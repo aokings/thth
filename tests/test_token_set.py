@@ -194,3 +194,41 @@ def test_7_CLI経由でパイプで渡しても動く_stdinフラグ(tmp_path, m
     with open(account["token_path"], encoding="utf-8") as f:
         token = json.load(f)
     assert token["access_token"] == secret_token
+
+
+def test_20260909_handle_mismatch_would_post_as_the_wrong_account(
+        tmp_path, monkeypatch, isolated_account_factory):
+    """台帳の handle と食い違うトークンは保存しない（masaru の指摘 2026-09-09）。
+
+    Meta 側にも「選択中のテスタープロフィールと一致しません」という検査があるが、
+    それが見るのは「管理画面で押した行」と「ブラウザでログイン中のアカウント」の
+    一致だけ。**正しく発行したトークンを別のアカウントの枠に貼る**取り違え
+    （nigamilab のトークンを kopicha-threads に入れる等）は通ってしまう。
+    通すとそのアカウントの queue の本文が別のアカウントから出る（取り消せない）。
+    """
+    # 偽 me は username=nigamilab を返す。台帳の handle をわざと別にする。
+    account = _account_with_token_path(
+        isolated_account_factory, tmp_path, handle="kopi_chaba")
+
+    with fake_oauth_server() as base_url:
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        lines = []
+        rc = oauth_mod.run_token_set(
+            account["name"], input_func=lambda: "PASTED-TOKEN", log=lines.append)
+
+    assert rc == 1
+    assert not os.path.exists(account["token_path"]), "食い違ったのに .token を書いてしまった"
+    out = "\n".join(lines)
+    assert "kopi_chaba" in out and "nigamilab" in out
+    assert "PASTED-TOKEN" not in out
+
+
+def test_20260909_handle_が一致すれば通る(tmp_path, monkeypatch, isolated_account_factory):
+    account = _account_with_token_path(
+        isolated_account_factory, tmp_path, handle="nigamilab")
+    with fake_oauth_server() as base_url:
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        rc = oauth_mod.run_token_set(
+            account["name"], input_func=lambda: "PASTED-TOKEN", log=lambda *_: None)
+    assert rc == 0
+    assert os.path.exists(account["token_path"])

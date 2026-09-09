@@ -447,6 +447,23 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
         _out("トークンが使えませんでした（me の応答に id が無い）", log=log)
         return 1
 
+    # 取り違え防止（masaru の指摘 2026-09-09）。台帳の handle と、トークンが
+    # 実際に指しているアカウントが食い違ったら保存しない。
+    #
+    # Meta 側にも「選択中のテスタープロフィールと一致しません」という検査があるが、
+    # それが見ているのは「管理画面で押した行」と「ブラウザでログイン中のアカウント」の
+    # 一致だけ。**正しく発行したトークンを、別のアカウントの枠に貼る**取り違えは
+    # 見てくれない（nigamilab のトークンを kopicha-threads に入れる等）。そこを塞ぐ。
+    #
+    # 通してしまうと、そのアカウントの queue の本文が別のアカウントから出る。
+    # 取り消せない公開行為なので、疑わしければ保存しない（--force でも覆さない）。
+    handle = (account_cfg.get("handle") or "").strip()
+    if handle and username and handle.lower() != username.lower():
+        _out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
+             f"このトークンは {username} のものです。", log=log)
+        _out("正しいアカウントで発行し直すか、台帳の handle を直してください。", log=log)
+        return 1
+
     token_data = {
         "access_token": token_value,
         "obtained_at": jst.iso(),
