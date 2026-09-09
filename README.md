@@ -12,4 +12,4 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 設計 review 中。実装は未着手。T1 の発注書は [docs/発注_T1_2026-09-09.md](docs/発注_T1_2026-09-09.md)。
 
 - 裁定済み: 当面 Threads だけ（X は保留）／アカウントはプロジェクト・サテライトごとに分ける／2 本目は asmon 関東／入口は timer・手打ち・薄い MCP の 3 つで core は 1 つ。
-- masaru の手待ち: GitHub repo 作成、Meta アプリと tester（scope 4 つを最初から）。
+- masaru の手待ち: **Meta アプリと tester だけ**（scope 4 つを最初から）。GitHub repo は 2026-09-09 に作成済。
