@@ -212,9 +212,11 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
     # repo ロック・account ロックの中・inflight 確認の後・queue を読む前。失敗したら
     # 投稿しない（続行不能。前回の書き戻しが中断して push できなかった local commit
     # が残っている場合ここで --ff-only が失敗しうる。通常は inflight が残っていて
-    # 手前で止まるが、万一 inflight が無くてもここで止める）。repo を持たない
-    # アカウント（`masaru-threads` の `repos/_none`）・git repo でない・origin が
-    # 無い場合は何もせず成功扱い（`writeback.sync_repo()` の docstring 参照）。
+    # 手前で止まるが、万一 inflight が無くてもここで止める）。fail-closed（外部
+    # レビュー第 3 巡 P1）: 唯一の例外は repo_dir が存在しないこと（`masaru-threads`
+    # の `repos/_none` のような send 専用アカウント）。それ以外は git repo として
+    # 同期の成功を確認できて初めて成功扱いになる（`writeback.sync_repo()` の
+    # docstring 参照）。
     synced, sync_err = writeback.sync_repo(account_cfg.get("repo_dir"))
     if not synced:
         msg = f"利用者 repo の同期に失敗しました（投稿しません）: {sync_err}"

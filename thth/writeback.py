@@ -139,44 +139,54 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
 def sync_repo(repo_dir: str) -> tuple:
     """利用者 repo を select より前に同期する（設計 §3.3・外部レビュー再レビュー A）。
 
-    `git fetch` ＋ `git pull --ff-only`（merge commit を作らない）相当。設計は
-    「pull(利用者 repo) → inflight 確認 → queue を読む」の順だったが、実装（`core.py`・
-    `cli.py`）のどこにも利用者 repo を pull する処理が無く、timer が clone した
-    時点の内容を永久に見てしまっていた（承認しても撤回しても届かない）。
-
     `thth/core.py::_throw_locked()` が repo ロックの中・inflight 確認の後・
-    queue を読む前に呼ぶ。**失敗したら投稿しない**（呼び出し側が続行不能として
-    扱う）。前回の書き戻しが中断して push できていないローカル commit が残っている
-    場合、`--ff-only` はここで失敗する（fast-forward できない）——通常は inflight が
-    残っていて手前で止まるはずだが、万一 inflight が無い状態でここに来ても、同期
-    失敗として扱い投稿しない。
+    queue を読む前に呼ぶ。
 
-    次の場合は「同期の必要が無い」として何もせず成功扱いにする（壊れないことを
-    優先する）:
-      - `repo_dir` が存在しない（例: `masaru-threads` の `repos/_none`。この
-        アカウントは `thth send` だけを使い、queue を読まないので同期は元々不要）
-      - `repo_dir` が git repo ではない（`.git` が無い。queue はそこには無いので
-        素通りしてよい）
+    **形を反転させてある（外部レビュー第 3 巡 P1）**。旧実装は「こういう場合は
+    同期しなくてよい」という**例外を数え上げる**作りだった（repo_dir が無い・
+    git repo でない・origin が無い、の 3 つを「成功扱い」として列挙）。例外が
+    ひとつ増えるたびに素通りの経路ができる——実際、外部レビューは 2 巡目で
+    「origin が無い」を、3 巡目で「.git が無い」を見つけた。queue ファイルは
+    残っているのに `.git` だけ退避されていると、旧実装は「git repo でない」を
+    無条件で成功扱いにしていたので、同期を経ずに select → 公開まで進み、
+    書き戻しの `git add` で初めて失敗した（公開はもう取り消せない）。次も
+    同じ形で新しい壊れ方が出るだろう。
 
-    一方、**`repo_dir` が git repo なのに `origin` という remote が無い場合は
-    「同期の必要が無い」ではない**（外部レビュー再々レビュー P1・2）。有効な
-    承認済み queue を残したまま `origin` を外すと、同期元を確認できないまま
-    select → 公開に進んでしまい、書き戻しの push で初めて失敗する（公開は
-    もう取り消せない）。ここは**同期失敗として扱い、投稿しない**（呼び出し側
-    `core.py` が `exit_code=2`・`error="repo_sync_failed"` にする）。
-    `git remote` コマンド自体が失敗した場合（壊れた repo 等）も同様に同期失敗
-    として扱う——「素通りしてよい」のは repo_dir がそもそも git repo でない
-    ときだけで、git repo である以上は同期元を確認できて初めて成功と言える。
+    そこで**同期は必ず成功しなければならない・例外はただ 1 つだけ**という形に
+    反転した。唯一の例外は `repo_dir` が**存在しない**ことだけ——この場合
+    queue を読む先が無いので
+    `core.list_queue_files()` は `os.path.isdir(queue_dir)` で空を返し、どのみち
+    何も公開されない（安全）。`repo_dir` が存在する場合は、以降の一切を
+    `_confirm_synced()` に渡し、**「成功したと確認できたときだけ」** `(True, "")`
+    を返させる。ディレクトリはあるが `.git` が無い／`origin` が無い／
+    `git remote` が失敗／fetch 失敗／`pull --ff-only` 失敗／pull 後に HEAD が
+    upstream に追いついたと確認できない、など「確認できない」場合はすべて
+    `(False, ...)` になる——分岐を列挙して素通りさせるのではなく、確認できな
+    かったものはすべて同じ扱いで落ちる形にしてあるので、ここに載っていない
+    新しい壊れ方が今後見つかっても、この関数を触らなくても安全側に倒れる。
 
-    `fetch` できない・`--ff-only` に失敗する、は元々正しく同期失敗として扱って
-    いる（ここは変えない）。
+    `(False, ...)` は呼び出し側 `core.py` で `exit_code=2`・
+    `error="repo_sync_failed"` になり、**adapter.publish() は一度も呼ばれない**。
 
     `thth send`（同席の様態）は queue を読まないのでこの関数を呼ばない。
     """
     if not repo_dir or not os.path.isdir(repo_dir):
+        # 唯一の例外。queue を読む先そのものが無いので、どのみち公開されない。
         return True, ""
-    if not os.path.exists(os.path.join(repo_dir, ".git")):
-        return True, ""
+
+    return _confirm_synced(repo_dir)
+
+
+def _confirm_synced(repo_dir: str) -> tuple:
+    """`repo_dir` が存在する前提で、同期の成功を積極的に確認する。
+
+    確認できたステップだけを通す（数え上げ式の逆）。どのステップであれ
+    「成功した」と確認できなければ、その場で `(False, 理由)` を返す。
+    """
+    git_dir = _run_git(repo_dir, ["rev-parse", "--git-dir"])
+    if git_dir.returncode != 0:
+        return False, ("git repository として確認できませんでした（.git が見当たりません）: "
+                        + redact_mod.redact(git_dir.stderr))
 
     remote = _run_git(repo_dir, ["remote"])
     if remote.returncode != 0:
@@ -191,5 +201,14 @@ def sync_repo(repo_dir: str) -> tuple:
     pull = _run_git(repo_dir, ["pull", "--ff-only"])
     if pull.returncode != 0:
         return False, "git pull --ff-only に失敗しました: " + redact_mod.redact(pull.stderr)
+
+    # 最終確認: pull --ff-only が exit 0 を返しただけでなく、HEAD が実際に
+    # upstream に追いついたことを直接見る（「エラーが出なかった」ではなく
+    # 「成功したと確認できた」で通すため）。
+    head = _run_git(repo_dir, ["rev-parse", "HEAD"])
+    upstream = _run_git(repo_dir, ["rev-parse", "@{u}"])
+    if (head.returncode != 0 or upstream.returncode != 0
+            or head.stdout.strip() != upstream.stdout.strip()):
+        return False, "pull --ff-only の後、HEAD が upstream に追いついたことを確認できませんでした"
 
     return True, ""

@@ -144,13 +144,26 @@ def thth_root(tmp_path, monkeypatch):
     return str(root)
 
 
+def init_real_repo(tmp_path, subdir: str) -> str:
+    """queue_dir を持つ、利用者 repo 相当の**実 git repo**（bare origin 付き）を作る。
+
+    `writeback.sync_repo()` の fail-closed 化（外部レビュー第 3 巡 P1）で、
+    `repo_dir` は「存在しない」以外は git repo・origin・同期成功が要る形に
+    なった。本番の利用者 repo は元々そうなっている（`accounts/*.json` の
+    `repo_dir` はすべて実クローン）ので、テストの既定 repo_dir もそれに合わせる。
+    `init_git_pair()` と同じ流儀（bare → seed → clone）だが、置くのは
+    queue_dir 直下の `.gitkeep` だけ（各テストは `write_queue_file()` で queue
+    ファイルを直接・未追跡のまま書き込む。push しないので `.md` と衝突しない）。
+    フェッチしても新しい commit は無いので、同期は毎回 trivially 成功する。
+    """
+    pair = init_git_pair(tmp_path / subdir, seed_content="", seed_name=".gitkeep")
+    return pair["work"]
+
+
 @pytest.fixture
 def nigamilab_repo(tmp_path):
-    """queue_dir を持つ、利用者 repo 相当のディレクトリ（git 無し。単純なファイル操作用）。"""
-    repo_dir = tmp_path / "nigamilab"
-    queue_dir = repo_dir / "docs" / "sns" / "queue"
-    queue_dir.mkdir(parents=True)
-    return str(repo_dir)
+    """queue_dir を持つ、利用者 repo 相当のディレクトリ（実 git repo。`init_real_repo()` 参照）。"""
+    return init_real_repo(tmp_path, "nigamilab")
 
 
 def make_account_json(accounts_dir: str, name: str, *, repo_dir: str, **overrides) -> str:

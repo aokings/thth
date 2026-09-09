@@ -124,17 +124,25 @@ def test_同期に失敗したら投稿しない(tmp_path, isolated_account_fact
 
 
 def test_repoを持たないアカウントは同期をスキップして壊れない(tmp_path):
-    """`masaru-threads` の `repos/_none` 相当（存在しないディレクトリ）・git repo
-    でないディレクトリは、そこに queue が無いので同期を静かにスキップする
-    （`writeback.sync_repo()` 自体のユニットテスト）。"""
+    """`masaru-threads` の `repos/_none` 相当（存在しないディレクトリ）は、そこに
+    queue が無いので同期を静かにスキップする（唯一の例外・外部レビュー第 3 巡 P1・
+    `writeback.sync_repo()` 自体のユニットテスト）。"""
     missing = str(tmp_path / "repos" / "_none")
     ok, err = writeback.sync_repo(missing)
     assert ok is True and err == ""
 
+
+def test_存在するがgit_repoでないディレクトリは同期失敗として扱う(tmp_path):
+    """外部レビュー第 3 巡 P1: ディレクトリが存在するが `.git` が無い場合は、
+    もはや「同期不要」ではなく同期失敗として扱う（fail-closed への反転）。
+    queue ファイルが残っているのに `.git` だけ失われる・退避される事故が
+    3 巡目レビューで見つかった（後続の `test_atlas_third_review.py` の
+    `missing_git` モードが `core.throw_once()` 越しの受け入れを見る）。"""
     plain_dir = tmp_path / "plain"
     plain_dir.mkdir()
     ok, err = writeback.sync_repo(str(plain_dir))
-    assert ok is True and err == ""
+    assert ok is False
+    assert err
 
 
 def test_git_repoなのにoriginが無ければ同期失敗として投稿しない(tmp_path):

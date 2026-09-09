@@ -11,7 +11,7 @@ import os
 import subprocess
 import sys
 
-from tests.conftest import run_thth
+from tests.conftest import init_real_repo, run_thth
 from thth import accounts as accounts_mod
 from thth import core
 from thth import lock as lock_mod
@@ -59,8 +59,7 @@ def test_8_ロック取得順はrepoからaccount(isolated_account):
 # 弾かれる（実プロセスで確かめる。tests/helpers/hold_lock.py の流儀）。
 def test_7_同じrepo_dirの2アカウント同時実行は後から来たほうが弾かれる(
         isolated_account_factory, tmp_path):
-    shared_repo = str(tmp_path / "shared-repo")
-    os.makedirs(os.path.join(shared_repo, "docs", "sns", "queue"), exist_ok=True)
+    shared_repo = init_real_repo(tmp_path, "shared-repo")
     acct_a = isolated_account_factory(name="acct-a-threads", repo_dir=shared_repo)
     isolated_account_factory(name="acct-b-threads", repo_dir=shared_repo)
 
@@ -85,8 +84,7 @@ def test_7_同じrepo_dirの2アカウント同時実行は後から来たほう
 
 
 def test_repoロックが解放されれば続けて投げられる(isolated_account_factory, tmp_path):
-    shared_repo = str(tmp_path / "shared-repo2")
-    os.makedirs(os.path.join(shared_repo, "docs", "sns", "queue"), exist_ok=True)
+    shared_repo = init_real_repo(tmp_path, "shared-repo2")
     isolated_account_factory(name="acct-c-threads", repo_dir=shared_repo)
 
     holder = subprocess.Popen(
