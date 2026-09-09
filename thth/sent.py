@@ -19,13 +19,20 @@ def path_for(state_dir: str, post_id: str) -> str:
     return os.path.join(dir_for(state_dir), f"{post_id}.json")
 
 
-def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: str) -> str:
-    """送った本文そのものを動かせない記録として保存する。返り値は書いたパス。"""
+def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: str,
+          approved_fingerprint: str | None = None) -> str:
+    """送った本文そのものを動かせない記録として保存する。返り値は書いたパス。
+
+    `approved_fingerprint`（外部レビュー再々レビュー P1・1）は公開直前に固定した
+    5 項目（本文・account・reply_to・topic・publish_at）の指紋。`body_hash` は
+    後方互換のため残す（本文だけの hash・`tests/test_sent_integrity.py` が参照）。
+    """
     d = dir_for(state_dir)
     os.makedirs(d, exist_ok=True)
     p = path_for(state_dir, post_id)
     tmp = p + ".tmp"
-    data = {"post_id": post_id, "text": text, "body_hash": body_hash, "sent_at": sent_at}
+    data = {"post_id": post_id, "text": text, "body_hash": body_hash, "sent_at": sent_at,
+            "approved_fingerprint": approved_fingerprint}
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
         f.write("\n")

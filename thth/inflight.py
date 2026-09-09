@@ -34,10 +34,18 @@ def _write(state_dir: str, data: dict) -> None:
 
 def write(state_dir: str, *, file: str, started: str,
           container_id: str | None = None, post_id: str | None = None,
-          body_hash: str | None = None) -> None:
+          body_hash: str | None = None, approved_fingerprint: str | None = None) -> None:
     """`body_hash`（外部レビュー §3・受け入れ 9・10）は「送るはずの本文」の
     `approval.compute_body_hash()`。公開の**前**にここへ書いておくことで、書き戻し
     直前の「送った本文と repo の本文が同じか」の照合ができる（`thth.core` 参照）。
+
+    `approved_fingerprint`（外部レビュー再々レビュー P1・1）は
+    `approval.compute_approved_sha()` と同じ 5 項目（本文・account・reply_to・
+    topic・publish_at）の指紋。`body_hash` は本文だけしか見ないため、公開中に
+    別 clone から account や topic だけを書き換えられても検知できない
+    （本文の hash は変わらないため）。書き戻し前・rebase 後の照合はこちらを使う
+    （`thth.core._fingerprint_matches()` 参照）。`body_hash` は既存の記録
+    （`tests/test_sent_integrity.py`）との後方互換のため残す。
     """
     _write(state_dir, {
         "file": file,
@@ -45,6 +53,7 @@ def write(state_dir: str, *, file: str, started: str,
         "container_id": container_id,
         "post_id": post_id,
         "body_hash": body_hash,
+        "approved_fingerprint": approved_fingerprint,
     })
 
 

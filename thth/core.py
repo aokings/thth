@@ -325,23 +325,51 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
     return last_result
 
 
-def _section_matches(path: str, media: str, expected_hash: str) -> bool:
-    """`path` の（media の節の）本文がいま `expected_hash`（送った本文の hash）と
-    一致するか（外部レビュー §3・再レビュー B）。ファイルが読めない・節が無い場合は
-    空文字列として扱う（＝一致しないほうに倒す。fail-closed）。
-
-    書き戻し直前（rebase 前・ローカルのファイルに対して）と、`writeback.commit_and_push()`
-    の `validate` コールバック（rebase の後・push の直前）の両方から呼ぶ。前者だけでは
-    「rebase の後に remote の変更が入ってくる」ケースを見逃す（外部レビュー再レビュー
-    §「validation occurs before remote changes are incorporated」）ので、両方が要る。
+def _current_fingerprint(path: str, media: str) -> str | None:
+    """`path` の**いまの**内容から、`approval.compute_approved_sha()` と同じ 5 項目
+    （本文・account・reply_to・topic・publish_at）の指紋を計算する（外部レビュー
+    再々レビュー P1・1）。ファイルが読めない・型外・media の節が無い・publish_at が
+    壊れている場合は None を返す（＝呼び出し側で「一致しない」扱いにする。
+    fail-closed）。
     """
     try:
         current_qf = queuefile.parse(path)
-        current_section = queuefile.extract_section(current_qf.body, media)
     except OSError:
-        current_section = None
-    current_hash = approval_mod.compute_body_hash(current_section or "")
-    return current_hash == expected_hash
+        return None
+    if current_qf.malformed:
+        return None
+    fm = current_qf.front_matter
+    current_section = queuefile.extract_section(current_qf.body, media)
+    try:
+        return approval_mod.compute_approved_sha(
+            section=current_section or "", account=fm.get("account"),
+            reply_to=fm.get("reply_to"), topic=fm.get("topic"),
+            publish_at=fm.get("publish_at"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _fingerprint_matches(path: str, media: str, expected_fingerprint: str) -> bool:
+    """`path` の**いまの** 5 項目の指紋が、公開の直前に固定した `expected_fingerprint`
+    と一致するか（外部レビュー再々レビュー P1・1）。
+
+    これまでは本文（media の節）だけの hash（`compute_body_hash()`）しか見ていな
+    かったため、公開中に別 clone から `account`・`topic`・`reply_to`・`publish_at`
+    だけを書き換えて push されても検知できなかった（本文の hash は変わらないので
+    すり抜ける）。ここでは `compute_approved_sha()` と同じ 5 項目全部を、**いま
+    ファイルに書かれている値**から計算し直し、`_throw_chosen()` が公開の直前に
+    固定した指紋と比較する（現在の `approved_sha` の値そのものとは比較しない
+    ——remote が別内容で再承認されている可能性があるため。設計どおり「実際に
+    公開した投稿」の指紋という不動点と比較する）。
+
+    書き戻し直前（rebase 前・ローカルのファイルに対して）と、
+    `writeback.commit_and_push()` の `validate` コールバック（rebase の後・push の
+    直前）の両方から呼ぶ。前者だけでは「rebase の後に remote の変更が入ってくる」
+    ケースを見逃す（外部レビュー再レビュー §「validation occurs before remote
+    changes are incorporated」）ので、両方が要る。
+    """
+    current_fingerprint = _current_fingerprint(path, media)
+    return current_fingerprint is not None and current_fingerprint == expected_fingerprint
 
 
 def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, section,
@@ -351,12 +379,21 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     `_throw_locked()` の max_per_run ループから 1 本ごとに呼ばれる（§3.3）。
     """
     started = jst.iso()
-    # 送る本文の hash を inflight に書く（外部レビュー §3・受け入れ 9・10）。公開の
-    # あと・書き戻しの前に、いま repo にある本文とこの hash を突き合わせる
-    # （下の「送った本文と repo の本文の照合」参照）。
+    media = account_cfg["media"]
+    # 公開の直前に、いま選ばれている内容（`compute_approved_sha()` と同じ 5 項目:
+    # 本文・account・reply_to・topic・publish_at）の指紋を固定する（外部レビュー
+    # 再々レビュー P1・1）。select_one() がこの時点までに approved_sha との一致を
+    # 検査済みなので、ここでの値は「masaru が承認した内容そのもの」と一致している
+    # ——この不動点を、書き戻し前・rebase 後の照合の基準にする（本文だけの hash では
+    # account・topic・reply_to・publish_at の書き換えを見逃すため）。
+    expected_fingerprint = approval_mod.compute_approved_sha(
+        section=section, account=account_name, reply_to=chosen.get("reply_to"),
+        topic=chosen.get("topic"), publish_at=chosen.get("publish_at"))
+    # 送る本文の hash（後方互換・`tests/test_sent_integrity.py` が参照）も併せて
+    # inflight に書く（外部レビュー §3・受け入れ 9・10）。実際の照合は上の指紋で行う。
     body_hash = approval_mod.compute_body_hash(section)
     inflight_mod.write(state_dir, file=chosen.path, started=started, container_id=None,
-                        body_hash=body_hash)
+                        body_hash=body_hash, approved_fingerprint=expected_fingerprint)
 
     if mode == "rehearsal":
         log("投げるはずの本文:")
@@ -406,8 +443,10 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
 
     posted_at = publish_result.ts
     # 送った本文そのものを動かせない記録として残す（外部レビュー §3・受け入れ 9・
-    # 10・これが正本）。書き戻し（front-matter 書き換え）より前に書く。
-    sent_mod.write(state_dir, post_id=post_id, text=section, body_hash=body_hash, sent_at=posted_at)
+    # 10・これが正本）。書き戻し（front-matter 書き換え）より前に書く。指紋
+    # （外部レビュー再々レビュー P1・1）も併せて残す。
+    sent_mod.write(state_dir, post_id=post_id, text=section, body_hash=body_hash,
+                    sent_at=posted_at, approved_fingerprint=expected_fingerprint)
 
     # テスト専用フック（受け入れ 10・公開成功直後の中断→次回 inflight で停止すること）。
     # 本番コードパスには影響しない（環境変数が立っているときだけ発火する）。
@@ -425,10 +464,13 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # `writeback.commit_and_push()` の `pull --rebase` を経ていないので、ここより
     # あとに remote から入ってくる変更は見えない。rebase の直後・push の直前に
     # もう一度同じ照合を行う（下の `validate=` 引数）。
-    media = account_cfg["media"]
-    if not _section_matches(chosen.path, media, body_hash):
-        msg = (f"送った本文と repo の本文が食い違います（書き戻しません・"
-               f"再公開もしません）: {chosen.path}")
+    #
+    # **本文だけでは足りない**（外部レビュー再々レビュー P1・1）: account・topic・
+    # reply_to・publish_at だけを別 clone から書き換えられても、本文の hash は
+    # 変わらないのですり抜ける。5 項目の指紋（`expected_fingerprint`）で照合する。
+    if not _fingerprint_matches(chosen.path, media, expected_fingerprint):
+        msg = (f"送った内容（本文・account・reply_to・topic・publish_at）と repo の"
+               f"内容が食い違います（書き戻しません・再公開もしません）: {chosen.path}")
         log(msg)
         _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
                     status="error", error="text_mismatch_before_writeback")
@@ -444,7 +486,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     commit_message = f"thth: {account_name} {os.path.basename(chosen.path)} を投稿（post_id {post_id}）"
 
     def _validate_after_rebase() -> bool:
-        return _section_matches(chosen.path, media, body_hash)
+        return _fingerprint_matches(chosen.path, media, expected_fingerprint)
 
     try:
         ok, err = writeback.commit_and_push(
