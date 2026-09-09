@@ -137,6 +137,28 @@ def test_9_hashtagがあると落ちる(tmp_path):
     assert any(r.reason == "hashtag" for r in result.rejections)
 
 
+# 9b. topic（`topic_tag`）が検査に落ちる → 落とす（T2c・masaru 裁定 2026-09-09）
+def test_9b_topicが51字だと落ちる(tmp_path):
+    p = write(tmp_path, "a.md", fm_overrides={"topic": "あ" * 51})
+    result = select(parse_all([p]))
+    assert result.chosen is None
+    assert any(r.reason == "topic_too_long(51)" for r in result.rejections)
+
+
+def test_9b_topicにピリオドを含むと落ちる(tmp_path):
+    p = write(tmp_path, "a.md", fm_overrides={"topic": "苦味."})
+    result = select(parse_all([p]))
+    assert result.chosen is None
+    assert any(r.reason == "topic_invalid_char(.)" for r in result.rejections)
+
+
+def test_9b_topicの先頭のシャープを落として選ばれる(tmp_path):
+    p = write(tmp_path, "a.md", fm_overrides={"topic": "#苦味"})
+    result = select(parse_all([p]))
+    assert result.chosen is not None
+    assert result.chosen.path == p
+
+
 # 10. publish_at から stale_days 超 → 落として要確認
 def test_10_stale_daysを超えると要確認(tmp_path):
     p = write(tmp_path, "a.md", fm_overrides={"publish_at": "2026-08-01T08:00:00+09:00"})

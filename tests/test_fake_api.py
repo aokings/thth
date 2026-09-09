@@ -15,13 +15,15 @@ import json
 import os
 import threading
 import time
+import urllib.parse
 
 import pytest
 
-from tests.conftest import run_thth, write_queue_file
+from tests.conftest import init_git_pair, make_queue_text, run_thth, write_queue_file
 from thth import accounts as accounts_mod
 from thth import core
 from thth import inflight as inflight_mod
+from thth import runs as runs_mod
 from thth.adapters import base as adapter_base
 from thth.adapters import threads as threads_mod
 
@@ -29,6 +31,8 @@ from thth.adapters import threads as threads_mod
 class _Handler(http.server.BaseHTTPRequestHandler):
     behavior = {"create": "ok", "publish": "ok", "create_delay": 0, "publish_delay": 0}
     counter = [1]
+    # コンテナ作成（`/threads`）に実際に届いた params（`topic_tag` の検査用・T2c）。
+    create_params: list
 
     def _respond_json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -39,6 +43,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802 (http.server の命名規則)
+        length = int(self.headers.get("Content-Length") or 0)
+        raw_body = self.rfile.read(length) if length else b""
+        if not self.path.endswith("/threads_publish"):
+            # コンテナ作成の params を記録する（`topic_tag` が入っているか／
+            # 入っていないかを偽サーバ側で受け取って確かめる・T2c）。
+            parsed = urllib.parse.parse_qs(raw_body.decode("utf-8"))
+            self.__class__.create_params.append({k: v[0] for k, v in parsed.items()})
         if self.path.endswith("/threads_publish"):
             mode = self.behavior["publish"]
             delay = self.behavior.get("publish_delay", 0)
@@ -64,14 +75,22 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class _ServerURL(str):
+    """`base_url` として素朴に使える文字列に、コンテナ作成の params を覗ける
+    `handler_cls` を添えたもの（既存の呼び出し側は文字列としてそのまま使える）。"""
+
+
 @contextlib.contextmanager
 def fake_threads_server(behavior: dict):
-    handler_cls = type("Handler", (_Handler,), {"behavior": dict(behavior), "counter": [1]})
+    handler_cls = type("Handler", (_Handler,),
+                        {"behavior": dict(behavior), "counter": [1], "create_params": []})
     server = http.server.HTTPServer(("127.0.0.1", 0), handler_cls)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_port}"
+        url = _ServerURL(f"http://127.0.0.1:{server.server_port}")
+        url.handler_cls = handler_cls
+        yield url
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -82,6 +101,24 @@ def _adapter(base_url: str, **kwargs) -> threads_mod.ThreadsAdapter:
     kwargs.setdefault("timeout", 1.0)
     return threads_mod.ThreadsAdapter(base_url=base_url, access_token="fake-token",
                                        user_id="12345", **kwargs)
+
+
+def test_1b_topicを渡すとtopic_tagとして送られる():
+    with fake_threads_server({"create": "ok", "publish": "ok"}) as base_url:
+        adapter = _adapter(base_url)
+        result = adapter.publish(
+            adapter_base.Post(text="こんにちは", topic="苦味"), dry_run=False)
+    assert result.post_id is not None
+    assert base_url.handler_cls.create_params[0]["topic_tag"] == "苦味"
+
+
+def test_1c_topicが空またはNoneならparamsに入らない():
+    with fake_threads_server({"create": "ok", "publish": "ok"}) as base_url:
+        adapter = _adapter(base_url)
+        adapter.publish(adapter_base.Post(text="こんにちは", topic=None), dry_run=False)
+        adapter.publish(adapter_base.Post(text="こんにちは", topic=""), dry_run=False)
+    assert "topic_tag" not in base_url.handler_cls.create_params[0]
+    assert "topic_tag" not in base_url.handler_cls.create_params[1]
 
 
 def test_1_正常系は投稿idを返す():
@@ -230,3 +267,28 @@ def test_8_公開が4xxならinflightが消えて次回は普通に選び直せ�
     result2 = core.throw_once(account["name"], production_flag=False)
     assert result2.action != "inflight"
     assert result2.file == os.path.join(account["queue_dir"], "a.md")
+
+
+def test_9_topicを付けて投稿するとrunsにtopicが残る(isolated_account_factory, tmp_path):
+    """付けたトピックを読み返す field が Threads 側に無い（設計 §2.2）ので、
+    付けたことは THTH 側の runs で記録する（T2c・masaru 裁定 2026-09-09）。
+    push まで通す必要があるので、round-trip テストと同じ隔離 git pair を使う。"""
+    seed_content = make_queue_text(fm_overrides={"topic": "苦味"})
+    pair = init_git_pair(tmp_path, seed_content=seed_content, seed_name="a.md")
+    account = isolated_account_factory(repo_dir=pair["work"], production=True)
+    state_dir = accounts_mod.state_dir_for(account["name"])
+
+    with fake_threads_server({"create": "ok", "publish": "ok"}) as base_url:
+        def factory(_cfg, _token):
+            return _adapter(base_url)
+
+        result = core.throw_once(account["name"], production_flag=True, adapter_factory=factory)
+
+    assert result.exit_code == 0
+    assert result.action == "post"
+    assert base_url.handler_cls.create_params[0]["topic_tag"] == "苦味"
+
+    runs = runs_mod.read_runs(state_dir)
+    posted = [r for r in runs if r["action"] == "post" and r["status"] == "ok"]
+    assert len(posted) == 1
+    assert posted[0]["topic"] == "苦味"

@@ -13,6 +13,10 @@ class Post:
     text: str                       # 媒体節の本文（検査済み）
     reply_to: str | None = None     # post_id | None
     link: str | None = None
+    # Threads の topic_tag（設計 §2.2・§4.1・masaru 裁定 2026-09-09。全アカウントで
+    # 使う）。1〜50 字・`.`・`&` 不可・1 投稿に 1 つだけ（検査済みのものだけを渡す
+    # こと・queuefile.normalize_topic()/topic_error() で検査する）。
+    topic: str | None = None
 
 
 @dataclasses.dataclass

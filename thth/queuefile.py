@@ -16,6 +16,12 @@ _FM_DELIM = "---"
 # `#語` のハッシュタグ検出。行頭または空白の後に `#` + 語構成文字が続く形。
 _HASHTAG_RE = re.compile(r"(?:^|\s)#\w")
 
+# トピック（Threads の `topic_tag`。設計 §2.2・§4.1・masaru 裁定 2026-09-09）。
+# 1〜50 字・`.`（ピリオド）と `&`（アンパサンド）は不可・1 投稿に 1 つだけ。
+TOPIC_MIN_LEN = 1
+TOPIC_MAX_LEN = 50
+TOPIC_FORBIDDEN_CHARS = ".&"
+
 
 @dataclasses.dataclass
 class QueueFile:
@@ -124,3 +130,35 @@ def has_hashtag(text: str) -> bool:
 def parse_publish_at(value: str) -> datetime.datetime:
     """`+09:00` 付きの ISO 8601 をパースする。壊れていれば ValueError。"""
     return datetime.datetime.fromisoformat(value)
+
+
+def normalize_topic(raw: str | None) -> str | None:
+    """front-matter の `topic` を検査・送信用に正規化する。前後の空白を落とし、
+    先頭の `#` を落とす（人が `#苦味` と書きがちなので機械的に外す。ハッシュタグ
+    とは別物なので `#` は付けない・設計 §4.1）。空・None は None（トピック無し）。
+    """
+    if raw is None:
+        return None
+    value = raw.strip()
+    value = value.lstrip("#")
+    value = value.strip()
+    return value or None
+
+
+def topic_error(topic: str) -> str | None:
+    """正規化済み topic 1 件を検査する。OK なら None、駄目なら理由コードを返す
+    （設計 §2.2: 1〜50 字・`.` と `&` は不可）。理由コードは `too_long(NNN)` 等の
+    既存の名付け方に合わせ、`topic_` を付けた機械可読な形にする
+    （`topic_too_long(NN)` / `topic_too_short(N)` / `topic_invalid_char(.)`）。
+    呼び出し側で None（トピック無し）を渡さないこと（`normalize_topic()` で
+    None になったものは検査対象にしない）。
+    """
+    n = len(topic)
+    if n > TOPIC_MAX_LEN:
+        return f"topic_too_long({n})"
+    if n < TOPIC_MIN_LEN:
+        return f"topic_too_short({n})"
+    for ch in TOPIC_FORBIDDEN_CHARS:
+        if ch in topic:
+            return f"topic_invalid_char({ch})"
+    return None

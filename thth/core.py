@@ -69,7 +69,11 @@ _ERROR_RUN_REASONS = ("hashtag", "duplicate_text")
 
 
 def _is_error_reason(reason: str) -> bool:
-    return reason in _ERROR_RUN_REASONS or reason.startswith("too_long(")
+    return (
+        reason in _ERROR_RUN_REASONS
+        or reason.startswith("too_long(")
+        or reason.startswith("topic_")
+    )
 
 
 def _default_adapter_factory(account_cfg: dict, token: dict | None) -> adapter_base.Adapter:
@@ -124,7 +128,8 @@ def throw_once(account_name: str, *, production_flag: bool = False,
 
 
 def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, action: str,
-                 file: str | None, post_id: str | None, now, *, status: str, error: str | None) -> None:
+                 file: str | None, post_id: str | None, now, *, status: str, error: str | None,
+                 topic: str | None = None) -> None:
     record = {
         "account": account_name,
         "run_id": run_id,
@@ -137,6 +142,9 @@ def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, actio
         "quota": None,
         "status": status,
         "error": redact_mod.redact(error),
+        # topic は「付けたこと」の記録（設計 §2.2: 読み返す field が無い）。
+        # 実際に付けた（投稿に使った）ときだけ渡す・それ以外は None のまま。
+        "topic": topic,
     }
     runs_mod.append_run(state_dir, record, jst.month_str(now))
 
@@ -195,7 +203,10 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
     # ---- production ----
     token = accounts_mod.load_token(account_cfg)
     adapter = adapter_factory(account_cfg, token)
-    post = adapter_base.Post(text=section, reply_to=chosen.get("reply_to") or None)
+    # topic は select_one() の条件 9b で既に検査済み（不正なら候補から落ちている）。
+    # ここでは正規化だけ行う（前後の空白・先頭の `#` を落とす・設計 §4.1）。
+    topic = queuefile.normalize_topic(chosen.get("topic"))
+    post = adapter_base.Post(text=section, reply_to=chosen.get("reply_to") or None, topic=topic)
 
     def on_container_created(container_id):
         inflight_mod.update(state_dir, container_id=container_id)
@@ -249,6 +260,6 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
 
     inflight_mod.clear(state_dir)
     _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
-                status="ok", error=None)
+                status="ok", error=None, topic=topic)
     return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました",
                         file=chosen.path, post_id=post_id)

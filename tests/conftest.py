@@ -19,12 +19,13 @@ DEFAULT_FM = {
     "account": DEFAULT_ACCOUNT_NAME,
     "publish_at": "2026-09-09T08:00:00+09:00",
     "status": "approved",
+    "topic": None,
     "reply_to": None,
     "post_id": None,
     "posted_at": None,
 }
 
-FM_ORDER = ["thth", "account", "publish_at", "status", "reply_to", "post_id", "posted_at"]
+FM_ORDER = ["thth", "account", "publish_at", "status", "topic", "reply_to", "post_id", "posted_at"]
 
 
 def render_front_matter(fm: dict, omit=()) -> str:

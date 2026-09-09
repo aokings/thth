@@ -160,6 +160,17 @@ def select_one(files, *, account_name: str, account_cfg: dict,
             rejections.append(Rejection(qf.path, "hashtag"))
             continue
 
+        # 9b. topic（`topic_tag`）が検査に落ちる（T2c・設計 §2.2・masaru 裁定
+        # 2026-09-09: 全アカウントで使う）。省略・空はスキップ（許す）。条件 8・9 と
+        # 同じ流儀: 切り詰めない・勝手に外さない。落として理由を runs に残す
+        # （core._is_error_reason() が `topic_` 始まりを実エラーとして拾う）。
+        topic = queuefile.normalize_topic(fm.get("topic"))
+        if topic is not None:
+            topic_err = queuefile.topic_error(topic)
+            if topic_err is not None:
+                rejections.append(Rejection(qf.path, topic_err))
+                continue
+
         # 10. publish_at から stale_days 超
         if now - publish_at > datetime.timedelta(days=stale_days):
             rejections.append(Rejection(qf.path, "stale"))

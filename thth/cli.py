@@ -14,6 +14,7 @@ from . import accounts as accounts_mod
 from . import core
 from . import lint as lint_mod
 from . import oauth as oauth_mod
+from . import queuefile
 from . import report as report_mod
 
 
@@ -37,11 +38,18 @@ def cmd_lint(args) -> int:
 
 
 def cmd_preview(args) -> int:
+    """本文だけを出す規約（設計 §4.1）。`--json` のときだけ topic 等も返す
+    （T2c・masaru 裁定 2026-09-09。本文の規約そのものは変えない）。"""
     try:
         section = lint_mod.preview_file(args.file)
     except (ValueError, accounts_mod.AccountError) as e:
         print(str(e), file=sys.stderr)
         return 1
+    if getattr(args, "json", False):
+        qf = queuefile.parse(args.file)
+        topic = queuefile.normalize_topic(qf.front_matter.get("topic"))
+        _print_json({"file": args.file, "text": section, "topic": topic})
+        return 0
     sys.stdout.write(section)
     return 0
 
@@ -56,8 +64,10 @@ def cmd_queue(args) -> int:
                 print(f"{name}: {info['error']}")
                 continue
             c = info["counts"]
+            topic_suffix = f" topic={info['next_topic']}" if info.get("next_topic") else ""
             print(f"{name}: draft={c['draft']} approved={c['approved']} posted={c['posted']} "
-                  f"型外={info['type_mismatch']} 次={info['next_file']}（{info['next_publish_at']}）")
+                  f"型外={info['type_mismatch']} 次={info['next_file']}（{info['next_publish_at']}）"
+                  f"{topic_suffix}")
             for rej in info.get("next_rejections") or []:
                 print(f"  いま出ない: {rej['file']} — {rej['reason']}")
     return 0
@@ -134,6 +144,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_preview = sub.add_parser("preview", help="実際に投げる本文そのものを返す")
     p_preview.add_argument("file")
+    p_preview.add_argument("--json", action="store_true", help="本文に加えて topic 等を JSON で返す")
     p_preview.set_defaults(func=cmd_preview)
 
     p_queue = sub.add_parser("queue", help="draft/approved/posted/型外 と次に出るもの")

@@ -82,6 +82,13 @@ def lint_file(path: str) -> list:
         if not hashtags_allowed and queuefile.has_hashtag(section):
             errors.append("hashtag: ハッシュタグは付けない規約（`#` を含む）")
 
+    # トピック（`topic_tag`）。省略・空は許す（設計 §4.1・masaru 裁定 2026-09-09）。
+    topic = queuefile.normalize_topic(fm.get("topic"))
+    if topic is not None:
+        topic_err = queuefile.topic_error(topic)
+        if topic_err is not None:
+            errors.append(topic_err)
+
     return errors
 
 

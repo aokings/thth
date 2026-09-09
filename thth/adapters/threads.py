@@ -57,6 +57,10 @@ class ThreadsAdapter(base.Adapter):
         }
         if post.reply_to:
             params["reply_to_id"] = post.reply_to
+        # トピック（`topic_tag`）。空・None のときは params に入れない（空文字を
+        # 送らない・設計 §2.2・masaru 裁定 2026-09-09）。
+        if post.topic:
+            params["topic_tag"] = post.topic
 
         # コンテナ作成の失敗はどんな理由でも「公開の呼び出しに到達していない」＝
         # 出ていない（設計 §3.5 の表）。

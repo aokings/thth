@@ -30,6 +30,7 @@ def _next_via_select_one(files, *, account_name: str, account_cfg: dict, now):
 
     next_file = None
     next_at = None
+    next_topic = None
     if result.chosen is not None:
         next_file = os.path.basename(result.chosen.path)
         publish_at_raw = result.chosen.front_matter.get("publish_at")
@@ -37,13 +38,14 @@ def _next_via_select_one(files, *, account_name: str, account_cfg: dict, now):
             next_at = queuefile.parse_publish_at(publish_at_raw).isoformat()
         except (TypeError, ValueError):
             next_at = None
+        next_topic = queuefile.normalize_topic(result.chosen.front_matter.get("topic"))
 
     rejections = [
         {"file": os.path.basename(rej.file), "reason": rej.reason}
         for rej in result.rejections
         if rej.reason != "account_mismatch"
     ]
-    return next_file, next_at, rejections
+    return next_file, next_at, next_topic, rejections
 
 
 def queue_summary(account_name: str | None, now=None) -> dict:
@@ -72,13 +74,14 @@ def queue_summary(account_name: str | None, now=None) -> dict:
             if status in counts:
                 counts[status] += 1
         now_val = now if now is not None else jst.now_jst()
-        next_file, next_at, next_rejections = _next_via_select_one(
+        next_file, next_at, next_topic, next_rejections = _next_via_select_one(
             files, account_name=name, account_cfg=account_cfg, now=now_val)
         out[name] = {
             "counts": counts,
             "type_mismatch": type_mismatch,
             "next_file": next_file,
             "next_publish_at": next_at,
+            "next_topic": next_topic,
             "next_rejections": next_rejections,
         }
     return out

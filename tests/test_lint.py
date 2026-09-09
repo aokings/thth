@@ -68,3 +68,40 @@ def test_hashtagを含む本文を名指しする(isolated_account, tmp_path):
     path = write_queue_file(str(tmp_path), "bad.md", body="## threads\n\n本文 #タグ です\n")
     errors = lint_mod.lint_file(path)
     assert any(e.startswith("hashtag:") for e in errors)
+
+
+def test_topic省略は従来どおり通る(isolated_account, tmp_path):
+    path = write_queue_file(str(tmp_path), "ok.md")
+    errors = lint_mod.lint_file(path)
+    assert errors == []
+
+
+def test_正常なtopicは通る(isolated_account, tmp_path):
+    path = write_queue_file(str(tmp_path), "ok.md", fm_overrides={"topic": "苦味"})
+    errors = lint_mod.lint_file(path)
+    assert errors == []
+
+
+def test_topicが51字を名指しする(isolated_account, tmp_path):
+    path = write_queue_file(str(tmp_path), "bad.md", fm_overrides={"topic": "あ" * 51})
+    errors = lint_mod.lint_file(path)
+    assert any(e.startswith("topic_too_long") for e in errors)
+
+
+def test_topicにピリオドを含むのを名指しする(isolated_account, tmp_path):
+    path = write_queue_file(str(tmp_path), "bad.md", fm_overrides={"topic": "苦味."})
+    errors = lint_mod.lint_file(path)
+    assert "topic_invalid_char(.)" in errors
+
+
+def test_topicにアンパサンドを含むのを名指しする(isolated_account, tmp_path):
+    path = write_queue_file(str(tmp_path), "bad.md", fm_overrides={"topic": "苦味&旨味"})
+    errors = lint_mod.lint_file(path)
+    assert "topic_invalid_char(&)" in errors
+
+
+def test_topicの先頭のシャープを落として通る(isolated_account, tmp_path):
+    # 人が `#苦味` と書きがち。ハッシュタグとは別物なので `#` を機械的に外す（設計 §4.1）。
+    path = write_queue_file(str(tmp_path), "ok.md", fm_overrides={"topic": "#苦味"})
+    errors = lint_mod.lint_file(path)
+    assert errors == []
