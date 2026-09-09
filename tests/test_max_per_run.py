@@ -67,7 +67,7 @@ def _three_approved_files():
 def test_min_interval_0でmax_per_run3なら3本とも出る(isolated_account_factory, tmp_path):
     pair = _init_git_pair_multi(tmp_path, _three_approved_files())
     account = isolated_account_factory(
-        repo_dir=pair["work"], production=True, quiet_hours=None,
+        repo_dir=pair["work"], production=True,
         min_interval_hours=0, max_per_run=3)
     state_dir = accounts_mod.state_dir_for(account["name"])
 
@@ -95,7 +95,7 @@ def test_min_interval_0でmax_per_run3なら3本とも出る(isolated_account_fa
 def test_min_interval_6でmax_per_run3でも実際には1本しか出ない(isolated_account_factory, tmp_path):
     pair = _init_git_pair_multi(tmp_path, _three_approved_files())
     account = isolated_account_factory(
-        repo_dir=pair["work"], production=True, quiet_hours=None,
+        repo_dir=pair["work"], production=True,
         min_interval_hours=6, max_per_run=3)
     state_dir = accounts_mod.state_dir_for(account["name"])
 
@@ -124,7 +124,7 @@ def test_既定のmax_per_runは1(isolated_account_factory, tmp_path):
     """台帳に `max_per_run` が無い（旧い台帳・テスト fixture の既定）ときは 1 本だけ。"""
     pair = _init_git_pair_multi(tmp_path, _three_approved_files())
     account = isolated_account_factory(
-        repo_dir=pair["work"], production=True, quiet_hours=None, min_interval_hours=0)
+        repo_dir=pair["work"], production=True, min_interval_hours=0)
     state_dir = accounts_mod.state_dir_for(account["name"])
 
     with fake_threads_server({"create": "ok", "publish": "ok"}) as base_url:
@@ -145,7 +145,7 @@ def test_途中で曖昧な失敗が起きたらそこで打ち切る(isolated_a
     （設計 §3.3: 途中で失敗したらそこで打ち切る）。"""
     pair = _init_git_pair_multi(tmp_path, _three_approved_files())
     account = isolated_account_factory(
-        repo_dir=pair["work"], production=True, quiet_hours=None,
+        repo_dir=pair["work"], production=True,
         min_interval_hours=0, max_per_run=3)
     state_dir = accounts_mod.state_dir_for(account["name"])
 

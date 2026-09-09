@@ -10,6 +10,7 @@ T1 検収 2026-09-09 の差し戻しで、失敗の三分類（設計 §3.5）�
 from __future__ import annotations
 
 import contextlib
+import datetime
 import http.server
 import json
 import os
@@ -26,6 +27,12 @@ from thth import inflight as inflight_mod
 from thth import runs as runs_mod
 from thth.adapters import base as adapter_base
 from thth.adapters import threads as threads_mod
+
+# 静かな時間帯（22:00〜07:00）の外・write_queue_file() の既定 publish_at（08:00）
+# より後。conftest.py::frozen_now_jst の既定値に頼らず、in-process で
+# core.throw_once() を直接呼ぶテスト（timeout/4xx/topic の三分類）が確かめたい
+# こと自体には無関係な「いま何時か」を明示的に固定する（T3b・時刻依存を根から断つ）。
+NOW = datetime.datetime.fromisoformat("2026-09-09T10:00:00+09:00")
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -169,7 +176,7 @@ def test_5_timeoutはエラーを返す():
 def test_6_公開成功直後の中断は次回inflightで停止する(isolated_account_factory, tmp_path):
     """post_id 書き戻し前にプロセスが落ちても、次回の throw は inflight を見て
     exit 1 になる（二重投稿しない・設計 §3.5）。"""
-    account = isolated_account_factory(production=True, quiet_hours=None)
+    account = isolated_account_factory(production=True)
     write_queue_file(account["queue_dir"], "a.md")
 
     token_path = os.path.join(account["repo_dir"], "..", "fake.token")
@@ -194,7 +201,13 @@ def test_6_公開成功直後の中断は次回inflightで停止する(isolated_
             "THTH_THREADS_WAIT_SECONDS": "0",
             "THTH_TEST_CRASH_AFTER_PUBLISH": "1",
         }
-        result = run_thth(["throw", account["name"], "--production"], env=env)
+        # `run_thth()` は `bin/thth` を別プロセスとして呼ぶので、conftest.py の
+        # `frozen_now_jst` autouse fixture（monkeypatch）はこのプロセス境界を
+        # 越えられず、届かない。ここで検査したいのは「公開成功直後の中断」で
+        # あって静かな時間帯の判定ではないので、`--now`（bypass_pace）で静かな
+        # 時間帯・最短間隔の判定そのものを外し、台帳は既定の quiet_hours
+        # （22:00〜07:00）のまま実行時刻に左右されないようにする。
+        result = run_thth(["throw", account["name"], "--production", "--now"], env=env)
         # os._exit(1) で強制終了するので returncode は 1（正常な「公開に成功して
         # 書き戻し前に落ちた」を模している）。
         assert result.returncode == 1
@@ -218,7 +231,7 @@ def test_6_公開成功直後の中断は次回inflightで停止する(isolated_
 def test_7_公開がtimeoutならinflightが残り次回も止まる(isolated_account_factory):
     """出たか分からない失敗（timeout）は inflight を消さない（設計 §3.5・差し戻し 1
     件目）。消すと次の毎時実行が同じファイルをもう一度選び直して二重投稿になる。"""
-    account = isolated_account_factory(production=True, quiet_hours=None)
+    account = isolated_account_factory(production=True)
     write_queue_file(account["queue_dir"], "a.md")
     state_dir = accounts_mod.state_dir_for(account["name"])
 
@@ -226,7 +239,7 @@ def test_7_公開がtimeoutならinflightが残り次回も止まる(isolated_ac
         def factory(_cfg, _token):
             return _adapter(base_url, timeout=0.5)
 
-        result = core.throw_once(account["name"], production_flag=True, adapter_factory=factory)
+        result = core.throw_once(account["name"], production_flag=True, adapter_factory=factory, now=NOW)
         assert result.exit_code == 1
         assert result.action == "inflight"
 
@@ -235,7 +248,7 @@ def test_7_公開がtimeoutならinflightが残り次回も止まる(isolated_ac
         assert left.get("file") == os.path.join(account["queue_dir"], "a.md")
 
         # 次の実行は inflight を見て、select をやり直さずに何もしないで exit 1。
-        result2 = core.throw_once(account["name"], production_flag=True, adapter_factory=factory)
+        result2 = core.throw_once(account["name"], production_flag=True, adapter_factory=factory, now=NOW)
     assert result2.exit_code == 1
     assert result2.action == "inflight"
     assert inflight_mod.read(state_dir) is not None  # 消えていない
@@ -248,7 +261,7 @@ def test_7_公開がtimeoutならinflightが残り次回も止まる(isolated_ac
 
 def test_8_公開が4xxならinflightが消えて次回は普通に選び直せる(isolated_account_factory):
     """出ていないと分かる失敗（HTTP 4xx）は inflight を消してよい（設計 §3.5）。"""
-    account = isolated_account_factory(production=True, quiet_hours=None)
+    account = isolated_account_factory(production=True)
     write_queue_file(account["queue_dir"], "a.md")
     state_dir = accounts_mod.state_dir_for(account["name"])
 
@@ -256,7 +269,7 @@ def test_8_公開が4xxならinflightが消えて次回は普通に選び直せ�
         def factory(_cfg, _token):
             return _adapter(base_url)
 
-        result = core.throw_once(account["name"], production_flag=True, adapter_factory=factory)
+        result = core.throw_once(account["name"], production_flag=True, adapter_factory=factory, now=NOW)
 
     assert result.exit_code == 1
     assert result.action == "post"
@@ -264,7 +277,7 @@ def test_8_公開が4xxならinflightが消えて次回は普通に選び直せ�
 
     # 次の実行は inflight に阻まれず、select が同じファイルを普通に選び直せる
     # （dry-run で確認。承認 gate 等の他条件はそのまま生きている）。
-    result2 = core.throw_once(account["name"], production_flag=False)
+    result2 = core.throw_once(account["name"], production_flag=False, now=NOW)
     assert result2.action != "inflight"
     assert result2.file == os.path.join(account["queue_dir"], "a.md")
 
@@ -275,14 +288,14 @@ def test_9_topicを付けて投稿するとrunsにtopicが残る(isolated_accoun
     push まで通す必要があるので、round-trip テストと同じ隔離 git pair を使う。"""
     seed_content = make_queue_text(fm_overrides={"topic": "苦味"})
     pair = init_git_pair(tmp_path, seed_content=seed_content, seed_name="a.md")
-    account = isolated_account_factory(repo_dir=pair["work"], production=True, quiet_hours=None)
+    account = isolated_account_factory(repo_dir=pair["work"], production=True)
     state_dir = accounts_mod.state_dir_for(account["name"])
 
     with fake_threads_server({"create": "ok", "publish": "ok"}) as base_url:
         def factory(_cfg, _token):
             return _adapter(base_url)
 
-        result = core.throw_once(account["name"], production_flag=True, adapter_factory=factory)
+        result = core.throw_once(account["name"], production_flag=True, adapter_factory=factory, now=NOW)
 
     assert result.exit_code == 0
     assert result.action == "post"

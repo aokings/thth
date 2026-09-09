@@ -4,6 +4,7 @@ origin に届くことを確認する（本文が 1 バイトも変わらない�
 from __future__ import annotations
 
 import contextlib
+import datetime
 import http.server
 import json
 import os
@@ -12,6 +13,12 @@ import threading
 
 from tests.conftest import FIXTURES_DIR, init_git_pair, run_git
 from thth import core
+
+# 静かな時間帯（22:00〜07:00）の外・umami-bile.md の publish_at（08:00）より後。
+# conftest.py::frozen_now_jst の既定値に頼らず、この経路自体が確かめたいこと
+# （production 1 巡での書き戻し）に直接関係の無い「いま何時か」を明示的に固定する
+# （T3b・時刻依存を根から断つ）。
+NOW = datetime.datetime.fromisoformat("2026-09-09T10:00:00+09:00")
 
 
 class _OkHandler(http.server.BaseHTTPRequestHandler):
@@ -48,13 +55,13 @@ def test_roundtrip_本番モード1巡で3行だけ変わる(isolated_account_fa
         seed_content = f.read()
     pair = init_git_pair(tmp_path, seed_content=seed_content, seed_name="2026-09-08-umami-bile.md")
 
-    account = isolated_account_factory(repo_dir=pair["work"], production=True, quiet_hours=None)
+    account = isolated_account_factory(repo_dir=pair["work"], production=True)
 
     monkeypatch.setenv("THTH_THREADS_WAIT_SECONDS", "0")
 
     with fake_ok_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
-        result = core.throw_once(account["name"], production_flag=True)
+        result = core.throw_once(account["name"], production_flag=True, now=NOW)
 
     assert result.exit_code == 0
     assert result.mode == "production"

@@ -1,12 +1,15 @@
 """共通 fixture。account 台帳・queue ファイルの組み立て、THTH_ROOT の隔離を提供する。"""
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import subprocess
 import sys
 
 import pytest
+
+from thth import jst
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN_THTH = os.path.join(REPO_ROOT, "bin", "thth")
@@ -26,6 +29,50 @@ DEFAULT_FM = {
 }
 
 FM_ORDER = ["thth", "account", "publish_at", "status", "topic", "reply_to", "post_id", "posted_at"]
+
+# quiet_hours の既定（22:00〜07:00）の外にある値。frozen_now_jst() の既定値に使う。
+FIXED_NOW_JST = datetime.datetime(2026, 9, 9, 10, 0, 0, tzinfo=jst.JST)
+
+
+@pytest.fixture(autouse=True)
+def frozen_now_jst(monkeypatch):
+    """`thth.jst.now_jst()` を既定で静かな時間帯の外（2026-09-09 10:00 JST）に固定する。
+
+    なぜ要るか（2026-09-09 に発見・記録は docs/検収_T3a_2026-09-09.md）:
+    投稿の経路（`thth.core.throw_once()` 等）は `now` を渡さなければ本物の壁時計
+    （`jst.now_jst()`）を読む。このため、テストが `now` を注入しないまま夜間
+    （静かな時間帯 22:00〜07:00）に `python3 -m pytest` を走らせると、`quiet_hours`
+    が候補を全部落として assertion が必ず failed になっていた
+    （`tests/test_roundtrip.py` 1 件・`tests/test_fake_api.py` 4 件）。
+    これは「たまに落ちる」より悪い形: 昼は必ず緑・夜は必ず赤になる。日中に開発して
+    いれば一度も見えず、夜に pytest を走らせた人だけが「自分の変更で壊した」ように
+    見えてしまう（実際には無関係）。
+
+    この fixture は autouse なので、**個々のテストが何もしなくても**既定で
+    `now_jst()` が静かな時間帯の外を返す。新しく書かれるテストも自動でこの恩恵を
+    受ける（再発防止の本体）。個別のテストが別の時刻（例: 静かな時間帯の中・日を
+    またぐ境界）を試したいときは、この fixture が返す setter を呼んで上書きする:
+
+        def test_何か(frozen_now_jst):
+            frozen_now_jst(datetime.datetime(2026, 9, 9, 23, 0, 0, tzinfo=jst.JST))
+            ...
+
+    ただしサブプロセス越し（`run_thth()` で `bin/thth` を別プロセスとして呼ぶ
+    テスト）にはこの monkeypatch は届かない（プロセス境界を越えられない）。そちら
+    は `thth throw --now` の `bypass_pace` で個別に対応するか、時刻に依存しない
+    形にする。
+    """
+    state = {"value": FIXED_NOW_JST}
+
+    def fake_now_jst() -> datetime.datetime:
+        return state["value"]
+
+    monkeypatch.setattr(jst, "now_jst", fake_now_jst)
+
+    def _set(dt: datetime.datetime) -> None:
+        state["value"] = dt
+
+    return _set
 
 
 def render_front_matter(fm: dict, omit=()) -> str:
