@@ -1,8 +1,10 @@
 """accounts/<account>.json の読みと形式検査（設計 §4.2）。"""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 
 # この thth アプリ repo 自身の場所（thth/ パッケージの 1 つ上）。
 # VM では $THTH_ROOT/app がここに一致する。accounts/ は常にここ基準で探す
@@ -91,6 +93,29 @@ def state_dir_for(account_name: str) -> str:
 
 def logs_dir_for(account_name: str) -> str:
     return os.path.join(thth_root(), "logs", account_name)
+
+
+_SAFE_CHARS_RE = re.compile(r"[^A-Za-z0-9_.-]")
+
+
+def repo_lock_path_for(repo_dir: str) -> str:
+    """`repo_dir` を正規化した単位のロックパス（外部レビュー §2・受け入れ 7・8）。
+
+    設計は「1 repo に clone は 1 つ、アカウントは複数ぶら下がってよい」なので、
+    別アカウントの投稿でも同じ index・作業ツリー・rebase 状態を同時に触りうる。
+    ロックの単位を account ではなく **repo_dir** にする。
+
+    `os.path.realpath()` で正規化するので、同じ clone を指す別表記（相対パス・
+    末尾スラッシュの有無・symlink 越し）でも同じロックファイルになる。realpath は
+    パスが実在しなくても正規化できるので、repo を持たないアカウント
+    （`masaru-threads` の `repos/_none` 等）でも壊れない——そのディレクトリ用の
+    ロックが 1 本できるだけで、他とは衝突しない。
+    """
+    real = os.path.realpath(repo_dir)
+    digest = hashlib.sha256(real.encode("utf-8")).hexdigest()[:12]
+    base = os.path.basename(real.rstrip(os.sep)) or "root"
+    safe_base = _SAFE_CHARS_RE.sub("_", base)
+    return os.path.join(thth_root(), "state", "_repos", f"{safe_base}-{digest}.lock")
 
 
 def load_token(account_cfg: dict) -> dict | None:

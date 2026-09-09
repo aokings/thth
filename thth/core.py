@@ -1,9 +1,11 @@
-"""throw の全体の流れ（発注 §3・設計 §3.3・§3.5）。lock・inflight・select・throw・
-write-back・runs をまとめる **core の唯一の入口**。CLI（`thth throw`・`thth run`）も
-MCP も、投稿を伴う操作はすべてここを通る。ロックはここで確保する（§3.7）。
+"""throw の全体の流れ（発注 §3・設計 §3.3・§3.5・外部レビュー §1b・§2）。lock・
+inflight・select・throw・write-back・runs をまとめる **core の唯一の入口**。
+CLI（`thth throw`・`thth run`）も MCP も、投稿を伴う操作はすべてここを通る。
+ロックはここで確保する（§3.7）。
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import datetime
 import os
@@ -68,7 +70,7 @@ def last_post_at(files, account_name: str):
     return latest
 
 
-_ERROR_RUN_REASONS = ("hashtag", "duplicate_text")
+_ERROR_RUN_REASONS = ("hashtag", "duplicate_text", "approval_stale")
 
 
 def _is_error_reason(reason: str) -> bool:
@@ -95,6 +97,38 @@ def _default_adapter_factory(account_cfg: dict, token: dict | None) -> adapter_b
     )
 
 
+@contextlib.contextmanager
+def _account_locks(account_name: str, account_cfg: dict, state_dir: str):
+    """1 アカウント分の実行の前に、**repo → account の順で**ロックを取る
+    （外部レビュー §2・受け入れ 7・8）。
+
+    設計は「1 repo に clone は 1 つ、アカウントは複数ぶら下がってよい」。ロックが
+    account 単位だけだと、同じ clone の別アカウントが同時に index・作業ツリー・
+    rebase の状態を触れてしまう。ここで repo_dir 単位のロックを account のロックの
+    **外側**に足す。
+
+    **取得順を固定する（repo → account）。逆順で取る経路を作らない**——ここが
+    唯一の入口である限り、デッドロックは構造的に起きない（§3.7 と同じ考え方:
+    「入口が増えても守りの数は増えない」）。release は取得と逆順（account →
+    repo）にする。どちらのロックも取れなければ `lock_mod.LockBusy` をそのまま
+    投げる（呼び出し側の `throw_once`/`send_once` が `action="locked"` に変換する）。
+    """
+    repo_lock_path = accounts_mod.repo_lock_path_for(account_cfg["repo_dir"])
+    account_lock_path = os.path.join(state_dir, "lock")
+    repo_lock = lock_mod.AccountLock(repo_lock_path)
+    account_lock = lock_mod.AccountLock(account_lock_path)
+
+    repo_lock.acquire()
+    try:
+        account_lock.acquire()
+        try:
+            yield
+        finally:
+            account_lock.release()
+    finally:
+        repo_lock.release()
+
+
 def throw_once(account_name: str, *, production_flag: bool = False,
                 bypass_pace: bool = False, adapter_factory=None, log=None,
                 now=None) -> ThrowResult:
@@ -114,24 +148,18 @@ def throw_once(account_name: str, *, production_flag: bool = False,
 
     account_cfg = accounts_mod.load_account(account_name)
     state_dir = accounts_mod.state_dir_for(account_name)
-    lock_path = os.path.join(state_dir, "lock")
 
-    account_lock = lock_mod.AccountLock(lock_path)
     try:
-        account_lock.acquire()
+        with _account_locks(account_name, account_cfg, state_dir):
+            return _throw_locked(
+                account_name, account_cfg, state_dir, run_id,
+                production_flag=production_flag, bypass_pace=bypass_pace,
+                adapter_factory=adapter_factory, log=log, now=now,
+            )
     except lock_mod.LockBusy:
         msg = f"{account_name} は既に実行中です（ロック取得失敗）"
         log(msg)
         return ThrowResult(exit_code=1, mode="rehearsal", action="locked", message=msg)
-
-    try:
-        return _throw_locked(
-            account_name, account_cfg, state_dir, run_id,
-            production_flag=production_flag, bypass_pace=bypass_pace,
-            adapter_factory=adapter_factory, log=log, now=now,
-        )
-    finally:
-        account_lock.release()
 
 
 def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, action: str,
@@ -380,15 +408,21 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
     state_dir = accounts_mod.state_dir_for(account_name)
     now = now if now is not None else jst.now_jst()
 
-    account_lock = lock_mod.AccountLock(os.path.join(state_dir, "lock"))
     try:
-        account_lock.acquire()
+        return _send_locked(
+            account_name, account_cfg, state_dir, run_id, text=text, topic=topic,
+            reply_to=reply_to, production_flag=production_flag, confirm=confirm,
+            adapter_factory=adapter_factory, log=log, now=now,
+        )
     except lock_mod.LockBusy:
         msg = f"{account_name} は既に実行中です（ロック取得失敗）"
         log(msg)
         return ThrowResult(exit_code=1, mode="rehearsal", action="locked", message=msg)
 
-    try:
+
+def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, reply_to,
+                  production_flag, confirm, adapter_factory, log, now) -> ThrowResult:
+    with _account_locks(account_name, account_cfg, state_dir):
         existing_inflight = inflight_mod.read(state_dir)
         if existing_inflight is not None:
             msg = f"inflight が残っています: {existing_inflight.get('file')}"
@@ -488,5 +522,3 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
         log(f"投稿しました: post_id={result.post_id}")
         return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました",
                             post_id=result.post_id)
-    finally:
-        account_lock.release()
