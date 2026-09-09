@@ -38,9 +38,17 @@ def test_20260909_doctor_must_not_print_the_token(tmp_path, monkeypatch, isolate
 def test_doctor_は書き込みの口を持たない():
     """副作用を持つ語（publish・delete・POST）が doctor に無いことを機械で見る。"""
     import inspect
+    import re
     src = inspect.getsource(doctor_mod)
-    for word in ("threads_publish", "method=\"POST\"", "manage_reply", "threads_delete"):
-        assert word not in src, f"doctor に書き込みらしき語がある: {word}"
+    # `threads_publishing_limit`（読み取り）に引っかからないよう、語の切れ目まで見る。
+    forbidden = [
+        r"threads_publish(?!ing)",   # 公開
+        r"method=\"POST\"",          # 書き込み
+        r"manage_reply",             # 返信の作成・非表示
+        r"threads_delete",           # 削除
+    ]
+    for pat in forbidden:
+        assert re.search(pat, src) is None, f"doctor に書き込みらしき語がある: {pat}"
     # 唯一の HTTP 呼び出しが GET（データを持たない urlopen）であること。
     assert src.count("urllib.request.urlopen(") == 1
     assert "data=" not in src
