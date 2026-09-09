@@ -10,6 +10,7 @@ import os
 import uuid
 
 from . import accounts as accounts_mod
+from . import approval as approval_mod
 from . import inflight as inflight_mod
 from . import jst
 from . import lock as lock_mod
@@ -31,6 +32,7 @@ class ThrowResult:
     file: str | None = None
     post_id: str | None = None
     error: str | None = None
+    digest: str | None = None   # `thth send` の確認用 digest（外部レビュー §1b）
 
 
 def list_queue_files(account_cfg: dict) -> list:
@@ -351,7 +353,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
 
 def send_once(account_name: str, *, text: str, topic: str | None = None,
                reply_to: str | None = None, production_flag: bool = False,
-               adapter_factory=None, log=None, now=None) -> ThrowResult:
+               confirm: str | None = None, adapter_factory=None, log=None,
+               now=None) -> ThrowResult:
     """`thth send`（**同席の様態**・設計 §3.7）。queue を通さずその場で 1 本出す。
 
     対話の中で masaru が本文を読んで「出して」と言ったときの経路。承認は既に
@@ -362,6 +365,12 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
     不在の様態（timer→`throw_once`）との違いは queue と承認だけで、**守りは同じ
     ものを通る**: ロックは core の入口・inflight・fail-closed（台帳 `production: true`
     が commit されていなければ dry-run）・runs への記録。
+
+    **`confirm`**（外部レビュー §1b・受け入れ 6）: dry-run（rehearsal）は本文・
+    account・reply_to・topic から計算した短い digest（`approval.compute_send_digest()`）
+    を表示するだけ。`--production` で実際に送るときは、その digest を
+    `--confirm <digest>` として渡さなければならない。省略・不一致はどちらも拒否
+    （「見せたものと送るものが同じ」を機械で担保する）。
     """
     log = log or (lambda line: None)
     adapter_factory = adapter_factory or _default_adapter_factory
@@ -415,15 +424,37 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
                             status="error", error=topic_err)
                 return ThrowResult(exit_code=1, mode=mode, action="skip", message=topic_err)
 
+        # 確認用 digest（外部レビュー §1b・受け入れ 6）。`approved_sha` と同じ正規化
+        # だが `publish_at` は含めない（send に予約時刻という概念が無いため）。
+        digest = approval_mod.compute_send_digest(
+            text=body, account=account_name, reply_to=reply_to, topic=topic_value)
+
         if mode == "rehearsal":
             log("投げるはずの本文:")
             log(body)
             if topic_value:
                 log(f"トピック: {topic_value}")
+            log(f"digest: {digest}")
             _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
                         status="ok", error=None)
             return ThrowResult(exit_code=0, mode=mode, action="skip",
-                                message="dry-run: 投げるはずの本文をログに出した")
+                                message="dry-run: 投げるはずの本文をログに出した", digest=digest)
+
+        # ---- production ----
+        # dry-run で見せた digest と一致する `--confirm` が無ければ送らない
+        # （省略も不一致も拒否・受け入れ 6）。「見せたものと送るものが同じ」を
+        # ここで機械的に担保する。
+        if confirm != digest:
+            if confirm is None:
+                msg = f"digest が指定されていないので送信しません（--confirm {digest} が必要）"
+                error = "confirm_missing"
+            else:
+                msg = "digest が一致しないので送信しません"
+                error = "confirm_mismatch"
+            log(msg)
+            _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                        status="error", error=error)
+            return ThrowResult(exit_code=1, mode=mode, action="skip", message=msg, digest=digest)
 
         inflight_mod.write(state_dir, file="(send)", started=jst.iso(), container_id=None)
         token = accounts_mod.load_token(account_cfg)

@@ -1,0 +1,153 @@
+"""`thth approve`（外部レビュー §1・受け入れ 1〜5）。
+
+承認を「見た本文」に結び付ける: `thth approve` が `approved_sha`（本文＋account＋
+reply_to＋topic＋publish_at の hash）を front-matter に書き、`select` はそれが
+いまの内容と一致するときだけ通す。承認後に中身を書き換えると `approval_stale` で
+落ちる（黙って出さない）。手で `status: approved` とだけ書いた（`approved_sha` 無し）
+ファイルも同じ扱い。`thth approve` 自身は lint を通らないファイルを承認しない。
+"""
+from __future__ import annotations
+
+from tests.conftest import run_thth, write_queue_file
+from thth import core
+from thth import queuefile
+from thth import select as select_mod
+
+
+def _patch_front_matter_field(path: str, key: str, value) -> None:
+    """front-matter の 1 行だけを「利用者が手で書き換えた」体で差し替える
+    （approved_sha は再計算しない——これが「見た本文と違う」を作るための細工）。
+    """
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    assert lines[0].strip() == "---"
+    end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+    for i in range(1, end):
+        if lines[i].split(":", 1)[0].strip() == key:
+            lines[i] = f"{key}: {value if value is not None else ''}"
+            break
+    else:
+        lines.insert(end, f"{key}: {value if value is not None else ''}")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+
+def _rewrite_body(path: str, old: str, new: str) -> None:
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    assert old in text
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text.replace(old, new))
+
+
+# 受け入れ 5: lint に通らないファイルを承認しない。
+def test_5_lintに通らないファイルは承認しない(isolated_account):
+    # publish_at に +09:00 が無い → lint エラー
+    path = write_queue_file(
+        isolated_account["queue_dir"], "a.md",
+        fm_overrides={"status": "draft", "publish_at": "2026-09-09T08:00:00",
+                      "approved_sha": None})
+    result = run_thth(["approve", path])
+    assert result.returncode == 1
+    qf = queuefile.parse(path)
+    assert qf.front_matter.get("status") == "draft"  # 書き換わっていない
+    assert not qf.front_matter.get("approved_sha")
+
+
+def test_approveは正常なファイルにapproved_shaとapproved_atを書く(isolated_account):
+    path = write_queue_file(isolated_account["queue_dir"], "a.md",
+                            fm_overrides={"status": "draft", "approved_sha": None})
+    result = run_thth(["approve", path])
+    assert result.returncode == 0
+    qf = queuefile.parse(path)
+    assert qf.front_matter.get("status") == "approved"
+    assert qf.front_matter.get("approved_sha")
+    assert len(qf.front_matter["approved_sha"]) == 64
+    assert qf.front_matter.get("approved_at")
+
+
+# 受け入れ 3: 承認 → 何も変えない → 出る。
+def test_3_承認後に何も変えなければ選ばれる(isolated_account):
+    path = write_queue_file(isolated_account["queue_dir"], "a.md",
+                            fm_overrides={"status": "draft", "approved_sha": None})
+    approve = run_thth(["approve", path])
+    assert approve.returncode == 0
+
+    result = core.throw_once(isolated_account["name"])
+    assert result.action == "skip"  # dry-run: 選ばれてログに出すだけ
+    assert result.file == path
+
+
+# 受け入れ 1: 承認 → 本文を書き換える → 出ない（approval_stale）・board に出る。
+def test_1_承認後に本文を書き換えると出ない(isolated_account):
+    path = write_queue_file(isolated_account["queue_dir"], "a.md",
+                            fm_overrides={"status": "draft", "approved_sha": None})
+    run_thth(["approve", path])
+    _rewrite_body(path, "本文です。", "書き換えた本文です。")
+
+    result = core.throw_once(isolated_account["name"])
+    assert result.action == "none"
+
+    # needs_review（board 側）に入る・理由は approval_stale。
+    qf = queuefile.parse(path)
+    account_cfg = {"media": "threads", "hashtags": True, "quiet_hours": None,
+                   "min_interval_hours": 0, "stale_days": 7}
+    import datetime
+    sel = select_mod.select_one(
+        [qf], account_name=isolated_account["name"], account_cfg=account_cfg,
+        now=datetime.datetime.fromisoformat("2026-09-09T10:00:00+09:00"),
+        last_post_at=None, recent_texts=set())
+    assert sel.chosen is None
+    assert any(r.reason == "approval_stale" for r in sel.rejections)
+    assert path in sel.needs_review
+
+
+# 受け入れ 2: topic だけ変える → 出ない。
+def test_2_承認後にtopicだけ変えると出ない(isolated_account):
+    path = write_queue_file(isolated_account["queue_dir"], "a.md",
+                            fm_overrides={"status": "draft", "approved_sha": None})
+    run_thth(["approve", path])
+    _patch_front_matter_field(path, "topic", "苦味")
+
+    result = core.throw_once(isolated_account["name"])
+    assert result.action == "none"
+
+
+# 受け入れ 2: reply_to だけ変える → 出ない。
+def test_2_承認後にreply_toだけ変えると出ない(isolated_account):
+    path = write_queue_file(isolated_account["queue_dir"], "a.md",
+                            fm_overrides={"status": "draft", "approved_sha": None})
+    run_thth(["approve", path])
+    _patch_front_matter_field(path, "reply_to", "9999999")
+
+    result = core.throw_once(isolated_account["name"])
+    assert result.action == "none"
+
+
+# 受け入れ 2: publish_at だけ変える → 出ない。
+def test_2_承認後にpublish_atだけ変えると出ない(isolated_account):
+    path = write_queue_file(isolated_account["queue_dir"], "a.md",
+                            fm_overrides={"status": "draft", "approved_sha": None})
+    run_thth(["approve", path])
+    # 承認時と別の時刻（まだ過去＝選ばれる資格はある）に書き換える。
+    _patch_front_matter_field(path, "publish_at", "2026-09-09T07:00:00+09:00")
+
+    result = core.throw_once(isolated_account["name"])
+    assert result.action == "none"
+
+
+# 受け入れ 4: 手で status: approved と書いただけ（approved_sha 無し）→ 出ない。
+def test_4_approved_sha無しの手書きapprovedは出ない(isolated_account):
+    write_queue_file(isolated_account["queue_dir"], "a.md",
+                     fm_overrides={"status": "approved", "approved_sha": None})
+    result = core.throw_once(isolated_account["name"])
+    assert result.action == "none"
+
+
+def test_approveはpost_idが付いていると承認しない(isolated_account):
+    path = write_queue_file(
+        isolated_account["queue_dir"], "a.md",
+        fm_overrides={"status": "posted", "post_id": "12345",
+                      "posted_at": "2026-09-08T08:00:00+09:00", "approved_sha": None})
+    result = run_thth(["approve", path])
+    assert result.returncode == 1

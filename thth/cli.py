@@ -11,11 +11,14 @@ import json
 import sys
 
 from . import accounts as accounts_mod
+from . import approval as approval_mod
 from . import core
+from . import jst
 from . import lint as lint_mod
 from . import oauth as oauth_mod
 from . import queuefile
 from . import report as report_mod
+from . import writeback as writeback_mod
 
 
 def _print_json(obj) -> None:
@@ -51,6 +54,64 @@ def cmd_preview(args) -> int:
         _print_json({"file": args.file, "text": section, "topic": topic})
         return 0
     sys.stdout.write(section)
+    return 0
+
+
+def cmd_approve(args) -> int:
+    """`thth approve <file>`（**CLI のみ・MCP には出さない**・設計 §3.7・外部レビュー §1）。
+
+    「不在の実行への承認」は masaru の手だけが持つ（統括は書けない・§3.7 の一線）。
+    `status: approved`・`approved_sha`・`approved_at`（JST ISO）を front-matter に
+    書く。**書く前に lint を通し、通らなければ承認しない**（受け入れ 5）。
+    `approved_sha` は「masaru が見た本文」を固定するハッシュ（`thth.approval`）で、
+    `select` はこれが現在の内容と一致するときだけ通す（不一致・欠落は
+    `approval_stale` で落として board に出す）。
+    """
+    messages = lint_mod.lint_file(args.file)
+    errors = [m for m in messages if not lint_mod.is_warning(m)]
+    if errors:
+        for m in errors:
+            print(m, file=sys.stderr)
+        print(f"lint に通らないので承認しません: {args.file}", file=sys.stderr)
+        return 1
+
+    qf = queuefile.parse(args.file)
+    fm = qf.front_matter
+    if fm.get("post_id"):
+        print(f"post_id が付いています（既に投稿済み）ので承認しません: {args.file}", file=sys.stderr)
+        return 1
+
+    account_name = fm.get("account")
+    try:
+        account_cfg = accounts_mod.load_account(account_name)
+    except accounts_mod.AccountError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    media = account_cfg["media"]
+    section = queuefile.extract_section(qf.body, media)
+    if section is None:
+        print(f"media: `## {media}` の節が無いので承認しません: {args.file}", file=sys.stderr)
+        return 1
+
+    approved_sha = approval_mod.compute_approved_sha(
+        section=section, account=account_name, reply_to=fm.get("reply_to"),
+        topic=fm.get("topic"), publish_at=fm.get("publish_at"))
+    approved_at = jst.iso()
+
+    writeback_mod.set_front_matter_fields(args.file, {
+        "status": "approved",
+        "approved_sha": approved_sha,
+        "approved_at": approved_at,
+    })
+
+    if args.json:
+        _print_json({"file": args.file, "status": "approved",
+                     "approved_sha": approved_sha, "approved_at": approved_at})
+    else:
+        print(f"承認しました: {args.file}")
+        print(f"approved_sha: {approved_sha}")
+        print(f"approved_at: {approved_at}")
     return 0
 
 
@@ -108,6 +169,10 @@ def cmd_send(args) -> int:
     **本文をコマンドライン引数で受けない**: シェルの履歴に残り、引用の扱いで
     本文が変わりうる。「masaru が見た本文がそのまま出る」を守るため、
     ファイル（`--text-file`）か標準入力だけにする。
+
+    **`--confirm`**（外部レビュー §1b・受け入れ 6）: dry-run（`--production` を
+    付けない実行）が表示する短い digest を、`--production` のときに
+    `--confirm <digest>` として渡す。省略・不一致はどちらも送らない。
     """
     import sys as _sys
     from . import core as core_mod
@@ -118,7 +183,7 @@ def cmd_send(args) -> int:
         text = _sys.stdin.read()
     result = core_mod.send_once(
         args.account, text=text, topic=args.topic, reply_to=args.reply_to,
-        production_flag=args.production, log=print)
+        production_flag=args.production, confirm=args.confirm, log=print)
     return result.exit_code
 
 
@@ -184,6 +249,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_preview.add_argument("--json", action="store_true", help="本文に加えて topic 等を JSON で返す")
     p_preview.set_defaults(func=cmd_preview)
 
+    p_approve = sub.add_parser(
+        "approve",
+        help="status: approved と approved_sha・approved_at を書く（masaru の手・MCPには出さない）")
+    p_approve.add_argument("file")
+    p_approve.add_argument("--json", action="store_true")
+    p_approve.set_defaults(func=cmd_approve)
+
     p_queue = sub.add_parser("queue", help="draft/approved/posted/型外 と次に出るもの")
     p_queue.add_argument("account", nargs="?")
     p_queue.add_argument("--json", action="store_true")
@@ -232,6 +304,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.add_argument("--reply-to", dest="reply_to", default=None)
     p_send.add_argument("--production", action="store_true",
                         help="本番で出す（台帳 production: true が無ければ dry-run のまま）")
+    p_send.add_argument("--confirm", default=None,
+                        help="dry-run が表示した digest。--production のときはこれが一致しないと送らない")
     p_send.set_defaults(func=cmd_send)
 
     p_doctor = sub.add_parser(
