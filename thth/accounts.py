@@ -24,10 +24,25 @@ class AccountError(Exception):
 def thth_root() -> str:
     """state・logs の置き場の基準。設計 §3.1 の $THTH_ROOT。
 
-    VM では systemd unit が `THTH_ROOT=/srv/thth` を渡す想定。未設定（Mac 手元・
-    pytest）では app repo 自身の場所を使う（.gitignore の state/・logs/ と対応）。
+    優先順位:
+      1. 環境変数 `THTH_ROOT`（systemd unit が渡す）
+      2. **app repo の basename が "app" なら、その親**（VM の `$THTH_ROOT/app` 配置）
+      3. それ以外は app repo 自身（Mac 手元・pytest。.gitignore の state/・logs/ と対応）
+
+    2 を足した理由（2026-09-09・最初の本番投稿で踏んだ）: VM で masaru が手で
+    `thth send` を打つと `THTH_ROOT` が無いので state が `/srv/thth/app/state/` に、
+    timer から走ると unit が渡すので `/srv/thth/state/` に出来ていた。**置き場が
+    2 つに割れると、ロックも inflight も別物になる**。§3.7 で「ロックを core の
+    入口に置く」と直したのに、パスが割れていては同じ穴が開く（timer が走っている
+    最中の手打ちがロックを踏まない）。**同じ機械の上では、呼び方が違っても同じ
+    場所を指す**ことをコードで保証する。
     """
-    return os.environ.get("THTH_ROOT") or APP_DIR
+    env = os.environ.get("THTH_ROOT")
+    if env:
+        return env
+    if os.path.basename(APP_DIR) == "app":
+        return os.path.dirname(APP_DIR)
+    return APP_DIR
 
 
 def app_dir() -> str:
