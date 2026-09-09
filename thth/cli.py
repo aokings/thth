@@ -96,6 +96,12 @@ def cmd_refresh(args) -> int:
     return oauth_mod.run_refresh(args.account, force=args.force, check=args.check)
 
 
+def cmd_token_set(args) -> int:
+    """masaru が Meta 管理画面で発行した長期トークンを貼り付けて保存する
+    （T2b・OAuth 往復を経ない tester 向け経路・MCP には出さない・§3.7 と同じ理由）。"""
+    return oauth_mod.run_token_set(args.account, force=args.force, stdin=args.stdin)
+
+
 def cmd_board(args) -> int:
     summary = report_mod.board_summary()
     if args.json:
@@ -152,6 +158,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_refresh.add_argument("--force", action="store_true")
     p_refresh.add_argument("--check", action="store_true", help="更新はせず残日数等をJSONで返す（boardが使う）")
     p_refresh.set_defaults(func=cmd_refresh)
+
+    p_token = sub.add_parser("token", help="長期トークンを直接扱う（現状 set のみ。MCPには出さない）")
+    token_sub = p_token.add_subparsers(dest="token_command", required=True)
+    p_token_set = token_sub.add_parser(
+        "set", help="管理画面で発行したトークンを貼り付けて検証し .token に保存する")
+    p_token_set.add_argument("account")
+    p_token_set.add_argument("--force", action="store_true", help="既存の .token を上書きする")
+    p_token_set.add_argument("--stdin", action="store_true",
+                              help="標準入力から黙って1行読む（非対話・パイプ用）")
+    p_token_set.set_defaults(func=cmd_token_set)
 
     return p
 

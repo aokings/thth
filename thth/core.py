@@ -78,9 +78,13 @@ def _default_adapter_factory(account_cfg: dict, token: dict | None) -> adapter_b
     base_url = os.environ.get("THTH_THREADS_BASE_URL", threads_mod.DEFAULT_BASE_URL)
     wait_seconds = float(os.environ.get("THTH_THREADS_WAIT_SECONDS", str(threads_mod.DEFAULT_WAIT_SECONDS)))
     access_token = (token or {}).get("access_token", "")
+    # user_id は `.token`（thth auth / thth token set が書く）を優先し、無ければ
+    # 台帳 accounts/<account>.json を見る。同じ値の置き場が 2 つあるとずれるので、
+    # 台帳側は空でも動く（統括の検収 T2a 指摘・T2b で解消）。
+    user_id = (token or {}).get("user_id") or account_cfg.get("user_id", "")
     return threads_mod.ThreadsAdapter(
         base_url=base_url, access_token=access_token,
-        user_id=account_cfg.get("user_id", ""), wait_seconds=wait_seconds,
+        user_id=user_id, wait_seconds=wait_seconds,
     )
 
 

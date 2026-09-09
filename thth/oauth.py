@@ -1,8 +1,14 @@
-"""`thth auth` / `thth refresh`（発注 T2 前半・設計 §2.2「トークン」節）。
+"""`thth auth` / `thth refresh` / `thth token set`（発注 T2 前半・T2b・設計 §2.2「トークン」節）。
 
 masaru が VM で対話的に実行する。ブラウザは masaru の Mac にあるので、ここでは
 「認可 URL を表示 → masaru がブラウザで承認 → 戻り URL に付く `code` を貼ってもらう」
-までを対話でやり、あとは機械的に短期→長期トークンへ交換して `.token` に書く。
+までを対話でやり、あとは機械的に短期→長期トークンへ交換して `.token` に書く
+（`thth auth`）。
+
+2026-09-09、Meta の管理画面に「ユーザートークン生成ツール」があり、Threads
+テスターの長期アクセストークンを OAuth の往復無しでボタン 1 つで発行できることが
+分かった。`thth token set` はそのトークンを masaru から直接受け取って `.token` に
+保存する（`thth auth` は tester 以外を扱う日のために残す。削除しない）。
 
 トークン・app secret・code は標準出力・ログ・例外文に一切出さない。すべての
 出力は `redact()` を通す（`_out()` を経由すれば自動で通る）。
@@ -18,8 +24,10 @@ masaru が VM で対話的に実行する。ブラウザは masaru の Mac に�
 """
 from __future__ import annotations
 
+import getpass
 import json
 import os
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -91,6 +99,37 @@ def extract_code(raw: str) -> str:
                 after = after[:cut]
         text = after
     text = text.strip()
+    try:
+        text = urllib.parse.unquote(text)
+    except Exception:
+        pass
+    return text
+
+
+def _strip_quotes(text: str) -> str:
+    text = (text or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1].strip()
+    return text
+
+
+def extract_token(raw: str) -> str:
+    """masaru が管理画面のトークン発行ツールからどう貼っても値だけを取り出す
+    （`extract_code()` と同じ思想。`thth token set` 用）。
+
+    対応する形:
+      - トークンの値そのまま
+      - 前後の空白・改行・引用符
+      - `access_token=...` のような接頭辞（URL・クエリ文字列ごと貼った場合）
+    """
+    text = _strip_quotes(raw)
+    if "access_token=" in text:
+        after = text.split("access_token=", 1)[1]
+        for sep in ("&", " ", "\t", "\n", "#"):
+            cut = after.find(sep)
+            if cut != -1:
+                after = after[:cut]
+        text = _strip_quotes(after)
     try:
         text = urllib.parse.unquote(text)
     except Exception:
@@ -256,7 +295,6 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
 
     _out(f"user_id={user_id} username={username}", log=log)
     _out(f"保存しました: {token_path}（600）", log=log)
-    _out(f"accounts/{account_name}.json の user_id を手で {user_id} に直してください（設計 §2.2）", log=log)
     return 0
 
 
@@ -345,4 +383,80 @@ def run_refresh(account_name: str, *, force: bool = False, check: bool = False,
     secrets_fs.atomic_write_json(account_cfg["token"], updated, mode=0o600)
 
     _out(f"更新しました: {account_name}", log=log)
+    return 0
+
+
+def _read_pasted_token(*, stdin: bool, input_func) -> str:
+    """トークンを読む。エコーしない。
+
+    `input_func` が渡されていればそれを使う（テスト・CLI からの注入用、`run_auth`
+    の `code` 引数と同じ思想）。無ければ実際の入力元から読む:
+      - `--stdin` 指定時、または標準入力が端末でない（パイプ）とき: 黙って 1 行読む
+        （端末ではないのでどのみち画面には出ない）。
+      - 標準入力が端末のとき: `getpass.getpass()` で表示せずに読む。
+    """
+    if input_func is not None:
+        return input_func()
+    if stdin or not sys.stdin.isatty():
+        return sys.stdin.readline()
+    return getpass.getpass("Threads の長期アクセストークンを貼り付けてください（表示されません）: ")
+
+
+def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False,
+                   input_func=None, log=print) -> int:
+    """`thth token set <account>`（T2b・masaru の指示 2026-09-09）。
+
+    Meta 管理画面の「ユーザートークン生成ツール」で発行した Threads テスターの
+    長期アクセストークンを、`thth auth` の OAuth 往復を経ずに直接受け取って
+    `.token` に保存する。`me` で実在確認できたときだけ書く。トークンは一切
+    出力しない（標準出力・ログ・例外文すべて `redact()` を経由する）。
+
+    `.token` の中身は `thth auth` と同じ形にするが、次の 2 点は正直に劣る:
+      - `obtained_at` は「管理画面でトークンを発行した時刻」ではなく「この
+        コマンドを打った時刻」になる（管理画面はいつ発行したかを返さない）。
+        `thth refresh` は 50 日超で更新するだけなので、数日ずれても実害は無い。
+      - `scopes` は管理画面発行では分からないので `null`（嘘の一覧は書かない）。
+      - `expires_in` は管理画面の応答に無いので、長期トークンの既定寿命
+        （`DEFAULT_TOKEN_LIFETIME_SECONDS`＝60 日）を使う。
+    """
+    try:
+        account_cfg = accounts_mod.load_account(account_name)
+    except accounts_mod.AccountError as e:
+        _out(str(e), log=log)
+        return 2
+
+    token_path = account_cfg["token"]
+    if os.path.exists(token_path) and not force:
+        _out(f"既にあります: {token_path}。上書きするなら --force", log=log)
+        return 1
+
+    raw = _read_pasted_token(stdin=stdin, input_func=input_func)
+    token_value = extract_token(raw)
+    if not token_value:
+        _out("トークンが読み取れませんでした", log=log)
+        return 2
+
+    try:
+        me = fetch_me(token_value)
+    except OAuthError as e:
+        _out(f"トークンが使えませんでした（{e}）", log=log)
+        return 1
+    user_id = me.get("id", "")
+    username = me.get("username", "")
+    if not user_id:
+        _out("トークンが使えませんでした（me の応答に id が無い）", log=log)
+        return 1
+
+    token_data = {
+        "access_token": token_value,
+        "obtained_at": jst.iso(),
+        "expires_in": DEFAULT_TOKEN_LIFETIME_SECONDS,
+        "user_id": user_id,
+        "username": username,
+        "scopes": None,
+    }
+    secrets_fs.atomic_write_json(token_path, token_data, mode=0o600)
+
+    _out(f"user_id={user_id} username={username}", log=log)
+    _out(f"保存しました: {token_path}（600）", log=log)
     return 0
