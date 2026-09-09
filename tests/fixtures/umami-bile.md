@@ -3,6 +3,8 @@ thth: 1
 account: nigamilab-threads
 publish_at: 2026-09-09T08:00:00+09:00
 status: approved
+approved_sha: 261ff1f7d1bde6d2fa4216f29077b236a07d95fe9c58567b5d779c47ea898097
+approved_at: 2026-09-08T12:00:00+09:00
 reply_to:
 post_id:
 posted_at:

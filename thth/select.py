@@ -3,6 +3,11 @@
 条件は **順序が意味を持つ**。上から順に落として、残った中で publish_at 昇順、
 同時刻ならファイル名順で先頭 1 件。post_id が入っていれば status を見る前に落とす
 （approved に戻されても出ない・§3.5）。
+
+条件 8b（外部レビュー §1・受け入れ 1〜4）: `approved_sha`（`thth approve` が書く・
+`thth.approval.compute_approved_sha()`）がいまの内容と食い違えば「承認が古い」として
+落とす（`approval_stale`）。承認したあとに本文・account・reply_to・topic・
+publish_at のどれかを書き換えると、masaru が見た本文とは別物として扱われる。
 """
 from __future__ import annotations
 
@@ -10,6 +15,7 @@ import dataclasses
 import datetime
 import os
 
+from . import approval as approval_mod
 from . import queuefile
 
 
@@ -151,11 +157,30 @@ def select_one(files, *, account_name: str, account_cfg: dict,
     hashtags_allowed = bool(account_cfg.get("hashtags", True))
 
     for qf, publish_at in candidates:
+        fm = qf.front_matter
+
         # 8. 媒体の節が無い／文字数超過
         section = queuefile.extract_section(qf.body, media)
         if section is None:
             rejections.append(Rejection(qf.path, "no_section"))
             continue
+
+        # 8b. 承認を「見た本文」に結び付ける（外部レビュー §1・受け入れ 1〜4）。
+        # `status: approved` だけでは、承認したあとに本文・account・reply_to・
+        # topic・publish_at を書き換えても検知できない。approved_sha が無い・
+        # いまの内容と食い違う場合は「承認が古い」として落とし、needs_review にも
+        # 入れる（黙って出さない・黙って通さない）。post_id を書く THTH 自身の
+        # 書き戻し（status: posted にする）はこの検査より前（条件 1）で候補から
+        # 落ちているので、ここで詰まることはない。
+        approved_sha = fm.get("approved_sha")
+        expected_sha = approval_mod.compute_approved_sha(
+            section=section, account=account_name, reply_to=fm.get("reply_to"),
+            topic=fm.get("topic"), publish_at=publish_at)
+        if not approved_sha or approved_sha != expected_sha:
+            rejections.append(Rejection(qf.path, "approval_stale"))
+            needs_review.append(qf.path)
+            continue
+
         limit = queuefile.MEDIA_LIMITS.get(media, 500)
         n = queuefile.char_count(section)
         if n > limit:

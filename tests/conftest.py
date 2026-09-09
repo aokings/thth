@@ -9,26 +9,34 @@ import sys
 
 import pytest
 
+from thth import approval as approval_mod
 from thth import jst
+from thth import queuefile as queuefile_mod
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN_THTH = os.path.join(REPO_ROOT, "bin", "thth")
 FIXTURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 
 DEFAULT_ACCOUNT_NAME = "nigamilab-threads"
+# make_queue_text() が既定で仮定する媒体（DEFAULT_ACCOUNT_NAME は threads）。
+# approved_sha の自動計算（下記）に使う。
+DEFAULT_MEDIA = "threads"
 
 DEFAULT_FM = {
     "thth": "1",
     "account": DEFAULT_ACCOUNT_NAME,
     "publish_at": "2026-09-09T08:00:00+09:00",
     "status": "approved",
+    "approved_sha": None,
+    "approved_at": "2026-09-08T12:00:00+09:00",
     "topic": None,
     "reply_to": None,
     "post_id": None,
     "posted_at": None,
 }
 
-FM_ORDER = ["thth", "account", "publish_at", "status", "topic", "reply_to", "post_id", "posted_at"]
+FM_ORDER = ["thth", "account", "publish_at", "status", "approved_sha", "approved_at",
+            "topic", "reply_to", "post_id", "posted_at"]
 
 # quiet_hours の既定（22:00〜07:00）の外にある値。frozen_now_jst() の既定値に使う。
 FIXED_NOW_JST = datetime.datetime(2026, 9, 9, 10, 0, 0, tzinfo=jst.JST)
@@ -87,12 +95,35 @@ def render_front_matter(fm: dict, omit=()) -> str:
 
 
 def make_queue_text(fm_overrides=None, body="## threads\n\n本文です。\n",
-                     omit=(), no_front_matter=False) -> str:
+                     omit=(), no_front_matter=False, media=DEFAULT_MEDIA) -> str:
+    """queue ファイルのテキストを組み立てる。
+
+    `status: approved`（既定）で、呼び出し側が `approved_sha` を明示していなければ、
+    いまの内容（`body`・`account`・`reply_to`・`topic`・`publish_at`）から
+    `approval.compute_approved_sha()` で機械的に計算して埋める（外部レビュー §1・
+    受け入れ 1〜4）。**ほとんどのテストは「承認された本文がそのまま出る」ことを
+    前提にしている**ので、テストごとに手で計算させない。approved_sha を意図的に
+    古くしたい・欠落させたいテスト（`approval_stale` を確かめるテスト）は
+    `fm_overrides={"approved_sha": "...", ...}`（None を含む）を明示して渡すこと
+    ——`fm_overrides` に `approved_sha` キーがあれば自動計算しない。
+    """
     if no_front_matter:
         return body
     fm = dict(DEFAULT_FM)
-    if fm_overrides:
-        fm.update(fm_overrides)
+    overrides = dict(fm_overrides or {})
+    fm.update(overrides)
+    if fm.get("status") == "approved" and "approved_sha" not in overrides:
+        publish_at = fm.get("publish_at")
+        if publish_at:
+            section = queuefile_mod.extract_section(body, media)
+            if section is not None:
+                try:
+                    fm["approved_sha"] = approval_mod.compute_approved_sha(
+                        section=section, account=fm.get("account"),
+                        reply_to=fm.get("reply_to"), topic=fm.get("topic"),
+                        publish_at=publish_at)
+                except ValueError:
+                    pass  # publish_at が壊れている型外テスト等: 計算できないので触らない
     return render_front_matter(fm, omit=omit) + "\n" + body
 
 

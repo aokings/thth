@@ -1,8 +1,13 @@
-"""front-matter 3 行の書き戻し ＋ git add/commit/pull --rebase/push（設計 §4.3）。
+"""front-matter の書き戻し ＋ git add/commit/pull --rebase/push（設計 §4.3）。
 
-書き換えるのは `status`・`post_id`・`posted_at` の 3 行だけ。本文には触らない。
-push 失敗は commit を残して非ゼロ（手で push できる状態を残す。inflight は消さない・
-呼び出し側の core.py の責務）。
+`rewrite_front_matter()` が書き換えるのは `status`・`post_id`・`posted_at` の
+3 行だけ。本文には触らない。push 失敗は commit を残して非ゼロ（手で push できる
+状態を残す。inflight は消さない・呼び出し側の core.py の責務）。
+
+`set_front_matter_fields()`（外部レビュー §1・受け入れ 1〜5）は `thth approve` 用の
+もっと汎用の書き換えで、任意のキーを書ける。既存のキーは値だけ差し替え、front-matter
+に無いキー（`approved_sha`・`approved_at` は新しい schema なので既存ファイルには
+無いことがある）は閉じ `---` の直前に追加する。
 """
 from __future__ import annotations
 
@@ -14,26 +19,43 @@ from . import redact as redact_mod
 def rewrite_front_matter(path: str, *, status: str, post_id: str | None,
                           posted_at: str | None) -> None:
     """`status`・`post_id`・`posted_at` の 3 行だけを書き換える。本文には触らない。"""
+    set_front_matter_fields(path, {"status": status, "post_id": post_id, "posted_at": posted_at})
+
+
+def _split_front_matter_lines(lines: list) -> int:
+    """先頭が `---` で始まる front-matter の閉じ `---` の行番号を返す。"""
+    if not lines or lines[0].strip() != "---":
+        raise ValueError("front-matter が壊れている")
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            return i
+    raise ValueError("front-matter が壊れている（閉じ --- が無い）")
+
+
+def set_front_matter_fields(path: str, fields: dict) -> None:
+    """front-matter の任意のキーを書き換える（無ければ閉じ `---` の直前に追加）。
+
+    `fields` の値が None のキーは空文字列として書く（既存の `rewrite_front_matter()`
+    の `post_id`・`posted_at` と同じ規約）。本文には一切触らない。キーの並び順は
+    既存のキーはその場、新規のキーは末尾（閉じ `---` の直前）に足される順。
+    """
     with open(path, encoding="utf-8") as f:
         text = f.read()
     lines = text.split("\n")
-    if not lines or lines[0].strip() != "---":
-        raise ValueError(f"front-matter が壊れている: {path}")
-    end_idx = None
-    for i in range(1, len(lines)):
-        if lines[i].strip() == "---":
-            end_idx = i
-            break
-    if end_idx is None:
-        raise ValueError(f"front-matter が壊れている（閉じ --- が無い）: {path}")
+    try:
+        end_idx = _split_front_matter_lines(lines)
+    except ValueError as e:
+        raise ValueError(f"{e}: {path}") from e
+
+    remaining = dict(fields)
     for i in range(1, end_idx):
         key = lines[i].split(":", 1)[0].strip()
-        if key == "status":
-            lines[i] = f"status: {status}"
-        elif key == "post_id":
-            lines[i] = f"post_id: {post_id or ''}"
-        elif key == "posted_at":
-            lines[i] = f"posted_at: {posted_at or ''}"
+        if key in remaining:
+            value = remaining.pop(key)
+            lines[i] = f"{key}: {value if value is not None else ''}"
+    if remaining:
+        new_lines = [f"{key}: {value if value is not None else ''}" for key, value in remaining.items()]
+        lines[end_idx:end_idx] = new_lines
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
