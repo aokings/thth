@@ -117,16 +117,20 @@ def select_one(files, *, account_name: str, account_cfg: dict,
             continue
 
         # 5. publish_at 未来／+09:00 無し／壊れた文字列
+        # `rejections` にも積む（`type_mismatch`・`needs_review` だけだと board が
+        # 「なぜ要確認か」を機械可読な理由付きで拾えない・外部レビュー再レビュー C）。
         publish_at_raw = fm.get("publish_at")
         if not publish_at_raw or "+09:00" not in publish_at_raw:
             type_mismatch.append(path)
             needs_review.append(path)  # approved なのに型外
+            rejections.append(Rejection(path, "publish_at_invalid"))
             continue
         try:
             publish_at = queuefile.parse_publish_at(publish_at_raw)
         except ValueError:
             type_mismatch.append(path)
             needs_review.append(path)
+            rejections.append(Rejection(path, "publish_at_invalid"))
             continue
         if publish_at > now:
             rejections.append(Rejection(path, "future"))

@@ -139,6 +139,11 @@ def cmd_throw(args) -> int:
                               bypass_pace=args.now, log=print)
     if args.json:
         _print_json(dataclasses.asdict(result))
+    elif result.action == "none" and result.rejections:
+        # 手で打ったときに、落ちた理由を添える（外部レビュー再レビュー C・
+        # いままでは「出すものが無い」とだけ出て、何を直せば出るのか分からなかった）。
+        for rej in result.rejections:
+            print(f"  いま出ない: {rej['file']} — {rej['reason']}")
     return result.exit_code
 
 
@@ -230,8 +235,25 @@ def cmd_board(args) -> int:
     if args.json:
         _print_json(summary)
     else:
+        # 生の dict をそのまま出さず、人が読む形に整える（--json は機械可読のまま
+        # 残す・外部レビュー再レビュー C）。
         for row in summary["accounts"]:
-            print(row)
+            if "error" in row:
+                print(f"{row['account']}: {row['error']}")
+                continue
+            last_post = row["last_post_at"] or "(なし)"
+            inflight = row["inflight"] or "(なし)"
+            print(f"{row['account']}: project={row['project']} last_post={last_post} "
+                  f"approved_waiting={row['approved_waiting']} type_mismatch={row['type_mismatch']} "
+                  f"inflight={inflight}")
+            needs_review = row.get("needs_review") or []
+            if needs_review:
+                # 「承認して待っている（正常）」と「承認が古くて永久に出ない（異常）」
+                # を board 1 画面で区別できるようにする印。
+                stale = row.get("approval_stale_count", 0)
+                print(f"  要確認: {len(needs_review)} 件（approval_stale {stale} 件）")
+                for item in needs_review:
+                    print(f"    {item['file']} — {item['reason']}")
     return 0
 
 

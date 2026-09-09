@@ -36,6 +36,10 @@ class ThrowResult:
     post_id: str | None = None
     error: str | None = None
     digest: str | None = None   # `thth send` の確認用 digest（外部レビュー §1b）
+    # 「出すものが無い」ときに、なぜ出せないかの内訳（外部レビュー再レビュー C）。
+    # `thth throw` を手で打ったときに黙って終わらせないためのもの。
+    # [{"file": ..., "reason": ...}, ...]。無ければ None。
+    rejections: list | None = None
 
 
 def list_queue_files(account_cfg: dict) -> list:
@@ -289,7 +293,15 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
             if last_result is None:
                 _append_run(state_dir, account_name, run_id, mode, "none", None, None, now,
                             status="ok", error=None)
-                return ThrowResult(exit_code=0, mode=mode, action="none", message=msg)
+                # `thth throw` を手で打ったときに理由を添える（外部レビュー再レビュー
+                # C）。account_mismatch は他アカウントのファイル由来のノイズなので
+                # 除く（report.py の queue_summary と同じ流儀）。
+                rejections = [
+                    {"file": os.path.basename(rej.file), "reason": rej.reason}
+                    for rej in result.rejections if rej.reason != "account_mismatch"
+                ]
+                return ThrowResult(exit_code=0, mode=mode, action="none", message=msg,
+                                    rejections=rejections or None)
             # 既にこの実行で何本か出せたあとで尽きただけ。ここで打ち切り、
             # 直前の結果を返す（下のログで本数をまとめて出す）。
             break

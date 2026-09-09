@@ -87,9 +87,34 @@ def queue_summary(account_name: str | None, now=None) -> dict:
     return out
 
 
+def _needs_review_detail(files, *, account_name: str, account_cfg: dict, now) -> list:
+    """`select.select_one()` が拾った要確認（`approval_stale`・`stale`・`approved`
+    なのに型外）を、board 向けにファイル名と理由の対で返す（外部レビュー再レビュー C）。
+
+    board はいままで `approved_waiting: 1` としか出さず、「承認して待っている」の
+    正常系と「承認が古くて（approval_stale）永久に出ない」の異常系を区別できなかった
+    （黙って失敗する形）。`select_one()` は元々 `needs_review`（パスの一覧）と
+    `rejections`（パスと理由の一覧）の両方を返しているので、ここで突き合わせるだけで
+    board にも同じ情報を出せる。
+    """
+    last_at = core.last_post_at(files, account_name)
+    recent_texts = select_mod.recent_posted_texts(
+        files, account_name=account_name, media=account_cfg["media"], now=now)
+    result = select_mod.select_one(
+        files, account_name=account_name, account_cfg=account_cfg,
+        now=now, last_post_at=last_at, recent_texts=recent_texts)
+    reason_by_path = {rej.file: rej.reason for rej in result.rejections}
+    return [
+        {"file": os.path.basename(path), "reason": reason_by_path.get(path, "needs_review")}
+        for path in result.needs_review
+    ]
+
+
 def board_summary() -> dict:
-    """アカウント・最終投稿・approved 待ち・inflight・型外の骨（設計 §4.6・T1 は骨だけ）。"""
+    """アカウント・最終投稿・approved 待ち・inflight・型外・要確認の骨（設計 §4.6・
+    外部レビュー再レビュー C で `needs_review`／`approval_stale_count` を追加）。"""
     accounts_out = []
+    now = jst.now_jst()
     for name in accounts_mod.list_account_names():
         try:
             account_cfg = accounts_mod.load_account(name)
@@ -107,6 +132,9 @@ def board_summary() -> dict:
         type_mismatch = sum(1 for qf in files if qf.malformed)
         state_dir = accounts_mod.state_dir_for(name)
         inflight = inflight_mod.read(state_dir)
+        needs_review = _needs_review_detail(
+            files, account_name=name, account_cfg=account_cfg, now=now)
+        approval_stale_count = sum(1 for item in needs_review if item["reason"] == "approval_stale")
         accounts_out.append({
             "account": name,
             "project": account_cfg.get("project"),
@@ -114,5 +142,7 @@ def board_summary() -> dict:
             "approved_waiting": approved_waiting,
             "type_mismatch": type_mismatch,
             "inflight": inflight.get("file") if inflight else None,
+            "needs_review": needs_review,
+            "approval_stale_count": approval_stale_count,
         })
     return {"accounts": accounts_out, "generated_at": jst.iso()}
