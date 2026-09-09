@@ -9,7 +9,10 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## いまの状態（2026-09-09）
 
-設計 review 中。実装は未着手。T1 の発注書は [docs/発注_T1_2026-09-09.md](docs/発注_T1_2026-09-09.md)。
+T1（core ＋ 厚い CLI ＋ 薄い MCP の読み取り系）実装済み。`python3 -m pytest tests/ -q` で
+61 件緑。詳細は [docs/検収_T1_2026-09-09.md](docs/検収_T1_2026-09-09.md)。
+本物の Threads API・トークンには一切触れていない（発注 [docs/発注_T1_2026-09-09.md](docs/発注_T1_2026-09-09.md) の範囲どおり）。
 
 - 裁定済み: 当面 Threads だけ（X は保留）／アカウントはプロジェクト・サテライトごとに分ける／2 本目は asmon 関東／入口は timer・手打ち・薄い MCP の 3 つで core は 1 つ。
 - masaru の手待ち: **Meta アプリと tester だけ**（scope 4 つを最初から）。GitHub repo は 2026-09-09 に作成済。
+- 次段: T2（Threads 本番 1 件・masaru の手作業待ち）。

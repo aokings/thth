@@ -1,0 +1,1 @@
+"""THTH（ThreadsThrower）core パッケージ。"""

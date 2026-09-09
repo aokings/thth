@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# systemd timer から呼ばれる薄いラッパ（発注 §2）。`thth run <account>` を呼ぶだけ。
+# flock・inflight の確認は core 側（thth/lock.py・thth/core.py）に置いてあるので、
+# ここには置かない（§3.7: 入口を増やしてもロックを踏まない経路を作らないため）。
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$DIR/thth" run "$@"

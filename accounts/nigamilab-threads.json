@@ -1,0 +1,21 @@
+{
+  "account": "nigamilab-threads",
+  "project": "nigamilab",
+  "media": "threads",
+  "handle": "nigamilab",
+  "user_id": "",
+  "repo_dir": "$THTH_ROOT/repos/nigamilab",
+  "queue_dir": "docs/sns/queue",
+  "replies_dir": "data/sns/replies",
+  "quiet_hours": ["22:00", "07:00"],
+  "min_interval_hours": 6,
+  "collect_days": 14,
+  "hashtags": false,
+  "stale_days": 7,
+  "env": "~/.config/thth/nigamilab-threads.env",
+  "token": "~/.config/thth/nigamilab-threads.token",
+  "ping": "wrapper",
+  "timeout": 300,
+  "dry_run_env": "THTH_DRY_RUN",
+  "production": false
+}

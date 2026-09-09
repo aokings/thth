@@ -1,0 +1,132 @@
+"""厚い CLI `thth <subcommand>`（発注 §3・設計 §3.7）。
+
+判断・業務論理はここ・`thth.core`・`thth.select` 等に置く。MCP（`mcp/server.py`）は
+これを subprocess で呼んで `--json` の出力を返すだけで、判断を持たない。
+"""
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import json
+import sys
+
+from . import accounts as accounts_mod
+from . import core
+from . import lint as lint_mod
+from . import report as report_mod
+
+
+def _print_json(obj) -> None:
+    print(json.dumps(obj, ensure_ascii=False, indent=2))
+
+
+def cmd_lint(args) -> int:
+    errors = lint_mod.lint_file(args.file)
+    if args.json:
+        _print_json({"file": args.file, "errors": errors, "ok": not errors})
+    elif not errors:
+        print("OK")
+    else:
+        for e in errors:
+            print(e)
+    return 0 if not errors else 1
+
+
+def cmd_preview(args) -> int:
+    try:
+        section = lint_mod.preview_file(args.file)
+    except (ValueError, accounts_mod.AccountError) as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    sys.stdout.write(section)
+    return 0
+
+
+def cmd_queue(args) -> int:
+    summary = report_mod.queue_summary(args.account)
+    if args.json:
+        _print_json(summary)
+    else:
+        for name, info in summary.items():
+            if "error" in info:
+                print(f"{name}: {info['error']}")
+                continue
+            c = info["counts"]
+            print(f"{name}: draft={c['draft']} approved={c['approved']} posted={c['posted']} "
+                  f"型外={info['type_mismatch']} 次={info['next_file']}（{info['next_publish_at']}）")
+    return 0
+
+
+def cmd_throw(args) -> int:
+    result = core.throw_once(args.account, production_flag=args.production,
+                              bypass_pace=args.now, log=print)
+    if args.json:
+        _print_json(dataclasses.asdict(result))
+    return result.exit_code
+
+
+def cmd_run(args) -> int:
+    """timer が呼ぶ形（throw ＋ T3 の collect ＋ T4 の refresh。T1 は throw だけ）。
+    env・token が無ければ何も投げずに exit 2（設計 §3.2・受け入れ 7）。"""
+    try:
+        account_cfg = accounts_mod.load_account(args.account)
+    except accounts_mod.AccountError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    if not accounts_mod.env_and_token_exist(account_cfg):
+        print(f"env・token が無いので実行しません: {args.account}", file=sys.stderr)
+        return 2
+    result = core.throw_once(args.account, production_flag=True, log=print)
+    return result.exit_code
+
+
+def cmd_board(args) -> int:
+    summary = report_mod.board_summary()
+    if args.json:
+        _print_json(summary)
+    else:
+        for row in summary["accounts"]:
+            print(row)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="thth")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    p_lint = sub.add_parser("lint", help="front-matter の形式・文字数等を検査する")
+    p_lint.add_argument("file")
+    p_lint.add_argument("--json", action="store_true")
+    p_lint.set_defaults(func=cmd_lint)
+
+    p_preview = sub.add_parser("preview", help="実際に投げる本文そのものを返す")
+    p_preview.add_argument("file")
+    p_preview.set_defaults(func=cmd_preview)
+
+    p_queue = sub.add_parser("queue", help="draft/approved/posted/型外 と次に出るもの")
+    p_queue.add_argument("account", nargs="?")
+    p_queue.add_argument("--json", action="store_true")
+    p_queue.set_defaults(func=cmd_queue)
+
+    p_throw = sub.add_parser("throw", help="approved を 1 件投げる（既定 dry-run）")
+    p_throw.add_argument("account")
+    p_throw.add_argument("--now", action="store_true", help="静かな時間帯・最短間隔を無視して今すぐ試す")
+    p_throw.add_argument("--production", action="store_true")
+    p_throw.add_argument("--json", action="store_true")
+    p_throw.set_defaults(func=cmd_throw)
+
+    p_run = sub.add_parser("run", help="throw ＋ collect ＋ refresh（timer が呼ぶ形）")
+    p_run.add_argument("account")
+    p_run.set_defaults(func=cmd_run)
+
+    p_board = sub.add_parser("board", help="アカウントごとの鮮度・inflight・型外の骨")
+    p_board.add_argument("--json", action="store_true")
+    p_board.set_defaults(func=cmd_board)
+
+    return p
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)

@@ -1,0 +1,11 @@
+[Unit]
+Description=THTH throw for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=wt
+Environment=THTH_ROOT=/srv/thth
+ExecStart=/srv/thth/app/bin/thth-run %i
+TimeoutStartSec=300
