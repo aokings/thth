@@ -167,6 +167,24 @@ def test_9_CLI経由でも動く_codeフラグ(tmp_path, monkeypatch, isolated_a
     assert os.path.exists(account["token_path"])
 
 
+def test_10_app_envのパーミッションが600でなければ直す(tmp_path, monkeypatch, isolated_account_factory):
+    path = tmp_path / "app.env"
+    path.write_text(f"THREADS_APP_ID={APP_ID_VALUE}\nTHREADS_APP_SECRET={APP_SECRET_VALUE}\n",
+                     encoding="utf-8")
+    os.chmod(path, 0o644)  # わざと緩くしておく
+    monkeypatch.setenv("THTH_APP_ENV_PATH", str(path))
+    account = _account_with_token_path(isolated_account_factory, tmp_path)
+
+    with fake_oauth_server() as base_url:
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        lines = []
+        rc = oauth_mod.run_auth(account["name"], code="ABC123", log=lines.append)
+
+    assert rc == 0
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert any("600" in line for line in lines)  # 警告が出ている
+
+
 def test_20260909_authが標準出力に秘密を一切出さない(tmp_path, monkeypatch, isolated_account_factory, capsys):
     """事故防止テスト: token・app secret・code のいずれも標準出力・ログに出ないことを、
     実際に仕込んだ秘密文字列で確認する（設計 §3.6・masaru の指示）。"""
