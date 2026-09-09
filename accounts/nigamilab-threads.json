@@ -4,6 +4,7 @@
   "media": "threads",
   "handle": "nigamilab",
   "user_id": "",
+  "redirect_uri": "https://nigamilab.com/",
   "repo_dir": "$THTH_ROOT/repos/nigamilab",
   "queue_dir": "docs/sns/queue",
   "replies_dir": "data/sns/replies",

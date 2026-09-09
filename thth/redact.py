@@ -3,6 +3,7 @@
 ログ・runs・例外文・ping 本文はすべてここを通す。伏字にするのは:
   - `access_token=...` / `"access_token": "..."` の値
   - `client_secret=...` / `"client_secret": "..."` の値
+  - `code=...` / `"code": "..."`（`thth auth` の認可コード。T2a で追加・masaru の指示）
   - `Authorization: ...`（ヘッダ値。行の残り全部）
   - `hc-ping.com/` 以降のパス（check の UUID が漏れないように）
 
@@ -19,6 +20,8 @@ import re
 _KV_PATTERNS = [
     re.compile(r'(access_token"?\s*[:=]\s*"?)([^\s&"\',}]+)', re.IGNORECASE),
     re.compile(r'(client_secret"?\s*[:=]\s*"?)([^\s&"\',}]+)', re.IGNORECASE),
+    # \b で単語境界を要求する（"unicode" 等の途中に "code" が現れても拾わない）。
+    re.compile(r'(\bcode"?\s*[:=]\s*"?)([^\s&"\',}]+)', re.IGNORECASE),
 ]
 # Authorization ヘッダは値に空白を含む（"Bearer xxx"）ので行末までを伏字にする。
 _AUTH_RE = re.compile(r'(Authorization:\s*)(.+)', re.IGNORECASE)

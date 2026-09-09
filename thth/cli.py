@@ -13,6 +13,7 @@ import sys
 from . import accounts as accounts_mod
 from . import core
 from . import lint as lint_mod
+from . import oauth as oauth_mod
 from . import report as report_mod
 
 
@@ -85,6 +86,16 @@ def cmd_run(args) -> int:
     return result.exit_code
 
 
+def cmd_auth(args) -> int:
+    """masaru が VM で対話的に実行する（設計 §9-3・MCP には出さない・§3.7）。"""
+    return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code)
+
+
+def cmd_refresh(args) -> int:
+    """長期トークンの更新（設計 §2.2・MCP には出さない・§3.7）。"""
+    return oauth_mod.run_refresh(args.account, force=args.force, check=args.check)
+
+
 def cmd_board(args) -> int:
     summary = report_mod.board_summary()
     if args.json:
@@ -127,6 +138,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_board = sub.add_parser("board", help="アカウントごとの鮮度・inflight・型外の骨")
     p_board.add_argument("--json", action="store_true")
     p_board.set_defaults(func=cmd_board)
+
+    p_auth = sub.add_parser("auth", help="認可コードから長期トークンを取得する（masaru が対話で実行。MCPには出さない）")
+    p_auth.add_argument("account")
+    p_auth.add_argument("--redirect-uri", dest="redirect_uri", default=None,
+                         help="省略時は accounts/<account>.json の redirect_uri を使う")
+    p_auth.add_argument("--code", dest="code", default=None,
+                         help="非対話用（テスト等）。省略時は標準入力から読む")
+    p_auth.set_defaults(func=cmd_auth)
+
+    p_refresh = sub.add_parser("refresh", help="長期トークンを更新する（50日超・--forceで無条件。MCPには出さない）")
+    p_refresh.add_argument("account")
+    p_refresh.add_argument("--force", action="store_true")
+    p_refresh.add_argument("--check", action="store_true", help="更新はせず残日数等をJSONで返す（boardが使う）")
+    p_refresh.set_defaults(func=cmd_refresh)
 
     return p
 
