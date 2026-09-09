@@ -1,4 +1,4 @@
-"""throw の全体の流れ（発注 §3・設計 §3.3・§3.5・外部レビュー §1b・§2）。lock・
+"""throw の全体の流れ（発注 §3・設計 §3.3・§3.5・外部レビュー §1〜3）。lock・
 inflight・select・throw・write-back・runs をまとめる **core の唯一の入口**。
 CLI（`thth throw`・`thth run`）も MCP も、投稿を伴う操作はすべてここを通る。
 ロックはここで確保する（§3.7）。
@@ -20,6 +20,7 @@ from . import queuefile
 from . import redact as redact_mod
 from . import runs as runs_mod
 from . import select as select_mod
+from . import sent as sent_mod
 from . import writeback
 from .adapters import base as adapter_base
 from .adapters import threads as threads_mod
@@ -303,7 +304,12 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     `_throw_locked()` の max_per_run ループから 1 本ごとに呼ばれる（§3.3）。
     """
     started = jst.iso()
-    inflight_mod.write(state_dir, file=chosen.path, started=started, container_id=None)
+    # 送る本文の hash を inflight に書く（外部レビュー §3・受け入れ 9・10）。公開の
+    # あと・書き戻しの前に、いま repo にある本文とこの hash を突き合わせる
+    # （下の「送った本文と repo の本文の照合」参照）。
+    body_hash = approval_mod.compute_body_hash(section)
+    inflight_mod.write(state_dir, file=chosen.path, started=started, container_id=None,
+                        body_hash=body_hash)
 
     if mode == "rehearsal":
         log("投げるはずの本文:")
@@ -351,12 +357,41 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     post_id = publish_result.post_id
     inflight_mod.update(state_dir, post_id=post_id)
 
+    posted_at = publish_result.ts
+    # 送った本文そのものを動かせない記録として残す（外部レビュー §3・受け入れ 9・
+    # 10・これが正本）。書き戻し（front-matter 書き換え）より前に書く。
+    sent_mod.write(state_dir, post_id=post_id, text=section, body_hash=body_hash, sent_at=posted_at)
+
     # テスト専用フック（受け入れ 10・公開成功直後の中断→次回 inflight で停止すること）。
     # 本番コードパスには影響しない（環境変数が立っているときだけ発火する）。
     if os.environ.get("THTH_TEST_CRASH_AFTER_PUBLISH") == "1":
         os._exit(1)
 
-    posted_at = publish_result.ts
+    # 書き戻しの直前に、いま repo にある本文と「送った本文」を照合する
+    # （外部レビュー §3・受け入れ 9・10）。公開している最中に利用者が remote で
+    # 本文を書き換えていると、ここで検知する。**要**: 不一致なら front-matter を
+    # 書き換えない・再公開しない・inflight を残したまま exit 1 で止める。post_id が
+    # 書かれないので、何もしなければ次の実行が同じファイルをもう一度出そうとする
+    # ——それを inflight の残留が防ぐ（次回起動時の inflight チェックに掛かる）。
+    media = account_cfg["media"]
+    try:
+        current_qf = queuefile.parse(chosen.path)
+        current_section = queuefile.extract_section(current_qf.body, media)
+    except OSError:
+        current_section = None
+    current_hash = approval_mod.compute_body_hash(current_section or "")
+    if current_hash != body_hash:
+        msg = (f"送った本文と repo の本文が食い違います（書き戻しません・"
+               f"再公開もしません）: {chosen.path}")
+        log(msg)
+        _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
+                    status="error", error="text_mismatch_before_writeback")
+        # inflight は消さない（§3.5 の「曖昧な失敗」と同じ扱い。人が直すまで
+        # このアカウントは次回以降も止まる）。
+        return ThrowResult(exit_code=1, mode=mode, action="inflight",
+                            message=msg, file=chosen.path, post_id=post_id,
+                            error="text_mismatch_before_writeback")
+
     writeback.rewrite_front_matter(chosen.path, status="posted", post_id=post_id, posted_at=posted_at)
     repo_dir = account_cfg["repo_dir"]
     rel_path = os.path.relpath(chosen.path, repo_dir)

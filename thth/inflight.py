@@ -33,12 +33,18 @@ def _write(state_dir: str, data: dict) -> None:
 
 
 def write(state_dir: str, *, file: str, started: str,
-          container_id: str | None = None, post_id: str | None = None) -> None:
+          container_id: str | None = None, post_id: str | None = None,
+          body_hash: str | None = None) -> None:
+    """`body_hash`（外部レビュー §3・受け入れ 9・10）は「送るはずの本文」の
+    `approval.compute_body_hash()`。公開の**前**にここへ書いておくことで、書き戻し
+    直前の「送った本文と repo の本文が同じか」の照合ができる（`thth.core` 参照）。
+    """
     _write(state_dir, {
         "file": file,
         "started": started,
         "container_id": container_id,
         "post_id": post_id,
+        "body_hash": body_hash,
     })
 
 
