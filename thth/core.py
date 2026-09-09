@@ -5,6 +5,7 @@ MCP も、投稿を伴う操作はすべてここを通る。ロックはここ�
 from __future__ import annotations
 
 import dataclasses
+import datetime
 import os
 import uuid
 
@@ -97,6 +98,10 @@ def throw_once(account_name: str, *, production_flag: bool = False,
                 now=None) -> ThrowResult:
     """§3.3 の順序で 1 アカウント分を投げる（dry-run 既定）。
 
+    台帳 `max_per_run`（既定 1）まで「select → throw」を繰り返す（1 本ごとに
+    select をやり直す・masaru 指摘 2026-09-09・`_throw_locked()` 参照）。返り値は
+    最後に処理した結果（何本出たかは log と runs から分かる）。
+
     `production_flag` は CLI の `--production`。台帳 `production: true` が commit
     されていない限り、これを付けても dry-run のまま（fail-closed。§0・受け入れ 6）。
     `now` はテスト用の時刻注入（省略時は `jst.now_jst()`）。CLI・timer は渡さない。
@@ -151,7 +156,9 @@ def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, actio
 
 def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
                    production_flag, bypass_pace, adapter_factory, log, now=None) -> ThrowResult:
-    # inflight が残っていれば何もしない（§3.5）
+    # inflight が残っていれば何もしない（§3.5）。ここは throw_once 1 回につき
+    # 1 度だけ見る（下のループ中に新たに inflight が残るのは「曖昧な失敗」の
+    # ときだけで、そのときはその場で打ち切って返すので読み直す必要が無い）。
     existing_inflight = inflight_mod.read(state_dir)
     if existing_inflight is not None:
         msg = f"inflight が残っています: {existing_inflight.get('file')}"
@@ -165,29 +172,106 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
     log(f"mode: {mode}")
 
     now = now if now is not None else jst.now_jst()
-    files = list_queue_files(account_cfg)
-    last_at = last_post_at(files, account_name)
-    recent_texts = select_mod.recent_posted_texts(
-        files, account_name=account_name, media=account_cfg["media"], now=now)
 
-    result = select_mod.select_one(
-        files, account_name=account_name, account_cfg=account_cfg,
-        now=now, last_post_at=last_at, recent_texts=recent_texts, bypass_pace=bypass_pace)
+    # 1 実行で出す本数（台帳 max_per_run・既定 1・設計 §3.3／§3.6・masaru 指摘
+    # 2026-09-09）。**1 本ごとに select をやり直す**（前の投稿が次の select の
+    # last_post_at に効く）。したがって min_interval_hours が 0 より大きければ、
+    # 2 本目の select は必ず min_interval で全滅し、max_per_run を増やしても
+    # 実際には 1 本しか出ない。**これは正しい挙動**（台帳の min_interval_hours が
+    # そのアカウントの間隔を決める。max_per_run は「間隔の外側でまとめて出したい
+    # ときの上限」であって、間隔を上書きしない）。
+    max_per_run = account_cfg.get("max_per_run", 1)
+    try:
+        max_per_run = int(max_per_run)
+    except (TypeError, ValueError):
+        max_per_run = 1
+    if max_per_run < 1:
+        max_per_run = 1
 
-    for rej in result.rejections:
-        if _is_error_reason(rej.reason):
-            _append_run(state_dir, account_name, run_id, mode, "skip", rej.file, None, now,
-                        status="error", error=rej.reason)
+    # dry-run（rehearsal）は実際には何も書き換えない（ディスク上の queue ファイルは
+    # 変わらない）ので、select をそのままやり直すと毎回同じ 1 件を選び直してしまう。
+    # 「まとめて出したら何が選ばれるか」のプレビューにする目的で、一度選んだ path は
+    # このループの中でだけ除く（disk にも runs にも書かない・見た目だけの除外）。
+    excluded_paths: set[str] = set()
+    # 同じ理由で落ちた候補（too_long・hashtag・duplicate_text・topic_*）を、
+    # 2 本目以降の select でもう一度評価して runs に重複記録しないための控え。
+    logged_error_paths: set[str] = set()
+    posted_count = 0
+    last_result: ThrowResult | None = None
+    # 直前の投稿の front-matter は `posted_at`（実際に公開した瞬間の壁時計・
+    # `jst.iso()`）で書く。1 回の throw_once は 1 つの `now`（この関数の先頭で
+    # 決めた値）で筋を通すので、ディスクの `posted_at` を読み直すと「投稿に
+    # かかった時間の分だけ now より後」になり、min_interval_hours: 0（=制限しない）
+    # のつもりでも `now - posted_at < 0` が真になって 2 本目以降が毎回落ちる
+    # （2026-09-09 に実際に踏んだ）。**この run の中で自分が投げた分は `now` を
+    # 基準に数える**（disk の値と併用: 他アカウント実行や前回の run 由来の
+    # last_post_at はそのまま disk から読む）。
+    run_last_post_at: datetime.datetime | None = None
 
-    if result.chosen is None:
-        msg = "出すものが無い"
-        log(msg)
-        _append_run(state_dir, account_name, run_id, mode, "none", None, None, now,
-                    status="ok", error=None)
-        return ThrowResult(exit_code=0, mode=mode, action="none", message=msg)
+    for _ in range(max_per_run):
+        # last_post_at・recent_texts は「全ファイル」から計算する（直前に投げた
+        # ファイルもここに含まれて初めて、次の select の間隔判定に効く）。
+        # excluded_paths は select の候補プールからだけ外す（dry-run が disk を
+        # 変えないので同じ 1 件を選び直さないための除外・下記コメント参照）。
+        # ここを取り違えると、直前に投げたファイルが last_post_at の計算からも
+        # 消えて min_interval が効かなくなる（2026-09-09 に実際に踏んだ）。
+        files = list_queue_files(account_cfg)
+        last_at = last_post_at(files, account_name)
+        if run_last_post_at is not None:
+            # この run の中で自分が投げた分は disk の実測 posted_at より優先する
+            # （同じ理由・上のコメント参照）。この run より前の投稿はロックの外で
+            # 起きようが無いので、run_last_post_at がある時点で常にそちらが最新。
+            last_at = run_last_post_at
+        recent_texts = select_mod.recent_posted_texts(
+            files, account_name=account_name, media=account_cfg["media"], now=now)
+        candidates = [qf for qf in files if qf.path not in excluded_paths]
 
-    chosen = result.chosen
-    section = result.section
+        result = select_mod.select_one(
+            candidates, account_name=account_name, account_cfg=account_cfg,
+            now=now, last_post_at=last_at, recent_texts=recent_texts, bypass_pace=bypass_pace)
+
+        for rej in result.rejections:
+            if _is_error_reason(rej.reason) and rej.file not in logged_error_paths:
+                logged_error_paths.add(rej.file)
+                _append_run(state_dir, account_name, run_id, mode, "skip", rej.file, None, now,
+                            status="error", error=rej.reason)
+
+        if result.chosen is None:
+            msg = "出すものが無い"
+            log(msg)
+            if last_result is None:
+                _append_run(state_dir, account_name, run_id, mode, "none", None, None, now,
+                            status="ok", error=None)
+                return ThrowResult(exit_code=0, mode=mode, action="none", message=msg)
+            # 既にこの実行で何本か出せたあとで尽きただけ。ここで打ち切り、
+            # 直前の結果を返す（下のログで本数をまとめて出す）。
+            break
+
+        chosen = result.chosen
+        excluded_paths.add(chosen.path)
+        one_result = _throw_chosen(
+            account_name, account_cfg, state_dir, run_id, mode, chosen, result.section,
+            now, log, adapter_factory)
+        last_result = one_result
+        if one_result.action == "post" and one_result.exit_code == 0:
+            posted_count += 1
+            run_last_post_at = now
+        if one_result.exit_code != 0:
+            # 途中で失敗（曖昧な失敗で inflight を残す等）したらそこで打ち切る
+            # （設計 §3.3）。
+            break
+
+    log(f"{account_name}: この実行で {posted_count} 本投げました"
+        f"（mode={mode}・上限 max_per_run={max_per_run}）")
+    return last_result
+
+
+def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, section,
+                   now, log, adapter_factory) -> ThrowResult:
+    """select_one() が選んだ 1 件を投げる（dry-run ならログに出すだけ）。
+
+    `_throw_locked()` の max_per_run ループから 1 本ごとに呼ばれる（§3.3）。
+    """
     started = jst.iso()
     inflight_mod.write(state_dir, file=chosen.path, started=started, container_id=None)
 

@@ -48,7 +48,7 @@ def test_roundtrip_本番モード1巡で3行だけ変わる(isolated_account_fa
         seed_content = f.read()
     pair = init_git_pair(tmp_path, seed_content=seed_content, seed_name="2026-09-08-umami-bile.md")
 
-    account = isolated_account_factory(repo_dir=pair["work"], production=True)
+    account = isolated_account_factory(repo_dir=pair["work"], production=True, quiet_hours=None)
 
     monkeypatch.setenv("THTH_THREADS_WAIT_SECONDS", "0")
 

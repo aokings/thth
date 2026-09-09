@@ -102,11 +102,45 @@ def load_token(account_cfg: dict) -> dict | None:
         return json.load(f)
 
 
-def env_and_token_exist(account_cfg: dict) -> bool:
-    """`thth run` の事前確認（設計 §3.2・受け入れ 7）。env・token の両方が無ければ False。"""
-    env_path = account_cfg.get("env")
+def token_exists(account_cfg: dict) -> bool:
+    """`thth run` の事前確認（設計 §3.2・T3a 訂正 2026-09-09）。
+
+    以前の名前は `env_and_token_exist()` で、env ファイルと token の**両方**が
+    無ければ False にしていた。**設計が変わって env ファイルは要らなくなった**:
+    アプリ ID・シークレットは Meta 管理画面の「ユーザートークン生成ツール」で
+    tester ごとに直接発行する運用にしたので（設計 §4.2）、`~/.config/thth/<account>.env`
+    を置かない。実際 VM に置いてあるのは `<account>.token` だけ（統括が 2026-09-09
+    に確認・L1）。env を必須のままにすると `thth run` は毎回ここで exit 2 になり、
+    timer を立てても何も投げない。
+
+    **token だけを必須にする。env は任意**（あれば `load_env()` で読める。中身は
+    `HEALTHCHECK_URL` 等・秘密ではない付随情報）。
+    """
     token_path = account_cfg.get("token")
-    return bool(env_path and os.path.exists(env_path) and token_path and os.path.exists(token_path))
+    return bool(token_path and os.path.exists(token_path))
+
+
+def load_env(account_cfg: dict) -> dict:
+    """`accounts/<account>.json` の `env`（任意・`HEALTHCHECK_URL` 等）を読む。
+
+    無ければ空の dict（`thth run` を止める理由にはしない・`token_exists()` 参照）。
+    """
+    path = account_cfg.get("env")
+    if not path or not os.path.exists(path):
+        return {}
+    data: dict[str, str] = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            data[key] = value
+    return data
 
 
 def list_account_names() -> list[str]:

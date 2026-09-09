@@ -34,7 +34,14 @@ def _parse_hhmm(value: str) -> datetime.time:
 
 
 def in_quiet_hours(now: datetime.datetime, quiet_hours) -> bool:
-    """`quiet_hours: [start, end]`。start > end なら日をまたぐ（例 22:00〜07:00）。"""
+    """`quiet_hours: [start, end]`。start > end なら日をまたぐ（例 22:00〜07:00）。
+
+    `null`（None）または空配列は「静かな時間帯を設けない」の意味（設計 §3.6:
+    頻度・時刻・本数は編集の判断であって基盤の礼儀ではない。台帳の `0`・`null`
+    で外せる）。この場合は常に False を返す（=いつでも出してよい）。
+    """
+    if not quiet_hours:
+        return False
     start = _parse_hhmm(quiet_hours[0])
     end = _parse_hhmm(quiet_hours[1])
     cur = datetime.time(now.hour, now.minute)

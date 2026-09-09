@@ -169,7 +169,7 @@ def test_5_timeoutはエラーを返す():
 def test_6_公開成功直後の中断は次回inflightで停止する(isolated_account_factory, tmp_path):
     """post_id 書き戻し前にプロセスが落ちても、次回の throw は inflight を見て
     exit 1 になる（二重投稿しない・設計 §3.5）。"""
-    account = isolated_account_factory(production=True)
+    account = isolated_account_factory(production=True, quiet_hours=None)
     write_queue_file(account["queue_dir"], "a.md")
 
     token_path = os.path.join(account["repo_dir"], "..", "fake.token")
@@ -218,7 +218,7 @@ def test_6_公開成功直後の中断は次回inflightで停止する(isolated_
 def test_7_公開がtimeoutならinflightが残り次回も止まる(isolated_account_factory):
     """出たか分からない失敗（timeout）は inflight を消さない（設計 §3.5・差し戻し 1
     件目）。消すと次の毎時実行が同じファイルをもう一度選び直して二重投稿になる。"""
-    account = isolated_account_factory(production=True)
+    account = isolated_account_factory(production=True, quiet_hours=None)
     write_queue_file(account["queue_dir"], "a.md")
     state_dir = accounts_mod.state_dir_for(account["name"])
 
@@ -248,7 +248,7 @@ def test_7_公開がtimeoutならinflightが残り次回も止まる(isolated_ac
 
 def test_8_公開が4xxならinflightが消えて次回は普通に選び直せる(isolated_account_factory):
     """出ていないと分かる失敗（HTTP 4xx）は inflight を消してよい（設計 §3.5）。"""
-    account = isolated_account_factory(production=True)
+    account = isolated_account_factory(production=True, quiet_hours=None)
     write_queue_file(account["queue_dir"], "a.md")
     state_dir = accounts_mod.state_dir_for(account["name"])
 
@@ -275,7 +275,7 @@ def test_9_topicを付けて投稿するとrunsにtopicが残る(isolated_accoun
     push まで通す必要があるので、round-trip テストと同じ隔離 git pair を使う。"""
     seed_content = make_queue_text(fm_overrides={"topic": "苦味"})
     pair = init_git_pair(tmp_path, seed_content=seed_content, seed_name="a.md")
-    account = isolated_account_factory(repo_dir=pair["work"], production=True)
+    account = isolated_account_factory(repo_dir=pair["work"], production=True, quiet_hours=None)
     state_dir = accounts_mod.state_dir_for(account["name"])
 
     with fake_threads_server({"create": "ok", "publish": "ok"}) as base_url:

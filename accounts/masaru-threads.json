@@ -8,11 +8,10 @@
   "repo_dir": "$THTH_ROOT/repos/_none",
   "queue_dir": "queue",
   "replies_dir": "replies",
-  "quiet_hours": [
-    "23:00",
-    "07:00"
-  ],
+  "quiet_hours": ["23:00", "07:00"],
   "min_interval_hours": 0,
+  "max_per_run": 1,
+  "tick_minutes": 10,
   "collect_days": 14,
   "hashtags": true,
   "stale_days": 7,

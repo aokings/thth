@@ -83,14 +83,15 @@ def cmd_throw(args) -> int:
 
 def cmd_run(args) -> int:
     """timer が呼ぶ形（throw ＋ T3 の collect ＋ T4 の refresh。T1 は throw だけ）。
-    env・token が無ければ何も投げずに exit 2（設計 §3.2・受け入れ 7）。"""
+    token が無ければ何も投げずに exit 2（設計 §3.2・T3a 訂正 2026-09-09。env は任意
+    ・`accounts.token_exists()` docstring 参照）。"""
     try:
         account_cfg = accounts_mod.load_account(args.account)
     except accounts_mod.AccountError as e:
         print(str(e), file=sys.stderr)
         return 2
-    if not accounts_mod.env_and_token_exist(account_cfg):
-        print(f"env・token が無いので実行しません: {args.account}", file=sys.stderr)
+    if not accounts_mod.token_exists(account_cfg):
+        print(f"token が無いので実行しません: {args.account}", file=sys.stderr)
         return 2
     result = core.throw_once(args.account, production_flag=True, log=print)
     return result.exit_code
@@ -143,6 +144,22 @@ def cmd_token_set(args) -> int:
     return oauth_mod.run_token_set(args.account, force=args.force, stdin=args.stdin)
 
 
+def cmd_systemd(args) -> int:
+    """`thth systemd <account>`: 台帳から `.timer` unit を機械的に生成して標準出力に
+    出す（設計 §3.2・masaru 指摘 2026-09-09）。手で書くと刻みがずれる（実際に
+    `systemd/thth@nigamilab-threads.timer` は毎時になっていて 10 分刻みの設計と
+    食い違っていた）ので、生成に一本化する。MCP には出さない（運用コマンド・§3.7
+    の auth／refresh と同じ扱い）。"""
+    from . import systemd_gen
+    try:
+        account_cfg = accounts_mod.load_account(args.account)
+    except accounts_mod.AccountError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    sys.stdout.write(systemd_gen.render_timer(account_cfg))
+    return 0
+
+
 def cmd_board(args) -> int:
     summary = report_mod.board_summary()
     if args.json:
@@ -182,6 +199,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_run = sub.add_parser("run", help="throw ＋ collect ＋ refresh（timer が呼ぶ形）")
     p_run.add_argument("account")
     p_run.set_defaults(func=cmd_run)
+
+    p_systemd = sub.add_parser(
+        "systemd", help="台帳から <account>.timer unit を生成して標準出力に出す")
+    p_systemd.add_argument("account")
+    p_systemd.set_defaults(func=cmd_systemd)
 
     p_board = sub.add_parser("board", help="アカウントごとの鮮度・inflight・型外の骨")
     p_board.add_argument("--json", action="store_true")

@@ -10,6 +10,8 @@
   "replies_dir": "data/sns/replies",
   "quiet_hours": ["22:00", "07:00"],
   "min_interval_hours": 6,
+  "max_per_run": 1,
+  "tick_minutes": 10,
   "collect_days": 14,
   "hashtags": false,
   "stale_days": 7,
