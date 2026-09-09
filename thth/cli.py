@@ -246,6 +246,12 @@ def cmd_board(args) -> int:
             print(f"{row['account']}: project={row['project']} last_post={last_post} "
                   f"approved_waiting={row['approved_waiting']} type_mismatch={row['type_mismatch']} "
                   f"inflight={inflight}")
+            # 指紋の 5 項目のどれが食い違って inflight が残ったか（外部レビュー
+            # 第 3 巡・持ち越し項目 C）。人が止まった原因をファイルを開いて
+            # 自分で探さずに済むように、board の 1 画面にそのまま出す。
+            mismatch_fields = row.get("inflight_mismatch_fields")
+            if inflight != "(なし)" and mismatch_fields:
+                print(f"  食い違った項目: {', '.join(mismatch_fields)}")
             needs_review = row.get("needs_review") or []
             if needs_review:
                 # 「承認して待っている（正常）」と「承認が古くて永久に出ない（異常）」

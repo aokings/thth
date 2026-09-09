@@ -40,6 +40,11 @@ class ThrowResult:
     # `thth throw` を手で打ったときに黙って終わらせないためのもの。
     # [{"file": ..., "reason": ...}, ...]。無ければ None。
     rejections: list | None = None
+    # `error` が `text_mismatch_before_writeback`・`text_mismatch_after_rebase` の
+    # ときに、5 項目（body・account・reply_to・topic・publish_at）のうちどれが
+    # 食い違ったか（外部レビュー第 3 巡・持ち越し項目 C）。それ以外の error では
+    # None のまま。
+    mismatch_fields: list | None = None
 
 
 def list_queue_files(account_cfg: dict) -> list:
@@ -169,7 +174,7 @@ def throw_once(account_name: str, *, production_flag: bool = False,
 
 def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, action: str,
                  file: str | None, post_id: str | None, now, *, status: str, error: str | None,
-                 topic: str | None = None) -> None:
+                 topic: str | None = None, mismatch_fields: list | None = None) -> None:
     record = {
         "account": account_name,
         "run_id": run_id,
@@ -185,6 +190,8 @@ def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, actio
         # topic は「付けたこと」の記録（設計 §2.2: 読み返す field が無い）。
         # 実際に付けた（投稿に使った）ときだけ渡す・それ以外は None のまま。
         "topic": topic,
+        # 指紋が食い違ったときの内訳（外部レビュー第 3 巡・持ち越し項目 C）。
+        "mismatch_fields": mismatch_fields,
     }
     runs_mod.append_run(state_dir, record, jst.month_str(now))
 
@@ -374,6 +381,38 @@ def _fingerprint_matches(path: str, media: str, expected_fingerprint: str) -> bo
     return current_fingerprint is not None and current_fingerprint == expected_fingerprint
 
 
+def _mismatch_fields(path: str, media: str, expected_components: dict) -> list:
+    """`_fingerprint_matches()` が False を返したとき、5 項目のうち**どれが**
+    食い違ったのかを返す（外部レビュー第 3 巡・持ち越し項目 C）。
+
+    hash 一致検査だけでは「一致しない」ことしか分からず、人が止まった原因を
+    ファイルを開いて自分で探すしかなかった。`expected_components`
+    （`_throw_chosen()` が公開の直前に `approval.compute_approved_components()` で
+    固定したもの）と、`path` の**いまの**内容から同じ関数で計算し直した値を
+    項目ごとに突き合わせ、違ったキー名（`body`・`account`・`reply_to`・`topic`・
+    `publish_at`）だけを返す。ファイルが読めない・型外・media の節が無い・
+    publish_at が壊れている場合は `["file_unreadable"]` を返す（`_current_fingerprint()`
+    が None を返すのと同じ状況の言い換え）。
+    """
+    try:
+        current_qf = queuefile.parse(path)
+    except OSError:
+        return ["file_unreadable"]
+    if current_qf.malformed:
+        return ["file_unreadable"]
+    fm = current_qf.front_matter
+    current_section = queuefile.extract_section(current_qf.body, media)
+    try:
+        current_components = approval_mod.compute_approved_components(
+            section=current_section or "", account=fm.get("account"),
+            reply_to=fm.get("reply_to"), topic=fm.get("topic"),
+            publish_at=fm.get("publish_at"))
+    except (ValueError, TypeError):
+        return ["file_unreadable"]
+    return [key for key in ("body", "account", "reply_to", "topic", "publish_at")
+            if current_components.get(key) != expected_components.get(key)]
+
+
 def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, section,
                    now, log, adapter_factory) -> ThrowResult:
     """select_one() が選んだ 1 件を投げる（dry-run ならログに出すだけ）。
@@ -389,6 +428,13 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # ——この不動点を、書き戻し前・rebase 後の照合の基準にする（本文だけの hash では
     # account・topic・reply_to・publish_at の書き換えを見逃すため）。
     expected_fingerprint = approval_mod.compute_approved_sha(
+        section=section, account=account_name, reply_to=chosen.get("reply_to"),
+        topic=chosen.get("topic"), publish_at=chosen.get("publish_at"))
+    # 上と同じ 5 項目を、hash にする前の正規化済みの値のまま持っておく
+    # （外部レビュー第 3 巡・持ち越し項目 C）。指紋が食い違ったときに
+    # `_mismatch_fields()` へ渡して「どの項目が」違ったかを特定するため
+    # （hash 自体からは個々の項目を復元できない）。
+    expected_components = approval_mod.compute_approved_components(
         section=section, account=account_name, reply_to=chosen.get("reply_to"),
         topic=chosen.get("topic"), publish_at=chosen.get("publish_at"))
     # 送る本文の hash（後方互換・`tests/test_sent_integrity.py` が参照）も併せて
@@ -471,40 +517,64 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # reply_to・publish_at だけを別 clone から書き換えられても、本文の hash は
     # 変わらないのですり抜ける。5 項目の指紋（`expected_fingerprint`）で照合する。
     if not _fingerprint_matches(chosen.path, media, expected_fingerprint):
+        # どの項目が食い違ったのかを特定する（外部レビュー第 3 巡・持ち越し項目 C）。
+        # ログ・runs・board（inflight 経由）の 3 箇所に出す。人が止まった原因を
+        # ファイルを開いて自分で探さずに済むように。
+        mismatch_fields = _mismatch_fields(chosen.path, media, expected_components)
         msg = (f"送った内容（本文・account・reply_to・topic・publish_at）と repo の"
-               f"内容が食い違います（書き戻しません・再公開もしません）: {chosen.path}")
+               f"内容が食い違います（食い違った項目: {', '.join(mismatch_fields)}）"
+               f"（書き戻しません・再公開もしません）: {chosen.path}")
         log(msg)
         _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
-                    status="error", error="text_mismatch_before_writeback")
+                    status="error", error="text_mismatch_before_writeback",
+                    mismatch_fields=mismatch_fields)
         # inflight は消さない（§3.5 の「曖昧な失敗」と同じ扱い。人が直すまで
-        # このアカウントは次回以降も止まる）。
+        # このアカウントは次回以降も止まる）。board が同じ内訳を出せるよう
+        # inflight にも書いておく（`thth.report.board_summary()` 参照）。
+        inflight_mod.update(state_dir, mismatch_fields=mismatch_fields)
         return ThrowResult(exit_code=1, mode=mode, action="inflight",
                             message=msg, file=chosen.path, post_id=post_id,
-                            error="text_mismatch_before_writeback")
+                            error="text_mismatch_before_writeback",
+                            mismatch_fields=mismatch_fields)
 
     writeback.rewrite_front_matter(chosen.path, status="posted", post_id=post_id, posted_at=posted_at)
     repo_dir = account_cfg["repo_dir"]
     rel_path = os.path.relpath(chosen.path, repo_dir)
     commit_message = f"thth: {account_name} {os.path.basename(chosen.path)} を投稿（post_id {post_id}）"
 
+    # rebase 後の検証が失敗したとき、どの項目が食い違ったかをここへ拾っておく
+    # （外部レビュー第 3 巡・持ち越し項目 C）。`validate` は bool しか返せない
+    # コールバック契約なので、詳細は外側のこの変数で受け取る
+    # （`writeback.commit_and_push()` は validate を最大でも 1 回だけ呼んでから
+    # 例外を送出するので、上書きの心配はない）。
+    rebase_mismatch_fields: list = []
+
     def _validate_after_rebase() -> bool:
-        return _fingerprint_matches(chosen.path, media, expected_fingerprint)
+        ok = _fingerprint_matches(chosen.path, media, expected_fingerprint)
+        if not ok:
+            rebase_mismatch_fields[:] = _mismatch_fields(chosen.path, media, expected_components)
+        return ok
 
     try:
         ok, err = writeback.commit_and_push(
             repo_dir, rel_path=rel_path, message=commit_message,
             validate=_validate_after_rebase)
     except writeback.PushValidationFailed as e:
-        msg = str(e)
+        mismatch_fields = rebase_mismatch_fields or ["unknown"]
+        msg = str(e) + f"（食い違った項目: {', '.join(mismatch_fields)}）"
         log(msg)
         _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
-                    status="error", error="text_mismatch_after_rebase")
+                    status="error", error="text_mismatch_after_rebase",
+                    mismatch_fields=mismatch_fields)
         # push していない（commit はローカルに残る）。inflight も消さない
         # （§3.5 と同じ扱い。次回実行も inflight チェックで止まる・外部レビュー
-        # 再レビュー B の受け入れ）。
+        # 再レビュー B の受け入れ）。board が同じ内訳を出せるよう inflight にも
+        # 書いておく（`thth.report.board_summary()` 参照）。
+        inflight_mod.update(state_dir, mismatch_fields=mismatch_fields)
         return ThrowResult(exit_code=1, mode=mode, action="inflight",
                             message=msg, file=chosen.path, post_id=post_id,
-                            error="text_mismatch_after_rebase")
+                            error="text_mismatch_after_rebase",
+                            mismatch_fields=mismatch_fields)
 
     if not ok:
         log(f"push に失敗しました: {err}")

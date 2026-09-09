@@ -142,6 +142,13 @@ def board_summary() -> dict:
             "approved_waiting": approved_waiting,
             "type_mismatch": type_mismatch,
             "inflight": inflight.get("file") if inflight else None,
+            # 指紋の 5 項目のどれが食い違って inflight が残ったか（外部レビュー
+            # 第 3 巡・持ち越し項目 C）。`core._throw_chosen()` が
+            # `text_mismatch_before_writeback`・`text_mismatch_after_rebase` の
+            # ときに inflight へ書く。それ以外（曖昧な失敗等）の inflight では
+            # None のまま——board を見た人が「なぜ止まっているか」をファイルを
+            # 開かずに区別できるように。
+            "inflight_mismatch_fields": inflight.get("mismatch_fields") if inflight else None,
             "needs_review": needs_review,
             "approval_stale_count": approval_stale_count,
         })

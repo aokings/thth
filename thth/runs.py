@@ -22,7 +22,11 @@ RUNS_FIELDS = [
     "collected", "refreshed", "quota", "status", "error",
 ]
 # 必須ではない追加項目（欠けていても None として書く。上の docstring 参照）。
-OPTIONAL_FIELDS = ["topic"]
+# `mismatch_fields`（外部レビュー第 3 巡・持ち越し項目 C）: error が
+# `text_mismatch_before_writeback`・`text_mismatch_after_rebase` のとき、5 項目
+# （body・account・reply_to・topic・publish_at）のうちどれが食い違ったか。
+# それ以外の error では None（人がなぜ止まったかを探さずに済むように）。
+OPTIONAL_FIELDS = ["topic", "mismatch_fields"]
 
 
 def path_for(state_dir: str, jst_month: str) -> str:

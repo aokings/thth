@@ -37,6 +37,32 @@ def _normalize_publish_at(publish_at: str | datetime.datetime) -> str:
     return dt.isoformat()
 
 
+_COMPONENT_ORDER = ("body", "account", "reply_to", "topic", "publish_at")
+
+
+def compute_approved_components(*, section: str, account: str, reply_to: str | None,
+                                 topic: str | None,
+                                 publish_at: str | datetime.datetime) -> dict:
+    """`compute_approved_sha()` が hash する前の、5 項目それぞれの正規化済みの値。
+
+    外部レビュー第 3 巡・持ち越し項目 C: 指紋（`compute_approved_sha()` の
+    戻り値）が食い違ったとき、hash からは「どの項目が違うか」を復元できない。
+    公開直前に固定した指紋と、書き戻し前・rebase 後に読み直した現在の内容の
+    **両方をこの関数に通して**キーごとに突き合わせれば、違った項目名だけを
+    拾える（`thth.core._mismatch_fields()` 参照）。**正規化の定義はここが正本**
+    ——`compute_approved_sha()` はこの戻り値を `_COMPONENT_ORDER` の順に連結して
+    hash するだけで、sha の入力バイト列自体はいままでと変えていない
+    （`tests/test_approval.py` の固定を壊さない）。
+    """
+    return {
+        "body": (section or "").strip(),
+        "account": (account or "").strip(),
+        "reply_to": (reply_to or "").strip(),
+        "topic": queuefile.normalize_topic(topic) or "",
+        "publish_at": _normalize_publish_at(publish_at),
+    }
+
+
 def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
                           topic: str | None, publish_at: str | datetime.datetime) -> str:
     """承認の対象を固定する sha256（外部レビュー §1・受け入れ 1〜4・11）。
@@ -61,14 +87,10 @@ def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
     （＝いま approved のファイルが軒並み `approval_stale` になる）。変えるときは
     それが分かった上で意図的にやること。
     """
-    parts = [
-        (section or "").strip(),
-        (account or "").strip(),
-        (reply_to or "").strip(),
-        queuefile.normalize_topic(topic) or "",
-        _normalize_publish_at(publish_at),
-    ]
-    joined = _SEP.join(parts)
+    components = compute_approved_components(
+        section=section, account=account, reply_to=reply_to, topic=topic,
+        publish_at=publish_at)
+    joined = _SEP.join(components[key] for key in _COMPONENT_ORDER)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
