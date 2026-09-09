@@ -155,8 +155,21 @@ def sync_repo(repo_dir: str) -> tuple:
     優先する）:
       - `repo_dir` が存在しない（例: `masaru-threads` の `repos/_none`。この
         アカウントは `thth send` だけを使い、queue を読まないので同期は元々不要）
-      - `repo_dir` が git repo ではない（`.git` が無い）
-      - `origin` という remote が無い
+      - `repo_dir` が git repo ではない（`.git` が無い。queue はそこには無いので
+        素通りしてよい）
+
+    一方、**`repo_dir` が git repo なのに `origin` という remote が無い場合は
+    「同期の必要が無い」ではない**（外部レビュー再々レビュー P1・2）。有効な
+    承認済み queue を残したまま `origin` を外すと、同期元を確認できないまま
+    select → 公開に進んでしまい、書き戻しの push で初めて失敗する（公開は
+    もう取り消せない）。ここは**同期失敗として扱い、投稿しない**（呼び出し側
+    `core.py` が `exit_code=2`・`error="repo_sync_failed"` にする）。
+    `git remote` コマンド自体が失敗した場合（壊れた repo 等）も同様に同期失敗
+    として扱う——「素通りしてよい」のは repo_dir がそもそも git repo でない
+    ときだけで、git repo である以上は同期元を確認できて初めて成功と言える。
+
+    `fetch` できない・`--ff-only` に失敗する、は元々正しく同期失敗として扱って
+    いる（ここは変えない）。
 
     `thth send`（同席の様態）は queue を読まないのでこの関数を呼ばない。
     """
@@ -164,9 +177,12 @@ def sync_repo(repo_dir: str) -> tuple:
         return True, ""
     if not os.path.exists(os.path.join(repo_dir, ".git")):
         return True, ""
+
     remote = _run_git(repo_dir, ["remote"])
-    if remote.returncode != 0 or "origin" not in remote.stdout.split():
-        return True, ""
+    if remote.returncode != 0:
+        return False, "git remote の確認に失敗しました: " + redact_mod.redact(remote.stderr)
+    if "origin" not in remote.stdout.split():
+        return False, "origin という remote が見つかりません（同期元を確認できないため投稿しません）"
 
     fetch = _run_git(repo_dir, ["fetch", "origin"])
     if fetch.returncode != 0:

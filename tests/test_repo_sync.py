@@ -125,7 +125,7 @@ def test_同期に失敗したら投稿しない(tmp_path, isolated_account_fact
 
 def test_repoを持たないアカウントは同期をスキップして壊れない(tmp_path):
     """`masaru-threads` の `repos/_none` 相当（存在しないディレクトリ）・git repo
-    でないディレクトリ・origin remote が無い repo は、同期を静かにスキップする
+    でないディレクトリは、そこに queue が無いので同期を静かにスキップする
     （`writeback.sync_repo()` 自体のユニットテスト）。"""
     missing = str(tmp_path / "repos" / "_none")
     ok, err = writeback.sync_repo(missing)
@@ -136,9 +136,37 @@ def test_repoを持たないアカウントは同期をスキップして壊れ�
     ok, err = writeback.sync_repo(str(plain_dir))
     assert ok is True and err == ""
 
+
+def test_git_repoなのにoriginが無ければ同期失敗として投稿しない(tmp_path):
+    """外部レビュー再々レビュー P1・2: `repo_dir` が git repo なのに `origin` が
+    無い場合は「同期の必要が無い」ではない。有効な承認済み queue を残したまま
+    `origin` を外すと、同期元を確認できないまま公開に進んでしまう（旧実装は
+    ここを成功扱いにしていた）。ここは同期失敗として扱う。"""
     git_no_remote = tmp_path / "git_no_remote"
     git_no_remote.mkdir()
     subprocess.run(["git", "init", "-b", "main", str(git_no_remote)], check=True,
                     capture_output=True, text=True)
     ok, err = writeback.sync_repo(str(git_no_remote))
-    assert ok is True and err == ""
+    assert ok is False
+    assert "origin" in err
+
+
+def test_git_repoでoriginを外すと公開まで進まない(tmp_path, isolated_account_factory):
+    """`core.throw_once()` を通した受け入れ確認: 有効な承認済み queue がある git
+    repo から `origin` remote を外すと、`adapter.publish()` が一度も呼ばれずに
+    exit 2 で止まる（外部レビュー再々レビュー P1・2 の受け入れ）。"""
+    pair = init_git_pair(tmp_path, seed_content=make_queue_text({"status": "approved"}))
+    account = isolated_account_factory(
+        repo_dir=pair["work"], production=True, quiet_hours=None, min_interval_hours=0)
+    run_git(pair["work"], ["remote", "remove", "origin"])
+
+    spy = _Spy()
+    result = core.throw_once(
+        account["name"], production_flag=True, adapter_factory=lambda *_: spy, now=NOW)
+
+    assert not spy.calls, "origin が無いのに publish が呼ばれた"
+    assert result.exit_code == 2
+    assert result.action == "none"
+    assert result.error == "repo_sync_failed"
+    state_dir = accounts_mod.state_dir_for(account["name"])
+    assert inflight_mod.read(state_dir) is None
