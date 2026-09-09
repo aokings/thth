@@ -201,7 +201,18 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
     if publish_result.error or not publish_result.post_id:
         err = redact_mod.redact(publish_result.error or "不明なエラー")
         log(f"公開失敗: {err}")
-        # コンテナ作成・公開の失敗は「実際には出ていない」ので inflight を残す理由が無い。
+        # 失敗の三分類（設計 §3.5・T1 検収 2026-09-09）。core は `failure` だけを見て
+        # 分岐する（HTTP の状態番号は core が解釈しない・アダプタに閉じる・§3.4）。
+        if publish_result.failure == "publish_ambiguous":
+            # 出たか分からない失敗 → inflight を残す（消すと二重投稿になりうる）。
+            # 次の実行の冒頭の inflight チェックに乗る（board にもそのまま出る）。
+            msg = f"公開の結果が分からないので inflight を残します: {chosen.path}"
+            log(msg)
+            _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
+                        status="error", error=err)
+            return ThrowResult(exit_code=1, mode=mode, action="inflight", message=msg,
+                                file=chosen.path, error=err)
+        # コンテナ作成の失敗・公開が 4xx は「実際には出ていない」ので inflight を残す理由が無い。
         inflight_mod.clear(state_dir)
         _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
                     status="error", error=err)

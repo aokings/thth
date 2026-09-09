@@ -18,12 +18,22 @@ def _account_cfg_or_none(account_name: str | None) -> dict | None:
         return None
 
 
+def is_warning(message: str) -> bool:
+    """`lint_file()` が返す 1 行が警告（落とさない）か実エラー（落とす）かを見分ける。"""
+    return message.startswith("warning:")
+
+
 def lint_file(path: str) -> list:
     """形式検査。駄目な理由を 1 行ずつ返す（空リストなら OK）。
 
     `account` の台帳が引けるときは、その媒体・hashtags 設定で媒体節と文字数・
     ハッシュタグまで検査する。台帳が引けないとき（アカウント未指定・未知）は
     threads 既定（500 字・ハッシュタグ不可）で検査する。
+
+    450 字を超えたら警告を返り値に含めるが、**落とさない**（食い違い 2 の裁定・
+    2026-09-09）。警告は `warning:` で始まる文字列として errors と同じリストに
+    混ぜて返す（`thth lint` の exit code は `error:`/その他の実エラーだけで決まる。
+    `is_warning()` で区別できる）。
     """
     qf = queuefile.parse(path)
     fm = qf.front_matter
@@ -61,6 +71,13 @@ def lint_file(path: str) -> list:
         n = queuefile.char_count(section)
         if n > limit:
             errors.append(f"length: {media} は {limit} 字以内（{n} 字）")
+        else:
+            warn_limit = queuefile.WARN_LIMITS.get(media)
+            if warn_limit is not None and n > warn_limit:
+                errors.append(
+                    f"warning: length: {media} は {warn_limit} 字を超えています"
+                    f"（{n} 字・上限 {limit} 字。絵文字の数え方は実物と一致する保証が無い）"
+                )
         hashtags_allowed = bool(account_cfg.get("hashtags", True)) if account_cfg else False
         if not hashtags_allowed and queuefile.has_hashtag(section):
             errors.append("hashtag: ハッシュタグは付けない規約（`#` を含む）")

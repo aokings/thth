@@ -120,7 +120,9 @@ def test_8a_媒体の節が無いと落ちる(tmp_path):
 
 
 def test_8b_文字数超過はtoo_longで落ちる(tmp_path):
-    body = "## threads\n\n" + ("あ" * 500) + "\n"
+    # 文字数は前後の空白を落とした本文そのもの（末尾改行は数えない・T1 検収
+    # 2026-09-09 で確定）。501 字は通常文字だけで作る。
+    body = "## threads\n\n" + ("あ" * 501) + "\n"
     p = write(tmp_path, "a.md", body=body)
     result = select(parse_all([p]))
     assert result.chosen is None

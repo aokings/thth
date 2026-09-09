@@ -13,11 +13,13 @@ def test_previewはバイト単位で節の本文と一致する(isolated_accoun
     with open(path, "rb") as f:
         raw = f.read()
     # 節（`## threads` の次から末尾まで）を素朴に切り出して比較する。
+    # 送る本文は前後の空白を落とした文字列（T1 検収 2026-09-09 で確定。末尾改行は
+    # 含めない）。
     text = raw.decode("utf-8")
     body_start = text.index("## threads\n") + len("## threads\n")
-    expected = text[body_start:].lstrip("\n")
+    expected = text[body_start:].strip()
     assert section.encode("utf-8") == expected.encode("utf-8")
-    assert section.endswith("\n") and not section.endswith("\n\n")
+    assert not section.endswith("\n")
 
 
 def test_cli_previewは前後に何も足さない(isolated_account):

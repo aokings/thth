@@ -8,6 +8,10 @@ import unicodedata
 
 KNOWN_STATUSES = {"draft", "approved", "posted", "withdrawn"}
 MEDIA_LIMITS = {"threads": 500, "x": 140}
+# threads の 450 字警告の閾値（食い違い 2 の裁定・2026-09-09）。絵文字カウントが
+# 実物と一致する保証が無い（L3）ので、上限ぎりぎりに座らないための警告として置く。
+# 500 で落とすのは従来どおり・450 は warning のみ（exit code は 0 のまま）。
+WARN_LIMITS = {"threads": 450}
 _FM_DELIM = "---"
 # `#語` のハッシュタグ検出。行頭または空白の後に `#` + 語構成文字が続く形。
 _HASHTAG_RE = re.compile(r"(?:^|\s)#\w")
@@ -67,8 +71,10 @@ def parse(path: str) -> QueueFile:
 
 
 def extract_section(body: str, media: str) -> str | None:
-    """`## <media>` の節の本文を抜き出す。前後の空行を落とし、末尾改行 1 個にして返す。
-    節が無ければ None。次の `## ` 見出し（同レベル）までがその節の範囲。"""
+    """`## <media>` の節の本文を抜き出す。**前後の空白を落とした文字列**を「送る本文」
+    として返す（設計 §4.1・T1 検収 2026-09-09 で確定。末尾改行は数に含めない・
+    表示上の改行は printer の都合であって本文ではない）。節が無ければ None。
+    次の `## ` 見出し（同レベル）までがその節の範囲。"""
     lines = body.split("\n")
     heading = f"## {media}".lower()
     start = None
@@ -83,14 +89,10 @@ def extract_section(body: str, media: str) -> str | None:
         if lines[i].startswith("## "):
             end = i
             break
-    section_lines = lines[start:end]
-    while section_lines and not section_lines[0].strip():
-        section_lines.pop(0)
-    while section_lines and not section_lines[-1].strip():
-        section_lines.pop()
-    if not section_lines:
+    section = "\n".join(lines[start:end]).strip()
+    if not section:
         return None
-    return "\n".join(section_lines) + "\n"
+    return section
 
 
 def _is_emoji(ch: str) -> bool:

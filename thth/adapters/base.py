@@ -21,6 +21,13 @@ class PublishResult:
     url: str | None
     ts: str                         # JST ISO
     error: str | None = None        # 伏字済み
+    # 失敗の種類（設計 §3.5・T1 検収 2026-09-09 で追加）。core はこれだけを見て
+    # inflight を消すか残すかを決める（HTTP の状態番号は core が解釈しない・§3.4）。
+    #   "none"              成功
+    #   "container"         コンテナ作成の失敗（全部）→ 出ていない
+    #   "publish_definite"  公開が HTTP 4xx → 出ていない
+    #   "publish_ambiguous" 公開が timeout・接続断・5xx・200 だが id 無し → 分からない
+    failure: str = "none"
 
 
 @dataclasses.dataclass

@@ -21,14 +21,17 @@ def _print_json(obj) -> None:
 
 
 def cmd_lint(args) -> int:
-    errors = lint_mod.lint_file(args.file)
+    messages = lint_mod.lint_file(args.file)
+    errors = [m for m in messages if not lint_mod.is_warning(m)]
+    warnings = [m for m in messages if lint_mod.is_warning(m)]
     if args.json:
-        _print_json({"file": args.file, "errors": errors, "ok": not errors})
-    elif not errors:
+        _print_json({"file": args.file, "errors": errors, "warnings": warnings, "ok": not errors})
+    elif not messages:
         print("OK")
     else:
-        for e in errors:
-            print(e)
+        for m in messages:
+            print(m)
+    # 警告（450 字超）は落とさない。exit code は実エラーだけで決まる（食い違い 2 の裁定）。
     return 0 if not errors else 1
 
 
@@ -54,6 +57,8 @@ def cmd_queue(args) -> int:
             c = info["counts"]
             print(f"{name}: draft={c['draft']} approved={c['approved']} posted={c['posted']} "
                   f"型外={info['type_mismatch']} 次={info['next_file']}（{info['next_publish_at']}）")
+            for rej in info.get("next_rejections") or []:
+                print(f"  いま出ない: {rej['file']} — {rej['reason']}")
     return 0
 
 

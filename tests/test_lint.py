@@ -40,10 +40,22 @@ def test_媒体の節が無いのを名指しする(isolated_account, tmp_path):
 
 
 def test_501字を名指しする(isolated_account, tmp_path):
-    body = "## threads\n\n" + ("あ" * 500) + "\n"
+    # 文字数は前後の空白を落とした本文そのもの（末尾改行は数えない・T1 検収
+    # 2026-09-09 で確定）。501 字は通常文字だけで作る。
+    body = "## threads\n\n" + ("あ" * 501) + "\n"
     path = write_queue_file(str(tmp_path), "bad.md", body=body)
     errors = lint_mod.lint_file(path)
     assert any(e.startswith("length:") and "501" in e for e in errors)
+
+
+def test_450字を超えたら警告するが落とさない(isolated_account, tmp_path):
+    body = "## threads\n\n" + ("あ" * 451) + "\n"
+    path = write_queue_file(str(tmp_path), "bad.md", body=body)
+    errors = lint_mod.lint_file(path)
+    warnings = [e for e in errors if lint_mod.is_warning(e)]
+    real_errors = [e for e in errors if not lint_mod.is_warning(e)]
+    assert any("451" in w for w in warnings)
+    assert real_errors == []
 
 
 def test_statusが未知の語なのを名指しする(isolated_account, tmp_path):

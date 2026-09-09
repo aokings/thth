@@ -48,7 +48,7 @@ class ThreadsAdapter(base.Adapter):
         dry_run にも対応しておく）。"""
         ts = jst.iso()
         if dry_run:
-            return base.PublishResult(post_id=None, url=None, ts=ts, error=None)
+            return base.PublishResult(post_id=None, url=None, ts=ts, error=None, failure="none")
 
         params = {
             "media_type": "TEXT",
@@ -58,18 +58,23 @@ class ThreadsAdapter(base.Adapter):
         if post.reply_to:
             params["reply_to_id"] = post.reply_to
 
+        # コンテナ作成の失敗はどんな理由でも「公開の呼び出しに到達していない」＝
+        # 出ていない（設計 §3.5 の表）。
         try:
             create = self._post(f"/{self.user_id}/threads", params)
         except urllib.error.HTTPError as e:
             return base.PublishResult(None, None, ts,
-                                       error=redact_mod.redact(f"container作成失敗: {e.code} {e.reason}"))
+                                       error=redact_mod.redact(f"container作成失敗: {e.code} {e.reason}"),
+                                       failure="container")
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             return base.PublishResult(None, None, ts,
-                                       error=redact_mod.redact(f"container作成失敗: {e}"))
+                                       error=redact_mod.redact(f"container作成失敗: {e}"),
+                                       failure="container")
 
         creation_id = create.get("id")
         if not creation_id:
-            return base.PublishResult(None, None, ts, error="container作成失敗: id無し")
+            return base.PublishResult(None, None, ts, error="container作成失敗: id無し",
+                                       failure="container")
 
         if on_container_created:
             on_container_created(creation_id)
@@ -77,22 +82,30 @@ class ThreadsAdapter(base.Adapter):
         if self.wait_seconds:
             time.sleep(self.wait_seconds)
 
+        # 公開の失敗は「出ていない」（HTTP 4xx）と「分からない」（timeout・接続断・
+        # 5xx・200 だが id 無し）に分かれる（設計 §3.5 の表）。この判定は媒体固有の
+        # 知識（HTTP 状態番号の意味）なので、ここ（アダプタ）に閉じる（§3.4）。
         try:
             publish = self._post(f"/{self.user_id}/threads_publish", {
                 "creation_id": creation_id,
                 "access_token": self.access_token,
             })
         except urllib.error.HTTPError as e:
+            failure = "publish_definite" if 400 <= e.code < 500 else "publish_ambiguous"
             return base.PublishResult(None, None, ts,
-                                       error=redact_mod.redact(f"公開失敗: {e.code} {e.reason}"))
+                                       error=redact_mod.redact(f"公開失敗: {e.code} {e.reason}"),
+                                       failure=failure)
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             return base.PublishResult(None, None, ts,
-                                       error=redact_mod.redact(f"公開失敗: {e}"))
+                                       error=redact_mod.redact(f"公開失敗: {e}"),
+                                       failure="publish_ambiguous")
 
         post_id = publish.get("id")
         if not post_id:
-            return base.PublishResult(None, None, ts, error="公開失敗: id無し")
-        return base.PublishResult(post_id=post_id, url=None, ts=ts, error=None)
+            # 200 だが id が無い＝サーバ側で成立した可能性を排除できない＝分からない。
+            return base.PublishResult(None, None, ts, error="公開失敗: id無し",
+                                       failure="publish_ambiguous")
+        return base.PublishResult(post_id=post_id, url=None, ts=ts, error=None, failure="none")
 
     def replies(self, post_id, *, since=None):
         raise NotImplementedError("T1 の範囲外（T3 で実装）")

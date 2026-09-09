@@ -1,5 +1,8 @@
 """偽 API（`http.server`）で 6 種（発注 §5 受け入れ 10）: 正常／コンテナ作成が 4xx／
 公開が 5xx／429／timeout／公開に成功した直後にプロセスを落とす（次回 inflight で停止）。
+T1 検収 2026-09-09 の差し戻しで、失敗の三分類（設計 §3.5）を確かめる 2 本を追加した:
+「公開が timeout → inflight が残り exit 1 → 次の実行も inflight で止まる」
+「公開が 4xx → inflight が消えて exit 1 → 次の実行は普通に選び直せる」。
 
 本物の Threads API には触らない。`ThreadsAdapter.base_url` を差し替えて、自前の
 偽サーバにだけ向ける。
@@ -17,6 +20,7 @@ import pytest
 
 from tests.conftest import run_thth, write_queue_file
 from thth import accounts as accounts_mod
+from thth import core
 from thth import inflight as inflight_mod
 from thth.adapters import base as adapter_base
 from thth.adapters import threads as threads_mod
@@ -172,3 +176,57 @@ def test_6_公開成功直後の中断は次回inflightで停止する(isolated_
     with open(path, encoding="utf-8") as f:
         text = f.read()
     assert "status: approved" in text
+
+
+def test_7_公開がtimeoutならinflightが残り次回も止まる(isolated_account_factory):
+    """出たか分からない失敗（timeout）は inflight を消さない（設計 §3.5・差し戻し 1
+    件目）。消すと次の毎時実行が同じファイルをもう一度選び直して二重投稿になる。"""
+    account = isolated_account_factory(production=True)
+    write_queue_file(account["queue_dir"], "a.md")
+    state_dir = accounts_mod.state_dir_for(account["name"])
+
+    with fake_threads_server({"create": "ok", "publish": "ok", "publish_delay": 3}) as base_url:
+        def factory(_cfg, _token):
+            return _adapter(base_url, timeout=0.5)
+
+        result = core.throw_once(account["name"], production_flag=True, adapter_factory=factory)
+        assert result.exit_code == 1
+        assert result.action == "inflight"
+
+        left = inflight_mod.read(state_dir)
+        assert left is not None
+        assert left.get("file") == os.path.join(account["queue_dir"], "a.md")
+
+        # 次の実行は inflight を見て、select をやり直さずに何もしないで exit 1。
+        result2 = core.throw_once(account["name"], production_flag=True, adapter_factory=factory)
+    assert result2.exit_code == 1
+    assert result2.action == "inflight"
+    assert inflight_mod.read(state_dir) is not None  # 消えていない
+
+    # front-matter も書き換わっていない（二重投稿していない証拠）。
+    path = os.path.join(account["queue_dir"], "a.md")
+    with open(path, encoding="utf-8") as f:
+        assert "status: approved" in f.read()
+
+
+def test_8_公開が4xxならinflightが消えて次回は普通に選び直せる(isolated_account_factory):
+    """出ていないと分かる失敗（HTTP 4xx）は inflight を消してよい（設計 §3.5）。"""
+    account = isolated_account_factory(production=True)
+    write_queue_file(account["queue_dir"], "a.md")
+    state_dir = accounts_mod.state_dir_for(account["name"])
+
+    with fake_threads_server({"create": "ok", "publish": "4xx"}) as base_url:
+        def factory(_cfg, _token):
+            return _adapter(base_url)
+
+        result = core.throw_once(account["name"], production_flag=True, adapter_factory=factory)
+
+    assert result.exit_code == 1
+    assert result.action == "post"
+    assert inflight_mod.read(state_dir) is None  # 消えている
+
+    # 次の実行は inflight に阻まれず、select が同じファイルを普通に選び直せる
+    # （dry-run で確認。承認 gate 等の他条件はそのまま生きている）。
+    result2 = core.throw_once(account["name"], production_flag=False)
+    assert result2.action != "inflight"
+    assert result2.file == os.path.join(account["queue_dir"], "a.md")

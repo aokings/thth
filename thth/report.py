@@ -13,37 +13,44 @@ from . import select as select_mod
 STATUS_KEYS = ("draft", "approved", "posted", "withdrawn")
 
 
-def _peek_next(files, account_name: str):
-    """「次に出るのは何か・いつか」の案内。select_one と違い、いま出せるか
-    （静かな時間帯・最短間隔・文字数・重複等）は見ない。approved かつ post_id 無し
-    かつ publish_at が正しい形式のものの中で最も早い 1 件を「次の予定」として返す。
+def _next_via_select_one(files, *, account_name: str, account_cfg: dict, now):
+    """「次に出るのは何か・いつか」を `select.select_one()` に寄せて計算する
+    （食い違い 7 の裁定・2026-09-09。以前は別ロジックで、同じ答えを 2 か所で
+    計算するとずれるため一本化した）。**いま出せるか**（静かな時間帯・最短間隔・
+    文字数・重複等）まで込みで判定する。選ばれなかった候補の理由
+    （`quiet_hours`・`min_interval`・`future` 等）も併記して返す（他アカウントの
+    ファイル由来の `account_mismatch` はノイズなので除く）。
     """
-    candidates = []
-    for qf in files:
-        if qf.malformed:
-            continue
-        fm = qf.front_matter
-        if fm.get("account") != account_name or fm.get("post_id"):
-            continue
-        if fm.get("status") != "approved":
-            continue
-        publish_at_raw = fm.get("publish_at")
-        if not publish_at_raw or "+09:00" not in publish_at_raw:
-            continue
+    last_at = core.last_post_at(files, account_name)
+    recent_texts = select_mod.recent_posted_texts(
+        files, account_name=account_name, media=account_cfg["media"], now=now)
+    result = select_mod.select_one(
+        files, account_name=account_name, account_cfg=account_cfg,
+        now=now, last_post_at=last_at, recent_texts=recent_texts)
+
+    next_file = None
+    next_at = None
+    if result.chosen is not None:
+        next_file = os.path.basename(result.chosen.path)
+        publish_at_raw = result.chosen.front_matter.get("publish_at")
         try:
-            publish_at = queuefile.parse_publish_at(publish_at_raw)
-        except ValueError:
-            continue
-        candidates.append((publish_at, qf.path))
-    if not candidates:
-        return None, None
-    candidates.sort(key=lambda t: (t[0], os.path.basename(t[1])))
-    publish_at, path = candidates[0]
-    return os.path.basename(path), publish_at.isoformat()
+            next_at = queuefile.parse_publish_at(publish_at_raw).isoformat()
+        except (TypeError, ValueError):
+            next_at = None
+
+    rejections = [
+        {"file": os.path.basename(rej.file), "reason": rej.reason}
+        for rej in result.rejections
+        if rej.reason != "account_mismatch"
+    ]
+    return next_file, next_at, rejections
 
 
-def queue_summary(account_name: str | None) -> dict:
-    """draft/approved/posted/型外 を数え、次に出るものと時刻を返す（アカウント別）。"""
+def queue_summary(account_name: str | None, now=None) -> dict:
+    """draft/approved/posted/型外 を数え、次に出るものと時刻を返す（アカウント別）。
+
+    `now` はテスト用の時刻注入（省略時は `jst.now_jst()`）。
+    """
     names = [account_name] if account_name else accounts_mod.list_account_names()
     out: dict = {}
     for name in names:
@@ -64,12 +71,15 @@ def queue_summary(account_name: str | None) -> dict:
             status = qf.front_matter.get("status")
             if status in counts:
                 counts[status] += 1
-        next_file, next_at = _peek_next(files, name)
+        now_val = now if now is not None else jst.now_jst()
+        next_file, next_at, next_rejections = _next_via_select_one(
+            files, account_name=name, account_cfg=account_cfg, now=now_val)
         out[name] = {
             "counts": counts,
             "type_mismatch": type_mismatch,
             "next_file": next_file,
             "next_publish_at": next_at,
+            "next_rejections": next_rejections,
         }
     return out
 
