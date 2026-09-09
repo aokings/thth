@@ -1,0 +1,22 @@
+{
+  "account": "masaru-threads",
+  "project": "masaru",
+  "media": "threads",
+  "handle": "aoking",
+  "user_id": "",
+  "redirect_uri": "https://thth.me/",
+  "repo_dir": "$THTH_ROOT/repos/_none",
+  "queue_dir": "queue",
+  "replies_dir": "replies",
+  "quiet_hours": ["23:00", "07:00"],
+  "min_interval_hours": 0,
+  "collect_days": 14,
+  "hashtags": true,
+  "stale_days": 7,
+  "env": "~/.config/thth/masaru-threads.env",
+  "token": "~/.config/thth/masaru-threads.token",
+  "ping": "wrapper",
+  "timeout": 300,
+  "dry_run_env": "THTH_DRY_RUN",
+  "production": false
+}
