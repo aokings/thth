@@ -141,19 +141,22 @@ def select_one(files, *, account_name: str, account_cfg: dict,
     if not candidates:
         return SelectResult(None, rejections, type_mismatch, needs_review)
 
-    # 6. 静かな時間帯 → 全部落とす
-    if not bypass_pace and in_quiet_hours(now, account_cfg["quiet_hours"]):
-        for qf, _ in candidates:
-            rejections.append(Rejection(qf.path, "quiet_hours"))
-        return SelectResult(None, rejections, type_mismatch, needs_review)
-
-    # 7. 前回投稿から min_interval_hours 未満 → 全部落とす
-    if not bypass_pace and last_post_at is not None:
-        min_interval = datetime.timedelta(hours=account_cfg["min_interval_hours"])
-        if now - last_post_at < min_interval:
-            for qf, _ in candidates:
-                rejections.append(Rejection(qf.path, "min_interval"))
-            return SelectResult(None, rejections, type_mismatch, needs_review)
+    # 6・7（静かな時間帯・最短間隔＝「いま出せるか」）は、8 以降（内容・承認の
+    # 妥当性）とは**別の軸**として扱う（外部レビュー再々レビュー P2・3）。
+    #
+    # 以前はここで静かな時間帯・最短間隔を先に見て、全滅していれば即 return して
+    # いた。そのため `approval_stale`（承認後に本文・account 等が書き換わった）
+    # などの内容診断が、静かな時間帯にはまったく走らなかった——board の実行時刻
+    # （06:20 JST）がちょうど静かな時間帯（22:00〜07:00）の中に入っているため、
+    # 「朝に見る画面が、朝には必ず何も出さない」という事故になっていた
+    # （`needs_review`・`approval_stale_count` が時刻に依存してしまう）。
+    #
+    # ここでは先に 8 以降の妥当性検査を**全候補について**行い、`needs_review` と
+    # `rejections`（内容起因の理由）を時刻に関係なく確定させる。**そのあとで**
+    # 静かな時間帯・最短間隔を見て、妥当性を通った候補（survivors）から実際に
+    # 選ぶかどうかだけを決める（pacing は「いま出すかどうか」だけを決める）。
+    # 静かな時間帯には出さない、という既存の挙動そのものは変えない
+    # （`chosen` は引き続き None になる）。
 
     survivors = []
     media = account_cfg["media"]
@@ -222,6 +225,21 @@ def select_one(files, *, account_name: str, account_cfg: dict,
 
     if not survivors:
         return SelectResult(None, rejections, type_mismatch, needs_review)
+
+    # 6. 静かな時間帯 → 妥当性を通った候補（survivors）を全部落とす（出せる時刻
+    # ではない、というだけ。妥当性の診断はすでに確定しているので変えない）。
+    if not bypass_pace and in_quiet_hours(now, account_cfg["quiet_hours"]):
+        for qf, _publish_at, _section in survivors:
+            rejections.append(Rejection(qf.path, "quiet_hours"))
+        return SelectResult(None, rejections, type_mismatch, needs_review)
+
+    # 7. 前回投稿から min_interval_hours 未満 → 同じく妥当性を通った候補を全部落とす
+    if not bypass_pace and last_post_at is not None:
+        min_interval = datetime.timedelta(hours=account_cfg["min_interval_hours"])
+        if now - last_post_at < min_interval:
+            for qf, _publish_at, _section in survivors:
+                rejections.append(Rejection(qf.path, "min_interval"))
+            return SelectResult(None, rejections, type_mismatch, needs_review)
 
     survivors.sort(key=lambda t: (t[1], os.path.basename(t[0].path)))
     chosen_qf, _chosen_publish_at, chosen_section = survivors[0]
