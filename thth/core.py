@@ -263,3 +263,115 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
                 status="ok", error=None, topic=topic)
     return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました",
                         file=chosen.path, post_id=post_id)
+
+
+def send_once(account_name: str, *, text: str, topic: str | None = None,
+               reply_to: str | None = None, production_flag: bool = False,
+               adapter_factory=None, log=None, now=None) -> ThrowResult:
+    """`thth send`（**同席の様態**・設計 §3.7）。queue を通さずその場で 1 本出す。
+
+    対話の中で masaru が本文を読んで「出して」と言ったときの経路。承認は既に
+    その場で済んでいるので `status: approved` は要らない。**その代わり、承認の
+    在り処が「masaru が見た本文」なので、渡された text をそのまま投げる**
+    （整形も切り詰めもしない）。
+
+    不在の様態（timer→`throw_once`）との違いは queue と承認だけで、**守りは同じ
+    ものを通る**: ロックは core の入口・inflight・fail-closed（台帳 `production: true`
+    が commit されていなければ dry-run）・runs への記録。
+    """
+    log = log or (lambda line: None)
+    adapter_factory = adapter_factory or _default_adapter_factory
+    run_id = uuid.uuid4().hex[:12]
+
+    account_cfg = accounts_mod.load_account(account_name)
+    state_dir = accounts_mod.state_dir_for(account_name)
+    now = now if now is not None else jst.now_jst()
+
+    account_lock = lock_mod.AccountLock(os.path.join(state_dir, "lock"))
+    try:
+        account_lock.acquire()
+    except lock_mod.LockBusy:
+        msg = f"{account_name} は既に実行中です（ロック取得失敗）"
+        log(msg)
+        return ThrowResult(exit_code=1, mode="rehearsal", action="locked", message=msg)
+
+    try:
+        existing_inflight = inflight_mod.read(state_dir)
+        if existing_inflight is not None:
+            msg = f"inflight が残っています: {existing_inflight.get('file')}"
+            log(msg)
+            return ThrowResult(exit_code=1, mode="rehearsal", action="inflight", message=msg,
+                                file=existing_inflight.get("file"))
+
+        production = bool(account_cfg.get("production")) and production_flag
+        mode = "production" if production else "rehearsal"
+        log(f"mode: {mode}")
+
+        body = (text or "").strip()
+        if not body:
+            log("本文が空です")
+            return ThrowResult(exit_code=2, mode=mode, action="none", message="本文が空です")
+
+        media = account_cfg["media"]
+        limit = queuefile.MEDIA_LIMITS.get(media, 500)
+        n = queuefile.char_count(body)
+        if n > limit:
+            msg = f"長すぎます（{n} 字・上限 {limit} 字）。切り詰めません。"
+            log(msg)
+            _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                        status="error", error=f"too_long({n})")
+            return ThrowResult(exit_code=1, mode=mode, action="skip", message=msg)
+
+        topic_value = queuefile.normalize_topic(topic)
+        if topic_value is not None:
+            topic_err = queuefile.topic_error(topic_value)
+            if topic_err is not None:
+                log(f"トピックが不正です: {topic_err}")
+                _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                            status="error", error=topic_err)
+                return ThrowResult(exit_code=1, mode=mode, action="skip", message=topic_err)
+
+        if mode == "rehearsal":
+            log("投げるはずの本文:")
+            log(body)
+            if topic_value:
+                log(f"トピック: {topic_value}")
+            _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                        status="ok", error=None)
+            return ThrowResult(exit_code=0, mode=mode, action="skip",
+                                message="dry-run: 投げるはずの本文をログに出した")
+
+        inflight_mod.write(state_dir, file="(send)", started=jst.iso(), container_id=None)
+        token = accounts_mod.load_token(account_cfg)
+        adapter = adapter_factory(account_cfg, token)
+        post = adapter_base.Post(text=body, reply_to=reply_to or None, topic=topic_value)
+
+        def on_container_created(container_id):
+            inflight_mod.update(state_dir, container_id=container_id)
+
+        result = adapter.publish(post, dry_run=False, on_container_created=on_container_created)
+
+        if result.error or not result.post_id:
+            err = redact_mod.redact(result.error or "不明なエラー")
+            log(f"公開失敗: {err}")
+            if result.failure == "publish_ambiguous":
+                # 出たか分からない → inflight を残して人を呼ぶ（§3.5）
+                msg = "公開の結果が分からないので inflight を残します"
+                log(msg)
+                _append_run(state_dir, account_name, run_id, mode, "post", None, None, now,
+                            status="error", error=err)
+                return ThrowResult(exit_code=1, mode=mode, action="inflight", message=msg, error=err)
+            inflight_mod.clear(state_dir)
+            _append_run(state_dir, account_name, run_id, mode, "post", None, None, now,
+                        status="error", error=err)
+            return ThrowResult(exit_code=1, mode=mode, action="post",
+                                message="公開に失敗しました", error=err)
+
+        inflight_mod.clear(state_dir)
+        _append_run(state_dir, account_name, run_id, mode, "post", None, result.post_id, now,
+                    status="ok", error=None)
+        log(f"投稿しました: post_id={result.post_id}")
+        return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました",
+                            post_id=result.post_id)
+    finally:
+        account_lock.release()

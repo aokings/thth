@@ -101,6 +101,26 @@ def cmd_auth(args) -> int:
     return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code)
 
 
+def cmd_send(args) -> int:
+    """`thth send`（同席の様態・§3.7）。本文はファイルか標準入力から受ける。
+
+    **本文をコマンドライン引数で受けない**: シェルの履歴に残り、引用の扱いで
+    本文が変わりうる。「masaru が見た本文がそのまま出る」を守るため、
+    ファイル（`--text-file`）か標準入力だけにする。
+    """
+    import sys as _sys
+    from . import core as core_mod
+    if args.text_file:
+        with open(args.text_file, encoding="utf-8") as f:
+            text = f.read()
+    else:
+        text = _sys.stdin.read()
+    result = core_mod.send_once(
+        args.account, text=text, topic=args.topic, reply_to=args.reply_to,
+        production_flag=args.production, log=print)
+    return result.exit_code
+
+
 def cmd_doctor(args) -> int:
     """`thth doctor`（読み取りだけで能力を測る。副作用を持たない・MCP には出さない）。"""
     from . import accounts as accounts_mod
@@ -180,6 +200,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_refresh.add_argument("--force", action="store_true")
     p_refresh.add_argument("--check", action="store_true", help="更新はせず残日数等をJSONで返す（boardが使う）")
     p_refresh.set_defaults(func=cmd_refresh)
+
+    p_send = sub.add_parser(
+        "send", help="同席の様態: queue を通さずその場で 1 本出す（本文はファイルか標準入力）")
+    p_send.add_argument("account")
+    p_send.add_argument("--text-file", dest="text_file", default=None,
+                        help="本文のファイル。省略時は標準入力から読む")
+    p_send.add_argument("--topic", default=None)
+    p_send.add_argument("--reply-to", dest="reply_to", default=None)
+    p_send.add_argument("--production", action="store_true",
+                        help="本番で出す（台帳 production: true が無ければ dry-run のまま）")
+    p_send.set_defaults(func=cmd_send)
 
     p_doctor = sub.add_parser(
         "doctor", help="そのトークンで実際に何ができるかを読み取りだけで測る（MCPには出さない）")
