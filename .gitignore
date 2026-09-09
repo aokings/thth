@@ -6,3 +6,5 @@ logs/
 state/
 .pytest_cache/
 .claude/worktrees/
+callback/.wrangler/
+callback/node_modules/

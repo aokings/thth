@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "thth-callback",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  // thth.me を Worker の custom domain にする（DNS レコードは wrangler が作る）。
+  "routes": [
+    { "pattern": "thth.me", "custom_domain": true }
+  ],
+  // observability は有効にしない。認可コードはクエリに乗るので、
+  // ログに残す動機を最初から作らない（設計 §3.6 の礼儀と同じ趣旨）。
+  "observability": { "enabled": false }
+}
