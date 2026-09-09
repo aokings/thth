@@ -91,6 +91,17 @@ def cmd_auth(args) -> int:
     return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code)
 
 
+def cmd_doctor(args) -> int:
+    """`thth doctor`（読み取りだけで能力を測る。副作用を持たない・MCP には出さない）。"""
+    from . import accounts as accounts_mod
+    from . import doctor as doctor_mod
+    try:
+        return doctor_mod.run_doctor(args.account, as_json=args.as_json)
+    except accounts_mod.AccountError as e:
+        print(str(e))
+        return 2
+
+
 def cmd_refresh(args) -> int:
     """長期トークンの更新（設計 §2.2・MCP には出さない・§3.7）。"""
     return oauth_mod.run_refresh(args.account, force=args.force, check=args.check)
@@ -158,6 +169,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_refresh.add_argument("--force", action="store_true")
     p_refresh.add_argument("--check", action="store_true", help="更新はせず残日数等をJSONで返す（boardが使う）")
     p_refresh.set_defaults(func=cmd_refresh)
+
+    p_doctor = sub.add_parser(
+        "doctor", help="そのトークンで実際に何ができるかを読み取りだけで測る（MCPには出さない）")
+    p_doctor.add_argument("account")
+    p_doctor.add_argument("--json", action="store_true", dest="as_json")
+    p_doctor.set_defaults(func=cmd_doctor)
 
     p_token = sub.add_parser("token", help="長期トークンを直接扱う（現状 set のみ。MCPには出さない）")
     token_sub = p_token.add_subparsers(dest="token_command", required=True)
