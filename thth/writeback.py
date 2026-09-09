@@ -10,7 +10,9 @@
 無いことがある）は閉じ `---` の直前に追加する。
 
 `sync_repo()`（外部レビュー再レビュー A・2026-09-09）は利用者 repo を select より前に
-同期する。`thth/core.py::_throw_locked()` から呼ばれる。
+同期する。`commit_and_push()` の `validate` 引数（外部レビュー再レビュー B）は
+push の直前・pull --rebase の後にもう一度「送った本文といまの内容が一致するか」を
+確かめる口。どちらも `thth/core.py` から呼ばれる。
 """
 from __future__ import annotations
 
@@ -18,6 +20,16 @@ import os
 import subprocess
 
 from . import redact as redact_mod
+
+
+class PushValidationFailed(Exception):
+    """`commit_and_push()` の `validate` コールバックが不一致を返した。
+
+    pull --rebase の後・push の前に検知したので、push はしていない
+    （commit はローカルに残ったまま。人が手で確認・修正できる状態）。
+    呼び出し側（`thth/core.py`）はこれを捕まえて inflight を残したまま exit 1 で
+    止める（外部レビュー再レビュー B・受け入れ）。
+    """
 
 
 def rewrite_front_matter(path: str, *, status: str, post_id: str | None,
@@ -71,7 +83,7 @@ def _run_git(repo_dir: str, args: list) -> subprocess.CompletedProcess:
     )
 
 
-def commit_and_push(repo_dir: str, *, rel_path: str, message: str) -> tuple:
+def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None) -> tuple:
     """`git add -- <rel_path>` → commit → `pull --rebase --autostash` → push。
 
     衝突したら 1 回だけ pull し直して再 push、それでも駄目なら commit を残して
@@ -81,6 +93,21 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str) -> tuple:
     変更）で rebase 自体が失敗し続ける事故（発注 §5 test_20260901）を避けるため。
     自分たちが今回 add した分は commit 済みなので rebase の対象にならず、
     autostash が退避・復元するのは「関係ない残骸」だけになる。
+
+    `validate`（省略可・外部レビュー再レビュー B）: 引数を取らない callable で、
+    「いまのファイルの本文が送った本文と一致するか」を bool で返す。**pull --rebase
+    が成功するたびに、push の直前に必ず呼ぶ**（再試行のループでも毎回）。
+
+    公開している最中に利用者が別 clone から本文を書き換えて push していると、
+    ここで rebase した直後のファイルには相手の変更が混ざっている。呼び出し側
+    （`core.py`）が渡す `validate` はそれを検知するためのもの。`core.py` 側で
+    push 前に一度だけ行う同種の検査（rebase を経ない・ローカルのファイルに対して
+    行う）だけでは、**rebase の後に remote の変更が入ってくる**ケースを見逃す
+    （外部レビュー再レビュー §「validation occurs before remote changes are
+    incorporated」）。ここで rebase 後の状態をもう一度見ることで、その穴を塞ぐ。
+
+    `validate` が False を返したら `PushValidationFailed` を送出する。push は
+    行わず、commit はローカルに残したまま（手で直せる状態）。
     """
     add = _run_git(repo_dir, ["add", "--", rel_path])
     if add.returncode != 0:
@@ -96,6 +123,10 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str) -> tuple:
         if pull.returncode != 0:
             last_err = pull.stderr
             continue
+        if validate is not None and not validate():
+            raise PushValidationFailed(
+                "pull --rebase のあと、本文が送った内容と食い違うため push しません"
+                "（commit はローカルに残っています。手で確認してください）")
         push = _run_git(repo_dir, ["push"])
         if push.returncode == 0:
             return True, ""

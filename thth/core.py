@@ -313,6 +313,25 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
     return last_result
 
 
+def _section_matches(path: str, media: str, expected_hash: str) -> bool:
+    """`path` の（media の節の）本文がいま `expected_hash`（送った本文の hash）と
+    一致するか（外部レビュー §3・再レビュー B）。ファイルが読めない・節が無い場合は
+    空文字列として扱う（＝一致しないほうに倒す。fail-closed）。
+
+    書き戻し直前（rebase 前・ローカルのファイルに対して）と、`writeback.commit_and_push()`
+    の `validate` コールバック（rebase の後・push の直前）の両方から呼ぶ。前者だけでは
+    「rebase の後に remote の変更が入ってくる」ケースを見逃す（外部レビュー再レビュー
+    §「validation occurs before remote changes are incorporated」）ので、両方が要る。
+    """
+    try:
+        current_qf = queuefile.parse(path)
+        current_section = queuefile.extract_section(current_qf.body, media)
+    except OSError:
+        current_section = None
+    current_hash = approval_mod.compute_body_hash(current_section or "")
+    return current_hash == expected_hash
+
+
 def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, section,
                    now, log, adapter_factory) -> ThrowResult:
     """select_one() が選んだ 1 件を投げる（dry-run ならログに出すだけ）。
@@ -389,14 +408,13 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # 書き換えない・再公開しない・inflight を残したまま exit 1 で止める。post_id が
     # 書かれないので、何もしなければ次の実行が同じファイルをもう一度出そうとする
     # ——それを inflight の残留が防ぐ（次回起動時の inflight チェックに掛かる）。
+    #
+    # **これだけでは足りない**（外部レビュー再レビュー B）: この時点ではまだ
+    # `writeback.commit_and_push()` の `pull --rebase` を経ていないので、ここより
+    # あとに remote から入ってくる変更は見えない。rebase の直後・push の直前に
+    # もう一度同じ照合を行う（下の `validate=` 引数）。
     media = account_cfg["media"]
-    try:
-        current_qf = queuefile.parse(chosen.path)
-        current_section = queuefile.extract_section(current_qf.body, media)
-    except OSError:
-        current_section = None
-    current_hash = approval_mod.compute_body_hash(current_section or "")
-    if current_hash != body_hash:
+    if not _section_matches(chosen.path, media, body_hash):
         msg = (f"送った本文と repo の本文が食い違います（書き戻しません・"
                f"再公開もしません）: {chosen.path}")
         log(msg)
@@ -412,7 +430,25 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     repo_dir = account_cfg["repo_dir"]
     rel_path = os.path.relpath(chosen.path, repo_dir)
     commit_message = f"thth: {account_name} {os.path.basename(chosen.path)} を投稿（post_id {post_id}）"
-    ok, err = writeback.commit_and_push(repo_dir, rel_path=rel_path, message=commit_message)
+
+    def _validate_after_rebase() -> bool:
+        return _section_matches(chosen.path, media, body_hash)
+
+    try:
+        ok, err = writeback.commit_and_push(
+            repo_dir, rel_path=rel_path, message=commit_message,
+            validate=_validate_after_rebase)
+    except writeback.PushValidationFailed as e:
+        msg = str(e)
+        log(msg)
+        _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
+                    status="error", error="text_mismatch_after_rebase")
+        # push していない（commit はローカルに残る）。inflight も消さない
+        # （§3.5 と同じ扱い。次回実行も inflight チェックで止まる・外部レビュー
+        # 再レビュー B の受け入れ）。
+        return ThrowResult(exit_code=1, mode=mode, action="inflight",
+                            message=msg, file=chosen.path, post_id=post_id,
+                            error="text_mismatch_after_rebase")
 
     if not ok:
         log(f"push に失敗しました: {err}")
