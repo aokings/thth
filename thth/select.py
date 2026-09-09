@@ -86,11 +86,62 @@ def select_one(files, *, account_name: str, account_cfg: dict,
                 now: datetime.datetime, last_post_at: datetime.datetime | None,
                 recent_texts: set, bypass_pace: bool = False) -> SelectResult:
     """§3.3 の 11 条件。`bypass_pace=True` は `--now`（静かな時間帯・最短間隔だけ無視。
-    承認 gate は無視しない・§3.7）。"""
+    承認 gate は無視しない・§3.7）。
+
+    段を 2 つに割り、順序を固定する（外部レビュー第 3 巡 P2）:
+
+    1. **妥当性**（`_validate_all()`）: 時刻に一切依存しない。**全ファイルについて
+       必ず計算する**。型外・account 違い・post_id あり・status 違い・
+       approval_stale・節が無い・文字数超過・トピック不正・重複本文・publish_at
+       が壊れている、のどれかに当たれば、ここで理由付きで落とす（`needs_review`・
+       `rejections` は時刻に関係なく確定する）。
+    2. **出せるか**（`_apply_timing_gate()`）: 1 を通った候補にだけ、publish_at が
+       未来か・静かな時間帯か・最短間隔内か・`stale_days` を超えているか、という
+       「いま出すか」の関門を適用する。診断（1）には一切影響しない。
+
+    以前は 1 段目のループの中に `publish_at > now` の `continue` が混ざっていて、
+    未来に予約された承認は**妥当性検査（approval_stale 等）に一度も届かずに**
+    落ちていた。承認後に本文を書き換えても、publish_at が未来である間は
+    `approval_stale` が見えない——board の実行時刻によって「見える／見えない」が
+    変わる事故だった（外部レビュー第 3 巡 P2）。段を分けて順序を固定することで、
+    diagnostics が時刻の関門より先に必ず走るようにする。
+
+    **1 の前に時刻を見る条件を足さないこと。** 1 段目（`_validate_all()`）に
+    `now` を渡していないのは事故ではない——渡せば「時刻を見る条件」を書ける
+    余地ができてしまい、同じ穴がまた開く。時刻に関わる判定は必ず 2 段目
+    （`_apply_timing_gate()`）に書く。
+    """
+    validated, rejections, type_mismatch, needs_review = _validate_all(
+        files, account_name=account_name, account_cfg=account_cfg,
+        recent_texts=recent_texts)
+
+    if not validated:
+        return SelectResult(None, rejections, type_mismatch, needs_review)
+
+    return _apply_timing_gate(
+        validated, rejections=rejections, type_mismatch=type_mismatch,
+        needs_review=needs_review, account_cfg=account_cfg, now=now,
+        last_post_at=last_post_at, bypass_pace=bypass_pace)
+
+
+def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: set):
+    """妥当性検査（時刻に一切依存しない・全ファイルについて必ず計算する）。
+
+    `now` を引数に取らない。ここに時刻を見る条件を足すと、1 段目で候補が
+    落ちて 2 段目（時刻の関門）に届かなくなる——それが今回の穴の形そのもの
+    なので、この関数のシグネチャで物理的に塞ぐ。
+
+    戻り値: `(validated, rejections, type_mismatch, needs_review)`。
+    `validated` は `(qf, publish_at, section)` のリスト（publish_at はまだ
+    「未来かどうか」を判定していない・型として妥当なだけ）。
+    """
     rejections: list[Rejection] = []
     type_mismatch: list = []
     needs_review: list = []
-    candidates = []
+    validated = []
+
+    media = account_cfg["media"]
+    hashtags_allowed = bool(account_cfg.get("hashtags", True))
 
     for qf in files:
         fm = qf.front_matter
@@ -116,7 +167,8 @@ def select_one(files, *, account_name: str, account_cfg: dict,
             rejections.append(Rejection(path, "not_approved"))
             continue
 
-        # 5. publish_at 未来／+09:00 無し／壊れた文字列
+        # 5. publish_at の型（+09:00 無し／壊れた文字列）。「未来かどうか」は
+        # ここでは見ない（時刻の関門は 2 段目・`_apply_timing_gate()`）。
         # `rejections` にも積む（`type_mismatch`・`needs_review` だけだと board が
         # 「なぜ要確認か」を機械可読な理由付きで拾えない・外部レビュー再レビュー C）。
         publish_at_raw = fm.get("publish_at")
@@ -132,93 +184,87 @@ def select_one(files, *, account_name: str, account_cfg: dict,
             needs_review.append(path)
             rejections.append(Rejection(path, "publish_at_invalid"))
             continue
-        if publish_at > now:
-            rejections.append(Rejection(path, "future"))
-            continue
 
-        candidates.append((qf, publish_at))
-
-    if not candidates:
-        return SelectResult(None, rejections, type_mismatch, needs_review)
-
-    # 6・7（静かな時間帯・最短間隔＝「いま出せるか」）は、8 以降（内容・承認の
-    # 妥当性）とは**別の軸**として扱う（外部レビュー再々レビュー P2・3）。
-    #
-    # 以前はここで静かな時間帯・最短間隔を先に見て、全滅していれば即 return して
-    # いた。そのため `approval_stale`（承認後に本文・account 等が書き換わった）
-    # などの内容診断が、静かな時間帯にはまったく走らなかった——board の実行時刻
-    # （06:20 JST）がちょうど静かな時間帯（22:00〜07:00）の中に入っているため、
-    # 「朝に見る画面が、朝には必ず何も出さない」という事故になっていた
-    # （`needs_review`・`approval_stale_count` が時刻に依存してしまう）。
-    #
-    # ここでは先に 8 以降の妥当性検査を**全候補について**行い、`needs_review` と
-    # `rejections`（内容起因の理由）を時刻に関係なく確定させる。**そのあとで**
-    # 静かな時間帯・最短間隔を見て、妥当性を通った候補（survivors）から実際に
-    # 選ぶかどうかだけを決める（pacing は「いま出すかどうか」だけを決める）。
-    # 静かな時間帯には出さない、という既存の挙動そのものは変えない
-    # （`chosen` は引き続き None になる）。
-
-    survivors = []
-    media = account_cfg["media"]
-    stale_days = account_cfg.get("stale_days", 7)
-    hashtags_allowed = bool(account_cfg.get("hashtags", True))
-
-    for qf, publish_at in candidates:
-        fm = qf.front_matter
-
-        # 8. 媒体の節が無い／文字数超過
+        # 6. 媒体の節が無い／文字数超過
         section = queuefile.extract_section(qf.body, media)
         if section is None:
-            rejections.append(Rejection(qf.path, "no_section"))
+            rejections.append(Rejection(path, "no_section"))
             continue
 
-        # 8b. 承認を「見た本文」に結び付ける（外部レビュー §1・受け入れ 1〜4）。
+        # 6b. 承認を「見た本文」に結び付ける（外部レビュー §1・受け入れ 1〜4）。
         # `status: approved` だけでは、承認したあとに本文・account・reply_to・
         # topic・publish_at を書き換えても検知できない。approved_sha が無い・
         # いまの内容と食い違う場合は「承認が古い」として落とし、needs_review にも
         # 入れる（黙って出さない・黙って通さない）。post_id を書く THTH 自身の
         # 書き戻し（status: posted にする）はこの検査より前（条件 1）で候補から
-        # 落ちているので、ここで詰まることはない。
+        # 落ちているので、ここで詰まることはない。**publish_at が未来でもここまで
+        # 必ず届く**（時刻の関門より前・外部レビュー第 3 巡 P2）。
         approved_sha = fm.get("approved_sha")
         expected_sha = approval_mod.compute_approved_sha(
             section=section, account=account_name, reply_to=fm.get("reply_to"),
             topic=fm.get("topic"), publish_at=publish_at)
         if not approved_sha or approved_sha != expected_sha:
-            rejections.append(Rejection(qf.path, "approval_stale"))
-            needs_review.append(qf.path)
+            rejections.append(Rejection(path, "approval_stale"))
+            needs_review.append(path)
             continue
 
         limit = queuefile.MEDIA_LIMITS.get(media, 500)
         n = queuefile.char_count(section)
         if n > limit:
-            rejections.append(Rejection(qf.path, f"too_long({n})"))
+            rejections.append(Rejection(path, f"too_long({n})"))
             continue
 
-        # 9. hashtags: false なのに `#` 語がある
+        # 7. hashtags: false なのに `#` 語がある
         if not hashtags_allowed and queuefile.has_hashtag(section):
-            rejections.append(Rejection(qf.path, "hashtag"))
+            rejections.append(Rejection(path, "hashtag"))
             continue
 
-        # 9b. topic（`topic_tag`）が検査に落ちる（T2c・設計 §2.2・masaru 裁定
-        # 2026-09-09: 全アカウントで使う）。省略・空はスキップ（許す）。条件 8・9 と
+        # 7b. topic（`topic_tag`）が検査に落ちる（T2c・設計 §2.2・masaru 裁定
+        # 2026-09-09: 全アカウントで使う）。省略・空はスキップ（許す）。条件 6・7 と
         # 同じ流儀: 切り詰めない・勝手に外さない。落として理由を runs に残す
         # （core._is_error_reason() が `topic_` 始まりを実エラーとして拾う）。
         topic = queuefile.normalize_topic(fm.get("topic"))
         if topic is not None:
             topic_err = queuefile.topic_error(topic)
             if topic_err is not None:
-                rejections.append(Rejection(qf.path, topic_err))
+                rejections.append(Rejection(path, topic_err))
                 continue
 
-        # 10. publish_at から stale_days 超
+        # 8. 直近 30 日の投稿済み本文と完全一致
+        if section.strip() in recent_texts:
+            rejections.append(Rejection(path, "duplicate_text"))
+            continue
+
+        validated.append((qf, publish_at, section))
+
+    return validated, rejections, type_mismatch, needs_review
+
+
+def _apply_timing_gate(validated, *, rejections: list, type_mismatch: list,
+                        needs_review: list, account_cfg: dict,
+                        now: datetime.datetime,
+                        last_post_at: datetime.datetime | None,
+                        bypass_pace: bool) -> SelectResult:
+    """「いま出せるか」だけを決める（診断にはもう影響しない）。
+
+    `_validate_all()` を通った候補（`validated`）にだけ適用する。ここで落ちても
+    `needs_review`／`rejections` には（`stale` を除いて）積まない——妥当性の
+    診断は 1 段目で確定済みで、ここは純粋にタイミングの話だから。
+    """
+    stale_days = account_cfg.get("stale_days", 7)
+    survivors = []
+
+    for qf, publish_at, section in validated:
+        # 9. publish_at が未来 → 出せる時刻ではない（診断には影響しない）
+        if publish_at > now:
+            rejections.append(Rejection(qf.path, "future"))
+            continue
+
+        # 10. publish_at から stale_days 超 → 時刻に依存するのでここに置くが、
+        # 要確認としては出す（現行どおり）。
         if now - publish_at > datetime.timedelta(days=stale_days):
             rejections.append(Rejection(qf.path, "stale"))
             needs_review.append(qf.path)
-            continue
-
-        # 11. 直近 30 日の投稿済み本文と完全一致
-        if section.strip() in recent_texts:
-            rejections.append(Rejection(qf.path, "duplicate_text"))
             continue
 
         survivors.append((qf, publish_at, section))
@@ -226,14 +272,14 @@ def select_one(files, *, account_name: str, account_cfg: dict,
     if not survivors:
         return SelectResult(None, rejections, type_mismatch, needs_review)
 
-    # 6. 静かな時間帯 → 妥当性を通った候補（survivors）を全部落とす（出せる時刻
+    # 11. 静かな時間帯 → 妥当性を通った候補（survivors）を全部落とす（出せる時刻
     # ではない、というだけ。妥当性の診断はすでに確定しているので変えない）。
     if not bypass_pace and in_quiet_hours(now, account_cfg["quiet_hours"]):
         for qf, _publish_at, _section in survivors:
             rejections.append(Rejection(qf.path, "quiet_hours"))
         return SelectResult(None, rejections, type_mismatch, needs_review)
 
-    # 7. 前回投稿から min_interval_hours 未満 → 同じく妥当性を通った候補を全部落とす
+    # 12. 前回投稿から min_interval_hours 未満 → 同じく妥当性を通った候補を全部落とす
     if not bypass_pace and last_post_at is not None:
         min_interval = datetime.timedelta(hours=account_cfg["min_interval_hours"])
         if now - last_post_at < min_interval:
