@@ -204,6 +204,22 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
 
     now = now if now is not None else jst.now_jst()
 
+    # 利用者 repo を select より前に同期する（設計 §3.3・外部レビュー再レビュー A）。
+    # repo ロック・account ロックの中・inflight 確認の後・queue を読む前。失敗したら
+    # 投稿しない（続行不能。前回の書き戻しが中断して push できなかった local commit
+    # が残っている場合ここで --ff-only が失敗しうる。通常は inflight が残っていて
+    # 手前で止まるが、万一 inflight が無くてもここで止める）。repo を持たない
+    # アカウント（`masaru-threads` の `repos/_none`）・git repo でない・origin が
+    # 無い場合は何もせず成功扱い（`writeback.sync_repo()` の docstring 参照）。
+    synced, sync_err = writeback.sync_repo(account_cfg.get("repo_dir"))
+    if not synced:
+        msg = f"利用者 repo の同期に失敗しました（投稿しません）: {sync_err}"
+        log(msg)
+        _append_run(state_dir, account_name, run_id, mode, "none", None, None, now,
+                    status="error", error="repo_sync_failed: " + (sync_err or ""))
+        return ThrowResult(exit_code=2, mode=mode, action="none", message=msg,
+                            error="repo_sync_failed")
+
     # 1 実行で出す本数（台帳 max_per_run・既定 1・設計 §3.3／§3.6・masaru 指摘
     # 2026-09-09）。**1 本ごとに select をやり直す**（前の投稿が次の select の
     # last_post_at に効く）。したがって min_interval_hours が 0 より大きければ、

@@ -8,9 +8,13 @@
 もっと汎用の書き換えで、任意のキーを書ける。既存のキーは値だけ差し替え、front-matter
 に無いキー（`approved_sha`・`approved_at` は新しい schema なので既存ファイルには
 無いことがある）は閉じ `---` の直前に追加する。
+
+`sync_repo()`（外部レビュー再レビュー A・2026-09-09）は利用者 repo を select より前に
+同期する。`thth/core.py::_throw_locked()` から呼ばれる。
 """
 from __future__ import annotations
 
+import os
 import subprocess
 
 from . import redact as redact_mod
@@ -99,3 +103,46 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str) -> tuple:
 
     msg = "push に失敗しました（commit は残っています。手で push してください）: " + redact_mod.redact(last_err)
     return False, msg
+
+
+def sync_repo(repo_dir: str) -> tuple:
+    """利用者 repo を select より前に同期する（設計 §3.3・外部レビュー再レビュー A）。
+
+    `git fetch` ＋ `git pull --ff-only`（merge commit を作らない）相当。設計は
+    「pull(利用者 repo) → inflight 確認 → queue を読む」の順だったが、実装（`core.py`・
+    `cli.py`）のどこにも利用者 repo を pull する処理が無く、timer が clone した
+    時点の内容を永久に見てしまっていた（承認しても撤回しても届かない）。
+
+    `thth/core.py::_throw_locked()` が repo ロックの中・inflight 確認の後・
+    queue を読む前に呼ぶ。**失敗したら投稿しない**（呼び出し側が続行不能として
+    扱う）。前回の書き戻しが中断して push できていないローカル commit が残っている
+    場合、`--ff-only` はここで失敗する（fast-forward できない）——通常は inflight が
+    残っていて手前で止まるはずだが、万一 inflight が無い状態でここに来ても、同期
+    失敗として扱い投稿しない。
+
+    次の場合は「同期の必要が無い」として何もせず成功扱いにする（壊れないことを
+    優先する）:
+      - `repo_dir` が存在しない（例: `masaru-threads` の `repos/_none`。この
+        アカウントは `thth send` だけを使い、queue を読まないので同期は元々不要）
+      - `repo_dir` が git repo ではない（`.git` が無い）
+      - `origin` という remote が無い
+
+    `thth send`（同席の様態）は queue を読まないのでこの関数を呼ばない。
+    """
+    if not repo_dir or not os.path.isdir(repo_dir):
+        return True, ""
+    if not os.path.exists(os.path.join(repo_dir, ".git")):
+        return True, ""
+    remote = _run_git(repo_dir, ["remote"])
+    if remote.returncode != 0 or "origin" not in remote.stdout.split():
+        return True, ""
+
+    fetch = _run_git(repo_dir, ["fetch", "origin"])
+    if fetch.returncode != 0:
+        return False, "git fetch に失敗しました: " + redact_mod.redact(fetch.stderr)
+
+    pull = _run_git(repo_dir, ["pull", "--ff-only"])
+    if pull.returncode != 0:
+        return False, "git pull --ff-only に失敗しました: " + redact_mod.redact(pull.stderr)
+
+    return True, ""
