@@ -6,6 +6,7 @@ import os
 from . import accounts as accounts_mod
 from . import core
 from . import inflight as inflight_mod
+from . import maintain as maintain_mod
 from . import jst
 from . import queuefile
 from . import select as select_mod
@@ -134,6 +135,7 @@ def board_summary() -> dict:
         inflight = inflight_mod.read(state_dir)
         needs_review = _needs_review_detail(
             files, account_name=name, account_cfg=account_cfg, now=now)
+        token_row = maintain_mod.inspect(name, now=now)
         approval_stale_count = sum(1 for item in needs_review if item["reason"] == "approval_stale")
         accounts_out.append({
             "account": name,
@@ -151,5 +153,10 @@ def board_summary() -> dict:
             "inflight_mismatch_fields": inflight.get("mismatch_fields") if inflight else None,
             "needs_review": needs_review,
             "approval_stale_count": approval_stale_count,
+            # トークンの状態（`thth maintain` と同じ判定・読むだけで何も更新しない）。
+            # 60 日の時限は投稿の可否と無関係に進むので、board に常に出す。
+            # 値（access_token）には触れない——残り日数と状態だけ。
+            "token_state": token_row["state"],
+            "token_remaining_days": token_row["remaining_days"],
         })
     return {"accounts": accounts_out, "generated_at": jst.iso()}

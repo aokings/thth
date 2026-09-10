@@ -306,7 +306,8 @@ def _parse_obtained_at(token: dict):
     return datetime.datetime.fromisoformat(raw)
 
 
-def _age_and_remaining(token: dict, now):
+def token_age_and_remaining(token: dict, now):
+    """`(経過秒, 残り日数)` を返す。`thth maintain` からも使う（公開の口）。"""
     obtained_at = _parse_obtained_at(token)
     age_seconds = (now - obtained_at).total_seconds()
     expires_in = token.get("expires_in") or DEFAULT_TOKEN_LIFETIME_SECONDS
@@ -334,7 +335,7 @@ def run_refresh(account_name: str, *, force: bool = False, check: bool = False,
     secrets_fs.ensure_mode_600(account_cfg["token"], log=lambda line: _out(line, log=log))
 
     try:
-        age_seconds, remaining_days = _age_and_remaining(token, now)
+        age_seconds, remaining_days = token_age_and_remaining(token, now)
     except OAuthError as e:
         _out(str(e), log=log)
         return 1

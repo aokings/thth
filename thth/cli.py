@@ -16,6 +16,7 @@ from . import approval as approval_mod
 from . import core
 from . import jst
 from . import lint as lint_mod
+from . import maintain as maintain_mod
 from . import oauth as oauth_mod
 from . import queuefile
 from . import report as report_mod
@@ -182,7 +183,12 @@ def cmd_throw(args) -> int:
 
 
 def cmd_run(args) -> int:
-    """timer が呼ぶ形（throw ＋ T3 の collect ＋ T4 の refresh。T1 は throw だけ）。
+    """timer が呼ぶ形（throw ＋ T3 の collect。T1 は throw だけ）。
+
+    **トークンの更新はここでは行わない**（`thth maintain` が別の timer で行う）。
+    投稿が詰まっている・timer を持たない・長期停止中のアカウントでトークンだけが
+    死ぬのを避けるため、投稿の可否をトークン保守の前提条件にしない
+    （外部レビュー §5・`thth/maintain.py` の docstring）。
     token が無ければ何も投げずに exit 2（設計 §3.2・T3a 訂正 2026-09-09。env は任意
     ・`accounts.token_exists()` docstring 参照）。"""
     try:
@@ -200,6 +206,16 @@ def cmd_run(args) -> int:
 def cmd_auth(args) -> int:
     """masaru が VM で対話的に実行する（設計 §9-3・MCP には出さない・§3.7）。"""
     return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code)
+
+
+def cmd_maintain(args) -> int:
+    """`thth maintain`（**CLI のみ・MCP には出さない**）。
+
+    投稿の可否と独立にトークンを保つ（`thth/maintain.py` の docstring 参照）。
+    1 日 1 回の timer が引数無しで呼ぶ。人の手が要るものがあれば非ゼロで終わる。
+    """
+    return maintain_mod.run_maintain(
+        args.account, check=args.check, as_json=args.json, log=print)
 
 
 def cmd_send(args) -> int:
@@ -255,6 +271,14 @@ def cmd_systemd(args) -> int:
     食い違っていた）ので、生成に一本化する。MCP には出さない（運用コマンド・§3.7
     の auth／refresh と同じ扱い）。"""
     from . import systemd_gen
+    if getattr(args, "maintain", False):
+        # `thth maintain` の timer/service は 1 日 1 回・アカウント別ではない。
+        sys.stdout.write(systemd_gen.render_maintain_service() if args.service
+                         else systemd_gen.render_maintain_timer())
+        return 0
+    if not args.account:
+        print("account を指定してください（または --maintain）", file=sys.stderr)
+        return 2
     try:
         account_cfg = accounts_mod.load_account(args.account)
     except accounts_mod.AccountError as e:
@@ -336,7 +360,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_systemd = sub.add_parser(
         "systemd", help="台帳から <account>.timer unit を生成して標準出力に出す")
-    p_systemd.add_argument("account")
+    p_systemd.add_argument("account", nargs="?")
+    p_systemd.add_argument("--maintain", action="store_true",
+                           help="thth maintain（トークン保守・1 日 1 回）の unit を出す")
+    p_systemd.add_argument("--service", action="store_true",
+                           help="--maintain と併用: .timer でなく .service を出す")
     p_systemd.set_defaults(func=cmd_systemd)
 
     p_board = sub.add_parser("board", help="アカウントごとの鮮度・inflight・型外の骨")
@@ -356,6 +384,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_refresh.add_argument("--force", action="store_true")
     p_refresh.add_argument("--check", action="store_true", help="更新はせず残日数等をJSONで返す（boardが使う）")
     p_refresh.set_defaults(func=cmd_refresh)
+
+    p_maintain = sub.add_parser(
+        "maintain",
+        help="全アカウントのトークンを保つ（投稿とは独立。1 日 1 回の timer が呼ぶ。MCPには出さない）")
+    p_maintain.add_argument("--account", default=None, help="1 本だけ見る（省略時は全部）")
+    p_maintain.add_argument("--check", action="store_true",
+                            help="更新はせず状態だけ述べる")
+    p_maintain.add_argument("--json", action="store_true", dest="json")
+    p_maintain.set_defaults(func=cmd_maintain)
 
     p_send = sub.add_parser(
         "send", help="同席の様態: queue を通さずその場で 1 本出す（本文はファイルか標準入力）")

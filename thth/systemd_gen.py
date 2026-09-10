@@ -66,3 +66,51 @@ def render_timer(account_cfg: dict) -> str:
         "[Install]\n"
         "WantedBy=timers.target\n"
     )
+
+
+# `thth maintain` の timer は **1 日 1 回・アカウント別ではない**（`thth maintain`
+# 自身が全アカウントを見て回る）。時刻は投稿の刻み（10 分ごと）と重ならない
+# 明け方に置く。`Persistent=true` なので VM が落ちていた日も起動後に 1 回走る
+# ——60 日の時限に対して「その日走らなかった」を作らないため。
+MAINTAIN_ONCALENDAR = "*-*-* 04:17:00"
+
+
+def render_maintain_timer() -> str:
+    """`thth-maintain.timer` の中身を返す（`thth systemd --maintain`）。"""
+    return (
+        "# 生成: `thth systemd --maintain`（手で編集しない）。\n"
+        "[Unit]\n"
+        "Description=THTH maintain（全アカウントのトークン保守・1 日 1 回）\n"
+        "\n"
+        "[Timer]\n"
+        f"OnCalendar={MAINTAIN_ONCALENDAR}\n"
+        "# VM が落ちていた日も起動後に 1 回走らせる（走らなかった日を作らない）。\n"
+        "Persistent=true\n"
+        "RandomizedDelaySec=0\n"
+        "Unit=thth-maintain.service\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n"
+    )
+
+
+def render_maintain_service() -> str:
+    """`thth-maintain.service` の中身を返す（`thth systemd --maintain --service`）。
+
+    投稿の service（`thth@.service`）と分ける。**投稿が止まっていてもトークンの
+    保守は走る**という切り分けが、unit の粒度としても見えるようにする。
+    """
+    return (
+        "# 生成: `thth systemd --maintain --service`（手で編集しない）。\n"
+        "[Unit]\n"
+        "Description=THTH maintain（全アカウントのトークン保守）\n"
+        "After=network-online.target\n"
+        "Wants=network-online.target\n"
+        "\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        "User=wt\n"
+        "Environment=THTH_ROOT=/srv/thth\n"
+        "ExecStart=/srv/thth/app/bin/thth maintain\n"
+        "TimeoutStartSec=300\n"
+    )
