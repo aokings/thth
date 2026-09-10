@@ -153,3 +153,37 @@ def test_no_remoteなら網に出ない(tmp_path, isolated_account_factory):
     d = account_report.account_detail(account["name"], remote=False)
     assert d["remote"]["known"] is False
     assert "--no-remote" in d["remote"]["message"]
+
+
+def test_同席専用は予約投稿の仕組みが無くても欠陥にしない(tmp_path, isolated_account_factory):
+    """`masaru-threads` のような同席専用（台帳 `scheduled: false`）。
+
+    作った直後、この口は正常な同席専用アカウントを「投稿できません」と言った
+    （repo が無い・queue が無い、を欠陥として数えたため）。**使わない仕組みが
+    無いことを欠陥にしない。**
+    """
+    token = tmp_path / "t.token"
+    token.write_text('{"access_token": "T", "obtained_at": "%s", "expires_in": 5184000,'
+                     ' "user_id": "1", "username": "nigamilab", "scopes": null}'
+                     % jst.iso(jst.now_jst()))
+    token.chmod(0o600)
+    account = isolated_account_factory(
+        repo_dir=str(tmp_path / "使わない"), production=True,
+        token=str(token), scheduled=False)
+
+    d = account_report.account_detail(account["name"], remote=False)
+    assert d["ready"] is True, d["blockers"]
+    text = account_report.render(d)
+    assert "同席の送信ができます" in text, text
+    # 使わないものの**状態**を並べない（説明の 1 行に語が出るのは構わない）
+    assert "  queue       :" not in text and "  timer       :" not in text, text
+    assert "  repo        :" not in text, text
+
+
+def test_同席専用でもtokenが無ければ投稿できないと言う(tmp_path, isolated_account_factory):
+    account = isolated_account_factory(
+        repo_dir=str(tmp_path / "使わない"), production=True,
+        token=str(tmp_path / "無い.token"), scheduled=False)
+    d = account_report.account_detail(account["name"], remote=False)
+    assert d["ready"] is False
+    assert any(b.startswith("token:") for b in d["blockers"]), d["blockers"]

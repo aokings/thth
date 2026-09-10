@@ -197,22 +197,30 @@ def account_detail(account_name: str, *, now=None, remote: bool = True) -> dict:
         files, account_name=account_name, account_cfg=account_cfg, now=now,
         last_post_at=last_at, recent_texts=recent)
 
+    # **予約投稿を使うアカウントかどうか**（台帳 `scheduled`・既定 true）。
+    # `masaru-threads` は同席専用（queue も timer も持たない・設計 §3.7）。
+    # これを区別しないと、正常な同席専用アカウントを「投稿できません」と
+    # 言ってしまう（作った直後に実際に言った）。**使わない仕組みが無いことを
+    # 欠陥として数えない。**
+    scheduled = account_cfg.get("scheduled", True)
+
     blockers = []
     if token["state"] in maintain_mod.ATTENTION_STATES:
         blockers.append(f"token: {token['state']}（{token['message']}）")
-    if not repo["exists"]:
-        blockers.append(f"repo: {repo['repo_dir']} がありません")
-    elif not repo["is_git"]:
-        blockers.append(f"repo: {repo['repo_dir']} は git repo ではありません")
-    elif not repo["synced"]:
-        blockers.append("repo: HEAD が upstream と一致していません"
-                        "（push していない commit があるか、upstream が無い）")
-    if not repo["queue_dir_exists"]:
-        blockers.append(f"queue: {repo['queue_dir']} がありません（作って push してください）")
-    if not account_cfg.get("production"):
-        blockers.append("台帳: production: false（リハーサル。出しません）")
     if pending is not None:
         blockers.append(f"inflight: {pending.get('file')} が残っています（人が確認するまで止まります）")
+    if scheduled:
+        if not repo["exists"]:
+            blockers.append(f"repo: {repo['repo_dir']} がありません")
+        elif not repo["is_git"]:
+            blockers.append(f"repo: {repo['repo_dir']} は git repo ではありません")
+        elif not repo["synced"]:
+            blockers.append("repo: HEAD が upstream と一致していません"
+                            "（push していない commit があるか、upstream が無い）")
+        if not repo["queue_dir_exists"]:
+            blockers.append(f"queue: {repo['queue_dir']} がありません（作って push してください）")
+        if not account_cfg.get("production"):
+            blockers.append("台帳: production: false（リハーサル。出しません）")
 
     return {
         "account": account_name,
@@ -220,6 +228,7 @@ def account_detail(account_name: str, *, now=None, remote: bool = True) -> dict:
         "media": account_cfg.get("media"),
         "handle": account_cfg.get("handle"),
         "production": bool(account_cfg.get("production")),
+        "scheduled": bool(scheduled),
         "設定": {
             "publish_at を上書きしうるもの": {
                 "min_interval_hours": account_cfg.get("min_interval_hours"),
@@ -255,9 +264,20 @@ def render(detail: dict) -> str:
 
     repo, token, timer, queue = detail["repo"], detail["token"], detail["timer"], detail["queue"]
     over = detail["設定"]["publish_at を上書きしうるもの"]
-    lines = [
+    head = [
         f"{detail['account']}（{detail['project']} / {detail['media']} / @{detail['handle']}）",
         f"  本番        : {'はい' if detail['production'] else 'いいえ（リハーサル）'}",
+    ]
+    if not detail.get("scheduled", True):
+        # 同席専用。**使わない仕組みの状態を並べない**（無いことが欠陥に見える）。
+        lines = head + [
+            "  様態        : 同席専用（queue も timer も持たない・設計 §3.7）",
+            f"  token       : {token['state']}"
+            + (f"（残り {token['remaining_days']:.1f} 日）" if token["remaining_days"] is not None else ""),
+            f"  inflight    : {detail['inflight'] or 'なし'}",
+        ]
+        return _append_remote_and_verdict(lines, detail)
+    lines = head + [
         f"  repo        : {repo['repo_dir']}",
         f"                git={repo['is_git']} branch={repo['branch']} upstream={repo['upstream']} "
         f"同期={'済' if repo['synced'] else '未'}",
@@ -274,6 +294,10 @@ def render(detail: dict) -> str:
         f"quiet={over['quiet_hours']} max_per_run={over['max_per_run']}",
         f"  inflight    : {detail['inflight'] or 'なし'}",
     ]
+    return _append_remote_and_verdict(lines, detail)
+
+
+def _append_remote_and_verdict(lines: list, detail: dict) -> str:
     remote = detail.get("remote") or {}
     if remote.get("known"):
         outside = remote["outside"]
@@ -285,7 +309,9 @@ def render(detail: dict) -> str:
             lines.append("                すべて THTH 経由です")
     else:
         lines.append(f"  Threads 側  : 判りません（{remote.get('message', '')}）")
-    if detail["ready"]:
+    if detail["ready"] and not detail.get("scheduled", True):
+        lines.append("  → **同席の送信ができます**（このアカウントは予約投稿を使いません）")
+    elif detail["ready"]:
         lines.append("  → **投稿できます**")
     else:
         lines.append("  → **投稿できません**:")
