@@ -139,7 +139,12 @@ def build_context(row: dict) -> dict:
     out["schema_version"] = SCHEMA_VERSION
     out.setdefault("source_state", "unverified")
     out["observation_ids"] = sorted(out["observation_ids"])
-    out["context_id"] = content_id(out, exclude=("context_id", "draft_path"))
+    # **`source_state` は ID に入れない。** 同じ原稿・同じ記事・同じ観測なら、
+    # それが commit 済みかどうかで別の判断にはならない。入れてしまうと、
+    # 承認して同期した瞬間に直前の判断が `stale_context` になる——**提案できる
+    # ことと公開できることを混同しない**（設計 §4.3）に反する。
+    out["context_id"] = content_id(
+        out, exclude=("context_id", "draft_path", "source_state"))
     return out
 
 
