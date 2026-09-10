@@ -377,3 +377,190 @@ def test_保存に足りない入力はそう言う(isolated_account):
     assert proc.returncode == 2
     message = json.loads(proc.stdout)["error"]["message"]
     assert "record_payload" in message, message
+
+
+# ===========================================================================
+# 独立レビュー第 2 巡（2026-09-11）の 3 件
+# ===========================================================================
+
+def _make_profile(status="provisional", scope="家庭で楽しむコーヒー"):
+    return {"language": "ja", "primary_goal": "article_visits",
+            "editorial_scope": scope, "intended_interests": ["コーヒー"],
+            "avoid_misrepresentation": ["医療効能を主張しない"],
+            "status": status, "basis": ["docs/編集方針.md"]}
+
+
+# --- P1-1: profile を例外にしない -------------------------------------------
+
+def test_profileも読むたびに中身と版番号を照合する(thth_root, isolated_account):
+    """**profile だけ `read_json` のままだった。**
+
+    観測・記事・候補比較・判断には入れた照合が、profile には無かった。
+    `profile_version` を据え置いて `status` を `confirmed` に、`basis` を
+    空に書き換えると、**未確定の方針に基づく判断が確定扱いで保存できた。**
+    """
+    account = isolated_account["name"]
+    assert _run(["topics", "profile", account, "--json-stdin", "--by", "t"],
+                 _make_profile("provisional")).returncode == 0
+
+    path = store.profile_path(account)
+    row = json.loads(open(path, encoding="utf-8").read())
+    row["status"] = "confirmed"
+    row["basis"] = []
+    row["editorial_scope"] = "書き換えた別の方針"
+    open(path, "w", encoding="utf-8").write(json.dumps(row, ensure_ascii=False))
+
+    with pytest.raises(store.StoreError) as e:
+        store.get_profile(account)
+    assert "profile_version と合いません" in str(e.value) \
+        or "schema に合いません" in str(e.value), str(e.value)
+
+
+def test_書き換えられたprofileでは判断も保存もできない(thth_root, isolated_account):
+    path = write_queue_file(isolated_account["queue_dir"], "p.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    account = isolated_account["name"]
+    _run(["topics", "profile", account, "--json-stdin", "--by", "t"],
+          _make_profile("provisional"))
+
+    ppath = store.profile_path(account)
+    row = json.loads(open(ppath, encoding="utf-8").read())
+    row["status"] = "confirmed"
+    open(ppath, "w", encoding="utf-8").write(json.dumps(row, ensure_ascii=False))
+
+    proc = _run(["topics", "suggest", path])
+    assert proc.returncode == 2, proc.stdout
+    assert json.loads(proc.stdout)["error"]["code"] == "store_busy" \
+        or "profile" in json.loads(proc.stdout)["error"]["message"]
+
+
+def test_検討用profileも検証関数を通る(isolated_account, tmp_path):
+    """`--profile` を素通ししていたので、何を渡しても通っていた。"""
+    path = write_queue_file(isolated_account["queue_dir"], "ov.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(
+        _make_profile("confirmed") | {"basis": [], "confirmed_by": "t"},
+        ensure_ascii=False))
+    proc = _run(["topics", "suggest", path, "--profile", str(bad)])
+    assert proc.returncode == 2, proc.stdout
+    assert "basis" in json.loads(proc.stdout)["error"]["message"]
+
+
+def test_検討用profileは版番号を名乗らせず中身から決める(isolated_account, tmp_path):
+    path = write_queue_file(isolated_account["queue_dir"], "ov2.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    liar = tmp_path / "liar.json"
+    liar.write_text(json.dumps(
+        _make_profile("confirmed") | {"confirmed_by": "t",
+                                       "profile_version": "sha256:" + "0" * 64},
+        ensure_ascii=False))
+    out = json.loads(_run(["topics", "suggest", path,
+                            "--profile", str(liar)]).stdout)
+    assert out["context"]["profile_version"] != "sha256:" + "0" * 64
+
+
+# --- P2-3: 使った方針が読み手に届く -----------------------------------------
+
+def test_差し替えたprofileの本文が出力に載る(isolated_account, tmp_path):
+    """**「差し替えています」の 1 行だけでは、次の LLM は何も分からない。**"""
+    path = write_queue_file(isolated_account["queue_dir"], "ov3.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    override = tmp_path / "o.json"
+    override.write_text(json.dumps(
+        _make_profile("confirmed", scope="MARKER_差し替えた方針") |
+        {"confirmed_by": "t"}, ensure_ascii=False))
+    proc = _run(["topics", "suggest", path, "--profile", str(override)])
+    out = json.loads(proc.stdout)
+    assert "evidence" in out, out
+    assert out["evidence"]["profile"]["editorial_scope"] == "MARKER_差し替えた方針"
+    assert out["evidence"]["profile_overridden"] is True
+    assert out["context"]["profile_overridden"] is True
+
+
+def test_使ったprofileと出力のprofileが同じもの(isolated_account):
+    """**検証した snapshot をそのまま読み手へ渡す。**
+
+    以前は `evidence` が active profile を**読み直して**いた。判断に使ったものと
+    読み手が見るものが別の経路だと、片方だけ変わっても気づけない。
+    """
+    account = isolated_account["name"]
+    path = write_queue_file(isolated_account["queue_dir"], "sn.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    _run(["topics", "profile", account, "--json-stdin", "--by", "t"],
+          _make_profile("confirmed"))
+    out = json.loads(_run(["topics", "suggest", path]).stdout)
+    assert out["evidence"]["profile"]["profile_version"] == \
+        out["context"]["profile_version"]
+    assert out["evidence"]["profile_overridden"] is False
+
+
+# --- P1-2: 共有観測と自 account の判断を混ぜない ----------------------------
+
+def test_自分の不適合が他所の適合に置き換わらない(isolated_account, thth_root):
+    """**`judgment()` は取っていたのに `bool()` しか使っていなかった。**
+
+    最新の 1 行から `fit` も理由も取っていたので、その行が account を持たない
+    記録だと、**自分が unsuitable と判断した事実が出力から消えた。**
+    """
+    from thth import topics as topics_mod
+    account = isolated_account["name"]
+    path = write_queue_file(isolated_account["queue_dir"], "j.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+
+    topics_mod.record("お茶", verdict="mismatch", by="自分", account=account,
+                       note="研究所は効能を扱わない")
+    topics_mod.record("お茶", verdict="alive", by="別のセッション",
+                       note="日本茶の場として活きている")   # account 無し
+
+    out = json.loads(_run(["topics", "suggest", path]).stdout)
+    row = next(r for r in out["evidence"]["legacy_notes"] if r["topic"] == "お茶")
+    assert row["own_judgment"]["fit"] == "unsuitable"
+    assert row["own_judgment"]["reason"] == "研究所は効能を扱わない"
+    assert row["own_judgment"]["account"] == account
+    # account 無しの記録は**常に参考**。
+    assert row["legacy_judgment"]["fit"] == "suitable"
+    assert row["legacy_judgment"]["account"] is None
+    assert "採用しないでください" in row["notice"]
+
+
+def test_他accountの判断も自分の判断を消さない(isolated_account, thth_root):
+    from thth import topics as topics_mod
+    account = isolated_account["name"]
+    path = write_queue_file(isolated_account["queue_dir"], "j2.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    topics_mod.record("お茶", verdict="mismatch", by="自分", account=account)
+    topics_mod.record("お茶", verdict="alive", by="kopicha", account="kopicha-threads")
+
+    out = json.loads(_run(["topics", "suggest", path]).stdout)
+    row = next(r for r in out["evidence"]["legacy_notes"] if r["topic"] == "お茶")
+    assert row["own_judgment"]["fit"] == "unsuitable"
+    assert [r["account"] for r in row["other_judgments"]] == ["kopicha-threads"]
+
+
+def test_自分の判断が無ければNoneで返す(isolated_account, thth_root):
+    """**「まだ判断していない」を「他所が判断した」で埋めない。**"""
+    from thth import topics as topics_mod
+    path = write_queue_file(isolated_account["queue_dir"], "j3.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    topics_mod.record("お茶", verdict="alive", by="別のセッション")
+
+    out = json.loads(_run(["topics", "suggest", path]).stdout)
+    row = next(r for r in out["evidence"]["legacy_notes"] if r["topic"] == "お茶")
+    assert row["own_judgment"] is None
+    assert row["legacy_judgment"]["fit"] == "suitable"
+
+
+def test_観測と判断が別の物として返る(isolated_account, thth_root):
+    """誰がいたか（共有できる事実）と、合うか（account ごと）を分ける。"""
+    from thth import topics as topics_mod
+    path = write_queue_file(isolated_account["queue_dir"], "j4.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    topics_mod.record("精製", verdict="mismatch", audience="レアアース・重加工",
+                       by="THTH セッション", kind="専門語")
+
+    out = json.loads(_run(["topics", "suggest", path]).stdout)
+    row = next(r for r in out["evidence"]["legacy_notes"] if r["topic"] == "精製")
+    assert row["observation"]["audience"] == "レアアース・重加工"
+    assert row["observation"]["kind"] == "専門語"
+    assert "fit" not in row["observation"], "観測に判定が混ざっている"

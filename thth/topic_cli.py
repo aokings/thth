@@ -177,11 +177,12 @@ def cmd_suggest(args) -> int:
             f"読めない観測の記録が {len(broken)} 件あります"
             f"（無いのではなく壊れています）: {broken[:3]}")
 
+    profile_snapshot = context.pop("profile_snapshot", None)
     envelope["context"] = dict(context)
     envelope["urls_in_post"] = context.get("urls_in_post", [])
     envelope["main_article_url"] = context.get("main_article_url")
     envelope["ignored_urls"] = context.get("ignored_urls", [])
-    envelope["evidence"] = _evidence(context, observations)
+    envelope["evidence"] = _evidence(context, observations, profile_snapshot)
     if article is not None:
         envelope["article_id"] = article["article_id"]
     if proposal is not None:
@@ -221,33 +222,63 @@ def _proposal_input(proposal):
 
 
 def _legacy_notes(account: str) -> list:
-    """既存 22 語を、**観測と当時の判断を分けた形**で返す（設計 §9）。
+    """既存 22 語を返す。**観測・自分の判断・他所の判断を別々の物として返す**
+    （設計 §9・独立レビュー第 2 巡 P1-2）。
 
-    語彙は新しいほうへ訳す（`alive→suitable` 等）。**知らない語は推測しない。**
-    `account` の付いていない記録は「参考」——**他の account の判断を自分の
-    判断として採用しない**（承認の変更点 3）。
+    以前は「最新の 1 行」から `fit` も `note` も取っていた。**その 1 行が
+    account を持たない記録だと、自分の account が `unsuitable` と判断した事実が
+    出力から消えて、他所の `suitable` が自分の判断のように渡っていた。**
+    `judgment()` は取っていたのに `bool()` しか使っていなかった——
+    **正しい部品を用意しておいて、使っていなかった。**
+
+    - `observation` … 誰がいたか。**共有できる事実**（最新の記録から）。
+    - `own_judgment` … **この account 自身の判断だけ。** 無ければ `None`。
+    - `other_judgments` … 他 account の判断。**参考。採らない。**
+    - `legacy_judgment` … account を持たない当時の判断。**常に参考。**
     """
     out = []
     for topic, row in sorted(topics_mod.observation().items()):
         own = topics_mod.judgment(topic, account) if account else {}
+        legacy = topics_mod.legacy_note(topic)
+        others = topics_mod.other_accounts(topic, account=account)
         out.append({
             "topic": topic,
-            "kind": row.get("kind"),
-            "audience": row.get("audience"),
-            "note": row.get("note"),
-            "checked_at": row.get("checked_at"),
-            "status": row.get("status"),
-            "recorded_by": row.get("by"),
-            "account": row.get("account"),
-            "legacy_verdict": row.get("verdict"),
-            "fit": advice.legacy_fit(row.get("verdict")),
-            "own_account_judged": bool(own),
-            "reference_only": row.get("account") not in (account, None) or not own,
+            "observation": {
+                "kind": row.get("kind"),
+                "audience": row.get("audience"),
+                "status": row.get("status"),
+                "checked_at": row.get("checked_at"),
+                "recorded_by": row.get("by"),
+                "account": row.get("account"),
+            },
+            "own_judgment": _judgment_view(own) if own else None,
+            "legacy_judgment": _judgment_view(legacy) if legacy else None,
+            "other_judgments": [_judgment_view(r) for r in others],
+            "notice": ("own_judgment だけがこの account の判断です。"
+                        "legacy_judgment と other_judgments は参考で、"
+                        "**自分の判断として採用しないでください。**"),
         })
     return out
 
 
-def _evidence(context: dict, observations: dict) -> dict:
+def _judgment_view(row: dict) -> dict:
+    """当時の判断を、新しい語彙を添えて返す。**元の語も残す。**
+
+    `dead`（人がいない）と `mismatch`（意味が違う）はどちらも `unsuitable` に
+    なるが**理由は別物**なので、訳した語だけにしない。
+    """
+    return {
+        "fit": advice.legacy_fit(row.get("verdict")),
+        "legacy_verdict": row.get("verdict"),
+        "reason": row.get("note"),
+        "audience": row.get("audience"),
+        "account": row.get("account"),
+        "recorded_by": row.get("by"),
+        "checked_at": row.get("checked_at"),
+    }
+
+
+def _evidence(context: dict, observations: dict, profile) -> dict:
     """**LLM が読める形で根拠そのものを返す**（独立レビュー 2026-09-11・指摘 2）。
 
     以前は `observation_ids` と `profile_version` しか返していなかった。
@@ -258,11 +289,6 @@ def _evidence(context: dict, observations: dict) -> dict:
     大きくなりすぎる場合は投稿例を削るが、**削ったことを必ず書く**
     （黙って減らすと「その投稿例は無い」と読まれる）。
     """
-    profile = store.get_profile(context["account"])
-    if context.get("profile_overridden"):
-        profile = {"note": "この検討では --profile で差し替えた profile を"
-                            "使っています（保存済みの profile は変えていません）"}
-
     rows, truncated = [], []
     used = 0
     for oid in sorted(observations):
@@ -286,7 +312,10 @@ def _evidence(context: dict, observations: dict) -> dict:
 
     return {
         "post_text": context.get("section"),
+        # **実際に使った profile の本文**。`--profile` で差し替えた場合も同じ
+        # ——差し替えた事実は `context.profile_overridden` に出る。
         "profile": profile,
+        "profile_overridden": bool(context.get("profile_overridden")),
         "observations": rows,
         "legacy_notes": _legacy_notes(context["account"]),
         "truncated_observation_ids": sorted(set(truncated)),
@@ -371,6 +400,7 @@ def cmd_record_decision(args) -> int:
                           "message": f"参照している観測が読めません: {damaged}"}})
         return 1
 
+    context.pop("profile_snapshot", None)
     proposal = models.validate_proposal(row["proposal"], article=article,
                                          known_observation_ids=set(observations))
     envelope = advice.evaluate(context, article=article, proposal=proposal,

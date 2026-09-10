@@ -102,10 +102,35 @@ thth topics record-decision --json-stdin              ← 判断を残す
 **keyword 検索でその語が出てきただけでは、tag の利用例になりません**（設計 §4.2）。
 `20 件あったが投稿者は 1 人` は「1 人」と数えます。
 
-## 6. 既存 22 語の扱い
+## 6. 返ってくる根拠（`evidence`）
 
-`thth topics <account> --advise` で見られる既存の下調べは**そのまま使えます**。
-語彙だけ読み替わります:
+`suggest` の出力の `evidence` に、**判断に要る材料そのもの**が入っています。
+ID だけではありません。
+
+| 項目 | 中身 |
+|---|---|
+| `post_text` | 固定した投稿本文（この判断が対象にしている本文そのもの） |
+| `profile` | **実際に使った** profile の本文。`--profile` で差し替えた場合もその本文 |
+| `profile_overridden` | 差し替えたかどうか |
+| `observations` | 保存済みの観測。投稿例の抜粋・出典 URL・投稿者・取得状況つき |
+| `legacy_notes` | 既存 22 語（下記） |
+| `truncated_observation_ids` | 投稿例を削った観測。`thth topics observation <id>` で全部読めます |
+
+### 既存 22 語は 3 つに分けて返ります
+
+**観測（誰がいたか）と判断（自分たちに合うか）は別物です。**
+
+- `observation` … 誰がいたか。**共有できる事実。** どのプロジェクトでも同じ。
+- `own_judgment` … **この account 自身の判断だけ。** まだなら `null`。
+- `legacy_judgment` … account を持たない当時の判断。**常に参考。**
+- `other_judgments` … 他 account の判断。**参考。採らない。**
+
+**`legacy_judgment` や `other_judgments` を自分の判断として採用しないでください。**
+`お茶` は茶葉を売る側には合い、苦味の研究には合いません。**同じ語の判断を
+他所から引き継ぐと、黙って間違えます。**
+
+語彙は新しいほうへ訳されて `fit` に入りますが、**元の語も `legacy_verdict` に
+残ります**:
 
 | 既存 | 新 |
 |---|---|
@@ -114,12 +139,8 @@ thth topics record-decision --json-stdin              ← 判断を残す
 | `dead` | `unsuitable`（人がいない） |
 | `unknown` | `uncertain` |
 
-`mismatch` と `dead` はどちらも `unsuitable` ですが**理由は別物**なので、元の語も
-一緒に出ます。**入れ直す必要はありません。**
-
-既存の記録は `account` が付いていないものがあります。それは**参考**として出ます——
-**他の account の判断を自分の判断として採用しないこと。** 観測（誰がいたか）は
-共有できますが、判断（自分たちに合うか）は account ごとです。
+`mismatch` と `dead` はどちらも `unsuitable` ですが**理由は別物**です。
+**入れ直す必要はありません。**
 
 ## 7. profile（masaru 裁定 2026-09-11）
 

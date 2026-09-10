@@ -186,6 +186,13 @@ def build_context(queue_file: str, *, article: dict | None = None,
         profile = store.get_profile(account_name)
         overridden = False
     else:
+        # **検討用の profile も検証関数を通す**（独立レビュー第 2 巡 P1-1）。
+        # 素通ししていたので、`--profile` に何を渡しても通った。ID は中身から
+        # 計算する——**送り手が名乗った版番号は使わない。**
+        profile = models.build_profile(
+            {k: v for k, v in profile.items()
+             if k not in ("profile_version", "schema_version")}
+            | {"account": account_name})
         overridden = True
 
     try:
@@ -218,6 +225,11 @@ def build_context(queue_file: str, *, article: dict | None = None,
     context["urls_in_post"] = urls
     context["profile_overridden"] = overridden
     context["profile_status"] = (profile or {}).get("status")
+    # **検証した snapshot をそのまま読み手へ渡す**（独立レビュー第 2 巡 P1-1・
+    # P2-3）。ここで使った profile と、あとで evidence に載せる profile が
+    # 別物だと、**「実際に使った方針」を誰も読めない。** `--profile` で
+    # 差し替えたときは、保存済みを読み直しても出てこない。
+    context["profile_snapshot"] = profile
     return context
 
 

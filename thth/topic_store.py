@@ -113,6 +113,33 @@ def read_json(path: str) -> dict:
         return json.load(f)
 
 
+def verify_profile(profile: dict, *, account: str | None = None) -> str | None:
+    """profile が自分の `profile_version` と合っているか（独立レビュー第 2 巡 P1-1）。
+
+    **profile を例外にしない。** 観測・記事・候補比較・判断には読むたびの照合を
+    入れたのに、**profile だけ `read_json` のままだった。** そのため
+    `profile_version` を据え置いて `status` を `confirmed` に、`basis` を空に
+    書き換えると、**未確定の方針に基づく判断が確定扱いで保存できた。**
+    """
+    claimed = profile.get("profile_version")
+    if not isinstance(claimed, str) or not _ID_RE.match(claimed):
+        return "profile_version がありません（または形が違います）"
+    if account is not None and profile.get("account") != account:
+        return (f"profile の account が違います"
+                f"（{profile.get('account')!r} / {account!r}）")
+    try:
+        rebuilt = models.build_profile(
+            {k: v for k, v in profile.items()
+             if k not in ("profile_version", "schema_version")})
+    except models.SchemaError as e:
+        return f"profile が schema に合いません: {e}"
+    if rebuilt["profile_version"] != claimed:
+        return (f"中身が profile_version と合いません（保存後に書き換わって"
+                f"います。{claimed[:19]}… のはずが "
+                f"{rebuilt['profile_version'][:19]}…）")
+    return None
+
+
 def verify(kind: str, record: dict, *, filename_id: str | None = None) -> str | None:
     """記録が自分の ID と合っているか。合っていれば None、違えば理由。
 
@@ -186,10 +213,15 @@ def profile_path(account: str) -> str:
 
 
 def get_profile(account: str) -> dict | None:
+    """active profile。**読むたびに中身と `profile_version` を照合する。**"""
     path = profile_path(account)
     if not os.path.exists(path):
         return None
-    return read_json(path)
+    profile = read_json(path)
+    problem = verify_profile(profile, account=account)
+    if problem:
+        raise StoreError(f"profiles/{account}: {problem}")
+    return profile
 
 
 def set_profile(profile: dict) -> dict:

@@ -449,6 +449,7 @@ def test_手順書のコマンドが実際に存在する():
     for name in used:
         assert parser.parse_args([name] + {
             "suggest": ["x.md"], "decision": ["sha256:x"],
+            "observation": ["sha256:x"],
             "profile": ["kopicha"]}.get(name, [])).sub == name
 
 
