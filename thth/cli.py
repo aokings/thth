@@ -20,6 +20,7 @@ from . import maintain as maintain_mod
 from . import oauth as oauth_mod
 from . import queuefile
 from . import report as report_mod
+from . import selfupdate as selfupdate_mod
 from . import writeback as writeback_mod
 
 
@@ -191,6 +192,12 @@ def cmd_run(args) -> int:
     （外部レビュー §5・`thth/maintain.py` の docstring）。
     token が無ければ何も投げずに exit 2（設計 §3.2・T3a 訂正 2026-09-09。env は任意
     ・`accounts.token_exists()` docstring 参照）。"""
+    # app 自身を最新にしてから走る（設計 §3.2・**lock を取る前**）。進んでいたら
+    # 同じ引数で 1 回だけ exec しなおすので、以降の行は新しいコードで動く。
+    stale = selfupdate_mod.pull_and_reexec(sys.argv, log=print)
+    if stale:
+        print(stale, file=sys.stderr)
+
     try:
         account_cfg = accounts_mod.load_account(args.account)
     except accounts_mod.AccountError as e:

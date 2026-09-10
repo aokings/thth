@@ -7,6 +7,7 @@ from . import accounts as accounts_mod
 from . import core
 from . import inflight as inflight_mod
 from . import maintain as maintain_mod
+from . import selfupdate as selfupdate_mod
 from . import jst
 from . import queuefile
 from . import select as select_mod
@@ -159,4 +160,9 @@ def board_summary() -> dict:
             "token_state": token_row["state"],
             "token_remaining_days": token_row["remaining_days"],
         })
-    return {"accounts": accounts_out, "generated_at": jst.iso()}
+    # 「動いているのに古い」を見える形にする（設計 §3.2・2026-09-10 に VM が
+    # 4 巡分古いまま 10 分ごとに回っていたのを見つけた）。取りに行かない
+    # （直前の `thth run` が fetch している）。
+    return {"accounts": accounts_out, "generated_at": jst.iso(),
+            "app": {"head": selfupdate_mod.head(),
+                    "behind_origin": selfupdate_mod.behind_origin()}}
