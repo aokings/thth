@@ -11,6 +11,7 @@ import json
 import os
 import sys
 
+from . import account_report as account_report_mod
 from . import accounts as accounts_mod
 from . import approval as approval_mod
 from . import core
@@ -169,6 +170,25 @@ def cmd_approve(args) -> int:
               file=sys.stderr)
         return 1
     return 0
+
+
+def cmd_account(args) -> int:
+    """`thth account [<name>]`: 1 アカウント（省略時は全部）の状態を一枚で述べる。
+
+    「このアカウントはいま投稿できる状態か」に答える口（masaru 指摘 2026-09-10）。
+    台帳・clone・queue・トークン・timer・inflight を 1 か所で見て、**最後に
+    投稿できるかどうかの 1 行**を出す。読むだけで、何も変えない。
+    """
+    names = [args.account] if args.account else accounts_mod.list_account_names()
+    details = [account_report_mod.account_detail(name, remote=not args.no_remote)
+               for name in names]
+    if args.json:
+        _print_json(details if args.account is None else details[0])
+    else:
+        for d in details:
+            sys.stdout.write(account_report_mod.render(d))
+    # 1 本でも投稿できない状態があれば非ゼロ（board と同じ流儀で、機械から使える）
+    return 0 if all(d.get("ready") for d in details) else 1
 
 
 def cmd_queue(args) -> int:
@@ -368,6 +388,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_approve.add_argument("file")
     p_approve.add_argument("--json", action="store_true")
     p_approve.set_defaults(func=cmd_approve)
+
+    p_account = sub.add_parser(
+        "account", help="1 アカウントの状態を一枚で述べる（投稿できる状態かどうか）")
+    p_account.add_argument("account", nargs="?")
+    p_account.add_argument("--json", action="store_true")
+    p_account.add_argument("--no-remote", action="store_true", dest="no_remote",
+                           help="Threads 側を引きに行かない（網に出ない・速い）")
+    p_account.set_defaults(func=cmd_account)
 
     p_queue = sub.add_parser("queue", help="draft/approved/posted/型外 と次に出るもの")
     p_queue.add_argument("account", nargs="?")
