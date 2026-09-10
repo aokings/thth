@@ -336,7 +336,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
         print(f"  reply_to  : {one['reply_to'] or '（なし）'}")
         if one.get("warning"):
             print(f"  ⚠ {one['warning']}")
-        topic_line = topics_mod.verdict_line(one.get("topic"))
+        topic_line = topics_mod.verdict_line(one.get("topic"), account=one.get("account"))
         if topic_line:
             print(f"  ◆ {topic_line}")
         print("--- 出す本文 ---")
@@ -527,15 +527,21 @@ def cmd_topics(args) -> int:
         try:
             row = topics_mod.record(args.note, verdict=args.verdict,
                                      audience=args.audience or "", by=by,
-                                     kind=args.kind, note=args.reason or "")
+                                     kind=args.kind, account=args.account,
+                                     note=args.reason or "")
         except ValueError as e:
             print(str(e), file=sys.stderr)
             return 1
         if args.json:
             _print_json(row)
         else:
-            print(f"記録しました: {row['topic']} → {row['verdict']}"
-                  + (f"（{row['audience']}）" if row["audience"] else ""))
+            scope = f"（{row['account']} の判定）" if row.get("account") else "（全体の記録）"
+            print(f"記録しました: {row['topic']} → {row['verdict']}{scope}"
+                  + (f" {row['audience']}" if row["audience"] else ""))
+            if not row.get("account"):
+                print("  ※ account を添えると**そのプロジェクトの判定**として残せます"
+                      "（同じ語でも合う／合わないはプロジェクトで変わります）:"
+                      f" thth topics <account> --note {row['topic']} ...")
         return 0
 
     if args.advise:
@@ -629,7 +635,7 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
     実測が溜まるほど、上の「使える語」が具体的になる。
     """
     measured = account_report_mod.measured_views_all_accounts()
-    checks = topics_mod.latest()
+    checks = topics_mod.latest(account=account_name)
     kinds = topics_mod.learned(measured)
 
     def views_of(topic):

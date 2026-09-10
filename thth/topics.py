@@ -73,8 +73,20 @@ def load() -> dict:
 
 
 def record(topic: str, *, verdict: str, audience: str = "", by: str,
-            note: str = "", kind: str | None = None, now=None) -> dict:
-    """1 回の下調べを追記する。**前の記録は消さない。**"""
+            note: str = "", kind: str | None = None, account: str | None = None,
+            now=None) -> dict:
+    """1 回の下調べを追記する。**前の記録は消さない。**
+
+    `account` を渡すと、その判定は**そのプロジェクトのもの**として記録される
+    （kopicha セッションの指摘 2026-09-10）。
+
+    > nigamilab は効能に流れるため不一致と記録しており、**茶葉を扱うかどうかで
+    > 評価が分かれる語**
+
+    **「誰がいるか」は共有できるが、「合っているか」はプロジェクトごとに違う。**
+    `お茶` は茶葉を売る側には当たりで、苦味の研究には不一致。1 語 1 判定にして
+    いると、後から書いた側が前の判定を黙って上書きしてしまう。
+    """
     if verdict not in VERDICTS:
         raise ValueError(f"verdict は {VERDICTS} のどれか: {verdict}")
     if kind is not None and kind not in KINDS:
@@ -82,7 +94,7 @@ def record(topic: str, *, verdict: str, audience: str = "", by: str,
     now = now if now is not None else jst.now_jst()
     data = load()
     row = {"topic": topic, "verdict": verdict, "audience": audience, "kind": kind,
-           "note": note, "by": by, "checked_at": jst.iso(now)}
+           "account": account, "note": note, "by": by, "checked_at": jst.iso(now)}
     data["checks"].append(row)
     p = path()
     os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -94,21 +106,52 @@ def record(topic: str, *, verdict: str, audience: str = "", by: str,
     return row
 
 
-def latest(topic: str | None = None) -> dict:
-    """トピックごとの**最後の確認**（`topic` を渡せばその 1 件・無ければ空の dict）。"""
-    out: dict = {}
+def latest(topic: str | None = None, *, account: str | None = None) -> dict:
+    """トピックごとの**最後の確認**。
+
+    `account` を渡すと、**そのプロジェクトの判定を優先**する（無ければ他所の
+    判定を使う）。同じ語でもプロジェクトによって合う／合わないが変わるため
+    （kopicha セッション指摘 2026-09-10）。
+    """
+    mine: dict = {}
+    other: dict = {}
     for row in load()["checks"]:
-        out[row["topic"]] = row          # 後の行が勝つ（追記順＝時系列）
+        if account is not None and row.get("account") == account:
+            mine[row["topic"]] = row
+        else:
+            other[row["topic"]] = row    # 後の行が勝つ（追記順＝時系列）
+    merged = dict(other)
+    merged.update(mine)                  # 自分の判定が他所より優先
     if topic is None:
-        return out
-    return out.get(topic, {})
+        return merged
+    return merged.get(topic, {})
 
 
-def verdict_line(topic: str | None) -> str | None:
-    """承認の一段目に添える 1 行（確認が無ければ「未確認」と言う）。"""
+def others_disagree(topic: str, *, account: str, verdict: str) -> list:
+    """**別のプロジェクトが違う判定をしている**場合、その一覧を返す。
+
+    共有された知識を黙って捨てないため。「あちらでは不一致だった」は、
+    使う前に一度考える価値のある情報。
+    """
+    seen: dict = {}
+    for row in load()["checks"]:
+        if row["topic"] != topic:
+            continue
+        owner = row.get("account")
+        if owner is None or owner == account:
+            continue
+        seen[owner] = row
+    return [row for row in seen.values() if row["verdict"] != verdict]
+
+
+def verdict_line(topic: str | None, *, account: str | None = None) -> str | None:
+    """承認の一段目に添える 1 行（確認が無ければ「未確認」と言う）。
+
+    `account` の判定を優先し、**別のプロジェクトが違う判定をしていれば添える。**
+    """
     if not topic:
         return None
-    row = latest(topic)
+    row = latest(topic, account=account)
     if not row:
         return (f"トピック `{topic}` は**未確認**です。"
                 "誰がいる場所か確かめてから出すことを勧めます。")
@@ -116,8 +159,15 @@ def verdict_line(topic: str | None) -> str | None:
             "dead": "**人がいません**", "unknown": "未確認"}[row["verdict"]]
     detail = f"（{row['audience']}）" if row.get("audience") else ""
     kind = f"［{row['kind']}］" if row.get("kind") else ""
-    return (f"トピック `{topic}`{kind}: {mark}{detail}"
+    line = (f"トピック `{topic}`{kind}: {mark}{detail}"
             f"／{row['checked_at'][:10]} {row['by']} が確認")
+    if account:
+        for other in others_disagree(topic, account=account, verdict=row["verdict"]):
+            label = {"alive": "合っている", "mismatch": "不一致",
+                     "dead": "人がいない", "unknown": "未確認"}[other["verdict"]]
+            line += (f"\n    ※ {other['account']} では「{label}」と記録されています"
+                     + (f"（{other['audience']}）" if other.get("audience") else ""))
+    return line
 
 
 def learned(measured_by_topic: dict) -> list:

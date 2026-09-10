@@ -170,3 +170,41 @@ def test_account無しのadviseは全部そのまま出す(thth_root):
     out = run_thth(["topics", "--advise"]).stdout
     assert "コーヒー" in out
     assert "ほかのプロジェクトの記録" not in out
+
+
+# --- プロジェクトごとに判定が変わる（kopicha セッション指摘 2026-09-10）
+
+def test_同じ語でもプロジェクトごとに判定を持てる(thth_root):
+    """> nigamilab は効能に流れるため不一致と記録しており、
+    > **茶葉を扱うかどうかで評価が分かれる語**
+
+    **「誰がいるか」は共有できるが、「合っているか」はプロジェクトで違う。**
+    1 語 1 判定にしていると、後から書いた側が前の判定を黙って上書きする。
+    """
+    topics_mod.record("お茶", verdict="mismatch", kind="一般名詞",
+                       account="nigamilab-threads", audience="効能・ダイエットに流れる",
+                       by="nigamilab")
+    topics_mod.record("お茶", verdict="alive", kind="一般名詞",
+                       account="kopicha-threads", audience="茶葉を買う人の質問",
+                       by="kopicha")
+
+    assert topics_mod.latest("お茶", account="kopicha-threads")["verdict"] == "alive"
+    assert topics_mod.latest("お茶", account="nigamilab-threads")["verdict"] == "mismatch"
+
+
+def test_別のプロジェクトの違う判定を承認時に添える(thth_root):
+    topics_mod.record("お茶", verdict="mismatch", account="nigamilab-threads",
+                       audience="効能に流れる", by="nigamilab")
+    topics_mod.record("お茶", verdict="alive", account="kopicha-threads", by="kopicha")
+
+    line = topics_mod.verdict_line("お茶", account="kopicha-threads")
+    assert "合っています" in line
+    assert "nigamilab-threads では「不一致」" in line, line
+    assert "効能に流れる" in line
+
+
+def test_account無しの記録は全体の記録として使われる(thth_root):
+    topics_mod.record("精製", verdict="mismatch", audience="レアアース", by="統括")
+    # どのプロジェクトから見ても、自分の判定が無ければ全体の記録が効く
+    assert topics_mod.latest("精製", account="kopicha-threads")["verdict"] == "mismatch"
+    assert topics_mod.latest("精製", account="asmon-kanto-threads")["verdict"] == "mismatch"

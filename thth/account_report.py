@@ -234,7 +234,7 @@ def topic_plan(account_name: str, *, now=None) -> dict:
 
     out = []
     for topic, row in rows.items():
-        check = topics_mod.latest(topic)
+        check = topics_mod.latest(topic, account=account_name)
         seen = sorted(measured.get(topic, []))
         row.update({
             "planned": row["draft"] + row["approved"],
