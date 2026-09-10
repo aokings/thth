@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime
-import getpass
 import json
 import os
 import sys
@@ -222,7 +221,17 @@ def cmd_approve(args) -> int:
                   "ください。", file=sys.stderr)
             return 1
 
-        approved_by = args.by or os.environ.get("THTH_ACTOR") or getpass.getuser()
+        approved_by = args.by or os.environ.get("THTH_ACTOR")
+        if not approved_by:
+            # **ホスト名で埋めない**（kopicha セッション指摘 2026-09-10）。
+            # `--by` を省いたら 28 本に `approved_by: wt`（VM の unix ユーザー名）が
+            # 入った。判断したのは masaru なのに、記録は `wt`。承認は THTH が
+            # いちばん重く扱っている一線なのだから、**誰が承認したか判らないまま
+            # 通してはいけない**。既定を作らず、名乗らせる。
+            print("--by を付けてください（誰が承認したかを記録します）。"
+                  "例: --by masaru / --by \"claude（kopicha セッション）\"。"
+                  "環境変数 THTH_ACTOR でも指定できます。", file=sys.stderr)
+            return 1
         approved_at = jst.iso()
         for one in prepared:
             writeback_mod.set_front_matter_fields(one["path"], {
@@ -362,7 +371,11 @@ def cmd_revoke(args) -> int:
         return 1
     rel_path = os.path.relpath(os.path.realpath(args.file), os.path.realpath(repo_dir))
 
-    revoked_by = args.by or os.environ.get("THTH_ACTOR") or getpass.getuser()
+    revoked_by = args.by or os.environ.get("THTH_ACTOR")
+    if not revoked_by:
+        print("--by を付けてください（誰が止めたかを記録します）。"
+              "環境変数 THTH_ACTOR でも指定できます。", file=sys.stderr)
+        return 1
     revoked_at = jst.iso()
 
     repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
@@ -622,9 +635,16 @@ def cmd_board(args) -> int:
                 continue
             last_post = row["last_post_at"] or "(なし)"
             inflight = row["inflight"] or "(なし)"
+            # トークンの状態は **人向けの出力にも出す**（kopicha セッション指摘
+            # 2026-09-10: 文書には出ると書いてあるのに --json にしか出ていなかった）。
+            # 期限が切れると 1 本も出なくなるので、見えないのが痛い欄。
+            remaining = row.get("token_remaining_days")
+            token = row.get("token_state") or "?"
+            if remaining is not None:
+                token += f"/残り{remaining:.0f}日"
             print(f"{row['account']}: project={row['project']} last_post={last_post} "
                   f"approved_waiting={row['approved_waiting']} type_mismatch={row['type_mismatch']} "
-                  f"inflight={inflight}")
+                  f"inflight={inflight} token={token}")
             # 指紋の 5 項目のどれが食い違って inflight が残ったか（外部レビュー
             # 第 3 巡・持ち越し項目 C）。人が止まった原因をファイルを開いて
             # 自分で探さずに済むように、board の 1 画面にそのまま出す。

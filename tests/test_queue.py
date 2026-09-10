@@ -37,8 +37,9 @@ def test_queue_summaryが状態別に数える(isolated_account):
     # 次に出るのは select_one() が選ぶ b（publish_at が早く、いま出せる）。
     assert info["next_file"] == "b-approved.md"
     assert info["next_publish_at"] == "2026-09-09T08:00:00+09:00"
-    # c は publish_at が未来なので「いま出ない理由」に future が付く。
-    assert {"file": "c-approved-later.md", "reason": "future"} in info["next_rejections"]
+    # `future`（時刻を待っているだけ）は理由として並べない（kopicha セッション指摘
+    # 2026-09-10: 28 本の `future` に埋もれて `approval_stale` が見えなくなった）。
+    assert all(r["reason"] != "future" for r in info["next_rejections"]), info["next_rejections"]
 
 
 def test_queue_summaryはpost_id付きを次の候補から外す(isolated_account):
@@ -86,3 +87,19 @@ def test_queue_summaryはquiet_hoursとmin_intervalの理由も併記する(isol
     info2 = summary2[isolated_account["name"]]
     assert info2["next_file"] is None
     assert {"file": "a-approved.md", "reason": "quiet_hours"} in info2["next_rejections"]
+
+
+def test_いま出せるものが無くても次に出るものを答える(isolated_account):
+    """kopicha セッション指摘 2026-09-10: 承認済み 28 本があっても `next_file` が
+    常に null だった。**留守にする前に知りたいのはそこ。**"""
+    qdir = isolated_account["queue_dir"]
+    write_queue_file(qdir, "later.md", fm_overrides={
+        "status": "approved", "publish_at": "2026-09-20T08:00:00+09:00"},
+        body="## threads\n\nあとの本文\n")
+    write_queue_file(qdir, "sooner.md", fm_overrides={
+        "status": "approved", "publish_at": "2026-09-11T08:00:00+09:00"},
+        body="## threads\n\n先の本文\n")
+
+    info = report_mod.queue_summary(isolated_account["name"], now=NOW)[isolated_account["name"]]
+    assert info["next_file"] == "sooner.md", info
+    assert info["next_publish_at"] == "2026-09-11T08:00:00+09:00"

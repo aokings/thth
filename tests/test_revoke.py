@@ -44,7 +44,7 @@ def test_取り消すとdraftに戻り本文は変わらない(isolated_account)
 
 def test_取り消したものは出ない(isolated_account):
     path = _approved(isolated_account)
-    assert run_thth(["revoke", path]).returncode == 0
+    assert run_thth(["revoke", path, "--by", "テスト"]).returncode == 0
     result = core.throw_once(isolated_account["name"])
     assert result.action == "none", result
 
@@ -59,7 +59,7 @@ def test_取り消しは記録として残る(isolated_account):
 
 def test_取り消したあと直して承認し直せる(isolated_account):
     path = _approved(isolated_account)
-    assert run_thth(["revoke", path]).returncode == 0
+    assert run_thth(["revoke", path, "--by", "テスト"]).returncode == 0
     with open(path, encoding="utf-8") as f:
         text = f.read()
     with open(path, "w", encoding="utf-8") as f:
@@ -75,7 +75,7 @@ def test_もう出たものは取り消せないと断る(isolated_account):
     """`post_id` が付いていれば THTH では止められない。**その場でそう言う。**"""
     path = write_queue_file(isolated_account["queue_dir"], "a.md", fm_overrides={
         "status": "posted", "post_id": "999", "posted_at": "2026-09-09T08:00:00+09:00"})
-    result = run_thth(["revoke", path])
+    result = run_thth(["revoke", path, "--by", "テスト"])
     assert result.returncode == 1
     assert "Threads の画面から" in result.stderr, result.stderr
     assert queuefile.parse(path).front_matter.get("status") == "posted"
@@ -84,7 +84,7 @@ def test_もう出たものは取り消せないと断る(isolated_account):
 def test_承認されていないものは断る(isolated_account):
     path = write_queue_file(isolated_account["queue_dir"], "a.md",
                             fm_overrides={"status": "draft", "approved_sha": None})
-    result = run_thth(["revoke", path])
+    result = run_thth(["revoke", path, "--by", "テスト"])
     assert result.returncode == 1
     assert "承認されていません" in result.stderr
 
@@ -98,7 +98,7 @@ def test_意図して止めたものと承認が古いものをboardで区別で
     from thth import report as report_mod
 
     stopped = _approved(isolated_account, "stopped.md")
-    assert run_thth(["revoke", stopped]).returncode == 0
+    assert run_thth(["revoke", stopped, "--by", "テスト"]).returncode == 0
 
     broken = _approved(isolated_account, "broken.md",
                         publish_at="2026-09-09T18:00:00+09:00")

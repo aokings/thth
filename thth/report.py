@@ -44,10 +44,36 @@ def _next_via_select_one(files, *, account_name: str, account_cfg: dict, now):
             next_at = None
         next_topic = queuefile.normalize_topic(result.chosen.front_matter.get("topic"))
 
+    # **いま出せるものが無くても「次に出るもの」を答える**（kopicha セッション指摘
+    # 2026-09-10: 承認済み 28 本があっても `next_file` が常に null だった）。
+    # `select_one()` は「**いま**出すもの」を選ぶので、予定時刻がまだ来ていない
+    # ものは `future` で落ちる。だが人が「次に出るもの」と言うときに知りたいのは
+    # **待機列の先頭**のほう。`future` で落ちたものは妥当性検査を通っている
+    # （＝あとは時刻が来るだけ）ので、その中で publish_at が最も早いものを返す。
+    if next_file is None:
+        waiting = []
+        future_paths = {rej.file for rej in result.rejections if rej.reason == "future"}
+        for qf in files:
+            if qf.path not in future_paths:
+                continue
+            try:
+                at = queuefile.parse_publish_at(qf.front_matter.get("publish_at"))
+            except (TypeError, ValueError):
+                continue
+            waiting.append((at, qf))
+        if waiting:
+            waiting.sort(key=lambda t: (t[0], os.path.basename(t[1].path)))
+            at, qf = waiting[0]
+            next_file = os.path.basename(qf.path)
+            next_at = at.isoformat()
+            next_topic = queuefile.normalize_topic(qf.front_matter.get("topic"))
+
+    # `future`（＝時刻を待っているだけ）は理由として並べない。28 本の `future` に
+    # 埋もれて `approval_stale` や `overdue` が見えなくなる（同指摘）。
     rejections = [
         {"file": os.path.basename(rej.file), "reason": rej.reason}
         for rej in result.rejections
-        if rej.reason != "account_mismatch"
+        if rej.reason not in ("account_mismatch", "future")
     ]
     return next_file, next_at, next_topic, rejections
 

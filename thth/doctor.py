@@ -91,7 +91,12 @@ def diagnose(account_name: str) -> dict:
 
     probes = [
         _Probe("本人の確認", "threads_basic", "/v1.0/me", {"fields": "id,username"}),
-        _Probe("自分の投稿一覧", "threads_basic", f"/v1.0/{user_id}/threads",
+        # **「直近 3 件まで」と名前に書く**（kopicha セッション指摘 2026-09-10）。
+        # 「3 件」と返ったのを投稿総数だと読まれ、masaru に「3 本しか投稿して
+        # いない」と報告しかけた、という報告を受けた。実際は 4 件あった。
+        # 全部を読む口は `thth posts`（切り詰めない）。
+        _Probe("自分の投稿一覧（直近 3 件まで・総数ではありません→ thth posts）",
+               "threads_basic", f"/v1.0/{user_id}/threads",
                {"fields": "id,permalink,timestamp", "limit": 3}),
         _Probe("投稿の残量", "threads_content_publish",
                f"/v1.0/{user_id}/threads_publishing_limit",

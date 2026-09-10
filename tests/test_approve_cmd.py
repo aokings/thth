@@ -303,3 +303,33 @@ def test_これから出るものには注意を出さない(isolated_account):
     first = run_thth(["approve", path])
     assert "承認するとすぐ出ます" not in first.stdout
     assert "承認しても出ません" not in first.stdout
+
+
+def test_byを省いたら承認しない(isolated_account):
+    """kopicha セッション指摘 2026-09-10: `--by` を省いたら 28 本に
+    `approved_by: wt`（VM の unix ユーザー名）が入った。判断したのは masaru なのに
+    記録は `wt`。**承認は THTH がいちばん重く扱っている一線**なのだから、
+    誰が承認したか判らないまま通してはいけない。既定を作らず、名乗らせる。
+    """
+    path = write_queue_file(isolated_account["queue_dir"], "a.md",
+                            fm_overrides={"status": "draft", "approved_sha": None})
+    first = run_thth(["approve", path])
+    digest = next(l.split(": ", 1)[1].strip() for l in first.stdout.splitlines()
+                  if l.startswith("digest: "))
+
+    result = run_thth(["approve", path, "--confirm", digest])  # --by なし
+    assert result.returncode == 1
+    assert "--by を付けてください" in result.stderr, result.stderr
+    assert queuefile.parse(path).front_matter.get("status") == "draft"
+
+
+def test_THTH_ACTORでも名乗れる(isolated_account):
+    path = write_queue_file(isolated_account["queue_dir"], "a.md",
+                            fm_overrides={"status": "draft", "approved_sha": None})
+    first = run_thth(["approve", path])
+    digest = next(l.split(": ", 1)[1].strip() for l in first.stdout.splitlines()
+                  if l.startswith("digest: "))
+    result = run_thth(["approve", path, "--confirm", digest],
+                      env={"THTH_ACTOR": "masaru"})
+    assert result.returncode == 0, result.stderr
+    assert queuefile.parse(path).front_matter.get("approved_by") == "masaru"

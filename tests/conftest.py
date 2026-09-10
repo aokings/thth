@@ -333,9 +333,9 @@ def approve_via_cli(path, *, by: str | None = None, extra: list | None = None):
     digests = [line.split(": ", 1)[1].strip() for line in first.stdout.splitlines()
                if line.startswith("digest: ")]
     assert digests, f"digest が表示されない: {first.stdout}{first.stderr}"
-    args = ["approve", str(path), "--confirm", digests[0]]
-    if by:
-        args += ["--by", by]
+    # `--by` は必須（kopicha セッション指摘 2026-09-10: 既定でホスト名が入っていた）。
+    # テストは中身の確認が目的なので、指定が無ければ「テスト」と名乗る。
+    args = ["approve", str(path), "--confirm", digests[0], "--by", by or "テスト"]
     return run_thth(args + list(extra or []))
 
 
