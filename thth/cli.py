@@ -15,6 +15,7 @@ import sys
 from . import account_report as account_report_mod
 from . import accounts as accounts_mod
 from . import approval as approval_mod
+from . import collect as collect_mod
 from . import core
 from . import jst
 from . import lint as lint_mod
@@ -574,7 +575,31 @@ def cmd_run(args) -> int:
         print(f"token が無いので実行しません: {args.account}", file=sys.stderr)
         return 2
     result = core.throw_once(args.account, production_flag=True, log=print)
+
+    # **投稿のあとに必ず採る**（masaru 裁定 2026-09-10）。数は「読んだ時点の累計」
+    # しか返らないので、逃した経過時間は永久に復元できない。採取の失敗で timer の
+    # 終了コードを悪くしない（次の実行で埋まる）が、黙らせもしない。
+    try:
+        collect_rc = collect_mod.run_collect(args.account, log=print)
+        if collect_rc:
+            print(f"（採取は完全ではありません: exit={collect_rc}。次の実行で埋めます）")
+    except Exception as e:  # 採取の失敗で投稿の経路を壊さない
+        print(f"（採取に失敗しました: {e}。次の実行で埋めます）", file=sys.stderr)
     return result.exit_code
+
+
+def cmd_collect(args) -> int:
+    """`thth collect <account>`: 数と返信を採る（`thth run` が自動で呼びます）。
+
+    **経過時間で取る**（`thth/collect.py` の docstring 参照）。手で呼ぶ必要は
+    ふつうありません。
+    """
+    names = [args.account] if args.account else accounts_mod.list_account_names()
+    worst = 0
+    for name in names:
+        rc = collect_mod.run_collect(name, log=print)
+        worst = max(worst, rc)
+    return worst
 
 
 def cmd_auth(args) -> int:
@@ -786,6 +811,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_board = sub.add_parser("board", help="アカウントごとの鮮度・inflight・型外の骨")
     p_board.add_argument("--json", action="store_true")
     p_board.set_defaults(func=cmd_board)
+
+    p_collect = sub.add_parser(
+        "collect", help="数と返信を採る（経過時間の刻みで・thth run が自動で呼びます）")
+    p_collect.add_argument("account", nargs="?")
+    p_collect.set_defaults(func=cmd_collect)
 
     p_auth = sub.add_parser("auth", help="認可コードから長期トークンを取得する（masaru が対話で実行。MCPには出さない）")
     p_auth.add_argument("account")

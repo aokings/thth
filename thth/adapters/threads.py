@@ -111,8 +111,63 @@ class ThreadsAdapter(base.Adapter):
                                        failure="publish_ambiguous")
         return base.PublishResult(post_id=post_id, url=None, ts=ts, error=None, failure="none")
 
+    def _get(self, path: str, params: dict) -> dict:
+        p = dict(params)
+        p["access_token"] = self.access_token
+        url = f"{self.base_url.rstrip('/')}{path}?" + urllib.parse.urlencode(p)
+        with urllib.request.urlopen(url, timeout=self.timeout) as resp:
+            return json.loads(resp.read() or b"{}")
+
+    @staticmethod
+    def _metric_value(row: dict):
+        """Insights の 1 行から数を取り出す。
+
+        Threads は指標によって `values: [{value: N}]` と `total_value: {value: N}` の
+        2 つの形を返す。**どちらか片方だけを見ると黙って None になる**ので両方見る。
+        """
+        total = row.get("total_value")
+        if isinstance(total, dict) and "value" in total:
+            return total["value"]
+        values = row.get("values")
+        if isinstance(values, list) and values and isinstance(values[0], dict):
+            return values[0].get("value")
+        return None
+
+    def insights(self, post_id: str) -> dict:
+        """投稿 1 本の数（`views`・`likes`・`replies`・`reposts`・`quotes`・`shares`）。
+
+        **読んだ時点の累計**で、since/until は使えない（設計 §4.5）。だから
+        「いつ読んだか」と「投稿からの経過時間」を必ず添えて記録する
+        （`thth.collect`）。取れなかった指標は入れない——**0 と混ぜない**。
+        """
+        body = self._get(f"/v1.0/{post_id}/insights",
+                          {"metric": "views,likes,replies,reposts,quotes,shares"})
+        out = {}
+        for row in body.get("data") or []:
+            name = row.get("name")
+            value = self._metric_value(row)
+            if name and value is not None:
+                out[name] = value
+        return out
+
     def replies(self, post_id, *, since=None):
-        raise NotImplementedError("T1 の範囲外（T3 で実装）")
+        """その投稿への返信（`threads_read_replies`）。上位 1 階層。"""
+        body = self._get(f"/v1.0/{post_id}/replies",
+                          {"fields": "id,text,username,timestamp,permalink,is_reply,replied_to"})
+        return body.get("data") or []
+
+    def account_insights(self, user_id: str, *, since: str, until: str) -> dict:
+        """アカウント単位の日次（`clicks` はここでしか取れない・設計 §4.5・§8-13）。"""
+        body = self._get(f"/v1.0/{user_id}/threads_insights", {
+            "metric": "views,likes,replies,reposts,quotes,followers_count,clicks",
+            "since": since, "until": until})
+        out = {}
+        for row in body.get("data") or []:
+            name = row.get("name")
+            value = self._metric_value(row)
+            if name and value is not None:
+                out[name] = value
+        return out
 
     def quota(self):
         return None
