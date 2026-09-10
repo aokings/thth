@@ -174,7 +174,24 @@ def test_T06_別のトピックの観測を根拠に数えない():
     result = evaluate([candidate("コーヒー", ids(1))],
                        [make_observation("お茶")], selected="コーヒー")
     assert result["status"] == "provisional", result
-    assert any("トピックそのもの" in s for s in result["shortfalls"]), result
+    assert any("別のトピックの観測" in s for s in result["shortfalls"]), result
+
+
+def test_T06_断る理由は実際に断った理由を言う():
+    """**tag で引いたが取得が完了していない観測を「keyword だから」と言わない。**
+
+    2026-09-11 に実データで踏んだ。`status: partial` の `topic_tag` 観測に対して
+    「keyword 検索の結果は tag の利用例になりません」と返していた——**次に何を
+    すればよいのかが分からなくなる。**
+    """
+    result = evaluate([candidate("コーヒー", ids(1))],
+                       [make_observation("コーヒー", status="partial")],
+                       selected="コーヒー")
+    assert result["status"] == "provisional", result
+    reason = [s for s in result["shortfalls"] if "観測" in s]
+    assert reason, result["shortfalls"]
+    assert "keyword" not in reason[0], reason
+    assert "partial" in reason[0], reason
 
 
 # --- T08 -------------------------------------------------------------------

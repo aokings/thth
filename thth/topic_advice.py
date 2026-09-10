@@ -343,14 +343,26 @@ def _shortfalls(context: dict, chosen: dict, observations: dict, *, now) -> tupl
 
     # 受け入れ T06。**keyword の結果を tag の利用例に昇格させない。**
     want = queuefile.normalize_topic(chosen["topic"])
-    exact = [r for r in fresh
-             if r.get("search_mode") == "topic_tag" and r.get("status") == "ok"
-             and (r.get("normalized_topic") or
-                  queuefile.normalize_topic(r.get("topic"))) == want]
+    same_topic = [r for r in fresh
+                  if (r.get("normalized_topic")
+                      or queuefile.normalize_topic(r.get("topic"))) == want]
+    by_tag = [r for r in same_topic if r.get("search_mode") == "topic_tag"]
+    exact = [r for r in by_tag if r.get("status") == "ok"]
     if not exact:
-        if fresh:
-            out.append("トピックそのものを引いた観測がありません"
+        # **断る理由は、実際に断った理由を言う。** ここで「keyword だから」と
+        # 決め打ちすると、`status` が `partial` の tag 観測まで keyword の話に
+        # されて、**次に何をすればよいのかが分からなくなる**（2026-09-11 に
+        # 実データで踏んだ）。
+        if by_tag:
+            statuses = sorted({r.get("status") or "不明" for r in by_tag})
+            out.append(f"トピックを引いた観測はありますが、取得が完了していません"
+                        f"（status: {'・'.join(statuses)}）")
+        elif same_topic:
+            out.append("そのトピックを引いた観測がありません"
                         "（keyword 検索の結果は tag の利用例になりません）")
+        elif fresh:
+            out.append(f"「{chosen['topic']}」そのものを引いた観測がありません"
+                        f"（参照しているのは別のトピックの観測です）")
         return out, notes
 
     samples = sum(len(r.get("samples") or []) for r in exact)
