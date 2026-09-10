@@ -179,11 +179,15 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
     return {"account": account_name, "error": None, "posts": posts}
 
 
-def measured_views_all_accounts() -> dict:
-    """全アカウントの実測（24 時間の刻み）を `{トピック: [views, ...]}` にまとめる。
+def measured_views_by_account() -> dict:
+    """実測（24 時間の刻み）を `{account: {トピック: [views, ...]}}` で返す。
 
-    トピックの知識は**プロジェクトを跨いで共有する**（`精製` が鉱物の場である
-    ことは誰にとっても同じ）。だから型ごとの学習も全アカウントを合わせて数える。
+    **アカウントを跨いで合算しない**（設計 §2 の表・§12.3・masaru 指示 2026-09-11）。
+
+    以前は全アカウントの views を 1 つの辞書に混ぜていた。**読者も目的も違う
+    アカウントの数字を足すと、比較の母集団が壊れる**——nigamilab の `コーヒー` の
+    数字が kopicha の判断材料に混ざっていた。トピックの**観測**は共有できるが、
+    **数字は account・投稿の単位で保つ。**
     """
     out: dict = {}
     for name in accounts_mod.list_account_names():
@@ -191,8 +195,7 @@ def measured_views_all_accounts() -> dict:
             account_cfg = accounts_mod.load_account(name)
         except accounts_mod.AccountError:
             continue
-        for topic, views in _measured_views_by_topic(account_cfg.get("repo_dir") or "").items():
-            out.setdefault(topic, []).extend(views)
+        out[name] = _measured_views_by_topic(account_cfg.get("repo_dir") or "")
     return out
 
 
