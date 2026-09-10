@@ -54,8 +54,9 @@ def make_observation(topic, *, mode="topic_tag", status="ok", authors=3,
     }
 
 
-def make_context(article, observation_ids, *, account="kopicha"):
-    return models.build_context({
+def make_context(article, observation_ids, *, account="kopicha",
+                  profile_status="confirmed"):
+    context = models.build_context({
         "account": account,
         "profile_version": "sha256:" + "0" * 64,
         "draft_bytes_sha256": "0" * 64,
@@ -66,7 +67,12 @@ def make_context(article, observation_ids, *, account="kopicha"):
         "article_content_sha256": article["content_sha256"],
         "observation_ids": list(observation_ids),
         "policy_version": advice.POLICY_VERSION,
+        "main_article_url": "https://example.test/coffee",
     })
+    # profile の中身は `profile_version` で固定されるので hash には入れない。
+    # **確定しているかどうかは判断に効く**ので、評価側へは渡す。
+    context["profile_status"] = profile_status
+    return context
 
 
 def make_proposal(context, article, candidates, *, selected):
@@ -94,10 +100,11 @@ def candidate(topic, refs, *, article_fit=3, conversation_fit=3, fit="suitable",
 
 
 def evaluate(candidates, observations, *, selected="精製", article=None,
-              context=None):
+              context=None, profile_status="confirmed"):
     article = article or make_article()
     obs = {f"sha256:{i:064x}": o for i, o in enumerate(observations, start=1)}
-    context = context or make_context(article, obs)
+    context = context or make_context(article, obs,
+                                       profile_status=profile_status)
     proposal = make_proposal(context, article, candidates, selected=selected)
     return advice.evaluate(context, article=article, proposal=proposal,
                             observations=obs, now=NOW)
@@ -372,7 +379,7 @@ def test_同期の状態は判断の同一性を変えない():
     rows = {ids(1)[0]: make_observation("コーヒー")}
     draft = make_context(article, rows)
     base = dict(draft)
-    for key in ("context_id", "schema_version", "source_state"):
+    for key in ("context_id", "schema_version", "source_state", "profile_status"):
         base.pop(key, None)
     synced = models.build_context({**base, "source_state": "synced"})
     assert synced["context_id"] == draft["context_id"]

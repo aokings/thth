@@ -41,6 +41,23 @@ MIN_AUTHORS = 3
 _URL_RE = re.compile(r"https?://[^\s、。）)」』】\]]+")
 
 
+def _strip_fragment(url: str) -> str:
+    return (url or "").split("#", 1)[0].rstrip("/")
+
+
+def same_article_url(a, b) -> bool:
+    """同じ記事を指す URL か。
+
+    **`#` から後ろだけを無視する。** query は無視しない——`?utm_source=` が
+    付いた URL は配信経路が違うだけで同じ本文のことが多いが、**query で別の
+    記事を出すサイトもある**ので、機械には区別できない。ここで寛容にすると
+    「別の記事を主対象にできる」穴に戻る。
+    """
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+    return _strip_fragment(a) == _strip_fragment(b)
+
+
 def extract_urls(text: str) -> list:
     """本文から URL を取り出す。**文末の句読点・括弧を巻き込まない。**
 
@@ -154,7 +171,16 @@ def build_context(queue_file: str, *, article: dict | None = None,
         raise models.SchemaError(f"`## {account_cfg['media']}` の節がありません")
 
     urls = extract_urls(section)
-    main_url = article_url or (urls[0] if len(urls) == 1 else None)
+    if article_url is not None:
+        # **投稿に無い URL を主対象にできない**（独立レビュー 2026-09-11・指摘 1）。
+        # 指定を素通ししていたので、投稿と無関係な記事を主対象にできた。
+        if not any(same_article_url(article_url, u) for u in urls):
+            raise models.SchemaError(
+                f"--article-url が投稿本文にありません: {article_url}"
+                f"（本文の URL: {urls or 'なし'}）")
+        main_url = next(u for u in urls if same_article_url(article_url, u))
+    else:
+        main_url = urls[0] if len(urls) == 1 else None
 
     if profile is None:
         profile = store.get_profile(account_name)
@@ -182,12 +208,12 @@ def build_context(queue_file: str, *, article: dict | None = None,
         "article_content_sha256": (article or {}).get("content_sha256"),
         "observation_ids": list(observation_ids or []),
         "policy_version": POLICY_VERSION,
+        "main_article_url": main_url,
         "source_state": ("synced" if verified is True
                           else "unverified" if verified is None else "local_draft"),
         "draft_path": queue_file,
     })
     # 内容 id に入らない付随情報（設計 §4.3 の「hash に含めない」側）。
-    context["main_article_url"] = main_url
     context["ignored_urls"] = [u for u in urls if u != main_url]
     context["urls_in_post"] = urls
     context["profile_overridden"] = overridden
@@ -235,6 +261,7 @@ def evaluate(context: dict, *, article: dict | None, proposal: dict | None,
     if article is None:
         required.append(_action("article", None, "記事本文を読み込んでいません",
                                  "ArticleEvidence"))
+        required += _article_url_action(context)
         return _envelope(context, "needs_article", required, warnings)
 
     if article.get("retrieval_status") != "ok" or article.get("coverage") != "full":
@@ -250,6 +277,27 @@ def evaluate(context: dict, *, article: dict | None, proposal: dict | None,
         return _envelope(context, "stale_context", required,
                           warnings + ["判断の入力と記事の中身が食い違っています"],
                           ok=False, code="stale_context")
+
+    # **記事証拠が、この投稿が紹介している記事かを見る**（独立レビュー
+    # 2026-09-11・指摘 1）。本文と hash が揃っていることは「今回紹介する記事の
+    # 本文である」ことの代わりにならない。ここを見ていなかったので、
+    # **投稿と無関係な記事でも recommended になっていた。**
+    main_url = context.get("main_article_url")
+    if main_url is None:
+        required += _article_url_action(context)
+        return _envelope(context, "needs_article", required, warnings)
+
+    requested, final = article.get("requested_url"), article.get("final_url")
+    if not (same_article_url(main_url, requested) or same_article_url(main_url, final)):
+        required.append(_action(
+            "article", None,
+            f"記事証拠が投稿の主対象と別の記事です"
+            f"（投稿: {main_url} / 記事: {requested}）",
+            "ArticleEvidence"))
+        return _envelope(context, "needs_article", required, warnings)
+    if not same_article_url(requested, final):
+        # redirect は通すが、**黙って通さない。**
+        warnings.append(f"記事の取得で転送がありました（{requested} → {final}）")
 
     if proposal is None:
         return _envelope(context, "needs_proposal", required, warnings)
@@ -291,22 +339,41 @@ def evaluate(context: dict, *, article: dict | None, proposal: dict | None,
 
     if not (chosen.get("counterevidence") or "").strip():
         # 反証の検討そのものが無い（§5 の 4）。書かれていれば内容は評価しない。
-        shortfalls.append("合わない理由の検討が書かれていません")
+        shortfalls.append(("proposal", "合わない理由の検討が書かれていません"))
     if (chosen.get("uncertainties") or "").strip():
         # 受け入れ T01。**同語一致だけで recommended にしない。**
         # 残っている不確かさは、THTH には解けない——暫定に落とす。
-        shortfalls.append(f"未解決の不確かさが残っています: "
-                           f"{chosen['uncertainties'][:60]}")
+        shortfalls.append(("observation",
+                            f"未解決の不確かさが残っています: "
+                            f"{chosen['uncertainties'][:60]}"))
 
     if shortfalls:
-        required.append(_action("observation", chosen["topic"],
-                                 "／".join(shortfalls), "TopicObservation"))
+        # **次にすべき作業の種類を、原因に合わせて分ける**（独立レビュー
+        # 2026-09-11・指摘 4 の後半）。profile が無いのに「観測を追加して
+        # ください」と言うと、**直せない指示を出したことになる。**
+        required += _actions_for(shortfalls, chosen["topic"])
         return _envelope(context, "provisional", required, warnings,
                           selected=chosen["topic"], candidates=candidates,
-                          shortfalls=shortfalls)
+                          shortfalls=[text for _kind, text in shortfalls])
 
     return _envelope(context, "recommended", required, warnings,
                       selected=chosen["topic"], candidates=candidates)
+
+
+# 不足の種類 → 次にすべき作業と、渡す形
+_SCHEMA_FOR = {"observation": "TopicObservation", "profile": "AccountProfile",
+               "proposal": "TopicProposal", "article": "ArticleEvidence"}
+
+
+def _actions_for(shortfalls: list, topic) -> list:
+    """種類ごとにまとめて `required_actions` にする。**混ぜない。**"""
+    out = []
+    for kind in ("article", "profile", "proposal", "observation"):
+        reasons = [text for k, text in shortfalls if k == kind]
+        if reasons:
+            out.append(_action(kind, topic if kind != "profile" else None,
+                                "／".join(reasons), _SCHEMA_FOR[kind]))
+    return out
 
 
 def _shortfalls(context: dict, chosen: dict, observations: dict, *, now) -> tuple:
@@ -319,24 +386,33 @@ def _shortfalls(context: dict, chosen: dict, observations: dict, *, now) -> tupl
     """
     out, notes = [], []
     if context.get("profile_version") is None:
-        out.append("この account の profile がまだありません")
-    if context.get("profile_status") == "provisional":
-        notes.append("profile が仮のままです（判断の前提が確定していません）")
+        out.append(("profile", "この account の profile がまだありません"))
+    elif context.get("profile_status") != "confirmed":
+        # **仮の profile で「確定」と言わない**（独立レビュー 2026-09-11・指摘 4）。
+        # 方針そのものが未確定なのに判断だけ確定扱いになっていた。
+        out.append(("profile",
+                     f"profile が確定していません（status: "
+                     f"{context.get('profile_status') or '不明'}）"))
     if chosen["article_fit"] < 2 or chosen["conversation_fit"] < 2:
-        out.append(f"適合の説明が弱い（article_fit={chosen['article_fit']}・"
-                    f"conversation_fit={chosen['conversation_fit']}）")
+        out.append(("proposal",
+                     f"適合の説明が弱い（article_fit={chosen['article_fit']}・"
+                     f"conversation_fit={chosen['conversation_fit']}）"))
 
     refs = [observations[r] for r in chosen["observation_refs"] if r in observations]
     if len(refs) != len(chosen["observation_refs"]):
-        out.append("参照した観測の一部を読み込めていません")
+        missing = [r for r in chosen["observation_refs"] if r not in observations]
+        out.append(("observation",
+                     f"参照した観測を読み込めていません（{len(missing)} 件。"
+                     f"壊れているか、消えています）"))
 
     fresh = [r for r in refs if _is_fresh(r, now=now)]
     stale = len(refs) - len(fresh)
     if not fresh:
         # 受け入れ T08。**古い観測だけでは recommended にしない。**
-        out.append(f"{FRESH_DAYS} 日以内の観測がありません"
-                    f"（参照 {len(refs)} 件はすべて古い）" if refs
-                    else "観測の参照がありません")
+        out.append(("observation",
+                     f"{FRESH_DAYS} 日以内の観測がありません"
+                     f"（参照 {len(refs)} 件はすべて古い）" if refs
+                     else "観測の参照がありません"))
     elif stale:
         # 新しいものが足りていれば止めない。**古いものが混ざっている事実は言う。**
         notes.append(f"参照のうち {stale} 件は {FRESH_DAYS} 日より古い観測です")
@@ -355,25 +431,50 @@ def _shortfalls(context: dict, chosen: dict, observations: dict, *, now) -> tupl
         # 実データで踏んだ）。
         if by_tag:
             statuses = sorted({r.get("status") or "不明" for r in by_tag})
-            out.append(f"トピックを引いた観測はありますが、取得が完了していません"
-                        f"（status: {'・'.join(statuses)}）")
+            out.append(("observation",
+                         f"トピックを引いた観測はありますが、取得が完了していません"
+                         f"（status: {'・'.join(statuses)}）"))
         elif same_topic:
-            out.append("そのトピックを引いた観測がありません"
-                        "（keyword 検索の結果は tag の利用例になりません）")
+            out.append(("observation",
+                         "そのトピックを引いた観測がありません"
+                         "（keyword 検索の結果は tag の利用例になりません）"))
         elif fresh:
-            out.append(f"「{chosen['topic']}」そのものを引いた観測がありません"
-                        f"（参照しているのは別のトピックの観測です）")
+            out.append(("observation",
+                         f"「{chosen['topic']}」そのものを引いた観測がありません"
+                         f"（参照しているのは別のトピックの観測です）"))
         return out, notes
 
     samples = sum(len(r.get("samples") or []) for r in exact)
     authors = _authors(exact)
     if samples < MIN_SAMPLES:
-        out.append(f"観測の投稿例が {samples} 件（{MIN_SAMPLES} 件以上ほしい）")
+        out.append(("observation",
+                     f"観測の投稿例が {samples} 件（{MIN_SAMPLES} 件以上ほしい）"))
     if len(authors) < MIN_AUTHORS:
         # 受け入れ T09。**20 件あっても投稿者が 1 人なら 1 人と数える。**
-        out.append(f"観測の投稿例 {samples} 件は投稿者 {len(authors)} 人に偏っています"
-                    f"（{MIN_AUTHORS} 人以上ほしい）")
+        out.append(("observation",
+                     f"観測の投稿例 {samples} 件は投稿者 {len(authors)} 人に"
+                     f"偏っています（{MIN_AUTHORS} 人以上ほしい）"))
     return out, notes
+
+
+def _article_url_action(context: dict) -> list:
+    """主対象の記事について、次にすべきことを言う。
+
+    **URL が 1 本に決まらないまま先へ進ませない**（独立レビュー 2026-09-11・
+    指摘 1）。決まっていれば「この記事を取ってきてください」と名指しする。
+    """
+    main_url = context.get("main_article_url")
+    urls = context.get("urls_in_post") or []
+    if main_url:
+        return [_action("article_url", None, f"主対象の記事: {main_url}",
+                         "ArticleEvidence")]
+    return [_action(
+        "article_url", None,
+        (f"本文に URL が {len(urls)} 本あります。--article-url で主対象を"
+         f"指定してください（{urls}）" if len(urls) > 1
+         else "本文に記事の URL がありません。--article-url で主対象を"
+              "指定してください"),
+        "ArticleEvidence")]
 
 
 def _action(kind: str, topic, reason: str, schema: str) -> dict:

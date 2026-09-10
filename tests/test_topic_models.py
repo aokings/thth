@@ -33,6 +33,7 @@ def _context(**over):
         "article_id": "sha256:" + "c" * 64,
         "article_content_sha256": "d" * 64,
         "observation_ids": ["sha256:" + "e" * 64], "policy_version": "1",
+        "main_article_url": "https://kopicha.example/processing",
     }
     row.update(over)
     return m.build_context(row)
@@ -184,3 +185,15 @@ def test_足りない項目は推測で補わずに止まる():
     del row["content_text"]
     with pytest.raises(m.SchemaError, match="足りません"):
         m.build_article(row)
+
+
+def test_主対象の記事が変われば別のcontext():
+    """独立レビュー 2026-09-11・指摘 1。
+
+    以前は `main_article_url` を `context_id` の計算の**外**に置いていたので、
+    `--article-url` を別の記事に変えても ID が動かなかった——**主対象を
+    変えても同じ判断のまま通る**形だった。
+    """
+    a = _context()
+    b = _context(main_article_url="https://kopicha.example/other")
+    assert a["context_id"] != b["context_id"]

@@ -120,7 +120,12 @@ def quote_is_in_article(article: dict, quote: str) -> bool:
 
 CONTEXT_KEYS = ("account", "profile_version", "draft_bytes_sha256", "section",
                 "reply_to", "topic", "publish_at", "article_id",
-                "article_content_sha256", "observation_ids", "policy_version")
+                "article_content_sha256", "observation_ids", "policy_version",
+                # **主対象の記事も入力**（独立レビュー 2026-09-11・指摘 1）。
+                # ID の外に置いていたので、`--article-url` を別の記事に変えても
+                # context_id が動かなかった——**主対象を変えても同じ判断のまま**
+                # 通る形になっていた。
+                "main_article_url")
 
 
 def build_context(row: dict) -> dict:
@@ -177,10 +182,25 @@ def validate_proposal(row: dict, *, article: dict, known_observation_ids: set) -
             for key in ("article_fit", "conversation_fit"):
                 if cand[key] not in (0, 1, 2, 3):
                     raise SchemaError(f"{where} の {key} は 0〜3: {cand[key]!r}")
-            for quote in cand["article_quotes"]:
+            quotes = cand["article_quotes"]
+            if not isinstance(quotes, list) or any(not isinstance(q, str)
+                                                    for q in quotes):
+                raise SchemaError(f"{where} の article_quotes は文字列の配列")
+            if cand["fit"] == "suitable" and not [q for q in quotes if q.strip()]:
+                # **引用が 0 本なら、引用の検査は 1 度も走らない。**
+                # for 文が 0 回まわって「不一致なし」で通ってしまう——
+                # **根拠そのものが無いのに、根拠の充足条件を満たしたことになる**
+                # （独立レビュー 2026-09-11・指摘 3）。適合すると言う候補には
+                # 記事本文からの引用を要る。
+                raise SchemaError(
+                    f"{where} は fit=suitable なのに article_quotes が空です"
+                    f"（記事本文からの引用を 1 つ以上）")
+            for quote in quotes:
                 if not quote_is_in_article(article, quote):
                     raise SchemaError(
                         f"{where} の引用が記事本文にありません: {quote[:40]!r}")
+            if not isinstance(cand["observation_refs"], list):
+                raise SchemaError(f"{where} の observation_refs は配列")
             unknown = [ref for ref in cand["observation_refs"]
                        if ref not in known_observation_ids]
             if unknown:

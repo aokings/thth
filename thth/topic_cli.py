@@ -18,8 +18,10 @@ from . import accounts as accounts_mod
 from . import topic_advice as advice
 from . import topic_models as models
 from . import topic_store as store
+from . import topics as topics_mod
 
-SUBCOMMANDS = ("suggest", "observe", "record-decision", "decision", "profile")
+SUBCOMMANDS = ("suggest", "observe", "record-decision", "decision",
+                "profile", "observation")
 
 # 本文を含めて 1 MiB（設計 §7）。**超過は構造化エラー**にする。
 MAX_INPUT_BYTES = 1024 * 1024
@@ -94,6 +96,11 @@ def _actor(args) -> str:
     return by
 
 
+def _action(kind: str, topic, reason: str, schema: str) -> dict:
+    return {"type": kind, "topic": topic, "reason": reason,
+            "expected_schema": schema}
+
+
 def _fail(code: str, message: str) -> int:
     _emit({"schema_version": models.SCHEMA_VERSION, "ok": False, "status": None,
            "context_id": None, "account": None, "selected_topic": None,
@@ -138,10 +145,11 @@ def cmd_suggest(args) -> int:
 
     article = models.build_article(article_raw) if article_raw else None
 
-    observations, broken = {}, []
-    if article is not None:
-        rows, broken = store.load_all("observations")
-        observations = {r["observation_id"]: r for r in rows}
+    # **観測は記事の有無に関係なく読む。** 以前は記事が無いと空にしていたので、
+    # 「まず何が分かっているか」を聞く最初の呼び出しで**手持ちの根拠が
+    # 返らなかった**（独立レビュー 2026-09-11・指摘 2）。
+    rows, broken = store.load_all("observations")
+    observations = {r["observation_id"]: r for r in rows}
 
     context = advice.build_context(
         args.file, article=article, article_url=args.article_url,
@@ -166,26 +174,125 @@ def cmd_suggest(args) -> int:
                                 observations=observations)
     if broken:
         envelope["warnings"].append(
-            f"読めない観測の記録が {len(broken)} 件あります（無いのではなく壊れています）: "
-            f"{broken[:3]}")
-    if envelope["status"] == "needs_article":
-        envelope["required_actions"].append({
-            "type": "article_url", "topic": None,
-            "reason": (f"主対象の記事: {context['main_article_url']}"
-                        if context.get("main_article_url")
-                        else "本文の URL が 1 本に決まりません。--article-url で指定してください"),
-            "expected_schema": "ArticleEvidence",
-        })
-        envelope["urls_in_post"] = context.get("urls_in_post", [])
-        envelope["main_article_url"] = context.get("main_article_url")
-        envelope["ignored_urls"] = context.get("ignored_urls", [])
-    if proposal is not None:
-        envelope["proposal_id"] = proposal["proposal_id"]
-    envelope["context"] = {k: v for k, v in context.items() if k != "section"}
+            f"読めない観測の記録が {len(broken)} 件あります"
+            f"（無いのではなく壊れています）: {broken[:3]}")
+
+    envelope["context"] = dict(context)
+    envelope["urls_in_post"] = context.get("urls_in_post", [])
+    envelope["main_article_url"] = context.get("main_article_url")
+    envelope["ignored_urls"] = context.get("ignored_urls", [])
+    envelope["evidence"] = _evidence(context, observations)
     if article is not None:
         envelope["article_id"] = article["article_id"]
+    if proposal is not None:
+        envelope["proposal_id"] = proposal["proposal_id"]
+    # **検査した結果を、そのまま保存へ渡せる形で返す**（指摘 6）。
+    # 利用側が過去の入力を拾って封筒を組み直す必要があると、
+    # **組み直し方が出力のどこにも書いていない**ので詰まる。
+    envelope["record_payload"] = {
+        "draft_path": args.file,
+        "context_id": context["context_id"],
+        "article_url": context.get("main_article_url"),
+        "article": _article_input(article),
+        "proposal": _proposal_input(proposal),
+    }
     _emit(envelope)
     return _exit_code(envelope)
+
+
+# 出力に載せる根拠の総量の目安。超えたら投稿例を削って、削ったと言う。
+EVIDENCE_BUDGET_BYTES = 256 * 1024
+SAMPLES_PER_OBSERVATION = 8
+
+
+def _article_input(article):
+    """`build_article()` が付けた項目を外して、入力の形に戻す。"""
+    if article is None:
+        return None
+    return {k: v for k, v in article.items()
+            if k not in ("article_id", "content_sha256", "schema_version")}
+
+
+def _proposal_input(proposal):
+    if proposal is None:
+        return None
+    return {k: v for k, v in proposal.items()
+            if k not in ("proposal_id", "schema_version")}
+
+
+def _legacy_notes(account: str) -> list:
+    """既存 22 語を、**観測と当時の判断を分けた形**で返す（設計 §9）。
+
+    語彙は新しいほうへ訳す（`alive→suitable` 等）。**知らない語は推測しない。**
+    `account` の付いていない記録は「参考」——**他の account の判断を自分の
+    判断として採用しない**（承認の変更点 3）。
+    """
+    out = []
+    for topic, row in sorted(topics_mod.observation().items()):
+        own = topics_mod.judgment(topic, account) if account else {}
+        out.append({
+            "topic": topic,
+            "kind": row.get("kind"),
+            "audience": row.get("audience"),
+            "note": row.get("note"),
+            "checked_at": row.get("checked_at"),
+            "status": row.get("status"),
+            "recorded_by": row.get("by"),
+            "account": row.get("account"),
+            "legacy_verdict": row.get("verdict"),
+            "fit": advice.legacy_fit(row.get("verdict")),
+            "own_account_judged": bool(own),
+            "reference_only": row.get("account") not in (account, None) or not own,
+        })
+    return out
+
+
+def _evidence(context: dict, observations: dict) -> dict:
+    """**LLM が読める形で根拠そのものを返す**（独立レビュー 2026-09-11・指摘 2）。
+
+    以前は `observation_ids` と `profile_version` しか返していなかった。
+    **ID だけでは、別のセッションは何も読めない。** state を直接読ませたり、
+    前のセッションの記憶に頼らせたりすると、「THTH が根拠を引き継ぐ」という
+    この道具の中心が成り立たない。
+
+    大きくなりすぎる場合は投稿例を削るが、**削ったことを必ず書く**
+    （黙って減らすと「その投稿例は無い」と読まれる）。
+    """
+    profile = store.get_profile(context["account"])
+    if context.get("profile_overridden"):
+        profile = {"note": "この検討では --profile で差し替えた profile を"
+                            "使っています（保存済みの profile は変えていません）"}
+
+    rows, truncated = [], []
+    used = 0
+    for oid in sorted(observations):
+        obs = dict(observations[oid])
+        samples = obs.get("samples") or []
+        if len(samples) > SAMPLES_PER_OBSERVATION:
+            obs["samples"] = samples[:SAMPLES_PER_OBSERVATION]
+            obs["samples_truncated"] = {
+                "shown": SAMPLES_PER_OBSERVATION, "total": len(samples),
+                "read_all": f"thth topics observation {oid}"}
+            truncated.append(oid)
+        size = len(models.canonical_json(obs))
+        if used + size > EVIDENCE_BUDGET_BYTES:
+            truncated.append(oid)
+            rows.append({"observation_id": oid, "topic": obs.get("topic"),
+                          "omitted": "大きすぎるので本文を省きました",
+                          "read_all": f"thth topics observation {oid}"})
+            continue
+        used += size
+        rows.append(obs)
+
+    return {
+        "post_text": context.get("section"),
+        "profile": profile,
+        "observations": rows,
+        "legacy_notes": _legacy_notes(context["account"]),
+        "truncated_observation_ids": sorted(set(truncated)),
+        "how_to_read_more": "thth topics observation <observation_id>",
+        "notice": advice.NOTICE,
+    }
 
 
 # --- observe / record-decision / decision / profile --------------------------
@@ -211,14 +318,27 @@ def cmd_record_decision(args) -> int:
 
     参照はサーバ側で解決しなおし、記事 hash と `context_id` を再計算して、
     **原稿の現在のバイト列と照合する**。合わなければ `stale_context` で登録しない。
+
+    `suggest` の出力をそのまま渡してよい（独立レビュー 2026-09-11・指摘 6）。
+    以前は `record_payload` が無く、**利用側が封筒を組み直さないと保存できず、
+    組み直し方は出力のどこにも書いていなかった。**
     """
     row = read_json(args.input, stdin=args.json_stdin, what="判断")
     if row is None:
         raise InputError("missing_input", "--input か --json-stdin で判断を渡してください")
+    if isinstance(row, dict) and isinstance(row.get("record_payload"), dict):
+        row = row["record_payload"]
+    for key in ("draft_path", "article", "proposal"):
+        if row.get(key) is None:
+            raise InputError(
+                "missing_input",
+                f"保存に必要な {key} がありません。"
+                f"`thth topics suggest … --proposal …` の出力をそのまま渡すか、"
+                f"その record_payload を渡してください")
     by = _actor(args)
 
     article = models.build_article(row["article"])
-    rows, _broken = store.load_all("observations")
+    rows, broken = store.load_all("observations")
     observations = {r["observation_id"]: r for r in rows}
     context = advice.build_context(row["draft_path"], article=article,
                                     article_url=row.get("article_url"),
@@ -230,7 +350,25 @@ def cmd_record_decision(args) -> int:
                "candidates": [], "required_actions": [], "warnings": [],
                "shortfalls": [], "notice": advice.NOTICE,
                "error": {"code": "stale_context",
-                          "message": "原稿・記事・観測が読み取り時から変わっています"}})
+                          "message": "原稿・記事・観測・主対象の記事が"
+                                      "読み取り時から変わっています"}})
+        return 1
+
+    # **根拠が壊れていたら保存しない**（指摘 5）。参照している観測だけを見る。
+    referenced = {r for c in row["proposal"].get("candidates") or []
+                  for r in (c.get("observation_refs") or [])}
+    damaged = sorted(referenced & set(broken))
+    if damaged:
+        _emit({"schema_version": models.SCHEMA_VERSION, "ok": False,
+               "status": "needs_observation", "context_id": context["context_id"],
+               "account": context["account"], "selected_topic": None,
+               "candidates": [], "required_actions": [_action(
+                   "observation", None,
+                   f"参照している観測が壊れています（保存後に書き換わった可能性が"
+                   f"あります）: {damaged}", "TopicObservation")],
+               "warnings": [], "shortfalls": [], "notice": advice.NOTICE,
+               "error": {"code": "broken_evidence",
+                          "message": f"参照している観測が読めません: {damaged}"}})
         return 1
 
     proposal = models.validate_proposal(row["proposal"], article=article,
@@ -243,6 +381,8 @@ def cmd_record_decision(args) -> int:
     store.put("proposals", proposal, id_key="proposal_id")
     decision = dict(envelope)
     decision.pop("context", None)
+    decision.pop("evidence", None)
+    decision.pop("record_payload", None)
     decision.update({"context": context, "article_id": article["article_id"],
                       "proposal_id": proposal["proposal_id"], "recorded_by": by})
     decision["decision_id"] = models.content_id(decision, exclude=("decision_id",))
@@ -272,6 +412,19 @@ def cmd_decision(args) -> int:
     except (OSError, TypeError, KeyError):
         out["freshness"] = {"draft_readable": False, "draft_unchanged": None}
     _emit(out)
+    return 0
+
+
+def cmd_observation(args) -> int:
+    """保存済みの観測を丸ごと読む（読むだけ）。
+
+    `suggest` の `evidence` が大きくなったときに投稿例を削るので、**削った分を
+    取りに来られる口**が要る（独立レビュー 2026-09-11・指摘 2）。
+    """
+    row = store.get("observations", args.observation_id)
+    if row is None:
+        return _fail("not_found", f"その観測は保存されていません: {args.observation_id}")
+    _emit({"ok": True, "observation": row, "notice": advice.NOTICE})
     return 0
 
 
@@ -343,6 +496,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("decision_id")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_decision)
+
+    p = sub.add_parser("observation", help="保存済みの観測を丸ごと読む")
+    p.add_argument("observation_id")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_observation)
 
     p = sub.add_parser("profile", help="account の profile を見る・確定する")
     p.add_argument("account")

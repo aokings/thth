@@ -22,6 +22,10 @@ from . import lock as lock_mod
 from . import topic_models as models
 
 KINDS = ("articles", "observations", "decisions", "proposals")
+
+# 種類ごとの ID の項目名。**読むたびに中身から計算しなおして照合する。**
+ID_KEY = {"articles": "article_id", "observations": "observation_id",
+          "decisions": "decision_id", "proposals": "proposal_id"}
 _ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.:@+-]{1,200}$")
 
@@ -86,8 +90,18 @@ def put(kind: str, record: dict, *, id_key: str) -> tuple:
     except lock_mod.LockBusy as e:
         raise StoreError("ほかの実行が保存中です。少し待ってからやり直してください") from e
     try:
+        problem = verify(kind, record, filename_id=record_id)
+        if problem:
+            raise StoreError(f"保存しようとした記録が壊れています: {problem}")
         if os.path.exists(path):
-            return read_json(path), False
+            stored = read_json(path)
+            # **同じ ID なら中身も同じはず。** 違えば、どちらかが書き換わって
+            # いる（独立レビュー 2026-09-11・指摘 5）。黙って古いほうを返さない。
+            if models.canonical_json(stored) != models.canonical_json(record):
+                raise StoreError(
+                    f"同じ ID で中身の違う記録が保存されています（{record_id}）。"
+                    f"保存済みのファイルが書き換わっている可能性があります")
+            return stored, False
         _atomic_write(path, record)
         return record, True
     finally:
@@ -99,11 +113,41 @@ def read_json(path: str) -> dict:
         return json.load(f)
 
 
+def verify(kind: str, record: dict, *, filename_id: str | None = None) -> str | None:
+    """記録が自分の ID と合っているか。合っていれば None、違えば理由。
+
+    **「ID が変わっていない＝証拠が変わっていない」は、照合して初めて言える**
+    （独立レビュー 2026-09-11・指摘 5）。以前は JSON として読めるかしか見て
+    いなかったので、**ファイルを手で書き換えても同じ ID のまま通った**——
+    `status: partial・投稿例 0 件` の観測を `ok・3 件` に差し替えて、
+    元の判断を `recommended` として保存できた。
+
+    内容アドレスは、**読むたびに計算しなおさなければ内容アドレスではない。**
+    """
+    id_key = ID_KEY.get(kind)
+    if id_key is None:
+        return None
+    claimed = record.get(id_key)
+    if not isinstance(claimed, str) or not _ID_RE.match(claimed):
+        return f"{id_key} がありません（または形が違います）"
+    if filename_id is not None and filename_id != claimed:
+        return f"ファイル名と {id_key} が違います（{filename_id} / {claimed}）"
+    actual = models.content_id(record, exclude=(id_key,))
+    if actual != claimed:
+        return (f"中身が {id_key} と合いません（保存後に書き換わっています。"
+                 f"{claimed[:19]}… のはずが {actual[:19]}…）")
+    return None
+
+
 def get(kind: str, record_id: str) -> dict | None:
     path = os.path.join(_kind_dir(kind), _id_filename(record_id))
     if not os.path.exists(path):
         return None
-    return read_json(path)
+    row = read_json(path)
+    problem = verify(kind, row, filename_id=record_id)
+    if problem:
+        raise StoreError(f"{kind}/{record_id}: {problem}")
+    return row
 
 
 def load_all(kind: str) -> tuple:
@@ -120,10 +164,18 @@ def load_all(kind: str) -> tuple:
         if not name.endswith(".json") or name.endswith(".tmp"):
             continue
         path = os.path.join(directory, name)
+        record_id = "sha256:" + name[:-len(".json")]
         try:
-            rows.append(read_json(path))
+            row = read_json(path)
         except (OSError, ValueError):
-            broken.append("sha256:" + name[:-len(".json")])
+            broken.append(record_id)
+            continue
+        # **JSON として読めることは、壊れていないことではない**（指摘 5）。
+        # 手で書き換えられた記録は「読めた」側に入れない。
+        if verify(kind, row, filename_id=record_id):
+            broken.append(record_id)
+            continue
+        rows.append(row)
     return rows, broken
 
 
