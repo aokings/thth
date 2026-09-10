@@ -540,6 +540,9 @@ def cmd_topics(args) -> int:
     **見に行くのは人（またはブラウザを持つ AI）、覚えておくのは THTH。**
     トピック検索の権限（上級アクセス）が降りれば 1 も機械にできる。
     """
+    if getattr(args, "account_flag", None):
+        args.account = args.account_flag
+
     if args.note:
         if not args.verdict:
             print("--verdict を付けてください（alive / mismatch / dead / unknown）",
@@ -713,7 +716,14 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
                      "check_url": "https://www.threads.com/search?q=<トピック>&filter=topic"})
         return 0
 
+    example_account = account_name or "<account>"
     print("■ トピックを選ぶ前に（THTH が知っていること）")
+    print("")
+    print("  確かめた結果はこう残します（**この形で動きます**）:")
+    print(f"    thth topics {example_account} --note <語> --verdict alive|mismatch|unknown \\")
+    print("      --status ok|empty|permission_denied|unavailable|rate_limited|partial \\")
+    print("      --kind 行動|一般名詞|カテゴリ|抽象|専門語|固有名|つながり型|自作 \\")
+    print("      --audience \"誰がいたか\" --by \"<あなた>\"")
     print("")
     def show(items, formatter, empty="  （まだありません）"):
         here, elsewhere = split(items) if account_name else ([], items)
@@ -1077,6 +1087,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_topics = sub.add_parser(
         "topics", help="トピック別にどれだけ見られたかを並べる（読むだけ）")
     p_topics.add_argument("account", nargs="?")
+    # **`--account` も受ける**（asmon 関東セッション指摘 2026-09-11）。
+    # 統括が通知に `--account` と書いたが、実装は位置引数だけだった——
+    # **動かないコマンドを配った。** 位置引数の形は前から動いていて、
+    # 「誰も使えなかった」のは道具が届かなかったのではなく**例を示していなかった**から。
+    # 直すべきは両方: 呼び方を増やし、動く例を出力に出す。
+    p_topics.add_argument("--account", dest="account_flag", default=None,
+                          help="位置引数の代わりに account を指定する")
     p_topics.add_argument("--plan", action="store_true",
                           help="これから出す本数がどのトピックに賭かっているか")
     p_topics.add_argument("--note", default=None, metavar="トピック",

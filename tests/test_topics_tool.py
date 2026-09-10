@@ -307,3 +307,31 @@ def test_知らないstatusは受け付けない(thth_root):
     import pytest
     with pytest.raises(ValueError):
         topics_mod.record("X", verdict="unknown", status="でたらめ", by="テスト")
+
+
+def test_accountはフラグでも位置引数でも指定できる(thth_root):
+    """asmon 関東セッション指摘 2026-09-11。
+
+    統括が通知に `--account` と書いたが、実装は位置引数だけだった——
+    **動かないコマンドを配った。** 位置引数の形は前から動いていた。
+    「誰も使えなかった」のは道具が届かなかったのではなく**例を示していなかった**から。
+    """
+    a = run_thth(["topics", "asmon-kanto-threads", "--note", "位置", "--verdict", "alive",
+                  "--by", "テスト"])
+    b = run_thth(["topics", "--account", "asmon-kanto-threads", "--note", "フラグ",
+                  "--verdict", "alive", "--by", "テスト"])
+    assert a.returncode == 0, a.stderr
+    assert b.returncode == 0, b.stderr
+    assert topics_mod.judgment("位置", "asmon-kanto-threads")["verdict"] == "alive"
+    assert topics_mod.judgment("フラグ", "asmon-kanto-threads")["verdict"] == "alive"
+
+
+def test_adviseは実際に動く例を出す(isolated_account):
+    """**動く例が 1 つ出力にあれば、動かないコマンドを配る事故は起きない。**"""
+    out = run_thth(["topics", isolated_account["name"], "--advise"]).stdout
+    assert "この形で動きます" in out, out
+    # 出力に載っている例が、実際に通ることを確かめる
+    assert f"thth topics {isolated_account['name']} --note" in out, out
+    ok = run_thth(["topics", isolated_account["name"], "--note", "例", "--verdict", "alive",
+                   "--status", "ok", "--kind", "行動", "--audience", "誰か", "--by", "テスト"])
+    assert ok.returncode == 0, ok.stderr
