@@ -250,8 +250,12 @@ def make_account_json(accounts_dir: str, name: str, *, repo_dir: str, **override
         "repo_dir": repo_dir,
         "queue_dir": "docs/sns/queue",
         "replies_dir": "data/sns/replies",
-        "quiet_hours": ["22:00", "07:00"],
-        "min_interval_hours": 6,
+        # **本番の台帳と同じ既定**（masaru 受け入れ条件 2026-09-10）。
+        # 「複数本の日時指定が効く」ためには、当て推量の間隔・静かな時間帯が
+        # 明示した `publish_at` を上書きしてはいけない。fixture がここだけ本番と
+        # 違う形をしていると、上書きの事故がテストでは見えない（規約 11）。
+        "quiet_hours": None,
+        "min_interval_hours": 0,
         "collect_days": 14,
         "hashtags": False,
         "stale_days": 7,

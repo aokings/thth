@@ -57,9 +57,17 @@ def test_queue_summaryはpost_id付きを次の候補から外す(isolated_accou
     assert {"file": "a-approved-but-posted.md", "reason": "post_id_present"} in info["next_rejections"]
 
 
-def test_queue_summaryはquiet_hoursとmin_intervalの理由も併記する(isolated_account):
+def test_queue_summaryはquiet_hoursとmin_intervalの理由も併記する(isolated_account_factory):
+    """**間隔・静かな時間帯を明示して設定した場合**の表示（既定ではない）。
+
+    既定は `min_interval_hours: 0`・`quiet_hours: null`（明示した publish_at を
+    当て推量で上書きしない・masaru 受け入れ条件 2026-09-10）。ここでは設定した
+    側の意思としてそれらを入れ、理由が併記されることを見る。
+    """
+    isolated_account = isolated_account_factory(
+        min_interval_hours=6, quiet_hours=["22:00", "07:00"])
     qdir = isolated_account["queue_dir"]
-    # 前回投稿（07:00）から min_interval_hours（既定 6h）未満で now（09:00）を迎える。
+    # 前回投稿（07:00）から min_interval_hours（6h）未満で now（09:00）を迎える。
     write_queue_file(qdir, "prev-posted.md", fm_overrides={
         "status": "posted", "post_id": "1", "posted_at": "2026-09-09T07:00:00+09:00"},
         body="## threads\n\n前回の本文\n")

@@ -1,6 +1,7 @@
 """`thth queue` / `thth board`（発注 §3・受け入れ 4）。CLI と MCP の両方から呼ばれる。"""
 from __future__ import annotations
 
+import datetime
 import os
 
 from . import accounts as accounts_mod
@@ -92,6 +93,11 @@ def queue_summary(account_name: str | None, now=None) -> dict:
     return out
 
 
+# 指定した時刻をこれだけ過ぎても出ていなければ board に出す（masaru 受け入れ
+# 条件 2026-09-10）。timer の刻みは 10 分なので、1 時間は「明らかにおかしい」。
+OVERDUE_HOURS = 1.0
+
+
 def _needs_review_detail(files, *, account_name: str, account_cfg: dict, now) -> list:
     """`select.select_one()` が拾った要確認（`approval_stale`・`stale`・`approved`
     なのに型外）を、board 向けにファイル名と理由の対で返す（外部レビュー再レビュー C）。
@@ -109,17 +115,57 @@ def _needs_review_detail(files, *, account_name: str, account_cfg: dict, now) ->
         files, account_name=account_name, account_cfg=account_cfg,
         now=now, last_post_at=last_at, recent_texts=recent_texts)
     reason_by_path = {rej.file: rej.reason for rej in result.rejections}
-    return [
+    out = [
         {"file": os.path.basename(path), "reason": reason_by_path.get(path, "needs_review")}
         for path in result.needs_review
     ]
+    seen = set(result.needs_review)
+
+    # **指定した時刻を過ぎたのに出ていないもの**（masaru 受け入れ条件 2026-09-10:
+    # 「複数本数の投稿の日時指定が出来て…ればそれでOK」）。
+    #
+    # select の「いま出せるか」の関門（`quiet_hours`・`min_interval`・`max_per_run`・
+    # timer が止まっている）は、**時間が経てば解決する**という理由で要確認に積んで
+    # いない。それは正しいが、**時間が経っても解決しなかった場合に誰も気づかない**。
+    # 指定した時刻は masaru の明示の指示なので、1 時間を過ぎても出ていなければ
+    # 理由を添えて board に出す（理由が判らなければ `overdue`＝timer が止まって
+    # いる・実行そのものが無い、など）。
+    for qf in files:
+        if qf.path in seen or qf.malformed:
+            continue
+        fm = qf.front_matter
+        if (fm.get("account") != account_name or fm.get("status") != "approved"
+                or fm.get("post_id")):
+            continue
+        raw = fm.get("publish_at")
+        if not raw:
+            continue
+        try:
+            publish_at = queuefile.parse_publish_at(raw)
+        except ValueError:
+            continue
+        if now - publish_at <= datetime.timedelta(hours=OVERDUE_HOURS):
+            continue
+        # **select が選ぶはずのものでも外さない。** board は投稿しないので、
+        # 「次の実行で出るはず」は保証ではない。1 時間以上遅れているなら、その
+        # 「はず」が 6 回以上外れているということ（timer の刻みは 10 分）。
+        if reason_by_path.get(qf.path):
+            reason = reason_by_path[qf.path]
+        elif not account_cfg.get("production"):
+            # いちばん多い理由をそのまま名指しする（台帳が本番になっていない）。
+            reason = "rehearsal"
+        else:
+            reason = "overdue"
+        out.append({"file": os.path.basename(qf.path), "reason": reason})
+        seen.add(qf.path)
+    return out
 
 
-def board_summary() -> dict:
+def board_summary(now=None) -> dict:
     """アカウント・最終投稿・approved 待ち・inflight・型外・要確認の骨（設計 §4.6・
     外部レビュー再レビュー C で `needs_review`／`approval_stale_count` を追加）。"""
     accounts_out = []
-    now = jst.now_jst()
+    now = now if now is not None else jst.now_jst()
     for name in accounts_mod.list_account_names():
         try:
             account_cfg = accounts_mod.load_account(name)

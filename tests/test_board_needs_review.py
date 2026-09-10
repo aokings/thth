@@ -65,14 +65,36 @@ def test_board_summaryはstaleと型外approvedも要確認に拾う(isolated_ac
 
 
 def test_board_summaryは正常な承認待ちをneeds_reviewに入れない(isolated_account):
+    """**「承認待ち」とは publish_at がこれから来るもの**（frozen now は 10:00）。
+
+    以前この fixture は 08:00（＝2 時間前）を「正常な承認待ち」と呼んでいたが、
+    指定した時刻を 2 時間過ぎて出ていないものは正常ではない（masaru 受け入れ条件
+    2026-09-10）。**これから出るもの**に直した。過ぎているものが要確認に出ることは
+    下のテストで固定する。
+    """
     write_queue_file(isolated_account["queue_dir"], "ok.md", fm_overrides={
-        "status": "approved", "publish_at": "2026-09-09T08:00:00+09:00"})
+        "status": "approved", "publish_at": "2026-09-09T18:00:00+09:00"})
 
     summary = report_mod.board_summary()
     row = next(r for r in summary["accounts"] if r["account"] == isolated_account["name"])
     assert row["approved_waiting"] == 1
     assert row["needs_review"] == []
     assert row["approval_stale_count"] == 0
+
+
+def test_board_summaryは指定時刻を過ぎても出ていないものを要確認にする(isolated_account):
+    """masaru 受け入れ条件 2026-09-10（「複数本数の投稿の日時指定が出来て」）。
+
+    指定時刻を 1 時間以上過ぎても出ていない＝10 分刻みの実行が 6 回以上空振り
+    している。台帳が `production: false`（＝リハーサルなので永久に出ない）なら、
+    その理由をそのまま名指しする。
+    """
+    write_queue_file(isolated_account["queue_dir"], "late.md", fm_overrides={
+        "status": "approved", "publish_at": "2026-09-09T08:00:00+09:00"})
+
+    summary = report_mod.board_summary()
+    row = next(r for r in summary["accounts"] if r["account"] == isolated_account["name"])
+    assert row["needs_review"] == [{"file": "late.md", "reason": "rehearsal"}], row
 
 
 def test_thth_boardの人向け出力にapproval_staleが要確認として出る(isolated_account_factory):
