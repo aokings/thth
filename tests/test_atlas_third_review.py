@@ -34,7 +34,7 @@ from pathlib import Path
 import pytest
 
 from tests.test_atlas_review import setup_pair, NOW, REL
-from tests.conftest import run_git, run_thth
+from tests.conftest import commit_and_push_if_changed, run_git, run_thth
 from thth import core, accounts, inflight, report
 from thth.adapters.base import PublishResult
 
@@ -64,9 +64,9 @@ def test_metadata_without_merge_conflict(tmp_path, isolated_account_factory, fie
                                        for l in editor.read_text().splitlines()) + '\n')
             if reapprove:
                 assert run_thth(['approve', str(editor)]).returncode == 0
-            run_git(pair['seed'], ['add', REL])
-            run_git(pair['seed'], ['commit', '-m', 'Change metadata during publication'])
-            run_git(pair['seed'], ['push'])
+            # `thth approve` が commit・push まで行う（外部レビュー第 4 巡 P1）ので、
+            # reapprove のときは既に載っている。載っていなければここで載せる。
+            commit_and_push_if_changed(pair['seed'], REL, 'Change metadata during publication')
             return PublishResult('THIRD_META', None, NOW.isoformat())
     result = core.throw_once(account['name'], production_flag=True, adapter_factory=lambda *_: Editor(), now=NOW)
     assert result.error == 'text_mismatch_after_rebase', dataclasses.asdict(result)

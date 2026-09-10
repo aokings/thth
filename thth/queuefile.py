@@ -32,6 +32,11 @@ class QueueFile:
     malformed: bool
     front_matter: dict
     body: str
+    # 同期を確認した commit（HEAD）の中身と一致することを確かめられたか
+    # （外部レビュー第 4 巡 P1・`thth.writeback.matches_synced_commit()`）。
+    # **既定は False（確認できていない）**。`core.list_queue_files()` だけが
+    # True を立てる。select はこれが False の approved を候補にしない。
+    verified: bool = False
 
     def get(self, key: str, default=None):
         return self.front_matter.get(key, default)
@@ -67,6 +72,17 @@ def parse(path: str) -> QueueFile:
     """queue ファイル 1 本を読む。front-matter が無い／`thth: 1` が無ければ malformed=True。"""
     with open(path, encoding="utf-8") as f:
         text = f.read()
+    return parse_text(text, path)
+
+
+def parse_text(text: str, path: str) -> QueueFile:
+    """既に読んである中身から組み立てる（`parse()` の中身）。
+
+    `core.list_queue_files()` は**ファイルを 1 回だけ読み**、その同じバイト列で
+    「commit と一致するか」の検査も行う（外部レビュー第 4 巡 P1）。読み直すと、
+    検査したバイト列と select が見るバイト列が別物になりうる（検査と使用の間に
+    書き換えられる）ため、口を分けてある。
+    """
     split = _split_front_matter(text)
     if split is None:
         return QueueFile(path=path, malformed=True, front_matter={}, body=text)

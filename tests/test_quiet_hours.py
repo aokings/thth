@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import datetime
 
-from tests.conftest import make_queue_text
+from tests.conftest import make_queue_text, parse_verified
 from thth import jst
 from thth import queuefile
 from thth import select as select_mod
@@ -51,7 +51,7 @@ def _approved_due_file(tmp_path, *, publish_at="2026-09-08T00:00:00+09:00"):
     条件 5 と混ざらないようにする。quiet_hours の判定だけを見たいため）。
     """
     p = write(tmp_path, "a.md", fm_overrides={"publish_at": publish_at})
-    return queuefile.parse(p)
+    return parse_verified(p)
 
 
 def _select(files, *, now, cfg):

@@ -83,6 +83,93 @@ def _run_git(repo_dir: str, args: list) -> subprocess.CompletedProcess:
     )
 
 
+def _run_git_bytes(repo_dir: str, args: list) -> subprocess.CompletedProcess:
+    """`_run_git` のバイト列版（blob をそのまま取り出して比較するため）。"""
+    return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True)
+
+
+def repo_toplevel(path: str) -> str | None:
+    """`path` が入っている git repo の作業ツリーの根を返す（repo でなければ None）。
+
+    `thth approve` は「台帳の `repo_dir`」ではなく「**そのファイルが入っている
+    repo**」に commit する。masaru が自分の clone で承認することもあるし（VM の
+    clone と同じ repo の別の clone）、レビューの再現でもそうしている。承認を
+    記録する先は、承認したファイルが実際に置かれている repo であるべき。
+    """
+    d = os.path.dirname(os.path.abspath(path))
+    if not os.path.isdir(d):
+        return None
+    top = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"],
+                          capture_output=True, text=True)
+    if top.returncode != 0 or not top.stdout.strip():
+        return None
+    return top.stdout.strip()
+
+
+def matches_synced_commit(repo_dir: str, path: str, *, disk_bytes: bytes | None = None) -> bool:
+    """`path` の**いま読める中身**が、同期を確認した commit（HEAD）の中身と
+    1 バイトも違わないことを確かめる（外部レビュー第 4 巡 P1）。
+
+    `sync_repo()` が確かめるのは **commit の一致**（`HEAD == @{u}`）であって、
+    **これから読むファイルの一致**ではなかった。`git pull --ff-only` は
+    「その pull が触らないファイル」の作業ツリー側の変更を黙って残すので、
+
+    1. remote で承認が撤回され、
+    2. その撤回を正常に pull できて（`HEAD == @{u}` も成立）、
+    3. それでも作業ツリーには**撤回前の承認済みファイル**が残っている
+
+    という状態が普通に作れる。実際に再現した（stash の復元・エディタの
+    「元に戻す」・退避ファイルの取り違え、どれでも起きる）。この状態で select は
+    作業ツリーを読むので、**撤回済みの本文が承認済みとして公開される**。
+    「masaru が見たものだけ出る」という設計の中心が破れる。
+
+    そこで、**選ぶ対象になるファイル 1 本ごとに**「読める中身＝確認した commit の
+    中身」を検査する。`git status` の解釈（staged／unstaged／untracked／
+    `.gitignore` 済み）に頼らないのは、解釈の隙間がそのまま素通りの経路になる
+    から——ここでは HEAD の blob と disk のバイト列を直接比べる。したがって
+    未 commit の変更・staged の変更・追跡されていないファイル・無視されている
+    ファイル・HEAD に無いファイルは、**すべて同じ 1 つの理由で**「確認できない」に
+    倒れる。
+
+    symlink は中身ではなくリンク先を読むことになるので、無条件で「確認できない」
+    とする（リンク先は同期の対象外でありうる）。同期した木の外を指すパスも同様。
+
+    **何も消さない・戻さない。** 作業中の変更はそのまま残し、その 1 本を
+    select の候補から外して board に出すだけ（`select` の `unverified_content`）。
+
+    `disk_bytes` を渡すと、その中身と HEAD を比べる（ファイルを読み直さない）。
+    `core.list_queue_files()` は**読んだのと同じバイト列**を渡す——読み直すと、
+    検査したバイト列と select が実際に見るバイト列が別物になりうるから
+    （検査と使用の間に書き換えられる隙間を作らない）。
+    """
+    if not repo_dir or not os.path.isdir(repo_dir):
+        return False
+    if os.path.islink(path):
+        return False
+
+    top = _run_git(repo_dir, ["rev-parse", "--show-toplevel"])
+    if top.returncode != 0 or not top.stdout.strip():
+        return False
+    toplevel = os.path.realpath(top.stdout.strip())
+
+    real = os.path.realpath(path)
+    rel = os.path.relpath(real, toplevel)
+    if os.path.isabs(rel) or rel == os.pardir or rel.startswith(os.pardir + os.sep):
+        return False
+
+    blob = _run_git_bytes(repo_dir, ["cat-file", "blob", "HEAD:" + rel.replace(os.sep, "/")])
+    if blob.returncode != 0:
+        return False
+    disk = disk_bytes
+    if disk is None:
+        try:
+            with open(path, "rb") as f:
+                disk = f.read()
+        except OSError:
+            return False
+    return blob.stdout == disk
+
+
 def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None) -> tuple:
     """`git add -- <rel_path>` → commit → `pull --rebase --autostash` → push。
 

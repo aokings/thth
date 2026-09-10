@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import datetime
 
-from tests.conftest import make_queue_text
+from tests.conftest import make_queue_text, parse_verified
 from thth import accounts as accounts_mod
 from thth import queuefile
 from thth import select as select_mod
@@ -40,7 +40,7 @@ def test_quiet_hours_nullなら深夜でも選ばれる(tmp_path):
     cfg = {"media": "threads", "hashtags": False, "quiet_hours": None,
            "min_interval_hours": 6, "stale_days": 7}
     result = select_mod.select_one(
-        [queuefile.parse(p)], account_name=ACCOUNT, account_cfg=cfg,
+        [parse_verified(p)], account_name=ACCOUNT, account_cfg=cfg,
         now=NOW, last_post_at=None, recent_texts=set())
     assert result.chosen is not None
     assert result.chosen.path == p
@@ -53,7 +53,7 @@ def test_min_interval_0なら直前に投稿していても選ばれる(tmp_path
     daytime = datetime.datetime.fromisoformat("2026-09-09T10:00:00+09:00")
     last_post_at = daytime - datetime.timedelta(minutes=1)  # 1 分前に投稿済み
     result = select_mod.select_one(
-        [queuefile.parse(p)], account_name=ACCOUNT, account_cfg=cfg,
+        [parse_verified(p)], account_name=ACCOUNT, account_cfg=cfg,
         now=daytime, last_post_at=last_post_at, recent_texts=set())
     assert result.chosen is not None
     assert result.chosen.path == p

@@ -131,6 +131,17 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
     落ちて 2 段目（時刻の関門）に届かなくなる——それが今回の穴の形そのもの
     なので、この関数のシグネチャで物理的に塞ぐ。
 
+    **`approved` なのに内容起因で落ちたものは、理由が何であれ `needs_review` に
+    積む**（外部レビュー第 4 巡 P2）。以前は `approval_stale` と
+    `publish_at_invalid` だけを積んでいたので、条件が重なると board から診断が
+    消えた——「8 日前の承認済み」と「同じ本文を昨日投稿済み」が重なると、
+    `duplicate_text` で先に落ちて `stale`（要確認）まで届かず、board は
+    `approved_waiting: 1`・要確認 0 件、つまり**何も問題が無いように見えた**。
+    条件の並び順が board の見え方を変えてしまう形そのものを潰す: 承認済みなのに
+    出ないものは、落ちた理由に関係なく必ず人に見える。**時間が経てば解決する
+    理由（`future`・`quiet_hours`・`min_interval`）だけが要確認に積まれない**
+    （それらは 2 段目・`_apply_timing_gate()` にある）。
+
     戻り値: `(validated, rejections, type_mismatch, needs_review)`。
     `validated` は `(qf, publish_at, section)` のリスト（publish_at はまだ
     「未来かどうか」を判定していない・型として妥当なだけ）。
@@ -189,6 +200,7 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
         section = queuefile.extract_section(qf.body, media)
         if section is None:
             rejections.append(Rejection(path, "no_section"))
+            needs_review.append(path)
             continue
 
         # 6b. 承認を「見た本文」に結び付ける（外部レビュー §1・受け入れ 1〜4）。
@@ -208,15 +220,36 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
             needs_review.append(path)
             continue
 
+        # 6c. 読んだ中身が、同期を確認した commit の中身と一致するか（外部レビュー
+        # 第 4 巡 P1・`core.list_queue_files()` が `writeback.matches_synced_commit()`
+        # で立てる）。`sync_repo()` が確かめるのは **commit の一致**であって、
+        # **これから読むファイルの一致**ではない——remote で承認を撤回して正常に
+        # pull できたあと（`HEAD == @{u}` も成立）でも、作業ツリーに撤回前の
+        # 承認済みファイルが残っていれば、それが選ばれて公開される（実際に再現した）。
+        # 復元された古いファイルは `approved_sha` が自分の中身と整合しているので
+        # 6b では捕まらない。未 commit・staged・追跡外・無視・HEAD に無い、の
+        # どれであっても同じ理由で落とす。**何も消さない**——候補から外して
+        # board に出すだけ。
+        #
+        # 6b（承認の古さ）より **後** に置くのは、承認したあとに手元で書き換えた
+        # 場合に「承認が古い」という具体的な理由のほうを出したいから（どちらも
+        # 落とすことに変わりはなく、要確認にも必ず積まれる）。
+        if not qf.verified:
+            rejections.append(Rejection(path, "unverified_content"))
+            needs_review.append(path)
+            continue
+
         limit = queuefile.MEDIA_LIMITS.get(media, 500)
         n = queuefile.char_count(section)
         if n > limit:
             rejections.append(Rejection(path, f"too_long({n})"))
+            needs_review.append(path)
             continue
 
         # 7. hashtags: false なのに `#` 語がある
         if not hashtags_allowed and queuefile.has_hashtag(section):
             rejections.append(Rejection(path, "hashtag"))
+            needs_review.append(path)
             continue
 
         # 7b. topic（`topic_tag`）が検査に落ちる（T2c・設計 §2.2・masaru 裁定
@@ -228,11 +261,13 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
             topic_err = queuefile.topic_error(topic)
             if topic_err is not None:
                 rejections.append(Rejection(path, topic_err))
+                needs_review.append(path)
                 continue
 
         # 8. 直近 30 日の投稿済み本文と完全一致
         if section.strip() in recent_texts:
             rejections.append(Rejection(path, "duplicate_text"))
+            needs_review.append(path)
             continue
 
         validated.append((qf, publish_at, section))

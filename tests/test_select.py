@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import datetime
 
-from tests.conftest import make_queue_text
+from tests.conftest import make_queue_text, parse_verified
 from thth import queuefile, select as select_mod
 
 ACCOUNT = "nigamilab-threads"
@@ -29,7 +29,10 @@ def write(tmp_path, name, **kwargs):
 
 
 def parse_all(paths):
-    return [queuefile.parse(p) for p in paths]
+    # `verified=True`（同期の確認は済んでいる前提）で読む。前提そのものは
+    # tests/test_atlas_fourth_review.py が本物の clone で確かめる（conftest の
+    # `parse_verified()` の docstring 参照・外部レビュー第 4 巡 P1）。
+    return [parse_verified(p) for p in paths]
 
 
 def select(files, **kwargs):

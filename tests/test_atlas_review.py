@@ -24,7 +24,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import init_git_pair, make_queue_text, run_git, run_thth
+from tests.conftest import (commit_and_push_if_changed, init_git_pair,
+                            make_queue_text, run_git, run_thth)
 from thth import accounts, core, inflight, queuefile, sent
 from thth.adapters.base import PublishResult
 
@@ -40,9 +41,10 @@ def setup_pair(tmp_path, factory):
     path = Path(pair['work']) / REL
     approved = run_thth(['approve', str(path)])
     assert approved.returncode == 0, approved.stderr
-    run_git(pair['work'], ['add', REL])
-    run_git(pair['work'], ['commit', '-m', 'Human approval'])
-    run_git(pair['work'], ['push'])
+    # `thth approve` 自身が add・commit・push まで行うようになった（外部レビュー
+    # 第 4 巡 P1）。原文にあった手動の add/commit/push は「commit するものが無い」
+    # で失敗するので外す。承認が commit として残ること自体は
+    # tests/test_atlas_fourth_review.py が別に確かめている。
     run_git(pair['seed'], ['pull', '--ff-only'])
     return pair, account, path
 
@@ -124,9 +126,9 @@ def test_two_real_processes_share_clone(tmp_path, isolated_account_factory):
     bpath = Path(pair['queue_dir']) / 'b.md'
     bpath.write_text(make_queue_text({'status':'draft', 'account':b['name']}, body='## threads\n\nOTHER_BODY\n'))
     assert run_thth(['approve', str(bpath)]).returncode == 0
-    run_git(pair['work'], ['add', 'docs/sns/queue/b.md'])
-    run_git(pair['work'], ['commit', '-m', 'Approve B'])
-    run_git(pair['work'], ['push'])
+    # `thth approve` が commit・push まで行う（外部レビュー第 4 巡 P1）ので、
+    # ここは「まだ載っていなければ載せる」に留める。
+    commit_and_push_if_changed(pair['work'], 'docs/sns/queue/b.md', 'Approve B')
     ctx = multiprocessing.get_context('fork')
     entered, release = ctx.Event(), ctx.Event()
     output = ctx.Queue()

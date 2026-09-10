@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 import sys
 
 from . import accounts as accounts_mod
@@ -66,6 +67,11 @@ def cmd_approve(args) -> int:
     `approved_sha` は「masaru が見た本文」を固定するハッシュ（`thth.approval`）で、
     `select` はこれが現在の内容と一致するときだけ通す（不一致・欠落は
     `approval_stale` で落として board に出す）。
+
+    書いたあと、その 1 ファイルを **commit して push する**（外部レビュー第 4 巡
+    P1）。select は「同期を確認した commit の中身と一致するファイル」しか候補に
+    しないので、承認をファイルに書いただけでは投稿されない。push できなければ
+    その旨を述べて非ゼロで終わる（黙って「承認しました」で終わらせない）。
     """
     messages = lint_mod.lint_file(args.file)
     errors = [m for m in messages if not lint_mod.is_warning(m)]
@@ -94,6 +100,21 @@ def cmd_approve(args) -> int:
         print(f"media: `## {media}` の節が無いので承認しません: {args.file}", file=sys.stderr)
         return 1
 
+    # 承認は commit として残す（外部レビュー第 4 巡 P1）。select は「同期を確認した
+    # commit の中身と一致するファイル」しか候補にしないので、承認をファイルに
+    # 書いただけでは出せない（board には `unverified_content` として出る）。
+    # ここで commit・push まで済ませることで、**承認した瞬間に利用者 repo の
+    # 履歴に残る**——「masaru がいつ何を承認したか」が後から動かせない形になる。
+    # commit 先は **そのファイルが入っている repo**（台帳の repo_dir ではない）。
+    # masaru が自分の clone で承認することもある。git repo の中でないなら、
+    # 承認を記録できないので front-matter を書く前に断る。
+    repo_dir = writeback_mod.repo_toplevel(args.file)
+    if repo_dir is None:
+        print(f"git repo の中のファイルではないので承認しません（承認を commit として"
+              f"残せません）: {args.file}", file=sys.stderr)
+        return 1
+    rel_path = os.path.relpath(os.path.realpath(args.file), os.path.realpath(repo_dir))
+
     approved_sha = approval_mod.compute_approved_sha(
         section=section, account=account_name, reply_to=fm.get("reply_to"),
         topic=fm.get("topic"), publish_at=fm.get("publish_at"))
@@ -105,13 +126,26 @@ def cmd_approve(args) -> int:
         "approved_at": approved_at,
     })
 
+    pushed, push_err = writeback_mod.commit_and_push(
+        repo_dir, rel_path=rel_path,
+        message=f"承認: {os.path.basename(args.file)}（{account_name}）")
+
     if args.json:
         _print_json({"file": args.file, "status": "approved",
-                     "approved_sha": approved_sha, "approved_at": approved_at})
+                     "approved_sha": approved_sha, "approved_at": approved_at,
+                     "pushed": pushed, "push_error": push_err or None})
     else:
         print(f"承認しました: {args.file}")
         print(f"approved_sha: {approved_sha}")
         print(f"approved_at: {approved_at}")
+
+    if not pushed:
+        # front-matter は書けたが、承認が commit として残っていない。この状態では
+        # **投稿されない**（select が `unverified_content` で落とす）。黙って
+        # 「承認しました」で終わらせない。
+        print("承認を commit・push できませんでした。このままでは投稿されません"
+              f"（board に unverified_content として出ます）: {push_err}", file=sys.stderr)
+        return 1
     return 0
 
 

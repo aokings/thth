@@ -127,12 +127,86 @@ def make_queue_text(fm_overrides=None, body="## threads\n\n本文です。\n",
     return render_front_matter(fm, omit=omit) + "\n" + body
 
 
-def write_queue_file(dir_path: str, name: str, **kwargs) -> str:
+def write_queue_file(dir_path: str, name: str, *, commit: bool = True, **kwargs) -> str:
+    """queue ファイルを 1 本置く。**置き先が git repo なら commit・push まで行う。**
+
+    本番の queue ファイルは利用者 repo の commit として届く（masaru が手元で書いて
+    push し、VM の clone が pull する）。select は「同期を確認した commit の中身と
+    一致するファイル」しか候補にしない（外部レビュー第 4 巡 P1・
+    `thth.writeback.matches_synced_commit()`）ので、**ディスクに置いただけの
+    ファイルは本番では絶対に選ばれない**。fixture がそこだけ本番と違う形をして
+    いると、テストは通るのに本番では動かない（あるいはその逆）になる——第 3 巡で
+    踏んだのと同じ罠（規約 11）。
+
+    `commit=False` は「commit されていないファイル」そのものを試すテスト用。
+    """
     os.makedirs(dir_path, exist_ok=True)
     path = os.path.join(dir_path, name)
     with open(path, "w", encoding="utf-8") as f:
         f.write(make_queue_text(**kwargs))
+    if commit:
+        commit_and_push_path(path, message=f"test: {name}")
     return path
+
+
+def commit_and_push_if_changed(repo_dir: str, rel_path: str, message: str = "test") -> bool:
+    """変更があれば add・commit・push する。無ければ何もしない（失敗にしない）。
+
+    `thth approve` 自身が commit・push するようになった（外部レビュー第 4 巡 P1）
+    ので、承認のあとに手で commit しようとすると「nothing to commit」で落ちる。
+    レビュアーのコードの筋（承認・変更を repo に載せてから続ける）はそのまま
+    残したいので、既に載っている場合を許す形にする。
+    """
+    subprocess.run(["git", "-C", repo_dir, "add", "--", rel_path], capture_output=True, text=True)
+    committed = subprocess.run(["git", "-C", repo_dir, "commit", "-m", message],
+                                capture_output=True, text=True)
+    if committed.returncode != 0:
+        return False
+    subprocess.run(["git", "-C", repo_dir, "push"], capture_output=True, text=True)
+    return True
+
+
+def parse_verified(path: str):
+    """queue ファイルを読み、`verified=True`（同期を確認した commit の中身と一致）
+    として返す。**select の 1 条件 1 テストの単体テスト用**。
+
+    本番で `verified` を立てるのは `core.list_queue_files()` だけで、その判定は
+    git を実際に見る（`thth.writeback.matches_synced_commit()`）。条件の並び順
+    だけを見たい単体テストのために毎回 bare origin + clone を作るのは筋が悪いので、
+    ここでは「同期の確認は済んでいる」という前提を**明示して**立てる。
+
+    **その前提自体が正しいかは `tests/test_atlas_fourth_review.py` が本物の
+    bare origin + clone + 実プロセスで確かめる**（確認できていないファイルは
+    選ばれない・承認は commit として残る）。前提を書かずに既定値で通してしまうと、
+    第 3 巡で踏んだ「fixture が本番と違う形をしていたから通っていた」（規約 11）
+    の再演になるので、helper の名前と docstring で見えるようにしておく。
+    """
+    qf = queuefile_mod.parse(path)
+    qf.verified = True
+    return qf
+
+
+def commit_and_push_path(path: str, *, message: str = "test") -> bool:
+    """`path` が git repo の中なら add・commit・push する（repo でなければ何もしない）。
+
+    push は upstream がある場合だけ（無ければ commit のみ）。戻り値は commit したか。
+    """
+    dir_path = os.path.dirname(os.path.abspath(path))
+    top = subprocess.run(["git", "-C", dir_path, "rev-parse", "--show-toplevel"],
+                          capture_output=True, text=True)
+    if top.returncode != 0:
+        return False
+    repo = top.stdout.strip()
+    subprocess.run(["git", "-C", repo, "add", "--", path], capture_output=True, text=True)
+    committed = subprocess.run(["git", "-C", repo, "commit", "-m", message],
+                                capture_output=True, text=True)
+    if committed.returncode != 0:
+        return False
+    has_upstream = subprocess.run(["git", "-C", repo, "rev-parse", "@{u}"],
+                                   capture_output=True, text=True)
+    if has_upstream.returncode == 0:
+        subprocess.run(["git", "-C", repo, "push"], capture_output=True, text=True)
+    return True
 
 
 @pytest.fixture

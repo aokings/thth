@@ -56,7 +56,17 @@ def list_queue_files(account_cfg: dict) -> list:
     for name in sorted(os.listdir(queue_dir)):
         if not name.endswith(".md"):
             continue
-        out.append(queuefile.parse(os.path.join(queue_dir, name)))
+        path = os.path.join(queue_dir, name)
+        # **1 回だけ読み**、その同じバイト列で「commit と一致するか」も判定する
+        # （外部レビュー第 4 巡 P1）。読み直すと、検査したバイト列と select が
+        # 見るバイト列が別物になりうる。ここでしか `verified` は立たない。
+        # board（report.py）も同じ関数を通るので、公開の判断と board の診断が
+        # 同じ事実を見る。
+        with open(path, "rb") as f:
+            raw = f.read()
+        qf = queuefile.parse_text(raw.decode("utf-8"), path)
+        qf.verified = writeback.matches_synced_commit(repo_dir, path, disk_bytes=raw)
+        out.append(qf)
     return out
 
 
@@ -80,7 +90,7 @@ def last_post_at(files, account_name: str):
     return latest
 
 
-_ERROR_RUN_REASONS = ("hashtag", "duplicate_text", "approval_stale")
+_ERROR_RUN_REASONS = ("hashtag", "duplicate_text", "approval_stale", "unverified_content")
 
 
 def _is_error_reason(reason: str) -> bool:
