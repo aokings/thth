@@ -150,3 +150,23 @@ def test_実測が無いときは当たり率の高い型が先に来る(thth_ro
     topics_mod.record("あたり", verdict="alive", kind="行動", by="テスト")
     rows = topics_mod.learned({})
     assert rows[0]["kind"] == "行動", [r["kind"] for r in rows]
+
+
+def test_adviseはアカウントの語を先に出す(isolated_account):
+    """kanto セッション要望 2026-09-10: プロジェクトが増えると関係ない語が増える。
+    **共有はそのまま、並び順だけ変える**（ほかのプロジェクトの記録は捨てない）。"""
+    topics_mod.record("中学受験", verdict="alive", kind="行動", by="テスト")
+    topics_mod.record("コーヒー", verdict="alive", kind="一般名詞", by="テスト")
+    write_queue_file(isolated_account["queue_dir"], "a.md", fm_overrides={
+        "status": "draft", "approved_sha": None, "topic": "中学受験"})
+
+    out = run_thth(["topics", isolated_account["name"], "--advise"]).stdout
+    assert out.index("中学受験") < out.index("ほかのプロジェクトの記録"), out
+    assert out.index("ほかのプロジェクトの記録") < out.index("コーヒー"), out
+
+
+def test_account無しのadviseは全部そのまま出す(thth_root):
+    topics_mod.record("コーヒー", verdict="alive", kind="一般名詞", by="テスト")
+    out = run_thth(["topics", "--advise"]).stdout
+    assert "コーヒー" in out
+    assert "ほかのプロジェクトの記録" not in out

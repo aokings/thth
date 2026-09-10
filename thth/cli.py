@@ -653,6 +653,15 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
             if account_name else [])
     unchecked = [r for r in plan if r["verdict"] == "unknown" and r["planned"]]
 
+    # **自分が触っている語を先に、ほかのプロジェクトの記録は後ろに**
+    # （kanto セッション要望 2026-09-10: プロジェクトが増えると関係ない語が増える）。
+    # 共有すること自体は正しいので**捨てない**——並び順だけ変える。
+    mine = {row["topic"] for row in plan}
+
+    def split(items):
+        return ([r for r in items if r["topic"] in mine],
+                [r for r in items if r["topic"] not in mine])
+
     if as_json:
         _print_json({"account": account_name, "proven": proven, "avoid": avoid,
                      "unproven": unproven, "kinds": kinds, "unchecked_in_queue": unchecked,
@@ -661,24 +670,35 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
 
     print("■ トピックを選ぶ前に（THTH が知っていること）")
     print("")
+    def show(items, formatter, empty="  （まだありません）"):
+        here, elsewhere = split(items) if account_name else ([], items)
+        if not here and not elsewhere:
+            print(empty)
+            return
+        for r in here:
+            print("  " + formatter(r))
+        if elsewhere:
+            if here:
+                print("  ── ほかのプロジェクトの記録（参考）")
+            for r in elsewhere:
+                print("  " + formatter(r))
+
+    def as_proven(r):
+        m = ("実測まだ" if r["views_median"] is None
+             else f"24h views 中央値 {r['views_median']}（{r['posts']} 本）")
+        return (f"{r['topic']}［{r['kind'] or '型なし'}］ {m}"
+                + (f" — {r['audience']}" if r["audience"] else ""))
+
+    def as_avoid(r):
+        label = "不一致" if r["verdict"] == "mismatch" else "人がいない"
+        return (f"{r['topic']}［{r['kind'] or '型なし'}］ {label}"
+                + (f" — {r['audience']}" if r["audience"] else ""))
+
     print("【使ってよい語】確かめ済み・合っている")
-    if proven:
-        for r in proven:
-            m = ("実測まだ" if r["views_median"] is None
-                 else f"24h views 中央値 {r['views_median']}（{r['posts']} 本）")
-            print(f"  {r['topic']}［{r['kind'] or '型なし'}］ {m}"
-                  + (f" — {r['audience']}" if r["audience"] else ""))
-    else:
-        print("  （まだありません）")
+    show(proven, as_proven)
     print("")
     print("【避ける語】人はいるが別の場所・または誰もいない")
-    if avoid:
-        for r in avoid:
-            label = "不一致" if r["verdict"] == "mismatch" else "人がいない"
-            print(f"  {r['topic']}［{r['kind'] or '型なし'}］ {label}"
-                  + (f" — {r['audience']}" if r["audience"] else ""))
-    else:
-        print("  （まだありません）")
+    show(avoid, as_avoid)
     print("")
     print("【型ごとの傾向】自分たちの実測から")
     for row in kinds:
