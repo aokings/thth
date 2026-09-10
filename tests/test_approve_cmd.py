@@ -271,3 +271,35 @@ def test_lintは複数本を一度に見る(isolated_account):
     assert result.returncode == 1
     assert "1.md: OK" in result.stdout, result.stdout
     assert "2.md: " in result.stdout
+
+
+# --- 予定時刻を過ぎた原稿（nigamilab セッション指摘 2026-09-10）
+
+def test_予定時刻を過ぎていたら承認の前にすぐ出ると言う(isolated_account):
+    """起草する人と承認する人が別なので、承認までに時刻が過ぎるのは普通に起きる。
+    「承認したらいつ出るのか」を知らないまま押す形にしない。"""
+    path = write_queue_file(isolated_account["queue_dir"], "a.md", fm_overrides={
+        "status": "draft", "approved_sha": None,
+        "publish_at": "2026-09-09T08:00:00+09:00"})  # frozen now は 09-09 10:00
+    first = run_thth(["approve", path])
+    assert "承認するとすぐ出ます" in first.stdout, first.stdout
+
+
+def test_stale_daysを超えていたら承認しても出ないと言う(isolated_account):
+    path = write_queue_file(isolated_account["queue_dir"], "a.md", fm_overrides={
+        "status": "draft", "approved_sha": None,
+        "publish_at": "2026-08-20T08:00:00+09:00"})  # 20 日前（stale_days 既定 7）
+    first = run_thth(["approve", path])
+    assert "承認しても出ません" in first.stdout, first.stdout
+    assert "stale_days" in first.stdout
+
+
+def test_これから出るものには注意を出さない(isolated_account):
+    # `run_thth` はサブプロセスなので frozen_now_jst が届かない（conftest 参照）。
+    # 実の壁時計より確実に先の時刻を使う。
+    path = write_queue_file(isolated_account["queue_dir"], "a.md", fm_overrides={
+        "status": "draft", "approved_sha": None,
+        "publish_at": "2030-01-01T08:00:00+09:00"})
+    first = run_thth(["approve", path])
+    assert "承認するとすぐ出ます" not in first.stdout
+    assert "承認しても出ません" not in first.stdout

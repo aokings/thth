@@ -105,6 +105,76 @@ REMOTE_TIMEOUT_SECONDS = 8.0
 REMOTE_LIMIT = 25
 
 
+def fetch_posts(account_cfg: dict, token: dict | None, *, limit: int = REMOTE_LIMIT,
+                 fields: str = "id,permalink,timestamp") -> tuple:
+    """Threads 側の直近の投稿をそのまま返す `(rows, エラー文)`。**切り詰めない。**
+
+    `thth doctor` の `detail` は能力の確認が目的で 220 字で切っている——2 件目の
+    permalink が読めない、という報告を受けた（nigamilab セッション 2026-09-10）。
+    診断の要約を投稿一覧の代わりに使わせていたのが間違いだったので、**投稿を読む
+    ための口を別に用意する**（`thth posts`）。読み取りだけ（`threads_basic`）。
+    """
+    if token is None or not token.get("access_token"):
+        return None, "token が無いので引けません"
+    user_id = token.get("user_id") or account_cfg.get("user_id")
+    if not user_id:
+        return None, "user_id が判らないので引けません"
+
+    base_url = os.environ.get("THTH_THREADS_BASE_URL", "https://graph.threads.net")
+    params = {"fields": fields, "limit": limit, "access_token": token["access_token"]}
+    url = base_url.rstrip("/") + f"/v1.0/{user_id}/threads?" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(url, timeout=REMOTE_TIMEOUT_SECONDS) as resp:
+            body = json.loads(resp.read() or b"{}")
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return None, "引けませんでした: " + redact_mod.redact(str(e))
+
+    rows = body.get("data")
+    if not isinstance(rows, list):
+        return None, "応答の形が想定と違います"
+    return rows, ""
+
+
+def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
+    """`thth posts <account>`: 実際の投稿を一覧する（手で出した分も含む）。
+
+    queue の `post_id` と突き合わせて、1 本ごとに **THTH 経由か外で出したか**を
+    付ける。手で投稿していた時期からの移行で要る（nigamilab セッション指摘）。
+    """
+    try:
+        account_cfg = accounts_mod.load_account(account_name)
+    except accounts_mod.AccountError as e:
+        return {"account": account_name, "error": str(e), "posts": []}
+
+    tree_sha = writeback_mod.upstream_sha(account_cfg.get("repo_dir"))
+    files = core.list_queue_files(account_cfg, tree_sha=tree_sha)
+    by_post_id = {}
+    for qf in files:
+        if qf.malformed:
+            continue
+        post_id = qf.front_matter.get("post_id")
+        if post_id:
+            by_post_id[post_id] = os.path.basename(qf.path)
+
+    rows, err = fetch_posts(account_cfg, accounts_mod.load_token(account_cfg),
+                             limit=limit, fields="id,permalink,timestamp,text")
+    if rows is None:
+        return {"account": account_name, "error": err, "posts": []}
+
+    posts = []
+    for row in rows:
+        post_id = row.get("id")
+        posts.append({
+            "id": post_id,
+            "timestamp": row.get("timestamp"),
+            "permalink": row.get("permalink"),
+            "text": row.get("text"),
+            "via_thth": post_id in by_post_id,
+            "file": by_post_id.get(post_id),
+        })
+    return {"account": account_name, "error": None, "posts": posts}
+
+
 def _remote_posts(account_cfg: dict, token: dict | None, known_post_ids: set) -> dict:
     """Threads 側の**実際の**直近の投稿を引く（masaru 指摘 2026-09-10）。
 
@@ -119,28 +189,9 @@ def _remote_posts(account_cfg: dict, token: dict | None, known_post_ids: set) ->
     網に届かない場合は **「判りません」** を返す（「0 件」と言わない・規約 12）。
     """
     out = {"known": False, "count": None, "latest": None, "outside": [], "message": ""}
-    if token is None or not token.get("access_token"):
-        out["message"] = "token が無いので引けません"
-        return out
-    user_id = token.get("user_id") or account_cfg.get("user_id")
-    if not user_id:
-        out["message"] = "user_id が判らないので引けません"
-        return out
-
-    base_url = os.environ.get("THTH_THREADS_BASE_URL", "https://graph.threads.net")
-    params = {"fields": "id,permalink,timestamp", "limit": REMOTE_LIMIT,
-              "access_token": token["access_token"]}
-    url = base_url.rstrip("/") + f"/v1.0/{user_id}/threads?" + urllib.parse.urlencode(params)
-    try:
-        with urllib.request.urlopen(url, timeout=REMOTE_TIMEOUT_SECONDS) as resp:
-            body = json.loads(resp.read() or b"{}")
-    except (urllib.error.URLError, OSError, ValueError) as e:
-        out["message"] = "引けませんでした: " + redact_mod.redact(str(e))
-        return out
-
-    rows = body.get("data")
-    if not isinstance(rows, list):
-        out["message"] = "応答の形が想定と違います"
+    rows, err = fetch_posts(account_cfg, token)
+    if rows is None:
+        out["message"] = err
         return out
 
     out["known"] = True

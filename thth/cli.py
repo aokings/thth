@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import datetime
 import getpass
 import json
 import os
@@ -102,8 +103,31 @@ def _prepare_one(path: str):
     approved_sha = approval_mod.compute_approved_sha(
         section=section, account=account_name, reply_to=fm.get("reply_to"),
         topic=fm.get("topic"), publish_at=fm.get("publish_at"))
+
+    # **予定時刻を過ぎた原稿の扱いを、承認の前に言う**（nigamilab セッション指摘
+    # 2026-09-10）。起草する人と承認する人が別なので、承認までに時刻が過ぎるのは
+    # 普通に起きる。「承認したらいつ出るのか」を承認者が知らないまま押す形に
+    # しない。
+    warning = None
+    now = jst.now_jst()
+    stale_days = account_cfg.get("stale_days", 7)
+    try:
+        publish_at = queuefile.parse_publish_at(fm.get("publish_at"))
+    except (ValueError, TypeError):
+        publish_at = None
+    if publish_at is not None and publish_at <= now:
+        late = now - publish_at
+        if late > datetime.timedelta(days=stale_days):
+            warning = (f"**承認しても出ません**: 予定時刻から {late.days} 日過ぎていて、"
+                       f"このアカウントの stale_days={stale_days} を超えています"
+                       "（board に要確認として出ます）。publish_at を直してください。")
+        else:
+            warning = (f"**承認するとすぐ出ます**: 予定時刻 {fm.get('publish_at')} は"
+                       f"既に過ぎています（{int(late.total_seconds() // 3600)} 時間前）。")
+
     return {
         "path": path,
+        "warning": warning,
         "account": account_name,
         "publish_at": fm.get("publish_at"),
         "topic": queuefile.normalize_topic(fm.get("topic")),
@@ -248,6 +272,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool) -> None:
                      "files": [{"file": one["path"], "account": one["account"],
                                 "publish_at": one["publish_at"], "topic": one["topic"],
                                 "reply_to": one["reply_to"], "text": one["text"],
+                                "warning": one.get("warning"),
                                 "digest": one["digest"]} for one in prepared]})
         return
     print(f"承認しません（確認の一段目です）: {len(prepared)} 本")
@@ -258,10 +283,18 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool) -> None:
         print(f"  publish_at: {one['publish_at']}")
         print(f"  topic     : {one['topic'] or '（なし）'}")
         print(f"  reply_to  : {one['reply_to'] or '（なし）'}")
+        if one.get("warning"):
+            print(f"  ⚠ {one['warning']}")
         print("--- 出す本文 ---")
         sys.stdout.write(one["text"] if one["text"].endswith("\n") else one["text"] + "\n")
         print("--- ここまで ---")
         print(f"digest: {one['digest']}")
+    warned = [one for one in prepared if one.get("warning")]
+    if warned:
+        print("")
+        print(f"⚠ 予定時刻を過ぎているものが {len(warned)} 本あります:")
+        for one in warned:
+            print(f"    {os.path.basename(one['path'])} — {one['warning']}")
     print("")
     if len(prepared) == 1:
         print(f"この本文でよければ: thth approve {prepared[0]['path']} --confirm {bundle}")
@@ -371,6 +404,41 @@ def cmd_revoke(args) -> int:
         print("取り消しを push できませんでした。**まだ出る可能性があります。**"
               f"手で push して、thth account で確かめてください: {push_err}", file=sys.stderr)
         return 1
+    return 0
+
+
+def cmd_posts(args) -> int:
+    """`thth posts <account>`: 実際に出ている投稿を一覧する（読むだけ）。
+
+    **`thth doctor` の要約を投稿一覧の代わりに使わせていたのが間違いだった**
+    （nigamilab セッション指摘 2026-09-10: 「`detail` が途中で切れた文字列で返るので、
+    2 件目の permalink が読めませんでした」）。doctor は能力の確認が目的なので
+    220 字で切る。**投稿を読むための口はこちら。切り詰めない。**
+
+    手で出した分も含めて全部出し、1 本ごとに THTH 経由かどうかを付ける。
+    """
+    result = account_report_mod.recent_posts(args.account, limit=args.limit)
+    if args.json:
+        _print_json(result)
+        return 0 if not result.get("error") else 1
+    if result.get("error"):
+        print(f"{args.account}: {result['error']}", file=sys.stderr)
+        return 1
+    posts = result["posts"]
+    if not posts:
+        print("投稿がありません")
+        return 0
+    for post in posts:
+        via = f"THTH（{post['file']}）" if post["via_thth"] else "**外で出したもの**"
+        print(f"{post['timestamp']}  {via}")
+        print(f"  id       : {post['id']}")
+        print(f"  permalink: {post['permalink']}")
+        if post.get("text"):
+            for line in post["text"].split("\n"):
+                print(f"  | {line}")
+        print("")
+    outside = sum(1 for p in posts if not p["via_thth"])
+    print(f"—— {len(posts)} 件（うち THTH を通していないもの {outside} 件）")
     return 0
 
 
@@ -614,6 +682,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_revoke.add_argument("--by", default=None, help="誰が止めたか（記録に残す）")
     p_revoke.add_argument("--json", action="store_true")
     p_revoke.set_defaults(func=cmd_revoke)
+
+    p_posts = sub.add_parser(
+        "posts", help="実際に出ている投稿を一覧する（手で出した分も含む・読むだけ）")
+    p_posts.add_argument("account")
+    p_posts.add_argument("--limit", type=int, default=25)
+    p_posts.add_argument("--json", action="store_true")
+    p_posts.set_defaults(func=cmd_posts)
 
     p_queue = sub.add_parser("queue", help="draft/approved/posted/型外 と次に出るもの")
     p_queue.add_argument("account", nargs="?")

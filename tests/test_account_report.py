@@ -187,3 +187,25 @@ def test_同席専用でもtokenが無ければ投稿できないと言う(tmp_p
     d = account_report.account_detail(account["name"], remote=False)
     assert d["ready"] is False
     assert any(b.startswith("token:") for b in d["blockers"]), d["blockers"]
+
+
+def test_postsは投稿を切り詰めずに返す(tmp_path, monkeypatch, isolated_account_factory):
+    """`thth doctor` の 220 字要約を投稿一覧の代わりに使わせていたのが間違いだった
+    （nigamilab セッション指摘 2026-09-10: 2 件目の permalink が読めない）。"""
+    long_text = "あ" * 400
+    rows = [{"id": "P1", "timestamp": "2026-09-10T09:00:00+0000",
+             "permalink": "https://www.threads.net/@nigamilab/post/P1", "text": long_text},
+            {"id": "P2", "timestamp": "2026-09-09T09:00:00+0000",
+             "permalink": "https://www.threads.net/@nigamilab/post/P2", "text": "みじかい"}]
+    pair, account = _ready_account(tmp_path, isolated_account_factory)
+
+    with fake_threads_reader(rows) as base_url:
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        result = account_report.recent_posts(account["name"])
+
+    assert [p["id"] for p in result["posts"]] == ["P1", "P2"]
+    # 2 件目の permalink がちゃんと読める（報告そのもの）
+    assert result["posts"][1]["permalink"].endswith("/P2")
+    # 本文を切り詰めない
+    assert result["posts"][0]["text"] == long_text
+    assert all(p["via_thth"] is False for p in result["posts"])
