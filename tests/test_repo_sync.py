@@ -128,7 +128,7 @@ def test_repoを持たないアカウントは同期をスキップして壊れ�
     queue が無いので同期を静かにスキップする（唯一の例外・外部レビュー第 3 巡 P1・
     `writeback.sync_repo()` 自体のユニットテスト）。"""
     missing = str(tmp_path / "repos" / "_none")
-    ok, err = writeback.sync_repo(missing)
+    ok, err, sha = writeback.sync_repo(missing)
     assert ok is True and err == ""
 
 
@@ -140,7 +140,7 @@ def test_存在するがgit_repoでないディレクトリは同期失敗とし
     `missing_git` モードが `core.throw_once()` 越しの受け入れを見る）。"""
     plain_dir = tmp_path / "plain"
     plain_dir.mkdir()
-    ok, err = writeback.sync_repo(str(plain_dir))
+    ok, err, sha = writeback.sync_repo(str(plain_dir))
     assert ok is False
     assert err
 
@@ -154,7 +154,7 @@ def test_git_repoなのにoriginが無ければ同期失敗として投稿しな
     git_no_remote.mkdir()
     subprocess.run(["git", "init", "-b", "main", str(git_no_remote)], check=True,
                     capture_output=True, text=True)
-    ok, err = writeback.sync_repo(str(git_no_remote))
+    ok, err, sha = writeback.sync_repo(str(git_no_remote))
     assert ok is False
     assert "origin" in err
 

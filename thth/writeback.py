@@ -88,6 +88,29 @@ def _run_git_bytes(repo_dir: str, args: list) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True)
 
 
+def upstream_sha(repo_dir: str) -> str | None:
+    """`HEAD` が upstream（`@{u}`）と一致していればその OID、していなければ None。
+
+    **同期を伴わない読み手（`thth board`・`thth queue`）の照合先**（外部レビュー
+    第 5 巡 P2）。board は fetch しないので「いま remote がどうなっているか」は
+    知らないが、**最後に取り込んだ remote の姿**（remote-tracking ref）は知って
+    いる。ローカルの HEAD がそれと一致していなければ、**まだ remote に届いて
+    いない commit がある**——`thth approve` が commit できたのに push を拒否された
+    場合がこれで、以前の board はそれを「承認して待っているだけ」と表示していた
+    （`approved_waiting: 1`・要確認 0 件）。一致しない間は照合先が無い（None）＝
+    どのファイルも `unverified_content` になるので、board にそのまま出る。
+    """
+    if not repo_dir or not os.path.isdir(repo_dir):
+        return None
+    head = _run_git(repo_dir, ["rev-parse", "HEAD"])
+    upstream = _run_git(repo_dir, ["rev-parse", "@{u}"])
+    if head.returncode != 0 or upstream.returncode != 0:
+        return None
+    if head.stdout.strip() != upstream.stdout.strip():
+        return None
+    return head.stdout.strip() or None
+
+
 def repo_toplevel(path: str) -> str | None:
     """`path` が入っている git repo の作業ツリーの根を返す（repo でなければ None）。
 
@@ -106,7 +129,7 @@ def repo_toplevel(path: str) -> str | None:
     return top.stdout.strip()
 
 
-def matches_synced_commit(repo_dir: str, path: str, *, disk_bytes: bytes | None = None) -> bool:
+def matches_synced_commit(repo_dir: str, path: str, *, tree_sha: str | None, disk_bytes: bytes | None = None) -> bool:
     """`path` の**いま読める中身**が、同期を確認した commit（HEAD）の中身と
     1 バイトも違わないことを確かめる（外部レビュー第 4 巡 P1）。
 
@@ -137,7 +160,15 @@ def matches_synced_commit(repo_dir: str, path: str, *, disk_bytes: bytes | None 
     **何も消さない・戻さない。** 作業中の変更はそのまま残し、その 1 本を
     select の候補から外して board に出すだけ（`select` の `unverified_content`）。
 
-    `disk_bytes` を渡すと、その中身と HEAD を比べる（ファイルを読み直さない）。
+    **比較先は呼び出し側が渡した `tree_sha` に固定する**（外部レビュー第 5 巡 P1）。
+    以前はここで `HEAD` を引き直していた。`HEAD` は動く——同期を確認したあとに
+    別プロセスの `thth approve` が commit すれば HEAD はそちらへ動き、**push が
+    remote に拒否されていても**作業ツリーと HEAD は一致するので `True` を返した。
+    その結果、**remote に届いていない本文が公開された**（実プロセスで再現）。
+    「確かめた commit」と「いま指しているもの」は別物なので、確かめた側の OID を
+    そのまま持ち回る（`tree_sha` が None なら何も確認できない＝全部落とす）。
+
+    `disk_bytes` を渡すと、その中身と `tree_sha` を比べる（ファイルを読み直さない）。
     `core.list_queue_files()` は**読んだのと同じバイト列**を渡す——読み直すと、
     検査したバイト列と select が実際に見るバイト列が別物になりうるから
     （検査と使用の間に書き換えられる隙間を作らない）。
@@ -157,7 +188,9 @@ def matches_synced_commit(repo_dir: str, path: str, *, disk_bytes: bytes | None 
     if os.path.isabs(rel) or rel == os.pardir or rel.startswith(os.pardir + os.sep):
         return False
 
-    blob = _run_git_bytes(repo_dir, ["cat-file", "blob", "HEAD:" + rel.replace(os.sep, "/")])
+    if not tree_sha:
+        return False
+    blob = _run_git_bytes(repo_dir, ["cat-file", "blob", f"{tree_sha}:" + rel.replace(os.sep, "/")])
     if blob.returncode != 0:
         return False
     disk = disk_bytes
@@ -200,7 +233,13 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
     if add.returncode != 0:
         return False, redact_mod.redact(add.stderr)
 
-    commit = _run_git(repo_dir, ["commit", "-m", message])
+    # **`--only` を付ける**（外部レビュー第 5 巡 P1・2）。`git add -- <path>` は
+    # その 1 本を stage するだけで、**その後の素の `git commit` は index に既に
+    # 載っている無関係な変更を全部巻き込む**。実際、別作業を stage したまま
+    # `thth approve` すると、承認の commit に他人の作業が混ざって remote まで
+    # 行った。`--only <path>` は一時 index を作ってそのパスだけを commit し、
+    # **実 index の他のエントリはそのまま残す**（何も消さない・戻さない）。
+    commit = _run_git(repo_dir, ["commit", "--only", "-m", message, "--", rel_path])
     if commit.returncode != 0:
         return False, redact_mod.redact(commit.stderr)
 
@@ -259,7 +298,7 @@ def sync_repo(repo_dir: str) -> tuple:
     """
     if not repo_dir or not os.path.isdir(repo_dir):
         # 唯一の例外。queue を読む先そのものが無いので、どのみち公開されない。
-        return True, ""
+        return True, "", None
 
     return _confirm_synced(repo_dir)
 
@@ -273,21 +312,21 @@ def _confirm_synced(repo_dir: str) -> tuple:
     git_dir = _run_git(repo_dir, ["rev-parse", "--git-dir"])
     if git_dir.returncode != 0:
         return False, ("git repository として確認できませんでした（.git が見当たりません）: "
-                        + redact_mod.redact(git_dir.stderr))
+                        + redact_mod.redact(git_dir.stderr)), None
 
     remote = _run_git(repo_dir, ["remote"])
     if remote.returncode != 0:
-        return False, "git remote の確認に失敗しました: " + redact_mod.redact(remote.stderr)
+        return False, "git remote の確認に失敗しました: " + redact_mod.redact(remote.stderr), None
     if "origin" not in remote.stdout.split():
-        return False, "origin という remote が見つかりません（同期元を確認できないため投稿しません）"
+        return False, "origin という remote が見つかりません（同期元を確認できないため投稿しません）", None
 
     fetch = _run_git(repo_dir, ["fetch", "origin"])
     if fetch.returncode != 0:
-        return False, "git fetch に失敗しました: " + redact_mod.redact(fetch.stderr)
+        return False, "git fetch に失敗しました: " + redact_mod.redact(fetch.stderr), None
 
     pull = _run_git(repo_dir, ["pull", "--ff-only"])
     if pull.returncode != 0:
-        return False, "git pull --ff-only に失敗しました: " + redact_mod.redact(pull.stderr)
+        return False, "git pull --ff-only に失敗しました: " + redact_mod.redact(pull.stderr), None
 
     # 最終確認: pull --ff-only が exit 0 を返しただけでなく、HEAD が実際に
     # upstream に追いついたことを直接見る（「エラーが出なかった」ではなく
@@ -296,6 +335,8 @@ def _confirm_synced(repo_dir: str) -> tuple:
     upstream = _run_git(repo_dir, ["rev-parse", "@{u}"])
     if (head.returncode != 0 or upstream.returncode != 0
             or head.stdout.strip() != upstream.stdout.strip()):
-        return False, "pull --ff-only の後、HEAD が upstream に追いついたことを確認できませんでした"
+        return False, "pull --ff-only の後、HEAD が upstream に追いついたことを確認できませんでした", None
 
-    return True, ""
+    # **確かめた OID をそのまま返す**（外部レビュー第 5 巡 P1）。呼び出し側は
+    # これを持ち回り、queue の照合先に使う。HEAD を引き直させない。
+    return True, "", head.stdout.strip()

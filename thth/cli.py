@@ -16,6 +16,7 @@ from . import approval as approval_mod
 from . import core
 from . import jst
 from . import lint as lint_mod
+from . import lock as lock_mod
 from . import maintain as maintain_mod
 from . import oauth as oauth_mod
 from . import queuefile
@@ -122,15 +123,31 @@ def cmd_approve(args) -> int:
         topic=fm.get("topic"), publish_at=fm.get("publish_at"))
     approved_at = jst.iso()
 
-    writeback_mod.set_front_matter_fields(args.file, {
-        "status": "approved",
-        "approved_sha": approved_sha,
-        "approved_at": approved_at,
-    })
+    # **投稿と同じ clone ロックに参加する**（外部レビュー第 5 巡 P1）。承認は
+    # この clone の作業ツリー・index・HEAD を動かすので、公開の最中に割り込めて
+    # しまうと、同期を確認した状態と実際に読まれる状態がずれる。**書き換える前に**
+    # 取る（front-matter を書いてからでは、取れなかったときに中途半端に残る）。
+    # 取れなければ何もせずに断る（待たない・壊さない）。
+    repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
+    try:
+        repo_lock.acquire()
+    except lock_mod.LockBusy:
+        print(f"いまこの repo を別の実行が使っています（{repo_dir}）。"
+              "少し待ってからもう一度 thth approve してください。", file=sys.stderr)
+        return 1
 
-    pushed, push_err = writeback_mod.commit_and_push(
-        repo_dir, rel_path=rel_path,
-        message=f"承認: {os.path.basename(args.file)}（{account_name}）")
+    try:
+        writeback_mod.set_front_matter_fields(args.file, {
+            "status": "approved",
+            "approved_sha": approved_sha,
+            "approved_at": approved_at,
+        })
+
+        pushed, push_err = writeback_mod.commit_and_push(
+            repo_dir, rel_path=rel_path,
+            message=f"承認: {os.path.basename(args.file)}（{account_name}）")
+    finally:
+        repo_lock.release()
 
     if args.json:
         _print_json({"file": args.file, "status": "approved",
@@ -147,6 +164,9 @@ def cmd_approve(args) -> int:
         # 「承認しました」で終わらせない。
         print("承認を commit・push できませんでした。このままでは投稿されません"
               f"（board に unverified_content として出ます）: {push_err}", file=sys.stderr)
+        print("  ※ commit だけ済んで push を断られた場合は、その commit がローカルに"
+              "残っています。手で push するか、取り消してから承認し直してください。",
+              file=sys.stderr)
         return 1
     return 0
 

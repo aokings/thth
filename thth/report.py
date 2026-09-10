@@ -8,6 +8,7 @@ from . import core
 from . import inflight as inflight_mod
 from . import maintain as maintain_mod
 from . import selfupdate as selfupdate_mod
+from . import writeback as writeback_mod
 from . import jst
 from . import queuefile
 from . import select as select_mod
@@ -63,7 +64,9 @@ def queue_summary(account_name: str | None, now=None) -> dict:
         except accounts_mod.AccountError as e:
             out[name] = {"error": str(e)}
             continue
-        files = core.list_queue_files(account_cfg)
+        # 同期を伴わない読み手の照合先（外部レビュー第 5 巡 P2）。
+        files = core.list_queue_files(
+            account_cfg, tree_sha=writeback_mod.upstream_sha(account_cfg.get("repo_dir")))
         counts = {k: 0 for k in STATUS_KEYS}
         type_mismatch = 0
         for qf in files:
@@ -123,7 +126,9 @@ def board_summary() -> dict:
         except accounts_mod.AccountError as e:
             accounts_out.append({"account": name, "error": str(e)})
             continue
-        files = core.list_queue_files(account_cfg)
+        # 同期を伴わない読み手の照合先（外部レビュー第 5 巡 P2）。
+        files = core.list_queue_files(
+            account_cfg, tree_sha=writeback_mod.upstream_sha(account_cfg.get("repo_dir")))
         last_at = core.last_post_at(files, name)
         approved_waiting = sum(
             1 for qf in files

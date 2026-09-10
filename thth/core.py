@@ -47,7 +47,17 @@ class ThrowResult:
     mismatch_fields: list | None = None
 
 
-def list_queue_files(account_cfg: dict) -> list:
+def list_queue_files(account_cfg: dict, *, tree_sha: str | None) -> list:
+    """queue を読む。**照合先の commit（`tree_sha`）を必ず受け取る**。
+
+    `tree_sha` は「同期を確認した commit の OID」（外部レビュー第 5 巡 P1）。
+    投稿の経路は `writeback.sync_repo()` が返した OID を、board のように同期を
+    伴わない読み手は `writeback.upstream_sha()`（HEAD が upstream と一致して
+    いればその OID・していなければ None）を渡す。**既定値を持たせない**——
+    省略できると「その時の HEAD」を引き直す実装に戻ってしまい、同じ穴がまた
+    開く（第 5 巡はまさにそれだった）。None なら何も確認できないので、
+    すべてのファイルが `verified=False`（`unverified_content`）になる。
+    """
     repo_dir = account_cfg["repo_dir"]
     queue_dir = os.path.join(repo_dir, account_cfg["queue_dir"])
     out = []
@@ -65,7 +75,8 @@ def list_queue_files(account_cfg: dict) -> list:
         with open(path, "rb") as f:
             raw = f.read()
         qf = queuefile.parse_text(raw.decode("utf-8"), path)
-        qf.verified = writeback.matches_synced_commit(repo_dir, path, disk_bytes=raw)
+        qf.verified = writeback.matches_synced_commit(
+            repo_dir, path, tree_sha=tree_sha, disk_bytes=raw)
         out.append(qf)
     return out
 
@@ -234,7 +245,7 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
     # の `repos/_none` のような send 専用アカウント）。それ以外は git repo として
     # 同期の成功を確認できて初めて成功扱いになる（`writeback.sync_repo()` の
     # docstring 参照）。
-    synced, sync_err = writeback.sync_repo(account_cfg.get("repo_dir"))
+    synced, sync_err, synced_sha = writeback.sync_repo(account_cfg.get("repo_dir"))
     if not synced:
         msg = f"利用者 repo の同期に失敗しました（投稿しません）: {sync_err}"
         log(msg)
@@ -285,7 +296,10 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
         # 変えないので同じ 1 件を選び直さないための除外・下記コメント参照）。
         # ここを取り違えると、直前に投げたファイルが last_post_at の計算からも
         # 消えて min_interval が効かなくなる（2026-09-09 に実際に踏んだ）。
-        files = list_queue_files(account_cfg)
+        # 照合先は**この run が同期を確認した OID に固定する**（外部レビュー第 5 巡
+        # P1）。ループの 2 周目以降も同じ OID を使う——書き戻しで HEAD が進んでも、
+        # 「この run が確かめた状態」を動かさないため。
+        files = list_queue_files(account_cfg, tree_sha=synced_sha)
         last_at = last_post_at(files, account_name)
         if run_last_post_at is not None:
             # この run の中で自分が投げた分は disk の実測 posted_at より優先する
