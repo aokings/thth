@@ -42,7 +42,10 @@ VERDICTS = ("alive", "mismatch", "dead", "unknown")
 # 型は「見れば分かること」だけにする（良し悪しの判断を型に混ぜない）。
 KINDS = {
     "行動": "人がいまやっている行動・場面の名前（中学受験・学校説明会）",
-    "一般名詞": "日常の物やカテゴリ（チョコレート・コーヒー）",
+    "一般名詞": "日常の**物**の名前（チョコレート・コーヒー）。分野や概念の名前は「カテゴリ」",
+    "カテゴリ": ("分野・概念の名前（教育・子育て・学校選び）。**普通の日本語でも場に"
+                 "なっていないことが多い**——kanto セッションが 2026-09-10 に 6 語を"
+                 "確かめて全部 0 件だった"),
     "抽象": "感覚や性質（苦味）。意味が拡散しやすい",
     "専門語": "業界の語（精製・六大茶類・アナエロビック）。別業界・別言語に取られがち",
     "固有名": "ブランド・製品・店の名前",
@@ -142,7 +145,12 @@ def learned(measured_by_topic: dict) -> list:
     result = []
     for kind, bucket in out.items():
         seen = sorted(bucket["views"])
+        judged = bucket["alive"] + bucket["mismatch"] + bucket["dead"]
         result.append({
+            # **当たり率を出す。** 「合っている 1・不一致 0」だけを出していたら、
+            # 8 語のうち 7 語が空でも当たっているように見えた（kanto セッションの
+            # 報告で気づいた・2026-09-10）。**分母を必ず添える。**
+            "hit_rate": (f"{bucket['alive']}/{judged}" if judged else "—"),
             "kind": kind,
             "description": KINDS.get(kind, ""),
             "topics": len(bucket["topics"]),
@@ -154,5 +162,10 @@ def learned(measured_by_topic: dict) -> list:
             "dead": bucket["dead"], "unknown": bucket["unknown"],
             "examples": sorted(bucket["topics"])[:6],
         })
-    result.sort(key=lambda r: (r["views_median"] is None, -(r["views_median"] or 0)))
+    def rate(row):
+        judged = row["alive"] + row["mismatch"] + row["dead"]
+        return row["alive"] / judged if judged else -1.0
+
+    # 実測があればそちら優先、無ければ当たり率で並べる。
+    result.sort(key=lambda r: (r["views_median"] is None, -(r["views_median"] or 0), -rate(r)))
     return result

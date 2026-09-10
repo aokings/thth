@@ -125,3 +125,28 @@ def test_承認の一段目に型も出る(isolated_account):
         "status": "draft", "approved_sha": None, "topic": "精製"})
     first = run_thth(["approve", path])
     assert "［専門語］" in first.stdout, first.stdout
+
+
+def test_当たり率を分母つきで出す(thth_root):
+    """**「合っている 1・不一致 0」だけでは当たって見える。**
+
+    kanto セッションの報告（2026-09-10）で気づいた欠陥。［一般名詞］8 語のうち
+    7 語が 0 件（dead）だったのに、表示は「合っている 1・不一致 0」だけだった。
+    dead を数えていなかったので、**最悪の型が最良に見えていた。**
+    """
+    topics_mod.record("チョコレート", verdict="alive", kind="一般名詞", by="テスト")
+    for word in ["子育て", "教育", "学校選び", "大学付属校"]:
+        topics_mod.record(word, verdict="dead", kind="カテゴリ", by="テスト")
+
+    rows = {r["kind"]: r for r in topics_mod.learned({})}
+    assert rows["一般名詞"]["hit_rate"] == "1/1"
+    assert rows["カテゴリ"]["hit_rate"] == "0/4"
+    assert rows["カテゴリ"]["dead"] == 4
+
+
+def test_実測が無いときは当たり率の高い型が先に来る(thth_root):
+    topics_mod.record("だめ1", verdict="dead", kind="カテゴリ", by="テスト")
+    topics_mod.record("だめ2", verdict="dead", kind="カテゴリ", by="テスト")
+    topics_mod.record("あたり", verdict="alive", kind="行動", by="テスト")
+    rows = topics_mod.learned({})
+    assert rows[0]["kind"] == "行動", [r["kind"] for r in rows]

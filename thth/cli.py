@@ -562,6 +562,7 @@ def cmd_topics(args) -> int:
             print(f"［{row['kind']}］{row['topics']} 語  {measured}")
             print(f"    合っている {row['alive']}・不一致 {row['mismatch']}・"
                   f"人がいない {row['dead']}・未確認 {row['unknown']}")
+            print(f"    当たり率 {row['hit_rate']}")
             print(f"    例: {'・'.join(row['examples'])}")
             if row["description"]:
                 print(f"    {row['description']}")
@@ -683,8 +684,9 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
     for row in kinds:
         m = ("実測まだ" if row["views_median"] is None
              else f"views 中央値 {row['views_median']}（{row['posts_measured']} 本）")
-        print(f"  ［{row['kind']}］{row['topics']} 語  {m}"
-              f"  合っている {row['alive']}・不一致 {row['mismatch']}")
+        print(f"  ［{row['kind']}］{row['topics']} 語  {m}  当たり率 {row['hit_rate']}"
+              f"（合っている {row['alive']}・不一致 {row['mismatch']}"
+              f"・人がいない {row['dead']}）")
     if not kinds:
         print("  （まだありません）")
     if unchecked:
