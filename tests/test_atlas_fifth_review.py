@@ -166,3 +166,33 @@ def test_同期も承認も正常なら公開される(tmp_path, isolated_accoun
     result = core.throw_once(account["name"], production_flag=True,
                               adapter_factory=lambda *_: spy, now=NOW)
     assert spy.calls == ["本文 A。"], dataclasses.asdict(result)
+
+
+def test_無関係なstage状態がrebaseで失われない(tmp_path, isolated_account_factory):
+    """外部レビュー第 6 巡 P2-5。
+
+    `commit --only` は実 index の他のエントリを残す（第 5 巡の対応）。ところが
+    その直後の `pull --rebase --autostash` が、**staged も unstaged もまとめて
+    退避して、戻すときは全部 unstaged にする。** 中身は消えないが、
+    「stage してある／していない」の区別が消える。第 5 巡のテストは**新規ファイル**を
+    stage する場合だけを見ていて、**既に追跡されているファイルの編集**を試していなかった。
+    """
+    pair, account, path = _setup(tmp_path, isolated_account_factory)
+
+    tracked = Path(pair["work"]) / "other.txt"
+    tracked.write_text("最初の中身\n")
+    run_git(pair["work"], ["add", "other.txt"])
+    run_git(pair["work"], ["commit", "-m", "other.txt を足す"])
+    run_git(pair["work"], ["push"])
+
+    tracked.write_text("組み立て中の変更\n")
+    run_git(pair["work"], ["add", "other.txt"])          # ← stage してある
+
+    approved = approve_via_cli(str(path))
+    assert approved.returncode == 0, approved.stderr
+
+    staged = run_git(pair["work"], ["diff", "--cached", "--name-only"]).stdout.split()
+    assert "other.txt" in staged, f"stage 状態が失われた: {staged}"
+    assert tracked.read_text() == "組み立て中の変更\n"
+    # origin には送られていない
+    assert "組み立て中" not in run_git(pair["bare"], ["show", "main:other.txt"]).stdout

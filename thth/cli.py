@@ -395,20 +395,6 @@ def cmd_revoke(args) -> int:
     割り込めない。既に出てしまったもの（`post_id` あり）は取り消せないので断る
     ——その場合は Threads の画面から手で消すしかない、とその場で言う。
     """
-    qf = queuefile.parse(args.file)
-    fm = qf.front_matter
-    if qf.malformed:
-        print(f"front-matter が読めないので取り消せません: {args.file}", file=sys.stderr)
-        return 1
-    if fm.get("post_id"):
-        print(f"もう出ています（post_id: {fm.get('post_id')}）。THTH からは取り消せません。"
-              "消すなら Threads の画面から手で消してください。", file=sys.stderr)
-        return 1
-    if fm.get("status") != "approved":
-        print(f"承認されていません（status: {fm.get('status')}）。取り消すものがありません: "
-              f"{args.file}", file=sys.stderr)
-        return 1
-
     repo_dir = writeback_mod.repo_toplevel(args.file)
     if repo_dir is None:
         print(f"git repo の中のファイルではないので取り消しを記録できません: {args.file}",
@@ -432,6 +418,36 @@ def cmd_revoke(args) -> int:
         return 1
 
     try:
+        # **検査はロックの中で、同期して読み直してから行う**（外部レビュー第 6 巡 P1-2）。
+        #
+        # 以前はロックを取る**前**に post_id と status を読んでいた。ロックが守るのは
+        # 書き込みだけで、**読んだ事実はその間に古くなる**。検査した直後・ロックを取る
+        # 直前に公開が完了すると、`post_id` が付いているのに `draft` へ書き換え、
+        # **exit 0 で「取り消しました」と返していた**。止められなかった投稿を、
+        # 止められたと利用者に伝える——取り消しという機能で最も避けたい嘘。
+        #
+        # 別 clone から公開された場合も同じなので、**同期してから**読み直す。
+        synced, sync_err, _sha = writeback_mod.sync_repo(repo_dir)
+        if not synced:
+            print(f"repo を同期できないので取り消しません（いまの状態が判りません）: {sync_err}",
+                  file=sys.stderr)
+            return 1
+
+        qf = queuefile.parse(args.file)
+        fm = qf.front_matter
+        if qf.malformed:
+            print(f"front-matter が読めないので取り消せません: {args.file}", file=sys.stderr)
+            return 1
+        if fm.get("post_id"):
+            print(f"**もう出ています**（post_id: {fm.get('post_id')}）。"
+                  "THTH からは取り消せません。消すなら Threads の画面から手で消してください。",
+                  file=sys.stderr)
+            return 1
+        if fm.get("status") != "approved":
+            print(f"承認されていません（status: {fm.get('status')}）。取り消すものがありません: "
+                  f"{args.file}", file=sys.stderr)
+            return 1
+
         writeback_mod.set_front_matter_fields(args.file, {
             "status": "draft",
             "approved_sha": None,
@@ -444,6 +460,15 @@ def cmd_revoke(args) -> int:
         pushed, push_err = writeback_mod.commit_and_push(
             repo_dir, rel_path=rel_path,
             message=f"承認の取り消し: {os.path.basename(args.file)}（{revoked_by}）")
+
+        # push の直前に `pull --rebase` が走るので、**その間に別 clone から
+        # 公開されたもの**が入ってくることがある。書き終えたあとにもう一度見る。
+        after = queuefile.parse(args.file).front_matter
+        if after.get("post_id"):
+            print(f"**取り消せませんでした。処理の途中で公開されました**"
+                  f"（post_id: {after.get('post_id')}）。消すなら Threads の画面から"
+                  "手で消してください。", file=sys.stderr)
+            return 1
     finally:
         repo_lock.release()
 
@@ -815,6 +840,11 @@ def cmd_run(args) -> int:
     if not accounts_mod.token_exists(account_cfg):
         print(f"token が無いので実行しません: {args.account}", file=sys.stderr)
         return 2
+    # **投稿より先に、前回送れなかった収集を送り直す**（外部レビュー第 6 巡 P1-1）。
+    # 収集の push 失敗が `HEAD != @{u}` を残し、それが同期検査に阻まれて
+    # **投稿まで恒久的に止めていた**。ここで復旧させれば、同じ実行の中で投稿が再開する。
+    collect_mod.recover_pending(args.account, log=print)
+
     result = core.throw_once(args.account, production_flag=True, log=print)
 
     # **投稿のあとに必ず採る**（masaru 裁定 2026-09-10）。数は「読んだ時点の累計」

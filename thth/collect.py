@@ -43,6 +43,98 @@ from . import writeback
 AGE_MARKS_HOURS = [1, 6, 24, 72, 168]
 
 
+# **収集が書いてよい場所**（利用者 repo の中）。ここだけは、未 push の commit が
+# 残っていたら次回に送り直してよい。**queue（`docs/sns/queue/`）は含めない**——
+# あちらは公開の経路で、未 push の commit を自動で送るのは fail-closed を弱める。
+COLLECTION_PREFIXES = ("data/sns/",)
+
+
+def _git(repo_dir: str, args: list):
+    import subprocess
+    return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True, text=True)
+
+
+def push_pending_collection(repo_dir: str, *, log=print) -> tuple:
+    """未 push の commit が**収集ぶんだけ**なら送り直す（外部レビュー第 6 巡 P1-1）。
+
+    **なぜ要るか。** 収集は commit してから push する。push に失敗すると
+    `HEAD != @{u}` のまま残り、`writeback.sync_repo()` がそれを拒否する。
+    その結果——
+
+      - 次回以降の収集も止まる（同期できないので）
+      - **予約投稿も止まる**（同じ clone を使うので）
+      - origin が復旧しても、**未 push の commit を送る経路がどこにも無い**
+
+    採取の失敗が投稿を恒久的に止める、という形になっていた。実際に外部レビューが
+    再現した（origin を一時的に壊し、直したあとも exit 2 が続く）。
+
+    **直し方の線引き。** 「未 push があっても通す」にはしない——それは公開側の
+    fail-closed を弱める。**未 push の commit が触ったパスを全部見て、
+    `data/sns/` の下だけだったときに限り**送り直す。queue を触る未 push の commit
+    （書き戻しが中断した等）が 1 つでも混ざっていれば、**送らずに人を呼ぶ**。
+
+    戻り値 `(送り直したか, 説明)`。
+    """
+    head = _git(repo_dir, ["rev-parse", "HEAD"])
+    upstream = _git(repo_dir, ["rev-parse", "@{u}"])
+    if head.returncode != 0 or upstream.returncode != 0:
+        return False, ""
+    if head.stdout.strip() == upstream.stdout.strip():
+        return False, ""          # 未 push は無い
+
+    names = _git(repo_dir, ["log", "@{u}..HEAD", "--name-only", "--pretty=format:"])
+    if names.returncode != 0:
+        return False, "未 push の commit が何を触ったか読めません"
+    touched = {line.strip() for line in names.stdout.splitlines() if line.strip()}
+    if not touched:
+        return False, ""
+    outside = sorted(p for p in touched
+                     if not any(p.startswith(prefix) for prefix in COLLECTION_PREFIXES))
+    if outside:
+        return False, ("未 push の commit が収集以外のファイルを含むので、自動では送りません"
+                       f"（{', '.join(outside[:3])}）。人が確認してください。")
+
+    fetch = _git(repo_dir, ["fetch", "origin"])
+    if fetch.returncode != 0:
+        return False, "fetch に失敗しました（origin にまだ届きません）"
+    # remote が進んでいることがあるので、収集ぶんを載せ直してから送る。
+    rebase = _git(repo_dir, ["pull", "--rebase", "--autostash"])
+    if rebase.returncode != 0:
+        return False, "未 push の収集を載せ直せませんでした: " + redact_mod.redact(rebase.stderr)
+    push = _git(repo_dir, ["push"])
+    if push.returncode != 0:
+        return False, "未 push の収集をまだ送れません: " + redact_mod.redact(push.stderr)
+    log("前回送れなかった収集を送り直しました")
+    return True, ""
+
+
+def recover_pending(account_name: str, *, log=print) -> None:
+    """`thth run` が**投稿の前に**呼ぶ。送り直せるものがあれば送る。
+
+    投稿より先に呼ぶのは、**収集の取り残しが投稿を止めたままにしない**ため。
+    ロックは投稿と同じ clone ロックを取る（取れなければ何もしない）。
+    """
+    from . import lock as lock_mod
+    try:
+        account_cfg = accounts_mod.load_account(account_name)
+    except accounts_mod.AccountError:
+        return
+    repo_dir = account_cfg.get("repo_dir")
+    if not repo_dir or not os.path.isdir(repo_dir):
+        return
+    lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
+    try:
+        lock.acquire()
+    except lock_mod.LockBusy:
+        return
+    try:
+        recovered, message = push_pending_collection(repo_dir, log=log)
+        if message and not recovered:
+            log("未 push の収集: " + message)
+    finally:
+        lock.release()
+
+
 def _read_ndjson(path: str) -> list:
     out = []
     if not os.path.exists(path):
@@ -63,6 +155,19 @@ def _append_ndjson(path: str, rows: list) -> None:
     with open(path, "a", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _reply_fetches(path: str) -> list:
+    """返信ファイルのうち、**取得を試みた記録**の行だけ（`kind: fetch`）。"""
+    return [row for row in _read_ndjson(path) if row.get("kind") == "fetch"]
+
+
+def _reply_rows(path: str) -> list:
+    """返信ファイルのうち、**返信そのもの**の行だけ。
+
+    `kind` を持たない古い行は返信として扱う（2026-09-10 以前に書いたもの）。
+    """
+    return [row for row in _read_ndjson(path) if row.get("kind") != "fetch"]
 
 
 def due_marks(age_hours: float, recorded: list) -> list:
@@ -115,16 +220,26 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
 
         section = queuefile.extract_section(qf.body, account_cfg["media"])
         insight_path = os.path.join(insights_dir, f"{post_id}.ndjson")
+        reply_path = os.path.join(replies_dir, f"{post_id}.ndjson")
+
+        # **数と返信で、済んだ刻みを別々に持つ**（外部レビュー第 6 巡 P2-3）。
+        # 以前は insights の記録だけから刻みを計算していたので、**数が取れて返信が
+        # 失敗すると、その刻みは「済んだ」ことになり、返信は二度と取りに行かなかった**。
+        # 最後の刻み（168 時間）で失敗すると、その投稿の返信は永久に取れない。
+        # 「部分的な成功は次の実行で埋まる」という約束に反していた。
         marks = due_marks(age_hours, _read_ndjson(insight_path))
-        if not marks:
+        reply_marks = due_marks(age_hours, _reply_fetches(reply_path))
+        if not marks and not reply_marks:
             continue
 
         # --- 数
-        try:
-            metrics = adapter.insights(post_id)
-        except Exception as e:  # 採取の失敗で投稿を止めない
-            errors.append(f"{post_id}: insights: {redact_mod.redact(str(e))}")
-            metrics = None
+        metrics = None
+        if marks:
+            try:
+                metrics = adapter.insights(post_id)
+            except Exception as e:  # 採取の失敗で投稿を止めない
+                errors.append(f"{post_id}: insights: {redact_mod.redact(str(e))}")
+                metrics = None
         if metrics is not None:
             _append_ndjson(insight_path, [{
                 "post_id": post_id,
@@ -147,20 +262,27 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
             touched.append(insight_path)
 
         # --- 返信（`id` で重複除去して追記）
-        reply_path = os.path.join(replies_dir, f"{post_id}.ndjson")
-        try:
-            replies = adapter.replies(post_id)
-        except Exception as e:
-            errors.append(f"{post_id}: replies: {redact_mod.redact(str(e))}")
-            replies = None
-        if replies is not None:
-            known = {row.get("id") for row in _read_ndjson(reply_path)}
-            fresh = [{"collected_at": jst.iso(now), "post_id": post_id, **row}
-                     for row in replies if row.get("id") and row["id"] not in known]
-            if fresh:
-                _append_ndjson(reply_path, fresh)
+        if reply_marks:
+            try:
+                replies = adapter.replies(post_id)
+            except Exception as e:
+                errors.append(f"{post_id}: replies: {redact_mod.redact(str(e))}")
+                replies = None
+            if replies is not None:
+                known = {row.get("id") for row in _reply_rows(reply_path)}
+                fresh = [{"kind": "reply", "collected_at": jst.iso(now),
+                          "post_id": post_id, **row}
+                         for row in replies if row.get("id") and row["id"] not in known]
+                # **取れたことそのものを 1 行残す**（返信 0 件の成功と、取得の失敗を
+                # 区別するため。これが無いと「0 件だった」を「まだ取っていない」と
+                # 読んでしまい、毎回取りに行く／二度と取りに行かない、のどちらかになる）。
+                _append_ndjson(reply_path, fresh + [{
+                    "kind": "fetch", "post_id": post_id, "collected_at": jst.iso(now),
+                    "age_hours": round(age_hours, 2), "marks": reply_marks,
+                    "replies": len(replies)}])
                 touched.append(reply_path)
-                log(f"返信 {len(fresh)} 件: {post_id}")
+                if fresh:
+                    log(f"返信 {len(fresh)} 件: {post_id}")
 
     # --- アカウント単位の日次（前日ぶん・`clicks` はここでしか取れない）
     account_path = _collect_account_daily(account_name, account_cfg, adapter,
@@ -239,6 +361,12 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print) -> int:
         return 0  # 次の実行（10 分後）で採る
 
     try:
+        # **同期を試す前に、前回送れなかった収集を送り直す**（第 6 巡 P1-1）。
+        # これが無いと、一度 push に失敗しただけで採取も投稿も永久に止まる。
+        recovered, recover_msg = push_pending_collection(repo_dir, log=log)
+        if recover_msg and not recovered:
+            log("未 push の収集: " + recover_msg)
+
         synced, sync_err, _sha = writeback.sync_repo(repo_dir)
         if not synced:
             log(f"repo を同期できないので採取しません: {sync_err}")

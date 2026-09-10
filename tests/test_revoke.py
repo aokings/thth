@@ -9,10 +9,14 @@ Meta の権限で投稿を削除できない（設計 §2.2）ので、**出る�
 """
 from __future__ import annotations
 
+import datetime
 import subprocess
+from pathlib import Path
 
 from tests.conftest import approve_via_cli, run_thth, write_queue_file
-from thth import core, queuefile
+from thth import core, jst, queuefile
+
+NOW = datetime.datetime(2026, 9, 9, 10, 0, tzinfo=jst.JST)
 
 
 def _approved(isolated_account, name="a.md", **overrides):
@@ -112,3 +116,58 @@ def test_意図して止めたものと承認が古いものをboardで区別で
     reasons = {item["file"]: item["reason"] for item in row["needs_review"]}
     assert reasons == {"broken.md": "approval_stale"}, reasons
     assert row["approved_waiting"] == 1  # broken.md だけ（stopped.md は draft）
+
+
+def test_検査とロックの間に公開されたら取り消し成功を返さない(tmp_path, isolated_account_factory, monkeypatch, capsys):
+    """外部レビュー第 6 巡 P1-2。
+
+    以前は post_id と status を**ロックの外**で読んでいた。ロックが守るのは書き込み
+    だけで、**読んだ事実はその間に古くなる**。検査の直後・ロック取得の直前に公開が
+    完了すると、`post_id` が付いているのに `draft` へ書き換え、**exit 0 で
+    「取り消しました」と返していた。止められなかった投稿を、止められたと伝える。**
+
+    monkeypatch がプロセス境界を越えないので、`cmd_revoke()` を同一プロセスで呼ぶ
+    （ロック・git・公開・書き戻しは実装をそのまま通す）。
+    """
+    import argparse
+    from tests.conftest import approve_via_cli, init_git_pair, make_queue_text
+    from thth import cli as cli_mod
+    from thth import core
+    from thth.adapters.base import PublishResult
+
+    REL = "docs/sns/queue/a.md"
+    pair = init_git_pair(tmp_path, seed_content=make_queue_text({"status": "draft"}))
+    account = isolated_account_factory(repo_dir=pair["work"], production=True,
+                                        quiet_hours=None, min_interval_hours=0)
+    path = str(Path(pair["work"]) / REL)
+    assert approve_via_cli(path).returncode == 0
+
+    class _Publisher:
+        def publish(self, post, **kw):
+            return PublishResult("2", None, "2026-09-09T10:00:30+09:00")
+
+    # **ロックを取る直前**に公開を完走させる（公開はロックを取って、書き戻して、
+    # 放すところまで終わる）。旧実装はこの時点で post_id を読み終えていたので、
+    # 「まだ出ていない」と判断したまま書き換えに進んだ。
+    real_acquire = cli_mod.lock_mod.AccountLock.acquire
+    done = {}
+
+    def publish_then_acquire(self):
+        if "done" not in done:
+            done["done"] = True
+            core.throw_once(account["name"], production_flag=True,
+                             adapter_factory=lambda *_: _Publisher(), now=NOW)
+        return real_acquire(self)
+
+    monkeypatch.setattr(cli_mod.lock_mod.AccountLock, "acquire", publish_then_acquire)
+
+    args = argparse.Namespace(file=path, reason=None, by="テスト", json=False)
+    rc = cli_mod.cmd_revoke(args)
+    captured = capsys.readouterr()
+
+    assert done.get("done"), "割り込みの公開が走っていない（前提が崩れている）"
+    assert rc != 0, "公開済みなのに取り消し成功を返した"
+    assert "もう出ています" in captured.err, captured.err
+    fm = queuefile.parse(path).front_matter
+    assert fm.get("post_id") == "2"
+    assert fm.get("status") == "posted", "公開済みなのに draft へ書き換えた"

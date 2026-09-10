@@ -91,3 +91,36 @@ def test_git_repoでなければその旨を返す(tmp_path):
     plain.mkdir()
     message = selfupdate.pull_and_reexec(["thth"], app_dir=str(plain), log=lambda _l: None)
     assert message and "git repo" in message
+
+
+def test_他のプロセスが先に更新しても読み込んだ版と違えばexecしなおす(tmp_path, monkeypatch):
+    """外部レビュー第 6 巡 P2-4。
+
+    lock を取ったあとのディスクの HEAD を基準にしていたので、**別プロセスが先に
+    更新を終えていると `before == after` になり、古いコードを読み込んだまま
+    走り続けた。** lock は git の更新を直列化するだけで、**読み込んだコードと
+    更新後のファイルが混ざる**ことは防げない。
+    """
+    pair = _app_pair(tmp_path)
+    loaded = selfupdate.head(pair["work"])      # このプロセスが読み込んだ版
+    _advance_origin(pair)
+    # 別プロセスが先に更新を終えた状態を作る（ディスクはもう新しい）
+    subprocess.run(["git", "-C", pair["work"], "pull", "-q", "--ff-only"], check=True)
+    assert selfupdate.head(pair["work"]) != loaded
+
+    execs = []
+    monkeypatch.setattr(os, "execve", lambda *a: execs.append(a))
+    selfupdate.pull_and_reexec(["thth"], app_dir=pair["work"], loaded_rev=loaded,
+                                log=lambda _l: None)
+
+    assert len(execs) == 1, "ディスクが動いていないので exec しないと誤判定した"
+
+
+def test_読み込んだ版のままなら何もしない(tmp_path, monkeypatch):
+    pair = _app_pair(tmp_path)
+    loaded = selfupdate.head(pair["work"])
+    execs = []
+    monkeypatch.setattr(os, "execve", lambda *a: execs.append(a))
+    assert selfupdate.pull_and_reexec(["thth"], app_dir=pair["work"], loaded_rev=loaded,
+                                       log=lambda _l: None) is None
+    assert execs == []

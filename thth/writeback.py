@@ -247,23 +247,63 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
     if commit.returncode != 0:
         return False, redact_mod.redact(commit.stderr)
 
+    # **無関係な stage 状態を、rebase の前後で保存する**（外部レビュー第 6 巡 P2-5）。
+    #
+    # `commit --only` は実 index の他のエントリを残す（第 5 巡の対応）。ところが
+    # その直後の `pull --rebase --autostash` が、**staged も unstaged もまとめて
+    # 退避して、戻すときは全部 unstaged にする。** 中身は消えないが、
+    # 「stage してある／していない」の区別が消える。**人が途中まで組み立てた
+    # コミットが崩れる。**
+    #
+    # そこで index を tree として控えておき、rebase のあとに**stage されていた
+    # パスだけ**を控えから戻す。worktree の中身には触らない（autostash が戻す）。
+    saved_tree, staged_paths = _save_index(repo_dir)
+
     last_err = ""
-    for _attempt in range(2):
-        pull = _run_git(repo_dir, ["pull", "--rebase", "--autostash"])
-        if pull.returncode != 0:
-            last_err = pull.stderr
-            continue
-        if validate is not None and not validate():
-            raise PushValidationFailed(
-                "pull --rebase のあと、本文が送った内容と食い違うため push しません"
-                "（commit はローカルに残っています。手で確認してください）")
-        push = _run_git(repo_dir, ["push"])
-        if push.returncode == 0:
-            return True, ""
-        last_err = push.stderr
+    try:
+        for _attempt in range(2):
+            pull = _run_git(repo_dir, ["pull", "--rebase", "--autostash"])
+            if pull.returncode != 0:
+                last_err = pull.stderr
+                continue
+            if validate is not None and not validate():
+                raise PushValidationFailed(
+                    "pull --rebase のあと、本文が送った内容と食い違うため push しません"
+                    "（commit はローカルに残っています。手で確認してください）")
+            push = _run_git(repo_dir, ["push"])
+            if push.returncode == 0:
+                return True, ""
+            last_err = push.stderr
+    finally:
+        _restore_index(repo_dir, saved_tree, staged_paths)
 
     msg = "push に失敗しました（commit は残っています。手で push してください）: " + redact_mod.redact(last_err)
     return False, msg
+
+
+def _save_index(repo_dir: str) -> tuple:
+    """いまの index を tree として控え、stage されているパスの一覧を返す。
+
+    戻り値 `(tree の OID または None, パスの一覧)`。控えられなければ `(None, [])`
+    ——そのときは復元も行わない（**壊すくらいなら何もしない**）。
+    """
+    names = _run_git(repo_dir, ["diff", "--cached", "--name-only"])
+    if names.returncode != 0:
+        return None, []
+    staged = [line.strip() for line in names.stdout.splitlines() if line.strip()]
+    if not staged:
+        return None, []
+    tree = _run_git(repo_dir, ["write-tree"])
+    if tree.returncode != 0 or not tree.stdout.strip():
+        return None, []
+    return tree.stdout.strip(), staged
+
+
+def _restore_index(repo_dir: str, tree: str | None, staged_paths: list) -> None:
+    """控えた tree から、stage されていたパスの index エントリだけを戻す。"""
+    if not tree or not staged_paths:
+        return
+    _run_git(repo_dir, ["restore", "--staged", "--source", tree, "--", *staged_paths])
 
 
 def sync_repo(repo_dir: str) -> tuple:

@@ -51,7 +51,8 @@ def behind_origin(app_dir: str = APP_DIR, *, fetch: bool = False) -> int | None:
         return None
 
 
-def pull_and_reexec(argv: list, *, app_dir: str = APP_DIR, log=print) -> str | None:
+def pull_and_reexec(argv: list, *, app_dir: str = APP_DIR,
+                     loaded_rev: str | None = None, log=print) -> str | None:
     """app を `git pull --ff-only` し、進んでいたら同じ引数で 1 回だけ exec しなおす。
 
     戻り値は「先へ進んでよい」ときの説明（`None` なら特に言うことなし）。
@@ -76,8 +77,16 @@ def pull_and_reexec(argv: list, *, app_dir: str = APP_DIR, log=print) -> str | N
         lock.acquire()
     except lock_mod.LockBusy:
         return "ほかの実行が app を更新中なので、この実行は更新を見送りました"
+    # **基準は「このプロセスが読み込んだコードの版」**（外部レビュー第 6 巡 P2-4）。
+    # 以前は lock を取ったあとのディスクの HEAD を基準にしていた。**別プロセスが
+    # 先に更新を終えていると `before == after` になり、「進んでいない＝exec しなくて
+    # よい」と誤判定して、古いコードを読み込んだまま走り続けた。** lock は git の
+    # 更新を直列化するだけで、**すでに読み込んだコードと更新後のファイルが混ざる**
+    # ことは防げない。
+    anchor = loaded_rev if loaded_rev is not None else _loaded_rev(app_dir)
+
     try:
-        message, moved = _pull_locked(app_dir)
+        message, moved = _pull_locked(app_dir, anchor=anchor)
     finally:
         lock.release()
 
@@ -91,8 +100,26 @@ def pull_and_reexec(argv: list, *, app_dir: str = APP_DIR, log=print) -> str | N
     return None  # ここには来ない
 
 
-def _pull_locked(app_dir: str) -> tuple:
-    """lock の中で pull だけを行う。`(説明, (前, 後) または None)` を返す。"""
+_LOADED_REV_CACHE: dict = {}
+
+
+def _loaded_rev(app_dir: str) -> str | None:
+    """**このプロセスがコードを読み込んだ時点の版**（最初に見た値を覚えておく）。
+
+    プロセスの寿命の中で 1 度だけ git を見る。以後は覚えた値を返すので、途中で
+    別プロセスが更新しても**この値は動かない**——それが基準として要る性質。
+    """
+    if app_dir not in _LOADED_REV_CACHE:
+        _LOADED_REV_CACHE[app_dir] = head(app_dir)
+    return _LOADED_REV_CACHE[app_dir]
+
+
+def _pull_locked(app_dir: str, *, anchor: str | None = None) -> tuple:
+    """lock の中で pull だけを行う。`(説明, (前, 後) または None)` を返す。
+
+    `anchor` は**このプロセスが読み込んだ版**。pull の結果がこれと違えば、
+    ディスクが動いていなくても exec しなおす必要がある。
+    """
     before = head(app_dir)
     if before is None:
         return "app が git repo として読めません（自己更新をしていません）", None
@@ -108,6 +135,7 @@ def _pull_locked(app_dir: str) -> tuple:
         return f"app の pull --ff-only に失敗しました{suffix}（古いまま走ります）", None
 
     after = head(app_dir)
-    if after == before:
+    # **ディスクが動いたかではなく、読み込んだ版と違うかで決める。**
+    if after == (anchor if anchor is not None else before):
         return None, None
-    return None, (before, after)
+    return None, (anchor if anchor is not None else before, after)

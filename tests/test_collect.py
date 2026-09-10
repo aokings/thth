@@ -106,7 +106,8 @@ def test_返信はidで重複除去して追記する(tmp_path, isolated_account
                                         {"id": "R2", "text": "あとの返信"}])
     collect_mod.run_collect(account["name"], adapter=second, now=later, log=lambda _l: None)
 
-    rows = _rows(pair["work"], "data/sns/replies/POST1.ndjson")
+    rows = [r for r in _rows(pair["work"], "data/sns/replies/POST1.ndjson")
+            if r.get("kind") != "fetch"]
     assert [r["id"] for r in rows] == ["R1", "R2"], rows
     assert rows[1]["text"] == "あとの返信"
 
@@ -120,7 +121,9 @@ def test_数が取れなくても返信は採る(tmp_path, isolated_account_fact
 
     assert rc == 1
     assert _rows(pair["work"], "data/sns/insights/posts/POST1.ndjson") == []
-    assert len(_rows(pair["work"], "data/sns/replies/POST1.ndjson")) == 1
+    replies = [r for r in _rows(pair["work"], "data/sns/replies/POST1.ndjson")
+               if r.get("kind") != "fetch"]
+    assert len(replies) == 1
 
 
 def test_アカウントの日次は前日を1行だけ(tmp_path, isolated_account_factory):
@@ -153,3 +156,115 @@ def test_採ったものはcommitしてpushされる(tmp_path, isolated_account_
     in_origin = subprocess.run(["git", "-C", pair["bare"], "ls-tree", "-r", "--name-only", "main"],
                                 capture_output=True, text=True).stdout
     assert "data/sns/insights/posts/POST1.ndjson" in in_origin, in_origin
+
+
+def test_返信の取得に失敗した刻みは次に再試行する(tmp_path, isolated_account_factory):
+    """外部レビュー第 6 巡 P2-3。
+
+    数が取れて返信が失敗すると、以前はその刻みが「済んだ」ことになり、
+    **返信は二度と取りに行かなかった**。最後の刻み（168 時間）で起きると永久に取れない。
+    """
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-03T12:00:00+09:00")  # 168 時間前
+    failing = FakeAdapter(replies_rows=[{"id": "R1", "text": "返信"}], fail={"replies"})
+    rc = collect_mod.run_collect(account["name"], adapter=failing, now=NOW,
+                                  log=lambda _l: None)
+    assert rc == 1
+    assert _rows(pair["work"], "data/sns/insights/posts/POST1.ndjson"), "数は取れているはず"
+    assert _rows(pair["work"], "data/sns/replies/POST1.ndjson") == []
+
+    # 10 分後、返信 API が直ったら**もう一度取りに行く**
+    later = NOW + datetime.timedelta(minutes=10)
+    healthy = FakeAdapter(replies_rows=[{"id": "R1", "text": "返信"}])
+    rc2 = collect_mod.run_collect(account["name"], adapter=healthy, now=later,
+                                   log=lambda _l: None)
+
+    assert rc2 == 0, "再試行していない"
+    assert healthy.reply_calls == ["POST1"], healthy.reply_calls
+    rows = [r for r in _rows(pair["work"], "data/sns/replies/POST1.ndjson")
+            if r.get("kind") != "fetch"]
+    assert [r["id"] for r in rows] == ["R1"]
+    # 数のほうは二重に記録しない
+    assert len(_rows(pair["work"], "data/sns/insights/posts/POST1.ndjson")) == 1
+
+
+def test_返信0件の成功と取得失敗を区別する(tmp_path, isolated_account_factory):
+    """0 件で成功したら、その刻みはもう取りに行かない（毎回叩き直さない）。"""
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    empty = FakeAdapter(replies_rows=[])
+    collect_mod.run_collect(account["name"], adapter=empty, now=NOW, log=lambda _l: None)
+    assert empty.reply_calls == ["POST1"]
+
+    again = FakeAdapter(replies_rows=[])
+    collect_mod.run_collect(account["name"], adapter=again, now=NOW, log=lambda _l: None)
+    assert again.reply_calls == [], "0 件だった刻みを取り直している"
+
+
+def test_pushに失敗しても復旧後に送り直して投稿が再開する(tmp_path, isolated_account_factory):
+    """外部レビュー第 6 巡 P1-1（統括が発注書で自分から疑っていた筋）。
+
+    収集は commit してから push する。push に失敗すると `HEAD != @{u}` のまま残り、
+    `sync_repo()` がそれを拒否する。結果、**採取も投稿も恒久的に止まる**——
+    origin が直っても、未 push の commit を送る経路がどこにも無かった。
+    """
+    import subprocess
+    from pathlib import Path
+
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+
+    # origin を一時的に壊す
+    hook = Path(pair["bare"]) / "hooks" / "pre-receive"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+
+    rc = collect_mod.run_collect(account["name"], adapter=FakeAdapter(), now=NOW,
+                                  log=lambda _l: None)
+    assert rc == 1, "push 失敗が伝わっていない"
+    head = subprocess.run(["git", "-C", pair["work"], "rev-parse", "HEAD"],
+                           capture_output=True, text=True).stdout
+    up = subprocess.run(["git", "-C", pair["work"], "rev-parse", "@{u}"],
+                         capture_output=True, text=True).stdout
+    assert head != up, "未 push の commit が残っている前提が崩れている"
+
+    # origin を直す
+    hook.unlink()
+
+    later = NOW + datetime.timedelta(hours=6)
+    rc2 = collect_mod.run_collect(account["name"], adapter=FakeAdapter(), now=later,
+                                   log=lambda _l: None)
+
+    assert rc2 == 0, "origin が直っても採取が再開しない"
+    head2 = subprocess.run(["git", "-C", pair["work"], "rev-parse", "HEAD"],
+                            capture_output=True, text=True).stdout
+    up2 = subprocess.run(["git", "-C", pair["work"], "rev-parse", "@{u}"],
+                          capture_output=True, text=True).stdout
+    assert head2 == up2, "未 push が解消していない（投稿も止まったまま）"
+    in_origin = subprocess.run(["git", "-C", pair["bare"], "ls-tree", "-r", "--name-only", "main"],
+                                capture_output=True, text=True).stdout
+    assert "data/sns/insights/posts/POST1.ndjson" in in_origin, "収集結果が失われた"
+    # 同じ刻みを二重に記録していない
+    rows = _rows(pair["work"], "data/sns/insights/posts/POST1.ndjson")
+    assert [r["marks"] for r in rows] == [[1], [6]], rows
+
+
+def test_queueを触る未pushは自動で送らない(tmp_path, isolated_account_factory):
+    """公開の経路の fail-closed を弱めない。人を呼ぶ。"""
+    import subprocess
+    from pathlib import Path
+
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    q = Path(pair["work"]) / "docs/sns/queue/b.md"
+    q.write_text("---\nthth: 1\n---\n\n## threads\n\n手で足した\n")
+    subprocess.run(["git", "-C", pair["work"], "add", "-A"], check=True,
+                    capture_output=True)
+    subprocess.run(["git", "-C", pair["work"], "commit", "-qm", "queue を触る未 push"],
+                    check=True, capture_output=True)
+
+    recovered, message = collect_mod.push_pending_collection(pair["work"],
+                                                              log=lambda _l: None)
+    assert recovered is False
+    assert "収集以外" in message, message
