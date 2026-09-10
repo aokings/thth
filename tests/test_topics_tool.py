@@ -266,3 +266,44 @@ def test_実測はアカウントを跨いで混ぜない(isolated_account_facto
     by_account = account_report.measured_views_by_account()
     assert set(by_account) >= {"nigamilab-threads", "kopicha-threads"}
     assert all(isinstance(v, dict) for v in by_account.values())
+
+
+# --- 取得結果と判断を分ける（設計 §4.2・受け入れ T05）
+
+def test_0件と権限不足と失敗を区別して記録できる(thth_root):
+    """**`dead` の一語に潰していたのが誤りだった。**
+
+    「検索して 0 件」「権限が無くて引けない」「通信に失敗」はまったく違う事実
+    なのに、全部「人がいない」として記録され、次の判断の材料になっていた。
+    **判らなかったことを、判った形で残していた。**
+    """
+    topics_mod.record("A", verdict="unknown", status="empty", by="テスト")
+    topics_mod.record("B", verdict="unknown", status="permission_denied", by="テスト")
+    topics_mod.record("C", verdict="unknown", status="unavailable", by="テスト")
+
+    assert topics_mod.observation("A")["status"] == "empty"
+    assert topics_mod.observation("B")["status"] == "permission_denied"
+    assert topics_mod.observation("C")["status"] == "unavailable"
+    # **どれも「人がいない」に変換されない**
+    assert all(topics_mod.observation(t)["verdict"] != "dead" for t in "ABC")
+
+
+def test_0件を人がいないと言い換えない(thth_root):
+    topics_mod.record("空", verdict="unknown", status="empty",
+                       audience="この検索条件では 0 件", by="テスト")
+    line = topics_mod.verdict_line("空", account="nigamilab-threads")
+    assert "0 件だった（人がいないとは限らない）" in line, line
+
+
+def test_取得結果を書いていない観測はその旨を言う(thth_root):
+    """既存 46 件は取得条件を持たない。**推測で `empty` に変換しない**（§9）。"""
+    topics_mod.record("旧", verdict="dead", audience="検索結果 0 件", by="昨日の記録")
+    line = topics_mod.verdict_line("旧", account="nigamilab-threads")
+    assert "取得結果（0 件／権限不足／失敗）を記録していません" in line, line
+    assert "読み替えないでください" in line
+
+
+def test_知らないstatusは受け付けない(thth_root):
+    import pytest
+    with pytest.raises(ValueError):
+        topics_mod.record("X", verdict="unknown", status="でたらめ", by="テスト")

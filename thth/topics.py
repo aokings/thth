@@ -32,6 +32,23 @@ from . import jst
 
 VERDICTS = ("alive", "mismatch", "dead", "unknown")
 
+# **観測の取得結果**（設計 §4.2）。判断（合うか）とは別の軸。
+#
+# `dead` の一語に潰していたのが誤りだった。「検索して 0 件だった」「権限が無くて
+# 引けなかった」「通信に失敗した」は**まったく違う事実**なのに、全部「人がいない」
+# として記録され、次の判断の材料になっていた。**判らなかったことを、判った形で
+# 残していた。**
+#
+# 0 件は「その検索条件で 0 件」であって、人口 0 でも `dead` でもない（§4.2）。
+OBS_STATUS = {
+    "ok": "投稿が取れた",
+    "empty": "その検索条件では 0 件だった（人がいないとは限らない）",
+    "permission_denied": "権限が無くて引けなかった",
+    "unavailable": "取得に失敗した（通信・応答の異常）",
+    "rate_limited": "上限で引けなかった",
+    "partial": "途中までしか取れなかった",
+}
+
 # **トピックの型**（masaru 提案 2026-09-10「その辺をツールの語彙として持つ」）。
 #
 # 1 つ 1 つのトピックの当たり外れは、次に別の語を選ぶときには直接使えない。
@@ -74,7 +91,7 @@ def load() -> dict:
 
 def record(topic: str, *, verdict: str, audience: str = "", by: str,
             note: str = "", kind: str | None = None, account: str | None = None,
-            now=None) -> dict:
+            status: str | None = None, now=None) -> dict:
     """1 回の下調べを追記する。**前の記録は消さない。**
 
     `account` を渡すと、その判定は**そのプロジェクトのもの**として記録される
@@ -91,10 +108,13 @@ def record(topic: str, *, verdict: str, audience: str = "", by: str,
         raise ValueError(f"verdict は {VERDICTS} のどれか: {verdict}")
     if kind is not None and kind not in KINDS:
         raise ValueError(f"kind は {tuple(KINDS)} のどれか: {kind}")
+    if status is not None and status not in OBS_STATUS:
+        raise ValueError(f"status は {tuple(OBS_STATUS)} のどれか: {status}")
     now = now if now is not None else jst.now_jst()
     data = load()
     row = {"topic": topic, "verdict": verdict, "audience": audience, "kind": kind,
-           "account": account, "note": note, "by": by, "checked_at": jst.iso(now)}
+           "account": account, "status": status, "note": note, "by": by,
+           "checked_at": jst.iso(now)}
     data["checks"].append(row)
     p = path()
     os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -215,9 +235,14 @@ def verdict_line(topic: str | None, *, account: str | None = None) -> str | None
                 "誰がいる場所か確かめてから出すことを勧めます。")
     kind = f"［{obs.get('kind')}］" if obs.get("kind") else ""
     lines = [f"トピック `{topic}`{kind}"]
-    if obs.get("audience"):
-        lines.append(f"    観測: {obs['audience']}"
+    if obs.get("audience") or obs.get("status"):
+        status = obs.get("status")
+        head = f"［{OBS_STATUS[status]}］" if status else ""
+        lines.append(f"    観測: {head}{obs.get('audience') or ''}"
                      f"（{obs['checked_at'][:10]} {obs['by']}）")
+    if not obs.get("status"):
+        lines.append("    ※ この観測は取得結果（0 件／権限不足／失敗）を記録して"
+                     "いません。「人がいない」と読み替えないでください。")
     if own:
         mark = {"alive": "**このアカウントで適合と判断済み**", "mismatch": "**不一致と判断済み**",
                 "dead": "**人がいないと判断済み**", "unknown": "未判断"}[own["verdict"]]

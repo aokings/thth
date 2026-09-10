@@ -553,7 +553,7 @@ def cmd_topics(args) -> int:
             row = topics_mod.record(args.note, verdict=args.verdict,
                                      audience=args.audience or "", by=by,
                                      kind=args.kind, account=args.account,
-                                     note=args.reason or "")
+                                     status=args.status, note=args.reason or "")
         except ValueError as e:
             print(str(e), file=sys.stderr)
             return 1
@@ -1086,6 +1086,10 @@ def build_parser() -> argparse.ArgumentParser:
                           help="--note と併用: alive=合っている / mismatch=別の業界・言語 / dead=人がいない")
     p_topics.add_argument("--audience", default=None,
                           help="--note と併用: 誰がいたか（例「レアアース・重加工」）")
+    p_topics.add_argument("--status", default=None, choices=list(topics_mod.OBS_STATUS),
+                          help="--note と併用: 取得結果（ok/empty/permission_denied/"
+                               "unavailable/rate_limited/partial）。**0 件は empty で"
+                               "あって「人がいない」ではありません**")
     p_topics.add_argument("--kind", default=None, choices=list(topics_mod.KINDS),
                           help="--note と併用: トピックの型（回すほど型ごとの傾向が溜まる）")
     p_topics.add_argument("--advise", action="store_true",
