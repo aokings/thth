@@ -99,6 +99,26 @@ def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
 APPROVE_DIGEST_LENGTH = 12
 
 
+def compute_bundle_digest(approved_shas: list, length: int = APPROVE_DIGEST_LENGTH) -> str:
+    """複数本まとめて承認するときの**束の digest**（asmon 関東セッション指摘 2026-09-10）。
+
+    各ファイルの `approved_sha` を**並べ替えてから**連結した文字列の sha256 の
+    先頭 `length` 桁。並べ替えるのは、ファイルを渡す順で digest が変わらないように
+    するため（同じ束なら同じ digest）。
+
+    **どれか 1 本でも中身が変われば、そのファイルの `approved_sha` が変わり、
+    束の digest も変わる。** 「見せたもの＝承認したもの」の保証は、本数が増えても
+    崩れない。
+    """
+    shas = sorted(approved_shas)
+    if len(shas) == 1:
+        # 1 本なら「束」という概念は要らない。そのファイルの digest をそのまま使う
+        # （1 本のときの手順を、複数本を足したせいで変えない）。
+        return shas[0][:length]
+    joined = _SEP.join(shas)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:length]
+
+
 def compute_send_digest(*, text: str, account: str, reply_to: str | None,
                          topic: str | None, length: int = 12) -> str:
     """`thth send` の dry-run が出す短い digest（外部レビュー §1b・受け入れ 6）。

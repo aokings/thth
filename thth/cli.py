@@ -32,18 +32,31 @@ def _print_json(obj) -> None:
 
 
 def cmd_lint(args) -> int:
-    messages = lint_mod.lint_file(args.file)
-    errors = [m for m in messages if not lint_mod.is_warning(m)]
-    warnings = [m for m in messages if lint_mod.is_warning(m)]
+    """`thth lint <file...>`（複数可・asmon 関東セッション指摘 2026-09-10）。
+
+    47 本の連載で lint を 47 回呼ぶことになった、という報告を受けて複数受けにした。
+    exit code は**全体**で決まる（1 本でも実エラーがあれば非ゼロ）。警告（450 字超）
+    では落とさない。
+    """
+    paths = args.file if isinstance(args.file, list) else [args.file]
+    rows, any_error = [], False
+    for path in paths:
+        messages = lint_mod.lint_file(path)
+        errors = [m for m in messages if not lint_mod.is_warning(m)]
+        warnings = [m for m in messages if lint_mod.is_warning(m)]
+        any_error = any_error or bool(errors)
+        rows.append({"file": path, "errors": errors, "warnings": warnings, "ok": not errors})
+
     if args.json:
-        _print_json({"file": args.file, "errors": errors, "warnings": warnings, "ok": not errors})
-    elif not messages:
-        print("OK")
+        _print_json(rows[0] if len(rows) == 1 else rows)
     else:
-        for m in messages:
-            print(m)
-    # 警告（450 字超）は落とさない。exit code は実エラーだけで決まる（食い違い 2 の裁定）。
-    return 0 if not errors else 1
+        for row in rows:
+            prefix = "" if len(rows) == 1 else f"{row['file']}: "
+            if not row["errors"] and not row["warnings"]:
+                print(prefix + "OK")
+            for m in row["errors"] + row["warnings"]:
+                print(prefix + m)
+    return 0 if not any_error else 1
 
 
 def cmd_preview(args) -> int:
@@ -63,123 +76,92 @@ def cmd_preview(args) -> int:
     return 0
 
 
-def cmd_approve(args) -> int:
-    """`thth approve <file>`（**CLI のみ・MCP には出さない**・設計 §3.7・外部レビュー §1）。
-
-    「不在の実行への承認」は masaru の手だけが持つ（統括は書けない・§3.7 の一線）。
-    `status: approved`・`approved_sha`・`approved_at`（JST ISO）を front-matter に
-    書く。**書く前に lint を通し、通らなければ承認しない**（受け入れ 5）。
-    `approved_sha` は「masaru が見た本文」を固定するハッシュ（`thth.approval`）で、
-    `select` はこれが現在の内容と一致するときだけ通す（不一致・欠落は
-    `approval_stale` で落として board に出す）。
-
-    書いたあと、その 1 ファイルを **commit して push する**（外部レビュー第 4 巡
-    P1）。select は「同期を確認した commit の中身と一致するファイル」しか候補に
-    しないので、承認をファイルに書いただけでは投稿されない。push できなければ
-    その旨を述べて非ゼロで終わる（黙って「承認しました」で終わらせない）。
-
-    **`--confirm <digest>` が必ず要る**（masaru 指示 2026-09-10「AI との対話の中から
-    承認できるようにしたい」）。`--confirm` を付けずに呼ぶと、**出す本文そのものと
-    digest を表示して、何も書き換えずに終わる**。承認するにはその digest を渡して
-    もう一度呼ぶ。`thth send --confirm` とまったく同じ形。
-
-    これは「AI が勝手に承認する」ことを防ぐ仕掛けではない——**防げない**。
-    セッションは Bash と ssh を持っているので、`approve` を MCP に出さないという
-    従来の線は最初から何も守っていなかった（統括の思い違い・2026-09-10 に自覚）。
-    この二段が実際に防ぐのは **「A を見せて B を承認する」**ほう:
-
-      - 承認の前に、**必ず本文の全文が画面に出る**（一段目が表示する）。
-      - 二段目は、**一段目が表示した内容から計算した digest** としか一致しない。
-        表示と承認の間に本文・account・reply_to・topic・publish_at のどれかが
-        変われば digest が変わり、承認は通らない。
-
-    `--by` は**誰が承認したか**を front-matter（`approved_by`）と commit に残す。
-    後から「これは誰の判断だったか」を辿れるようにするためで、値を偽れないと
-    いう類の保証はしない（そこは記録で担保する）。
-    """
-    messages = lint_mod.lint_file(args.file)
+def _prepare_one(path: str):
+    """承認できるかを検査して `(準備, 断る理由)` を返す（何も書き換えない）。"""
+    messages = lint_mod.lint_file(path)
     errors = [m for m in messages if not lint_mod.is_warning(m)]
     if errors:
-        for m in errors:
-            print(m, file=sys.stderr)
-        print(f"lint に通らないので承認しません: {args.file}", file=sys.stderr)
-        return 1
+        return None, f"{path}: lint に通りません（{errors[0]}）"
 
-    qf = queuefile.parse(args.file)
+    qf = queuefile.parse(path)
     fm = qf.front_matter
     if fm.get("post_id"):
-        print(f"post_id が付いています（既に投稿済み）ので承認しません: {args.file}", file=sys.stderr)
-        return 1
+        return None, f"{path}: post_id が付いています（既に投稿済み）"
 
     account_name = fm.get("account")
     try:
         account_cfg = accounts_mod.load_account(account_name)
     except accounts_mod.AccountError as e:
-        print(str(e), file=sys.stderr)
-        return 1
+        return None, f"{path}: {e}"
 
     media = account_cfg["media"]
     section = queuefile.extract_section(qf.body, media)
     if section is None:
-        print(f"media: `## {media}` の節が無いので承認しません: {args.file}", file=sys.stderr)
-        return 1
-
-    # 承認は commit として残す（外部レビュー第 4 巡 P1）。select は「同期を確認した
-    # commit の中身と一致するファイル」しか候補にしないので、承認をファイルに
-    # 書いただけでは出せない（board には `unverified_content` として出る）。
-    # ここで commit・push まで済ませることで、**承認した瞬間に利用者 repo の
-    # 履歴に残る**——「masaru がいつ何を承認したか」が後から動かせない形になる。
-    # commit 先は **そのファイルが入っている repo**（台帳の repo_dir ではない）。
-    # masaru が自分の clone で承認することもある。git repo の中でないなら、
-    # 承認を記録できないので front-matter を書く前に断る。
-    repo_dir = writeback_mod.repo_toplevel(args.file)
-    if repo_dir is None:
-        print(f"git repo の中のファイルではないので承認しません（承認を commit として"
-              f"残せません）: {args.file}", file=sys.stderr)
-        return 1
-    rel_path = os.path.relpath(os.path.realpath(args.file), os.path.realpath(repo_dir))
+        return None, f"{path}: `## {media}` の節がありません"
 
     approved_sha = approval_mod.compute_approved_sha(
         section=section, account=account_name, reply_to=fm.get("reply_to"),
         topic=fm.get("topic"), publish_at=fm.get("publish_at"))
-    digest = approved_sha[:approval_mod.APPROVE_DIGEST_LENGTH]
-    approved_at = jst.iso()
+    return {
+        "path": path,
+        "account": account_name,
+        "publish_at": fm.get("publish_at"),
+        "topic": queuefile.normalize_topic(fm.get("topic")),
+        "reply_to": fm.get("reply_to"),
+        "text": section,
+        "approved_sha": approved_sha,
+        "digest": approved_sha[:approval_mod.APPROVE_DIGEST_LENGTH],
+    }, None
 
-    # 一段目: 本文そのものを見せて、何も書き換えずに終わる。
-    if not args.confirm:
-        if args.json:
-            _print_json({"file": args.file, "status": fm.get("status"), "digest": digest,
-                         "text": section, "account": account_name,
-                         "publish_at": fm.get("publish_at"),
-                         "topic": queuefile.normalize_topic(fm.get("topic")),
-                         "reply_to": fm.get("reply_to"), "approved": False})
-        else:
-            print(f"承認しません（確認の一段目です）: {args.file}")
-            print(f"  account   : {account_name}")
-            print(f"  publish_at: {fm.get('publish_at')}")
-            topic = queuefile.normalize_topic(fm.get("topic"))
-            print(f"  topic     : {topic or '（なし）'}")
-            print(f"  reply_to  : {fm.get('reply_to') or '（なし）'}")
-            print("--- 出す本文 ---")
-            sys.stdout.write(section if section.endswith("\n") else section + "\n")
-            print("--- ここまで ---")
-            print(f"digest: {digest}")
-            print(f"この本文でよければ: thth approve {args.file} --confirm {digest}")
+
+def cmd_approve(args) -> int:
+    """`thth approve <file...>`（**二段確認**・複数本まとめて可）。
+
+    **二段にする理由**（masaru 指示 2026-09-10「AI との対話の中から承認できるように
+    したい」）。元の線「approve は CLI だけ・MCP には出さない」は最初から何も守って
+    いなかった——各セッションは Bash と ssh を持っているので、MCP に出さなくても
+    approve は打てる。不便だけがあって保証は無かった（統括の思い違い）。
+
+    1. `--confirm` 無し: **出す本文の全文と digest を表示して、何も書き換えずに終わる**
+       （exit 1）。
+    2. `--confirm <digest>`: 承認する。
+
+    **防げるのは「A を見せて B を承認する」ほう。** 表示と承認の間に本文・account・
+    reply_to・topic・publish_at のどれかが変われば digest が変わり、二段目は通らない。
+    承認の前に必ず本文の全文が画面に出ることも、この形が強制する。**防げないのは
+    AI が本文を見せずに承認すること**——digest は AI 自身でも計算できる。そこは
+    仕掛けではなく記録（`approved_by`）で担保する。
+
+    **複数本をまとめて承認できる**（asmon 関東セッション指摘 2026-09-10）。47 本の
+    連載で lint 47 回・一段目 94 回・二段目 47 回になった、という報告を受けての形。
+    複数渡すと**束の digest** を 1 つ出す。束の digest は各ファイルの
+    `approved_sha` を**パス順に**並べた文字列の sha256 の先頭 12 桁なので、
+    **どれか 1 本でも変われば束の digest が変わる**——見せたもの＝承認したもの、の
+    保証は崩れない。
+
+    **全部そろって初めて承認する。** 1 本でも lint に落ちる・post_id が付いている・
+    節が無いものがあれば、**何も書き換えずに全部断る**（半分だけ承認された状態を
+    作らない）。
+
+    **repo の同期も承認の一部**（同指摘 3-b）。ロックを取ったあとに
+    `writeback.sync_repo()` を通す。以前は「承認の前に VM で git pull が要る」ことが
+    どこにも書いていなかった。手順を文書に足すのではなく、道具の側でやる。
+    """
+    paths = args.file if isinstance(args.file, list) else [args.file]
+
+    repos = {}
+    for path in paths:
+        repo_dir = writeback_mod.repo_toplevel(path)
+        if repo_dir is None:
+            print(f"git repo の中のファイルではないので承認できません: {path}", file=sys.stderr)
+            return 1
+        repos.setdefault(os.path.realpath(repo_dir), []).append(path)
+    if len(repos) > 1:
+        print("別々の repo のファイルを一度に承認できません（clone ごとに分けてください）: "
+              + " / ".join(sorted(repos)), file=sys.stderr)
         return 1
+    repo_dir = next(iter(repos))
 
-    if args.confirm != digest:
-        print(f"digest が一致しないので承認しません（表示した本文と中身が違います）。"
-              f"いまの digest は {digest} です。もう一度 thth approve {args.file} から"
-              "やり直してください。", file=sys.stderr)
-        return 1
-
-    approved_by = args.by or os.environ.get("THTH_ACTOR") or getpass.getuser()
-
-    # **投稿と同じ clone ロックに参加する**（外部レビュー第 5 巡 P1）。承認は
-    # この clone の作業ツリー・index・HEAD を動かすので、公開の最中に割り込めて
-    # しまうと、同期を確認した状態と実際に読まれる状態がずれる。**書き換える前に**
-    # 取る（front-matter を書いてからでは、取れなかったときに中途半端に残る）。
-    # 取れなければ何もせずに断る（待たない・壊さない）。
     repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
     try:
         repo_lock.acquire()
@@ -189,33 +171,67 @@ def cmd_approve(args) -> int:
         return 1
 
     try:
-        writeback_mod.set_front_matter_fields(args.file, {
-            "status": "approved",
-            "approved_sha": approved_sha,
-            "approved_at": approved_at,
-            "approved_by": approved_by,
-        })
+        synced, sync_err, _sha = writeback_mod.sync_repo(repo_dir)
+        if not synced:
+            print(f"repo を同期できないので承認しません: {sync_err}", file=sys.stderr)
+            return 1
 
+        prepared, problems = [], []
+        for path in sorted(paths):
+            one, problem = _prepare_one(path)
+            (problems if problem else prepared).append(problem or one)
+        if problems:
+            for problem in problems:
+                print(problem, file=sys.stderr)
+            print(f"{len(problems)} 件に問題があるので、**1 本も承認しませんでした**"
+                  "（半分だけ承認された状態を作らないため）。", file=sys.stderr)
+            return 1
+
+        bundle = approval_mod.compute_bundle_digest([one["approved_sha"] for one in prepared])
+
+        if not args.confirm:
+            _show_first_stage(prepared, bundle, as_json=args.json)
+            return 1
+        if args.confirm != bundle:
+            print(f"digest が一致しないので承認しません（表示した本文と中身が違います）。"
+                  f"いまの digest は {bundle} です。もう一度 thth approve からやり直して"
+                  "ください。", file=sys.stderr)
+            return 1
+
+        approved_by = args.by or os.environ.get("THTH_ACTOR") or getpass.getuser()
+        approved_at = jst.iso()
+        for one in prepared:
+            writeback_mod.set_front_matter_fields(one["path"], {
+                "status": "approved",
+                "approved_sha": one["approved_sha"],
+                "approved_at": approved_at,
+                "approved_by": approved_by,
+                "revoked_at": None,
+                "revoked_by": None,
+                "revoked_reason": None,
+            })
+
+        rel_paths = [os.path.relpath(os.path.realpath(one["path"]), repo_dir) for one in prepared]
+        label = (os.path.basename(prepared[0]["path"]) if len(prepared) == 1
+                 else f"{len(prepared)} 本")
         pushed, push_err = writeback_mod.commit_and_push(
-            repo_dir, rel_path=rel_path,
-            message=f"承認: {os.path.basename(args.file)}（{account_name}・{approved_by}）")
+            repo_dir, rel_path=rel_paths,
+            message=f"承認: {label}（{prepared[0]['account']}・{approved_by}）")
     finally:
         repo_lock.release()
 
     if args.json:
-        _print_json({"file": args.file, "status": "approved",
-                     "approved_sha": approved_sha, "approved_at": approved_at,
-                     "approved_by": approved_by, "approved": True,
+        _print_json({"approved": True, "count": len(prepared), "approved_by": approved_by,
+                     "approved_at": approved_at, "bundle_digest": bundle,
+                     "files": [{"file": one["path"], "approved_sha": one["approved_sha"],
+                                "digest": one["digest"]} for one in prepared],
                      "pushed": pushed, "push_error": push_err or None})
     else:
-        print(f"承認しました: {args.file}（{approved_by}）")
-        print(f"approved_sha: {approved_sha}")
-        print(f"approved_at: {approved_at}")
+        print(f"承認しました: {len(prepared)} 本（{approved_by}）")
+        for one in prepared:
+            print(f"  {os.path.basename(one['path'])} — {one['publish_at']}")
 
     if not pushed:
-        # front-matter は書けたが、承認が commit として残っていない。この状態では
-        # **投稿されない**（select が `unverified_content` で落とす）。黙って
-        # 「承認しました」で終わらせない。
         print("承認を commit・push できませんでした。このままでは投稿されません"
               f"（board に unverified_content として出ます）: {push_err}", file=sys.stderr)
         print("  ※ commit だけ済んで push を断られた場合は、その commit がローカルに"
@@ -224,6 +240,35 @@ def cmd_approve(args) -> int:
         return 1
     return 0
 
+
+def _show_first_stage(prepared: list, bundle: str, *, as_json: bool) -> None:
+    """一段目: **出す本文をすべて全文表示する**。何も書き換えない。"""
+    if as_json:
+        _print_json({"approved": False, "count": len(prepared), "bundle_digest": bundle,
+                     "files": [{"file": one["path"], "account": one["account"],
+                                "publish_at": one["publish_at"], "topic": one["topic"],
+                                "reply_to": one["reply_to"], "text": one["text"],
+                                "digest": one["digest"]} for one in prepared]})
+        return
+    print(f"承認しません（確認の一段目です）: {len(prepared)} 本")
+    for one in prepared:
+        print("")
+        print(f"=== {one['path']}")
+        print(f"  account   : {one['account']}")
+        print(f"  publish_at: {one['publish_at']}")
+        print(f"  topic     : {one['topic'] or '（なし）'}")
+        print(f"  reply_to  : {one['reply_to'] or '（なし）'}")
+        print("--- 出す本文 ---")
+        sys.stdout.write(one["text"] if one["text"].endswith("\n") else one["text"] + "\n")
+        print("--- ここまで ---")
+        print(f"digest: {one['digest']}")
+    print("")
+    if len(prepared) == 1:
+        print(f"この本文でよければ: thth approve {prepared[0]['path']} --confirm {bundle}")
+        return
+    print(f"束の digest: {bundle}")
+    print(f"この {len(prepared)} 本でよければ、同じファイルを並べて "
+          f"--confirm {bundle} を付けてもう一度実行してください。")
 
 def cmd_account(args) -> int:
     """`thth account [<name>]`: 1 アカウント（省略時は全部）の状態を一枚で述べる。
@@ -244,6 +289,91 @@ def cmd_account(args) -> int:
     return 0 if all(d.get("ready") for d in details) else 1
 
 
+def cmd_revoke(args) -> int:
+    """`thth revoke <file>`: 承認を取り消す（関東セッション指摘 2026-09-10・最優先）。
+
+    > revoke が無い。承認後に 1 本だけ止めたいとき、正しい操作が用意されていません。
+    > いまできるのは本文を書き換えて approval_stale にすることだけで、**止める手段が
+    > 壊すことになっています。**
+
+    そのとおりだった。しかも意図して止めたものと、うっかり書き換えたものが board で
+    同じ見た目になる。**Meta の権限で投稿の削除ができない**からこそ、出る前に止める
+    道が要る（設計 §2.2）。
+
+    やること: `status` を `draft` に戻し、`approved_sha`・`approved_at`・`approved_by`
+    を空にし、`revoked_at`・`revoked_by`・`revoked_reason` を残す。**本文には触らない**
+    ——止めることと壊すことを分ける。そのまま直して `thth approve` し直せる。
+
+    **投稿と同じ clone ロックを取る**（`approve` と同じ理由）。公開の最中には
+    割り込めない。既に出てしまったもの（`post_id` あり）は取り消せないので断る
+    ——その場合は Threads の画面から手で消すしかない、とその場で言う。
+    """
+    qf = queuefile.parse(args.file)
+    fm = qf.front_matter
+    if qf.malformed:
+        print(f"front-matter が読めないので取り消せません: {args.file}", file=sys.stderr)
+        return 1
+    if fm.get("post_id"):
+        print(f"もう出ています（post_id: {fm.get('post_id')}）。THTH からは取り消せません。"
+              "消すなら Threads の画面から手で消してください。", file=sys.stderr)
+        return 1
+    if fm.get("status") != "approved":
+        print(f"承認されていません（status: {fm.get('status')}）。取り消すものがありません: "
+              f"{args.file}", file=sys.stderr)
+        return 1
+
+    repo_dir = writeback_mod.repo_toplevel(args.file)
+    if repo_dir is None:
+        print(f"git repo の中のファイルではないので取り消しを記録できません: {args.file}",
+              file=sys.stderr)
+        return 1
+    rel_path = os.path.relpath(os.path.realpath(args.file), os.path.realpath(repo_dir))
+
+    revoked_by = args.by or os.environ.get("THTH_ACTOR") or getpass.getuser()
+    revoked_at = jst.iso()
+
+    repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
+    try:
+        repo_lock.acquire()
+    except lock_mod.LockBusy:
+        print(f"いまこの repo を別の実行が使っています（{repo_dir}）。"
+              "少し待ってからもう一度 thth revoke してください。", file=sys.stderr)
+        return 1
+
+    try:
+        writeback_mod.set_front_matter_fields(args.file, {
+            "status": "draft",
+            "approved_sha": None,
+            "approved_at": None,
+            "approved_by": None,
+            "revoked_at": revoked_at,
+            "revoked_by": revoked_by,
+            "revoked_reason": args.reason or "",
+        })
+        pushed, push_err = writeback_mod.commit_and_push(
+            repo_dir, rel_path=rel_path,
+            message=f"承認の取り消し: {os.path.basename(args.file)}（{revoked_by}）")
+    finally:
+        repo_lock.release()
+
+    if args.json:
+        _print_json({"file": args.file, "status": "draft", "revoked_at": revoked_at,
+                     "revoked_by": revoked_by, "revoked_reason": args.reason or None,
+                     "pushed": pushed, "push_error": push_err or None})
+    else:
+        print(f"承認を取り消しました: {args.file}（{revoked_by}）")
+        print("  本文はそのままです。直して thth approve し直せます。")
+
+    if not pushed:
+        # **ここが押さえどころ。** push できていなければ、VM の clone では
+        # 取り消しが commit として残っていても、次の同期で HEAD != upstream に
+        # なって投稿そのものが止まる（fail-closed）。ただし黙って安心させない。
+        print("取り消しを push できませんでした。**まだ出る可能性があります。**"
+              f"手で push して、thth account で確かめてください: {push_err}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_queue(args) -> int:
     summary = report_mod.queue_summary(args.account)
     if args.json:
@@ -260,6 +390,29 @@ def cmd_queue(args) -> int:
                   f"{topic_suffix}")
             for rej in info.get("next_rejections") or []:
                 print(f"  いま出ない: {rej['file']} — {rej['reason']}")
+    return 0
+
+
+def cmd_schedule(args) -> int:
+    """`thth schedule [account] [--days N]`: 日付順に「いつ何が出るか」を並べる。
+
+    読むだけ（asmon 関東セッション指摘 2026-09-10）。承認済みと下書きの両方を出す
+    ——連載を組むときに見たいのは全体だから。
+    """
+    rows = report_mod.schedule(args.account, days=args.days)
+    if args.json:
+        _print_json(rows)
+        return 0
+    if not rows:
+        print("これから出る予定はありません")
+        return 0
+    for row in rows:
+        mark = "済" if row["status"] == "approved" else "未"
+        overdue = "  ← 時刻を過ぎています" if row["past"] else ""
+        topic = f" [{row['topic']}]" if row["topic"] else ""
+        print(f"{row['publish_at'][:16]}  {mark}  {row['account']:22} "
+              f"{row['file']:28}{topic} {row['head']}{overdue}")
+    print(f"—— {len(rows)} 本（承認済み {sum(1 for r in rows if r['status'] == 'approved')}）")
     return 0
 
 
@@ -426,7 +579,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     p_lint = sub.add_parser("lint", help="front-matter の形式・文字数等を検査する")
-    p_lint.add_argument("file")
+    p_lint.add_argument("file", nargs="+")
     p_lint.add_argument("--json", action="store_true")
     p_lint.set_defaults(func=cmd_lint)
 
@@ -438,7 +591,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_approve = sub.add_parser(
         "approve",
         help="本文を見せて（一段目）、digest を渡すと承認する（二段目）")
-    p_approve.add_argument("file")
+    p_approve.add_argument("file", nargs="+")
     p_approve.add_argument("--json", action="store_true")
     p_approve.add_argument("--confirm", default=None,
                            help="一段目が表示した digest。これが無いと承認しない")
@@ -454,10 +607,25 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Threads 側を引きに行かない（網に出ない・速い）")
     p_account.set_defaults(func=cmd_account)
 
+    p_revoke = sub.add_parser(
+        "revoke", help="承認を取り消して draft に戻す（本文は触らない）")
+    p_revoke.add_argument("file")
+    p_revoke.add_argument("--reason", default=None, help="なぜ止めたか（記録に残す）")
+    p_revoke.add_argument("--by", default=None, help="誰が止めたか（記録に残す）")
+    p_revoke.add_argument("--json", action="store_true")
+    p_revoke.set_defaults(func=cmd_revoke)
+
     p_queue = sub.add_parser("queue", help="draft/approved/posted/型外 と次に出るもの")
     p_queue.add_argument("account", nargs="?")
     p_queue.add_argument("--json", action="store_true")
     p_queue.set_defaults(func=cmd_queue)
+
+    p_schedule = sub.add_parser(
+        "schedule", help="日付順に「いつ何が出るか」を並べる（読むだけ）")
+    p_schedule.add_argument("account", nargs="?")
+    p_schedule.add_argument("--days", type=int, default=None, help="この日数ぶんに絞る")
+    p_schedule.add_argument("--json", action="store_true")
+    p_schedule.set_defaults(func=cmd_schedule)
 
     p_throw = sub.add_parser("throw", help="approved を 1 件投げる（既定 dry-run）")
     p_throw.add_argument("account")

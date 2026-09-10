@@ -161,6 +161,59 @@ def _needs_review_detail(files, *, account_name: str, account_cfg: dict, now) ->
     return out
 
 
+def schedule(account_name: str | None = None, *, now=None, days: int | None = None) -> list:
+    """日付順に「いつ・何が出るか」を並べる（asmon 関東セッション指摘 2026-09-10）。
+
+    > queue は future が 47 行並ぶだけで、日付順に時刻・トピック・書き出しを通しで
+    > 見る手段がありません。
+
+    読むだけ。`days` を渡すとその日数ぶんに絞る。`status` が `approved` のものと
+    `draft` のものを両方出す——**連載を組むときに見たいのは「承認済みだけ」では
+    なく「これから出る予定の全体」**だから。承認されていないものは `status` 欄で
+    区別できる。
+    """
+    now = now if now is not None else jst.now_jst()
+    names = [account_name] if account_name else accounts_mod.list_account_names()
+    rows = []
+    for name in names:
+        try:
+            account_cfg = accounts_mod.load_account(name)
+        except accounts_mod.AccountError:
+            continue
+        files = core.list_queue_files(
+            account_cfg, tree_sha=writeback_mod.upstream_sha(account_cfg.get("repo_dir")))
+        media = account_cfg["media"]
+        for qf in files:
+            fm = qf.front_matter
+            if qf.malformed or fm.get("account") != name or fm.get("post_id"):
+                continue
+            if fm.get("status") not in ("draft", "approved"):
+                continue
+            raw = fm.get("publish_at")
+            if not raw:
+                continue
+            try:
+                publish_at = queuefile.parse_publish_at(raw)
+            except ValueError:
+                continue
+            if days is not None and publish_at > now + datetime.timedelta(days=days):
+                continue
+            section = queuefile.extract_section(qf.body, media) or ""
+            head = section.strip().split("\n", 1)[0]
+            rows.append({
+                "account": name,
+                "file": os.path.basename(qf.path),
+                "publish_at": publish_at.isoformat(),
+                "status": fm.get("status"),
+                "topic": queuefile.normalize_topic(fm.get("topic")),
+                "reply_to": fm.get("reply_to") or None,
+                "past": publish_at <= now,
+                "head": head[:60],
+            })
+    rows.sort(key=lambda r: (r["publish_at"], r["account"], r["file"]))
+    return rows
+
+
 def board_summary(now=None) -> dict:
     """アカウント・最終投稿・approved 待ち・inflight・型外・要確認の骨（設計 §4.6・
     外部レビュー再レビュー C で `needs_review`／`approval_stale_count` を追加）。"""

@@ -229,7 +229,11 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
     `validate` が False を返したら `PushValidationFailed` を送出する。push は
     行わず、commit はローカルに残したまま（手で直せる状態）。
     """
-    add = _run_git(repo_dir, ["add", "--", rel_path])
+    # `rel_path` は 1 本でもリストでもよい（複数本まとめて承認する経路・
+    # asmon 関東セッション指摘 2026-09-10）。**commit に入るのはここに並べた
+    # パスだけ**（`--only`）。
+    rel_paths = [rel_path] if isinstance(rel_path, str) else list(rel_path)
+    add = _run_git(repo_dir, ["add", "--", *rel_paths])
     if add.returncode != 0:
         return False, redact_mod.redact(add.stderr)
 
@@ -239,7 +243,7 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
     # `thth approve` すると、承認の commit に他人の作業が混ざって remote まで
     # 行った。`--only <path>` は一時 index を作ってそのパスだけを commit し、
     # **実 index の他のエントリはそのまま残す**（何も消さない・戻さない）。
-    commit = _run_git(repo_dir, ["commit", "--only", "-m", message, "--", rel_path])
+    commit = _run_git(repo_dir, ["commit", "--only", "-m", message, "--", *rel_paths])
     if commit.returncode != 0:
         return False, redact_mod.redact(commit.stderr)
 

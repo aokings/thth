@@ -106,7 +106,9 @@ def test_approveは投稿中のrepoロックに参加する(tmp_path, isolated_a
         result = real_sync(repo_dir)
         if result[0] and "rc" not in attempt:
             attempt["before"] = path.read_text()
-            proc = approve_via_cli(str(path))
+            # **一段目から断られる**（同期も承認の中で行うようになったため）。
+            # 二段確認のヘルパは digest が出ることを前提にしているので直に呼ぶ。
+            proc = run_thth(["approve", str(path)])
             attempt["rc"] = proc.returncode
             attempt["stderr"] = proc.stderr
             attempt["after"] = path.read_text()

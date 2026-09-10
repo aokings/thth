@@ -207,3 +207,67 @@ def test_誰が承認したかを残す(isolated_account):
     log = subprocess.run(["git", "-C", isolated_account["repo_dir"], "log", "--oneline", "-1"],
                           capture_output=True, text=True).stdout
     assert "claude（nigamilab セッション）" in log, log
+
+
+# --- 複数本まとめて（asmon 関東セッション指摘 2026-09-10）
+
+def test_複数本を束のdigestでまとめて承認できる(isolated_account):
+    """47 本の連載で一段目 94 回・二段目 47 回になった、という報告への答え。"""
+    paths = [write_queue_file(isolated_account["queue_dir"], f"{i}.md",
+                              fm_overrides={"status": "draft", "approved_sha": None},
+                              body=f"## threads\n\n{i} 本目です。\n")
+             for i in range(1, 4)]
+
+    first = run_thth(["approve", *paths])
+    assert first.returncode == 1
+    for i in range(1, 4):
+        assert f"{i} 本目です。" in first.stdout, first.stdout   # 全部の本文が出る
+    bundle = next(l.split(": ", 1)[1].strip() for l in first.stdout.splitlines()
+                  if l.startswith("束の digest: "))
+
+    second = run_thth(["approve", *paths, "--confirm", bundle, "--by", "kanto"])
+    assert second.returncode == 0, second.stderr
+    for path in paths:
+        assert queuefile.parse(path).front_matter.get("status") == "approved"
+
+
+def test_1本でも変われば束のdigestが変わる(isolated_account):
+    """束にしても「見せたもの＝承認したもの」の保証は崩れない。"""
+    paths = [write_queue_file(isolated_account["queue_dir"], f"{i}.md",
+                              fm_overrides={"status": "draft", "approved_sha": None},
+                              body=f"## threads\n\n{i} 本目です。\n")
+             for i in range(1, 4)]
+    first = run_thth(["approve", *paths])
+    bundle = next(l.split(": ", 1)[1].strip() for l in first.stdout.splitlines()
+                  if l.startswith("束の digest: "))
+
+    _rewrite_body(paths[1], "2 本目です。", "こっそり差し替えた 2 本目です。")
+    second = run_thth(["approve", *paths, "--confirm", bundle])
+
+    assert second.returncode == 1
+    assert "digest が一致しない" in second.stderr
+    for path in paths:
+        assert queuefile.parse(path).front_matter.get("status") == "draft"
+
+
+def test_1本でも駄目なら1本も承認しない(isolated_account):
+    """半分だけ承認された状態を作らない。"""
+    ok1 = write_queue_file(isolated_account["queue_dir"], "1.md",
+                           fm_overrides={"status": "draft", "approved_sha": None})
+    bad = write_queue_file(isolated_account["queue_dir"], "2.md",
+                           fm_overrides={"status": "draft", "approved_sha": None,
+                                         "publish_at": "2026-09-09T08:00:00"})  # tz 無し
+    result = run_thth(["approve", ok1, bad])
+    assert result.returncode == 1
+    assert "1 本も承認しませんでした" in result.stderr, result.stderr
+    assert queuefile.parse(ok1).front_matter.get("status") == "draft"
+
+
+def test_lintは複数本を一度に見る(isolated_account):
+    ok1 = write_queue_file(isolated_account["queue_dir"], "1.md")
+    bad = write_queue_file(isolated_account["queue_dir"], "2.md",
+                           fm_overrides={"publish_at": "2026-09-09T08:00:00"})
+    result = run_thth(["lint", ok1, bad])
+    assert result.returncode == 1
+    assert "1.md: OK" in result.stdout, result.stdout
+    assert "2.md: " in result.stdout
