@@ -257,7 +257,8 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
     #
     # そこで index を tree として控えておき、rebase のあとに**stage されていた
     # パスだけ**を控えから戻す。worktree の中身には触らない（autostash が戻す）。
-    saved_tree, staged_paths = _save_index(repo_dir)
+    saved_tree, staged_paths = save_index(repo_dir)
+    before_pull = _run_git(repo_dir, ["rev-parse", "HEAD"]).stdout.strip()
 
     last_err = ""
     try:
@@ -275,13 +276,13 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
                 return True, ""
             last_err = push.stderr
     finally:
-        _restore_index(repo_dir, saved_tree, staged_paths)
+        restore_index(repo_dir, saved_tree, staged_paths, since=before_pull)
 
     msg = "push に失敗しました（commit は残っています。手で push してください）: " + redact_mod.redact(last_err)
     return False, msg
 
 
-def _save_index(repo_dir: str) -> tuple:
+def save_index(repo_dir: str) -> tuple:
     """いまの index を tree として控え、stage されているパスの一覧を返す。
 
     戻り値 `(tree の OID または None, パスの一覧)`。控えられなければ `(None, [])`
@@ -299,11 +300,32 @@ def _save_index(repo_dir: str) -> tuple:
     return tree.stdout.strip(), staged
 
 
-def _restore_index(repo_dir: str, tree: str | None, staged_paths: list) -> None:
-    """控えた tree から、stage されていたパスの index エントリだけを戻す。"""
+def restore_index(repo_dir: str, tree: str | None, staged_paths: list, *,
+                   since: str | None = None, log=None) -> None:
+    """控えた tree から、stage されていたパスの index エントリだけを戻す。
+
+    **rebase が触ったファイルは戻さない**（外部レビュー第 7 巡 P2-3）。
+    控えは「pull の前の中身」なので、pull で remote の変更が入ったファイルにこれを
+    当てると、**その変更を打ち消す差分が stage される**——別 clone から届いた修正を
+    黙って巻き戻す形になる。**戻すのは、pull が触らなかったファイルだけ。**
+
+    触られたファイルは stage 状態を戻せない（autostash のまま unstaged で残る）ので、
+    **黙らずにそう述べる。**
+    """
     if not tree or not staged_paths:
         return
-    _run_git(repo_dir, ["restore", "--staged", "--source", tree, "--", *staged_paths])
+    skip = set()
+    if since:
+        moved = _run_git(repo_dir, ["diff", "--name-only", since, "HEAD"])
+        if moved.returncode == 0:
+            skip = {line.strip() for line in moved.stdout.splitlines() if line.strip()}
+    restorable = [p for p in staged_paths if p not in skip]
+    untouched = [p for p in staged_paths if p in skip]
+    if restorable:
+        _run_git(repo_dir, ["restore", "--staged", "--source", tree, "--", *restorable])
+    if untouched and log is not None:
+        log("stage 状態を戻せなかったファイルがあります（取り込みで中身が変わったため。"
+            "中身は残っています）: " + ", ".join(untouched[:3]))
 
 
 def sync_repo(repo_dir: str) -> tuple:

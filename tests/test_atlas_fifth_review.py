@@ -196,3 +196,43 @@ def test_無関係なstage状態がrebaseで失われない(tmp_path, isolated_a
     assert tracked.read_text() == "組み立て中の変更\n"
     # origin には送られていない
     assert "組み立て中" not in run_git(pair["bare"], ["show", "main:other.txt"]).stdout
+
+
+def test_取り込みで変わったファイルのstageは戻さない(tmp_path, isolated_account_factory):
+    """外部レビュー第 7 巡 P2-3。
+
+    控えは「pull の前の中身」なので、pull で remote の変更が入ったファイルにそれを
+    当てると、**その変更を打ち消す差分が stage される**——別 clone から届いた修正を
+    黙って巻き戻す形になる。`commit_and_push()` を直に呼んで確かめる
+    （`approve` 経由だと手前の `pull --ff-only` が先に断るため）。
+    """
+    pair, account, path = _setup(tmp_path, isolated_account_factory)
+    shared = Path(pair["work"]) / "shared.txt"
+    shared.write_text("1 行目\n2 行目\n3 行目\n")
+    run_git(pair["work"], ["add", "shared.txt"])
+    run_git(pair["work"], ["commit", "-m", "shared.txt"])
+    run_git(pair["work"], ["push"])
+
+    # 別 clone が 1 行目を直して push
+    run_git(pair["seed"], ["pull", "--ff-only"])
+    other = Path(pair["seed"]) / "shared.txt"
+    other.write_text("別 clone が直した 1 行目\n2 行目\n3 行目\n")
+    run_git(pair["seed"], ["add", "shared.txt"])
+    run_git(pair["seed"], ["commit", "-m", "別 clone の修正"])
+    run_git(pair["seed"], ["push"])
+
+    # こちらは 3 行目を直して stage したまま、queue ファイルだけを書き戻す
+    shared.write_text("1 行目\n2 行目\nこちらで組み立て中の 3 行目\n")
+    run_git(pair["work"], ["add", "shared.txt"])
+    path.write_text(path.read_text().replace("本文 A。", "本文 A2。"))
+
+    from thth import writeback
+    pushed, err = writeback.commit_and_push(pair["work"], rel_path=REL,
+                                             message="書き戻し")
+    assert pushed, err
+
+    staged_diff = run_git(pair["work"], ["diff", "--cached"]).stdout
+    assert "別 clone が直した 1 行目" not in staged_diff, \
+        f"別 clone の修正を打ち消す差分が stage された:\n{staged_diff}"
+    # 別 clone の修正は残っている
+    assert "別 clone が直した 1 行目" in shared.read_text()

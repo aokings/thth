@@ -268,3 +268,48 @@ def test_queueを触る未pushは自動で送らない(tmp_path, isolated_accoun
                                                               log=lambda _l: None)
     assert recovered is False
     assert "収集以外" in message, message
+
+
+def test_merge_commitを含む未pushは自動で送らない(tmp_path, isolated_account_factory):
+    """外部レビュー第 7 巡 P1-1。**統括の修正が作った公開の穴。**
+
+    `git log --name-only` は **merge commit そのものの変更を既定で出さない。**
+    `merge -s ours` のように、**マージの解決だけで内容が決まる** commit を作ると、
+    範囲内のどの非 merge commit にも queue の変更が現れないので、パス検査を素通りする。
+    その状態で送ると **remote 側の撤回が消えて、古い承認が復活する。**
+    """
+    import subprocess
+    from pathlib import Path
+
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    work, seed = pair["work"], pair["seed"]
+
+    def git(repo, *args):
+        return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+
+    # remote 側で承認を撤回して push
+    git(seed, "pull", "-q", "--ff-only")
+    q = Path(seed) / "docs/sns/queue/a.md"
+    q.write_text(q.read_text().replace("status: posted", "status: draft"))
+    git(seed, "add", "-A"); git(seed, "commit", "-qm", "撤回")
+    assert git(seed, "push", "-q").returncode == 0
+
+    # こちらは収集ぶんの未 push を作り、**マージの解決だけで remote の撤回を捨てる**
+    Path(work, "data/sns/insights/posts").mkdir(parents=True, exist_ok=True)
+    Path(work, "data/sns/insights/posts/X.ndjson").write_text('{"a":1}\n')
+    git(work, "add", "-A"); git(work, "commit", "-qm", "収集ぶん")
+    git(work, "fetch", "-q", "origin")
+    merged = git(work, "merge", "-s", "ours", "--no-edit", "origin/main")
+    assert merged.returncode == 0, merged.stderr
+
+    # 前提: `log --name-only` には queue が現れない
+    logged = git(work, "log", "@{u}..HEAD", "--name-only", "--pretty=format:").stdout
+    assert "docs/sns/queue/a.md" not in logged, "前提が崩れている"
+
+    recovered, message = collect_mod.push_pending_collection(work, log=lambda _l: None)
+
+    assert recovered is False, "撤回を消す merge を自動で送ってしまった"
+    assert "merge" in message, message
+    # remote の撤回は生きたまま
+    assert "status: draft" in git(pair["bare"], "show", "main:docs/sns/queue/a.md").stdout

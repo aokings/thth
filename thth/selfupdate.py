@@ -51,6 +51,12 @@ def behind_origin(app_dir: str = APP_DIR, *, fetch: bool = False) -> int | None:
         return None
 
 
+# **このモジュールを import した瞬間の版。** プロセスが実際に読み込んだコードの版で
+# あり、以後どれだけディスクが動いても変わらない——それが基準として要る性質
+# （外部レビュー第 7 巡 P2-2）。ここで 1 度だけ git を見る。
+LOADED_REV = head(APP_DIR)
+
+
 def pull_and_reexec(argv: list, *, app_dir: str = APP_DIR,
                      loaded_rev: str | None = None, log=print) -> str | None:
     """app を `git pull --ff-only` し、進んでいたら同じ引数で 1 回だけ exec しなおす。
@@ -100,18 +106,27 @@ def pull_and_reexec(argv: list, *, app_dir: str = APP_DIR,
     return None  # ここには来ない
 
 
-_LOADED_REV_CACHE: dict = {}
-
-
 def _loaded_rev(app_dir: str) -> str | None:
-    """**このプロセスがコードを読み込んだ時点の版**（最初に見た値を覚えておく）。
+    """基準にする版を返す。
 
-    プロセスの寿命の中で 1 度だけ git を見る。以後は覚えた値を返すので、途中で
-    別プロセスが更新しても**この値は動かない**——それが基準として要る性質。
+    **`APP_DIR`（本番）については `LOADED_REV`——このモジュールを import した瞬間に
+    記録した版を返す。**（外部レビュー第 7 巡 P2-2）
+
+    第 6 巡でここを直したつもりだったが、**直っていなかった。** 「読み込んだ時点の
+    版」と書きながら、実際には `pull_and_reexec()` の中——**lock を取ったあと**に
+    git を見ていた。その時点で別プロセスが更新を終えていれば、記録される値は
+    すでに新しい版で、`after` と一致して「exec 不要」になる。**穴はそのまま
+    残っていた。**
+
+    テストが通ったのは、テストが `loaded_rev` を引数で渡していたから。
+    **本番経路は渡していない。** 引数で正しい値を注入できるテストは、
+    引数を渡さない本番経路を検証していない（規約 11 の変種）。
+
+    `app_dir` が本番と違う場合（テストの隔離 clone）は、その場で見る。
     """
-    if app_dir not in _LOADED_REV_CACHE:
-        _LOADED_REV_CACHE[app_dir] = head(app_dir)
-    return _LOADED_REV_CACHE[app_dir]
+    if os.path.realpath(app_dir) == os.path.realpath(APP_DIR):
+        return LOADED_REV
+    return head(app_dir)
 
 
 def _pull_locked(app_dir: str, *, anchor: str | None = None) -> tuple:

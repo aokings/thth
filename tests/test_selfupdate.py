@@ -124,3 +124,21 @@ def test_読み込んだ版のままなら何もしない(tmp_path, monkeypatch)
     assert selfupdate.pull_and_reexec(["thth"], app_dir=pair["work"], loaded_rev=loaded,
                                        log=lambda _l: None) is None
     assert execs == []
+
+
+def test_読み込んだ版はimportの瞬間に固定される(monkeypatch):
+    """外部レビュー第 7 巡 P2-2。**第 6 巡の修正は本番経路では効いていなかった。**
+
+    「読み込んだ時点の版」と書きながら、実際には `pull_and_reexec()` の中——
+    **lock を取ったあと**に git を見ていた。その時点で別プロセスが更新を終えて
+    いれば、記録される値はすでに新しい版で `after` と一致し、「exec 不要」になる。
+
+    テストが通ったのは、テストが `loaded_rev` を引数で渡していたから。
+    **引数で正しい値を注入できるテストは、引数を渡さない本番経路を検証していない。**
+    """
+    assert selfupdate.LOADED_REV is not None, "import 時に版を記録していない"
+    assert selfupdate._loaded_rev(selfupdate.APP_DIR) == selfupdate.LOADED_REV
+
+    # ディスクが動いても、基準は動かない（ここが第 6 巡で効いていなかった性質）
+    monkeypatch.setattr(selfupdate, "head", lambda *_a, **_k: "ちがう版")
+    assert selfupdate._loaded_rev(selfupdate.APP_DIR) == selfupdate.LOADED_REV

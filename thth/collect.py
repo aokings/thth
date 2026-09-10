@@ -82,29 +82,76 @@ def push_pending_collection(repo_dir: str, *, log=print) -> tuple:
     if head.stdout.strip() == upstream.stdout.strip():
         return False, ""          # 未 push は無い
 
-    names = _git(repo_dir, ["log", "@{u}..HEAD", "--name-only", "--pretty=format:"])
+    ok, why = _only_collection_ahead(repo_dir)
+    if not ok:
+        return False, why
+
+    fetch = _git(repo_dir, ["fetch", "origin"])
+    if fetch.returncode != 0:
+        return False, "fetch に失敗しました（origin にまだ届きません）"
+
+    # fetch で remote が進んでいたら、条件をもう一度見る（間に何か入っている場合）。
+    ok, why = _only_collection_ahead(repo_dir)
+    if not ok:
+        return False, why
+
+    # **stage 状態を守る**（外部レビュー第 7 巡 P2-4）。この経路にも rebase がある
+    # のに、書き戻し側だけ直して**ここには入れていなかった**。
+    saved_tree, staged_paths = writeback.save_index(repo_dir)
+    before_pull = _git(repo_dir, ["rev-parse", "HEAD"]).stdout.strip()
+    try:
+        rebase = _git(repo_dir, ["pull", "--rebase", "--autostash"])
+    finally:
+        writeback.restore_index(repo_dir, saved_tree, staged_paths,
+                                 since=before_pull, log=log)
+    if rebase.returncode != 0:
+        return False, "未 push の収集を載せ直せませんでした: " + redact_mod.redact(rebase.stderr)
+
+    # **載せ直したあとに、もう一度確かめてから送る。** rebase が何を作ったかは
+    # 事前の検査では分からない（第 7 巡 P1-1）。
+    ok, why = _only_collection_ahead(repo_dir)
+    if not ok:
+        return False, ("載せ直した結果が収集ぶんだけになりませんでした。送りません: " + why)
+
+    push = _git(repo_dir, ["push"])
+    if push.returncode != 0:
+        return False, "未 push の収集をまだ送れません: " + redact_mod.redact(push.stderr)
+    log("前回送れなかった収集を送り直しました")
+    return True, ""
+
+
+def _only_collection_ahead(repo_dir: str) -> tuple:
+    """未 push の中身が**収集ぶんだけ**かを確かめる `(よいか, 理由)`。
+
+    **`git log --name-only` は使わない**（外部レビュー第 7 巡 P1-1）。
+    **merge commit は、既定では変更したファイルを 1 つも出さない。** そのため
+    「何も触っていない commit」に見え、queue の撤回を含む merge がパス検査を
+    素通りした。その状態で rebase すると**撤回が落ち、古い承認が復活して公開された**。
+
+    直し方は 2 つ重ねる:
+
+    1. **merge commit があれば、そもそも自動で送らない**（人を呼ぶ）。
+    2. パスは `git diff --name-only @{u}...HEAD`（**3 点**＝分岐点から HEAD まで）で
+       取る。merge の有無に関わらず、こちら側で変わったファイルが全部出る。
+    """
+    merges = _git(repo_dir, ["rev-list", "--merges", "@{u}..HEAD"])
+    if merges.returncode != 0:
+        return False, "未 push の commit を読めません"
+    if merges.stdout.strip():
+        return False, ("未 push に merge commit が含まれるので、自動では送りません。"
+                       "人が確認してください。")
+
+    names = _git(repo_dir, ["diff", "--name-only", "@{u}...HEAD"])
     if names.returncode != 0:
         return False, "未 push の commit が何を触ったか読めません"
     touched = {line.strip() for line in names.stdout.splitlines() if line.strip()}
     if not touched:
-        return False, ""
+        return True, ""
     outside = sorted(p for p in touched
                      if not any(p.startswith(prefix) for prefix in COLLECTION_PREFIXES))
     if outside:
         return False, ("未 push の commit が収集以外のファイルを含むので、自動では送りません"
                        f"（{', '.join(outside[:3])}）。人が確認してください。")
-
-    fetch = _git(repo_dir, ["fetch", "origin"])
-    if fetch.returncode != 0:
-        return False, "fetch に失敗しました（origin にまだ届きません）"
-    # remote が進んでいることがあるので、収集ぶんを載せ直してから送る。
-    rebase = _git(repo_dir, ["pull", "--rebase", "--autostash"])
-    if rebase.returncode != 0:
-        return False, "未 push の収集を載せ直せませんでした: " + redact_mod.redact(rebase.stderr)
-    push = _git(repo_dir, ["push"])
-    if push.returncode != 0:
-        return False, "未 push の収集をまだ送れません: " + redact_mod.redact(push.stderr)
-    log("前回送れなかった収集を送り直しました")
     return True, ""
 
 
