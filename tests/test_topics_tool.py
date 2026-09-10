@@ -335,3 +335,8 @@ def test_adviseは実際に動く例を出す(isolated_account):
     ok = run_thth(["topics", isolated_account["name"], "--note", "例", "--verdict", "alive",
                    "--status", "ok", "--kind", "行動", "--audience", "誰か", "--by", "テスト"])
     assert ok.returncode == 0, ok.stderr
+
+    # 記事ごとに選ぶ道具への橋（工程 6）。**ここも動く形で出す。**
+    assert "thth topics suggest <原稿>" in out, out
+    from thth import topic_cli
+    assert topic_cli.build_parser().parse_args(["suggest", "x.md"]).sub == "suggest"

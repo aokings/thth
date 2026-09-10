@@ -49,6 +49,53 @@ TOOLS = [
         },
     },
     {
+        "name": "thth_topic_context",
+        "description": (
+            "原稿のトピックを決める前に**最初に**呼ぶ。原稿と（あれば）記事本文から、"
+            "判断の入力を固定して返す。記事がまだ無ければ、取りに行くべき URL と"
+            "必要な JSON の形を返す（読むだけ・副作用なし）。"
+            "使う順序: context → 足りない資料を取る → evaluate。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file": {"type": "string", "description": "queue ファイルのパス"},
+                "article": {"type": "object", "description": "記事証拠（ArticleEvidence）"},
+                "article_url": {"type": "string",
+                                 "description": "本文に URL が複数ある場合の主対象"},
+            },
+            "required": ["file"],
+        },
+    },
+    {
+        "name": "thth_topic_evaluate",
+        "description": (
+            "記事本文と候補比較を渡して、**引用が本文に在るか・参照が実在するか・"
+            "観測が新しいか・投稿者が偏っていないか**を検査させる。"
+            "THTH は候補を作らないし順位も付けない——足りないものを言うだけ。"
+            "候補が suitable でなければ別の候補に繰り上げず、比較し直しを求める。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file": {"type": "string"},
+                "article": {"type": "object"},
+                "proposal": {"type": "object", "description": "候補比較（TopicProposal）"},
+                "article_url": {"type": "string"},
+            },
+            "required": ["file", "article", "proposal"],
+        },
+    },
+    {
+        "name": "thth_topic_decision",
+        "description": "保存済みの判断を読む（読むだけ）。今の原稿と食い違っていれば freshness で言う。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "string", "description": "decision_id"}},
+            "required": ["id"],
+        },
+    },
+    {
         "name": "thth_board",
         "description": "アカウントごとの最終投稿・approved 待ち・inflight・型外の骨を返す（読むだけ）。",
         "inputSchema": {"type": "object", "properties": {}},
@@ -56,8 +103,26 @@ TOOLS = [
 ]
 
 
-def run_cli(args: list) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, THTH_BIN, *args], capture_output=True, text=True)
+def run_cli(args: list, *, stdin_text: str | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, THTH_BIN, *args], capture_output=True,
+                           text=True, input=stdin_text)
+
+
+def _topic_stdin(arguments: dict, *, with_proposal: bool) -> tuple:
+    """記事・候補比較は**標準入力に 1 つの JSON** で渡す（設計 §7）。
+
+    外部モデルが指定した任意のサーバファイルへ書いて受け渡さない。stdin は 1 本
+    しかないので、記事と候補比較を別々の口にせず 1 つの封筒にまとめる
+    （**設計からの変更・理由はここ**）。CLI 側はファイル入力と同じ検査関数へ
+    合流する。
+    """
+    args = ["topics", "suggest", arguments["file"], "--input-json-stdin"]
+    if arguments.get("article_url"):
+        args += ["--article-url", arguments["article_url"]]
+    payload = {"article": arguments.get("article")}
+    if with_proposal:
+        payload["proposal"] = arguments.get("proposal")
+    return args, json.dumps(payload, ensure_ascii=False)
 
 
 def call_tool(name: str, arguments: dict | None) -> dict:
@@ -76,13 +141,27 @@ def call_tool(name: str, arguments: dict | None) -> dict:
     elif name == "thth_preview":
         proc = run_cli(["preview", arguments["file"]])
         text = proc.stdout if proc.returncode == 0 else proc.stderr
+    elif name in ("thth_topic_context", "thth_topic_evaluate"):
+        args, payload = _topic_stdin(
+            arguments, with_proposal=(name == "thth_topic_evaluate"))
+        proc = run_cli(args, stdin_text=payload)
+        text = proc.stdout
+    elif name == "thth_topic_decision":
+        proc = run_cli(["topics", "decision", arguments["id"], "--json"])
+        text = proc.stdout
     elif name == "thth_board":
         proc = run_cli(["board", "--json"])
         text = proc.stdout
     else:
         return {"content": [{"type": "text", "text": f"unknown tool: {name}"}], "isError": True}
 
-    is_error = proc.returncode not in (0, 1)  # lint は 1 も正常な「検査結果」
+    if name.startswith("thth_topic_"):
+        # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）
+        # とは意味が違う——こちらは stale_context・不正な候補比較で、
+        # **そのまま使ってはいけない**応答。既存の扱いは変えない。
+        is_error = proc.returncode != 0
+    else:
+        is_error = proc.returncode not in (0, 1)  # lint は 1 も正常な「検査結果」
     if not text:
         text = proc.stderr
     return {"content": [{"type": "text", "text": text}], "isError": is_error}

@@ -725,6 +725,14 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
     print("      --kind 行動|一般名詞|カテゴリ|抽象|専門語|固有名|つながり型|自作 \\")
     print("      --audience \"誰がいたか\" --by \"<あなた>\"")
     print("")
+    # 記事ごとに選ぶ道具（工程 6・2026-09-11）。**下の一覧は「知っていること」で、
+    # 今回の記事に合うかは別の判断**——そこへ橋を架ける。
+    print("  記事ごとに選ぶときは、先にこちらを呼んでください:")
+    print("    thth topics suggest <原稿>")
+    print("  記事本文と候補比較を渡すと、引用が本文に在るか・観測が新しいか・")
+    print("  投稿者が偏っていないかを検査して、足りないものを返します。")
+    print("  判断のしかた: docs/手順_LLM_トピック選定.md")
+    print("")
     def show(items, formatter, empty="  （まだありません）"):
         here, elsewhere = split(items) if account_name else ([], items)
         if not here and not elsewhere:
@@ -1216,6 +1224,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # **`topics` の直後の語だけを見て入口を分ける**（設計 §6「CLI 互換性」）。
+    # 新方式を既存の argparse へ足すと、`--note` 等と衝突して**既存の呼び方が
+    # 壊れる**。`thth topics <account> --advise` はこれまでどおり下を通る。
+    from . import topic_cli
+    real_argv = list(sys.argv[1:] if argv is None else argv)
+    if topic_cli.is_new_style(real_argv):
+        return topic_cli.dispatch(real_argv)
+
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)
