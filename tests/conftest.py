@@ -320,6 +320,25 @@ def run_thth(args, env=None, cwd=None) -> subprocess.CompletedProcess:
     )
 
 
+def approve_via_cli(path, *, by: str | None = None, extra: list | None = None):
+    """`thth approve` の二段確認をまとめて行う（テスト用）。
+
+    一段目（`--confirm` 無し）は**本文と digest を表示して何も書き換えずに終わる**
+    （masaru 指示 2026-09-10「AI との対話の中から承認できるようにしたい」）。
+    二段目でその digest を渡すと承認される。テストは中身の確認が目的ではないので、
+    ここで 2 回呼ぶ。**一段目が非ゼロで終わることも確かめる**（承認していない）。
+    """
+    first = run_thth(["approve", str(path)])
+    assert first.returncode == 1, f"一段目が承認してしまった: {first.stdout}{first.stderr}"
+    digests = [line.split(": ", 1)[1].strip() for line in first.stdout.splitlines()
+               if line.startswith("digest: ")]
+    assert digests, f"digest が表示されない: {first.stdout}{first.stderr}"
+    args = ["approve", str(path), "--confirm", digests[0]]
+    if by:
+        args += ["--by", by]
+    return run_thth(args + list(extra or []))
+
+
 def run_git(repo_dir: str, args: list) -> subprocess.CompletedProcess:
     result = subprocess.run(["git", "-C", repo_dir, *args], capture_output=True, text=True)
     assert result.returncode == 0, f"git {args} failed: {result.stderr}"

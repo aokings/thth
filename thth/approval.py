@@ -94,6 +94,11 @@ def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
+# `thth approve` の二段確認で使う digest の桁数（`approved_sha` の先頭から取る）。
+# `thth send` の digest と同じ 12 桁にそろえる（手順を 1 つにする）。
+APPROVE_DIGEST_LENGTH = 12
+
+
 def compute_send_digest(*, text: str, account: str, reply_to: str | None,
                          topic: str | None, length: int = 12) -> str:
     """`thth send` の dry-run が出す短い digest（外部レビュー §1b・受け入れ 6）。

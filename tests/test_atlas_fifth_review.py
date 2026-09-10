@@ -21,7 +21,7 @@ import datetime
 import os
 from pathlib import Path
 
-from tests.conftest import init_git_pair, make_queue_text, run_git, run_thth
+from tests.conftest import approve_via_cli, init_git_pair, make_queue_text, run_git, run_thth
 from thth import core, report, writeback
 from thth.adapters.base import PublishResult
 
@@ -106,7 +106,7 @@ def test_approveは投稿中のrepoロックに参加する(tmp_path, isolated_a
         result = real_sync(repo_dir)
         if result[0] and "rc" not in attempt:
             attempt["before"] = path.read_text()
-            proc = run_thth(["approve", str(path)])
+            proc = approve_via_cli(str(path))
             attempt["rc"] = proc.returncode
             attempt["stderr"] = proc.stderr
             attempt["after"] = path.read_text()
@@ -128,7 +128,7 @@ def test_approveは無関係なstage済み変更を巻き込まない(tmp_path, 
     other.write_text("書きかけの別作業\n")
     run_git(pair["work"], ["add", "unfinished.txt"])
 
-    approved = run_thth(["approve", str(path)])
+    approved = approve_via_cli(str(path))
     assert approved.returncode == 0, approved.stderr
 
     in_origin = run_git(pair["bare"], ["show", "--name-only", "--format=", "main"]).stdout.split()
@@ -144,7 +144,7 @@ def test_pushを断られた承認はboardで要確認になる(tmp_path, isolat
     pair, account, path = _setup(tmp_path, isolated_account_factory)
     _reject_pushes(pair["bare"])
 
-    approved = run_thth(["approve", str(path)])
+    approved = approve_via_cli(str(path))
     assert approved.returncode == 1, "push を断られたのに成功で終わった"
 
     row = next(r for r in report.board_summary()["accounts"]
@@ -159,7 +159,7 @@ def test_pushを断られた承認はboardで要確認になる(tmp_path, isolat
 def test_同期も承認も正常なら公開される(tmp_path, isolated_account_factory):
     """過剰に塞いでいないことの確認。"""
     pair, account, path = _setup(tmp_path, isolated_account_factory)
-    assert run_thth(["approve", str(path)]).returncode == 0
+    assert approve_via_cli(str(path)).returncode == 0
     spy = Spy()
     result = core.throw_once(account["name"], production_flag=True,
                               adapter_factory=lambda *_: spy, now=NOW)

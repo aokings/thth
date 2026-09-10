@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import getpass
 import json
 import os
 import sys
@@ -76,6 +77,25 @@ def cmd_approve(args) -> int:
     P1）。select は「同期を確認した commit の中身と一致するファイル」しか候補に
     しないので、承認をファイルに書いただけでは投稿されない。push できなければ
     その旨を述べて非ゼロで終わる（黙って「承認しました」で終わらせない）。
+
+    **`--confirm <digest>` が必ず要る**（masaru 指示 2026-09-10「AI との対話の中から
+    承認できるようにしたい」）。`--confirm` を付けずに呼ぶと、**出す本文そのものと
+    digest を表示して、何も書き換えずに終わる**。承認するにはその digest を渡して
+    もう一度呼ぶ。`thth send --confirm` とまったく同じ形。
+
+    これは「AI が勝手に承認する」ことを防ぐ仕掛けではない——**防げない**。
+    セッションは Bash と ssh を持っているので、`approve` を MCP に出さないという
+    従来の線は最初から何も守っていなかった（統括の思い違い・2026-09-10 に自覚）。
+    この二段が実際に防ぐのは **「A を見せて B を承認する」**ほう:
+
+      - 承認の前に、**必ず本文の全文が画面に出る**（一段目が表示する）。
+      - 二段目は、**一段目が表示した内容から計算した digest** としか一致しない。
+        表示と承認の間に本文・account・reply_to・topic・publish_at のどれかが
+        変われば digest が変わり、承認は通らない。
+
+    `--by` は**誰が承認したか**を front-matter（`approved_by`）と commit に残す。
+    後から「これは誰の判断だったか」を辿れるようにするためで、値を偽れないと
+    いう類の保証はしない（そこは記録で担保する）。
     """
     messages = lint_mod.lint_file(args.file)
     errors = [m for m in messages if not lint_mod.is_warning(m)]
@@ -122,7 +142,38 @@ def cmd_approve(args) -> int:
     approved_sha = approval_mod.compute_approved_sha(
         section=section, account=account_name, reply_to=fm.get("reply_to"),
         topic=fm.get("topic"), publish_at=fm.get("publish_at"))
+    digest = approved_sha[:approval_mod.APPROVE_DIGEST_LENGTH]
     approved_at = jst.iso()
+
+    # 一段目: 本文そのものを見せて、何も書き換えずに終わる。
+    if not args.confirm:
+        if args.json:
+            _print_json({"file": args.file, "status": fm.get("status"), "digest": digest,
+                         "text": section, "account": account_name,
+                         "publish_at": fm.get("publish_at"),
+                         "topic": queuefile.normalize_topic(fm.get("topic")),
+                         "reply_to": fm.get("reply_to"), "approved": False})
+        else:
+            print(f"承認しません（確認の一段目です）: {args.file}")
+            print(f"  account   : {account_name}")
+            print(f"  publish_at: {fm.get('publish_at')}")
+            topic = queuefile.normalize_topic(fm.get("topic"))
+            print(f"  topic     : {topic or '（なし）'}")
+            print(f"  reply_to  : {fm.get('reply_to') or '（なし）'}")
+            print("--- 出す本文 ---")
+            sys.stdout.write(section if section.endswith("\n") else section + "\n")
+            print("--- ここまで ---")
+            print(f"digest: {digest}")
+            print(f"この本文でよければ: thth approve {args.file} --confirm {digest}")
+        return 1
+
+    if args.confirm != digest:
+        print(f"digest が一致しないので承認しません（表示した本文と中身が違います）。"
+              f"いまの digest は {digest} です。もう一度 thth approve {args.file} から"
+              "やり直してください。", file=sys.stderr)
+        return 1
+
+    approved_by = args.by or os.environ.get("THTH_ACTOR") or getpass.getuser()
 
     # **投稿と同じ clone ロックに参加する**（外部レビュー第 5 巡 P1）。承認は
     # この clone の作業ツリー・index・HEAD を動かすので、公開の最中に割り込めて
@@ -142,20 +193,22 @@ def cmd_approve(args) -> int:
             "status": "approved",
             "approved_sha": approved_sha,
             "approved_at": approved_at,
+            "approved_by": approved_by,
         })
 
         pushed, push_err = writeback_mod.commit_and_push(
             repo_dir, rel_path=rel_path,
-            message=f"承認: {os.path.basename(args.file)}（{account_name}）")
+            message=f"承認: {os.path.basename(args.file)}（{account_name}・{approved_by}）")
     finally:
         repo_lock.release()
 
     if args.json:
         _print_json({"file": args.file, "status": "approved",
                      "approved_sha": approved_sha, "approved_at": approved_at,
+                     "approved_by": approved_by, "approved": True,
                      "pushed": pushed, "push_error": push_err or None})
     else:
-        print(f"承認しました: {args.file}")
+        print(f"承認しました: {args.file}（{approved_by}）")
         print(f"approved_sha: {approved_sha}")
         print(f"approved_at: {approved_at}")
 
@@ -384,9 +437,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_approve = sub.add_parser(
         "approve",
-        help="status: approved と approved_sha・approved_at を書く（masaru の手・MCPには出さない）")
+        help="本文を見せて（一段目）、digest を渡すと承認する（二段目）")
     p_approve.add_argument("file")
     p_approve.add_argument("--json", action="store_true")
+    p_approve.add_argument("--confirm", default=None,
+                           help="一段目が表示した digest。これが無いと承認しない")
+    p_approve.add_argument("--by", default=None,
+                           help="誰が承認したか（front-matter と commit に残す）")
     p_approve.set_defaults(func=cmd_approve)
 
     p_account = sub.add_parser(

@@ -8,7 +8,7 @@ reply_to＋topic＋publish_at の hash）を front-matter に書き、`select` �
 """
 from __future__ import annotations
 
-from tests.conftest import run_thth, write_queue_file
+from tests.conftest import approve_via_cli, run_thth, write_queue_file
 from thth import core
 from thth import queuefile
 from thth import select as select_mod
@@ -47,8 +47,10 @@ def test_5_lintに通らないファイルは承認しない(isolated_account):
         isolated_account["queue_dir"], "a.md",
         fm_overrides={"status": "draft", "publish_at": "2026-09-09T08:00:00",
                       "approved_sha": None})
+    # 一段目で断られる（本文も digest も出ない）ので、二段確認のヘルパは通さない。
     result = run_thth(["approve", path])
     assert result.returncode == 1
+    assert "digest:" not in result.stdout
     qf = queuefile.parse(path)
     assert qf.front_matter.get("status") == "draft"  # 書き換わっていない
     assert not qf.front_matter.get("approved_sha")
@@ -57,7 +59,7 @@ def test_5_lintに通らないファイルは承認しない(isolated_account):
 def test_approveは正常なファイルにapproved_shaとapproved_atを書く(isolated_account):
     path = write_queue_file(isolated_account["queue_dir"], "a.md",
                             fm_overrides={"status": "draft", "approved_sha": None})
-    result = run_thth(["approve", path])
+    result = approve_via_cli(path)
     assert result.returncode == 0
     qf = queuefile.parse(path)
     assert qf.front_matter.get("status") == "approved"
@@ -70,7 +72,7 @@ def test_approveは正常なファイルにapproved_shaとapproved_atを書く(i
 def test_3_承認後に何も変えなければ選ばれる(isolated_account):
     path = write_queue_file(isolated_account["queue_dir"], "a.md",
                             fm_overrides={"status": "draft", "approved_sha": None})
-    approve = run_thth(["approve", path])
+    approve = approve_via_cli(path)
     assert approve.returncode == 0
 
     result = core.throw_once(isolated_account["name"])
@@ -82,7 +84,7 @@ def test_3_承認後に何も変えなければ選ばれる(isolated_account):
 def test_1_承認後に本文を書き換えると出ない(isolated_account):
     path = write_queue_file(isolated_account["queue_dir"], "a.md",
                             fm_overrides={"status": "draft", "approved_sha": None})
-    run_thth(["approve", path])
+    approve_via_cli(path)
     _rewrite_body(path, "本文です。", "書き換えた本文です。")
 
     result = core.throw_once(isolated_account["name"])
@@ -106,7 +108,7 @@ def test_1_承認後に本文を書き換えると出ない(isolated_account):
 def test_2_承認後にtopicだけ変えると出ない(isolated_account):
     path = write_queue_file(isolated_account["queue_dir"], "a.md",
                             fm_overrides={"status": "draft", "approved_sha": None})
-    run_thth(["approve", path])
+    approve_via_cli(path)
     _patch_front_matter_field(path, "topic", "苦味")
 
     result = core.throw_once(isolated_account["name"])
@@ -117,7 +119,7 @@ def test_2_承認後にtopicだけ変えると出ない(isolated_account):
 def test_2_承認後にreply_toだけ変えると出ない(isolated_account):
     path = write_queue_file(isolated_account["queue_dir"], "a.md",
                             fm_overrides={"status": "draft", "approved_sha": None})
-    run_thth(["approve", path])
+    approve_via_cli(path)
     _patch_front_matter_field(path, "reply_to", "9999999")
 
     result = core.throw_once(isolated_account["name"])
@@ -128,7 +130,7 @@ def test_2_承認後にreply_toだけ変えると出ない(isolated_account):
 def test_2_承認後にpublish_atだけ変えると出ない(isolated_account):
     path = write_queue_file(isolated_account["queue_dir"], "a.md",
                             fm_overrides={"status": "draft", "approved_sha": None})
-    run_thth(["approve", path])
+    approve_via_cli(path)
     # 承認時と別の時刻（まだ過去＝選ばれる資格はある）に書き換える。
     _patch_front_matter_field(path, "publish_at", "2026-09-09T07:00:00+09:00")
 
@@ -151,3 +153,57 @@ def test_approveはpost_idが付いていると承認しない(isolated_account)
                       "posted_at": "2026-09-08T08:00:00+09:00", "approved_sha": None})
     result = run_thth(["approve", path])
     assert result.returncode == 1
+    assert "digest:" not in result.stdout
+
+
+# --- 二段確認（masaru 指示 2026-09-10「AI との対話の中から承認できるようにしたい」）
+
+def test_一段目は本文を全文見せて何も書き換えない(isolated_account):
+    path = write_queue_file(isolated_account["queue_dir"], "a.md",
+                            fm_overrides={"status": "draft", "approved_sha": None})
+    first = run_thth(["approve", path])
+
+    assert first.returncode == 1
+    assert "本文です。" in first.stdout, first.stdout      # 出す本文がそのまま出る
+    assert "digest: " in first.stdout
+    assert "--confirm" in first.stdout                     # 次に打つ形まで見せる
+    qf = queuefile.parse(path)
+    assert qf.front_matter.get("status") == "draft"        # 書き換わっていない
+    assert not qf.front_matter.get("approved_sha")
+
+
+def test_見せた本文と違うものは承認できない(isolated_account):
+    """**この 1 件がこの仕掛けの理由。**
+
+    AI が勝手に承認することは防げない（Bash も ssh も持っている）。防げるのは
+    **「A を見せて B を承認する」**ほう——表示と承認の間に本文が変われば digest が
+    変わり、二段目が通らない。
+    """
+    path = write_queue_file(isolated_account["queue_dir"], "a.md",
+                            fm_overrides={"status": "draft", "approved_sha": None})
+    first = run_thth(["approve", path])
+    digest = next(l.split(": ", 1)[1].strip() for l in first.stdout.splitlines()
+                  if l.startswith("digest: "))
+
+    _rewrite_body(path, "本文です。", "こっそり差し替えた本文です。")
+    second = run_thth(["approve", path, "--confirm", digest])
+
+    assert second.returncode == 1
+    assert "digest が一致しない" in second.stderr, second.stderr
+    qf = queuefile.parse(path)
+    assert qf.front_matter.get("status") == "draft"        # 承認されていない
+
+
+def test_誰が承認したかを残す(isolated_account):
+    path = write_queue_file(isolated_account["queue_dir"], "a.md",
+                            fm_overrides={"status": "draft", "approved_sha": None})
+    result = approve_via_cli(path, by="claude（nigamilab セッション）")
+    assert result.returncode == 0
+
+    qf = queuefile.parse(path)
+    assert qf.front_matter.get("approved_by") == "claude（nigamilab セッション）"
+
+    import subprocess
+    log = subprocess.run(["git", "-C", isolated_account["repo_dir"], "log", "--oneline", "-1"],
+                          capture_output=True, text=True).stdout
+    assert "claude（nigamilab セッション）" in log, log

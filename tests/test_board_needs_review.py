@@ -17,7 +17,7 @@ from __future__ import annotations
 import datetime
 import json
 
-from tests.conftest import run_thth, write_queue_file
+from tests.conftest import approve_via_cli, run_thth, write_queue_file
 from thth import report as report_mod
 
 PAST_PUBLISH_AT = "2020-01-01T08:00:00+09:00"
@@ -34,7 +34,7 @@ def _rewrite_body(path: str, before: str, after: str) -> None:
 def test_board_summaryはapproval_staleをファイル名付きで出す(isolated_account):
     path = write_queue_file(isolated_account["queue_dir"], "a.md",
                              fm_overrides={"status": "draft", "approved_sha": None})
-    approved = run_thth(["approve", path])
+    approved = approve_via_cli(path)
     assert approved.returncode == 0, approved.stderr
     _rewrite_body(path, "本文です。", "書き換えた本文です。")
 
@@ -103,7 +103,7 @@ def test_thth_boardの人向け出力にapproval_staleが要確認として出�
     account = isolated_account_factory(quiet_hours=None, min_interval_hours=0)
     path = write_queue_file(account["queue_dir"], "a.md", fm_overrides={
         "status": "draft", "approved_sha": None, "publish_at": PAST_PUBLISH_AT})
-    assert run_thth(["approve", path]).returncode == 0
+    assert approve_via_cli(path).returncode == 0
     _rewrite_body(path, "本文です。", "書き換えた本文です。")
 
     result = run_thth(["board"])

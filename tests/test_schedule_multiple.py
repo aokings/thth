@@ -11,7 +11,7 @@ from __future__ import annotations
 import datetime
 from pathlib import Path
 
-from tests.conftest import init_git_pair, make_queue_text, commit_and_push_path, run_thth
+from tests.conftest import approve_via_cli, init_git_pair, make_queue_text, commit_and_push_path, run_thth
 from thth import core
 from thth.adapters.base import PublishResult
 
@@ -47,7 +47,7 @@ def _setup_three(tmp_path, factory, **account_overrides):
         {"status": "draft", "publish_at": TIMES[0]}, body="## threads\n\n1 本目。\n"))
     account = factory(repo_dir=pair["work"], production=True, **account_overrides)
     first = Path(pair["work"]) / REL
-    assert run_thth(["approve", str(first)]).returncode == 0
+    assert approve_via_cli(str(first)).returncode == 0
 
     for i, iso in enumerate(TIMES[1:], start=2):
         path = Path(pair["work"]) / f"docs/sns/queue/{i}.md"

@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import (commit_and_push_if_changed, init_git_pair,
+from tests.conftest import (approve_via_cli, commit_and_push_if_changed, init_git_pair,
                             make_queue_text, run_git, run_thth)
 from thth import accounts, core, inflight, queuefile, sent
 from thth.adapters.base import PublishResult
@@ -39,7 +39,7 @@ def setup_pair(tmp_path, factory):
     pair = init_git_pair(tmp_path, seed_content=make_queue_text({'status': 'draft'}, body=BODY))
     account = factory(repo_dir=pair['work'], production=True, quiet_hours=None, min_interval_hours=0)
     path = Path(pair['work']) / REL
-    approved = run_thth(['approve', str(path)])
+    approved = approve_via_cli(str(path))
     assert approved.returncode == 0, approved.stderr
     # `thth approve` 自身が add・commit・push まで行うようになった（外部レビュー
     # 第 4 巡 P1）。原文にあった手動の add/commit/push は「commit するものが無い」
@@ -125,7 +125,7 @@ def test_two_real_processes_share_clone(tmp_path, isolated_account_factory):
     b = isolated_account_factory(name='other-threads', repo_dir=pair['work'], production=True, quiet_hours=None, min_interval_hours=0)
     bpath = Path(pair['queue_dir']) / 'b.md'
     bpath.write_text(make_queue_text({'status':'draft', 'account':b['name']}, body='## threads\n\nOTHER_BODY\n'))
-    assert run_thth(['approve', str(bpath)]).returncode == 0
+    assert approve_via_cli(str(bpath)).returncode == 0
     # `thth approve` が commit・push まで行う（外部レビュー第 4 巡 P1）ので、
     # ここは「まだ載っていなければ載せる」に留める。
     commit_and_push_if_changed(pair['work'], 'docs/sns/queue/b.md', 'Approve B')

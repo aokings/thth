@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import (commit_and_push_if_changed, commit_and_push_path,
+from tests.conftest import (approve_via_cli, commit_and_push_if_changed, commit_and_push_path,
                             init_git_pair, make_queue_text, run_git, run_thth)
 from thth import core, report
 from thth.adapters.base import PublishResult
@@ -59,7 +59,7 @@ def _setup(tmp_path, factory, *, ensure_committed=True):
     account = factory(repo_dir=pair["work"], production=True, quiet_hours=None,
                        min_interval_hours=0)
     path = Path(pair["work"]) / REL
-    approved = run_thth(["approve", str(path)])
+    approved = approve_via_cli(str(path))
     assert approved.returncode == 0, approved.stderr
     if ensure_committed:
         commit_and_push_if_changed(pair["work"], REL, "承認（fixture の補い）")

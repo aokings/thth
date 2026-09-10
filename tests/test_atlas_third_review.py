@@ -34,7 +34,7 @@ from pathlib import Path
 import pytest
 
 from tests.test_atlas_review import setup_pair, NOW, REL
-from tests.conftest import commit_and_push_if_changed, run_git, run_thth
+from tests.conftest import approve_via_cli, commit_and_push_if_changed, run_git, run_thth
 from thth import core, accounts, inflight, report
 from thth.adapters.base import PublishResult
 
@@ -63,7 +63,7 @@ def test_metadata_without_merge_conflict(tmp_path, isolated_account_factory, fie
             editor.write_text('\n'.join(f'{field}: {value}' if l.startswith(field + ':') else l
                                        for l in editor.read_text().splitlines()) + '\n')
             if reapprove:
-                assert run_thth(['approve', str(editor)]).returncode == 0
+                assert approve_via_cli(str(editor)).returncode == 0
             # `thth approve` が commit・push まで行う（外部レビュー第 4 巡 P1）ので、
             # reapprove のときは既に載っている。載っていなければここで載せる。
             commit_and_push_if_changed(pair['seed'], REL, 'Change metadata during publication')
@@ -113,7 +113,7 @@ def test_board_before_scheduled_time_preserves_diagnostics(tmp_path, isolated_ac
     pair, account, path = setup_pair(tmp_path, isolated_account_factory)
     # Approve a future posting and then change only the body; compare before/after due.
     path.write_text(path.read_text().replace('2026-09-09T08:00:00+09:00', '2026-09-10T08:00:00+09:00'))
-    assert run_thth(['approve', str(path)]).returncode == 0
+    assert approve_via_cli(str(path)).returncode == 0
     path.write_text(path.read_text().replace('BODY_A', 'BODY_B'))
     evidence = {}
     for hour in (6, 10):
