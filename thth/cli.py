@@ -840,11 +840,6 @@ def cmd_run(args) -> int:
     if not accounts_mod.token_exists(account_cfg):
         print(f"token が無いので実行しません: {args.account}", file=sys.stderr)
         return 2
-    # **投稿より先に、前回送れなかった収集を送り直す**（外部レビュー第 6 巡 P1-1）。
-    # 収集の push 失敗が `HEAD != @{u}` を残し、それが同期検査に阻まれて
-    # **投稿まで恒久的に止めていた**。ここで復旧させれば、同じ実行の中で投稿が再開する。
-    collect_mod.recover_pending(args.account, log=print)
-
     result = core.throw_once(args.account, production_flag=True, log=print)
 
     # **投稿のあとに必ず採る**（masaru 裁定 2026-09-10）。数は「読んだ時点の累計」
@@ -978,9 +973,11 @@ def cmd_board(args) -> int:
             token = row.get("token_state") or "?"
             if remaining is not None:
                 token += f"/残り{remaining:.0f}日"
+            pending = row.get("collect_pending") or 0
+            pending_note = f" **未送信の採取={pending}**" if pending else ""
             print(f"{row['account']}: project={row['project']} last_post={last_post} "
                   f"approved_waiting={row['approved_waiting']} type_mismatch={row['type_mismatch']} "
-                  f"inflight={inflight} token={token}")
+                  f"inflight={inflight} token={token}{pending_note}")
             # 指紋の 5 項目のどれが食い違って inflight が残ったか（外部レビュー
             # 第 3 巡・持ち越し項目 C）。人が止まった原因をファイルを開いて
             # 自分で探さずに済むように、board の 1 画面にそのまま出す。

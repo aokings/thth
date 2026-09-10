@@ -5,6 +5,7 @@ import datetime
 import os
 
 from . import accounts as accounts_mod
+from . import collect as collect_mod
 from . import core
 from . import inflight as inflight_mod
 from . import maintain as maintain_mod
@@ -289,6 +290,12 @@ def board_summary(now=None) -> dict:
             # 値（access_token）には触れない——残り日数と状態だけ。
             "token_state": token_row["state"],
             "token_remaining_days": token_row["remaining_days"],
+            # **まだ送れていない採取**（masaru 指示 2026-09-11: 失敗時の通知）。
+            # push に失敗すると commit を取り消してファイルに残すので、
+            # 未 push の commit は残らない（＝投稿は止まらない）。代わりに
+            # **送れていないことに気づく口がここになる**。
+            "collect_pending": len(collect_mod.pending_paths(
+                account_cfg.get("repo_dir"), account_cfg)),
         })
     # 「動いているのに古い」を見える形にする（設計 §3.2・2026-09-10 に VM が
     # 4 巡分古いまま 10 分ごとに回っていたのを見つけた）。取りに行かない

@@ -201,20 +201,20 @@ def test_返信0件の成功と取得失敗を区別する(tmp_path, isolated_ac
     assert again.reply_calls == [], "0 件だった刻みを取り直している"
 
 
-def test_pushに失敗しても復旧後に送り直して投稿が再開する(tmp_path, isolated_account_factory):
-    """外部レビュー第 6 巡 P1-1（統括が発注書で自分から疑っていた筋）。
 
-    収集は commit してから push する。push に失敗すると `HEAD != @{u}` のまま残り、
-    `sync_repo()` がそれを拒否する。結果、**採取も投稿も恒久的に止まる**——
-    origin が直っても、未 push の commit を送る経路がどこにも無かった。
+
+def test_pushに失敗しても未pushのcommitを残さない(tmp_path, isolated_account_factory):
+    """masaru 裁定 2026-09-11。**足して固めるのをやめ、状態そのものを作らない。**
+
+    第 6 巡・第 7 巡の P1 はどちらも「未 push の commit が残る」ことから出た。
+    push できなければ commit を取り消し、中身はファイルに残す。**未 push が
+    存在しないので、投稿は止まらない。**
     """
     import subprocess
     from pathlib import Path
 
     pair, account = _setup(tmp_path, isolated_account_factory,
                             posted_at="2026-09-10T10:00:00+09:00")
-
-    # origin を一時的に壊す
     hook = Path(pair["bare"]) / "hooks" / "pre-receive"
     hook.parent.mkdir(parents=True, exist_ok=True)
     hook.write_text("#!/bin/sh\nexit 1\n")
@@ -222,94 +222,48 @@ def test_pushに失敗しても復旧後に送り直して投稿が再開する(
 
     rc = collect_mod.run_collect(account["name"], adapter=FakeAdapter(), now=NOW,
                                   log=lambda _l: None)
-    assert rc == 1, "push 失敗が伝わっていない"
-    head = subprocess.run(["git", "-C", pair["work"], "rev-parse", "HEAD"],
-                           capture_output=True, text=True).stdout
-    up = subprocess.run(["git", "-C", pair["work"], "rev-parse", "@{u}"],
-                         capture_output=True, text=True).stdout
-    assert head != up, "未 push の commit が残っている前提が崩れている"
+    assert rc == 1
 
-    # origin を直す
+    def git(*a):
+        return subprocess.run(["git", "-C", pair["work"], *a],
+                               capture_output=True, text=True).stdout.strip()
+
+    assert git("rev-parse", "HEAD") == git("rev-parse", "@{u}"), \
+        "未 push の commit が残っている（投稿が止まる）"
+    assert _rows(pair["work"], "data/sns/insights/posts/POST1.ndjson"), "採取した中身が消えた"
+
+    # **投稿は止まらない**
+    from thth import writeback
+    synced, err, _sha = writeback.sync_repo(pair["work"])
+    assert synced, f"収集の失敗が同期を止めている: {err}"
+
+    # board が「未送信」として見せる
+    from thth import accounts as accounts_mod
+    cfg = accounts_mod.load_account(account["name"])
+    assert collect_mod.pending_paths(pair["work"], cfg), "未送信に気づく口が無い"
+
+
+def test_origin復旧後に次の実行が送り直す(tmp_path, isolated_account_factory):
+    import subprocess
+    from pathlib import Path
+
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    hook = Path(pair["bare"]) / "hooks" / "pre-receive"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    collect_mod.run_collect(account["name"], adapter=FakeAdapter(), now=NOW,
+                             log=lambda _l: None)
     hook.unlink()
 
     later = NOW + datetime.timedelta(hours=6)
-    rc2 = collect_mod.run_collect(account["name"], adapter=FakeAdapter(), now=later,
-                                   log=lambda _l: None)
+    rc = collect_mod.run_collect(account["name"], adapter=FakeAdapter(), now=later,
+                                  log=lambda _l: None)
+    assert rc == 0, "origin が直っても送り直していない"
 
-    assert rc2 == 0, "origin が直っても採取が再開しない"
-    head2 = subprocess.run(["git", "-C", pair["work"], "rev-parse", "HEAD"],
-                            capture_output=True, text=True).stdout
-    up2 = subprocess.run(["git", "-C", pair["work"], "rev-parse", "@{u}"],
-                          capture_output=True, text=True).stdout
-    assert head2 == up2, "未 push が解消していない（投稿も止まったまま）"
     in_origin = subprocess.run(["git", "-C", pair["bare"], "ls-tree", "-r", "--name-only", "main"],
                                 capture_output=True, text=True).stdout
-    assert "data/sns/insights/posts/POST1.ndjson" in in_origin, "収集結果が失われた"
-    # 同じ刻みを二重に記録していない
+    assert "data/sns/insights/posts/POST1.ndjson" in in_origin, "採取が origin に届いていない"
     rows = _rows(pair["work"], "data/sns/insights/posts/POST1.ndjson")
     assert [r["marks"] for r in rows] == [[1], [6]], rows
-
-
-def test_queueを触る未pushは自動で送らない(tmp_path, isolated_account_factory):
-    """公開の経路の fail-closed を弱めない。人を呼ぶ。"""
-    import subprocess
-    from pathlib import Path
-
-    pair, account = _setup(tmp_path, isolated_account_factory,
-                            posted_at="2026-09-10T10:00:00+09:00")
-    q = Path(pair["work"]) / "docs/sns/queue/b.md"
-    q.write_text("---\nthth: 1\n---\n\n## threads\n\n手で足した\n")
-    subprocess.run(["git", "-C", pair["work"], "add", "-A"], check=True,
-                    capture_output=True)
-    subprocess.run(["git", "-C", pair["work"], "commit", "-qm", "queue を触る未 push"],
-                    check=True, capture_output=True)
-
-    recovered, message = collect_mod.push_pending_collection(pair["work"],
-                                                              log=lambda _l: None)
-    assert recovered is False
-    assert "収集以外" in message, message
-
-
-def test_merge_commitを含む未pushは自動で送らない(tmp_path, isolated_account_factory):
-    """外部レビュー第 7 巡 P1-1。**統括の修正が作った公開の穴。**
-
-    `git log --name-only` は **merge commit そのものの変更を既定で出さない。**
-    `merge -s ours` のように、**マージの解決だけで内容が決まる** commit を作ると、
-    範囲内のどの非 merge commit にも queue の変更が現れないので、パス検査を素通りする。
-    その状態で送ると **remote 側の撤回が消えて、古い承認が復活する。**
-    """
-    import subprocess
-    from pathlib import Path
-
-    pair, account = _setup(tmp_path, isolated_account_factory,
-                            posted_at="2026-09-10T10:00:00+09:00")
-    work, seed = pair["work"], pair["seed"]
-
-    def git(repo, *args):
-        return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
-
-    # remote 側で承認を撤回して push
-    git(seed, "pull", "-q", "--ff-only")
-    q = Path(seed) / "docs/sns/queue/a.md"
-    q.write_text(q.read_text().replace("status: posted", "status: draft"))
-    git(seed, "add", "-A"); git(seed, "commit", "-qm", "撤回")
-    assert git(seed, "push", "-q").returncode == 0
-
-    # こちらは収集ぶんの未 push を作り、**マージの解決だけで remote の撤回を捨てる**
-    Path(work, "data/sns/insights/posts").mkdir(parents=True, exist_ok=True)
-    Path(work, "data/sns/insights/posts/X.ndjson").write_text('{"a":1}\n')
-    git(work, "add", "-A"); git(work, "commit", "-qm", "収集ぶん")
-    git(work, "fetch", "-q", "origin")
-    merged = git(work, "merge", "-s", "ours", "--no-edit", "origin/main")
-    assert merged.returncode == 0, merged.stderr
-
-    # 前提: `log --name-only` には queue が現れない
-    logged = git(work, "log", "@{u}..HEAD", "--name-only", "--pretty=format:").stdout
-    assert "docs/sns/queue/a.md" not in logged, "前提が崩れている"
-
-    recovered, message = collect_mod.push_pending_collection(work, log=lambda _l: None)
-
-    assert recovered is False, "撤回を消す merge を自動で送ってしまった"
-    assert "merge" in message, message
-    # remote の撤回は生きたまま
-    assert "status: draft" in git(pair["bare"], "show", "main:docs/sns/queue/a.md").stdout

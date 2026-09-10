@@ -43,143 +43,46 @@ from . import writeback
 AGE_MARKS_HOURS = [1, 6, 24, 72, 168]
 
 
-# **収集が書いてよい場所**（利用者 repo の中）。ここだけは、未 push の commit が
-# 残っていたら次回に送り直してよい。**queue（`docs/sns/queue/`）は含めない**——
-# あちらは公開の経路で、未 push の commit を自動で送るのは fail-closed を弱める。
-COLLECTION_PREFIXES = ("data/sns/",)
-
-
 def _git(repo_dir: str, args: list):
     import subprocess
     return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True, text=True)
 
 
-def push_pending_collection(repo_dir: str, *, log=print) -> tuple:
-    """未 push の commit が**収集ぶんだけ**なら送り直す（外部レビュー第 6 巡 P1-1）。
+def _undo_local_commit(repo_dir: str) -> bool:
+    """直前の commit を取り消して、中身を作業ツリーに戻す（`reset --soft`）。
 
-    **なぜ要るか。** 収集は commit してから push する。push に失敗すると
-    `HEAD != @{u}` のまま残り、`writeback.sync_repo()` がそれを拒否する。
-    その結果——
+    **収集は、未 push の commit を一度も残さない**（masaru 裁定 2026-09-11）。
 
-      - 次回以降の収集も止まる（同期できないので）
-      - **予約投稿も止まる**（同じ clone を使うので）
-      - origin が復旧しても、**未 push の commit を送る経路がどこにも無い**
+    第 6 巡・第 7 巡の P1 は、どちらもここから出た。push に失敗すると
+    `HEAD != @{u}` が残り、`sync_repo()` がそれを拒否して**採取も投稿も止まる**。
+    第 6 巡ではそれを「自動で送り直す」機構で塞いだが、**その機構が第 7 巡の
+    公開の穴を作った**（merge を見落として撤回を消す）。
 
-    採取の失敗が投稿を恒久的に止める、という形になっていた。実際に外部レビューが
-    再現した（origin を一時的に壊し、直したあとも exit 2 が続く）。
-
-    **直し方の線引き。** 「未 push があっても通す」にはしない——それは公開側の
-    fail-closed を弱める。**未 push の commit が触ったパスを全部見て、
-    `data/sns/` の下だけだったときに限り**送り直す。queue を触る未 push の commit
-    （書き戻しが中断した等）が 1 つでも混ざっていれば、**送らずに人を呼ぶ**。
-
-    戻り値 `(送り直したか, 説明)`。
+    **足して固めるのをやめ、状態そのものを作らない形にする。** push できなければ
+    commit を取り消す。中身はファイルに残るので、次の実行が commit し直す。
+    未 push が存在しないので、投稿は止まらない。rebase もしないので、
+    merge の穴も stage の問題も起きない。
     """
-    head = _git(repo_dir, ["rev-parse", "HEAD"])
-    upstream = _git(repo_dir, ["rev-parse", "@{u}"])
-    if head.returncode != 0 or upstream.returncode != 0:
-        return False, ""
-    if head.stdout.strip() == upstream.stdout.strip():
-        return False, ""          # 未 push は無い
-
-    ok, why = _only_collection_ahead(repo_dir)
-    if not ok:
-        return False, why
-
-    fetch = _git(repo_dir, ["fetch", "origin"])
-    if fetch.returncode != 0:
-        return False, "fetch に失敗しました（origin にまだ届きません）"
-
-    # fetch で remote が進んでいたら、条件をもう一度見る（間に何か入っている場合）。
-    ok, why = _only_collection_ahead(repo_dir)
-    if not ok:
-        return False, why
-
-    # **stage 状態を守る**（外部レビュー第 7 巡 P2-4）。この経路にも rebase がある
-    # のに、書き戻し側だけ直して**ここには入れていなかった**。
-    saved_tree, staged_paths = writeback.save_index(repo_dir)
-    before_pull = _git(repo_dir, ["rev-parse", "HEAD"]).stdout.strip()
-    try:
-        rebase = _git(repo_dir, ["pull", "--rebase", "--autostash"])
-    finally:
-        writeback.restore_index(repo_dir, saved_tree, staged_paths,
-                                 since=before_pull, log=log)
-    if rebase.returncode != 0:
-        return False, "未 push の収集を載せ直せませんでした: " + redact_mod.redact(rebase.stderr)
-
-    # **載せ直したあとに、もう一度確かめてから送る。** rebase が何を作ったかは
-    # 事前の検査では分からない（第 7 巡 P1-1）。
-    ok, why = _only_collection_ahead(repo_dir)
-    if not ok:
-        return False, ("載せ直した結果が収集ぶんだけになりませんでした。送りません: " + why)
-
-    push = _git(repo_dir, ["push"])
-    if push.returncode != 0:
-        return False, "未 push の収集をまだ送れません: " + redact_mod.redact(push.stderr)
-    log("前回送れなかった収集を送り直しました")
-    return True, ""
+    return _git(repo_dir, ["reset", "--soft", "HEAD~1"]).returncode == 0
 
 
-def _only_collection_ahead(repo_dir: str) -> tuple:
-    """未 push の中身が**収集ぶんだけ**かを確かめる `(よいか, 理由)`。
+def pending_paths(repo_dir: str, account_cfg: dict) -> list:
+    """**まだ送れていない収集ファイル**（作業ツリーで変わっているもの）。
 
-    **`git log --name-only` は使わない**（外部レビュー第 7 巡 P1-1）。
-    **merge commit は、既定では変更したファイルを 1 つも出さない。** そのため
-    「何も触っていない commit」に見え、queue の撤回を含む merge がパス検査を
-    素通りした。その状態で rebase すると**撤回が落ち、古い承認が復活して公開された**。
-
-    直し方は 2 つ重ねる:
-
-    1. **merge commit があれば、そもそも自動で送らない**（人を呼ぶ）。
-    2. パスは `git diff --name-only @{u}...HEAD`（**3 点**＝分岐点から HEAD まで）で
-       取る。merge の有無に関わらず、こちら側で変わったファイルが全部出る。
+    `thth board` がこれを出す。healthchecks を入れるまで、**採取が送れていない
+    ことに気づく唯一の口**（masaru 指示 2026-09-11: 失敗時の通知）。
     """
-    merges = _git(repo_dir, ["rev-list", "--merges", "@{u}..HEAD"])
-    if merges.returncode != 0:
-        return False, "未 push の commit を読めません"
-    if merges.stdout.strip():
-        return False, ("未 push に merge commit が含まれるので、自動では送りません。"
-                       "人が確認してください。")
-
-    names = _git(repo_dir, ["diff", "--name-only", "@{u}...HEAD"])
-    if names.returncode != 0:
-        return False, "未 push の commit が何を触ったか読めません"
-    touched = {line.strip() for line in names.stdout.splitlines() if line.strip()}
-    if not touched:
-        return True, ""
-    outside = sorted(p for p in touched
-                     if not any(p.startswith(prefix) for prefix in COLLECTION_PREFIXES))
-    if outside:
-        return False, ("未 push の commit が収集以外のファイルを含むので、自動では送りません"
-                       f"（{', '.join(outside[:3])}）。人が確認してください。")
-    return True, ""
-
-
-def recover_pending(account_name: str, *, log=print) -> None:
-    """`thth run` が**投稿の前に**呼ぶ。送り直せるものがあれば送る。
-
-    投稿より先に呼ぶのは、**収集の取り残しが投稿を止めたままにしない**ため。
-    ロックは投稿と同じ clone ロックを取る（取れなければ何もしない）。
-    """
-    from . import lock as lock_mod
-    try:
-        account_cfg = accounts_mod.load_account(account_name)
-    except accounts_mod.AccountError:
-        return
-    repo_dir = account_cfg.get("repo_dir")
     if not repo_dir or not os.path.isdir(repo_dir):
-        return
-    lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
-    try:
-        lock.acquire()
-    except lock_mod.LockBusy:
-        return
-    try:
-        recovered, message = push_pending_collection(repo_dir, log=log)
-        if message and not recovered:
-            log("未 push の収集: " + message)
-    finally:
-        lock.release()
+        return []
+    status = _git(repo_dir, ["status", "--porcelain", "--", "data/sns"])
+    if status.returncode != 0:
+        return []
+    out = []
+    for line in status.stdout.splitlines():
+        path = line[3:].strip()
+        if path:
+            out.append(path)
+    return sorted(out)
 
 
 def _read_ndjson(path: str) -> list:
@@ -408,12 +311,6 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print) -> int:
         return 0  # 次の実行（10 分後）で採る
 
     try:
-        # **同期を試す前に、前回送れなかった収集を送り直す**（第 6 巡 P1-1）。
-        # これが無いと、一度 push に失敗しただけで採取も投稿も永久に止まる。
-        recovered, recover_msg = push_pending_collection(repo_dir, log=log)
-        if recover_msg and not recovered:
-            log("未 push の収集: " + recover_msg)
-
         synced, sync_err, _sha = writeback.sync_repo(repo_dir)
         if not synced:
             log(f"repo を同期できないので採取しません: {sync_err}")
@@ -428,7 +325,16 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print) -> int:
                 repo_dir, rel_path=rel,
                 message=f"収集: {len(rel)} ファイル（{account_name}）")
             if not pushed:
+                # **未 push の commit を残さない。** 残すと `HEAD != @{u}` になり、
+                # 次回以降の同期検査が投稿ごと止める（第 6 巡 P1-1）。中身は
+                # ファイルに残るので、次の実行が commit し直す。
+                undone = _undo_local_commit(repo_dir)
                 log(f"採取したものを push できませんでした: {push_err}")
+                log("送れていない採取はファイルに残しました"
+                    + ("（commit は取り消したので投稿は止まりません）。"
+                       if undone else
+                       "。**commit を取り消せませんでした。投稿が止まる可能性があります。**")
+                    + " `thth board` の 未送信 に出ます。次の実行で送り直します。")
                 return 1
             log(f"採取しました: {len(rel)} ファイル（投稿 {result['posts']} 本を見ました）")
     finally:
