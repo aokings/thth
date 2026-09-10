@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# 手元（Mac）から VM の `thth` を呼ぶ薄いラッパ（masaru 指摘 2026-09-10）。
+#
+# **なぜ要るか。** 各プロジェクトのセッションは `ssh wt 'PATH=...; thth ...'` と
+# 打っていた。安全で特定の作業をするために、いちばん鈍器な道具（生の ssh）を
+# 持たせていたことになる。実際、権限判定に何度も弾かれ、ループの形では止められた。
+# **道具を特定にすれば、許可も特定にできる**（`Bash(thth:*)` の 1 行で済む）。
+#
+# 引数はそのまま VM の `thth` に渡す。手元のシェルに展開させない
+# （VM 側のパスは手元に存在しないので、glob は使わずディレクトリを渡すこと）。
+# 秘密を対話で入れるもの（`token set`・`auth`）だけ tty を割り当てる——tty が
+# 無いと getpass がエコーを止められず、**手元の画面にトークンが出る**。
+set -euo pipefail
+
+HOST="${THTH_SSH_HOST:-wt}"
+REMOTE='PATH="$HOME/.local/bin:$PATH"; exec thth'
+for arg in "$@"; do
+  REMOTE+=" $(printf '%q' "$arg")"
+done
+
+# `set -u` の下で空配列を展開すると古い bash（macOS 既定の 3.2）で落ちるので、
+# 文字列で持つ（引数は 1 つだけなので分割の心配が無い）。
+TTY_FLAG=""
+case "${1:-} ${2:-}" in
+  "token set"|"auth "*) TTY_FLAG="-t" ;;
+esac
+
+if [ -n "$TTY_FLAG" ]; then
+  exec ssh -t "$HOST" "$REMOTE"
+fi
+exec ssh "$HOST" "$REMOTE"

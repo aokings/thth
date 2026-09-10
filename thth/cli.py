@@ -38,7 +38,7 @@ def cmd_lint(args) -> int:
     exit code は**全体**で決まる（1 本でも実エラーがあれば非ゼロ）。警告（450 字超）
     では落とさない。
     """
-    paths = args.file if isinstance(args.file, list) else [args.file]
+    paths, _note = _expand_targets(args.file, only_draft=False)
     rows, any_error = [], False
     for path in paths:
         messages = lint_mod.lint_file(path)
@@ -74,6 +74,41 @@ def cmd_preview(args) -> int:
         return 0
     sys.stdout.write(section)
     return 0
+
+
+def _expand_targets(files, *, only_draft: bool) -> tuple:
+    """ファイルとディレクトリの混在を受けて、対象のファイル一覧に展開する。
+
+    **ディレクトリを受けられるようにした**（kopicha セッション指摘 2026-09-10）。
+    手元（Mac）から VM の thth を呼ぶとき、`*.md` は**手元のシェルが展開しようと
+    して失敗する**（VM 側のパスは手元に存在しない）。glob を使わずに済むように
+    ディレクトリそのものを受ける。
+
+    `only_draft=True`（`thth approve`）のときは、ディレクトリから拾うのは
+    `status: draft` のものだけ——「下書きを全部承認する」が自然な意味だから。
+    **ファイルを名指しで渡した場合は絞らない**（承認済みに `--by` を足し直す用途が
+    ある）。何を外したかは呼び出し側が述べる。
+    """
+    out, skipped = [], 0
+    for item in files if isinstance(files, list) else [files]:
+        if not os.path.isdir(item):
+            out.append(item)
+            continue
+        for name in sorted(os.listdir(item)):
+            if not name.endswith(".md"):
+                continue
+            path = os.path.join(item, name)
+            if only_draft:
+                try:
+                    if queuefile.parse(path).front_matter.get("status") != "draft":
+                        skipped += 1
+                        continue
+                except OSError:
+                    continue
+            out.append(path)
+    note = (f"（ディレクトリから {skipped} 本を対象外にしました: status が draft ではない）"
+            if skipped else "")
+    return out, note
 
 
 def _prepare_one(path: str):
@@ -170,7 +205,10 @@ def cmd_approve(args) -> int:
     `writeback.sync_repo()` を通す。以前は「承認の前に VM で git pull が要る」ことが
     どこにも書いていなかった。手順を文書に足すのではなく、道具の側でやる。
     """
-    paths = args.file if isinstance(args.file, list) else [args.file]
+    paths, note = _expand_targets(args.file, only_draft=True)
+    if not paths:
+        print(f"承認できるものがありません{note}", file=sys.stderr)
+        return 1
 
     repos = {}
     for path in paths:
@@ -213,7 +251,7 @@ def cmd_approve(args) -> int:
         bundle = approval_mod.compute_bundle_digest([one["approved_sha"] for one in prepared])
 
         if not args.confirm:
-            _show_first_stage(prepared, bundle, as_json=args.json)
+            _show_first_stage(prepared, bundle, as_json=args.json, note=note)
             return 1
         if args.confirm != bundle:
             print(f"digest が一致しないので承認しません（表示した本文と中身が違います）。"
@@ -274,7 +312,7 @@ def cmd_approve(args) -> int:
     return 0
 
 
-def _show_first_stage(prepared: list, bundle: str, *, as_json: bool) -> None:
+def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str = "") -> None:
     """一段目: **出す本文をすべて全文表示する**。何も書き換えない。"""
     if as_json:
         _print_json({"approved": False, "count": len(prepared), "bundle_digest": bundle,
@@ -285,6 +323,8 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool) -> None:
                                 "digest": one["digest"]} for one in prepared]})
         return
     print(f"承認しません（確認の一段目です）: {len(prepared)} 本")
+    if note:
+        print(f"  {note}")
     for one in prepared:
         print("")
         print(f"=== {one['path']}")
@@ -667,7 +707,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     p_lint = sub.add_parser("lint", help="front-matter の形式・文字数等を検査する")
-    p_lint.add_argument("file", nargs="+")
+    p_lint.add_argument("file", nargs="+", help="ファイルでもディレクトリでも可")
     p_lint.add_argument("--json", action="store_true")
     p_lint.set_defaults(func=cmd_lint)
 
@@ -679,7 +719,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_approve = sub.add_parser(
         "approve",
         help="本文を見せて（一段目）、digest を渡すと承認する（二段目）")
-    p_approve.add_argument("file", nargs="+")
+    p_approve.add_argument("file", nargs="+",
+                           help="ファイルでもディレクトリでも可（ディレクトリなら draft の .md をまとめて）")
     p_approve.add_argument("--json", action="store_true")
     p_approve.add_argument("--confirm", default=None,
                            help="一段目が表示した digest。これが無いと承認しない")
