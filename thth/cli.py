@@ -484,7 +484,8 @@ def cmd_posts(args) -> int:
         return 0
     for post in posts:
         via = f"THTH（{post['file']}）" if post["via_thth"] else "**外で出したもの**"
-        print(f"{post['timestamp']}  {via}")
+        topic = f"  [{post['topic']}]" if post.get("topic") else "  [トピック無し]"
+        print(f"{post['timestamp']}{topic}  {via}")
         print(f"  id       : {post['id']}")
         print(f"  permalink: {post['permalink']}")
         if post.get("text"):
@@ -493,6 +494,33 @@ def cmd_posts(args) -> int:
         print("")
     outside = sum(1 for p in posts if not p["via_thth"])
     print(f"—— {len(posts)} 件（うち THTH を通していないもの {outside} 件）")
+    return 0
+
+
+def cmd_topics(args) -> int:
+    """`thth topics <account>`: トピック別にどれだけ見られたかを並べる（読むだけ）。
+
+    **合ったトピックか**（トピックごとの中央値）と**刺さったポストか**（同じ
+    トピックの中の散らばり）を分けて見るための口。
+    """
+    result = account_report_mod.topic_performance(args.account, limit=args.limit)
+    if args.json:
+        _print_json(result)
+        return 0 if not result.get("error") else 1
+    if result.get("error"):
+        print(f"{args.account}: {result['error']}", file=sys.stderr)
+        return 1
+    if not result["topics"]:
+        print("投稿がありません")
+        return 0
+    for row in result["topics"]:
+        span = ("—" if row["views_min"] is None
+                else f"{row['views_min']}〜{row['views_max']}")
+        print(f"[{row['topic']}]  {row['posts']} 本  "
+              f"views 中央値={row['views_median']}（{span}）  いいね計={row['likes_total']}")
+        for item in row["items"]:
+            print(f"    views={str(item['views']):>6}  likes={str(item['likes']):>3}  "
+                  f"{item['timestamp'][:10]}  {item['head']}")
     return 0
 
 
@@ -775,6 +803,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_posts.add_argument("--limit", type=int, default=25)
     p_posts.add_argument("--json", action="store_true")
     p_posts.set_defaults(func=cmd_posts)
+
+    p_topics = sub.add_parser(
+        "topics", help="トピック別にどれだけ見られたかを並べる（読むだけ）")
+    p_topics.add_argument("account")
+    p_topics.add_argument("--limit", type=int, default=25)
+    p_topics.add_argument("--json", action="store_true")
+    p_topics.set_defaults(func=cmd_topics)
 
     p_queue = sub.add_parser("queue", help="draft/approved/posted/型外 と次に出るもの")
     p_queue.add_argument("account", nargs="?")

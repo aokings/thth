@@ -157,7 +157,7 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
             by_post_id[post_id] = os.path.basename(qf.path)
 
     rows, err = fetch_posts(account_cfg, accounts_mod.load_token(account_cfg),
-                             limit=limit, fields="id,permalink,timestamp,text")
+                             limit=limit, fields="id,permalink,timestamp,text,topic_tag")
     if rows is None:
         return {"account": account_name, "error": err, "posts": []}
 
@@ -169,10 +169,72 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
             "timestamp": row.get("timestamp"),
             "permalink": row.get("permalink"),
             "text": row.get("text"),
+            "topic": row.get("topic_tag"),
             "via_thth": post_id in by_post_id,
             "file": by_post_id.get(post_id),
         })
     return {"account": account_name, "error": None, "posts": posts}
+
+
+def topic_performance(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
+    """**トピック別に、実際にどれだけ見られたか**（masaru 指摘 2026-09-10）。
+
+    > いかに合ったトピックに刺さるポストを落とすか、です。
+
+    その 2 つを分けて見るための口。**合っているか**＝トピックごとの中央値、
+    **刺さったか**＝同じトピックの中での散らばり（最小〜最大）。
+
+    実測の裏付け（2026-09-10）: asmon はフォロワー 0 で `中学受験` を付けた投稿が
+    202〜574 views、nigamilab のトピック無しは 1 view。**届ける経路はフォロワー
+    ではなくトピック**。だからトピックは「付けるかどうか」ではなく
+    「どれを付けるか」の問題になる。
+
+    読み取りだけ（`threads_basic` ＋ `threads_manage_insights`）。投稿ごとに
+    1 回ずつ数を読むので、`limit` 本ぶんの呼び出しが走る（手で叩く口なので可）。
+    """
+    try:
+        account_cfg = accounts_mod.load_account(account_name)
+    except accounts_mod.AccountError as e:
+        return {"account": account_name, "error": str(e), "topics": []}
+    token = accounts_mod.load_token(account_cfg)
+    rows, err = fetch_posts(account_cfg, token, limit=limit,
+                             fields="id,permalink,timestamp,text,topic_tag")
+    if rows is None:
+        return {"account": account_name, "error": err, "topics": []}
+
+    adapter = core._default_adapter_factory(account_cfg, token)
+    by_topic: dict = {}
+    for row in rows:
+        post_id = row.get("id")
+        if not post_id:
+            continue
+        try:
+            metrics = adapter.insights(post_id)
+        except Exception as e:
+            metrics = {"error": redact_mod.redact(str(e))}
+        views = metrics.get("views")
+        topic = row.get("topic_tag") or "(トピック無し)"
+        by_topic.setdefault(topic, []).append({
+            "id": post_id, "timestamp": row.get("timestamp"),
+            "views": views, "likes": metrics.get("likes"),
+            "replies": metrics.get("replies"),
+            "head": (row.get("text") or "").strip().split("\n", 1)[0][:40],
+        })
+
+    topics = []
+    for topic, posts in by_topic.items():
+        seen = sorted(p["views"] for p in posts if isinstance(p["views"], int))
+        topics.append({
+            "topic": topic,
+            "posts": len(posts),
+            "views_median": seen[len(seen) // 2] if seen else None,
+            "views_min": seen[0] if seen else None,
+            "views_max": seen[-1] if seen else None,
+            "likes_total": sum(p["likes"] for p in posts if isinstance(p["likes"], int)),
+            "items": sorted(posts, key=lambda p: (p["views"] is None, -(p["views"] or 0))),
+        })
+    topics.sort(key=lambda t: (t["views_median"] is None, -(t["views_median"] or 0)))
+    return {"account": account_name, "error": None, "topics": topics}
 
 
 def _remote_posts(account_cfg: dict, token: dict | None, known_post_ids: set) -> dict:

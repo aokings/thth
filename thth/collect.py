@@ -34,6 +34,7 @@ import os
 from . import accounts as accounts_mod
 from . import core
 from . import jst
+from . import queuefile
 from . import redact as redact_mod
 from . import writeback
 
@@ -112,6 +113,7 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
             continue
         posts_seen += 1
 
+        section = queuefile.extract_section(qf.body, account_cfg["media"])
         insight_path = os.path.join(insights_dir, f"{post_id}.ndjson")
         marks = due_marks(age_hours, _read_ndjson(insight_path))
         if not marks:
@@ -127,6 +129,15 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
             _append_ndjson(insight_path, [{
                 "post_id": post_id,
                 "file": os.path.basename(qf.path),
+                # **トピックを一緒に残す**（masaru 指摘 2026-09-10）。asmon は
+                # フォロワー 0 で `中学受験` を付けた投稿が 200〜574 views、
+                # nigamilab のトピック無しは 1 view。**届ける経路はフォロワー
+                # ではなくトピック**なので、数と一緒に記録しないと後から
+                # 突き合わせられない。front-matter から取るので API は増やさない。
+                "topic": queuefile.normalize_topic(fm.get("topic")),
+                "reply_to": fm.get("reply_to") or None,
+                "text_length": len(section) if section is not None else None,
+                "has_link": ("http://" in (section or "")) or ("https://" in (section or "")),
                 "collected_at": jst.iso(now),
                 "posted_at": posted_at_raw,
                 "age_hours": round(age_hours, 2),
