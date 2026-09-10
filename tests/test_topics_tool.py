@@ -76,3 +76,52 @@ def test_noteはbyを省くと記録しない(thth_root):
     result = run_thth(["topics", "--note", "何か", "--verdict", "alive"])
     assert result.returncode == 1
     assert "--by" in result.stderr
+
+
+# --- 型ごとの学習（masaru 提案 2026-09-10「回していくうちに成功が蓄積されていく」）
+
+def test_型ごとに実測がまとまる(thth_root):
+    """**個々の語の当たり外れは次の語選びに使えないが、型ごとの傾向なら使える。**"""
+    topics_mod.record("中学受験", verdict="alive", kind="行動", by="テスト")
+    topics_mod.record("学校説明会", verdict="alive", kind="行動", by="テスト")
+    topics_mod.record("精製", verdict="mismatch", kind="専門語", by="テスト")
+    topics_mod.record("六大茶類", verdict="mismatch", kind="専門語", by="テスト")
+
+    rows = topics_mod.learned({"中学受験": [574, 202, 368],
+                               "学校説明会": [400],
+                               "精製": [3],
+                               "六大茶類": [5]})
+    by_kind = {r["kind"]: r for r in rows}
+
+    assert by_kind["行動"]["topics"] == 2
+    assert by_kind["行動"]["posts_measured"] == 4
+    # 4 本のときは上側の中央値（実際に観測した値をそのまま出す・補間しない）
+    assert by_kind["行動"]["views_median"] == 400
+    assert by_kind["専門語"]["views_median"] == 5
+    assert by_kind["専門語"]["mismatch"] == 2
+    # 効いている型が先頭に来る
+    assert rows[0]["kind"] == "行動", [r["kind"] for r in rows]
+
+
+def test_実測がまだ無い型も数える(thth_root):
+    """「試したが数はこれから」が分かる（0 と混ぜない）。"""
+    topics_mod.record("チョコレート", verdict="alive", kind="一般名詞", by="テスト")
+    rows = topics_mod.learned({})
+    assert rows[0]["topics"] == 1
+    assert rows[0]["views_median"] is None
+    assert rows[0]["posts_measured"] == 0
+
+
+def test_知らない型は受け付けない(thth_root):
+    import pytest
+    with pytest.raises(ValueError):
+        topics_mod.record("何か", verdict="alive", kind="でたらめ", by="テスト")
+
+
+def test_承認の一段目に型も出る(isolated_account):
+    topics_mod.record("精製", verdict="mismatch", kind="専門語",
+                       audience="レアアース・重加工", by="テスト")
+    path = write_queue_file(isolated_account["queue_dir"], "a.md", fm_overrides={
+        "status": "draft", "approved_sha": None, "topic": "精製"})
+    first = run_thth(["approve", path])
+    assert "［専門語］" in first.stdout, first.stdout

@@ -179,6 +179,23 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
     return {"account": account_name, "error": None, "posts": posts}
 
 
+def measured_views_all_accounts() -> dict:
+    """全アカウントの実測（24 時間の刻み）を `{トピック: [views, ...]}` にまとめる。
+
+    トピックの知識は**プロジェクトを跨いで共有する**（`精製` が鉱物の場である
+    ことは誰にとっても同じ）。だから型ごとの学習も全アカウントを合わせて数える。
+    """
+    out: dict = {}
+    for name in accounts_mod.list_account_names():
+        try:
+            account_cfg = accounts_mod.load_account(name)
+        except accounts_mod.AccountError:
+            continue
+        for topic, views in _measured_views_by_topic(account_cfg.get("repo_dir") or "").items():
+            out.setdefault(topic, []).extend(views)
+    return out
+
+
 def topic_plan(account_name: str, *, now=None) -> dict:
     """**これから出す本数が、どのトピックにぶら下がっているか**（masaru 指摘 2026-09-10）。
 

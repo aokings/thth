@@ -524,9 +524,13 @@ def cmd_topics(args) -> int:
         if not by:
             print("--by を付けてください（誰が確かめたかを残します）", file=sys.stderr)
             return 1
-        row = topics_mod.record(args.note, verdict=args.verdict,
-                                 audience=args.audience or "", by=by,
-                                 note=args.reason or "")
+        try:
+            row = topics_mod.record(args.note, verdict=args.verdict,
+                                     audience=args.audience or "", by=by,
+                                     kind=args.kind, note=args.reason or "")
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 1
         if args.json:
             _print_json(row)
         else:
@@ -534,8 +538,38 @@ def cmd_topics(args) -> int:
                   + (f"（{row['audience']}）" if row["audience"] else ""))
         return 0
 
+    if args.advise:
+        # **書き始める前に LLM が読む口**（masaru 提案 2026-09-10）。
+        # 「それが thth から接続している llm に対して供給されるので、ユーザは
+        # 意識しないで最適なトピック選択をしてもらえる／結果の fb が入ってくるから
+        # どんどん最適化される」。
+        # 人向けの表ではなく、**選ぶために必要なことだけ**を上から順に置く。
+        return _advise(args.account, as_json=args.json)
+
+    if args.learned:
+        rows = topics_mod.learned(account_report_mod.measured_views_all_accounts())
+        if args.json:
+            _print_json(rows)
+            return 0
+        if not rows:
+            print("まだ何も記録がありません（thth topics --note で下調べを残してください）")
+            return 0
+        print("型ごとに何が起きたか（全アカウント合算・24 時間時点の実測）")
+        for row in rows:
+            measured = ("実測まだ" if row["views_median"] is None
+                        else f"views 中央値={row['views_median']}"
+                             f"（{row['views_min']}〜{row['views_max']}・{row['posts_measured']} 本）")
+            print(f"［{row['kind']}］{row['topics']} 語  {measured}")
+            print(f"    合っている {row['alive']}・不一致 {row['mismatch']}・"
+                  f"人がいない {row['dead']}・未確認 {row['unknown']}")
+            print(f"    例: {'・'.join(row['examples'])}")
+            if row["description"]:
+                print(f"    {row['description']}")
+        return 0
+
     if not args.account:
-        print("account を指定してください（または --note <トピック>）", file=sys.stderr)
+        print("account を指定してください（または --note <トピック> / --learned）",
+              file=sys.stderr)
         return 2
 
     if args.plan:
@@ -584,6 +618,94 @@ def cmd_topics(args) -> int:
         for item in row["items"]:
             print(f"    views={str(item['views']):>6}  likes={str(item['likes']):>3}  "
                   f"{item['timestamp'][:10]}  {item['head']}")
+    return 0
+
+
+def _advise(account_name: str | None, *, as_json: bool) -> int:
+    """トピックを選ぶために必要なことを、上から順に 1 画面で出す。
+
+    **これを読めば、使い方文書を読まなくてもトピックを選べる**ことを目標にする。
+    実測が溜まるほど、上の「使える語」が具体的になる。
+    """
+    measured = account_report_mod.measured_views_all_accounts()
+    checks = topics_mod.latest()
+    kinds = topics_mod.learned(measured)
+
+    def views_of(topic):
+        seen = sorted(measured.get(topic, []))
+        return seen[len(seen) // 2] if seen else None
+
+    proven, avoid, unproven = [], [], []
+    for topic, row in checks.items():
+        item = {"topic": topic, "kind": row.get("kind"), "verdict": row["verdict"],
+                "audience": row.get("audience") or None,
+                "views_median": views_of(topic), "posts": len(measured.get(topic, []))}
+        if row["verdict"] == "alive":
+            proven.append(item)
+        elif row["verdict"] in ("mismatch", "dead"):
+            avoid.append(item)
+        else:
+            unproven.append(item)
+    proven.sort(key=lambda r: (r["views_median"] is None, -(r["views_median"] or 0)))
+
+    plan = (account_report_mod.topic_plan(account_name)["topics"]
+            if account_name else [])
+    unchecked = [r for r in plan if r["verdict"] == "unknown" and r["planned"]]
+
+    if as_json:
+        _print_json({"account": account_name, "proven": proven, "avoid": avoid,
+                     "unproven": unproven, "kinds": kinds, "unchecked_in_queue": unchecked,
+                     "check_url": "https://www.threads.com/search?q=<トピック>&filter=topic"})
+        return 0
+
+    print("■ トピックを選ぶ前に（THTH が知っていること）")
+    print("")
+    print("【使ってよい語】確かめ済み・合っている")
+    if proven:
+        for r in proven:
+            m = ("実測まだ" if r["views_median"] is None
+                 else f"24h views 中央値 {r['views_median']}（{r['posts']} 本）")
+            print(f"  {r['topic']}［{r['kind'] or '型なし'}］ {m}"
+                  + (f" — {r['audience']}" if r["audience"] else ""))
+    else:
+        print("  （まだありません）")
+    print("")
+    print("【避ける語】人はいるが別の場所・または誰もいない")
+    if avoid:
+        for r in avoid:
+            label = "不一致" if r["verdict"] == "mismatch" else "人がいない"
+            print(f"  {r['topic']}［{r['kind'] or '型なし'}］ {label}"
+                  + (f" — {r['audience']}" if r["audience"] else ""))
+    else:
+        print("  （まだありません）")
+    print("")
+    print("【型ごとの傾向】自分たちの実測から")
+    for row in kinds:
+        m = ("実測まだ" if row["views_median"] is None
+             else f"views 中央値 {row['views_median']}（{row['posts_measured']} 本）")
+        print(f"  ［{row['kind']}］{row['topics']} 語  {m}"
+              f"  合っている {row['alive']}・不一致 {row['mismatch']}")
+    if not kinds:
+        print("  （まだありません）")
+    if unchecked:
+        print("")
+        print(f"【いまの queue で未確認】{account_name}")
+        for r in unchecked[:12]:
+            print(f"  {r['topic']} — これから {r['planned']} 本")
+    print("")
+    print("【選び方】")
+    print("  1. 上の「使ってよい語」から選ぶのが最も確実。**散らすより寄せる。**")
+    print("  2. 無ければ、人がいまやっている行動の名前か日常の一般名詞を選ぶ。")
+    print("     狭い専門語は精度が上がるのではなく**人がいなくなる**。")
+    print("  3. 自分で作った語・「〜と繋がりたい」型は Threads では場になっていない。")
+    print("  4. 漢語の専門語は中国語圏の場になりやすい。")
+    print("  5. 新しい語を使うなら、**先にログイン状態のブラウザで確かめる**:")
+    print("       https://www.threads.com/search?q=<トピック>&filter=topic")
+    print("     見るのは「何件あるか」ではなく**誰がいるか**。")
+    print("  6. 確かめたら残す:")
+    print("       thth topics --note <語> --verdict alive|mismatch|dead \\")
+    print("         --kind 行動|一般名詞|抽象|専門語|固有名|つながり型|自作 \\")
+    print("         --audience \"誰がいたか\" --by \"<あなた>\"")
     return 0
 
 
@@ -879,6 +1001,12 @@ def build_parser() -> argparse.ArgumentParser:
                           help="--note と併用: alive=合っている / mismatch=別の業界・言語 / dead=人がいない")
     p_topics.add_argument("--audience", default=None,
                           help="--note と併用: 誰がいたか（例「レアアース・重加工」）")
+    p_topics.add_argument("--kind", default=None, choices=list(topics_mod.KINDS),
+                          help="--note と併用: トピックの型（回すほど型ごとの傾向が溜まる）")
+    p_topics.add_argument("--advise", action="store_true",
+                          help="書き始める前に読む: 使ってよい語・避ける語・型の傾向・選び方")
+    p_topics.add_argument("--learned", action="store_true",
+                          help="型ごとに何が起きたか（全アカウント合算・実測つき）")
     p_topics.add_argument("--reason", default=None, help="--note と併用: 補足")
     p_topics.add_argument("--by", default=None, help="--note と併用: 誰が確かめたか")
     p_topics.add_argument("--limit", type=int, default=25)
