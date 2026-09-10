@@ -27,7 +27,10 @@ from . import accounts as accounts_mod
 from . import core
 from . import inflight as inflight_mod
 from . import jst
+from . import jst as jst_mod
 from . import maintain as maintain_mod
+from . import queuefile
+from . import topics as topics_mod
 from . import redact as redact_mod
 from . import select as select_mod
 from . import writeback as writeback_mod
@@ -174,6 +177,90 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
             "file": by_post_id.get(post_id),
         })
     return {"account": account_name, "error": None, "posts": posts}
+
+
+def topic_plan(account_name: str, *, now=None) -> dict:
+    """**これから出す本数が、どのトピックにぶら下がっているか**（masaru 指摘 2026-09-10）。
+
+    > とにかくトピックが threads 新参者にとってはとても重要だと考えています
+
+    フォロワーが 0 でも `中学受験` で 202〜574 views 取れている一方、
+    トピック無し・弱いトピックは 1 view。**新参者にとってトピックは唯一の入口**
+    なので、「何本がどのトピックに賭かっているか」と「そのトピックを確かめたか」を
+    1 枚で出す。読むだけ。
+
+    `checked` は `thth.topics`（下調べの記録）から。`views_median` は
+    `data/sns/insights/posts/*.ndjson`（実測）から——**同じ経過時間で比べる**ため、
+    24 時間の刻みを満たした行だけを使う。
+    """
+    now = now if now is not None else jst_mod.now_jst()
+    try:
+        account_cfg = accounts_mod.load_account(account_name)
+    except accounts_mod.AccountError as e:
+        return {"account": account_name, "error": str(e), "topics": []}
+
+    repo_dir = account_cfg.get("repo_dir") or ""
+    files = core.list_queue_files(
+        account_cfg, tree_sha=writeback_mod.upstream_sha(repo_dir))
+
+    measured = _measured_views_by_topic(repo_dir)
+    rows: dict = {}
+    for qf in files:
+        if qf.malformed or qf.front_matter.get("account") != account_name:
+            continue
+        status = qf.front_matter.get("status")
+        if status not in ("draft", "approved", "posted"):
+            continue
+        topic = queuefile.normalize_topic(qf.front_matter.get("topic")) or "(トピック無し)"
+        row = rows.setdefault(topic, {"topic": topic, "draft": 0, "approved": 0, "posted": 0})
+        row[status] += 1
+
+    out = []
+    for topic, row in rows.items():
+        check = topics_mod.latest(topic)
+        seen = sorted(measured.get(topic, []))
+        row.update({
+            "planned": row["draft"] + row["approved"],
+            "verdict": check.get("verdict", "unknown"),
+            "audience": check.get("audience") or None,
+            "checked_at": check.get("checked_at"),
+            "checked_by": check.get("by"),
+            "views_median_24h": seen[len(seen) // 2] if seen else None,
+            "measured_posts": len(seen),
+        })
+        out.append(row)
+    # **賭かっている本数が多く、かつ確かめていないもの**を先頭に置く。
+    out.sort(key=lambda r: (r["verdict"] != "unknown", -r["planned"], r["topic"]))
+    return {"account": account_name, "error": None, "topics": out}
+
+
+def _measured_views_by_topic(repo_dir: str) -> dict:
+    """実測（24 時間の刻みを満たした行）を topic ごとに集める。"""
+    out: dict = {}
+    base = os.path.join(repo_dir, "data", "sns", "insights", "posts")
+    if not os.path.isdir(base):
+        return out
+    for name in sorted(os.listdir(base)):
+        if not name.endswith(".ndjson"):
+            continue
+        best = None
+        try:
+            with open(os.path.join(base, name), encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    row = json.loads(line)
+                    if 24 in (row.get("marks") or []):
+                        best = row
+        except (OSError, ValueError):
+            continue
+        if best is None:
+            continue
+        views = (best.get("metrics") or {}).get("views")
+        if isinstance(views, int):
+            out.setdefault(best.get("topic") or "(トピック無し)", []).append(views)
+    return out
 
 
 def topic_performance(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:

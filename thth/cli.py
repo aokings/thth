@@ -25,6 +25,7 @@ from . import oauth as oauth_mod
 from . import queuefile
 from . import report as report_mod
 from . import selfupdate as selfupdate_mod
+from . import topics as topics_mod
 from . import writeback as writeback_mod
 
 
@@ -335,6 +336,9 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
         print(f"  reply_to  : {one['reply_to'] or '（なし）'}")
         if one.get("warning"):
             print(f"  ⚠ {one['warning']}")
+        topic_line = topics_mod.verdict_line(one.get("topic"))
+        if topic_line:
+            print(f"  ◆ {topic_line}")
         print("--- 出す本文 ---")
         sys.stdout.write(one["text"] if one["text"].endswith("\n") else one["text"] + "\n")
         print("--- ここまで ---")
@@ -498,11 +502,70 @@ def cmd_posts(args) -> int:
 
 
 def cmd_topics(args) -> int:
-    """`thth topics <account>`: トピック別にどれだけ見られたかを並べる（読むだけ）。
+    """`thth topics`: トピックを見る・調べた結果を残す。
 
-    **合ったトピックか**（トピックごとの中央値）と**刺さったポストか**（同じ
-    トピックの中の散らばり）を分けて見るための口。
+    **新参者にとってトピックは唯一の入口**（masaru 2026-09-10）。実測でも、
+    フォロワー 0 で `中学受験` は 202〜574 views、弱いトピックは 1 view——
+    効き目が約 400 倍違う。だから THTH はトピックを 3 つの層で扱う。
+
+      1. `--note`  下調べの結果を残す（誰がいる場所か。人が見て、THTH が覚える）
+      2. `--plan`  これから出す本数が、どのトピックに賭かっているか
+      3. （既定） 実際にどれだけ見られたか
+
+    **見に行くのは人（またはブラウザを持つ AI）、覚えておくのは THTH。**
+    トピック検索の権限（上級アクセス）が降りれば 1 も機械にできる。
     """
+    if args.note:
+        if not args.verdict:
+            print("--verdict を付けてください（alive / mismatch / dead / unknown）",
+                  file=sys.stderr)
+            return 1
+        by = args.by or os.environ.get("THTH_ACTOR")
+        if not by:
+            print("--by を付けてください（誰が確かめたかを残します）", file=sys.stderr)
+            return 1
+        row = topics_mod.record(args.note, verdict=args.verdict,
+                                 audience=args.audience or "", by=by,
+                                 note=args.reason or "")
+        if args.json:
+            _print_json(row)
+        else:
+            print(f"記録しました: {row['topic']} → {row['verdict']}"
+                  + (f"（{row['audience']}）" if row["audience"] else ""))
+        return 0
+
+    if not args.account:
+        print("account を指定してください（または --note <トピック>）", file=sys.stderr)
+        return 2
+
+    if args.plan:
+        result = account_report_mod.topic_plan(args.account)
+        if args.json:
+            _print_json(result)
+            return 0 if not result.get("error") else 1
+        if result.get("error"):
+            print(f"{args.account}: {result['error']}", file=sys.stderr)
+            return 1
+        mark = {"alive": "合っている", "mismatch": "**不一致**",
+                "dead": "**人がいない**", "unknown": "**未確認**"}
+        unchecked = 0
+        for row in result["topics"]:
+            if row["verdict"] == "unknown":
+                unchecked += row["planned"]
+            measured = ("—" if row["views_median_24h"] is None
+                        else f"{row['views_median_24h']}（{row['measured_posts']}本）")
+            print(f"[{row['topic']}]  これから {row['planned']} 本"
+                  f"（下書き {row['draft']}・承認済み {row['approved']}）"
+                  f"  済 {row['posted']} 本  24h views 中央値={measured}")
+            print(f"    {mark[row['verdict']]}"
+                  + (f"（{row['audience']}）" if row["audience"] else "")
+                  + (f"  {row['checked_at'][:10]} {row['checked_by']}"
+                     if row.get("checked_at") else ""))
+        if unchecked:
+            print(f"—— **未確認のトピックに {unchecked} 本が賭かっています。**"
+                  "出す前に確かめることを勧めます。")
+        return 0
+
     result = account_report_mod.topic_performance(args.account, limit=args.limit)
     if args.json:
         _print_json(result)
@@ -806,7 +869,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_topics = sub.add_parser(
         "topics", help="トピック別にどれだけ見られたかを並べる（読むだけ）")
-    p_topics.add_argument("account")
+    p_topics.add_argument("account", nargs="?")
+    p_topics.add_argument("--plan", action="store_true",
+                          help="これから出す本数がどのトピックに賭かっているか")
+    p_topics.add_argument("--note", default=None, metavar="トピック",
+                          help="下調べの結果を残す（誰がいる場所か）")
+    p_topics.add_argument("--verdict", default=None,
+                          choices=["alive", "mismatch", "dead", "unknown"],
+                          help="--note と併用: alive=合っている / mismatch=別の業界・言語 / dead=人がいない")
+    p_topics.add_argument("--audience", default=None,
+                          help="--note と併用: 誰がいたか（例「レアアース・重加工」）")
+    p_topics.add_argument("--reason", default=None, help="--note と併用: 補足")
+    p_topics.add_argument("--by", default=None, help="--note と併用: 誰が確かめたか")
     p_topics.add_argument("--limit", type=int, default=25)
     p_topics.add_argument("--json", action="store_true")
     p_topics.set_defaults(func=cmd_topics)
