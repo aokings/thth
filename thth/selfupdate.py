@@ -56,30 +56,58 @@ def pull_and_reexec(argv: list, *, app_dir: str = APP_DIR, log=print) -> str | N
 
     戻り値は「先へ進んでよい」ときの説明（`None` なら特に言うことなし）。
     exec した場合はこの関数から戻らない。**lock を取る前に呼ぶこと。**
+
+    **同時に pull しない**（2026-09-10 に実際に衝突した）。timer は 3 本が 10 分の
+    中でずれて走り、そこに手で叩いた pull が重なると、作業ツリーが checkout の
+    途中で見える。git 自身が index を守るので壊れはしないが、片方が
+    「古いまま走ります」になって**黙って古いコードで動く**。取れなければ更新を
+    諦める（待たない）——誰かが今まさに更新しているので、この実行はそのまま
+    進めばよい。**exec は lock を放してから**行う（exec は戻らないので、
+    握ったまま渡すと子が持ち続ける）。
     """
     if os.environ.get(REEXEC_ENV):
         return None  # exec しなおした後の子。もう pull しない。
 
+    from . import accounts as accounts_mod
+    from . import lock as lock_mod
+    lock = lock_mod.AccountLock(
+        os.path.join(accounts_mod.thth_root(), "state", "_app.lock"))
+    try:
+        lock.acquire()
+    except lock_mod.LockBusy:
+        return "ほかの実行が app を更新中なので、この実行は更新を見送りました"
+    try:
+        message, moved = _pull_locked(app_dir)
+    finally:
+        lock.release()
+
+    if not moved:
+        return message
+
+    log(f"app を更新しました（{moved[0][:7]} → {moved[1][:7]}）。実行しなおします。")
+    env = dict(os.environ)
+    env[REEXEC_ENV] = "1"
+    os.execve(sys.executable, [sys.executable, *sys.argv], env)
+    return None  # ここには来ない
+
+
+def _pull_locked(app_dir: str) -> tuple:
+    """lock の中で pull だけを行う。`(説明, (前, 後) または None)` を返す。"""
     before = head(app_dir)
     if before is None:
-        return "app が git repo として読めません（自己更新をしていません）"
+        return "app が git repo として読めません（自己更新をしていません）", None
 
     fetch = _git(["fetch", "origin"], cwd=app_dir)
     if fetch.returncode != 0:
-        return "app の fetch に失敗しました（古いまま走ります）"
+        return "app の fetch に失敗しました（古いまま走ります）", None
 
     pull = _git(["pull", "--ff-only"], cwd=app_dir)
     if pull.returncode != 0:
         n = behind_origin(app_dir)
         suffix = "" if n is None else f"（origin/main より {n} commit 遅れ）"
-        return f"app の pull --ff-only に失敗しました{suffix}（古いまま走ります）"
+        return f"app の pull --ff-only に失敗しました{suffix}（古いまま走ります）", None
 
     after = head(app_dir)
     if after == before:
-        return None
-
-    log(f"app を更新しました（{(before or '')[:7]} → {(after or '')[:7]}）。実行しなおします。")
-    env = dict(os.environ)
-    env[REEXEC_ENV] = "1"
-    os.execve(sys.executable, [sys.executable, *sys.argv], env)
-    return None  # ここには来ない
+        return None, None
+    return None, (before, after)
