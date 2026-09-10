@@ -398,8 +398,18 @@ def _read_pasted_token(*, stdin: bool, input_func) -> str:
     """
     if input_func is not None:
         return input_func()
-    if stdin or not sys.stdin.isatty():
+    if stdin:
         return sys.stdin.readline()
+    if not sys.stdin.isatty():
+        # **黙って読まない**（masaru 指摘 2026-09-10「トークンの入替が出来ない」）。
+        # 端末でないまま読むと、`ssh wt 'thth token set ...'` のように tty を割り
+        # 当てずに実行したときに **手元の画面にトークンがそのまま表示される**
+        # （remote 側に tty が無いのでエコーを止められない）。秘密を画面に出す
+        # 経路を黙って通さない。どちらの意図なのかを利用者に選ばせる。
+        raise OAuthError(
+            "標準入力が端末ではありません。トークンが画面に出てしまうので読みません。\n"
+            "  対話で入れる場合: ssh に -t を付けてください（例: ssh -t wt '...thth token set <account> --force'）\n"
+            "  パイプ・ファイルから渡す場合: --stdin を付けてください")
     return getpass.getpass("Threads の長期アクセストークンを貼り付けてください（表示されません）: ")
 
 
@@ -428,10 +438,15 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
 
     token_path = account_cfg["token"]
     if os.path.exists(token_path) and not force:
-        _out(f"既にあります: {token_path}。上書きするなら --force", log=log)
+        _out(f"既に token があります（{account_name}）。**入れ替える**なら --force を"
+             f"付けてください: thth token set {account_name} --force", log=log)
         return 1
 
-    raw = _read_pasted_token(stdin=stdin, input_func=input_func)
+    try:
+        raw = _read_pasted_token(stdin=stdin, input_func=input_func)
+    except OAuthError as e:
+        _out(str(e), log=log)
+        return 2
     token_value = extract_token(raw)
     if not token_value:
         _out("トークンが読み取れませんでした", log=log)

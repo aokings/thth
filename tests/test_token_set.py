@@ -232,3 +232,27 @@ def test_20260909_handle_が一致すれば通る(tmp_path, monkeypatch, isolate
             account["name"], input_func=lambda: "PASTED-TOKEN", log=lambda *_: None)
     assert rc == 0
     assert os.path.exists(account["token_path"])
+
+
+def test_20260910_端末でない標準入力からは黙って読まない(tmp_path, monkeypatch, isolated_account_factory):
+    """`ssh wt '...'`（tty を割り当てない）で実行すると、getpass が効かず
+    **手元の画面にトークンがそのまま出る**。黙って読まずに、どうすればよいかを述べる
+    （masaru 指摘 2026-09-10「トークンの入替が出来ない」）。
+    """
+    account = isolated_account_factory(token=str(tmp_path / "new.token"))
+
+    class _NotATty:
+        def isatty(self):
+            return False
+
+        def readline(self):
+            raise AssertionError("端末でないのに読んでしまった（画面にトークンが出る）")
+
+    monkeypatch.setattr(oauth_mod.sys, "stdin", _NotATty())
+    lines = []
+    rc = oauth_mod.run_token_set(account["name"], log=lines.append)
+
+    assert rc == 2
+    assert not os.path.exists(str(tmp_path / "new.token"))
+    blob = "\n".join(lines)
+    assert "-t" in blob and "--stdin" in blob, blob
