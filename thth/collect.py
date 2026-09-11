@@ -396,6 +396,13 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print) -> int:
                     + " `thth board` の 未送信 に出ます。次の実行で送り直します。")
                 return 1
             log(f"採取しました: {len(rel)} ファイル（投稿 {result['posts']} 本を見ました）")
+        # **採れなかった理由を、どこにも出さずに捨てていた**（運用セッション指摘
+        # 2026-09-12）。`errors` を集めて終了コードにはしていたが、**中身を
+        # log に出していなかった。** そのため「返信の 1h と 6h がなぜ失敗したか」が
+        # 後から追えなくなった（journal にも残っていない）。
+        # **失敗の理由は、失敗した回にしか書けない。**
+        for problem in result.get("errors") or []:
+            log(f"採れなかったもの: {problem}")
     finally:
         repo_lock.release()
 

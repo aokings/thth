@@ -315,3 +315,24 @@ posts:
         f"束が読めなかった事実が errors に出ていない: {result['errors']}")
     assert _rows(pair["work"], "data/sns/insights/posts/POST1.ndjson"), (
         "束の失敗につられて、他の投稿の採取まで止まっている")
+
+
+def test_採れなかった理由をlogに出す(tmp_path, isolated_account_factory):
+    """**理由を集めておきながら、どこにも出していなかった**（2026-09-12）。
+
+    運用セッションが VM を追っていて詰まった: 返信の 1h と 6h がなぜ失敗したかを
+    知りたいのに、`/srv/thth/logs/` は空で journal にも理由が無い。
+    `run_collect()` は `errors` を集めて終了コードにしていたが、**中身を log に
+    出していなかった。** 失敗の理由は、**失敗した回にしか書けない。**
+    """
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-03T12:00:00+09:00")   # 168 時間前
+    failing = FakeAdapter(replies_rows=[{"id": "R1", "text": "返信"}],
+                           fail={"replies"})
+    lines = []
+    rc = collect_mod.run_collect(account["name"], adapter=failing, now=NOW,
+                                  log=lines.append)
+    assert rc == 1
+    reasons = [l for l in lines if l.startswith("採れなかったもの:")]
+    assert reasons, f"理由が出ていない: {lines}"
+    assert "replies" in reasons[0] and "POST1" in reasons[0], reasons
