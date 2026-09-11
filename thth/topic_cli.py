@@ -24,7 +24,9 @@ from . import topics as topics_mod
 SUBCOMMANDS = ("suggest", "observe", "record-decision", "decision",
                 "profile", "observation", "retract", "unretract",
                 # 検収と修正理由（Codex §6.2・§7・§12 第 1 段階）。
-                "record-vocabulary", "vocabulary", "record-review", "review")
+                "record-vocabulary", "vocabulary", "record-review", "review",
+                # 型の仕様と、検収履歴からの改善候補（§12 第 2 段階）。
+                "record-form-spec", "form-spec", "form-check", "improvements")
 
 # 本文を含めて 1 MiB（設計 §7）。**超過は構造化エラー**にする。
 MAX_INPUT_BYTES = 1024 * 1024
@@ -139,7 +141,8 @@ def _fail(code: str, message: str) -> int:
                          ("TopicObservation", advice.OBSERVATION_SHAPE),
                          ("TopicProposal", advice.PROPOSAL_SHAPE),
                          ("ReviewRecord", models.REVIEW_SHAPE),
-                         ("ReasonVocabulary", models.VOCABULARY_SHAPE)):
+                         ("ReasonVocabulary", models.VOCABULARY_SHAPE),
+                         ("FormSpec", models.FORM_SPEC_SHAPE)):
         if name in message:
             schema.update(shape)
     if not schema and "記事" in message:
@@ -151,6 +154,10 @@ def _fail(code: str, message: str) -> int:
     if not schema and ("検収" in message or "findings" in message
                         or "disposition" in message or "reason_id" in message):
         schema.update(models.REVIEW_SHAPE)
+    if not schema and ("型の仕様" in message or "roles" in message
+                        or "machine_checks" in message
+                        or "semantic_questions" in message):
+        schema.update(models.FORM_SPEC_SHAPE)
     if not schema and ("語彙" in message or "entries" in message):
         schema.update(models.VOCABULARY_SHAPE)
     _emit({"schema_version": models.SCHEMA_VERSION, "ok": False, "status": None,
@@ -1020,6 +1027,118 @@ def _recent_reviews(account: str, args) -> int:
            "notice": REVIEW_NOTICE})
     return 0
 
+# --- 型の仕様と改善候補（Codex §5・§12 第 2 段階） ---------------------------
+
+def cmd_record_form_spec(args) -> int:
+    """型の仕様を 1 版残す。**語彙と同じく、コードではなくデータ。**"""
+    row = read_json(args.input, stdin=args.json_stdin, what="型の仕様")
+    if row is None:
+        raise InputError("missing_input",
+                          "--input か --json-stdin で型の仕様を渡してください")
+    if not isinstance(row, dict):
+        raise InputError("invalid_json", "型の仕様は object にしてください")
+    spec = models.build_form_spec(
+        {k: v for k, v in row.items()
+         if k not in ("form_spec_id", "schema_version")}
+        | {"created_by": _actor(args)})
+    saved, wrote = store.put("form_specs", spec, id_key="form_spec_id")
+    _emit({"ok": True, "form_spec_id": saved["form_spec_id"], "stored": wrote,
+           "form": saved["form"], "state": saved["state"],
+           "scope": saved["scope"], "supersedes": saved["supersedes"],
+           "roles": [r["role_id"] for r in saved["roles"]],
+           "cases": {"positive": len([c for c in saved["cases"]
+                                       if c["kind"] == "positive"]),
+                      "counter": len([c for c in saved["cases"]
+                                       if c["kind"] == "counter"])},
+           "warnings": ([f"state={saved['state']} です。**採用は masaru または"
+                          f"保守責任者が独立確認を踏まえて確定します**（Codex §8）"]
+                         if saved["state"] == "accepted" else []),
+           "notice": REVIEW_NOTICE})
+    return 0
+
+
+def cmd_form_spec(args) -> int:
+    """保存済みの型の仕様を読む（読むだけ）。"""
+    if args.form_spec_id:
+        row = store.get("form_specs", args.form_spec_id)
+        if row is None:
+            return _fail("not_found",
+                          f"その型の仕様は保存されていません: {args.form_spec_id}")
+        _emit({"ok": True, "form_spec": row, "notice": REVIEW_NOTICE})
+        return 0
+    rows, broken, _taken = store.load_all("form_specs")
+    if args.form:
+        rows = [r for r in rows if r.get("form") == args.form]
+    rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    _emit({"ok": True, "count": len(rows), "broken_ids": broken,
+           "form_specs": [{"form_spec_id": r["form_spec_id"], "form": r.get("form"),
+                            "state": r.get("state"), "scope": r.get("scope"),
+                            "meaning_version": r.get("meaning_version"),
+                            "supersedes": r.get("supersedes"),
+                            "roles": [x["role_id"] for x in r.get("roles") or []]}
+                           for r in rows],
+           "notice": REVIEW_NOTICE})
+    return 0
+
+
+def _load_form_spec(form_spec_id: str):
+    if not isinstance(form_spec_id, str) or not form_spec_id.startswith("sha256:"):
+        return None, _fail("missing_form_spec",
+                            "--form-spec に型の仕様の form_spec_id を渡して"
+                            "ください（`thth topics form-spec` で見られます）")
+    spec = store.get("form_specs", form_spec_id)
+    if spec is None:
+        return None, _fail("not_found",
+                            f"その型の仕様は保存されていません: {form_spec_id}")
+    return spec, None
+
+
+def cmd_form_check(args) -> int:
+    """段の役割の申告を、**機械で見られる範囲だけ**検査する（Codex §5・§7）。
+
+    **THTH は「その段が本当にその役割を果たしているか」を見ていない。**
+    意味評価は問いのまま `not_evaluated` で返す。
+    """
+    spec, failure = _load_form_spec(args.form_spec)
+    if spec is None:
+        return failure
+    claim = read_json(args.input, stdin=args.json_stdin, what="段の役割の申告")
+    if claim is None:
+        raise InputError("missing_input",
+                          "--input か --json-stdin で段の役割の申告を渡してください")
+    out = models.check_form_claim(spec, claim, known_ids=_known_ids())
+    now_sha = _draft_sha256(args.draft, "原稿")
+    if now_sha is not None:
+        out["draft_sha256"] = now_sha
+    out["ok"] = True
+    out["out_of_scope"] = list(OUT_OF_SCOPE)
+    _emit(out)
+    return 0
+
+
+def cmd_improvements(args) -> int:
+    """検収履歴から**改善案を出すところまで**（Codex §12 第 2 段階）。
+
+    **仕様も語彙も profile も書き換えない。** 出すのは候補と根拠の ID だけ。
+    """
+    spec, failure = _load_form_spec(args.form_spec)
+    if spec is None:
+        return failure
+    rows, broken, _taken = store.load_all("reviews")
+    if args.account:
+        try:
+            accounts_mod.load_account(args.account)
+        except accounts_mod.AccountError as e:
+            return _fail("unknown_account", str(e))
+        rows = [r for r in rows if r.get("account") == args.account]
+    out = models.improvement_candidates(rows, spec=spec)
+    out["ok"] = True
+    out["account"] = args.account
+    out["broken_ids"] = broken
+    out["reviewed"] = len([r for r in rows if r.get("form") == spec["form"]])
+    _emit(out)
+    return 0
+
 # --- parser -----------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1123,6 +1242,35 @@ def build_parser() -> argparse.ArgumentParser:
                     help="いまの原稿のパス（**変わっていれば確認済みを引き継がない**）")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_review)
+
+    p = sub.add_parser("record-form-spec", help="型の仕様を 1 版残す")
+    p.add_argument("--input", default=None)
+    p.add_argument("--json-stdin", action="store_true")
+    p.add_argument("--by", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_record_form_spec)
+
+    p = sub.add_parser("form-spec", help="保存済みの型の仕様を読む")
+    p.add_argument("form_spec_id", nargs="?", default=None)
+    p.add_argument("--form", default=None, help="型の名前で絞る")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_form_spec)
+
+    p = sub.add_parser("form-check",
+                        help="段の役割の申告を検査する（**意味は見ていない**）")
+    p.add_argument("--form-spec", default=None, help="型の仕様の form_spec_id")
+    p.add_argument("--input", default=None)
+    p.add_argument("--json-stdin", action="store_true")
+    p.add_argument("--draft", default=None, help="原稿のパス（指紋を出力に付ける）")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_form_check)
+
+    p = sub.add_parser("improvements",
+                        help="検収履歴から改善候補を出す（**書き換えない**）")
+    p.add_argument("--form-spec", default=None, help="型の仕様の form_spec_id")
+    p.add_argument("--account", default=None, help="account で絞る")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_improvements)
     return parser
 
 

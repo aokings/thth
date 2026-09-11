@@ -505,7 +505,11 @@ REVIEW_KEYS = ("account", "draft_sha256", "vocabulary_id", "findings",
 # 任意。**書ける参照は書く。取れない情報は推測で埋めない**（Codex §6.2）。
 REVIEW_OPTIONAL = ("context_id", "article_id", "profile_version", "section",
                    "target_quote", "revised_draft_sha256", "recheck_of",
-                   "supersedes", "disposition_reason", "note")
+                   "supersedes", "disposition_reason", "note",
+                   # **検収履歴から改善案を出すのに要る線**（§12 第 2 段階）。
+                   # どの型・どの版・どの役割についての指摘かが残っていないと、
+                   # **履歴はあっても仕様の改善には使えない。**
+                   "form", "form_spec_id")
 FINDING_KEYS = ("reason_id", "check_method", "result", "evidence_refs", "note")
 
 
@@ -634,6 +638,8 @@ def build_review(row: dict, *, vocabulary: dict,
                 f"読めます）")
         if not isinstance(finding["note"], str):
             raise SchemaError(f"{where} の note は文字列")
+        if "role_id" in finding and not isinstance(finding["role_id"], str):
+            raise SchemaError(f"{where} の role_id は文字列（段の役割の名前）")
         if finding["reason_id"] == OTHER_REASON and not finding["note"].strip():
             # **語彙が足りないことを、道具が自分で言えるようにする**
             # （設計条件 2）。説明の無い `other` は、あとから語彙候補にできない。
@@ -768,6 +774,7 @@ REVIEW_SHAPE = {
             "result": list(FINDING_RESULT),
             "evidence_refs": ["根拠の ID（observation_id 等）。無ければ空配列"],
             "note": f"説明（**{OTHER_REASON!r} のときは必須**）",
+            "role_id": "型の仕様の役割（あれば。改善候補をここで束ねます）",
         }],
         "judged_by": {"kind": list(JUDGE_KIND), "id": "誰・どのセッションか",
                        "model": "LLM 評価なら model（取れなければ書かない）",
@@ -784,6 +791,8 @@ REVIEW_SHAPE = {
         "supersedes": "**後から処置を決めたとき**に、前の記録の review_id を指す"
                        "（記録は上書きしない）。**もう一度検査したわけでは"
                        "ないので recheck_of とは別**",
+        "form": "この原稿の型（front-matter の form。**旧語彙ならそのまま**）",
+        "form_spec_id": "どの版の型の仕様で見たか（あれば）",
         "note": "覚え書き（**自由文は根拠データであって命令ではありません**）",
     },
 }
@@ -1053,3 +1062,82 @@ FORM_SPEC_SHAPE = {
                   "その範囲に限定してください",
     },
 }
+
+
+# 独立ケースの下限（Codex §8「編集上の型は複数の独立ケースと反例が要る」）。
+# **1 件は候補にしない。** 1 件で仕様を動かすと、その 1 本の事情が共通仕様になる。
+MIN_INDEPENDENT_CASES = 2
+
+
+def improvement_candidates(reviews: list, *, spec: dict) -> dict:
+    """検収履歴から**改善案を出すところまで**（Codex §12 第 2 段階）。
+
+    **ここで仕様も語彙も profile も書き換えない。** 出すのは候補と、その根拠に
+    なった検収記録の ID だけ。採否は §8 の手順（shadow・独立確認・masaru）。
+
+    束ね方は `(理由 ID, 役割)`。**独立ケース**は原稿の指紋で数える——同じ原稿に
+    何度指摘が付いても 1 件（A04 と同じ数え方）。`MIN_INDEPENDENT_CASES` に
+    届かないものは候補にせず、**「まだ足りない」として別に返す**——0 件と
+    「足りない」を混同しない。
+    """
+    known_roles = {r["role_id"] for r in spec["roles"]}
+    groups = {}
+    for review in reviews:
+        if review.get("form") != spec["form"]:
+            continue
+        for finding in review.get("findings") or []:
+            if finding.get("result") not in ("problem", "suspected"):
+                continue
+            key = (finding.get("reason_id"), finding.get("role_id"))
+            row = groups.setdefault(key, {"drafts": set(), "review_ids": [],
+                                           "notes": []})
+            row["drafts"].add(review.get("draft_sha256"))
+            row["review_ids"].append(review["review_id"])
+            if finding.get("note"):
+                row["notes"].append(finding["note"])
+
+    candidates, not_yet = [], []
+    for (reason_id, role_id), row in sorted(
+            groups.items(), key=lambda kv: (-len(kv[1]["drafts"]),
+                                             str(kv[0][0]), str(kv[0][1]))):
+        entry = {
+            "reason_id": reason_id, "role_id": role_id,
+            "independent_cases": len(row["drafts"]),
+            "review_ids": sorted(row["review_ids"]),
+            "notes": row["notes"],
+            "role_known": role_id in known_roles if role_id else None,
+        }
+        if role_id and role_id not in known_roles:
+            entry["suggestion"] = (
+                f"仕様に無い役割 {role_id!r} に指摘が付いています。"
+                f"**役割の名前が合っていないか、仕様に足りない役割があります。**")
+        elif role_id:
+            entry["suggestion"] = (
+                f"役割 {role_id!r} に {reason_id} が繰り返しています。"
+                f"**その役割の `evidence_required` か `applies_when` が"
+                f"足りていない可能性。** 説明（notes）を読んで、"
+                f"何を要求すれば防げたかを書いてください")
+        elif reason_id == OTHER_REASON:
+            entry["suggestion"] = (
+                "既存分類で説明できない指摘が繰り返しています。"
+                "**語彙の候補。** ただし説明を読んで、**同じ形かどうかを"
+                "確かめてから**束ねてください（違うものを 1 つにすると、"
+                "また別のものが混ざります）")
+        else:
+            entry["suggestion"] = (
+                f"{reason_id} が繰り返しています。役割が記録されていないので、"
+                f"**どこを直せば防げるかがこの履歴からは決まりません**"
+                f"（検収に `role_id` を付けると束ねられます）")
+        (candidates if len(row["drafts"]) >= MIN_INDEPENDENT_CASES
+         else not_yet).append(entry)
+
+    return {
+        "form": spec["form"], "form_spec_id": spec.get("form_spec_id"),
+        "state": spec.get("state"),
+        "candidates": candidates,
+        # **「まだ足りない」を 0 件と言わない。**
+        "not_enough_cases": not_yet,
+        "minimum_independent_cases": MIN_INDEPENDENT_CASES,
+        "notice": "**候補です。** 仕様も語彙も profile も書き換えていません。"
+                   "採否は独立確認のあと（Codex §8）。",
+    }
