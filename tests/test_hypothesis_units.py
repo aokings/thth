@@ -478,3 +478,73 @@ def test_理由を変えればIDは変わる(thth_root):
     b = _json(_register(_hypothesis(supersedes=first, supersede_reason="理由 B")))
     assert a["hypothesis_id"] != b["hypothesis_id"], \
         "理由を変えても同じ ID になっている（理由が内容 ID に入っていない）"
+
+
+# --- 規約 14: 断るときは正しい形も返す（2026-09-12）--------------------------
+
+def test_仮説を断るときも正しい形を返す(thth_root):
+    """**規約 14 の 4 回目をやっていた。**
+
+    > 新しい schema を足したら、(1) 必須項目の検査 (2) `expected_schema` の返却
+    > (3) 空・欠損での拒否テスト を**同時に**入れる。
+
+    `hypotheses` を足すとき (1) と (3) は入れて、**(2) だけ落としていた。**
+    `reviews`・`vocabularies`・`form_specs` は 3 つとも載っているので、
+    **仮説だけが例外**——規約 14 が名指しで禁じている形そのもの。
+
+    しかも 2026-09-12 に**この関門を 3 回きつくした**（`supersedes` の表記・
+    `supersede_reason` の条件付き必須・予測の観測単位）。**断られる回数を
+    増やしておいて、断り文句だけ空にしていた。**
+
+    実地で踏まれている——運用セッションは仮説 4 件を**すべて
+    `topic_models.py` を直接読んで書いた**。手順書
+    （`docs/手順_LLM_トピック選定.md:85`）の「**ソースを読む必要はありません**」
+    が、仮説の棚だけ守られていなかった。
+    """
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json
+
+    proc = _register({"code": "x"})
+    assert proc.returncode != 0
+    out = _json(proc)
+
+    assert "Hypothesis" in out["expected_schema"], \
+        "**断り文句が空**（規約 14 の (2) が入っていない）"
+    shape = out["expected_schema"]["Hypothesis"]
+    # **値域が入っていること。** 項目名だけでは、結局ソースを読む羽目になる。
+    assert shape["kind"] == list(models.HYPOTHESIS_KINDS)
+    assert set(shape["sample_design"]) == set(models.SAMPLE_DESIGNS), \
+        "B/M/U の意味が渡っていない（ここを取り違えたのが実際の事故）"
+    assert shape["sources"][0]["tier"] == list(models.EVIDENCE_TIERS)
+    assert shape["sources"][0]["date_kind"] == list(models.DATE_KINDS)
+    assert shape["sources"][0]["date_precision"] == list(models.DATE_PRECISIONS)
+
+
+@pytest.mark.parametrize("payload,where", [
+    ({"code": "x"}, "項目が足りません"),
+    ({}, "項目が足りません"),
+])
+def test_空や欠損で断るときも形を返す(thth_root, payload, where):
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json
+
+    proc = _register(payload)
+    assert proc.returncode != 0
+    out = _json(proc)
+    assert where in out["error"]["message"]
+    assert "Hypothesis" in out["expected_schema"]
+
+
+def test_観測単位の断りに観測の形を返さない(thth_root):
+    """**「観測単位が食い違っています」に `TopicObservation` の形を返していた**
+    （語の重なり）。**断り文句に、関係のない形を渡すほうが質が悪い。**"""
+    from thth import topic_cli
+    import contextlib, io as _io, json as _json
+
+    buf = _io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        topic_cli._fail("schema_error",
+                         "predictions[0] の指標が、同じ観測単位にそろいません")
+    got = _json.loads(buf.getvalue())["expected_schema"]
+
+    assert list(got) == ["Hypothesis"], f"関係のない形を返している: {list(got)}"

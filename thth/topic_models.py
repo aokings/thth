@@ -1766,6 +1766,85 @@ HYPOTHESIS_KEYS = ("code", "claim", "kind", "sources", "predictions",
 HYPOTHESIS_OPTIONAL = ("supersede_reason",)
 
 
+# **仮説の正しい形**（規約 14・2026-09-12）。
+#
+# **規約 14 の 4 回目をやっていた。** 「新しい schema を足したら、(1) 必須項目の
+# 検査 (2) `expected_schema` の返却 (3) 空・欠損での拒否テスト を同時に入れる」
+# ——`hypotheses` を足すとき (1) と (3) は入れて、**(2) だけ落としていた。**
+# `reviews`・`vocabularies`・`form_specs` は 3 つとも載っているので、**仮説だけが
+# 例外**。規約 14 が名指しで禁じている形そのもの。
+#
+# **しかも 2026-09-12 に、この関門を 3 回きつくした**（`supersedes` の表記・
+# `supersede_reason` の条件付き必須・予測の観測単位）。**断られる回数を増やして
+# おいて、断り文句だけ空のままにしていた。**
+#
+# 実地で踏まれている——運用セッションは仮説 4 件を**すべて `topic_models.py` を
+# 直接読んで書いた**。手順書（`docs/手順_LLM_トピック選定.md:85`）が「**ソースを
+# 読む必要はありません**」と約束している経路が、仮説の棚だけ機能していなかった。
+#
+# > 私は 1672 行目を読んだ時点では JSON をまだ書いていませんでした。
+#
+# **値域が見えていれば防げた、ではない**（値域は見えていた）。**書いている最中に
+# 目に入らなかった。** 断られたときは「何を書けばいいか」を探しているので、
+# そこで渡すのがいちばん結びつく。
+HYPOTHESIS_SHAPE = {
+    "Hypothesis": {
+        "code": "短い識別子（例 H01）。**同じ仮説の版をまたいで同じ値にします**",
+        "claim": "主張そのもの。**版の運用メモを混ぜないこと**"
+                  "（理由は supersede_reason へ）",
+        "kind": list(HYPOTHESIS_KINDS),
+        "sources": [{
+            "tier": list(EVIDENCE_TIERS),
+            "ref": "出所（URL・文書名・うちの台帳の ID）",
+            "date": "date_precision に合わせた形。"
+                     "day→YYYY-MM-DD / month→YYYY-MM / unknown→null。"
+                     "**知らない日を作らないこと**",
+            "date_precision": list(DATE_PRECISIONS),
+            "date_kind": list(DATE_KINDS),
+            "note": "補足（省略可・null 可）",
+        }],
+        "predictions": [{
+            "statement": "**うちの台帳でどう見えるはずか**（相手の仕組みそのもの"
+                          "ではなく、観測できる派生予測）",
+            "metrics": [f"うちが持っている指標だけ: {'・'.join(LEDGER_METRICS)}。"
+                         f"**取れる観測単位が指標ごとに違います**——"
+                         f"shares は投稿単位にしかなく、clicks・followers_count は"
+                         f"アカウント日次にしかありません。"
+                         f"**そろう観測単位が無い組み合わせは警告が出ます**"
+                         f"（拒否はしません）"],
+            "window": "比較窓（例 24h・公開後 7 日）",
+            "scope": "どの範囲の話か。**統制していないものもここに書くこと**"
+                      "（例 曜日・本文は揃っていない）",
+        }],
+        "refutation": "**何が観測されたら捨てるか。** 本数ではなく"
+                       "『何が起きたら』を書く——本数を書くと B（反例探し）が"
+                       "M（推定）に化けます",
+        "sample_design": {
+            "B": "反例探し。**1 件でも崩せる。** 何本積んでも確かにはならない",
+            "M": "推定（平均差・予測性能）。**本数が要る**",
+            "U": "**変数が無いので識別できない。本数を増やしても無理。**"
+                  "捨てずに残すが、shadow には上げられない",
+        },
+        "counter_hypothesis": "対抗仮説。**無いと、どんな観測も『支持した』に"
+                               "読めます**",
+        "scope": "どの account の話か（すべてなら「すべて」）",
+        "state": [f"**いま登録できるのは 'proposed' だけ**"
+                   f"（shadow への昇格は未実装・accepted は masaru の裁定）。"
+                   f"語彙の状態は {list(REASON_STATE)}"],
+        "proposed_by": "立てた人・セッション（`--by` で上書きされます）",
+        "verifier": "**確かめる人。立てた人と分けること**"
+                     "（同じ手が両方をやると、何も確かめていない）",
+        "created_at": "ISO 8601・timezone 必須",
+        "supersedes": "前の版の hypothesis_id（`sha256:` + 16 進 64 桁）。"
+                       "最初は null。**版は 1 つずつ差し替えます**",
+        "supersede_reason": "**supersedes があるときは必須。**"
+                             "**『以前の誤り』の告白の欄ではありません**——"
+                             "追加資料・対象範囲の変更でも構いません。"
+                             "supersedes が null のときは書けません",
+    },
+}
+
+
 def build_hypothesis(row: dict) -> dict:
     """仮説を 1 件、記録として残す（masaru 指示 2026-09-11）。
 

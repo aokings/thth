@@ -146,11 +146,23 @@ def _fail(code: str, message: str) -> int:
                          ("TopicProposal", advice.PROPOSAL_SHAPE),
                          ("ReviewRecord", models.REVIEW_SHAPE),
                          ("ReasonVocabulary", models.VOCABULARY_SHAPE),
-                         ("FormSpec", models.FORM_SPEC_SHAPE)):
+                         ("FormSpec", models.FORM_SPEC_SHAPE),
+                         ("Hypothesis", models.HYPOTHESIS_SHAPE)):
         if name in message:
             schema.update(shape)
     if not schema and "記事" in message:
         schema.update(advice.ARTICLE_SHAPE)
+    # **仮説は「観測」より先に見る**（規約 14・2026-09-12）。観測単位の食い違いを
+    # 断る文言に「観測」が入るので、後ろに置くと `TopicObservation` の形を返して
+    # しまう——**断り文句に、関係のない形を渡すほうが質が悪い。**
+    if not schema and ("仮説" in message or "sample_design" in message
+                        or "refutation" in message
+                        or "counter_hypothesis" in message
+                        or "supersede_reason" in message
+                        or "predictions" in message
+                        or "hypothesis_id" in message
+                        or "観測単位" in message):
+        schema.update(models.HYPOTHESIS_SHAPE)
     if not schema and ("観測" in message or "samples" in message):
         schema.update(advice.OBSERVATION_SHAPE)
     if not schema and ("候補比較" in message or "candidates" in message):
