@@ -151,3 +151,81 @@ def compute_body_hash(text: str) -> str:
     （メタデータが変わっても本文が同じなら一致してよい）。
     """
     return hashlib.sha256((text or "").strip().encode("utf-8")).hexdigest()
+
+
+# --- スレッド連投（`thth: 2`）の承認指紋（設計 §2・§5・工程 2） -------------
+
+_BUNDLE_VERSION = "thth-bundle-1"
+_SEG = "\x1e"          # ASCII record separator（段の境界）
+
+
+def compute_bundle_components(*, segments: list, account: str, topic: str | None,
+                               publish_at, continue_until,
+                               frozen: list | None = None) -> dict:
+    """束の承認対象を項目ごとに正規化する（設計 §2.2・§5）。
+
+    **単なる本文連結ではなく、段の境界と順序を保った配列**（Codex 最終条件 5）。
+    連結してしまうと、段の割り方を変えても指紋が同じになる
+    ——「2 段で出す」と「1 段で出す」は**別の承認**でなければならない。
+
+    **`frozen`（公開済み部分の記録）は指紋に入れない**——承認の意味は
+    「この段の並びを、この account で、この時刻に、この期限まで出す」まで。
+
+    Codex の最終条件 2 は「再承認は**固定した公開済み部分の記録と、変更後の
+    残り**をまとめて対象にする」だった。**その意図は満たすが、指紋の入力には
+    しない。** 入れると **1 段出すたびに `frozen` が増えて指紋が変わり、
+    編集していない束の続きが `approval_stale` になって出せなくなる**
+    （THTH が `approved_sha` を書き換えるわけにはいかない——それは人の承認）。
+
+    代わりに**照合で担保する**:
+
+    - 公開済みの段の本文は `threadthrow._frozen_drift()` が
+      `text_sha256` と突き合わせる（**凍結の強制**）
+    - 親は `threadrun.resolve_parent()` が**永続化した公開記録**から決める
+      （**承認された親子関係を別の投稿へ付け替えられない**——不変条件そのもの）
+    - 承認画面には**公開済みの段とその `post_id` を明示する**（人が
+      「何が既に出ているか」を見た上で残りを承認する）
+
+    `frozen` 引数は**承認画面の表示**のために受け取るだけで、hash には使わない。
+    """
+    normalized = [(s or "").strip() for s in segments]
+    frozen_parts = []
+    for row in (frozen or []):
+        frozen_parts.append(
+            f"{row.get('index')}:{row.get('post_id') or ''}"
+            f":{row.get('text_sha256') or ''}")
+    return {
+        "version": _BUNDLE_VERSION,
+        "segments": _SEG.join(normalized),
+        "segment_count": str(len(normalized)),
+        "account": (account or "").strip(),
+        "topic": queuefile.normalize_topic(topic) or "",
+        "publish_at": _normalize_publish_at(publish_at),
+        "continue_until": _normalize_publish_at(continue_until),
+        "frozen": _SEG.join(frozen_parts),
+    }
+
+
+# **`frozen` は入らない**（上の理由）。
+_BUNDLE_ORDER = ("version", "segments", "segment_count", "account", "topic",
+                 "publish_at", "continue_until")
+
+
+def compute_bundle_sha(*, segments: list, account: str, topic: str | None,
+                        publish_at, continue_until, frozen: list | None = None) -> str:
+    """束の `approved_sha`。
+
+    v1 の `compute_approved_sha()` とは**別の入力バイト列**（先頭に
+    `thth-bundle-1` が入る）。**v1 の指紋には触れない**ので、いま approved の
+    84 本は影響を受けない（Codex 最終条件 5）。
+    """
+    components = compute_bundle_components(
+        segments=segments, account=account, topic=topic, publish_at=publish_at,
+        continue_until=continue_until, frozen=frozen)
+    joined = _SEP.join(components[key] for key in _BUNDLE_ORDER)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+def segment_sha(text: str) -> str:
+    """1 段の本文の指紋。**公開記録に残して、あとから照合する。**"""
+    return hashlib.sha256((text or "").strip().encode("utf-8")).hexdigest()

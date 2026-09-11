@@ -24,6 +24,7 @@ import hashlib
 import re
 
 from . import accounts as accounts_mod
+from . import bundle as bundle_mod
 from . import jst
 from . import queuefile
 from . import topic_models as models
@@ -39,6 +40,9 @@ MIN_SAMPLES = 3
 MIN_AUTHORS = 3
 
 _URL_RE = re.compile(r"https?://[^\s、。）)」』】\]]+")
+# 段の境界（`approval._SEG` と同じ ASCII record separator）。
+# **連結して 1 つの文にしない**——段の割り方が変われば別の判断。
+_SEGMENT_SEP = "\x1e"
 
 
 def _strip_fragment(url: str) -> str:
@@ -164,14 +168,35 @@ def build_context(queue_file: str, *, article: dict | None = None,
     """
     with open(queue_file, "rb") as f:
         raw = f.read()
-    qf = queuefile.parse_text(raw.decode("utf-8"), queue_file)
-    fm = qf.front_matter
-    account_name = fm.get("account")
-    account_cfg = accounts_mod.load_account(account_name)
-    section = queuefile.extract_section(qf.body, account_cfg["media"])
-    if section is None:
-        raise models.SchemaError(f"`## {account_cfg['media']}` の節がありません")
+    text = raw.decode("utf-8")
 
+    # **束は全段を読む**（設計 §10・Codex 指摘）。
+    # 先頭に topic・最終段に記事 URL を置く形なので、**先頭だけを検査しても
+    # 記事との適合は判断できない。**
+    if bundle_mod.is_bundle_text(text):
+        b = bundle_mod.parse_text(text, queue_file)
+        if b.malformed:
+            raise models.SchemaError("thth: 2 の原稿として読めません")
+        fm = b.front_matter
+        account_name = fm.get("account")
+        account_cfg = accounts_mod.load_account(account_name)
+        segments, problems = bundle_mod.load_segments(b, account_cfg["media"])
+        if problems:
+            raise models.SchemaError("／".join(problems))
+        posts_meta = b.posts
+    else:
+        qf = queuefile.parse_text(text, queue_file)
+        fm = qf.front_matter
+        account_name = fm.get("account")
+        account_cfg = accounts_mod.load_account(account_name)
+        one = queuefile.extract_section(qf.body, account_cfg["media"])
+        if one is None:
+            raise models.SchemaError(f"`## {account_cfg['media']}` の節がありません")
+        segments = [one]
+        posts_meta = []
+
+    # **段の境界と順序を保った配列**。連結しない（Codex 最終条件 5）。
+    section = _SEGMENT_SEP.join(segments)
     urls = extract_urls(section)
     if article_url is not None:
         # **投稿に無い URL を主対象にできない**（独立レビュー 2026-09-11・指摘 1）。
@@ -225,6 +250,9 @@ def build_context(queue_file: str, *, article: dict | None = None,
     # 内容 id に入らない付随情報（設計 §4.3 の「hash に含めない」側）。
     context["ignored_urls"] = [u for u in urls if u != main_url]
     context["urls_in_post"] = urls
+    context["segments"] = segments
+    context["segment_count"] = len(segments)
+    context["posts_meta"] = posts_meta
     context["profile_overridden"] = overridden
     context["profile_status"] = (profile or {}).get("status")
     # **検証した snapshot をそのまま読み手へ渡す**（独立レビュー第 2 巡 P1-1・

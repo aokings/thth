@@ -443,8 +443,13 @@ def _evidence(context: dict, observations: dict, profile) -> dict:
         used += size
         rows.append(obs)
 
+    segments = context.get("segments") or []
     return {
-        "post_text": context.get("section"),
+        # **段に分けて返す。** 連結した 1 本の文字列だと、読み手は
+        # 「どこで切れて何本の投稿になるか」を判断できない（設計 §10）。
+        "post_text": segments[0] if len(segments) == 1 else None,
+        "segments": segments,
+        "segment_count": context.get("segment_count", len(segments)),
         # **実際に使った profile の本文**。`--profile` で差し替えた場合も同じ
         # ——差し替えた事実は `context.profile_overridden` に出る。
         "profile": profile,

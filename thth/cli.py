@@ -115,6 +115,14 @@ def _expand_targets(files, *, only_draft: bool) -> tuple:
 
 def _prepare_one(path: str):
     """承認できるかを検査して `(準備, 断る理由)` を返す（何も書き換えない）。"""
+    from . import bundle as bundle_mod
+    try:
+        raw_text = open(path, encoding="utf-8").read()
+    except OSError as e:
+        return None, f"{path}: 読めません（{e}）"
+    if bundle_mod.is_bundle_text(raw_text):
+        return _prepare_bundle(path, raw_text)
+
     messages = lint_mod.lint_file(path)
     errors = [m for m in messages if not lint_mod.is_warning(m)]
     if errors:
@@ -314,13 +322,103 @@ def cmd_approve(args) -> int:
     return 0
 
 
+def _prepare_bundle(path: str, text: str):
+    """スレッド連投（`thth: 2`）の承認の準備（設計 §2・§5・工程 2）。
+
+    **承認画面には、各段の全文と返信関係を明示する**（Codex 最終条件 5）。
+    束を 1 つの塊として見せると、**何本の投稿になるのかが承認者に分からない。**
+    """
+    from . import bundle as bundle_mod
+    from . import threadrun as threadrun_mod
+
+    b = bundle_mod.parse_text(text, path)
+    if b.malformed:
+        return None, f"{path}: thth: 2 の原稿として読めません"
+    account_name = b.front_matter.get("account")
+    try:
+        account_cfg = accounts_mod.load_account(account_name)
+    except accounts_mod.AccountError as e:
+        return None, f"{path}: {e}"
+
+    problems = bundle_mod.check(b, account_cfg=account_cfg)
+    hard = [p for p in problems if not p.startswith("warning:")]
+    if hard:
+        return None, f"{path}: lint に通りません（{hard[0]}）"
+
+    repo_dir = writeback_mod.repo_toplevel(path)
+    rel_path = (os.path.relpath(os.path.realpath(path), os.path.realpath(repo_dir))
+                 if repo_dir else None)
+    run = threadrun_mod.find_latest(account_name, rel_path) if rel_path else None
+    frozen = threadrun_mod.frozen_records(run) if run else []
+
+    # **公開済みの段の本文は凍結。** 承認の時点で断る（設計 §5・
+    # Codex 最終条件 4「承認時と公開時にも拒否する」）。
+    for row in frozen:
+        i = row["index"]
+        if i > len(b.segments) or \
+                approval_mod.segment_sha(b.segments[i - 1]) != row["text_sha256"]:
+            return None, (f"{path}: {i} 段目はすでに公開されています。"
+                           f"**公開済みの段の本文は変えられません**"
+                           f"（誤字修正でも公開履歴を書き換えません）")
+
+    approved_sha = approval_mod.compute_bundle_sha(
+        segments=b.segments, account=account_name, topic=b.front_matter.get("topic"),
+        publish_at=b.front_matter.get("publish_at"),
+        continue_until=b.front_matter.get("continue_until"))
+    return {
+        "path": path, "kind": "bundle", "account": account_name,
+        "segments": b.segments, "frozen": frozen,
+        "topic": b.front_matter.get("topic"),
+        "publish_at": b.front_matter.get("publish_at"),
+        "continue_until": b.front_matter.get("continue_until"),
+        "form": b.front_matter.get("form"), "outlet": b.front_matter.get("outlet"),
+        "approved_sha": approved_sha, "warning": None,
+        "run_id": (run or {}).get("run_id"),
+        "digest": approved_sha[:approval_mod.APPROVE_DIGEST_LENGTH],
+        "reply_to": None, "text": None,
+    }, None
+
+
+def _show_bundle_stage(prepared: dict) -> None:
+    """束の一段目の表示。**各段の全文と返信関係を出す。**"""
+    frozen = {row["index"]: row for row in prepared.get("frozen") or []}
+    total = len(prepared["segments"])
+    print(f"■ {prepared['path']}（スレッド連投・{total} 段）")
+    print(f"  account: {prepared['account']}")
+    print(f"  開始: {prepared['publish_at']}　続けてよい期限: {prepared['continue_until']}")
+    print(f"  topic: {prepared['topic'] or '（なし）'}（**先頭の段だけ**）")
+    print(f"  形: {prepared['form'] or '（未記入）'} / 導線: {prepared['outlet'] or '（未記入）'}")
+    print("")
+    for i, seg in enumerate(prepared["segments"], start=1):
+        if i == 1:
+            rel = "返信先なし（スレッドの先頭）"
+        else:
+            rel = f"{i - 1} 段目への返信"
+        mark = ""
+        if i in frozen:
+            mark = f"　**公開済み・変更できません**（{frozen[i]['post_id']}）"
+        print(f"  ── {i}/{total}　{rel}{mark}")
+        for line in seg.split("\n"):
+            print(f"     {line}")
+        print("")
+    if frozen:
+        print("  ※ 公開済みの段は凍結されています。**未公開の段と期限だけを"
+              "直して、まとめて承認し直す形です。**")
+        print("")
+
+
 def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str = "") -> None:
     """一段目: **出す本文をすべて全文表示する**。何も書き換えない。"""
     if as_json:
         _print_json({"approved": False, "count": len(prepared), "bundle_digest": bundle,
                      "files": [{"file": one["path"], "account": one["account"],
                                 "publish_at": one["publish_at"], "topic": one["topic"],
-                                "reply_to": one["reply_to"], "text": one["text"],
+                                "reply_to": one.get("reply_to"),
+                                "text": one.get("text"),
+                                "kind": one.get("kind", "single"),
+                                "segments": one.get("segments"),
+                                "continue_until": one.get("continue_until"),
+                                "frozen": one.get("frozen"),
                                 "warning": one.get("warning"),
                                 "digest": one["digest"]} for one in prepared]})
         return
@@ -329,6 +427,15 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
         print(f"  {note}")
     for one in prepared:
         print("")
+        if one.get("kind") == "bundle":
+            # **各段の全文と返信関係を出す**（Codex 最終条件 5）。
+            _show_bundle_stage(one)
+            topic_line = topics_mod.verdict_line(one.get("topic"),
+                                                  account=one.get("account"))
+            if topic_line:
+                print(f"  ◆ {topic_line}")
+            print(f"digest: {one['digest']}")
+            continue
         print(f"=== {one['path']}")
         print(f"  account   : {one['account']}")
         print(f"  publish_at: {one['publish_at']}")
@@ -374,6 +481,24 @@ def cmd_account(args) -> int:
             sys.stdout.write(account_report_mod.render(d))
     # 1 本でも投稿できない状態があれば非ゼロ（board と同じ流儀で、機械から使える）
     return 0 if all(d.get("ready") for d in details) else 1
+
+
+def _already_posted(fm: dict, text: str, path: str):
+    """「もう出ていて止めようがない」か。**束は全段出ていて初めてそうなる。**
+
+    v1 の `queuefile._parse_kv()` は字下げを無視するので、束の
+    `    post_id: POST1` を**top-level の post_id として読んでしまう**——
+    1 段出ただけで「もう出ています」と断り、**残りを止める手段が消える**
+    （実装中に踏んだ）。
+    """
+    from . import bundle as bundle_mod
+    if bundle_mod.is_bundle_text(text):
+        b = bundle_mod.parse_text(text, path)
+        ids = [p.get("post_id") for p in b.posts]
+        if ids and all(ids):
+            return ids[-1]
+        return None
+    return fm.get("post_id")
 
 
 def cmd_revoke(args) -> int:
@@ -433,13 +558,26 @@ def cmd_revoke(args) -> int:
                   file=sys.stderr)
             return 1
 
-        qf = queuefile.parse(args.file)
-        fm = qf.front_matter
-        if qf.malformed:
+        # **スレッド連投も止められる**（設計 §4）。v1 の parse は `thth: 2` を
+        # malformed にするので、ここで分岐しないと**止める手段が無くなる。**
+        from . import bundle as bundle_mod
+        raw_text = open(args.file, encoding="utf-8").read()
+        if bundle_mod.is_bundle_text(raw_text):
+            b = bundle_mod.parse_text(raw_text, args.file)
+            fm = b.front_matter
+            malformed = b.malformed
+        else:
+            qf = queuefile.parse(args.file)
+            fm = qf.front_matter
+            malformed = qf.malformed
+        if malformed:
             print(f"front-matter が読めないので取り消せません: {args.file}", file=sys.stderr)
             return 1
-        if fm.get("post_id"):
-            print(f"**もう出ています**（post_id: {fm.get('post_id')}）。"
+        # **束は「途中まで出ている」が普通の状態。** 止めたいのは残りなので、
+        # 1 段出ているだけで断ってはいけない（全段出ていれば止めるものが無い）。
+        posted = _already_posted(fm, raw_text, args.file)
+        if posted:
+            print(f"**もう出ています**（post_id: {posted}）。"
                   "THTH からは取り消せません。消すなら Threads の画面から手で消してください。",
                   file=sys.stderr)
             return 1
@@ -463,19 +601,44 @@ def cmd_revoke(args) -> int:
 
         # push の直前に `pull --rebase` が走るので、**その間に別 clone から
         # 公開されたもの**が入ってくることがある。書き終えたあとにもう一度見る。
-        after = queuefile.parse(args.file).front_matter
-        if after.get("post_id"):
+        after_text = open(args.file, encoding="utf-8").read()
+        after = (bundle_mod.parse_text(after_text, args.file).front_matter
+                  if bundle_mod.is_bundle_text(after_text)
+                  else queuefile.parse(args.file).front_matter)
+        posted_after = _already_posted(after, after_text, args.file)
+        if posted_after:
             print(f"**取り消せませんでした。処理の途中で公開されました**"
-                  f"（post_id: {after.get('post_id')}）。消すなら Threads の画面から"
+                  f"（post_id: {posted_after}）。消すなら Threads の画面から"
                   "手で消してください。", file=sys.stderr)
             return 1
     finally:
         repo_lock.release()
 
+    # **スレッド連投なら、どこまで出たかを分けて出す**（設計 §4.2）。
+    # **「N 段目以降は未公開」と断定しない。** 停止要求は出したが、
+    # **実行側がそれを読むまでは止まったと言えない。**
+    from . import bundle as bundle_mod
+    from . import threadrun as threadrun_mod
+    thread_report = None
+    try:
+        if bundle_mod.is_bundle_text(open(args.file, encoding="utf-8").read()):
+            account_name = queuefile.parse(args.file).front_matter.get("account") \
+                or bundle_mod.parse(args.file).front_matter.get("account")
+            thread_report = threadrun_mod.stop_report(account_name, rel_path)
+    except (OSError, UnicodeDecodeError):
+        thread_report = None
+
     if args.json:
         _print_json({"file": args.file, "status": "draft", "revoked_at": revoked_at,
                      "revoked_by": revoked_by, "revoked_reason": args.reason or None,
-                     "pushed": pushed, "push_error": push_err or None})
+                     "pushed": pushed, "push_error": push_err or None,
+                     "thread": thread_report})
+    elif thread_report is not None:
+        print(f"停止を要求しました: {args.file}（{revoked_by}）")
+        print(threadrun_mod.format_stop_report(thread_report))
+        print("実行側がこれを読んだ時点で、新しい公開要求を送らなくなります。")
+        print("**すでに送信済みの要求は取り消せません。** 出てしまったものは"
+              "Threads の画面から手で消してください。")
     else:
         print(f"承認を取り消しました: {args.file}（{revoked_by}）")
         print("  本文はそのままです。直して thth approve し直せます。")
@@ -842,6 +1005,43 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
     return 0
 
 
+def cmd_forms(args) -> int:
+    """`thth forms`: 投稿の形の語彙と、形を選ぶ前に読むもの（設計 §8）。
+
+    **実測がまだ無いことを隠さない。** 「この形式で成果が出るかは未検証」を
+    毎回出す——出さないと**根拠のない型が権威を持つ**（トピックで
+    「一般名詞なら安全」と思い込んで 0 件を踏んだのと同じ罠）。
+    """
+    from . import forms as forms_mod
+    data = forms_mod.advise()
+    if args.json:
+        _print_json(data)
+        return 0
+
+    print("■ 投稿の形を選ぶ前に")
+    print("")
+    print("  【構成】何段に分けて、どう並べるか")
+    for name, note in data["forms"].items():
+        print(f"    {name} — {note}")
+    print("")
+    print("  【導線】読んだ人をどこへ渡すか")
+    for name, note in data["outlets"].items():
+        print(f"    {name} — {note}")
+    print("")
+    print("  【選び方】")
+    for line in data["guidance"]:
+        print(f"    ・{line}")
+    print("")
+    print(f"  ※ {data['notice']}")
+    print("")
+    print("  【数の読み方】")
+    for line in data["outcome_rules"]:
+        print(f"    ・{line}")
+    print("")
+    print("  連投の原稿の書き方: docs/手順_LLM_スレッド連投.md")
+    return 0
+
+
 def cmd_queue(args) -> int:
     summary = report_mod.queue_summary(args.account)
     if args.json:
@@ -1158,6 +1358,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_topics.add_argument("--limit", type=int, default=25)
     p_topics.add_argument("--json", action="store_true")
     p_topics.set_defaults(func=cmd_topics)
+
+    p_forms = sub.add_parser(
+        "forms", help="投稿の形の語彙と選び方（読むだけ・実測はまだ無い）")
+    p_forms.add_argument("--json", action="store_true")
+    p_forms.set_defaults(func=cmd_forms)
 
     p_queue = sub.add_parser("queue", help="draft/approved/posted/型外 と次に出るもの")
     p_queue.add_argument("account", nargs="?")

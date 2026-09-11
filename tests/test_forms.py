@@ -1,0 +1,130 @@
+"""形の語彙と計測の紐付け（設計 §8・§9・工程 7〜8）。
+
+**「使いこなせる」は実測待ちにすると満たせない**（Codex 最終条件 6）。
+実測がゼロでも、判断材料・語彙・検査・計測の口は初版から揃っている。
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+from thth import bundle, forms, threadrun
+
+BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "bin", "thth")
+
+
+def test_軸が構成と導線に分かれている():
+    """**第 1 稿の語彙は軸が混ざっていた**（Codex 指摘）。
+
+    「列挙」「問い→答え」は構成、「誘導」は目的。別々に記録すると
+    「問い→答え × 記事へ」と「列挙 × 記事へ」を並べられる。
+    """
+    assert set(forms.FORMS) == {"単発", "列挙", "問い→答え", "手順"}
+    assert set(forms.OUTLETS) == {"記事へ", "別投稿へ", "無し"}
+    # **目的の語が構成に混ざっていない。**
+    assert "誘導" not in forms.FORMS
+
+
+def test_知らない語は通さない():
+    assert forms.label_error("問い→答え", "記事へ") is None
+    assert "知らない語" in forms.label_error("問いと答え", "記事へ")
+    assert "知らない語" in forms.label_error("列挙", "きじへ")
+    # 書かなくてよい（承認対象ではない）。
+    assert forms.label_error(None, None) is None
+
+
+def test_ラベルの履歴は当時の値と分類の版を持つ():
+    """**時刻だけでなく**（Codex 最終条件 4）。"""
+    row = forms.label_record(form="列挙", outlet="記事へ",
+                              at="2026-09-15T18:00:00+09:00")
+    assert row["form"] == "列挙" and row["outlet"] == "記事へ"
+    assert row["vocabulary_version"] == forms.VOCABULARY_VERSION
+
+
+def test_実測がまだ無いことを隠さない():
+    """**出さないと、根拠のない型が権威を持つ。**"""
+    data = forms.advise()
+    assert data["measured"] == {}
+    assert "未検証" in data["notice"]
+    assert any("未検証" in line for line in data["guidance"])
+
+
+def test_分けないで済むなら分けないが先頭にある():
+    assert "無理に分割しない" in forms.GUIDANCE[0]
+
+
+def test_計測は足さない割らない(thth_root):
+    """**「到達人数」や「読了率」という名前を付けない**（設計 §9）。"""
+    run = threadrun.start(account="a", rel_path="q/x.md", bundle_sha="s",
+                           segment_count=2, segment_shas=["h1", "h2"],
+                           continue_until="2026-09-15T20:00:00+09:00", by="t")
+    threadrun.mark(run, 1, threadrun.PUBLISHED, post_id="P1")
+    threadrun.mark(run, 2, threadrun.PUBLISHED, post_id="P2")
+
+    out = forms.bundle_outcome(run, {"P1": {"views": 100}, "P2": {"views": 40}})
+    assert [r["measured"]["views"] for r in out["posts"]] == [100, 40]
+    blob = json.dumps(out, ensure_ascii=False)
+    assert "到達人数" not in blob.replace("到達人数」と呼ばない", "")
+    assert "読了率" not in blob.replace("読了率」と呼ばない", "")
+    # **合計も割り算も返していない。**
+    assert "total" not in out and "rate" not in out
+    assert "足して" in out["notice"]
+
+
+def test_未公開の段は測りようがないと分かる(thth_root):
+    run = threadrun.start(account="a", rel_path="q/y.md", bundle_sha="s",
+                           segment_count=2, segment_shas=["h1", "h2"],
+                           continue_until="2026-09-15T20:00:00+09:00", by="t")
+    threadrun.mark(run, 1, threadrun.PUBLISHED, post_id="P1")
+    out = forms.bundle_outcome(run, {"P1": {"views": 5}})
+    assert out["posts"][1]["measured"] is None
+    assert out["posts"][1]["state"] == threadrun.PENDING
+
+
+def test_ラベルの綴り違いをlintが断る():
+    from tests.test_bundle import FM, BODY, make, account_cfg
+    b = bundle.parse_text(make(FM.replace("form: 問い→答え", "form: 問いと答え")),
+                           "b.md")
+    errors = bundle.check(b, account_cfg=account_cfg())
+    assert any("form: 知らない語" in e for e in errors), errors
+
+
+# --- 手順書と CLI ------------------------------------------------------------
+
+def test_formsコマンドが動く():
+    proc = subprocess.run([sys.executable, BIN, "forms"], capture_output=True,
+                           text=True, env=dict(os.environ))
+    assert proc.returncode == 0, proc.stderr
+    assert "問い→答え" in proc.stdout
+    assert "未検証" in proc.stdout
+    assert "到達人数" in proc.stdout        # やってはいけないことも出る
+
+
+def test_手順書のコマンドが実際に存在する():
+    """**動かないコマンドを配らない**（2026-09-11 に 3 回やった）。"""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    doc = open(os.path.join(root, "docs", "手順_LLM_スレッド連投.md"),
+                encoding="utf-8").read()
+    used = set(re.findall(r"^thth ([a-z][a-z-]*)", doc, re.M))
+    assert used, "手順書にコマンドが出てこない"
+    proc = subprocess.run([sys.executable, BIN, "--help"], capture_output=True,
+                           text=True)
+    for name in used:
+        assert name in proc.stdout, f"{name} が thth --help に無い"
+
+
+def test_手順書の原稿の例が実際に通る():
+    """**例が lint を通ることを機械で見張る。**"""
+    from tests.test_bundle import account_cfg
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    doc = open(os.path.join(root, "docs", "手順_LLM_スレッド連投.md"),
+                encoding="utf-8").read()
+    block = doc.split("```markdown\n")[1].split("```")[0]
+    b = bundle.parse_text(block, "例.md")
+    assert b.malformed is False, "手順書の例が読めない"
+    errors = bundle.check(b, account_cfg=account_cfg())
+    assert errors == [], errors
