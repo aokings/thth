@@ -128,7 +128,18 @@ class ThreadsAdapter(base.Adapter):
         p["access_token"] = self.access_token
         url = f"{self.base_url.rstrip('/')}{path}?" + urllib.parse.urlencode(p)
         with urllib.request.urlopen(url, timeout=self.timeout) as resp:
-            return json.loads(resp.read() or b"{}")
+            body = json.loads(resp.read() or b"{}")
+        # **200 で返ってきた `error` を、取れたことにしない**（監査 2026-09-11）。
+        # 失敗すれば `urlopen` が上げるので、採取側は「例外なら記録を書かない」
+        # で成功と失敗を分けている。**だが 200 のまま `error` が入っていると、
+        # `body.get("data") or []` が静かに 0 件になり、「取れて 0 件」として
+        # 台帳に残る。** 返信が 10 回とも 0 件だったときに、それが事実なのか
+        # 取れていないのかを、あとから区別できなくなる。
+        if isinstance(body, dict) and body.get("error"):
+            raise RuntimeError(
+                f"API が error を返しました（HTTP 200）: "
+                f"{redact_mod.redact(str(body['error']))[:200]}")
+        return body
 
     @staticmethod
     def _metric_value(row: dict):
