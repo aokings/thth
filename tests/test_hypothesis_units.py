@@ -271,3 +271,46 @@ def test_保存済みの壊れた版の指し先で一覧を落とさない(thth
     by_id = {h["hypothesis_id"]: h for h in listed["hypotheses"]}
     assert by_id[good]["superseded_by"] == [], \
         "**壊れた指し先を、正常な版関係として扱っている**"
+
+
+@pytest.mark.parametrize("bad", [[], {}, 0, False])
+def test_空の不正型をnullと同じに扱わない(thth_root, bad):
+    """**`if not link:` は `[]` `{}` `0` `false` を null と同じに読んでいた**
+    （外部レビュー V1 残件・2026-09-12）。
+
+    **新規登録では拒否する値が、読取では「指し先なし」に化けていた。**
+    `None` だけを読み飛ばし、あとは型検査へ通す。
+    """
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json, _thth
+    from thth import topic_store
+
+    good = _json(_register(_hypothesis()))["hypothesis_id"]
+
+    # **登録の口は通らない**（型検査で拒否される）ので、直接置く——「直す前の口が
+    # 受理してしまった記録」の再現。**将来の機能の証拠ではない。**
+    row = models.build_hypothesis(_hypothesis(
+        code="T03", created_at="2026-09-12T05:00:00+09:00", proposed_by="テスト"))
+    row["supersedes"] = bad
+    row["hypothesis_id"] = models.content_id(row, exclude=("hypothesis_id",))
+    saved, _wrote = topic_store.put("hypotheses", row, id_key="hypothesis_id")
+
+    listed = _json(_thth(["topics", "hypotheses"]))
+
+    assert listed["ok"] is True, "一覧が読めなくなっている"
+    assert [p["hypothesis_id"] for p in listed["broken_version_links"]] \
+        == [saved["hypothesis_id"]], \
+        f"{bad!r} を null と同じ『指し先なし』として黙って通している"
+    by_id = {h["hypothesis_id"]: h for h in listed["hypotheses"]}
+    assert by_id[good]["superseded_by"] == []
+
+
+def test_nullは診断しない(thth_root):
+    """**出しすぎない。** `null`（＝最初の版）は正常で、診断に出してはいけない。"""
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json, _thth
+
+    _register(_hypothesis())
+    listed = _json(_thth(["topics", "hypotheses"]))
+    assert listed["broken_version_links"] == [], \
+        "null（最初の版）を壊れとして出している"

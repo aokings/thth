@@ -1593,7 +1593,12 @@ def cmd_hypotheses(args) -> int:
     broken_version_links: list = []
     for r in rows:
         link = r.get("supersedes")
-        if not link:
+        if link is None:
+            # **`None` だけを「指し先なし」として読み飛ばす**（外部レビュー
+            # V1 残件・2026-09-12）。元は `if not link:` だったので、
+            # **`[]` `{}` `0` `false` が型検査に届かず、null と同じ扱いで
+            # 黙って通っていた。** 新規登録では拒否する値が、読取では
+            # 「指し先なし」に化けていた。
             continue
         if not isinstance(link, str):
             broken_version_links.append({
