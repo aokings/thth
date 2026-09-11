@@ -273,7 +273,8 @@ def test_保存済みの壊れた版の指し先で一覧を落とさない(thth
         "**壊れた指し先を、正常な版関係として扱っている**"
 
 
-@pytest.mark.parametrize("bad", [[], {}, 0, False])
+@pytest.mark.parametrize("bad", [[], {}, 0, False, "", "   ", "sha256:xyz",
+                                  "sha256:" + "1" * 63, "1" * 64])
 def test_空の不正型をnullと同じに扱わない(thth_root, bad):
     """**`if not link:` は `[]` `{}` `0` `false` を null と同じに読んでいた**
     （外部レビュー V1 残件・2026-09-12）。
@@ -314,3 +315,37 @@ def test_nullは診断しない(thth_root):
     listed = _json(_thth(["topics", "hypotheses"]))
     assert listed["broken_version_links"] == [], \
         "null（最初の版）を壊れとして出している"
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "sha256:xyz", "sha256:" + "1" * 63,
+                                  "1" * 64, ["sha256:" + "1" * 64], {}, 0, False])
+def test_hypothesis_idの表記でない値は登録で拒まれる(thth_root, bad):
+    """**登録と読取で同じ基準にする**（外部レビュー・2026-09-12）。
+
+    型だけを見ていたときは、**空文字列と空白だけの文字列が素通りしていた**
+    （`str` なので）。「指し先なし」を意味する値が診断されずに索引へ入る——
+    `[]` `{}` `0` `false` と同じ形だった。
+
+    **見るのは表記だけ。** 形式が正しいが存在しない ID は通る（参照先の
+    実在性・循環検査は対象外との指示）。
+    """
+    from tests.test_hypotheses import _register
+
+    proc = _register(_hypothesis(supersedes=bad))
+    assert proc.returncode != 0, f"{bad!r} が保存されている"
+    assert "supersedes" in proc.stdout + proc.stderr
+
+
+def test_形式が正しければ存在しないIDでも登録できる(thth_root):
+    """**見るのは表記だけ**という境界を、こちら側からも固定する。
+    参照先の実在検査を勝手に足していないことの確認でもある。"""
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json, _thth
+
+    ghost = "sha256:" + "a" * 64
+    proc = _register(_hypothesis(supersedes=ghost))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    listed = _json(_thth(["topics", "hypotheses"]))
+    assert listed["broken_version_links"] == [], \
+        "**表記は正しいのに壊れとして出している**（実在検査は対象外）"

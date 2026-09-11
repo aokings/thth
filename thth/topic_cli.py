@@ -1600,13 +1600,18 @@ def cmd_hypotheses(args) -> int:
             # 黙って通っていた。** 新規登録では拒否する値が、読取では
             # 「指し先なし」に化けていた。
             continue
-        if not isinstance(link, str):
+        # **登録と同じ基準で読む**（外部レビュー・2026-09-12）。型だけを見て
+        # いたときは、**空文字列・空白だけの文字列が正常な指し先として索引へ
+        # 入っていた。** 見るのは**表記だけ**——形式が正しいが存在しない ID は
+        # 通る（参照先の実在性・循環検査は対象外との指示）。
+        if not isinstance(link, str) or not models._REF_ID_RE.fullmatch(link):
             broken_version_links.append({
                 "hypothesis_id": r["hypothesis_id"],
                 "supersedes": link,
-                "problem": "supersedes が前の版の hypothesis_id（1 つ）でも "
-                            "null でもありません（**この記録の版の関係は"
-                            "読めません**。ほかの仮説には影響しません）",
+                "problem": "supersedes が前の版の hypothesis_id"
+                            "（`sha256:` + 16 進 64 桁）でも null でもありません"
+                            "（**この記録の版の関係は読めません**。"
+                            "ほかの仮説には影響しません）",
             })
             continue
         superseded.setdefault(link, []).append(r["hypothesis_id"])

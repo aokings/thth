@@ -439,7 +439,9 @@ def build_vocabulary(row: dict) -> dict:
     _require_iso(row["created_at"], "created_at")
     if not row.get("created_by"):
         raise SchemaError("created_by が要ります（誰が作ったか）")
-    if row["supersedes"] is not None and not isinstance(row["supersedes"], str):
+    if row["supersedes"] is not None and (
+            not isinstance(row["supersedes"], str)
+            or not _REF_ID_RE.fullmatch(row["supersedes"])):
         raise SchemaError("supersedes は前の版の vocabulary_id か null")
     entries = row["entries"]
     if not isinstance(entries, list) or not entries:
@@ -1769,16 +1771,24 @@ def build_hypothesis(row: dict) -> dict:
       独立確認の仕組みができてから（構想書 §8）。
     """
     _require(row, HYPOTHESIS_KEYS, "仮説")
-    if row["supersedes"] is not None and not isinstance(row["supersedes"], str):
+    if row["supersedes"] is not None and (
+            not isinstance(row["supersedes"], str)
+            or not _REF_ID_RE.fullmatch(row["supersedes"])):
         # **型を検査していなかった**（外部レビュー V1・2026-09-12）。配列を
         # 渡すと**登録は通るのに、その記録があると仮説の一覧が丸ごと読めなく
         # なっていた**（逆索引が辞書のキーに使うため `TypeError`）。
         # **既存の検査だけなら受理できる入力が、後から足した読取処理を壊す。**
+        # **表記まで見る**（外部レビュー・2026-09-12）。最初は型だけ見ていたが、
+        # **空文字列と空白だけの文字列が素通りしていた**（`str` なので）。
+        # 「指し先なし」を意味する値が診断されずに索引へ入る——挙げられた
+        # `[]` `{}` `0` `false` と同じ形だった。**登録と読取で同じ基準にする。**
+        # **見るのは表記だけ**——形式が正しいが存在しない ID は通る
+        # （参照先の実在性・循環検査は対象外との指示）。
         raise SchemaError(
-            f"supersedes は前の版の hypothesis_id（1 つ）か null です: "
-            f"{row['supersedes']!r}。**版は 1 つずつ差し替えます**——"
-            f"複数を 1 件でまとめて差し替えたい場合も、1 件ずつ記録して"
-            f"ください（記録は消しません）")
+            f"supersedes は前の版の hypothesis_id（`sha256:` + 16 進 64 桁）"
+            f"1 つか null です: {row['supersedes']!r}。**版は 1 つずつ"
+            f"差し替えます**——複数を 1 件でまとめて差し替えたい場合も、"
+            f"1 件ずつ記録してください（記録は消しません）")
     if not isinstance(row["claim"], str) or not row["claim"].strip():
         raise SchemaError("claim が空です")
     _require_choice(row["kind"], HYPOTHESIS_KINDS, "kind")
