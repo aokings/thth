@@ -31,11 +31,18 @@ _KEEP = ("name", "id", "username", "total_value", "quota_usage", "config",
 
 
 class _Probe:
-    def __init__(self, label: str, permission: str, path: str, params: dict):
+    # **`key` はラベルの表示文言とは独立**（監査 2026-09-11・掃討で検出。
+    # 運用セッションが VM の `thth doctor` 出力で再現を確認）。以前は判定側が `label == "自分の投稿一覧"` と文字列で
+    # 突き合わせていたが、ラベルに注記を足した（2026-09-10）ときに直し忘れ、
+    # `==` が永久に偽になって「返信の取得」probe が一度も HTTP を叩かなくなった。
+    # 表示用のラベルは今後も変わりうるので、突き合わせには変わらない `key` を使う。
+    def __init__(self, label: str, permission: str, path: str, params: dict,
+                 key: str | None = None):
         self.label = label
         self.permission = permission
         self.path = path
         self.params = params
+        self.key = key
 
 
 def _get(base_url: str, path: str, params: dict, token: str) -> dict:
@@ -58,7 +65,7 @@ def _summarize(body: dict) -> str:
 def _run_probe(base_url: str, probe: _Probe, token: str) -> dict:
     try:
         body = _get(base_url, probe.path, probe.params, token)
-        return {"label": probe.label, "permission": probe.permission,
+        return {"label": probe.label, "permission": probe.permission, "key": probe.key,
                 "ok": True, "detail": _summarize(body), "body": body}
     except urllib.error.HTTPError as e:
         message = ""
@@ -67,11 +74,12 @@ def _run_probe(base_url: str, probe: _Probe, token: str) -> dict:
                        .get("message", ""))[:170]
         except Exception:
             pass
-        return {"label": probe.label, "permission": probe.permission, "ok": False,
+        return {"label": probe.label, "permission": probe.permission, "key": probe.key,
+                "ok": False,
                 "detail": redact_mod.redact(f"HTTP {e.code} {message}".strip()), "body": None}
     except Exception as e:  # ネットワーク層。例外文にトークンが混じらないよう型名だけ。
-        return {"label": probe.label, "permission": probe.permission, "ok": False,
-                "detail": type(e).__name__, "body": None}
+        return {"label": probe.label, "permission": probe.permission, "key": probe.key,
+                "ok": False, "detail": type(e).__name__, "body": None}
 
 
 def diagnose(account_name: str) -> dict:
@@ -97,7 +105,7 @@ def diagnose(account_name: str) -> dict:
         # 全部を読む口は `thth posts`（切り詰めない）。
         _Probe("自分の投稿一覧（直近 3 件まで・総数ではありません→ thth posts）",
                "threads_basic", f"/v1.0/{user_id}/threads",
-               {"fields": "id,permalink,timestamp", "limit": 3}),
+               {"fields": "id,permalink,timestamp", "limit": 3}, key="my_posts"),
         _Probe("投稿の残量", "threads_content_publish",
                f"/v1.0/{user_id}/threads_publishing_limit",
                {"fields": "quota_usage,config,reply_quota_usage,reply_config"}),
@@ -114,7 +122,7 @@ def diagnose(account_name: str) -> dict:
     # 返信の取得は投稿が 1 本要る。上で拾えた最初の投稿で試す（無ければ飛ばす）。
     first_post_id = None
     for r in results:
-        if r["label"] == "自分の投稿一覧" and r["ok"] and r.get("body"):
+        if r["key"] == "my_posts" and r["ok"] and r.get("body"):
             rows = r["body"].get("data") or []
             if rows:
                 first_post_id = rows[0].get("id")

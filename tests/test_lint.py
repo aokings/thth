@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 
-from tests.conftest import FIXTURES_DIR, make_queue_text, write_queue_file
+from tests.conftest import FIXTURES_DIR, make_queue_text, run_thth, write_queue_file
 from thth import lint as lint_mod
 
 
@@ -105,3 +105,21 @@ def test_topicの先頭のシャープを落として通る(isolated_account, tm
     path = write_queue_file(str(tmp_path), "ok.md", fm_overrides={"topic": "#苦味"})
     errors = lint_mod.lint_file(path)
     assert errors == []
+
+
+def test_空ディレクトリを渡すと非ゼロで理由が出る(tmp_path, isolated_account):
+    """バグ 2: 空ディレクトリを渡すと `_expand_targets()` が空を返し、for が 0 回
+    まわって非 JSON では無言、`--json` でも `[]` を出して、どちらも exit 0 だった
+    （監査 2026-09-11・掃討で検出）。「0 本を検査した」がどこにも出ないまま
+    正常終了に見えてしまう事故を防ぐ。
+    """
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+
+    result = run_thth(["lint", str(empty_dir)])
+    assert result.returncode != 0, result.stdout
+    assert "0" in result.stderr and "検査" in result.stderr
+
+    result_json = run_thth(["lint", str(empty_dir), "--json"])
+    assert result_json.returncode != 0, result_json.stdout
+    assert "検査" in result_json.stderr

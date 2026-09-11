@@ -129,12 +129,22 @@ def due_marks(age_hours: float, recorded: list) -> list:
     return [m for m in AGE_MARKS_HOURS if age_hours >= m and m not in done]
 
 
-def _with_bundle_posts(files: list, account_name: str, account_cfg: dict) -> list:
+def _with_bundle_posts(files: list, account_name: str, account_cfg: dict, *,
+                        errors: list) -> list:
     """v1 のファイル一覧に、**v2 の段を 1 投稿 1 件として足す**（P2-7）。
 
     段ごとに `post_id` と `posted_at` を持つ**疑似 queue ファイル**にして、
     既存の収集ループにそのまま流す。**計測は投稿単位のまま**（設計 §9）で、
     束への紐付けは `thth/forms.py` の `bundle_outcome()` が行う。
+
+    `errors` に読めなかった束を積む（監査 2026-09-11・掃討で検出）。
+    以前は `problems`（media の節が無い等）が非空だと `continue` で黙って
+    その束の全投稿を採取から落としていた。account の `media` を書き換えると
+    （表記の修正など）旧 media の節が見つからなくなり、公開済みの投稿があっても
+    `posts: 0`・`errors: []` で正常終了に見えてしまっていた。この冒頭コメントの
+    規約 12「取れなかった指標は書かない。0 と混ぜると判らなくなる」がまさに
+    ここで破れていたので、読めなかった事実を `errors` に残す。**他の束の採取は
+    続ける**——1 件読めないことを全部読めないことにしない。
     """
     from . import bundle as bundle_mod
     from . import queuefile as queuefile_mod
@@ -155,6 +165,7 @@ def _with_bundle_posts(files: list, account_name: str, account_cfg: dict) -> lis
             continue
         segments, problems = bundle_mod.load_segments(b, account_cfg["media"])
         if problems:
+            errors.append(f"{qf.path}: bundle: " + "; ".join(problems))
             continue
         for i, post in enumerate(b.posts, start=1):
             post_id = bundle_mod.unquote(post.get("post_id"))
@@ -196,7 +207,7 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     # **スレッド連投の段も拾う**（独立検収 2026-09-11・P2-7）。
     # v1 の `qf.malformed` 判定が `thth: 2` を落とすので、3 段公開しても
     # **収集対象は 0 件だった。** 出したものを測れないなら、出す意味が薄い。
-    for qf in _with_bundle_posts(files, account_name, account_cfg):
+    for qf in _with_bundle_posts(files, account_name, account_cfg, errors=errors):
         if qf.malformed:
             continue
         fm = qf.front_matter

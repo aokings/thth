@@ -14,7 +14,7 @@ import json
 import os
 from pathlib import Path
 
-from tests.conftest import init_git_pair, make_queue_text, commit_and_push_path
+from tests.conftest import init_git_pair, make_queue_text, commit_and_push_path, write_queue_file
 from thth import collect as collect_mod
 from thth import jst
 
@@ -267,3 +267,51 @@ def test_origin復旧後に次の実行が送り直す(tmp_path, isolated_accoun
     assert "data/sns/insights/posts/POST1.ndjson" in in_origin, "採取が origin に届いていない"
     rows = _rows(pair["work"], "data/sns/insights/posts/POST1.ndjson")
     assert [r["marks"] for r in rows] == [[1], [6]], rows
+
+
+def test_bundleのmediaが合わないとerrorsに出るが他の投稿は採れる(tmp_path, isolated_account_factory):
+    """バグ 3: account の `media` を書き換えると（表記の修正など）、公開済みの
+    `thth: 2` 束の `## <旧media>` 節が見つからなくなり `problems` が非空になる。
+    以前は `continue` で黙ってその束の全投稿を採取から落とし、`posts: 0`・
+    `errors: []` で正常終了に見えていた（監査 2026-09-11・掃討で検出）。
+    冒頭コメントの規約 12「取れなかった指標は書かない。0 と混ぜると判らなくなる」
+    がここで破れていた。読めなかった事実が `errors` に出ること、**他の投稿の
+    採取は続く**ことを確かめる。
+    """
+    bundle_fm = """thth: 2
+account: nigamilab-threads
+publish_at: 2026-09-06T10:00:00+09:00
+status: posted
+posts:
+  - index: 1
+  - index: 2
+"""
+    # account の media（既定 threads）と合わない節名にして、
+    # `bundle.load_segments()` を「節が無い」で失敗させる。
+    bundle_body = """## other-media
+
+段 1。
+
+<!-- thth: 2/2 -->
+
+段 2。
+"""
+    bundle_text = f"---\n{bundle_fm}---\n{bundle_body}"
+
+    pair = init_git_pair(tmp_path, seed_content=bundle_text, seed_name="bundle.md")
+    account = isolated_account_factory(repo_dir=pair["work"], production=True)
+
+    # 束とは別に、ふつうに投稿できている v1 の記事も 1 本置く。
+    write_queue_file(pair["queue_dir"], "normal.md",
+                      fm_overrides={"status": "posted", "post_id": "POST1",
+                                    "posted_at": "2026-09-10T10:00:00+09:00"})
+
+    adapter = FakeAdapter()
+    result = collect_mod.collect_once(account["name"], adapter=adapter, now=NOW,
+                                       log=lambda _l: None)
+
+    assert result["posts"] == 1, "束が読めなくても、他の投稿は数える"
+    assert any("bundle.md" in e for e in result["errors"]), (
+        f"束が読めなかった事実が errors に出ていない: {result['errors']}")
+    assert _rows(pair["work"], "data/sns/insights/posts/POST1.ndjson"), (
+        "束の失敗につられて、他の投稿の採取まで止まっている")

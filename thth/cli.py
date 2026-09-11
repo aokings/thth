@@ -40,7 +40,14 @@ def cmd_lint(args) -> int:
     exit code は**全体**で決まる（1 本でも実エラーがあれば非ゼロ）。警告（450 字超）
     では落とさない。
     """
-    paths, _note = _expand_targets(args.file, only_draft=False)
+    # **空ディレクトリを渡すと無言で exit 0 になっていた**（監査
+    # 2026-09-11・`ba81219` 後の掃討で検出）。for が 0 回まわるだけで「0 本を検査した」が
+    # どこにも出ず、承認前の `cmd_approve()` にはある同じ関門が lint には無かった。
+    # `cmd_approve()` と同じ形（note も使って理由を出す・exit 1）にそろえる。
+    paths, note = _expand_targets(args.file, only_draft=False)
+    if not paths:
+        print(f"検査できるものがありません（対象 0 件です）{note}", file=sys.stderr)
+        return 1
     rows, any_error = [], False
     for path in paths:
         messages = lint_mod.lint_file(path)

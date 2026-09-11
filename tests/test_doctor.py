@@ -60,3 +60,41 @@ def test_トークンが無ければその旨を返す(tmp_path, isolated_accoun
     rc = doctor_mod.run_doctor(account["name"], log=lines.append)
     assert rc == 2
     assert "トークンが無い" in "\n".join(lines)
+
+
+def test_投稿があると返信のprobeが実際にリクエストを送る(tmp_path, monkeypatch,
+                                                isolated_account_factory):
+    """バグ 1: ラベルの文字列比較（`== "自分の投稿一覧"`）が注記付きラベルと
+    一致せず、`first_post_id` が常に None のまま「返信の取得」probe が一度も
+    HTTP を叩かなかった事故（2026-09-10 のラベル変更で直し忘れ）。
+
+    `key="my_posts"` での突き合わせに直したので、投稿が実在すれば返信 probe が
+    実際にリクエストを送ることを、送られたパスを記録して確かめる。
+    """
+    token_path = str(tmp_path / "a.token")
+    account = isolated_account_factory(token=token_path, handle="nigamilab")
+    _write_token(token_path)
+
+    requested_paths = []
+
+    def fake_get(base_url, path, params, token):
+        requested_paths.append(path)
+        if path.endswith("/threads"):
+            return {"data": [{"id": "POST123", "permalink": "https://example/p",
+                               "timestamp": "2026-09-10T00:00:00+0000"}]}
+        if path.endswith("/replies"):
+            return {"data": [{"id": "R1", "username": "someone",
+                               "timestamp": "2026-09-10T01:00:00+0000"}]}
+        return {}
+
+    monkeypatch.setattr(doctor_mod, "_get", fake_get)
+    report = doctor_mod.diagnose(account["name"])
+
+    reply_paths = [p for p in requested_paths if p.endswith("/replies")]
+    assert reply_paths == ["/v1.0/POST123/replies"], (
+        "返信の取得 probe が実際に HTTP リクエストを送っていない: "
+        f"{requested_paths}")
+
+    reply_probe = next(p for p in report["probes"]
+                        if p["permission"] == "threads_read_replies")
+    assert reply_probe["ok"] is True
