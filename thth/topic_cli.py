@@ -1638,6 +1638,10 @@ def cmd_hypotheses(args) -> int:
                "sample_design": r.get("sample_design"), "state": r.get("state"),
                "scope": r.get("scope"), "verifier": r.get("verifier"),
                "supersedes": r.get("supersedes"),
+               # **版を改めた理由**（運用指摘 2026-09-12）。一覧に出さないと、
+               # **「差し替わっている」ことは読めても「何を間違えていたか」は
+               # 読めない。** そこがいちばん価値のある部分。
+               "supersede_reason": r.get("supersede_reason"),
                # **古い記録を消さずに、いまの版がどれかを読めるように。**
                "superseded_by": superseded.get(r["hypothesis_id"], []),
                # **一覧でも当てる**（外部レビュー U2・2026-09-12）。「読むたびに

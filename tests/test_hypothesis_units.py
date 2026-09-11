@@ -162,7 +162,9 @@ def test_一覧で後から来た版が読める(thth_root):
     second = _json(_register(_hypothesis(
         sample_design=models.UNIDENTIFIABLE,
         refutation="差が大きくても識別できない",
-        supersedes=first)))["hypothesis_id"]
+        supersedes=first,
+        supersede_reason="反証の敷居を『複数回』と書いていた（B なのに M の敷居）"
+        )))["hypothesis_id"]
 
     listed = _json(_thth(["topics", "hypotheses"]))
     by_id = {h["hypothesis_id"]: h for h in listed["hypotheses"]}
@@ -196,8 +198,8 @@ def test_状態で絞っても絞りの外の新しい版が印に出る(thth_ro
     # **CLI では作れない状態**（登録は proposed 限定）。ここは store に直接置く。
     later = models.build_hypothesis(_hypothesis(
         state="shadow", refutation="差が大きくても識別できない",
-        supersedes=first, created_at="2026-09-12T04:00:00+09:00",
-        proposed_by="テスト"))
+        supersedes=first, supersede_reason="統制していないものを書いていなかった",
+        created_at="2026-09-12T04:00:00+09:00", proposed_by="テスト"))
     saved, _wrote = topic_store.put("hypotheses", later, id_key="hypothesis_id")
 
     listed = _json(_thth(["topics", "hypotheses", "--state", "proposed"]))
@@ -343,9 +345,73 @@ def test_形式が正しければ存在しないIDでも登録できる(thth_roo
     from tests.test_review_cli import _json, _thth
 
     ghost = "sha256:" + "a" * 64
-    proc = _register(_hypothesis(supersedes=ghost))
+    proc = _register(_hypothesis(supersedes=ghost,
+                                  supersede_reason="表記だけを見ることの確認"))
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     listed = _json(_thth(["topics", "hypotheses"]))
     assert listed["broken_version_links"] == [], \
         "**表記は正しいのに壊れとして出している**（実在検査は対象外）"
+
+
+# --- 版を改めた理由（運用指摘 2026-09-12）------------------------------------
+
+def test_版を改めるなら理由が要る(thth_root):
+    """**検収記録には `disposition_reason` があるのに、仮説には無かった。**
+
+    運用は当座 `claim` の末尾に書いていたが、本人が**置き場所として間違って
+    いると自覚していた**——`claim` は主張そのものの欄なので、版の運用メモが
+    混ざると**次に読む人が主張の一部として読む。**
+
+    **版を改めた記録でいちばん価値があるのは「何を間違えていたか」。**
+    それが残らないなら、古い版を消さずに置いておく意味が薄い。
+    """
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json
+
+    first = _json(_register(_hypothesis()))["hypothesis_id"]
+    proc = _register(_hypothesis(supersedes=first))
+
+    assert proc.returncode != 0, "理由なしで版を差し替えられている"
+    assert "supersede_reason" in proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_理由が空なら書いたことにしない(thth_root, blank):
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json
+
+    first = _json(_register(_hypothesis()))["hypothesis_id"]
+    proc = _register(_hypothesis(supersedes=first, supersede_reason=blank))
+    assert proc.returncode != 0, f"{blank!r} を理由として受け取っている"
+
+
+def test_版を改めていないのに理由だけは書けない(thth_root):
+    """**何の理由か判らない。** 欄があるからといって、どこにでも書けるように
+    はしない。"""
+    from tests.test_hypotheses import _register
+
+    proc = _register(_hypothesis(supersede_reason="なんとなく"))
+    assert proc.returncode != 0, "版を改めていないのに理由が保存されている"
+
+
+def test_理由は一覧でも読める(thth_root):
+    """**一覧に出さないと、「差し替わっている」ことは読めても「何を間違えて
+    いたか」は読めない。** そこがいちばん価値のある部分。"""
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json, _thth
+
+    first = _json(_register(_hypothesis()))["hypothesis_id"]
+    why = "反証の敷居を『複数回』と書いていた（B なのに M の敷居）"
+    second = _json(_register(_hypothesis(
+        supersedes=first, supersede_reason=why)))["hypothesis_id"]
+
+    listed = _json(_thth(["topics", "hypotheses"]))
+    by_id = {h["hypothesis_id"]: h for h in listed["hypotheses"]}
+
+    assert by_id[second]["supersede_reason"] == why, "一覧で理由が読めない"
+    assert by_id[first]["supersede_reason"] is None, \
+        "差し替えていない版に理由が付いている"
+
+    detail = _json(_thth(["topics", "hypotheses", second]))
+    assert detail["hypothesis"]["supersede_reason"] == why

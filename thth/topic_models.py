@@ -442,6 +442,12 @@ def build_vocabulary(row: dict) -> dict:
     if row["supersedes"] is not None and (
             not isinstance(row["supersedes"], str)
             or not _REF_ID_RE.fullmatch(row["supersedes"])):
+        # **表記まで見る**（2026-09-12）。ただし**これは仮説側を直したときに
+        # 置換がここにも効いたもので、こちらが意図して入れた変更ではなく、
+        # 依頼書にも書いていなかった**——外部レビューが差分から自分で拾って
+        # 検証し、「新たな不合格項目にはしないが、**今後の変更報告には仮説・
+        # 語彙の両方を記載してほしい**」との裁定。同じ 13 入力を語彙にも通して
+        # 結果が一致することまで確認された上で残っている。
         raise SchemaError("supersedes は前の版の vocabulary_id か null")
     entries = row["entries"]
     if not isinstance(entries, list) or not entries:
@@ -1744,6 +1750,21 @@ HYPOTHESIS_KEYS = ("code", "claim", "kind", "sources", "predictions",
                    "scope", "state", "proposed_by", "verifier",
                    "created_at", "supersedes")
 
+# **版を改めた理由**（運用指摘 2026-09-12）。検収記録には `disposition_reason`
+# があるのに、**仮説には版を改めた理由を書く欄が無かった。** 運用は当座
+# `claim` の末尾に書いていたが、本人が**置き場所として間違っていると自覚して
+# いた**——`claim` は主張そのものの欄なので、版の運用メモが混ざると**次に読む
+# 人が主張の一部として読む。**
+#
+# **`supersedes` を書くなら、理由も書く。** 版を改めた記録で、いちばん価値が
+# あるのは「**何を間違えていたか**」で、それが残らないなら記録を増やす意味が
+# 薄い。逆に**版を改めていないのに理由だけ書くことはできない**（何の理由か
+# 判らない）。
+#
+# **キー自体は任意**（`REVIEW_OPTIONAL` と同じ扱い。既存の入力を一斉に
+# 書き換えさせない）だが、**`supersedes` があるときだけ必須**にする。
+HYPOTHESIS_OPTIONAL = ("supersede_reason",)
+
 
 def build_hypothesis(row: dict) -> dict:
     """仮説を 1 件、記録として残す（masaru 指示 2026-09-11）。
@@ -1789,6 +1810,20 @@ def build_hypothesis(row: dict) -> dict:
             f"1 つか null です: {row['supersedes']!r}。**版は 1 つずつ"
             f"差し替えます**——複数を 1 件でまとめて差し替えたい場合も、"
             f"1 件ずつ記録してください（記録は消しません）")
+    reason = row.get("supersede_reason")
+    if row["supersedes"] is None and reason is not None:
+        raise SchemaError(
+            f"supersede_reason は supersedes があるときだけ書けます: "
+            f"{reason!r}（**版を改めていないのに理由だけがあると、何の理由か"
+            f"判りません**）")
+    if row["supersedes"] is not None and (
+            not isinstance(reason, str) or not reason.strip()):
+        # **版を改めるなら、何を間違えていたかを書く。** ここが残らないなら、
+        # 古い版を消さずに置いておく意味が薄い（読んでも何が変わったか判らない）。
+        raise SchemaError(
+            "supersedes を書くなら supersede_reason も書いてください"
+            "（**版を改めた記録でいちばん価値があるのは『何を間違えて"
+            "いたか』です**）")
     if not isinstance(row["claim"], str) or not row["claim"].strip():
         raise SchemaError("claim が空です")
     _require_choice(row["kind"], HYPOTHESIS_KINDS, "kind")
@@ -1884,6 +1919,11 @@ def build_hypothesis(row: dict) -> dict:
             f"残してください——捨てはしません")
 
     out = dict(row)
+    # **任意の欄は、無ければ null で埋める**（`REVIEW_OPTIONAL` と違い、
+    # 書いた記録と書かなかった記録で**内容 ID が変わらない**ようにする——
+    # 同じ中身なのに欄の有無で別 ID になると、**同じ仮説が 2 件に見える**）。
+    for key in HYPOTHESIS_OPTIONAL:
+        out.setdefault(key, None)
     out["schema_version"] = SCHEMA_VERSION
     out["hypothesis_id"] = content_id(out, exclude=("hypothesis_id",))
     return out
