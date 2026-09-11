@@ -1834,19 +1834,18 @@ def build_hypothesis(row: dict) -> dict:
         metrics = prediction["metrics"]
         if not isinstance(metrics, list) or not metrics:
             raise SchemaError(f"{where} の metrics が空です")
-        units = [set(METRIC_UNITS[m]) for m in metrics if m in METRIC_UNITS]
-        if units and not set.intersection(*units):
-            # **そろう観測単位が 1 つも無い**——名前はどれもうちにあるが、
-            # **1 つの表には決して並ばない。** 警告ではなく拒否でよい
-            # （運用指摘 2026-09-12）。例: `shares`（投稿にしか無い）と
-            # `clicks`（アカウント日次にしか無い）を 1 つの予測に並べる。
-            raise SchemaError(
-                f"{where} の指標が、**同じ観測単位にそろいません**: "
-                + "・".join(f"{m}（{'／'.join(UNIT_LABELS[u] for u in METRIC_UNITS[m])}）"
-                            for m in metrics if m in METRIC_UNITS)
-                + "。**名前がうちにあることと、1 つの表に並ぶことは違います**"
-                  "——その仮説は sample_design を "
-                f"{UNIDENTIFIABLE!r} にして残してください")
+        # **「そろう観測単位が 1 つも無い」で拒否しない**（外部レビュー U1・
+        # 2026-09-12）。一度は拒否にしたが、**2 つの点で間違っていた。**
+        #
+        #   1. **案内が効かなかった。** エラーは「sample_design を 'U' にして
+        #      残してください」と言うのに、**同じ予測を U にしても同じエラーで
+        #      保存できなかった。** 逃げ道の無い案内を出していた
+        #   2. **判るのは「そのまま同じ粒度の量として扱えない」ことだけ。**
+        #      集計・対応づけ・相関を検討する**未検証の案そのものを保存できない
+        #      とまでは言えない。それを未検証のまま保持するのが proposed の役割**
+        #
+        # 層の食い違いは `prediction_unit_problems()` が警告として返す（保存は
+        # しない）。**shadow・accepted への登録禁止はそのまま。**
         unknown = [m for m in metrics if m not in LEDGER_METRICS]
         if unknown:
             # **持っていない量で予測を書かせない**（外部調査 §9 H10）。

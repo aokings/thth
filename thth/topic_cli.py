@@ -1593,7 +1593,12 @@ def cmd_hypotheses(args) -> int:
                "hypothesis_id": r["hypothesis_id"], "code": r.get("code"),
                "claim": _claim(r), "kind": r.get("kind"),
                "sample_design": r.get("sample_design"), "state": r.get("state"),
-               "scope": r.get("scope"), "verifier": r.get("verifier")}
+               "scope": r.get("scope"), "verifier": r.get("verifier"),
+               # **一覧でも当てる**（外部レビュー U2・2026-09-12）。「読むたびに
+               # 当てるので保存済みにも効く」と言いながら、**一覧の経路だけ
+               # 落ちていた。** 詳細で出て一覧で出ないと、**一覧を見た人は
+               # 警告が無いと読む。**
+               "unit_warnings": models.prediction_unit_problems(r)}
                for r in rows],
            "notice": REVIEW_NOTICE,
            "declaration_notice": HYPOTHESIS_DECLARATION_NOTICE})

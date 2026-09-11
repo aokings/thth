@@ -47,15 +47,99 @@ def test_同じ層の指標だけなら警告は出ない(thth_root):
     assert models.prediction_unit_problems(row) == []
 
 
-def test_そろう観測単位が無い予測は登録できない(thth_root):
-    """食い違い（警告）と、**そろう読み方が 1 つも無い**（拒否）を分ける。
-    `shares` は投稿にしか無く、`clicks` はアカウント日次にしか無い——
-    **1 つの表には決して並ばない。**"""
-    row = _hypothesis(predictions=[
+@pytest.mark.parametrize("design", [models.ESTIMATION, models.UNIDENTIFIABLE])
+def test_そろう観測単位が無くてもproposedには残せる(thth_root, design):
+    """**一度は拒否にしたが、間違っていた**（外部レビュー U1・2026-09-12）。
+
+    `shares` は投稿にしか無く、`clicks` はアカウント日次にしか無い——確かに
+    1 つの表には並ばない。だが拒否にすると **2 つの点で破綻していた。**
+
+      1. **案内が効かなかった。** エラーは「`sample_design` を `'U'` にして
+         残してください」と言うのに、**同じ予測を `U` にしても同じエラーで
+         保存できなかった。逃げ道の無い案内。**
+      2. 指標の単位が違うことから判るのは「**そのまま同じ粒度の量として
+         扱えない**」まで。集計・対応づけ・相関を検討する**未検証の案そのもの**
+         を保存できないとまでは言えない。**それを保持するのが proposed の役割。**
+
+    **警告は返す。予測本文は削らない。**
+    """
+    row = _hypothesis(sample_design=design, predictions=[
+        {"statement": "shares が多い日は clicks も多い",
+         "metrics": ["shares", "clicks"], "window": "24h", "scope": "kopicha"},
+    ])
+    built = models.build_hypothesis(row)
+
+    assert built["predictions"][0]["metrics"] == ["shares", "clicks"], \
+        "予測本文を削って保存している"
+    problems = models.prediction_unit_problems(built)
+    assert any("そろう読み方がありません" in p for p in problems), \
+        "そろう観測単位が無いことを、黙って通している"
+
+
+def test_そろう観測単位が無くてもshadowには上げられない(thth_root):
+    """**拒否を外したことで、shadow まで開いてはいけない。**"""
+    row = _hypothesis(sample_design=models.UNIDENTIFIABLE, state="shadow",
+                      predictions=[
         {"statement": "shares が多い日は clicks も多い",
          "metrics": ["shares", "clicks"], "window": "24h", "scope": "kopicha"},
     ])
     with pytest.raises(models.SchemaError) as e:
         models.build_hypothesis(row)
-    assert "同じ観測単位にそろいません" in str(e.value)
-    assert "shares" in str(e.value) and "clicks" in str(e.value)
+    assert "shadow" in str(e.value)
+
+
+def test_うちに無い指標は今も拒否される(thth_root):
+    """**U1 の修正は「単位がそろわない」だけを警告に落としたもの。**
+    持っていない量（滞在時間・親密度）で予測を書かせない検査は生きている。"""
+    row = _hypothesis(predictions=[
+        {"statement": "滞在時間が長い投稿は views も多い",
+         "metrics": ["views", "dwell_time"], "window": "24h", "scope": "kopicha"},
+    ])
+    with pytest.raises(models.SchemaError) as e:
+        models.build_hypothesis(row)
+    assert "うちの台帳に無い指標" in str(e.value)
+
+
+def test_一覧でも観測単位の警告が出る(thth_root):
+    """**詳細で出て一覧で出ないと、一覧を見た人は「警告が無い」と読む**
+    （外部レビュー U2・2026-09-12）。
+
+    `unit_warnings` は保存しないので、**読むたびに当てる**——その約束が
+    **一覧の経路だけ落ちていた。** 保存済みの古い仮説にも効かせるための作りが、
+    いちばん人が見る画面で効いていなかった。
+    """
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json, _thth
+
+    proc = _register(_hypothesis(sample_design=models.UNIDENTIFIABLE, predictions=[
+        {"statement": "shares が多い日は clicks も多い",
+         "metrics": ["shares", "clicks"], "window": "24h", "scope": "kopicha"},
+    ]))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    hypothesis_id = _json(proc)["hypothesis_id"]
+
+    detail = _json(_thth(["topics", "hypotheses", hypothesis_id]))
+    listed = _json(_thth(["topics", "hypotheses"]))
+
+    assert detail["unit_warnings"], "詳細で警告が出ていない"
+    assert listed["count"] == 1
+    row = listed["hypotheses"][0]
+    assert row.get("unit_warnings"), "**一覧で警告が落ちている**"
+    assert row["unit_warnings"] == detail["unit_warnings"], \
+        "詳細と一覧で警告の中身が違う"
+
+
+def test_登録の応答にも観測単位の警告が出る(thth_root):
+    """登録した本人が、その場で気づけること。"""
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json
+
+    proc = _register(_hypothesis(predictions=[
+        {"statement": "views 最多の投稿の URL が clicks でも最多",
+         "metrics": ["views", "clicks"], "window": "24h", "scope": "kopicha"},
+    ]))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    out = _json(proc)
+    assert any("観測単位が食い違" in w for w in out["unit_warnings"])
+    stored = out["hypothesis_id"]
+    assert stored, "警告を出しつつ保存はする（proposed は置き場）"
