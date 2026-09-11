@@ -39,7 +39,7 @@ def test_同じ入力の再送は重複しない(thth_root):
 
     assert wrote1 is True and wrote2 is False
     assert first["article_id"] == second["article_id"]
-    rows, broken = store.load_all("articles")
+    rows, broken, _ = store.load_all("articles")
     assert len(rows) == 1 and broken == []
 
 
@@ -48,7 +48,7 @@ def test_違う入力は別の記録として両方残る(thth_root):
     b = models.build_article(dict(ARTICLE, content_text="別の本文です。"))
     store.put("articles", a, id_key="article_id")
     store.put("articles", b, id_key="article_id")
-    rows, _ = store.load_all("articles")
+    rows, _, _r = store.load_all("articles")
     assert len(rows) == 2
 
 
@@ -64,7 +64,7 @@ def test_壊れたファイルを観測なしと偽らない(thth_root):
     with open(broken_path, "w", encoding="utf-8") as f:
         f.write("{壊れている")
 
-    rows, broken = store.load_all("articles")
+    rows, broken, _ = store.load_all("articles")
     assert len(rows) == 1, "読めた記録まで失っている"
     assert broken == ["sha256:" + "f" * 64], broken
 
@@ -76,7 +76,7 @@ def test_保存途中の一時ファイルは読まれない(thth_root):
     tmp = os.path.join(store.root(), "articles", "abc.json.1234.deadbeef.tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         f.write("{途中")
-    rows, broken = store.load_all("articles")
+    rows, broken, _ = store.load_all("articles")
     assert len(rows) == 1 and broken == []
 
 
@@ -142,6 +142,6 @@ def test_同時に保存しても壊れない(thth_root):
                            env=dict(os.environ))
     assert proc.returncode == 0, proc.stderr
 
-    rows, broken = store.load_all("articles")
+    rows, broken, _ = store.load_all("articles")
     assert len(rows) == 2 and broken == []
     assert all(isinstance(r, dict) and "article_id" in r for r in rows)

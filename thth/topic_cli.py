@@ -22,7 +22,7 @@ from . import topic_store as store
 from . import topics as topics_mod
 
 SUBCOMMANDS = ("suggest", "observe", "record-decision", "decision",
-                "profile", "observation")
+                "profile", "observation", "retract", "unretract")
 
 # 本文を含めて 1 MiB（設計 §7）。**超過は構造化エラー**にする。
 MAX_INPUT_BYTES = 1024 * 1024
@@ -205,7 +205,7 @@ def cmd_suggest(args) -> int:
     # **観測は記事の有無に関係なく読む。** 以前は記事が無いと空にしていたので、
     # 「まず何が分かっているか」を聞く最初の呼び出しで**手持ちの根拠が
     # 返らなかった**（独立レビュー 2026-09-11・指摘 2）。
-    observations, broken = _all_observations()
+    observations, broken, taken = _all_observations()
 
     context = advice.build_context(
         args.file, article=article, article_url=args.article_url,
@@ -228,6 +228,13 @@ def cmd_suggest(args) -> int:
 
     envelope = advice.evaluate(context, article=article, proposal=proposal,
                                 observations=observations)
+    if taken:
+        # **取り下げは「壊れている」ではない。** 誰が何を理由に下げたか、
+        # という別の事実（asmon 関東セッション提案 2026-09-11）。混ぜない。
+        envelope["warnings"].append(
+            f"取り下げられた観測が {len(taken)} 件あります（記録は残っています）: "
+            + "／".join(f"{t.get('topic') or '（語なし）'}: {t['reason']}"
+                         f"（{t['retracted_by']}）" for t in taken[:3]))
     if broken:
         # **「壊れている」と決めつけない。** 中身が足りない（検査を足す前に
         # 保存された）場合と、保存後に書き換わった場合の両方がここに来る。
@@ -235,7 +242,8 @@ def cmd_suggest(args) -> int:
         # **件数と並べる数を食い違わせない**（kopicha セッション報告
         # 2026-09-11: 「4 件あります」なのに配列は 3 件だった）。
         shown = broken[:5]
-        more = f"（ほか {len(broken) - len(shown)} 件）" if len(broken) > len(shown) else ""
+        more = (f"（ほか {len(broken) - len(shown)} 件）"
+                 if len(broken) > len(shown) else "")
         envelope["warnings"].append(
             f"使えない観測の記録が {len(broken)} 件あります"
             f"（無いのではなく、中身が足りないか保存後に変わっています）: "
@@ -280,11 +288,14 @@ def _all_observations() -> tuple:
     参考観測は投稿例を持たないので、**これだけでは `recommended` にならない**
     ——「投稿例を控えてください」という**満たせる**不足になる。
     """
-    rows, broken = store.load_all("observations")
+    rows, broken, taken = store.load_all("observations")
     out = {r["observation_id"]: r for r in rows}
+    withdrawn = set(store.retractions())
     for row in store.legacy_observations():
+        if row["observation_id"] in withdrawn:
+            continue
         out.setdefault(row["observation_id"], row)
-    return out, broken
+    return out, broken, taken
 
 
 def _article_input(article):
@@ -492,7 +503,7 @@ def cmd_record_decision(args) -> int:
     by = _actor(args)
 
     article = models.build_article(row["article"])
-    observations, broken = _all_observations()
+    observations, broken, _taken = _all_observations()
     context = advice.build_context(row["draft_path"], article=article,
                                     article_url=row.get("article_url"),
                                     observation_ids=sorted(observations))
@@ -585,7 +596,7 @@ def _recent_decisions(account: str) -> int:
         accounts_mod.load_account(account)
     except accounts_mod.AccountError as e:
         return _fail("unknown_account", str(e))
-    rows, broken = store.load_all("decisions")
+    rows, broken, _taken = store.load_all("decisions")
     mine = [r for r in rows if (r.get("context") or {}).get("account") == account]
     mine.sort(key=lambda r: (r.get("context") or {}).get("publish_at") or "",
                reverse=True)
@@ -614,6 +625,35 @@ def cmd_observation(args) -> int:
     if row is None:
         return _fail("not_found", f"その観測は保存されていません: {args.observation_id}")
     _emit({"ok": True, "observation": row, "notice": advice.NOTICE})
+    return 0
+
+
+def cmd_retract(args) -> int:
+    """観測を取り下げる。**消さない**（asmon 関東セッション提案 2026-09-11）。
+
+    > 観測は内容アドレスで、**消すと参照していた候補比較が壊れます。**
+    > 本当に要るのは削除ではなく「取り下げ」かもしれません。
+
+    間違って入れた観測は運用が続けば定期的に出る。**そのたびに本番の state を
+    手で消すのは重いし危ない。** 取り下げなら記録は残り、過去の判断が参照して
+    いた事実も消えない。
+    """
+    row = store.retract(args.observation_id, reason=args.reason or "",
+                         by=_actor(args))
+    _emit({"ok": True, "retracted": row,
+           "notice": "記録は消していません。新しい候補比較から参照できなく"
+                      "なるだけです。戻すときは `thth topics unretract <id>`。"})
+    return 0
+
+
+def cmd_unretract(args) -> int:
+    """取り下げを取り消す。**記録を消していないので戻せる。**"""
+    ok = store.unretract(args.observation_id)
+    if not ok:
+        return _fail("not_found",
+                      f"その観測は取り下げられていません: {args.observation_id}")
+    _emit({"ok": True, "observation_id": args.observation_id,
+           "notice": "取り下げを取り消しました。また参照できます。"})
     return 0
 
 
@@ -690,6 +730,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("observation_id")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_observation)
+
+    p = sub.add_parser("retract", help="観測を取り下げる（消さない）")
+    p.add_argument("observation_id")
+    p.add_argument("--reason", default=None, help="なぜ取り下げるか（必須）")
+    p.add_argument("--by", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_retract)
+
+    p = sub.add_parser("unretract", help="取り下げを取り消す")
+    p.add_argument("observation_id")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_unretract)
 
     p = sub.add_parser("profile", help="account の profile を見る・確定する")
     p.add_argument("account")

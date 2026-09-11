@@ -205,16 +205,83 @@ def _usable_observation(row: dict) -> bool:
         and row.get("search_mode") in models.SEARCH_MODE
 
 
+def retraction_dir() -> str:
+    return os.path.join(root(), "retractions")
+
+
+def retract(observation_id: str, *, reason: str, by: str, now=None) -> dict:
+    """観測を**取り下げる。消さない**（asmon 関東セッション提案 2026-09-11）。
+
+    > 観測は内容アドレスで、**消すと参照していた候補比較が壊れます。**
+    > 本当に要るのは削除ではなく「取り下げ」かもしれません。
+
+    そのとおり。**間違って入れた観測は運用が続けば定期的に出る**が、そのたびに
+    本番の state を手で消すのは重いし危ない。取り下げなら:
+
+    - 記録そのものは残る（**過去の判断が参照していた事実は消えない**）
+    - 新しい候補比較からは参照できない
+    - 誰がいつなぜ取り下げたかが残る
+
+    **取り消しの取り消しはできる**（`unretract`）。記録を消さないので。
+    """
+    from . import jst
+    if not _ID_RE.match(observation_id or ""):
+        raise BadId(f"ID の形が違います: {observation_id!r}")
+    if not (reason or "").strip():
+        raise StoreError("--reason を付けてください（なぜ取り下げるか）")
+    if not (by or "").strip():
+        raise StoreError("--by を付けてください（誰が取り下げたか）")
+    if get("observations", observation_id) is None:
+        raise StoreError(f"その観測は保存されていません: {observation_id}")
+
+    now = now if now is not None else jst.now_jst()
+    row = {"observation_id": observation_id, "reason": reason,
+           "retracted_by": by, "retracted_at": now.isoformat(),
+           "schema_version": models.SCHEMA_VERSION}
+    os.makedirs(retraction_dir(), exist_ok=True)
+    _atomic_write(os.path.join(retraction_dir(), _id_filename(observation_id)), row)
+    return row
+
+
+def unretract(observation_id: str) -> bool:
+    """取り下げを取り消す。**記録を消していないので戻せる。**"""
+    path = os.path.join(retraction_dir(), _id_filename(observation_id))
+    if not os.path.exists(path):
+        return False
+    os.remove(path)
+    return True
+
+
+def retractions() -> dict:
+    """`{observation_id: 取り下げの記録}`。"""
+    out = {}
+    directory = retraction_dir()
+    if not os.path.isdir(directory):
+        return out
+    for name in sorted(os.listdir(directory)):
+        if not name.endswith(".json") or name.endswith(".tmp"):
+            continue
+        try:
+            row = read_json(os.path.join(directory, name))
+        except (OSError, ValueError):
+            continue
+        if row.get("observation_id") == "sha256:" + name[:-len(".json")]:
+            out[row["observation_id"]] = row
+    return out
+
+
 def load_all(kind: str) -> tuple:
-    """`(読めた記録, 壊れていた ID)`（設計 §8・受け入れ T14）。
+    """`(読めた記録, 使えなかった ID, 取り下げられた記録)`（設計 §8・受け入れ T14）。
 
     **壊れたファイルを「無い」ことにしない。** 読めなかったものは ID を返す。
     呼び出し側は「観測が無い」と「観測が読めない」を区別できる。
     """
     directory = _kind_dir(kind)
     rows, broken = [], []
+    withdrawn = retractions() if kind == "observations" else {}
+    taken = []
     if not os.path.isdir(directory):
-        return rows, broken
+        return rows, broken, taken
     for name in sorted(os.listdir(directory)):
         if not name.endswith(".json") or name.endswith(".tmp"):
             continue
@@ -236,8 +303,13 @@ def load_all(kind: str) -> tuple:
         if kind == "observations" and not _usable_observation(row):
             broken.append(record_id)
             continue
+        # **取り下げは「壊れている」ではない。** 誰かが理由をつけて下げた、
+        # という別の事実（asmon 関東セッション提案 2026-09-11）。混ぜない。
+        if record_id in withdrawn:
+            taken.append(dict(withdrawn[record_id], topic=row.get("topic")))
+            continue
         rows.append(row)
-    return rows, broken
+    return rows, broken, taken
 
 
 # --- profile（active は履歴を残して更新する・設計 §8・§10） ------------------

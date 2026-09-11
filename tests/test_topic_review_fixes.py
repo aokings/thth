@@ -285,7 +285,7 @@ def test_同じIDで中身が変わっていたら壊れている扱い(thth_roo
     with open(path, "w", encoding="utf-8") as f:
         json.dump(tampered, f, ensure_ascii=False)
 
-    rows, broken = store.load_all("observations")
+    rows, broken, _ = store.load_all("observations")
     assert rows == [], "書き換えられた記録を読めたことにした"
     assert broken == [row["observation_id"]]
     with pytest.raises(store.StoreError):
@@ -951,7 +951,7 @@ def test_中身の無い観測は使えるものとして数えない(thth_root)
     junk["observation_id"] = models.content_id(junk, exclude=("observation_id",))
     store.put("observations", junk, id_key="observation_id")
 
-    rows, broken = store.load_all("observations")
+    rows, broken, _ = store.load_all("observations")
     assert rows == []
     assert broken == [junk["observation_id"]]
 
@@ -1082,7 +1082,7 @@ def test_正規化語しか持たない古い観測を捨てない(thth_root):
     row["observation_id"] = models.content_id(row, exclude=("observation_id",))
     store.put("observations", row, id_key="observation_id")
 
-    rows, broken = store.load_all("observations")
+    rows, broken, _ = store.load_all("observations")
     assert broken == [], "実際に見てきた観測を捨てた"
     assert rows[0]["normalized_topic"] == "中学受験"
 
@@ -1195,3 +1195,70 @@ def test_正規化語しか無い観測は表示だけ補う(isolated_account, t
     assert shown["topic_filled_from"] == "normalized_topic"
     # **保存されたほうは変わっていない**（内容 ID が変わると別の記録になる）。
     assert store.get("observations", row["observation_id"]).get("topic") is None
+
+
+# ===========================================================================
+# 取り下げ（asmon 関東セッション提案 2026-09-11）
+# ===========================================================================
+
+def _save_observation(topic="コーヒー"):
+    row = models.build_observation(_fresh_observation(topic) | {"submitted_by": "t"})
+    store.put("observations", row, id_key="observation_id")
+    return row["observation_id"]
+
+
+def test_取り下げても記録は消えない(thth_root, isolated_account):
+    """> 観測は内容アドレスで、**消すと参照していた候補比較が壊れます。**"""
+    oid = _save_observation()
+    proc = _run(["topics", "retract", oid, "--reason", "入れ間違い",
+                  "--by", "関東"])
+    assert proc.returncode == 0, proc.stdout
+
+    # **ファイルは残っている。**
+    assert store.get("observations", oid) is not None
+    # **使える一覧からは外れる。壊れている扱いにはしない。**
+    rows, broken, taken = store.load_all("observations")
+    assert rows == [] and broken == []
+    assert taken[0]["observation_id"] == oid
+    assert taken[0]["reason"] == "入れ間違い"
+    assert taken[0]["retracted_by"] == "関東"
+
+
+def test_取り下げた観測は候補比較から参照できない(thth_root, isolated_account):
+    oid = _save_observation()
+    path = write_queue_file(isolated_account["queue_dir"], "rt.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    before = json.loads(_run(["topics", "suggest", path]).stdout)
+    assert oid in before["context"]["observation_ids"]
+
+    _run(["topics", "retract", oid, "--reason", "入れ間違い", "--by", "関東"])
+    after = json.loads(_run(["topics", "suggest", path]).stdout)
+    assert oid not in after["context"]["observation_ids"]
+    assert any("取り下げられた観測" in w for w in after["warnings"]), after["warnings"]
+    # **「壊れている」とは言わない。**
+    assert not any("使えない観測" in w for w in after["warnings"])
+
+
+def test_取り下げは戻せる(thth_root, isolated_account):
+    oid = _save_observation()
+    _run(["topics", "retract", oid, "--reason", "入れ間違い", "--by", "関東"])
+    proc = _run(["topics", "unretract", oid])
+    assert proc.returncode == 0, proc.stdout
+    rows, _broken, taken = store.load_all("observations")
+    assert [r["observation_id"] for r in rows] == [oid]
+    assert taken == []
+
+
+def test_取り下げには理由と名前が要る(thth_root, isolated_account):
+    oid = _save_observation()
+    assert _run(["topics", "retract", oid, "--by", "関東"]).returncode == 2
+    proc = _run(["topics", "retract", oid, "--reason", "x"])
+    assert proc.returncode == 2
+    assert "--by" in json.loads(proc.stdout)["error"]["message"]
+
+
+def test_無い観測は取り下げられない(thth_root, isolated_account):
+    proc = _run(["topics", "retract", "sha256:" + "a" * 64,
+                  "--reason", "x", "--by", "y"])
+    assert proc.returncode == 2
+    assert "保存されていません" in json.loads(proc.stdout)["error"]["message"]
