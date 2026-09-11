@@ -1574,6 +1574,19 @@ def cmd_hypotheses(args) -> int:
                "declaration_notice": HYPOTHESIS_DECLARATION_NOTICE})
         return 0
     rows, broken, _taken = store.load_all("hypotheses")
+    # **後から来た版を「印」で示す**（運用指摘 2026-09-12）。検収台帳
+    # （`cmd_review` の `superseded_by`）では解いていたのに、**仮説の棚だけ
+    # 落ちていた。** 一覧に同じ `code` が 2 件並んで、どちらが現行か読めず、
+    # **古いほうを掴む筋があった。**
+    #
+    # **記録を消さない造りにしたのに、消していないことが読み手に見えない**
+    # ——今夜ずっと拾ってきた形そのもの。逆向きの索引は保存せず、読むたびに張る
+    # （`state` で絞る前の全件から張る——絞った中だけで張ると、**絞りの外に
+    # 新しい版があるときに「現行だ」と読めてしまう**）。
+    superseded: dict = {}
+    for r in rows:
+        if r.get("supersedes"):
+            superseded.setdefault(r["supersedes"], []).append(r["hypothesis_id"])
     if args.state:
         rows = [r for r in rows if r.get("state") == args.state]
     rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
@@ -1594,6 +1607,9 @@ def cmd_hypotheses(args) -> int:
                "claim": _claim(r), "kind": r.get("kind"),
                "sample_design": r.get("sample_design"), "state": r.get("state"),
                "scope": r.get("scope"), "verifier": r.get("verifier"),
+               "supersedes": r.get("supersedes"),
+               # **古い記録を消さずに、いまの版がどれかを読めるように。**
+               "superseded_by": superseded.get(r["hypothesis_id"], []),
                # **一覧でも当てる**（外部レビュー U2・2026-09-12）。「読むたびに
                # 当てるので保存済みにも効く」と言いながら、**一覧の経路だけ
                # 落ちていた。** 詳細で出て一覧で出ないと、**一覧を見た人は

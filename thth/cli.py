@@ -836,8 +836,14 @@ def cmd_measured(args) -> int:
     # `clicks`・`followers_count` はアカウントにしか無い）ので、混ぜて数えると
     # **片方の層で 1 度も採れていないものが、もう片方に出ていれば隠れる。**
     missing_posts = result["missing_post_metrics"]
-    print("欠けている指標（投稿単位）: "
-          + (", ".join(missing_posts) if missing_posts else "無し"))
+    if missing_posts is None:
+        # **「投稿が 1 件も無い」を「指標が欠けている」と言わない**（運用指摘
+        # 2026-09-12）。日次側と同じ区別。
+        print("欠けている指標（投稿単位）: **所有の裏付けがある投稿が"
+              "まだ 1 件もありません**（欠けているかどうかも判りません）")
+    else:
+        print("欠けている指標（投稿単位）: "
+              + (", ".join(missing_posts) if missing_posts else "無し"))
     missing_daily = result["missing_account_daily_metrics"]
     if missing_daily is None:
         # **「欠けている」と言わない。** 採っていないので、欠けているかどうかも

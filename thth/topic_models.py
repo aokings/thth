@@ -1905,7 +1905,7 @@ def prediction_unit_problems(row) -> list:
         for m in metrics:
             caveat = METRIC_CAVEATS.get(m)
             if caveat:
-                problems.append(f"predictions[{i}]: `{m}` は{caveat}")
+                problems.append(f"predictions[{i}]: `{m}` は、{caveat}")
     return problems
 
 

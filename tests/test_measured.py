@@ -734,3 +734,33 @@ def test_行ごとの欠測が人向け出力に出る(isolated_account, capsys)
     assert "⚠この日に無い: clicks" in out, "その日に無い指標が画面に出ていない"
     assert "欠けている指標（アカウント日次）: 無し" in out, \
         "全体の判定はこの台帳では『無し』のはず（だから行ごとが要る）"
+
+
+def test_投稿が1件も無いのを指標の欠測と言わない(isolated_account, capsys):
+    """**「投稿が 1 件も無い」と「あるのに指標が欠けている」は違う**
+    （運用指摘 2026-09-12）。日次側で先に分けた区別を、投稿側でも揃える。
+
+    実物では asmon・nigamilab が「所有の裏付けがある行が 0」の状態で、
+    **`views, likes, replies, reposts, quotes, shares` が欠けている**と出て
+    いた。`—— 投稿 0 件` と並ぶので読めはするが、**事実に近いのは「まだ 1 件も
+    無い」のほう。**
+    """
+    from thth import cli as cli_mod
+
+    _write_ndjson(_account_daily_path(isolated_account), [
+        {"account": isolated_account["name"], "date": "2026-09-09",
+         "collected_at": "2026-09-10T00:05:00+09:00",
+         "metrics": {"views": 100}},
+    ])
+
+    result = measured_mod.load(isolated_account["name"])
+    assert result["posts"] == []
+    assert result["missing_post_metrics"] is None, \
+        "投稿が 1 件も無いのを『6 つの指標が欠けている』と言っている"
+
+    args = argparse.Namespace(account=isolated_account["name"], post=None, json=False)
+    cli_mod.cmd_measured(args)
+    out = capsys.readouterr().out
+    assert "まだ 1 件もありません" in out
+    assert "欠けている指標（投稿単位）: views" not in out, \
+        "投稿がゼロなのに指標名を並べている"

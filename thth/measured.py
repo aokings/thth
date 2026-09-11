@@ -208,7 +208,8 @@ def load(account_name: str) -> dict:
         ずれたこともある）。**「6h の値」と丸めて読まない。** 判断には
         `age_hours` の実値を使うこと。
       - `missing_post_metrics`: **投稿単位の台帳で** 1 度も現れていない指標の
-        名前（他 account の行を含めずに判定する）。
+        名前（他 account の行を含めずに判定する）。**所有の裏付けがある投稿が
+        1 件も無ければ `None`**——「欠けている」ではなく「まだ 1 件も無い」。
       - `missing_account_daily_metrics`: **アカウント日次の台帳で** 1 度も
         現れていない指標の名前。**日次の台帳が 1 本も無ければ `None`**——
         「欠けている」ではなく「採っていないので判らない」。空配列（台帳は
@@ -350,7 +351,14 @@ def load(account_name: str) -> dict:
                                             ACCOUNT_DAILY_METRIC_NAMES),
                 })
 
-    missing_post_metrics = [m for m in POST_METRIC_NAMES if m not in seen_post_metrics]
+    # **投稿が 1 件も無いのと、あるのに指標が欠けているのは違う**（運用指摘
+    # 2026-09-12）。日次で先に分けた区別（`None` = 台帳が無い）を、投稿側でも
+    # 揃える。**「投稿が 1 件も無い」を「6 つの指標が欠けている」と出していた**
+    # ——`—— 投稿 0 件` と並ぶので読めはするが、**事実に近いのは「まだ 1 件も
+    # 無い」のほう。**
+    missing_post_metrics = (
+        [m for m in POST_METRIC_NAMES if m not in seen_post_metrics]
+        if posts else None)
     # 台帳が 1 本も無ければ `None`（「欠けている」ではなく「判らない」）。
     missing_daily_metrics = (
         [m for m in ACCOUNT_DAILY_METRIC_NAMES if m not in seen_daily_metrics]

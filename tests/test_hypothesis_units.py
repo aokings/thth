@@ -143,3 +143,66 @@ def test_登録の応答にも観測単位の警告が出る(thth_root):
     assert any("観測単位が食い違" in w for w in out["unit_warnings"])
     stored = out["hypothesis_id"]
     assert stored, "警告を出しつつ保存はする（proposed は置き場）"
+
+
+# --- 後から来た版の印（運用指摘 2026-09-12）---------------------------------
+
+def test_一覧で後から来た版が読める(thth_root):
+    """**記録を消さない造りにしたのに、消していないことが読み手に見えない**
+    ——検収台帳（`superseded_by`）では解いていたのに、**仮説の棚だけ落ちていた。**
+
+    実物で、同じ `code` の仮説が `U` と `B` で 2 件並び、**どちらが現行か
+    読めなかった**（運用セッションが `B` を `U` に改めた直後）。**古いほうを
+    掴む筋がある。**
+    """
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json, _thth
+
+    first = _json(_register(_hypothesis()))["hypothesis_id"]
+    second = _json(_register(_hypothesis(
+        sample_design=models.UNIDENTIFIABLE,
+        refutation="差が大きくても識別できない",
+        supersedes=first)))["hypothesis_id"]
+
+    listed = _json(_thth(["topics", "hypotheses"]))
+    by_id = {h["hypothesis_id"]: h for h in listed["hypotheses"]}
+
+    assert by_id[second]["supersedes"] == first, \
+        "新しい版が、どれを差し替えたのか一覧から読めない"
+    assert by_id[first]["superseded_by"] == [second], \
+        "**古い版に、後から来た版の印が付いていない**（古いほうを掴む筋がある）"
+    assert by_id[second]["superseded_by"] == [], \
+        "現行の版に印が付いている"
+
+
+def test_状態で絞っても絞りの外の新しい版が印に出る(thth_root):
+    """**逆向きの索引は、絞る前の全件から張る。** 絞った中だけで張ると、
+    **絞りの外に新しい版があるときに「これが現行だ」と読めてしまう。**
+
+    **最初に書いたテストは、この場所を守っていなかった**（2026-09-12）。
+    2 件とも `proposed` で登録したので、`--state proposed` で絞っても両方
+    残り、**索引を絞る前に張ろうが後に張ろうが同じ結果**になっていた
+    （変異で確認: 索引を絞った後の行から張っても通ってしまった）。
+
+    **絞りの外に置くには、CLI を通せない。** 登録の口は `proposed` しか
+    受け付けない（昇格は未実装・外部レビュー R4）ので、ここだけ **store に
+    直接置く**。「いつか shadow が開いたとき」を先取りして守る。
+    """
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json, _thth
+    from thth import topic_store
+
+    first = _json(_register(_hypothesis()))["hypothesis_id"]
+    # **CLI では作れない状態**（登録は proposed 限定）。ここは store に直接置く。
+    later = models.build_hypothesis(_hypothesis(
+        state="shadow", refutation="差が大きくても識別できない",
+        supersedes=first, created_at="2026-09-12T04:00:00+09:00",
+        proposed_by="テスト"))
+    saved, _wrote = topic_store.put("hypotheses", later, id_key="hypothesis_id")
+
+    listed = _json(_thth(["topics", "hypotheses", "--state", "proposed"]))
+    by_id = {h["hypothesis_id"]: h for h in listed["hypotheses"]}
+
+    assert saved["hypothesis_id"] not in by_id, "絞りが効いていない（前提が崩れている）"
+    assert by_id[first]["superseded_by"] == [saved["hypothesis_id"]], \
+        "**絞りの外にある新しい版が見えず、古いほうが現行に読める**"
