@@ -21,6 +21,7 @@ from . import jst
 from . import lint as lint_mod
 from . import lock as lock_mod
 from . import maintain as maintain_mod
+from . import measured as measured_mod
 from . import oauth as oauth_mod
 from . import queuefile
 from . import replies as replies_mod
@@ -750,6 +751,55 @@ def cmd_replies(args) -> int:
     return 0
 
 
+def cmd_measured(args) -> int:
+    """`thth measured <account> [--post <post_id>] [--json]`: 実測を台帳から
+    機械的に並べる（読むだけ）。
+
+    運用の担当が VM の台帳（ndjson）を目で追って実測表を作っていた結果、一晩で
+    2 回、読み違いが起きた（返信の台帳の行と views の行の取り違え・`お茶` の
+    6 時間値の見落とし）。**現物を目で追うのも十分に間違える**ので、機械的に
+    並べる口をここに置く（`thth/measured.py` 参照）。
+    """
+    try:
+        result = measured_mod.load(args.account)
+    except accounts_mod.AccountError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    if args.post:
+        result = {**result, "posts": [p for p in result["posts"]
+                                       if p["post_id"] == args.post]}
+
+    if args.json:
+        _print_json(result)
+        return 0
+
+    posts = result["posts"]
+    if not posts:
+        print("実測がありません")
+    for post in posts:
+        topic = post["topic"] or "（トピック無し）"
+        form = post["form"] or "（型無し）"
+        print(f"{post['post_id']}  [{topic}]  form={form}"
+              f"  posted_at={post.get('posted_at')}  file={post.get('file')}")
+        for row in post["rows"]:
+            age = row.get("age_hours")
+            age_text = f"{age:.1f}h" if isinstance(age, (int, float)) else "?"
+            mark_text = " ⚠同居" if row.get("marks_collapsed") else ""
+            metrics = row.get("metrics") or {}
+            metrics_text = " ".join(f"{k}={v}" for k, v in metrics.items())
+            print(f"  {row.get('collected_at', '')}  経過={age_text}"
+                  f"  marks={row.get('marks')}{mark_text}  {metrics_text}")
+        print("")
+
+    print(f"—— 投稿 {len(posts)} 件")
+    missing = result["missing_metrics"]
+    print("欠けている指標: " + (", ".join(missing) if missing else "無し"))
+    broken = result["broken"]
+    print("**読めなかったファイル**: " + (", ".join(broken) if broken else "無し"))
+    return 0
+
+
 def cmd_topics(args) -> int:
     """`thth topics`: トピックを見る・調べた結果を残す。
 
@@ -1405,6 +1455,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_replies.add_argument("--post", default=None, help="この post_id だけ")
     p_replies.add_argument("--json", action="store_true")
     p_replies.set_defaults(func=cmd_replies)
+
+    p_measured = sub.add_parser(
+        "measured", help="実測（ndjson の台帳）を機械的に並べる（読むだけ）")
+    p_measured.add_argument("account")
+    p_measured.add_argument("--post", default=None, help="この post_id だけ")
+    p_measured.add_argument("--json", action="store_true")
+    p_measured.set_defaults(func=cmd_measured)
 
     p_topics = sub.add_parser(
         "topics", help="トピック別にどれだけ見られたかを並べる（読むだけ）")
