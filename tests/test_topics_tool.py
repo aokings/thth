@@ -340,3 +340,23 @@ def test_adviseは実際に動く例を出す(isolated_account):
     assert "thth topics suggest <原稿>" in out, out
     from thth import topic_cli
     assert topic_cli.build_parser().parse_args(["suggest", "x.md"]).sub == "suggest"
+
+
+def test_年度付きの型を記録できる(thth_root, isolated_account):
+    """**使う人が書こうとして初めて穴が見える**（3 回目）。
+
+    `カテゴリ`（kanto・2026-09-10）、連投の `比較`（asmon 関東・2026-09-11）に
+    続いて、`年度付き`（asmon 関東・同日）。**机上で並べた語彙は 3 回とも
+    足りていなかった。**
+    """
+    from thth import topics as topics_mod
+    assert "年度付き" in topics_mod.KINDS
+    row = topics_mod.record("中学受験2027", verdict="alive", kind="年度付き",
+                             account=isolated_account["name"], status="ok",
+                             audience="当事者の実務。画面が全件ラベル付き",
+                             by="関東")
+    assert row["kind"] == "年度付き"
+    # **実測はまだ 0 本**なので、当たり率は分母つきで出る。
+    learned = topics_mod.learned({}, account=isolated_account["name"])
+    year = next(r for r in learned if r["kind"] == "年度付き")
+    assert year["topics"] == 1
