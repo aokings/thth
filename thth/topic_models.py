@@ -149,6 +149,13 @@ def build_observation(row: dict) -> dict:
         raise SchemaError("topic が空です")
     if not isinstance(row["samples"], list):
         raise SchemaError("samples は配列（0 件なら [] と status を書いてください）")
+    if "coverage" in row and not isinstance(row["coverage"], (dict, type(None))):
+        # **`ArticleEvidence` の `coverage` は文字列**なので取り違えが起きる
+        # （kopicha セッション報告 2026-09-11）。**同じ名前で別の形。**
+        raise SchemaError(
+            f"観測の coverage は object です（記事証拠の coverage とは別物）: "
+            f"{row['coverage']!r}。例 "
+            f'{{"pages": 1, "fetched": 20, "has_more": true}}')
     for i, sample in enumerate(row["samples"]):
         if not isinstance(sample, dict):
             raise SchemaError(f"samples[{i}] は object")

@@ -1085,3 +1085,91 @@ def test_正規化語しか持たない古い観測を捨てない(thth_root):
     rows, broken = store.load_all("observations")
     assert broken == [], "実際に見てきた観測を捨てた"
     assert rows[0]["normalized_topic"] == "中学受験"
+
+
+# ===========================================================================
+# kopicha セッション 2 巡目: 本番でのクラッシュ（2026-09-11）
+# ===========================================================================
+
+def test_coverageが文字列でも落ちない():
+    """**本番でクラッシュした**（kopicha セッション報告 2026-09-11）。
+
+    > `coverage` が文字列の観測を参照すると `suggest` が落ちます。
+    > …JSON は返りません（stdout が空になるので、呼ぶ側は「出力が無い」としか
+    > 分かりません）。
+
+    `ArticleEvidence` の `coverage` は `full`/`partial`/`unknown` の**文字列**
+    なので、同じ名前で観測にも文字列を入れるのは自然な取り違え。
+    **保存された記録の形を信じない。**
+    """
+    obs = make_observation("コーヒー", samples=1, authors=1)
+    obs["coverage"] = "partial"          # 記事証拠のほうの形
+    result = evaluate([candidate("コーヒー", ids(1))], [obs], selected="コーヒー")
+    assert result["status"] == "provisional", result
+    # 分からないものを「これで全部」と言わない。
+    assert not any("これ以上出ていません" in s for s in result["shortfalls"])
+
+
+@pytest.mark.parametrize("broken", ["partial", [], 3, {"has_more": "yes"}])
+def test_壊れた形の観測でも応答を返す(broken):
+    obs = make_observation("コーヒー")
+    obs["coverage"] = broken
+    obs["samples"].append("投稿例のつもりの文字列")     # 形が違う sample
+    result = evaluate([candidate("コーヒー", ids(1))], [obs], selected="コーヒー")
+    assert result["status"] in ("recommended", "provisional"), result
+
+
+def test_観測のcoverageに文字列を保存させない(isolated_account, thth_root):
+    """**同じ名前で別の形**なので、保存のときに言う。"""
+    obs = _fresh_observation()
+    obs["coverage"] = "partial"
+    proc = _run(["topics", "observe", "--json-stdin", "--by", "t"], obs)
+    assert proc.returncode == 2, proc.stdout
+    message = json.loads(proc.stdout)["error"]["message"]
+    assert "記事証拠の coverage とは別物" in message, message
+
+
+def test_使えない記録の件数と一覧が食い違わない(isolated_account, thth_root):
+    """「4 件あります」なのに配列は 3 件、が起きていた。"""
+    path = write_queue_file(isolated_account["queue_dir"], "bc.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    for i in range(7):
+        junk = {"submitted_by": f"だれか {i}",
+                "schema_version": models.SCHEMA_VERSION}
+        junk["observation_id"] = models.content_id(junk,
+                                                    exclude=("observation_id",))
+        store.put("observations", junk, id_key="observation_id")
+
+    out = json.loads(_run(["topics", "suggest", path]).stdout)
+    warning = next(w for w in out["warnings"] if "使えない観測" in w)
+    assert "7 件あります" in warning, warning
+    assert "ほか 2 件" in warning, warning
+
+
+def test_想定外の失敗でもJSONを返す(isolated_account, monkeypatch, tmp_path):
+    """**stdout を空で終わらせない**（kopicha セッション報告 2026-09-11）。
+
+    > JSON は返りません（stdout が空になるので、呼ぶ側は「出力が無い」としか
+    > 分かりません）。
+
+    個々の穴を塞ぐだけでなく、**落ち方そのもの**を直す。握りつぶさず、
+    型と場所を応答に入れる——出さなければ、使う側は報告のしようがない。
+    """
+    from thth import topic_cli
+    path = write_queue_file(isolated_account["queue_dir"], "boom.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+
+    def explode(*a, **k):
+        raise RuntimeError("わざと壊す")
+
+    monkeypatch.setattr(topic_cli.advice, "build_context", explode)
+    out = tmp_path / "out.json"
+    import contextlib
+    with open(out, "w", encoding="utf-8") as f, contextlib.redirect_stdout(f):
+        rc = topic_cli.dispatch(["topics", "suggest", path])
+    assert rc == 2
+    payload = json.loads(out.read_text())
+    assert payload["error"]["code"] == "internal_error"
+    assert "RuntimeError" in payload["error"]["message"]
+    assert "わざと壊す" in payload["error"]["message"]
+    assert "統括に報告" in payload["error"]["message"]

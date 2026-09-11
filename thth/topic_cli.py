@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import sys
+import traceback
 
 from . import accounts as accounts_mod
 from . import topic_advice as advice
@@ -231,10 +232,14 @@ def cmd_suggest(args) -> int:
         # **「壊れている」と決めつけない。** 中身が足りない（検査を足す前に
         # 保存された）場合と、保存後に書き換わった場合の両方がここに来る。
         # どちらも「使えない」が、原因が違う——**推測で言わない。**
+        # **件数と並べる数を食い違わせない**（kopicha セッション報告
+        # 2026-09-11: 「4 件あります」なのに配列は 3 件だった）。
+        shown = broken[:5]
+        more = f"（ほか {len(broken) - len(shown)} 件）" if len(broken) > len(shown) else ""
         envelope["warnings"].append(
             f"使えない観測の記録が {len(broken)} 件あります"
             f"（無いのではなく、中身が足りないか保存後に変わっています）: "
-            f"{broken[:3]}")
+            f"{shown}{more}")
 
     profile_snapshot = context.pop("profile_snapshot", None)
     envelope["context"] = dict(context)
@@ -717,3 +722,22 @@ def dispatch(argv: list) -> int:
         return _fail("invalid_id", str(e))
     except store.StoreError as e:
         return _fail("store_error", str(e))
+    except Exception as e:
+        # **stdout を空で終わらせない**（kopicha セッション報告 2026-09-11）。
+        # 想定外の例外で traceback だけが出ると、**呼ぶ側には「出力が無い」と
+        # しか分からない。** 設計 §6 は「stdout は JSON だけ・ログは stderr」
+        # と決めているので、落ちるときも JSON を返して、traceback は stderr へ。
+        #
+        # **握りつぶさない。** 例外の型と場所を応答に入れる——出さなければ、
+        # 使う側は報告のしようがない。
+        traceback.print_exc(file=sys.stderr)
+        where = ""
+        tb = e.__traceback__
+        while tb is not None:
+            frame = tb.tb_frame
+            where = f"{os.path.basename(frame.f_code.co_filename)}:{tb.tb_lineno}"
+            tb = tb.tb_next
+        return _fail("internal_error",
+                      f"想定していない失敗です（{type(e).__name__}: {e}）"
+                      f"{f'・{where}' if where else ''}。"
+                      f"**この文をそのまま統括に報告してください。**")

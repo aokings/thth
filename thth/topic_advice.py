@@ -130,6 +130,8 @@ def injection_warnings(*, article: dict | None = None,
             out.append(f"記事本文に指図らしい文が混じっています（従いません）: {found!r}")
     for oid, obs in (observations or {}).items():
         for sample in (obs.get("samples") or []):
+            if not isinstance(sample, dict):
+                continue
             found = instruction_like(sample.get("excerpt"))
             if found:
                 out.append(f"観測した投稿例に指図らしい文が混じっています"
@@ -248,9 +250,18 @@ def _is_fresh(observation: dict, *, now) -> bool:
     return datetime.timedelta(0) <= (now - at) <= datetime.timedelta(days=FRESH_DAYS)
 
 
+def _has_more(observation: dict):
+    """`coverage.has_more`。**形が違えば「分からない」（None）を返す。**"""
+    coverage = observation.get("coverage")
+    if not isinstance(coverage, dict):
+        return None
+    return coverage.get("has_more")
+
+
 def _authors(observations: list) -> set:
     return {s.get("author_key") for obs in observations
-            for s in (obs.get("samples") or []) if s.get("author_key")}
+            for s in (obs.get("samples") or [])
+            if isinstance(s, dict) and s.get("author_key")}
 
 
 def evaluate(context: dict, *, article: dict | None, proposal: dict | None,
@@ -517,8 +528,12 @@ def _shortfalls(context: dict, chosen: dict, observations: dict, *, now) -> tupl
     # **プラットフォームがそれしか出さなかったのか、こちらが見なかったのか**を
     # 区別して言う（asmon 関東セッション報告 2026-09-11: ログイン状態の実
     # ブラウザでも `中学受験` のトピック頁に 1 件しか描画されなかった）。
-    exhausted = all((r.get("coverage") or {}).get("has_more") is False
-                     for r in exact) and bool(exact)
+    # **保存された記録の形を信じない**（kopicha セッション報告 2026-09-11）。
+    # `coverage` に文字列が入った観測を参照した瞬間に AttributeError で落ち、
+    # **stdout が空になって呼ぶ側には「出力が無い」としか分からなかった。**
+    # `ArticleEvidence` の `coverage` は文字列（full/partial/unknown）なので、
+    # **同じ名前で別の形**——取り違えは起きる。読む側で受け止める。
+    exhausted = bool(exact) and all(_has_more(r) is False for r in exact)
     limit = "（この取得手段ではこれ以上出ていません）" if exhausted else ""
 
     if samples < MIN_SAMPLES:
