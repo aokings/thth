@@ -331,7 +331,12 @@ def board_summary(now=None) -> dict:
     # 2026-09-12）。HEAD が配布の枝より**先**にいても `behind` は `0` になる。
     # 先にいる＝**配っていない commit で動いている**ので、別の数として出す。
     return {"accounts": accounts_out, "generated_at": jst.iso(),
+    # **取りに行けたかどうかを、数と一緒に出す**（外部レビュー F2 残件・P2・
+    # 2026-09-12）。**`behind_release: 0` だけを読んだ機械の利用者も、同じ
+    # 読み違いをする。** 確かめられていなければ数は `null` になり、
+    # `release_check` に「いつ・何が起きたか」が入る。
             "app": {"head": selfupdate_mod.head(),
                     "release_ref": selfupdate_mod.RELEASE_REF,
                     "behind_release": selfupdate_mod.behind_release(),
-                    "ahead_of_release": selfupdate_mod.ahead_of_release()}}
+                    "ahead_of_release": selfupdate_mod.ahead_of_release(),
+                    "release_check": selfupdate_mod.release_check()}}

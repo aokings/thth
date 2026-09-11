@@ -15,9 +15,12 @@ timer は動いているので「動いている」ように見え、誰も気�
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
+
+from . import jst
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # exec しなおしたことを子に伝える（無限ループを作らない）。
@@ -75,6 +78,77 @@ def _remote_ref(ref: str) -> str:
     return f"refs/remotes/origin/{ref}"
 
 
+def _check_record_path(app_dir: str) -> str | None:
+    """**取りに行けたかどうか**を書き置く場所。その clone の `.git` の中。
+
+    `state/` ではなく `.git` に置くのは、**この事実が「その clone のもの」だから**
+    ——別の clone に持ち越されても意味が無い。追跡もされない。
+    """
+    r = _git(["rev-parse", "--absolute-git-dir"], cwd=app_dir)
+    if r.returncode != 0:
+        return None
+    return os.path.join(r.stdout.strip(), "thth-release-check.json")
+
+
+def _record_check(app_dir: str, ref: str, *, ok: bool,
+                   error: str | None = None) -> None:
+    """**取りに行った結果を残す。** 失敗しても呼び出し側は止めない（記録係が
+    転んだせいで投稿が止まるのは重すぎる）。"""
+    path = _check_record_path(app_dir)
+    if path is None:
+        return
+    payload = {"ref": ref, "ok": ok, "checked_at": jst.iso(), "error": error}
+    if ok:
+        payload["release"] = _cached_release(app_dir, ref)
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _read_check(app_dir: str, ref: str) -> dict | None:
+    """記録を読む**内部の口**。
+
+    公開の `release_check()` とは別にしてある。**内部が公開名を呼ぶと、
+    呼び出し側が公開名を差し替えたときに内部まで巻き込まれる**（テストで
+    `functools.partial` で `app_dir` を束ねたら、内部の呼び出しが二重に
+    束ねられて落ちた）。**公開の口は外から差し替えられる前提で扱う。**
+    """
+    path = _check_record_path(app_dir)
+    if path is None or not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            row = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(row, dict) or row.get("ref") != ref:
+        # **別の枝についての記録を、この枝の確認として読まない。**
+        return None
+    return row
+
+
+def release_check(app_dir: str = APP_DIR, *, ref: str | None = None) -> dict | None:
+    """**最後に配布の枝を取りに行った結果。** 記録が無ければ `None`。
+
+    外部レビュー F2 残件（P2・2026-09-12）。**`fetch=True` の経路だけ直しても
+    閉じなかった**——board は `fetch=False` で呼ぶので、**取りに行けなくなった
+    あとも古い追跡 ref から `0` を数えて「追いついています」と出ていた。**
+
+    取得結果を**別プロセスからも読める形**にして、board がそれを見る。
+    """
+    return _read_check(app_dir, ref or RELEASE_REF)
+
+
+def _confirmed(app_dir: str, ref: str) -> bool:
+    """**いまの配布状況を確かめられているか。** 記録が無い・失敗しているなら偽。"""
+    row = _read_check(app_dir, ref)
+    return bool(row and row.get("ok"))
+
+
 def _cached_release(app_dir: str, ref: str) -> str | None:
     """**手元が覚えている配布の枝の SHA。** 持っていなければ `None`。
 
@@ -121,8 +195,17 @@ def behind_release(app_dir: str = APP_DIR, *, fetch: bool = False,
         # 数えない——外部レビュー F2-1（2026-09-12）: 取得の戻り値を無視して
         # 古い `origin/release` から数え、**到達不能なのに `0`（＝追いついて
         # います）を返していた。**
-        if _git(["fetch", "origin", _refspec(ref)], cwd=app_dir).returncode != 0:
+        ok = _git(["fetch", "origin", _refspec(ref)], cwd=app_dir).returncode == 0
+        _record_check(app_dir, ref, ok=ok,
+                       error=None if ok else "取りに行けませんでした")
+        if not ok:
             return None
+    # **確かめられていないなら数えない**（外部レビュー F2 残件・P2・2026-09-12）。
+    # **`fetch=True` だけ直しても閉じなかった**——board は `fetch=False` で呼ぶので、
+    # 取りに行けなくなったあとも古い追跡 ref から `0` を数え、**「追いついて
+    # います」と出していた。** 取りに行けた事実そのものを見に行く。
+    if not _confirmed(app_dir, ref):
+        return None
     # **持っていないものからは数えない。** 枝が消されたと判った時点で
     # `_pull_locked` が手元の追跡 ref を落とすので、ここは `None` になる
     # （外部レビュー F2-2: 消えた枝の古い追跡 ref から `0` を返していた）。
@@ -149,8 +232,13 @@ def ahead_of_release(app_dir: str = APP_DIR, *, fetch: bool = False,
     """
     ref = ref or RELEASE_REF
     if fetch:
-        if _git(["fetch", "origin", _refspec(ref)], cwd=app_dir).returncode != 0:
+        ok = _git(["fetch", "origin", _refspec(ref)], cwd=app_dir).returncode == 0
+        _record_check(app_dir, ref, ok=ok,
+                       error=None if ok else "取りに行けませんでした")
+        if not ok:
             return None
+    if not _confirmed(app_dir, ref):
+        return None
     if _cached_release(app_dir, ref) is None:
         return None
     return _count(app_dir, f"origin/{ref}..HEAD")
@@ -254,6 +342,11 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
     # **配布の枝だけを名指しで取りに行く。** `git pull` のように checkout して
     # いる枝の上流を見ない——**`main` に何が push されても、ここには入らない。**
     fetch = _git(["fetch", "origin", _refspec(ref)], cwd=app_dir)
+    # **取りに行った結果を、成否どちらでも残す**（外部レビュー F2 残件・
+    # 2026-09-12）。board は別プロセスで `fetch=False` で呼ぶので、**ここで
+    # 残さないと「確かめられているか」を board が知る術がない。**
+    _record_check(app_dir, ref, ok=fetch.returncode == 0,
+                   error=None if fetch.returncode == 0 else "取りに行けませんでした")
     if fetch.returncode != 0:
         # **枝が無いのと、取りに行けなかったのを混ぜない。** 枝が無いなら
         # 「配ってもらえていない」であって、ネットワークの話ではない。
@@ -274,6 +367,8 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
             # `0` を数え、**枝が消えているのに board が「追いついています」と
             # 出す。** 判ったことを、判った時点で反映する。
             _git(["update-ref", "-d", _remote_ref(ref)], cwd=app_dir)
+            _record_check(app_dir, ref, ok=False,
+                           error=f"`origin/{ref}` が origin にありません")
             return (f"**配布の枝 `origin/{ref}` が origin にありません**"
                      f"（古いまま走ります。**まだ配布されていないか、枝の名前が"
                      f"違います**）"), None

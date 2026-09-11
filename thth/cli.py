@@ -1458,8 +1458,22 @@ def cmd_board(args) -> int:
         elif behind is None:
             # **「遅れていない」ではなく「判らない」。** 配布の枝が無い場合も
             # ここに来る——**0 と混ぜない。**
+            #
+            # **なぜ判らないのかまで出す**（外部レビュー F2 残件・2026-09-12）。
+            # 取りに行けなくなったあとも「追いついています」と出ていたのを
+            # 直した結果ここへ来るので、**「取りに行けたのはいつか」を添えない
+            # と、枝が無いのか届かないのかが読み手に分からない。**
+            check = app.get("release_check") or {}
+            when = check.get("checked_at")
+            why = check.get("error")
+            if why and when:
+                detail = f"最後に取りに行けたのは {when}——{why}"
+            elif why:
+                detail = str(why)
+            else:
+                detail = "枝が無いか、まだ取りに行けていません"
             state = (f"**配布の枝（`{ref}`）に対する遅れが判りません**"
-                      f"（枝が無いか、まだ取りに行けていません）")
+                      f"（{detail}。**いまの配布状況は未確認です**）")
         elif behind == 0:
             state = f"配布の枝（`{ref}`）に追いついています"
         else:

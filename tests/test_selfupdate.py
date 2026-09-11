@@ -418,3 +418,89 @@ def test_thth_boardは配っていないcommitで動いていることを出す(
     assert "追いついています" not in out, \
         "**配っていないもので動いているのに『追いついています』と出している**"
     assert "2 commit 先" in out
+
+# --- 外部レビュー F2 残件（P2・2026-09-12・再判定）---------------------------
+#
+# **`fetch=True` の経路だけ直しても閉じなかった。** board は `fetch=False` で
+# 呼ぶので、取りに行けなくなったあとも**古い追跡 ref から `0` を数えて
+# 「追いついています」と出ていた。** こちらの直しは半分だった。
+#
+# 反例は `~/thth-exchange/out/2026-09-12_再判定_配布の枝/controller/test_board_path.py`。
+# **あの反例は `release_check` を tmp clone に束ねていない**ので、「最後に取りに
+# 行けたのはいつか」を出す枝までは通らない。ここはそこまで通す。
+
+def _real_board(pair, monkeypatch, capsys):
+    """**board の既定経路をまるごと通す。** 値を差し替えない。"""
+    import argparse
+    import functools
+    monkeypatch.setattr(report_mod.accounts_mod, "list_account_names", lambda: [])
+    for name in ("head", "behind_release", "ahead_of_release", "release_check"):
+        monkeypatch.setattr(selfupdate, name,
+                             functools.partial(getattr(selfupdate, name), pair["work"]))
+    summary = report_mod.board_summary()
+    assert cli_mod.cmd_board(argparse.Namespace(json=False)) == 0
+    return summary, capsys.readouterr().out
+
+
+def test_取りに行けなくなったらboardは追いついているとは言わない(tmp_path, monkeypatch,
+                                                                  capsys):
+    """**残件の本体。** board は `fetch=False` で呼ぶ。"""
+    pair = _app_pair(tmp_path)
+    selfupdate._pull_locked(pair["work"])                  # 一度は取れている
+    _advance_origin(pair, "v2\n")                          # 配布の枝は進んだ
+    subprocess.run(["git", "-C", pair["work"], "remote", "set-url", "origin",
+                    str(tmp_path / "とどかない.git")], check=True)
+    selfupdate._pull_locked(pair["work"])                  # ここで取りに行けない
+
+    summary, out = _real_board(pair, monkeypatch, capsys)
+
+    assert "追いついています" not in out, \
+        "**取りに行けていないのに『追いついています』と出している**"
+    assert "いまの配布状況は未確認です" in out
+    assert "最後に取りに行けたのは" in out, \
+        "いつまでは確かめられていたのかが出ていない"
+    # **機械の利用者にも伝わるか**（`behind_release: 0` だけを読む読み手が同じ
+    # 読み違いをする）。
+    assert summary["app"]["behind_release"] is None
+    assert summary["app"]["ahead_of_release"] is None
+    assert summary["app"]["release_check"]["ok"] is False
+    assert summary["app"]["release_check"]["checked_at"]
+
+
+def test_取り直せたらboardは現在の状態に戻る(tmp_path, monkeypatch, capsys):
+    """**閉じる条件の後半**（外部レビュー: 正常な取得後は適切な表示になること）。
+
+    **未確認に倒しっぱなしにしない。** 倒しっぱなしなら「常に未確認」と書くのと
+    同じで、何も言っていないことになる。
+    """
+    pair = _app_pair(tmp_path)
+    selfupdate._pull_locked(pair["work"])
+    _advance_main(pair, "v2\n")
+    _release(pair)
+    good = str(pair["bare"])
+    subprocess.run(["git", "-C", pair["work"], "remote", "set-url", "origin",
+                    str(tmp_path / "とどかない.git")], check=True)
+    selfupdate._pull_locked(pair["work"])                  # 一度壊す
+    assert selfupdate.behind_release(pair["work"]) is None, "前提が崩れている"
+
+    subprocess.run(["git", "-C", pair["work"], "remote", "set-url", "origin", good],
+                    check=True)
+    selfupdate._pull_locked(pair["work"])                  # 取り直せた
+
+    # **束ねるのは、git を触り終えてから。** `_real_board` は `head` などを
+    # `app_dir` 付きで束ねるので、そのあとに `_pull_locked` を呼ぶと二重に
+    # 束ねられる（**テストの組み方の問題。製品コードの話ではない**）。
+    summary, out = _real_board(pair, monkeypatch, capsys)
+    assert "未確認" not in out, "取り直せたのに未確認のまま倒れている"
+    assert "追いついています" in out
+    assert summary["app"]["behind_release"] == 0
+    assert summary["app"]["release_check"]["ok"] is True
+
+
+def test_別の枝についての確認をこの枝の確認として読まない(tmp_path):
+    """記録には枝の名前が入っている。**違う枝の確認を流用しない。**"""
+    pair = _app_pair(tmp_path)
+    selfupdate._pull_locked(pair["work"])
+    assert selfupdate.release_check(pair["work"]) is not None
+    assert selfupdate.release_check(pair["work"], ref="べつの枝") is None
+    assert selfupdate.behind_release(pair["work"], ref="べつの枝") is None
