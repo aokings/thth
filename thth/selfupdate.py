@@ -186,6 +186,29 @@ def _confirmed(app_dir: str, ref: str) -> bool:
     return bool(row and row.get("ok"))
 
 
+def _recorded_release(app_dir: str, ref: str) -> str | None:
+    """**比較の基準にする SHA。** 最後に記録できた取得試行のときの配布参照。
+
+    外部レビュー F5（P2・2026-09-12）。**表示していた SHA と、比較に使っていた
+    SHA が別物だった。** 表示は記録された SHA（A）、比較は**いまの**
+    `origin/release`（B）。記録の更新に失敗すると両者がずれ、**実際は B にいるのに
+    「A と一致しています」と出た。**
+
+    **基準を記録側に揃える。** board は取りに行かないので、**言えるのは記録に
+    ついてだけ**——比較もそこに合わせる。結果として、記録できなかった配布は
+    「**配っていない commit で動いています**」と出る。**記録が無い以上、配られた
+    証拠が無いのは本当のこと。**
+
+    （`_pull_locked` の中だけは別で、**その場で fetch した直後**なので手元の追跡
+    ref が現在を指している。**そこは現在を見てよい唯一の場所。**）
+    """
+    row = _read_check(app_dir, ref)
+    if not (row and row.get("ok")):
+        return None
+    base = row.get("release")
+    return base if isinstance(base, str) and base else None
+
+
 def _cached_release(app_dir: str, ref: str) -> str | None:
     """**手元が覚えている配布の枝の SHA。** 持っていなければ `None`。
 
@@ -242,14 +265,10 @@ def behind_release(app_dir: str = APP_DIR, *, fetch: bool = False,
     # **`fetch=True` だけ直しても閉じなかった**——board は `fetch=False` で呼ぶので、
     # 取りに行けなくなったあとも古い追跡 ref から `0` を数え、**「追いついて
     # います」と出していた。** 取りに行けた事実そのものを見に行く。
-    if not _confirmed(app_dir, ref):
+    base = _recorded_release(app_dir, ref)
+    if base is None:
         return None
-    # **持っていないものからは数えない。** 枝が消されたと判った時点で
-    # `_pull_locked` が手元の追跡 ref を落とすので、ここは `None` になる
-    # （外部レビュー F2-2: 消えた枝の古い追跡 ref から `0` を返していた）。
-    if _cached_release(app_dir, ref) is None:
-        return None
-    return _count(app_dir, f"HEAD..origin/{ref}")
+    return _count(app_dir, f"HEAD..{base}")
 
 
 def ahead_of_release(app_dir: str = APP_DIR, *, fetch: bool = False,
@@ -276,11 +295,10 @@ def ahead_of_release(app_dir: str = APP_DIR, *, fetch: bool = False,
                        error=None if ok else "取りに行けませんでした")
         if not ok:
             return None
-    if not _confirmed(app_dir, ref):
+    base = _recorded_release(app_dir, ref)
+    if base is None:
         return None
-    if _cached_release(app_dir, ref) is None:
-        return None
-    return _count(app_dir, f"origin/{ref}..HEAD")
+    return _count(app_dir, f"{base}..HEAD")
 
 
 # **このモジュールを import した瞬間の版。** プロセスが実際に読み込んだコードの版で

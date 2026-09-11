@@ -486,7 +486,7 @@ def test_取りに行けなくなったらboardは追いついているとは言
         "**古い鍵が残っている**（remote に対する現在の遅れだと読まれる・規約 5）"
     assert app["behind_cached_release"] is None
     assert app["ahead_cached_release"] is None
-    assert app["comparison_basis"] == "cached_ref"
+    assert app["comparison_basis"] == "recorded_release"
     assert app["remote_current_verified"] is False
     assert app["release_check"]["ok"] is False
     assert app["release_check"]["checked_at"]
@@ -518,8 +518,17 @@ def test_取り直せたらboardは現在の状態に戻る(tmp_path, monkeypatc
     summary, out = _real_board(pair, monkeypatch, capsys)
     assert "いまの配布状況は未確認です" not in out, \
         "取り直せたのに未確認のまま倒れている"
-    assert "（成功）" in out
-    assert "一致しています" in out
+    assert "（成功・そのとき記録した配布参照" in out
+    assert "その参照と一致しています" in out
+    # **表示している SHA と、比較に使った SHA が同じであること**（外部レビュー
+    # F5・2026-09-12）。**別々に取り出していたので、記録の更新に失敗すると
+    # ずれ、実際は別の commit にいるのに「一致しています」と出た。**
+    basis = summary["app"]["comparison_ref_sha"]
+    assert basis and basis[:7] in out, "比較に使った SHA が画面に出ていない"
+    # `head` は `_real_board` が束ねているので、summary 側から読む
+    # （**束ねたあとに素で呼ぶと二重に束ねられる**・同じ型で 2 度踏んだ）。
+    assert basis == summary["app"]["head"], \
+        "一致していると言っているのに、比較の基準と HEAD が違う"
     # **取り直せても「いま」は言わない。** board は取りに行かないので、
     # **言えるのは「そのとき記録した参照との比較」まで**（外部レビュー F3 残件）。
     assert "この画面では確認していません" in out
@@ -606,3 +615,58 @@ def test_結果を書く前に死んでも古い成功を残さない(tmp_path, 
 
     assert selfupdate.behind_release(pair["work"]) is None, \
         "**結果を書く前に死んだのに、前回の成功が有効なまま残っている**"
+
+# --- 外部レビュー F5（P2・2026-09-12・5 回目）--------------------------------
+
+def test_表示するSHAと比較に使うSHAを同じにする(tmp_path, monkeypatch, capsys):
+    """**F5。** 表示は記録された SHA（A）、比較は**いまの** `origin/release`（B）
+    だった。記録の更新に失敗すると両者がずれ、**実際は B にいるのに「A と一致して
+    います」と出た。**
+
+    **変異で分かった**（2026-09-12）: F5 を戻す変異をかけても、**こちらのテストは
+    27 本とも通った。** 落ちたのは外部レビューの反例だけで、**この性質を守る
+    テストを 1 本も持っていなかった。**
+
+    作る状況: **通信は成功させ、記録の書き込みだけ失敗させる。** すると
+    `origin/release` は進むのに、記録は前のまま残る。
+    """
+    pair = _app_pair(tmp_path)
+    selfupdate._pull_locked(pair["work"])
+    記録された = selfupdate.release_check(pair["work"])["release"]
+
+    _advance_main(pair, "v2\n")
+    _release(pair)                                   # 配布の枝は進む
+
+    def 書けない(*_a):
+        raise PermissionError("記録の書き込みだけ失敗させる")
+
+    with monkeypatch.context() as m:
+        m.setattr(selfupdate.os, "replace", 書けない)
+        m.setattr(selfupdate.os, "remove", 書けない)
+        selfupdate._pull_locked(pair["work"])        # fetch と merge は成功する
+
+    head = selfupdate.head(pair["work"])
+    assert head != 記録された, "前提が崩れている（HEAD が動いていない）"
+
+    summary, out = _real_board(pair, monkeypatch, capsys)
+    基準 = summary["app"]["comparison_ref_sha"]
+
+    assert 基準 == 記録された, "比較の基準が記録と違う"
+    assert 基準[:7] in out, "比較に使った SHA が画面に出ていない"
+    assert not (基準 != summary["app"]["head"] and "その参照と一致しています" in out), \
+        "**表示している SHA と違うところにいるのに『一致しています』と出している**"
+    # 記録に無い commit で動いている、と言えていること。
+    assert summary["app"]["ahead_cached_release"] == 1
+    assert "配っていない commit で動いています" in out
+
+
+def test_記録が読めないときに一度も取りに行っていないと言わない(isolated_account,
+                                                                monkeypatch, capsys):
+    """**読めない ≠ 無い。** 記録の消失・読取失敗でも同じ分岐に来る。"""
+    monkeypatch.setattr(report_mod.selfupdate_mod, "release_check",
+                         lambda *_a, **_k: None)
+    assert cli_mod.cmd_board(argparse.Namespace(json=False)) == 0
+    out = capsys.readouterr().out
+    assert "取得試行の記録を確認できません" in out
+    assert "まだ一度も" not in out, \
+        "**記録が読めないだけかもしれないのに『一度も無い』と言い切っている**"

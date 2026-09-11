@@ -1455,7 +1455,9 @@ def cmd_board(args) -> int:
         # 間違えても気づけない**（新しい出力契約にしたとき、ここを落とした）。
         print(f"道具: {head or '(版が読めません)'}  配布の枝: `{ref}`")
         if not check:
-            print(f"  **配布の枝（`{ref}`）を、まだ一度も取りに行っていません**")
+            # **「まだ一度も」とは言えない**（外部レビュー・2026-09-12）。記録の
+            # 消失・読取失敗でも同じ分岐に来る。**読めない ≠ 無い。**
+            print(f"  **配布の枝（`{ref}`）の取得試行の記録を確認できません**")
         elif not check.get("ok"):
             # **`checked_at` は成否を問わない「試みた時刻」**（外部レビュー F4）。
             # **失敗した時刻を成功した時刻として説明していた。**
@@ -1463,21 +1465,25 @@ def cmd_board(args) -> int:
                    f"（**失敗**——{check.get('error') or '理由が記録されていません'}）")
             print(f"  **いまの配布状況は未確認です**")
         else:
-            print(f"  最後に記録された取得試行: {check.get('checked_at')}（成功）")
-            seen = check.get("release")
+            # **表示する SHA と比較する SHA を同じものにする**（外部レビュー
+            # F5・P2・2026-09-12）。ここは `comparison_ref_sha` を使う——
+            # **`release_check.release` から別々に取り出すと、また分かれる。**
+            seen = app.get("comparison_ref_sha")
             seen7 = seen[:7] if isinstance(seen, str) else "(記録にありません)"
+            print(f"  最後に記録された取得試行: {check.get('checked_at')}"
+                   f"（成功・そのとき記録した配布参照 {seen7}）")
             if ahead:
                 # **F1。いちばん重い状態なので、遅れより先に出す。**
                 print(f"  **配っていない commit で動いています**"
-                       f"（そのとき記録した配布参照 {seen7} より {ahead} commit 先）"
-                       f"——**誰かが配布の経路の外で更新しています**")
+                       f"（その参照より {ahead} commit 先）"
+                       f"——**配られた記録が無い commit です**")
             elif behind:
-                print(f"  そのとき記録した配布参照 {seen7} より **{behind} commit "
-                       f"遅れています**——**配ったものが届いていません**")
+                print(f"  その参照より **{behind} commit 遅れています**"
+                       f"——**配ったものが届いていません**")
             elif behind == 0:
-                print(f"  そのとき記録した配布参照 {seen7} と一致しています")
+                print(f"  その参照と一致しています")
             else:
-                print(f"  **そのとき記録した配布参照との比較ができません**")
+                print(f"  **その参照との比較ができません**")
             print(f"  **現在の remote の配布状況は、この画面では確認していません**")
         print("")
 

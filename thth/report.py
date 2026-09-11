@@ -331,18 +331,26 @@ def board_summary(now=None) -> dict:
     # これ以上増やすのではなく、出力契約を変える**（外部レビューの指示）。
     #
     # **鍵の名前も変える**（規約 5）。`behind_release` のままだと、古い読み手が
-    # 「remote に対する現在の遅れ」として読み続ける。ここで数えているのは
-    # **手元の追跡 ref との比較**で、**remote の現在ではない。**
+    # 「remote に対する現在の遅れ」として読み続ける。
+    #
+    # **比較の基準は「最後に記録できた取得試行のときの配布参照」**（外部レビュー
+    # F5・P2）。**表示する SHA と比較する SHA が別物だった**——表示は記録された
+    # SHA、比較は**いまの** `origin/release`。記録の更新に失敗すると両者がずれ、
+    # **実際は別の commit にいるのに「一致しています」と出た。** 基準を記録側へ
+    # 揃えたので、**機械の読み手も同じ基準を確認できるように、その SHA を出す。**
     #
     # ここまでに直した読み違いも残しておく:
     # - `None` は「遅れていない」ではなく**「判らない」**（F2）
     # - `0` は「配ったもので動いている」ではない。**先にいても 0 になる**（F1）
+    check = selfupdate_mod.release_check()
+    basis = (check or {}).get("release")
     return {"accounts": accounts_out, "generated_at": jst.iso(),
             "app": {"head": selfupdate_mod.head(),
                     "release_ref": selfupdate_mod.RELEASE_REF,
-                    "release_check": selfupdate_mod.release_check(),
+                    "release_check": check,
                     "behind_cached_release": selfupdate_mod.behind_release(),
                     "ahead_cached_release": selfupdate_mod.ahead_of_release(),
-                    "comparison_basis": "cached_ref",
+                    "comparison_basis": "recorded_release",
+                    "comparison_ref_sha": basis,
                     # **board は取りに行かないので、常に未確認。**
                     "remote_current_verified": False}}
