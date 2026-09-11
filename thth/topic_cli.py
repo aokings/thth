@@ -1497,6 +1497,19 @@ def cmd_impact(args) -> int:
 
 # --- 仮説の棚（masaru 指示 2026-09-11・外部調査の §9 を型にしたもの） ---------
 
+# **`metrics`/`sample_design` は申告値**（外部レビュー R4・2026-09-11）。
+# `build_hypothesis` は未知の指標名を拒否し、`sample_design` が語彙にある
+# ことは検査するが、その予測が**実際に観測可能か**（観測単位・必要変数の
+# 実測参照・取得窓・欠測規則）までは確認していない。`improvements` の
+# `notice` が「記録者の自己申告であって、実測で確認したものではない」と
+# 書くのと同じ流儀で、ここでも申告値であることを毎回出す。
+HYPOTHESIS_DECLARATION_NOTICE = (
+    "**`metrics` と `sample_design` は申告値です。** 台帳にある指標名か・"
+    "語彙にある区分かは検査していますが、**その予測が実際に観測可能か"
+    "（観測単位・必要変数の実測参照・取得窓・欠測規則）は確認していません**"
+    "（外部レビュー R4・未検証）。")
+
+
 def cmd_record_hypothesis(args) -> int:
     """仮説を 1 件、記録として残す。**語彙・型の仕様と同じく、コードではなく
     データ。** 出所と日付を付けて棚に置く（`build_hypothesis` が検査する）。
@@ -1513,14 +1526,23 @@ def cmd_record_hypothesis(args) -> int:
         | {"proposed_by": _actor(args)})
     # 語彙・型の仕様と同じ穴があく。**自己申告の accepted を保存させない**
     # ——正式な採用は独立確認の仕組みができてから（構想書 §8）。
-    if hyp["state"] not in ("proposed", "shadow"):
+    #
+    # **`shadow` もいまは受け付けない**（外部レビュー R4・最小の閉鎖案）。
+    # 指標名の許可リスト検査だけで shadow に上げると、「予測が観測可能」を
+    # 確かめないまま「検証が動いている」ように見えてしまう
+    # （非フォロワー由来 views・外回りの返信回数のような反例が実際に通った）。
+    # 自由文の意味を万能に判定する仕組みは作らず、**当面は proposed に限定**
+    # し、観測単位・必要変数の実測参照・取得窓・欠測規則の準備確認は
+    # 別に用意してから shadow を開ける。
+    if hyp["state"] != "proposed":
         return _fail(
             "promotion_not_implemented",
-            f"いま登録できるのは proposed か shadow までです"
-            f"（{hyp['state']} は受け付けません）。**正式な採用は未実装**で、"
-            f"独立確認の照合も採用判断の記録もまだありません（構想書 §8）。"
-            f"自己申告の accepted を保存すると、**採用されたという主張だけが"
-            f"残ります。**")
+            f"いま登録できるのは proposed だけです"
+            f"（{hyp['state']} は受け付けません）。**shadow への昇格は未実装**"
+            f"です——観測単位・必要変数の実測参照・取得窓・欠測規則の準備確認"
+            f"ができていないため、いまは shadow に上げられません"
+            f"（外部レビュー R4）。指標名と設計区分（`metrics`/"
+            f"`sample_design`）は申告値のまま proposed で残してください。")
     saved, wrote = store.put("hypotheses", hyp, id_key="hypothesis_id")
     _emit({"ok": True, "hypothesis_id": saved["hypothesis_id"], "stored": wrote,
            "code": saved["code"], "kind": saved["kind"],
@@ -1529,7 +1551,8 @@ def cmd_record_hypothesis(args) -> int:
            "warnings": [f"state={saved['state']} です。**採用は masaru または"
                          f"保守責任者が独立確認を踏まえて確定します**"
                          f"（構想書 §8。いまは登録できません）"],
-           "notice": REVIEW_NOTICE})
+           "notice": REVIEW_NOTICE,
+           "declaration_notice": HYPOTHESIS_DECLARATION_NOTICE})
     return 0
 
 
@@ -1540,7 +1563,8 @@ def cmd_hypotheses(args) -> int:
         if row is None:
             return _fail("not_found",
                           f"その仮説は保存されていません: {args.hypothesis_id}")
-        _emit({"ok": True, "hypothesis": row, "notice": REVIEW_NOTICE})
+        _emit({"ok": True, "hypothesis": row, "notice": REVIEW_NOTICE,
+               "declaration_notice": HYPOTHESIS_DECLARATION_NOTICE})
         return 0
     rows, broken, _taken = store.load_all("hypotheses")
     if args.state:
@@ -1564,7 +1588,8 @@ def cmd_hypotheses(args) -> int:
                "sample_design": r.get("sample_design"), "state": r.get("state"),
                "scope": r.get("scope"), "verifier": r.get("verifier")}
                for r in rows],
-           "notice": REVIEW_NOTICE})
+           "notice": REVIEW_NOTICE,
+           "declaration_notice": HYPOTHESIS_DECLARATION_NOTICE})
     return 0
 
 # --- parser -----------------------------------------------------------------

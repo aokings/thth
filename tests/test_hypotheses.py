@@ -23,6 +23,7 @@ DOCS_HYPOTHESES = os.path.join(
 
 def _source(**over):
     row = {"tier": "L1", "ref": "O1", "date": "2025-01-01",
+           "date_precision": "day", "date_kind": "published_at",
            "note": "テスト用の出所"}
     row.update(over)
     return row
@@ -180,3 +181,99 @@ def test_露出と反応率の仮説10件が登録できること(thth_root):
             assert "［識別不能］" in r["claim"]
         else:
             assert "［識別不能］" not in r["claim"]
+
+
+# --- 8. R4：指標名を許しただけで shadow に進めない（外部レビュー再判定） -----
+#
+# 最小の閉鎖案（proposed 限定）。指標名・window・scope を検査するだけでは
+# 「予測が観測可能」までは確かめられない——非フォロワー由来の views だけを
+# 予測対象にしても、外回りの返信回数で自投稿 views を予測すると書いても、
+# 指標名さえ台帳にあれば shadow まで通ってしまっていた（R4 の反例）。
+
+def test_shadowでは登録できないこと理由が出ること(thth_root):
+    proc = _register(_hypothesis(state="shadow"))
+    assert proc.returncode != 0
+    out = _json(proc)
+    assert out["ok"] is False
+    assert out["error"]["code"] == "promotion_not_implemented"
+    # **なぜ今は shadow に上げられないかが書かれている。**
+    message = out["error"]["message"]
+    assert "観測単位" in message
+    assert "取得窓" in message or "欠測" in message
+    # 保存されていないことも確かめる。
+    assert _json(_thth(["topics", "hypotheses"]))["count"] == 0
+
+
+def test_proposedは登録できること自由文の予測も保存できること(thth_root):
+    freeform = _prediction(
+        statement="非フォロワー由来の views の 24 時間増分が増える（自由文の"
+                    "未検証予測。観測可能性は確かめていない）",
+        metrics=["views"], scope="非フォロワー由来のみ")
+    proc = _register(_hypothesis(state="proposed", predictions=[freeform]))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    out = _json(proc)
+    assert out["ok"] is True
+    assert out["state"] == "proposed"
+
+    single = _json(_thth(["topics", "hypotheses", out["hypothesis_id"]]))
+    assert single["hypothesis"]["predictions"][0]["statement"] \
+        == freeform["statement"]
+
+
+# --- 9. R5：知らない日を作らない（外部レビュー再判定） -----------------------
+
+def test_日を知らない出所を日付を作らずに登録できること(thth_root):
+    month_source = _source(date="2026-04", date_precision="month",
+                             date_kind="observed_period",
+                             note="観測対象期間のみ判明。公開日は不明")
+    proc = _register(_hypothesis(sources=[month_source]))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    unknown_source = _source(date=None, date_precision="unknown",
+                               date_kind="published_at",
+                               note="いつの記事かそもそも分からない")
+    proc2 = _register(_hypothesis(code="T02", sources=[unknown_source]))
+    assert proc2.returncode == 0, proc2.stdout + proc2.stderr
+
+
+def test_dayと名乗ったらYYYY_MM_DDを要求すること(thth_root):
+    # 月しか無いのに day と申告 → 知らない日を作らず断る。
+    bad = _source(date="2026-04", date_precision="day")
+    proc = _register(_hypothesis(sources=[bad]))
+    assert proc.returncode != 0
+    out = _json(proc)
+    assert out["error"]["code"] == "schema_error"
+
+    # unknown（null）を day と申告しても同様に断る。
+    bad2 = _source(date=None, date_precision="day")
+    proc2 = _register(_hypothesis(sources=[bad2]))
+    assert proc2.returncode != 0
+
+
+def test_date_precisionとdate_kindが無ければ断ること(thth_root):
+    no_precision = {"tier": "L1", "ref": "O1", "date": "2025-01-01",
+                     "date_kind": "published_at", "note": "精度を忘れた"}
+    proc = _register(_hypothesis(sources=[no_precision]))
+    assert proc.returncode != 0
+    assert _json(proc)["error"]["code"] == "schema_error"
+
+    no_kind = {"tier": "L1", "ref": "O1", "date": "2025-01-01",
+               "date_precision": "day", "note": "種類を忘れた"}
+    proc2 = _register(_hypothesis(sources=[no_kind]))
+    assert proc2.returncode != 0
+    assert _json(proc2)["error"]["code"] == "schema_error"
+
+
+# --- 10. R4：出力に「申告値であって検証していない」但し書きが出ること -------
+
+def test_出力に申告値である但し書きが出ること(thth_root):
+    proc = _register(_hypothesis())
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    out = _json(proc)
+    assert "申告値" in out["declaration_notice"]
+
+    single = _json(_thth(["topics", "hypotheses", out["hypothesis_id"]]))
+    assert "申告値" in single["declaration_notice"]
+
+    listed = _json(_thth(["topics", "hypotheses"]))
+    assert "申告値" in listed["declaration_notice"]

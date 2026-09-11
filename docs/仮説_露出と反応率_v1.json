@@ -8,6 +8,8 @@
         "tier": "L1",
         "ref": "O1",
         "date": "2025-03-07",
+        "date_precision": "day",
+        "date_kind": "published_at",
         "note": "投稿比率入力から作る、調査者の検証用仮説。API の比率と内部比率が同一とは置かない。"
       }
     ],
@@ -41,18 +43,24 @@
         "tier": "L1",
         "ref": "O3",
         "date": "2024-10-21",
+        "date_precision": "day",
+        "date_kind": "published_at",
         "note": "更新表示 2025-06-26。返信が閲覧のほぼ半分を占めるという観測。投稿に返信が付いたかどうかの話であり、投稿者の返信行動とは同じ処置ではない。"
       },
       {
         "tier": "L3",
         "ref": "J5",
         "date": "2026-07-29",
+        "date_precision": "day",
+        "date_kind": "published_at",
         "note": "投稿に返信が付いたかの関連（返信あり 23 本の views 中央値 2,754、無し 31 本は 602）。"
       },
       {
         "tier": "L3",
         "ref": "E1",
         "date": "2025-09-22",
+        "date_precision": "day",
+        "date_kind": "published_at",
         "note": "投稿者自身の返信行動の比較。元資料とは目的変数が違うため追試とは呼ばない。"
       }
     ],
@@ -86,6 +94,8 @@
         "tier": "L4",
         "ref": "P2",
         "date": "2025-11-17",
+        "date_precision": "day",
+        "date_kind": "published_at",
         "note": "初動重視の主張を、あえて強い普遍命題へ変換した反証用仮説。24h は調査者が台帳に合わせた窓で、原典の固定閾値ではない。"
       }
     ],
@@ -118,6 +128,8 @@
         "tier": "L1",
         "ref": "O4",
         "date": "2025-03-20",
+        "date_precision": "day",
+        "date_kind": "published_at",
         "note": "ヘッダー表記は 2025-03-20／2025-10-30、本文の初出表記は 2025-04-24 で不一致（報告 §4）。ここではヘッダーの早い方の日付を暫定的に採る。内部データではトピック付き投稿が概して多く閲覧されるという観測で、タグを付けた因果効果ではない。"
       }
     ],
@@ -150,18 +162,24 @@
         "tier": "L3",
         "ref": "E2",
         "date": "2026-02-04",
+        "date_precision": "day",
+        "date_kind": "published_at",
         "note": "投稿時刻分析。反応数の中央値で木曜 9 時、平日午前が優勢。閲覧数比較ではない。"
       },
       {
         "tier": "L3",
         "ref": "E3",
-        "date": "2026-04-01",
-        "note": "対象は 2026 年 4 月（公開日の日単位表記は確認できず、ここでは月初日を暫定的に記載）。長い連投の平均 views 3,921、日曜の views が高い。"
+        "date": "2026-04",
+        "date_precision": "month",
+        "date_kind": "observed_period",
+        "note": "対象（観測期間）は 2026 年 4 月。公開日は不明（日単位はもちろん、月も確認できていない）——知らない日を書かない。長い連投の平均 views 3,921、日曜の views が高い。"
       },
       {
         "tier": "L4",
         "ref": "P3",
         "date": "2026-02-08",
+        "date_precision": "day",
+        "date_kind": "published_at",
         "note": "1 日 10 本以上や時間帯の効果を数値で主張するが、n が不明。"
       }
     ],
@@ -197,6 +215,8 @@
         "tier": "L4",
         "ref": "J2",
         "date": "2026-04-13",
+        "date_precision": "day",
+        "date_kind": "published_at",
         "note": "143 本の検証記録の解釈。投稿数変更と内容変更が混ざり、減らした効果は分からないと著者自身が述べる。O3 の頻度観測、P2/P3 の増やす助言とは方向が異なる。"
       }
     ],
@@ -229,6 +249,8 @@
         "tier": "L4",
         "ref": "P4",
         "date": "2026-01-14",
+        "date_precision": "day",
+        "date_kind": "published_at",
         "note": "古い公式発言（Mosseri のリンク改善発言）の二次流通。プラットフォームの閾値を検証した結果ではない。"
       }
     ],
@@ -251,8 +273,10 @@
       {
         "tier": "L3",
         "ref": "E3",
-        "date": "2026-04-01",
-        "note": "対象は 2026 年 4 月（公開日の日単位表記は確認できず、ここでは月初日を暫定的に記載）。長い連投の平均 views 3,921。"
+        "date": "2026-04",
+        "date_precision": "month",
+        "date_kind": "observed_period",
+        "note": "対象（観測期間）は 2026 年 4 月。公開日は不明（日単位はもちろん、月も確認できていない）——知らない日を書かない。長い連投の平均 views 3,921。"
       }
     ],
     "predictions": [
@@ -283,8 +307,10 @@
       {
         "tier": "L4",
         "ref": "Reddit(Why Most People Fail to Grow on Threads)",
-        "date": "2025-03-01",
-        "note": "2025 年 3 月（日単位不明のため月初日を暫定的に記載）等。投稿より返信を重視する助言。対照実験や n はない。"
+        "date": "2025-03",
+        "date_precision": "month",
+        "date_kind": "published_at",
+        "note": "2025 年 3 月（日単位は原報告に無い）。投稿より返信を重視する助言。対照実験や n はない。"
       }
     ],
     "predictions": [],
@@ -307,12 +333,16 @@
         "tier": "L1",
         "ref": "O1",
         "date": "2025-03-07",
+        "date_precision": "day",
+        "date_kind": "published_at",
         "note": "滞在・個人履歴を入力例に挙げる公式資料。"
       },
       {
         "tier": "L4",
         "ref": "P2",
         "date": "2025-11-17",
+        "date_precision": "day",
+        "date_kind": "published_at",
         "note": "スクリーンショット優位の断言。根拠の強さは O1 と同じではない。"
       }
     ],
