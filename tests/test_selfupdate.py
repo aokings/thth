@@ -345,3 +345,76 @@ def test_thth_boardの人向け出力にも配布の枝の名前が出る(isolat
     monkeypatch.setattr(selfupdate, "RELEASE_REF", "べつの枝")
     out = _board_lines(monkeypatch, 1, capsys)
     assert "べつの枝" in out, "追いかけている枝の名前が人向けに出ていない"
+
+# --- 外部レビュー F1・F2（2026-09-12・要修正の判定）--------------------------
+#
+# **どちらも「キャッシュから答えられるなら答えてしまう」形だった。**
+# 反例は `~/thth-exchange/out/2026-09-12_検収_配布の枝/controller/test_boundaries.py`
+# に byte のまま置いてある（SHA-256 c1a33c0e…）。ここはそこから起こした版。
+
+def test_配っていないcommitで動いていたら黙って正常扱いにしない(tmp_path):
+    """**F1（P1）。`behind == 0` は「配ったもので動いている」ではない。**
+
+    `merge --ff-only origin/release` は**相手が祖先なら何もせずに成功する**ので、
+    HEAD が配布の枝より先にいると「正常に終わった」と見える。`HEAD..origin/release`
+    も `0` なので、**board は「追いついています」と出していた。**
+
+    届く経路が実際にある: VM のローカル枝の upstream が `origin/main` のままなので、
+    **保守で誰かが `git pull` を打てば、そこで配布の境界を迂回する。**
+    """
+    pair = _app_pair(tmp_path)
+    selfupdate._pull_locked(pair["work"])                 # まず配布の枝に揃える
+    released = subprocess.run(["git", "-C", pair["work"], "rev-parse", "origin/release"],
+                               capture_output=True, text=True, check=True).stdout.strip()
+
+    _advance_main(pair, "配っていない\n")                # **配らずに** main だけ進める
+    subprocess.run(["git", "-C", pair["work"], "pull", "--ff-only", "-q"], check=True)
+
+    message, moved = selfupdate._pull_locked(pair["work"])
+    after = selfupdate.head(pair["work"])
+
+    assert after != released, "前提が崩れている（先に進んでいない）"
+    assert message, "**配っていない commit で動いているのに、黙って正常扱いにした**"
+    assert "配っていない" in message
+    # **`behind` は `0` のまま。** そこを直すのではなく、別の数で言う。
+    assert selfupdate.behind_release(pair["work"]) == 0
+    assert selfupdate.ahead_of_release(pair["work"]) == 1
+
+
+def test_取りに行けなかったら遅れの数を古いまま返さない(tmp_path):
+    """**F2-1。** 一度取れたあと origin へ届かなくなると、**古い
+    `origin/release` から数えて `0`（＝追いついています）を返していた。**"""
+    pair = _app_pair(tmp_path)
+    selfupdate._pull_locked(pair["work"])
+    _advance_origin(pair, "v2\n")                        # 配布の枝は進んでいる
+    subprocess.run(["git", "-C", pair["work"], "remote", "set-url", "origin",
+                    str(tmp_path / "とどかない.git")], check=True)
+
+    assert selfupdate.behind_release(pair["work"], fetch=True) is None, \
+        "**取りに行けなかったのに、古い値から数えて言い切っている**"
+
+
+def test_枝が消えたら遅れの数を持ち越さない(tmp_path):
+    """**F2-2。** origin から枝が消えても手元の追跡 ref は残るので、そこから
+    `0` を数えて **board が「追いついています」と出していた。**"""
+    pair = _app_pair(tmp_path)
+    selfupdate._pull_locked(pair["work"])
+    subprocess.run(["git", "-C", pair["seed"], "push", "-q", "origin",
+                    "--delete", "release"], check=True)
+
+    message, _moved = selfupdate._pull_locked(pair["work"])
+    assert message and "origin にありません" in message
+    assert selfupdate.behind_release(pair["work"]) is None, \
+        "**消えた枝の古い値を持ち越して数えている**"
+
+
+def test_thth_boardは配っていないcommitで動いていることを出す(isolated_account,
+                                                              monkeypatch, capsys):
+    """**いちばん重い状態なので、遅れより先に出す。**"""
+    monkeypatch.setattr(report_mod.selfupdate_mod, "ahead_of_release",
+                         lambda *_a, **_k: 2)
+    out = _board_lines(monkeypatch, 0, capsys)
+    assert "配っていない commit で動いています" in out
+    assert "追いついています" not in out, \
+        "**配っていないもので動いているのに『追いついています』と出している**"
+    assert "2 commit 先" in out

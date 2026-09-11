@@ -327,7 +327,11 @@ def board_summary(now=None) -> dict:
     # 変わらないので、「遅れ」は**配布の枝に対して**数える。
     # **`behind_release` の `None` は「遅れていない」ではなく「判らない」**
     # ——配布の枝が origin に無い場合もここに来る。**0 と混ぜない。**
+    # **`behind == 0` は「配ったもので動いている」ではない**（外部レビュー F1・
+    # 2026-09-12）。HEAD が配布の枝より**先**にいても `behind` は `0` になる。
+    # 先にいる＝**配っていない commit で動いている**ので、別の数として出す。
     return {"accounts": accounts_out, "generated_at": jst.iso(),
             "app": {"head": selfupdate_mod.head(),
                     "release_ref": selfupdate_mod.RELEASE_REF,
-                    "behind_release": selfupdate_mod.behind_release()}}
+                    "behind_release": selfupdate_mod.behind_release(),
+                    "ahead_of_release": selfupdate_mod.ahead_of_release()}}

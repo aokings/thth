@@ -1445,8 +1445,17 @@ def cmd_board(args) -> int:
         app = summary.get("app") or {}
         head = app.get("head")
         behind = app.get("behind_release")
+        ahead = app.get("ahead_of_release")
         ref = app.get("release_ref")
-        if behind is None:
+        if ahead:
+            # **`behind == 0` を「追いついています」と出していた**（外部レビュー
+            # F1・P1・2026-09-12）。HEAD が配布の枝より**先**にいても `behind` は
+            # `0` になる。**配っていないもので動いている**のがいちばん重い状態
+            # なので、遅れより先に出す。
+            state = (f"**配っていない commit で動いています**"
+                      f"（配布の枝（`{ref}`）より {ahead} commit 先）"
+                      f"——**誰かが配布の経路の外で更新しています**")
+        elif behind is None:
             # **「遅れていない」ではなく「判らない」。** 配布の枝が無い場合も
             # ここに来る——**0 と混ぜない。**
             state = (f"**配布の枝（`{ref}`）に対する遅れが判りません**"

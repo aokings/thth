@@ -71,6 +71,31 @@ def _refspec(ref: str) -> str:
     return f"+refs/heads/{ref}:refs/remotes/origin/{ref}"
 
 
+def _remote_ref(ref: str) -> str:
+    return f"refs/remotes/origin/{ref}"
+
+
+def _cached_release(app_dir: str, ref: str) -> str | None:
+    """**手元が覚えている配布の枝の SHA。** 持っていなければ `None`。
+
+    これは「**前回取りに行けたときの値**」であって、いまの origin の値ではない。
+    取りに行けたかどうかと**必ず一緒に扱う**——単体で読むと、外部レビューが
+    見つけた「古い値で『追いついています』と言う」形になる（F2・2026-09-12）。
+    """
+    r = _git(["rev-parse", "--verify", "-q", _remote_ref(ref)], cwd=app_dir)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _count(app_dir: str, spec: str) -> int | None:
+    r = _git(["rev-list", "--count", spec], cwd=app_dir)
+    if r.returncode != 0:
+        return None
+    try:
+        return int(r.stdout.strip())
+    except ValueError:
+        return None
+
+
 def head(app_dir: str = APP_DIR) -> str | None:
     r = _git(["rev-parse", "HEAD"], cwd=app_dir)
     return r.stdout.strip() if r.returncode == 0 else None
@@ -92,14 +117,43 @@ def behind_release(app_dir: str = APP_DIR, *, fetch: bool = False,
     """
     ref = ref or RELEASE_REF
     if fetch:
-        _git(["fetch", "origin", _refspec(ref)], cwd=app_dir)
-    r = _git(["rev-list", "--count", f"HEAD..origin/{ref}"], cwd=app_dir)
-    if r.returncode != 0:
+        # **取りに行けなかったなら、手元の値は古い。** 数えられるからといって
+        # 数えない——外部レビュー F2-1（2026-09-12）: 取得の戻り値を無視して
+        # 古い `origin/release` から数え、**到達不能なのに `0`（＝追いついて
+        # います）を返していた。**
+        if _git(["fetch", "origin", _refspec(ref)], cwd=app_dir).returncode != 0:
+            return None
+    # **持っていないものからは数えない。** 枝が消されたと判った時点で
+    # `_pull_locked` が手元の追跡 ref を落とすので、ここは `None` になる
+    # （外部レビュー F2-2: 消えた枝の古い追跡 ref から `0` を返していた）。
+    if _cached_release(app_dir, ref) is None:
         return None
-    try:
-        return int(r.stdout.strip())
-    except ValueError:
+    return _count(app_dir, f"HEAD..origin/{ref}")
+
+
+def ahead_of_release(app_dir: str = APP_DIR, *, fetch: bool = False,
+                      ref: str | None = None) -> int | None:
+    """**配布の枝より何 commit 先にいるか。** 判らなければ `None`。
+
+    **`0` でないなら「配っていない commit で動いている」。**
+
+    外部レビュー F1（P1・2026-09-12）。`behind` が `0` でも**配ったもので
+    動いているとは限らない**——`merge --ff-only origin/release` は相手が祖先
+    なら**成功する（何もせずに）**ので、HEAD が release より先にいると
+    「更新は正常に終わった」と見え、`HEAD..origin/release` も `0` になる。
+    **board は「追いついています」と出していた。**
+
+    起きうる経路が実際にある: VM のローカル枝の upstream が `origin/main` の
+    ままなので、**保守で誰かが `git pull` を打てば、そこで配布の境界を迂回
+    する。** しかも以後、迂回したことが**どこにも出ない。**
+    """
+    ref = ref or RELEASE_REF
+    if fetch:
+        if _git(["fetch", "origin", _refspec(ref)], cwd=app_dir).returncode != 0:
+            return None
+    if _cached_release(app_dir, ref) is None:
         return None
+    return _count(app_dir, f"origin/{ref}..HEAD")
 
 
 # **このモジュールを import した瞬間の版。** プロセスが実際に読み込んだコードの版で
@@ -151,6 +205,10 @@ def pull_and_reexec(argv: list, *, app_dir: str = APP_DIR,
     if not moved:
         return message
 
+    # **動いたときも、言うことがあるなら落とさない。** ff で追いついた直後は
+    # `message` は None になるはずだが、**「はずだ」で握り潰さない。**
+    if message:
+        log(message)
     log(f"app を更新しました（{moved[0][:7]} → {moved[1][:7]}）。実行しなおします。")
     env = dict(os.environ)
     env[REEXEC_ENV] = "1"
@@ -211,6 +269,11 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
         exists = _git(["ls-remote", "--exit-code", "--heads", "origin", ref],
                        cwd=app_dir)
         if exists.returncode == 2:
+            # **無いと判ったものを、手元に残さない**（外部レビュー F2-2・
+            # 2026-09-12）。残しておくと `behind_release` がその古い値から
+            # `0` を数え、**枝が消えているのに board が「追いついています」と
+            # 出す。** 判ったことを、判った時点で反映する。
+            _git(["update-ref", "-d", _remote_ref(ref)], cwd=app_dir)
             return (f"**配布の枝 `origin/{ref}` が origin にありません**"
                      f"（古いまま走ります。**まだ配布されていないか、枝の名前が"
                      f"違います**）"), None
@@ -232,7 +295,29 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
                  f"（古いまま走ります）"), None
 
     after = head(app_dir)
+
+    # **ff が成功しても、配ったもので動いているとは限らない**（外部レビュー
+    # F1・P1・2026-09-12）。`merge --ff-only origin/release` は**相手が祖先なら
+    # 何もせずに成功する**ので、HEAD が release より先にいると「正常に終わった」
+    # と見える。`HEAD..origin/release` も `0` なので、**board は「追いついて
+    # います」と出していた。**
+    #
+    # 実際に届く経路がある: VM のローカル枝の upstream が `origin/main` のままで、
+    # **保守で誰かが `git pull` を打てば、そこで配布の境界を迂回する。**
+    # しかも以後、迂回したことがどこにも出ない。**黙って正常扱いにしない。**
+    #
+    # **止めはしない**（取りに行けない日に投稿を全部止めるのが重すぎるのと同じ
+    # 理由）。出すのは「いま何で動いているか」の事実。
+    released = _cached_release(app_dir, ref)
+    unreleased = None
+    if released is not None and after != released:
+        n = _count(app_dir, f"origin/{ref}..HEAD")
+        count = "" if n is None else f" {n} commit"
+        unreleased = (f"**配っていない commit で動いています**"
+                       f"（`origin/{ref}` より{count}先。配布の枝: "
+                       f"{released[:7]} / いま: {(after or '不明')[:7]}）")
+
     # **ディスクが動いたかではなく、読み込んだ版と違うかで決める。**
     if after == (anchor if anchor is not None else before):
-        return None, None
-    return None, (anchor if anchor is not None else before, after)
+        return unreleased, None
+    return unreleased, (anchor if anchor is not None else before, after)
