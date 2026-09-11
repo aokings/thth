@@ -321,22 +321,28 @@ def board_summary(now=None) -> dict:
                 account_cfg.get("repo_dir"), account_cfg)),
         })
     # 「動いているのに古い」を見える形にする（設計 §3.2・2026-09-10 に VM が
-    # 4 巡分古いまま 10 分ごとに回っていたのを見つけた）。取りに行かない
+    # 4 巡分古いまま 10 分ごとに回っていたのを見つけた）。**取りに行かない**
     # （直前の `thth run` が fetch している）。
-    # **配布の枝を見る**（masaru 裁定 2026-09-12）。`main` への push では本番は
-    # 変わらないので、「遅れ」は**配布の枝に対して**数える。
-    # **`behind_release` の `None` は「遅れていない」ではなく「判らない」**
-    # ——配布の枝が origin に無い場合もここに来る。**0 と混ぜない。**
-    # **`behind == 0` は「配ったもので動いている」ではない**（外部レビュー F1・
-    # 2026-09-12）。HEAD が配布の枝より**先**にいても `behind` は `0` になる。
-    # 先にいる＝**配っていない commit で動いている**ので、別の数として出す。
+    #
+    # **board は取りに行かない。だから「いま」を言えない**（外部レビュー F3 残件・
+    # P2・2026-09-12）。**保存済みの記録から言えるのは「その時刻に確認した参照との
+    # 比較」まで。** 記録が更新も削除もできない状態だと古い `ok: true` が残り、
+    # 別プロセスの board が「追いついています」と出していた。**無効化の仕組みを
+    # これ以上増やすのではなく、出力契約を変える**（外部レビューの指示）。
+    #
+    # **鍵の名前も変える**（規約 5）。`behind_release` のままだと、古い読み手が
+    # 「remote に対する現在の遅れ」として読み続ける。ここで数えているのは
+    # **手元の追跡 ref との比較**で、**remote の現在ではない。**
+    #
+    # ここまでに直した読み違いも残しておく:
+    # - `None` は「遅れていない」ではなく**「判らない」**（F2）
+    # - `0` は「配ったもので動いている」ではない。**先にいても 0 になる**（F1）
     return {"accounts": accounts_out, "generated_at": jst.iso(),
-    # **取りに行けたかどうかを、数と一緒に出す**（外部レビュー F2 残件・P2・
-    # 2026-09-12）。**`behind_release: 0` だけを読んだ機械の利用者も、同じ
-    # 読み違いをする。** 確かめられていなければ数は `null` になり、
-    # `release_check` に「いつ・何が起きたか」が入る。
             "app": {"head": selfupdate_mod.head(),
                     "release_ref": selfupdate_mod.RELEASE_REF,
-                    "behind_release": selfupdate_mod.behind_release(),
-                    "ahead_of_release": selfupdate_mod.ahead_of_release(),
-                    "release_check": selfupdate_mod.release_check()}}
+                    "release_check": selfupdate_mod.release_check(),
+                    "behind_cached_release": selfupdate_mod.behind_release(),
+                    "ahead_cached_release": selfupdate_mod.ahead_of_release(),
+                    "comparison_basis": "cached_ref",
+                    # **board は取りに行かないので、常に未確認。**
+                    "remote_current_verified": False}}

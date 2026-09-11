@@ -311,9 +311,17 @@ def test_単一枝のcloneでも配布が届く(tmp_path, monkeypatch):
 # ——そうしないと `report` が書く鍵と `cli` が読む鍵の食い違いを、テストが
 # 自分で埋めてしまう（**テストが通る理由が変わる**）。
 
-def _board_lines(monkeypatch, behind, capsys):
+_成功した記録 = {"ref": "release", "ok": True, "checked_at": "2026-09-09T10:00:00+09:00",
+                  "error": None, "release": "abcdef1234567890"}
+
+
+def _board_lines(monkeypatch, behind, capsys, *, check=_成功した記録):
+    """**記録も一緒に差し替える。** 記録が無ければ board は数を読まない
+    （外部レビュー F3 残件で出力契約が変わった・2026-09-12）。"""
     monkeypatch.setattr(report_mod.selfupdate_mod, "behind_release",
                          lambda *_a, **_k: behind)
+    monkeypatch.setattr(report_mod.selfupdate_mod, "release_check",
+                         lambda *_a, **_k: check)
     assert cli_mod.cmd_board(argparse.Namespace(json=False)) == 0
     return capsys.readouterr().out
 
@@ -324,18 +332,24 @@ def test_thth_boardの人向け出力に道具の版と遅れが出る(isolated_
     assert "道具:" in out, "道具の版が人向けに出ていない"
     assert "3 commit 遅れ" in out
     assert "届いていません" in out, "遅れているのに、届いていないと言っていない"
+    # **「いま」を言わない**（外部レビュー F3 残件・2026-09-12）。board は
+    # 取りに行かないので、言えるのは「そのとき記録した参照との比較」まで。
+    assert "この画面では確認していません" in out
 
 
 def test_thth_boardは遅れが判らないときを0と混ぜない(isolated_account, monkeypatch,
                                                        capsys):
     """**`None` は「遅れていない」ではない。** 配布の枝が無い場合もここに来る。"""
-    unknown = _board_lines(monkeypatch, None, capsys)
+    失敗した記録 = {"ref": "release", "ok": False,
+                     "checked_at": "2026-09-09T10:00:00+09:00",
+                     "error": "取りに行けませんでした"}
+    unknown = _board_lines(monkeypatch, None, capsys, check=失敗した記録)
     caught_up = _board_lines(monkeypatch, 0, capsys)
-    assert "判りません" in unknown
-    assert "追いついています" not in unknown, \
-        "**判らないのに『追いついている』と言っている**"
-    assert "追いついています" in caught_up
-    assert "判りません" not in caught_up
+    assert "いまの配布状況は未確認です" in unknown
+    assert "一致しています" not in unknown, \
+        "**判らないのに『一致している』と言っている**"
+    assert "一致しています" in caught_up
+    assert "未確認です" not in caught_up
     assert unknown != caught_up
 
 
@@ -415,8 +429,8 @@ def test_thth_boardは配っていないcommitで動いていることを出す(
                          lambda *_a, **_k: 2)
     out = _board_lines(monkeypatch, 0, capsys)
     assert "配っていない commit で動いています" in out
-    assert "追いついています" not in out, \
-        "**配っていないもので動いているのに『追いついています』と出している**"
+    assert "一致しています" not in out, \
+        "**配っていないもので動いているのに『一致している』と出している**"
     assert "2 commit 先" in out
 
 # --- 外部レビュー F2 残件（P2・2026-09-12・再判定）---------------------------
@@ -461,15 +475,21 @@ def test_取りに行けなくなったらboardは追いついているとは言
     # 2026-09-12）。**失敗した時刻を「取りに行けた」＝成功した時刻として説明
     # していた。** ここは一度その文言をテストで固定してしまっていた
     # ——**間違いを固定するテストは、間違いを守る。**
-    assert "最後に取得を試みたのは" in out, "いつ試みたのかが出ていない"
+    assert "最後に記録された取得試行" in out, "いつ試みたのかが出ていない"
     assert "取りに行けたのは" not in out, \
         "**失敗した時刻を、成功した時刻として説明している**"
-    # **機械の利用者にも伝わるか**（`behind_release: 0` だけを読む読み手が同じ
-    # 読み違いをする）。
-    assert summary["app"]["behind_release"] is None
-    assert summary["app"]["ahead_of_release"] is None
-    assert summary["app"]["release_check"]["ok"] is False
-    assert summary["app"]["release_check"]["checked_at"]
+    assert "（**失敗**" in out, "成功と失敗を書き分けていない"
+    # **機械の利用者にも伝わるか。** 鍵の名前で「手元の追跡 ref との比較」だと
+    # 分かること、**remote の現在は未確認だと明示されていること。**
+    app = summary["app"]
+    assert "behind_release" not in app, \
+        "**古い鍵が残っている**（remote に対する現在の遅れだと読まれる・規約 5）"
+    assert app["behind_cached_release"] is None
+    assert app["ahead_cached_release"] is None
+    assert app["comparison_basis"] == "cached_ref"
+    assert app["remote_current_verified"] is False
+    assert app["release_check"]["ok"] is False
+    assert app["release_check"]["checked_at"]
 
 
 def test_取り直せたらboardは現在の状態に戻る(tmp_path, monkeypatch, capsys):
@@ -496,10 +516,16 @@ def test_取り直せたらboardは現在の状態に戻る(tmp_path, monkeypatc
     # `app_dir` 付きで束ねるので、そのあとに `_pull_locked` を呼ぶと二重に
     # 束ねられる（**テストの組み方の問題。製品コードの話ではない**）。
     summary, out = _real_board(pair, monkeypatch, capsys)
-    assert "未確認" not in out, "取り直せたのに未確認のまま倒れている"
-    assert "追いついています" in out
-    assert summary["app"]["behind_release"] == 0
+    assert "いまの配布状況は未確認です" not in out, \
+        "取り直せたのに未確認のまま倒れている"
+    assert "（成功）" in out
+    assert "一致しています" in out
+    # **取り直せても「いま」は言わない。** board は取りに行かないので、
+    # **言えるのは「そのとき記録した参照との比較」まで**（外部レビュー F3 残件）。
+    assert "この画面では確認していません" in out
+    assert summary["app"]["behind_cached_release"] == 0
     assert summary["app"]["release_check"]["ok"] is True
+    assert summary["app"]["remote_current_verified"] is False
 
 
 def test_別の枝についての確認をこの枝の確認として読まない(tmp_path):

@@ -1435,54 +1435,50 @@ def cmd_board(args) -> int:
         _print_json(summary)
     else:
         # **道具の版を、いちばん上に出す**（masaru 裁定 2026-09-12・受け入れ条件
-        # 「**届かない場合に分かる**」）。
+        # 「**届かない場合に分かる**」）。`app.head` と遅れは **`--json` にしか
+        # 出ていなかった**——2026-09-10 に「4 巡分古いまま timer が回っていた」のを
+        # 見つけた当の欄が、人向けには出ていなかった。
         #
-        # `app.head` と遅れは **`--json` にしか出ていなかった。** 人が
-        # `thth board` を見ても、**本番が古いままかどうかは分からなかった**
-        # ——2026-09-10 に「4 巡分古いまま timer が回っていた」のを見つけた
-        # 当の欄が、人向けには出ていなかった。**同じ形（文書には出ると書いて
-        # あるのに --json にしかない）を、token で 1 度指摘されている。**
+        # **そして、ここで「いま」を言わない**（外部レビュー F3 残件・P2・
+        # 2026-09-12）。**board は取りに行かない。** 言えるのは
+        # 「**最後に記録された取得試行の時点で、こうだった**」まで。
+        # 記録が更新も削除もできない状態だと古い成功が残るので、**「追いついて
+        # います」と現在形で言うと、そのとき嘘になる。**
         app = summary.get("app") or {}
         head = app.get("head")
-        behind = app.get("behind_release")
-        ahead = app.get("ahead_of_release")
         ref = app.get("release_ref")
-        if ahead:
-            # **`behind == 0` を「追いついています」と出していた**（外部レビュー
-            # F1・P1・2026-09-12）。HEAD が配布の枝より**先**にいても `behind` は
-            # `0` になる。**配っていないもので動いている**のがいちばん重い状態
-            # なので、遅れより先に出す。
-            state = (f"**配っていない commit で動いています**"
-                      f"（配布の枝（`{ref}`）より {ahead} commit 先）"
-                      f"——**誰かが配布の経路の外で更新しています**")
-        elif behind is None:
-            # **「遅れていない」ではなく「判らない」。** 配布の枝が無い場合も
-            # ここに来る——**0 と混ぜない。**
-            #
-            # **なぜ判らないのかまで出す**（外部レビュー F2 残件・2026-09-12）。
-            # 取りに行けなくなったあとも「追いついています」と出ていたのを
-            # 直した結果ここへ来るので、**「取りに行けたのはいつか」を添えない
-            # と、枝が無いのか届かないのかが読み手に分からない。**
-            check = app.get("release_check") or {}
-            when = check.get("checked_at")
-            why = check.get("error")
-            if why and when:
-                # **`checked_at` は成否を問わない「試みた時刻」**（外部レビュー
-                # F4・P3・2026-09-12）。**失敗した時刻を成功した時刻として
-                # 説明していた。**
-                detail = f"最後に取得を試みたのは {when}——{why}"
-            elif why:
-                detail = str(why)
-            else:
-                detail = "枝が無いか、まだ取りに行けていません"
-            state = (f"**配布の枝（`{ref}`）に対する遅れが判りません**"
-                      f"（{detail}。**いまの配布状況は未確認です**）")
-        elif behind == 0:
-            state = f"配布の枝（`{ref}`）に追いついています"
+        check = app.get("release_check") or {}
+        behind = app.get("behind_cached_release")
+        ahead = app.get("ahead_cached_release")
+
+        # **どの枝を追いかけているのかを必ず出す。** 出ないと、**配る先を
+        # 間違えても気づけない**（新しい出力契約にしたとき、ここを落とした）。
+        print(f"道具: {head or '(版が読めません)'}  配布の枝: `{ref}`")
+        if not check:
+            print(f"  **配布の枝（`{ref}`）を、まだ一度も取りに行っていません**")
+        elif not check.get("ok"):
+            # **`checked_at` は成否を問わない「試みた時刻」**（外部レビュー F4）。
+            # **失敗した時刻を成功した時刻として説明していた。**
+            print(f"  最後に記録された取得試行: {check.get('checked_at')}"
+                   f"（**失敗**——{check.get('error') or '理由が記録されていません'}）")
+            print(f"  **いまの配布状況は未確認です**")
         else:
-            state = (f"**配布の枝（`{ref}`）より {behind} commit 遅れています**"
-                      f"——**配ったものが届いていません**")
-        print(f"道具: {head or '(版が読めません)'}  {state}")
+            print(f"  最後に記録された取得試行: {check.get('checked_at')}（成功）")
+            seen = check.get("release")
+            seen7 = seen[:7] if isinstance(seen, str) else "(記録にありません)"
+            if ahead:
+                # **F1。いちばん重い状態なので、遅れより先に出す。**
+                print(f"  **配っていない commit で動いています**"
+                       f"（そのとき記録した配布参照 {seen7} より {ahead} commit 先）"
+                       f"——**誰かが配布の経路の外で更新しています**")
+            elif behind:
+                print(f"  そのとき記録した配布参照 {seen7} より **{behind} commit "
+                       f"遅れています**——**配ったものが届いていません**")
+            elif behind == 0:
+                print(f"  そのとき記録した配布参照 {seen7} と一致しています")
+            else:
+                print(f"  **そのとき記録した配布参照との比較ができません**")
+            print(f"  **現在の remote の配布状況は、この画面では確認していません**")
         print("")
 
         # 生の dict をそのまま出さず、人が読む形に整える（--json は機械可読のまま
