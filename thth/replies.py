@@ -37,36 +37,49 @@ def _normalize_handle(value) -> str | None:
     return v.lower() or None
 
 
-def _own_handles() -> set:
+def _own_handles() -> tuple:
     """`accounts/*.json` の**すべての account** の handle を正規化して集める。
 
     1 つの account の台帳が壊れていても、他の account の handle は使いたいので、
     読めたものだけ集める（読めない account があるからといって、この読みの口
-    全体を止めない）。
+    全体を止めない）。**だが、読めなかった account があったこと自体は捨てない**
+    ——`(handles, unreadable_account_names)` で返す（外部レビュー再々判定 N6・
+    2026-09-12）。以前は読めた分の handle だけを見て、そこに無い username を
+    無条件で `own: False`（他者）にしていた。**集合が不完全なだけかもしれない**
+    account が読めなかった台帳の中の身内かもしれないのに、それを「他者」と
+    確定していた。呼び出し側（`_classify_own`）が「不一致を他者と確定してよいか」
+    を判断できるよう、不完全だったという事実を一緒に返す。
     """
     handles = set()
+    unreadable = []
     for name in accounts_mod.list_account_names():
         try:
             cfg = accounts_mod.load_account(name)
         except accounts_mod.AccountError:
+            unreadable.append(name)
             continue
         h = _normalize_handle(cfg.get("handle"))
         if h:
             handles.add(h)
-    return handles
+    return handles, sorted(unreadable)
 
 
-def _classify_own(username, own_handles: set):
+def _classify_own(username, own_handles: set, *, incomplete: bool):
     """`username` を身内の handle と突き合わせる。
 
-    - 一致すれば `True`
-    - `username` があって一致しなければ `False`
+    - 一致すれば `True`（**account 台帳の一部が読めなくても、一致したものは
+      確定できるので身内のまま**——止めすぎない）
+    - `username` があって一致しなければ、handle 集合が完全なときだけ `False`。
+      **`incomplete`（読めなかった account がある）なら `None`**——非一致を
+      「他者」と確定しない。読めなかった台帳の中の身内かもしれない。
     - **`username` が無ければ `None`**（判らない。「違う」と決めつけない）
     """
     norm = _normalize_handle(username)
     if norm is None:
         return None
-    return norm in own_handles
+    if norm in own_handles:
+        return True
+    return None if incomplete else False
 
 
 def _read_replies_file(path: str) -> tuple:
@@ -115,6 +128,10 @@ def load(account_name: str, *, post_id: str | None = None) -> dict:
       - `fetches`: 取得の記録の配列（`kind: "fetch"` の行。返信 0 件の成功と
         取得の失敗を区別するために `collect.py` が残しているもの）
       - `broken`: 読めなかったファイルの名前（壊れと不存在は混ぜない）
+      - `unreadable_accounts`: handle 突き合わせのために読もうとして**読めなかった
+        account の名前**（外部レビュー再々判定 N6・2026-09-12）。非空なら
+        handle 集合が不完全——一致しない `username` は `other` ではなく
+        `unknown` に入っている（一致したものは `own` のまま）。
       - `counts`: `{"replies": n, "own": n, "other": n, "unknown": n, "fetches": n}`
     """
     account_cfg = accounts_mod.load_account(account_name)
@@ -129,7 +146,8 @@ def load(account_name: str, *, post_id: str | None = None) -> dict:
         names = sorted(n for n in os.listdir(base) if n.endswith(".ndjson")) \
             if os.path.isdir(base) else []
 
-    own_handles = _own_handles()
+    own_handles, unreadable_accounts = _own_handles()
+    incomplete = bool(unreadable_accounts)
 
     all_replies, all_fetches, broken = [], [], []
     for name in names:
@@ -138,7 +156,8 @@ def load(account_name: str, *, post_id: str | None = None) -> dict:
             broken.append(name)
             continue
         for row in rows:
-            all_replies.append({**row, "own": _classify_own(row.get("username"), own_handles)})
+            own = _classify_own(row.get("username"), own_handles, incomplete=incomplete)
+            all_replies.append({**row, "own": own})
         all_fetches.extend(fetch_rows)
 
     counts = {
@@ -149,4 +168,5 @@ def load(account_name: str, *, post_id: str | None = None) -> dict:
         "fetches": len(all_fetches),
     }
 
-    return {"replies": all_replies, "fetches": all_fetches, "broken": broken, "counts": counts}
+    return {"replies": all_replies, "fetches": all_fetches, "broken": broken,
+            "unreadable_accounts": unreadable_accounts, "counts": counts}

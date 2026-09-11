@@ -45,12 +45,28 @@ class _Probe:
         self.key = key
 
 
+class _ApiBodyError(RuntimeError):
+    """HTTP 200 だが本文に `error` が入っている（`thth/adapters/threads.py` の
+    `_get()` と同じ考え方——200 でも「取れた」ことにしない）。"""
+
+
 def _get(base_url: str, path: str, params: dict, token: str) -> dict:
     p = dict(params)
     p["access_token"] = token
     url = base_url.rstrip("/") + path + "?" + urllib.parse.urlencode(p)
     with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as resp:
-        return json.loads(resp.read() or b"{}")
+        body = json.loads(resp.read() or b"{}")
+    # **doctor 自前の `_get()` には、この直しがまだ入っていなかった**
+    # （外部レビュー再々判定 N7・2026-09-12）。`thth/adapters/threads.py` の
+    # `_get()` は HTTP 200 でも body に `error` があれば失敗として上げるように
+    # 直してあったが、doctor は別の `_get()` を持っていて、そちらは素通しの
+    # ままだった。全 GET が HTTP 200 の `error` を返す fixture で、5 probe が
+    # ○になり返信 probe が「未投稿のため検査できない」になった（事実と違う）。
+    if isinstance(body, dict) and body.get("error"):
+        raise _ApiBodyError(
+            f"API が error を返しました（HTTP 200）: "
+            f"{redact_mod.redact(str(body['error']))[:200]}")
+    return body
 
 
 def _summarize(body: dict) -> str:
@@ -77,6 +93,11 @@ def _run_probe(base_url: str, probe: _Probe, token: str) -> dict:
         return {"label": probe.label, "permission": probe.permission, "key": probe.key,
                 "ok": False,
                 "detail": redact_mod.redact(f"HTTP {e.code} {message}".strip()), "body": None}
+    except _ApiBodyError as e:
+        # **HTTP は 200 だが本文が error**。メッセージは `_get()` で既に
+        # redact 済みなので、そのまま出してよい。
+        return {"label": probe.label, "permission": probe.permission, "key": probe.key,
+                "ok": False, "detail": str(e)[:220], "body": None}
     except Exception as e:  # ネットワーク層。例外文にトークンが混じらないよう型名だけ。
         return {"label": probe.label, "permission": probe.permission, "key": probe.key,
                 "ok": False, "detail": type(e).__name__, "body": None}
@@ -121,16 +142,28 @@ def diagnose(account_name: str) -> dict:
 
     # 返信の取得は投稿が 1 本要る。上で拾えた最初の投稿で試す（無ければ飛ばす）。
     first_post_id = None
+    my_posts_ok = None
     for r in results:
-        if r["key"] == "my_posts" and r["ok"] and r.get("body"):
-            rows = r["body"].get("data") or []
-            if rows:
-                first_post_id = rows[0].get("id")
+        if r["key"] == "my_posts":
+            my_posts_ok = r["ok"]
+            if r["ok"] and r.get("body"):
+                rows = r["body"].get("data") or []
+                if rows:
+                    first_post_id = rows[0].get("id")
             break
     if first_post_id:
         results.append(_run_probe(base_url, _Probe(
             "返信の取得", "threads_read_replies", f"/v1.0/{first_post_id}/replies",
             {"fields": "id,username,timestamp", "limit": 3}), access_token))
+    elif my_posts_ok is False:
+        # **「投稿がまだ無いので試せない」は、投稿一覧が実際に取れたときだけ
+        # 言ってよい**（外部レビュー再々判定 N7・2026-09-12）。投稿一覧の
+        # 取得そのものが失敗していたら、理由はそちらであって「未投稿」ではない
+        # ——事実と違う表示を作らない。`ok: False` にして失敗数にも数える。
+        results.append({"label": "返信の取得", "permission": "threads_read_replies",
+                        "ok": False,
+                        "detail": "投稿一覧の取得に失敗したため試せていません（上の「自分の投稿一覧」参照）",
+                        "body": None})
     else:
         results.append({"label": "返信の取得", "permission": "threads_read_replies",
                         "ok": None, "detail": "投稿がまだ無いので試せない", "body": None})

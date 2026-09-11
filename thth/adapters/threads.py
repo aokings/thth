@@ -212,6 +212,18 @@ class ThreadsAdapter(base.Adapter):
             raise RuntimeError(
                 f"{what}: data が配列ではありません（{type(rows).__name__}）。"
                 f"**件数として数えません**")
+        # **配列という外形だけでなく、要素も見る**（外部レビュー再々判定 N5・
+        # 2026-09-12）。`{"data": [null]}` は「配列」を通ってしまい、以前は
+        # `[None]` をそのまま返信一覧として返していた。呼び出し側（`collect.py`）
+        # の `row.get(...)` が `AttributeError` で落ち、**その例外は 1 投稿分の
+        # try/except の外**（リスト内包表記の外）で起きるので、当該投稿どころか
+        # 後続の投稿の採取まで止まっていた。ここで弾けば `collect.py` の
+        # 「例外は `errors` に積んで次の投稿へ進む」がそのまま効く。
+        for i, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise RuntimeError(
+                    f"{what}: data の {i} 番目が object ではありません"
+                    f"（{type(row).__name__}）。**件数として数えません**")
         return rows
 
     def insights(self, post_id: str) -> dict:
