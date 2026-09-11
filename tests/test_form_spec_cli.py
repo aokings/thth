@@ -63,8 +63,14 @@ def test_仕様を登録して型で絞って読む(isolated_account, thth_root)
     listed = _json(_thth(["topics", "form-spec", "--form", FORM]))
     assert listed["count"] == 1
     assert listed["form_specs"][0]["form_spec_id"] == spec_id
-    assert listed["form_specs"][0]["roles"] == ["対象と結論の範囲", "共通の比較軸",
-                                                 "条件付きの選び方"]
+    # **`roles` という名前では返さない**（2026-09-12）。単体取得の `roles` は
+    # object の配列で、ここは `role_id` の文字列配列だった——**同じ名前で違う型。**
+    # 派生は別名（`role_ids`）にし、数は `role_count` で直接渡す。
+    assert "roles" not in listed["form_specs"][0], \
+        "本体と同じ名前で、違う型を返している"
+    assert listed["form_specs"][0]["role_ids"] == ["対象と結論の範囲", "共通の比較軸",
+                                                    "条件付きの選び方"]
+    assert listed["form_specs"][0]["role_count"] == 3
     assert _json(_thth(["topics", "form-spec"]))["count"] == 2
     assert _json(_thth(["topics", "form-spec", other]))["form_spec"]["form"] == "列挙"
 

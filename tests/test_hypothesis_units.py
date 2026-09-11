@@ -623,3 +623,4 @@ def test_案内どおりにnoteを書けば通る(thth_root):
     out = _json(proc)
     assert "note" in out["error"]["message"]
     assert list(out["expected_schema"]) == ["Hypothesis"]
+

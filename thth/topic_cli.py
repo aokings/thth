@@ -919,6 +919,12 @@ def cmd_vocabulary(args) -> int:
                "vocabulary_id": r["vocabulary_id"], "name": r.get("name"),
                "created_at": r.get("created_at"), "created_by": r.get("created_by"),
                "supersedes": r.get("supersedes"),
+               # **件数を出す**（運用指摘 2026-09-12）。一覧は `entries` という
+               # キーを返さないので、`len(row.get("entries") or [])` で数えると
+               # **0 になる**——運用セッションが実際にそう読み、「空の語彙が
+               # 1 件ある」と誤報した。**キーが無いのと空なのを、読み手の側で
+               # 混ぜさせていた。**
+               "entry_count": len(r.get("entries") or []),
                "reason_ids": [e["reason_id"] for e in r.get("entries") or []],
                "states": {e["reason_id"]: e["state"]
                            for e in r.get("entries") or []}} for r in rows],
@@ -1275,6 +1281,9 @@ def _recent_reviews(account: str, args) -> int:
                          "judged_by": r.get("judged_by"),
                          "judged_at": r.get("judged_at"),
                          "disposition": r.get("disposition"),
+                         # 件数（`entries` と同じ理由）。一覧は `findings` を
+                         # 返さないので、`len()` で数えると 0 になる。
+                         "finding_count": len(r.get("findings") or []),
                          "reason_ids": [f.get("reason_id")
                                          for f in r.get("findings") or []],
                          "recheck_of": r.get("recheck_of"),
@@ -1328,7 +1337,12 @@ def cmd_record_form_spec(args) -> int:
     _emit({"ok": True, "form_spec_id": saved["form_spec_id"], "stored": wrote,
            "form": saved["form"], "state": saved["state"],
            "scope": saved["scope"], "supersedes": saved["supersedes"],
-           "roles": [r["role_id"] for r in saved["roles"]],
+           # **同じ名前で違う型を返さない**（運用指摘 2026-09-12）。ここと
+           # 一覧は `roles` という名前のまま **`role_id` の文字列配列**を返して
+           # いたが、単体取得の `roles` は object の配列。**3 つのうち 2 つが
+           # 一致していて、その 2 つが間違っている**ので、突き合わせても
+           # 気づけなかった。派生は別の名前で出す。
+           "role_ids": [r["role_id"] for r in saved["roles"]],
            "cases": {"positive": len([c for c in saved["cases"]
                                        if c["kind"] == "positive"]),
                       "counter": len([c for c in saved["cases"]
@@ -1383,7 +1397,13 @@ def cmd_form_spec(args) -> int:
                             "state": r.get("state"), "scope": r.get("scope"),
                             "meaning_version": r.get("meaning_version"),
                             "supersedes": r.get("supersedes"),
-                            "roles": [x["role_id"] for x in r.get("roles") or []]}
+                            # 派生は別名（登録の応答と同じ理由）。**本体の
+                            # `roles` は一覧では返さない**——重くなるので。
+                            # **数を数えたい読み手が配列を数えずに済むように、
+                            # 件数も出す**（`entries` を `len()` で数えて 0 に
+                            # なった件と同じ根）。
+                            "role_ids": [x["role_id"] for x in r.get("roles") or []],
+                            "role_count": len(r.get("roles") or [])}
                            for r in rows],
            "notice": REVIEW_NOTICE})
     return 0
