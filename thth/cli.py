@@ -790,6 +790,9 @@ def cmd_measured(args) -> int:
         for row in post["rows"]:
             age = row.get("age_hours")
             age_text = f"{age:.1f}h" if isinstance(age, (int, float)) else "?"
+            # **`marks` は「どの刻みとして採ったか」で、経過時間ではない。**
+            # timer は 10 分刻み・刻みは投稿の秒に固定なので、**常に最大 10 分
+            # 遅れて拾われる。** 判断には `age_hours` の実値を使う。
             mark_text = " ⚠同居" if row.get("marks_collapsed") else ""
             metrics = row.get("metrics") or {}
             metrics_text = " ".join(f"{k}={v}" for k, v in metrics.items())
