@@ -560,12 +560,24 @@ def cmd_topics(args) -> int:
         except ValueError as e:
             print(str(e), file=sys.stderr)
             return 1
+        # **参照できる ID を返す**（asmon 関東セッション報告 2026-09-11）。
+        # ID を返していなかったので、記録しても `observation_refs` に書けず、
+        # **「観測が足りない」と言われても満たす手段が無かった。**
+        from . import topic_store as topic_store_mod
+        observation_id = next(
+            (r["observation_id"] for r in reversed(topic_store_mod.legacy_observations())
+             if r["topic"] == row["topic"]), None)
+        row = dict(row, observation_id=observation_id)
         if args.json:
             _print_json(row)
         else:
             scope = f"（{row['account']} の判定）" if row.get("account") else "（全体の記録）"
             print(f"記録しました: {row['topic']} → {row['verdict']}{scope}"
                   + (f" {row['audience']}" if row["audience"] else ""))
+            if observation_id:
+                print(f"  観測 ID: {observation_id}")
+                print("  （候補比較の observation_refs に書けます。"
+                      "投稿例は入っていないので、これだけでは推奨になりません）")
             if not row.get("account"):
                 print("  ※ account を添えると**そのプロジェクトの判定**として残せます"
                       "（同じ語でも合う／合わないはプロジェクトで変わります）:"

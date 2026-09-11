@@ -41,15 +41,45 @@ thth topics suggest <原稿>            ← 何が足りないかを聞く
    ↓ 足りない資料（記事本文・観測）を取りに行く
 thth topics observe --json-stdin      ← 見てきたものを残す
    ↓ 候補を比べる（ここがあなたの仕事）
-thth topics suggest <原稿> --article … --proposal …   ← 検査してもらう
+cat input.json | thth topics suggest <原稿> --input-json-stdin   ← 検査してもらう
    ↓
-thth topics record-decision --json-stdin              ← 判断を残す
+cat checked.json | thth topics record-decision --json-stdin --by "<あなた>"
    ↓
 既存の承認（thth approve）へ
 ```
 
+**原稿のパスは VM 側**（`/srv/thth/repos/<project>/docs/sns/queue/…`）。
+手元で push したものが VM に届いていれば読めます。
+
+### 記事だけを渡すとき
+
+```bash
+cat article.json | thth topics suggest <原稿> --article-json-stdin
+```
+
+### 記事と候補比較を一緒に渡すとき
+
+`--input-json-stdin` は `{"article": …, "proposal": …}` という**封筒**を
+期待します。**記事だけを流すと通りません**（間違えると、そう言われます）。
+
+```bash
+cat input.json | thth topics suggest <原稿> --input-json-stdin
+```
+
+### 何を渡せばいいか分からないとき
+
+**ソースを読む必要はありません。** 出力の `expected_schema` に、必要な項目と
+値域が入っています。`required_actions` には「次に何をするか」が種類つきで
+（`article` / `article_url` / `profile` / `proposal` / `observation`）出ます。
+
 最初の `suggest` は**記事も候補比較も無いまま呼んでよい**。返ってくるのは
 「主対象の記事はこの URL」「必要な JSON はこの形」という**不足のリスト**です。
+
+### 途中で `stale_context` が出たら
+
+**不足を埋めると 1 回は踏みます。** profile を作る・観測を足すと入力が変わるので、
+**その前に作った候補比較は無効**になります。`thth topics suggest` を叩き直して
+`context_id` を取り直し、候補比較の `context_id` を差し替えてください。
 
 ## 2. 守ること（設計 §5）
 
@@ -115,6 +145,12 @@ ID だけではありません。
 | `observations` | 保存済みの観測。投稿例の抜粋・出典 URL・投稿者・取得状況つき |
 | `legacy_notes` | 既存 22 語（下記） |
 | `truncated_observation_ids` | 投稿例を削った観測。`thth topics observation <id>` で全部読めます |
+
+**`observations` にも `legacy_notes` にも `observation_id` が付いています。**
+候補比較の `observation_refs` にはその ID を書いてください。既存 22 語から
+作った参考観測は**投稿例を持たない**ので、それだけでは `recommended` に
+なりません——「トピック頁を見て投稿例を控えてください」と言われます。
+控えたら `thth topics observe` で残してください。
 
 ### 既存 22 語は 3 つに分けて返ります
 

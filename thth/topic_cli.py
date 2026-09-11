@@ -135,6 +135,18 @@ def cmd_suggest(args) -> int:
         envelope_in = read_json(None, stdin=True, what="入力") or {}
         if not isinstance(envelope_in, dict):
             raise InputError("invalid_json", "入力は object にしてください")
+        if envelope_in and "article" not in envelope_in \
+                and "proposal" not in envelope_in:
+            # **記事をそのまま流した場合**（asmon 関東セッション報告
+            # 2026-09-11）。`--input-json-stdin` は封筒を期待するので、
+            # 記事だけを渡すと黙って「記事なし」になっていた。
+            hint = ("--input-json-stdin は "
+                     '{"article": …, "proposal": …} の形です。'
+                     "記事だけを渡すなら --article-json-stdin を使ってください")
+            if "content_text" in envelope_in or "requested_url" in envelope_in:
+                raise InputError("wrong_input_shape",
+                                  f"記事証拠がそのまま渡されました。{hint}")
+            raise InputError("wrong_input_shape", hint)
         article_raw = envelope_in.get("article")
         proposal_raw = envelope_in.get("proposal")
     else:
@@ -148,8 +160,7 @@ def cmd_suggest(args) -> int:
     # **観測は記事の有無に関係なく読む。** 以前は記事が無いと空にしていたので、
     # 「まず何が分かっているか」を聞く最初の呼び出しで**手持ちの根拠が
     # 返らなかった**（独立レビュー 2026-09-11・指摘 2）。
-    rows, broken = store.load_all("observations")
-    observations = {r["observation_id"]: r for r in rows}
+    observations, broken = _all_observations()
 
     context = advice.build_context(
         args.file, article=article, article_url=args.article_url,
@@ -206,6 +217,23 @@ EVIDENCE_BUDGET_BYTES = 256 * 1024
 SAMPLES_PER_OBSERVATION = 8
 
 
+def _all_observations() -> tuple:
+    """保存済みの観測と、**既存 22 語から作った参考観測**をまとめて返す。
+
+    以前は保存済みのものだけだった。**そのため `--note` で入れた記録は
+    `observation_refs` に書けず、「観測が足りない」と言われても満たす手段が
+    存在しなかった**（asmon 関東セッション報告 2026-09-11）。
+
+    参考観測は投稿例を持たないので、**これだけでは `recommended` にならない**
+    ——「投稿例を控えてください」という**満たせる**不足になる。
+    """
+    rows, broken = store.load_all("observations")
+    out = {r["observation_id"]: r for r in rows}
+    for row in store.legacy_observations():
+        out.setdefault(row["observation_id"], row)
+    return out, broken
+
+
 def _article_input(article):
     """`build_article()` が付けた項目を外して、入力の形に戻す。"""
     if article is None:
@@ -236,6 +264,10 @@ def _legacy_notes(account: str) -> list:
     - `other_judgments` … 他 account の判断。**参考。採らない。**
     - `legacy_judgment` … account を持たない当時の判断。**常に参考。**
     """
+    by_topic = {}
+    for row in store.legacy_observations():
+        by_topic[row["topic"]] = row["observation_id"]   # 後の行が勝つ（時系列）
+
     out = []
     for topic, row in sorted(topics_mod.observation().items()):
         own = topics_mod.judgment(topic, account) if account else {}
@@ -243,6 +275,9 @@ def _legacy_notes(account: str) -> list:
         others = topics_mod.other_accounts(topic, account=account)
         out.append({
             "topic": topic,
+            # **`observation_refs` に書ける ID。** これが無いと、不足を
+            # 満たす手段が存在しない（asmon 関東セッション報告 2026-09-11）。
+            "observation_id": by_topic.get(topic),
             "observation": {
                 "kind": row.get("kind"),
                 "audience": row.get("audience"),
@@ -367,8 +402,7 @@ def cmd_record_decision(args) -> int:
     by = _actor(args)
 
     article = models.build_article(row["article"])
-    rows, broken = store.load_all("observations")
-    observations = {r["observation_id"]: r for r in rows}
+    observations, broken = _all_observations()
     context = advice.build_context(row["draft_path"], article=article,
                                     article_url=row.get("article_url"),
                                     observation_ids=sorted(observations))
@@ -379,8 +413,12 @@ def cmd_record_decision(args) -> int:
                "candidates": [], "required_actions": [], "warnings": [],
                "shortfalls": [], "notice": advice.NOTICE,
                "error": {"code": "stale_context",
-                          "message": "原稿・記事・観測・主対象の記事が"
-                                      "読み取り時から変わっています"}})
+                          "message": "原稿・記事・観測・profile・主対象の記事の"
+                                      "どれかが読み取り時から変わっています。"
+                                      "`thth topics suggest` を叩き直して "
+                                      "context_id を取り直し、候補比較の "
+                                      "context_id を差し替えてから保存して"
+                                      "ください"}})
         return 1
 
     # **根拠が壊れていたら保存しない**（指摘 5）。参照している観測だけを見る。
@@ -450,8 +488,12 @@ def cmd_observation(args) -> int:
 
     `suggest` の `evidence` が大きくなったときに投稿例を削るので、**削った分を
     取りに来られる口**が要る（独立レビュー 2026-09-11・指摘 2）。
+    既存 22 語から作った参考観測も、同じ ID で引ける。
     """
     row = store.get("observations", args.observation_id)
+    if row is None:
+        row = next((r for r in store.legacy_observations()
+                     if r["observation_id"] == args.observation_id), None)
     if row is None:
         return _fail("not_found", f"その観測は保存されていません: {args.observation_id}")
     _emit({"ok": True, "observation": row, "notice": advice.NOTICE})

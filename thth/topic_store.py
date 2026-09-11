@@ -258,7 +258,7 @@ def legacy_observations() -> list:
 
     out = []
     for row in topics_mod.load()["checks"]:
-        out.append({
+        record = {
             "topic": row["topic"],
             "normalized_topic": row["topic"],
             "provider": "legacy_note",
@@ -272,5 +272,13 @@ def legacy_observations() -> list:
             "legacy_verdict": row.get("verdict"),
             "samples": [],                        # 旧記録は投稿例を持たない
             "coverage": None,
-        })
+            "search_mode": "manual_unknown",       # 当時の引き方は記録が無い
+        }
+        # **参照できる ID を与える**（asmon 関東セッション報告 2026-09-11）。
+        # ID が無いと `observation_refs` に書けず、**「観測が足りない」と言われても
+        # 満たす手段が存在しなかった。** 中身から決まるので、同じ記録なら
+        # 何度読んでも同じ ID になる。元データは変更しない。
+        record["observation_id"] = models.content_id(
+            record, exclude=("observation_id",))
+        out.append(record)
     return out

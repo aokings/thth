@@ -564,3 +564,150 @@ def test_観測と判断が別の物として返る(isolated_account, thth_root)
     assert row["observation"]["audience"] == "レアアース・重加工"
     assert row["observation"]["kind"] == "専門語"
     assert "fit" not in row["observation"], "観測に判定が混ざっている"
+
+
+# ===========================================================================
+# asmon 関東セッションが実記事で見つけたもの（2026-09-11）
+# ===========================================================================
+
+def test_既存22語が参照できるIDを持つ(isolated_account, thth_root):
+    """**いちばん重かった指摘。**
+
+    > `required_actions` が `TopicObservation` を求めますが、私が入れた 16 語の
+    > 記録は `legacy_notes` に入っていて `observation_id` を持っていません。
+    > **満たす手段が無い。**
+
+    検出は正しかったが、**直せない指示を出していた**——第 2 巡の
+    「profile が無いのに観測を足せと言う」と同じ形。
+    """
+    from thth import topics as topics_mod
+    account = isolated_account["name"]
+    topics_mod.record("中学受験", verdict="alive", audience="受験親のやりとり",
+                       by="関東セッション", account=account, kind="行動")
+    path = write_queue_file(isolated_account["queue_dir"], "k.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+
+    out = json.loads(_run(["topics", "suggest", path]).stdout)
+    row = next(r for r in out["evidence"]["legacy_notes"]
+               if r["topic"] == "中学受験")
+    oid = row["observation_id"]
+    assert oid and oid.startswith("sha256:"), row
+    # **context にも入っている**＝候補比較に書いてよい ID。
+    assert oid in out["context"]["observation_ids"]
+    # **引ける。**
+    full = json.loads(_run(["topics", "observation", oid]).stdout)
+    assert full["observation"]["topic"] == "中学受験"
+    assert full["observation"]["provenance"] == "legacy"
+
+
+def test_noteで記録したら観測IDが返る(isolated_account, thth_root):
+    account = isolated_account["name"]
+    proc = _run(["topics", account, "--note", "中受", "--verdict", "alive",
+                  "--status", "ok", "--kind", "行動", "--audience", "受験親",
+                  "--by", "関東", "--json"])
+    assert proc.returncode == 0, proc.stderr
+    row = json.loads(proc.stdout)
+    assert row["observation_id"].startswith("sha256:"), row
+
+    text = _run(["topics", account, "--note", "中受2", "--verdict", "alive",
+                  "--status", "ok", "--kind", "行動", "--by", "関東"]).stdout
+    assert "観測 ID:" in text, text
+    assert "これだけでは推奨になりません" in text, text
+
+
+def test_参考記録だけでは推奨にならないが理由が正しい(isolated_account, thth_root):
+    """**旧記録を「keyword だから」と言わない。**
+
+    引き方の記録が無いだけで、keyword で引いたわけではない。理由が違えば
+    **次にすることも違う**（tag で引き直す、ではなく、投稿例を控える）。
+    """
+    from thth import topics as topics_mod
+    account = isolated_account["name"]
+    topics_mod.record("コーヒー", verdict="alive", audience="焙煎士",
+                       by="関東", account=account)
+    path = write_queue_file(isolated_account["queue_dir"], "lg.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    _run(["topics", "profile", account, "--json-stdin", "--by", "t"],
+          _make_profile("confirmed"))
+
+    first = json.loads(_run(["topics", "suggest", path, "--input-json-stdin"],
+                             {"article": make_article()}).stdout)
+    oid = next(r["observation_id"] for r in first["evidence"]["legacy_notes"]
+               if r["topic"] == "コーヒー")
+    proposal = {
+        "context_id": first["context_id"], "prompt_version": "t",
+        "intended_reader": "x", "article_value": "x", "post_angle": "x",
+        "candidates": [candidate("コーヒー", [oid])],
+        "selected_topic": "コーヒー", "selection_reason": "x",
+    }
+    out = json.loads(_run(["topics", "suggest", path, "--input-json-stdin"],
+                           {"article": make_article(),
+                            "proposal": proposal}).stdout)
+    assert out["status"] == "provisional", out
+    reason = [s for s in out["shortfalls"] if "観測" in s or "記録" in s]
+    assert reason, out["shortfalls"]
+    assert "keyword" not in reason[0], reason
+    assert "投稿例を控えて" in reason[0], reason
+
+
+def test_needs_proposalでも次にすることが出る(isolated_account):
+    """**`needs_article` には出て `needs_proposal` には出ていなかった。**
+
+    > ソースを読まないと次に進めませんでした。
+    """
+    path = write_queue_file(isolated_account["queue_dir"], "np.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    out = json.loads(_run(["topics", "suggest", path, "--input-json-stdin"],
+                           {"article": make_article()}).stdout)
+    assert out["status"] == "needs_proposal"
+    assert out["required_actions"], "次にすることが空だった"
+    assert out["required_actions"][0]["type"] == "proposal"
+    shape = out["expected_schema"]["TopicProposal"]
+    assert "candidates" in shape and "context_id" in shape
+    assert "suitable" in shape["candidates"][0]["fit"]
+
+
+def test_記事の必須項目と値域が出力に出る(isolated_account):
+    """`topic_models.py` を読ませない。"""
+    path = write_queue_file(isolated_account["queue_dir"], "sc.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    out = json.loads(_run(["topics", "suggest", path]).stdout)
+    assert out["status"] == "needs_article"
+    shape = out["expected_schema"]["ArticleEvidence"]
+    assert set(shape) >= set(models.ARTICLE_KEYS), shape
+    assert "full" in shape["coverage"] and "ok" in shape["retrieval_status"]
+
+
+def test_記事だけを封筒なしで渡したらそう言う(isolated_account):
+    """通知に**動かない例**を書いてしまった（`--account` と同じ形の事故）。"""
+    path = write_queue_file(isolated_account["queue_dir"], "wr.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    proc = _run(["topics", "suggest", path, "--input-json-stdin"],
+                 make_article())
+    assert proc.returncode == 2, proc.stdout
+    message = json.loads(proc.stdout)["error"]["message"]
+    assert "--article-json-stdin" in message, message
+
+
+def test_stale_contextは直し方を言う(isolated_account, thth_root):
+    """**不足を埋めると 1 回必ず踏む。** 踏んだときに迷わせない。"""
+    account = isolated_account["name"]
+    path = write_queue_file(isolated_account["queue_dir"], "st.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    article = make_article()
+    first = json.loads(_run(["topics", "suggest", path, "--input-json-stdin"],
+                             {"article": article}).stdout)
+    # profile を作る＝入力が変わる
+    _run(["topics", "profile", account, "--json-stdin", "--by", "t"],
+          _make_profile("confirmed"))
+
+    proposal = {
+        "context_id": first["context_id"], "prompt_version": "t",
+        "intended_reader": "x", "article_value": "x", "post_angle": "x",
+        "candidates": [candidate("コーヒー", [])],
+        "selected_topic": "コーヒー", "selection_reason": "x",
+    }
+    out = json.loads(_run(["topics", "suggest", path, "--input-json-stdin"],
+                           {"article": article, "proposal": proposal}).stdout)
+    assert out["status"] == "stale_context"
+    assert "context_id を" in out["warnings"][-1], out["warnings"]
