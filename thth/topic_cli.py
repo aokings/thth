@@ -878,6 +878,30 @@ def _vocabulary_warnings(tally: dict) -> list:
             f"候補にするか決めてください"]
 
 
+def _review_support(review: dict) -> dict:
+    """その記録を**いまの棚の語彙で読めるか**（Codex §11・A05・設計 §8）。
+
+    **「語彙が無い」と「語彙が壊れている」を混ぜない。** 棚の側は前からこの 2 つを
+    区別していた（`load_all` の `broken`）のに、**こちらが `store.get` の例外を
+    そのまま外へ出していた**ので、束で読むと 1 件壊れているだけで一覧全体が
+    `store_error` で落ちた——**残りの検収まで読めなくなる。**
+    """
+    vocabulary_id = review.get("vocabulary_id")
+    if not isinstance(vocabulary_id, str) or not vocabulary_id.startswith("sha256:"):
+        return {"status": "unsupported",
+                "reason": f"vocabulary_id がありません（{vocabulary_id!r}）",
+                "unknown_reason_ids": [], "retired_reason_ids": []}
+    try:
+        vocabulary = store.get("vocabularies", vocabulary_id)
+    except store.StoreError as e:
+        # **壊れた語彙を「無い」と言わない。** 読めない理由をそのまま出す。
+        return {"status": "unsupported",
+                "reason": (f"理由語彙を読めません（{e}）。"
+                            f"**既知の分類に読み替えません**"),
+                "unknown_reason_ids": [], "retired_reason_ids": []}
+    return models.review_support(review, vocabulary)
+
+
 def _by_check_method(findings: list) -> dict:
     """§7 の区分に分ける。**機械の合格を意味の合格にしない。**"""
     groups = {"machine_checks": [], "semantic_evaluations": [],
@@ -917,8 +941,7 @@ def cmd_review(args) -> int:
     row = store.get("reviews", args.target)
     if row is None:
         return _fail("not_found", f"その検収は保存されていません: {args.target}")
-    vocabulary = store.get("vocabularies", row.get("vocabulary_id") or "")         if isinstance(row.get("vocabulary_id"), str)         and row["vocabulary_id"].startswith("sha256:") else None
-    support = models.review_support(row, vocabulary)
+    support = _review_support(row)
     now_sha = _draft_sha256(args.draft, "原稿")
     out = {"ok": True, "review": row,
            "target": {"account": row.get("account"),
@@ -954,17 +977,12 @@ def _recent_reviews(account: str, args) -> int:
         mine = [r for r in mine if models.review_applies_to(r, now_sha)]
     mine.sort(key=lambda r: r.get("judged_at") or "", reverse=True)
 
-    vocabularies, unsupported = {}, []
+    unsupported = []
     for review in mine:
-        vocabulary_id = review.get("vocabulary_id")
-        if vocabulary_id not in vocabularies:
-            vocabularies[vocabulary_id] = (
-                store.get("vocabularies", vocabulary_id)
-                if isinstance(vocabulary_id, str)
-                and vocabulary_id.startswith("sha256:") else None)
-        support = models.review_support(review, vocabularies[vocabulary_id])
+        support = _review_support(review)
         if support["status"] != "supported":
             # **対応外を 0 件・問題なしに変換しない**（A05）。数えずに名前で出す。
+            # **1 件読めないことを、一覧全体が読めないことにもしない。**
             unsupported.append({"review_id": review["review_id"],
                                  "reason": support["reason"],
                                  "unknown_reason_ids":

@@ -307,3 +307,54 @@ def test_stdoutはJSONだけ(isolated_account, thth_root):
 ])
 def test_既存の呼び方を壊さない(argv, new_style):
     assert topic_cli.is_new_style(argv) is new_style
+
+
+# --- 出口条件の残り: 他 account と破損（Codex §12 第 1 段階） ----------------
+
+def test_他accountの検収を混ぜない(isolated_account_factory, thth_root):
+    """**アカウントを越えて判断を継承しない**（Codex §3）。数にも入れない。"""
+    mine = isolated_account_factory("nigamilab-threads")
+    theirs = isolated_account_factory("kopicha-threads")
+    vocabulary_id = _register_vocabulary()
+
+    _record(_review(vocabulary_id, account=mine["name"], draft_sha256="a" * 64,
+                     findings=[_finding(note="こちらの指摘")]))
+    _record(_review(vocabulary_id, account=theirs["name"], draft_sha256="b" * 64,
+                     findings=[_finding("other", note="あちらの指摘")]))
+
+    out = _json(_thth(["topics", "review", mine["name"]]))
+    assert out["count"] == 1
+    assert out["reviews"][0]["draft_sha256"] == "a" * 64
+    # **他 account の `other` をこちらの語彙の不足として数えない。**
+    assert out["reasons"]["other"]["count"] == 0
+    assert out["warnings"] == []
+
+    other = _json(_thth(["topics", "review", theirs["name"]]))
+    assert other["count"] == 1 and other["reasons"]["other"]["count"] == 1
+
+
+def test_壊れた語彙を無いことにしない_残りは読める(isolated_account, thth_root):
+    """設計 §8。**破損と不存在は別の状態。** 1 件読めないことを、
+    一覧全体が読めないことにもしない（束で落ちると**残りの検収まで消える**）。
+    """
+    vocabulary_id = _register_vocabulary()
+    good = _json(_record(_review(vocabulary_id, draft_sha256="a" * 64)))["review_id"]
+    path = os.path.join(thth_root, "state", "topic_advice", "vocabularies",
+                        vocabulary_id.replace("sha256:", "") + ".json")
+    row = json.load(open(path, encoding="utf-8"))
+    row["entries"][0]["definition"] = "手で書き換えた定義"
+    json.dump(row, open(path, "w", encoding="utf-8"), ensure_ascii=False)
+
+    listed = _json(_thth(["topics", "review", isolated_account["name"]]))
+    assert listed["ok"] is True, f"1 件壊れただけで一覧が落ちた: {listed}"
+    assert listed["count"] == 1                      # 検収そのものは読める
+    assert len(listed["unsupported"]) == 1
+    reason = listed["unsupported"][0]["reason"]
+    assert "読めません" in reason and "保存されていません" not in reason
+
+    one = _json(_thth(["topics", "review", good]))
+    assert one["support"]["status"] == "unsupported"
+    assert "読めません" in one["support"]["reason"]
+    # **0 件・問題なしに変換しない。** 指摘そのものは元のラベルのまま出る。
+    assert [f["reason_id"] for f in one["human_confirmations"]] == \
+        ["missing_condition"]
