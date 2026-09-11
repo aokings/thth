@@ -1227,6 +1227,55 @@ def _role_fingerprint(spec: dict | None, role_id) -> str | None:
     return None
 
 
+def _case_id_clusters(series_case_ids: dict) -> list:
+    """同じ `case_id` を名乗る非接続系列を 1 クラスタに畳む（再判定 M2 対応・
+
+    再々判定・2026-09-12 Codex）。
+
+    > 同じ account・同じ `case_id=same-case` の非接続 2 hash を production
+    > として登録すると、`reported_case_ids=['same-case']` のまま
+    > `independent_cases=2` となり候補が成立した。
+
+    N4 は「同じ系列に別々の `case_id`」を系列 1 件に畳んだ。**今回はその
+    逆向き**——「別々の系列に同じ `case_id`」も畳む。`draft_series()` の線
+    (`recheck_of`・`supersedes`・`carried_from`) が無くても、**同じ ID を
+    名乗っている**こと自体を独立性への制約として扱う。account をまたいで
+    同じ文字列が出てきても畳む側に倒す（`case_id` の名前空間がどこまで
+    一意かは記録からは分からないので、疑わしいものを多く数えない）。
+
+    引数は `series_rep -> {case_id, ...}`（実運用だけ）。返り値は
+    `series_rep` の集合のリスト（＝独立事例として数える単位）。
+    """
+    parent = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    case_id_to_series = {}
+    for series_rep, case_ids in series_case_ids.items():
+        find(series_rep)
+        for case_id in case_ids:
+            case_id_to_series.setdefault(case_id, set()).add(series_rep)
+    for reps in case_id_to_series.values():
+        reps = sorted(reps)
+        for other in reps[1:]:
+            union(reps[0], other)
+
+    clusters = {}
+    for series_rep in series_case_ids:
+        clusters.setdefault(find(series_rep), set()).add(series_rep)
+    return list(clusters.values())
+
+
 def improvement_candidates(reviews: list, *, spec: dict,
                             vocabularies: dict | None = None,
                             form_specs: dict | None = None,
@@ -1246,6 +1295,16 @@ def improvement_candidates(reviews: list, *, spec: dict,
       落としていたので分ける／**試作が実運用の候補成立に加算されていた**ので
       閾値は実運用だけで数える／**線の無い版を独立 2 件と判定していた**ので、
       独立は `case_id` が明示されたときだけにする。
+    - **N3/N4（再々判定・2026-09-12 Codex）**: 解決できることと解決先が
+      その型であることは別なので照合する／**既知の改訂・再検査系列に別々の
+      `case_id` が申告されても、系列 1 件としてしか数えない**（`case_id` の
+      申告より繋がっている線のほうが強い証拠）。
+    - **M2（再々判定・2026-09-12 Codex）**: N4 の逆向き。**別々の非接続系列が
+      同じ `case_id` を名乗っても、独立事例には 1 件としてしか数えない**
+      （`_case_id_clusters()`）。account をまたいでも畳む側に倒す——
+      `case_id` の名前空間がどこまで一意かは記録から分からないので、疑わしい
+      ものを多く数えない。畳んでも申告そのものは消さず、両向きの競合を
+      `case_id_conflicts` に残す。
     """
     vocabularies = vocabularies or {}
     form_specs = form_specs or {}
@@ -1302,7 +1361,11 @@ def improvement_candidates(reviews: list, *, spec: dict,
             row = groups.setdefault(key, {
                 "series": set(), "drafts": set(), "review_ids": [], "notes": [],
                 "provenance": {}, "case_ids": set(), "unlinked": set(),
-                "lineage": set(), "series_case_ids": {}})
+                "lineage": set(), "series_case_ids": {},
+                # **表示用。** `series_case_ids` は実運用だけ（独立事例の
+                # 母数）だが、こちらは provenance を問わず集める——trial の
+                # `case_id` も競合表示からは消さない（M2）。
+                "series_case_ids_all": {}, "case_id_accounts": {}})
             draft = review.get("draft_sha256")
             source = review.get("provenance") or "unknown"
             series_rep = series.get(draft, draft)
@@ -1312,6 +1375,15 @@ def improvement_candidates(reviews: list, *, spec: dict,
             row["provenance"][source] = row["provenance"].get(source, 0) + 1
             row["lineage"].add((lineage or {}).get(review.get("vocabulary_id"),
                                                     review.get("vocabulary_id")))
+            if review.get("case_id"):
+                # **provenance を問わず先に集める。** trial 側の申告も、
+                # 同じ系列に付いていれば競合として見える必要がある
+                # （M2・「同じ ID の非接続系列」を畳む条件・2026-09-12
+                # Codex）。閾値には数えない（下の production 分岐だけ）。
+                row["series_case_ids_all"].setdefault(
+                    series_rep, set()).add(review["case_id"])
+                row["case_id_accounts"].setdefault(
+                    review["case_id"], set()).add(review.get("account"))
             if source == "production":
                 # **閾値は実運用だけで数える**（R4）。試作は消さずに別枠。
                 if review.get("case_id"):
@@ -1332,33 +1404,59 @@ def improvement_candidates(reviews: list, *, spec: dict,
 
     candidates, not_yet = [], []
     for (reason_id, meaning, role_id, role_fp), row in sorted(
-            groups.items(), key=lambda kv: (-len(kv[1]["series_case_ids"]),
-                                             str(kv[0][0]), str(kv[0][2]))):
-        # **独立事例は「申告された `case_id` の数」ではなく「`case_id` が
-        # 申告された系列の数」**（N4）。同じ系列（既知の改訂・再検査で
-        # つながっている）に複数の `case_id` が付いていても、系列としては
-        # 1 件。矛盾する申告は消さず、下で `case_id_conflicts` に出す。
-        confirmed = len(row["series_case_ids"])
-        conflicts = [
+            groups.items(),
+            key=lambda kv: (-len(_case_id_clusters(kv[1]["series_case_ids"])),
+                             str(kv[0][0]), str(kv[0][2]))):
+        # **独立事例は「申告された `case_id` の数」ではなく「`case_id` で
+        # 畳んだあとの系列クラスタの数」**（N4・M2）。同じ系列（既知の
+        # 改訂・再検査でつながっている）に複数の `case_id` が付いていても
+        # 系列としては 1 件（N4）。**逆に、繋がっていない系列でも同じ
+        # `case_id` を名乗っていれば 1 クラスタに畳む**（M2・
+        # `_case_id_clusters()`）。矛盾する申告はどちらも消さず、下で
+        # 両向きに `case_id_conflicts` へ出す。
+        clusters = _case_id_clusters(row["series_case_ids"])
+        confirmed = len(clusters)
+        # **線が無い版**。ただし、その系列がすでに別の版で `case_id` を
+        # 名乗っている（provenance を問わない）なら、「線の無い版」の集計
+        # から外す——系列としての身元はもう分かっている（N4/M2 反例・
+        # 「一部の版だけ `case_id` がある既知系列」・2026-09-12 Codex）。
+        unlinked = row["unlinked"] - set(row["series_case_ids_all"])
+        # (a) 同じ系列に複数の `case_id`（trial の申告も含め、消さない）。
+        same_series_conflicts = [
             {"series": series_rep, "case_ids": sorted(ids)}
-            for series_rep, ids in sorted(row["series_case_ids"].items())
+            for series_rep, ids in sorted(row["series_case_ids_all"].items())
             if len(ids) > 1]
+        # (b) 同じ `case_id` を複数の非接続系列が名乗っている（M2）。
+        # 独立事例には 1 件にしか数えないが、なぜ畳んだかを消さず出す。
+        # `case_id` は account をまたぐと曖昧なので、どの account が
+        # 名乗ったかも添える。
+        case_id_series = {}
+        for series_rep, ids in row["series_case_ids"].items():
+            for case_id in ids:
+                case_id_series.setdefault(case_id, set()).add(series_rep)
+        cross_series_conflicts = [
+            {"case_id": case_id, "series": sorted(reps),
+             "accounts": sorted(
+                 a for a in row["case_id_accounts"].get(case_id, ()) if a)}
+            for case_id, reps in sorted(case_id_series.items())
+            if len(reps) > 1]
+        conflicts = same_series_conflicts + cross_series_conflicts
         entry = {
             "reason_id": reason_id, "meaning": meaning,
             "vocabulary_lineage": sorted(row["lineage"]),
             "role_id": role_id, "role_meaning": role_fp,
-            # **明示された系列の数だけが「独立事例」。**
+            # **`case_id` で畳んだあとのクラスタ数だけが「独立事例」。**
             "independent_cases": confirmed,
             # **「確認済み」ではない。** ここにある `case_id` はすべて
             # 記録者の自己申告であって、実測で確認したものではない
             # （表示の条件・2026-09-12 Codex）。名前もそれが分かるように
             # `confirmed_case_ids` から変えた。
             "reported_case_ids": sorted(row["case_ids"]),
-            # **同じ系列に別々の `case_id` が申告された競合。** 独立事例には
-            # 加算していないが、申告そのものは消さずここに出す。
+            # **両向きの競合。** 独立事例には加算していないが、申告そのもの
+            # は消さずここに出す。
             "case_id_conflicts": conflicts,
             # **線が無い版**。数えはするが、閾値の証拠にはしない（R5）。
-            "unlinked_versions": len(row["unlinked"]),
+            "unlinked_versions": len(unlinked),
             "draft_versions": len(row["drafts"]),
             "review_ids": sorted(row["review_ids"]),
             "notes": row["notes"],
@@ -1398,17 +1496,22 @@ def improvement_candidates(reviews: list, *, spec: dict,
         if confirmed < MIN_INDEPENDENT_CASES:
             entry["why_not_yet"] = (
                 f"**独立した事例が {confirmed} 件です**"
-                f"（実運用で `case_id` を名乗った系列の数）。"
-                + (f"ほかに線の無い版が {len(row['unlinked'])} 件ありますが、"
+                f"（実運用で `case_id` を名乗った系列を、同じ `case_id` で"
+                f"畳んだあとのクラスタ数）。"
+                + (f"ほかに線の無い版が {len(unlinked)} 件ありますが、"
                    f"**別の原稿なのか同じ原稿の改訂なのかを記録から言えない**ので、"
                    f"独立とは数えていません（`case_id` を付けてください）"
-                   if row["unlinked"] else "")
+                   if unlinked else "")
                 + ("／試作・出自不明の記録は閾値に数えません"
                    if set(row["provenance"]) - {"production"} else "")
                 + ("／同じ系列に別々の `case_id` が申告されていて、"
                    "**競合したまま系列 1 件としてしか数えていません**"
                    "（`case_id_conflicts` 参照）"
-                   if conflicts else ""))
+                   if same_series_conflicts else "")
+                + ("／同じ `case_id` を非接続の系列が名乗っていて、"
+                   "**別の原稿かもしれないまま 1 件に畳んでいます**"
+                   "（`case_id_conflicts` 参照）"
+                   if cross_series_conflicts else ""))
         (candidates if confirmed >= MIN_INDEPENDENT_CASES
          else not_yet).append(entry)
 
@@ -1511,3 +1614,153 @@ def vocabulary_impact(candidate: dict, reviews: list, *,
         "notice": "**当てただけです。** 現行版は替えていません（保存もしていま"
                    "せん）。替えるかどうかは独立確認のあと（Codex §8）。",
     }
+
+
+# --- 4.9 仮説（masaru 指示 2026-09-11・外部調査の §9 を型にしたもの） ---------
+
+# **うちの台帳に実際にある指標だけ**。予測をこの語彙で書けないものは、
+# 「いまのうちでは検証できない」（下の `UNIDENTIFIABLE`）として残す。
+# 「滞在時間」「親密度」のような**持っていない量で予測を書かせない。**
+LEDGER_METRICS = ("views", "likes", "replies", "reposts", "quotes", "shares",
+                   "clicks", "followers_count")
+
+# 証拠の階層（masaru の `AI協業の作法` §7・外部調査の分類に合わせた）。
+# **L1（公式）が L2（うちの実測）より上とは限らない**——「指標の定義」なら L1、
+# 「うちで何が起きたか」ならうちの実測が一次資料。**何を問うているかで変わる。**
+EVIDENCE_TIERS = ("L1", "L2", "L3", "L4", "L5")
+
+# 標本設計の区分（外部調査 2026-09-11 の §10）。**「30 本で合格」を作らない。**
+REFUTATION_ONLY = "B"      # 絶対命題への反例探し。**1 件でも崩せる**
+ESTIMATION = "M"           # 平均差・予測性能の推定。**本数が要る**
+UNIDENTIFIABLE = "U"       # **変数が無いので識別できない。本数を増やしても無理**
+SAMPLE_DESIGNS = (REFUTATION_ONLY, ESTIMATION, UNIDENTIFIABLE)
+
+# 仮説の種類。**構造仮説（相手の仕組みの推測）を登録できるようにする**
+# （masaru 指摘 2026-09-11）。それ自体は観測できないが、**観測できる派生予測を
+# ぶら下げる**ことを条件にする。
+HYPOTHESIS_KINDS = ("structural", "operational")
+
+SOURCE_KEYS = ("tier", "ref", "date", "note")
+PREDICTION_KEYS = ("statement", "metrics", "window", "scope")
+HYPOTHESIS_KEYS = ("code", "claim", "kind", "sources", "predictions",
+                   "refutation", "sample_design", "counter_hypothesis",
+                   "scope", "state", "proposed_by", "verifier",
+                   "created_at", "supersedes")
+
+
+def build_hypothesis(row: dict) -> dict:
+    """仮説を 1 件、記録として残す（masaru 指示 2026-09-11）。
+
+    **「検証できないから捨てる」も「正しいと決めて焼き込む」もしない。**
+    出所と日付を付けて棚に置き、**手応えが溜まる形**にする。
+
+    守らせること:
+
+    - **出所には必ず日付を付ける**（`AI協業の作法` §6「『○○によると』は書くな」）。
+      公式でも「いま時点の真実」ではない——ランキングの説明は 1 年半前だった。
+    - **構造仮説には、観測できる派生予測を 1 つ以上**。相手の仕組みそのものは
+      観測できないが、**うちの台帳でどう見えるはずか**は書ける。
+    - **予測はうちが持っている指標の語彙でしか書けない**（`LEDGER_METRICS`）。
+      持っていない量（滞在時間・親密度）で予測を書くと、**検証したつもりに
+      なれてしまう。**
+    - **捨てる条件が無い仮説は登録できない。** 捨てられない仮説は知見にならない。
+    - **対抗仮説を書く。** 無いと、どんな観測も「支持した」に読める。
+    - **`U`（識別できない）は消さずに残す**が、**`shadow` には上げられない**
+      ——検証が動いているように見せない（外部調査 §9 H09 の裁定）。
+    - **`accepted` は作れない。** 語彙・型の仕様と同じく、正式な採用は
+      独立確認の仕組みができてから（構想書 §8）。
+    """
+    _require(row, HYPOTHESIS_KEYS, "仮説")
+    if not isinstance(row["claim"], str) or not row["claim"].strip():
+        raise SchemaError("claim が空です")
+    _require_choice(row["kind"], HYPOTHESIS_KINDS, "kind")
+    _require_choice(row["sample_design"], SAMPLE_DESIGNS, "sample_design")
+    _require_choice(row["state"], REASON_STATE, "state")
+    _require_iso(row["created_at"], "created_at")
+    for key in ("proposed_by", "verifier"):
+        if not row.get(key):
+            raise SchemaError(
+                f"{key} が要ります（**立てた人と、確かめる人を分ける**。"
+                f"同じ手が両方をやると、手応えが溜まったように見えて"
+                f"何も確かめていない）")
+    if not isinstance(row["scope"], str) or not row["scope"].strip():
+        raise SchemaError("scope が空です（どの account の話か・すべてなら「すべて」）")
+    if not isinstance(row["refutation"], str) or not row["refutation"].strip():
+        raise SchemaError(
+            "refutation が空です。**何が観測されたら捨てるかを書いてください**"
+            "——捨てられない仮説は知見になりません")
+    if not isinstance(row["counter_hypothesis"], str) \
+            or not row["counter_hypothesis"].strip():
+        raise SchemaError(
+            "counter_hypothesis が空です。**対抗仮説を書いてください**"
+            "——無いと、どんな観測も「支持した」に読めます")
+
+    sources = row["sources"]
+    if not isinstance(sources, list) or not sources:
+        raise SchemaError("sources が空です（誰の・いつの話か）")
+    for i, source in enumerate(sources):
+        where = f"sources[{i}]"
+        if not isinstance(source, dict):
+            raise SchemaError(f"{where} は object")
+        _require(source, SOURCE_KEYS, where)
+        _require_choice(source["tier"], EVIDENCE_TIERS, f"{where} の tier")
+        if not source.get("ref"):
+            raise SchemaError(f"{where} の ref が空です（どこの何か）")
+        # **日付の無い出所を受け取らない。** あとで「うちで確かめた事実」に化ける。
+        _require_iso_date(source["date"], f"{where} の date")
+
+    predictions = row["predictions"]
+    if not isinstance(predictions, list):
+        raise SchemaError("predictions は配列")
+    if row["sample_design"] != UNIDENTIFIABLE and not predictions:
+        raise SchemaError(
+            "predictions が空です。**うちの台帳でどう見えるはずかを 1 つ以上**"
+            "書いてください（相手の仕組みそのものは観測できなくても、"
+            "**派生する予測は書けます**）。書けないなら sample_design を "
+            f"{UNIDENTIFIABLE!r} にして、なぜ書けないかを refutation に"
+            "書いてください")
+    for i, prediction in enumerate(predictions):
+        where = f"predictions[{i}]"
+        if not isinstance(prediction, dict):
+            raise SchemaError(f"{where} は object")
+        _require(prediction, PREDICTION_KEYS, where)
+        if not isinstance(prediction["statement"], str) \
+                or not prediction["statement"].strip():
+            raise SchemaError(f"{where} の statement が空です")
+        metrics = prediction["metrics"]
+        if not isinstance(metrics, list) or not metrics:
+            raise SchemaError(f"{where} の metrics が空です")
+        unknown = [m for m in metrics if m not in LEDGER_METRICS]
+        if unknown:
+            # **持っていない量で予測を書かせない**（外部調査 §9 H10）。
+            raise SchemaError(
+                f"{where} に、うちの台帳に無い指標があります: {unknown}。"
+                f"使えるのは: {'・'.join(LEDGER_METRICS)}。"
+                f"**持っていない量（滞在時間・親密度など）で予測を書くと、"
+                f"検証したつもりになれてしまいます**——その仮説は "
+                f"sample_design を {UNIDENTIFIABLE!r} にして残してください")
+
+    if row["sample_design"] == UNIDENTIFIABLE and row["state"] == "shadow":
+        # **識別できないものを「検証が動いている」と見せない**（§9 H09）。
+        raise SchemaError(
+            f"sample_design が {UNIDENTIFIABLE!r} の仮説は shadow にできません"
+            f"（**検証が動いているように見えてしまう**）。proposed のまま"
+            f"残してください——捨てはしません")
+
+    out = dict(row)
+    out["schema_version"] = SCHEMA_VERSION
+    out["hypothesis_id"] = content_id(out, exclude=("hypothesis_id",))
+    return out
+
+
+def _require_iso_date(value, what: str) -> None:
+    """日付（`YYYY-MM-DD` か ISO 8601）。**時刻まで要求しない。**
+
+    出所の日付は「その資料がいつのものか」なので、日だけで足りる。
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise SchemaError(f"{what} が空です（**いつの話かを必ず書く**）")
+    try:
+        datetime.date.fromisoformat(value[:10])
+    except ValueError as e:
+        raise SchemaError(f"{what} を日付として読めません: {value!r}") from e
