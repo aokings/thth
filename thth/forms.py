@@ -15,7 +15,7 @@
 """
 from __future__ import annotations
 
-VOCABULARY_VERSION = "2026-09-11.2"
+VOCABULARY_VERSION = "2026-09-11.3"
 
 # 構成（何段に分けて、どう並べるか）
 FORMS = {
@@ -42,6 +42,21 @@ FORMS = {
 # 比べる材料が無い。** 同じセッションもそう書いている——1 本目が出てから。
 # **語彙は測れるようになってから増やす**（トピックの型で踏んだ順序の逆を
 # やらない）。
+
+# 段の番号を本文に書いたか（asmon 関東セッション要望 2026-09-11）。
+#
+# > 番号の有無を `form` と一緒に記録するなら、**原稿の front-matter に欄が
+# > ほしい**です。…経緯のメモに書いても THTH は読みません。
+#
+# **記録する場所が無ければ、比べられない。** 2 セッションとも独立に
+# 「書かない」を選んだが、**理由が違った**——
+#   nigamilab: 1 段目で止まる人に「これは途中です」と思わせるのは損
+#   asmon 関東: 番号が付くとその段が単独で読めなくなる
+# **どちらが効くかは実測が無い。** だから欄を作って残す。
+NUMBERING = {
+    "あり": "本文に `1/3` のような番号を書いた",
+    "なし": "書かなかった。**各段が単独で読める形**にしたとき",
+}
 
 # 最後の導線（読んだ人をどこへ渡すか）
 OUTLETS = {
@@ -71,7 +86,7 @@ OUTCOME_RULES = [
 ]
 
 
-def label_error(form, outlet) -> str | None:
+def label_error(form, outlet, numbering=None) -> str | None:
     """ラベルの値を検査する。**知らない語は推測で通さない。**"""
     if form is not None and form not in FORMS:
         return (f"form: 知らない語です（{form}）。"
@@ -79,16 +94,40 @@ def label_error(form, outlet) -> str | None:
     if outlet is not None and outlet not in OUTLETS:
         return (f"outlet: 知らない語です（{outlet}）。"
                 f"使えるのは: {'・'.join(OUTLETS)}")
+    if numbering is not None and numbering not in NUMBERING:
+        return (f"numbering: 知らない語です（{numbering}）。"
+                f"使えるのは: {'・'.join(NUMBERING)}")
     return None
 
 
-def label_record(*, form, outlet, at: str) -> dict:
+_NUMBER_RE = __import__("re").compile(r"\d+\s*/\s*\d+")
+
+
+def numbering_warning(numbering, segments: list) -> str | None:
+    """名乗ったラベルと本文が食い違っていないか。**警告まで。**
+
+    ラベルは承認の対象ではないので**止めない。** ただし食い違ったまま測ると、
+    **番号ありと番号なしを取り違えて比べる**ことになる。
+    """
+    if numbering is None or not segments:
+        return None
+    found = any(_NUMBER_RE.search(seg or "") for seg in segments)
+    if numbering == "あり" and not found:
+        return ("warning: numbering: 「あり」と書いてありますが、本文に "
+                "`1/3` のような番号が見つかりません")
+    if numbering == "なし" and found:
+        return ("warning: numbering: 「なし」と書いてありますが、本文に "
+                "`N/M` の形が含まれています（本文の一部なら無視してください）")
+    return None
+
+
+def label_record(*, form, outlet, at: str, numbering=None) -> dict:
     """ラベルの履歴 1 件（Codex 最終条件 4）。
 
     **時刻だけでなく、当時の値と分類の版を保存する。**
     語彙が増えたあとに読み返しても「どの版の分類で測ったか」が分かる。
     """
-    return {"at": at, "form": form, "outlet": outlet,
+    return {"at": at, "form": form, "outlet": outlet, "numbering": numbering,
             "vocabulary_version": VOCABULARY_VERSION}
 
 
@@ -131,6 +170,7 @@ def advise() -> dict:
         "vocabulary_version": VOCABULARY_VERSION,
         "forms": FORMS,
         "outlets": OUTLETS,
+        "numbering": NUMBERING,
         "guidance": GUIDANCE,
         "measured": {},          # **空。まだ 1 本も出していない。**
         "notice": "形ごとの実測はまだありません。"

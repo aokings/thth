@@ -1028,6 +1028,10 @@ def cmd_forms(args) -> int:
     for name, note in data["outlets"].items():
         print(f"    {name} — {note}")
     print("")
+    print("  【段の番号】本文に `1/3` を書いたか（front matter の numbering:）")
+    for name, note in data["numbering"].items():
+        print(f"    {name} — {note}")
+    print("")
     print("  【選び方】")
     for line in data["guidance"]:
         print(f"    ・{line}")

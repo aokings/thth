@@ -26,6 +26,8 @@ MAX_SEGMENTS = 4
 # 段ごとに持てる項目。**`topic` は先頭だけ**（設計 §7）。
 POST_KEYS = ("index", "post_id", "posted_at", "reply_to", "run_id",
              "bundle_sha", "text_sha256", "topic")
+# 分類するだけのラベル（**承認の対象ではない**・設計 §8.3）。
+LABEL_KEYS = ("form", "outlet", "numbering")
 
 
 class BundleError(Exception):
@@ -283,9 +285,13 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
     # ただし**知らない語は推測で通さない**——実測を型ごとに並べるときに、
     # 綴り違いが別の型として増えると比較にならない。
     from . import forms as forms_mod
-    label_err = forms_mod.label_error(fm.get("form"), fm.get("outlet"))
+    label_err = forms_mod.label_error(fm.get("form"), fm.get("outlet"),
+                                       fm.get("numbering"))
     if label_err is not None:
         errors.append(label_err)
+    number_warn = forms_mod.numbering_warning(fm.get("numbering"), segments)
+    if number_warn is not None:
+        errors.append(number_warn)
 
     return errors
 

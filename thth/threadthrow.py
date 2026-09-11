@@ -360,6 +360,7 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
     # 食い違い**、次の凍結検査が「旧本文を正本」として比べて、正しく送った
     # 新本文を変更扱いにする。**公開済みの段の過去の承認版は動かさない。**
     labels = {"form": fm.get("form"), "outlet": fm.get("outlet"),
+              "numbering": fm.get("numbering"),
               "vocabulary_version": forms_mod.VOCABULARY_VERSION}
     threadrun.snapshot_pending(
         run, bundle_sha=expected,

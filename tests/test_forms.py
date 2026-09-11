@@ -149,9 +149,33 @@ def test_手順書の原稿の例が実際に通る():
 def test_語彙が増えたら版が上がる():
     """**どの版の分類で測ったか**が要る（Codex 最終条件 4）。
 
-    `比較` を足したのに版が据え置きだと、**前後の実測が同じ分類で測られた
-    ように見える。**
+    語彙を足したのに版が据え置きだと、**前後の実測が同じ分類で測られたように
+    見える。** `比較` を足して .2、`numbering` を足して .3。
     """
-    assert forms.VOCABULARY_VERSION == "2026-09-11.2"
-    row = forms.label_record(form="比較", outlet="記事へ", at="2026-09-11T12:00:00+09:00")
-    assert row["vocabulary_version"] == "2026-09-11.2"
+    assert forms.VOCABULARY_VERSION == "2026-09-11.3"
+    row = forms.label_record(form="比較", outlet="記事へ", numbering="なし",
+                              at="2026-09-11T12:00:00+09:00")
+    assert row["vocabulary_version"] == "2026-09-11.3"
+    assert row["numbering"] == "なし"
+
+
+def test_番号の有無を記録できる():
+    """**記録する場所が無ければ、比べられない**（asmon 関東セッション要望）。
+
+    2 セッションとも独立に「書かない」を選んだが**理由が違った**。
+    どちらが効くかは実測が無いので、**欄を作って残す。**
+    """
+    assert set(forms.NUMBERING) == {"あり", "なし"}
+    assert forms.label_error("問い→答え", "記事へ", "なし") is None
+    assert "知らない語" in forms.label_error("問い→答え", "記事へ", "無し")
+
+
+def test_名乗ったラベルと本文の食い違いは警告まで():
+    """**ラベルは承認の対象ではないので止めない。** ただし黙って測らない。"""
+    assert forms.numbering_warning("なし", ["問い。", "答え。"]) is None
+    assert forms.numbering_warning("あり", ["1/2 問い。", "2/2 答え。"]) is None
+
+    warn = forms.numbering_warning("あり", ["問い。", "答え。"])
+    assert warn.startswith("warning:") and "見つかりません" in warn
+    warn = forms.numbering_warning("なし", ["1/2 問い。", "答え。"])
+    assert warn.startswith("warning:") and "含まれています" in warn
