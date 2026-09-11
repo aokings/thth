@@ -1023,3 +1023,44 @@ def test_評価セットの実行例に両方の環境変数が入る(tmp_path):
         env=dict(os.environ, THTH_ROOT=info["root"], THTH_APP_DIR=info["app_dir"]))
     assert out.returncode == 0, out.stdout + out.stderr
     assert json.loads(out.stdout)["status"] == "needs_proposal"
+
+
+# ===========================================================================
+# 規約 14: 層を足したら、検査も同時に足す
+# ===========================================================================
+
+# **形の一覧と必須項目の一覧は別々に育つ。** 片方だけ増えると、
+# 「項目が足りません」と言いながら正しい形を教えない、という状態になる。
+# 新しい schema を足したらここに 1 行足すこと（足し忘れたら下が落ちる）。
+SHAPES = {
+    "ArticleEvidence": (advice.ARTICLE_SHAPE, models.ARTICLE_KEYS),
+    "TopicObservation": (advice.OBSERVATION_SHAPE, models.OBSERVATION_KEYS),
+    "TopicProposal": (advice.PROPOSAL_SHAPE, models.PROPOSAL_KEYS),
+}
+
+
+@pytest.mark.parametrize("name", sorted(SHAPES))
+def test_出力する形が必須項目を全部含む(name):
+    shape, keys = SHAPES[name]
+    missing = set(keys) - set(shape[name])
+    assert not missing, f"{name} の expected_schema に無い必須項目: {missing}"
+
+
+def test_候補の必須項目も形に出ている():
+    shape = advice.PROPOSAL_SHAPE["TopicProposal"]["candidates"][0]
+    missing = set(models.CANDIDATE_KEYS) - set(shape)
+    assert not missing, f"候補の expected_schema に無い必須項目: {missing}"
+    for optional in models.CANDIDATE_OPTIONAL:
+        assert optional in shape, f"任意の項目も形に出す: {optional}"
+
+
+def test_検査を持つ層がすべて空で断る():
+    """**空・欠損で断ること**を、層ごとに 1 か所で確かめる。
+
+    `profile` だけ照合が無い・`observation` だけ検査が無い、を 3 回やった
+    （規約 14）。**層が増えたらここに 1 行足す。**
+    """
+    for build in (models.build_article, models.build_observation,
+                   models.build_profile):
+        with pytest.raises(models.SchemaError):
+            build({})
