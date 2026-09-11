@@ -206,3 +206,68 @@ def test_状態で絞っても絞りの外の新しい版が印に出る(thth_ro
     assert saved["hypothesis_id"] not in by_id, "絞りが効いていない（前提が崩れている）"
     assert by_id[first]["superseded_by"] == [saved["hypothesis_id"]], \
         "**絞りの外にある新しい版が見えず、古いほうが現行に読める**"
+
+
+# --- V1: 版の指し先が壊れていても一覧を落とさない（外部レビュー 2026-09-12）---
+
+_BAD_LINK = ["sha256:" + "1" * 64]
+
+
+def test_supersedesに配列を渡すと登録で拒まれる(thth_root):
+    """**登録は通るのに、その記録があると一覧が丸ごと読めなくなっていた。**
+
+    逆索引が `supersedes` を辞書のキーに使うので `TypeError: unhashable type`。
+    **既存の検査だけなら受理できる入力が、後から足した読取処理を壊していた。**
+    """
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json, _thth
+
+    good = _json(_register(_hypothesis()))["hypothesis_id"]
+    proc = _register(_hypothesis(supersedes=_BAD_LINK))
+
+    assert proc.returncode != 0, "配列の supersedes が保存されている"
+    assert "supersedes" in proc.stdout + proc.stderr
+
+    listed = _json(_thth(["topics", "hypotheses"]))
+    assert listed["ok"] is True, "**一覧が読めなくなっている**"
+    assert [h["hypothesis_id"] for h in listed["hypotheses"]] == [good]
+
+
+def test_保存済みの壊れた版の指し先で一覧を落とさない(thth_root):
+    """**登録の口を直しても、それ以前に保存された記録は直せない**
+    （append-only・消さない）。**1 件の壊れで、正常な仮説まで読めなくしない。**
+
+    `thth/topic_store.py` の `broken_ids` と同じ流儀——**読めないものを数に
+    混ぜず、読めるものまで巻き添えにしない。**
+    """
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json, _thth
+    from thth import topic_store
+
+    good = _json(_register(_hypothesis()))["hypothesis_id"]
+
+    # **登録の口を通らない**（いまは拒否される）ので、直接置く。「直す前の口が
+    # 受理してしまった記録」を再現するため。
+    bad = models.build_hypothesis(_hypothesis(
+        code="T02", created_at="2026-09-12T04:30:00+09:00", proposed_by="テスト"))
+    # **中身は実在する ID にする。** ここを架空の ID にすると、「壊れを黙って
+    # 正常な版関係として扱う」変異を当てても**どの仮説にも結び付かないので
+    # テストが通ってしまう**（2026-09-12・変異 O で発覚）。実在する ID を
+    # 配列に入れてはじめて、**誤って印を付けたことが観測できる。**
+    bad["supersedes"] = [good]
+    bad["hypothesis_id"] = models.content_id(bad, exclude=("hypothesis_id",))
+    saved, _wrote = topic_store.put("hypotheses", bad, id_key="hypothesis_id")
+
+    listed = _json(_thth(["topics", "hypotheses"]))
+
+    assert listed["ok"] is True, "**壊れ 1 件で一覧が丸ごと落ちている**"
+    ids = [h["hypothesis_id"] for h in listed["hypotheses"]]
+    assert good in ids, "正常な仮説が巻き添えで読めなくなっている"
+    assert saved["hypothesis_id"] in ids, "本体は読めるのに消している"
+
+    problems = listed["broken_version_links"]
+    assert [p["hypothesis_id"] for p in problems] == [saved["hypothesis_id"]], \
+        "版の関係が読めなかったことを黙っている"
+    by_id = {h["hypothesis_id"]: h for h in listed["hypotheses"]}
+    assert by_id[good]["superseded_by"] == [], \
+        "**壊れた指し先を、正常な版関係として扱っている**"

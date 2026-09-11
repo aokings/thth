@@ -1769,6 +1769,16 @@ def build_hypothesis(row: dict) -> dict:
       独立確認の仕組みができてから（構想書 §8）。
     """
     _require(row, HYPOTHESIS_KEYS, "仮説")
+    if row["supersedes"] is not None and not isinstance(row["supersedes"], str):
+        # **型を検査していなかった**（外部レビュー V1・2026-09-12）。配列を
+        # 渡すと**登録は通るのに、その記録があると仮説の一覧が丸ごと読めなく
+        # なっていた**（逆索引が辞書のキーに使うため `TypeError`）。
+        # **既存の検査だけなら受理できる入力が、後から足した読取処理を壊す。**
+        raise SchemaError(
+            f"supersedes は前の版の hypothesis_id（1 つ）か null です: "
+            f"{row['supersedes']!r}。**版は 1 つずつ差し替えます**——"
+            f"複数を 1 件でまとめて差し替えたい場合も、1 件ずつ記録して"
+            f"ください（記録は消しません）")
     if not isinstance(row["claim"], str) or not row["claim"].strip():
         raise SchemaError("claim が空です")
     _require_choice(row["kind"], HYPOTHESIS_KINDS, "kind")

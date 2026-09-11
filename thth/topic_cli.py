@@ -1584,9 +1584,27 @@ def cmd_hypotheses(args) -> int:
     # （`state` で絞る前の全件から張る——絞った中だけで張ると、**絞りの外に
     # 新しい版があるときに「現行だ」と読めてしまう**）。
     superseded: dict = {}
+    # **壊れた版の指し先で、一覧を丸ごと落とさない**（外部レビュー V1・
+    # 2026-09-12）。登録の口は型を検査するようにしたが、**それ以前に保存された
+    # 記録は直せない**（append-only。消さない）。1 件の不正な `supersedes` で
+    # **正常な仮説まで読めなくなる**のが元の姿だった——**壊れは 1 件として
+    # 出し、残りは読めるようにする**（`thth/topic_store.py` の `broken_ids` と
+    # 同じ流儀: 読めないものを数に混ぜず、読めるものまで巻き添えにしない）。
+    broken_version_links: list = []
     for r in rows:
-        if r.get("supersedes"):
-            superseded.setdefault(r["supersedes"], []).append(r["hypothesis_id"])
+        link = r.get("supersedes")
+        if not link:
+            continue
+        if not isinstance(link, str):
+            broken_version_links.append({
+                "hypothesis_id": r["hypothesis_id"],
+                "supersedes": link,
+                "problem": "supersedes が前の版の hypothesis_id（1 つ）でも "
+                            "null でもありません（**この記録の版の関係は"
+                            "読めません**。ほかの仮説には影響しません）",
+            })
+            continue
+        superseded.setdefault(link, []).append(r["hypothesis_id"])
     if args.state:
         rows = [r for r in rows if r.get("state") == args.state]
     rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
@@ -1602,6 +1620,8 @@ def cmd_hypotheses(args) -> int:
         return claim
 
     _emit({"ok": True, "count": len(rows), "broken_ids": broken,
+           # **版の関係が読めなかった記録**（`broken_ids` とは別——本体は読める）。
+           "broken_version_links": broken_version_links,
            "hypotheses": [{
                "hypothesis_id": r["hypothesis_id"], "code": r.get("code"),
                "claim": _claim(r), "kind": r.get("kind"),
