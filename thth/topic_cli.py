@@ -1505,8 +1505,10 @@ def cmd_impact(args) -> int:
 # 書くのと同じ流儀で、ここでも申告値であることを毎回出す。
 HYPOTHESIS_DECLARATION_NOTICE = (
     "**`metrics` と `sample_design` は申告値です。** 台帳にある指標名か・"
-    "語彙にある区分かは検査していますが、**その予測が実際に観測可能か"
-    "（観測単位・必要変数の実測参照・取得窓・欠測規則）は確認していません**"
+    "語彙にある区分かは検査しています。**観測単位は、指標どうしの層が食い違って"
+    "いないかだけ**を見ます（`unit_warnings`。2026-09-12 に追加）——"
+    "**どの層で読む予定かは申告されないので、そこまでは確かめていません。**"
+    "**必要変数の実測参照・取得窓・欠測規則は確認していません**"
     "（外部レビュー R4・未検証）。")
 
 
@@ -1551,6 +1553,9 @@ def cmd_record_hypothesis(args) -> int:
            "warnings": [f"state={saved['state']} です。**採用は masaru または"
                          f"保守責任者が独立確認を踏まえて確定します**"
                          f"（構想書 §8。いまは登録できません）"],
+           # **観測単位の食い違い**（運用指摘 2026-09-12）。保存はしない
+           # ——読むたびに当てる（保存済みの古い仮説にも効く）。
+           "unit_warnings": models.prediction_unit_problems(saved),
            "notice": REVIEW_NOTICE,
            "declaration_notice": HYPOTHESIS_DECLARATION_NOTICE})
     return 0
@@ -1563,7 +1568,9 @@ def cmd_hypotheses(args) -> int:
         if row is None:
             return _fail("not_found",
                           f"その仮説は保存されていません: {args.hypothesis_id}")
-        _emit({"ok": True, "hypothesis": row, "notice": REVIEW_NOTICE,
+        _emit({"ok": True, "hypothesis": row,
+               "unit_warnings": models.prediction_unit_problems(row),
+               "notice": REVIEW_NOTICE,
                "declaration_notice": HYPOTHESIS_DECLARATION_NOTICE})
         return 0
     rows, broken, _taken = store.load_all("hypotheses")

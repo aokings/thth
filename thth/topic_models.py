@@ -1669,8 +1669,38 @@ def vocabulary_impact(candidate: dict, reviews: list, *,
 # **うちの台帳に実際にある指標だけ**。予測をこの語彙で書けないものは、
 # 「いまのうちでは検証できない」（下の `UNIDENTIFIABLE`）として残す。
 # 「滞在時間」「親密度」のような**持っていない量で予測を書かせない。**
-LEDGER_METRICS = ("views", "likes", "replies", "reposts", "quotes", "shares",
-                   "clicks", "followers_count")
+# **平らな名前一覧をやめ、観測単位を持たせた**（運用指摘 2026-09-12）。
+# 元は 8 つの名前を並べただけだったので、**`views`（投稿単位）と `clicks`
+# （アカウント日次）を 1 つの予測に並べても通った。** 同じ根の間違いが
+# `thth/measured.py` の欠測判定でも出ていた（層を混ぜた期待一覧）——**元が
+# 平らな一覧であることだった**ので、ここを層のある定義にして両方を塞ぐ。
+UNIT_POST = "post"                    # 投稿単位（`insights/posts/*.ndjson`）
+UNIT_ACCOUNT_DAILY = "account_daily"  # アカウント日次（`insights/account/*.ndjson`）
+UNIT_LABELS = {UNIT_POST: "投稿単位", UNIT_ACCOUNT_DAILY: "アカウント日次"}
+
+# 指標 → **その指標が実際に取れる観測単位**（`thth/adapters/threads.py:237`
+# と `:255` が要求している metric の一覧そのもの）。
+METRIC_UNITS = {
+    "views": (UNIT_POST, UNIT_ACCOUNT_DAILY),
+    "likes": (UNIT_POST, UNIT_ACCOUNT_DAILY),
+    "replies": (UNIT_POST, UNIT_ACCOUNT_DAILY),
+    "reposts": (UNIT_POST, UNIT_ACCOUNT_DAILY),
+    "quotes": (UNIT_POST, UNIT_ACCOUNT_DAILY),
+    "shares": (UNIT_POST,),
+    "followers_count": (UNIT_ACCOUNT_DAILY,),
+    "clicks": (UNIT_ACCOUNT_DAILY,),
+}
+LEDGER_METRICS = tuple(METRIC_UNITS)
+
+# **その指標を予測に使うと、何が台帳に無いのか**。名前があることと、欲しい量が
+# あることは違う——ここを書いておかないと「検証したつもり」になれてしまう。
+METRIC_CAVEATS = {
+    "clicks": ("URL ごとの内訳（`clicks_by_url`）しか無く、**どの投稿が生んだ"
+                "クリックかは台帳にありません**——同じ URL に過去の投稿・"
+                "プロフィール欄・外部からの流入が乗ります"),
+    "followers_count": ("アカウント全体の値で、**どの投稿で増えたかは台帳に"
+                         "ありません**"),
+}
 
 # 証拠の階層（masaru の `AI協業の作法` §7・外部調査の分類に合わせた）。
 # **L1（公式）が L2（うちの実測）より上とは限らない**——「指標の定義」なら L1、
@@ -1804,6 +1834,19 @@ def build_hypothesis(row: dict) -> dict:
         metrics = prediction["metrics"]
         if not isinstance(metrics, list) or not metrics:
             raise SchemaError(f"{where} の metrics が空です")
+        units = [set(METRIC_UNITS[m]) for m in metrics if m in METRIC_UNITS]
+        if units and not set.intersection(*units):
+            # **そろう観測単位が 1 つも無い**——名前はどれもうちにあるが、
+            # **1 つの表には決して並ばない。** 警告ではなく拒否でよい
+            # （運用指摘 2026-09-12）。例: `shares`（投稿にしか無い）と
+            # `clicks`（アカウント日次にしか無い）を 1 つの予測に並べる。
+            raise SchemaError(
+                f"{where} の指標が、**同じ観測単位にそろいません**: "
+                + "・".join(f"{m}（{'／'.join(UNIT_LABELS[u] for u in METRIC_UNITS[m])}）"
+                            for m in metrics if m in METRIC_UNITS)
+                + "。**名前がうちにあることと、1 つの表に並ぶことは違います**"
+                  "——その仮説は sample_design を "
+                f"{UNIDENTIFIABLE!r} にして残してください")
         unknown = [m for m in metrics if m not in LEDGER_METRICS]
         if unknown:
             # **持っていない量で予測を書かせない**（外部調査 §9 H10）。
@@ -1825,6 +1868,46 @@ def build_hypothesis(row: dict) -> dict:
     out["schema_version"] = SCHEMA_VERSION
     out["hypothesis_id"] = content_id(out, exclude=("hypothesis_id",))
     return out
+
+
+def prediction_unit_problems(row) -> list:
+    """**予測の指標が、同じ観測単位に並んでいるか**を見る（運用指摘 2026-09-12）。
+
+    **読むだけ。保存しない。** 保存済みの仮説にも後から当てられるように、
+    `build_hypothesis()` の中ではなく独立した関数にしてある。
+
+    きっかけ: `views` が最多の投稿の URL が `clicks_by_url` でも最多になる、
+    という予測が通った。**`views` は投稿単位、`clicks` はアカウント日次×URL**
+    で、**「その投稿が生んだクリック」という量は台帳に無い。** それでも
+    `LEDGER_METRICS` が平らな名前一覧だったので、両方「うちにある指標」として
+    通っていた。
+
+    **見つけられるのは申告された `metrics` の組み合わせだけ**で、statement の
+    日本語は読んでいない。**「問題なし」は「観測可能だと確かめた」ではない。**
+    """
+    problems = []
+    for i, prediction in enumerate(row.get("predictions") or []):
+        metrics = [m for m in (prediction.get("metrics") or [])
+                   if m in METRIC_UNITS]
+        if not metrics:
+            continue
+        unit_sets = [set(METRIC_UNITS[m]) for m in metrics]
+        if len(set(map(frozenset, unit_sets))) > 1:
+            detail = "・".join(
+                f"{m}（{'／'.join(UNIT_LABELS[u] for u in METRIC_UNITS[m])}）"
+                for m in metrics)
+            common = set.intersection(*unit_sets)
+            where = (f"**どちらも {'／'.join(UNIT_LABELS[u] for u in sorted(common))}"
+                     f"で読む**のでなければ、この予測は同じ観測単位に並びません"
+                     if common else "**同じ観測単位にそろう読み方がありません**")
+            problems.append(
+                f"predictions[{i}]: 指標の観測単位が食い違っています——{detail}。"
+                f"{where}")
+        for m in metrics:
+            caveat = METRIC_CAVEATS.get(m)
+            if caveat:
+                problems.append(f"predictions[{i}]: `{m}` は{caveat}")
+    return problems
 
 
 def _require_source_date(value, precision: str, what: str) -> None:
