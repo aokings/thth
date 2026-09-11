@@ -120,28 +120,35 @@ def _finding_for(role_id, reason_id="missing_condition", note="条件が足り�
 
 
 def test_独立ケースが2件そろって初めて候補になる(isolated_account, thth_root):
-    """**1 件で仕様を動かさない**（Codex §8）。0 件と「足りない」も分ける。"""
+    """**1 件で仕様を動かさない**（Codex §8）。0 件と「足りない」も分ける。
+
+    **閾値は実運用（`provenance=production`）の `case_id` が明示された系列
+    だけで数える**（数え方の契約・再判定 R4/R5・2026-09-11 Codex）。
+    """
     vocabulary_id = _register_vocabulary()
     spec_id = _register_spec()
 
     _record(_review(vocabulary_id, draft_sha256="a" * 64, form=FORM,
-                     form_spec_id=spec_id,
+                     form_spec_id=spec_id, provenance="production",
+                     case_id="case-a",
                      findings=[_finding_for("共通の比較軸", note="時点が無い")]))
     first = _json(_thth(["topics", "improvements", "--form-spec", spec_id]))
     assert first["candidates"] == []
     assert first["not_enough_cases"][0]["independent_cases"] == 1
     assert first["minimum_independent_cases"] == 2
 
-    # **同じ原稿を 2 回数えない。**
+    # **同じ原稿（同じ系列）を 2 回数えない。** `case_id` を同じにして送る。
     _record(_review(vocabulary_id, draft_sha256="a" * 64, form=FORM,
                      form_spec_id=spec_id, judged_by={"kind": "human"},
+                     provenance="production", case_id="case-a",
                      findings=[_finding_for("共通の比較軸", note="単位が無い")]),
              by="別の人")
     still = _json(_thth(["topics", "improvements", "--form-spec", spec_id]))
     assert still["candidates"] == [], "同じ原稿 2 件を独立ケースにした"
 
     _record(_review(vocabulary_id, draft_sha256="b" * 64, form=FORM,
-                     form_spec_id=spec_id,
+                     form_spec_id=spec_id, provenance="production",
+                     case_id="case-b",
                      findings=[_finding_for("共通の比較軸", note="換算前の単位が無い")]))
     out = _json(_thth(["topics", "improvements", "--form-spec", spec_id]))
     assert len(out["candidates"]) == 1
@@ -160,9 +167,10 @@ def test_独立ケースが2件そろって初めて候補になる(isolated_acc
 def test_仕様に無い役割への指摘は名前の不一致として出す(isolated_account, thth_root):
     vocabulary_id = _register_vocabulary()
     spec_id = _register_spec()
-    for draft in ("a" * 64, "b" * 64):
+    for i, draft in enumerate(("a" * 64, "b" * 64)):
         _record(_review(vocabulary_id, draft_sha256=draft, form=FORM,
-                         form_spec_id=spec_id,
+                         form_spec_id=spec_id, provenance="production",
+                         case_id=f"case-{i}",
                          findings=[_finding_for("まとめ", note="役割名が違う")]))
     out = _json(_thth(["topics", "improvements", "--form-spec", spec_id]))
     candidate = out["candidates"][0]
@@ -185,8 +193,9 @@ def test_役割の記録が無ければどこを直すか決まらないと言�
     """**履歴があっても、役割が付いていなければ仕様の改善には使えない。**"""
     vocabulary_id = _register_vocabulary()
     spec_id = _register_spec()
-    for draft in ("a" * 64, "b" * 64):
+    for i, draft in enumerate(("a" * 64, "b" * 64)):
         _record(_review(vocabulary_id, draft_sha256=draft, form=FORM,
+                         provenance="production", case_id=f"case-{i}",
                          findings=[_finding("missing_condition", note="条件不足")]))
     candidate = _json(_thth(["topics", "improvements",
                               "--form-spec", spec_id]))["candidates"][0]
@@ -198,8 +207,9 @@ def test_候補を出しても何も書き換えない(isolated_account, thth_ro
     """Codex §12 第 2 段階「共通語彙の自動追加や profile 自動変更はしません」。"""
     vocabulary_id = _register_vocabulary()
     spec_id = _register_spec()
-    for draft in ("a" * 64, "b" * 64):
+    for i, draft in enumerate(("a" * 64, "b" * 64)):
         _record(_review(vocabulary_id, draft_sha256=draft, form=FORM,
+                         provenance="production", case_id=f"case-{i}",
                          findings=[_finding_for("共通の比較軸")]))
     before = {kind: sorted(os.listdir(os.path.join(
         thth_root, "state", "topic_advice", kind)))
@@ -266,10 +276,15 @@ def test_無関係な語彙が同じ番号を名乗っても束ねない(isolate
     other["name"] = "別系統の語彙"
     second = _register_vocabulary(other)          # supersedes は付けない＝別系統
 
+    # **見出しの `entries[0]` は語彙 v1/v2 で書き換えた `missing_condition`。**
+    # 束ねる鍵は `reason_id` の意味の指紋（定義文そのもの）なので、指摘も
+    # `missing_condition` を使う——書き換えていない `unsupported_claim` を使うと
+    # 定義文が同じままなので、**別系統でも意味が同じという別の話**になってしまう
+    # （数え方の契約・再判定 R1・2026-09-11 Codex）。
     for vocabulary_id, draft in ((first, "a" * 64), (second, "b" * 64)):
         proc = _record(dict(_review(vocabulary_id, draft_sha256=draft, form=FORM,
                                      form_spec_id=spec_id),
-                             findings=[dict(_finding("unsupported_claim",
+                             findings=[dict(_finding("missing_condition",
                                                       note="裏付けが無い"),
                                              role_id="共通の比較軸")]))
         assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -277,7 +292,8 @@ def test_無関係な語彙が同じ番号を名乗っても束ねない(isolate
     out = _json(_thth(["topics", "improvements", "--form-spec", spec_id]))
     assert out["candidates"] == [], "別系統の語彙を 1 つの候補に束ねている"
     assert len(out["not_enough_cases"]) == 2, out["not_enough_cases"]
-    roots = {c["vocabulary_lineage"] for c in out["not_enough_cases"]}
+    # `vocabulary_lineage` はいまリストで返る（系統をたどった根の集合）。
+    roots = {c["vocabulary_lineage"][0] for c in out["not_enough_cases"]}
     assert roots == {first, second}
 
 
@@ -291,13 +307,16 @@ def test_同じ系統で版が上がったものは束ねる(isolated_account, t
     nxt["supersedes"] = first                     # 同じ系統
     second = _register_vocabulary(nxt)
 
-    for vocabulary_id, draft in ((first, "a" * 64), (second, "b" * 64)):
+    for i, (vocabulary_id, draft) in enumerate(
+            ((first, "a" * 64), (second, "b" * 64))):
         _record(dict(_review(vocabulary_id, draft_sha256=draft, form=FORM,
-                              form_spec_id=spec_id),
+                              form_spec_id=spec_id, provenance="production",
+                              case_id=f"case-{i}"),
                       findings=[dict(_finding("unsupported_claim", note="裏付け無し"),
                                       role_id="共通の比較軸")]))
 
     out = _json(_thth(["topics", "improvements", "--form-spec", spec_id]))
     assert len(out["candidates"]) == 1, out
     assert out["candidates"][0]["independent_cases"] == 2
-    assert out["candidates"][0]["vocabulary_lineage"] == first
+    # `vocabulary_lineage` はいまリストで返る（系統をたどった根の集合）。
+    assert out["candidates"][0]["vocabulary_lineage"] == [first]

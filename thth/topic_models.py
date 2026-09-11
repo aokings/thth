@@ -518,7 +518,7 @@ REVIEW_OPTIONAL = ("context_id", "article_id", "profile_version", "section",
                    # **検収履歴から改善案を出すのに要る線**（§12 第 2 段階）。
                    # どの型・どの版・どの役割についての指摘かが残っていないと、
                    # **履歴はあっても仕様の改善には使えない。**
-                   "form", "form_spec_id", "provenance")
+                   "form", "form_spec_id", "provenance", "case_id")
 FINDING_KEYS = ("reason_id", "check_method", "result", "evidence_refs", "note")
 
 
@@ -605,6 +605,12 @@ def build_review(row: dict, *, vocabulary: dict,
             "（直したことは、正しくなったことではありません）")
     if "provenance" in row:
         _require_choice(row["provenance"], PROVENANCE, "provenance")
+    if "case_id" in row and (not isinstance(row["case_id"], str)
+                              or not row["case_id"].strip()):
+        # **独立性は推測できない**（再判定 R5・2026-09-11 Codex）。指紋が違う
+        # ことは別の事例であることではない（同じ原稿の改訂かもしれない）。
+        # **人が「これは別の事例だ」と言った**ときだけ独立として数える。
+        raise SchemaError("case_id は空でない文字列（原稿の系列の名前）")
     for key in ("recheck_of", "supersedes", "carried_from"):
         value = row.get(key)
         if value is not None and (not isinstance(value, str)
@@ -805,6 +811,9 @@ REVIEW_SHAPE = {
         "carried_from": "**指摘を新しい版へ持ち越したとき**に前の review_id を指す"
                          "（原稿の指紋が違う。処置の更新でも再検査でもない）",
         "form": "この原稿の型（front-matter の form。**旧語彙ならそのまま**）",
+        "case_id": "**原稿の系列の名前**（任意）。指紋が違うことは別の事例で"
+                    "あることではない（同じ原稿の改訂かもしれない）ので、"
+                    "**独立した事例として数えるにはこれが要る**",
         "provenance": list(PROVENANCE) + [
             "**試験のために書かれた原稿への指摘を、実運用の傾向に数えない**"
             "ため。書かなければ unknown（＝本番ではない）"],
@@ -1187,6 +1196,37 @@ def draft_series(reviews: list) -> dict:
     return {draft: find(draft) for draft in parent}
 
 
+def _meaning_fingerprint(entry: dict) -> str:
+    """理由の**意味そのもの**から決まる指紋（再判定 R1・2026-09-11 Codex）。
+
+    > 番号が同じでも意味の同一性は証明されていない。
+
+    版の番号は語彙ごとに独立して採番されるうえ、**同じ系統で番号を据え置いた
+    まま定義を書き換える**こともできる。だから番号でも系統でもなく、
+    **定義・含む例・含まない例そのもの**から指紋を作って束ねる。
+    文言が変われば別として扱う（**取りこぼすより、混ぜないほうを選ぶ**）。
+    """
+    return content_id({
+        "reason_id": entry.get("reason_id"),
+        "meaning_version": entry.get("meaning_version"),
+        "definition": entry.get("definition"),
+        "includes": entry.get("includes"),
+        "excludes": entry.get("excludes"),
+    })
+
+
+def _role_fingerprint(spec: dict | None, role_id) -> str | None:
+    """役割の意味から決まる指紋。**型側も版の番号だけで同一視しない**（R1）。"""
+    if spec is None or role_id is None:
+        return None
+    for role in spec.get("roles") or []:
+        if role.get("role_id") == role_id:
+            return content_id({"role_id": role_id,
+                                "description": role.get("description"),
+                                "evidence_required": role.get("evidence_required")})
+    return None
+
+
 def improvement_candidates(reviews: list, *, spec: dict,
                             vocabularies: dict | None = None,
                             form_specs: dict | None = None,
@@ -1196,15 +1236,16 @@ def improvement_candidates(reviews: list, *, spec: dict,
     **ここで仕様も語彙も profile も書き換えない。** 出すのは候補と、その根拠に
     なった検収記録の ID だけ。採否は §8 の手順（shadow・独立確認・masaru）。
 
-    **再検収（2026-09-11 Codex）で 2 つ直した。**
+    **数え方は 3 度直っている。**
 
-    - **F5**: 語彙を解決せずに `reason_id` の文字列だけで束ねていたので、
-      **同じ ID で意味を変えた v1 と v2 の記録が 1 つの候補に混ざった。**
-      語彙が読めない記録も、そのまま根拠に数えていた（`review` の側には
-      `unsupported` があるのに、こちらは通っていた）。いまは**意味の版まで
-      含めて束ね、解決できない記録は候補に数えず名前で出す。**
-    - **F6**: 独立ケースを原稿の指紋で数えていたので、**1 本の原稿の修正前後が
-      独立 2 件**になった。いまは `draft_series()` の系列で数える。
+    - **F5/F6（再検収）**: 語彙を解決せず文字列だけで束ねていた／1 本の原稿の
+      修正前後を独立 2 件と数えていた。
+    - **R1〜R5（再判定・2026-09-11 Codex）**:
+      **番号が同じでも意味が同じとは限らない**ので定義そのものの指紋で束ねる／
+      **指定された型の仕様が読めない**のを「元から未指定」と同じ None に
+      落としていたので分ける／**試作が実運用の候補成立に加算されていた**ので
+      閾値は実運用だけで数える／**線の無い版を独立 2 件と判定していた**ので、
+      独立は `case_id` が明示されたときだけにする。
     """
     vocabularies = vocabularies or {}
     form_specs = form_specs or {}
@@ -1216,13 +1257,21 @@ def improvement_candidates(reviews: list, *, spec: dict,
     for review in mine:
         vocabulary = vocabularies.get(review.get("vocabulary_id"))
         if vocabulary is None:
-            # **読めない意味を根拠にしない**（A05 と同じ線）。0 件にも丸めない。
             unresolved.append({"review_id": review.get("review_id"),
                                 "reason": "この記録の語彙を解決できません"
                                            f"（{review.get('vocabulary_id')}）"})
             continue
-        spec_version = (form_specs.get(review.get("form_spec_id")) or {}).get(
-            "meaning_version")
+        spec_ref = review.get("form_spec_id")
+        resolved_spec = None
+        if spec_ref:
+            resolved_spec = form_specs.get(spec_ref)
+            if resolved_spec is None:
+                # **「指定があるのに読めない」を「元から未指定」と同じにしない**
+                # （R2）。読めないものを候補の母数に入れない。
+                unresolved.append({
+                    "review_id": review.get("review_id"),
+                    "reason": f"指定された型の仕様を解決できません（{spec_ref}）"})
+                continue
         for finding in review.get("findings") or []:
             if finding.get("result") not in ("problem", "suspected"):
                 continue
@@ -1233,40 +1282,47 @@ def improvement_candidates(reviews: list, *, spec: dict,
                     "review_id": review.get("review_id"),
                     "reason": f"理由 {reason_id!r} がこの記録の語彙にありません"})
                 continue
-            # **版の番号は語彙ごとに独立して採番される**（逆監査 2026-09-11）。
-            # 系統（`supersedes` をたどった根）を鍵に入れないと、**無関係な
-            # 2 つの語彙が同じ番号を名乗っただけで 1 つの候補にまとまる。**
-            vocabulary_id = review.get("vocabulary_id")
-            root = (lineage or {}).get(vocabulary_id, vocabulary_id)
-            key = (reason_id, entry.get("meaning_version"), root,
-                   finding.get("role_id"), spec_version)
-            row = groups.setdefault(key, {"series": set(), "drafts": set(),
-                                           "review_ids": [], "notes": [],
-                                           "provenance": {}})
+            role_id = finding.get("role_id")
+            key = (reason_id, _meaning_fingerprint(entry), role_id,
+                   _role_fingerprint(resolved_spec, role_id))
+            row = groups.setdefault(key, {
+                "series": set(), "drafts": set(), "review_ids": [], "notes": [],
+                "provenance": {}, "case_ids": set(), "unlinked": set(),
+                "lineage": set()})
             draft = review.get("draft_sha256")
+            source = review.get("provenance") or "unknown"
             row["series"].add(series.get(draft, draft))
             row["drafts"].add(draft)
             row["review_ids"].append(review["review_id"])
-            source = review.get("provenance") or "unknown"
             row["provenance"][source] = row["provenance"].get(source, 0) + 1
+            row["lineage"].add((lineage or {}).get(review.get("vocabulary_id"),
+                                                    review.get("vocabulary_id")))
+            if source == "production":
+                # **閾値は実運用だけで数える**（R4）。試作は消さずに別枠。
+                if review.get("case_id"):
+                    row["case_ids"].add(review["case_id"])
+                else:
+                    row["unlinked"].add(series.get(draft, draft))
             if finding.get("note"):
                 row["notes"].append(finding["note"])
 
     candidates, not_yet = [], []
-    for (reason_id, meaning_version, root, role_id, spec_version), row in sorted(
-            groups.items(), key=lambda kv: (-len(kv[1]["series"]),
-                                             str(kv[0][0]), str(kv[0][3]))):
+    for (reason_id, meaning, role_id, role_fp), row in sorted(
+            groups.items(), key=lambda kv: (-len(kv[1]["case_ids"]),
+                                             str(kv[0][0]), str(kv[0][2]))):
+        confirmed = len(row["case_ids"])
         entry = {
-            "reason_id": reason_id, "meaning_version": meaning_version,
-            # **どの語彙の系統の話か**（逆監査 2026-09-11）。番号は語彙ごとに
-            # 独立して採番されるので、系統を言わないと「版が同じ」が意味を持たない。
-            "vocabulary_lineage": root,
-            "role_id": role_id, "form_spec_meaning_version": spec_version,
-            "independent_cases": len(row["series"]),
+            "reason_id": reason_id, "meaning": meaning,
+            "vocabulary_lineage": sorted(row["lineage"]),
+            "role_id": role_id, "role_meaning": role_fp,
+            # **明示された系列の数だけが「独立事例」。**
+            "independent_cases": confirmed,
+            "confirmed_case_ids": sorted(row["case_ids"]),
+            # **線が無い版**。数えはするが、閾値の証拠にはしない（R5）。
+            "unlinked_versions": len(row["unlinked"]),
             "draft_versions": len(row["drafts"]),
             "review_ids": sorted(row["review_ids"]),
             "notes": row["notes"],
-            # **試作由来と実運用を混ぜて数えない**（運用セッションの申し出）。
             "provenance": dict(sorted(row["provenance"].items())),
             "role_known": role_id in known_roles if role_id else None,
         }
@@ -1275,6 +1331,10 @@ def improvement_candidates(reviews: list, *, spec: dict,
                 "**根拠に実運用の検収が 1 件もありません**"
                 f"（{dict(sorted(row['provenance'].items()))}）。"
                 "試験のために書かれた原稿の癖を、全体の傾向として読まないこと")
+        elif len(row["provenance"]) > 1:
+            entry["representativeness"] = (
+                f"実運用以外の記録が混ざっています（{entry['provenance']}）。"
+                "**閾値には実運用だけを数えています。**")
         if role_id and role_id not in known_roles:
             entry["suggestion"] = (
                 f"仕様に無い役割 {role_id!r} に指摘が付いています。"
@@ -1296,28 +1356,32 @@ def improvement_candidates(reviews: list, *, spec: dict,
                 f"{reason_id} が繰り返しています。役割が記録されていないので、"
                 f"**どこを直せば防げるかがこの履歴からは決まりません**"
                 f"（検収に `role_id` を付けると束ねられます）")
-        if len(row["series"]) < MIN_INDEPENDENT_CASES \
-                and len(row["drafts"]) > len(row["series"]):
-            entry["note_on_counting"] = (
-                f"版は {len(row['drafts'])} 件ありますが、**改訂・再検査の線で"
-                f"つながっているので同じ事例**として数えました")
-        (candidates if len(row["series"]) >= MIN_INDEPENDENT_CASES
+        if confirmed < MIN_INDEPENDENT_CASES:
+            entry["why_not_yet"] = (
+                f"**独立した事例が {confirmed} 件です**"
+                f"（実運用で `case_id` を名乗った系列の数）。"
+                + (f"ほかに線の無い版が {len(row['unlinked'])} 件ありますが、"
+                   f"**別の原稿なのか同じ原稿の改訂なのかを記録から言えない**ので、"
+                   f"独立とは数えていません（`case_id` を付けてください）"
+                   if row["unlinked"] else "")
+                + ("／試作・出自不明の記録は閾値に数えません"
+                   if set(row["provenance"]) - {"production"} else ""))
+        (candidates if confirmed >= MIN_INDEPENDENT_CASES
          else not_yet).append(entry)
 
     return {
         "form": spec["form"], "form_spec_id": spec.get("form_spec_id"),
         "state": spec.get("state"),
         "candidates": candidates,
-        # **「まだ足りない」を 0 件と言わない。**
         "not_enough_cases": not_yet,
-        # **解決できなかった記録を、無かったことにしない。**
         "unresolved_records": unresolved,
         "minimum_independent_cases": MIN_INDEPENDENT_CASES,
         "provenance": provenance_tally(mine),
         "notice": "**候補です。** 仕様も語彙も profile も書き換えていません。"
-                   "採否は独立確認のあと（構想書 §8）。意味の版が違う記録は"
-                   "束ねていません。",
+                   "採否は独立確認のあと（構想書 §8）。**閾値は実運用の記録だけ**で"
+                   "数え、**独立は `case_id` が明示されたときだけ**数えます。",
     }
+
 
 
 def provenance_tally(reviews: list) -> dict:
@@ -1326,6 +1390,10 @@ def provenance_tally(reviews: list) -> dict:
     区別する手段が無いと、**次に実運用の検収が入った瞬間に、試作と混ざって
     見分けがつかなくなる。** 印が付く前の記録は `unknown`——
     **`unknown` を「本番」と読まない。**
+
+    （2026-09-11: `improvement_candidates()` を書き直したときに、この関数ごと
+    消してしまっていた。呼ぶ側が別モジュールから当て木をしていたのを、
+    元に戻した。**当て木は消す。**）
     """
     out = {}
     for review in reviews:

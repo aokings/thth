@@ -1147,15 +1147,24 @@ def _recent_reviews(account: str, args) -> int:
     unreviewed_history = []
     if now_sha is not None:
         applies = [r for r in mine if models.review_applies_to(r, now_sha)]
-        carried = {r.get("carried_from") for r in applies}
+        # **持ち越し先の review_id ごとに、持ち越し元を集める**（再判定 R3・
+        # 2026-09-11 Codex）。以前は `carried_from` が指す旧記録を丸ごと
+        # `unreviewed_history` から外していたが、**「持ち越した」のは新版の
+        # 検収が扱った指摘 1 件だけ**で、旧記録に付いた他の指摘（未確認のまま）
+        # まで一緒に消えていた。**対応を証明できない限り旧レビューは履歴に
+        # 残す**——除外の代わりに `carried_by` で印を付けるだけにする。
+        carried_by = {}
+        for r in applies:
+            source = r.get("carried_from")
+            if source:
+                carried_by.setdefault(source, []).append(r["review_id"])
         for review in mine:
             if models.review_applies_to(review, now_sha):
                 continue
             if review.get("disposition") not in ("deferred", "unresolved"):
                 continue
-            if review["review_id"] in carried:
-                continue          # 現版へ持ち越し済み（もう applies の側にいる）
-            unreviewed_history.append({
+            by = sorted(carried_by.get(review["review_id"], []))
+            entry = {
                 "review_id": review["review_id"],
                 "draft_sha256": review.get("draft_sha256"),
                 "disposition": review.get("disposition"),
@@ -1163,7 +1172,19 @@ def _recent_reviews(account: str, args) -> int:
                                 for f in review.get("findings") or []],
                 "note": "**旧版の記録です。** 現版に当たるかは確かめていません"
                          "——持ち越すなら `carried_from` で新しい版へ記録して"
-                         "ください"})
+                         "ください"}
+            if by:
+                # **忘れられているわけではないが、これだけで安心はできない。**
+                # `carried_from` は 1 件の指摘の対応を示すだけで、この記録の
+                # 指摘全部が確認されたとは限らない（reason_id だけの一致では
+                # 同じ理由の複数段・別の対象範囲を区別できない）。
+                entry["carried_by"] = by
+                entry["note"] = ("**旧版の記録です。** このうち一部の指摘は"
+                                  f"新しい版へ持ち越されています（`carried_by`"
+                                  f": {', '.join(by)}）。**それ以外の指摘まで"
+                                  "確認済みとは限らないので、この記録ごと"
+                                  "履歴に残しています。**")
+            unreviewed_history.append(entry)
         mine = applies
     mine.sort(key=lambda r: r.get("judged_at") or "", reverse=True)
 
