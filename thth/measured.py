@@ -62,14 +62,51 @@ import re
 from . import accounts as accounts_mod
 from . import queuefile as queuefile_mod
 
-# **期待する指標名の一覧**（運用指摘 2026-09-12）。台帳の全行を通して 1 度も
-# 現れない名前を `missing_metrics` に出す。`clicks` は実装の穴で一度も記録
-# されていなかった（2026-09-12 に修正済み）——この一覧はその再発を見つける
-# ためのもの。**0 と混ぜない**のが要点（規約 12: 判らないものを判らないと言う）。
-EXPECTED_METRIC_NAMES = (
-    "views", "likes", "replies", "reposts", "quotes", "shares", "clicks",
-    "followers_count",
+# **期待する指標名の一覧**（運用指摘 2026-09-12）。台帳の行を通して 1 度も
+# 現れない名前を出す。`clicks` は実装の穴で一度も記録されていなかった
+# （2026-09-12 に修正済み）——この一覧はその再発を見つけるためのもの。
+# **0 と混ぜない**のが要点（規約 12: 判らないものを判らないと言う）。
+#
+# **層ごとに分ける**（運用指摘 2026-09-12・2 度目）。最初は 1 つの一覧に
+# まとめ、投稿単位とアカウント日次の**両方の行を 1 つの集合に混ぜて**突き
+# 合わせていた。**が、そもそも取れる指標が層ごとに違う。**
+#
+#   - 投稿単位（`thth/adapters/threads.py:237`）は `shares` を持つが
+#     `clicks`・`followers_count` を**持てない**
+#   - アカウント日次（同 `:255`）は `clicks`・`followers_count` を持つが
+#     `shares` を**持てない**
+#
+# 混ぜた集合で判定すると、**片方の層でその指標が 1 度も採れていなくても、
+# もう片方の層に出ていれば「欠けていない」になる。** 運用が見つけたのは
+# 「`clicks` が無いのに『欠けている指標: 無し』と出る」形だが、**逆向き
+# （投稿の `views` が 1 件も無いのに、日次に `views` があるので隠れる）
+# のほうが重い。** 層をまたいで数えない。
+#
+# **キー名も変えた**（`missing_metrics` → 層ごとの 2 つ）。名前を残すと、
+# 古い読み手が**黙って**通ってしまう。壊れて気づくほうがよい（規約 5）。
+POST_METRIC_NAMES = ("views", "likes", "replies", "reposts", "quotes", "shares")
+ACCOUNT_DAILY_METRIC_NAMES = (
+    "views", "likes", "replies", "reposts", "quotes", "followers_count", "clicks",
 )
+
+
+def _row_missing(metrics, expected) -> list:
+    """**その 1 行に無い指標の名前**（運用指摘 2026-09-12・3 度目）。
+
+    台帳全体の「1 度も現れていない」だけでは足りない。**採取の版が上がると、
+    翌日から入った指標が、前日の欠測を隠す。**
+
+    実例: `clicks` を採れるようにした修正が VM に降りたのが 00:08:24。
+    その日の日次採取は asmon 00:03:12・nigamilab 00:05:14・kopicha 00:08:32
+    ——**kopicha だけが 8 秒差で間に合った。** 日次は日付ごとに 1 度しか採らない
+    （`thth/collect.py:332`）ので、**asmon と nigamilab の 2026-09-11 の
+    `clicks` は永久に欠測**。翌日ぶんには入るので、**全体の判定では隠れる。**
+
+    行に欄が無いだけなので値 `0` と混ざる心配は薄いが、**「欄が無い＝採る前の
+    版だった」と読める手段**が要る。それがこれ。
+    """
+    have = set((metrics or {}).keys())
+    return [m for m in expected if m not in have]
 
 
 def _read_ndjson(path: str) -> tuple[list, bool]:
@@ -170,8 +207,18 @@ def load(account_name: str) -> dict:
         採れた・2026-09-12 運用セッション観測。逆に 29 秒足りずに 1 周期
         ずれたこともある）。**「6h の値」と丸めて読まない。** 判断には
         `age_hours` の実値を使うこと。
-      - `missing_metrics`: 1 度も現れていない指標の名前（他 account の行を
-        含めずに判定する）。
+      - `missing_post_metrics`: **投稿単位の台帳で** 1 度も現れていない指標の
+        名前（他 account の行を含めずに判定する）。
+      - `missing_account_daily_metrics`: **アカウント日次の台帳で** 1 度も
+        現れていない指標の名前。**日次の台帳が 1 本も無ければ `None`**——
+        「欠けている」ではなく「採っていないので判らない」。空配列（台帳は
+        あるが欠けは無い）と混ぜない。
+        **層をまたいで数えない**（取れる指標が層ごとに違う。`shares` は投稿
+        にしか無く、`clicks`・`followers_count` はアカウントにしか無い）。
+      - 上の 2 つは「**1 度も**現れていない」の判定なので、**採取の版が上がる
+        と、翌日から入った指標が前日の欠測を隠す。** そこで `posts[].rows[]` と
+        `account_daily[]` の**各行にも `missing`**（その行に無い指標の名前）を
+        付ける。`_row_missing()` の docstring に実例がある。
 
     読むだけ。何も書かない。
     """
@@ -184,7 +231,10 @@ def load(account_name: str) -> dict:
     broken: list = []
     posts: list = []
     unknown_posts: list = []
-    seen_metric_names: set = set()
+    # **層をまたいで数えない。** 投稿単位で見た指標名と、アカウント日次で見た
+    # 指標名を別々に持つ（上の一覧の説明を参照）。
+    seen_post_metrics: set = set()
+    seen_daily_metrics: set = set()
 
     if os.path.isdir(posts_dir):
         for name in sorted(os.listdir(posts_dir)):
@@ -238,7 +288,7 @@ def load(account_name: str) -> dict:
             _mark_collapsed(own_rows)
             own_rows.sort(key=lambda r: r.get("collected_at") or "")
             for row in own_rows:
-                seen_metric_names.update((row.get("metrics") or {}).keys())
+                seen_post_metrics.update((row.get("metrics") or {}).keys())
 
             first = own_rows[0]
             posts.append({
@@ -258,12 +308,19 @@ def load(account_name: str) -> dict:
                         "marks": row.get("marks"),
                         "marks_collapsed": row.get("marks_collapsed", False),
                         "metrics": row.get("metrics"),
+                        # **この行に無い指標**（採取の版が上がる前の行かどうかが
+                        # 読める）。全体の判定では翌日の行に隠される。
+                        "missing": _row_missing(row.get("metrics"), POST_METRIC_NAMES),
                     }
                     for row in own_rows
                 ],
             })
 
     account_daily: list = []
+    # **日次の台帳が 1 本も無いのと、あるのに指標が欠けているのは違う。**
+    # 1 本も無いなら「欠けている」と言わない——採っていないので、欠けて
+    # いるかどうかも判らない（壊れと不存在を混ぜないのと同じ理由）。
+    daily_files_seen = 0
     # **アカウント日次はファイル名そのものが根拠**（`thth/collect.py` の
     # `_collect_account_daily()` が `<account>-<年月>.ndjson` で書く）。
     # 一致しないファイルは他 account と判っているので、不明にはせず、ただ除く。
@@ -274,6 +331,7 @@ def load(account_name: str) -> dict:
                 continue
             if not daily_name_re.match(name):
                 continue
+            daily_files_seen += 1
             rows, is_broken = _read_ndjson(os.path.join(account_daily_dir, name))
             if is_broken:
                 broken.append(name)
@@ -285,10 +343,18 @@ def load(account_name: str) -> dict:
                 broken.append(name)
                 continue
             for row in rows:
-                seen_metric_names.update((row.get("metrics") or {}).keys())
-                account_daily.append({"date": row.get("date"), "metrics": row.get("metrics")})
+                seen_daily_metrics.update((row.get("metrics") or {}).keys())
+                account_daily.append({
+                    "date": row.get("date"), "metrics": row.get("metrics"),
+                    "missing": _row_missing(row.get("metrics"),
+                                            ACCOUNT_DAILY_METRIC_NAMES),
+                })
 
-    missing_metrics = [m for m in EXPECTED_METRIC_NAMES if m not in seen_metric_names]
+    missing_post_metrics = [m for m in POST_METRIC_NAMES if m not in seen_post_metrics]
+    # 台帳が 1 本も無ければ `None`（「欠けている」ではなく「判らない」）。
+    missing_daily_metrics = (
+        [m for m in ACCOUNT_DAILY_METRIC_NAMES if m not in seen_daily_metrics]
+        if daily_files_seen else None)
 
     posts.sort(key=lambda p: p["post_id"])
     unknown_posts.sort()
@@ -300,5 +366,8 @@ def load(account_name: str) -> dict:
         "posts_unknown_ownership": unknown_posts,
         "account_daily": account_daily,
         "broken": sorted(broken),
-        "missing_metrics": missing_metrics,
+        "missing_post_metrics": missing_post_metrics,
+        # **`None` は「欠けていない」ではなく「日次の台帳が 1 本も無いので
+        # 判らない」。** 空配列（＝台帳はあり、欠けは無い）と混ぜないこと。
+        "missing_account_daily_metrics": missing_daily_metrics,
     }

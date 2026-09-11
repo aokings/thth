@@ -805,13 +805,48 @@ def cmd_measured(args) -> int:
             mark_text = " ⚠同居" if row.get("marks_collapsed") else ""
             metrics = row.get("metrics") or {}
             metrics_text = " ".join(f"{k}={v}" for k, v in metrics.items())
+            # **この行に無い指標**（2026-09-12・運用指摘 3 度目）。全体の
+            # 「1 度も現れていない」判定では、**翌日の行が前日の欠測を隠す。**
+            row_missing = row.get("missing") or []
+            missing_text = ("  ⚠この行に無い: " + ", ".join(row_missing)
+                            if row_missing else "")
             print(f"  {row.get('collected_at', '')}  経過={age_text}"
-                  f"  marks={row.get('marks')}{mark_text}  {metrics_text}")
+                  f"  marks={row.get('marks')}{mark_text}  {metrics_text}"
+                  f"{missing_text}")
+        print("")
+
+    # **アカウント日次も出す**（運用指摘 2026-09-12・2 度目）。これまで人向け
+    # 出力は日次を 1 行も表示していなかったのに、**「欠けている指標」の判定には
+    # その日次を使っていた。画面に出ないデータを根拠に「無し」と言っていた。**
+    daily = result["account_daily"]
+    if daily:
+        print(f"アカウント日次 {len(daily)} 日分")
+        for row in daily:
+            metrics = row.get("metrics") or {}
+            row_missing = row.get("missing") or []
+            missing_text = ("  ⚠この日に無い: " + ", ".join(row_missing)
+                            if row_missing else "")
+            print(f"  {row.get('date')}  "
+                  + " ".join(f"{k}={v}" for k, v in metrics.items())
+                  + missing_text)
         print("")
 
     print(f"—— 投稿 {len(posts)} 件")
-    missing = result["missing_metrics"]
-    print("欠けている指標: " + (", ".join(missing) if missing else "無し"))
+    # **層ごとに出す。** 取れる指標が層ごとに違う（`shares` は投稿にしか無く、
+    # `clicks`・`followers_count` はアカウントにしか無い）ので、混ぜて数えると
+    # **片方の層で 1 度も採れていないものが、もう片方に出ていれば隠れる。**
+    missing_posts = result["missing_post_metrics"]
+    print("欠けている指標（投稿単位）: "
+          + (", ".join(missing_posts) if missing_posts else "無し"))
+    missing_daily = result["missing_account_daily_metrics"]
+    if missing_daily is None:
+        # **「欠けている」と言わない。** 採っていないので、欠けているかどうかも
+        # 判らない（不存在と欠測を混ぜない）。
+        print("欠けている指標（アカウント日次）: **日次の台帳がありません**"
+              "（採っていないので、欠けているかどうかも判りません）")
+    else:
+        print("欠けている指標（アカウント日次）: "
+              + (", ".join(missing_daily) if missing_daily else "無し"))
     broken = result["broken"]
     print("**読めなかったファイル**: " + (", ".join(broken) if broken else "無し"))
 

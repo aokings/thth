@@ -131,10 +131,15 @@ def test_刻みが同居している行に印が付く(isolated_account):
         "単独の刻みにまで印が付いている——「n 点測った」の n を水増しする"
 
 
-def test_一度も現れていない指標がmissing_metricsに出る(isolated_account):
-    """`clicks` を含まない台帳では `missing_metrics` に `clicks` が出る。
+def test_一度も現れていない指標が層ごとに出る(isolated_account):
+    """`shares` を含まない投稿台帳では `missing_post_metrics` に `shares` が出る。
     値として `0` と混ぜてはいけない——実際に `0` として記録された指標は
-    missing に出てはいけない。"""
+    missing に出てはいけない。
+
+    **`clicks` をここで期待しない**（2026-09-12・運用指摘 2 度目）。`clicks` は
+    **アカウント日次にしか無い指標**で、投稿単位の台帳には原理的に現れない
+    （`thth/adapters/threads.py:237` と `:255`）。混ぜて数えると、**片方の層で
+    1 度も採れていないものが、もう片方に出ていれば隠れる。**"""
     _write_ndjson(_insight_path(isolated_account), [
         {"post_id": "POST1", "file": "POST1.md", "topic": None,
          "account": isolated_account["name"],
@@ -144,17 +149,21 @@ def test_一度も現れていない指標がmissing_metricsに出る(isolated_a
 
     result = measured_mod.load(isolated_account["name"])
 
-    assert "clicks" in result["missing_metrics"], "1 度も現れていない指標が出ていない"
-    assert "views" not in result["missing_metrics"], "現れている指標を欠けたことにしている"
-    assert "replies" not in result["missing_metrics"], \
+    assert "shares" in result["missing_post_metrics"], "1 度も現れていない指標が出ていない"
+    assert "views" not in result["missing_post_metrics"], "現れている指標を欠けたことにしている"
+    assert "replies" not in result["missing_post_metrics"], \
         "0 として記録された指標を『無い』と混ぜている"
-    assert all(isinstance(m, str) for m in result["missing_metrics"]), \
-        "missing_metrics は名前の一覧であって、値（0 等）と混ぜてはいけない"
+    assert all(isinstance(m, str) for m in result["missing_post_metrics"]), \
+        "missing_post_metrics は名前の一覧であって、値（0 等）と混ぜてはいけない"
+    assert "clicks" not in result["missing_post_metrics"], \
+        "投稿単位に原理的に存在しない指標を、投稿の欠測として数えている"
+    assert result["missing_account_daily_metrics"] is None, \
+        "日次の台帳が 1 本も無いのに『欠けている』と言っている（不存在と欠測を混ぜない）"
 
 
 def test_clicksが0として記録されていればmissingに出ない(isolated_account):
     """（上のテストの裏）実際に `clicks: 0` を記録した account では、
-    `clicks` は `missing_metrics` に出ない——『無い』と『0 だった』を混同しない。"""
+    `clicks` は日次の missing に出ない——『無い』と『0 だった』を混同しない。"""
     _write_ndjson(_account_daily_path(isolated_account), [
         {"account": isolated_account["name"], "date": "2026-09-09",
          "collected_at": "2026-09-10T00:05:00+09:00",
@@ -163,7 +172,9 @@ def test_clicksが0として記録されていればmissingに出ない(isolated
 
     result = measured_mod.load(isolated_account["name"])
 
-    assert "clicks" not in result["missing_metrics"]
+    assert "clicks" not in result["missing_account_daily_metrics"]
+    assert result["missing_account_daily_metrics"] is not None, \
+        "台帳があるのに『判らない』と言っている（空配列と None を混ぜない）"
 
 
 def test_壊れたndjsonを実測0件と言わない(isolated_account):
@@ -230,7 +241,10 @@ def test_アカウント日次も出る(isolated_account):
     result = measured_mod.load(isolated_account["name"])
 
     assert result["account_daily"] == [
-        {"date": "2026-09-09", "metrics": {"views": 100, "followers_count": 5}}]
+        {"date": "2026-09-09", "metrics": {"views": 100, "followers_count": 5},
+         # **その日に無い指標**。台帳全体の「1 度も現れていない」判定は、
+         # 翌日の行が前日の欠測を隠すので、行ごとにも出す（2026-09-12）。
+         "missing": ["likes", "replies", "reposts", "quotes", "clicks"]}]
 
 
 def test_別accountの行が混ざらない(isolated_account_factory, tmp_path):
@@ -258,12 +272,12 @@ def test_別accountの行が混ざらない(isolated_account_factory, tmp_path):
     result_a = measured_mod.load(account_a["name"])
 
     assert [p["post_id"] for p in result_a["posts"]] == ["POST_A"]
-    assert "shares" not in result_a["missing_metrics"], \
+    assert "shares" not in result_a["missing_post_metrics"], \
         "自分の account の実測から集めた指標のはず"
     result_b = measured_mod.load(account_b["name"])
     assert [p["post_id"] for p in result_b["posts"]] == ["POST_B"]
-    assert "shares" in result_b["missing_metrics"], \
-        "他 account（A）の shares が B の missing_metrics 判定に混ざっている"
+    assert "shares" in result_b["missing_post_metrics"], \
+        "他 account（A）の shares が B の欠測判定に混ざっている"
 
 
 def test_CLIがjsonでloadと同じものを返す(isolated_account, capsys):
@@ -303,7 +317,11 @@ def test_CLIの人向け出力は同居に印をつけ欠けている指標を�
     assert rc == 0
     assert "⚠同居" in captured.out, "刻みが同居している行に目で分かる印が無い"
     assert "25.0h" in captured.out, "age_hours は小数 1 桁まで出す約束"
-    assert "clicks" in captured.out, "missing_metrics は必ず出す約束"
+    assert "欠けている指標（投稿単位）" in captured.out, \
+        "欠けている指標を層ごとに出す約束（混ぜると片方の層の欠測が隠れる）"
+    assert "shares" in captured.out, "投稿単位の欠測が出ていない"
+    assert "日次の台帳がありません" in captured.out, \
+        "日次を採っていないのに『欠けている指標: 無し』で済ませている"
     assert "無し" in captured.out, "broken は空でも『無し』と出す約束"
     assert "所有不明: 無し" in captured.out, \
         "所有不明が無いときも、その旨を出す約束（R3）"
@@ -352,13 +370,14 @@ def test_共有repoでも所有accountだけを根拠付きで選別する(isola
          "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
          "marks": [1], "metrics": {"views": 1}},
     ])
-    # B の投稿にだけ clicks が付いている——A の missing_metrics から
-    # clicks が消えてはいけない（外部レビュー再現の核心）。
+    # B の投稿にだけ shares が付いている——A の投稿単位の欠測から shares が
+    # 消えてはいけない（外部レビュー再現の核心）。**`clicks` は投稿単位には
+    # 原理的に無い**ので、ここでは日次の層で同じことを確かめる。
     _write_ndjson(_insight_path(account_b, post_id="B_POST"), [
         {"post_id": "B_POST", "file": "B_POST.md", "topic": "B のトピック",
          "account": "account-b",
          "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
-         "marks": [1], "metrics": {"clicks": 9}},
+         "marks": [1], "metrics": {"shares": 9}},
     ])
 
     # 日次: ファイル名に account が刻まれている（`thth/collect.py` の
@@ -377,15 +396,19 @@ def test_共有repoでも所有accountだけを根拠付きで選別する(isola
     assert [p["post_id"] for p in result_a["posts"]] == ["A_POST"], \
         "B の投稿が A の出力に混ざっている"
     assert result_a["account_daily"] == [
-        {"date": "2026-09-10", "metrics": {"views": 1}}], \
+        {"date": "2026-09-10", "metrics": {"views": 1},
+         "missing": ["likes", "replies", "reposts", "quotes",
+                     "followers_count", "clicks"]}], \
         "B の日次（clicks 9）が A の日次に混ざっている"
-    assert "clicks" in result_a["missing_metrics"], \
-        "B の clicks が A の missing_metrics から消えている——A は一度も clicks を記録していない"
+    assert "shares" in result_a["missing_post_metrics"], \
+        "B の shares が A の投稿単位の欠測から消えている——A は一度も shares を記録していない"
+    assert "clicks" in result_a["missing_account_daily_metrics"], \
+        "B の日次の clicks が A の日次の欠測から消えている"
 
     result_b = measured_mod.load("account-b")
     assert [p["post_id"] for p in result_b["posts"]] == ["B_POST"]
-    assert "views" in result_b["missing_metrics"], \
-        "A の views が B の missing_metrics 判定に混ざっている"
+    assert "views" in result_b["missing_post_metrics"], \
+        "A の views が B の欠測判定に混ざっている"
 
 
 def test_所有を決められない投稿台帳は不明として分けられる(isolated_account_factory, tmp_path):
@@ -423,7 +446,7 @@ def test_所有を決められない投稿台帳は不明として分けられ�
         "所有不明を区別して出す約束（消えたことにしない）"
     assert all(p["post_id"] != "GHOST_POST" for p in result_b["posts"]), \
         "所有不明を『他 account のものではない』ことを理由に B にも混ぜてはいけない"
-    assert "reposts" in result_a["missing_metrics"], \
+    assert "reposts" in result_a["missing_post_metrics"], \
         "所有不明の投稿の指標を A の実測に数えてしまっている"
 
 
@@ -646,3 +669,68 @@ def test_1つの台帳に2つのaccountの行が同居したら壊れとして�
         "壊れを『不明』に混ぜている（読めない ≠ 判らない）"
     assert "CONFLICT.ndjson" in result_a["broken"], \
         "信用できない台帳を壊れとして出していない"
+
+
+def test_翌日に入った指標が前日の欠測を隠さない(isolated_account):
+    """**採取の版が上がると、全体の判定では前日の穴が見えなくなる**
+    （運用指摘 2026-09-12・3 度目）。
+
+    実例: `clicks` を採れるようにした修正が VM に降りたのが 00:08:24。その日の
+    日次採取は asmon 00:03:12・nigamilab 00:05:14・kopicha 00:08:32——
+    **kopicha だけが 8 秒差で間に合った。** 日次は日付ごとに 1 度しか採らない
+    （`thth/collect.py:332`）ので、**間に合わなかった account の 9/11 の
+    `clicks` は永久に欠測**。だが翌日ぶんには入るので、「1 度も現れていない」
+    という全体の判定からは**消える**。
+
+    **行ごとの `missing` がその穴を残す。**
+    """
+    _write_ndjson(_account_daily_path(isolated_account), [
+        # 修正が降りる前に採った日（`clicks` の欄が無い）
+        {"account": isolated_account["name"], "date": "2026-09-11",
+         "collected_at": "2026-09-12T00:03:12+09:00",
+         "metrics": {"views": 100, "likes": 3, "replies": 1,
+                     "reposts": 0, "quotes": 0, "followers_count": 5}},
+        # 降りた後に採った日（`clicks` が入っている）
+        {"account": isolated_account["name"], "date": "2026-09-12",
+         "collected_at": "2026-09-13T00:03:12+09:00",
+         "metrics": {"views": 120, "likes": 4, "replies": 1,
+                     "reposts": 0, "quotes": 0, "followers_count": 6,
+                     "clicks": 3}},
+    ])
+
+    result = measured_mod.load(isolated_account["name"])
+
+    assert result["missing_account_daily_metrics"] == [], \
+        "全体の判定では欠測が無いように見える——これが隠す側"
+    by_date = {r["date"]: r for r in result["account_daily"]}
+    assert by_date["2026-09-11"]["missing"] == ["clicks"], \
+        "翌日に入った指標が、前日の欠測を隠している"
+    assert by_date["2026-09-12"]["missing"] == [], \
+        "揃っている日に欠測があることにしている"
+
+
+def test_行ごとの欠測が人向け出力に出る(isolated_account, capsys):
+    """隠れた穴は、画面にも出なければ意味がない。"""
+    from thth import cli as cli_mod
+
+    _write_ndjson(_account_daily_path(isolated_account), [
+        {"account": isolated_account["name"], "date": "2026-09-11",
+         "collected_at": "2026-09-12T00:03:12+09:00",
+         "metrics": {"views": 100, "likes": 3, "replies": 1,
+                     "reposts": 0, "quotes": 0, "followers_count": 5}},
+        {"account": isolated_account["name"], "date": "2026-09-12",
+         "collected_at": "2026-09-13T00:03:12+09:00",
+         "metrics": {"views": 120, "likes": 4, "replies": 1,
+                     "reposts": 0, "quotes": 0, "followers_count": 6,
+                     "clicks": 3}},
+    ])
+
+    args = argparse.Namespace(account=isolated_account["name"], post=None, json=False)
+    rc = cli_mod.cmd_measured(args)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "アカウント日次 2 日分" in out, "日次が人向け出力に出ていない"
+    assert "⚠この日に無い: clicks" in out, "その日に無い指標が画面に出ていない"
+    assert "欠けている指標（アカウント日次）: 無し" in out, \
+        "全体の判定はこの台帳では『無し』のはず（だから行ごとが要る）"
