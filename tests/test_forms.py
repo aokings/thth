@@ -69,8 +69,31 @@ def test_実測がまだ無いことを隠さない():
     assert any("未検証" in line for line in data["guidance"])
 
 
-def test_分けないで済むなら分けないが先頭にある():
-    assert "無理に分割しない" in forms.GUIDANCE[0]
+def test_判断の基準が先頭にある():
+    """**分けるかどうかを決める問いは 1 つ**（masaru 2026-09-11）。
+
+    以前は「無理に分割しない」を先頭に置いていたが、**それは編集の話だけ**
+    だった。動機は信号・演出・編集の 3 つあり、**どれで分けても同じ問いに
+    答える必要がある。**
+    """
+    assert "1 段目で止まった人にとっても有益か" in forms.GUIDANCE[0]
+    assert "演じているだけ" in forms.GUIDANCE[0]
+
+
+def test_引っぱってよいものと駄目なものを分ける():
+    """**続きが気になるのは本物の効果**（masaru 2026-09-11）。
+
+    禁じるのは引っぱること自体ではなく、**留保を引っぱること**。
+    """
+    rule = next(g for g in forms.GUIDANCE if "引っぱって" in g)
+    assert "引っぱってよいのは答え" in rule
+    assert "本物の効果" in rule
+
+
+def test_信号は動機だが未検証と書く():
+    rule = next(g for g in forms.GUIDANCE if "信号" in g)
+    assert "未検証" in rule
+    assert "伸びるらしい" in rule
 
 
 def test_計測は足さない割らない(thth_root):
