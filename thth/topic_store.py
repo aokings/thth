@@ -190,8 +190,18 @@ def get(kind: str, record_id: str) -> dict | None:
 
 
 def _usable_observation(row: dict) -> bool:
-    """観測として使える最低限があるか。**検査を足す前の記録の掃除用。**"""
-    return bool(row.get("topic")) and bool(row.get("retrieved_at")) \
+    """観測として使える最低限があるか。**検査を足す前の記録の掃除用。**
+
+    **`normalized_topic` しか無い記録も救う**（2026-09-11）。検査を足す前に
+    asmon 関東セッションが残した `中学受験` の観測が、`topic` を持たず
+    `normalized_topic` だけ持っていた。**ログイン状態のブラウザで実際に見てきた、
+    唯一のトピック観測**だったのに、こちらの掃除で丸ごと捨てていた。
+
+    照合には正規化語を使うので、**これで緩むものは無い。**
+    「使えない」と「形が古い」を混同しない。
+    """
+    return bool(row.get("topic") or row.get("normalized_topic")) \
+        and bool(row.get("retrieved_at")) \
         and row.get("search_mode") in models.SEARCH_MODE
 
 

@@ -1064,3 +1064,24 @@ def test_検査を持つ層がすべて空で断る():
                    models.build_profile):
         with pytest.raises(models.SchemaError):
             build({})
+
+
+def test_正規化語しか持たない古い観測を捨てない(thth_root):
+    """**「使えない」と「形が古い」を混同しない**（2026-09-11）。
+
+    検査を足す前に残された `中学受験` の観測が `topic` を持たず
+    `normalized_topic` だけ持っていた。**ログイン状態のブラウザで実際に見てきた
+    唯一のトピック観測**だったのに、掃除で丸ごと捨てていた。
+    """
+    row = {"normalized_topic": "中学受験", "query": "中学受験",
+           "search_mode": "topic_tag", "provider": "browser",
+           "retrieved_at": datetime.datetime.now().astimezone().isoformat(),
+           "samples": [{"post_id": "p", "excerpt": "x",
+                         "author_key": "manamanaty79"}],
+           "schema_version": models.SCHEMA_VERSION, "submitted_by": "関東"}
+    row["observation_id"] = models.content_id(row, exclude=("observation_id",))
+    store.put("observations", row, id_key="observation_id")
+
+    rows, broken = store.load_all("observations")
+    assert broken == [], "実際に見てきた観測を捨てた"
+    assert rows[0]["normalized_topic"] == "中学受験"
