@@ -711,3 +711,23 @@ def test_stale_contextは直し方を言う(isolated_account, thth_root):
                            {"article": article, "proposal": proposal}).stdout)
     assert out["status"] == "stale_context"
     assert "context_id を" in out["warnings"][-1], out["warnings"]
+
+
+def test_形が違うと断るときも正しい形を返す(isolated_account):
+    """**断るときこそ、次にできることを渡す。**
+
+    項目の名指しはしていたが、値域は `topic_models.py` を読むまで分からず、
+    関東セッションはソースを読みに行った。
+    """
+    path = write_queue_file(isolated_account["queue_dir"], "sh.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    proc = _run(["topics", "suggest", path, "--input-json-stdin"],
+                 {"article": {"url": "https://example.test/coffee",
+                               "title": "t", "content_text": "本文",
+                               "fetched_at": "2026-09-11T09:00:00+09:00"}})
+    assert proc.returncode == 2, proc.stdout
+    out = json.loads(proc.stdout)
+    assert "requested_url" in out["error"]["message"]
+    shape = out["expected_schema"]["ArticleEvidence"]
+    assert set(shape) >= set(models.ARTICLE_KEYS), shape
+    assert "full" in shape["coverage"]

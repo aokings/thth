@@ -102,10 +102,22 @@ def _action(kind: str, topic, reason: str, schema: str) -> dict:
 
 
 def _fail(code: str, message: str) -> int:
+    # **形が違うと言うときは、正しい形も返す**（asmon 関東セッション報告
+    # 2026-09-11）。項目の名指しはしていたが、値域は `topic_models.py` を
+    # 読むまで分からなかった。**断るときこそ、次にできることを渡す。**
+    schema = {}
+    for name, shape in (("ArticleEvidence", advice.ARTICLE_SHAPE),
+                         ("TopicProposal", advice.PROPOSAL_SHAPE)):
+        if name in message:
+            schema.update(shape)
+    if not schema and "記事" in message:
+        schema.update(advice.ARTICLE_SHAPE)
+    if not schema and ("候補比較" in message or "candidates" in message):
+        schema.update(advice.PROPOSAL_SHAPE)
     _emit({"schema_version": models.SCHEMA_VERSION, "ok": False, "status": None,
            "context_id": None, "account": None, "selected_topic": None,
            "candidates": [], "required_actions": [], "warnings": [],
-           "shortfalls": [], "notice": advice.NOTICE,
+           "shortfalls": [], "expected_schema": schema, "notice": advice.NOTICE,
            "error": {"code": code, "message": message}})
     return 2
 
