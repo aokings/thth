@@ -117,7 +117,8 @@ def build(out_dir: str) -> dict:
                           "url": f"https://eval.example/p/{topic}-{i}",
                           "posted_at": now.isoformat(timespec="seconds"),
                           "excerpt": excerpt if i == 0 else f"{topic} の話 {i}",
-                          "language": "ja", "author_key": f"a{i % authors}"}
+                          "language": "ja", "author_key": f"a{i % authors}",
+                          "tagged": True}
                          for i in range(samples)],
             "coverage": {"pages": 1, "fetched": samples, "has_more": False},
             "note": note, "provenance": "tool_observed",

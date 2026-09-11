@@ -965,7 +965,7 @@ def test_投稿者を数えられないことを偏りと言わない():
     """
     obs = make_observation("コーヒー", samples=1, authors=1)
     obs["samples"] = [{"post_id": "p", "excerpt": "x", "author": "だれか",
-                        "posted_at": obs["retrieved_at"]}]
+                        "posted_at": obs["retrieved_at"], "tagged": True}]
     result = evaluate([candidate("コーヒー", ids(1))], [obs], selected="コーヒー")
     reason = [s for s in result["shortfalls"] if "投稿者" in s]
     assert reason, result["shortfalls"]
@@ -1287,3 +1287,67 @@ def test_取り下げの表示も正規化語を拾う(thth_root, isolated_accou
     warning = next(w for w in out["warnings"] if "取り下げられた観測" in w)
     assert "中学受験" in warning, warning
     assert "（語なし）" not in warning, warning
+
+
+# ===========================================================================
+# トピック頁には「そのタグを付けていない投稿」も並ぶ
+# （nigamilab セッション発見 2026-09-11）
+# ===========================================================================
+
+def test_タグを確かめていない投稿例は数えない():
+    """**頁に出ていることは、その語を使っている証拠にならない。**
+
+    > `料理` の最近タブに出た 14 件のうちラベルが付いていたのは 3 件だけで、
+    > しかも `今夜は豚汁`・`土井善晴の和食` という**別のトピック**でした。
+    > **`料理` のラベルが付いた投稿は 1 件もありません。**
+
+    こちらが `topic_tag` として保存した観測は、**頁に出ていたことしか
+    確かめていない。** そのまま数えると過大になる。
+    """
+    obs = make_observation("コーヒー", samples=3, authors=3)
+    for sample in obs["samples"]:
+        sample.pop("tagged")            # 昔の観測（確かめていない）
+    result = evaluate([candidate("コーヒー", ids(1))], [obs], selected="コーヒー")
+    assert result["status"] == "provisional", result
+    assert any("投稿例が 0 件" in s for s in result["shortfalls"]), result["shortfalls"]
+    assert any("確かめていません" in w for w in result["warnings"]), result["warnings"]
+
+
+def test_確かめた投稿例だけを数える():
+    obs = make_observation("コーヒー", samples=4, authors=4)
+    obs["samples"][0]["tagged"] = False     # 本文一致だった
+    obs["samples"][1].pop("tagged")         # 確かめていない
+    result = evaluate([candidate("コーヒー", ids(1))], [obs], selected="コーヒー")
+    assert result["status"] == "provisional", result
+    hit = [s for s in result["shortfalls"] if "投稿例" in s]
+    assert hit and "2 件" in hit[0], result["shortfalls"]
+
+
+def test_全部確かめてあれば推奨になる():
+    """**過剰に塞いでいないこと。**"""
+    result = evaluate([candidate("コーヒー", ids(1))],
+                       [make_observation("コーヒー", samples=3, authors=3)],
+                       selected="コーヒー")
+    assert result["status"] == "recommended", result
+
+
+def test_topic_tagの観測はtaggedを書かないと保存できない(isolated_account, thth_root):
+    """**保存のときに言う**（あとから数え直すより早い）。"""
+    obs = _fresh_observation()
+    for sample in obs["samples"]:
+        sample.pop("tagged", None)
+    proc = _run(["topics", "observe", "--json-stdin", "--by", "t"], obs)
+    assert proc.returncode == 2, proc.stdout
+    message = json.loads(proc.stdout)["error"]["message"]
+    assert "tagged" in message
+    assert "ラベル" in message
+
+
+def test_keywordの観測にはtaggedを求めない(isolated_account, thth_root):
+    """タグの利用例を数える条件には**そもそも入らない**ので。"""
+    obs = _fresh_observation()
+    obs["search_mode"] = "keyword"
+    for sample in obs["samples"]:
+        sample.pop("tagged", None)
+    proc = _run(["topics", "observe", "--json-stdin", "--by", "t"], obs)
+    assert proc.returncode == 0, proc.stdout

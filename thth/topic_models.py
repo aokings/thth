@@ -164,6 +164,19 @@ def build_observation(row: dict) -> dict:
                 f"samples[{i}] に author_key がありません。"
                 f"**投稿者はここで数えます**（`author` では数えません）——"
                 f"偏りを見るための非可逆な識別子で足ります")
+        # **その投稿が本当にそのトピックを付けているか**（nigamilab
+        # セッション発見 2026-09-11）。トピック頁には**タグ付き・別タグ・
+        # 本文一致**が混ざる。頁に出ていることは、**その語を使っている証拠に
+        # ならない。** 名前の右にラベルが出ているかで判る。
+        if row["search_mode"] == "topic_tag" and "tagged" not in sample:
+            raise SchemaError(
+                f"samples[{i}] に tagged がありません。"
+                f"**トピック頁には、そのタグを付けていない投稿も並びます**"
+                f"（別のタグ・本文やハッシュタグの一致）。名前の右に"
+                f"`› <語>` のラベルが出ているかを見て、"
+                f"`tagged: true/false` を書いてください")
+        if "tagged" in sample and not isinstance(sample["tagged"], bool):
+            raise SchemaError(f"samples[{i}] の tagged は true/false")
     if row["status"] == "ok" and not row["samples"]:
         raise SchemaError(
             "status が ok なのに samples が空です。"

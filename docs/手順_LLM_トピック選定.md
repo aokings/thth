@@ -150,13 +150,29 @@ thth topics retract <observation_id> --reason "投稿者が author_key でなか
 | `provider` | `browser` / `threads_api` / `legacy_note` |
 | `retrieved_at` | ISO 8601・timezone 必須 |
 | `status` | `ok` `empty` `permission_denied` `unavailable` `rate_limited` `partial` |
-| `samples` | 投稿の `post_id` `url` `posted_at` `excerpt` `language` **`author_key`** |
+| `samples` | 投稿の `post_id` `url` `posted_at` `excerpt` `language` **`author_key`** **`tagged`** |
 | `coverage` | 見たページ数・取れた件数・`has_more`（不明は `null`） |
 | `note` | 気づいたこと。**判定は混ぜない** |
 
 **投稿者は `author_key` で数えます**（`author` では数えません）。偏りを見るための
 非可逆な識別子で足ります。**`status: ok` なら `samples` が要ります**——取得できて
 0 件だったなら `empty` です。**0 件は「人がいない」ではありません。**
+
+**`tagged` は必須です**（`search_mode: topic_tag` のとき）。
+
+> `料理` の最近タブに出た 14 件のうちラベルが付いていたのは 3 件だけで、
+> しかも `今夜は豚汁`・`土井善晴の和食` という**別のトピック**でした。
+> **`料理` のラベルが付いた投稿は 1 件もありません。**
+> （nigamilab セッション 2026-09-11）
+
+**頁に出ていることは、その語を使っている証拠になりません。** 名前の右に
+`› <語>` のラベルが出ているかを見て、1 件ずつ `tagged: true/false` を書いて
+ください。**`tagged` が無い標本は「投稿例 3 件・投稿者 3 人」に数えません。**
+
+**ラベル＝タグであることは確かめてあります**（2026-09-11）: THTH が API で
+`topic_tag` を付けた nigamilab の 2 本は、いずれも名前の右にラベルが出ました。
+**同じトピックの頁でもラベルは省かれません**（`中学受験` の頁に並んだ
+`koba8007` の投稿に `› 中学受験` が出ていました）。
 
 ### TopicProposal（候補比較）
 

@@ -286,10 +286,25 @@ def _has_more(observation: dict):
     return coverage.get("has_more")
 
 
+def _tagged_samples(observation: dict) -> list:
+    """**本当にそのトピックを付けている投稿だけ**（nigamilab セッション発見
+    2026-09-11）。
+
+    トピック頁には**タグ付き・別のタグ・本文やハッシュタグの一致**が混ざる。
+    実例: `料理` の頁に並んだ 14 件のうちラベルが付いていたのは 3 件だけで、
+    しかも `今夜は豚汁`・`土井善晴の和食` という**別のトピック**だった。
+    **`料理` のタグが付いた投稿は 1 件も無かった。**
+
+    **`tagged` を書いていない標本は数えない**（fail-closed）。以前の観測は
+    頁に出ていたことしか確かめていないので、**そのまま数えると過大になる。**
+    """
+    return [s for s in (observation.get("samples") or [])
+            if isinstance(s, dict) and s.get("tagged") is True]
+
+
 def _authors(observations: list) -> set:
     return {s.get("author_key") for obs in observations
-            for s in (obs.get("samples") or [])
-            if isinstance(s, dict) and s.get("author_key")}
+            for s in _tagged_samples(obs) if s.get("author_key")}
 
 
 def evaluate(context: dict, *, article: dict | None, proposal: dict | None,
@@ -550,8 +565,15 @@ def _shortfalls(context: dict, chosen: dict, observations: dict, *, now) -> tupl
                          f"（参照しているのは別のトピックの観測です）"))
         return out, notes
 
-    samples = sum(len(r.get("samples") or []) for r in exact)
+    samples = sum(len(_tagged_samples(r)) for r in exact)
+    untagged = sum(len(r.get("samples") or []) - len(_tagged_samples(r))
+                    for r in exact)
     authors = _authors(exact)
+    if untagged:
+        notes.append(
+            f"参照した観測のうち {untagged} 件の投稿例は、**そのトピックを"
+            f"付けているか確かめていません**（`tagged` が無い）。"
+            f"数に入れていません")
 
     # **プラットフォームがそれしか出さなかったのか、こちらが見なかったのか**を
     # 区別して言う（asmon 関東セッション報告 2026-09-11: ログイン状態の実
@@ -611,7 +633,12 @@ OBSERVATION_SHAPE = {
                       "language": "ja 等",
                       "author_key": "**投稿者はここで数えます**（`author` では"
                                      "数えません）。偏りを見るための非可逆な"
-                                     "識別子で足ります"}],
+                                     "識別子で足ります",
+                      "tagged": "**その投稿が本当にそのトピックを付けているか**"
+                                 "（true/false）。名前の右に `› <語>` の"
+                                 "ラベルが出ているかで判る。**トピック頁には"
+                                 "別のタグ・本文一致も並ぶので、頁に出ている"
+                                 "ことは証拠にならない**"}],
         "coverage": {"pages": "見たページ数", "fetched": "取れた件数",
                       "has_more": "まだ続きがあるか（不明は null）"},
         "note": "気づいたこと（**判定は混ぜない**）",

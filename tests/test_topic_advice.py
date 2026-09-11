@@ -38,11 +38,14 @@ def make_article(*, text=ARTICLE_TEXT, status="ok", coverage="full"):
 
 
 def make_observation(topic, *, mode="topic_tag", status="ok", authors=3,
-                     samples=3, age_days=0, excerpt="今日のコーヒーの精製の話"):
+                     samples=3, age_days=0, excerpt="今日のコーヒーの精製の話",
+                     tagged=True):
     at = (NOW - datetime.timedelta(days=age_days)).isoformat()
     rows = [{"post_id": f"p{i}", "url": f"https://example.test/p{i}",
              "posted_at": at, "excerpt": excerpt, "language": "ja",
-             "author_key": f"a{i % authors}"} for i in range(samples)]
+             "author_key": f"a{i % authors}",
+             # **その投稿が本当にそのタグを付けているか**（既定は確認済み）。
+             "tagged": tagged} for i in range(samples)]
     return {
         "topic": topic, "normalized_topic": topic,
         "query": topic, "search_mode": mode, "provider": "browser",
