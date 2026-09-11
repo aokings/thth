@@ -11,6 +11,8 @@ import re
 import subprocess
 import sys
 
+import pytest
+
 from thth import bundle, forms, threadrun
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -23,10 +25,14 @@ def test_軸が構成と導線に分かれている():
     「列挙」「問い→答え」は構成、「誘導」は目的。別々に記録すると
     「問い→答え × 記事へ」と「列挙 × 記事へ」を並べられる。
     """
-    assert set(forms.FORMS) == {"単発", "比較", "列挙", "問い→答え", "手順"}
+    assert set(forms.FORMS) == {
+        "単発", "概要→実用詳細", "体験→再現方法", "困り事→理由→行動",
+        "具体例→解釈→応用", "比較→条件→選択", "列挙"}
     assert set(forms.OUTLETS) == {"記事へ", "別投稿へ", "無し"}
     # **目的の語が構成に混ざっていない。**
     assert "誘導" not in forms.FORMS
+    # **各段が何を渡すか**が名前に入っている（文章の形ではなく）。
+    assert all("→" in name or name in ("単発", "列挙") for name in forms.FORMS)
 
 
 def test_分ける理由として挙げた型は分類できる():
@@ -41,12 +47,45 @@ def test_分ける理由として挙げた型は分類できる():
     reasons = doc.split("分ける理由になるもの:")[1].split("分ける理由にならない")[0]
     for word in ("比較", "段階的"):
         assert word in reasons, reasons
-    # 「比較」で書いたものを「比較」と分類できる。
-    assert forms.label_error("比較", "記事へ") is None
+    # 「比較」で書いたものを分類できる。
+    assert forms.label_error("比較→条件→選択", "記事へ") is None
+
+
+def test_旧語彙は新語彙を名指しで教える():
+    """**3 セッションが 3 本とも `問い→答え` を選んだ**（2026-09-11）。
+
+    中身も狙いも違う 3 本が同じ箱に落ちた——**分類が何も分けていなかった。**
+    語彙を入れ替えたので、**旧語彙で書いた人に新しい語を名指しで渡す。**
+    """
+    err = forms.label_error("問い→答え", "記事へ")
+    assert "旧語彙です" in err
+    assert "困り事→理由→行動" in err
+    assert forms.FORM_MIGRATION["手順"] == "概要→実用詳細"
+    assert forms.FORM_MIGRATION["比較"] == "比較→条件→選択"
+
+
+def test_profileで使わない型を宣言できる():
+    """**流行っているからで編集方針が溶けない**（masaru 裁定 2026-09-11）。"""
+    assert forms.label_error("体験→再現方法", "記事へ") is None
+    err = forms.label_error("体験→再現方法", "記事へ",
+                             avoid_forms=["体験→再現方法"])
+    assert "使わないと profile に宣言" in err
+    # 宣言していない型は通る。
+    assert forms.label_error("困り事→理由→行動", "記事へ",
+                              avoid_forms=["体験→再現方法"]) is None
+
+
+def test_連投にする前の5つの問いがある():
+    """**「記事 URL があるから連投」にしないための関門**（Codex §8）。"""
+    assert len(forms.BEFORE_YOU_SPLIT) == 5
+    assert "単発に収まらず" in forms.BEFORE_YOU_SPLIT[1]
+    assert "各段で何を一つずつ渡すか" in forms.BEFORE_YOU_SPLIT[2]
+    assert "何が不明か" in forms.BEFORE_YOU_SPLIT[3]
+    assert "結論と対象読者" in forms.BASE_SHAPE
 
 
 def test_知らない語は通さない():
-    assert forms.label_error("問い→答え", "記事へ") is None
+    assert forms.label_error("困り事→理由→行動", "記事へ") is None
     assert "知らない語" in forms.label_error("問いと答え", "記事へ")
     assert "知らない語" in forms.label_error("列挙", "きじへ")
     # 書かなくてよい（承認対象ではない）。
@@ -126,8 +165,8 @@ def test_未公開の段は測りようがないと分かる(thth_root):
 
 def test_ラベルの綴り違いをlintが断る():
     from tests.test_bundle import FM, BODY, make, account_cfg
-    b = bundle.parse_text(make(FM.replace("form: 問い→答え", "form: 問いと答え")),
-                           "b.md")
+    b = bundle.parse_text(
+        make(FM.replace("form: 困り事→理由→行動", "form: 問いと答え")), "b.md")
     errors = bundle.check(b, account_cfg=account_cfg())
     assert any("form: 知らない語" in e for e in errors), errors
 
@@ -138,7 +177,7 @@ def test_formsコマンドが動く():
     proc = subprocess.run([sys.executable, BIN, "forms"], capture_output=True,
                            text=True, env=dict(os.environ))
     assert proc.returncode == 0, proc.stderr
-    assert "問い→答え" in proc.stdout
+    assert "困り事→理由→行動" in proc.stdout
     assert "未検証" in proc.stdout
     assert "到達人数" in proc.stdout        # やってはいけないことも出る
 
@@ -175,10 +214,10 @@ def test_語彙が増えたら版が上がる():
     語彙を足したのに版が据え置きだと、**前後の実測が同じ分類で測られたように
     見える。** `比較` を足して .2、`numbering` を足して .3。
     """
-    assert forms.VOCABULARY_VERSION == "2026-09-11.3"
-    row = forms.label_record(form="比較", outlet="記事へ", numbering="なし",
-                              at="2026-09-11T12:00:00+09:00")
-    assert row["vocabulary_version"] == "2026-09-11.3"
+    assert forms.VOCABULARY_VERSION == "2026-09-11.4"
+    row = forms.label_record(form="比較→条件→選択", outlet="記事へ",
+                              numbering="なし", at="2026-09-11T12:00:00+09:00")
+    assert row["vocabulary_version"] == "2026-09-11.4"
     assert row["numbering"] == "なし"
 
 
@@ -189,8 +228,8 @@ def test_番号の有無を記録できる():
     どちらが効くかは実測が無いので、**欄を作って残す。**
     """
     assert set(forms.NUMBERING) == {"あり", "なし"}
-    assert forms.label_error("問い→答え", "記事へ", "なし") is None
-    assert "知らない語" in forms.label_error("問い→答え", "記事へ", "無し")
+    assert forms.label_error("困り事→理由→行動", "記事へ", "なし") is None
+    assert "知らない語" in forms.label_error("困り事→理由→行動", "記事へ", "無し")
 
 
 def test_名乗ったラベルと本文の食い違いは警告まで():
@@ -202,3 +241,64 @@ def test_名乗ったラベルと本文の食い違いは警告まで():
     assert warn.startswith("warning:") and "見つかりません" in warn
     warn = forms.numbering_warning("なし", ["1/2 問い。", "答え。"])
     assert warn.startswith("warning:") and "含まれています" in warn
+
+
+def test_profileのavoid_formsを検査する(thth_root):
+    """**知らない型を宣言させない**（綴り違いで制限が効かなくなる）。"""
+    from thth import topic_models as models
+
+    base = {"account": "a", "language": "ja", "primary_goal": "article_visits",
+            "editorial_scope": "x", "intended_interests": ["x"],
+            "avoid_misrepresentation": ["x"], "status": "provisional",
+            "confirmed_by": "t", "basis": []}
+    ok = models.build_profile(dict(base, avoid_forms=["体験→再現方法"]))
+    assert ok["avoid_forms"] == ["体験→再現方法"]
+
+    with pytest.raises(models.SchemaError) as e:
+        models.build_profile(dict(base, avoid_forms=["体験型"]))
+    assert "知らない型" in str(e.value)
+
+    with pytest.raises(models.SchemaError):
+        models.build_profile(dict(base, avoid_forms="体験→再現方法"))
+
+    # **書かなくてよい**（既存の profile を壊さない）。
+    assert "avoid_forms" not in models.build_profile(dict(base))
+
+
+def test_宣言した型はlintで止まる(tmp_path, isolated_account, thth_root):
+    """**流行っているからで編集方針が溶けない。**"""
+    from tests.test_bundle import FM, BODY, account_cfg
+    from thth import bundle as bundle_mod
+    from thth import topic_models as models
+    from thth import topic_store
+
+    account = isolated_account["name"]
+    profile = models.build_profile({
+        "account": account, "language": "ja", "primary_goal": "article_visits",
+        "editorial_scope": "x", "intended_interests": ["x"],
+        "avoid_misrepresentation": ["体験を創作しない"], "status": "confirmed",
+        "confirmed_by": "t", "basis": ["docs/方針.md"],
+        "avoid_forms": ["体験→再現方法"]})
+    topic_store.set_profile(profile)
+
+    text = (FM.replace("nigamilab-threads", account)
+            .replace("form: 困り事→理由→行動", "form: 体験→再現方法"))
+    b = bundle_mod.parse_text(f"---\n{text}---\n{BODY}", "b.md")
+    errors = bundle_mod.check(b, account_cfg=account_cfg())
+    assert any("使わないと profile に宣言" in e for e in errors), errors
+
+    # 宣言していない型は通る。
+    ok = bundle_mod.parse_text(
+        f"---\n{FM.replace('nigamilab-threads', account)}---\n{BODY}", "b.md")
+    assert bundle_mod.check(ok, account_cfg=account_cfg()) == []
+
+
+def test_profileが無ければ制限しない(tmp_path, isolated_account, thth_root):
+    """**分類ラベルのために公開の手前で止まるのは重すぎる**（fail-safe）。"""
+    from tests.test_bundle import FM, BODY, account_cfg
+    from thth import bundle as bundle_mod
+
+    text = (FM.replace("nigamilab-threads", isolated_account["name"])
+            .replace("form: 困り事→理由→行動", "form: 体験→再現方法"))
+    b = bundle_mod.parse_text(f"---\n{text}---\n{BODY}", "b.md")
+    assert bundle_mod.check(b, account_cfg=account_cfg()) == []

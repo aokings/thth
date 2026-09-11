@@ -14,7 +14,7 @@ publish_at: 2026-09-15T19:00:00+09:00
 continue_until: 2026-09-15T20:00:00+09:00
 status: draft
 topic: コーヒー
-form: 問い→答え
+form: 困り事→理由→行動
 outlet: 記事へ
 posts:
   - index: 1

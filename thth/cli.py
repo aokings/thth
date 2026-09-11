@@ -1032,6 +1032,12 @@ def cmd_forms(args) -> int:
     for name, note in data["numbering"].items():
         print(f"    {name} — {note}")
     print("")
+    print(f"  【記事 URL を付けるときの基本案】{data['base_shape']}")
+    print("")
+    print("  【連投にすると決める前に、これに答える】")
+    for i, line in enumerate(data["before_you_split"], start=1):
+        print(f"    {i}. {line}")
+    print("")
     print("  【選び方】")
     for line in data["guidance"]:
         print(f"    ・{line}")

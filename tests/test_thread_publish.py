@@ -87,7 +87,7 @@ def bundle_text(*, segments=None, status="approved", publish_at=None,
     fm = (f"thth: 2\naccount: {account}\npublish_at: {publish_at}\n"
           f"continue_until: {continue_until}\nstatus: {status}\n"
           f"approved_sha: {sha}\napproved_by: テスト\ntopic: {topic}\n"
-          f"form: 問い→答え\noutlet: 記事へ\n"
+          f"form: 困り事→理由→行動\noutlet: 記事へ\n"
           + (f"revoked_at: {revoked_at}\n" if revoked_at else "")
           + f"posts:\n{posts_text}")
     return f"---\n{fm}---\n# 経緯\n\nメモ。\n\n## threads\n\n{body}\n"
@@ -911,7 +911,7 @@ def test_公開時のラベルが記録される(thread_account, thth_root):
     results = publish(thread_account, adapter, max_posts=1)
     run = threadrun.load(results[0].run_id)
     labels = run["posts"][0]["labels"]
-    assert labels["form"] == "問い→答え"
+    assert labels["form"] == "困り事→理由→行動"
     assert labels["outlet"] == "記事へ"
     assert labels["vocabulary_version"] == forms.VOCABULARY_VERSION
     assert labels["at"]

@@ -297,6 +297,9 @@ def validate_proposal(row: dict, *, article: dict, known_observation_ids: set,
 PROFILE_KEYS = ("account", "language", "primary_goal", "editorial_scope",
                 "intended_interests", "avoid_misrepresentation", "status",
                 "confirmed_by", "basis")
+# 任意の項目（既存の profile を壊さない）。`avoid_forms` は
+# **その account が使わないと決めた連投の型**（masaru 裁定 2026-09-11）。
+PROFILE_OPTIONAL = ("avoid_forms",)
 
 
 def _known_refs_hint(topic, known_topics: dict | None) -> str:
@@ -337,6 +340,17 @@ def build_profile(row: dict) -> dict:
     """
     _require(row, PROFILE_KEYS, "profile")
     _require_choice(row["primary_goal"], PRIMARY_GOAL, "primary_goal")
+    # **使わない型の宣言**（任意・masaru 裁定 2026-09-11）。
+    # 既存の profile を壊さないため必須にしない。
+    if "avoid_forms" in row:
+        from . import forms as forms_mod
+        if not isinstance(row["avoid_forms"], list):
+            raise SchemaError("avoid_forms は配列です")
+        unknown = [f for f in row["avoid_forms"] if f not in forms_mod.FORMS]
+        if unknown:
+            raise SchemaError(
+                f"avoid_forms に知らない型があります: {unknown}。"
+                f"使えるのは: {'・'.join(forms_mod.FORMS)}")
     _require_choice(row["status"], PROFILE_STATUS, "status")
     if not row.get("confirmed_by"):
         raise SchemaError("confirmed_by が要ります（誰が確認したか）")

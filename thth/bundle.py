@@ -286,7 +286,8 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
     # 綴り違いが別の型として増えると比較にならない。
     from . import forms as forms_mod
     label_err = forms_mod.label_error(fm.get("form"), fm.get("outlet"),
-                                       fm.get("numbering"))
+                                       fm.get("numbering"),
+                                       avoid_forms=_avoid_forms(fm.get("account")))
     if label_err is not None:
         errors.append(label_err)
     number_warn = forms_mod.numbering_warning(fm.get("numbering"), segments)
@@ -294,6 +295,22 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
         errors.append(number_warn)
 
     return errors
+
+
+def _avoid_forms(account) -> list:
+    """その account が「使わない」と宣言した型（設計 §8.3・masaru 裁定）。
+
+    **profile が無い・読めないときは制限しない**（fail-safe）——分類ラベルの
+    ために公開の手前で止まるのは重すぎる。
+    """
+    if not account:
+        return []
+    try:
+        from . import topic_store
+        profile = topic_store.get_profile(account)
+    except Exception:
+        return []
+    return list((profile or {}).get("avoid_forms") or [])
 
 
 def check_posts(bundle: Bundle, segments: list) -> list:
@@ -321,8 +338,9 @@ def check_posts(bundle: Bundle, segments: list) -> list:
         if i > 1 and post.get("topic"):
             errors.append(
                 f"posts[{i}]: {i} 段目に topic が指定されています。"
-                f"**初版では未対応です**（API が併用を許すかは未確認）。"
-                f"先頭の段だけに付けてください")
+                f"**初版では未対応です。** 画面では返信にもトピックが付いて"
+                f"いますが（2026-09-11 に実物を確認）、**API で同じことが"
+                f"できるかは未確認**です。先頭の段だけに付けてください")
     return errors
 
 
