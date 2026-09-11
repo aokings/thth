@@ -1036,6 +1036,9 @@ SHAPES = {
     "ArticleEvidence": (advice.ARTICLE_SHAPE, models.ARTICLE_KEYS),
     "TopicObservation": (advice.OBSERVATION_SHAPE, models.OBSERVATION_KEYS),
     "TopicProposal": (advice.PROPOSAL_SHAPE, models.PROPOSAL_KEYS),
+    # 検収記録と修正理由の語彙（2026-09-11・Codex §6.2／§12 第 1 段階）。
+    "ReviewRecord": (models.REVIEW_SHAPE, models.REVIEW_KEYS),
+    "ReasonVocabulary": (models.VOCABULARY_SHAPE, models.VOCABULARY_KEYS),
 }
 
 
@@ -1054,14 +1057,35 @@ def test_候補の必須項目も形に出ている():
         assert optional in shape, f"任意の項目も形に出す: {optional}"
 
 
+def test_入れ子の必須項目も形に出ている():
+    """候補・指摘・理由の定義は**入れ子なので上の検査に入らない。**
+
+    `candidates` で 1 度やったことを、`findings` と `entries` でも同じように。
+    """
+    for what, shape, keys in (
+            ("候補", advice.PROPOSAL_SHAPE["TopicProposal"]["candidates"][0],
+             models.CANDIDATE_KEYS),
+            ("指摘", models.REVIEW_SHAPE["ReviewRecord"]["findings"][0],
+             models.FINDING_KEYS),
+            ("理由の定義", models.VOCABULARY_SHAPE["ReasonVocabulary"]["entries"][0],
+             models.ENTRY_KEYS)):
+        missing = set(keys) - set(shape)
+        assert not missing, f"{what}の expected_schema に無い必須項目: {missing}"
+    for optional in models.REVIEW_OPTIONAL:
+        assert optional in models.REVIEW_SHAPE["ReviewRecord"], \
+            f"任意の項目も形に出す: {optional}"
+
+
 def test_検査を持つ層がすべて空で断る():
     """**空・欠損で断ること**を、層ごとに 1 か所で確かめる。
 
     `profile` だけ照合が無い・`observation` だけ検査が無い、を 3 回やった
     （規約 14）。**層が増えたらここに 1 行足す。**
     """
+    vocabulary = {"vocabulary_id": "sha256:" + "0" * 64, "entries": []}
     for build in (models.build_article, models.build_observation,
-                   models.build_profile):
+                   models.build_profile, models.build_vocabulary,
+                   lambda row: models.build_review(row, vocabulary=vocabulary)):
         with pytest.raises(models.SchemaError):
             build({})
 

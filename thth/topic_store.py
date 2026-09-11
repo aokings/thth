@@ -21,11 +21,20 @@ from . import accounts as accounts_mod
 from . import lock as lock_mod
 from . import topic_models as models
 
-KINDS = ("articles", "observations", "decisions", "proposals")
+# `reviews`（検収記録）と `vocabularies`（修正理由の語彙）を足した（2026-09-11・
+# Codex §6.2／§12 第 1 段階）。**既存の棚の性質をそのまま使う**——内容アドレス・
+# 読むたびの照合・破損と不存在の区別・同じ入力の再送は同じファイル（A04）。
+#
+# **語彙をここに置くのが要点**（設計条件 1）。`forms.py` の語彙はモジュール定数
+# なので入れ替えに commit と配布が要ったが、**版付きレコードなら差し替えが記録
+# 1 件で済む。**
+KINDS = ("articles", "observations", "decisions", "proposals",
+         "reviews", "vocabularies")
 
 # 種類ごとの ID の項目名。**読むたびに中身から計算しなおして照合する。**
 ID_KEY = {"articles": "article_id", "observations": "observation_id",
-          "decisions": "decision_id", "proposals": "proposal_id"}
+          "decisions": "decision_id", "proposals": "proposal_id",
+          "reviews": "review_id", "vocabularies": "vocabulary_id"}
 _ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.:@+-]{1,200}$")
 

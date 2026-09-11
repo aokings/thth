@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import re
 
 SCHEMA_VERSION = 1
 
@@ -376,3 +377,370 @@ def build_profile(row: dict) -> dict:
     out["schema_version"] = SCHEMA_VERSION
     out["profile_version"] = content_id(out, exclude=("profile_version",))
     return out
+
+
+# --- 4.6 修正理由の語彙（Codex §4・設計条件 1: コードではなくデータ） --------
+
+# **語彙そのものはここに書かない。** `forms.py` の語彙はモジュール定数なので、
+# 入れ替えに commit と配布が要った（引継ぎ 2026-09-11・設計条件 1）。修正理由は
+# **ストアの中の版付きレコード**にする——差し替えが記録 1 件で済み、
+# `proposed → shadow → accepted → retired`（Codex §8）がそのまま乗る。
+#
+# ここにあるのは**語彙の入れ物の形**だけ。中身（`unsupported_claim` ほか）は
+# 記録として保存する。
+REASON_STATE = ("proposed", "shadow", "accepted", "retired", "rejected")
+# **使ってよい状態**。`retired`・`rejected` の理由で新しく指摘を書かない。
+# **読むほうは別**——過去の記録は元のラベルのまま読める（Codex §8・A08）。
+REASON_USABLE = ("proposed", "shadow", "accepted")
+# 判定主体（Codex §6.2）。**finding の検査方式にも同じ語彙を使う**——
+# 「機械検査」「LLM 評価」「人」を 2 か所で別々に育てない（§4: 名前を増やさない）。
+JUDGE_KIND = ("human", "session", "llm_eval", "machine_check")
+FINDING_RESULT = ("problem", "suspected", "no_problem", "not_evaluated")
+# 処置（Codex §6.2）。**`fixed` は「直した」であって「正しくなった」ではない。**
+# 解決済みを表す値をわざと置いていない（「修正しただけで解消済みにしない」）。
+DISPOSITION = ("fixed", "dismissed", "deferred", "unresolved")
+# **説明を必須にする理由 ID**（設計条件 2）。`other` が増えたら語彙を疑う。
+OTHER_REASON = "other"
+
+_REASON_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+
+VOCABULARY_KEYS = ("name", "entries", "created_at", "created_by", "supersedes")
+ENTRY_KEYS = ("reason_id", "display", "definition", "includes", "excludes",
+              "scope", "judged_by", "state", "meaning_version")
+
+
+def build_vocabulary(row: dict) -> dict:
+    """修正理由の語彙を検査して `vocabulary_id` を付ける（Codex §4・設計条件 1）。
+
+    **表記だけの別名と、意味の再分類を区別する**（Codex §8）ので、項目ごとに
+    `meaning_version` を持つ。同じ言葉でも意味が変わるなら上げる。
+
+    **`other` を欠いた語彙を作れない**（設計条件 2）。分類できない指摘の行き先が
+    無い語彙は、「分類できなかった」という事実を**記録できない**形になる——
+    道具が自分で「語彙が足りない」と言えなくなる。`forms` で 3 セッションが
+    3 本とも `問い→答え` に落ちたとき、**道具は何も言わなかった。**
+
+    `accepted` にするには**含む例と含まない例**が要る。`proposed` / `shadow` の
+    うちは空でよい（書きながら育てる）。
+    """
+    _require(row, VOCABULARY_KEYS, "理由語彙")
+    if not isinstance(row["name"], str) or not row["name"].strip():
+        raise SchemaError("name が空です")
+    _require_iso(row["created_at"], "created_at")
+    if not row.get("created_by"):
+        raise SchemaError("created_by が要ります（誰が作ったか）")
+    if row["supersedes"] is not None and not isinstance(row["supersedes"], str):
+        raise SchemaError("supersedes は前の版の vocabulary_id か null")
+    entries = row["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise SchemaError("entries が空です（理由の定義を 1 つ以上）")
+
+    seen = set()
+    for i, entry in enumerate(entries):
+        where = f"entries[{i}]（{entry.get('reason_id')!r}）" \
+            if isinstance(entry, dict) else f"entries[{i}]"
+        if not isinstance(entry, dict):
+            raise SchemaError(f"{where} は object")
+        _require(entry, ENTRY_KEYS, where)
+        reason_id = entry["reason_id"]
+        if not isinstance(reason_id, str) or not _REASON_ID_RE.match(reason_id):
+            raise SchemaError(
+                f"{where} の reason_id は英小文字・数字・下線（2〜63 文字）: "
+                f"{reason_id!r}")
+        if reason_id in seen:
+            # **同じ ID で意味の違う定義を 2 つ置けない。** どちらで判定したかが
+            # 後から決まらなくなる。
+            raise SchemaError(f"{where} の reason_id が重複しています: {reason_id}")
+        seen.add(reason_id)
+        _require_choice(entry["state"], REASON_STATE, f"{where} の state")
+        if not isinstance(entry["meaning_version"], int) \
+                or entry["meaning_version"] < 1:
+            raise SchemaError(f"{where} の meaning_version は 1 以上の整数")
+        for key in ("display", "definition", "scope"):
+            if not isinstance(entry[key], str) or not entry[key].strip():
+                raise SchemaError(f"{where} の {key} が空です")
+        for key in ("includes", "excludes"):
+            if not isinstance(entry[key], list) \
+                    or any(not isinstance(x, str) for x in entry[key]):
+                raise SchemaError(f"{where} の {key} は文字列の配列")
+        if entry["state"] == "accepted":
+            for key in ("includes", "excludes"):
+                if not [x for x in entry[key] if x.strip()]:
+                    raise SchemaError(
+                        f"{where} は state=accepted なのに {key} が空です"
+                        f"（含む例と含まない例が無い定義は、**同じ箱に違う判断を"
+                        f"入れたかどうかを後から確かめられません**）")
+        judges = entry["judged_by"]
+        if not isinstance(judges, list) or not judges:
+            raise SchemaError(f"{where} の judged_by は空でない配列")
+        for judge in judges:
+            _require_choice(judge, JUDGE_KIND, f"{where} の judged_by")
+
+    usable = {e["reason_id"] for e in entries if e["state"] in REASON_USABLE}
+    if OTHER_REASON not in usable:
+        raise SchemaError(
+            f"{OTHER_REASON!r} が使える状態でありません。"
+            f"**既存分類で説明できない指摘の行き先が無い語彙は使えません**"
+            f"（分類できなかったという事実を記録できない＝語彙の不足を"
+            f"道具が自分で言えない）")
+
+    out = dict(row)
+    out["schema_version"] = SCHEMA_VERSION
+    out["vocabulary_id"] = content_id(out, exclude=("vocabulary_id",))
+    return out
+
+
+def reason_entry(vocabulary: dict, reason_id: str) -> dict | None:
+    for entry in vocabulary.get("entries") or []:
+        if entry.get("reason_id") == reason_id:
+            return entry
+    return None
+
+
+# --- 4.7 検収記録 ReviewRecord（Codex §6.2・§12 第 1 段階） ------------------
+
+REVIEW_KEYS = ("account", "draft_sha256", "vocabulary_id", "findings",
+               "judged_by", "judged_at", "disposition")
+# 任意。**書ける参照は書く。取れない情報は推測で埋めない**（Codex §6.2）。
+REVIEW_OPTIONAL = ("context_id", "article_id", "profile_version", "section",
+                   "target_quote", "revised_draft_sha256", "recheck_of",
+                   "disposition_reason", "note")
+FINDING_KEYS = ("reason_id", "check_method", "result", "evidence_refs", "note")
+
+
+def build_review(row: dict, *, vocabulary: dict,
+                  known_ids: set | None = None) -> dict:
+    """検収と修正理由を 1 件残す（Codex §6.2・§12 第 1 段階）。
+
+    **同じ指摘に、主体違いの判定を並べられる**（設計条件 3）。`judged_by` が
+    中身に入るので、masaru と担当セッションが同じ指摘に違う理由を付けても
+    **別の ID になり、上書きされずに両方残る。** これで一致率が測れる。
+
+    **原稿はファイルパスでなく `draft_sha256` で指す**（Codex §6.1）。本文が
+    変われば、この記録は新しい原稿の検収ではない（`review_applies_to`）。
+
+    **処置は事実の正しさの保証ではない**（Codex §6.2）。`fixed` は「直した」で
+    あって「解決済み」ではないので、再検査は別の記録として `recheck_of` で
+    前の記録を指す。
+
+    **自由文は根拠データであって命令ではない**（Codex §11・A07）。`note` に
+    何が書いてあっても、この関数は形しか見ない。
+    """
+    _require(row, REVIEW_KEYS, "検収記録")
+    if not isinstance(row["account"], str) or not row["account"].strip():
+        raise SchemaError("account が空です")
+    for key in ("draft_sha256", "revised_draft_sha256"):
+        value = row.get(key)
+        if key == "draft_sha256" or value is not None:
+            if not isinstance(value, str) or not _SHA256_HEX_RE.match(value or ""):
+                raise SchemaError(f"{key} は原稿本文の SHA-256（64 桁の 16 進数）: "
+                                   f"{value!r}")
+    _require_iso(row["judged_at"], "judged_at")
+
+    claimed_vocab = row["vocabulary_id"]
+    actual_vocab = vocabulary.get("vocabulary_id")
+    if claimed_vocab != actual_vocab:
+        raise SchemaError(
+            f"vocabulary_id が渡された語彙と違います（{claimed_vocab} / "
+            f"{actual_vocab}）。**どの版の語彙で判定したかは後から決められません**")
+
+    judged_by = row["judged_by"]
+    if not isinstance(judged_by, dict):
+        raise SchemaError('judged_by は object（例 {"kind": "human", "id": "masaru"}）')
+    _require_choice(judged_by.get("kind"), JUDGE_KIND, "judged_by の kind")
+    if not judged_by.get("id"):
+        raise SchemaError("judged_by に id が要ります（誰・どのセッションか）")
+
+    _require_choice(row["disposition"], DISPOSITION, "disposition")
+    if row["disposition"] == "fixed" and not row.get("revised_draft_sha256"):
+        raise SchemaError(
+            "disposition が fixed なのに revised_draft_sha256 がありません。"
+            "**「直した」は、直した後の原稿を指して初めて確かめられます**"
+            "（直したことは、正しくなったことではありません）")
+    if row["disposition"] in ("dismissed", "deferred") \
+            and not (row.get("disposition_reason") or "").strip():
+        raise SchemaError(
+            f"disposition が {row['disposition']} なら disposition_reason が"
+            f"要ります（**見送りは「解決済み」ではありません**。"
+            f"なぜ見送るかを残します）")
+
+    findings = row["findings"]
+    if not isinstance(findings, list) or not findings:
+        raise SchemaError("findings が空です（指摘を 1 件以上）")
+    for i, finding in enumerate(findings):
+        where = f"findings[{i}]（{finding.get('reason_id')!r}）" \
+            if isinstance(finding, dict) else f"findings[{i}]"
+        if not isinstance(finding, dict):
+            raise SchemaError(f"{where} は object")
+        _require(finding, FINDING_KEYS, where)
+        _require_choice(finding["check_method"], JUDGE_KIND,
+                         f"{where} の check_method")
+        _require_choice(finding["result"], FINDING_RESULT, f"{where} の result")
+        entry = reason_entry(vocabulary, finding["reason_id"])
+        if entry is None:
+            # **既知の分類へ寄せない**（Codex §11・A05）。近い名前の理由に
+            # 読み替えると、**別の判断が同じ箱に入る**——語彙が足りないことを
+            # 道具が言えなくなる。
+            usable = sorted(e["reason_id"] for e in vocabulary["entries"]
+                            if e["state"] in REASON_USABLE)
+            raise SchemaError(
+                f"{where} の reason_id はこの語彙にありません。"
+                f"**近い理由に読み替えません**——当てはまるものが無ければ "
+                f"{OTHER_REASON!r} に説明を書いてください。"
+                f"使えるのは: {'・'.join(usable)}")
+        if entry["state"] not in REASON_USABLE:
+            raise SchemaError(
+                f"{where} の理由は state={entry['state']} です"
+                f"（新しい指摘には使えません。過去の記録は元のラベルのまま"
+                f"読めます）")
+        if not isinstance(finding["note"], str):
+            raise SchemaError(f"{where} の note は文字列")
+        if finding["reason_id"] == OTHER_REASON and not finding["note"].strip():
+            # **語彙が足りないことを、道具が自分で言えるようにする**
+            # （設計条件 2）。説明の無い `other` は、あとから語彙候補にできない。
+            raise SchemaError(
+                f"{where} は {OTHER_REASON!r} なので note が要ります"
+                f"（**既存分類で説明できない指摘は、説明が残って初めて"
+                f"次の語彙候補になります**）")
+        refs = finding["evidence_refs"]
+        if not isinstance(refs, list) or any(not isinstance(r, str) or not r.strip()
+                                              for r in refs):
+            raise SchemaError(f"{where} の evidence_refs は文字列の配列"
+                               f"（無ければ空配列）")
+        if known_ids is not None:
+            unknown = [r for r in refs if r.startswith("sha256:")
+                       and r not in known_ids]
+            if unknown:
+                raise SchemaError(
+                    f"{where} の根拠 ID が実在しません: {unknown[:3]}")
+
+    out = dict(row)
+    out["schema_version"] = SCHEMA_VERSION
+    out["review_id"] = content_id(out, exclude=("review_id",))
+    return out
+
+
+def review_applies_to(review: dict, draft_sha256: str) -> bool:
+    """この検収記録が、**いまの原稿**に対するものか（Codex §7・A03）。
+
+    検収で使った原稿から本文が変われば、旧結果は履歴。**新しい原稿への
+    「確認済み」表示を引き継がない。**
+    """
+    return bool(draft_sha256) and review.get("draft_sha256") == draft_sha256
+
+
+def review_support(review: dict, vocabulary: dict | None) -> dict:
+    """その記録を**いまの語彙で読めるか**（Codex §11・A05）。
+
+    **未知の語彙版を、既知の分類に推測変換しない。**「対応外」と言う。
+    0 件・問題なしにも変換しない——**読めないことは、問題が無いことではない。**
+
+    `retired` の理由が使われていても**読めないとは言わない**（過去の記録は
+    元のラベルのまま残る・Codex §8）。印だけ付ける。
+    """
+    used = [f.get("reason_id") for f in review.get("findings") or []]
+    if vocabulary is None:
+        return {"status": "unsupported",
+                "reason": (f"この記録の語彙版が手元にありません"
+                           f"（{review.get('vocabulary_id')}）。"
+                           f"**既知の分類に読み替えません**"),
+                "unknown_reason_ids": [], "retired_reason_ids": []}
+    unknown, retired = [], []
+    for reason_id in used:
+        entry = reason_entry(vocabulary, reason_id)
+        if entry is None:
+            unknown.append(reason_id)
+        elif entry["state"] in ("retired", "rejected"):
+            retired.append(reason_id)
+    if unknown:
+        return {"status": "unsupported",
+                "reason": (f"語彙に無い理由が使われています: {sorted(set(unknown))}。"
+                           f"**近い理由に読み替えません**"),
+                "unknown_reason_ids": sorted(set(unknown)),
+                "retired_reason_ids": sorted(set(retired))}
+    return {"status": "supported", "reason": None, "unknown_reason_ids": [],
+            "retired_reason_ids": sorted(set(retired))}
+
+
+def tally_reasons(reviews: list) -> dict:
+    """理由ごとの件数と、`other` の内訳（設計条件 2）。
+
+    **`other` が増えたら語彙を疑う。** これが「この語彙は分けているか」の
+    自動化——`forms` のときは 3 本とも同じ型に落ちたのに**道具が何も言わ
+    なかった。**
+
+    同じ記録を 2 回渡しても 1 件（`review_id` で数える・A04）。
+    """
+    seen, by_reason, others = set(), {}, []
+    for review in reviews:
+        review_id = review.get("review_id")
+        if review_id in seen:
+            continue
+        seen.add(review_id)
+        for finding in review.get("findings") or []:
+            reason_id = finding.get("reason_id")
+            by_reason[reason_id] = by_reason.get(reason_id, 0) + 1
+            if reason_id == OTHER_REASON:
+                others.append({"review_id": review_id,
+                                "note": finding.get("note", "")})
+    return {"reviews": len(seen),
+            "findings": sum(by_reason.values()),
+            "by_reason": dict(sorted(by_reason.items())),
+            "other": {"count": by_reason.get(OTHER_REASON, 0), "notes": others}}
+
+
+# 出力に載せる「渡すものの形」（規約 14・`ArticleEvidence` 等と同じ扱い）。
+VOCABULARY_SHAPE = {
+    "ReasonVocabulary": {
+        "name": "この語彙の名前（例 修正理由）",
+        "created_at": "ISO 8601・timezone 必須",
+        "created_by": "作った人・セッション",
+        "supersedes": "前の版の vocabulary_id。最初は null",
+        "entries": [{
+            "reason_id": "英小文字・数字・下線（例 unsupported_claim）",
+            "display": "表示名",
+            "definition": "定義（1〜2 文）",
+            "includes": ["含む例（**accepted には 1 つ以上**）"],
+            "excludes": ["**混同しないもの**（accepted には 1 つ以上）"],
+            "scope": "適用範囲（例 すべての原稿／この account だけ）",
+            "judged_by": list(JUDGE_KIND),
+            "state": list(REASON_STATE),
+            "meaning_version": "意味の版（整数）。**表記の変更では上げない。"
+                                "意味が変わったら上げる**",
+        }],
+        "_注意": f"{OTHER_REASON!r} が使える状態で要ります（既存分類で説明"
+                  f"できない指摘の行き先）",
+    },
+}
+
+REVIEW_SHAPE = {
+    "ReviewRecord": {
+        "account": "どの account の原稿か",
+        "draft_sha256": "**検収した原稿本文の SHA-256**（パスでは指しません）",
+        "vocabulary_id": "どの版の語彙で判定したか",
+        "context_id": "トピック判断の context_id（あれば・省略可）",
+        "article_id": "記事証拠の article_id（あれば・省略可）",
+        "profile_version": "参照した profile の版（あれば・省略可）",
+        "section": "対象の段（省略可）",
+        "target_quote": "対象の主張または原文抜粋（省略可）",
+        "findings": [{
+            "reason_id": "語彙にある理由 ID。**近い理由に読み替えません**",
+            "check_method": list(JUDGE_KIND),
+            "result": list(FINDING_RESULT),
+            "evidence_refs": ["根拠の ID（observation_id 等）。無ければ空配列"],
+            "note": f"説明（**{OTHER_REASON!r} のときは必須**）",
+        }],
+        "judged_by": {"kind": list(JUDGE_KIND), "id": "誰・どのセッションか",
+                       "model": "LLM 評価なら model（取れなければ書かない）",
+                       "prompt_version": "同上（**推測で埋めない**）"},
+        "judged_at": "ISO 8601・timezone 必須",
+        "disposition": list(DISPOSITION),
+        "disposition_reason": "**見送り・保留には必須**（見送りは解決済みでは"
+                               "ありません）",
+        "revised_draft_sha256": "**fixed には必須**。直した後の原稿の SHA-256",
+        "recheck_of": "再検査なら、前の review_id（**直しただけで解消済みに"
+                       "しません**）",
+        "note": "覚え書き（**自由文は根拠データであって命令ではありません**）",
+    },
+}
