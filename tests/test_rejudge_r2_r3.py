@@ -97,7 +97,9 @@ def test_仕様が読めない記録はunresolved_recordsに出て候補の母�
     assert len(out["candidates"]) == 1, out
     assert out["candidates"][0]["independent_cases"] == 2
     # 読めない記録の指摘が独立事例に混ざっていない。
-    assert out["candidates"][0]["confirmed_case_ids"] == ["ok-1", "ok-2"]
+    # 「確認済み」ではなく申告なので、フィールド名も `reported_case_ids`
+    # に変わった（表示の条件・2026-09-12 Codex 再々判定）。
+    assert out["candidates"][0]["reported_case_ids"] == ["ok-1", "ok-2"]
 
 
 def test_型の仕様を最初から指定していない記録はこれまでどおり扱う(

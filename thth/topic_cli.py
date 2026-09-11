@@ -1179,11 +1179,16 @@ def _recent_reviews(account: str, args) -> int:
                 # 指摘全部が確認されたとは限らない（reason_id だけの一致では
                 # 同じ理由の複数段・別の対象範囲を区別できない）。
                 entry["carried_by"] = by
+                # **「対応した」ではなく「対応した"と申告された"」**（表示の
+                # 条件・2026-09-12 Codex）。`carried_from` は 1 件の指摘に
+                # 対応した"という記録者の申告"であって、指摘ごとの対応を
+                # 機械が確認したわけではない。
                 entry["note"] = ("**旧版の記録です。** このうち一部の指摘は"
                                   f"新しい版へ持ち越されています（`carried_by`"
-                                  f": {', '.join(by)}）。**それ以外の指摘まで"
-                                  "確認済みとは限らないので、この記録ごと"
-                                  "履歴に残しています。**")
+                                  f": {', '.join(by)}）。**持ち越しが申告されて"
+                                  "います。指摘ごとの対応は未確認です。**"
+                                  "それ以外の指摘まで確認済みとは限らないので、"
+                                  "この記録ごと履歴に残しています。")
             unreviewed_history.append(entry)
         mine = applies
     mine.sort(key=lambda r: r.get("judged_at") or "", reverse=True)

@@ -1272,6 +1272,20 @@ def improvement_candidates(reviews: list, *, spec: dict,
                     "review_id": review.get("review_id"),
                     "reason": f"指定された型の仕様を解決できません（{spec_ref}）"})
                 continue
+            # **解決できることと、指した先がこの型であることは別**（再々判定
+            # N3・2026-09-12 Codex）。比較型のレビューに列挙型など別の型の
+            # `form_spec_id` を付けても、それが読めてしまえば根拠として通って
+            # いた——解決可能性だけを見て、解決先の `form` とレビューの
+            # `form` を照合していなかった。ここで照合し、食い違うなら
+            # 母数から外す（既存履歴もこの分岐を通るので安全に読める）。
+            resolved_form = resolved_spec.get("form")
+            if resolved_form != review.get("form"):
+                unresolved.append({
+                    "review_id": review.get("review_id"),
+                    "reason": f"指定された型の仕様は別の型です（{spec_ref} は "
+                               f"{resolved_form!r}・このレビューは "
+                               f"{review.get('form')!r}）"})
+                continue
         for finding in review.get("findings") or []:
             if finding.get("result") not in ("problem", "suspected"):
                 continue
@@ -1288,10 +1302,11 @@ def improvement_candidates(reviews: list, *, spec: dict,
             row = groups.setdefault(key, {
                 "series": set(), "drafts": set(), "review_ids": [], "notes": [],
                 "provenance": {}, "case_ids": set(), "unlinked": set(),
-                "lineage": set()})
+                "lineage": set(), "series_case_ids": {}})
             draft = review.get("draft_sha256")
             source = review.get("provenance") or "unknown"
-            row["series"].add(series.get(draft, draft))
+            series_rep = series.get(draft, draft)
+            row["series"].add(series_rep)
             row["drafts"].add(draft)
             row["review_ids"].append(review["review_id"])
             row["provenance"][source] = row["provenance"].get(source, 0) + 1
@@ -1301,23 +1316,47 @@ def improvement_candidates(reviews: list, *, spec: dict,
                 # **閾値は実運用だけで数える**（R4）。試作は消さずに別枠。
                 if review.get("case_id"):
                     row["case_ids"].add(review["case_id"])
+                    # **`case_id` の申告より、既知の改訂・再検査系列のほうが
+                    # 強い証拠**（再々判定 N4・2026-09-12 Codex）。
+                    # `draft_series()` が `recheck_of`・`supersedes`・
+                    # `carried_from` から同一系列を計算済みなので、それを
+                    # 使って束ねる。同じ系列に別々の `case_id` が申告されて
+                    # いても、**独立事例には系列 1 件としてしか数えない**
+                    # ——競合は消さず `case_id_conflicts` に出す。
+                    row["series_case_ids"].setdefault(
+                        series_rep, set()).add(review["case_id"])
                 else:
-                    row["unlinked"].add(series.get(draft, draft))
+                    row["unlinked"].add(series_rep)
             if finding.get("note"):
                 row["notes"].append(finding["note"])
 
     candidates, not_yet = [], []
     for (reason_id, meaning, role_id, role_fp), row in sorted(
-            groups.items(), key=lambda kv: (-len(kv[1]["case_ids"]),
+            groups.items(), key=lambda kv: (-len(kv[1]["series_case_ids"]),
                                              str(kv[0][0]), str(kv[0][2]))):
-        confirmed = len(row["case_ids"])
+        # **独立事例は「申告された `case_id` の数」ではなく「`case_id` が
+        # 申告された系列の数」**（N4）。同じ系列（既知の改訂・再検査で
+        # つながっている）に複数の `case_id` が付いていても、系列としては
+        # 1 件。矛盾する申告は消さず、下で `case_id_conflicts` に出す。
+        confirmed = len(row["series_case_ids"])
+        conflicts = [
+            {"series": series_rep, "case_ids": sorted(ids)}
+            for series_rep, ids in sorted(row["series_case_ids"].items())
+            if len(ids) > 1]
         entry = {
             "reason_id": reason_id, "meaning": meaning,
             "vocabulary_lineage": sorted(row["lineage"]),
             "role_id": role_id, "role_meaning": role_fp,
             # **明示された系列の数だけが「独立事例」。**
             "independent_cases": confirmed,
-            "confirmed_case_ids": sorted(row["case_ids"]),
+            # **「確認済み」ではない。** ここにある `case_id` はすべて
+            # 記録者の自己申告であって、実測で確認したものではない
+            # （表示の条件・2026-09-12 Codex）。名前もそれが分かるように
+            # `confirmed_case_ids` から変えた。
+            "reported_case_ids": sorted(row["case_ids"]),
+            # **同じ系列に別々の `case_id` が申告された競合。** 独立事例には
+            # 加算していないが、申告そのものは消さずここに出す。
+            "case_id_conflicts": conflicts,
             # **線が無い版**。数えはするが、閾値の証拠にはしない（R5）。
             "unlinked_versions": len(row["unlinked"]),
             "draft_versions": len(row["drafts"]),
@@ -1365,7 +1404,11 @@ def improvement_candidates(reviews: list, *, spec: dict,
                    f"独立とは数えていません（`case_id` を付けてください）"
                    if row["unlinked"] else "")
                 + ("／試作・出自不明の記録は閾値に数えません"
-                   if set(row["provenance"]) - {"production"} else ""))
+                   if set(row["provenance"]) - {"production"} else "")
+                + ("／同じ系列に別々の `case_id` が申告されていて、"
+                   "**競合したまま系列 1 件としてしか数えていません**"
+                   "（`case_id_conflicts` 参照）"
+                   if conflicts else ""))
         (candidates if confirmed >= MIN_INDEPENDENT_CASES
          else not_yet).append(entry)
 
@@ -1379,7 +1422,11 @@ def improvement_candidates(reviews: list, *, spec: dict,
         "provenance": provenance_tally(mine),
         "notice": "**候補です。** 仕様も語彙も profile も書き換えていません。"
                    "採否は独立確認のあと（構想書 §8）。**閾値は実運用の記録だけ**で"
-                   "数え、**独立は `case_id` が明示されたときだけ**数えます。",
+                   "数え、**独立は `case_id` が明示されたときだけ**数えます。"
+                   "**`case_id`・`provenance`（実運用かどうか）・独立性は、"
+                   "いずれも記録者の自己申告であって、実測で確認したもの"
+                   "ではありません（未検証）。** 候補表示はあくまで"
+                   "**申告に基づく探索候補**として扱ってください。",
     }
 
 

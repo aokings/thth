@@ -141,7 +141,9 @@ def test_R4_試作は閾値に数えない_実運用だけで数える(isolated_
     assert len(out["candidates"]) == 1
     candidate = out["candidates"][0]
     assert candidate["independent_cases"] == 2
-    assert candidate["confirmed_case_ids"] == ["記事A", "記事C"]
+    # 「確認済み」ではなく申告なので、フィールド名も `reported_case_ids`
+    # に変わった（表示の条件・2026-09-12 Codex 再々判定）。
+    assert candidate["reported_case_ids"] == ["記事A", "記事C"]
     # **試作が混ざっていることは隠さない。**
     assert candidate["provenance"]["trial"] == 1
     assert "実運用以外の記録が混ざっています" in candidate["representativeness"]
