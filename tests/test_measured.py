@@ -9,6 +9,13 @@
 
 現物を目で追うのも十分に間違える。ここではその機械的に並べる口を確かめる。
 **読むだけ。何も書かない。**
+
+外部レビュー再判定 M3・M4（2026-09-12）——**所有 account の根拠付き選別**と
+**`form_now`（いまの原稿の値であることの明示）**の閉じる条件をここで確かめる。
+投稿の所有は `file`（採取当時の queue ファイル名）が指す実ファイルの
+front-matter `account` でしか判らないため、**ここから先の post 系テストは
+（所有を試したい一部を除き）対応する queue ファイルを必ず書く**——書かなければ
+その投稿は「所有不明」（`posts_unknown_ownership`）に回り、`posts` に出ない。
 """
 from __future__ import annotations
 
@@ -60,6 +67,7 @@ def _write_queue_file(account, file_name: str, *, post_id: str, form: str | None
 
 def test_投稿ごとに時系列が並ぶこと(isolated_account):
     """`age_hours`・`collected_at` は台帳に書いた実値のまま出る（他の値に丸めない）。"""
+    _write_queue_file(isolated_account, "POST1.md", post_id="POST1", form=None)
     _write_ndjson(_insight_path(isolated_account), [
         {"post_id": "POST1", "file": "POST1.md", "topic": "お茶",
          "posted_at": "2026-09-10T10:00:00+09:00",
@@ -87,6 +95,7 @@ def test_投稿ごとに時系列が並ぶこと(isolated_account):
 
 def test_刻みが同居している行に印が付く(isolated_account):
     """`marks: [1, 6]` が同居する行には `marks_collapsed: true`。単独の刻みには付かない。"""
+    _write_queue_file(isolated_account, "POST1.md", post_id="POST1", form=None)
     _write_ndjson(_insight_path(isolated_account), [
         {"post_id": "POST1", "file": "POST1.md", "topic": None,
          "collected_at": "2026-09-11T11:00:00+09:00", "age_hours": 25.0,
@@ -110,6 +119,7 @@ def test_一度も現れていない指標がmissing_metricsに出る(isolated_a
     """`clicks` を含まない台帳では `missing_metrics` に `clicks` が出る。
     値として `0` と混ぜてはいけない——実際に `0` として記録された指標は
     missing に出てはいけない。"""
+    _write_queue_file(isolated_account, "POST1.md", post_id="POST1", form=None)
     _write_ndjson(_insight_path(isolated_account), [
         {"post_id": "POST1", "file": "POST1.md", "topic": None,
          "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
@@ -160,7 +170,9 @@ def test_壊れたndjsonを実測0件と言わない(isolated_account):
 
 
 def test_formはqueueのfront_matterから取れる(isolated_account):
-    """front-matter の `form` を引ける。対応する queue ファイルが無ければ `None`。"""
+    """`form_now` は**いまの queue ファイルの front-matter から引いた値**（M4）。
+    対応する queue ファイルが無ければ、所有そのものが判らない（M3）ので
+    `posts_unknown_ownership` に回る——`posts` には出ない。"""
     _write_queue_file(isolated_account, "POST1.md", post_id="POST1", form="相談形式")
     _write_ndjson(_insight_path(isolated_account, post_id="POST1"), [
         {"post_id": "POST1", "file": "POST1.md", "topic": None,
@@ -176,8 +188,15 @@ def test_formはqueueのfront_matterから取れる(isolated_account):
     result = measured_mod.load(isolated_account["name"])
     by_id = {p["post_id"]: p for p in result["posts"]}
 
-    assert by_id["POST1"]["form"] == "相談形式"
-    assert by_id["POST2"]["form"] is None, "取れなければ null（判らないものを判らないと言う）"
+    assert by_id["POST1"]["form_now"] == "相談形式"
+    assert by_id["POST1"]["form_source"] == "current_draft", \
+        "いまの原稿から引いた値だと明示していない"
+    assert "form" not in by_id["POST1"], \
+        "`form` という名前のままだと、採取時点の値だと誤読させる（M4）"
+    assert "POST2" not in by_id, \
+        "対応する queue ファイルが無く所有が判らないのに posts に出ている（M3）"
+    assert result["posts_unknown_ownership"] == ["POST2"], \
+        "所有不明は推定で混ぜず、区別して出す約束"
 
 
 def test_アカウント日次も出る(isolated_account):
@@ -202,6 +221,8 @@ def test_別accountの行が混ざらない(isolated_account_factory, tmp_path):
     account_a = isolated_account_factory("account-a", repo_dir=repo_a)
     account_b = isolated_account_factory("account-b", repo_dir=repo_b)
 
+    _write_queue_file(account_a, "POST_A.md", post_id="POST_A", form=None)
+    _write_queue_file(account_b, "POST_B.md", post_id="POST_B", form=None)
     _write_ndjson(_insight_path(account_a, post_id="POST_A"), [
         {"post_id": "POST_A", "file": "POST_A.md", "topic": "A のトピック",
          "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
@@ -227,6 +248,7 @@ def test_別accountの行が混ざらない(isolated_account_factory, tmp_path):
 def test_CLIがjsonでloadと同じものを返す(isolated_account, capsys):
     from thth import cli as cli_mod
 
+    _write_queue_file(isolated_account, "POST1.md", post_id="POST1", form=None)
     _write_ndjson(_insight_path(isolated_account), [
         {"post_id": "POST1", "file": "POST1.md", "topic": "お茶",
          "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
@@ -246,6 +268,7 @@ def test_CLIがjsonでloadと同じものを返す(isolated_account, capsys):
 def test_CLIの人向け出力は同居に印をつけ欠けている指標を出す(isolated_account, capsys):
     from thth import cli as cli_mod
 
+    _write_queue_file(isolated_account, "POST1.md", post_id="POST1", form=None)
     _write_ndjson(_insight_path(isolated_account), [
         {"post_id": "POST1", "file": "POST1.md", "topic": "お茶",
          "collected_at": "2026-09-11T11:00:00+09:00", "age_hours": 25.0,
@@ -266,6 +289,8 @@ def test_CLIの人向け出力は同居に印をつけ欠けている指標を�
 def test_CLIのpostフィルタは指定した投稿だけに絞る(isolated_account, capsys):
     from thth import cli as cli_mod
 
+    _write_queue_file(isolated_account, "POST1.md", post_id="POST1", form=None)
+    _write_queue_file(isolated_account, "POST2.md", post_id="POST2", form=None)
     _write_ndjson(_insight_path(isolated_account, post_id="POST1"), [
         {"post_id": "POST1", "file": "POST1.md", "topic": None,
          "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
@@ -284,3 +309,145 @@ def test_CLIのpostフィルタは指定した投稿だけに絞る(isolated_acc
     assert rc == 0
     printed = json.loads(captured.out)
     assert [p["post_id"] for p in printed["posts"]] == ["POST1"]
+
+
+def test_共有repoでも所有accountだけを根拠付きで選別する(isolated_account_factory, tmp_path):
+    """M3: 2 account が**同じ repo**を使っても、A の出力に B の投稿・日次は
+    混ざらない。所有の根拠は queue ファイルの front-matter `account`
+    （投稿）とファイル名 `<account>-<年月>.ndjson`（日次）——外部レビューの
+    再現物（`repro_measured_boundaries.py` の `cross_account_shared_repo()`）
+    と同じ入力で確かめる。"""
+    from tests.conftest import init_real_repo
+
+    shared_repo = init_real_repo(tmp_path, "shared")
+    account_a = isolated_account_factory("account-a", repo_dir=shared_repo)
+    account_b = isolated_account_factory("account-b", repo_dir=shared_repo)
+
+    # 投稿: 同じ queue_dir に、それぞれの account の front-matter を持つ
+    # queue ファイルを置く（所有の唯一の根拠）。
+    _write_queue_file(account_a, "A_POST.md", post_id="A_POST", form=None)
+    _write_queue_file(account_b, "B_POST.md", post_id="B_POST", form=None)
+    _write_ndjson(_insight_path(account_a, post_id="A_POST"), [
+        {"post_id": "A_POST", "file": "A_POST.md", "topic": "A のトピック",
+         "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
+         "marks": [1], "metrics": {"views": 1}},
+    ])
+    # B の投稿にだけ clicks が付いている——A の missing_metrics から
+    # clicks が消えてはいけない（外部レビュー再現の核心）。
+    _write_ndjson(_insight_path(account_b, post_id="B_POST"), [
+        {"post_id": "B_POST", "file": "B_POST.md", "topic": "B のトピック",
+         "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
+         "marks": [1], "metrics": {"clicks": 9}},
+    ])
+
+    # 日次: ファイル名に account が刻まれている（`thth/collect.py` の
+    # `_collect_account_daily()` と同じ形）。
+    _write_ndjson(_account_daily_path(account_a), [
+        {"account": "account-a", "date": "2026-09-10",
+         "collected_at": "2026-09-11T00:05:00+09:00", "metrics": {"views": 1}},
+    ])
+    _write_ndjson(_account_daily_path(account_b), [
+        {"account": "account-b", "date": "2026-09-10",
+         "collected_at": "2026-09-11T00:05:00+09:00", "metrics": {"clicks": 9}},
+    ])
+
+    result_a = measured_mod.load("account-a")
+
+    assert [p["post_id"] for p in result_a["posts"]] == ["A_POST"], \
+        "B の投稿が A の出力に混ざっている"
+    assert result_a["account_daily"] == [
+        {"date": "2026-09-10", "metrics": {"views": 1}}], \
+        "B の日次（clicks 9）が A の日次に混ざっている"
+    assert "clicks" in result_a["missing_metrics"], \
+        "B の clicks が A の missing_metrics から消えている——A は一度も clicks を記録していない"
+
+    result_b = measured_mod.load("account-b")
+    assert [p["post_id"] for p in result_b["posts"]] == ["B_POST"]
+    assert "views" in result_b["missing_metrics"], \
+        "A の views が B の missing_metrics 判定に混ざっている"
+
+
+def test_所有を決められない投稿台帳は不明として分けられる(isolated_account_factory, tmp_path):
+    """M3: 対応する queue ファイルが無い（＝所有 account を判別できない）
+    投稿台帳は、**どの account の `posts` にも混ぜず**、`posts_unknown_ownership`
+    に分けて出す。混ぜないのと同じくらい、**見えなくもしない**（消えたことに
+    しない）。不明な投稿の指標も、どちらの account の missing_metrics 判定にも
+    使わない。"""
+    from tests.conftest import init_real_repo
+
+    shared_repo = init_real_repo(tmp_path, "shared_unknown")
+    account_a = isolated_account_factory("account-a", repo_dir=shared_repo)
+    account_b = isolated_account_factory("account-b", repo_dir=shared_repo)
+
+    _write_queue_file(account_a, "A_POST.md", post_id="A_POST", form=None)
+    _write_ndjson(_insight_path(account_a, post_id="A_POST"), [
+        {"post_id": "A_POST", "file": "A_POST.md", "topic": None,
+         "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
+         "marks": [1], "metrics": {"views": 1}},
+    ])
+    # queue ファイルが存在しない（削除済み・同期漏れ等）——所有が判らない。
+    # `reposts` はこの行にしか出てこない指標にしておく。
+    _write_ndjson(_insight_path(account_a, post_id="GHOST_POST"), [
+        {"post_id": "GHOST_POST", "file": "GHOST_無い.md", "topic": None,
+         "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
+         "marks": [1], "metrics": {"reposts": 5}},
+    ])
+
+    result_a = measured_mod.load("account-a")
+    result_b = measured_mod.load("account-b")
+
+    assert [p["post_id"] for p in result_a["posts"]] == ["A_POST"], \
+        "所有不明の投稿を A の posts に推定で混ぜている"
+    assert result_a["posts_unknown_ownership"] == ["GHOST_POST"], \
+        "所有不明を区別して出す約束（消えたことにしない）"
+    assert all(p["post_id"] != "GHOST_POST" for p in result_b["posts"]), \
+        "所有不明を『他 account のものではない』ことを理由に B にも混ぜてはいけない"
+    assert "reposts" in result_a["missing_metrics"], \
+        "所有不明の投稿の指標を A の実測に数えてしまっている"
+
+
+def test_formはform_nowとして明示され過去の型を装わない(isolated_account):
+    """M4: 出力は `form` ではなく `form_now`・`form_source: current_draft`。
+    採取時点の型は台帳に無いので、それを装った値を出さない。"""
+    _write_queue_file(isolated_account, "POST1.md", post_id="POST1", form="相談形式")
+    _write_ndjson(_insight_path(isolated_account, post_id="POST1"), [
+        {"post_id": "POST1", "file": "POST1.md", "topic": None,
+         "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
+         "marks": [1], "metrics": {"views": 1}},
+    ])
+
+    result = measured_mod.load(isolated_account["name"])
+    post = result["posts"][0]
+
+    assert post["form_now"] == "相談形式"
+    assert post["form_source"] == "current_draft"
+    assert "form" not in post
+
+
+def test_原稿が後から編集されても過去の行に現在の型を断定して付けない(isolated_account):
+    """M4 の再現そのもの: 採取後に queue ファイルの `form` が書き換わっても、
+    `measured.load()` は「いまの原稿の値」だとしか言わない——採取時点の型
+    だったかのように断定表示しない（外部レビューの再現物
+    `current_queue_rewrites_history_form()` と同じ入力で確かめる）。"""
+    _write_queue_file(isolated_account, "POST1.md", post_id="POST1", form="旧型")
+    _write_ndjson(_insight_path(isolated_account, post_id="POST1"), [
+        {"post_id": "POST1", "file": "POST1.md", "topic": None,
+         "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
+         "marks": [1], "metrics": {"views": 1}},
+    ])
+
+    before = measured_mod.load(isolated_account["name"])["posts"][0]
+    assert before["form_now"] == "旧型"
+    assert before["form_source"] == "current_draft", \
+        "採取時点の値だと誤読させない印が要る"
+
+    # 原稿を後から編集（同名ファイルの再利用・後編集の両方に相当）。
+    _write_queue_file(isolated_account, "POST1.md", post_id="POST1", form="新型")
+
+    after = measured_mod.load(isolated_account["name"])["posts"][0]
+    assert after["form_now"] == "新型", \
+        "『いまの原稿から引いた値』なので、編集後は現在値に追従するのが筋"
+    assert after["form_source"] == "current_draft", \
+        "編集後も『いまの原稿の値である』ことは変わらず明示され続けるべき"
+    assert "form" not in after, \
+        "『新型』を、採取当時の型だったかのように `form` という名前で肯定表示していないか"

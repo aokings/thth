@@ -779,8 +779,13 @@ def cmd_measured(args) -> int:
         print("実測がありません")
     for post in posts:
         topic = post["topic"] or "（トピック無し）"
-        form = post["form"] or "（型無し）"
-        print(f"{post['post_id']}  [{topic}]  form={form}"
+        # **`form` は「いまの原稿から引いた値」であって、採取した時点の型では
+        # ない**（再々判定 M4・2026-09-12 Codex）。原稿が後から編集されていれば
+        # 違う値になる。**過去の分類として読ませないよう、由来ごと出す。**
+        form = post.get("form_now") or "（型無し）"
+        source = post.get("form_source")
+        source_text = "（いまの原稿から）" if source == "current_draft" else ""
+        print(f"{post['post_id']}  [{topic}]  form={form}{source_text}"
               f"  posted_at={post.get('posted_at')}  file={post.get('file')}")
         for row in post["rows"]:
             age = row.get("age_hours")
