@@ -23,6 +23,24 @@ def is_warning(message: str) -> bool:
     return message.startswith("warning:")
 
 
+def _bundle_segments(b, media: str):
+    from . import bundle as bundle_mod
+    return bundle_mod.load_segments(b, media)
+
+
+def _bundle_or_none(path: str):
+    """`thth: 2` なら束として読む。**v1 の経路には触らない。**"""
+    from . import bundle as bundle_mod
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return None, None
+    if not bundle_mod.is_bundle_text(text):
+        return None, None
+    return bundle_mod.parse_text(text, path), text
+
+
 def lint_file(path: str) -> list:
     """形式検査。駄目な理由を 1 行ずつ返す（空リストなら OK）。
 
@@ -35,6 +53,13 @@ def lint_file(path: str) -> list:
     混ぜて返す（`thth lint` の exit code は `error:`/その他の実エラーだけで決まる。
     `is_warning()` で区別できる）。
     """
+    # **スレッド連投は束として検査する**（`thth: 1` が無いとだけ言わない）。
+    b, _text = _bundle_or_none(path)
+    if b is not None:
+        from . import bundle as bundle_mod
+        return bundle_mod.check(
+            b, account_cfg=_account_cfg_or_none(b.front_matter.get("account")))
+
     qf = queuefile.parse(path)
     fm = qf.front_matter
     errors: list = []
@@ -93,7 +118,27 @@ def lint_file(path: str) -> list:
 
 
 def preview_file(path: str) -> str:
-    """実際に投げる本文そのもの（媒体の節だけ。前後に何も足さない）。"""
+    """実際に投げる本文そのもの（媒体の節だけ。前後に何も足さない）。
+
+    **スレッド連投は段ごとに分けて出す。** 区切り行まで本文として見せると、
+    **それが投稿されるように読める**（実際には送らない）。
+    """
+    b, _text = _bundle_or_none(path)
+    if b is not None:
+        cfg = _account_cfg_or_none(b.front_matter.get("account"))
+        media = cfg["media"] if cfg else "threads"
+        segments, problems = _bundle_segments(b, media)
+        if problems:
+            return "（段に割れません）" + "／".join(problems)
+        out = []
+        total = len(segments)
+        for i, seg in enumerate(segments, start=1):
+            rel = "返信先なし（先頭）" if i == 1 else f"{i - 1} 段目への返信"
+            out.append(f"── {i}/{total}　{rel}")
+            out.append(seg)
+            out.append("")
+        return "\n".join(out).rstrip() + "\n"
+
     qf = queuefile.parse(path)
     account_name = qf.front_matter.get("account")
     account_cfg = _account_cfg_or_none(account_name)

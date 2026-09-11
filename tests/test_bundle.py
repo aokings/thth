@@ -223,3 +223,38 @@ def test_知らない項目を拒否する():
     b = bundle.parse_text(make(fm), "b.md")
     errors = bundle.check(b, account_cfg=account_cfg())
     assert any("知らない項目" in e for e in errors), errors
+
+
+# --- lint / preview の入口（セッションに渡す前に確かめる） -------------------
+
+def test_lintが束を束として検査する(tmp_path, isolated_account):
+    """**「thth: 1 が無い」とだけ言わない。**
+
+    2026-09-11 に 3 回「動かないコマンドを配る」失敗をしたので、
+    **渡す前に実際に叩く。**
+    """
+    from thth import lint
+    path = tmp_path / "t.md"
+    text = make().replace("nigamilab-threads", isolated_account["name"])
+    path.write_text(text, encoding="utf-8")
+    assert lint.lint_file(str(path)) == []
+
+    broken = str(tmp_path / "bad.md")
+    open(broken, "w", encoding="utf-8").write(
+        text.replace("<!-- thth: 2/3 -->", "<!-- thth: 3/3 -->"))
+    errors = lint.lint_file(broken)
+    assert any("順番どおりではありません" in e for e in errors), errors
+    assert not any("thth: 1" in e for e in errors), errors
+
+
+def test_previewは段ごとに分けて出す(tmp_path, isolated_account):
+    """**区切り行を本文として見せない**（それが投稿されるように読める）。"""
+    from thth import lint
+    path = tmp_path / "t.md"
+    path.write_text(make().replace("nigamilab-threads", isolated_account["name"]),
+                     encoding="utf-8")
+    out = lint.preview_file(str(path))
+    assert "<!-- thth:" not in out, out
+    assert "1/3　返信先なし（先頭）" in out
+    assert "2/3　1 段目への返信" in out
+    assert "コーヒーが苦いのは、カフェインのせいでしょうか。" in out
