@@ -90,23 +90,60 @@ def _check_record_path(app_dir: str) -> str | None:
     return os.path.join(r.stdout.strip(), "thth-release-check.json")
 
 
-def _record_check(app_dir: str, ref: str, *, ok: bool,
-                   error: str | None = None) -> None:
-    """**取りに行った結果を残す。** 失敗しても呼び出し側は止めない（記録係が
-    転んだせいで投稿が止まるのは重すぎる）。"""
+def _write_check(app_dir: str, ref: str, payload: dict) -> bool:
+    """記録を書く。**書けたかどうかを返す**（握り潰さない）。"""
     path = _check_record_path(app_dir)
     if path is None:
-        return
-    payload = {"ref": ref, "ok": ok, "checked_at": jst.iso(), "error": error}
-    if ok:
-        payload["release"] = _cached_release(app_dir, ref)
+        return False
     try:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
         os.replace(tmp, path)
+        return True
     except OSError:
-        pass
+        try:
+            # 書けないなら**せめて古いものを消す**——**古い成功を有効なまま
+            # 残すのがいちばん悪い。**
+            os.remove(path)
+        except OSError:
+            pass
+        return False
+
+
+def _begin_check(app_dir: str, ref: str) -> bool:
+    """**取りに行く前に、前の成功を無効にする**（外部レビュー F3・P2・2026-09-12）。
+
+    以前は結果を書くときだけ記録していた。**その書き込みが失敗すると
+    `except OSError: pass` で握り潰され、前回の `ok: true` がそのまま有効に
+    残った**——通信に失敗しているのに、別プロセスの board が古い成功から
+    「追いついています」と出す形。
+
+    **順番を変える。** 先に「まだ結果が無い」を書いてから取りに行く。**結果の
+    書き込みが失敗しても、残るのは古い成功ではなくこれ。**
+
+    **限界は残る**（そしてそれを隠すために記録の記録を増やさない・外部レビュー
+    の指示）: **この書き込み自体が失敗した場合**、古い成功が残る。そのときは
+    `False` を返すので、呼び出し側が**その実行の中では**知ることができる。
+    **別プロセスの board には伝わらない。** ここは塞げていない。
+    """
+    return _write_check(app_dir, ref, {
+        "ref": ref, "ok": False, "checked_at": jst.iso(), "pending": True,
+        "error": "取りに行った結果がまだ書けていません"})
+
+
+def _record_check(app_dir: str, ref: str, *, ok: bool,
+                   error: str | None = None) -> bool:
+    """**取りに行った結果を残す。** 書けたかどうかを返す。
+
+    **失敗しても呼び出し側は止めない**（記録係が転んだせいで投稿が止まるのは
+    重すぎる）。ただし**握り潰さない**——`_begin_check` が先に無効化している
+    ので、ここが失敗しても**古い成功は残らない。**
+    """
+    payload = {"ref": ref, "ok": ok, "checked_at": jst.iso(), "error": error}
+    if ok:
+        payload["release"] = _cached_release(app_dir, ref)
+    return _write_check(app_dir, ref, payload)
 
 
 def _read_check(app_dir: str, ref: str) -> dict | None:
@@ -195,6 +232,7 @@ def behind_release(app_dir: str = APP_DIR, *, fetch: bool = False,
         # 数えない——外部レビュー F2-1（2026-09-12）: 取得の戻り値を無視して
         # 古い `origin/release` から数え、**到達不能なのに `0`（＝追いついて
         # います）を返していた。**
+        _begin_check(app_dir, ref)
         ok = _git(["fetch", "origin", _refspec(ref)], cwd=app_dir).returncode == 0
         _record_check(app_dir, ref, ok=ok,
                        error=None if ok else "取りに行けませんでした")
@@ -232,6 +270,7 @@ def ahead_of_release(app_dir: str = APP_DIR, *, fetch: bool = False,
     """
     ref = ref or RELEASE_REF
     if fetch:
+        _begin_check(app_dir, ref)
         ok = _git(["fetch", "origin", _refspec(ref)], cwd=app_dir).returncode == 0
         _record_check(app_dir, ref, ok=ok,
                        error=None if ok else "取りに行けませんでした")
@@ -341,6 +380,18 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
     ref = ref or RELEASE_REF
     # **配布の枝だけを名指しで取りに行く。** `git pull` のように checkout して
     # いる枝の上流を見ない——**`main` に何が push されても、ここには入らない。**
+    # **取りに行く前に、前の成功を無効にする**（外部レビュー F3・2026-09-12）。
+    began = _begin_check(app_dir, ref)
+    if not began:
+        # **前の成功を無効にできなかった。** 別プロセスの board には伝わらない
+        # ——**そこは塞げていない**ので、せめてこの実行では言う（外部レビュー
+        # F3 の「記録の記録を増やさない」に従い、ここで止める）。
+        log_prefix = (f"**配布の確認の記録を書けませんでした**"
+                       f"（`{_check_record_path(app_dir) or '置き場が読めません'}`。"
+                       f"**board には前回の確認が残ったままになります**）\n")
+    else:
+        log_prefix = ""
+
     fetch = _git(["fetch", "origin", _refspec(ref)], cwd=app_dir)
     # **取りに行った結果を、成否どちらでも残す**（外部レビュー F2 残件・
     # 2026-09-12）。board は別プロセスで `fetch=False` で呼ぶので、**ここで
@@ -369,10 +420,10 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
             _git(["update-ref", "-d", _remote_ref(ref)], cwd=app_dir)
             _record_check(app_dir, ref, ok=False,
                            error=f"`origin/{ref}` が origin にありません")
-            return (f"**配布の枝 `origin/{ref}` が origin にありません**"
+            return (log_prefix + f"**配布の枝 `origin/{ref}` が origin にありません**"
                      f"（古いまま走ります。**まだ配布されていないか、枝の名前が"
                      f"違います**）"), None
-        return (f"配布の枝 `origin/{ref}` を取りに行けませんでした"
+        return (log_prefix + f"配布の枝 `origin/{ref}` を取りに行けませんでした"
                  f"（古いまま走ります。**枝が無いのか、届かないのかは"
                  f"区別できていません**）"), None
 
@@ -382,11 +433,11 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
         if n == 0:
             # 遅れていないのに ff できない＝**枝分かれしている**（本番で誰かが
             # commit した・配布の枝が巻き戻された）。**黙って古いまま走らない。**
-            return (f"**配布の枝 `origin/{ref}` と枝分かれしています**"
+            return (log_prefix + f"**配布の枝 `origin/{ref}` と枝分かれしています**"
                      f"（古いまま走ります。本番側に commit が残っていないか"
                      f"確かめてください）"), None
         suffix = "" if n is None else f"（`origin/{ref}` より {n} commit 遅れ）"
-        return (f"配布の枝への ff に失敗しました{suffix}"
+        return (log_prefix + f"配布の枝への ff に失敗しました{suffix}"
                  f"（古いまま走ります）"), None
 
     after = head(app_dir)
@@ -408,11 +459,13 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
     if released is not None and after != released:
         n = _count(app_dir, f"origin/{ref}..HEAD")
         count = "" if n is None else f" {n} commit"
-        unreleased = (f"**配っていない commit で動いています**"
+        unreleased = (log_prefix + f"**配っていない commit で動いています**"
                        f"（`origin/{ref}` より{count}先。配布の枝: "
                        f"{released[:7]} / いま: {(after or '不明')[:7]}）")
 
     # **ディスクが動いたかではなく、読み込んだ版と違うかで決める。**
+    if unreleased is None and log_prefix:
+        unreleased = log_prefix.rstrip("\n")
     if after == (anchor if anchor is not None else before):
         return unreleased, None
     return unreleased, (anchor if anchor is not None else before, after)

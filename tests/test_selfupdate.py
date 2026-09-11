@@ -457,8 +457,13 @@ def test_取りに行けなくなったらboardは追いついているとは言
     assert "追いついています" not in out, \
         "**取りに行けていないのに『追いついています』と出している**"
     assert "いまの配布状況は未確認です" in out
-    assert "最後に取りに行けたのは" in out, \
-        "いつまでは確かめられていたのかが出ていない"
+    # **`checked_at` は成否を問わない「試みた時刻」**（外部レビュー F4・P3・
+    # 2026-09-12）。**失敗した時刻を「取りに行けた」＝成功した時刻として説明
+    # していた。** ここは一度その文言をテストで固定してしまっていた
+    # ——**間違いを固定するテストは、間違いを守る。**
+    assert "最後に取得を試みたのは" in out, "いつ試みたのかが出ていない"
+    assert "取りに行けたのは" not in out, \
+        "**失敗した時刻を、成功した時刻として説明している**"
     # **機械の利用者にも伝わるか**（`behind_release: 0` だけを読む読み手が同じ
     # 読み違いをする）。
     assert summary["app"]["behind_release"] is None
@@ -504,3 +509,74 @@ def test_別の枝についての確認をこの枝の確認として読まな�
     assert selfupdate.release_check(pair["work"]) is not None
     assert selfupdate.release_check(pair["work"], ref="べつの枝") is None
     assert selfupdate.behind_release(pair["work"], ref="べつの枝") is None
+
+# --- 外部レビュー F3（P2・2026-09-12・再々判定）------------------------------
+
+def test_結果を保存できなくても古い成功を残さない(tmp_path, monkeypatch):
+    """**F3。** 結果の書き込みが失敗したとき、`except OSError: pass` で握り潰され、
+    **前回の `ok: true` がそのまま有効に残っていた**——通信に失敗しているのに、
+    別プロセスの board が古い成功から「追いついています」と出す形。
+
+    **順番を変えた。** 先に「まだ結果が無い」を書いてから取りに行く。**結果の
+    書き込みが失敗しても、残るのは古い成功ではなくこれ。**
+    """
+    pair = _app_pair(tmp_path)
+    selfupdate._pull_locked(pair["work"])
+    assert selfupdate.release_check(pair["work"])["ok"] is True, "前提が崩れている"
+
+    _advance_origin(pair, "v2\n")
+    subprocess.run(["git", "-C", pair["work"], "remote", "set-url", "origin",
+                    str(tmp_path / "とどかない.git")], check=True)
+
+    def 書けない(*_a):
+        raise PermissionError("書き込みを失敗させる")
+
+    with monkeypatch.context() as m:
+        m.setattr(selfupdate.os, "replace", 書けない)
+        selfupdate._pull_locked(pair["work"])
+
+    assert selfupdate.behind_release(pair["work"]) is None, \
+        "**保存に失敗したのに、古い成功が有効なまま残っている**"
+    assert selfupdate.ahead_of_release(pair["work"]) is None
+
+
+def test_無効化もできなかったらその実行では言う(tmp_path, monkeypatch):
+    """**塞げていない範囲を、塞げている顔で通さない。**
+
+    無効化の書き込み自体が失敗すると、**古い成功が残る。** 別プロセスの board には
+    伝わらない（外部レビューの「記録の記録を増やさない」に従い、そこは塞がない）。
+    **せめてその実行では言う。**
+    """
+    pair = _app_pair(tmp_path)
+    selfupdate._pull_locked(pair["work"])
+
+    with monkeypatch.context() as m:
+        m.setattr(selfupdate, "_write_check", lambda *_a, **_k: False)
+        message, _moved = selfupdate._pull_locked(pair["work"])
+
+    assert message and "配布の確認の記録を書けませんでした" in message
+    assert "board には前回の確認が残ったままになります" in message, \
+        "**何が起きるのかを言っていない**（書けなかった、だけでは伝わらない）"
+
+def test_結果を書く前に死んでも古い成功を残さない(tmp_path, monkeypatch):
+    """**先に無効化することが効くのは、ここ。**
+
+    **変異で分かった**（2026-09-12）: 外部レビューの反例は「書けないなら古いものを
+    消す」だけで満たされ、**先に無効化する処理を外しても通ってしまう。**
+    つまりあの処理は**何にも守られていなかった。**
+
+    効くのは**取得のあと、結果を書く前に実行が死んだとき**——VM の再起動、timer の
+    kill、`timeout`。そのとき前回の `ok: true` が残っていると、**別プロセスの board
+    が古い成功から「追いついています」と出す。**
+    """
+    pair = _app_pair(tmp_path)
+    selfupdate._pull_locked(pair["work"])
+    assert selfupdate.behind_release(pair["work"]) == 0, "前提が崩れている"
+
+    with monkeypatch.context() as m:
+        # **結果を書かないまま終わる**（＝書く前に死んだ）。
+        m.setattr(selfupdate, "_record_check", lambda *_a, **_k: True)
+        selfupdate._pull_locked(pair["work"])
+
+    assert selfupdate.behind_release(pair["work"]) is None, \
+        "**結果を書く前に死んだのに、前回の成功が有効なまま残っている**"

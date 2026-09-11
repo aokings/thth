@@ -1467,7 +1467,10 @@ def cmd_board(args) -> int:
             when = check.get("checked_at")
             why = check.get("error")
             if why and when:
-                detail = f"最後に取りに行けたのは {when}——{why}"
+                # **`checked_at` は成否を問わない「試みた時刻」**（外部レビュー
+                # F4・P3・2026-09-12）。**失敗した時刻を成功した時刻として
+                # 説明していた。**
+                detail = f"最後に取得を試みたのは {when}——{why}"
             elif why:
                 detail = str(why)
             else:
