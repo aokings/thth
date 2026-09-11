@@ -420,3 +420,37 @@ def test_実在しない記録は指せない(isolated_account, thth_root):
     proc = _record(_review(vocabulary_id, draft_sha256="a" * 64,
                             supersedes="前のやつ"))
     assert "review_id" in _json(proc)["error"]["message"]
+
+
+def test_直す前と後が同じ指紋なら断る(isolated_account, thth_root):
+    """**往復の常態を罠にしない**（運用セッションが踏みかけた・2026-09-11）。
+
+    指摘は「直す前の原稿」に対するものなのに、`--draft` は現物（＝もう直って
+    いる）から計算する。両方渡すと**判定した対象と記録される対象がずれる。**
+    """
+    vocabulary_id = _register_vocabulary()
+    path = str(write_queue_file(isolated_account["queue_dir"], "same.md", body=BODY,
+                                 fm_overrides={"status": "draft"}))
+    proc = _record(_review(vocabulary_id, disposition="fixed"),
+                    ["--draft", path, "--revised-draft", path])
+    assert proc.returncode == 2
+    message = _json(proc)["error"]["message"]
+    assert "直す前の原稿" in message and "--revised-draft" in message
+
+
+def test_記録の応答に鎖が出る(isolated_account, thth_root):
+    """**読み返さずに確かめられる**（改訂先が応答に無いと `review` を引き直す）。"""
+    vocabulary_id = _register_vocabulary()
+    path = str(write_queue_file(isolated_account["queue_dir"], "chain.md", body=BODY,
+                                 fm_overrides={"status": "draft"}))
+    fixed = _json(_record(_review(vocabulary_id, draft_sha256="a" * 64,
+                                   disposition="fixed"),
+                           ["--revised-draft", path]))
+    assert fixed["revised_draft_sha256"] == _sha256(path)
+    assert fixed["recheck_of"] is None and fixed["supersedes"] is None
+
+    recheck = _json(_record(_review(vocabulary_id, recheck_of=fixed["review_id"],
+                                     findings=[_finding(result="no_problem")]),
+                             ["--draft", path]))
+    assert recheck["recheck_of"] == fixed["review_id"]
+    assert recheck["draft_sha256"] == fixed["revised_draft_sha256"]

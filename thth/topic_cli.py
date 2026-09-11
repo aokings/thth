@@ -859,6 +859,11 @@ def cmd_record_review(args) -> int:
     saved, wrote = store.put("reviews", review, id_key="review_id")
     _emit({"ok": True, "review_id": saved["review_id"], "stored": wrote,
            "account": saved["account"], "draft_sha256": saved["draft_sha256"],
+           # **鎖を読み返さずに確かめられるように出す**（運用セッション報告
+           # 2026-09-11: 改訂先が応答に無いので `review` を引き直していた）。
+           "revised_draft_sha256": saved.get("revised_draft_sha256"),
+           "recheck_of": saved.get("recheck_of"),
+           "supersedes": saved.get("supersedes"),
            "disposition": saved["disposition"],
            "reasons": models.tally_reasons([saved]),
            "warnings": _vocabulary_warnings(models.tally_reasons([saved])),
@@ -1100,9 +1105,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--input", default=None)
     p.add_argument("--json-stdin", action="store_true")
     p.add_argument("--draft", default=None,
-                    help="検収した原稿のパス（**中身から fingerprint を計算する**）")
+                    help="**検収した原稿**のパス（中身から fingerprint を計算する）。"
+                         "**直したあとに記録するときは使わない**——現物はもう直って"
+                         "いるので、対象がずれる。その場合は直す前の指紋を JSON の "
+                         "draft_sha256 に書く")
     p.add_argument("--revised-draft", default=None,
-                    help="修正後の原稿のパス（disposition: fixed に要る）")
+                    help="**直したあとの原稿**のパス（disposition: fixed に要る）。"
+                         "見つけた時点では直っていない・記録するのは直したあと、"
+                         "という順序が往復では常態なので、2 つを分けてある")
     p.add_argument("--by", default=None)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_record_review)

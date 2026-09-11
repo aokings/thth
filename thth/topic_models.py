@@ -574,6 +574,17 @@ def build_review(row: dict, *, vocabulary: dict,
         raise SchemaError("judged_by に id が要ります（誰・どのセッションか）")
 
     _require_choice(row["disposition"], DISPOSITION, "disposition")
+    if row.get("revised_draft_sha256") \
+            and row["revised_draft_sha256"] == row.get("draft_sha256"):
+        # **直す前と後が同じ指紋になることはない**（運用セッションが踏みかけた・
+        # 2026-09-11）。指摘は「直す前の原稿」に対するものなのに、`--draft` は
+        # 現物（＝もう直っている）から計算する。そのまま両方渡すと、
+        # **判定した対象と記録される対象がずれたまま通ってしまう。**
+        raise SchemaError(
+            "draft_sha256 と revised_draft_sha256 が同じです。"
+            "**指摘は直す前の原稿に対するもの**なので、`--draft` に現物を渡すと"
+            "（もう直っているので）対象がずれます。直す前の指紋を JSON の "
+            "draft_sha256 に書き、直した後を `--revised-draft` で渡してください")
     if row["disposition"] == "fixed" and not row.get("revised_draft_sha256"):
         raise SchemaError(
             "disposition が fixed なのに revised_draft_sha256 がありません。"
