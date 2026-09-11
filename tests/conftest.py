@@ -332,7 +332,12 @@ def approve_via_cli(path, *, by: str | None = None, extra: list | None = None):
     assert first.returncode == 1, f"一段目が承認してしまった: {first.stdout}{first.stderr}"
     digests = [line.split(": ", 1)[1].strip() for line in first.stdout.splitlines()
                if line.startswith("digest: ")]
-    assert digests, f"digest が表示されない: {first.stdout}{first.stderr}"
+    if not digests:
+        # **digest が出ないのは「承認に到達しなかった」**（2026-09-12）。
+        # 以前はここで AssertionError にしていたので、**道具が正しく承認を
+        # 断ったときに、テストの助け手のほうが落ちていた。** 断られたことを
+        # 呼び出し側が見られるように、一段目の結果をそのまま返す。
+        return first
     # `--by` は必須（kopicha セッション指摘 2026-09-10: 既定でホスト名が入っていた）。
     # テストは中身の確認が目的なので、指定が無ければ「テスト」と名乗る。
     args = ["approve", str(path), "--confirm", digests[0], "--by", by or "テスト"]

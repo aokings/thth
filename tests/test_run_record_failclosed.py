@@ -41,7 +41,10 @@ def test_読めない記録は名前で返す(thth_root):
     directory = _runs_dir(thth_root)
     with open(os.path.join(directory, "run-x.json"), "w", encoding="utf-8") as f:
         f.write("{壊れた")
-    ok = {"run_id": "run-y", "account": "a", "rel_path": "q.md", "posts": []}
+    # **実行記録として解釈できる形**にする（2026-09-12・N1 の検査を足したので、
+    # `posts` が空だと「解釈できない」側に入る）。
+    ok = {"run_id": "run-y", "account": "a", "rel_path": "q.md",
+          "posts": [{"index": 1, "state": "pending", "post_id": None}]}
     with open(os.path.join(directory, "run-y.json"), "w", encoding="utf-8") as f:
         json.dump(ok, f)
 
@@ -139,3 +142,57 @@ def test_別accountの実行の続きとして出さない(thth_root):
     problem = threadrun.identity_error(row, posts, rel_path="q.md",
                                         account="B-threads")
     assert problem and "別の account" in problem
+
+
+# --- 再々判定 N1・N2（2026-09-12 Codex）: 解釈できない記録を「無い」にしない ---
+
+def test_JSONとして読めても実行記録として読めなければ止める(thth_root):
+    """**「JSON として読める」と「実行記録として読める」は別**（N1）。
+
+    棚（`topic_store`）は前から「読むたびに中身を照合する」を守っていたのに、
+    **公開経路の実行記録だけ `json.load()` の成否しか見ていなかった。**
+    中身を `{}` に置き換えると「壊れていない」ことになり、そのあと
+    `find_latest()` が account 不一致で飛ばすので**「該当する実行が無い」と
+    同じ状態**になった——凍結済みの段を持たない新しい束として、
+    **1 段目が再公開できた。**
+    """
+    directory = _runs_dir(thth_root)
+    for name, body in (("run-empty.json", {}),
+                        ("run-noposts.json", {"run_id": "r", "account": "a",
+                                               "rel_path": "q.md", "posts": []}),
+                        ("run-badstate.json", {"run_id": "r", "account": "a",
+                                                "rel_path": "q.md",
+                                                "posts": [{"index": 1,
+                                                            "state": "なにか"}]})):
+        with open(os.path.join(directory, name), "w", encoding="utf-8") as f:
+            json.dump(body, f)
+
+    broken = threadrun.unreadable_runs()
+    assert len(broken) == 3, broken
+    assert all(b.endswith(".json") for b in broken)
+
+    # **正しい形は通す**（止めすぎない）。
+    ok = {"run_id": "run-ok", "account": "a", "rel_path": "q.md",
+          "posts": [{"index": 1, "state": "published", "post_id": "P1"},
+                     {"index": 2, "state": "pending", "post_id": None}]}
+    assert threadrun.run_problem(ok) is None
+
+
+def test_置き場が通常ファイルなら不在と同じにしない(thth_root):
+    """**「無い」と「あるが置き場として使えない」は別**（N2）。
+
+    `state/threads` に通常ファイルが置かれていると `os.path.isdir` が偽になり、
+    **記録が 1 件も無いのと同じ扱い**になっていた。承認は通り、公開は
+    `FileExistsError` で落ちた——**不正な状態で承認だけ成功していた。**
+    """
+    path = os.path.join(thth_root, "state", "threads")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("ディレクトリではない")
+
+    broken = threadrun.unreadable_runs()
+    assert broken == [os.path.abspath(path)], broken
+
+    # **無いこと自体は、これまでどおり止めない。**
+    os.remove(path)
+    assert threadrun.unreadable_runs() == []

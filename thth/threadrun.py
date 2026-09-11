@@ -173,6 +173,49 @@ def open_runs(account: str) -> list:
     return out
 
 
+STATES = (PENDING, REQUESTED, PUBLISHED, UNRESOLVED, SKIPPED) \
+    if "SKIPPED" in globals() else (PENDING, REQUESTED, PUBLISHED, UNRESOLVED)
+
+# 実行記録として使うのに要る項目（`start()` が必ず書くもの）。
+_RUN_KEYS = ("run_id", "account", "rel_path", "posts")
+
+
+def run_problem(row) -> str | None:
+    """実行記録として**解釈できるか**（再々判定 N1・2026-09-12 Codex）。
+
+    **JSON として読めることは、実行記録として読めることではない。**
+    `unreadable_runs()` は `json.load()` の成否しか見ていなかったので、
+    **中身を `{}` に置き換えると「壊れていない」ことになった。** そのあと
+    `find_latest()` が account 不一致で飛ばすため「**該当する実行が無い**」と
+    同じ状態になり、**凍結済みの段を持たない新しい束として 1 段目が再公開できた。**
+
+    棚（`topic_store`）の側は前から「読むたびに中身を照合する」を守っていたのに、
+    **公開経路の実行記録だけ素通しだった。** 同じ基準にする。
+
+    **解釈できないものを「該当 run なし」に落とさない**——呼び出し側は
+    `unreadable_runs()` で止まる。
+    """
+    if not isinstance(row, dict):
+        return f"object ではありません（{type(row).__name__}）"
+    missing = [k for k in _RUN_KEYS if not row.get(k)]
+    if missing:
+        return f"項目がありません: {missing}"
+    for key in ("run_id", "account", "rel_path"):
+        if not isinstance(row[key], str):
+            return f"{key} が文字列ではありません"
+    posts = row["posts"]
+    if not isinstance(posts, list) or not posts:
+        return "posts が空です"
+    for i, post in enumerate(posts, start=1):
+        if not isinstance(post, dict):
+            return f"posts[{i}] が object ではありません"
+        if post.get("index") != i:
+            return f"posts[{i}] の index が {post.get('index')!r} です（順番どおりに）"
+        if post.get("state") not in STATES:
+            return f"posts[{i}] の state が知らない値です（{post.get('state')!r}）"
+    return None
+
+
 def unreadable_runs() -> list:
     """**読めない実行記録**の絶対パス（監査 2026-09-11・F1 と同じ形）。
 
@@ -186,8 +229,14 @@ def unreadable_runs() -> list:
     空を返す。曖昧なのは「ファイルはあるのに読めない」だけ。
     """
     directory = runs_dir()
-    if not os.path.isdir(directory):
+    if not os.path.exists(directory):
         return []            # **無いことは確定した事実。** 止めない
+    if not os.path.isdir(directory):
+        # **「無い」と「あるが置き場として使えない」は別**（再々判定 N2）。
+        # 通常ファイルが置かれていると `isdir` が偽になり、**記録が 1 件も
+        # 無いのと同じ扱い**になっていた。承認は通り、公開は
+        # `FileExistsError` で落ちた——**不正な状態で承認だけ成功していた。**
+        return [os.path.abspath(directory)]
     out = []
     for name in sorted(os.listdir(directory)):
         if not name.endswith(".json") or name.endswith(".tmp"):
@@ -195,8 +244,12 @@ def unreadable_runs() -> list:
         path = os.path.join(directory, name)
         try:
             with open(path, encoding="utf-8") as f:
-                json.load(f)
+                row = json.load(f)
         except (OSError, ValueError):
+            out.append(os.path.abspath(path))
+            continue
+        # **JSON として読めても、実行記録として解釈できなければ同じ扱い**（N1）。
+        if run_problem(row):
             out.append(os.path.abspath(path))
     return out
 
