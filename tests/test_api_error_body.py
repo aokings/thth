@@ -141,3 +141,55 @@ def test_本当の0件はこれまでどおり通る():
     """**止めすぎない。** `{"data": []}` は取れて 0 件。"""
     with _server({"data": []}) as base_url:
         assert _adapter(base_url).replies("POST1") == []
+
+
+# --- clicks の形（外部調査 2026-09-11 Codex・公式の例そのまま） ---------------
+
+# 公式ドキュメントの応答例（`developers.facebook.com/documentation/threads/insights`・
+# 2026-09-12 取得）。**この形を取り出せず、clicks が None になって捨てられていた。**
+CLICKS_EXAMPLE = {"data": [{
+    "name": "clicks", "period": "day",
+    "link_total_values": [{"value": 11, "link_url": "https://ai.meta.com/blog/"}],
+    "title": "clicks", "description": "The number of times users clicked on a link.",
+    "id": "37602215421583/insights/clicks/day"}]}
+
+
+def test_clicksを取りこぼさない():
+    """**`link_total_values` を見ていなかった。**
+
+    `_metric_value()` は `total_value` と `values` しか見ておらず、公式の例の
+    clicks=11 に対して `None` を返していた。`account_insights()` は None の指標を
+    結果に入れないので、**clicks は一度も記録されていなかった可能性が高い**
+    （本番で何件失われたかは未確認）。外部調査（Codex）の指摘を、こちらでも
+    同じ入力で再現して直した。
+    """
+    with _server(CLICKS_EXAMPLE) as base_url:
+        got = _adapter(base_url).account_insights(
+            "12345", since="2026-09-10", until="2026-09-11")
+    assert got["clicks"] == 11
+
+
+def test_URLごとの内訳を捨てない():
+    """**投稿ごとの clicks は取れないが、URL ごとの内訳は取れる。**
+
+    こちらの資料に「どの URL かも分からない」と書いていたのは誤りだった
+    （外部調査で判明）。ただし**URL と投稿は一対一とは限らない**ので、
+    投稿へ割り当てはしない——内訳として持つだけ。
+    """
+    with _server(CLICKS_EXAMPLE) as base_url:
+        got = _adapter(base_url).account_insights(
+            "12345", since="2026-09-10", until="2026-09-11")
+    assert got["clicks_by_url"] == [
+        {"link_url": "https://ai.meta.com/blog/", "value": 11}]
+
+
+def test_これまでの2つの形も引き続き取れる():
+    """**止めすぎない。** `total_value` と `values` の形は変わらず取れる。"""
+    for row, expected in (
+            ({"name": "views", "total_value": {"value": 323}}, 323),
+            ({"name": "views", "values": [{"value": 164}]}, 164)):
+        with _server({"data": [row]}) as base_url:
+            got = _adapter(base_url).account_insights(
+                "12345", since="2026-09-10", until="2026-09-11")
+        assert got["views"] == expected
+        assert "views_by_url" not in got

@@ -154,7 +154,34 @@ class ThreadsAdapter(base.Adapter):
         values = row.get("values")
         if isinstance(values, list) and values and isinstance(values[0], dict):
             return values[0].get("value")
+        # **3 つめの形がある**（外部調査 2026-09-11 Codex・独立に再現済み）。
+        # `clicks` は `link_total_values: [{value, link_url}]` で返る。
+        # ここを見ていなかったので `None` になり、`account_insights()` が
+        # None の指標を落とすため、**clicks は一度も記録されていなかった可能性が
+        # 高い**（本番で何件失われたかは未確認）。
+        links = row.get("link_total_values")
+        if isinstance(links, list) and links:
+            numbers = [x.get("value") for x in links
+                       if isinstance(x, dict) and isinstance(x.get("value"), (int, float))]
+            if numbers:
+                return sum(numbers)
         return None
+
+    @staticmethod
+    def _link_values(row: dict) -> list:
+        """URL ごとの内訳（`clicks` だけが持つ）。
+
+        **投稿ごとの clicks は取れない**が、**URL ごとの内訳は取れる**
+        （外部調査 2026-09-11 で判明。こちらの資料には「どの URL かも分からない」と
+        書いていたが誤りだった）。ただし**URL と投稿は一対一とは限らない**——
+        同じ URL を複数の投稿で使えば、どの投稿の分かは決まらない。
+        **合算して投稿へ割り当てない。**
+        """
+        links = row.get("link_total_values")
+        if not isinstance(links, list):
+            return []
+        return [{"link_url": x.get("link_url"), "value": x.get("value")}
+                for x in links if isinstance(x, dict)]
 
     @staticmethod
     def _rows(body: dict, what: str) -> list:
@@ -221,6 +248,11 @@ class ThreadsAdapter(base.Adapter):
             value = self._metric_value(row)
             if name and value is not None:
                 out[name] = value
+            # **URL ごとの内訳を捨てない。** 投稿へ割り当てはしないが、
+            # 「どのリンクが踏まれたか」は記事への導線を見るのに要る。
+            links = self._link_values(row)
+            if name and links:
+                out[f"{name}_by_url"] = links
         return out
 
     def quota(self):
