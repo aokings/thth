@@ -13,17 +13,26 @@
 `data/sns/insights/account/*.ndjson`（アカウント日次）を読む。**読むだけ。
 何も書かない。**
 
-**所有 account を根拠付きで選別する**（外部レビュー再判定 M3・2026-09-12）。
-`repo_dir` は account ごとに分かれている前提だったが、共有された場合に選別が
-無く、他 account の投稿・日次が混ざっていた。根拠は 2 つあり、記録され方が
-違うので選び方も分ける:
+**所有 account を根拠付きで選別する**（外部レビュー再判定 M3・2026-09-12、
+さらに R3・2026-09-12 で根拠を採取時点のものに絞った）。`repo_dir` は
+account ごとに分かれている前提だったが、共有された場合に選別が無く、他
+account の投稿・日次が混ざっていた。根拠は 2 つあり、記録され方が違うので
+選び方も分ける:
 
-  - 投稿ごとの台帳（`posts/*.ndjson`）の行は `account` を持たない。唯一の
-    手がかりは `file`（採取当時の queue ファイル名）なので、queue_dir の
-    実ファイルを開いて front-matter の `account` を見る（`_form_for()` と
-    同じ解決）。ファイルが無い・壊れている・`account` が無ければ「不明」
-    （`posts_unknown_ownership`）——他 account と判った場合と違い、**この
-    account かもしれないので、値を混ぜずに区別して出す**。
+  - 投稿ごとの台帳（`posts/*.ndjson`）の行は、`thth/collect.py` が採取時点に
+    `account` を書く（R3 以降）。**行そのものの `account` だけを所有の根拠に
+    する。** 行に `account` が無ければ「不明」（`posts_unknown_ownership`）
+    ——他 account と判った場合と違い、**この account かもしれないので、値を
+    混ぜずに区別して出す**。
+
+    以前（M3）は行に `account` が無いことを前提に、`file`（採取当時の queue
+    ファイル名）を手がかりに queue_dir の**現在の**原稿を開き、その
+    front-matter の `account` を過去の所有として使っていた。だが原稿の
+    account は「いま」の値であって「採取時点」の値ではない——原稿の account を
+    書き換えると、過去の台帳が黙って新しい account の実測へ移し替えられて
+    しまっていた（R3）。**現在の原稿を過去の所有の根拠にするのをやめる。**
+    R3 より前に採取した行（`account` を持たない）は、完全な過去復元を諦めて
+    「不明」に分ける——これが最小修正。
   - アカウント日次（`account/*.ndjson`）は `thth/collect.py` の
     `_collect_account_daily()` がファイル名そのものに `<account>-<年月>` を
     刻んでいる。ファイル名が一致しないものは他 account と判っているので、
@@ -106,31 +115,6 @@ def _form_for(queue_dir: str, file_name: str | None) -> str | None:
     return qf.front_matter.get("form")
 
 
-def _account_for(queue_dir: str, file_name: str | None) -> str | None:
-    """投稿ごとの台帳の行から**所有 account を根拠付きで引く**（M3）。
-
-    `posts/*.ndjson` の行そのものは `account` を持たない（`thth/collect.py`
-    が書いていない）ので、`file`（採取当時の queue ファイル名）を手がかりに
-    queue_dir の実ファイルを開き、front-matter の `account` を見る。
-    `_form_for()` と同じ解決（連投の段は `#` の手前で切って実物を探す）。
-
-    読めなければ（無い・壊れている・`account` が無い）`None`——**「不明」**。
-    共有 repo で他 account の投稿が既に無くなっている場合、ここで `None` を
-    返すことで「この account の投稿だと推定して混ぜる」のを避ける。
-    """
-    if not file_name:
-        return None
-    base = file_name.split("#", 1)[0]
-    path = os.path.join(queue_dir, base)
-    try:
-        qf = queuefile_mod.parse(path)
-    except OSError:
-        return None
-    if qf.malformed:
-        return None
-    return qf.front_matter.get("account")
-
-
 def _mark_collapsed(rows: list) -> None:
     """刻みが同居している行に印を付ける（`rows` を書き換える）。
 
@@ -159,9 +143,10 @@ def load(account_name: str) -> dict:
         `posted_at` と、時系列の `rows`（`collected_at`・`age_hours`・
         `marks`・`marks_collapsed`・`metrics`）を持つ。
       - `posts_unknown_ownership`: 所有 account を**判別できなかった**投稿
-        台帳の post_id（共有 repo で、対応する queue ファイルが無い・壊れて
-        いる・`account` が無い場合）。この account の実測へ推定で混ぜず、
-        ここに分けて出す——`posts` にも他 account の分にも入らない。
+        台帳の post_id（行に `account` が無い場合——R3 より前に採取した行、
+        または壊れた採取）。この account の実測へ推定で混ぜず、ここに分けて
+        出す——`posts` にも他 account の分にも入らない。**現在の原稿の
+        account では復元しない**（R3）。
       - `account_daily`: アカウント日次の行（`date` と `metrics`）。ファイル名
         `<account>-<年月>.ndjson` が一致するものだけ（M3）。
       - `broken`: 読めなかった・信用できなかったファイルの名前（壊れと
@@ -196,12 +181,19 @@ def load(account_name: str) -> dict:
 
             post_id = name[: -len(".ndjson")]
             first = rows[0]
-            # **所有 account を根拠付きで選別する**（M3）。行そのものに
-            # `account` が無いので、`file`（採取当時の queue ファイル名）を
-            # 手がかりに queue_dir の実ファイルの front-matter を見る。
-            owner = _account_for(queue_dir, first.get("file"))
+            # **所有 account は行そのものの `account` だけを根拠にする**
+            # （R3・2026-09-12）。以前（M3）は行に `account` が無いことを
+            # 前提に、`file` を手がかりに queue_dir の**現在の**原稿を開いて
+            # その account を過去の所有として使っていた。だが現在の原稿の
+            # account は「いま」の値であって「採取時点」の値ではない——
+            # 原稿の account を書き換えると、過去の台帳が現在の account の
+            # 実測へ黙って移し替えられてしまう。**裏付けの無いものを、推定で
+            # 混ぜない。**
+            owner = first.get("account")
             if owner is None:
-                # 不明——この account かもしれないが判別できない。混ぜない。
+                # 不明——採取時点の account が台帳に無い（R3 より前の行、
+                # または壊れた採取）。この account かもしれないが判別できない
+                # ので、推定で混ぜない。
                 unknown_posts.append(post_id)
                 continue
             if owner != account_name:

@@ -802,6 +802,19 @@ def cmd_measured(args) -> int:
     print("欠けている指標: " + (", ".join(missing) if missing else "無し"))
     broken = result["broken"]
     print("**読めなかったファイル**: " + (", ".join(broken) if broken else "無し"))
+
+    # **所有不明を人向け出力にも出す**（外部レビュー再判定 R3・2026-09-12）。
+    # JSON では `posts_unknown_ownership` が返るのに、人向け出力は
+    # 「実測がありません」だけで終わっていた——所有不明の投稿があることも
+    # 混ぜていない理由も見えなかった。自動で所有を補完はしない（できない）ので、
+    # 件数・post ID・理由をここで明示する。
+    unknown = result["posts_unknown_ownership"]
+    if unknown:
+        print(f"所有不明: {len(unknown)} 件  " + ", ".join(unknown))
+        print("  理由: 採取時点の account が台帳の行に無く、"
+              "現在の原稿の account では推定しません（混ぜません）")
+    else:
+        print("所有不明: 無し")
     return 0
 
 

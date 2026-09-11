@@ -73,6 +73,23 @@ def test_刻みを跨いだら1行だけ足す(tmp_path, isolated_account_factor
     assert rows[0]["age_hours"] == 2.0
 
 
+def test_採取時点の所有accountが行に書かれる(tmp_path, isolated_account_factory):
+    """外部レビュー再判定 R3・2026-09-12: 台帳の行そのものに、採取時点の所有
+    `account` を残す。これが無いと、`thth/measured.py` は「いまの原稿の
+    account」を過去の所有として使うしかなく、原稿の account を書き換えると
+    過去の台帳が黙って別 account の実測へ移し替えられていた。**この行の
+    `account` が、あとから原稿の account が変わっても動かない所有の根拠**。"""
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    adapter = FakeAdapter()
+    collect_mod.run_collect(account["name"], adapter=adapter, now=NOW, log=lambda _l: None)
+
+    rows = _rows(pair["work"], "data/sns/insights/posts/POST1.ndjson")
+    assert len(rows) == 1, rows
+    assert rows[0]["account"] == account["name"], \
+        "採取時点の account が行に無い——過去の所有の根拠が残っていない"
+
+
 def test_同じ刻みを二度書かない(tmp_path, isolated_account_factory):
     pair, account = _setup(tmp_path, isolated_account_factory,
                             posted_at="2026-09-10T10:00:00+09:00")

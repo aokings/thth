@@ -24,6 +24,12 @@
 
 **取れなかった指標は書かない。** 0 と混ぜると、あとから「0 だったのか取れなかったのか」
 が判らなくなる（規約 12: 判らないものを判らないと言う）。
+
+**投稿ごとの台帳の行は、採取時点の所有 account を自分自身に刻む**（外部レビュー
+再判定 R3・2026-09-12）。`thth/measured.py` が過去、現在の原稿の account を
+過去の所有として使い、原稿の account を書き換えると過去の台帳が黙って移し替え
+られる欠陥があった。**過去の行は追記専用なので書き換えない**——`account` を
+持たない古い行は「不明」として扱われる（`thth/measured.py` 参照）。
 """
 from __future__ import annotations
 
@@ -253,6 +259,17 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
             _append_ndjson(insight_path, [{
                 "post_id": post_id,
                 "file": os.path.basename(qf.path),
+                # **採取時点の所有 account を根拠として残す**（外部レビュー
+                # 再判定 R3・2026-09-12）。以前は台帳の行に `account` が無く、
+                # `thth/measured.py` が `file` から**現在の**原稿を開いて
+                # その account を過去の所有として使っていた。原稿の account を
+                # 書き換えると、過去の台帳が黙って新しい account の実測へ
+                # 移し替えられてしまっていた。**採取した「いま」判っている
+                # account をこの行自身に刻む**ことで、あとから原稿の account が
+                # 変わっても、この行の所有は変わらない。過去に書いた行は
+                # 追記専用の台帳なので書き換えない——`account` が無い行は
+                # `thth/measured.py` 側で「不明」として扱う。
+                "account": account_name,
                 # **トピックを一緒に残す**（masaru 指摘 2026-09-10）。asmon は
                 # フォロワー 0 で `中学受験` を付けた投稿が 200〜574 views、
                 # nigamilab のトピック無しは 1 view。**届ける経路はフォロワー
