@@ -225,9 +225,13 @@ def cmd_suggest(args) -> int:
     envelope = advice.evaluate(context, article=article, proposal=proposal,
                                 observations=observations)
     if broken:
+        # **「壊れている」と決めつけない。** 中身が足りない（検査を足す前に
+        # 保存された）場合と、保存後に書き換わった場合の両方がここに来る。
+        # どちらも「使えない」が、原因が違う——**推測で言わない。**
         envelope["warnings"].append(
-            f"読めない観測の記録が {len(broken)} 件あります"
-            f"（無いのではなく壊れています）: {broken[:3]}")
+            f"使えない観測の記録が {len(broken)} 件あります"
+            f"（無いのではなく、中身が足りないか保存後に変わっています）: "
+            f"{broken[:3]}")
 
     profile_snapshot = context.pop("profile_snapshot", None)
     envelope["context"] = dict(context)
@@ -393,6 +397,11 @@ def _evidence(context: dict, observations: dict, profile) -> dict:
     used = 0
     for oid in _relevance_order(context, observations):
         obs = dict(observations[oid])
+        if obs.get("provenance") == "legacy":
+            # **既存 22 語は `legacy_notes` に出る。** ここに重ねると、
+            # 実際に見てきた観測が埋もれる（実運用報告 2026-09-11）。
+            # 参照できる ID は `legacy_notes[].observation.observation_id`。
+            continue
         samples = obs.get("samples") or []
         if len(samples) > SAMPLES_PER_OBSERVATION:
             obs["samples"] = samples[:SAMPLES_PER_OBSERVATION]

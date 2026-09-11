@@ -280,8 +280,15 @@ def legacy_observations() -> list:
     """
     from . import topics as topics_mod
 
-    out = []
+    # **語ごとに最後の 1 件だけ**（実運用報告 2026-09-11）。履歴を全部返すと
+    # 同じ語が何度も並んで、原稿に関係のある観測が埋もれる。履歴そのものは
+    # `topics.json` に残っている。
+    latest = {}
     for row in topics_mod.load()["checks"]:
+        latest[row["topic"]] = row
+
+    out = []
+    for row in latest.values():
         record = {
             "topic": row["topic"],
             "normalized_topic": row["topic"],

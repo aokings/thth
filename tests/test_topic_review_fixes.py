@@ -854,6 +854,29 @@ def test_legacy_notesのobservationの中にIDがある(isolated_account, thth_r
     assert row["observation"]["observation_id"].startswith("sha256:")
 
 
+def test_既存22語はevidenceのobservationsに重ねない(isolated_account, thth_root):
+    """**実際に見てきた観測が埋もれる**（実運用報告 2026-09-11）。
+
+    本番で 90 件並び、そのほとんどが既存 22 語の履歴だった。参照できる ID は
+    `legacy_notes[].observation.observation_id` にある。
+    """
+    from thth import topics as topics_mod
+    topics_mod.record("お茶", verdict="alive", by="1 回目")
+    topics_mod.record("お茶", verdict="mismatch", by="2 回目")   # 同じ語の履歴
+    path = write_queue_file(isolated_account["queue_dir"], "dup.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    _run(["topics", "observe", "--json-stdin", "--by", "t"],
+          _fresh_observation("コーヒー"))
+
+    out = json.loads(_run(["topics", "suggest", path]).stdout)
+    topics = [o["topic"] for o in out["evidence"]["observations"]]
+    assert topics == ["コーヒー"], topics
+    assert [r["topic"] for r in out["evidence"]["legacy_notes"]] == ["お茶"]
+    # **参照はできる**（context に入っている）。
+    oid = out["evidence"]["legacy_notes"][0]["observation"]["observation_id"]
+    assert oid in out["context"]["observation_ids"]
+
+
 def test_原稿に関係する観測が先に出る(isolated_account, thth_root):
     """**ID の辞書順で切っていたので、関係のない語が予算を使い切っていた。**"""
     body = "## threads\n\n日本茶の話。https://example.test/coffee\n"
