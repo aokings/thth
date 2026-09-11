@@ -9,8 +9,8 @@
         "ref": "O1",
         "date": "2025-03-07",
         "date_precision": "day",
-        "date_kind": "published_at",
-        "note": "投稿比率入力から作る、調査者の検証用仮説。API の比率と内部比率が同一とは置かない。"
+        "date_kind": "updated_at",
+        "note": "投稿比率入力から作る、調査者の検証用仮説。API の比率と内部比率が同一とは置かない。／頁の表示は「更新 2025-03-07」で、公開日ではない"
       }
     ],
     "predictions": [
@@ -334,8 +334,8 @@
         "ref": "O1",
         "date": "2025-03-07",
         "date_precision": "day",
-        "date_kind": "published_at",
-        "note": "滞在・個人履歴を入力例に挙げる公式資料。"
+        "date_kind": "updated_at",
+        "note": "滞在・個人履歴を入力例に挙げる公式資料。／頁の表示は「更新 2025-03-07」で、公開日ではない"
       },
       {
         "tier": "L4",

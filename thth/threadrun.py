@@ -265,6 +265,14 @@ def run_problem(row, *, filename_id: str | None = None) -> str | None:
             return (f"root_post_id が {root!r} なのに、1 段目が "
                     f"{first.get('state')!r}（post_id={first.get('post_id')!r}）です"
                     f"（**先頭が公開された記録と食い違います**）")
+        # **値そのものの一致も見る**（再判定 S1・2026-09-12 Codex）。
+        # 「あるか」と「published か」までは見たが、**同じ ID かを見ていなかった。**
+        # 実際の返信先は段の `post_id` なので誤った親にはならないが、
+        # **記録には食い違った ID が残る**——診断の契約を満たしていない。
+        if first["post_id"] != root:
+            return (f"root_post_id（{root!r}）と 1 段目の post_id"
+                    f"（{first['post_id']!r}）が違います"
+                    f"（**同じ投稿を指していません**）")
     if filename_id is not None and row["run_id"] != filename_id:
         # **ファイル名と中の run_id がずれた記録**を、別の実行として拾わせない。
         return (f"ファイル名と run_id が違います"

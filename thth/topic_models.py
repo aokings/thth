@@ -1700,7 +1700,10 @@ DATE_PRECISIONS = ("day", "month", "unknown")
 # 日付が**何の日か**（公開日か・観測対象の期間か・こちらが取得した日か）。
 # 区別しないと、「観測対象期間」を「公開日」と読み違えて知見が固まる
 # （外部調査 §9 H09・H05・H08 の裁定）。
-DATE_KINDS = ("published_at", "observed_period", "retrieved_at")
+# **更新日を公開日として保存しない**（再判定 S2・2026-09-12 Codex）。
+# Transparency Center の頁は「更新 2025-03-07」であって、**その日に書かれた
+# わけではない。** 表せない語彙しか無いと、**近い名前の欄に入れてしまう。**
+DATE_KINDS = ("published_at", "updated_at", "observed_period", "retrieved_at")
 
 SOURCE_KEYS = ("tier", "ref", "date", "date_precision", "date_kind", "note")
 PREDICTION_KEYS = ("statement", "metrics", "window", "scope")
