@@ -954,3 +954,48 @@ def test_中身の無い観測は使えるものとして数えない(thth_root)
     rows, broken = store.load_all("observations")
     assert rows == []
     assert broken == [junk["observation_id"]]
+
+
+def test_投稿者を数えられないことを偏りと言わない():
+    """**キー名が違うだけなのに「投稿者を増やせ」と読める**（関東セッション報告）。
+
+    > 0 人はおかしいと思って `topic_advice.py` を読んだら、`_authors()` が
+    > 見ているのは `author_key` でした。…次にすることが「投稿者を増やす」に
+    > 見えて、実際には「キー名を直す」でした。
+    """
+    obs = make_observation("コーヒー", samples=1, authors=1)
+    obs["samples"] = [{"post_id": "p", "excerpt": "x", "author": "だれか",
+                        "posted_at": obs["retrieved_at"]}]
+    result = evaluate([candidate("コーヒー", ids(1))], [obs], selected="コーヒー")
+    reason = [s for s in result["shortfalls"] if "投稿者" in s]
+    assert reason, result["shortfalls"]
+    assert "author_key" in reason[0], reason
+    assert "偏って" not in reason[0], reason
+
+
+def test_取得手段の限界と見ていないことを区別する():
+    """**プラットフォームがそれしか出さなかったのか、こちらが見なかったのか。**
+
+    ログイン状態の実ブラウザでも `中学受験` のトピック頁に 1 件しか描画
+    されなかった、という報告。**「3 件以上ほしい」とだけ言うと、取りに行けば
+    あるように読める。**
+    """
+    obs = make_observation("コーヒー", samples=1, authors=1)
+    obs["coverage"] = {"pages": 1, "fetched": 1, "has_more": False}
+    result = evaluate([candidate("コーヒー", ids(1))], [obs], selected="コーヒー")
+    assert any("これ以上出ていません" in s for s in result["shortfalls"]), \
+        result["shortfalls"]
+
+    more = make_observation("コーヒー", samples=1, authors=1)
+    more["coverage"] = {"pages": 1, "fetched": 1, "has_more": True}
+    result = evaluate([candidate("コーヒー", ids(1))], [more], selected="コーヒー")
+    assert not any("これ以上出ていません" in s for s in result["shortfalls"])
+
+
+def test_観測の形も断るときに返る(isolated_account, thth_root):
+    proc = _run(["topics", "observe", "--json-stdin", "--by", "t"], {})
+    assert proc.returncode == 2
+    out = json.loads(proc.stdout)
+    shape = out["expected_schema"]["TopicObservation"]
+    assert "author_key" in shape["samples"][0]
+    assert "topic_tag" in shape["search_mode"]

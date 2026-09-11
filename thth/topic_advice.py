@@ -513,14 +513,29 @@ def _shortfalls(context: dict, chosen: dict, observations: dict, *, now) -> tupl
 
     samples = sum(len(r.get("samples") or []) for r in exact)
     authors = _authors(exact)
+
+    # **プラットフォームがそれしか出さなかったのか、こちらが見なかったのか**を
+    # 区別して言う（asmon 関東セッション報告 2026-09-11: ログイン状態の実
+    # ブラウザでも `中学受験` のトピック頁に 1 件しか描画されなかった）。
+    exhausted = all((r.get("coverage") or {}).get("has_more") is False
+                     for r in exact) and bool(exact)
+    limit = "（この取得手段ではこれ以上出ていません）" if exhausted else ""
+
     if samples < MIN_SAMPLES:
         out.append(("observation",
-                     f"観測の投稿例が {samples} 件（{MIN_SAMPLES} 件以上ほしい）"))
-    if len(authors) < MIN_AUTHORS:
+                     f"観測の投稿例が {samples} 件（{MIN_SAMPLES} 件以上ほしい）"
+                     f"{limit}"))
+    if samples and not authors:
+        # **「0 人に偏っている」は違う意味になる**（同報告）。キー名が違うだけ
+        # なのに「投稿者を増やせ」と読めて、次にすることを間違える。
+        out.append(("observation",
+                     f"投稿例 {samples} 件の投稿者を数えられません"
+                     f"（`author_key` がありません。`author` では数えません）"))
+    elif len(authors) < MIN_AUTHORS:
         # 受け入れ T09。**20 件あっても投稿者が 1 人なら 1 人と数える。**
         out.append(("observation",
                      f"観測の投稿例 {samples} 件は投稿者 {len(authors)} 人に"
-                     f"偏っています（{MIN_AUTHORS} 人以上ほしい）"))
+                     f"偏っています（{MIN_AUTHORS} 人以上ほしい）{limit}"))
     return out, notes
 
 

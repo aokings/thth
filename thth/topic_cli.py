@@ -133,11 +133,14 @@ def _fail(code: str, message: str) -> int:
     # 読むまで分からなかった。**断るときこそ、次にできることを渡す。**
     schema = {}
     for name, shape in (("ArticleEvidence", advice.ARTICLE_SHAPE),
+                         ("TopicObservation", advice.OBSERVATION_SHAPE),
                          ("TopicProposal", advice.PROPOSAL_SHAPE)):
         if name in message:
             schema.update(shape)
     if not schema and "記事" in message:
         schema.update(advice.ARTICLE_SHAPE)
+    if not schema and ("観測" in message or "samples" in message):
+        schema.update(advice.OBSERVATION_SHAPE)
     if not schema and ("候補比較" in message or "candidates" in message):
         schema.update(advice.PROPOSAL_SHAPE)
     _emit({"schema_version": models.SCHEMA_VERSION, "ok": False, "status": None,
