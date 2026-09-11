@@ -34,17 +34,28 @@ SEGMENTS = ["コーヒーが苦いのはカフェインのせいでしょうか�
 class FakeAdapter:
     """偽 API。**本物は呼ばない。**"""
 
-    def __init__(self, *, fail_at=None, failure="publish_failed"):
+    def __init__(self, *, fail_at=None, failure="publish_failed", on_wait=None):
         self.calls = []
         self.fail_at = fail_at
         self.failure = failure
+        self.on_wait = on_wait
 
-    def publish(self, post, dry_run=False, on_container_created=None):
+    def publish(self, post, dry_run=False, on_container_created=None,
+                 before_publish=None):
         n = len(self.calls) + 1
-        self.calls.append({"text": post.text, "reply_to": post.reply_to,
-                            "topic": post.topic})
         if on_container_created:
             on_container_created(f"container-{n}")
+        # **偽 API も本物と同じ順序にする**（container → 待機 → 最後の関門 → 公開）。
+        # ここを省くと「公開要求の直前の検査」がテストを通り抜ける。
+        if self.on_wait:
+            self.on_wait()
+        if before_publish is not None:
+            veto = before_publish()
+            if veto:
+                return PublishResult(None, None, NOW.isoformat(), error=str(veto),
+                                      failure="publish_vetoed")
+        self.calls.append({"text": post.text, "reply_to": post.reply_to,
+                            "topic": post.topic})
         if self.fail_at == n:
             return PublishResult(None, None, NOW.isoformat(),
                                   error=f"わざと失敗（{self.failure}）",
@@ -331,8 +342,10 @@ def test_別の実行の記録を書いても使わない(thread_account, thth_r
     write_and_push(thread_account["pair"], text)
 
     results = publish(thread_account, adapter)
-    assert results[0].action == "skipped"
-    assert "別の実行のものです" in results[0].reason
+    assert results[0].action == "stopped"
+    # **身元の照合が先に効く。** 手元にその実行が無いので新規扱いにしない。
+    assert "原稿が名乗る実行と手元の記録が違います" in results[0].reason
+    assert len(adapter.calls) == 1, "別の実行の記録で先へ進んだ"
 
 
 # --- 排他 -------------------------------------------------------------------
@@ -419,10 +432,14 @@ def _child(repo_dir, account_name, out_path):
     calls = []
 
     class Spy:
-        def publish(self, post, dry_run=False, on_container_created=None):
-            calls.append(post.text)
+        def publish(self, post, dry_run=False, on_container_created=None,
+                     before_publish=None):
             if on_container_created:
                 on_container_created("c")
+            if before_publish is not None and before_publish():
+                return PR(None, None, NOW.isoformat(), error="止めました",
+                           failure="publish_vetoed")
+            calls.append(post.text)
             return PR(f"CHILD{len(calls)}", None, NOW.isoformat())
 
     results = tt.publish_bundle(account_name, REL,
@@ -598,3 +615,354 @@ def test_トピック提案が束の全段を読む(thread_account, thth_root):
     assert context["segments"] == SEGMENTS
     # **最終段の URL を拾えている**（先頭だけ読んでいたら拾えない）。
     assert context["main_article_url"] == "https://nigamilab.com/x"
+
+
+# ===========================================================================
+# 独立検収（2026-09-11・Codex）で出た 7 件
+# ===========================================================================
+
+def test_公開中のremote変更で違う本文にIDをpushしない(thread_account, thth_root):
+    """**P1-2。** v1 で直した経路が v2 に引き継がれていなかった。
+
+    > 公開成功後、公開前の text をもとにファイルを上書きし、rebase 後の内容を
+    > 照合せず push する。…**A の ID と B の本文が origin に書き戻される。**
+    """
+    seed = thread_account["pair"]["seed"]
+    changed = list(SEGMENTS)
+    changed[0] = "別 clone が書き換えた 1 段目。"
+
+    def swap_on_wait():
+        """公開要求の直前（待機中）に、別 clone が本文を差し替えて push。"""
+        if getattr(swap_on_wait, "done", False):
+            return
+        swap_on_wait.done = True
+        run_git(seed, ["pull", "--ff-only"])
+        (Path(seed) / REL).write_text(bundle_text(segments=changed))
+        run_git(seed, ["add", REL]); run_git(seed, ["commit", "-m", "別 clone"])
+        run_git(seed, ["push"])
+
+    adapter = FakeAdapter(on_wait=swap_on_wait)
+    results = publish(thread_account, adapter)
+
+    assert results[0].action == "stopped", results[0].reason
+    assert "書き戻しを確定できませんでした" in results[0].reason
+    assert "本文が変わっています" in results[0].reason or \
+        "承認版が変わっています" in results[0].reason, results[0].reason
+
+    # **origin に混ざったものが入っていない。**
+    shown = run_git(thread_account["pair"]["bare"],
+                     ["show", f"main:{REL}"]).stdout
+    assert not ("別 clone が書き換えた 1 段目。" in shown and "POST1" in shown), \
+        "本文 B に投稿 A の ID が付いて push された"
+    # **後続へ進んでいない。**
+    assert len(adapter.calls) == 1
+
+
+def test_書き戻しが確定するまでinflightを消さない(thread_account, thth_root):
+    """**P1-2 の後半。** 未完の書き戻しは account 共通の停止条件。"""
+    from thth import accounts as accounts_mod
+    hook = Path(thread_account["pair"]["bare"]) / "hooks" / "pre-receive"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+
+    adapter = FakeAdapter()
+    publish(thread_account, adapter)
+    state_dir = accounts_mod.state_dir_for(thread_account["account"]["name"])
+    assert inflight.read(state_dir) is not None, \
+        "push が確定していないのに inflight を消した"
+
+
+def test_待機中に期限を越えたら公開要求を送らない(thread_account, thth_root):
+    """**P1-3。** 「公開要求の直前」は adapter の**中**。
+
+    > その中に container 作成・30 秒待機・threads_publish があるため、
+    > **待機後の期限は見ていない。**
+    """
+    over = {"now": NOW}
+    import thth.jst as jst_mod
+    real_now = jst_mod.now_jst
+
+    def fake_now():
+        return over["now"]
+
+    def cross_deadline():
+        # 待機のあいだに期限を越える。
+        over["now"] = datetime.datetime.fromisoformat("2026-09-15T20:00:20+09:00")
+
+    adapter = FakeAdapter(on_wait=cross_deadline)
+    jst_mod.now_jst = fake_now
+    try:
+        results = publish(thread_account, adapter,
+                           now=datetime.datetime.fromisoformat(
+                               "2026-09-15T19:59:50+09:00"))
+    finally:
+        jst_mod.now_jst = real_now
+
+    assert results[0].action == "stopped", results[0].reason
+    assert "継続期限を越えました" in results[0].reason
+    # **公開要求は 1 回も送っていない**（container は作ってよい）。
+    assert adapter.calls == [], adapter.calls
+    b = bundle.parse(thread_account["path"])
+    assert b.posts[0].get("post_id") is None
+
+
+def test_renameしても1段目を再公開しない(thread_account, thth_root):
+    """**P1-4。** 実行の身元をパスだけで決めない。"""
+    adapter = FakeAdapter()
+    results = publish(thread_account, adapter)
+    assert [r.action for r in results] == ["published"] * 3
+    assert len(adapter.calls) == 3
+
+    work = thread_account["pair"]["work"]
+    renamed = "docs/sns/queue/renamed.md"
+    run_git(work, ["mv", REL, renamed])
+    run_git(work, ["commit", "-m", "rename"])
+    run_git(work, ["push"])
+
+    again = FakeAdapter()
+    results2 = threadthrow.publish_bundle(
+        thread_account["account"]["name"], renamed,
+        adapter_factory=lambda *_: again, now=NOW)
+    assert again.calls == [], "rename しただけで 1 段目を再公開した"
+    assert results2[0].action == "stopped"
+    assert "別の原稿" in results2[0].reason or "実行" in results2[0].reason
+
+
+def test_続きの再承認で記録も新しい本文になる(thread_account, thth_root):
+    """**P1-5。** 実際に送った本文と永続記録が食い違わない。"""
+    from tests.conftest import approve_via_cli
+
+    adapter = FakeAdapter()
+    threadthrow.publish_bundle(thread_account["account"]["name"], REL,
+                               adapter_factory=lambda *_: adapter, now=NOW,
+                               max_posts=1)
+    run_id = threadrun.find_open(thread_account["account"]["name"], REL)["run_id"]
+
+    revised = list(SEGMENTS)
+    revised[1] = "書き直した 2 段目。"
+    run = threadrun.load(run_id)
+    text = bundle_text(segments=revised, status="draft",
+                        posts=[{"index": 1, "post_id": "POST1",
+                                "run_id": run_id},
+                               {"index": 2}, {"index": 3}])
+    write_and_push(thread_account["pair"], text)
+    assert approve_via_cli(thread_account["path"], by="テスト").returncode == 0
+
+    results = publish(thread_account, adapter)
+    assert [r.action for r in results] == ["published", "published"], \
+        [r.reason for r in results]
+    assert adapter.calls[1]["text"] == revised[1]
+
+    row = threadrun.load(run_id)
+    # **記録が実際に送った本文になっている。**
+    assert row["posts"][1]["text_sha256"] == approval.segment_sha(revised[1])
+    # **1 段目の過去の承認版は動いていない。**
+    assert row["posts"][0]["text_sha256"] == approval.segment_sha(SEGMENTS[0])
+    # 原稿と記録が一致している。
+    b = bundle.parse(thread_account["path"])
+    assert b.posts[1]["text_sha256"] == row["posts"][1]["text_sha256"]
+
+
+def test_期限を延ばして再承認すれば再開できる(thread_account, thth_root):
+    """**P2-6。** 完了と停止は別物。"""
+    from tests.conftest import approve_via_cli
+
+    adapter = FakeAdapter()
+    threadthrow.publish_bundle(thread_account["account"]["name"], REL,
+                               adapter_factory=lambda *_: adapter, now=NOW,
+                               max_posts=1)
+    run_id = threadrun.find_open(thread_account["account"]["name"], REL)["run_id"]
+
+    # 期限切れで停止する
+    late = datetime.datetime.fromisoformat("2026-09-15T21:00:00+09:00")
+    stopped = publish(thread_account, adapter, now=late)
+    assert stopped[0].action == "stopped"
+    assert threadrun.is_stopped(threadrun.load(run_id)) is True
+
+    # 期限を延ばして再承認
+    text = bundle_text(continue_until="2026-09-15T23:00:00+09:00", status="draft",
+                        posts=[{"index": 1, "post_id": "POST1", "run_id": run_id},
+                               {"index": 2}, {"index": 3}])
+    write_and_push(thread_account["pair"], text)
+    assert approve_via_cli(thread_account["path"], by="テスト").returncode == 0
+
+    results = publish(thread_account, adapter,
+                       now=datetime.datetime.fromisoformat("2026-09-15T22:00:00+09:00"))
+    assert [r.action for r in results] == ["published", "published"], \
+        [r.reason for r in results]
+    row = threadrun.load(run_id)
+    assert row["run_id"] == run_id, "再開で run_id が変わった"
+    assert row["resumes"][0]["from_stop_reason"]
+
+
+def test_未解決のまま再開しない(thread_account, thth_root):
+    """**再開しても、結果の分からない公開は解除しない。**"""
+    adapter = FakeAdapter(fail_at=1, failure="publish_ambiguous")
+    results = publish(thread_account, adapter)
+    run = threadrun.load(results[0].run_id)
+    threadrun.confirm_stop(run, "手で止めた")
+    with pytest.raises(threadrun.RunError):
+        threadrun.resume(run, bundle_sha="x", continue_until="2026-09-15T23:00:00+09:00",
+                          by="t")
+
+
+# --- 通常経路からの接続（P1-1） ---------------------------------------------
+
+def test_通常のthrowから束が出る(thread_account, thth_root):
+    """**P1-1。** `publish_bundle` を直接呼ぶテストだけでは完成ではない。
+
+    > 新しい処理だけを直接実行できれば完成とはしない。
+    """
+    from thth import core
+
+    calls = []
+
+    class Spy(FakeAdapter):
+        def publish(self, post, **kw):
+            out = super().publish(post, **kw)
+            calls.append(post.text)
+            return out
+
+    adapter = Spy()
+    result = core.throw_once(thread_account["account"]["name"],
+                              production_flag=True,
+                              adapter_factory=lambda *_: adapter, now=NOW)
+    assert calls == SEGMENTS, result
+    assert result.action == "posted", result
+    assert "3 段" in result.message
+
+
+def test_rehearsalでは送らない(thread_account, thth_root):
+    from thth import core
+
+    adapter = FakeAdapter()
+    result = core.throw_once(thread_account["account"]["name"],
+                              production_flag=False,
+                              adapter_factory=lambda *_: adapter, now=NOW)
+    assert adapter.calls == []
+    assert result.mode == "rehearsal"
+
+
+def test_v1とv2が同じaccountに並んでいても両方動く(thread_account, thth_root):
+    """v2 を出したあと、v1 の 1 本が従来どおり出る。"""
+    from tests.conftest import approve_via_cli, make_queue_text
+    from thth import core
+
+    v1_body = "# メモ\n\n" + "\n".join(f"行 {i}" for i in range(12)) + \
+        "\n\n## threads\n\n単発の本文。\n"
+    v1_path = Path(thread_account["pair"]["work"]) / "docs/sns/queue/single.md"
+    v1_path.write_text(make_queue_text({"status": "draft",
+                                         "publish_at": "2026-09-15T19:00:00+09:00"},
+                                        body=v1_body))
+    run_git(thread_account["pair"]["work"], ["add", "-A"])
+    run_git(thread_account["pair"]["work"], ["commit", "-m", "v1 を足す"])
+    run_git(thread_account["pair"]["work"], ["push"])
+    assert approve_via_cli(str(v1_path), by="テスト").returncode == 0
+
+    adapter = FakeAdapter()
+    core.throw_once(thread_account["account"]["name"], production_flag=True,
+                     adapter_factory=lambda *_: adapter, now=NOW)
+    assert [c["text"] for c in adapter.calls] == SEGMENTS
+
+    # 束が出し切ったので、次は v1 が出る。
+    adapter2 = FakeAdapter()
+    core.throw_once(thread_account["account"]["name"], production_flag=True,
+                     adapter_factory=lambda *_: adapter2, now=NOW)
+    assert [c["text"] for c in adapter2.calls] == ["単発の本文。"]
+
+
+def test_通常のcollectが全段を拾う(thread_account, thth_root):
+    """**P2-7。** 3 段公開しても収集対象が 0 件だった。"""
+    from thth import collect, forms
+
+    adapter = FakeAdapter()
+    results = publish(thread_account, adapter)
+    assert [r.action for r in results] == ["published"] * 3
+
+    class FakeInsights:
+        def insights(self, post_id, **kw):
+            return {"views": {"POST1": 100, "POST2": 40, "POST3": 12}[post_id]}
+
+        def replies(self, post_id, **kw):
+            return []
+
+    later = datetime.datetime.fromisoformat("2026-09-15T20:05:00+09:00")
+    out = collect.collect_once(thread_account["account"]["name"],
+                                adapter=FakeInsights(), now=later)
+    assert out["posts"] >= 3, out
+    blob = json.dumps(out, ensure_ascii=False, default=str)
+    for post_id in ("POST1", "POST2", "POST3"):
+        assert post_id in blob, (post_id, out)
+
+    # **束として紐付けて読める**（足さない・割らない）。
+    run = threadrun.load(results[0].run_id)
+    outcome = forms.bundle_outcome(run, {"POST1": {"views": 100},
+                                          "POST2": {"views": 40},
+                                          "POST3": {"views": 12}})
+    assert [r["measured"]["views"] for r in outcome["posts"]] == [100, 40, 12]
+
+
+def test_公開時のラベルが記録される(thread_account, thth_root):
+    """**実測に使った版を記録する**（Codex 最終条件 4）。"""
+    from thth import forms
+
+    adapter = FakeAdapter()
+    results = publish(thread_account, adapter, max_posts=1)
+    run = threadrun.load(results[0].run_id)
+    labels = run["posts"][0]["labels"]
+    assert labels["form"] == "問い→答え"
+    assert labels["outlet"] == "記事へ"
+    assert labels["vocabulary_version"] == forms.VOCABULARY_VERSION
+    assert labels["at"]
+
+
+def test_boardに進行状態と停止理由が出る(thread_account, thth_root):
+    """**P1-1 の後半。** board の進行状態表示・停止確認も同じ経路へ。"""
+    from thth import report
+
+    adapter = FakeAdapter(fail_at=2, failure="publish_ambiguous")
+    publish(thread_account, adapter)
+
+    row = next(r for r in report.board_summary()["accounts"]
+               if r["account"] == thread_account["account"]["name"])
+    threads = row["threads"]
+    assert threads, row
+    assert threads[0]["published"] == [1]
+    assert threads[0]["unresolved"] == [2]
+    assert threads[0]["pending"] == [3]
+    # **結果不明のときに人が判断できる材料**（Codex 最終条件 4）。
+    detail = threads[0]["unresolved_detail"][0]
+    assert detail["index"] == 2
+    assert detail["container_id"] == "container-2"
+    assert detail["text_sha256"]
+    assert detail["reply_to"] == "POST1"
+
+
+def test_束が無いaccountの経路に手を出さない(tmp_path, isolated_account_factory):
+    """**実装中に踏んだ。**
+
+    束が 1 つも無くても同期していたので、**触っていないはずの v1 の経路で
+    観測できる順序が変わり**、第 5 巡の回帰テスト（同期の直後に HEAD が動く筋）
+    が別の場所で消費されて落ちた。
+    """
+    from tests.conftest import make_queue_text
+    from thth import accounts as accounts_mod
+    from thth import threadthrow as tt
+    from thth import writeback
+
+    pair = init_git_pair(tmp_path, seed_content=make_queue_text({"status": "draft"}))
+    account = isolated_account_factory(repo_dir=pair["work"], production=True)
+    cfg = accounts_mod.load_account(account["name"])
+    assert tt.has_bundle_files(cfg) is False
+
+    synced = []
+    real = writeback.sync_repo
+    try:
+        writeback.sync_repo = lambda d: synced.append(d) or real(d)
+        assert tt.run_for_account(account["name"],
+                                   adapter_factory=lambda *_: FakeAdapter(),
+                                   now=NOW) == []
+    finally:
+        writeback.sync_repo = real
+    assert synced == [], "束が無いのに同期した"

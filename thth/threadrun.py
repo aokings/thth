@@ -182,10 +182,52 @@ def has_unresolved(account: str) -> list:
             if any(p["state"] in (REQUESTED, UNRESOLVED) for p in r["posts"])]
 
 
-def is_finished(row: dict) -> bool:
-    if row.get("stop_confirmed_at"):
-        return True
+def is_complete(row: dict) -> bool:
+    """**全段が出た。** これだけが「終わった」。"""
     return all(p["state"] == PUBLISHED for p in row.get("posts", []))
+
+
+def is_stopped(row: dict) -> bool:
+    """**止まっている。** 終わってはいない（独立検収 2026-09-11・P2-6）。
+
+    以前は `stop_confirmed_at` があれば「完了」にしていた。そのため
+    **期限を延ばして再承認しても「すでに実行済みです」で再開できなかった。**
+    **完了と停止は別物。**
+    """
+    return bool(row.get("stop_confirmed_at")) and not is_complete(row)
+
+
+def is_finished(row: dict) -> bool:
+    """もう進まない（完了または停止）。"""
+    return is_complete(row) or bool(row.get("stop_confirmed_at"))
+
+
+def has_unresolved_post(row: dict) -> bool:
+    return any(p["state"] in (REQUESTED, UNRESOLVED) for p in row.get("posts", []))
+
+
+def resume(row: dict, *, bundle_sha: str, continue_until: str, by: str,
+            now=None) -> dict:
+    """停止した実行を、**新しい承認版で同じ `run_id` のまま再開する**（P2-6）。
+
+    **未解決は解除しない。** 結果の分からない公開がある実行は、人が Threads を
+    見て判断するまで動かさない——そこを自動で通すと二重投稿になる。
+    """
+    if not is_stopped(row):
+        raise RunError("停止していない実行は再開できません")
+    if has_unresolved_post(row):
+        raise RunError("結果の分からない公開があるので再開できません"
+                        "（人が Threads を見て判断してください）")
+    now = now if now is not None else jst.now_jst()
+    row.setdefault("resumes", []).append({
+        "at": now.isoformat(), "by": by,
+        "from_stop_reason": row.get("stop_reason"),
+        "bundle_sha": bundle_sha, "continue_until": continue_until,
+    })
+    row["stop_confirmed_at"] = None
+    row["stop_reason"] = None
+    row["continue_until"] = continue_until
+    return save(row)
 
 
 def next_index(row: dict) -> int | None:
@@ -198,6 +240,29 @@ def next_index(row: dict) -> int | None:
         if post["state"] == PENDING:
             return post["index"]
     return None
+
+
+def snapshot_pending(row: dict, *, bundle_sha: str, segment_shas: list,
+                      labels: dict | None = None, now=None) -> dict:
+    """**未公開の段だけ**、これから送る版を記録に固定する（独立検収 P1-5）。
+
+    再承認で本文を直しても、記録には `start()` のときの古い指紋と古い承認版が
+    残っていた。**実際に送った本文と永続記録が食い違う**——凍結の検査が
+    「旧本文を正本」として比べるので、**正しく送った新本文を変更扱いにする。**
+
+    **公開済みの段の過去の承認版は変更しない**（Codex 最終条件 2）。
+    """
+    now = now if now is not None else jst.now_jst()
+    for post in row["posts"]:
+        if post["state"] == PUBLISHED:
+            continue                      # **過去は動かさない**
+        i = post["index"]
+        if i <= len(segment_shas):
+            post["text_sha256"] = segment_shas[i - 1]
+        post["bundle_sha"] = bundle_sha
+        if labels is not None:
+            post["labels"] = dict(labels, at=now.isoformat())
+    return save(row)
 
 
 def mark(row: dict, index: int, state: str, **fields) -> dict:
@@ -220,6 +285,43 @@ def confirm_stop(row: dict, reason: str, now=None) -> dict:
     row["stop_confirmed_at"] = now.isoformat()
     row["stop_reason"] = reason
     return save(row)
+
+
+def identity_error(row: dict | None, draft_posts: list, *, rel_path: str) -> str | None:
+    """原稿が名乗る実行と、手元の記録が合っているか（独立検収 P1-4）。
+
+    **実行の身元をパスだけで決めない。** 完成した束のファイルを `git mv` すると
+    `rel_path` が変わり、**post_id を持った原稿が「新しい束」として扱われて
+    1 段目を再公開していた。**
+
+    原稿に `post_id` か `run_id` が書かれているなら、**その実行を照合できない
+    限り新規扱いにしない。** コピー・移動・記録の欠損も同じ検査に掛かる。
+    """
+    claimed_ids = {(_unquote(p.get("run_id")) or "") for p in draft_posts
+                   if p.get("run_id")}
+    has_post = any(p.get("post_id") for p in draft_posts)
+    if not claimed_ids and not has_post:
+        return None                      # 何も名乗っていない＝新しい束
+
+    if row is None:
+        return (f"この原稿には公開済みの記録が書かれていますが、"
+                f"手元にその実行がありません（{sorted(claimed_ids) or 'run_id 無し'}）。"
+                f"**移動・複製された原稿を新しい束として出すことはしません。**"
+                f"出し直すなら記録を消してから別の原稿にしてください")
+    if claimed_ids and claimed_ids != {row["run_id"]}:
+        return (f"原稿が名乗る実行と手元の記録が違います"
+                f"（原稿: {sorted(claimed_ids)} / 記録: {row['run_id']}）")
+    if row.get("rel_path") != rel_path:
+        return (f"この実行は別の原稿のものです"
+                f"（記録: {row.get('rel_path')} / いま: {rel_path}）")
+    return None
+
+
+def find_by_run_id(run_id: str) -> dict | None:
+    try:
+        return load(run_id)
+    except RunError:
+        return None
 
 
 def resolve_parent(row: dict, index: int, *, draft_posts: list,

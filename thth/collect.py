@@ -129,6 +129,51 @@ def due_marks(age_hours: float, recorded: list) -> list:
     return [m for m in AGE_MARKS_HOURS if age_hours >= m and m not in done]
 
 
+def _with_bundle_posts(files: list, account_name: str, account_cfg: dict) -> list:
+    """v1 のファイル一覧に、**v2 の段を 1 投稿 1 件として足す**（P2-7）。
+
+    段ごとに `post_id` と `posted_at` を持つ**疑似 queue ファイル**にして、
+    既存の収集ループにそのまま流す。**計測は投稿単位のまま**（設計 §9）で、
+    束への紐付けは `thth/forms.py` の `bundle_outcome()` が行う。
+    """
+    from . import bundle as bundle_mod
+    from . import queuefile as queuefile_mod
+
+    out = list(files)
+    for qf in files:
+        if not qf.malformed:
+            continue
+        try:
+            with open(qf.path, encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            continue
+        if not bundle_mod.is_bundle_text(text):
+            continue
+        b = bundle_mod.parse_text(text, qf.path)
+        if b.malformed or b.front_matter.get("account") != account_name:
+            continue
+        segments, problems = bundle_mod.load_segments(b, account_cfg["media"])
+        if problems:
+            continue
+        for i, post in enumerate(b.posts, start=1):
+            post_id = bundle_mod.unquote(post.get("post_id"))
+            if not post_id or not post.get("posted_at"):
+                continue
+            fm = dict(b.front_matter)
+            fm.update({"post_id": post_id, "posted_at": post.get("posted_at"),
+                        "reply_to": bundle_mod.unquote(post.get("reply_to")) or None,
+                        "thread_index": str(i), "thread_run_id":
+                            bundle_mod.unquote(post.get("run_id"))})
+            # 段ごとの本文を「その投稿の本文」として持たせる。
+            body = f"## {account_cfg['media']}\n\n{segments[i - 1]}\n" \
+                if i <= len(segments) else qf.body
+            out.append(queuefile_mod.QueueFile(
+                path=f"{qf.path}#{i}", malformed=False, front_matter=fm,
+                body=body, verified=qf.verified))
+    return out
+
+
 def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     """1 アカウントぶんの採取。**書き込みと push は呼び出し側（`run_collect`）。**
 
@@ -148,7 +193,10 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     replies_dir = os.path.join(repo_dir, account_cfg.get("replies_dir") or "data/sns/replies")
 
     touched, errors, posts_seen = [], [], 0
-    for qf in files:
+    # **スレッド連投の段も拾う**（独立検収 2026-09-11・P2-7）。
+    # v1 の `qf.malformed` 判定が `thth: 2` を落とすので、3 段公開しても
+    # **収集対象は 0 件だった。** 出したものを測れないなら、出す意味が薄い。
+    for qf in _with_bundle_posts(files, account_name, account_cfg):
         if qf.malformed:
             continue
         fm = qf.front_matter

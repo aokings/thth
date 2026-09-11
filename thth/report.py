@@ -241,6 +241,25 @@ def schedule(account_name: str | None = None, *, now=None, days: int | None = No
     return rows
 
 
+def _thread_rows(account_name: str) -> list:
+    """その account の**終わっていないスレッド連投**（読むだけ）。"""
+    from . import threadrun as threadrun_mod
+    out = []
+    for row in threadrun_mod.open_runs(account_name):
+        summary = threadrun_mod.summary(row)
+        summary["stopped"] = threadrun_mod.is_stopped(row)
+        summary["stop_reason"] = row.get("stop_reason")
+        summary["unresolved_detail"] = [
+            {"index": p["index"], "container_id": p.get("container_id"),
+             "text_sha256": p.get("text_sha256"), "reply_to": p.get("reply_to"),
+             "note": p.get("note"), "last_ok": p.get("last_ok")}
+            for p in row["posts"]
+            if p["state"] in (threadrun_mod.REQUESTED, threadrun_mod.UNRESOLVED)]
+        summary["started_at"] = row.get("started_at")
+        out.append(summary)
+    return out
+
+
 def board_summary(now=None) -> dict:
     """アカウント・最終投稿・approved 待ち・inflight・型外・要確認の骨（設計 §4.6・
     外部レビュー再レビュー C で `needs_review`／`approval_stale_count` を追加）。"""
@@ -285,6 +304,10 @@ def board_summary(now=None) -> dict:
             "inflight_mismatch_fields": inflight.get("mismatch_fields") if inflight else None,
             "needs_review": needs_review,
             "approval_stale_count": approval_stale_count,
+            # **スレッド連投の進行状態**（独立検収 2026-09-11・P1-1）。
+            # 「どこまで出たか」ではなく**確認できた段・要求中の段・未着手の段**
+            # を分けて出す。**停止の確認**もここに出る。
+            "threads": _thread_rows(name),
             # トークンの状態（`thth maintain` と同じ判定・読むだけで何も更新しない）。
             # 60 日の時限は投稿の可否と無関係に進むので、board に常に出す。
             # 値（access_token）には触れない——残り日数と状態だけ。

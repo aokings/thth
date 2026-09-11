@@ -25,6 +25,7 @@ from . import inflight as inflight_mod
 from . import jst
 from . import lock as lock_mod
 from . import queuefile
+from . import forms as forms_mod
 from . import redact as redact_mod
 from . import threadrun
 from . import writeback as writeback_mod
@@ -44,6 +45,114 @@ class StepResult:
     reason: str
     run_id: str | None = None
     post_id: str | None = None
+
+
+def due_bundles(account_cfg: dict, *, now, tree_sha) -> list:
+    """出せる束の `rel_path` を並べる（設計 §6・独立検収 P1-1）。
+
+    **製品の経路から呼ぶための口。** これが無かったので、`thth throw` は
+    v2 を「出すものが無い」で素通りしていた——**モジュールを書いて、それを
+    直接呼ぶテストだけ書いていた**（規約 11 そのもの）。
+    """
+    from . import core as core_mod
+
+    repo_dir = account_cfg.get("repo_dir") or ""
+    account_name = account_cfg["account"]
+    out = []
+    for qf in core_mod.list_queue_files(account_cfg, tree_sha=tree_sha):
+        if not qf.malformed:
+            continue                      # v1 は従来の経路が扱う
+        try:
+            with open(qf.path, encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            continue
+        if not bundle_mod.is_bundle_text(text):
+            continue
+        b = bundle_mod.parse_text(text, qf.path)
+        if b.malformed or b.front_matter.get("account") != account_name:
+            continue
+        if b.front_matter.get("status") != "approved":
+            continue
+        if b.front_matter.get("revoked_at"):
+            continue
+        if bundle_mod.check(b, account_cfg=account_cfg):
+            hard = [p for p in bundle_mod.check(b, account_cfg=account_cfg)
+                    if not p.startswith("warning:")]
+            if hard:
+                continue
+        try:
+            if now < queuefile.parse_publish_at(b.front_matter["publish_at"]):
+                continue
+        except (KeyError, ValueError, TypeError):
+            continue
+        rel = os.path.relpath(os.path.realpath(qf.path),
+                               os.path.realpath(repo_dir))
+        # **もう出し切った束は候補にしない**（毎回「実行済みです」と並ぶのを防ぐ）。
+        known = threadrun.find_latest(account_name, rel)
+        if known is not None and threadrun.is_complete(known):
+            continue
+        out.append(rel)
+    return sorted(out)
+
+
+def has_bundle_files(account_cfg: dict) -> bool:
+    """queue に `thth: 2` の原稿が 1 つでもあるか（**同期しない・読むだけ**）。"""
+    repo_dir = account_cfg.get("repo_dir") or ""
+    queue_dir = os.path.join(repo_dir, account_cfg.get("queue_dir") or
+                              "docs/sns/queue")
+    if not os.path.isdir(queue_dir):
+        return False
+    for name in sorted(os.listdir(queue_dir)):
+        if not name.endswith(".md"):
+            continue
+        try:
+            with open(os.path.join(queue_dir, name), encoding="utf-8") as f:
+                head = f.read(400)
+        except (OSError, UnicodeDecodeError):
+            continue
+        if bundle_mod.is_bundle_text(head + "\n---\n"):
+            return True
+    return False
+
+
+def run_for_account(account_name: str, *, adapter_factory, now=None, log=print,
+                     production: bool = True) -> list:
+    """その account の束を、上限まで進める（**製品の入口**・独立検収 P1-1）。
+
+    `thth throw` / `thth run` / timer からここへ来る。**新しい処理だけを
+    直接実行できても完成ではない。**
+    """
+    account_cfg = accounts_mod.load_account(account_name)
+    now = now if now is not None else jst.now_jst()
+
+    repo_dir = account_cfg["repo_dir"]
+    # **束が 1 つも無ければ、同期もロックもしない**（v1 の経路に手を出さない）。
+    # ここを省いたら、束を持たない account でも同期が 1 回増え、v1 の
+    # 第 5 巡テスト（同期の直後に HEAD が動く筋）が別の場所で消費された。
+    # **新しい機能が、触っていないはずの経路の観測できる順序を変えていた。**
+    if not has_bundle_files(account_cfg):
+        return []
+
+    repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
+    try:
+        repo_lock.acquire()
+    except lock_mod.LockBusy:
+        return []
+    try:
+        ok, _err, tree_sha = writeback_mod.sync_repo(repo_dir)
+        if not ok:
+            return []
+        rels = due_bundles(account_cfg, now=now, tree_sha=tree_sha)
+    finally:
+        repo_lock.release()
+
+    limit = int(account_cfg.get("max_bundles_per_run", DEFAULT_MAX_BUNDLES_PER_RUN))
+    results = []
+    for rel in rels[:max(1, limit)]:
+        results += publish_bundle(account_name, rel, adapter_factory=adapter_factory,
+                                   now=now, log=log, production=production)
+    return results
 
 
 def publish_bundle(account_name: str, rel_path: str, *, adapter_factory,
@@ -140,7 +249,19 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
     # **終わった実行も見る。** これを見ないと、出し切ったあとにもう一度
     # 最初から出してしまう（実装中に実際に踏んだ）。
     latest = threadrun.find_latest(account_name, rel_path)
-    run = None if (latest is None or threadrun.is_finished(latest)) else latest
+    # **原稿が名乗る実行を照合する**（独立検収 P1-4）。パスだけで身元を決めない。
+    claimed = None
+    for post in b.posts:
+        rid = threadrun._unquote(post.get("run_id"))
+        if rid:
+            claimed = threadrun.find_by_run_id(rid) or claimed
+            break
+    known = claimed or latest
+    identity = threadrun.identity_error(known, b.posts, rel_path=rel_path)
+    if identity:
+        return StepResult("stopped", None, identity,
+                           run_id=(known or {}).get("run_id"))
+    run = None if (known is None or threadrun.is_finished(known)) else known
     if fm.get("revoked_at"):
         if run is not None and not run.get("stop_confirmed_at"):
             threadrun.confirm_stop(run, f"原稿が撤回されています（{fm['revoked_at']}）",
@@ -178,17 +299,32 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
                            f"継続期限を過ぎています（{fm['continue_until']}）",
                            run_id=(run or {}).get("run_id"))
 
-    if run is None and latest is not None:
+    # **停止と完了は別物**（独立検収 P2-6）。停止している実行は、新しい承認版が
+    # 成立していれば**同じ run_id のまま**再開できる。完了した束は再開しない。
+    if run is None and known is not None and threadrun.is_stopped(known):
+        if threadrun.has_unresolved_post(known):
+            return StepResult("stopped", None,
+                               "結果の分からない公開があるので再開しません",
+                               run_id=known["run_id"])
+        try:
+            run = threadrun.resume(known, bundle_sha=expected,
+                                    continue_until=fm["continue_until"],
+                                    by=fm.get("approved_by") or "unknown", now=now)
+            log(f"停止していた実行を再開します（{known['run_id']}）")
+        except threadrun.RunError as e:
+            return StepResult("stopped", None, f"再開できません: {e}",
+                               run_id=known["run_id"])
+
+    if run is None and known is not None:
         # **同じ原稿で 2 つ目の実行を自動では始めない**（設計 §2.3）。
         # 「最初から別スレッドとして再投稿する」のは**明示の操作**であって、
         # timer が勝手にやってよいことではない。
-        done = threadrun.summary(latest)
+        done = threadrun.summary(known)
         return StepResult("stopped", None,
-                           f"この原稿はすでに実行済みです"
-                           f"（run_id: {latest['run_id']}・公開: {done['published']}・"
-                           f"停止: {latest.get('stop_reason') or 'なし'}）。"
+                           f"この原稿はすでに出し切っています"
+                           f"（run_id: {known['run_id']}・公開: {done['published']}）。"
                            f"出し直すなら別の原稿にしてください",
-                           run_id=latest["run_id"])
+                           run_id=known["run_id"])
 
     if run is None:
         # **公開要求より前に run_id を発行して永続化する**（Codex 最終条件 1）。
@@ -219,14 +355,16 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
         log(section)
         return StepResult("skipped", index, "dry-run", run_id=run["run_id"])
 
-    # **公開要求の直前に、もう一度いまの時刻で期限を見る**（Codex 最終条件 3）。
-    # 30 秒待機や同期のあいだに越えることがある。
-    now2 = jst.now_jst()
-    if now2 > until:
-        threadrun.confirm_stop(run, "公開要求の直前に継続期限を越えました", now=now2)
-        return StepResult("stopped", index,
-                           f"公開の直前に継続期限を越えました（{fm['continue_until']}）",
-                           run_id=run["run_id"])
+    # **これから送る版を、送る前に記録へ固定する**（独立検収 P1-5）。
+    # 再承認で本文を直しても記録が古いままだと、**実際に送った本文と永続記録が
+    # 食い違い**、次の凍結検査が「旧本文を正本」として比べて、正しく送った
+    # 新本文を変更扱いにする。**公開済みの段の過去の承認版は動かさない。**
+    labels = {"form": fm.get("form"), "outlet": fm.get("outlet"),
+              "vocabulary_version": forms_mod.VOCABULARY_VERSION}
+    threadrun.snapshot_pending(
+        run, bundle_sha=expected,
+        segment_shas=[approval_mod.segment_sha(s) for s in segments],
+        labels=labels, now=now)
 
     started = jst.iso()
     inflight_mod.write(state_dir, file=path, started=started, container_id=None,
@@ -242,8 +380,29 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
         inflight_mod.update(state_dir, container_id=container_id)
         threadrun.mark(run, index, threadrun.REQUESTED, container_id=container_id)
 
+    def before_publish():
+        """**実際の公開要求の直前**（container 作成と 30 秒待機のあと）。
+
+        独立検収 P1-3: 以前はここが `adapter.publish()` の**外側**にあり、
+        **待機のあいだに継続期限を越えても公開していた。**
+        """
+        if jst.now_jst() > until:
+            return (f"継続期限を越えました（{fm['continue_until']}）。"
+                     f"公開要求は送っていません")
+        return None
+
     result = adapter.publish(post, dry_run=False,
-                              on_container_created=on_container_created)
+                              on_container_created=on_container_created,
+                              before_publish=before_publish)
+
+    if result.failure == "publish_vetoed":
+        # **container は作ったが公開していない。** 出ていないので inflight は消す。
+        inflight_mod.clear(state_dir)
+        threadrun.mark(run, index, threadrun.PENDING, note=result.error)
+        threadrun.confirm_stop(run, result.error or "公開直前の関門で止めました",
+                                now=jst.now_jst())
+        return StepResult("stopped", index, result.error or "公開直前に止めました",
+                           run_id=run["run_id"])
 
     if result.error or not result.post_id:
         err = redact_mod.redact(result.error or "不明なエラー")
@@ -260,35 +419,90 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
                            run_id=run["run_id"])
 
     # **公開は成功した。ここから先が失敗しても再公開しない。**
+    posted_at = result.ts or jst.iso()
+    sent_sha = approval_mod.segment_sha(section)
     threadrun.mark(run, index, threadrun.PUBLISHED, post_id=result.post_id,
-                    posted_at=result.ts or jst.iso(), reply_to=parent or None,
-                    last_ok="publish")
-    inflight_mod.clear(state_dir)
+                    posted_at=posted_at, reply_to=parent or None,
+                    text_sha256=sent_sha, bundle_sha=expected, last_ok="publish")
 
     updated = bundle_mod.set_post_fields(text, index, {
         "post_id": result.post_id,
-        "posted_at": result.ts or jst.iso(),
+        "posted_at": posted_at,
         "reply_to": parent or "",
         "run_id": run["run_id"],
         "bundle_sha": expected,
-        "text_sha256": approval_mod.segment_sha(section),
+        "text_sha256": sent_sha,
     })
     with open(path, "w", encoding="utf-8") as f:
         f.write(updated)
 
-    pushed, push_err = writeback_mod.commit_and_push(
-        repo_dir, rel_path=rel_path,
-        message=f"THTH: {rel_path} の {index} 段目を公開（{result.post_id}）")
+    mismatch = {}
+
+    def validate_after_rebase():
+        """**rebase のあと・push の前に、送ったものと一致するかを見る**
+        （独立検収 P1-2）。
+
+        v1 で直した経路が v2 に引き継がれていなかった。**公開の最中に別 clone が
+        本文を変えると、投稿 A の ID を本文 B に付けて push していた。**
+        """
+        # **ディスクを読み直す。** 取り込み（rebase）で中身が変わりうるので、
+        # 書いたつもりの文字列ではなく**いまそこにあるもの**を見る。
+        try:
+            with open(path, encoding="utf-8") as f:
+                current = f.read()
+        except OSError as e:
+            mismatch["why"] = f"取り込みのあと原稿を読めません: {e}"
+            return False
+        after = bundle_mod.parse_text(current, path)
+        why = None
+        if after.malformed:
+            why = f"取り込みのあと原稿が読めなくなりました（{bundle_mod.why_malformed(current)}）"
+        elif after.front_matter.get("approved_sha") != expected:
+            why = "取り込みのあと承認版が変わっています"
+        else:
+            segs, problems = bundle_mod.load_segments(after, account_cfg["media"])
+            if problems:
+                why = f"取り込みのあと段が読めません: {problems[0]}"
+            elif len(segs) != len(segments):
+                why = f"取り込みのあと段の数が変わりました（{len(segs)}）"
+            elif approval_mod.segment_sha(segs[index - 1]) != sent_sha:
+                why = (f"取り込みのあと {index} 段目の本文が変わっています"
+                        f"——**送ったのは別の本文です**")
+            else:
+                row = after.posts[index - 1] if index <= len(after.posts) else {}
+                if threadrun._unquote(row.get("post_id")) != result.post_id:
+                    why = f"取り込みのあと {index} 段目の post_id が違います"
+        if why:
+            mismatch["why"] = why
+            log(f"push を止めます: {why}")
+            return False
+        return True
+
+    try:
+        pushed, push_err = writeback_mod.commit_and_push(
+            repo_dir, rel_path=rel_path,
+            message=f"THTH: {rel_path} の {index} 段目を公開（{result.post_id}）",
+            validate=validate_after_rebase)
+    except writeback_mod.PushValidationFailed as e:
+        # **照合に落ちた＝送ったものと違うものを push しようとした。**
+        # v1 と同じく例外で上がってくるので、ここで受けて止める（P1-2）。
+        pushed, push_err = False, str(e)
     if not pushed:
         # **公開済みとして保持し、後続を止める。再公開しない**（設計 §3.1）。
-        threadrun.mark(run, index, threadrun.PUBLISHED, note=f"push 失敗: {push_err}")
-        threadrun.confirm_stop(run, f"書き戻しの push に失敗しました: {push_err}",
+        # **inflight は消さない**——書き戻しが終わっていないので、
+        # **同じ account の別投稿（v1 を含む）へも進ませない**（P1-2）。
+        why = mismatch.get("why") or push_err
+        threadrun.mark(run, index, threadrun.PUBLISHED,
+                        note=f"書き戻しを確定できず: {why}")
+        threadrun.confirm_stop(run, f"書き戻しを確定できませんでした: {why}",
                                 now=jst.now_jst())
         return StepResult("stopped", index,
-                           f"公開はできましたが push に失敗しました（{push_err}）。"
-                           f"**再公開しません**",
+                           f"公開はできましたが書き戻しを確定できませんでした"
+                           f"（{why}）。**再公開しません**",
                            run_id=run["run_id"], post_id=result.post_id)
 
+    # **push が通ってから inflight を消す**（P1-2）。
+    inflight_mod.clear(state_dir)
     return StepResult("published", index, f"{index} 段目を公開しました",
                        run_id=run["run_id"], post_id=result.post_id)
 

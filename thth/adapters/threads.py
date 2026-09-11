@@ -41,9 +41,11 @@ class ThreadsAdapter(base.Adapter):
             return json.loads(body) if body else {}
 
     def publish(self, post: base.Post, *, dry_run: bool,
-                on_container_created=None) -> base.PublishResult:
+                on_container_created=None,
+                before_publish=None) -> base.PublishResult:
         """コンテナ作成 → `on_container_created(creation_id)`（inflight 書き込み用）→
-        30 秒待つ → 公開。dry_run なら何も叩かず終わる（core.py 側で既にモード分岐
+        30 秒待つ → **`before_publish()` で最後の確認** → 公開。
+        dry_run なら何も叩かず終わる（core.py 側で既にモード分岐
         しているので、ここに来るのは基本 production のときだけ想定だが、念のため
         dry_run にも対応しておく）。"""
         ts = jst.iso()
@@ -85,6 +87,16 @@ class ThreadsAdapter(base.Adapter):
 
         if self.wait_seconds:
             time.sleep(self.wait_seconds)
+
+        # **実際の公開要求の直前に、もう一度確かめる**（独立検収 2026-09-11・P1-3）。
+        # 統括は「公開要求の直前」と書きながら `adapter.publish()` を呼ぶ前に
+        # 検査していた。**その中に container 作成と 30 秒の待機がある**ので、
+        # 待機のあいだに継続期限を越えても公開していた。**待ったあとに見る。**
+        if before_publish is not None:
+            veto = before_publish()
+            if veto:
+                return base.PublishResult(None, None, ts, error=str(veto),
+                                           failure="publish_vetoed")
 
         # 公開の失敗は「出ていない」（HTTP 4xx）と「分からない」（timeout・接続断・
         # 5xx・200 だが id 無し）に分かれる（設計 §3.5 の表）。この判定は媒体固有の

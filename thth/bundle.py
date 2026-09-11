@@ -178,6 +178,27 @@ def parse_text(text: str, path: str) -> Bundle:
                    body=body, segments=[])
 
 
+def unquote(value):
+    """front matter に `"18016…"` と書かれていても中身を返す。"""
+    if isinstance(value, str) and len(value) >= 2 and value[0] == value[-1] == '"':
+        return value[1:-1]
+    return value
+
+
+def why_malformed(text: str) -> str:
+    """なぜ読めないのかを返す。**「読めません」だけでは直せない。**"""
+    split = queuefile._split_front_matter(text)
+    if split is None:
+        return "front matter の区切りがありません"
+    try:
+        top, _posts = parse_front_matter(split[0])
+    except BundleError as e:
+        return str(e)
+    if top.get("thth") != VERSION:
+        return f"thth が {VERSION} ではありません（{top.get('thth')!r}）"
+    return "理由を特定できません"
+
+
 def parse(path: str) -> Bundle:
     with open(path, encoding="utf-8") as f:
         return parse_text(f.read(), path)
@@ -320,7 +341,18 @@ def set_post_fields(text: str, index: int, fields: dict) -> str:
     if index < 1 or index > len(starts):
         raise BundleError(f"{index} 段目が posts: にありません")
     start = starts[index - 1]
-    end = starts[index] if index < len(starts) else fm_end
+    if index < len(starts):
+        end = starts[index]
+    else:
+        # **最後の段の終わりは front matter の終わりではない**（独立検収で
+        # 踏んだ）。`posts:` の後ろに top-level のキー（`approved_at:` など）が
+        # 続くことがあり、そこまで含めて書き足すと**字下げ行が top-level キーの
+        # 後ろに落ちて front matter が読めなくなる。**
+        end = fm_end
+        for i in range(start + 1, fm_end):
+            if lines[i].strip() and not lines[i].startswith(" "):
+                end = i
+                break
 
     block = lines[start:end]
     indent = " " * (len(lines[start]) - len(lines[start].lstrip(" ")) + 2)

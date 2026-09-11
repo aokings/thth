@@ -180,6 +180,25 @@ def throw_once(account_name: str, *, production_flag: bool = False,
     account_cfg = accounts_mod.load_account(account_name)
     state_dir = accounts_mod.state_dir_for(account_name)
 
+    # **スレッド連投を先に見る**（独立検収 2026-09-11・P1-1）。
+    # v2 は**段ごとにロックを取り直す**ので、ここで account+repo ロックを
+    # 握ったまま入ることはできない。**握る前に**分岐する。
+    from . import threadthrow as threadthrow_mod
+    bundle_results = threadthrow_mod.run_for_account(
+        account_name, adapter_factory=adapter_factory, now=now, log=log,
+        production=(bool(account_cfg.get('production')) and production_flag))
+    if bundle_results:
+        last = bundle_results[-1]
+        published = [r for r in bundle_results if r.action == "published"]
+        mode = "production" if (bool(account_cfg.get('production')) and production_flag) else "rehearsal"
+        return ThrowResult(
+            exit_code=0 if last.action in ("published", "skipped", "stopped") else 1,
+            mode=mode,
+            action="posted" if published else last.action,
+            message=(f"スレッド連投: {len(published)} 段を公開しました"
+                      if published else f"スレッド連投: {last.reason}"),
+            file=None, post_id=last.post_id)
+
     try:
         with _account_locks(account_name, account_cfg, state_dir):
             return _throw_locked(

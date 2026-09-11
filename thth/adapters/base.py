@@ -31,6 +31,7 @@ class PublishResult:
     #   "container"         コンテナ作成の失敗（全部）→ 出ていない
     #   "publish_definite"  公開が HTTP 4xx → 出ていない
     #   "publish_ambiguous" 公開が timeout・接続断・5xx・200 だが id 無し → 分からない
+    #   "publish_vetoed"    公開要求の直前の関門で止めた → **出ていない**
     failure: str = "none"
 
 
@@ -47,7 +48,14 @@ class Reply:
 class Adapter:
     """媒体ごとの実装（ThreadsAdapter が最初。T6 で XAdapter が保留のまま並ぶ想定）。"""
 
-    def publish(self, post: Post, *, dry_run: bool) -> PublishResult:
+    def publish(self, post: Post, *, dry_run: bool, on_container_created=None,
+                before_publish=None) -> PublishResult:
+        """`before_publish` は**実際の公開要求の直前**に呼ばれる最後の関門。
+
+        文字列を返せば公開しない（`failure="publish_vetoed"`）。**container を
+        作ったあと・待機のあとに呼ぶ**——待っているあいだに継続期限を越える
+        ことがある（独立検収 2026-09-11・P1-3）。
+        """
         raise NotImplementedError
 
     def replies(self, post_id: str, *, since: str | None = None) -> list:
