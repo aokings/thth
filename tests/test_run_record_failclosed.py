@@ -208,3 +208,85 @@ def test_置き場が通常ファイルなら不在と同じにしない(thth_ro
     # **無いこと自体は、これまでどおり止めない。**
     os.remove(path)
     assert threadrun.unreadable_runs() == []
+
+
+# --- 再判定 R1（2026-09-12 Codex）: 残った痕跡と、原稿との突き合わせ -----------
+
+def test_last_okとroot_post_idも公開の痕跡として見る(thth_root):
+    """**`post_id` と `posted_at` を消すだけで検査を抜けられた**（R1）。
+
+    公開の痕跡は 2 つだけではない。`last_ok=publish` は**公開まで進んだ**と
+    言っているし、`root_post_id` は**先頭段が出た**と言っている。
+    """
+    base = {"run_id": "run-a", "account": "a", "rel_path": "q.md", "posts": [
+        {"index": 1, "state": "pending", "post_id": None, "posted_at": None}]}
+
+    assert threadrun.run_problem(base) is None          # 普通の未着手は通す
+
+    with_last_ok = json.loads(json.dumps(base))
+    with_last_ok["posts"][0]["last_ok"] = "publish"
+    problem = threadrun.run_problem(with_last_ok)
+    assert problem and "last_ok=publish" in problem
+
+    with_root = json.loads(json.dumps(base))
+    with_root["root_post_id"] = "POST1"
+    problem = threadrun.run_problem(with_root)
+    assert problem and "root_post_id" in problem
+
+
+def test_止めすぎない境界(thth_root):
+    """**外部レビューが「維持する」と明記した正常な形**（R1）。
+
+    - `published` に `last_ok` は必須ではない
+    - **確定した失敗のあとの `pending` に `container_id` が残るのは正当**
+      （再試行してよい）
+    """
+    published_without_last_ok = {
+        "run_id": "run-b", "account": "a", "rel_path": "q.md",
+        "root_post_id": "POST1",
+        "posts": [{"index": 1, "state": "published", "post_id": "POST1",
+                    "posted_at": "2026-09-15T19:00:00+09:00",
+                    "text_sha256": "a" * 64, "bundle_sha": "b" * 64,
+                    "last_ok": None}]}
+    assert threadrun.run_problem(published_without_last_ok) is None
+
+    failed_then_pending = {
+        "run_id": "run-c", "account": "a", "rel_path": "q.md",
+        "posts": [{"index": 1, "state": "pending", "post_id": None,
+                    "posted_at": None, "container_id": "container-1",
+                    "last_ok": "container"}]}
+    assert threadrun.run_problem(failed_then_pending) is None
+
+
+def test_記録を綺麗に巻き戻しても原稿が公開済みと言っていれば止める(
+        thth_root, thread_account):
+    """**3 つの検査が互いを覆い隠していた**（2026-09-12 に気づいた）。
+
+    外部レビューの反例は「痕跡を 1 つ残す」形なので、`last_ok` の検査を外しても
+    `root_post_id` の検査や原稿との突き合わせが拾ってしまい、**どれを壊しても
+    反例が通ってしまった。** ここでは**実行記録を矛盾なく巻き戻し**（痕跡を
+    全部消す）、**原稿だけが公開済みと言っている**状態にして、
+    **原稿との突き合わせだけ**が効くようにする。
+    """
+    import json as _json
+    api = FakeAdapter()
+    first = publish(thread_account, api, max_posts=1)
+    assert len(api.calls) == 1
+    row = threadrun.load(first[0].run_id)
+
+    # **矛盾の無い pending に戻す**（痕跡を残さない）。
+    post = row["posts"][0]
+    post.update({"state": "pending", "post_id": None, "posted_at": None,
+                  "reply_to": None, "container_id": None, "last_ok": None})
+    row["root_post_id"] = None
+    with open(threadrun.run_path(row["run_id"]), "w", encoding="utf-8") as f:
+        _json.dump(row, f, ensure_ascii=False)
+
+    # 記録の中身だけでは矛盾が無い——**原稿と突き合わせないと判らない。**
+    assert threadrun.run_problem(row) is None
+    assert threadrun.unreadable_runs() == []
+
+    second = FakeAdapter()
+    results = publish(thread_account, second, max_posts=1)
+    assert second.calls == [], "原稿が公開済みと言っているのに再送した"
+    assert any("巻き戻っています" in (r.reason or "") for r in results), results

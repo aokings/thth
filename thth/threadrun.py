@@ -247,6 +247,24 @@ def run_problem(row, *, filename_id: str | None = None) -> str | None:
             if receipt:
                 return (f"posts[{i}] は state が {state!r} なのに {receipt} が"
                         f"残っています（**公開した痕跡と食い違います**）")
+            # **`last_ok=publish` も公開の痕跡**（再判定 R1・2026-09-12 Codex）。
+            # `post_id` と `posted_at` だけを消せば検査を抜けられた。
+            # **`container_id` が残るのは正当**（確定した失敗のあとの再試行）なので、
+            # ここで見るのは `last_ok` が**公開まで進んだと言っている**ときだけ。
+            if post.get("last_ok") == "publish":
+                return (f"posts[{i}] は state が {state!r} なのに "
+                        f"last_ok=publish が残っています"
+                        f"（**公開まで進んだ記録と食い違います**）")
+    # **root の post_id は、先頭段が公開されている証拠**（再判定 R1）。
+    # 段の側だけを巻き戻しても、ここが残っていれば矛盾として弾ける。
+    # **正当な null は成功と誤認しない**——`root_post_id` が無いのは普通の状態。
+    root = row.get("root_post_id")
+    if root:
+        first = posts[0]
+        if first.get("state") != PUBLISHED or not first.get("post_id"):
+            return (f"root_post_id が {root!r} なのに、1 段目が "
+                    f"{first.get('state')!r}（post_id={first.get('post_id')!r}）です"
+                    f"（**先頭が公開された記録と食い違います**）")
     if filename_id is not None and row["run_id"] != filename_id:
         # **ファイル名と中の run_id がずれた記録**を、別の実行として拾わせない。
         return (f"ファイル名と run_id が違います"

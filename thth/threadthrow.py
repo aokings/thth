@@ -278,6 +278,28 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
                            f"撤回されています（{fm.get('revoked_at')}）",
                            run_id=(run or {}).get("run_id"))
 
+    # **原稿が「公開済み」と言っている段を、実行記録が未着手として扱わない**
+    # （再判定 R1・2026-09-12 Codex の受け入れ条件 3）。原稿の `post_id` は
+    # 公開後に書き戻されるので、**それが残っているのに run 側が pending なら、
+    # どちらかが巻き戻っている。** 記録の中身だけでは判らないので、
+    # ここ（原稿と突き合わせられる場所）で見る。
+    #
+    # **逆向き（run は published・原稿に post_id が無い）は止めない**——
+    # 書き戻しが途中で落ちた正当な状態で、`identity_error()` の担当。
+    if run is not None:
+        run_posts = {p.get("index"): p for p in run.get("posts") or []}
+        for i, draft_post in enumerate(b.posts, start=1):
+            claimed = threadrun._unquote(draft_post.get("post_id"))
+            recorded = run_posts.get(i) or {}
+            if claimed and recorded.get("state") != threadrun.PUBLISHED:
+                return StepResult(
+                    "stopped", None,
+                    f"{i} 段目は原稿に post_id（{claimed}）が書かれているのに、"
+                    f"実行記録では {recorded.get('state')!r} です。"
+                    f"**どちらかが巻き戻っています**——Threads を実際に見て、"
+                    f"その段が出ているかを確かめてください",
+                    run_id=run.get("run_id"))
+
     segments = b.segments
     frozen = threadrun.frozen_records(run) if run else []
     expected = approval_mod.compute_bundle_sha(
