@@ -123,22 +123,20 @@ OUTCOME_RULES = [
 ]
 
 
-def label_error(form, outlet, numbering=None, *, avoid_forms=None) -> str | None:
+def label_error(form, outlet, numbering=None) -> str | None:
     """ラベルの値を検査する。**知らない語は推測で通さない。**
 
-    `avoid_forms` は**その account の profile が「使わない」と宣言した型**
-    （masaru 裁定 2026-09-11）。**流行っているからで編集方針が溶けない**ように
-    する。宣言が無ければ何も制限しない。
+    **`avoid_forms` の照合はここでやらない**（再検収 F1・2026-09-11 Codex）。
+    この関数は公開経路からも呼ばれる `bundle.check()` の中にいるので、
+    profile を読むと**編集方針が公開の可否を決めることになる**（しかも
+    読めないと制限が消える fail-open だった）。照合は
+    `bundle.editorial_notes()` へ移し、**警告までにした。**
     """
     if form is not None and form not in FORMS:
         old = FORM_MIGRATION.get(form)
         hint = f"（`{form}` は旧語彙です。いまは `{old}`）" if old else ""
         return (f"form: 知らない語です（{form}）{hint}。"
                 f"使えるのは: {'・'.join(FORMS)}")
-    if form is not None and form in (avoid_forms or ()):
-        return (f"form: この account は `{form}` を使わないと profile に"
-                f"宣言しています（avoid_forms）。**型を変えるか、"
-                f"profile を masaru に諮って変えてください。**")
     if outlet is not None and outlet not in OUTLETS:
         return (f"outlet: 知らない語です（{outlet}）。"
                 f"使えるのは: {'・'.join(OUTLETS)}")

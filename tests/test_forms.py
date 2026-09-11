@@ -64,15 +64,15 @@ def test_旧語彙は新語彙を名指しで教える():
     assert forms.FORM_MIGRATION["比較"] == "比較→条件→選択"
 
 
-def test_profileで使わない型を宣言できる():
-    """**流行っているからで編集方針が溶けない**（masaru 裁定 2026-09-11）。"""
+def test_ラベルの検査はprofileを読まない():
+    """**再検収 F1**。`label_error()` は公開経路から呼ばれる `bundle.check()` の
+    中にいるので、**profile を読まない**（読むと編集方針が公開の可否を決める）。
+    `avoid_forms` の照合は `bundle.editorial_notes()` へ移した。
+    """
+    import inspect
+    assert "avoid_forms" not in inspect.signature(forms.label_error).parameters
     assert forms.label_error("体験→再現方法", "記事へ") is None
-    err = forms.label_error("体験→再現方法", "記事へ",
-                             avoid_forms=["体験→再現方法"])
-    assert "使わないと profile に宣言" in err
-    # 宣言していない型は通る。
-    assert forms.label_error("困り事→理由→行動", "記事へ",
-                              avoid_forms=["体験→再現方法"]) is None
+    assert "知らない語" in forms.label_error("体験型", "記事へ")
 
 
 def test_連投にする前の5つの問いがある():
@@ -265,10 +265,17 @@ def test_profileのavoid_formsを検査する(thth_root):
     assert "avoid_forms" not in models.build_profile(dict(base))
 
 
-def test_宣言した型はlintで止まる(tmp_path, isolated_account, thth_root):
-    """**流行っているからで編集方針が溶けない。**"""
+def test_宣言した型は警告するが公開は止めない(tmp_path, isolated_account, thth_root):
+    """**再検収 F1**（2026-09-11 Codex）。以前はここで**公開が止まっていた。**
+
+    `bundle.check()` は**公開経路（`threadthrow`）からも呼ばれる。**
+    そこで `avoid_forms` を実エラーにしていたので、**編集方針が公開の可否を
+    決めていた**（構想書 §11 が別レビューを求めている変更）。照合は
+    `editorial_notes()`（lint からだけ呼ぶ）へ移し、**警告までにした。**
+    """
     from tests.test_bundle import FM, BODY, account_cfg
     from thth import bundle as bundle_mod
+    from thth import lint as lint_mod
     from thth import topic_models as models
     from thth import topic_store
 
@@ -284,17 +291,54 @@ def test_宣言した型はlintで止まる(tmp_path, isolated_account, thth_roo
     text = (FM.replace("nigamilab-threads", account)
             .replace("form: 困り事→理由→行動", "form: 体験→再現方法"))
     b = bundle_mod.parse_text(f"---\n{text}---\n{BODY}", "b.md")
-    errors = bundle_mod.check(b, account_cfg=account_cfg())
-    assert any("使わないと profile に宣言" in e for e in errors), errors
 
-    # 宣言していない型は通る。
+    # **公開経路の検査は profile を読まない。**
+    assert bundle_mod.check(b, account_cfg=account_cfg()) == []
+
+    notes = bundle_mod.editorial_notes(b)
+    assert any("使わないと profile に宣言" in n for n in notes), notes
+    assert all(lint_mod.is_warning(n) for n in notes), "承認を止める側に入っている"
+
+    # 宣言していない型には何も言わない。
     ok = bundle_mod.parse_text(
         f"---\n{FM.replace('nigamilab-threads', account)}---\n{BODY}", "b.md")
-    assert bundle_mod.check(ok, account_cfg=account_cfg()) == []
+    assert bundle_mod.editorial_notes(ok) == []
 
 
-def test_profileが無ければ制限しない(tmp_path, isolated_account, thth_root):
-    """**分類ラベルのために公開の手前で止まるのは重すぎる**（fail-safe）。"""
+def test_profileが読めないことを制限なしにしない(tmp_path, isolated_account, thth_root):
+    """**再検収 F1 の核心。** 以前は例外を握って空配列（＝制限なし）にしていた。
+
+    そのため **profile を壊れた JSON に置き換えるだけで、原稿も承認も変えずに
+    3 段すべてが公開できた。** いまは公開の可否が profile を見ていないうえに、
+    診断の側も「読めなかった」と言う（**黙って制限なしにしない**）。
+    """
+    from tests.test_bundle import FM, BODY, account_cfg
+    from thth import bundle as bundle_mod
+    from thth import lint as lint_mod
+    from thth import topic_models as models
+    from thth import topic_store
+
+    account = isolated_account["name"]
+    topic_store.set_profile(models.build_profile({
+        "account": account, "language": "ja", "primary_goal": "article_visits",
+        "editorial_scope": "x", "intended_interests": ["x"],
+        "avoid_misrepresentation": [], "status": "confirmed",
+        "confirmed_by": "t", "basis": ["docs/方針.md"],
+        "avoid_forms": ["体験→再現方法"]}))
+    with open(topic_store.profile_path(account), "w", encoding="utf-8") as f:
+        f.write("{壊れた")
+
+    text = (FM.replace("nigamilab-threads", account)
+            .replace("form: 困り事→理由→行動", "form: 体験→再現方法"))
+    b = bundle_mod.parse_text(f"---\n{text}---\n{BODY}", "b.md")
+
+    assert bundle_mod.check(b, account_cfg=account_cfg()) == []
+    notes = bundle_mod.editorial_notes(b)
+    assert any("読めません" in n for n in notes), notes
+    assert all(lint_mod.is_warning(n) for n in notes)
+
+
+def test_profileが無ければ何も言わない(tmp_path, isolated_account, thth_root):
     from tests.test_bundle import FM, BODY, account_cfg
     from thth import bundle as bundle_mod
 
@@ -302,3 +346,4 @@ def test_profileが無ければ制限しない(tmp_path, isolated_account, thth_
             .replace("form: 困り事→理由→行動", "form: 体験→再現方法"))
     b = bundle_mod.parse_text(f"---\n{text}---\n{BODY}", "b.md")
     assert bundle_mod.check(b, account_cfg=account_cfg()) == []
+    assert bundle_mod.editorial_notes(b) == []

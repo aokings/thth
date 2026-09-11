@@ -236,17 +236,35 @@ def test_実在しない根拠idを断る(isolated_account, thth_root):
     assert "実在しません" in _json(proc)["error"]["message"]
 
 
-def test_acceptedの語彙はmasaruの確定が要ると言う(isolated_account, thth_root):
-    """Codex §8 権限。**実績から自動で採用しない。**"""
+def test_acceptedの語彙は登録できない(isolated_account, thth_root):
+    """**再検収 F4**（2026-09-11 Codex）。注意文だけでは、保存された
+    `accepted` という主張は変わらない。
+
+    > 実在しない review ID を付けた正例 2 件・反例 1 件で、書き手が
+    > `state:accepted` を保存できました。…注意文を出すだけでは、保存状態の
+    > accepted という主張は変わりません。
+
+    **できていない状態を開けておかない。** 正式な採用（独立確認の照合と採用
+    判断の記録）は第 3 段階で実装する。
+    """
     payload = dict(VOCABULARY, entries=[
         _entry("other", definition="既存分類で説明できない"),
         _entry("missing_condition", definition="必要な条件が不足", state="accepted",
                includes=["比較の条件が無い"], excludes=["反応が読めないこと"])])
     proc = _thth(["topics", "record-vocabulary", "--json-stdin", "--by", "テスト"],
                   payload)
+    assert proc.returncode == 2
     out = _json(proc)
-    assert out["states"] == {"proposed": 1, "accepted": 1}
-    assert any("masaru" in w for w in out["warnings"])
+    assert out["error"]["code"] == "promotion_not_implemented"
+    assert "missing_condition" in out["error"]["message"]
+
+    # proposed / shadow は通る。**書きながら育てる側は閉じない。**
+    ok = _thth(["topics", "record-vocabulary", "--json-stdin", "--by", "テスト"],
+                dict(VOCABULARY, entries=[
+                    _entry("other"), _entry("missing_condition", state="shadow")]))
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    assert _json(ok)["states"] == {"proposed": 1, "shadow": 1}
+    assert any("masaru" in w for w in _json(ok)["warnings"])
 
 
 def test_語彙は版で並ぶ_前の版を指す(isolated_account, thth_root):

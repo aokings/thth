@@ -57,8 +57,11 @@ def lint_file(path: str) -> list:
     b, _text = _bundle_or_none(path)
     if b is not None:
         from . import bundle as bundle_mod
+        # **編集方針の診断は lint にだけ足す**（再検収 F1）。`bundle.check()` は
+        # 公開経路からも呼ばれるので、あちらに profile を読ませない。
         return bundle_mod.check(
-            b, account_cfg=_account_cfg_or_none(b.front_matter.get("account")))
+            b, account_cfg=_account_cfg_or_none(b.front_matter.get("account"))
+        ) + bundle_mod.editorial_notes(b)
 
     qf = queuefile.parse(path)
     fm = qf.front_matter

@@ -284,10 +284,20 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
     # **form / outlet は承認対象ではない**（分類するだけのラベル・設計 §8.3）。
     # ただし**知らない語は推測で通さない**——実測を型ごとに並べるときに、
     # 綴り違いが別の型として増えると比較にならない。
+    #
+    # **ここで profile を読まない**（再検収 F1・2026-09-11 Codex）。この関数は
+    # **公開経路（`threadthrow`）からも呼ばれる。** `avoid_forms` の照合を
+    # ここに置いていたので、**編集方針が公開の可否を決めていた**——しかも
+    # profile が読めないと制限が消える **fail-open** だった。
+    # 同じ承認済み原稿が、正常な profile では公開 0 回、**profile を壊れた
+    # JSON に置き換えるだけで 3 段とも公開された。**
+    #
+    # 編集方針の診断は `editorial_notes()` へ移した（`lint` からだけ呼ぶ・
+    # 警告まで）。型の禁止を強制的な公開方針にするなら別設計・別レビュー
+    # （構想書 §11）。
     from . import forms as forms_mod
     label_err = forms_mod.label_error(fm.get("form"), fm.get("outlet"),
-                                       fm.get("numbering"),
-                                       avoid_forms=_avoid_forms(fm.get("account")))
+                                       fm.get("numbering"))
     if label_err is not None:
         errors.append(label_err)
     number_warn = forms_mod.numbering_warning(fm.get("numbering"), segments)
@@ -300,20 +310,35 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
     return errors
 
 
-def _avoid_forms(account) -> list:
-    """その account が「使わない」と宣言した型（設計 §8.3・masaru 裁定）。
+def editorial_notes(bundle: Bundle) -> list:
+    """編集方針の診断（**公開経路からは呼ばない**・再検収 F1）。
 
-    **profile が無い・読めないときは制限しない**（fail-safe）——分類ラベルの
-    ために公開の手前で止まるのは重すぎる。
+    `avoid_forms`（その account が「使わない」と宣言した型）の照合はここ。
+    **警告までで、承認も公開も止めない**——構想書 §11「診断結果、型、profile を
+    公開時の必須条件にする変更は別設計・別レビュー」。
+
+    **profile が読めないことを黙って「制限なし」にしない。** 以前は例外を
+    握って空配列にしていたので、**壊せば制限が消えた。** いまは読めなければ
+    読めないと言う（言うだけで、止めない）。
     """
-    if not account:
+    fm = bundle.front_matter
+    account, form = fm.get("account"), fm.get("form")
+    if not account or not form:
         return []
+    from . import topic_store
     try:
-        from . import topic_store
         profile = topic_store.get_profile(account)
-    except Exception:
-        return []
-    return list((profile or {}).get("avoid_forms") or [])
+    except Exception as e:
+        return [f"warning: profile: {account} の profile を読めません（{e}）。"
+                f"**使わないと宣言した型（avoid_forms）を照合していません**"
+                f"——照合できなかっただけで、制限が無いわけではありません"]
+    avoid = list((profile or {}).get("avoid_forms") or [])
+    if form in avoid:
+        return [f"warning: form: この account は `{form}` を使わないと profile に"
+                f"宣言しています（avoid_forms）。**型を変えるか、profile を "
+                f"masaru に諮って変えてください。** "
+                f"**これは警告です——承認・公開は止まりません。**"]
+    return []
 
 
 def check_posts(bundle: Bundle, segments: list) -> list:

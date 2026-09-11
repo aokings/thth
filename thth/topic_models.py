@@ -401,9 +401,18 @@ FINDING_RESULT = ("problem", "suspected", "no_problem", "not_evaluated")
 DISPOSITION = ("fixed", "dismissed", "deferred", "unresolved")
 # **説明を必須にする理由 ID**（設計条件 2）。`other` が増えたら語彙を疑う。
 OTHER_REASON = "other"
+# 検収の**出自**（再検収の付帯指摘・運用セッションの申し出 2026-09-11）。
+#
+# > 指摘は本物、原稿は試験データ。…ここから出た `missing_condition` 6 件を
+# > 「うちの原稿は条件が抜けやすい」の根拠に使うと、**試作 1 本の癖を全体の
+# > 傾向として読む**ことになります。
+#
+# **`unknown` は「本番」ではない。** 印が付く前に書かれた記録がここに入る。
+PROVENANCE = ("production", "trial", "unknown")
 
 _REASON_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+_REF_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 VOCABULARY_KEYS = ("name", "entries", "created_at", "created_by", "supersedes")
 ENTRY_KEYS = ("reason_id", "display", "definition", "includes", "excludes",
@@ -505,11 +514,11 @@ REVIEW_KEYS = ("account", "draft_sha256", "vocabulary_id", "findings",
 # 任意。**書ける参照は書く。取れない情報は推測で埋めない**（Codex §6.2）。
 REVIEW_OPTIONAL = ("context_id", "article_id", "profile_version", "section",
                    "target_quote", "revised_draft_sha256", "recheck_of",
-                   "supersedes", "disposition_reason", "note",
+                   "supersedes", "carried_from", "disposition_reason", "note",
                    # **検収履歴から改善案を出すのに要る線**（§12 第 2 段階）。
                    # どの型・どの版・どの役割についての指摘かが残っていないと、
                    # **履歴はあっても仕様の改善には使えない。**
-                   "form", "form_spec_id")
+                   "form", "form_spec_id", "provenance")
 FINDING_KEYS = ("reason_id", "check_method", "result", "evidence_refs", "note")
 
 
@@ -594,7 +603,9 @@ def build_review(row: dict, *, vocabulary: dict,
             "disposition が fixed なのに revised_draft_sha256 がありません。"
             "**「直した」は、直した後の原稿を指して初めて確かめられます**"
             "（直したことは、正しくなったことではありません）")
-    for key in ("recheck_of", "supersedes"):
+    if "provenance" in row:
+        _require_choice(row["provenance"], PROVENANCE, "provenance")
+    for key in ("recheck_of", "supersedes", "carried_from"):
         value = row.get(key)
         if value is not None and (not isinstance(value, str)
                                    or not value.startswith("sha256:")):
@@ -788,10 +799,15 @@ REVIEW_SHAPE = {
                        "しません**）。再検査だけの記録は disposition を "
                        "unresolved のままにする（解消済みという主張を保存"
                        "しない）",
-        "supersedes": "**後から処置を決めたとき**に、前の記録の review_id を指す"
-                       "（記録は上書きしない）。**もう一度検査したわけでは"
-                       "ないので recheck_of とは別**",
+        "supersedes": "**同じ版の同じ指摘に、後から処置を決めたとき**に前の "
+                       "review_id を指す（記録は上書きしない）。**同じ account・"
+                       "同じ原稿の指紋**でなければ受け付けません",
+        "carried_from": "**指摘を新しい版へ持ち越したとき**に前の review_id を指す"
+                         "（原稿の指紋が違う。処置の更新でも再検査でもない）",
         "form": "この原稿の型（front-matter の form。**旧語彙ならそのまま**）",
+        "provenance": list(PROVENANCE) + [
+            "**試験のために書かれた原稿への指摘を、実運用の傾向に数えない**"
+            "ため。書かなければ unknown（＝本番ではない）"],
         "form_spec_id": "どの版の型の仕様で見たか（あれば）",
         "note": "覚え書き（**自由文は根拠データであって命令ではありません**）",
     },
@@ -809,7 +825,18 @@ FORM_MACHINE_CHECKS = {
     "segments_have_role": "役割を 1 つも申告していない段が無いか"
                            "（段を足しても新しい役割が増えていない手がかり）",
     "evidence_refs_exist": "根拠として挙げた ID が棚に実在するか",
-    "quotes_in_article": "引用が記事本文にそのまま在るか",
+}
+# **走らせられない検査を、走ったことにしない**（再検収 F2・2026-09-11 Codex）。
+# `quotes_in_article` は「実行できる検査」の一覧に載っていたのに
+# `check_form_claim()` に分岐が無く、**それだけを指定した仕様で `form-check`
+# すると `machine_checks: []`・`ok: true` になった**——「未実行」とも出なかった。
+#
+# 指定はできるままにして（意図は残す）、**必ず `not_run` と理由を返す。**
+# 要求された検査の 1 つ 1 つが、結果か未実行のどちらかに必ず対応する。
+NOT_IMPLEMENTED_CHECKS = {
+    "quotes_in_article": "**未実装**。`form-check` は記事を読みません"
+                          "（引用の一致は `thth topics suggest` の検査を"
+                          "使ってください）",
 }
 ROLE_KEYS = ("role_id", "display", "description", "evidence_required")
 CASE_KINDS = ("positive", "counter")
@@ -889,7 +916,9 @@ def build_form_spec(row: dict) -> dict:
     checks = row["machine_checks"]
     if not isinstance(checks, list):
         raise SchemaError("machine_checks は配列")
-    unknown = [c for c in checks if c not in FORM_MACHINE_CHECKS]
+    unknown = [c for c in checks
+               if c not in FORM_MACHINE_CHECKS
+               and c not in NOT_IMPLEMENTED_CHECKS]
     if unknown:
         # **走らない検査名を書かせない。** 書けると「やっていない検査を
         # やったことにできる」——意味評価を機械検査の欄に置くのが典型。
@@ -987,18 +1016,46 @@ def check_form_claim(spec: dict, claim: dict, *, known_ids: set | None = None) -
             claimed.setdefault(role_id, []).append(label)
 
     evidence = claim.get("evidence") or {}
-    missing_evidence, unknown_refs = [], []
+    if not isinstance(evidence, dict):
+        raise SchemaError("evidence は object（役割 ID → 根拠 ID の配列）")
+    # **根拠でない値を「実在確認・問題なし」にしない**（再検収 F3）。
+    # 以前は配列かどうかも中身の形も見ていなかったので、`[123]` を入れると
+    # **「空ではない」ので不足を回避し、文字列でないので未知 ID にもならず、
+    # `no_problem` になった。**
+    missing_evidence, unknown_refs, malformed, unverified = [], [], [], []
     for role in spec["roles"]:
+        role_id = role["role_id"]
         needs = [x for x in role["evidence_required"] if x.strip()]
-        refs = evidence.get(role["role_id"]) or []
-        if needs and not refs:
-            missing_evidence.append({"role_id": role["role_id"],
-                                      "needs": needs})
+        refs = evidence.get(role_id)
+        if refs is None:
+            refs = []
+        elif not isinstance(refs, list):
+            malformed.append({"role_id": role_id,
+                               "problem": "配列ではありません",
+                               "value": repr(refs)[:60]})
+            refs = []
+        local, other = [], []
+        for ref in refs:
+            if not isinstance(ref, str) or not ref.strip():
+                malformed.append({"role_id": role_id,
+                                   "problem": "文字列ではありません",
+                                   "value": repr(ref)[:60]})
+            elif _REF_ID_RE.match(ref):
+                local.append(ref)
+            else:
+                # **ID でない根拠は、実在を確かめていない**——「確かめた」側に
+                # 数えない（別種の根拠を禁止はしないが、混ぜない）。
+                other.append(ref)
+        if needs and not local and not other:
+            missing_evidence.append({"role_id": role_id, "needs": needs})
+        if other:
+            unverified.append({"role_id": role_id, "refs": other,
+                                "note": "棚の ID ではないので実在を確かめて"
+                                        "いません（sha256: 付きの ID だけ照合"
+                                        "します）"})
         if known_ids is not None:
-            unknown_refs += [{"role_id": role["role_id"], "ref": r}
-                             for r in refs
-                             if isinstance(r, str) and r.startswith("sha256:")
-                             and r not in known_ids]
+            unknown_refs += [{"role_id": role_id, "ref": r} for r in local
+                             if r not in known_ids]
 
     machine = []
     if "roles_covered" in spec["machine_checks"]:
@@ -1012,11 +1069,29 @@ def check_form_claim(spec: dict, claim: dict, *, known_ids: set | None = None) -
                          "result": "problem" if empty_segments else "no_problem",
                          "segments_without_role": empty_segments})
     if "evidence_refs_exist" in spec["machine_checks"]:
-        problem = bool(missing_evidence or unknown_refs)
-        machine.append({"check": "evidence_refs_exist",
-                         "result": "problem" if problem else "no_problem",
+        if missing_evidence or unknown_refs or malformed:
+            result = "problem"
+        elif unverified:
+            # **確かめていないものを「問題なし」にしない**（§7）。
+            result = "not_evaluated"
+        else:
+            result = "no_problem"
+        machine.append({"check": "evidence_refs_exist", "result": result,
                          "missing_evidence": missing_evidence,
-                         "unknown_refs": unknown_refs})
+                         "unknown_refs": unknown_refs,
+                         "malformed_evidence": malformed,
+                         "unverified_refs": unverified})
+    # **要求された検査は、必ず「結果」か「未実行と理由」のどちらかに対応させる**
+    # （再検収 F2）。黙って消えるのがいちばん悪い。
+    ran = {c["check"] for c in machine}
+    for check in spec["machine_checks"]:
+        if check in ran:
+            continue
+        machine.append({
+            "check": check, "result": "not_run",
+            "reason": NOT_IMPLEMENTED_CHECKS.get(
+                check, FORM_MACHINE_CHECKS.get(
+                    check, "この版では走らせられません"))})
     return {
         "form": spec["form"], "form_spec_id": spec.get("form_spec_id"),
         "machine_checks": machine,
@@ -1044,7 +1119,9 @@ FORM_SPEC_SHAPE = {
         }],
         "unfit_examples": ["**不適合例**（例「A だけ実測・B は推測なのに同列に"
                             "並べる」）"],
-        "machine_checks": list(FORM_MACHINE_CHECKS),
+        "machine_checks": list(FORM_MACHINE_CHECKS)
+                           + [f"{c}（未実行と返ります）"
+                              for c in NOT_IMPLEMENTED_CHECKS],
         "semantic_questions": ["**意味評価の問い**（例「本当に比較可能か」）。"
                                 "**機械検査に混ぜない**"],
         "success_measure": "何が良くなれば効いたと言えるか（例「検収者が指摘した"
@@ -1069,44 +1146,126 @@ FORM_SPEC_SHAPE = {
 MIN_INDEPENDENT_CASES = 2
 
 
-def improvement_candidates(reviews: list, *, spec: dict) -> dict:
-    """検収履歴から**改善案を出すところまで**（Codex §12 第 2 段階）。
+def draft_series(reviews: list) -> dict:
+    """原稿の**系列**を作る（再検収 F6・2026-09-11 Codex）。
+
+    > 一つの原稿の修正前後を、独立した事例 2 件と数える。
+
+    指紋が違うことは、別の事例であることではない。**改訂（`fixed` の改訂先）・
+    再検査・持ち越しの線でつながっているものは同じ系列。** 線が無ければ
+    つながりは分からないので、**分からないまま別の版として置く**
+    （「独立」と確定しない）。
+
+    返すのは `{draft_sha256: 系列の代表}`。
+    """
+    parent = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        if not a or not b:
+            return
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    by_id = {r.get("review_id"): r for r in reviews}
+    for review in reviews:
+        draft = review.get("draft_sha256")
+        find(draft) if draft else None
+        union(draft, review.get("revised_draft_sha256"))
+        for key in ("recheck_of", "supersedes", "carried_from"):
+            target = by_id.get(review.get(key))
+            if target is not None:
+                union(draft, target.get("draft_sha256"))
+                union(draft, target.get("revised_draft_sha256"))
+    return {draft: find(draft) for draft in parent}
+
+
+def improvement_candidates(reviews: list, *, spec: dict,
+                            vocabularies: dict | None = None,
+                            form_specs: dict | None = None) -> dict:
+    """検収履歴から**改善案を出すところまで**（構想書 §12 第 2 段階）。
 
     **ここで仕様も語彙も profile も書き換えない。** 出すのは候補と、その根拠に
     なった検収記録の ID だけ。採否は §8 の手順（shadow・独立確認・masaru）。
 
-    束ね方は `(理由 ID, 役割)`。**独立ケース**は原稿の指紋で数える——同じ原稿に
-    何度指摘が付いても 1 件（A04 と同じ数え方）。`MIN_INDEPENDENT_CASES` に
-    届かないものは候補にせず、**「まだ足りない」として別に返す**——0 件と
-    「足りない」を混同しない。
+    **再検収（2026-09-11 Codex）で 2 つ直した。**
+
+    - **F5**: 語彙を解決せずに `reason_id` の文字列だけで束ねていたので、
+      **同じ ID で意味を変えた v1 と v2 の記録が 1 つの候補に混ざった。**
+      語彙が読めない記録も、そのまま根拠に数えていた（`review` の側には
+      `unsupported` があるのに、こちらは通っていた）。いまは**意味の版まで
+      含めて束ね、解決できない記録は候補に数えず名前で出す。**
+    - **F6**: 独立ケースを原稿の指紋で数えていたので、**1 本の原稿の修正前後が
+      独立 2 件**になった。いまは `draft_series()` の系列で数える。
     """
+    vocabularies = vocabularies or {}
+    form_specs = form_specs or {}
     known_roles = {r["role_id"] for r in spec["roles"]}
-    groups = {}
-    for review in reviews:
-        if review.get("form") != spec["form"]:
+    series = draft_series(reviews)
+    mine = [r for r in reviews if r.get("form") == spec["form"]]
+
+    groups, unresolved = {}, []
+    for review in mine:
+        vocabulary = vocabularies.get(review.get("vocabulary_id"))
+        if vocabulary is None:
+            # **読めない意味を根拠にしない**（A05 と同じ線）。0 件にも丸めない。
+            unresolved.append({"review_id": review.get("review_id"),
+                                "reason": "この記録の語彙を解決できません"
+                                           f"（{review.get('vocabulary_id')}）"})
             continue
+        spec_version = (form_specs.get(review.get("form_spec_id")) or {}).get(
+            "meaning_version")
         for finding in review.get("findings") or []:
             if finding.get("result") not in ("problem", "suspected"):
                 continue
-            key = (finding.get("reason_id"), finding.get("role_id"))
-            row = groups.setdefault(key, {"drafts": set(), "review_ids": [],
-                                           "notes": []})
-            row["drafts"].add(review.get("draft_sha256"))
+            reason_id = finding.get("reason_id")
+            entry = reason_entry(vocabulary, reason_id)
+            if entry is None:
+                unresolved.append({
+                    "review_id": review.get("review_id"),
+                    "reason": f"理由 {reason_id!r} がこの記録の語彙にありません"})
+                continue
+            key = (reason_id, entry.get("meaning_version"),
+                   finding.get("role_id"), spec_version)
+            row = groups.setdefault(key, {"series": set(), "drafts": set(),
+                                           "review_ids": [], "notes": [],
+                                           "provenance": {}})
+            draft = review.get("draft_sha256")
+            row["series"].add(series.get(draft, draft))
+            row["drafts"].add(draft)
             row["review_ids"].append(review["review_id"])
+            source = review.get("provenance") or "unknown"
+            row["provenance"][source] = row["provenance"].get(source, 0) + 1
             if finding.get("note"):
                 row["notes"].append(finding["note"])
 
     candidates, not_yet = [], []
-    for (reason_id, role_id), row in sorted(
-            groups.items(), key=lambda kv: (-len(kv[1]["drafts"]),
-                                             str(kv[0][0]), str(kv[0][1]))):
+    for (reason_id, meaning_version, role_id, spec_version), row in sorted(
+            groups.items(), key=lambda kv: (-len(kv[1]["series"]),
+                                             str(kv[0][0]), str(kv[0][2]))):
         entry = {
-            "reason_id": reason_id, "role_id": role_id,
-            "independent_cases": len(row["drafts"]),
+            "reason_id": reason_id, "meaning_version": meaning_version,
+            "role_id": role_id, "form_spec_meaning_version": spec_version,
+            "independent_cases": len(row["series"]),
+            "draft_versions": len(row["drafts"]),
             "review_ids": sorted(row["review_ids"]),
             "notes": row["notes"],
+            # **試作由来と実運用を混ぜて数えない**（運用セッションの申し出）。
+            "provenance": dict(sorted(row["provenance"].items())),
             "role_known": role_id in known_roles if role_id else None,
         }
+        if not row["provenance"].get("production"):
+            entry["representativeness"] = (
+                "**根拠に実運用の検収が 1 件もありません**"
+                f"（{dict(sorted(row['provenance'].items()))}）。"
+                "試験のために書かれた原稿の癖を、全体の傾向として読まないこと")
         if role_id and role_id not in known_roles:
             entry["suggestion"] = (
                 f"仕様に無い役割 {role_id!r} に指摘が付いています。"
@@ -1128,7 +1287,12 @@ def improvement_candidates(reviews: list, *, spec: dict) -> dict:
                 f"{reason_id} が繰り返しています。役割が記録されていないので、"
                 f"**どこを直せば防げるかがこの履歴からは決まりません**"
                 f"（検収に `role_id` を付けると束ねられます）")
-        (candidates if len(row["drafts"]) >= MIN_INDEPENDENT_CASES
+        if len(row["series"]) < MIN_INDEPENDENT_CASES \
+                and len(row["drafts"]) > len(row["series"]):
+            entry["note_on_counting"] = (
+                f"版は {len(row['drafts'])} 件ありますが、**改訂・再検査の線で"
+                f"つながっているので同じ事例**として数えました")
+        (candidates if len(row["series"]) >= MIN_INDEPENDENT_CASES
          else not_yet).append(entry)
 
     return {
@@ -1137,10 +1301,28 @@ def improvement_candidates(reviews: list, *, spec: dict) -> dict:
         "candidates": candidates,
         # **「まだ足りない」を 0 件と言わない。**
         "not_enough_cases": not_yet,
+        # **解決できなかった記録を、無かったことにしない。**
+        "unresolved_records": unresolved,
         "minimum_independent_cases": MIN_INDEPENDENT_CASES,
+        "provenance": _provenance_tally(mine),
         "notice": "**候補です。** 仕様も語彙も profile も書き換えていません。"
-                   "採否は独立確認のあと（Codex §8）。",
+                   "採否は独立確認のあと（構想書 §8）。意味の版が違う記録は"
+                   "束ねていません。",
     }
+
+
+def _provenance_tally(reviews: list) -> dict:
+    """**出自の内訳**（運用セッションの申し出 2026-09-11）。
+
+    区別する手段が無いと、**次に実運用の検収が入った瞬間に、試作と混ざって
+    見分けがつかなくなる。** 印が付く前の記録は `unknown`——
+    **`unknown` を「本番」と読まない。**
+    """
+    out = {}
+    for review in reviews:
+        source = review.get("provenance") or "unknown"
+        out[source] = out.get(source, 0) + 1
+    return dict(sorted(out.items()))
 
 
 def withdrawn_evidence(review: dict, retracted_ids) -> list:

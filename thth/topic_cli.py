@@ -766,21 +766,29 @@ def cmd_record_vocabulary(args) -> int:
         {k: v for k, v in row.items()
          if k not in ("vocabulary_id", "schema_version")}
         | {"created_by": _actor(args)})
+    # 語彙にも同じ穴があった（再検収 F4 と同じ形）。**自己申告の accepted を
+    # 保存させない**——採用は独立確認のあと（構想書 §8）。
+    accepted = sorted(e["reason_id"] for e in vocab["entries"]
+                      if e["state"] == "accepted")
+    if accepted:
+        return _fail(
+            "promotion_not_implemented",
+            f"accepted の理由を登録できません: {accepted}。"
+            f"いま登録できるのは proposed か shadow までです。"
+            f"**正式な採用は未実装**で、独立確認の照合も採用判断の記録も"
+            f"まだありません（構想書 §8）")
     saved, wrote = store.put("vocabularies", vocab, id_key="vocabulary_id")
 
     states = {}
     for entry in saved["entries"]:
         states[entry["state"]] = states.get(entry["state"], 0) + 1
-    accepted = sorted(e["reason_id"] for e in saved["entries"]
-                      if e["state"] == "accepted")
     _emit({"ok": True, "vocabulary_id": saved["vocabulary_id"], "stored": wrote,
            "name": saved["name"], "supersedes": saved["supersedes"],
            "entries": len(saved["entries"]), "states": states,
-           "warnings": ([f"accepted の理由が {len(accepted)} 件あります"
-                          f"（{'・'.join(accepted)}）。**共通仕様の採用は "
-                          f"masaru または保守責任者が独立レビューを踏まえて"
-                          f"確定します**（Codex §8）。実績から自動で採用しません。"]
-                         if accepted else []),
+           "warnings": ["**共通仕様の採用は masaru または保守責任者が独立"
+                         "レビューを踏まえて確定します**（構想書 §8）。"
+                         "実績から自動で採用しません。いまは accepted を"
+                         "登録できません"],
            "notice": REVIEW_NOTICE})
     return 0
 
@@ -807,6 +815,35 @@ def cmd_vocabulary(args) -> int:
            "notice": REVIEW_NOTICE})
     return 0
 
+
+def _chain_problem(key: str, review: dict, target: dict) -> str | None:
+    """鎖の 3 本を**意味で使い分けさせる**（再検収 F8・F7）。
+
+    - `supersedes`  … 同じ版の同じ指摘に、**後から処置を決めた**
+    - `recheck_of`  … その処置の**改訂先をもう一度見た**
+    - `carried_from`… 同じ指摘を**新しい版へ持ち越した**
+
+    版の関係を見ないと、3 つとも「棚に在る何か」を指せてしまう。
+    """
+    mine = review.get("draft_sha256")
+    theirs = target.get("draft_sha256")
+    if key == "supersedes":
+        if mine != theirs:
+            return (f"supersedes は**同じ版の同じ指摘に処置を付ける**ための線です"
+                     f"（指紋が違います: {str(mine)[:12]}… / {str(theirs)[:12]}…）。"
+                     f"新しい版へ指摘を持ち越すなら `carried_from` を使ってください")
+        return None
+    if key == "carried_from":
+        if mine == theirs:
+            return ("carried_from は**新しい版へ持ち越す**ための線です"
+                     "（同じ版なら `supersedes`）")
+        return None
+    expected = target.get("revised_draft_sha256") or theirs
+    if mine != expected:
+        return (f"recheck_of の版が合いません。**再検査は、その処置が指した"
+                 f"改訂先を見るもの**です（期待 {str(expected)[:12]}… / "
+                 f"いま {str(mine)[:12]}…）")
+    return None
 
 def cmd_record_review(args) -> int:
     """検収と修正理由を 1 件残す（Codex §6.2）。
@@ -840,6 +877,8 @@ def cmd_record_review(args) -> int:
                 f"検収したのがどの本文かを確かめてください")
         row[key] = computed
 
+    if getattr(args, "provenance", None):
+        row["provenance"] = args.provenance
     judged_by = dict(row.get("judged_by") or {})
     judged_by["id"] = _actor(args)
     row["judged_by"] = judged_by
@@ -862,9 +901,25 @@ def cmd_record_review(args) -> int:
     # **形を先に見る。** 棚に聞くのはそのあと——`supersedes: "前のやつ"` に
     # 「ID の形が違います」とだけ返すと、**どの欄の話か分からない**。
     for key, what in (("recheck_of", "再検査の対象"),
-                       ("supersedes", "処置を付ける先の記録")):
-        if review.get(key) and store.get("reviews", review[key]) is None:
+                       ("supersedes", "処置を付ける先の記録"),
+                       ("carried_from", "持ち越す元の記録")):
+        if not review.get(key):
+            continue
+        target = store.get("reviews", review[key])
+        if target is None:
             return _fail("not_found", f"{what}が保存されていません: {review[key]}")
+        # **鎖の意味を照合する**（再検収 F8）。以前は「棚に在るか」しか見て
+        # いなかったので、**別 account・別原稿の記録を supersedes できた。**
+        # 在るだけのものを「処置の鎖」として保存しない。
+        if target.get("account") != review.get("account"):
+            return _fail(
+                "unrelated_reference",
+                f"{what}が別の account の記録です"
+                f"（{target.get('account')!r} / {review.get('account')!r}）。"
+                f"**account を越えて処置を継承しません**（構想書 §3）")
+        problem = _chain_problem(key, review, target)
+        if problem:
+            return _fail("unrelated_reference", problem)
     saved, wrote = store.put("reviews", review, id_key="review_id")
     _emit({"ok": True, "review_id": saved["review_id"], "stored": wrote,
            "account": saved["account"], "draft_sha256": saved["draft_sha256"],
@@ -993,8 +1048,33 @@ def _recent_reviews(account: str, args) -> int:
     rows, broken, _taken = store.load_all("reviews")
     mine = [r for r in rows if r.get("account") == account]
     now_sha = _draft_sha256(args.draft, "原稿")
+    # **未解決の履歴を黙って 0 件にしない**（再検収 F7・2026-09-11 Codex）。
+    # 原稿を替えると、旧版に付いた持ち越し（`deferred`）や未処置が
+    # **一覧から消えていた**——`ok: true, count: 0, warnings: []`。
+    # 新しい原稿への「確認済み」を継承しないのは正しいが、
+    # **「旧版に持ち越しがある」ことまで失ってよいわけではない。**
+    # 旧指摘を現版の不備と断定はしない（別の欄に、別の名前で出す）。
+    unreviewed_history = []
     if now_sha is not None:
-        mine = [r for r in mine if models.review_applies_to(r, now_sha)]
+        applies = [r for r in mine if models.review_applies_to(r, now_sha)]
+        carried = {r.get("carried_from") for r in applies}
+        for review in mine:
+            if models.review_applies_to(review, now_sha):
+                continue
+            if review.get("disposition") not in ("deferred", "unresolved"):
+                continue
+            if review["review_id"] in carried:
+                continue          # 現版へ持ち越し済み（もう applies の側にいる）
+            unreviewed_history.append({
+                "review_id": review["review_id"],
+                "draft_sha256": review.get("draft_sha256"),
+                "disposition": review.get("disposition"),
+                "reason_ids": [f.get("reason_id")
+                                for f in review.get("findings") or []],
+                "note": "**旧版の記録です。** 現版に当たるかは確かめていません"
+                         "——持ち越すなら `carried_from` で新しい版へ記録して"
+                         "ください"})
+        mine = applies
     mine.sort(key=lambda r: r.get("judged_at") or "", reverse=True)
 
     unsupported, needs_recheck = [], []
@@ -1023,7 +1103,14 @@ def _recent_reviews(account: str, args) -> int:
            # **撤回されたら、依存する判断を再確認対象にする**（Codex §11・A12）。
            "needs_recheck": needs_recheck,
            "reasons": tally, "out_of_scope": list(OUT_OF_SCOPE),
-           "warnings": _vocabulary_warnings(tally) + (
+           "unreviewed_history": unreviewed_history,
+           "warnings": ([f"この account には**旧版の未解決記録が "
+                          f"{len(unreviewed_history)} 件**あります"
+                          f"（unreviewed_history）。"
+                          + ("**現版はまだ検収していません。**"
+                             if not mine else "")]
+                         if unreviewed_history else [])
+           + _vocabulary_warnings(tally) + (
                [f"根拠の観測が取り下げられた検収が {len(needs_recheck)} 件"
                 f"あります。**再確認の対象です**——判定をやり直してください"
                 f"（記録は消していません。取り下げた事実も残っています）"]
@@ -1058,6 +1145,26 @@ def cmd_record_form_spec(args) -> int:
         {k: v for k, v in row.items()
          if k not in ("form_spec_id", "schema_version")}
         | {"created_by": _actor(args)})
+    # **未検証の accepted を保存させない**（再検収 F4・2026-09-11 Codex）。
+    # 昇格の検査は正例の件数・反例の有無・scope の文字列しか見ていなかったので、
+    # **実在しない review ID を付けた正例 2 件と反例 1 件で、書き手が自分で
+    # `accepted` を保存できた。** scope を「… and every other account」と
+    # 書いても通った。注意文を出すだけでは、**保存された `accepted` という
+    # 主張は変わらない。**
+    #
+    # 正式な採用（独立確認と採用判断の記録）は第 3 段階の ChangeProposal で
+    # 実装する。**できていない状態を開けておかない。**
+    if spec["state"] not in ("proposed", "shadow"):
+        return _fail(
+            "promotion_not_implemented",
+            f"いま登録できるのは proposed か shadow までです"
+            f"（{spec['state']} は受け付けません）。**正式な採用は未実装**で、"
+            f"独立確認の照合も採用判断の記録もまだありません（構想書 §8）。"
+            f"自己申告の accepted を保存すると、**採用されたという主張だけが"
+            f"残ります。**")
+    problem = _cases_problem(spec)
+    if problem:
+        return _fail("unverified_cases", problem)
     saved, wrote = store.put("form_specs", spec, id_key="form_spec_id")
     _emit({"ok": True, "form_spec_id": saved["form_spec_id"], "stored": wrote,
            "form": saved["form"], "state": saved["state"],
@@ -1067,12 +1174,37 @@ def cmd_record_form_spec(args) -> int:
                                        if c["kind"] == "positive"]),
                       "counter": len([c for c in saved["cases"]
                                        if c["kind"] == "counter"])},
-           "warnings": ([f"state={saved['state']} です。**採用は masaru または"
-                          f"保守責任者が独立確認を踏まえて確定します**（Codex §8）"]
-                         if saved["state"] == "accepted" else []),
+           "warnings": [f"state={saved['state']} です。**採用は masaru または"
+                         f"保守責任者が独立確認を踏まえて確定します**"
+                         f"（構想書 §8。いまは登録できません）"],
            "notice": REVIEW_NOTICE})
     return 0
 
+
+def _cases_problem(spec: dict) -> str | None:
+    """正例・反例が**実在する検収**を指しているか（再検収 F4）。
+
+    件数だけ数えていたので、**実在しない review ID でも通った。** 挙げた
+    review が在るか・同じ account か・同じ原稿かを見る。**在るだけのものを
+    根拠として数えない。**
+    """
+    for i, case in enumerate(spec.get("cases") or []):
+        where = f"cases[{i}]（{case.get('kind')}）"
+        for review_id in case.get("review_ids") or []:
+            row = store.get("reviews", review_id) \
+                if isinstance(review_id, str) \
+                and review_id.startswith("sha256:") else None
+            if row is None:
+                return (f"{where} の review_ids が実在しません: {review_id}。"
+                         f"**挙げた検収が無ければ、その事例は根拠になりません**")
+            if row.get("account") != case.get("account"):
+                return (f"{where} の検収は別の account のものです"
+                         f"（{row.get('account')!r} / {case.get('account')!r}）")
+            if row.get("draft_sha256") != case.get("draft_sha256"):
+                return (f"{where} の検収は別の原稿のものです"
+                         f"（{str(row.get('draft_sha256'))[:12]}… / "
+                         f"{str(case.get('draft_sha256'))[:12]}…）")
+    return None
 
 def cmd_form_spec(args) -> int:
     """保存済みの型の仕様を読む（読むだけ）。"""
@@ -1148,7 +1280,23 @@ def cmd_improvements(args) -> int:
         except accounts_mod.AccountError as e:
             return _fail("unknown_account", str(e))
         rows = [r for r in rows if r.get("account") == args.account]
-    out = models.improvement_candidates(rows, spec=spec)
+    # **参照を候補の入口でも解決する**（再検収 F5）。`review` の側にだけ
+    # `unsupported` があって、改善候補の側は通っていた。
+    vocabularies, form_specs = {}, {}
+    for review in rows:
+        for key, cache, kind in (("vocabulary_id", vocabularies, "vocabularies"),
+                                  ("form_spec_id", form_specs, "form_specs")):
+            ref = review.get(key)
+            if not ref or ref in cache:
+                continue
+            try:
+                cache[ref] = store.get(kind, ref) if isinstance(ref, str) \
+                    and ref.startswith("sha256:") else None
+            except store.StoreError:
+                cache[ref] = None      # **壊れている＝解決できない。** 0 件にしない
+    out = models.improvement_candidates(rows, spec=spec,
+                                         vocabularies=vocabularies,
+                                         form_specs=form_specs)
     out["ok"] = True
     out["account"] = args.account
     out["broken_ids"] = broken
@@ -1289,6 +1437,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "**直したあとに記録するときは使わない**——現物はもう直って"
                          "いるので、対象がずれる。その場合は直す前の指紋を JSON の "
                          "draft_sha256 に書く")
+    p.add_argument("--provenance", default=None,
+                    choices=list(models.PROVENANCE),
+                    help="この検収の出自。**試験のために書かれた原稿への指摘を"
+                         "実運用の傾向に数えない**ため。省略すると unknown "
+                         "（＝本番とは数えません）")
     p.add_argument("--revised-draft", default=None,
                     help="**直したあとの原稿**のパス（disposition: fixed に要る）。"
                          "見つけた時点では直っていない・記録するのは直したあと、"
