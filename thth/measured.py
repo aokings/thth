@@ -32,7 +32,16 @@ account の投稿・日次が混ざっていた。根拠は 2 つあり、記録
     書き換えると、過去の台帳が黙って新しい account の実測へ移し替えられて
     しまっていた（R3）。**現在の原稿を過去の所有の根拠にするのをやめる。**
     R3 より前に採取した行（`account` を持たない）は、完全な過去復元を諦めて
-    「不明」に分ける——これが最小修正。
+    「不明」に分ける。
+
+    **選別は行ごとに行う。** R3 の実装は 1 ファイルの所有を**先頭行 1 行**で
+    決めていた。先頭行が R3 より前だと、後から `account` 付きの行がいくら
+    足されても、その投稿は永久に「不明」のままになる——実際、kopicha の
+    6 投稿すべてがその状態で、道具が空で出続けていた。行ごとに見れば、
+    裏付けのある行は裏付けのあるまま出せる。外した行の数は
+    `rows_unattributed` として出す（**時系列の頭が欠けているのに、そこから
+    始まったかのように読ませない**）。1 つのファイルに 2 つの account の行が
+    同居していたら、そのファイルは信用できないので**壊れとして 1 行も使わない**。
   - アカウント日次（`account/*.ndjson`）は `thth/collect.py` の
     `_collect_account_daily()` がファイル名そのものに `<account>-<年月>` を
     刻んでいる。ファイル名が一致しないものは他 account と判っているので、
@@ -140,13 +149,16 @@ def load(account_name: str) -> dict:
         （1 投稿 1 要素）。`post_id`・`topic`・`form_now`（いまの queue
         ファイルから引いた値。過去の型ではない）・`form_source`
         （`"current_draft"` 固定。`form_now` の由来を明示する）・`file`・
-        `posted_at` と、時系列の `rows`（`collected_at`・`age_hours`・
-        `marks`・`marks_collapsed`・`metrics`）を持つ。
+        `posted_at`・`rows_unattributed`（採取時点の `account` が無く、この
+        系列から**外した**行の数。0 でなければ時系列は途中から始まっている）
+        と、時系列の `rows`（`collected_at`・`age_hours`・`marks`・
+        `marks_collapsed`・`metrics`）を持つ。**`rows` はこの account の
+        `account` を持つ行だけ。**
       - `posts_unknown_ownership`: 所有 account を**判別できなかった**投稿
-        台帳の post_id（行に `account` が無い場合——R3 より前に採取した行、
-        または壊れた採取）。この account の実測へ推定で混ぜず、ここに分けて
-        出す——`posts` にも他 account の分にも入らない。**現在の原稿の
-        account では復元しない**（R3）。
+        台帳の post_id（**裏付けのある行が 1 行も無い**場合——R3 より前に
+        採取した行だけ、または壊れた採取）。この account の実測へ推定で
+        混ぜず、ここに分けて出す——`posts` にも他 account の分にも入らない。
+        **現在の原稿の account では復元しない**（R3）。
       - `account_daily`: アカウント日次の行（`date` と `metrics`）。ファイル名
         `<account>-<年月>.ndjson` が一致するものだけ（M3）。
       - `broken`: 読めなかった・信用できなかったファイルの名前（壊れと
@@ -186,7 +198,6 @@ def load(account_name: str) -> dict:
                 continue
 
             post_id = name[: -len(".ndjson")]
-            first = rows[0]
             # **所有 account は行そのものの `account` だけを根拠にする**
             # （R3・2026-09-12）。以前（M3）は行に `account` が無いことを
             # 前提に、`file` を手がかりに queue_dir の**現在の**原稿を開いて
@@ -195,22 +206,41 @@ def load(account_name: str) -> dict:
             # 原稿の account を書き換えると、過去の台帳が現在の account の
             # 実測へ黙って移し替えられてしまう。**裏付けの無いものを、推定で
             # 混ぜない。**
-            owner = first.get("account")
-            if owner is None:
-                # 不明——採取時点の account が台帳に無い（R3 より前の行、
+            #
+            # **選別は行ごとに行う**（R3 が残した制限を閉じる・2026-09-12）。
+            # R3 の実装は**先頭行 1 行**で 1 ファイルの所有を決めていた。
+            # 先頭行が R3 より前（`account` 無し）だと、後から `account` 付きの
+            # 行がいくら足されても、その投稿は永久に「不明」のままになる——
+            # 実際、kopicha の 6 投稿すべてがその状態で、道具が空で出ていた。
+            # 行ごとに見れば、裏付けのある行は裏付けのあるまま出せる。
+            # **足りない分は「無い」ではなく「不明」として数を出す**
+            # （`rows_unattributed`）——時系列の頭が欠けているのに、そこから
+            # 始まったかのように読ませない。
+            owners = {r.get("account") for r in rows if r.get("account") is not None}
+            if len(owners) > 1:
+                # 1 つの post_id が 2 つの account に属することは実際には
+                # 起こらない。起きているならこのファイルは信用できない
+                # （取り違え・import/merge・改竄）——**1 行も使わない**。
+                broken.append(name)
+                continue
+            own_rows = [r for r in rows if r.get("account") == account_name]
+            unattributed = [r for r in rows if r.get("account") is None]
+            if not own_rows:
+                if owners:
+                    # 他 account と判っている。不明ではなく、単に自分のではない。
+                    continue
+                # 裏付けのある行が 1 行も無い——不明（R3 より前の行だけ、
                 # または壊れた採取）。この account かもしれないが判別できない
                 # ので、推定で混ぜない。
                 unknown_posts.append(post_id)
                 continue
-            if owner != account_name:
-                # 他 account と判っている。不明ではなく、単に自分のではない。
-                continue
 
-            _mark_collapsed(rows)
-            rows.sort(key=lambda r: r.get("collected_at") or "")
-            for row in rows:
+            _mark_collapsed(own_rows)
+            own_rows.sort(key=lambda r: r.get("collected_at") or "")
+            for row in own_rows:
                 seen_metric_names.update((row.get("metrics") or {}).keys())
 
+            first = own_rows[0]
             posts.append({
                 "post_id": post_id,
                 "topic": first.get("topic"),
@@ -218,6 +248,9 @@ def load(account_name: str) -> dict:
                 "form_source": "current_draft",
                 "file": first.get("file"),
                 "posted_at": first.get("posted_at"),
+                # 採取時点の account が無く、この投稿の系列から**外した**行の数。
+                # 0 でなければ時系列は途中から始まっている。
+                "rows_unattributed": len(unattributed),
                 "rows": [
                     {
                         "collected_at": row.get("collected_at"),
@@ -226,7 +259,7 @@ def load(account_name: str) -> dict:
                         "marks_collapsed": row.get("marks_collapsed", False),
                         "metrics": row.get("metrics"),
                     }
-                    for row in rows
+                    for row in own_rows
                 ],
             })
 

@@ -552,3 +552,97 @@ def test_CLIの人向け出力に所有不明の件数とIDと理由が出る(is
     assert "所有不明" in out, "所有不明があることが人向け出力に出ていない"
     assert "GHOST" in out, "所有不明の post ID が出ていない"
     assert "1 件" in out, "所有不明の件数が出ていない"
+
+
+def test_先頭行が古くても裏付けのある行はその実測として出る(isolated_account):
+    """**R3 が残した制限を閉じる**（2026-09-12）。
+
+    R3 の実装は 1 ファイルの所有を**先頭行 1 行**で決めていた。先頭行が R3
+    より前（`account` 無し）だと、後から `account` 付きの行がいくら足されても
+    その投稿は永久に「不明」のまま——実際 VM の kopicha は 6 投稿すべてが
+    その状態で、`thth measured` が空で出続けていた。
+
+    行ごとに選別すれば、**裏付けのある行は裏付けのあるまま出せる**。外した
+    行は 0 にせず数を出す（`rows_unattributed`）。
+    """
+    _write_ndjson(_insight_path(isolated_account, post_id="MIXED"), [
+        # R3 より前の採取（`account` 無し）。これが先頭にある。
+        {"post_id": "MIXED", "file": "mixed.md", "topic": "お茶",
+         "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
+         "marks": [1], "metrics": {"views": 10}},
+        # R3 以降の採取（`account` あり）。
+        {"post_id": "MIXED", "file": "mixed.md", "topic": "お茶",
+         "account": isolated_account["name"],
+         "collected_at": "2026-09-10T16:00:00+09:00", "age_hours": 6.0,
+         "marks": [6], "metrics": {"views": 42}},
+    ])
+
+    result = measured_mod.load(isolated_account["name"])
+
+    assert [p["post_id"] for p in result["posts"]] == ["MIXED"], \
+        "先頭行が古いだけで、裏付けのある行まで捨てている"
+    assert result["posts_unknown_ownership"] == [], \
+        "裏付けのある行があるのに投稿ごと不明へ回している"
+    post = result["posts"][0]
+    assert [r["age_hours"] for r in post["rows"]] == [6.0], \
+        "裏付けの無い行を推定で混ぜている"
+    assert post["rows_unattributed"] == 1, \
+        "外した行の数を出していない（系列が 6h から始まったように読める）"
+
+
+def test_外した行があることが人向け出力に出る(isolated_account, capsys):
+    """欠けているものを黙って落とさない。**時系列の頭が欠けているのに、
+    そこから始まったかのように読ませない。**"""
+    from thth import cli as cli_mod
+
+    _write_ndjson(_insight_path(isolated_account, post_id="MIXED"), [
+        {"post_id": "MIXED", "file": "mixed.md", "topic": "お茶",
+         "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
+         "marks": [1], "metrics": {"views": 10}},
+        {"post_id": "MIXED", "file": "mixed.md", "topic": "お茶",
+         "account": isolated_account["name"],
+         "collected_at": "2026-09-10T16:00:00+09:00", "age_hours": 6.0,
+         "marks": [6], "metrics": {"views": 42}},
+    ])
+
+    args = argparse.Namespace(account=isolated_account["name"], post=None, json=False)
+    rc = cli_mod.cmd_measured(args)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "MIXED" in out
+    assert "1 行" in out, "外した行数が人向け出力に出ていない"
+    assert "始まったのではありません" in out, "系列が途中から始まっている旨が出ていない"
+
+
+def test_1つの台帳に2つのaccountの行が同居したら壊れとして扱う(
+        isolated_account_factory, tmp_path):
+    """1 つの post_id が 2 つの account に属することは実際には起こらない。
+    起きているならそのファイルは信用できない（取り違え・import/merge・改竄）
+    ——**1 行も使わない**。どちらの account の実測にも、不明にも入れない
+    （壊れと不明を混ぜない）。"""
+    from tests.conftest import init_real_repo
+
+    shared_repo = init_real_repo(tmp_path, "shared_conflict")
+    account_a = isolated_account_factory("account-a", repo_dir=shared_repo)
+    isolated_account_factory("account-b", repo_dir=shared_repo)
+
+    _write_ndjson(_insight_path(account_a, post_id="CONFLICT"), [
+        {"post_id": "CONFLICT", "file": "c.md", "account": "account-a",
+         "collected_at": "2026-09-10T11:00:00+09:00", "age_hours": 1.0,
+         "marks": [1], "metrics": {"views": 1}},
+        {"post_id": "CONFLICT", "file": "c.md", "account": "account-b",
+         "collected_at": "2026-09-10T16:00:00+09:00", "age_hours": 6.0,
+         "marks": [6], "metrics": {"views": 99}},
+    ])
+
+    result_a = measured_mod.load("account-a")
+    result_b = measured_mod.load("account-b")
+
+    assert result_a["posts"] == [] and result_b["posts"] == [], \
+        "所有が食い違う台帳の行を実測として使っている"
+    assert result_a["posts_unknown_ownership"] == [] and \
+        result_b["posts_unknown_ownership"] == [], \
+        "壊れを『不明』に混ぜている（読めない ≠ 判らない）"
+    assert "CONFLICT.ndjson" in result_a["broken"], \
+        "信用できない台帳を壊れとして出していない"

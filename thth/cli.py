@@ -787,6 +787,15 @@ def cmd_measured(args) -> int:
         source_text = "（いまの原稿から）" if source == "current_draft" else ""
         print(f"{post['post_id']}  [{topic}]  form={form}{source_text}"
               f"  posted_at={post.get('posted_at')}  file={post.get('file')}")
+        # **外した行の数を、その投稿の所に出す**（2026-09-12）。行ごとに所有を
+        # 選別するようにしたので、1 つの投稿の中に「裏付けのある行」と「採取
+        # 時点の account が無い行」が混在し得る。黙って落とすと、**時系列が
+        # そこから始まったように読める**——欠けていることを言う。
+        dropped = post.get("rows_unattributed") or 0
+        if dropped:
+            print(f"  ⚠ 所有の裏付けが無い行を {dropped} 行外しました"
+                  "（採取時点の account が台帳に無い行。"
+                  "**この系列はここから始まったのではありません**）")
         for row in post["rows"]:
             age = row.get("age_hours")
             age_text = f"{age:.1f}h" if isinstance(age, (int, float)) else "?"
@@ -814,7 +823,7 @@ def cmd_measured(args) -> int:
     unknown = result["posts_unknown_ownership"]
     if unknown:
         print(f"所有不明: {len(unknown)} 件  " + ", ".join(unknown))
-        print("  理由: 採取時点の account が台帳の行に無く、"
+        print("  理由: 採取時点の account を持つ行が 1 行も無く、"
               "現在の原稿の account では推定しません（混ぜません）")
     else:
         print("所有不明: 無し")
