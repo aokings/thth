@@ -23,10 +23,26 @@ def test_軸が構成と導線に分かれている():
     「列挙」「問い→答え」は構成、「誘導」は目的。別々に記録すると
     「問い→答え × 記事へ」と「列挙 × 記事へ」を並べられる。
     """
-    assert set(forms.FORMS) == {"単発", "列挙", "問い→答え", "手順"}
+    assert set(forms.FORMS) == {"単発", "比較", "列挙", "問い→答え", "手順"}
     assert set(forms.OUTLETS) == {"記事へ", "別投稿へ", "無し"}
     # **目的の語が構成に混ざっていない。**
     assert "誘導" not in forms.FORMS
+
+
+def test_分ける理由として挙げた型は分類できる():
+    """**§0 の「分ける理由」と `form` の語彙が食い違わない**（関東セッション指摘）。
+
+    > 分ける理由として挙げている型が、書いたあとに分類できないのは少し座りが悪い
+    """
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    doc = open(os.path.join(root, "docs", "手順_LLM_スレッド連投.md"),
+                encoding="utf-8").read()
+    reasons = doc.split("分ける理由になるもの:")[1].split("分ける理由にならない")[0]
+    for word in ("比較", "段階的"):
+        assert word in reasons, reasons
+    # 「比較」で書いたものを「比較」と分類できる。
+    assert forms.label_error("比較", "記事へ") is None
 
 
 def test_知らない語は通さない():
@@ -128,3 +144,14 @@ def test_手順書の原稿の例が実際に通る():
     assert b.malformed is False, "手順書の例が読めない"
     errors = bundle.check(b, account_cfg=account_cfg())
     assert errors == [], errors
+
+
+def test_語彙が増えたら版が上がる():
+    """**どの版の分類で測ったか**が要る（Codex 最終条件 4）。
+
+    `比較` を足したのに版が据え置きだと、**前後の実測が同じ分類で測られた
+    ように見える。**
+    """
+    assert forms.VOCABULARY_VERSION == "2026-09-11.2"
+    row = forms.label_record(form="比較", outlet="記事へ", at="2026-09-11T12:00:00+09:00")
+    assert row["vocabulary_version"] == "2026-09-11.2"

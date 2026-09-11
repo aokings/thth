@@ -220,7 +220,8 @@ def cmd_suggest(args) -> int:
         try:
             proposal = models.validate_proposal(
                 proposal_raw, article=article,
-                known_observation_ids=set(observations))
+                known_observation_ids=set(observations),
+                known_topics=_topic_by_id(observations))
         except models.SchemaError as e:
             out = advice.rejected(context["context_id"], context["account"], str(e))
             _emit(out)
@@ -276,6 +277,12 @@ def cmd_suggest(args) -> int:
 # 出力に載せる根拠の総量の目安。超えたら投稿例を削って、削ったと言う。
 EVIDENCE_BUDGET_BYTES = 256 * 1024
 SAMPLES_PER_OBSERVATION = 8
+
+
+def _topic_by_id(observations: dict) -> dict:
+    """`{observation_id: 語}`。**弾くときに正解を並べるため。**"""
+    return {oid: (obs.get("topic") or obs.get("normalized_topic"))
+            for oid, obs in observations.items()}
 
 
 def _all_observations() -> tuple:
@@ -545,8 +552,10 @@ def cmd_record_decision(args) -> int:
         return 1
 
     context.pop("profile_snapshot", None)
-    proposal = models.validate_proposal(row["proposal"], article=article,
-                                         known_observation_ids=set(observations))
+    proposal = models.validate_proposal(
+        row["proposal"], article=article,
+        known_observation_ids=set(observations),
+        known_topics=_topic_by_id(observations))
     envelope = advice.evaluate(context, article=article, proposal=proposal,
                                 observations=observations)
     # **記事を先に atomic 保存し、参照が揃ってから判断を保存する**（設計 §6）。

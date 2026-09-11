@@ -226,7 +226,8 @@ PROPOSAL_KEYS = ("context_id", "prompt_version", "intended_reader", "article_val
                  "post_angle", "candidates", "selected_topic", "selection_reason")
 
 
-def validate_proposal(row: dict, *, article: dict, known_observation_ids: set) -> dict:
+def validate_proposal(row: dict, *, article: dict, known_observation_ids: set,
+                       known_topics: dict | None = None) -> dict:
     """LLM が返した候補比較を検査する（設計 §4.4・受け入れ T10）。
 
     **THTH が検査できるのは、引用が本文に在るか・参照が実在するか・値域だけ。**
@@ -268,7 +269,13 @@ def validate_proposal(row: dict, *, article: dict, known_observation_ids: set) -
             unknown = [ref for ref in cand["observation_refs"]
                        if ref not in known_observation_ids]
             if unknown:
-                raise SchemaError(f"{where} の観測 ID が実在しません: {unknown[:3]}")
+                # **正解を並べる**（asmon 関東セッション報告 2026-09-11）。
+                # ID は記憶から書けないので、間違えたら**取り直しの往復**に
+                # なる。`suggest` の出力には入っているが、**弾くときに
+                # 手元に出すほうが早い。**
+                raise SchemaError(
+                    f"{where} の観測 ID が実在しません: {unknown[:3]}"
+                    + _known_refs_hint(cand.get("topic"), known_topics))
         except SchemaError as e:
             problems.append(str(e))
 
@@ -290,6 +297,23 @@ def validate_proposal(row: dict, *, article: dict, known_observation_ids: set) -
 PROFILE_KEYS = ("account", "language", "primary_goal", "editorial_scope",
                 "intended_interests", "avoid_misrepresentation", "status",
                 "confirmed_by", "basis")
+
+
+def _known_refs_hint(topic, known_topics: dict | None) -> str:
+    """この束で参照できる観測 ID を並べる。**その語のものを先に。**"""
+    if not known_topics:
+        return ""
+    same = sorted(oid for oid, t in known_topics.items() if t == topic)
+    lines = []
+    if same:
+        lines.append(f"「{topic}」で使えるのは: {'・'.join(same)}")
+    others = sorted(set(known_topics) - set(same))
+    if others:
+        shown = others[:8]
+        more = f"（ほか {len(others) - len(shown)} 件）" if len(others) > len(shown) else ""
+        pairs = "・".join(f"{known_topics[o]}={o[:19]}…" for o in shown)
+        lines.append(f"ほかの語: {pairs}{more}")
+    return "。" + "。".join(lines) if lines else ""
 
 
 def build_profile(row: dict) -> dict:
