@@ -1919,11 +1919,21 @@ def build_hypothesis(row: dict) -> dict:
             f"残してください——捨てはしません")
 
     out = dict(row)
-    # **任意の欄は、無ければ null で埋める**（`REVIEW_OPTIONAL` と違い、
-    # 書いた記録と書かなかった記録で**内容 ID が変わらない**ようにする——
-    # 同じ中身なのに欄の有無で別 ID になると、**同じ仮説が 2 件に見える**）。
+    # **任意の欄は、無ければ「キーごと落とす」**（外部レビュー・2026-09-12）。
+    #
+    # 最初は `null` で埋めていた。「書いた記録と書かなかった記録で内容 ID が
+    # 変わらないように」という意図だったが、**それは新しい記録どうしの話**で、
+    # **この欄ができる前に保存した記録と同じ入力を出すと、別 ID になっていた**
+    # （旧: キー無し／新: `null`）。**同じ仮説が 2 件に見える**——避けたかった
+    # ことを、別の向きで起こしていた。しかも**旧 ID を指す改訂を作っても、
+    # 複製のほうは別 ID なので後継として結び付かない。**
+    #
+    # **省略と明示 `null` を、どちらも「キー無し」に正規化する。** これで
+    # 新しい記録どうしの同一性も、旧記録との同一性も、両方保てる
+    # （**二択ではなかった**）。保存済み JSON の書き換えも棚の移行も要らない。
     for key in HYPOTHESIS_OPTIONAL:
-        out.setdefault(key, None)
+        if out.get(key) is None:
+            out.pop(key, None)
     out["schema_version"] = SCHEMA_VERSION
     out["hypothesis_id"] = content_id(out, exclude=("hypothesis_id",))
     return out

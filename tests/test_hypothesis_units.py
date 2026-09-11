@@ -415,3 +415,66 @@ def test_理由は一覧でも読める(thth_root):
 
     detail = _json(_thth(["topics", "hypotheses", second]))
     assert detail["hypothesis"]["supersede_reason"] == why
+
+
+# --- 旧記録との同一性（外部レビュー・2026-09-12）-----------------------------
+
+def test_理由欄ができる前と同じIDになる(thth_root):
+    """**この欄を `null` で埋めていたら、欄ができる前の記録と別 ID になっていた。**
+
+    「書いた記録と書かなかった記録で内容 ID が変わらないように」という意図で
+    `null` を埋めたが、**それは新しい記録どうしの話**だった。**欄ができる前に
+    保存した記録と同じ入力を出すと、旧はキー無し・新は `null` で別 ID**になる
+    ——**同じ仮説が 2 件に見える。避けたかったことを、別の向きで起こしていた。**
+
+    しかも**旧 ID を指す改訂を作っても、複製のほうは別 ID なので後継として
+    結び付かない。**
+
+    省略と明示 `null` を**どちらもキー無しに正規化**すれば、新しい記録どうしの
+    同一性も旧記録との同一性も両方保てる（**二択ではなかった**）。
+    """
+    built = models.build_hypothesis(_hypothesis())
+    assert "supersede_reason" not in built, "無い欄を null で埋めている"
+
+    # **この欄ができる前のコードが作っていた ID** を独立に計算する
+    # （`out = dict(row)` に schema_version を足して content_id、だけだった）。
+    before = dict(_hypothesis())
+    before["schema_version"] = models.SCHEMA_VERSION
+    old_id = models.content_id(before, exclude=("hypothesis_id",))
+
+    assert built["hypothesis_id"] == old_id, \
+        "**欄ができる前と同じ入力が、別 ID になっている**（棚に複製ができる）"
+
+
+def test_省略と明示nullは同じID(thth_root):
+    omitted = models.build_hypothesis(_hypothesis())
+    explicit = models.build_hypothesis(_hypothesis(supersede_reason=None))
+    assert omitted["hypothesis_id"] == explicit["hypothesis_id"]
+    assert "supersede_reason" not in explicit
+
+
+def test_同じ入力を二度登録しても棚は1件(thth_root):
+    """**内容で決まる ID なので、同じものは 2 件にならない。**"""
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json, _thth
+
+    first = _json(_register(_hypothesis()))
+    second = _json(_register(_hypothesis(supersede_reason=None)))
+
+    assert first["hypothesis_id"] == second["hypothesis_id"]
+    assert first["stored"] is True
+    assert second["stored"] is False, "同じ中身を 2 件目として保存している"
+    assert _json(_thth(["topics", "hypotheses"]))["count"] == 1
+
+
+def test_理由を変えればIDは変わる(thth_root):
+    """**同一性を保つのと、理由を無視するのは違う。** 理由は中身なので、
+    変えれば別の記録になる。"""
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json
+
+    first = _json(_register(_hypothesis()))["hypothesis_id"]
+    a = _json(_register(_hypothesis(supersedes=first, supersede_reason="理由 A")))
+    b = _json(_register(_hypothesis(supersedes=first, supersede_reason="理由 B")))
+    assert a["hypothesis_id"] != b["hypothesis_id"], \
+        "理由を変えても同じ ID になっている（理由が内容 ID に入っていない）"
