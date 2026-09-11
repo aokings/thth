@@ -848,12 +848,14 @@ def cmd_record_review(args) -> int:
                       f"**既知の分類へ読み替えません。**先に "
                       f"`thth topics record-vocabulary` で登録してください")
 
-    if row.get("recheck_of") and store.get("reviews", row["recheck_of"]) is None:
-        return _fail("not_found",
-                      f"再検査の対象が保存されていません: {row['recheck_of']}")
-
     review = models.build_review(row, vocabulary=vocabulary,
                                   known_ids=_known_ids())
+    # **形を先に見る。** 棚に聞くのはそのあと——`supersedes: "前のやつ"` に
+    # 「ID の形が違います」とだけ返すと、**どの欄の話か分からない**。
+    for key, what in (("recheck_of", "再検査の対象"),
+                       ("supersedes", "処置を付ける先の記録")):
+        if review.get(key) and store.get("reviews", review[key]) is None:
+            return _fail("not_found", f"{what}が保存されていません: {review[key]}")
     saved, wrote = store.put("reviews", review, id_key="review_id")
     _emit({"ok": True, "review_id": saved["review_id"], "stored": wrote,
            "account": saved["account"], "draft_sha256": saved["draft_sha256"],
@@ -987,6 +989,11 @@ def _recent_reviews(account: str, args) -> int:
                                  "reason": support["reason"],
                                  "unknown_reason_ids":
                                      support["unknown_reason_ids"]})
+    superseded = {}
+    for review in mine:
+        if review.get("supersedes"):
+            superseded.setdefault(review["supersedes"], []).append(
+                review["review_id"])
     tally = models.tally_reasons(mine)
     _emit({"ok": True, "account": account, "count": len(mine),
            "broken_ids": broken, "unsupported": unsupported,
@@ -999,7 +1006,12 @@ def _recent_reviews(account: str, args) -> int:
                          "disposition": r.get("disposition"),
                          "reason_ids": [f.get("reason_id")
                                          for f in r.get("findings") or []],
-                         "recheck_of": r.get("recheck_of")} for r in mine],
+                         "recheck_of": r.get("recheck_of"),
+                         "supersedes": r.get("supersedes"),
+                         # **上書きしないので、後から来た処置は「印」で示す。**
+                         # 古い記録を消さずに、いまの処置がどれかを読めるように。
+                         "superseded_by": superseded.get(r["review_id"], [])}
+                        for r in mine],
            "notice": REVIEW_NOTICE})
     return 0
 

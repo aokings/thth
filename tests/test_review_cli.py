@@ -358,3 +358,65 @@ def test_壊れた語彙を無いことにしない_残りは読める(isolated_
     # **0 件・問題なしに変換しない。** 指摘そのものは元のラベルのまま出る。
     assert [f["reason_id"] for f in one["human_confirmations"]] == \
         ["missing_condition"]
+
+
+# --- 後から決まった処置を前の指摘に結び付ける（kopicha 9/21 の 1 往復で出た） --
+
+def test_後から決めた処置は前の記録を指す_上書きしない(isolated_account, thth_root):
+    """**記録は上書きしない**ので、処置を後から決めたときに線が要る。
+
+    運用セッションの問い（2026-09-11）がそのまま反例だった——
+    「dismissed ではなく**未着手のまま持ち越し**として扱えますか。見送りだと
+    『見たうえで要らないと判断した』に読めますが、実際は『確かめていない』です」。
+    処置の語彙には `deferred` が最初からあった。**足りなかったのは、その処置を
+    前の指摘に結び付ける線のほう。**
+    """
+    vocabulary_id = _register_vocabulary()
+    first = _json(_record(_review(vocabulary_id, draft_sha256="a" * 64,
+                                   findings=[_finding("other", note="頁を見ていない")])))
+    later = _json(_record(_review(
+        vocabulary_id, draft_sha256="a" * 64,
+        findings=[_finding("other", note="頁を見ていない")],
+        supersedes=first["review_id"], disposition="deferred",
+        disposition_reason="本文の修正では消えない。一覧頁の確認が要る")))
+
+    out = _json(_thth(["topics", "review", isolated_account["name"]]))
+    assert out["count"] == 2, "前の記録が消えている"
+    rows = {r["review_id"]: r for r in out["reviews"]}
+    # **古いほうも残る。** いまの処置がどれかは印で読む。
+    assert rows[first["review_id"]]["superseded_by"] == [later["review_id"]]
+    assert rows[first["review_id"]]["disposition"] == "unresolved"
+    assert rows[later["review_id"]]["disposition"] == "deferred"
+    assert rows[later["review_id"]]["superseded_by"] == []
+
+
+def test_再検査と処置の書き足しを同じ印にしない(isolated_account, thth_root):
+    """`recheck_of` は**もう一度見た**とき、`supersedes` は**処置を書き足した**とき。
+
+    1 つにすると「処置を書いただけ」と「検査し直した」が区別できなくなる
+    （§7 の「未評価と問題なしは別」と同じ筋）。
+    """
+    vocabulary_id = _register_vocabulary()
+    fixed = _json(_record(_review(vocabulary_id, draft_sha256="a" * 64,
+                                   disposition="fixed",
+                                   revised_draft_sha256="b" * 64)))
+    recheck = _json(_record(_review(vocabulary_id, draft_sha256="b" * 64,
+                                     recheck_of=fixed["review_id"],
+                                     findings=[_finding(result="no_problem")])))
+    rows = {r["review_id"]: r for r in
+            _json(_thth(["topics", "review", isolated_account["name"]]))["reviews"]}
+    assert rows[recheck["review_id"]]["recheck_of"] == fixed["review_id"]
+    assert rows[recheck["review_id"]]["supersedes"] is None
+    assert rows[fixed["review_id"]]["superseded_by"] == []   # 再検査は処置ではない
+
+
+def test_実在しない記録は指せない(isolated_account, thth_root):
+    vocabulary_id = _register_vocabulary()
+    for key in ("recheck_of", "supersedes"):
+        proc = _record(_review(vocabulary_id, draft_sha256="a" * 64,
+                                **{key: "sha256:" + "9" * 64}))
+        assert proc.returncode == 2
+        assert _json(proc)["error"]["code"] == "not_found"
+    proc = _record(_review(vocabulary_id, draft_sha256="a" * 64,
+                            supersedes="前のやつ"))
+    assert "review_id" in _json(proc)["error"]["message"]

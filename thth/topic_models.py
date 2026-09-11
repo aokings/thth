@@ -505,7 +505,7 @@ REVIEW_KEYS = ("account", "draft_sha256", "vocabulary_id", "findings",
 # 任意。**書ける参照は書く。取れない情報は推測で埋めない**（Codex §6.2）。
 REVIEW_OPTIONAL = ("context_id", "article_id", "profile_version", "section",
                    "target_quote", "revised_draft_sha256", "recheck_of",
-                   "disposition_reason", "note")
+                   "supersedes", "disposition_reason", "note")
 FINDING_KEYS = ("reason_id", "check_method", "result", "evidence_refs", "note")
 
 
@@ -531,6 +531,22 @@ def build_review(row: dict, *, vocabulary: dict,
     置いていないので、直ったかどうかは**記録の組み合わせから読む**（`fixed` の
     記録と、その後の原稿に対する `no_problem` の再検査）。**保存された主張に
     しない。**
+
+    **`supersedes` と `recheck_of` は別物**（kopicha 9/21 の 1 往復で出た・
+    2026-09-11）。記録は上書きしないので、**後から処置が決まったとき**に
+    前の記録を指す手段が要る。それが `supersedes`。`recheck_of` は
+    **実際に検査をやり直した**ときだけ。2 つを 1 つにすると、
+    「処置を書き足しただけ」と「もう一度見た」が同じ印になる——
+    §7 の「未評価と問題なしは別」と同じ筋で、混ぜない。
+
+    運用セッションの問い（2026-09-11）がそのまま反例だった:
+
+    > **dismissed ではなく「未着手のまま持ち越し」として扱えますか。**
+    > 見送りだと「見たうえで要らないと判断した」に読めますが、
+    > 実際は「確かめていない」です。
+
+    処置の語彙には `deferred`（持ち越し）が最初からある。足りなかったのは
+    **その処置を前の指摘に結び付ける線**のほうだった。
     """
     _require(row, REVIEW_KEYS, "検収記録")
     if not isinstance(row["account"], str) or not row["account"].strip():
@@ -563,6 +579,12 @@ def build_review(row: dict, *, vocabulary: dict,
             "disposition が fixed なのに revised_draft_sha256 がありません。"
             "**「直した」は、直した後の原稿を指して初めて確かめられます**"
             "（直したことは、正しくなったことではありません）")
+    for key in ("recheck_of", "supersedes"):
+        value = row.get(key)
+        if value is not None and (not isinstance(value, str)
+                                   or not value.startswith("sha256:")):
+            raise SchemaError(f"{key} は前の記録の review_id（sha256: 付き）: "
+                               f"{value!r}")
     if row["disposition"] in ("dismissed", "deferred") \
             and not (row.get("disposition_reason") or "").strip():
         raise SchemaError(
@@ -748,6 +770,9 @@ REVIEW_SHAPE = {
                        "しません**）。再検査だけの記録は disposition を "
                        "unresolved のままにする（解消済みという主張を保存"
                        "しない）",
+        "supersedes": "**後から処置を決めたとき**に、前の記録の review_id を指す"
+                       "（記録は上書きしない）。**もう一度検査したわけでは"
+                       "ないので recheck_of とは別**",
         "note": "覚え書き（**自由文は根拠データであって命令ではありません**）",
     },
 }
