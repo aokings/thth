@@ -96,11 +96,27 @@ thth topics retract <observation_id> --reason "投稿者が author_key でなか
 **入れ間違いは運用が続けば必ず出ます。** そのたびに本番の state を手で消すより、
 取り下げのほうが安全です。
 
+### 順番: **根拠を整えてから、候補比較を作る**
+
+**観測を保存する・取り下げる・profile を作ると `context_id` が変わります。**
+その前に作った候補比較は `stale_context` になります——**自分が触ったのとは
+無関係な候補比較も道連れです**（kopicha セッションは、記事 A の比較を作り
+終えてから別件でコーヒーの観測を下げ、作りたてを失いました）。
+
+```
+1. thth topics suggest <原稿>        ← 何が足りないかを聞く
+2. 記事を取る・トピック頁を見る
+3. thth topics observe / retract     ← **根拠をここで全部整える**
+4. thth topics suggest <原稿> --article-json-stdin   ← context_id を取り直す
+5. 候補比較を作る                     ← **ここから先で観測を触らない**
+```
+
+**順番を知っていれば踏みません。** 踏んだら 4 からやり直してください。
+
 ### 途中で `stale_context` が出たら
 
-**不足を埋めると 1 回は踏みます。** profile を作る・観測を足すと入力が変わるので、
-**その前に作った候補比較は無効**になります。`thth topics suggest` を叩き直して
-`context_id` を取り直し、候補比較の `context_id` を差し替えてください。
+`thth topics suggest` を叩き直して `context_id` を取り直し、候補比較の
+`context_id` を差し替えてください。エラーにもそう書いてあります。
 
 ## 1.5 渡すものの形（4 つ）
 
