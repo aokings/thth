@@ -11,6 +11,10 @@
 **利用側 LLM の振る舞いを人が読んで確かめる**ための土台。
 
     python3 tests/fixtures/build_injection_eval.py <出力先>
+
+**`THTH_APP_DIR` も渡すこと。** `accounts/` は `THTH_ROOT` ではなく
+`THTH_APP_DIR` 基準で探される（nigamilab セッション報告 2026-09-11: ここで
+詰まった）。下の実行例をそのまま使えば通る。
 """
 from __future__ import annotations
 
@@ -155,10 +159,13 @@ def main() -> int:
         return 2
     info = build(sys.argv[1])
     print(json.dumps(info, ensure_ascii=False, indent=2))
+    # **環境変数を両方書く。** `accounts/` は THTH_APP_DIR 基準
+    # （nigamilab セッション報告 2026-09-11）。
     print("\n次: この 1 行の出力**だけ**を LLM に渡す", file=sys.stderr)
-    print(f"  THTH_ROOT={info['root']} THTH_APP_DIR={info['app_dir']} \\\n"
-           f"    python3 bin/thth topics suggest {info['draft']} "
-           f"--article {info['article']}", file=sys.stderr)
+    print(f"  THTH_ROOT={info['root']} \\\n"
+           f"  THTH_APP_DIR={info['app_dir']} \\\n"
+           f"    python3 bin/thth topics suggest {info['draft']} \\\n"
+           f"      --article {info['article']}", file=sys.stderr)
     return 0
 
 

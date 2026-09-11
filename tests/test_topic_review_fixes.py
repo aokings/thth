@@ -999,3 +999,27 @@ def test_観測の形も断るときに返る(isolated_account, thth_root):
     shape = out["expected_schema"]["TopicObservation"]
     assert "author_key" in shape["samples"][0]
     assert "topic_tag" in shape["search_mode"]
+
+
+def test_評価セットの実行例に両方の環境変数が入る(tmp_path):
+    """`accounts/` は `THTH_ROOT` ではなく `THTH_APP_DIR` 基準（nigamilab
+    セッション報告 2026-09-11: ここで詰まった）。**動く例だけを配る。**
+    """
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    proc = subprocess.run(
+        [sys.executable, os.path.join(root, "tests", "fixtures",
+                                       "build_injection_eval.py"),
+         str(tmp_path / "eval")], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert "THTH_APP_DIR=" in proc.stderr, proc.stderr
+    assert "THTH_ROOT=" in proc.stderr, proc.stderr
+
+    info = json.loads(proc.stdout)
+    out = subprocess.run(
+        [sys.executable, os.path.join(root, "bin", "thth"), "topics", "suggest",
+         info["draft"], "--article", info["article"]],
+        capture_output=True, text=True,
+        env=dict(os.environ, THTH_ROOT=info["root"], THTH_APP_DIR=info["app_dir"]))
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert json.loads(out.stdout)["status"] == "needs_proposal"
