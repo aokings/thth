@@ -15,7 +15,7 @@ import sys
 import pytest
 
 from tests.conftest import run_thth, write_queue_file
-from tests.test_topic_advice import (candidate, ids, make_article,
+from tests.test_topic_advice import (candidate, evaluate, ids, make_article,
                                       make_context, make_observation)
 from thth import topic_advice as advice
 from thth import topic_models as models
@@ -731,3 +731,203 @@ def test_形が違うと断るときも正しい形を返す(isolated_account):
     shape = out["expected_schema"]["ArticleEvidence"]
     assert set(shape) >= set(models.ARTICLE_KEYS), shape
     assert "full" in shape["coverage"]
+
+
+# ===========================================================================
+# 実運用 2 巡目: kopicha / nigamilab セッションの報告（2026-09-11）
+# ===========================================================================
+
+def _fresh_observation(topic="コーヒー", **over):
+    obs = make_observation(topic, **over)
+    obs["retrieved_at"] = datetime.datetime.now().astimezone().isoformat()
+    return obs
+
+
+def test_正直に書いても落ちない(isolated_account, thth_root):
+    """**いちばん重い指摘**（kopicha セッション報告 2026-09-11）。
+
+    > `uncertainties` を**空文字にしただけ**で、他は 1 文字も変えずに再実行したら
+    > `recommended` になりました。**根拠は 1 つも増えていません。**
+
+    書かれていたのは「このアカウントの実績がまだ 0 本なので、期待した反応が出るかは
+    未検証」——**結果の不確かさ**であって、根拠の欠けではない。初投稿の
+    アカウントは必ず書けるし、書けば落ちる。**正直に書くと落ちる道具は、全員に
+    「空にすれば通る」を教える。**
+    """
+    honest = evaluate(
+        [candidate("コーヒー", ids(1)) |
+         {"evidence_gaps": [],
+          "uncertainties": "このアカウントの実績がまだ 0 本なので、"
+                            "観測から期待した反応が出るかは未検証"}],
+        [make_observation("コーヒー")], selected="コーヒー")
+    silent = evaluate(
+        [candidate("コーヒー", ids(1)) | {"evidence_gaps": [],
+                                           "uncertainties": ""}],
+        [make_observation("コーヒー")], selected="コーヒー")
+
+    assert honest["status"] == silent["status"] == "recommended", honest
+    # **黙っても得をしない。正直に書いた分は残る。**
+    assert any("残る不確かさ" in w for w in honest["warnings"]), honest["warnings"]
+    assert not any("残る不確かさ" in w for w in silent["warnings"])
+
+
+def test_根拠の欠けは止める():
+    """結果の読めなさは止めないが、**根拠が欠けていれば止める。**"""
+    result = evaluate(
+        [candidate("コーヒー", ids(1)) |
+         {"evidence_gaps": ["この語でコーヒーの話をしている人を確認できていない"],
+          "uncertainties": ""}],
+        [make_observation("コーヒー")], selected="コーヒー")
+    assert result["status"] == "provisional", result
+    assert any("根拠が欠けています" in s for s in result["shortfalls"])
+
+
+def test_古い形の候補比較は今までどおり止める():
+    """**黙って緩めない。**
+
+    `evidence_gaps` を書いていない（キーが無い）候補比較は、`uncertainties` を
+    今までどおり「足りないもの」として扱う——移行の途中で穴を開けない。
+    """
+    result = evaluate(
+        [candidate("コーヒー", ids(1),
+                    uncertainties="投稿例が鉱物の話ばかりで確認できていない")],
+        [make_observation("コーヒー")], selected="コーヒー")
+    assert result["status"] == "provisional", result
+    assert any("未解決の不確かさ" in s for s in result["shortfalls"])
+    assert any("evidence_gaps" in w for w in result["warnings"])
+
+
+def test_空のJSONは観測として保存できない(isolated_account, thth_root):
+    """両セッションが同じ穴を見つけた。
+
+    > `echo "{}" | thth topics observe --json-stdin` が `stored: true` を返し、
+    > `topic` も `samples` も `retrieved_at` も無い記録が**共有台帳に ID つきで
+    > 残った。**
+
+    `build_article` / `build_profile` には検査があったのに、**観測だけ素通し**
+    ——また例外を 1 つ作っていた。
+    """
+    proc = _run(["topics", "observe", "--json-stdin", "--by", "t"], {})
+    assert proc.returncode == 2, proc.stdout
+    message = json.loads(proc.stdout)["error"]["message"]
+    for key in ("topic", "search_mode", "retrieved_at", "status", "samples"):
+        assert key in message, message
+
+
+def test_投稿者が数えられない観測は断る(isolated_account, thth_root):
+    """`author` だけ書くと投稿者 0 人と数えられていた（nigamilab セッション）。
+
+    **保存のときに言う**のがいちばん親切。
+    """
+    obs = _fresh_observation()
+    obs["samples"] = [{"post_id": "p", "excerpt": "x", "author": "だれか"}]
+    proc = _run(["topics", "observe", "--json-stdin", "--by", "t"], obs)
+    assert proc.returncode == 2, proc.stdout
+    message = json.loads(proc.stdout)["error"]["message"]
+    assert "author_key" in message and "author" in message, message
+
+
+def test_okなのに投稿例が空の観測は断る(isolated_account, thth_root):
+    """**0 件は「人がいない」ではない。** `empty` と区別させる。"""
+    obs = _fresh_observation()
+    obs["samples"] = []
+    proc = _run(["topics", "observe", "--json-stdin", "--by", "t"], obs)
+    assert proc.returncode == 2
+    assert "empty" in json.loads(proc.stdout)["error"]["message"]
+
+
+def test_legacy_notesのobservationの中にIDがある(isolated_account, thth_root):
+    """**行の top-level にだけ置いていた。**
+
+    > `legacy_notes[].observation` に `observation_id` が入っていないので
+    > `observation_refs` に書けません。…LLM の席から見ると直っていないのと
+    > 同じです。
+    """
+    from thth import topics as topics_mod
+    topics_mod.record("日本茶", verdict="alive", audience="煎茶・玉露",
+                       by="kopicha", account=isolated_account["name"])
+    path = write_queue_file(isolated_account["queue_dir"], "lid.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    out = json.loads(_run(["topics", "suggest", path]).stdout)
+    row = next(r for r in out["evidence"]["legacy_notes"] if r["topic"] == "日本茶")
+    assert row["observation"]["observation_id"] == row["observation_id"]
+    assert row["observation"]["observation_id"].startswith("sha256:")
+
+
+def test_原稿に関係する観測が先に出る(isolated_account, thth_root):
+    """**ID の辞書順で切っていたので、関係のない語が予算を使い切っていた。**"""
+    body = "## threads\n\n日本茶の話。https://example.test/coffee\n"
+    path = write_queue_file(isolated_account["queue_dir"], "ord.md", body=body,
+                             fm_overrides={"status": "draft"})
+    for topic in ("コーヒー", "焙煎", "日本茶"):
+        _run(["topics", "observe", "--json-stdin", "--by", "t"],
+              _fresh_observation(topic))
+    out = json.loads(_run(["topics", "suggest", path]).stdout)
+    topics = [o["topic"] for o in out["evidence"]["observations"]]
+    assert topics[0] == "日本茶", topics
+
+
+def test_読んだファイルを言う(isolated_account, tmp_path):
+    """`thth` は VM 側で走るので、**手元のつもりのパスが別のファイルを指す。**"""
+    path = write_queue_file(isolated_account["queue_dir"], "rf.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    other = tmp_path / "article.json"
+    other.write_text(json.dumps({"url": "https://elsewhere.test/other",
+                                  "title": "別の記事", "content_text": "x"},
+                                 ensure_ascii=False))
+    proc = _run(["topics", "suggest", path, "--article", str(other)])
+    assert proc.returncode == 2
+    message = json.loads(proc.stdout)["error"]["message"]
+    assert str(other) in message, message
+    assert "elsewhere.test" in message, message
+
+
+def test_IDの形の誤りはstore_busyではない(isolated_account):
+    proc = _run(["topics", "observation", "sha256:xxx"])
+    assert proc.returncode == 2
+    assert json.loads(proc.stdout)["error"]["code"] == "invalid_id"
+
+
+def test_accountで最近の判断を引ける(isolated_account, thth_root):
+    """**decision_id を控えていないと読み返せなかった。**"""
+    account = isolated_account["name"]
+    proc = _run(["topics", "decision", account])
+    assert proc.returncode == 0, proc.stdout
+    out = json.loads(proc.stdout)
+    assert out["account"] == account and out["decisions"] == []
+
+    proc = _run(["topics", "decision", "そんなaccountはない"])
+    assert proc.returncode == 2
+    assert json.loads(proc.stdout)["error"]["code"] == "unknown_account"
+
+
+def test_adviseも他accountの判断をそう書く(isolated_account, thth_root):
+    """**同じ情報が入口によって扱いが変わっていた。**
+
+    `--advise` は「最新の 1 行」の判断を「アカウント未指定」と書いていた——
+    **その行が他 account のものでも。**
+    """
+    from thth import topics as topics_mod
+    topics_mod.record("お茶", verdict="alive", by="kopicha",
+                       account="kopicha-threads", audience="煎茶の話")
+    out = run_thth(["topics", isolated_account["name"], "--advise"]).stdout
+    line = next(l for l in out.splitlines() if "お茶" in l)
+    assert "このアカウントの判断ではありません" in line, line
+    assert "kopicha-threads が「適合」と判断" in line, line
+    assert "アカウント未指定" not in line, line
+
+
+def test_中身の無い観測は使えるものとして数えない(thth_root):
+    """**検査を足す前に保存された記録**が `topic: null` として並んでいた。
+
+    消さずに、使わない。**壊れている扱いにして名前を出す**——黙って消すと
+    「無かった」ことになる。
+    """
+    junk = {"observation_id": "", "schema_version": models.SCHEMA_VERSION,
+            "submitted_by": "だれか"}
+    junk["observation_id"] = models.content_id(junk, exclude=("observation_id",))
+    store.put("observations", junk, id_key="observation_id")
+
+    rows, broken = store.load_all("observations")
+    assert rows == []
+    assert broken == [junk["observation_id"]]

@@ -34,6 +34,15 @@ class StoreError(Exception):
     """保存・読取ができない。**推測で続けない。**"""
 
 
+class BadId(StoreError):
+    """ID の形が違う。**棚の状態とは関係ない**（入力の誤り）。
+
+    `StoreError` の一種にしてあるのは、既存の呼び出し側を壊さないため。
+    CLI だけが区別して `invalid_id` を返す（kopicha セッション報告 2026-09-11:
+    「`store_busy`（棚が使用中）ではなく入力の形の誤りです」）。
+    """
+
+
 def root() -> str:
     return os.path.join(accounts_mod.thth_root(), "state", "topic_advice")
 
@@ -47,7 +56,10 @@ def _kind_dir(kind: str) -> str:
 def _id_filename(record_id: str) -> str:
     """ID をファイル名にする。**任意のパスを連結させない**（設計 §8）。"""
     if not _ID_RE.match(record_id or ""):
-        raise StoreError(f"ID の形が違います: {record_id!r}")
+        # **形の誤りは「棚が使用中」ではない**（kopicha セッション報告
+        # 2026-09-11）。コードで分岐する側が誤る。
+        raise BadId(f"ID の形が違います: {record_id!r}"
+                     f"（sha256: に続く 64 桁の 16 進数）")
     return record_id.replace("sha256:", "") + ".json"
 
 
@@ -177,6 +189,12 @@ def get(kind: str, record_id: str) -> dict | None:
     return row
 
 
+def _usable_observation(row: dict) -> bool:
+    """観測として使える最低限があるか。**検査を足す前の記録の掃除用。**"""
+    return bool(row.get("topic")) and bool(row.get("retrieved_at")) \
+        and row.get("search_mode") in models.SEARCH_MODE
+
+
 def load_all(kind: str) -> tuple:
     """`(読めた記録, 壊れていた ID)`（設計 §8・受け入れ T14）。
 
@@ -200,6 +218,12 @@ def load_all(kind: str) -> tuple:
         # **JSON として読めることは、壊れていないことではない**（指摘 5）。
         # 手で書き換えられた記録は「読めた」側に入れない。
         if verify(kind, row, filename_id=record_id):
+            broken.append(record_id)
+            continue
+        # **使えない記録も「読めた」側に入れない**（両セッション報告
+        # 2026-09-11）。検査を足す前に保存された中身の無い観測が、
+        # `topic: null` として一覧に並んでいた。**消さずに、使わない。**
+        if kind == "observations" and not _usable_observation(row):
             broken.append(record_id)
             continue
         rows.append(row)

@@ -84,9 +84,35 @@ def read_json(path: str | None, *, stdin: bool, what: str):
         raise InputError("input_too_large",
                           f"{what}（{origin}）が {MAX_INPUT_BYTES} バイトを超えています")
     try:
-        return json.loads(raw.decode("utf-8"))
+        parsed = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
         raise InputError("invalid_json", f"{what}（{origin}）を JSON として読めません: {e}")
+    _ORIGIN[id(parsed)] = origin
+    return parsed
+
+
+# **どのファイルを読んだか**（kopicha セッション報告 2026-09-11）。
+# `thth` は VM 側で走るので、手元のつもりのパスが**別のセッションが VM に
+# 置いた同名ファイル**を指すことがある。「項目が足りません」だけでは、
+# 別の記事を読んだと気づけない。**中身には混ぜない**（内容 hash が変わる）。
+_ORIGIN: dict = {}
+
+
+def _origin_of(obj) -> str | None:
+    return _ORIGIN.get(id(obj))
+
+
+def _with_origin(obj, message: str) -> str:
+    origin = _origin_of(obj)
+    if not origin:
+        return message
+    head = ""
+    if isinstance(obj, dict):
+        for key in ("final_url", "requested_url", "url", "title"):
+            if obj.get(key):
+                head = f"・{key}={str(obj[key])[:60]}"
+                break
+    return f"{message}（読んだのは {origin}{head}）"
 
 
 def _actor(args) -> str:
@@ -167,7 +193,10 @@ def cmd_suggest(args) -> int:
         proposal_raw = read_json(args.proposal, stdin=args.proposal_json_stdin,
                                   what="候補比較")
 
-    article = models.build_article(article_raw) if article_raw else None
+    try:
+        article = models.build_article(article_raw) if article_raw else None
+    except models.SchemaError as e:
+        raise models.SchemaError(_with_origin(article_raw, str(e))) from e
 
     # **観測は記事の有無に関係なく読む。** 以前は記事が無いと空にしていたので、
     # 「まず何が分かっているか」を聞く最初の呼び出しで**手持ちの根拠が
@@ -261,6 +290,26 @@ def _proposal_input(proposal):
             if k not in ("proposal_id", "schema_version")}
 
 
+def _relevance_order(context: dict, observations: dict) -> list:
+    """**その原稿に関係する観測を先に出す**（kopicha セッション報告 2026-09-11）。
+
+    > 記事 B の `evidence.observations` に並んだのはコーヒーの観測 3 件でした。
+    > その原稿のトピック（日本茶）の記録は 1 件も出ません。
+
+    ID の辞書順で切っていたので、**関係のない語が先に予算を使い切っていた。**
+    原稿の topic と本文に出てくる語を先に、あとは新しい順。
+    """
+    text = (context.get("section") or "") + " " + (context.get("topic") or "")
+
+    def key(oid):
+        obs = observations[oid]
+        topic = obs.get("topic") or ""
+        near = 0 if (topic and topic in text) else 1
+        return (near, str(obs.get("retrieved_at") or ""), oid)
+
+    return sorted(observations, key=key)
+
+
 def _legacy_notes(account: str) -> list:
     """既存 22 語を返す。**観測・自分の判断・他所の判断を別々の物として返す**
     （設計 §9・独立レビュー第 2 巡 P1-2）。
@@ -291,6 +340,10 @@ def _legacy_notes(account: str) -> list:
             # 満たす手段が存在しない（asmon 関東セッション報告 2026-09-11）。
             "observation_id": by_topic.get(topic),
             "observation": {
+                # **ID は観測の中に置く**（kopicha セッション報告 2026-09-11）。
+                # 行の top-level にだけ置いていたので、`observation` を見ていた
+                # 読み手には**無いのと同じ**だった。
+                "observation_id": by_topic.get(topic),
                 "kind": row.get("kind"),
                 "audience": row.get("audience"),
                 "status": row.get("status"),
@@ -338,7 +391,7 @@ def _evidence(context: dict, observations: dict, profile) -> dict:
     """
     rows, truncated = [], []
     used = 0
-    for oid in sorted(observations):
+    for oid in _relevance_order(context, observations):
         obs = dict(observations[oid])
         samples = obs.get("samples") or []
         if len(samples) > SAMPLES_PER_OBSERVATION:
@@ -378,11 +431,14 @@ def cmd_observe(args) -> int:
     row = read_json(args.input, stdin=args.json_stdin, what="観測")
     if row is None:
         raise InputError("missing_input", "--input か --json-stdin で観測を渡してください")
-    row = dict(row)
-    row["submitted_by"] = _actor(args)
-    row["schema_version"] = models.SCHEMA_VERSION
-    # **ID は中身から決める。** 送り手が名乗った ID は使わない（再送しても増えない）。
-    row["observation_id"] = models.content_id(row, exclude=("observation_id",))
+    if not isinstance(row, dict):
+        raise InputError("invalid_json", "観測は object にしてください")
+    # **中身を検査してから保存する**（両セッション報告 2026-09-11）。
+    # 以前は素通しで、`{}` が `stored: true` になっていた。
+    row = models.build_observation(
+        {k: v for k, v in row.items()
+         if k not in ("observation_id", "schema_version")}
+        | {"submitted_by": _actor(args)})
     saved, wrote = store.put("observations", row, id_key="observation_id")
     _emit({"ok": True, "observation_id": saved["observation_id"],
            "stored": wrote, "notice": advice.NOTICE})
@@ -477,7 +533,13 @@ def cmd_decision(args) -> int:
     """保存済みの判断を読む。**内容は上書きしない**（設計 §6）。
 
     今の原稿と食い違っていれば、判断そのものは変えずに `freshness` で別に言う。
+
+    `decision_id` の代わりに account 名を渡すと、**その account の新しい順に
+    並べて返す**（kopicha セッション報告 2026-09-11: decision_id を控えて
+    いないと読み返せなかった）。
     """
+    if not args.decision_id.startswith("sha256:"):
+        return _recent_decisions(args.decision_id)
     row = store.get("decisions", args.decision_id)
     if row is None:
         return _fail("not_found", f"その判断は保存されていません: {args.decision_id}")
@@ -492,6 +554,27 @@ def cmd_decision(args) -> int:
     except (OSError, TypeError, KeyError):
         out["freshness"] = {"draft_readable": False, "draft_unchanged": None}
     _emit(out)
+    return 0
+
+
+def _recent_decisions(account: str) -> int:
+    """account の判断を新しい順に並べる（読むだけ）。"""
+    try:
+        accounts_mod.load_account(account)
+    except accounts_mod.AccountError as e:
+        return _fail("unknown_account", str(e))
+    rows, broken = store.load_all("decisions")
+    mine = [r for r in rows if (r.get("context") or {}).get("account") == account]
+    mine.sort(key=lambda r: (r.get("context") or {}).get("publish_at") or "",
+               reverse=True)
+    _emit({"ok": True, "account": account, "count": len(mine),
+           "broken_ids": broken,
+           "decisions": [{"decision_id": r["decision_id"], "status": r.get("status"),
+                           "selected_topic": r.get("selected_topic"),
+                           "publish_at": (r.get("context") or {}).get("publish_at"),
+                           "draft_path": (r.get("context") or {}).get("draft_path"),
+                           "recorded_by": r.get("recorded_by")} for r in mine],
+           "notice": advice.NOTICE})
     return 0
 
 
@@ -618,5 +701,7 @@ def dispatch(argv: list) -> int:
         return _fail("schema_error", f"必須の項目がありません: {e}")
     except accounts_mod.AccountError as e:
         return _fail("unknown_account", str(e))
+    except store.BadId as e:
+        return _fail("invalid_id", str(e))
     except store.StoreError as e:
-        return _fail("store_busy", str(e))
+        return _fail("store_error", str(e))

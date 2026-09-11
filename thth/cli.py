@@ -692,11 +692,23 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
     proven, avoid, observed_only = [], [], []
     for topic, row in observations.items():
         own = topics_mod.judgment(topic, account_name) if account_name else {}
+        # **参考の出所を正しく言う**（kopicha セッション報告 2026-09-11）。
+        # 以前は「最新の 1 行」の verdict を `legacy_verdict` に入れて
+        # 「アカウント未指定」と書いていた。**その行が他 account のものでも
+        # そう書いていた**——`suggest` 側では隔離しているのに、`--advise` では
+        # 出所が化けていた。同じ情報が入口によって扱いが変わっていた。
+        legacy = topics_mod.legacy_note(topic)
+        others = topics_mod.other_accounts(topic, account=account_name)
         item = {"topic": topic, "kind": row.get("kind"),
                 "verdict": (own or {}).get("verdict"),
+                "judged_by_this_account": bool(own),
                 "audience": row.get("audience") or None,
                 "checked_at": row.get("checked_at"), "checked_by": row.get("by"),
-                "legacy_verdict": None if own else row.get("verdict"),
+                "legacy_verdict": (legacy or {}).get("verdict") if not own else None,
+                "legacy_by": (legacy or {}).get("by") if not own else None,
+                "other_accounts": [{"account": r.get("account"),
+                                     "verdict": r.get("verdict"),
+                                     "by": r.get("by")} for r in others],
                 "views_median": views_of(topic), "posts": len(measured.get(topic, []))}
         if item["verdict"] == "alive":
             proven.append(item)
@@ -764,14 +776,22 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
         return (f"{r['topic']}［{r['kind'] or '型なし'}］ {m}"
                 + (f" — {r['audience']}" if r["audience"] else ""))
 
+    LABEL = {"alive": "適合", "mismatch": "不一致",
+             "dead": "人がいない", "unknown": "未確認"}
+
     def as_observed(r):
-        legacy = ""
+        refs = []
         if r.get("legacy_verdict"):
-            label = {"alive": "適合", "mismatch": "不一致",
-                     "dead": "人がいない", "unknown": "未確認"}[r["legacy_verdict"]]
-            legacy = f"（参考: {r.get('checked_by')} が「{label}」と記録・アカウント未指定）"
+            refs.append(f"{r.get('legacy_by')} が「{LABEL[r['legacy_verdict']]}」"
+                         f"と記録・アカウント未指定")
+        for other in r.get("other_accounts") or []:
+            refs.append(f"{other['account']} が「{LABEL[other['verdict']]}」と判断")
+        tail = ""
+        if refs:
+            tail = "（参考・**このアカウントの判断ではありません**: "\
+                   + "／".join(refs) + "）"
         return (f"{r['topic']}［{r['kind'] or '型なし'}］"
-                + (f" — {r['audience']}" if r["audience"] else "") + legacy)
+                + (f" — {r['audience']}" if r["audience"] else "") + tail)
 
     def as_avoid(r):
         label = "不一致" if r["verdict"] == "mismatch" else "人がいない"

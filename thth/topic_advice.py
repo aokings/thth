@@ -368,21 +368,52 @@ def evaluate(context: dict, *, article: dict | None, proposal: dict | None,
     if not (chosen.get("counterevidence") or "").strip():
         # 反証の検討そのものが無い（§5 の 4）。書かれていれば内容は評価しない。
         shortfalls.append(("proposal", "合わない理由の検討が書かれていません"))
-    if (chosen.get("uncertainties") or "").strip():
-        # 受け入れ T01。**同語一致だけで recommended にしない。**
-        # 残っている不確かさは、THTH には解けない——暫定に落とす。
-        shortfalls.append(("observation",
-                            f"未解決の不確かさが残っています: "
-                            f"{chosen['uncertainties'][:60]}"))
+    # **根拠の欠けと、結果の読めなさを分ける**（kopicha セッション報告
+    # 2026-09-11）。
+    #
+    # > `uncertainties` を**空文字にしただけ**で、他は 1 文字も変えずに
+    # > 再実行したら `recommended` になりました。**根拠は 1 つも増えて
+    # > いません。**
+    #
+    # 書かれていたのは「このアカウントの実績がまだ 0 本なので、期待した反応が
+    # 出るかは未検証」——**トピックが合うかの不確かさではなく、結果の
+    # 不確かさ。** 初投稿のアカウントは必ず書けるし、書けば落ちる。
+    # **正直に書くと落ちる道具は、全員に「空にすれば通る」を教える。**
+    #
+    # `evidence_gaps`（根拠が欠けている＝止める）と `uncertainties`
+    # （結果は分からない＝止めない）に分けた。`evidence_gaps` を**書いて
+    # いない**古い形の候補比較は、`uncertainties` を今までどおり扱う——
+    # 黙って緩めない。
+    gaps = chosen.get("evidence_gaps")
+    if gaps is None:
+        if (chosen.get("uncertainties") or "").strip():
+            shortfalls.append(("observation",
+                                f"未解決の不確かさが残っています: "
+                                f"{chosen['uncertainties'][:60]}"))
+            warnings.append("`evidence_gaps` を書くと、根拠の欠け（止まる）と"
+                             "結果の読めなさ（止まらない）を分けられます")
+    else:
+        for gap in gaps:
+            shortfalls.append(("observation", f"根拠が欠けています: {gap}"))
+        if (chosen.get("uncertainties") or "").strip():
+            warnings.append(f"残る不確かさ（推奨は止めません）: "
+                             f"{chosen['uncertainties'][:80]}")
 
     if shortfalls:
         # **次にすべき作業の種類を、原因に合わせて分ける**（独立レビュー
         # 2026-09-11・指摘 4 の後半）。profile が無いのに「観測を追加して
         # ください」と言うと、**直せない指示を出したことになる。**
         required += _actions_for(shortfalls, chosen["topic"])
+        schema = {}
+        kinds = {k for k, _ in shortfalls}
+        if "observation" in kinds:
+            schema.update(OBSERVATION_SHAPE)
+        if "proposal" in kinds:
+            schema.update(PROPOSAL_SHAPE)
         return _envelope(context, "provisional", required, warnings,
                           selected=chosen["topic"], candidates=candidates,
-                          shortfalls=[text for _kind, text in shortfalls])
+                          shortfalls=[text for _kind, text in shortfalls],
+                          schema=schema)
 
     return _envelope(context, "recommended", required, warnings,
                       selected=chosen["topic"], candidates=candidates)
@@ -509,6 +540,28 @@ ARTICLE_SHAPE = {
     },
 }
 
+OBSERVATION_SHAPE = {
+    "TopicObservation": {
+        "topic": "見に行った語", "normalized_topic": "正規化した語（省略可）",
+        "query": "実際の検索文字列",
+        "search_mode": list(models.SEARCH_MODE),
+        "provider": "browser / threads_api / legacy_note",
+        "retrieved_at": "ISO 8601・timezone 必須",
+        "status": list(models.OBS_STATUS),
+        "samples": [{"post_id": "投稿の ID", "url": "投稿の URL",
+                      "posted_at": "ISO 8601", "excerpt": "短い本文の抜粋",
+                      "language": "ja 等",
+                      "author_key": "**投稿者はここで数えます**（`author` では"
+                                     "数えません）。偏りを見るための非可逆な"
+                                     "識別子で足ります"}],
+        "coverage": {"pages": "見たページ数", "fetched": "取れた件数",
+                      "has_more": "まだ続きがあるか（不明は null）"},
+        "note": "気づいたこと（**判定は混ぜない**）",
+        "_注意": "status が ok なら samples が要ります。取得できて 0 件だったなら "
+                  "empty です（**0 件は「人がいない」ではありません**）",
+    },
+}
+
 PROPOSAL_SHAPE = {
     "TopicProposal": {
         "context_id": "この出力の context_id をそのまま",
@@ -528,7 +581,11 @@ PROPOSAL_SHAPE = {
             "rationale": "なぜ合うか",
             "counterevidence": "合わない理由の検討。無ければ"
                                 "「重大な反証を確認できず」",
-            "uncertainties": "残っている不確かさ（あれば暫定に落ちます）",
+            "evidence_gaps": ["**根拠が欠けていること**（例「この語で投稿して"
+                               "いる人を確認できていない」）。書くと暫定に"
+                               "落ちます。**無ければ空配列**"],
+            "uncertainties": "**結果の読めなさ**（例「このアカウントの実績が"
+                              "まだ無い」）。**推奨は止めません**",
             "fit": list(models.FIT),
         }],
     },

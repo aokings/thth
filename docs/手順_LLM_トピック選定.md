@@ -87,6 +87,83 @@ cat input.json | thth topics suggest <原稿> --input-json-stdin
 **その前に作った候補比較は無効**になります。`thth topics suggest` を叩き直して
 `context_id` を取り直し、候補比較の `context_id` を差し替えてください。
 
+## 1.5 渡すものの形（4 つ）
+
+**実装を読む必要はありません。** `suggest` の出力の `expected_schema` に、そのとき
+必要なものが値域つきで入ります。ここは一覧です。
+
+### ArticleEvidence（記事証拠）
+
+| 項目 | 中身 |
+|---|---|
+| `requested_url` | 取りに行った URL。**投稿本文の URL と対応すること** |
+| `final_url` | 実際に着いた URL（転送があればここが変わる） |
+| `retrieved_at` | ISO 8601・**timezone 必須** |
+| `provider` | `browser` / `threads_api` / `legacy_note` |
+| `submitted_by` | 取ってきた人・セッション |
+| `retrieval_status` | `ok` / `blocked` / `failed` / `partial` |
+| `title` / `language` | 記事の題 / `ja` 等 |
+| `content_text` | **取得した本文そのもの。要約で代用しない** |
+| `coverage` | `full` / `partial` / `unknown` |
+| `source_locator` | 本文をどこから取ったか（例 `main`） |
+
+**同じ記事なら `article_id` は同じ**になります（中身から決まるので）。主題ハブ 1 本に
+対して投稿が複数あるときは、**同じ JSON を使い回して構いません。**
+
+### TopicObservation（観測）
+
+| 項目 | 中身 |
+|---|---|
+| `topic` / `normalized_topic` | 見に行った語 |
+| `query` / `search_mode` | 実際の検索文字列 / `topic_tag` `keyword` `manual_unknown` |
+| `provider` | `browser` / `threads_api` / `legacy_note` |
+| `retrieved_at` | ISO 8601・timezone 必須 |
+| `status` | `ok` `empty` `permission_denied` `unavailable` `rate_limited` `partial` |
+| `samples` | 投稿の `post_id` `url` `posted_at` `excerpt` `language` **`author_key`** |
+| `coverage` | 見たページ数・取れた件数・`has_more`（不明は `null`） |
+| `note` | 気づいたこと。**判定は混ぜない** |
+
+**投稿者は `author_key` で数えます**（`author` では数えません）。偏りを見るための
+非可逆な識別子で足ります。**`status: ok` なら `samples` が要ります**——取得できて
+0 件だったなら `empty` です。**0 件は「人がいない」ではありません。**
+
+### TopicProposal（候補比較）
+
+`context_id`・`prompt_version`・`intended_reader`・`article_value`・`post_angle`・
+`selected_topic`（付けないなら `null` と理由）・`selection_reason`・`candidates`。
+
+候補 1 つあたり:
+
+| 項目 | 中身 |
+|---|---|
+| `topic` | 候補の語 |
+| `article_fit` / `conversation_fit` | 0〜3 |
+| `article_quotes` | **記事本文にそのまま在る文字列**（`fit: suitable` には 1 つ以上） |
+| `observation_refs` | `evidence.observations` / `legacy_notes` の `observation_id` |
+| `rationale` | なぜ合うか |
+| `counterevidence` | 合わない理由の検討。無ければ「重大な反証を確認できず」 |
+| `evidence_gaps` | **根拠が欠けていること**（配列）。書くと暫定に落ちます |
+| `uncertainties` | **結果の読めなさ**。推奨は止めません |
+| `fit` | `suitable` / `unsuitable` / `uncertain` |
+
+**`evidence_gaps` と `uncertainties` は別物です。**
+
+- `evidence_gaps` … 「この語で投稿している人を確認できていない」——**確かめれば
+  埋まる**。だから止めます。
+- `uncertainties` … 「このアカウントの実績がまだ無いので、反応が出るかは分からない」
+  ——**確かめようがない**。だから止めません。
+
+**結果の読めなさを正直に書いても損をしません。** 以前は `uncertainties` に何か
+書くだけで暫定に落ちていました（kopicha セッションの指摘 2026-09-11）。
+
+### AccountProfile
+
+`account`・`language`・`primary_goal`（`article_visits` / `relevant_conversation` /
+`awareness`）・`editorial_scope`・`intended_interests`・`avoid_misrepresentation`・
+`status`（`confirmed` / `provisional`）・`confirmed_by`・`basis`。
+
+**`basis` が空のまま `confirmed` にはできません。**
+
 ## 2. 守ること（設計 §5）
 
 1. 記事と投稿本文を読み、**誰のどんな関心に応える投稿か**を 1〜2 文で書く。

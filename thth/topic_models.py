@@ -116,6 +116,60 @@ def quote_is_in_article(article: dict, quote: str) -> bool:
     return quote in (article.get("content_text") or "")
 
 
+# --- 4.2 観測 ---------------------------------------------------------------
+
+SEARCH_MODE = ("topic_tag", "keyword", "manual_unknown")
+# 取得結果の語彙は `topics.py` と 1 つにする（2 か所で別々に育てない）。
+OBS_STATUS = ("ok", "empty", "permission_denied", "unavailable",
+              "rate_limited", "partial")
+OBSERVATION_KEYS = ("topic", "search_mode", "provider", "retrieved_at", "status",
+                    "samples")
+
+
+def build_observation(row: dict) -> dict:
+    """観測を検査して `observation_id` を付ける（設計 §4.2）。
+
+    **空の JSON が観測として保存できた**（nigamilab・kopicha 両セッション報告
+    2026-09-11）。`echo "{}" | thth topics observe` が `stored: true` を返し、
+    `topic` も `samples` も `retrieved_at` も無い記録が**共有台帳に ID つきで
+    残った。** `validate_proposal()` は参照が**実在するか**しか見ないので、
+    中身の無い観測でも「参照はある」ことになる。
+
+    `build_article` / `build_profile` には検査があったのに、**観測だけ
+    素通しだった**——また例外を 1 つ作っていた。
+
+    **`samples` の投稿者は `author_key` で数える。** `author` だけ書いて保存すると
+    投稿者 0 人と数えられる（nigamilab セッション報告）。ここで言う。
+    """
+    _require(row, OBSERVATION_KEYS, "観測")
+    _require_choice(row["search_mode"], SEARCH_MODE, "search_mode")
+    _require_choice(row["status"], OBS_STATUS, "status")
+    _require_iso(row["retrieved_at"], "retrieved_at")
+    if not isinstance(row["topic"], str) or not row["topic"].strip():
+        raise SchemaError("topic が空です")
+    if not isinstance(row["samples"], list):
+        raise SchemaError("samples は配列（0 件なら [] と status を書いてください）")
+    for i, sample in enumerate(row["samples"]):
+        if not isinstance(sample, dict):
+            raise SchemaError(f"samples[{i}] は object")
+        if not sample.get("author_key"):
+            raise SchemaError(
+                f"samples[{i}] に author_key がありません。"
+                f"**投稿者はここで数えます**（`author` では数えません）——"
+                f"偏りを見るための非可逆な識別子で足ります")
+    if row["status"] == "ok" and not row["samples"]:
+        raise SchemaError(
+            "status が ok なのに samples が空です。"
+            "取得できて 0 件だったなら status は empty です"
+            "（**0 件は「人がいない」ではありません**）")
+
+    out = dict(row)
+    out["schema_version"] = SCHEMA_VERSION
+    out.setdefault("normalized_topic", row["topic"])
+    out["observation_id"] = content_id(out, exclude=("observation_id",))
+    return out
+
+
 # --- 4.3 判断コンテキスト ---------------------------------------------------
 
 CONTEXT_KEYS = ("account", "profile_version", "draft_bytes_sha256", "section",
@@ -158,6 +212,9 @@ def build_context(row: dict) -> dict:
 CANDIDATE_KEYS = ("topic", "article_fit", "conversation_fit", "article_quotes",
                   "observation_refs", "rationale", "counterevidence",
                   "uncertainties", "fit")
+# **根拠の欠けと、結果の読めなさは別物**（kopicha セッション報告 2026-09-11）。
+# 任意。書けば「何が足りないか」として扱う。
+CANDIDATE_OPTIONAL = ("evidence_gaps",)
 PROPOSAL_KEYS = ("context_id", "prompt_version", "intended_reader", "article_value",
                  "post_angle", "candidates", "selected_topic", "selection_reason")
 
