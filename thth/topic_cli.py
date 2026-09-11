@@ -1398,9 +1398,24 @@ def cmd_improvements(args) -> int:
                     and ref.startswith("sha256:") else None
             except store.StoreError:
                 cache[ref] = None      # **壊れている＝解決できない。** 0 件にしない
+    # **版の系統をたどる**（逆監査 2026-09-11）。`meaning_version` は語彙ごとに
+    # 独立して採番されるので、**無関係な語彙が同じ番号を名乗っただけで束ねて
+    # しまう。** `supersedes` をたどって系統の根を鍵に足す。
+    lineage = {}
+    for vocabulary_id, vocabulary in vocabularies.items():
+        seen, cursor, row = set(), vocabulary_id, vocabulary
+        while row is not None and row.get("supersedes") \
+                and row["supersedes"] not in seen:
+            seen.add(cursor)
+            cursor = row["supersedes"]
+            try:
+                row = store.get("vocabularies", cursor)
+            except store.StoreError:
+                break          # **たどれないなら、そこを根として扱う**
+        lineage[vocabulary_id] = cursor
     out = models.improvement_candidates(rows, spec=spec,
                                          vocabularies=vocabularies,
-                                         form_specs=form_specs)
+                                         form_specs=form_specs, lineage=lineage)
     out["ok"] = True
     out["account"] = args.account
     out["broken_ids"] = broken

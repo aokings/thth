@@ -246,3 +246,58 @@ def test_formを後付けしても承認は無効にならない(isolated_accoun
     after = run_thth(["lint", str(path), "--json"])
     assert after.returncode == 0, after.stdout + after.stderr
     assert "stale" not in after.stdout, after.stdout
+
+
+def test_無関係な語彙が同じ番号を名乗っても束ねない(isolated_account, thth_root):
+    """**逆監査（2026-09-11）で出た。** 版の番号は語彙ごとに独立して採番される。
+
+    `(reason_id, meaning_version)` だけで束ねていたので、**定義文がまるで違う
+    2 つの語彙が、同じ `reason_id` に同じ番号を振っただけで 1 つの改善候補に
+    まとまった**（`independent_cases: 2`）。系統（`supersedes` の根）が違うものは
+    束ねない。
+    """
+    import copy
+    from tests.test_review_cli import VOCABULARY
+    spec_id = _register_spec()
+
+    first = _register_vocabulary()
+    other = copy.deepcopy(VOCABULARY)
+    other["entries"][0]["definition"] = "まったく別の理由づけ（同じ番号を独立に採番）"
+    other["name"] = "別系統の語彙"
+    second = _register_vocabulary(other)          # supersedes は付けない＝別系統
+
+    for vocabulary_id, draft in ((first, "a" * 64), (second, "b" * 64)):
+        proc = _record(dict(_review(vocabulary_id, draft_sha256=draft, form=FORM,
+                                     form_spec_id=spec_id),
+                             findings=[dict(_finding("unsupported_claim",
+                                                      note="裏付けが無い"),
+                                             role_id="共通の比較軸")]))
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    out = _json(_thth(["topics", "improvements", "--form-spec", spec_id]))
+    assert out["candidates"] == [], "別系統の語彙を 1 つの候補に束ねている"
+    assert len(out["not_enough_cases"]) == 2, out["not_enough_cases"]
+    roots = {c["vocabulary_lineage"] for c in out["not_enough_cases"]}
+    assert roots == {first, second}
+
+
+def test_同じ系統で版が上がったものは束ねる(isolated_account, thth_root):
+    """**止めすぎない。** 同じ語彙の版が上がっただけなら、同じ話として束ねる。"""
+    import copy
+    from tests.test_review_cli import VOCABULARY
+    spec_id = _register_spec()
+    first = _register_vocabulary()
+    nxt = copy.deepcopy(VOCABULARY)
+    nxt["supersedes"] = first                     # 同じ系統
+    second = _register_vocabulary(nxt)
+
+    for vocabulary_id, draft in ((first, "a" * 64), (second, "b" * 64)):
+        _record(dict(_review(vocabulary_id, draft_sha256=draft, form=FORM,
+                              form_spec_id=spec_id),
+                      findings=[dict(_finding("unsupported_claim", note="裏付け無し"),
+                                      role_id="共通の比較軸")]))
+
+    out = _json(_thth(["topics", "improvements", "--form-spec", spec_id]))
+    assert len(out["candidates"]) == 1, out
+    assert out["candidates"][0]["independent_cases"] == 2
+    assert out["candidates"][0]["vocabulary_lineage"] == first

@@ -1189,7 +1189,8 @@ def draft_series(reviews: list) -> dict:
 
 def improvement_candidates(reviews: list, *, spec: dict,
                             vocabularies: dict | None = None,
-                            form_specs: dict | None = None) -> dict:
+                            form_specs: dict | None = None,
+                            lineage: dict | None = None) -> dict:
     """検収履歴から**改善案を出すところまで**（構想書 §12 第 2 段階）。
 
     **ここで仕様も語彙も profile も書き換えない。** 出すのは候補と、その根拠に
@@ -1232,7 +1233,12 @@ def improvement_candidates(reviews: list, *, spec: dict,
                     "review_id": review.get("review_id"),
                     "reason": f"理由 {reason_id!r} がこの記録の語彙にありません"})
                 continue
-            key = (reason_id, entry.get("meaning_version"),
+            # **版の番号は語彙ごとに独立して採番される**（逆監査 2026-09-11）。
+            # 系統（`supersedes` をたどった根）を鍵に入れないと、**無関係な
+            # 2 つの語彙が同じ番号を名乗っただけで 1 つの候補にまとまる。**
+            vocabulary_id = review.get("vocabulary_id")
+            root = (lineage or {}).get(vocabulary_id, vocabulary_id)
+            key = (reason_id, entry.get("meaning_version"), root,
                    finding.get("role_id"), spec_version)
             row = groups.setdefault(key, {"series": set(), "drafts": set(),
                                            "review_ids": [], "notes": [],
@@ -1247,11 +1253,14 @@ def improvement_candidates(reviews: list, *, spec: dict,
                 row["notes"].append(finding["note"])
 
     candidates, not_yet = [], []
-    for (reason_id, meaning_version, role_id, spec_version), row in sorted(
+    for (reason_id, meaning_version, root, role_id, spec_version), row in sorted(
             groups.items(), key=lambda kv: (-len(kv[1]["series"]),
-                                             str(kv[0][0]), str(kv[0][2]))):
+                                             str(kv[0][0]), str(kv[0][3]))):
         entry = {
             "reason_id": reason_id, "meaning_version": meaning_version,
+            # **どの語彙の系統の話か**（逆監査 2026-09-11）。番号は語彙ごとに
+            # 独立して採番されるので、系統を言わないと「版が同じ」が意味を持たない。
+            "vocabulary_lineage": root,
             "role_id": role_id, "form_spec_meaning_version": spec_version,
             "independent_cases": len(row["series"]),
             "draft_versions": len(row["drafts"]),
