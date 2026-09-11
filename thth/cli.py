@@ -348,6 +348,13 @@ def _prepare_bundle(path: str, text: str):
     repo_dir = writeback_mod.repo_toplevel(path)
     rel_path = (os.path.relpath(os.path.realpath(path), os.path.realpath(repo_dir))
                  if repo_dir else None)
+    # **読めない実行記録があるなら承認しない**（監査 2026-09-11）。
+    # `find_latest()` は読めない記録を飛ばすので `frozen` が空になり、
+    # **公開済みの段の本文を書き換えたまま承認が通っていた**（公開は
+    # `_frozen_drift()` が別途止めるが、誤った承認は記録に残る）。
+    unreadable = threadrun_mod.unreadable_runs()
+    if unreadable:
+        return None, f"{path}: {threadrun_mod.unreadable_error(unreadable)}"
     run = threadrun_mod.find_latest(account_name, rel_path) if rel_path else None
     frozen = threadrun_mod.frozen_records(run) if run else []
 

@@ -205,6 +205,13 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
                   adapter_factory, now, log, production) -> StepResult:
     now = now if now is not None else jst.now_jst()
 
+    # **読めない実行記録があるなら、その手前で止まる**（監査 2026-09-11）。
+    # `has_unresolved()` は読めない記録を飛ばすので、**壊れた記録 1 件で
+    # 下の関門が開いていた**（F1 と同じ「読めない＝問題なし」）。
+    unreadable = threadrun.unreadable_runs()
+    if unreadable:
+        return StepResult("stopped", None, threadrun.unreadable_error(unreadable))
+
     # **未解決の公開結果がある間は、同じ account の別投稿へ進まない**
     # （Codex 最終条件 3）。自分の束の未解決もここで止まる。
     blocked = threadrun.has_unresolved(account_name)
@@ -257,7 +264,8 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
             claimed = threadrun.find_by_run_id(rid) or claimed
             break
     known = claimed or latest
-    identity = threadrun.identity_error(known, b.posts, rel_path=rel_path)
+    identity = threadrun.identity_error(known, b.posts, rel_path=rel_path,
+                                         account=account_name)
     if identity:
         return StepResult("stopped", None, identity,
                            run_id=(known or {}).get("run_id"))

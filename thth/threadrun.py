@@ -173,6 +173,54 @@ def open_runs(account: str) -> list:
     return out
 
 
+def unreadable_runs() -> list:
+    """**読めない実行記録**の絶対パス（監査 2026-09-11・F1 と同じ形）。
+
+    `open_runs()` / `find_latest()` は読めないファイルを `continue` で飛ばす。
+    **読めないことと、無いことは別**（設計 §8「破損と不存在は別状態」）なのに、
+    飛ばした結果が「未解決なし」と同じ値になっていた——**壊れた記録 1 件で、
+    「結果が確定していない公開がある間は進まない」という関門が開く。**
+
+    **ディレクトリが無いのは「判らない」ではない**（運用セッション指摘
+    2026-09-11）。実行記録が 1 件も無いという**確定した事実**なので、ここでは
+    空を返す。曖昧なのは「ファイルはあるのに読めない」だけ。
+    """
+    directory = runs_dir()
+    if not os.path.isdir(directory):
+        return []            # **無いことは確定した事実。** 止めない
+    out = []
+    for name in sorted(os.listdir(directory)):
+        if not name.endswith(".json") or name.endswith(".tmp"):
+            continue
+        path = os.path.join(directory, name)
+        try:
+            with open(path, encoding="utf-8") as f:
+                json.load(f)
+        except (OSError, ValueError):
+            out.append(os.path.abspath(path))
+    return out
+
+
+def unreadable_error(paths: list) -> str:
+    """止めるときに、**人が動ける形**で言う（運用セッション指摘 2026-09-11）。
+
+    > fail-closed は運用を止める権限を道具に渡すので、止まったときに人が
+    > 動ける形にしてから入れてほしい。
+
+    絶対パス・**止まっている範囲**・戻し方を書く。
+    """
+    return (f"実行記録を読めません: {paths[:3]}"
+            f"{f'（ほか {len(paths) - 3} 件）' if len(paths) > 3 else ''}。"
+            f"**読めないことを「未解決の公開なし」とは読みません。**"
+            f"壊れた記録がどの account のものかは中身が読めない以上わからないので、"
+            f"**連投の公開と承認は全 account で止まっています**"
+            f"（単発の投稿・承認は止まっていません）。"
+            f"戻すには: Threads を実際に見て**その束が出ていないこと**を確かめてから、"
+            f"上のファイルを `state/threads/` の外へ退避して、もう一度実行して"
+            f"ください。**退避すると「その実行は無かったこと」になります**"
+            f"——出ている束の記録を退避すると、1 段目から出し直します。")
+
+
 def has_unresolved(account: str) -> list:
     """**未解決の公開結果**がある実行（設計 §3.3）。
 
@@ -287,7 +335,8 @@ def confirm_stop(row: dict, reason: str, now=None) -> dict:
     return save(row)
 
 
-def identity_error(row: dict | None, draft_posts: list, *, rel_path: str) -> str | None:
+def identity_error(row: dict | None, draft_posts: list, *, rel_path: str,
+                    account: str | None = None) -> str | None:
     """原稿が名乗る実行と、手元の記録が合っているか（独立検収 P1-4）。
 
     **実行の身元をパスだけで決めない。** 完成した束のファイルを `git mv` すると
@@ -314,6 +363,15 @@ def identity_error(row: dict | None, draft_posts: list, *, rel_path: str) -> str
     if row.get("rel_path") != rel_path:
         return (f"この実行は別の原稿のものです"
                 f"（記録: {row.get('rel_path')} / いま: {rel_path}）")
+    # **account も照合する**（監査 2026-09-11）。`run_id` と `rel_path` しか見て
+    # いなかったので、**別 account の repo に同じ相対パスの束があり、その原稿に
+    # 他所の `run_id` が紛れ込んでいると（複製・コピー由来）、他 account の実行
+    # 記録に書き込みながら公開できた。** 1 段目は `resolve_parent()` の account
+    # 照合（`index > 1` だけ）にも掛からない。
+    if account is not None and row.get("account") != account:
+        return (f"この実行は別の account のものです"
+                f"（記録: {row.get('account')} / いま: {account}）。"
+                f"**複製された原稿を、他所の実行の続きとして出すことはしません**")
     return None
 
 
