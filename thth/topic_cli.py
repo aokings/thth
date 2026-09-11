@@ -669,10 +669,24 @@ def _recent_decisions(account: str) -> int:
                reverse=True)
     _emit({"ok": True, "account": account, "count": len(mine),
            "broken_ids": broken,
+           # **一覧は ID と件数を返し、本体は単体取得へ**（外部レビューが承認した
+           # 原則・2026-09-12）。`proposal_id`（候補比較）と `article_id`
+           # （記事証拠）は**まさにその「ID」で、本体ではない**のに落ちていた
+           # ——**一覧からは候補比較にも記事証拠にも辿れなかった。**
+           # decision を単体取得し直さないと先へ進めない、という形だった。
+           #
+           # **候補の数（`candidate_count`）はここでは出さない。** 単体取得は
+           # `proposals` の棚を開いて `candidates` を繋ぎ直して返しているので、
+           # **「棚を開かないと数えられない」ではない。** 正確な理由は
+           # **一覧では件数ぶん棚を開くことになる**から（運用指摘 2026-09-12）。
+           # **理由を取り違えると、後から「軽くなったから足そう」の判断ができない。**
+           # ID があれば辿れるので、まず ID。
            "decisions": [{"decision_id": r["decision_id"], "status": r.get("status"),
                            "selected_topic": r.get("selected_topic"),
                            "publish_at": (r.get("context") or {}).get("publish_at"),
                            "draft_path": (r.get("context") or {}).get("draft_path"),
+                           "proposal_id": r.get("proposal_id"),
+                           "article_id": r.get("article_id"),
                            "recorded_by": r.get("recorded_by")} for r in mine],
            "notice": advice.NOTICE})
     return 0

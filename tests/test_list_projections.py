@@ -73,3 +73,54 @@ def test_検収の一覧も件数を直接返す(isolated_account, thth_root):
     assert "findings" not in row
     assert row["finding_count"] == 2
     assert row["finding_count"] == len(row["reason_ids"])
+
+
+def test_判断の一覧から候補比較と記事証拠へ辿れる(isolated_account, thth_root):
+    """**一覧は ID と件数を返し、本体は単体取得へ**——外部レビューが承認した
+    原則（2026-09-12）。`proposal_id`（候補比較）と `article_id`（記事証拠）は
+    **まさにその「ID」で、本体ではない**のに落ちていた。
+
+    **一覧からは候補比較にも記事証拠にも辿れず**、decision を単体取得し直す
+    必要があった。運用セッションが `topics` / `observations` / `proposals` を
+    横断で見たときに残った 1 箇所（`decisions`）を、こちらで確かめて見つけた。
+    """
+    import json as _json_mod
+    from tests.test_topic_cli import _queue, _suggest
+    from tests.test_topic_advice import candidate, make_article, make_observation
+
+    path = _queue(isolated_account, name="decide.md")
+    article = make_article()
+    obs = make_observation("コーヒー")
+    proc = _thth(["topics", "observe", "--json-stdin", "--by", "t"], obs)
+    assert proc.returncode == 0, proc.stderr
+    observation_id = _json(proc)["observation_id"]
+
+    suggested = _json_mod.loads(_suggest(path, {"article": article}).stdout)
+    proc = _thth(["topics", "record-decision", "--json-stdin", "--by", "t"], {
+        "draft_path": path, "context_id": suggested["context_id"],
+        "article": {k: v for k, v in article.items()
+                     if k not in ("article_id", "content_sha256", "schema_version")},
+        "proposal": {
+            "context_id": suggested["context_id"], "prompt_version": "t",
+            "intended_reader": "コーヒーを淹れる人", "article_value": "精製の違い",
+            "post_angle": "同じ豆でも変わる",
+            "candidates": [candidate("コーヒー", [observation_id])],
+            "selected_topic": "コーヒー", "selection_reason": "記事の主題",
+        }})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    listed = _json(_thth(["topics", "decision", isolated_account["name"]]))
+    row = listed["decisions"][0]
+
+    assert row["proposal_id"], "候補比較へ辿る ID が一覧から落ちている"
+    assert row["article_id"], "記事証拠へ辿る ID が一覧から落ちている"
+    # **本体は返さない。** 承認された原則の後半（「本体は単体取得へ」）を、
+    # こちら側からも固定する——**足しすぎを止めるテスト**（2026-09-12・
+    # 変異 AJ で、この assert が無いと「候補本体まで返す」が通ってしまった）。
+    for body in ("candidates", "proposal", "article", "context", "evidence"):
+        assert body not in row, f"一覧が本体（{body}）まで返している"
+
+    # **辿れることまで確かめる**（ID があっても引けなければ意味がない）。
+    detail = _json(_thth(["topics", "decision", row["decision_id"]]))
+    assert detail["proposal_id"] == row["proposal_id"]
+    assert detail["article_id"] == row["article_id"]
