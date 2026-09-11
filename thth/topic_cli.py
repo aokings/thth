@@ -740,13 +740,88 @@ def _draft_sha256(path: str | None, what: str) -> str | None:
         raise InputError("unreadable_input", f"{what}を読めません: {e}") from e
 
 
-def _known_ids() -> set:
-    """根拠として参照できる ID を集める（**実在するかだけを見る**）。"""
+def _known_ids(account: str | None = None) -> set:
+    """根拠として参照できる ID を**account の境界を見て**集める。
+
+    以前は articles・observations・decisions・proposals・reviews の全 account
+    の ID を 1 つの集合にプールしていた。**そのため `record-review` で、別
+    account の判断（decision）を自分の指摘の根拠として保存できた。** THTH の
+    設計原則は「account を越えて判断を継承しない」なので、これは通さない
+    （`cmd_record_review` の `supersedes`・`recheck_of` 等の鎖の照合と同じ筋）。
+
+    - **共有の事実**（そのまま許す）: `articles`・`observations`・
+      `store.legacy_observations()`。この 2 種類は記録に account の欄を
+      持たず、「誰がいたか」「記事に何が書いてあるか」という account 非依存の
+      事実だから。
+    - **account に属する記録**（同じ account のものだけ許す）: `reviews`
+      （`row["account"]`）・`decisions`（`row["context"]["account"]`）。
+      `account` が渡されなければ（＝どの account の検収かまだ分からない場面）、
+      共有の事実だけを返す。
+    - `proposals` は**account を解決できない**（`proposal` は `context_id`
+      しか持たない）。**解決できないものは許さない**——account を渡しても
+      渡さなくても、proposal は常に対象外。
+    """
     out = set()
-    for kind in ("articles", "observations", "decisions", "proposals", "reviews"):
+    for kind in ("articles", "observations"):
         rows, _broken, _taken = store.load_all(kind)
         out |= {r[store.ID_KEY[kind]] for r in rows if r.get(store.ID_KEY[kind])}
     out |= {r["observation_id"] for r in store.legacy_observations()}
+    if account:
+        rows, _broken, _taken = store.load_all("reviews")
+        out |= {r["review_id"] for r in rows
+                if r.get("review_id") and r.get("account") == account}
+        rows, _broken, _taken = store.load_all("decisions")
+        out |= {r["decision_id"] for r in rows if r.get("decision_id")
+                and (r.get("context") or {}).get("account") == account}
+    return out
+
+
+def _foreign_evidence(refs: list, account: str | None) -> dict:
+    """`refs` のうち、**実在はするが account の境界で根拠にできない**ものを
+    `{ref: 断り文}` で返す。
+
+    実在しない ID はここに含めない（`build_review` 側の「根拠 ID が実在しま
+    せん」に任せる）。**「無い」と「他所のもの」は別の事実**なので、文言を
+    分ける——ID が実在すらしないのか、他 account のものだから使えないのかを
+    読み手が区別できるようにする。
+    """
+    out = {}
+    if not refs:
+        return out
+    refs = set(refs)
+
+    rows, _broken, _taken = store.load_all("decisions")
+    for row in rows:
+        rid = row.get("decision_id")
+        if rid not in refs or rid in out:
+            continue
+        owner = (row.get("context") or {}).get("account")
+        if owner != account:
+            out[rid] = (f"その根拠は別の account の記録です"
+                         f"（{account} の検収に {owner or '不明'} の判断は"
+                         f"使えません）。**アカウントを越えて判断を継承しません**")
+
+    rows, _broken, _taken = store.load_all("reviews")
+    for row in rows:
+        rid = row.get("review_id")
+        if rid not in refs or rid in out:
+            continue
+        owner = row.get("account")
+        if owner != account:
+            out[rid] = (f"その根拠は別の account の記録です"
+                         f"（{account} の検収に {owner or '不明'} の検収は"
+                         f"使えません）。**アカウントを越えて判断を継承しません**")
+
+    rows, _broken, _taken = store.load_all("proposals")
+    for row in rows:
+        rid = row.get("proposal_id")
+        if rid not in refs or rid in out:
+            continue
+        # **proposal は context_id しか持たず、account を解決できない。**
+        out[rid] = ("この候補比較がどの account のものか解決できないので"
+                     "根拠にできません（`proposal` は `context_id` しか"
+                     "持ちません）。**アカウントを越えて判断を継承しません**")
+
     return out
 
 
@@ -896,8 +971,23 @@ def cmd_record_review(args) -> int:
                       f"**既知の分類へ読み替えません。**先に "
                       f"`thth topics record-vocabulary` で登録してください")
 
+    # **根拠を account の境界で見る**（引継ぎ 2026-09-11: 直し 1）。形の検査
+    # （`build_review`）より先に見る——「無い」と「他所のもの」は別の事実
+    # なので、文言を分けたまま断る。
+    account = row.get("account") if isinstance(row.get("account"), str) else None
+    findings = row.get("findings")
+    if account and isinstance(findings, list):
+        refs = [r for f in findings if isinstance(f, dict)
+                for r in (f.get("evidence_refs") or []) if isinstance(r, str)]
+        foreign = _foreign_evidence(refs, account)
+        if foreign:
+            shown = list(foreign.items())[:3]
+            detail = "／".join(f"{ref}: {why}" for ref, why in shown)
+            return _fail("unrelated_reference",
+                          f"根拠として使えない参照があります。{detail}")
+
     review = models.build_review(row, vocabulary=vocabulary,
-                                  known_ids=_known_ids())
+                                  known_ids=_known_ids(account))
     # **形を先に見る。** 棚に聞くのはそのあと——`supersedes: "前のやつ"` に
     # 「ID の形が違います」とだけ返すと、**どの欄の話か分からない**。
     for key, what in (("recheck_of", "再検査の対象"),
@@ -1102,6 +1192,10 @@ def _recent_reviews(account: str, args) -> int:
            "broken_ids": broken, "unsupported": unsupported,
            # **撤回されたら、依存する判断を再確認対象にする**（Codex §11・A12）。
            "needs_recheck": needs_recheck,
+           # **出自の内訳**（運用セッションの申し出 2026-09-11）。試験のために
+           # 書かれた原稿への指摘と、実運用の指摘を混ぜて数えないため。以前は
+           # `improvements` にしか内訳が出ず、一覧を見ただけでは区別できなかった。
+           "provenance": models.provenance_tally(mine),
            "reasons": tally, "out_of_scope": list(OUT_OF_SCOPE),
            "unreviewed_history": unreviewed_history,
            "warnings": ([f"この account には**旧版の未解決記録が "
@@ -1126,7 +1220,11 @@ def _recent_reviews(account: str, args) -> int:
                          "supersedes": r.get("supersedes"),
                          # **上書きしないので、後から来た処置は「印」で示す。**
                          # 古い記録を消さずに、いまの処置がどれかを読めるように。
-                         "superseded_by": superseded.get(r["review_id"], [])}
+                         "superseded_by": superseded.get(r["review_id"], []),
+                         # **試験のために書かれた原稿への指摘と、実運用の指摘を
+                         # 混ぜて数えない**ため、各記録にも出自を添える。印が
+                         # 付く前の記録は `unknown`（＝本番とは数えない）。
+                         "provenance": r.get("provenance") or "unknown"}
                         for r in mine],
            "notice": REVIEW_NOTICE})
     return 0
@@ -1247,6 +1345,11 @@ def cmd_form_check(args) -> int:
 
     **THTH は「その段が本当にその役割を果たしているか」を見ていない。**
     意味評価は問いのまま `not_evaluated` で返す。
+
+    根拠の ID も**account の境界で見る**（引継ぎ 2026-09-11: 直し 1）。
+    `--account` は省略できる——ここには判定した記録の account が渡ってこない
+    ので、渡されたらその account で絞り、省略されたら共有の事実（記事・観測）
+    だけを許す。
     """
     spec, failure = _load_form_spec(args.form_spec)
     if spec is None:
@@ -1255,7 +1358,8 @@ def cmd_form_check(args) -> int:
     if claim is None:
         raise InputError("missing_input",
                           "--input か --json-stdin で段の役割の申告を渡してください")
-    out = models.check_form_claim(spec, claim, known_ids=_known_ids())
+    out = models.check_form_claim(spec, claim,
+                                   known_ids=_known_ids(args.account))
     now_sha = _draft_sha256(args.draft, "原稿")
     if now_sha is not None:
         out["draft_sha256"] = now_sha
@@ -1476,6 +1580,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--input", default=None)
     p.add_argument("--json-stdin", action="store_true")
     p.add_argument("--draft", default=None, help="原稿のパス（指紋を出力に付ける）")
+    p.add_argument("--account", default=None,
+                    help="根拠を絞る account（省略可）。省略すると共有の事実"
+                         "（記事・観測）だけを根拠として許す")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_form_check)
 

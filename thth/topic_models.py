@@ -1304,14 +1304,14 @@ def improvement_candidates(reviews: list, *, spec: dict,
         # **解決できなかった記録を、無かったことにしない。**
         "unresolved_records": unresolved,
         "minimum_independent_cases": MIN_INDEPENDENT_CASES,
-        "provenance": _provenance_tally(mine),
+        "provenance": provenance_tally(mine),
         "notice": "**候補です。** 仕様も語彙も profile も書き換えていません。"
                    "採否は独立確認のあと（構想書 §8）。意味の版が違う記録は"
                    "束ねていません。",
     }
 
 
-def _provenance_tally(reviews: list) -> dict:
+def provenance_tally(reviews: list) -> dict:
     """**出自の内訳**（運用セッションの申し出 2026-09-11）。
 
     区別する手段が無いと、**次に実運用の検収が入った瞬間に、試作と混ざって
