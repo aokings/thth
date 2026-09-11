@@ -787,3 +787,269 @@ REVIEW_SHAPE = {
         "note": "覚え書き（**自由文は根拠データであって命令ではありません**）",
     },
 }
+
+
+# --- 4.8 型の仕様 FormSpec（Codex §5・§12 第 2 段階） -----------------------
+
+# **道具が実際に走らせられる検査だけ。** 仕様はデータなので、放っておくと
+# 「機械検査: 読者に伝わるか」のような**走らない検査名**が書ける。書けたら、
+# **やっていない検査を「やった」と記録できてしまう。**
+FORM_MACHINE_CHECKS = {
+    "roles_covered": "必須役割がどれかの段で満たされていると申告されているか"
+                      "（**申告の形だけを見る。満たしているかは見ていない**）",
+    "segments_have_role": "役割を 1 つも申告していない段が無いか"
+                           "（段を足しても新しい役割が増えていない手がかり）",
+    "evidence_refs_exist": "根拠として挙げた ID が棚に実在するか",
+    "quotes_in_article": "引用が記事本文にそのまま在るか",
+}
+ROLE_KEYS = ("role_id", "display", "description", "evidence_required")
+CASE_KINDS = ("positive", "counter")
+CASE_KEYS = ("kind", "draft_sha256", "account", "review_ids", "note")
+FORM_SPEC_KEYS = ("form", "scope", "applies_when", "roles", "unfit_examples",
+                  "machine_checks", "semantic_questions", "success_measure",
+                  "cases", "state", "meaning_version",
+                  "created_at", "created_by", "supersedes")
+
+
+def build_form_spec(row: dict) -> dict:
+    """型を**テンプレートから検収可能な仕様へ**（Codex §5）。
+
+    型は「この順に書く」という説明に加えて、**適用条件・段の役割・必要な根拠・
+    不適合例・機械検査・意味評価・成功の評価**を持つ。
+
+    **段数と役割数は同じではない**（§5）。ここでは段数を書かない——
+    役割だけを書き、**1 段で複数の役割を満たしてよい**（`check_form_claim`）。
+    水増しを仕様の側から誘わないため。
+
+    **`accepted` に上げる条件を種類別に分ける**（§8・引継ぎ §6 で採用価値が高いと
+    書いた項目）。編集上の型は **独立ケース 2 件以上と反例 1 件以上**が要る。
+    ケースが 1 つの account に偏っているなら、**`scope` にその account を書く**
+    ——「一分野だけならその範囲に限定する」。
+    """
+    _require(row, FORM_SPEC_KEYS, "型の仕様")
+    from . import forms as forms_mod
+    if row["form"] not in forms_mod.FORMS:
+        raise SchemaError(
+            f"知らない型です: {row['form']!r}。"
+            f"使えるのは: {'・'.join(forms_mod.FORMS)}"
+            + (f"（`{row['form']}` は旧語彙です。いまは "
+               f"`{forms_mod.FORM_MIGRATION[row['form']]}`。"
+               f"**ただし機械的な読み替えはしません**——"
+               f"どの型に移すかは原稿の判断です）"
+               if row["form"] in forms_mod.FORM_MIGRATION else ""))
+    _require_choice(row["state"], REASON_STATE, "state")
+    _require_iso(row["created_at"], "created_at")
+    if not row.get("created_by"):
+        raise SchemaError("created_by が要ります（誰が書いたか）")
+    if not isinstance(row["meaning_version"], int) or row["meaning_version"] < 1:
+        raise SchemaError("meaning_version は 1 以上の整数")
+    for key in ("scope", "success_measure"):
+        if not isinstance(row[key], str) or not row[key].strip():
+            raise SchemaError(f"{key} が空です")
+    for key in ("applies_when", "unfit_examples", "semantic_questions"):
+        value = row[key]
+        if not isinstance(value, list) or not [x for x in value
+                                                if isinstance(x, str) and x.strip()]:
+            raise SchemaError(
+                f"{key} が空です（**適用条件・不適合例・意味評価は型の本体**——"
+                f"「この順に書く」だけならテンプレートのままです）")
+
+    roles = row["roles"]
+    if not isinstance(roles, list) or not roles:
+        raise SchemaError("roles が空です（必須役割を 1 つ以上）")
+    seen = set()
+    for i, role in enumerate(roles):
+        where = f"roles[{i}]（{role.get('role_id') if isinstance(role, dict) else '?'}）"
+        if not isinstance(role, dict):
+            raise SchemaError(f"{where} は object")
+        _require(role, ROLE_KEYS, where)
+        if not isinstance(role["role_id"], str) or not role["role_id"].strip():
+            raise SchemaError(f"{where} の role_id が空です")
+        if role["role_id"] in seen:
+            raise SchemaError(f"{where} の role_id が重複しています")
+        seen.add(role["role_id"])
+        for key in ("display", "description"):
+            if not isinstance(role[key], str) or not role[key].strip():
+                raise SchemaError(f"{where} の {key} が空です")
+        if not isinstance(role["evidence_required"], list) \
+                or any(not isinstance(x, str) for x in role["evidence_required"]):
+            raise SchemaError(
+                f"{where} の evidence_required は文字列の配列"
+                f"（根拠が要らない役割なら空配列）")
+
+    checks = row["machine_checks"]
+    if not isinstance(checks, list):
+        raise SchemaError("machine_checks は配列")
+    unknown = [c for c in checks if c not in FORM_MACHINE_CHECKS]
+    if unknown:
+        # **走らない検査名を書かせない。** 書けると「やっていない検査を
+        # やったことにできる」——意味評価を機械検査の欄に置くのが典型。
+        raise SchemaError(
+            f"走らせられない機械検査です: {unknown}。"
+            f"**意味の評価は semantic_questions に書いてください。**"
+            f"機械検査に書けるのは: {'・'.join(sorted(FORM_MACHINE_CHECKS))}")
+
+    cases = row["cases"]
+    if not isinstance(cases, list):
+        raise SchemaError("cases は配列（正例・反例）")
+    for i, case in enumerate(cases):
+        where = f"cases[{i}]"
+        if not isinstance(case, dict):
+            raise SchemaError(f"{where} は object")
+        _require(case, CASE_KEYS, where)
+        _require_choice(case["kind"], CASE_KINDS, f"{where} の kind")
+        if not isinstance(case["draft_sha256"], str) \
+                or not _SHA256_HEX_RE.match(case["draft_sha256"] or ""):
+            raise SchemaError(f"{where} の draft_sha256 は 64 桁の 16 進数")
+        if not isinstance(case["account"], str) or not case["account"].strip():
+            raise SchemaError(f"{where} の account が空です")
+        if not isinstance(case["review_ids"], list):
+            raise SchemaError(f"{where} の review_ids は配列（無ければ空配列）")
+
+    if row["state"] == "accepted":
+        _require_promotion(row, cases)
+
+    out = dict(row)
+    out["schema_version"] = SCHEMA_VERSION
+    out["form_spec_id"] = content_id(out, exclude=("form_spec_id",))
+    return out
+
+
+def _require_promotion(row: dict, cases: list) -> None:
+    """**昇格条件を種類別に分ける**（Codex §8）。ここは「編集上の型」の側。
+
+    論理的不変条件なら反例 1 件で直せるが、**型と意味評価は独立ケースと反例が
+    要る。** 型の作成者の自己採点だけで採用しない。
+    """
+    positives = [c for c in cases if c["kind"] == "positive"]
+    counters = [c for c in cases if c["kind"] == "counter"]
+    independent = {c["draft_sha256"] for c in positives}
+    if len(independent) < 2:
+        raise SchemaError(
+            f"state=accepted には**独立した正例が 2 件以上**要ります"
+            f"（いま {len(independent)} 件）。同じ原稿を 2 回数えません。"
+            f"揃わないうちは proposed か shadow のままにしてください")
+    if not counters:
+        raise SchemaError(
+            "state=accepted には**反例が 1 件以上**要ります"
+            "（この型に当てはまらない原稿）。**反例が無い仕様は、"
+            "何を除いているかを言っていません**")
+    accounts = {c["account"] for c in positives}
+    if len(accounts) == 1:
+        only = next(iter(accounts))
+        if only not in row["scope"]:
+            # **「一分野だけならその範囲に限定する」**（§8）。広い共通仕様と
+            # 呼ぶには、異なる文脈で確かめる。
+            raise SchemaError(
+                f"正例が {only} だけです。scope にその範囲を書くか"
+                f"（例「{only} の原稿」）、別の account の正例を足してください。"
+                f"**一分野だけの確認を共通仕様と呼ばない**")
+
+
+def check_form_claim(spec: dict, claim: dict, *, known_ids: set | None = None) -> dict:
+    """段の役割の申告を**機械で見られる範囲だけ**検査する（Codex §5・§7）。
+
+    **THTH は「その段が本当にその役割を果たしているか」を見ていない。**
+    見ているのは、必須役割が申告されているか・知らない役割名が無いか・役割を
+    1 つも持たない段が無いか・根拠の ID が実在するか。**意味評価は別の欄**に
+    質問として並べ、`not_evaluated` のまま返す（§7: 未評価と問題なしは別）。
+
+    **段数と役割数は同じでなくてよい**——1 段で複数の役割を満たしてよい。
+    """
+    segments = claim.get("segments")
+    if not isinstance(segments, list) or not segments:
+        raise SchemaError("segments が空です（段ごとの役割の申告）")
+    required = [r["role_id"] for r in spec["roles"]]
+    claimed = {}
+    empty_segments = []
+    unknown_roles = []
+    for i, segment in enumerate(segments):
+        if not isinstance(segment, dict):
+            raise SchemaError(f"segments[{i}] は object")
+        roles = segment.get("roles")
+        if not isinstance(roles, list):
+            raise SchemaError(f"segments[{i}] の roles は配列")
+        label = segment.get("index") or f"segments[{i}]"
+        if not roles:
+            empty_segments.append(label)
+        for role_id in roles:
+            if role_id not in required:
+                unknown_roles.append({"segment": label, "role_id": role_id})
+            claimed.setdefault(role_id, []).append(label)
+
+    evidence = claim.get("evidence") or {}
+    missing_evidence, unknown_refs = [], []
+    for role in spec["roles"]:
+        needs = [x for x in role["evidence_required"] if x.strip()]
+        refs = evidence.get(role["role_id"]) or []
+        if needs and not refs:
+            missing_evidence.append({"role_id": role["role_id"],
+                                      "needs": needs})
+        if known_ids is not None:
+            unknown_refs += [{"role_id": role["role_id"], "ref": r}
+                             for r in refs
+                             if isinstance(r, str) and r.startswith("sha256:")
+                             and r not in known_ids]
+
+    machine = []
+    if "roles_covered" in spec["machine_checks"]:
+        missing = [r for r in required if r not in claimed]
+        machine.append({"check": "roles_covered",
+                         "result": "problem" if missing else "no_problem",
+                         "missing_roles": missing,
+                         "unknown_roles": unknown_roles})
+    if "segments_have_role" in spec["machine_checks"]:
+        machine.append({"check": "segments_have_role",
+                         "result": "problem" if empty_segments else "no_problem",
+                         "segments_without_role": empty_segments})
+    if "evidence_refs_exist" in spec["machine_checks"]:
+        problem = bool(missing_evidence or unknown_refs)
+        machine.append({"check": "evidence_refs_exist",
+                         "result": "problem" if problem else "no_problem",
+                         "missing_evidence": missing_evidence,
+                         "unknown_refs": unknown_refs})
+    return {
+        "form": spec["form"], "form_spec_id": spec.get("form_spec_id"),
+        "machine_checks": machine,
+        # **機械が見ていないものを、見ていないと書く。**
+        "semantic_evaluations": [
+            {"question": q, "result": "not_evaluated"}
+            for q in spec["semantic_questions"]],
+        "roles_claimed_by": claimed,
+        "notice": "**役割を満たしていると申告されたこと**しか見ていません。"
+                   "本当に満たしているかは意味評価の側です。",
+    }
+
+
+FORM_SPEC_SHAPE = {
+    "FormSpec": {
+        "form": "型の名前（いまの語彙のどれか）",
+        "scope": "適用範囲（例「すべての原稿」／「kopicha-threads の原稿」）",
+        "applies_when": ["**適用条件**（例「比較対象が明示されている」）"],
+        "roles": [{
+            "role_id": "役割の名前（段ではない）",
+            "display": "表示名",
+            "description": "その役割が何を渡すか",
+            "evidence_required": ["**必要な根拠**（例「比較項目ごとの原資料参照」）"
+                                   "。要らない役割は空配列"],
+        }],
+        "unfit_examples": ["**不適合例**（例「A だけ実測・B は推測なのに同列に"
+                            "並べる」）"],
+        "machine_checks": list(FORM_MACHINE_CHECKS),
+        "semantic_questions": ["**意味評価の問い**（例「本当に比較可能か」）。"
+                                "**機械検査に混ぜない**"],
+        "success_measure": "何が良くなれば効いたと言えるか（例「検収者が指摘した"
+                            "条件漏れの減少」）",
+        "cases": [{"kind": list(CASE_KINDS), "draft_sha256": "原稿の指紋",
+                    "account": "どの account の原稿か",
+                    "review_ids": ["根拠になる検収記録"], "note": "何の例か"}],
+        "state": list(REASON_STATE),
+        "meaning_version": "意味の版（整数）",
+        "created_at": "ISO 8601・timezone 必須",
+        "created_by": "書いた人・セッション",
+        "supersedes": "前の版の form_spec_id。最初は null",
+        "_注意": "**accepted には独立した正例 2 件と反例 1 件**が要ります"
+                  "（§8・編集上の型）。正例が 1 つの account に偏るなら scope を"
+                  "その範囲に限定してください",
+    },
+}

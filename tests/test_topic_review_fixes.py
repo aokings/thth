@@ -1039,6 +1039,7 @@ SHAPES = {
     # 検収記録と修正理由の語彙（2026-09-11・Codex §6.2／§12 第 1 段階）。
     "ReviewRecord": (models.REVIEW_SHAPE, models.REVIEW_KEYS),
     "ReasonVocabulary": (models.VOCABULARY_SHAPE, models.VOCABULARY_KEYS),
+    "FormSpec": (models.FORM_SPEC_SHAPE, models.FORM_SPEC_KEYS),
 }
 
 
@@ -1068,7 +1069,11 @@ def test_入れ子の必須項目も形に出ている():
             ("指摘", models.REVIEW_SHAPE["ReviewRecord"]["findings"][0],
              models.FINDING_KEYS),
             ("理由の定義", models.VOCABULARY_SHAPE["ReasonVocabulary"]["entries"][0],
-             models.ENTRY_KEYS)):
+             models.ENTRY_KEYS),
+            ("段の役割", models.FORM_SPEC_SHAPE["FormSpec"]["roles"][0],
+             models.ROLE_KEYS),
+            ("正例・反例", models.FORM_SPEC_SHAPE["FormSpec"]["cases"][0],
+             models.CASE_KEYS)):
         missing = set(keys) - set(shape)
         assert not missing, f"{what}の expected_schema に無い必須項目: {missing}"
     for optional in models.REVIEW_OPTIONAL:
@@ -1085,6 +1090,7 @@ def test_検査を持つ層がすべて空で断る():
     vocabulary = {"vocabulary_id": "sha256:" + "0" * 64, "entries": []}
     for build in (models.build_article, models.build_observation,
                    models.build_profile, models.build_vocabulary,
+                   models.build_form_spec,
                    lambda row: models.build_review(row, vocabulary=vocabulary)):
         with pytest.raises(models.SchemaError):
             build({})
