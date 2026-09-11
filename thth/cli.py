@@ -23,6 +23,7 @@ from . import lock as lock_mod
 from . import maintain as maintain_mod
 from . import oauth as oauth_mod
 from . import queuefile
+from . import replies as replies_mod
 from . import report as report_mod
 from . import selfupdate as selfupdate_mod
 from . import topics as topics_mod
@@ -703,6 +704,52 @@ def cmd_posts(args) -> int:
     return 0
 
 
+def cmd_replies(args) -> int:
+    """`thth replies <account> [--post <post_id>] [--json]`: 返信の台帳を読む（読むだけ）。
+
+    **明日、初めて返信が 1 件付いた状態の採取が走る。それを読む口が要る**
+    （masaru 指摘 2026-09-11）。`thth/collect.py` は返信を
+    `data/sns/replies/<post_id>.ndjson` に採っているが、読む口がどこにも
+    無かった（`thth/replies.py` の docstring 参照）。
+
+    人が読む出力では**身内の返信に印を付ける**（`[身内]`）——「うちの account
+    が付けた返信」を成果として数えないため。`--json` は `replies.load()` の
+    戻り値をそのまま返す（機械向け）。
+    """
+    try:
+        result = replies_mod.load(args.account, post_id=args.post)
+    except accounts_mod.AccountError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    if args.json:
+        _print_json(result)
+        return 0
+
+    replies = result["replies"]
+    if not replies:
+        print("返信がありません")
+    for row in replies:
+        mark = "[身内] " if row.get("own") is True else ""
+        username = row.get("username") or "(username 無し)"
+        print(f"{row.get('collected_at', '')}  {mark}@{username}"
+              f"  post_id={row.get('post_id')}")
+        if row.get("text"):
+            for line in str(row["text"]).split("\n"):
+                print(f"  | {line}")
+        if row.get("permalink"):
+            print(f"  permalink: {row['permalink']}")
+        print("")
+
+    counts = result["counts"]
+    print(f"—— 返信 {counts['replies']} 件（身内 {counts['own']}・その他 {counts['other']}・"
+          f"不明 {counts['unknown']}）／取得記録 {counts['fetches']} 件")
+    if result["broken"]:
+        print(f"**読めなかったファイル**（壊れています）: {', '.join(result['broken'])}",
+              file=sys.stderr)
+    return 0
+
+
 def cmd_topics(args) -> int:
     """`thth topics`: トピックを見る・調べた結果を残す。
 
@@ -1351,6 +1398,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_posts.add_argument("--limit", type=int, default=25)
     p_posts.add_argument("--json", action="store_true")
     p_posts.set_defaults(func=cmd_posts)
+
+    p_replies = sub.add_parser(
+        "replies", help="返信の台帳を読む（身内の返信に印を付ける・読むだけ）")
+    p_replies.add_argument("account")
+    p_replies.add_argument("--post", default=None, help="この post_id だけ")
+    p_replies.add_argument("--json", action="store_true")
+    p_replies.set_defaults(func=cmd_replies)
 
     p_topics = sub.add_parser(
         "topics", help="トピック別にどれだけ見られたかを並べる（読むだけ）")
