@@ -1227,24 +1227,49 @@ def _role_fingerprint(spec: dict | None, role_id) -> str | None:
     return None
 
 
-def _case_id_clusters(series_case_ids: dict) -> list:
+def _case_id_clusters(series_case_ids: dict,
+                       production_series: set | None = None) -> list:
     """同じ `case_id` を名乗る非接続系列を 1 クラスタに畳む（再判定 M2 対応・
 
-    再々判定・2026-09-12 Codex）。
+    再々判定・2026-09-12 Codex／再々々判定 R2・2026-09-12 Codex）。
 
     > 同じ account・同じ `case_id=same-case` の非接続 2 hash を production
     > として登録すると、`reported_case_ids=['same-case']` のまま
     > `independent_cases=2` となり候補が成立した。
 
-    N4 は「同じ系列に別々の `case_id`」を系列 1 件に畳んだ。**今回はその
-    逆向き**——「別々の系列に同じ `case_id`」も畳む。`draft_series()` の線
+    N4 は「同じ系列に別々の `case_id`」を系列 1 件に畳んだ。M2 はその
+    逆向き——「別々の系列に同じ `case_id`」も畳んだ。`draft_series()` の線
     (`recheck_of`・`supersedes`・`carried_from`) が無くても、**同じ ID を
     名乗っている**こと自体を独立性への制約として扱う。account をまたいで
     同じ文字列が出てきても畳む側に倒す（`case_id` の名前空間がどこまで
     一意かは記録からは分からないので、疑わしいものを多く数えない）。
 
-    引数は `series_rep -> {case_id, ...}`（実運用だけ）。返り値は
-    `series_rep` の集合のリスト（＝独立事例として数える単位）。
+    **R2 で直した順序の誤り。** M2 の呼び出し側は実運用限定の
+    `series_case_ids` だけを渡して結合していたため、**trial の ID が
+    非接続の production 2 系列を橋渡ししているケースを見落としていた**——
+    production 系列 A が `case-a`、同系列の trial 再検査が `shared-case`、
+    非接続の production 系列 B も `shared-case` を名乗ると、trial の記録は
+    結合の材料に入らないので A・B は非接続のまま `independent_cases=2` に
+    なっていた。trial の ID は「同系列内の競合表示」には使われていたが、
+    「系列横断の結合と競合」には使われていなかった。
+
+    直したのは**結合と計数の順番**。**同一性・衝突の結合は provenance を
+    問わずすべての申告（trial・unknown も含む）で先に作り**、そのあとで
+    **production の根拠を持つ成分だけを母数に数える**（受入条件どおり）。
+    trial 自体を正例として件数に加算する変更ではない——`production_series`
+    に属する `series_rep` を 1 つも含まない成分は、trial の ID がどれだけ
+    橋渡ししていても母数からは外れたままになる。
+
+    引数:
+      series_case_ids: `series_rep -> {case_id, ...}`。**結合には
+        provenance を問わずすべての申告を渡すこと**（呼び出し側は
+        `series_case_ids_all` を渡す）。
+      production_series: 実運用の根拠を持つ `series_rep` の集合。渡すと、
+        返すクラスタはこの集合と 1 つ以上重なるものだけに絞る（＝
+        production の根拠を持つ成分だけを母数に数える）。省略時は
+        絞り込まず全クラスタを返す（結合結果だけを見たい呼び出し側用）。
+
+    返り値は `series_rep` の集合のリスト（＝独立事例として数える単位）。
     """
     parent = {}
 
@@ -1273,7 +1298,14 @@ def _case_id_clusters(series_case_ids: dict) -> list:
     clusters = {}
     for series_rep in series_case_ids:
         clusters.setdefault(find(series_rep), set()).add(series_rep)
-    return list(clusters.values())
+    members_list = list(clusters.values())
+    if production_series is None:
+        return members_list
+    # **production の根拠を持つ成分だけを母数へ**。trial だけで作られた
+    # 成分（`production_series` と重ならない）は、橋渡しの材料にはなっても
+    # 件数には数えない。
+    return [members for members in members_list
+            if members & production_series]
 
 
 def improvement_candidates(reviews: list, *, spec: dict,
@@ -1405,7 +1437,9 @@ def improvement_candidates(reviews: list, *, spec: dict,
     candidates, not_yet = [], []
     for (reason_id, meaning, role_id, role_fp), row in sorted(
             groups.items(),
-            key=lambda kv: (-len(_case_id_clusters(kv[1]["series_case_ids"])),
+            key=lambda kv: (-len(_case_id_clusters(
+                                 kv[1]["series_case_ids_all"],
+                                 set(kv[1]["series_case_ids"]))),
                              str(kv[0][0]), str(kv[0][2]))):
         # **独立事例は「申告された `case_id` の数」ではなく「`case_id` で
         # 畳んだあとの系列クラスタの数」**（N4・M2）。同じ系列（既知の
@@ -1414,7 +1448,15 @@ def improvement_candidates(reviews: list, *, spec: dict,
         # `case_id` を名乗っていれば 1 クラスタに畳む**（M2・
         # `_case_id_clusters()`）。矛盾する申告はどちらも消さず、下で
         # 両向きに `case_id_conflicts` へ出す。
-        clusters = _case_id_clusters(row["series_case_ids"])
+        #
+        # **R2: 結合には `series_case_ids_all`（provenance を問わない）を
+        # 使う。** trial の `case_id` が非接続の production 2 系列を橋渡し
+        # していることがあり（同系列内の再検査が別系列と同じ ID を名乗る）、
+        # 実運用だけで結合すると見落とす。結合はすべての申告で行い、
+        # `production_series`（=`series_case_ids` のキー）と重なる成分だけを
+        # 母数に数える——trial 単独の成分は依然として数えない。
+        clusters = _case_id_clusters(row["series_case_ids_all"],
+                                      set(row["series_case_ids"]))
         confirmed = len(clusters)
         # **線が無い版**。ただし、その系列がすでに別の版で `case_id` を
         # 名乗っている（provenance を問わない）なら、「線の無い版」の集計
@@ -1430,8 +1472,14 @@ def improvement_candidates(reviews: list, *, spec: dict,
         # 独立事例には 1 件にしか数えないが、なぜ畳んだかを消さず出す。
         # `case_id` は account をまたぐと曖昧なので、どの account が
         # 名乗ったかも添える。
+        # **R2: ここも `series_case_ids_all`（provenance を問わない）から
+        # 作る。** trial 経由で 2 つの production 系列がつながる場合も、
+        # その橋渡しが競合表示に出る必要がある（「trial は同系列内の競合
+        # 表示には使うが、系列横断の結合と競合には使っていない」という
+        # 外部レビューの指摘そのもの）。母数（`confirmed`）には数えなくても、
+        # 表示からは消さない。
         case_id_series = {}
-        for series_rep, ids in row["series_case_ids"].items():
+        for series_rep, ids in row["series_case_ids_all"].items():
             for case_id in ids:
                 case_id_series.setdefault(case_id, set()).add(series_rep)
         cross_series_conflicts = [
@@ -1640,7 +1688,21 @@ SAMPLE_DESIGNS = (REFUTATION_ONLY, ESTIMATION, UNIDENTIFIABLE)
 # ぶら下げる**ことを条件にする。
 HYPOTHESIS_KINDS = ("structural", "operational")
 
-SOURCE_KEYS = ("tier", "ref", "date", "note")
+# **精度を持てる日付**（外部レビュー R5・外部調査 2026-09-12）。
+# 「出所には必ず日付を」という schema が、知らない日を補完させていた
+# （観測対象期間しか分からない出所に、実在しない公開日を書かせていた）。
+# `date_precision` を必ず申告させることで、**知らないことを明示させる**。
+# - `day`: `date` は `YYYY-MM-DD` を要求する。
+# - `month`: `date` は `YYYY-MM` を要求する。
+# - `unknown`: `date` は `null`（日そのものを持っていない）。
+DATE_PRECISIONS = ("day", "month", "unknown")
+
+# 日付が**何の日か**（公開日か・観測対象の期間か・こちらが取得した日か）。
+# 区別しないと、「観測対象期間」を「公開日」と読み違えて知見が固まる
+# （外部調査 §9 H09・H05・H08 の裁定）。
+DATE_KINDS = ("published_at", "observed_period", "retrieved_at")
+
+SOURCE_KEYS = ("tier", "ref", "date", "date_precision", "date_kind", "note")
 PREDICTION_KEYS = ("statement", "metrics", "window", "scope")
 HYPOTHESIS_KEYS = ("code", "claim", "kind", "sources", "predictions",
                    "refutation", "sample_design", "counter_hypothesis",
@@ -1656,8 +1718,11 @@ def build_hypothesis(row: dict) -> dict:
 
     守らせること:
 
-    - **出所には必ず日付を付ける**（`AI協業の作法` §6「『○○によると』は書くな」）。
+    - **出所には必ず日付欄を書く**（`AI協業の作法` §6「『○○によると』は書くな」）。
       公式でも「いま時点の真実」ではない——ランキングの説明は 1 年半前だった。
+      ただし**日付欄を書くことと、日を知っていることは別**——`date_precision`
+      を必ず申告させ、`day`/`month`/`unknown` に応じて要求する形を変える
+      （外部レビュー R5）。**知らない日を作らせない。**
     - **構造仮説には、観測できる派生予測を 1 つ以上**。相手の仕組みそのものは
       観測できないが、**うちの台帳でどう見えるはずか**は書ける。
     - **予測はうちが持っている指標の語彙でしか書けない**（`LEDGER_METRICS`）。
@@ -1706,8 +1771,14 @@ def build_hypothesis(row: dict) -> dict:
         _require_choice(source["tier"], EVIDENCE_TIERS, f"{where} の tier")
         if not source.get("ref"):
             raise SchemaError(f"{where} の ref が空です（どこの何か）")
-        # **日付の無い出所を受け取らない。** あとで「うちで確かめた事実」に化ける。
-        _require_iso_date(source["date"], f"{where} の date")
+        # **日付欄そのものは必ず埋めさせる**が、精度は申告させる
+        # （外部レビュー R5）。あとで「うちで確かめた事実」に化けさせない。
+        _require_choice(source["date_precision"], DATE_PRECISIONS,
+                         f"{where} の date_precision")
+        _require_choice(source["date_kind"], DATE_KINDS,
+                         f"{where} の date_kind")
+        _require_source_date(source["date"], source["date_precision"],
+                              f"{where} の date")
 
     predictions = row["predictions"]
     if not isinstance(predictions, list):
@@ -1753,14 +1824,38 @@ def build_hypothesis(row: dict) -> dict:
     return out
 
 
-def _require_iso_date(value, what: str) -> None:
-    """日付（`YYYY-MM-DD` か ISO 8601）。**時刻まで要求しない。**
+def _require_source_date(value, precision: str, what: str) -> None:
+    """出所の日付を、**申告した精度どおりの形**でだけ検査する（外部レビュー R5）。
 
-    出所の日付は「その資料がいつのものか」なので、日だけで足りる。
+    `date` を必ず `YYYY-MM-DD` にする schema が、知らない日の補完を誘発して
+    いた（観測対象期間しか分からない出所に、実在しない公開日を書かせていた
+    ——外部調査 §9 H05・H08・H09）。**`unknown` を許しても「書かなくてよい」
+    にはしない**——`date_precision` を必ず申告させることで、知らないことを
+    明示させる。
     """
-    if not isinstance(value, str) or not value.strip():
-        raise SchemaError(f"{what} が空です（**いつの話かを必ず書く**）")
+    if precision == "unknown":
+        if value is not None:
+            raise SchemaError(
+                f"{what} は date_precision='unknown' のときは null にして"
+                f"ください（{value!r}）。**知らない日を書くと、知っている"
+                f"ことにされてしまいます**")
+        return
+    if precision == "month":
+        if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}", value):
+            raise SchemaError(
+                f"{what} は date_precision='month' のとき YYYY-MM を要求"
+                f"します: {value!r}")
+        try:
+            datetime.date.fromisoformat(f"{value}-01")
+        except ValueError as e:
+            raise SchemaError(f"{what} を月として読めません: {value!r}") from e
+        return
+    # precision == "day"（デフォルトの厳しさ。知っているならここまで書ける）
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise SchemaError(
+            f"{what} は date_precision='day' のとき YYYY-MM-DD を要求します"
+            f"（**いつの話かを必ず書く**）: {value!r}")
     try:
-        datetime.date.fromisoformat(value[:10])
+        datetime.date.fromisoformat(value)
     except ValueError as e:
         raise SchemaError(f"{what} を日付として読めません: {value!r}") from e
