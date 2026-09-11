@@ -422,16 +422,21 @@ def test_枝が消えたら遅れの数を持ち越さない(tmp_path):
         "**消えた枝の古い値を持ち越して数えている**"
 
 
-def test_thth_boardは配っていないcommitで動いていることを出す(isolated_account,
-                                                              monkeypatch, capsys):
-    """**いちばん重い状態なので、遅れより先に出す。**"""
+def test_thth_boardは記録より先にいることを出す(isolated_account,
+                                                 monkeypatch, capsys):
+    """**いちばん重い状態なので、遅れより先に出す。**
+
+    ただし **「配っていない」とまでは言わない**（外部レビュー・2026-09-12）。
+    **記録より先にいることは、未配布であることの証明にならない**——記録の
+    書き込みに失敗しただけかもしれない。**比較の事実だけを書く。**
+    """
     monkeypatch.setattr(report_mod.selfupdate_mod, "ahead_of_release",
                          lambda *_a, **_k: 2)
     out = _board_lines(monkeypatch, 0, capsys)
-    assert "配っていない commit で動いています" in out
-    assert "一致しています" not in out, \
-        "**配っていないもので動いているのに『一致している』と出している**"
-    assert "2 commit 先" in out
+    assert "記録された配布参照より 2 commit 先です" in out
+    assert "一致しています" not in out, "**先にいるのに『一致している』と出している**"
+    assert "配っていない commit" not in out, \
+        "**記録より先にいるだけで『配っていない』と断定している**"
 
 # --- 外部レビュー F2 残件（P2・2026-09-12・再判定）---------------------------
 #
@@ -657,7 +662,7 @@ def test_表示するSHAと比較に使うSHAを同じにする(tmp_path, monkey
         "**表示している SHA と違うところにいるのに『一致しています』と出している**"
     # 記録に無い commit で動いている、と言えていること。
     assert summary["app"]["ahead_cached_release"] == 1
-    assert "配っていない commit で動いています" in out
+    assert "記録された配布参照より 1 commit 先です" in out
 
 
 def test_記録が読めないときに一度も取りに行っていないと言わない(isolated_account,
@@ -670,3 +675,46 @@ def test_記録が読めないときに一度も取りに行っていないと�
     assert "取得試行の記録を確認できません" in out
     assert "まだ一度も" not in out, \
         "**記録が読めないだけかもしれないのに『一度も無い』と言い切っている**"
+
+def test_1枚の画面は1組のSHAで作る(tmp_path, monkeypatch, capsys):
+    """**F5 残件**（外部レビュー・P2・2026-09-12）。
+
+    `board_summary()` が記録から A を取り出して表示用に持ったあと、
+    `behind_release()` と `ahead_of_release()` が**それぞれ記録を読み直し、さらに
+    可変の `HEAD` で数えていた。** その間に自己更新が B へ進むと、**表示は A、
+    計数は B** になる。
+
+    **確率の話ではない。** 読み直す限り、**その隙間に更新が入れば必ずずれる。**
+    ここでは順序を固定して確かめる（記録を読んだ直後に更新を終わらせる）。
+    """
+    pair = _app_pair(tmp_path)
+    selfupdate._pull_locked(pair["work"])
+    A = selfupdate.release_check(pair["work"])["release"]
+
+    _advance_main(pair, "v2\n")
+    _release(pair)
+
+    本物 = selfupdate.release_check
+
+    def 読んだ直後に更新が終わる():
+        row = 本物(pair["work"])
+        selfupdate._pull_locked(pair["work"])       # ここで B へ進む
+        return row
+
+    import functools
+    monkeypatch.setattr(report_mod.accounts_mod, "list_account_names", lambda: [])
+    monkeypatch.setattr(selfupdate, "release_check", 読んだ直後に更新が終わる)
+    for name in ("behind_release", "ahead_of_release"):
+        monkeypatch.setattr(selfupdate, name,
+                             functools.partial(getattr(selfupdate, name), pair["work"]))
+    素の_head = selfupdate.head
+    monkeypatch.setattr(selfupdate, "head",
+                         lambda app_dir=pair["work"]: 素の_head(app_dir))
+
+    app = report_mod.board_summary()["app"]
+
+    assert app["comparison_ref_sha"] == A, "表示の基準が記録と違う"
+    assert app["head"] != A, "前提が崩れている（更新が入っていない）"
+    assert app["ahead_cached_release"] == 1, \
+        "**表示は古い基準、計数は新しい基準**（画面の途中で読み直している）"
+    assert app["behind_cached_release"] == 0

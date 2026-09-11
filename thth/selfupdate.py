@@ -209,6 +209,18 @@ def _recorded_release(app_dir: str, ref: str) -> str | None:
     return base if isinstance(base, str) and base else None
 
 
+# **1 枚の画面は、1 組の SHA で作る**（外部レビュー F5 残件・P2・2026-09-12）。
+#
+# `board_summary()` が記録から A を取り出して表示用に持ったあと、`behind_release()`
+# と `ahead_of_release()` が**それぞれ記録を読み直し、さらに可変の `HEAD` で数えて
+# いた。** その間に自己更新が B へ進むと、**表示は A、計数は B** になる。
+#
+# `base`・`head_sha` を渡せるようにして、**呼び出し側が 1 度だけ読んだ 2 値を、
+# 表示と両方向の計数の全部に使う。** 計数の途中で記録も `HEAD` も読み直さない。
+#
+# **追加の lock も、記録の状態機械も要らない。** 「読み直さない」だけで閉じる。
+
+
 def _cached_release(app_dir: str, ref: str) -> str | None:
     """**手元が覚えている配布の枝の SHA。** 持っていなければ `None`。
 
@@ -236,7 +248,8 @@ def head(app_dir: str = APP_DIR) -> str | None:
 
 
 def behind_release(app_dir: str = APP_DIR, *, fetch: bool = False,
-                    ref: str | None = None) -> int | None:
+                    ref: str | None = None, base: str | None = None,
+                    head_sha: str | None = None) -> int | None:
     """**配布の枝**より何 commit 遅れているか。判らなければ `None`。
 
     **名前を変えた**（`behind_origin` → `behind_release`・2026-09-12）。見る先が
@@ -265,14 +278,16 @@ def behind_release(app_dir: str = APP_DIR, *, fetch: bool = False,
     # **`fetch=True` だけ直しても閉じなかった**——board は `fetch=False` で呼ぶので、
     # 取りに行けなくなったあとも古い追跡 ref から `0` を数え、**「追いついて
     # います」と出していた。** 取りに行けた事実そのものを見に行く。
-    base = _recorded_release(app_dir, ref)
+    base = base if base is not None else _recorded_release(app_dir, ref)
+    here = head_sha or "HEAD"
     if base is None:
         return None
-    return _count(app_dir, f"HEAD..{base}")
+    return _count(app_dir, f"{here}..{base}")
 
 
 def ahead_of_release(app_dir: str = APP_DIR, *, fetch: bool = False,
-                      ref: str | None = None) -> int | None:
+                      ref: str | None = None, base: str | None = None,
+                      head_sha: str | None = None) -> int | None:
     """**配布の枝より何 commit 先にいるか。** 判らなければ `None`。
 
     **`0` でないなら「配っていない commit で動いている」。**
@@ -295,10 +310,11 @@ def ahead_of_release(app_dir: str = APP_DIR, *, fetch: bool = False,
                        error=None if ok else "取りに行けませんでした")
         if not ok:
             return None
-    base = _recorded_release(app_dir, ref)
+    base = base if base is not None else _recorded_release(app_dir, ref)
+    here = head_sha or "HEAD"
     if base is None:
         return None
-    return _count(app_dir, f"{base}..HEAD")
+    return _count(app_dir, f"{base}..{here}")
 
 
 # **このモジュールを import した瞬間の版。** プロセスが実際に読み込んだコードの版で

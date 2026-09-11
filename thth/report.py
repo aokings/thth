@@ -342,14 +342,20 @@ def board_summary(now=None) -> dict:
     # ここまでに直した読み違いも残しておく:
     # - `None` は「遅れていない」ではなく**「判らない」**（F2）
     # - `0` は「配ったもので動いている」ではない。**先にいても 0 になる**（F1）
+    # **1 枚の画面は、1 組の SHA で作る**（外部レビュー F5 残件・P2・2026-09-12）。
+    # 記録と `HEAD` を**ここで 1 度だけ読み**、以後この 2 値だけを使う。数える側で
+    # 読み直すと、**その間に自己更新が終わったとき、表示と計数が別の SHA を指す。**
     check = selfupdate_mod.release_check()
     basis = (check or {}).get("release")
+    head_sha = selfupdate_mod.head()
+    behind = selfupdate_mod.behind_release(base=basis, head_sha=head_sha)
+    ahead = selfupdate_mod.ahead_of_release(base=basis, head_sha=head_sha)
     return {"accounts": accounts_out, "generated_at": jst.iso(),
-            "app": {"head": selfupdate_mod.head(),
+            "app": {"head": head_sha,
                     "release_ref": selfupdate_mod.RELEASE_REF,
                     "release_check": check,
-                    "behind_cached_release": selfupdate_mod.behind_release(),
-                    "ahead_cached_release": selfupdate_mod.ahead_of_release(),
+                    "behind_cached_release": behind,
+                    "ahead_cached_release": ahead,
                     "comparison_basis": "recorded_release",
                     "comparison_ref_sha": basis,
                     # **board は取りに行かないので、常に未確認。**
