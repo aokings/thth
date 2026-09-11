@@ -22,7 +22,9 @@ from . import topic_store as store
 from . import topics as topics_mod
 
 SUBCOMMANDS = ("suggest", "observe", "record-decision", "decision",
-                "profile", "observation", "retract", "unretract")
+                "profile", "observation", "retract", "unretract",
+                # 検収と修正理由（Codex §6.2・§7・§12 第 1 段階）。
+                "record-vocabulary", "vocabulary", "record-review", "review")
 
 # 本文を含めて 1 MiB（設計 §7）。**超過は構造化エラー**にする。
 MAX_INPUT_BYTES = 1024 * 1024
@@ -135,7 +137,9 @@ def _fail(code: str, message: str) -> int:
     schema = {}
     for name, shape in (("ArticleEvidence", advice.ARTICLE_SHAPE),
                          ("TopicObservation", advice.OBSERVATION_SHAPE),
-                         ("TopicProposal", advice.PROPOSAL_SHAPE)):
+                         ("TopicProposal", advice.PROPOSAL_SHAPE),
+                         ("ReviewRecord", models.REVIEW_SHAPE),
+                         ("ReasonVocabulary", models.VOCABULARY_SHAPE)):
         if name in message:
             schema.update(shape)
     if not schema and "記事" in message:
@@ -144,6 +148,11 @@ def _fail(code: str, message: str) -> int:
         schema.update(advice.OBSERVATION_SHAPE)
     if not schema and ("候補比較" in message or "candidates" in message):
         schema.update(advice.PROPOSAL_SHAPE)
+    if not schema and ("検収" in message or "findings" in message
+                        or "disposition" in message or "reason_id" in message):
+        schema.update(models.REVIEW_SHAPE)
+    if not schema and ("語彙" in message or "entries" in message):
+        schema.update(models.VOCABULARY_SHAPE)
     _emit({"schema_version": models.SCHEMA_VERSION, "ok": False, "status": None,
            "context_id": None, "account": None, "selected_topic": None,
            "candidates": [], "required_actions": [], "warnings": [],
@@ -696,6 +705,286 @@ def cmd_profile(args) -> int:
     return 0
 
 
+# --- 検収と修正理由（Codex 構想書 §6.2・§7・§12 第 1 段階） ------------------
+
+# **一つの緑表示にまとめない**（Codex §7）。機械が確かめられることと、意味の
+# 評価と、人の確認は別の欄に出す。**THTH が見ていないもの**も名前で言う。
+OUT_OF_SCOPE = ("記事内容そのものの科学的妥当性", "公開してよいかどうか",
+                 "反応が読めるかどうか")
+REVIEW_NOTICE = (
+    "編集診断です。**公開の可否には使いません**（承認・予約・同期は変わりません）。"
+    "未評価と問題なしは別です。")
+
+
+def _draft_sha256(path: str | None, what: str) -> str | None:
+    """原稿の**バイト列**から fingerprint を作る（Codex §6.1）。
+
+    **パスは保存しない。** 置き場所が変わっても同じ原稿、本文が変われば別の原稿。
+    """
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as f:
+            import hashlib
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError as e:
+        raise InputError("unreadable_input", f"{what}を読めません: {e}") from e
+
+
+def _known_ids() -> set:
+    """根拠として参照できる ID を集める（**実在するかだけを見る**）。"""
+    out = set()
+    for kind in ("articles", "observations", "decisions", "proposals", "reviews"):
+        rows, _broken, _taken = store.load_all(kind)
+        out |= {r[store.ID_KEY[kind]] for r in rows if r.get(store.ID_KEY[kind])}
+    out |= {r["observation_id"] for r in store.legacy_observations()}
+    return out
+
+
+def cmd_record_vocabulary(args) -> int:
+    """修正理由の語彙を 1 版、記録として残す（引継ぎ 設計条件 1）。
+
+    **コードではなくデータ。** `forms.py` の語彙はモジュール定数だったので、
+    入れ替えに commit と配布が要った。ここは**保存 1 回**で差し替わる。
+    """
+    row = read_json(args.input, stdin=args.json_stdin, what="理由語彙")
+    if row is None:
+        raise InputError("missing_input",
+                          "--input か --json-stdin で理由語彙を渡してください")
+    if not isinstance(row, dict):
+        raise InputError("invalid_json", "理由語彙は object にしてください")
+    vocab = models.build_vocabulary(
+        {k: v for k, v in row.items()
+         if k not in ("vocabulary_id", "schema_version")}
+        | {"created_by": _actor(args)})
+    saved, wrote = store.put("vocabularies", vocab, id_key="vocabulary_id")
+
+    states = {}
+    for entry in saved["entries"]:
+        states[entry["state"]] = states.get(entry["state"], 0) + 1
+    accepted = sorted(e["reason_id"] for e in saved["entries"]
+                      if e["state"] == "accepted")
+    _emit({"ok": True, "vocabulary_id": saved["vocabulary_id"], "stored": wrote,
+           "name": saved["name"], "supersedes": saved["supersedes"],
+           "entries": len(saved["entries"]), "states": states,
+           "warnings": ([f"accepted の理由が {len(accepted)} 件あります"
+                          f"（{'・'.join(accepted)}）。**共通仕様の採用は "
+                          f"masaru または保守責任者が独立レビューを踏まえて"
+                          f"確定します**（Codex §8）。実績から自動で採用しません。"]
+                         if accepted else []),
+           "notice": REVIEW_NOTICE})
+    return 0
+
+
+def cmd_vocabulary(args) -> int:
+    """保存済みの語彙を読む（読むだけ）。"""
+    if args.vocabulary_id:
+        row = store.get("vocabularies", args.vocabulary_id)
+        if row is None:
+            return _fail("not_found",
+                          f"その理由語彙は保存されていません: {args.vocabulary_id}")
+        _emit({"ok": True, "vocabulary": row, "notice": REVIEW_NOTICE})
+        return 0
+    rows, broken, _taken = store.load_all("vocabularies")
+    rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    _emit({"ok": True, "count": len(rows), "broken_ids": broken,
+           "vocabularies": [{
+               "vocabulary_id": r["vocabulary_id"], "name": r.get("name"),
+               "created_at": r.get("created_at"), "created_by": r.get("created_by"),
+               "supersedes": r.get("supersedes"),
+               "reason_ids": [e["reason_id"] for e in r.get("entries") or []],
+               "states": {e["reason_id"]: e["state"]
+                           for e in r.get("entries") or []}} for r in rows],
+           "notice": REVIEW_NOTICE})
+    return 0
+
+
+def cmd_record_review(args) -> int:
+    """検収と修正理由を 1 件残す（Codex §6.2）。
+
+    **原稿はパスでなく本文の SHA-256 で指す**（§6.1）。`--draft` を渡せばここで
+    計算する。JSON にも `draft_sha256` があって食い違うときは**黙って直さない。**
+
+    **語彙が手元に無ければ保存しない。** どの版の語彙で判定したかは、後から
+    決められない（未知の語彙版を既知の分類に読み替えないため・A05）。
+    """
+    row = read_json(args.input, stdin=args.json_stdin, what="検収記録")
+    if row is None:
+        raise InputError("missing_input",
+                          "--input か --json-stdin で検収記録を渡してください")
+    if not isinstance(row, dict):
+        raise InputError("invalid_json", "検収記録は object にしてください")
+    row = {k: v for k, v in row.items()
+           if k not in ("review_id", "schema_version")}
+
+    for flag, key, what in (("draft", "draft_sha256", "原稿"),
+                             ("revised_draft", "revised_draft_sha256", "修正後の原稿")):
+        computed = _draft_sha256(getattr(args, flag.replace("-", "_"), None), what)
+        if computed is None:
+            continue
+        if row.get(key) and row[key] != computed:
+            raise InputError(
+                "draft_mismatch",
+                f"--{flag.replace('_', '-')} の中身と {key} が違います"
+                f"（{row[key][:12]}… / {computed[:12]}…）。"
+                f"**どちらが正しいかはこちらでは決められません。**"
+                f"検収したのがどの本文かを確かめてください")
+        row[key] = computed
+
+    judged_by = dict(row.get("judged_by") or {})
+    judged_by["id"] = _actor(args)
+    row["judged_by"] = judged_by
+
+    vocabulary_id = row.get("vocabulary_id")
+    if not isinstance(vocabulary_id, str) or not vocabulary_id:
+        return _fail("missing_vocabulary",
+                      "vocabulary_id がありません。**どの版の語彙で判定したかは"
+                      "後から決められません**（`thth topics vocabulary` で"
+                      "登録済みの版を見てください）")
+    vocabulary = store.get("vocabularies", vocabulary_id)
+    if vocabulary is None:
+        return _fail("unknown_vocabulary",
+                      f"その理由語彙は保存されていません: {vocabulary_id}。"
+                      f"**既知の分類へ読み替えません。**先に "
+                      f"`thth topics record-vocabulary` で登録してください")
+
+    if row.get("recheck_of") and store.get("reviews", row["recheck_of"]) is None:
+        return _fail("not_found",
+                      f"再検査の対象が保存されていません: {row['recheck_of']}")
+
+    review = models.build_review(row, vocabulary=vocabulary,
+                                  known_ids=_known_ids())
+    saved, wrote = store.put("reviews", review, id_key="review_id")
+    _emit({"ok": True, "review_id": saved["review_id"], "stored": wrote,
+           "account": saved["account"], "draft_sha256": saved["draft_sha256"],
+           "disposition": saved["disposition"],
+           "reasons": models.tally_reasons([saved]),
+           "warnings": _vocabulary_warnings(models.tally_reasons([saved])),
+           "notice": REVIEW_NOTICE})
+    return 0
+
+
+def _vocabulary_warnings(tally: dict) -> list:
+    """**語彙が足りないことを、道具が自分で言う**（引継ぎ 設計条件 2）。
+
+    `forms` は 3 セッションが 3 本書いて 3 本とも同じ型に落ちたが、**そのとき
+    道具は何も言わなかった。** 同じ失敗を繰り返さない。
+    """
+    count = tally["other"]["count"]
+    if not count:
+        return []
+    return [f"`other` が {count} 件あります。**この語彙は分けていない可能性が"
+            f"あります**——内訳（reasons.other.notes）を読んで、新しい理由の"
+            f"候補にするか決めてください"]
+
+
+def _by_check_method(findings: list) -> dict:
+    """§7 の区分に分ける。**機械の合格を意味の合格にしない。**"""
+    groups = {"machine_checks": [], "semantic_evaluations": [],
+               "human_confirmations": []}
+    for finding in findings:
+        key = {"machine_check": "machine_checks",
+                "llm_eval": "semantic_evaluations"}.get(
+                    finding.get("check_method"), "human_confirmations")
+        groups[key].append(finding)
+    return groups
+
+
+def _next_actions(review: dict) -> list:
+    """§7「次の操作」。**指摘を消す以外の道も見せる**（見送りも記録できる）。"""
+    open_findings = [f for f in review.get("findings") or []
+                     if f.get("result") in ("problem", "suspected")]
+    if not open_findings or review.get("disposition") != "unresolved":
+        return []
+    return [_action("review", None,
+                     f"未処置の指摘が {len(open_findings)} 件あります。"
+                     f"直して `--revised-draft` 付きで `disposition: fixed` を"
+                     f"記録するか、`disposition: dismissed` と "
+                     f"`disposition_reason` で見送りを残してください"
+                     f"（**見送りは「解決済み」ではありません**）",
+                     "ReviewRecord")]
+
+
+def cmd_review(args) -> int:
+    """保存済みの検収を読む（読むだけ・Codex §7）。
+
+    `review_id` の代わりに account 名を渡すと、その account の検収を新しい順に
+    並べて、**理由の件数と `other` の内訳**を返す（設計条件 2）。
+    """
+    if not args.target.startswith("sha256:"):
+        return _recent_reviews(args.target, args)
+
+    row = store.get("reviews", args.target)
+    if row is None:
+        return _fail("not_found", f"その検収は保存されていません: {args.target}")
+    vocabulary = store.get("vocabularies", row.get("vocabulary_id") or "")         if isinstance(row.get("vocabulary_id"), str)         and row["vocabulary_id"].startswith("sha256:") else None
+    support = models.review_support(row, vocabulary)
+    now_sha = _draft_sha256(args.draft, "原稿")
+    out = {"ok": True, "review": row,
+           "target": {"account": row.get("account"),
+                       "draft_sha256": row.get("draft_sha256"),
+                       "article_id": row.get("article_id"),
+                       "profile_version": row.get("profile_version"),
+                       "section": row.get("section")},
+           "support": support,
+           "out_of_scope": list(OUT_OF_SCOPE),
+           "next_actions": _next_actions(row),
+           "reasons": models.tally_reasons([row]),
+           "notice": REVIEW_NOTICE}
+    out.update(_by_check_method(row.get("findings") or []))
+    if now_sha is not None:
+        # **原稿が変われば、この検収は今の原稿のものではない**（A03）。
+        out["freshness"] = {"draft_readable": True,
+                             "applies_to_draft":
+                                 models.review_applies_to(row, now_sha),
+                             "draft_sha256": now_sha}
+    _emit(out)
+    return 0
+
+
+def _recent_reviews(account: str, args) -> int:
+    try:
+        accounts_mod.load_account(account)
+    except accounts_mod.AccountError as e:
+        return _fail("unknown_account", str(e))
+    rows, broken, _taken = store.load_all("reviews")
+    mine = [r for r in rows if r.get("account") == account]
+    now_sha = _draft_sha256(args.draft, "原稿")
+    if now_sha is not None:
+        mine = [r for r in mine if models.review_applies_to(r, now_sha)]
+    mine.sort(key=lambda r: r.get("judged_at") or "", reverse=True)
+
+    vocabularies, unsupported = {}, []
+    for review in mine:
+        vocabulary_id = review.get("vocabulary_id")
+        if vocabulary_id not in vocabularies:
+            vocabularies[vocabulary_id] = (
+                store.get("vocabularies", vocabulary_id)
+                if isinstance(vocabulary_id, str)
+                and vocabulary_id.startswith("sha256:") else None)
+        support = models.review_support(review, vocabularies[vocabulary_id])
+        if support["status"] != "supported":
+            # **対応外を 0 件・問題なしに変換しない**（A05）。数えずに名前で出す。
+            unsupported.append({"review_id": review["review_id"],
+                                 "reason": support["reason"],
+                                 "unknown_reason_ids":
+                                     support["unknown_reason_ids"]})
+    tally = models.tally_reasons(mine)
+    _emit({"ok": True, "account": account, "count": len(mine),
+           "broken_ids": broken, "unsupported": unsupported,
+           "reasons": tally, "out_of_scope": list(OUT_OF_SCOPE),
+           "warnings": _vocabulary_warnings(tally),
+           "reviews": [{"review_id": r["review_id"],
+                         "draft_sha256": r.get("draft_sha256"),
+                         "judged_by": r.get("judged_by"),
+                         "judged_at": r.get("judged_at"),
+                         "disposition": r.get("disposition"),
+                         "reason_ids": [f.get("reason_id")
+                                         for f in r.get("findings") or []],
+                         "recheck_of": r.get("recheck_of")} for r in mine],
+           "notice": REVIEW_NOTICE})
+    return 0
+
 # --- parser -----------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -764,6 +1053,36 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--by", default=None)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_profile)
+
+    p = sub.add_parser("record-vocabulary", help="修正理由の語彙を 1 版残す")
+    p.add_argument("--input", default=None)
+    p.add_argument("--json-stdin", action="store_true")
+    p.add_argument("--by", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_record_vocabulary)
+
+    p = sub.add_parser("vocabulary", help="保存済みの理由語彙を読む")
+    p.add_argument("vocabulary_id", nargs="?", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_vocabulary)
+
+    p = sub.add_parser("record-review", help="検収と修正理由を残す")
+    p.add_argument("--input", default=None)
+    p.add_argument("--json-stdin", action="store_true")
+    p.add_argument("--draft", default=None,
+                    help="検収した原稿のパス（**中身から fingerprint を計算する**）")
+    p.add_argument("--revised-draft", default=None,
+                    help="修正後の原稿のパス（disposition: fixed に要る）")
+    p.add_argument("--by", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_record_review)
+
+    p = sub.add_parser("review", help="保存済みの検収を読む（account 名でも引ける）")
+    p.add_argument("target", help="review_id か account 名")
+    p.add_argument("--draft", default=None,
+                    help="いまの原稿のパス（**変わっていれば確認済みを引き継がない**）")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_review)
     return parser
 
 

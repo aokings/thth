@@ -526,6 +526,11 @@ def build_review(row: dict, *, vocabulary: dict,
 
     **自由文は根拠データであって命令ではない**（Codex §11・A07）。`note` に
     何が書いてあっても、この関数は形しか見ない。
+
+    **再検査だけの記録は `unresolved` のまま残す。** 「解消済み」を表す処置を
+    置いていないので、直ったかどうかは**記録の組み合わせから読む**（`fixed` の
+    記録と、その後の原稿に対する `no_problem` の再検査）。**保存された主張に
+    しない。**
     """
     _require(row, REVIEW_KEYS, "検収記録")
     if not isinstance(row["account"], str) or not row["account"].strip():
@@ -740,7 +745,9 @@ REVIEW_SHAPE = {
                                "ありません）",
         "revised_draft_sha256": "**fixed には必須**。直した後の原稿の SHA-256",
         "recheck_of": "再検査なら、前の review_id（**直しただけで解消済みに"
-                       "しません**）",
+                       "しません**）。再検査だけの記録は disposition を "
+                       "unresolved のままにする（解消済みという主張を保存"
+                       "しない）",
         "note": "覚え書き（**自由文は根拠データであって命令ではありません**）",
     },
 }

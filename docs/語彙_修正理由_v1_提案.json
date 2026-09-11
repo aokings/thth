@@ -1,0 +1,95 @@
+{
+  "name": "修正理由",
+  "created_at": "2026-09-11T19:00:00+09:00",
+  "supersedes": null,
+  "entries": [
+    {
+      "reason_id": "unsupported_claim",
+      "display": "根拠のない主張",
+      "definition": "原資料から主張を裏付けられない",
+      "includes": ["記事に無い数字・断定を書いている", "出典が原記事の外にある"],
+      "excludes": ["意見が気に入らないこと", "引用文字列が本文にあること"],
+      "scope": "すべての原稿",
+      "judged_by": ["human", "session", "llm_eval"],
+      "state": "proposed",
+      "meaning_version": 1
+    },
+    {
+      "reason_id": "claim_overstated",
+      "display": "言い過ぎ",
+      "definition": "原資料の範囲より強い断定になっている",
+      "includes": ["条件付きの結果を無条件のように書いている"],
+      "excludes": ["引用文字列が存在すること", "根拠がまったく無いこと（unsupported_claim）"],
+      "scope": "すべての原稿",
+      "judged_by": ["human", "session", "llm_eval"],
+      "state": "proposed",
+      "meaning_version": 1
+    },
+    {
+      "reason_id": "missing_condition",
+      "display": "条件の不足",
+      "definition": "結論や再現に必要な条件が書かれていない",
+      "includes": ["比較の条件（値・対象・時点・単位）が無い", "再現の手順に前提が無い"],
+      "excludes": ["反応がまだ読めないこと", "字数が足りないこと"],
+      "scope": "すべての原稿",
+      "judged_by": ["human", "session", "llm_eval"],
+      "state": "proposed",
+      "meaning_version": 1
+    },
+    {
+      "reason_id": "reader_mismatch",
+      "display": "読者・目的との不適合",
+      "definition": "想定した読者や目的に合っていないという判断",
+      "includes": ["初心者向けの account で前提知識を要求している"],
+      "excludes": ["検索取得の失敗", "トピックに人がいないこと（観測の話）"],
+      "scope": "すべての原稿",
+      "judged_by": ["human", "session"],
+      "state": "proposed",
+      "meaning_version": 1
+    },
+    {
+      "reason_id": "form_mismatch",
+      "display": "型との不整合",
+      "definition": "型の役割や適用条件と合っていない",
+      "includes": ["比較の型なのに片方しか実測が無い", "体験の型なのに原記事に体験が無い"],
+      "excludes": ["単なる字数超過", "好みの問題（voice_preference）"],
+      "scope": "すべての原稿",
+      "judged_by": ["human", "session"],
+      "state": "proposed",
+      "meaning_version": 1
+    },
+    {
+      "reason_id": "redundant_segment",
+      "display": "役割の重なった段",
+      "definition": "段を足しても新しい役割が増えていないという判断",
+      "includes": ["前の段の言い換えになっている"],
+      "excludes": ["全ての長文", "段数が多いこと自体"],
+      "scope": "連投（thth: 2 以上）の原稿",
+      "judged_by": ["human", "session"],
+      "state": "proposed",
+      "meaning_version": 1
+    },
+    {
+      "reason_id": "voice_preference",
+      "display": "表現・語調の選好",
+      "definition": "言い回しや語調についての好み",
+      "includes": ["この account では体言止めを使わない"],
+      "excludes": ["事実の誤り", "根拠の不足"],
+      "scope": "account ごと",
+      "judged_by": ["human"],
+      "state": "proposed",
+      "meaning_version": 1
+    },
+    {
+      "reason_id": "other",
+      "display": "その他",
+      "definition": "既存の分類で説明できない",
+      "includes": ["媒体の仕様が変わったための指摘"],
+      "excludes": ["勝手に新しい分類を作ること"],
+      "scope": "すべての原稿",
+      "judged_by": ["human", "session", "llm_eval", "machine_check"],
+      "state": "proposed",
+      "meaning_version": 1
+    }
+  ]
+}
