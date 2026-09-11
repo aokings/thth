@@ -28,7 +28,9 @@ SUBCOMMANDS = ("suggest", "observe", "record-decision", "decision",
                 # 型の仕様と、検収履歴からの改善候補（§12 第 2 段階）。
                 "record-form-spec", "form-spec", "form-check", "improvements",
                 # 語彙を替えたら何が読めなくなるか（§8 手順 2・3）。
-                "impact")
+                "impact",
+                # 仮説の棚（masaru 指示 2026-09-11・外部調査の §9 を型にしたもの）。
+                "record-hypothesis", "hypotheses")
 
 # 本文を含めて 1 MiB（設計 §7）。**超過は構造化エラー**にする。
 MAX_INPUT_BYTES = 1024 * 1024
@@ -1493,6 +1495,78 @@ def cmd_impact(args) -> int:
     _emit(out)
     return 0
 
+# --- 仮説の棚（masaru 指示 2026-09-11・外部調査の §9 を型にしたもの） ---------
+
+def cmd_record_hypothesis(args) -> int:
+    """仮説を 1 件、記録として残す。**語彙・型の仕様と同じく、コードではなく
+    データ。** 出所と日付を付けて棚に置く（`build_hypothesis` が検査する）。
+    """
+    row = read_json(args.input, stdin=args.json_stdin, what="仮説")
+    if row is None:
+        raise InputError("missing_input",
+                          "--input か --json-stdin で仮説を渡してください")
+    if not isinstance(row, dict):
+        raise InputError("invalid_json", "仮説は object にしてください")
+    hyp = models.build_hypothesis(
+        {k: v for k, v in row.items()
+         if k not in ("hypothesis_id", "schema_version")}
+        | {"proposed_by": _actor(args)})
+    # 語彙・型の仕様と同じ穴があく。**自己申告の accepted を保存させない**
+    # ——正式な採用は独立確認の仕組みができてから（構想書 §8）。
+    if hyp["state"] not in ("proposed", "shadow"):
+        return _fail(
+            "promotion_not_implemented",
+            f"いま登録できるのは proposed か shadow までです"
+            f"（{hyp['state']} は受け付けません）。**正式な採用は未実装**で、"
+            f"独立確認の照合も採用判断の記録もまだありません（構想書 §8）。"
+            f"自己申告の accepted を保存すると、**採用されたという主張だけが"
+            f"残ります。**")
+    saved, wrote = store.put("hypotheses", hyp, id_key="hypothesis_id")
+    _emit({"ok": True, "hypothesis_id": saved["hypothesis_id"], "stored": wrote,
+           "code": saved["code"], "kind": saved["kind"],
+           "sample_design": saved["sample_design"], "state": saved["state"],
+           "scope": saved["scope"], "supersedes": saved["supersedes"],
+           "warnings": [f"state={saved['state']} です。**採用は masaru または"
+                         f"保守責任者が独立確認を踏まえて確定します**"
+                         f"（構想書 §8。いまは登録できません）"],
+           "notice": REVIEW_NOTICE})
+    return 0
+
+
+def cmd_hypotheses(args) -> int:
+    """保存済みの仮説を読む（読むだけ）。"""
+    if args.hypothesis_id:
+        row = store.get("hypotheses", args.hypothesis_id)
+        if row is None:
+            return _fail("not_found",
+                          f"その仮説は保存されていません: {args.hypothesis_id}")
+        _emit({"ok": True, "hypothesis": row, "notice": REVIEW_NOTICE})
+        return 0
+    rows, broken, _taken = store.load_all("hypotheses")
+    if args.state:
+        rows = [r for r in rows if r.get("state") == args.state]
+    rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+
+    def _claim(r: dict) -> str:
+        claim = r.get("claim") or ""
+        if len(claim) > 60:
+            claim = claim[:60] + "…"
+        if r.get("sample_design") == models.UNIDENTIFIABLE:
+            # **識別できない仮説を、一覧でも目立たせる**——検証が動いている
+            # ように見せない（外部調査 §9 H09 の裁定と同じ理由）。
+            claim = f"［識別不能］{claim}"
+        return claim
+
+    _emit({"ok": True, "count": len(rows), "broken_ids": broken,
+           "hypotheses": [{
+               "hypothesis_id": r["hypothesis_id"], "code": r.get("code"),
+               "claim": _claim(r), "kind": r.get("kind"),
+               "sample_design": r.get("sample_design"), "state": r.get("state"),
+               "scope": r.get("scope"), "verifier": r.get("verifier")}
+               for r in rows],
+           "notice": REVIEW_NOTICE})
+    return 0
+
 # --- parser -----------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1643,6 +1717,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--account", default=None)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_impact)
+
+    p = sub.add_parser("record-hypothesis", help="仮説を 1 件残す")
+    p.add_argument("--input", default=None)
+    p.add_argument("--json-stdin", action="store_true")
+    p.add_argument("--by", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_record_hypothesis)
+
+    p = sub.add_parser("hypotheses", help="保存済みの仮説を読む")
+    p.add_argument("hypothesis_id", nargs="?", default=None)
+    p.add_argument("--state", default=None, choices=list(models.REASON_STATE),
+                    help="state で絞る")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_hypotheses)
     return parser
 
 

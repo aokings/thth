@@ -29,13 +29,13 @@ from . import topic_models as models
 # なので入れ替えに commit と配布が要ったが、**版付きレコードなら差し替えが記録
 # 1 件で済む。**
 KINDS = ("articles", "observations", "decisions", "proposals",
-         "reviews", "vocabularies", "form_specs")
+         "reviews", "vocabularies", "form_specs", "hypotheses")
 
 # 種類ごとの ID の項目名。**読むたびに中身から計算しなおして照合する。**
 ID_KEY = {"articles": "article_id", "observations": "observation_id",
           "decisions": "decision_id", "proposals": "proposal_id",
           "reviews": "review_id", "vocabularies": "vocabulary_id",
-          "form_specs": "form_spec_id"}
+          "form_specs": "form_spec_id", "hypotheses": "hypothesis_id"}
 _ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.:@+-]{1,200}$")
 

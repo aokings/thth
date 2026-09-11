@@ -1,0 +1,330 @@
+[
+  {
+    "code": "H01",
+    "claim": "初期のいいね比率には、その後の閲覧増分を予測する情報がある",
+    "kind": "structural",
+    "sources": [
+      {
+        "tier": "L1",
+        "ref": "O1",
+        "date": "2025-03-07",
+        "note": "投稿比率入力から作る、調査者の検証用仮説。API の比率と内部比率が同一とは置かない。"
+      }
+    ],
+    "predictions": [
+      {
+        "statement": "同じ account で V_1 を考慮しても、L_1/V_1 が高い投稿ほど ΔV(1,24) または ΔV(1,72) が大きい。主要な窓は一つに事前固定。",
+        "metrics": [
+          "views",
+          "likes"
+        ],
+        "window": "ΔV(1,24)",
+        "scope": "同一 account 内"
+      }
+    ],
+    "refutation": "事前に決めた最小の予測改善を、別期間の予測評価で上回れず、区間推定も実用上の差を除外するなら「この account・期間で有用」を捨てる。単に p>0.05 では捨てない。",
+    "sample_design": "M",
+    "counter_hypothesis": "初期のいいね比率には、その後の閲覧増分を予測する情報が無い",
+    "scope": "同一 account 内",
+    "state": "proposed",
+    "proposed_by": "codex（外部調査 2026-09-11 依頼分）",
+    "verifier": "claude（運用セッション）",
+    "created_at": "2026-09-12T00:00:00+09:00",
+    "supersedes": null
+  },
+  {
+    "code": "H02",
+    "claim": "早期に受信返信がある投稿は、その後さらに閲覧される",
+    "kind": "structural",
+    "sources": [
+      {
+        "tier": "L1",
+        "ref": "O3",
+        "date": "2024-10-21",
+        "note": "更新表示 2025-06-26。返信が閲覧のほぼ半分を占めるという観測。投稿に返信が付いたかどうかの話であり、投稿者の返信行動とは同じ処置ではない。"
+      },
+      {
+        "tier": "L3",
+        "ref": "J5",
+        "date": "2026-07-29",
+        "note": "投稿に返信が付いたかの関連（返信あり 23 本の views 中央値 2,754、無し 31 本は 602）。"
+      },
+      {
+        "tier": "L3",
+        "ref": "E1",
+        "date": "2025-09-22",
+        "note": "投稿者自身の返信行動の比較。元資料とは目的変数が違うため追試とは呼ばない。"
+      }
+    ],
+    "predictions": [
+      {
+        "statement": "R_1>0 群の ΔV(1,24) が、初期 views の近い R_1=0 群より大きい。",
+        "metrics": [
+          "views",
+          "replies"
+        ],
+        "window": "ΔV(1,24)",
+        "scope": "同一 account 内"
+      }
+    ],
+    "refutation": "H01 同様、事前の最小差を上回らないことを十分な精度で確認したら局所的な予測仮説を棄却。返信後の増分がない一例だけでは平均効果を否定しない。返信者が誰か、外回りや著者自身の返信かを指定指標だけでは区別できず、返信の因果効果や会話の質は検証不能——その範囲はこの仮説の外に残す。",
+    "sample_design": "M",
+    "counter_hypothesis": "早期に受信返信があっても、その後の閲覧増分を予測する情報は無い",
+    "scope": "同一 account 内",
+    "state": "proposed",
+    "proposed_by": "codex（外部調査 2026-09-11 依頼分）",
+    "verifier": "claude（運用セッション）",
+    "created_at": "2026-09-12T00:00:00+09:00",
+    "supersedes": null
+  },
+  {
+    "code": "H03",
+    "claim": "24 時間で伸びなければ、その後はもう増えない",
+    "kind": "structural",
+    "sources": [
+      {
+        "tier": "L4",
+        "ref": "P2",
+        "date": "2025-11-17",
+        "note": "初動重視の主張を、あえて強い普遍命題へ変換した反証用仮説。24h は調査者が台帳に合わせた窓で、原典の固定閾値ではない。"
+      }
+    ],
+    "predictions": [
+      {
+        "statement": "初期に低 views の投稿で ΔV(24,168)=0。",
+        "metrics": [
+          "views"
+        ],
+        "window": "ΔV(24,168)",
+        "scope": "同一 account 内"
+      }
+    ],
+    "refutation": "実際に別時刻で取得した同一投稿に、後半の正の増分があれば、絶対的打ち切り説は一例で崩れる。取得遅延・数値改訂と区別できない場合は保留。",
+    "sample_design": "B",
+    "counter_hypothesis": "初期の 24 時間で伸びなくても、その後（24h〜168h）に views が増えることがある",
+    "scope": "同一 account 内",
+    "state": "proposed",
+    "proposed_by": "codex（外部調査 2026-09-11 依頼分）",
+    "verifier": "claude（運用セッション）",
+    "created_at": "2026-09-12T00:00:00+09:00",
+    "supersedes": null
+  },
+  {
+    "code": "H04",
+    "claim": "トピックを付けることで views が増える",
+    "kind": "structural",
+    "sources": [
+      {
+        "tier": "L1",
+        "ref": "O4",
+        "date": "2025-03-20",
+        "note": "ヘッダー表記は 2025-03-20／2025-10-30、本文の初出表記は 2025-04-24 で不一致（報告 §4）。ここではヘッダーの早い方の日付を暫定的に採る。内部データではトピック付き投稿が概して多く閲覧されるという観測で、タグを付けた因果効果ではない。"
+      }
+    ],
+    "predictions": [
+      {
+        "statement": "条件を揃えた付与／非付与の V_24 または V_168 に差がある。",
+        "metrics": [
+          "views"
+        ],
+        "window": "V_24／V_168",
+        "scope": "同一 account 内"
+      }
+    ],
+    "refutation": "指定された数と刻みだけでは識別不能（U）。既存の topic メタデータを接続し、割付・内容差を扱えるなら M に上げられる。6〜7 本のアカウント横断比較では判定不能。事前の最小差を除外する精度で付与群の改善がない場合に捨てる。ただし不適切なタグ一種類で、全トピックの効果を否定しない。",
+    "sample_design": "U",
+    "counter_hypothesis": "トピックを付けても views は増えない（内容・投稿者・タグ選択の違いで説明できる）",
+    "scope": "同一 account 内",
+    "state": "proposed",
+    "proposed_by": "codex（外部調査 2026-09-11 依頼分）",
+    "verifier": "claude（運用セッション）",
+    "created_at": "2026-09-12T00:00:00+09:00",
+    "supersedes": null
+  },
+  {
+    "code": "H05",
+    "claim": "朝／特定曜日に投稿すると反応や views が増える",
+    "kind": "structural",
+    "sources": [
+      {
+        "tier": "L3",
+        "ref": "E2",
+        "date": "2026-02-04",
+        "note": "投稿時刻分析。反応数の中央値で木曜 9 時、平日午前が優勢。閲覧数比較ではない。"
+      },
+      {
+        "tier": "L3",
+        "ref": "E3",
+        "date": "2026-04-01",
+        "note": "対象は 2026 年 4 月（公開日の日単位表記は確認できず、ここでは月初日を暫定的に記載）。長い連投の平均 views 3,921、日曜の views が高い。"
+      },
+      {
+        "tier": "L4",
+        "ref": "P3",
+        "date": "2026-02-08",
+        "note": "1 日 10 本以上や時間帯の効果を数値で主張するが、n が不明。"
+      }
+    ],
+    "predictions": [
+      {
+        "statement": "同じ成熟時点の L+R+RP と V を別々に比較する。反応数優位をviews 優位へ変換しない。",
+        "metrics": [
+          "likes",
+          "replies",
+          "reposts",
+          "views"
+        ],
+        "window": "同一成熟時点",
+        "scope": "同一 account 内"
+      }
+    ],
+    "refutation": "数と経過時間だけでは識別不能（U）。絶対の投稿日時・タイムゾーンが必要——既存 posted_at を接続する拡張なら M に上げられる。曜日効果の独立性は投稿本数だけでなく観測週数にも依存し、6〜7 本では曜日と内容がほぼ分離できない。同一 account の複数週で、事前に選んだ時間群に実用上の改善がなければ捨てる。",
+    "sample_design": "U",
+    "counter_hypothesis": "朝／特定曜日に投稿しても反応や views は増えない",
+    "scope": "同一 account 内",
+    "state": "proposed",
+    "proposed_by": "codex（外部調査 2026-09-11 依頼分）",
+    "verifier": "claude（運用セッション）",
+    "created_at": "2026-09-12T00:00:00+09:00",
+    "supersedes": null
+  },
+  {
+    "code": "H06",
+    "claim": "投稿本数を減らせば露出が回復する",
+    "kind": "structural",
+    "sources": [
+      {
+        "tier": "L4",
+        "ref": "J2",
+        "date": "2026-04-13",
+        "note": "143 本の検証記録の解釈。投稿数変更と内容変更が混ざり、減らした効果は分からないと著者自身が述べる。O3 の頻度観測、P2/P3 の増やす助言とは方向が異なる。"
+      }
+    ],
+    "predictions": [
+      {
+        "statement": "頻度を減らした期間に、同じ年齢で測った投稿あたり views が改善する。期間合計 views も別に見る。投稿あたり改善だけでは総露出増加にならない。",
+        "metrics": [
+          "views"
+        ],
+        "window": "投稿あたり（同一経過時間）／期間合計",
+        "scope": "同一 account 内（複数期間比較）"
+      }
+    ],
+    "refutation": "指定指標だけでは識別不能（U）。頻度・期間の介入記録が必要で、補っても M——独立単位は期間。6〜7 本で頻度を断定する根拠はない。条件を揃えた複数期間で、事前の改善幅を除外できるほど改善しないなら捨てる。",
+    "sample_design": "U",
+    "counter_hypothesis": "投稿本数を減らしても露出は回復しない",
+    "scope": "同一 account 内",
+    "state": "proposed",
+    "proposed_by": "codex（外部調査 2026-09-11 依頼分）",
+    "verifier": "claude（運用セッション）",
+    "created_at": "2026-09-12T00:00:00+09:00",
+    "supersedes": null
+  },
+  {
+    "code": "H07",
+    "claim": "リンクを返信に移せば、記事へ多く送客できる",
+    "kind": "structural",
+    "sources": [
+      {
+        "tier": "L4",
+        "ref": "P4",
+        "date": "2026-01-14",
+        "note": "古い公式発言（Mosseri のリンク改善発言）の二次流通。プラットフォームの閾値を検証した結果ではない。"
+      }
+    ],
+    "predictions": [],
+    "refutation": "現在は識別不能（U）——配置ラベルなし、投稿別 clicks なし、対象コードは公式 URL 別応答も取り出せない。本来必要なのは配置別の同一窓のリンククリックであり、root views が増えるだけでは送客仮説を満たさない。本数を増やすだけでは判定可能にならず、6〜7 本の root views で代用しない。配置条件と URL 帰属を特定した比較で、事前のクリック改善幅を除外できれば捨てる。",
+    "sample_design": "U",
+    "counter_hypothesis": "リンクを返信に移しても、記事への送客は増えない",
+    "scope": "同一 account 内",
+    "state": "proposed",
+    "proposed_by": "codex（外部調査 2026-09-11 依頼分）",
+    "verifier": "claude（運用セッション）",
+    "created_at": "2026-09-12T00:00:00+09:00",
+    "supersedes": null
+  },
+  {
+    "code": "H08",
+    "claim": "連投は単発より露出・反応がよい",
+    "kind": "structural",
+    "sources": [
+      {
+        "tier": "L3",
+        "ref": "E3",
+        "date": "2026-04-01",
+        "note": "対象は 2026 年 4 月（公開日の日単位表記は確認できず、ここでは月初日を暫定的に記載）。長い連投の平均 views 3,921。"
+      }
+    ],
+    "predictions": [
+      {
+        "statement": "root 単体の V_24 と、連投全体のアクションを別の問いとして設計する。全段 views の和はユニーク到達ではない。",
+        "metrics": [
+          "views"
+        ],
+        "window": "V_24",
+        "scope": "同一 account 内"
+      }
+    ],
+    "refutation": "指定指標だけでは識別不能（U）。形式・段の関係・各段の取得網羅性が必要で、揃えば M。6〜7 本で判定不能。形式とテーマを揃えた比較で、対象とした指標の最小改善を除外できれば捨てる。root の差で全段の効果を否定しない。",
+    "sample_design": "U",
+    "counter_hypothesis": "連投は単発より露出・反応が良いとは限らない",
+    "scope": "同一 account 内",
+    "state": "proposed",
+    "proposed_by": "codex（外部調査 2026-09-11 依頼分）",
+    "verifier": "claude（運用セッション）",
+    "created_at": "2026-09-12T00:00:00+09:00",
+    "supersedes": null
+  },
+  {
+    "code": "H09",
+    "claim": "他人への返信が、後の自分の投稿を伸ばす",
+    "kind": "structural",
+    "sources": [
+      {
+        "tier": "L4",
+        "ref": "Reddit(Why Most People Fail to Grow on Threads)",
+        "date": "2025-03-01",
+        "note": "2025 年 3 月（日単位不明のため月初日を暫定的に記載）等。投稿より返信を重視する助言。対照実験や n はない。"
+      }
+    ],
+    "predictions": [],
+    "refutation": "U——受信 replies は外回り回数ではない。指定台帳に行動時刻・相手・回数といった行動記録がなく、何本あってもこの仮説は検証できない。保持はするが、shadow の検証が動いていると表示しない。",
+    "sample_design": "U",
+    "counter_hypothesis": "他人への返信は、後の自分の投稿の伸びを予測しない",
+    "scope": "同一 account 内",
+    "state": "proposed",
+    "proposed_by": "codex（外部調査 2026-09-11 依頼分）",
+    "verifier": "claude（運用セッション）",
+    "created_at": "2026-09-12T00:00:00+09:00",
+    "supersedes": null
+  },
+  {
+    "code": "H10",
+    "claim": "滞在・スクリーンショット・親密度が露出を決める",
+    "kind": "structural",
+    "sources": [
+      {
+        "tier": "L1",
+        "ref": "O1",
+        "date": "2025-03-07",
+        "note": "滞在・個人履歴を入力例に挙げる公式資料。"
+      },
+      {
+        "tier": "L4",
+        "ref": "P2",
+        "date": "2025-11-17",
+        "note": "スクリーンショット優位の断言。根拠の強さは O1 と同じではない。"
+      }
+    ],
+    "predictions": [],
+    "refutation": "U——指定指標に該当行動も閲覧者単位の履歴もない。views や likes を代理に置いて「検証済み」としない。フォロワー増だけでも識別できない。",
+    "sample_design": "U",
+    "counter_hypothesis": "滞在・スクリーンショット・親密度は露出を決めていない（または他の要因で説明できる）",
+    "scope": "同一 account 内",
+    "state": "proposed",
+    "proposed_by": "codex（外部調査 2026-09-11 依頼分）",
+    "verifier": "claude（運用セッション）",
+    "created_at": "2026-09-12T00:00:00+09:00",
+    "supersedes": null
+  }
+]
