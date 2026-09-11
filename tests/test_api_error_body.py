@@ -103,3 +103,41 @@ def test_失敗したら台帳に取得の行を書かない(tmp_path, isolated_
     fetched = [r for r in _rows(pair["work"], "data/sns/replies/POST1.ndjson")
                if r.get("kind") == "fetch"]
     assert len(fetched) == 1 and fetched[0]["replies"] == 0, fetched
+
+
+# --- 逆監査で出た穴（2026-09-11）: 形が違うものを 0 件と読まない ---------------
+
+@pytest.mark.parametrize("payload,なぜ", [
+    ({}, "data がそもそも無い"),
+    ({"data": None}, "data が null"),
+    ({"ページ": "壊れた応答"}, "別の形の object"),
+])
+def test_dataが取れない応答を0件と読まない(payload, なぜ):
+    """**「取れて 0 件」と区別できないものを、0 件にしない。**
+
+    逆監査（別セッションに反証を取りに行かせた・2026-09-11）で出た。
+    `body.get("data") or []` と書いていたので、上の 3 つがどれも静かに 0 件に
+    なっていた。200 が返っていても、**中身が期待した形でなければ取れていない。**
+    """
+    with _server(payload) as base_url:
+        with pytest.raises(RuntimeError) as e:
+            _adapter(base_url).replies("POST1")
+    assert "data" in str(e.value), なぜ
+
+
+def test_dataが配列でなければ件数として数えない():
+    """`{"data": "文字列"}` が**そのまま返っていた。**
+
+    採取側は `for row in replies` で回すので 1 文字ずつになり、`len()` が
+    そのまま件数になる筋もあった。**形が違うものを件数にしない。**
+    """
+    with _server({"data": "これは配列ではない"}) as base_url:
+        with pytest.raises(RuntimeError) as e:
+            _adapter(base_url).replies("POST1")
+    assert "配列ではありません" in str(e.value)
+
+
+def test_本当の0件はこれまでどおり通る():
+    """**止めすぎない。** `{"data": []}` は取れて 0 件。"""
+    with _server({"data": []}) as base_url:
+        assert _adapter(base_url).replies("POST1") == []

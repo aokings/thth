@@ -156,6 +156,37 @@ class ThreadsAdapter(base.Adapter):
             return values[0].get("value")
         return None
 
+    @staticmethod
+    def _rows(body: dict, what: str) -> list:
+        """応答から `data` の配列を取り出す。**取れなかったら失敗として上げる。**
+
+        逆監査 2026-09-11（別セッションに反証を取りに行かせた結果）。
+        `body.get("data") or []` と書いていたので、次のどれも**静かに 0 件**に
+        なっていた——**「取れて 0 件」と区別できない。**
+
+        - `{}`（`data` がそもそも無い）
+        - `{"data": null}`
+        - 空の body
+
+        さらに `{"data": "文字列"}` のときは**文字列がそのまま返り**、採取側の
+        `for row in replies` が 1 文字ずつ回って落ちる（`len()` がそのまま件数に
+        なる筋もある）。**形が違うものを、件数として数えない。**
+
+        200 が返っていても、**中身が期待した形でなければ「取れていない」。**
+        """
+        if not isinstance(body, dict) or "data" not in body:
+            raise RuntimeError(
+                f"{what}: 応答に data がありません。**取れて 0 件とは区別できない**"
+                f"ので、失敗として扱います")
+        rows = body["data"]
+        if rows is None:
+            raise RuntimeError(f"{what}: data が null です（0 件とは違います）")
+        if not isinstance(rows, list):
+            raise RuntimeError(
+                f"{what}: data が配列ではありません（{type(rows).__name__}）。"
+                f"**件数として数えません**")
+        return rows
+
     def insights(self, post_id: str) -> dict:
         """投稿 1 本の数（`views`・`likes`・`replies`・`reposts`・`quotes`・`shares`）。
 
@@ -166,7 +197,7 @@ class ThreadsAdapter(base.Adapter):
         body = self._get(f"/v1.0/{post_id}/insights",
                           {"metric": "views,likes,replies,reposts,quotes,shares"})
         out = {}
-        for row in body.get("data") or []:
+        for row in self._rows(body, "投稿の数"):
             name = row.get("name")
             value = self._metric_value(row)
             if name and value is not None:
@@ -177,7 +208,7 @@ class ThreadsAdapter(base.Adapter):
         """その投稿への返信（`threads_read_replies`）。上位 1 階層。"""
         body = self._get(f"/v1.0/{post_id}/replies",
                           {"fields": "id,text,username,timestamp,permalink,is_reply,replied_to"})
-        return body.get("data") or []
+        return self._rows(body, "返信")
 
     def account_insights(self, user_id: str, *, since: str, until: str) -> dict:
         """アカウント単位の日次（`clicks` はここでしか取れない・設計 §4.5・§8-13）。"""
@@ -185,7 +216,7 @@ class ThreadsAdapter(base.Adapter):
             "metric": "views,likes,replies,reposts,quotes,followers_count,clicks",
             "since": since, "until": until})
         out = {}
-        for row in body.get("data") or []:
+        for row in self._rows(body, "アカウントの日次"):
             name = row.get("name")
             value = self._metric_value(row)
             if name and value is not None:
