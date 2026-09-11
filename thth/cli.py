@@ -1434,6 +1434,31 @@ def cmd_board(args) -> int:
     if args.json:
         _print_json(summary)
     else:
+        # **道具の版を、いちばん上に出す**（masaru 裁定 2026-09-12・受け入れ条件
+        # 「**届かない場合に分かる**」）。
+        #
+        # `app.head` と遅れは **`--json` にしか出ていなかった。** 人が
+        # `thth board` を見ても、**本番が古いままかどうかは分からなかった**
+        # ——2026-09-10 に「4 巡分古いまま timer が回っていた」のを見つけた
+        # 当の欄が、人向けには出ていなかった。**同じ形（文書には出ると書いて
+        # あるのに --json にしかない）を、token で 1 度指摘されている。**
+        app = summary.get("app") or {}
+        head = app.get("head")
+        behind = app.get("behind_release")
+        ref = app.get("release_ref")
+        if behind is None:
+            # **「遅れていない」ではなく「判らない」。** 配布の枝が無い場合も
+            # ここに来る——**0 と混ぜない。**
+            state = (f"**配布の枝（`{ref}`）に対する遅れが判りません**"
+                      f"（枝が無いか、まだ取りに行けていません）")
+        elif behind == 0:
+            state = f"配布の枝（`{ref}`）に追いついています"
+        else:
+            state = (f"**配布の枝（`{ref}`）より {behind} commit 遅れています**"
+                      f"——**配ったものが届いていません**")
+        print(f"道具: {head or '(版が読めません)'}  {state}")
+        print("")
+
         # 生の dict をそのまま出さず、人が読む形に整える（--json は機械可読のまま
         # 残す・外部レビュー再レビュー C）。
         for row in summary["accounts"]:

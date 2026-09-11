@@ -11,7 +11,7 @@ timer は動いているので「動いている」ように見え、誰も気�
 
 **pull に失敗しても止めない。** GitHub に届かない日に投稿が全部止まるのは重すぎる。
 ただし**黙って古いまま走らない**: `runs` に記録が残り、`thth board` の `app` に
-`behind_origin` として出る（「動いているのに古い」を見える形にする）。
+`behind_release` として出る（「動いているのに古い」を見える形にする）。
 """
 from __future__ import annotations
 
@@ -23,9 +23,52 @@ APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # exec しなおしたことを子に伝える（無限ループを作らない）。
 REEXEC_ENV = "THTH_SELF_UPDATED"
 
+# **本番が追いかける枝**（masaru 裁定 2026-09-12）。
+#
+# **`push` が本番反映と同義だった。** `thth run` は仕事の前に自分自身を
+# `git pull --ff-only` する。それまでは**checkout している枝の上流**（＝`main`）を
+# 引いていたので、**`main` に push した時点で、次の timer（10 分ごと）で本番の
+# 道具が入れ替わっていた。** 実測でタイマー発火の 4〜7 秒後に降りている。
+#
+# 2026-09-11 の 1 日で 20 回以上 push しており、**公開経路の P1 が入っていた版も
+# 同じ経路で本番に降りていた。** 実害が出なかったのは連投が 1 本も承認されて
+# いなかったからで、**仕組みが止めたわけではない。**
+#
+# **`main` への push は開発の保存・共有。配布は `release` を進める操作。**
+# ここは**checkout している枝を見ない**——`main` がどれだけ進んでも、この枝が
+# 動かなければ本番は変わらない。
+RELEASE_REF = os.environ.get("THTH_RELEASE_REF") or "release"
+
 
 def _git(args: list, *, cwd: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
+
+
+def _refspec(ref: str) -> str:
+    """**取りに行く先を明示する。** clone の作られ方に依存させない。
+
+    `git fetch origin release` は、**clone の refspec が拾っている場合にだけ**
+    `refs/remotes/origin/release` を作る。`--single-branch` や `--depth` 付きで
+    clone されていると refspec は `+refs/heads/main:refs/remotes/origin/main`
+    だけになり、**同じ命令が rc=0 で成功したまま `origin/release` を作らない。**
+
+    実際に確かめた（2026-09-12・単一枝に絞った clone）:
+
+    - `git fetch origin release` → **rc=0**（失敗しない）
+    - `refs/remotes/origin/release` → **作られない**
+    - `git merge --ff-only origin/release` → `not something we can merge`
+    - `git rev-list HEAD..origin/release` → rc=128 ＝ **遅れは「判らない」**
+
+    つまり**配っても永久に届かず、board には「ff に失敗」としか出ない**
+    ——原因（clone の作られ方）は誰にも辿れない。**止まりはしないが、
+    理由が届かない。** refspec を書けば clone の設定を見に行かなくて済む。
+
+    いまの VM は普通の clone（wildcard refspec・運用セッションが現物で確認・
+    2026-09-12）なので**今日は刺さらない**。ここで塞ぐのは、**VM を作り直す
+    人が `--depth 1` を打たない保証がないから**であって、いま壊れている
+    からではない。
+    """
+    return f"+refs/heads/{ref}:refs/remotes/origin/{ref}"
 
 
 def head(app_dir: str = APP_DIR) -> str | None:
@@ -33,16 +76,24 @@ def head(app_dir: str = APP_DIR) -> str | None:
     return r.stdout.strip() if r.returncode == 0 else None
 
 
-def behind_origin(app_dir: str = APP_DIR, *, fetch: bool = False) -> int | None:
-    """`origin/main` より何 commit 遅れているか。判らなければ None。
+def behind_release(app_dir: str = APP_DIR, *, fetch: bool = False,
+                    ref: str | None = None) -> int | None:
+    """**配布の枝**より何 commit 遅れているか。判らなければ `None`。
+
+    **名前を変えた**（`behind_origin` → `behind_release`・2026-09-12）。見る先が
+    `origin/main` から配布の枝に変わったので、**古い読み手が黙って通らないように
+    する**（規約 5）。
 
     `fetch=False` のときは**取りに行かない**（board のように頻繁に呼ぶ場所で
-    ネットワークに触れないため。直前に `thth run` が fetch しているので、
-    ローカルの `origin/main` はたいてい新しい）。
+    ネットワークに触れないため。直前に `thth run` が fetch している）。
+
+    **`None` は「遅れていない」ではなく「判らない」。**——配布の枝が origin に
+    無い場合もここに来る。**0 と混ぜない。**
     """
+    ref = ref or RELEASE_REF
     if fetch:
-        _git(["fetch", "origin"], cwd=app_dir)
-    r = _git(["rev-list", "--count", "HEAD..origin/main"], cwd=app_dir)
+        _git(["fetch", "origin", _refspec(ref)], cwd=app_dir)
+    r = _git(["rev-list", "--count", f"HEAD..origin/{ref}"], cwd=app_dir)
     if r.returncode != 0:
         return None
     try:
@@ -58,7 +109,8 @@ LOADED_REV = head(APP_DIR)
 
 
 def pull_and_reexec(argv: list, *, app_dir: str = APP_DIR,
-                     loaded_rev: str | None = None, log=print) -> str | None:
+                     loaded_rev: str | None = None, ref: str | None = None,
+                     log=print) -> str | None:
     """app を `git pull --ff-only` し、進んでいたら同じ引数で 1 回だけ exec しなおす。
 
     戻り値は「先へ進んでよい」ときの説明（`None` なら特に言うことなし）。
@@ -92,7 +144,7 @@ def pull_and_reexec(argv: list, *, app_dir: str = APP_DIR,
     anchor = loaded_rev if loaded_rev is not None else _loaded_rev(app_dir)
 
     try:
-        message, moved = _pull_locked(app_dir, anchor=anchor)
+        message, moved = _pull_locked(app_dir, anchor=anchor, ref=ref)
     finally:
         lock.release()
 
@@ -129,7 +181,8 @@ def _loaded_rev(app_dir: str) -> str | None:
     return head(app_dir)
 
 
-def _pull_locked(app_dir: str, *, anchor: str | None = None) -> tuple:
+def _pull_locked(app_dir: str, *, anchor: str | None = None,
+                  ref: str | None = None) -> tuple:
     """lock の中で pull だけを行う。`(説明, (前, 後) または None)` を返す。
 
     `anchor` は**このプロセスが読み込んだ版**。pull の結果がこれと違えば、
@@ -139,15 +192,44 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None) -> tuple:
     if before is None:
         return "app が git repo として読めません（自己更新をしていません）", None
 
-    fetch = _git(["fetch", "origin"], cwd=app_dir)
+    ref = ref or RELEASE_REF
+    # **配布の枝だけを名指しで取りに行く。** `git pull` のように checkout して
+    # いる枝の上流を見ない——**`main` に何が push されても、ここには入らない。**
+    fetch = _git(["fetch", "origin", _refspec(ref)], cwd=app_dir)
     if fetch.returncode != 0:
-        return "app の fetch に失敗しました（古いまま走ります）", None
+        # **枝が無いのと、取りに行けなかったのを混ぜない。** 枝が無いなら
+        # 「配ってもらえていない」であって、ネットワークの話ではない。
+        #
+        # **ここで 1 度混ぜた（2026-09-12）。** `ls-remote` の戻り値が 0 以外
+        # なら「枝が無い」と読んでいたが、**届かないときも 0 以外になる。**
+        # つまり GitHub に繋がらない日に「**配布されていません**」と言って
+        # しまう——今夜ずっと潰してきた「読めない ≠ 無い」そのもの。
+        #
+        # `git ls-remote --exit-code` は**一致する ref が無いときだけ 2**、
+        # 繋がらない等のエラーは別の値（128 など）。**2 のときだけ「無い」と
+        # 言い切る。** それ以外は「判らない」側に倒す。
+        exists = _git(["ls-remote", "--exit-code", "--heads", "origin", ref],
+                       cwd=app_dir)
+        if exists.returncode == 2:
+            return (f"**配布の枝 `origin/{ref}` が origin にありません**"
+                     f"（古いまま走ります。**まだ配布されていないか、枝の名前が"
+                     f"違います**）"), None
+        return (f"配布の枝 `origin/{ref}` を取りに行けませんでした"
+                 f"（古いまま走ります。**枝が無いのか、届かないのかは"
+                 f"区別できていません**）"), None
 
-    pull = _git(["pull", "--ff-only"], cwd=app_dir)
-    if pull.returncode != 0:
-        n = behind_origin(app_dir)
-        suffix = "" if n is None else f"（origin/main より {n} commit 遅れ）"
-        return f"app の pull --ff-only に失敗しました{suffix}（古いまま走ります）", None
+    merged = _git(["merge", "--ff-only", f"origin/{ref}"], cwd=app_dir)
+    if merged.returncode != 0:
+        n = behind_release(app_dir, ref=ref)
+        if n == 0:
+            # 遅れていないのに ff できない＝**枝分かれしている**（本番で誰かが
+            # commit した・配布の枝が巻き戻された）。**黙って古いまま走らない。**
+            return (f"**配布の枝 `origin/{ref}` と枝分かれしています**"
+                     f"（古いまま走ります。本番側に commit が残っていないか"
+                     f"確かめてください）"), None
+        suffix = "" if n is None else f"（`origin/{ref}` より {n} commit 遅れ）"
+        return (f"配布の枝への ff に失敗しました{suffix}"
+                 f"（古いまま走ります）"), None
 
     after = head(app_dir)
     # **ディスクが動いたかではなく、読み込んだ版と違うかで決める。**

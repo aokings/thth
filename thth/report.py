@@ -323,6 +323,11 @@ def board_summary(now=None) -> dict:
     # 「動いているのに古い」を見える形にする（設計 §3.2・2026-09-10 に VM が
     # 4 巡分古いまま 10 分ごとに回っていたのを見つけた）。取りに行かない
     # （直前の `thth run` が fetch している）。
+    # **配布の枝を見る**（masaru 裁定 2026-09-12）。`main` への push では本番は
+    # 変わらないので、「遅れ」は**配布の枝に対して**数える。
+    # **`behind_release` の `None` は「遅れていない」ではなく「判らない」**
+    # ——配布の枝が origin に無い場合もここに来る。**0 と混ぜない。**
     return {"accounts": accounts_out, "generated_at": jst.iso(),
             "app": {"head": selfupdate_mod.head(),
-                    "behind_origin": selfupdate_mod.behind_origin()}}
+                    "release_ref": selfupdate_mod.RELEASE_REF,
+                    "behind_release": selfupdate_mod.behind_release()}}
