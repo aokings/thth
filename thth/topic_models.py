@@ -1141,3 +1141,67 @@ def improvement_candidates(reviews: list, *, spec: dict) -> dict:
         "notice": "**候補です。** 仕様も語彙も profile も書き換えていません。"
                    "採否は独立確認のあと（Codex §8）。",
     }
+
+
+def withdrawn_evidence(review: dict, retracted_ids) -> list:
+    """**取り下げられた観測を根拠にしている指摘**（Codex §11・A12）。
+
+    > 観測・根拠が撤回されたら、依存する候補を**再確認対象にする**。
+    > 過去にそれを根拠として採用した事実は消さない。
+
+    **記録は書き換えない。** 読むときに印を付けるだけ——だから
+    「取り下げられた観測に基づいて判定した」という事実そのものは残る。
+    """
+    taken = set(retracted_ids or ())
+    out = []
+    for finding in review.get("findings") or []:
+        hit = sorted(set(finding.get("evidence_refs") or []) & taken)
+        if hit:
+            out.append({"reason_id": finding.get("reason_id"),
+                         "withdrawn_refs": hit})
+    return out
+
+
+def vocabulary_impact(candidate: dict, reviews: list, *,
+                       current: dict | None = None) -> dict:
+    """新しい語彙を**現行版を維持したまま**既存の記録へ当てる（Codex §8 手順 2・3）。
+
+    > **影響範囲**：どの判断が変わり、何を変えないか、過去記録への影響を明記する。
+    > **shadow 検証**：現行版を維持したまま、新版を別結果として既存ケースへ適用する。
+
+    **ここでは何も保存しない。** 出すのは「この版に替えたら、どの記録が読めなく
+    なるか・どの理由が一度も使われていないか」。
+
+    **読めなくなる記録を「0 件」や「問題なし」に変換しない**（A05 と同じ線）。
+    名前で出す。
+    """
+    usable = {e["reason_id"] for e in candidate.get("entries") or []
+              if e.get("state") in REASON_USABLE}
+    known = {e["reason_id"]: e for e in candidate.get("entries") or []}
+    before = {e["reason_id"] for e in (current or {}).get("entries") or []}
+
+    breaks, used = [], {}
+    for review in reviews:
+        lost = []
+        for finding in review.get("findings") or []:
+            reason_id = finding.get("reason_id")
+            used[reason_id] = used.get(reason_id, 0) + 1
+            if reason_id not in known:
+                lost.append(reason_id)
+        if lost:
+            # **過去のラベルを読み出せなくしない**（Codex §11）。替えるなら、
+            # どの記録が読めなくなるかを先に言う。
+            breaks.append({"review_id": review.get("review_id"),
+                            "account": review.get("account"),
+                            "lost_reason_ids": sorted(set(lost))})
+
+    return {
+        "reviews_examined": len(reviews),
+        "records_that_stop_reading": breaks,
+        "reasons_added": sorted(usable - before) if current else sorted(usable),
+        "reasons_removed": sorted(before - set(known)) if current else [],
+        "reasons_never_used": sorted(r for r in usable if not used.get(r)),
+        "reasons_in_use": dict(sorted(used.items())),
+        "notice": "**当てただけです。** 現行版は替えていません（保存もしていま"
+                   "せん）。替えるかどうかは独立確認のあと（Codex §8）。",
+    }

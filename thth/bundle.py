@@ -293,6 +293,9 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
     number_warn = forms_mod.numbering_warning(fm.get("numbering"), segments)
     if number_warn is not None:
         errors.append(number_warn)
+    form_warn = forms_mod.missing_form_warning(fm.get("form"), segments)
+    if form_warn is not None:
+        errors.append(form_warn)
 
     return errors
 

@@ -169,6 +169,32 @@ def numbering_warning(numbering, segments: list) -> str | None:
     return None
 
 
+def missing_form_warning(form, segments: list) -> str | None:
+    """**連投なのに型を名乗っていない**（運用セッション提案 2026-09-11）。
+
+    > `thth: 1` は `単発` と等価なので、**lint が `thth: 2` 以上にだけ
+    > `form:` を要求する**形にできませんか。いまは要求されないので書かれず、
+    > 書かれないので集まりません。
+
+    そのとおりなので足した。**ただし警告まで**（`warning:` 付き）。
+
+    **止めない理由は Codex §11。** 「診断結果、型、profile を公開時の必須条件に
+    する変更は別設計・別レビュー」。lint の実エラーは `thth approve` を止める
+    ので、型を必須にすると**編集の分類が公開のゲートになる。** 型を書いて
+    ほしいことと、型が無いと出せないことは別。
+
+    単発（`thth: 1`）には要求しない——**定義上すべて `単発` になる**ので、
+    書いても `thth` の値から機械的に導ける以上のことを言わない
+    （運用セッションが queue 86 本を数えて確かめた: 84 本が `thth: 1`）。
+    """
+    if form is not None or not segments or len(segments) < 2:
+        return None
+    return ("warning: form: 連投なので型を書いてください"
+            f"（{'・'.join(FORMS)}）。**書くときに選ぶもの**で、"
+            "あとから貼るものではありません。"
+            "**これは警告です——型が無くても承認・公開は止まりません。**")
+
+
 def label_record(*, form, outlet, at: str, numbering=None) -> dict:
     """ラベルの履歴 1 件（Codex 最終条件 4）。
 

@@ -26,7 +26,9 @@ SUBCOMMANDS = ("suggest", "observe", "record-decision", "decision",
                 # 検収と修正理由（Codex §6.2・§7・§12 第 1 段階）。
                 "record-vocabulary", "vocabulary", "record-review", "review",
                 # 型の仕様と、検収履歴からの改善候補（§12 第 2 段階）。
-                "record-form-spec", "form-spec", "form-check", "improvements")
+                "record-form-spec", "form-spec", "form-check", "improvements",
+                # 語彙を替えたら何が読めなくなるか（§8 手順 2・3）。
+                "impact")
 
 # 本文を含めて 1 MiB（設計 §7）。**超過は構造化エラー**にする。
 MAX_INPUT_BYTES = 1024 * 1024
@@ -956,6 +958,7 @@ def cmd_review(args) -> int:
     if row is None:
         return _fail("not_found", f"その検収は保存されていません: {args.target}")
     support = _review_support(row)
+    withdrawn = models.withdrawn_evidence(row, store.retractions())
     now_sha = _draft_sha256(args.draft, "原稿")
     out = {"ok": True, "review": row,
            "target": {"account": row.get("account"),
@@ -964,6 +967,9 @@ def cmd_review(args) -> int:
                        "profile_version": row.get("profile_version"),
                        "section": row.get("section")},
            "support": support,
+           # **取り下げられた観測を根拠にしている指摘に印を付ける**（A12）。
+           # 記録は書き換えない——読むときに言う。
+           "withdrawn_evidence": withdrawn,
            "out_of_scope": list(OUT_OF_SCOPE),
            "next_actions": _next_actions(row),
            "reasons": models.tally_reasons([row]),
@@ -991,8 +997,13 @@ def _recent_reviews(account: str, args) -> int:
         mine = [r for r in mine if models.review_applies_to(r, now_sha)]
     mine.sort(key=lambda r: r.get("judged_at") or "", reverse=True)
 
-    unsupported = []
+    unsupported, needs_recheck = [], []
+    taken = store.retractions()
     for review in mine:
+        withdrawn = models.withdrawn_evidence(review, taken)
+        if withdrawn:
+            needs_recheck.append({"review_id": review["review_id"],
+                                   "withdrawn_evidence": withdrawn})
         support = _review_support(review)
         if support["status"] != "supported":
             # **対応外を 0 件・問題なしに変換しない**（A05）。数えずに名前で出す。
@@ -1009,8 +1020,14 @@ def _recent_reviews(account: str, args) -> int:
     tally = models.tally_reasons(mine)
     _emit({"ok": True, "account": account, "count": len(mine),
            "broken_ids": broken, "unsupported": unsupported,
+           # **撤回されたら、依存する判断を再確認対象にする**（Codex §11・A12）。
+           "needs_recheck": needs_recheck,
            "reasons": tally, "out_of_scope": list(OUT_OF_SCOPE),
-           "warnings": _vocabulary_warnings(tally),
+           "warnings": _vocabulary_warnings(tally) + (
+               [f"根拠の観測が取り下げられた検収が {len(needs_recheck)} 件"
+                f"あります。**再確認の対象です**——判定をやり直してください"
+                f"（記録は消していません。取り下げた事実も残っています）"]
+               if needs_recheck else []),
            "reviews": [{"review_id": r["review_id"],
                          "draft_sha256": r.get("draft_sha256"),
                          "judged_by": r.get("judged_by"),
@@ -1136,6 +1153,50 @@ def cmd_improvements(args) -> int:
     out["account"] = args.account
     out["broken_ids"] = broken
     out["reviewed"] = len([r for r in rows if r.get("form") == spec["form"]])
+    _emit(out)
+    return 0
+
+def cmd_impact(args) -> int:
+    """新しい語彙を**現行版を維持したまま**当ててみる（Codex §8 手順 2・3）。
+
+    **何も保存しない。** 「替えたらどの記録が読めなくなるか」を先に言う。
+    """
+    candidate = read_json(args.input, stdin=args.json_stdin, what="理由語彙")
+    if candidate is None:
+        raise InputError("missing_input",
+                          "--input か --json-stdin で新しい理由語彙を渡してください")
+    if not isinstance(candidate, dict):
+        raise InputError("invalid_json", "理由語彙は object にしてください")
+    # **形の検査は同じ関数へ合流させる**（保存はしない）。
+    candidate = models.build_vocabulary(
+        {k: v for k, v in candidate.items()
+         if k not in ("vocabulary_id", "schema_version")}
+        | {"created_by": candidate.get("created_by") or "（未保存の候補）"})
+
+    current = None
+    if args.against:
+        current = store.get("vocabularies", args.against)
+        if current is None:
+            return _fail("not_found",
+                          f"比べる語彙が保存されていません: {args.against}")
+
+    rows, broken, _taken = store.load_all("reviews")
+    if args.account:
+        try:
+            accounts_mod.load_account(args.account)
+        except accounts_mod.AccountError as e:
+            return _fail("unknown_account", str(e))
+        rows = [r for r in rows if r.get("account") == args.account]
+    if current is not None:
+        rows = [r for r in rows if r.get("vocabulary_id") == args.against]
+
+    out = models.vocabulary_impact(candidate, rows, current=current)
+    out["ok"] = True
+    out["account"] = args.account
+    out["candidate_vocabulary_id"] = candidate["vocabulary_id"]
+    out["compared_with"] = args.against
+    out["broken_ids"] = broken
+    out["stored"] = False
     _emit(out)
     return 0
 
@@ -1271,6 +1332,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--account", default=None, help="account で絞る")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_improvements)
+
+    p = sub.add_parser("impact",
+                        help="新しい理由語彙を当ててみる（**保存しない**）")
+    p.add_argument("--input", default=None)
+    p.add_argument("--json-stdin", action="store_true")
+    p.add_argument("--against", default=None,
+                    help="比べる現行版の vocabulary_id")
+    p.add_argument("--account", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_impact)
     return parser
 
 

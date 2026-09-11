@@ -258,3 +258,49 @@ def test_previewは段ごとに分けて出す(tmp_path, isolated_account):
     assert "1/3　返信先なし（先頭）" in out
     assert "2/3　1 段目への返信" in out
     assert "コーヒーが苦いのは、カフェインのせいでしょうか。" in out
+
+
+# --- 連投には型を書いてほしい（ただし止めない・2026-09-11） -----------------
+
+def _check(text, account_cfg=None):
+    return bundle.check(bundle.parse_text(text, "t.md"), account_cfg=account_cfg)
+
+
+def test_連投で型を書いていなければ警告する():
+    """運用セッション提案 2026-09-11。**要求されないので書かれず、集まらない。**"""
+    without = FM.replace("form: 困り事→理由→行動\n", "")
+    messages = _check(make(fm=without))
+    hits = [m for m in messages if "form:" in m]
+    assert len(hits) == 1, messages
+    assert hits[0].startswith("warning: "), "型が無いだけで落としている"
+
+
+def test_型が無くても承認と公開は止めない():
+    """**Codex §11**「診断結果、型、profile を公開時の必須条件にする変更は
+    別設計・別レビュー」。lint の実エラーは `thth approve` を止めるので、
+    **型を必須にすると編集の分類が公開のゲートになる。**
+
+    型を書いてほしいことと、型が無いと出せないことは別。
+    """
+    from thth import lint as lint_mod
+    without = FM.replace("form: 困り事→理由→行動\n", "")
+    messages = _check(make(fm=without))
+    hard = [m for m in messages if not lint_mod.is_warning(m)]
+    assert hard == [], f"承認を止める側に入っている: {hard}"
+
+
+def test_単発には型を要求しない():
+    """`thth: 1` は**定義上すべて `単発`**——書いても `thth` から導ける以上の
+    ことを言わない（運用セッションが queue 86 本を数えた: 84 本が `thth: 1`）。
+    """
+    single = queuefile.parse_text(
+        "---\nthth: 1\naccount: nigamilab-threads\n"
+        "publish_at: 2026-09-15T19:00:00+09:00\nstatus: draft\n---\n"
+        "## threads\n\n本文です。\n", "t.md")
+    assert single is not None
+    from thth import forms as forms_mod
+    assert forms_mod.missing_form_warning(None, ["本文です。"]) is None
+
+
+def test_型を書いていれば何も言わない():
+    assert [m for m in _check(make()) if "form:" in m] == []
