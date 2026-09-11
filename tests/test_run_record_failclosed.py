@@ -172,10 +172,22 @@ def test_JSONとして読めても実行記録として読めなければ止め�
     assert all(b.endswith(".json") for b in broken)
 
     # **正しい形は通す**（止めすぎない）。
+    # **`published` と名乗る段には、公開の事実を復元する項目が要る**
+    # （2026-09-12・M1 の検査を足したので、`post_id` だけでは通らない）。
     ok = {"run_id": "run-ok", "account": "a", "rel_path": "q.md",
-          "posts": [{"index": 1, "state": "published", "post_id": "P1"},
+          "posts": [{"index": 1, "state": "published", "post_id": "P1",
+                      "posted_at": "2026-09-15T19:00:00+09:00",
+                      "text_sha256": "a" * 64, "bundle_sha": "b" * 64},
                      {"index": 2, "state": "pending", "post_id": None}]}
     assert threadrun.run_problem(ok) is None
+
+    # **公開の痕跡が残っているのに published でない**のは矛盾（M1 の本体）。
+    contradicted = {"run_id": "run-x", "account": "a", "rel_path": "q.md",
+                    "posts": [{"index": 1, "state": "pending",
+                                "post_id": "POST1",
+                                "posted_at": "2026-09-15T19:00:00+09:00"}]}
+    problem = threadrun.run_problem(contradicted)
+    assert problem and "食い違います" in problem
 
 
 def test_置き場が通常ファイルなら不在と同じにしない(thth_root):

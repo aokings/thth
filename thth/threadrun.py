@@ -180,7 +180,16 @@ STATES = (PENDING, REQUESTED, PUBLISHED, UNRESOLVED, SKIPPED) \
 _RUN_KEYS = ("run_id", "account", "rel_path", "posts")
 
 
-def run_problem(row) -> str | None:
+# `published` の段に、公開の事実を復元するのに要る項目
+# （再々判定 M1・2026-09-12 Codex）。**「published と名乗るなら、何が残って
+# いなければおかしいか」**を決める。`pending` は null を持つのが正常なので、
+# **全項目を非 null にする直し方はできない。**
+_PUBLISHED_KEYS = ("post_id", "posted_at", "text_sha256", "bundle_sha")
+# **公開したことを示す痕跡。** これが残っているのに `published` でないのは矛盾。
+_RECEIPT_KEYS = ("post_id", "posted_at")
+
+
+def run_problem(row, *, filename_id: str | None = None) -> str | None:
     """実行記録として**解釈できるか**（再々判定 N1・2026-09-12 Codex）。
 
     **JSON として読めることは、実行記録として読めることではない。**
@@ -194,6 +203,18 @@ def run_problem(row) -> str | None:
 
     **解釈できないものを「該当 run なし」に落とさない**——呼び出し側は
     `unreadable_runs()` で止まる。
+
+    **形が合っていることは、中身が整合していることではない**（再々判定 M1・
+    2026-09-12）。項目・型・`state` の値域までは見たが、**`state` と公開の事実の
+    整合を見ていなかった。** 1 段公開したあとに `posts[0].state` だけを
+    `published` から `pending` に書き換える（`post_id`・`posted_at`・`last_ok`・
+    `root_post_id` はそのまま残す）と検査を通り、**同じ本文を `reply_to=None` で
+    もう一度送った。**
+
+    直し方の線引き: **`pending` は null を持つのが正常**なので、「全項目を非 null に
+    する」ではなく、**`published` と名乗る段にだけ、公開の事実を復元する項目を
+    要求する**。逆に、**公開の痕跡（`post_id`・`posted_at`）が残っているのに
+    `published` でない**のは矛盾として弾く。
     """
     if not isinstance(row, dict):
         return f"object ではありません（{type(row).__name__}）"
@@ -211,8 +232,25 @@ def run_problem(row) -> str | None:
             return f"posts[{i}] が object ではありません"
         if post.get("index") != i:
             return f"posts[{i}] の index が {post.get('index')!r} です（順番どおりに）"
-        if post.get("state") not in STATES:
-            return f"posts[{i}] の state が知らない値です（{post.get('state')!r}）"
+        state = post.get("state")
+        if state not in STATES:
+            return f"posts[{i}] の state が知らない値です（{state!r}）"
+        if state == PUBLISHED:
+            gone = [k for k in _PUBLISHED_KEYS if not post.get(k)]
+            if gone:
+                return (f"posts[{i}] は published なのに {gone} がありません"
+                        f"（**公開したという事実を復元できません**）")
+        else:
+            # **公開の痕跡が残っているのに published でない**のは矛盾。
+            # 書き換えでも、書き戻しの中断でも、**そのまま進めてよい状態ではない。**
+            receipt = [k for k in _RECEIPT_KEYS if post.get(k)]
+            if receipt:
+                return (f"posts[{i}] は state が {state!r} なのに {receipt} が"
+                        f"残っています（**公開した痕跡と食い違います**）")
+    if filename_id is not None and row["run_id"] != filename_id:
+        # **ファイル名と中の run_id がずれた記録**を、別の実行として拾わせない。
+        return (f"ファイル名と run_id が違います"
+                f"（{filename_id} / {row['run_id']}）")
     return None
 
 
@@ -249,7 +287,8 @@ def unreadable_runs() -> list:
             out.append(os.path.abspath(path))
             continue
         # **JSON として読めても、実行記録として解釈できなければ同じ扱い**（N1）。
-        if run_problem(row):
+        # ファイル名との一致もここで見る（中身だけでは判らないので）。
+        if run_problem(row, filename_id=name[:-len(".json")]):
             out.append(os.path.abspath(path))
     return out
 
