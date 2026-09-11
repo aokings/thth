@@ -306,7 +306,12 @@ def load_all(kind: str) -> tuple:
         # **取り下げは「壊れている」ではない。** 誰かが理由をつけて下げた、
         # という別の事実（asmon 関東セッション提案 2026-09-11）。混ぜない。
         if record_id in withdrawn:
-            taken.append(dict(withdrawn[record_id], topic=row.get("topic")))
+            # **`normalized_topic` しか持たない記録がまさにここに来る**
+            # （asmon 関東セッション報告 2026-09-11）。照合は直したのに
+            # **表示だけ取り残していた。** 「（語なし）」では、どの語の観測を
+            # 下げたのか読み手に分からない。
+            taken.append(dict(withdrawn[record_id],
+                               topic=row.get("topic") or row.get("normalized_topic")))
             continue
         rows.append(row)
     return rows, broken, taken

@@ -1262,3 +1262,28 @@ def test_無い観測は取り下げられない(thth_root, isolated_account):
                   "--reason", "x", "--by", "y"])
     assert proc.returncode == 2
     assert "保存されていません" in json.loads(proc.stdout)["error"]["message"]
+
+
+def test_取り下げの表示も正規化語を拾う(thth_root, isolated_account):
+    """**照合は直したのに表示だけ取り残していた**（asmon 関東セッション報告）。
+
+    「（語なし）」では、どの語の観測を下げたのか読み手に分からない。
+    取り下げの対象になるのは**まさに形の古い記録**なので、ここで拾えないと
+    意味がない。
+    """
+    row = {"normalized_topic": "中学受験", "query": "中学受験",
+           "search_mode": "topic_tag", "provider": "browser",
+           "retrieved_at": datetime.datetime.now().astimezone().isoformat(),
+           "samples": [{"post_id": "p", "excerpt": "x", "author_key": "a"}],
+           "schema_version": models.SCHEMA_VERSION, "submitted_by": "関東"}
+    row["observation_id"] = models.content_id(row, exclude=("observation_id",))
+    store.put("observations", row, id_key="observation_id")
+    _run(["topics", "retract", row["observation_id"],
+           "--reason", "author_key でなく author を使用", "--by", "関東"])
+
+    path = write_queue_file(isolated_account["queue_dir"], "rw.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    out = json.loads(_run(["topics", "suggest", path]).stdout)
+    warning = next(w for w in out["warnings"] if "取り下げられた観測" in w)
+    assert "中学受験" in warning, warning
+    assert "（語なし）" not in warning, warning
