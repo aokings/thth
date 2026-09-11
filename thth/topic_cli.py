@@ -315,7 +315,7 @@ def _relevance_order(context: dict, observations: dict) -> list:
 
     def key(oid):
         obs = observations[oid]
-        topic = obs.get("topic") or ""
+        topic = obs.get("topic") or obs.get("normalized_topic") or ""
         near = 0 if (topic and topic in text) else 1
         return (near, str(obs.get("retrieved_at") or ""), oid)
 
@@ -405,6 +405,11 @@ def _evidence(context: dict, observations: dict, profile) -> dict:
     used = 0
     for oid in _relevance_order(context, observations):
         obs = dict(observations[oid])
+        # **表示のときだけ補う**（保存された記録は書き換えない）。検査を足す前の
+        # 記録は `normalized_topic` しか持たず、`topic: null` と並んで読めない。
+        if not obs.get("topic") and obs.get("normalized_topic"):
+            obs["topic"] = obs["normalized_topic"]
+            obs["topic_filled_from"] = "normalized_topic"
         if obs.get("provenance") == "legacy":
             # **既存 22 語は `legacy_notes` に出る。** ここに重ねると、
             # 実際に見てきた観測が埋もれる（実運用報告 2026-09-11）。

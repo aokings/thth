@@ -1173,3 +1173,25 @@ def test_想定外の失敗でもJSONを返す(isolated_account, monkeypatch, tm
     assert "RuntimeError" in payload["error"]["message"]
     assert "わざと壊す" in payload["error"]["message"]
     assert "統括に報告" in payload["error"]["message"]
+
+
+def test_正規化語しか無い観測は表示だけ補う(isolated_account, thth_root):
+    """`topic: null` と並ぶと読めない。**保存された記録は書き換えない。**"""
+    row = {"normalized_topic": "中学受験", "query": "中学受験",
+           "search_mode": "topic_tag", "provider": "browser",
+           "retrieved_at": datetime.datetime.now().astimezone().isoformat(),
+           "status": "ok",
+           "samples": [{"post_id": "p", "excerpt": "x", "author_key": "a"}],
+           "schema_version": models.SCHEMA_VERSION, "submitted_by": "関東"}
+    row["observation_id"] = models.content_id(row, exclude=("observation_id",))
+    store.put("observations", row, id_key="observation_id")
+
+    path = write_queue_file(isolated_account["queue_dir"], "nt.md", body=BODY,
+                             fm_overrides={"status": "draft"})
+    out = json.loads(_run(["topics", "suggest", path]).stdout)
+    shown = next(o for o in out["evidence"]["observations"]
+                 if o["observation_id"] == row["observation_id"])
+    assert shown["topic"] == "中学受験"
+    assert shown["topic_filled_from"] == "normalized_topic"
+    # **保存されたほうは変わっていない**（内容 ID が変わると別の記録になる）。
+    assert store.get("observations", row["observation_id"]).get("topic") is None
