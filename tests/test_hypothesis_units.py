@@ -548,3 +548,78 @@ def test_観測単位の断りに観測の形を返さない(thth_root):
     got = _json.loads(buf.getvalue())["expected_schema"]
 
     assert list(got) == ["Hypothesis"], f"関係のない形を返している: {list(got)}"
+
+
+# --- 断り文句の型を、文言から推測しない（外部レビュー・2026-09-12）----------
+
+@pytest.mark.parametrize("label,over", [
+    ("claim が空文字", {"claim": ""}),
+    ("kind が値域外", {"kind": "bad"}),
+    ("state が値域外", {"state": "bad"}),
+    ("scope が空文字", {"scope": ""}),
+    ("created_at が時刻でない", {"created_at": "bad"}),
+    ("sources が空配列", {"sources": []}),
+    ("refutation が空", {"refutation": ""}),
+    ("counter_hypothesis が空", {"counter_hypothesis": ""}),
+    ("verifier が空", {"verifier": ""}),
+    # **入力値が案内先を決めてしまっていた**——`kind` に他の型の名前を書くと、
+    # その型の形が返っていた。**断られた人が、自分の書いた値のせいで別の型の
+    # 説明を読まされる。**
+    ("kind に他の型の名前", {"kind": "TopicObservation"}),
+    ("kind に『記事』", {"kind": "記事"}),
+    # 断り文句は**入力値をそのまま引用する**ので、値に他の型の語が入ると
+    # 引用ごしに誤選択が起きる（`created_at` は値を引用して断る）。
+    ("created_at に『観測』", {"created_at": "観測した日"}),
+    ("sample_design に『記事』", {"sample_design": "記事"}),
+])
+def test_値が不正なときも仮説の形だけを返す(thth_root, label, over):
+    """**外部レビューの独立反例。** こちらのテストは 4 件のうち 3 件が
+    「必須項目が足りない」経路しか見ておらず、**正常な項目集合を渡して値だけが
+    不正な経路**と、**引用された入力文字列による誤選択**を確認できていなかった。
+
+    `_fail()` は**エラー文言のキーワード一致**で形を選んでいた。通常の値エラーには
+    型の語が入らないので**空の形しか返らず**、入力値に他の型の名前が入っていると
+    **その型の形が返っていた。**
+    """
+    from tests.test_hypotheses import _register
+    from tests.test_review_cli import _json
+
+    proc = _register(_hypothesis(**over))
+    assert proc.returncode != 0, f"{label}: 断られていない"
+    out = _json(proc)
+    assert list(out["expected_schema"]) == ["Hypothesis"], \
+        f"{label}: 返った形が {list(out['expected_schema'])}"
+
+
+def test_他のコマンドの断り方は変えていない(thth_root):
+    """**指定があるときだけ推測をやめる。** ほかのコマンドの既存出力は維持する
+    （今回の閉鎖条件にそう書かれている）。"""
+    from tests.test_review_cli import _json, _thth
+
+    proc = _thth(["topics", "record-vocabulary", "--json-stdin", "--by", "t"],
+                  {"name": "x"})
+    assert proc.returncode != 0
+    assert list(_json(proc)["expected_schema"]) == ["ReasonVocabulary"]
+
+
+def test_案内どおりにnoteを書けば通る(thth_root):
+    """**案内が実装と違っていた。** shape は `note` を「省略可」と書いていたが、
+    `SOURCE_KEYS` に `note` が入っていて `_require()` が省略を拒む——
+    **案内どおりに書くと断られた。** キーは必須・値は null 可。"""
+    from tests.test_hypotheses import _register, _source
+    from tests.test_review_cli import _json
+    from thth import topic_models as tm
+
+    shape = tm.HYPOTHESIS_SHAPE["Hypothesis"]["sources"][0]
+    assert "省略可" not in shape["note"], "実装と違う案内を出している"
+
+    source = dict(_source()); source["note"] = None
+    assert _register(_hypothesis(sources=[source])).returncode == 0
+
+    # キーごと省略したら、断りに仮説の形が返る（**次にできることを渡す**）。
+    missing = {k: v for k, v in _source().items() if k != "note"}
+    proc = _register(_hypothesis(sources=[missing]))
+    assert proc.returncode != 0
+    out = _json(proc)
+    assert "note" in out["error"]["message"]
+    assert list(out["expected_schema"]) == ["Hypothesis"]

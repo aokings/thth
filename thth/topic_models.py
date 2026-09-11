@@ -1801,7 +1801,10 @@ HYPOTHESIS_SHAPE = {
                      "**知らない日を作らないこと**",
             "date_precision": list(DATE_PRECISIONS),
             "date_kind": list(DATE_KINDS),
-            "note": "補足（省略可・null 可）",
+            # **キーは必須・値は null 可**（外部レビュー・2026-09-12）。
+            # 「省略可」と案内していたが、`SOURCE_KEYS` に `note` が入っていて
+            # `_require()` が省略を拒む。**案内どおりに書くと断られた。**
+            "note": "補足。**キーは必須・書くことが無ければ null**",
         }],
         "predictions": [{
             "statement": "**うちの台帳でどう見えるはずか**（相手の仕組みそのもの"

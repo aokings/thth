@@ -136,10 +136,31 @@ def _action(kind: str, topic, reason: str, schema: str) -> dict:
             "expected_schema": schema}
 
 
-def _fail(code: str, message: str) -> int:
+def _fail(code: str, message: str, *, expected_schema: dict | None = None) -> int:
     # **形が違うと言うときは、正しい形も返す**（asmon 関東セッション報告
     # 2026-09-11）。項目の名指しはしていたが、値域は `topic_models.py` を
     # 読むまで分からなかった。**断るときこそ、次にできることを渡す。**
+    #
+    # **呼ぶ側が形を指定できる**（外部レビュー・2026-09-12）。下のキーワード
+    # 一致は**エラー文言から型を推測する**作りで、2 つの穴があった。
+    #
+    #   1. **通常の値エラーには、その語が入らない**（`kind=bad`・`state=bad`・
+    #      `created_at=bad`・`sources` が空——**どれも空の形しか返らなかった**）
+    #   2. **入力値が案内先を決めてしまう。** `kind` に `"記事"` と書くと
+    #      `ArticleEvidence` の形が、`"TopicObservation"` と書くと
+    #      `TopicObservation` の形が返っていた——**断られた人が、書いた値の
+    #      せいで別の型の説明を読まされる。**
+    #
+    # **指定があれば推測しない。** 指定は仮説の登録だけが渡す（ほかのコマンドの
+    # 出力は変えない）。
+    if expected_schema is not None:
+        _emit({"schema_version": models.SCHEMA_VERSION, "ok": False, "status": None,
+               "context_id": None, "account": None, "selected_topic": None,
+               "candidates": [], "required_actions": [], "warnings": [],
+               "shortfalls": [], "expected_schema": expected_schema,
+               "notice": advice.NOTICE,
+               "error": {"code": code, "message": message}})
+        return 2
     schema = {}
     for name, shape in (("ArticleEvidence", advice.ARTICLE_SHAPE),
                          ("TopicObservation", advice.OBSERVATION_SHAPE),
@@ -1822,7 +1843,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json-stdin", action="store_true")
     p.add_argument("--by", default=None)
     p.add_argument("--json", action="store_true")
-    p.set_defaults(func=cmd_record_hypothesis)
+    # **断るときに返す形を、コマンドが持つ**（外部レビュー・2026-09-12）。
+    # エラー文言からの推測をやめる——**通常の値エラーには型の語が入らず、
+    # 入力値に「記事」と書かれていると案内先まで変わっていた。**
+    p.set_defaults(func=cmd_record_hypothesis,
+                    expected_schema=models.HYPOTHESIS_SHAPE)
 
     p = sub.add_parser("hypotheses", help="保存済みの仮説を読む")
     p.add_argument("hypothesis_id", nargs="?", default=None)
@@ -1843,16 +1868,20 @@ def dispatch(argv: list) -> int:
                       f"account 名を変えるか、この機能の語を変えてください")
     i = argv.index("topics")
     args = build_parser().parse_args(argv[i + 1:])
+    # **どの型の話かは、文言ではなくコマンドが知っている**（外部レビュー・
+    # 2026-09-12）。parser の default に形を持たせ、断るときにそのまま渡す。
+    shape = getattr(args, "expected_schema", None)
     try:
         return args.func(args)
     except InputError as e:
-        return _fail(e.code, e.message)
+        return _fail(e.code, e.message, expected_schema=shape)
     except models.SchemaError as e:
-        return _fail("schema_error", str(e))
+        return _fail("schema_error", str(e), expected_schema=shape)
     except FileNotFoundError as e:
-        return _fail("unreadable_input", str(e))
+        return _fail("unreadable_input", str(e), expected_schema=shape)
     except KeyError as e:
-        return _fail("schema_error", f"必須の項目がありません: {e}")
+        return _fail("schema_error", f"必須の項目がありません: {e}",
+                      expected_schema=shape)
     except accounts_mod.AccountError as e:
         return _fail("unknown_account", str(e))
     except store.BadId as e:
