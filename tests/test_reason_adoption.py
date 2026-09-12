@@ -458,3 +458,102 @@ def test_機械が確かめたことと人が判断したことを分けて返�
     assert {m["kind"] for m in out["machine_verified"]} == {"positive", "counter"}
     assert set(out["self_reported"]) == {"path", "meaning", "distinguished_from",
                                           "applied_example"}
+
+# --- 保存済みの系列を辿る（外部レビュー R1 の残り・2026-09-12）--------------
+
+def _系列(v, sha_a="a" * 64, sha_b="e" * 64):
+    """A →（supersedes）B →（recheck_of）C の往復を実際に保存する。"""
+    a = _検収(v, sha=sha_a, result="problem")
+    b_row = models.build_review({
+        "account": "kopicha-threads", "draft_sha256": sha_a,
+        "vocabulary_id": v["vocabulary_id"],
+        "findings": [{"reason_id": "too_long", "check_method": "human",
+                       "result": "problem", "evidence_refs": [],
+                       "note": "処置の記録"}],
+        "judged_by": {"kind": "human", "id": "masaru"},
+        "judged_at": "2026-09-12T10:20:00+09:00",
+        "disposition": "fixed", "supersedes": a,
+        "revised_draft_sha256": sha_b,
+    }, vocabulary=v)
+    b, _ = store.put("reviews", b_row, id_key="review_id")
+    c_row = models.build_review({
+        "account": "kopicha-threads", "draft_sha256": sha_b,
+        "vocabulary_id": v["vocabulary_id"],
+        "findings": [{"reason_id": "too_long", "check_method": "human",
+                       "result": "problem", "evidence_refs": [],
+                       "note": "再検査"}],
+        "judged_by": {"kind": "human", "id": "masaru"},
+        "judged_at": "2026-09-12T10:30:00+09:00",
+        "disposition": "unresolved", "recheck_of": b["review_id"],
+    }, vocabulary=v)
+    c, _ = store.put("reviews", c_row, id_key="review_id")
+    return a, b["review_id"], c["review_id"]
+
+
+@pytest.mark.parametrize("中間を挙げる", [False, True])
+def test_中間記録を挙げなくても同じ往復は1件(thth_root, tmp_path, capsys, 中間を挙げる):
+    """**入力に何を列挙したかで、既知の原稿同一性が変わってはいけない**
+    （外部レビュー・2026-09-12）。
+
+    A →（supersedes）B →（recheck_of）C は**同じ往復**。**B を挙げなくても**、
+    保存済みの線を辿れば A と C が同じ事例だと分かる。**前は入力に挙がった記録
+    しか見ていなかったので、B を外すと 2 例になった。**
+    """
+    v = _語彙()
+    store.put("vocabularies", v, id_key="vocabulary_id")
+    a, b, c = _系列(v)
+    row = _採用(v["vocabulary_id"])
+    # A と C は**別の原稿名**（改訂して名前も変えた場合を想定）。
+    row["cases"] = [
+        {"kind": "positive", "path": "docs/sns/queue/a.md", "sha256": "a" * 64,
+         "account": "kopicha-threads", "review_id": a},
+        {"kind": "positive", "path": "docs/sns/queue/b.md", "sha256": "e" * 64,
+         "account": "kopicha-threads", "review_id": c},
+        {"kind": "counter", "path": "docs/sns/queue/z.md", "sha256": "c" * 64,
+         "account": "kopicha-threads",
+         "review_id": _検収(v, sha="c" * 64, result="no_problem")},
+    ]
+    if 中間を挙げる:
+        row["cases"].insert(1, {
+            "kind": "positive", "path": "docs/sns/queue/a.md", "sha256": "a" * 64,
+            "account": "kopicha-threads", "review_id": b})
+    rc, out = _採用を試す(tmp_path, capsys, v, row)
+    assert rc == 2, "**同じ往復を 2 例として数えている**"
+    assert "照合してまとめると 1 件" in out["error"]["message"]
+
+
+def test_辿れない参照は独立と確定しない(thth_root, tmp_path, capsys, monkeypatch):
+    """**取得できない参照を「別の独立事例」と確定しない。**"""
+    v = _語彙()
+    store.put("vocabularies", v, id_key="vocabulary_id")
+    row = _根拠つき(v)
+    本物 = store.get
+
+    def 系列だけ取れない(kind, record_id):
+        got = 本物(kind, record_id)
+        if kind == "reviews" and record_id == row["cases"][0]["review_id"]:
+            # 参照先が消えた状態を作る（記録自体は返すが、その先は返さない）。
+            got = dict(got, supersedes="sha256:" + "0" * 64)
+        return None if record_id == "sha256:" + "0" * 64 else got
+
+    monkeypatch.setattr(topic_cli.store, "get", 系列だけ取れない)
+    rc, out = _採用を試す(tmp_path, capsys, v, row)
+    assert rc == 2
+    assert "確かめられません" in out["error"]["message"]
+
+
+def test_参照が循環しても止まる(thth_root, tmp_path, capsys, monkeypatch):
+    v = _語彙()
+    store.put("vocabularies", v, id_key="vocabulary_id")
+    row = _根拠つき(v)
+    本物 = store.get
+
+    def ぐるぐる(kind, record_id):
+        got = 本物(kind, record_id)
+        if kind == "reviews" and got is not None:
+            got = dict(got, supersedes=record_id)      # 自分自身を指す
+        return got
+
+    monkeypatch.setattr(topic_cli.store, "get", ぐるぐる)
+    rc, out = _採用を試す(tmp_path, capsys, v, row)
+    assert rc == 2 and "循環" in out["error"]["message"]

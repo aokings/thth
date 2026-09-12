@@ -888,7 +888,40 @@ def _foreign_evidence(refs: list, account: str | None) -> dict:
     return out
 
 
-def _同じ事例か(cases: list, reviews: dict) -> list:
+def _系列の根(review_id: str, reviews: dict) -> tuple:
+    """**保存済みの記録を辿って、その往復の根まで行く**（外部レビュー R1・
+    2026-09-12）。
+
+    前は**入力に挙がった記録しか見ていなかった**ので、**ストアにはあるのに採用の
+    入力に選ばれていない中間記録**で系列が切れた。A→B→C と繋がっていても、
+    B を挙げなければ A と C が別の事例になった——**入力に何を列挙したかで、
+    既知の原稿同一性が変わっていた。**
+
+    戻り値は `(根の review_id, 問題)`。**取得できない参照は「別の独立事例」と
+    確定しない**——`問題` を返して採用を止める。**参照が循環しても止まらない。**
+    """
+    見た: set = set()
+    いま = review_id
+    for _ in range(64):
+        if いま in 見た:
+            return (None, f"検収記録の参照が循環しています（{いま}）")
+        見た.add(いま)
+        review = reviews.get(いま)
+        if review is None:
+            review = store.get("reviews", いま)
+            if review is None:
+                # **辿れない＝独立とは言えない。** 黙って別扱いにしない。
+                return (None, f"検収記録 {いま} を取得できないので、"
+                               f"独立した事例かどうかを確かめられません")
+            reviews[いま] = review
+        つぎ = review.get("supersedes") or review.get("recheck_of")
+        if not isinstance(つぎ, str) or not つぎ:
+            return (いま, None)
+        いま = つぎ
+    return (None, f"検収記録の参照が長すぎます（{review_id}）")
+
+
+def _同じ事例か(cases: list, reviews: dict) -> tuple:
     """**同じと分かる証拠を先にまとめる**（外部レビュー R1・2026-09-12）。
 
     前は `(account, path)` の文字列で数えていたので、**同じ検収記録・同じ hash でも
@@ -930,21 +963,17 @@ def _同じ事例か(cases: list, reviews: dict) -> list:
                 結ぶ(鍵[k], i)
             else:
                 鍵[k] = i
-        # **修正の系列**（保存されている線だけを使う。無ければ結ばない）。
-        for link in (review.get("supersedes"), review.get("recheck_of")):
-            if isinstance(link, str) and link:
-                k = ("系列", link)
-                if k in 鍵:
-                    結ぶ(鍵[k], i)
-                else:
-                    鍵[k] = i
-        k = ("系列", case["review_id"])
+        # **修正の系列**——**保存済みの記録を辿って根まで行く。**
+        根id, 問題 = _系列の根(case["review_id"], reviews)
+        if 問題:
+            return (None, 問題)
+        k = ("系列", case["account"], 根id)
         if k in 鍵:
             結ぶ(鍵[k], i)
         else:
             鍵[k] = i
 
-    return [根(i) for i in range(len(cases))]
+    return ([根(i) for i in range(len(cases))], None)
 
 
 def _verify_adoption_cases(adoption: dict) -> tuple:
@@ -997,7 +1026,9 @@ def _verify_adoption_cases(adoption: dict) -> tuple:
         reviews[case["review_id"]] = review
 
     # **照合済みの証拠でまとめてから数える**（外部レビュー R1）。
-    群 = _同じ事例か(adoption["cases"], reviews)
+    群, 問題 = _同じ事例か(adoption["cases"], reviews)
+    if 問題:
+        return (問題, [])
     正例の群 = {群[i] for i, c in enumerate(adoption["cases"])
                  if c["kind"] == "positive"}
     if len(正例の群) < 2:
