@@ -2198,6 +2198,14 @@ def dispatch(argv: list) -> int:
     shape = getattr(args, "expected_schema", None)
     try:
         return args.func(args)
+    except topics_mod.ShelfBroken as e:
+        # **読めなかったことを、無かったことにしない**（独立監査 1・P1-1）。
+        # `_fail()` の形に混ぜず、**直せる場所（path）と原因（detail）**を出す。
+        print(str(e), file=sys.stderr)
+        _emit({"ok": False, "error": "topics_shelf_broken",
+               "path": e.path, "detail": e.detail, "message": str(e),
+               "notice": advice.NOTICE})
+        return 2
     except InputError as e:
         return _fail(e.code, e.message, expected_schema=shape)
     except models.SchemaError as e:

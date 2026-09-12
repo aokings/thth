@@ -280,7 +280,15 @@ def cmd_approve(args) -> int:
         bundle = approval_mod.compute_bundle_digest([one["approved_sha"] for one in prepared])
 
         if not args.confirm:
-            _show_first_stage(prepared, bundle, as_json=args.json, note=note)
+            try:
+                # **見せる前に台帳を確かめる**（独立監査 1・P1-1）。一段目は
+                # `topics.verdict_line()` を呼ぶので、台帳が壊れていると
+                # **traceback だけを出して途中で止まっていた。** 承認の入口で
+                # traceback を出すのは、いちばんやってはいけない断り方。
+                topics_mod.load()
+                _show_first_stage(prepared, bundle, as_json=args.json, note=note)
+            except topics_mod.ShelfBroken as e:
+                return _台帳が壊れている(e, as_json=args.json)
             return 1
         if args.confirm != bundle:
             print(f"digest が一致しないので承認しません（表示した本文と中身が違います）。"
@@ -954,8 +962,29 @@ def cmd_measured(args) -> int:
     return 0
 
 
+def _台帳が壊れている(e, *, as_json: bool) -> int:
+    """**トピックの台帳が読めないことを、観測が無いことにしない**（独立監査 1・P1-1）。
+
+    `topic_store` の「壊れた記録を観測なしと偽らない」（設計 §8・受け入れ T14）と
+    同じ作法。**読めないと言って止まる。** 直すまで読み書きしない。
+    """
+    if as_json:
+        _print_json({"error": "topics_shelf_broken", "path": e.path, "detail": e.detail})
+    else:
+        print(str(e), file=sys.stderr)
+    return 2
+
+
 def cmd_topics(args) -> int:
-    """`thth topics`: トピックを見る・調べた結果を残す。
+    """`thth topics`: トピックを見る・調べた結果を残す。"""
+    try:
+        return _cmd_topics(args)
+    except topics_mod.ShelfBroken as e:
+        return _台帳が壊れている(e, as_json=args.json)
+
+
+def _cmd_topics(args) -> int:
+    """`thth topics` の本体。
 
     **新参者にとってトピックは唯一の入口**（masaru 2026-09-10）。実測でも、
     フォロワー 0 で `中学受験` は 202〜574 views、弱いトピックは 1 view——

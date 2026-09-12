@@ -85,6 +85,32 @@ def path() -> str:
     return os.path.join(accounts_mod.thth_root(), "state", "topics.json")
 
 
+class ShelfBroken(Exception):
+    """**台帳があるのに読めない**（独立監査 1・P1-1・2026-09-12）。
+
+    以前はここで `{"checks": []}` を返していた。つまり **「読めなかった」を
+    「観測が無い」と偽っていた。** 二重に悪い:
+
+      1. `--advise` も承認の一段目も「記録はありません」と平然と言う
+         ——**知っていたはずのことを、知らないと言う。**
+      2. 次の `record()` が「空の台帳」に 1 行足して**丸ごと書き戻す**ので、
+         **それまでの全行が消える。** 壊れていたのは 3 バイトなのに、
+         復旧できるはずの 46 件が本当に無くなる。
+
+    `topic_store.load_all()` は最初から「壊れたファイルを『無い』ことにしない」
+    と決めていた（設計 §8・受け入れ T14）。**同じ作法をこちらにも通す。**
+
+    **ファイルが無いのは壊れているのではない**（まだ 1 度も記録していない）。
+    そこだけは空を返す。
+    """
+
+    def __init__(self, path: str, detail: str):
+        self.path = path
+        self.detail = detail
+        super().__init__(f"トピックの台帳が壊れています: {path}（{detail}）。"
+                          "直すまで読み書きしません")
+
+
 def load() -> dict:
     p = path()
     if not os.path.exists(p):
@@ -92,10 +118,15 @@ def load() -> dict:
     try:
         with open(p, encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, ValueError):
-        return {"checks": []}
+    except OSError as e:
+        raise ShelfBroken(p, f"開けません（{e.strerror or e}）") from e
+    except ValueError as e:
+        raise ShelfBroken(p, f"JSON として読めません（{e}）") from e
+    if not isinstance(data, dict):
+        raise ShelfBroken(p, f"いちばん外側が object ではありません"
+                              f"（{type(data).__name__}）")
     if not isinstance(data.get("checks"), list):
-        return {"checks": []}
+        raise ShelfBroken(p, "checks が配列ではありません")
     return data
 
 
@@ -162,6 +193,9 @@ def _append(row: dict) -> dict:
             time.sleep(0.05)
             待った += 0.05
     try:
+        # **読めなければ書かない**（独立監査 1・P1-1）。`load()` の `ShelfBroken`
+        # をここで捕まえない——捕まえて空の台帳を作れば、**壊れた 3 バイトの
+        # 代償に既存の全行が消える。** 呼んだ側に投げ返して、人に直させる。
         data = load()
         data["checks"].append(row)
         tmp = p + ".tmp"
