@@ -38,6 +38,9 @@ def _検収(vocab, *, sha, result, reason_id="too_long", account="kopicha-thread
         "judged_by": {"kind": "human", "id": "masaru"},
         "judged_at": "2026-09-12T10:10:00+09:00",
         "disposition": disposition,
+        # `dismissed` / `deferred` は理由が要る（見送りは「解決済み」ではない）。
+        **({"disposition_reason": "テストが置いた見送り"}
+            if disposition in ("dismissed", "deferred") else {}),
     }, vocabulary=vocab)
     saved, _ = store.put("reviews", review, id_key="review_id")
     return saved["review_id"]
@@ -223,19 +226,65 @@ def test_語彙の記録は書き換わらない(thth_root, tmp_path, capsys):
 # **2026-09-12 に運用セッションが手で数え直して「まだ 1 件も採用できない」と
 # 結論した。** その数え方を道具に置く。**手で数えた合意ではなく、検査にする。**
 
-def test_同じ原稿を2回数えない():
-    """`missing_condition` は 6 回記録されていたが、**実体は 2 件**で、
-    **どちらも同じ原稿・同じ段・同じ往復**だった。"""
-    同じ原稿 = [
-        {"kind": "positive", "path": "a.md", "sha256": "a" * 64, "account": "k",
-         "review_id": "sha256:" + "1" * 64},
-        {"kind": "positive", "path": "a.md", "sha256": "d" * 64, "account": "k",
-         "review_id": "sha256:" + "2" * 64},
-        {"kind": "counter", "path": "c.md", "sha256": "c" * 64, "account": "k", "review_id": "sha256:" + "3" * 64},
-    ]
-    with pytest.raises(models.SchemaError) as e:
-        models.build_reason_adoption(_採用("sha256:" + "b" * 64, cases=同じ原稿))
-    assert "直す前と後でも 1 件" in str(e.value)
+@pytest.mark.parametrize("別のpath表記", ["docs/sns/queue/a.md", "./docs/sns/queue/a.md",
+                                          "docs/sns/queue/b.md"])
+def test_同じ証拠はpathの書き方を変えても1件(thth_root, tmp_path, capsys, 別のpath表記):
+    """**独立数は、照合済みの証拠でまとめてから数える**（外部レビュー R1・
+    2026-09-12）。
+
+    前は `(account, path)` の**文字列**で数えていたので、**同じ検収記録・同じ版
+    でも `path` の書き方を変えるだけで 2 例になった。自己申告の違いを独立数に
+    使っていた。**
+    """
+    v = _語彙()
+    store.put("vocabularies", v, id_key="vocabulary_id")
+    row = _根拠つき(v)
+    import copy
+    row["cases"][1] = copy.deepcopy(row["cases"][0])
+    row["cases"][1]["path"] = 別のpath表記
+    rc, out = _採用を試す(tmp_path, capsys, v, row)
+    assert rc == 2, "**同じ証拠を 2 例として数えている**"
+    assert "照合してまとめると 1 件" in out["error"]["message"]
+
+
+@pytest.mark.parametrize("書き方", ["{}", "./{}", "docs/../{}"])
+def test_同じ原稿の改訂前後は1件(thth_root, tmp_path, capsys, 書き方):
+    """**内容の hash は「版」であって「原稿」ではない。**
+
+    ここは**版も検収記録も違う**（改訂の前後）ので、**`path` でしかまとめられない。**
+    だから**書き方の違いを吸収する**必要がある——`./a.md` と `a.md` は同じ原稿。
+    """
+    v = _語彙()
+    store.put("vocabularies", v, id_key="vocabulary_id")
+    row = _根拠つき(v)
+    row["cases"][1]["path"] = 書き方.format(row["cases"][0]["path"])
+    rc, out = _採用を試す(tmp_path, capsys, v, row)           # hash も記録も別
+    assert rc == 2, "**同じ原稿の改訂前後を 2 例として数えている**"
+    assert "照合してまとめると 1 件" in out["error"]["message"]
+
+
+def test_同じ版への別の検収記録も1件(thth_root, tmp_path, capsys):
+    """**同じ版に対する処置の記録を足しても、事例は増えない。**"""
+    v = _語彙()
+    store.put("vocabularies", v, id_key="vocabulary_id")
+    row = _根拠つき(v)
+    import copy
+    row["cases"][1] = copy.deepcopy(row["cases"][0])
+    row["cases"][1]["path"] = "docs/sns/queue/b.md"
+    row["cases"][1]["review_id"] = _検収(
+        v, sha=row["cases"][0]["sha256"], result="problem", disposition="deferred")
+    rc, out = _採用を試す(tmp_path, capsys, v, row)
+    assert rc == 2 and "照合してまとめると 1 件" in out["error"]["message"]
+
+
+def test_別の原稿なら2件として通る(thth_root, tmp_path, capsys):
+    """**まとめすぎない。** 本当に別の原稿なら採用できる。"""
+    v = _語彙()
+    store.put("vocabularies", v, id_key="vocabulary_id")
+    rc, out = _採用を試す(tmp_path, capsys, v, _根拠つき(v))
+    assert rc == 0, out
+    assert len({m["case_group"] for m in out["machine_verified"]
+                 if m["kind"] == "positive"}) == 2
 
 
 def test_反例が無ければ採用できない():
@@ -289,15 +338,14 @@ def test_accepted_が保証することを記録に書く():
     assert "この記録では確かめていません" in a["guarantees"]
 
 
-def test_件数のしきい値は暫定だと明示する():
+def test_件数のしきい値は暫定だと明示する(thth_root, tmp_path, capsys):
     """**型の昇格条件の流用を、決定済みの条件として扱わない**（masaru 指示）。"""
-    正例1件 = [
-        {"kind": "positive", "path": "a.md", "sha256": "a" * 64, "account": "k", "review_id": "sha256:" + "1" * 64},
-        {"kind": "counter", "path": "c.md", "sha256": "c" * 64, "account": "k", "review_id": "sha256:" + "3" * 64},
-    ]
-    with pytest.raises(models.SchemaError) as e:
-        models.build_reason_adoption(_採用("sha256:" + "b" * 64, cases=正例1件))
-    assert "暫定" in str(e.value)
+    v = _語彙()
+    store.put("vocabularies", v, id_key="vocabulary_id")
+    row = _根拠つき(v)
+    row["cases"] = [row["cases"][0], row["cases"][2]]         # 正例 1・反例 1
+    rc, out = _採用を試す(tmp_path, capsys, v, row)
+    assert rc == 2 and "暫定" in out["error"]["message"]
 
 
 def test_判定者の人数は条件にしない():

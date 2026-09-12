@@ -552,12 +552,17 @@ def build_reason_adoption(row: dict) -> dict:
         if not isinstance(c.get("account"), str) or not c["account"].strip():
             raise SchemaError(f"cases[{i}].account が空です")
 
-    # **手で数えていたことを、道具が数える**（外部の合意ではなく検査にする）。
-    # **型（`form_spec`）の側には昇格条件があったのに、理由の採用には入れて
-    # いなかった**——「確認できた項目から」が、**書けば通る**になっていた。
-    # 2026-09-12 に運用セッションが手で数え直して「まだ 1 件も採用できない」と
-    # 結論した。**その数え方を、ここに置く。**
-    _require_adoption_evidence(row["cases"])
+    # **ここでは構造だけを見る。** 「独立した何件か」は**照合済みの証拠で数える**
+    # ので、`topic_cli._verify_adoption_cases()` の後（外部レビュー R1・2026-09-12）。
+    # **自己申告の `path` の違いを独立数に使っていた**のが前の誤り。
+    if not any(c["kind"] == "positive" for c in row["cases"]):
+        raise SchemaError("cases に正例が 1 件もありません")
+    if not any(c["kind"] == "counter" for c in row["cases"]):
+        raise SchemaError(
+            "採用には**反例が 1 件以上**要ります"
+            "（この語に当てはまりそうだが当てはまらない、と判定した記録）。"
+            "**反例が無いと、語の境界を確かめたことになりません**"
+            "——採用が保証するのは「意味と境界を確かめた」ことなので")
     for key in ("meaning", "distinguished_from", "applied_example"):
         if not isinstance(row.get(key), str) or not row[key].strip():
             raise SchemaError(

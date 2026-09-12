@@ -888,6 +888,65 @@ def _foreign_evidence(refs: list, account: str | None) -> dict:
     return out
 
 
+def _同じ事例か(cases: list, reviews: dict) -> list:
+    """**同じと分かる証拠を先にまとめる**（外部レビュー R1・2026-09-12）。
+
+    前は `(account, path)` の文字列で数えていたので、**同じ検収記録・同じ hash でも
+    `path` の表記を変えるだけで 2 例になった**（`a.md` と `./a.md`、あるいは
+    まったく別名）。**自己申告の違いを独立数に使っていた。**
+
+    **照合済みの証拠でまとめる。** 次のどれかで結ばれていれば同じ事例:
+
+    - 同じ `review_id`
+    - 同じ `(account, 検収記録の draft_sha256)`——**同じ原稿の同じ版**
+    - 同じ `(account, 正規化した path)`——**同じ原稿の別の版**（改訂の前後）
+    - 検収記録が `supersedes` / `recheck_of` で繋がっている——**同じ往復**
+
+    **推移的にまとめる**（a と b が同じ、b と c が同じなら、3 つで 1 件）。
+    **独立と確認できないものは、独立と数えない**方に倒す。
+    """
+    import posixpath
+    親 = list(range(len(cases)))
+
+    def 根(i):
+        while 親[i] != i:
+            親[i] = 親[親[i]]
+            i = 親[i]
+        return i
+
+    def 結ぶ(i, j):
+        a, b = 根(i), 根(j)
+        if a != b:
+            親[b] = a
+
+    鍵: dict = {}
+    for i, case in enumerate(cases):
+        review = reviews[case["review_id"]]
+        path = posixpath.normpath(case["path"]).lstrip("./")
+        for k in (("review", case["review_id"]),
+                   ("版", case["account"], review["draft_sha256"]),
+                   ("原稿", case["account"], path)):
+            if k in 鍵:
+                結ぶ(鍵[k], i)
+            else:
+                鍵[k] = i
+        # **修正の系列**（保存されている線だけを使う。無ければ結ばない）。
+        for link in (review.get("supersedes"), review.get("recheck_of")):
+            if isinstance(link, str) and link:
+                k = ("系列", link)
+                if k in 鍵:
+                    結ぶ(鍵[k], i)
+                else:
+                    鍵[k] = i
+        k = ("系列", case["review_id"])
+        if k in 鍵:
+            結ぶ(鍵[k], i)
+        else:
+            鍵[k] = i
+
+    return [根(i) for i in range(len(cases))]
+
+
 def _verify_adoption_cases(adoption: dict) -> tuple:
     """**採用の根拠を、保存済みの検収記録と突き合わせる**（外部レビュー R2・
     2026-09-12）。
@@ -901,6 +960,7 @@ def _verify_adoption_cases(adoption: dict) -> tuple:
     意味の適合は分けて返す**（外部レビューの指示）。
     """
     verified = []
+    reviews: dict = {}
     for i, case in enumerate(adoption["cases"]):
         where = f"cases[{i}]"
         review = store.get("reviews", case["review_id"])
@@ -934,6 +994,20 @@ def _verify_adoption_cases(adoption: dict) -> tuple:
             "account": review["account"], "result": finding["result"],
             "judged_by": review.get("judged_by"),
         })
+        reviews[case["review_id"]] = review
+
+    # **照合済みの証拠でまとめてから数える**（外部レビュー R1）。
+    群 = _同じ事例か(adoption["cases"], reviews)
+    正例の群 = {群[i] for i, c in enumerate(adoption["cases"])
+                 if c["kind"] == "positive"}
+    if len(正例の群) < 2:
+        return (f"採用には**独立した正例が 2 件以上**要ります"
+                 f"（照合してまとめると {len(正例の群)} 件）。**同じ検収記録・同じ版・"
+                 f"同じ原稿・同じ往復は 1 件です。** 揃わないうちは proposed か "
+                 f"shadow のままにしてください。**この件数は暫定です**"
+                 f"（型の昇格条件からの借用で、理由の語彙に適切かは未決）", [])
+    for v, g in zip(verified, 群):
+        v["case_group"] = g
     return (None, verified)
 
 
