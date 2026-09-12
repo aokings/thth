@@ -1,0 +1,305 @@
+"""まっさらな導入の乾式試験（設計 v1.0.0 §2 の C2）。
+
+**この repo を一時ディレクトリに clone し、偽の `app.env` と偽の台帳だけを置いて、
+`docs/導入_自分のMetaアプリで動かす.md` §7 の順番（doctor → lint → board → dry-run）
+をそのまま通す。**
+
+守ること:
+  - **実物の `~/.config/thth/` を読まない・書かない。** `HOME`・`THTH_APP_DIR`・
+    `THTH_APP_ENV_PATH`・`THTH_ROOT` を全部 `tmp_path` へ向ける。とくに
+    `THTH_APP_DIR` は必須で、これが無いと `thth board` が clone に入っている
+    masaru の 4 本の台帳を読み、その `token` 欄が指す実物の `.token` を開く。
+  - **本物の API を叩かない。** 台帳は `production: false`（`mode: rehearsal`）で、
+    トークンを 1 本も置かない。`doctor` はトークンが無い時点で HTTP に届く前に
+    止まる。
+  - **rc を必ず見る。** 存在しないサブコマンドは argparse が rc=2 で落とすので、
+    文言だけを見ていると「止まった」と「通った」を取り違える——ここでは
+    `トークンが無い` の rc=2 と argparse の rc=2 を区別するために、文言と rc の
+    両方を assert する。
+
+**期待どおりの停止**: トークンを入れる前の `thth doctor` は rc=2 で
+`トークンが無い（thth token set を先に）` と言って止まる。これは失敗ではなく、
+導入の途中経過が正しく見えていることの確認。
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+ACCOUNT = "demo-threads"
+
+QUEUE_MD = """---
+thth: 1
+account: demo-threads
+publish_at: 2026-09-12T08:00:00+09:00
+status: draft
+topic:
+reply_to:
+post_id:
+posted_at:
+---
+# 乾式試験用の下書き
+
+## threads
+
+これは導入の確かめ用の下書きです。実際には出ません。
+"""
+
+
+def _git(*args, cwd):
+    return subprocess.run(
+        ["git", "-c", "user.email=fresh@example.invalid", "-c", "user.name=fresh",
+         "-c", "commit.gpgsign=false", *args],
+        cwd=cwd, capture_output=True, text=True, check=True)
+
+
+def clone_app(dest: str) -> str:
+    """**この worktree を `file://` で clone する。**
+
+    `file://` にするのは hardlink の共有を避けて「他所から持ってきた clone」に
+    近づけるため。clone は **HEAD の commit** を取るので、commit していない変更は
+    入らない（＝配ったものを試している）。
+
+    **clone は 1 回で使い回す**（この module の session fixture）。1 回 1.5 秒ほど
+    かかり、試験の本数だけ繰り返すと全件テストが 2 倍以上に伸びる。使い回して
+    よいのは、ここで叩く subcommand が **app repo を書き換えないから**——app 自身を
+    `release` へ ff-only するのは `thth run` だけで（`thth/cli.py` `cmd_run()`）、
+    この試験は `run` を呼ばない。**呼ぶようになったら clone を共有しないこと。**
+    """
+    app = os.path.join(dest, "app")
+    subprocess.run(["git", "clone", "--quiet", "file://" + REPO_ROOT, app],
+                   capture_output=True, text=True, check=True)
+    assert os.path.exists(os.path.join(app, "thth", "cli.py"))
+    assert os.path.exists(os.path.join(app, "thth", "__main__.py")), (
+        "clone に thth/__main__.py が無い（`python -m thth` が使えない）")
+    return app
+
+
+class FreshInstall:
+    """まっさらな clone と、そこへ被せる環境変数一式。"""
+
+    def __init__(self, base, app, *, write_app_env=True):
+        self.base = str(base)
+        self.app = app
+        self.home = os.path.join(self.base, "home")
+        self.thth_root = os.path.join(self.base, "root")
+        self.app_dir = os.path.join(self.base, "appdir")
+        self.config = os.path.join(self.home, ".config", "thth")
+        self.app_env = os.path.join(self.config, "app.env")
+        self.repo = os.path.join(self.base, "repos", "demo")
+        self.queue = os.path.join(self.repo, "docs", "sns", "queue")
+        self.origin = os.path.join(self.base, "origin.git")
+        self.write_app_env = write_app_env
+
+    # ---- 組み立て -------------------------------------------------------
+    def build(self):
+        for d in (self.home, self.thth_root, os.path.join(self.app_dir, "accounts"),
+                  self.config, os.path.dirname(self.repo)):
+            os.makedirs(d, exist_ok=True)
+        self._make_user_repo()
+        if self.write_app_env:
+            self._write_app_env()
+        self._write_ledger()
+        return self
+
+    def _make_user_repo(self):
+        """利用者 repo。**`origin` を持つ clone でないと `thth throw` が止まる。**"""
+        subprocess.run(["git", "init", "--quiet", "--bare", "-b", "main", self.origin],
+                       capture_output=True, text=True, check=True)
+        subprocess.run(["git", "clone", "--quiet", self.origin, self.repo],
+                       capture_output=True, text=True, check=True)
+        os.makedirs(self.queue, exist_ok=True)
+        with open(os.path.join(self.queue, "2026-09-12-hello.md"), "w",
+                  encoding="utf-8") as f:
+            f.write(QUEUE_MD)
+        _git("add", "docs", cwd=self.repo)
+        _git("commit", "--quiet", "-m", "queue", cwd=self.repo)
+        _git("push", "--quiet", "-u", "origin", "main", cwd=self.repo)
+
+    def _write_app_env(self):
+        """**偽の値。** 本物のアプリ ID・シークレットではない。"""
+        with open(self.app_env, "w", encoding="utf-8") as f:
+            f.write("THREADS_APP_ID=0000000000000000\n")
+            f.write("THREADS_APP_SECRET=dummy-not-a-real-secret\n")
+        os.chmod(self.app_env, 0o600)
+
+    def _write_ledger(self):
+        ledger = {
+            "account": ACCOUNT,
+            "project": "demo",
+            "media": "threads",
+            "handle": "demo",
+            "user_id": "",
+            "repo_dir": self.repo,
+            "queue_dir": "docs/sns/queue",
+            "replies_dir": "data/sns/replies",
+            "quiet_hours": ["22:00", "07:00"],
+            "min_interval_hours": 6,
+            "collect_days": 14,
+            "hashtags": False,
+            "stale_days": 7,
+            "env": os.path.join(self.config, f"{ACCOUNT}.env"),
+            "token": os.path.join(self.config, f"{ACCOUNT}.token"),
+            "ping": "wrapper",
+            "timeout": 300,
+            "dry_run_env": "THTH_DRY_RUN",
+            "production": False,
+            "redirect_uri": "https://example.invalid/",
+        }
+        path = os.path.join(self.app_dir, "accounts", f"{ACCOUNT}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(ledger, f, ensure_ascii=False, indent=2)
+
+    # ---- 実行 -----------------------------------------------------------
+    def env(self):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        env["THTH_ROOT"] = self.thth_root
+        env["THTH_APP_DIR"] = self.app_dir
+        env["THTH_APP_ENV_PATH"] = self.app_env
+        env["PYTHONPATH"] = self.app
+        env.pop("THTH_DRY_RUN", None)
+        env.pop("THTH_RELEASE_REF", None)
+        return env
+
+    def run(self, *argv, stdin=""):
+        """clone した thth を `python -m thth` で呼ぶ（PATH を通していない人が
+        まず打つ形）。"""
+        return subprocess.run([sys.executable, "-m", "thth", *argv],
+                              cwd=self.app, env=self.env(), input=stdin,
+                              capture_output=True, text=True, timeout=180)
+
+
+@pytest.fixture(scope="session")
+def cloned_app(tmp_path_factory):
+    return clone_app(str(tmp_path_factory.mktemp("thth-fresh-clone")))
+
+
+@pytest.fixture
+def fresh(tmp_path, cloned_app):
+    return FreshInstall(tmp_path, cloned_app).build()
+
+
+# --------------------------------------------------------------------------
+# 導入文書 §7 の順番: doctor → lint → board → dry-run
+# --------------------------------------------------------------------------
+
+def test_step_1_doctor_stops_because_there_is_no_token(fresh):
+    """**期待どおりの停止。** トークンを入れる前の doctor は rc=2 で止まる。"""
+    r = fresh.run("doctor", ACCOUNT)
+    assert r.returncode == 2, f"rc={r.returncode}\nout={r.stdout}\nerr={r.stderr}"
+    assert "トークンが無い" in r.stdout, r.stdout
+    # argparse が知らない語で落ちたのではないこと（rc=2 は両方で起きる）。
+    assert "usage:" not in r.stderr, r.stderr
+    assert "invalid choice" not in r.stderr, r.stderr
+    # 読み取りだけの道具が、トークンが無い段で API へ届いていないこと。
+    assert "HTTP" not in r.stdout, r.stdout
+
+
+def test_step_2_lint_passes_on_the_queue(fresh):
+    r = fresh.run("lint", fresh.queue)
+    assert r.returncode == 0, f"rc={r.returncode}\nout={r.stdout}\nerr={r.stderr}"
+    assert "OK" in r.stdout, r.stdout
+
+
+def test_step_2b_lint_refuses_an_empty_directory(fresh):
+    """**「検査できるものが無い」を成功にしない**（loud reject・作法 5）。"""
+    empty = os.path.join(fresh.base, "empty")
+    os.makedirs(empty, exist_ok=True)
+    r = fresh.run("lint", empty)
+    assert r.returncode == 1, f"rc={r.returncode}\nout={r.stdout}\nerr={r.stderr}"
+    assert "対象 0 件" in (r.stdout + r.stderr)
+
+
+def test_step_3_board_shows_the_account_without_a_token(fresh):
+    r = fresh.run("board")
+    assert r.returncode == 0, f"rc={r.returncode}\nout={r.stdout}\nerr={r.stderr}"
+    assert ACCOUNT in r.stdout, r.stdout
+    assert "token=no_token" in r.stdout, r.stdout
+    # **masaru の台帳を読んでいないこと**（THTH_APP_DIR の隔離が効いている）。
+    for other in ("nigamilab-threads", "kopicha-threads", "masaru-threads",
+                  "asmon-kanto-threads"):
+        assert other not in r.stdout, f"{other} が board に出た（隔離が効いていない）"
+
+
+def test_step_4_dry_run_is_rehearsal_and_posts_nothing(fresh):
+    """`production: false` なので `mode: rehearsal`。draft は投げない。"""
+    r = fresh.run("throw", ACCOUNT, "--now")
+    assert r.returncode == 0, f"rc={r.returncode}\nout={r.stdout}\nerr={r.stderr}"
+    assert r.stdout.splitlines()[0] == "mode: rehearsal", r.stdout
+    assert "not_approved" in r.stdout, r.stdout
+
+
+# --------------------------------------------------------------------------
+# 導入文書 §3・§5: app.env を読むのは `thth auth` だけ
+# --------------------------------------------------------------------------
+
+def test_auth_reads_app_env_and_stops_at_the_code_prompt(fresh):
+    """**偽の `app.env` が実際に読まれていること**を見る（変異の的）。
+
+    `--code ""` で非対話にしてあるので HTTP には届かない。app.env → redirect_uri
+    → 認可 URL の表示まで進み、code が空なので rc=2 で止まる。
+    """
+    r = fresh.run("auth", ACCOUNT, "--code", "")
+    assert r.returncode == 2, f"rc={r.returncode}\nout={r.stdout}\nerr={r.stderr}"
+    assert "app.env が無い" not in r.stdout, r.stdout
+    assert "/oauth/authorize?" in r.stdout, r.stdout
+    assert "code が読み取れませんでした" in r.stdout, r.stdout
+    # 偽の app_id が認可 URL に載っている＝この app.env を読んだ、の証拠。
+    assert "client_id=0000000000000000" in r.stdout, r.stdout
+
+
+def test_auth_stops_loudly_when_app_env_is_missing(tmp_path, cloned_app):
+    """**app.env を置かないと `thth auth` は止まる。**
+
+    上のテストが本当に app.env を見ているかの裏取り（同じ組み立てで
+    `write_app_env=False` にするだけ）。
+    """
+    fresh = FreshInstall(tmp_path, cloned_app, write_app_env=False).build()
+    assert not os.path.exists(fresh.app_env)
+    r = fresh.run("auth", ACCOUNT, "--code", "")
+    assert r.returncode == 2, f"rc={r.returncode}\nout={r.stdout}\nerr={r.stderr}"
+    assert "app.env が無い" in r.stdout, r.stdout
+    assert "/oauth/authorize?" not in r.stdout, r.stdout
+
+
+# --------------------------------------------------------------------------
+# 導入文書 §6: timer は生成物を使う
+# --------------------------------------------------------------------------
+
+def test_systemd_unit_is_generated_from_the_ledger(fresh):
+    r = fresh.run("systemd", ACCOUNT)
+    assert r.returncode == 0, f"rc={r.returncode}\nout={r.stdout}\nerr={r.stderr}"
+    assert f"Unit=thth@{ACCOUNT}.service" in r.stdout, r.stdout
+    assert "OnCalendar=*:" in r.stdout and "/10" in r.stdout, r.stdout
+    assert "Persistent=true" in r.stdout, r.stdout
+
+
+# --------------------------------------------------------------------------
+# 導入文書 §8: 配布の枝
+# --------------------------------------------------------------------------
+
+def test_board_does_not_claim_to_be_up_to_date_without_a_release_check(fresh):
+    """clone した直後は `release` を一度も取りに行っていない。**「追いついて
+    います」と言わない**（設計 §3.2.1）。"""
+    r = fresh.run("board")
+    assert r.returncode == 0, r.stderr
+    assert "確認できません" in r.stdout, r.stdout
+    assert "追いついています" not in r.stdout, r.stdout
+
+
+# --------------------------------------------------------------------------
+# 存在しないコマンドで「通った」ことにならない
+# --------------------------------------------------------------------------
+
+def test_a_command_that_does_not_exist_is_not_mistaken_for_a_stop(fresh):
+    r = fresh.run("doctorr", ACCOUNT)
+    assert r.returncode == 2
+    assert "invalid choice" in r.stderr, r.stderr
+    assert "トークンが無い" not in r.stdout
