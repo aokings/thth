@@ -364,3 +364,71 @@ def test_P2_4_正しい形の打ち消しはこれまでどおり効く(thth_roo
     assert topics_mod.notes("お茶") == []
     assert topics_mod.broken_rows() == 0
     assert [r["retracted"] is not None for r in topics_mod.history("お茶")] == [True]
+
+
+# --- P2-5 -------------------------------------------------------------------
+
+def test_P2_5_accountを持たない観測者が2人いても片方が消えない(thth_root, isolated_account):
+    """監査 1 の `legacynotes3.py` と同じ形（2026-09-10 までの 46 件は account 無し）。
+
+    `_legacy_notes()` は `観測[0]` で 1 語 1 行に潰していたので、**`thth topics
+    suggest` を読む LLM には片方の観測しか届かなかった。** `--advise --json` は
+    直っていたのに、**同じ棚を読む別の口が取り残されていた。**
+    """
+    import datetime
+
+    from thth import jst
+    from thth import topic_cli as topic_cli_mod
+
+    def at(d):
+        return datetime.datetime(2026, 9, d, 10, 0, 0, tzinfo=jst.JST)
+
+    topics_mod.record("精製", verdict="alive", audience="【統括】茶の精製の話が中心だった",
+                       by="統括", status="ok", now=at(1))
+    topics_mod.record("精製", verdict="mismatch", audience="【研究者】レアアース・重加工",
+                       by="研究者", status="ok", now=at(10))
+
+    行 = [r for r in topic_cli_mod._legacy_notes(isolated_account["name"])
+          if r["topic"] == "精製"][0]
+    blob = json.dumps(行, ensure_ascii=False)
+    assert "【統括】" in blob, f"**古いほうの観測が消えた**:\n{blob}"
+    assert "【研究者】" in blob, f"**新しいほうの観測が消えた**:\n{blob}"
+
+    # `--advise --json` と同じ形・新しい順・最大 5 件。
+    assert [o["by"] for o in 行["observations"]] == ["研究者", "統括"], 行["observations"]
+    assert 行["observations_more"] == 0
+    assert set(行["observations"][0]) == {"note_id", "audience", "account", "by",
+                                           "checked_at", "status", "kind"}
+    # **代表 1 件であることを鍵名で言う**（`observation` は残す）。
+    assert 行["observation"]["audience_representative"] == 行["observation"]["audience"]
+    assert 行["observation"]["audience"] == "【研究者】レアアース・重加工"
+
+
+def test_P2_5_observationsは5件までで残りは件数で言う(thth_root, isolated_account):
+    import datetime
+
+    from thth import jst
+    from thth import topic_cli as topic_cli_mod
+
+    for i in range(1, 8):
+        topics_mod.record("精製", verdict="alive", audience=f"観測{i}", by=f"人{i}",
+                           now=datetime.datetime(2026, 9, i, 10, 0, 0, tzinfo=jst.JST))
+    行 = [r for r in topic_cli_mod._legacy_notes(isolated_account["name"])
+          if r["topic"] == "精製"][0]
+    assert len(行["observations"]) == 5
+    assert 行["observations_more"] == 2, "**出さなかった件数を隠した**"
+
+
+def test_P2_5_構造化棚のschemaは変えていない(thth_root, isolated_account):
+    """**足すだけ。** 既存の鍵は 1 つも消していない（設計 §6）。"""
+    from thth import topic_cli as topic_cli_mod
+
+    topics_mod.record("精製", verdict="alive", audience="茶の精製", by="統括")
+    行 = [r for r in topic_cli_mod._legacy_notes(isolated_account["name"])
+          if r["topic"] == "精製"][0]
+    for 鍵 in ("topic", "observation_id", "observation", "own_judgment",
+               "legacy_judgment", "other_judgments", "notice"):
+        assert 鍵 in 行, f"既存の鍵 {鍵} が消えた"
+    for 鍵 in ("observation_id", "kind", "audience", "status", "checked_at",
+               "recorded_by", "account"):
+        assert 鍵 in 行["observation"], f"observation の既存の鍵 {鍵} が消えた"

@@ -416,10 +416,24 @@ def _legacy_notes(account: str) -> list:
 
     out = []
     for topic, 観測 in sorted(topics_mod.observation().items()):
-        # **観測者ごとに並ぶようになった**（設計 v1.0.0 §1 規則 1）。ここは
-        # 1 語 1 行の射影なので、**いちばん新しい観測**を代表に使う。全観測者は
-        # `thth topics history <語>`。
+        # **観測者ごとに並ぶようになった**（設計 v1.0.0 §1 規則 1）のに、ここは
+        # `観測[0]` で 1 語 1 行に潰していた（独立監査 1・P2-5）。**account を
+        # 持たない観測者が 2 人以上いると、古いほうがこの payload から完全に
+        # 消える**——`精製` を統括が「茶の精製」、研究者が「レアアース」と書いた
+        # とき、`thth topics suggest` を読む LLM には片方しか届かない。
+        # `--advise --json` は直っていたのに、**同じ棚を読む別の口が取り残されて
+        # いた。**
+        #
+        # **鍵を変えずに足す**（構造化棚の schema は変えない・設計 §6）。
+        # `observation` は残し、`observations` を並べる。
         row = 観測[0]
+        並び = [{"note_id": o.get("note_id"),
+                  "audience": o.get("audience") or None,
+                  "account": o.get("account"),
+                  "by": o.get("by"),
+                  "checked_at": o.get("checked_at"),
+                  "status": o.get("status"),
+                  "kind": o.get("kind")} for o in 観測[:5]]
         own = topics_mod.judgment(topic, account) if account else {}
         legacy = topics_mod.legacy_note(topic)
         others = topics_mod.other_accounts(topic, account=account)
@@ -435,15 +449,26 @@ def _legacy_notes(account: str) -> list:
                 "observation_id": by_topic.get(topic),
                 "kind": row.get("kind"),
                 "audience": row.get("audience"),
+                # **これが「代表 1 件」であることを鍵名で言う**（独立監査 1・
+                # P2-5）。`audience` は互換のため残すが、同じ値をこの名前でも
+                # 出す——**名前が「1 語 1 観測」を含意していたのが穴だった。**
+                # 全観測者は `observations`（下）と `thth topics history <語>`。
+                "audience_representative": row.get("audience"),
                 "status": row.get("status"),
                 "checked_at": row.get("checked_at"),
                 "recorded_by": row.get("by"),
                 "account": row.get("account"),
             },
+            # **観測者ごとの最新を、新しい順に最大 5 件**（`--advise --json` と
+            # 同じ形・設計 §1 規則 3）。出さなかった分は件数で言う。
+            "observations": 並び,
+            "observations_more": max(0, len(観測) - len(並び)),
             "own_judgment": _judgment_view(own) if own else None,
             "legacy_judgment": _judgment_view(legacy) if legacy else None,
             "other_judgments": [_judgment_view(r) for r in others],
-            "notice": ("own_judgment だけがこの account の判断です。"
+            "notice": ("observations が全観測者ぶんです"
+                        "（observation は代表 1 件）。"
+                        "own_judgment だけがこの account の判断です。"
                         "legacy_judgment と other_judgments は参考で、"
                         "**自分の判断として採用しないでください。**"),
         })
