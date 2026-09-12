@@ -167,8 +167,14 @@ def record(topic: str, *, verdict: str, audience: str = "", by: str,
     return row
 
 
-def _append(row: dict) -> dict:
-    """1 行足す。**前の行は消さない**（観測も打ち消しも同じ口を通る）。"""
+def _append(row: dict, *, check=None) -> dict:
+    """1 行足す。**前の行は消さない**（観測も打ち消しも同じ口を通る）。
+
+    `check` を渡すと、**鍵の中で読み直した台帳**を引数に呼ぶ。raise すれば書かない
+    （独立監査 1・P3-9）。`retract_note()` の「すでに打ち消されています」の検査は
+    鍵の外で走っていたので、**6 本同時に同じ `note_id` を打ち消すと打ち消し行が
+    複数本入り、全部が「ok」と報告していた。** 検査と書き込みの間に他人を入れない。
+    """
     p = path()
     os.makedirs(os.path.dirname(p), exist_ok=True)
     # **読んで・足して・全部書き直す**ので、その間に別の記録が入ると**消える**
@@ -201,6 +207,10 @@ def _append(row: dict) -> dict:
         # をここで捕まえない——捕まえて空の台帳を作れば、**壊れた 3 バイトの
         # 代償に既存の全行が消える。** 呼んだ側に投げ返して、人に直させる。
         data = load()
+        if check is not None:
+            # **鍵の中で読み直した中身で検査する**（独立監査 1・P3-9）。
+            # raise すれば下の書き込みへ進まない。
+            check(data)
         data["checks"].append(row)
         tmp = p + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -344,17 +354,27 @@ def retract_note(note_id: str, *, reason: str, by: str, now=None) -> dict:
         raise ValueError("--reason を付けてください（なぜ打ち消すか）")
     if not (by or "").strip():
         raise ValueError("--by を付けてください（誰が打ち消したか）")
-    rows, taken, _broken = _read()
-    if not any(r["note_id"] == note_id for r in rows):
-        # **「無い」と「もう下げてある」を混ぜない。**
-        raise ValueError(f"その記録は棚にありません: {note_id}")
-    if note_id in taken:
-        前 = taken[note_id]
-        raise ValueError(f"その記録はすでに打ち消されています"
-                          f"（{(前.get('checked_at') or '')[:10]} {前.get('by')}）")
+    def _鍵の中で確かめる(data: dict) -> None:
+        """**検査と書き込みの間に他人を入れない**（独立監査 1・P3-9）。
+
+        以前はこの検査が鍵の外にあった。読んで「まだ打ち消されていない」と
+        判ってから鍵を取りに行くので、**6 本同時に同じ `note_id` を打ち消すと
+        6 本とも検査を通り、打ち消し行が 6 本入って全部が「ok」と報告していた。**
+        履歴が読めなくなるうえ、**打ち消しは消せない**（打ち消しを打ち消す口は
+        無い）。`_append()` に渡して、鍵の中で読み直した中身で確かめる。
+        """
+        rows, taken, _broken = _split(data["checks"])
+        if not any(r["note_id"] == note_id for r in rows):
+            # **「無い」と「もう下げてある」を混ぜない。**
+            raise ValueError(f"その記録は棚にありません: {note_id}")
+        if note_id in taken:
+            前 = taken[note_id]
+            raise ValueError(f"その記録はすでに打ち消されています"
+                              f"（{str(前.get('checked_at') or '')[:10]} {前.get('by')}）")
+
     now = now if now is not None else jst.now_jst()
     return _append({"retracts": note_id, "reason": reason, "by": by,
-                    "checked_at": jst.iso(now)})
+                     "checked_at": jst.iso(now)}, check=_鍵の中で確かめる)
 
 
 def observation(topic: str | None = None):

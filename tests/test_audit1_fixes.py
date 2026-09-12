@@ -533,3 +533,59 @@ def test_P3_8_空のnoteはrc2で語が空ですと言う(語, thth_root, isolat
     assert r.returncode == 2, f"rc={r.returncode}\n{r.stdout}{r.stderr}"
     assert "語が空です" in r.stderr, r.stderr
     assert topics_mod.notes() == [], "**空白だけの語が台帳に入った**"
+
+
+# --- P3-9 -------------------------------------------------------------------
+
+def test_P3_9_打ち消しの検査はロックの中で読み直す(thth_root, monkeypatch):
+    """**実プロセスを 6 本走らせなくても、契約は 1 本で固定できる。**
+
+    以前は「すでに打ち消されています」の検査が鍵の外にあった。読んで「まだ
+    打ち消されていない」と判ってから鍵を取りに行くので、**同時に打つと全部が
+    検査を通り、打ち消し行が複数本入って全部が「ok」と報告していた。**
+
+    ここでは **鍵を取った瞬間に別の実行が先に打ち消しを書いた**を決定的に作る。
+    検査が鍵の外にあれば、その書き込みは見えないまま通ってしまう。鍵の中で
+    読み直していれば気づく。
+    """
+    from thth import lock as lock_mod
+
+    row = topics_mod.record("お茶", verdict="alive", by="統括")
+    note_id = row["note_id"]
+
+    本物の取得 = lock_mod.AccountLock.acquire
+    済み = {"割り込んだ": False}
+
+    def 取得したら割り込む(self):
+        本物の取得(self)
+        if 済み["割り込んだ"]:
+            return
+        済み["割り込んだ"] = True
+        先 = topics_mod.load()
+        先["checks"].append({"retracts": note_id, "reason": "先に気づいた",
+                              "by": "運用セッション",
+                              "checked_at": "2026-09-12T09:00:00+09:00"})
+        with open(topics_mod.path(), "w", encoding="utf-8") as f:
+            json.dump(先, f, ensure_ascii=False, indent=2)
+
+    monkeypatch.setattr(lock_mod.AccountLock, "acquire", 取得したら割り込む)
+    with pytest.raises(ValueError, match="すでに打ち消されています"):
+        topics_mod.retract_note(note_id, reason="後から", by="開発セッション")
+    # `monkeypatch.undo()` は呼ばない——**同じ monkeypatch が `thth_root` の
+    # `THTH_ROOT` も張っている**ので、ここで戻すと以降の `topics_mod.load()` が
+    # **実物の `~/.config/thth/` を読みに行く。** fixture の後片付けに任せる。
+
+    assert 済み["割り込んだ"], "割り込みが起きていない（テストが空回りしている）"
+    行 = [r for r in topics_mod.load()["checks"] if r.get("retracts") == note_id]
+    assert len(行) == 1, f"**打ち消し行が {len(行)} 本入った**（1 本であってほしい）"
+    assert 行[0]["by"] == "運用セッション"
+
+
+def test_P3_9_ふつうの打ち消しは1回で通る(thth_root):
+    """**締めすぎない。** 競合が無ければこれまでどおり 1 回で通る。"""
+    row = topics_mod.record("お茶", verdict="alive", by="統括")
+    topics_mod.retract_note(row["note_id"], reason="誤り", by="統括")
+    with pytest.raises(ValueError, match="すでに打ち消されています"):
+        topics_mod.retract_note(row["note_id"], reason="二度目", by="統括")
+    行 = [r for r in topics_mod.load()["checks"] if r.get("retracts")]
+    assert len(行) == 1
