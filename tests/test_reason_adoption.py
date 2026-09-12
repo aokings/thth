@@ -251,3 +251,54 @@ def test_いまの材料では1件も採用できない():
         with pytest.raises(models.SchemaError):
             models.build_reason_adoption(
                 _採用("sha256:" + "b" * 64, reason_id=reason_id, cases=cases))
+
+def test_accepted_が保証することを記録に書く():
+    """**条件より先に、何を保証する状態かがある**（masaru 指示 2026-09-12）。"""
+    a = models.build_reason_adoption(_採用("sha256:" + "b" * 64))
+    assert "別の人が、同じ語を、同じ意味で使える" in a["guarantees"]
+    assert "反応率を改善すること" in a["guarantees"]
+
+
+def test_件数のしきい値は暫定だと明示する():
+    """**型の昇格条件の流用を、決定済みの条件として扱わない**（masaru 指示）。"""
+    正例1件 = [
+        {"kind": "positive", "path": "a.md", "sha256": "a" * 64, "account": "k"},
+        {"kind": "counter", "path": "c.md", "sha256": "c" * 64, "account": "k"},
+    ]
+    with pytest.raises(models.SchemaError) as e:
+        models.build_reason_adoption(_採用("sha256:" + "b" * 64, cases=正例1件))
+    assert "暫定" in str(e.value)
+
+
+def test_判定者の人数は条件にしない():
+    """**「3 人目必須」を決定済みの条件として扱わない**（masaru 指示）。
+
+    同じ 1 人が判定した材料でも、**件数と境界の条件を満たせば通る。**
+    人数を条件にするかどうかは、まだ決まっていない。
+    """
+    同じ人 = [
+        {"kind": "positive", "path": "a.md", "sha256": "a" * 64,
+         "account": "k", "judged_by": "同じ人"},
+        {"kind": "positive", "path": "b.md", "sha256": "b" * 64,
+         "account": "k", "judged_by": "同じ人"},
+        {"kind": "counter", "path": "c.md", "sha256": "c" * 64,
+         "account": "k", "judged_by": "同じ人"},
+    ]
+    a = models.build_reason_adoption(_採用("sha256:" + "b" * 64, cases=同じ人))
+    assert a["state"] == "accepted"
+
+
+def test_採用できなくても投稿と記録は妨げない(thth_root, tmp_path, capsys):
+    """**採用が 0 件でも、proposed のまま使える**（masaru 指示 2026-09-12）。
+
+    語彙の登録も、検収の記録も、採用の可否に触らない。
+    """
+    v = _語彙(state="proposed")
+    saved, _ = store.put("vocabularies", v, id_key="vocabulary_id")
+    # 採用は 1 件も無い。
+    assert topic_cli.dispatch(["topics", "adoptions", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["count"] == 0
+    # それでも語彙は読めるし、使える状態のまま。
+    読めた = store.get("vocabularies", saved["vocabulary_id"])
+    assert {e["state"] for e in 読めた["entries"]} == {"proposed"}

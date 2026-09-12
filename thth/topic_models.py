@@ -435,18 +435,52 @@ ADOPTION_KEYS = ("vocabulary_id", "reason_id", "cases", "meaning",
                   "distinguished_from", "applied_example", "decided_by",
                   "decided_at", "meaning_version")
 
-# **`accepted` が意味しないこと。** 記録に毎回書く——読む人が入れ替わるので、
+# **`accepted` は何を保証する状態か**（masaru 指示 2026-09-12）。
+#
+# **条件を先に決めない。** まず「採用済みとは何が言える状態か」を決め、
+# **条件はそこから導く。**
+#
+# **保証すること**——**別の人が、同じ語を、同じ意味で使える。**
+#   - その語が何を指すかが書いてある（`meaning`）
+#   - 隣の語とどう違うかが書いてある（`distinguished_from`）
+#   - 実際の原稿で当てた例がある（`cases` の正例）
+#   - **当てはまらなかった例もある**（`cases` の反例）——境界が引けていないと、
+#     次の人は違う意味で使う
+#
+# **保証しないこと**
+#   - **反応率を改善すること。** 効果は測っていない（masaru 裁定 2 番）
+#   - **すべての原稿に当てはまること。** 適用範囲は語彙側の `scope`
+#   - **将来も同じ意味であること。** 意味が変われば `meaning_version` を上げる
+ACCEPTED_GUARANTEE = (
+    "**別の人が、同じ語を、同じ意味で使える**という状態です。"
+    "**反応率を改善すること・すべての原稿に当てはまること・将来も同じ意味である"
+    "ことは保証しません。**")
+
+# 記録に毎回書く——読む人が入れ替わるので、
 # 「採用済み＝効果が実証済み」と読まれる余地を残さない。
 ADOPTION_DISCLAIMER = ("**編集に使う語彙として採用した、という意味です。"
                         "反応率を改善すると実証された、という意味ではありません。**")
 
 
 def _require_adoption_evidence(cases: list) -> None:
-    """採用に足る材料か（`_require_promotion` と同じ数え方・Codex §8）。
+    """採用に足る材料か。
 
-    **独立した正例 2 件以上**（`sha256` が違う＝**同じ原稿を 2 回数えない**）と
-    **反例 1 件以上**。反例は「この語に当てはまりそうだが当てはまらない」と判定した
-    記録——**それが無いと、語の境界を確かめたことにならない。**
+    **まず `ACCEPTED_GUARANTEE` がある。** 「別の人が、同じ語を、同じ意味で
+    使える」——そこから、材料として**当てはまった例**と**当てはまらなかった例**が
+    要る、が出てくる。**境界が引けていないと、次の人は違う意味で使う。**
+
+    **件数のしきい値（正例 2・反例 1）は暫定です**（masaru 指示 2026-09-12:
+    **型の昇格条件の流用を、決定済みの条件として扱わない**）。いまは型
+    （`form_spec`）の `_require_promotion` と同じ数にしてあるが、**理由の語彙に
+    その数が適切かは決まっていない。** 決まるまでの置き場所であって、根拠では
+    ない。**変えるときは、しきい値だけでなく `ACCEPTED_GUARANTEE` から
+    引き直すこと。**
+
+    **「同じ原稿を 2 回数えない」は、しきい値とは別の話。** 同じ原稿の同じ段を
+    2 回記録しても、**別の事例にはならない**——ここは数の問題ではない。
+
+    **判定者の人数は条件にしていません**（masaru 指示: 「3 人目必須」を決定済みの
+    条件として扱わない）。運用セッションが材料として挙げたが、**決まっていない。**
     """
     positives = [c for c in cases if c["kind"] == "positive"]
     counters = [c for c in cases if c["kind"] == "counter"]
@@ -455,12 +489,14 @@ def _require_adoption_evidence(cases: list) -> None:
         raise SchemaError(
             f"採用には**独立した正例が 2 件以上**要ります（いま {len(independent)} 件）。"
             f"**同じ原稿を 2 回数えません。** 揃わないうちは proposed か shadow の"
-            f"ままにしてください")
+            f"ままにしてください。**この件数は暫定です**（型の昇格条件からの借用で、"
+            f"理由の語彙に適切かは未決）")
     if not counters:
         raise SchemaError(
             "採用には**反例が 1 件以上**要ります"
             "（この語に当てはまりそうだが当てはまらない、と判定した記録）。"
-            "**反例が無いと、語の境界を確かめたことになりません**")
+            "**反例が無いと、語の境界を確かめたことになりません**"
+            "——採用が保証するのは「別の人が同じ意味で使える」ことなので")
 
 
 def build_reason_adoption(row: dict) -> dict:
@@ -516,6 +552,7 @@ def build_reason_adoption(row: dict) -> dict:
 
     out = {k: row[k] for k in ADOPTION_KEYS}
     out["state"] = "accepted"
+    out["guarantees"] = ACCEPTED_GUARANTEE
     out["means"] = ADOPTION_DISCLAIMER
     out["schema_version"] = SCHEMA_VERSION
     out["adoption_id"] = content_id(out, exclude=("adoption_id",))
@@ -537,6 +574,7 @@ ADOPTION_SHAPE = {
         "applied_example": "実際にどう当てたか",
         "decided_by": "誰が決めたか",
         "decided_at": "いつ（ISO8601・+09:00）",
+        "**accepted が保証すること**": ACCEPTED_GUARANTEE,
         "**注意**": ADOPTION_DISCLAIMER,
     }
 }
