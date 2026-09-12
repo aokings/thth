@@ -888,6 +888,55 @@ def _foreign_evidence(refs: list, account: str | None) -> dict:
     return out
 
 
+def _verify_adoption_cases(adoption: dict) -> tuple:
+    """**採用の根拠を、保存済みの検収記録と突き合わせる**（外部レビュー R2・
+    2026-09-12）。
+
+    直す前の口は「**台帳を道具が数えた**」のではなく「**入力された自己申告を
+    数えた**」ものだった——存在しない原稿名と適当な 64 桁で採用できた。
+    悪意の話だけでなく、**パスの誤記・別版の転記・未評価を正例として転記した
+    場合にも気づけない**構造だった。
+
+    戻り値は `(問題, 機械が確かめたこと)`。**機械が確かめたことと、人が判断した
+    意味の適合は分けて返す**（外部レビューの指示）。
+    """
+    verified = []
+    for i, case in enumerate(adoption["cases"]):
+        where = f"cases[{i}]"
+        review = store.get("reviews", case["review_id"])
+        if review is None:
+            return (f"{where}: 検収記録が見つかりません（{case['review_id']}）", [])
+        if review["account"] != case["account"]:
+            return (f"{where}: account が検収記録と違います"
+                     f"（記録は {review['account']}）", [])
+        if review["draft_sha256"] != case["sha256"]:
+            return (f"{where}: sha256 が検収記録と違います"
+                     f"（**別の版の記録を根拠にしています**）", [])
+        if review["vocabulary_id"] != adoption["vocabulary_id"]:
+            return (f"{where}: 別の語彙に対する検収記録です", [])
+        finding = next((f for f in review["findings"]
+                        if f["reason_id"] == adoption["reason_id"]), None)
+        if finding is None:
+            return (f"{where}: その検収記録に `{adoption['reason_id']}` の判定が"
+                     f"ありません", [])
+        # **判定の中身と、正例・反例の別を突き合わせる。**
+        # `not_evaluated` は**どちらにもならない**（§7: 未評価と問題なしは別）。
+        if case["kind"] == "positive" and finding["result"] not in ("problem", "suspected"):
+            return (f"{where}: 正例として挙げていますが、判定は "
+                     f"`{finding['result']}` です"
+                     f"（**未評価は正例になりません**）", [])
+        if case["kind"] == "counter" and finding["result"] != "no_problem":
+            return (f"{where}: 反例として挙げていますが、判定は "
+                     f"`{finding['result']}` です"
+                     f"（反例は「当てはまらないと判定した」記録です）", [])
+        verified.append({
+            "review_id": case["review_id"], "kind": case["kind"],
+            "account": review["account"], "result": finding["result"],
+            "judged_by": review.get("judged_by"),
+        })
+    return (None, verified)
+
+
 def cmd_adopt_reason(args) -> int:
     """修正理由を**1 件だけ**採用する（masaru 裁定 2026-09-12・2 番）。
 
@@ -920,12 +969,22 @@ def cmd_adopt_reason(args) -> int:
                      f"意味の版が違います（語彙は {entry['meaning_version']}、"
                      f"採用の記録は {adoption['meaning_version']}）")
 
+    問題, verified = _verify_adoption_cases(adoption)
+    if 問題:
+        return _fail("evidence_not_verified", 問題)
+
     saved, wrote = store.put("reason_adoptions", adoption, id_key="adoption_id")
     _emit({"ok": True, "adoption_id": saved["adoption_id"], "stored": wrote,
            "vocabulary_id": saved["vocabulary_id"],
            "reason_id": saved["reason_id"],
            "meaning_version": saved["meaning_version"],
-           "cases": [f"{c['kind']}: {c['path']}" for c in saved["cases"]],
+           # **機械が確かめたことと、人が判断したことを分ける**（外部レビュー）。
+           "machine_verified": verified,
+           "self_reported": {"path": [c["path"] for c in saved["cases"]],
+                              "meaning": saved["meaning"],
+                              "distinguished_from": saved["distinguished_from"],
+                              "applied_example": saved["applied_example"]},
+           "guarantees": saved["guarantees"],
            "means": saved["means"],
            "warnings": [models.ADOPTION_DISCLAIMER],
            "notice": REVIEW_NOTICE})

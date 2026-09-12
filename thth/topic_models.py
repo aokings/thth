@@ -451,10 +451,15 @@ ADOPTION_KEYS = ("vocabulary_id", "reason_id", "cases", "meaning",
 #   - **反応率を改善すること。** 効果は測っていない（masaru 裁定 2 番）
 #   - **すべての原稿に当てはまること。** 適用範囲は語彙側の `scope`
 #   - **将来も同じ意味であること。** 意味が変われば `meaning_version` を上げる
+# **検査していないことを「保証する」と書かない**（外部レビュー 2026-09-12）。
+# 「別の人が同じ意味で使える」は**こちらの検査では確かめていない**——書けるのは
+# **判断の記録があること**まで。
 ACCEPTED_GUARANTEE = (
-    "**別の人が、同じ語を、同じ意味で使える**という状態です。"
-    "**反応率を改善すること・すべての原稿に当てはまること・将来も同じ意味である"
-    "ことは保証しません。**")
+    "**意味と境界を確かめたうえで、編集に使う語彙として採用した、という"
+    "『判断の記録』です。** 誰が・どの記録を根拠に判断したかは `decided_by` と "
+    "`cases` に残ります。**別の人が同じ意味で使えること・反応率を改善すること・"
+    "すべての原稿に当てはまること・将来も同じ意味であることは、"
+    "この記録では確かめていません。**")
 
 # 記録に毎回書く——読む人が入れ替わるので、
 # 「採用済み＝効果が実証済み」と読まれる余地を残さない。
@@ -484,11 +489,18 @@ def _require_adoption_evidence(cases: list) -> None:
     """
     positives = [c for c in cases if c["kind"] == "positive"]
     counters = [c for c in cases if c["kind"] == "counter"]
-    independent = {c["sha256"] for c in positives}
+    # **内容の hash は「版」であって「原稿」ではない**（外部レビュー R1・
+    # 2026-09-12）。同じ原稿を直す前と後では hash が変わるので、**修正の往復が
+    # 独立した 2 例として数えられていた。** 原稿の同一性で数える。
+    #
+    # **`path` は自己申告**なので、これで数えられるのは「**同じと分かるものを
+    # 同じと数える**」までで、「**違うと確かめた**」ではない。**参照できない
+    # ものは独立と確定しない**という向きに倒してある。
+    independent = {(c["account"], c["path"]) for c in positives}
     if len(independent) < 2:
         raise SchemaError(
             f"採用には**独立した正例が 2 件以上**要ります（いま {len(independent)} 件）。"
-            f"**同じ原稿を 2 回数えません。** 揃わないうちは proposed か shadow の"
+            f"**同じ原稿は、直す前と後でも 1 件です。** 揃わないうちは proposed か shadow の"
             f"ままにしてください。**この件数は暫定です**（型の昇格条件からの借用で、"
             f"理由の語彙に適切かは未決）")
     if not counters:
@@ -523,6 +535,14 @@ def build_reason_adoption(row: dict) -> dict:
         if not isinstance(c, dict):
             raise SchemaError(f"cases[{i}] は object")
         _require_choice(c.get("kind"), CASE_KINDS, f"cases[{i}] の kind")
+        # **自己申告だけで通さない**（外部レビュー R2・2026-09-12）。
+        # 存在しない原稿名と適当な 64 桁で採用できていた。**保存済みの検収記録に
+        # 結び付ける**——実在と対応は `topic_cli` が台帳と突き合わせる。
+        if not isinstance(c.get("review_id"), str) or not _REF_ID_RE.fullmatch(
+                c.get("review_id") or ""):
+            raise SchemaError(
+                f"cases[{i}].review_id が要ります（保存済みの検収記録の ID）。"
+                f"**自己申告の原稿名と hash だけでは採用できません**")
         for key in ("path", "sha256"):
             if not isinstance(c.get(key), str) or not c[key].strip():
                 raise SchemaError(f"cases[{i}].{key} が空です"
@@ -565,9 +585,12 @@ ADOPTION_SHAPE = {
         "reason_id": "**1 件だけ**。配列は受け取りません（一括昇格はしません）",
         "meaning_version": "採用する意味の版（整数・1 以上）",
         "cases": [{"kind": list(CASE_KINDS),
-                    "path": "実際に確かめた原稿（queue の相対パス）",
-                    "sha256": "そのときの内容の sha256（64 桁）",
-                    "account": "その原稿の account"}],
+                    "review_id": "**保存済みの検収記録の ID**（sha256:…）。"
+                                  "**自己申告だけでは採用できません**",
+                    "path": "その原稿（queue の相対パス）。**独立性はここで数えます"
+                             "——同じ原稿は直す前と後でも 1 件**",
+                    "sha256": "そのときの内容の sha256（64 桁・検収記録と一致すること）",
+                    "account": "その原稿の account（検収記録と一致すること）"}],
         "**採用の条件**": "独立した正例 2 件以上（同じ原稿は 2 回数えない）＋ 反例 1 件以上",
         "meaning": "その語が何を指すか（**原稿で確かめた内容**）",
         "distinguished_from": "隣の語とどう使い分けたか",
