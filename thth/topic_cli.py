@@ -415,7 +415,11 @@ def _legacy_notes(account: str) -> list:
         by_topic[row["topic"]] = row["observation_id"]   # 後の行が勝つ（時系列）
 
     out = []
-    for topic, row in sorted(topics_mod.observation().items()):
+    for topic, 観測 in sorted(topics_mod.observation().items()):
+        # **観測者ごとに並ぶようになった**（設計 v1.0.0 §1 規則 1）。ここは
+        # 1 語 1 行の射影なので、**いちばん新しい観測**を代表に使う。全観測者は
+        # `thth topics history <語>`。
+        row = 観測[0]
         own = topics_mod.judgment(topic, account) if account else {}
         legacy = topics_mod.legacy_note(topic)
         others = topics_mod.other_accounts(topic, account=account)

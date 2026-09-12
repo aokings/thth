@@ -58,3 +58,50 @@ def test_引継ぎ書に選べる値が全部出る(値):
     """**文書は手書きなので、ここで見る。** 型を足したら、この文書も直す。"""
     本文 = 文書.read_text(encoding="utf-8")
     assert 値 in 本文, f"**選べるのに引継ぎ書に出ていない**: {値}"
+
+
+# --- `--json` の契約が文書と合っているか（設計 v1.0.0 §1 受け入れ T-A4） ------
+#
+# **鍵の名前を変えたのは、古い読み手に旧意味で読ませないため**（規約 5）。
+# **文書がその名前を書いていなければ、読む人は旧契約のまま使う。**
+
+使い方 = pathlib.Path(__file__).parent.parent / "docs" / \
+    "使い方_プロジェクトのセッション向け_2026-09-09.md"
+
+新しい鍵 = ("observations", "observations_more", "note_id",
+             "thth topics history", "thth topics retract-note")
+旧い鍵 = ("audience_account", "audience_by")
+
+
+@pytest.mark.parametrize("紙", [文書, 使い方])
+@pytest.mark.parametrize("鍵", 新しい鍵)
+def test_新しい鍵が両方の文書に出る(紙, 鍵):
+    本文 = 紙.read_text(encoding="utf-8")
+    assert 鍵 in 本文, f"**新しい契約が {紙.name} に書かれていない**: {鍵}"
+
+
+@pytest.mark.parametrize("紙", [文書, 使い方])
+@pytest.mark.parametrize("鍵", 旧い鍵)
+def test_旧い鍵は廃止したと分かる形でだけ残す(紙, 鍵):
+    """**黙って消さない。** 旧鍵で読んでいた人が、消えた理由を読めるようにする。
+    ただし**「使ってよい」とは書かせない**——`廃止` の語と同じ節にだけ置く。"""
+    行 = [l for l in 紙.read_text(encoding="utf-8").splitlines() if 鍵 in l]
+    assert 行, f"**廃止した鍵の説明が {紙.name} に無い**: {鍵}"
+    assert all("廃止" in l for l in 行), \
+        f"**廃止と書かずに {鍵} を出している**: {行}"
+
+
+def test_advise_のjsonに旧鍵が無い(thth_root, capsys, monkeypatch):
+    """**文書とコードの両方を見る。** 片方だけ直しても食い違いは残る。"""
+    import json
+    from thth import cli
+    topics_mod.record("お茶", verdict="alive", audience="茶葉の話",
+                       by="自分", account="kopicha-threads")
+    monkeypatch.setattr(cli.account_report_mod, "topic_plan",
+                         lambda *_a, **_k: {"topics": []})
+    cli._advise("kopicha-threads", as_json=True)
+    payload = json.loads(capsys.readouterr().out)
+    行 = payload["proven"][0]
+    assert "observations" in 行 and "observations_more" in 行
+    for 旧 in ("audience", "audience_account", "audience_by"):
+        assert 旧 not in 行, f"**旧鍵が `--json` に残っている**: {旧}"

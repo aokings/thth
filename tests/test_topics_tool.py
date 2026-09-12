@@ -249,8 +249,8 @@ def test_別のプロジェクトの違う判定を承認時に添える(thth_ro
 
 def test_account無しの記録は観測として残り判断にはならない(thth_root):
     topics_mod.record("精製", verdict="mismatch", audience="レアアース", by="統括")
-    # 観測（誰がいたか）は共有される
-    assert topics_mod.observation("精製")["audience"] == "レアアース"
+    # 観測（誰がいたか）は共有される。**観測者ごとに並ぶ**（設計 v1.0.0 §1 規則 1）
+    assert [r["audience"] for r in topics_mod.observation("精製")] == ["レアアース"]
     # 判断としては、どのアカウントにも継承されない
     assert topics_mod.judgment("精製", "kopicha-threads") == {}
     assert topics_mod.legacy_note("精製")["verdict"] == "mismatch"
@@ -305,11 +305,12 @@ def test_0件と権限不足と失敗を区別して記録できる(thth_root):
     topics_mod.record("B", verdict="unknown", status="permission_denied", by="テスト")
     topics_mod.record("C", verdict="unknown", status="unavailable", by="テスト")
 
-    assert topics_mod.observation("A")["status"] == "empty"
-    assert topics_mod.observation("B")["status"] == "permission_denied"
-    assert topics_mod.observation("C")["status"] == "unavailable"
+    assert topics_mod.newest("A")["status"] == "empty"
+    assert topics_mod.newest("B")["status"] == "permission_denied"
+    assert topics_mod.newest("C")["status"] == "unavailable"
     # **どれも「人がいない」に変換されない**
-    assert all(topics_mod.observation(t)["verdict"] != "dead" for t in "ABC")
+    assert all(r["verdict"] != "dead" for t in "ABC"
+                for r in topics_mod.observation(t))
 
 
 def test_0件を人がいないと言い換えない(thth_root):
