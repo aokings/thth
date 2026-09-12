@@ -353,7 +353,11 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
             # **当たり率を出す。** 「合っている 1・不一致 0」だけを出していたら、
             # 8 語のうち 7 語が空でも当たっているように見えた（kanto セッションの
             # 報告で気づいた・2026-09-10）。**分母を必ず添える。**
-            "hit_rate": (f"{bucket['alive']}/{judged}" if judged else "—"),
+            # **分母は「適合判断ができた語」だけ**（外部レビュー A・2026-09-12）。
+            # `dead`（人がいない）は**適合の確認にならない旧記録**なので、
+            # **勝手に不一致へ変換しない。** 分母 0 を `0%` と書かない。
+            "hit_rate": (f"{bucket['alive']}/{bucket['alive'] + bucket['mismatch']}"
+                          if (bucket["alive"] + bucket["mismatch"]) else "—"),
             "kind": kind,
             "description": KINDS.get(kind, ""),
             "topics": len(bucket["topics"]),
@@ -380,7 +384,11 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
                 "age_band_hours": account_report_mod.AGE_BAND_HOURS[24]},
         })
     def rate(row):
-        judged = row["alive"] + row["mismatch"] + row["dead"]
+        # **並べ替えも表示と同じ分母で**（外部レビュー A・2026-09-12）。
+        # 分母が 0（適合判断が 1 件も無い）の型は、**良いとも悪いとも言えない**
+        # ので最後に置く。**`dead` だけの型を「率 0」として最下位にしない**
+        # ——それは適合判断ではない。
+        judged = row["alive"] + row["mismatch"]
         return row["alive"] / judged if judged else -1.0
 
     # 実測があればそちら優先、無ければ当たり率で並べる。

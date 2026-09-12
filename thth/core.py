@@ -222,7 +222,14 @@ def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, actio
         "action": action,
         "file": os.path.basename(file) if file else None,
         "post_id": post_id,
-        "collected": 0,
+        # **投稿の処理では収集を測っていない**（外部レビュー C・2026-09-12）。
+        # ここが `0` 固定だったので、**「見に行って 0 件だった」と読めた。**
+        # 収集は `cmd_run` のこの後で走る（`cli.py`）。**測っていないものを
+        # 0 と書かない。** `maintain.py` も同じく `None`。
+        #
+        # **古い `0` の行は書き換えない。** 遡って「成功 0」とも「未取得」とも
+        # 確定しない——**旧形式・収集結果不明**として読む。
+        "collected": None,
         "refreshed": False,
         "quota": None,
         "status": status,

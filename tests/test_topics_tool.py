@@ -168,8 +168,16 @@ def test_当たり率を分母つきで出す(thth_root):
 
     rows = {r["kind"]: r for r in topics_mod.learned({})}
     assert rows["一般名詞"]["hit_rate"] == "1/1"
-    assert rows["カテゴリ"]["hit_rate"] == "0/4"
+    # **契約が変わった**（外部レビュー A・2026-09-12）。`dead`（人がいない）は
+    # **適合判断の確認にならない旧記録**なので、**分母に入れない。**
+    # `0/4` ではなく `—`。
+    #
+    # **元の懸念（最悪の型が最良に見える）は消していない。** `dead` の件数を
+    # 別に持ち、人向け出力でも別行に出す。**「率が良い」ではなく「判断が無い」と
+    # 読める形にした。**
+    assert rows["カテゴリ"]["hit_rate"] == "—"
     assert rows["カテゴリ"]["dead"] == 4
+    assert rows["カテゴリ"]["alive"] == 0 and rows["カテゴリ"]["mismatch"] == 0
 
 
 def test_実測が無いときは当たり率の高い型が先に来る(thth_root):

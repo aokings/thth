@@ -1200,13 +1200,34 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
           "——誰がいるかは分かっています。合うかは記事と読者で決めてください")
     show(observed_only, as_observed)
     print("")
-    print("【型ごとの傾向】自分たちの実測から")
+    # **「当たり率」が何の比率か分からなかった**（外部レビュー A・2026-09-12）。
+    # これは**トピックの語が場に合っていたかの事前判断**の内訳で、**投稿の成果率
+    # でも、連投の型の話でも、返信率でもない。** 見出しと分母を言い切る。
+    print(f"【型ごとの傾向】{account_name or 'このアカウント'} の"
+           f"**トピックの適合判断**（**投稿成果の成功率ではありません**）")
     for row in kinds:
         m = ("実測まだ" if row["views_median"] is None
              else f"views 中央値 {row['views_median']}（{row['posts_measured']} 本）")
-        print(f"  ［{row['kind']}］{row['topics']} 語  {m}  当たり率 {row['hit_rate']}"
-              f"（合っている {row['alive']}・不一致 {row['mismatch']}"
-              f"・人がいない {row['dead']}）")
+        分母 = row["alive"] + row["mismatch"]
+        率 = f"適合判断 {row['hit_rate']} 語" if 分母 else "**適合判断の記録なし**"
+        print(f"  ［{row['kind']}］{row['topics']} 語  {率}"
+              f"（適合 {row['alive']}・不一致 {row['mismatch']}）")
+        余り = []
+        if row["dead"]:
+            # **`dead` は適合判断の確認にならない旧記録。** 勝手に不一致へ変換しない。
+            余り.append(f"旧 dead 記録 {row['dead']} 語")
+        if row["unknown"]:
+            余り.append(f"未確認 {row['unknown']} 語")
+        if row.get("no_own_judgment"):
+            余り.append(f"**このアカウントの判断なし {len(row['no_own_judgment'])} 語**"
+                         f"（他アカウントの判断は参考。分母に入れていません）")
+        if 余り:
+            print(f"      {'・'.join(余り)}")
+        # **実測は語数と別の単位。** 混ぜない。
+        d = row.get("descriptive")
+        if row["posts_measured"] or (d and d["posts"]):
+            外し = f"／除外 {d['posts'] - row['posts_measured']} 投稿" if d else ""
+            print(f"      比較可能な実測 {row['posts_measured']} 投稿{外し}  {m}")
     if not kinds:
         print("  （まだありません）")
     if unchecked:

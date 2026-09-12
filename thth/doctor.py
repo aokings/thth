@@ -156,7 +156,12 @@ def diagnose(account_name: str) -> dict:
             # **採取が実際に叩く口を probe する**（2026-09-12）。`/replies` を
             # probe していたが、採取は `/conversation`（全階層）を叩く。**違う口の
             # 疎通を確かめて「返信の取得は通る」と言っていた。**
-            "返信の取得", "threads_read_replies",
+            # **件数の意味を書く**（外部レビュー C・2026-09-12）。**選んだ 1 投稿の
+            # 先頭ページ・要求上限 3 件**であって、全投稿でも全返信数でもない。
+            # `limit` は**要求値**で、総数でも完全性の証明でもない。
+            "返信の取得（疎通確認・**選んだ 1 投稿の先頭ページ・要求上限 3 件**。"
+            "**全返信数ではありません**）",
+            "threads_read_replies",
             f"/v1.0/{first_post_id}/conversation",
             {"fields": "id,username,timestamp", "limit": 3}), access_token))
     elif my_posts_ok is False:
