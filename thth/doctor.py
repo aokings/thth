@@ -22,6 +22,7 @@ import urllib.request
 from . import accounts as accounts_mod
 from . import appenv as appenv_mod
 from . import redact as redact_mod
+from . import topics as topics_mod
 from .adapters import threads as threads_mod
 
 TIMEOUT_SECONDS = 20.0
@@ -203,14 +204,33 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     notices: list[str] = []
 
     # `--json` のときは stdout を JSON 1 個だけにする（設計 §6）ので、
-    # パーミッション直しの警告（`secrets_fs.ensure_mode_600`）はそちらに
-    # 混ぜない。値そのものはどちらにしても出さない。
-    env_log = (lambda _msg: None) if as_json else log
+    # パーミッション直しの警告（`secrets_fs.ensure_mode_600`）を **stdout へ
+    # 素通しできない。** そこで以前は `--json` のとき捨てていたが、それだと
+    # **道具がファイルを 600 に書き換えた事実が、機械の読み手からは完全に
+    # 消える**（独立監査 1・P3-11）。**捨てずに `notices` へ回す。**
+    # 値そのものはどちらにしても出さない（出るのは path と「直した」だけ）。
+    直した: list[str] = []
+    def env_log(msg):
+        直した.append(str(msg))
     try:
         appenv_mod.load_app_env(log=env_log)
     except appenv_mod.AppEnvError as e:
         notices.append(f"app.env: {e}")
         notices.append(NEXT_STEP_APP_ENV)
+    if 直した:
+        notices.append("app.env のパーミッションを 600 に直しました"
+                        f"（{appenv_mod.default_path()}）")
+
+    # **トピックの台帳が壊れていたら、それも診断で言う**（独立監査 1・P1-1）。
+    # 台帳は `--advise` と承認の一段目が毎回読む。**壊れていることに気づける
+    # 場所が「壊れたあと」しか無かった。** 診断の道具が黙っているのが穴。
+    topics_shelf = None
+    try:
+        topics_mod.load()
+    except topics_mod.ShelfBroken as e:
+        topics_shelf = {"error": "topics_shelf_broken", "path": e.path,
+                        "detail": e.detail}
+        notices.append(str(e))
 
     try:
         accounts_mod.load_account(account_name)
@@ -218,8 +238,11 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         notices.append(f"アカウント台帳: {e}")
         notices.append(NEXT_STEP_ACCOUNT)
         if as_json:
-            log(json.dumps({"account": account_name, "error": str(e), "probes": [],
-                             "notices": notices}, ensure_ascii=False))
+            payload = {"account": account_name, "error": str(e), "probes": [],
+                       "notices": notices}
+            if topics_shelf:
+                payload["topics_shelf_broken"] = topics_shelf
+            log(json.dumps(payload, ensure_ascii=False))
         else:
             for n in notices:
                 log(n)
@@ -231,7 +254,12 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
 
     if as_json:
         report["notices"] = notices
+        if topics_shelf:
+            report["topics_shelf_broken"] = topics_shelf
         log(json.dumps(report, ensure_ascii=False))
+        if topics_shelf:
+            # **壊れた台帳を「異常なし」で返さない**（独立監査 1・P1-1）。
+            return 2
         return 0 if report.get("probes") and all(
             p["ok"] is not False for p in report["probes"]) else 1
 
@@ -254,4 +282,8 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         log(f"      {p['detail']}")
     log("")
     log("読み取りだけを試しました。投稿・返信・削除は呼んでいません。")
+    # **診断は最後まで出す。ただし壊れた台帳を「異常なし」で返さない**
+    # （独立監査 1・P1-1）。probe が全部○でも rc=2。
+    if topics_shelf:
+        return 2
     return 1 if failed else 0
