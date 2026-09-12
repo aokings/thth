@@ -100,7 +100,7 @@ chmod 600 ~/.config/thth/app.env
 | 既定のパスは `~/.config/thth/app.env`。**環境変数 `THTH_APP_ENV_PATH` で差し替えられる**（テストの隔離用） | `thth/appenv.py` `default_path()` | **L1** |
 | 鍵の名前は `THREADS_APP_ID` と `THREADS_APP_SECRET` の 2 つだけ。どちらかが空なら `app.env に項目が足りません` | `thth/appenv.py` `REQUIRED_KEYS` | **L1** |
 | 読むときに 600 でなければ**警告して直します**（`警告: … のパーミッションが … です。600 に直します。`） | `thth/secrets_fs.py` `ensure_mode_600()` | **L1** |
-| **`app.env` を読むのは `thth auth` だけです。** `doctor`・`lint`・`board`・`throw` は読みません | 実測（§7 の乾式試験） | **L1** |
+| **`app.env` を使うのは `thth auth` だけです。** `lint`・`board`・`throw` は読みません。`doctor` は**有無だけ**を見て、無ければ `次の一手: 導入文書 §3` と言います（値は読みません） | 実測（§7 の乾式試験・`tests/test_doctor_next_step.py`） | **L1** |
 
 **だから、管理画面の「ユーザートークン生成ツール」で発行したトークンを `thth token set` で入れる運用なら、`app.env` は作らなくても動きます**（設計 §4.2「置かないものは漏れない」）。`thth auth` を使う日に作ってください。
 
@@ -248,7 +248,7 @@ Unit=thth@demo-threads.service
 | §7-2 空ディレクトリは rc=1 | `test_step_2b_lint_refuses_an_empty_directory` |
 | §7-3 board に `token=no_token` | `test_step_3_board_shows_the_account_without_a_token` |
 | §7-4 dry-run が `mode: rehearsal` | `test_step_4_dry_run_is_rehearsal_and_posts_nothing` |
-| §3・§5 `app.env` を読むのは `auth` だけ | `test_auth_reads_app_env_and_stops_at_the_code_prompt` / `test_auth_stops_loudly_when_app_env_is_missing` |
+| §3・§5 `app.env` を使うのは `auth` だけ（`doctor` は有無だけ見る） | `test_auth_reads_app_env_and_stops_at_the_code_prompt` / `test_auth_stops_loudly_when_app_env_is_missing` / `tests/test_doctor_next_step.py` |
 | §6 unit は台帳から生成される | `test_systemd_unit_is_generated_from_the_ledger` |
 | §8 board が「追いついています」と言わない | `test_board_does_not_claim_to_be_up_to_date_without_a_release_check` |
 
@@ -256,11 +256,13 @@ Unit=thth@demo-threads.service
 
 ```
 $ thth doctor demo-threads
+次の一手: 導入文書 §5 トークン を見てください。
+
 トークンが無い（thth token set を先に）
 rc = 2
 ```
 
-**これが期待どおりの停止です。** トークンを入れる前にここで止まるのが正しい。トークンを入れたあとに走らせると、そのトークンで**実際に何ができるか**を読み取りだけで測ります（投稿・返信・削除は呼びません）。
+**これが期待どおりの停止です。** `app.env`（§3）や台帳（§4）が無ければ、その節を指す行が先に出ます。 トークンを入れる前にここで止まるのが正しい。トークンを入れたあとに走らせると、そのトークンで**実際に何ができるか**を読み取りだけで測ります（投稿・返信・削除は呼びません）。
 
 ### 7-2. `thth lint <queue ディレクトリ>` —— front-matter の形
 

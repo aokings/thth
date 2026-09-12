@@ -237,7 +237,7 @@ def test_step_4_dry_run_is_rehearsal_and_posts_nothing(fresh):
 
 
 # --------------------------------------------------------------------------
-# 導入文書 §3・§5: app.env を読むのは `thth auth` だけ
+# 導入文書 §3・§5: app.env を使うのは `thth auth` だけ（doctor は有無だけ見る・tests/test_doctor_next_step.py）
 # --------------------------------------------------------------------------
 
 def test_auth_reads_app_env_and_stops_at_the_code_prompt(fresh):
