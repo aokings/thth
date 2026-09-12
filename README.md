@@ -19,7 +19,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## いまの状態（2026-09-12）
 
-版 **1.0.0**。全件テスト **1251 件**（`python -m pytest tests/ -q -n auto`）。
+版 **1.0.0**。全件テスト **1319 件**（`python -m pytest tests/ -q -n auto`）。
 
 **本番稼働中**: Threads の 4 アカウント（nigamilab・asmon 関東・kopicha・masaru の同席用）。
 timer（systemd・`thth systemd` で生成）で毎時投稿、返信の採集（`thth replies`）と数の採集
