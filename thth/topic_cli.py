@@ -888,23 +888,28 @@ def _foreign_evidence(refs: list, account: str | None) -> dict:
     return out
 
 
-def _系列の根(review_id: str, reviews: dict) -> tuple:
-    """**保存済みの記録を辿って、その往復の根まで行く**（外部レビュー R1・
-    2026-09-12）。
+def _系列の全体(review_id: str, reviews: dict) -> tuple:
+    """**その記録から辿れる検収記録を、全部集める**（外部レビュー R1・2026-09-12）。
 
-    前は**入力に挙がった記録しか見ていなかった**ので、**ストアにはあるのに採用の
-    入力に選ばれていない中間記録**で系列が切れた。A→B→C と繋がっていても、
-    B を挙げなければ A と C が別の事例になった——**入力に何を列挙したかで、
-    既知の原稿同一性が変わっていた。**
+    前は `supersedes or recheck_of` と書いていたので、**1 つの記録から出る参照を
+    片方しか辿らなかった。** 1 件が両方を持つと、**そこで系列が切れる。**
+    往復は**線ではなく枝分かれしうる**ので、**到達できるものを全部**集めて、
+    **集合が重なれば同じ事例**とする。
 
-    戻り値は `(根の review_id, 問題)`。**取得できない参照は「別の独立事例」と
-    確定しない**——`問題` を返して採用を止める。**参照が循環しても止まらない。**
+    さらにその前は**入力に挙がった記録しか見ていなかった**ので、**ストアにはあるのに
+    選ばれていない中間記録**で切れていた。**保存済みを取りに行く。**
+
+    戻り値は `(到達できた review_id の集合, 問題)`。**取得できない参照は「別の
+    独立事例」と確定しない**——`問題` を返して採用を止める。**循環しても止まる。**
     """
     見た: set = set()
-    いま = review_id
-    for _ in range(64):
+    これから = [review_id]
+    for _ in range(256):
+        if not これから:
+            return (見た, None)
+        いま = これから.pop()
         if いま in 見た:
-            return (None, f"検収記録の参照が循環しています（{いま}）")
+            continue
         見た.add(いま)
         review = reviews.get(いま)
         if review is None:
@@ -914,11 +919,12 @@ def _系列の根(review_id: str, reviews: dict) -> tuple:
                 return (None, f"検収記録 {いま} を取得できないので、"
                                f"独立した事例かどうかを確かめられません")
             reviews[いま] = review
-        つぎ = review.get("supersedes") or review.get("recheck_of")
-        if not isinstance(つぎ, str) or not つぎ:
-            return (いま, None)
-        いま = つぎ
-    return (None, f"検収記録の参照が長すぎます（{review_id}）")
+        # **両方辿る。** 片方だけだと、そこで系列が切れる。
+        for key in ("supersedes", "recheck_of", "carried_from"):
+            つぎ = review.get(key)
+            if isinstance(つぎ, str) and つぎ and つぎ not in 見た:
+                これから.append(つぎ)
+    return (None, f"検収記録の参照が多すぎます（{review_id}）")
 
 
 def _同じ事例か(cases: list, reviews: dict) -> tuple:
@@ -963,15 +969,16 @@ def _同じ事例か(cases: list, reviews: dict) -> tuple:
                 結ぶ(鍵[k], i)
             else:
                 鍵[k] = i
-        # **修正の系列**——**保存済みの記録を辿って根まで行く。**
-        根id, 問題 = _系列の根(case["review_id"], reviews)
+        # **修正の系列**——**到達できる記録が 1 つでも重なれば同じ事例。**
+        到達, 問題 = _系列の全体(case["review_id"], reviews)
         if 問題:
             return (None, 問題)
-        k = ("系列", case["account"], 根id)
-        if k in 鍵:
-            結ぶ(鍵[k], i)
-        else:
-            鍵[k] = i
+        for rid in 到達:
+            k = ("系列", case["account"], rid)
+            if k in 鍵:
+                結ぶ(鍵[k], i)
+            else:
+                鍵[k] = i
 
     return ([根(i) for i in range(len(cases))], None)
 

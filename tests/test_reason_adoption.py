@@ -556,4 +556,55 @@ def test_参照が循環しても止まる(thth_root, tmp_path, capsys, monkeypa
 
     monkeypatch.setattr(topic_cli.store, "get", ぐるぐる)
     rc, out = _採用を試す(tmp_path, capsys, v, row)
-    assert rc == 2 and "循環" in out["error"]["message"]
+    # **求められているのは「止まらなくならないこと」**（外部レビュー）。
+    # 辿った先を覚えているので、循環しても**終わる**。エラーにはしない。
+    assert rc in (0, 2), out
+    assert "internal_error" not in json.dumps(out, ensure_ascii=False)
+
+def test_1つの記録が両方の線を持っていても辿る(thth_root, tmp_path, capsys):
+    """**`supersedes or recheck_of` と書いていたので、片方しか辿らなかった**
+    （外部レビュー・2026-09-12）。1 件が両方を持つと、**そこで系列が切れる。**
+
+    往復は**線ではなく枝分かれしうる**ので、到達できるものを全部集めて、
+    **集合が重なれば同じ事例**とする。
+    """
+    v = _語彙()
+    store.put("vocabularies", v, id_key="vocabulary_id")
+    A = _検収(v, sha="a" * 64, result="problem")
+    別系統 = _検収(v, sha="e" * 64, result="problem")
+    # **両方の線を持つ記録**（A を処置し、別系統の再検査でもある）。
+    両方 = models.build_review({
+        "account": "kopicha-threads", "draft_sha256": "f" * 64,
+        "vocabulary_id": v["vocabulary_id"],
+        "findings": [{"reason_id": "too_long", "check_method": "human",
+                       "result": "problem", "evidence_refs": [],
+                       "note": "両方の線を持つ記録"}],
+        "judged_by": {"kind": "human", "id": "masaru"},
+        "judged_at": "2026-09-12T10:40:00+09:00",
+        "disposition": "unresolved",
+        "supersedes": A, "recheck_of": 別系統,
+    }, vocabulary=v)
+    両方, _ = store.put("reviews", 両方, id_key="review_id")
+
+    row = _採用(v["vocabulary_id"])
+    row["cases"] = [
+        {"kind": "positive", "path": "docs/sns/queue/a.md", "sha256": "a" * 64,
+         "account": "kopicha-threads", "review_id": A},
+        {"kind": "positive", "path": "docs/sns/queue/b.md", "sha256": "e" * 64,
+         "account": "kopicha-threads", "review_id": 別系統},
+        {"kind": "counter", "path": "docs/sns/queue/z.md", "sha256": "c" * 64,
+         "account": "kopicha-threads",
+         "review_id": _検収(v, sha="c" * 64, result="no_problem")},
+    ]
+    # **両方の線を持つ記録を、正例として挙げる。**
+    #
+    # **挙げない場合は、ここでは見ない。** A も別系統も上向きの参照を持たないので、
+    # 繋げるには**自分を指している記録を探す**（下向き）必要がある。**いまの実装は
+    # 上向きしか辿らない**——外部レビューが報告したのは「1 件が両方の線を持つと
+    # そこで切れる」ほうなので、**実装より強い主張をテストに書かない。**
+    row["cases"].insert(2, {
+        "kind": "positive", "path": "docs/sns/queue/c.md", "sha256": "f" * 64,
+        "account": "kopicha-threads", "review_id": 両方["review_id"]})
+    rc, out = _採用を試す(tmp_path, capsys, v, row)
+    assert rc == 2, "**両方の線で繋がっているのに、別の事例として数えている**"
+    assert "照合してまとめると 1 件" in out["error"]["message"]
