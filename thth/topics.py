@@ -316,12 +316,22 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
         kind = row.get("kind") or "（型なし）"
         bucket = out.setdefault(kind, {"kind": kind, "topics": [], "views": [],
                                         "not_compared": [], "all": [],
+                                        "no_own_judgment": [],
                                         "alive": 0, "mismatch": 0, "dead": 0, "unknown": 0})
         bucket["topics"].append(topic)
         # 型ごとの傾向は**当時の判断**を数える（成功の実証ではない・設計 §9）。
         # account 自身の判断があればそちらを優先する。
         own = judgment(topic, account) if account else {}
-        bucket[(own or row)["verdict"]] += 1
+        if account and not own:
+            # **他 account の判断を、自 account の当たり率に混ぜない**
+            # （外部レビュー・2026-09-12。他 account の 1 語だけで `1/1` に
+            # なっていた）。**判断が無いことを、判断があることにしない。**
+            # 参考として出所つきで残す——**消すのではなく、分子・分母に入れない。**
+            bucket["no_own_judgment"].append(
+                {"topic": topic, "verdict": row["verdict"],
+                 "account": row.get("account")})
+        else:
+            bucket[(own or row)["verdict"]] += 1
         # **揃った観測だけを集計に入れる**（設計 §3.2.2・masaru 裁定 2026-09-12）。
         # **揃わなかったものは捨てず、理由ごと数える**——「実測がまだ無い」と
         # 「揃わなかったので比較に使えない」を混ぜない。
@@ -356,6 +366,8 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
             "examples": sorted(bucket["topics"])[:6],
             # **比較に使わなかった観測**（「実測まだ」と混ぜない）。
             "not_compared": bucket["not_compared"],
+            # **自 account の判断が無い語**（参考。分子・分母には入らない）。
+            "no_own_judgment": bucket["no_own_judgment"],
             # **記述統計は出す。ただし性能比較には使えないと分かる形で**
             # （masaru 2026-09-12「現状の記述統計としては出せますが、同条件での
             # 性能比較には使えません」）。**数字を消すより、そのままでは

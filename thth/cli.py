@@ -1057,9 +1057,23 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
     measured = by_account.get(account_name, {}) if account_name else {}
     observations = topics_mod.observation()
     kinds = topics_mod.learned(measured, account=account_name)
-    def views_of(topic):
-        seen = sorted(measured.get(topic, []))
-        return seen[len(seen) // 2] if seen else None
+    def 実測(topic):
+        """**観測から、比較できるものだけを取り出す**（設計 §3.2.2）。
+
+        **`measured` は観測 object の配列**（出所・実経過時間つき）。ここが数値配列
+        のままだったので、**1 件だと `sorted` を素通りして、並べ替えで落ちた**
+        （`TypeError: bad operand type for unary -: 'dict'`）。**今朝こちらが
+        入れた退行。** 外部レビューが関数境界で再現した。
+
+        **条件外は捨てず、件数と理由を返す。**
+        """
+        使う, 使わない = account_report_mod.comparable_views(measured.get(topic, []))
+        views = sorted(o["views"] for o in 使う)
+        return {"views_median": views[len(views) // 2] if views else None,
+                 "posts": len(views),
+                 "not_compared": len(使わない),
+                 "not_compared_reasons": sorted({o.get("理由") for o in 使わない}),
+                 }
 
     # **判断はこのアカウント自身のものだけを採る**（設計 §8・受け入れ T07）。
     # 他アカウントの判断も、account を持たない記録も継承しない。観測（誰がいたか）
@@ -1084,7 +1098,7 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
                 "other_accounts": [{"account": r.get("account"),
                                      "verdict": r.get("verdict"),
                                      "by": r.get("by")} for r in others],
-                "views_median": views_of(topic), "posts": len(measured.get(topic, []))}
+                **実測(topic)}
         if item["verdict"] == "alive":
             proven.append(item)
         elif item["verdict"] in ("mismatch", "dead"):

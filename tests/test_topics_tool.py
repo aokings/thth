@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+import json
+
 from tests.conftest import approve_via_cli, run_thth, write_queue_file
 from thth import queuefile
 from thth import topics as topics_mod
@@ -448,3 +450,69 @@ def test_記述統計は出すが比べられないと分かる形にする(thth
     # **経過の散らばりが同じところに出る**（読んだ人が自分で判断できる）。
     assert d["age_min_hours"] == 24.1 and d["age_max_hours"] == 332.2
     assert "性能比較には使えません" in d["**注意**"]
+
+def test_他accountの判断を自分の当たり率にしない(thth_root):
+    """**他 account の 1 語だけで `1/1` になっていた**（外部レビュー・2026-09-12）。
+
+    **判断が無いことを、判断があることにしない。** 参考としては残すが、
+    **分子・分母には入れない。**
+    """
+    topics_mod.record("お茶", verdict="alive", kind="一般名詞", by="よそ",
+                       account="other-threads")
+    rows = topics_mod.learned({}, account="mine-threads")
+    row = {r["kind"]: r for r in rows}["一般名詞"]
+    assert row["hit_rate"] == "—", "**他 account の判断を自分の率にしている**"
+    assert row["alive"] == 0 and row["mismatch"] == 0
+    assert [o["topic"] for o in row["no_own_judgment"]] == ["お茶"]
+    assert row["no_own_judgment"][0]["account"] == "other-threads"
+
+
+def test_自分の判断があればそれを数える(thth_root):
+    topics_mod.record("お茶", verdict="alive", kind="一般名詞", by="よそ",
+                       account="other-threads")
+    topics_mod.record("お茶", verdict="mismatch", kind="一般名詞", by="自分",
+                       account="mine-threads")
+    rows = topics_mod.learned({}, account="mine-threads")
+    row = {r["kind"]: r for r in rows}["一般名詞"]
+    assert row["hit_rate"] == "0/1"
+    assert row["mismatch"] == 1 and row["no_own_judgment"] == []
+
+def test_advise_は観測1件でも落ちない(thth_root, capsys, monkeypatch):
+    """**今朝こちらが入れた退行**（外部レビュー・2026-09-12）。
+
+    `measured` を観測 object の配列に変えたのに、`--advise` 側が数値配列のまま
+    だった。**1 件だと `sorted` を素通りして、並べ替えで落ちる**
+    （`TypeError: bad operand type for unary -: 'dict'`）。
+    """
+    from thth import cli as cli_mod
+    ar = cli_mod.account_report_mod
+    観測 = {"views": 22, "age_hours": 24, "mark": 24, "post_id": "p1",
+             "source": ar.LEDGER_SOURCE, "topic_source": ar.DRAFT_TOPIC}
+    topics_mod.record("お茶", verdict="alive", kind="一般名詞", by="自分",
+                       account="mine-threads")
+    monkeypatch.setattr(ar, "measured_views_by_account",
+                         lambda: {"mine-threads": {"お茶": [観測]}})
+    monkeypatch.setattr(ar, "topic_plan", lambda *_a, **_k: {"topics": []})
+
+    assert cli_mod._advise("mine-threads", as_json=True) == 0
+    out = json.loads(capsys.readouterr().out)
+    語 = [r for r in out["proven"] if r["topic"] == "お茶"]
+    assert 語 and 語[0]["views_median"] == 22, out
+    assert 語[0]["posts"] == 1
+
+
+def test_advise_は比較できない観測を数に入れない(thth_root, capsys, monkeypatch):
+    from thth import cli as cli_mod
+    ar = cli_mod.account_report_mod
+    駄目 = {"views": 999, "age_hours": 300.0, "mark": 24, "post_id": "p2",
+            "source": ar.LEDGER_SOURCE, "topic_source": ar.DRAFT_TOPIC}
+    topics_mod.record("お茶", verdict="alive", kind="一般名詞", by="自分",
+                       account="mine-threads")
+    monkeypatch.setattr(ar, "measured_views_by_account",
+                         lambda: {"mine-threads": {"お茶": [駄目]}})
+    monkeypatch.setattr(ar, "topic_plan", lambda *_a, **_k: {"topics": []})
+    cli_mod._advise("mine-threads", as_json=True)
+    out = json.loads(capsys.readouterr().out)
+    語 = [r for r in out["proven"] if r["topic"] == "お茶"][0]
+    assert 語["views_median"] is None and 語["posts"] == 0
+    assert 語["not_compared"] == 1 and 語["not_compared_reasons"]
