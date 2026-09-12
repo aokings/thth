@@ -20,10 +20,18 @@ import urllib.parse
 import urllib.request
 
 from . import accounts as accounts_mod
+from . import appenv as appenv_mod
 from . import redact as redact_mod
 from .adapters import threads as threads_mod
 
 TIMEOUT_SECONDS = 20.0
+
+# 導入手順のどこが足りないかを、節番号で指す（設計 §2 の C1・節番号は
+# Track C2 の導入文書と合わせて決め打ち: §2 Meta アプリ・§3 app.env・
+# §4 アカウント台帳・§5 トークン・§6 timer）。
+NEXT_STEP_APP_ENV = "次の一手: 導入文書 §3 app.env を見てください。"
+NEXT_STEP_ACCOUNT = "次の一手: 導入文書 §4 アカウント台帳 を見てください。"
+NEXT_STEP_TOKEN = "次の一手: 導入文書 §5 トークン を見てください。"
 
 # 返ってきた中で表示してよい鍵だけを通す（本文や個人情報を垂れ流さない）。
 _KEEP = ("name", "id", "username", "total_value", "quota_usage", "config",
@@ -186,11 +194,51 @@ def diagnose(account_name: str) -> dict:
 
 
 def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
+    """導入手順のどこが足りないかを、実際にトークンを叩く前に机上で見る（設計
+    §2 の C1）。順番は app.env → accounts/<account>.json → token。**既存の検査
+    （トークンを実際に叩く診断）は壊さない・その手前に足す。** 足りないものごとに
+    「次の一手」（導入文書の節番号）を 1 行言う。値は一切出力しない——app.env は
+    存在と項目の有無だけを見て、中身は読み捨てる。
+    """
+    notices: list[str] = []
+
+    # `--json` のときは stdout を JSON 1 個だけにする（設計 §6）ので、
+    # パーミッション直しの警告（`secrets_fs.ensure_mode_600`）はそちらに
+    # 混ぜない。値そのものはどちらにしても出さない。
+    env_log = (lambda _msg: None) if as_json else log
+    try:
+        appenv_mod.load_app_env(log=env_log)
+    except appenv_mod.AppEnvError as e:
+        notices.append(f"app.env: {e}")
+        notices.append(NEXT_STEP_APP_ENV)
+
+    try:
+        accounts_mod.load_account(account_name)
+    except accounts_mod.AccountError as e:
+        notices.append(f"アカウント台帳: {e}")
+        notices.append(NEXT_STEP_ACCOUNT)
+        if as_json:
+            log(json.dumps({"account": account_name, "error": str(e), "probes": [],
+                             "notices": notices}, ensure_ascii=False))
+        else:
+            for n in notices:
+                log(n)
+        return 2
+
     report = diagnose(account_name)
+    if report.get("error"):
+        notices.append(NEXT_STEP_TOKEN)
+
     if as_json:
+        report["notices"] = notices
         log(json.dumps(report, ensure_ascii=False))
         return 0 if report.get("probes") and all(
             p["ok"] is not False for p in report["probes"]) else 1
+
+    for n in notices:
+        log(n)
+    if notices:
+        log("")
 
     if report.get("error"):
         log(report["error"])
