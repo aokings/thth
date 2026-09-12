@@ -12,6 +12,7 @@ import json
 import os
 import sys
 
+from . import __version__ as _pkg_version
 from . import account_report as account_report_mod
 from . import accounts as accounts_mod
 from . import approval as approval_mod
@@ -33,6 +34,15 @@ from . import writeback as writeback_mod
 
 def _print_json(obj) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
+
+
+def _version_string() -> str:
+    """`thth --version` と `thth board` 先頭で共有する版の表記（設計 v1.0.0・
+    Track C1）。**プロセスが実際に読み込んだ head**（`LOADED_REV`）を使う
+    ——`head()` を都度呼び直すと、自己更新の途中でプロセスの版とずれる
+    （`thth/selfupdate.py` の `LOADED_REV` の説明を参照）。"""
+    head7 = (selfupdate_mod.LOADED_REV or "")[:7]
+    return f"thth {_pkg_version} ({head7 if head7 else 'head 不明'})"
 
 
 def cmd_lint(args) -> int:
@@ -1717,7 +1727,7 @@ def cmd_board(args) -> int:
 
         # **どの枝を追いかけているのかを必ず出す。** 出ないと、**配る先を
         # 間違えても気づけない**（新しい出力契約にしたとき、ここを落とした）。
-        print(f"道具: {head or '(版が読めません)'}  配布の枝: `{ref}`")
+        print(f"道具: {_pkg_version}（{head or '(版が読めません)'}）  配布の枝: `{ref}`")
         if not check:
             # **「まだ一度も」とは言えない**（外部レビュー・2026-09-12）。記録の
             # 消失・読取失敗でも同じ分岐に来る。**読めない ≠ 無い。**
@@ -1796,6 +1806,7 @@ def cmd_board(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="thth")
+    p.add_argument("--version", action="version", version=_version_string())
     sub = p.add_subparsers(dest="command", required=True)
 
     p_lint = sub.add_parser("lint", help="front-matter の形式・文字数等を検査する")
