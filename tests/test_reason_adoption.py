@@ -608,3 +608,69 @@ def test_1つの記録が両方の線を持っていても辿る(thth_root, tmp_
     rc, out = _採用を試す(tmp_path, capsys, v, row)
     assert rc == 2, "**両方の線で繋がっているのに、別の事例として数えている**"
     assert "照合してまとめると 1 件" in out["error"]["message"]
+
+def test_改訂先が分かっていれば同じ原稿として数える(thth_root, tmp_path, capsys):
+    """**「版αを直した先が版β」と分かっているのに、別の原稿として数えていた**
+    （外部レビュー R1・2026-09-12）。
+
+    既存の `models.draft_series()` が**まさにこの系列**を作るので、それを使う
+    ——**採用のために新しい系列モデルを増やさない。**
+    """
+    v = _語彙()
+    store.put("vocabularies", v, id_key="vocabulary_id")
+    # A: 版αに問題あり。**改訂先は版β**。
+    a_row = models.build_review({
+        "account": "kopicha-threads", "draft_sha256": "a" * 64,
+        "vocabulary_id": v["vocabulary_id"],
+        "findings": [{"reason_id": "too_long", "check_method": "human",
+                       "result": "problem", "evidence_refs": [], "note": "α"}],
+        "judged_by": {"kind": "human", "id": "masaru"},
+        "judged_at": "2026-09-12T10:00:00+09:00",
+        "disposition": "fixed", "revised_draft_sha256": "e" * 64,
+    }, vocabulary=v)
+    a, _ = store.put("reviews", a_row, id_key="review_id")
+    b = _検収(v, sha="e" * 64, result="problem")     # B: 版βに問題あり
+
+    row = _採用(v["vocabulary_id"])
+    row["cases"] = [
+        # **改訂に伴って path も変えた想定**——path では繋がらない。
+        {"kind": "positive", "path": "docs/sns/queue/before.md", "sha256": "a" * 64,
+         "account": "kopicha-threads", "review_id": a["review_id"]},
+        {"kind": "positive", "path": "docs/sns/queue/after.md", "sha256": "e" * 64,
+         "account": "kopicha-threads", "review_id": b},
+        {"kind": "counter", "path": "docs/sns/queue/z.md", "sha256": "c" * 64,
+         "account": "kopicha-threads",
+         "review_id": _検収(v, sha="c" * 64, result="no_problem")},
+    ]
+    rc, out = _採用を試す(tmp_path, capsys, v, row)
+    assert rc == 2, "**改訂の前後を 2 例として数えている**"
+    assert "照合してまとめると 1 件" in out["error"]["message"]
+
+    # **まとめすぎない**——本当に別の原稿を足せば通る。
+    row["cases"].insert(2, {
+        "kind": "positive", "path": "docs/sns/queue/other.md", "sha256": "f" * 64,
+        "account": "kopicha-threads",
+        "review_id": _検収(v, sha="f" * 64, result="problem")})
+    rc2, out2 = _採用を試す(tmp_path, capsys, v, row)
+    assert rc2 == 0, out2
+
+
+def test_アカウントを跨いで系列を繋がない(thth_root, tmp_path, capsys):
+    """**別の account の同じ hash を、同じ原稿として繋がない。**"""
+    v = _語彙()
+    store.put("vocabularies", v, id_key="vocabulary_id")
+    row = _採用(v["vocabulary_id"])
+    row["cases"] = [
+        {"kind": "positive", "path": "q/a.md", "sha256": "a" * 64,
+         "account": "kopicha-threads",
+         "review_id": _検収(v, sha="a" * 64, result="problem")},
+        {"kind": "positive", "path": "q/a.md", "sha256": "a" * 64,
+         "account": "nigamilab-threads",
+         "review_id": _検収(v, sha="a" * 64, result="problem",
+                             account="nigamilab-threads")},
+        {"kind": "counter", "path": "q/z.md", "sha256": "c" * 64,
+         "account": "kopicha-threads",
+         "review_id": _検収(v, sha="c" * 64, result="no_problem")},
+    ]
+    rc, out = _採用を試す(tmp_path, capsys, v, row)
+    assert rc == 0, out

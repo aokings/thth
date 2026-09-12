@@ -958,22 +958,40 @@ def _同じ事例か(cases: list, reviews: dict) -> tuple:
         if a != b:
             親[b] = a
 
+    # **先に、辿れる記録を全部そろえる。** そのうえで既存の系列判定
+    # （`models.draft_series`）に渡す——**採用のために新しい系列モデルを増やさない**
+    # （外部レビュー・2026-09-12）。
+    到達表: dict = {}
+    for case in cases:
+        到達, 問題 = _系列の全体(case["review_id"], reviews)
+        if 問題:
+            return (None, 問題)
+        到達表[case["review_id"]] = 到達
+
+    # **改訂先（`revised_draft_sha256`）も同一性の材料。** 「版αを直した先が版β」と
+    # 分かっているのに、**別の原稿として数えていた**（外部レビュー R1・2026-09-12）。
+    # account ごとに作る——**アカウントを跨いで系列を繋がない。**
+    系列: dict = {}
+    for account in {c["account"] for c in cases}:
+        同じ口の記録 = [r for r in reviews.values() if r.get("account") == account]
+        for sha, 代表 in models.draft_series(同じ口の記録).items():
+            系列[(account, sha)] = 代表
+
     鍵: dict = {}
     for i, case in enumerate(cases):
         review = reviews[case["review_id"]]
         path = posixpath.normpath(case["path"]).lstrip("./")
+        版 = 系列.get((case["account"], review["draft_sha256"]),
+                       review["draft_sha256"])
         for k in (("review", case["review_id"]),
-                   ("版", case["account"], review["draft_sha256"]),
+                   ("版系列", case["account"], 版),
                    ("原稿", case["account"], path)):
             if k in 鍵:
                 結ぶ(鍵[k], i)
             else:
                 鍵[k] = i
         # **修正の系列**——**到達できる記録が 1 つでも重なれば同じ事例。**
-        到達, 問題 = _系列の全体(case["review_id"], reviews)
-        if 問題:
-            return (None, 問題)
-        for rid in 到達:
+        for rid in 到達表[case["review_id"]]:
             k = ("系列", case["account"], rid)
             if k in 鍵:
                 結ぶ(鍵[k], i)
