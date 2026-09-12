@@ -75,8 +75,13 @@ def test_jsonにも出どころが出る(thth_root, capsys, monkeypatch):
     行 = [r for r in payload["observed_only"] + payload["proven"] + payload["avoid"]
           if r["topic"] == "中学受験"]
     assert 行, payload
-    assert 行[0]["audience_account"] == "asmon-kanto-threads"
-    assert 行[0]["audience_by"] == "kanto"
+    # **旧鍵は廃止した**（設計 v1.0.0 §1 規則 4）。観測は観測者ごとに並ぶ。
+    assert "audience" not in 行[0] and "audience_account" not in 行[0]
+    観測 = 行[0]["observations"]
+    assert [o["account"] for o in 観測] == ["asmon-kanto-threads"]
+    assert [o["by"] for o in 観測] == ["kanto"]
+    assert 観測[0]["audience"] == "受験親のやりとり"
+    assert 観測[0]["note_id"].startswith("sha256:")
 
 def test_空のaudienceで前の観測を消さない(thth_root, capsys, monkeypatch):
     """**`kind` と同じ穴が `audience` にもあった**（2026-09-12・このテストを
@@ -97,5 +102,7 @@ def test_空のaudienceで前の観測を消さない(thth_root, capsys, monkeyp
     _出す("kopicha-threads", True)
     payload = json.loads(capsys.readouterr().out)
     行 = [r for r in payload["proven"] if r["topic"] == "中学受験"][0]
-    assert 行["audience"] == "受験親のやりとり", "**観測が消えている**"
-    assert 行["audience_account"] == "asmon-kanto-threads"
+    # **観測者ごとに並ぶので、両方が残る**（設計 v1.0.0 §1 規則 1）。
+    書いた = {o["account"]: o["audience"] for o in 行["observations"]}
+    assert 書いた["asmon-kanto-threads"] == "受験親のやりとり", "**観測が消えている**"
+    assert 書いた["kopicha-threads"] is None, "**書いていないものを書いたことにしない**"

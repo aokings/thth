@@ -26,11 +26,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 
 from . import accounts as accounts_mod
 from . import account_report as account_report_mod
 from . import jst
+from . import topic_models as models
 
 VERDICTS = ("alive", "mismatch", "dead", "unknown")
 
@@ -122,6 +124,16 @@ def record(topic: str, *, verdict: str, audience: str = "", by: str,
     row = {"topic": topic, "verdict": verdict, "audience": audience, "kind": kind,
            "account": account, "status": status, "note": note, "by": by,
            "checked_at": jst.iso(now)}
+    # **保存するときに `note_id` を付ける**（設計 v1.0.0 §1 規則 2）。付けておく
+    # のは**人が打ち消しを打てるようにする**ため——読むときに計算しても同じ値に
+    # なるが、`state/topics.json` を直接見た人が ID を読めない。
+    row["note_id"] = note_id_of(row)
+    _append(row)
+    return row
+
+
+def _append(row: dict) -> dict:
+    """1 行足す。**前の行は消さない**（観測も打ち消しも同じ口を通る）。"""
     p = path()
     os.makedirs(os.path.dirname(p), exist_ok=True)
     # **読んで・足して・全部書き直す**ので、その間に別の記録が入ると**消える**
@@ -162,22 +174,142 @@ def record(topic: str, *, verdict: str, audience: str = "", by: str,
     return row
 
 
-def observation(topic: str | None = None) -> dict:
-    """**観測**——そのトピックの場に誰がいたか（設計 §4.2・§8）。
+# --- 観測者・行の ID・打ち消し（設計 v1.0.0 §1 規則 1・2） --------------------
 
-    **観測は共有できる。** 「`精製` は鉱物精製の場だった」は、どのプロジェクトに
-    とっても同じ事実。だから account に関係なく最後の記録を返す。
+# **観測者が名乗らなかったことを、名乗ったことにしない。** `account` も `by` も
+# 無い行は 1 つの「観測者」に束ねる（旧 46 件はここに来ることがある）。
+NO_OBSERVER = "(記録なし)"
+
+_NOTE_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def observer_of(row: dict) -> str:
+    """**観測者の鍵**（設計 v1.0.0 §1 規則 1）。`account` → `by` → `"(記録なし)"`。
+
+    **「誰がいるか」は共有できる事実だが、共有の棚に真実は 1 つではない。**
+    同じ `コーヒー` でも豆屋・焙煎家・研究者で見えるものが違う。だから
+    **潰さずに、観測者ごとに最新を並べる。**
+    """
+    return (row.get("account") or row.get("by") or "").strip() or NO_OBSERVER
+
+
+def note_id_of(row: dict) -> str:
+    """**行の中身から決まる ID**（設計 v1.0.0 §1 規則 2）。
+
+    保存時に付けるが、**読むときも同じ規則で計算しなおす**ので、`note_id` を
+    持たない旧行にも同じ ID が付く。**内容アドレスは、読むたびに計算しなおさ
+    なければ内容アドレスではない**（`topic_store.verify()` と同じ筋）。
+    """
+    return models.content_id(row, exclude=("note_id",))
+
+
+def _read() -> tuple:
+    """`(観測の行, 打ち消し)`。**行は消さない。読むときに飛ばすだけ。**
+
+    打ち消しの行は `{"retracts": note_id, "reason", "by", "checked_at"}` で、
+    **観測ではない**（`topic` を持たない）。観測として数えない。
+    """
+    checks = [r for r in load()["checks"] if isinstance(r, dict)]
+    taken = {r["retracts"]: r for r in checks if r.get("retracts")}
+    rows = [dict(r, note_id=note_id_of(r)) for r in checks
+            if not r.get("retracts") and r.get("topic")]
+    return rows, taken
+
+
+def notes(topic: str | None = None) -> list:
+    """**生きている観測の行**（追記順・打ち消し済みは含まない）。
+
+    ここが**唯一の読み口**。`load()["checks"]` を直接読むと、打ち消しが効かない
+    ——**消せない誤記録**がそのまま判断の材料になる。
+    """
+    rows, taken = _read()
+    return [r for r in rows if r["note_id"] not in taken
+            and (topic is None or r["topic"] == topic)]
+
+
+def _newest_first(rows: list) -> list:
+    """新しい順。**同じ時刻なら後から足したほうが新しい**（追記順が時系列）。"""
+    return [r for _, r in sorted(enumerate(rows),
+                                  key=lambda t: ((t[1].get("checked_at") or ""), t[0]),
+                                  reverse=True)]
+
+
+def history(topic: str) -> list:
+    """その語の**全観測者・全行**（新しい順）。**打ち消し済みには印を付ける。**
+
+    `--advise` は 1 語 2 件までしか出さない（設計 v1.0.0 §1 規則 3）。
+    **出さなかったものを見に来る口**がここ。**消さないので、全部ある。**
+    """
+    rows, taken = _read()
+    return [dict(r, retracted=taken.get(r["note_id"]))
+            for r in _newest_first([r for r in rows if r["topic"] == topic])]
+
+
+def retract_note(note_id: str, *, reason: str, by: str, now=None) -> dict:
+    """**1 行を打ち消す。消さない**（設計 v1.0.0 §1 規則 2）。
+
+    観測者ごとに並べると、**誤記録は「その観測者の最新」として残り続ける**
+    ——いままでは後から上書きすれば画面から消えたので、**むしろ消えにくく
+    なる。** だから打ち消しの口を一緒に入れる。
+
+    `topic_store.retract()`（構造化の棚）と同じ考え方: 記録そのものは残り、
+    **誰がいつなぜ下げたかも残る。** 読み出しから外れるだけ。
+    """
+    if not _NOTE_ID_RE.match(note_id or ""):
+        raise ValueError(f"note_id の形が違います: {note_id!r}"
+                          f"（sha256: に続く 64 桁の 16 進数）")
+    if not (reason or "").strip():
+        raise ValueError("--reason を付けてください（なぜ打ち消すか）")
+    if not (by or "").strip():
+        raise ValueError("--by を付けてください（誰が打ち消したか）")
+    rows, taken = _read()
+    if not any(r["note_id"] == note_id for r in rows):
+        # **「無い」と「もう下げてある」を混ぜない。**
+        raise ValueError(f"その記録は棚にありません: {note_id}")
+    if note_id in taken:
+        前 = taken[note_id]
+        raise ValueError(f"その記録はすでに打ち消されています"
+                          f"（{(前.get('checked_at') or '')[:10]} {前.get('by')}）")
+    now = now if now is not None else jst.now_jst()
+    return _append({"retracts": note_id, "reason": reason, "by": by,
+                    "checked_at": jst.iso(now)})
+
+
+def observation(topic: str | None = None):
+    """**観測者ごとの最新**を、新しい順に全部返す（設計 v1.0.0 §1 規則 1）。
+
+    `topic` を渡すと `[行, ...]`、渡さなければ `{語: [行, ...]}`。
+
+    **以前は「語ごとに最後の 1 行」だった。** 意図は「**誰がいるかは共有の事実**
+    だから account で分けない」で、その意図自体は正しい。だが**共有の棚に真実は
+    1 つではない**——別の account が書き直すと、**前の観測が画面から消えた。**
+    `audience` に account 固有の実績が乗っていた行がそれで入れ替わり、
+    **他所の実績を自分の見込みにする**経路になっていた。
+
+    **潰さない。観測者ごとに最新を 1 行ずつ、全部並べる。** 同じ観測者の古い行は
+    `topics.json` に残り、`history()` で読める。**打ち消された行は返さない。**
 
     **ここに「合うか」は入れない。** 合うかどうかは記事・投稿・プロジェクトの
-    目的によって変わる（設計 §4.2:「そのトピックはこの記事に合う」という判定を
-    混ぜない）。判断は `judgment()`。
+    目的によって変わる（設計 §4.2）。判断は `judgment()`。
     """
-    out: dict = {}
-    for row in load()["checks"]:
-        out[row["topic"]] = row          # 後の行が勝つ（追記順＝時系列）
+    per: dict = {}
+    for row in notes():
+        # 同じ観測者の後の行が勝つ（追記順＝時系列）。**別の観測者は潰さない。**
+        per.setdefault(row["topic"], {})[observer_of(row)] = row
+    out = {語: _newest_first(list(観測.values())) for 語, 観測 in per.items()}
     if topic is None:
         return out
-    return out.get(topic, {})
+    return out.get(topic, [])
+
+
+def newest(topic: str) -> dict:
+    """その語の**いちばん新しい観測 1 行**（無ければ `{}`）。
+
+    **「1 行だけ見る」ことが正しい場面にだけ使う**——型や取得状態の既定値など。
+    **人や LLM に観測を見せるところでは使わない**（`observation()` を使う）。
+    """
+    rows = observation(topic)
+    return rows[0] if rows else {}
 
 
 def kind_of(topic: str, account: str | None = None) -> str | None:
@@ -194,41 +326,13 @@ def kind_of(topic: str, account: str | None = None) -> str | None:
     **自分の記録があればそれを優先する**（型の見立ては account で割れてよい）。
     """
     自分, だれか = None, None
-    for row in load()["checks"]:
+    for row in notes():
         if row.get("topic") != topic or not row.get("kind"):
             continue
         だれか = row["kind"]
         if account and row.get("account") == account:
             自分 = row["kind"]
     return 自分 or だれか
-
-
-def audience_of(topic: str, account: str | None = None) -> dict:
-    """その語の**観測（誰がいたか）**と、それを書いた行（2026-09-12）。
-
-    `kind` と同じ穴が `audience` にもあった。**空の `audience` で記録し直すと、
-    前に書いた観測が消える**——`observation()` は「最後の行が勝つ」ので、
-    `--audience` を付けずに verdict だけ記録すると**共有の事実が消える。**
-
-    **空で上書きしない。** 自分の記録があればそれを優先する（同じ語でも
-    「誰がいたか」の見え方は account で割れてよい）。
-
-    戻り値は `{"audience", "account", "by"}`。**誰が書いたかを一緒に返す**
-    ——`audience` に account 固有の実績が書かれることがあるので、**出どころ無しで
-    共有の事実として見せない。**
-    """
-    自分, だれか = None, None
-    for row in load()["checks"]:
-        if row.get("topic") != topic or not (row.get("audience") or "").strip():
-            continue
-        だれか = row
-        if account and row.get("account") == account:
-            自分 = row
-    元 = 自分 or だれか
-    if 元 is None:
-        return {"audience": None, "account": None, "by": None}
-    return {"audience": 元["audience"], "account": 元.get("account"),
-            "by": 元.get("by")}
 
 
 def judgment(topic: str, account: str) -> dict:
@@ -243,7 +347,7 @@ def judgment(topic: str, account: str) -> dict:
     それらは観測として活き、判断は各アカウントが改めて下す。
     """
     found: dict = {}
-    for row in load()["checks"]:
+    for row in notes():
         if row["topic"] == topic and row.get("account") == account:
             found = row
     return found
@@ -255,7 +359,7 @@ def legacy_note(topic: str) -> dict:
     **成功の実証としては扱わない。**「当時この人はこう判断した」まで。
     """
     found: dict = {}
-    for row in load()["checks"]:
+    for row in notes():
         if row["topic"] == topic and not row.get("account"):
             found = row
     return found
@@ -277,11 +381,11 @@ def latest(topic: str | None = None, *, account: str | None = None) -> dict:
     `account` を渡さないときは従来どおり観測（account を見ない最新 1 行）を返す。
     """
     if account is None:
-        return observation(topic)
+        return newest(topic)
     own = judgment(topic, account)
     if own:
         return own
-    obs = observation(topic)
+    obs = newest(topic)
     # **借りてこない。** 型と読者は観測として共有できる事実なので残すが、
     # **判断・判断者・判断日時は空**にする。
     return {"topic": topic, "account": account, "verdict": "unknown",
@@ -295,7 +399,7 @@ _LABEL = {"alive": "適合", "mismatch": "不一致", "dead": "人がいない",
 def other_accounts(topic: str, *, account: str | None) -> list:
     """**ほかのアカウントの判断**（参考として見せるだけ・採らない）。設計 §8。"""
     seen: dict = {}
-    for row in load()["checks"]:
+    for row in notes():
         if row["topic"] != topic:
             continue
         owner = row.get("account")
@@ -312,7 +416,7 @@ def others_disagree(topic: str, *, account: str, verdict: str) -> list:
     使う前に一度考える価値のある情報。
     """
     seen: dict = {}
-    for row in load()["checks"]:
+    for row in notes():
         if row["topic"] != topic:
             continue
         owner = row.get("account")
@@ -339,14 +443,20 @@ def verdict_line(topic: str | None, *, account: str | None = None) -> str | None
     if not obs and not own:
         return (f"トピック `{topic}` は**未確認**です。"
                 "誰がいる場所か確かめてから出すことを勧めます。")
-    kind = f"［{obs.get('kind')}］" if obs.get("kind") else ""
+    型 = kind_of(topic, account)
+    kind = f"［{型}］" if 型 else ""
     lines = [f"トピック `{topic}`{kind}"]
-    if obs.get("audience") or obs.get("status"):
-        status = obs.get("status")
+    # **観測者ごとに全部並べる**（設計 v1.0.0 §1 規則 1）。承認の一段目は 1 語
+    # しか見ないので、ここは件数を絞らない——**絞ると、見せなかった観測が
+    # 「無かったこと」になる。**
+    for row in obs:
+        if not (row.get("audience") or row.get("status")):
+            continue
+        status = row.get("status")
         head = f"［{OBS_STATUS[status]}］" if status else ""
-        lines.append(f"    観測: {head}{obs.get('audience') or ''}"
-                     f"（{obs['checked_at'][:10]} {obs['by']}）")
-    if not obs.get("status"):
+        lines.append(f"    観測: {head}{row.get('audience') or ''}"
+                     f"（{(row.get('checked_at') or '')[:10]} {observer_of(row)}）")
+    if any(not row.get("status") for row in obs) or not obs:
         lines.append("    ※ この観測は取得結果（0 件／権限不足／失敗）を記録して"
                      "いません。「人がいない」と読み替えないでください。")
     if own:
@@ -409,9 +519,12 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
     そのままは使えないが、型ごとの傾向なら使い回せる。**6 件の下調べは推測でしか
     ないが、84 本の実測が付けば根拠になる。**
     """
+    # **観測者ごとに並んだ観測**（設計 v1.0.0 §1 規則 1）。型ごとの集計は語を
+    # 数えるので、**取得状態と旧 verdict の既定はいちばん新しい 1 行**から取る。
     rows = observation()
     out: dict = {}
-    for topic, row in rows.items():
+    for topic, 観測 in rows.items():
+        row = 観測[0]
         # **型は最新 1 行から取らない**（独立検収 A・2026-09-12）。
         kind = kind_of(topic, account) or "（型なし）"
         bucket = out.setdefault(kind, {"kind": kind, "topics": [], "views": [],

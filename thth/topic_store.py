@@ -379,12 +379,16 @@ def legacy_observations() -> list:
     """
     from . import topics as topics_mod
 
-    # **語ごとに最後の 1 件だけ**（実運用報告 2026-09-11）。履歴を全部返すと
-    # 同じ語が何度も並んで、原稿に関係のある観測が埋もれる。履歴そのものは
-    # `topics.json` に残っている。
+    # **観測者ごとに最新 1 件**（設計 v1.0.0 §1 規則 5）。以前は「語ごとに最後の
+    # 1 件」だったので、**別の観測者が同じ語を書くと前の観測が消えていた**
+    # ——`suggest` の証拠から、その語を実際に見てきた人の観測が落ちる。
+    # 履歴を全部返すのはやめたまま（原稿に関係のある観測が埋もれる）、
+    # **潰す単位を「語」から「語 × 観測者」に変える。**
+    #
+    # **打ち消された行は返さない**（`topics_mod.notes()` が飛ばす）。
     latest = {}
-    for row in topics_mod.load()["checks"]:
-        latest[row["topic"]] = row
+    for row in topics_mod.notes():
+        latest[(row["topic"], topics_mod.observer_of(row))] = row
 
     out = []
     for row in latest.values():
