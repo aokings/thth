@@ -79,3 +79,32 @@ def test_途中で失敗したら部分を返さない():
 
     with pytest.raises(RuntimeError):
         _途中で落ちる([]).conversation("POST1")
+
+@pytest.mark.parametrize("だめな値", [123, ["https://例"], {"url": "x"}, ""])
+def test_次の頁の指し先が読めなければ終端と読まない(だめな値):
+    """**「正常な終端」と「型が違う」を分ける**（外部レビュー・2026-09-12）。
+
+    文字列でなければ終端として返していたので、**数値・配列・辞書が来ると部分結果を
+    成功として返していた**——取得済の印が付き、次の刻みでやり直せない。
+    **読めない形は、終わりではない。**
+    """
+    口 = _頁を返す口([{"data": [{"id": "R1"}], "paging": {"next": だめな値}}])
+    with pytest.raises(RuntimeError) as e:
+        口.conversation("POST1")
+    assert "取れたことにしません" in str(e.value)
+
+
+@pytest.mark.parametrize("body", [
+    {"data": [{"id": "R1"}]},                       # paging が無い
+    {"data": [{"id": "R1"}], "paging": {}},          # next が無い
+    {"data": [{"id": "R1"}], "paging": {"next": None}},
+])
+def test_正常な終端は終端として扱う(body):
+    assert [r["id"] for r in _頁を返す口([body]).conversation("POST1")] == ["R1"]
+
+
+def test_pagingの形が違えば終端と読まない():
+    口 = _頁を返す口([{"data": [{"id": "R1"}], "paging": "つぎ"}])
+    with pytest.raises(RuntimeError) as e:
+        口.conversation("POST1")
+    assert "`paging` の形が違います" in str(e.value)

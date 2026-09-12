@@ -347,13 +347,17 @@ def load(account_name: str) -> dict:
                 seen_post_metrics.update((row.get("metrics") or {}).keys())
 
             first = own_rows[0]
+            # **1 回の戻り値を 2 欄へ分ける**（外部レビュー・2026-09-12）。
+            # 2 回呼んでいたので、**途中で原稿が現れる／消えると
+            # `form_now` と `form_readable` が食い違った。**
+            型, 読めた = _form_state(queue_dir, first.get("file"))
             posts.append({
                 "post_id": post_id,
                 "topic": first.get("topic"),
-                "form_now": _form_state(queue_dir, first.get("file"))[0],
+                "form_now": 型,
                 # **読めたかどうかを別に持つ。** `form_now` の `None` だけでは
                 # 「型が無い」と「読めなかった」を区別できない（外部レビュー C2）。
-                "form_readable": _form_state(queue_dir, first.get("file"))[1],
+                "form_readable": 読めた,
                 "form_source": "current_draft",
                 "file": first.get("file"),
                 "posted_at": first.get("posted_at"),

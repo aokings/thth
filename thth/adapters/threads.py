@@ -290,10 +290,22 @@ class ThreadsAdapter(base.Adapter):
         body = self._get(path, params)
         for _ in range(self._PAGE_LIMIT):
             out.extend(self._rows(body, what))
-            nxt = ((body.get("paging") or {}).get("next")
-                    if isinstance(body, dict) else None)
+            paging = body.get("paging") if isinstance(body, dict) else None
+            if paging is None:
+                return out                      # **正常な終端**（頁の情報が無い）
+            if not isinstance(paging, dict):
+                raise RuntimeError(f"{what}: `paging` の形が違います（{type(paging).__name__}）")
+            if "next" not in paging or paging["next"] is None:
+                return out                      # **正常な終端**
+            nxt = paging["next"]
+            # **「正常な終端」と「型が違う」を分ける**（外部レビュー・2026-09-12）。
+            # 文字列でなければ終端として `return` していたので、**数値・配列・辞書が
+            # 来ると部分結果を成功として返していた**——取得済の印が付き、次の刻みで
+            # やり直せない。**読めない形は、終わりではない。**
             if not isinstance(nxt, str) or not nxt:
-                return out
+                raise RuntimeError(
+                    f"{what}: 次の頁の指し先が読めません"
+                    f"（{type(nxt).__name__}）。**途中までを取れたことにしません**")
             if nxt in seen_urls:
                 # **同じ頁を指し続ける**（API 側の不具合・cursor の取り違え）。
                 # **黙って回り続けない。**

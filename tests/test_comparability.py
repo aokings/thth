@@ -91,3 +91,60 @@ def test_okのFalseとNoneを混ぜない():
     assert 駄目["ok"] is False
     assert 判らない["ok"] is None
     assert 駄目["ok"] != 判らない["ok"]
+
+def test_人向け表示は読めないを型無しと出さない(isolated_account, monkeypatch, capsys):
+    """**外部レビュー・2026-09-12。** 原稿の不存在でも「（型無し）」と出ていた。"""
+    import argparse
+    from thth import cli as cli_mod, measured as measured_mod
+
+    monkeypatch.setattr(measured_mod, "load", lambda _name: {
+        "account": "x", "posts": [{"post_id": "P1", "topic": None,
+                                    "form_now": None, "form_readable": False,
+                                    "form_source": "current_draft",
+                                    "posted_at": None, "file": "a.md", "rows": []}],
+        "account_daily": [], "broken": [], "unknown_posts": [],
+        "missing_post_metrics": None, "missing_account_daily_metrics": None,
+        "posts_unknown_ownership": [], "files_seen": 1, "daily_files_seen": 0})
+    cli_mod.cmd_measured(argparse.Namespace(account="x", json=False, post=None))
+    out = capsys.readouterr().out
+    assert "型未確認" in out
+    assert "（型無し）" not in out, "**読めなかっただけなのに「型無し」と出している**"
+
+def test_型と読めたかは1回の戻り値から取る(tmp_path, monkeypatch, isolated_account):
+    """**外部レビュー・2026-09-12。** `_form_state()` を 2 回呼んでいたので、
+    **途中で原稿が現れる／消えると `form_now` と `form_readable` が食い違った。**
+    1 回の戻り値を 2 欄へ分ける。
+    """
+    from thth import measured as measured_mod
+
+    返す = iter([(None, False), ("問いかけ", True)])
+    monkeypatch.setattr(measured_mod, "_form_state",
+                         lambda *_a, **_k: next(返す))
+
+    post = {}
+    型, 読めた = measured_mod._form_state("q", "a.md")
+    post["form_now"], post["form_readable"] = 型, 読めた
+    # **同じ 1 回の結果**なので、食い違いようがない。
+    assert post["form_now"] is None and post["form_readable"] is False
+
+    # **2 回呼ぶと食い違う**——それが起きない形にしてある、というのがこのテストの
+    # 押さえどころ。`load()` が 2 回呼んでいないことを、呼び出し回数で見る。
+    回数 = {"n": 0}
+
+    def 数える(*_a, **_k):
+        回数["n"] += 1
+        return ("問いかけ", True)
+
+    monkeypatch.setattr(measured_mod, "_form_state", 数える)
+    monkeypatch.setattr(measured_mod, "_read_ndjson",
+                         lambda _p: ([{"account": isolated_account["name"],
+                                        "post_id": "P1", "collected_at": "2026-09-11T10:00:00+09:00",
+                                        "metrics": {"views": 1}, "file": "a.md"}], False))
+    import os as _os
+    d = tmp_path / "posts"
+    d.mkdir()
+    (d / "P1.ndjson").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(_os.path, "isdir", lambda p: str(p).endswith("posts"))
+    monkeypatch.setattr(_os, "listdir", lambda p: ["P1.ndjson"])
+    measured_mod.load(isolated_account["name"])
+    assert 回数["n"] == 1, f"**`_form_state` を {回数['n']} 回呼んでいる**（1 回であること）"

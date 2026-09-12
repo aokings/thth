@@ -782,7 +782,10 @@ def cmd_measured(args) -> int:
         # **`form` は「いまの原稿から引いた値」であって、採取した時点の型では
         # ない**（再々判定 M4・2026-09-12 Codex）。原稿が後から編集されていれば
         # 違う値になる。**過去の分類として読ませないよう、由来ごと出す。**
-        form = post.get("form_now") or "（型無し）"
+        # **読めなかったことを「型無し」と出さない**（外部レビュー・2026-09-12）。
+        # 原稿の不存在・読取不能でも「（型無し）」と出ていた。
+        form = (post.get("form_now") or "（型無し）") if post.get("form_readable") \
+                else "（**型未確認**——原稿を読めません）"
         source = post.get("form_source")
         source_text = "（いまの原稿から）" if source == "current_draft" else ""
         print(f"{post['post_id']}  [{topic}]  form={form}{source_text}"
