@@ -264,7 +264,7 @@ def test_acceptedの語彙は登録できない(isolated_account, thth_root):
                     _entry("other"), _entry("missing_condition", state="shadow")]))
     assert ok.returncode == 0, ok.stdout + ok.stderr
     assert _json(ok)["states"] == {"proposed": 1, "shadow": 1}
-    assert any("masaru" in w for w in _json(ok)["warnings"])
+    assert any("運用者" in w for w in _json(ok)["warnings"])
 
 
 def test_語彙は版で並ぶ_前の版を指す(isolated_account, thth_root):

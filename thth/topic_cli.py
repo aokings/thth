@@ -772,7 +772,7 @@ def cmd_profile(args) -> int:
     saved = store.set_profile(profile)
     _emit({"ok": True, "account": args.account, "profile": saved,
            "notice": "新しい方針の決定・既存方針の変更・解消できない矛盾は "
-                      "masaru に確認してください（トピック選定用 profile の確認権限です。"
+                      "運用者に確認してください（トピック選定用 profile の確認権限です。"
                       "投稿そのものの承認権限は変わりません）。"})
     return 0
 
@@ -1182,7 +1182,7 @@ def cmd_record_vocabulary(args) -> int:
     _emit({"ok": True, "vocabulary_id": saved["vocabulary_id"], "stored": wrote,
            "name": saved["name"], "supersedes": saved["supersedes"],
            "entries": len(saved["entries"]), "states": states,
-           "warnings": ["**共通仕様の採用は masaru または保守責任者が独立"
+           "warnings": ["**共通仕様の採用は運用者または保守責任者が独立"
                          "レビューを踏まえて確定します**（構想書 §8）。"
                          "実績から自動で採用しません。いまは accepted を"
                          "登録できません"],
@@ -1634,7 +1634,7 @@ def cmd_record_form_spec(args) -> int:
                                        if c["kind"] == "positive"]),
                       "counter": len([c for c in saved["cases"]
                                        if c["kind"] == "counter"])},
-           "warnings": [f"state={saved['state']} です。**採用は masaru または"
+           "warnings": [f"state={saved['state']} です。**採用は運用者または"
                          f"保守責任者が独立確認を踏まえて確定します**"
                          f"（構想書 §8。いまは登録できません）"],
            "notice": REVIEW_NOTICE})
@@ -1890,7 +1890,7 @@ def cmd_record_hypothesis(args) -> int:
            "code": saved["code"], "kind": saved["kind"],
            "sample_design": saved["sample_design"], "state": saved["state"],
            "scope": saved["scope"], "supersedes": saved["supersedes"],
-           "warnings": [f"state={saved['state']} です。**採用は masaru または"
+           "warnings": [f"state={saved['state']} です。**採用は運用者または"
                          f"保守責任者が独立確認を踏まえて確定します**"
                          f"（構想書 §8。いまは登録できません）"],
            # **観測単位の食い違い**（運用指摘 2026-09-12）。保存はしない

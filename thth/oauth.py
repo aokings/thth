@@ -236,7 +236,7 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
 
     redirect_uri = redirect_uri or account_cfg.get("redirect_uri")
     if not redirect_uri:
-        _out(f"redirect_uri が accounts/{account_name}.json に無い（masaru が設計 §9 の値を足す）", log=log)
+        _out(f"redirect_uri が accounts/{account_name}.json に無い（運用者が設計 §9 の値を足す）", log=log)
         return 2
 
     scope_list = account_cfg.get("scopes") or scopes_mod.DEFAULT_SCOPES

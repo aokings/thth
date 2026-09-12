@@ -425,7 +425,7 @@ def test_profileは確認者と根拠が要る(isolated_account):
     assert proc.returncode == 0, proc.stderr + proc.stdout
     out = json.loads(proc.stdout)
     assert out["profile"]["confirmed_by"] == "kopicha-session"
-    assert "masaru に確認" in out["notice"]
+    assert "運用者に確認" in out["notice"]
 
 
 # --- 手順書に書いたコマンドが実在すること ------------------------------------

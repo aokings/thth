@@ -43,7 +43,7 @@ def load_app_env(path: str | None = None, *, log=print) -> tuple[str, str]:
     path = path or default_path()
     if not os.path.exists(path):
         raise AppEnvError(
-            f"app.env が無い: {path}（masaru が ~/.config/thth/app.env に "
+            f"app.env が無い: {path}（運用者が ~/.config/thth/app.env に "
             "THREADS_APP_ID・THREADS_APP_SECRET を書く。設計 §3.1・§9）"
         )
     secrets_fs.ensure_mode_600(path, log=log)

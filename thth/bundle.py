@@ -336,7 +336,7 @@ def editorial_notes(bundle: Bundle) -> list:
     if form in avoid:
         return [f"warning: form: この account は `{form}` を使わないと profile に"
                 f"宣言しています（avoid_forms）。**型を変えるか、profile を "
-                f"masaru に諮って変えてください。** "
+                f"運用者に諮って変えてください。** "
                 f"**これは警告です——承認・公開は止まりません。**"]
     return []
 

@@ -296,7 +296,7 @@ def cmd_approve(args) -> int:
             # いちばん重く扱っている一線なのだから、**誰が承認したか判らないまま
             # 通してはいけない**。既定を作らず、名乗らせる。
             print("--by を付けてください（誰が承認したかを記録します）。"
-                  "例: --by masaru / --by \"claude（kopicha セッション）\"。"
+                  "例: --by <あなたの名前> / --by \"claude（kopicha セッション）\"。"
                   "環境変数 THTH_ACTOR でも指定できます。", file=sys.stderr)
             return 1
         approved_at = jst.iso()
@@ -1952,7 +1952,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_collect.add_argument("account", nargs="?")
     p_collect.set_defaults(func=cmd_collect)
 
-    p_auth = sub.add_parser("auth", help="認可コードから長期トークンを取得する（masaru が対話で実行。MCPには出さない）")
+    p_auth = sub.add_parser("auth", help="認可コードから長期トークンを取得する（運用者が対話で実行。MCPには出さない）")
     p_auth.add_argument("account")
     p_auth.add_argument("--redirect-uri", dest="redirect_uri", default=None,
                          help="省略時は accounts/<account>.json の redirect_uri を使う")

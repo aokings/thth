@@ -734,7 +734,7 @@ def build_review(row: dict, *, vocabulary: dict,
 
     judged_by = row["judged_by"]
     if not isinstance(judged_by, dict):
-        raise SchemaError('judged_by は object（例 {"kind": "human", "id": "masaru"}）')
+        raise SchemaError('judged_by は object（例 {"kind": "human", "id": "運用者"}）')
     _require_choice(judged_by.get("kind"), JUDGE_KIND, "judged_by の kind")
     if not judged_by.get("id"):
         raise SchemaError("judged_by に id が要ります（誰・どのセッションか）")
@@ -1982,7 +1982,7 @@ HYPOTHESIS_SHAPE = {
                   "**統制していないもの（曜日・本文など）はここではなく "
                   "`predictions[].scope` へ**——予測ごとに統制は違い得ます",
         "state": [f"**いま登録できるのは 'proposed' だけ**"
-                   f"（shadow への昇格は未実装・accepted は masaru の裁定）。"
+                   f"（shadow への昇格は未実装・accepted は運用者の裁定）。"
                    f"語彙の状態は {list(REASON_STATE)}"],
         "proposed_by": "立てた人・セッション（`--by` で上書きされます）",
         "verifier": "**確かめる人。立てた人と分けること**"
