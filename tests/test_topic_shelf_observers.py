@@ -227,6 +227,64 @@ def test_TA3_historyとretract_noteはCLIから打てる(thth_root, capsys):
     assert cli_mod.main(["topics", "kopicha-threads", "よけいなもの"]) == 2
 
 
+# --- 規則 5: legacy_observations() も観測者別 -------------------------------
+
+def test_規則5_旧棚の読み出しも観測者ごとに引ける(thth_root):
+    """**`observation_refs` に書ける ID を、観測者ごとに用意する。**
+
+    語ごとに 1 件しか返していなかったので、**同じ語を別の観測者が書くと、
+    先に書いた人の観測は `suggest` の証拠から消え、ID でも引けなかった**
+    ——「観測が足りない」と言われても、自分の観測を指す手段が無い。
+
+    **`observation_id` の計算は変えていない**（記録の中身から決まるまま）。
+    変えたのは**潰す単位**だけ。
+    """
+    topics_mod.record("コーヒー", verdict="alive", audience="焙煎と抽出",
+                       by="kanto", account="asmon-kanto-threads")
+    topics_mod.record("コーヒー", verdict="alive", audience="豆屋と喫茶",
+                       by="自分", account="kopicha-threads")
+
+    行 = [r for r in store.legacy_observations() if r["topic"] == "コーヒー"]
+    assert len(行) == 2, f"**観測者ごとに引けない**: {行}"
+    assert {r["account"] for r in 行} == {"asmon-kanto-threads", "kopicha-threads"}
+    assert {r["audience"] for r in 行} == {"焙煎と抽出", "豆屋と喫茶"}
+    assert len({r["observation_id"] for r in 行}) == 2, "ID が衝突している"
+    for r in 行:
+        assert r["observation_id"].startswith("sha256:")
+        # **中身から決まる ID のまま**（保存側と同じ計算）。
+        from thth import topic_models as models
+        assert r["observation_id"] == models.content_id(
+            r, exclude=("observation_id",))
+
+
+def test_規則5_記録するといま書いた行のIDが返る(thth_root, capsys):
+    """**語だけで引くと、他人の観測の ID が返る。** いま書いた行のものを返す。
+
+    **先に書いた観測者が、あとから書き直す**のが現実の順序（棚は観測者ごとに
+    並ぶので、書き直しても並びの位置は変わらない）。**語だけで引くと、
+    そのあいだに割り込んだ別の観測者の ID が返る。**
+    """
+    topics_mod.record("コーヒー", verdict="alive", audience="古い見立て",
+                       by="自分", account="kopicha-threads")
+    topics_mod.record("コーヒー", verdict="alive", audience="焙煎と抽出",
+                       by="kanto", account="asmon-kanto-threads")
+    assert cli_mod.main(["topics", "kopicha-threads", "--note", "コーヒー",
+                          "--verdict", "alive", "--audience", "豆屋と喫茶",
+                          "--by", "自分"]) == 0
+    out = capsys.readouterr().out
+    出た = [l.split(": ", 1)[1].strip() for l in out.splitlines()
+             if l.strip().startswith("観測 ID:")]
+    assert 出た, out
+    引いた = [r for r in store.legacy_observations()
+              if r["observation_id"] == 出た[0]]
+    assert len(引いた) == 1, out
+    assert 引いた[0]["account"] == "kopicha-threads", \
+        f"**他人の観測の ID を返している**: {引いた[0]}"
+    assert 引いた[0]["audience"] == "豆屋と喫茶"
+    # 記録 ID も返る（打ち消せる形で返す）
+    assert "記録 ID: sha256:" in out, out
+
+
 # --- T-A4 -------------------------------------------------------------------
 
 def test_TA4_jsonに旧3鍵が無くobservationsがある(thth_root, capsys, monkeypatch):
