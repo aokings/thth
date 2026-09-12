@@ -42,6 +42,15 @@ REEXEC_ENV = "THTH_SELF_UPDATED"
 # 動かなければ本番は変わらない。
 RELEASE_REF = os.environ.get("THTH_RELEASE_REF") or "release"
 
+# **「渡していない」と「渡したが不明」を分ける**（外部レビュー・2026-09-12）。
+#
+# `base=None` を「省略」と読んでいたため、**記録が無い画面が `None` を渡すと、
+# 数える側が記録を読み直しに行った。** その間に別の更新が終わっていると、**無い
+# はずの基準で `0`（＝一致しています）を返す。**
+#
+# **今日ずっと潰してきた「読めない ≠ 無い」を、引数の設計で作っていた。**
+_未指定 = object()
+
 
 def _git(args: list, *, cwd: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
@@ -248,8 +257,8 @@ def head(app_dir: str = APP_DIR) -> str | None:
 
 
 def behind_release(app_dir: str = APP_DIR, *, fetch: bool = False,
-                    ref: str | None = None, base: str | None = None,
-                    head_sha: str | None = None) -> int | None:
+                    ref: str | None = None, base=_未指定,
+                    head_sha=_未指定) -> int | None:
     """**配布の枝**より何 commit 遅れているか。判らなければ `None`。
 
     **名前を変えた**（`behind_origin` → `behind_release`・2026-09-12）。見る先が
@@ -278,16 +287,18 @@ def behind_release(app_dir: str = APP_DIR, *, fetch: bool = False,
     # **`fetch=True` だけ直しても閉じなかった**——board は `fetch=False` で呼ぶので、
     # 取りに行けなくなったあとも古い追跡 ref から `0` を数え、**「追いついて
     # います」と出していた。** 取りに行けた事実そのものを見に行く。
-    base = base if base is not None else _recorded_release(app_dir, ref)
-    here = head_sha or "HEAD"
-    if base is None:
+    if base is _未指定:
+        base = _recorded_release(app_dir, ref)
+    here = "HEAD" if head_sha is _未指定 else head_sha
+    # **渡された `None` は「不明」。** 読み直して埋めない。
+    if base is None or here is None:
         return None
     return _count(app_dir, f"{here}..{base}")
 
 
 def ahead_of_release(app_dir: str = APP_DIR, *, fetch: bool = False,
-                      ref: str | None = None, base: str | None = None,
-                      head_sha: str | None = None) -> int | None:
+                      ref: str | None = None, base=_未指定,
+                      head_sha=_未指定) -> int | None:
     """**配布の枝より何 commit 先にいるか。** 判らなければ `None`。
 
     **`0` でないなら「配っていない commit で動いている」。**
@@ -310,9 +321,10 @@ def ahead_of_release(app_dir: str = APP_DIR, *, fetch: bool = False,
                        error=None if ok else "取りに行けませんでした")
         if not ok:
             return None
-    base = base if base is not None else _recorded_release(app_dir, ref)
-    here = head_sha or "HEAD"
-    if base is None:
+    if base is _未指定:
+        base = _recorded_release(app_dir, ref)
+    here = "HEAD" if head_sha is _未指定 else head_sha
+    if base is None or here is None:
         return None
     return _count(app_dir, f"{base}..{here}")
 

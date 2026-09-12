@@ -718,3 +718,54 @@ def test_1枚の画面は1組のSHAで作る(tmp_path, monkeypatch, capsys):
     assert app["ahead_cached_release"] == 1, \
         "**表示は古い基準、計数は新しい基準**（画面の途中で読み直している）"
     assert app["behind_cached_release"] == 0
+
+def test_基準が無いまま渡されたら読み直して埋めない(tmp_path, monkeypatch):
+    """**「渡していない」と「渡したが不明」を分ける**（外部レビュー・2026-09-12）。
+
+    `base=None` を「省略」と読んでいたため、**記録が無い画面が `None` を渡すと、
+    数える側が記録を読み直しに行った。** その間に別の更新が終わっていると、
+    **無いはずの基準で `0`（＝一致しています）を返す。**
+
+    **今日ずっと潰してきた「読めない ≠ 無い」を、引数の設計で作っていた。**
+    """
+    pair = _app_pair(tmp_path)
+    selfupdate._pull_locked(pair["work"])          # 記録は「ある」状態にしておく
+    assert selfupdate.behind_release(pair["work"]) == 0, "前提が崩れている"
+
+    # **明示の `None` は「不明」。** 記録があっても、読み直して埋めない。
+    assert selfupdate.behind_release(pair["work"], base=None) is None
+    assert selfupdate.ahead_of_release(pair["work"], base=None) is None
+    assert selfupdate.behind_release(pair["work"], head_sha=None) is None
+    assert selfupdate.ahead_of_release(pair["work"], head_sha=None) is None
+
+    # 省略したときは従来どおり読む。
+    assert selfupdate.behind_release(pair["work"]) == 0
+
+
+def test_記録が無い画面では数を出さない(tmp_path, monkeypatch, capsys):
+    """**画面ぜんたいで見ても同じこと。** 基準が無いなら、数も無い。"""
+    pair = _app_pair(tmp_path)
+    assert selfupdate.release_check(pair["work"]) is None, "前提が崩れている"
+
+    本物 = selfupdate.release_check
+
+    def 読んだ直後に更新が終わる():
+        row = 本物(pair["work"])                    # None（記録が無い）
+        selfupdate._pull_locked(pair["work"])       # ここで記録ができてしまう
+        return row
+
+    import functools
+    monkeypatch.setattr(report_mod.accounts_mod, "list_account_names", lambda: [])
+    monkeypatch.setattr(selfupdate, "release_check", 読んだ直後に更新が終わる)
+    for name in ("behind_release", "ahead_of_release"):
+        monkeypatch.setattr(selfupdate, name,
+                             functools.partial(getattr(selfupdate, name), pair["work"]))
+    素の_head = selfupdate.head
+    monkeypatch.setattr(selfupdate, "head",
+                         lambda app_dir=pair["work"]: 素の_head(app_dir))
+
+    app = report_mod.board_summary()["app"]
+    assert app["comparison_ref_sha"] is None
+    assert app["behind_cached_release"] is None, \
+        "**基準が無いのに数を出している**（数える側が読み直して埋めた）"
+    assert app["ahead_cached_release"] is None
