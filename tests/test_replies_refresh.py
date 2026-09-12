@@ -202,3 +202,57 @@ def test_全部取れたときだけ0で終わる():
                  {**良い, "errors": ["何か"]},
                  {**良い, "remote": "not_synced"}):
         assert cli_mod._refresh_rc(駄目) == 1, 駄目
+
+@pytest.mark.parametrize("結果, 出るはず, 出ないはず", [
+    ({"skipped": None, "requested": 2, "fetched": 2, "new_replies": 3,
+      "failed": [], "errors": [], "saved": True, "remote": "synced",
+      "checked_at": "2026-09-12T12:00:00+09:00"},
+     ["新しい返信 3 件", "送信済み", "全件取れたとは限りません"], ["見送りました"]),
+    ({"skipped": "locked", "requested": 0, "fetched": 0, "new_replies": 0,
+      "failed": [], "errors": [], "saved": False, "remote": "unknown",
+      "checked_at": "x"},
+     ["見送りました", "ほかの実行"], ["新しい返信"]),
+    ({"skipped": None, "requested": 1, "fetched": 0, "new_replies": 0,
+      "failed": [{"post_id": "P1", "reason": "取れません"}], "errors": [],
+      "saved": False, "remote": "unknown", "checked_at": "x"},
+     ["取れなかった", "P1"], ["送信済み"]),
+    ({"skipped": None, "requested": 1, "fetched": 1, "new_replies": 1,
+      "failed": [], "errors": ["送れていません"], "saved": True,
+      "remote": "not_synced", "checked_at": "x"},
+     ["保存はできましたが送れていません"], ["送信済み"]),
+])
+def test_人向け出力は状態を書き分ける(結果, 出るはず, 出ないはず, capsys):
+    """**一度も実行されていなかった経路**（2026-09-12・こちらの洗い出しで発覚）。
+
+    **API 成功・保存成功・送信成功は別**なので、画面でも分かれること。
+    """
+    from thth import cli as cli_mod
+    cli_mod._print_refresh(結果)
+    out = capsys.readouterr().out
+    for 語 in 出るはず:
+        assert 語 in out, f"**{語} が出ていない**: {out}"
+    for 語 in 出ないはず:
+        assert 語 not in out, f"**{語} が出てしまっている**: {out}"
+
+
+def test_人向け出力でrefreshを通しで走らせる(tmp_path, isolated_account_factory,
+                                              capsys, monkeypatch):
+    """**人向けの経路を、実際に端から端まで通す。**"""
+    import argparse
+    from thth import cli as cli_mod
+    pair, account = _仕立て(tmp_path, isolated_account_factory)
+    口 = _口([{"id": "R1", "text": "返信", "username": "よそ"}])
+    # **差し替える前に本物を捕まえる。** `cli.collect_mod` は同じモジュール
+    # なので、中で名前越しに呼ぶと**自分自身を呼んで**無限に回る。
+    本物 = collect_mod.refresh_replies
+
+    def _差し替え(name, **kw):
+        kw.pop("log", None)
+        return 本物(name, adapter=口, now=NOW, log=lambda _l: None, **kw)
+
+    monkeypatch.setattr(cli_mod.collect_mod, "refresh_replies", _差し替え)
+    rc = cli_mod.cmd_replies(argparse.Namespace(account=account["name"], post=None,
+                                                 json=False, refresh=True))
+    out = capsys.readouterr().out
+    assert "取り直し:" in out and "新しい返信 1 件" in out
+    assert rc in (0, 1)
