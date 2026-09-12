@@ -414,3 +414,20 @@ def test_会話の口は階層が読める項目を取りに行く():
         "**上位 1 階層しか返さない口を呼んでいる**"
     for 項目 in ("id", "text", "username", "timestamp", "replied_to", "root_post"):
         assert 項目 in 呼ばれた["fields"], f"`{項目}` を取りに行っていない"
+
+def test_同じ取得の中の重複も台帳に入れない(tmp_path, isolated_account_factory):
+    """**台帳の中だけを見ていた**（外部レビュー C1・2026-09-12）。
+
+    同じ応答が `R1,R1,R2` だと台帳も `R1,R1,R2` になっていた。**頁の境界で同じ
+    返信が 2 度現れうる**ので、全頁を辿るようにしたいま、ここが効く。
+    """
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    adapter = FakeAdapter(replies_rows=[{"id": "R1", "text": "1"},
+                                         {"id": "R1", "text": "1"},
+                                         {"id": "R2", "text": "2"}])
+    collect_mod.run_collect(account["name"], adapter=adapter, now=NOW,
+                             log=lambda _l: None)
+    ids = [r.get("id") for r in _rows(pair["work"], "data/sns/replies/POST1.ndjson")
+            if r.get("kind") == "reply"]
+    assert ids == ["R1", "R2"], f"**同じ id が 2 度入っている**: {ids}"

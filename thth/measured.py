@@ -148,17 +148,31 @@ def _form_for(queue_dir: str, file_name: str | None) -> str | None:
     `None`（取れなかった、であって「型無し」ではないが、この口は区別しない——
     どちらも「判らない」なので `null` でよい）。
     """
+    return _form_state(queue_dir, file_name)[0]
+
+
+def _form_state(queue_dir: str, file_name: str | None) -> tuple:
+    """`(型, 読めたか)` を返す（外部レビュー C2・P2・2026-09-12）。
+
+    **`_form_for()` は「読めなかった」も「型が無い」も `None` で返す**——
+    docstring にも「取れなかった、であって型無しではない」と書いてあった。
+    それなのに `comparability()` がその `None` を
+    **「型（`form`）が無い」＝採用不可**に変換していた。**自分で書いた但し書きを、
+    自分で踏んだ。**
+
+    **読めたときだけ「型が無い」と言える。**
+    """
     if not file_name:
-        return None
+        return (None, False)
     base = file_name.split("#", 1)[0]
     path = os.path.join(queue_dir, base)
     try:
         qf = queuefile_mod.parse(path)
     except OSError:
-        return None
+        return (None, False)
     if qf.malformed:
-        return None
-    return qf.front_matter.get("form")
+        return (None, False)
+    return (qf.front_matter.get("form"), True)
 
 
 def comparability(post: dict) -> dict:
@@ -179,7 +193,11 @@ def comparability(post: dict) -> dict:
     「宣言だけで条件が守られた」ことになる（masaru 裁定 5 番と同じ筋）。
     """
     blockers = []
-    if not post.get("form_now"):
+    unchecked = []
+    if not post.get("form_readable"):
+        # **読めなかったことを「無い」と言わない**（外部レビュー C2）。
+        unchecked.append("型を確認できない（原稿を読めない・不存在・不正形式）")
+    elif not post.get("form_now"):
         blockers.append("型（`form`）が無い")
     if not post.get("post_id"):
         blockers.append("公開されていない")
@@ -190,7 +208,7 @@ def comparability(post: dict) -> dict:
         blockers.append("実測が揃っている行が 1 つも無い")
 
     # **見る口が無いもの。** 空にできるまで `ok` は `True` にならない。
-    unchecked = [
+    unchecked += [
         "修正理由が記録されているか（投稿と `reason` を結ぶ口がまだ無い）",
         "型が後から付けられたものでないか（型の記録の時刻を投稿と比べる口がまだ無い）",
     ]
@@ -332,7 +350,10 @@ def load(account_name: str) -> dict:
             posts.append({
                 "post_id": post_id,
                 "topic": first.get("topic"),
-                "form_now": _form_for(queue_dir, first.get("file")),
+                "form_now": _form_state(queue_dir, first.get("file"))[0],
+                # **読めたかどうかを別に持つ。** `form_now` の `None` だけでは
+                # 「型が無い」と「読めなかった」を区別できない（外部レビュー C2）。
+                "form_readable": _form_state(queue_dir, first.get("file"))[1],
                 "form_source": "current_draft",
                 "file": first.get("file"),
                 "posted_at": first.get("posted_at"),

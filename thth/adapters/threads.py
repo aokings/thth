@@ -123,10 +123,18 @@ class ThreadsAdapter(base.Adapter):
                                        failure="publish_ambiguous")
         return base.PublishResult(post_id=post_id, url=None, ts=ts, error=None, failure="none")
 
-    def _get(self, path: str, params: dict) -> dict:
+    def _get(self, path: str, params: dict, *, absolute_url: str | None = None) -> dict:
         p = dict(params)
         p["access_token"] = self.access_token
-        url = f"{self.base_url.rstrip('/')}{path}?" + urllib.parse.urlencode(p)
+        if absolute_url is not None:
+            # **次の頁は API が URL ごと返す。** 組み立て直さない（cursor の
+            # 組み立てを自前でやると、仕様が変わったときに黙って 1 頁で止まる）。
+            url = absolute_url
+            if "access_token=" not in url:
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}access_token={urllib.parse.quote(self.access_token)}"
+        else:
+            url = f"{self.base_url.rstrip('/')}{path}?" + urllib.parse.urlencode(p)
         with urllib.request.urlopen(url, timeout=self.timeout) as resp:
             body = json.loads(resp.read() or b"{}")
         # **200 で返ってきた `error` を、取れたことにしない**（監査 2026-09-11）。
@@ -261,11 +269,40 @@ class ThreadsAdapter(base.Adapter):
 
         **`replied_to` と `root_post` を取る**ので、階層の形も残る。
         """
-        body = self._get(
-            f"/v1.0/{post_id}/conversation",
-            {"fields": "id,text,username,timestamp,permalink,is_reply,"
-                        "replied_to,root_post,has_replies"})
-        return self._rows(body, "会話")
+        params = {"fields": "id,text,username,timestamp,permalink,is_reply,"
+                             "replied_to,root_post,has_replies"}
+        return self._all_pages(f"/v1.0/{post_id}/conversation", params, "会話")
+
+    # **頁を最後まで辿る**（外部レビュー C1・P2・2026-09-12）。
+    #
+    # `/conversation` は**頁分割された一覧**で、1 応答で会話全件は返らない。
+    # **1 頁目だけ取って「取れた」と記録していた**ので、2 頁目にあった返信への
+    # 返信は永久に入らない（**同じ刻みで再実行しても、取得済の印が付いている**）。
+    # **「会話全体を残す」という目的そのものを外していた。**
+    #
+    # **途中で失敗したら、部分を成功として返さない**——例外を上げる。採取側は
+    # 「例外なら記録を書かない」で成功と失敗を分けているので、次の刻みでやり直せる。
+    _PAGE_LIMIT = 50
+
+    def _all_pages(self, path: str, params: dict, what: str) -> list:
+        out: list = []
+        seen_urls: set = set()
+        body = self._get(path, params)
+        for _ in range(self._PAGE_LIMIT):
+            out.extend(self._rows(body, what))
+            nxt = ((body.get("paging") or {}).get("next")
+                    if isinstance(body, dict) else None)
+            if not isinstance(nxt, str) or not nxt:
+                return out
+            if nxt in seen_urls:
+                # **同じ頁を指し続ける**（API 側の不具合・cursor の取り違え）。
+                # **黙って回り続けない。**
+                raise RuntimeError(f"{what}: 次の頁が同じ URL を指しています（循環）")
+            seen_urls.add(nxt)
+            body = self._get(path, params, absolute_url=nxt)
+        raise RuntimeError(
+            f"{what}: 頁が {self._PAGE_LIMIT} を超えました"
+            f"（**途中までを取れたことにしません**）")
 
     def account_insights(self, user_id: str, *, since: str, until: str) -> dict:
         """アカウント単位の日次（`clicks` はここでしか取れない・設計 §4.5・§8-13）。"""
