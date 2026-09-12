@@ -91,6 +91,29 @@ def pending_paths(repo_dir: str, account_cfg: dict) -> list:
     return sorted(out)
 
 
+def _read_ndjson_strict(path: str) -> tuple:
+    """`(行, 壊れているか)`。**壊れた行を黙って飛ばさない。**
+
+    `_read_ndjson()` は壊れた行を無視する（**定期取得では、1 行の壊れで採取全体を
+    止めない**ため）。**取り直しでは流用しない**——壊れた台帳に追記すると、
+    **何が入っていたか分からないまま上に積む**ことになる（外部レビュー B・
+    2026-09-12）。
+    """
+    out = []
+    if not os.path.exists(path):
+        return (out, False)
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                return (out, True)
+    return (out, False)
+
+
 def _read_ndjson(path: str) -> list:
     out = []
     if not os.path.exists(path):
@@ -189,6 +212,46 @@ def _with_bundle_posts(files: list, account_name: str, account_cfg: dict, *,
                 path=f"{qf.path}#{i}", malformed=False, front_matter=fm,
                 body=body, verified=qf.verified))
     return out
+
+
+def _save_replies(reply_path: str, post_id: str, replies: list, *, now,
+                   age_hours, marks: list, trigger: str) -> list:
+    """取ってきた会話を台帳へ追記する。**定期取得と `--refresh` で共有する。**
+
+    **重複除去を二重実装しない**（外部レビュー B・2026-09-12）。台帳の中だけでなく
+    **取ってきた配列の中の重複も除く**——頁の境界で同じ返信が 2 度現れうるし、
+    同じ応答が `R1,R1,R2` でも台帳が `R1,R1,R2` になっていた。
+
+    **`marks` は呼び出し側が決める。** `--refresh` は `[]` を渡す——**臨時の取得で
+    刻みを進めない。** 進めると「24h の数」に化ける。
+
+    **`id` の無い行を、黙って成功件数に含めない。** **API の行が台帳の管理項目
+    （`kind`・`post_id`・`collected_at`）を上書きしないように、後から置く。**
+
+    戻り値は**新しく入れた返信の行**。
+    """
+    known = {row.get("id") for row in _reply_rows(reply_path)}
+    fresh, 欠落 = [], 0
+    for row in replies:
+        rid = row.get("id") if isinstance(row, dict) else None
+        if not rid:
+            欠落 += 1
+            continue
+        if rid in known:
+            continue
+        known.add(rid)
+        # **管理項目を後に置く**——API の行に同名の値があっても上書きさせない。
+        fresh.append({**row, "kind": "reply", "post_id": post_id,
+                       "collected_at": jst.iso(now)})
+    # **取れたことそのものを 1 行残す**（返信 0 件の成功と、取得の失敗を区別する
+    # ため。これが無いと「0 件だった」を「まだ取っていない」と読んでしまい、
+    # 毎回取りに行く／二度と取りに行かない、のどちらかになる）。
+    _append_ndjson(reply_path, fresh + [{
+        "kind": "fetch", "post_id": post_id, "collected_at": jst.iso(now),
+        "age_hours": None if age_hours is None else round(age_hours, 2),
+        "marks": marks, "trigger": trigger,
+        "replies": len(replies), "id_missing": 欠落}])
+    return fresh
 
 
 def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
@@ -300,30 +363,12 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 errors.append(f"{post_id}: conversation: {redact_mod.redact(str(e))}")
                 replies = None
             if replies is not None:
-                # **台帳の中だけでなく、取ってきた配列の中の重複も除く**
-                # （外部レビュー C1・2026-09-12）。頁の境界で同じ返信が 2 度
-                # 現れうるし、同じ応答が `R1,R1,R2` でも台帳が `R1,R1,R2` に
-                # なっていた。**`known` を回しながら足していく**ので、
-                # **1 つの id は 1 度しか入らない。**
-                known = {row.get("id") for row in _reply_rows(reply_path)}
-                fresh = []
-                for row in replies:
-                    rid = row.get("id")
-                    if not rid or rid in known:
-                        continue
-                    known.add(rid)
-                    fresh.append({"kind": "reply", "collected_at": jst.iso(now),
-                                   "post_id": post_id, **row})
-                # **取れたことそのものを 1 行残す**（返信 0 件の成功と、取得の失敗を
-                # 区別するため。これが無いと「0 件だった」を「まだ取っていない」と
-                # 読んでしまい、毎回取りに行く／二度と取りに行かない、のどちらかになる）。
-                _append_ndjson(reply_path, fresh + [{
-                    "kind": "fetch", "post_id": post_id, "collected_at": jst.iso(now),
-                    "age_hours": round(age_hours, 2), "marks": reply_marks,
-                    "replies": len(replies)}])
+                新しい = _save_replies(reply_path, post_id, replies, now=now,
+                                        age_hours=age_hours, marks=reply_marks,
+                                        trigger="marks")
                 touched.append(reply_path)
-                if fresh:
-                    log(f"返信 {len(fresh)} 件: {post_id}")
+                if 新しい:
+                    log(f"返信 {len(新しい)} 件: {post_id}")
 
     # --- アカウント単位の日次（前日ぶん・`clicks` はここでしか取れない）
     account_path = _collect_account_daily(account_name, account_cfg, adapter,
@@ -441,3 +486,149 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print) -> int:
     for err in result["errors"]:
         log("採取の失敗: " + err)
     return 1 if result["errors"] else 0
+
+# --- 臨時の取り直し（masaru 指示 2026-09-12・外部レビュー B）------------------
+
+def _refresh_targets(account_name: str, account_cfg: dict, *, now, errors: list,
+                      post_id: str | None) -> tuple:
+    """取り直す対象を選ぶ。**定期取得と同じ選び方**（別の母集団を作らない）。
+
+    戻り値は `(対象, 断り)`。**`--post` が対象外なら理由を返し、別 account や
+    全投稿へ落とさない。**
+    """
+    repo_dir = account_cfg.get("repo_dir") or ""
+    collect_days = int(account_cfg.get("collect_days", 14) or 14)
+    files = core.list_queue_files(account_cfg,
+                                   tree_sha=writeback.upstream_sha(repo_dir))
+    対象 = []
+    for qf in _with_bundle_posts(files, account_name, account_cfg, errors=errors):
+        if qf.malformed:
+            continue
+        fm = qf.front_matter
+        if fm.get("account") != account_name:
+            continue
+        pid, posted_at_raw = fm.get("post_id"), fm.get("posted_at")
+        if not pid or not posted_at_raw:
+            continue
+        try:
+            posted_at = datetime.datetime.fromisoformat(posted_at_raw)
+        except (TypeError, ValueError):
+            continue
+        age = (now - posted_at).total_seconds() / 3600.0
+        if age < 0 or age > collect_days * 24:
+            continue
+        対象.append((pid, age))
+    if post_id is None:
+        return (対象, None)
+    見つけた = [t for t in 対象 if t[0] == post_id]
+    if 見つけた:
+        return (見つけた, None)
+    return ([], f"{post_id} は、この account の収集対象ではありません"
+                 f"（別 account・対象期間外・未公開・未知のいずれか）。"
+                 f"**別の投稿では代用しません**")
+
+
+def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
+                     post_id: str | None = None) -> dict:
+    """**刻みを待たずに会話を取り直す**（`thth replies <account> --refresh`）。
+
+    **定期取得と何が違うか**——対象の選び方・保存・重複除去は**同じものを使う**。
+    違うのは 3 つだけ。
+
+    1. **刻みを見ない**（`due_marks` を通さない）。いつでも取りに行く。
+    2. **刻みを進めない**（`marks: []` で記録する）。臨時の取得を「24h の数」に
+       化けさせない。
+    3. **`insights` を取らない。** 投稿・返信の送信も、承認も、トークン更新もしない。
+
+    **API 成功・保存成功・push 成功を分けて返す**（外部レビュー B）。
+    """
+    from . import lock as lock_mod
+
+    now = now if now is not None else jst.now_jst()
+    out = {"account": account_name, "requested": 0, "fetched": 0, "new_replies": 0,
+            "failed": [], "skipped": None, "saved": False,
+            "remote": "unknown", "checked_at": jst.iso(now), "errors": []}
+    try:
+        account_cfg = accounts_mod.load_account(account_name)
+    except accounts_mod.AccountError as e:
+        out["errors"].append(str(e))
+        out["skipped"] = "account_error"
+        return out
+    repo_dir = account_cfg.get("repo_dir")
+    if not repo_dir or not os.path.isdir(repo_dir):
+        out["skipped"] = "no_repo"
+        return out
+
+    if adapter is None:
+        token = accounts_mod.load_token(account_cfg)
+        if token is None:
+            out["skipped"] = "no_token"
+            out["errors"].append(f"token が無いので取り直せません: {account_name}")
+            return out
+        adapter = core._default_adapter_factory(account_cfg, token)
+
+    repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
+    try:
+        repo_lock.acquire()
+    except lock_mod.LockBusy:
+        # **待たない。** 投稿を塞ぐより見送る（定期取得と同じ扱い）。
+        out["skipped"] = "locked"
+        log(f"repo を別の実行が使っているので取り直しを見送ります: {repo_dir}")
+        return out
+
+    replies_dir = os.path.join(repo_dir,
+                               account_cfg.get("replies_dir") or "data/sns/replies")
+    touched = []
+    try:
+        synced, sync_err, _sha = writeback.sync_repo(repo_dir)
+        if not synced:
+            out["skipped"] = "not_synced"
+            out["errors"].append(f"repo を同期できないので取り直しません: {sync_err}")
+            return out
+
+        対象, 断り = _refresh_targets(account_name, account_cfg, now=now,
+                                      errors=out["errors"], post_id=post_id)
+        if 断り:
+            out["skipped"] = "out_of_scope"
+            out["errors"].append(断り)
+            return out
+        out["requested"] = len(対象)
+
+        for pid, age in 対象:
+            reply_path = os.path.join(replies_dir, f"{pid}.ndjson")
+            # **壊れた台帳には追記しない**（その対象の失敗にする）。
+            _rows, broken = _read_ndjson_strict(reply_path)
+            if broken:
+                out["failed"].append({"post_id": pid, "reason": "台帳が壊れています"})
+                continue
+            try:
+                replies = adapter.conversation(pid)
+            except Exception as e:
+                out["failed"].append({"post_id": pid,
+                                       "reason": redact_mod.redact(str(e))})
+                continue
+            新しい = _save_replies(reply_path, pid, replies, now=now,
+                                   age_hours=age, marks=[], trigger="refresh")
+            touched.append(reply_path)
+            out["fetched"] += 1
+            out["new_replies"] += len(新しい)
+
+        if touched:
+            rel = [os.path.relpath(os.path.realpath(p), os.path.realpath(repo_dir))
+                   for p in touched]
+            out["saved"] = True
+            pushed, push_err = writeback.commit_and_push(
+                repo_dir, rel_path=rel,
+                message=f"返信の取り直し: {len(rel)} ファイル（{account_name}）")
+            if pushed:
+                out["remote"] = "synced"
+            else:
+                # **「送れなかった」と「送れたか分からない」を分ける。**
+                # `commit_and_push` は add／commit／push の失敗を同じ False に
+                # まとめるので、**これだけで巻き戻さない。**
+                out["remote"] = "not_synced"
+                out["errors"].append(
+                    f"保存はできましたが送れていません: {push_err}")
+    finally:
+        repo_lock.release()
+    return out

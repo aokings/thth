@@ -705,6 +705,52 @@ def cmd_posts(args) -> int:
     return 0
 
 
+def _refresh_rc(取り直し) -> int:
+    """**全部取れたときだけ 0。** 見送り・部分成功・失敗は非 0（外部レビュー B）。"""
+    if 取り直し is None:
+        return 0
+    if 取り直し["skipped"] or 取り直し["failed"] or 取り直し["errors"]:
+        return 1
+    if 取り直し["remote"] != "synced":
+        return 1
+    return 0
+
+
+def _print_refresh(取り直し) -> None:
+    """**取りに行った結果を、台帳の中身と混ぜずに出す。**
+
+    **API 成功・保存成功・送信成功を分ける**（外部レビュー B・2026-09-12）。
+    「取れた」と「残った」と「送れた」は別。
+    """
+    見送り = {"locked": "ほかの実行が repo を使っています",
+               "not_synced": "repo を同期できませんでした",
+               "no_token": "token がありません",
+               "no_repo": "この account に repo がありません",
+               "out_of_scope": "指定の投稿が収集対象ではありません",
+               "account_error": "account を読めませんでした"}
+    if 取り直し["skipped"]:
+        print(f"**取り直しを見送りました**——"
+               f"{見送り.get(取り直し['skipped'], 取り直し['skipped'])}")
+    else:
+        print(f"取り直し: 対象 {取り直し['requested']} 本／"
+               f"取れた {取り直し['fetched']} 本／"
+               f"新しい返信 {取り直し['new_replies']} 件"
+               f"（{取り直し['checked_at']}）")
+        送信 = {"synced": "送信済み", "not_synced": "**保存はできましたが送れていません**",
+                 "unknown": "送信していません（保存するものがありませんでした）"}
+        print(f"  保存: {'した' if 取り直し['saved'] else 'していない'}／"
+               f"{送信[取り直し['remote']]}")
+    for f in 取り直し["failed"]:
+        print(f"  **取れなかった**: {f['post_id']}——{f['reason']}")
+    for e in 取り直し["errors"]:
+        print(f"  {e}")
+    # **「全部取れた」とは言わない**——頁の形が本番で未確認なので。
+    if 取り直し["fetched"]:
+        print("  **これで会話を全件取れたとは限りません**"
+               "（頁の形が本番で未確認です）")
+    print("")
+
+
 def cmd_replies(args) -> int:
     """`thth replies <account> [--post <post_id>] [--json]`: 返信の台帳を読む（読むだけ）。
 
@@ -717,15 +763,29 @@ def cmd_replies(args) -> int:
     が付けた返信」を成果として数えないため。`--json` は `replies.load()` の
     戻り値をそのまま返す（機械向け）。
     """
+    # **`--refresh` を付けたときだけ取りに行く**（masaru 指示 2026-09-12）。
+    # **付けなければ従来どおり台帳を読むだけ**——API も git も触らない。
+    取り直し = None
+    if getattr(args, "refresh", False):
+        取り直し = collect_mod.refresh_replies(
+            args.account, post_id=args.post,
+            log=lambda line: print(line, file=sys.stderr))
+
     try:
         result = replies_mod.load(args.account, post_id=args.post)
     except accounts_mod.AccountError as e:
         print(str(e), file=sys.stderr)
         return 1
 
+    if 取り直し is not None:
+        result = {**result, "refresh": 取り直し}
+
     if args.json:
         _print_json(result)
-        return 0
+        return _refresh_rc(取り直し)
+
+    if 取り直し is not None:
+        _print_refresh(取り直し)
 
     replies = result["replies"]
     if not replies:
@@ -1649,6 +1709,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_replies.add_argument("account")
     p_replies.add_argument("--post", default=None, help="この post_id だけ")
     p_replies.add_argument("--json", action="store_true")
+    p_replies.add_argument(
+        "--refresh", action="store_true",
+        help="刻みを待たずに会話を取り直す（**刻みは進めません**）")
     p_replies.set_defaults(func=cmd_replies)
 
     p_measured = sub.add_parser(
