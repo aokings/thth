@@ -29,6 +29,8 @@ SUBCOMMANDS = ("suggest", "observe", "record-decision", "decision",
                 "record-form-spec", "form-spec", "form-check", "improvements",
                 # 語彙を替えたら何が読めなくなるか（§8 手順 2・3）。
                 "impact",
+                # 修正理由を 1 件ずつ採用する（masaru 裁定 2026-09-12）。
+                "adopt-reason", "adoptions",
                 # 仮説の棚（masaru 指示 2026-09-11・外部調査の §9 を型にしたもの）。
                 "record-hypothesis", "hypotheses")
 
@@ -884,6 +886,75 @@ def _foreign_evidence(refs: list, account: str | None) -> dict:
                      "持ちません）。**アカウントを越えて判断を継承しません**")
 
     return out
+
+
+def cmd_adopt_reason(args) -> int:
+    """修正理由を**1 件だけ**採用する（masaru 裁定 2026-09-12・2 番）。
+
+    **一括昇格の口は作らない。** `reason_id` は 1 つで、**配列は型で弾く。**
+
+    **語彙の記録は書き換えない**（内容アドレスの追記のみ）。採用は別の記録として
+    積み、読むときに重ねる。
+    """
+    row = read_json(args.input, stdin=args.json_stdin, what="理由の採用")
+    if not isinstance(row, dict):
+        raise InputError("invalid_json", "採用の記録は object にしてください")
+    adoption = models.build_reason_adoption(
+        {k: v for k, v in row.items()
+         if k not in ("adoption_id", "schema_version", "state", "means")}
+        | {"decided_by": row.get("decided_by") or _actor(args)})
+
+    # **語彙にその項目が実在するか**を確かめる（**採用の記録だけが浮かない**）。
+    vocab = store.get("vocabularies", adoption["vocabulary_id"])
+    if vocab is None:
+        return _fail("vocabulary_not_found",
+                     f"語彙が見つかりません: {adoption['vocabulary_id']}")
+    entry = next((e for e in vocab["entries"]
+                  if e["reason_id"] == adoption["reason_id"]), None)
+    if entry is None:
+        return _fail("reason_not_found",
+                     f"その語彙に `{adoption['reason_id']}` はありません")
+    if entry["meaning_version"] != adoption["meaning_version"]:
+        # **どの意味の版を採用したのかがずれたまま残らないようにする。**
+        return _fail("meaning_version_mismatch",
+                     f"意味の版が違います（語彙は {entry['meaning_version']}、"
+                     f"採用の記録は {adoption['meaning_version']}）")
+
+    saved, wrote = store.put("reason_adoptions", adoption, id_key="adoption_id")
+    _emit({"ok": True, "adoption_id": saved["adoption_id"], "stored": wrote,
+           "vocabulary_id": saved["vocabulary_id"],
+           "reason_id": saved["reason_id"],
+           "meaning_version": saved["meaning_version"],
+           "checked_on": [c["path"] for c in saved["checked_on"]],
+           "means": saved["means"],
+           "warnings": [models.ADOPTION_DISCLAIMER],
+           "notice": REVIEW_NOTICE})
+    return 0
+
+
+def cmd_adoptions(args) -> int:
+    """採用済みの修正理由を並べる。**本体は出さず、ID と確かめた原稿まで。**"""
+    records, broken, _taken = store.load_all("reason_adoptions")
+    rows = []
+    for adoption in records:
+        if args.vocabulary_id and adoption["vocabulary_id"] != args.vocabulary_id:
+            continue
+        rows.append({
+            "adoption_id": adoption["adoption_id"],
+            "vocabulary_id": adoption["vocabulary_id"],
+            "reason_id": adoption["reason_id"],
+            "meaning_version": adoption["meaning_version"],
+            "checked_count": len(adoption["checked_on"]),
+            "checked_on": [c["path"] for c in adoption["checked_on"]],
+            "decided_by": adoption["decided_by"],
+            "decided_at": adoption["decided_at"],
+        })
+    rows.sort(key=lambda r: (r["vocabulary_id"], r["reason_id"]))
+    # **読めなかったものを 0 件に混ぜない。**
+    _emit({"ok": True, "adoptions": rows, "count": len(rows),
+           "broken": broken, "means": models.ADOPTION_DISCLAIMER,
+           "notice": REVIEW_NOTICE})
+    return 0
 
 
 def cmd_record_vocabulary(args) -> int:
@@ -1801,6 +1872,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--by", default=None)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_profile)
+
+    p = sub.add_parser("adopt-reason",
+                        help="修正理由を 1 件だけ採用する（一括昇格はしません）")
+    p.add_argument("--input", default=None)
+    p.add_argument("--json-stdin", action="store_true")
+    p.add_argument("--by", default=None)
+    p.add_argument("--json", action="store_true")
+    # **規約 14**: 新しい schema を足したら `expected_schema` も同時に。
+    p.set_defaults(func=cmd_adopt_reason, expected_schema=models.ADOPTION_SHAPE)
+
+    p = sub.add_parser("adoptions", help="採用済みの修正理由を並べる")
+    p.add_argument("vocabulary_id", nargs="?", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_adoptions)
 
     p = sub.add_parser("record-vocabulary", help="修正理由の語彙を 1 版残す")
     p.add_argument("--input", default=None)

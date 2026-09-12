@@ -419,6 +419,89 @@ ENTRY_KEYS = ("reason_id", "display", "definition", "includes", "excludes",
               "scope", "judged_by", "state", "meaning_version")
 
 
+# --- 修正理由の採用（masaru 裁定 2026-09-12・2 番）-----------------------------
+#
+# > **確認できた項目から個別に `accepted` へ上げましょう。** 実際の原稿で意味・
+# > 使い分け・適用例を確認する。**`accepted` は「編集に使う語彙として採用した」で
+# > あり「反応率を改善すると実証された」ではありません。一括昇格はしません。**
+#
+# **語彙の記録は書き換えない**（内容アドレスの追記のみ）。採用は**別の記録**として
+# 1 件ずつ積み、読むときに重ねる。**1 レコード 1 項目**——まとめて上げる口を作ら
+# ない。
+ADOPTION_KEYS = ("vocabulary_id", "reason_id", "checked_on", "meaning",
+                  "distinguished_from", "applied_example", "decided_by",
+                  "decided_at", "meaning_version")
+
+# **`accepted` が意味しないこと。** 記録に毎回書く——読む人が入れ替わるので、
+# 「採用済み＝効果が実証済み」と読まれる余地を残さない。
+ADOPTION_DISCLAIMER = ("**編集に使う語彙として採用した、という意味です。"
+                        "反応率を改善すると実証された、という意味ではありません。**")
+
+
+def build_reason_adoption(row: dict) -> dict:
+    """修正理由 1 件の採用を記録する（masaru 裁定 2026-09-12）。
+
+    **1 レコード 1 項目。** `reason_id` は 1 つだけ——**配列を受け取らない。**
+    まとめて上げたいときは、**1 件ずつ実際の原稿で確かめて、1 件ずつ積む。**
+
+    `checked_on` は**実際に確かめた原稿**（`queue` の相対パスと、そのときの内容の
+    sha256）。**「確かめた」と書くだけにしない**——**どの原稿で確かめたのかが
+    後から辿れること**が、この記録の値打ち。
+    """
+    _require(row, ADOPTION_KEYS, "理由の採用")
+    if not isinstance(row["vocabulary_id"], str) or not _REF_ID_RE.fullmatch(
+            row["vocabulary_id"]):
+        raise SchemaError("vocabulary_id は語彙の ID（sha256:…）")
+    if not isinstance(row["reason_id"], str) or not row["reason_id"].strip():
+        # **配列を弾く。** 「一括昇格はしない」を型で守る。
+        raise SchemaError("reason_id は 1 件だけの文字列です"
+                           "（**まとめて上げる口はありません**）")
+    if not isinstance(row["checked_on"], list) or not row["checked_on"]:
+        raise SchemaError("checked_on に、実際に確かめた原稿を 1 つ以上")
+    for i, c in enumerate(row["checked_on"]):
+        if not isinstance(c, dict):
+            raise SchemaError(f"checked_on[{i}] は object")
+        for key in ("path", "sha256"):
+            if not isinstance(c.get(key), str) or not c[key].strip():
+                raise SchemaError(f"checked_on[{i}].{key} が空です"
+                                   f"（**どの原稿で確かめたのかを残す**）")
+    for key in ("meaning", "distinguished_from", "applied_example"):
+        if not isinstance(row.get(key), str) or not row[key].strip():
+            raise SchemaError(
+                f"{key} が空です（意味・使い分け・適用例の 3 つを、"
+                f"**実際の原稿で確かめた内容として**書いてください）")
+    if not isinstance(row["meaning_version"], int) or row["meaning_version"] < 1:
+        raise SchemaError("meaning_version は 1 以上の整数"
+                           "（**どの意味の版を採用したか**）")
+    if not row.get("decided_by"):
+        raise SchemaError("decided_by が要ります（誰が決めたか）")
+    _require_iso(row["decided_at"], "decided_at")
+
+    out = {k: row[k] for k in ADOPTION_KEYS}
+    out["state"] = "accepted"
+    out["means"] = ADOPTION_DISCLAIMER
+    out["schema_version"] = SCHEMA_VERSION
+    out["adoption_id"] = content_id(out, exclude=("adoption_id",))
+    return out
+
+
+ADOPTION_SHAPE = {
+    "ReasonAdoption": {
+        "vocabulary_id": "採用する項目が載っている語彙の ID（sha256:…）",
+        "reason_id": "**1 件だけ**。配列は受け取りません（一括昇格はしません）",
+        "meaning_version": "採用する意味の版（整数・1 以上）",
+        "checked_on": [{"path": "実際に確かめた原稿（queue の相対パス）",
+                         "sha256": "そのときの内容の sha256"}],
+        "meaning": "その語が何を指すか（**原稿で確かめた内容**）",
+        "distinguished_from": "隣の語とどう使い分けたか",
+        "applied_example": "実際にどう当てたか",
+        "decided_by": "誰が決めたか",
+        "decided_at": "いつ（ISO8601・+09:00）",
+        "**注意**": ADOPTION_DISCLAIMER,
+    }
+}
+
+
 def build_vocabulary(row: dict) -> dict:
     """修正理由の語彙を検査して `vocabulary_id` を付ける（Codex §4・設計条件 1）。
 
