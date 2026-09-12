@@ -1,7 +1,7 @@
 """`state/<account>/runs-YYYY-MM.ndjson` への追記と読込（設計 §4.6）。
 
 1 行の必須項目は 11 個ちょうど・同じ順序: account, run_id, mode(rehearsal|production),
-action(post|skip|none), file, post_id, collected(n), refreshed(bool), quota(json|null),
+action(post|skip|none), file, post_id, collected（**投稿の処理では測っていないので常に null**・2026-09-12）, refreshed(bool), quota(json|null),
 status, error。
 
 watchtower/watchtower/runs.py の流儀（1 行 1 実行・ndjson 追記のみ）を写したが、

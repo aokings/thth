@@ -169,12 +169,14 @@ def diagnose(account_name: str) -> dict:
         # 言ってよい**（外部レビュー再々判定 N7・2026-09-12）。投稿一覧の
         # 取得そのものが失敗していたら、理由はそちらであって「未投稿」ではない
         # ——事実と違う表示を作らない。`ok: False` にして失敗数にも数える。
-        results.append({"label": "返信の取得", "permission": "threads_read_replies",
+        results.append({"label": "返信の取得", "key": "replies",
+                        "permission": "threads_read_replies",
                         "ok": False,
                         "detail": "投稿一覧の取得に失敗したため試せていません（上の「自分の投稿一覧」参照）",
                         "body": None})
     else:
-        results.append({"label": "返信の取得", "permission": "threads_read_replies",
+        results.append({"label": "返信の取得", "key": "replies",
+                        "permission": "threads_read_replies",
                         "ok": None, "detail": "投稿がまだ無いので試せない", "body": None})
 
     for r in results:
