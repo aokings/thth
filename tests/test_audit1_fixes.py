@@ -589,3 +589,109 @@ def test_P3_9_ふつうの打ち消しは1回で通る(thth_root):
         topics_mod.retract_note(row["note_id"], reason="二度目", by="統括")
     行 = [r for r in topics_mod.load()["checks"] if r.get("retracts")]
     assert len(行) == 1
+
+
+# --- P3-11 ------------------------------------------------------------------
+
+def _偽のapp_env(path, *, mode=0o600):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("THREADS_APP_ID=APP-ID\nTHREADS_APP_SECRET=APP-SECRET\n")
+    os.chmod(path, mode)
+
+
+def test_P3_11_doctor_jsonはapp_envを600に直した事実を書く(tmp_path, monkeypatch,
+                                                           isolated_account_factory):
+    """**`--json` のときだけ、直した事実が消えていた。**
+
+    `env_log` を `lambda _msg: None` にして捨てていた（stdout を JSON 1 個だけに
+    保つため）。理由は正しいが、**捨てるのではなく `notices` へ回せばよい**
+    ——機械の読み手には「道具がファイルの権限を書き換えた」が完全に見えて
+    いなかった。
+    """
+    account = isolated_account_factory(token=str(tmp_path / "missing.token"))
+    app_env = tmp_path / "app.env"
+    _偽のapp_env(str(app_env), mode=0o644)
+    monkeypatch.setenv("THTH_APP_ENV_PATH", str(app_env))
+
+    r = run_thth(["doctor", account["name"], "--json"])
+    payload = json.loads(r.stdout)
+    直した = [n for n in payload["notices"]
+              if "app.env のパーミッションを 600 に直しました" in n]
+    assert 直した, f"**直した事実が JSON に無い**: {payload['notices']}"
+    assert oct(os.stat(str(app_env)).st_mode & 0o777) == "0o600", "実際には直していない"
+
+
+def test_P3_11_人向けでも直した事実を言う(tmp_path, monkeypatch,
+                                          isolated_account_factory):
+    account = isolated_account_factory(token=str(tmp_path / "missing.token"))
+    app_env = tmp_path / "app.env"
+    _偽のapp_env(str(app_env), mode=0o644)
+    monkeypatch.setenv("THTH_APP_ENV_PATH", str(app_env))
+
+    r = run_thth(["doctor", account["name"]])
+    assert "app.env のパーミッションを 600 に直しました" in r.stdout, r.stdout
+
+
+def test_P3_11_600のままなら何も言わない(tmp_path, monkeypatch,
+                                          isolated_account_factory):
+    """**言わなくてよいときに言わない。** 常に出る通知は何も言っていないのと同じ。"""
+    account = isolated_account_factory(token=str(tmp_path / "missing.token"))
+    app_env = tmp_path / "app.env"
+    _偽のapp_env(str(app_env), mode=0o600)
+    monkeypatch.setenv("THTH_APP_ENV_PATH", str(app_env))
+
+    r = run_thth(["doctor", account["name"], "--json"])
+    payload = json.loads(r.stdout)
+    assert not [n for n in payload["notices"] if "600 に直しました" in n], payload["notices"]
+
+
+# --- 監査 1 の mutate.py で生き残った変異（M4 / M6 / M7）--------------------
+
+def test_M4_観測者の鍵はaccountが先でbyは後(thth_root):
+    """設計 v1.0.0 §1 規則 1。**`by` 優先にすると別人の観測になる。**
+
+    同じ account の投稿を別の人（統括／自分／wt）が記録することがある。`by` を
+    先にすると**同じ account の観測が観測者ごとにばらけ**、`--advise` の
+    「（**asmon** の観測）」と `history` の観測者列が別人になる。
+    """
+    assert topics_mod.observer_of({"account": "asmon", "by": "統括"}) == "asmon"
+    assert topics_mod.observer_of({"by": "統括"}) == "統括"
+    assert topics_mod.observer_of({}) == topics_mod.NO_OBSERVER
+
+    # 振る舞いでも固定する: **同じ account なら記録者が違っても 1 人の観測者。**
+    topics_mod.record("精製", verdict="alive", audience="古い", by="統括",
+                       account="asmon-kanto-threads")
+    topics_mod.record("精製", verdict="alive", audience="新しい", by="wt",
+                       account="asmon-kanto-threads")
+    観測 = topics_mod.observation("精製")
+    assert len(観測) == 1, f"**同じ account が 2 人の観測者に割れた**: {観測}"
+    assert 観測[0]["audience"] == "新しい"
+
+
+def test_M6_recordが保存した行にnote_idが書いてある(thth_root):
+    """設計 v1.0.0 §1 規則 2。**読むときに計算しても同じ値になるが、それでは
+    `state/topics.json` を直接見た人が ID を読めない**——打ち消しが打てない。
+    """
+    row = topics_mod.record("お茶", verdict="alive", by="統括")
+    with open(topics_mod.path(), encoding="utf-8") as f:
+        保存された = json.load(f)["checks"]
+    assert len(保存された) == 1
+    assert 保存された[0].get("note_id") == row["note_id"], (
+        f"**保存した行に note_id が無い**: {保存された[0]}")
+    assert topics_mod._NOTE_ID_RE.match(保存された[0]["note_id"])
+
+
+def test_M7_doctor_jsonのstdoutはJSON1個だけ(tmp_path, monkeypatch,
+                                                isolated_account_factory):
+    """C1。**app.env が 644 のとき**に確かめる——警告が stdout へ漏れる経路。"""
+    account = isolated_account_factory(token=str(tmp_path / "missing.token"))
+    app_env = tmp_path / "app.env"
+    _偽のapp_env(str(app_env), mode=0o644)
+    monkeypatch.setenv("THTH_APP_ENV_PATH", str(app_env))
+
+    r = run_thth(["doctor", account["name"], "--json"])
+    # 1 個だけ: 全体が 1 個の JSON として読め、かつ余分な行が無い。
+    json.loads(r.stdout)
+    assert len([l for l in r.stdout.splitlines() if l.strip()]) == 1, (
+        f"**stdout に JSON 以外が混ざった**:\n{r.stdout}")
+    assert "警告:" not in r.stdout, r.stdout

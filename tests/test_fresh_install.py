@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -33,6 +34,10 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 ACCOUNT = "demo-threads"
+
+# clone に入って来る masaru の台帳（導入文書 §4 で消してもらうもの）。
+OTHER_LEDGERS = ("nigamilab-threads", "kopicha-threads", "masaru-threads",
+                 "asmon-kanto-threads")
 
 QUEUE_MD = """---
 thth: 1
@@ -223,8 +228,7 @@ def test_step_3_board_shows_the_account_without_a_token(fresh):
     assert ACCOUNT in r.stdout, r.stdout
     assert "token=no_token" in r.stdout, r.stdout
     # **masaru の台帳を読んでいないこと**（THTH_APP_DIR の隔離が効いている）。
-    for other in ("nigamilab-threads", "kopicha-threads", "masaru-threads",
-                  "asmon-kanto-threads"):
+    for other in OTHER_LEDGERS:
         assert other not in r.stdout, f"{other} が board に出た（隔離が効いていない）"
 
 
@@ -303,3 +307,48 @@ def test_a_command_that_does_not_exist_is_not_mistaken_for_a_stop(fresh):
     assert r.returncode == 2
     assert "invalid choice" in r.stderr, r.stderr
     assert "トークンが無い" not in r.stdout
+
+
+# --------------------------------------------------------------------------
+# 導入文書 §4 の経路: **`THTH_APP_DIR` を設定しない**（clone した人が打つ形）
+# --------------------------------------------------------------------------
+
+def test_step_3b_THTH_APP_DIRを設定しない導入者のboard(tmp_path):
+    """**乾式試験が 1 本も通していなかった経路**（独立監査 1・P3-12）。
+
+    ここまでの試験はすべて `THTH_APP_DIR` を偽の場所へ向けている。だが
+    **clone した人はそれを設定しない**——導入文書 §4 が言うのは
+    「使わない台帳を消してください」で、`accounts/` は clone に入って来る。
+    その経路（4 本を消して自分のを 1 本置く）を実際に通す。
+
+    **この試験だけ専用の clone を作る**（`cloned_app` は session fixture で
+    ほかの試験と共有しているので、そこから `accounts/` を消せない）。
+    """
+    app = clone_app(str(tmp_path))
+    fresh = FreshInstall(tmp_path, app).build()
+
+    accounts = os.path.join(app, "accounts")
+    配られた台帳 = sorted(n for n in os.listdir(accounts) if n.endswith(".json"))
+    # **前提を明示する。** clone は masaru の台帳を連れて来る——消さずに board を
+    # 打つと 4 本とも出る（監査 1 の `freshreal.sh` が示したのがこれ）。ここが
+    # 空なら、下の「出ないこと」は何も確かめていない。
+    assert 配られた台帳, "clone に台帳が入っていない（この試験の前提が崩れている）"
+    for other in OTHER_LEDGERS:
+        assert f"{other}.json" in 配られた台帳, (
+            f"{other} が clone に入っていない（この試験の前提が崩れている）")
+    # 導入文書 §4: **使わない台帳を消して、自分のものだけを置く。**
+    for name in 配られた台帳:
+        os.remove(os.path.join(accounts, name))
+    shutil.copy(os.path.join(fresh.app_dir, "accounts", f"{ACCOUNT}.json"),
+                os.path.join(accounts, f"{ACCOUNT}.json"))
+
+    env = fresh.env()
+    env.pop("THTH_APP_DIR")            # **設定しない**（ここが実際の導入者）
+    r = subprocess.run([sys.executable, "-m", "thth", "board"], cwd=app, env=env,
+                       capture_output=True, text=True, timeout=180)
+
+    assert r.returncode == 0, f"rc={r.returncode}\nout={r.stdout}\nerr={r.stderr}"
+    assert ACCOUNT in r.stdout, r.stdout
+    for other in OTHER_LEDGERS:
+        assert other not in r.stdout, (
+            f"{other} が board に出た（§4 で消したはずの台帳を読んでいる）:\n{r.stdout}")
