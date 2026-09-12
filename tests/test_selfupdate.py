@@ -18,6 +18,18 @@ from thth import report as report_mod
 from thth import selfupdate
 
 
+@pytest.fixture(autouse=True)
+def _隔離(thth_root):
+    """**`pull_and_reexec` は `THTH_ROOT` の `state/_app.lock` を取る。**
+
+    この fixture を使っていなかったので、**全テストが本物の lock を共有していた。**
+    逐次実行では衝突しないので**気づかなかった**——並列にした瞬間に
+    `test_releaseへ進めた指定commitが届く` が落ちた（片方が `LockBusy` で
+    更新を見送る）。**テストの隔離が足りていなかった。**
+    """
+    return thth_root
+
+
 def _app_pair(tmp_path):
     """app repo に見立てた bare origin ＋ clone を作る。
 

@@ -949,7 +949,11 @@ def cmd_topics(args) -> int:
         if not rows:
             print("まだ何も記録がありません（thth topics --note で下調べを残してください）")
             return 0
-        print("型ごとに何が起きたか（全アカウント合算・24 時間時点の実測）")
+        # **数字の素性を書く**（設計 §3.2.2・masaru 裁定 2026-09-12）。
+        # **「24 時間時点」と書いていたが、刻みの名前であって実経過ではない。**
+        帯 = account_report_mod.AGE_BAND_HOURS[24]
+        print(f"型ごとに何が起きたか"
+               f"（実測は**台帳・原稿由来のトピック・実経過 {帯[0]}〜{帯[1]}h** のものだけ）")
         for row in rows:
             measured = ("実測まだ" if row["views_median"] is None
                         else f"views 中央値={row['views_median']}"
@@ -958,6 +962,10 @@ def cmd_topics(args) -> int:
             print(f"    合っている {row['alive']}・不一致 {row['mismatch']}・"
                   f"人がいない {row['dead']}・未確認 {row['unknown']}")
             print(f"    当たり率 {row['hit_rate']}")
+            if row.get("not_compared"):
+                # **「実測まだ」と「揃わなかった」を混ぜない。**
+                print(f"    **比較に使わなかった観測 {len(row['not_compared'])} 件**"
+                       f"（{row['not_compared'][0]['理由']} ほか）")
             print(f"    例: {'・'.join(row['examples'])}")
             if row["description"]:
                 print(f"    {row['description']}")
@@ -1006,6 +1014,15 @@ def cmd_topics(args) -> int:
     if not result["topics"]:
         print("投稿がありません")
         return 0
+    # **この数の素性を、表の前に書く**（設計 §3.2.2・masaru 裁定 2026-09-12）。
+    # **打った瞬間に API から読んだ値**であって、台帳の刻みの値ではない。
+    # **時点を書かなかったので、受け取る側が台帳の数字と混ぜた**
+    # （2026-09-12・kopicha セッション）。
+    print(f"**API 観測値**（{result.get('observed_at')} に打った瞬間の値）／"
+           f"トピックは **API 観測値（`topic_tag`）**")
+    print("**台帳の 24 時間時点の数（`--advise` / `--learned`）とは別の数です。"
+           "並べて比べないでください。**")
+    print("")
     for row in result["topics"]:
         span = ("—" if row["views_min"] is None
                 else f"{row['views_min']}〜{row['views_max']}")

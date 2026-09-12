@@ -97,6 +97,15 @@ def test_noteはbyを省くと記録しない(thth_root):
 
 # --- 型ごとの学習（masaru 提案 2026-09-10「回していくうちに成功が蓄積されていく」）
 
+def _観測(views, *, age_hours=24.1, source=None, topic_source=None, mark=24):
+    """**数値は出所と時間条件を連れて歩く**（設計 §3.2.2・2026-09-12）。"""
+    from thth import account_report as ar
+    return {"views": views, "mark": mark, "age_hours": age_hours,
+             "collected_at": "2026-09-11T10:00:00+09:00", "post_id": "P1",
+             "source": source or ar.LEDGER_SOURCE,
+             "topic_source": topic_source or ar.DRAFT_TOPIC}
+
+
 def test_型ごとに実測がまとまる(thth_root):
     """**個々の語の当たり外れは次の語選びに使えないが、型ごとの傾向なら使える。**"""
     topics_mod.record("中学受験", verdict="alive", kind="行動", by="テスト")
@@ -104,10 +113,10 @@ def test_型ごとに実測がまとまる(thth_root):
     topics_mod.record("精製", verdict="mismatch", kind="専門語", by="テスト")
     topics_mod.record("六大茶類", verdict="mismatch", kind="専門語", by="テスト")
 
-    rows = topics_mod.learned({"中学受験": [574, 202, 368],
-                               "学校説明会": [400],
-                               "精製": [3],
-                               "六大茶類": [5]})
+    rows = topics_mod.learned({"中学受験": [_観測(574), _観測(202), _観測(368)],
+                               "学校説明会": [_観測(400)],
+                               "精製": [_観測(3)],
+                               "六大茶類": [_観測(5)]})
     by_kind = {r["kind"]: r for r in rows}
 
     assert by_kind["行動"]["topics"] == 2
@@ -360,3 +369,63 @@ def test_年度付きの型を記録できる(thth_root, isolated_account):
     learned = topics_mod.learned({}, account=isolated_account["name"])
     year = next(r for r in learned if r["kind"] == "年度付き")
     assert year["topics"] == 1
+
+def test_素の数は黙って数えない(thth_root):
+    """**古い呼び出しを黙って通さない**（規約 5・2026-09-12）。
+
+    以前は `{トピック: [views, ...]}` だった。**そのまま渡されたら、出所も
+    時間条件も分からない。** 0 件として数え、**理由を残す。**
+    """
+    topics_mod.record("中学受験", verdict="alive", kind="行動", by="テスト")
+    rows = topics_mod.learned({"中学受験": [574, 202]})
+    row = {r["kind"]: r for r in rows}["行動"]
+    assert row["posts_measured"] == 0, "**素の数を実測として数えている**"
+    assert len(row["not_compared"]) == 2
+    assert all("観測の形" in o["理由"] for o in row["not_compared"])
+
+
+def test_実経過が帯の外なら比較に使わない(thth_root):
+    """**`24 in marks` は「24 時間ちょうど」ではない**（masaru 指摘 2026-09-12）。
+
+    `6.16h で 42` のように、**刻みの名前と実経過時間はずれる。**
+    """
+    topics_mod.record("中学受験", verdict="alive", kind="行動", by="テスト")
+    rows = topics_mod.learned({"中学受験": [_観測(100, age_hours=24.1),
+                                            _観測(999, age_hours=96.0)]})
+    row = {r["kind"]: r for r in rows}["行動"]
+    assert row["posts_measured"] == 1, "**帯の外の値を混ぜている**"
+    assert row["views_median"] == 100
+    assert len(row["not_compared"]) == 1
+    assert "96.0h" in row["not_compared"][0]["理由"]
+
+
+def test_出所が違う観測を混ぜない(thth_root):
+    """**台帳の数と API 観測値を同じ中央値に入れない。**"""
+    from thth import account_report as ar
+    topics_mod.record("中学受験", verdict="alive", kind="行動", by="テスト")
+    rows = topics_mod.learned({"中学受験": [_観測(100),
+                                            _観測(999, source=ar.API_SOURCE)]})
+    row = {r["kind"]: r for r in rows}["行動"]
+    assert row["posts_measured"] == 1
+    assert "出所が違います" in row["not_compared"][0]["理由"]
+
+
+def test_トピックの由来が違う観測を混ぜない(thth_root):
+    """**原稿由来の記録値と API 観測値（`topic_tag`）を混ぜない。**"""
+    from thth import account_report as ar
+    topics_mod.record("中学受験", verdict="alive", kind="行動", by="テスト")
+    rows = topics_mod.learned({"中学受験": [_観測(100),
+                                            _観測(999, topic_source=ar.API_TOPIC)]})
+    row = {r["kind"]: r for r in rows}["行動"]
+    assert row["posts_measured"] == 1
+    assert "トピックの由来が違います" in row["not_compared"][0]["理由"]
+
+
+def test_比較の基準を出力に書く(thth_root):
+    """**何を揃えたのかが読めること。**"""
+    topics_mod.record("中学受験", verdict="alive", kind="行動", by="テスト")
+    rows = topics_mod.learned({"中学受験": [_観測(100)]})
+    基準 = {r["kind"]: r for r in rows}["行動"]["comparison_basis"]
+    assert 基準["mark"] == 24
+    assert 基準["age_band_hours"] == (24.0, 30.0)
+    assert 基準["source"] and 基準["topic_source"]

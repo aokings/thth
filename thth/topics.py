@@ -28,6 +28,7 @@ import json
 import os
 
 from . import accounts as accounts_mod
+from . import account_report as account_report_mod
 from . import jst
 
 VERDICTS = ("alive", "mismatch", "dead", "unknown")
@@ -290,13 +291,22 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
     for topic, row in rows.items():
         kind = row.get("kind") or "（型なし）"
         bucket = out.setdefault(kind, {"kind": kind, "topics": [], "views": [],
+                                        "not_compared": [],
                                         "alive": 0, "mismatch": 0, "dead": 0, "unknown": 0})
         bucket["topics"].append(topic)
         # 型ごとの傾向は**当時の判断**を数える（成功の実証ではない・設計 §9）。
         # account 自身の判断があればそちらを優先する。
         own = judgment(topic, account) if account else {}
         bucket[(own or row)["verdict"]] += 1
-        bucket["views"].extend(measured_by_topic.get(topic, []))
+        # **揃った観測だけを集計に入れる**（設計 §3.2.2・masaru 裁定 2026-09-12）。
+        # **揃わなかったものは捨てず、理由ごと数える**——「実測がまだ無い」と
+        # 「揃わなかったので比較に使えない」を混ぜない。
+        使う, 使わない = account_report_mod.comparable_views(
+            measured_by_topic.get(topic, []))
+        bucket["views"].extend(o["views"] for o in 使う)
+        bucket["not_compared"].extend(
+            {"topic": topic, "post_id": o.get("post_id"), "理由": o.get("理由")}
+            for o in 使わない)
 
     # 実測がまだ無いトピックも型に数える（「試したが数はこれから」が分かる）
     result = []
@@ -318,6 +328,13 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
             "alive": bucket["alive"], "mismatch": bucket["mismatch"],
             "dead": bucket["dead"], "unknown": bucket["unknown"],
             "examples": sorted(bucket["topics"])[:6],
+            # **比較に使わなかった観測**（「実測まだ」と混ぜない）。
+            "not_compared": bucket["not_compared"],
+            "comparison_basis": {
+                "source": account_report_mod.LEDGER_SOURCE,
+                "topic_source": account_report_mod.DRAFT_TOPIC,
+                "mark": 24,
+                "age_band_hours": account_report_mod.AGE_BAND_HOURS[24]},
         })
     def rate(row):
         judged = row["alive"] + row["mismatch"] + row["dead"]

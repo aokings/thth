@@ -40,6 +40,17 @@ from . import writeback as writeback_mod
 READY_CHECKS = ["ledger", "token", "repo", "queue_dir", "production", "no_inflight"]
 
 
+LEDGER_SOURCE = "ledger"          # 台帳（保存済みの行）
+API_SOURCE = "api_observed"        # API（実行時点で叩いた値）
+DRAFT_TOPIC = "draft_front_matter"  # 原稿由来の記録値
+API_TOPIC = "api_topic_tag"         # API 観測値（**付与の主体は未確認**）
+
+# 24 時間の刻みとして扱ってよい実経過の幅。**刻みの名前だけで揃えない。**
+# `thth run` は 10 分ごとなので、刻みを跨いだ直後に採れば 24.0〜24.2h に入る。
+# ここを広く取ると「1 日の値」と「3 日の値」が同じ中央値に混ざる。
+AGE_BAND_HOURS = {24: (24.0, 30.0)}
+
+
 def _git(repo_dir: str, args: list):
     return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True, text=True)
 
@@ -195,8 +206,45 @@ def measured_views_by_account() -> dict:
             account_cfg = accounts_mod.load_account(name)
         except accounts_mod.AccountError:
             continue
-        out[name] = _measured_views_by_topic(account_cfg.get("repo_dir") or "")
+        out[name] = _measured_observations_by_topic(account_cfg.get("repo_dir") or "")
     return out
+
+
+def comparable_views(観測: list, *, source: str = LEDGER_SOURCE,
+                      topic_source: str = DRAFT_TOPIC, mark: int = 24) -> tuple:
+    """**出所と時間条件が揃った数値だけ**を返す（masaru 裁定 2026-09-12）。
+
+    戻り値は `(使った観測, 使わなかった観測)`。**使わなかったものは捨てない**
+    ——`理由` を添えて返す。**「数が少ない」と「揃わなかった」を混ぜない。**
+
+    **名前を分けるだけでは足りない**というのがこの口の理由。別名にしても、
+    集計の手前で混ぜられる。**混ぜられない形にする。**
+    """
+    lo, hi = AGE_BAND_HOURS.get(mark, (None, None))
+    使う, 使わない = [], []
+    for o in 観測 or []:
+        if not isinstance(o, dict):
+            使わない.append({"観測": o, "理由": "観測の形ではありません"})
+            continue
+        age = o.get("age_hours")
+        if o.get("source") != source:
+            理由 = f"出所が違います（{o.get('source')}）"
+        elif o.get("topic_source") != topic_source:
+            理由 = f"トピックの由来が違います（{o.get('topic_source')}）"
+        elif o.get("mark") != mark:
+            理由 = f"刻みが違います（{o.get('mark')}）"
+        elif not isinstance(age, (int, float)):
+            理由 = "実経過時間が記録されていません"
+        elif lo is not None and not (lo <= age <= hi):
+            # **刻みの名前で揃えたつもりにならない。**
+            理由 = f"実経過 {age}h が {mark}h の帯（{lo}〜{hi}h）の外です"
+        elif not isinstance(o.get("views"), int):
+            理由 = "views が数ではありません"
+        else:
+            使う.append(o)
+            continue
+        使わない.append({**o, "理由": 理由})
+    return 使う, 使わない
 
 
 def topic_plan(account_name: str, *, now=None) -> dict:
@@ -223,7 +271,7 @@ def topic_plan(account_name: str, *, now=None) -> dict:
     files = core.list_queue_files(
         account_cfg, tree_sha=writeback_mod.upstream_sha(repo_dir))
 
-    measured = _measured_views_by_topic(repo_dir)
+    measured = _measured_observations_by_topic(repo_dir)
     rows: dict = {}
     for qf in files:
         if qf.malformed or qf.front_matter.get("account") != account_name:
@@ -238,7 +286,9 @@ def topic_plan(account_name: str, *, now=None) -> dict:
     out = []
     for topic, row in rows.items():
         check = topics_mod.latest(topic, account=account_name)
-        seen = sorted(measured.get(topic, []))
+        # **揃ったものだけで数える。揃わなかったものは理由ごと残す。**
+        使う, 使わない = comparable_views(measured.get(topic, []))
+        seen = sorted(o["views"] for o in 使う)
         row.update({
             "planned": row["draft"] + row["approved"],
             "verdict": check.get("verdict", "unknown"),
@@ -247,6 +297,13 @@ def topic_plan(account_name: str, *, now=None) -> dict:
             "checked_by": check.get("by"),
             "views_median_24h": seen[len(seen) // 2] if seen else None,
             "measured_posts": len(seen),
+            # **比較に使わなかったもの**（「無かった」と混ぜない）。
+            "not_compared": [{"post_id": o.get("post_id"), "理由": o.get("理由")}
+                              for o in 使わない],
+            "comparison_basis": {"source": LEDGER_SOURCE,
+                                  "topic_source": DRAFT_TOPIC,
+                                  "mark": 24,
+                                  "age_band_hours": AGE_BAND_HOURS[24]},
         })
         out.append(row)
     # **賭かっている本数が多く、かつ確かめていないもの**を先頭に置く。
@@ -254,8 +311,24 @@ def topic_plan(account_name: str, *, now=None) -> dict:
     return {"account": account_name, "error": None, "topics": out}
 
 
-def _measured_views_by_topic(repo_dir: str) -> dict:
-    """実測（24 時間の刻みを満たした行）を topic ごとに集める。"""
+# **数値は「出所」と「時間条件」を連れて歩く**（設計 §3.2.2・masaru 裁定
+# 2026-09-12）。**`views` だけを配列に積むと、何と比べてよいか分からなくなる。**
+#
+# `24 in marks` は**「24 時間ちょうどに採った」ではない。** 行には実際の
+# `age_hours` があり、`6.16h で 42` のように**刻みの名前と実経過時間はずれる。**
+# 出所が同じでも、**実経過時間が違う値を並べて中央値を出すのは比較になっていない。**
+
+
+def _measured_observations_by_topic(repo_dir: str) -> dict:
+    """実測を topic ごとに集める。**数値だけでなく、出所と時間条件も返す。**
+
+    **改名した**（`_measured_views_by_topic` → これ・2026-09-12）。返すものが
+    `int` の配列から観測の記録に変わったので、**古い読み手を黙って通さない**
+    （規約 5）。
+
+    戻り値は `{topic: [観測, ...]}`。観測は
+    `{views, age_hours, collected_at, mark, source, topic_source, post_id}`。
+    """
     out: dict = {}
     base = os.path.join(repo_dir, "data", "sns", "insights", "posts")
     if not os.path.isdir(base):
@@ -278,8 +351,18 @@ def _measured_views_by_topic(repo_dir: str) -> dict:
         if best is None:
             continue
         views = (best.get("metrics") or {}).get("views")
-        if isinstance(views, int):
-            out.setdefault(best.get("topic") or "(トピック無し)", []).append(views)
+        if not isinstance(views, int):
+            continue
+        out.setdefault(best.get("topic") or "(トピック無し)", []).append({
+            "views": views,
+            # **刻みの名前と、実際にいつ採ったかは別。**
+            "mark": 24,
+            "age_hours": best.get("age_hours"),
+            "collected_at": best.get("collected_at"),
+            "post_id": best.get("post_id") or name[:-len(".ndjson")],
+            "source": LEDGER_SOURCE,
+            "topic_source": DRAFT_TOPIC,
+        })
     return out
 
 
@@ -323,6 +406,12 @@ def topic_performance(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
         topic = row.get("topic_tag") or "(トピック無し)"
         by_topic.setdefault(topic, []).append({
             "id": post_id, "timestamp": row.get("timestamp"),
+            # **この数は「打った瞬間の値」**（設計 §3.2.2）。台帳の刻みの値では
+            # ない。**時点を書かないと、受け取る側が台帳の数字と混ぜる**
+            # （2026-09-12 に kopicha セッションが実際に混ぜた）。
+            "observed_at": jst.iso(),
+            "source": API_SOURCE,
+            "topic_source": API_TOPIC,
             "views": views, "likes": metrics.get("likes"),
             "replies": metrics.get("replies"),
             "head": (row.get("text") or "").strip().split("\n", 1)[0][:40],
@@ -341,7 +430,10 @@ def topic_performance(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
             "items": sorted(posts, key=lambda p: (p["views"] is None, -(p["views"] or 0))),
         })
     topics.sort(key=lambda t: (t["views_median"] is None, -(t["views_median"] or 0)))
-    return {"account": account_name, "error": None, "topics": topics}
+    return {"account": account_name, "error": None, "topics": topics,
+            # **この口が返す数の素性**（設計 §3.2.2）。台帳の数と混ぜない。
+            "source": API_SOURCE, "topic_source": API_TOPIC,
+            "observed_at": jst.iso()}
 
 
 def _remote_posts(account_cfg: dict, token: dict | None, known_post_ids: set) -> dict:
