@@ -440,7 +440,23 @@ def test_手順書のコマンドが実際に存在する():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     doc = open(os.path.join(root, "docs", "手順_LLM_トピック選定.md"),
                 encoding="utf-8").read()
-    used = set(re.findall(r"thth topics ([a-z][a-z-]*)", doc))
+    # **`thth topics` の次は、サブコマンドとは限らない。**
+    # `thth topics <account>` も正しい形（2026-09-12 に別セッションが手順書へ
+    # `thth topics asmon-kanto-threads --json` を足して、ここが落ちた）。
+    # **手順書が間違っていたのではなく、テストの決めつけが間違っていた。**
+    #
+    # アカウント名は**存在するかどうか**で確かめる（`accounts/` の台帳）。
+    # **「書いてあるから正しい」にしない**——綴り間違いはここで止める。
+    語 = set(re.findall(r"thth topics ([a-z][a-z-]*)", doc))
+    台帳 = {name[:-len(".json")]
+             for name in os.listdir(os.path.join(root, "accounts"))
+             if name.endswith(".json")}
+    アカウント名らしき語 = {w for w in 語 if w.endswith("-threads")}
+    知らないアカウント = アカウント名らしき語 - 台帳
+    assert not 知らないアカウント, \
+        f"手順書に、台帳に無いアカウントが書いてある: {知らないアカウント}"
+
+    used = 語 - アカウント名らしき語
     unknown = used - set(topic_cli.SUBCOMMANDS)
     assert not unknown, f"手順書に無いコマンドが書いてある: {unknown}"
     assert used, "手順書にコマンドが 1 つも出てこない"
