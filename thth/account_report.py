@@ -206,7 +206,7 @@ def measured_views_by_account() -> dict:
             account_cfg = accounts_mod.load_account(name)
         except accounts_mod.AccountError:
             continue
-        out[name] = _measured_observations_by_topic(account_cfg.get("repo_dir") or "")
+        out[name] = _measured_observations_by_topic(account_cfg.get("repo_dir") or "", name)
     return out
 
 
@@ -273,7 +273,7 @@ def topic_plan(account_name: str, *, now=None) -> dict:
     files = core.list_queue_files(
         account_cfg, tree_sha=writeback_mod.upstream_sha(repo_dir))
 
-    measured = _measured_observations_by_topic(repo_dir)
+    measured = _measured_observations_by_topic(repo_dir, account_name)
     rows: dict = {}
     for qf in files:
         if qf.malformed or qf.front_matter.get("account") != account_name:
@@ -321,7 +321,7 @@ def topic_plan(account_name: str, *, now=None) -> dict:
 # 出所が同じでも、**実経過時間が違う値を並べて中央値を出すのは比較になっていない。**
 
 
-def _measured_observations_by_topic(repo_dir: str) -> dict:
+def _measured_observations_by_topic(repo_dir: str, account_name: str) -> dict:
     """実測を topic ごとに集める。**数値だけでなく、出所と時間条件も返す。**
 
     **改名した**（`_measured_views_by_topic` → これ・2026-09-12）。返すものが
@@ -339,6 +339,7 @@ def _measured_observations_by_topic(repo_dir: str) -> dict:
         if not name.endswith(".ndjson"):
             continue
         best = None
+        others = set()
         try:
             with open(os.path.join(base, name), encoding="utf-8") as f:
                 for line in f:
@@ -346,6 +347,19 @@ def _measured_observations_by_topic(repo_dir: str) -> dict:
                     if not line:
                         continue
                     row = json.loads(line)
+                    # **その行が誰のものかを見る**（独立検収 A・2026-09-12）。
+                    # `measured.py` は外部レビュー M3/R3 で**まさにこの穴を閉じて
+                    # いる**のに、同じ台帳を読むここには選別が無かった。
+                    # **repo を共有した瞬間に、他 account の数が自分の分母に入る。**
+                    # **`account` の無い古い行**（R3 以前）も、`measured.py` では
+                    # 「不明」なのにここでは自分のものとして数えていた。
+                    この行の主 = row.get("account")
+                    if この行の主 is not None and この行の主 != account_name:
+                        others.add(この行の主)
+                        continue
+                    if この行の主 is None:
+                        # **不明を自分のものにしない。**
+                        continue
                     if 24 in (row.get("marks") or []):
                         best = row
         except (OSError, ValueError):

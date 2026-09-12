@@ -77,7 +77,12 @@ def test_account無しの記録は判断として採らない(isolated_account):
 
 
 def test_planは未確認に何本賭かっているかを言う(isolated_account):
-    topics_mod.record("中学受験", verdict="alive", by="テスト")
+    # **この account 自身の判断**でなければ未確認（独立検収 A・2026-09-12）。
+    # 以前は `account` を持たない記録（2026-09-10 までの 46 件と同じ形）を
+    # 「自分の判断」として数えていた。**`--advise` は継承しないのに `--plan` は
+    # 継承していた**——同じ台帳を見る 2 つの口で扱いが違った。
+    topics_mod.record("中学受験", verdict="alive", by="テスト",
+                       account=isolated_account["name"])
     for i, topic in enumerate(["中学受験", "精製", "精製", "六大茶類"]):
         write_queue_file(isolated_account["queue_dir"], f"{i}.md", fm_overrides={
             "status": "draft", "approved_sha": None, "topic": topic},
@@ -524,3 +529,21 @@ def test_advise_は比較できない観測を数に入れない(thth_root, caps
     語 = [r for r in out["proven"] if r["topic"] == "お茶"][0]
     assert 語["views_median"] is None and 語["posts"] == 0
     assert 語["not_compared"] == 1 and 語["not_compared_reasons"]
+
+def test_他人の判断や記録者不明の判断では未確認のままにする(isolated_account):
+    """**警告が消える向きの誤りだった**（独立検収 A・2026-09-12）。
+
+    `latest()` は `account` を受け取っておきながら捨てていたので、
+    **他 account の判断で「未確認」が消えていた。**
+    """
+    topics_mod.record("中学受験", verdict="alive", by="よそ",
+                       account="other-threads")
+    topics_mod.record("精製", verdict="alive", by="昔の記録")   # account なし
+    for i, topic in enumerate(["中学受験", "精製"]):
+        write_queue_file(isolated_account["queue_dir"], f"{i}.md", fm_overrides={
+            "status": "draft", "approved_sha": None, "topic": topic},
+            body=f"## threads\n\n{i} 本目\n")
+
+    result = run_thth(["topics", isolated_account["name"], "--plan"])
+    assert result.returncode == 0, result.stderr
+    assert "未確認のトピックに 2 本が賭かっています" in result.stdout, result.stdout

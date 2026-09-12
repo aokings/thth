@@ -1148,11 +1148,22 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
         # 出所が化けていた。同じ情報が入口によって扱いが変わっていた。
         legacy = topics_mod.legacy_note(topic)
         others = topics_mod.other_accounts(topic, account=account_name)
-        item = {"topic": topic, "kind": row.get("kind"),
-                "verdict": (own or {}).get("verdict"),
+        # **判断と、その日時・記録者は同じ記録から取る**（独立検収 A・2026-09-12）。
+        # `verdict` は自 account の判断から、`checked_at`・`checked_by` は
+        # **account を見ない最新 1 行**から取っていた。**`judged_by_this_account:
+        # true` の隣に他人の日付と名前が並ぶ**ので、読み手は「自分が その日に
+        # 判断した」と読む。**出所が化けていたのを直したはずが、日時と記録者に
+        # 残っていた。**
+        #
+        # `kind`・`audience` は**観測として共有できる事実**なので、そのまま
+        # 最新行から取る（判断ではない）。
+        判断元 = own or {}
+        item = {"topic": topic, "kind": topics_mod.kind_of(topic, account_name),
+                "verdict": 判断元.get("verdict"),
                 "judged_by_this_account": bool(own),
                 "audience": row.get("audience") or None,
-                "checked_at": row.get("checked_at"), "checked_by": row.get("by"),
+                "checked_at": 判断元.get("checked_at"),
+                "checked_by": 判断元.get("by"),
                 "legacy_verdict": (legacy or {}).get("verdict") if not own else None,
                 "legacy_by": (legacy or {}).get("by") if not own else None,
                 "other_accounts": [{"account": r.get("account"),

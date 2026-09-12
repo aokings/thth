@@ -151,6 +151,29 @@ def observation(topic: str | None = None) -> dict:
     return out.get(topic, {})
 
 
+def kind_of(topic: str, account: str | None = None) -> str | None:
+    """その語の**型**（独立検収 A・2026-09-12）。
+
+    型は「最新 1 行」から取っていたので、次の 2 つで**消えたり付け替わったり
+    していた。**
+
+    - **`--kind` を付け忘れて記録し直す**と、前に付けた型が消えて「（型なし）」へ
+      移る（型ごとの統計から語が落ちる）
+    - **他 account が違う型で記録する**と、自分の当たり率がその型の側に付く
+
+    **空で上書きしない**（型を書かなかった記録は、型については何も言っていない）。
+    **自分の記録があればそれを優先する**（型の見立ては account で割れてよい）。
+    """
+    自分, だれか = None, None
+    for row in load()["checks"]:
+        if row.get("topic") != topic or not row.get("kind"):
+            continue
+        だれか = row["kind"]
+        if account and row.get("account") == account:
+            自分 = row["kind"]
+    return 自分 or だれか
+
+
 def judgment(topic: str, account: str) -> dict:
     """**そのアカウント自身の適合判断**（無ければ空）。設計 §8・受け入れ T07。
 
@@ -182,12 +205,31 @@ def legacy_note(topic: str) -> dict:
 
 
 def latest(topic: str | None = None, *, account: str | None = None) -> dict:
-    """**互換のための口**（既存の呼び出し元が使う）。観測を返す。
+    """その語の記録を 1 件返す。**`account` を渡したら、その account の判断だけ。**
 
-    判断が要る場所は `judgment()` を使うこと。ここは「その語について何か記録が
-    あるか」を見るだけの用途に残す。
+    **`account` を受け取っておきながら捨てていた**（独立検収 A・2026-09-12）。
+    呼び出し側（`account_report.topic_plan()`）は account を渡していたのに、
+    **他 account の判断が返っていた**——その結果、
+
+    - `--plan` の verdict が他人の判断になる
+    - **`--advise` の「未確認のトピックに N 本が賭かっています」が消える**
+
+    **警告が消える向きの誤り**なので重い。**判断が無いことを、判断があることに
+    しない。**
+
+    `account` を渡さないときは従来どおり観測（account を見ない最新 1 行）を返す。
     """
-    return observation(topic)
+    if account is None:
+        return observation(topic)
+    own = judgment(topic, account)
+    if own:
+        return own
+    obs = observation(topic)
+    # **借りてこない。** 型と読者は観測として共有できる事実なので残すが、
+    # **判断・判断者・判断日時は空**にする。
+    return {"topic": topic, "account": account, "verdict": "unknown",
+            "kind": obs.get("kind"), "audience": obs.get("audience"),
+            "checked_at": None, "by": None, "no_own_judgment": True}
 
 
 _LABEL = {"alive": "適合", "mismatch": "不一致", "dead": "人がいない", "unknown": "未確認"}
@@ -313,7 +355,8 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
     rows = observation()
     out: dict = {}
     for topic, row in rows.items():
-        kind = row.get("kind") or "（型なし）"
+        # **型は最新 1 行から取らない**（独立検収 A・2026-09-12）。
+        kind = kind_of(topic, account) or "（型なし）"
         bucket = out.setdefault(kind, {"kind": kind, "topics": [], "views": [],
                                         "not_compared": [], "all": [],
                                         "no_own_judgment": [],
