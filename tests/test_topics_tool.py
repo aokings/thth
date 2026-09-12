@@ -429,3 +429,22 @@ def test_比較の基準を出力に書く(thth_root):
     assert 基準["mark"] == 24
     assert 基準["age_band_hours"] == (24.0, 30.0)
     assert 基準["source"] and 基準["topic_source"]
+
+def test_記述統計は出すが比べられないと分かる形にする(thth_root):
+    """**masaru 2026-09-12**「現状の記述統計としては出せますが、同条件での性能
+    比較には使えません」。**数字を消すより、そのままでは比べられないと分かる形。**
+    """
+    topics_mod.record("中学受験", verdict="alive", kind="行動", by="テスト")
+    rows = topics_mod.learned({"中学受験": [_観測(100, age_hours=24.1),
+                                            _観測(999, age_hours=332.2)]})
+    row = {r["kind"]: r for r in rows}["行動"]
+
+    # 比較に使うのは揃った 1 本だけ。
+    assert row["posts_measured"] == 1 and row["views_median"] == 100
+    # **外した値も消えていない。**
+    d = row["descriptive"]
+    assert d["posts"] == 2
+    assert d["views_min"] == 100 and d["views_max"] == 999
+    # **経過の散らばりが同じところに出る**（読んだ人が自分で判断できる）。
+    assert d["age_min_hours"] == 24.1 and d["age_max_hours"] == 332.2
+    assert "性能比較には使えません" in d["**注意**"]

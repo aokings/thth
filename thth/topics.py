@@ -275,6 +275,30 @@ def verdict_line(topic: str | None, *, account: str | None = None) -> str | None
     return "\n".join(lines)
 
 
+def _descriptive(観測: list) -> dict | None:
+    """**全部を混ぜた記述統計**（masaru 2026-09-12）。
+
+    **性能比較には使えない。** 使えないと分かるように、**経過時間の散らばりを
+    同じところに出す**（運用セッション提案）——`views 中央値=334（202〜575）` の
+    隣に `経過 3.0h〜332.2h` があれば、**読んだ人が自分で「これは比べられない」と
+    判断できる。数字を消すより、そのほうがよい。**
+    """
+    if not 観測:
+        return None
+    views = sorted(o["views"] for o in 観測)
+    ages = [o.get("age_hours") for o in 観測
+             if isinstance(o.get("age_hours"), (int, float))]
+    return {
+        "posts": len(views),
+        "views_median": views[len(views) // 2],
+        "views_min": views[0], "views_max": views[-1],
+        "age_min_hours": min(ages) if ages else None,
+        "age_max_hours": max(ages) if ages else None,
+        "ages_known": len(ages),
+        "**注意**": "経過時間が揃っていない可能性があります。性能比較には使えません",
+    }
+
+
 def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
     """**型ごとに何が起きたか**を集める（masaru 提案 2026-09-10）。
 
@@ -291,7 +315,7 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
     for topic, row in rows.items():
         kind = row.get("kind") or "（型なし）"
         bucket = out.setdefault(kind, {"kind": kind, "topics": [], "views": [],
-                                        "not_compared": [],
+                                        "not_compared": [], "all": [],
                                         "alive": 0, "mismatch": 0, "dead": 0, "unknown": 0})
         bucket["topics"].append(topic)
         # 型ごとの傾向は**当時の判断**を数える（成功の実証ではない・設計 §9）。
@@ -304,6 +328,8 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
         使う, 使わない = account_report_mod.comparable_views(
             measured_by_topic.get(topic, []))
         bucket["views"].extend(o["views"] for o in 使う)
+        bucket["all"].extend(o for o in (measured_by_topic.get(topic) or [])
+                              if isinstance(o, dict) and isinstance(o.get("views"), int))
         bucket["not_compared"].extend(
             {"topic": topic, "post_id": o.get("post_id"), "理由": o.get("理由")}
             for o in 使わない)
@@ -330,6 +356,11 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
             "examples": sorted(bucket["topics"])[:6],
             # **比較に使わなかった観測**（「実測まだ」と混ぜない）。
             "not_compared": bucket["not_compared"],
+            # **記述統計は出す。ただし性能比較には使えないと分かる形で**
+            # （masaru 2026-09-12「現状の記述統計としては出せますが、同条件での
+            # 性能比較には使えません」）。**数字を消すより、そのままでは
+            # 比べられないと分かる形のほうがよい。**
+            "descriptive": _descriptive(bucket["all"]),
             "comparison_basis": {
                 "source": account_report_mod.LEDGER_SOURCE,
                 "topic_source": account_report_mod.DRAFT_TOPIC,

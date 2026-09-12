@@ -876,6 +876,8 @@ def cmd_topics(args) -> int:
 
     **新参者にとってトピックは唯一の入口**（masaru 2026-09-10）。実測でも、
     フォロワー 0 で `中学受験` は 202〜574 views、弱いトピックは 1 view——
+    **訂正 2026-09-12**: この「1 view」は**経過が数時間の疎通確認投稿**で、同じ投稿が 9/12 時点で **112 views**。**400 倍の大半は経過時間だった。**トピックが効かないという意味ではなく、**この数字では判定できない。**
+    
     効き目が約 400 倍違う。だから THTH はトピックを 3 つの層で扱う。
 
       1. `--note`  下調べの結果を残す（誰がいる場所か。人が見て、THTH が覚える）
@@ -962,6 +964,14 @@ def cmd_topics(args) -> int:
             print(f"    合っている {row['alive']}・不一致 {row['mismatch']}・"
                   f"人がいない {row['dead']}・未確認 {row['unknown']}")
             print(f"    当たり率 {row['hit_rate']}")
+            d = row.get("descriptive")
+            if d:
+                # **記述統計は出す。ただし比べられないと分かる形で。**
+                幅 = ("経過不明" if d["age_min_hours"] is None
+                       else f"経過 {d['age_min_hours']}h〜{d['age_max_hours']}h")
+                print(f"    参考（**比較には使えません**）: 全 {d['posts']} 本の"
+                       f"views 中央値={d['views_median']}"
+                       f"（{d['views_min']}〜{d['views_max']}・{幅}）")
             if row.get("not_compared"):
                 # **「実測まだ」と「揃わなかった」を混ぜない。**
                 print(f"    **比較に使わなかった観測 {len(row['not_compared'])} 件**"

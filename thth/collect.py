@@ -272,7 +272,9 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 "account": account_name,
                 # **トピックを一緒に残す**（masaru 指摘 2026-09-10）。asmon は
                 # フォロワー 0 で `中学受験` を付けた投稿が 200〜574 views、
-                # nigamilab のトピック無しは 1 view。**届ける経路はフォロワー
+                # nigamilab のトピック無しは 1 view。
+                # **訂正 2026-09-12**: この「1 view」は**経過が数時間の疎通確認投稿**で、同じ投稿が 9/12 時点で **112 views**。**400 倍の大半は経過時間だった。**トピックが効かないという意味ではなく、**この数字では判定できない。**
+                # **届ける経路はフォロワー
                 # ではなくトピック**なので、数と一緒に記録しないと後から
                 # 突き合わせられない。front-matter から取るので API は増やさない。
                 "topic": queuefile.normalize_topic(fm.get("topic")),
@@ -298,10 +300,20 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 errors.append(f"{post_id}: conversation: {redact_mod.redact(str(e))}")
                 replies = None
             if replies is not None:
+                # **台帳の中だけでなく、取ってきた配列の中の重複も除く**
+                # （外部レビュー C1・2026-09-12）。頁の境界で同じ返信が 2 度
+                # 現れうるし、同じ応答が `R1,R1,R2` でも台帳が `R1,R1,R2` に
+                # なっていた。**`known` を回しながら足していく**ので、
+                # **1 つの id は 1 度しか入らない。**
                 known = {row.get("id") for row in _reply_rows(reply_path)}
-                fresh = [{"kind": "reply", "collected_at": jst.iso(now),
-                          "post_id": post_id, **row}
-                         for row in replies if row.get("id") and row["id"] not in known]
+                fresh = []
+                for row in replies:
+                    rid = row.get("id")
+                    if not rid or rid in known:
+                        continue
+                    known.add(rid)
+                    fresh.append({"kind": "reply", "collected_at": jst.iso(now),
+                                   "post_id": post_id, **row})
                 # **取れたことそのものを 1 行残す**（返信 0 件の成功と、取得の失敗を
                 # 区別するため。これが無いと「0 件だった」を「まだ取っていない」と
                 # 読んでしまい、毎回取りに行く／二度と取りに行かない、のどちらかになる）。
