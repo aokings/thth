@@ -295,6 +295,8 @@ def topic_plan(account_name: str, *, now=None) -> dict:
             "planned": row["draft"] + row["approved"],
             "verdict": check.get("verdict", "unknown"),
             "audience": check.get("audience") or None,
+            # 自 account の判断が無い語では、観測を書いた人（`topics.latest()`）
+            "audience_observer": check.get("audience_observer"),
             "checked_at": check.get("checked_at"),
             "checked_by": check.get("by"),
             "views_median_24h": seen[len(seen) // 2] if seen else None,

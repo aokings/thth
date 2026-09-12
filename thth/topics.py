@@ -388,8 +388,11 @@ def latest(topic: str | None = None, *, account: str | None = None) -> dict:
     obs = newest(topic)
     # **借りてこない。** 型と読者は観測として共有できる事実なので残すが、
     # **判断・判断者・判断日時は空**にする。
+    # **誰の観測かを添える**（監査 2・2026-09-12）。`--plan` は自 account の判断が
+    # 無い語でここに来るので、**他人の観測が無記名で出ていた。**
     return {"topic": topic, "account": account, "verdict": "unknown",
             "kind": obs.get("kind"), "audience": obs.get("audience"),
+            "audience_observer": observer_of(obs) if obs else None,
             "checked_at": None, "by": None, "no_own_judgment": True}
 
 

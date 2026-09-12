@@ -1149,8 +1149,10 @@ def cmd_topics(args) -> int:
             print(f"[{row['topic']}]  これから {row['planned']} 本"
                   f"（下書き {row['draft']}・承認済み {row['approved']}）"
                   f"  済 {row['posted']} 本  24h views 中央値={measured}")
+            出所 = (f"・{row['audience_observer']} の観測"
+                    if row.get("audience_observer") else "")
             print(f"    {mark[row['verdict']]}"
-                  + (f"（{row['audience']}）" if row["audience"] else "")
+                  + (f"（{row['audience']}{出所}）" if row["audience"] else "")
                   + (f"  {row['checked_at'][:10]} {row['checked_by']}"
                      if row.get("checked_at") else ""))
         if unchecked:
@@ -1349,7 +1351,8 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
         # 最新行から取る（判断ではない）。
         判断元 = own or {}
         # **観測者ごとの最新を、新しい順に並べる**（設計 v1.0.0 §1 規則 3・4）。
-        # 旧鍵 `audience` / `audience_account` / `audience_by` は**廃止した**
+        # item 直下の旧鍵 `audience` / `audience_account` / `audience_by` は**廃止した**
+        # （`audience` は `observations[]` の各要素の中に残る）
         # ——1 語 1 観測という前提そのものが誤りで、**名前を変えないと古い
         # 読み手が旧意味で読む**（規約 5）。
         並び = [{"note_id": o["note_id"],
@@ -1483,8 +1486,14 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
         if r.get("legacy_verdict"):
             refs.append(f"{r.get('legacy_by')} が「{LABEL[r['legacy_verdict']]}」"
                          f"と記録・アカウント未指定")
-        for other in r.get("other_accounts") or []:
+        others = r.get("other_accounts") or []
+        # **観測を 2 件で切っても、この列挙が無制限なら画面は伸びる**（監査 2・
+        # 2026-09-12）。3 account まで出し、残りは件数で言って `history` へ送る。
+        for other in others[:3]:
             refs.append(f"{other['account']} が「{LABEL[other['verdict']]}」と判断")
+        if len(others) > 3:
+            refs.append(f"ほか {len(others) - 3} account"
+                         f"（thth topics history {r['topic']}）")
         tail = ""
         if refs:
             tail = "（参考・**このアカウントの判断ではありません**: "\

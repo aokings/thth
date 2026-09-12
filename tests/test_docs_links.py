@@ -41,7 +41,9 @@ EXCLUDED_PATHS = {
     "docs/設計_記事別トピック提案_2026-09-11.md",
 }
 
-_PLACEHOLDER_MARKERS = ("<", ">", "*", "{", "}", "...")
+# **この repo の文章作法は `…`（U+2026）**。ASCII の "..." だけ持っていたので、
+# 実際に使われる綴りを取り逃がしていた（監査 2・2026-09-12）。
+_PLACEHOLDER_MARKERS = ("<", ">", "*", "{", "}", "...", "…")
 
 _LINK_RE = re.compile(r"\]\(([^)]+)\)")
 _BARE_DOCS_RE = re.compile(r"(?<![\w/])docs/[^\s\"'()「」\]]+\.md")
