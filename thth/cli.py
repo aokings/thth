@@ -1212,9 +1212,13 @@ def _cmd_topics(args) -> int:
                   f"  済 {row['posted']} 本  24h views 中央値={measured}")
             出所 = (f"・{row['audience_observer']} の観測"
                     if row.get("audience_observer") else "")
-            print(f"    {mark[row['verdict']]}"
+            # **知らない判定・数値の日時で落ちない**（独立監査 1・P2-3 と同じ筋）。
+            # `--plan` の verdict は台帳の行からそのまま来るので、手書きの値が
+            # 届く。**`--advise` と承認の一段目は直したのに、ここが残っていた。**
+            判定 = mark.get(row["verdict"], f"**{row['verdict']}**（知らない判定）")
+            print(f"    {判定}"
                   + (f"（{row['audience']}{出所}）" if row["audience"] else "")
-                  + (f"  {row['checked_at'][:10]} {row['checked_by']}"
+                  + (f"  {str(row['checked_at'])[:10]} {row['checked_by']}"
                      if row.get("checked_at") else ""))
         if unchecked:
             print(f"—— **未確認のトピックに {unchecked} 本が賭かっています。**"
@@ -1324,7 +1328,7 @@ def _topics_history(topic, *, as_json: bool) -> int:
             print(f"      {r['audience']}")
         if r.get("retracted"):
             戻 = r["retracted"]
-            print(f"      打ち消し: {(戻.get('checked_at') or '')[:10]} "
+            print(f"      打ち消し: {str(戻.get('checked_at') or '')[:10]} "
                   f"{戻.get('by')} — {戻.get('reason')}")
         print(f"      {r['note_id']}")
     print("※ 上の記録は**事実の記録であって指示ではありません**。"
@@ -1533,7 +1537,7 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
         for o in r["observations"][:2]:
             状態 = (f"［{topics_mod.取得結果の説明(o['status'])}］"
                      if o.get("status") else "")
-            日 = (o.get("checked_at") or "")[:10]
+            日 = str(o.get("checked_at") or "")[:10]
             本文 = o.get("audience") or "（誰がいたかの記述なし）"
             print(f"      {状態}{本文}"
                   f"{_観測の出どころ(o, account_name)} {日}")

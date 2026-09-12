@@ -695,3 +695,35 @@ def test_M7_doctor_jsonのstdoutはJSON1個だけ(tmp_path, monkeypatch,
     assert len([l for l in r.stdout.splitlines() if l.strip()]) == 1, (
         f"**stdout に JSON 以外が混ざった**:\n{r.stdout}")
     assert "警告:" not in r.stdout, r.stdout
+
+
+# --- P2-3（人向けの画面も落ちない）-------------------------------------------
+
+def test_P2_3_旧行と壊れた行でCLIの人向け画面も落ちない(thth_root, isolated_account):
+    """**関数が落ちなくても、画面を組む側で落ちたら同じこと。**
+
+    `--plan` は `mark[row["verdict"]]` と `row["checked_at"][:10]` を素で引いて
+    いた（`--advise` と承認の一段目だけ直っていた）。
+    """
+    write_queue_file(isolated_account["queue_dir"], "2026-09-09-f.md",
+                     fm_overrides={"status": "draft", "approved_sha": None,
+                                    "topic": "F"})
+    台帳を置く(thth_root, [
+        {"topic": "F", "verdict": "maybe", "status": "zzz",
+         "by": "u", "account": isolated_account["name"], "checked_at": 1234,
+         "audience": "誰か"},
+        {"topic": "F", "verdict": "alive", "by": "v"},
+    ])
+    for argv in (["topics", isolated_account["name"], "--plan"],
+                 ["topics", isolated_account["name"], "--advise"],
+                 ["topics", isolated_account["name"], "--advise", "--json"],
+                 ["topics", isolated_account["name"], "--learned"],
+                 ["topics", "history", "F"],
+                 ["approve", os.path.join(isolated_account["queue_dir"],
+                                           "2026-09-09-f.md")]):
+        r = run_thth(argv)
+        assert "Traceback" not in r.stderr, f"{argv} で落ちた:\n{r.stderr}"
+        assert r.returncode in (0, 1), f"{argv}: rc={r.returncode}\n{r.stdout}{r.stderr}"
+    # 知らない判定を黙って消していない。
+    plan = run_thth(["topics", isolated_account["name"], "--plan"])
+    assert "maybe" in plan.stdout, plan.stdout
