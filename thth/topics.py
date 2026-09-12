@@ -203,6 +203,34 @@ def kind_of(topic: str, account: str | None = None) -> str | None:
     return 自分 or だれか
 
 
+def audience_of(topic: str, account: str | None = None) -> dict:
+    """その語の**観測（誰がいたか）**と、それを書いた行（2026-09-12）。
+
+    `kind` と同じ穴が `audience` にもあった。**空の `audience` で記録し直すと、
+    前に書いた観測が消える**——`observation()` は「最後の行が勝つ」ので、
+    `--audience` を付けずに verdict だけ記録すると**共有の事実が消える。**
+
+    **空で上書きしない。** 自分の記録があればそれを優先する（同じ語でも
+    「誰がいたか」の見え方は account で割れてよい）。
+
+    戻り値は `{"audience", "account", "by"}`。**誰が書いたかを一緒に返す**
+    ——`audience` に account 固有の実績が書かれることがあるので、**出どころ無しで
+    共有の事実として見せない。**
+    """
+    自分, だれか = None, None
+    for row in load()["checks"]:
+        if row.get("topic") != topic or not (row.get("audience") or "").strip():
+            continue
+        だれか = row
+        if account and row.get("account") == account:
+            自分 = row
+    元 = 自分 or だれか
+    if 元 is None:
+        return {"audience": None, "account": None, "by": None}
+    return {"audience": 元["audience"], "account": 元.get("account"),
+            "by": 元.get("by")}
+
+
 def judgment(topic: str, account: str) -> dict:
     """**そのアカウント自身の適合判断**（無ければ空）。設計 §8・受け入れ T07。
 

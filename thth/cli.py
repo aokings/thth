@@ -1146,6 +1146,32 @@ def cmd_topics(args) -> int:
     return 0
 
 
+def _観測の出どころ(row, account_name=None) -> str:
+    """`row` は `audience_account` を持つ item、または観測の行。"""
+    """**その `audience` を誰が書いたか**（運用セッション指摘 2026-09-12）。
+
+    観測は「**誰がいるかは共有の事実**」として account を分けずに 1 つの棚に
+    置いている。**その意図は正しい。** 穴は **`audience` に何を書いてよいかを
+    決めていない**こと——実際に
+
+        中学受験［行動］ — 受験親のやりとり。**自アカウントの既存 6 投稿が
+        全部この語で views 202〜574**
+
+    のように、**account 固有の実績が共有の棚に乗っていた。** 文面から機械で
+    見分けることはできない（「受験親のやりとり」と「自分の 6 投稿が…」を
+    区別できない）ので、**せめて出どころを必ず見せる。**
+
+    kopicha の人がこれを読んだとき、**asmon の実績だと分かれば、共有の事実として
+    読むことはない。**
+    """
+    書いた = row.get("audience_account", row.get("account"))
+    if not 書いた:
+        return "（account の記録なし）"
+    if account_name and 書いた == account_name:
+        return ""
+    return f"（**{書いた}** の観測）"
+
+
 def _advise(account_name: str | None, *, as_json: bool) -> int:
     """トピックを選ぶために必要なことを、上から順に 1 画面で出す。
 
@@ -1197,10 +1223,19 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
         # `kind`・`audience` は**観測として共有できる事実**なので、そのまま
         # 最新行から取る（判断ではない）。
         判断元 = own or {}
+        観測 = topics_mod.audience_of(topic, account_name)
         item = {"topic": topic, "kind": topics_mod.kind_of(topic, account_name),
                 "verdict": 判断元.get("verdict"),
                 "judged_by_this_account": bool(own),
-                "audience": row.get("audience") or None,
+                # **空の `audience` で上書きしない**（2026-09-12）。`--audience` を
+                # 付けずに verdict だけ記録すると、**前に書いた観測が消えて**いた
+                # ——`kind` と同じ穴。
+                "audience": 観測["audience"],
+                # **その `audience` を誰が書いたか**（運用セッション指摘
+                # 2026-09-12）。**共有の棚に account 固有の話が乗る**ので、
+                # せめて出どころを出す。
+                "audience_account": 観測["account"],
+                "audience_by": 観測["by"],
                 "checked_at": 判断元.get("checked_at"),
                 "checked_by": 判断元.get("by"),
                 "legacy_verdict": (legacy or {}).get("verdict") if not own else None,
@@ -1282,7 +1317,8 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
             m = (f"24h views 中央値 {r['views_median']}（{r['posts']} 本）"
                   + (f"／**比較に使えなかった {除外} 件**" if 除外 else ""))
         return (f"{r['topic']}［{r['kind'] or '型なし'}］ {m}"
-                + (f" — {r['audience']}" if r["audience"] else ""))
+                + (f" — {r['audience']}{_観測の出どころ(r, account_name)}"
+                    if r["audience"] else ""))
 
     LABEL = {"alive": "適合", "mismatch": "不一致",
              "dead": "人がいない", "unknown": "未確認"}
@@ -1299,7 +1335,8 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
             tail = "（参考・**このアカウントの判断ではありません**: "\
                    + "／".join(refs) + "）"
         return (f"{r['topic']}［{r['kind'] or '型なし'}］"
-                + (f" — {r['audience']}" if r["audience"] else "") + tail)
+                + (f" — {r['audience']}{_観測の出どころ(r, account_name)}"
+                    if r["audience"] else "") + tail)
 
     def as_avoid(r):
         label = "不一致" if r["verdict"] == "mismatch" else "人がいない"
