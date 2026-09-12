@@ -412,6 +412,9 @@ PROVENANCE = ("production", "trial", "unknown")
 
 _REASON_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+
+# 正例と反例（Codex §8）。**型の側と、理由の採用の側で同じ語を使う。**
+CASE_KINDS = ("positive", "counter")
 _REF_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 VOCABULARY_KEYS = ("name", "entries", "created_at", "created_by", "supersedes")
@@ -428,7 +431,7 @@ ENTRY_KEYS = ("reason_id", "display", "definition", "includes", "excludes",
 # **語彙の記録は書き換えない**（内容アドレスの追記のみ）。採用は**別の記録**として
 # 1 件ずつ積み、読むときに重ねる。**1 レコード 1 項目**——まとめて上げる口を作ら
 # ない。
-ADOPTION_KEYS = ("vocabulary_id", "reason_id", "checked_on", "meaning",
+ADOPTION_KEYS = ("vocabulary_id", "reason_id", "cases", "meaning",
                   "distinguished_from", "applied_example", "decided_by",
                   "decided_at", "meaning_version")
 
@@ -436,6 +439,28 @@ ADOPTION_KEYS = ("vocabulary_id", "reason_id", "checked_on", "meaning",
 # 「採用済み＝効果が実証済み」と読まれる余地を残さない。
 ADOPTION_DISCLAIMER = ("**編集に使う語彙として採用した、という意味です。"
                         "反応率を改善すると実証された、という意味ではありません。**")
+
+
+def _require_adoption_evidence(cases: list) -> None:
+    """採用に足る材料か（`_require_promotion` と同じ数え方・Codex §8）。
+
+    **独立した正例 2 件以上**（`sha256` が違う＝**同じ原稿を 2 回数えない**）と
+    **反例 1 件以上**。反例は「この語に当てはまりそうだが当てはまらない」と判定した
+    記録——**それが無いと、語の境界を確かめたことにならない。**
+    """
+    positives = [c for c in cases if c["kind"] == "positive"]
+    counters = [c for c in cases if c["kind"] == "counter"]
+    independent = {c["sha256"] for c in positives}
+    if len(independent) < 2:
+        raise SchemaError(
+            f"採用には**独立した正例が 2 件以上**要ります（いま {len(independent)} 件）。"
+            f"**同じ原稿を 2 回数えません。** 揃わないうちは proposed か shadow の"
+            f"ままにしてください")
+    if not counters:
+        raise SchemaError(
+            "採用には**反例が 1 件以上**要ります"
+            "（この語に当てはまりそうだが当てはまらない、と判定した記録）。"
+            "**反例が無いと、語の境界を確かめたことになりません**")
 
 
 def build_reason_adoption(row: dict) -> dict:
@@ -456,15 +481,27 @@ def build_reason_adoption(row: dict) -> dict:
         # **配列を弾く。** 「一括昇格はしない」を型で守る。
         raise SchemaError("reason_id は 1 件だけの文字列です"
                            "（**まとめて上げる口はありません**）")
-    if not isinstance(row["checked_on"], list) or not row["checked_on"]:
-        raise SchemaError("checked_on に、実際に確かめた原稿を 1 つ以上")
-    for i, c in enumerate(row["checked_on"]):
+    if not isinstance(row["cases"], list) or not row["cases"]:
+        raise SchemaError("cases に、実際に確かめた原稿を 1 つ以上")
+    for i, c in enumerate(row["cases"]):
         if not isinstance(c, dict):
-            raise SchemaError(f"checked_on[{i}] は object")
+            raise SchemaError(f"cases[{i}] は object")
+        _require_choice(c.get("kind"), CASE_KINDS, f"cases[{i}] の kind")
         for key in ("path", "sha256"):
             if not isinstance(c.get(key), str) or not c[key].strip():
-                raise SchemaError(f"checked_on[{i}].{key} が空です"
+                raise SchemaError(f"cases[{i}].{key} が空です"
                                    f"（**どの原稿で確かめたのかを残す**）")
+        if not _SHA256_HEX_RE.match(c["sha256"]):
+            raise SchemaError(f"cases[{i}].sha256 は 64 桁の 16 進数")
+        if not isinstance(c.get("account"), str) or not c["account"].strip():
+            raise SchemaError(f"cases[{i}].account が空です")
+
+    # **手で数えていたことを、道具が数える**（外部の合意ではなく検査にする）。
+    # **型（`form_spec`）の側には昇格条件があったのに、理由の採用には入れて
+    # いなかった**——「確認できた項目から」が、**書けば通る**になっていた。
+    # 2026-09-12 に運用セッションが手で数え直して「まだ 1 件も採用できない」と
+    # 結論した。**その数え方を、ここに置く。**
+    _require_adoption_evidence(row["cases"])
     for key in ("meaning", "distinguished_from", "applied_example"):
         if not isinstance(row.get(key), str) or not row[key].strip():
             raise SchemaError(
@@ -490,8 +527,11 @@ ADOPTION_SHAPE = {
         "vocabulary_id": "採用する項目が載っている語彙の ID（sha256:…）",
         "reason_id": "**1 件だけ**。配列は受け取りません（一括昇格はしません）",
         "meaning_version": "採用する意味の版（整数・1 以上）",
-        "checked_on": [{"path": "実際に確かめた原稿（queue の相対パス）",
-                         "sha256": "そのときの内容の sha256"}],
+        "cases": [{"kind": list(CASE_KINDS),
+                    "path": "実際に確かめた原稿（queue の相対パス）",
+                    "sha256": "そのときの内容の sha256（64 桁）",
+                    "account": "その原稿の account"}],
+        "**採用の条件**": "独立した正例 2 件以上（同じ原稿は 2 回数えない）＋ 反例 1 件以上",
         "meaning": "その語が何を指すか（**原稿で確かめた内容**）",
         "distinguished_from": "隣の語とどう使い分けたか",
         "applied_example": "実際にどう当てたか",
@@ -939,7 +979,6 @@ NOT_IMPLEMENTED_CHECKS = {
                           "使ってください）",
 }
 ROLE_KEYS = ("role_id", "display", "description", "evidence_required")
-CASE_KINDS = ("positive", "counter")
 CASE_KEYS = ("kind", "draft_sha256", "account", "review_ids", "note")
 FORM_SPEC_KEYS = ("form", "scope", "applies_when", "roles", "unfit_examples",
                   "machine_checks", "semantic_questions", "success_measure",

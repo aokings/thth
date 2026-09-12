@@ -43,7 +43,14 @@ def _語彙(state="shadow"):
 def _採用(vocabulary_id, **上書き):
     row = {"vocabulary_id": vocabulary_id, "reason_id": "too_long",
             "meaning_version": 1,
-            "checked_on": [{"path": "docs/sns/queue/a.md", "sha256": "a" * 64}],
+            "cases": [
+                {"kind": "positive", "path": "docs/sns/queue/a.md",
+                 "sha256": "a" * 64, "account": "kopicha-threads"},
+                {"kind": "positive", "path": "docs/sns/queue/b.md",
+                 "sha256": "b" * 64, "account": "kopicha-threads"},
+                {"kind": "counter", "path": "docs/sns/queue/c.md",
+                 "sha256": "c" * 64, "account": "kopicha-threads"},
+            ],
             "meaning": "1 段が読み切れない長さのこと",
             "distinguished_from": "`too_many` は本数の話で、長さではない",
             "applied_example": "a.md の 2 段目を 2 つに割った",
@@ -93,17 +100,18 @@ def test_意味と使い分けと適用例は空にできない(鍵):
 
 def test_確かめた原稿が無ければ拒否する():
     with pytest.raises(models.SchemaError) as e:
-        models.build_reason_adoption(_採用("sha256:" + "b" * 64, checked_on=[]))
-    assert "checked_on" in str(e.value)
+        models.build_reason_adoption(_採用("sha256:" + "b" * 64, cases=[]))
+    assert "cases" in str(e.value)
 
 
-@pytest.mark.parametrize("鍵", ["path", "sha256"])
+@pytest.mark.parametrize("鍵", ["path", "sha256", "account"])
 def test_確かめた原稿の素性が空なら拒否する(鍵):
     """**どの原稿で確かめたのかが後から辿れること**が、この記録の値打ち。"""
-    checked = [{"path": "a.md", "sha256": "a" * 64}]
-    checked[0][鍵] = ""
+    cases = [{"kind": "positive", "path": "a.md", "sha256": "a" * 64,
+               "account": "kopicha-threads"}]
+    cases[0][鍵] = ""
     with pytest.raises(models.SchemaError) as e:
-        models.build_reason_adoption(_採用("sha256:" + "b" * 64, checked_on=checked))
+        models.build_reason_adoption(_採用("sha256:" + "b" * 64, cases=cases))
     assert 鍵 in str(e.value)
 
 
@@ -168,7 +176,7 @@ def test_採用してから一覧に出る(thth_root, tmp_path, capsys):
     assert out["count"] == 1
     r = out["adoptions"][0]
     assert r["reason_id"] == "too_long"
-    assert r["checked_on"] == ["docs/sns/queue/a.md"]
+    assert r["case_count"] == 3
     # **本体は出さない**（一覧は ID と件数まで・既存の射影と同じ）。
     assert "meaning" not in r and "applied_example" not in r
     assert "実証された、という意味ではありません" in out["means"]
@@ -184,3 +192,62 @@ def test_語彙の記録は書き換わらない(thth_root, tmp_path, capsys):
     topic_cli.dispatch(["topics", "adopt-reason", "--input", _入力, "--json"])
     capsys.readouterr()
     assert store.get("vocabularies", saved["vocabulary_id"]) == 前
+
+# --- 採用に足る材料か（Codex §8 と同じ数え方）-------------------------------
+#
+# **2026-09-12 に運用セッションが手で数え直して「まだ 1 件も採用できない」と
+# 結論した。** その数え方を道具に置く。**手で数えた合意ではなく、検査にする。**
+
+def test_同じ原稿を2回数えない():
+    """`missing_condition` は 6 回記録されていたが、**実体は 2 件**で、
+    **どちらも同じ原稿・同じ段・同じ往復**だった。"""
+    同じ原稿 = [
+        {"kind": "positive", "path": "a.md", "sha256": "a" * 64, "account": "k"},
+        {"kind": "positive", "path": "a.md", "sha256": "a" * 64, "account": "k"},
+        {"kind": "counter", "path": "c.md", "sha256": "c" * 64, "account": "k"},
+    ]
+    with pytest.raises(models.SchemaError) as e:
+        models.build_reason_adoption(_採用("sha256:" + "b" * 64, cases=同じ原稿))
+    assert "同じ原稿を 2 回数えません" in str(e.value)
+
+
+def test_反例が無ければ採用できない():
+    """**反例が無いと、語の境界を確かめたことにならない。**
+
+    実際、8 件の記録に**反例は 1 件も無かった**（`no_problem` が 1 件あるだけ）。
+    """
+    正例だけ = [
+        {"kind": "positive", "path": "a.md", "sha256": "a" * 64, "account": "k"},
+        {"kind": "positive", "path": "b.md", "sha256": "b" * 64, "account": "k"},
+    ]
+    with pytest.raises(models.SchemaError) as e:
+        models.build_reason_adoption(_採用("sha256:" + "b" * 64, cases=正例だけ))
+    assert "反例が 1 件以上" in str(e.value)
+
+
+def test_いまの材料では1件も採用できない():
+    """**2026-09-12 時点の実際の材料**（運用セッションが台帳から数えたもの）。
+
+        missing_condition  正例 2 件だが**同じ原稿**
+        claim_overstated   正例 1 件（もう 1 件は no_problem＝反例ではない）
+        unsupported_claim  0 件（not_evaluated。**未評価は正例にならない**）
+        other              2 件（束ねない合意のまま）
+
+    **どれも通らないこと**を、道具の側で確かめる。
+    """
+    原稿 = "green-spec-spread.md"
+    sha = "1" * 64
+    材料 = {
+        "missing_condition": [
+            {"kind": "positive", "path": 原稿, "sha256": sha, "account": "k"},
+            {"kind": "positive", "path": 原稿, "sha256": sha, "account": "k"},
+        ],
+        "claim_overstated": [
+            {"kind": "positive", "path": 原稿, "sha256": sha, "account": "k"},
+        ],
+        "unsupported_claim": [],
+    }
+    for reason_id, cases in 材料.items():
+        with pytest.raises(models.SchemaError):
+            models.build_reason_adoption(
+                _採用("sha256:" + "b" * 64, reason_id=reason_id, cases=cases))

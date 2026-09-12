@@ -925,7 +925,7 @@ def cmd_adopt_reason(args) -> int:
            "vocabulary_id": saved["vocabulary_id"],
            "reason_id": saved["reason_id"],
            "meaning_version": saved["meaning_version"],
-           "checked_on": [c["path"] for c in saved["checked_on"]],
+           "cases": [f"{c['kind']}: {c['path']}" for c in saved["cases"]],
            "means": saved["means"],
            "warnings": [models.ADOPTION_DISCLAIMER],
            "notice": REVIEW_NOTICE})
@@ -944,8 +944,9 @@ def cmd_adoptions(args) -> int:
             "vocabulary_id": adoption["vocabulary_id"],
             "reason_id": adoption["reason_id"],
             "meaning_version": adoption["meaning_version"],
-            "checked_count": len(adoption["checked_on"]),
-            "checked_on": [c["path"] for c in adoption["checked_on"]],
+            "case_count": len(adoption["cases"]),
+            "positives": sum(1 for c in adoption["cases"] if c["kind"] == "positive"),
+            "counters": sum(1 for c in adoption["cases"] if c["kind"] == "counter"),
             "decided_by": adoption["decided_by"],
             "decided_at": adoption["decided_at"],
         })
