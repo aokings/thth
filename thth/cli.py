@@ -1172,6 +1172,14 @@ def _観測の出どころ(row, account_name=None) -> str:
     return f"（**{書いた}** の観測）"
 
 
+def _選べる(値: tuple) -> str:
+    """**選べる値を、定数からそのまま並べる。**
+
+    手で書いた一覧は必ずずれる（2026-09-12 に 3 か所とも違う欠け方をしていた）。
+    """
+    return "|".join(値)
+
+
 def _advise(account_name: str | None, *, as_json: bool) -> int:
     """トピックを選ぶために必要なことを、上から順に 1 画面で出す。
 
@@ -1278,9 +1286,15 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
     print("■ トピックを選ぶ前に（THTH が知っていること）")
     print("")
     print("  確かめた結果はこう残します（**この形で動きます**）:")
-    print(f"    thth topics {example_account} --note <語> --verdict alive|mismatch|unknown \\")
-    print("      --status ok|empty|permission_denied|unavailable|rate_limited|partial \\")
-    print("      --kind 行動|一般名詞|カテゴリ|抽象|専門語|固有名|つながり型|自作 \\")
+    # **値域を手で並べない**（運用セッション報告 2026-09-12）。3 か所に手書きの
+    # 一覧があって、**3 か所とも違う欠け方**をしていた——`--advise` は `dead` と
+    # `年度付き` を落とし、`suggest` は `unknown`・`年度付き`・`カテゴリ` を落として
+    # いた。**`年度付き` は前日に足した型なのに、どの案内にも出ていなかった。**
+    # **定数から組み立てれば、足した瞬間に全部に出る。**
+    print(f"    thth topics {example_account} --note <語> "
+           f"--verdict {_選べる(topics_mod.VERDICTS)} \\")
+    print(f"      --status {_選べる(topics_mod.OBS_STATUS)} \\")
+    print(f"      --kind {_選べる(topics_mod.KINDS)} \\")
     print("      --audience \"誰がいたか\" --by \"<あなた>\"")
     print("")
     # 記事ごとに選ぶ道具（工程 6・2026-09-11）。**下の一覧は「知っていること」で、
@@ -1434,8 +1448,9 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
     print("       https://www.threads.com/search?q=<トピック>&filter=topic")
     print("     見るのは「何件あるか」ではなく**誰がいるか**。")
     print("  6. 確かめたら残す:")
-    print("       thth topics --note <語> --verdict alive|mismatch|dead \\")
-    print("         --kind 行動|一般名詞|抽象|専門語|固有名|つながり型|自作 \\")
+    print(f"       thth topics --note <語> --verdict {_選べる(topics_mod.VERDICTS)} \\")
+    print(f"         --status {_選べる(topics_mod.OBS_STATUS)} \\")
+    print(f"         --kind {_選べる(topics_mod.KINDS)} \\")
     print("         --audience \"誰がいたか\" --by \"<あなた>\"")
     return 0
 
