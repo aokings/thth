@@ -884,7 +884,7 @@ def test_通常のcollectが全段を拾う(thread_account, thth_root):
         def insights(self, post_id, **kw):
             return {"views": {"POST1": 100, "POST2": 40, "POST3": 12}[post_id]}
 
-        def replies(self, post_id, **kw):
+        def conversation(self, post_id, **kw):
             return []
 
     later = datetime.datetime.fromisoformat("2026-09-15T20:05:00+09:00")

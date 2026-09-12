@@ -153,7 +153,11 @@ def diagnose(account_name: str) -> dict:
             break
     if first_post_id:
         results.append(_run_probe(base_url, _Probe(
-            "返信の取得", "threads_read_replies", f"/v1.0/{first_post_id}/replies",
+            # **採取が実際に叩く口を probe する**（2026-09-12）。`/replies` を
+            # probe していたが、採取は `/conversation`（全階層）を叩く。**違う口の
+            # 疎通を確かめて「返信の取得は通る」と言っていた。**
+            "返信の取得", "threads_read_replies",
+            f"/v1.0/{first_post_id}/conversation",
             {"fields": "id,username,timestamp", "limit": 3}), access_token))
     elif my_posts_ok is False:
         # **「投稿がまだ無いので試せない」は、投稿一覧が実際に取れたときだけ

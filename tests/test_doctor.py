@@ -82,7 +82,7 @@ def test_投稿があると返信のprobeが実際にリクエストを送る(tm
         if path.endswith("/threads"):
             return {"data": [{"id": "POST123", "permalink": "https://example/p",
                                "timestamp": "2026-09-10T00:00:00+0000"}]}
-        if path.endswith("/replies"):
+        if path.endswith("/conversation"):
             return {"data": [{"id": "R1", "username": "someone",
                                "timestamp": "2026-09-10T01:00:00+0000"}]}
         return {}
@@ -90,8 +90,8 @@ def test_投稿があると返信のprobeが実際にリクエストを送る(tm
     monkeypatch.setattr(doctor_mod, "_get", fake_get)
     report = doctor_mod.diagnose(account["name"])
 
-    reply_paths = [p for p in requested_paths if p.endswith("/replies")]
-    assert reply_paths == ["/v1.0/POST123/replies"], (
+    reply_paths = [p for p in requested_paths if p.endswith("/conversation")]
+    assert reply_paths == ["/v1.0/POST123/conversation"], (
         "返信の取得 probe が実際に HTTP リクエストを送っていない: "
         f"{requested_paths}")
 

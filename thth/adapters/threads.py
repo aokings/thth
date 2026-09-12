@@ -243,11 +243,29 @@ class ThreadsAdapter(base.Adapter):
                 out[name] = value
         return out
 
-    def replies(self, post_id, *, since=None):
-        """その投稿への返信（`threads_read_replies`）。上位 1 階層。"""
-        body = self._get(f"/v1.0/{post_id}/replies",
-                          {"fields": "id,text,username,timestamp,permalink,is_reply,replied_to"})
-        return self._rows(body, "返信")
+    def conversation(self, post_id, *, since=None):
+        """その投稿の**会話全体**（`threads_read_replies`）。**全階層。**
+
+        **名前を変えた**（`replies` → `conversation`・2026-09-12）。見る先が
+        `/{post_id}/replies`（**上位 1 階層**）から `/{post_id}/conversation`
+        （**全階層**）に変わったので、**古い読み手を黙って通さない**（規約 5）。
+
+        **設計にはもともとこう書いてあった**（設計 §5「`GET /{post_id}/conversation`
+        （全階層）を取り」）。実装が `/replies` を呼んでいたのは**逸脱**で、
+        新しい設計判断ではない。
+
+        **見つかり方**: masaru が 2026-09-12 08:25〜08:40 に kopicha の投稿への
+        返信 2 件に**返信した**（＝2 段目）。運用セッションがスクリーンショットで
+        現物を見ていたのに、`thth replies` に 1 件も出なかった。
+        **うちの側の発言が台帳に残らず、会話の片側しか記録されない。**
+
+        **`replied_to` と `root_post` を取る**ので、階層の形も残る。
+        """
+        body = self._get(
+            f"/v1.0/{post_id}/conversation",
+            {"fields": "id,text,username,timestamp,permalink,is_reply,"
+                        "replied_to,root_post,has_replies"})
+        return self._rows(body, "会話")
 
     def account_insights(self, user_id: str, *, since: str, until: str) -> dict:
         """アカウント単位の日次（`clicks` はここでしか取れない・設計 §4.5・§8-13）。"""

@@ -58,7 +58,8 @@ class Adapter:
         """
         raise NotImplementedError
 
-    def replies(self, post_id: str, *, since: str | None = None) -> list:
+    def conversation(self, post_id: str, *, since: str | None = None) -> list:
+        """会話全体（**全階層**）。`replies`（上位 1 階層）から改名・2026-09-12。"""
         raise NotImplementedError
 
     def quota(self) -> dict | None:

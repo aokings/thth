@@ -183,7 +183,7 @@ def test_静かに0件になる形が残っていないか(label, body_bytes, co
     with _quiet_server(body_bytes, content_type) as base_url:
         adapter = _adapter(base_url)
         try:
-            result = adapter.replies("POST1")
+            result = adapter.conversation("POST1")
             outcome = ("no_exception", result)
         except Exception as e:  # noqa: BLE001 — 何が起きるかそのものを見たい
             outcome = ("exception", f"{type(e).__name__}: {e}")
@@ -206,7 +206,7 @@ def test_数値がゴミなら件数として数えない():
     with _quiet_server(b'{"data": "not-a-list-but-truthy"}') as base_url:
         adapter = _adapter(base_url)
         with pytest.raises(RuntimeError) as e:
-            adapter.replies("POST1")
+            adapter.conversation("POST1")
     assert "配列ではありません" in str(e.value)
 
 

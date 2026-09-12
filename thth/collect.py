@@ -290,9 +290,12 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
         # --- 返信（`id` で重複除去して追記）
         if reply_marks:
             try:
-                replies = adapter.replies(post_id)
+                # **会話全体を取る**（設計 §5・2026-09-12 に実装の逸脱が発覚）。
+                # `/replies` は**上位 1 階層だけ**なので、**返信への返信——
+                # つまりうちの側の発言——が台帳に残らなかった。**
+                replies = adapter.conversation(post_id)
             except Exception as e:
-                errors.append(f"{post_id}: replies: {redact_mod.redact(str(e))}")
+                errors.append(f"{post_id}: conversation: {redact_mod.redact(str(e))}")
                 replies = None
             if replies is not None:
                 known = {row.get("id") for row in _reply_rows(reply_path)}

@@ -93,7 +93,7 @@ def test_collect_sees_bundle_posts(thread_account):
     a=FakeAdapter();publish(thread_account,a)
     class Reader:
         def insights(self,pid): return {'views':10}
-        def replies(self,pid): return []
+        def conversation(self,pid,**kw): return []
         def account_insights(self,*args,**kwargs): return {}
     result=collect.collect_once(thread_account['account']['name'],adapter=Reader(),now=NOW+datetime.timedelta(hours=1))
     print('COLLECT',result)

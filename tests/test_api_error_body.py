@@ -59,14 +59,14 @@ def test_200でもerrorが入っていれば失敗として上げる():
                           "code": 10}}
     with _server(payload) as base_url:
         with pytest.raises(RuntimeError) as e:
-            _adapter(base_url).replies("POST1")
+            _adapter(base_url).conversation("POST1")
     assert "error を返しました" in str(e.value)
 
 
 def test_本当に0件のときは0件として返す():
     """**取れて 0 件**は成功。ここまで止めると、今度は事実が記録できない。"""
     with _server({"data": []}) as base_url:
-        assert _adapter(base_url).replies("POST1") == []
+        assert _adapter(base_url).conversation("POST1") == []
 
 
 def test_数の取得でも同じ():
@@ -89,7 +89,7 @@ def test_失敗したら台帳に取得の行を書かない(tmp_path, isolated_
 
     pair, account = _setup(tmp_path, isolated_account_factory,
                             posted_at="2026-09-03T12:00:00+09:00")   # 168 時間前
-    failing = FakeAdapter(replies_rows=[], fail={"replies"})
+    failing = FakeAdapter(replies_rows=[], fail={"conversation"})
     result = collect_mod.run_collect(account["name"], adapter=failing, now=NOW,
                                       log=lambda _l: None)
     assert result == 1, "失敗を終了コードに出していない"
@@ -121,7 +121,7 @@ def test_dataが取れない応答を0件と読まない(payload, なぜ):
     """
     with _server(payload) as base_url:
         with pytest.raises(RuntimeError) as e:
-            _adapter(base_url).replies("POST1")
+            _adapter(base_url).conversation("POST1")
     assert "data" in str(e.value), なぜ
 
 
@@ -133,14 +133,14 @@ def test_dataが配列でなければ件数として数えない():
     """
     with _server({"data": "これは配列ではない"}) as base_url:
         with pytest.raises(RuntimeError) as e:
-            _adapter(base_url).replies("POST1")
+            _adapter(base_url).conversation("POST1")
     assert "配列ではありません" in str(e.value)
 
 
 def test_本当の0件はこれまでどおり通る():
     """**止めすぎない。** `{"data": []}` は取れて 0 件。"""
     with _server({"data": []}) as base_url:
-        assert _adapter(base_url).replies("POST1") == []
+        assert _adapter(base_url).conversation("POST1") == []
 
 
 # --- clicks の形（外部調査 2026-09-11 Codex・公式の例そのまま） ---------------

@@ -161,6 +161,43 @@ def _form_for(queue_dir: str, file_name: str | None) -> str | None:
     return qf.front_matter.get("form")
 
 
+def comparability(post: dict) -> dict:
+    """**比較材料に採用してよいか**（masaru 裁定 2026-09-12・3 番／出口条件 §3）。
+
+    **投稿できる条件と、比較材料に採用できる条件は別。** 型が無くても投稿は
+    止めない（裁定 3 番・`forms.missing_form_warning` は警告のまま）。**比較の
+    分母に入れるかどうかは、ここで別に決める。**
+
+    戻り値の `ok` は **3 値**:
+
+    - `False` … **採用できない**（`blockers` に理由）
+    - `None`  … **判らない**（`unchecked` が空でない。**「採用してよい」ではない**）
+    - `True`  … 採用してよい（**`unchecked` が空のときだけ**）
+
+    **確かめていない条件を、満たしたことにしない。** いま機械で見られるのは
+    3 つだけで、**残り 2 つは見る口が無い**——それを黙って通すと、
+    「宣言だけで条件が守られた」ことになる（masaru 裁定 5 番と同じ筋）。
+    """
+    blockers = []
+    if not post.get("form_now"):
+        blockers.append("型（`form`）が無い")
+    if not post.get("post_id"):
+        blockers.append("公開されていない")
+    rows = post.get("rows") or []
+    if not rows:
+        blockers.append("実測が 1 行も無い")
+    elif all(r.get("missing") for r in rows):
+        blockers.append("実測が揃っている行が 1 つも無い")
+
+    # **見る口が無いもの。** 空にできるまで `ok` は `True` にならない。
+    unchecked = [
+        "修正理由が記録されているか（投稿と `reason` を結ぶ口がまだ無い）",
+        "型が後から付けられたものでないか（型の記録の時刻を投稿と比べる口がまだ無い）",
+    ]
+    ok = False if blockers else None
+    return {"ok": ok, "blockers": blockers, "unchecked": unchecked}
+
+
 def _mark_collapsed(rows: list) -> None:
     """刻みが同居している行に印を付ける（`rows` を書き換える）。
 
@@ -316,6 +353,8 @@ def load(account_name: str) -> dict:
                     for row in own_rows
                 ],
             })
+            # **比較材料に採用してよいか**（裁定 3 番）。投稿の可否とは別の欄。
+            posts[-1]["comparable"] = comparability(posts[-1])
 
     account_daily: list = []
     # **日次の台帳が 1 本も無いのと、あるのに指標が欠けているのは違う。**

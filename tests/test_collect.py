@@ -35,8 +35,8 @@ class FakeAdapter:
         self.insight_calls.append(post_id)
         return {"views": self.views, "likes": 3, "replies": len(self.replies_rows)}
 
-    def replies(self, post_id, *, since=None):
-        if "replies" in self.fail:
+    def conversation(self, post_id, *, since=None):
+        if "conversation" in self.fail:
             raise RuntimeError("取れません")
         self.reply_calls.append(post_id)
         return list(self.replies_rows)
@@ -183,7 +183,7 @@ def test_返信の取得に失敗した刻みは次に再試行する(tmp_path, 
     """
     pair, account = _setup(tmp_path, isolated_account_factory,
                             posted_at="2026-09-03T12:00:00+09:00")  # 168 時間前
-    failing = FakeAdapter(replies_rows=[{"id": "R1", "text": "返信"}], fail={"replies"})
+    failing = FakeAdapter(replies_rows=[{"id": "R1", "text": "返信"}], fail={"conversation"})
     rc = collect_mod.run_collect(account["name"], adapter=failing, now=NOW,
                                   log=lambda _l: None)
     assert rc == 1
@@ -345,11 +345,72 @@ def test_採れなかった理由をlogに出す(tmp_path, isolated_account_fact
     pair, account = _setup(tmp_path, isolated_account_factory,
                             posted_at="2026-09-03T12:00:00+09:00")   # 168 時間前
     failing = FakeAdapter(replies_rows=[{"id": "R1", "text": "返信"}],
-                           fail={"replies"})
+                           fail={"conversation"})
     lines = []
     rc = collect_mod.run_collect(account["name"], adapter=failing, now=NOW,
                                   log=lines.append)
     assert rc == 1
     reasons = [l for l in lines if l.startswith("採れなかったもの:")]
     assert reasons, f"理由が出ていない: {lines}"
-    assert "replies" in reasons[0] and "POST1" in reasons[0], reasons
+    assert "conversation" in reasons[0] and "POST1" in reasons[0], reasons
+
+def test_返信への返信も台帳に残る(tmp_path, isolated_account_factory):
+    """**うちの側の発言が台帳に残らなかった**（2026-09-12）。
+
+    `/{post_id}/replies` は**上位 1 階層だけ**を返す。masaru が 08:25〜08:40 に
+    kopicha の投稿への返信 2 件に**返信した**（＝2 段目）が、`thth replies` に
+    1 件も出なかった。運用セッションがスクリーンショットで現物を見ていたのに。
+    **会話の片側しか記録されない。**
+
+    **設計にはもともと `GET /{post_id}/conversation`（全階層）と書いてあった**
+    （設計 §5）。実装が `/replies` を呼んでいたのは**逸脱**。
+
+    ここでは、**会話の口が 2 段目を返したら、それが台帳に残る**ことだけを見る
+    （階層をこちらで組み立てるのではなく、**返ってきたものを落とさない**こと）。
+    """
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    会話 = [
+        {"id": "R1", "text": "薬品匂？", "username": "funaemon2",
+         "is_reply": True, "replied_to": {"id": "POST1"}},
+        # **2 段目**——返信への返信。`/replies` では返ってこなかったもの。
+        {"id": "R2", "text": "そうなんです", "username": "kopi_chaba",
+         "is_reply": True, "replied_to": {"id": "R1"}, "root_post": {"id": "POST1"}},
+    ]
+    adapter = FakeAdapter(replies_rows=会話)
+    collect_mod.run_collect(account["name"], adapter=adapter, now=NOW,
+                             log=lambda _l: None)
+
+    ids = {r.get("id") for r in _rows(pair["work"], "data/sns/replies/POST1.ndjson")}
+    assert "R1" in ids, "1 段目が落ちている"
+    assert "R2" in ids, "**2 段目（返信への返信）が台帳に残っていない**"
+
+def test_会話の口は階層が読める項目を取りに行く():
+    """**変異で分かった**（2026-09-12）: 経路を `/replies` に戻す変異も、
+    `root_post` を落とす変異も、**こちらが足した「2 段目が残る」テストでは
+    捕まらない**（偽アダプタは経路も項目も見ない）。ここで口の側を押さえる。
+
+    階層の形（どれがどれへの返信か）が残らないと、**会話として読み返せない。**
+    """
+    from thth.adapters import threads as threads_mod
+
+    呼ばれた = {}
+
+    class _口(threads_mod.ThreadsAdapter):
+        def __init__(self):
+            pass
+
+        def _get(self, path, params):
+            呼ばれた["path"] = path
+            呼ばれた["fields"] = params.get("fields", "")
+            return {"data": []}
+
+        def _rows(self, body, 何):
+            return body["data"]
+
+    _口().conversation("POST1")
+
+    assert 呼ばれた["path"].endswith("/conversation"), \
+        "**上位 1 階層しか返さない口を呼んでいる**"
+    for 項目 in ("id", "text", "username", "timestamp", "replied_to", "root_post"):
+        assert 項目 in 呼ばれた["fields"], f"`{項目}` を取りに行っていない"

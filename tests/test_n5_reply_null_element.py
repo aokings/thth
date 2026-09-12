@@ -27,13 +27,13 @@ from thth.adapters import threads as threads_mod
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
-    """`/POST1/replies` だけ `{"data": [null]}` を返し、他は健全な応答を返す。"""
+    """`/POST1/conversation` だけ `{"data": [null]}` を返し、他は健全な応答を返す。"""
 
     def do_GET(self) -> None:  # noqa: N802（http.server の命名規則）
         path = self.path.split("?")[0]
-        if path == "/v1.0/POST1/replies":
+        if path == "/v1.0/POST1/conversation":
             payload = {"data": [None]}
-        elif path.endswith("/replies"):
+        elif path.endswith("/conversation"):
             payload = {"data": []}
         elif "insights" in path:
             payload = {"data": [{"name": "views", "total_value": {"value": 10}}]}
@@ -68,7 +68,7 @@ def test_dataの要素がnullなら件数として数えず失敗として上げ
         adapter = threads_mod.ThreadsAdapter(base_url=base_url, access_token="fake",
                                               user_id="12345", timeout=2.0)
         with pytest.raises(RuntimeError) as e:
-            adapter.replies("POST1")
+            adapter.conversation("POST1")
     assert "object ではありません" in str(e.value)
 
 
@@ -89,7 +89,7 @@ def test_null要素の投稿は失敗として残り後続の投稿は採れる(
                                            log=lambda _l: None)
 
     assert result["posts"] == 2, "束ではないので 2 投稿とも数えるはず"
-    assert any("POST1" in e and "replies" in e for e in result["errors"]), (
+    assert any("POST1" in e and "conversation" in e for e in result["errors"]), (
         f"POST1 の返信の失敗が errors に出ていない: {result['errors']}")
     # POST1 は返信こそ失敗したが、数（insights）は別に採れているはず——
     # 「当該投稿の失敗」が返信だけに留まり、投稿全体を巻き込んでいないこと。
