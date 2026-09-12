@@ -255,4 +255,104 @@ def test_人向け出力でrefreshを通しで走らせる(tmp_path, isolated_ac
                                                  json=False, refresh=True))
     out = capsys.readouterr().out
     assert "取り直し:" in out and "新しい返信 1 件" in out
-    assert rc in (0, 1)
+    # **終了コードを確かめる**（独立検収 B・2026-09-12）。
+    # `assert rc in (0, 1)` と書いていたので、**人向けの終了コードが常に 0 に
+    # なっていた欠陥を、このテストが通していた。**
+    assert rc == 0, "取れているのに非 0"
+
+
+def test_人向けでも失敗は終了コードに出る(tmp_path, isolated_account_factory,
+                                            capsys, monkeypatch):
+    """**`&&` で繋いだときに失敗が素通りしない**（独立検収 B）。"""
+    import argparse
+    from thth import cli as cli_mod
+    pair, account = _仕立て(tmp_path, isolated_account_factory)
+    本物 = collect_mod.refresh_replies
+
+    def _差し替え(name, **kw):
+        kw.pop("log", None)
+        return 本物(name, adapter=_口([], fail=True), now=NOW,
+                    log=lambda _l: None, **kw)
+
+    monkeypatch.setattr(cli_mod.collect_mod, "refresh_replies", _差し替え)
+    rc = cli_mod.cmd_replies(argparse.Namespace(account=account["name"], post=None,
+                                                 json=False, refresh=True))
+    assert rc == 1, "**人向けだと失敗しても 0 で終わっている**"
+
+
+def test_取るものが無いのは失敗ではない(tmp_path, isolated_account_factory,
+                                          capsys, monkeypatch):
+    """**「取るものが無い」と「送れなかった」を同じにしない**（独立検収 B）。"""
+    import argparse
+    from thth import cli as cli_mod
+    pair, account = _仕立て(tmp_path, isolated_account_factory,
+                             posted_at="2026-08-01T10:00:00+09:00")   # 期間外
+    本物 = collect_mod.refresh_replies
+
+    def _差し替え(name, **kw):
+        kw.pop("log", None)
+        return 本物(name, adapter=_口([]), now=NOW, log=lambda _l: None, **kw)
+
+    monkeypatch.setattr(cli_mod.collect_mod, "refresh_replies", _差し替え)
+    rc = cli_mod.cmd_replies(argparse.Namespace(account=account["name"], post=None,
+                                                 json=False, refresh=True))
+    assert rc == 0, "**取るものが無いだけなのに失敗にしている**"
+
+
+def test_push拒否で未pushのcommitを残さない(tmp_path, isolated_account_factory,
+                                              monkeypatch):
+    """**P1。** 臨時の取り直しが 1 回失敗しただけで、以後 timer が投稿も採取も
+    しなくなる状態を、新しい入口から作れていた（独立検収 B）。"""
+    from thth import writeback
+    pair, account = _仕立て(tmp_path, isolated_account_factory)
+    monkeypatch.setattr(writeback, "commit_and_push",
+                         lambda *a, **k: (False, "push を拒否されました"))
+    out = collect_mod.refresh_replies(account["name"], adapter=_口([{"id": "R1"}]),
+                                       now=NOW, log=lambda _l: None)
+    assert out["remote"] == "not_synced"
+    # **未 push の commit が残っていない。**
+    残り = __import__("subprocess").run(
+        ["git", "-C", pair["work"], "rev-list", "--count", "@{u}..HEAD"],
+        capture_output=True, text=True)
+    assert 残り.stdout.strip() == "0", "**未 push の commit が残っている**"
+    # 次の同期が通ること（投稿が止まらない）。
+    synced, err, _sha = writeback.sync_repo(pair["work"])
+    assert synced, f"**次の同期が通らない**: {err}"
+
+
+def test_post_idにパス区切りがあれば書かない(tmp_path, isolated_account_factory):
+    """**取った会話が repo の外に落ちて、表示は「成功」だった**（独立検収 B）。"""
+    pair, account = _仕立て(tmp_path, isolated_account_factory)
+    from tests.conftest import write_queue_file
+    write_queue_file(account["queue_dir"], "b.md", fm_overrides={
+        "status": "posted", "post_id": "../../../脱出", "posted_at": POSTED})
+    out = collect_mod.refresh_replies(account["name"], adapter=_口([{"id": "R1"}]),
+                                       now=NOW, log=lambda _l: None)
+    assert any("パス区切り" in e for e in out["errors"]), out
+    assert not os.path.exists(os.path.join(tmp_path, "脱出.ndjson"))
+
+
+def test_時間帯の無いposted_atで全体を止めない(tmp_path, isolated_account_factory):
+    """**1 本読めないことを、全部読めないことにしない**（独立検収 B）。"""
+    pair, account = _仕立て(tmp_path, isolated_account_factory)
+    from tests.conftest import write_queue_file
+    write_queue_file(account["queue_dir"], "b.md", fm_overrides={
+        "status": "posted", "post_id": "POST2",
+        "posted_at": "2026-09-12 11:30:00"})      # **+09:00 が無い**
+    out = collect_mod.refresh_replies(account["name"], adapter=_口([{"id": "R1"}]),
+                                       now=NOW, log=lambda _l: None)
+    assert out["fetched"] == 1, "**壊れた 1 本で全部止まっている**"
+    assert any("posted_at を読めません" in e for e in out["errors"]), out
+
+
+def test_保存できない投稿はその投稿の失敗にする(tmp_path, isolated_account_factory,
+                                                monkeypatch):
+    """**API の失敗は 1 本で済むのに、保存の失敗だけ全体が落ちていた**（独立検収 B）。"""
+    pair, account = _仕立て(tmp_path, isolated_account_factory)
+    monkeypatch.setattr(collect_mod, "_save_replies",
+                         lambda *a, **k: (_ for _ in ()).throw(
+                             PermissionError("書けません")))
+    out = collect_mod.refresh_replies(account["name"], adapter=_口([{"id": "R1"}]),
+                                       now=NOW, log=lambda _l: None)
+    assert out["failed"] and "保存できません" in out["failed"][0]["reason"]
+    assert out["fetched"] == 0

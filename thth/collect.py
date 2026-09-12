@@ -54,6 +54,31 @@ def _git(repo_dir: str, args: list):
     return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True, text=True)
 
 
+def _safe_post_id(post_id) -> bool:
+    """`post_id` をファイル名として使ってよいか。**外へ出る値を弾く。**"""
+    if not isinstance(post_id, str) or not post_id.strip():
+        return False
+    if post_id in (".", ".."):
+        return False
+    return not any(c in post_id for c in ("/", "\\", "\x00"))
+
+
+def _has_unpushed_commit(repo_dir: str) -> bool:
+    """**自分が作った commit が未 push で残っているか。**
+
+    `commit_and_push()` は add／commit／push の失敗を同じ `False` にまとめるので、
+    **戻り値だけでは巻き戻してよいか分からない**（add で失敗していれば HEAD は
+    動いていない）。**HEAD と upstream を見て決める。**
+    """
+    r = _git(repo_dir, ["rev-list", "--count", "@{u}..HEAD"])
+    if r.returncode != 0:
+        return False
+    try:
+        return int(r.stdout.strip()) > 0
+    except ValueError:
+        return False
+
+
 def _undo_local_commit(repo_dir: str) -> bool:
     """直前の commit を取り消して、中身を作業ツリーに戻す（`reset --soft`）。
 
@@ -286,12 +311,20 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
         posted_at_raw = fm.get("posted_at")
         if not post_id or not posted_at_raw:
             continue
+        if not _safe_post_id(post_id):
+            # **`post_id` をそのままパスにしない**（独立検収 B・2026-09-12）。
+            errors.append(f"post_id にパス区切りが入っています: {post_id!r}")
+            continue
         try:
             posted_at = jst.parse(posted_at_raw) if hasattr(jst, "parse") else \
                 datetime.datetime.fromisoformat(posted_at_raw)
+            # **時間帯の無い `posted_at` で全体を止めない**（同上）。
+            # `fromisoformat` は通るのに引き算で落ち、**他の正常な投稿まで
+            # 採れなくなっていた。**
+            age_hours = (now - posted_at).total_seconds() / 3600.0
         except (TypeError, ValueError):
+            errors.append(f"{post_id}: posted_at を読めません（{posted_at_raw!r}）")
             continue
-        age_hours = (now - posted_at).total_seconds() / 3600.0
         if age_hours < 0 or age_hours > collect_days * 24:
             continue
         posts_seen += 1
@@ -510,11 +543,24 @@ def _refresh_targets(account_name: str, account_cfg: dict, *, now, errors: list,
         pid, posted_at_raw = fm.get("post_id"), fm.get("posted_at")
         if not pid or not posted_at_raw:
             continue
+        # **`post_id` をそのままパスにしない**（独立検収 B・2026-09-12）。
+        # `../../../脱出` のような値で、**取った会話が repo の外に落ちていた**
+        # ——版管理からも `thth replies` の読み口からも消えるのに、
+        # **表示は「取れた 1 本」で成功に見えた。**
+        if not _safe_post_id(pid):
+            errors.append(f"post_id にパス区切りが入っています: {pid!r}")
+            continue
         try:
             posted_at = datetime.datetime.fromisoformat(posted_at_raw)
+            # **時間帯の無い `posted_at` で全体を止めない**（独立検収 B・
+            # 2026-09-12）。`fromisoformat` は通るのに、引き算で
+            # `TypeError: can't subtract offset-naive and offset-aware` が
+            # **外まで抜けて、他の正常な投稿も一切取り直せなかった。**
+            # **1 本読めないことを、全部読めないことにしない。**
+            age = (now - posted_at).total_seconds() / 3600.0
         except (TypeError, ValueError):
+            errors.append(f"{pid}: posted_at を読めません（{posted_at_raw!r}）")
             continue
-        age = (now - posted_at).total_seconds() / 3600.0
         if age < 0 or age > collect_days * 24:
             continue
         対象.append((pid, age))
@@ -593,6 +639,10 @@ def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
             out["errors"].append(断り)
             return out
         out["requested"] = len(対象)
+        if not 対象:
+            # **「取るものが無い」と「送れなかった」を同じにしない**
+            # （独立検収 B・2026-09-12）。
+            out["remote"] = "nothing_to_send"
 
         for pid, age in 対象:
             reply_path = os.path.join(replies_dir, f"{pid}.ndjson")
@@ -607,8 +657,18 @@ def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
                 out["failed"].append({"post_id": pid,
                                        "reason": redact_mod.redact(str(e))})
                 continue
-            新しい = _save_replies(reply_path, pid, replies, now=now,
-                                   age_hours=age, marks=[], trigger="refresh")
+            try:
+                新しい = _save_replies(reply_path, pid, replies, now=now,
+                                       age_hours=age, marks=[], trigger="refresh")
+            except OSError as e:
+                # **保存できないことを、その投稿の失敗にする**（独立検収 B・
+                # 2026-09-12）。以前は `PermissionError` が外まで抜けて、
+                # **2 本目以降が一切取れず、`failed` にも 1 件も入らなかった。**
+                # API の失敗は 1 本で済むのに、保存の失敗だけ全体が落ちていた。
+                out["failed"].append({"post_id": pid,
+                                       "reason": f"保存できません: "
+                                                  f"{redact_mod.redact(str(e))}"})
+                continue
             touched.append(reply_path)
             out["fetched"] += 1
             out["new_replies"] += len(新しい)
@@ -623,12 +683,31 @@ def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
             if pushed:
                 out["remote"] = "synced"
             else:
-                # **「送れなかった」と「送れたか分からない」を分ける。**
-                # `commit_and_push` は add／commit／push の失敗を同じ False に
-                # まとめるので、**これだけで巻き戻さない。**
                 out["remote"] = "not_synced"
-                out["errors"].append(
-                    f"保存はできましたが送れていません: {push_err}")
+                # **未 push の commit を一度も残さない**（masaru 裁定 2026-09-11・
+                # 第 6/7 巡 P1。独立検収 B・2026-09-12 で**この入口だけ抜けて
+                # いた**のが見つかった）。
+                #
+                # `commit_and_push` は add／commit／push の失敗を同じ False に
+                # まとめるので、**「commit があるか」を自分で見てから**取り消す。
+                # add／commit が失敗していれば HEAD は動いていないので、何もしない。
+                #
+                # **残すと `HEAD != @{u}` になり、`sync_repo()` がそれを拒否して
+                # 投稿も採取も止まる。** 臨時の取り直しが 1 回失敗しただけで、
+                # 以後 10 分ごとの timer が何もしなくなる。
+                if _has_unpushed_commit(repo_dir):
+                    undone = _undo_local_commit(repo_dir)
+                    out["errors"].append(
+                        f"保存はできましたが送れていません: {push_err}"
+                        + ("（commit は取り消したので投稿は止まりません。"
+                            "中身はファイルに残っています）"
+                            if undone else
+                            "。**commit を取り消せませんでした。"
+                            "投稿が止まる可能性があります。**"))
+                else:
+                    out["errors"].append(
+                        f"保存はできましたが送れていません: {push_err}"
+                        f"（commit は作られていません）")
     finally:
         repo_lock.release()
     return out

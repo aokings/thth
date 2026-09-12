@@ -711,7 +711,7 @@ def _refresh_rc(取り直し) -> int:
         return 0
     if 取り直し["skipped"] or 取り直し["failed"] or 取り直し["errors"]:
         return 1
-    if 取り直し["remote"] != "synced":
+    if 取り直し["remote"] not in ("synced", "nothing_to_send"):
         return 1
     return 0
 
@@ -736,7 +736,9 @@ def _print_refresh(取り直し) -> None:
                f"取れた {取り直し['fetched']} 本／"
                f"新しい返信 {取り直し['new_replies']} 件"
                f"（{取り直し['checked_at']}）")
-        送信 = {"synced": "送信済み", "not_synced": "**保存はできましたが送れていません**",
+        送信 = {"synced": "送信済み",
+                 "not_synced": "**保存はできましたが送れていません**",
+                 "nothing_to_send": "送るものがありませんでした",
                  "unknown": "送信していません（保存するものがありませんでした）"}
         print(f"  保存: {'した' if 取り直し['saved'] else 'していない'}／"
                f"{送信[取り直し['remote']]}")
@@ -780,12 +782,20 @@ def cmd_replies(args) -> int:
     if 取り直し is not None:
         result = {**result, "refresh": 取り直し}
 
+
     if args.json:
         _print_json(result)
         return _refresh_rc(取り直し)
 
     if 取り直し is not None:
         _print_refresh(取り直し)
+        # **人向けでも終了コードを返す**（独立検収 B・2026-09-12）。
+        # `return _refresh_rc(...)` は `--json` の枝にしかなく、人向けは末尾の
+        # `return 0` に落ちていた。**`&&` で繋ぐと失敗が素通りする。**
+        # **こちらのテストは `assert rc in (0, 1)` で、この穴を通していた。**
+        失敗 = _refresh_rc(取り直し)
+    else:
+        失敗 = 0
 
     replies = result["replies"]
     if not replies:
@@ -808,7 +818,7 @@ def cmd_replies(args) -> int:
     if result["broken"]:
         print(f"**読めなかったファイル**（壊れています）: {', '.join(result['broken'])}",
               file=sys.stderr)
-    return 0
+    return 失敗
 
 
 def cmd_measured(args) -> int:
