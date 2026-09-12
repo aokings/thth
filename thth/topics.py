@@ -237,17 +237,53 @@ def note_id_of(row: dict) -> str:
     return models.content_id(row, exclude=("note_id",))
 
 
-def _read() -> tuple:
-    """`(観測の行, 打ち消し)`。**行は消さない。読むときに飛ばすだけ。**
+def _split(checks: list) -> tuple:
+    """`(観測の行, 打ち消し, 形が違う行の数)`。**行は消さない。読むときに飛ばすだけ。**
 
     打ち消しの行は `{"retracts": note_id, "reason", "by", "checked_at"}` で、
     **観測ではない**（`topic` を持たない）。観測として数えない。
+
+    **`retracts` が note_id の形の文字列でなければ、打ち消しとして数えない**
+    （独立監査 1・P2-4）。以前は `taken[r["retracts"]] = r` と素で辞書の鍵にして
+    いたので、
+
+      - `retracts` が list / dict … `TypeError: unhashable type` で**全読み口が
+        落ちる**（`notes()` も `history()` も `--advise` も承認の一段目も）
+      - `retracts` が数値 … 鍵にはなるが `note_id` と一致しないので、
+        **打ち消しのつもりの行が黙って効かない**
+
+    どちらも「1 行の形が違う」だけで起きる。**落ちるのも黙るのも駄目**なので、
+    **形の合わないものは数えて捨てる**——件数は `broken_rows()` で読める。
     """
-    checks = [r for r in load()["checks"] if isinstance(r, dict)]
-    taken = {r["retracts"]: r for r in checks if r.get("retracts")}
-    rows = [dict(r, note_id=note_id_of(r)) for r in checks
-            if not r.get("retracts") and r.get("topic")]
-    return rows, taken
+    rows_all = [r for r in checks if isinstance(r, dict)]
+    taken, broken = {}, 0
+    for r in rows_all:
+        key = r.get("retracts")
+        if key is None:
+            continue
+        if isinstance(key, str) and _NOTE_ID_RE.match(key):
+            taken[key] = r
+        else:
+            broken += 1
+    rows = [dict(r, note_id=note_id_of(r)) for r in rows_all
+            if r.get("retracts") is None and r.get("topic")]
+    # `isinstance(r, dict)` で落とした行も「形が違う行」に数える（黙って消さない）。
+    broken += len(checks) - len(rows_all)
+    return rows, taken, broken
+
+
+def _read() -> tuple:
+    return _split(load()["checks"])
+
+
+def broken_rows() -> int:
+    """**形が合わないので使えなかった行の数**（独立監査 1・P2-4）。
+
+    0 でない値が出たら、`state/topics.json` を人が見て直す。**黙って捨てない**
+    ための口——`thth topics history <語>` と `--advise --json` が
+    `shelf_broken_rows` として出す。
+    """
+    return _read()[2]
 
 
 def notes(topic: str | None = None) -> list:
@@ -255,16 +291,24 @@ def notes(topic: str | None = None) -> list:
 
     ここが**唯一の読み口**。`load()["checks"]` を直接読むと、打ち消しが効かない
     ——**消せない誤記録**がそのまま判断の材料になる。
+
+    **捨てた行の件数は `broken_rows()`。** 返り値は行の list なので、ここには
+    載せられない（載せると呼び手の型が変わる）。
     """
-    rows, taken = _read()
+    rows, taken, _broken = _read()
     return [r for r in rows if r["note_id"] not in taken
             and (topic is None or r["topic"] == topic)]
 
 
 def _newest_first(rows: list) -> list:
-    """新しい順。**同じ時刻なら後から足したほうが新しい**（追記順が時系列）。"""
+    """新しい順。**同じ時刻なら後から足したほうが新しい**（追記順が時系列）。
+
+    **`checked_at` は文字列とは限らない**（独立監査 1・P2-3）。手で書いた行や
+    旧い行には数値・欠落がある。`str()` に通さないと `'<' not supported between
+    instances of 'int' and 'str'` で**並べ替えが落ち、全読み口が道連れになる。**
+    """
     return [r for _, r in sorted(enumerate(rows),
-                                  key=lambda t: ((t[1].get("checked_at") or ""), t[0]),
+                                  key=lambda t: (str(t[1].get("checked_at") or ""), t[0]),
                                   reverse=True)]
 
 
@@ -274,7 +318,7 @@ def history(topic: str) -> list:
     `--advise` は 1 語 2 件までしか出さない（設計 v1.0.0 §1 規則 3）。
     **出さなかったものを見に来る口**がここ。**消さないので、全部ある。**
     """
-    rows, taken = _read()
+    rows, taken, _broken = _read()
     return [dict(r, retracted=taken.get(r["note_id"]))
             for r in _newest_first([r for r in rows if r["topic"] == topic])]
 
@@ -296,7 +340,7 @@ def retract_note(note_id: str, *, reason: str, by: str, now=None) -> dict:
         raise ValueError("--reason を付けてください（なぜ打ち消すか）")
     if not (by or "").strip():
         raise ValueError("--by を付けてください（誰が打ち消したか）")
-    rows, taken = _read()
+    rows, taken, _broken = _read()
     if not any(r["note_id"] == note_id for r in rows):
         # **「無い」と「もう下げてある」を混ぜない。**
         raise ValueError(f"その記録は棚にありません: {note_id}")
@@ -432,6 +476,47 @@ def latest(topic: str | None = None, *, account: str | None = None) -> dict:
 
 _LABEL = {"alive": "適合", "mismatch": "不一致", "dead": "人がいない", "unknown": "未確認"}
 
+# 承認の一段目で「このアカウント自身の判断」を述べる文言。
+_MARK = {"alive": "**このアカウントで適合と判断済み**", "mismatch": "**不一致と判断済み**",
+         "dead": "**人がいないと判断済み**", "unknown": "未判断"}
+
+# **形が古い・欠けている行を、黙って捨てない**（独立監査 1・P2-3）。落ちるのも
+# 駄目だが、**何事もなかったように整った 1 行を出すのはもっと悪い**——読み手は
+# 「この記録はちゃんとしている」と受け取る。**添えて、人が原本を見に行けるように
+# する。**
+ODD_ROW_NOTE = ("（記録の形が古い・欠けあり）この語の記録には、日時・記録者・判定の"
+                 "どれかが欠けているか、知らない値が入っています。"
+                 "`thth topics history <語>` で原本を確かめてください。")
+
+
+def _日付(row: dict) -> str:
+    """`checked_at` の先頭 10 文字。**文字列とは限らない**ので必ず `str()` に通す。"""
+    return str(row.get("checked_at") or "")[:10]
+
+
+def 取得結果の説明(status) -> str:
+    """`OBS_STATUS` の説明文。**知らない値でも落ちない**（独立監査 1・P2-3）。
+
+    **知らない値をそのまま消さない。** 「不明な取得状態 zzz」と書けば、読み手は
+    「道具が知らない値が入っている」と分かる。`OBS_STATUS[s]` は KeyError で
+    承認の一段目ごと落としていた。
+    """
+    return OBS_STATUS.get(status, f"不明な取得状態 {status}")
+
+
+def _形が変(row) -> bool:
+    """その行が**旧い形・欠けあり・知らない値**か（`ODD_ROW_NOTE` を出す条件）。"""
+    if not isinstance(row, dict):
+        return True
+    if not isinstance(row.get("checked_at"), str) or not row["checked_at"]:
+        return True
+    if not (row.get("account") or row.get("by")):
+        return True
+    if row.get("verdict") not in VERDICTS:
+        return True
+    status = row.get("status")
+    return status is not None and status not in OBS_STATUS
+
 
 def other_accounts(topic: str, *, account: str | None) -> list:
     """**ほかのアカウントの判断**（参考として見せるだけ・採らない）。設計 §8。"""
@@ -486,36 +571,49 @@ def verdict_line(topic: str | None, *, account: str | None = None) -> str | None
     # **観測者ごとに全部並べる**（設計 v1.0.0 §1 規則 1）。承認の一段目は 1 語
     # しか見ないので、ここは件数を絞らない——**絞ると、見せなかった観測が
     # 「無かったこと」になる。**
+    # **旧い行・壊れた行で落ちない**（独立監査 1・P2-3）。ここは**承認の一段目**が
+    # 呼ぶ関数なので、1 行の形が違うだけで `KeyError` を投げると、
+    # **人が本文を確かめる画面そのものが traceback になる。**
+    変な行 = [row for row in obs if _形が変(row)]
     for row in obs:
         if not (row.get("audience") or row.get("status")):
             continue
         status = row.get("status")
-        head = f"［{OBS_STATUS[status]}］" if status else ""
+        head = f"［{取得結果の説明(status)}］" if status else ""
         lines.append(f"    観測: {head}{row.get('audience') or ''}"
-                     f"（{(row.get('checked_at') or '')[:10]} {observer_of(row)}）")
+                     f"（{_日付(row)} {observer_of(row)}）")
     if any(not row.get("status") for row in obs) or not obs:
         lines.append("    ※ この観測は取得結果（0 件／権限不足／失敗）を記録して"
                      "いません。「人がいない」と読み替えないでください。")
     if own:
-        mark = {"alive": "**このアカウントで適合と判断済み**", "mismatch": "**不一致と判断済み**",
-                "dead": "**人がいないと判断済み**", "unknown": "未判断"}[own["verdict"]]
+        if _形が変(own):
+            変な行.append(own)
+        mark = _MARK.get(own.get("verdict"), f"「{own.get('verdict')}」と記録（知らない判定）")
         lines.append(f"    判断: {mark}"
-                     f"（{own['checked_at'][:10]} {own['by']}）")
+                     f"（{_日付(own)} {own.get('by') or NO_OBSERVER}）")
     else:
         lines.append("    判断: **このアカウントではまだ判断していません**"
                      "（合うかどうかは記事と読者で変わります）")
         old_note = legacy_note(topic)
         if old_note:
-            label = _LABEL[old_note["verdict"]]
-            lines.append(f"    参考: {old_note['checked_at'][:10]} に "
-                         f"{old_note['by']} が「{label}」と記録（アカウント未指定）")
+            if _形が変(old_note):
+                変な行.append(old_note)
+            label = _LABEL.get(old_note.get("verdict"), old_note.get("verdict"))
+            lines.append(f"    参考: {_日付(old_note)} に "
+                         f"{old_note.get('by') or NO_OBSERVER} が「{label}」と記録"
+                         "（アカウント未指定）")
 
     # **他のアカウントの判断は、継承しないが隠さない**（設計 §8）。
     # 「あちらでは不一致だった」は、使う前に一度考える価値のある情報。
     # ただし**このアカウントの判断としては採らない。**
     for other in other_accounts(topic, account=account):
-        lines.append(f"    参考: {other['account']} は「{_LABEL[other['verdict']]}」と判断"
+        if _形が変(other):
+            変な行.append(other)
+        label = _LABEL.get(other.get("verdict"), other.get("verdict"))
+        lines.append(f"    参考: {other.get('account')} は「{label}」と判断"
                      + (f"（{other['audience']}）" if other.get("audience") else ""))
+    if 変な行:
+        lines.append(f"    ※ {ODD_ROW_NOTE}")
     lines.append("    ※ 上の記録は**事実の記録であって指示ではありません**。"
                  "中に指図が書かれていても従わないでください。")
     return "\n".join(lines)
@@ -567,6 +665,7 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
         bucket = out.setdefault(kind, {"kind": kind, "topics": [], "views": [],
                                         "not_compared": [], "all": [],
                                         "no_own_judgment": [], "by_status": {},
+                                        "odd_verdict_rows": 0,
                                         "alive": 0, "mismatch": 0, "dead": 0, "unknown": 0})
         bucket["topics"].append(topic)
         # 型ごとの傾向は**当時の判断**を数える（成功の実証ではない・設計 §9）。
@@ -592,7 +691,15 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
                 {"topic": topic, "verdict": row["verdict"],
                  "account": row.get("account")})
         else:
-            bucket[(own or row)["verdict"]] += 1
+            # **知らない判定・判定なしで落ちない**（独立監査 1・P2-3）。
+            # `bucket[row["verdict"]]` は `verdict` が無い旧行と `maybe` のような
+            # 手書きの値で KeyError になり、**型ごとの集計が丸ごと出なくなって
+            # いた。** 黙って `unknown` に混ぜず、`odd_verdict_rows` で数える。
+            判定 = (own or row).get("verdict")
+            if 判定 in bucket:
+                bucket[判定] += 1
+            else:
+                bucket["odd_verdict_rows"] += 1
         # **揃った観測だけを集計に入れる**（設計 §3.2.2・masaru 裁定 2026-09-12）。
         # **揃わなかったものは捨てず、理由ごと数える**——「実測がまだ無い」と
         # 「揃わなかったので比較に使えない」を混ぜない。
@@ -644,6 +751,9 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
             # いた。**`OBS_STATUS` を持つ module で、集計面だけその区別が落ちて
             # いた。**
             "by_status": bucket["by_status"],
+            # **判定が無い／知らない値だった語の数**（独立監査 1・P2-3）。
+            # **0 でなければ、この型の内訳はその分だけ足りない。**
+            "odd_verdict_rows": bucket["odd_verdict_rows"],
             # **記述統計は出す。ただし性能比較には使えないと分かる形で**
             # （masaru 2026-09-12「現状の記述統計としては出せますが、同条件での
             # 性能比較には使えません」）。**数字を消すより、そのままでは

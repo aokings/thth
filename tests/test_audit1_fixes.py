@@ -173,3 +173,194 @@ def test_P1_1_topic_cliも黙らない(thth_root, isolated_account):
     assert payload["error"] == "topics_shelf_broken", payload
     assert payload["path"] and payload["detail"]
     assert "Traceback" not in r.stderr or "topics_shelf_broken" in r.stdout
+
+
+# --- P2-3 -------------------------------------------------------------------
+
+# 監査 1 の `legacy.py` が並べた 14 の行の形。**1 行の形が違うだけで、
+# 承認の一段目・`--advise`・`--learned` が丸ごと落ちていた。**
+旧行の形 = {
+    "checked_at 無し(account 有り)": [
+        {"topic": "A", "verdict": "alive", "by": "u", "account": "acc"},
+    ],
+    "checked_at 無し(account 無し=旧46件の形)": [
+        {"topic": "B", "verdict": "mismatch", "by": "u"},
+    ],
+    "checked_at が数値": [
+        {"topic": "C", "verdict": "alive", "by": "u", "account": "acc", "checked_at": 1234},
+        {"topic": "C", "verdict": "alive", "by": "v", "account": "acc2",
+         "checked_at": "2026-09-10T00:00:00+09:00"},
+    ],
+    "topic が空文字": [
+        {"topic": "", "verdict": "alive", "by": "u", "account": "acc",
+         "checked_at": "2026-09-10T00:00:00+09:00"},
+    ],
+    "by も account も無い": [
+        {"topic": "D", "verdict": "alive", "checked_at": "2026-09-10T00:00:00+09:00"},
+    ],
+    "verdict が無い": [
+        {"topic": "E", "by": "u", "account": "acc", "checked_at": "2026-09-10T00:00:00+09:00"},
+    ],
+    "verdict が知らない値": [
+        {"topic": "F", "verdict": "maybe", "by": "u", "account": "acc",
+         "checked_at": "2026-09-10T00:00:00+09:00"},
+    ],
+    "verdict 知らない値(他 account)": [
+        {"topic": "G", "verdict": "maybe", "by": "u", "account": "other",
+         "checked_at": "2026-09-10T00:00:00+09:00"},
+    ],
+    "status が知らない値": [
+        {"topic": "H", "verdict": "alive", "status": "zzz", "by": "u", "account": "acc",
+         "checked_at": "2026-09-10T00:00:00+09:00"},
+    ],
+    "retracts が list": [
+        {"topic": "I", "verdict": "alive", "by": "u", "account": "acc",
+         "checked_at": "2026-09-10T00:00:00+09:00"},
+        {"retracts": ["x"], "reason": "r", "by": "u", "checked_at": "2026-09-11T00:00:00+09:00"},
+    ],
+    "retracts が dict": [
+        {"topic": "J", "verdict": "alive", "by": "u", "account": "acc",
+         "checked_at": "2026-09-10T00:00:00+09:00"},
+        {"retracts": {"a": 1}, "reason": "r", "by": "u", "checked_at": "2026-09-11T00:00:00+09:00"},
+    ],
+    "retracts が数値": [
+        {"topic": "K", "verdict": "alive", "by": "u", "account": "acc",
+         "checked_at": "2026-09-10T00:00:00+09:00"},
+        {"retracts": 7, "reason": "r", "by": "u", "checked_at": "2026-09-11T00:00:00+09:00"},
+    ],
+    "retracts と topic の両方を持つ行": [
+        {"topic": "L", "verdict": "alive", "by": "u", "account": "acc",
+         "retracts": "sha256:" + "0" * 64,
+         "checked_at": "2026-09-10T00:00:00+09:00"},
+    ],
+    "legacy_verdict 無し + audience 有り(旧46件)": [
+        {"topic": "M", "verdict": "alive", "audience": "受験親", "by": "統括"},
+    ],
+}
+
+
+def 台帳を置く(thth_root: str, checks: list) -> None:
+    path = os.path.join(thth_root, "state", "topics.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"checks": checks}, f, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("形", sorted(旧行の形))
+def test_P2_3_旧行と壊れた行でどの読み口も落ちない(形, thth_root):
+    """**14 の形 × 主な読み口。** 例外が 1 つも出ないこと。
+
+    ここが落ちると、承認の一段目（`verdict_line`）が traceback になる
+    ——**人が本文を確かめる画面そのものが出なくなる。**
+    """
+    from thth import topic_cli as topic_cli_mod, topic_store as store_mod
+
+    checks = 旧行の形[形]
+    台帳を置く(thth_root, checks)
+    topic = checks[0].get("topic") or ""
+
+    読み口 = {
+        "notes()": lambda: topics_mod.notes(),
+        "observation()": lambda: topics_mod.observation(),
+        "observation(t)": lambda: topics_mod.observation(topic),
+        "history(t)": lambda: topics_mod.history(topic),
+        "newest(t)": lambda: topics_mod.newest(topic),
+        "kind_of(t,acc)": lambda: topics_mod.kind_of(topic, "acc"),
+        "judgment(t,acc)": lambda: topics_mod.judgment(topic, "acc"),
+        "latest(t,account=acc)": lambda: topics_mod.latest(topic, account="acc"),
+        "verdict_line(t,acc)": lambda: topics_mod.verdict_line(topic, account="acc"),
+        "verdict_line(t,None)": lambda: topics_mod.verdict_line(topic),
+        "other_accounts(t,acc)": lambda: topics_mod.other_accounts(topic, account="acc"),
+        "learned({})": lambda: topics_mod.learned({}, account="acc"),
+        "broken_rows()": lambda: topics_mod.broken_rows(),
+        "legacy_observations()": lambda: store_mod.legacy_observations(),
+        "_legacy_notes(acc)": lambda: topic_cli_mod._legacy_notes("acc"),
+    }
+    落ちた = []
+    for 名, 呼ぶ in 読み口.items():
+        try:
+            呼ぶ()
+        except Exception as e:            # noqa: BLE001  ——**どの例外も許さない**
+            落ちた.append(f"{名}: {type(e).__name__}: {e}")
+    assert not 落ちた, f"[{形}] で落ちた読み口:\n" + "\n".join(落ちた)
+
+
+@pytest.mark.parametrize("形", ["checked_at 無し(account 有り)",
+                                 "by も account も無い",
+                                 "verdict が無い",
+                                 "verdict が知らない値",
+                                 "status が知らない値",
+                                 "checked_at が数値"])
+def test_P2_3_形の変な行は黙って通さず印を添える(形, thth_root):
+    """**落ちないだけでは足りない。** 整った 1 行に見せると、読み手は信じる。"""
+    checks = 旧行の形[形]
+    台帳を置く(thth_root, checks)
+    line = topics_mod.verdict_line(checks[0]["topic"], account="acc")
+    assert "記録の形が古い・欠けあり" in line, line
+
+
+def test_P2_3_知らない判定と取得状態を消さずに出す(thth_root):
+    台帳を置く(thth_root, [
+        {"topic": "F", "verdict": "maybe", "status": "zzz", "by": "u", "account": "acc",
+         "checked_at": "2026-09-10T00:00:00+09:00", "audience": "誰か"},
+    ])
+    line = topics_mod.verdict_line("F", account="acc")
+    assert "maybe" in line, f"**知らない判定を黙って消した**:\n{line}"
+    assert "不明な取得状態 zzz" in line, f"**知らない取得状態を黙って消した**:\n{line}"
+
+
+def test_P2_3_ちゃんとした記録には印を付けない(thth_root):
+    """**印が常に出るなら、印は何も言っていないのと同じ。**"""
+    topics_mod.record("お茶", verdict="alive", audience="茶葉", by="統括",
+                       status="ok", account="acc")
+    line = topics_mod.verdict_line("お茶", account="acc")
+    assert "記録の形が古い・欠けあり" not in line, line
+
+
+# --- P2-4 -------------------------------------------------------------------
+
+def test_P2_4_形の合わない打ち消しは数えて捨てる(thth_root):
+    """`retracts` が list / dict だと全読み口が TypeError、数値だと黙って通る。"""
+    台帳を置く(thth_root, [
+        {"topic": "K", "verdict": "alive", "by": "u", "account": "acc",
+         "checked_at": "2026-09-10T00:00:00+09:00"},
+        {"retracts": ["x"], "reason": "r", "by": "u", "checked_at": "2026-09-11T00:00:00+09:00"},
+        {"retracts": {"a": 1}, "reason": "r", "by": "u", "checked_at": "2026-09-11T00:00:00+09:00"},
+        {"retracts": 7, "reason": "r", "by": "u", "checked_at": "2026-09-11T00:00:00+09:00"},
+    ])
+    assert topics_mod.broken_rows() == 3
+    assert [r["topic"] for r in topics_mod.notes()] == ["K"], "観測まで落とした"
+
+
+def test_P2_4_historyが捨てた行の件数を言う(thth_root):
+    台帳を置く(thth_root, [
+        {"topic": "K", "verdict": "alive", "by": "u", "account": "acc",
+         "checked_at": "2026-09-10T00:00:00+09:00"},
+        {"retracts": 7, "reason": "r", "by": "u", "checked_at": "2026-09-11T00:00:00+09:00"},
+    ])
+    r = run_thth(["topics", "history", "K", "--json"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(r.stdout)["shelf_broken_rows"] == 1, r.stdout
+
+    人向け = run_thth(["topics", "history", "K"])
+    assert "使えなかった行が 1 行" in 人向け.stdout, 人向け.stdout
+
+
+def test_P2_4_adviseのjsonも捨てた行の件数を言う(thth_root, isolated_account):
+    台帳を置く(thth_root, [
+        {"topic": "K", "verdict": "alive", "by": "u", "account": "acc",
+         "checked_at": "2026-09-10T00:00:00+09:00"},
+        {"retracts": ["x"], "reason": "r", "by": "u", "checked_at": "2026-09-11T00:00:00+09:00"},
+    ])
+    r = run_thth(["topics", isolated_account["name"], "--advise", "--json"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(r.stdout)["shelf_broken_rows"] == 1, r.stdout
+
+
+def test_P2_4_正しい形の打ち消しはこれまでどおり効く(thth_root):
+    """**捨てる側を厳しくしたせいで、正しい打ち消しまで効かなくなっていないか。**"""
+    row = topics_mod.record("お茶", verdict="alive", by="統括", account="acc")
+    topics_mod.retract_note(row["note_id"], reason="誤り", by="統括")
+    assert topics_mod.notes("お茶") == []
+    assert topics_mod.broken_rows() == 0
+    assert [r["retracted"] is not None for r in topics_mod.history("お茶")] == [True]
