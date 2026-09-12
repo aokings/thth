@@ -432,3 +432,104 @@ def test_P2_5_構造化棚のschemaは変えていない(thth_root, isolated_acc
     for 鍵 in ("observation_id", "kind", "audience", "status", "checked_at",
                "recorded_by", "account"):
         assert 鍵 in 行["observation"], f"observation の既存の鍵 {鍵} が消えた"
+
+
+# --- P2-6 -------------------------------------------------------------------
+
+@pytest.mark.parametrize("余分", [
+    ["--note", "X"],
+    ["--verdict", "alive"],
+    ["--audience", "誰か"],
+    ["--kind", "行動"],
+    ["--status", "ok"],
+    ["--advise"],
+    ["--plan"],
+    ["--learned"],
+])
+def test_P2_6_historyの枝は使えない引数を黙って捨てない(余分, thth_root):
+    """`thth topics history <語> --note X --verdict alive` が rc=0 で履歴を出していた。
+
+    **打った人は記録したつもりでいる。** 記録は 1 行も増えていない。
+    """
+    topics_mod.record("お茶", verdict="alive", by="統括")
+    r = run_thth(["topics", "history", "お茶", *余分])
+    assert r.returncode == 2, f"{余分}: rc={r.returncode}\n{r.stdout}{r.stderr}"
+    assert "この枝ではその引数は使えません" in r.stderr, r.stderr
+    assert 余分[0] in r.stderr, r.stderr
+    assert len(topics_mod.notes()) == 1, "**黙って記録が増えた／減った**"
+
+
+def test_P2_6_retract_noteの枝も同じ(thth_root):
+    row = topics_mod.record("お茶", verdict="alive", by="統括")
+    r = run_thth(["topics", "retract-note", row["note_id"],
+                  "--reason", "誤り", "--by", "統括", "--note", "X"])
+    assert r.returncode == 2, f"rc={r.returncode}\n{r.stdout}{r.stderr}"
+    assert "この枝ではその引数は使えません" in r.stderr, r.stderr
+    assert topics_mod.notes("お茶"), "**断ったのに打ち消していた**"
+
+
+def test_P2_6_reasonとbyは打ち消しの枝で使える(thth_root):
+    """**締めすぎない。** `--reason` と `--by` は打ち消しが実際に使う。"""
+    row = topics_mod.record("お茶", verdict="alive", by="統括")
+    r = run_thth(["topics", "retract-note", row["note_id"],
+                  "--reason", "誤り", "--by", "統括"])
+    assert r.returncode == 0, f"rc={r.returncode}\n{r.stdout}{r.stderr}"
+    assert topics_mod.notes("お茶") == []
+
+
+# --- P2-7 -------------------------------------------------------------------
+
+def test_P2_7_historyという名のaccountがあってもフラグで打てる(thth_root,
+                                                                isolated_account_factory):
+    """**account 名も機能の語も、利用者には変えられない。** 逃げ道を用意する。"""
+    isolated_account_factory("history")
+    isolated_account_factory("retract-note")
+    row = topics_mod.record("お茶", verdict="alive", by="統括")
+
+    # 位置引数の形は曖昧なので断る。**そのとき打てる形を案内する。**
+    塞がった = run_thth(["topics", "history", "お茶"])
+    assert 塞がった.returncode == 2, 塞がった.stdout + 塞がった.stderr
+    assert "--history <語>" in 塞がった.stderr, 塞がった.stderr
+    assert "この機能の語を変えて" not in 塞がった.stderr, (
+        "**利用者にできないことを案内している**: " + 塞がった.stderr)
+
+    # フラグの形なら通る。
+    見る = run_thth(["topics", "--history", "お茶"])
+    assert 見る.returncode == 0, 見る.stdout + 見る.stderr
+    assert "お茶" in 見る.stdout and row["note_id"] in 見る.stdout, 見る.stdout
+
+    塞がった2 = run_thth(["topics", "retract-note", row["note_id"],
+                          "--reason", "誤り", "--by", "統括"])
+    assert 塞がった2.returncode == 2, 塞がった2.stdout + 塞がった2.stderr
+    assert "--retract-note <note_id>" in 塞がった2.stderr, 塞がった2.stderr
+
+    打ち消す = run_thth(["topics", "--retract-note", row["note_id"],
+                          "--reason", "誤り", "--by", "統括"])
+    assert 打ち消す.returncode == 0, 打ち消す.stdout + 打ち消す.stderr
+    assert topics_mod.notes("お茶") == []
+
+
+def test_P2_7_フラグの形は衝突が無くても使える(thth_root):
+    topics_mod.record("お茶", verdict="alive", by="統括")
+    r = run_thth(["topics", "--history", "お茶", "--json"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(r.stdout)["topic"] == "お茶"
+
+
+# --- P3-8 -------------------------------------------------------------------
+
+def test_P3_8_recordは空の語を拒む(thth_root):
+    for 語 in ("", "   ", "　"):
+        with pytest.raises(ValueError, match="語が空です"):
+            topics_mod.record(語, verdict="alive", by="統括")
+    assert topics_mod.notes() == []
+
+
+@pytest.mark.parametrize("語", ["", "   "])
+def test_P3_8_空のnoteはrc2で語が空ですと言う(語, thth_root, isolated_account):
+    """空文字は記録の枝を素通りして**無関係な文言で rc=1** になっていた。"""
+    r = run_thth(["topics", isolated_account["name"], "--note", 語,
+                  "--verdict", "alive", "--by", "統括"])
+    assert r.returncode == 2, f"rc={r.returncode}\n{r.stdout}{r.stderr}"
+    assert "語が空です" in r.stderr, r.stderr
+    assert topics_mod.notes() == [], "**空白だけの語が台帳に入った**"

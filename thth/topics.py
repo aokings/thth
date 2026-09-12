@@ -145,6 +145,10 @@ def record(topic: str, *, verdict: str, audience: str = "", by: str,
     `お茶` は茶葉を売る側には当たりで、苦味の研究には不一致。1 語 1 判定にして
     いると、後から書いた側が前の判定を黙って上書きしてしまう。
     """
+    # **空白だけの語を台帳に入れない**（独立監査 1・P3-8）。`--note "   "` が
+    # そのまま通っていた——**語として引けない行が残り、打ち消すしかなくなる。**
+    if not (topic or "").strip():
+        raise ValueError("語が空です（--note に語を書いてください）")
     if verdict not in VERDICTS:
         raise ValueError(f"verdict は {VERDICTS} のどれか: {verdict}")
     if kind is not None and kind not in KINDS:

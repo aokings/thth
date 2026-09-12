@@ -999,6 +999,17 @@ def _cmd_topics(args) -> int:
     **見に行くのは人（またはブラウザを持つ AI）、覚えておくのは THTH。**
     トピック検索の権限（上級アクセス）が降りれば 1 も機械にできる。
     """
+    # **語の形が塞がっても打てる口を残す**（独立監査 1・P2-7）。`history` /
+    # `retract-note` という名前の account があると、位置引数の形は曖昧になって
+    # 断るしかない。以前はそこで「account 名を変えるか、この機能の語を変えて
+    # ください」と案内していたが、**どちらも利用者には不可能**——account 名は
+    # 運用中で、機能の語は道具の側にある。**フラグの形なら曖昧にならない。**
+    if getattr(args, "history", None) is not None:
+        return _topics_history(args.history, as_json=args.json)
+    if getattr(args, "retract_note", None) is not None:
+        return _topics_retract_note(args.retract_note, reason=args.reason,
+                                     by=args.by, as_json=args.json)
+
     # **`topics` の直後の語で入口を分ける**（`topic_cli.is_new_style()` と同じ筋）。
     # `history` / `retract-note` は account ではない。
     語 = getattr(args, "target", None)
@@ -1006,9 +1017,22 @@ def _cmd_topics(args) -> int:
         衝突 = _account_named(args.account)
         if 衝突:
             # **黙って既存の account を隠さない**（設計 §6・`topic_cli` と同じ）。
+            # **できることだけを案内する**（P2-7）。
+            逃げ道 = ("--history <語>" if args.account == "history"
+                        else "--retract-note <note_id>")
             print(f"`{args.account}` という account があるため、"
                   f"`thth topics {args.account}` が曖昧です。"
-                  f"account 名を変えるか、この機能の語を変えてください",
+                  f"フラグの形なら曖昧になりません: `thth topics {逃げ道}`",
+                  file=sys.stderr)
+            return 2
+        # **この枝で使えない引数を黙って捨てない**（独立監査 1・P2-6）。
+        # `thth topics history お茶 --note X --verdict alive` は `--note` を
+        # 捨てて rc=0 で履歴を出していた——**打った人は記録したつもりでいる。**
+        使えない = _この枝では使えない引数(args)
+        if 使えない:
+            print(f"この枝ではその引数は使えません: {' '.join(使えない)}"
+                  f"（`thth topics {args.account}` は履歴・打ち消しの口です。"
+                  f"記録は `thth topics <account> --note <語> ...`）",
                   file=sys.stderr)
             return 2
         if args.account == "history":
@@ -1025,7 +1049,15 @@ def _cmd_topics(args) -> int:
     if getattr(args, "account_flag", None):
         args.account = args.account_flag
 
-    if args.note:
+    # **`--note ""` を「--note が無い」と同じにしない**（独立監査 1・P3-8）。
+    # 以前は `if args.note:` だったので、空文字は記録の枝を素通りして既定の
+    # 一覧へ落ち、「実測がまだありません」のような**無関係な文言で rc=1** に
+    # なっていた。`--note "   "` はさらに悪く、**空白だけの語がそのまま台帳に
+    # 入っていた。**
+    if args.note is not None:
+        if not args.note.strip():
+            print("語が空です（--note に語を書いてください）", file=sys.stderr)
+            return 2
         if not args.verdict:
             print("--verdict を付けてください（alive / mismatch / dead / unknown）",
                   file=sys.stderr)
@@ -1222,6 +1254,24 @@ def _cmd_topics(args) -> int:
 # **`topics` の直後に来ても account ではない語。** 増やすときは
 # `_account_named()` の衝突検査も一緒に効く。
 _TOPIC_WORDS = ("history", "retract-note")
+
+# `history` / `retract-note` の枝では意味を持たない引数（独立監査 1・P2-6）。
+# `--reason` と `--by` は打ち消しが使うので入れない。
+_他の枝の引数 = (("--note", "note"), ("--verdict", "verdict"),
+                  ("--audience", "audience"), ("--kind", "kind"),
+                  ("--status", "status"))
+_他の枝のフラグ = (("--advise", "advise"), ("--plan", "plan"), ("--learned", "learned"))
+
+
+def _この枝では使えない引数(args) -> list:
+    """`history` / `retract-note` に付いた、その枝では意味の無い引数の名前。
+
+    **黙って捨てない。** 捨てて rc=0 で終わると、打った人は「記録した」と思う
+    ——`thth topics history <語> --note X --verdict alive` がまさにそれだった。
+    """
+    出た = [名 for 名, attr in _他の枝の引数 if getattr(args, attr, None) is not None]
+    出た += [名 for 名, attr in _他の枝のフラグ if getattr(args, attr, False)]
+    return 出た
 
 
 def _account_named(word: str) -> bool:
@@ -2065,6 +2115,14 @@ def build_parser() -> argparse.ArgumentParser:
     # 直すべきは両方: 呼び方を増やし、動く例を出力に出す。
     p_topics.add_argument("--account", dest="account_flag", default=None,
                           help="位置引数の代わりに account を指定する")
+    # **語の形が塞がっても打てる口**（独立監査 1・P2-7）。`history` /
+    # `retract-note` という名前の account があると位置引数の形は曖昧になるが、
+    # **フラグなら曖昧にならない。** 衝突のときはこちらを案内する。
+    p_topics.add_argument("--history", default=None, metavar="トピック",
+                          help="その語の全観測者・全行（`thth topics history <語>` と同じ）")
+    p_topics.add_argument("--retract-note", dest="retract_note", default=None,
+                          metavar="note_id",
+                          help="1 行を打ち消す（`thth topics retract-note <note_id>` と同じ）")
     p_topics.add_argument("--plan", action="store_true",
                           help="これから出す本数がどのトピックに賭かっているか")
     p_topics.add_argument("--note", default=None, metavar="トピック",
