@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 from . import accounts as accounts_mod
 from . import account_report as account_report_mod
@@ -118,18 +119,46 @@ def record(topic: str, *, verdict: str, audience: str = "", by: str,
     if status is not None and status not in OBS_STATUS:
         raise ValueError(f"status は {tuple(OBS_STATUS)} のどれか: {status}")
     now = now if now is not None else jst.now_jst()
-    data = load()
     row = {"topic": topic, "verdict": verdict, "audience": audience, "kind": kind,
            "account": account, "status": status, "note": note, "by": by,
            "checked_at": jst.iso(now)}
-    data["checks"].append(row)
     p = path()
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
-    os.replace(tmp, p)
+    # **読んで・足して・全部書き直す**ので、その間に別の記録が入ると**消える**
+    # （独立検収 A・2026-09-12）。台帳は「**追記のみ**——後の確認が前の確認を
+    # 上書きせず、履歴として残る」と謳っているのに、**同時に書くと前の行が
+    # 消えていた。** 運用セッションと開発セッションが同居するので、現実の経路。
+    #
+    # **鍵を取ってから読む。** 読み書きの間に誰も入れない。
+    from . import lock as lock_mod
+    鍵 = lock_mod.AccountLock(p + ".lock")
+    # **待つ。** 断るだけだと、同時に 8 本走らせて 7 本が落ちた（実プロセスで
+    # 確かめた・2026-09-12）。書き込みは一瞬なので、**少し待てば通る。**
+    # ただし**無限には待たない**——待ち続けると、呼んだ側が止まったように見える。
+    限度 = 5.0
+    待った = 0.0
+    while True:
+        try:
+            鍵.acquire()
+            break
+        except lock_mod.LockBusy:
+            if 待った >= 限度:
+                # **黙って落とさない。** 書けなかったことを言う。
+                raise RuntimeError(
+                    f"ほかの実行がトピックの台帳を書いたままです"
+                    f"（{限度} 秒待ちました）。少し待って試してください")
+            time.sleep(0.05)
+            待った += 0.05
+    try:
+        data = load()
+        data["checks"].append(row)
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.replace(tmp, p)
+    finally:
+        鍵.release()
     return row
 
 
@@ -359,12 +388,23 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
         kind = kind_of(topic, account) or "（型なし）"
         bucket = out.setdefault(kind, {"kind": kind, "topics": [], "views": [],
                                         "not_compared": [], "all": [],
-                                        "no_own_judgment": [],
+                                        "no_own_judgment": [], "by_status": {},
                                         "alive": 0, "mismatch": 0, "dead": 0, "unknown": 0})
         bucket["topics"].append(topic)
         # 型ごとの傾向は**当時の判断**を数える（成功の実証ではない・設計 §9）。
         # account 自身の判断があればそちらを優先する。
         own = judgment(topic, account) if account else {}
+        # **取得できなかったことを、判らなかったことのまま残す**（独立検収 A）。
+        st = (own or row).get("status") or "（記録なし）"
+        bucket["by_status"][st] = bucket["by_status"].get(st, 0) + 1
+        # **account を指定したときだけ、自分の判断で数える。**
+        #
+        # 指定しないときは従来どおり「全体の眺め」として最新行で数える。
+        # **独立検収 A は「指定なしでも率を出すな」と言ったが、そこまでは
+        # 採らなかった**——`--learned` を account 無しで使う眺めが丸ごと消える
+        # ため。**代わりに、画面に「アカウントを指定していないので率は出しません」
+        # と書いて、混ざった数を率として見せないようにした**（`_advise` 側）。
+        # **ここは意見が割れたところなので、そう書いておく。**
         if account and not own:
             # **他 account の判断を、自 account の当たり率に混ぜない**
             # （外部レビュー・2026-09-12。他 account の 1 語だけで `1/1` に
@@ -413,8 +453,19 @@ def learned(measured_by_topic: dict, *, account: str | None = None) -> list:
             "examples": sorted(bucket["topics"])[:6],
             # **比較に使わなかった観測**（「実測まだ」と混ぜない）。
             "not_compared": bucket["not_compared"],
+            # **人向けと同じ数を、同じ出どころから出す**（独立検収 A・
+            # 2026-09-12）。人向けは `descriptive` の本数から引き算していたので、
+            # **「観測の形ではない」「views が数ではない」で落とした分が
+            # 除外に現れなかった。**
+            "not_compared_count": len(bucket["not_compared"]),
             # **自 account の判断が無い語**（参考。分子・分母には入らない）。
             "no_own_judgment": bucket["no_own_judgment"],
+            # **取得できなかったことを、判らなかったことのまま残す**
+            # （独立検収 A・2026-09-12）。`status=permission_denied`（引けなかった）
+            # と `status` 無し（まだ見ていない）が、どちらも `unknown` に潰れて
+            # いた。**`OBS_STATUS` を持つ module で、集計面だけその区別が落ちて
+            # いた。**
+            "by_status": bucket["by_status"],
             # **記述統計は出す。ただし性能比較には使えないと分かる形で**
             # （masaru 2026-09-12「現状の記述統計としては出せますが、同条件での
             # 性能比較には使えません」）。**数字を消すより、そのままでは

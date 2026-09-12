@@ -332,6 +332,7 @@ def _measured_observations_by_topic(repo_dir: str, account_name: str) -> dict:
     `{views, age_hours, collected_at, mark, source, topic_source, post_id}`。
     """
     out: dict = {}
+    見た投稿: set = set()
     base = os.path.join(repo_dir, "data", "sns", "insights", "posts")
     if not os.path.isdir(base):
         return out
@@ -369,13 +370,20 @@ def _measured_observations_by_topic(repo_dir: str, account_name: str) -> dict:
         views = (best.get("metrics") or {}).get("views")
         if not isinstance(views, int):
             continue
+        # **同じ投稿を 2 本として数えない**（独立検収 A・2026-09-12）。
+        # 台帳は `<post_id>.ndjson` 固定だが、取り込み直しや改名で
+        # `p1.ndjson` と `p1-copy.ndjson` が同居すると 1 投稿が 2 本になる。
+        pid = best.get("post_id") or name[:-len(".ndjson")]
+        if pid in 見た投稿:
+            continue
+        見た投稿.add(pid)
         out.setdefault(best.get("topic") or "(トピック無し)", []).append({
             "views": views,
             # **刻みの名前と、実際にいつ採ったかは別。**
             "mark": 24,
             "age_hours": best.get("age_hours"),
             "collected_at": best.get("collected_at"),
-            "post_id": best.get("post_id") or name[:-len(".ndjson")],
+            "post_id": pid,
             "source": LEDGER_SOURCE,
             "topic_source": DRAFT_TOPIC,
         })

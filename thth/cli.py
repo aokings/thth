@@ -1029,26 +1029,55 @@ def cmd_topics(args) -> int:
         帯 = account_report_mod.AGE_BAND_HOURS[24]
         print(f"型ごとに何が起きたか"
                f"（実測は**台帳・原稿由来のトピック・実経過 {帯[0]}〜{帯[1]}h** のものだけ）")
+        if not args.account:
+            # **account を指定していないのに率を出さない**（設計 §12.3・独立検収 A・
+            # 2026-09-12）。上半分（語の一覧）は「判断なし」になるのに、下半分の
+            # 当たり率だけ**全 account を混ぜていた**——同じ画面で母集団が違った。
+            print("**アカウントを指定していないので、適合判断の率は出しません**"
+                   "（アカウントを跨いで混ぜないため）。"
+                   "率が見たいときは account を指定してください")
         for row in rows:
             measured = ("実測まだ" if row["views_median"] is None
                         else f"views 中央値={row['views_median']}"
                              f"（{row['views_min']}〜{row['views_max']}・{row['posts_measured']} 本）")
             print(f"［{row['kind']}］{row['topics']} 語  {measured}")
-            print(f"    合っている {row['alive']}・不一致 {row['mismatch']}・"
-                  f"人がいない {row['dead']}・未確認 {row['unknown']}")
-            print(f"    当たり率 {row['hit_rate']}")
+            print(f"    適合 {row['alive']}・不一致 {row['mismatch']}・"
+                  f"旧 dead 記録 {row['dead']}・未確認 {row['unknown']}")
+            分母 = row["alive"] + row["mismatch"]
+            if not args.account:
+                pass                      # 混合の率は出さない（上に理由を出した）
+            else:
+                print(f"    適合判断 {row['hit_rate']} 語"
+                      if 分母 else "    **適合判断の記録なし**")
+            # **「このアカウントの判断が無い語」を人向けにも出す**（独立検収 A・
+            # 2026-09-12）。`--advise` は出すのに `--learned` は出していなかった
+            # ——**「1 語」と言いながら内訳が全部 0** になり、分母に入れていない
+            # 理由が読めなかった。**同じ定義の 2 つの口で表示が違っていた。**
+            if row.get("no_own_judgment"):
+                出所 = sorted({o.get("account") or "（account なし）"
+                                for o in row["no_own_judgment"]})
+                print(f"    **このアカウントの判断なし "
+                      f"{len(row['no_own_judgment'])} 語**"
+                      f"（参考の出所: {'・'.join(出所)}。分母に入れていません）")
+            取得 = {k: v for k, v in (row.get("by_status") or {}).items()
+                     if k != "（記録なし）"}
+            if 取得:
+                print("    取得の状態: "
+                      + "・".join(f"{k} {v} 語" for k, v in sorted(取得.items())))
+            if row.get("not_compared_count"):
+                print(f"    **比較に使えなかった観測 "
+                      f"{row['not_compared_count']} 件**")
             d = row.get("descriptive")
             if d:
                 # **記述統計は出す。ただし比べられないと分かる形で。**
-                幅 = ("経過不明" if d["age_min_hours"] is None
-                       else f"経過 {d['age_min_hours']}h〜{d['age_max_hours']}h")
+                幅 = ("経過は分かりません" if d["age_min_hours"] is None
+                       else f"経過 {d['age_min_hours']}h〜{d['age_max_hours']}h"
+                            f"（{d['ages_known']}/{d['posts']} 本で判明）")
                 print(f"    参考（**比較には使えません**）: 全 {d['posts']} 本の"
                        f"views 中央値={d['views_median']}"
                        f"（{d['views_min']}〜{d['views_max']}・{幅}）")
             if row.get("not_compared"):
-                # **「実測まだ」と「揃わなかった」を混ぜない。**
-                print(f"    **比較に使わなかった観測 {len(row['not_compared'])} 件**"
-                       f"（{row['not_compared'][0]['理由']} ほか）")
+                print(f"      理由の例: {row['not_compared'][0]['理由']}")
             print(f"    例: {'・'.join(row['examples'])}")
             if row["description"]:
                 print(f"    {row['description']}")
@@ -1241,8 +1270,17 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
                 print("  " + formatter(r))
 
     def as_proven(r):
-        m = ("実測まだ" if r["views_median"] is None
-             else f"24h views 中央値 {r['views_median']}（{r['posts']} 本）")
+        # **「実測がまだ無い」と「揃わなかったので比較に使えない」を混ぜない**
+        # （設計 §3.2.2・独立検収 A・2026-09-12）。**人向けにだけ混ざっていた。**
+        # 観測は採れているのに「実測まだ」とだけ出ると、**もう一度採ればよいと
+        # 読める**——実際は経過時間や出所が揃っていないだけ。
+        除外 = r.get("not_compared", 0)
+        if r["views_median"] is None:
+            m = (f"**比較に使えた実測なし**（揃わなかった観測 {除外} 件）"
+                  if 除外 else "実測まだ")
+        else:
+            m = (f"24h views 中央値 {r['views_median']}（{r['posts']} 本）"
+                  + (f"／**比較に使えなかった {除外} 件**" if 除外 else ""))
         return (f"{r['topic']}［{r['kind'] or '型なし'}］ {m}"
                 + (f" — {r['audience']}" if r["audience"] else ""))
 
@@ -1274,7 +1312,12 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
     print(f"【{account_name or 'このアカウント'} が適合と判断した語】")
     show(proven, as_proven)
     print("")
-    print(f"【{account_name or 'このアカウント'} が不適合と判断した語】")
+    # **同じ画面で `dead` の扱いを食い違わせない**（独立検収 A・2026-09-12）。
+    # ここでは「不適合と判断した」と書き、下の型ごとの傾向では「適合判断の確認に
+    # ならない旧記録」として分母から外していた。**1 語が上では判断済み、下では
+    # 判断なしになる。**
+    print(f"【{account_name or 'このアカウント'} が不適合・不在と判断した語】"
+           f"——**`dead`（人がいない）は下の適合判断の分母には入れていません**")
     show(avoid, as_avoid)
     print("")
     print("【観測はあるが、このアカウントの判断がまだの語】"
@@ -1304,11 +1347,34 @@ def _advise(account_name: str | None, *, as_json: bool) -> int:
                          f"（他アカウントの判断は参考。分母に入れていません）")
         if 余り:
             print(f"      {'・'.join(余り)}")
+        # **取得できなかったことを、判らなかったことのまま出す**（独立検収 A・
+        # 2026-09-12）。`permission_denied`（引けなかった）と記録なし（まだ見て
+        # いない）が、どちらも「未確認」に潰れていた。
+        取得 = {k: v for k, v in (row.get("by_status") or {}).items()
+                 if k != "（記録なし）"}
+        if 取得:
+            print(f"      取得の状態: "
+                   + "・".join(f"{k} {v} 語" for k, v in sorted(取得.items())))
         # **実測は語数と別の単位。** 混ぜない。
         d = row.get("descriptive")
-        if row["posts_measured"] or (d and d["posts"]):
-            外し = f"／除外 {d['posts'] - row['posts_measured']} 投稿" if d else ""
-            print(f"      比較可能な実測 {row['posts_measured']} 投稿{外し}  {m}")
+        除外 = row.get("not_compared_count", 0)
+        if row["posts_measured"] or 除外 or (d and d["posts"]):
+            # **除外の数は集計側と同じ出どころから出す**（独立検収 A）。
+            # `descriptive` から引き算すると、**「観測の形ではない」で落とした分が
+            # 現れなかった。**
+            外し = f"／**比較に使えなかった {除外} 件**" if 除外 else ""
+            本数 = ("**実測まだ**" if not row["posts_measured"] and not 除外
+                     else f"比較可能な実測 {row['posts_measured']} 投稿{外し}")
+            print(f"      {本数}  {m if row['posts_measured'] else ''}")
+            if d:
+                # **経過が分かっている本数を書く**（独立検収 A）。
+                # `経過 24.1h〜24.1h` だけだと**全件がその帯にある**ように読める。
+                幅 = ("経過は分かりません" if d["age_min_hours"] is None
+                       else f"経過 {d['age_min_hours']}h〜{d['age_max_hours']}h"
+                            f"（{d['ages_known']}/{d['posts']} 本で判明）")
+                print(f"      参考（**比較には使えません**）: 全 {d['posts']} 本の"
+                       f"views 中央値 {d['views_median']}"
+                       f"（{d['views_min']}〜{d['views_max']}・{幅}）")
     if not kinds:
         print("  （まだありません）")
     if unchecked:
