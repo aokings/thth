@@ -46,7 +46,7 @@ FIXED_NOW_JST = datetime.datetime(2026, 9, 9, 10, 0, 0, tzinfo=jst.JST)
 def frozen_now_jst(monkeypatch):
     """`thth.jst.now_jst()` を既定で静かな時間帯の外（2026-09-09 10:00 JST）に固定する。
 
-    なぜ要るか（2026-09-09 に発見・記録は docs/検収_T3a_2026-09-09.md）:
+    なぜ要るか（2026-09-09 に発見・記録は docs/記録/検収_T3a_2026-09-09.md）:
     投稿の経路（`thth.core.throw_once()` 等）は `now` を渡さなければ本物の壁時計
     （`jst.now_jst()`）を読む。このため、テストが `now` を注入しないまま夜間
     （静かな時間帯 22:00〜07:00）に `python3 -m pytest` を走らせると、`quiet_hours`

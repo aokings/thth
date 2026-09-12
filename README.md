@@ -14,8 +14,8 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 ## いまの状態（2026-09-09）
 
 T1（core ＋ 厚い CLI ＋ 薄い MCP の読み取り系）実装済み。`python3 -m pytest tests/ -q` で
-61 件緑。詳細は [docs/検収_T1_2026-09-09.md](docs/検収_T1_2026-09-09.md)。
-本物の Threads API・トークンには一切触れていない（発注 [docs/発注_T1_2026-09-09.md](docs/発注_T1_2026-09-09.md) の範囲どおり）。
+61 件緑。詳細は [docs/記録/検収_T1_2026-09-09.md](docs/記録/検収_T1_2026-09-09.md)。
+本物の Threads API・トークンには一切触れていない（発注 [docs/記録/発注_T1_2026-09-09.md](docs/記録/発注_T1_2026-09-09.md) の範囲どおり）。
 
 - **動くもの**: `thth send`（同席の投稿）・`thth lint`／`preview`／`queue`／`board`・`thth token set`／`auth`／`refresh`・`thth doctor`。テスト 126 件。
 - **最初の本番投稿**: 2026-09-09、@aoking に疎通確認を 1 本（`17916074118445631`）。
