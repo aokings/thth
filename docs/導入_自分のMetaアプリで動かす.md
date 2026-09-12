@@ -100,7 +100,7 @@ chmod 600 ~/.config/thth/app.env
 | 既定のパスは `~/.config/thth/app.env`。**環境変数 `THTH_APP_ENV_PATH` で差し替えられる**（テストの隔離用） | `thth/appenv.py` `default_path()` | **L1** |
 | 鍵の名前は `THREADS_APP_ID` と `THREADS_APP_SECRET` の 2 つだけ。どちらかが空なら `app.env に項目が足りません` | `thth/appenv.py` `REQUIRED_KEYS` | **L1** |
 | 読むときに 600 でなければ**警告して直します**（`警告: … のパーミッションが … です。600 に直します。`） | `thth/secrets_fs.py` `ensure_mode_600()` | **L1** |
-| **`app.env` を使うのは `thth auth` だけです。** `lint`・`board`・`throw` は読みません。`doctor` は**有無だけ**を見て、無ければ `次の一手: 導入文書 §3` と言います（値は読みません） | 実測（§7 の乾式試験・`tests/test_doctor_next_step.py`） | **L1** |
+| **`app.env` を使うのは `thth auth` だけです。** `lint`・`board`・`throw` は読みません。`doctor` は**存在と、2 つの項目（`THREADS_APP_ID`・`THREADS_APP_SECRET`）が空でないことだけ**を見て、足りなければ `次の一手: 導入文書 §3` と言います（値は出力しません。実測: 項目が空でも同じく `次の一手: 導入文書 §3` になる） | 実測（§7 の乾式試験・`tests/test_doctor_next_step.py`） | **L1** |
 
 **だから、管理画面の「ユーザートークン生成ツール」で発行したトークンを `thth token set` で入れる運用なら、`app.env` は作らなくても動きます**（設計 §4.2「置かないものは漏れない」）。`thth auth` を使う日に作ってください。
 
@@ -145,7 +145,7 @@ chmod 600 ~/.config/thth/app.env
 | **`production: true` を commit しない限り dry-run。** 出力の 1 行目が `mode: rehearsal` になる | 設計 §4.2 | **L1**（実測） |
 | `account` は `<project>-<media>`。`project` は clone の dir 名と board の見出し | 設計 §4.2 | **L2**（設計の決め） |
 | **`thth auth` を使うなら `redirect_uri` の欄が要ります。** 設計 §4.2 の例には**載っていません**。無いと `redirect_uri が accounts/<account>.json に無い` で rc=2 | `thth/oauth.py` `run_auth()` | **L1**（実測） |
-| `scopes` の欄を書けば既定 scope より優先される（任意） | `thth/oauth.py`・`thth/scopes.py` | **L1** |
+| `scopes` の欄を書けば既定 scope より優先される（任意） | `thth/oauth.py`・`thth/scopes.py` | **L1（コード読解・テスト無し）** |
 | `env`（`HEALTHCHECK_URL` 等）は**任意**。無くても `thth run` は止まらない | `thth/accounts.py` `token_exists()` の docstring | **L1** |
 
 ### アカウントを 1 本足す 6 手順（設計 §4.2）
@@ -177,7 +177,7 @@ thth token set demo-threads          # 貼り付けを求められる。値は�
 
 | 事実 | 出典 | 証拠 |
 |---|---|---|
-| 保存する前に `me` を叩いて実在を確かめ、**台帳の `handle` と食い違うトークンは `--force` でも保存しない** | `thth/oauth.py` `run_token_set()` | **L1** |
+| 保存する前に `me` を叩いて実在を確かめ、台帳の `handle` と食い違うトークンは保存しない。**`--force` でも保存しない、という部分は、テストが `--force` を渡した食い違いまでは確かめていない** | `thth/oauth.py` `run_token_set()` | **L1**（`--force` でも、の部分は**コード読解のみ・テスト無し**） |
 | 既に `.token` があると rc=1 で止まる（入れ替えは `--force`） | 同上 | **L1** |
 | 管理画面発行では発行時刻も scope も分からないので、`obtained_at` はコマンドを打った時刻、`scopes` は `null`（嘘の一覧を書かない） | 同上 | **L1** |
 
@@ -315,7 +315,7 @@ rc = 0
 | 事実 | 出典 | 証拠 |
 |---|---|---|
 | `git fetch origin +refs/heads/release:refs/remotes/origin/release` → `git merge --ff-only origin/release`。**checkout している枝の上流を見ない** | 設計 §3.2.1・`thth/selfupdate.py` | **L1** |
-| **refspec を明示する。** `--single-branch` / `--depth` 付きの clone だと `git fetch origin release` が **rc=0 で成功したまま `origin/release` を作らない** | 同上 `_refspec()` | **L1**（コード）／**L3**（その clone 形での実挙動） |
+| **refspec を明示する。** `--single-branch` / `--depth` 付きの clone だと `git fetch origin release` が **rc=0 で成功したまま `origin/release` を作らない** | 同上 `_refspec()`・`tests/test_selfupdate.py::test_単一枝のcloneでも配布が届く` | **L1**（単一枝 clone の実挙動もテストが再現して確かめている） |
 | 枝の名前は環境変数 **`THTH_RELEASE_REF`** で変えられる（既定 `release`） | `thth/selfupdate.py` `RELEASE_REF` | **L1** |
 | **`behind_release` の `None` は「遅れていない」ではなく「判らない」。** 0 と混ぜない | 設計 §3.2.1 | **L1** |
 | **`behind == 0` は「配ったもので動いている」ではない。** HEAD が配布の枝より**先**にいると 0 に見えるので、`ahead_of_release` を別に数え、board では遅れより先に出す | 設計 §3.2.1 | **L1** |
@@ -335,14 +335,16 @@ rc = 0
 | 節 | L1 | L2 | L3 |
 |---|---|---|---|
 | §1 前提 | 4 | 1 | 1 |
-| §2 Meta アプリ | 0 | 4 | 7 |
+| §2 Meta アプリ | 0 | 5 | 7 |
 | §3 app.env | 4 | 0 | 0 |
-| §4 台帳 | 6 | 2 | 0 |
+| §4 台帳 | 8 | 2 | 0 |
 | §5 トークン | 8 | 2 | 3 |
-| §6 timer | 6 | 0 | 1 |
-| §7 確かめ方 | 6 | 0 | 0 |
+| §6 timer | 7 | 0 | 1 |
+| §7 確かめ方 | 2 | 0 | 0 |
 | §8 配布の枝 | 6 | 1 | 1 |
-| **計 63** | **40** | **10** | **13** |
+| **計 63** | **39** | **11** | **13** |
+
+**§7 の 2 件は、行ごとの印ではなく「この 4 つは `tests/test_fresh_install.py` が毎回同じ順番で通している」という一括宣言から数えたものです。** 個別に印を付けている他の節と数え方が違う点に注意してください。
 
 **L3 は 13 / 63 ＝ 21%。** 設計 §6 の止まる条件（「導入文書に L3 しか無い手順が半分を超えたら止まる」）には当たっていません。
 
