@@ -445,16 +445,14 @@ def test_手順書のコマンドが実際に存在する():
     # `thth topics asmon-kanto-threads --json` を足して、ここが落ちた）。
     # **手順書が間違っていたのではなく、テストの決めつけが間違っていた。**
     #
-    # アカウント名は**存在するかどうか**で確かめる（`accounts/` の台帳）。
-    # **「書いてあるから正しい」にしない**——綴り間違いはここで止める。
+    # **アカウント名の綴りはここでは確かめられない**（2026-09-14）。以前は
+    # `accounts/` の台帳と突き合わせて綴り間違いを止めていたが、**台帳は repo の
+    # 外へ出た**（設計 v2 §3・6 本を `git rm`）ので、repo の中に正本が無い。
+    # 手元の `$THTH_ROOT/accounts/` と突き合わせると、**打つ機械によって
+    # 通ったり落ちたりする試験**になる（それは lint ではない）ので、しない。
+    # ここが守るのは**コマンド（サブコマンド）が実在すること**だけに戻す。
     語 = set(re.findall(r"thth topics ([a-z][a-z-]*)", doc))
-    台帳 = {name[:-len(".json")]
-             for name in os.listdir(os.path.join(root, "accounts"))
-             if name.endswith(".json")}
     アカウント名らしき語 = {w for w in 語 if w.endswith("-threads")}
-    知らないアカウント = アカウント名らしき語 - 台帳
-    assert not 知らないアカウント, \
-        f"手順書に、台帳に無いアカウントが書いてある: {知らないアカウント}"
 
     used = 語 - アカウント名らしき語
     unknown = used - set(topic_cli.SUBCOMMANDS)

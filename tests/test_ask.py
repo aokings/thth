@@ -24,7 +24,7 @@ import pytest
 from thth import ask as ask_mod
 from thth import jst as jst_mod
 from thth import topics as topics_mod
-from tests.conftest import BIN_THTH, REPO_ROOT
+from tests.conftest import BIN_THTH, REPO_ROOT, make_account_json
 
 # **本文と観測者の名前は、どこにも出てはいけない**（設計 v2 §1 規約 4）。
 # 偽の台帳にこの 2 つを埋めておいて、答えの JSON 全体を grep する。
@@ -712,6 +712,14 @@ def _real_root(tmp_path) -> str | None:
 
     **読むだけ**（symlink を張るだけで、利用者 repo には一切書かない）。
     手元にその repo が無い機械（CI・他人の clone）では `None`。
+
+    **台帳もここで組む**（2026-09-14）。前は repo に同梱されていた
+    `accounts/kopicha-threads.json` を互換 (c) で拾っていたが、**台帳は repo の
+    外へ出た**（設計 v2 §3・6 本を `git rm`）ので、repo からは読めない。運用の
+    `$THTH_ROOT/accounts/` を読みに行かせるわけにもいかない（打つ機械によって
+    結果が変わる試験になる）ので、**`repo_dir` だけ本物を指す台帳をここで
+    書く**。この試験が見たいのは「**本物の水**で `ask` が落ちないこと」であって
+    台帳の中身ではない。
     """
     real = os.path.expanduser("~/Developer/kopicha")
     if not os.path.isdir(os.path.join(real, "data", "sns", "insights", "posts")):
@@ -719,6 +727,9 @@ def _real_root(tmp_path) -> str | None:
     root = tmp_path / "real_root"
     (root / "repos").mkdir(parents=True)
     os.symlink(real, str(root / "repos" / "kopicha"))
+    make_account_json(str(root / "accounts"), "kopicha-threads",
+                      repo_dir=str(root / "repos" / "kopicha"),
+                      project="kopicha", handle="kopicha")
     return str(root)
 
 

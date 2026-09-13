@@ -145,7 +145,7 @@ $ thth app show --json
 
 ## 4. アカウント台帳 `$THTH_ROOT/accounts/<account>.json`
 
-**台帳は repo の外に置きます**（設計 v2 §3「台帳を repo の外へ」・masaru 裁定 2026-09-13「出す」）。**正は `$THTH_ROOT/accounts/`**。秘密は入りませんが、repo に commit すると「配る道具」と「その人の顔ぶれ」が同じ履歴に混ざり、clone した人に他人の台帳が付いて来ます（それが下の「消してください」でした）。
+**台帳は repo の外に置きます**（設計 v2 §3「台帳を repo の外へ」・masaru 裁定 2026-09-13「出す」）。**正は `$THTH_ROOT/accounts/`**。秘密は入りませんが、repo に commit すると「配る道具」と「その人の顔ぶれ」が同じ履歴に混ざり、clone した人に他人の台帳が付いて来ます。**開発側の 6 本は 2026-09-14 に repo から消しました**（§4-2 の末尾）。
 
 ### 置き場の決まり方（`thth/accounts.py` `accounts_dir_info()`・**L1**）
 
@@ -155,7 +155,7 @@ $ thth app show --json
 |---|---|---|
 | (a) | 環境変数 `THTH_ACCOUNTS_DIR` | 明示したとき（テスト・特殊な配置） |
 | (b) | **`$THTH_ROOT/accounts/`** ← **正** | **ディレクトリがあれば**。中が 0 本でもここが正 |
-| (c) | app repo の `accounts/` | **(b) が無いときだけ**。**互換・1 版かぎり** |
+| (c) | app repo の `accounts/` | **(b) が無いときだけ**。**互換・1 版かぎり**。新しい clone には `accounts/` が無いので効きません（2026-09-14 に削除）——効くのは、まだ移行していない既存の機械だけ |
 
 **(b) は「ディレクトリがあるか」だけで見ます**（中に台帳があるかは見ません）。`thth account add` を 1 本打った時点で外が正になり、**repo の中の台帳は二度と読まれません**。「外に足したのに repo の分も混ざって並ぶ」を作らないためです。
 
@@ -192,7 +192,9 @@ thth account add demo-bluesky  --media bluesky  --project demo \
 
 **この 1 行が無かったころは、`add` と `thth auth` の間に「どこにも書かれていない手作業」が挟まっていました**（`thth doctor` も黙っていた）。いまは **`add` → `doctor` → `auth`** の 3 か所すべてがダミーを名指しします。
 
-**clone したばかりだと 1 回断られます**（rc=1）。repo の `accounts/` に開発側の台帳が同梱されていて、いまはそれを読んでいる（上の (c)）状態だからです。`add` を打つと `$THTH_ROOT/accounts/` が出来て**その台帳は以後読まれなくなる**ので、道具は何が起きるかを言って 1 度止まります。**同梱されているのは他人の台帳なので、`--force` を付けて進んでください**：
+**clone したばかりなら、そのまま通ります**（2026-09-14 から。repo に台帳が 1 本も入っていないので、互換 (c) に落ちません）。`--force` は要りません。
+
+**`--force` が要るのは、互換 (c) で動いている既存の機械だけです。** 読みが repo の `accounts/` に落ちている状態で `add` を打つと、`$THTH_ROOT/accounts/` が出来た瞬間に**その台帳は以後読まれなくなる**ので、道具は何が起きるかを言って 1 度止まります（rc=1）。そこで `--force` を付けて進むのは、**repo の中にあるのが他人の台帳だと判っているとき**だけにしてください：
 
 ```bash
 thth account add demo-threads --media threads --project demo --force
@@ -239,13 +241,13 @@ thth board                       # 6 本が変わらず見えること
 
 **なぜ copy か**: VM の `/srv/thth/app` は `merge --ff-only origin/release` で更新する clone です。道具がそこの作業ツリーを動かすと、次の自己更新が止まります。
 
-**`repo の accounts/` を消すのは別の日です**（設計 v2 §8）。移行を確かめて、次の `thth run` が通ってから、人の手で消します。この版では repo に 6 本とも残っています。
+**`repo の accounts/` は 2026-09-14 に消しました**（設計 v2 §8 の順番どおり: VM の移行を確かめ、board の互換警告が消え、次の `thth run` が通ってから、人の手で `git rm`）。**互換 (c) はコードには 1 版だけ残してあります**——(b) を失った機械を止めないためで、消すのは次の版です。
 
 ### clone した直後（新しく導入する人）
 
-**clone の `accounts/` には masaru の 6 本**（`nigamilab-threads`・`asmon-kanto-threads`・`kopicha-threads`・`masaru-threads`・`masaru-bluesky`・`masaru-mastodon`）**が入っています**（この版ではまだ）。`$THTH_ROOT/accounts/` がまだ無いあいだは、互換 (c) でそれが `thth board` に並びます。
+**clone に台帳は 1 本も入っていません**（2026-09-14 から。入っているのは雛形 `accounts.example/` の 3 本だけです）。`thth board` を打つと「台帳の置き場: `$THTH_ROOT/accounts`」の 1 行が出て、台帳 0 本です。
 
-**消す必要はありません。`thth account add` を 1 本打てば、その時点で外が正になり、6 本は並ばなくなります**（**L1**・乾式試験 `test_v2_2a_台帳を消さなくてもaddした時点で外が正になる`）。
+**`thth account add` を 1 本打てば、そこから始まります**（`--force` は要りません・**L1**・乾式試験 `test_v2_2a_clone_は台帳0本_addは断られずに通る`）。
 
 ### 4-3. 台帳の中身
 

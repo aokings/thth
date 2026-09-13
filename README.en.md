@@ -65,7 +65,9 @@ python -m thth --version   # or: put bin/thth on your PATH
 
 One JSON file per account, **outside this repo**:
 `$THTH_ROOT/accounts/<account>.json` (override with `$THTH_ACCOUNTS_DIR`).
-Nothing you configure is committed here.
+Nothing you configure is committed here. **A fresh clone ships no ledgers at
+all** (the in-repo `accounts/` directory was removed on 2026-09-14); you start
+by writing your own:
 
 ```bash
 thth account add your-project-threads --media threads --project your-project \

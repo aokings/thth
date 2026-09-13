@@ -207,8 +207,12 @@ def test_wheelにもsdistにも雛形が入っている(built):
 
 
 def test_sdist_に台帳と運用の日誌が入っていない(built):
-    """`accounts/`（masaru の 4 本）と `docs/記録/`（運用の日誌）は配らない
-    （設計 v2 §3 の台帳・§7-2）。"""
+    """`accounts/` と `docs/記録/`（運用の日誌）は配らない（設計 v2 §3・§7-2）。
+
+    **2026-09-14 からは repo にも `accounts/` が無い**（6 本を `git rm`）ので、
+    ここは「除外設定が効いている」ではなく「**台帳が repo へ戻っても配り物には
+    入らない**」を守る網になった。`pyproject.toml` の除外はそのまま残してある。
+    """
     r = _run(["tar", "tzf", built["sdist"]])
     assert r.returncode == 0, r.stderr
     entries = [ln.split("/", 1)[1] for ln in r.stdout.splitlines() if "/" in ln]

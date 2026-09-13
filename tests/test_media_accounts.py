@@ -1,13 +1,20 @@
-"""同席用の台帳 2 本（Bluesky・Mastodon・T3 の配線 2026-09-13）。
+"""同席用の 2 媒体（Bluesky・Mastodon）の台帳と画面（T3 の配線 2026-09-13）。
 
-masaru の各 1 アカウント（無料）を `accounts/` に置いた。**まだ稼働させない**
-（`production: false`・`scheduled: false`）ので、投稿は `thth send --production`
-を人が打ったときだけ出る。ここで確かめるのは 4 つ:
+**2026-09-14 に土台が変わった。** 以前ここは repo に同梱されていた
+`accounts/masaru-bluesky.json`・`accounts/masaru-mastodon.json` を**直に読んで**
+いた。台帳は repo の外へ出た（設計 v2 §3「台帳を repo の外へ」・6 本を `git rm`）
+ので、repo からは読めない。運用の `$THTH_ROOT/accounts/` を読みに行かせるのも
+だめ（**打つ機械によって通ったり落ちたりする試験**になる）。
 
-- **台帳の形が正しい**（媒体ごとの追加項目・秘密の置き場・未稼働の印）。
-- **`thth account` と `thth board` が 2 本を読んで落ちない**（トークンが無い
-  状態で `no_token` と出る）。台帳を足しただけで既存の画面が落ちると、
-  masaru が現物を試す前に手が止まる。
+だからここは**同じ形の台帳を隔離した置き場に組んで**確かめる。失ったのは
+「masaru の 2 本が実際にその値で置かれていること」で、それは repo の仕事では
+なくなった（運用の `$THTH_ROOT/accounts/` の中身）。残したのは道具の側の約束:
+
+- **媒体ごとの追加項目がアダプタに届く**（Bluesky は `service`、Mastodon は
+  `instance`）。雛形 `accounts.example/` が知っている媒体を指している。
+- **`thth account` と `thth board` が 2 媒体を読んで落ちない**（トークンが無い
+  状態で `no_token` と出る）。台帳を足しただけで既存の画面が落ちると、masaru が
+  現物を試す前に手が止まる。
 - **他媒体の token が `graph.threads.net` へ行かない**（宛先を媒体が決める・F2）。
 - **`recent_posts` を持たない媒体には聞きに行かない**（能力で塞ぐ・アダプタを
   組み立てもしない）。
@@ -26,113 +33,98 @@ from tests.conftest import run_thth
 from thth import adapters as adapters_mod
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-ACCOUNTS = REPO_ROOT / "accounts"
+EXAMPLES = REPO_ROOT / "accounts.example"
 
-新しい台帳 = ["masaru-bluesky", "masaru-mastodon"]
+# 同席用の 2 媒体。**名前は試験のもの**（実アカウント名ではない——repo に
+# 実アカウントの綴りを残さない・公開前チェックリスト §4）。
+同席用 = {
+    "demo-bluesky": {"media": "bluesky", "handle": "demo.bsky.social",
+                     "service": "https://bsky.social"},
+    "demo-mastodon": {"media": "mastodon", "handle": "demo",
+                      "instance": "https://mastodon.example"},
+}
 
 
-def _load(name):
-    with open(ACCOUNTS / f"{name}.json", encoding="utf-8") as f:
-        return json.load(f)
+@pytest.fixture
+def 同席の2本(isolated_account_factory, tmp_path):
+    """2 媒体の台帳を隔離した置き場に 1 本ずつ。**トークンは置かない。**
+
+    `production: true`・`scheduled: false`（同席専用の様態・masaru 裁定
+    2026-09-13 夕）を写す——`thth send --production` を人が打ったときだけ出て、
+    timer は生えない。
+    """
+    out = {}
+    for name, 欄 in 同席用.items():
+        out[name] = isolated_account_factory(
+            name, project="demo", production=True, scheduled=False,
+            token=str(tmp_path / f"{name}.token"),   # **置かない**（no_token）
+            **欄)
+    return out
 
 
-@pytest.mark.parametrize("name", 新しい台帳)
-def test_台帳が読めて既知の媒体を指している(name):
-    cfg = _load(name)
-    assert cfg["account"] == name
-    assert cfg["project"] == "masaru"
-    # **知らない媒体なら loud に断られる**（T-B0）。ここが通ることが「登録できた」
-    # ことの証明でもある。
+@pytest.mark.parametrize("media", ["bluesky", "mastodon"])
+def test_雛形が既知の媒体を指している(media):
+    """**知らない媒体なら loud に断られる**（T-B0）。配る雛形がその関門を通る。"""
+    with open(EXAMPLES / f"{media}.json", encoding="utf-8") as f:
+        cfg = json.load(f)
+    assert cfg["media"] == media
     adapters_mod.adapter_class(cfg["media"])
 
 
-@pytest.mark.parametrize("name", 新しい台帳)
-def test_同席用の台帳はtimerを持たない(name):
-    """**同席専用**（masaru の裁定 2026-09-13 夕: 「どちらも配って」）。
-
-    `production: true` は masaru の裁定で立てた——`thth send --production` を**明示した
-    ときだけ**出る（`masaru-threads` と同じ様態）。`scheduled: false` は動かさない:
-    `thth systemd` が timer を作らず、`thth run` の経路に乗らない。**timer が生えたら、
-    queue の無い台帳で毎 10 分「出すものが無い」を回すだけでなく、production が
-    true なので不在の様態が開く。** ここだけは固定する。
-    """
-    cfg = _load(name)
-    assert cfg["production"] is True, cfg
-    assert cfg["scheduled"] is False, cfg
-    assert cfg["repo_dir"].endswith("/_none"), cfg
-
-
-@pytest.mark.parametrize("name", 新しい台帳)
-def test_秘密はプロジェクトの外に置く(name):
-    """`env`・`token` は `~/.config/thth/` （repo の中に秘密を置かない）。"""
-    cfg = _load(name)
-    assert cfg["env"] == f"~/.config/thth/{name}.env"
-    assert cfg["token"] == f"~/.config/thth/{name}.token"
-    # 値そのものは台帳に入らない（**鍵の名前だけ**）。
-    raw = json.dumps(cfg, ensure_ascii=False)
-    assert "app_password" not in raw and "access_token" not in raw
-
-
-def test_blueskyの台帳はserviceとhandleを持つ():
+def test_blueskyの台帳のserviceがアダプタに届く(同席の2本):
     """媒体ごとの追加項目（設計 v2 §4.2「台帳と登録」）。"""
-    cfg = _load("masaru-bluesky")
+    cfg = _読む(同席の2本["demo-bluesky"])
     assert cfg["media"] == "bluesky"
-    assert cfg["handle"] == "aoking.bsky.social"
+    assert cfg["handle"] == "demo.bsky.social"
     assert cfg["service"] == "https://bsky.social"
     # 台帳から実際に組み立てられる（トークンが無くても組み立ては通る）。
     adapter = adapters_mod.make_adapter(cfg, {})
     assert adapter.service == "https://bsky.social"
 
 
-def test_mastodonの台帳はinstanceとhandleを持つ():
+def test_mastodonの台帳のinstanceがアダプタに届く(同席の2本):
     """**`instance` は必須**——既定に落とすと、書き忘れた人が知らないサーバに投げる。"""
-    cfg = _load("masaru-mastodon")
+    cfg = _読む(同席の2本["demo-mastodon"])
     assert cfg["media"] == "mastodon"
-    assert cfg["handle"] == "aoking"
-    assert cfg["instance"] == "https://mastodon.social"
+    assert cfg["instance"] == "https://mastodon.example"
     adapter = adapters_mod.make_adapter(cfg, {"access_token": ""})
-    assert adapter.instance == "https://mastodon.social"
+    assert adapter.instance == "https://mastodon.example"
 
 
-def _トークンがまだ無い(name) -> bool:
-    """masaru が `thth auth` を打ったあとの手元でも、この試験が嘘にならないように。
-
-    トークンを入れたら `no_token` でなくなるのが**正しい**——そこまで固定すると、
-    現物を試した瞬間にテストが落ちる。
-    """
-    return not os.path.exists(os.path.expanduser(_load(name)["token"]))
+def _読む(account: dict) -> dict:
+    path = os.path.join(account["accounts_dir"], f"{account['name']}.json")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
-@pytest.mark.parametrize("name", 新しい台帳)
-def test_thth_accountが読んで落ちない(name):
+@pytest.mark.parametrize("name", sorted(同席用))
+def test_thth_accountが読んで落ちない(同席の2本, name):
     """トークンが無い状態で `no_token` と出る（**落ちない**）。"""
     r = run_thth(["account", name, "--no-remote"])
     assert "Traceback" not in r.stderr, r.stderr
-    assert f"（masaru / {_load(name)['media']} /" in r.stdout, r.stdout
-    if _トークンがまだ無い(name):
-        # **表示できたら rc=0**（T3・第 1 回の記録 §3）。トークンを入れる前の台帳は
-        # 「まだ投稿できない」を**正常に表示できている**——それを失敗として返すと、
-        # 呼んだ側からは道具が落ちたように見える。非ゼロは読めなかったときだけ
-        # （rc=2 は台帳が読めない・使い方が違う）。
-        assert r.returncode == 0, f"{r.returncode}: {r.stdout}{r.stderr}"
-        assert "no_token" in r.stdout, r.stdout
-        # 投稿できない旨は**本文に残る**。
-        assert "投稿できません" in r.stdout, r.stdout
+    assert f"（demo / {同席用[name]['media']} /" in r.stdout, r.stdout
+    # **表示できたら rc=0**（T3・第 1 回の記録 §3）。トークンを入れる前の台帳は
+    # 「まだ投稿できない」を**正常に表示できている**——それを失敗として返すと、
+    # 呼んだ側からは道具が落ちたように見える。非ゼロは読めなかったときだけ
+    # （rc=2 は台帳が読めない・使い方が違う）。
+    assert r.returncode == 0, f"{r.returncode}: {r.stdout}{r.stderr}"
+    assert "no_token" in r.stdout, r.stdout
+    # 投稿できない旨は**本文に残る**。
+    assert "投稿できません" in r.stdout, r.stdout
 
 
-def test_thth_boardが2本を並べて落ちない():
+def test_thth_boardが2本を並べて落ちない(同席の2本):
     r = run_thth(["board"])
     assert r.returncode == 0, f"{r.returncode}: {r.stdout}{r.stderr}"
     assert "Traceback" not in r.stderr, r.stderr
     行 = {line.split(":", 1)[0]: line for line in r.stdout.splitlines()}
-    for name in 新しい台帳:
+    for name in 同席用:
         assert name in 行, r.stdout
-        assert "project=masaru" in 行[name]
-        if _トークンがまだ無い(name):
-            assert "token=no_token" in 行[name], 行[name]
+        assert "project=demo" in 行[name]
+        assert "token=no_token" in 行[name], 行[name]
 
 
-def test_他媒体のtokenはgraph_threads_netに行かない(monkeypatch):
+def test_他媒体のtokenはgraph_threads_netに行かない(monkeypatch, 同席の2本):
     """**Mastodon の access token を Meta のサーバへ送らない**（T3 で見つけた）。
 
     **止め方が変わった**（F2・2026-09-13）。以前 `account_report.fetch_posts()` は
@@ -155,7 +147,7 @@ def test_他媒体のtokenはgraph_threads_netに行かない(monkeypatch):
         raise urllib.error.URLError("この試験は網に出ません")
     monkeypatch.setattr(urllib.request, "urlopen", 記録して落とす)
 
-    cfg = _load("masaru-mastodon")
+    cfg = _読む(同席の2本["demo-mastodon"])
     rows, message = account_report_mod.fetch_posts(
         cfg, {"access_token": "MASTODON-SECRET", "user_id": "9000"})
 

@@ -219,13 +219,15 @@ THTH's core:
 ## 9. Account ledgers (`thth account add` / `migrate`)
 
 Each account is one JSON file. It lives **outside this repo**, so nothing you
-configure is ever committed here:
+configure is ever committed here. **A fresh clone contains no ledgers** — the
+in-repo `accounts/` directory was removed on 2026-09-14, and only the templates
+in `accounts.example/` are shipped, so `thth account add` is your first step:
 
 | Order | Location | When |
 |---|---|---|
 | 1 | `$THTH_ACCOUNTS_DIR` | if you set it |
 | 2 | `$THTH_ROOT/accounts/` | the normal place — used as soon as the directory exists, even when empty |
-| 3 | `<repo>/accounts/` | compatibility only, kept for one release, with a warning on stderr |
+| 3 | `<repo>/accounts/` | compatibility only, kept for one release, with a warning on stderr — a fresh clone has no such directory, so this applies only to a machine that has not migrated yet |
 
 `thth doctor` and `thth board` print the directory they actually read, on one
 line, even when no ledger was found (`accounts_dir` in `--json`).
@@ -280,7 +282,8 @@ It **copies** — the repo's working tree is not touched, so a deployment that
 tracks the repo with `git merge --ff-only` keeps working. It is idempotent, and
 if a file already exists at the destination with different content it says so
 by name and exits 1 rather than overwriting. Deleting the old directory is a
-separate, human step.
+separate, human step — this project took it on 2026-09-14, once its own
+deployment had migrated and one scheduled run had gone through.
 
 ## 10. Asking before you post (`thth ask before-you-post`)
 

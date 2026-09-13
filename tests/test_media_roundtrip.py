@@ -116,8 +116,8 @@ def test_端から端_bluesky(tmp_path, isolated_account_factory):
         account = isolated_account_factory(
             "masaru-bluesky-test", media="bluesky", handle=HANDLE,
             service=str(service), token=token_path,
-            # **`production: true` はこの試験の台帳だけ**（repo の
-            # `accounts/masaru-bluesky.json` は `false` のまま）。
+            # **`production: true` はこの試験の台帳だけ**（`thth account add` が
+            # 書くものは `false`。repo は台帳を配らない・設計 v2 §3）。
             production=True)
         path = _queue(account, media="bluesky")
 
