@@ -34,6 +34,15 @@ NEXT_STEP_APP_ENV = "次の一手: 導入文書 §3 app.env を見てくださ�
 NEXT_STEP_ACCOUNT = "次の一手: 導入文書 §4 アカウント台帳 を見てください。"
 NEXT_STEP_TOKEN = "次の一手: 導入文書 §5 トークン を見てください。"
 
+# **雛形のダミーが残っている台帳を「異常なし」で返さない**（監査 2・C10・
+# masaru 裁定 2026-09-13「手がかかっても最善を」）。`thth account add` が写す
+# 雛形には、そのままでは通らない値が入っている（`redirect_uri` は
+# `https://example.invalid/`・Mastodon の `instance` は `https://mastodon.example`・
+# handle は `demo`）。**`add` と `thth auth` の間に、どこにも書かれていない手作業が
+# 挟まっていた**——しかも診断の道具が黙っていた。どの欄がダミーかは
+# `accounts.dummy_fields()` の 1 か所が知っている（`thth auth` も同じ知識で断る）。
+DUMMY_LABEL = "**ダミーのままです**"
+
 # **app.env が「無い」のは、直すべき欠落ではない**（masaru 裁定 2026-09-13）。
 # app.env（`THREADS_APP_ID`・`THREADS_APP_SECRET`）を使うのは `thth auth` だけで、
 # 管理画面で発行したトークンを `thth token set` で入れる運用——いまの本番 4 本が
@@ -191,14 +200,14 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         notices.append(str(e))
 
     try:
-        accounts_mod.load_account(account_name)
+        account_cfg = accounts_mod.load_account(account_name)
     except accounts_mod.AccountError as e:
         notices.append(f"アカウント台帳: {e}")
         notices.append(NEXT_STEP_ACCOUNT)
         if as_json:
             payload = {"account": account_name, "error": str(e), "probes": [],
                        "notices": notices, "app_env": app_env_state,
-                       "accounts_dir": accounts_dir_info}
+                       "accounts_dir": accounts_dir_info, "dummy_fields": []}
             if topics_shelf:
                 payload["topics_shelf_broken"] = topics_shelf
             log(json.dumps(payload, ensure_ascii=False))
@@ -208,6 +217,15 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
             for n in notices:
                 log(n)
         return 2
+
+    # **台帳は読めた。その中身が雛形のダミーのままなら、名指しで言う**（C10）。
+    # rc の意味づけは変えない——ここは「台帳が読めない」（2）でも「トークンが
+    # 無い」（2）でもなく、**診断はできたが×がある**ので、probe が落ちたときと
+    # 同じ 1。台帳の値は人が直すもので、道具は測るだけ（設計 §4.2）。
+    dummies = accounts_mod.dummy_fields(account_cfg)
+    for d in dummies:
+        notices.append(f"台帳の `{d['field']}` が{DUMMY_LABEL}: {d['value']}")
+        notices.append(f"次の一手: {d['next']}")
 
     report = diagnose(account_name)
     if report.get("error"):
@@ -224,12 +242,16 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         report["notices"] = notices
         report["app_env"] = app_env_state
         report["accounts_dir"] = accounts_dir_info
+        report["dummy_fields"] = dummies
         if topics_shelf:
             report["topics_shelf_broken"] = topics_shelf
         log(json.dumps(report, ensure_ascii=False))
         if topics_shelf:
             # **壊れた台帳を「異常なし」で返さない**（独立監査 1・P1-1）。
             return 2
+        if dummies:
+            # 同じ筋（C10）——**ダミーの残った台帳を 0 で返さない。**
+            return 1
         return 0 if report.get("probes") and all(
             p["ok"] is not False for p in report["probes"]) else 1
 
@@ -256,4 +278,4 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     # （独立監査 1・P1-1）。probe が全部○でも rc=2。
     if topics_shelf:
         return 2
-    return 1 if failed else 0
+    return 1 if (failed or dummies) else 0
