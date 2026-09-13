@@ -155,9 +155,16 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     # `absent` / `ok` / `broken`。**無い（任意）と、置いたのに使えない（要修理）を
     # 分ける**（masaru 裁定 2026-09-13・上の `APP_ENV_ABSENT_NOTICE` の理由）。
     app_env_state, app_env_detail = appenv_mod.probe(log=env_log)
-    if app_env_state == appenv_mod.ABSENT:
+    # **app.env が要るのはその媒体の `thth auth` だけ**（`AUTH_NEEDS_APP_ENV`・
+    # 独立監査 1・P2-3・2026-09-13）。以前はここが媒体を見ずに出していたので、
+    # Bluesky の診断に「`thth auth` を使うときだけ app.env が要ります」と出た
+    # ——Bluesky の `thth auth` は App Password を対話で受けるだけで app.env を
+    # 読まない。**要らない準備を勧める道具は、そこで人の手を止める**（NEXT_STEP_
+    # AUTH_NEEDS_APP_ENV を媒体で絞ったのと同じ理由・同じ判定を使う）。
+    # 「置いたのに壊れている」は媒体に関わらず言う（実在するファイルの異常）。
+    if app_env_state == appenv_mod.ABSENT and _auth_needs_app_env(account_name):
         notices.append(APP_ENV_ABSENT_NOTICE)
-    elif app_env_state == appenv_mod.BROKEN:
+    if app_env_state == appenv_mod.BROKEN:
         notices.append(f"app.env: {app_env_detail}")
         notices.append(NEXT_STEP_APP_ENV)
     if 直した:

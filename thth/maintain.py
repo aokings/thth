@@ -54,14 +54,21 @@ CONFIG_ERROR = "config_error"
 ATTENTION_STATES = frozenset({REFRESH_FAILED, EXPIRING, EXPIRED, NO_TOKEN,
                               UNREADABLE, CONFIG_ERROR})
 
+# **次の一手は媒体が知っている**（`Adapter.TOKEN_SETUP_HINT`・独立監査 1・
+# P2-4・2026-09-13）。ここの文言は `thth maintain` だけでなく **board と
+# `thth account` にもそのまま出る**（どちらも `inspect()` の `message` を
+# 読む）ので、Threads 用の `thth token set` を焼き付けると、Bluesky の
+# アカウントに**入らない道**を 3 か所で勧めることになる（doctor は媒体を
+# 見るようになっていたので、道具の中で言い分が割れていた）。
+# `{hint}` を書いた文言だけが差し替わる。
 _MESSAGES = {
     OK: "問題ありません",
     REFRESHED: "更新しました",
     REFRESH_DUE: "更新が必要です（--check なので更新していません）",
     REFRESH_FAILED: "更新に失敗しました",
     EXPIRING: "まもなく切れます（更新できていません）",
-    EXPIRED: "期限切れです。`thth token set` か `thth auth` で取り直してください",
-    NO_TOKEN: "token がありません。`thth token set` か `thth auth` を実行してください",
+    EXPIRED: "期限切れです。`{hint}` で取り直してください",
+    NO_TOKEN: "token がありません。`{hint}` を実行してください",
     UNREADABLE: "token を読めません",
     CONFIG_ERROR: "台帳を読めません",
 }
@@ -105,10 +112,11 @@ def inspect(account_name: str, *, now) -> dict:
         adapter_cls = adapters_mod.adapter_class(account_cfg.get("media"))
     except adapter_base.AdapterError as e:
         return _finish(row, CONFIG_ERROR, detail=str(e))
+    hint = adapter_cls.TOKEN_SETUP_HINT
 
     token = accounts_mod.load_token(account_cfg)
     if token is None:
-        return _finish(row, NO_TOKEN)
+        return _finish(row, NO_TOKEN, hint=hint)
 
     row["obtained_at"] = token.get("obtained_at")
     unreadable = None
@@ -144,7 +152,7 @@ def inspect(account_name: str, *, now) -> dict:
 
     if remaining_days <= 0:
         # 期限切れは更新では戻らない（Meta 側が失効したトークンの更新を受け付けない）。
-        return _finish(row, EXPIRED)
+        return _finish(row, EXPIRED, hint=hint)
     if age_days > oauth_mod.REFRESH_AFTER_DAYS:
         if "refresh" not in adapter_cls.capabilities():
             # **更新の口が無い媒体を `REFRESH_DUE` に落とさない**（P1-1）。
@@ -162,9 +170,16 @@ def inspect(account_name: str, *, now) -> dict:
     return _finish(row, OK)
 
 
-def _finish(row: dict, state: str, *, detail: str = "") -> dict:
+def _finish(row: dict, state: str, *, detail: str = "", hint: str | None = None) -> dict:
+    """`hint` はその媒体の「トークンの入れ方」（`Adapter.TOKEN_SETUP_HINT`）。
+
+    台帳も媒体も引けなかったときは既定（`thth token set`）——**判らないときに
+    別の道を名指ししない**。
+    """
     row["state"] = state
     message = _MESSAGES.get(state, state)
+    if "{hint}" in message:
+        message = message.format(hint=hint or adapter_base.Adapter.TOKEN_SETUP_HINT)
     if detail:
         message = f"{message}: {detail}"
     row["message"] = redact_mod.redact(message)
