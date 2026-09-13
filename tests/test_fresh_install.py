@@ -404,9 +404,23 @@ def test_v2_2a_台帳を消さなくてもaddした時点で外が正になる(f
     assert not os.path.isdir(os.path.join(fresh.thth_root, "accounts")), (
         "この試験の前提が崩れている（外が最初からある）")
 
-    # --- `thth account add` を 1 本 --------------------------------------
+    # --- まず**断られる**（監査 1・P1-3）-----------------------------------
+    # 互換 (c) のまま `add` を打つと、書く先が出来た瞬間に repo の 6 本が
+    # 読まれなくなる。**それが望みなのか（clone に同梱された他人の台帳）**、
+    # **事故なのか（自分の 6 本を移し忘れた VM）**は道具には区別が付かないので、
+    # 何が起きるかを言って 1 度止まる。
+    断られた = 導入者として打つ(fresh, "account", "add", ACCOUNT,
+                              "--media", "threads", "--project", "demo")
+    assert 断られた.returncode == 1, 断られた.stdout + 断られた.stderr
+    assert "以後読まれません" in 断られた.stderr
+    assert "--force" in 断られた.stderr
+    assert not os.path.isdir(os.path.join(fresh.thth_root, "accounts")), \
+        "断ったのに外のディレクトリが出来た"
+
+    # --- `thth account add --force` を 1 本 --------------------------------
+    # 導入者にとっては **repo の 6 本は他人のもの**なので、これが正しい進み方。
     add = 導入者として打つ(fresh, "account", "add", ACCOUNT,
-                          "--media", "threads", "--project", "demo")
+                          "--media", "threads", "--project", "demo", "--force")
     assert add.returncode == 0, f"rc={add.returncode}\nout={add.stdout}\nerr={add.stderr}"
 
     # 書かれたのは **外**。clone の `accounts/` は 1 本も増えていない。

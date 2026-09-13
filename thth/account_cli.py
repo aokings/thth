@@ -306,7 +306,8 @@ def cmd_add(args) -> int:
               file=sys.stderr)
         print(f"  2) thth account add {name} --media {args.media} --project {args.project}",
               file=sys.stderr)
-        print(f"承知のうえで進めるなら `--force`。", file=sys.stderr)
+        print(f"**上の台帳が自分のものでなければ**（clone に同梱されていた他人の台帳）、"
+              f"`--force` を付けて進んでかまいません。", file=sys.stderr)
         return 1
 
     try:

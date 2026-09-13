@@ -172,6 +172,14 @@ thth account add demo-bluesky  --media bluesky  --project demo --instance https:
 
 `accounts.example/<media>.json` の雛形から `$THTH_ROOT/accounts/<name>.json` を書きます。
 
+**clone したばかりだと 1 回断られます**（rc=1）。repo の `accounts/` に開発側の台帳が同梱されていて、いまはそれを読んでいる（上の (c)）状態だからです。`add` を打つと `$THTH_ROOT/accounts/` が出来て**その台帳は以後読まれなくなる**ので、道具は何が起きるかを言って 1 度止まります。**同梱されているのは他人の台帳なので、`--force` を付けて進んでください**：
+
+```bash
+thth account add demo-threads --media threads --project demo --force
+```
+
+（**すでに自分の台帳で動いている機械**なら、`--force` ではなく §4-2 の `thth account migrate` が先です。順番を間違えると次の実行で「台帳が無い」になります。）
+
 | 事実 | 出典 | 証拠 |
 |---|---|---|
 | 書く先は**必ず外**。読みが (c) の互換に落ちていても、**repo の中には書きません** | `thth/account_cli.py` `target_accounts_dir()` | **L1**（試験 `test_addは互換のときでもrepoの中に書かない`） |
