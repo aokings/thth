@@ -44,6 +44,8 @@ cat tools/llm_trial/prompts/choice_prompt_1.md           # 被験者に渡すの
   venv/bin/thth.real   wheel が入れた本物
   venv/bin/git         薄い wrapper（thth の中から呼ばれた git と被験者の git を書き分けるだけ）
   root/                THTH_ROOT（台帳 `accounts/demo-threads.json`・state）
+                       台帳は **`production: false`／`scheduled: true`**——本物は投げないが
+                       **queue 経路（lint → approve → throw）は使える**（H1(a)）
   appdir/              THTH_APP_DIR
   home/.config/thth/app.env   **偽の値**（本物のアプリ ID・秘密ではない）
   repos/demo/          原稿 repo（origin は箱の中の bare・`docs/sns/queue/` は空）

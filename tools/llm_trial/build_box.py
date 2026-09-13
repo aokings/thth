@@ -370,7 +370,23 @@ def box_env(box: str) -> dict:
 
 
 def write_ledger(box: str, repo: str) -> str:
-    """台帳 1 本。**wrapper を置く前に打つ**——ログに残さないため（設計 4-1）。"""
+    """台帳 1 本。**wrapper を置く前に打つ**——ログに残さないため（設計 4-1）。
+
+    **`scheduled: true` にする**（H1(a)・第 1 回の記録 §3）。`thth account add` は
+    必ず `scheduled: false` で台帳を書く（`thth/account_cli.py:build_ledger()`——
+    道具が作ったものがいきなり timer に載ってはいけない）。ところが
+    `thth/account_report.py:622` の `scheduled = account_cfg.get("scheduled", True)`
+    が偽なら、`thth account <name>` は **「同席専用（queue も timer も持たない）」**
+    と述べ、repo も queue も出さない。第 1 回の被験者 3 体はこれを読んで
+    `queue → lint → approve → throw` を**正しく諦め**、`send --text-file` に着いた。
+    測りたかった経路が箱に無かったのだから、これは被験者ではなく**箱の欠陥**。
+
+    `scheduled` は台帳の鍵**だけ**で決まる（`repo_dir` や queue dir の有無ではない
+    ——それらは `scheduled` が真のときに初めて blocker として見られる）。だから
+    ここで 1 鍵だけ立て直す。**`production` は false のまま**（この箱は本物を
+    投げない）。原稿 repo の `docs/sns/queue/` は空のまま——雛形を作るところから
+    が試験。
+    """
     thth = os.path.join(box, "venv", "bin", "thth")
     r = _run([thth, "account", "add", ACCOUNT, "--media", "threads",
               "--project", "demo", "--repo-dir", repo, "--force"],
@@ -385,6 +401,10 @@ def write_ledger(box: str, repo: str) -> str:
     # **この箱は本物を投げない。** 雛形の既定だが、変わったら気づけるようにする。
     if data.get("production") is not False:
         raise SystemExit(f"台帳が production: true で生まれました（試験に使えません）: {path}")
+    data["scheduled"] = True
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
     return path
 
 

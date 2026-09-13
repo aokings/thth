@@ -93,6 +93,27 @@ def test_箱が組める(box):
     assert os.path.exists(os.path.join(box, "snapshot_before.json"))
 
 
+def test_箱の台帳はqueue経路を持つ(box):
+    """**同席専用ではない**（H1(a)・第 1 回の記録 §3）。
+
+    `thth account <name>` が「同席専用（queue も timer も持たない）」と述べる箱では、
+    `queue → lint → approve → throw` が初めから無い——第 1 回で測れなかった条件は
+    それが理由。判定は `thth/account_report.py:622`
+    （`scheduled = account_cfg.get("scheduled", True)`）だけで決まる。
+    """
+    台帳 = os.path.join(box, "root", "accounts", f"{bb.ACCOUNT}.json")
+    with open(台帳, encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["scheduled"] is True, data
+    assert data["production"] is False, "本物を投げる箱にしてはいけない"
+
+    r = _run_in_box(box, "account", bb.ACCOUNT, "--no-remote")
+    assert "同席専用" not in r.stdout, r.stdout
+    # queue の置き場と repo が画面に出る（被験者がそこに雛形を作れる）。
+    assert os.path.join(box, "repos", "demo") in r.stdout, r.stdout
+    assert "queue" in r.stdout, r.stdout
+
+
 def test_箱は空でない場所には組めない(tmp_path):
     """**毎回まっさらな箱で。** 前の試験の残りが混ざると差分が嘘になる。"""
     d = tmp_path / "used"
