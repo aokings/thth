@@ -2,13 +2,13 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.aokings/thth",
   "description": "Call it before you post: a gate that ships a draft to Threads, Bluesky or Mastodon only after a person approved that exact text, and that answers what your own record shows about a word and a shape, with the counts and the period behind every number.",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "thth",
-      "version": "1.3.0",
+      "version": "2.0.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
