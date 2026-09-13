@@ -5,11 +5,27 @@ import hashlib
 import json
 import os
 import re
+import sys
 
 # この thth アプリ repo 自身の場所（thth/ パッケージの 1 つ上）。
-# VM では $THTH_ROOT/app がここに一致する。accounts/ は常にここ基準で探す
-# （THTH_ROOT が別ディレクトリを指しても、台帳は app repo に commit されたものを使う）。
+# VM では $THTH_ROOT/app がここに一致する。
+#
+# **v2-2a まで `accounts/` は常にここ基準だった**（台帳は app repo に commit する・
+# 設計 v1 §4.2）。設計 v2 §3「台帳を repo の外へ」（masaru 裁定 2026-09-13「出す」）で
+# それを変えた——正は `$THTH_ROOT/accounts/`、ここ基準の `accounts/` は
+# **互換の最後の手段**（`accounts_dir_info()` を読むこと）。
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 台帳の置き場を明示で差し替える環境変数（いちばん強い）。
+ACCOUNTS_DIR_ENV = "THTH_ACCOUNTS_DIR"
+
+# `accounts_dir_info()["source"]` が返す値。
+SOURCE_ENV = "env"            # $THTH_ACCOUNTS_DIR
+SOURCE_ROOT = "root"          # $THTH_ROOT/accounts（**正**）
+SOURCE_APP_REPO = "app_repo"  # app repo の accounts/（**互換・1 版だけ**）
+
+LEGACY_WARNING = ("台帳が repo の中にあります。"
+                  "`thth account migrate` で外へ出してください")
 
 REQUIRED_FIELDS = [
     "account", "project", "media", "handle", "repo_dir", "queue_dir",
@@ -55,8 +71,76 @@ def app_dir() -> str:
     return os.environ.get("THTH_APP_DIR") or APP_DIR
 
 
-def accounts_dir() -> str:
+def root_accounts_dir() -> str:
+    """**正**の置き場（設計 v2 §3「台帳を repo の外へ」）。無くてもこの綴り。"""
+    return os.path.join(thth_root(), "accounts")
+
+
+def legacy_accounts_dir() -> str:
+    """app repo の中の `accounts/`（設計 v1 §4.2 の置き場・互換）。"""
     return os.path.join(app_dir(), "accounts")
+
+
+def accounts_dir_info() -> dict:
+    """台帳の置き場を決める（設計 v2 §3・裁定 §7-1「出す」）。
+
+    順番:
+      (a) 環境変数 `THTH_ACCOUNTS_DIR`（明示。テストと特殊な配置のため）
+      (b) `$THTH_ROOT/accounts/` —— **正**。あればこれ
+      (c) それが無ければ **app repo の `accounts/`** —— **互換。1 版だけ**
+
+    **(c) を消すと VM の稼働が止まる**（設計 v2 §8 の止まる条件）。VM の
+    `/srv/thth/app` は clone で、台帳はそこに commit されている。この版で (c) を
+    落とすと、次の timer で本番 4 本が全部「台帳が無い」になる。運用が
+    `thth account migrate` で `$THTH_ROOT/accounts/` に写しを作り、それを確認して
+    から、**別の日に** repo の `accounts/` を消す。
+
+    **(b) は「ディレクトリがあるか」だけで見る**（中に台帳があるかは見ない）。
+    空でもあれば正——`thth account add` を 1 本打った時点で外が正になり、repo の
+    台帳は二度と読まれない。「外に足したのに repo の分も混ざって並ぶ」を作らない
+    ため（監査 1・P3-12 が見つけたのがまさにそれ）。
+
+    返り値は `{"path": …, "source": …}`。`source` は上の 3 つの定数のどれか。
+    どちらも無いときは (b) の綴りを `root` として返す（＝台帳 0 本）。
+    """
+    env = os.environ.get(ACCOUNTS_DIR_ENV)
+    if env:
+        return {"path": env, "source": SOURCE_ENV}
+    outside = root_accounts_dir()
+    if os.path.isdir(outside):
+        return {"path": outside, "source": SOURCE_ROOT}
+    legacy = legacy_accounts_dir()
+    if os.path.isdir(legacy):
+        return {"path": legacy, "source": SOURCE_APP_REPO}
+    return {"path": outside, "source": SOURCE_ROOT}
+
+
+# 互換の警告は**1 プロセスに 1 行**。`accounts_dir()` は 1 回の実行で何十回も
+# 呼ばれるので、毎回出すと画面が警告で埋まって読まれなくなる。
+_legacy_warned = False
+
+
+def reset_legacy_warning() -> None:
+    """テスト用。1 プロセスの中で警告をもう一度出させる。"""
+    global _legacy_warned
+    _legacy_warned = False
+
+
+def _warn_legacy_once(path: str) -> None:
+    global _legacy_warned
+    if _legacy_warned:
+        return
+    _legacy_warned = True
+    # **stderr へ出す。** `--json` は stdout に JSON 1 個だけ、という出力契約
+    # （設計 §6）を警告で壊さないため。
+    print(f"⚠ {LEGACY_WARNING}（{path}）", file=sys.stderr)
+
+
+def accounts_dir() -> str:
+    info = accounts_dir_info()
+    if info["source"] == SOURCE_APP_REPO:
+        _warn_legacy_once(info["path"])
+    return info["path"]
 
 
 def _expand(value):
