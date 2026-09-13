@@ -70,7 +70,12 @@ def cmd_lint(args) -> int:
         errors = [m for m in messages if not lint_mod.is_warning(m)]
         warnings = [m for m in messages if lint_mod.is_warning(m)]
         any_error = any_error or bool(errors)
-        rows.append({"file": path, "errors": errors, "warnings": warnings, "ok": not errors})
+        row = {"file": path, "errors": errors, "warnings": warnings, "ok": not errors}
+        # **断り文の末尾に次の一手を 1 行**（T1・第 1 回の記録 §3）。
+        next_step = lint_mod.next_step(path) if errors else None
+        if next_step:
+            row["next_step"] = next_step
+        rows.append(row)
 
     if args.json:
         _print_json(rows[0] if len(rows) == 1 else rows)
@@ -81,6 +86,8 @@ def cmd_lint(args) -> int:
                 print(prefix + "OK")
             for m in row["errors"] + row["warnings"]:
                 print(prefix + m)
+            if row.get("next_step"):
+                print(prefix + row["next_step"])
     return 0 if not any_error else 1
 
 
@@ -91,6 +98,11 @@ def cmd_preview(args) -> int:
         section = lint_mod.preview_file(args.file)
     except (ValueError, accounts_mod.AccountError) as e:
         print(str(e), file=sys.stderr)
+        # **断り文の末尾に次の一手を 1 行**（T1・第 1 回の記録 §3）。素の原稿に
+        # `preview` を当てた人は「媒体の節が無い」とだけ言われて行き先を失う。
+        next_step = lint_mod.next_step(args.file)
+        if next_step:
+            print(next_step, file=sys.stderr)
         return 1
     if getattr(args, "json", False):
         qf = queuefile.parse(args.file)
@@ -2269,12 +2281,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=_version_string())
     sub = p.add_subparsers(dest="command", required=True)
 
-    p_lint = sub.add_parser("lint", help="front-matter の形式・文字数等を検査する")
+    # **冒頭に「queue のファイル用」**（T1・第 1 回の記録 §3）。素の原稿を持って
+    # いる人が `lint`/`preview` から始めて空振りする往復を減らす。
+    p_lint = sub.add_parser(
+        "lint", help="queue のファイル用: front-matter の形式・文字数等を検査する",
+        description="queue のファイル用。front-matter の形式・文字数等を検査する"
+                    "（素の原稿は `thth send <account> --text-file <file>`）。")
     p_lint.add_argument("file", nargs="+", help="ファイルでもディレクトリでも可")
     p_lint.add_argument("--json", action="store_true")
     p_lint.set_defaults(func=cmd_lint)
 
-    p_preview = sub.add_parser("preview", help="実際に投げる本文そのものを返す")
+    p_preview = sub.add_parser(
+        "preview", help="queue のファイル用: 実際に投げる本文そのものを返す",
+        description="queue のファイル用。実際に投げる本文そのものを返す"
+                    "（素の原稿は `thth send <account> --text-file <file>`）。")
     p_preview.add_argument("file")
     p_preview.add_argument("--json", action="store_true", help="本文に加えて topic 等を JSON で返す")
     p_preview.set_defaults(func=cmd_preview)

@@ -23,6 +23,40 @@ def is_warning(message: str) -> bool:
     return message.startswith("warning:")
 
 
+# --------------------------------------------------------------------------
+# front-matter の無いファイルに当たったときの次の一手（T1・第 1 回の記録 §3）
+# --------------------------------------------------------------------------
+
+# **断るだけで終わらない。** 第 1 回（2026-09-13・L1）は 3 体とも素の原稿に
+# `thth lint`／`thth preview` を当て、「front-matter が無い」とだけ言われて
+# `--help` の往復に戻った（1〜2 往復の損・呼び出し 14・22・10 回のうち）。
+# **素の原稿を持っている人がここに来るのは自然**なので、その人の行き先を
+# 1 行で言う——`lint`/`preview` は queue のファイル用の道具であって、
+# 素の原稿には `send` がある。
+NEXT_STEP_NO_FRONT_MATTER = (
+    "次の一手: 素の原稿を 1 回だけ出すなら `thth send <account> --text-file {file}`"
+    "（乾式試験が既定）。queue で運用するなら front-matter 付きのファイル"
+    "（`thth queue --help`／導入文書 §6）"
+)
+
+
+def has_front_matter(path: str) -> bool:
+    """先頭が `---` で囲まれた front-matter か（中身の正しさは見ない）。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return True          # 読めない理由は別に述べられる。次の一手は出さない。
+    return queuefile._split_front_matter(text) is not None
+
+
+def next_step(path: str) -> str | None:
+    """front-matter が無いなら次の一手の 1 行、あるなら `None`。"""
+    if has_front_matter(path):
+        return None
+    return NEXT_STEP_NO_FRONT_MATTER.format(file=path)
+
+
 def _bundle_segments(b, media: str):
     from . import bundle as bundle_mod
     return bundle_mod.load_segments(b, media)
