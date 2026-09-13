@@ -7,6 +7,7 @@
 
 ```
 python3 tools/llm_trial/build_box.py /tmp/thth-trial-1   # 箱を 1 つ組む（wheel を建てて別 venv に入れる）
+python3 tools/llm_trial/build_box.py /tmp/thth-trial-long --long  # draft.md を上限超え（942 字ほど）にする（編集の往復を測る別の試験用）
 . /tmp/thth-trial-1/env.sh                               # 被験者に渡す環境（HOME ごと箱の中）
 cd /tmp/thth-trial-1 && thth --help                      # 被験者はここから先だけを触る
 python3 tools/llm_trial/score.py /tmp/thth-trial-1       # 採点（rc=0 が「通った」・score.json も書く）
