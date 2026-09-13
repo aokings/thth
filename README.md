@@ -30,7 +30,7 @@ timer（systemd・`thth systemd` で生成）で毎時投稿、返信の採集�
 
 **トピックの棚**（`thth topics`）: 観測者ごとに並ぶ・打ち消し `retract-note`・`history`。
 
-- **動くもの**（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`token`。
+- **動くもの**（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`。
 - **最初の本番投稿の記録**: 2026-09-09、@aoking に疎通確認を 1 本（`17916074118445631`）。
 - **未着手**: X・Facebook ページ・Instagram の各アダプタ。トピック検索の権限（tester には降りない）。
 - **権限の制約**: tester に降りる scope は 5 つ。削除はできない。

@@ -82,17 +82,49 @@ thth doctor <account>
 
 ---
 
-## 3. `~/.config/thth/app.env`
+## 3. `~/.config/thth/app.env` —— **`thth auth` を使うときだけ**
+
+### この節を飛ばしてよい場合
+
+**管理画面の「ユーザートークン生成ツール」で発行したトークンを `thth token set`（§5）で入れる運用なら、`app.env` は要りません。この節を飛ばして §4 へ進んでください**（設計 §4.2「置かないものは漏れない」）。
+
+`app.env`（`THREADS_APP_ID`・`THREADS_APP_SECRET`）を読むのは **`thth auth`（認可コードから長期トークンを取る道）だけ**です。**トークンの延長も読みません**——`thth refresh` / `thth maintain` が叩く `refresh_access_token` は app secret を使いません（`thth/oauth.py`・**L1**）。masaru の本番 4 アカウントは `app.env` を置かずに動いています（2026-09-13・**L3**＝masaru の VM でしか確かめていない）。
+
+### 置くとき —— 手で書かずに `thth app set`
 
 **全アカウント共通の 1 本です。** アカウントが増えても書き足しません（設計 §3.1・§9-1b）。
 
-```
-THREADS_APP_ID=<Threads app ID>
-THREADS_APP_SECRET=<Threads app secret>
+```bash
+$ thth app set --app-id <Threads app ID>
+Threads の App Secret を貼り付けてください（表示されません）:
+app.env を書きました: /home/wt/.config/thth/app.env（600）
 ```
 
+**App Secret は `getpass` で受け取ります——打っても画面に出ません。** 書いたあとに言うのは path と `600` だけで、**値は標準出力にも標準エラーにも出ません**。
+
+非対話（スクリプト・tty を割り当てない `ssh`）は `--secret-stdin` で標準入力から 1 行:
+
 ```bash
-chmod 600 ~/.config/thth/app.env
+printf '%s\n' "$APP_SECRET" | thth app set --app-id <Threads app ID> --secret-stdin
+```
+
+**`--secret-stdin` を付けずに端末以外から呼ぶと、読まずに止まります**（tty が無いとエコーを止められず、手元の画面に secret がそのまま出てしまうため。`thth token set` と同じ作法）。
+
+置いたものを確かめる（**値は出ません**）:
+
+```
+$ thth app show
+app.env: /home/wt/.config/thth/app.env
+  あり
+  項目: THREADS_APP_ID・THREADS_APP_SECRET
+  パーミッション: 600
+  値は表示しません。
+rc = 0
+```
+
+```
+$ thth app show --json
+{"path": "/home/wt/.config/thth/app.env", "exists": true, "keys_present": ["THREADS_APP_ID", "THREADS_APP_SECRET"], "mode_ok": true}
 ```
 
 | 事実 | 出典 | 証拠 |
@@ -100,11 +132,14 @@ chmod 600 ~/.config/thth/app.env
 | 既定のパスは `~/.config/thth/app.env`。**環境変数 `THTH_APP_ENV_PATH` で差し替えられる**（テストの隔離用） | `thth/appenv.py` `default_path()` | **L1** |
 | 鍵の名前は `THREADS_APP_ID` と `THREADS_APP_SECRET` の 2 つだけ。どちらかが空なら `app.env に項目が足りません` | `thth/appenv.py` `REQUIRED_KEYS` | **L1** |
 | 読むときに 600 でなければ**警告して直します**（`警告: … のパーミッションが … です。600 に直します。`） | `thth/secrets_fs.py` `ensure_mode_600()` | **L1** |
-| **`app.env` を使うのは `thth auth` だけです。** `lint`・`board`・`throw` は読みません。`doctor` は**存在と、2 つの項目（`THREADS_APP_ID`・`THREADS_APP_SECRET`）が空でないことだけ**を見て、足りなければ `次の一手: 導入文書 §3` と言います（値は出力しません。実測: 項目が空でも同じく `次の一手: 導入文書 §3` になる） | 実測（§7 の乾式試験・`tests/test_doctor_next_step.py`） | **L1** |
+| `thth app set` は**一時ファイル ＋ `os.replace` で原子的に**書き、**600** にします。ディレクトリが無ければ **700** で作ります。上書きしても 600 に戻します | 実測（隔離した乾式試験・`tests/test_app_env_cli.py`） | **L1** |
+| **App Secret は stdout にも stderr にも出ません。** 成功時の出力は `app.env を書きました: <path>（600）` の 1 行だけ | 実測（隔離した乾式試験・`tests/test_app_env_cli.py`） | **L1** |
+| 空の `--app-id`・空の App Secret は **rc=2 で断り、ファイルを作りません**（既存があれば壊しません） | 実測（隔離した乾式試験・`tests/test_app_env_cli.py`） | **L1** |
+| `thth app show` は**有無・鍵の名前・パーミッションだけ**を出します。**値は出しません**し、パーミッションも直しません（読むだけ）。`--json` は `{"path", "exists", "keys_present", "mode_ok"}` | 実測（隔離した乾式試験・`tests/test_app_env_cli.py`） | **L1** |
+| **`app.env` を使うのは `thth auth` だけです。** `lint`・`board`・`throw`・`refresh` は読みません。`doctor` は**存在と、2 つの項目が空でないことだけ**を見ます（値は出力しません）。**無いときは「任意」と言うだけで §3 は指しません。置いたのに項目が空・読めないときだけ `次の一手: 導入文書 §3` になります** | 実測（隔離した乾式試験・`tests/test_doctor_next_step.py`） | **L1** |
+| **`app set` / `app show` は MCP に出しません**（秘密は人の手のまま・設計 §3.7。`auth`・`refresh`・`token set` と同じ扱い） | `mcp/server.py` `TOOLS`・`tests/test_mcp.py` | **L1** |
 
-**だから、管理画面の「ユーザートークン生成ツール」で発行したトークンを `thth token set` で入れる運用なら、`app.env` は作らなくても動きます**（設計 §4.2「置かないものは漏れない」）。`thth auth` を使う日に作ってください。
-
-**値をこの repo に書かないでください。** 台帳（`accounts/*.json`）にも、docs にも、commit message にも。
+**値をこの repo に書かないでください。** 台帳（`accounts/*.json`）にも、docs にも、commit message にも。`thth app set` を使えば、値が shell の履歴にも残りません（`--app-id` は秘密ではありません）。
 
 ---
 
@@ -249,6 +284,8 @@ Unit=thth@demo-threads.service
 | §7-3 board に `token=no_token` | `test_step_3_board_shows_the_account_without_a_token` |
 | §7-4 dry-run が `mode: rehearsal` | `test_step_4_dry_run_is_rehearsal_and_posts_nothing` |
 | §3・§5 `app.env` を使うのは `auth` だけ（`doctor` は有無だけ見る） | `test_auth_reads_app_env_and_stops_at_the_code_prompt` / `test_auth_stops_loudly_when_app_env_is_missing` / `tests/test_doctor_next_step.py` |
+| §3 `app.env` が無くても `doctor` は §3 を指さない（「任意」と言う）・壊れているときだけ指す | `test_doctorはapp_env無しでも節3を言わず任意だと言う` / `test_doctorは壊れたapp_envでは節3を言う` |
+| §3 `thth app set` が 600 で原子的に書き、App Secret を出力に出さない | `tests/test_app_env_cli.py` |
 | §6 unit は台帳から生成される | `test_systemd_unit_is_generated_from_the_ledger` |
 | §8 board が「追いついています」と言わない | `test_board_does_not_claim_to_be_up_to_date_without_a_release_check` |
 
@@ -262,7 +299,23 @@ $ thth doctor demo-threads
 rc = 2
 ```
 
-**これが期待どおりの停止です。** `app.env`（§3）や台帳（§4）が無ければ、その節を指す行が先に出ます。 トークンを入れる前にここで止まるのが正しい。トークンを入れたあとに走らせると、そのトークンで**実際に何ができるか**を読み取りだけで測ります（投稿・返信・削除は呼びません）。
+**これが期待どおりの停止です。** 台帳（§4）が無ければ、その節を指す行が先に出ます。トークンを入れる前にここで止まるのが正しい。トークンを入れたあとに走らせると、そのトークンで**実際に何ができるか**を読み取りだけで測ります（投稿・返信・削除は呼びません）。
+
+**`app.env` を置いていない場合は、こう出ます**（§3 は指しません——無いのは任意だからです）:
+
+```
+$ thth doctor demo-threads
+app.env: 無し（任意。`thth auth` を使うときだけ要ります。管理画面で発行したトークンを `thth token set` で入れる運用なら不要。置くなら `thth app set`）
+次の一手: 導入文書 §5 トークン を見てください。
+`thth auth` を使うなら先に `thth app set`（導入文書 §3）。
+
+トークンが無い（thth token set を先に）
+rc = 2
+```
+
+**トークンを入れたあとは、`app.env` について言うのは 1 行目だけになります**（「次の一手」は消えます）。**`app.env` を置いたのに項目が空・読めないときだけ**、いままでどおり `次の一手: 導入文書 §3 app.env を見てください。` が出ます。**「無い」（任意）と「置いたのに使えない」（要修理）を分ける**のが 2026-09-13 の直しです——正しい状態を毎回「足りない」と言う道具は、本当に足りないときに読まれなくなります。
+
+`--json` には `app_env` が `"absent"` / `"ok"` / `"broken"` で入ります（既存の鍵はそのまま・追加のみ）。
 
 ### 7-2. `thth lint <queue ディレクトリ>` —— front-matter の形
 
@@ -336,16 +389,16 @@ rc = 0
 |---|---|---|---|
 | §1 前提 | 4 | 1 | 1 |
 | §2 Meta アプリ | 0 | 5 | 7 |
-| §3 app.env | 4 | 0 | 0 |
+| §3 app.env | 10 | 0 | 1 |
 | §4 台帳 | 8 | 2 | 0 |
 | §5 トークン | 8 | 2 | 3 |
 | §6 timer | 7 | 0 | 1 |
 | §7 確かめ方 | 2 | 0 | 0 |
 | §8 配布の枝 | 6 | 1 | 1 |
-| **計 63** | **39** | **11** | **13** |
+| **計 70** | **45** | **11** | **14** |
 
 **§7 の 2 件は、行ごとの印ではなく「この 4 つは `tests/test_fresh_install.py` が毎回同じ順番で通している」という一括宣言から数えたものです。** 個別に印を付けている他の節と数え方が違う点に注意してください。
 
-**L3 は 13 / 63 ＝ 21%。** 設計 §6 の止まる条件（「導入文書に L3 しか無い手順が半分を超えたら止まる」）には当たっていません。
+**L3 は 14 / 70 ＝ 20%。** 設計 §6 の止まる条件（「導入文書に L3 しか無い手順が半分を超えたら止まる」）には当たっていません。
 
 **ただし L3 は §2 に固まっています。** Meta の管理画面まわりは 11 手順のうち 7 つが L3 です。**この文書で導入して詰まるとしたら、ほぼ確実に §2 です。** 詰まったら §2 に足してください。
