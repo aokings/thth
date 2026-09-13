@@ -586,3 +586,19 @@ def test_T_V0_5_本物の台帳を1バイトも書き換えない(isolated_accou
     after = subprocess.run(["git", "-C", repo, "status", "--porcelain"],
                             capture_output=True, text=True).stdout
     assert before == after
+
+
+def test_要約の表は中央値だと画面に書いてある(capsys, monkeypatch):
+    """運用の指摘（2026-09-13）: 8 本中 1 本だけ返信 14 でも表は 0 と出る。中央値と書かないと
+    「一般名詞は返信 0」と読める。見出しと脚注の両方に出す。"""
+    import types
+    from thth import cli as cli_mod
+    minimal = {"account": "x", "medium": "threads", "marks": [1, 6, 24, 72, 168], "posts": [],
+               "posts_without_reply_ledger": [], "broken": [], "unreadable_accounts": [],
+               "summary": {"medium": "threads", "by_kind": {}, "by_hour_band": {}, "cannot_say": []}}
+    monkeypatch.setattr(cli_mod.threadshape_mod, "load", lambda *_a, **_k: minimal)
+    rc = cli_mod.cmd_threads(types.SimpleNamespace(account="x", post=None, json=False))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "中央値" in out, out
+    assert "投稿ごとの行を見てください" in out, out

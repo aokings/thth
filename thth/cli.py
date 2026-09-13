@@ -1070,7 +1070,7 @@ def cmd_threads(args) -> int:
         print("")
 
     summary = result["summary"]
-    print(f"—— 要約（媒体 {summary['medium']} で閉じています・媒体をまたいで集計しません）")
+    print(f"—— 要約（**中央値**・媒体 {summary['medium']} で閉じています・媒体をまたいで集計しません）")
     cols = [("枝", "branches", 8), ("最深", "depth", 8), ("返信", "replies_total", 8),
             ("最初の返信(分)", "first_reply_min", 16)]
     print(_pad("区分", 22) + _pad("n", 4, right=True) + "  "
@@ -1086,6 +1086,10 @@ def cmd_threads(args) -> int:
                                   width, right=True))
             print(_pad(f"{label}:{name}", 22) + _pad(str(group["n"]), 4, right=True)
                   + "  " + "".join(cells))
+    # **表は中央値**（運用の指摘 2026-09-13）。8 本のうち 1 本だけ返信 14 でも、中央値は 0 に
+    # なる。「一般名詞は返信 0」と読ませない——数値は出所（どう集計したか）を連れて歩く
+    # （設計 v1 §3.2.2）。伸びた 1 本は上の投稿ごとの行にある。
+    print("  ※ 表の数は中央値です。1 本だけ伸びた投稿は中央値に出ません。投稿ごとの行を見てください。")
     print("")
     if summary["cannot_say"]:
         print("言えないこと（n が足りません）:")
