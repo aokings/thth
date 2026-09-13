@@ -2022,6 +2022,19 @@ def cmd_board(args) -> int:
             print(f"  **現在の remote の配布状況は、この画面では確認していません**")
         print("")
 
+        # **いま run が走っていれば 1 行**（引継ぎ 2026-09-13「小さいもの」）。
+        # board は inflight しか見ていなかったので、「実行中で待っている」と
+        # 「止まっている」が同じ顔だった。**出ないことは「走っていない」の証明
+        # ではない**（`AccountLock.holder_pid()` の但し書き）ので、
+        # **見つけたときだけ**足す——無いときに「走っていません」とは言わない。
+        走っている = [name for name in summary.get("running") or [] if name != "_app"]
+        if 走っている:
+            print(f"いま run が走っています（{'・'.join(走っている)}）")
+        if "_app" in (summary.get("running") or []):
+            print("いま自己更新が走っています（`_app.lock`）")
+        if summary.get("running"):
+            print("")
+
         # 生の dict をそのまま出さず、人が読む形に整える（--json は機械可読のまま
         # 残す・外部レビュー再レビュー C）。
         for row in summary["accounts"]:

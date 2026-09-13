@@ -141,7 +141,7 @@ def _account_locks(account_name: str, account_cfg: dict, state_dir: str):
     投げる（呼び出し側の `throw_once`/`send_once` が `action="locked"` に変換する）。
     """
     repo_lock_path = accounts_mod.repo_lock_path_for(account_cfg["repo_dir"])
-    account_lock_path = os.path.join(state_dir, "lock")
+    account_lock_path = accounts_mod.account_lock_path_for(account_name)
     repo_lock = lock_mod.AccountLock(repo_lock_path)
     account_lock = lock_mod.AccountLock(account_lock_path)
 

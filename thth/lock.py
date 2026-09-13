@@ -48,6 +48,7 @@ class AccountLock:
             os.close(fd)
             raise LockBusy(f"ロック取得失敗（flock）: {self.lock_path}")
         self._fd = fd
+        self._write_pid(fd)
 
     def _acquire_mkdir(self) -> None:
         lock_dir = self.lock_path + ".d"
@@ -81,20 +82,51 @@ class AccountLock:
     def _read_pid(pid_path: str) -> int | None:
         try:
             with open(pid_path, encoding="utf-8") as f:
-                return int(f.read().strip())
+                pid = int(f.read().strip())
         except (OSError, ValueError):
             return None
+        return pid if pid > 0 else None
 
     @staticmethod
     def _pid_alive(pid: int) -> bool:
         try:
             os.kill(pid, 0)
+        except PermissionError:
+            # **居るが、こちらに信号を送る権限が無い**（別の利用者のプロセス）。
+            # 「居ない」ではない——奪う側でも観る側でも、安全なのは「居る」。
             return True
         except OSError:
             return False
+        return True
+
+    @staticmethod
+    def _write_pid(fd: int) -> None:
+        """握った直後に**自分の pid を中身として書く**（`holder_pid()` が読む）。
+
+        flock の保持者は OS しか知らない。**読み取りだけで「いま誰かが握って
+        いるか」を答えるには、握っている側が名乗るしかない**（`thth board` が
+        知るため・2026-09-13）。flock を試して調べる形にすると、**観るだけの
+        board が一瞬ロックを取り、そのあいだに始まった `thth run` が
+        「既に実行中」で落ちる**——観測が対象を壊す。
+
+        中身は pid の 10 進表記だけ。**flock の意味は変わらない**（中身は
+        誰も読まない・追記もしない）。
+        """
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.ftruncate(fd, 0)
+            os.write(fd, str(os.getpid()).encode("ascii"))
+        except OSError:
+            pass    # 名乗れなくてもロックは有効（board が「判らない」になるだけ）
 
     def release(self) -> None:
         if self._fd is not None:
+            try:
+                # 放す前に名乗りを消す（**残すと、死んでもいないのに古い pid が
+                # 残る**）。pid が生きているかは `holder_pid()` も見るので二重の網。
+                os.ftruncate(self._fd, 0)
+            except OSError:
+                pass
             try:
                 import fcntl
                 fcntl.flock(self._fd, fcntl.LOCK_UN)
@@ -112,6 +144,37 @@ class AccountLock:
             except OSError:
                 pass
             self._mkdir_path = None
+
+    @classmethod
+    def holder_pid(cls, lock_path: str) -> int | None:
+        """そのロックを**いま握っている**プロセスの pid（読み取りだけ・**握らない**）。
+
+        `None` は「握っている者を見つけられない」——**「誰も握っていない」の
+        証明ではない**（名乗りの書き込みに失敗した・古い版が握っている・pid が
+        読めない、でも `None` になる）。呼び手はこれを「走っていない」と言い換えて
+        はいけない（`thth board` は**見つけたときだけ**1 行足す）。
+
+        判定は 2 段:
+
+        1. 中身（または mkdir 版の `pid` ファイル）から pid を読む。
+        2. **その pid が生きているか**を見る。`kill -9` されると flock は OS が
+           放すのに名乗りだけ残るので、生死を見ないと「永遠に実行中」になる
+           （mkdir 版の stale 判定と同じ理屈）。
+
+        **pid の使い回し**までは見分けられない（別のプロセスが同じ pid を得て
+        いれば「握っている」と答える）。**L3**——ここは近似だと明記しておく。
+        """
+        pid = cls._read_pid(os.path.join(lock_path + ".d", "pid"))
+        if pid is None:
+            pid = cls._read_pid(lock_path)
+        if pid is None or not cls._pid_alive(pid):
+            return None
+        return pid
+
+    @classmethod
+    def is_held(cls, lock_path: str) -> bool:
+        """`holder_pid()` が見つかったか。**「見つからない＝空いている」ではない。**"""
+        return cls.holder_pid(lock_path) is not None
 
     def __enter__(self) -> "AccountLock":
         self.acquire()
