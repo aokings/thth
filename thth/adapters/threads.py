@@ -546,6 +546,22 @@ class ThreadsAdapter(base.Adapter):
                 raise RuntimeError(
                     f"{what}: 次の頁の指し先が読めません"
                     f"（{type(nxt).__name__}）。**途中までを取れたことにしません**")
+            # **次の頁の指し先は「同じサーバの https」だけ**（セキュリティ監査
+            # 2026-09-14・P1-2）。`paging.next` は**サーバが自由に書ける文字列**
+            # で、`_get(absolute_url=...)` はそれに `access_token` を付けて叩いて
+            # いた——`{"paging": {"next": "https://attacker.example/x"}}` を 1 度
+            # 返すだけで、**アクセストークンが第三者のログに載る**。
+            #
+            # 読めない形（型が違う）と同じ扱いにする（`RuntimeError`・**途中まで
+            # を取れたことにしない**）。追わずに黙って終端にすると、取得済の印が
+            # 付いて次の刻みでやり直せなくなる。
+            parts = urllib.parse.urlsplit(nxt)
+            base_netloc = urllib.parse.urlsplit(self.base_url).netloc
+            if parts.scheme != "https" or parts.netloc != base_netloc:
+                raise RuntimeError(
+                    f"{what}: 次の頁が別のホストを指しています"
+                    f"（{parts.scheme}://{parts.netloc} ≠ https://{base_netloc}）。"
+                    f"**追いません**（access_token を外へ出さないため）")
             if nxt in seen_urls:
                 # **同じ頁を指し続ける**（API 側の不具合・cursor の取り違え）。
                 # **黙って回り続けない。**

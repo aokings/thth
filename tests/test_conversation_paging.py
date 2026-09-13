@@ -18,6 +18,10 @@ class _頁を返す口(threads_mod.ThreadsAdapter):
     def __init__(self, 頁: list):
         self.頁 = list(頁)
         self.叩いた: list = []
+        # `_all_pages()` は次の頁の指し先が**同じサーバの https** かを見る
+        # （セキュリティ監査 2026-09-14・P1-2）。この偽の口は `__init__` を
+        # 呼ばないので、比べる先をここで持たせる（頁を辿る筋書きは変えない）。
+        self.base_url = "https://例"
 
     def _get(self, path, params, *, absolute_url=None):
         self.叩いた.append(absolute_url or path)
@@ -108,3 +112,45 @@ def test_pagingの形が違えば終端と読まない():
     with pytest.raises(RuntimeError) as e:
         口.conversation("POST1")
     assert "`paging` の形が違います" in str(e.value)
+
+
+# ---------------------------------------------------------------------------
+# 次の頁の指し先（セキュリティ監査 2026-09-14・P1-2）
+# ---------------------------------------------------------------------------
+# `paging.next` は**サーバが自由に書ける文字列**で、`_get(absolute_url=...)` は
+# それに `access_token` を付けて叩いていた。1 度返すだけで**トークンが第三者の
+# ログに載る**。型が違うときと同じ扱い（`RuntimeError`・部分を成功にしない）。
+
+@pytest.mark.parametrize("よそのURL", [
+    "https://attacker.example/次",
+    "http://例/次",                        # 同じホストでも平文への格下げ
+    "https://例.attacker.example/次",       # 似た綴りの別ホスト
+    "//attacker.example/次",               # scheme 相対
+])
+def test_次の頁が別のホストなら追わずに例外(よそのURL):
+    口 = _頁を返す口([_頁([{"id": "R1"}], next_url=よそのURL)])
+    with pytest.raises(RuntimeError) as e:
+        口.conversation("POST1")
+    assert "別のホスト" in str(e.value)
+    # **1 頁目しか叩いていない**（よそへは行っていない）。
+    assert len(口.叩いた) == 1
+
+
+def test_別ホストのnextにaccess_tokenを載せない():
+    """偽サーバ 1 本（127.0.0.1）に**1 件も届かない**ことを実測する。"""
+    from tests.helpers.fake_redirect_server import recording_server
+
+    with recording_server() as (よそ, 届いたもの):
+        class 一頁目だけ偽物(threads_mod.ThreadsAdapter):
+            def _get(self, path, params, *, absolute_url=None):
+                if absolute_url is None:
+                    return {"data": [{"id": "R1"}],
+                            "paging": {"next": よそ + "/次"}}
+                return super()._get(path, params, absolute_url=absolute_url)
+
+        口 = 一頁目だけ偽物(base_url="https://graph.threads.net",
+                            access_token="FAKE-TOKEN-never-a-real-secret",
+                            user_id="1", timeout=5)
+        with pytest.raises(RuntimeError):
+            口.conversation("POST1")
+    assert 届いたもの == [], 届いたもの
