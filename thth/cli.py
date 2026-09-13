@@ -2030,7 +2030,11 @@ def cmd_board(args) -> int:
             # 期限が切れると 1 本も出なくなるので、見えないのが痛い欄。
             remaining = row.get("token_remaining_days")
             token = row.get("token_state") or "?"
-            if remaining is not None:
+            # **「期限を持たない」と「判らない」を別の顔で出す**（設計 v2 §4.2）。
+            # 何も付かない＝残りが判らない、`/期限なし`＝そもそも期限が無い媒体。
+            if row.get("token_no_expiry"):
+                token += "/期限なし"
+            elif remaining is not None:
                 token += f"/残り{remaining:.0f}日"
             pending = row.get("collect_pending") or 0
             pending_note = f" **未送信の採取={pending}**" if pending else ""

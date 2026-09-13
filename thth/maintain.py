@@ -77,6 +77,11 @@ def inspect(account_name: str, *, now) -> dict:
         "obtained_at": None,
         "age_days": None,
         "remaining_days": None,
+        # **「判らない」と「期限を持たない」を分ける**（設計 v2 §4.2）。
+        # `remaining_days: null` は台帳を読めないときにも出る。どちらなのかを
+        # 読み手（board・runs・`--json`）が判別できないと、Bluesky の
+        # 「期限が無い」が Threads の「読めない」と同じ顔で並ぶ。
+        "no_expiry": False,
         "refreshed": False,
         "message": "",
     }
@@ -98,6 +103,15 @@ def inspect(account_name: str, *, now) -> dict:
     age_days = age_seconds / 86400.0
     row["obtained_at"] = token.get("obtained_at")
     row["age_days"] = round(age_days, 2)
+
+    if remaining_days is None:
+        # **期限を持たないトークン**（Bluesky の App Password・Mastodon の
+        # access token・設計 v2 §4.2）。`remaining_days` は `None` のまま
+        # ——**「判らない」ではない**ので、`no_expiry` を立てて言い分ける。
+        # 更新もしない（`REFRESH_DUE` に落とすと 50 日目から毎日失敗し続ける）。
+        row["no_expiry"] = True
+        return _finish(row, OK, detail="期限を持たないトークンです（更新は不要）")
+
     row["remaining_days"] = round(remaining_days, 2)
 
     if remaining_days <= 0:
@@ -175,7 +189,13 @@ def run_maintain(account: str | None = None, *, check: bool = False,
                        ensure_ascii=False, indent=2))
     else:
         for r in rows:
-            remaining = "—" if r["remaining_days"] is None else f"残り {r['remaining_days']:.1f} 日"
+            # **3 つを別の顔で出す**: 期限を持たない／判らない／残り日数。
+            if r.get("no_expiry"):
+                remaining = "期限なし"
+            elif r["remaining_days"] is None:
+                remaining = "—"
+            else:
+                remaining = f"残り {r['remaining_days']:.1f} 日"
             mark = "要確認" if needs_attention(r) else "  "
             log(f"{mark} {r['account']}: {r['state']}（{remaining}）— {r['message']}")
         if attention:

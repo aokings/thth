@@ -313,6 +313,10 @@ def board_summary(now=None) -> dict:
             # 値（access_token）には触れない——残り日数と状態だけ。
             "token_state": token_row["state"],
             "token_remaining_days": token_row["remaining_days"],
+            # **「判らない」（null）と「期限を持たない」を混ぜない**
+            # （設計 v2 §4.2）。`token_remaining_days: null` だけでは
+            # 「読めなかった」と「期限が無い媒体」の区別が付かない。
+            "token_no_expiry": bool(token_row.get("no_expiry")),
             # **まだ送れていない採取**（masaru 指示 2026-09-11: 失敗時の通知）。
             # push に失敗すると commit を取り消してファイルに残すので、
             # 未 push の commit は残らない（＝投稿は止まらない）。代わりに

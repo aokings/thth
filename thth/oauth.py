@@ -307,9 +307,22 @@ def _parse_obtained_at(token: dict):
 
 
 def token_age_and_remaining(token: dict, now):
-    """`(経過秒, 残り日数)` を返す。`thth maintain` からも使う（公開の口）。"""
+    """`(経過秒, 残り日数)` を返す。`thth maintain` からも使う（公開の口）。
+
+    **「判らない」と「期限を持たない」を混ぜない**（設計 v2 §4.2「認可と
+    トークン」）。Bluesky の App Password と Mastodon の access token には
+    期限が無い。`expires_in` が無いだけなら Threads の既定寿命（60 日）を
+    当てるが、**`no_expiry: true` が立っていれば `remaining_days` は `None`**
+    ——`None` はここでは「期限を持たない」の意味で、呼び出し側
+    （`maintain.inspect()`）が `token_state: ok` と言い分ける。
+
+    `no_expiry` と `expires_in` の両方があるトークンは**`expires_in` を採る**
+    ——期限が書いてあるものを「期限が無い」とは言わない。
+    """
     obtained_at = _parse_obtained_at(token)
     age_seconds = (now - obtained_at).total_seconds()
+    if not token.get("expires_in") and token.get("no_expiry") is True:
+        return age_seconds, None
     expires_in = token.get("expires_in") or DEFAULT_TOKEN_LIFETIME_SECONDS
     remaining_days = (expires_in - age_seconds) / 86400.0
     return age_seconds, remaining_days
@@ -342,7 +355,11 @@ def run_refresh(account_name: str, *, force: bool = False, check: bool = False,
 
     age_hours = age_seconds / 3600.0
     age_days = age_seconds / 86400.0
-    needs_refresh = age_days > REFRESH_AFTER_DAYS
+    # **期限を持たないトークンは更新しない**（設計 v2 §4.2）。Bluesky の App
+    # Password・Mastodon の access token には更新の口が無い。**「まだ更新でき
+    # ません」でも「更新が必要です」でもなく、「期限を持たない」と言う。**
+    no_expiry = remaining_days is None
+    needs_refresh = (not no_expiry) and age_days > REFRESH_AFTER_DAYS
     can_refresh = age_hours >= MIN_REFRESH_AGE_HOURS
 
     if check:
@@ -350,11 +367,18 @@ def run_refresh(account_name: str, *, force: bool = False, check: bool = False,
             "account": account_name,
             "obtained_at": token.get("obtained_at"),
             "age_days": round(age_days, 2),
-            "remaining_days": round(remaining_days, 2),
+            "remaining_days": None if no_expiry else round(remaining_days, 2),
+            "no_expiry": no_expiry,
             "needs_refresh": needs_refresh,
             "can_refresh": can_refresh,
         }
         _out(json.dumps(payload, ensure_ascii=False), log=log)
+        return 0
+
+    if no_expiry:
+        # `--force` でも覆さない（媒体側に更新の口が無いので叩いても失敗する
+        # だけ。Threads の「24 時間未満は更新できない」と同じ扱い）。
+        _out(f"このトークンは期限を持ちません（{account_name}: 更新は不要です）", log=log)
         return 0
 
     # 公式の条件（設計 §2.2）: 24 時間未満は更新できない。--force でも覆さない
