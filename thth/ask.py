@@ -131,10 +131,16 @@ def _stat(values: list, *, min_n: int) -> dict:
     if n < min_n:
         return out
     ordered = sorted(values)
-    q25, _q50, q75 = statistics.quantiles(ordered, n=4, method="inclusive")
     out["median"] = _num(statistics.median(ordered))
-    out["p25"] = _num(q25)
-    out["p75"] = _num(q75)
+    # **四分位は 2 件から。** `statistics.quantiles` は 1 件で
+    # `StatisticsError` を投げる——`--min-n 1` で呼ばれた瞬間に口ごと落ちて
+    # いた（前任 WIP の穴）。**中央値は言えるが散らばりは言えない**という
+    # 状態はありうるので、落とさずに `p25`・`p75` だけ `None` で返す
+    # （`—` は「言えない」・`0` ではない、という表示の約束のまま）。
+    if n >= 2:
+        q25, _q50, q75 = statistics.quantiles(ordered, n=4, method="inclusive")
+        out["p25"] = _num(q25)
+        out["p75"] = _num(q75)
     return out
 
 
@@ -352,9 +358,18 @@ def before_you_post(account: str, *, medium: str | None = None, topic: str,
     population = _population(account, default_medium=account_cfg.get("media"))
 
     # **捨てない・数える**（設計 v1 §3.2.2）。除いた理由ごとに件数を持つ。
+    #
+    # **語で先に絞ってから数える。** 除いた件数は「**この語について**何を
+    # 数えられなかったか」でなければ意味が無い——先に媒体や期間で切ると、
+    # `コーヒー` を聞いた人の `cannot_say` に `中学受験` の投稿が混ざる
+    # （前任 WIP はその順だった）。語と型は「別の問い」なので黙って外す。
     除いた = {"medium": 0, "window": 0, "posted_at": 0, "reply_unknown": 0}
     base = []
     for post in population:
+        if post["topic"] != topic:
+            continue
+        if kind is not None and post["kind"] != kind:
+            continue
         # **媒体で閉じる**（設計 v2 §2.1）。Threads の 24 時間と Bluesky の
         # 24 時間は別の数。
         if post["medium"] != medium:
@@ -365,10 +380,6 @@ def before_you_post(account: str, *, medium: str | None = None, topic: str,
             continue
         if post["posted_at"] < since:
             除いた["window"] += 1
-            continue
-        if post["topic"] != topic:
-            continue
-        if kind is not None and post["kind"] != kind:
             continue
         if post["is_reply"] is None:
             # **判らないものを「返信ではない」にしない**（規約 12）。
@@ -392,15 +403,17 @@ def before_you_post(account: str, *, medium: str | None = None, topic: str,
             cannot_say.append(f"{label}: n={stat['n']}（{min_n} 未満）")
 
     if 除いた["medium"]:
-        cannot_say.append(f"媒体違いで数えなかった投稿 {除いた['medium']} 件"
-                          f"（{medium} 以外。媒体をまたいで比べません）")
+        cannot_say.append(f"媒体違いで数えなかった「{topic}」の投稿 "
+                          f"{除いた['medium']} 件（{medium} 以外。"
+                          "媒体をまたいで比べません）")
     if 除いた["window"]:
-        cannot_say.append(f"期間外で数えなかった投稿 {除いた['window']} 件"
-                          f"（直近 {window_days} 日の外）")
+        cannot_say.append(f"期間外で数えなかった「{topic}」の投稿 "
+                          f"{除いた['window']} 件（直近 {window_days} 日の外）")
     if 除いた["posted_at"]:
-        cannot_say.append(f"`posted_at` が読めず数えなかった投稿 {除いた['posted_at']} 件")
+        cannot_say.append(f"`posted_at` が読めず数えなかった「{topic}」の投稿 "
+                          f"{除いた['posted_at']} 件")
     if 除いた["reply_unknown"]:
-        cannot_say.append(f"返信かどうかが判らず数えなかった投稿 "
+        cannot_say.append(f"返信かどうかが判らず数えなかった「{topic}」の投稿 "
                           f"{除いた['reply_unknown']} 件（実測の台帳がありません）")
 
     # ---- 観測（誰がいるか）。**名前は出さない。人数と自由文と日付だけ。**
