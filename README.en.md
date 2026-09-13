@@ -62,12 +62,16 @@ One JSON file per account, **outside this repo**:
 Nothing you configure is committed here.
 
 ```bash
-thth account add your-project-threads --media threads --project your-project
+thth account add your-project-threads --media threads --project your-project \
+  --redirect-uri https://your.domain/callback/
 ```
 
 writes one from the bundled template (`accounts.example/<media>.json`) with
 `production: false` and `scheduled: false` — it will **not** post until you
-edit those by hand. If you are upgrading from a version that kept ledgers in
+edit those by hand. Bluesky and Mastodon require `--handle` (and Mastodon
+`--instance`), because the default cannot match there. Any template
+placeholder you leave behind is named by `account add`, by `thth doctor`, and
+by `thth auth`, which refuses before it prints an authorization URL. If you are upgrading from a version that kept ledgers in
 the repo's own `accounts/` directory, `thth account migrate` copies them out
 (copy, never move; it refuses to overwrite anything that differs). That old
 location is still read for one release, with a warning.
@@ -106,8 +110,10 @@ All 27 subcommands `thth --help` lists today, one line each:
 - `approve` — two-step approval (show, then confirm with a digest)
 - `account` — one account's postable status; `account add <name> --media
   threads|bluesky|mastodon --project <p>` writes a new ledger from the bundled
-  template, and `account migrate` copies ledgers out of an old in-repo
-  `accounts/` directory (see "Where your account ledgers live" below)
+  template (`--redirect-uri` on Threads; `--handle`, and `--instance` on
+  Mastodon, are required where the default cannot match), and `account migrate`
+  copies ledgers out of an old in-repo `accounts/` directory (see "Where your
+  account ledgers live" below)
 - `revoke` — undo an approval and return the file to `draft`
 - `posts` — list posts actually made, including ones sent outside THTH
 - `replies` — read the collected-reply ledger

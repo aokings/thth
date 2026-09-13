@@ -164,13 +164,33 @@ $ thth app show --json
 ### アカウントを 1 本足す（`thth account add`）
 
 ```bash
-thth account add demo-threads --media threads --project demo
-# 媒体で足す欄が違う
-thth account add demo-mastodon --media mastodon --project demo --instance https://mastodon.social
-thth account add demo-bluesky  --media bluesky  --project demo --instance https://bsky.social
+# Threads（`--redirect-uri` は §2 で Meta アプリに登録した戻り先）
+thth account add demo-threads --media threads --project demo \
+  --redirect-uri https://thth.me/callback/
+# 媒体で足す欄が違う（**handle は必須**。既定では当たりません）
+thth account add demo-mastodon --media mastodon --project demo \
+  --handle user --instance https://mastodon.social
+thth account add demo-bluesky  --media bluesky  --project demo \
+  --handle name.bsky.social
 ```
 
 `accounts.example/<media>.json` の雛形から `$THTH_ROOT/accounts/<name>.json` を書きます。
+
+**媒体ごとに要る欄**（2026-09-13・監査 2 の C10 で必須化。**既定で当たらない欄は、黙って埋めずに聞きます**）:
+
+| 媒体 | `--handle` | `--instance` | `--redirect-uri` |
+|---|---|---|---|
+| threads | **任意**（既定は `--project` の値。Threads の handle は利用者名そのものなので、だいたい当たります） | — | **省略可。ただし省くと雛形のダミー `https://example.invalid/` のまま**で、`thth auth` が rc=2 で断ります |
+| bluesky | **必須**（`name.bsky.social` のドメイン形。`--project` の値は当たりません） | 任意（`service` 欄。既定 `https://bsky.social`） | — |
+| mastodon | **必須**（`@` を除いた利用者名） | **必須**（インスタンスごとに口が違うので推測できません） | — |
+
+**`--redirect-uri` を省いたときは、`add` が書いたその場で 1 行言います**（**L1**・試験 `test_addはredirect_uriを省いたら次の一手で1行言う`）:
+
+```
+**redirect_uri はダミーのままです**（https://example.invalid/）。**`thth auth` の前に。** Meta アプリに登録した URL を `thth account add <name> --redirect-uri <url>` か、台帳の `redirect_uri` に入れてください（導入文書 §4）。
+```
+
+**この 1 行が無かったころは、`add` と `thth auth` の間に「どこにも書かれていない手作業」が挟まっていました**（`thth doctor` も黙っていた）。いまは **`add` → `doctor` → `auth`** の 3 か所すべてがダミーを名指しします。
 
 **clone したばかりだと 1 回断られます**（rc=1）。repo の `accounts/` に開発側の台帳が同梱されていて、いまはそれを読んでいる（上の (c)）状態だからです。`add` を打つと `$THTH_ROOT/accounts/` が出来て**その台帳は以後読まれなくなる**ので、道具は何が起きるかを言って 1 度止まります。**同梱されているのは他人の台帳なので、`--force` を付けて進んでください**：
 
@@ -185,17 +205,20 @@ thth account add demo-threads --media threads --project demo --force
 | 書く先は**必ず外**。読みが (c) の互換に落ちていても、**repo の中には書きません** | `thth/account_cli.py` `target_accounts_dir()` | **L1**（試験 `test_addは互換のときでもrepoの中に書かない`） |
 | **`production: false`・`scheduled: false` で生まれます。** 雛形が万一 true でもここで落とします | `thth/account_cli.py` `build_ledger()` | **L1**（試験・実測で `mode: rehearsal`） |
 | **既にあるものは上書きしません**（rc=1 で断る） | 同上 `cmd_add()` | **L1**（試験） |
-| `--handle` の既定は **`--project` の値**（アカウント名ではない） | 同上 | **L1**（試験） |
+| **Threads の** `--handle` の既定は **`--project` の値**（アカウント名ではない） | 同上 | **L1**（試験） |
+| **Bluesky・Mastodon は `--handle` が必須**（Mastodon は `--instance` も）。省くと例つきで rc=2 | 同上 | **L1**（試験 `test_addはblueskyのhandleを必須にする`・`…mastodonのhandleとinstanceを必須にする`） |
 | Mastodon は `instance`、Bluesky は `service` の欄に入ります | 同上 | **L1**（試験） |
+| `--redirect-uri` は **threads のときだけ**。他媒体に付けると rc=2（黙って捨てない） | 同上 | **L1**（試験） |
 
 足した後の続き（**値に触るので人の手**・設計 §4.2）:
 
-1. その Threads アカウントを Meta アプリの tester に招待・承諾（§2-5・§2-6）
-2. トークンを入れる（§5）
-3. `~/.config/thth/<account>.env`（`HEALTHCHECK_URL` だけ。**app ID と secret は共通の `app.env` にあるので触らない**）
-4. 本番にするときだけ、台帳の `production` を手で `true` に
-5. `systemctl enable --now thth@<account>.timer`（§6）
-6. 死活監視の check を 1 つ
+1. `thth doctor <account>` —— **雛形のダミーが残っていれば名指しで言います**（`redirect_uri: https://example.invalid/`・Mastodon の `instance: https://mastodon.example`・handle が `demo` のまま）。ここで直してから先へ進みます（§7-1）
+2. その Threads アカウントを Meta アプリの tester に招待・承諾（§2-5・§2-6）
+3. トークンを入れる（§5）
+4. `~/.config/thth/<account>.env`（`HEALTHCHECK_URL` だけ。**app ID と secret は共通の `app.env` にあるので触らない**）
+5. 本番にするときだけ、台帳の `production` を手で `true` に
+6. `systemctl enable --now thth@<account>.timer`（§6）
+7. 死活監視の check を 1 つ
 
 ### 4-2. すでに動いている機械の移行（`thth account migrate`）
 
@@ -263,6 +286,7 @@ thth board                       # 6 本が変わらず見えること
 | **`production` を自分で `true` にしない限り dry-run。** 出力の 1 行目が `mode: rehearsal` になる（`thth account add` が作るものは必ず `false`） | 設計 §4.2・設計 v2 §3 | **L1**（実測） |
 | `account` は `<project>-<media>`。`project` は clone の dir 名と board の見出し | 設計 §4.2 | **L2**（設計の決め） |
 | **`thth auth` を使うなら `redirect_uri` の欄が要ります。** 設計 §4.2 の例には**載っていません**。無いと `redirect_uri が accounts/<account>.json に無い` で rc=2 | `thth/oauth.py` `run_auth()` | **L1**（実測） |
+| **雛形のダミー（`https://example.invalid/`）のままだと、`thth auth` は認可 URL を出す前に rc=2 で断ります。** 前はその URL をそのまま表示していたので、ブラウザで開いて Meta 側のエラーで初めて詰まりました | 同上 | **L1**（試験 `test_C10_ダミーのredirect_uriでは認可URLを出さない`） |
 | `scopes` の欄を書けば既定 scope より優先される（任意） | `thth/oauth.py`・`thth/scopes.py` | **L1（コード読解・テスト無し）** |
 | `env`（`HEALTHCHECK_URL` 等）は**任意**。無くても `thth run` は止まらない | `thth/accounts.py` `token_exists()` の docstring | **L1** |
 
@@ -390,6 +414,21 @@ rc = 2
 **トークンを入れたあとは、`app.env` について言うのは 1 行目だけになります**（「次の一手」は消えます）。**`app.env` を置いたのに項目が空・読めないときだけ**、いままでどおり `次の一手: 導入文書 §3 app.env を見てください。` が出ます。**「無い」（任意）と「置いたのに使えない」（要修理）を分ける**のが 2026-09-13 の直しです——正しい状態を毎回「足りない」と言う道具は、本当に足りないときに読まれなくなります。
 
 `--json` には `app_env` が `"absent"` / `"ok"` / `"broken"` で入ります（既存の鍵はそのまま・追加のみ）。
+
+**雛形のダミーが残っていれば、doctor が名指しで言います**（2026-09-13・監査 2 の C10）:
+
+```
+$ thth doctor demo-threads
+台帳の置き場: /srv/thth/root/accounts（$THTH_ROOT/accounts）
+台帳の `redirect_uri` が**ダミーのままです**: https://example.invalid/
+次の一手: Meta アプリに登録した URL を `thth account add <name> --redirect-uri <url>` か、台帳の `redirect_uri` に入れてください（導入文書 §4）。
+台帳の `handle` が**ダミーのままです**: demo
+次の一手: そのアカウントの本物の handle を台帳の `handle` に入れてください（Bluesky は `name.bsky.social`・Mastodon は `@` を除いた利用者名・導入文書 §4）。
+```
+
+見るのは 3 種類 —— `redirect_uri` が `https://example.invalid/`・Mastodon の `instance` が `https://mastodon.example`・handle が雛形のまま（threads / mastodon は `demo`、bluesky は `demo.bsky.social`）。`--json` には `dummy_fields: [{"field", "value", "next"}, …]` で入ります（既存の鍵はそのまま・追加のみ）。
+
+**rc の決め方**（**L1**・試験 `test_C10_ダミーが残っていれば全部丸でも0で返さない`）: **台帳は読めているので 2 にはしません**（2 は「診断できなかった」——台帳が読めない・トークンが無い・トピックの棚が壊れている）。かといって **0（異常なし）でも返しません**——`thth auth` はそこで必ず止まるからです。probe が×のときと同じ **1**。壊れたトピックの棚を「異常なし」で返さないのと同じ筋です（独立監査 1・P1-1）。
 
 ### 7-2. `thth lint <queue ディレクトリ>` —— front-matter の形
 
