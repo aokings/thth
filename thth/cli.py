@@ -14,6 +14,7 @@ import sys
 import unicodedata
 
 from . import __version__ as _pkg_version
+from . import account_cli as account_cli_mod
 from . import account_report as account_report_mod
 from . import accounts as accounts_mod
 from . import approval as approval_mod
@@ -2258,6 +2259,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_account.add_argument("--no-remote", action="store_true", dest="no_remote",
                            help="Threads 側を引きに行かない（網に出ない・速い）")
     p_account.set_defaults(func=cmd_account)
+    account_cli_mod.register(sub)  # `account add` / `account migrate`（設計 v2 §3）
 
     p_revoke = sub.add_parser(
         "revoke", help="承認を取り消して draft に戻す（本文は触らない）")
