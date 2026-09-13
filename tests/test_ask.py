@@ -30,6 +30,9 @@ from tests.conftest import BIN_THTH, REPO_ROOT
 # 偽の台帳にこの 2 つを埋めておいて、答えの JSON 全体を grep する。
 SECRET_BODY = "SECRET-BODY-本文は泉に落ちない"
 SECRET_USER = "SECRET-USER-観測者の名前"
+# `audience[].views` が観測者ごとに並ぶようになって（規約 6′）、名前の漏れ口が
+# 増えた。**account 側と by 側の両方**に仕込んで grep する。
+SECRET_OBSERVER = "SECRET-OBSERVER-棚の観測者"
 
 ACCOUNT = "nigamilab-threads"
 TOPIC = "コーヒー"
@@ -364,9 +367,14 @@ def test_e_本文もusernameも答えのどこにも出ない(account):
     assert SECRET_BODY not in text
     assert SECRET_USER not in text
     # 観測は出る（自由文・人数・日付だけ）。
-    assert answer["audience"] == [{"topic": TOPIC, "who": "コーヒー好きのやりとり",
-                                   "observers": 1, "latest": "2026-09-09"}]
-    assert set(answer["audience"][0]) == {"topic", "who", "observers", "latest"}
+    assert answer["audience"] == [{
+        "topic": TOPIC, "observers": 1, "latest": "2026-09-09",
+        "views": [{"who": "コーヒー好きのやりとり", "latest": "2026-09-09"}],
+        "views_more": 0}]
+    # **`who` は最上位から消え、`views` の中に入った**（設計 v2 §1 規約 6′）。
+    assert set(answer["audience"][0]) == {"topic", "observers", "latest",
+                                          "views", "views_more"}
+    assert set(answer["audience"][0]["views"][0]) == {"who", "latest"}
     assert answer["provenance"]["observers"] == 1
 
 
@@ -388,6 +396,105 @@ def test_e3_本文は問いにも入らない():
     params = set(inspect.signature(ask_mod.before_you_post).parameters)
     assert params == {"account", "medium", "topic", "kind", "hour_band",
                       "is_reply", "window_days", "min_n", "now"}
+
+
+# ------------------------------- (e4) audience は観測者ごとに並ぶ（規約 6′）
+
+def _観測(who: str, 自由文: str, *, days_ago: int, account: str | None = None,
+          topic: str = TOPIC) -> dict:
+    """観測 1 行。**観測者は `account`（無ければ `by`）で分かれる。**"""
+    return topics_mod.record(topic, verdict="alive", audience=自由文, by=who,
+                             account=account if account is not None else who,
+                             now=NOW - datetime.timedelta(days=days_ago))
+
+
+def test_e4_観測者4人なら新しい順に3件とほか1人(account):
+    """設計 v2 §1 規約 6′（2026-09-13 改訂・監査 2 B9 の裁定）。
+
+    **初稿は語につき最新 1 人の自由文だけだった。** `observers: 3` と並ぶと
+    「3 人がこう言った」と読める——**共有の棚に真実は 1 つではない。**
+    """
+    write_many(account, 25)
+    _観測("四番目", "四番目の見立て", days_ago=3)
+    _観測("三番目", "三番目の見立て", days_ago=2)
+    _観測("二番目", "二番目の見立て", days_ago=1)
+    _観測("一番目", "一番目の見立て", days_ago=0)
+
+    row = ask_mod.before_you_post(ACCOUNT, topic=TOPIC, now=NOW)["audience"][0]
+    assert row["observers"] == 4
+    assert row["latest"] == "2026-09-09"
+    # 新しい順に 3 件だけ。**4 人目は自由文ごと落ちて、件数だけ残る。**
+    assert row["views"] == [
+        {"who": "一番目の見立て", "latest": "2026-09-09"},
+        {"who": "二番目の見立て", "latest": "2026-09-08"},
+        {"who": "三番目の見立て", "latest": "2026-09-07"},
+    ]
+    assert row["views_more"] == 1
+
+
+def test_e5_観測者1人ならviews_moreは0で出る(account):
+    """**0 のときも `views_more` を出す**（鍵が消えると「全部」と読めない）。"""
+    write_many(account, 25)
+    _観測("ひとり", "ひとりの見立て", days_ago=0)
+    row = ask_mod.before_you_post(ACCOUNT, topic=TOPIC, now=NOW)["audience"][0]
+    assert row["observers"] == 1 and row["views_more"] == 0
+    assert row["views"] == [{"who": "ひとりの見立て", "latest": "2026-09-09"}]
+
+
+def test_e6_打ち消された観測は数えない(account):
+    """**打ち消しは人数にも `views` にも出ない**（`observation()` が返さない）。
+
+    `observation()` の側の性質だが、**ここで固定する**——答えの人数が打ち消しを
+    数えた日に落ちるように。
+    """
+    write_many(account, 25)
+    消す = _観測("消える人", "消える見立て", days_ago=1)
+    _観測("残る人", "残る見立て", days_ago=0)
+    topics_mod.retract_note(消す["note_id"], reason="誤記録", by="テスト")
+
+    answer = ask_mod.before_you_post(ACCOUNT, topic=TOPIC, now=NOW)
+    row = answer["audience"][0]
+    assert row["observers"] == 1 and row["views_more"] == 0
+    assert row["views"] == [{"who": "残る見立て", "latest": "2026-09-09"}]
+    assert answer["provenance"]["observers"] == 1
+    assert "消える見立て" not in json.dumps(answer, ensure_ascii=False)
+
+
+def test_e7_viewsのどこにも観測者の名前は出ない(account):
+    """規約 4。**`views` が増えたぶん、名前の漏れ口も増えた。**
+
+    偽の棚の `account` と `by` の**両方**に印を仕込み、答えの JSON 全体を grep
+    する（鍵の名前ではなく中身を見る）。
+    """
+    write_many(account, 25)
+    for i in range(4):
+        _観測(f"{SECRET_OBSERVER}-by-{i}", f"観測 {i}", days_ago=i,
+              account=f"{SECRET_OBSERVER}-account-{i}")
+
+    answer = ask_mod.before_you_post(ACCOUNT, topic=TOPIC, now=NOW)
+    text = json.dumps(answer, ensure_ascii=False)
+    assert SECRET_OBSERVER not in text
+    assert answer["audience"][0]["views_more"] == 1
+    for view in answer["audience"][0]["views"]:
+        assert set(view) == {"who", "latest"}
+
+
+def test_e8_CLIの人向けにも観測者ごとに並びほか1人が出る(account, thth_root):
+    write_many(account, 25)
+    for i, 何 in enumerate(["いちばん新しい見立て", "次の見立て", "三つ目の見立て",
+                            "いちばん古い見立て"]):
+        _観測(f"{SECRET_OBSERVER}-{i}", 何, days_ago=i,
+              account=f"{SECRET_OBSERVER}-account-{i}")
+
+    proc = run_ask(["ask", "before-you-post", ACCOUNT, "--topic", TOPIC])
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    assert SECRET_OBSERVER not in out
+    assert f"- {TOPIC}: 観測者 4 人・最新 2026-09-09" in out
+    assert "- いちばん新しい見立て（2026-09-09）" in out
+    assert "- 三つ目の見立て（2026-09-07）" in out
+    assert "いちばん古い見立て" not in out
+    assert "ほか 1 人" in out
 
 
 # ---------------------------------------------------------------- (f) CLI
