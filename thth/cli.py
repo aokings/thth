@@ -711,7 +711,14 @@ def cmd_posts(args) -> int:
         print("投稿がありません")
         return 0
     for post in posts:
-        via = f"THTH（{post['file']}）" if post["via_thth"] else "**外で出したもの**"
+        if not post["via_thth"]:
+            via = "**外で出したもの**"
+        elif post.get("file"):
+            via = f"THTH（{post['file']}）"
+        else:
+            # 同席の様態（`thth send`）。queue のファイルは無く、本文の記録は
+            # `state/<account>/sent/<post_id>.json` にある（2026-09-13）。
+            via = "THTH（同席の送信）"
         topic = f"  [{post['topic']}]" if post.get("topic") else "  [トピック無し]"
         print(f"{post['timestamp']}{topic}  {via}")
         print(f"  id       : {post['id']}")
