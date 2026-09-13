@@ -9,7 +9,8 @@
 
 - Post one draft, once → `thth send <account> --text-file <file>` (a rehearsal
   by default; nothing goes out until you add `--production` with the digest the
-  rehearsal printed)
+  rehearsal printed). `thth collect` picks these up too, even with no repo —
+  the ledgers then live under `$THTH_ROOT/state/<account>/data/sns/`.
 - Run an account from a queue → `thth lint <file>` → `thth approve <file>` (two
   steps) → `thth throw <account>`
 - Ask before you post → `thth ask before-you-post <account> --topic <word>`

@@ -103,7 +103,9 @@ Authorizing an account (one line each):
    `post_id` back.
 4. Replies and metrics are collected on a schedule (1/6/24/72/168 hours after
    posting) into your repo, where you can read them with `thth replies` and
-   `thth measured`.
+   `thth measured`. Posts made in person with `thth send` are collected the
+   same way (they carry `source: "sent"`); an account with no repo keeps those
+   ledgers under `$THTH_ROOT/state/<account>/data/sns/`.
 
 Full walkthrough: [docs/usage.en.md](docs/usage.en.md).
 
@@ -133,7 +135,9 @@ All 27 subcommands `thth --help` lists today, one line each:
 - `run` — throw + collect + refresh, in one call (what the timer runs)
 - `systemd` — generate a `.timer`/`.service` unit from the account config
 - `board` — freshness, in-flight state, and malformed files per account
-- `collect` — gather metrics and replies on the elapsed-time schedule
+- `collect` — gather metrics and replies on the elapsed-time schedule, for
+  queued posts **and** for posts made with `send`; with no repo configured the
+  ledgers go to `$THTH_ROOT/state/<account>/data/sns/` instead of your repo
 - `auth` — exchange an authorization code or credentials for a long-lived token
 - `refresh` — refresh a long-lived token
 - `maintain` — keep every account's token alive (independent of posting)
