@@ -33,6 +33,7 @@ import json
 import os
 import re
 import secrets
+import time
 
 from . import accounts as accounts_mod
 from . import jst
@@ -497,6 +498,40 @@ def _observations_from_shelf() -> tuple:
     return live, taken
 
 
+def sync_lock_path() -> str:
+    return os.path.join(root(), "sync.lock")
+
+
+def _take_sync_lock():
+    """`sync()` の鍵。**待つ**（`topics.record()` と同じ形）。
+
+    見つかり方（監査 1・P2-4）: 鍵が無かったので、4 本同時に `thth share sync` を
+    打つと **outbox が 4 倍**になった（484 行・`row_id` は 121 種）。`sync()` は
+    「積み済みを読む → 無いものを積む」なので、**読みと書きの間に他人が入ると
+    全員が「まだ積んでいない」と判断する**。重複を増やす口が、送る前の outbox に
+    溜まる。
+
+    断るのではなく**待つ**: `sync` は `thth share on` からも呼ばれるし、
+    書き込みは一瞬。ただし**無限には待たない**（呼んだ側が止まって見える）。
+    """
+    from . import lock as lock_mod
+    鍵 = lock_mod.AccountLock(sync_lock_path())
+    限度 = 5.0
+    待った = 0.0
+    while True:
+        try:
+            鍵.acquire()
+            return 鍵
+        except lock_mod.LockBusy:
+            if 待った >= 限度:
+                # **黙って落とさない。** 積めなかったことを言う。
+                raise ShareError(
+                    f"ほかの実行が share を積んでいます（{限度} 秒待ちました）。"
+                    f"少し待って `thth share sync` を打ち直してください")
+            time.sleep(0.05)
+            待った += 0.05
+
+
 def sync(*, now=None, accounts=None) -> dict:
     """出来上がった台帳を読んで、まだ積んでいないものを積む。
 
@@ -505,12 +540,26 @@ def sync(*, now=None, accounts=None) -> dict:
     `thth throw` は通る**（`tests/test_share_safety.py`）。
 
     同じものを 2 度積まない（`row_id` で照合する）。観測は `note_id`、
-    スレッドの形は post_id のハッシュが鍵。
+    スレッドの形は post_id のハッシュが鍵。**その照合は鍵の中でやる**
+    （`_take_sync_lock()` の但し書き・監査 1・P2-4）。
     """
     if not is_on():
-        return {"enabled": False, "added": 0, "observations": 0, "shapes": 0,
-                "retractions": 0, "skipped": [],
-                "note": "share は off です（`thth share on` で始まります）"}
+        # **off なら鍵も取らない**（`state/share/` を作らない＝off で 0 バイト）。
+        return _sync_off()
+    鍵 = _take_sync_lock()
+    try:
+        return _sync_locked(now=now, accounts=accounts)
+    finally:
+        鍵.release()
+
+
+def _sync_off() -> dict:
+    return {"enabled": False, "added": 0, "observations": 0, "shapes": 0,
+            "retractions": 0, "skipped": [],
+            "note": "share は off です（`thth share on` で始まります）"}
+
+
+def _sync_locked(*, now=None, accounts=None) -> dict:
     now = now if now is not None else jst.now_jst()
     既に, _broken = log_rows()
     積み済み = {r.get("row_id") for r in 既に}
