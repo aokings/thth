@@ -43,6 +43,11 @@ thth send <your-account> --text-file /tmp/post.txt
 - `--topic <word>` sets a topic (one per post, 1–50 characters, no `.` or
   `&`). `--reply-to <post_id>` makes it a reply. Both are part of the digest,
   so changing either after a dry run invalidates that digest.
+- `thth collect <your-account>` gathers metrics and replies for posts sent this
+  way as well; if the account has no repo, the ledgers are written to
+  `$THTH_ROOT/state/<account>/data/sns/` (nothing is committed or pushed), and
+  `thth measured` / `thth replies` / `thth threads` read them from there and
+  label them `出所=同席の送信` (`source: "sent"` in `--json`).
 
 ## 3. Choosing topics
 

@@ -310,6 +310,56 @@ def logs_dir_for(account_name: str) -> str:
     return os.path.join(thth_root(), "logs", account_name)
 
 
+def is_repo_backed(account_cfg: dict) -> bool:
+    """`repo_dir` が**実在する git repo** か（設計 v2.0.1 §1）。
+
+    **「ディレクトリがある」では足りない。** `repos/_none` のような送信専用の
+    捨て場は実在しないし、`.git` だけ失われた壊れた clone に採取を書き足すと、
+    版管理に載らないまま `thth board` の「未送信」にも出ない（`writeback.sync_repo()`
+    が同じ理由でここを同期失敗として扱う）。**git が無いなら repo ではない。**
+    """
+    repo_dir = (account_cfg or {}).get("repo_dir") or ""
+    return bool(repo_dir) and os.path.isdir(repo_dir) \
+        and os.path.exists(os.path.join(repo_dir, ".git"))
+
+
+def data_dirs(account_cfg: dict, account_name: str) -> dict:
+    """採集が書き、読み手が読む**置き場を 1 か所で決める**（設計 v2.0.1 §1）。
+
+    規則は 2 行。
+
+    1. `repo_dir` が実在する git repo なら、従来どおり `repo_dir/data/sns/…`。
+       `replies_dir` の指定もそのまま効く（**既存の経路は 1 バイトも変えない**）。
+    2. そうでなければ（`repos/_none`・存在しない・`.git` が無い）
+       **`$THTH_ROOT/state/<account>/data/sns/…`**。
+
+    2 が要る理由（運用 2026-09-14）。`thth send`（同席の様態）で出した投稿は
+    queue を通らないので原稿 repo が無く、**書く先が無いという理由だけで実測も
+    返信も 1 件も採れていなかった。** 出したものを測れないなら、出す意味が薄い。
+
+    state 側で `replies_dir` を効かせないのは、**合わせる相手の repo が無い**から
+    （あの指定は「利用者 repo のどこに置くか」の話）。置き場は道具が決める。
+
+    戻り値の鍵は `insights_posts`・`insights_account`・`replies`・`inbox`。
+    **読み手も書き手もここを通る**——直書きが 1 か所でも残ると、そこだけ別の
+    場所を見る（`thth/measured.py`・`thth/replies.py`・`thth/account_report.py`）。
+    """
+    account_cfg = account_cfg or {}
+    if is_repo_backed(account_cfg):
+        base = account_cfg.get("repo_dir") or ""
+        replies = os.path.join(
+            base, account_cfg.get("replies_dir") or "data/sns/replies")
+    else:
+        base = state_dir_for(account_name)
+        replies = os.path.join(base, "data", "sns", "replies")
+    return {
+        "insights_posts": os.path.join(base, "data", "sns", "insights", "posts"),
+        "insights_account": os.path.join(base, "data", "sns", "insights", "account"),
+        "replies": replies,
+        "inbox": os.path.join(base, "data", "sns", "inbox"),
+    }
+
+
 _SAFE_CHARS_RE = re.compile(r"[^A-Za-z0-9_.-]")
 
 

@@ -119,6 +119,15 @@ def _read_replies_file(path: str) -> tuple:
     return replies, fetches, False
 
 
+def _fetch_sources(fetches: list) -> dict:
+    """取得の記録を**出所ごとに数える**（設計 v2.0.1 §3）。`{出所: 件数}`。"""
+    out: dict = {}
+    for row in fetches:
+        key = row.get("source") or "queue"
+        out[key] = out.get(key, 0) + 1
+    return dict(sorted(out.items()))
+
+
 def load(account_name: str, *, post_id: str | None = None) -> dict:
     """返信の台帳を読む。
 
@@ -136,10 +145,10 @@ def load(account_name: str, *, post_id: str | None = None) -> dict:
       - `counts`: `{"replies": n, "own": n, "other": n, "unknown": n, "fetches": n}`
     """
     account_cfg = accounts_mod.load_account(account_name)
-    repo_dir = account_cfg.get("repo_dir") or ""
-    # `collect.py` の `collect_once()` と同じ組み立て方に揃える（`replies_dir`
-    # は repo_dir からの相対パスという前提）。
-    base = os.path.join(repo_dir, account_cfg.get("replies_dir") or "data/sns/replies")
+    # **置き場の解決は 1 か所**（設計 v2.0.1 §1・`accounts.data_dirs()`）。
+    # `collect.py` の `collect_once()` が書く先と**同じ helper** から引く
+    # ——別々に組み立てると、片方を直したときにもう片方が黙って別の場所を見る。
+    base = accounts_mod.data_dirs(account_cfg, account_name)["replies"]
 
     if post_id:
         # **`post_id` をそのままパスにしない**（`thth/postid.py`・T3 2026-09-13）。
@@ -169,6 +178,11 @@ def load(account_name: str, *, post_id: str | None = None) -> dict:
         "other": sum(1 for r in all_replies if r["own"] is False),
         "unknown": sum(1 for r in all_replies if r["own"] is None),
         "fetches": len(all_fetches),
+        # **どの記録を見て取りに行ったか**（設計 v2.0.1 §3）。`queue` は
+        # 書き戻された front-matter、`sent` は `state/<account>/sent/`
+        # （同席の様態）。**無印の古い行は `queue`**（`source` を書き始めたのは
+        # 2026-09-14）。0 件の出所は数えない——**出さないことで「無い」と言う。**
+        "fetch_sources": _fetch_sources(all_fetches),
     }
 
     return {"replies": all_replies, "fetches": all_fetches, "broken": broken,

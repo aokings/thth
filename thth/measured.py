@@ -282,8 +282,13 @@ def load(account_name: str) -> dict:
     account_cfg = accounts_mod.load_account(account_name)
     repo_dir = account_cfg.get("repo_dir") or ""
     queue_dir = os.path.join(repo_dir, account_cfg.get("queue_dir") or "")
-    posts_dir = os.path.join(repo_dir, "data", "sns", "insights", "posts")
-    account_daily_dir = os.path.join(repo_dir, "data", "sns", "insights", "account")
+    # **置き場の解決は 1 か所**（設計 v2.0.1 §1・`accounts.data_dirs()`）。
+    # repo が無い account（同席専用・`thth send` だけで出す）では
+    # `$THTH_ROOT/state/<account>/data/sns/…` を読む——**直書きが 1 か所でも
+    # 残ると、そこだけ別の場所を見る。**
+    dirs = accounts_mod.data_dirs(account_cfg, account_name)
+    posts_dir = dirs["insights_posts"]
+    account_daily_dir = dirs["insights_account"]
 
     broken: list = []
     posts: list = []
@@ -369,6 +374,12 @@ def load(account_name: str) -> dict:
                 # 「型が無い」と「読めなかった」を区別できない（外部レビュー C2）。
                 "form_readable": 読めた,
                 "form_source": "current_draft",
+                # **どの記録から採った実測か**（設計 v2.0.1 §3・設計 v1 §3.2.2）。
+                # `"queue"` は書き戻された front-matter（不在の様態・原稿がある）、
+                # `"sent"` は `state/<account>/sent/`（同席の様態・原稿は無い）。
+                # **無印の古い行は `queue`** ——`source` を書き始めたのは
+                # 2026-09-14 で、それ以前の行はすべて queue 由来。
+                "source": first.get("source") or "queue",
                 "file": first.get("file"),
                 "posted_at": first.get("posted_at"),
                 # 採取時点の account が無く、この投稿の系列から**外した**行の数。
@@ -380,6 +391,7 @@ def load(account_name: str) -> dict:
                         "age_hours": row.get("age_hours"),
                         "marks": row.get("marks"),
                         "marks_collapsed": row.get("marks_collapsed", False),
+                        "source": row.get("source") or "queue",
                         "metrics": row.get("metrics"),
                         # **この行に無い指標**（採取の版が上がる前の行かどうかが
                         # 読める）。全体の判定では翌日の行に隠される。
