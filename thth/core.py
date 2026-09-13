@@ -34,6 +34,9 @@ class ThrowResult:
     message: str
     file: str | None = None
     post_id: str | None = None
+    # 出たものの URL（`PublishResult.url`）。**媒体が返したものだけ**を入れる
+    # ——組み立てた推測は入れない（Threads は公開の応答で返さないので None）。
+    url: str | None = None
     error: str | None = None
     digest: str | None = None   # `thth send` の確認用 digest（外部レビュー §1b）
     # 「出すものが無い」ときに、なぜ出せないかの内訳（外部レビュー再レビュー C）。
@@ -794,5 +797,12 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         _append_run(state_dir, account_name, run_id, mode, "post", None, result.post_id, now,
                     status="ok", error=None)
         log(f"投稿しました: post_id={result.post_id}")
+        # **出たものを見に行ける形で言う**（運用の報告 2026-09-13: 出したあと、
+        # 実物を確かめるのに `post_id` から URL を組み立て直していた）。URL を
+        # 作るのは媒体の仕事なので、ここは `PublishResult.url` をそのまま出す
+        # だけ——**無ければ黙る**（Threads は公開の応答から URL を返さない。
+        # 組み立てた推測を URL として出さない）。
+        if result.url:
+            log(f"URL: {result.url}")
         return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました",
-                            post_id=result.post_id)
+                            post_id=result.post_id, url=result.url)

@@ -11,6 +11,7 @@ from . import inflight as inflight_mod
 from . import lock as lock_mod
 from . import maintain as maintain_mod
 from . import selfupdate as selfupdate_mod
+from . import sent as sent_mod
 from . import writeback as writeback_mod
 from . import jst
 from . import queuefile
@@ -292,6 +293,26 @@ def board_summary(now=None) -> dict:
         # **ロックを試しに取らない**（`AccountLock.holder_pid()` の docstring）。
         running_pid = lock_mod.AccountLock.holder_pid(
             accounts_mod.account_lock_path_for(name))
+        # **同席の様態（`thth send`）で出したものも「最後に出したもの」に数える**
+        # （運用の報告 2026-09-13: 実際に 2 媒体へ出したのに board の
+        # `last_post` が `(なし)` のままだった）。
+        #
+        # 原因は `core.last_post_at()` が **queue の front-matter だけ**を見て
+        # いること。`send` は queue を通らないので書き戻す front-matter が無く、
+        # `state/<account>/sent/<post_id>.json` が唯一の記録になる
+        # （`core._send_locked()`）。**出した事実がそこにしか無いなら、board も
+        # そこを見るしかない。**
+        #
+        # **`select` の間合い（`min_interval_hours`）には混ぜない**。あちらが
+        # 見る `core.last_post_at()` はそのまま——同席の送信は masaru がその場で
+        # 決めるもので、不在の様態の間合いを消費させる筋のものではない。ここは
+        # **board の表示だけ**を直す。
+        sent_at, sent_row = sent_mod.latest_sent(state_dir)
+        last_post_at = last_at
+        last_post_source = "queue" if last_at is not None else None
+        if sent_at is not None and (last_at is None or sent_at > last_at):
+            last_post_at = sent_at
+            last_post_source = "sent"
         needs_review = _needs_review_detail(
             files, account_name=name, account_cfg=account_cfg, now=now)
         token_row = maintain_mod.inspect(name, now=now)
@@ -299,7 +320,14 @@ def board_summary(now=None) -> dict:
         accounts_out.append({
             "account": name,
             "project": account_cfg.get("project"),
-            "last_post_at": last_at.isoformat() if last_at else None,
+            "last_post_at": last_post_at.isoformat() if last_post_at else None,
+            # **どちらの記録から言っているか**（鍵の追加だけ・意味は変えない）。
+            # `"queue"` は書き戻された front-matter（不在の様態）、`"sent"` は
+            # `state/<account>/sent/`（同席の様態）、`None` は「出した記録が
+            # 無い」。混ぜた 1 つの値だけを出すと、読み手が素性を確かめられない。
+            "last_post_source": last_post_source,
+            "last_sent_at": sent_at.isoformat() if sent_at else None,
+            "last_sent_post_id": sent_row.get("post_id") if sent_row else None,
             "approved_waiting": approved_waiting,
             "type_mismatch": type_mismatch,
             "inflight": inflight.get("file") if inflight else None,

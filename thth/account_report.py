@@ -35,6 +35,7 @@ from . import queuefile
 from . import topics as topics_mod
 from . import redact as redact_mod
 from . import select as select_mod
+from . import sent as sent_mod
 from . import writeback as writeback_mod
 from .adapters import base as adapter_base
 
@@ -166,6 +167,13 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
 
     queue の `post_id` と突き合わせて、1 本ごとに **THTH 経由か外で出したか**を
     付ける。手で投稿していた時期からの移行で要る（nigamilab セッション指摘）。
+
+    **突合の相手は queue だけではない**（運用の報告 2026-09-13）。`thth send`
+    （同席の様態）で出した 1 本を、この口が「**外で出したもの**」と表示していた
+    ——`state/<account>/sent/<post_id>.json` に記録があるのに。同席の様態は
+    queue も書き戻しも通らないので、front-matter だけを見ると**自分が出した
+    ものを他人が出したものとして数える**。`masaru-threads` のような同席専用の
+    アカウントでは、出したものが 1 本残らず「通していないもの」になる。
     """
     try:
         account_cfg = accounts_mod.load_account(account_name)
@@ -181,6 +189,9 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
         post_id = qf.front_matter.get("post_id")
         if post_id:
             by_post_id[post_id] = os.path.basename(qf.path)
+    # 同席の様態（`thth send`）の記録。**queue に無いことは「通していない」の
+    # 証明ではない。**
+    sent_ids = sent_mod.post_ids(accounts_mod.state_dir_for(account_name))
 
     rows, err = fetch_posts(account_cfg, accounts_mod.load_token(account_cfg),
                              limit=limit)
@@ -198,8 +209,14 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
             "permalink": row.get("url"),
             "text": row.get("text"),
             "topic": row.get("topic"),
-            "via_thth": post_id in by_post_id,
+            "via_thth": post_id in by_post_id or post_id in sent_ids,
             "file": by_post_id.get(post_id),
+            # **どちらの記録で「THTH を通した」と言えるか**（鍵の追加だけ）。
+            # `"queue"` は queue の front-matter（不在の様態・`file` が付く）、
+            # `"sent"` は `state/<account>/sent/`（同席の様態・`file` は無い）。
+            # 通していないものは `None`。
+            "source": ("queue" if post_id in by_post_id
+                       else ("sent" if post_id in sent_ids else None)),
         })
     return {"account": account_name, "error": None, "posts": posts}
 
@@ -579,8 +596,12 @@ def account_detail(account_name: str, *, now=None, remote: bool = True) -> dict:
         if status in counts:
             counts[status] += 1
 
+    # **queue と `sent/` の両方**（運用の報告 2026-09-13）。同席の様態で出した
+    # ものは queue に残らないので、front-matter だけで数えると `thth account` の
+    # 「うち THTH を通していないもの N 件」に自分の投稿が並ぶ。
     known_post_ids = {qf.front_matter.get("post_id") for qf in files
                        if not qf.malformed and qf.front_matter.get("post_id")}
+    known_post_ids |= sent_mod.post_ids(state_dir)
     remote_state = ({"known": False, "count": None, "latest": None, "outside": [],
                      "message": "--no-remote が指定されました"} if not remote
                     else _remote_posts(account_cfg, accounts_mod.load_token(account_cfg),

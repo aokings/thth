@@ -711,7 +711,14 @@ def cmd_posts(args) -> int:
         print("投稿がありません")
         return 0
     for post in posts:
-        via = f"THTH（{post['file']}）" if post["via_thth"] else "**外で出したもの**"
+        if not post["via_thth"]:
+            via = "**外で出したもの**"
+        elif post.get("file"):
+            via = f"THTH（{post['file']}）"
+        else:
+            # 同席の様態（`thth send`）。queue のファイルは無く、本文の記録は
+            # `state/<account>/sent/<post_id>.json` にある（2026-09-13）。
+            via = "THTH（同席の送信）"
         topic = f"  [{post['topic']}]" if post.get("topic") else "  [トピック無し]"
         print(f"{post['timestamp']}{topic}  {via}")
         print(f"  id       : {post['id']}")
@@ -2190,6 +2197,12 @@ def cmd_board(args) -> int:
                 print(f"{row['account']}: {row['error']}")
                 continue
             last_post = row["last_post_at"] or "(なし)"
+            # **どちらの記録から言っているか**（2026-09-13 の本番）。同席の様態
+            # （`thth send`）で出したものは queue の front-matter に残らないので、
+            # 記録は `state/<account>/sent/` にしかない。混ぜた 1 つの時刻だけを
+            # 出すと、人が「どこを見れば本文が読めるか」を辿れない。
+            if row.get("last_post_source") == "sent":
+                last_post += "（同席）"
             inflight = row["inflight"] or "(なし)"
             # トークンの状態は **人向けの出力にも出す**（kopicha セッション指摘
             # 2026-09-10: 文書には出ると書いてあるのに --json にしか出ていなかった）。
