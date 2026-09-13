@@ -100,6 +100,30 @@ TOOLS = [
         "description": "アカウントごとの最終投稿・approved 待ち・inflight・型外の骨を返す（読むだけ）。",
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        # **名前と説明文がそのまま売り文句**（設計 v2 §1 規約 6）。LLM は説明文で
+        # 呼ぶかを決めるので、**この文言は設計 v2 §1 の正本から動かさない。**
+        "name": "before_you_post",
+        "description": (
+            "投稿する前に呼ぶ。この語とこの型で、スレッドがどう伸びたかの実績を、"
+            "件数と期間つきで返す。言えないことは cannot_say に出る"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "account": {"type": "string", "description": "account 名"},
+                "topic": {"type": "string", "description": "語（トピック）"},
+                "kind": {"type": "string", "description": "型（行動・年度付き 等）"},
+                "hour_band": {"type": "string",
+                               "description": "出す予定の時刻帯（朝・昼・夕・深夜）"},
+                "is_reply": {"type": "boolean", "description": "返信として出すか"},
+                "window_days": {"type": "integer", "description": "直近何日（既定 30）"},
+                "min_n": {"type": "integer",
+                           "description": "中央値を返す下限（既定 20）"},
+            },
+            "required": ["account", "topic"],
+        },
+    },
 ]
 
 
@@ -152,13 +176,31 @@ def call_tool(name: str, arguments: dict | None) -> dict:
     elif name == "thth_board":
         proc = run_cli(["board", "--json"])
         text = proc.stdout
+    elif name == "before_you_post":
+        args = ["ask", "before-you-post", arguments["account"],
+                "--topic", arguments["topic"]]
+        if arguments.get("kind"):
+            args += ["--kind", arguments["kind"]]
+        if arguments.get("hour_band"):
+            args += ["--hour-band", arguments["hour_band"]]
+        if arguments.get("is_reply"):
+            args.append("--reply")
+        if arguments.get("window_days") is not None:
+            args += ["--window-days", str(arguments["window_days"])]
+        if arguments.get("min_n") is not None:
+            args += ["--min-n", str(arguments["min_n"])]
+        args.append("--json")
+        proc = run_cli(args)
+        text = proc.stdout
     else:
         return {"content": [{"type": "text", "text": f"unknown tool: {name}"}], "isError": True}
 
-    if name.startswith("thth_topic_"):
+    if name.startswith("thth_topic_") or name == "before_you_post":
         # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）
         # とは意味が違う——こちらは stale_context・不正な候補比較で、
         # **そのまま使ってはいけない**応答。既存の扱いは変えない。
+        # `before_you_post` も同じ（設計 v2 §1）: exit 1 は台帳が無い、2 は問いが
+        # 受け取れない。**`cannot_say` だらけの答えは exit 0 で、error ではない。**
         is_error = proc.returncode != 0
     else:
         is_error = proc.returncode not in (0, 1)  # lint は 1 も正常な「検査結果」

@@ -17,6 +17,7 @@ from . import __version__ as _pkg_version
 from . import account_report as account_report_mod
 from . import accounts as accounts_mod
 from . import approval as approval_mod
+from . import ask_cli
 from . import collect as collect_mod
 from . import core
 from . import jst
@@ -2474,6 +2475,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_token_set.add_argument("--stdin", action="store_true",
                               help="標準入力から黙って1行読む（非対話・パイプ用）")
     p_token_set.set_defaults(func=cmd_token_set)
+
+    # `thth ask before-you-post`（設計 v2 §1・§6 v2-1）。**口の中身は
+    # `thth/ask_cli.py` に閉じる**——ここに足すのはこの 1 行だけ。
+    ask_cli.register(sub)
 
     return p
 
