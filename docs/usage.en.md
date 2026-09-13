@@ -17,6 +17,9 @@ project's call. It sends your text as given, without reformatting or
 truncating it. Platform caps (e.g. Threads' 250 posts / 1,000 replies per 24h)
 are not enforced by THTH itself.
 
+Setting up a new account? Read §9 (where the account ledger file lives) first —
+it is not in this repo. §10 is `thth ask before-you-post`, §11 is `thth share`.
+
 ## 2. Posting in person (`thth send`)
 
 When a human is present and says "post this," you can skip the queue file:
@@ -205,3 +208,130 @@ THTH's core:
    engage with (efficacy claims, outcome predictions, comparisons) —
    THTH will post reply drafts, but a human reads every one before it goes.
 3. Create `docs/sns/queue/` in your own repo before the timer needs it.
+
+## 9. Account ledgers (`thth account add` / `migrate`)
+
+Each account is one JSON file. It lives **outside this repo**, so nothing you
+configure is ever committed here:
+
+| Order | Location | When |
+|---|---|---|
+| 1 | `$THTH_ACCOUNTS_DIR` | if you set it |
+| 2 | `$THTH_ROOT/accounts/` | the normal place — used as soon as the directory exists, even when empty |
+| 3 | `<repo>/accounts/` | compatibility only, kept for one release, with a warning on stderr |
+
+`thth doctor` and `thth board` print the directory they actually read, on one
+line, even when no ledger was found (`accounts_dir` in `--json`).
+
+Write a new one from the bundled template:
+
+```bash
+thth account add your-project-threads \
+  --media threads|bluesky|mastodon \
+  --project your-project \
+  [--handle your-handle] [--instance https://your.instance] [--repo-dir …]
+```
+
+- Written to `$THTH_ROOT/accounts/<name>.json` — **never into the repo**, even
+  when the compatibility path above is the one being read.
+- Always `production: false` and `scheduled: false`. The tool will not create
+  something that posts for real; you turn those on by hand.
+- It refuses to overwrite an existing ledger (exit 1).
+- `--handle` defaults to `--project`, not to the account name.
+
+Coming from an older version whose ledgers sat in `<repo>/accounts/`:
+
+```bash
+thth account migrate --dry-run   # plan only; creates nothing
+thth account migrate             # copy them to $THTH_ROOT/accounts/
+```
+
+It **copies** — the repo's working tree is not touched, so a deployment that
+tracks the repo with `git merge --ff-only` keeps working. It is idempotent, and
+if a file already exists at the destination with different content it says so
+by name and exits 1 rather than overwriting. Deleting the old directory is a
+separate, human step.
+
+## 10. Asking before you post (`thth ask before-you-post`)
+
+```bash
+thth ask before-you-post your-account --topic <word> \
+  [--kind 行動|年度付き|一般名詞|カテゴリ|抽象|専門語|固有名|つながり型|自作] \
+  [--hour-band 朝|昼|夕|深夜] [--reply] \
+  [--window-days 30] [--min-n 20] [--json]
+```
+
+**Read-only, and local only.** It reads the ledgers THTH has already collected
+into your own repo — nothing is fetched, nothing is written, no repo or state
+file changes. `provenance.source` is `"local"`. This is *not* the shared spring
+described in [設計_v2_泉と門_2026-09-13.md](設計_v2_泉と門_2026-09-13.md) §1;
+that does not exist yet.
+
+**Your draft is not an input.** You pass a word, a shape, an hour band and
+whether it's a reply. The body never reaches it, and never appears in its
+output.
+
+What comes back (`--json`, seven keys):
+
+| Key | What it is |
+|---|---|
+| `summary` | one line you can read aloud |
+| `expected` | `branches_24h`, `first_reply_min`, `views_24h` — each with median, p25/p75 and `n` |
+| `comparable` | `n`, `window_days`, what was aligned on, and the `medium` |
+| `cannot_say` | every question it declined, with the reason |
+| `one_thing_to_change` | at most one suggestion, or `null` |
+| `audience` | who was observed in that topic, per topic, newest first |
+| `provenance` | `source`, number of observers, when, schema version |
+
+**Expect `cannot_say` almost everywhere at first.** A median is only returned
+once at least `--min-n` (default 20) comparable posts exist inside
+`--window-days` (default 30); below that the number is withheld and the reason
+(`n=5`, and so on) is listed instead. One account's first weeks will not reach
+20. **That is the answer, not a failure** — exit code stays 0. Comparisons
+never cross media: Threads' 24 hours and Bluesky's 24 hours are different
+numbers, and the `medium` in `comparable` says which one you got.
+
+An unknown `--kind` or `--hour-band`, or an empty `--topic`, is refused with
+exit 2 rather than quietly ignored. An account with no ledger exits 1.
+
+The same thing is available over MCP as the `before_you_post` tool.
+
+## 11. Contributing observations (`thth share`)
+
+```bash
+thth share            # or: status — where it is, on or off, how many bytes
+thth share on         # start queuing (also: sync, immediately)
+thth share off        # stop
+thth share log        # print every line ever queued
+thth share sync       # re-queue from the ledgers you already have
+```
+
+**Off by default**, and off in every ambiguous case: if
+`$THTH_ROOT/state/share/config.json` is missing, or unreadable, or malformed,
+the answer is off. While off, the outbox is **zero bytes** — the pseudonym file
+and the hash salt are not even created.
+
+**There is nowhere for it to send.** Turning it on appends lines to
+`$THTH_ROOT/state/share/outbox/<YYYY-MM>.ndjson` on your own disk. No server
+exists to receive them; `thth share` opens no socket. `thth share log` prints
+every line, so you can read exactly what you would be contributing before
+anyone ever asks for it.
+
+What it queues:
+
+- **Observations** — the topic word, the free-text `audience` note, the topic
+  kind, the fetch status, a pseudonym for the observer, and the date.
+- **Thread shape** — a **salted SHA-256** of the post id (the salt stays on
+  your disk and is never queued, so the hash cannot be turned back into a
+  permalink), the medium, the kind, the word, the hour band, and the counts at
+  each collection tick.
+- **Your pseudonym** — a random 16-digit id in
+  `$THTH_ROOT/state/share/observer_id`, stable across runs. It is the only name
+  that ever appears.
+
+What never gets queued, enforced by a check that raises before the line is
+written (`_assert_clean`): post bodies, reply bodies, replier usernames, your
+own `verdict`/`by`/`note`/`reason`, account names, access tokens, repo paths,
+and raw post ids.
+
+Turning it on is recorded locally with `--by`; that name is not queued.

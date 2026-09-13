@@ -42,13 +42,32 @@ not yet running in production). It does not decide what to write.
 
 ## Install
 
-There is no PyPI package yet (packaging is planned, not published). Today:
+There is no PyPI release yet — the wheel builds and installs (`thth` and
+`thth-mcp` entry points, zero runtime dependencies), but uploading it is a
+manual step the maintainer has not taken. Today:
 
 ```bash
 git clone <this repo>
 cd thth
 python -m thth --version   # or: put bin/thth on your PATH
 ```
+
+### Where your account ledgers live
+
+One JSON file per account, **outside this repo**:
+`$THTH_ROOT/accounts/<account>.json` (override with `$THTH_ACCOUNTS_DIR`).
+Nothing you configure is committed here.
+
+```bash
+thth account add your-project-threads --media threads --project your-project
+```
+
+writes one from the bundled template (`accounts.example/<media>.json`) with
+`production: false` and `scheduled: false` — it will **not** post until you
+edit those by hand. If you are upgrading from a version that kept ledgers in
+the repo's own `accounts/` directory, `thth account migrate` copies them out
+(copy, never move; it refuses to overwrite anything that differs). That old
+location is still read for one release, with a warning.
 
 Authorizing an account (one line each):
 
@@ -77,12 +96,15 @@ Full walkthrough: [docs/usage.en.md](docs/usage.en.md).
 
 ## Commands
 
-All 25 subcommands `thth --help` lists today, one line each:
+All 27 subcommands `thth --help` lists today, one line each:
 
 - `lint` — check a queue file's front matter and length
 - `preview` — show the exact text that would go out
 - `approve` — two-step approval (show, then confirm with a digest)
-- `account` — one account's postable status
+- `account` — one account's postable status; `account add <name> --media
+  threads|bluesky|mastodon --project <p>` writes a new ledger from the bundled
+  template, and `account migrate` copies ledgers out of an old in-repo
+  `accounts/` directory (see "Where your account ledgers live" below)
 - `revoke` — undo an approval and return the file to `draft`
 - `posts` — list posts actually made, including ones sent outside THTH
 - `replies` — read the collected-reply ledger
@@ -109,8 +131,25 @@ All 25 subcommands `thth --help` lists today, one line each:
   subset (§2) to a local outbox; **nothing is sent anywhere** — the spring that
   would receive it does not exist yet (v2-5).
 
-`thth ask` (a query-before-you-post advisor) is designed but not implemented —
-see [docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md) §1.
+- `ask` — `before-you-post`: what happened last time you used this word, at this
+  hour, in this shape.
+
+```bash
+thth ask before-you-post <your-account> --topic <word> [--kind …] \
+  [--hour-band 朝|昼|夕|深夜] [--reply] [--window-days 30] [--min-n 20] [--json]
+```
+
+It answers from **your own local ledgers only** — the replies and metrics THTH
+already collected into your repo. It is **not** the spring (`thth-spring`, the
+shared pool described in
+[docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md) §1); no
+network call is made and `provenance.source` says `"local"`. It never sees your
+draft — you pass a word, a shape and an hour band, never the body.
+
+Expect **mostly `cannot_say`** at first: medians are withheld below `--min-n`
+(default 20) comparable posts inside `--window-days` (default 30), and one
+account's first weeks rarely reach that. That is the intended answer, not an
+error — rc stays 0, and `cannot_say` names each reason with its `n`.
 
 ## What's not here
 
