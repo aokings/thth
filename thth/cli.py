@@ -509,9 +509,19 @@ def cmd_account(args) -> int:
     台帳・clone・queue・トークン・timer・inflight を 1 か所で見て、**最後に
     投稿できるかどうかの 1 行**を出す。読むだけで、何も変えない。
     """
-    names = [args.account] if args.account else accounts_mod.list_account_names()
-    details = [account_report_mod.account_detail(name, remote=not args.no_remote)
-               for name in names]
+    try:
+        names = [args.account] if args.account else accounts_mod.list_account_names()
+        details = [account_report_mod.account_detail(name, remote=not args.no_remote)
+                   for name in names]
+    except accounts_mod.AccountError as e:
+        # **traceback にしない**（監査 1・P2-2）。置き場を 1 行出してから断る。
+        if args.json:
+            _print_json({"error": "accounts_dir_unreadable", "detail": str(e),
+                         "accounts_dir": accounts_mod.accounts_dir_info()})
+        else:
+            print(account_cli_mod.where_line())
+            print(str(e))
+        return 2
     if args.json:
         _print_json(details if args.account is None else details[0])
     else:
@@ -2116,7 +2126,19 @@ def cmd_systemd(args) -> int:
 
 
 def cmd_board(args) -> int:
-    summary = report_mod.board_summary()
+    try:
+        summary = report_mod.board_summary()
+    except accounts_mod.AccountError as e:
+        # **置き場を先に言う**（監査 1・P2-2）。読めなかったときこそ、どこを
+        # 読もうとしたのかを出さないと直しようがない。traceback にしない・
+        # 「0 本」と黙らない。
+        if args.json:
+            _print_json({"error": "accounts_dir_unreadable", "detail": str(e),
+                         "accounts_dir": accounts_mod.accounts_dir_info()})
+        else:
+            print(account_cli_mod.where_line())
+            print(str(e))
+        return 2
     if args.json:
         _print_json(summary)
     else:

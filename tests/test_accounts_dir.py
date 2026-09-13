@@ -471,6 +471,73 @@ def test_読めないaccountの呼び方はloudに断る(置き場):
 
 
 # --------------------------------------------------------------------------
+# 置き場が読めないとき（「無い」と言わない・監査 1・P2-2）
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def 読めない置き場(置き場):
+    """台帳の置き場を `chmod 000` にする（後で必ず戻す）。
+
+    root では権限が効かないので skip。
+    """
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root では chmod 000 が効かない")
+    d = 置き場["外"]
+    台帳を置く(d, "demo-threads")
+    os.chmod(d, 0o000)
+    try:
+        if os.access(d, os.R_OK):
+            pytest.skip("この環境では chmod 000 が効かない")
+        yield d
+    finally:
+        os.chmod(d, 0o700)
+
+
+def test_読めない置き場は0本ではなく読めないと言う(読めない置き場):
+    """**黙って「0 本」と返さない。** 本番 6 本が消えたように見える。"""
+    with pytest.raises(accounts_mod.AccountError) as e:
+        accounts_mod.list_account_names()
+    assert "権限" in str(e.value)
+    assert "0 本" in str(e.value)     # 「0 本なのではない」と明言している
+
+
+def test_読めない置き場でload_accountは不在と嘘をつかない(読めない置き場):
+    """`os.path.exists()` の False をそのまま「無い」と言っていた（P2-2）。
+
+    台帳はそこに在る。**作り直しに行かせてはいけない。**
+    """
+    with pytest.raises(accounts_mod.AccountError) as e:
+        accounts_mod.load_account("demo-threads")
+    assert "権限" in str(e.value)
+    assert "台帳が無い" not in str(e.value)
+
+
+def test_読めない置き場でboardはtracebackにならず置き場を1行出す(読めない置き場):
+    r = run_thth(["board"])
+    assert "Traceback" not in r.stderr, r.stderr
+    assert "PermissionError" not in r.stderr, r.stderr
+    assert r.returncode != 0, r.stdout
+    assert f"台帳の置き場: {読めない置き場}" in r.stdout, r.stdout
+    assert "権限" in r.stdout, r.stdout
+
+
+def test_読めない置き場でaccountはtracebackにならない(読めない置き場):
+    r = run_thth(["account", "--no-remote"])
+    assert "Traceback" not in r.stderr, r.stderr
+    assert r.returncode != 0, r.stdout
+    assert "権限" in r.stdout, r.stdout
+
+
+def test_読めない置き場でdoctorは不在と言わない(読めない置き場):
+    r = run_thth(["doctor", "demo-threads"])
+    assert "Traceback" not in r.stderr, r.stderr
+    assert r.returncode != 0
+    両方 = r.stdout + r.stderr
+    assert "権限" in 両方, 両方
+    assert "台帳が無い" not in 両方, 両方
+
+
+# --------------------------------------------------------------------------
 # doctor・board が置き場を 1 行で言う
 # --------------------------------------------------------------------------
 

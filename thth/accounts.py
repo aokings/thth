@@ -180,14 +180,38 @@ def _expand(value):
     return value
 
 
+def dir_is_unreadable(d: str) -> bool:
+    """**ディレクトリはあるのに読めない**（権限）か。
+
+    `os.path.exists()` は権限が無いときも False を返す。それをそのまま
+    「無い」と言うと、`thth doctor` が **嘘をつく**——台帳はそこに在るのに
+    「台帳が無い」と言われた人は、作り直しに行ってしまう（監査 1・P2-2）。
+    """
+    return os.path.isdir(d) and not os.access(d, os.R_OK | os.X_OK)
+
+
 def load_account(name: str) -> dict:
-    """`accounts/<name>.json` を読んで検査する。$THTH_ROOT・~ を展開したコピーを返す。"""
-    path = os.path.join(accounts_dir(), f"{name}.json")
-    if not os.path.exists(path):
-        raise AccountError(f"台帳が無い: {name}（{path}）")
+    """`accounts/<name>.json` を読んで検査する。$THTH_ROOT・~ を展開したコピーを返す。
+
+    **「無い」と「読めない」を言い分ける**（監査 1・P2-2）。
+    """
+    d = accounts_dir()
+    path = os.path.join(d, f"{name}.json")
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
+    except FileNotFoundError as e:
+        if dir_is_unreadable(d):
+            raise AccountError(
+                f"台帳の置き場が読めません（権限）: {d}"
+                f"——**無いのではありません。** 権限を直してください") from e
+        raise AccountError(f"台帳が無い: {name}（{path}）") from e
+    except PermissionError as e:
+        raise AccountError(
+            f"台帳が読めません（権限）: {path}"
+            f"——**無いのではありません。** 権限を直してください") from e
+    except OSError as e:
+        raise AccountError(f"台帳が読めません: {path}（{e.strerror}）") from e
     except json.JSONDecodeError as e:
         raise AccountError(f"台帳が壊れている: {name}（{e}）") from e
     missing = [k for k in REQUIRED_FIELDS if k not in data]
@@ -296,7 +320,22 @@ def load_env(account_cfg: dict) -> dict:
 
 
 def list_account_names() -> list[str]:
+    """置き場にある台帳の名前。**無い**なら空、**読めない**なら loud に落ちる。
+
+    前は `os.listdir()` の `PermissionError` がそのまま traceback になっていた
+    （`thth board`・`thth account`・監査 1・P2-2）。「台帳 0 本」と黙って返すのは
+    もっと悪い——**本番 6 本が消えたように見える**。`AccountError` に言い換えて、
+    呼んだ側が置き場を 1 行出してから非ゼロで終われるようにする。
+    """
     d = accounts_dir()
-    if not os.path.isdir(d):
+    try:
+        names = os.listdir(d)
+    except (FileNotFoundError, NotADirectoryError):
         return []
-    return sorted(name[:-5] for name in os.listdir(d) if name.endswith(".json"))
+    except PermissionError as e:
+        raise AccountError(
+            f"台帳の置き場が読めません（権限）: {d}"
+            f"——**0 本なのではありません。** 権限を直してください") from e
+    except OSError as e:
+        raise AccountError(f"台帳の置き場が読めません: {d}（{e.strerror}）") from e
+    return sorted(name[:-5] for name in names if name.endswith(".json"))
