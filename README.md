@@ -62,3 +62,10 @@ timer（systemd・`thth systemd` で生成）で毎時投稿、返信の採集�
 - **未着手**: X・Facebook ページ・Instagram の各アダプタ。トピック検索の権限（tester には降りない）。泉のサーバ（v2-5）。
 - **権限の制約**: tester に降りる scope は 5 つ。削除はできない。
 - **masaru の手が要るもの**: PyPI の登録と upload、repo を public にする切替と `LICENSE`、MCP registry への登録、tag と `release` を進める操作。
+
+## MCP registry
+
+registry は「この PyPI の名前を名乗ってよいのは誰か」を、**配布物の README にこの 1 行があるか**で確かめる（設計 v2-4 §3・一次資料は quickstart・**L2**）。だから消さないこと——消すと登録（`mcp-publisher publish`）が通らなくなる。形（`server.json` と版の一致）は `tests/test_server_json.py` が見張る。
+
+mcp-name: io.github.aokings/thth
+
