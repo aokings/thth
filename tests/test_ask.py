@@ -250,6 +250,42 @@ def test_c2_期間外と媒体違いの件数はこの語のものだけ(account
     assert not [line for line in answer["cannot_say"] if "媒体違い" in line]
 
 
+# ------------------------------------- (c3) 壊れて数えられない ≠ 無かった
+
+def test_c3_返信台帳が壊れていたらcannot_sayに出る(account):
+    """**「壊れて数えられない」を「無かった」に化けさせない**（監査 1・P2-3）。
+
+    返信の `<post_id>.ndjson` が JSON として読めないと、`replies.load()` は
+    **そのファイルを丸ごと落とす**（壊れと不存在を混ぜない流儀）。落ちた分だけ
+    枝が少なく出るのに、`before_you_post` は何も言わずに n=0 を返していた。
+    観測の棚が壊れたときは `cannot_say` に出るのに、返信台帳だけ抜けていた。
+    """
+    ids = write_many(account, 25, branches=3)
+    replies_dir = os.path.join(account["repo_dir"], "data", "sns", "replies")
+    壊す = ids[:4]
+    for post_id in 壊す:
+        with open(os.path.join(replies_dir, f"{post_id}.ndjson"), "w",
+                  encoding="utf-8") as f:
+            f.write('{"kind": "reply", これはJSONではない\n')
+
+    answer = ask_mod.before_you_post(ACCOUNT, topic=TOPIC, now=NOW)
+
+    理由 = [line for line in answer["cannot_say"] if "返信台帳" in line]
+    assert 理由, answer["cannot_say"]
+    assert f"{len(壊す)} 本が読めません" in 理由[0], 理由[0]
+    assert 壊す[0] in 理由[0], 理由[0]
+    # **枝が黙って 0 になっていない**ことも言う（少なく出ている、と添える）。
+    assert "少なく出ています" in 理由[0], 理由[0]
+
+
+def test_c3b_返信台帳が全部読めれば余計なことを言わない(account):
+    """**言わなくてよいときは言わない**（`cannot_say` を水増ししない）。"""
+    write_many(account, 25, branches=3)
+    answer = ask_mod.before_you_post(ACCOUNT, topic=TOPIC, now=NOW)
+    assert not [line for line in answer["cannot_say"] if "返信台帳" in line], \
+        answer["cannot_say"]
+
+
 # ------------------------------------------------- (d) 1 つだけ・指図はしない
 
 # **指図の語**（設計 v2 §1 規約 3）。答えは事実の形で書く。

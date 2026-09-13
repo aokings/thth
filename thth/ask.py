@@ -194,8 +194,14 @@ def _views_observation(post: dict) -> dict | None:
     }
 
 
-def _population(account_name: str, *, default_medium: str | None) -> list:
+def _population(account_name: str, *, default_medium: str | None) -> tuple:
     """手元の台帳を 1 投稿 1 行に並べる。**判断はしない。数えるだけ。**
+
+    返すのは `(行, 読めなかった返信台帳のファイル名)`。**2 つ目を捨てない**
+    （監査 1・P2-3）: 返信の ndjson が壊れていると `replies.load()` はその
+    ファイルを丸ごと落とすので、枝も最初の枝も**黙って 0 になる**——
+    「壊れて数えられない」が「無かった」に化ける。観測の棚が壊れたときは
+    `cannot_say` に出るのに、返信台帳だけ抜けていた。
 
     3 つの台帳を post_id で突き合わせる:
 
@@ -262,7 +268,7 @@ def _population(account_name: str, *, default_medium: str | None) -> list:
             "first_reply_min": s.get("first_reply_min"),
             "views_24h": views_by_id.get(post_id),
         })
-    return out
+    return out, list(ledger.get("broken") or [])
 
 
 # ---------------------------------------------------------------- 1 つだけ
@@ -355,7 +361,8 @@ def before_you_post(account: str, *, medium: str | None = None, topic: str,
     now = now if now is not None else jst_mod.now_jst()
     since = now - datetime.timedelta(days=window_days)
 
-    population = _population(account, default_medium=account_cfg.get("media"))
+    population, 読めなかった返信台帳 = _population(
+        account, default_medium=account_cfg.get("media"))
 
     # **捨てない・数える**（設計 v1 §3.2.2）。除いた理由ごとに件数を持つ。
     #
@@ -415,6 +422,16 @@ def before_you_post(account: str, *, medium: str | None = None, topic: str,
     if 除いた["reply_unknown"]:
         cannot_say.append(f"返信かどうかが判らず数えなかった「{topic}」の投稿 "
                           f"{除いた['reply_unknown']} 件（実測の台帳がありません）")
+
+    # **返信台帳が読めなかったことを黙らない**（監査 1・P2-3）。壊れた
+    # `<post_id>.ndjson` は 1 本まるごと落ちるので、**枝と最初の枝が少なく出る**
+    # ——「壊れて数えられない」を「無かった」と読ませない。
+    if 読めなかった返信台帳:
+        cannot_say.append(
+            f"返信台帳の {len(読めなかった返信台帳)} 本が読めません"
+            f"（{'・'.join(読めなかった返信台帳[:5])}"
+            f"{' ほか' if len(読めなかった返信台帳) > 5 else ''}）"
+            f"——枝と最初の枝はその分だけ少なく出ています")
 
     # ---- 観測（誰がいるか）。**名前は出さない。人数と自由文と日付だけ。**
     try:
