@@ -772,10 +772,18 @@ def test_雛形は3本ともダミーでproduction_false(media):
         assert 本物 not in text, f"雛形に実物の綴りが入っている: {本物}"
 
 
-def test_repoのaccountsはこの版ではまだ残っている():
-    """**この版では消さない**（設計 v2 §8）。VM の migrate が済んで運用が
-    確認した後の、別の日の commit。ここが空になったら、それは早すぎる。
+def test_repoにaccountsは無い_台帳0本で配る():
+    """**repo に台帳を置かない**（設計 v2 §3「台帳を repo の外へ」）。
+
+    2026-09-14: VM の `thth account migrate` が済み、board の互換警告が消え、
+    直後の `thth run` も通ったので、repo の 6 本を `git rm` した。**clone した人に
+    他人の台帳が付いて来ない**——`accounts.example/` の雛形だけを配る。
+
+    ここが「6 本ある」に戻ったら、それは台帳が repo に戻ったということ。
+    互換 (c)（app repo の `accounts/` を読む）はコードにはまだ残っているが、
+    それは**既存の VM を止めないため**で、配り物に台帳を入れる理由ではない。
     """
     d = os.path.join(REPO_ROOT, "accounts")
-    残り = sorted(n for n in os.listdir(d) if n.endswith(".json"))
-    assert len(残り) == 6, f"repo の accounts/ が 6 本でない: {残り}"
+    assert not os.path.exists(d), (
+        f"repo に accounts/ が復活している: "
+        f"{sorted(n for n in os.listdir(d) if n.endswith('.json'))}")

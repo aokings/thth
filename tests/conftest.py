@@ -278,8 +278,10 @@ def make_account_json(accounts_dir: str, name: str, *, repo_dir: str, **override
 def isolated_account_factory(thth_root, nigamilab_repo, monkeypatch):
     """`isolated_account` の中身をテストごとの台帳上書きに対応させたファクトリ。
 
-    `thth.accounts.APP_DIR` を差し替えて、実物の `accounts/nigamilab-threads.json`
-    （repo_dir が `$THTH_ROOT/repos/nigamilab` の実運用値）を汚さずにテストする。
+    `thth.accounts.APP_DIR` を差し替えて、**打った人の実物の台帳**
+    （`$THTH_ROOT/accounts/*.json`・repo_dir が実クローンを指している）を
+    読みにも書きにも行かせない。repo に台帳は無い（2026-09-14 に 6 本を
+    `git rm`・設計 v2 §3）が、`THTH_ROOT` を向け損ねれば実物に届いてしまう。
     """
     import thth.accounts as accounts_mod
 

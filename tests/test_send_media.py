@@ -18,8 +18,8 @@
   3. 出した本文が `state/<account>/sent/<post_id>.json` に残る（**正本**）。
      `thth send` には書き戻す front-matter が無いので、ここが唯一の記録。
   4. **台帳が `production: false` なら `--production` を付けても出ない**
-     （fail-closed・設計 §0）。repo の `accounts/masaru-bluesky.json`・
-     `masaru-mastodon.json` はこの状態で配布されている。
+     （fail-closed・設計 §0）。`thth account add` が書く台帳はこの状態で生まれる
+     （2026-09-14 以降、repo は台帳そのものを配らない・設計 v2 §3）。
 """
 from __future__ import annotations
 
