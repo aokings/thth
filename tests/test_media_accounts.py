@@ -110,9 +110,14 @@ def test_thth_accountが読んで落ちない(name):
     assert "Traceback" not in r.stderr, r.stderr
     assert f"（masaru / {_load(name)['media']} /" in r.stdout, r.stdout
     if _トークンがまだ無い(name):
-        # 投稿できない状態なので rc=1（**2 は台帳が読めない・使い方が違う**）。
-        assert r.returncode == 1, f"{r.returncode}: {r.stdout}{r.stderr}"
+        # **表示できたら rc=0**（T3・第 1 回の記録 §3）。トークンを入れる前の台帳は
+        # 「まだ投稿できない」を**正常に表示できている**——それを失敗として返すと、
+        # 呼んだ側からは道具が落ちたように見える。非ゼロは読めなかったときだけ
+        # （rc=2 は台帳が読めない・使い方が違う）。
+        assert r.returncode == 0, f"{r.returncode}: {r.stdout}{r.stderr}"
         assert "no_token" in r.stdout, r.stdout
+        # 投稿できない旨は**本文に残る**。
+        assert "投稿できません" in r.stdout, r.stdout
 
 
 def test_thth_boardが2本を並べて落ちない():
