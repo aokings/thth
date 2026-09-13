@@ -10,13 +10,21 @@ from __future__ import annotations
 import json
 import os
 
+from . import postid as postid_mod
+
 
 def dir_for(state_dir: str) -> str:
     return os.path.join(state_dir, "sent")
 
 
 def path_for(state_dir: str, post_id: str) -> str:
-    return os.path.join(dir_for(state_dir), f"{post_id}.json")
+    """**`post_id` をそのままパスにしない**（`thth/postid.py`・T3 2026-09-13）。
+
+    Bluesky の `post_id` は AT URI で `/` を含む。Threads の数字だけの
+    `post_id` は encode しても 1 文字も変わらないので、既存のファイルは動かない。
+    """
+    return os.path.join(dir_for(state_dir),
+                        f"{postid_mod.to_filename(post_id)}.json")
 
 
 def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: str,

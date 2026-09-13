@@ -320,16 +320,30 @@ def test_push拒否で未pushのcommitを残さない(tmp_path, isolated_account
     assert synced, f"**次の同期が通らない**: {err}"
 
 
-def test_post_idにパス区切りがあれば書かない(tmp_path, isolated_account_factory):
-    """**取った会話が repo の外に落ちて、表示は「成功」だった**（独立検収 B）。"""
+def test_post_idにパス区切りがあっても台帳の外に書かない(tmp_path, isolated_account_factory):
+    """**取った会話が repo の外に落ちて、表示は「成功」だった**（独立検収 B）。
+
+    **守り方を変えた**（T3・2026-09-13）。以前は `/` を含む `post_id` を弾いて
+    いたが、Bluesky の `post_id` は AT URI（`at://…/app.bsky.feed.post/<rkey>`）で
+    **正しい値が `/` を含む**——弾くと Bluesky の投稿が 1 本も採取されない。
+    いまはパスにする直前に percent-encode する（`thth/postid.py`）ので、
+    **区切りが区切りとして効かない。** 守っているもの（repo の外に書かない）は
+    同じで、Threads の既存のファイル名も 1 文字も変わらない。
+    """
     pair, account = _仕立て(tmp_path, isolated_account_factory)
     from tests.conftest import write_queue_file
     write_queue_file(account["queue_dir"], "b.md", fm_overrides={
         "status": "posted", "post_id": "../../../脱出", "posted_at": POSTED})
     out = collect_mod.refresh_replies(account["name"], adapter=_口([{"id": "R1"}]),
                                        now=NOW, log=lambda _l: None)
-    assert any("パス区切り" in e for e in out["errors"]), out
+    # **どこにも脱出していない。**
     assert not os.path.exists(os.path.join(tmp_path, "脱出.ndjson"))
+    assert not os.path.exists(os.path.join(pair["work"], "..", "脱出.ndjson"))
+    # 書いたものがあれば、それは replies_dir の**直下**（名前は encode 済み）。
+    replies_dir = os.path.realpath(os.path.join(pair["work"], "data", "sns", "replies"))
+    for name in (os.listdir(replies_dir) if os.path.isdir(replies_dir) else []):
+        居場所 = os.path.realpath(os.path.join(replies_dir, name))
+        assert os.path.dirname(居場所) == replies_dir, 居場所
 
 
 def test_時間帯の無いposted_atで全体を止めない(tmp_path, isolated_account_factory):

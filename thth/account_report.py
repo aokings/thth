@@ -25,6 +25,7 @@ import urllib.request
 
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
+from . import postid as postid_mod
 from . import core
 from . import inflight as inflight_mod
 from . import jst
@@ -429,7 +430,7 @@ def _measured_observations_by_topic(repo_dir: str, account_name: str,
         # **同じ投稿を 2 本として数えない**（独立検収 A・2026-09-12）。
         # 台帳は `<post_id>.ndjson` 固定だが、取り込み直しや改名で
         # `p1.ndjson` と `p1-copy.ndjson` が同居すると 1 投稿が 2 本になる。
-        pid = best.get("post_id") or name[:-len(".ndjson")]
+        pid = best.get("post_id") or postid_mod.from_filename(name[:-len(".ndjson")])
         if pid in 見た投稿:
             continue
         見た投稿.add(pid)

@@ -43,6 +43,7 @@ from . import accounts as accounts_mod
 from . import core
 from . import jst
 from . import measured as measured_mod
+from . import postid as postid_mod
 from . import queuefile
 from . import redact as redact_mod
 from . import writeback
@@ -63,12 +64,14 @@ def _git(repo_dir: str, args: list):
 
 
 def _safe_post_id(post_id) -> bool:
-    """`post_id` をファイル名として使ってよいか。**外へ出る値を弾く。**"""
-    if not isinstance(post_id, str) or not post_id.strip():
-        return False
-    if post_id in (".", ".."):
-        return False
-    return not any(c in post_id for c in ("/", "\\", "\x00"))
+    """`post_id` を台帳の鍵として使ってよいか（`thth/postid.py` へ移した判定）。
+
+    **区切り文字はもう弾かない**（T3・2026-09-13）。Bluesky の `post_id` は
+    AT URI（`at://…/app.bsky.feed.post/<rkey>`）で `/` を含むので、弾くと
+    **Bluesky の投稿が 1 本も採取されない。** パスにするときに encode する
+    （`postid.to_filename()`）ので、区切りが効いて外へ出ることは無い。
+    """
+    return postid_mod.is_usable(post_id)
 
 
 def _has_unpushed_commit(repo_dir: str) -> bool:
@@ -358,8 +361,9 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
         posts_seen += 1
 
         section = queuefile.extract_section(qf.body, account_cfg["media"])
-        insight_path = os.path.join(insights_dir, f"{post_id}.ndjson")
-        reply_path = os.path.join(replies_dir, f"{post_id}.ndjson")
+        名 = postid_mod.to_filename(post_id)
+        insight_path = os.path.join(insights_dir, f"{名}.ndjson")
+        reply_path = os.path.join(replies_dir, f"{名}.ndjson")
 
         # **数と返信で、済んだ刻みを別々に持つ**（外部レビュー第 6 巡 P2-3）。
         # 以前は insights の記録だけから刻みを計算していたので、**数が取れて返信が
@@ -789,7 +793,8 @@ def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
             out["remote"] = "nothing_to_send"
 
         for pid, age in 対象:
-            reply_path = os.path.join(replies_dir, f"{pid}.ndjson")
+            reply_path = os.path.join(replies_dir,
+                                       f"{postid_mod.to_filename(pid)}.ndjson")
             # **壊れた台帳には追記しない**（その対象の失敗にする）。
             _rows, broken = _read_ndjson_strict(reply_path)
             if broken:

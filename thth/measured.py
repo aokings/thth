@@ -60,6 +60,7 @@ import os
 import re
 
 from . import accounts as accounts_mod
+from . import postid as postid_mod
 from . import queuefile as queuefile_mod
 
 # **期待する指標名の一覧**（運用指摘 2026-09-12）。台帳の行を通して 1 度も
@@ -303,7 +304,9 @@ def load(account_name: str) -> dict:
             if not rows:
                 continue
 
-            post_id = name[: -len(".ndjson")]
+            # ファイル名は percent-encode してある（`thth/postid.py`・T3
+            # 2026-09-13）。Threads の数字だけの名前は素通りする。
+            post_id = postid_mod.from_filename(name[: -len(".ndjson")])
             # **所有 account は行そのものの `account` だけを根拠にする**
             # （R3・2026-09-12）。以前（M3）は行に `account` が無いことを
             # 前提に、`file` を手がかりに queue_dir の**現在の**原稿を開いて

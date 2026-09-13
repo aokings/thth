@@ -21,6 +21,7 @@ import json
 import os
 
 from . import accounts as accounts_mod
+from . import postid as postid_mod
 
 
 def _normalize_handle(value) -> str | None:
@@ -141,7 +142,9 @@ def load(account_name: str, *, post_id: str | None = None) -> dict:
     base = os.path.join(repo_dir, account_cfg.get("replies_dir") or "data/sns/replies")
 
     if post_id:
-        names = [f"{post_id}.ndjson"]
+        # **`post_id` をそのままパスにしない**（`thth/postid.py`・T3 2026-09-13）。
+        # Bluesky の `post_id` は AT URI で `/` を含む。
+        names = [f"{postid_mod.to_filename(post_id)}.ndjson"]
     else:
         names = sorted(n for n in os.listdir(base) if n.endswith(".ndjson")) \
             if os.path.isdir(base) else []
