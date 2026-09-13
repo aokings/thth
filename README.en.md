@@ -31,9 +31,12 @@ not yet running in production). It does not decide what to write.
   to a local file under `$THTH_ROOT/state/share/outbox/`, and `thth share log`
   prints every line of it. What it queues is words, audience notes, topic kinds,
   counts, time-of-day bands and a **salted hash** of the post id — never post
-  bodies, replies, replier names, your own verdicts, account names, tokens, repo
-  paths, or raw post ids — see
+  bodies, replies, **repliers'** usernames, your own verdicts, account names,
+  tokens, repo paths, or raw post ids — see
   [docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md) §2.
+  The one thing the machine cannot strip is **what you typed yourself**: the
+  free-text `audience` note is queued as written, so describe who was there by
+  attribute ("parents comparing schools"), not by handle.
 - Never reads direct messages. It only ever touches public posts and public replies.
 - Never auto-replies with canned text. Reply drafts go through the same
   human-approval path as any other post.

@@ -330,8 +330,14 @@ What it queues:
   that ever appears.
 
 What never gets queued, enforced by a check that raises before the line is
-written (`_assert_clean`): post bodies, reply bodies, replier usernames, your
-own `verdict`/`by`/`note`/`reason`, account names, access tokens, repo paths,
-and raw post ids.
+written (`_assert_clean`): post bodies, reply bodies, **repliers'** usernames,
+your own `verdict`/`by`/`note`/`reason`, account names, access tokens, repo
+paths, and raw post ids.
+
+**The check cannot strip what you typed yourself.** `audience` is a free-text
+note you write with `thth topics --note --audience "…"`, and it is queued as
+written. What the machine drops is the *replier's* `username` — a field that
+comes from the platform's ledger — not characters you chose. Describe who was
+in the room by attribute ("parents comparing schools"), never by handle.
 
 Turning it on is recorded locally with `--by`; that name is not queued.
