@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 
@@ -54,6 +55,18 @@ def _find_example_dir() -> str:
 EXAMPLE_DIR = _find_example_dir()
 
 MEDIA_CHOICES = ("threads", "bluesky", "mastodon")
+
+# **アカウント名はファイル名になる**（`<accounts_dir>/<name>.json`）。区切りや
+# `..` を混ぜると置き場の外に書けてしまう——`thth account add ../pwned` が
+# `accounts/../pwned.json` を書いて rc=0 で終わり、`list_account_names()` には
+# 出ないので board からも見えなかった（監査 1・P2-1）。`thth posts` が post_id を
+# 検査するのと同じ守り方（`tests/test_posts.py::test_post_idにパス区切りがあれば書かない`）。
+NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def name_is_safe(name: str) -> bool:
+    """置き場の中の 1 ファイルに必ず収まる名前か。`.`・`..` は名前ではない。"""
+    return bool(name) and bool(NAME_RE.match(name)) and name not in (".", "..")
 
 # `thth account` の 1 本目の位置引数が、アカウント名ではなく枝の名前になるもの。
 VERBS = ("add", "migrate")
@@ -250,6 +263,15 @@ def cmd_add(args) -> int:
     name = args.name
     if not name:
         print("account add には名前が要ります: thth account add <name> --media … --project …",
+              file=sys.stderr)
+        return 2
+    if not name_is_safe(name):
+        # **置き場の外に書かせない**（監査 1・P2-1）。`thth account add ../pwned` が
+        # `accounts/../pwned.json` を書いて rc=0 で終わっていた——しかも
+        # `list_account_names()` は `.json` の直下しか見ないので board に出ない。
+        print(f"アカウント名に使えない字が入っています: {name!r}", file=sys.stderr)
+        print("使えるのは英数字と `_`・`.`・`-` だけです"
+              "（名前はそのままファイル名になります。`/` や `..` は置き場の外を指せます）。",
               file=sys.stderr)
         return 2
     if not args.media:

@@ -398,6 +398,40 @@ def test_addのinstanceは媒体で綴りが変わる(置き場):
         assert json.load(f)["service"] == "https://pds.example"
 
 
+@pytest.mark.parametrize("name", [
+    "../pwned", "../../pwned", "a/b", "sub/../../out",
+    ".", "..", "demo threads", "demo\nthreads", "demo\\threads", "デモ-threads",
+])
+def test_addは置き場の外に書けない_名前を検査する(置き場, tmp_path, name):
+    """**アカウント名はそのままファイル名になる**（監査 1・P2-1）。
+
+    `thth account add ../pwned` が `accounts/../pwned.json` を書いて **rc=0** で
+    終わっていた。しかも `list_account_names()` は置き場直下の `.json` しか
+    見ないので、**board にも `account` 一覧にも出ない**——書かれたことに誰も
+    気づけない。`thth posts` が post_id を検査するのと同じ守り方で断る。
+    """
+    外 = 置き場["外"]
+    r = run_thth(["account", "add", name, "--media", "threads", "--project", "demo"])
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "使えない字" in r.stderr, r.stderr
+
+    # **1 バイトも書いていない。** 置き場の外（親ディレクトリ）も見る。
+    assert not os.path.exists(外) or os.listdir(外) == [], \
+        f"断ったのに書いている: {os.listdir(外)}"
+    親 = os.path.dirname(外.rstrip(os.sep))
+    出来たもの = [n for n in os.listdir(親) if n.endswith(".json")]
+    assert 出来たもの == [], f"置き場の外に書いている: {出来たもの}"
+
+
+def test_addは普通の名前を断らない(置き場):
+    """検査が厳しすぎて実在の綴りを弾いていないこと（`.`・`-`・`_` は通る）。"""
+    for name in ("nigamilab-threads", "asmon_kanto-threads", "a.b-mastodon"):
+        r = run_thth(["account", "add", name, "--media", "threads",
+                      "--project", "demo"])
+        assert r.returncode == 0, f"{name}: {r.stdout}{r.stderr}"
+        assert os.path.exists(os.path.join(置き場["外"], f"{name}.json"))
+
+
 def test_addは足りない指定を黙って埋めない(置き場):
     知らない媒体 = run_thth(["account", "add", "demo-x", "--media", "mixi",
                              "--project", "demo"])
