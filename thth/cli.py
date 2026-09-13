@@ -1912,6 +1912,23 @@ def cmd_token_set(args) -> int:
     return oauth_mod.run_token_set(args.account, force=args.force, stdin=args.stdin)
 
 
+def cmd_app_set(args) -> int:
+    """`thth app set --app-id <ID>`（masaru 裁定 2026-09-13）。
+
+    `~/.config/thth/app.env` を手で書く代わりの道具。App Secret は `getpass` で
+    受け取り（画面に出ない）、非対話は `--secret-stdin`。**MCP には出さない**
+    （秘密は人の手のまま・設計 §3.7。`auth`・`refresh`・`token set` と同じ扱い）。
+    """
+    from . import appenv as appenv_mod
+    return appenv_mod.run_app_set(app_id=args.app_id, stdin=args.secret_stdin)
+
+
+def cmd_app_show(args) -> int:
+    """`thth app show`: 存在・鍵の名前の有無・パーミッションだけ（値は出さない）。"""
+    from . import appenv as appenv_mod
+    return appenv_mod.run_app_show(as_json=args.as_json)
+
+
 def cmd_systemd(args) -> int:
     """`thth systemd <account>`: 台帳から `.timer` unit を機械的に生成して標準出力に
     出す（設計 §3.2・masaru 指摘 2026-09-09）。手で書くと刻みがずれる（実際に
@@ -2242,6 +2259,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor.add_argument("account")
     p_doctor.add_argument("--json", action="store_true", dest="as_json")
     p_doctor.set_defaults(func=cmd_doctor)
+
+    p_app = sub.add_parser(
+        "app", help="~/.config/thth/app.env を置く・見る（thth auth を使うときだけ要る。MCPには出さない）")
+    app_sub = p_app.add_subparsers(dest="app_command", required=True)
+    p_app_set = app_sub.add_parser(
+        "set", help="app.env を書く（App Secret は表示されない入力で受け取る）")
+    p_app_set.add_argument("--app-id", dest="app_id", required=True, help="Threads app ID")
+    p_app_set.add_argument("--secret-stdin", dest="secret_stdin", action="store_true",
+                           help="App Secret を標準入力から黙って 1 行読む（非対話・パイプ用）")
+    p_app_set.set_defaults(func=cmd_app_set)
+    p_app_show = app_sub.add_parser(
+        "show", help="app.env の有無・鍵の名前・パーミッションだけ出す（値は出さない）")
+    p_app_show.add_argument("--json", action="store_true", dest="as_json")
+    p_app_show.set_defaults(func=cmd_app_show)
 
     p_token = sub.add_parser("token", help="長期トークンを直接扱う（現状 set のみ。MCPには出さない）")
     token_sub = p_token.add_subparsers(dest="token_command", required=True)

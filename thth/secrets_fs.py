@@ -40,3 +40,29 @@ def atomic_write_json(path: str, data: dict, *, mode: int = 0o600) -> None:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         raise
+
+
+def atomic_write_text(path: str, text: str, *, mode: int = 0o600,
+                      dir_mode: int = 0o700) -> None:
+    """`text` を `path` に原子的に書く（一時ファイル ＋ `os.replace`）。
+
+    `atomic_write_json()` の素のテキスト版。`app.env` のように JSON でない
+    秘密ファイルに使う。**ディレクトリが無ければ `dir_mode`（既定 700）で作る**
+    ——`~/.config/thth/` を umask 任せの 755 で作らない。既にあるディレクトリの
+    パーミッションは触らない（運用者が決めたものを勝手に変えない）。
+    """
+    directory = os.path.dirname(path) or "."
+    if not os.path.isdir(directory):
+        os.makedirs(directory, exist_ok=True)
+        # makedirs の mode は umask で削られる。作ったときだけ明示的に絞る。
+        os.chmod(directory, dir_mode)
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".thth-tmp-", suffix=".env")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(tmp_path, mode)
+        os.replace(tmp_path, path)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise

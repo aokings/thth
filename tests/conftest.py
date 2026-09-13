@@ -309,14 +309,19 @@ def isolated_account(isolated_account_factory):
     return isolated_account_factory()
 
 
-def run_thth(args, env=None, cwd=None) -> subprocess.CompletedProcess:
-    """`bin/thth` をサブプロセスで呼ぶ（プロセス境界が要るテスト用: ロック・inflight）。"""
+def run_thth(args, env=None, cwd=None, stdin=None) -> subprocess.CompletedProcess:
+    """`bin/thth` をサブプロセスで呼ぶ（プロセス境界が要るテスト用: ロック・inflight）。
+
+    `stdin` を渡すとその文字列を標準入力に流す（`thth app set --secret-stdin`・
+    `thth token set --stdin` のような**端末から読ませない**経路の試験用。
+    渡さなければ今までどおり継承する）。
+    """
     full_env = dict(os.environ)
     if env:
         full_env.update(env)
     return subprocess.run(
         [sys.executable, BIN_THTH, *args],
-        capture_output=True, text=True, env=full_env, cwd=cwd,
+        capture_output=True, text=True, env=full_env, cwd=cwd, input=stdin,
     )
 
 

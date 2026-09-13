@@ -100,6 +100,7 @@ def test_mcp_stdioでtools_listとtools_callが通る(isolated_account):
     # 副作用のあるものは 1 つも出ていない。
     assert not (tool_names & {"thth_approve", "thth_throw", "thth_token",
                                "thth_auth", "thth_refresh", "thth_revoke",
+                               "thth_app",
                                "thth_topic_observe", "thth_topic_record_decision"})
     call_result = by_id[3]["result"]
     payload = json.loads(call_result["content"][0]["text"])
