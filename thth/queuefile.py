@@ -7,7 +7,12 @@ import re
 import unicodedata
 
 KNOWN_STATUSES = {"draft", "approved", "posted", "withdrawn"}
-MEDIA_LIMITS = {"threads": 500, "x": 140}
+# 媒体ごとの文字数の上限（既定）。**台帳の `char_limit` で account ごとに
+# 上書きできる**（`limit_for()`・設計 v2 §4.2「台帳と登録」）——Mastodon は
+# インスタンスで上限が違う（既定 500 だが運用者が変えられる）。
+# Bluesky は 300（grapheme・**L2**: bsky-docs）、Mastodon は既定 500（**L2**）。
+MEDIA_LIMITS = {"threads": 500, "x": 140, "bluesky": 300, "mastodon": 500}
+DEFAULT_MEDIA_LIMIT = 500
 # threads の 450 字警告の閾値（食い違い 2 の裁定・2026-09-09）。絵文字カウントが
 # 実物と一致する保証が無い（L3）ので、上限ぎりぎりに座らないための警告として置く。
 # 500 で落とすのは従来どおり・450 は warning のみ（exit code は 0 のまま）。
@@ -125,6 +130,20 @@ def _is_emoji(ch: str) -> bool:
     if 0x1F1E6 <= cp <= 0x1F1FF:
         return True
     return unicodedata.category(ch) == "So"
+
+
+def limit_for(media: str, account_cfg: dict | None = None) -> int:
+    """その媒体・そのアカウントの文字数上限（設計 v2 §4.2）。
+
+    台帳の `char_limit` が**正の整数**なら媒体の既定を上書きする。壊れた値
+    （0・負・数でない）は**黙って採らない**——上書きが効いたと思わせないため、
+    既定に戻す（loud に断るのは `thth lint` の仕事で、ここは読むだけの口）。
+    """
+    limit = MEDIA_LIMITS.get(media, DEFAULT_MEDIA_LIMIT)
+    override = (account_cfg or {}).get("char_limit")
+    if isinstance(override, int) and not isinstance(override, bool) and override > 0:
+        return override
+    return limit
 
 
 def char_count(text: str) -> int:

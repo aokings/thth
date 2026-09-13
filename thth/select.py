@@ -15,6 +15,7 @@ import dataclasses
 import datetime
 import os
 
+from . import adapters as adapters_mod
 from . import approval as approval_mod
 from . import queuefile
 
@@ -239,7 +240,10 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
             needs_review.append(path)
             continue
 
-        limit = queuefile.MEDIA_LIMITS.get(media, 500)
+        # **上限は媒体の既定を台帳で上書きできる**（設計 v2 §4.2「台帳と登録」）。
+        # Mastodon はインスタンスごとに上限が違うので、`MEDIA_LIMITS` の既定
+        # （mastodon 500）を account ごとに `char_limit` で差し替える。
+        limit = queuefile.limit_for(media, account_cfg)
         n = queuefile.char_count(section)
         if n > limit:
             rejections.append(Rejection(path, f"too_long({n})"))
@@ -256,13 +260,20 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
         # 2026-09-09: 全アカウントで使う）。省略・空はスキップ（許す）。条件 6・7 と
         # 同じ流儀: 切り詰めない・勝手に外さない。落として理由を runs に残す
         # （core._is_error_reason() が `topic_` 始まりを実エラーとして拾う）。
-        topic = queuefile.normalize_topic(fm.get("topic"))
-        if topic is not None:
-            topic_err = queuefile.topic_error(topic)
-            if topic_err is not None:
-                rejections.append(Rejection(path, topic_err))
-                needs_review.append(path)
-                continue
+        #
+        # **topic を持たない媒体では検査しない**（設計 v2 §4.2）。1 つの queue
+        # ファイルを Threads と Bluesky の 2 account が拾う形（設計 v1 §8-16）で、
+        # Threads 用に書いた `topic` が Bluesky 側で `topic_too_long` を出すと、
+        # **同じ原稿が媒体によって落ちる**。**topic を使う媒体だけが検査する**
+        # ——使わない媒体は黙って無視する（`base.Post.topic` の但し書きと同じ）。
+        if "topic" in adapters_mod.capabilities_for(media):
+            topic = queuefile.normalize_topic(fm.get("topic"))
+            if topic is not None:
+                topic_err = queuefile.topic_error(topic)
+                if topic_err is not None:
+                    rejections.append(Rejection(path, topic_err))
+                    needs_review.append(path)
+                    continue
 
         # 8. 直近 30 日の投稿済み本文と完全一致
         if section.strip() in recent_texts:

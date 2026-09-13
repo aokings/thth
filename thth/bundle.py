@@ -259,7 +259,7 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
         if not (MIN_SEGMENTS <= len(segments) <= MAX_SEGMENTS):
             errors.append(
                 f"段の数は {MIN_SEGMENTS}〜{MAX_SEGMENTS} です（{len(segments)} 段）")
-        limit = queuefile.MEDIA_LIMITS.get(media, 500)
+        limit = queuefile.limit_for(media, account_cfg)
         warn_limit = queuefile.WARN_LIMITS.get(media)
         hashtags_allowed = bool(account_cfg.get("hashtags", True)) if account_cfg else False
         for i, seg in enumerate(segments, start=1):

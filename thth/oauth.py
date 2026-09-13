@@ -452,12 +452,20 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
         _out("トークンが読み取れませんでした", log=log)
         return 2
 
+    # **本人の確認はアダプタの `whoami()` を通す**（設計 v2 §4.2・裁定
+    # 2026-09-13）。以前はここが Threads の `me` を直接叩いていた（Threads 固有に
+    # なっている 6 箇所の 1 つ）。媒体ごとに確認の口は違う——Mastodon は
+    # `/api/v1/accounts/verify_credentials`、Bluesky は `createSession` の応答
+    # ——ので、**どこを叩くかは媒体の知識**として境界の向こうに置く。
+    # Threads の挙動は変わらない（`whoami()` が `me` を包んでいるだけ）。
+    from . import adapters as adapters_mod
     try:
-        me = fetch_me(token_value)
-    except OAuthError as e:
-        _out(f"トークンが使えませんでした（{e}）", log=log)
+        adapter = adapters_mod.make_adapter(account_cfg, {"access_token": token_value})
+        me = adapter.whoami()
+    except adapters_mod.base.AdapterError as e:
+        _out(f"トークンが使えませんでした（{redact_mod.redact(str(e))}）", log=log)
         return 1
-    user_id = me.get("id", "")
+    user_id = me.get("user_id", "")
     username = me.get("username", "")
     if not user_id:
         _out("トークンが使えませんでした（me の応答に id が無い）", log=log)

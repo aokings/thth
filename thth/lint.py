@@ -95,7 +95,7 @@ def lint_file(path: str) -> list:
     if section is None:
         errors.append(f"media: `## {media}` の節が無い")
     else:
-        limit = queuefile.MEDIA_LIMITS.get(media, 500)
+        limit = queuefile.limit_for(media, account_cfg)
         n = queuefile.char_count(section)
         if n > limit:
             errors.append(f"length: {media} は {limit} 字以内（{n} 字）")

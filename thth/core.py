@@ -12,6 +12,7 @@ import os
 import uuid
 
 from . import accounts as accounts_mod
+from . import adapters as adapters_mod
 from . import approval as approval_mod
 from . import inflight as inflight_mod
 from . import jst
@@ -21,7 +22,6 @@ from . import redact as redact_mod
 from . import runs as runs_mod
 from . import select as select_mod
 from . import sent as sent_mod
-from . import adapters as adapters_mod
 from . import writeback
 from .adapters import base as adapter_base
 
@@ -699,7 +699,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             return ThrowResult(exit_code=2, mode=mode, action="none", message="本文が空です")
 
         media = account_cfg["media"]
-        limit = queuefile.MEDIA_LIMITS.get(media, 500)
+        # **上限は台帳の `char_limit` で上書きできる**（設計 v2 §4.2）。
+        limit = queuefile.limit_for(media, account_cfg)
         n = queuefile.char_count(body)
         if n > limit:
             msg = f"長すぎます（{n} 字・上限 {limit} 字）。切り詰めません。"
