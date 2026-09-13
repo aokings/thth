@@ -315,6 +315,46 @@ def test_別のvenvでthth_account_addが雛形から1本書ける(venv_thth, tm
     assert not os.path.exists(os.path.join(互換の置き場, f"{ACCOUNT}.json"))
 
 
+def test_THTH_ROOTが無くてもsite_packagesに置き場を作らない(venv_thth, tmp_path):
+    """**`pip install --upgrade` で利用者のデータが黙って消えない**（監査 1・P1-2）。
+
+    `THTH_ROOT` を設定せずに叩くと、`thth_root()` の最後の段は `APP_DIR`——
+    pip で入れた人にとってはそれが **`site-packages/`** だった。台帳も state も
+    share の outbox も塩も仮名もそこに落ち、wheel を入れ替えた瞬間に消える。
+
+    ここでは `THTH_ROOT` を**わざと外して** `thth share on` を打ち、置き場が
+    `site-packages` の下でないこと・`$HOME/.thth` の下であること・実際に
+    そこへ書けていることを見る。**実物の `~` には触らない**（`HOME` は tmp、
+    `XDG_DATA_HOME` は消す）。
+    """
+    env = _isolated_env(venv_thth, tmp_path)
+    # **この試験の主題**——`THTH_ROOT` が無い状態。
+    env.pop("THTH_ROOT", None)
+    env.pop("THTH_APP_DIR", None)
+    env.pop("THTH_ACCOUNTS_DIR", None)
+    # 打った人の shell の `XDG_DATA_HOME` が実在のディレクトリを指していると、
+    # そこに書いてしまう。**消してから** `HOME`（tmp）だけに頼る。
+    env.pop("XDG_DATA_HOME", None)
+    home = env["HOME"]
+
+    r = _run([venv_thth["thth"], "share", "status", "--json"],
+             env=env, cwd=_elsewhere(tmp_path))
+    assert r.returncode == 0, f"{r.stdout}{r.stderr}"
+    st = json.loads(r.stdout)
+    for key in ("root", "outbox"):
+        assert "site-packages" not in st[key], (
+            f"{key} が site-packages の下です（`pip install --upgrade` で消えます）: "
+            f"{st[key]}")
+        assert st[key].startswith(os.path.join(home, ".thth")), st[key]
+    assert st["enabled"] is False, st
+
+    # **本当にそこへ書ける**（綴りだけ直して実際は別の場所、を作らない）。
+    r = _run([venv_thth["thth"], "share", "on"], env=env, cwd=_elsewhere(tmp_path))
+    assert r.returncode == 0, f"{r.stdout}{r.stderr}"
+    assert os.path.exists(os.path.join(home, ".thth", "state", "share",
+                                       "config.json")), r.stdout
+
+
 def test_別のvenvでMCPサーバが起動してtoolsを返す(venv_thth, tmp_path):
     """同梱の入口（`thth-mcp`）が **wheel だけで**立ち上がり、`tools/list` を返す。
 

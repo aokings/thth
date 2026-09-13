@@ -45,7 +45,9 @@ def thth_root() -> str:
     優先順位:
       1. 環境変数 `THTH_ROOT`（systemd unit が渡す）
       2. **app repo の basename が "app" なら、その親**（VM の `$THTH_ROOT/app` 配置）
-      3. それ以外は app repo 自身（Mac 手元・pytest。.gitignore の state/・logs/ と対応）
+      3. **repo から走っているとき**（`APP_DIR` に `.git` か `bin/thth` がある）は
+         app repo 自身（Mac 手元・pytest。.gitignore の state/・logs/ と対応）
+      4. それ以外＝`pip install` で入った道具は `$XDG_DATA_HOME/thth`、無ければ `~/.thth`
 
     2 を足した理由（2026-09-09・最初の本番投稿で踏んだ）: VM で masaru が手で
     `thth send` を打つと `THTH_ROOT` が無いので state が `/srv/thth/app/state/` に、
@@ -54,13 +56,39 @@ def thth_root() -> str:
     入口に置く」と直したのに、パスが割れていては同じ穴が開く（timer が走っている
     最中の手打ちがロックを踏まない）。**同じ機械の上では、呼び方が違っても同じ
     場所を指す**ことをコードで保証する。
+
+    4 を足した理由（監査 1・P1-2・2026-09-13）: `pip install thth` で入れた人が
+    `THTH_ROOT` を設定せずに打つと、`APP_DIR` は **`site-packages/`** になる。
+    台帳も state も share の outbox も塩も仮名も、そこに落ちていた——
+    **`pip install --upgrade thth` が黙って全部消す**（wheel の入れ替えで
+    site-packages の中身が作り直される）。しかも消えたことは誰にも言われない。
+    **道具の入れ替えで利用者のデータが消える置き場は、置き場ではない。**
+
+    「repo から走っているか」は `APP_DIR` に `.git`（worktree では**ファイル**）か
+    `bin/thth` があるかで見る。site-packages にはどちらも無い。
     """
     env = os.environ.get("THTH_ROOT")
     if env:
         return env
     if os.path.basename(APP_DIR) == "app":
         return os.path.dirname(APP_DIR)
-    return APP_DIR
+    if running_from_repo():
+        return APP_DIR
+    xdg = os.environ.get("XDG_DATA_HOME")
+    if xdg:
+        return os.path.join(xdg, "thth")
+    return os.path.join(os.path.expanduser("~"), ".thth")
+
+
+def running_from_repo() -> bool:
+    """`APP_DIR` が clone（か worktree）か。**`site-packages/` では False。**
+
+    `.git` は clone ならディレクトリ、worktree ならファイルなので `exists` で見る。
+    `bin/thth` を併せて見るのは、`.git` を持たない export（tarball を展開しただけの
+    置き方）でも従来どおり動かすため。
+    """
+    return (os.path.exists(os.path.join(APP_DIR, ".git"))
+            or os.path.exists(os.path.join(APP_DIR, "bin", "thth")))
 
 
 def app_dir() -> str:
