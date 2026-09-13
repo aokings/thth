@@ -273,8 +273,78 @@ def _with_bundle_posts(files: list, account_name: str, account_cfg: dict, *,
     return out
 
 
+SENT_SOURCE = "sent"        # `state/<account>/sent/`（同席の様態・`thth send`）
+QUEUE_SOURCE = "queue"      # 書き戻された front-matter（不在の様態）
+_SENT_PATH_PREFIX = "sent://"
+
+
+def _source_of(qf) -> str:
+    """その疑似 queue ファイルの**出所**（設計 v2.0.1 §3・設計 v1 §3.2.2）。
+
+    **数値は出所を連れて歩く。** `sent://` で始まる path は `_with_sent_posts()`
+    が `state/<account>/sent/` から組み立てたもので、queue のファイルは実在する
+    パスを持つ（`sent://` は path として現れない）。
+    """
+    return SENT_SOURCE if str(qf.path).startswith(_SENT_PATH_PREFIX) else QUEUE_SOURCE
+
+
+def _with_sent_posts(files: list, account_name: str, account_cfg: dict) -> list:
+    """`state/<account>/sent/` の記録を**疑似 queue ファイル**にして足す（v2.0.1 §2）。
+
+    **なぜ要るか**（運用 2026-09-14）。`thth send`（同席の様態）は queue を通ら
+    ないので、front-matter に `post_id`・`posted_at` が書き戻されない。
+    `collect_once()` は queue の原稿だけを見ていたので、**同席専用の台帳
+    （`repos/_none`・`scheduled: false`）では実測も返信も 1 件も採れなかった。**
+    出した記録は `state/<account>/sent/<post_id>.json` にしか無い以上、
+    **採取もそこを見るしかない**（`thth board`・`thth posts` が 2026-09-13 に
+    先に直ったのと同じ筋・`thth/sent.py` の `records()` 参照）。
+
+    作り方は `_with_bundle_posts()`（束の段）と同じ——既存の採集ループに
+    そのまま流せる形にするだけで、**ループ側の振る舞いは変えない**。
+
+    **queue 由来と `post_id` が重なれば queue を正**（同じ投稿を 2 回数えない）。
+    queue 側には `topic`・`reply_to`・`form` があり、こちらには無い——**多い方を
+    残す**。
+
+    `topic`・`reply_to` は**書かない**（同席の送信には front-matter が無い。
+    無いものを推定で埋めない・規約 12）。
+    """
+    from . import sent as sent_mod
+
+    既知 = set()
+    for qf in files:
+        if qf.malformed:
+            continue
+        if qf.front_matter.get("account") != account_name:
+            continue
+        pid = qf.front_matter.get("post_id")
+        if pid:
+            既知.add(pid)
+
+    out = list(files)
+    for row in sent_mod.records(accounts_mod.state_dir_for(account_name)):
+        post_id = row.get("post_id")
+        sent_at = row.get("sent_at")
+        if not post_id or not sent_at:
+            continue
+        if post_id in 既知:
+            continue
+        既知.add(post_id)
+        out.append(queuefile.QueueFile(
+            path=f"{_SENT_PATH_PREFIX}{post_id}", malformed=False,
+            front_matter={"thth": "1", "account": account_name, "status": "posted",
+                           "post_id": post_id, "posted_at": sent_at,
+                           "topic": None, "reply_to": None},
+            # **本文はここまで**（設計 v2.0.1 §4）。行に入るのは `text_length` と
+            # `has_link` だけで、本文そのものは repo にも outbox にも写さない。
+            body=f"## {account_cfg.get('media')}\n\n{row.get('text') or ''}\n",
+            verified=True))
+    return out
+
+
 def _save_replies(reply_path: str, post_id: str, replies: list, *, now,
-                   age_hours, marks: list, trigger: str) -> list:
+                   age_hours, marks: list, trigger: str,
+                   source: str = QUEUE_SOURCE) -> list:
     """取ってきた会話を台帳へ追記する。**定期取得と `--refresh` で共有する。**
 
     **重複除去を二重実装しない**（外部レビュー B・2026-09-12）。台帳の中だけでなく
@@ -310,6 +380,10 @@ def _save_replies(reply_path: str, post_id: str, replies: list, *, now,
         "kind": "fetch", "post_id": post_id, "collected_at": jst.iso(now),
         "age_hours": None if age_hours is None else round(age_hours, 2),
         "marks": marks, "trigger": trigger,
+        # **どの記録を見て取りに行ったか**（設計 v2.0.1 §3）。`"queue"` は
+        # 書き戻された front-matter、`"sent"` は `state/<account>/sent/`。
+        # **無印は旧行**で、読み手は `queue` として扱う（`thth/replies.py`）。
+        "source": source,
         "replies": len(replies), "id_missing": 欠落}])
     return fresh
 
@@ -340,12 +414,17 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     # **スレッド連投の段も拾う**（独立検収 2026-09-11・P2-7）。
     # v1 の `qf.malformed` 判定が `thth: 2` を落とすので、3 段公開しても
     # **収集対象は 0 件だった。** 出したものを測れないなら、出す意味が薄い。
-    for qf in _with_bundle_posts(files, account_name, account_cfg, errors=errors):
+    # **同席の様態（`thth send`）で出したものも採る**（設計 v2.0.1 §2・2026-09-14）。
+    # queue を通らない投稿の記録は `state/<account>/sent/` にしか無い。
+    for qf in _with_sent_posts(
+            _with_bundle_posts(files, account_name, account_cfg, errors=errors),
+            account_name, account_cfg):
         if qf.malformed:
             continue
         fm = qf.front_matter
         if fm.get("account") != account_name:
             continue
+        source = _source_of(qf)
         post_id = fm.get("post_id")
         posted_at_raw = fm.get("posted_at")
         if not post_id or not posted_at_raw:
@@ -407,7 +486,14 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
         if metrics is not None:
             _append_ndjson(insight_path, [{
                 "post_id": post_id,
-                "file": os.path.basename(qf.path),
+                # **同席の様態には原稿が無い**（設計 v2.0.1 §3）。`file` に
+                # 偽の名前を置くと、`thth/measured.py` がそれを queue_dir の
+                # 原稿として開こうとして「読めません」と言う——**無いものを
+                # 「読めなかった」に化けさせない。**
+                "file": None if source == SENT_SOURCE else os.path.basename(qf.path),
+                # **どの記録から採ったか**（設計 v2.0.1 §3・設計 v1 §3.2.2）。
+                # 無印の古い行は読み手が `queue` として扱う。
+                "source": source,
                 # **採取時点の所有 account を根拠として残す**（外部レビュー
                 # 再判定 R3・2026-09-12）。以前は台帳の行に `account` が無く、
                 # `thth/measured.py` が `file` から**現在の**原稿を開いて
@@ -455,7 +541,7 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
             if replies is not None:
                 新しい = _save_replies(reply_path, post_id, replies, now=now,
                                         age_hours=age_hours, marks=reply_marks,
-                                        trigger="marks")
+                                        trigger="marks", source=source)
                 touched.append(reply_path)
                 if 新しい:
                     log(f"返信 {len(新しい)} 件: {post_id}")
@@ -727,15 +813,19 @@ def _refresh_targets(account_name: str, account_cfg: dict, *, now, errors: list,
                       post_id: str | None) -> tuple:
     """取り直す対象を選ぶ。**定期取得と同じ選び方**（別の母集団を作らない）。
 
-    戻り値は `(対象, 断り)`。**`--post` が対象外なら理由を返し、別 account や
-    全投稿へ落とさない。**
+    戻り値は `(対象, 断り)`。対象は `(post_id, 経過時間, 出所)` の組
+    （出所は `"queue"` か `"sent"`・設計 v2.0.1 §3）。**`--post` が対象外なら
+    理由を返し、別 account や全投稿へ落とさない。**
     """
     repo_dir = account_cfg.get("repo_dir") or ""
     collect_days = int(account_cfg.get("collect_days", 14) or 14)
     files = core.list_queue_files(account_cfg,
                                    tree_sha=writeback.upstream_sha(repo_dir))
     対象 = []
-    for qf in _with_bundle_posts(files, account_name, account_cfg, errors=errors):
+    # **定期取得と同じ母集団**——`sent/`（同席の様態）もここに入る（v2.0.1 §2）。
+    for qf in _with_sent_posts(
+            _with_bundle_posts(files, account_name, account_cfg, errors=errors),
+            account_name, account_cfg):
         if qf.malformed:
             continue
         fm = qf.front_matter
@@ -764,7 +854,7 @@ def _refresh_targets(account_name: str, account_cfg: dict, *, now, errors: list,
             continue
         if age < 0 or age > collect_days * 24:
             continue
-        対象.append((pid, age))
+        対象.append((pid, age, _source_of(qf)))
     if post_id is None:
         return (対象, None)
     見つけた = [t for t in 対象 if t[0] == post_id]
@@ -849,7 +939,7 @@ def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
             # （独立検収 B・2026-09-12）。
             out["remote"] = "nothing_to_send"
 
-        for pid, age in 対象:
+        for pid, age, 出所 in 対象:
             reply_path = os.path.join(replies_dir,
                                        f"{postid_mod.to_filename(pid)}.ndjson")
             # **壊れた台帳には追記しない**（その対象の失敗にする）。
@@ -865,7 +955,8 @@ def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
                 continue
             try:
                 新しい = _save_replies(reply_path, pid, replies, now=now,
-                                       age_hours=age, marks=[], trigger="refresh")
+                                       age_hours=age, marks=[], trigger="refresh",
+                                       source=出所)
             except OSError as e:
                 # **保存できないことを、その投稿の失敗にする**（独立検収 B・
                 # 2026-09-12）。以前は `PermissionError` が外まで抜けて、
