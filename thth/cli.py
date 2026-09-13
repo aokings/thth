@@ -771,7 +771,9 @@ def _refresh_rc(取り直し) -> int:
         return 0
     if 取り直し["skipped"] or 取り直し["failed"] or 取り直し["errors"]:
         return 1
-    if 取り直し["remote"] not in ("synced", "nothing_to_send"):
+    # `local_only` は repo を持たない account（同席専用）の正常な終わり方
+    # ——**送る先が無いことを失敗と呼ばない**（設計 v2.0.1 §1）。
+    if 取り直し["remote"] not in ("synced", "nothing_to_send", "local_only"):
         return 1
     return 0
 
@@ -798,6 +800,7 @@ def _print_refresh(取り直し) -> None:
                f"（{取り直し['checked_at']}）")
         送信 = {"synced": "送信済み",
                  "not_synced": "**保存はできましたが送れていません**",
+                 "local_only": "repo が無いので state に置きました（git には載せません）",
                  "nothing_to_send": "送るものがありませんでした",
                  "unknown": "送信していません（保存するものがありませんでした）"}
         print(f"  保存: {'した' if 取り直し['saved'] else 'していない'}／"
