@@ -23,8 +23,13 @@
    使わない**——事実の形で書く。
 4. **本文・返信の本文・`username` は、入力にも出力にも入らない。**
    `audience` に出るのは観測の `audience`（自由文）と `observers`（人数）と
-   `latest` だけ。
+   `latest` だけ。**観測者の名前・仮名（`account` / `by`）は出さない。**
 5. **媒体をまたがない**（設計 v2 §2.1）。`medium` で閉じる。
+6′. **`audience` は観測者ごとに並べる**（設計 v2 §1 規約 6′・2026-09-13 改訂）。
+   `views` は観測者ごとの最新の自由文を**新しい順に 3 件まで**、3 件に入らな
+   かった観測者の数は `views_more`（0 でも出す）。**初稿は語につき最新 1 人の
+   自由文だけで、`observers: 3` と並ぶと「3 人がこう言った」と読めた**
+   （監査 2・B9）——**共有の棚に真実は 1 つではない。**
 
 **読むだけ。何も書かない。API も git も触らない。**
 
@@ -73,6 +78,11 @@ VIEWS_MARK = 24
 
 # 観測の鮮度（設計 v2 §2）。これを過ぎた観測は答えに出すが理由を添える。
 OBSERVATION_STALE_DAYS = 90
+
+# `audience[].views` に並べる観測者の数（設計 v2 §1 規約 6′）。残りは件数だけ
+# `views_more` に出る。**全部並べない**のは、答えを小さく保つため（§1「形は
+# 固定・小さく」）——全部は `thth topics <account> --advise` と `history` で読める。
+AUDIENCE_VIEWS_MAX = 3
 
 # 時刻帯の名前（`thth/threadshape.py:HOUR_BANDS` を正とする——ここで書き写すと
 # 分ける側と聞く側が黙って割れる）。
@@ -446,12 +456,20 @@ def before_you_post(account: str, *, medium: str | None = None, topic: str,
     if 観測:
         newest = 観測[0]
         latest_date = _date_of(newest.get("checked_at"))
+        # **観測者ごとに並べる**（設計 v2 §1 規約 6′）。`observation()` は
+        # 観測者ごとの最新を新しい順に返すので、そのまま 3 件で切る。
+        views = [{
+            # **自由文の `audience` だけ。** 観測者の名前（account・by）は出さない。
+            "who": (obs.get("audience") or None),
+            "latest": _date_of(obs.get("checked_at")),
+        } for obs in 観測[:AUDIENCE_VIEWS_MAX]]
         audience.append({
             "topic": topic,
-            # **自由文の `audience` だけ。** 観測者の名前（account・by）は出さない。
-            "who": (newest.get("audience") or None),
             "observers": observers,
             "latest": latest_date,
+            "views": views,
+            # **0 のときも出す**（鍵が消えると「3 件で全部」と読めない）。
+            "views_more": observers - len(views),
         })
         if latest_date:
             古い = threadshape_mod.parse_time(newest.get("checked_at"))
