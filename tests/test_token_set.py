@@ -256,3 +256,125 @@ def test_20260910_端末でない標準入力からは黙って読まない(tmp_
     assert not os.path.exists(str(tmp_path / "new.token"))
     blob = "\n".join(lines)
     assert "-t" in blob and "--stdin" in blob, blob
+
+
+# --- T3 の配線（2026-09-13）: Mastodon の `thth token set` ---------------------
+
+MASTODON_TOKEN = "MASTODON-SECRET-TOKEN-do-not-leak"
+
+
+def test_T3_mastodonのtoken_setがwhoami経由で通る(tmp_path, isolated_account_factory):
+    """検証は `/api/v1/accounts/verify_credentials`（境界の `whoami()`）。
+
+    `run_token_set()` は媒体名を知らない——アダプタの `whoami()` を呼ぶだけ。
+    """
+    from tests.test_mastodon_adapter import ACCOUNT_FIXTURE, fake_mastodon
+
+    with fake_mastodon() as fake:
+        account = _account_with_token_path(
+            isolated_account_factory, tmp_path, media="mastodon",
+            instance=fake.instance, handle=ACCOUNT_FIXTURE["acct"])
+        lines = []
+        rc = oauth_mod.run_token_set(account["name"], input_func=lambda: MASTODON_TOKEN,
+                                      log=lines.append)
+
+    assert rc == 0, lines
+    with open(account["token_path"], encoding="utf-8") as f:
+        token = json.load(f)
+    assert token["access_token"] == MASTODON_TOKEN
+    assert token["user_id"] == ACCOUNT_FIXTURE["id"]
+    assert token["username"] == ACCOUNT_FIXTURE["acct"]
+    # **期限を持たない**（設計 v2 §4.2）。`expires_in` を書くと `maintain` が
+    # 60 日後に嘘の督促を出し、`thth refresh` が更新できないまま鳴り続ける。
+    assert token["no_expiry"] is True
+    assert "expires_in" not in token
+    assert stat.S_IMODE(os.stat(account["token_path"]).st_mode) == 0o600
+    assert MASTODON_TOKEN not in "\n".join(lines)
+
+
+def test_T3_mastodonのverify_credentialsが落ちたらtokenを作らない(
+        tmp_path, isolated_account_factory):
+    from tests.test_mastodon_adapter import fake_mastodon
+
+    with fake_mastodon({"whoami": "4xx"}) as fake:
+        account = _account_with_token_path(
+            isolated_account_factory, tmp_path, media="mastodon",
+            instance=fake.instance, handle="nigamilab")
+        lines = []
+        rc = oauth_mod.run_token_set(account["name"], input_func=lambda: MASTODON_TOKEN,
+                                      log=lines.append)
+
+    assert rc == 1
+    assert not os.path.exists(account["token_path"])
+    assert MASTODON_TOKEN not in "\n".join(lines)
+
+
+def test_T3_mastodonも取り違えを保存しない(tmp_path, isolated_account_factory):
+    """台帳の handle と `acct` が食い違えば書かない（Threads と同じ検査が効く）。"""
+    from tests.test_mastodon_adapter import fake_mastodon
+
+    with fake_mastodon() as fake:
+        account = _account_with_token_path(
+            isolated_account_factory, tmp_path, media="mastodon",
+            instance=fake.instance, handle="someone-else")
+        lines = []
+        rc = oauth_mod.run_token_set(account["name"], input_func=lambda: MASTODON_TOKEN,
+                                      log=lines.append)
+
+    assert rc == 1
+    assert not os.path.exists(account["token_path"])
+    assert "保存しませんでした" in "\n".join(lines)
+
+
+def test_T3_threadsのtokenは現行のままexpires_inが入る(tmp_path, monkeypatch,
+                                              isolated_account_factory):
+    """**Threads の挙動は変えない**（`no_expiry` は立たない）。"""
+    account = _account_with_token_path(isolated_account_factory, tmp_path,
+                                        handle="nigamilab")
+    with fake_oauth_server() as base_url:
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        rc = oauth_mod.run_token_set(account["name"], input_func=lambda: "T",
+                                      log=lambda _l: None)
+    assert rc == 0
+    with open(account["token_path"], encoding="utf-8") as f:
+        token = json.load(f)
+    assert token["expires_in"] == oauth_mod.DEFAULT_TOKEN_LIFETIME_SECONDS
+    assert "no_expiry" not in token
+
+
+def test_T3_blueskyはtoken_setでは入らないと断る(tmp_path, isolated_account_factory):
+    """**貼り付けで入らない媒体に、貼り付けを勧めない**（`.token` の鍵が違う）。"""
+    account = _account_with_token_path(
+        isolated_account_factory, tmp_path, media="bluesky",
+        handle="aoking.bsky.social")
+    lines = []
+    rc = oauth_mod.run_token_set(account["name"], input_func=lambda: "whatever",
+                                  log=lines.append)
+    assert rc == 2
+    assert not os.path.exists(account["token_path"])
+    out = "\n".join(lines)
+    assert "thth auth" in out and "app_password" in out
+
+
+def test_T3_期限を持たないtokenをmaintainがokと言う(tmp_path, isolated_account_factory):
+    """`no_expiry` を書いた効き目を端まで（`maintain` が督促しない）。"""
+    import datetime
+
+    from thth import jst
+    from thth import maintain as maintain_mod
+    from tests.test_mastodon_adapter import ACCOUNT_FIXTURE, fake_mastodon
+
+    with fake_mastodon() as fake:
+        account = _account_with_token_path(
+            isolated_account_factory, tmp_path, media="mastodon",
+            instance=fake.instance, handle=ACCOUNT_FIXTURE["acct"])
+        assert oauth_mod.run_token_set(account["name"],
+                                        input_func=lambda: MASTODON_TOKEN,
+                                        log=lambda _l: None) == 0
+
+    # 1 年後でも「まもなく切れます」と言わない。
+    later = jst.now_jst() + datetime.timedelta(days=365)
+    row = maintain_mod.inspect(account["name"], now=later)
+    assert row["state"] == maintain_mod.OK
+    assert row["no_expiry"] is True
+    assert row["remaining_days"] is None

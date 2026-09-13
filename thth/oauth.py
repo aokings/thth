@@ -562,6 +562,11 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
       - `scopes` は管理画面発行では分からないので `null`（嘘の一覧は書かない）。
       - `expires_in` は管理画面の応答に無いので、長期トークンの既定寿命
         （`DEFAULT_TOKEN_LIFETIME_SECONDS`＝60 日）を使う。
+
+    **媒体で変わるのは 2 つだけ**（T3 の配線 2026-09-13）。本人の確認は
+    アダプタの `whoami()`（既に境界の向こう）、期限の有無はクラス属性
+    `TOKEN_NO_EXPIRY`。Mastodon は `no_expiry: true` を書いて `expires_in` を
+    書かない。**貼り付けで入らない媒体（Bluesky）は loud に断る。**
     """
     try:
         account_cfg = accounts_mod.load_account(account_name)
@@ -592,6 +597,19 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
     # ——ので、**どこを叩くかは媒体の知識**として境界の向こうに置く。
     # Threads の挙動は変わらない（`whoami()` が `me` を包んでいるだけ）。
     from . import adapters as adapters_mod
+    try:
+        adapter_cls = adapters_mod.adapter_class(account_cfg.get("media"))
+    except adapters_mod.UnknownMedium as e:
+        _out(str(e), log=log)
+        return 2
+    if "access_token" not in adapter_cls.TOKEN_KEYS:
+        # **貼り付けで入らない媒体に、貼り付けを勧めない**（Bluesky の App
+        # Password は `thth auth` が対話で受ける・T3 の配線 2026-09-13）。
+        _out(f"{account_cfg.get('media')} は `thth token set` では入りません"
+             f"（この媒体の `.token` の鍵は "
+             f"{'・'.join(adapter_cls.TOKEN_KEYS)}）。"
+             f"`thth auth {account_name}` を使ってください。", log=log)
+        return 2
     try:
         adapter = adapters_mod.make_adapter(account_cfg, {"access_token": token_value})
         me = adapter.whoami()
@@ -624,11 +642,21 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
     token_data = {
         "access_token": token_value,
         "obtained_at": jst.iso(),
-        "expires_in": DEFAULT_TOKEN_LIFETIME_SECONDS,
         "user_id": user_id,
         "username": username,
         "scopes": None,
     }
+    # **期限の有無は媒体の知識**（`TOKEN_NO_EXPIRY`・T3 の配線 2026-09-13）。
+    # Threads の長期トークンは 60 日で切れるので、管理画面が発行時刻を返さない
+    # ぶんを既定寿命で埋める。Mastodon の access token に期限は無いので、
+    # **`expires_in` を書かず `no_expiry: true` を立てる**——書いてしまうと
+    # `maintain` が 60 日後に「まもなく切れます」と嘘の督促を出し、`thth refresh`
+    # が更新できないまま毎日 rc=1 で鳴り続ける。「判らない」ではなく
+    # 「期限を持たない」（設計 v2 §4.2）。
+    if adapter_cls.TOKEN_NO_EXPIRY:
+        token_data["no_expiry"] = True
+    else:
+        token_data["expires_in"] = DEFAULT_TOKEN_LIFETIME_SECONDS
     secrets_fs.atomic_write_json(token_path, token_data, mode=0o600)
 
     _out(f"user_id={user_id} username={username}", log=log)
