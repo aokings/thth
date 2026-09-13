@@ -357,6 +357,13 @@ def load(account_name: str) -> dict:
             posts.append({
                 "post_id": post_id,
                 "topic": first.get("topic"),
+                # **採取時点に帰属する 2 つ**（`thth/collect.py` が行に書いている）。
+                # `thth/ask.py`（設計 v2 §1）がここから読む——`medium` は
+                # 「媒体をまたいで比較しない」（設計 v2 §2.1）ため、`reply_to` は
+                # 「返信かどうか」で群を分けるため。**現在の原稿からは引かない**
+                # （`form_now` と違い、行そのものに残っている値）。
+                "medium": first.get("medium"),
+                "reply_to": first.get("reply_to"),
                 "form_now": 型,
                 # **読めたかどうかを別に持つ。** `form_now` の `None` だけでは
                 # 「型が無い」と「読めなかった」を区別できない（外部レビュー C2）。
