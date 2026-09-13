@@ -96,11 +96,25 @@ def test_判らないものを無効と言わない(tmp_path, isolated_account_f
     assert not any("timer" in b for b in d["blockers"])
 
 
-def test_CLIは投稿できない状態で非ゼロを返す(tmp_path, isolated_account_factory):
+def test_CLIは投稿できない状態でも表示できたらrc0(tmp_path, isolated_account_factory):
+    """**「投稿できるか」と「表示できたか」は別の問い**（T3・第 1 回の記録 §3）。
+
+    前はここで rc=1 を固定していた（「board と同じ流儀で、機械から使える」）。
+    だが `production: false` のままのアカウントは**正常にそう表示できている**のに、
+    呼んだ側からは道具が失敗したように見える（第 1 回の被験者 3 が指摘・L1）。
+    投稿できるかどうかは**本文の最後の 1 行**と `--json` の `ready` / `blockers`
+    が既に述べているので、そちらを正とする。
+    """
+    import json
     pair, account = _ready_account(tmp_path, isolated_account_factory, production=False)
     result = run_thth(["account", account["name"]])
-    assert result.returncode == 1
+    assert result.returncode == 0, result.stdout + result.stderr
     assert "投稿できません" in result.stdout
+    as_json = run_thth(["account", account["name"], "--json"])
+    assert as_json.returncode == 0, as_json.stdout + as_json.stderr
+    detail = json.loads(as_json.stdout)
+    assert detail["ready"] is False
+    assert detail["blockers"], detail
 
 
 # --- Threads 側の実物を引く（masaru 指摘 2026-09-10「thth通してないものも

@@ -520,6 +520,14 @@ def cmd_account(args) -> int:
     「このアカウントはいま投稿できる状態か」に答える口（masaru 指摘 2026-09-10）。
     台帳・clone・queue・トークン・timer・inflight を 1 か所で見て、**最後に
     投稿できるかどうかの 1 行**を出す。読むだけで、何も変えない。
+
+    **rc は「表示できたか」で決まる**（T3・第 1 回の記録 §3）。前は「1 本でも
+    投稿できない状態なら非ゼロ」にしていたが、トークンを入れる前・`production:
+    false` のままのアカウントは**正常にそう表示できている**のに、呼んだ側からは
+    **道具が失敗したように見える**（第 1 回の被験者 3 が指摘・L1）。「投稿できるか」
+    は本文の最後の 1 行（`→ **投稿できません**: …`）と `--json` の `ready` /
+    `blockers` が既に述べているので、そちらを正とする。**非ゼロは読めなかった
+    ときだけ**——台帳が無い・置き場が読めない（どちらも rc=2）。
     """
     try:
         names = [args.account] if args.account else accounts_mod.list_account_names()
@@ -539,8 +547,9 @@ def cmd_account(args) -> int:
     else:
         for d in details:
             sys.stdout.write(account_report_mod.render(d))
-    # 1 本でも投稿できない状態があれば非ゼロ（board と同じ流儀で、機械から使える）
-    return 0 if all(d.get("ready") for d in details) else 1
+    # **読めなかったものがあるときだけ非ゼロ**（台帳が無い・引けない）。
+    # 投稿できるかどうかは本文と `--json` の `ready` が述べる（上の docstring）。
+    return 2 if any(d.get("error") for d in details) else 0
 
 
 def _already_posted(fm: dict, text: str, path: str):

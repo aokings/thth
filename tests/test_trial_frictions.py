@@ -134,3 +134,24 @@ def test_収まる本文にはformsの行を出さない(tmp_path, isolated_acco
     r = run_thth(["send", account["name"], "--text-file", str(text_path)])
     assert r.returncode == 0, r.stdout + r.stderr
     assert "thth forms" not in r.stdout, r.stdout
+
+
+# --------------------------------------------------------------------------
+# T3: `thth account <name>` は表示できたら rc=0
+# --------------------------------------------------------------------------
+
+def test_accountは同席専用でトークン無しでもrc0(isolated_account_factory):
+    """第 1 回の被験者 3 が指摘した形そのもの（同席専用・トークン無しで rc=1）。"""
+    account = isolated_account_factory(scheduled=False)
+    r = run_thth(["account", account["name"], "--no-remote"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "同席専用" in r.stdout, r.stdout
+    # **投稿できない旨は本文に残る**（rc を下げただけで黙らせない）。
+    assert "投稿できません" in r.stdout, r.stdout
+
+
+def test_account読めない台帳は非ゼロ(isolated_account):
+    """**非ゼロは読めなかったときだけ。**"""
+    r = run_thth(["account", "いない-threads", "--no-remote"])
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "いない-threads" in r.stdout + r.stderr
