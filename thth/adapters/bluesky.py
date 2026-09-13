@@ -223,7 +223,8 @@ def post_url(handle: str | None, uri: str) -> str | None:
 
 # --- XRPC ------------------------------------------------------------------
 def _xrpc(service: str, method: str, nsid: str, *, params=None, payload=None,
-          bearer: str | None = None, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> dict:
+          bearer: str | None = None, timeout: float = DEFAULT_TIMEOUT_SECONDS,
+          secrets=()) -> dict:
     """XRPC を 1 回叩いて JSON の dict を返す。
 
     **L3**: 口は `<service>/xrpc/<nsid>`。query は GET のクエリ文字列、procedure は
@@ -233,6 +234,14 @@ def _xrpc(service: str, method: str, nsid: str, *, params=None, payload=None,
     **呼び手**・設計 v1 §3.4「core は HTTP を解釈しない」）。ただし
     **200 で返ってきた `error` を、取れたことにしない**（Threads 側の監査
     2026-09-11 と同じ穴。ここでも塞ぐ）。
+
+    `secrets` は**いま判っている秘密の値**（App Password・`accessJwt`・
+    `refreshJwt`）。**サーバの応答は伏字の対象**——鍵の名前（`password:` 等）で
+    しか伏せていなかったので、`{"message": "rejected credential <値>"}` と
+    鸚鵡返しにしてくるサーバ（饒舌な proxy・素朴な実装）が相手だと、値が
+    そのまま例外文に載った。例外文は `collect` の `errors` → `runs` の ndjson →
+    ログまで届く（独立監査 1・P1-2・2026-09-13）。**ここは秘密の値が通る唯一の
+    関門**なので、名前でなく値で塞ぐ。
     """
     url = f"{service.rstrip('/')}/xrpc/{nsid}"
     if params:
@@ -251,7 +260,7 @@ def _xrpc(service: str, method: str, nsid: str, *, params=None, payload=None,
     if body.get("error"):
         raise RuntimeError(
             f"{nsid}: API が error を返しました（HTTP 200）: "
-            f"{scrub(str(body.get('message') or body['error']))[:200]}")
+            f"{scrub(str(body.get('message') or body['error']), *secrets)[:200]}")
     return body
 
 
@@ -264,7 +273,7 @@ def create_session(service: str, identifier: str, app_password: str, *,
     """
     body = _xrpc(service, "POST", "com.atproto.server.createSession",
                  payload={"identifier": identifier, "password": app_password},
-                 timeout=timeout)
+                 timeout=timeout, secrets=(app_password,))
     for key in ("accessJwt", "did", "handle"):
         if not body.get(key):
             raise RuntimeError(f"createSession: 応答に {key} がありません")
@@ -328,10 +337,14 @@ class BlueskyAdapter(base.Adapter):
         )
 
     # --- 秘密を通さない ----------------------------------------------------
-    def _scrub(self, text) -> str | None:
+    def _secrets(self) -> tuple:
+        """いま判っている秘密の**値**（`scrub()` に渡して値ごと置き換える）。"""
         session = self._session or {}
-        return scrub(text, self.app_password, session.get("accessJwt"),
-                     session.get("refreshJwt"))
+        return (self.app_password, session.get("accessJwt"),
+                session.get("refreshJwt"))
+
+    def _scrub(self, text) -> str | None:
+        return scrub(text, *self._secrets())
 
     # --- session -----------------------------------------------------------
     def session(self) -> dict:
@@ -341,13 +354,33 @@ class BlueskyAdapter(base.Adapter):
                 raise RuntimeError(
                     "Bluesky の identifier と App Password がありません"
                     "（`thth auth <account>` で入れてください）")
-            self._session = create_session(self.service, self.identifier,
-                                            self.app_password, timeout=self.timeout)
+            try:
+                self._session = create_session(self.service, self.identifier,
+                                                self.app_password, timeout=self.timeout)
+            except RuntimeError as e:
+                raise RuntimeError(self._scrub(str(e))) from None
         return self._session
 
     def _request(self, method: str, nsid: str, *, params=None, payload=None) -> dict:
-        return _xrpc(self.service, method, nsid, params=params, payload=payload,
-                     bearer=self.session()["accessJwt"], timeout=self.timeout)
+        """**媒体を叩く経路はここ 1 本**——秘密の伏字もここで済ませる（P1-2）。
+
+        以前は `publish` と `probe` だけが `self._scrub()` を通していたので、
+        `conversation`・`insights`・`whoami` の例外文は素通しだった。その文字列は
+        `collect` の `errors` に積まれ、**`runs` の ndjson とログに残る**。
+        `_xrpc()` に値を渡して塞ぐのが本体で、ここは「値で伏せそこねた文言が
+        あっても、この関門をもう一度通る」ための二重の網（`RuntimeError` は
+        200 応答の `error` と応答の形の異常だけ——`urllib` の例外は種類を保つ。
+        状態番号を三分類に写すのは呼び手なので、型を変えてはいけない）。
+        """
+        try:
+            return _xrpc(self.service, method, nsid, params=params, payload=payload,
+                         bearer=self.session()["accessJwt"], timeout=self.timeout,
+                         secrets=self._secrets())
+        except RuntimeError as e:
+            hidden = self._scrub(str(e))
+            if hidden == str(e):
+                raise
+            raise RuntimeError(hidden) from None
 
     def quota(self):
         return None
