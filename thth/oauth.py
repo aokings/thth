@@ -33,6 +33,7 @@ import urllib.parse
 import urllib.request
 
 from . import accounts as accounts_mod
+from . import adapters as adapters_mod
 from . import appenv
 from . import jst
 from . import redact as redact_mod
@@ -209,6 +210,10 @@ def fetch_me(access_token: str, *, timeout: float = 10.0) -> dict:
 
 
 def refresh_long_lived_token(access_token: str, *, timeout: float = 10.0) -> dict:
+    # **Threads 専用**（宛先は `graph.threads.net`）。ほかの媒体の `access_token`
+    # を渡してはいけない——Mastodon の `.token` も鍵が `access_token` なので、
+    # 媒体を見ずに呼ぶと**秘密が Meta のサーバへ出る**。唯一の呼び手
+    # （`run_refresh()`）が入口で `refresh` の能力を見て塞いでいる（P1-1）。
     url = f"{_graph_base_url()}/refresh_access_token"
     params = {"grant_type": "th_refresh_token", "access_token": access_token}
     try:
@@ -367,6 +372,22 @@ def run_refresh(account_name: str, *, force: bool = False, check: bool = False,
     except accounts_mod.AccountError as e:
         _out(str(e), log=log)
         return 2
+
+    # **更新の口を持たない媒体では、`.token` を 1 バイトも読まないうちに断る**
+    # （独立監査 1・P1-1・2026-09-13）。下の `refresh_long_lived_token()` は
+    # `graph.threads.net` を直に叩き、`access_token` をクエリに載せる。Mastodon
+    # の `.token` も鍵が `access_token` なので、**媒体を見ずに通すと Mastodon の
+    # access token が Meta のサーバへ飛び、返ってきた Threads のトークンで
+    # `.token` が上書きされる**。歯止めが `.token` の中の `no_expiry` という
+    # **データの印だけ**だったのが穴で、導入文書が示す手置きの形にその印は無い。
+    # 止め方は `account_report.fetch_posts()` と同じ——**能力で塞ぐ**（媒体名で
+    # 分岐しない）。`--force` でも `--check` でも覆らない。
+    media = account_cfg.get("media")
+    if "refresh" not in adapters_mod.capabilities_for(media):
+        _out(f"{account_name}（media={media}）のトークンに更新の口はありません"
+             f"（更新できるのは refresh を持つ媒体だけ）。何もしませんでした",
+             log=log)
+        return 0
 
     token = accounts_mod.load_token(account_cfg)
     if token is None:

@@ -28,10 +28,12 @@ from __future__ import annotations
 import json
 
 from . import accounts as accounts_mod
+from . import adapters as adapters_mod
 from . import jst
 from . import oauth as oauth_mod
 from . import redact as redact_mod
 from . import runs as runs_mod
+from .adapters import base as adapter_base
 
 # 残りがこれを切ったら、更新の期限（50 日）をとうに過ぎているのに更新できていない
 # ということ（60 日 − 50 日 ＝ 残り 10 日で更新が始まる）。人を呼ぶ。
@@ -91,24 +93,50 @@ def inspect(account_name: str, *, now) -> dict:
     except accounts_mod.AccountError as e:
         return _finish(row, CONFIG_ERROR, detail=str(e))
 
+    # **媒体を先に引く**（独立監査 1・P1-1・2026-09-13）。期限を持つかどうかも、
+    # 更新の口があるかどうかも**媒体の知識**で、`.token` の中身から推し量る
+    # ものではない。以前はここが `.token` の `no_expiry` という**データの印
+    # だけ**を見ていたので、印の無い Mastodon の `.token`（導入文書が示す手置き
+    # の形）が「残り 60 日の Threads のトークン」に見え、50 日を越えた日から
+    # `run_maintain()` が毎日 `refresh` を呼び、**Mastodon の access token が
+    # Meta のサーバへ飛んでいた**。`media` を知らないときは断る——「判らない」を
+    # 「Threads だ」と読み替えない。
+    try:
+        adapter_cls = adapters_mod.adapter_class(account_cfg.get("media"))
+    except adapter_base.AdapterError as e:
+        return _finish(row, CONFIG_ERROR, detail=str(e))
+
     token = accounts_mod.load_token(account_cfg)
     if token is None:
         return _finish(row, NO_TOKEN)
 
+    row["obtained_at"] = token.get("obtained_at")
+    unreadable = None
+    age_seconds = remaining_days = None
     try:
         age_seconds, remaining_days = oauth_mod.token_age_and_remaining(token, now)
     except oauth_mod.OAuthError as e:
-        return _finish(row, UNREADABLE, detail=str(e))
+        unreadable = str(e)
+    else:
+        row["age_days"] = round(age_seconds / 86400.0, 2)
+
+    if adapter_cls.TOKEN_NO_EXPIRY:
+        # **期限を持たない媒体**（Bluesky の App Password・Mastodon の access
+        # token・設計 v2 §4.2）。**`.token` の中身に関わらずここで終わる**
+        # ——`no_expiry` の印が無い（手で置いた・古い道具が書いた）`.token` でも、
+        # `obtained_at` が無くて年齢が判らなくても、**期限が無いことは変わらない**。
+        # board に「残り 60 日」と嘘を言わせないための分岐（P1-1・(b)）。
+        row["no_expiry"] = True
+        return _finish(row, OK, detail="期限を持たないトークンです（更新は不要）")
+
+    if unreadable is not None:
+        return _finish(row, UNREADABLE, detail=unreadable)
 
     age_days = age_seconds / 86400.0
-    row["obtained_at"] = token.get("obtained_at")
-    row["age_days"] = round(age_days, 2)
 
     if remaining_days is None:
-        # **期限を持たないトークン**（Bluesky の App Password・Mastodon の
-        # access token・設計 v2 §4.2）。`remaining_days` は `None` のまま
-        # ——**「判らない」ではない**ので、`no_expiry` を立てて言い分ける。
-        # 更新もしない（`REFRESH_DUE` に落とすと 50 日目から毎日失敗し続ける）。
+        # `.token` に `no_expiry: true` が立っている（期限を持つ媒体でも、
+        # 人がそう書いたなら額面どおりに読む）。
         row["no_expiry"] = True
         return _finish(row, OK, detail="期限を持たないトークンです（更新は不要）")
 
@@ -118,6 +146,12 @@ def inspect(account_name: str, *, now) -> dict:
         # 期限切れは更新では戻らない（Meta 側が失効したトークンの更新を受け付けない）。
         return _finish(row, EXPIRED)
     if age_days > oauth_mod.REFRESH_AFTER_DAYS:
+        if "refresh" not in adapter_cls.capabilities():
+            # **更新の口が無い媒体を `REFRESH_DUE` に落とさない**（P1-1）。
+            # 落とすと `run_maintain()` が `oauth.run_refresh()` を呼ぶ
+            # ——その先は `graph.threads.net` である。人を呼んで止まる。
+            return _finish(row, EXPIRING,
+                           detail="この媒体に更新の口がありません（取り直してください）")
         if age_seconds / 3600.0 < oauth_mod.MIN_REFRESH_AGE_HOURS:
             # 公式の条件（24 時間未満は更新できない）。50 日超と同時には起こり得ないが、
             # `expires_in` が極端に短い台帳では起こる。更新を試みずに人を呼ぶ。
