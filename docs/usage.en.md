@@ -280,8 +280,19 @@ What comes back (`--json`, seven keys):
 | `comparable` | `n`, `window_days`, what was aligned on, and the `medium` |
 | `cannot_say` | every question it declined, with the reason |
 | `one_thing_to_change` | at most one suggestion, or `null` |
-| `audience` | who was observed in that topic, per topic, newest first |
+| `audience` | who was observed in that topic — one row per topic, listed **per observer** |
 | `provenance` | `source`, number of observers, when, schema version |
+
+Each `audience` row is `{"topic", "observers", "latest", "views", "views_more"}`.
+`observers` is how many observers wrote about that word, `latest` the newest
+observation date, and `views` the **newest free-text note from each observer**,
+newest first, **at most three**; `views_more` is how many observers did not fit
+(it is always present, `0` included). **No observer's name or pseudonym is ever
+returned** — each view is just `{"who", "latest"}`, where `who` is the
+free-text note and `latest` that observer's newest date. One note beside a
+count of three observers read as "three people said this"; **a shared shelf
+does not hold a single truth.** The full history stays local, in
+`thth topics <account> --advise` and `thth topics history`.
 
 **Expect `cannot_say` almost everywhere at first.** A median is only returned
 once at least `--min-n` (default 20) comparable posts exist inside

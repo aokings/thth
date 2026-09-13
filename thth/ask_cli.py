@@ -126,9 +126,15 @@ def cmd_before_you_post(args) -> int:
     if not answer["audience"]:
         print("    （この語の観測はまだありません）")
     for row in answer["audience"]:
-        who = row["who"] or "（自由文の記録なし）"
-        print(f"    - {row['topic']}: {who}"
-              f"（観測者 {row['observers']} 人・最終 {row['latest'] or '不明'}）")
+        # **観測者ごとに並べる**（設計 v2 §1 規約 6′）。1 人の自由文を人数と
+        # 並べて出すと「N 人がこう言った」と読めた（監査 2・B9）。
+        print(f"    - {row['topic']}: 観測者 {row['observers']} 人"
+              f"・最新 {row['latest'] or '不明'}")
+        for view in row["views"]:
+            who = view["who"] or "（自由文の記録なし）"
+            print(f"      - {who}（{view['latest'] or '不明'}）")
+        if row["views_more"]:
+            print(f"      ほか {row['views_more']} 人")
     print("")
 
     print(f"  出所 {prov['source']}・観測者 {prov['observers']} 人"
