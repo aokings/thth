@@ -272,6 +272,25 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
         _out(f"redirect_uri が accounts/{account_name}.json に無い（運用者が設計 §9 の値を足す）", log=log)
         return 2
 
+    # **ダミーのまま認可 URL を出さない**（監査 2・C10・masaru 裁定 2026-09-13）。
+    #
+    # `thth account add` が写す雛形の `redirect_uri` は `https://example.invalid/`
+    # ——**存在しないホスト**。前はこの値で認可 URL を組んで表示していたので、
+    # 打った人はブラウザで開き、Meta に「redirect_uri が登録と違う」と断られて
+    # 初めて詰まった（しかも画面に出るのは Meta 側の英語のエラー）。**道具は
+    # 開く前に知っている**のだから、URL を出す前に言う。
+    #
+    # 判定は `accounts.redirect_uri_is_dummy()`（`thth doctor` が名指しするのと
+    # 同じ 1 か所の知識）。`--redirect-uri` で本物を渡した分にはここを通らない。
+    if accounts_mod.redirect_uri_is_dummy(redirect_uri):
+        _out(f"**redirect_uri がダミーです**（{redirect_uri}）。認可 URL は出しません。",
+             log=log)
+        _out(f"Meta アプリに登録した URL を "
+             f"`thth account add {account_name} --redirect-uri <url>` か、"
+             f"台帳（{os.path.join(accounts_mod.accounts_dir(), account_name + '.json')}）の "
+             f"`redirect_uri` に入れてから、もう一度打ってください。", log=log)
+        return 2
+
     scope_list = account_cfg.get("scopes") or scopes_mod.DEFAULT_SCOPES
 
     url = build_authorize_url(app_id, redirect_uri, scope_list)
