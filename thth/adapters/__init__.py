@@ -11,13 +11,20 @@
 from __future__ import annotations
 
 from . import base
+from .bluesky import BlueskyAdapter
+from .mastodon import MastodonAdapter
 from .threads import ThreadsAdapter
 
-# 媒体名 → アダプタのクラス。**Bluesky・Mastodon は別 Track（T1・T2）で足す。**
-# 足すときはここに 1 行入れるだけで、`core`・`select`・`collect`・`doctor`・
-# `token set` は触らなくてよい（それがこの境界の目的）。
+# 媒体名 → アダプタのクラス。**足すのはここに 1 行だけ**——`core`・`select`・
+# `collect`・`doctor`・`token set` は触らなくてよい（それがこの境界の目的）。
+# Bluesky・Mastodon を足したときに core 側で変わったのは、境界の語彙で言い換えた
+# 4 か所だけ（`account_insights` の capability・`doctor` の `TOKEN_KEYS`・
+# `thth auth` の媒体分岐・`token set` の `TOKEN_NO_EXPIRY`）で、**媒体名で分岐する
+# コードは 1 行も増えていない。**
 REGISTRY = {
     "threads": ThreadsAdapter,
+    "bluesky": BlueskyAdapter,
+    "mastodon": MastodonAdapter,
 }
 
 UnknownMedium = base.UnknownMedium
@@ -60,4 +67,5 @@ def make_adapter(account_cfg: dict, token: dict | None):
 
 
 __all__ = ["REGISTRY", "UnknownMedium", "adapter_class", "base",
-           "capabilities_for", "known_media", "make_adapter", "ThreadsAdapter"]
+           "capabilities_for", "known_media", "make_adapter",
+           "BlueskyAdapter", "MastodonAdapter", "ThreadsAdapter"]

@@ -201,7 +201,15 @@ class MastodonAdapter(base.Adapter):
     """
 
     # 設計 v2 §4.2 の部分集合（`base.KNOWN_CAPABILITIES` の語だけを使う）。**空**。
+    # `account_insights`（アカウント単位の日次）も無い——`collect` はここを見て
+    # 呼ばずに済ませる（T0 の残件・2026-09-13）。
     CAPABILITIES: frozenset = frozenset()
+
+    # `.token` の鍵（`thth token set <account>` が書く形・設計 v2 §4.2）。
+    TOKEN_KEYS = ("access_token",)
+    # access token に期限は無い（`.token` に `expires_in` を書かず
+    # `no_expiry: true` を立てる。`maintain` が「期限を持たない」と言い分ける）。
+    TOKEN_NO_EXPIRY = True
 
     def __init__(self, *, instance: str = DEFAULT_INSTANCE, access_token: str = "",
                  visibility: str = DEFAULT_VISIBILITY,
@@ -393,10 +401,10 @@ class MastodonAdapter(base.Adapter):
             raise AdapterError("会話: 返信に id がありません（**件数として数えません**）")
         account = status.get("account")
         account = account if isinstance(account, dict) else {}
-        account_id = account.get("id")
+        acct = account.get("acct")
         return {
             "message_id": str(message_id),
-            "username": account.get("acct"),
+            "username": acct,
             "text": strip_html(status.get("content")),
             "timestamp": status.get("created_at"),
             "replied_to": status.get("in_reply_to_id"),
@@ -404,20 +412,42 @@ class MastodonAdapter(base.Adapter):
             # （`in_reply_to_id` で親を辿るだけ）ので、`/context` を引いた投稿を根とする。
             "root_post": root_post,
             "medium": MEDIUM,
-            # 非可逆（誰かは戻せない・偏りは数えられる）。account が無ければ None——
+            # 非可逆（誰かは戻せない・偏りは数えられる）。acct が無ければ None——
             # **「分からない」を空文字で埋めない。**
-            "author_key": self.author_key(account_id) if account_id else None,
+            "author_key": self.author_key(acct),
             # SNS に会話窓は無い（**WhatsApp の芽**・設計 v2 §4.2）。
             "reply_deadline": None,
         }
 
-    def author_key(self, account_id) -> str:
-        """`sha256("mastodon:" + instance + ":" + account.id)[:16]`（設計 v2 §4.2）。
+    def qualified_acct(self, acct) -> str | None:
+        """`acct` を**必ずドメイン付き**にする（`name` → `name@<instance の host>`）。
 
-        **インスタンスを混ぜる**ので、別インスタンスの同じ番号は別人になる。
+        Mastodon の `acct` は**自分のインスタンスの利用者だけドメインが落ちる**
+        （よそから来た人は `name@other.example` のまま）。落ちたまま鍵にすると、
+        `mastodon.social` の `aoking` と `fedibird.com` の `aoking` が
+        **同一人物として数えられる**。**別インスタンスの同名を同じ人にしない。**
         """
-        material = f"mastodon:{self.instance}:{account_id}"
-        return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+        acct = (acct or "").strip().lstrip("@")
+        if not acct:
+            return None
+        if "@" in acct:
+            return acct
+        host = urllib.parse.urlsplit(self.instance).netloc or self.instance
+        return f"{acct}@{host}"
+
+    def author_key(self, acct) -> str | None:
+        """投稿者の非可逆な識別子（設計 v2 §4.2 の `Message.author_key`）。
+
+        **式は境界のもの**（`base.author_key(medium, identity)`・T3 の配線
+        2026-09-13）。以前はここが `sha256("mastodon:" + instance + ":" + id)` を
+        自前で作っていた——Threads・Bluesky と**同じ意味の欄に別の式**が入って
+        いたので、泉に出たあとで突き合わせる根拠が実装の履歴に依存していた。
+
+        身元は **ドメイン付きの `acct`**。数字の `account.id` を使わないのは、
+        **id がインスタンスの中でしか意味を持たない**（引っ越すと変わる・
+        よそのインスタンスの人はそのインスタンスの id を持たない）ため。
+        """
+        return base.author_key(MEDIUM, self.qualified_acct(acct))
 
     def conversation(self, post_id: str, *, since: str | None = None) -> list:
         """`GET /api/v1/statuses/:id/context` の `descendants`（**全階層**・**L2**）。

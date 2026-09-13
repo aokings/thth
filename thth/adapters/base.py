@@ -68,6 +68,12 @@ KNOWN_CAPABILITIES = frozenset({
     "quota",          # 残量を問える
     "inbox",          # 利用者から始まった会話が取れる（**WhatsApp の芽**）
     "refresh",        # トークンを更新できる
+    # アカウント単位の日次（`account_insights()`）が取れる。**Threads だけ**
+    # （T0 の残件・2026-09-13）。以前は `collect._collect_account_daily()` が
+    # 媒体を問わず呼んでいたので、持たない媒体では毎回 `errors` に
+    # `account_insights: …` が積まれ、**採取が「1 本でも失敗したか」で
+    # 非ゼロ終了し続けた**——「無い」を「失敗」と呼ばないための語。
+    "account_insights",
 })
 
 
@@ -143,6 +149,33 @@ class Adapter:
 
     # 設計 v2 §4.2 の部分集合（`KNOWN_CAPABILITIES` の語だけを使う）。
     CAPABILITIES: frozenset = frozenset()
+
+    # **`.token` に何が入っていればトークンが在ると言えるか**（設計 v2 §4.2
+    # 「認可とトークン」・T1/T2 の配線 2026-09-13）。`doctor.diagnose()` は
+    # 以前 `token.get("access_token")` で早期 return していたので、
+    # **Bluesky（`identifier` と `app_password`）は正しく認可されていても
+    # 「トークンが無い」と言われた。** 媒体ごとの鍵の名前は媒体の知識なので
+    # ここに置く。**値は見ない**（在るかどうかだけ）。
+    TOKEN_KEYS: tuple = ("access_token",)
+
+    # トークンが無いときに人へ示す次の一手（`doctor`）。Bluesky は
+    # `thth token set` ではなく `thth auth`（App Password を対話で受ける）。
+    TOKEN_SETUP_HINT: str = "thth token set"
+
+    # `.token` に `expires_in` を書かず `no_expiry: true` を立てる媒体
+    # （Bluesky の App Password・Mastodon の access token・設計 v2 §4.2）。
+    # `oauth.token_age_and_remaining()` がこの印を見て `remaining_days` を
+    # `None`（＝**判らない、ではなく期限を持たない**）にする。
+    TOKEN_NO_EXPIRY: bool = False
+
+    @classmethod
+    def has_token(cls, token) -> bool:
+        """`.token` の中身が、この媒体にとって「在る」と言える形か。
+
+        **値は読まない**——在るかどうかだけを見る（値を触る口を増やさない）。
+        """
+        token = token or {}
+        return all(token.get(key) for key in cls.TOKEN_KEYS)
 
     @classmethod
     def capabilities(cls) -> set:

@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import datetime
 import getpass
-import hashlib
 import json
 import re
 import unicodedata
@@ -179,12 +178,19 @@ def count(text: str) -> int:
     return total
 
 
-def author_key(did: str) -> str:
+def author_key(did: str | None) -> str | None:
     """投稿者の非可逆な識別子（設計 v2 §4.2 の `Message.author_key`）。
 
-    **偏りを数えるためだけのもの**なので、did をそのまま残さない。
+    **式は境界のもの**（`base.author_key(medium, identity)`・T3 の配線
+    2026-09-13）。以前はここが `sha256("bluesky:" + did)` を自前で作っていて、
+    Threads（`base.author_key`）と**同じ意味の欄に別の式が入っていた**——泉に
+    出るのはこの欄だけなので、媒体ごとに式が違うと「同じ人か」を後から突き合わ
+    せる根拠が媒体の実装の履歴に依存する。**式は 1 か所**にする。
+
+    Bluesky の身元は **`did`**（handle は改名できるが did は変わらない）。
+    did が無ければ `None`——**空文字を鍵にしない**（誰も彼もが同じ鍵になる）。
     """
-    return hashlib.sha256(f"{MEDIUM}:{did}".encode("utf-8")).hexdigest()[:16]
+    return base.author_key(MEDIUM, did)
 
 
 def created_at(now: datetime.datetime | None = None) -> str:
@@ -269,6 +275,24 @@ class BlueskyAdapter(base.Adapter):
     medium = MEDIUM
     char_limit = CHAR_LIMIT
 
+    # --- 能力（**クラス属性**・設計 v2 §4.2「受け入れ 6」） -------------------
+    # `select` はトークンを読まずに（実体を作らずに）ここを引く。語は
+    # `base.KNOWN_CAPABILITIES` のものだけ。`topic` 無し（Threads の topic_tag に
+    # 当たるものが無い）・`views` 無し（**L2**: `#postView` に views は無い）・
+    # `quota` 無し・`inbox` 無し・`refresh` 無し（App Password に期限が無いので
+    # 延長という概念が無い）・`account_insights` 無し（アカウント単位の日次は無い）。
+    CAPABILITIES: frozenset = frozenset({"link_preview"})
+
+    # `.token` の鍵（`thth auth <account>` が書く形・設計 v2 §4.2「認可とトークン」）。
+    # **`access_token` ではない**——doctor が `access_token` だけを見ていたので、
+    # 正しく認可した Bluesky が「トークンが無い」と言われていた。
+    TOKEN_KEYS = ("identifier", "app_password")
+    # 次の一手は `thth token set` ではない（App Password は対話で受ける）。
+    TOKEN_SETUP_HINT = "thth auth"
+    # App Password に期限は無い（`maintain` は `token_state: ok`・
+    # `remaining_days: None`。「判らない」ではなく「期限を持たない」）。
+    TOKEN_NO_EXPIRY = True
+
     def __init__(self, *, service: str = DEFAULT_SERVICE, identifier: str = "",
                  app_password: str = "", timeout: float = DEFAULT_TIMEOUT_SECONDS,
                  thread_depth: int = DEFAULT_THREAD_DEPTH):
@@ -278,6 +302,28 @@ class BlueskyAdapter(base.Adapter):
         self.timeout = timeout
         self.thread_depth = thread_depth
         self._session: dict | None = None
+
+    @classmethod
+    def from_account(cls, account_cfg: dict, token: dict):
+        """台帳と `.token` から組み立てる（`make_adapter()` が呼ぶ・設計 v2 §4.2）。
+
+        読むのは台帳の `service`（省略時 `https://bsky.social`）と `.token` の
+        `identifier`・`app_password`（`thth auth <account>` が書く形）。
+        **`service` は既定を持つ**——Mastodon と違い、Bluesky は
+        `bsky.social` が事実上の既定 PDS なので、書き忘れが「知らないサーバに
+        投げる」事故にならない（Mastodon 側が `instance` 必須なのはその逆）。
+
+        **トークンが無くてもここでは断らない**——`thth board` や `thth account`
+        のような読むだけの口が、トークンを入れる前のアカウントで落ちる。
+        実際に叩く段（`session()`）で「`thth auth` を先に」と loud に断る。
+        """
+        cfg = account_cfg or {}
+        return cls(
+            service=cfg.get("service") or DEFAULT_SERVICE,
+            identifier=((token or {}).get("identifier")
+                        or cfg.get("handle") or ""),
+            app_password=(token or {}).get("app_password", ""),
+        )
 
     # --- 秘密を通さない ----------------------------------------------------
     def _scrub(self, text) -> str | None:
@@ -300,16 +346,6 @@ class BlueskyAdapter(base.Adapter):
     def _request(self, method: str, nsid: str, *, params=None, payload=None) -> dict:
         return _xrpc(self.service, method, nsid, params=params, payload=payload,
                      bearer=self.session()["accessJwt"], timeout=self.timeout)
-
-    # --- 能力 ---------------------------------------------------------------
-    def capabilities(self) -> set:
-        """設計 v2 §4.2 の集合のうち Bluesky が持つもの。
-
-        `topic` 無し（Threads の topic_tag に当たるものが無い）・`views` 無し（**L2**:
-        `#postView` に views は無い）・`quota` 無し・`inbox` 無し・`refresh` 無し
-        （App Password に期限が無いので延長という概念が無い）。
-        """
-        return {"link_preview"}
 
     def quota(self):
         return None
@@ -547,34 +583,47 @@ class BlueskyAdapter(base.Adapter):
         session = self.session()
         return {"user_id": session.get("did"), "username": session.get("handle")}
 
-    def probe(self) -> list:
-        """`doctor` の probe（媒体側に置く・設計 v2 §4.2）。"""
+    def probe(self, *, get=None) -> list:
+        """`doctor` の probe（媒体側に置く・設計 v2 §4.2）。
+
+        `get` は doctor 側の「読み取りしか呼ばない取得口」（`base.Adapter.probe`
+        参照）。**Bluesky 側は使わない**——XRPC は認可を `Authorization` ヘッダで
+        載せるので、`access_token` をクエリに置く Threads 向けの口とは形が違う。
+        **トークンをクエリに移してまで口を共有しない。**
+        """
+        # 1 行の形は T0 の決めた 6 項目（`name`・`label`・`permission`・`key`・
+        # `ok`・`detail`）。**`doctor` の人向け画面は `label` と `permission` を
+        # 直に読む**ので、欠けると画面のほうが落ちる（P2-3 と同じ筋）。
+        def _row(name, label, permission, key, ok, detail):
+            return {"name": name, "label": label, "permission": permission,
+                    "key": key, "ok": ok, "detail": detail, "body": None}
+
         results = []
         try:
             session = self.session()
         except urllib.error.HTTPError as e:
-            results.append({"name": "createSession", "ok": False,
-                             "detail": self._scrub(f"{e.code} {e.reason}")})
+            results.append(_row("createSession", "本人の確認", "App Password",
+                                 "whoami", False, self._scrub(f"{e.code} {e.reason}")))
             return results
         except Exception as e:  # noqa: BLE001 - 理由を detail に残して先へ進まない
-            results.append({"name": "createSession", "ok": False,
-                             "detail": self._scrub(str(e))[:220]})
+            results.append(_row("createSession", "本人の確認", "App Password",
+                                 "whoami", False, self._scrub(str(e))[:220]))
             return results
-        results.append({"name": "createSession", "ok": True,
-                         "detail": f"handle={session.get('handle')}"})
+        results.append(_row("createSession", "本人の確認", "App Password", "whoami",
+                             True, f"handle={session.get('handle')}"))
         try:
             body = self._request("GET", "app.bsky.actor.getProfile",
                                   params={"actor": session["did"]})
         except urllib.error.HTTPError as e:
-            results.append({"name": "getProfile", "ok": False,
-                             "detail": self._scrub(f"{e.code} {e.reason}")})
+            results.append(_row("getProfile", "自分の素性", "（認可不要）", "profile",
+                                 False, self._scrub(f"{e.code} {e.reason}")))
         except Exception as e:  # noqa: BLE001
-            results.append({"name": "getProfile", "ok": False,
-                             "detail": self._scrub(str(e))[:220]})
+            results.append(_row("getProfile", "自分の素性", "（認可不要）", "profile",
+                                 False, self._scrub(str(e))[:220]))
         else:
-            results.append({
-                "name": "getProfile", "ok": True,
-                "detail": f"handle={body.get('handle')} posts={body.get('postsCount')}"})
+            results.append(_row(
+                "getProfile", "自分の素性", "（認可不要）", "profile", True,
+                f"handle={body.get('handle')} posts={body.get('postsCount')}"))
         return results
 
 

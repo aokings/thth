@@ -427,10 +427,24 @@ def test_getPostThreadを全階層のMessageに写す():
     assert first["timestamp"] == "2026-09-13T01:00:00.000Z"
     assert first["medium"] == "bluesky"
     assert first["reply_deadline"] is None
+    # **式は境界のもの**（T3 の配線 2026-09-13）。以前は Bluesky だけが
+    # `sha256("bluesky:" + did)` を自前で作っていた——同じ意味の欄に媒体ごとの
+    # 別の式が入っていると、泉に出たあとで突き合わせる根拠が実装の履歴になる。
     assert first["author_key"] == bsky.author_key("did:plc:c")
+    assert first["author_key"] == adapter_base.author_key("bluesky", "did:plc:c")
+    # 身元は **did**（handle は改名できる）。
+    assert first["author_key"] != adapter_base.author_key("bluesky", "c.bsky.social")
     # **author_key は非可逆**（did がそのまま残らない）。
     assert len(first["author_key"]) == 16
     assert "did:plc:c" not in first["author_key"]
+    # 媒体をまたいで同じ鍵にならない（設計 v2 §2.1）。
+    assert first["author_key"] != adapter_base.author_key("threads", "did:plc:c")
+
+
+def test_author_keyはdidが無ければNone():
+    """**空文字を鍵にしない**（誰も彼もが同じ鍵になる・`base.author_key`）。"""
+    assert bsky.author_key("") is None
+    assert bsky.author_key(None) is None
 
 
 def test_sinceより古い返信は返さない():

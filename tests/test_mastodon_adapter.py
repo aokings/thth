@@ -413,20 +413,51 @@ def test_contextのHTMLが本文に落とされる():
     assert "<a href" not in messages[1]["text"]
 
 
-def test_author_keyはinstanceとaccount_idから決まる():
+def test_author_keyはドメイン付きacctから決まる():
+    """**式は境界のもの**（`base.author_key`・T3 の配線 2026-09-13）。
+
+    以前はここが `sha256("mastodon:" + instance + ":" + account.id)` を自前で
+    作っていた。数字の `id` はインスタンスの中でしか意味を持たない（引っ越すと
+    変わる・よそのインスタンスの人はそのインスタンスの id を持たない）ので、
+    身元は**ドメイン付きの `acct`** に寄せた。
+    """
     with fake_mastodon() as fake:
         adapter = _adapter(fake)
         messages = adapter.conversation(ROOT_ID)
-    # 同じ人（9001）は 2 件とも同じ鍵、別の人（9002）は別の鍵
+        host = urllib.parse.urlsplit(fake.instance).netloc
+    # 同じ人（alice）は 2 件とも同じ鍵、別の人（bob@other.invalid）は別の鍵
     assert messages[0]["author_key"] == messages[2]["author_key"]
     assert messages[0]["author_key"] != messages[1]["author_key"]
+    # 式は境界の `base.author_key(medium, identity)` そのもの。
+    assert messages[0]["author_key"] == adapter_base.author_key(
+        "mastodon", f"alice@{host}")
+    # よそから来た人の `acct` は既にドメイン付き（**補わない**）。
+    assert messages[1]["author_key"] == adapter_base.author_key(
+        "mastodon", "bob@other.invalid")
     # 非可逆・16 桁の 16 進
     key = messages[0]["author_key"]
     assert len(key) == 16 and all(c in "0123456789abcdef" for c in key)
-    assert "9001" not in key
-    # **インスタンスを混ぜる**ので、別インスタンスの同じ番号は別人
-    other = mastodon_mod.MastodonAdapter(instance="https://other.invalid")
-    assert other.author_key("9001") != adapter.author_key("9001")
+    assert "alice" not in key
+
+
+def test_ドメインの無いacctはインスタンスのhostを補う():
+    """**別インスタンスの同名を同一人物にしない**（T3 の配線 2026-09-13）。
+
+    Mastodon の `acct` は**自分のインスタンスの利用者だけドメインが落ちる**。
+    落ちたまま鍵にすると `mastodon.social` の `aoking` と `fedibird.com` の
+    `aoking` が同じ鍵になる。
+    """
+    a = mastodon_mod.MastodonAdapter(instance="https://mastodon.social")
+    b = mastodon_mod.MastodonAdapter(instance="https://fedibird.com")
+    assert a.qualified_acct("aoking") == "aoking@mastodon.social"
+    assert b.qualified_acct("aoking") == "aoking@fedibird.com"
+    assert a.author_key("aoking") != b.author_key("aoking")
+    # 既にドメインが付いていれば、どちらから見ても同じ人。
+    assert a.author_key("who@example.invalid") == b.author_key("who@example.invalid")
+    # `@` 始まりの綴りも同じ人（画面から写した形）。
+    assert a.author_key("@aoking") == a.author_key("aoking")
+    # 空は鍵にしない。
+    assert a.author_key("") is None and a.qualified_acct(None) is None
 
 
 def test_sinceより古い返信は落ちるが時刻が読めないものは残る():

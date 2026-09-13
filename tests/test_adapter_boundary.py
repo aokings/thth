@@ -87,8 +87,11 @@ def test_TB0_capabilitiesは実体を作らずに引ける():
     """`select` はトークンを読まずに判定する（設計 v2 §4.2・受け入れ 6）。"""
     assert "topic" in adapters_mod.capabilities_for("threads")
     assert "topic" not in adapters_mod.capabilities_for("carrier-pigeon")
+    # `account_insights` は T3 の配線（2026-09-13）で足した語。**Threads だけ**が
+    # 持つ——`collect._collect_account_daily()` はこれを見て、持たない媒体では
+    # 呼ばない（以前は毎回 `errors` に積んでいた・T0 の残件）。
     assert threads_mod.ThreadsAdapter.capabilities() == {
-        "topic", "link_preview", "views", "quota", "refresh"}
+        "topic", "link_preview", "views", "quota", "refresh", "account_insights"}
 
 
 def test_TB0_Messageは旧名Replyでも作れる():
@@ -560,3 +563,92 @@ def test_TB5_知らない媒体のdoctorは黙って異常なしにしない(tmp
     assert "carrier-pigeon" in report["error"] and "threads" in report["error"]
     rc = doctor_mod.run_doctor(account["name"], log=lambda _l: None)
     assert rc == 2
+
+
+# --- T3 の配線（2026-09-13・Bluesky と Mastodon を REGISTRY に載せる） ---------
+
+def test_T3_REGISTRYに3媒体が載っている():
+    """**足すのは 1 行だけ**（設計 v2 §4.2「台帳と登録」）。
+
+    ここが落ちると、台帳に `media: bluesky` と書いても
+    「知りません」で断られる（＝端から端が通らない）。
+    """
+    from thth.adapters import bluesky as bluesky_mod
+    from thth.adapters import mastodon as mastodon_mod
+    assert adapters_mod.known_media() == ["bluesky", "mastodon", "threads"]
+    assert adapters_mod.REGISTRY["bluesky"] is bluesky_mod.BlueskyAdapter
+    assert adapters_mod.REGISTRY["mastodon"] is mastodon_mod.MastodonAdapter
+
+
+def test_T3_全媒体のCAPABILITIESが境界の語彙に収まる():
+    """**ここに無い語を返さない**（`base.KNOWN_CAPABILITIES` の但し書き）。
+
+    読み手（`select`・`collect`・`core`）はこの一覧だけを見て分岐するので、
+    媒体側が勝手な語を入れると**誰も見ない能力**になる（黙って効かない）。
+    """
+    for media, cls in adapters_mod.REGISTRY.items():
+        unknown = set(cls.CAPABILITIES) - adapter_base.KNOWN_CAPABILITIES
+        assert not unknown, f"{media}: 境界の語彙に無い能力 {sorted(unknown)}"
+        # `capabilities()` は**実体を作らずに**引ける（受け入れ 6）。
+        assert cls.capabilities() == set(cls.CAPABILITIES)
+
+
+def test_T3_全媒体がfrom_accountを持つ():
+    """`make_adapter()` は `from_account()` しか呼ばない（**core の唯一の入口**）。"""
+    for media, cls in adapters_mod.REGISTRY.items():
+        assert cls.from_account is not adapter_base.Adapter.from_account, \
+            f"{media}: from_account が境界の未実装のまま"
+
+
+def test_T3_台帳とトークンからBlueskyとMastodonを組み立てられる():
+    bsky = adapters_mod.make_adapter(
+        {"media": "bluesky", "handle": "aoking.bsky.social"},
+        {"identifier": "aoking.bsky.social", "app_password": "aaaa-bbbb-cccc-dddd"})
+    # `service` を省いたら既定の PDS（設計 v2 §4.2「台帳の追加項目」）。
+    assert bsky.service == "https://bsky.social"
+    assert bsky.identifier == "aoking.bsky.social"
+    bsky2 = adapters_mod.make_adapter(
+        {"media": "bluesky", "service": "https://pds.example.invalid/"}, {})
+    assert bsky2.service == "https://pds.example.invalid"
+
+    mstdn = adapters_mod.make_adapter(
+        {"media": "mastodon", "instance": "https://mastodon.social"},
+        {"access_token": "x"})
+    assert mstdn.instance == "https://mastodon.social"
+
+
+def test_T3_Blueskyはトークンが無くても組み立てだけは通る():
+    """**読むだけの口を、トークンの有無で落とさない**（`thth board`・`thth account`）。
+
+    実際に叩く段（`session()`）で loud に断る。
+    """
+    adapter = adapters_mod.make_adapter({"media": "bluesky"}, {})
+    with pytest.raises(RuntimeError) as e:
+        adapter.session()
+    assert "thth auth" in str(e.value)
+
+
+def test_T3_媒体ごとのTOKEN_KEYSが境界に載っている():
+    """`doctor` は `access_token` の有無ではなく**媒体の鍵**で判定する。"""
+    from thth.adapters import bluesky as bluesky_mod
+    from thth.adapters import mastodon as mastodon_mod
+    assert threads_mod.ThreadsAdapter.TOKEN_KEYS == ("access_token",)
+    assert bluesky_mod.BlueskyAdapter.TOKEN_KEYS == ("identifier", "app_password")
+    assert mastodon_mod.MastodonAdapter.TOKEN_KEYS == ("access_token",)
+    # Bluesky は `identifier` だけでは足りない（両方揃って初めて「在る」）。
+    assert not bluesky_mod.BlueskyAdapter.has_token({"identifier": "a"})
+    assert bluesky_mod.BlueskyAdapter.has_token(
+        {"identifier": "a", "app_password": "b"})
+    # Threads の access_token を貼っても Bluesky では「在る」にならない。
+    assert not bluesky_mod.BlueskyAdapter.has_token({"access_token": "x"})
+    assert threads_mod.ThreadsAdapter.has_token({"access_token": "x"})
+    assert not threads_mod.ThreadsAdapter.has_token(None)
+
+
+def test_T3_期限を持たない媒体に印がある():
+    """「判らない」と「期限を持たない」を分ける（設計 v2 §4.2・`maintain`）。"""
+    from thth.adapters import bluesky as bluesky_mod
+    from thth.adapters import mastodon as mastodon_mod
+    assert bluesky_mod.BlueskyAdapter.TOKEN_NO_EXPIRY is True
+    assert mastodon_mod.MastodonAdapter.TOKEN_NO_EXPIRY is True
+    assert threads_mod.ThreadsAdapter.TOKEN_NO_EXPIRY is False

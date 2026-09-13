@@ -91,7 +91,11 @@ def _run_probe(get, base_url: str, probe: _Probe, token: str) -> dict:
 
 class ThreadsAdapter(base.Adapter):
     # 設計 v2 §4.2。`inbox` は持たない（Threads は push 型ではない）。
-    CAPABILITIES = frozenset({"topic", "link_preview", "views", "quota", "refresh"})
+    # `account_insights`（アカウント単位の日次）を**持つのは Threads だけ**
+    # （T3 の配線 2026-09-13）。`collect._collect_account_daily()` はこの語を見て
+    # 呼ぶかどうかを決める——無い媒体で毎回 `errors` に積むのをやめるため。
+    CAPABILITIES = frozenset({"topic", "link_preview", "views", "quota", "refresh",
+                              "account_insights"})
 
     def __init__(self, *, base_url: str = DEFAULT_BASE_URL, access_token: str = "",
                  user_id: str = "", wait_seconds: float = DEFAULT_WAIT_SECONDS,
