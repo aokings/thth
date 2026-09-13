@@ -1,11 +1,18 @@
-"""アダプタの境界（差し替え可能な interface。設計 §3.4）。
+"""アダプタの境界（差し替え可能な interface。設計 v1 §3.4・設計 v2 §4.2）。
 
 礼儀（静かな時間帯・最短間隔・1 件だけ）は Adapter の外側の `select` が守る。
 アダプタは「渡されたものを 1 回投げる」しかしない。
+
+**境界の拡張**（設計 v2 §4.2・masaru 裁定 2026-09-13）。Threads の返信の形を
+そのまま共通の形にする——親と根と時刻と誰が、は SNS のスレッドにもメッセンジャーの
+会話にも当てはまる。足したのは 3 つ（`medium`・`author_key`・`reply_deadline`）と、
+媒体差を core から締め出すための 5 つの口（`capabilities`・`inbox`・`whoami`・
+`probe`・`insights` の `available`）だけ。**core は媒体名を知らない。**
 """
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 
 
 @dataclasses.dataclass
@@ -16,6 +23,11 @@ class Post:
     # Threads の topic_tag（設計 §2.2・§4.1・masaru 裁定 2026-09-09。全アカウントで
     # 使う）。1〜50 字・`.`・`&` 不可・1 投稿に 1 つだけ（検査済みのものだけを渡す
     # こと・queuefile.normalize_topic()/topic_error() で検査する）。
+    #
+    # **topic を持たない媒体は黙って無視する**（設計 v2 §4.2）。1 つの queue
+    # ファイルを Threads と Bluesky の 2 account が拾う形（設計 v1 §8-16）を
+    # 壊さないため——ここで loud に断ると、媒体を足した瞬間に既存の queue が
+    # 全部止まる。**使わない媒体が受け取っても何も起きない**が正しい。
     topic: str | None = None
 
 
@@ -35,18 +47,116 @@ class PublishResult:
     failure: str = "none"
 
 
+class AdapterError(RuntimeError):
+    """媒体の呼び出しが成立しなかった（メッセージは `redact()` 済みであること）。
+
+    **`RuntimeError` を継承する**——採取側は「例外なら記録を書かない」で成功と
+    失敗を分けているので、既存の `except Exception` の網にそのまま入る。
+    """
+
+
+class UnknownMedium(AdapterError):
+    """台帳の `media` を知らない（`thth/adapters/__init__.py` が投げる・T-B0）。"""
+
+
+# `Adapter.capabilities()` が返しうる語（設計 v2 §4.2）。**ここに無い語を返さない**
+# ——読み手（`select`・`collect`・`core`）はこの一覧だけを見て分岐する。
+KNOWN_CAPABILITIES = frozenset({
+    "topic",          # 投稿に語（Threads の topic_tag）を付けられる
+    "link_preview",   # 本文の URL がリンクとして展開される
+    "views",          # 投稿ごとの表示回数が取れる
+    "quota",          # 残量を問える
+    "inbox",          # 利用者から始まった会話が取れる（**WhatsApp の芽**）
+    "refresh",        # トークンを更新できる
+})
+
+
+def author_key(medium: str, username: str | None) -> str | None:
+    """媒体と投稿者から決まる**非可逆**の識別子（設計 v2 §4.2・§2）。
+
+    **泉に出るのはこれで、`username` は出ない**（§2「落ちないもの」）。偏りを
+    数える（同じ人が何度も返しているか）ためだけに要るので、**戻せない形**で
+    十分。媒体名を混ぜるのは、別媒体の同名アカウントを同一人物として数えない
+    ため（§2.1「媒体をまたいで比較しない」と同じ筋）。
+
+    `username` が無ければ `None`——**空文字を鍵にしない**（誰も彼もが同じ鍵に
+    なる）。
+    """
+    if not username:
+        return None
+    digest = hashlib.sha256(f"{medium}\n{username}".encode("utf-8")).hexdigest()
+    return digest[:16]
+
+
 @dataclasses.dataclass
-class Reply:
-    reply_id: str
+class Message:
+    """会話の 1 行（設計 v2 §4.2。旧 `Reply` の改名）。
+
+    **改名した理由**: 同じ形が「返信」でも「利用者から届いた問い合わせ」でも
+    使える（親と根と時刻と誰が、は両方にある）。`Reply` は別名として残すが、
+    新しく書くものは `Message` を使うこと。
+    """
+    message_id: str
     username: str
     text: str
     timestamp: str
     replied_to: str | None
     root_post: str | None
+    # --- 設計 v2 §4.2 で足した 3 つ ---
+    medium: str | None = None
+    # 媒体と投稿者から決まる非可逆の識別子（`author_key()` で作る）。
+    author_key: str | None = None
+    # **WhatsApp の芽**（設計 v2 §4.1・§4.2）。利用者の最後のメッセージから
+    # 24 時間の会話窓を過ぎると自由文で返せない。SNS では `None`。
+    reply_deadline: str | None = None
+
+
+# 旧名（設計 v2 §4.2「`Reply = Message` の別名を残す」）。
+Reply = Message
+
+
+def metrics_of(result) -> tuple:
+    """`insights()` の戻りを `(metrics, available)` に開く。
+
+    新しい形は `{"metrics": {...}, "available": [...]}`（設計 v2 §4.2）。
+    **`available` は「その媒体が持っている指標の名前」**で、`metrics` に無い
+    ものは「持っているのに取れなかった」——`available` に無いものは
+    「**そもそも媒体に無い**」。この 2 つを混ぜないためだけに在る欄。
+
+    両方の鍵が揃っているときだけ新しい形として読む。揃っていなければ
+    「指標の辞書そのもの」として扱い、`available` は `None`（＝**判らない**。
+    「全部ある」でも「何も無い」でもない）。
+    """
+    if (isinstance(result, dict) and isinstance(result.get("metrics"), dict)
+            and isinstance(result.get("available"), (list, tuple, set, frozenset))):
+        return dict(result["metrics"]), list(result["available"])
+    return (dict(result) if isinstance(result, dict) else {}), None
 
 
 class Adapter:
-    """媒体ごとの実装（ThreadsAdapter が最初。T6 で XAdapter が保留のまま並ぶ想定）。"""
+    """媒体ごとの実装（`thth/adapters/__init__.py` の `REGISTRY` に登録する）。
+
+    **`CAPABILITIES` はクラス属性**（設計 v2 §4.2・受け入れ 6）。台帳の `media`
+    から `REGISTRY` を引くだけで判定できないと、`select` が「トピック検査を
+    するかどうか」を決めるためにトークンを読んでアダプタを組み立てる羽目になる。
+    """
+
+    # 設計 v2 §4.2 の部分集合（`KNOWN_CAPABILITIES` の語だけを使う）。
+    CAPABILITIES: frozenset = frozenset()
+
+    @classmethod
+    def capabilities(cls) -> set:
+        """この媒体にできることの集合。**実体を作らずにも引ける**（classmethod）。"""
+        return set(cls.CAPABILITIES)
+
+    @classmethod
+    def from_account(cls, account_cfg: dict, token: dict):
+        """台帳とトークンから実体を作る（`make_adapter()` が呼ぶ）。
+
+        **媒体ごとの台帳項目・環境変数の読み方はアダプタの中に閉じる**——core は
+        `media` の名前すら見ない（設計 v2 §4.2「台帳と登録」）。
+        """
+        raise NotImplementedError
 
     def publish(self, post: Post, *, dry_run: bool, on_container_created=None,
                 before_publish=None) -> PublishResult:
@@ -59,8 +169,50 @@ class Adapter:
         raise NotImplementedError
 
     def conversation(self, post_id: str, *, since: str | None = None) -> list:
-        """会話全体（**全階層**）。`replies`（上位 1 階層）から改名・2026-09-12。"""
+        """会話全体（**全階層**）。`replies`（上位 1 階層）から改名・2026-09-12。
+
+        各行に `medium` と `author_key` を添えること（設計 v2 §4.2）。
+        **返信の台帳（ndjson）の既存の鍵は変えない——足すだけ。**
+        """
         raise NotImplementedError
+
+    def inbox(self, *, since: str | None = None) -> list:
+        """利用者から始まった会話（`root_post` 無し）。**WhatsApp の芽**。
+
+        **既定は空**——持たない媒体は何も返さない（`capabilities()` に `inbox`
+        が無ければ `collect` は呼ばない）。
+        """
+        return []
+
+    def insights(self, post_id: str) -> dict:
+        """`{"metrics": {...}, "available": [...]}`（設計 v2 §4.2）。
+
+        `available` には**その媒体が持っている指標の名前**を並べる。views が
+        無い媒体は `views` を入れない——実測の行は `views: null` になり、
+        `account_report.comparable_views()` が「媒体に views が無い」の理由で
+        **除外して数える**（捨てない・設計 v1 §3.2.2）。
+        """
+        raise NotImplementedError
+
+    def whoami(self) -> dict:
+        """`{"user_id", "username"}`（`thth token set` と `thth doctor` の検証）。
+
+        失敗したら `AdapterError`（メッセージは伏字済み）。
+        """
+        raise NotImplementedError
+
+    def probe(self, *, get=None) -> list:
+        """読み取りだけで能力を測る（`thth doctor`）。`[{"name", "ok", "detail"}, …]`。
+
+        `ok` は 3 値（`True` ○ / `False` × / `None` －「試せていない」）。
+
+        `get` は**取得口の差し替え**（省略可）。`thth/doctor.py` は自分の
+        `_get(base_url, path, params, token)` を渡す——doctor は「読み取りしか
+        呼ばない」ことを自分の source に対する検査で担保しており（`tests/
+        test_doctor.py::test_doctor_は書き込みの口を持たない`）、その唯一の
+        HTTP 呼び出しを doctor 側に残すため。**媒体側は使わなくてよい。**
+        """
+        return []
 
     def quota(self) -> dict | None:
         return None

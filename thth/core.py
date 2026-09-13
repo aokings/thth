@@ -21,9 +21,9 @@ from . import redact as redact_mod
 from . import runs as runs_mod
 from . import select as select_mod
 from . import sent as sent_mod
+from . import adapters as adapters_mod
 from . import writeback
 from .adapters import base as adapter_base
-from .adapters import threads as threads_mod
 
 
 @dataclasses.dataclass
@@ -113,19 +113,15 @@ def _is_error_reason(reason: str) -> bool:
 
 
 def _default_adapter_factory(account_cfg: dict, token: dict | None) -> adapter_base.Adapter:
-    if account_cfg["media"] != "threads":
-        raise NotImplementedError(f"media={account_cfg['media']} は T1 の範囲外（X は T6 保留）")
-    base_url = os.environ.get("THTH_THREADS_BASE_URL", threads_mod.DEFAULT_BASE_URL)
-    wait_seconds = float(os.environ.get("THTH_THREADS_WAIT_SECONDS", str(threads_mod.DEFAULT_WAIT_SECONDS)))
-    access_token = (token or {}).get("access_token", "")
-    # user_id は `.token`（thth auth / thth token set が書く）を優先し、無ければ
-    # 台帳 accounts/<account>.json を見る。同じ値の置き場が 2 つあるとずれるので、
-    # 台帳側は空でも動く（統括の検収 T2a 指摘・T2b で解消）。
-    user_id = (token or {}).get("user_id") or account_cfg.get("user_id", "")
-    return threads_mod.ThreadsAdapter(
-        base_url=base_url, access_token=access_token,
-        user_id=user_id, wait_seconds=wait_seconds,
-    )
+    """台帳の `media` からアダプタを 1 つ作る。**媒体名の分岐はここに書かない。**
+
+    設計 v2 §4.2。以前はここが `media != "threads"` を弾いて `ThreadsAdapter` を
+    直に組み立てていた（Threads 固有になっている 6 箇所の 1 つめ）。**媒体を
+    足すたびに core を触る形**だったので、`thth/adapters/__init__.py` の
+    `REGISTRY` へ移した。**知らない `media` は、知っている媒体の一覧を添えて
+    loud に断る**（T-B0）——それも `make_adapter()` の中。
+    """
+    return adapters_mod.make_adapter(account_cfg, token)
 
 
 @contextlib.contextmanager

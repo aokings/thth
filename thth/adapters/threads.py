@@ -8,6 +8,7 @@ T2 以降の範囲なので実装しない（呼ばれたら NotImplementedError
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
 import urllib.parse
@@ -21,8 +22,77 @@ DEFAULT_BASE_URL = "https://graph.threads.net"
 DEFAULT_WAIT_SECONDS = 30.0
 DEFAULT_TIMEOUT_SECONDS = 10.0
 
+# この媒体の名前（`Message.medium`・`author_key()`・台帳の `media`）。
+MEDIUM = "threads"
+
+# 投稿 1 本について**この媒体が持っている**指標（設計 v2 §4.2 の `available`）。
+# **取れなかった指標**（`metrics` に無い）と**そもそも媒体に無い指標**
+# （ここに無い）を混ぜないための一覧。
+POST_METRICS = ("views", "likes", "replies", "reposts", "quotes", "shares")
+
+# doctor の probe が本文から表示してよい鍵だけ（本文や個人情報を垂れ流さない）。
+PROBE_KEEP = ("name", "id", "username", "total_value", "quota_usage", "config",
+              "reply_quota_usage", "reply_config", "values", "timestamp", "permalink")
+
+
+class ProbeBodyError(base.AdapterError):
+    """HTTP 200 だが本文に `error` が入っている（`_get()` と同じ考え方——
+    200 でも「取れた」ことにしない）。`thth/doctor.py` の `_get()` が投げる。"""
+
+
+class _Probe:
+    # **`key` はラベルの表示文言とは独立**（監査 2026-09-11・掃討で検出。
+    # 運用セッションが VM の `thth doctor` 出力で再現を確認）。以前は判定側が
+    # `label == "自分の投稿一覧"` と文字列で突き合わせていたが、ラベルに注記を
+    # 足した（2026-09-10）ときに直し忘れ、`==` が永久に偽になって「返信の取得」
+    # probe が一度も HTTP を叩かなくなった。表示用のラベルは今後も変わりうるので、
+    # 突き合わせには変わらない `key` を使う。
+    def __init__(self, label: str, permission: str, path: str, params: dict,
+                 key: str | None = None):
+        self.label = label
+        self.permission = permission
+        self.path = path
+        self.params = params
+        self.key = key
+
+
+def _summarize(body: dict) -> str:
+    rows = body.get("data")
+    if isinstance(rows, list):
+        trimmed = [{k: v for k, v in row.items() if k in PROBE_KEEP} for row in rows[:3]]
+        return f"{len(rows)} 件 " + json.dumps(trimmed, ensure_ascii=False)[:220]
+    kept = {k: v for k, v in body.items() if k in PROBE_KEEP}
+    return json.dumps(kept or body, ensure_ascii=False)[:220]
+
+
+def _run_probe(get, base_url: str, probe: _Probe, token: str) -> dict:
+    def row(ok, detail, body=None):
+        return {"name": probe.key or probe.label, "label": probe.label,
+                "permission": probe.permission, "key": probe.key,
+                "ok": ok, "detail": detail, "body": body}
+    try:
+        body = get(base_url, probe.path, probe.params, token)
+        return row(True, _summarize(body), body)
+    except urllib.error.HTTPError as e:
+        message = ""
+        try:
+            message = (json.loads(e.read() or b"{}").get("error", {})
+                       .get("message", ""))[:170]
+        except Exception:
+            pass
+        return row(False, redact_mod.redact(f"HTTP {e.code} {message}".strip()))
+    except ProbeBodyError as e:
+        # **HTTP は 200 だが本文が error**。メッセージは `_get()` で既に
+        # redact 済みなので、そのまま出してよい。
+        return row(False, str(e)[:220])
+    except Exception as e:  # ネットワーク層。例外文にトークンが混じらないよう型名だけ。
+        return row(False, type(e).__name__)
+
 
 class ThreadsAdapter(base.Adapter):
+    # 設計 v2 §4.2。`inbox` は持たない（Threads は push 型ではない）。
+    CAPABILITIES = frozenset({"topic", "link_preview", "views", "quota", "refresh"})
+
     def __init__(self, *, base_url: str = DEFAULT_BASE_URL, access_token: str = "",
                  user_id: str = "", wait_seconds: float = DEFAULT_WAIT_SECONDS,
                  timeout: float = DEFAULT_TIMEOUT_SECONDS):
@@ -31,6 +101,24 @@ class ThreadsAdapter(base.Adapter):
         self.user_id = user_id
         self.wait_seconds = wait_seconds
         self.timeout = timeout
+
+    @classmethod
+    def from_account(cls, account_cfg: dict, token: dict):
+        """台帳と `.token` から組み立てる（旧 `core._default_adapter_factory`）。
+
+        `user_id` は `.token`（`thth auth` / `thth token set` が書く）を優先し、
+        無ければ台帳 `accounts/<account>.json` を見る。同じ値の置き場が 2 つ
+        あるとずれるので、台帳側は空でも動く（統括の検収 T2a 指摘・T2b で解消）。
+        """
+        base_url = os.environ.get("THTH_THREADS_BASE_URL", DEFAULT_BASE_URL)
+        wait_seconds = float(os.environ.get("THTH_THREADS_WAIT_SECONDS",
+                                            str(DEFAULT_WAIT_SECONDS)))
+        return cls(
+            base_url=base_url,
+            access_token=(token or {}).get("access_token", ""),
+            user_id=(token or {}).get("user_id") or (account_cfg or {}).get("user_id", ""),
+            wait_seconds=wait_seconds,
+        )
 
     def _post(self, path: str, params: dict) -> dict:
         url = f"{self.base_url}{path}"
@@ -240,16 +328,20 @@ class ThreadsAdapter(base.Adapter):
         **読んだ時点の累計**で、since/until は使えない（設計 §4.5）。だから
         「いつ読んだか」と「投稿からの経過時間」を必ず添えて記録する
         （`thth.collect`）。取れなかった指標は入れない——**0 と混ぜない**。
+
+        戻りは `{"metrics": {...}, "available": [...]}`（設計 v2 §4.2）。
+        `available` は**この媒体が持っている**指標の名前で、`metrics` の有無とは
+        別——「取れなかった」と「媒体に無い」を混ぜないための欄。
         """
         body = self._get(f"/v1.0/{post_id}/insights",
-                          {"metric": "views,likes,replies,reposts,quotes,shares"})
+                          {"metric": ",".join(POST_METRICS)})
         out = {}
         for row in self._rows(body, "投稿の数"):
             name = row.get("name")
             value = self._metric_value(row)
             if name and value is not None:
                 out[name] = value
-        return out
+        return {"metrics": out, "available": list(POST_METRICS)}
 
     def conversation(self, post_id, *, since=None):
         """その投稿の**会話全体**（`threads_read_replies`）。**全階層。**
@@ -271,7 +363,121 @@ class ThreadsAdapter(base.Adapter):
         """
         params = {"fields": "id,text,username,timestamp,permalink,is_reply,"
                              "replied_to,root_post,has_replies"}
-        return self._all_pages(f"/v1.0/{post_id}/conversation", params, "会話")
+        rows = self._all_pages(f"/v1.0/{post_id}/conversation", params, "会話")
+        # **`medium` と `author_key` を足す**（設計 v2 §4.2）。**既存の鍵は
+        # 変えない**——返信の台帳（ndjson）は追記専用で、過去の行と同じ鍵で
+        # 読めなくなると `thth replies` も `measured` も黙って壊れる。
+        # 足すだけなら、古い行は「まだ足す前の行」として読める。
+        for row in rows:
+            row["medium"] = MEDIUM
+            row["author_key"] = base.author_key(MEDIUM, row.get("username"))
+        return rows
+
+    def whoami(self) -> dict:
+        """`{"user_id", "username"}`（Threads の `me` を包む・設計 v2 §4.2）。
+
+        `thth token set` の実在確認と `thth doctor` の本人確認がここを通る。
+        **トークンの値は返り値にも例外文にも出さない。**
+        """
+        try:
+            body = self._get("/v1.0/me", {"fields": "id,username"})
+        except urllib.error.HTTPError as e:
+            raise base.AdapterError(
+                redact_mod.redact(f"user_id の取得に失敗しました: HTTP {e.code} {e.reason}")) from e
+        except base.AdapterError:
+            raise
+        except Exception as e:
+            raise base.AdapterError(
+                redact_mod.redact(f"user_id の取得に失敗しました: {e}")) from e
+        if not isinstance(body, dict):
+            raise base.AdapterError("user_id の取得に失敗しました: 応答が object ではありません")
+        return {"user_id": body.get("id", ""), "username": body.get("username", "")}
+
+    def probe(self, *, get=None) -> list:
+        """読み取りだけで能力を測る（`thth doctor` の Threads 固有の probe）。
+
+        **doctor から移した**（設計 v2 §4.2「`doctor` の probe を媒体側へ」）。
+        どの口を叩けばどの権限が確かめられるかは媒体の知識で、doctor の知識では
+        ない。**出力は現行と同じ**（T-B5）。
+
+        守ること（doctor から引き継ぐ）:
+          - **読み取りだけ。投稿・返信・削除は絶対に呼ばない。**
+          - **トークンの値を出力に出さない。** エラー文も `redact()` を通す。
+        """
+        if get is None:
+            def get(base_url, path, params, token):
+                return self._get(path, params)
+
+        now = int(time.time())
+        since = now - 7 * 86400
+        user_id = self.user_id
+
+        probes = [
+            _Probe("本人の確認", "threads_basic", "/v1.0/me",
+                   {"fields": "id,username"}),
+            # **「直近 3 件まで」と名前に書く**（kopicha セッション指摘 2026-09-10）。
+            # 「3 件」と返ったのを投稿総数だと読まれ、masaru に「3 本しか投稿して
+            # いない」と報告しかけた、という報告を受けた。実際は 4 件あった。
+            # 全部を読む口は `thth posts`（切り詰めない）。
+            _Probe("自分の投稿一覧（直近 3 件まで・総数ではありません→ thth posts）",
+                   "threads_basic", f"/v1.0/{user_id}/threads",
+                   {"fields": "id,permalink,timestamp", "limit": 3}, key="my_posts"),
+            _Probe("投稿の残量", "threads_content_publish",
+                   f"/v1.0/{user_id}/threads_publishing_limit",
+                   {"fields": "quota_usage,config,reply_quota_usage,reply_config"}),
+            _Probe("数（views・likes・followers）", "threads_manage_insights",
+                   f"/v1.0/{user_id}/threads_insights",
+                   {"metric": "views,likes,followers_count",
+                    "since": since, "until": now}),
+            _Probe("数（リンクのクリック）", "threads_manage_insights",
+                   f"/v1.0/{user_id}/threads_insights",
+                   {"metric": "clicks", "since": since, "until": now}),
+        ]
+
+        results = [_run_probe(get, self.base_url, p, self.access_token) for p in probes]
+
+        # 返信の取得は投稿が 1 本要る。上で拾えた最初の投稿で試す（無ければ飛ばす）。
+        first_post_id = None
+        my_posts_ok = None
+        for r in results:
+            if r["key"] == "my_posts":
+                my_posts_ok = r["ok"]
+                if r["ok"] and r.get("body"):
+                    rows = r["body"].get("data") or []
+                    if rows:
+                        first_post_id = rows[0].get("id")
+                break
+        if first_post_id:
+            results.append(_run_probe(get, self.base_url, _Probe(
+                # **採取が実際に叩く口を probe する**（2026-09-12）。`/replies` を
+                # probe していたが、採取は `/conversation`（全階層）を叩く。**違う口の
+                # 疎通を確かめて「返信の取得は通る」と言っていた。**
+                # **件数の意味を書く**（外部レビュー C・2026-09-12）。**選んだ 1 投稿の
+                # 先頭ページ・要求上限 3 件**であって、全投稿でも全返信数でもない。
+                # `limit` は**要求値**で、総数でも完全性の証明でもない。
+                "返信の取得（疎通確認・**選んだ 1 投稿の先頭ページ・要求上限 3 件**。"
+                "**全返信数ではありません**）",
+                "threads_read_replies",
+                f"/v1.0/{first_post_id}/conversation",
+                {"fields": "id,username,timestamp", "limit": 3}, key="replies"),
+                self.access_token))
+        elif my_posts_ok is False:
+            # **「投稿がまだ無いので試せない」は、投稿一覧が実際に取れたときだけ
+            # 言ってよい**（外部レビュー再々判定 N7・2026-09-12）。投稿一覧の
+            # 取得そのものが失敗していたら、理由はそちらであって「未投稿」ではない
+            # ——事実と違う表示を作らない。`ok: False` にして失敗数にも数える。
+            results.append({"name": "replies", "label": "返信の取得", "key": "replies",
+                            "permission": "threads_read_replies",
+                            "ok": False,
+                            "detail": "投稿一覧の取得に失敗したため試せていません"
+                                      "（上の「自分の投稿一覧」参照）",
+                            "body": None})
+        else:
+            results.append({"name": "replies", "label": "返信の取得", "key": "replies",
+                            "permission": "threads_read_replies",
+                            "ok": None, "detail": "投稿がまだ無いので試せない",
+                            "body": None})
+        return results
 
     # **頁を最後まで辿る**（外部レビュー C1・P2・2026-09-12）。
     #
