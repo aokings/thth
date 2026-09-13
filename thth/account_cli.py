@@ -31,8 +31,27 @@ from . import accounts as accounts_mod
 
 # 雛形の置き場。**`THTH_APP_DIR` を見ない**——雛形は道具に同梱されているもので、
 # 台帳の置き場（差し替え可能）とは別。この module 自身の場所から引く。
-EXAMPLE_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "accounts.example")
+#
+# **2 か所を順に見る**（監査 2・2026-09-13）。前は「package の親／accounts.example」
+# だけを見ていた。repo から走らせる分には当たるが、**`pip install thth` した人の
+# 手元では package の親は `site-packages/` で、そこに雛形は無い**——
+# `thth account add` が `雛形がありません: …/site-packages/accounts.example/threads.json`
+# で rc=2 になっていた（wheel にも sdist にも雛形が入っていなかった）。
+#
+#   (a) `thth/accounts.example/` … 配布物の中（`pyproject.toml` の `force-include`）
+#   (b) `../accounts.example/`   … repo から走らせたとき（repo の置き場は変えない）
+#
+# **両方効かせる。** (a) だけにすると repo での開発が止まり、(b) だけにすると
+# 配った先で止まる。
+def _find_example_dir() -> str:
+    here = os.path.dirname(os.path.abspath(__file__))
+    同梱 = os.path.join(here, "accounts.example")
+    if os.path.isdir(同梱):
+        return 同梱
+    return os.path.join(os.path.dirname(here), "accounts.example")
+
+
+EXAMPLE_DIR = _find_example_dir()
 
 MEDIA_CHOICES = ("threads", "bluesky", "mastodon")
 

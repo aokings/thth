@@ -175,6 +175,37 @@ def test_依存は0本_devだけがpytestを要る(built):
     assert any("pytest-xdist" in ln for ln in dev), f"dev に pytest-xdist が無い: {dev}"
 
 
+def test_wheelにもsdistにも雛形が入っている(built):
+    """**`thth account add` が読む雛形**（`accounts.example/*.json`）。
+
+    見つかり方（監査 2・2026-09-13）: `thth/account_cli.py` は雛形を
+    「package の親／`accounts.example`」から引いていた。repo から叩けば当たるが、
+    `pip install` した人の手元ではそこは `site-packages/` で、しかも雛形は
+    **wheel にも sdist にも入っていなかった**——別 venv で
+    `thth account add` を打つと `雛形がありません: …` の rc=2。
+
+    wheel は `thth/accounts.example/`（`force-include`）、sdist は repo と同じ
+    `accounts.example/`（そこから wheel を建て直せる）。
+    """
+    with zipfile.ZipFile(built["wheel"]) as z:
+        names = set(z.namelist())
+        for media in ("threads", "bluesky", "mastodon"):
+            assert f"thth/accounts.example/{media}.json" in names, (
+                f"雛形 {media}.json が wheel に入っていません"
+                f"（`thth account add --media {media}` が pip 越しに落ちます）")
+        雛形 = json.loads(z.read("thth/accounts.example/threads.json").decode("utf-8"))
+    # **配る雛形が本番の形で生まれない**（`tests/test_accounts_dir.py` と対）。
+    assert 雛形["production"] is False
+
+    r = _run(["tar", "tzf", built["sdist"]])
+    assert r.returncode == 0, r.stderr
+    entries = [ln.split("/", 1)[1] for ln in r.stdout.splitlines() if "/" in ln]
+    for media in ("threads", "bluesky", "mastodon"):
+        assert f"accounts.example/{media}.json" in entries, (
+            f"雛形 {media}.json が sdist に入っていません"
+            f"（sdist から建て直した wheel に雛形が入らない）")
+
+
 def test_sdist_に台帳と運用の日誌が入っていない(built):
     """`accounts/`（masaru の 4 本）と `docs/記録/`（運用の日誌）は配らない
     （設計 v2 §3 の台帳・§7-2）。"""
@@ -245,6 +276,43 @@ def test_別のvenvでpython_m_thth_doctorが期待どおり止まる(venv_thth,
     assert "Traceback" not in both, both
     assert r.returncode == 2, f"rc={r.returncode}\n{both}"
     assert "トークンが無い" in both, both
+
+
+def test_別のvenvでthth_account_addが雛形から1本書ける(venv_thth, tmp_path):
+    """**`pip install thth` した人の最初の 1 手**（設計 v2 §3「台帳を repo の外へ」）。
+
+    repo が無い手元で `thth account add` が通ること。前は雛形が配布物に入って
+    いなかったので、ここは `雛形がありません: …/site-packages/accounts.example/
+    threads.json` の rc=2 だった（監査 2・2026-09-13）。
+
+    ついでに 2 つ確かめる:
+      - 書く先は **`$THTH_ROOT/accounts/`**（`THTH_APP_DIR/accounts/` が在っても
+        そちらには書かない・主張 C2）。
+      - 書いたものは **`production: false`**（道具が作ったものがいきなり投げない）。
+    """
+    env = _isolated_env(venv_thth, tmp_path)
+    # 打った人の shell の置き土産で確かめたい経路を素通りしない。
+    env.pop("THTH_ACCOUNTS_DIR", None)
+    互換の置き場 = os.path.join(env["THTH_APP_DIR"], "accounts")
+    assert os.path.isdir(互換の置き場), "この試験の前提が崩れている（互換の置き場が無い）"
+
+    r = _run([venv_thth["thth"], "account", "add", ACCOUNT,
+              "--media", "threads", "--project", "demo"],
+             env=env, cwd=_elsewhere(tmp_path))
+    both = r.stdout + r.stderr
+    assert "雛形がありません" not in both, both
+    assert r.returncode == 0, f"rc={r.returncode}\n{both}"
+
+    path = os.path.join(env["THTH_ROOT"], "accounts", f"{ACCOUNT}.json")
+    assert os.path.exists(path), both
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["account"] == ACCOUNT
+    assert data["media"] == "threads"
+    assert data["project"] == "demo"
+    assert data["production"] is False and data["scheduled"] is False
+    # **互換の置き場には書いていない。**
+    assert not os.path.exists(os.path.join(互換の置き場, f"{ACCOUNT}.json"))
 
 
 def test_別のvenvでMCPサーバが起動してtoolsを返す(venv_thth, tmp_path):

@@ -67,6 +67,12 @@ packages = ["thth"]
 # **repo の置き場は変えない。** wheel の中の場所だけをここで決める。
 "mcp/server.py" = "thth/mcp_server.py"
 "skills" = "thth/skills"
+# **雛形は道具に同梱されているもの**（`thth account add` が読む）。入れ忘れると
+# `pip install` した人の手元で `thth account add` が
+# 「雛形がありません: …/site-packages/accounts.example/threads.json」で rc=2 になる
+# ——repo から叩くぶんには当たるので、**wheel を開くまで分からない**（監査 2）。
+# `thth/account_cli.py` の `_find_example_dir()` がここを先に見る。
+"accounts.example" = "thth/accounts.example"
 
 [tool.hatch.build.targets.sdist]
 # **`accounts/` と `docs/記録/` は入れない。** 前者は masaru の 4 本の台帳
@@ -74,6 +80,10 @@ packages = ["thth"]
 # 配布物に混ぜると、`pip download thth` した人の手元にそれが落ちる。
 include = [
   "/thth",
+  # **`accounts.example/` は入れる**（`accounts/` とは別物——中身は全部ダミー）。
+  # sdist から wheel を建て直すとき、`force-include` の写し元がここに無いと
+  # 雛形の無い wheel ができる。
+  "/accounts.example",
   "/bin",
   "/mcp",
   "/skills",
