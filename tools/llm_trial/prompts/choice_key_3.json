@@ -1,0 +1,15 @@
+{
+  "n": 3,
+  "order": [
+    "typefully",
+    "thth",
+    "buffer",
+    "postiz"
+  ],
+  "labels": {
+    "Tool A": "typefully",
+    "Tool B": "thth",
+    "Tool C": "buffer",
+    "Tool D": "postiz"
+  }
+}
