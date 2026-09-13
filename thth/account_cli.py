@@ -226,6 +226,21 @@ def build_ledger(name: str, *, media: str, project: str, handle: str | None = No
     return data
 
 
+def _互換の台帳() -> dict | None:
+    """いま読んでいるのが **repo の中（互換 (c)）** なら、その置き場と台帳の名前。
+
+    そうでなければ `None`。`add` が「この N 本が読まれなくなる」と言うために使う。
+    """
+    info = accounts_mod.accounts_dir_info()
+    if info["source"] != accounts_mod.SOURCE_APP_REPO:
+        return None
+    try:
+        names = sorted(n for n in os.listdir(info["path"]) if n.endswith(".json"))
+    except OSError:
+        names = []
+    return {"path": info["path"], "names": names}
+
+
 def cmd_add(args) -> int:
     """`thth account add <name> --media … --project … [--handle …] [--instance …] [--repo-dir …]`。
 
@@ -247,6 +262,30 @@ def cmd_add(args) -> int:
     if not args.project:
         print("--project が要ります（clone の dir 名・board の見出し）", file=sys.stderr)
         return 2
+
+    # **互換 (c) のまま `add` を打たせない**（監査 1・P1-3）。
+    #
+    # 読みが repo の中に落ちている機械（＝VM）で `add` を 1 本打つと、書く先の
+    # `$THTH_ROOT/accounts/` が**その瞬間に出来る**。解決順は「ディレクトリが
+    # あるか」だけで (b) を正とするので、**次の実行から repo の N 本は一切
+    # 読まれない**——`thth run kopicha-threads` が「台帳が無い」の rc=2 になる。
+    # 前はこれを何も言わずにやっていた。**順番は `migrate` → `add`。**
+    互換 = _互換の台帳()
+    if 互換 and not getattr(args, "force", False):
+        print(f"**先に `thth account migrate` を打ってください。**", file=sys.stderr)
+        print(f"いま台帳を読んでいるのは repo の中です: {互換['path']}（{len(互換['names'])} 本）",
+              file=sys.stderr)
+        for n in 互換["names"]:
+            print(f"  - {n}", file=sys.stderr)
+        print(f"ここで `add` を打つと {target_accounts_dir()} が出来て、"
+              f"**この {len(互換['names'])} 本は以後読まれません**"
+              f"（次の実行で「台帳が無い」になります）。", file=sys.stderr)
+        print(f"  1) thth account migrate   （repo の中を外へ copy・repo は触りません）",
+              file=sys.stderr)
+        print(f"  2) thth account add {name} --media {args.media} --project {args.project}",
+              file=sys.stderr)
+        print(f"承知のうえで進めるなら `--force`。", file=sys.stderr)
+        return 1
 
     try:
         data = build_ledger(name, media=args.media, project=args.project,
@@ -327,6 +366,8 @@ def register(sub) -> None:
                    help="`add` のとき: 原稿 repo（既定 `$THTH_ROOT/repos/<project>`）")
     p.add_argument("--dry-run", action="store_true", dest="dry_run",
                    help="`migrate` のとき: 何も書かずに計画だけ出す")
+    p.add_argument("--force", action="store_true",
+                   help="`add` のとき: repo の中の台帳が読めなくなるのを承知で進む")
     p.epilog = ("thth account                     全アカウントの状態を一枚で\n"
                 "thth account <name>              1 本の状態を一枚で\n"
                 "thth account migrate [--dry-run] repo の中の台帳を "

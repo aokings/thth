@@ -336,11 +336,37 @@ def test_addは既にあるものを上書きしない(置き場):
         assert json.load(f)["handle"] == "先にあったほう"
 
 
-def test_addは互換のときでもrepoの中に書かない(置き場):
-    """**読みが互換 (c) に落ちていても、書く先は外。**"""
+def test_addは互換のときは書く前にloudに断る_順番を間違えさせない(置き場):
+    """**`migrate` より先に `add` を打たせない**（監査 1・P1-3）。
+
+    読みが repo の中に落ちている機械（＝VM）で `add` を 1 本打つと、書く先の
+    `$THTH_ROOT/accounts/` が**その瞬間に出来る**。解決順は「ディレクトリが
+    あるか」だけで (b) を正とするので、**次の実行から repo の台帳は一切
+    読まれない**（`thth run <account>` が「台帳が無い」の rc=2）。前はこれを
+    何も言わずにやっていた。
+    """
     台帳を置く(置き場["repo の中"], "repo-threads")
+    台帳を置く(置き場["repo の中"], "repo2-threads")
+
     r = run_thth(["account", "add", "demo-threads", "--media", "threads",
                   "--project", "demo"])
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "thth account migrate" in r.stderr
+    assert "以後読まれません" in r.stderr
+    assert "repo-threads.json" in r.stderr and "repo2-threads.json" in r.stderr
+    assert "--force" in r.stderr
+    # **書く前に断る。** 外のディレクトリが出来ていたら、断った意味が無い
+    # （出来た瞬間に repo の台帳が読まれなくなる）。
+    assert not os.path.exists(置き場["外"]), "断ったのに外のディレクトリが出来た"
+    assert accounts_mod.list_account_names() == ["repo-threads", "repo2-threads"] or \
+        accounts_mod.list_account_names() == ["repo2-threads", "repo-threads"]
+
+
+def test_addは互換のときでもrepoの中に書かない(置き場):
+    """**読みが互換 (c) に落ちていても、書く先は外**（`--force` で進んだとき）。"""
+    台帳を置く(置き場["repo の中"], "repo-threads")
+    r = run_thth(["account", "add", "demo-threads", "--media", "threads",
+                  "--project", "demo", "--force"])
     assert r.returncode == 0, r.stdout + r.stderr
     assert os.path.exists(os.path.join(置き場["外"], "demo-threads.json"))
     assert not os.path.exists(os.path.join(置き場["repo の中"], "demo-threads.json"))

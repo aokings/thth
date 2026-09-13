@@ -295,6 +295,9 @@ def test_別のvenvでthth_account_addが雛形から1本書ける(venv_thth, tm
     env.pop("THTH_ACCOUNTS_DIR", None)
     互換の置き場 = os.path.join(env["THTH_APP_DIR"], "accounts")
     assert os.path.isdir(互換の置き場), "この試験の前提が崩れている（互換の置き場が無い）"
+    # **互換 (c) が効いているうちは `add` が断る**（監査 1・P1-3）。ここは
+    # 「pip で入れた人の最初の 1 手」を見たいので、互換の置き場を外してから叩く。
+    os.rmdir(互換の置き場)
 
     r = _run([venv_thth["thth"], "account", "add", ACCOUNT,
               "--media", "threads", "--project", "demo"],
@@ -302,6 +305,7 @@ def test_別のvenvでthth_account_addが雛形から1本書ける(venv_thth, tm
     both = r.stdout + r.stderr
     assert "雛形がありません" not in both, both
     assert r.returncode == 0, f"rc={r.returncode}\n{both}"
+    os.makedirs(互換の置き場, exist_ok=True)
 
     path = os.path.join(env["THTH_ROOT"], "accounts", f"{ACCOUNT}.json")
     assert os.path.exists(path), both
