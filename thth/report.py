@@ -8,6 +8,7 @@ from . import accounts as accounts_mod
 from . import collect as collect_mod
 from . import core
 from . import inflight as inflight_mod
+from . import lock as lock_mod
 from . import maintain as maintain_mod
 from . import selfupdate as selfupdate_mod
 from . import writeback as writeback_mod
@@ -284,6 +285,13 @@ def board_summary(now=None) -> dict:
         type_mismatch = sum(1 for qf in files if qf.malformed)
         state_dir = accounts_mod.state_dir_for(name)
         inflight = inflight_mod.read(state_dir)
+        # **いま run が走っているか**（引継ぎ 2026-09-13「小さいもの」）。
+        # board は inflight しか見ていなかったので、**「実行中で待っている」と
+        # 「止まっている」が同じ顔**だった（inflight が書かれるのは公開の直前
+        # だけで、select・同期・書き戻しの間は空）。読み取りだけ——
+        # **ロックを試しに取らない**（`AccountLock.holder_pid()` の docstring）。
+        running_pid = lock_mod.AccountLock.holder_pid(
+            accounts_mod.account_lock_path_for(name))
         needs_review = _needs_review_detail(
             files, account_name=name, account_cfg=account_cfg, now=now)
         token_row = maintain_mod.inspect(name, now=now)
@@ -323,6 +331,11 @@ def board_summary(now=None) -> dict:
             # **送れていないことに気づく口がここになる**。
             "collect_pending": len(collect_mod.pending_paths(
                 account_cfg.get("repo_dir"), account_cfg)),
+            # **見つかったときだけ True**。False は「走っていない」の証明では
+            # ない（`holder_pid()` の但し書き）。`collect` は repo のロックしか
+            # 握らないので、**採取の最中はここに出ない**。
+            "running": running_pid is not None,
+            "running_pid": running_pid,
         })
     # 「動いているのに古い」を見える形にする（設計 §3.2・2026-09-10 に VM が
     # 4 巡分古いまま 10 分ごとに回っていたのを見つけた）。**取りに行かない**
@@ -354,7 +367,14 @@ def board_summary(now=None) -> dict:
     head_sha = selfupdate_mod.head()
     behind = selfupdate_mod.behind_release(base=basis, head_sha=head_sha)
     ahead = selfupdate_mod.ahead_of_release(base=basis, head_sha=head_sha)
+    # **走っているものの一覧**（`--json` の読み手用）。アカウントの実行ロックを
+    # 握っているものの名前と、自己更新（`_app.lock`）が走っていれば `"_app"`。
+    running = [row["account"] for row in accounts_out if row.get("running")]
+    app_pid = lock_mod.AccountLock.holder_pid(accounts_mod.app_lock_path())
+    if app_pid is not None:
+        running.append("_app")
     return {"accounts": accounts_out, "generated_at": jst.iso(),
+            "running": running,
             "app": {"head": head_sha,
                     "release_ref": selfupdate_mod.RELEASE_REF,
                     "release_check": check,

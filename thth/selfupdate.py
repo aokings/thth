@@ -356,8 +356,7 @@ def pull_and_reexec(argv: list, *, app_dir: str = APP_DIR,
 
     from . import accounts as accounts_mod
     from . import lock as lock_mod
-    lock = lock_mod.AccountLock(
-        os.path.join(accounts_mod.thth_root(), "state", "_app.lock"))
+    lock = lock_mod.AccountLock(accounts_mod.app_lock_path())
     try:
         lock.acquire()
     except lock_mod.LockBusy:

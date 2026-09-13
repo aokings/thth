@@ -141,7 +141,7 @@ def _account_locks(account_name: str, account_cfg: dict, state_dir: str):
     投げる（呼び出し側の `throw_once`/`send_once` が `action="locked"` に変換する）。
     """
     repo_lock_path = accounts_mod.repo_lock_path_for(account_cfg["repo_dir"])
-    account_lock_path = os.path.join(state_dir, "lock")
+    account_lock_path = accounts_mod.account_lock_path_for(account_name)
     repo_lock = lock_mod.AccountLock(repo_lock_path)
     account_lock = lock_mod.AccountLock(account_lock_path)
 
@@ -775,6 +775,20 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                         status="error", error=err)
             return ThrowResult(exit_code=1, mode=mode, action="post",
                                 message="公開に失敗しました", error=err)
+
+        # **送った本文そのものを残す**（`state/<account>/sent/<post_id>.json`）。
+        # 不在の様態（`_throw_chosen()`）は書き戻しの照合のためにこれを書いていたが、
+        # **同席の様態は書いていなかった**——`thth send` には書き戻す front-matter が
+        # 無いので、**実際に出た本文がどこにも残らなかった**。queue にも repo にも
+        # 無い以上、ここが唯一の正本になる（v2-3・2026-09-13）。`post_id` は媒体に
+        # よって `/` を含む（Bluesky の AT URI）ので、パスは `postid` を通す
+        # （`sent.path_for()`）。
+        sent_mod.write(state_dir, post_id=result.post_id, text=body,
+                        body_hash=approval_mod.compute_body_hash(body),
+                        sent_at=result.ts or jst.iso(),
+                        # 承認の在り処が「masaru がその場で見た本文」なので、
+                        # queue の 5 項目の指紋ではなく `--confirm` の digest を残す。
+                        approved_fingerprint=digest)
 
         inflight_mod.clear(state_dir)
         _append_run(state_dir, account_name, run_id, mode, "post", None, result.post_id, now,

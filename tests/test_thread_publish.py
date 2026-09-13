@@ -882,7 +882,10 @@ def test_通常のcollectが全段を拾う(thread_account, thth_root):
 
     class FakeInsights:
         def insights(self, post_id, **kw):
-            return {"views": {"POST1": 100, "POST2": 40, "POST3": 12}[post_id]}
+            # F3: `{"metrics", "available"}` だけ（旧い平の dict は断られる）。
+            return {"metrics": {"views": {"POST1": 100, "POST2": 40,
+                                          "POST3": 12}[post_id]},
+                    "available": ["views"]}
 
         def conversation(self, post_id, **kw):
             return []

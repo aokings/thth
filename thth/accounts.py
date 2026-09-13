@@ -118,6 +118,21 @@ def repo_lock_path_for(repo_dir: str) -> str:
     return os.path.join(thth_root(), "state", "_repos", f"{safe_base}-{digest}.lock")
 
 
+def account_lock_path_for(account_name: str) -> str:
+    """1 アカウント分の実行ロック（`core._account_locks()` が握る）。
+
+    **綴りを 1 か所にする**——`thth board` が「いま run が走っているか」を見る
+    ために同じパスを組み立てる（別々に書くと、片方を直したときに board が
+    黙って別のファイルを見る）。
+    """
+    return os.path.join(state_dir_for(account_name), "lock")
+
+
+def app_lock_path() -> str:
+    """自己更新のロック（`selfupdate._pull_locked()` が握る・アカウント別ではない）。"""
+    return os.path.join(thth_root(), "state", "_app.lock")
+
+
 def load_token(account_cfg: dict) -> dict | None:
     """`<account>.token` を読む。無ければ None（T1 はここに触れない・秘密を扱わない）。"""
     path = account_cfg.get("token")

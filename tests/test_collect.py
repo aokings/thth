@@ -17,6 +17,7 @@ from pathlib import Path
 from tests.conftest import init_git_pair, make_queue_text, commit_and_push_path, write_queue_file
 from thth import collect as collect_mod
 from thth import jst
+from thth import measured as measured_mod
 
 NOW = datetime.datetime(2026, 9, 10, 12, 0, tzinfo=jst.JST)
 
@@ -42,7 +43,13 @@ class FakeAdapter:
         if "insights" in self.fail:
             raise RuntimeError("取れません")
         self.insight_calls.append(post_id)
-        return {"views": self.views, "likes": 3, "replies": len(self.replies_rows)}
+        # **`{"metrics", "available"}` だけ**（F3・2026-09-13）。旧い平の dict は
+        # `metrics_of()` が loud に断る。`available` に 6 つ全部を並べるのは
+        # 「この媒体は全部持っている（今回取れなかっただけ）」の意——だから
+        # `collect` は欠けた指標を `null` で埋めない。
+        return {"metrics": {"views": self.views, "likes": 3,
+                            "replies": len(self.replies_rows)},
+                "available": list(measured_mod.POST_METRIC_NAMES)}
 
     def conversation(self, post_id, *, since=None):
         if "conversation" in self.fail:

@@ -90,8 +90,77 @@ def test_TB0_capabilitiesは実体を作らずに引ける():
     # `account_insights` は T3 の配線（2026-09-13）で足した語。**Threads だけ**が
     # 持つ——`collect._collect_account_daily()` はこれを見て、持たない媒体では
     # 呼ばない（以前は毎回 `errors` に積んでいた・T0 の残件）。
+    # `recent_posts` は F2 の配線（2026-09-13）で足した語。**3 媒体とも持つ**が、
+    # 宛先は媒体が決める（`account_report.fetch_posts()` はこの語で塞ぐだけ）。
     assert threads_mod.ThreadsAdapter.capabilities() == {
-        "topic", "link_preview", "views", "quota", "refresh", "account_insights"}
+        "topic", "link_preview", "views", "quota", "refresh", "recent_posts",
+        "account_insights"}
+
+
+def test_F3_metrics_ofは新しい形だけを受ける():
+    """`{"metrics", "available"}` を開く（設計 v2 §4.2）。"""
+    metrics, available = adapter_base.metrics_of(
+        {"metrics": {"likes": 2}, "available": ["likes", "replies"]})
+    assert metrics == {"likes": 2}
+    assert available == ["likes", "replies"]
+    # `available` は空でもよい（**「何も持たない媒体」は「判らない」ではない**）。
+    assert adapter_base.metrics_of({"metrics": {}, "available": []}) == ({}, [])
+
+
+@pytest.mark.parametrize("戻り", [
+    {"views": 10, "likes": 3},                     # 旧い平の dict
+    {},                                             # 空の dict も旧い形
+    {"metrics": {"likes": 1}},                      # available が無い
+    {"available": ["likes"]},                       # metrics が無い
+    {"metric": {"likes": 1}, "available": ["likes"]},   # 鍵の綴り間違い
+    {"metrics": {"likes": 1}, "availables": ["likes"]},  # 同上
+    {"metrics": [("likes", 1)], "available": ["likes"]},  # metrics が dict でない
+    None,
+    [{"likes": 1}],
+])
+def test_F3_metrics_ofは旧い形をloudに断る(戻り):
+    """**黙って通さない**（規約 5）。
+
+    以前は鍵が揃っていなければ辞書全体を指標とみなし、`available` を `None` に
+    していた。**その `None` が「埋めない」経路**で、「そもそも媒体に無い指標」と
+    「今回取れなかった指標」が台帳で同じ形になっていた。綴りを間違えた新しい
+    アダプタも、戻り全体が指標として通っていた。
+
+    `AdapterError` は `RuntimeError` の子なので、採取側の `except Exception` に
+    そのまま乗る——**1 本のアダプタの不備で投稿は止まらず**、`errors` に残る。
+    """
+    with pytest.raises(adapter_base.AdapterError) as e:
+        adapter_base.metrics_of(戻り)
+    assert "available" in str(e.value), str(e.value)
+
+
+def test_F3_旧い形を返すアダプタは採取のerrorsに出て投稿は止まらない(
+        tmp_path, isolated_account_factory):
+    """loud の届き先を固定する（**例外を握り潰さない・採取ごと落とさない**）。"""
+    account = isolated_account_factory()
+    write_queue_file(account["queue_dir"], "a.md", fm_overrides={
+        "status": "posted", "post_id": "P1", "posted_at": POSTED_AT})
+
+    class _旧い形(threads_mod.ThreadsAdapter):
+        def __init__(self):
+            pass
+
+        def insights(self, post_id):
+            return {"views": 12, "likes": 1}     # 旧い平の dict
+
+        def conversation(self, post_id, *, since=None):
+            return []
+
+        def account_insights(self, user_id, *, since, until):
+            return {}
+
+    result = collect_mod.collect_once(account["name"], adapter=_旧い形(), now=NOW)
+    assert any("insights" in e and "available" in e for e in result["errors"]), \
+        result["errors"]
+    # **実測の行は書かない**（旧い形を「取れた」ことにしない）。
+    path = os.path.join(account["repo_dir"], "data", "sns", "insights", "posts",
+                        "P1.ndjson")
+    assert not os.path.exists(path), path
 
 
 def test_TB0_Messageは旧名Replyでも作れる():

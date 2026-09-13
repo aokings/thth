@@ -29,6 +29,9 @@ MEDIUM = "threads"
 # **取れなかった指標**（`metrics` に無い）と**そもそも媒体に無い指標**
 # （ここに無い）を混ぜないための一覧。
 POST_METRICS = ("views", "likes", "replies", "reposts", "quotes", "shares")
+# `recent_posts()` で引く field（**L2**: `GET /{user_id}/threads` の `fields`）。
+# `topic_tag` は**付与の主体が未確認**（`account_report.API_TOPIC` の但し書き）。
+RECENT_POST_FIELDS = "id,permalink,timestamp,text,topic_tag"
 
 # doctor の probe が本文から表示してよい鍵だけ（本文や個人情報を垂れ流さない）。
 PROBE_KEEP = ("name", "id", "username", "total_value", "quota_usage", "config",
@@ -95,7 +98,7 @@ class ThreadsAdapter(base.Adapter):
     # （T3 の配線 2026-09-13）。`collect._collect_account_daily()` はこの語を見て
     # 呼ぶかどうかを決める——無い媒体で毎回 `errors` に積むのをやめるため。
     CAPABILITIES = frozenset({"topic", "link_preview", "views", "quota", "refresh",
-                              "account_insights"})
+                              "recent_posts", "account_insights"})
 
     # `thth auth`（OAuth の往復）に Meta の app.env が要る **唯一の媒体**。
     AUTH_NEEDS_APP_ENV = True
@@ -328,6 +331,29 @@ class ThreadsAdapter(base.Adapter):
                     f"{what}: data の {i} 番目が object ではありません"
                     f"（{type(row).__name__}）。**件数として数えません**")
         return rows
+
+    def recent_posts(self, *, limit: int = 25) -> list:
+        """`GET /{user_id}/threads`（**L2**: developers.facebook.com の Threads API）。
+
+        **`account_report.fetch_posts()` から移した**（F2・2026-09-13）。あちらは
+        `graph.threads.net` の URL を直に組み立てており、`access_token` を**クエリに
+        載せて**いた。Mastodon の `.token` も鍵が `access_token` なので、媒体を見ずに
+        通すと**宛先違いに秘密が出る**——媒体名で止めるのではなく、**宛先を媒体が
+        決める**形にした。
+
+        **切り詰めない**（`thth doctor` の 220 字要約を投稿一覧の代わりに使わせて
+        いたのが間違いだった・nigamilab セッション 2026-09-10）。
+        """
+        if not self.user_id:
+            raise base.AdapterError("user_id が判らないので直近の投稿を引けません")
+        body = self._get(f"/v1.0/{self.user_id}/threads",
+                          {"fields": RECENT_POST_FIELDS, "limit": limit})
+        return [{"post_id": row.get("id"),
+                 "timestamp": row.get("timestamp"),
+                 "url": row.get("permalink"),
+                 "text": row.get("text"),
+                 "topic": row.get("topic_tag")}
+                for row in self._rows(body, "直近の投稿")]
 
     def insights(self, post_id: str) -> dict:
         """投稿 1 本の数（`views`・`likes`・`replies`・`reposts`・`quotes`・`shares`）。
