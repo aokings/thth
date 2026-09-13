@@ -19,7 +19,18 @@ import subprocess
 import sys
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-THTH_BIN = os.environ.get("THTH_BIN", os.path.join(APP_DIR, "bin", "thth"))
+
+# **CLI の在り処は 2 通りある**（設計 v2 §3・`pip install thth`）。
+#
+#   - repo をそのまま使う運用: このファイルの 1 つ上に `bin/thth` がある（従来）。
+#   - `pip install thth`: wheel の中では**このファイル自身が `thth/mcp_server.py`**
+#     として入る（`pyproject.toml` の force-include）。隣に `bin/` は無い。
+#
+# **無いものを指したまま subprocess を起こさない。** `bin/thth` が実在するときだけ
+# それを使い、無ければ `python -m thth` に落とす（`thth/__main__.py`・同じ `main()`）。
+# `THTH_BIN` は従来どおり環境変数で上書きできる（テストはこの属性を差し替える）。
+_REPO_BIN = os.path.join(APP_DIR, "bin", "thth")
+THTH_BIN = os.environ.get("THTH_BIN") or (_REPO_BIN if os.path.exists(_REPO_BIN) else None)
 
 TOOLS = [
     {
@@ -103,8 +114,14 @@ TOOLS = [
 ]
 
 
+def cli_argv(args: list) -> list:
+    """CLI を起こす argv。`THTH_BIN` があればそれ、無ければ `python -m thth`。"""
+    head = [sys.executable, THTH_BIN] if THTH_BIN else [sys.executable, "-m", "thth"]
+    return [*head, *args]
+
+
 def run_cli(args: list, *, stdin_text: str | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, THTH_BIN, *args], capture_output=True,
+    return subprocess.run(cli_argv(args), capture_output=True,
                            text=True, input=stdin_text)
 
 
