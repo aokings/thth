@@ -541,7 +541,20 @@ def run_auth_bluesky(account_name: str, *, account_cfg=None,
     return 0
 
 
-def _read_pasted_token(*, stdin: bool, input_func) -> str:
+# **媒体ごとの貼り付けの案内**（masaru 報告 2026-09-13: Mastodon なのに「Threads の長期
+# アクセストークン」と聞かれた）。文言が違っても動きは同じだが、**別媒体の秘密を
+# 貼らせる画面で媒体名を間違えるのは、道具が嘘をついている**のと同じ。
+TOKEN_PASTE_PROMPTS = {
+    "threads": "Threads の長期アクセストークンを貼り付けてください（表示されません）: ",
+    "mastodon": "Mastodon のアクセストークン（設定 → 開発 → アプリ）を貼り付けてください（表示されません）: ",
+}
+
+
+def _paste_prompt(media) -> str:
+    return TOKEN_PASTE_PROMPTS.get(media) or f"{media} のアクセストークンを貼り付けてください（表示されません）: "
+
+
+def _read_pasted_token(*, stdin: bool, input_func, prompt: str | None = None) -> str:
     """トークンを読む。エコーしない。
 
     `input_func` が渡されていればそれを使う（テスト・CLI からの注入用、`run_auth`
@@ -564,7 +577,7 @@ def _read_pasted_token(*, stdin: bool, input_func) -> str:
             "標準入力が端末ではありません。トークンが画面に出てしまうので読みません。\n"
             "  対話で入れる場合: ssh に -t を付けてください（例: ssh -t wt '...thth token set <account> --force'）\n"
             "  パイプ・ファイルから渡す場合: --stdin を付けてください")
-    return getpass.getpass("Threads の長期アクセストークンを貼り付けてください（表示されません）: ")
+    return getpass.getpass(prompt or TOKEN_PASTE_PROMPTS["threads"])
 
 
 def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False,
@@ -602,7 +615,8 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
         return 1
 
     try:
-        raw = _read_pasted_token(stdin=stdin, input_func=input_func)
+        raw = _read_pasted_token(stdin=stdin, input_func=input_func,
+                                 prompt=_paste_prompt(account_cfg.get("media")))
     except OAuthError as e:
         _out(str(e), log=log)
         return 2

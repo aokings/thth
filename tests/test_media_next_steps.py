@@ -138,3 +138,19 @@ def test_boardの行も同じ文言を使う(tmp_path, isolated_account_factory)
     # 判定が一致していることだけ押さえる（文言は maintain のテストが見る）。
     assert maintain_mod.inspect(account["name"], now=いま)["message"].count(
         "thth token set") == 0
+
+
+def test_token_setの貼り付けの案内は媒体名を言う(monkeypatch):
+    """masaru 報告（2026-09-13）: Mastodon の `token set` が「Threads の長期アクセストークン」と
+    聞いていた。動きは同じでも、別媒体の秘密を貼らせる画面で媒体名を間違えない。"""
+    import sys
+    from thth import oauth as oauth_mod
+    assert "Mastodon" in oauth_mod._paste_prompt("mastodon")
+    assert "Threads" not in oauth_mod._paste_prompt("mastodon")
+    assert "Threads" in oauth_mod._paste_prompt("threads")
+    assert "bluesky" in oauth_mod._paste_prompt("bluesky")  # 既定の形（媒体名を含む）
+    seen = {}
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(oauth_mod.getpass, "getpass", lambda prompt: seen.setdefault("p", prompt) or "x")
+    oauth_mod._read_pasted_token(stdin=False, input_func=None, prompt=oauth_mod._paste_prompt("mastodon"))
+    assert "Mastodon" in seen["p"] and "Threads" not in seen["p"], seen
