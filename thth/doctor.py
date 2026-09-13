@@ -34,6 +34,22 @@ NEXT_STEP_APP_ENV = "次の一手: 導入文書 §3 app.env を見てくださ�
 NEXT_STEP_ACCOUNT = "次の一手: 導入文書 §4 アカウント台帳 を見てください。"
 NEXT_STEP_TOKEN = "次の一手: 導入文書 §5 トークン を見てください。"
 
+# **app.env が「無い」のは、直すべき欠落ではない**（masaru 裁定 2026-09-13）。
+# app.env（`THREADS_APP_ID`・`THREADS_APP_SECRET`）を使うのは `thth auth` だけで、
+# 管理画面で発行したトークンを `thth token set` で入れる運用——いまの本番 4 本が
+# そう——では VM に置かなくても正しく動く（延長 `refresh_access_token` は app
+# secret を使わない・`thth/oauth.py`）。それなのに doctor は毎回「次の一手: 導入
+# 文書 §3」と言っていた。**正しい状態を毎回「足りない」と言う道具は、本当に
+# 足りないときに読まれなくなる。** 無いときは「任意」と言うだけにして、§3 は
+# **置いたのに使えないとき**（項目が空・読めない）だけに残す。
+APP_ENV_ABSENT_NOTICE = (
+    "app.env: 無し（任意。`thth auth` を使うときだけ要ります。"
+    "管理画面で発行したトークンを `thth token set` で入れる運用なら不要。"
+    "置くなら `thth app set`）")
+# トークンが無い／使えないときだけ、`thth auth` へ進む道も一応示す（そちらを
+# 選ぶなら app.env が先に要る）。**app.env が無いときにしか出さない。**
+NEXT_STEP_AUTH_NEEDS_APP_ENV = "`thth auth` を使うなら先に `thth app set`（導入文書 §3）。"
+
 # 返ってきた中で表示してよい鍵だけを通す（本文や個人情報を垂れ流さない）。
 _KEEP = ("name", "id", "username", "total_value", "quota_usage", "config",
          "reply_quota_usage", "reply_config", "values", "timestamp", "permalink")
@@ -212,10 +228,13 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     直した: list[str] = []
     def env_log(msg):
         直した.append(str(msg))
-    try:
-        appenv_mod.load_app_env(log=env_log)
-    except appenv_mod.AppEnvError as e:
-        notices.append(f"app.env: {e}")
+    # `absent` / `ok` / `broken`。**無い（任意）と、置いたのに使えない（要修理）を
+    # 分ける**（masaru 裁定 2026-09-13・上の `APP_ENV_ABSENT_NOTICE` の理由）。
+    app_env_state, app_env_detail = appenv_mod.probe(log=env_log)
+    if app_env_state == appenv_mod.ABSENT:
+        notices.append(APP_ENV_ABSENT_NOTICE)
+    elif app_env_state == appenv_mod.BROKEN:
+        notices.append(f"app.env: {app_env_detail}")
         notices.append(NEXT_STEP_APP_ENV)
     if 直した:
         notices.append("app.env のパーミッションを 600 に直しました"
@@ -239,7 +258,7 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         notices.append(NEXT_STEP_ACCOUNT)
         if as_json:
             payload = {"account": account_name, "error": str(e), "probes": [],
-                       "notices": notices}
+                       "notices": notices, "app_env": app_env_state}
             if topics_shelf:
                 payload["topics_shelf_broken"] = topics_shelf
             log(json.dumps(payload, ensure_ascii=False))
@@ -251,9 +270,14 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     report = diagnose(account_name)
     if report.get("error"):
         notices.append(NEXT_STEP_TOKEN)
+        if app_env_state == appenv_mod.ABSENT:
+            # トークンを入れる道は 2 つある。`thth token set`（app.env 不要）と
+            # `thth auth`（app.env が要る）。後者を選ぶ人が §3 へ戻れる 1 行。
+            notices.append(NEXT_STEP_AUTH_NEEDS_APP_ENV)
 
     if as_json:
         report["notices"] = notices
+        report["app_env"] = app_env_state
         if topics_shelf:
             report["topics_shelf_broken"] = topics_shelf
         log(json.dumps(report, ensure_ascii=False))
