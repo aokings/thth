@@ -209,7 +209,8 @@ def example_path(media: str) -> str:
 
 
 def build_ledger(name: str, *, media: str, project: str, handle: str | None = None,
-                 instance: str | None = None, repo_dir: str | None = None) -> dict:
+                 instance: str | None = None, repo_dir: str | None = None,
+                 redirect_uri: str | None = None) -> dict:
     """`accounts.example/<media>.json` の雛形から 1 本ぶんを組み立てる。
 
     **`production` と `scheduled` は必ず false**（設計 §4.2「`production: true` を
@@ -226,9 +227,19 @@ def build_ledger(name: str, *, media: str, project: str, handle: str | None = No
     data["media"] = media
     # 既定の handle は **project**（`nigamilab-threads` の handle は `nigamilab`）。
     # アカウント名をそのまま入れると `@nigamilab-threads` という実在しない綴りが
-    # board に並ぶ。媒体で綴りが違う（Bluesky は `x.bsky.social`）ので、
-    # 当たらないときは `--handle` で。
+    # board に並ぶ。
+    #
+    # **既定を許すのは Threads だけ**（監査 2・C10・2026-09-13）。Threads の
+    # handle は利用者名そのものなので `--project` の値がだいたい当たるが、
+    # **Bluesky は `name.bsky.social`、Mastodon は `@` を除いた利用者名＋instance**
+    # なので、`--project` の値はほぼ外れる。外れた handle は board に実在しない
+    # 綴りで並ぶだけでなく、**Bluesky では `thth auth` の取り違え検査に引っかかって
+    # 認可が保存されない**（`oauth.run_auth_bluesky()`）。だから `cmd_add()` は
+    # その 2 媒体で `--handle` を必須にする——ここは受け取った値を入れるだけ。
     data["handle"] = handle or project
+    if redirect_uri is not None:
+        # Threads だけ（`cmd_add()` が他媒体を断る）。省略時は雛形のダミーのまま。
+        data["redirect_uri"] = redirect_uri
     if instance is not None:
         # Mastodon は `instance`、Bluesky は `service`（既存の台帳の綴り）。
         data["service" if media == "bluesky" else "instance"] = instance
@@ -286,6 +297,42 @@ def cmd_add(args) -> int:
         print("--project が要ります（clone の dir 名・board の見出し）", file=sys.stderr)
         return 2
 
+    # **媒体ごとに、既定で当たらない欄は必須にする**（監査 2・C10・2026-09-13）。
+    #
+    # handle の既定は `--project` の値。**Threads は利用者名がそのまま handle** な
+    # ので当たることが多いが、**Bluesky は `name.bsky.social`**（ドメイン形）、
+    # **Mastodon は利用者名＋instance** なので、既定はほぼ外れる。外れたまま書くと:
+    #   - board に実在しない綴りが並ぶ（見た人が直せない）
+    #   - Bluesky は `thth auth` の取り違え検査が「台帳の handle と App Password の
+    #     handle が違う」と言って**認可を保存しない**（`oauth.run_auth_bluesky()`）
+    # **黙って外れた値を書くより、ここで 1 回止まって聞くほうが安い。**
+    if args.media in ("bluesky", "mastodon") and not args.handle:
+        print(f"--handle が要ります（{args.media} は `--project` の値では当たりません）",
+              file=sys.stderr)
+        if args.media == "bluesky":
+            print(f"  例: thth account add {name} --media bluesky "
+                  f"--project {args.project} --handle name.bsky.social", file=sys.stderr)
+        else:
+            print(f"  例: thth account add {name} --media mastodon "
+                  f"--project {args.project} --handle user "
+                  f"--instance https://mastodon.social", file=sys.stderr)
+        return 2
+    if args.media == "mastodon" and not args.instance:
+        # instance が無いと、雛形の `https://mastodon.example`（存在しない）が
+        # そのまま残る。**どのインスタンスかは道具には推測できない。**
+        print("--instance が要ります（Mastodon はインスタンスごとに口が違います）",
+              file=sys.stderr)
+        print(f"  例: thth account add {name} --media mastodon "
+              f"--project {args.project} --handle user "
+              f"--instance https://mastodon.social", file=sys.stderr)
+        return 2
+    if args.redirect_uri and args.media != "threads":
+        # **黙って捨てない**（作法 5）。`redirect_uri` は Threads の OAuth 往復
+        # （`thth auth`）だけが読む欄で、他媒体の雛形には無い。
+        print(f"--redirect-uri は threads のときだけ使えます（受け取った媒体: {args.media}）",
+              file=sys.stderr)
+        return 2
+
     # **互換 (c) のまま `add` を打たせない**（監査 1・P1-3）。
     #
     # 読みが repo の中に落ちている機械（＝VM）で `add` を 1 本打つと、書く先の
@@ -314,7 +361,7 @@ def cmd_add(args) -> int:
     try:
         data = build_ledger(name, media=args.media, project=args.project,
                             handle=args.handle, instance=args.instance,
-                            repo_dir=args.repo_dir)
+                            repo_dir=args.repo_dir, redirect_uri=args.redirect_uri)
     except FileNotFoundError as e:
         print(f"雛形がありません: {e}", file=sys.stderr)
         return 2
@@ -348,6 +395,13 @@ def cmd_add(args) -> int:
     print(f"  scheduled: false（timer に載せるときだけ手で true に）")
     print(f"  repo_dir: {data['repo_dir']}")
     print("")
+    # **雛形のダミーが残っているなら、書いたその場で名指しする**（監査 2・C10・
+    # 2026-09-13）。前はここが何も言わず、`thth auth` を打った人が
+    # `https://example.invalid/` の認可 URL をブラウザで開いて初めて詰まった
+    # ——**どこにも書かれていない手作業**が `add` と `auth` の間に挟まっていた。
+    for d in accounts_mod.dummy_fields(data):
+        前置き = "**`thth auth` の前に。** " if d["field"] == "redirect_uri" else ""
+        print(f"**{d['field']} はダミーのままです**（{d['value']}）。{前置き}{d['next']}")
     print(f"次の一手: `thth doctor {name}`（トークンがまだなので rc=2 で止まります）"
           f" → `thth token set {name}` → `thth board`")
     return 0
@@ -393,9 +447,13 @@ def register(sub) -> None:
                    help="`add` のとき: 媒体")
     p.add_argument("--project", default=None,
                    help="`add` のとき: clone の dir 名・board の見出し")
-    p.add_argument("--handle", default=None, help="`add` のとき: 表示上の handle")
+    p.add_argument("--handle", default=None,
+                   help="`add` のとき: 表示上の handle（bluesky・mastodon では必須）")
     p.add_argument("--instance", default=None,
-                   help="`add` のとき: Mastodon の instance / Bluesky の service")
+                   help="`add` のとき: Mastodon の instance（必須）/ Bluesky の service")
+    p.add_argument("--redirect-uri", default=None, dest="redirect_uri",
+                   help="`add`（threads）のとき: Meta アプリに登録した認可の戻り先。"
+                        "省略すると雛形のダミーのままで、`thth auth` が rc=2 で断ります")
     p.add_argument("--repo-dir", default=None, dest="repo_dir",
                    help="`add` のとき: 原稿 repo（既定 `$THTH_ROOT/repos/<project>`）")
     p.add_argument("--dry-run", action="store_true", dest="dry_run",
@@ -407,5 +465,10 @@ def register(sub) -> None:
                 "thth account migrate [--dry-run] repo の中の台帳を "
                 "$THTH_ROOT/accounts/ へ写す（copy・repo は触らない）\n"
                 "thth account add <name> --media threads|bluesky|mastodon "
-                "--project <p> [--handle …] [--instance …] [--repo-dir …]")
+                "--project <p> [--handle …] [--instance …] [--redirect-uri …] "
+                "[--repo-dir …]\n"
+                "  threads  : --handle は省略可（既定は --project の値）。"
+                "--redirect-uri を省くと雛形のダミーのまま\n"
+                "  bluesky  : --handle name.bsky.social が必須\n"
+                "  mastodon : --handle user と --instance https://… が必須")
     p.set_defaults(func=dispatch)
