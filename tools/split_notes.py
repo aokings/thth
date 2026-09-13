@@ -95,8 +95,20 @@ NOTES_REPO = _main_repo_root().parent / "thth-notes"
 # docs/ 直下に残っている日誌寄りの接頭辞（モジュール docstring 参照）。
 TOPLEVEL_DIARY_PREFIXES = ("出口条件_", "引継ぎ_", "記録_", "調査_")
 
-# 機能的パスとして直接読まれるため動かさないファイル（現時点では空）。
-PIN_EXCEPTIONS: set[str] = set()
+# 機能的パスとして直接読まれるため動かさないファイル。
+#
+# 2026-09-14 の --execute で分かったこと: docstring は「現時点では該当なし」と
+# 書いていたが、**誤り**だった。`tests/test_value_domains_shown.py` が
+# `docs/引継ぎ_トピックの棚_…_2026-09-12.md` を `pathlib.Path` で直接開き、
+# 選べる値（VERDICTS・KINDS）と `--json` の新旧の鍵がその文書に書かれて
+# いることを assert している（20 件が落ちた）。文書を repo の外へ出すと
+# この検査は「文書が無ければ黙って通る」形にするしかなく、作法 5 の
+# loud reject に反する。よって**この 1 本は本 repo に残す**。
+# `docs/usage.en.md` が §2 の出典として要約している相手でもあるので、
+# 日誌というより製品文書に近い。
+PIN_EXCEPTIONS: set[str] = {
+    "引継ぎ_トピックの棚_アカウント側セッションへ_2026-09-12.md",
+}
 
 _LINK_RE = re.compile(r"\]\(([^)]+)\)")
 _BARE_DOCS_RE = re.compile(r"(?<![\w/])docs/[^\s\"'()「」\]]+\.md")
