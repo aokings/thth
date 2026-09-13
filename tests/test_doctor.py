@@ -198,3 +198,41 @@ def test_T3_blueskyには要らないapp_envの一手を勧めない(tmp_path, m
     lines = []
     doctor_mod.run_doctor(threads["name"], log=lines.append)
     assert "`thth auth` を使うなら先に `thth app set`" in "\n".join(lines)
+
+
+# --- C10（監査 2・2026-09-13）: 雛形のダミーが残った台帳を 0 で返さない --------
+
+def test_C10_ダミーが残っていれば全部丸でも0で返さない(tmp_path, monkeypatch,
+                                                isolated_account_factory):
+    """**rc の決め方**（`thth/doctor.py` 冒頭の思想に合わせた）。
+
+    `thth doctor` の rc は「2＝診断できなかった（台帳が読めない・トークンが無い・
+    トピックの棚が壊れている）／1＝診断はできたが×がある／0＝異常なし」。雛形の
+    ダミーが残っている台帳は**読める**ので 2 にはしない。しかし `thth auth` は
+    そこで必ず止まるので、**0（異常なし）で返すのも嘘**——壊れた棚を「異常なし」で
+    返さないのと同じ筋（独立監査 1・P1-1）。よって **1**。
+
+    ここは probe の結果と独立に rc を見たいので `diagnose()` を差し替える
+    （**HTTP は一切出さない**）。同じ probe の結果で、**ダミーの有無だけが rc を
+    変える**ことを見る。
+    """
+    def 全部丸(account_name):
+        return {"account": account_name, "handle": "nigamilab", "username": "nigamilab",
+                "user_id": "1", "probes": [{"label": "本人の確認", "ok": True,
+                                            "permission": "threads_basic",
+                                            "detail": "ok"}]}
+
+    monkeypatch.setattr(doctor_mod, "diagnose", 全部丸)
+    monkeypatch.setenv("THTH_APP_ENV_PATH", str(tmp_path / "none.env"))
+
+    綺麗 = isolated_account_factory("clean-threads", handle="nigamilab",
+                                     redirect_uri="https://thth.me/callback/")
+    assert doctor_mod.run_doctor(綺麗["name"], log=lambda _l: None) == 0
+
+    ダミー = isolated_account_factory("dummy-threads", handle="nigamilab",
+                                       redirect_uri="https://example.invalid/")
+    lines = []
+    assert doctor_mod.run_doctor(ダミー["name"], log=lines.append) == 1
+    assert "ダミーのまま" in "\n".join(lines)
+    # `--json` でも同じ 1（機械の読み手にも「異常なし」と言わない）。
+    assert doctor_mod.run_doctor(ダミー["name"], as_json=True, log=lambda _l: None) == 1
