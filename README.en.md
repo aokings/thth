@@ -3,6 +3,12 @@
 THTH posts approved drafts to Threads (Bluesky and Mastodon adapters exist but are
 not yet running in production). It does not decide what to write.
 
+**Where to start** (the same three lines `thth --help` opens with)
+- Post one draft, once → `thth send` (a rehearsal by default; nothing goes out
+  until you add `--production`)
+- Run an account from a queue → `thth lint` → `thth approve` (two steps) → `thth throw`
+- Ask before you post → `thth ask before-you-post`
+
 **What it guarantees**
 - Approval is a human act: a post only ships once a person runs `thth approve`
   a second time with the digest the first run showed them, and `status: approved`

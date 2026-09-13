@@ -155,3 +155,47 @@ def test_account読めない台帳は非ゼロ(isolated_account):
     r = run_thth(["account", "いない-threads", "--no-remote"])
     assert r.returncode != 0, r.stdout + r.stderr
     assert "いない-threads" in r.stdout + r.stderr
+
+
+# --------------------------------------------------------------------------
+# T4: `thth --help` の冒頭 3 行の道案内
+# --------------------------------------------------------------------------
+
+道案内の3行 = [
+    ("原稿を 1 回だけ出す", "send"),
+    ("queue で運用する", "lint"),
+    ("投稿する前に聞く", "ask before-you-post"),
+]
+
+
+def test_helpの冒頭に3行の道案内がある():
+    """**目的から入口への線**（第 1 回は `send` に着くまで `--help` を 3〜5 回）。"""
+    r = run_thth(["--help"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    # 道案内の 3 行は「目的 → 入口」の形（サブコマンド一覧の説明文と区別する）。
+    行 = [line for line in r.stdout.splitlines() if "→" in line]
+    assert len(行) == 3, r.stdout
+    for (目的, 入口), line in zip(道案内の3行, 行):
+        assert 目的 in line and 入口 in line, (目的, line)
+    # queue の経路は 3 つの段を 1 行で言う。
+    queue行 = next(line for line in 行 if "queue で運用する" in line)
+    assert "lint" in queue行 and "approve" in queue行 and "throw" in queue行, queue行
+    # **positional arguments の前**（冒頭）に出ていること。
+    先頭 = r.stdout.index("原稿を 1 回だけ出す")
+    assert 先頭 < r.stdout.index("positional arguments"), r.stdout
+    # 既定が乾式試験であることを `send` の行で言う。
+    send行 = next(line for line in 行 if "原稿を 1 回だけ出す" in line)
+    assert "乾式試験" in send行, send行
+
+
+def test_英語の3行がREADMEとusageとllms_txtにある():
+    """**同じ 3 行を英語でも**（英語の入口は README.en.md・usage.en.md・llms.txt）。"""
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for name in ("README.en.md", os.path.join("docs", "usage.en.md"), "llms.txt"):
+        text = open(os.path.join(repo, name), encoding="utf-8").read()
+        assert "Where to start" in text, name
+        始まり = text.index("Where to start")
+        頭 = text[始まり:始まり + 700]
+        assert "`thth send`" in 頭 or "`thth send <account> --text-file <file>`" in 頭, name
+        for 語 in ("lint", "approve", "throw", "ask before-you-post"):
+            assert 語 in 頭, (name, 語)

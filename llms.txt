@@ -5,6 +5,15 @@
 > records everything in your git. Nothing leaves your machine unless you
 > opt in.
 
+## Where to start (the same three lines `thth --help` opens with)
+
+- Post one draft, once → `thth send <account> --text-file <file>` (a rehearsal
+  by default; nothing goes out until you add `--production` with the digest the
+  rehearsal printed)
+- Run an account from a queue → `thth lint <file>` → `thth approve <file>` (two
+  steps) → `thth throw <account>`
+- Ask before you post → `thth ask before-you-post <account> --topic <word>`
+
 ## Three things an agent should know before calling it
 
 - `thth ask before-you-post <account> --topic <word> [--kind …] [--hour-band …]

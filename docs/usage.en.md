@@ -8,6 +8,13 @@ This is a summary of
 it is the operational document, updated as reality changes. Examples below
 use `your-account` in place of any real account name.
 
+**Where to start** (the same three lines `thth --help` opens with)
+- Post one draft, once → `thth send` (a rehearsal by default; nothing goes out
+  until you add `--production`) — §2
+- Run an account from a queue → `thth lint` → `thth approve` (two steps) →
+  `thth throw` — §5
+- Ask before you post → `thth ask before-you-post` — §10
+
 ## 1. What it does, what it doesn't
 
 THTH takes a body of text and posts it: it writes the `post_id` back, and

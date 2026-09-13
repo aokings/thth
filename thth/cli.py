@@ -2285,8 +2285,21 @@ def cmd_board(args) -> int:
     return 0
 
 
+# **`thth --help` の冒頭 3 行の道案内**（T4・第 1 回の記録 §3）。第 1 回
+# （2026-09-13・L1）は 3 体とも `send` に着くまで `--help` を 3〜5 回読んだ——
+# サブコマンドの一覧はあるが、**目的から入口への線が 1 本も無かった**。
+# 3 つの目的（1 回だけ出す・queue で運用する・出す前に聞く）を先に置く。
+# 英語の同じ 3 行は README.en.md・docs/usage.en.md・llms.txt の冒頭にある。
+道案内 = """原稿を 1 回だけ出す   → send（既定は乾式試験。--production を付けるまで出しません）
+queue で運用する     → lint → approve（2 段）→ throw
+投稿する前に聞く     → ask before-you-post"""
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="thth")
+    p = argparse.ArgumentParser(
+        prog="thth", description=道案内,
+        # **3 行のまま出す**（argparse の既定は 1 段落に畳む）。
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--version", action="version", version=_version_string())
     sub = p.add_subparsers(dest="command", required=True)
 
