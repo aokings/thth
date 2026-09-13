@@ -182,6 +182,25 @@ def _reply_rows(path: str) -> list:
     return [row for row in _read_ndjson(path) if row.get("kind") != "fetch"]
 
 
+def reply_row_id(row):
+    """返信 1 行の識別子。**`message_id` と `id` のどちらでも通す**（T3・2026-09-13）。
+
+    Threads の `/conversation` は API の生の行をそのまま返すので鍵は **`id`**。
+    Bluesky・Mastodon のアダプタは境界の `Message`（設計 v2 §4.2）の形で返すので
+    鍵は **`message_id`**。ここが `id` 固定だったので、**Bluesky と Mastodon の
+    返信は 1 行残らず「id 欠落」で捨てられていた**（`id_missing` にだけ数が載り、
+    台帳には 1 件も入らない）。境界が `message_id` と決めた以上、直すのは読む側。
+
+    **Threads の行は変えない**——返信の台帳（ndjson）は追記専用で、過去の行と
+    同じ鍵で読めなくなると `thth replies` も `measured` も黙って壊れる。
+    `message_id` を先に見るのは、両方持つ行（`Message` を dict に写したものに
+    API の `id` が残っている場合）で境界の鍵を正とするため。
+    """
+    if not isinstance(row, dict):
+        return None
+    return row.get("message_id") or row.get("id")
+
+
 def due_marks(age_hours: float, recorded: list) -> list:
     """まだ記録していない刻みのうち、もう跨いだもの。"""
     done = set()
@@ -258,15 +277,16 @@ def _save_replies(reply_path: str, post_id: str, replies: list, *, now,
     **`marks` は呼び出し側が決める。** `--refresh` は `[]` を渡す——**臨時の取得で
     刻みを進めない。** 進めると「24h の数」に化ける。
 
-    **`id` の無い行を、黙って成功件数に含めない。** **API の行が台帳の管理項目
+    **識別子の無い行を、黙って成功件数に含めない。** 識別子は `message_id` か
+    `id`（`reply_row_id()`・媒体で鍵の名前が違う）。**API の行が台帳の管理項目
     （`kind`・`post_id`・`collected_at`）を上書きしないように、後から置く。**
 
     戻り値は**新しく入れた返信の行**。
     """
-    known = {row.get("id") for row in _reply_rows(reply_path)}
+    known = {reply_row_id(row) for row in _reply_rows(reply_path)}
     fresh, 欠落 = [], 0
     for row in replies:
-        rid = row.get("id") if isinstance(row, dict) else None
+        rid = reply_row_id(row)
         if not rid:
             欠落 += 1
             continue
@@ -526,7 +546,21 @@ def _collect_account_daily(account_name, account_cfg, adapter, *, now, errors) -
     """**前日の閉じた 1 日**を 1 行だけ記録する（外部レビュー §4-a）。
 
     当日ぶんを取ると、そのあとに起きた反応が記録に入らない。閉じた日だけ取る。
+
+    **持たない媒体では呼ばない**（capability `account_insights`・T3・2026-09-13）。
+    以前はここが媒体を問わず `adapter.account_insights()` を呼んでいたので
+    （T0 の残件）、Bluesky・Mastodon では毎回 `AttributeError` を捕まえて
+    `errors` に `account_insights: …` を積み、**採取が「1 本でも失敗したか」で
+    非ゼロ終了し続けた**。「そもそも媒体に無い」を「失敗」と呼ばない
+    ——`insights` の `available` で views を扱ったのと同じ筋（設計 v2 §4.2）。
     """
+    try:
+        capabilities = adapter.capabilities()
+    except Exception:   # noqa: BLE001 — 能力を答えられない実装は「持たない」扱い
+        capabilities = set()
+    if "account_insights" not in (capabilities or set()):
+        return None
+
     repo_dir = account_cfg.get("repo_dir") or ""
     yesterday = (now - datetime.timedelta(days=1)).date()
     path = os.path.join(repo_dir, "data", "sns", "insights", "account",

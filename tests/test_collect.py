@@ -22,6 +22,15 @@ NOW = datetime.datetime(2026, 9, 10, 12, 0, tzinfo=jst.JST)
 
 
 class FakeAdapter:
+    # **能力を名乗る**（設計 v2 §4.2・T3 の配線 2026-09-13）。`collect` は
+    # `account_insights` を持つ媒体にしか日次を聞かない——名乗らない偽アダプタは
+    # 「持たない媒体」として扱われる。
+    CAPABILITIES = frozenset({"views", "account_insights"})
+
+    @classmethod
+    def capabilities(cls):
+        return set(cls.CAPABILITIES)
+
     def __init__(self, *, views=100, replies_rows=None, fail=None):
         self.views = views
         self.replies_rows = replies_rows or []
@@ -431,3 +440,146 @@ def test_同じ取得の中の重複も台帳に入れない(tmp_path, isolated_
     ids = [r.get("id") for r in _rows(pair["work"], "data/sns/replies/POST1.ndjson")
             if r.get("kind") == "reply"]
     assert ids == ["R1", "R2"], f"**同じ id が 2 度入っている**: {ids}"
+
+
+# --- T3 の配線（2026-09-13）: 媒体で鍵の名前が違う返信・持たない媒体の日次 -------
+
+class 境界の形で返すアダプタ:
+    """Bluesky・Mastodon と同じ形で返す偽アダプタ（`Message` の鍵は `message_id`）。
+
+    **本物の API は叩かない。** 確かめたいのは `collect` 側の読み方だけ。
+    """
+
+    CAPABILITIES = frozenset()      # `views` も `account_insights` も持たない
+
+    @classmethod
+    def capabilities(cls):
+        return set(cls.CAPABILITIES)
+
+    def __init__(self, *, messages=None, medium="bluesky"):
+        self.messages = list(messages or [])
+        self.medium = medium
+        self.account_insights_calls = 0
+
+    def insights(self, post_id):
+        return {"metrics": {"likes": 2, "replies": len(self.messages)},
+                "available": ["likes", "replies", "reposts"]}
+
+    def conversation(self, post_id, *, since=None):
+        return [dict(m) for m in self.messages]
+
+    def account_insights(self, user_id, *, since, until):
+        self.account_insights_calls += 1
+        raise AssertionError("**持たない媒体に account_insights を聞いている**")
+
+
+def _message(message_id, *, medium="bluesky", username="someone"):
+    from thth.adapters import base as adapter_base
+    return {"message_id": message_id, "username": username, "text": "返信です",
+            "timestamp": "2026-09-10T11:00:00+09:00", "replied_to": "POST1",
+            "root_post": "POST1", "medium": medium,
+            "author_key": adapter_base.author_key(medium, username),
+            "reply_deadline": None}
+
+
+def test_T3_message_idの行が捨てられずに台帳へ入る(tmp_path, isolated_account_factory):
+    """**媒体で鍵の名前が違う**（Threads は `id`・境界の `Message` は `message_id`）。
+
+    `_save_replies()` が `row.get("id")` 固定だったので、Bluesky・Mastodon の
+    返信は 1 行残らず「id 欠落」で捨てられ、`id_missing` にだけ数が載っていた。
+    """
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    adapter = 境界の形で返すアダプタ(messages=[_message("R1"), _message("R2")])
+    collect_mod.run_collect(account["name"], adapter=adapter, now=NOW,
+                             log=lambda _l: None)
+
+    rows = _rows(pair["work"], "data/sns/replies/POST1.ndjson")
+    返信 = [r for r in rows if r.get("kind") == "reply"]
+    取得 = [r for r in rows if r.get("kind") == "fetch"]
+    assert [r["message_id"] for r in 返信] == ["R1", "R2"], rows
+    # **「id 欠落」で数えられていない。**
+    assert 取得[-1]["id_missing"] == 0, 取得[-1]
+    # 境界が足した欄がそのまま台帳に残る（設計 v2 §4.2）。
+    assert 返信[0]["medium"] == "bluesky"
+    assert 返信[0]["author_key"] and "someone" not in 返信[0]["author_key"]
+
+
+def test_T3_message_idで重複除去される(tmp_path, isolated_account_factory):
+    """2 回採っても 1 件（**同じ応答の中の重複も、台帳との重複も**）。"""
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    for _ in range(2):
+        collect_mod.run_collect(
+            account["name"], now=NOW, log=lambda _l: None,
+            adapter=境界の形で返すアダプタ(
+                messages=[_message("R1"), _message("R1"), _message("R2")]))
+    返信 = [r for r in _rows(pair["work"], "data/sns/replies/POST1.ndjson")
+            if r.get("kind") == "reply"]
+    assert [r["message_id"] for r in 返信] == ["R1", "R2"], 返信
+
+
+def test_T3_Threadsのidの行はそのまま通る(tmp_path, isolated_account_factory):
+    """**Threads の行は変えない**（追記専用の台帳を、鍵の名前ごと変えない）。"""
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    rows_in = [{"id": "R1", "username": "u", "text": "t",
+                "timestamp": "2026-09-10T11:00:00+09:00", "medium": "threads"}]
+    collect_mod.run_collect(account["name"], now=NOW, log=lambda _l: None,
+                             adapter=FakeAdapter(replies_rows=rows_in))
+    返信 = [r for r in _rows(pair["work"], "data/sns/replies/POST1.ndjson")
+            if r.get("kind") == "reply"]
+    assert [r["id"] for r in 返信] == ["R1"], 返信
+    # 2 回目も足されない（`id` のままで重複除去が効く）。
+    collect_mod.run_collect(account["name"], now=NOW, log=lambda _l: None,
+                             adapter=FakeAdapter(replies_rows=rows_in))
+    返信 = [r for r in _rows(pair["work"], "data/sns/replies/POST1.ndjson")
+            if r.get("kind") == "reply"]
+    assert len(返信) == 1, 返信
+
+
+def test_T3_識別子の無い行は成功件数に入らない(tmp_path, isolated_account_factory):
+    """`message_id` も `id` も無い行は、黙って数えず `id_missing` に載せる。"""
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    壊れた = dict(_message("R1"))
+    del 壊れた["message_id"]
+    collect_mod.run_collect(
+        account["name"], now=NOW, log=lambda _l: None,
+        adapter=境界の形で返すアダプタ(messages=[壊れた, _message("R2")]))
+    rows = _rows(pair["work"], "data/sns/replies/POST1.ndjson")
+    返信 = [r for r in rows if r.get("kind") == "reply"]
+    取得 = [r for r in rows if r.get("kind") == "fetch"]
+    assert [r["message_id"] for r in 返信] == ["R2"]
+    assert 取得[-1]["id_missing"] == 1, 取得[-1]
+
+
+def test_T3_account_insightsを持たない媒体には聞かずerrorsにも積まない(
+        tmp_path, isolated_account_factory):
+    """「そもそも媒体に無い」を「失敗」と呼ばない（設計 v2 §4.2・T0 の残件）。
+
+    以前は媒体を問わず `adapter.account_insights()` を呼んでいたので、
+    Bluesky・Mastodon では毎回 `errors` に積まれ、**採取が非ゼロで終わり続けた**。
+    """
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    adapter = 境界の形で返すアダプタ(messages=[_message("R1")])
+    result = collect_mod.collect_once(account["name"], adapter=adapter, now=NOW,
+                                       log=lambda _l: None)
+    assert adapter.account_insights_calls == 0
+    assert result["errors"] == [], result["errors"]
+    # 日次の台帳そのものが作られない（**空の 1 行も書かない**）。
+    assert not os.path.isdir(os.path.join(pair["work"], "data", "sns", "insights",
+                                           "account"))
+
+
+def test_T3_account_insightsを持つ媒体では今までどおり書く(
+        tmp_path, isolated_account_factory):
+    """**Threads の挙動は変えない**（capability を見るようにしただけ）。"""
+    pair, account = _setup(tmp_path, isolated_account_factory,
+                            posted_at="2026-09-10T10:00:00+09:00")
+    collect_mod.run_collect(account["name"], adapter=FakeAdapter(), now=NOW,
+                             log=lambda _l: None)
+    rows = _rows(pair["work"],
+                 f"data/sns/insights/account/{account['name']}-2026-09.ndjson")
+    assert len(rows) == 1 and rows[0]["metrics"]["clicks"] == 12, rows
