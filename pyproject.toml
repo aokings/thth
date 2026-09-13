@@ -1,0 +1,84 @@
+# `pip install thth`（設計 v2 §3・v2-2b）。
+#
+# **依存 0。** `thth/`・`bin/thth`・`mcp/server.py`・`tests/` の import を全部数えて、
+# 標準ライブラリの外は 1 つも無いことを確かめた（2026-09-13・L1）。ここに何かを
+# 足すときは「なぜ標準ライブラリで足りないか」を書くこと——依存が 0 なら、
+# エージェントが勧めた先で `pip install` が失敗する経路がそもそも無い。
+# `pytest` と `pytest-xdist` は**開発のときだけ**（`[project.optional-dependencies] dev`）。
+#
+# **版は `thth/VERSION` の 1 か所**（設計 v1.0.0 Track C1）。ここに数字を書き写すと
+# `thth --version` と配布物が黙って割れる。`[tool.hatch.version]` がその 1 行を読む。
+#
+# **backend が hatchling である理由**: `skills/` と `mcp/server.py` は package の外に
+# あるが wheel には入れたい（設計 v2 §3「`mcp/` を pip に同梱・`skills/thth/SKILL.md`」）。
+# hatchling の `force-include` は**repo の置き場を変えずに** wheel の中の場所を指定できる。
+# setuptools には同じ口が無く、`skills/` を package に見せるための空の `__init__.py` を
+# repo に撒くことになる。**配布の都合で repo の形を歪めない。**
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "thth"
+dynamic = ["version"]
+description = "承認済みの投稿だけを投げる門（Threads・Bluesky・Mastodon）。人が承認し、記録は利用者の git に残る。"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Masaru Aoki" }]
+keywords = ["threads", "bluesky", "mastodon", "mcp", "approval", "social", "cli"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Communications",
+  "Topic :: Utilities",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-xdist>=3"]
+
+[project.urls]
+Homepage = "https://thth.me"
+Source = "https://github.com/aokings/thth"
+
+[project.scripts]
+# **`bin/thth` は残す**（PATH に symlink する運用・`tests/test_cli_entrypoint.py`）。
+# ここはそれと同じ `thth.cli:main` を指すだけで、入口を 2 種類の判断にしない。
+thth = "thth.cli:main"
+# MCP の入口。repo では `mcp/server.py` を直接叩く運用がそのまま残る
+# （`tests/test_mcp.py`）。wheel には同じファイルが `thth/mcp_server.py` として入る。
+thth-mcp = "thth.mcp_server:main"
+
+[tool.hatch.version]
+# `thth/VERSION` は「1.3.0」の 1 行だけ。`__version__ = "…"` の形ではないので
+# pattern を明示する（named group `version` が hatchling の約束）。
+path = "thth/VERSION"
+pattern = "^(?P<version>[^\\s]+)"
+
+[tool.hatch.build.targets.wheel]
+packages = ["thth"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# **repo の置き場は変えない。** wheel の中の場所だけをここで決める。
+"mcp/server.py" = "thth/mcp_server.py"
+"skills" = "thth/skills"
+
+[tool.hatch.build.targets.sdist]
+# **`accounts/` と `docs/記録/` は入れない。** 前者は masaru の 4 本の台帳
+# （設計 v2 §3「台帳を repo の外へ」・監査 1）、後者は運用の日誌（§7-2）。
+# 配布物に混ぜると、`pip download thth` した人の手元にそれが落ちる。
+include = [
+  "/thth",
+  "/bin",
+  "/mcp",
+  "/skills",
+  "/systemd",
+  "/tests",
+  "/README.md",
+  "/pyproject.toml",
+]

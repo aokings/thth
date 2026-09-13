@@ -26,9 +26,14 @@ not yet running in production). It does not decide what to write.
   Authorization headers are redacted before anything is written or printed.
 
 **What it never does**
-- Never sends anything to a third party. There is no data-sharing feature today;
-  the design for one (`thth share`, opt-in, default off) is written down but not
-  built yet — see [docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md).
+- Never sends anything to a third party. `thth share` is **off by default** and,
+  even when you turn it on, **there is nowhere for it to send**: it only appends
+  to a local file under `$THTH_ROOT/state/share/outbox/`, and `thth share log`
+  prints every line of it. What it queues is words, audience notes, topic kinds,
+  counts, time-of-day bands and a **salted hash** of the post id — never post
+  bodies, replies, replier names, your own verdicts, account names, tokens, repo
+  paths, or raw post ids — see
+  [docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md) §2.
 - Never reads direct messages. It only ever touches public posts and public replies.
 - Never auto-replies with canned text. Reply drafts go through the same
   human-approval path as any other post.
@@ -100,9 +105,12 @@ All 25 subcommands `thth --help` lists today, one line each:
 - `app` — store or show the local Meta app config
 - `token` — set a long-lived token directly (paste-in, e.g. Mastodon)
 
-`thth ask` (a query-before-you-post advisor) and `thth share` (opt-in metrics
-sharing) are designed but not implemented — see
-[docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md) §1 and §3.
+- `share` — `on|off|status|log|sync`. **Off by default.** Queues the shareable
+  subset (§2) to a local outbox; **nothing is sent anywhere** — the spring that
+  would receive it does not exist yet (v2-5).
+
+`thth ask` (a query-before-you-post advisor) is designed but not implemented —
+see [docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md) §1.
 
 ## What's not here
 
