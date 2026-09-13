@@ -218,14 +218,42 @@ def refresh_long_lived_token(access_token: str, *, timeout: float = 10.0) -> dic
 
 
 def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | None = None,
-             input_func=input, log=print) -> int:
-    """`thth auth <account>`。masaru との対話 1 往復（URL 表示 → code 入力）＋
-    短期→長期トークン交換 →`me` → `.token` 書き込み。トークン等は一切出力しない。
+             input_func=input, identifier_input=None, password_input=None,
+             log=print) -> int:
+    """`thth auth <account>`。**媒体で分ける**（T3 の配線 2026-09-13）。
+
+    以前はここが Threads 固有（OAuth の往復）だった——設計 v2 §4.2 が挙げた
+    「Threads 固有になっている 6 箇所」の 1 つ。台帳の `media` で分ける:
+
+      - `threads`  現行のまま（URL 表示 → code 入力 → 短期→長期交換 → `me`）。
+      - `bluesky`  `bluesky.auth_interactive()` が handle と App Password を
+                   受け取り、返った dict を `.token` に 600 で原子的に書く。
+      - `mastodon` 認可はインスタンスの管理画面で行うので、ここでは受けない。
+                   `thth token set` へ案内して rc=2（**黙って何もしない終わり方を
+                   しない**）。
+      - それ以外   知っている媒体の一覧を添えて loud に断る（T-B0）。
     """
     try:
         account_cfg = accounts_mod.load_account(account_name)
     except accounts_mod.AccountError as e:
         _out(str(e), log=log)
+        return 2
+
+    media = account_cfg.get("media")
+    if media != "threads":
+        from . import adapters as adapters_mod
+        try:
+            adapters_mod.adapter_class(media)
+        except adapters_mod.UnknownMedium as e:
+            _out(str(e), log=log)
+            return 2
+        if media == "bluesky":
+            return run_auth_bluesky(
+                account_name, account_cfg=account_cfg, log=log,
+                identifier_input=identifier_input, password_input=password_input)
+        _out(f"{media} は `thth auth` では認可できません。"
+             f"インスタンスの管理画面（設定 → 開発 → 新規アプリ）で access token を"
+             f"作って、`thth token set {account_name}` で貼り付けてください。", log=log)
         return 2
 
     try:
@@ -408,6 +436,87 @@ def run_refresh(account_name: str, *, force: bool = False, check: bool = False,
     secrets_fs.atomic_write_json(account_cfg["token"], updated, mode=0o600)
 
     _out(f"更新しました: {account_name}", log=log)
+    return 0
+
+
+def _ask_bluesky(prompt: str, *, secret: bool):
+    """端末から 1 つ受け取る。**端末でなければ断る**（`thth app set` と同じ作法）。
+
+    tty を割り当てずに `ssh wt 'thth auth ...'` と打つと、**手元の画面に App
+    Password がそのまま出る**（remote に tty が無いのでエコーを止められない）。
+    秘密を画面に出す経路を黙って通さない。
+    """
+    if not sys.stdin.isatty():
+        raise OAuthError(
+            "標準入力が端末ではありません。App Password が画面に出てしまうので"
+            "読みません。\n"
+            "  ssh に -t を付けてください"
+            "（例: ssh -t wt '...thth auth <account>'）")
+    return getpass.getpass(prompt) if secret else input(prompt)
+
+
+def run_auth_bluesky(account_name: str, *, account_cfg=None,
+                     identifier_input=None, password_input=None, log=print) -> int:
+    """`thth auth <account>`（Bluesky・設計 v2 §4.2「認可とトークン」）。
+
+    handle と **App Password** を対話で受け（`getpass` なので画面に出ない）、
+    `createSession` が通ったものだけを `~/.config/thth/<account>.token` に
+    **600 で原子的に**書く（`thth/secrets_fs.py` の作法・`thth app set` と同じ）。
+
+    **値はどこにも出さない**——標準出力・ログ・例外文のどれにも。成功時に言うのは
+    handle と did と path と 600 だけ。
+
+    書く中身は `bluesky.auth_interactive()` の戻り（`identifier`・`app_password`・
+    `did`・`handle`・`no_expiry: true`・`obtained_at`）に、取り違え防止の
+    `user_id`・`username` を足したもの。**`expires_in` は書かない**——App Password
+    に期限は無い（`maintain` が「判らない」ではなく「期限を持たない」と言う）。
+    """
+    from .adapters import bluesky as bluesky_mod
+
+    if account_cfg is None:
+        try:
+            account_cfg = accounts_mod.load_account(account_name)
+        except accounts_mod.AccountError as e:
+            _out(str(e), log=log)
+            return 2
+
+    service = account_cfg.get("service") or bluesky_mod.DEFAULT_SERVICE
+    ask_id = identifier_input or (
+        lambda: _ask_bluesky(f"Bluesky の handle（例: name.bsky.social・{service}）: ",
+                             secret=False))
+    ask_pw = password_input or (
+        lambda: _ask_bluesky("App Password（xxxx-xxxx-xxxx-xxxx・表示されません）: ",
+                             secret=True))
+
+    try:
+        token_data = bluesky_mod.auth_interactive(ask_id, ask_pw, service=service)
+    except OAuthError as e:
+        _out(str(e), log=log)
+        return 2
+    except (ValueError, RuntimeError) as e:
+        # `auth_interactive()` は既に `scrub()` を通した文だけを投げる。
+        _out(f"認可できませんでした（{redact_mod.redact(str(e))}）", log=log)
+        return 1
+
+    # 取り違え防止（`token set` と同じ筋・masaru の指摘 2026-09-09）。台帳の
+    # handle と、App Password が実際に指しているアカウントが食い違ったら
+    # 保存しない。**通すと、そのアカウントの queue の本文が別のアカウントから出る。**
+    handle = (account_cfg.get("handle") or "").strip().lstrip("@")
+    got = (token_data.get("handle") or "").strip().lstrip("@")
+    if handle and got and handle.lower() != got.lower():
+        _out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
+             f"この App Password は {got} のものです。", log=log)
+        _out("正しいアカウントで発行し直すか、台帳の handle を直してください。", log=log)
+        return 1
+
+    token_data = dict(token_data)
+    # `whoami()` と同じ鍵（`board`・`doctor` がここを読む）。
+    token_data["user_id"] = token_data.get("did")
+    token_data["username"] = token_data.get("handle")
+    secrets_fs.atomic_write_json(account_cfg["token"], token_data, mode=0o600)
+
+    _out(f"handle={token_data['handle']} did={token_data['did']}", log=log)
+    _out(f"保存しました: {account_cfg['token']}（600）", log=log)
     return 0
 
 

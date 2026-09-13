@@ -1852,7 +1852,12 @@ def cmd_collect(args) -> int:
 
 
 def cmd_auth(args) -> int:
-    """masaru が VM で対話的に実行する（設計 §9-3・MCP には出さない・§3.7）。"""
+    """masaru が VM で対話的に実行する（設計 §9-3・MCP には出さない・§3.7）。
+
+    **媒体で分かれる**（`oauth.run_auth()` の中・T3 の配線 2026-09-13）。
+    Threads は OAuth の往復、Bluesky は handle と App Password の対話
+    （`thth auth masaru-bluesky`）、Mastodon は `thth token set` へ案内する。
+    """
     return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code)
 
 

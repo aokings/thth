@@ -215,3 +215,181 @@ def test_20260909_authが標準出力に秘密を一切出さない(tmp_path, mo
     for secret in (secret_code, APP_SECRET_VALUE, "LONG-SECRET-TOKEN", "SHORT-SECRET-TOKEN"):
         assert secret not in captured.out
         assert secret not in captured.err
+
+
+# --- T3 の配線（2026-09-13）: `thth auth` を媒体で分ける ------------------------
+
+def test_T3_mastodonはtoken_setへ案内してrc2(tmp_path, isolated_account_factory):
+    """認可はインスタンスの管理画面。**黙って何もしない終わり方をしない。**"""
+    account = _account_with_token_path(
+        isolated_account_factory, tmp_path, media="mastodon",
+        instance="https://mastodon.invalid")
+    lines = []
+    rc = oauth_mod.run_auth(account["name"], log=lines.append)
+    assert rc == 2
+    out = "\n".join(lines)
+    assert "thth token set" in out and account["name"] in out
+    assert not os.path.exists(account["token_path"])
+
+
+def test_T3_知らない媒体はloudに断る(tmp_path, isolated_account_factory):
+    account = _account_with_token_path(
+        isolated_account_factory, tmp_path, media="carrier-pigeon")
+    lines = []
+    assert oauth_mod.run_auth(account["name"], log=lines.append) == 2
+    out = "\n".join(lines)
+    assert "carrier-pigeon" in out and "知っている媒体" in out
+
+
+def test_T3_blueskyはtokenを600で書く(tmp_path, isolated_account_factory):
+    """`bluesky.auth_interactive()` の戻りを `.token` に 600 で原子的に書く。"""
+    from tests.test_bluesky_adapter import APP_PASSWORD, DID, HANDLE, fake_bluesky
+
+    with fake_bluesky() as service:
+        account = _account_with_token_path(
+            isolated_account_factory, tmp_path, media="bluesky",
+            handle=HANDLE, service=str(service))
+        lines = []
+        rc = oauth_mod.run_auth(
+            account["name"], log=lines.append,
+            identifier_input=lambda: HANDLE,
+            password_input=lambda: APP_PASSWORD)
+
+    assert rc == 0, lines
+    with open(account["token_path"], encoding="utf-8") as f:
+        token = json.load(f)
+    assert token["identifier"] == HANDLE
+    assert token["app_password"] == APP_PASSWORD
+    assert token["did"] == DID and token["handle"] == HANDLE
+    # **期限を持たない**（`expires_in` は書かない・設計 v2 §4.2）。
+    assert token["no_expiry"] is True and "expires_in" not in token
+    # `whoami()` と同じ鍵（board・doctor がここを読む）。
+    assert token["user_id"] == DID and token["username"] == HANDLE
+    # 600（`thth app set`・`token set` と同じ作法）。
+    assert stat.S_IMODE(os.stat(account["token_path"]).st_mode) == 0o600
+    # **値はどこにも出さない。**
+    out = "\n".join(lines)
+    assert APP_PASSWORD not in out
+    assert "ACCESS-SECRET-JWT" not in out and "REFRESH-SECRET-JWT" not in out
+    assert "600" in out
+
+
+def test_T3_blueskyのcreateSessionが落ちたらtokenを作らない(tmp_path,
+                                                    isolated_account_factory):
+    from tests.test_bluesky_adapter import APP_PASSWORD, HANDLE, fake_bluesky
+
+    with fake_bluesky({"com.atproto.server.createSession": "4xx"}) as service:
+        account = _account_with_token_path(
+            isolated_account_factory, tmp_path, media="bluesky",
+            handle=HANDLE, service=str(service))
+        lines = []
+        rc = oauth_mod.run_auth(
+            account["name"], log=lines.append,
+            identifier_input=lambda: HANDLE,
+            password_input=lambda: APP_PASSWORD)
+
+    assert rc == 1
+    assert not os.path.exists(account["token_path"])
+    assert APP_PASSWORD not in "\n".join(lines)
+
+
+def test_T3_blueskyは秘密を返してくるサーバでも値を出さない(tmp_path,
+                                                 isolated_account_factory):
+    """**200 のまま `error` を返し、秘密をそのまま echo するサーバ。**"""
+    from tests.test_bluesky_adapter import APP_PASSWORD, HANDLE, fake_bluesky
+
+    with fake_bluesky({"com.atproto.server.createSession": "echo_secret"}) as service:
+        account = _account_with_token_path(
+            isolated_account_factory, tmp_path, media="bluesky",
+            handle=HANDLE, service=str(service))
+        lines = []
+        rc = oauth_mod.run_auth(
+            account["name"], log=lines.append,
+            identifier_input=lambda: HANDLE,
+            password_input=lambda: APP_PASSWORD)
+
+    assert rc == 1
+    assert not os.path.exists(account["token_path"])
+    assert APP_PASSWORD not in "\n".join(lines)
+
+
+def test_T3_blueskyはアカウントの取り違えを保存しない(tmp_path, isolated_account_factory):
+    """台帳の handle と App Password の指す先が違えば書かない（`token set` と同じ筋）。
+
+    通すと、**そのアカウントの queue の本文が別のアカウントから出る。**
+    """
+    from tests.test_bluesky_adapter import APP_PASSWORD, HANDLE, fake_bluesky
+
+    with fake_bluesky() as service:
+        account = _account_with_token_path(
+            isolated_account_factory, tmp_path, media="bluesky",
+            handle="someone-else.bsky.social", service=str(service))
+        lines = []
+        rc = oauth_mod.run_auth(
+            account["name"], log=lines.append,
+            identifier_input=lambda: HANDLE,
+            password_input=lambda: APP_PASSWORD)
+
+    assert rc == 1
+    assert not os.path.exists(account["token_path"])
+    assert "保存しませんでした" in "\n".join(lines)
+
+
+def test_T3_blueskyはアカウントのパスワードを断る(tmp_path, isolated_account_factory):
+    """App Password の形（xxxx-xxxx-xxxx-xxxx）でなければ loud に断る。
+
+    アカウントのパスワードは管理画面から取り消せない——`.token` に置いてよい
+    ものではない（`bluesky.auth_interactive()` の但し書き）。
+    """
+    from tests.test_bluesky_adapter import HANDLE, fake_bluesky
+
+    with fake_bluesky() as service:
+        account = _account_with_token_path(
+            isolated_account_factory, tmp_path, media="bluesky",
+            handle=HANDLE, service=str(service))
+        lines = []
+        rc = oauth_mod.run_auth(
+            account["name"], log=lines.append,
+            identifier_input=lambda: HANDLE,
+            password_input=lambda: "my-real-account-password")
+
+    assert rc == 1
+    assert not os.path.exists(account["token_path"])
+    out = "\n".join(lines)
+    assert "App Password" in out
+    assert "my-real-account-password" not in out
+
+
+def test_T3_端末でなければ読まない(tmp_path, monkeypatch, isolated_account_factory):
+    """tty を割り当てない ssh で秘密が画面に出る経路を塞ぐ（`thth app set` と同じ）。"""
+    import sys as _sys
+
+    class _NotATty:
+        def isatty(self):
+            return False
+
+    monkeypatch.setattr(_sys, "stdin", _NotATty())
+    account = _account_with_token_path(
+        isolated_account_factory, tmp_path, media="bluesky",
+        handle="x.bsky.social", service="https://bsky.invalid")
+    lines = []
+    rc = oauth_mod.run_auth(account["name"], log=lines.append)
+    assert rc == 2
+    assert "端末ではありません" in "\n".join(lines)
+    assert not os.path.exists(account["token_path"])
+
+
+def test_T3_threadsの経路は現行のまま(tmp_path, monkeypatch, isolated_account_factory):
+    """**媒体分岐を足しても Threads の挙動は変わらない。**"""
+    _write_app_env(tmp_path, monkeypatch)
+    account = _account_with_token_path(isolated_account_factory, tmp_path)
+    with fake_oauth_server() as base_url:
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        monkeypatch.setenv("THTH_THREADS_AUTH_BASE_URL", base_url)
+        rc = oauth_mod.run_auth(account["name"], code="THE-CODE",
+                                 log=lambda _l: None)
+    assert rc == 0
+    with open(account["token_path"], encoding="utf-8") as f:
+        token = json.load(f)
+    # Threads は期限を持つ（`expires_in` が入り、`no_expiry` は立たない）。
+    assert token["expires_in"] and not token.get("no_expiry")
