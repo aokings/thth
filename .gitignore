@@ -5,6 +5,7 @@ __pycache__/
 logs/
 state/
 .pytest_cache/
+dist/
 .claude/worktrees/
 callback/.wrangler/
 callback/node_modules/
