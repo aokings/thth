@@ -543,3 +543,61 @@ def test_秘密は例外文に出ない(call):
                 adapter.conversation(ROOT_ID)
     assert TOKEN not in str(e.value)
     assert TOKEN not in repr(e.value)
+
+
+# ---------------------------------------------------------------------------
+# T0（境界）が main に入れた形に合わせてある部分
+# ---------------------------------------------------------------------------
+
+def test_capabilitiesは実体を作らずに引ける():
+    """`select` がトークンを読まずにトピック検査の要否を決められる（T0・受け入れ 6）。"""
+    assert mastodon_mod.MastodonAdapter.capabilities() == set()
+    assert mastodon_mod.MastodonAdapter.CAPABILITIES == frozenset()
+
+
+def test_from_accountは台帳とトークンから組み立てる():
+    adapter = mastodon_mod.MastodonAdapter.from_account(
+        {"media": "mastodon", "instance": "https://example.invalid/"},
+        {"access_token": TOKEN})
+    assert adapter.instance == "https://example.invalid"   # 末尾の / は落ちる
+    assert adapter.access_token == TOKEN
+    assert adapter.visibility == "public"
+
+
+def test_from_accountはvisibilityを台帳から読む():
+    adapter = mastodon_mod.MastodonAdapter.from_account(
+        {"instance": "https://example.invalid", "visibility": "unlisted"}, {})
+    assert adapter.visibility == "unlisted"
+
+
+def test_from_accountはinstanceが無ければ名指しで断る():
+    """既定の mastodon.social に黙って落とすと、書き忘れた人が知らないサーバに投げる。"""
+    with pytest.raises(ValueError) as e:
+        mastodon_mod.MastodonAdapter.from_account({"media": "mastodon"}, {})
+    assert "instance" in str(e.value)
+
+
+def test_probeの1行はdoctorがそのまま描ける形():
+    """`thth/doctor.py` は `label`・`permission`・`detail`・`ok` を読む（T-B5）。"""
+    with fake_mastodon() as fake:
+        probes = _adapter(fake).probe()
+    for row in probes:
+        assert {"name", "label", "permission", "key", "ok", "detail"} <= set(row)
+        assert isinstance(row["label"], str) and row["label"]
+        assert isinstance(row["permission"], str) and row["permission"]
+
+
+def test_probeはgetを渡されても受け取る():
+    """doctor は取得口を渡す（T0）。Mastodon 側は使わないが、**署名は合わせる**。"""
+    with fake_mastodon() as fake:
+        probes = _adapter(fake).probe(get=lambda *a, **k: {})
+    assert [p["ok"] for p in probes] == [True, True]
+
+
+def test_例外はAdapterErrorでRuntimeErrorの網にも入る():
+    """採取側は「例外なら記録を書かない」で成功と失敗を分けている（T0 の base）。"""
+    with fake_mastodon({"context": "5xx"}) as fake:
+        with pytest.raises(mastodon_mod.AdapterError):
+            _adapter(fake).conversation(ROOT_ID)
+        with pytest.raises(RuntimeError):
+            _adapter(fake).conversation(ROOT_ID)
