@@ -33,20 +33,28 @@
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import json
 import os
+import re
 
 from . import accounts as accounts_mod
 from . import core
 from . import jst
+from . import measured as measured_mod
 from . import queuefile
 from . import redact as redact_mod
 from . import writeback
+from .adapters import base as adapter_base
 
 # 投稿からの経過時間の刻み（時間）。**比較の単位はここ。**
 # 初速（1h・6h）と、落ち着いたあと（24h・72h・7d）。
 AGE_MARKS_HOURS = [1, 6, 24, 72, 168]
+
+# 利用者から始まった会話の置き場（設計 v2 §4.2「採集と実測の媒体差」）。
+# **WhatsApp の芽**——`inbox` を持つアダプタがあれば、`collect` がここへ追記する。
+INBOX_DIR = ("data", "sns", "inbox")
 
 
 def _git(repo_dir: str, args: list):
@@ -347,7 +355,17 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
         metrics = None
         if marks:
             try:
-                metrics = adapter.insights(post_id)
+                # **「取れなかった指標」と「そもそも媒体に無い指標」を分ける**
+                # （設計 v2 §4.2）。`available` はその媒体が持っている指標の
+                # 名前で、そこに無いものは実測の行に `null` を書く——
+                # **捨てない・数える**（設計 v1 §3.2.2）。あとで
+                # `account_report.comparable_views()` が「媒体に views が無い」
+                # という理由で比較から外し、件数と理由を残す。
+                metrics, available = adapter_base.metrics_of(adapter.insights(post_id))
+                if available is not None:
+                    for name in measured_mod.POST_METRIC_NAMES:
+                        if name not in available:
+                            metrics.setdefault(name, None)
             except Exception as e:  # 採取の失敗で投稿を止めない
                 errors.append(f"{post_id}: insights: {redact_mod.redact(str(e))}")
                 metrics = None
@@ -366,6 +384,10 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 # 追記専用の台帳なので書き換えない——`account` が無い行は
                 # `thth/measured.py` 側で「不明」として扱う。
                 "account": account_name,
+                # **どの媒体で測った数か**（設計 v2 §2.1「媒体をまたいで比較
+                # しない」）。台帳の `media` を書き換えても過去の行は動かない
+                # ——`account` を行に刻んだのと同じ理由（R3・2026-09-12）。
+                "medium": account_cfg.get("media"),
                 # **トピックを一緒に残す**（masaru 指摘 2026-09-10）。asmon は
                 # フォロワー 0 で `中学受験` を付けた投稿が 200〜574 views、
                 # nigamilab のトピック無しは 1 view。
@@ -403,6 +425,10 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 if 新しい:
                     log(f"返信 {len(新しい)} 件: {post_id}")
 
+    # --- 利用者から始まった会話（**WhatsApp の芽**・設計 v2 §4.2）
+    touched.extend(_collect_inbox(account_cfg, adapter, now=now, errors=errors,
+                                   log=log))
+
     # --- アカウント単位の日次（前日ぶん・`clicks` はここでしか取れない）
     account_path = _collect_account_daily(account_name, account_cfg, adapter,
                                            now=now, errors=errors)
@@ -410,6 +436,90 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
         touched.append(account_path)
 
     return {"touched": sorted(set(touched)), "posts": posts_seen, "errors": errors}
+
+
+_MONTH_RE = re.compile(r"^\d{4}-\d{2}")
+
+
+def _inbox_month(row: dict, *, now) -> str:
+    """その行を書く月（`<YYYY-MM>.ndjson`）。
+
+    **届いた時刻の月**に置く（採った月ではない）。`timestamp` が無い・読めない
+    ときだけ「いま」の月に落とす（行そのものには `timestamp` が残るので、
+    あとから「置き場は推測だった」と分かる）。
+    """
+    stamp = row.get("timestamp")
+    if isinstance(stamp, str) and _MONTH_RE.match(stamp):
+        return stamp[:7]
+    return jst.month_str(now)
+
+
+def _collect_inbox(account_cfg: dict, adapter, *, now, errors: list, log) -> list:
+    """`inbox` を持つアダプタから、利用者が始めた会話を採って追記する。
+
+    **芽である**（設計 v2 §4.2）。v2-3 では偽の push 型アダプタでこの配管だけを
+    通し、WhatsApp の実装は §7-9 の後。ここでやることは 3 つだけ:
+
+    1. `capabilities()` に `inbox` があるアダプタだけに聞く（無い媒体は呼ばない）。
+    2. `data/sns/inbox/<YYYY-MM>.ndjson` に**追記**する。
+    3. **`message_id` で重複を除く**（冪等——同じ実行を 2 度走らせても増えない）。
+
+    **`reply_deadline` はそのまま行に残す**（24 時間の会話窓・設計 v2 §4.1）。
+    承認の待ち時間に上限が要るので、**期限を落とすと門が使えなくなる。**
+    """
+    try:
+        capabilities = adapter.capabilities()
+    except Exception:
+        capabilities = set()
+    if "inbox" not in (capabilities or set()):
+        return []
+
+    repo_dir = account_cfg.get("repo_dir") or ""
+    try:
+        messages = adapter.inbox()
+    except Exception as e:
+        errors.append(f"inbox: {redact_mod.redact(str(e))}")
+        return []
+    if not isinstance(messages, list):
+        # **形が違うものを件数として数えない**（`_rows()` と同じ流儀）。
+        errors.append(f"inbox: 一覧が配列ではありません（{type(messages).__name__}）")
+        return []
+
+    touched, 欠落 = [], 0
+    by_month: dict = {}
+    for message in messages:
+        row = (dataclasses.asdict(message)
+               if dataclasses.is_dataclass(message) and not isinstance(message, type)
+               else message)
+        if not isinstance(row, dict):
+            欠落 += 1
+            continue
+        if not row.get("message_id"):
+            # **id の無い行を、黙って成功件数に含めない**（`_save_replies()` と同じ）。
+            欠落 += 1
+            continue
+        by_month.setdefault(_inbox_month(row, now=now), []).append(row)
+
+    if 欠落:
+        errors.append(f"inbox: message_id の無い行が {欠落} 件ありました（書いていません）")
+
+    for month, rows in sorted(by_month.items()):
+        path = os.path.join(repo_dir, *INBOX_DIR, f"{month}.ndjson")
+        known = {r.get("message_id") for r in _read_ndjson(path)}
+        fresh = []
+        for row in rows:
+            mid = row.get("message_id")
+            if mid in known:
+                continue
+            known.add(mid)
+            # **管理項目は後に置く**——媒体の行に同名の値があっても上書きさせない。
+            fresh.append({**row, "kind": "inbox", "collected_at": jst.iso(now)})
+        if not fresh:
+            continue
+        _append_ndjson(path, fresh)
+        touched.append(path)
+        log(f"問い合わせ {len(fresh)} 件: {month}")
+    return touched
 
 
 def _collect_account_daily(account_name, account_cfg, adapter, *, now, errors) -> str | None:
