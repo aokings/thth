@@ -9,7 +9,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 版
 
-**1.0.0**（`thth --version`）。他人が自分の Meta アプリで導入できる最初の版。範囲は [docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md](docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md)、導入は [docs/導入_自分のMetaアプリで動かす.md](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
+**1.1.0**（`thth --version`）。他人が自分の Meta アプリで導入できる最初の版。範囲は [docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md](docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md)、導入は [docs/導入_自分のMetaアプリで動かす.md](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
 
 **`main` への push は保存だけ。`release` を進める操作が配布**（VM は `release` だけを追う。設計 §3.2.1）。
 
@@ -19,7 +19,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## いまの状態（2026-09-12）
 
-版 **1.0.0**。全件テスト **1319 件**（`python -m pytest tests/ -q -n auto`）。
+版 **1.1.0**。全件テスト **1506 件**（`python -m pytest tests/ -q -n auto`）。
 
 **媒体**: Threads（稼働）・Bluesky・Mastodon（v2・同席用の台帳あり・未稼働）。
 
