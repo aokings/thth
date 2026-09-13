@@ -20,6 +20,6 @@
   "ping": "wrapper",
   "timeout": 300,
   "dry_run_env": "THTH_DRY_RUN",
-  "production": false,
+  "production": true,
   "scheduled": false
 }

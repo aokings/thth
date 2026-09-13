@@ -47,16 +47,19 @@ def test_台帳が読めて既知の媒体を指している(name):
 
 
 @pytest.mark.parametrize("name", 新しい台帳)
-def test_まだ稼働させない印が両方立っている(name):
-    """**未稼働**（masaru の指示 2026-09-13）。timer も持たず、本番でもない。
+def test_同席用の台帳はtimerを持たない(name):
+    """**同席専用**（masaru の裁定 2026-09-13 夕: 「どちらも配って」）。
 
-    `production: false` なら `--production` を付けても出ない。
-    `scheduled: false` なら `thth systemd` が timer を作らない。
-    **どちらか片方だけだと、うっかり出る／うっかり回る。**
+    `production: true` は masaru の裁定で立てた——`thth send --production` を**明示した
+    ときだけ**出る（`masaru-threads` と同じ様態）。`scheduled: false` は動かさない:
+    `thth systemd` が timer を作らず、`thth run` の経路に乗らない。**timer が生えたら、
+    queue の無い台帳で毎 10 分「出すものが無い」を回すだけでなく、production が
+    true なので不在の様態が開く。** ここだけは固定する。
     """
     cfg = _load(name)
-    assert cfg["production"] is False, cfg
+    assert cfg["production"] is True, cfg
     assert cfg["scheduled"] is False, cfg
+    assert cfg["repo_dir"].endswith("/_none"), cfg
 
 
 @pytest.mark.parametrize("name", 新しい台帳)
