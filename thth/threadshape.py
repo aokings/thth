@@ -446,6 +446,12 @@ def _post_shape(post_id: str, rows: list, fetches: list, *, measured_post,
         "medium": medium,
         "topic": topic,
         "kind": kind,
+        # **どの記録から採った投稿か**（設計 v2.0.1 §3）。`"queue"` は書き戻された
+        # front-matter、`"sent"` は `state/<account>/sent/`（同席の様態）。
+        # 実測の台帳が無ければ `None`——**判らないものを `queue` と言わない。**
+        "source": ((measured_post or {}).get("source")
+                    or next((f.get("source") for f in fetches if f.get("source")),
+                            None)),
         "posted_at": posted_at_raw,
         "hour_band": hour_band(posted_at),
         "branches": branches,

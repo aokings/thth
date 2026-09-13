@@ -238,7 +238,7 @@ def measured_views_by_account() -> dict:
         except accounts_mod.AccountError:
             continue
         out[name] = _measured_observations_by_topic(
-            account_cfg.get("repo_dir") or "", name, account_cfg.get("media"))
+            account_cfg, name, account_cfg.get("media"))
     return out
 
 
@@ -326,7 +326,7 @@ def topic_plan(account_name: str, *, now=None) -> dict:
     files = core.list_queue_files(
         account_cfg, tree_sha=writeback_mod.upstream_sha(repo_dir))
 
-    measured = _measured_observations_by_topic(repo_dir, account_name,
+    measured = _measured_observations_by_topic(account_cfg, account_name,
                                                 account_cfg.get("media"))
     rows: dict = {}
     for qf in files:
@@ -377,7 +377,7 @@ def topic_plan(account_name: str, *, now=None) -> dict:
 # 出所が同じでも、**実経過時間が違う値を並べて中央値を出すのは比較になっていない。**
 
 
-def _measured_observations_by_topic(repo_dir: str, account_name: str,
+def _measured_observations_by_topic(account_cfg: dict, account_name: str,
                                      default_medium: str | None = None) -> dict:
     """実測を topic ごとに集める。**数値だけでなく、出所と時間条件も返す。**
 
@@ -394,7 +394,9 @@ def _measured_observations_by_topic(repo_dir: str, account_name: str,
     """
     out: dict = {}
     見た投稿: set = set()
-    base = os.path.join(repo_dir, "data", "sns", "insights", "posts")
+    # **置き場の解決は 1 か所**（設計 v2.0.1 §1）。repo が無い account
+    # （同席専用）では `$THTH_ROOT/state/<account>/data/sns/…` を読む。
+    base = accounts_mod.data_dirs(account_cfg, account_name)["insights_posts"]
     if not os.path.isdir(base):
         return out
     for name in sorted(os.listdir(base)):

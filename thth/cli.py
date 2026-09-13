@@ -876,8 +876,13 @@ def cmd_replies(args) -> int:
         print("")
 
     counts = result["counts"]
+    # **取得記録の出所**（設計 v2.0.1 §3）。`sent` は同席の様態（`thth send`）で
+    # 出した投稿の返信——queue の原稿は無い。
+    出所 = "・".join(f"{'同席の送信' if k == 'sent' else k} {v}"
+                     for k, v in (counts.get("fetch_sources") or {}).items())
     print(f"—— 返信 {counts['replies']} 件（身内 {counts['own']}・その他 {counts['other']}・"
-          f"不明 {counts['unknown']}）／取得記録 {counts['fetches']} 件")
+          f"不明 {counts['unknown']}）／取得記録 {counts['fetches']} 件"
+          + (f"（出所 {出所}）" if 出所 else ""))
     if result["broken"]:
         print(f"**読めなかったファイル**（壊れています）: {', '.join(result['broken'])}",
               file=sys.stderr)
@@ -917,11 +922,21 @@ def cmd_measured(args) -> int:
         # 違う値になる。**過去の分類として読ませないよう、由来ごと出す。**
         # **読めなかったことを「型無し」と出さない**（外部レビュー・2026-09-12）。
         # 原稿の不存在・読取不能でも「（型無し）」と出ていた。
-        form = (post.get("form_now") or "（型無し）") if post.get("form_readable") \
-                else "（**型未確認**——原稿を読めません）"
+        # **出所の 1 語**（設計 v2.0.1 §3）。同席の様態（`thth send`）には原稿が
+        # 無いので、「型を読めなかった」ではなく「原稿が無い」と言う——
+        # **無いものを、読めなかったことにしない。**
+        出所 = post.get("source") or "queue"
+        出所文 = "同席の送信" if 出所 == "sent" else "queue"
+        if post.get("form_readable"):
+            form = post.get("form_now") or "（型無し）"
+        elif 出所 == "sent":
+            form = "（原稿なし——同席の送信）"
+        else:
+            form = "（**型未確認**——原稿を読めません）"
         source = post.get("form_source")
-        source_text = "（いまの原稿から）" if source == "current_draft" else ""
-        print(f"{post['post_id']}  [{topic}]  form={form}{source_text}"
+        source_text = "（いまの原稿から）" if source == "current_draft" \
+            and post.get("form_readable") else ""
+        print(f"{post['post_id']}  [{topic}]  出所={出所文}  form={form}{source_text}"
               f"  posted_at={post.get('posted_at')}  file={post.get('file')}")
         # **外した行の数を、その投稿の所に出す**（2026-09-12）。行ごとに所有を
         # 選別するようにしたので、1 つの投稿の中に「裏付けのある行」と「採取
@@ -1066,7 +1081,8 @@ def cmd_threads(args) -> int:
         topic = post["topic"] or "（トピック無し）"
         kind = post["kind"] or "型なし"
         band = post["hour_band"] or "時刻不明"
-        print(f"{post['post_id']}  [{topic}／{kind}]  {band}"
+        出所 = {"sent": "同席の送信", "queue": "queue"}.get(post.get("source"), "不明")
+        print(f"{post['post_id']}  [{topic}／{kind}]  {band}  出所={出所}"
               f"  posted_at={post['posted_at']}")
 
         part = post["participants"]
