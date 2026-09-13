@@ -389,11 +389,14 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 # **捨てない・数える**（設計 v1 §3.2.2）。あとで
                 # `account_report.comparable_views()` が「媒体に views が無い」
                 # という理由で比較から外し、件数と理由を残す。
+                # **`available` は必ず来る**（F3・2026-09-13）。旧い形を
+                # `metrics_of()` が断るようになったので、`available is not None`
+                # の枝は無くなった——**その枝が「埋めない」経路**で、
+                # 「媒体に無い」と「取れなかった」が同じ形になっていた。
                 metrics, available = adapter_base.metrics_of(adapter.insights(post_id))
-                if available is not None:
-                    for name in measured_mod.POST_METRIC_NAMES:
-                        if name not in available:
-                            metrics.setdefault(name, None)
+                for name in measured_mod.POST_METRIC_NAMES:
+                    if name not in available:
+                        metrics.setdefault(name, None)
             except Exception as e:  # 採取の失敗で投稿を止めない
                 errors.append(f"{post_id}: insights: {redact_mod.redact(str(e))}")
                 metrics = None
