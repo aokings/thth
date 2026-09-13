@@ -13,7 +13,7 @@ import os
 
 import pytest
 
-from tests.conftest import write_queue_file
+from tests.conftest import make_queue_text, parse_verified, write_queue_file
 from tests.helpers import fake_push_adapter
 from thth import account_report as account_report_mod
 from thth import adapters as adapters_mod
@@ -22,6 +22,10 @@ from thth import collect as collect_mod
 from thth import core as core_mod
 from thth import doctor as doctor_mod
 from thth import jst
+from thth import maintain as maintain_mod
+from thth import oauth as oauth_mod
+from thth import queuefile as queuefile_mod
+from thth import select as select_mod
 from thth.adapters import base as adapter_base
 from thth.adapters import threads as threads_mod
 
@@ -120,6 +124,54 @@ def test_TB0_conversationはmediumとauthor_keyを足すが既存の鍵は変え
         assert 旧鍵 in row, f"既存の鍵 `{旧鍵}` が消えている"
     assert row["medium"] == "threads"
     assert row["author_key"] == adapter_base.author_key("threads", "someone")
+
+
+def _select_1件(tmp_path, *, media: str, topic: str, char_limit=None):
+    """`select` に 1 本だけ流して、落ちた理由を返す（時刻の関門より手前を見る）。"""
+    path = tmp_path / "a.md"
+    path.write_text(make_queue_text(
+        fm_overrides={"account": "a", "topic": topic,
+                       "publish_at": "2026-09-09T08:00:00+09:00"},
+        body=f"## {media}\n\n本文です。\n", media=media), encoding="utf-8")
+    account_cfg = {"media": media, "hashtags": False, "quiet_hours": None,
+                   "min_interval_hours": 0, "stale_days": 3650}
+    if char_limit is not None:
+        account_cfg["char_limit"] = char_limit
+    result = select_mod.select_one(
+        [parse_verified(str(path))], account_name="a", account_cfg=account_cfg,
+        now=datetime.datetime(2026, 9, 9, 10, 0, tzinfo=jst.JST),
+        last_post_at=None, recent_texts=set())
+    return result, [r.reason for r in result.rejections]
+
+
+def test_topicを持たない媒体では検査しない(tmp_path, 偽の媒体を登録する):
+    """**変異検出**: `capabilities` を見ずに常に検査する形に戻すと落ちる。
+
+    1 つの queue を Threads と Bluesky の 2 account が拾う形（設計 v1 §8-16）で、
+    **同じ原稿が媒体によって落ちる**のを避ける（設計 v2 §4.2）。
+    """
+    result, 理由 = _select_1件(tmp_path, media=MEDIUM, topic="苦味.コーヒー")
+    assert not any(r.startswith("topic_") for r in 理由), 理由
+    assert result.chosen is not None, 理由
+
+
+def test_threadsは今までどおりtopicを検査する(tmp_path):
+    result, 理由 = _select_1件(tmp_path, media="threads", topic="苦味.コーヒー")
+    assert any(r.startswith("topic_") for r in 理由), 理由
+    assert result.chosen is None
+
+
+def test_char_limitで媒体の既定を上書きできる(tmp_path, 偽の媒体を登録する):
+    """Mastodon のようにインスタンスで上限が違う媒体のため（設計 v2 §4.2）。"""
+    assert queuefile_mod.MEDIA_LIMITS["bluesky"] == 300
+    assert queuefile_mod.MEDIA_LIMITS["mastodon"] == 500
+    assert queuefile_mod.limit_for("mastodon", {"char_limit": 1000}) == 1000
+    # 壊れた上書き（0・負・文字列）は黙って採らない。
+    assert queuefile_mod.limit_for("mastodon", {"char_limit": 0}) == 500
+    assert queuefile_mod.limit_for("mastodon", {"char_limit": "たくさん"}) == 500
+
+    _, 理由 = _select_1件(tmp_path, media=MEDIUM, topic="", char_limit=3)
+    assert any(r.startswith("too_long(") for r in 理由), 理由
 
 
 # =============================================================================
@@ -336,6 +388,87 @@ def test_TB4_threadsの実測は今までどおり(tmp_path, isolated_account_fa
     rows = [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
     assert rows[0]["metrics"] == {"views": 12, "likes": 1}, rows[0]["metrics"]
     assert rows[0]["medium"] == "threads"
+
+
+# =============================================================================
+# トークン: 「判らない」と「期限を持たない」を混ぜない（設計 v2 §4.2）
+# =============================================================================
+
+def _write_no_expiry_token(path, *, obtained_at="2026-01-01T00:00:00+09:00"):
+    """Bluesky の App Password 相当（期限が無い・`expires_in` を持たない）。"""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"access_token": "NO-EXPIRY-TOKEN", "obtained_at": obtained_at,
+                   "no_expiry": True, "user_id": "1", "username": "u"}, f)
+
+
+def test_期限を持たないトークンはremaining_daysがNone():
+    now = datetime.datetime(2026, 9, 13, 10, 0, tzinfo=jst.JST)
+    age, remaining = oauth_mod.token_age_and_remaining(
+        {"obtained_at": "2026-01-01T00:00:00+09:00", "no_expiry": True}, now)
+    assert remaining is None and age > 0
+
+
+def test_expires_inが書いてあれば期限が無いとは言わない():
+    """**変異検出**: `no_expiry` を `expires_in` より優先すると落ちる。"""
+    now = datetime.datetime(2026, 9, 13, 10, 0, tzinfo=jst.JST)
+    _, remaining = oauth_mod.token_age_and_remaining(
+        {"obtained_at": "2026-09-12T10:00:00+09:00", "no_expiry": True,
+         "expires_in": 5184000}, now)
+    assert remaining is not None and 58 < remaining < 60
+
+
+def test_maintainは期限なしをokと言い更新しない(tmp_path, isolated_account_factory):
+    token_path = str(tmp_path / "a.token")
+    account = isolated_account_factory(token=token_path)
+    _write_no_expiry_token(token_path)   # 取得から 250 日以上（50 日超）
+
+    row = maintain_mod.inspect(account["name"],
+                                now=datetime.datetime(2026, 9, 13, 10, 0, tzinfo=jst.JST))
+    assert row["state"] == maintain_mod.OK, row
+    assert row["remaining_days"] is None
+    assert row["no_expiry"] is True
+    assert "期限を持たない" in row["message"]
+
+    呼ばれた = []
+    lines = []
+    rc = maintain_mod.run_maintain(account["name"], log=lines.append,
+                                    refresh=lambda *a, **k: 呼ばれた.append(a) or 0,
+                                    now=datetime.datetime(2026, 9, 13, 10, 0,
+                                                           tzinfo=jst.JST))
+    assert rc == 0 and 呼ばれた == [], "**期限を持たないトークンを更新しようとしている**"
+    assert "期限なし" in "\n".join(lines), lines
+
+
+def test_判らないと期限を持たないは別の顔で出る(tmp_path, isolated_account_factory):
+    """`remaining_days: null` だけでは、読めなかったのか期限が無いのか判らない。"""
+    token_path = str(tmp_path / "a.token")
+    account = isolated_account_factory(token=token_path)
+    with open(token_path, "w", encoding="utf-8") as f:
+        json.dump({"access_token": "T"}, f)   # `obtained_at` が無い＝読めない
+    壊れ = maintain_mod.inspect(account["name"],
+                                now=datetime.datetime(2026, 9, 13, 10, 0, tzinfo=jst.JST))
+    assert 壊れ["state"] == maintain_mod.UNREADABLE
+    assert 壊れ["remaining_days"] is None and 壊れ["no_expiry"] is False
+
+
+def test_refreshのcheckにno_expiryが出る(tmp_path, capsys, isolated_account_factory):
+    token_path = str(tmp_path / "a.token")
+    account = isolated_account_factory(token=token_path)
+    _write_no_expiry_token(token_path)
+    now = datetime.datetime(2026, 9, 13, 10, 0, tzinfo=jst.JST)
+
+    lines = []
+    assert oauth_mod.run_refresh(account["name"], check=True, log=lines.append,
+                                  now=now) == 0
+    payload = json.loads(lines[-1])
+    assert payload["no_expiry"] is True
+    assert payload["remaining_days"] is None
+    assert payload["needs_refresh"] is False
+
+    lines = []
+    assert oauth_mod.run_refresh(account["name"], force=True, log=lines.append,
+                                  now=now) == 0
+    assert "期限を持ちません" in "\n".join(lines), lines
 
 
 # =============================================================================
