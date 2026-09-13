@@ -14,6 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .. import httpsafe
 from .. import jst
 from .. import redact as redact_mod
 from . import base
@@ -134,7 +135,7 @@ class ThreadsAdapter(base.Adapter):
         url = f"{self.base_url}{path}"
         data = urllib.parse.urlencode(params).encode("utf-8")
         req = urllib.request.Request(url, data=data, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with httpsafe.urlopen(req, timeout=self.timeout) as resp:
             body = resp.read()
             return json.loads(body) if body else {}
 
@@ -233,7 +234,7 @@ class ThreadsAdapter(base.Adapter):
                 url = f"{url}{sep}access_token={urllib.parse.quote(self.access_token)}"
         else:
             url = f"{self.base_url.rstrip('/')}{path}?" + urllib.parse.urlencode(p)
-        with urllib.request.urlopen(url, timeout=self.timeout) as resp:
+        with httpsafe.urlopen(url, timeout=self.timeout) as resp:
             body = json.loads(resp.read() or b"{}")
         # **200 で返ってきた `error` を、取れたことにしない**（監査 2026-09-11）。
         # 失敗すれば `urlopen` が上げるので、採取側は「例外なら記録を書かない」

@@ -34,6 +34,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .. import httpsafe
 from .. import jst
 from .. import redact as redact_mod
 from . import base
@@ -156,7 +157,7 @@ def char_limit(instance: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> in
     url = _instance_url(instance) + "/api/v2/instance"
     req = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with httpsafe.urlopen(req, timeout=timeout) as resp:
             body = json.loads(resp.read() or b"{}")
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
         raise AdapterError(
@@ -300,7 +301,7 @@ class MastodonAdapter(base.Adapter):
         body = urllib.parse.urlencode(data).encode("utf-8") if data is not None else None
         req = urllib.request.Request(url, data=body, method=method,
                                      headers=self._headers(headers))
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with httpsafe.urlopen(req, timeout=self.timeout) as resp:
             self._remember_rate_limit(resp)
             raw = resp.read()
         return json.loads(raw) if raw else {}

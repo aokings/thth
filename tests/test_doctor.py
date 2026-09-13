@@ -50,7 +50,11 @@ def test_doctor_は書き込みの口を持たない():
     for pat in forbidden:
         assert re.search(pat, src) is None, f"doctor に書き込みらしき語がある: {pat}"
     # 唯一の HTTP 呼び出しが GET（データを持たない urlopen）であること。
-    assert src.count("urllib.request.urlopen(") == 1
+    # **綴りは `httpsafe.urlopen(`**（監査 2026-09-14・P1-1 で、別ホストへの
+    # リダイレクトを追わない共通の opener 経由に移した）。見ている性質
+    # 「HTTP の口は 1 つ・`data=` を持たない」は変えていない。
+    assert src.count("httpsafe.urlopen(") == 1
+    assert src.count("urllib.request.urlopen(") == 0
     assert "data=" not in src
 
 

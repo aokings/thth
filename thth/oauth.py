@@ -35,6 +35,7 @@ import urllib.request
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
 from . import appenv
+from . import httpsafe
 from . import jst
 from . import redact as redact_mod
 from . import scopes as scopes_mod
@@ -141,7 +142,7 @@ def extract_token(raw: str) -> str:
 def _post_form(url: str, params: dict, *, timeout: float) -> dict:
     data = urllib.parse.urlencode(params).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with httpsafe.urlopen(req, timeout=timeout) as resp:
         body = resp.read()
         return json.loads(body) if body else {}
 
@@ -149,7 +150,7 @@ def _post_form(url: str, params: dict, *, timeout: float) -> dict:
 def _get_json(url: str, params: dict, *, timeout: float) -> dict:
     qs = urllib.parse.urlencode(params)
     req = urllib.request.Request(f"{url}?{qs}", method="GET")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with httpsafe.urlopen(req, timeout=timeout) as resp:
         body = resp.read()
         return json.loads(body) if body else {}
 

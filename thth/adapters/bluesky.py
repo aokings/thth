@@ -40,6 +40,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .. import httpsafe
 from .. import jst
 from .. import redact as redact_mod
 from . import base
@@ -252,7 +253,7 @@ def _xrpc(service: str, method: str, nsid: str, *, params=None, payload=None,
         req.add_header("Content-Type", "application/json")
     if bearer:
         req.add_header("Authorization", f"Bearer {bearer}")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with httpsafe.urlopen(req, timeout=timeout) as resp:
         raw = resp.read()
     body = json.loads(raw) if raw else {}
     if not isinstance(body, dict):

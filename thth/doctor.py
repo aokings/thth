@@ -20,6 +20,7 @@ from . import account_cli as account_cli_mod
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
 from . import appenv as appenv_mod
+from . import httpsafe
 from . import redact as redact_mod
 from . import topics as topics_mod
 from .adapters import base as adapter_base
@@ -72,7 +73,7 @@ def _get(base_url: str, path: str, params: dict, token: str) -> dict:
     p = dict(params)
     p["access_token"] = token
     url = base_url.rstrip("/") + path + "?" + urllib.parse.urlencode(p)
-    with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as resp:
+    with httpsafe.urlopen(url, timeout=TIMEOUT_SECONDS) as resp:
         body = json.loads(resp.read() or b"{}")
     # **doctor 自前の `_get()` には、この直しがまだ入っていなかった**
     # （外部レビュー再々判定 N7・2026-09-12）。`thth/adapters/threads.py` の
