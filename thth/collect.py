@@ -344,7 +344,7 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
             continue
         if not _safe_post_id(post_id):
             # **`post_id` をそのままパスにしない**（独立検収 B・2026-09-12）。
-            errors.append(f"post_id にパス区切りが入っています: {post_id!r}")
+            errors.append(f"post_id がファイル名に使えません（空・`.`・`..`・NUL）: {post_id!r}")
             continue
         try:
             posted_at = jst.parse(posted_at_raw) if hasattr(jst, "parse") else \
@@ -696,7 +696,7 @@ def _refresh_targets(account_name: str, account_cfg: dict, *, now, errors: list,
         # ——版管理からも `thth replies` の読み口からも消えるのに、
         # **表示は「取れた 1 本」で成功に見えた。**
         if not _safe_post_id(pid):
-            errors.append(f"post_id にパス区切りが入っています: {pid!r}")
+            errors.append(f"post_id がファイル名に使えません（空・`.`・`..`・NUL）: {pid!r}")
             continue
         try:
             posted_at = datetime.datetime.fromisoformat(posted_at_raw)

@@ -17,13 +17,15 @@ Threads と同じ境界（`Post` / `PublishResult` / 三分類の `failure`）�
   `parentHeight`、出力は `#threadViewPost` / `#notFoundPost` / `#blockedPost` の union）、
   `app.bsky.feed.getPosts`（`uris` は最大 25・出力 `posts` は `#postView`）、
   `app.bsky.actor.getProfile`（`actor`）。`#postView` は `likeCount`・`replyCount`・
-  `repostCount`・`quoteCount` を持ち、**views に当たる項目は無い**。
+  `repostCount`・`quoteCount` を持ち、**views に当たる項目は無い**。`#postView` には
+  `bookmarkCount` もあるが、**このアダプタは取っていない**（監査 2・2026-09-13）。
 - **L3**（記憶・慣行。一次資料で裏を取っていない）: XRPC の口が `<service>/xrpc/<nsid>` で
   あること、`bsky.social`（PDS）が `app.bsky.*` の問い合わせを AppView へ中継すること、
   投稿の人向け URL が `https://bsky.app/profile/<handle>/post/<rkey>` であること、
   `createSession` の呼び出し上限（30/5 分・300/日）、App Password の形
   （`xxxx-xxxx-xxxx-xxxx`）、本文から URL を拾う正規表現の切り出し方（末尾の句読点を
-  どこまで落とすか）、`count()` の grapheme 近似（**厳密な grapheme 分割ではない**）。
+  どこまで落とすか）、`count()` の grapheme 近似（**厳密な grapheme 分割ではない**）、
+  `refreshSession` は未実装（App Password で毎回 `createSession`）。
 
 秘密（App Password・`accessJwt`）は**例外文にもログにも出さない**（`scrub()` を通す）。
 """

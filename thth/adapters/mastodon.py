@@ -10,6 +10,7 @@
 | `POST /api/v1/statuses`（`status`・`in_reply_to_id`・`visibility`） | docs.joinmastodon.org/methods/statuses/ | **L2** |
 | `Idempotency-Key` ヘッダ（同じ本文の二重投稿を**サーバ側で**防ぐ・保持は 1 時間） | 同上（"Idempotency keys are stored for up to 1 hour"） | **L2** |
 | `GET /api/v1/statuses/:id`（`favourites_count`・`replies_count`・`reblogs_count`） | 同上 | **L2** |
+| Status の `quotes_count`（引用数） | 同上 | **L2**（**このアダプタは取っていない**・監査 2・2026-09-13） |
 | `GET /api/v1/statuses/:id/context`（`ancestors`・`descendants`） | 同上 | **L2** |
 | `GET /api/v1/accounts/verify_credentials`（`id`・`acct`） | docs.joinmastodon.org/methods/accounts/ | **L2** |
 | `GET /api/v2/instance` の `configuration.statuses.max_characters` | docs.joinmastodon.org/methods/instance/ | **L2** |
