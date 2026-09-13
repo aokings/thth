@@ -77,6 +77,19 @@ def _get(base_url: str, path: str, params: dict, token: str) -> dict:
     return body
 
 
+def _auth_needs_app_env(account_name: str) -> bool:
+    """その媒体の `thth auth` が Meta の app.env を要るか（既定は「要らない」）。
+
+    台帳が読めない・媒体を知らないときは False——**判らないときに、要るとは
+    言わない**（要らない一手を勧めるほうが、黙っているより手を止める）。
+    """
+    try:
+        cfg = accounts_mod.load_account(account_name)
+        return bool(adapters_mod.adapter_class(cfg.get("media")).AUTH_NEEDS_APP_ENV)
+    except Exception:   # noqa: BLE001 — 診断の付け足しで診断を止めない
+        return False
+
+
 def diagnose(account_name: str) -> dict:
     """読み取りだけで能力を測る。トークンの値は返り値にも入れない。
 
@@ -181,9 +194,12 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     report = diagnose(account_name)
     if report.get("error"):
         notices.append(NEXT_STEP_TOKEN)
-        if app_env_state == appenv_mod.ABSENT:
+        if app_env_state == appenv_mod.ABSENT and _auth_needs_app_env(account_name):
             # トークンを入れる道は 2 つある。`thth token set`（app.env 不要）と
             # `thth auth`（app.env が要る）。後者を選ぶ人が §3 へ戻れる 1 行。
+            # **要らない媒体には勧めない**（T3・2026-09-13）——Bluesky の
+            # `thth auth` は App Password を対話で受けるだけで app.env を読まない。
+            # 診断の道具が「要らない準備」を指図すると、そこで手が止まる。
             notices.append(NEXT_STEP_AUTH_NEEDS_APP_ENV)
 
     if as_json:

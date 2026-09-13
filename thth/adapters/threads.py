@@ -97,6 +97,9 @@ class ThreadsAdapter(base.Adapter):
     CAPABILITIES = frozenset({"topic", "link_preview", "views", "quota", "refresh",
                               "account_insights"})
 
+    # `thth auth`（OAuth の往復）に Meta の app.env が要る **唯一の媒体**。
+    AUTH_NEEDS_APP_ENV = True
+
     def __init__(self, *, base_url: str = DEFAULT_BASE_URL, access_token: str = "",
                  user_id: str = "", wait_seconds: float = DEFAULT_WAIT_SECONDS,
                  timeout: float = DEFAULT_TIMEOUT_SECONDS):

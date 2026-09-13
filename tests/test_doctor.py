@@ -172,3 +172,29 @@ def test_T3_知らない媒体はトークンの有無より先に断る(tmp_pat
     error = doctor_mod.diagnose(account["name"])["error"]
     assert "carrier-pigeon" in error and "知りません" in error
     assert "トークンが無い" not in error
+
+
+def test_T3_blueskyには要らないapp_envの一手を勧めない(tmp_path, monkeypatch,
+                                             isolated_account_factory):
+    """**要らない準備を指図しない**（T3・2026-09-13）。
+
+    Bluesky の `thth auth` は App Password を対話で受けるだけで、Meta の
+    `app.env` を読まない。それでも「`thth auth` を使うなら先に `thth app set`」と
+    出ていたので、**診断の道具が、そこに無い準備を指図していた**。
+    """
+    monkeypatch.setenv("THTH_APP_ENV_PATH", str(tmp_path / "none.env"))
+    bluesky = isolated_account_factory(
+        "bsky-hint", media="bluesky", handle="aoking.bsky.social",
+        token=str(tmp_path / "missing.token"))
+    lines = []
+    doctor_mod.run_doctor(bluesky["name"], log=lines.append)
+    out = "\n".join(lines)
+    assert "トークンが無い（thth auth を先に）" in out, out
+    assert "thth app set" not in out.split("次の一手")[-1], out
+
+    # **Threads の出力は現行のまま**（app.env が無ければ §3 へ戻る 1 行が出る）。
+    threads = isolated_account_factory(
+        "threads-hint", token=str(tmp_path / "missing2.token"))
+    lines = []
+    doctor_mod.run_doctor(threads["name"], log=lines.append)
+    assert "`thth auth` を使うなら先に `thth app set`" in "\n".join(lines)

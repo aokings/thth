@@ -162,6 +162,13 @@ class Adapter:
     # `thth token set` ではなく `thth auth`（App Password を対話で受ける）。
     TOKEN_SETUP_HINT: str = "thth token set"
 
+    # `thth auth` に Meta の `app.env`（app id と secret）が要るか。**Threads だけ**
+    # （OAuth の往復をこちらが組み立てるので）。Bluesky は App Password を対話で
+    # 受けるだけ、Mastodon はそもそも `thth auth` を使わない。`doctor` が
+    # 「`thth auth` を使うなら先に `thth app set`」と**要らない一手を勧めない**
+    # ようにするための印（T3・2026-09-13）。
+    AUTH_NEEDS_APP_ENV: bool = False
+
     # `.token` に `expires_in` を書かず `no_expiry: true` を立てる媒体
     # （Bluesky の App Password・Mastodon の access token・設計 v2 §4.2）。
     # `oauth.token_age_and_remaining()` がこの印を見て `remaining_days` を
