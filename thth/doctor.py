@@ -16,6 +16,7 @@ import json
 import urllib.parse
 import urllib.request
 
+from . import account_cli as account_cli_mod
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
 from . import appenv as appenv_mod
@@ -143,6 +144,13 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     """
     notices: list[str] = []
 
+    # **台帳の置き場を 1 行で言う**（設計 v2 §3・v2-2a）。台帳が「外」なのか
+    # 「repo の中（互換）」なのかで、`thth account add` した 1 本が見えたり
+    # 見えなかったりする。**どこを読んだかを言わない診断は、台帳が見つからない
+    # ときに役に立たない。** notices（＝足りないもの）とは別枠で常に出す。
+    どこ = account_cli_mod.where_line()
+    accounts_dir_info = accounts_mod.accounts_dir_info()
+
     # `--json` のときは stdout を JSON 1 個だけにする（設計 §6）ので、
     # パーミッション直しの警告（`secrets_fs.ensure_mode_600`）を **stdout へ
     # 素通しできない。** そこで以前は `--json` のとき捨てていたが、それだと
@@ -189,11 +197,14 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         notices.append(NEXT_STEP_ACCOUNT)
         if as_json:
             payload = {"account": account_name, "error": str(e), "probes": [],
-                       "notices": notices, "app_env": app_env_state}
+                       "notices": notices, "app_env": app_env_state,
+                       "accounts_dir": accounts_dir_info}
             if topics_shelf:
                 payload["topics_shelf_broken"] = topics_shelf
             log(json.dumps(payload, ensure_ascii=False))
         else:
+            # **台帳が読めなかったときこそ、どこを読んだかを言う。**
+            log(どこ)
             for n in notices:
                 log(n)
         return 2
@@ -212,6 +223,7 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     if as_json:
         report["notices"] = notices
         report["app_env"] = app_env_state
+        report["accounts_dir"] = accounts_dir_info
         if topics_shelf:
             report["topics_shelf_broken"] = topics_shelf
         log(json.dumps(report, ensure_ascii=False))
@@ -221,10 +233,10 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         return 0 if report.get("probes") and all(
             p["ok"] is not False for p in report["probes"]) else 1
 
+    log(どこ)
     for n in notices:
         log(n)
-    if notices:
-        log("")
+    log("")
 
     if report.get("error"):
         log(report["error"])

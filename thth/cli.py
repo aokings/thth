@@ -14,6 +14,7 @@ import sys
 import unicodedata
 
 from . import __version__ as _pkg_version
+from . import account_cli as account_cli_mod
 from . import account_report as account_report_mod
 from . import accounts as accounts_mod
 from . import approval as approval_mod
@@ -2139,6 +2140,9 @@ def cmd_board(args) -> int:
         # **どの枝を追いかけているのかを必ず出す。** 出ないと、**配る先を
         # 間違えても気づけない**（新しい出力契約にしたとき、ここを落とした）。
         print(f"道具: {_pkg_version}（{head or '(版が読めません)'}）  配布の枝: `{ref}`")
+        # **台帳の置き場を 1 行**（設計 v2 §3・v2-2a）。下に並ぶ顔ぶれが
+        # どこから来たのかを、並べる前に言う。
+        print(account_cli_mod.where_line())
         if not check:
             # **「まだ一度も」とは言えない**（外部レビュー・2026-09-12）。記録の
             # 消失・読取失敗でも同じ分岐に来る。**読めない ≠ 無い。**
@@ -2272,6 +2276,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_account.add_argument("--no-remote", action="store_true", dest="no_remote",
                            help="Threads 側を引きに行かない（網に出ない・速い）")
     p_account.set_defaults(func=cmd_account)
+    account_cli_mod.register(sub)  # `account add` / `account migrate`（設計 v2 §3）
 
     p_revoke = sub.add_parser(
         "revoke", help="承認を取り消して draft に戻す（本文は触らない）")

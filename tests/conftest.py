@@ -289,6 +289,22 @@ def isolated_account_factory(thth_root, nigamilab_repo, monkeypatch):
     # subprocess 越し（bin/thth を別プロセスで呼ぶロック・inflight・round-trip 系の
     # テスト）でも同じ隔離した accounts/ を見るように、環境変数でも渡しておく。
     monkeypatch.setenv("THTH_APP_DIR", fake_app_dir)
+    # **置き場を明示する**（設計 v2 §3「台帳を repo の外へ」・v2-2a）。
+    #
+    # `accounts_dir_info()` の解決は (a) `$THTH_ACCOUNTS_DIR` → (b) `$THTH_ROOT/accounts`
+    # → (c) 互換の app repo `accounts/` の順。**この fixture が置く台帳は (c) に
+    # 当たる**ので、明示しないと隔離したテストが軒並み「互換」経路に落ちる。実害が
+    # 2 つあった:
+    #   - 互換の警告（「台帳が repo の中にあります」）が **stderr に混ざる**。
+    #     `test_run_missing_env` は出力に `env` の 3 文字が出ないことを見ているので、
+    #     tmp パスを含む警告 1 行でその assert が壊れる。
+    #   - (b)(c) の判定は `os.path.isdir()` を呼ぶ。`os.path.isdir` を丸ごと
+    #     monkeypatch するテスト（`test_comparability`）では、その偽物が台帳の
+    #     置き場の判定まで巻き込んで「台帳が無い」になる。
+    # **ここは台帳の置き場を試す場ではない**（それは `tests/test_accounts_dir.py` と
+    # `tests/test_fresh_install.py` の仕事）。隔離した置き場を一意に名指しして、
+    # 解決の順番に依存させない。
+    monkeypatch.setenv("THTH_ACCOUNTS_DIR", accounts_dir)
 
     def _make(name: str = DEFAULT_ACCOUNT_NAME, *, repo_dir: str | None = None, **overrides) -> dict:
         repo_dir = repo_dir or nigamilab_repo

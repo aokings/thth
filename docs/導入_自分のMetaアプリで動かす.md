@@ -143,11 +143,82 @@ $ thth app show --json
 
 ---
 
-## 4. アカウント台帳 `accounts/<account>.json`
+## 4. アカウント台帳 `$THTH_ROOT/accounts/<account>.json`
 
-**台帳はこの repo に commit します**（秘密は入りません）。探し先は **app repo の `accounts/`** で、環境変数 `THTH_APP_DIR` で差し替えられます（`thth/accounts.py` `app_dir()`・**L1**）。
+**台帳は repo の外に置きます**（設計 v2 §3「台帳を repo の外へ」・masaru 裁定 2026-09-13「出す」）。**正は `$THTH_ROOT/accounts/`**。秘密は入りませんが、repo に commit すると「配る道具」と「その人の顔ぶれ」が同じ履歴に混ざり、clone した人に他人の台帳が付いて来ます（それが下の「消してください」でした）。
 
-**clone した直後の `accounts/` には masaru の 4 本（`nigamilab-threads`・`asmon-kanto-threads`・`kopicha-threads`・`masaru-threads`）が入っています。** `thth board` はそれを全部並べます。**自分の台帳を足す前に、使わないものは消してください**（**L1**・実測）。
+### 置き場の決まり方（`thth/accounts.py` `accounts_dir_info()`・**L1**）
+
+上から順に見て、**最初に見つかったところ**を使います。
+
+| 順 | 置き場 | いつ効くか |
+|---|---|---|
+| (a) | 環境変数 `THTH_ACCOUNTS_DIR` | 明示したとき（テスト・特殊な配置） |
+| (b) | **`$THTH_ROOT/accounts/`** ← **正** | **ディレクトリがあれば**。中が 0 本でもここが正 |
+| (c) | app repo の `accounts/` | **(b) が無いときだけ**。**互換・1 版かぎり** |
+
+**(b) は「ディレクトリがあるか」だけで見ます**（中に台帳があるかは見ません）。`thth account add` を 1 本打った時点で外が正になり、**repo の中の台帳は二度と読まれません**。「外に足したのに repo の分も混ざって並ぶ」を作らないためです。
+
+**(c) に落ちているときは、`thth doctor` と `thth board` が 1 行目あたりでそう言います**（`台帳の置き場: … （**repo の中・互換**。…）`）。加えて標準エラーへ警告が 1 行出ます。**この互換は次の版で外します**——見かけたら §4-2 の移行を済ませてください。
+
+### アカウントを 1 本足す（`thth account add`）
+
+```bash
+thth account add demo-threads --media threads --project demo
+# 媒体で足す欄が違う
+thth account add demo-mastodon --media mastodon --project demo --instance https://mastodon.social
+thth account add demo-bluesky  --media bluesky  --project demo --instance https://bsky.social
+```
+
+`accounts.example/<media>.json` の雛形から `$THTH_ROOT/accounts/<name>.json` を書きます。
+
+| 事実 | 出典 | 証拠 |
+|---|---|---|
+| 書く先は**必ず外**。読みが (c) の互換に落ちていても、**repo の中には書きません** | `thth/account_cli.py` `target_accounts_dir()` | **L1**（試験 `test_addは互換のときでもrepoの中に書かない`） |
+| **`production: false`・`scheduled: false` で生まれます。** 雛形が万一 true でもここで落とします | `thth/account_cli.py` `build_ledger()` | **L1**（試験・実測で `mode: rehearsal`） |
+| **既にあるものは上書きしません**（rc=1 で断る） | 同上 `cmd_add()` | **L1**（試験） |
+| `--handle` の既定は **`--project` の値**（アカウント名ではない） | 同上 | **L1**（試験） |
+| Mastodon は `instance`、Bluesky は `service` の欄に入ります | 同上 | **L1**（試験） |
+
+足した後の続き（**値に触るので人の手**・設計 §4.2）:
+
+1. その Threads アカウントを Meta アプリの tester に招待・承諾（§2-5・§2-6）
+2. トークンを入れる（§5）
+3. `~/.config/thth/<account>.env`（`HEALTHCHECK_URL` だけ。**app ID と secret は共通の `app.env` にあるので触らない**）
+4. 本番にするときだけ、台帳の `production` を手で `true` に
+5. `systemctl enable --now thth@<account>.timer`（§6）
+6. 死活監視の check を 1 つ
+
+### 4-2. すでに動いている機械の移行（`thth account migrate`）
+
+**すでに repo の `accounts/` で動いている機械**（VM・2026-09-13 時点の `/srv/thth/app`）は、下の 4 手で外へ移します。**運用セッションの手順は `docs/引継ぎ_運用セッション_2026-09-13.md` 末尾にそのまま貼れる形であります。**
+
+```bash
+thth account migrate --dry-run   # 何も書かない。写す顔ぶれを見るだけ
+thth account migrate             # repo の accounts/*.json を $THTH_ROOT/accounts/ へ copy
+thth board                       # 6 本が変わらず見えること
+```
+
+| 事実 | 出典 | 証拠 |
+|---|---|---|
+| **copy であって移動ではありません。repo は触りません** | `thth/account_cli.py` `cmd_migrate()` | **L1**（試験） |
+| **冪等。** 2 回目からは「写すものはありませんでした」 | 同上 | **L1**（試験） |
+| 外に**中身の違うもの**があれば、**名指しで断って rc=1**（上書きしない） | 同上 `plan_migration()` | **L1**（試験） |
+| **`--dry-run` は `$THTH_ROOT/accounts/` を作りません** | 同上 | **L1**（試験） |
+
+**なぜ copy か**: VM の `/srv/thth/app` は `merge --ff-only origin/release` で更新する clone です。道具がそこの作業ツリーを動かすと、次の自己更新が止まります。
+
+**`repo の accounts/` を消すのは別の日です**（設計 v2 §8）。移行を確かめて、次の `thth run` が通ってから、人の手で消します。この版では repo に 6 本とも残っています。
+
+### clone した直後（新しく導入する人）
+
+**clone の `accounts/` には masaru の 6 本**（`nigamilab-threads`・`asmon-kanto-threads`・`kopicha-threads`・`masaru-threads`・`masaru-bluesky`・`masaru-mastodon`）**が入っています**（この版ではまだ）。`$THTH_ROOT/accounts/` がまだ無いあいだは、互換 (c) でそれが `thth board` に並びます。
+
+**消す必要はありません。`thth account add` を 1 本打てば、その時点で外が正になり、6 本は並ばなくなります**（**L1**・乾式試験 `test_v2_2a_台帳を消さなくてもaddした時点で外が正になる`）。
+
+### 4-3. 台帳の中身
+
+`thth account add` が書くのはこの形です（`accounts.example/threads.json` と同じ）。手で直すときの表も兼ねます。
 
 ```json
 {
@@ -156,11 +227,14 @@ $ thth app show --json
   "media": "threads",
   "handle": "demo",
   "user_id": "",
+  "redirect_uri": "https://example.invalid/",
   "repo_dir": "$THTH_ROOT/repos/demo",
   "queue_dir": "docs/sns/queue",
   "replies_dir": "data/sns/replies",
   "quiet_hours": ["22:00", "07:00"],
   "min_interval_hours": 6,
+  "max_per_run": 1,
+  "tick_minutes": 10,
   "collect_days": 14,
   "hashtags": false,
   "stale_days": 7,
@@ -169,30 +243,22 @@ $ thth app show --json
   "ping": "wrapper",
   "timeout": 300,
   "dry_run_env": "THTH_DRY_RUN",
-  "production": false
+  "production": false,
+  "scheduled": false
 }
 ```
 
 | 事実 | 出典 | 証拠 |
 |---|---|---|
-| **必須は 18 項目**（上の全部から `user_id` を除いたもの）。1 つでも欠けると `台帳に項目が足りません: [...]` で止まる | `thth/accounts.py` `REQUIRED_FIELDS` | **L1** |
+| **必須は 18 項目。** 上の例のうち `user_id`・`redirect_uri`・`max_per_run`・`tick_minutes`・`scheduled` は任意で、残り 18 が必須。1 つでも欠けると `台帳に項目が足りません: [...]` で止まる | `thth/accounts.py` `REQUIRED_FIELDS` | **L1** |
 | `$THTH_ROOT` と `~` を展開するのは **`repo_dir`・`env`・`token` の 3 つだけ** | `thth/accounts.py` `_expand()` | **L1** |
-| **`production: true` を commit しない限り dry-run。** 出力の 1 行目が `mode: rehearsal` になる | 設計 §4.2 | **L1**（実測） |
+| **`production` を自分で `true` にしない限り dry-run。** 出力の 1 行目が `mode: rehearsal` になる（`thth account add` が作るものは必ず `false`） | 設計 §4.2・設計 v2 §3 | **L1**（実測） |
 | `account` は `<project>-<media>`。`project` は clone の dir 名と board の見出し | 設計 §4.2 | **L2**（設計の決め） |
 | **`thth auth` を使うなら `redirect_uri` の欄が要ります。** 設計 §4.2 の例には**載っていません**。無いと `redirect_uri が accounts/<account>.json に無い` で rc=2 | `thth/oauth.py` `run_auth()` | **L1**（実測） |
 | `scopes` の欄を書けば既定 scope より優先される（任意） | `thth/oauth.py`・`thth/scopes.py` | **L1（コード読解・テスト無し）** |
 | `env`（`HEALTHCHECK_URL` 等）は**任意**。無くても `thth run` は止まらない | `thth/accounts.py` `token_exists()` の docstring | **L1** |
 
-### アカウントを 1 本足す 6 手順（設計 §4.2）
-
-1. `accounts/<account>.json` を書いて commit
-2. その Threads アカウントを Meta アプリの tester に招待・承諾（§2-5・§2-6）
-3. トークンを入れる（§5）
-4. `~/.config/thth/<account>.env`（`HEALTHCHECK_URL` だけ。**app ID と secret は共通の `app.env` にあるので触らない**）
-5. `systemctl enable --now thth@<account>.timer`（§6）
-6. 死活監視の check を 1 つ
-
-**1 以外は値に触るので、人の手です**（設計 §4.2・**L2**＝設計の決め）。
+**1 本足す手順は上の「アカウントを 1 本足す」に移りました**（`thth account add` が 1 手目を引き受けます。2 手目から先は値に触るので、今までどおり人の手です・設計 §4.2・**L2**＝設計の決め）。
 
 ---
 
