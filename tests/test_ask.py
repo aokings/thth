@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import os
 import subprocess
@@ -428,21 +429,92 @@ def test_f5_台帳が無ければrc1(account, thth_root):
     assert proc.stdout == ""
 
 
+def _tree_fingerprint(root: str) -> dict:
+    """`root` の下**全部**の (相対パス → 大きさ・更新時刻・中身の sha256)。
+
+    **なぜ `os.listdir` では足りないか**（監査 2・2026-09-13）: 前はここが
+    `os.listdir(state)` のトップ階層の**名前だけ**だった。`state/share/outbox/
+    2026-09.ndjson` に 1 行積んでも、`state/topics.json` を書き換えても、
+    `state/share/observer_id` を新しく作っても——**名前の一覧は変わらないので
+    緑のまま**。「読むだけ」を名前だけで見張ると、中身の書き換えを取り逃がす。
+
+    ディレクトリも数える（空のディレクトリが増えるのも書き込み——`$THTH_ROOT/
+    accounts` が出来た瞬間に台帳の解決順が変わる、という形で実害が出る）。
+    """
+    out: dict = {}
+    if not os.path.isdir(root):
+        return out
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for name in sorted(dirnames):
+            p = os.path.join(dirpath, name)
+            out[os.path.relpath(p, root) + "/"] = "dir"
+        for name in sorted(filenames):
+            p = os.path.join(dirpath, name)
+            rel = os.path.relpath(p, root)
+            st = os.lstat(p)
+            if os.path.islink(p):
+                out[rel] = ("link", os.readlink(p))
+                continue
+            with open(p, "rb") as f:
+                digest = hashlib.sha256(f.read()).hexdigest()
+            out[rel] = (st.st_size, st.st_mtime_ns, digest)
+    return out
+
+
 def test_f6_読むだけで何も書かない(account, thth_root):
-    """**読むだけの口**。呼んでも repo にも state にも書き込みが起きない。"""
+    """**読むだけの口**。呼んでも repo にも state にも書き込みが起きない。
+
+    見るのは `$THTH_ROOT` の**ツリー全体**と原稿 repo の**ツリー全体**——
+    パス・大きさ・更新時刻・中身の sha256 を前後で丸ごと比べる。`.git/` は
+    除く（`git status` を挟むと index の `mtime` が動くため。代わりに
+    `git status --porcelain` と `rev-parse HEAD` を見る）。
+    """
     write_many(account, 25)
-    before = subprocess.run(["git", "-C", account["repo_dir"], "status",
-                             "--porcelain"], capture_output=True, text=True).stdout
-    state_before = sorted(os.listdir(os.path.join(thth_root, "state"))) \
-        if os.path.isdir(os.path.join(thth_root, "state")) else []
+    repo = account["repo_dir"]
+
+    def 原稿repo():
+        return {k: v for k, v in _tree_fingerprint(repo).items()
+                if not k.startswith(".git/") and k != ".git/"}
+
+    def gitの状態():
+        return (subprocess.run(["git", "-C", repo, "status", "--porcelain"],
+                               capture_output=True, text=True).stdout,
+                subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"],
+                               capture_output=True, text=True).stdout)
+
+    台帳の置き場 = account["accounts_dir"]
+    root_before = _tree_fingerprint(thth_root)
+    台帳_before = _tree_fingerprint(台帳の置き場)
+    repo_before = 原稿repo()
+    git_before = gitの状態()
+    # **`$THTH_ROOT` はこの時点で空**（`state/` はまだ 1 つも無い）。空のまま
+    # であることこそ見たいものなので、前提は「在ること」だけ確かめる。
+    assert os.path.isdir(thth_root), "この試験の前提が崩れている（$THTH_ROOT が無い）"
+    assert 台帳_before, "この試験の前提が崩れている（台帳が 1 本も無い）"
+    assert repo_before, "この試験の前提が崩れている（原稿 repo が空）"
+
     assert run_ask(["ask", "before-you-post", ACCOUNT,
                     "--topic", TOPIC]).returncode == 0
-    after = subprocess.run(["git", "-C", account["repo_dir"], "status",
-                            "--porcelain"], capture_output=True, text=True).stdout
-    state_after = sorted(os.listdir(os.path.join(thth_root, "state"))) \
-        if os.path.isdir(os.path.join(thth_root, "state")) else []
-    assert before == after
-    assert state_before == state_after
+
+    root_after = _tree_fingerprint(thth_root)
+    repo_after = 原稿repo()
+
+    # 差分は**名指しで**出す（「違う」だけでは、何を書いたのか分からない）。
+    def 差分(before: dict, after: dict) -> list:
+        return sorted(
+            [f"増えた: {k}" for k in after if k not in before]
+            + [f"消えた: {k}" for k in before if k not in after]
+            + [f"変わった: {k}" for k in before if k in after and before[k] != after[k]])
+
+    assert 差分(root_before, root_after) == [], \
+        "`ask` が $THTH_ROOT に書き込んだ:\n" + "\n".join(差分(root_before, root_after))
+    台帳_after = _tree_fingerprint(台帳の置き場)
+    assert 差分(台帳_before, 台帳_after) == [], \
+        "`ask` が台帳を書き換えた:\n" + "\n".join(差分(台帳_before, 台帳_after))
+    assert 差分(repo_before, repo_after) == [], \
+        "`ask` が原稿 repo に書き込んだ:\n" + "\n".join(差分(repo_before, repo_after))
+    assert gitの状態() == git_before
 
 
 # ---------------------------------------------------------------- (g) MCP
