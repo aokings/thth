@@ -706,7 +706,13 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         limit = queuefile.limit_for(media, account_cfg)
         n = queuefile.char_count(body)
         if n > limit:
-            msg = f"長すぎます（{n} 字・上限 {limit} 字）。切り詰めません。"
+            # **次の一手を 1 行**（T2・第 1 回の記録 §3）。第 1 回（2026-09-13・L1）は
+            # 3 体中 2 体がここで止まり、自分で本文を縮めるか分けるかを迷った。
+            # 道具は**切り詰めない**（規約）が、**分けるかどうかを考える口**は
+            # ある——`thth forms` が媒体ごとの形と「分ける理由になるもの／
+            # ならないもの」を述べる。
+            msg = (f"長すぎます（{n} 字・上限 {limit} 字）。切り詰めません。\n"
+                   f"分けるかどうかは `thth forms`")
             log(msg)
             _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
                         status="error", error=f"too_long({n})")

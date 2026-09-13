@@ -105,3 +105,32 @@ def test_lintとpreviewのhelpはqueueのファイル用と言う():
         r = run_thth([cmd, "--help"])
         assert r.returncode == 0, r.stdout + r.stderr
         assert "queue のファイル用" in r.stdout, (cmd, r.stdout)
+
+
+# --------------------------------------------------------------------------
+# T2: 「長すぎます」の次の一手（`thth forms`）
+# --------------------------------------------------------------------------
+
+def test_sendの長すぎますはformsを指す(tmp_path, isolated_account_factory):
+    """**道具は切り詰めない**（規約）。分けるかどうかを考える口があることを言う。"""
+    account = isolated_account_factory()
+    text_path = tmp_path / "body.txt"
+    text_path.write_text("あ" * 942 + "\n", encoding="utf-8")
+    r = run_thth(["send", account["name"], "--text-file", str(text_path)])
+    assert r.returncode == 1, r.stdout + r.stderr
+    出力 = r.stdout + r.stderr
+    assert "長すぎます（942 字・上限 500 字）。切り詰めません。" in 出力, 出力
+    assert "分けるかどうかは `thth forms`" in 出力, 出力
+    # **断り文の直後の行**（離れたところに置かない）。
+    行 = 出力.splitlines()
+    i = next(n for n, line in enumerate(行) if "長すぎます" in line)
+    assert "`thth forms`" in 行[i + 1], 行[i:i + 3]
+
+
+def test_収まる本文にはformsの行を出さない(tmp_path, isolated_account_factory):
+    account = isolated_account_factory()
+    text_path = tmp_path / "body.txt"
+    text_path.write_text("みじかい\n", encoding="utf-8")
+    r = run_thth(["send", account["name"], "--text-file", str(text_path)])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "thth forms" not in r.stdout, r.stdout
