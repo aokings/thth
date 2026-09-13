@@ -99,6 +99,19 @@ def app_dir() -> str:
     return os.environ.get("THTH_APP_DIR") or APP_DIR
 
 
+def env_accounts_dir() -> str | None:
+    """`$THTH_ACCOUNTS_DIR`。**その場で絶対パスにする**（監査 1・P3）。
+
+    相対パスのまま持ち回ると、**cwd が変わった瞬間に別の場所を指す**——
+    timer（`WorkingDirectory` 次第）と手打ちで置き場が割れるし、`thth board` が
+    出す 1 行は読んだ人がそのまま `ls` できる綴りでなくなる。`~` も展開する。
+    """
+    value = os.environ.get(ACCOUNTS_DIR_ENV)
+    if not value:
+        return None
+    return os.path.abspath(os.path.expanduser(value))
+
+
 def root_accounts_dir() -> str:
     """**正**の置き場（設計 v2 §3「台帳を repo の外へ」）。無くてもこの綴り。"""
     return os.path.join(thth_root(), "accounts")
@@ -131,7 +144,7 @@ def accounts_dir_info() -> dict:
     返り値は `{"path": …, "source": …}`。`source` は上の 3 つの定数のどれか。
     どちらも無いときは (b) の綴りを `root` として返す（＝台帳 0 本）。
     """
-    env = os.environ.get(ACCOUNTS_DIR_ENV)
+    env = env_accounts_dir()
     if env:
         return {"path": env, "source": SOURCE_ENV}
     outside = root_accounts_dir()
