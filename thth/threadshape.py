@@ -596,3 +596,12 @@ def load(account_name: str, *, post_id: str | None = None) -> dict:
         "measured_broken": measured.get("broken") or [],
         "measured_unknown_ownership": measured.get("posts_unknown_ownership") or [],
     }
+
+
+# ---------------------------------------------------------------- 公開名
+#
+# `thth/ask.py`（設計 v2 §1 の答えの口）が**同じ読み方**を使うための名前。
+# 時刻の読み方と `replied_to` の中の id の取り出し方は、ここと 2 通りあっては
+# ならない——**同じ規則を二度書くと、黙って割れる。**
+parse_time = _parse_time
+ref_id = _ref_id
