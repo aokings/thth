@@ -59,8 +59,38 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOCS = REPO_ROOT / "docs"
 RECORDS_DIRNAME = "記録"
 RECORDS = DOCS / RECORDS_DIRNAME
-NOTES_REPO = REPO_ROOT.parent / "thth-notes"
 NOTES_RECORDS_DIRNAME = "記録"
+
+
+def _main_repo_root() -> pathlib.Path:
+    """worktree の中で実行されていても、本体 repo のルートを返す。
+
+    `REPO_ROOT`（= このファイルから辿ったルート）は、worktree の中で
+    走らせると worktree 自身（`.claude/worktrees/<name>/`）になって
+    しまい、NOTES_REPO のアンカーには使えない（モジュール docstring
+    参照）。`git rev-parse --git-common-dir` は worktree からでも
+    本体 repo の `.git` を指すので、その親を本体 repo ルートとする。
+    git が使えない・repo の外などで失敗したら REPO_ROOT にフォールバック
+    する。
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "rev-parse", "--git-common-dir"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return REPO_ROOT
+    if not out:
+        return REPO_ROOT
+    common_dir = pathlib.Path(out)
+    if not common_dir.is_absolute():
+        common_dir = (REPO_ROOT / common_dir).resolve()
+    return common_dir.parent
+
+
+NOTES_REPO = _main_repo_root().parent / "thth-notes"
 
 # docs/ 直下に残っている日誌寄りの接頭辞（モジュール docstring 参照）。
 TOPLEVEL_DIARY_PREFIXES = ("出口条件_", "引継ぎ_", "記録_", "調査_")
