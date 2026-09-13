@@ -14,7 +14,12 @@ from tests.helpers.fake_oauth_server import fake_oauth_server
 from thth import accounts as accounts_mod
 from thth import oauth as oauth_mod
 
-REDIRECT_URI = "https://nigamilab.example.invalid/"
+# **`example.invalid` を使わない**（監査 2・C10・2026-09-13）。そこは雛形の
+# ダミー（`accounts.example/threads.json`）の綴りで、`thth auth` は**認可 URL を
+# 出す前に断る**ようになった。ここで確かめたいのは往復のほうなので、実在しない
+# ことは同じで**ダミーではない**綴り（`.test` は RFC 6761 の予約 TLD）を使う。
+# ダミーで断ることそのものは `test_C10_ダミーのredirect_uriでは認可URLを出さない`。
+REDIRECT_URI = "https://nigamilab.example.test/"
 APP_SECRET_VALUE = "APP-SECRET-super-value-01234"
 APP_ID_VALUE = "1234567890"
 
@@ -149,6 +154,42 @@ def test_8_redirect_uri無しはexit2(tmp_path, monkeypatch, isolated_account_fa
 
     assert rc == 2
     assert not os.path.exists(token_path)
+
+
+def test_C10_ダミーのredirect_uriでは認可URLを出さない(
+        tmp_path, monkeypatch, isolated_account_factory):
+    """**(d) ダミーのまま認可 URL を出さない**（監査 2・C10・masaru 裁定 2026-09-13）。
+
+    `thth account add` が写す雛形の `redirect_uri` は `https://example.invalid/`
+    ——存在しないホスト。前はその値で認可 URL を組んで表示していたので、打った人は
+    ブラウザで開き、**Meta 側の英語のエラー**で初めて詰まった。道具は開く前に
+    知っているのだから、**URL を出す前に**言う。
+    """
+    _write_app_env(tmp_path, monkeypatch)
+    token_path = str(tmp_path / "account.token")
+    account = isolated_account_factory(token=token_path,
+                                        redirect_uri="https://example.invalid/")
+
+    lines = []
+    rc = oauth_mod.run_auth(account["name"], code="ABC123", log=lines.append)
+    out = "\n".join(lines)
+
+    assert rc == 2, out
+    # **URL を出す前**に断っている（出してしまったら、その人はもう開いている）。
+    assert "oauth/authorize" not in out, out
+    assert "ダミー" in out and "https://example.invalid/" in out, out
+    assert "--redirect-uri" in out, out          # 直し方 その 1
+    assert f"{account['name']}.json" in out, out  # 直し方 その 2（台帳の場所を名指し）
+    assert not os.path.exists(token_path)
+
+    # **`--redirect-uri` で本物を渡した分には通る**（断る条件が広すぎない）。
+    with fake_oauth_server() as base_url:
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        lines2 = []
+        rc2 = oauth_mod.run_auth(account["name"], redirect_uri=REDIRECT_URI,
+                                 code="ABC123", log=lines2.append)
+    assert rc2 == 0, "\n".join(lines2)
+    assert os.path.exists(token_path)
 
 
 def test_9_CLI経由でも動く_codeフラグ(tmp_path, monkeypatch, isolated_account_factory):

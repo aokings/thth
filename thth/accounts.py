@@ -39,6 +39,70 @@ class AccountError(Exception):
     """台帳が無い・壊れている・必須項目が足りない。"""
 
 
+# --------------------------------------------------------------------------
+# 雛形のダミー値（監査 2・C10「あるべきもの 9」・masaru 裁定 2026-09-13
+# 「手がかかっても最善を」）
+# --------------------------------------------------------------------------
+#
+# `thth account add` は `accounts.example/<media>.json` の雛形を写して 1 本書く。
+# 雛形には**そのままでは絶対に通らない値**が入っている（`redirect_uri` は
+# `https://example.invalid/`、Mastodon の `instance` は `https://mastodon.example`、
+# handle は `demo`）。**その 1 本で `thth auth` を打つ人は、どこにも書かれていない
+# 手作業を 2 つ挟む必要があった**——しかも `thth doctor` は何も言わなかった。
+# 設計 v2 §3 の狙いは「見つかった瞬間に 1 回で成功する」なので、**道具のほうが
+# 名指しで言う**。ここは「どの値が雛形のままか」の 1 か所の知識で、
+# `thth doctor`（言う）と `thth auth`（進ませない）の両方が読む。
+DUMMY_REDIRECT_URI_HOST = "example.invalid"
+DUMMY_INSTANCE_HOST = "mastodon.example"
+# 媒体ごとの雛形の handle。**「`demo` を含む」では見ない**——`demo-band` のような
+# 実在の綴りを巻き込む。雛形の値と丸ごと一致したときだけダミーと呼ぶ。
+DUMMY_HANDLES = {"threads": ("demo",), "mastodon": ("demo",),
+                 "bluesky": ("demo.bsky.social",)}
+
+_DUMMY_NEXT = {
+    "redirect_uri": ("Meta アプリに登録した URL を "
+                     "`thth account add <name> --redirect-uri <url>` か、"
+                     "台帳の `redirect_uri` に入れてください（導入文書 §4）。"),
+    "handle": ("そのアカウントの本物の handle を台帳の `handle` に入れてください"
+               "（Bluesky は `name.bsky.social`・Mastodon は `@` を除いた利用者名・"
+               "導入文書 §4）。"),
+    "instance": ("自分のインスタンスの URL を "
+                 "`thth account add <name> --instance https://<instance>` か、"
+                 "台帳の `instance` に入れてください（導入文書 §4）。"),
+}
+
+
+def redirect_uri_is_dummy(value) -> bool:
+    """`redirect_uri` が雛形のダミー（`https://example.invalid/`）か。
+
+    **ホスト名で見る**（末尾の `/` の有無・`?` 付きの綴りで擦り抜けないように）。
+    """
+    return bool(value) and DUMMY_REDIRECT_URI_HOST in str(value)
+
+
+def dummy_fields(cfg: dict) -> list[dict]:
+    """台帳のうち**雛形のダミーのまま**の欄を並べる（`thth doctor` が名指しする）。
+
+    返すのは `{"field", "value", "next"}` の並び。空なら「ダミーは残っていない」。
+    **判定するだけで、何も直さない**（値を直すのは人の手・設計 §4.2）。
+    """
+    out: list[dict] = []
+    media = cfg.get("media")
+
+    def 足す(field: str, value) -> None:
+        out.append({"field": field, "value": str(value), "next": _DUMMY_NEXT[field]})
+
+    if redirect_uri_is_dummy(cfg.get("redirect_uri")):
+        足す("redirect_uri", cfg.get("redirect_uri"))
+    handle = (cfg.get("handle") or "").strip().lstrip("@")
+    if handle and handle in DUMMY_HANDLES.get(media, ()):
+        足す("handle", cfg.get("handle"))
+    instance = cfg.get("instance")
+    if instance and DUMMY_INSTANCE_HOST in str(instance):
+        足す("instance", instance)
+    return out
+
+
 def thth_root() -> str:
     """state・logs の置き場の基準。設計 §3.1 の $THTH_ROOT。
 

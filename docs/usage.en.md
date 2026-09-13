@@ -226,18 +226,41 @@ line, even when no ledger was found (`accounts_dir` in `--json`).
 Write a new one from the bundled template:
 
 ```bash
-thth account add your-project-threads \
-  --media threads|bluesky|mastodon \
-  --project your-project \
-  [--handle your-handle] [--instance https://your.instance] [--repo-dir …]
+# Threads: --redirect-uri is the callback you registered with your Meta app
+thth account add your-project-threads --media threads --project your-project \
+  --redirect-uri https://your.domain/callback/
+# Bluesky: --handle is required (a domain-shaped handle)
+thth account add your-project-bluesky --media bluesky --project your-project \
+  --handle you.bsky.social
+# Mastodon: --handle and --instance are required
+thth account add your-project-mastodon --media mastodon --project your-project \
+  --handle you --instance https://your.instance
 ```
+
+What each medium needs — **fields the tool cannot guess are asked for, not
+filled in silently**:
+
+| Medium | `--handle` | `--instance` | `--redirect-uri` |
+|---|---|---|---|
+| threads | optional (defaults to `--project`; on Threads the handle is the username, so that usually lands) | — | optional, but **omitting it leaves the template's placeholder** `https://example.invalid/`, and `thth auth` then refuses (exit 2) |
+| bluesky | **required** (`name.bsky.social`; the `--project` value never matches) | optional (`service`, defaults to `https://bsky.social`) | — |
+| mastodon | **required** (username without the `@`) | **required** (every instance has its own endpoint) | — |
 
 - Written to `$THTH_ROOT/accounts/<name>.json` — **never into the repo**, even
   when the compatibility path above is the one being read.
 - Always `production: false` and `scheduled: false`. The tool will not create
   something that posts for real; you turn those on by hand.
 - It refuses to overwrite an existing ledger (exit 1).
-- `--handle` defaults to `--project`, not to the account name.
+- `--handle` defaults to `--project` on Threads, not to the account name. On
+  Bluesky and Mastodon it is required, with an example in the refusal.
+- If you leave a template placeholder in the ledger, **all three commands say
+  so by name**: `account add` prints one line as it writes the file, `thth
+  doctor` lists them (`dummy_fields` in `--json`, exit 1 — the ledger is
+  readable, so not 2, but "no problems" would be a lie), and `thth auth`
+  refuses **before printing an authorization URL** (exit 2). The placeholders
+  are `redirect_uri: https://example.invalid/`, Mastodon's
+  `instance: https://mastodon.example`, and a handle still set to the
+  template's (`demo`, or `demo.bsky.social` on Bluesky).
 
 Coming from an older version whose ledgers sat in `<repo>/accounts/`:
 

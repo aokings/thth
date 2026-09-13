@@ -153,6 +153,92 @@ def test_doctorは台帳無しで節4を言う(tmp_path, monkeypatch):
     assert "§3" not in out, "app.env は揃えたのに §3 が出た: " + out
 
 
+# --------------------------------------------------------------------------
+# 雛形のダミー（監査 2・C10・masaru 裁定 2026-09-13「手がかかっても最善を」）
+# --------------------------------------------------------------------------
+#
+# `thth account add` が写す雛形には、そのままでは通らない値が 3 種類ある
+# （`redirect_uri: https://example.invalid/`・Mastodon の
+# `instance: https://mastodon.example`・handle が `demo`）。**診断の道具が
+# 黙っていたので、`add` と `thth auth` の間に、どこにも書かれていない手作業が
+# 挟まっていた。** 名指しで言うこと・次の一手を添えること・`--json` にも出ること
+# ・rc が 0 にならないことを、ここで固定する。
+
+# **トークンは置かない。** 置くと probe が実際に HTTP を出しに行く（偽サーバを
+# 立てていないこの file では本物の口へ）。ここで見たいのは**トークンに触る前の
+# 机上の検査**なので、トークン無しで止まる形のまま確かめる。rc の決め方そのものは
+# `tests/test_doctor.py::test_C10_ダミーが残っていれば全部○でも0で返さない` が
+# （HTTP を出さずに）見る。
+
+def test_doctorはダミーのredirect_uriを名指しする(
+        tmp_path, monkeypatch, isolated_account_factory):
+    """(c-1) Threads の `redirect_uri` が `https://example.invalid/` のまま。"""
+    account = isolated_account_factory(token=str(tmp_path / "missing.token"),
+                                        redirect_uri="https://example.invalid/")
+    monkeypatch.setenv("THTH_APP_ENV_PATH", str(tmp_path / "no.env"))
+    r = run_thth(["doctor", account["name"]])
+
+    out = r.stdout + r.stderr
+    assert "redirect_uri" in out and "ダミーのまま" in out, out
+    assert "https://example.invalid/" in out, out          # **値を名指しする**
+    assert "--redirect-uri" in out, out                    # 次の一手（2 通りの直し方）
+    assert "§4" in out, out
+    # **トークンの話より先に出る**（先に直すのはこちら）。
+    assert "ダミー" in out.split("トークンが無い")[0], out
+
+
+def test_doctorはダミーのinstanceとhandleを名指しする(
+        tmp_path, monkeypatch, isolated_account_factory):
+    """(c-2)(c-3) Mastodon の `instance` と、雛形の `demo` handle。"""
+    account = isolated_account_factory(
+        "demo-mastodon", token=str(tmp_path / "missing.token"), media="mastodon",
+        handle="demo", instance="https://mastodon.example")
+    monkeypatch.setenv("THTH_APP_ENV_PATH", str(tmp_path / "no.env"))
+    r = run_thth(["doctor", account["name"]])
+
+    out = r.stdout + r.stderr
+    assert "instance" in out and "https://mastodon.example" in out, out
+    assert "handle" in out and "demo" in out, out
+    assert out.count("ダミーのまま") == 2, out
+
+
+def test_doctorのjsonにdummy_fieldsが出る(
+        tmp_path, monkeypatch, isolated_account_factory):
+    """`--json` にも機械が読める形で出る。**stdout は JSON 1 個のまま。**"""
+    import json as _json
+
+    account = isolated_account_factory(token=str(tmp_path / "missing.token"),
+                                        redirect_uri="https://example.invalid/")
+    monkeypatch.setenv("THTH_APP_ENV_PATH", str(tmp_path / "no.env"))
+    r = run_thth(["doctor", account["name"], "--json"])
+
+    data = _json.loads(r.stdout)                 # 混ざっていればここで落ちる
+    fields = [d["field"] for d in data["dummy_fields"]]
+    assert fields == ["redirect_uri"], data["dummy_fields"]
+    assert data["dummy_fields"][0]["value"] == "https://example.invalid/"
+    assert "--redirect-uri" in data["dummy_fields"][0]["next"]
+    assert r.returncode != 0, r.stdout
+
+
+def test_doctorはダミーが無ければ何も言わない(
+        tmp_path, monkeypatch, isolated_account_factory):
+    """**要らない注意を足さない**（言う条件が効いていることの裏取り）。
+
+    正しい値が入っている台帳で「ダミー」と言い出したら、本当にダミーのときに
+    読まれなくなる（app.env の「無し＝任意」と同じ筋・masaru 裁定 2026-09-13）。
+    """
+    import json as _json
+
+    account = isolated_account_factory(token=str(tmp_path / "missing.token"),
+                                        handle="nigamilab",
+                                        redirect_uri="https://thth.me/callback/")
+    monkeypatch.setenv("THTH_APP_ENV_PATH", str(tmp_path / "no.env"))
+    r = run_thth(["doctor", account["name"], "--json"])
+
+    assert _json.loads(r.stdout)["dummy_fields"] == []
+    assert "ダミーのまま" not in r.stdout, r.stdout
+
+
 def test_doctorはtoken無しで節5を言う(tmp_path, monkeypatch, isolated_account_factory):
     """app.env・台帳は揃っていて token だけ無いとき、`§5 トークン` を指す。
 

@@ -143,7 +143,10 @@ class FreshInstall:
             "account": ACCOUNT,
             "project": "demo",
             "media": "threads",
-            "handle": "demo",
+            # **雛形の `demo` にしない**（上の `redirect_uri` と同じ理由・C10）。
+            # ここは「導入者が自分の値を入れ終えた台帳」の想定で、§7 の順番を
+            # 通す場。雛形のままの台帳は下の `test_C10_...` が別に見る。
+            "handle": "demo-user",
             "user_id": "",
             "repo_dir": self.repo,
             "queue_dir": "docs/sns/queue",
@@ -159,7 +162,13 @@ class FreshInstall:
             "timeout": 300,
             "dry_run_env": "THTH_DRY_RUN",
             "production": False,
-            "redirect_uri": "https://example.invalid/",
+            # **雛形のダミー（`https://example.invalid/`）にしない**（監査 2・C10・
+            # 2026-09-13）。`thth auth` は**ダミーの値では認可 URL を出さずに rc=2**
+            # で断るようになった。ここは §3・§5 の往復（app.env を読んで URL を
+            # 組む）を通す場なので、実在しないことは同じで**ダミーではない**綴りに
+            # する（`.test` は RFC 6761 の予約 TLD・本物の口には届かない）。
+            # ダミーで断ることそのものは `test_C10_addした台帳のダミーをdoctorが言う`。
+            "redirect_uri": "https://demo.example.test/",
         }
         path = os.path.join(self.app_dir, "accounts", f"{ACCOUNT}.json")
         with open(path, "w", encoding="utf-8") as f:
@@ -480,3 +489,42 @@ def test_v2_2a_migrateはrepoの6本を外へ写す_repoは触らない(fresh):
         assert other in board.stdout, (
             f"{other} が migrate の後に board から消えた:\n{board.stdout}")
     assert "互換" not in board.stdout, board.stdout
+
+
+# --------------------------------------------------------------------------
+# C10（監査 2・masaru 裁定 2026-09-13）: `add` した台帳で `auth` まで無言で進ませない
+# --------------------------------------------------------------------------
+
+def test_C10_addした台帳のダミーをdoctorが言う(fresh):
+    """**`thth account add` → `thth doctor` を、まっさらな clone の上でそのまま。**
+
+    `add` が写す雛形の `redirect_uri` はダミー（`https://example.invalid/`）で、
+    handle の既定は `--project` の値。前はその 1 本で `thth doctor` を打っても
+    **何も言われず**、`thth auth` まで進んでブラウザで初めて詰まった——
+    **`add` と `auth` の間に、どこにも書かれていない手作業が 2 つ**あった。
+
+    ここで見るのは 3 つ: `add` が書いたその場で言う・`doctor` が名指しで言う・
+    `auth` が**認可 URL を出す前に** rc=2 で断る。
+    """
+    add = 導入者として打つ(fresh, "account", "add", ACCOUNT,
+                          "--media", "threads", "--project", "demo", "--force")
+    assert add.returncode == 0, f"rc={add.returncode}\nout={add.stdout}\nerr={add.stderr}"
+    # (1) 書いたその場で 1 行（`thth auth` の前に直すこと・直し方 2 通り）。
+    行 = [l for l in add.stdout.splitlines() if "redirect_uri" in l and "ダミー" in l]
+    assert len(行) == 1, add.stdout
+    assert "thth auth" in 行[0] and "--redirect-uri" in 行[0], 行[0]
+
+    # (2) `doctor` が名指しする（トークンが無いので rc は 2 のまま）。
+    doctor = 導入者として打つ(fresh, "doctor", ACCOUNT)
+    assert doctor.returncode == 2, doctor.stdout + doctor.stderr
+    assert "ダミーのまま" in doctor.stdout, doctor.stdout
+    assert "https://example.invalid/" in doctor.stdout, doctor.stdout
+    assert "§4" in doctor.stdout, doctor.stdout
+    # **HTTP には届いていない**（読み取りの道具が、直す前に外へ出ていない）。
+    assert "HTTP" not in doctor.stdout, doctor.stdout
+
+    # (3) `auth` は認可 URL を出す前に断る（偽の app.env・実 Meta には行かない）。
+    auth = 導入者として打つ(fresh, "auth", ACCOUNT, "--code", "")
+    assert auth.returncode == 2, auth.stdout + auth.stderr
+    assert "/oauth/authorize?" not in auth.stdout, auth.stdout
+    assert "ダミー" in auth.stdout, auth.stdout
