@@ -36,8 +36,12 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ACCOUNT = "demo-threads"
 
 # clone に入って来る masaru の台帳（導入文書 §4 で消してもらうもの）。
+#
+# **6 本ある**（2026-09-13・v2-2a）。ここが 4 本だった間、`masaru-bluesky` と
+# `masaru-mastodon` が board に出ていても、どの試験も気づかなかった
+# （導入_Bluesky / 導入_Mastodon で 2 本増えたときに、ここを足していない）。
 OTHER_LEDGERS = ("nigamilab-threads", "kopicha-threads", "masaru-threads",
-                 "asmon-kanto-threads")
+                 "asmon-kanto-threads", "masaru-bluesky", "masaru-mastodon")
 
 QUEUE_MD = """---
 thth: 1
@@ -171,6 +175,11 @@ class FreshInstall:
         env["PYTHONPATH"] = self.app
         env.pop("THTH_DRY_RUN", None)
         env.pop("THTH_RELEASE_REF", None)
+        # **`THTH_ACCOUNTS_DIR` は必ず外す**（設計 v2 §3・v2-2a）。この試験は
+        # 台帳の置き場の解決そのもの——(b) `$THTH_ROOT/accounts` と互換の (c)
+        # app repo `accounts/`——を通す場なので、打った人の shell や別の fixture が
+        # 置いた明示指定が紛れ込むと、**確かめたい経路を素通りして通ってしまう**。
+        env.pop("THTH_ACCOUNTS_DIR", None)
         return env
 
     def run(self, *argv, stdin=""):
@@ -352,3 +361,108 @@ def test_step_3b_THTH_APP_DIRを設定しない導入者のboard(tmp_path):
     for other in OTHER_LEDGERS:
         assert other not in r.stdout, (
             f"{other} が board に出た（§4 で消したはずの台帳を読んでいる）:\n{r.stdout}")
+
+
+# --------------------------------------------------------------------------
+# 設計 v2 §3「台帳を repo の外へ」（v2-2a・masaru 裁定 2026-09-13「出す」）
+# --------------------------------------------------------------------------
+
+def 導入者として打つ(fresh, *argv):
+    """**`THTH_APP_DIR` を設定しない**（clone した人が実際に打つ形）で thth を呼ぶ。
+
+    `THTH_APP_DIR` を偽の場所へ向けると、確かめたい「clone の中の 6 本」が
+    そもそも見えない。設定しないので `accounts.APP_DIR` は clone 自身になる。
+    """
+    env = fresh.env()
+    env.pop("THTH_APP_DIR", None)
+    return subprocess.run([sys.executable, "-m", "thth", *argv], cwd=fresh.app,
+                          env=env, capture_output=True, text=True, timeout=180)
+
+
+def test_v2_2a_台帳を消さなくてもaddした時点で外が正になる(fresh):
+    """**まっさらな clone に `THTH_ROOT` だけ設定して `thth account add` を 1 本。**
+
+    導入文書 §4 は今まで「使わない台帳を**消してください**」だった（`accounts/` は
+    clone に入って来るので、消さないと masaru の 6 本が board に並ぶ）。設計 v2 §3 で
+    それを変える——**外（`$THTH_ROOT/accounts/`）に 1 本置いた時点で、repo の中は
+    もう読まれない。**
+
+    ここが固定するのは「`add` した後、repo の 6 本が **1 本も** 出ないこと」。
+    互換 (c) は「`$THTH_ROOT/accounts/` が**無いとき**」だけ効くので、`add` が
+    ディレクトリを作った時点で外が正になる。
+    """
+    # --- 前提: add する前は、互換 (c) で clone の 6 本が見えている ---------
+    前 = 導入者として打つ(fresh, "board")
+    assert 前.returncode == 0, f"rc={前.returncode}\nout={前.stdout}\nerr={前.stderr}"
+    for other in OTHER_LEDGERS:
+        assert other in 前.stdout, (
+            f"{other} が board に出ていない（互換 (c) が効いていない＝**VM が止まる形**）:"
+            f"\n{前.stdout}")
+    # **互換であることを画面が言っている。**
+    assert "互換" in 前.stdout, 前.stdout
+    assert "thth account migrate" in 前.stdout, 前.stdout
+    assert not os.path.isdir(os.path.join(fresh.thth_root, "accounts")), (
+        "この試験の前提が崩れている（外が最初からある）")
+
+    # --- `thth account add` を 1 本 --------------------------------------
+    add = 導入者として打つ(fresh, "account", "add", ACCOUNT,
+                          "--media", "threads", "--project", "demo")
+    assert add.returncode == 0, f"rc={add.returncode}\nout={add.stdout}\nerr={add.stderr}"
+
+    # 書かれたのは **外**。clone の `accounts/` は 1 本も増えていない。
+    外 = os.path.join(fresh.thth_root, "accounts")
+    assert os.path.exists(os.path.join(外, f"{ACCOUNT}.json")), add.stdout
+    clone側 = sorted(n for n in os.listdir(os.path.join(fresh.app, "accounts"))
+                     if n.endswith(".json"))
+    assert f"{ACCOUNT}.json" not in clone側, (
+        f"`account add` が clone の中に書いた: {clone側}")
+    assert len(clone側) == 6, f"clone の accounts/ が 6 本でない: {clone側}"
+
+    # --- board に demo だけが出る ----------------------------------------
+    後 = 導入者として打つ(fresh, "board")
+    assert 後.returncode == 0, f"rc={後.returncode}\nout={後.stdout}\nerr={後.stderr}"
+    assert ACCOUNT in 後.stdout, 後.stdout
+    for other in OTHER_LEDGERS:
+        assert other not in 後.stdout, (
+            f"{other} が board に出た（**外に 1 本置いたのに repo の中も読んでいる**）:"
+            f"\n{後.stdout}")
+    # もう互換ではない——警告も出ない。
+    assert "互換" not in 後.stdout, 後.stdout
+    assert "台帳が repo の中にあります" not in 後.stderr, 後.stderr
+    assert f"台帳の置き場: {外}" in 後.stdout, 後.stdout
+
+
+def test_v2_2a_migrateはrepoの6本を外へ写す_repoは触らない(fresh):
+    """**VM がやる手順**（導入文書 §4）を、clone の上でそのまま通す。
+
+    `migrate --dry-run` → `migrate` → `board` で **6 本が変わらず見える**。
+    そして **clone の `accounts/` は手つかず**（消すのは別の日・設計 v2 §8）。
+    """
+    clone_accounts = os.path.join(fresh.app, "accounts")
+    元の6本 = sorted(n for n in os.listdir(clone_accounts) if n.endswith(".json"))
+    assert len(元の6本) == 6, 元の6本
+
+    dry = 導入者として打つ(fresh, "account", "migrate", "--dry-run")
+    assert dry.returncode == 0, f"rc={dry.returncode}\nout={dry.stdout}\nerr={dry.stderr}"
+    assert "--dry-run なので何も書いていません" in dry.stdout
+    # **`--dry-run` は外のディレクトリを作らない。** 作ると (b) が成立して、
+    # 次の `thth board` が「外（空）」を正と見なし、**6 本が消えて見える。**
+    assert not os.path.isdir(os.path.join(fresh.thth_root, "accounts")), dry.stdout
+
+    実行 = 導入者として打つ(fresh, "account", "migrate")
+    assert 実行.returncode == 0, f"rc={実行.returncode}\nout={実行.stdout}\nerr={実行.stderr}"
+    写された = sorted(n for n in os.listdir(os.path.join(fresh.thth_root, "accounts"))
+                      if n.endswith(".json"))
+    assert 写された == 元の6本, (写された, 元の6本)
+    # **repo は触らない**（VM の `/srv/thth/app` は `merge --ff-only` の clone）。
+    assert sorted(os.listdir(clone_accounts)) == sorted(os.listdir(clone_accounts))
+    assert sorted(n for n in os.listdir(clone_accounts)
+                  if n.endswith(".json")) == 元の6本
+
+    # **6 本が変わらず見える**（移行の受け入れ条件そのもの）。
+    board = 導入者として打つ(fresh, "board")
+    assert board.returncode == 0, board.stdout + board.stderr
+    for other in OTHER_LEDGERS:
+        assert other in board.stdout, (
+            f"{other} が migrate の後に board から消えた:\n{board.stdout}")
+    assert "互換" not in board.stdout, board.stdout
