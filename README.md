@@ -21,6 +21,8 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 版 **1.0.0**。全件テスト **1319 件**（`python -m pytest tests/ -q -n auto`）。
 
+**媒体**: Threads（稼働）・Bluesky・Mastodon（v2・同席用の台帳あり・未稼働）。
+
 **本番稼働中**: Threads の 4 アカウント（nigamilab・asmon 関東・kopicha・masaru の同席用）。
 timer（systemd・`thth systemd` で生成）で毎時投稿、返信の採集（`thth replies`）と数の採集
 （`thth measured`）は稼働、トークン更新は `thth maintain` が毎日。
