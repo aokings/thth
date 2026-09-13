@@ -21,7 +21,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## いまの状態（2026-09-13）
 
-版 **2.0.0（tag 待ち）**。全件テスト **1729 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip）。
+版 **2.0.0（tag 待ち）**。全件テスト **1768 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip・rc=0）。
 
 **媒体**: Threads（稼働）・Bluesky・Mastodon（同席用の台帳あり・未稼働）。
 
