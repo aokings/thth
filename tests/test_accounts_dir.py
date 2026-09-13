@@ -538,6 +538,57 @@ def test_読めない置き場でdoctorは不在と言わない(読めない置�
 
 
 # --------------------------------------------------------------------------
+# loud reject であって traceback ではない（監査 1・P3）
+# --------------------------------------------------------------------------
+
+def test_置き場がファイルならaddは言葉で断る(置き場):
+    """`$THTH_ROOT/accounts` がファイルだと `FileExistsError` が素通りしていた。"""
+    with open(置き場["外"], "w", encoding="utf-8") as f:
+        f.write("これはディレクトリではない\n")
+
+    r = run_thth(["account", "add", "demo-threads", "--media", "threads",
+                  "--project", "demo"])
+    assert "Traceback" not in r.stderr, r.stderr
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "台帳を書けませんでした" in r.stderr, r.stderr
+    assert "ファイルになっています" in r.stderr, r.stderr
+
+
+# --------------------------------------------------------------------------
+# THTH_ACCOUNTS_DIR の相対パス（監査 1・P3）
+# --------------------------------------------------------------------------
+
+def test_環境変数の相対パスはその場で絶対になる(置き場, tmp_path, monkeypatch):
+    """**相対のまま持ち回ると、cwd が変わった瞬間に別の場所を指す。**
+
+    timer（`WorkingDirectory` 次第）と手打ちで置き場が割れるし、`thth board` が
+    出す 1 行が、読んだ人がそのまま `ls` できる綴りでなくなる。
+    """
+    明示 = tmp_path / "相対の先"
+    明示.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(accounts_mod.ACCOUNTS_DIR_ENV, "相対の先")
+
+    info = accounts_mod.accounts_dir_info()
+    assert os.path.isabs(info["path"]), info["path"]
+    assert os.path.realpath(info["path"]) == os.path.realpath(str(明示))
+    # **書く先も同じ綴り。**
+    assert os.path.isabs(account_cli_mod.target_accounts_dir())
+    # **画面に出る 1 行も絶対。**
+    line = account_cli_mod.where_line()
+    assert str(明示) in line or os.path.realpath(str(明示)) in line, line
+    assert line.startswith("台帳の置き場: " + os.sep), \
+        f"1 行が相対パスのまま（そのまま ls できない）: {line}"
+
+
+def test_環境変数のチルダも展開する(置き場, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv(accounts_mod.ACCOUNTS_DIR_ENV, "~/台帳")
+    path = accounts_mod.accounts_dir_info()["path"]
+    assert path == str(tmp_path / "home" / "台帳"), path
+
+
+# --------------------------------------------------------------------------
 # doctor・board が置き場を 1 行で言う
 # --------------------------------------------------------------------------
 

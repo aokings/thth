@@ -333,6 +333,79 @@ def test_onが失敗したらonのまま残さない(thth_root, capsys, monkeypa
     assert share_mod.is_on() is False, "失敗したのに on のまま残っている"
 
 
+# ----------------------------- 生き残った変異に印を付ける（監査 1・P3）
+
+def test_仮名と塩は0600で_作った瞬間から他人に読めない(thth_root):
+    """**塩が読めれば `sha256(塩 + post_id)` を総当たりできる**（§2 が崩れる）。
+
+    前は `open()` してから `os.chmod()` していたので、その 2 行のあいだ
+    **一瞬 0644 で存在**した。`os.open(..., 0o600)` にして、他人に読める瞬間を
+    作らない。
+    """
+    if os.name != "posix":
+        pytest.skip("権限の試験は posix だけ")
+    share_mod.set_enabled(True, by="masaru")
+    for path in (share_mod.observer_id_path(), share_mod._salt_path()):
+        mode = os.stat(path).st_mode & 0o777
+        assert mode == 0o600, f"{path} が {oct(mode)}（0o600 でない）"
+
+
+def test_数でないものは0にせずnullにする(thth_root):
+    """**取れていない刻みは `null`。`0` ではない**（規約 12）。
+
+    とくに **bool は数ではない**——`True` を通すと、JSON では `1` と区別が
+    付く形で積まれ、集計側で 1 として足される。
+    """
+    assert share_mod._num(True) is None
+    assert share_mod._num(False) is None
+    assert share_mod._num(None) is None
+    assert share_mod._num("3") is None
+    assert share_mod._num(3) == 3
+    assert share_mod._num(0) == 0        # **0 は数。** 「無い」ではない
+    assert share_mod._num(1.5) == 1.5
+
+
+def test_スレッドの形の短い欄は40字で切る(thth_root):
+    """`kind`・`hour_band`・`medium` は**語彙**で、自由文ではない。
+
+    上流に長い値が入っても、そのまま積まない（`audience` の 200 字とは別枠）。
+    """
+    share_mod.set_enabled(True, by="masaru")
+    長い = "あ" * 100
+    row = share_mod.enqueue_thread_shape(
+        {"post_id": "17916074118445631", "kind": 長い, "hour_band": 長い,
+         "topic": "お茶"},
+        medium=長い)
+    assert row is not None
+    for key in ("kind", "hour_band", "medium"):
+        assert len(row[key]) == 40, f"{key} が {len(row[key])} 字（40 で切れていない）"
+
+
+def test_置き場がファイルならshare_onは言葉で断る(thth_root, capsys):
+    """`state/share` がファイルだと `PermissionError`/`FileExistsError` が
+    素通りしていた（監査 1・P3）。"""
+    os.makedirs(os.path.dirname(share_mod.root()), exist_ok=True)
+    with open(share_mod.root(), "w", encoding="utf-8") as f:
+        f.write("これはディレクトリではない\n")
+
+    assert _share("on", "--by", "masaru") == 2
+    out = capsys.readouterr().out
+    assert "share:" in out and "書けません" in out, out
+
+
+def test_outboxがファイルならsyncは言葉で断る(thth_root, capsys):
+    topics_mod.record("お茶", verdict="alive", audience="茶葉", kind="一般名詞",
+                       status="ok", by="masaru")
+    share_mod.set_enabled(True, by="masaru")
+    # **on にしてから** outbox をファイルに差し替える。
+    with open(share_mod.outbox_dir(), "w", encoding="utf-8") as f:
+        f.write("これはディレクトリではない\n")
+
+    assert _share("sync") == 2
+    out = capsys.readouterr().out
+    assert "share:" in out and "積めません" in out, out
+
+
 def test_shareはネットワークに触る口を持たない():
     """**送る先はまだ無い**（§6 v2-5）。import だけで確かめる。"""
     src = open(share_mod.__file__, encoding="utf-8").read()

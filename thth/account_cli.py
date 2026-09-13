@@ -84,7 +84,8 @@ def target_accounts_dir() -> str:
     残すが（`accounts.accounts_dir_info()`）、道具が新しく台帳を作るときは常に
     外。そうしないと「外へ出す」作業のさなかに repo の中が増える。
     """
-    env = os.environ.get(accounts_mod.ACCOUNTS_DIR_ENV)
+    # **相対パスはその場で絶対にする**（監査 1・P3・`accounts.env_accounts_dir()`）。
+    env = accounts_mod.env_accounts_dir()
     return env if env else accounts_mod.root_accounts_dir()
 
 
@@ -323,10 +324,20 @@ def cmd_add(args) -> int:
     if os.path.exists(path):
         print(f"既にあります。上書きしません: {path}", file=sys.stderr)
         return 1
-    os.makedirs(dst_dir, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    try:
+        os.makedirs(dst_dir, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+    except OSError as e:
+        # **traceback にしない**（監査 1・P3）。`$THTH_ROOT/accounts` がファイル
+        # だと `FileExistsError`、書けない場所だと `PermissionError` が素通りして
+        # いた。どちらも「打った人が直せること」なので、言葉で言う。
+        print(f"台帳を書けませんでした: {path}（{e.strerror or e}）", file=sys.stderr)
+        if os.path.exists(dst_dir) and not os.path.isdir(dst_dir):
+            print(f"  台帳の置き場がファイルになっています: {dst_dir}"
+                  f"（ディレクトリでなければなりません）", file=sys.stderr)
+        return 2
 
     if args.json:
         print(json.dumps({"path": path, "account": data}, ensure_ascii=False))

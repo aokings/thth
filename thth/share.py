@@ -151,8 +151,16 @@ def set_enabled(enabled: bool, *, by: str = "", now=None) -> dict:
     now = now if now is not None else jst.now_jst()
     data = {"enabled": bool(enabled), "changed_at": jst.iso(now),
             "by": (by or "").strip() or None}
-    os.makedirs(root(), exist_ok=True)
-    _write_json(config_path(), data)
+    try:
+        os.makedirs(root(), exist_ok=True)
+        _write_json(config_path(), data)
+    except OSError as e:
+        # **traceback にしない**（監査 1・P3）。`state/share` が書けない・
+        # ファイルになっている、は打った人が直せること。
+        raise ShareError(
+            f"share の置き場に書けません: {root()}（{e.strerror or e}）"
+            f"{'——ここがファイルになっています' if os.path.exists(root()) and not os.path.isdir(root()) else ''}"
+        ) from e
     if enabled:
         # **on にしたときに仮名と塩を作る**（off のままなら作らない）。
         observer_id()
@@ -171,6 +179,29 @@ def _write_json(path: str, data: dict) -> None:
 # --------------------------------------------------------------------------
 # 観測者の仮名
 # --------------------------------------------------------------------------
+
+def _write_private(path: str, value: str) -> None:
+    """**最初から 0600 で作る**（監査 1・P3）。
+
+    前は `open()` して `os.chmod()` していた。その 2 行のあいだ、**塩と仮名が
+    一瞬 0644（他人が読める）で存在する**。塩が読めれば `sha256(塩 + post_id)`
+    を総当たりできてしまう——§2 の「permalink に戻せない」が崩れる。
+    `os.open(..., 0o600)` なら、**そもそも他人に読める瞬間が無い**（既にある
+    ファイルへの上書きではないので umask も効かない経路になる）。
+    """
+    try:
+        os.makedirs(root(), exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(value + "\n")
+        finally:
+            # 既にあったファイルだと `os.open` のモードは効かないので念のため。
+            os.chmod(path, 0o600)
+    except OSError as e:
+        raise ShareError(
+            f"share の置き場に書けません: {path}（{e.strerror or e}）") from e
+
 
 def observer_id() -> str:
     """`state/share/observer_id`。**初回に乱数で作る**（設計 v2 §2）。
@@ -191,10 +222,7 @@ def observer_id() -> str:
         # 原因が分からない**のがいちばん高くつく）。
         if not value.isdigit():
             break
-    os.makedirs(root(), exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(value + "\n")
-    os.chmod(p, 0o600)
+    _write_private(p, value)
     return value
 
 
@@ -206,10 +234,7 @@ def _salt() -> str:
         if value:
             return value
     value = secrets.token_hex(32)
-    os.makedirs(root(), exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(value + "\n")
-    os.chmod(p, 0o600)
+    _write_private(p, value)
     return value
 
 
@@ -288,9 +313,17 @@ def _append(row: dict, *, now=None) -> dict | None:
     _assert_clean(row)
     now = now if now is not None else jst.now_jst()
     path = outbox_path(now)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    except OSError as e:
+        # **traceback にしない**（監査 1・P3）。`outbox` がファイルだと
+        # `FileExistsError` が `thth share sync` から素通りしていた。
+        raise ShareError(
+            f"outbox に積めません: {path}（{e.strerror or e}）"
+            f"{'——outbox がファイルになっています' if os.path.exists(outbox_dir()) and not os.path.isdir(outbox_dir()) else ''}"
+        ) from e
     return row
 
 
