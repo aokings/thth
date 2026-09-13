@@ -121,14 +121,22 @@ def test_thth_boardが2本を並べて落ちない():
             assert "token=no_token" in 行[name], 行[name]
 
 
-def test_この口はThreadsのAPIを直に叩くので他媒体では引かない():
+def test_この口はThreadsのAPIを直に叩くので他媒体では引かない(monkeypatch):
     """**Mastodon の access token を Meta のサーバへ送らない**（T3 で見つけた）。
 
     `account_report.fetch_posts()` は `graph.threads.net` の URL を直に組み立て、
     `access_token` を**クエリに載せる**。Mastodon の `.token` も鍵が
     `access_token` なので、媒体を見ずに通すと**宛先違いに秘密が出る**。
     """
+    import urllib.request
     from thth import account_report as account_report_mod
+
+    # **叩いたら即落ちる**（開発セッションの変異で、止めを外しても通ったため）。
+    # 止めを外すと本物の graph.threads.net へ秘密つきの URL が飛ぶ形になるので、
+    # 「返り値が None」ではなく「HTTP の口が一度も呼ばれない」を固定する。
+    def 叩いてはいけない(*_a, **_k):
+        raise AssertionError("Threads 以外の媒体で graph.threads.net を叩いた（秘密が宛先違いに出る）")
+    monkeypatch.setattr(urllib.request, "urlopen", 叩いてはいけない)
 
     rows, message = account_report_mod.fetch_posts(
         _load("masaru-mastodon"), {"access_token": "MASTODON-SECRET", "user_id": "1"})
