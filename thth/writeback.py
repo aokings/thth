@@ -17,9 +17,54 @@ push の直前・pull --rebase の後にもう一度「送った本文といま�
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 
 from . import redact as redact_mod
+
+# front-matter は 1 行 1 項目の平たい `key: value`。**値に改行が入れば、そこから
+# 先は「別の行」になる**——`thth revoke --reason $'x\nstatus: approved'` が
+# `status: approved` を front-matter に足し、あとから書かれた行が後勝ちで効いて
+# **撤回したはずの原稿が承認済みに戻る**（セキュリティ監査 2026-09-14・P1-3/P1-4）。
+# 同じ口を `thth approve --by`・`THTH_ACTOR`・媒体が返した `post_id` も通る。
+#
+# **書く前に断る**（作法 5・loud reject）。`appenv.run_app_set()` の `--app-id`
+# 検査と同じ型: 直せないものは黙って直さず、書かずに名指しで断る。
+FORBIDDEN_IN_FRONT_MATTER = ("\n", "\r", "\x00")
+
+# `post_id` は front-matter だけでなくファイル名・台帳の鍵にもなるので、
+# 制御文字はまとめて弾く（`thth/core.py` が公開の直後に通す）。
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _forbidden_name(ch: str) -> str:
+    return {"\n": "改行（\\n）", "\r": "復帰（\\r）", "\x00": "NUL"}.get(ch, repr(ch))
+
+
+def check_front_matter_field(key, value) -> None:
+    """front-matter に書ける鍵と値か。書けなければ `ValueError` で断る。
+
+    値が `None` は「空文字列を書く」という既存の規約なので通す。数値等は
+    `str()` した姿で検査する（書かれるのはその姿なので）。
+    """
+    for label, raw in (("鍵", key), ("値", value)):
+        if raw is None:
+            continue
+        text = raw if isinstance(raw, str) else str(raw)
+        for ch in FORBIDDEN_IN_FRONT_MATTER:
+            if ch in text:
+                raise ValueError(
+                    f"front-matter の{label}に{_forbidden_name(ch)}が入っています"
+                    f"（{key!r}）。**書きませんでした。**"
+                    f"（改行を含む値は front-matter の別の行になり、"
+                    f"`status:` 等を後勝ちで上書きできてしまいます）")
+
+
+def has_control_chars(text) -> bool:
+    """制御文字（`\\x00`〜`\\x1f`・`\\x7f`）を含むか。`post_id` の検査に使う。"""
+    if not isinstance(text, str):
+        return False
+    return bool(_CONTROL_RE.search(text))
 
 
 class PushValidationFailed(Exception):
@@ -54,7 +99,14 @@ def set_front_matter_fields(path: str, fields: dict) -> None:
     `fields` の値が None のキーは空文字列として書く（既存の `rewrite_front_matter()`
     の `post_id`・`posted_at` と同じ規約）。本文には一切触らない。キーの並び順は
     既存のキーはその場、新規のキーは末尾（閉じ `---` の直前）に足される順。
+
+    **鍵・値に改行・復帰・NUL があれば 1 文字も書かずに `ValueError`**
+    （セキュリティ監査 2026-09-14・P1-3/P1-4）。`thth approve --by`・
+    `thth revoke --reason`・`THTH_ACTOR`・媒体が返す `post_id` はどれもここを
+    通るので、検査はこの 1 か所に置く。
     """
+    for key, value in fields.items():
+        check_front_matter_field(key, value)
     with open(path, encoding="utf-8") as f:
         text = f.read()
     lines = text.split("\n")

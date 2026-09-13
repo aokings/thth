@@ -324,6 +324,15 @@ def cmd_approve(args) -> int:
                   "環境変数 THTH_ACTOR でも指定できます。", file=sys.stderr)
             return 1
         approved_at = jst.iso()
+        # **名乗りに改行が入っていたら、1 本も書かない**（セキュリティ監査
+        # 2026-09-14・P1-3）。`--by $'x\nstatus: draft'` のような値は front-matter
+        # の別の行になり、後勝ちで `status` を書き換えられた。書く前に断る
+        # （半分だけ承認された状態を作らない）。
+        try:
+            writeback_mod.check_front_matter_field("approved_by", approved_by)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 2
         for one in prepared:
             writeback_mod.set_front_matter_fields(one["path"], {
                 "status": "approved",
@@ -601,6 +610,16 @@ def cmd_revoke(args) -> int:
         print("--by を付けてください（誰が止めたかを記録します）。"
               "環境変数 THTH_ACTOR でも指定できます。", file=sys.stderr)
         return 1
+    # **理由と名乗りに改行が入っていたら、ロックを取る前に断る**（セキュリティ
+    # 監査 2026-09-14・P1-3）。`--reason $'x\nstatus: approved\napproved_sha: …'`
+    # は front-matter の別の行になり、**取り消したはずの原稿が承認済みに戻って
+    # いた**（後の行が後勝ちで効く）。
+    try:
+        writeback_mod.check_front_matter_field("revoked_by", revoked_by)
+        writeback_mod.check_front_matter_field("revoked_reason", args.reason)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     revoked_at = jst.iso()
 
     repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
