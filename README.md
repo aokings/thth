@@ -38,7 +38,9 @@ timer（systemd・`thth systemd` で生成）で毎時投稿、返信の採集�
 ### v2.0.0 で増えた口
 
 - **台帳を repo の外へ**（設計 v2 §3・裁定 §7-1）。正は `$THTH_ROOT/accounts/`（`$THTH_ACCOUNTS_DIR` があればそちら）。
-  repo の `accounts/` は**1 版だけ互換で読む**（stderr に警告 1 行・VM を止めないため）。
+  **repo に台帳は入っていない**（2026-09-14 に 6 本を削除）——clone しても他人の台帳は付いて来ないので、
+  `thth account add` で自分の 1 本を作るところから始まる。配るのは雛形 `accounts.example/` の 3 本だけ。
+  repo の `accounts/` は**1 版だけ互換で読む**（stderr に警告 1 行・移行前の機械を止めないため）。
   `thth account migrate` が repo の中を外へ **copy**（移動しない・上書きしない・冪等）、
   `thth account add <name> --media threads|bluesky|mastodon --project <p>` が
   `accounts.example/<media>.json` の雛形から 1 本書く（**必ず `production: false`**）。

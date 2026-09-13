@@ -194,11 +194,13 @@ def accounts_dir_info() -> dict:
       (b) `$THTH_ROOT/accounts/` —— **正**。あればこれ
       (c) それが無ければ **app repo の `accounts/`** —— **互換。1 版だけ**
 
-    **(c) を消すと VM の稼働が止まる**（設計 v2 §8 の止まる条件）。VM の
-    `/srv/thth/app` は clone で、台帳はそこに commit されている。この版で (c) を
-    落とすと、次の timer で本番 4 本が全部「台帳が無い」になる。運用が
-    `thth account migrate` で `$THTH_ROOT/accounts/` に写しを作り、それを確認して
-    から、**別の日に** repo の `accounts/` を消す。
+    **(c) はこの版でも残す。** repo の `accounts/`（6 本）は **2026-09-14 に
+    `git rm` した**——VM の `thth account migrate` が済み、board の互換警告が
+    消え、次の `thth run` が通ってから（設計 v2 §8 の順番）。それでも (c) を
+    残すのは、**(b) を失った機械を止めないための安全網**。VM の `/srv/thth/app`
+    は `merge --ff-only` の clone なので、この削除が release に届けば作業ツリー
+    からも 6 本が消えるが、(b) を先に見るので稼働には影響しない。
+    **(c) を消すのは次の版。**
 
     **(b) は「ディレクトリがあるか」だけで見る**（中に台帳があるかは見ない）。
     空でもあれば正——`thth account add` を 1 本打った時点で外が正になり、repo の
