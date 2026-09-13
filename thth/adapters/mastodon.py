@@ -26,6 +26,7 @@ import datetime
 import hashlib
 import html.parser
 import json
+import os
 import re
 import urllib.error
 import urllib.parse
@@ -43,6 +44,15 @@ DEFAULT_CHAR_LIMIT = 500
 VISIBILITIES = ("public", "unlisted", "private", "direct")
 
 MEDIUM = "mastodon"
+
+# 台帳の項目名（設計 v2 §4.2「台帳と登録」）。**アダプタの中に閉じる**——core は
+# `media` の名前すら見ない。
+INSTANCE_ENV = "THTH_MASTODON_INSTANCE"
+
+# T0（境界）が `base.AdapterError`（`RuntimeError` の子）を入れた。**まだ入って
+# いない木でも動くように**ここで解決する（新旧どちらでも `except RuntimeError` の
+# 網に入る）。T0 が main に入り切ったら `base.AdapterError` に直接書き換えてよい。
+AdapterError = getattr(base, "AdapterError", RuntimeError)
 
 
 # --------------------------------------------------------------------------
@@ -145,16 +155,16 @@ def char_limit(instance: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> in
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = json.loads(resp.read() or b"{}")
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
-        raise RuntimeError(
+        raise AdapterError(
             f"インスタンスの上限を読めません（{_instance_url(instance)}）: "
             f"{redact_mod.redact(str(e))}") from None
     if not isinstance(body, dict):
-        raise RuntimeError("インスタンスの上限を読めません: 応答が object ではありません")
+        raise AdapterError("インスタンスの上限を読めません: 応答が object ではありません")
     configuration = body.get("configuration")
     statuses = configuration.get("statuses") if isinstance(configuration, dict) else None
     value = statuses.get("max_characters") if isinstance(statuses, dict) else None
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-        raise RuntimeError(
+        raise AdapterError(
             "インスタンスの上限を読めません: "
             "configuration.statuses.max_characters がありません")
     return value
@@ -190,6 +200,9 @@ class MastodonAdapter(base.Adapter):
     トークンを載せない（載せると `urlopen` の例外文とアクセスログに残る）。
     """
 
+    # 設計 v2 §4.2 の部分集合（`base.KNOWN_CAPABILITIES` の語だけを使う）。**空**。
+    CAPABILITIES: frozenset = frozenset()
+
     def __init__(self, *, instance: str = DEFAULT_INSTANCE, access_token: str = "",
                  visibility: str = DEFAULT_VISIBILITY,
                  timeout: float = DEFAULT_TIMEOUT_SECONDS):
@@ -205,6 +218,27 @@ class MastodonAdapter(base.Adapter):
         # （`capabilities()` に "quota" が無いので core は呼ばない）が、
         # `probe()` の detail に出せるように覚えておく。
         self.last_rate_limit: dict | None = None
+
+    @classmethod
+    def from_account(cls, account_cfg: dict, token: dict):
+        """台帳と `.token` から組み立てる（`make_adapter()` が呼ぶ・設計 v2 §4.2）。
+
+        読むのは台帳の `instance`（必須）と `visibility`（省略可）、`.token` の
+        `access_token`（Threads と同じ鍵名）。**`instance` が無ければ名指しで断る**
+        ——既定の `mastodon.social` に黙って落とすと、**台帳を書き忘れた人が
+        知らないサーバに投げる**。
+        """
+        cfg = account_cfg or {}
+        instance = os.environ.get(INSTANCE_ENV) or cfg.get("instance")
+        if not instance:
+            raise ValueError(
+                f"台帳に instance がありません（例: \"instance\": \"{DEFAULT_INSTANCE}\"）"
+                f"——Mastodon はインスタンスごとに別のサーバなので、既定では決められません")
+        return cls(
+            instance=instance,
+            access_token=(token or {}).get("access_token", ""),
+            visibility=cfg.get("visibility") or DEFAULT_VISIBILITY,
+        )
 
     # ----- 秘密 ------------------------------------------------------------
 
@@ -263,14 +297,14 @@ class MastodonAdapter(base.Adapter):
         try:
             body = self._request("GET", path)
         except urllib.error.HTTPError as e:
-            raise RuntimeError(f"{what}: HTTP {e.code} {self._scrub(e.reason)}") from None
+            raise AdapterError(f"{what}: HTTP {e.code} {self._scrub(e.reason)}") from None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
-            raise RuntimeError(f"{what}: {self._scrub(e)}") from None
+            raise AdapterError(f"{what}: {self._scrub(e)}") from None
         if not isinstance(body, dict):
-            raise RuntimeError(
+            raise AdapterError(
                 f"{what}: 応答が object ではありません（{type(body).__name__}）")
         if body.get("error"):
-            raise RuntimeError(f"{what}: {self._scrub(body['error'])[:200]}")
+            raise AdapterError(f"{what}: {self._scrub(body['error'])[:200]}")
         return body
 
     # ----- 投稿 ------------------------------------------------------------
@@ -356,7 +390,7 @@ class MastodonAdapter(base.Adapter):
         """1 件の Status を共通の `Message`（設計 v2 §4.2）に写す。"""
         message_id = status.get("id")
         if not message_id:
-            raise RuntimeError("会話: 返信に id がありません（**件数として数えません**）")
+            raise AdapterError("会話: 返信に id がありません（**件数として数えません**）")
         account = status.get("account")
         account = account if isinstance(account, dict) else {}
         account_id = account.get("id")
@@ -403,17 +437,17 @@ class MastodonAdapter(base.Adapter):
         if "descendants" not in body:
             # **「取れて 0 件」と区別できない**ので失敗として扱う（Threads と同じ・
             # `threads.py::_rows` の理由をそのまま）。
-            raise RuntimeError("会話: 応答に descendants がありません")
+            raise AdapterError("会話: 応答に descendants がありません")
         rows = body["descendants"]
         if rows is None:
-            raise RuntimeError("会話: descendants が null です（0 件とは違います）")
+            raise AdapterError("会話: descendants が null です（0 件とは違います）")
         if not isinstance(rows, list):
-            raise RuntimeError(
+            raise AdapterError(
                 f"会話: descendants が配列ではありません（{type(rows).__name__}）。"
                 f"**件数として数えません**")
         for i, row in enumerate(rows):
             if not isinstance(row, dict):
-                raise RuntimeError(
+                raise AdapterError(
                     f"会話: descendants の {i} 番目が object ではありません"
                     f"（{type(row).__name__}）。**件数として数えません**")
 
@@ -470,43 +504,66 @@ class MastodonAdapter(base.Adapter):
         body = self._get_json("/api/v1/accounts/verify_credentials", "アカウントの確認")
         user_id = body.get("id")
         if not user_id:
-            raise RuntimeError("アカウントの確認: 応答に id がありません")
+            raise AdapterError("アカウントの確認: 応答に id がありません")
         return {"user_id": str(user_id), "username": body.get("acct")}
 
-    def probe(self) -> list:
-        """doctor 用（設計 v2 §4.2「`Adapter.probe()`」）。**秘密は detail に出さない。**"""
+    def probe(self, *, get=None) -> list:
+        """読み取りだけで能力を測る（`thth doctor`）。**秘密は detail に出さない。**
+
+        1 行は doctor がそのまま描ける形（`name`・`label`・`permission`・`key`・
+        `ok`・`detail`）。`ok` は 3 値（True ○ / False × / None －）。
+
+        `get` は取得口の差し替え（doctor が「書き込みの口を持たない」ことを自分の
+        source への検査で担保しているため・T0 の `base.Adapter.probe` 参照）。
+        **Mastodon 側は使わない**——ここで叩く 2 つは GET だけで、doctor の
+        `_get(base_url, path, params, token)`（`access_token` を**クエリに載せる**
+        Threads 向けの形）とは認可の載せ方が違う。**トークンをクエリに移してまで
+        口を共有しない。**
+
+        **投稿・返信・削除は絶対に呼ばない**（doctor から引き継ぐ約束）。
+        """
         results = []
         try:
             me = self.whoami()
-        except Exception as e:      # noqa: BLE001 — probe は落ちずに ✗ を返す口
-            results.append({"name": "verify_credentials", "ok": False,
-                            "detail": self._scrub(e)[:200]})
+        except Exception as e:      # noqa: BLE001 — probe は落ちずに × を返す口
+            results.append({"name": "verify_credentials", "label": "本人の確認",
+                            "permission": "read:accounts", "key": "whoami",
+                            "ok": False, "detail": self._scrub(e)[:200], "body": None})
         else:
             detail = f"acct={me.get('username')} id={me.get('user_id')}"
             if self.last_rate_limit:
-                detail += f" rate={self.last_rate_limit}"
-            results.append({"name": "verify_credentials", "ok": True, "detail": detail})
+                detail += f"・残量 {self.last_rate_limit}"
+            results.append({"name": "verify_credentials", "label": "本人の確認",
+                            "permission": "read:accounts", "key": "whoami",
+                            "ok": True, "detail": detail, "body": None})
         try:
             limit = _read_char_limit(self.instance, timeout=self.timeout)
         except Exception as e:      # noqa: BLE001
-            results.append({"name": "instance", "ok": False,
-                            "detail": self._scrub(e)[:200]})
+            results.append({"name": "instance", "label": "インスタンスの上限",
+                            "permission": "（認可不要）", "key": "instance",
+                            "ok": False, "detail": self._scrub(e)[:200], "body": None})
         else:
-            results.append({"name": "instance", "ok": True,
-                            "detail": f"max_characters={limit}"})
+            results.append({"name": "instance", "label": "インスタンスの上限",
+                            "permission": "（認可不要）", "key": "instance",
+                            "ok": True, "detail": f"max_characters={limit}",
+                            "body": None})
         return results
 
     def char_limit(self) -> int:
         """このインスタンスの上限（台帳の `char_limit` が無いときの既定）。"""
         return _read_char_limit(self.instance, timeout=self.timeout)
 
-    def capabilities(self) -> set:
+    @classmethod
+    def capabilities(cls) -> set:
         """topic 無し・views 無し・inbox 無し・quota 無し・refresh 無し（設計 v2 §4.2）。
+
+        **実体を作らずに引ける**（classmethod・T0 の `base.Adapter` と同じ形）——
+        `select` がトピック検査をするかどうかを、トークンを読まずに決められる。
 
         `link_preview` も入れない——Mastodon は本文中の URL を勝手にリンクにするので
         **アダプタが何かをする余地が無い**。「できる」ではなく「アダプタが担う」を数える。
         """
-        return set()
+        return set(cls.CAPABILITIES)
 
     def quota(self):
         """rate limit ヘッダ（**L2**）は `last_rate_limit` に覚えるが、**枠としては返さない**。
