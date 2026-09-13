@@ -87,16 +87,30 @@ def diagnose(account_name: str) -> dict:
     """
     account_cfg = accounts_mod.load_account(account_name)
     token = accounts_mod.load_token(account_cfg)
-    if not token or not token.get("access_token"):
-        return {"account": account_name, "error": "トークンが無い（thth token set を先に）",
+
+    # **媒体を先に引く。** トークンの「在る／無い」の判定が媒体ごとに違うので
+    # （下）、知らない媒体をここで loud に断らないと、`media` の誤字が
+    # 「トークンが無い」という**別の理由**に化けて出る（T-B0）。
+    try:
+        adapter_cls = adapters_mod.adapter_class(account_cfg.get("media"))
+    except adapter_base.AdapterError as e:
+        # 「probe が 0 件で異常なし」にしない——`run_doctor()` が `error` を見て rc=2。
+        return {"account": account_name, "error": str(e), "probes": []}
+
+    # **トークンの鍵は媒体が知っている**（`TOKEN_KEYS`・T3 の配線 2026-09-13）。
+    # 以前はここが `token.get("access_token")` 固定だったので、**Bluesky は
+    # `thth auth` で正しく認可しても「トークンが無い」と言われた**（`.token` に
+    # 入るのは `identifier` と `app_password`）。次の一手も媒体ごとに違う
+    # （`TOKEN_SETUP_HINT`）——Bluesky に `thth token set` を勧めても入らない。
+    if not adapter_cls.has_token(token):
+        return {"account": account_name,
+                "error": f"トークンが無い（{adapter_cls.TOKEN_SETUP_HINT} を先に）",
                 "probes": []}
 
     user_id = token.get("user_id") or account_cfg.get("user_id") or ""
     try:
         adapter = adapters_mod.make_adapter(account_cfg, token)
     except adapter_base.AdapterError as e:
-        # **知らない媒体は loud に断る**（T-B0）。「probe が 0 件で異常なし」に
-        # しない——`run_doctor()` が `error` を見て rc=2 にする。
         return {"account": account_name, "error": str(e), "probes": []}
 
     results = adapter.probe(get=_get)
