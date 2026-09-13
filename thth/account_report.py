@@ -130,6 +130,19 @@ def fetch_posts(account_cfg: dict, token: dict | None, *, limit: int = REMOTE_LI
     診断の要約を投稿一覧の代わりに使わせていたのが間違いだったので、**投稿を読む
     ための口を別に用意する**（`thth posts`）。読み取りだけ（`threads_basic`）。
     """
+    # **この口だけは境界の向こうに行っていない**（設計 v2 §4.2 が数えた「Threads
+    # 固有になっている 6 箇所」に入っていなかった 7 つめ・T3 で見つけた
+    # 2026-09-13）。下の URL は `graph.threads.net` を直に組み立てており、
+    # アダプタを一切通さない。**Mastodon の `.token` も鍵が `access_token` なので、
+    # 媒体を見ずに通すと Mastodon の access token を Meta のサーバへ送ってしまう。**
+    # 秘密を宛先違いに出す経路なので、ここで名指しで止める。**「0 件」とは言わない**
+    # （規約 12）——引けないことを引けないと言う。
+    #
+    # 残件: `Adapter.recent_posts()` を境界に足して媒体側へ移す（そこまでは、
+    # 媒体を足すたびにこの 1 行を見直すこと）。
+    media = account_cfg.get("media")
+    if media != "threads":
+        return None, f"この口は Threads の API を直に叩くので {media} では引けません"
     if token is None or not token.get("access_token"):
         return None, "token が無いので引けません"
     user_id = token.get("user_id") or account_cfg.get("user_id")
