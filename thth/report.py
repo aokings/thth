@@ -403,6 +403,10 @@ def board_summary(now=None) -> dict:
         running.append("_app")
     return {"accounts": accounts_out, "generated_at": jst.iso(),
             "running": running,
+            # **どこの台帳を読んで、この一覧を作ったか**（設計 v2 §3・v2-2a）。
+            # 「外」と「repo の中（互換）」で並ぶ顔ぶれが変わる。**画面が誰の
+            # 台帳を読んだのかを言わないと、移行のさなかに何が正か判らない。**
+            "accounts_dir": accounts_mod.accounts_dir_info(),
             "app": {"head": head_sha,
                     "release_ref": selfupdate_mod.RELEASE_REF,
                     "release_check": check,
