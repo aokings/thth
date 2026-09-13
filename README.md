@@ -11,7 +11,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 **2.0.0**。門を無料で開ける版（`pip install`・`thth ask`・`thth share`・台帳を repo の外へ）。範囲と裁定は [docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md) §3・§7、その前の版は [docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md](docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md)、導入は [docs/導入_自分のMetaアプリで動かす.md](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
 
-`thth/VERSION` は `2.0.0`（版は `thth/VERSION` の 1 か所・`server.json` はテストで一致を強制）。`origin/release` は v1.3.0（`0bd8208`）のままで、**v2.0.0 はまだ配っていない**（配布は masaru の一言）。出口条件の試験は [docs/記録/試験_LLMに選ばせる_2026-09-13.md](docs/記録/試験_LLMに選ばせる_2026-09-13.md)。
+`thth/VERSION` は `2.0.0`（版は `thth/VERSION` の 1 か所・`server.json` はテストで一致を強制）。`origin/release` は v1.3.0（`0bd8208`）のままで、**v2.0.0 はまだ配っていない**（配布は masaru の一言）。出口条件の試験は（運用日誌 thth-notes: `記録/試験_LLMに選ばせる_2026-09-13.md`）。
 
 **`main` への push は保存だけ。`release` を進める操作が配布**（VM は `release` だけを追う。設計 §3.2.1）。
 

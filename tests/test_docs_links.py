@@ -31,6 +31,12 @@ EXCLUDED_PREFIXES = (
     # `docs/sns/queue/` だけ除外していたが、`docs/sns/返信の方針.md` のような
     # 利用者 repo の文書への言及も同じ扱い（2026-09-13・運用の引継ぎ書で発火）。
     "docs/sns/",
+    # 運用日誌は private repo `thth-notes` の `記録/` へ移した（2026-09-14・
+    # 設計 v2 §3 public・§7-2 masaru 裁定。tools/split_notes.py --execute）。
+    # 本 repo に残る `docs/記録/...` という表記は、移動前の状態を書き留めた
+    # 記録・転記（例: docs/公開前チェックリスト_2026-09-13.md の dry-run 出力）
+    # なので、**実在しないのが正しい**。文書の中身は書かれた当時のまま残す。
+    "docs/記録/",
 )
 
 # まだ存在しない前方参照・過去の文書構成案。文書の中身は書き換えない方針のため
@@ -42,6 +48,21 @@ EXCLUDED_PATHS = {
     # docs/実装_トピック提案_2026-09-11.md が「取り込む予定」と書いている、
     # まだ取り込まれていない外部ファイル。
     "docs/設計_記事別トピック提案_2026-09-11.md",
+    # docs/ 直下にあった日誌（出口条件_・引継ぎ_・記録_・調査_）も 2026-09-14 に
+    # thth-notes/記録/ へ移した。docs/公開前チェックリスト_2026-09-13.md が
+    # 引用している dry-run 出力の中にこれらのパスが**移動前の表記のまま**
+    # 残っている（転記なので書き換えない）。上と同じ理由で実在しないのが正しい。
+    # （`docs/引継ぎ_トピックの棚_…_2026-09-12.md` は
+    # tests/test_value_domains_shown.py が直接読むので本 repo に残した。
+    # tools/split_notes.py の PIN_EXCEPTIONS 参照。ここには足さない。）
+    "docs/出口条件_編集知識の蓄積_第2段階_2026-09-12.md",
+    "docs/引継ぎ_実測と未決の論点_2026-09-11.md",
+    "docs/引継ぎ_編集知識の蓄積_第1段階_2026-09-11.md",
+    "docs/引継ぎ_運用セッション_2026-09-13.md",
+    "docs/引継ぎ_開発セッション_2026-09-12.md",
+    "docs/引継ぎ_開発セッション_2026-09-13.md",
+    "docs/記録_URLの使用を限定した期間_2026-09-12.md",
+    "docs/調査_配布の権限分離_2026-09-12.md",
 }
 
 # **この repo の文章作法は `…`（U+2026）**。ASCII の "..." だけ持っていたので、
@@ -133,7 +154,20 @@ def test_docs_links_resolve_to_real_files():
     assert not missing, "存在しないリンク・パス文字列:\n" + "\n".join(sorted(missing))
 
 
-def test_docs_records_directory_exists_and_has_files():
+def test_docs_records_directory_is_empty_or_absent():
+    """`docs/記録/` は**無いのが正しい**（あるなら空でなければならない）。
+
+    2026-09-14 に運用日誌を private repo `thth-notes` の `記録/` へ移した
+    （設計 v2 §3 public・§7-2 masaru 裁定。tools/split_notes.py --execute）。
+    以前はここで `docs/記録/` の実在・非空を assert していたが、分離後は
+    逆に「日誌が本 repo へ戻ってきていないこと」を守る検査にする。
+    ディレクトリごと無くなっているのが通常の状態なので、無ければ通る。
+    """
     records = DOCS / "記録"
-    assert records.is_dir(), "docs/記録/ が無い（tools/docs_reorg.py を走らせたか確認）"
-    assert any(records.iterdir()), "docs/記録/ が空（移動が実行されていない）"
+    if not records.exists():
+        return
+    strays = sorted(p.name for p in records.iterdir())
+    assert not strays, (
+        "docs/記録/ に日誌が戻っている（thth-notes/記録/ へ置くこと）:\n"
+        + "\n".join(strays)
+    )

@@ -222,7 +222,7 @@ thth account add demo-threads --media threads --project demo --force
 
 ### 4-2. すでに動いている機械の移行（`thth account migrate`）
 
-**すでに repo の `accounts/` で動いている機械**（VM・2026-09-13 時点の `/srv/thth/app`）は、下の 4 手で外へ移します。**運用セッションの手順は `docs/引継ぎ_運用セッション_2026-09-13.md` 末尾にそのまま貼れる形であります。**
+**すでに repo の `accounts/` で動いている機械**（VM・2026-09-13 時点の `/srv/thth/app`）は、下の 4 手で外へ移します。**運用セッションの手順は（運用日誌 thth-notes: `記録/引継ぎ_運用セッション_2026-09-13.md`）末尾にそのまま貼れる形であります。**
 
 ```bash
 thth account migrate --dry-run   # 何も書かない。写す顔ぶれを見るだけ
