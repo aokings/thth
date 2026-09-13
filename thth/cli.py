@@ -11,6 +11,7 @@ import datetime
 import json
 import os
 import sys
+import unicodedata
 
 from . import __version__ as _pkg_version
 from . import account_report as account_report_mod
@@ -28,6 +29,7 @@ from . import queuefile
 from . import replies as replies_mod
 from . import report as report_mod
 from . import selfupdate as selfupdate_mod
+from . import threadshape as threadshape_mod
 from . import topics as topics_mod
 from . import writeback as writeback_mod
 
@@ -959,6 +961,148 @@ def cmd_measured(args) -> int:
               "現在の原稿の account では推定しません（混ぜません）")
     else:
         print("所有不明: 無し")
+    return 0
+
+
+
+def _disp_width(text: str) -> int:
+    """端末での表示幅（全角は 2）。**表の桁を揃えるため**——`len()` で数えると
+    日本語の見出しが入った列が必ずずれる。"""
+    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+               for ch in str(text))
+
+
+def _pad(text: str, width: int, *, right: bool = False) -> str:
+    """表示幅で詰める（`str.ljust` は全角を 1 と数えるので使えない）。"""
+    pad = " " * max(0, width - _disp_width(text))
+    return (pad + str(text)) if right else (str(text) + pad)
+
+
+def _fmt_num(value, *, digits: int = 1, dash: str = "—") -> str:
+    """数でなければ `—`。**`0` と「取れていない」を見た目でも分ける。**"""
+    if value is None:
+        return dash
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return f"{value:.{digits}f}".rstrip("0").rstrip(".") or "0"
+    return str(value)
+
+
+def cmd_threads(args) -> int:
+    """`thth threads <account> [--post <post_id>] [--json]`: スレッドの**形**を出す
+    （設計 v2 §2「スレッドの形」・§6 v2-0。読むだけ）。
+
+    返信の台帳（`data/sns/replies/<post_id>.ndjson`）から、枝・最深・参加者・
+    最初の返信までの分・作者返信の効き・刻みごとの伸びを計算する
+    （`thth/threadshape.py`）。**泉（v2-5）はまだ無い。手元の account の実データで
+    先に計算して見る段。**
+
+    人向けは 1 投稿 3〜4 行と要約の表 1 つ。**指図（「〜すべき」）は出さない**
+    ——事実と分母だけ（設計 v2 §1 規約 3 は泉の答えの話で、この口は素の観測）。
+    `--json` は分子・分母・除外の理由を全部持つ。
+    """
+    try:
+        result = threadshape_mod.load(args.account, post_id=args.post)
+    except accounts_mod.AccountError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    if args.json:
+        _print_json(result)
+        return 0
+
+    posts = result["posts"]
+    print(f"{result['account']}（媒体 {result['medium']}）"
+          f"  投稿 {len(posts)} 件  刻み {'/'.join(str(m) for m in result['marks'])}h")
+    print("")
+    if not posts:
+        print("返信の台帳がある投稿がありません")
+
+    for post in posts:
+        topic = post["topic"] or "（トピック無し）"
+        kind = post["kind"] or "型なし"
+        band = post["hour_band"] or "時刻不明"
+        print(f"{post['post_id']}  [{topic}／{kind}]  {band}"
+              f"  posted_at={post['posted_at']}")
+
+        part = post["participants"]
+        share = ("—" if part["top_share"] is None
+                 else f"{part['top_replies']}/{part['denominator']}"
+                      f"＝{part['top_share'] * 100:.0f}%")
+        first = _fmt_num(post["first_reply_min"])
+        first_text = f"{first} 分" if post["first_reply_min"] is not None \
+            else f"—（{post['first_reply']['reason']}）"
+        print(f"  枝 {post['branches']}・最深 {post['depth']}・"
+              f"返信 {post['replies_total']}（作者 {post['author_replies']}・"
+              f"他人 {post['other_replies']}・不明 {post['own_unknown']}）・"
+              f"参加者 {part['count']}（最多 {share}）・最初の返信 {first_text}")
+
+        growth = " ".join(
+            f"{m}h={_fmt_num((post['growth'][str(m)] or {}).get('replies'))}"
+            for m in result["marks"])
+        views = " ".join(
+            f"{m}h={_fmt_num((post['views_at'][str(m)] or {}).get('views'))}"
+            for m in result["marks"])
+        print(f"  伸び（返信の累計） {growth}   views {views}"
+              "   ※ `—` は取れていない刻み（0 件ではありません）")
+
+        eff = post["author_reply_effect"]
+        yes, no = eff["replied"], eff["not_replied"]
+        print(f"  作者が返した枝 その後の他人の返信 平均 {_fmt_num(yes['mean'])}"
+              f"（n={yes['n']}）／返さなかった枝 {_fmt_num(no['mean'])}（n={no['n']}）"
+              f"  ※ n<{threadshape_mod.MIN_N} は平均を出しません・相関であって因果ではありません")
+
+        注意 = []
+        if post["orphan_replies"]:
+            注意.append(f"根まで辿れない返信 {len(post['orphan_replies'])} 件"
+                        "（枝にも最深にも数えていません）")
+        if post["duplicate_reply_ids"]:
+            注意.append(f"同じ id の返信が重複 {len(post['duplicate_reply_ids'])} 件")
+        if post["first_reply"]["unknown_reply_was_earlier"]:
+            注意.append("最初の他人の返信より前に、身内か判らない返信があります")
+        if any((post["growth"][str(m)] or {}).get("marks_collapsed") for m in result["marks"]):
+            注意.append("1 回の取得に刻みが同居しています（その時点を復元したものではありません）")
+        if not post["measured"]:
+            注意.append("実測の台帳が無いので views と posted_at が取れません")
+        if 注意:
+            print("  ⚠ " + "／".join(注意))
+        print("")
+
+    summary = result["summary"]
+    print(f"—— 要約（媒体 {summary['medium']} で閉じています・媒体をまたいで集計しません）")
+    cols = [("枝", "branches", 8), ("最深", "depth", 8), ("返信", "replies_total", 8),
+            ("最初の返信(分)", "first_reply_min", 16)]
+    print(_pad("区分", 22) + _pad("n", 4, right=True) + "  "
+          + "".join(_pad(head, w, right=True) for head, _key, w in cols))
+    for label, groups in (("型", summary["by_kind"]), ("時刻帯", summary["by_hour_band"])):
+        for name, group in groups.items():
+            cells = []
+            for _head, metric, width in cols:
+                stat = (group["metrics"] or {}).get(metric)
+                # **群ごと `—`（n が足りない）と、指標ごと `—` を同じ記号で出す。**
+                # どちらも「言えない」で、その理由は下の `言えないこと` に並ぶ。
+                cells.append(_pad("—" if not stat else _fmt_num(stat["median"]),
+                                  width, right=True))
+            print(_pad(f"{label}:{name}", 22) + _pad(str(group["n"]), 4, right=True)
+                  + "  " + "".join(cells))
+    print("")
+    if summary["cannot_say"]:
+        print("言えないこと（n が足りません）:")
+        for line in summary["cannot_say"]:
+            print(f"  - {line}")
+    else:
+        print("言えないこと: 無し")
+
+    if result["posts_without_reply_ledger"]:
+        print(f"返信の台帳が無い投稿（0 件と混ぜていません）: "
+              + ", ".join(result["posts_without_reply_ledger"]))
+    if result["broken"]:
+        print("**読めなかった返信の台帳**: " + ", ".join(result["broken"]),
+              file=sys.stderr)
+    if result["unreadable_accounts"]:
+        print("**読めなかった account 台帳**（他人の判定が不完全です）: "
+              + ", ".join(result["unreadable_accounts"]), file=sys.stderr)
     return 0
 
 
@@ -2129,6 +2273,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_measured.add_argument("--post", default=None, help="この post_id だけ")
     p_measured.add_argument("--json", action="store_true")
     p_measured.set_defaults(func=cmd_measured)
+
+    p_threads = sub.add_parser(
+        "threads",
+        help="スレッドの形（枝・最深・参加者・最初の返信までの分・刻みごとの伸び）を出す（読むだけ）")
+    p_threads.add_argument("account")
+    p_threads.add_argument("--post", default=None, help="この post_id だけ")
+    p_threads.add_argument("--json", action="store_true")
+    p_threads.set_defaults(func=cmd_threads)
 
     p_topics = sub.add_parser(
         "topics", help="トピック別にどれだけ見られたかを並べる（読むだけ）")
