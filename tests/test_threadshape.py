@@ -499,7 +499,8 @@ def test_CLIのjsonは分子と分母と除外の理由を持つ(three_level_acc
 
 
 def test_CLIは無い台帳で1を返す(capsys):
-    rc, out = _run_cli("そんなaccountは無い", capsys=capsys)
+    # 名前は ASCII（`load_account()` が名前を先に検査する・監査 2026-09-14 P2-2）。
+    rc, out = _run_cli("sonna-account-wa-nai", capsys=capsys)
     assert rc == 1
     assert "台帳が無い" in out.err
 

@@ -566,7 +566,7 @@ def test_f4_問いが受け取れなければrc2で一覧を添えて断る(acco
 
 
 def test_f5_台帳が無ければrc1(account, thth_root):
-    proc = run_ask(["ask", "before-you-post", "そんなaccountは無い",
+    proc = run_ask(["ask", "before-you-post", "sonna-account-wa-nai",
                     "--topic", TOPIC])
     assert proc.returncode == 1
     assert proc.stdout == ""

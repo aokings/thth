@@ -737,7 +737,11 @@ def test_doctorが置き場を1行で言う_台帳が読めないときも(置�
     「台帳が無い」とだけ言われても、外を見に行ったのか repo の中を見に行ったのかが
     判らないと直しようがない。
     """
-    r = run_thth(["doctor", "居ない-threads"])
+    # **名前は ASCII にする**（セキュリティ監査 2026-09-14・P2-2）。
+    # `accounts.load_account()` が名前そのものを先に検査するようになったので、
+    # 置き場の外を指せない綴り（`thth account add` が通す綴り）でないと
+    # 「台帳が無い」まで届かない。ここで見たいのは**無いときに置き場を言うか**。
+    r = run_thth(["doctor", "inai-threads"])
     assert r.returncode == 2, r.stdout + r.stderr
     assert f"台帳の置き場: {置き場['外']}" in r.stdout, r.stdout
     assert "台帳が無い" in r.stdout
