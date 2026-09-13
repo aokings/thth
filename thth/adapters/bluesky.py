@@ -292,7 +292,7 @@ class BlueskyAdapter(base.Adapter):
     # 当たるものが無い）・`views` 無し（**L2**: `#postView` に views は無い）・
     # `quota` 無し・`inbox` 無し・`refresh` 無し（App Password に期限が無いので
     # 延長という概念が無い）・`account_insights` 無し（アカウント単位の日次は無い）。
-    CAPABILITIES: frozenset = frozenset({"link_preview"})
+    CAPABILITIES: frozenset = frozenset({"link_preview", "recent_posts"})
 
     # `.token` の鍵（`thth auth <account>` が書く形・設計 v2 §4.2「認可とトークン」）。
     # **`access_token` ではない**——doctor が `access_token` だけを見ていたので、
@@ -593,6 +593,57 @@ class BlueskyAdapter(base.Adapter):
             # SNS に会話の窓の期限は無い（**WhatsApp の芽**・設計 v2 §4.2）。
             "reply_deadline": None,
         }
+
+    # --- 直近の投稿 ---------------------------------------------------------
+    def recent_posts(self, *, limit: int = 25) -> list:
+        """`app.bsky.feed.getAuthorFeed`（**L2**——lexicon を 2026-09-13 に読解）。
+
+        `actor`（at-identifier・必須）・`limit`（1〜100・既定 50）・`cursor`・
+        `filter`（既定 `posts_with_replies`）・`includePins`（既定 false）。出力は
+        `cursor` と `feed`（`#feedViewPost` の配列）。`#feedViewPost` は `post`
+        （`#postView`）が必須で、`reply`・`reason`（`#reasonRepost` か
+        `#reasonPin`）が任意（**L2**・`app.bsky.feed.defs`）。
+
+        **`reason` の付いた行は落とす**——それは「本人が再投稿したもの」であって
+        本人が書いた投稿ではない（`thth posts` は「THTH を通していない**自分の
+        投稿**」を数えるための口）。`includePins` は既定の false のままなので、
+        ここで落ちるのは実質すべて再投稿。
+
+        **返信も入る**（`filter` を既定のままにしている）。THTH が出した返信も
+        `post_id` で突き合わせたいので、`posts_no_replies` にはしない。
+        """
+        actor = (self.session().get("did") or self.identifier or "").strip()
+        if not actor:
+            raise base.AdapterError("actor（did か handle）が判らないので直近の投稿を引けません")
+        body = self._request("GET", "app.bsky.feed.getAuthorFeed", params={
+            "actor": actor, "limit": max(1, min(int(limit), 100))})
+        feed = body.get("feed")
+        if not isinstance(feed, list):
+            # **「取れなかった」を「取れて 0 件」にしない**（`_post_view` と同じ規律）。
+            raise base.AdapterError(
+                "getAuthorFeed: 応答に feed の配列がありません"
+                f"（{type(feed).__name__}）。取れて 0 件とは区別できません")
+        out = []
+        for item in feed:
+            if not isinstance(item, dict) or item.get("reason"):
+                continue
+            view = item.get("post")
+            if not isinstance(view, dict) or not view.get("uri"):
+                continue
+            record = view.get("record")
+            record = record if isinstance(record, dict) else {}
+            author = view.get("author")
+            handle = (author or {}).get("handle") if isinstance(author, dict) else None
+            out.append({
+                "post_id": view["uri"],
+                # 書いた時刻（`record.createdAt`）を優先し、無ければ索引された時刻。
+                "timestamp": record.get("createdAt") or view.get("indexedAt"),
+                "url": post_url(handle, view["uri"]) if handle else None,
+                "text": record.get("text"),
+                # **語（Threads の topic_tag）に当たるものが無い**媒体。
+                "topic": None,
+            })
+        return out
 
     # --- 実測 ---------------------------------------------------------------
     def insights(self, post_id: str) -> dict:

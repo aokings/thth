@@ -75,6 +75,16 @@ STATUS_FIXTURE = {
 ACCOUNT_FIXTURE = {"id": "9000", "username": "nigamilab", "acct": "nigamilab",
                    "display_name": "にがみラボ"}
 
+# `GET /api/v1/accounts/:id/statuses`（**L2**）。新しい順・`content` は HTML。
+ACCOUNT_STATUSES_FIXTURE = [
+    {"id": "110000000000000010", "created_at": "2026-09-13T05:00:00.000Z",
+     "url": "https://example.invalid/@nigamilab/110000000000000010",
+     "content": "<p>あたらしい&amp;ほう</p>"},
+    {"id": ROOT_ID, "created_at": "2026-09-13T00:00:00.000Z",
+     "url": f"https://example.invalid/@nigamilab/{ROOT_ID}",
+     "content": "<p>根の投稿</p>"},
+]
+
 INSTANCE_FIXTURE = {
     "domain": "example.invalid",
     "configuration": {"statuses": {"max_characters": 1234,
@@ -153,7 +163,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802
         self._record(None)
-        path = self.path
+        path = urllib.parse.urlsplit(self.path).path
+        if path.startswith("/api/v1/accounts/") and path.endswith("/statuses"):
+            mode = self.behavior.get("account_statuses", "ok")
+            if mode == "ok":
+                self._json(200, ACCOUNT_STATUSES_FIXTURE)
+            elif mode == "object":
+                # **配列でない**（「取れて 0 件」と区別できない）。
+                self._json(200, {"statuses": []})
+            else:
+                self._fail(mode)
+            return
         if path == "/api/v2/instance":
             mode = self.behavior.get("instance", "ok")
             if mode == "ok":
@@ -481,6 +501,53 @@ def test_descendantsが無いnullなら取れて0件にしない(mode):
 # insights・whoami・probe・char_limit
 # ---------------------------------------------------------------------------
 
+def test_recent_postsは自分の投稿を新しい順に返す():
+    """`GET /api/v1/accounts/:id/statuses`（**L2**・F2 の `recent_posts`）。"""
+    with fake_mastodon() as fake:
+        rows = _adapter(fake, account_id="9000").recent_posts(limit=25)
+        取得 = [r for r in fake.requests if "/statuses" in r["path"]
+                and "/accounts/" in r["path"]]
+    assert [r["post_id"] for r in rows] == ["110000000000000010", ROOT_ID], rows
+    # **HTML は落として人が読む本文にする**（実体参照も戻す）。
+    assert rows[0]["text"] == "あたらしい&ほう", rows[0]
+    assert rows[0]["timestamp"] == "2026-09-13T05:00:00.000Z"
+    assert rows[0]["url"].endswith("/110000000000000010")
+    assert rows[0]["topic"] is None
+    # 数字の account id を使う（`acct` ではない）。ブーストは落とす。
+    assert 取得[0]["path"].startswith("/api/v1/accounts/9000/statuses?"), 取得[0]["path"]
+    assert "exclude_reblogs=true" in 取得[0]["path"], 取得[0]["path"]
+
+
+def test_recent_postsのlimitは40を超えない():
+    """**L2**: `limit` は既定 20・最大 40。"""
+    with fake_mastodon() as fake:
+        _adapter(fake, account_id="9000").recent_posts(limit=1000)
+        取得 = [r for r in fake.requests if "/accounts/" in r["path"]]
+    assert "limit=40" in 取得[0]["path"], 取得[0]["path"]
+
+
+def test_recent_postsはaccount_idが無ければwhoamiで引く():
+    with fake_mastodon() as fake:
+        rows = _adapter(fake).recent_posts()
+        引いた = [r["path"] for r in fake.requests]
+    assert rows
+    assert "/api/v1/accounts/verify_credentials" in 引いた, 引いた
+    assert any(p.startswith("/api/v1/accounts/9000/statuses") for p in 引いた), 引いた
+
+
+def test_recent_postsは配列でなければ0件と言わない():
+    with fake_mastodon({"account_statuses": "object"}) as fake:
+        with pytest.raises(mastodon_mod.AdapterError):
+            _adapter(fake, account_id="9000").recent_posts()
+
+
+def test_recent_postsの失敗にトークンが出ない():
+    with fake_mastodon({"account_statuses": "4xx_echo"}) as fake:
+        with pytest.raises(mastodon_mod.AdapterError) as e:
+            _adapter(fake, account_id="9000").recent_posts()
+    assert TOKEN not in str(e.value), str(e.value)
+
+
 def test_insightsにviewsが無い():
     with fake_mastodon() as fake:
         got = _adapter(fake).insights(ROOT_ID)
@@ -532,11 +599,14 @@ def test_probeは失敗しても落ちずに理由を返す():
     assert TOKEN not in json.dumps(probes, ensure_ascii=False)
 
 
-def test_capabilitiesは空でquotaはNone():
-    """topic 無し・views 無し・inbox 無し・refresh 無し（設計 v2 §4.2）。"""
+def test_capabilitiesはrecent_postsだけでquotaはNone():
+    """topic 無し・views 無し・inbox 無し・refresh 無し（設計 v2 §4.2）。
+
+    `recent_posts` だけは在る（`GET /api/v1/accounts/:id/statuses`・F2・2026-09-13）。
+    """
     with fake_mastodon() as fake:
         adapter = _adapter(fake)
-        assert adapter.capabilities() == set()
+        assert adapter.capabilities() == {"recent_posts"}
         assert adapter.quota() is None
         assert adapter.inbox() == []
 
@@ -582,8 +652,8 @@ def test_秘密は例外文に出ない(call):
 
 def test_capabilitiesは実体を作らずに引ける():
     """`select` がトークンを読まずにトピック検査の要否を決められる（T0・受け入れ 6）。"""
-    assert mastodon_mod.MastodonAdapter.capabilities() == set()
-    assert mastodon_mod.MastodonAdapter.CAPABILITIES == frozenset()
+    assert mastodon_mod.MastodonAdapter.capabilities() == {"recent_posts"}
+    assert mastodon_mod.MastodonAdapter.CAPABILITIES == frozenset({"recent_posts"})
 
 
 def test_from_accountは台帳とトークンから組み立てる():

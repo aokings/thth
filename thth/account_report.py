@@ -122,44 +122,40 @@ REMOTE_TIMEOUT_SECONDS = 8.0
 REMOTE_LIMIT = 25
 
 
-def fetch_posts(account_cfg: dict, token: dict | None, *, limit: int = REMOTE_LIMIT,
-                 fields: str = "id,permalink,timestamp") -> tuple:
-    """Threads 側の直近の投稿をそのまま返す `(rows, エラー文)`。**切り詰めない。**
+def fetch_posts(account_cfg: dict, token: dict | None, *,
+                 limit: int = REMOTE_LIMIT) -> tuple:
+    """その媒体で**実際に出ている**直近の投稿 `(rows, エラー文)`。**切り詰めない。**
 
-    `thth doctor` の `detail` は能力の確認が目的で 220 字で切っている——2 件目の
-    permalink が読めない、という報告を受けた（nigamilab セッション 2026-09-10）。
-    診断の要約を投稿一覧の代わりに使わせていたのが間違いだったので、**投稿を読む
-    ための口を別に用意する**（`thth posts`）。読み取りだけ（`threads_basic`）。
+    1 行の形は境界のもの（`Adapter.recent_posts()` の docstring）:
+    `post_id`・`timestamp`・`url`・`text`・`topic`。
+
+    **以前ここが `graph.threads.net` の URL を直に組み立てていた**（設計 v2 §4.2 が
+    数えた「Threads 固有になっている 6 箇所」に入っていなかった 7 つめ）。
+    `access_token` を**クエリに載せて**おり、Mastodon の `.token` も鍵が
+    `access_token` なので、媒体を見ずに通すと**宛先違いに秘密が出る**。当座は
+    `media != "threads"` を名指しで弾いていたが、それは**媒体を足すたびにここを
+    見直す**形——F2（2026-09-13）で `Adapter.recent_posts()` を境界に足し、
+    **宛先を媒体が決める**ようにした。ここに残るのは 3 つだけ:
+
+    1. **能力で塞ぐ**（媒体名で分岐しない）。持たない媒体には**聞きに行かない**
+       ——アダプタを組み立てもしない（`.token` を渡す先を増やさない）。
+    2. **トークンが在るかは媒体が決める**（`TOKEN_KEYS`・Bluesky は
+       `identifier` と `app_password`）。
+    3. **「0 件」とは言わない**（規約 12）——引けないことを引けないと言う。
     """
-    # **この口だけは境界の向こうに行っていない**（設計 v2 §4.2 が数えた「Threads
-    # 固有になっている 6 箇所」に入っていなかった 7 つめ・T3 で見つけた
-    # 2026-09-13）。下の URL は `graph.threads.net` を直に組み立てており、
-    # アダプタを一切通さない。**Mastodon の `.token` も鍵が `access_token` なので、
-    # 媒体を見ずに通すと Mastodon の access token を Meta のサーバへ送ってしまう。**
-    # 秘密を宛先違いに出す経路なので、ここで名指しで止める。**「0 件」とは言わない**
-    # （規約 12）——引けないことを引けないと言う。
-    #
-    # 残件: `Adapter.recent_posts()` を境界に足して媒体側へ移す（そこまでは、
-    # 媒体を足すたびにこの 1 行を見直すこと）。
     media = account_cfg.get("media")
-    if media != "threads":
-        return None, f"この口は Threads の API を直に叩くので {media} では引けません"
-    if token is None or not token.get("access_token"):
+    if "recent_posts" not in adapters_mod.capabilities_for(media):
+        return None, (f"{media} には直近の投稿を引く口がありません"
+                       f"（引けるのは recent_posts を持つ媒体だけ）")
+    adapter_cls = adapters_mod.adapter_class(media)
+    if not adapter_cls.has_token(token):
         return None, "token が無いので引けません"
-    user_id = token.get("user_id") or account_cfg.get("user_id")
-    if not user_id:
-        return None, "user_id が判らないので引けません"
 
-    base_url = os.environ.get("THTH_THREADS_BASE_URL", "https://graph.threads.net")
-    params = {"fields": fields, "limit": limit, "access_token": token["access_token"]}
-    url = base_url.rstrip("/") + f"/v1.0/{user_id}/threads?" + urllib.parse.urlencode(params)
     try:
-        with urllib.request.urlopen(url, timeout=REMOTE_TIMEOUT_SECONDS) as resp:
-            body = json.loads(resp.read() or b"{}")
-    except (urllib.error.URLError, OSError, ValueError) as e:
+        adapter = adapters_mod.make_adapter(account_cfg, token)
+        rows = adapter.recent_posts(limit=limit)
+    except Exception as e:                      # 引けないことは投稿の可否と無関係
         return None, "引けませんでした: " + redact_mod.redact(str(e))
-
-    rows = body.get("data")
     if not isinstance(rows, list):
         return None, "応答の形が想定と違います"
     return rows, ""
@@ -187,19 +183,21 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
             by_post_id[post_id] = os.path.basename(qf.path)
 
     rows, err = fetch_posts(account_cfg, accounts_mod.load_token(account_cfg),
-                             limit=limit, fields="id,permalink,timestamp,text,topic_tag")
+                             limit=limit)
     if rows is None:
         return {"account": account_name, "error": err, "posts": []}
 
+    # **外に出す鍵の綴りは変えない**（`thth posts --json` は masaru のセッションが
+    # 読んでいる）。境界の `post_id`・`url` をここで `id`・`permalink` に写す。
     posts = []
     for row in rows:
-        post_id = row.get("id")
+        post_id = row.get("post_id")
         posts.append({
             "id": post_id,
             "timestamp": row.get("timestamp"),
-            "permalink": row.get("permalink"),
+            "permalink": row.get("url"),
             "text": row.get("text"),
-            "topic": row.get("topic_tag"),
+            "topic": row.get("topic"),
             "via_thth": post_id in by_post_id,
             "file": by_post_id.get(post_id),
         })
@@ -472,15 +470,14 @@ def topic_performance(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
     except accounts_mod.AccountError as e:
         return {"account": account_name, "error": str(e), "topics": []}
     token = accounts_mod.load_token(account_cfg)
-    rows, err = fetch_posts(account_cfg, token, limit=limit,
-                             fields="id,permalink,timestamp,text,topic_tag")
+    rows, err = fetch_posts(account_cfg, token, limit=limit)
     if rows is None:
         return {"account": account_name, "error": err, "topics": []}
 
     adapter = core._default_adapter_factory(account_cfg, token)
     by_topic: dict = {}
     for row in rows:
-        post_id = row.get("id")
+        post_id = row.get("post_id")
         if not post_id:
             continue
         try:
@@ -489,7 +486,7 @@ def topic_performance(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
         except Exception as e:
             metrics = {"error": redact_mod.redact(str(e))}
         views = metrics.get("views")
-        topic = row.get("topic_tag") or "(トピック無し)"
+        topic = row.get("topic") or "(トピック無し)"
         by_topic.setdefault(topic, []).append({
             "id": post_id, "timestamp": row.get("timestamp"),
             # **この数は「打った瞬間の値」**（設計 §3.2.2）。台帳の刻みの値では
@@ -523,7 +520,7 @@ def topic_performance(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
 
 
 def _remote_posts(account_cfg: dict, token: dict | None, known_post_ids: set) -> dict:
-    """Threads 側の**実際の**直近の投稿を引く（masaru 指摘 2026-09-10）。
+    """媒体側の**実際の**直近の投稿を引く（masaru 指摘 2026-09-10）。
 
     > thth通してないものもひいてきたら加わると良いですね
 
@@ -547,9 +544,10 @@ def _remote_posts(account_cfg: dict, token: dict | None, known_post_ids: set) ->
         out["latest"] = rows[0].get("timestamp")
     # **THTH の queue に post_id が無いもの＝THTH を通していない投稿。**
     out["outside"] = [
-        {"id": row.get("id"), "timestamp": row.get("timestamp"),
-         "permalink": row.get("permalink")}
-        for row in rows if row.get("id") and row["id"] not in known_post_ids
+        {"id": row.get("post_id"), "timestamp": row.get("timestamp"),
+         "permalink": row.get("url")}
+        for row in rows
+        if row.get("post_id") and row["post_id"] not in known_post_ids
     ]
     return out
 
@@ -697,16 +695,20 @@ def render(detail: dict) -> str:
 
 def _append_remote_and_verdict(lines: list, detail: dict) -> str:
     remote = detail.get("remote") or {}
+    # **「Threads 側」と書かない**（F2・2026-09-13）。この行は媒体を問わず出るのに
+    # 見出しだけ Threads で固定されていたので、Bluesky の画面が「Threads 側 :
+    # 判りません」と言っていた——**引けない理由が媒体違いに見える。**
+    見出し = f"  {detail.get('media') or '媒体'} 側".ljust(14)
     if remote.get("known"):
         outside = remote["outside"]
-        lines.append(f"  Threads 側  : 直近 {remote['count']} 件（最新 {remote['latest']}）")
+        lines.append(f"{見出し}: 直近 {remote['count']} 件（最新 {remote['latest']}）")
         if outside:
-            lines.append(f"                うち **THTH を通していないもの {len(outside)} 件**"
+            lines.append(f"{' ' * 14}  うち **THTH を通していないもの {len(outside)} 件**"
                          f"（最新 {outside[0]['timestamp']}）")
         else:
-            lines.append("                すべて THTH 経由です")
+            lines.append(f"{' ' * 14}  すべて THTH 経由です")
     else:
-        lines.append(f"  Threads 側  : 判りません（{remote.get('message', '')}）")
+        lines.append(f"{見出し}: 判りません（{remote.get('message', '')}）")
     if detail["ready"] and not detail.get("scheduled", True):
         lines.append("  → **同席の送信ができます**（このアカウントは予約投稿を使いません）")
     elif detail["ready"]:

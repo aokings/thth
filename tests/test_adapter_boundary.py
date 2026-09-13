@@ -90,8 +90,11 @@ def test_TB0_capabilitiesは実体を作らずに引ける():
     # `account_insights` は T3 の配線（2026-09-13）で足した語。**Threads だけ**が
     # 持つ——`collect._collect_account_daily()` はこれを見て、持たない媒体では
     # 呼ばない（以前は毎回 `errors` に積んでいた・T0 の残件）。
+    # `recent_posts` は F2 の配線（2026-09-13）で足した語。**3 媒体とも持つ**が、
+    # 宛先は媒体が決める（`account_report.fetch_posts()` はこの語で塞ぐだけ）。
     assert threads_mod.ThreadsAdapter.capabilities() == {
-        "topic", "link_preview", "views", "quota", "refresh", "account_insights"}
+        "topic", "link_preview", "views", "quota", "refresh", "recent_posts",
+        "account_insights"}
 
 
 def test_TB0_Messageは旧名Replyでも作れる():

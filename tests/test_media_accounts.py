@@ -2,12 +2,15 @@
 
 masaru の各 1 アカウント（無料）を `accounts/` に置いた。**まだ稼働させない**
 （`production: false`・`scheduled: false`）ので、投稿は `thth send --production`
-を人が打ったときだけ出る。ここで確かめるのは 2 つ:
+を人が打ったときだけ出る。ここで確かめるのは 4 つ:
 
 - **台帳の形が正しい**（媒体ごとの追加項目・秘密の置き場・未稼働の印）。
 - **`thth account` と `thth board` が 2 本を読んで落ちない**（トークンが無い
   状態で `no_token` と出る）。台帳を足しただけで既存の画面が落ちると、
   masaru が現物を試す前に手が止まる。
+- **他媒体の token が `graph.threads.net` へ行かない**（宛先を媒体が決める・F2）。
+- **`recent_posts` を持たない媒体には聞きに行かない**（能力で塞ぐ・アダプタを
+  組み立てもしない）。
 
 **本物の API は 1 つも叩かない**（トークンが無いので、そもそも網に出ない）。
 """
@@ -121,25 +124,70 @@ def test_thth_boardが2本を並べて落ちない():
             assert "token=no_token" in 行[name], 行[name]
 
 
-def test_この口はThreadsのAPIを直に叩くので他媒体では引かない(monkeypatch):
+def test_他媒体のtokenはgraph_threads_netに行かない(monkeypatch):
     """**Mastodon の access token を Meta のサーバへ送らない**（T3 で見つけた）。
 
-    `account_report.fetch_posts()` は `graph.threads.net` の URL を直に組み立て、
-    `access_token` を**クエリに載せる**。Mastodon の `.token` も鍵が
-    `access_token` なので、媒体を見ずに通すと**宛先違いに秘密が出る**。
+    **止め方が変わった**（F2・2026-09-13）。以前 `account_report.fetch_posts()` は
+    `graph.threads.net` の URL を直に組み立て、`access_token` を**クエリに載せて**
+    いた。Mastodon の `.token` も鍵が `access_token` なので、媒体を見ずに通すと
+    宛先違いに秘密が出る——当座は `media != "threads"` を名指しで弾いていたが、
+    それは**媒体を足すたびにここを見直す**形だった。
+
+    いまは `Adapter.recent_posts()` が境界にあり、**宛先を媒体が決める**。だから
+    固定するのも変わる: 「引かない」ではなく「**引きに行く先が Meta ではない**」。
+    網には出さない（`urlopen` を差し替えて**宛先だけ**を数える）。
     """
     import urllib.request
     from thth import account_report as account_report_mod
 
-    # **叩いたら即落ちる**（開発セッションの変異で、止めを外しても通ったため）。
-    # 止めを外すと本物の graph.threads.net へ秘密つきの URL が飛ぶ形になるので、
-    # 「返り値が None」ではなく「HTTP の口が一度も呼ばれない」を固定する。
-    def 叩いてはいけない(*_a, **_k):
-        raise AssertionError("Threads 以外の媒体で graph.threads.net を叩いた（秘密が宛先違いに出る）")
-    monkeypatch.setattr(urllib.request, "urlopen", 叩いてはいけない)
+    宛先 = []
 
+    def 記録して落とす(req, *_a, **_k):
+        宛先.append(req.full_url if hasattr(req, "full_url") else str(req))
+        raise urllib.error.URLError("この試験は網に出ません")
+    monkeypatch.setattr(urllib.request, "urlopen", 記録して落とす)
+
+    cfg = _load("masaru-mastodon")
     rows, message = account_report_mod.fetch_posts(
-        _load("masaru-mastodon"), {"access_token": "MASTODON-SECRET", "user_id": "1"})
+        cfg, {"access_token": "MASTODON-SECRET", "user_id": "9000"})
+
+    assert rows is None                                  # 引けなかった（網に出ていない）
+    assert "MASTODON-SECRET" not in message, message     # 理由文にも出さない
+    assert 宛先, "そもそも引きに行っていない（この試験が宛先を見られていない）"
+    for url in 宛先:
+        assert "graph.threads.net" not in url, url
+        assert url.startswith(cfg["instance"]), url
+        # トークンは**ヘッダ**に載る（Threads と違ってクエリに出ない）。
+        assert "MASTODON-SECRET" not in url, url
+
+
+def test_recent_postsを持たない媒体には聞きに行かない(monkeypatch):
+    """**能力で塞ぐ**（媒体名で分岐しない・`oauth.run_refresh()` と同じ止め方）。
+
+    持たない媒体では**アダプタを組み立てもしない**——`.token` を渡す先を増やさない。
+    """
+    from thth import account_report as account_report_mod
+    from thth.adapters import base as adapter_base
+
+    組み立てた = []
+
+    class 口の無い媒体(adapter_base.Adapter):
+        CAPABILITIES = frozenset()
+        TOKEN_KEYS = ("access_token",)
+
+        @classmethod
+        def from_account(cls, account_cfg, token):
+            組み立てた.append(token)
+            return cls()
+
+        def recent_posts(self, *, limit=25):
+            raise AssertionError("持たない媒体に聞きに行った")
+
+    monkeypatch.setitem(adapters_mod.REGISTRY, "架空", 口の無い媒体)
+    rows, message = account_report_mod.fetch_posts(
+        {"media": "架空"}, {"access_token": "SECRET"})
+
     assert rows is None
-    assert "mastodon" in message and "引けません" in message
-    assert "MASTODON-SECRET" not in message
+    assert "架空" in message and "recent_posts" in message, message
+    assert "SECRET" not in message, message
+    assert 組み立てた == [], "能力の無い媒体でアダプタを組み立てた（token を渡した）"

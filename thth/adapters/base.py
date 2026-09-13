@@ -68,6 +68,11 @@ KNOWN_CAPABILITIES = frozenset({
     "quota",          # 残量を問える
     "inbox",          # 利用者から始まった会話が取れる（**WhatsApp の芽**）
     "refresh",        # トークンを更新できる
+    # そのアカウントが**実際に出している**直近の投稿を引ける（`Adapter.recent_posts()`）。
+    # **THTH を通していない投稿を含む**のがこの口の目的（`thth posts`・`thth account`
+    # の「外で出したもの」）。持たない媒体には**聞きに行かない**——
+    # `account_report.fetch_posts()` がこの語で塞ぐ（F2・2026-09-13）。
+    "recent_posts",
     # アカウント単位の日次（`account_insights()`）が取れる。**Threads だけ**
     # （T0 の残件・2026-09-13）。以前は `collect._collect_account_daily()` が
     # 媒体を問わず呼んでいたので、持たない媒体では毎回 `errors` に
@@ -223,6 +228,37 @@ class Adapter:
         が無ければ `collect` は呼ばない）。
         """
         return []
+
+    def recent_posts(self, *, limit: int = 25) -> list:
+        """そのアカウントが**実際に出している**直近の投稿（新しい順）。
+
+        **THTH を通していない投稿も入る**のがこの口の目的（`thth posts`・
+        `thth account` の「外で出したもの」）。読み取りだけ——投稿・返信・削除は
+        呼ばない。
+
+        1 行の形（**媒体差はここで吸収する**。core も `account_report` も媒体名を
+        知らない）:
+
+          `post_id`   台帳の `post_id` と突き合わせる鍵（`PublishResult.post_id`
+                      と同じ綴り。Threads は数字・Bluesky は AT URI）
+          `timestamp` 媒体が返す時刻の綴りそのまま（**揃えない**——揃えたふりを
+                      すると、揃っていないことが見えなくなる）
+          `url`       人が開ける URL（無ければ `None`）
+          `text`      本文（**切り詰めない**）
+          `topic`     語（Threads の `topic_tag`）。持たない媒体は `None`
+
+        **「取れなかった」を「取れて 0 件」にしない**——引けなければ
+        `AdapterError` を上げる（`_rows()`・`_get_json()` と同じ規律）。
+
+        以前この口は `account_report.fetch_posts()` の中にあり、`graph.threads.net`
+        の URL を直に組み立てていた（**設計 v2 §4.2 が数えた「Threads 固有になって
+        いる 6 箇所」に入っていなかった 7 つめ**）。境界へ移したので、**媒体ごとの
+        宛先は媒体が決める**——他媒体の `.token` が Meta のサーバへ行く筋が、
+        分岐ではなく構造で無くなる。
+        """
+        raise AdapterError(
+            f"{type(self).__name__}: 直近の投稿を引く口がありません"
+            f"（capabilities に recent_posts がある媒体だけが答えます）")
 
     def insights(self, post_id: str) -> dict:
         """`{"metrics": {...}, "available": [...]}`（設計 v2 §4.2）。

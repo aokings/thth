@@ -59,6 +59,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     behavior: dict = {}
     posts: dict = {}
     thread: dict = {}
+    feed: list = []
     created: list = []
     seen: list = []
 
@@ -150,6 +151,20 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._respond_json(200, {"thread": self.thread})
             return
 
+        if nsid == "app.bsky.feed.getAuthorFeed":
+            if mode == "4xx":
+                self._respond_json(400, {"error": "InvalidRequest"})
+                return
+            if mode == "no_feed":
+                # **200 だが feed が無い**（「取れて 0 件」と区別できない）。
+                self._respond_json(200, {"cursor": "c1"})
+                return
+            self.__class__.seen.append(
+                "getAuthorFeed:" + ",".join(params.get("actor", []))
+                + "/limit=" + ",".join(params.get("limit", [])))
+            self._respond_json(200, {"feed": list(self.feed), "cursor": "c1"})
+            return
+
         if nsid == "app.bsky.actor.getProfile":
             if mode != "ok":
                 self._respond_json(400, {"error": "InvalidRequest"})
@@ -169,11 +184,12 @@ class _ServerURL(str):
 
 
 @contextlib.contextmanager
-def fake_bluesky(behavior=None, *, posts=None, thread=None):
+def fake_bluesky(behavior=None, *, posts=None, thread=None, feed=None):
     handler_cls = type("Handler", (_Handler,), {
         "behavior": dict(behavior or {}),
         "posts": dict(posts or {}),
         "thread": dict(thread or {}),
+        "feed": list(feed or []),
         "created": [],
         "seen": [],
     })
@@ -472,6 +488,59 @@ def test_遮断された枝は飛ばすがほかの枝は取れる():
     assert len(messages) == 4
 
 
+# ------------------------------------------------------------- recent_posts
+def _feed_item(uri, *, text, created_at, reason=None):
+    item = {"post": _post_view(uri, "bafy" + uri[-4:], handle=HANDLE, did=DID,
+                                text=text, created_at=created_at)}
+    if reason:
+        item["reason"] = reason
+    return item
+
+
+def test_recent_postsは自分の投稿を新しい順に返す():
+    """`app.bsky.feed.getAuthorFeed`（F2・境界の `recent_posts`）。"""
+    feed = [
+        _feed_item(ROOT_URI, text="あたらしいほう", created_at="2026-09-13T05:00:00Z"),
+        _feed_item(MID_URI, text="ふるいほう", created_at="2026-09-13T00:00:00Z"),
+    ]
+    with fake_bluesky(feed=feed) as service:
+        rows = _adapter(service).recent_posts(limit=25)
+    assert [r["post_id"] for r in rows] == [ROOT_URI, MID_URI]
+    assert rows[0]["text"] == "あたらしいほう"
+    assert rows[0]["timestamp"] == "2026-09-13T05:00:00Z"
+    assert rows[0]["url"] == f"https://bsky.app/profile/{HANDLE}/post/rootrootroot"
+    # **語（Threads の topic_tag）に当たるものが無い媒体。**
+    assert rows[0]["topic"] is None
+
+
+def test_recent_postsは再投稿を自分の投稿に数えない():
+    """`reason`（`#reasonRepost`）の付いた行は本人が書いたものではない（**L2**）。"""
+    feed = [
+        _feed_item(ROOT_URI, text="自分の", created_at="2026-09-13T05:00:00Z"),
+        _feed_item(MID_URI, text="よそのを再投稿", created_at="2026-09-13T04:00:00Z",
+                   reason={"$type": "app.bsky.feed.defs#reasonRepost",
+                           "by": {"did": DID, "handle": HANDLE},
+                           "indexedAt": "2026-09-13T04:00:00Z"}),
+    ]
+    with fake_bluesky(feed=feed) as service:
+        rows = _adapter(service).recent_posts()
+    assert [r["post_id"] for r in rows] == [ROOT_URI], rows
+
+
+def test_recent_postsのlimitは1から100に収まる():
+    with fake_bluesky(feed=[]) as service:
+        _adapter(service).recent_posts(limit=5000)
+        呼び = [x for x in service.handler_cls.seen if x.startswith("getAuthorFeed:")]
+    assert 呼び == [f"getAuthorFeed:{DID}/limit=100"], 呼び
+
+
+def test_recent_postsはfeedが無ければ0件と言わない():
+    """**「取れなかった」を「取れて 0 件」にしない**（`_post_view` と同じ規律）。"""
+    with fake_bluesky({"app.bsky.feed.getAuthorFeed": "no_feed"}) as service:
+        with pytest.raises(adapter_base.AdapterError):
+            _adapter(service).recent_posts()
+
+
 # ---------------------------------------------------------------- insights
 def test_insightsにviewsは無い():
     view = _post_view(ROOT_URI, ROOT_CID, handle=HANDLE, did=DID, text="うちの投稿",
@@ -524,7 +593,9 @@ def test_probeはgetProfileの失敗を隠さない():
 
 def test_capabilitiesにviewsもtopicも入らない():
     adapter = bsky.BlueskyAdapter(identifier=HANDLE, app_password=APP_PASSWORD)
-    assert adapter.capabilities() == {"link_preview"}
+    # `recent_posts` は在る（`getAuthorFeed`・F2・2026-09-13）。views・topic・
+    # quota・inbox・refresh は無いまま。
+    assert adapter.capabilities() == {"link_preview", "recent_posts"}
     assert adapter.quota() is None
 
 

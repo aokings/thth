@@ -13,6 +13,7 @@
 | Status の `quotes_count`（引用数） | 同上 | **L2**（**このアダプタは取っていない**・監査 2・2026-09-13） |
 | `GET /api/v1/statuses/:id/context`（`ancestors`・`descendants`） | 同上 | **L2** |
 | `GET /api/v1/accounts/verify_credentials`（`id`・`acct`） | docs.joinmastodon.org/methods/accounts/ | **L2** |
+| `GET /api/v1/accounts/:id/statuses`（`limit` 既定 20・**最大 40**・`exclude_reblogs`） | 同上（2026-09-13 に読解） | **L2** |
 | `GET /api/v2/instance` の `configuration.statuses.max_characters` | docs.joinmastodon.org/methods/instance/ | **L2** |
 | rate limit ヘッダ `X-RateLimit-Limit`・`-Remaining`・`-Reset`（既定 300/5 分） | docs.joinmastodon.org/api/rate-limits/ | **L2** |
 | 公開 API に views（表示回数）は無い | 上の一覧に無い、という**不在の証拠**なので | **L3** |
@@ -38,6 +39,8 @@ from .. import redact as redact_mod
 from . import base
 
 DEFAULT_INSTANCE = "https://mastodon.social"
+# `GET /api/v1/accounts/:id/statuses` の `limit` の上限（**L2**: 既定 20・最大 40）。
+RECENT_POSTS_MAX = 40
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DEFAULT_VISIBILITY = "public"
 # 設計 v2 §4.2 の `MEDIA_LIMITS` の mastodon（インスタンスで違うので**既定**でしかない）。
@@ -201,10 +204,11 @@ class MastodonAdapter(base.Adapter):
     トークンを載せない（載せると `urlopen` の例外文とアクセスログに残る）。
     """
 
-    # 設計 v2 §4.2 の部分集合（`base.KNOWN_CAPABILITIES` の語だけを使う）。**空**。
-    # `account_insights`（アカウント単位の日次）も無い——`collect` はここを見て
-    # 呼ばずに済ませる（T0 の残件・2026-09-13）。
-    CAPABILITIES: frozenset = frozenset()
+    # 設計 v2 §4.2 の部分集合（`base.KNOWN_CAPABILITIES` の語だけを使う）。
+    # `account_insights`（アカウント単位の日次）は無い——`collect` はここを見て
+    # 呼ばずに済ませる（T0 の残件・2026-09-13）。`recent_posts` は在る
+    # （`GET /api/v1/accounts/:id/statuses`・F2・2026-09-13）。
+    CAPABILITIES: frozenset = frozenset({"recent_posts"})
 
     # `.token` の鍵（`thth token set <account>` が書く形・設計 v2 §4.2）。
     TOKEN_KEYS = ("access_token",)
@@ -213,10 +217,13 @@ class MastodonAdapter(base.Adapter):
     TOKEN_NO_EXPIRY = True
 
     def __init__(self, *, instance: str = DEFAULT_INSTANCE, access_token: str = "",
-                 visibility: str = DEFAULT_VISIBILITY,
+                 visibility: str = DEFAULT_VISIBILITY, account_id: str = "",
                  timeout: float = DEFAULT_TIMEOUT_SECONDS):
         self.instance = _instance_url(instance)
         self.access_token = access_token
+        # `.token` の `user_id`（`thth token set` が `verify_credentials` の `id` を
+        # 書く）。無ければ `recent_posts()` がその場で `whoami()` を 1 回叩く。
+        self.account_id = str(account_id or "")
         if visibility not in VISIBILITIES:
             raise ValueError(
                 f"visibility が未知です: {visibility!r}（使えるのは "
@@ -247,6 +254,7 @@ class MastodonAdapter(base.Adapter):
             instance=instance,
             access_token=(token or {}).get("access_token", ""),
             visibility=cfg.get("visibility") or DEFAULT_VISIBILITY,
+            account_id=(token or {}).get("user_id") or cfg.get("user_id") or "",
         )
 
     # ----- 秘密 ------------------------------------------------------------
@@ -314,6 +322,27 @@ class MastodonAdapter(base.Adapter):
                 f"{what}: 応答が object ではありません（{type(body).__name__}）")
         if body.get("error"):
             raise AdapterError(f"{what}: {self._scrub(body['error'])[:200]}")
+        return body
+
+    def _get_list(self, path: str, what: str) -> list:
+        """GET して**配列**を返す（`_get_json` の配列版）。
+
+        Mastodon の一覧の口（`/statuses` 等）は object ではなく配列を返す。
+        `[]` を「取れて 0 件」と読んでよいのは**配列が返ったとき**だけで、
+        形が違えば失敗（`_get_json` と同じ規律・`threads.py::_rows` と同じ理由）。
+        """
+        try:
+            body = self._request("GET", path)
+        except urllib.error.HTTPError as e:
+            raise AdapterError(f"{what}: HTTP {e.code} {self._scrub(e.reason)}") from None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            raise AdapterError(f"{what}: {self._scrub(e)}") from None
+        if isinstance(body, dict) and body.get("error"):
+            raise AdapterError(f"{what}: {self._scrub(body['error'])[:200]}")
+        if not isinstance(body, list):
+            raise AdapterError(
+                f"{what}: 応答が配列ではありません（{type(body).__name__}）。"
+                f"**取れて 0 件とは区別できません**")
         return body
 
     # ----- 投稿 ------------------------------------------------------------
@@ -535,6 +564,43 @@ class MastodonAdapter(base.Adapter):
     _METRICS = (("likes", "favourites_count"),
                 ("replies", "replies_count"),
                 ("reposts", "reblogs_count"))
+
+    def recent_posts(self, *, limit: int = 25) -> list:
+        """`GET /api/v1/accounts/:id/statuses`（**L2**——2026-09-13 に一次資料を読解）。
+
+        `limit` は既定 20・**最大 40**。`exclude_reblogs` は既定 false なので
+        **明示して落とす**——ブースト（他人の投稿の再投稿）は「自分が書いた投稿」
+        ではない（`thth posts` は「THTH を通していない**自分の投稿**」を数える口）。
+        `exclude_replies` は**立てない**: THTH が出した返信も `post_id` で
+        突き合わせたい。
+
+        `:id` は**数字の account id**（`acct` ではない）。`.token` の `user_id`
+        （`thth token set` が `verify_credentials` の `id` を書く）を使い、無ければ
+        ここで 1 回だけ `whoami()` を叩く。
+        """
+        account_id = self.account_id or str(self.whoami().get("user_id") or "")
+        if not account_id:
+            raise AdapterError("account id が判らないので直近の投稿を引けません")
+        params = urllib.parse.urlencode({
+            "limit": max(1, min(int(limit), RECENT_POSTS_MAX)),
+            "exclude_reblogs": "true"})
+        rows = self._get_list(
+            f"/api/v1/accounts/{urllib.parse.quote(account_id)}/statuses?{params}",
+            "直近の投稿")
+        out = []
+        for row in rows:
+            if not isinstance(row, dict) or not row.get("id"):
+                continue
+            out.append({
+                "post_id": str(row["id"]),
+                "timestamp": row.get("created_at"),
+                "url": row.get("url"),
+                # `content` は HTML（`strip_html()` の限界は同関数の docstring）。
+                "text": strip_html(row.get("content")),
+                # **語（Threads の topic_tag）に当たるものが無い**媒体。
+                "topic": None,
+            })
+        return out
 
     def insights(self, post_id: str) -> dict:
         """`GET /api/v1/statuses/:id` の 3 つ（**L2**）。**views は無い。**
