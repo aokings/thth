@@ -45,9 +45,27 @@ import sys
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ACCOUNT = "demo-threads"
 
-# 被験者に渡す原稿。**英語・600 字ほど・無害な話題**（Threads 向け）。
-# 本番の Threads には出ない（`production: false` かつトークン無し）。
-DRAFT_MD = """# Why I started keeping a "boring notes" file
+# 被験者に渡す原稿（既定）。**英語・380〜440 字・無害な話題**（Threads 向け・
+# `len()` で数える・改行込み）。「1 回で通るか」（設計 §2）は媒体の上限（Threads
+# 500 字未満）に収まっている原稿でないと測れない（第 2 回の記録 §6・H2）。
+# 見出し（`#`）は付けない・URL は入れない。本番の Threads には出ない
+# （`production: false` かつトークン無し）。
+DRAFT_MD = """For about a year I have kept a plain text file called boring-notes.md,
+holding only small facts I keep re-discovering: which cable fits which
+camera, the wording of a form I fill in twice a year.
+
+An entry has to be useless on the day I write it. That constraint keeps the
+file working, since nothing in it competes for attention.
+
+Once a week something I wrote months ago saves me ten minutes. Start with
+one line, let it stay boring.
+"""
+
+# `--long` のときだけ使う、**上限超え**の原稿（942 字ほど）。「上限超えの原稿で
+# 編集の往復を測る」別の試験用（設計セッション向けの逃げ道ではなく、意図した
+# 第 2 の測定）。既定の箱には置かない——`draft.md` は常に上限内でなければ
+# 「1 回で通るか」を測れない（H2）。
+DRAFT_MD_LONG = """# Why I started keeping a "boring notes" file
 
 For about a year I have kept a single plain text file called boring-notes.md.
 It is not a journal and not a task list. It only holds the small facts I keep
@@ -66,6 +84,27 @@ right size of tool for them.
 If you try it, start with one line today. Do not organise it. Do not add
 headings. Let it be boring.
 """
+
+
+def _selfcheck_default_draft() -> None:
+    """既定の原稿（`--long` を付けないときの `draft.md`）が Threads の上限
+    （500 字未満）に収まっているかの自己検査（H2）。
+
+    ここが緩むと「1 回で通るか」の原稿が上限超えのまま配られ、`thth send` /
+    `thth throw` が最初の 1 回で「長すぎます」に当たって止まる——測りたい
+    条件（設計 §2 の成功の定義 1〜4）にすら着けない。`build_box.py` 自身が
+    ここで fail する（テストの緑にも、箱を組めたという見かけにも紛れ込ませない）。
+    """
+    n = len(DRAFT_MD)
+    if n >= 500:
+        raise SystemExit(
+            "1 回で通るかの原稿が上限を超えています"
+            f"（既定の draft.md が {n} 字・Threads の上限は 500 字未満）。"
+            "build_box.py の DRAFT_MD を短くしてください。"
+            "上限超えの原稿で測りたいときは --long を使ってください。")
+
+
+_selfcheck_default_draft()  # 読み込まれた時点（import 経由も含む）で検査する。
 
 # `tests/test_fresh_install.py` と同じ**偽の値**（本物のアプリ ID・秘密ではない）。
 APP_ENV = ("THREADS_APP_ID=0000000000000000\n"
@@ -428,7 +467,16 @@ def install_wrappers(box: str) -> None:
     os.chmod(git_live, 0o755)
 
 
-def build_box(box: str) -> str:
+def write_draft(box: str, *, long: bool = False) -> str:
+    """`draft.md` を 1 本書く。既定は上限内（`DRAFT_MD`）、`long=True` のときだけ
+    上限超え（`DRAFT_MD_LONG`）——`--long` は編集の往復を測る別の試験用。"""
+    path = os.path.join(box, "draft.md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(DRAFT_MD_LONG if long else DRAFT_MD)
+    return path
+
+
+def build_box(box: str, *, long: bool = False) -> str:
     box = os.path.abspath(box)
     if os.path.exists(box) and os.listdir(box):
         raise SystemExit(f"空でない場所には組めません（毎回まっさらな箱で）: {box}")
@@ -444,8 +492,7 @@ def build_box(box: str) -> str:
     os.chmod(app_env, 0o600)
 
     repo = make_user_repo(box)
-    with open(os.path.join(box, "draft.md"), "w", encoding="utf-8") as f:
-        f.write(DRAFT_MD)
+    write_draft(box, long=long)
 
     write_ledger(box, repo)          # **wrapper より前**（ログに残さない）
     install_wrappers(box)
@@ -465,11 +512,15 @@ def build_box(box: str) -> str:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="LLM に選ばせる試験の箱を 1 つ組む")
     p.add_argument("box", help="箱のディレクトリ（無いか空であること）")
+    p.add_argument("--long", action="store_true",
+                   help="draft.md を上限超え（942 字ほど）にする"
+                        "（既定は 380〜440 字・上限内。編集の往復を測る別の試験用）")
     args = p.parse_args(argv)
-    box = build_box(args.box)
+    box = build_box(args.box, long=args.long)
     print(f"箱を組みました: {box}")
     print(f"  環境:   . {os.path.join(box, 'env.sh')}")
-    print(f"  原稿:   {os.path.join(box, 'draft.md')}")
+    print(f"  原稿:   {os.path.join(box, 'draft.md')}"
+          + ("（--long・上限超え）" if args.long else "（上限内）"))
     print(f"  台帳:   {os.path.join(box, 'root', 'accounts', ACCOUNT + '.json')}"
           f"（production: false・トークン無し）")
     print(f"  記録:   {os.path.join(box, 'log', 'commands.ndjson')}")

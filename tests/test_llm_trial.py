@@ -125,6 +125,64 @@ def test_箱は空でない場所には組めない(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# H2: 「1 回で通るか」の原稿は媒体の上限に収まっていること（第 2 回の記録 §6）
+# --------------------------------------------------------------------------
+
+def test_既定の箱の原稿は上限未満(box):
+    """(a) 既定の `draft.md` は Threads の上限（500 字）未満（`len()` で数える）。"""
+    draft = os.path.join(box, "draft.md")
+    n = len(open(draft, encoding="utf-8").read())
+    assert n < 500, f"既定の原稿が上限を超えています（{n} 字）"
+
+
+def test_longオプションは上限超えの原稿を書く(tmp_path):
+    """(b) `--long` のときだけ上限を超える（編集の往復を測る別の試験用）。
+
+    `build_box()` の全体（wheel を建てて venv に入れる）を通さず、`draft.md` を
+    書く関数だけを見る（wheel を建て直すコストを避ける・fixture `box` は既定の
+    箱を 1 つだけ組む）。
+    """
+    box = str(tmp_path / "box")
+    os.makedirs(box)
+    long_path = bb.write_draft(box, long=True)
+    n = len(open(long_path, encoding="utf-8").read())
+    assert n > 500, f"--long なのに上限を超えていません（{n} 字）"
+
+    box2 = str(tmp_path / "box2")
+    os.makedirs(box2)
+    short_path = bb.write_draft(box2, long=False)
+    n2 = len(open(short_path, encoding="utf-8").read())
+    assert n2 < 500, f"既定なのに上限を超えています（{n2} 字）"
+
+
+def test_既定原稿の自己検査は上限超えでbuild_box自身をfailさせる(monkeypatch):
+    """`_selfcheck_default_draft` は既定の原稿が 500 字以上なら `build_box.py`
+    自身を fail させる（テストの緑にも「箱を組めた」という見かけにも
+    紛れ込ませない・H2）。"""
+    with pytest.raises(SystemExit, match="上限を超えています"):
+        monkeypatch.setattr(bb, "DRAFT_MD", "x" * 500)
+        bb._selfcheck_default_draft()
+    # 499 字（上限未満）なら通る。
+    monkeypatch.setattr(bb, "DRAFT_MD", "x" * 499)
+    bb._selfcheck_default_draft()
+
+
+def test_既定原稿はsendを1回でrc0で通す(box):
+    """(c) 既定の原稿をそのまま `thth send demo-threads --text-file draft.md`
+    に通すと、`--production` を付けなくても rc=0 で本文と digest が出る
+    （箱を組む既存の fixture `box` を使う。設計 §2 の「1 回で通るか」が
+    そもそも測れる原稿になっていることの直接確認・H2）。
+    """
+    draft = os.path.join(box, "draft.md")
+    assert len(open(draft, encoding="utf-8").read()) < 500
+
+    r = _run_in_box(box, "send", bb.ACCOUNT, "--text-file", draft)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "投げるはずの本文" in r.stdout, r.stdout
+    assert "digest: " in r.stdout, r.stdout
+
+
+# --------------------------------------------------------------------------
 # wrapper（変異の的: ここが記録をやめたら採点は全部無意味になる）
 # --------------------------------------------------------------------------
 
