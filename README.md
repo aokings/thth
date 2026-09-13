@@ -9,7 +9,9 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 版
 
-**1.3.0**（`thth --version`）。他人が自分の Meta アプリで導入できる最初の版。範囲は [docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md](docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md)、導入は [docs/導入_自分のMetaアプリで動かす.md](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
+**2.0.0（tag 待ち）**。門を無料で開ける版（`pip install`・`thth ask`・`thth share`・台帳を repo の外へ）。範囲と裁定は [docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md) §3・§7、その前の版は [docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md](docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md)、導入は [docs/導入_自分のMetaアプリで動かす.md](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
+
+**`thth/VERSION` はまだ `1.3.0`**——tag を打つのと同時に上げる（配布物と `thth --version` が割れないように、版は `thth/VERSION` の 1 か所）。`origin/release` も v1.3.0 のままで、**v2.0.0 はまだ配っていない**。
 
 **`main` への push は保存だけ。`release` を進める操作が配布**（VM は `release` だけを追う。設計 §3.2.1）。
 
@@ -17,22 +19,46 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 各プロジェクトのセッションが読むのは [docs/使い方_プロジェクトのセッション向け_2026-09-09.md](docs/使い方_プロジェクトのセッション向け_2026-09-09.md) **だけ**。設計書は作った側の記録なので読まなくてよい。
 
-## いまの状態（2026-09-12）
+## いまの状態（2026-09-13）
 
-版 **1.3.0**。全件テスト **1613 件**（`python -m pytest tests/ -q -n auto`）。
+版 **2.0.0（tag 待ち）**。全件テスト **1729 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip）。
 
-**媒体**: Threads（稼働）・Bluesky・Mastodon（v2・同席用の台帳あり・未稼働）。
+**媒体**: Threads（稼働）・Bluesky・Mastodon（同席用の台帳あり・未稼働）。
 
 **本番稼働中**: Threads の 4 アカウント（nigamilab・asmon 関東・kopicha・masaru の同席用）。
 timer（systemd・`thth systemd` で生成）で毎時投稿、返信の採集（`thth replies`）と数の採集
 （`thth measured`）は稼働、トークン更新は `thth maintain` が毎日。
 
-**入口は 3 つ**: 厚い CLI（`bin/thth`・`python -m thth`）、薄い MCP（`mcp/server.py`・読み取りと
-同席の投稿）、timer。
+**入口は 4 つ**: 厚い CLI（`bin/thth`・`python -m thth`）、薄い MCP（`mcp/server.py`・読み取りと
+同席の投稿・`before_you_post`）、timer、そして `pip install`（`thth`・`thth-mcp` の entry point・
+**依存 0**。ただし **PyPI への登録と upload は masaru の手で、まだしていない**）。
 
 **トピックの棚**（`thth topics`）: 観測者ごとに並ぶ・打ち消し `retract-note`・`history`。
 
-- **動くもの**（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`。
+### v2.0.0 で増えた口
+
+- **台帳を repo の外へ**（設計 v2 §3・裁定 §7-1）。正は `$THTH_ROOT/accounts/`（`$THTH_ACCOUNTS_DIR` があればそちら）。
+  repo の `accounts/` は**1 版だけ互換で読む**（stderr に警告 1 行・VM を止めないため）。
+  `thth account migrate` が repo の中を外へ **copy**（移動しない・上書きしない・冪等）、
+  `thth account add <name> --media threads|bluesky|mastodon --project <p>` が
+  `accounts.example/<media>.json` の雛形から 1 本書く（**必ず `production: false`**）。
+  **書く先は互換に落ちていても常に外**。`doctor`・`board` が置き場を 1 行で言う。
+- **`thth ask before-you-post <account> --topic <語>`**（設計 v2 §1）。この語・この型・この時刻帯で
+  スレッドがどう伸びたかを、件数と期間つきで返す。**読むだけ・手元の台帳だけ**（`provenance.source`
+  は `local`。泉のサーバはまだ無い）。原稿本文は渡さないし、答えにも出ない。
+  **n が閾値（既定 20）に満たない群は中央値を返さず `cannot_say` に理由を出す**——
+  手元の水ではほとんどが `cannot_say` になる。それが正しい答えで、rc は 0。MCP からは `before_you_post`。
+- **`thth share on|off|status|log|sync`**（設計 v2 §3・裁定 §7-3）。**既定 off**、設定が無い・壊れて
+  いるときも off。off のあいだは outbox が **0 バイト**。on にしても
+  `$THTH_ROOT/state/share/outbox/<YYYY-MM>.ndjson` に積むだけで、**送り先はまだ無い**（v2-5）。
+  積んだ全部は `thth share log` で読める。落ちるのは語・audience・型・件数・時刻帯・
+  post_id の**塩つき sha256**（塩は outbox に出ない）。本文・返信本文・返信者の username・
+  自分の判断・アカウント名・トークン・repo のパス・生の post_id は落ちない。
+- **英語の文書**: [README.en.md](README.en.md)・[docs/usage.en.md](docs/usage.en.md)・[llms.txt](llms.txt)。
+- **skill**: `skills/thth/SKILL.md`（wheel にも入る）。
+
+- **動くもの**（`thth --help` の全 27 サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`share`・`board`・`collect`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`。
 - **最初の本番投稿の記録**: 2026-09-09、@aoking に疎通確認を 1 本（`17916074118445631`）。
-- **未着手**: X・Facebook ページ・Instagram の各アダプタ。トピック検索の権限（tester には降りない）。
+- **未着手**: X・Facebook ページ・Instagram の各アダプタ。トピック検索の権限（tester には降りない）。泉のサーバ（v2-5）。
 - **権限の制約**: tester に降りる scope は 5 つ。削除はできない。
+- **masaru の手が要るもの**: PyPI の登録と upload、repo を public にする切替と `LICENSE`、MCP registry への登録、tag と `release` を進める操作。
