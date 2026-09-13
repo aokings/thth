@@ -84,6 +84,23 @@ def venv_thth(tmp_path_factory, built):
             "thth_mcp": os.path.join(env_dir, "bin", "thth-mcp")}
 
 
+def _elsewhere(tmp_path) -> str:
+    """**repo の外の作業ディレクトリ。**
+
+    見つかり方（2026-09-13・引き継いだ担当が手で叩いて気づいた）: 下の
+    `_isolated_env()` は `PYTHONPATH` を消して「repo を見せない」と書いてあるが、
+    **`cwd` を渡していなかった**。pytest の cwd は repo の根なので、
+    `python -m thth …` は `sys.path[0]` に**カレントディレクトリ**を入れる——
+    つまり **wheel ではなく repo の `thth/` を import していた**。
+    `thth/mcp_server.py` を wheel から外しても、この試験は緑のままだった。
+
+    **配布物を試すのだから、repo が在ってはいけない場所から叩く。**
+    """
+    d = tmp_path / "どこか別の場所"
+    d.mkdir(exist_ok=True)
+    return str(d)
+
+
 def _isolated_env(venv_thth, tmp_path) -> dict:
     """実物の `~/.config/thth/` にも repo にも触らない環境変数一式。"""
     home = tmp_path / "home"
@@ -179,9 +196,27 @@ def _version() -> str:
 # 別の venv に入れて叩く（repo を見せない）
 # --------------------------------------------------------------------------
 
+def test_別のvenvでrepoを見せなければimport元はwheelになる(venv_thth, tmp_path):
+    """**この試験群の前提そのもの。** 壊れていたら他の 5 本が意味を失う。
+
+    `python -m thth` は cwd を `sys.path` の先頭に置く。repo の中から叩くと
+    wheel ではなく repo を import してしまうので、**import 元が site-packages
+    であること**を最初に確かめる（`_elsewhere()` の注記）。
+    """
+    env = _isolated_env(venv_thth, tmp_path)
+    r = _run([venv_thth["python"], "-c",
+              "import thth, os; print(os.path.dirname(thth.__file__))"],
+             env=env, cwd=_elsewhere(tmp_path))
+    assert r.returncode == 0, f"{r.stdout}{r.stderr}"
+    import_元 = r.stdout.strip()
+    assert "site-packages" in import_元, import_元
+    assert REPO_ROOT not in import_元, (
+        f"wheel ではなく repo を import しています: {import_元}")
+
+
 def test_別のvenvでthth_versionが版を言う(venv_thth, tmp_path):
     env = _isolated_env(venv_thth, tmp_path)
-    r = _run([venv_thth["thth"], "--version"], env=env)
+    r = _run([venv_thth["thth"], "--version"], env=env, cwd=_elsewhere(tmp_path))
     assert r.returncode == 0, f"{r.stdout}{r.stderr}"
     out = (r.stdout + r.stderr).strip()
     assert out.startswith(f"thth {_version()}"), out
@@ -190,10 +225,10 @@ def test_別のvenvでthth_versionが版を言う(venv_thth, tmp_path):
 
 def test_別のvenvでthth_helpが全サブコマンドを出す(venv_thth, tmp_path):
     env = _isolated_env(venv_thth, tmp_path)
-    r = _run([venv_thth["thth"], "--help"], env=env)
+    r = _run([venv_thth["thth"], "--help"], env=env, cwd=_elsewhere(tmp_path))
     assert r.returncode == 0, f"{r.stdout}{r.stderr}"
     for name in ("lint", "preview", "approve", "queue", "throw", "board",
-                 "doctor", "topics", "threads"):
+                 "doctor", "topics", "threads", "share"):
         assert name in r.stdout, f"`{name}` が --help に出ていません:\n{r.stdout}"
 
 
@@ -203,7 +238,8 @@ def test_別のvenvでpython_m_thth_doctorが期待どおり止まる(venv_thth,
     止まる**ことが、入口が通っている証拠。"""
     env = _isolated_env(venv_thth, tmp_path)
     _write_demo_ledger(tmp_path)
-    r = _run([venv_thth["python"], "-m", "thth", "doctor", ACCOUNT], env=env)
+    r = _run([venv_thth["python"], "-m", "thth", "doctor", ACCOUNT], env=env,
+             cwd=_elsewhere(tmp_path))
     both = r.stdout + r.stderr
     assert "cannot be directly executed" not in both, both
     assert "Traceback" not in both, both
@@ -224,7 +260,7 @@ def test_別のvenvでMCPサーバが起動してtoolsを返す(venv_thth, tmp_p
     ]
     stdin = "".join(json.dumps(o, ensure_ascii=False) + "\n" for o in req)
     r = subprocess.run([venv_thth["thth_mcp"]], input=stdin, capture_output=True,
-                        text=True, timeout=120, env=env)
+                        text=True, timeout=120, env=env, cwd=_elsewhere(tmp_path))
     assert r.returncode == 0, f"{r.stdout}{r.stderr}"
     lines = [json.loads(ln) for ln in r.stdout.splitlines() if ln.strip()]
     assert len(lines) == 2, r.stdout
@@ -242,7 +278,7 @@ def test_別のvenvのMCPが本物のCLIを呼べる(venv_thth, tmp_path):
     stdin = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                         "params": {"name": "thth_board", "arguments": {}}}) + "\n"
     r = subprocess.run([venv_thth["thth_mcp"]], input=stdin, capture_output=True,
-                        text=True, timeout=120, env=env)
+                        text=True, timeout=120, env=env, cwd=_elsewhere(tmp_path))
     assert r.returncode == 0, f"{r.stdout}{r.stderr}"
     resp = json.loads(r.stdout.strip())
     text = resp["result"]["content"][0]["text"]
