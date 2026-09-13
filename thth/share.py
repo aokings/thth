@@ -65,6 +65,17 @@ FORBIDDEN_KEYS = frozenset({
 # 生の post_id の形。Threads は数字だけ、Bluesky は AT URI（`thth/postid.py`）。
 _RAW_POST_ID = re.compile(r"^\d{10,}$")
 
+# **人が書く自由文の欄**。ここに入る値は ID ではないので、生 post_id の検査から
+# 外す（監査 1・P2-5）。
+#
+# 見つかり方: 語が 10 桁以上の数字だけ（`2026091300` のような年度番号・品番）だと、
+# `^\d{10,}$` が `topic` を生の post_id と誤認して `ShareError` を投げていた。
+# `thth share on` は **config を書いた後に** `sync()` を呼ぶので、**rc=2 で
+# 終わるのに on のまま残り、以後 `sync` が恒久的に rc=2** になる——
+# 語を消さない限り抜けられない。**長さの検査（原稿本文が回ってきていないか）は
+# 自由文にも効かせたまま**にする。
+FREE_TEXT_KEYS = frozenset({"topic", "audience"})
+
 
 class ShareError(Exception):
     """share の置き場が壊れている・書けない。**黙って諦めない。**"""
@@ -223,7 +234,7 @@ def _assert_clean(row, *, where="") -> None:
     「入れないように書いた」では足りない——上流の台帳に鍵が 1 つ増えただけで
     静かに混ざる。**入っていたら例外で落ちる**（loud reject）。
     """
-    def walk(node, path):
+    def walk(node, path, *, free_text=False):
         if isinstance(node, dict):
             for k, v in node.items():
                 if k in FORBIDDEN_KEYS:
@@ -231,19 +242,24 @@ def _assert_clean(row, *, where="") -> None:
                         f"泉に落としてはいけない鍵が行に入っています: "
                         f"{path + '.' + k if path else k}"
                         f"（設計 v2 §2「落ちないもの」{where}）")
-                walk(v, f"{path}.{k}" if path else k)
+                walk(v, f"{path}.{k}" if path else k,
+                     free_text=free_text or k in FREE_TEXT_KEYS)
         elif isinstance(node, (list, tuple)):
             for i, v in enumerate(node):
-                walk(v, f"{path}[{i}]")
+                walk(v, f"{path}[{i}]", free_text=free_text)
         elif isinstance(node, str):
-            if "at://" in node:
-                raise ShareError(
-                    f"生の post_id（AT URI）が行に入っています: {path}"
-                    f"（ハッシュにしてください・§2）")
-            if _RAW_POST_ID.match(node):
-                raise ShareError(
-                    f"生の post_id（数字だけの ID）が行に入っています: {path}"
-                    f"（ハッシュにしてください・§2）")
+            # **生 post_id の検査は ID の欄だけ**（監査 1・P2-5）。人が選んだ語や
+            # 人が書いた audience に数字が並んでいるのは ID ではない。
+            if not free_text:
+                if "at://" in node:
+                    raise ShareError(
+                        f"生の post_id（AT URI）が行に入っています: {path}"
+                        f"（ハッシュにしてください・§2）")
+                if _RAW_POST_ID.match(node):
+                    raise ShareError(
+                        f"生の post_id（数字だけの ID）が行に入っています: {path}"
+                        f"（ハッシュにしてください・§2）")
+            # **長さは自由文にも効かせる**（原稿本文が回ってきていないか）。
             if len(node) > MAX_FREE_TEXT:
                 raise ShareError(
                     f"自由文が長すぎます（{len(node)} 字 > {MAX_FREE_TEXT}）: {path}"

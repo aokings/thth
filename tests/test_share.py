@@ -272,6 +272,67 @@ def test_設定が壊れていたらCLIは理由を言って非ゼロで終わ�
     assert "share:" in capsys.readouterr().out
 
 
+# ----------------------------------- 数字だけの語で詰まらない（監査 1・P2-5）
+
+def test_数字だけの語は生のpost_idと間違われない(thth_root, capsys):
+    """**人が選んだ語は ID ではない**（監査 1・P2-5）。
+
+    `_assert_clean()` の `^\\d{10,}$` は生の post_id を弾くためのものだが、
+    `topic` にも効いていた。語が 10 桁以上の数字だけ（年度番号・品番）だと
+    `share on` が **rc=2 なのに on のまま残り**、以後 `sync` が恒久的に rc=2 に
+    なる——語を消さない限り抜けられない。
+    """
+    topics_mod.record("2026091300", verdict="alive", audience="品番の話",
+                       kind="固有名", status="ok", by="masaru")
+    assert _share("on", "--by", "masaru") == 0, capsys.readouterr().out
+    capsys.readouterr()
+
+    rows, broken = share_mod.log_rows()
+    assert broken == [], broken
+    assert "2026091300" in [r.get("topic") for r in rows], rows
+    # 2 回目も通る（恒久的に詰まらない）。
+    assert _share("sync") == 0
+
+
+def test_audienceに数字が並んでいても詰まらない(thth_root, capsys):
+    topics_mod.record("お茶", verdict="alive", audience="12345678901 番地の人たち",
+                       kind="一般名詞", status="ok", by="masaru")
+    assert _share("on", "--by", "masaru") == 0, capsys.readouterr().out
+    capsys.readouterr()
+    assert _share("sync") == 0
+
+
+def test_生のpost_idはID欄では今までどおり弾く(thth_root):
+    """**緩めたのは自由文だけ。** ID の欄に生の post_id が入れば落ちる。"""
+    with pytest.raises(share_mod.ShareError) as e:
+        share_mod._assert_clean({"post_hash": "17916074118445631"})
+    assert "生の post_id" in str(e.value)
+
+    with pytest.raises(share_mod.ShareError) as e:
+        share_mod._assert_clean({"root": "at://did:plc:x/app.bsky.feed.post/y"})
+    assert "生の post_id" in str(e.value)
+
+    # 自由文でも**長すぎれば**落ちる（原稿本文が回ってきていないか）。
+    with pytest.raises(share_mod.ShareError) as e:
+        share_mod._assert_clean({"audience": "あ" * (share_mod.MAX_FREE_TEXT + 1)})
+    assert "長すぎます" in str(e.value)
+
+
+def test_onが失敗したらonのまま残さない(thth_root, capsys, monkeypatch):
+    """**失敗したら on にしない**（監査 1・P2-5 の後半）。
+
+    前は config を先に書いていたので、最初の `sync` が落ちると「on にできな
+    かった」と思っている人の手元に**積む設定だけが残った**。
+    """
+    def 落ちる(*a, **kw):
+        raise share_mod.ShareError("わざと落とす（試験）")
+    monkeypatch.setattr(share_mod, "sync", 落ちる)
+
+    assert _share("on", "--by", "masaru") == 2
+    assert "わざと落とす" in capsys.readouterr().out
+    assert share_mod.is_on() is False, "失敗したのに on のまま残っている"
+
+
 def test_shareはネットワークに触る口を持たない():
     """**送る先はまだ無い**（§6 v2-5）。import だけで確かめる。"""
     src = open(share_mod.__file__, encoding="utf-8").read()

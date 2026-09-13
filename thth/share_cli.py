@@ -49,8 +49,18 @@ def _cmd_share(args) -> int:
     action = getattr(args, "action", None) or "status"
 
     if action == "on":
+        # **失敗したら on にしない**（監査 1・P2-5）。前は config を先に書いて
+        # から `sync()` を呼んでいたので、最初の `sync` が落ちると **rc=2 で
+        # 終わるのに on のまま残り、以後 `sync` が恒久的に rc=2** になった
+        # ——打った人は「on にできなかった」と思っているのに、積む設定だけが
+        # 残る。`sync()` は on でないと何もしないので、**書いて・試して・
+        # 駄目なら戻す**（戻すところまでが「検査」）。
         share_mod.set_enabled(True, by=args.by or "")
-        結果 = share_mod.sync()
+        try:
+            結果 = share_mod.sync()
+        except share_mod.ShareError:
+            share_mod.set_enabled(False, by=args.by or "")
+            raise
         st = share_mod.status()
         if args.json:
             _print_json({"enabled": True, "synced": 結果, "status": st})
