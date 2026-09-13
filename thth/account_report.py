@@ -24,6 +24,7 @@ import urllib.parse
 import urllib.request
 
 from . import accounts as accounts_mod
+from . import adapters as adapters_mod
 from . import core
 from . import inflight as inflight_mod
 from . import jst
@@ -34,6 +35,7 @@ from . import topics as topics_mod
 from . import redact as redact_mod
 from . import select as select_mod
 from . import writeback as writeback_mod
+from .adapters import base as adapter_base
 
 # 「投稿できる」と言うために確認できていなければならないこと。**ここに並ぶのは
 # すべて「確認できた」形**（「〜でない」を数え上げない・規約 12）。
@@ -206,8 +208,30 @@ def measured_views_by_account() -> dict:
             account_cfg = accounts_mod.load_account(name)
         except accounts_mod.AccountError:
             continue
-        out[name] = _measured_observations_by_topic(account_cfg.get("repo_dir") or "", name)
+        out[name] = _measured_observations_by_topic(
+            account_cfg.get("repo_dir") or "", name, account_cfg.get("media"))
     return out
+
+
+NO_VIEWS_REASON = "媒体に views が無い"
+
+
+def _views_reason(観測: dict) -> str:
+    """`views` が数でないとき、**なぜ**かを言い分ける（設計 v2 §4.2・T-B4）。
+
+    - **媒体に views が無い**（Bluesky・Mastodon）——採り方の問題ではないので、
+      次に採れば入るものではない。**捨てずに数える**（設計 v1 §3.2.2）。
+    - **採れていない**（Threads で views が欠けた行）——次の刻みで入りうる。
+
+    この 2 つを 1 つの理由にまとめると、`--advise` の `not_compared_reasons` を
+    見た人が「そのうち埋まる」と読む。媒体の能力は `REGISTRY` から引く
+    （観測の `medium` は `thth/collect.py` が行に刻む）。
+    """
+    medium = 観測.get("medium")
+    if isinstance(medium, str) and medium in adapters_mod.REGISTRY \
+            and "views" not in adapters_mod.capabilities_for(medium):
+        return f"{NO_VIEWS_REASON}（{medium}）"
+    return "views が数ではありません"
 
 
 def comparable_views(観測: list, *, source: str = LEDGER_SOURCE,
@@ -239,7 +263,7 @@ def comparable_views(観測: list, *, source: str = LEDGER_SOURCE,
             # **刻みの名前で揃えたつもりにならない。**
             理由 = f"実経過 {age}h が {mark}h の帯（{lo}〜{hi}h）の外です"
         elif not isinstance(o.get("views"), int):
-            理由 = "views が数ではありません"
+            理由 = _views_reason(o)
         else:
             使う.append(o)
             continue
@@ -273,7 +297,8 @@ def topic_plan(account_name: str, *, now=None) -> dict:
     files = core.list_queue_files(
         account_cfg, tree_sha=writeback_mod.upstream_sha(repo_dir))
 
-    measured = _measured_observations_by_topic(repo_dir, account_name)
+    measured = _measured_observations_by_topic(repo_dir, account_name,
+                                                account_cfg.get("media"))
     rows: dict = {}
     for qf in files:
         if qf.malformed or qf.front_matter.get("account") != account_name:
@@ -323,8 +348,13 @@ def topic_plan(account_name: str, *, now=None) -> dict:
 # 出所が同じでも、**実経過時間が違う値を並べて中央値を出すのは比較になっていない。**
 
 
-def _measured_observations_by_topic(repo_dir: str, account_name: str) -> dict:
+def _measured_observations_by_topic(repo_dir: str, account_name: str,
+                                     default_medium: str | None = None) -> dict:
     """実測を topic ごとに集める。**数値だけでなく、出所と時間条件も返す。**
+
+    `default_medium` は**行に `medium` が無いとき**（設計 v2 §4.2 より前に
+    採った行）に当てる媒体。台帳の `media` を渡す——**推定ではなく、いま判って
+    いる唯一の手がかり**で、views を持つ媒体なら扱いは従来どおり変わらない。
 
     **改名した**（`_measured_views_by_topic` → これ・2026-09-12）。返すものが
     `int` の配列から観測の記録に変わったので、**古い読み手を黙って通さない**
@@ -370,8 +400,19 @@ def _measured_observations_by_topic(repo_dir: str, account_name: str) -> dict:
         if best is None:
             continue
         views = (best.get("metrics") or {}).get("views")
+        medium = best.get("medium") or default_medium
         if not isinstance(views, int):
-            continue
+            # **媒体に views が無いなら、捨てずに数える**（設計 v2 §4.2・T-B4・
+            # 設計 v1 §3.2.2）。ここで `continue` すると、Bluesky・Mastodon の
+            # 投稿は `--advise` の分母からも `not_compared` からも消え、
+            # **「実測がまだ無い」と見分けが付かなくなる。**
+            #
+            # 一方、views を持つ媒体で欠けているだけの行は従来どおり落とす
+            # ——それは「次の刻みで入りうる」話で、比較の理由としては別物。
+            if not (isinstance(medium, str) and medium in adapters_mod.REGISTRY
+                    and "views" not in adapters_mod.capabilities_for(medium)):
+                continue
+            views = None
         # **同じ投稿を 2 本として数えない**（独立検収 A・2026-09-12）。
         # 台帳は `<post_id>.ndjson` 固定だが、取り込み直しや改名で
         # `p1.ndjson` と `p1-copy.ndjson` が同居すると 1 投稿が 2 本になる。
@@ -381,6 +422,9 @@ def _measured_observations_by_topic(repo_dir: str, account_name: str) -> dict:
         見た投稿.add(pid)
         out.setdefault(best.get("topic") or "(トピック無し)", []).append({
             "views": views,
+            # **どの媒体の数か**（設計 v2 §2.1「媒体をまたいで比較しない」）。
+            # 古い行には無いので、そのときは台帳の `media` を当てる。
+            "medium": medium,
             # **刻みの名前と、実際にいつ採ったかは別。**
             "mark": 24,
             "age_hours": best.get("age_hours"),
@@ -426,7 +470,8 @@ def topic_performance(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
         if not post_id:
             continue
         try:
-            metrics = adapter.insights(post_id)
+            # `insights()` は `{"metrics", "available"}` を返す（設計 v2 §4.2）。
+            metrics, _available = adapter_base.metrics_of(adapter.insights(post_id))
         except Exception as e:
             metrics = {"error": redact_mod.redact(str(e))}
         views = metrics.get("views")
