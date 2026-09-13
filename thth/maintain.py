@@ -47,12 +47,20 @@ REFRESH_FAILED = "refresh_failed"
 EXPIRING = "expiring"
 EXPIRED = "expired"
 NO_TOKEN = "no_token"
+# **`.token` は在るが、この媒体に要る鍵が足りない**（独立監査 1・P3-8・
+# 2026-09-13）。`doctor` は媒体の `TOKEN_KEYS` を見て「トークンが無い」と
+# 言っていたのに、`maintain.inspect()` は `load_token()` が dict を返しさえ
+# すれば「在る」として先へ進んでいた——Bluesky の `.token` に `identifier`
+# だけあって `app_password` が無い（`thth auth` を途中で止めた・手で書いた）
+# とき、**doctor は「トークンが無い」、board は「ok/期限なし」**と、同じ
+# 状態を 2 通りに言っていた。**道具の中で言い分を割らない。**
+TOKEN_INCOMPLETE = "token_incomplete"
 UNREADABLE = "unreadable"
 CONFIG_ERROR = "config_error"
 
 # 人の手が要る state（`thth maintain` の終了コードが 1 になるもの）
 ATTENTION_STATES = frozenset({REFRESH_FAILED, EXPIRING, EXPIRED, NO_TOKEN,
-                              UNREADABLE, CONFIG_ERROR})
+                              TOKEN_INCOMPLETE, UNREADABLE, CONFIG_ERROR})
 
 # **次の一手は媒体が知っている**（`Adapter.TOKEN_SETUP_HINT`・独立監査 1・
 # P2-4・2026-09-13）。ここの文言は `thth maintain` だけでなく **board と
@@ -69,6 +77,7 @@ _MESSAGES = {
     EXPIRING: "まもなく切れます（更新できていません）",
     EXPIRED: "期限切れです。`{hint}` で取り直してください",
     NO_TOKEN: "token がありません。`{hint}` を実行してください",
+    TOKEN_INCOMPLETE: "token に足りない項目があります。`{hint}` を実行してください",
     UNREADABLE: "token を読めません",
     CONFIG_ERROR: "台帳を読めません",
 }
@@ -117,6 +126,13 @@ def inspect(account_name: str, *, now) -> dict:
     token = accounts_mod.load_token(account_cfg)
     if token is None:
         return _finish(row, NO_TOKEN, hint=hint)
+    # **在るかどうかの判定は媒体が持っている**（`TOKEN_KEYS`・`has_token()`）。
+    # doctor と同じ物差しを使う（P3-8）。**欠けている鍵の名前は言う**——
+    # 「足りない」だけでは何を足すのか判らない。**値は読まない。**
+    if not adapter_cls.has_token(token):
+        欠け = [key for key in adapter_cls.TOKEN_KEYS if not token.get(key)]
+        return _finish(row, TOKEN_INCOMPLETE, hint=hint,
+                       detail="足りない鍵: " + "・".join(欠け))
 
     row["obtained_at"] = token.get("obtained_at")
     unreadable = None

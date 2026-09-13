@@ -26,18 +26,34 @@ from __future__ import annotations
 import urllib.parse
 
 
+# ファイル名 1 つぶんの上限（encode **後**のバイト数）。ext4・APFS・HFS+ は
+# いずれも 255 バイト。`.ndjson`（7 バイト）や `.tmp` を足しても収まるように
+# 200 で切る。**`quote()` は 1 文字を最大 12 バイトに膨らませる**（4 バイトの
+# 絵文字 → `%F0%9F%98%80`）ので、encode 前の長さでは判定できない。
+MAX_FILENAME_BYTES = 200
+
+
 def is_usable(post_id) -> bool:
-    """`post_id` を台帳の鍵として使えるか。**外へ出る値を弾く。**
+    """`post_id` を台帳の鍵として使えるか。**外へ出る値・書けない値を弾く。**
 
     区切り文字（`/`）はもう弾かない——**encode すれば安全に書ける**し、
     弾くと Bluesky の投稿が丸ごと採取から落ちる。残っているのは
-    「空」「`.`／`..`」「NUL」だけ。
+    「空」「`.`／`..`」「NUL」と、**encode 後のファイル名が長すぎるもの**。
+
+    長さを見るのは独立監査 1（P3-6・2026-09-13）。極端に長い `post_id`
+    （壊れた台帳・悪意のある返信先・別の媒体の URI を丸ごと入れた原稿）で
+    `open()` が `OSError: [Errno 63] File name too long` を上げ、**`collect`
+    が 1 本の異常で全部落ちていた**——採取は部分的な成功を許す設計なのに、
+    ここだけ例外が `collect_once()` の外まで抜けていた。**書けないものは
+    `errors` に積んで次へ**（`.` や `..` と同じ扱い）。
     """
     if not isinstance(post_id, str) or not post_id.strip():
         return False
     if post_id.strip() in (".", ".."):
         return False
-    return "\x00" not in post_id
+    if "\x00" in post_id:
+        return False
+    return len(to_filename(post_id).encode("utf-8")) <= MAX_FILENAME_BYTES
 
 
 def to_filename(post_id: str) -> str:

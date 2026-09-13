@@ -70,6 +70,10 @@ def _safe_post_id(post_id) -> bool:
     AT URI（`at://…/app.bsky.feed.post/<rkey>`）で `/` を含むので、弾くと
     **Bluesky の投稿が 1 本も採取されない。** パスにするときに encode する
     （`postid.to_filename()`）ので、区切りが効いて外へ出ることは無い。
+
+    **長すぎる `post_id` もここで弾く**（独立監査 1・P3-6・2026-09-13）。
+    encode 後のファイル名が上限を越えると `open()` が `OSError` を上げ、
+    **1 本の異常で採取が丸ごと落ちていた**（部分的な成功を許す設計に反する）。
     """
     return postid_mod.is_usable(post_id)
 
@@ -344,7 +348,7 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
             continue
         if not _safe_post_id(post_id):
             # **`post_id` をそのままパスにしない**（独立検収 B・2026-09-12）。
-            errors.append(f"post_id がファイル名に使えません（空・`.`・`..`・NUL）: {post_id!r}")
+            errors.append(f"post_id がファイル名に使えません（空・`.`・`..`・NUL・長すぎる）: {post_id!r}")
             continue
         try:
             posted_at = jst.parse(posted_at_raw) if hasattr(jst, "parse") else \
@@ -478,6 +482,26 @@ def _inbox_month(row: dict, *, now) -> str:
     return jst.month_str(now)
 
 
+def _inbox_known_ids(repo_dir: str) -> set:
+    """`data/sns/inbox/` **配下の全ファイル**に既にある `message_id`（P3-5）。
+
+    月ごとのファイルだけを見ていたので、`timestamp` の無いメッセージ（置き場は
+    「いま」の月に推測で決まる）が月をまたぐと 2 度書かれていた。**追記専用の
+    台帳で同じ id が 2 行あると、数え直したときに 2 件になる。**
+    """
+    inbox_dir = os.path.join(repo_dir, *INBOX_DIR)
+    if not os.path.isdir(inbox_dir):
+        return set()
+    known: set = set()
+    for name in sorted(os.listdir(inbox_dir)):
+        if not name.endswith(".ndjson"):
+            continue
+        known |= {r.get("message_id") for r in _read_ndjson(
+            os.path.join(inbox_dir, name))}
+    known.discard(None)
+    return known
+
+
 def _collect_inbox(account_cfg: dict, adapter, *, now, errors: list, log) -> list:
     """`inbox` を持つアダプタから、利用者が始めた会話を採って追記する。
 
@@ -487,6 +511,12 @@ def _collect_inbox(account_cfg: dict, adapter, *, now, errors: list, log) -> lis
     1. `capabilities()` に `inbox` があるアダプタだけに聞く（無い媒体は呼ばない）。
     2. `data/sns/inbox/<YYYY-MM>.ndjson` に**追記**する。
     3. **`message_id` で重複を除く**（冪等——同じ実行を 2 度走らせても増えない）。
+       除く相手は `data/sns/inbox/` **配下の全ファイル**であって、その月の
+       ファイルだけではない（独立監査 1・P3-5・2026-09-13）。`timestamp` の
+       無いメッセージは「いま」の月に落とすので、**月をまたいだ次の実行で
+       同じ `message_id` がもう 1 度書かれていた**（月末 23:00 に採り、
+       翌月 01:00 に採ると 2 行）。冪等は「同じ実行を 2 度」だけでなく
+       **「日をまたいで何度でも」**でなければ意味が無い。
 
     **`reply_deadline` はそのまま行に残す**（24 時間の会話窓・設計 v2 §4.1）。
     承認の待ち時間に上限が要るので、**期限を落とすと門が使えなくなる。**
@@ -527,9 +557,11 @@ def _collect_inbox(account_cfg: dict, adapter, *, now, errors: list, log) -> lis
     if 欠落:
         errors.append(f"inbox: message_id の無い行が {欠落} 件ありました（書いていません）")
 
+    # **既に書いた `message_id` を、月をまたいで数え上げる**（P3-5）。
+    known = _inbox_known_ids(repo_dir)
+
     for month, rows in sorted(by_month.items()):
         path = os.path.join(repo_dir, *INBOX_DIR, f"{month}.ndjson")
-        known = {r.get("message_id") for r in _read_ndjson(path)}
         fresh = []
         for row in rows:
             mid = row.get("message_id")
@@ -696,7 +728,7 @@ def _refresh_targets(account_name: str, account_cfg: dict, *, now, errors: list,
         # ——版管理からも `thth replies` の読み口からも消えるのに、
         # **表示は「取れた 1 本」で成功に見えた。**
         if not _safe_post_id(pid):
-            errors.append(f"post_id がファイル名に使えません（空・`.`・`..`・NUL）: {pid!r}")
+            errors.append(f"post_id がファイル名に使えません（空・`.`・`..`・NUL・長すぎる）: {pid!r}")
             continue
         try:
             posted_at = datetime.datetime.fromisoformat(posted_at_raw)

@@ -421,20 +421,49 @@ class MastodonAdapter(base.Adapter):
         }
 
     def qualified_acct(self, acct) -> str | None:
-        """`acct` を**必ずドメイン付き**にする（`name` → `name@<instance の host>`）。
+        """`acct` を**必ずドメイン付き**にし、**綴りの揺れをそろえる**。
 
         Mastodon の `acct` は**自分のインスタンスの利用者だけドメインが落ちる**
         （よそから来た人は `name@other.example` のまま）。落ちたまま鍵にすると、
         `mastodon.social` の `aoking` と `fedibird.com` の `aoking` が
         **同一人物として数えられる**。**別インスタンスの同名を同じ人にしない。**
+
+        **逆側もある**（独立監査 1・P3-7・2026-09-13）: 同じ人が別人に割れる。
+        鍵は `sha256` なので 1 文字違えば別の鍵で、揺れの元が 2 つあった。
+
+        - **台帳の `instance` の綴り**——`https://Mastodon.Social`・
+          `https://mastodon.social:443`・末尾 `/`。どれも同じサーバを指すのに、
+          `netloc` をそのまま使うと 4 通りの鍵ができる。台帳を書き直した日を
+          境に、**同じ人の観測が別人として積まれる**。
+        - **`acct` の大小**——Mastodon の利用者名は大小を区別しない（**L3**:
+          `Aoking` でログインしても `aoking` に解決される）が、API の応答は
+          その時々の綴りを返す。
+
+        そろえ方は host を小文字化して既定 port（`https:443` / `http:80`）を
+        落とし、acct 全体を `casefold()`。**戻せない鍵なので、後から直せない**
+        ——集める前にそろえておくしかない。
         """
         acct = (acct or "").strip().lstrip("@")
         if not acct:
             return None
-        if "@" in acct:
-            return acct
-        host = urllib.parse.urlsplit(self.instance).netloc or self.instance
-        return f"{acct}@{host}"
+        if "@" not in acct:
+            acct = f"{acct}@{self._instance_host()}"
+        return acct.casefold()
+
+    def _instance_host(self) -> str:
+        """台帳の `instance` から、鍵に使う host（小文字・既定 port を落とす）。"""
+        parts = urllib.parse.urlsplit(self.instance)
+        netloc = parts.netloc or self.instance
+        host = (parts.hostname or netloc).lower()
+        port = None
+        try:
+            port = parts.port
+        except ValueError:      # port が数字でない台帳（`_instance_url` は通す）
+            port = None
+        既定 = {"https": 443, "http": 80}.get((parts.scheme or "").lower())
+        if port is not None and port != 既定:
+            host = f"{host}:{port}"
+        return host
 
     def author_key(self, acct) -> str | None:
         """投稿者の非可逆な識別子（設計 v2 §4.2 の `Message.author_key`）。
