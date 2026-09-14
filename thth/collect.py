@@ -604,8 +604,12 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                     log(f"返信 {len(新しい)} 件: {post_id}")
 
     # --- 利用者から始まった会話（**WhatsApp の芽**・設計 v2 §4.2）
-    touched.extend(_collect_inbox(account_cfg, adapter, now=now, errors=errors,
-                                   log=log, inbox_dir=dirs["inbox"]))
+    inbox_touched, inbox_state = _collect_inbox(
+        account_cfg, adapter, now=now, errors=errors, log=log, inbox_dir=dirs["inbox"])
+    touched.extend(inbox_touched)
+    # **board が読む**（`thth board` の `inbox=権限なし`・`--json` の `inbox_state`）。
+    # 取りに行かない board に「最後の採取で inbox がどうだったか」を渡す唯一の口。
+    write_inbox_state(account_name, inbox_state, now=now)
 
     # --- アカウント単位の日次（前日ぶん・`clicks` はここでしか取れない）
     account_path = _collect_account_daily(account_name, account_cfg, adapter,
@@ -614,10 +618,58 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     if account_path:
         touched.append(account_path)
 
-    return {"touched": sorted(set(touched)), "posts": posts_seen, "errors": errors}
+    return {"touched": sorted(set(touched)), "posts": posts_seen, "errors": errors,
+            "inbox": inbox_state}
 
 
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}")
+
+
+# --- inbox の状態（board が読む・本番 P1 2026-09-14）--------------------------
+#
+# `_collect_inbox()` の結果を `$THTH_ROOT/state/<account>/inbox_state.json` に
+# 1 つだけ置く（上書き・追記ではない）。形は
+#   {"at": <JST ISO>, "state": "ok" | "permission_missing" | "failed" | "none",
+#    "permission": <権限の綴り・permission_missing のときだけ>, "count": <件数>}
+# `"none"` は「媒体が `inbox` を持たない」。**`thth board` はこれを読むだけ**
+# （取りに行かない）。無ければ「判らない」（`inbox_state: null`）。
+
+INBOX_STATE_FILE = "inbox_state.json"
+INBOX_STATE_OK = "ok"
+INBOX_STATE_PERMISSION_MISSING = "permission_missing"
+INBOX_STATE_FAILED = "failed"
+INBOX_STATE_NONE = "none"
+
+
+def inbox_state_path(account_name: str) -> str:
+    return os.path.join(accounts_mod.state_dir_for(account_name), INBOX_STATE_FILE)
+
+
+def write_inbox_state(account_name: str, state: dict | None, *, now) -> None:
+    """最後の採取で inbox がどうだったかを state に置く（**書けなくても採取は止めない**）。"""
+    if not isinstance(state, dict):
+        return
+    path = inbox_state_path(account_name)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"at": jst.iso(now), **state}, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def read_inbox_state(account_name: str) -> dict | None:
+    """`inbox_state.json` を読む（無い・読めない・形違いは None＝判らない）。"""
+    try:
+        with open(inbox_state_path(account_name), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("state"), str):
+        return None
+    return data
 
 
 def _inbox_month(row: dict, *, now) -> str:
@@ -653,8 +705,17 @@ def _inbox_known_ids(inbox_dir: str) -> set:
 
 
 def _collect_inbox(account_cfg: dict, adapter, *, now, errors: list, log,
-                    inbox_dir: str) -> list:
+                    inbox_dir: str) -> tuple:
     """`inbox` を持つアダプタから、利用者が始めた会話を採って追記する。
+
+    戻りは `(touched, state)`。`state` は `write_inbox_state()` の形（`"state"` と
+    `"permission"`・`"count"`）。**`PermissionMissing` は `errors` に積まない**
+    （本番 P1 2026-09-14）——5 権限のトークンでは `inbox` が毎 run 「権限なし」
+    で、それを失敗と呼ぶと `thth run` が 10 分ごとに「採取は完全ではありません」
+    を出し続け、**本物の失敗が埋もれる**。権限が無いのは失敗ではなく状態なので
+    `{"state": "permission_missing", "permission": …}` として残し、board が
+    `inbox=権限なし` の 1 語で出す。**`AdapterError`（本物の失敗）は従来どおり
+    `errors`。**
 
     **芽である**（設計 v2 §4.2）。v2-3 では偽の push 型アダプタでこの配管だけを
     通し、WhatsApp の実装は §7-9 の後。ここでやることは 3 つだけ:
@@ -677,17 +738,25 @@ def _collect_inbox(account_cfg: dict, adapter, *, now, errors: list, log,
     except Exception:
         capabilities = set()
     if "inbox" not in (capabilities or set()):
-        return []
+        return [], {"state": INBOX_STATE_NONE}
 
     try:
         messages = adapter.inbox()
+    except adapter_base.PermissionMissing as e:
+        # **状態であって失敗ではない**——`errors` に積まない（`thth run` の
+        # 「採取は完全ではありません」を毎 run 出さない）。黙りもしない: log に
+        # 1 行、state に 1 つ、board に 1 語。
+        log(f"inbox: 権限なし（{redact_mod.redact(str(e))}）")
+        return [], {"state": INBOX_STATE_PERMISSION_MISSING,
+                    "permission": e.permission,
+                    "skipped": INBOX_STATE_PERMISSION_MISSING}
     except Exception as e:
         errors.append(f"inbox: {redact_mod.redact(str(e))}")
-        return []
+        return [], {"state": INBOX_STATE_FAILED}
     if not isinstance(messages, list):
         # **形が違うものを件数として数えない**（`_rows()` と同じ流儀）。
         errors.append(f"inbox: 一覧が配列ではありません（{type(messages).__name__}）")
-        return []
+        return [], {"state": INBOX_STATE_FAILED}
 
     touched, 欠落 = [], 0
     by_month: dict = {}
@@ -725,7 +794,7 @@ def _collect_inbox(account_cfg: dict, adapter, *, now, errors: list, log,
         _append_ndjson(path, fresh)
         touched.append(path)
         log(f"問い合わせ {len(fresh)} 件: {month}")
-    return touched
+    return touched, {"state": INBOX_STATE_OK, "count": len(messages)}
 
 
 def _collect_account_daily(account_name, account_cfg, adapter, *, now, errors,

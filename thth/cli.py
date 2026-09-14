@@ -2387,9 +2387,15 @@ def cmd_board(args) -> int:
             # 取り下げ済み（`thth retract`）があるときだけ 1 語足す。
             retracted = row.get("retracted_count") or 0
             retracted_note = f" 取り下げ済み={retracted}" if retracted else ""
+            # **言及（inbox）の権限が乗っていないときだけ 1 語**（本番 P1
+            # 2026-09-14）。失敗ではなく状態なので `errors` には出ない——
+            # ここに出ないと「採っていない」ことが誰にも見えない。
+            inbox_note = (" inbox=権限なし"
+                          if row.get("inbox_state") == collect_mod.INBOX_STATE_PERMISSION_MISSING
+                          else "")
             print(f"{row['account']}: project={row['project']} last_post={last_post} "
                   f"approved_waiting={row['approved_waiting']} type_mismatch={row['type_mismatch']} "
-                  f"inflight={inflight} token={token}{pending_note}{retracted_note}")
+                  f"inflight={inflight} token={token}{pending_note}{retracted_note}{inbox_note}")
             # 指紋の 5 項目のどれが食い違って inflight が残ったか（外部レビュー
             # 第 3 巡・持ち越し項目 C）。人が止まった原因をファイルを開いて
             # 自分で探さずに済むように、board の 1 画面にそのまま出す。

@@ -81,12 +81,17 @@ class PermissionMissing(AdapterError):
     `error.message` に `permission`、または権限系 code）で上げる。**黙って 0 件
     にしない・500 を黙って返さない**——CLI は「`<permission>` がトークンに
     乗っていません。`thth auth <account>` をやり直してください」で rc=2、
-    `collect` は `errors` に 1 行積んで続行する（投稿は止めない）。
+    `collect` は **`errors` に積まず** `inbox_state: permission_missing` として
+    残して続行する（投稿は止めない・board に `inbox=権限なし`・本番 P1
+    2026-09-14。以前は `errors` に 1 行積んでいたが、5 権限のトークンでは
+    毎 run 「採取は完全ではありません」になり本物の失敗が埋もれた）。
 
     `permission` は権限の綴り（`threads_keyword_search` 等）。**媒体の語**だが、
     読む側（CLI・collect）は文言に流すだけで分岐はしない。
 
-    判定は `.token` の `scopes`（一覧があるとき）と、媒体の応答の権限系エラーの 2 段。
+    判定は `.token` の `scopes`（一覧があるとき）→ `/debug_token`（Threads・
+    実体で 1 回だけ）→ 媒体の応答の権限系エラー（4xx・または 500 で権限が無いと
+    分かっているとき）の順。**不明なら叩く**（判らないことを「無い」にしない）。
     """
 
     def __init__(self, permission: str, detail: str = ""):

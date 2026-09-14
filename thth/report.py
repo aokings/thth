@@ -340,6 +340,7 @@ def board_summary(now=None) -> dict:
             last_post_at = sent_at
             last_post_source = "sent"
         collected_at = collect_mod.last_collected_at(account_cfg, name)
+        inbox_state = collect_mod.read_inbox_state(name)
         needs_review = _needs_review_detail(
             files, account_name=name, account_cfg=account_cfg, now=now)
         token_row = maintain_mod.inspect(name, now=now)
@@ -358,6 +359,12 @@ def board_summary(now=None) -> dict:
             # アカウントは投稿の timer を持たないので、**採集が止まっていても
             # 画面には何も出なかった**。`None` は「1 度も採っていない」。
             "last_collected_at": (collected_at.isoformat() if collected_at else None),
+            # **最後の採取で inbox（言及）がどうだったか**（本番 P1 2026-09-14）。
+            # `"permission_missing"` は「トークンに権限が乗っていないので叩いて
+            # いない」——失敗ではなく状態。`None` は記録が無い（判らない）。
+            # 読むだけ（`collect.read_inbox_state()`・取りに行かない）。
+            "inbox_state": inbox_state.get("state") if inbox_state else None,
+            "inbox_permission": inbox_state.get("permission") if inbox_state else None,
             "last_sent_post_id": sent_row.get("post_id") if sent_row else None,
             "approved_waiting": approved_waiting,
             "type_mismatch": type_mismatch,
