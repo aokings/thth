@@ -142,7 +142,40 @@ def diagnose(account_name: str) -> dict:
     for r in results:
         r.pop("body", None)
     return {"account": account_name, "handle": account_cfg.get("handle"),
-            "username": token.get("username"), "user_id": user_id, "probes": results}
+            "username": token.get("username"), "user_id": user_id,
+            "scopes_recorded": recorded_scopes(token),
+            "probes": results}
+
+
+# **記録上の scope**（運用の観測 2026-09-14）。VM の `.token` は Threads 4 本・
+# Mastodon 1 本とも `scopes` が null だった——`thth token set` は管理画面発行の
+# トークンなので認可の範囲を知りようがなく、null を書く（嘘の一覧は書かない）。
+# `thth auth` は `/debug_token` の応答（`scopes_source: "response"`）か、無ければ
+# 要求した一覧（`"requested"`）を書き、どちらを書いたかを残す（`thth/oauth.py`）。
+# doctor はその記録を **probe（実力）とは別の行**として先頭に出す。**記録と
+# 実力を混ぜない**——記録は「認可を求めた／API が言った」であって、叩いて
+# 確かめた結果ではない。読み手は null を「不明」と扱う。
+SCOPES_SOURCE_UNKNOWN = "unknown"
+
+
+def recorded_scopes(token: dict) -> dict:
+    """`.token` の `scopes`／`scopes_source` を「不明」を不明のまま返す。"""
+    token = token or {}
+    scopes = token.get("scopes")
+    source = token.get("scopes_source")
+    if not isinstance(scopes, list):
+        return {"count": None, "scopes": None,
+                "source": source or SCOPES_SOURCE_UNKNOWN}
+    return {"count": len(scopes), "scopes": list(scopes),
+            "source": source or SCOPES_SOURCE_UNKNOWN}
+
+
+def recorded_scopes_line(rec: dict | None) -> str:
+    rec = rec or {}
+    if rec.get("count") is None:
+        return (f"記録上の scope: 不明（.token に一覧が無い・"
+                f"source={rec.get('source') or SCOPES_SOURCE_UNKNOWN}）")
+    return f"記録上の scope: {rec['count']} 個（source={rec.get('source')}）"
 
 
 def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
@@ -265,16 +298,21 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         log(report["error"])
         return 2
     log(f"{report['account']}（{report['username']}・user_id={report['user_id']}）")
+    log(recorded_scopes_line(report.get("scopes_recorded")))
     log("")
     failed = 0
     for p in report["probes"]:
-        mark = "○" if p["ok"] else ("－" if p["ok"] is None else "×")
+        # `―` は「読み取りでは確かめられません」（権限不足の × とは違う）。
+        # **`None` は失敗に数えない**——判らないことを「駄目」と言わない。
+        mark = "○" if p["ok"] else ("―" if p["ok"] is None else "×")
         if p["ok"] is False:
             failed += 1
         log(f"  {mark} {p['label']}（{p['permission']}）")
         log(f"      {p['detail']}")
     log("")
     log("読み取りだけを試しました。投稿・返信・削除は呼んでいません。")
+    if any(p["ok"] is None for p in report["probes"]):
+        log("― は「読み取りでは確かめられません」（権限不足の印ではありません）。")
     # **診断は最後まで出す。ただし壊れた台帳を「異常なし」で返さない**
     # （独立監査 1・P1-1）。probe が全部○でも rc=2。
     if topics_shelf:
