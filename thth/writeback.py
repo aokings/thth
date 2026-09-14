@@ -152,7 +152,14 @@ def upstream_sha(repo_dir: str) -> str | None:
     （`approved_waiting: 1`・要確認 0 件）。一致しない間は照合先が無い（None）＝
     どのファイルも `unverified_content` になるので、board にそのまま出る。
     """
+    # **`.git` の無いディレクトリで git を呼ばない**（監査 2 回目・P3-1）。
+    # `git -C <dir> rev-parse HEAD` は**上の階層まで遡って repo を探す**ので、
+    # `repo_dir` が `$THTH_ROOT/repos/_none`（存在しない・空）でも、その上に
+    # 別の clone があれば**他人の repo の HEAD を照合先として返していた**。
+    # 判定は `accounts.repo_state()` と同じ 2 つ（ディレクトリがある・`.git` がある）。
     if not repo_dir or not os.path.isdir(repo_dir):
+        return None
+    if not os.path.exists(os.path.join(repo_dir, ".git")):
         return None
     head = _run_git(repo_dir, ["rev-parse", "HEAD"])
     upstream = _run_git(repo_dir, ["rev-parse", "@{u}"])

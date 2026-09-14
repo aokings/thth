@@ -144,3 +144,247 @@ def test_P1_1_set_post_fieldsの入口が改行入りの値を断る():
     # まともな値はこれまでどおり書ける。
     assert "post_id: POST9" in bundle_mod.set_post_fields(
         text, 1, {"post_id": "POST9"})
+
+
+# --------------------------------------------------------------- P2-1
+# 置き場の判定（`repo_dir` が一時的に見えないと黙って state に転んでいた）。
+
+from thth import collect as collect_mod  # noqa: E402
+from thth import writeback as writeback_mod  # noqa: E402
+
+# 台帳の名前は**決め打ち**にする（`hash()` はプロセスごとに変わる）。
+壊れ方の名前 = {
+    "実在": "acct-ok", "git無し": "acct-nogit", "git外し": "acct-moved",
+    "読めない": "acct-locked", "相対で実在": "acct-rel", "相対で不在": "acct-relgone",
+    "持たない": "acct-none",
+}
+
+
+def _repo(tmp_path, name="clone"):
+    """実在する git repo（`.git` つき）を 1 つ作る。"""
+    pair = init_git_pair(tmp_path / name, seed_content="---\nthth: 1\n---\n本文\n")
+    return pair["work"]
+
+
+@pytest.fixture
+def 壊れ方(tmp_path, thth_root, isolated_account_factory):
+    """5 通りの `repo_dir` を作って `(名前, 台帳, 期待する状態)` を返す工場。"""
+    戻す = []
+
+    def _make(どれ):
+        if どれ == "実在":
+            repo = _repo(tmp_path)
+        elif どれ == "git無し":
+            repo = str(tmp_path / "plain")
+            os.makedirs(repo, exist_ok=True)
+        elif どれ == "git外し":
+            repo = _repo(tmp_path, "moved")
+            os.rename(os.path.join(repo, ".git"), str(tmp_path / "退避.git"))
+        elif どれ == "読めない":
+            repo = _repo(tmp_path, "locked")
+            os.chmod(repo, 0o000)
+            戻す.append(repo)
+        elif どれ == "相対で実在":
+            # `$THTH_ROOT` の下に置いた実在の clone を**相対で**指す。
+            repo = _repo(Path(thth_root), "rel")
+            repo = os.path.relpath(repo, thth_root)
+        elif どれ == "相対で不在":
+            repo = os.path.join("repos", "どこにも無い")
+        elif どれ == "持たない":
+            repo = str(tmp_path / "repos" / "_none")
+        else:                                       # pragma: no cover
+            raise AssertionError(どれ)
+        account = isolated_account_factory(
+            name=壊れ方の名前[どれ], repo_dir=repo,
+            media="bluesky", handle="x.bsky.social", production=True,
+            scheduled=False)
+        return account
+    yield _make
+    # chmod 000 のまま tmp_path を片付けられないので戻す。
+    for p in 戻す:
+        try:
+            os.chmod(p, 0o755)
+        except OSError:
+            pass
+
+
+@pytest.mark.parametrize("どれ,期待", [
+    ("実在", accounts_mod.REPO_OK),
+    ("git無し", accounts_mod.REPO_BROKEN),
+    ("git外し", accounts_mod.REPO_BROKEN),
+    ("読めない", accounts_mod.REPO_BROKEN),
+    ("相対で実在", accounts_mod.REPO_OK),
+    ("相対で不在", accounts_mod.REPO_BROKEN),
+    ("持たない", accounts_mod.REPO_NONE),
+])
+def test_P2_1_repo_stateが5通りを言い分ける(壊れ方, どれ, 期待):
+    account = 壊れ方(どれ)
+    cfg = accounts_mod.load_account(account["name"])
+    assert accounts_mod.repo_state(cfg) == 期待
+
+
+@pytest.mark.parametrize("どれ", ["git無し", "git外し", "読めない", "相対で不在"])
+def test_P2_1_使えないrepoでは採取せずrcが立つ(壊れ方, どれ):
+    """**黙って state に転ばない。** v2.0.0 と同じく loud に断る。"""
+    account = 壊れ方(どれ)
+    出力 = []
+    rc = collect_mod.run_collect(account["name"], adapter=object(), now=NOW,
+                                  log=出力.append)
+    assert rc != 0
+    assert any("repo を同期できないので採取しません" in l for l in 出力), 出力
+    # state 側に置き場を作っていない（転んでいない）。
+    state = accounts_mod.state_dir_for(account["name"])
+    assert not os.path.isdir(os.path.join(state, "data", "sns")), "state に転んだ"
+
+
+@pytest.mark.parametrize("どれ", ["git無し", "git外し", "読めない", "相対で不在"])
+def test_P2_1_使えないrepoでは取り直しもしない(壊れ方, どれ):
+    account = 壊れ方(どれ)
+    out = collect_mod.refresh_replies(account["name"], adapter=object(), now=NOW,
+                                       log=lambda _l: None)
+    assert out["skipped"] == "not_synced", out
+    assert any("repo を同期できない" in e for e in out["errors"]), out
+
+
+@pytest.mark.parametrize("どれ,repo側", [
+    ("持たない", False),
+    ("git無し", True),
+    ("git外し", True),
+])
+def test_P2_1_data_dirsはrepoを持たないときだけstateへ(壊れ方, どれ, repo側):
+    account = 壊れ方(どれ)
+    cfg = accounts_mod.load_account(account["name"])
+    d = accounts_mod.data_dirs(cfg, account["name"])
+    state = accounts_mod.state_dir_for(account["name"])
+    if repo側:
+        assert not d["insights_posts"].startswith(state), d
+    else:
+        assert d["insights_posts"].startswith(state), d
+
+
+def test_P2_1_相対のrepo_dirはTHTH_ROOT基準で畳む(壊れ方, thth_root):
+    """**cwd 基準にしない**——timer の cwd は `/`、手打ちの cwd は人それぞれ。"""
+    account = 壊れ方("相対で実在")
+    cfg = accounts_mod.load_account(account["name"])
+    解決 = accounts_mod.resolved_repo_dir(cfg)
+    assert os.path.isabs(解決) and 解決.startswith(os.path.realpath(thth_root)) \
+        or 解決.startswith(thth_root), 解決
+    assert os.path.isdir(os.path.join(解決, ".git")) or \
+        os.path.exists(os.path.join(解決, ".git"))
+    d = accounts_mod.data_dirs(cfg, account["name"])
+    assert d["insights_posts"].startswith(解決), d
+
+
+# --------------------------------------------------------------- P3-1
+
+def test_P3_1_upstream_shaはgitの無いdirで上の階層を拾わない(tmp_path):
+    """`git -C` は**上へ遡って repo を探す**——他人の repo の HEAD を返していた。"""
+    repo = _repo(tmp_path)
+    中の空dir = os.path.join(repo, "repos", "_none")
+    os.makedirs(中の空dir, exist_ok=True)
+    assert writeback_mod.upstream_sha(repo) is not None, "前提（repo 自体は読める）"
+    assert writeback_mod.upstream_sha(中の空dir) is None
+
+
+# --------------------------------------------------------------- P2-2
+# repo 無しの分岐がロックを取らなかった（守っていたのは repo ではなく台帳）。
+
+import json  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# **遅い偽アダプタ**。1 本目が採っている最中に 2 本目を起こす。
+# 同じプロセスの中の thread では、この手の穴は再現しない（`flock` は
+# プロセス単位）ので、実プロセスを 2 本並べる
+# （`tests/test_share_sync_concurrent.py` と同じ形）。
+同時に打つ = """
+import json, sys, time
+from thth import collect
+
+class のろい媒体:
+    CAPABILITIES = frozenset({"views"})
+
+    @classmethod
+    def capabilities(cls):
+        return set(cls.CAPABILITIES)
+
+    def insights(self, post_id):
+        time.sleep(2.0)
+        return {"metrics": {"views": 7}, "available": ["views"]}
+
+    def conversation(self, post_id, since=None):
+        time.sleep(2.0)
+        return [{"message_id": "R1", "text": "返信"}]
+
+出た = []
+どちら = sys.argv[2]
+if どちら == "collect":
+    rc = collect.run_collect(sys.argv[1], adapter=のろい媒体(), log=出た.append)
+    print(json.dumps({"rc": rc, "log": 出た}, ensure_ascii=False))
+else:
+    out = collect.refresh_replies(sys.argv[1], adapter=のろい媒体(),
+                                   log=出た.append)
+    print(json.dumps({"skipped": out["skipped"], "fetched": out["fetched"]},
+                      ensure_ascii=False))
+"""
+
+
+@pytest.fixture
+def 同席専用(tmp_path, thth_root, isolated_account_factory):
+    """repo を持たない台帳＋`sent/` に 1 件（2 時間前＝1h の刻みを跨いでいる）。"""
+    from thth import jst
+    from thth import sent as sent_mod
+
+    account = isolated_account_factory(
+        name="acct-solo", repo_dir=str(tmp_path / "repos" / "_none"),
+        media="bluesky", handle="x.bsky.social", production=True, scheduled=False)
+    二時間前 = jst.iso(jst.now_jst() - datetime.timedelta(hours=2))
+    sent_mod.write(accounts_mod.state_dir_for(account["name"]),
+                    post_id="POST-SOLO", text="本文", body_hash="h",
+                    sent_at=二時間前)
+    return account
+
+
+def _2本同時に(account_name: str, どちら: str) -> list:
+    env = {**os.environ, "PYTHONPATH": REPO_ROOT}
+    procs = [subprocess.Popen(
+        [sys.executable, "-c", 同時に打つ, account_name, どちら],
+        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        for _ in range(2)]
+    出た = []
+    for p in procs:
+        out, err = p.communicate()
+        assert out.strip(), err
+        出た.append(json.loads(out))
+    return 出た
+
+
+def _ndjson(path: str) -> list:
+    if not os.path.exists(path):
+        return []
+    return [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
+
+
+def test_P2_2_repo無しでも同時のcollectは1本しか採らない(同席専用):
+    """**ロックが守っていたのは repo ではなく台帳**（追記専用の ndjson）。"""
+    出た = _2本同時に(同席専用["name"], "collect")
+    d = accounts_mod.data_dirs(accounts_mod.load_account(同席専用["name"]),
+                               同席専用["name"])
+    行 = _ndjson(os.path.join(d["insights_posts"], "POST-SOLO.ndjson"))
+    assert len(行) == 1, 行
+    # 片方は見送っている（busy は待たない・repo 付きと同じ作法）。
+    見送り = [r for r in 出た if any("見送ります" in l for l in r["log"])]
+    assert len(見送り) == 1, 出た
+    assert 見送り[0]["rc"] == 0, 見送り[0]
+
+
+def test_P2_2_repo無しでも同時のrefreshは1本しか採らない(同席専用):
+    出た = _2本同時に(同席専用["name"], "refresh")
+    d = accounts_mod.data_dirs(accounts_mod.load_account(同席専用["name"]),
+                               同席専用["name"])
+    取得 = [r for r in _ndjson(os.path.join(d["replies"], "POST-SOLO.ndjson"))
+            if r.get("kind") == "fetch"]
+    assert len(取得) == 1, 取得
+    assert sorted(r["skipped"] or "" for r in 出た) == ["", "locked"], 出た

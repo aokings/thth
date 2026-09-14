@@ -743,14 +743,36 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print) -> int:
             return 2
         adapter = core._default_adapter_factory(account_cfg, token)
 
-    # **repo が無ければ git を一切呼ばない**（設計 v2.0.1 §1・2026-09-14）。
+    # **「持たない」と「使えない」を分ける**（監査 2 回目・P2-1）。
+    # `repo_dir` が一時的に見えないだけ（mount が落ちた・clone を移した・`.git` を
+    # 退避した・権限が変わった）で state に転ぶと、書いたものが版管理にも
+    # `thth board` の「未送信」にも出ない。**断れば人は直しに行ける。**
+    状態 = accounts_mod.repo_state(account_cfg)
+    if 状態 == accounts_mod.REPO_BROKEN:
+        log(f"repo を同期できないので採取しません: "
+            f"{accounts_mod.repo_problem(account_cfg)}")
+        return 2
+
+    # **repo を持たないなら git を一切呼ばない**（設計 v2.0.1 §1・2026-09-14）。
     # 以前はここで `return 0` していた——「送信専用アカウントは採るものが無い」
     # という前提だったが、**`thth send` で出した投稿こそ採るものだった。**
     # 置き場は `$THTH_ROOT/state/<account>/data/sns/…`（`accounts.data_dirs()`）で、
-    # 版管理の相手がいないので、ロックも同期も commit も push もしない。
-    # 書いて終わり——`thth board`・`thth measured` は同じ helper でそこを読む。
-    if not accounts_mod.is_repo_backed(account_cfg):
-        result = collect_once(account_name, adapter=adapter, now=now, log=log)
+    # 版管理の相手がいないので、同期も commit も push もしない。**ただしロックは
+    # 取る**（監査 2 回目・P2-2）——同じ account の採取が 2 本走れば、追記専用の
+    # 台帳に同じ行が 2 度入る。
+    if 状態 == accounts_mod.REPO_NONE:
+        account_lock = lock_mod.AccountLock(
+            accounts_mod.account_lock_path_for(account_name))
+        try:
+            account_lock.acquire()
+        except lock_mod.LockBusy:
+            # **待たない・見送る**（repo 付きと同じ作法。次の実行で採る）。
+            log(f"別の実行が使っているので採取を見送ります: {account_name}")
+            return 0
+        try:
+            result = collect_once(account_name, adapter=adapter, now=now, log=log)
+        finally:
+            account_lock.release()
         if result["touched"]:
             log(f"採取しました: {len(result['touched'])} ファイル"
                 f"（投稿 {result['posts']} 本を見ました・repo が無いので state に"
@@ -896,7 +918,16 @@ def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
     # `no_repo` として見送っていたので、**同席専用の account の返信は
     # `--refresh` でも取れなかった。** 置き場は `accounts.data_dirs()` が決め、
     # git は repo があるときだけ触る。
-    repo_backed = accounts_mod.is_repo_backed(account_cfg)
+    #
+    # **「持たない」と「使えない」を分ける**（監査 2 回目・P2-1）。使えないなら
+    # 取り直さない（`not_synced`）——黙って state に転ばせない。
+    状態 = accounts_mod.repo_state(account_cfg)
+    if 状態 == accounts_mod.REPO_BROKEN:
+        out["skipped"] = "not_synced"
+        out["errors"].append(f"repo を同期できないので取り直しません: "
+                              f"{accounts_mod.repo_problem(account_cfg)}")
+        return out
+    repo_backed = 状態 == accounts_mod.REPO_OK
 
     if adapter is None:
         token = accounts_mod.load_token(account_cfg)
@@ -906,16 +937,21 @@ def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
             return out
         adapter = core._default_adapter_factory(account_cfg, token)
 
-    repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir)) \
-        if repo_backed else None
-    if repo_lock is not None:
-        try:
-            repo_lock.acquire()
-        except lock_mod.LockBusy:
-            # **待たない。** 投稿を塞ぐより見送る（定期取得と同じ扱い）。
-            out["skipped"] = "locked"
-            log(f"repo を別の実行が使っているので取り直しを見送ります: {repo_dir}")
-            return out
+    # **repo が無くてもロックは取る**（監査 2 回目・P2-2）。同じ account の
+    # 取り直しが 2 本走れば、追記専用の台帳に同じ返信の行が 2 度入る——
+    # **ロックが守っていたのは repo ではなく台帳**だった。busy は見送り（repo 付きと
+    # 同じ作法）。
+    repo_lock = lock_mod.AccountLock(
+        accounts_mod.repo_lock_path_for(repo_dir) if repo_backed
+        else accounts_mod.account_lock_path_for(account_name))
+    try:
+        repo_lock.acquire()
+    except lock_mod.LockBusy:
+        # **待たない。** 投稿を塞ぐより見送る（定期取得と同じ扱い）。
+        out["skipped"] = "locked"
+        log(f"別の実行が使っているので取り直しを見送ります: "
+            f"{repo_dir if repo_backed else account_name}")
+        return out
 
     replies_dir = accounts_mod.data_dirs(account_cfg, account_name)["replies"]
     touched = []
@@ -1012,6 +1048,5 @@ def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
                         f"保存はできましたが送れていません: {push_err}"
                         f"（commit は作られていません）")
     finally:
-        if repo_lock is not None:
-            repo_lock.release()
+        repo_lock.release()
     return out

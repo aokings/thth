@@ -334,17 +334,98 @@ def logs_dir_for(account_name: str) -> str:
     return os.path.join(thth_root(), "logs", account_name)
 
 
+# **「はじめから repo を持たない」印**（`$THTH_ROOT/repos/_none`）。送信専用の
+# アカウント（`thth send` だけで使う）の台帳が指す捨て場で、**作られることは無い**。
+REPO_NONE_BASENAME = "_none"
+
+# `repo_state()` の 3 値。
+REPO_NONE = "none"        # はじめから repo を持たない（空・`_none`・null）
+REPO_OK = "ok"            # 実在する git repo
+REPO_BROKEN = "broken"    # 指定があるのに使えない（無い・`.git` が無い・読めない）
+
+
+def resolved_repo_dir(account_cfg: dict) -> str:
+    """台帳の `repo_dir` を**絶対パス**にして返す（無指定なら空文字列）。
+
+    相対で書かれていたら `$THTH_ROOT` 基準で畳む（`_expand()` が `$THTH_ROOT`・
+    `~` を展開するのと同じ基準に合わせる）。**cwd 基準にしない**——timer から
+    走るときの cwd は `/` で、手で打つときの cwd は人それぞれなので、
+    **同じ台帳が実行のたびに別の場所を指す。**
+    """
+    raw = (account_cfg or {}).get("repo_dir")
+    raw = raw.strip() if isinstance(raw, str) else ""
+    if not raw:
+        return ""
+    if not os.path.isabs(raw):
+        raw = os.path.join(thth_root(), raw)
+    return os.path.normpath(raw)
+
+
+def repo_state(account_cfg: dict) -> str:
+    """置き場の判定（セキュリティ監査 2 回目・P2-1）。`REPO_NONE`／`OK`／`BROKEN`。
+
+    **「repo を持たない」と「repo が使えない」は別物**。v2.0.1 で
+    `is_repo_backed()` を「実在する git repo か」の 1 つの真偽値にしたとき、
+    **この 2 つが同じ False に潰れた**——`repo_dir` が一時的に見えない
+    （mount が落ちた・clone を移した・`.git` を退避した・権限が変わった）だけで
+    採取が**黙って `state/` に転び**、書いたものは版管理にも `thth board` の
+    「未送信」にも出なくなる。v2.0.0 はここで loud に断っていた（断られれば
+    人は直しに行ける。黙って別の場所に書かれると、気づくのは数日後）。
+
+    - `REPO_NONE`: `repo_dir` が空・`null`・`repos/_none`。**はじめから持たない。**
+      置き場は `$THTH_ROOT/state/<account>/data/sns/…`（`data_dirs()`）。
+    - `REPO_OK`: 実在して `.git` がある。従来どおり repo の中。
+    - `REPO_BROKEN`: 指定があるのに使えない。**採取しない・取り直さない**
+      （`collect.run_collect()`・`collect.refresh_replies()` が断る）。
+    """
+    raw = (account_cfg or {}).get("repo_dir")
+    raw = raw.strip() if isinstance(raw, str) else ""
+    if not raw:
+        return REPO_NONE
+    if os.path.basename(raw.rstrip("/\\")) == REPO_NONE_BASENAME:
+        return REPO_NONE
+    path = resolved_repo_dir(account_cfg)
+    if not os.path.isdir(path):
+        return REPO_BROKEN
+    if not os.path.exists(os.path.join(path, ".git")):
+        return REPO_BROKEN
+    return REPO_OK
+
+
+def repo_problem(account_cfg: dict) -> str | None:
+    """`REPO_BROKEN` の理由を 1 行で（そうでなければ None）。
+
+    **何がどう駄目かを名指しする**——「repo がありません」だけでは、mount が
+    落ちているのか台帳の綴りが違うのかが判らない。
+    """
+    if repo_state(account_cfg) != REPO_BROKEN:
+        return None
+    path = resolved_repo_dir(account_cfg)
+    if dir_is_unreadable(path):
+        理由 = "読めません（権限）——**無いのではありません**"
+    elif not os.path.isdir(path):
+        理由 = "そこにありません（mount・綴り・移動を確かめてください）"
+    else:
+        理由 = "`.git` がありません（git repo ではありません）"
+    return (f"台帳の repo_dir が使えません: {path}（{理由}）。"
+            f"**repo を持たないアカウント**（`thth send` だけで使う）なら、"
+            f"台帳の repo_dir を `$THTH_ROOT/repos/{REPO_NONE_BASENAME}` に"
+            f"してください——そう名乗れば採取は state に置きます")
+
+
 def is_repo_backed(account_cfg: dict) -> bool:
     """`repo_dir` が**実在する git repo** か（設計 v2.0.1 §1）。
 
-    **「ディレクトリがある」では足りない。** `repos/_none` のような送信専用の
-    捨て場は実在しないし、`.git` だけ失われた壊れた clone に採取を書き足すと、
-    版管理に載らないまま `thth board` の「未送信」にも出ない（`writeback.sync_repo()`
-    が同じ理由でここを同期失敗として扱う）。**git が無いなら repo ではない。**
+    **「ディレクトリがある」では足りない。** `.git` だけ失われた壊れた clone に
+    採取を書き足すと、版管理に載らないまま `thth board` の「未送信」にも出ない
+    （`writeback.sync_repo()` が同じ理由でここを同期失敗として扱う）。
+    **git が無いなら repo ではない。**
+
+    **これで「state に転ばせてよいか」を決めてはいけない**（監査 2 回目・P2-1）。
+    転ばせてよいのは `repo_state() == REPO_NONE` のときだけで、`REPO_BROKEN` は
+    断る側。ここは「いま git を呼べるか」を聞く口として残す。
     """
-    repo_dir = (account_cfg or {}).get("repo_dir") or ""
-    return bool(repo_dir) and os.path.isdir(repo_dir) \
-        and os.path.exists(os.path.join(repo_dir, ".git"))
+    return repo_state(account_cfg) == REPO_OK
 
 
 def data_dirs(account_cfg: dict, account_name: str) -> dict:
@@ -354,8 +435,12 @@ def data_dirs(account_cfg: dict, account_name: str) -> dict:
 
     1. `repo_dir` が実在する git repo なら、従来どおり `repo_dir/data/sns/…`。
        `replies_dir` の指定もそのまま効く（**既存の経路は 1 バイトも変えない**）。
-    2. そうでなければ（`repos/_none`・存在しない・`.git` が無い）
+    2. **`repo_dir` を持たないとき**（空・`null`・`repos/_none`）だけ
        **`$THTH_ROOT/state/<account>/data/sns/…`**。
+
+    **「指定があるのに使えない」は 2 ではない**（監査 2 回目・P2-1）。そこは
+    従来どおり repo の中を指したまま——採取の側（`collect.run_collect()`）が
+    loud に断るので、書かれることはない。**黙って別の場所に転ばせない。**
 
     2 が要る理由（運用 2026-09-14）。`thth send`（同席の様態）で出した投稿は
     queue を通らないので原稿 repo が無く、**書く先が無いという理由だけで実測も
@@ -369,13 +454,13 @@ def data_dirs(account_cfg: dict, account_name: str) -> dict:
     場所を見る（`thth/measured.py`・`thth/replies.py`・`thth/account_report.py`）。
     """
     account_cfg = account_cfg or {}
-    if is_repo_backed(account_cfg):
-        base = account_cfg.get("repo_dir") or ""
-        replies = os.path.join(
-            base, account_cfg.get("replies_dir") or "data/sns/replies")
-    else:
+    if repo_state(account_cfg) == REPO_NONE:
         base = state_dir_for(account_name)
         replies = os.path.join(base, "data", "sns", "replies")
+    else:
+        base = resolved_repo_dir(account_cfg)
+        replies = os.path.join(
+            base, account_cfg.get("replies_dir") or "data/sns/replies")
     return {
         "insights_posts": os.path.join(base, "data", "sns", "insights", "posts"),
         "insights_account": os.path.join(base, "data", "sns", "insights", "account"),
