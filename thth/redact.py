@@ -22,6 +22,14 @@ _KV_PATTERNS = [
     re.compile(r'(client_secret"?\s*[:=]\s*"?)([^\s&"\',}]+)', re.IGNORECASE),
     # \b で単語境界を要求する（"unicode" 等の途中に "code" が現れても拾わない）。
     re.compile(r'(\bcode"?\s*[:=]\s*"?)([^\s&"\',}]+)', re.IGNORECASE),
+    # **v2 で増えた媒体の秘密**（セキュリティ監査 2026-09-14・P3-1）。
+    # Bluesky は `access_token` を使わない——`app_password`・`accessJwt`・
+    # `refreshJwt` がその位置にいる。`redact()` を通しても**綴りを知らないので
+    # 素通り**していた（`thth doctor --json` の生の応答・`runs` の ndjson）。
+    # 値そのものを消す `bluesky.scrub()` は境界の中だけなので、ここにも足す。
+    re.compile(r'(app_password"?\s*[:=]\s*"?)([^\s&"\',}]+)', re.IGNORECASE),
+    re.compile(r'(accessJwt"?\s*[:=]\s*"?)([^\s&"\',}]+)', re.IGNORECASE),
+    re.compile(r'(refreshJwt"?\s*[:=]\s*"?)([^\s&"\',}]+)', re.IGNORECASE),
 ]
 # Authorization ヘッダは値に空白を含む（"Bearer xxx"）ので行末までを伏字にする。
 _AUTH_RE = re.compile(r'(Authorization:\s*)(.+)', re.IGNORECASE)

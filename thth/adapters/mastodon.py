@@ -194,6 +194,18 @@ def _instance_url(instance: str) -> str:
     if not text.startswith(("http://", "https://")):
         raise ValueError(
             f"instance は scheme から書いてください（例: https://{text}）: {text}")
+    # **平文で投げる先は手元だけ**（セキュリティ監査 2026-09-14・P3-3）。
+    # `http://` を通していたので、台帳に 1 文字書き間違える（あるいは書き換え
+    # られる）だけで、`Authorization: Bearer <token>` が**平文で網に出た**。
+    # 偽サーバに向けるテスト（`http://127.0.0.1:<port>`）は動かしたいので、
+    # 手元（localhost・127.0.0.1・[::1]）だけ許す。
+    if text.startswith("http://"):
+        host = urllib.parse.urlsplit(text).hostname or ""
+        if host not in ("localhost", "127.0.0.1", "::1"):
+            raise ValueError(
+                f"instance が http:// です（{text}）。**平文ではトークンを送りません。**"
+                f"https:// で書いてください（手元の偽サーバ＝localhost・127.0.0.1 "
+                f"だけは http でも通します）")
     return text
 
 

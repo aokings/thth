@@ -25,10 +25,23 @@ def ensure_mode_600(path: str, *, log=print) -> None:
         os.chmod(path, 0o600)
 
 
-def atomic_write_json(path: str, data: dict, *, mode: int = 0o600) -> None:
-    """`data` を JSON として `path` に原子的に書く（一時ファイル ＋ `os.replace`）。"""
+def atomic_write_json(path: str, data: dict, *, mode: int = 0o600,
+                      dir_mode: int = 0o700) -> None:
+    """`data` を JSON として `path` に原子的に書く（一時ファイル ＋ `os.replace`）。
+
+    **ディレクトリが無ければ `dir_mode`（既定 700）で作る**（セキュリティ監査
+    2026-09-14・P2-6）。`atomic_write_text()` には入っていた守りが、こちらには
+    無かった——`.token` の親（`~/.thth/tokens/` 等）を **umask 任せの 755** で
+    作っていたので、同じ機械の別ユーザーからディレクトリを辿れた。ファイルは
+    600 なので中身は読めないが、**どのアカウントのトークンが在るかは見える**。
+    既にあるディレクトリのパーミッションは触らない（運用者が決めたものを
+    勝手に変えない）。
+    """
     directory = os.path.dirname(path) or "."
-    os.makedirs(directory, exist_ok=True)
+    if not os.path.isdir(directory):
+        os.makedirs(directory, exist_ok=True)
+        # makedirs の mode は umask で削られる。作ったときだけ明示的に絞る。
+        os.chmod(directory, dir_mode)
     fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".thth-tmp-", suffix=".json")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
