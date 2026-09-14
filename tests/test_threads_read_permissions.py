@@ -520,7 +520,7 @@ def test_権限が無いcollectはerrorsに1行積んで続行する(tmp_path, i
                                           log=lambda _l: None)
     inbox_errors = [e for e in result["errors"] if e.startswith("inbox")]
     assert len(inbox_errors) == 1, result["errors"]
-    assert "threads_manage_mentions がトークンに乗っていません" in inbox_errors[0]
+    assert "`threads_manage_mentions` がトークンに乗っていません" in inbox_errors[0]
     assert "FAKE-SECRET" not in inbox_errors[0]
     assert _inbox_rows(pair["work"]) == []
     # **投稿の数は採れている**（inbox の失敗が投稿の採取を巻き込んでいない）。
