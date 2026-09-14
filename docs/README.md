@@ -29,6 +29,7 @@
 | [型_比較条件選択_v1_提案.json](型_比較条件選択_v1_提案.json) | 開発セッション・編集知識を使う LLM | 記事の型「比較→条件→選択」の定義（提案） |
 | [語彙_修正理由_v1_提案.json](語彙_修正理由_v1_提案.json) | 開発セッション・編集知識を使う LLM | 修正理由の語彙定義（提案） |
 | [仮説_露出と反応率_v1.json](仮説_露出と反応率_v1.json) | 開発セッション | 露出と反応率に関する仮説 H01〜H10（`tests/test_hypotheses.py` 等が直接読む） |
+| [../callback/README.md](../callback/README.md) | 開発セッション・masaru | `thth.me` の Worker: 認可の受け口＋紹介ページ（`public/` は `tools/build_site.py` が正本から生成・deploy は masaru の手） |
 
 ## 日誌（別 repo `thth-notes`）
 
