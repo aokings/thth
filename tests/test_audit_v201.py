@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import init_git_pair, run_git
+from tests.conftest import init_git_pair, run_git, run_thth
 from thth import accounts as accounts_mod
 from thth import bundle as bundle_mod
 from thth import inflight as inflight_mod
@@ -509,3 +509,86 @@ def test_P2_4_boardの1語が3つに分かれる(monkeypatch, capsys, 要求, �
     cli_mod.cmd_board(argparse.Namespace(json=False, account=None))
     出た = capsys.readouterr().out
     assert 期待 in 出た, 出た
+
+
+# --------------------------------------------------------------- P2-5
+# 同席専用の採集が自動で回らなかった（人が毎日手で打つ前提になっていた）。
+
+from thth import systemd_gen  # noqa: E402
+
+
+def test_P2_5_collect_onlyのtimerは採集のserviceを指す():
+    cfg = {"account": "masaru-bluesky", "tick_minutes": 10}
+    timer = systemd_gen.render_collect_timer(cfg)
+    offset = systemd_gen.collect_offset_minutes("masaru-bluesky", 10)
+    assert f"OnCalendar=*:{offset}/10" in timer
+    assert "Unit=thth-collect@masaru-bluesky.service" in timer
+    # **投稿の unit は指さない**（`scheduled: false` の台帳で投稿を回さない）。
+    assert "thth@masaru-bluesky.service" not in timer
+    assert "Persistent=true" in timer and "WantedBy=timers.target" in timer
+
+
+def test_P2_5_採集のserviceはcollectだけを呼ぶ():
+    service = systemd_gen.render_collect_service()
+    assert "ExecStart=/srv/thth/app/bin/thth collect %i" in service
+    # 投稿の経路（`bin/thth-run`）は呼ばない。
+    assert "thth-run" not in service
+    assert "Type=oneshot" in service
+
+
+def test_P2_5_採集の起点は投稿とずらす():
+    """同じ機械で当たりを重ねない（設計 §3.2 と同じ考え）。"""
+    同じ = [n for n in ("a-threads", "b-threads", "masaru-bluesky", "c-mastodon")
+            if systemd_gen.collect_offset_minutes(n, 10)
+            == systemd_gen.offset_minutes(n, 10)]
+    assert not 同じ, 同じ
+
+
+def test_P2_5_CLIがcollect_onlyを出す(isolated_account_factory):
+    account = isolated_account_factory(name="solo-bluesky", media="bluesky",
+                                        handle="x.bsky.social", scheduled=False)
+    out = run_thth(["systemd", account["name"], "--collect-only"])
+    assert out.returncode == 0, out.stderr
+    assert "Unit=thth-collect@solo-bluesky.service" in out.stdout
+
+    svc = run_thth(["systemd", account["name"], "--collect-only", "--service"])
+    assert svc.returncode == 0, svc.stderr
+    assert "thth collect %i" in svc.stdout
+
+    # 既定（`--collect-only` 無し）は今までどおり投稿の timer。
+    old = run_thth(["systemd", account["name"]])
+    assert old.returncode == 0 and "Unit=thth@solo-bluesky.service" in old.stdout
+
+
+def test_P2_5_boardは最後に採った時刻を1行出す(同席専用, capsys):
+    """**「1 度も採っていない」を `0 時間前` と言わない。**"""
+    cli_mod.cmd_board(argparse.Namespace(json=False, account=None))
+    assert "最後に採ったのは: 未採取" in capsys.readouterr().out
+
+    from thth import jst
+    collect_mod.run_collect(同席専用["name"], adapter=_採れる媒体(), now=None,
+                             log=lambda _l: None)
+    行 = report_mod.board_summary()["accounts"]
+    row = next(r for r in 行 if r["account"] == 同席専用["name"])
+    assert row["last_collected_at"], row
+    assert jst.parse(row["last_collected_at"]) is not None
+
+    cli_mod.cmd_board(argparse.Namespace(json=False, account=None))
+    出た = capsys.readouterr().out
+    assert "最後に採ったのは: 0 時間前" in 出た, 出た
+
+
+def _採れる媒体():
+    class _媒体:
+        CAPABILITIES = frozenset({"views"})
+
+        @classmethod
+        def capabilities(cls):
+            return set(cls.CAPABILITIES)
+
+        def insights(self, post_id):
+            return {"metrics": {"views": 1}, "available": ["views"]}
+
+        def conversation(self, post_id, since=None):
+            return []
+    return _媒体()

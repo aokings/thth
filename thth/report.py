@@ -332,6 +332,7 @@ def board_summary(now=None) -> dict:
         if sent_at is not None and (last_at is None or sent_at > last_at):
             last_post_at = sent_at
             last_post_source = "sent"
+        collected_at = collect_mod.last_collected_at(account_cfg, name)
         needs_review = _needs_review_detail(
             files, account_name=name, account_cfg=account_cfg, now=now)
         token_row = maintain_mod.inspect(name, now=now)
@@ -346,6 +347,10 @@ def board_summary(now=None) -> dict:
             # 無い」。混ぜた 1 つの値だけを出すと、読み手が素性を確かめられない。
             "last_post_source": last_post_source,
             "last_sent_at": sent_at.isoformat() if sent_at else None,
+            # **最後に採れたのはいつか**（監査 2 回目・P2-5）。同席専用の
+            # アカウントは投稿の timer を持たないので、**採集が止まっていても
+            # 画面には何も出なかった**。`None` は「1 度も採っていない」。
+            "last_collected_at": (collected_at.isoformat() if collected_at else None),
             "last_sent_post_id": sent_row.get("post_id") if sent_row else None,
             "approved_waiting": approved_waiting,
             "type_mismatch": type_mismatch,

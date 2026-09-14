@@ -2180,8 +2180,33 @@ def cmd_systemd(args) -> int:
     except accounts_mod.AccountError as e:
         print(str(e), file=sys.stderr)
         return 2
+    # **採集だけを回す口**（監査 2 回目・P2-5）。同席専用（`scheduled: false`）の
+    # アカウントは投稿の timer を持たないので、**採集を呼ぶものが誰もいなかった**。
+    if getattr(args, "collect_only", False):
+        sys.stdout.write(systemd_gen.render_collect_service() if args.service
+                         else systemd_gen.render_collect_timer(account_cfg))
+        return 0
     sys.stdout.write(systemd_gen.render_timer(account_cfg))
     return 0
+
+
+def _collected_line(raw) -> str:
+    """「最後に採ったのは n 時間前」の 1 行（監査 2 回目・P2-5）。
+
+    **1 度も採っていない**ときは「未採取」——`0 時間前` と言わない（規約 12）。
+    時刻が読めない記録も「未採取」ではなく、そう言う。
+    """
+    from . import jst as jst_mod
+    if not raw:
+        return "最後に採ったのは: 未採取"
+    at = jst_mod.parse(raw)
+    if at is None:
+        return f"最後に採ったのは: 時刻を読めません（{raw}）"
+    時間 = (jst_mod.now_jst() - at).total_seconds() / 3600.0
+    if 時間 < 0:
+        # 未来の時刻。**判らないものを「さっき」と言わない。**
+        return f"最後に採ったのは: {at.isoformat()}（未来の時刻です）"
+    return f"最後に採ったのは: {時間:.0f} 時間前（{at.isoformat()}）"
 
 
 def cmd_board(args) -> int:
@@ -2322,6 +2347,10 @@ def cmd_board(args) -> int:
             mismatch_fields = row.get("inflight_mismatch_fields")
             if inflight != "(なし)" and mismatch_fields:
                 print(f"  食い違った項目: {', '.join(mismatch_fields)}")
+            # **採集が止まっていることを黙らない**（監査 2 回目・P2-5）。
+            # 同席専用（`scheduled: false`）のアカウントは投稿の timer を持たない
+            # ので、**採集を呼ぶものが誰もいなくても画面には何も出なかった**。
+            print(f"  {_collected_line(row.get('last_collected_at'))}")
             needs_review = row.get("needs_review") or []
             if needs_review:
                 # 「承認して待っている（正常）」と「承認が古くて永久に出ない（異常）」
@@ -2515,7 +2544,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_systemd.add_argument("--maintain", action="store_true",
                            help="thth maintain（トークン保守・1 日 1 回）の unit を出す")
     p_systemd.add_argument("--service", action="store_true",
-                           help="--maintain と併用: .timer でなく .service を出す")
+                           help="--maintain／--collect-only と併用: .timer でなく .service を出す")
+    p_systemd.add_argument("--collect-only", action="store_true",
+                           help="採集だけの unit を出す（同席専用＝scheduled: false の"
+                                "アカウント用。thth-collect@<account>）")
     p_systemd.set_defaults(func=cmd_systemd)
 
     # `thth share on|off|status|log`（設計 v2 §3・裁定 §7-3）。**口は

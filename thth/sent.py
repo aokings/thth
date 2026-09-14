@@ -101,15 +101,13 @@ def post_ids(state_dir: str) -> set:
 
 
 def _parse_sent_at(raw):
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    value = raw.strip()
-    if value.endswith("Z"):          # 媒体が UTC の Z 表記で返してきた場合
-        value = value[:-1] + "+00:00"
-    try:
-        return jst.to_jst(datetime.datetime.fromisoformat(value))
-    except ValueError:
-        return None
+    """**綴りの揺れを吸うのは `jst.parse()` の仕事**（監査 2 回目・P3-11）。
+
+    ここにあった実装を `jst` へ移した——同じ仕事が採取の側にも 2 つあり、
+    **そちらだけ `Z` を読めなかった**（同じ投稿が board には出るのに採取の
+    母集団から落ちる）。名前は呼び出し側のために残す。
+    """
+    return jst.parse(raw)
 
 
 def latest_sent(state_dir: str):

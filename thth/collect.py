@@ -169,6 +169,56 @@ def _read_ndjson(path: str) -> list:
     return out
 
 
+def last_collected_at(account_cfg: dict, account_name: str):
+    """**最後に採れた時刻**（JST の aware datetime）。1 度も採っていなければ `None`。
+
+    監査 2 回目・P2-5。同席専用のアカウントは投稿の timer を持たないので、
+    **採集が止まっていても board には何も出なかった**——「出したものを測る」と
+    直したのに、測れていないことが見えないままだった。
+
+    見るのは `collected_at` を持つ 3 つの台帳（実測・アカウント日次・返信）。
+    台帳は**追記専用**なので、**各ファイルの最後の行だけ**を読む（投稿が増えても
+    board が重くならない）。読めない行・読めない時刻は混ぜない（規約 12）。
+    """
+    dirs = accounts_mod.data_dirs(account_cfg, account_name)
+    best = None
+    for key in ("insights_posts", "insights_account", "replies"):
+        d = dirs.get(key)
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for name in names:
+            if not name.endswith(".ndjson"):
+                continue
+            行 = _last_line(os.path.join(d, name))
+            if not isinstance(行, dict):
+                continue
+            at = jst.parse(行.get("collected_at"))
+            if at is not None and (best is None or at > best):
+                best = at
+    return best
+
+
+def _last_line(path: str):
+    """ndjson の**最後の 1 行**を dict で返す（読めなければ None）。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            最後 = None
+            for line in f:
+                line = line.strip()
+                if line:
+                    最後 = line
+    except OSError:
+        return None
+    if 最後 is None:
+        return None
+    try:
+        return json.loads(最後)
+    except ValueError:
+        return None
+
+
 def _append_ndjson(path: str, rows: list) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
@@ -433,16 +483,19 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
             # **`post_id` をそのままパスにしない**（独立検収 B・2026-09-12）。
             errors.append(f"post_id がファイル名に使えません（空・`.`・`..`・NUL・長すぎる）: {post_id!r}")
             continue
-        try:
-            posted_at = jst.parse(posted_at_raw) if hasattr(jst, "parse") else \
-                datetime.datetime.fromisoformat(posted_at_raw)
-            # **時間帯の無い `posted_at` で全体を止めない**（同上）。
-            # `fromisoformat` は通るのに引き算で落ち、**他の正常な投稿まで
-            # 採れなくなっていた。**
-            age_hours = (now - posted_at).total_seconds() / 3600.0
-        except (TypeError, ValueError):
+        # **時刻の綴りは `jst.parse()` に一本化**（監査 2 回目・P3-10／P3-11）。
+        # ここには `hasattr(jst, "parse")` の分岐があったが、`jst` に `parse` は
+        # 無かったので**右の枝しか動いていなかった**——死んだ枝は「もう直した」
+        # ように読めるぶん、素の `fromisoformat` より悪い。
+        #
+        # **時間帯の無い `posted_at` で全体を止めない**（独立検収 B）。
+        # `fromisoformat` は通るのに引き算で落ち、他の正常な投稿まで採れなく
+        # なっていた。読めないものは 1 本ぶんの `errors` にして次へ。
+        posted_at = jst.parse(posted_at_raw)
+        if posted_at is None:
             errors.append(f"{post_id}: posted_at を読めません（{posted_at_raw!r}）")
             continue
+        age_hours = (now - posted_at).total_seconds() / 3600.0
         if age_hours < 0 or age_hours > collect_days * 24:
             continue
         posts_seen += 1
@@ -863,17 +916,18 @@ def _refresh_targets(account_name: str, account_cfg: dict, *, now, errors: list,
         if not _safe_post_id(pid):
             errors.append(f"post_id がファイル名に使えません（空・`.`・`..`・NUL・長すぎる）: {pid!r}")
             continue
-        try:
-            posted_at = datetime.datetime.fromisoformat(posted_at_raw)
-            # **時間帯の無い `posted_at` で全体を止めない**（独立検収 B・
-            # 2026-09-12）。`fromisoformat` は通るのに、引き算で
-            # `TypeError: can't subtract offset-naive and offset-aware` が
-            # **外まで抜けて、他の正常な投稿も一切取り直せなかった。**
-            # **1 本読めないことを、全部読めないことにしない。**
-            age = (now - posted_at).total_seconds() / 3600.0
-        except (TypeError, ValueError):
+        # **定期取得と同じ読み方**（`jst.parse()`・監査 2 回目・P3-11）。
+        # ここだけ素の `fromisoformat` だったので、**媒体が `Z` で返した
+        # `posted_at` は `--refresh` の母集団から落ちていた。**
+        #
+        # **時間帯の無い `posted_at` で全体を止めない**（独立検収 B・2026-09-12）。
+        # `fromisoformat` は通るのに、引き算で `TypeError` が**外まで抜けて、
+        # 他の正常な投稿も一切取り直せなかった。**
+        posted_at = jst.parse(posted_at_raw)
+        if posted_at is None:
             errors.append(f"{pid}: posted_at を読めません（{posted_at_raw!r}）")
             continue
+        age = (now - posted_at).total_seconds() / 3600.0
         if age < 0 or age > collect_days * 24:
             continue
         対象.append((pid, age, _source_of(qf)))
