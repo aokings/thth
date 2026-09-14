@@ -388,3 +388,76 @@ def test_P2_2_repo無しでも同時のrefreshは1本しか採らない(同席�
             if r.get("kind") == "fetch"]
     assert len(取得) == 1, 取得
     assert sorted(r["skipped"] or "" for r in 出た) == ["", "locked"], 出た
+
+
+# --------------------------------------------------------------- P2-3
+# `thth send` が媒体の `post_id` を検査していなかった（不在の様態にはあった）。
+
+from thth import approval as approval_mod  # noqa: E402
+from thth import core as core_mod  # noqa: E402
+from thth import queuefile  # noqa: E402
+from thth import sent as sent_mod  # noqa: E402
+from thth.adapters import base as adapter_base  # noqa: E402
+
+
+def _digest(account_name: str, text: str) -> str:
+    return approval_mod.compute_send_digest(
+        text=(text or "").strip(), account=account_name, reply_to=None,
+        topic=queuefile.normalize_topic(None))
+
+
+def _send(account_name, post_id, *, log=None):
+    class _媒体:
+        def publish(self, post, *, dry_run, on_container_created=None):
+            return adapter_base.PublishResult(
+                post_id=post_id, url=None, ts="2026-09-14T00:00:00+09:00")
+
+    body = "同席で出す 1 本。"
+    return core_mod.send_once(account_name, text=body, production_flag=True,
+                               confirm=_digest(account_name, body),
+                               adapter_factory=lambda *_: _媒体(),
+                               log=log or (lambda _l: None))
+
+
+@pytest.mark.parametrize("悪いid", [
+    "P1\nstatus: approved",      # 改行
+    "P1\rx",
+    "P1\x00",
+    "P" * 300,                   # ファイル名にすると長すぎる（OSError が抜けていた）
+    "..",
+    ".",
+])
+def test_P2_3_sendは書けないpost_idでinflightを残す(isolated_account_factory, 悪いid):
+    """**traceback を出さない**（300 文字の `OSError` が端末まで抜けていた）。"""
+    account = isolated_account_factory(production=True)
+    r = _send(account["name"], 悪いid)
+
+    assert r.exit_code == 1 and r.action == "inflight", r
+    assert r.error == "unusable_post_id", r
+    state_dir = accounts_mod.state_dir_for(account["name"])
+    # **`sent/` には書かない**（書けない）。
+    assert sent_mod.records(state_dir) == []
+    # inflight は残る（記録できないまま消すと二重投稿になりうる）。
+    assert inflight_mod.read(state_dir) is not None
+    # **runs には残る**（何が起きたかは追える）。
+    from thth import runs as runs_mod
+    rows = runs_mod.read_runs(state_dir)
+    assert any(row.get("error") == "unusable_post_id" for row in rows), rows
+
+
+def test_P2_3_まともなidはこれまでどおりsentに残る(isolated_account_factory):
+    account = isolated_account_factory(production=True)
+    r = _send(account["name"], "P1")
+    assert r.exit_code == 0 and r.post_id == "P1", r
+    state_dir = accounts_mod.state_dir_for(account["name"])
+    assert [row["post_id"] for row in sent_mod.records(state_dir)] == ["P1"]
+    assert inflight_mod.read(state_dir) is None
+
+
+def test_P2_3_AT_URIのpost_idはsendでも通る(isolated_account_factory):
+    account = isolated_account_factory(production=True)
+    uri = "at://did:plc:abc123/app.bsky.feed.post/3kabc"
+    r = _send(account["name"], uri)
+    assert r.exit_code == 0, r
+    state_dir = accounts_mod.state_dir_for(account["name"])
+    assert [row["post_id"] for row in sent_mod.records(state_dir)] == [uri]

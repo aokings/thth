@@ -806,6 +806,29 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             return ThrowResult(exit_code=1, mode=mode, action="post",
                                 message="公開に失敗しました", error=err)
 
+        # **媒体が返した `post_id` を、確かめずに台帳の鍵にしない**（監査 2 回目・
+        # P2-3）。不在の様態（`_throw_chosen()`）には 2026-09-14 に入れた検査が、
+        # **同席の様態にだけ無かった**。ここで素通しになると 2 つ壊れる:
+        #
+        #   1. `post_id` は `sent/<post_id>.json` の**ファイル名**になる。300 文字の
+        #      `id` で `open()` が `OSError: File name too long` を上げ、**traceback
+        #      が端末に出る**（送信は成功しているのに、何が起きたか読めない）。
+        #   2. `..` や `/` を含む `id` は、`postid.to_filename()` を通す前の段階で
+        #      台帳の鍵として出回る（runs・board・`thth posts` の突合）。
+        #
+        # 扱いは `publish_ambiguous` と同じ（§3.5）。**出たことは判っているが記録
+        # できない**——inflight を残して人を呼ぶ。`sent/` には書かない（書けない）。
+        if not postid_mod.is_usable(result.post_id) \
+                or writeback.has_control_chars(result.post_id):
+            msg = ("媒体が返した post_id が台帳に書けない形です"
+                   "（記録できないので inflight を残します・再送はしません）")
+            log(msg)
+            _append_run(state_dir, account_name, run_id, mode, "post", None, None, now,
+                        status="error", error="unusable_post_id")
+            inflight_mod.update(state_dir, mismatch_fields=["post_id"])
+            return ThrowResult(exit_code=1, mode=mode, action="inflight", message=msg,
+                                error="unusable_post_id")
+
         # **送った本文そのものを残す**（`state/<account>/sent/<post_id>.json`）。
         # 不在の様態（`_throw_chosen()`）は書き戻しの照合のためにこれを書いていたが、
         # **同席の様態は書いていなかった**——`thth send` には書き戻す front-matter が
