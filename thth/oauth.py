@@ -304,6 +304,46 @@ def fetch_me(access_token: str, *, timeout: float = 10.0) -> dict:
         raise OAuthError(_error_message("user_id の取得に失敗しました", e)) from e
 
 
+# **認可の範囲（scope）は長期トークン交換の応答には入っていない**（**L2**
+# https://developers.facebook.com/docs/threads/get-started/long-lived-tokens
+# ——`GET /access_token` の応答は `access_token`・`token_type`・`expires_in` の
+# 3 つだけ）。トークンに実際に乗っている権限を API に訊く口は
+# `GET /v1.0/debug_token?access_token=<tester のユーザートークン>&input_token=<同じ>`
+# で、応答の `data.scopes` が一覧（**L2**
+# https://developers.facebook.com/docs/threads/troubleshooting/debug-access-token
+# ——「access_token には app access token か、Threads tester のユーザートークン」）。
+#
+# 運用の観測（2026-09-14）: VM の `.token` は 5 本とも `scopes` が null で、
+# **認可の範囲がどこにも記録されていなかった**。`thth auth` はこれを訊いて書き、
+# **どちらを書いたかを `scopes_source` に残す**（`"response"`＝`/debug_token` が
+# 言った・`"requested"`＝訊けなかったので要求した一覧・`"unknown"`＝管理画面
+# 発行で判らない）。推測で埋めない。
+SCOPES_SOURCE_RESPONSE = "response"
+SCOPES_SOURCE_REQUESTED = "requested"
+SCOPES_SOURCE_UNKNOWN = "unknown"
+
+
+def fetch_token_scopes(access_token: str, *, timeout: float = 10.0):
+    """`/debug_token` に**そのトークン自身**を訊いて `data.scopes` を返す。
+
+    読み取りだけ。**訊けなければ None**（例外にしない——scope の記録は認可の
+    成否を左右しないので、`thth auth` は要求した一覧に落とす）。応答に値が
+    無い・形が違うときも None（嘘の一覧を作らない）。
+    """
+    url = f"{_graph_base_url()}/v1.0/debug_token"
+    params = {"access_token": access_token, "input_token": access_token}
+    try:
+        body = _get_json(url, params, timeout=timeout)
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError,
+            ValueError):
+        return None
+    data = body.get("data") if isinstance(body, dict) else None
+    scopes = data.get("scopes") if isinstance(data, dict) else None
+    if not isinstance(scopes, list) or not all(isinstance(x, str) for x in scopes):
+        return None
+    return list(scopes)
+
+
 def refresh_long_lived_token(access_token: str, *, timeout: float = 10.0) -> dict:
     # **Threads 専用**（宛先は `graph.threads.net`）。ほかの媒体の `access_token`
     # を渡してはいけない——Mastodon の `.token` も鍵が `access_token` なので、
@@ -477,6 +517,15 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
         _out("正しいアカウントで認可し直すか、台帳の handle を直してください。", log=log)
         return 1
 
+    # **認可の範囲を記録する**（2026-09-14・`fetch_token_scopes` の説明）。
+    # `/debug_token` が言った一覧なら `"response"`、訊けなければ要求した一覧を
+    # `"requested"` として書く。**どちらを書いたかを残す。**
+    granted = fetch_token_scopes(long_token)
+    if granted is not None:
+        scopes_recorded, scopes_source = granted, SCOPES_SOURCE_RESPONSE
+    else:
+        scopes_recorded, scopes_source = list(scope_list), SCOPES_SOURCE_REQUESTED
+
     token_path = account_cfg["token"]
     token_data = {
         "access_token": long_token,
@@ -484,7 +533,8 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
         "expires_in": expires_in,
         "user_id": user_id,
         "username": username,
-        "scopes": scope_list,
+        "scopes": scopes_recorded,
+        "scopes_source": scopes_source,
     }
     secrets_fs.atomic_write_json(token_path, token_data, mode=0o600)
     # 使い終わった `state` は残さない（1 回きり）。
@@ -758,6 +808,8 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
         コマンドを打った時刻」になる（管理画面はいつ発行したかを返さない）。
         `thth refresh` は 50 日超で更新するだけなので、数日ずれても実害は無い。
       - `scopes` は管理画面発行では分からないので `null`（嘘の一覧は書かない）。
+        `scopes_source` に `"unknown"` を書いて、**判らないことを判った形で残す**
+        （`thth auth` が書く `"response"` / `"requested"` と区別できる）。
       - `expires_in` は管理画面の応答に無いので、長期トークンの既定寿命
         （`DEFAULT_TOKEN_LIFETIME_SECONDS`＝60 日）を使う。
 
@@ -844,6 +896,7 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
         "user_id": user_id,
         "username": username,
         "scopes": None,
+        "scopes_source": SCOPES_SOURCE_UNKNOWN,
     }
     # **期限の有無は媒体の知識**（`TOKEN_NO_EXPIRY`・T3 の配線 2026-09-13）。
     # Threads の長期トークンは 60 日で切れるので、管理画面が発行時刻を返さない
