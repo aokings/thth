@@ -14,12 +14,15 @@ exit code:
 """
 from __future__ import annotations
 
+import datetime
 import json
+import os
 import sys
 import unicodedata
 
 from . import accounts as accounts_mod
 from . import ask as ask_mod
+from . import jst
 from . import topics as topics_mod
 
 
@@ -73,12 +76,44 @@ def _fmt(value) -> str:
     return str(value)
 
 
+# **「いま」を外から固定する口**（セキュリティ監査 2026-09-14・P3-6）。
+#
+# `tests/test_ask.py` は偽の台帳を 2026-08-15〜09-03 に置き、CLI を
+# **subprocess** で呼んでいた。`conftest` の `frozen_now_jst` は monkeypatch
+# なのでプロセス境界を越えない——**別プロセスの CLI は本物の壁時計を読む**ので、
+# 既定の期間（30 日）の窓が日ごとに動き、**ある日から静かに落ち始める**
+# （2026-09-14 に `n == 25` が 23 になった）。
+#
+# **本番の経路は変えない**（この環境変数は本番でも timer でも立たない）。立って
+# いれば読み、読めない綴りなら**黙って壁時計に落ちずに** rc=2 で断る（作法 5）。
+NOW_ENV = "THTH_NOW"
+
+
+def _now_from_env(log=None):
+    """`$THTH_NOW` があればその時刻。無ければ None（＝呼び出し側の既定＝壁時計）。"""
+    raw = (os.environ.get(NOW_ENV) or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(raw)
+    except ValueError as e:
+        raise ValueError(f"{NOW_ENV} が読めません（ISO 8601 で書いてください）: {raw!r}") from e
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=jst.JST)
+    return dt
+
+
 def cmd_before_you_post(args) -> int:
+    try:
+        now = _now_from_env()
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     try:
         answer = ask_mod.before_you_post(
             args.account, topic=args.topic, kind=args.kind,
             hour_band=args.hour_band, is_reply=args.is_reply,
-            window_days=args.window_days, min_n=args.min_n)
+            window_days=args.window_days, min_n=args.min_n, now=now)
     except ask_mod.AskError as e:
         print(str(e), file=sys.stderr)
         return 2

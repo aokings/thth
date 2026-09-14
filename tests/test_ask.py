@@ -500,7 +500,16 @@ def test_e8_CLIの人向けにも観測者ごとに並びほか1人が出る(acc
 # ---------------------------------------------------------------- (f) CLI
 
 def run_ask(args, env=None) -> subprocess.CompletedProcess:
+    """CLI を subprocess で呼ぶ。**「いま」を env で固定する**（監査 2026-09-14・P3-6）。
+
+    `conftest` の `frozen_now_jst` は monkeypatch なので**プロセス境界を越えない**
+    ——別プロセスの CLI は本物の壁時計を読むので、偽の台帳（2026-08-15〜09-03）に
+    対する既定の窓（30 日）が日ごとに動き、**ある日から静かに落ち始める**
+    （2026-09-14 に `n == 25` が 23 になった）。`$THTH_NOW` で in-process の
+    `NOW` と同じ時刻に揃える。
+    """
     full = dict(os.environ)
+    full.setdefault("THTH_NOW", NOW.isoformat())
     full.update(env or {})
     return subprocess.run([sys.executable, BIN_THTH, *args],
                           capture_output=True, text=True, env=full)
@@ -737,3 +746,22 @@ def test_本物の台帳でrc0でcannot_sayが出る(tmp_path):
     assert answer["provenance"]["source"] == "local"
     assert answer["cannot_say"], "手元の水で言い切ってしまっている"
     assert answer["expected"]["branches_24h"]["median"] is None
+
+
+def test_P3_6_THTH_NOWで時刻を固定できる(account, thth_root):
+    """**本番の経路は変えない**（この環境変数は本番でも timer でも立たない）。"""
+    write_many(account, 25, hour=8)
+    # 台帳の最後の投稿（2026-09-03）から 30 日以上あとに立てば、群は空になる。
+    遠い未来 = run_ask(["ask", "before-you-post", ACCOUNT, "--topic", TOPIC, "--json"],
+                        env={"THTH_NOW": "2026-12-01T10:00:00+09:00"})
+    assert json.loads(遠い未来.stdout)["comparable"]["n"] == 0
+    # 固定した「いま」なら 25 本そろう。
+    いま = run_ask(["ask", "before-you-post", ACCOUNT, "--topic", TOPIC, "--json"])
+    assert json.loads(いま.stdout)["comparable"]["n"] == 25
+
+
+def test_P3_6_読めないTHTH_NOWは黙って壁時計に落ちない(account, thth_root):
+    proc = run_ask(["ask", "before-you-post", ACCOUNT, "--topic", TOPIC],
+                    env={"THTH_NOW": "きのう"})
+    assert proc.returncode == 2
+    assert "THTH_NOW" in proc.stderr
