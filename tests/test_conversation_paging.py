@@ -121,17 +121,20 @@ def test_pagingの形が違えば終端と読まない():
 # それに `access_token` を付けて叩いていた。1 度返すだけで**トークンが第三者の
 # ログに載る**。型が違うときと同じ扱い（`RuntimeError`・部分を成功にしない）。
 
-@pytest.mark.parametrize("よそのURL", [
-    "https://attacker.example/次",
-    "http://例/次",                        # 同じホストでも平文への格下げ
-    "https://例.attacker.example/次",       # 似た綴りの別ホスト
-    "//attacker.example/次",               # scheme 相対
+@pytest.mark.parametrize("よそのURL,断り文", [
+    ("https://attacker.example/次", "ホストが違います"),
+    # **同じホストでも平文への格下げ**。監査 2 回目・P3-8 で断り文を分けた——
+    # ここを「別のホストを指しています」と言うと、**同じホストなのにホストが
+    # 違うと言われる**ので、読んだ人は綴りを疑って原因に辿り着けない。
+    ("http://例/次", "scheme が違います"),
+    ("https://例.attacker.example/次", "ホストが違います"),   # 似た綴りの別ホスト
+    ("//attacker.example/次", "ホストが違います"),             # scheme 相対
 ])
-def test_次の頁が別のホストなら追わずに例外(よそのURL):
+def test_次の頁がよそを指すなら追わずに例外(よそのURL, 断り文):
     口 = _頁を返す口([_頁([{"id": "R1"}], next_url=よそのURL)])
     with pytest.raises(RuntimeError) as e:
         口.conversation("POST1")
-    assert "別のホスト" in str(e.value)
+    assert 断り文 in str(e.value), str(e.value)
     # **1 頁目しか叩いていない**（よそへは行っていない）。
     assert len(口.叩いた) == 1
 

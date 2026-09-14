@@ -364,9 +364,26 @@ def _error(req_id, code: int, message: str) -> dict:
             "error": {"code": code, "message": message}}
 
 
+def _is_notification(req: dict) -> bool:
+    """JSON-RPC の**通知**（`id` を持たない要求）か。
+
+    監査 2 回目・P3-6。**通知には応答を返してはいけない**（JSON-RPC 2.0 §4.1）。
+    `notifications/initialized` だけを名前で特定して黙っていたので、
+    **`id` の無い `tools/call` には結果を、`id` の無い未知の method には
+    エラーを返していた**——`"id": null` を付けた応答は仕様違反で、厳密な
+    クライアントは接続を切る。**名前ではなく形で決める。**
+    """
+    return "id" not in req
+
+
 def _handle_request(req: dict):
     method = req.get("method")
     req_id = req.get("id")
+
+    if _is_notification(req):
+        # **通知は黙って処理する**（応答を作らない）。いまのところ中身のある
+        # 通知は `notifications/initialized` だけで、それも何もしない。
+        return None
 
     if method == "initialize":
         return {
@@ -434,7 +451,11 @@ def main() -> None:
         except Exception as e:                      # noqa: BLE001
             # **死なない。** 想定していない失敗も 1 要求の error にして次へ。
             resp = _error(req_id, -32602, f"{type(e).__name__}: {e}")
-        if resp is not None:
+        # **通知には何も返さない**（監査 2 回目・P3-6）。失敗しても同じ——
+        # 返す先の `id` が無いので、`"id": null` の error を送ることになる
+        # （JSON-RPC 2.0 §4.1 違反・厳密なクライアントは接続を切る）。
+        # **死なないことと、黙ることは両立する。**
+        if resp is not None and not _is_notification(req):
             _send(resp)
 
 

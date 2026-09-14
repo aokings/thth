@@ -578,6 +578,208 @@ def test_P2_5_boardは最後に採った時刻を1行出す(同席専用, capsys
     assert "最後に採ったのは: 0 時間前" in 出た, 出た
 
 
+# --------------------------------------------------------------- P3
+
+from thth import oauth  # noqa: E402
+from thth import postid as postid_mod  # noqa: E402
+from thth import threadshape  # noqa: E402
+
+
+@pytest.mark.parametrize("実測,取得,期待", [
+    ({}, [], "queue"),                                   # 無印の旧行
+    ({"source": "sent"}, [], "sent"),
+    ({}, [{"kind": "fetch", "source": "sent"}], "sent"),
+    ({"source": "queue"}, [], "queue"),
+])
+def test_P3_2_無印の出所はqueue(実測, 取得, 期待):
+    """設計 v2.0.1 §3「**無印は旧行**で、読み手は `queue` として扱う」。
+
+    `threadshape` だけ `None` を返し、`thth threads` がそれを「不明」と出して
+    いたので、**同じ投稿が画面によって違う出所を名乗っていた**
+    （`thth posts` は同じ行を `queue` と出す）。`source` を書き始めたのは
+    v2.0.1 なので、それ以前の行は定義上すべて queue 由来。
+    """
+    形 = threadshape._post_shape(
+        "P1", [], 取得,
+        measured_post={**実測, "posted_at": "2026-09-10T08:00:00+09:00"},
+        medium="threads", account_name="a")
+    assert 形["source"] == 期待, 形["source"]
+
+
+def test_P3_3_queueは読めない台帳でrcを立てる(isolated_account_factory):
+    """`thth queue <打ち間違い>` が rc=0 で返っていた（script から素通りする）。"""
+    isolated_account_factory()
+    悪い = run_thth(["queue", "../../etc/passwd"])
+    assert 悪い.returncode != 0, 悪い.stdout
+    無い = run_thth(["queue", "そんな台帳は無い"])
+    assert 無い.returncode != 0, 無い.stdout
+    よい = run_thth(["queue"])
+    assert よい.returncode == 0, よい.stdout + よい.stderr
+
+
+@pytest.mark.parametrize("戻りURL,期待", [
+    ("https://x.example/cb?code=A&state=S1", "S1"),
+    ("https://x.example/cb?state=S1&code=A#_", "S1"),
+    ("https://x.example/cb?code=A", None),
+    # **`state` で終わる別の鍵を `state` として読まない**（監査 2 回目・P3-4）。
+    ("https://x.example/cb?code=A&my_state=攻撃者の値", None),
+    ("https://x.example/cb?code=A&oauth_state=X&state=S2", "S2"),
+    ("https://x.example/cb?code=A&state=", None),
+])
+def test_P3_4_extract_stateは鍵を厳密に見る(戻りURL, 期待):
+    assert oauth.extract_state(戻りURL) == 期待
+
+
+def test_P3_5_古いauth_stateは通らない(isolated_account_factory, monkeypatch):
+    """**去年出して貼らなかった `state` が今日の戻りを通さない。**"""
+    from thth import jst
+    account = isolated_account_factory()
+    oauth._save_auth_state(account["name"], "S1")
+    assert oauth._saved_auth_state(account["name"]) == "S1"
+
+    古い = jst.now_jst() - datetime.timedelta(
+        seconds=oauth.AUTH_STATE_TTL_SECONDS + 60)
+    path = oauth._auth_state_path(account["name"])
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"state": "S1", "created_at": jst.iso(古い)}, f)
+    assert oauth._saved_auth_state(account["name"]) is None
+
+    # いつ出したか判らないものも通さない（fail-closed）。
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"state": "S1"}, f)
+    assert oauth._saved_auth_state(account["name"]) is None
+
+
+def test_P3_6_MCPはidの無い通知に応答を返さない():
+    """JSON-RPC 2.0 §4.1。`"id": null` の応答は仕様違反（厳密な口は切る）。"""
+    import subprocess
+    import sys as _sys
+    要求 = [
+        '{"jsonrpc":"2.0","method":"notifications/initialized"}',
+        '{"jsonrpc":"2.0","method":"tools/list"}',          # id 無し＝通知
+        '{"jsonrpc":"2.0","method":"知らない道具"}',          # id 無し＝通知
+        '{"jsonrpc":"2.0","method":"tools/call","params":{}}',  # id 無し・壊れた引数
+        '{"jsonrpc":"2.0","id":9,"method":"tools/list"}',   # これだけ応答が要る
+    ]
+    proc = subprocess.run(
+        [_sys.executable, os.path.join(REPO_ROOT, "mcp", "server.py")],
+        input="\n".join(要求) + "\n", capture_output=True, text=True, timeout=60)
+    行 = [json.loads(l) for l in proc.stdout.splitlines() if l.strip()]
+    assert [r.get("id") for r in 行] == [9], 行
+
+
+def test_P3_7_sentはファイル名からpost_idを作らない(isolated_account_factory):
+    """**名前は誰でも置ける。** 置いただけの `post_id` を「出したもの」にしない。"""
+    account = isolated_account_factory()
+    state_dir = accounts_mod.state_dir_for(account["name"])
+    sent_mod.write(state_dir, post_id="ほんもの", text="本文", body_hash="h",
+                    sent_at="2026-09-14T10:00:00+09:00")
+    にせ = os.path.join(sent_mod.dir_for(state_dir), "別人の投稿.json")
+    with open(にせ, "w", encoding="utf-8") as f:
+        json.dump({"text": "よそのもの", "sent_at": "2026-09-14T11:00:00+09:00"}, f)
+
+    errors = []
+    ids = [row["post_id"] for row in sent_mod.records(state_dir, errors=errors)]
+    assert ids == ["ほんもの"], ids
+    assert sent_mod.post_ids(state_dir) == {"ほんもの"}
+    assert any("post_id がありません" in e for e in errors), errors
+
+
+def test_P3_9_制御文字の判定は1本(isolated_account_factory):
+    """`postid.is_usable()` しか通らない口（`sent.write`・`collect`）も守る。"""
+    for 悪い in ("P\n1", "P\t1", "P\r1", "P\x001", "P\x7f1"):
+        assert not postid_mod.is_usable(悪い), 悪い
+        assert not collect_mod._safe_post_id(悪い), 悪い
+    assert postid_mod.is_usable("at://did:plc:abc/app.bsky.feed.post/3k")
+
+    account = isolated_account_factory()
+    state_dir = accounts_mod.state_dir_for(account["name"])
+    with pytest.raises(ValueError):
+        sent_mod.write(state_dir, post_id="P\n1", text="x", body_hash="h",
+                        sent_at="2026-09-14T10:00:00+09:00")
+    assert sent_mod.records(state_dir) == []
+
+
+# --------------------------------------------------------------- 生き残った変異
+
+def test_M6_repo無しの取り直しはlocal_onlyと名乗る(同席専用):
+    """**「送る先が無い」を「送れなかった」と言わない**（設計 v2.0.1 §1）。"""
+    out = collect_mod.refresh_replies(同席専用["name"], adapter=_採れる媒体(),
+                                       log=lambda _l: None)
+    assert out["saved"] is True, out
+    assert out["remote"] == "local_only", out
+    assert out["errors"] == [], out
+
+
+def test_M7_state側ではreplies_dirが効かない(tmp_path, isolated_account_factory):
+    """置き場は道具が決める（合わせる相手の repo が無い・設計 v2.0.1 §1）。
+
+    **既定と違う値**を台帳に入れて確かめる——既定（`data/sns/replies`）のままだと、
+    効いていても効いていなくても同じ綴りになるので、この変異は生き残る。
+    """
+    account = isolated_account_factory(
+        name="acct-m7", repo_dir=str(tmp_path / "repos" / "_none"),
+        media="bluesky", handle="x.bsky.social",
+        replies_dir="どこか別の場所/返信")
+    cfg = accounts_mod.load_account(account["name"])
+    d = accounts_mod.data_dirs(cfg, account["name"])
+    state = accounts_mod.state_dir_for(account["name"])
+    assert d["replies"] == os.path.join(state, "data", "sns", "replies"), d
+    assert "どこか別の場所" not in d["replies"]
+
+    # repo があるときは**そのまま効く**（既存の経路は 1 バイトも変えない）。
+    repo = _repo(tmp_path, "m7repo")
+    有り = isolated_account_factory(
+        name="acct-m7b", repo_dir=repo, media="bluesky", handle="x.bsky.social",
+        replies_dir="どこか別の場所/返信")
+    d2 = accounts_mod.data_dirs(accounts_mod.load_account(有り["name"]),
+                                有り["name"])
+    assert d2["replies"] == os.path.join(repo, "どこか別の場所/返信"), d2
+
+
+def test_M11_MCPのfileはrepo_dirの前方一致の兄弟を断る(tmp_path, monkeypatch):
+    """`<repo_dir>-evil/x.md` は `<repo_dir>` の**中ではない**（文字列の前方一致）。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "thth_mcp_server", os.path.join(REPO_ROOT, "mcp", "server.py"))
+    server = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(server)
+
+    repo = str(tmp_path / "repo")
+    兄弟 = str(tmp_path / "repo-evil")
+    os.makedirs(os.path.join(兄弟), exist_ok=True)
+    os.makedirs(repo, exist_ok=True)
+    monkeypatch.setattr(server, "ledger_roots", lambda: [os.path.realpath(repo)])
+
+    with pytest.raises(server.ToolInputError):
+        server.check_file_argument("thth_lint", os.path.join(兄弟, "x.md"))
+    # 中のものは通る（断りすぎていない）。
+    server.check_file_argument("thth_lint", os.path.join(repo, "x.md"))
+
+
+def test_M17_未来のposted_atは採らない(tmp_path, isolated_account_factory):
+    """**まだ出ていないものを「出した」ことにしない**（`age_hours < 0`）。"""
+    from thth import jst
+    account = isolated_account_factory(
+        name="acct-m17", repo_dir=str(tmp_path / "repos" / "_none"),
+        media="bluesky", handle="x.bsky.social", production=True, scheduled=False)
+    未来 = jst.iso(jst.now_jst() + datetime.timedelta(hours=3))
+    sent_mod.write(accounts_mod.state_dir_for(account["name"]),
+                    post_id="POST-未来", text="本文", body_hash="h", sent_at=未来)
+
+    媒体 = _採れる媒体()
+    呼んだ = []
+    媒体.insights = lambda post_id: 呼んだ.append(post_id) or {
+        "metrics": {"views": 1}, "available": ["views"]}
+    rc = collect_mod.run_collect(account["name"], adapter=媒体,
+                                  log=lambda _l: None)
+    assert rc == 0
+    assert 呼んだ == [], 呼んだ
+    d = accounts_mod.data_dirs(accounts_mod.load_account(account["name"]),
+                               account["name"])
+    assert not os.path.exists(os.path.join(d["insights_posts"], "POST-未来.ndjson"))
+
+
 def _採れる媒体():
     class _媒体:
         CAPABILITIES = frozenset({"views"})

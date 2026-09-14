@@ -23,7 +23,17 @@
 """
 from __future__ import annotations
 
+import re
 import urllib.parse
+
+# 制御文字（`\x00`〜`\x1f`・`\x7f`）。**`post_id` の判定はここが正本**
+# （監査 2 回目・P3-9）。前は `writeback.has_control_chars()` と
+# `postid.is_usable()`（NUL だけ）の 2 つがあり、**呼び出し側が両方を並べて
+# 書いたところだけが守られていた**——`collect._safe_post_id()` と
+# `sent.write()` は `is_usable()` しか通らないので、**タブや改行を含む
+# `post_id` がファイル名・台帳の鍵になれた。** 判定は 1 か所に置き、
+# 通る口を全部そこへ寄せる。
+CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
 # ファイル名 1 つぶんの上限（encode **後**のバイト数）。ext4・APFS・HFS+ は
@@ -38,7 +48,11 @@ def is_usable(post_id) -> bool:
 
     区切り文字（`/`）はもう弾かない——**encode すれば安全に書ける**し、
     弾くと Bluesky の投稿が丸ごと採取から落ちる。残っているのは
-    「空」「`.`／`..`」「NUL」と、**encode 後のファイル名が長すぎるもの**。
+    「空」「`.`／`..`」「**制御文字**」と、**encode 後のファイル名が長すぎるもの**。
+
+    **制御文字は NUL だけではない**（監査 2 回目・P3-9）。改行は front-matter の
+    別の行になり、タブ・復帰は台帳や画面の 1 行を割る。ここを通る値は
+    ファイル名にも front-matter の値にもなるので、**まとめて弾く**。
 
     長さを見るのは独立監査 1（P3-6・2026-09-13）。極端に長い `post_id`
     （壊れた台帳・悪意のある返信先・別の媒体の URI を丸ごと入れた原稿）で
@@ -51,7 +65,7 @@ def is_usable(post_id) -> bool:
         return False
     if post_id.strip() in (".", ".."):
         return False
-    if "\x00" in post_id:
+    if CONTROL_RE.search(post_id):
         return False
     return len(to_filename(post_id).encode("utf-8")) <= MAX_FILENAME_BYTES
 

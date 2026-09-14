@@ -338,7 +338,8 @@ def _source_of(qf) -> str:
     return SENT_SOURCE if str(qf.path).startswith(_SENT_PATH_PREFIX) else QUEUE_SOURCE
 
 
-def _with_sent_posts(files: list, account_name: str, account_cfg: dict) -> list:
+def _with_sent_posts(files: list, account_name: str, account_cfg: dict, *,
+                      errors: list | None = None) -> list:
     """`state/<account>/sent/` の記録を**疑似 queue ファイル**にして足す（v2.0.1 §2）。
 
     **なぜ要るか**（運用 2026-09-14）。`thth send`（同席の様態）は queue を通ら
@@ -372,7 +373,10 @@ def _with_sent_posts(files: list, account_name: str, account_cfg: dict) -> list:
             既知.add(pid)
 
     out = list(files)
-    for row in sent_mod.records(accounts_mod.state_dir_for(account_name)):
+    # **読めなかった記録を黙って捨てない**（監査 2 回目・P3-7）。`post_id` の
+    # 無い記録は飛ばす（名前からは作らない）が、飛ばしたことは `errors` に出す。
+    for row in sent_mod.records(accounts_mod.state_dir_for(account_name),
+                                 errors=errors):
         post_id = row.get("post_id")
         sent_at = row.get("sent_at")
         if not post_id or not sent_at:
@@ -468,7 +472,7 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     # queue を通らない投稿の記録は `state/<account>/sent/` にしか無い。
     for qf in _with_sent_posts(
             _with_bundle_posts(files, account_name, account_cfg, errors=errors),
-            account_name, account_cfg):
+            account_name, account_cfg, errors=errors):
         if qf.malformed:
             continue
         fm = qf.front_matter
@@ -900,7 +904,7 @@ def _refresh_targets(account_name: str, account_cfg: dict, *, now, errors: list,
     # **定期取得と同じ母集団**——`sent/`（同席の様態）もここに入る（v2.0.1 §2）。
     for qf in _with_sent_posts(
             _with_bundle_posts(files, account_name, account_cfg, errors=errors),
-            account_name, account_cfg):
+            account_name, account_cfg, errors=errors):
         if qf.malformed:
             continue
         fm = qf.front_matter

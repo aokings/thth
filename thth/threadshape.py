@@ -448,10 +448,17 @@ def _post_shape(post_id: str, rows: list, fetches: list, *, measured_post,
         "kind": kind,
         # **どの記録から採った投稿か**（設計 v2.0.1 §3）。`"queue"` は書き戻された
         # front-matter、`"sent"` は `state/<account>/sent/`（同席の様態）。
-        # 実測の台帳が無ければ `None`——**判らないものを `queue` と言わない。**
+        #
+        # **無印は `queue`**（監査 2 回目・P3-2）。ここだけ `None` を返していたので、
+        # `thth threads` の画面は旧行を「出所=不明」と出し、`thth measured`・
+        # `thth posts`・`thth replies` は同じ行を `queue` と出していた——**同じ投稿が
+        # 画面によって違う出所を名乗る**。`source` を書き始めたのは v2.0.1 で、
+        # **それ以前の行は定義上すべて queue 由来**（`sent/` を採るのが v2.0.1 の
+        # 新機能）。だから「判らない」ではなく「**判っている・queue だ**」。
         "source": ((measured_post or {}).get("source")
                     or next((f.get("source") for f in fetches if f.get("source")),
-                            None)),
+                            None)
+                    or "queue"),
         "posted_at": posted_at_raw,
         "hour_band": hour_band(posted_at),
         "branches": branches,

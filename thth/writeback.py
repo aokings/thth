@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 
+from . import postid as postid_mod
 from . import redact as redact_mod
 
 # front-matter は 1 行 1 項目の平たい `key: value`。**値に改行が入れば、そこから
@@ -33,8 +34,9 @@ from . import redact as redact_mod
 FORBIDDEN_IN_FRONT_MATTER = ("\n", "\r", "\x00")
 
 # `post_id` は front-matter だけでなくファイル名・台帳の鍵にもなるので、
-# 制御文字はまとめて弾く（`thth/core.py` が公開の直後に通す）。
-_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+# 制御文字はまとめて弾く。**判定の正本は `thth/postid.py`**（監査 2 回目・P3-9）
+# ——ここに別の綴りを持つと、`postid.is_usable()` しか通らない口
+# （`collect._safe_post_id()`・`sent.write()`）だけが守られないまま残る。
 
 
 def _forbidden_name(ch: str) -> str:
@@ -61,10 +63,14 @@ def check_front_matter_field(key, value) -> None:
 
 
 def has_control_chars(text) -> bool:
-    """制御文字（`\\x00`〜`\\x1f`・`\\x7f`）を含むか。`post_id` の検査に使う。"""
+    """制御文字（`\\x00`〜`\\x1f`・`\\x7f`）を含むか。
+
+    **判定は `postid.CONTROL_RE` の 1 本**（監査 2 回目・P3-9）。この名前は
+    呼び出し側のために残す。
+    """
     if not isinstance(text, str):
         return False
-    return bool(_CONTROL_RE.search(text))
+    return bool(postid_mod.CONTROL_RE.search(text))
 
 
 class PushValidationFailed(Exception):

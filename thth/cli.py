@@ -1100,7 +1100,10 @@ def cmd_threads(args) -> int:
         topic = post["topic"] or "（トピック無し）"
         kind = post["kind"] or "型なし"
         band = post["hour_band"] or "時刻不明"
-        出所 = {"sent": "同席の送信", "queue": "queue"}.get(post.get("source"), "不明")
+        # **無印は queue**（設計 v2.0.1 §3・監査 2 回目・P3-2）。`thth posts` と
+        # 同じ既定にする——ここだけ「不明」と出していたので、**同じ投稿が画面に
+        # よって違う出所を名乗っていた**。
+        出所 = {"sent": "同席の送信"}.get(post.get("source"), "queue")
         print(f"{post['post_id']}  [{topic}／{kind}]  {band}  出所={出所}"
               f"  posted_at={post['posted_at']}")
 
@@ -1973,12 +1976,18 @@ def cmd_forms(args) -> int:
 
 def cmd_queue(args) -> int:
     summary = report_mod.queue_summary(args.account)
+    # **読めなかった台帳があれば終了コードを立てる**（監査 2 回目・P3-3）。
+    # 名前が不正・台帳が無い・壊れているとき、画面には 1 行出るのに **rc は 0**
+    # だった——`thth queue ../../etc/passwd` も `thth queue 打ち間違い` も「成功」で
+    # 返るので、**script から呼ぶと黙って素通りする**（作法 5・loud reject）。
+    rc = 2 if any("error" in info for info in summary.values()) else 0
     if args.json:
         _print_json(summary)
+        return rc
     else:
         for name, info in summary.items():
             if "error" in info:
-                print(f"{name}: {info['error']}")
+                print(f"{name}: {info['error']}", file=sys.stderr)
                 continue
             c = info["counts"]
             topic_suffix = f" topic={info['next_topic']}" if info.get("next_topic") else ""
@@ -1987,7 +1996,7 @@ def cmd_queue(args) -> int:
                   f"{topic_suffix}")
             for rej in info.get("next_rejections") or []:
                 print(f"  いま出ない: {rej['file']} — {rej['reason']}")
-    return 0
+    return rc
 
 
 def cmd_schedule(args) -> int:

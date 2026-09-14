@@ -462,8 +462,7 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
     # 扱いは `publish_ambiguous` と同じ（§3.5・単発と揃える）。**出たことは
     # 判っているが、それを記録できない**——inflight を残して人を呼び、後続の段は
     # 進めない（親の ID が信用できないので、繋ぎ先が決まらない）。
-    if not postid_mod.is_usable(result.post_id) \
-            or writeback_mod.has_control_chars(result.post_id):
+    if not postid_mod.is_usable(result.post_id):
         msg = ("媒体が返した post_id が台帳に書けない形です"
                "（書き戻しません・再公開もしません・inflight を残します）")
         inflight_mod.update(state_dir, mismatch_fields=["post_id"])

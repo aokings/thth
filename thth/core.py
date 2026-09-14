@@ -547,7 +547,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # ここで断るときの扱いは **`publish_ambiguous` と同じ**（§3.5）。**出たこと
     # は判っているが、それを記録できない**——記録できないまま inflight を消すと
     # 二重投稿になるので、残して人を呼ぶ。再投稿はしない。
-    if not postid_mod.is_usable(post_id) or writeback.has_control_chars(post_id):
+    if not postid_mod.is_usable(post_id):
         msg = ("媒体が返した post_id が台帳に書けない形です"
                "（書き戻しません・再公開もしません・inflight を残します）: "
                f"{chosen.path}")
@@ -818,8 +818,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         #
         # 扱いは `publish_ambiguous` と同じ（§3.5）。**出たことは判っているが記録
         # できない**——inflight を残して人を呼ぶ。`sent/` には書かない（書けない）。
-        if not postid_mod.is_usable(result.post_id) \
-                or writeback.has_control_chars(result.post_id):
+        if not postid_mod.is_usable(result.post_id):
             msg = ("媒体が返した post_id が台帳に書けない形です"
                    "（記録できないので inflight を残します・再送はしません）")
             log(msg)
