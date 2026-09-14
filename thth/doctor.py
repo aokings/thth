@@ -170,6 +170,33 @@ def recorded_scopes(token: dict) -> dict:
             "source": source or SCOPES_SOURCE_UNKNOWN}
 
 
+def debug_token_line(probes: list) -> str | None:
+    """`/debug_token` の行（`key == "debug_token"`）から、**記録上の scope の
+    直後に出す 1 行**を作る。無い媒体（Bluesky・Mastodon）は None。
+
+    突き合わせの相手は `scopes.DEFAULT_SCOPES`（設計 §8-14・11 権限）。**doctor は
+    `.token` を書き換えない**（読むだけの道具）——一覧が取れて `.token` の
+    `scopes` が null でも、ここで言うだけ。
+    """
+    row = next((p for p in probes
+                if p.get("key") == threads_mod.ThreadsAdapter.DEBUG_TOKEN_KEY), None)
+    if row is None:
+        return None
+    if row.get("ok") is not True or not isinstance(row.get("scopes"), list):
+        return f"debug_token の scope: 取れませんでした（{row.get('detail')}）"
+    n = len(row["scopes"])
+    missing = row.get("missing") or []
+    extra = row.get("extra") or []
+    if not missing and not extra:
+        return f"debug_token の scope: {n} 個（DEFAULT_SCOPES と一致）"
+    parts = []
+    if missing:
+        parts.append("足りない=" + ",".join(missing))
+    if extra:
+        parts.append("余計=" + ",".join(extra))
+    return f"debug_token の scope: {n} 個（不一致: {'・'.join(parts)}）"
+
+
 def recorded_scopes_line(rec: dict | None) -> str:
     rec = rec or {}
     if rec.get("count") is None:
@@ -299,6 +326,9 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         return 2
     log(f"{report['account']}（{report['username']}・user_id={report['user_id']}）")
     log(recorded_scopes_line(report.get("scopes_recorded")))
+    debug_line = debug_token_line(report["probes"])
+    if debug_line:
+        log(debug_line)
     log("")
     failed = 0
     for p in report["probes"]:

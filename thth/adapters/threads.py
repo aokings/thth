@@ -84,6 +84,11 @@ _PERMISSION_ERROR_CODES = frozenset({10} | set(range(200, 300)))
 NOT_GRANTED = "この権限がトークンに乗っていません"
 COULD_NOT_VERIFY = "確かめられませんでした"
 UNVERIFIABLE_BY_READ = "読み取りでは確かめられません"
+# 読み取りの口が無い 3 権限の行の `key`。`/debug_token` が取れたときだけ、
+# この 3 行を「乗っている／乗っていない」に格上げする（`probe()`）。
+UNVERIFIABLE_KEYS = frozenset({"manage_replies", "delete", "share_to_instagram"})
+GRANTED_BY_DEBUG_TOKEN = ("トークンに乗っています（/debug_token の scopes に有り。"
+                          "読み取りの口は無いので、この口は叩いていません）")
 
 
 def _is_permission_error(err: dict | None, message: str) -> bool:
@@ -570,7 +575,56 @@ class ThreadsAdapter(base.Adapter):
         # `tests/test_doctor_all_permissions.py` が固定する）。
         results.extend(_run_probe(get, self.base_url, p, self.access_token)
                        for p in self._extra_probes(user_id))
+
+        # **`/debug_token` で、乗っている権限の一覧を訊く**（2026-09-14・監査後の
+        # 追加）。読み取りだけ。取れたら、読み取りの口が無い 3 権限の行を
+        # 「乗っている／乗っていない」に格上げする。取れなければ従来の None のまま。
+        debug = self._debug_token_probe(get)
+        granted = debug.get("scopes")
+        if isinstance(granted, list):
+            for r in results:
+                if r["key"] in UNVERIFIABLE_KEYS:
+                    if r["permission"] in granted:
+                        r["ok"] = True
+                        r["detail"] = GRANTED_BY_DEBUG_TOKEN
+                    else:
+                        r["ok"] = False
+                        r["detail"] = f"{NOT_GRANTED}（/debug_token の scopes に無い）"
+        results.append(debug)
         return results
+
+    # **L2** https://developers.facebook.com/docs/threads/troubleshooting/debug-access-token
+    # `GET /v1.0/debug_token?access_token=<tester のユーザートークン>&input_token=<同じ>`
+    # の `data.scopes` が「the user has granted for the app in this access token」
+    # の一覧。app access token は要らない（tester のユーザートークンでよい）。
+    # 資料はこの口に要る権限を挙げていないので、行の permission は「全部の口に
+    # 要る」`threads_basic` にしてある。
+    DEBUG_TOKEN_KEY = "debug_token"
+
+    def _debug_token_probe(self, get) -> dict:
+        from .. import scopes as scopes_mod
+        row = _run_probe(get, self.base_url, _Probe(
+            "トークンに乗っている権限の一覧（/debug_token・読み取り）", "threads_basic",
+            "/v1.0/debug_token", {"input_token": self.access_token},
+            key=self.DEBUG_TOKEN_KEY), self.access_token)
+        row["scopes"] = None
+        row["missing"] = None
+        row["extra"] = None
+        if row["ok"] is not True:
+            return row
+        data = (row.get("body") or {}).get("data")
+        scopes = data.get("scopes") if isinstance(data, dict) else None
+        if not isinstance(scopes, list) or not all(isinstance(x, str) for x in scopes):
+            # 200 だが形が違う。**嘘の一覧を作らない**——「取れなかった」にする。
+            row["ok"] = None
+            row["detail"] = f"{COULD_NOT_VERIFY}（応答に data.scopes の一覧が無い）"
+            return row
+        wanted = list(scopes_mod.DEFAULT_SCOPES)
+        row["scopes"] = list(scopes)
+        row["missing"] = [x for x in wanted if x not in scopes]
+        row["extra"] = [x for x in scopes if x not in wanted]
+        row["detail"] = f"{len(scopes)} 個: " + ", ".join(scopes)
+        return row
 
     # 検索の語は**固定・無害**で各 1 回だけ叩く。**投稿しない・書かない。**
     #
