@@ -262,6 +262,25 @@ def _thread_rows(account_name: str) -> list:
     return out
 
 
+def _signature_state(check) -> str:
+    """配布参照の署名を**確かめた結果**（監査 2 回目・P2-4）。
+
+    `off`（確かめていない）／`verified`（確かめる設定で、署名では止まっていない）
+    ／`unverified`（確かめられず、**取り込んでいない**）。
+
+    **「確かめる設定か」と「確かめられたか」は別物。** 前は前者だけを見ていたので、
+    `THTH_REQUIRE_SIGNED_RELEASE=1` で署名が確かめられずに配布を見送った回でも、
+    board は「署名: 確認」と出していた——**いちばん人を呼ばなければならない回に、
+    いちばん安心な語が出ていた。**
+    """
+    if not selfupdate_mod.require_signed_release():
+        return "off"
+    if check and not check.get("ok") \
+            and selfupdate_mod.SIGNATURE_ERROR in str(check.get("error") or ""):
+        return "unverified"
+    return "verified"
+
+
 def board_summary(now=None) -> dict:
     """アカウント・最終投稿・approved 待ち・inflight・型外・要確認の骨（設計 §4.6・
     外部レビュー再レビュー C で `needs_review`／`approval_stale_count` を追加）。"""
@@ -417,6 +436,13 @@ def board_summary(now=None) -> dict:
                     # 既定は off（いまの release は無署名なので、無条件に入れると
                     # 次の配布で VM が止まる）。**確かめていないことを黙らない。**
                     "signature_checked": selfupdate_mod.require_signed_release(),
+                    # **確かめた結果**（監査 2 回目・P2-4）。`signature_checked` は
+                    # 「確かめる設定か」でしかなく、**確かめられなかった回まで
+                    # 「署名: 確認」と出していた**。3 値で言い分ける:
+                    #   `off`        — 確かめていない（既定）
+                    #   `verified`   — 確かめる設定で、最後の取得は署名で止まっていない
+                    #   `unverified` — 確かめられず、**取り込んでいない**
+                    "signature_state": _signature_state(check),
                     "comparison_ref_sha": basis,
                     # **board は取りに行かないので、常に未確認。**
                     "remote_current_verified": False}}

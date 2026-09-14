@@ -63,6 +63,11 @@ RELEASE_REF = os.environ.get("THTH_RELEASE_REF") or "release"
 #      以後、署名を確かめられない配布は**取り込まれず、古いまま走る**（止まらない）。
 REQUIRE_SIGNED_ENV = "THTH_REQUIRE_SIGNED_RELEASE"
 
+# **署名を確かめられなかったことを、取得の記録に残す言葉**（監査 2 回目・P2-4）。
+# `board` はこの綴りで「確認できず」を出し分けるので、**1 か所に置く**（文言を
+# 直したときに board だけ古い綴りを探す、を作らない）。
+SIGNATURE_ERROR = "署名を確かめられません"
+
 
 def require_signed_release() -> bool:
     return os.environ.get(REQUIRE_SIGNED_ENV) == "1"
@@ -511,6 +516,11 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
     # `REQUIRE_SIGNED_ENV` の注記）。確かめられなければ**更新せず、古いまま走る**
     # ——止めない（取りに行けない日に投稿を全部止めるのが重すぎるのと同じ理由）。
     if require_signed_release() and not verify_release_signature(app_dir, ref):
+        # **失敗を記録に残す**（監査 2 回目・P2-4）。前は `fetch` が成功した時点の
+        # `ok=True` がそのまま残り、**署名を確かめられずに取り込まなかった回でも
+        # board が「署名: 確認」と出していた**——`signature_checked` が見ていたのは
+        # 「確かめる設定か」だけで、**確かめた結果ではなかった**。
+        _record_check(app_dir, ref, ok=False, error=SIGNATURE_ERROR)
         return (log_prefix + f"**配布参照の署名を確かめられません**（`origin/{ref}`・"
                  f"{REQUIRE_SIGNED_ENV}=1）。**取り込まずに古いまま走ります**"), None
 

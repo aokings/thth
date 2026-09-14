@@ -461,3 +461,51 @@ def test_P2_3_AT_URIのpost_idはsendでも通る(isolated_account_factory):
     assert r.exit_code == 0, r
     state_dir = accounts_mod.state_dir_for(account["name"])
     assert [row["post_id"] for row in sent_mod.records(state_dir)] == [uri]
+
+
+# --------------------------------------------------------------- P2-4
+# 署名を確かめられずに配布を見送った回でも board が「署名: 確認」と出していた。
+
+import argparse  # noqa: E402
+
+from thth import cli as cli_mod  # noqa: E402
+from thth import report as report_mod  # noqa: E402
+from thth import selfupdate  # noqa: E402
+
+from tests.test_selfupdate import _advance_origin, _app_pair  # noqa: E402
+
+
+def test_P2_4_署名を確かめられなければ取得の記録に残る(tmp_path, monkeypatch):
+    """**確かめられなかったことを、別プロセスからも読める形で残す。**"""
+    pair = _app_pair(tmp_path)
+    _advance_origin(pair)
+    monkeypatch.setattr(os, "execve", lambda *a: None)
+    monkeypatch.setenv(selfupdate.REQUIRE_SIGNED_ENV, "1")
+
+    selfupdate.pull_and_reexec(["thth"], app_dir=pair["work"], log=lambda _l: None)
+
+    記録 = selfupdate.release_check(pair["work"])
+    assert 記録 is not None, "取得試行の記録が無い"
+    assert 記録["ok"] is False, 記録
+    assert selfupdate.SIGNATURE_ERROR in (記録.get("error") or ""), 記録
+
+
+@pytest.mark.parametrize("要求,記録,期待", [
+    (False, {"ok": True}, "署名: 未確認"),
+    (True, {"ok": True}, "署名: 確認"),
+    (True, {"ok": False, "error": selfupdate.SIGNATURE_ERROR},
+     "署名: 確認できず（取り込んでいません）"),
+    # 署名以外の失敗（取りに行けなかった）を「確認できず」に混ぜない。
+    (True, {"ok": False, "error": "origin に届きません"}, "署名: 確認"),
+])
+def test_P2_4_boardの1語が3つに分かれる(monkeypatch, capsys, 要求, 記録, 期待):
+    if 要求:
+        monkeypatch.setenv(selfupdate.REQUIRE_SIGNED_ENV, "1")
+    else:
+        monkeypatch.delenv(selfupdate.REQUIRE_SIGNED_ENV, raising=False)
+    monkeypatch.setattr(report_mod.selfupdate_mod, "release_check",
+                        lambda *a, **k: dict(記録))
+
+    cli_mod.cmd_board(argparse.Namespace(json=False, account=None))
+    出た = capsys.readouterr().out
+    assert 期待 in 出た, 出た
