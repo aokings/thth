@@ -204,12 +204,18 @@ class ThreadsAdapter(base.Adapter):
 
     def __init__(self, *, base_url: str = DEFAULT_BASE_URL, access_token: str = "",
                  user_id: str = "", wait_seconds: float = DEFAULT_WAIT_SECONDS,
-                 timeout: float = DEFAULT_TIMEOUT_SECONDS):
+                 timeout: float = DEFAULT_TIMEOUT_SECONDS, scopes=None):
         self.base_url = base_url.rstrip("/")
         self.access_token = access_token
         self.user_id = user_id
         self.wait_seconds = wait_seconds
         self.timeout = timeout
+        # **`.token` の `scopes`**（一覧なら「乗っている権限」・それ以外は不明）。
+        # `granted_scopes()` が読む。**書かない**（`.token` は読むだけ）。
+        self._token_scopes = list(scopes) if isinstance(scopes, list) else None
+        # `/debug_token` の答え（**プロセス内で 1 回だけ**引く・`granted_scopes()`）。
+        self._debug_scopes = None
+        self._debug_scopes_asked = False
 
     @classmethod
     def from_account(cls, account_cfg: dict, token: dict):
@@ -227,6 +233,8 @@ class ThreadsAdapter(base.Adapter):
             access_token=(token or {}).get("access_token", ""),
             user_id=(token or {}).get("user_id") or (account_cfg or {}).get("user_id", ""),
             wait_seconds=wait_seconds,
+            # `.token` の `scopes`（`thth auth` が書く一覧・`thth token set` は null）。
+            scopes=(token or {}).get("scopes"),
         )
 
     def _post(self, path: str, params: dict) -> dict:
@@ -361,11 +369,13 @@ class ThreadsAdapter(base.Adapter):
         query = (query or "").strip()
         if not query:
             raise base.AdapterError("場所の語が空です")
+        self._require_scope(self.LOCATION_PERMISSION)
         try:
             body = self._get("/v1.0/location_search",
                               {"q": query, "fields": self.LOCATION_SEARCH_FIELDS})
         except urllib.error.HTTPError as e:
             _raise_if_permission(e, self.LOCATION_PERMISSION)
+            self._raise_if_500_without_scope(e, self.LOCATION_PERMISSION)
             raise base.AdapterError(redact_mod.redact(
                 f"場所の検索に失敗: HTTP {e.code} {e.reason}")) from e
         except base.AdapterError as e:
@@ -967,13 +977,101 @@ class ThreadsAdapter(base.Adapter):
     KEYWORD_SEARCH_MAX_LIMIT = 100
     SEARCH_TYPES = ("TOP", "RECENT")
 
+    # ------------------------------------------------------------------
+    # **権限が無いと分かっているトークンでは叩かない**（本番 P1・2026-09-14）。
+    #
+    # v2.1.0 で `inbox` が言及（`threads_manage_mentions`）を流すようになり、
+    # `collect` が 10 分ごとに `GET /{user_id}/mentions` を叩くようになった。
+    # **5 権限のトークン**（`thth token set` の管理画面発行・`.token` の
+    # `scopes` は null）では Meta が **HTTP 500** を返す（4xx ではない・doctor
+    # v2.0.2 の実測でも同じ）。`_read()` は 500 を権限不足と読まないので
+    # `AdapterError` → `collect` の `errors` に毎 run 積まれ、`thth run` が
+    # 「採取は完全ではありません」を 10 分ごとに出していた。
+    #
+    # 直し方は 2 段。**「無いと分かっている」ときだけ**断り、**不明なら叩く**
+    # （判らないことを「無い」にしない・本物のサーバ障害と混ぜない）。
+    #   1. 口を叩く前に `_require_scope()`——`granted_scopes()` に無ければ HTTP を
+    #      叩かず `PermissionMissing`。
+    #   2. 叩いて 500 が返ったとき（`_raise_if_500_without_scope()`）——
+    #      `granted_scopes()` に無いと分かっていれば `PermissionMissing`、
+    #      不明なら従来どおり `AdapterError`。
+    #
+    # `granted_scopes()` の答えは `.token` の `scopes`（一覧のとき）→ 無ければ
+    # `/debug_token`（**プロセス内で 1 回だけ**・取れなければ None＝不明）。
+    # **`.token` には書かない**（読むだけ）。
+
+    SCOPES_FROM_TOKEN = ".token の scopes"
+    SCOPES_FROM_DEBUG_TOKEN = "/debug_token の scopes"
+
+    def granted_scopes(self) -> list | None:
+        """トークンに乗っている権限の一覧。**判らなければ None**（嘘の一覧を作らない）。
+
+        `.token` の `scopes` が一覧ならそれ。null なら `GET /v1.0/debug_token` を
+        **この実体で 1 回だけ**引いて覚える（失敗・形違いも「1 回聞いた」に数え、
+        None を覚える——毎 run 叩き直さない）。
+        """
+        if isinstance(self._token_scopes, list):
+            return list(self._token_scopes)
+        if not self._debug_scopes_asked:
+            self._debug_scopes_asked = True
+            self._debug_scopes = self._fetch_debug_scopes()
+        return list(self._debug_scopes) if isinstance(self._debug_scopes, list) else None
+
+    def _fetch_debug_scopes(self) -> list | None:
+        """`/debug_token` の `data.scopes`（**L2**・doctor の `_debug_token_probe()` と同じ口）。
+
+        取れなければ None（4xx/5xx・ネットワーク・形違いのどれでも）。ここで
+        例外を上げない——**権限の一覧が取れないことは、口を叩けない理由にならない。**
+        """
+        try:
+            body = self._get("/v1.0/debug_token", {"input_token": self.access_token})
+        except Exception:
+            return None
+        data = body.get("data") if isinstance(body, dict) else None
+        scopes = data.get("scopes") if isinstance(data, dict) else None
+        if not isinstance(scopes, list) or not all(isinstance(x, str) for x in scopes):
+            return None
+        return list(scopes)
+
+    def _scopes_source(self) -> str:
+        return (self.SCOPES_FROM_TOKEN if isinstance(self._token_scopes, list)
+                else self.SCOPES_FROM_DEBUG_TOKEN)
+
+    def _scope_known_missing(self, permission: str) -> bool:
+        """`permission` が **無いと分かっている**か（不明は False）。"""
+        granted = self.granted_scopes()
+        return isinstance(granted, list) and permission not in granted
+
+    def _require_scope(self, permission: str) -> None:
+        """無いと分かっている権限の口は **HTTP を叩かずに** `PermissionMissing`。"""
+        if self._scope_known_missing(permission):
+            raise base.PermissionMissing(
+                permission, f"{self._scopes_source()}に無いので叩いていません")
+
+    def _raise_if_500_without_scope(self, e: urllib.error.HTTPError,
+                                    permission: str) -> None:
+        """500 系で、かつ権限が無いと分かっているときだけ `PermissionMissing`。
+
+        **500 を無条件に権限不足にしない**——一覧が不明なら何もしない（呼び手が
+        従来どおり `AdapterError` にする）。
+        """
+        if e.code >= 500 and self._scope_known_missing(permission):
+            raise base.PermissionMissing(
+                permission,
+                redact_mod.redact(f"HTTP {e.code}・{self._scopes_source()}に無い")) from e
+
     def _read(self, fetch, *, permission: str, what: str):
         """`fetch()` を呼び、失敗を **`PermissionMissing` / `AdapterError`** に読み分ける。
 
         `_get()`・`_all_pages()` は `urllib.error.HTTPError`（4xx/5xx）と
         `RuntimeError`（200 だが `error`・形が違う）を上げる。doctor の
         `_run_probe()` と同じ判定で「権限が乗っていない」を切り出す。
+
+        **叩く前に `_require_scope()`**——無いと分かっている権限なら HTTP を
+        叩かない。500 は `_raise_if_500_without_scope()` で読み分ける（不明なら
+        `AdapterError` のまま）。
         """
+        self._require_scope(permission)
         try:
             return fetch()
         except urllib.error.HTTPError as e:
@@ -988,6 +1086,7 @@ class ThreadsAdapter(base.Adapter):
             http = redact_mod.redact(f"HTTP {e.code} {message}".strip())
             if _is_permission_error(err, message):
                 raise base.PermissionMissing(permission, http) from e
+            self._raise_if_500_without_scope(e, permission)
             raise base.AdapterError(f"{what}: {http}") from e
         except base.AdapterError:
             raise
@@ -1070,8 +1169,10 @@ class ThreadsAdapter(base.Adapter):
 
         `collect` は `capabilities()` に `inbox` を見て呼び、
         `data/sns/inbox/<YYYY-MM>.ndjson` に `message_id` で冪等に追記する。
-        権限が無ければ `PermissionMissing` が上がり、`collect` は `errors` に
-        1 行積んで続行する（投稿は止めない）。
+        権限が無ければ `PermissionMissing` が上がる（**無いと分かっていれば
+        HTTP を叩かずに**・`granted_scopes()`）。`collect` はそれを `errors` に
+        積まず `inbox_state: permission_missing` として残して続行する（投稿は
+        止めない・本番 P1 2026-09-14）。
         """
         return self.mentions(since=since)
 
