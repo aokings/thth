@@ -12,6 +12,36 @@ masaru からの申告で本 session からは裏取りできなかったもの�
 
 ## 0. 結論を先に（読みたい人はここだけでよい）
 
+### 0′. 2026-09-15 の訂正——「App Review は要らない」は半分だけ正しかった
+
+下の §0 は「tester のトークンに 11 権限が乗り、口が全部 ○ だった」ことから「自社利用に App Review は
+要らない」と結論した。**「口が開く」と「欲しいデータが返る」を混同していた。** doctor の探りは固定語・
+@threads・固定の場所で、**たまたま全部スタンダードアクセスで許される範囲**だった。
+
+2026-09-15 に `kopicha-threads`（11 権限・`thth auth` で再認可済み）で読み取りだけ試した結果（**L1**）と、
+Meta の Threads 専用ページの記述（同日読解・**L2**）:
+
+| 口 | 実測 | Meta の文書（L2） |
+|---|---|---|
+| `topics --search コーヒー` | 7 件、**全部 @kopi_chaba** | `docs/threads/keyword-search`: "If your app has not been approved for the `threads_keyword_search` permission, the search will be performed only on posts owned by the authenticated user. After approval, public posts will be searchable." |
+| `location search 渋谷` | Menlo Park 等の固定の見本 | `documentation/threads/create-posts/location-tagging`: "If your app has not been approved for the `threads_location_tagging` permission, the search will be performed only on the query 'Menlo Park'." |
+| `profile aoking` | HTTP 400 "Application does not have permission for this action" | `documentation/threads/threads-profiles`: "With standard access, only some of the official Meta accounts can be looked up. These include @meta, @threads, @instagram, and @facebook." |
+| `mentions` | 0 件（テスターからの言及だけ・道具の出力がそう言う） | — |
+
+**技術提供者の認証（2026-09-14 送信・審査中）だけでは開かない。** Graph API の access-levels 文書
+（`docs/graph-api/overview/access-levels/`・L2）: Advanced Access にはビジネス認証が**必要**だが、それで
+自動的に Advanced Access になるのではなく、**権限ごとに App Review の承認が要る**。
+
+**したがって、訂正後の結論**:
+
+- 投稿・返信・返信の取得・数・**削除**（`retract`）・自分の投稿の検索 —— **App Review 不要**（今のまま）
+- **世間の投稿の検索・本物の場所・他人のプロフィール・他人からの言及** —— **権限ごとに App Review が要る**
+  （`threads_keyword_search`・`threads_location_tagging`・`threads_profile_discovery`・`threads_manage_mentions`）
+
+出すなら §1〜§5 の台本がそのまま使える。**§1.3 のプライバシーポリシー URL は今も無い**（提出前に要る）。
+録画は、いま 11 権限の口が実際に動く（tester のデータで）ので撮れる。
+
+
 - **`masaru-threads` のトークンは既に 11 権限すべてを持っている**（`thth doctor` v2.0.2・`/debug_token` の
   結果・**L1**＝設計 v2 §4.3 が repo 内の実測として書いている）。他の運用アカウント（3 本）は 2026-09-09
   取得時の 5 権限（`threads_basic`・`threads_content_publish`・`threads_manage_replies`・
