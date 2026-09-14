@@ -92,9 +92,12 @@ def test_TB0_capabilitiesは実体を作らずに引ける():
     # 呼ばない（以前は毎回 `errors` に積んでいた・T0 の残件）。
     # `recent_posts` は F2 の配線（2026-09-13）で足した語。**3 媒体とも持つ**が、
     # 宛先は媒体が決める（`account_report.fetch_posts()` はこの語で塞ぐだけ）。
+    # `keyword_search`・`mentions`・`profile_lookup`・`inbox` は v2.1-A（設計 v2
+    # §4.3・2026-09-14）で足した語。Threads の 11 権限を使う読み取りの口 3 つと、
+    # 言及を `inbox` に流す配管（v2-3 の芽がそのまま受け皿）。
     assert threads_mod.ThreadsAdapter.capabilities() == {
         "topic", "link_preview", "views", "quota", "refresh", "recent_posts",
-        "account_insights"}
+        "account_insights", "keyword_search", "mentions", "profile_lookup", "inbox"}
 
 
 def test_F3_metrics_ofは新しい形だけを受ける():
@@ -303,10 +306,17 @@ def test_TB1_二度走らせても増えない(tmp_path, isolated_account_factor
 
 
 def test_TB1_inboxを持たない媒体には聞かない(tmp_path, isolated_account_factory):
-    """Threads には `inbox` を呼ばない（`capabilities()` に無い）。"""
-    account = isolated_account_factory()
+    """`inbox` を持たない媒体には呼ばない（`capabilities()` に無い）。
 
-    class _呼ばれたら失敗(threads_mod.ThreadsAdapter):
+    **Bluesky で見る**（2026-09-14・v2.1-A）。以前は Threads で見ていたが、Threads は
+    言及（`threads_manage_mentions`）を `inbox` に流すようになった（設計 v2 §4.3）。
+    Threads のままだと `inbox()` が呼ばれて `AssertionError` が `collect` の
+    `errors` に飲まれ、**呼ばれているのに通る**——見たい性質が見えなくなる。
+    """
+    from thth.adapters import bluesky as bluesky_mod
+    account = isolated_account_factory(media="bluesky")
+
+    class _呼ばれたら失敗(bluesky_mod.BlueskyAdapter):
         def __init__(self):
             pass
 
@@ -316,7 +326,9 @@ def test_TB1_inboxを持たない媒体には聞かない(tmp_path, isolated_acc
         def account_insights(self, user_id, *, since, until):
             return {}
 
-    collect_mod.collect_once(account["name"], adapter=_呼ばれたら失敗())
+    assert "inbox" not in _呼ばれたら失敗.capabilities()
+    result = collect_mod.collect_once(account["name"], adapter=_呼ばれたら失敗())
+    assert not any(e.startswith("inbox") for e in result["errors"]), result["errors"]
     assert not os.path.isdir(os.path.join(account["repo_dir"], "data", "sns", "inbox"))
 
 

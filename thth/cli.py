@@ -19,6 +19,7 @@ from . import account_report as account_report_mod
 from . import accounts as accounts_mod
 from . import approval as approval_mod
 from . import ask_cli
+from . import threads_read_cli
 from . import collect as collect_mod
 from . import core
 from . import jst
@@ -1233,6 +1234,10 @@ def _cmd_topics(args) -> int:
     # 断るしかない。以前はそこで「account 名を変えるか、この機能の語を変えて
     # ください」と案内していたが、**どちらも利用者には不可能**——account 名は
     # 運用中で、機能の語は道具の側にある。**フラグの形なら曖昧にならない。**
+    # `--search <語>`（設計 v2 §4.3・`threads_keyword_search`）。**口の中身は
+    # `thth/threads_read_cli.py`**——ここは入口を分けるだけ。
+    if getattr(args, "search", None) is not None:
+        return threads_read_cli.cmd_topics_search(args)
     if getattr(args, "history", None) is not None:
         return _topics_history(args.history, as_json=args.json)
     if getattr(args, "retract_note", None) is not None:
@@ -2643,6 +2648,9 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth ask before-you-post`（設計 v2 §1・§6 v2-1）。**口の中身は
     # `thth/ask_cli.py` に閉じる**——ここに足すのはこの 1 行だけ。
     ask_cli.register(sub)
+    # `thth mentions` / `thth profile` と `topics --search`（設計 v2 §4.3・v2.1-A）。
+    # **口の中身は `thth/threads_read_cli.py` に閉じる**——ここに足すのはこの 1 行だけ。
+    threads_read_cli.register(sub)
 
     return p
 

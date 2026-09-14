@@ -155,6 +155,14 @@ class ThreadsAdapter(base.Adapter):
     # 呼ぶかどうかを決める——無い媒体で毎回 `errors` に積むのをやめるため。
     CAPABILITIES = frozenset({"topic", "link_preview", "views", "quota", "refresh",
                               "recent_posts", "account_insights"})
+    # **v2.1-A（設計 v2 §4.3・2026-09-14）: 読み取りの口 3 つと `inbox`。**
+    # 上の「`inbox` は持たない」はこの日まで。`threads_manage_mentions` の
+    # 言及（`mentions()`）は「利用者から始まった会話」そのものなので、`inbox()`
+    # がそれを返し、`collect` の v2-3 の配管（`data/sns/inbox/<YYYY-MM>.ndjson`）
+    # がそのまま受け皿になる。**足す形**（既存の行を変えない・並行 Track と
+    # 同じ行を触らないため）。
+    CAPABILITIES = CAPABILITIES | frozenset({"keyword_search", "mentions",
+                                             "profile_lookup", "inbox"})
 
     # `thth auth`（OAuth の往復）に Meta の app.env が要る **唯一の媒体**。
     AUTH_NEEDS_APP_ENV = True
@@ -785,3 +793,171 @@ class ThreadsAdapter(base.Adapter):
 
     def refresh_token(self, token):
         raise NotImplementedError("T1 の範囲外（T2 で実装）")
+
+    # ------------------------------------------------------------------
+    # **11 権限を使う読み取りの口**（設計 v2 §4.3・v2.1-A・2026-09-14）。
+    #
+    # 3 つとも GET だけ。**権限不足は `base.PermissionMissing` で loud に上げる**
+    # （受け入れ (c)・判定は doctor と同じ `_is_permission_error()`）。他の失敗は
+    # `AdapterError`（伏字済み）。**黙って 0 件にしない・500 を黙って返さない。**
+    #
+    # 一次資料（2026-09-14 に WebFetch で読んだ・**L2**）:
+    #   - keyword-search: `GET /keyword_search?q=…&search_type=TOP|RECENT&limit=≤100`
+    #     返る field は id・text・media_type・permalink・timestamp・username・
+    #     has_replies・is_quote_post・is_reply。**上限は利用者あたり 24 時間で
+    #     2,200 回**（0 件の検索は数えない）。**未承認だと「自分の投稿だけ」が
+    #     検索対象**（"the search will be performed only on posts owned by the
+    #     authenticated user"）。
+    #   - threads-mentions: `GET /{user_id}/mentions?fields=…[&since&until]`。
+    #     「非公開の利用者の投稿は返らない」「承認前は tester による言及だけ」。
+    #   - threads-profiles: `GET /profile_lookup?username=…`。返る field は
+    #     username・name・profile_picture_url・biography・follower_count・
+    #     likes_count・quotes_count・reposts_count・views_count・is_verified。
+    #     **標準アクセスでは @meta・@threads・@instagram・@facebook だけ**・
+    #     「公開かつフォロワー 100 以上」・利用者あたり 24 時間で 1,000 回。
+    #
+    # `topic_tag` は keyword-search の資料の一覧に**無い**（Media の field 一覧に
+    # あり、`recent_posts()` は `/{user_id}/threads` で実際に取れている・L1）。
+    # 検索の応答に付くかは**L3**——付かなければ「タグ付きの割合」は「判らない」。
+
+    KEYWORD_SEARCH_FIELDS = ("id,text,username,timestamp,permalink,media_type,"
+                             "is_reply,is_quote_post,has_replies,topic_tag")
+    MENTIONS_FIELDS = ("id,text,username,timestamp,permalink,media_type,"
+                       "is_reply,has_replies")
+    PROFILE_FIELDS = ("username,name,profile_picture_url,biography,follower_count,"
+                      "likes_count,quotes_count,reposts_count,views_count,is_verified")
+    # **L2**（keyword-search「maximum 100」）。
+    KEYWORD_SEARCH_MAX_LIMIT = 100
+    SEARCH_TYPES = ("TOP", "RECENT")
+
+    def _read(self, fetch, *, permission: str, what: str):
+        """`fetch()` を呼び、失敗を **`PermissionMissing` / `AdapterError`** に読み分ける。
+
+        `_get()`・`_all_pages()` は `urllib.error.HTTPError`（4xx/5xx）と
+        `RuntimeError`（200 だが `error`・形が違う）を上げる。doctor の
+        `_run_probe()` と同じ判定で「権限が乗っていない」を切り出す。
+        """
+        try:
+            return fetch()
+        except urllib.error.HTTPError as e:
+            message = ""
+            err = None
+            try:
+                err = json.loads(e.read() or b"{}").get("error")
+                if isinstance(err, dict):
+                    message = str(err.get("message", ""))[:170]
+            except Exception:
+                pass
+            http = redact_mod.redact(f"HTTP {e.code} {message}".strip())
+            if _is_permission_error(err, message):
+                raise base.PermissionMissing(permission, http) from e
+            raise base.AdapterError(f"{what}: {http}") from e
+        except base.AdapterError:
+            raise
+        except RuntimeError as e:
+            # `_get()` の「200 だが error」・`_rows()`/`_all_pages()` の形の違い。
+            # 文面は既に伏字済み。
+            text = str(e)[:220]
+            if _is_permission_error(None, text):
+                raise base.PermissionMissing(permission, text) from e
+            raise base.AdapterError(f"{what}: {text}") from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise base.AdapterError(
+                redact_mod.redact(f"{what}: {type(e).__name__}: {e}")) from e
+
+    def _message_row(self, row: dict) -> dict:
+        """媒体の 1 行を `Message` の形（設計 v2 §4.2）に写す。**既存の鍵は残す。**
+
+        `replied_to`・`root_post` は**要求していない**（keyword-search・mentions の
+        資料の field 一覧に無い）。応答に付いていればそのまま写し、無ければ None。
+        """
+        username = row.get("username")
+        out = {
+            "message_id": row.get("id"),
+            "username": username,
+            "text": row.get("text"),
+            "timestamp": row.get("timestamp"),
+            "replied_to": row.get("replied_to"),
+            "root_post": row.get("root_post"),
+            "medium": MEDIUM,
+            "author_key": base.author_key(MEDIUM, username),
+            # SNS なので会話窓は無い（設計 v2 §4.1）。
+            "reply_deadline": None,
+        }
+        for key in ("permalink", "media_type", "is_reply", "is_quote_post",
+                    "has_replies", "topic_tag"):
+            if key in row:
+                out[key] = row[key]
+        return out
+
+    def keyword_search(self, q: str, *, search_type: str = "TOP",
+                       limit: int = 25) -> list:
+        """`GET /keyword_search`（`threads_keyword_search`・**L2**）。**1 頁だけ。**
+
+        返るのは `Message` の形の行（`_message_row()`）。**本文はここで返すだけ**
+        ——どこにも書かない（保存しないのは呼ぶ側の規律でもある・§4.3「入れないもの」）。
+        """
+        if not isinstance(q, str) or not q.strip():
+            raise base.AdapterError("検索の語が空です")
+        if search_type not in self.SEARCH_TYPES:
+            raise base.AdapterError(
+                f"search_type は {' / '.join(self.SEARCH_TYPES)} のどちらかです"
+                f"（{search_type!r}）")
+        if not isinstance(limit, int) or limit < 1 or limit > self.KEYWORD_SEARCH_MAX_LIMIT:
+            raise base.AdapterError(
+                f"limit は 1〜{self.KEYWORD_SEARCH_MAX_LIMIT} です（{limit!r}）")
+        params = {"q": q.strip(), "search_type": search_type,
+                  "fields": self.KEYWORD_SEARCH_FIELDS, "limit": limit}
+        rows = self._read(
+            lambda: self._rows(self._get("/v1.0/keyword_search", params), "投稿の検索"),
+            permission="threads_keyword_search", what="投稿の検索")
+        return [self._message_row(r) for r in rows]
+
+    def mentions(self, *, since=None) -> list:
+        """`GET /{user_id}/mentions`（`threads_manage_mentions`・**L2**）。**全頁。**
+
+        `since` は資料どおり Unix 時刻か読める日付（そのまま渡す）。
+        """
+        if not self.user_id:
+            raise base.AdapterError("user_id が判らないので言及を引けません")
+        params = {"fields": self.MENTIONS_FIELDS}
+        if since is not None:
+            params["since"] = since
+        rows = self._read(
+            lambda: self._all_pages(f"/v1.0/{self.user_id}/mentions", params, "言及"),
+            permission="threads_manage_mentions", what="言及の取得")
+        return [self._message_row(r) for r in rows]
+
+    def inbox(self, *, since=None) -> list:
+        """**言及を `inbox` に流す**（設計 v2 §4.3「v2-3 の芽がそのまま受け皿」）。
+
+        `collect` は `capabilities()` に `inbox` を見て呼び、
+        `data/sns/inbox/<YYYY-MM>.ndjson` に `message_id` で冪等に追記する。
+        権限が無ければ `PermissionMissing` が上がり、`collect` は `errors` に
+        1 行積んで続行する（投稿は止めない）。
+        """
+        return self.mentions(since=since)
+
+    def profile_lookup(self, username: str) -> dict:
+        """`GET /profile_lookup?username=…`（`threads_profile_discovery`・**L2**）。
+
+        返るのは資料の field をそのまま持つ dict（無い field は入れない）に
+        `medium`・`author_key` を添えたもの。**標準アクセスでは Meta 公式の
+        4 アカウントしか引けない**（それは権限の有無とは別の断り方で返る）。
+        """
+        if not isinstance(username, str) or not username.strip():
+            raise base.AdapterError("username が空です")
+        handle = username.strip().lstrip("@")
+        body = self._read(
+            lambda: self._get("/v1.0/profile_lookup",
+                              {"username": handle, "fields": self.PROFILE_FIELDS}),
+            permission="threads_profile_discovery", what="プロフィールの参照")
+        if not isinstance(body, dict):
+            raise base.AdapterError("プロフィールの参照: 応答が object ではありません")
+        out = {k: body[k] for k in self.PROFILE_FIELDS.split(",") if k in body}
+        if "username" not in out:
+            raise base.AdapterError(
+                "プロフィールの参照: 応答に username がありません（取れたことにしません）")
+        out["medium"] = MEDIUM
+        out["author_key"] = base.author_key(MEDIUM, out["username"])
+        return out

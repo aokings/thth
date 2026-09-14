@@ -59,6 +59,26 @@ class UnknownMedium(AdapterError):
     """台帳の `media` を知らない（`thth/adapters/__init__.py` が投げる・T-B0）。"""
 
 
+class PermissionMissing(AdapterError):
+    """**その口に要る権限がトークンに乗っていない**（設計 v2 §4.3・受け入れ (c)）。
+
+    `thth doctor` と同じ判定（`threads._is_permission_error()`——Meta の
+    `error.message` に `permission`、または権限系 code）で上げる。**黙って 0 件
+    にしない・500 を黙って返さない**——CLI は「`<permission>` がトークンに
+    乗っていません。`thth auth <account>` をやり直してください」で rc=2、
+    `collect` は `errors` に 1 行積んで続行する（投稿は止めない）。
+
+    `permission` は権限の綴り（`threads_keyword_search` 等）。**媒体の語**だが、
+    読む側（CLI・collect）は文言に流すだけで分岐はしない。
+    """
+
+    def __init__(self, permission: str, detail: str = ""):
+        self.permission = permission
+        self.detail = detail
+        super().__init__(f"{permission} がトークンに乗っていません"
+                         + (f"（{detail}）" if detail else ""))
+
+
 # `Adapter.capabilities()` が返しうる語（設計 v2 §4.2）。**ここに無い語を返さない**
 # ——読み手（`select`・`collect`・`core`）はこの一覧だけを見て分岐する。
 KNOWN_CAPABILITIES = frozenset({
@@ -79,6 +99,14 @@ KNOWN_CAPABILITIES = frozenset({
     # `account_insights: …` が積まれ、**採取が「1 本でも失敗したか」で
     # 非ゼロ終了し続けた**——「無い」を「失敗」と呼ばないための語。
     "account_insights",
+    # --- Threads の 11 権限を使う読み取りの口（設計 v2 §4.3・v2.1-A・2026-09-14）
+    # 語で公開投稿を検索できる（`keyword_search()`・`threads_keyword_search`）。
+    "keyword_search",
+    # 自分への言及を引ける（`mentions()`・`threads_manage_mentions`）。Threads は
+    # これを `inbox` にも流す（言及＝利用者から始まった会話）。
+    "mentions",
+    # 公開プロフィールを引ける（`profile_lookup()`・`threads_profile_discovery`）。
+    "profile_lookup",
 })
 
 
