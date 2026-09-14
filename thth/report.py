@@ -413,6 +413,10 @@ def board_summary(now=None) -> dict:
                     "behind_cached_release": behind,
                     "ahead_cached_release": ahead,
                     "comparison_basis": "recorded_release",
+                    # **署名を確かめているか**（セキュリティ監査 2026-09-14・P2-5）。
+                    # 既定は off（いまの release は無署名なので、無条件に入れると
+                    # 次の配布で VM が止まる）。**確かめていないことを黙らない。**
+                    "signature_checked": selfupdate_mod.require_signed_release(),
                     "comparison_ref_sha": basis,
                     # **board は取りに行かないので、常に未確認。**
                     "remote_current_verified": False}}

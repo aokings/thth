@@ -781,3 +781,51 @@ def test_記録が無い画面では数を出さない(tmp_path, monkeypatch, ca
     assert app["behind_cached_release"] is None, \
         "**基準が無いのに数を出している**（数える側が読み直して埋めた）"
     assert app["ahead_cached_release"] is None
+
+
+# --- セキュリティ監査 2026-09-14・P2-5 ----------------------------------------
+# `thth run` は `merge --ff-only origin/release` で**自分自身を入れ替えてから**
+# 走る。確かめているのは「ff できるか」だけなので、origin を握った者は次の
+# timer（10 分）で VM の上に任意のコードを置ける。**だが既定では入れられない**
+# ——いまの release の commit は無署名なので、無条件に検証すると次の配布で VM が
+# 止まる（設計 §8 の止まる条件）。環境変数で明示したときだけ検証する。
+
+def test_P2_5_署名を要求すると未署名の配布は取り込まない(tmp_path, monkeypatch):
+    pair = _app_pair(tmp_path)
+    before = selfupdate.head(pair["work"])
+    _advance_origin(pair)
+
+    execs = []
+    monkeypatch.setattr(os, "execve", lambda *a: execs.append(a))
+    monkeypatch.setenv(selfupdate.REQUIRE_SIGNED_ENV, "1")
+    message = selfupdate.pull_and_reexec(["thth"], app_dir=pair["work"],
+                                          log=lambda _l: None)
+
+    assert selfupdate.head(pair["work"]) == before, "未署名なのに取り込んだ"
+    assert execs == [], "未署名なのに実行しなおした"
+    # **黙って古いまま走らない。**
+    assert message and "署名を確かめられません" in message
+
+
+def test_P2_5_既定では従来どおり取り込む(tmp_path, monkeypatch):
+    """**既定を変えない**（無条件に入れると次の配布で VM が止まる）。"""
+    pair = _app_pair(tmp_path)
+    before = selfupdate.head(pair["work"])
+    _advance_origin(pair)
+    monkeypatch.delenv(selfupdate.REQUIRE_SIGNED_ENV, raising=False)
+    monkeypatch.setattr(os, "execve", lambda *a: None)
+
+    selfupdate.pull_and_reexec(["thth"], app_dir=pair["work"], log=lambda _l: None)
+    assert selfupdate.head(pair["work"]) != before, "既定の挙動が変わっている"
+
+
+def test_P2_5_boardは署名を確かめているかを1語出す(tmp_path, monkeypatch, capsys):
+    """既定は「未確認」——確かめていないことを黙らない。"""
+    monkeypatch.delenv(selfupdate.REQUIRE_SIGNED_ENV, raising=False)
+    assert report_mod.board_summary()["app"]["signature_checked"] is False
+    monkeypatch.setenv(selfupdate.REQUIRE_SIGNED_ENV, "1")
+    assert report_mod.board_summary()["app"]["signature_checked"] is True
+
+    monkeypatch.delenv(selfupdate.REQUIRE_SIGNED_ENV, raising=False)
+    cli_mod.cmd_board(argparse.Namespace(json=False, account=None))
+    assert "署名: 未確認" in capsys.readouterr().out
