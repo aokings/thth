@@ -65,18 +65,53 @@ thth doctor <account>
 | 2-4 | **開発モードのまま**にする。App Review は通さない | 設計 §8-8・§8-17 | **L2** |
 | 2-5 | App roles > Roles の **「Add or Remove Threads Test Users」** で、使う Threads アカウントを 1 本ずつ **Threads tester** に招待する。**招待だけでは何も起きない**ので、使う見込みのあるアカウントは先に招待しておいてよい | 設計 §2.2・§4.2 | **L2**（招待の場所）／**L3**（「招待だけでは何も起きない」） |
 | 2-6 | 招待した数だけ、**それぞれのアカウントで Threads アプリを開いて承諾**する | 設計 §4.2 | **L3** |
-| 2-7 | Settings の **「Threads app ID」「Threads app secret」**を控える。**Meta アプリ側の ID とは別物**で、取り違えると認可が通らない | 設計 §2.2 | **L2** |
-| 2-8 | `thth auth` を使うなら Redirect URI を登録する（静的サイトの URL でよい。認可後に URL バーへ `?code=…#_` が付いて戻る。末尾の `#_` は code に含めない） | 設計 §9-2 | **L3** |
+| 2-7 | **ユースケース → Threads → 設定** の **「Threads アプリ ID」「Threads の app secret」**を控える。**「アプリの設定 → ベーシック」に出る Meta アプリ ID とは別物**です。取り違えると認可画面まで行かず、Meta が `error_code 4476002`（アプリ ID が送信されませんでした）を返します | 設計 §2.2 | **L1**（2026-09-15 に取り違えて実際にこのエラーを踏んだ） |
+| 2-8 | `thth auth` を使うなら、同じ **設定** 画面の**コールバック URL を 3 つとも埋めて保存**する。**1 つだけ入れて保存すると「フォームを保存できません」で弾かれます**（リダイレクトだけ入れて踏んだ）。登録しないまま認可すると `error_code 1349168`（リダイレクト URI が未登録） | 設計 §9-2 | **L1**（2026-09-15・両方のエラーを実際に踏んだ） |
 
-### 降りてくる権限は 5 つだけ
+### コールバック URL は 3 つセット（2026-09-15 追記）
 
-**管理画面で 11 個の権限を「アプリレビューに追加」しても、tester の認可画面に出るのは 5 つです**（設計 §2.2・**L3**）。
+masaru の値（`thth.me` は THTH 専用の Cloudflare Worker）:
 
-出る: `threads_basic`・`threads_content_publish`・`threads_manage_replies`・`threads_manage_insights`・`threads_read_replies`
+| 欄 | 値 |
+|---|---|
+| コールバック URL をリダイレクト | `https://thth.me/callback/` |
+| コールバック URL をアンインストール | `https://thth.me/deauthorize` |
+| コールバック URL を削除 | `https://thth.me/data-deletion` |
 
-出ない: `threads_delete`・`threads_keyword_search`・`threads_location_tagging`・`threads_manage_mentions`・`threads_profile_discovery`・`threads_share_to_instagram`
+後ろの 2 本は Meta が要求するだけで、Worker は 200 と定型の JSON を返すだけです
+（`callback/src/index.js`・**L1**）。**台帳の `redirect_uri` は、ここに登録した値と
+1 文字違わず同じにしてください**——`https://thth.me/` と `https://thth.me/callback/`
+は別物として扱われます。
 
-**投稿・返信・返信の取得・数の取得は 5 つで足ります。** 届かないのは検索・メンション・削除・位置情報です。**削除ができないので、事故の後始末は Threads の画面から手で行います**（設計 §2.2）。
+### 権限は 11 個とも降りてくる（2026-09-15 に訂正）
+
+**以前ここには「tester の認可画面に出るのは 5 つだけ」と書いてありました。誤りです。**
+2026-09-15 に `thth auth` で 3 アカウントを認可し直したところ、**認可画面に 11 個すべて**が
+並び、承認後の `/debug_token` も 11 個を返しました（**L1**・`thth doctor` の出力）。
+
+出る 11 個: `threads_basic`・`threads_content_publish`・`threads_manage_replies`・
+`threads_manage_insights`・`threads_read_replies`・`threads_manage_mentions`・
+`threads_keyword_search`・`threads_delete`・`threads_location_tagging`・
+`threads_profile_discovery`・`threads_share_to_instagram`
+
+古い記述が生まれた事情: 最初の 4 アカウントは 5 権限しか足していない時期に認可されており、
+その状態が長く続いていたため「5 つしか降りてこない」と読み違えていました。
+
+### 権限を増やしたら、`thth auth` で認可し直す（`thth token set` では変わらない）
+
+**管理画面の「ユーザートークン生成ツール」は、そのアカウントが過去に承認した範囲でしか
+トークンを出しません。** 11 個に増やしたあとで生成ツールを押しても、**5 権限のトークンが
+出てきます**（2026-09-15 に kopi_chaba で実測・**L1**）。生成ツールの行には「取り消す」も
+権限の選択も無いので、**権限を増やす／減らすときは `thth auth`（OAuth の往復）を通すしか
+ありません**——`thth auth` は要求する scope を認可 URL に載せるので、承認画面がその一覧で出ます。
+
+| やりたいこと | 使う口 |
+|---|---|
+| 期限が切れかけたトークンを入れ替える（権限は同じ） | 生成ツール ＋ `thth token set <account> --force` |
+| **権限の内訳を変える** | **`thth auth <account>`**（§2-8 のコールバック URL 登録が要る） |
+
+`.token` の `scopes_source` で、どちらで入れたかが後から分かります
+（`response`＝`thth auth` が `/debug_token` に訊いた・`unknown`＝生成ツール発行で判らない）。
 
 **「Threads API はビジネス認証済みアカウントが要る」という第三者の記述があります**（設計 §8-8・**L3**・公式で裏が取れていない）。開発モード＋tester なら不要のはずですが、アプリを作る場面で分かるので、違っていたらこの文書に足してください。
 
@@ -328,7 +363,7 @@ thth auth demo-threads
 
 **トークンが別のアカウントのものなら保存しません**（同上・`thth token set` と同じ守り）。台帳の `handle` と、トークンが実際に指しているアカウントが食い違えば rc=1 で止まります。
 
-**既定で要求する scope は 11 個**（`thth/scopes.py` `DEFAULT_SCOPES`・**L1**）。裁定は「例外なく全部」（設計 §8-14）ですが、**tester に実際に降りるのは §2 の 5 つだけ**（**L3**）。
+**既定で要求する scope は 11 個**（`thth/scopes.py` `DEFAULT_SCOPES`・**L1**）。裁定は「例外なく全部」（設計 §8-14）で、**11 個とも tester に降ります**（2026-09-15 に 3 アカウントで実測・**L1**・§2 の「権限は 11 個とも降りてくる」）。
 
 ### 60 日と更新
 
