@@ -6,7 +6,9 @@
   - "long"（GET /access_token）
   - "me"（GET /v1.0/me）
   - "refresh"（GET /refresh_access_token）
-値は "ok" | "4xx" | "5xx" | "no_token"。
+  - "debug"（GET /v1.0/debug_token・既定は "absent"＝404。"ok" で `data.scopes` に
+    `debug_scopes` を返す。`thth auth` が scope の記録元を切り替える試験用）
+値は "ok" | "4xx" | "5xx" | "no_token"（"debug" だけ "absent" も）。
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     refreshed_token = "REFRESHED-SECRET-TOKEN"
     me_payload = {"id": "999999", "username": "nigamilab"}
     expires_in = 5184000
+    debug_scopes = ["threads_basic", "threads_content_publish"]
 
     def _respond_json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -70,6 +73,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._respond_for(self.behavior.get("refresh", "ok"),
                                {"access_token": self.refreshed_token, "token_type": "bearer",
                                 "expires_in": self.expires_in})
+        elif parsed.path == "/v1.0/debug_token":
+            mode = self.behavior.get("debug", "absent")
+            if mode == "absent":
+                self._respond_json(404, {"error": "not found"})
+            else:
+                self._respond_for(mode, {"data": {"is_valid": True,
+                                                  "scopes": list(self.debug_scopes),
+                                                  "user_id": "999999"}})
         else:
             self._respond_json(404, {"error": "not found"})
 

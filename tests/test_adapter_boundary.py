@@ -589,7 +589,11 @@ def test_TB5_threadsの出力は現行と同じ(tmp_path, monkeypatch, isolated_
     monkeypatch.setattr(doctor_mod, "_get", fake_get)
     report = doctor_mod.diagnose(account["name"])
 
-    assert 叩いた == [
+    # **probe を移す前からある 6 行は、口も並びもそのまま**。2026-09-14 に残り
+    # 7 権限の行を**この後ろに**足した（`tests/test_doctor_all_permissions.py`）
+    # ので、ここは「先頭 6 つが現行と同じ」を固定する（増えた分は許す）。
+    既存 = 6
+    assert 叩いた[:既存] == [
         "/v1.0/me",
         "/v1.0/999999/threads",
         "/v1.0/999999/threads_publishing_limit",
@@ -597,7 +601,7 @@ def test_TB5_threadsの出力は現行と同じ(tmp_path, monkeypatch, isolated_
         "/v1.0/999999/threads_insights",
         "/v1.0/POST123/conversation",
     ], 叩いた
-    assert [p["permission"] for p in report["probes"]] == [
+    assert [p["permission"] for p in report["probes"]][:既存] == [
         "threads_basic", "threads_basic", "threads_content_publish",
         "threads_manage_insights", "threads_manage_insights", "threads_read_replies",
     ]
@@ -605,7 +609,9 @@ def test_TB5_threadsの出力は現行と同じ(tmp_path, monkeypatch, isolated_
         # 人向けの表示（`run_doctor`）が使う鍵。**足すのはよいが、消さない。**
         assert {"label", "permission", "key", "ok", "detail"} <= set(p)
         assert "body" not in p, "**本文を返り値に残さない**（値が漏れる）"
-    assert all(p["ok"] is True for p in report["probes"])
+    # 読み取りの口が無い権限（`ok=None`）が後ろに並ぶので、**叩いた行は全部○**。
+    assert all(p["ok"] is True for p in report["probes"][:既存])
+    assert all(p["ok"] is True for p in report["probes"] if p["ok"] is not None)
 
 
 def test_TB5_投稿が無ければ返信のprobeは判定不能のまま(tmp_path, monkeypatch,
