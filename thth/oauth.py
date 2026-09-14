@@ -27,6 +27,7 @@ from __future__ import annotations
 import getpass
 import json
 import os
+import secrets
 import sys
 import urllib.error
 import urllib.parse
@@ -35,6 +36,7 @@ import urllib.request
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
 from . import appenv
+from . import httpsafe
 from . import jst
 from . import redact as redact_mod
 from . import scopes as scopes_mod
@@ -67,14 +69,89 @@ def _authorize_base_url() -> str:
     return os.environ.get("THTH_THREADS_AUTH_BASE_URL", AUTHORIZE_BASE_URL_DEFAULT).rstrip("/")
 
 
-def build_authorize_url(app_id: str, redirect_uri: str, scopes: list) -> str:
+def build_authorize_url(app_id: str, redirect_uri: str, scopes: list,
+                         state: str | None = None) -> str:
+    """認可 URL を組む。**`state` を必ず載せる**（セキュリティ監査 2026-09-14・P2-4）。
+
+    `state` が無いと、**この道具が出した URL の戻りかどうかを確かめる術が無い**。
+    別のところで作られた `code`（攻撃者のアプリの認可コード・別アカウントの
+    戻り）を貼られても、そのまま交換して `.token` に書いていた。
+    """
     params = {
         "client_id": app_id,
         "redirect_uri": redirect_uri,
         "scope": ",".join(scopes),
         "response_type": "code",
     }
+    if state:
+        params["state"] = state
     return f"{_authorize_base_url()}/oauth/authorize?" + urllib.parse.urlencode(params)
+
+
+def _new_state() -> str:
+    """推測できない `state`（テストはここを差し替える）。"""
+    return secrets.token_urlsafe(16)
+
+
+def _auth_state_path(account_name: str) -> str:
+    return os.path.join(accounts_mod.state_dir_for(account_name), "auth_state.json")
+
+
+def _save_auth_state(account_name: str, state: str) -> None:
+    """出した URL の `state` を残す（**次の実行が戻りを照合できるように**）。
+
+    `thth auth <account> --code …` は**別の実行**なので、その場で作った `state`
+    とは照合できない（URL を出したのは前回の実行）。認可 URL を出すたびに
+    600 で残し、照合できたら消す。
+    """
+    try:
+        secrets_fs.atomic_write_json(
+            _auth_state_path(account_name),
+            {"state": state, "created_at": jst.iso()}, mode=0o600)
+    except OSError:
+        pass                       # 残せなくても認可そのものは続けられる
+
+
+def _saved_auth_state(account_name: str):
+    try:
+        with open(_auth_state_path(account_name), encoding="utf-8") as f:
+            return (json.load(f) or {}).get("state")
+    except (OSError, ValueError):
+        return None
+
+
+def _clear_auth_state(account_name: str) -> None:
+    try:
+        os.remove(_auth_state_path(account_name))
+    except OSError:
+        pass
+
+
+def extract_state(raw: str):
+    """貼られた戻り URL から `state` を取り出す（無ければ None）。
+
+    `extract_code()` と同じ揺れに耐える（末尾の `#_`・URL 全体・前後の空白）。
+    """
+    text = (raw or "").strip()
+    for sep in ("#_", "#"):
+        idx = text.find(sep)
+        if idx != -1:
+            text = text[:idx]
+            break
+    if "state=" not in text:
+        return None
+    after = text.split("state=", 1)[1]
+    for sep in ("&", " ", "\t", "\n"):
+        cut = after.find(sep)
+        if cut != -1:
+            after = after[:cut]
+    after = after.strip()
+    if not after:
+        return None
+    try:
+        return urllib.parse.unquote(after)
+    except Exception:              # noqa: BLE001
+        return after
 
 
 def extract_code(raw: str) -> str:
@@ -141,7 +218,7 @@ def extract_token(raw: str) -> str:
 def _post_form(url: str, params: dict, *, timeout: float) -> dict:
     data = urllib.parse.urlencode(params).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with httpsafe.urlopen(req, timeout=timeout) as resp:
         body = resp.read()
         return json.loads(body) if body else {}
 
@@ -149,7 +226,7 @@ def _post_form(url: str, params: dict, *, timeout: float) -> dict:
 def _get_json(url: str, params: dict, *, timeout: float) -> dict:
     qs = urllib.parse.urlencode(params)
     req = urllib.request.Request(f"{url}?{qs}", method="GET")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with httpsafe.urlopen(req, timeout=timeout) as resp:
         body = resp.read()
         return json.loads(body) if body else {}
 
@@ -293,16 +370,52 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
 
     scope_list = account_cfg.get("scopes") or scopes_mod.DEFAULT_SCOPES
 
-    url = build_authorize_url(app_id, redirect_uri, scope_list)
+    # **`state` を載せて出し、戻りで照合する**（セキュリティ監査 2026-09-14・P2-4）。
+    # 前は `state` が無かったので、**この道具が出した URL の戻りかどうかを
+    # 確かめる術が無かった**——別のところで作られた `code` を貼られても、
+    # そのまま交換して `.token` に書いていた。
+    #
+    # 照合先は 2 つ: いま出した URL の `state`（対話でその場で貼る筋）と、
+    # **前回の実行が出した URL の `state`**（`--code` で後から貼る筋。URL を
+    # 出したのは別のプロセスなので、残しておかないと照合できない）。
+    state = _new_state()
+    previous_state = _saved_auth_state(account_name)
+    _save_auth_state(account_name, state)
+
+    url = build_authorize_url(app_id, redirect_uri, scope_list, state=state)
     _out("次の URL をブラウザで開いて認可してください:", log=log)
     _out(url, log=log)
-    _out("承認後の戻り URL に付く code を貼ってください"
-         "（そのまま貼ってよい。#_ が付いていても、URL 全体でも構いません）:", log=log)
+    _out("承認後の戻り URL を**そのまま**貼ってください"
+         "（`code` と `state` の両方が要ります。#_ が付いていても構いません）:", log=log)
 
-    raw = code if code is not None else input_func()
+    if code is not None:
+        raw = code
+    else:
+        try:
+            raw = input_func()
+        except EOFError:
+            # 対話でない口から呼ばれた（パイプ・`ssh` に `-t` が無い）。
+            # **黙って traceback にしない**（作法 5）。
+            _out("戻り URL を読めませんでした（端末から読めません）。"
+                 "上の URL をブラウザで開いて、戻り URL を "
+                 f"`thth auth {account_name} --code '<戻り URL 全体>'` で渡してください。",
+                 log=log)
+            return 2
     code_value = extract_code(raw)
     if not code_value:
         _out("code が読み取れませんでした", log=log)
+        return 2
+
+    got_state = extract_state(raw)
+    if not got_state:
+        _out("戻り URL に state がありません。**受け付けません。**"
+             "（`code` の値だけでなく、**戻り URL 全体**を貼ってください。"
+             "この道具が出した URL の戻りであることを確かめられません）", log=log)
+        return 2
+    if got_state != state and got_state != previous_state:
+        _out("state が一致しません。**受け付けません。**"
+             "（この道具が出した認可 URL の戻りではありません。"
+             "もう一度 `thth auth` から始めてください）", log=log)
         return 2
 
     try:
@@ -334,6 +447,18 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
     user_id = me.get("id", "")
     username = me.get("username", "")
 
+    # **取り違え防止**（セキュリティ監査 2026-09-14・P2-4）。`thth token set` は
+    # 前からこれを見ていたが、`thth auth` には無かった——**同じ危険の同じ守りが
+    # 片方にしか無い**。台帳の handle と、トークンが実際に指しているアカウントが
+    # 食い違ったら保存しない。通してしまうと、そのアカウントの queue の本文が
+    # 別のアカウントから出る（取り消せない公開行為）。
+    handle = (account_cfg.get("handle") or "").strip()
+    if handle and username and handle.lower() != username.lower():
+        _out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
+             f"このトークンは {username} のものです。", log=log)
+        _out("正しいアカウントで認可し直すか、台帳の handle を直してください。", log=log)
+        return 1
+
     token_path = account_cfg["token"]
     token_data = {
         "access_token": long_token,
@@ -344,6 +469,8 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
         "scopes": scope_list,
     }
     secrets_fs.atomic_write_json(token_path, token_data, mode=0o600)
+    # 使い終わった `state` は残さない（1 回きり）。
+    _clear_auth_state(account_name)
 
     _out(f"user_id={user_id} username={username}", log=log)
     _out(f"保存しました: {token_path}（600）", log=log)

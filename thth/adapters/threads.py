@@ -14,6 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .. import httpsafe
 from .. import jst
 from .. import redact as redact_mod
 from . import base
@@ -134,7 +135,7 @@ class ThreadsAdapter(base.Adapter):
         url = f"{self.base_url}{path}"
         data = urllib.parse.urlencode(params).encode("utf-8")
         req = urllib.request.Request(url, data=data, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with httpsafe.urlopen(req, timeout=self.timeout) as resp:
             body = resp.read()
             return json.loads(body) if body else {}
 
@@ -233,7 +234,7 @@ class ThreadsAdapter(base.Adapter):
                 url = f"{url}{sep}access_token={urllib.parse.quote(self.access_token)}"
         else:
             url = f"{self.base_url.rstrip('/')}{path}?" + urllib.parse.urlencode(p)
-        with urllib.request.urlopen(url, timeout=self.timeout) as resp:
+        with httpsafe.urlopen(url, timeout=self.timeout) as resp:
             body = json.loads(resp.read() or b"{}")
         # **200 で返ってきた `error` を、取れたことにしない**（監査 2026-09-11）。
         # 失敗すれば `urlopen` が上げるので、採取側は「例外なら記録を書かない」
@@ -545,6 +546,22 @@ class ThreadsAdapter(base.Adapter):
                 raise RuntimeError(
                     f"{what}: 次の頁の指し先が読めません"
                     f"（{type(nxt).__name__}）。**途中までを取れたことにしません**")
+            # **次の頁の指し先は「同じサーバの https」だけ**（セキュリティ監査
+            # 2026-09-14・P1-2）。`paging.next` は**サーバが自由に書ける文字列**
+            # で、`_get(absolute_url=...)` はそれに `access_token` を付けて叩いて
+            # いた——`{"paging": {"next": "https://attacker.example/x"}}` を 1 度
+            # 返すだけで、**アクセストークンが第三者のログに載る**。
+            #
+            # 読めない形（型が違う）と同じ扱いにする（`RuntimeError`・**途中まで
+            # を取れたことにしない**）。追わずに黙って終端にすると、取得済の印が
+            # 付いて次の刻みでやり直せなくなる。
+            parts = urllib.parse.urlsplit(nxt)
+            base_netloc = urllib.parse.urlsplit(self.base_url).netloc
+            if parts.scheme != "https" or parts.netloc != base_netloc:
+                raise RuntimeError(
+                    f"{what}: 次の頁が別のホストを指しています"
+                    f"（{parts.scheme}://{parts.netloc} ≠ https://{base_netloc}）。"
+                    f"**追いません**（access_token を外へ出さないため）")
             if nxt in seen_urls:
                 # **同じ頁を指し続ける**（API 側の不具合・cursor の取り違え）。
                 # **黙って回り続けない。**

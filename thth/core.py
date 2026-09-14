@@ -17,6 +17,7 @@ from . import approval as approval_mod
 from . import inflight as inflight_mod
 from . import jst
 from . import lock as lock_mod
+from . import postid as postid_mod
 from . import queuefile
 from . import redact as redact_mod
 from . import runs as runs_mod
@@ -536,6 +537,26 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                             file=chosen.path, error=err)
 
     post_id = publish_result.post_id
+    # **媒体が返した `post_id` を、確かめずに書き戻さない**（セキュリティ監査
+    # 2026-09-14・P1-4）。`post_id` は front-matter の 1 行になり、台帳の
+    # ファイル名にもなる。改行の入った `id` を返すサーバ（乗っ取られた媒体・
+    # 間に入った proxy・偽の口）が相手だと、**書き戻しが front-matter に
+    # `status: approved` を後勝ちで足せた**——出したはずの原稿が承認済みに戻り、
+    # 次の実行がもう一度出す。
+    #
+    # ここで断るときの扱いは **`publish_ambiguous` と同じ**（§3.5）。**出たこと
+    # は判っているが、それを記録できない**——記録できないまま inflight を消すと
+    # 二重投稿になるので、残して人を呼ぶ。再投稿はしない。
+    if not postid_mod.is_usable(post_id) or writeback.has_control_chars(post_id):
+        msg = ("媒体が返した post_id が台帳に書けない形です"
+               "（書き戻しません・再公開もしません・inflight を残します）: "
+               f"{chosen.path}")
+        log(msg)
+        _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
+                    status="error", error="unusable_post_id")
+        inflight_mod.update(state_dir, mismatch_fields=["post_id"])
+        return ThrowResult(exit_code=1, mode=mode, action="inflight", message=msg,
+                            file=chosen.path, error="unusable_post_id")
     inflight_mod.update(state_dir, post_id=post_id)
 
     posted_at = publish_result.ts

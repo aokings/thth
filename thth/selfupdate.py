@@ -42,6 +42,40 @@ REEXEC_ENV = "THTH_SELF_UPDATED"
 # 動かなければ本番は変わらない。
 RELEASE_REF = os.environ.get("THTH_RELEASE_REF") or "release"
 
+# **配布参照の署名を確かめるか**（セキュリティ監査 2026-09-14・P2-5）。
+#
+# `thth run` は `git fetch` → `git merge --ff-only origin/<ref>` で**自分自身を
+# 入れ替えてから走る**。確かめているのは「ff できるか」だけなので、**origin を
+# 握った者は、次の timer（10 分）で VM の上に任意のコードを置ける。**
+#
+# **だが既定で入れることはできない。** いまの release の commit は署名されて
+# いない（開発の commit は無署名）。無条件に検証すると**次の配布で VM が止まる**
+# （設計 §8 の止まる条件）。よって**環境変数で明示的に入れたときだけ**検証し、
+# 既定では「確かめていない」ことを board に 1 語出す。
+#
+# **署名を始めるときの手順**（3 行）:
+#   1. 配布する人の手元で `git config --global commit.gpgsign true`（または
+#      `gpg.format=ssh` ＋ `user.signingkey`）を入れ、`release` を署名付きで進める。
+#   2. VM で公開鍵を信頼させる（gpg なら import、ssh 署名なら
+#      `gpg.ssh.allowedSignersFile` に 1 行）。`git verify-commit origin/release`
+#      が手で通ることを確かめる。
+#   3. VM の unit に `Environment=THTH_REQUIRE_SIGNED_RELEASE=1` を足す。
+#      以後、署名を確かめられない配布は**取り込まれず、古いまま走る**（止まらない）。
+REQUIRE_SIGNED_ENV = "THTH_REQUIRE_SIGNED_RELEASE"
+
+
+def require_signed_release() -> bool:
+    return os.environ.get(REQUIRE_SIGNED_ENV) == "1"
+
+
+def verify_release_signature(app_dir: str, ref: str) -> bool:
+    """`origin/<ref>` の commit 署名を確かめられるか（`git verify-commit`）。
+
+    **確かめられないこと**と**署名が偽物であること**を区別しない——どちらも
+    「取り込まない」で同じだから（作法 5・fail-closed）。
+    """
+    return _git(["verify-commit", _remote_ref(ref)], cwd=app_dir).returncode == 0
+
 # **「渡していない」と「渡したが不明」を分ける**（外部レビュー・2026-09-12）。
 #
 # `base=None` を「省略」と読んでいたため、**記録が無い画面が `None` を渡すと、
@@ -471,6 +505,14 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
         return (log_prefix + f"配布の枝 `origin/{ref}` を取りに行けませんでした"
                  f"（古いまま走ります。**枝が無いのか、届かないのかは"
                  f"区別できていません**）"), None
+
+    # **署名を確かめてから取り込む**（セキュリティ監査 2026-09-14・P2-5）。
+    # `THTH_REQUIRE_SIGNED_RELEASE=1` のときだけ（既定 off の理由は
+    # `REQUIRE_SIGNED_ENV` の注記）。確かめられなければ**更新せず、古いまま走る**
+    # ——止めない（取りに行けない日に投稿を全部止めるのが重すぎるのと同じ理由）。
+    if require_signed_release() and not verify_release_signature(app_dir, ref):
+        return (log_prefix + f"**配布参照の署名を確かめられません**（`origin/{ref}`・"
+                 f"{REQUIRE_SIGNED_ENV}=1）。**取り込まずに古いまま走ります**"), None
 
     merged = _git(["merge", "--ff-only", f"origin/{ref}"], cwd=app_dir)
     if merged.returncode != 0:

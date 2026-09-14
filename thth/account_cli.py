@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shutil
 import sys
 
@@ -61,12 +60,12 @@ MEDIA_CHOICES = ("threads", "bluesky", "mastodon")
 # `accounts/../pwned.json` を書いて rc=0 で終わり、`list_account_names()` には
 # 出ないので board からも見えなかった（監査 1・P2-1）。`thth posts` が post_id を
 # 検査するのと同じ守り方（`tests/test_posts.py::test_post_idにパス区切りがあれば書かない`）。
-NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-
-
-def name_is_safe(name: str) -> bool:
-    """置き場の中の 1 ファイルに必ず収まる名前か。`.`・`..` は名前ではない。"""
-    return bool(name) and bool(NAME_RE.match(name)) and name not in (".", "..")
+#
+# **知識は `thth/accounts.py` に 1 つ**（セキュリティ監査 2026-09-14・P2-2）。
+# 書く側（ここ）だけが検査していて、読む側（`accounts.load_account()`）には
+# 検査が無かった。同じ規則が 2 か所にあると、片方だけ直る。
+NAME_RE = accounts_mod.NAME_RE
+name_is_safe = accounts_mod.name_is_safe
 
 # `thth account` の 1 本目の位置引数が、アカウント名ではなく枝の名前になるもの。
 VERBS = ("add", "migrate")

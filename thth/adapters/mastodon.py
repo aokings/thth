@@ -34,6 +34,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .. import httpsafe
 from .. import jst
 from .. import redact as redact_mod
 from . import base
@@ -156,7 +157,7 @@ def char_limit(instance: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> in
     url = _instance_url(instance) + "/api/v2/instance"
     req = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with httpsafe.urlopen(req, timeout=timeout) as resp:
             body = json.loads(resp.read() or b"{}")
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
         raise AdapterError(
@@ -193,6 +194,18 @@ def _instance_url(instance: str) -> str:
     if not text.startswith(("http://", "https://")):
         raise ValueError(
             f"instance は scheme から書いてください（例: https://{text}）: {text}")
+    # **平文で投げる先は手元だけ**（セキュリティ監査 2026-09-14・P3-3）。
+    # `http://` を通していたので、台帳に 1 文字書き間違える（あるいは書き換え
+    # られる）だけで、`Authorization: Bearer <token>` が**平文で網に出た**。
+    # 偽サーバに向けるテスト（`http://127.0.0.1:<port>`）は動かしたいので、
+    # 手元（localhost・127.0.0.1・[::1]）だけ許す。
+    if text.startswith("http://"):
+        host = urllib.parse.urlsplit(text).hostname or ""
+        if host not in ("localhost", "127.0.0.1", "::1"):
+            raise ValueError(
+                f"instance が http:// です（{text}）。**平文ではトークンを送りません。**"
+                f"https:// で書いてください（手元の偽サーバ＝localhost・127.0.0.1 "
+                f"だけは http でも通します）")
     return text
 
 
@@ -300,7 +313,7 @@ class MastodonAdapter(base.Adapter):
         body = urllib.parse.urlencode(data).encode("utf-8") if data is not None else None
         req = urllib.request.Request(url, data=body, method=method,
                                      headers=self._headers(headers))
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with httpsafe.urlopen(req, timeout=self.timeout) as resp:
             self._remember_rate_limit(resp)
             raw = resp.read()
         return json.loads(raw) if raw else {}

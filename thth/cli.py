@@ -324,6 +324,15 @@ def cmd_approve(args) -> int:
                   "環境変数 THTH_ACTOR でも指定できます。", file=sys.stderr)
             return 1
         approved_at = jst.iso()
+        # **名乗りに改行が入っていたら、1 本も書かない**（セキュリティ監査
+        # 2026-09-14・P1-3）。`--by $'x\nstatus: draft'` のような値は front-matter
+        # の別の行になり、後勝ちで `status` を書き換えられた。書く前に断る
+        # （半分だけ承認された状態を作らない）。
+        try:
+            writeback_mod.check_front_matter_field("approved_by", approved_by)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 2
         for one in prepared:
             writeback_mod.set_front_matter_fields(one["path"], {
                 "status": "approved",
@@ -601,6 +610,16 @@ def cmd_revoke(args) -> int:
         print("--by を付けてください（誰が止めたかを記録します）。"
               "環境変数 THTH_ACTOR でも指定できます。", file=sys.stderr)
         return 1
+    # **理由と名乗りに改行が入っていたら、ロックを取る前に断る**（セキュリティ
+    # 監査 2026-09-14・P1-3）。`--reason $'x\nstatus: approved\napproved_sha: …'`
+    # は front-matter の別の行になり、**取り消したはずの原稿が承認済みに戻って
+    # いた**（後の行が後勝ちで効く）。
+    try:
+        writeback_mod.check_front_matter_field("revoked_by", revoked_by)
+        writeback_mod.check_front_matter_field("revoked_reason", args.reason)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     revoked_at = jst.iso()
 
     repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
@@ -2201,7 +2220,11 @@ def cmd_board(args) -> int:
 
         # **どの枝を追いかけているのかを必ず出す。** 出ないと、**配る先を
         # 間違えても気づけない**（新しい出力契約にしたとき、ここを落とした）。
-        print(f"道具: {_pkg_version}（{head or '(版が読めません)'}）  配布の枝: `{ref}`")
+        # **配布参照の署名を確かめているか 1 語**（セキュリティ監査 2026-09-14・
+        # P2-5）。既定は「未確認」——確かめていないことを黙らない。
+        署名 = "署名: 確認" if app.get("signature_checked") else "署名: 未確認"
+        print(f"道具: {_pkg_version}（{head or '(版が読めません)'}）  "
+              f"配布の枝: `{ref}`  {署名}")
         # **台帳の置き場を 1 行**（設計 v2 §3・v2-2a）。下に並ぶ顔ぶれが
         # どこから来たのかを、並べる前に言う。
         print(account_cli_mod.where_line())

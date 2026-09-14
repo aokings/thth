@@ -137,15 +137,21 @@ def test_他媒体のtokenはgraph_threads_netに行かない(monkeypatch, 同�
     固定するのも変わる: 「引かない」ではなく「**引きに行く先が Meta ではない**」。
     網には出さない（`urlopen` を差し替えて**宛先だけ**を数える）。
     """
-    import urllib.request
+    import urllib.error
+
     from thth import account_report as account_report_mod
+    from thth import httpsafe as httpsafe_mod
 
     宛先 = []
 
     def 記録して落とす(req, *_a, **_k):
         宛先.append(req.full_url if hasattr(req, "full_url") else str(req))
         raise urllib.error.URLError("この試験は網に出ません")
-    monkeypatch.setattr(urllib.request, "urlopen", 記録して落とす)
+    # **差し替える先が変わった**（セキュリティ監査 2026-09-14・P1-1）。
+    # アダプタは `urllib.request.urlopen()` ではなく、別ホストへのリダイレクトを
+    # 追わない共通の opener（`thth/httpsafe.py`）を通る。見ている性質
+    # （宛先が Meta ではない・トークンが URL に出ない）は変えていない。
+    monkeypatch.setattr(httpsafe_mod, "urlopen", 記録して落とす)
 
     cfg = _読む(同席の2本["demo-mastodon"])
     rows, message = account_report_mod.fetch_posts(

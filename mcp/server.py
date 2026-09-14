@@ -142,6 +142,130 @@ TOOLS = [
 ]
 
 
+class ToolInputError(Exception):
+    """要求が受け取れない（JSON-RPC `-32602`・セキュリティ監査 2026-09-14・P2-1）。
+
+    **落ちない・黙らない。** 以前は `arguments["file"]` の `KeyError` や
+    `params` が list のときの `AttributeError` が `main()` のループの外まで抜けて、
+    **サーバが死んでいた**——クライアントから見ると応答が来ないまま接続が切れる
+    （どの要求が悪かったのかも判らない）。1 要求の失敗は 1 要求の error で返し、
+    ループは続ける。
+    """
+
+
+def _schema_for(name):
+    for tool in TOOLS:
+        if tool["name"] == name:
+            return tool.get("inputSchema") or {}
+    return None
+
+
+# `inputSchema` の `type` を Python の型に写す。**`bool` は `int` の子**なので、
+# 整数の検査から明示的に外す（`True` を `window_days` に通さない）。
+_TYPES = {
+    "string": ((str,), "文字列"),
+    "object": ((dict,), "object"),
+    "boolean": ((bool,), "真偽値"),
+    "integer": ((int,), "整数"),
+    "number": ((int, float), "数"),
+}
+
+
+def ledger_roots() -> list:
+    """台帳の `repo_dir` の realpath 一覧（`file` 引数の**唯一の行き先**）。
+
+    セキュリティ監査 2026-09-14・P2-3。`thth_preview`・`thth_lint`・
+    `thth_topic_context` の `file` は**どこでも指せた**——MCP を持つ LLM が
+    `/etc/passwd` や `~/.config/thth/*.token` を渡せば、`thth preview` は
+    front-matter が読めないと言うだけだが、**`thth lint` は中身の断片を返す**。
+    読むだけの道具でも、読む先は縛る。
+
+    `queue_dir` は台帳で `repo_dir` からの相対なので、`repo_dir` の下で足りる。
+    """
+    try:
+        if APP_DIR not in sys.path:
+            sys.path.insert(0, APP_DIR)
+        from thth import accounts as accounts_mod
+    except ImportError:
+        return []
+    try:
+        names = accounts_mod.list_account_names()
+    except Exception:                              # noqa: BLE001（台帳が読めない）
+        return []
+    roots = []
+    for account in names:
+        try:
+            cfg = accounts_mod.load_account(account)
+        except Exception:                          # noqa: BLE001（1 本壊れていても続ける）
+            continue
+        repo_dir = cfg.get("repo_dir")
+        if repo_dir:
+            roots.append(os.path.realpath(repo_dir))
+    return roots
+
+
+def check_file_argument(name: str, path: str) -> None:
+    """`file` は**台帳のどれかの `repo_dir` の下**だけ（外れれば `ToolInputError`）。
+
+    `realpath` してから比べる（symlink・`..`・相対パスを畳んでから見る）。
+    """
+    real = os.path.realpath(path)
+    roots = ledger_roots()
+    for root in roots:
+        if real == root or real.startswith(root + os.sep):
+            return
+    raise ToolInputError(
+        f"{name}: file は台帳の repo_dir の中のパスだけを渡してください"
+        f"（受け取ったものはどの repo_dir にも入っていません）")
+
+
+def validate_arguments(name: str, arguments) -> dict:
+    """道具の `inputSchema` どおりの引数か。違えば `ToolInputError`。
+
+    見るのは 3 つだけ: **object であること**・**必須が揃っていること**・
+    **型が合っていること**（知らない鍵も断る——綴りを間違えたまま既定値で
+    動いたことにしない）。判断はしない（中身の意味は CLI の仕事）。
+    """
+    schema = _schema_for(name)
+    if schema is None:
+        return {}                     # 知らない道具は `call_tool()` が断る
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, dict):
+        raise ToolInputError(
+            f"{name}: arguments は object で渡してください"
+            f"（受け取った: {type(arguments).__name__}）")
+    props = schema.get("properties") or {}
+    for key in schema.get("required") or []:
+        if arguments.get(key) is None:
+            raise ToolInputError(f"{name}: 必須の引数がありません: {key}")
+    for key, value in arguments.items():
+        spec = props.get(key)
+        if spec is None:
+            raise ToolInputError(f"{name}: 知らない引数です: {key}")
+        if value is None:
+            continue
+        types, 名 = _TYPES.get(spec.get("type"), ((object,), "値"))
+        if spec.get("type") == "integer" and isinstance(value, bool):
+            raise ToolInputError(f"{name}: {key} は{名}で渡してください（受け取った: bool）")
+        if not isinstance(value, types):
+            raise ToolInputError(
+                f"{name}: {key} は{名}で渡してください"
+                f"（受け取った: {type(value).__name__}）")
+        # **位置引数に渡る値が `-` で始まらない**（監査 2026-09-14・P3-2）。
+        # `run_cli()` は値を argv の位置に置く。`--json` のような綴りを渡されると
+        # **CLI の別の旗として読まれる**（`thth lint --help` のように無害な形も
+        # あるが、旗の意味は CLI 側の都合で増える）。`--` を足して黙って通すより、
+        # **受け取れないものとして断る**（作法 5）。
+        if isinstance(value, str) and value.startswith("-"):
+            raise ToolInputError(
+                f"{name}: {key} が `-` で始まっています（{value!r}）。"
+                f"CLI の旗と区別できないので受け取りません")
+        if key == "file":
+            check_file_argument(name, value)
+    return arguments
+
+
 def cli_argv(args: list) -> list:
     """CLI を起こす argv。`THTH_BIN` があればそれ、無ければ `python -m thth`。"""
     head = [sys.executable, THTH_BIN] if THTH_BIN else [sys.executable, "-m", "thth"]
@@ -235,6 +359,11 @@ def _send(obj: dict) -> None:
     sys.stdout.flush()
 
 
+def _error(req_id, code: int, message: str) -> dict:
+    return {"jsonrpc": "2.0", "id": req_id,
+            "error": {"code": code, "message": message}}
+
+
 def _handle_request(req: dict):
     method = req.get("method")
     req_id = req.get("id")
@@ -254,15 +383,29 @@ def _handle_request(req: dict):
         return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": TOOLS}}
     if method == "tools/call":
         params = req.get("params") or {}
-        result = call_tool(params.get("name"), params.get("arguments"))
+        if not isinstance(params, dict):
+            raise ToolInputError(
+                f"params は object で渡してください（受け取った: {type(params).__name__}）")
+        name = params.get("name")
+        if not isinstance(name, str) or not name:
+            raise ToolInputError("params.name（道具の名前）が要ります")
+        arguments = validate_arguments(name, params.get("arguments"))
+        result = call_tool(name, arguments)
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
     if req_id is not None:
-        return {"jsonrpc": "2.0", "id": req_id,
-                "error": {"code": -32601, "message": f"method not found: {method}"}}
+        return _error(req_id, -32601, f"method not found: {method}")
     return None
 
 
 def main() -> None:
+    """1 行 1 要求のループ。**1 件の失敗でループを降りない**（監査 2026-09-14・P2-1）。
+
+    以前は `_handle_request()` の中で上がった例外がここまで抜けてサーバが死んで
+    いた（`arguments` に `file` が無い `KeyError`・`params` が list のときの
+    `AttributeError`）。クライアントから見ると応答が来ないまま口が閉じる——
+    **どの要求が悪かったのかも判らない。** 1 要求の失敗は 1 要求の error にして、
+    次の要求は今までどおり受ける。
+    """
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -270,8 +413,27 @@ def main() -> None:
         try:
             req = json.loads(line)
         except json.JSONDecodeError:
+            # id が判らないので返しようがない（JSON-RPC も id:null を許すが、
+            # 従来どおり黙って次の行へ）。
             continue
-        resp = _handle_request(req)
+        if isinstance(req, list):
+            # **batch（配列）は受けない。** 受けたふりをして 1 件目だけ処理する
+            # と、残りが黙って消える（`-32600 Invalid Request`）。
+            _send(_error(None, -32600,
+                         "batch（配列）の要求は受け付けません。1 行 1 要求で送ってください"))
+            continue
+        if not isinstance(req, dict):
+            _send(_error(None, -32600,
+                         f"要求は object で送ってください（受け取った: {type(req).__name__}）"))
+            continue
+        req_id = req.get("id")
+        try:
+            resp = _handle_request(req)
+        except ToolInputError as e:
+            resp = _error(req_id, -32602, str(e))
+        except Exception as e:                      # noqa: BLE001
+            # **死なない。** 想定していない失敗も 1 要求の error にして次へ。
+            resp = _error(req_id, -32602, f"{type(e).__name__}: {e}")
         if resp is not None:
             _send(resp)
 

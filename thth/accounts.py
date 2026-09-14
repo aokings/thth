@@ -269,11 +269,35 @@ def dir_is_unreadable(d: str) -> bool:
     return os.path.isdir(d) and not os.access(d, os.R_OK | os.X_OK)
 
 
+# **アカウント名はそのままファイル名になる**（`<accounts_dir>/<name>.json`）。
+# 区切りや `..` を混ぜると置き場の外を指せる。`thth account add` の側は前から
+# 断っていたが（監査 1・P2-1）、**読む側に検査が無かった**（セキュリティ監査
+# 2026-09-14・P2-2）——`thth queue ../../etc/passwd` は `json.JSONDecodeError` を
+# 出し、存在しない綴りは `FileNotFoundError` になるので、**返る文言の違いで
+# 「そこに何かあるか」を探れた**。書く側と読む側で 1 か所の知識にする。
+NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def name_is_safe(name) -> bool:
+    """置き場の中の 1 ファイルに必ず収まる名前か。`.`・`..` は名前ではない。"""
+    return (isinstance(name, str) and bool(name)
+            and bool(NAME_RE.match(name)) and name not in (".", ".."))
+
+
 def load_account(name: str) -> dict:
     """`accounts/<name>.json` を読んで検査する。$THTH_ROOT・~ を展開したコピーを返す。
 
     **「無い」と「読めない」を言い分ける**（監査 1・P2-2）。
+
+    **名前そのものを先に検査する**（セキュリティ監査 2026-09-14・P2-2）。
+    置き場の外を指せる綴りは、読む前に同じ 1 つの文言で断る——**存在の探りを
+    させない**（在る／無い／壊れているで文言が変わらない）。
     """
+    if not name_is_safe(name):
+        raise AccountError(
+            f"アカウント名に使えない字が入っています: {name!r}"
+            f"（使えるのは英数字と `_`・`.`・`-` だけ。名前はそのまま"
+            f"ファイル名になるので、`/` や `..` は置き場の外を指せます）")
     d = accounts_dir()
     path = os.path.join(d, f"{name}.json")
     try:
