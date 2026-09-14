@@ -10,7 +10,8 @@
   - CLI は権限不足を **rc=2** で「`thth auth <account>` をやり直してください」と断る（受け入れ (c)）
   - `--search` は本文を**どこにも書かない**（`THTH_ROOT`・利用者 repo・state を走査して 1 バイトも無い）
   - `collect` の inbox に言及が落ち、2 度走らせても増えない
-  - 権限が無い collect は `errors` に 1 行積んで**続行する**（投稿の採取は止まらない）
+  - 権限が無い collect は `errors` に積まず `inbox_state: permission_missing` を残して
+    **続行する**（投稿の採取は止まらない・本番 P1 2026-09-14 で「errors に 1 行」から変更）
   - **偽サーバが GET 以外を受けたら即 fail**
 
 本物の Threads API には一切触れない（`http.server` の偽 API にだけ向ける）。
@@ -506,8 +507,14 @@ def test_collectのinboxにThreadsの言及が落ちmessage_idで冪等(tmp_path
     assert sum(1 for m, p, _q in requests if p.endswith("/mentions")) == 2
 
 
-def test_権限が無いcollectはerrorsに1行積んで続行する(tmp_path, isolated_account_factory):
-    """**投稿の採取は止めない**（設計 v2 §4.3・受け入れ (c) の collect 側）。"""
+def test_権限が無いcollectはerrorsに積まずinbox_stateを残して続行する(tmp_path, isolated_account_factory):
+    """**投稿の採取は止めない**（設計 v2 §4.3・受け入れ (c) の collect 側）。
+
+    **2026-09-14（本番 P1）に「`errors` に 1 行積む」から変えた。** 5 権限の
+    トークンでは inbox が毎 run 権限なしで、それを失敗と呼ぶと `thth run` が
+    10 分ごとに「採取は完全ではありません」を出し続ける。権限なしは状態
+    （`inbox_state: permission_missing`・board の `inbox=権限なし`）。
+    """
     import datetime
     from thth import jst
     now = datetime.datetime(2026, 9, 12, 12, 0, tzinfo=jst.JST)
@@ -518,10 +525,10 @@ def test_権限が無いcollectはerrorsに1行積んで続行する(tmp_path, i
     with _server({"/mentions": "permission"}) as (base_url, requests):
         result = collect_mod.collect_once(acc["name"], adapter=_adapter(base_url), now=now,
                                           log=lambda _l: None)
-    inbox_errors = [e for e in result["errors"] if e.startswith("inbox")]
-    assert len(inbox_errors) == 1, result["errors"]
-    assert "`threads_manage_mentions` がトークンに乗っていません" in inbox_errors[0]
-    assert "FAKE-SECRET" not in inbox_errors[0]
+    assert not any(e.startswith("inbox") for e in result["errors"]), result["errors"]
+    assert result["inbox"]["state"] == "permission_missing"
+    assert result["inbox"]["permission"] == "threads_manage_mentions"
+    assert "FAKE-SECRET" not in json.dumps(result, ensure_ascii=False)
     assert _inbox_rows(pair["work"]) == []
     # **投稿の数は採れている**（inbox の失敗が投稿の採取を巻き込んでいない）。
     insight = os.path.join(pair["work"], "data", "sns", "insights", "posts", "POST1.ndjson")
