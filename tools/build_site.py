@@ -50,8 +50,8 @@ EN_SECTIONS = ["What it guarantees", "What it refuses", "What it never does"]
 JA_SECTIONS = ["何を保証するか", "何を拒むか", "何を絶対にしないか"]
 
 DESCRIPTION = (
-    "THTH は「LLM が下書きし、人が承認してから」出すための門。"
-    "Threads・Bluesky・Mastodon。ヘッドレス（CLI・MCP・skill）。MIT。"
+    "AI が書いた下書きを、人が読んで承認してから投稿する道具。"
+    "Threads・Bluesky・Mastodon。画面はなく、コマンドと MCP で動く。記録はあなたの git に残る。"
 )
 
 
@@ -189,6 +189,16 @@ STYLE = """\
 
 
 def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
+    """紹介ページ。**訪問者向けの文で、短く**（masaru 2026-09-14「文言が気持ち悪い」）。
+
+    以前は README.en.md と SKILL.md の 3 節を要約せずに写し、日本語と英語を交互に並べ、
+    「このページは正本から生成される」「泉はまだ無い」「LLM に選ばせる試験 5/5」のような
+    作り手の作業メモまで載せていた。**正本を写す**ことと**読める**ことは別で、訪問者には
+    後者だけが要る。内部の語（digest・approval_stale・loud reject・泉）はここでは使わない。
+    保証の中身は README.en.md / SKILL.md と食い違わないよう、**同じ事実を平たい言葉で**
+    書く（引数 `en`・`ja` は互換のため受けるが、写さない）。
+    """
+    del en, ja
     esc = lambda s: html_mod.escape(s, quote=True)  # noqa: E731
     parts: list[str] = []
     add = parts.append
@@ -196,87 +206,65 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
     add("<!doctype html>")
     add('<html lang="ja"><head>')
     add('<meta charset="utf-8">')
-    add('<meta name="viewport" content="width=device-width,initial-scale=1">')
-    add("<title>THTH — 人が承認してから出す門</title>")
+    add('<meta name="viewport" content="width=device-width, initial-scale=1">')
+    add('<meta name="referrer" content="no-referrer">')
+    add("<title>THTH — 人が承認してから投稿する道具</title>")
     add(f'<meta name="description" content="{esc(DESCRIPTION)}">')
-    add('<meta property="og:title" content="THTH — 人が承認してから出す門">')
+    add('<meta property="og:title" content="THTH — 人が承認してから投稿する道具">')
     add(f'<meta property="og:description" content="{esc(DESCRIPTION)}">')
     add(f"<style>\n{STYLE}</style>")
     add("</head><body><main>")
 
     add("<h1>THTH</h1>")
-    add('<p class="lead">THTH は「LLM が下書きし、<strong>人が承認してから</strong>出す」'
-        "ための門。Threads・Bluesky・Mastodon。ヘッドレス（CLI・MCP・skill）。</p>")
-    add('<p class="lead en">THTH is the gate that publishes an LLM-drafted post '
-        "<strong>only after a person approved it</strong> — Threads, Bluesky, Mastodon; "
-        "headless (CLI, MCP, skill).</p>")
+    add('<p class="lead">AI が書いた下書きを、人が読んで承認してから投稿する道具です。'
+        "Threads・Bluesky・Mastodon に対応しています。画面はなく、コマンドと MCP で動きます。</p>")
 
-    add("<h2>入れ方 / Install</h2>")
-    add("<pre><code>pip install thth\n"
-        "thth account add my-threads --media threads --project my-project \\\n"
-        "  --redirect-uri https://thth.me/callback/\n"
-        "thth doctor my-threads</code></pre>")
-    add("<p>台帳は repo の外（<code>$THTH_ROOT/accounts/</code>）に置かれ、"
-        "<code>production: false</code> で始まる。"
-        "Threads の初回設定（自分の Meta アプリを作る）は "
-        f'<a href="{GITHUB_BLOB}docs/導入_自分のMetaアプリで動かす.md">'
-        "docs/導入_自分のMetaアプリで動かす.md</a>。</p>")
-    add("<p><strong>MCP</strong>: registry の <code>io.github.aokings/thth</code>"
-        f'（<a href="{esc(REGISTRY_SEARCH)}">registry で引く</a>）。'
-        "<code>pip install thth</code> に同梱で、stdio の <code>thth-mcp</code> として動く。"
-        "<strong>skill</strong>: <code>skills/thth/SKILL.md</code>（wheel にも入る）。</p>")
+    add("<h2>しくみ</h2>")
+    add("<ol>")
+    add("  <li>エージェントが下書きを書きます。置き場はあなたの repo の中です。</li>")
+    add("  <li>あなたが本文を読んで承認します。承認していない本文は出ません。</li>")
+    add("  <li>THTH が投稿し、投稿の ID・返信・閲覧数を同じ repo に記録します。</li>")
+    add("</ol>")
 
-    add("<h2>何を保証し、何を拒み、何を絶対にしないか</h2>")
-    add('<p class="note">README.en.md と skills/thth/SKILL.md からそのまま写している'
-        "（要約していない・このページは正本から生成される）。</p>")
-    for title in EN_SECTIONS:
-        add(f"<h3>{esc(title)}</h3>")
-        add(_ul(en[title]))
-    for title in JA_SECTIONS:
-        add(f"<h3>{esc(title)}</h3>")
-        add(_ul(ja[title]))
-
-    add("<h2>投稿する前に聞く / <code>before_you_post</code></h2>")
-    add("<p><code>thth ask before-you-post &lt;account&gt; --topic &lt;語&gt;</code>"
-        "（MCP からは <code>before_you_post</code>）は、この語・この型・この時刻帯で"
-        "スレッドがどう伸びたかを、<strong>件数と期間つきで</strong>返す。答えるのは"
-        "<strong>あなたの手元の台帳だけ</strong>——ネットワークへは出ないし、原稿本文は"
-        "問いにも答えにも入らない。件数が閾値（既定 20）に満たない群は中央値を返さず、"
-        "<strong>ほとんどが <code>cannot_say</code> になる</strong>。それが正しい答えで、"
-        "終了コードは 0。<strong>泉（共有の水）はまだ無い</strong>ので、"
-        "<code>provenance.source</code> は <code>local</code> と言う。</p>")
-
-    add("<h2>泉はまだ無い / The spring does not exist yet</h2>")
-    add("<p><code>api.thth.me</code>（泉）は<strong>まだ無い</strong>。"
-        "<code>thth share</code> は<strong>既定 off</strong>で、on にしても"
-        "<strong>送り先が無い</strong>——手元の "
-        "<code>$THTH_ROOT/state/share/outbox/</code> に積むだけで、"
-        "<code>thth share log</code> で積んだ全部が読める"
-        f'（設計 <a href="{GITHUB_BLOB}docs/設計_v2_泉と門_2026-09-13.md">'
-        "docs/設計_v2_泉と門_2026-09-13.md</a> §3・§7-3）。</p>")
-
-    add("<h2>LLM に選ばせる試験 / Picked by an LLM</h2>")
-    add("<p>名前を伏せた 4 本の候補から、まっさらな Claude が"
-        "「人の承認を通して Threads に出す」道具として THTH を選んだのは "
-        "<strong>5/5</strong>、<code>pip install</code> 済みの箱で禁じ手ゼロのまま"
-        "乾式試験まで着いたのが <strong>3/3</strong>。ただし<strong>承認の条件を外した"
-        "対照の問いでも 5/5 だったので、「承認の機能ゆえに選ばれた」とはまだ言えない"
-        "</strong>（記録あり・thth-notes）。</p>")
-
-    add("<h2>リンク / Links</h2>")
+    add("<h2>約束</h2>")
     add("<ul>")
-    add(f'  <li><a href="{GITHUB}">GitHub — aokings/thth</a>'
-        "（README・docs・テスト）</li>")
-    add(f'  <li><a href="{PYPI}">PyPI — thth</a>（<code>pip install thth</code>・依存 0）</li>')
-    add(f'  <li><a href="{esc(REGISTRY_SEARCH)}">MCP registry — io.github.aokings/thth</a></li>')
-    add('  <li><a href="/llms.txt">/llms.txt</a>（LLM 向けの入口。repo の <code>llms.txt</code> と同じ）</li>')
-    add(f'  <li><a href="{GITHUB_BLOB}LICENSE">LICENSE</a> — MIT (c) 2026 gotoq</li>')
+    add("  <li>承認していない本文は 1 文字も出ません。承認は、本文を見せてから、その本文の"
+        "指紋を渡す 2 段です。承認のあとに本文が変わると、出しません。</li>")
+    add("  <li>出したものは全部あなたの git に残ります。THTH のサーバはありません。</li>")
+    add("  <li>何も外に送りません。共有の機能は既定で切れていて、入れても送り先はまだありません。</li>")
+    add("  <li>DM は読みません。定型文で自動返信もしません。返信の下書きも同じ承認を通ります。</li>")
+    add("  <li>数字には件数と期間が付きます。分からないことは分からないと言います。</li>")
+    add("  <li>1 回の実行で出すのは 1 件。静かな時間帯と最短間隔を守ります。</li>")
     add("</ul>")
 
-    add("<footer>MIT License (c) 2026 gotoq ・ "
-        "<code>thth.me</code> は Threads の認可の受け口（<code>/callback/</code>）も"
-        "兼ねている。このページは外部の CSS・JS・フォント・画像を 1 つも読み込まない。"
-        "</footer>")
+    add("<h2>入れ方</h2>")
+    add("<pre><code>pip install thth\n"
+        "thth account add my-threads --media threads --project my-project\n"
+        "thth doctor my-threads</code></pre>")
+    add("<p>Threads は自分の Meta アプリで使います。初回の設定は "
+        f'<a href="{GITHUB_BLOB}docs/導入_自分のMetaアプリで動かす.md">導入の手引き</a>'
+        "を見てください。Bluesky と Mastodon は "
+        f'<a href="{GITHUB_BLOB}docs/導入_Bluesky_2026-09-13.md">Bluesky</a>・'
+        f'<a href="{GITHUB_BLOB}docs/導入_Mastodon_2026-09-13.md">Mastodon</a> の手引きがあります。</p>')
+    add("<p>MCP サーバと Claude Code 用の skill は <code>pip install thth</code> に同梱です。"
+        f'MCP registry では <a href="{esc(REGISTRY_SEARCH)}">io.github.aokings/thth</a> です。</p>')
+
+    add("<h2>English</h2>")
+    add('<p class="en">THTH publishes an LLM-drafted post only after a person has read and '
+        "approved it. It works with Threads, Bluesky and Mastodon, has no dashboard, and runs "
+        "from the command line or as an MCP server. Everything it posts and collects is recorded "
+        f'in your own git repository. Nothing leaves your machine. See <a href="{GITHUB_BLOB}README.en.md">README.en.md</a>.</p>')
+
+    add("<h2>リンク</h2>")
+    add("<ul>")
+    add(f'  <li><a href="{GITHUB}">GitHub</a></li>')
+    add(f'  <li><a href="{PYPI}">PyPI</a></li>')
+    add(f'  <li><a href="{esc(REGISTRY_SEARCH)}">MCP registry</a></li>')
+    add('  <li><a href="/llms.txt">llms.txt</a>（LLM 向けの案内）</li>')
+    add("</ul>")
+
+    add("<footer>MIT License (c) 2026 gotoq。このページは外部の CSS・JS・フォント・画像を読み込みません。"
+        "<code>thth.me/callback/</code> は Threads の認可の受け口です。</footer>")
     add("</main></body></html>")
     return "\n".join(parts) + "\n"
 

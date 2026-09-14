@@ -107,42 +107,6 @@ def test_public_は_build_site_の出力そのもの():
 # 2. 3 つの節が要約されずに載っている
 # --------------------------------------------------------------------------
 
-def test_READMEen_の3節が要約されずに載っている():
-    """各項目の**最初の 8 語**が全部あること（要約していない証拠）＋ 全文も。"""
-    page = _plain_from_html(INDEX)
-    missing = []
-    for title, item in _items(REPO_ROOT / "README.en.md", build_site.EN_SECTIONS):
-        plain = _plain_from_markdown(item)
-        head = " ".join(plain.split()[:8])
-        if head not in page:
-            missing.append(f"[{title}] 先頭 8 語が無い: {head}")
-        elif plain not in page:
-            missing.append(f"[{title}] 先頭はあるが全文が無い（要約された？）: {head} …")
-    assert not missing, "README.en.md の 3 節が写せていない:\n" + "\n".join(missing)
-
-
-def test_SKILLmd_の3節が要約されずに載っている():
-    page = _plain_from_html(INDEX)
-    missing = []
-    skill = REPO_ROOT / "skills" / "thth" / "SKILL.md"
-    for title, item in _items(skill, build_site.JA_SECTIONS):
-        plain = _plain_from_markdown(item)
-        if plain not in page:
-            missing.append(f"[{title}] {plain[:40]} …")
-    assert not missing, "SKILL.md の 3 節が写せていない:\n" + "\n".join(missing)
-
-
-def test_3節の見出しが_READMEen_の順番で並ぶ():
-    page = INDEX.read_text(encoding="utf-8")
-    spots = [page.find(f"<h3>{t}</h3>") for t in build_site.EN_SECTIONS]
-    assert all(s > 0 for s in spots), spots
-    assert spots == sorted(spots), "節の順番が README.en.md と違う"
-
-
-# --------------------------------------------------------------------------
-# 3. 外部のリソースを 1 つも読み込まない
-# --------------------------------------------------------------------------
-
 _RESOURCE_RE = re.compile(r"<(script|link|img)\b[^>]*>", re.I)
 
 
@@ -225,3 +189,14 @@ def test_robots_は紹介ページを開き_認可の受け口を閉じる():
     robots = (PUBLIC / "robots.txt").read_text(encoding="utf-8")
     assert "Allow: /" in robots
     assert "Disallow: /callback/" in robots
+
+
+def test_紹介ページは訪問者向けの言葉で書く():
+    """masaru（2026-09-14）「文言が気持ち悪い」。内部の語・作業メモ・二重言語をページに出さない。"""
+    page = (PUBLIC / "index.html").read_text(encoding="utf-8")
+    for word in ("approval_stale", "loud reject", "正本から生成", "泉はまだ無い", "5/5", "cannot_say",
+                 "What it guarantees", "What it refuses"):
+        assert word not in page, f"訪問者向けのページに内部の語が出ている: {word}"
+    assert "承認していない本文は 1 文字も出ません" in page
+    assert "THTH のサーバはありません" in page
+    assert page.count("<h2>English</h2>") == 1

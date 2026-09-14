@@ -1,11 +1,12 @@
 <!doctype html>
 <html lang="ja"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>THTH — 人が承認してから出す門</title>
-<meta name="description" content="THTH は「LLM が下書きし、人が承認してから」出すための門。Threads・Bluesky・Mastodon。ヘッドレス（CLI・MCP・skill）。MIT。">
-<meta property="og:title" content="THTH — 人が承認してから出す門">
-<meta property="og:description" content="THTH は「LLM が下書きし、人が承認してから」出すための門。Threads・Bluesky・Mastodon。ヘッドレス（CLI・MCP・skill）。MIT。">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>THTH — 人が承認してから投稿する道具</title>
+<meta name="description" content="AI が書いた下書きを、人が読んで承認してから投稿する道具。Threads・Bluesky・Mastodon。画面はなく、コマンドと MCP で動く。記録はあなたの git に残る。">
+<meta property="og:title" content="THTH — 人が承認してから投稿する道具">
+<meta property="og:description" content="AI が書いた下書きを、人が読んで承認してから投稿する道具。Threads・Bluesky・Mastodon。画面はなく、コマンドと MCP で動く。記録はあなたの git に残る。">
 <style>
   /* 見た目は認可の受け口（src/index.js）に揃える（masaru 2026-09-14「あのシンプルなテイスト」）:
      小さめの見出し・罫線なし・淡い角丸の背景・余白で区切る。装飾を足さない。 */
@@ -34,71 +35,36 @@
 </style>
 </head><body><main>
 <h1>THTH</h1>
-<p class="lead">THTH は「LLM が下書きし、<strong>人が承認してから</strong>出す」ための門。Threads・Bluesky・Mastodon。ヘッドレス（CLI・MCP・skill）。</p>
-<p class="lead en">THTH is the gate that publishes an LLM-drafted post <strong>only after a person approved it</strong> — Threads, Bluesky, Mastodon; headless (CLI, MCP, skill).</p>
-<h2>入れ方 / Install</h2>
+<p class="lead">AI が書いた下書きを、人が読んで承認してから投稿する道具です。Threads・Bluesky・Mastodon に対応しています。画面はなく、コマンドと MCP で動きます。</p>
+<h2>しくみ</h2>
+<ol>
+  <li>エージェントが下書きを書きます。置き場はあなたの repo の中です。</li>
+  <li>あなたが本文を読んで承認します。承認していない本文は出ません。</li>
+  <li>THTH が投稿し、投稿の ID・返信・閲覧数を同じ repo に記録します。</li>
+</ol>
+<h2>約束</h2>
+<ul>
+  <li>承認していない本文は 1 文字も出ません。承認は、本文を見せてから、その本文の指紋を渡す 2 段です。承認のあとに本文が変わると、出しません。</li>
+  <li>出したものは全部あなたの git に残ります。THTH のサーバはありません。</li>
+  <li>何も外に送りません。共有の機能は既定で切れていて、入れても送り先はまだありません。</li>
+  <li>DM は読みません。定型文で自動返信もしません。返信の下書きも同じ承認を通ります。</li>
+  <li>数字には件数と期間が付きます。分からないことは分からないと言います。</li>
+  <li>1 回の実行で出すのは 1 件。静かな時間帯と最短間隔を守ります。</li>
+</ul>
+<h2>入れ方</h2>
 <pre><code>pip install thth
-thth account add my-threads --media threads --project my-project \
-  --redirect-uri https://thth.me/callback/
+thth account add my-threads --media threads --project my-project
 thth doctor my-threads</code></pre>
-<p>台帳は repo の外（<code>$THTH_ROOT/accounts/</code>）に置かれ、<code>production: false</code> で始まる。Threads の初回設定（自分の Meta アプリを作る）は <a href="https://github.com/aokings/thth/blob/main/docs/導入_自分のMetaアプリで動かす.md">docs/導入_自分のMetaアプリで動かす.md</a>。</p>
-<p><strong>MCP</strong>: registry の <code>io.github.aokings/thth</code>（<a href="https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.aokings/thth">registry で引く</a>）。<code>pip install thth</code> に同梱で、stdio の <code>thth-mcp</code> として動く。<strong>skill</strong>: <code>skills/thth/SKILL.md</code>（wheel にも入る）。</p>
-<h2>何を保証し、何を拒み、何を絶対にしないか</h2>
-<p class="note">README.en.md と skills/thth/SKILL.md からそのまま写している（要約していない・このページは正本から生成される）。</p>
-<h3>What it guarantees</h3>
+<p>Threads は自分の Meta アプリで使います。初回の設定は <a href="https://github.com/aokings/thth/blob/main/docs/導入_自分のMetaアプリで動かす.md">導入の手引き</a>を見てください。Bluesky と Mastodon は <a href="https://github.com/aokings/thth/blob/main/docs/導入_Bluesky_2026-09-13.md">Bluesky</a>・<a href="https://github.com/aokings/thth/blob/main/docs/導入_Mastodon_2026-09-13.md">Mastodon</a> の手引きがあります。</p>
+<p>MCP サーバと Claude Code 用の skill は <code>pip install thth</code> に同梱です。MCP registry では <a href="https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.aokings/thth">io.github.aokings/thth</a> です。</p>
+<h2>English</h2>
+<p class="en">THTH publishes an LLM-drafted post only after a person has read and approved it. It works with Threads, Bluesky and Mastodon, has no dashboard, and runs from the command line or as an MCP server. Everything it posts and collects is recorded in your own git repository. Nothing leaves your machine. See <a href="https://github.com/aokings/thth/blob/main/README.en.md">README.en.md</a>.</p>
+<h2>リンク</h2>
 <ul>
-  <li>Approval is a human act: a post only ships once a person runs <code>thth approve</code> a second time with the digest the first run showed them, and <code>status: approved</code> plus that digest land in git.</li>
-  <li>Fail-closed, at least three ways: an unfinished previous post (<code>inflight</code>) halts the account instead of retrying; a queue file whose committed content doesn't match the working tree (<code>unverified_content</code>) is refused, not posted; a file edited after approval (<code>approval_stale</code>) is refused until re-approved.</li>
-  <li>One post per account per run (<code>max_per_run</code>, default 1); a timer tick just runs that loop again.</li>
-  <li>Every public act is recorded in your git history: the queue file, the approval commit, the <code>post_id</code> written back, the collected replies and metrics.</li>
+  <li><a href="https://github.com/aokings/thth">GitHub</a></li>
+  <li><a href="https://pypi.org/project/thth/">PyPI</a></li>
+  <li><a href="https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.aokings/thth">MCP registry</a></li>
+  <li><a href="/llms.txt">llms.txt</a>（LLM 向けの案内）</li>
 </ul>
-<h3>What it refuses</h3>
-<ul>
-  <li>No post without <code>status: approved</code> and a matching digest — editing the body, account, topic, reply target, or scheduled time after approval invalidates it.</li>
-  <li>No post inside an account's configured quiet hours (<code>quiet_hours</code>), when set.</li>
-  <li>No duplicate posts — an in-flight marker blocks the next run until a human confirms what actually happened.</li>
-  <li>No tokens or secrets in logs — access tokens, client secrets, auth codes, and Authorization headers are redacted before anything is written or printed.</li>
-</ul>
-<h3>What it never does</h3>
-<ul>
-  <li>Never sends anything to a third party. <code>thth share</code> is <strong>off by default</strong> and, even when you turn it on, <strong>there is nowhere for it to send</strong>: it only appends to a local file under <code>$THTH_ROOT/state/share/outbox/</code>, and <code>thth share log</code> prints every line of it. What it queues is words, audience notes, topic kinds, counts, time-of-day bands and a <strong>salted hash</strong> of the post id — never post bodies, replies, <strong>repliers'</strong> usernames, your own verdicts, account names, tokens, repo paths, or raw post ids — see <a href="https://github.com/aokings/thth/blob/main/docs/設計_v2_泉と門_2026-09-13.md">docs/設計_v2_泉と門_2026-09-13.md</a> §2. The one thing the machine cannot strip is <strong>what you typed yourself</strong>: the free-text <code>audience</code> note is queued as written, so describe who was there by attribute ("parents comparing schools"), not by handle.</li>
-  <li>Never reads direct messages. It only ever touches public posts and public replies.</li>
-  <li>Never auto-replies with canned text. Reply drafts go through the same human-approval path as any other post.</li>
-</ul>
-<h3>何を保証するか</h3>
-<ul>
-  <li><strong>人が承認していない本文は 1 文字も出ない。</strong> 承認は 2 段（見せる → digest を渡す）。 digest が違えば拒否する。<strong>「見せた本文」と「出す本文」が同じであることを機械が確かめる。</strong></li>
-  <li><strong><code>--production</code> を付けるまで出ない。</strong> 付けない実行は、投げるはずの本文と digest を表示して終わる。</li>
-  <li><strong>記録は利用者の git に残る。</strong> post_id・承認者・承認時刻・返信・実測は、あなたの repo の commit として残る。THTH のサーバには何も無い。</li>
-  <li><strong>数値には分母が付く。</strong> 件数・期間・揃えた条件が無い数字は返さない。取れていない刻みは <code>null</code> であって <code>0</code> ではない。</li>
-  <li><strong>黙って間違えない。</strong> 拒むときは理由と次の一手を言って非ゼロで終わる（loud reject）。</li>
-</ul>
-<h3>何を拒むか</h3>
-<ul>
-  <li><strong><code>--confirm</code> の無い本番。</strong> digest の食い違う本番。承認後に本文が変わった下書き（<code>approval_stale</code>）。</li>
-  <li><strong>同期を確認していない commit の本文。</strong> ディスクに置いただけのファイルは選ばれない。</li>
-  <li><strong>静かな時間帯・最短間隔に反する投稿。</strong></li>
-  <li><strong>語（トピック）の未確認。</strong> 承認の一段目が「未確認です」と言う。</li>
-</ul>
-<h3>何を絶対にしないか</h3>
-<ul>
-  <li><strong>何を書くかを決めない。</strong> 文体・頻度・時刻・語の選び方はあなたのプロジェクトのもの。渡された本文を<strong>整形も切り詰めもせず</strong>そのまま出す。</li>
-  <li><strong>本文を勝手に外へ出さない。</strong> <code>thth share</code> は<strong>既定 off</strong>。on にしても出るのは語・<strong>誰がいたか</strong>（<code>--audience</code> にあなたが書いた自由文）・型・取得状態・件数・時刻帯・ post_id の<strong>ハッシュ</strong>・観測者の仮名だけで、<strong>本文・返信の本文・返信者の名前・あなたの判断（<code>--verdict</code>）・<code>--by</code>・アカウント名・トークン・repo のパス・生の post_id は 1 バイトも出ない</strong>（<code>thth share log</code> で積んだ全部が読める）。 <strong>ただし <code>--audience</code> はあなたが書く自由文なので、そこに人の名前を書けばそれは出る。</strong> 機械が落とすのは<strong>返信者の</strong> <code>username</code>（台帳から来る欄）であって、<strong>あなたが自分で書いた文字ではない</strong>。<code>--audience</code> には「誰がいたか」を<strong>属性で</strong>書く（「受験親のやりとり」）——<code>@名前</code> は書かない。 <strong>on にしても送り先はまだ無い</strong>——手元の <code>state/share/outbox/</code> に積むだけ。</li>
-  <li><strong>人の代わりに承認しない。</strong> あなた（エージェント）は下書きと digest を人に見せ、人が <code>--confirm</code> を打つ。</li>
-</ul>
-<h2>投稿する前に聞く / <code>before_you_post</code></h2>
-<p><code>thth ask before-you-post &lt;account&gt; --topic &lt;語&gt;</code>（MCP からは <code>before_you_post</code>）は、この語・この型・この時刻帯でスレッドがどう伸びたかを、<strong>件数と期間つきで</strong>返す。答えるのは<strong>あなたの手元の台帳だけ</strong>——ネットワークへは出ないし、原稿本文は問いにも答えにも入らない。件数が閾値（既定 20）に満たない群は中央値を返さず、<strong>ほとんどが <code>cannot_say</code> になる</strong>。それが正しい答えで、終了コードは 0。<strong>泉（共有の水）はまだ無い</strong>ので、<code>provenance.source</code> は <code>local</code> と言う。</p>
-<h2>泉はまだ無い / The spring does not exist yet</h2>
-<p><code>api.thth.me</code>（泉）は<strong>まだ無い</strong>。<code>thth share</code> は<strong>既定 off</strong>で、on にしても<strong>送り先が無い</strong>——手元の <code>$THTH_ROOT/state/share/outbox/</code> に積むだけで、<code>thth share log</code> で積んだ全部が読める（設計 <a href="https://github.com/aokings/thth/blob/main/docs/設計_v2_泉と門_2026-09-13.md">docs/設計_v2_泉と門_2026-09-13.md</a> §3・§7-3）。</p>
-<h2>LLM に選ばせる試験 / Picked by an LLM</h2>
-<p>名前を伏せた 4 本の候補から、まっさらな Claude が「人の承認を通して Threads に出す」道具として THTH を選んだのは <strong>5/5</strong>、<code>pip install</code> 済みの箱で禁じ手ゼロのまま乾式試験まで着いたのが <strong>3/3</strong>。ただし<strong>承認の条件を外した対照の問いでも 5/5 だったので、「承認の機能ゆえに選ばれた」とはまだ言えない</strong>（記録あり・thth-notes）。</p>
-<h2>リンク / Links</h2>
-<ul>
-  <li><a href="https://github.com/aokings/thth">GitHub — aokings/thth</a>（README・docs・テスト）</li>
-  <li><a href="https://pypi.org/project/thth/">PyPI — thth</a>（<code>pip install thth</code>・依存 0）</li>
-  <li><a href="https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.aokings/thth">MCP registry — io.github.aokings/thth</a></li>
-  <li><a href="/llms.txt">/llms.txt</a>（LLM 向けの入口。repo の <code>llms.txt</code> と同じ）</li>
-  <li><a href="https://github.com/aokings/thth/blob/main/LICENSE">LICENSE</a> — MIT (c) 2026 gotoq</li>
-</ul>
-<footer>MIT License (c) 2026 gotoq ・ <code>thth.me</code> は Threads の認可の受け口（<code>/callback/</code>）も兼ねている。このページは外部の CSS・JS・フォント・画像を 1 つも読み込まない。</footer>
+<footer>MIT License (c) 2026 gotoq。このページは外部の CSS・JS・フォント・画像を読み込みません。<code>thth.me/callback/</code> は Threads の認可の受け口です。</footer>
 </main></body></html>
