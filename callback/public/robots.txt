@@ -1,0 +1,8 @@
+# thth.me は製品の入口（設計 v2 §3）。紹介ページは索引してよい。
+# 認可の受け口と Meta 用の口は索引しない（認可コードがクエリに乗る）。
+User-agent: *
+Allow: /
+Disallow: /callback/
+Disallow: /deauthorize
+Disallow: /data-deletion
+Disallow: /data-deletion-status
