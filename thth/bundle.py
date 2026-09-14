@@ -14,6 +14,7 @@ import dataclasses
 import re
 
 from . import queuefile
+from . import writeback as writeback_mod
 
 VERSION = "2"
 
@@ -379,7 +380,16 @@ def set_post_fields(text: str, index: int, fields: dict) -> str:
 
     front matter を組み直すのではなく**その段の中だけを書き換える**——
     組み直すと、書いた人のコメントや並びが消える（v1 の `writeback` と同じ考え）。
+
+    **鍵・値に改行・復帰・NUL があれば 1 文字も書かずに `ValueError`**
+    （セキュリティ監査 2 回目・P1-1）。検査は単発の書き戻し（`thth/writeback.py`
+    の `set_front_matter_fields()`）と**同じ 1 本**を通す——`posts:` の段も
+    front-matter の一部で、改行のあとを字下げ無しで書けば **top-level の行**に
+    なる（`status: approved` を後勝ちで足せる）。ここを通らない口が 1 つでも
+    残ると、単発で塞いだ穴が連投でそのまま空く（実際にそうなっていた）。
     """
+    for key, value in fields.items():
+        writeback_mod.check_front_matter_field(key, value)
     lines = text.split("\n")
     fm_end = None
     for i in range(1, len(lines)):

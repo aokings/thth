@@ -24,6 +24,7 @@ from . import bundle as bundle_mod
 from . import inflight as inflight_mod
 from . import jst
 from . import lock as lock_mod
+from . import postid as postid_mod
 from . import queuefile
 from . import forms as forms_mod
 from . import redact as redact_mod
@@ -450,6 +451,26 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
                            run_id=run["run_id"])
 
     # **公開は成功した。ここから先が失敗しても再公開しない。**
+    #
+    # **媒体が返した `post_id` を、確かめずに書き戻さない**（セキュリティ監査
+    # 2 回目・P1-1）。単発（`core._throw_chosen()`）には 2026-09-14 に入れた
+    # 検査が、**連投にだけ無かった**——`result.post_id` が素通しで
+    # `bundle.set_post_fields()` に渡り、改行入りの `id` で束の front-matter に
+    # 任意の行（`status: approved` 等）が入った。書いたものはそのまま commit・
+    # push されるので、以後その account の `run` は `sync_repo` で止まる。
+    #
+    # 扱いは `publish_ambiguous` と同じ（§3.5・単発と揃える）。**出たことは
+    # 判っているが、それを記録できない**——inflight を残して人を呼び、後続の段は
+    # 進めない（親の ID が信用できないので、繋ぎ先が決まらない）。
+    if not postid_mod.is_usable(result.post_id) \
+            or writeback_mod.has_control_chars(result.post_id):
+        msg = ("媒体が返した post_id が台帳に書けない形です"
+               "（書き戻しません・再公開もしません・inflight を残します）")
+        inflight_mod.update(state_dir, mismatch_fields=["post_id"])
+        threadrun.mark(run, index, threadrun.UNRESOLVED, note="unusable_post_id")
+        log(f"{msg}（{index} 段目）")
+        return StepResult("unresolved", index, msg, run_id=run["run_id"])
+
     posted_at = result.ts or jst.iso()
     sent_sha = approval_mod.segment_sha(section)
     threadrun.mark(run, index, threadrun.PUBLISHED, post_id=result.post_id,
