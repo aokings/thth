@@ -320,7 +320,11 @@ thth token set demo-threads          # 貼り付けを求められる。値は�
 thth auth demo-threads
 ```
 
-順番は **`accounts/<account>.json` → `app.env` → `redirect_uri` → 認可 URL の表示 → code の貼り付け → 短期→長期の交換 → `.token`（600）** です（**L1**・§7 の乾式試験が `app.env` を読むところまで毎回通しています）。
+順番は **`accounts/<account>.json` → `app.env` → `redirect_uri` → 認可 URL の表示 → **戻り URL 全体**の貼り付け → 短期→長期の交換 → handle の照合 → `.token`（600）** です（**L1**・§7 の乾式試験が `app.env` を読むところまで毎回通しています）。
+
+**貼るのは `code` の値ではなく、戻り URL 全体です**（セキュリティ監査 2026-09-14・P2-4・**L1**）。認可 URL には `state` が付いていて、戻りの `state` と照合します——`state` が無い戻り・食い違う戻りは rc=2 で受け付けません（この道具が出した URL の戻りだと確かめられないため）。**対話でない口から使うときは 2 段**になります: 1 回目（`thth auth <account>`）が URL を出し、2 回目に `thth auth <account> --code '<戻り URL 全体>'` で渡します。
+
+**トークンが別のアカウントのものなら保存しません**（同上・`thth token set` と同じ守り）。台帳の `handle` と、トークンが実際に指しているアカウントが食い違えば rc=1 で止まります。
 
 **既定で要求する scope は 11 個**（`thth/scopes.py` `DEFAULT_SCOPES`・**L1**）。裁定は「例外なく全部」（設計 §8-14）ですが、**tester に実際に降りるのは §2 の 5 つだけ**（**L3**）。
 
