@@ -307,8 +307,14 @@ def test_f_sentの本文は実測にも返信にも入らない(tmp_path, isolat
 def test_g_乾式_account_addした同席専用の台帳で採ってmeasuredに1件(
         tmp_path, monkeypatch):
     """**まっさらな `$THTH_ROOT` に `thth account add` を 1 本**（`tests/
-    test_fresh_install.py` の型）。`add` が書く台帳の `repo_dir` は
-    `$THTH_ROOT/repos/<project>`＝実在しない——**同席専用そのもの**。
+    test_fresh_install.py` の型）。
+
+    **`--repo-dir $THTH_ROOT/repos/_none` を付ける**（監査 2 回目・P2-1 で
+    変更）。以前はここで `add` の既定（`$THTH_ROOT/repos/<project>`）のまま
+    「実在しない＝同席専用」としていたが、**それでは「まだ clone していない」と
+    「clone が見えなくなった」が同じ扱いになる**——後者で黙って state に転ぶと、
+    書いたものは版管理にも board の「未送信」にも出ない。**repo を持たない
+    アカウントは台帳でそう名乗る**（設計 §・`masaru-threads` と同じ綴り）。
     """
     root = tmp_path / "thth_root"
     accounts_dir = root / "accounts"
@@ -318,7 +324,8 @@ def test_g_乾式_account_addした同席専用の台帳で採ってmeasuredに1
     monkeypatch.setenv("THTH_ACCOUNTS_DIR", str(accounts_dir))
 
     add = run_thth(["account", "add", "demo-bluesky", "--media", "bluesky",
-                    "--project", "demo", "--handle", "demo.bsky.social"], env=env)
+                    "--project", "demo", "--handle", "demo.bsky.social",
+                    "--repo-dir", "$THTH_ROOT/repos/_none"], env=env)
     assert add.returncode == 0, f"{add.stdout}\n{add.stderr}"
     cfg = accounts_mod.load_account("demo-bluesky")
     assert not accounts_mod.is_repo_backed(cfg), cfg["repo_dir"]

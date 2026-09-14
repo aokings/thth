@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 
+from . import postid as postid_mod
 from . import redact as redact_mod
 
 # front-matter は 1 行 1 項目の平たい `key: value`。**値に改行が入れば、そこから
@@ -33,8 +34,9 @@ from . import redact as redact_mod
 FORBIDDEN_IN_FRONT_MATTER = ("\n", "\r", "\x00")
 
 # `post_id` は front-matter だけでなくファイル名・台帳の鍵にもなるので、
-# 制御文字はまとめて弾く（`thth/core.py` が公開の直後に通す）。
-_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+# 制御文字はまとめて弾く。**判定の正本は `thth/postid.py`**（監査 2 回目・P3-9）
+# ——ここに別の綴りを持つと、`postid.is_usable()` しか通らない口
+# （`collect._safe_post_id()`・`sent.write()`）だけが守られないまま残る。
 
 
 def _forbidden_name(ch: str) -> str:
@@ -61,10 +63,14 @@ def check_front_matter_field(key, value) -> None:
 
 
 def has_control_chars(text) -> bool:
-    """制御文字（`\\x00`〜`\\x1f`・`\\x7f`）を含むか。`post_id` の検査に使う。"""
+    """制御文字（`\\x00`〜`\\x1f`・`\\x7f`）を含むか。
+
+    **判定は `postid.CONTROL_RE` の 1 本**（監査 2 回目・P3-9）。この名前は
+    呼び出し側のために残す。
+    """
     if not isinstance(text, str):
         return False
-    return bool(_CONTROL_RE.search(text))
+    return bool(postid_mod.CONTROL_RE.search(text))
 
 
 class PushValidationFailed(Exception):
@@ -152,7 +158,14 @@ def upstream_sha(repo_dir: str) -> str | None:
     （`approved_waiting: 1`・要確認 0 件）。一致しない間は照合先が無い（None）＝
     どのファイルも `unverified_content` になるので、board にそのまま出る。
     """
+    # **`.git` の無いディレクトリで git を呼ばない**（監査 2 回目・P3-1）。
+    # `git -C <dir> rev-parse HEAD` は**上の階層まで遡って repo を探す**ので、
+    # `repo_dir` が `$THTH_ROOT/repos/_none`（存在しない・空）でも、その上に
+    # 別の clone があれば**他人の repo の HEAD を照合先として返していた**。
+    # 判定は `accounts.repo_state()` と同じ 2 つ（ディレクトリがある・`.git` がある）。
     if not repo_dir or not os.path.isdir(repo_dir):
+        return None
+    if not os.path.exists(os.path.join(repo_dir, ".git")):
         return None
     head = _run_git(repo_dir, ["rev-parse", "HEAD"])
     upstream = _run_git(repo_dir, ["rev-parse", "@{u}"])

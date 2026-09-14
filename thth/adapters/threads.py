@@ -558,8 +558,14 @@ class ThreadsAdapter(base.Adapter):
             parts = urllib.parse.urlsplit(nxt)
             base_netloc = urllib.parse.urlsplit(self.base_url).netloc
             if parts.scheme != "https" or parts.netloc != base_netloc:
+                # **何が違うのかを言う**（監査 2 回目・P3-8）。`http://` への
+                # 格下げでも「別のホストを指しています」と出ていたので、
+                # **同じホストなのにホストが違うと言われる**——読んだ人は
+                # 綴りを疑って原因に辿り着けない。
+                違い = ("ホストが違います" if parts.netloc != base_netloc
+                        else "scheme が違います（https でないと追いません）")
                 raise RuntimeError(
-                    f"{what}: 次の頁が別のホストを指しています"
+                    f"{what}: 次の頁の指し先で{違い}"
                     f"（{parts.scheme}://{parts.netloc} ≠ https://{base_netloc}）。"
                     f"**追いません**（access_token を外へ出さないため）")
             if nxt in seen_urls:

@@ -36,7 +36,17 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
     `approved_fingerprint`（外部レビュー再々レビュー P1・1）は公開直前に固定した
     5 項目（本文・account・reply_to・topic・publish_at）の指紋。`body_hash` は
     後方互換のため残す（本文だけの hash・`tests/test_sent_integrity.py` が参照）。
+
+    **書けない `post_id` はここでも断る**（監査 2 回目・P3-9）。呼び出し側
+    （`core`・`threadthrow`）は公開の直後に確かめているが、**書く側にも 1 枚置く**
+    ——`post_id` はそのままファイル名になるので、長すぎれば `OSError`、制御文字が
+    入れば読めない名前が残る。**書く場所に近いほうで断ると、新しい呼び出し口が
+    増えても穴が空かない。**
     """
+    if not postid_mod.is_usable(post_id):
+        raise ValueError(
+            f"post_id を記録の鍵にできません（空・`.`／`..`・制御文字・長すぎる）:"
+            f" {post_id!r}")
     d = dir_for(state_dir)
     os.makedirs(d, exist_ok=True)
     p = path_for(state_dir, post_id)
@@ -58,7 +68,7 @@ def read(state_dir: str, post_id: str) -> dict | None:
         return json.load(f)
 
 
-def records(state_dir: str) -> list:
+def records(state_dir: str, *, errors: list | None = None) -> list:
     """`sent/` に残っている記録を全部読む（**壊れた 1 本で全部を落とさない**）。
 
     **なぜ要るか**（2026-09-13 の本番）。`thth send`（同席の様態）で出した 1 本が
@@ -67,9 +77,17 @@ def records(state_dir: str) -> list:
     front-matter が無い（`core._send_locked()` の註）。**出した事実がここにしか
     無い**以上、読み手もここを見なければ「出していない」と言ってしまう。
 
-    読めなかったファイル・辞書でないもの・`post_id` を復元できないものは飛ばす
-    （読むだけの口が 1 本の壊れた記録で止まらないように）。`post_id` が中身に
-    無い記録はファイル名から復元する（`postid.from_filename()`）。
+    読めなかったファイル・辞書でないもの・`post_id` の無いものは飛ばす
+    （読むだけの口が 1 本の壊れた記録で止まらないように）。飛ばしたものは
+    `errors` に 1 行ずつ積む（渡されていれば）。
+
+    **ファイル名から `post_id` を作らない**（監査 2 回目・P3-7）。前は中身に
+    `post_id` が無ければ `postid.from_filename()` で復元していたが、**名前は
+    誰でも置ける**——`sent/` に `at%3A%2F%2F別人の投稿.json` を 1 つ置けば、
+    `thth board` の `last_post`・`thth posts` の突合・採取の母集団に、
+    **THTH が出していない `post_id` が「出したもの」として入る**。名前は
+    パスの都合（`postid.to_filename()`）であって、記録の中身ではない。
+    `write()` は必ず `post_id` を書くので、無いものは**壊れた記録**。
     """
     d = dir_for(state_dir)
     try:
@@ -80,17 +98,25 @@ def records(state_dir: str) -> list:
     for name in names:
         if not name.endswith(".json"):
             continue
+        path = os.path.join(d, name)
         try:
-            with open(os.path.join(d, name), encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         except (OSError, ValueError):
+            if errors is not None:
+                errors.append(f"sent の記録を読めません: {name}")
             continue
         if not isinstance(data, dict):
+            if errors is not None:
+                errors.append(f"sent の記録が object ではありません: {name}")
             continue
-        post_id = data.get("post_id") or postid_mod.from_filename(name[: -len(".json")])
-        if not post_id:
+        post_id = data.get("post_id")
+        if not isinstance(post_id, str) or not post_id.strip():
+            if errors is not None:
+                errors.append(
+                    f"sent の記録に post_id がありません: {name}"
+                    f"（**ファイル名からは作りません**——名前は誰でも置けます）")
             continue
-        data["post_id"] = post_id
         out.append(data)
     return out
 
@@ -101,15 +127,13 @@ def post_ids(state_dir: str) -> set:
 
 
 def _parse_sent_at(raw):
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    value = raw.strip()
-    if value.endswith("Z"):          # 媒体が UTC の Z 表記で返してきた場合
-        value = value[:-1] + "+00:00"
-    try:
-        return jst.to_jst(datetime.datetime.fromisoformat(value))
-    except ValueError:
-        return None
+    """**綴りの揺れを吸うのは `jst.parse()` の仕事**（監査 2 回目・P3-11）。
+
+    ここにあった実装を `jst` へ移した——同じ仕事が採取の側にも 2 つあり、
+    **そちらだけ `Z` を読めなかった**（同じ投稿が board には出るのに採取の
+    母集団から落ちる）。名前は呼び出し側のために残す。
+    """
+    return jst.parse(raw)
 
 
 def latest_sent(state_dir: str):

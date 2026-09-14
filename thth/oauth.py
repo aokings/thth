@@ -112,12 +112,29 @@ def _save_auth_state(account_name: str, state: str) -> None:
         pass                       # 残せなくても認可そのものは続けられる
 
 
+# **残した `state` の有効期限**（監査 2 回目・P3-5）。認可の URL を出してから
+# 戻り URL を貼るまでの時間で、10 分あれば足りる（ブラウザで承認するだけ）。
+#
+# 期限が無いと、**去年出して貼らなかった `state` が今日の戻りを通してしまう**
+# ——`auth_state.json` は照合に成功したときしか消えないので、途中でやめた認可の
+# `state` は残り続ける。攻撃者がその 1 本を握れば、いつでも使える鍵になる。
+AUTH_STATE_TTL_SECONDS = 600
+
+
 def _saved_auth_state(account_name: str):
+    """前回の実行が残した `state`（無い・読めない・**古い**なら None）。"""
     try:
         with open(_auth_state_path(account_name), encoding="utf-8") as f:
-            return (json.load(f) or {}).get("state")
+            data = json.load(f) or {}
     except (OSError, ValueError):
         return None
+    created = jst.parse(data.get("created_at"))
+    if created is None:
+        # **いつ出したか判らないものを通さない**（規約 12・fail-closed）。
+        return None
+    if (jst.now_jst() - created).total_seconds() > AUTH_STATE_TTL_SECONDS:
+        return None
+    return data.get("state")
 
 
 def _clear_auth_state(account_name: str) -> None:
@@ -131,6 +148,13 @@ def extract_state(raw: str):
     """貼られた戻り URL から `state` を取り出す（無ければ None）。
 
     `extract_code()` と同じ揺れに耐える（末尾の `#_`・URL 全体・前後の空白）。
+
+    **鍵の照合は `parse_qs` に任せる**（監査 2 回目・P3-4）。前は
+    `text.split("state=", 1)` で切っていたので、**`state` で終わる別の鍵**を
+    `state` として読んでいた——`?code=X&my_state=攻撃者の値` の `my_state` が
+    当たる（`"state=" in text` も通る）。照合する側は「出した `state` と同じか」を
+    見るだけなので、**間違った鍵を拾えば照合は必ず外れる**か、悪いときには
+    攻撃者が仕込んだ値で通る。鍵の名前は厳密に見る。
     """
     text = (raw or "").strip()
     for sep in ("#_", "#"):
@@ -138,20 +162,14 @@ def extract_state(raw: str):
         if idx != -1:
             text = text[:idx]
             break
-    if "state=" not in text:
-        return None
-    after = text.split("state=", 1)[1]
-    for sep in ("&", " ", "\t", "\n"):
-        cut = after.find(sep)
-        if cut != -1:
-            after = after[:cut]
-    after = after.strip()
-    if not after:
-        return None
-    try:
-        return urllib.parse.unquote(after)
-    except Exception:              # noqa: BLE001
-        return after
+    query = text.split("?", 1)[1] if "?" in text else text
+    # `keep_blank_values=False` なので `state=` だけの空値は拾わない（＝無い）。
+    values = urllib.parse.parse_qs(query).get("state") or []
+    for value in values:
+        value = (value or "").strip()
+        if value:
+            return value
+    return None
 
 
 def extract_code(raw: str) -> str:

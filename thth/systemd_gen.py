@@ -31,13 +31,8 @@ def offset_minutes(account_name: str, tick_minutes: int) -> int:
     return int(digest[:8], 16) % tick_minutes
 
 
-def render_timer(account_cfg: dict) -> str:
-    """`.timer` unit の中身を返す（`thth systemd <account>` が標準出力に出す）。
-
-    `Persistent=true`・`Unit=thth@<account>.service`。既存の `systemd/thth@.service`
-    をそのまま使う（`THTH_ROOT=/srv/thth` を渡している・変更しない）。
-    """
-    account_name = account_cfg["account"]
+def _tick_of(account_cfg: dict) -> int:
+    """台帳の `tick_minutes`（読めない・1 未満なら既定 10）。"""
     tick_minutes = account_cfg.get("tick_minutes") or DEFAULT_TICK_MINUTES
     try:
         tick_minutes = int(tick_minutes)
@@ -45,6 +40,17 @@ def render_timer(account_cfg: dict) -> str:
         tick_minutes = DEFAULT_TICK_MINUTES
     if tick_minutes < 1:
         tick_minutes = DEFAULT_TICK_MINUTES
+    return tick_minutes
+
+
+def render_timer(account_cfg: dict) -> str:
+    """`.timer` unit の中身を返す（`thth systemd <account>` が標準出力に出す）。
+
+    `Persistent=true`・`Unit=thth@<account>.service`。既存の `systemd/thth@.service`
+    をそのまま使う（`THTH_ROOT=/srv/thth` を渡している・変更しない）。
+    """
+    account_name = account_cfg["account"]
+    tick_minutes = _tick_of(account_cfg)
     offset = offset_minutes(account_name, tick_minutes)
 
     return (
@@ -65,6 +71,78 @@ def render_timer(account_cfg: dict) -> str:
         "\n"
         "[Install]\n"
         "WantedBy=timers.target\n"
+    )
+
+
+# --- 採集だけの timer（同席専用アカウント・監査 2 回目・P2-5）-----------------
+#
+# **`thth collect` を回す口が無かった。** 採集は `thth run`（＝投稿）の最後に
+# ぶら下がっているので、`scheduled: false`（timer を持たない）の同席専用
+# アカウントでは**誰も呼ばない**——v2.0.1 で「同席の送信も採る」と直したのに、
+# 実際に回すには人が手で `thth collect <account>` を打つしかなかった。
+# **人が毎日打つことを前提にした設計は、打たれない日に黙って穴が空く。**
+#
+# 投稿の timer（`thth@<account>.timer`）とは**別の名前**にする
+# （`thth-collect@<account>`）。同じ名前に寄せると、`scheduled: false` の
+# アカウントで投稿の unit が enable されうる。
+COLLECT_UNIT_PREFIX = "thth-collect@"
+
+
+def collect_offset_minutes(account_name: str, tick_minutes: int) -> int:
+    """採集の起点（分）。**投稿の起点とずらす**（同じ機械で当たりを重ねない）。"""
+    return offset_minutes(f"{account_name}-collect", tick_minutes)
+
+
+def render_collect_timer(account_cfg: dict) -> str:
+    """`thth-collect@<account>.timer` の中身（`thth systemd <a> --collect-only`）。
+
+    刻みは投稿と同じ `tick_minutes`（既定 10）。採集の刻みは投稿からの経過時間
+    （1・6・24・72・168 時間）で決まり、timer は「跨いだか」を見に来るだけなので、
+    細かく回しても API は叩かない（`collect.due_marks()`）。
+    """
+    account_name = account_cfg["account"]
+    tick_minutes = _tick_of(account_cfg)
+    offset = collect_offset_minutes(account_name, tick_minutes)
+    return (
+        f"# 生成: `thth systemd {account_name} --collect-only`（手で編集しない）。\n"
+        f"# 同席専用（`thth send` だけで使う・`scheduled: false`）アカウントの\n"
+        f"# 採集を回す。投稿の timer（thth@{account_name}.timer）は enable しない。\n"
+        "[Unit]\n"
+        f"Description=THTH collect for {account_name}"
+        f"（{tick_minutes} 分ごと・終日・採集だけ）\n"
+        "\n"
+        "[Timer]\n"
+        f"OnCalendar=*:{offset}/{tick_minutes}\n"
+        "Persistent=true\n"
+        "RandomizedDelaySec=0\n"
+        f"Unit={COLLECT_UNIT_PREFIX}{account_name}.service\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n"
+    )
+
+
+def render_collect_service() -> str:
+    """`thth-collect@.service`（雛形・`--collect-only --service`）。
+
+    **投稿の service（`thth@.service`）と分ける。** あちらは `bin/thth-run` を
+    呼ぶ（投稿してから採る）。こちらは `thth collect %i` だけ——**同席専用の
+    アカウントで投稿の経路を走らせない。**
+    """
+    return (
+        "# 生成: `thth systemd <account> --collect-only --service`（手で編集しない）。\n"
+        "# 雛形 unit（`%i` にアカウント名が入る）。1 つ置けば全アカウントで使える。\n"
+        "[Unit]\n"
+        "Description=THTH collect for %i（採集だけ・投稿はしない）\n"
+        "After=network-online.target\n"
+        "Wants=network-online.target\n"
+        "\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        "User=wt\n"
+        "Environment=THTH_ROOT=/srv/thth\n"
+        "ExecStart=/srv/thth/app/bin/thth collect %i\n"
+        "TimeoutStartSec=300\n"
     )
 
 

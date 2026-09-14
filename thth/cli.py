@@ -1100,7 +1100,10 @@ def cmd_threads(args) -> int:
         topic = post["topic"] or "（トピック無し）"
         kind = post["kind"] or "型なし"
         band = post["hour_band"] or "時刻不明"
-        出所 = {"sent": "同席の送信", "queue": "queue"}.get(post.get("source"), "不明")
+        # **無印は queue**（設計 v2.0.1 §3・監査 2 回目・P3-2）。`thth posts` と
+        # 同じ既定にする——ここだけ「不明」と出していたので、**同じ投稿が画面に
+        # よって違う出所を名乗っていた**。
+        出所 = {"sent": "同席の送信"}.get(post.get("source"), "queue")
         print(f"{post['post_id']}  [{topic}／{kind}]  {band}  出所={出所}"
               f"  posted_at={post['posted_at']}")
 
@@ -1973,12 +1976,18 @@ def cmd_forms(args) -> int:
 
 def cmd_queue(args) -> int:
     summary = report_mod.queue_summary(args.account)
+    # **読めなかった台帳があれば終了コードを立てる**（監査 2 回目・P3-3）。
+    # 名前が不正・台帳が無い・壊れているとき、画面には 1 行出るのに **rc は 0**
+    # だった——`thth queue ../../etc/passwd` も `thth queue 打ち間違い` も「成功」で
+    # 返るので、**script から呼ぶと黙って素通りする**（作法 5・loud reject）。
+    rc = 2 if any("error" in info for info in summary.values()) else 0
     if args.json:
         _print_json(summary)
+        return rc
     else:
         for name, info in summary.items():
             if "error" in info:
-                print(f"{name}: {info['error']}")
+                print(f"{name}: {info['error']}", file=sys.stderr)
                 continue
             c = info["counts"]
             topic_suffix = f" topic={info['next_topic']}" if info.get("next_topic") else ""
@@ -1987,7 +1996,7 @@ def cmd_queue(args) -> int:
                   f"{topic_suffix}")
             for rej in info.get("next_rejections") or []:
                 print(f"  いま出ない: {rej['file']} — {rej['reason']}")
-    return 0
+    return rc
 
 
 def cmd_schedule(args) -> int:
@@ -2180,8 +2189,33 @@ def cmd_systemd(args) -> int:
     except accounts_mod.AccountError as e:
         print(str(e), file=sys.stderr)
         return 2
+    # **採集だけを回す口**（監査 2 回目・P2-5）。同席専用（`scheduled: false`）の
+    # アカウントは投稿の timer を持たないので、**採集を呼ぶものが誰もいなかった**。
+    if getattr(args, "collect_only", False):
+        sys.stdout.write(systemd_gen.render_collect_service() if args.service
+                         else systemd_gen.render_collect_timer(account_cfg))
+        return 0
     sys.stdout.write(systemd_gen.render_timer(account_cfg))
     return 0
+
+
+def _collected_line(raw) -> str:
+    """「最後に採ったのは n 時間前」の 1 行（監査 2 回目・P2-5）。
+
+    **1 度も採っていない**ときは「未採取」——`0 時間前` と言わない（規約 12）。
+    時刻が読めない記録も「未採取」ではなく、そう言う。
+    """
+    from . import jst as jst_mod
+    if not raw:
+        return "最後に採ったのは: 未採取"
+    at = jst_mod.parse(raw)
+    if at is None:
+        return f"最後に採ったのは: 時刻を読めません（{raw}）"
+    時間 = (jst_mod.now_jst() - at).total_seconds() / 3600.0
+    if 時間 < 0:
+        # 未来の時刻。**判らないものを「さっき」と言わない。**
+        return f"最後に採ったのは: {at.isoformat()}（未来の時刻です）"
+    return f"最後に採ったのは: {時間:.0f} 時間前（{at.isoformat()}）"
 
 
 def cmd_board(args) -> int:
@@ -2222,7 +2256,13 @@ def cmd_board(args) -> int:
         # 間違えても気づけない**（新しい出力契約にしたとき、ここを落とした）。
         # **配布参照の署名を確かめているか 1 語**（セキュリティ監査 2026-09-14・
         # P2-5）。既定は「未確認」——確かめていないことを黙らない。
-        署名 = "署名: 確認" if app.get("signature_checked") else "署名: 未確認"
+        # **確かめられなかった回を「確認」と言わない**（監査 2 回目・P2-4）。
+        署名 = {
+            "off": "署名: 未確認",
+            "verified": "署名: 確認",
+            "unverified": "署名: 確認できず（取り込んでいません）",
+        }.get(app.get("signature_state"),
+              "署名: 確認" if app.get("signature_checked") else "署名: 未確認")
         print(f"道具: {_pkg_version}（{head or '(版が読めません)'}）  "
               f"配布の枝: `{ref}`  {署名}")
         # **台帳の置き場を 1 行**（設計 v2 §3・v2-2a）。下に並ぶ顔ぶれが
@@ -2316,6 +2356,10 @@ def cmd_board(args) -> int:
             mismatch_fields = row.get("inflight_mismatch_fields")
             if inflight != "(なし)" and mismatch_fields:
                 print(f"  食い違った項目: {', '.join(mismatch_fields)}")
+            # **採集が止まっていることを黙らない**（監査 2 回目・P2-5）。
+            # 同席専用（`scheduled: false`）のアカウントは投稿の timer を持たない
+            # ので、**採集を呼ぶものが誰もいなくても画面には何も出なかった**。
+            print(f"  {_collected_line(row.get('last_collected_at'))}")
             needs_review = row.get("needs_review") or []
             if needs_review:
                 # 「承認して待っている（正常）」と「承認が古くて永久に出ない（異常）」
@@ -2509,7 +2553,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_systemd.add_argument("--maintain", action="store_true",
                            help="thth maintain（トークン保守・1 日 1 回）の unit を出す")
     p_systemd.add_argument("--service", action="store_true",
-                           help="--maintain と併用: .timer でなく .service を出す")
+                           help="--maintain／--collect-only と併用: .timer でなく .service を出す")
+    p_systemd.add_argument("--collect-only", action="store_true",
+                           help="採集だけの unit を出す（同席専用＝scheduled: false の"
+                                "アカウント用。thth-collect@<account>）")
     p_systemd.set_defaults(func=cmd_systemd)
 
     # `thth share on|off|status|log`（設計 v2 §3・裁定 §7-3）。**口は
