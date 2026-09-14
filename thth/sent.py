@@ -60,6 +60,37 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
     return p
 
 
+RETRACT_KEYS = ("retracted_at", "retracted_by", "retract_reason")
+
+
+def mark_retracted(state_dir: str, post_id: str, *, retracted_at: str,
+                   retracted_by: str, retract_reason: str) -> str:
+    """取り下げの 3 項目を `sent/<post_id>.json` に**足す**（設計 v2 §4.3・v2.1-B）。
+
+    **消さない**——送った本文・hash・時刻はそのまま残り、`retracted_at` 等が
+    加わるだけ。記録が無ければ `FileNotFoundError`（無いものに足さない）。
+    """
+    p = path_for(state_dir, post_id)
+    with open(p, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"sent の記録が object ではありません: {p}")
+    data["retracted_at"] = retracted_at
+    data["retracted_by"] = retracted_by
+    data["retract_reason"] = retract_reason
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.replace(tmp, p)
+    return p
+
+
+def retracted_records(state_dir: str) -> list:
+    """`sent/` のうち取り下げ済み（`retracted_at` あり）の記録。"""
+    return [row for row in records(state_dir) if row.get("retracted_at")]
+
+
 def read(state_dir: str, post_id: str) -> dict | None:
     p = path_for(state_dir, post_id)
     if not os.path.exists(p):

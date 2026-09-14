@@ -183,20 +183,39 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
     tree_sha = writeback_mod.upstream_sha(account_cfg.get("repo_dir"))
     files = core.list_queue_files(account_cfg, tree_sha=tree_sha)
     by_post_id = {}
+    # **取り下げ済み**（`thth retract`・設計 v2 §4.3）。媒体からは消えているので
+    # 一覧には出ないが、**記録は消していない**——queue の front-matter と
+    # `sent/` の `retracted_at` から拾って、別枠で出す。
+    retracted = {}
     for qf in files:
         if qf.malformed:
             continue
         post_id = qf.front_matter.get("post_id")
         if post_id:
             by_post_id[post_id] = os.path.basename(qf.path)
+            if qf.front_matter.get("retracted_at"):
+                retracted[post_id] = {
+                    "id": post_id, "file": os.path.basename(qf.path),
+                    "retracted_at": qf.front_matter.get("retracted_at"),
+                    "retracted_by": qf.front_matter.get("retracted_by"),
+                    "retract_reason": qf.front_matter.get("retract_reason")}
     # 同席の様態（`thth send`）の記録。**queue に無いことは「通していない」の
     # 証明ではない。**
-    sent_ids = sent_mod.post_ids(accounts_mod.state_dir_for(account_name))
+    state_dir = accounts_mod.state_dir_for(account_name)
+    sent_ids = sent_mod.post_ids(state_dir)
+    for row in sent_mod.retracted_records(state_dir):
+        retracted.setdefault(row["post_id"], {
+            "id": row["post_id"], "file": None,
+            "retracted_at": row.get("retracted_at"),
+            "retracted_by": row.get("retracted_by"),
+            "retract_reason": row.get("retract_reason")})
 
     rows, err = fetch_posts(account_cfg, accounts_mod.load_token(account_cfg),
                              limit=limit)
     if rows is None:
-        return {"account": account_name, "error": err, "posts": []}
+        return {"account": account_name, "error": err, "posts": [],
+                "retracted": sorted(retracted.values(),
+                                    key=lambda r: r.get("retracted_at") or "")}
 
     # **外に出す鍵の綴りは変えない**（`thth posts --json` は masaru のセッションが
     # 読んでいる）。境界の `post_id`・`url` をここで `id`・`permalink` に写す。
@@ -217,8 +236,13 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
             # 通していないものは `None`。
             "source": ("queue" if post_id in by_post_id
                        else ("sent" if post_id in sent_ids else None)),
+            # 取り下げの記録があるのに媒体にまだ見えている（消えるまでの間・
+            # 取り下げの失敗）。**記録の側を正とは言わない**——印だけ付ける。
+            "retracted": post_id in retracted,
         })
-    return {"account": account_name, "error": None, "posts": posts}
+    return {"account": account_name, "error": None, "posts": posts,
+            "retracted": sorted(retracted.values(),
+                                key=lambda r: r.get("retracted_at") or "")}
 
 
 def measured_views_by_account() -> dict:

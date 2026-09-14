@@ -180,9 +180,12 @@ def _prepare_one(path: str):
     if section is None:
         return None, f"{path}: `## {media}` の節がありません"
 
+    # 任意項目（場所・Instagram 共有・設計 v2 §4.3・v2.1-B）は**指紋に入る**——
+    # 一段目で見せた場所と共有の有無が、承認の対象そのもの。
+    options = approval_mod.publish_options(fm)
     approved_sha = approval_mod.compute_approved_sha(
         section=section, account=account_name, reply_to=fm.get("reply_to"),
-        topic=fm.get("topic"), publish_at=fm.get("publish_at"))
+        topic=fm.get("topic"), publish_at=fm.get("publish_at"), **options)
 
     # **予定時刻を過ぎた原稿の扱いを、承認の前に言う**（nigamilab セッション指摘
     # 2026-09-10）。起草する人と承認する人が別なので、承認までに時刻が過ぎるのは
@@ -213,6 +216,9 @@ def _prepare_one(path: str):
         "topic": queuefile.normalize_topic(fm.get("topic")),
         "reply_to": fm.get("reply_to"),
         "text": section,
+        "location": (fm.get("location") or "").strip() or None,
+        "location_id": options["location_id"],
+        "share_to_instagram": options["share_to_instagram"],
         "approved_sha": approved_sha,
         "digest": approved_sha[:approval_mod.APPROVE_DIGEST_LENGTH],
     }, None
@@ -480,6 +486,9 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
                                 "continue_until": one.get("continue_until"),
                                 "frozen": one.get("frozen"),
                                 "warning": one.get("warning"),
+                                "location": one.get("location"),
+                                "location_id": one.get("location_id"),
+                                "share_to_instagram": bool(one.get("share_to_instagram")),
                                 "digest": one["digest"]} for one in prepared]})
         return
     print(f"承認しません（確認の一段目です）: {len(prepared)} 本")
@@ -509,6 +518,12 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
         print("--- 出す本文 ---")
         sys.stdout.write(one["text"] if one["text"].endswith("\n") else one["text"] + "\n")
         print("--- ここまで ---")
+        # **公開の側を変える任意項目は本文の下に見せる**（設計 v2 §4.3・v2.1-B）。
+        # どちらも digest に入っている——見せたものが承認の対象。
+        if one.get("location_id"):
+            print(f"  場所: {one.get('location') or '（名前なし）'}（id {one['location_id']}）")
+        if one.get("share_to_instagram"):
+            print("  Instagram のストーリーズにも出ます（share_to_instagram: true）")
         print(f"digest: {one['digest']}")
     warned = [one for one in prepared if one.get("warning")]
     if warned:
@@ -758,10 +773,12 @@ def cmd_posts(args) -> int:
         return 0 if not result.get("error") else 1
     if result.get("error"):
         print(f"{args.account}: {result['error']}", file=sys.stderr)
+        _print_retracted(result.get("retracted") or [])
         return 1
     posts = result["posts"]
     if not posts:
         print("投稿がありません")
+        _print_retracted(result.get("retracted") or [])
         return 0
     for post in posts:
         if not post["via_thth"]:
@@ -773,6 +790,8 @@ def cmd_posts(args) -> int:
             # `state/<account>/sent/<post_id>.json` にある（2026-09-13）。
             via = "THTH（同席の送信）"
         topic = f"  [{post['topic']}]" if post.get("topic") else "  [トピック無し]"
+        if post.get("retracted"):
+            via += "  **取り下げ済み（記録上）**"
         print(f"{post['timestamp']}{topic}  {via}")
         print(f"  id       : {post['id']}")
         print(f"  permalink: {post['permalink']}")
@@ -782,7 +801,20 @@ def cmd_posts(args) -> int:
         print("")
     outside = sum(1 for p in posts if not p["via_thth"])
     print(f"—— {len(posts)} 件（うち THTH を通していないもの {outside} 件）")
+    _print_retracted(result.get("retracted") or [])
     return 0
+
+
+def _print_retracted(rows: list) -> None:
+    """**取り下げ済み**の記録（`thth retract`・設計 v2 §4.3）。記録は消していない。"""
+    if not rows:
+        return
+    print("")
+    print(f"取り下げ済み: {len(rows)} 件（媒体からは消えています・記録は残しています）")
+    for row in rows:
+        where = f"（{row['file']}）" if row.get("file") else "（同席の送信）"
+        print(f"  {row.get('retracted_at')}  id {row['id']}{where}"
+              f"  by {row.get('retracted_by') or '?'} — {row.get('retract_reason') or ''}")
 
 
 def _refresh_rc(取り直し) -> int:
@@ -2352,9 +2384,12 @@ def cmd_board(args) -> int:
                 token += f"/残り{remaining:.0f}日"
             pending = row.get("collect_pending") or 0
             pending_note = f" **未送信の採取={pending}**" if pending else ""
+            # 取り下げ済み（`thth retract`）があるときだけ 1 語足す。
+            retracted = row.get("retracted_count") or 0
+            retracted_note = f" 取り下げ済み={retracted}" if retracted else ""
             print(f"{row['account']}: project={row['project']} last_post={last_post} "
                   f"approved_waiting={row['approved_waiting']} type_mismatch={row['type_mismatch']} "
-                  f"inflight={inflight} token={token}{pending_note}")
+                  f"inflight={inflight} token={token}{pending_note}{retracted_note}")
             # 指紋の 5 項目のどれが食い違って inflight が残ったか（外部レビュー
             # 第 3 巡・持ち越し項目 C）。人が止まった原因をファイルを開いて
             # 自分で探さずに済むように、board の 1 画面にそのまま出す。
@@ -2651,6 +2686,11 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth mentions` / `thth profile` と `topics --search`（設計 v2 §4.3・v2.1-A）。
     # **口の中身は `thth/threads_read_cli.py` に閉じる**——ここに足すのはこの 1 行だけ。
     threads_read_cli.register(sub)
+
+    # `thth retract` / `thth location search`（設計 v2 §4.3・v2.1-B）。口は
+    # `thth/retract_cli.py` に閉じる——ここに足すのはこの 1 行だけ。
+    from . import retract_cli
+    retract_cli.register(sub)
 
     return p
 

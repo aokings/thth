@@ -39,10 +39,55 @@ def _normalize_publish_at(publish_at: str | datetime.datetime) -> str:
 
 _COMPONENT_ORDER = ("body", "account", "reply_to", "topic", "publish_at")
 
+# **承認を通る書き込みの口**（設計 v2 §4.3・v2.1-B・2026-09-14）。場所と Instagram
+# 共有は「公開の側を変える」ので承認の対象に入れる——承認後に `location_id:` や
+# `share_to_instagram:` を変えれば `approval_stale`。
+#
+# **既存の `approved_sha` を 1 つも無効にしない**ために、これらは**値があるときだけ**
+# 5 項目の後ろに `\x1f` 区切りで足す（`location_id=<id>`・`share_to_instagram=true`）。
+# 無いときの入力バイト列は今までと 1 バイトも変わらない（`tests/test_approval.py`
+# の固定はそのまま）。鍵名付きで足すのは、`location_id` 無し＋共有ありと
+# `location_id="true"` を同じ列にしないため。
+_OPTION_ORDER = ("location_id", "share_to_instagram")
+
+
+def is_true(raw) -> bool:
+    """front-matter の真偽（`true` / `yes` / `1`・大文字小文字を問わない）。"""
+    if isinstance(raw, bool):
+        return raw
+    return str(raw or "").strip().lower() in ("true", "yes", "1")
+
+
+def publish_options(fm: dict) -> dict:
+    """front-matter から承認の対象になる任意項目を抜く（`compute_approved_*` に渡す形）。"""
+    fm = fm or {}
+    return {
+        "location_id": (fm.get("location_id") or "").strip() or None,
+        "share_to_instagram": is_true(fm.get("share_to_instagram")),
+    }
+
+
+def _option_components(location_id, share_to_instagram) -> dict:
+    return {
+        "location_id": (location_id or "").strip() if isinstance(location_id, str) else "",
+        "share_to_instagram": "true" if is_true(share_to_instagram) else "",
+    }
+
+
+def _option_parts(components: dict) -> list:
+    parts = []
+    for key in _OPTION_ORDER:
+        value = components.get(key) or ""
+        if value:
+            parts.append(f"{key}={value}")
+    return parts
+
 
 def compute_approved_components(*, section: str, account: str, reply_to: str | None,
                                  topic: str | None,
-                                 publish_at: str | datetime.datetime) -> dict:
+                                 publish_at: str | datetime.datetime,
+                                 location_id: str | None = None,
+                                 share_to_instagram=False) -> dict:
     """`compute_approved_sha()` が hash する前の、5 項目それぞれの正規化済みの値。
 
     外部レビュー第 3 巡・持ち越し項目 C: 指紋（`compute_approved_sha()` の
@@ -54,17 +99,21 @@ def compute_approved_components(*, section: str, account: str, reply_to: str | N
     hash するだけで、sha の入力バイト列自体はいままでと変えていない
     （`tests/test_approval.py` の固定を壊さない）。
     """
-    return {
+    out = {
         "body": (section or "").strip(),
         "account": (account or "").strip(),
         "reply_to": (reply_to or "").strip(),
         "topic": queuefile.normalize_topic(topic) or "",
         "publish_at": _normalize_publish_at(publish_at),
     }
+    out.update(_option_components(location_id, share_to_instagram))
+    return out
 
 
 def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
-                          topic: str | None, publish_at: str | datetime.datetime) -> str:
+                          topic: str | None, publish_at: str | datetime.datetime,
+                          location_id: str | None = None,
+                          share_to_instagram=False) -> str:
     """承認の対象を固定する sha256（外部レビュー §1・受け入れ 1〜4・11）。
 
     ハッシュの入力は、次の 5 つをこの順序で `\\x1f`（ASCII unit separator）区切りに
@@ -81,6 +130,10 @@ def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
       5. `publish_at` — `datetime` として解釈した上で `.isoformat()` した文字列
                          （`_normalize_publish_at()` 参照）。
 
+    **任意項目**（v2.1-B）: `location_id` があれば 6 つめとして `location_id=<id>`、
+    `share_to_instagram` が真なら次に `share_to_instagram=true` を同じ区切りで足す。
+    **どちらも無ければ 5 項目のまま**（既存の承認を無効にしない）。
+
     返り値は sha256 の 16 進ダイジェスト（64 文字）。**この定義は
     `tests/test_approval.py` で固定する**（受け入れ 11）。将来この関数の中身を
     変えると、いままで書かれた `approved_sha` が一斉に「食い違う」扱いになる
@@ -89,9 +142,15 @@ def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
     """
     components = compute_approved_components(
         section=section, account=account, reply_to=reply_to, topic=topic,
-        publish_at=publish_at)
-    joined = _SEP.join(components[key] for key in _COMPONENT_ORDER)
+        publish_at=publish_at, location_id=location_id,
+        share_to_instagram=share_to_instagram)
+    parts = [components[key] for key in _COMPONENT_ORDER] + _option_parts(components)
+    joined = _SEP.join(parts)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+# `_mismatch_fields()` が突き合わせる鍵（5 項目＋任意項目）。
+COMPARED_KEYS = _COMPONENT_ORDER + _OPTION_ORDER
 
 
 # `thth approve` の二段確認で使う digest の桁数（`approved_sha` の先頭から取る）。
@@ -139,6 +198,29 @@ def compute_send_digest(*, text: str, account: str, reply_to: str | None,
     joined = _SEP.join(parts)
     full = hashlib.sha256(joined.encode("utf-8")).hexdigest()
     return full[:length]
+
+
+# `thth retract` の二段確認の digest（設計 v2 §4.3・v2.1-B）。
+_RETRACT_VERSION = "thth-retract-1"
+
+
+def compute_retract_digest(*, post_id: str, account: str, reason: str,
+                            length: int = APPROVE_DIGEST_LENGTH) -> str:
+    """`thth retract` の一段目が出す digest（`compute_send_digest()` と同じ型）。
+
+    `thth-retract-1`・`post_id`・`account`・`reason` をこの順で `\x1f` 区切りに
+    連結した sha256 の先頭 `length` 桁。先頭に版の語を置くのは、同じ `post_id` と
+    `account` から作る他の digest（承認・送信）と**偶然にも一致させない**ため
+    ——取り下げの確認に、別の口が出した digest を流用できてはいけない。
+    """
+    parts = [
+        _RETRACT_VERSION,
+        (post_id or "").strip(),
+        (account or "").strip(),
+        (reason or "").strip(),
+    ]
+    joined = _SEP.join(parts)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:length]
 
 
 def compute_body_hash(text: str) -> str:

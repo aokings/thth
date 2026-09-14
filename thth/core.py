@@ -403,7 +403,8 @@ def _current_fingerprint(path: str, media: str) -> str | None:
         return approval_mod.compute_approved_sha(
             section=current_section or "", account=fm.get("account"),
             reply_to=fm.get("reply_to"), topic=fm.get("topic"),
-            publish_at=fm.get("publish_at"))
+            publish_at=fm.get("publish_at"),
+            **approval_mod.publish_options(fm))
     except (ValueError, TypeError):
         return None
 
@@ -456,11 +457,13 @@ def _mismatch_fields(path: str, media: str, expected_components: dict) -> list:
         current_components = approval_mod.compute_approved_components(
             section=current_section or "", account=fm.get("account"),
             reply_to=fm.get("reply_to"), topic=fm.get("topic"),
-            publish_at=fm.get("publish_at"))
+            publish_at=fm.get("publish_at"),
+            **approval_mod.publish_options(fm))
     except (ValueError, TypeError):
         return ["file_unreadable"]
-    return [key for key in ("body", "account", "reply_to", "topic", "publish_at")
-            if current_components.get(key) != expected_components.get(key)]
+    # 5 項目＋任意項目（`location_id`・`share_to_instagram`・v2.1-B）。
+    return [key for key in approval_mod.COMPARED_KEYS
+            if (current_components.get(key) or "") != (expected_components.get(key) or "")]
 
 
 def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, section,
@@ -477,16 +480,19 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # 検査済みなので、ここでの値は「masaru が承認した内容そのもの」と一致している
     # ——この不動点を、書き戻し前・rebase 後の照合の基準にする（本文だけの hash では
     # account・topic・reply_to・publish_at の書き換えを見逃すため）。
+    # 任意項目（場所・Instagram 共有・設計 v2 §4.3）も指紋に入る——承認後に
+    # 変えれば select が `approval_stale` で落としている。
+    options = approval_mod.publish_options(chosen.front_matter)
     expected_fingerprint = approval_mod.compute_approved_sha(
         section=section, account=account_name, reply_to=chosen.get("reply_to"),
-        topic=chosen.get("topic"), publish_at=chosen.get("publish_at"))
+        topic=chosen.get("topic"), publish_at=chosen.get("publish_at"), **options)
     # 上と同じ 5 項目を、hash にする前の正規化済みの値のまま持っておく
     # （外部レビュー第 3 巡・持ち越し項目 C）。指紋が食い違ったときに
     # `_mismatch_fields()` へ渡して「どの項目が」違ったかを特定するため
     # （hash 自体からは個々の項目を復元できない）。
     expected_components = approval_mod.compute_approved_components(
         section=section, account=account_name, reply_to=chosen.get("reply_to"),
-        topic=chosen.get("topic"), publish_at=chosen.get("publish_at"))
+        topic=chosen.get("topic"), publish_at=chosen.get("publish_at"), **options)
     # 送る本文の hash（後方互換・`tests/test_sent_integrity.py` が参照）も併せて
     # inflight に書く（外部レビュー §3・受け入れ 9・10）。実際の照合は上の指紋で行う。
     body_hash = approval_mod.compute_body_hash(section)
@@ -508,7 +514,25 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # topic は select_one() の条件 9b で既に検査済み（不正なら候補から落ちている）。
     # ここでは正規化だけ行う（前後の空白・先頭の `#` を落とす・設計 §4.1）。
     topic = queuefile.normalize_topic(chosen.get("topic"))
-    post = adapter_base.Post(text=section, reply_to=chosen.get("reply_to") or None, topic=topic)
+    post = adapter_base.Post(text=section, reply_to=chosen.get("reply_to") or None, topic=topic,
+                             location_id=options["location_id"],
+                             share_to_instagram=options["share_to_instagram"])
+
+    # **公開要求の手前で、要る権限が乗っているかを見る**（設計 v2 §4.3 受け入れ (c)・
+    # v2.1-B）。場所・Instagram 共有はそれぞれ別の権限を要る。`.token` の `scopes`
+    # （doctor と同じ物差し）に無ければ、**コンテナも作らず**に inflight を消して
+    # rc=2——`thth auth` のやり直しを促す。`scopes` が判らないトークンはここでは
+    # 止めない（媒体の応答の権限系エラーで `failure="permission"` になる）。
+    missing = adapter_base.missing_for_post(adapter, token, post)
+    if missing:
+        err = adapter_base.not_granted_message(missing[0]).replace(
+            "<account>", account_name)
+        log(f"公開しません: {err}")
+        inflight_mod.clear(state_dir)
+        _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
+                    status="error", error=f"permission_missing({missing[0]})")
+        return ThrowResult(exit_code=2, mode=mode, action="post", message=err,
+                            file=chosen.path, error=err)
 
     def on_container_created(container_id):
         inflight_mod.update(state_dir, container_id=container_id)
@@ -518,6 +542,15 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     if publish_result.error or not publish_result.post_id:
         err = redact_mod.redact(publish_result.error or "不明なエラー")
         log(f"公開失敗: {err}")
+        if publish_result.failure == "permission":
+            # 媒体が「権限が無い」と断った（コンテナ作成の段・出ていない）。
+            # inflight を残す理由は無い。rc=2 で `thth auth` のやり直しを促す。
+            err = err.replace("<account>", account_name)
+            inflight_mod.clear(state_dir)
+            _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
+                        status="error", error=err)
+            return ThrowResult(exit_code=2, mode=mode, action="post", message=err,
+                                file=chosen.path, error=err)
         # 失敗の三分類（設計 §3.5・T1 検収 2026-09-09）。core は `failure` だけを見て
         # 分岐する（HTTP の状態番号は core が解釈しない・アダプタに閉じる・§3.4）。
         if publish_result.failure == "publish_ambiguous":

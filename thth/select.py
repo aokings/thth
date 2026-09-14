@@ -212,12 +212,24 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
         # 書き戻し（status: posted にする）はこの検査より前（条件 1）で候補から
         # 落ちているので、ここで詰まることはない。**publish_at が未来でもここまで
         # 必ず届く**（時刻の関門より前・外部レビュー第 3 巡 P2）。
+        # 任意項目（`location_id`・`share_to_instagram`・設計 v2 §4.3）も指紋に
+        # 入る——承認したあとに場所や共有を足す・変えると、ここで落ちる。
         approved_sha = fm.get("approved_sha")
         expected_sha = approval_mod.compute_approved_sha(
             section=section, account=account_name, reply_to=fm.get("reply_to"),
-            topic=fm.get("topic"), publish_at=publish_at)
+            topic=fm.get("topic"), publish_at=publish_at,
+            **approval_mod.publish_options(fm))
         if not approved_sha or approved_sha != expected_sha:
             rejections.append(Rejection(path, "approval_stale"))
+            needs_review.append(path)
+            continue
+
+        # 6d. Instagram 共有は台帳に `instagram_linked: true` が要る（v2.1-B）。
+        # lint も断るが、**承認のあとで台帳から外した**ときは lint を通らない
+        # ——公開の側を変える指示を、台帳の前提が消えたまま出さない。
+        if (approval_mod.is_true(fm.get("share_to_instagram"))
+                and not approval_mod.is_true(account_cfg.get("instagram_linked"))):
+            rejections.append(Rejection(path, "instagram_not_linked"))
             needs_review.append(path)
             continue
 

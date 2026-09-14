@@ -101,6 +101,27 @@ def _is_permission_error(err: dict | None, message: str) -> bool:
     return False
 
 
+def _read_error(e: urllib.error.HTTPError) -> tuple:
+    """HTTPError の本文から Meta の `error` と `message` を読む（読めなければ空）。"""
+    message = ""
+    err = None
+    try:
+        err = json.loads(e.read() or b"{}").get("error")
+        if isinstance(err, dict):
+            message = str(err.get("message", ""))[:170]
+    except Exception:
+        pass
+    return err, message
+
+
+def _raise_if_permission(e: urllib.error.HTTPError, permission: str) -> None:
+    """権限系の 4xx なら `PermissionMissing`（doctor と同じ物差し）。それ以外は何もしない。"""
+    err, message = _read_error(e)
+    if _is_permission_error(err, message):
+        detail = redact_mod.redact(f"HTTP {e.code} {message}".strip())
+        raise base.PermissionMissing(permission, detail) from e
+
+
 def _summarize(body: dict) -> str:
     rows = body.get("data")
     if isinstance(rows, list):
@@ -167,6 +188,20 @@ class ThreadsAdapter(base.Adapter):
     # `thth auth`（OAuth の往復）に Meta の app.env が要る **唯一の媒体**。
     AUTH_NEEDS_APP_ENV = True
 
+    # **承認を通る書き込みの口に要る権限**（設計 v2 §4.3・v2.1-B）。
+    # **L2** create-posts/location-tagging: 「`threads_location_tagging` — Required
+    # for making GET calls to the location search endpoint and for making POST
+    # calls to the publishing endpoints with a location tag」。
+    # **L2** create-posts/share-to-ig-stories: `threads_share_to_instagram`。
+    # **L2** posts/delete-posts: 「`threads_delete` — Required for making any
+    # delete calls」。
+    OPTION_PERMISSIONS = {
+        "location_id": "threads_location_tagging",
+        "share_to_instagram": "threads_share_to_instagram",
+    }
+    LOCATION_PERMISSION = "threads_location_tagging"
+    DELETE_PERMISSION = "threads_delete"
+
     def __init__(self, *, base_url: str = DEFAULT_BASE_URL, access_token: str = "",
                  user_id: str = "", wait_seconds: float = DEFAULT_WAIT_SECONDS,
                  timeout: float = DEFAULT_TIMEOUT_SECONDS):
@@ -225,12 +260,32 @@ class ThreadsAdapter(base.Adapter):
         # 送らない・設計 §2.2・masaru 裁定 2026-09-09）。
         if post.topic:
             params["topic_tag"] = post.topic
+        # 場所（**L2** create-posts/location-tagging: 投稿作成の `location_id`）と
+        # Instagram のストーリーズへの共有（**L2** create-posts/share-to-ig-stories:
+        # `crossreshare_to_ig=true`）。どちらも承認の指紋に入っている値だけが
+        # ここに来る（`core._throw_chosen()`）。無ければ params に入れない。
+        if post.location_id:
+            params["location_id"] = post.location_id
+        if post.share_to_instagram:
+            params["crossreshare_to_ig"] = "true"
+        # この投稿の任意項目に要る権限（無ければ空）。コンテナ作成が権限系エラーで
+        # 断られたとき、**どの権限が足りないか**を言うために先に控える。
+        needed = self.permissions_for_post(post)
 
         # コンテナ作成の失敗はどんな理由でも「公開の呼び出しに到達していない」＝
         # 出ていない（設計 §3.5 の表）。
         try:
             create = self._post(f"/{self.user_id}/threads", params)
         except urllib.error.HTTPError as e:
+            err, message = _read_error(e)
+            if needed and _is_permission_error(err, message):
+                # 場所・Instagram 共有の権限がトークンに乗っていない（doctor と同じ
+                # 物差し）。**出ていない**。core は inflight を消して rc=2。
+                detail = redact_mod.redact(f"HTTP {e.code} {message}".strip())
+                return base.PublishResult(
+                    None, None, ts,
+                    error=base.not_granted_message(needed[0], detail),
+                    failure="permission")
             return base.PublishResult(None, None, ts,
                                        error=redact_mod.redact(f"container作成失敗: {e.code} {e.reason}"),
                                        failure="container")
@@ -284,6 +339,88 @@ class ThreadsAdapter(base.Adapter):
             return base.PublishResult(None, None, ts, error="公開失敗: id無し",
                                        failure="publish_ambiguous")
         return base.PublishResult(post_id=post_id, url=None, ts=ts, error=None, failure="none")
+
+    # ---- 承認を通る書き込みの口（設計 v2 §4.3・v2.1-B）----------------------
+
+    # **L2** https://developers.facebook.com/docs/threads/create-posts/location-tagging
+    # 「`GET /location_search`」・引数は `q`（本文の例）または `latitude`+`longitude`。
+    # 返る field: `id`・`name`・`address`・`city`・`country`・`latitude`・
+    # `longitude`・`postal_code`。**「If your app has not been approved for the
+    # `threads_location_tagging` permission, the search will be performed only on
+    # the query 'Menlo Park'」**。同じ口の reference（reference/location-search）は
+    # 引数名を `query` と書いていて食い違う——例が載っている本文の `q` に合わせる
+    # （doctor の probe と同じ判断）。
+    LOCATION_SEARCH_FIELDS = "id,name,address,city,country"
+
+    def location_search(self, query: str, *, limit: int = 5) -> list:
+        """場所を語で検索して `[{"id", "name", "address", "city", "country"}, …]`。
+
+        読み取りだけ。`limit` 件まで（既定 5）。権限が乗っていなければ
+        `PermissionMissing`（rc=2 の断り）。
+        """
+        query = (query or "").strip()
+        if not query:
+            raise base.AdapterError("場所の語が空です")
+        try:
+            body = self._get("/v1.0/location_search",
+                              {"q": query, "fields": self.LOCATION_SEARCH_FIELDS})
+        except urllib.error.HTTPError as e:
+            _raise_if_permission(e, self.LOCATION_PERMISSION)
+            raise base.AdapterError(redact_mod.redact(
+                f"場所の検索に失敗: HTTP {e.code} {e.reason}")) from e
+        except base.AdapterError as e:
+            if _is_permission_error(None, str(e)):
+                raise base.PermissionMissing(self.LOCATION_PERMISSION, str(e)[:170]) from e
+            raise
+        rows = self._rows(body, "場所の検索")
+        out = []
+        for row in rows[:max(0, int(limit))]:
+            out.append({
+                "id": str(row.get("id")) if row.get("id") is not None else None,
+                "name": row.get("name"),
+                "address": row.get("address"),
+                "city": row.get("city"),
+                "country": row.get("country"),
+            })
+        return out
+
+    # **L2** https://developers.facebook.com/docs/threads/posts/delete-posts
+    # 「`DELETE /v1.0/{threads-media-id}`」・応答 `{"success": true, "deleted_id":
+    # "…"}`・「delete a Threads post that was created by the authenticated user」・
+    # 「rate limit of 100 deletes per day per account」。
+    def delete_post(self, post_id: str) -> dict:
+        """公開済みの投稿 1 本を取り下げる（**DELETE を 1 回**・再試行しない）。
+
+        **ここは `thth retract` の二段目からしか呼ばれない**（`retract_cli`）。
+        `post_id` は Threads の数字の id だけを受ける——`/` や `?` を含む値で
+        別の口へ向かう筋を構造で無くす。`success: true` 以外は成功と言わない。
+        """
+        post_id = (post_id or "").strip()
+        if not post_id.isdigit():
+            raise base.AdapterError(
+                f"Threads の post_id は数字だけです（{post_id!r}）。取り下げません")
+        url = (f"{self.base_url}/v1.0/{post_id}?"
+               + urllib.parse.urlencode({"access_token": self.access_token}))
+        req = urllib.request.Request(url, method="DELETE")
+        try:
+            with httpsafe.urlopen(req, timeout=self.timeout) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as e:
+            _raise_if_permission(e, self.DELETE_PERMISSION)
+            raise base.AdapterError(redact_mod.redact(
+                f"取り下げに失敗: HTTP {e.code} {e.reason}")) from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise base.AdapterError(redact_mod.redact(f"取り下げに失敗: {e}")) from e
+        try:
+            body = json.loads(raw) if raw else {}
+        except ValueError as e:
+            raise base.AdapterError("取り下げの応答が JSON ではありません") from e
+        if not isinstance(body, dict) or body.get("success") is not True:
+            raise base.AdapterError(
+                "取り下げの応答に success: true がありません（消えたとは言えません）: "
+                + redact_mod.redact(json.dumps(body, ensure_ascii=False)[:200]))
+        return {"success": True,
+                "deleted_id": str(body.get("deleted_id") or post_id)}
 
     def _get(self, path: str, params: dict, *, absolute_url: str | None = None) -> dict:
         p = dict(params)
