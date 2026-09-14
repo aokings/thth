@@ -170,6 +170,38 @@ resp-plat-initiatives）からの類推で書いた箇所はすべて **L2**、T
 
 ---
 
+### 2.3 2026-09-15 の提出——4 つに絞る（masaru 裁定）
+
+§0′ のとおり、App Review で得るものがあるのは世間のデータが要る 4 つだけ。masaru の裁定（2026-09-15）
+で **`threads_keyword_search`・`threads_manage_mentions`・`threads_profile_discovery`・
+`threads_location_tagging` の 4 つだけを出す**。残り 7 つはリクエスト一覧から外す（今の運用はそのまま動く）。
+提出の前提（§1.2）は同日に揃えた: プライバシーポリシー `https://thth.me/privacy/`・アイコン
+（`callback/icon/thth-icon-1024.png`）・カテゴリ・利用規約 URL（MIT の LICENSE）・データ削除手順
+URL（`https://thth.me/privacy/#delete`）。
+
+**共通の前置き（各権限の説明文の先頭に入れる）**:
+
+> THTH is an open-source command-line tool that lets a person draft, approve, and publish their own Threads posts from a Git repository, with a two-step human approval before every action. It runs on the user's own machine; nothing is stored on our servers.
+
+| 権限 | English（前置きの後に続ける） |
+|---|---|
+| `threads_keyword_search` | We use keyword search so the user can see, before choosing a topic, whether people are already posting about it. The command `thth topics <account> --search <word>` reports only aggregate observations — number of distinct authors, most recent post time, share of tagged posts. Post bodies are shown on screen once and are never saved. |
+| `threads_manage_mentions` | We retrieve public mentions of the user's own account with `thth mentions <account>` and record them in the user's own Git repository so they can decide whether to answer. Any reply goes through the same two-step human approval as a post. THTH never replies automatically. |
+| `threads_profile_discovery` | When someone replies to or mentions the user, `thth profile <account> <username>` fetches that person's public profile (the basic fields Meta exposes) so the user can understand who is taking part in the thread. Nothing beyond the public fields is requested, and the data stays in the user's own repository. |
+| `threads_location_tagging` | A draft may name a place. `thth location search <account> <name>` looks up the location_id, the approval screen shows the place name before publishing, and only an approved post carries the tag. THTH never infers a location — only one the user explicitly wrote. |
+
+**録画（4 本）**——標準アクセスなので返るのは自分の投稿・Meta 公式・Menlo Park に限られる。それでよい
+（審査員が見るのは「権限が正しく使われているか」）。
+
+| 権限 | 打つもの | 映っていれば足りるもの |
+|---|---|---|
+| `threads_keyword_search` | `thth topics kopicha-threads --search コーヒー` | 集計（件数・異なり数・直近時刻）と本文の 1 行プレビュー |
+| `threads_manage_mentions` | **先に** aoking から「@kopi_chaba …」を 1 本出してから `thth mentions kopicha-threads` | 言及が 1 件出る画面（0 件だと権限が映らない） |
+| `threads_profile_discovery` | `thth profile kopicha-threads threads` | @threads の公開プロフィール（他のユーザー名は標準アクセスでは 400） |
+| `threads_location_tagging` | `thth location search kopicha-threads "Menlo Park"` | 候補と id が出る画面（余裕があれば `location:` 付きの下書きを `approve` の一段目まで） |
+
+---
+
 ## 3. 録画の手順（権限ごとに 1 分以内・masaru の手）
 
 **共通の作法**: 高解像度（1080p 以上）・カーソルを大きくする・音声は録らない（審査員は聞かない）・
