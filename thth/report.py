@@ -305,6 +305,13 @@ def board_summary(now=None) -> dict:
         type_mismatch = sum(1 for qf in files if qf.malformed)
         state_dir = accounts_mod.state_dir_for(name)
         inflight = inflight_mod.read(state_dir)
+        # **取り下げ済み**の数（`thth retract`・設計 v2 §4.3）。queue の
+        # front-matter と `sent/` の両方から（同じ post_id は 1 つに数える）。
+        retracted_ids = {
+            qf.front_matter.get("post_id") for qf in files
+            if not qf.malformed and qf.front_matter.get("retracted_at")
+            and qf.front_matter.get("post_id")}
+        retracted_ids |= {row["post_id"] for row in sent_mod.retracted_records(state_dir)}
         # **いま run が走っているか**（引継ぎ 2026-09-13「小さいもの」）。
         # board は inflight しか見ていなかったので、**「実行中で待っている」と
         # 「止まっている」が同じ顔**だった（inflight が書かれるのは公開の直前
@@ -354,6 +361,7 @@ def board_summary(now=None) -> dict:
             "last_sent_post_id": sent_row.get("post_id") if sent_row else None,
             "approved_waiting": approved_waiting,
             "type_mismatch": type_mismatch,
+            "retracted_count": len(retracted_ids),
             "inflight": inflight.get("file") if inflight else None,
             # 指紋の 5 項目のどれが食い違って inflight が残ったか（外部レビュー
             # 第 3 巡・持ち越し項目 C）。`core._throw_chosen()` が
