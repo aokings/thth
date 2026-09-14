@@ -151,7 +151,50 @@ def lint_file(path: str) -> list:
         if topic_err is not None:
             errors.append(topic_err)
 
+    errors.extend(publish_option_errors(fm, account_cfg, account_name=account_name))
     return errors
+
+
+# --------------------------------------------------------------------------
+# 承認を通る書き込みの口（設計 v2 §4.3・v2.1-B）: 場所・Instagram 共有
+# --------------------------------------------------------------------------
+
+LOCATION_ID_MISSING = (
+    "location_id: `location:` があるのに `location_id:` が無い——"
+    "`thth location search {account} <語>` で id を引いて `location_id:` に書いてください"
+    "（場所は推測しません・fail-closed）")
+LOCATION_NAME_MISSING = (
+    "location: `location_id:` があるのに `location:` が無い——"
+    "場所の名前は人が書きます（承認の一段目に見せるため）")
+INSTAGRAM_NOT_LINKED = (
+    "share_to_instagram: 台帳に `instagram_linked: true` が無いので Instagram には"
+    "出せません（Instagram を連携してから台帳に書いてください）")
+
+
+def publish_option_errors(fm: dict, account_cfg: dict | None, *,
+                          account_name: str | None = None) -> list:
+    """`location:` / `location_id:` / `share_to_instagram:` の検査（fail-closed）。"""
+    from . import approval as approval_mod
+    out: list = []
+    location = (fm.get("location") or "").strip()
+    location_id = (fm.get("location_id") or "").strip()
+    if location and not location_id:
+        out.append(LOCATION_ID_MISSING.format(account=account_name or "<account>"))
+    elif location_id and not location:
+        out.append(LOCATION_NAME_MISSING)
+    if location_id and any(ch.isspace() for ch in location_id):
+        out.append(f"location_id: 空白を含んでいます（{location_id!r}）")
+
+    raw_share = fm.get("share_to_instagram")
+    if raw_share is not None and str(raw_share).strip() != "":
+        if str(raw_share).strip().lower() not in ("true", "false", "yes", "no", "1", "0"):
+            out.append(f"share_to_instagram: true か false で書いてください（{raw_share}）")
+        elif approval_mod.is_true(raw_share):
+            # 台帳が引けない（未知の account）ときも断る——連携の有無が判らない
+            # ものを「出せる」と言わない。
+            if not (account_cfg and approval_mod.is_true(account_cfg.get("instagram_linked"))):
+                out.append(INSTAGRAM_NOT_LINKED)
+    return out
 
 
 def preview_file(path: str) -> str:

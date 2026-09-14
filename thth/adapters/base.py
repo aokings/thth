@@ -29,6 +29,17 @@ class Post:
     # 壊さないため——ここで loud に断ると、媒体を足した瞬間に既存の queue が
     # 全部止まる。**使わない媒体が受け取っても何も起きない**が正しい。
     topic: str | None = None
+    # --- 承認を通る書き込みの口（設計 v2 §4.3・v2.1-B・2026-09-14） ---
+    # 場所（Threads の `location_id`）。queue の front-matter `location:`（人が
+    # 書く語）と `location_id:`（`thth location search` が引いた id を人が書く）
+    # から `core._throw_chosen()` が渡す。**承認の指紋に入る**（`approval.
+    # compute_approved_sha()`）——承認後に変えれば `approval_stale`。
+    # 持たない媒体は黙って無視する（`topic` と同じ理由）。
+    location_id: str | None = None
+    # Instagram のストーリーズにも出す（Threads の `crossreshare_to_ig`・**L2**
+    # create-posts/share-to-ig-stories）。front-matter `share_to_instagram: true`。
+    # 台帳に `instagram_linked: true` が無ければ lint が断る。指紋に入る。
+    share_to_instagram: bool = False
 
 
 @dataclasses.dataclass
@@ -44,6 +55,10 @@ class PublishResult:
     #   "publish_definite"  公開が HTTP 4xx → 出ていない
     #   "publish_ambiguous" 公開が timeout・接続断・5xx・200 だが id 無し → 分からない
     #   "publish_vetoed"    公開要求の直前の関門で止めた → **出ていない**
+    #   "permission"        この投稿の任意項目（場所・Instagram 共有）に要る権限が
+    #                       トークンに乗っていない → **出ていない**（コンテナ作成の
+    #                       手前、または作成が権限不足で断られた）。core は inflight
+    #                       を消し、`thth auth` のやり直しを促して rc=2（v2.1-B）
     failure: str = "none"
 
 
@@ -57,6 +72,27 @@ class AdapterError(RuntimeError):
 
 class UnknownMedium(AdapterError):
     """台帳の `media` を知らない（`thth/adapters/__init__.py` が投げる・T-B0）。"""
+
+
+class PermissionMissing(AdapterError):
+    """要る権限がトークンに乗っていない（設計 v2 §4.3 受け入れ (c)・v2.1-B）。
+
+    `thth doctor` と同じ物差し（`.token` の `scopes`、または媒体の応答の
+    権限系エラー）で判った「乗っていない」。呼び出し側は **`thth auth <account>`
+    のやり直し**を促して rc=2 で止まる。`permission` に権限名を持つ。
+    """
+
+    def __init__(self, permission: str, detail: str = ""):
+        self.permission = permission
+        self.detail = detail
+        super().__init__(not_granted_message(permission, detail))
+
+
+def not_granted_message(permission: str, detail: str = "") -> str:
+    """「乗っていません」の 1 行（doctor の `NOT_GRANTED` と同じ意味・文言は口向け）。"""
+    tail = f"（{detail}）" if detail else ""
+    return (f"`{permission}` がトークンに乗っていません{tail}。"
+            "`thth auth <account>` をやり直してください")
 
 
 # `Adapter.capabilities()` が返しうる語（設計 v2 §4.2）。**ここに無い語を返さない**
@@ -161,6 +197,19 @@ def metrics_of(result) -> tuple:
         "指標」を言い分けられません（設計 v2 §4.2・F3）")
 
 
+def missing_for_post(adapter, token, post: "Post") -> list:
+    """`adapter` がこの `Post` に要求する権限のうち、`.token` に無いもの。
+
+    **`Adapter` を継がない差し替え（テストの偽アダプタ）でも落ちない**——口を
+    持たないものは「要求する権限が無い」として空を返す。
+    """
+    needed_fn = getattr(adapter, "permissions_for_post", None)
+    missing_fn = getattr(adapter, "missing_permissions", None)
+    if not callable(needed_fn) or not callable(missing_fn):
+        return []
+    return list(missing_fn(token, needed_fn(post)))
+
+
 class Adapter:
     """媒体ごとの実装（`thth/adapters/__init__.py` の `REGISTRY` に登録する）。
 
@@ -191,6 +240,14 @@ class Adapter:
     # ようにするための印（T3・2026-09-13）。
     AUTH_NEEDS_APP_ENV: bool = False
 
+    # **`Post` の任意項目に要る権限**（設計 v2 §4.3・v2.1-B）。`Post` の属性名 →
+    # その媒体で要る権限名。core は `missing_permissions()` を通してだけ見る
+    # （媒体名も権限名も core には書かない）。持たない媒体は空のまま。
+    OPTION_PERMISSIONS: dict = {}
+    # 投稿の取り下げ（`delete_post()`）に要る権限。`None` は「この媒体の取り下げは
+    # 未対応」（`thth retract` が rc=2 で断る）。
+    DELETE_PERMISSION: str | None = None
+
     # `.token` に `expires_in` を書かず `no_expiry: true` を立てる媒体
     # （Bluesky の App Password・Mastodon の access token・設計 v2 §4.2）。
     # `oauth.token_age_and_remaining()` がこの印を見て `remaining_days` を
@@ -210,6 +267,46 @@ class Adapter:
     def capabilities(cls) -> set:
         """この媒体にできることの集合。**実体を作らずにも引ける**（classmethod）。"""
         return set(cls.CAPABILITIES)
+
+    @classmethod
+    def permissions_for_post(cls, post: "Post") -> list:
+        """この `Post` の任意項目が、この媒体で要求する権限の一覧（無ければ空）。"""
+        out = []
+        for attr, permission in cls.OPTION_PERMISSIONS.items():
+            if getattr(post, attr, None):
+                out.append(permission)
+        return out
+
+    @classmethod
+    def missing_permissions(cls, token, needed) -> list:
+        """`needed` のうち `.token` の `scopes` に**無い**もの（doctor と同じ物差し）。
+
+        `.token` の `scopes` が一覧でなければ（`thth token set` の管理画面発行・
+        `scopes_source: "unknown"`）**判らない**ので空を返す——止めない。その
+        場合は媒体の応答の権限系エラーで判る（`PermissionMissing`・
+        `PublishResult.failure == "permission"`）。**嘘の一覧で断らない**。
+        """
+        scopes = (token or {}).get("scopes")
+        if not isinstance(scopes, list):
+            return []
+        return [p for p in needed if p not in scopes]
+
+    def location_search(self, query: str, *, limit: int = 5) -> list:
+        """場所を検索して `[{"id", "name", …}, …]`（読み取り・設計 v2 §4.3）。
+
+        持たない媒体は `AdapterError`（`thth location search` が rc=2 で断る）。
+        """
+        raise AdapterError(
+            f"{type(self).__name__}: この媒体に場所の検索はありません")
+
+    def delete_post(self, post_id: str) -> dict:
+        """公開済みの投稿 1 本を取り下げる（**承認の二段を通った後にだけ呼ばれる**）。
+
+        `DELETE_PERMISSION` が `None` の媒体は未対応——`thth retract` は
+        **このメソッドに来る前**に rc=2 で断る（Bluesky / Mastodon は v2.2）。
+        """
+        raise AdapterError(
+            f"{type(self).__name__}: この媒体の取り下げは未対応です")
 
     @classmethod
     def from_account(cls, account_cfg: dict, token: dict):
