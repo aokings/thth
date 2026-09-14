@@ -51,13 +51,49 @@ class _Probe:
     # 足した（2026-09-10）ときに直し忘れ、`==` が永久に偽になって「返信の取得」
     # probe が一度も HTTP を叩かなくなった。表示用のラベルは今後も変わりうるので、
     # 突き合わせには変わらない `key` を使う。
+    #
+    # **`unverifiable` が入っている probe は HTTP を叩かない**（2026-09-14）。
+    # `threads_delete`（DELETE にしか使われない）のように**読み取りの口が無い**
+    # 権限は、叩いて確かめる術が無い。それでも 11 権限が 1 行ずつ並ぶように、
+    # 「読み取りでは確かめられません」という理由を持った行として出す
+    # （`ok=None`）。**× にはしない**——判らないことを「駄目」と言わない。
     def __init__(self, label: str, permission: str, path: str, params: dict,
-                 key: str | None = None):
+                 key: str | None = None, unverifiable: str | None = None):
         self.label = label
         self.permission = permission
         self.path = path
         self.params = params
         self.key = key
+        self.unverifiable = unverifiable
+
+
+# **「乗っていない」と「確かめられない」を混ぜない**（2026-09-14）。
+#
+# probe の失敗は 3 通りに読み分ける:
+#   - 権限不足（`ok=False`）: Meta の `error.message` に `permission` が出る、
+#     または Graph API の権限系 code（10・200〜299）。**この権限はトークンに
+#     乗っていない**、と言ってよい。
+#   - その他の 4xx・HTTP 200 の `error`（`ok=False`）: API が断った。理由は本文。
+#   - 5xx・ネットワーク層（`ok=None`）: **確かめられなかった**。権限の有無に
+#     ついては何も判っていないので、× にしない。
+#
+# code の意味は Graph API 共通の一覧に基づく（**L3**——Threads の一次資料には
+# 権限不足のときの応答の形が書かれていない。`message` の `permission` を主に
+# 見て、code は補助）。
+_PERMISSION_ERROR_CODES = frozenset({10} | set(range(200, 300)))
+NOT_GRANTED = "この権限がトークンに乗っていません"
+COULD_NOT_VERIFY = "確かめられませんでした"
+UNVERIFIABLE_BY_READ = "読み取りでは確かめられません"
+
+
+def _is_permission_error(err: dict | None, message: str) -> bool:
+    if "permission" in (message or "").lower():
+        return True
+    if isinstance(err, dict):
+        code = err.get("code")
+        if isinstance(code, int) and code in _PERMISSION_ERROR_CODES:
+            return True
+    return False
 
 
 def _summarize(body: dict) -> str:
@@ -74,23 +110,37 @@ def _run_probe(get, base_url: str, probe: _Probe, token: str) -> dict:
         return {"name": probe.key or probe.label, "label": probe.label,
                 "permission": probe.permission, "key": probe.key,
                 "ok": ok, "detail": detail, "body": body}
+    if probe.unverifiable:
+        # 読み取りの口が無い権限。**叩かない**（副作用のある口しか無い）。
+        return row(None, f"{UNVERIFIABLE_BY_READ}（{probe.unverifiable}）")
     try:
         body = get(base_url, probe.path, probe.params, token)
         return row(True, _summarize(body), body)
     except urllib.error.HTTPError as e:
         message = ""
+        err = None
         try:
-            message = (json.loads(e.read() or b"{}").get("error", {})
-                       .get("message", ""))[:170]
+            err = json.loads(e.read() or b"{}").get("error")
+            if isinstance(err, dict):
+                message = str(err.get("message", ""))[:170]
         except Exception:
             pass
-        return row(False, redact_mod.redact(f"HTTP {e.code} {message}".strip()))
+        http = redact_mod.redact(f"HTTP {e.code} {message}".strip())
+        if _is_permission_error(err, message):
+            return row(False, f"{NOT_GRANTED}（{http}）")
+        if e.code >= 500:
+            # サーバ側の失敗。権限の有無は何も判っていない。
+            return row(None, f"{COULD_NOT_VERIFY}（{http}）")
+        return row(False, http)
     except ProbeBodyError as e:
         # **HTTP は 200 だが本文が error**。メッセージは `_get()` で既に
         # redact 済みなので、そのまま出してよい。
-        return row(False, str(e)[:220])
+        text = str(e)[:220]
+        if _is_permission_error(None, text):
+            return row(False, f"{NOT_GRANTED}（{text}）")
+        return row(False, text)
     except Exception as e:  # ネットワーク層。例外文にトークンが混じらないよう型名だけ。
-        return row(False, type(e).__name__)
+        return row(None, f"{COULD_NOT_VERIFY}（{type(e).__name__}）")
 
 
 class ThreadsAdapter(base.Adapter):
@@ -511,7 +561,87 @@ class ThreadsAdapter(base.Adapter):
                             "permission": "threads_read_replies",
                             "ok": None, "detail": "投稿がまだ無いので試せない",
                             "body": None})
+
+        # **残り 7 権限**（2026-09-14）。`DEFAULT_SCOPES` は 11 権限を要求する
+        # （設計 §8-14「権限は例外なく全部」）のに、doctor が確かめていたのは
+        # 4 権限だけだった——残りは「乗っているはずだが確かめていない」。
+        # 読み取りの口がある 4 つは叩き、無い 3 つは理由つきの `ok=None` で並べる
+        # （**`scopes.DEFAULT_SCOPES` の 11 権限すべてが少なくとも 1 行**に出る——
+        # `tests/test_doctor_all_permissions.py` が固定する）。
+        results.extend(_run_probe(get, self.base_url, p, self.access_token)
+                       for p in self._extra_probes(user_id))
         return results
+
+    # 検索の語は**固定・無害**で各 1 回だけ叩く。**投稿しない・書かない。**
+    #
+    # - keyword_search（**L2** keyword-search）: `q` は必須。承認前は「自分の
+    #   投稿だけ」が検索対象になるので 0 件でもよい（0 件の検索は上限に数えない）。
+    #   語は `お茶`。
+    # - location_search（**L2** create-posts/location-tagging）: 「承認前は
+    #   `Menlo Park` という語しか検索できない」と明記されている。承認の前後
+    #   どちらでも通る語はそれしか無いので、**`Menlo Park` に固定**する。
+    #   （同じ資料の本文は引数名を `q`、reference/location-search は `query` と
+    #   書いていて食い違う。例が載っている本文の `q` に合わせる。）
+    KEYWORD_SEARCH_QUERY = "お茶"
+    LOCATION_SEARCH_QUERY = "Menlo Park"
+    # profile_lookup（**L2** threads-profiles）: 「標準アクセスでは Meta の公式
+    # アカウント（@meta・@threads・@instagram・@facebook）しか引けない」
+    # 「公開かつフォロワー 100 以上のプロフィールだけ返す」。**自分の handle を
+    # 引くと、権限が乗っていても標準アクセスの制限で失敗する**ので、権限の有無を
+    # 見分けられない。資料が名指しする公式アカウントのうち `threads` を 1 回
+    # 引く（Meta 自身の公開プロフィール・第三者ではない）。
+    PROFILE_LOOKUP_USERNAME = "threads"
+
+    def _extra_probes(self, user_id: str) -> list:
+        return [
+            # **L2** https://developers.facebook.com/docs/threads/keyword-search
+            _Probe("投稿の検索（固定語 1 回・読み取りだけ）", "threads_keyword_search",
+                   "/v1.0/keyword_search",
+                   {"q": self.KEYWORD_SEARCH_QUERY, "search_type": "TOP",
+                    "fields": "id", "limit": 1}, key="keyword_search"),
+            # **L2** https://developers.facebook.com/docs/threads/threads-mentions
+            # `GET /{threads-user-id}/mentions`・`threads_manage_mentions`
+            _Probe("自分への言及の取得（要求上限 3 件）", "threads_manage_mentions",
+                   f"/v1.0/{user_id}/mentions",
+                   {"fields": "id", "limit": 3}, key="mentions"),
+            # **L2** https://developers.facebook.com/docs/threads/threads-profiles
+            # `GET /profile_lookup?username=…`・`threads_profile_discovery`。
+            # 返る field に `id` は無いので `username` を引く。
+            _Probe("公開プロフィールの参照（Meta 公式 @threads を 1 回）",
+                   "threads_profile_discovery", "/v1.0/profile_lookup",
+                   {"username": self.PROFILE_LOOKUP_USERNAME, "fields": "username"},
+                   key="profile_lookup"),
+            # **L2** https://developers.facebook.com/docs/threads/create-posts/location-tagging
+            # `GET /location_search`・`threads_location_tagging`（GET と、投稿時の
+            # location_id の両方に要る。ここで叩くのは GET だけ）。
+            _Probe("場所の検索（固定語 1 回・読み取りだけ）", "threads_location_tagging",
+                   "/v1.0/location_search",
+                   {"q": self.LOCATION_SEARCH_QUERY, "fields": "id"},
+                   key="location_search"),
+            # **L2** https://developers.facebook.com/docs/threads/retrieve-and-manage-replies
+            # 「threads_manage_replies — Required for making POST calls to reply
+            # endpoints」「threads_read_replies — Required for making GET calls to
+            # reply endpoints」。GET の返信取得は read_replies の行で確かめている
+            # ので、この権限に読み取りの口は無い。
+            _Probe("返信の作成・非表示", "threads_manage_replies", "", {},
+                   key="manage_replies",
+                   unverifiable="返信の作成・非表示（POST）にしか使われない権限です。"
+                                "返信の取得（GET）は threads_read_replies の行"),
+            # **L2** https://developers.facebook.com/docs/threads/posts/delete-posts
+            # 「threads_delete — Required for making any delete calls」。口は
+            # `DELETE /{threads-media-id}` だけ。**削除は絶対に呼ばない。**
+            _Probe("投稿の削除", "threads_delete", "", {}, key="delete",
+                   unverifiable="削除（DELETE）にしか使われない権限で、"
+                                "doctor は削除を呼びません"),
+            # **L2** https://developers.facebook.com/docs/threads/create-posts/share-to-ig-stories
+            # 「threads_share_to_instagram — Required for cross-sharing the Threads
+            # post to the user's linked Instagram account as a Story」。投稿作成
+            # （POST）の `crossreshare_to_ig` にしか使われず、読み取りの口は無い。
+            _Probe("Instagram ストーリーズへの共有", "threads_share_to_instagram",
+                   "", {}, key="share_to_instagram",
+                   unverifiable="投稿の作成（POST）の crossreshare_to_ig にしか"
+                                "使われない権限で、doctor は投稿しません"),
+        ]
 
     # **頁を最後まで辿る**（外部レビュー C1・P2・2026-09-12）。
     #
