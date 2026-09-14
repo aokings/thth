@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>THTH — Privacy Policy / プライバシーポリシー</title>
+<style>
+  /* 見た目は認可の受け口（src/index.js）に揃える（masaru 2026-09-14「あのシンプルなテイスト」）:
+     小さめの見出し・罫線なし・淡い角丸の背景・余白で区切る。装飾を足さない。 */
+  :root { color-scheme: light dark; --bg:#faf9f7; --fg:#1a1a1a; --soft:rgba(127,127,127,.12); }
+  @media (prefers-color-scheme: dark) { :root { --bg:#16161a; --fg:#eee; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 48px 24px 72px; }
+  h1 { font-size:1.15rem; font-weight:600; margin:0 0 4px; letter-spacing:.02em; }
+  h2 { font-size:1rem; font-weight:600; margin: 40px 0 8px; }
+  h3 { font-size:.95rem; font-weight:600; margin: 20px 0 6px; }
+  p { margin: 0 0 12px; }
+  ul { margin: 0 0 12px; padding-left: 1.25em; }
+  li { margin: 0 0 6px; }
+  a { color: inherit; text-decoration: underline; text-underline-offset: 3px; opacity:.85; }
+  .lead { margin-bottom: 4px; }
+  .en { opacity:.65; }
+  .note { font-size:.85rem; opacity:.7; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+         font-size:.92em; background: var(--soft); border-radius: 6px; padding: 1px 5px; }
+  pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.9rem; line-height:1.6;
+        background: var(--soft); border-radius: 10px; padding: 16px; margin: 0 0 12px;
+        white-space: pre-wrap; overflow-wrap: anywhere; }
+  pre code { background: none; padding: 0; }
+  footer { margin-top: 44px; font-size:.85rem; opacity:.7; }
+</style>
+</head><body><main>
+<h1>THTH — Privacy Policy</h1>
+<p class="note">Effective 2026-09-15 · <a href="#ja">日本語はこの下</a></p>
+<h2>What THTH is</h2>
+<p>THTH is a free, open-source command-line tool for drafting, approving, and publishing social media posts (Threads, Bluesky, Mastodon). It runs on <strong>your own computer or server</strong>. There is no THTH cloud service, no THTH account, and no server operated by THTH that receives or stores your content.</p>
+<h2>What this website (thth.me) does</h2>
+<ul>
+<li><strong>Static pages</strong> (this page and the product introduction). They load no third-party scripts, fonts, images, or analytics, and set no cookies.</li>
+<li><strong>Authorization receiver</strong> (<code>/callback/</code>). When you authorize THTH with Threads, Meta redirects your browser here with a one-time authorization code. The page <strong>only displays that code so you can paste it into your terminal</strong>. It does not store, log, or transmit the code anywhere, and it removes the code from the address bar immediately. Server-side logging for this site is disabled. The hosting provider (Cloudflare) may keep standard aggregate traffic metrics, which THTH does not use.</li>
+<li><strong>Meta callbacks</strong> (<code>/deauthorize</code>, <code>/data-deletion</code>). These acknowledge Meta's requests and store nothing (see “Deleting your data”).</li>
+</ul>
+<h2>Data THTH accesses on your behalf</h2>
+<p>When <strong>you</strong> authorize THTH for a Threads account and run its commands, THTH calls the Threads API with your access token to:</p>
+<ul>
+<li>publish posts and replies that <strong>you wrote and explicitly approved</strong> (a two-step approval is required for every post);</li>
+<li>read your profile (id, username), your posts, replies to them, view/like/follower counts, and mentions of your account;</li>
+<li>search public posts and locations, look up public profiles, tag a location on a post, share a post to Instagram, and delete a post — <strong>only when you run that command</strong>.</li>
+</ul>
+<p>THTH does not access any data you did not authorize, and never acts on Threads without a command from you.</p>
+<h2>Where the data is stored</h2>
+<p>Everything THTH obtains is written to <strong>files on the machine where you run it</strong>: your own Git repository (drafts, post IDs, replies, counts) and a configuration directory for access tokens (created with owner-only permissions). Nothing is sent to the author of THTH or to any third party. The only network destinations are the social media platforms you configured (for Threads, Meta's <code>graph.threads.net</code>).</p>
+<h2>Sharing</h2>
+<p>THTH does not sell, share, or transfer your data. There is no server on our side that holds it.</p>
+<h2>Retention</h2>
+<p>Data stays on your machine for as long as you keep the files. You can delete them at any time.</p>
+<h2>Deleting your data / revoking access</h2>
+<ul>
+<li>To revoke THTH's access to your Threads account, remove it in the Threads app (Settings → Account → Website permissions) or delete the token file on your machine.</li>
+<li>Because THTH stores nothing on its own servers, there is nothing for us to delete on our side. Meta's data-deletion callback is answered with a confirmation for that reason. Data on your own machine is yours to delete.</li>
+</ul>
+<h2>Who uses the Meta app “THTH”</h2>
+<p>The Meta app named “THTH” is operated by the author for accounts that hold a role on that app. Other people who want to use THTH register <strong>their own</strong> Meta app; their data never passes through ours.</p>
+<h2>Contact</h2>
+<p>Questions about this policy: open an issue at <a href="https://github.com/aokings/thth/issues">https://github.com/aokings/thth/issues</a>. Operator: gotoq.</p>
+<h2>Changes</h2>
+<p>This page is generated from the THTH source repository; its history is public there.</p>
+<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>
+<p class="note">2026-09-15 施行</p>
+<h2>THTH とは</h2>
+<p>THTH は、SNS（Threads・Bluesky・Mastodon）の投稿を下書きし、承認し、投稿するための無料のオープンソースのコマンドラインツールです。<strong>あなた自身の PC やサーバ</strong>で動きます。THTH のクラウドサービスや THTH のアカウントは存在せず、あなたの内容を受け取ったり保存したりするTHTH 側のサーバはありません。</p>
+<h2>このサイト（thth.me）がすること</h2>
+<ul>
+<li><strong>静的なページ</strong>（このページと製品紹介）。第三者のスクリプト・フォント・画像・解析ツールを読み込まず、Cookie も使いません。</li>
+<li><strong>認可の受け口</strong>（<code>/callback/</code>）。Threads で THTH を認可すると、Meta が使い捨ての認可コードを付けてブラウザをここへ戻します。このページは<strong>そのコードをターミナルに貼れるよう表示するだけ</strong>です。どこにも保存・記録・送信せず、アドレスバーからも直ちに消します。サーバ側のログは無効にしています。ホスティング事業者（Cloudflare）が標準的な集計トラフィック指標を保持することはありますが、THTH はそれを使いません。</li>
+<li><strong>Meta 向けの応答</strong>（<code>/deauthorize</code>・<code>/data-deletion</code>）。Meta からの通知に応答するだけで、何も保存しません（「データの削除」参照）。</li>
+</ul>
+<h2>THTH があなたの代わりに扱うデータ</h2>
+<p><strong>あなた</strong>が Threads アカウントで THTH を認可し、コマンドを実行したとき、THTH はあなたのアクセストークンで Threads API を呼び、次のことをします。</p>
+<ul>
+<li><strong>あなたが書き、明示的に承認した</strong>投稿・返信を出す（すべての投稿に二段階の承認が要ります）</li>
+<li>あなたのプロフィール（id・ユーザー名）、投稿、その返信、閲覧数・いいね数・フォロワー数、あなたへの言及を読む</li>
+<li>公開投稿と場所の検索、公開プロフィールの参照、投稿への場所の付与、Instagram への共有、投稿の削除——<strong>あなたがそのコマンドを実行したときだけ</strong></li>
+</ul>
+<p>認可していないデータには触れず、あなたの指示なしに Threads 上で何かをすることはありません。</p>
+<h2>データの置き場所</h2>
+<p>THTH が取得したものはすべて、<strong>THTH を動かしている機械のファイル</strong>に書かれます。あなた自身の Git リポジトリ（下書き・投稿 ID・返信・数）と、アクセストークンの設定ディレクトリ（所有者だけが読める権限で作られます）です。THTH の作者にも第三者にも送られません。通信先は、あなたが設定した SNS だけです（Threads なら Meta の <code>graph.threads.net</code>）。</p>
+<h2>第三者提供</h2>
+<p>THTH はあなたのデータを販売・共有・譲渡しません。こちら側にデータを持つサーバがありません。</p>
+<h2>保存期間</h2>
+<p>あなたがファイルを残す限り、あなたの機械に残ります。いつでも削除できます。</p>
+<h2>データの削除・認可の取り消し</h2>
+<ul>
+<li>Threads アカウントへの THTH のアクセスを取り消すには、Threads アプリ（設定 → アカウント → ウェブサイトの許可）で外すか、あなたの機械のトークンファイルを削除してください。</li>
+<li>THTH は自分のサーバに何も保存していないので、こちら側で削除するものはありません。Meta からのデータ削除要求には、その理由で確認応答を返します。あなたの機械のデータはあなたが削除します。</li>
+</ul>
+<h2>Meta アプリ「THTH」を使うのは誰か</h2>
+<p>「THTH」という名前の Meta アプリは、作者が、そのアプリで役割を持つアカウントのために運用しています。THTH を使いたい他の方は<strong>ご自身の</strong> Meta アプリを登録して使うので、その方のデータがこちらのアプリを通ることはありません。</p>
+<h2>連絡先</h2>
+<p>このポリシーについての質問は <a href="https://github.com/aokings/thth/issues">https://github.com/aokings/thth/issues</a> へ。運用者: gotoq。</p>
+<h2>変更</h2>
+<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。</p>
+<footer><a href="/">THTH</a> · Free and open source · MIT License<br>© 2026 gotoq</footer>
+</main></body></html>

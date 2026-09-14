@@ -9,6 +9,7 @@
 | `callback/public/index.html` | `README.en.md` の「何を保証し、何を拒み、何を絶対にしないか」＋ `skills/thth/SKILL.md` の同じ 3 節（日本語） |
 | `callback/public/llms.txt` | repo の `llms.txt`（**1 バイトも変えずに写す**） |
 | `callback/public/robots.txt` | このスクリプト（認可の受け口だけを索引から外す） |
+| `callback/public/privacy/index.html` | このスクリプト（`build_privacy()`。Meta の App Review が要求するプライバシーポリシー。2026-09-15） |
 
 **手で二重管理しない。** 正本を直したらこのスクリプトを走らせ直す。
 `--check` は書かずに突き合わせるだけで、ずれていれば非ゼロで終わる
@@ -263,7 +264,176 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
     add(f'<p><a href="{GITHUB}">GitHub</a> ／ <a href="{PYPI}">PyPI</a> ／ '
         f'<a href="{esc(REGISTRY_SEARCH)}">MCP Registry</a> ／ <a href="/llms.txt">llms.txt</a></p>')
 
-    add("<footer>Free and open source · MIT License<br>© 2026 gotoq</footer>")
+    add('<footer>Free and open source · MIT License<br>© 2026 gotoq · <a href="/privacy/">プライバシーポリシー / Privacy Policy</a></footer>')
+    add("</main></body></html>")
+    return "\n".join(parts) + "\n"
+
+
+PRIVACY_EFFECTIVE = "2026-09-15"
+
+
+def build_privacy() -> str:
+    """プライバシーポリシー（`/privacy/`）。Meta の App Review が「プライバシーポリシー URL」を
+    要求する（`docs/手順_AppReview_2026-09-14.md` §1.3・2026-09-15 に masaru の指示で作成）。
+
+    **書いてあることは全部この repo で確かめられる事実だけ**にする（盛らない・約束しない）:
+    THTH はサーバを持たない（`README`・設計 v2 §3）、受け口は code を表示するだけで保存も送信もしない
+    （`callback/src/index.js`・`wrangler.jsonc` の observability は無効）、外部リソースを読まない
+    （`tests/test_site.py`）、トークンは利用者の機械の 600 のファイル（`thth/secrets_fs.py`）。
+
+    英語を先に置く——読むのは Meta の審査担当と海外の利用者。日本語は同じ内容を下に。
+    """
+    esc = lambda s: html_mod.escape(s, quote=True)  # noqa: E731
+    parts: list[str] = []
+    add = parts.append
+
+    add("<!doctype html>")
+    add('<html lang="en"><head>')
+    add('<meta charset="utf-8">')
+    add('<meta name="viewport" content="width=device-width, initial-scale=1">')
+    add('<meta name="referrer" content="no-referrer">')
+    add("<title>THTH — Privacy Policy / プライバシーポリシー</title>")
+    add(f"<style>\n{STYLE}</style>")
+    add("</head><body><main>")
+
+    add("<h1>THTH — Privacy Policy</h1>")
+    add(f'<p class="note">Effective {esc(PRIVACY_EFFECTIVE)} · <a href="#ja">日本語はこの下</a></p>')
+
+    add("<h2>What THTH is</h2>")
+    add("<p>THTH is a free, open-source command-line tool for drafting, approving, and publishing "
+        "social media posts (Threads, Bluesky, Mastodon). It runs on <strong>your own computer or "
+        "server</strong>. There is no THTH cloud service, no THTH account, and no server operated by "
+        "THTH that receives or stores your content.</p>")
+
+    add("<h2>What this website (thth.me) does</h2>")
+    add("<ul>")
+    add("<li><strong>Static pages</strong> (this page and the product introduction). They load no "
+        "third-party scripts, fonts, images, or analytics, and set no cookies.</li>")
+    add("<li><strong>Authorization receiver</strong> (<code>/callback/</code>). When you authorize THTH "
+        "with Threads, Meta redirects your browser here with a one-time authorization code. The page "
+        "<strong>only displays that code so you can paste it into your terminal</strong>. It does not store, "
+        "log, or transmit the code anywhere, and it removes the code from the address bar immediately. "
+        "Server-side logging for this site is disabled. The hosting provider (Cloudflare) may keep "
+        "standard aggregate traffic metrics, which THTH does not use.</li>")
+    add("<li><strong>Meta callbacks</strong> (<code>/deauthorize</code>, <code>/data-deletion</code>). "
+        "These acknowledge Meta's requests and store nothing (see “Deleting your data”).</li>")
+    add("</ul>")
+
+    add("<h2>Data THTH accesses on your behalf</h2>")
+    add("<p>When <strong>you</strong> authorize THTH for a Threads account and run its commands, THTH "
+        "calls the Threads API with your access token to:</p>")
+    add("<ul>")
+    add("<li>publish posts and replies that <strong>you wrote and explicitly approved</strong> "
+        "(a two-step approval is required for every post);</li>")
+    add("<li>read your profile (id, username), your posts, replies to them, view/like/follower counts, "
+        "and mentions of your account;</li>")
+    add("<li>search public posts and locations, look up public profiles, tag a location on a post, "
+        "share a post to Instagram, and delete a post — <strong>only when you run that command</strong>.</li>")
+    add("</ul>")
+    add("<p>THTH does not access any data you did not authorize, and never acts on Threads without "
+        "a command from you.</p>")
+
+    add("<h2>Where the data is stored</h2>")
+    add("<p>Everything THTH obtains is written to <strong>files on the machine where you run it</strong>: "
+        "your own Git repository (drafts, post IDs, replies, counts) and a configuration directory "
+        "for access tokens (created with owner-only permissions). Nothing is sent to the author of THTH "
+        "or to any third party. The only network destinations are the social media platforms you "
+        "configured (for Threads, Meta's <code>graph.threads.net</code>).</p>")
+
+    add("<h2>Sharing</h2>")
+    add("<p>THTH does not sell, share, or transfer your data. There is no server on our side that holds it.</p>")
+
+    add("<h2>Retention</h2>")
+    add("<p>Data stays on your machine for as long as you keep the files. You can delete them at any time.</p>")
+
+    add("<h2>Deleting your data / revoking access</h2>")
+    add("<ul>")
+    add("<li>To revoke THTH's access to your Threads account, remove it in the Threads app "
+        "(Settings → Account → Website permissions) or delete the token file on your machine.</li>")
+    add("<li>Because THTH stores nothing on its own servers, there is nothing for us to delete on our side. "
+        "Meta's data-deletion callback is answered with a confirmation for that reason. "
+        "Data on your own machine is yours to delete.</li>")
+    add("</ul>")
+
+    add("<h2>Who uses the Meta app “THTH”</h2>")
+    add("<p>The Meta app named “THTH” is operated by the author for accounts that hold a role on that app. "
+        "Other people who want to use THTH register <strong>their own</strong> Meta app; their data never "
+        "passes through ours.</p>")
+
+    add("<h2>Contact</h2>")
+    add(f'<p>Questions about this policy: open an issue at <a href="{GITHUB}/issues">{esc(GITHUB)}/issues</a>. '
+        "Operator: gotoq.</p>")
+
+    add("<h2>Changes</h2>")
+    add("<p>This page is generated from the THTH source repository; its history is public there.</p>")
+
+    # ---- 日本語 ----
+    add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
+    add(f'<p class="note">{esc(PRIVACY_EFFECTIVE)} 施行</p>')
+
+    add("<h2>THTH とは</h2>")
+    add("<p>THTH は、SNS（Threads・Bluesky・Mastodon）の投稿を下書きし、承認し、投稿するための無料の"
+        "オープンソースのコマンドラインツールです。<strong>あなた自身の PC やサーバ</strong>で動きます。"
+        "THTH のクラウドサービスや THTH のアカウントは存在せず、あなたの内容を受け取ったり保存したりする"
+        "THTH 側のサーバはありません。</p>")
+
+    add("<h2>このサイト（thth.me）がすること</h2>")
+    add("<ul>")
+    add("<li><strong>静的なページ</strong>（このページと製品紹介）。第三者のスクリプト・フォント・画像・"
+        "解析ツールを読み込まず、Cookie も使いません。</li>")
+    add("<li><strong>認可の受け口</strong>（<code>/callback/</code>）。Threads で THTH を認可すると、Meta が"
+        "使い捨ての認可コードを付けてブラウザをここへ戻します。このページは<strong>そのコードをターミナルに"
+        "貼れるよう表示するだけ</strong>です。どこにも保存・記録・送信せず、アドレスバーからも直ちに消します。"
+        "サーバ側のログは無効にしています。ホスティング事業者（Cloudflare）が標準的な集計トラフィック指標を"
+        "保持することはありますが、THTH はそれを使いません。</li>")
+    add("<li><strong>Meta 向けの応答</strong>（<code>/deauthorize</code>・<code>/data-deletion</code>）。"
+        "Meta からの通知に応答するだけで、何も保存しません（「データの削除」参照）。</li>")
+    add("</ul>")
+
+    add("<h2>THTH があなたの代わりに扱うデータ</h2>")
+    add("<p><strong>あなた</strong>が Threads アカウントで THTH を認可し、コマンドを実行したとき、THTH は"
+        "あなたのアクセストークンで Threads API を呼び、次のことをします。</p>")
+    add("<ul>")
+    add("<li><strong>あなたが書き、明示的に承認した</strong>投稿・返信を出す（すべての投稿に二段階の承認が要ります）</li>")
+    add("<li>あなたのプロフィール（id・ユーザー名）、投稿、その返信、閲覧数・いいね数・フォロワー数、"
+        "あなたへの言及を読む</li>")
+    add("<li>公開投稿と場所の検索、公開プロフィールの参照、投稿への場所の付与、Instagram への共有、投稿の削除"
+        "——<strong>あなたがそのコマンドを実行したときだけ</strong></li>")
+    add("</ul>")
+    add("<p>認可していないデータには触れず、あなたの指示なしに Threads 上で何かをすることはありません。</p>")
+
+    add("<h2>データの置き場所</h2>")
+    add("<p>THTH が取得したものはすべて、<strong>THTH を動かしている機械のファイル</strong>に書かれます。"
+        "あなた自身の Git リポジトリ（下書き・投稿 ID・返信・数）と、アクセストークンの設定ディレクトリ"
+        "（所有者だけが読める権限で作られます）です。THTH の作者にも第三者にも送られません。通信先は、"
+        "あなたが設定した SNS だけです（Threads なら Meta の <code>graph.threads.net</code>）。</p>")
+
+    add("<h2>第三者提供</h2>")
+    add("<p>THTH はあなたのデータを販売・共有・譲渡しません。こちら側にデータを持つサーバがありません。</p>")
+
+    add("<h2>保存期間</h2>")
+    add("<p>あなたがファイルを残す限り、あなたの機械に残ります。いつでも削除できます。</p>")
+
+    add("<h2>データの削除・認可の取り消し</h2>")
+    add("<ul>")
+    add("<li>Threads アカウントへの THTH のアクセスを取り消すには、Threads アプリ（設定 → アカウント → "
+        "ウェブサイトの許可）で外すか、あなたの機械のトークンファイルを削除してください。</li>")
+    add("<li>THTH は自分のサーバに何も保存していないので、こちら側で削除するものはありません。Meta からの"
+        "データ削除要求には、その理由で確認応答を返します。あなたの機械のデータはあなたが削除します。</li>")
+    add("</ul>")
+
+    add("<h2>Meta アプリ「THTH」を使うのは誰か</h2>")
+    add("<p>「THTH」という名前の Meta アプリは、作者が、そのアプリで役割を持つアカウントのために運用しています。"
+        "THTH を使いたい他の方は<strong>ご自身の</strong> Meta アプリを登録して使うので、その方のデータが"
+        "こちらのアプリを通ることはありません。</p>")
+
+    add("<h2>連絡先</h2>")
+    add(f'<p>このポリシーについての質問は <a href="{GITHUB}/issues">{esc(GITHUB)}/issues</a> へ。運用者: gotoq。</p>')
+
+    add("<h2>変更</h2>")
+    add("<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。</p>")
+
+    add('<footer><a href="/">THTH</a> · Free and open source · MIT License<br>© 2026 gotoq</footer>')
     add("</main></body></html>")
     return "\n".join(parts) + "\n"
 
@@ -289,6 +459,7 @@ def outputs() -> dict[str, str]:
         # **1 バイトも変えずに写す。** 正本は repo の llms.txt（手で二重管理しない）。
         "llms.txt": LLMS_TXT.read_text(encoding="utf-8"),
         "robots.txt": ROBOTS,
+        "privacy/index.html": build_privacy(),
     }
 
 
@@ -318,6 +489,7 @@ def main(argv: list[str] | None = None) -> int:
 
     PUBLIC.mkdir(parents=True, exist_ok=True)
     for name, content in built.items():
+        (PUBLIC / name).parent.mkdir(parents=True, exist_ok=True)
         (PUBLIC / name).write_text(content, encoding="utf-8")
         print(f"書いた: callback/public/{name}")
     return 0

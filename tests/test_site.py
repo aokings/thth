@@ -228,3 +228,30 @@ def test_紹介ページは訪問者向けの言葉で書く():
     assert "AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツール" in page
     assert "THTH 専用のクラウドサービスは使いません" in page
     assert page.count("<h2>English</h2>") == 1
+
+
+# --------------------------------------------------------------------------
+# プライバシーポリシー（/privacy/・2026-09-15・Meta の App Review が要求する）
+# --------------------------------------------------------------------------
+
+def test_プライバシーポリシーは正本から生成され_外へ出る口が無い():
+    """`docs/手順_AppReview_2026-09-14.md` §1.3「プライバシーポリシー URL が無い」を埋めた。
+    書いてあることは repo で確かめられる事実だけ。紹介ページと同じ礼儀（第三者リソース 0）。"""
+    page = (PUBLIC / "privacy" / "index.html").read_text(encoding="utf-8")
+    assert page == build_site.build_privacy()
+    # 読み込む外部リソースは 0（リンク <a href> は可・script/link/img は不可）
+    assert not re.search(r'<(script|link|img|iframe)\b[^>]*(src|href)\s*=\s*["\']https?:', page, re.I)
+    assert "<script" not in page
+    # 英語が先（審査担当が読む）・日本語も同じ内容
+    assert page.index("Privacy Policy") < page.index("プライバシーポリシー")
+    for must in ("does not store, log, or transmit the code",
+                 "your own computer or server",
+                 "graph.threads.net",
+                 "どこにも保存・記録・送信せず",
+                 "https://github.com/aokings/thth/issues"):
+        assert must in page, must
+    # 紹介ページから辿れる・robots は開いている
+    index = (PUBLIC / "index.html").read_text(encoding="utf-8")
+    assert 'href="/privacy/"' in index
+    robots = (PUBLIC / "robots.txt").read_text(encoding="utf-8")
+    assert "Disallow: /privacy" not in robots
