@@ -19,6 +19,7 @@ if (!modulePath) {
 const URLS = [
   "https://thth.me/callback/",
   "https://thth.me/callback",
+  "https://thth.me/callback/?code=FAKE-CODE-abc123&state=FAKE-STATE-xyz",
   "https://thth.me/callback/?code=FAKE-CODE-abc123",
   "https://thth.me/callback/?error=access_denied&error_description=The+user+denied+your+request",
   "https://thth.me/callback/?code=%3Cscript%3E&x=1",

@@ -73,11 +73,32 @@ function callbackPage(url) {
   }
 
   if (code) {
+    // **貼るのは URL 全体**（`code` だけではない）。`thth auth` は 2026-09-14 の
+    // セキュリティ監査（P2-4）以降、**`state` の照合が通らないと受け付けない**
+    // ——「この道具が出した認可 URL の戻りかどうか」を確かめる術がないため。
+    // 受け口が `code` だけを見せていた間、貼っても必ず「state がありません」で
+    // 断られていた（2026-09-15 に masaru が詰まった）。**道具が要るものを、
+    // 受け口が出す。**
+    //
+    // 出すのは `code` と `state` の 2 つだけに絞る（Meta が他の鍵を付けて
+    // きても写さない——余計なものを画面に残さない）。
+    const state = url.searchParams.get("state");
+    const parts = ["code=" + encodeURIComponent(code)];
+    if (state) parts.push("state=" + encodeURIComponent(state));
+    const paste = url.origin + url.pathname + "?" + parts.join("&");
+
+    const missing = state
+      ? ""
+      : `<p class="note err">state が付いていません。この戻りは <code>thth auth</code> に
+         受け付けられません（もう一度 <code>thth auth</code> から始めてください）。</p>`;
+
     return html(
       `<h1>認可コードを受け取りました</h1>
-       <p class="sub">下の文字列をターミナルに貼ってください。1 時間で切れる使い捨てです。</p>
-       <p class="code" id="c">${esc(code)}</p>
+       <p class="sub">下の <strong>URL 全体</strong>をターミナルに貼ってください
+       （<code>code</code> だけでは足りません）。1 時間で切れる使い捨てです。</p>
+       <p class="code" id="c">${esc(paste)}</p>
        <button id="b">コピー</button>
+       ${missing}
        <p class="note">この画面は撮らないでください。貼り終えたら閉じて構いません。</p>
        <script>
          // アドレスバーからコードを消す（撮影・肩越しの覗き見への備え）。
@@ -95,7 +116,8 @@ function callbackPage(url) {
     `<h1>THTH</h1>
      <p class="sub">Threads の認可の受け口です。ここを直接開いても何もありません。</p>
      <p class="note">ターミナルで <code>thth auth &lt;account&gt;</code> を実行すると、
-     認可 URL が表示されます。承認するとこのページに戻ってきます。</p>`);
+     認可 URL が表示されます。承認するとこのページに戻ってくるので、
+     表示された <strong>URL 全体</strong>をターミナルに貼ります。</p>`);
 }
 
 export default {

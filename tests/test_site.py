@@ -9,11 +9,17 @@
    「何を保証し、何を拒み、何を絶対にしないか」が **要約されずに** 載っている。
 3. 外部 URL の `<script>`・`<link>`・`<img>` が **0**（認可の受け口と同じ礼儀。
    この入口を開いた人の browser から第三者へは何も飛ばない）。
-4. **`/callback/` の応答が紹介ページを足す前と同じ**。固定した応答
-   （`tests/fixtures/callback/worker_responses.json`）は、assets を足す前の
-   Worker（`HEAD:callback/src/index.js`）を同じ probe に通して採り、
-   新しい Worker の出力と byte 単位で一致することを確かめてから置いた。
-   `wrangler dev` は使わず、handler を Node で直接呼ぶ。
+4. **`/callback/` の応答が固定した形と byte 単位で一致する**
+   （`tests/fixtures/callback/worker_responses.json`）。`wrangler dev` は
+   使わず、handler を Node で直接呼ぶ。
+
+   固定した応答は 2 度採り直している。1 度目は紹介ページ（assets）を足したとき
+   ——受け口の振る舞いが 1 バイトも変わっていないことを示すため。2 度目は
+   **2026-09-15**——受け口が `code` だけを見せていたのを、`state` を含む
+   **戻り URL 全体**に変えたため。`thth auth` は 2026-09-14 のセキュリティ監査
+   （P2-4）以降 `state` の照合が通らないと受け付けないので、`code` だけを
+   見せる受け口は**必ず断られる形**を人に渡していた（masaru が実際に詰まった）。
+   採り直しは意図した変更のときだけ行い、理由をここに残す。
 """
 from __future__ import annotations
 
@@ -179,6 +185,27 @@ def test_認可コードは_HTML_に埋め込まれるだけで外へ出る口�
     assert "FAKE-CODE-abc123" in page
     assert "history.replaceState" in page
     assert not re.search(r'(src|href)\s*=\s*["\']https?:', page, re.I)
+
+
+@needs_node
+def test_受け口が出す文字列を_thth_auth_が受け取れる():
+    """**受け口が渡すものと、道具が要るものが同じ形か**（2026-09-15）。
+
+    `thth auth` は `state` の照合が通らないと受け付けない（監査 P2-4）。
+    受け口が `code` だけを見せていた間、貼っても必ず断られていた——**両側とも
+    単体では正しいのに、繋ぐと通らない**。ここは繋ぎ目を実測で押さえる:
+    受け口の画面に出る文字列を取り出し、`thth auth` の読み取りに通す。
+    """
+    from thth import oauth
+
+    page = {r["url"]: r for r in _probe()}[
+        "https://thth.me/callback/?code=FAKE-CODE-abc123&state=FAKE-STATE-xyz"]["body"]
+    shown = re.search(r'<p class="code" id="c">([^<]*)</p>', page)
+    assert shown, "貼るための文字列が画面に無い"
+    pasted = html_mod.unescape(shown.group(1))
+
+    assert oauth.extract_code(pasted) == "FAKE-CODE-abc123"
+    assert oauth.extract_state(pasted) == "FAKE-STATE-xyz"
 
 
 # --------------------------------------------------------------------------
