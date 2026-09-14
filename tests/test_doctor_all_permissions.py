@@ -39,8 +39,12 @@ class _ReadOnlyThreads(http.server.BaseHTTPRequestHandler):
     """読み取り専用の偽 Threads API。**GET 以外は全部記録して 405**。
 
     `behavior` は「path の末尾 → モード」。モードは "ok" | "permission" | "5xx" |
-    "4xx"。無ければ "ok"。
+    "4xx"。無ければ "ok"。`/debug_token` だけ "absent"（404）・"partial"（delete と
+    share_to_instagram が無い一覧）・"malformed"（200 だが scopes 無し）も受ける。
     """
+    debug_scopes = list(scopes_mod.DEFAULT_SCOPES)
+    partial_scopes = [x for x in scopes_mod.DEFAULT_SCOPES
+                      if x not in ("threads_delete", "threads_share_to_instagram")]
     behavior: dict = {}
     requests: list = []          # (method, path, params)
 
@@ -63,6 +67,16 @@ class _ReadOnlyThreads(http.server.BaseHTTPRequestHandler):
         params = dict(urllib.parse.parse_qsl(parsed.query))
         self.requests.append(("GET", parsed.path, params))
         mode = self._mode(parsed.path)
+        if parsed.path == "/v1.0/debug_token":
+            if mode == "absent":
+                return self._json(404, {"error": {"message": "Unknown path", "code": 803}})
+            if mode == "malformed":
+                return self._json(200, {"data": {"is_valid": True}})
+            if mode == "partial":
+                return self._json(200, {"data": {"scopes": self.partial_scopes}})
+            if mode == "ok":
+                return self._json(200, {"data": {"scopes": self.debug_scopes,
+                                                 "is_valid": True, "user_id": "999999"}})
         if mode == "permission":
             return self._json(400, PERMISSION_ERROR)
         if mode == "5xx":
@@ -155,10 +169,12 @@ def test_11権限すべてが少なくとも1行に出る(monkeypatch, account):
 
 
 def test_読み取りの口がある権限は全部叩いて丸になる(monkeypatch, account):
-    report, requests = _diagnose(monkeypatch, account)
+    report, requests = _diagnose(monkeypatch, account, NO_DEBUG)
     rows = _by_permission(report)
     for perm in set(scopes_mod.DEFAULT_SCOPES) - set(UNVERIFIABLE):
-        assert all(p["ok"] is True for p in rows[perm]), (perm, rows[perm])
+        assert all(p["ok"] is True for p in rows[perm]
+                   if p["key"] != threads_mod.ThreadsAdapter.DEBUG_TOKEN_KEY), (
+            perm, rows[perm])
     paths = [path for _m, path, _q in requests]
     assert "/v1.0/keyword_search" in paths
     assert "/v1.0/999999/mentions" in paths
@@ -166,8 +182,12 @@ def test_読み取りの口がある権限は全部叩いて丸になる(monkeyp
     assert "/v1.0/location_search" in paths
 
 
+NO_DEBUG = {"/debug_token": "absent"}
+
+
 def test_deleteとshare_to_instagramとmanage_repliesはNoneで理由つき(monkeypatch, account):
-    report, requests = _diagnose(monkeypatch, account)
+    """`/debug_token` が取れないときは従来どおり None（読み取りでは確かめられない）。"""
+    report, requests = _diagnose(monkeypatch, account, NO_DEBUG)
     rows = _by_permission(report)
     for perm in UNVERIFIABLE:
         assert len(rows[perm]) == 1, rows[perm]
@@ -183,28 +203,34 @@ def test_deleteとshare_to_instagramとmanage_repliesはNoneで理由つき(monk
 
 # --------------------------------------------------------------- rc と表示
 
+# `/debug_token` が 5xx → その行も 3 行も None（rc に数えない）。404 のような
+# 4xx は「API が断った」で ×（他の probe と同じ物差し・rc=1）。
+DEBUG_5XX = {"/debug_token": "5xx"}
+
+
 def test_okNoneはrcを1にしない_人向け(monkeypatch, account):
-    with _server() as (base_url, _requests):
+    with _server(DEBUG_5XX) as (base_url, _requests):
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         lines: list = []
         rc = doctor_mod.run_doctor(account["name"], log=lines.append)
     out = "\n".join(lines)
     assert rc == 0, out
     marks = [line for line in lines if line.startswith("  ― ")]
-    assert len(marks) == len(UNVERIFIABLE), out
+    assert len(marks) == len(UNVERIFIABLE) + 1, out          # +1 は debug_token の行
+    assert "debug_token の scope: 取れませんでした" in out, out
     assert "読み取りでは確かめられません" in out
     assert "ALLPERM-SECRET-TOKEN" not in out
 
 
 def test_okNoneはrcを1にしない_json(monkeypatch, account):
-    with _server() as (base_url, _requests):
+    with _server(DEBUG_5XX) as (base_url, _requests):
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         lines: list = []
         rc = doctor_mod.run_doctor(account["name"], as_json=True, log=lines.append)
     assert rc == 0
     payload = json.loads(lines[-1])
     oks = [p["ok"] for p in payload["probes"]]
-    assert oks.count(None) == len(UNVERIFIABLE), oks
+    assert oks.count(None) == len(UNVERIFIABLE) + 1, oks    # +1 は debug_token の行
     assert set(oks) <= {True, False, None}
     assert "ALLPERM-SECRET-TOKEN" not in lines[-1]
 
@@ -316,3 +342,86 @@ def test_記録上のscopeが先頭に出る_null(monkeypatch, account):
     payload = json.loads(lines_json[-1])
     assert payload["scopes_recorded"] == {"count": None, "scopes": None,
                                           "source": "unknown"}
+
+
+# ----------------------------------------------------- /debug_token（監査後の追加）
+
+DEBUG_KEY = threads_mod.ThreadsAdapter.DEBUG_TOKEN_KEY
+
+
+def _debug_row(report):
+    return next(p for p in report["probes"] if p["key"] == DEBUG_KEY)
+
+
+def test_debug_tokenが取れれば3行が乗っているに格上げされる(monkeypatch, account):
+    report, requests = _diagnose(monkeypatch, account)          # 既定: 11 個全部
+    rows = _by_permission(report)
+    for perm in UNVERIFIABLE:
+        p = rows[perm][0]
+        assert p["ok"] is True, p
+        assert "debug_token" in p["detail"], p
+        assert threads_mod.UNVERIFIABLE_BY_READ not in p["detail"], p
+    d = _debug_row(report)
+    assert d["ok"] is True and d["scopes"] == list(scopes_mod.DEFAULT_SCOPES)
+    assert d["missing"] == [] and d["extra"] == []
+    # 口は 1 回・自分のトークンを input_token にも渡す・GET。
+    calls = [(m, q) for m, p, q in requests if p == "/v1.0/debug_token"]
+    assert len(calls) == 1 and calls[0][0] == "GET"
+    assert calls[0][1]["input_token"] == calls[0][1]["access_token"]
+
+
+def test_debug_tokenに無い権限は乗っていませんになる(monkeypatch, account):
+    report, _ = _diagnose(monkeypatch, account, {"/debug_token": "partial"})
+    rows = _by_permission(report)
+    assert rows["threads_manage_replies"][0]["ok"] is True
+    for perm in ("threads_delete", "threads_share_to_instagram"):
+        p = rows[perm][0]
+        assert p["ok"] is False, p
+        assert threads_mod.NOT_GRANTED in p["detail"], p
+    d = _debug_row(report)
+    assert d["missing"] == ["threads_delete", "threads_share_to_instagram"], d
+    assert d["extra"] == []
+
+
+def test_debug_tokenが取れなければ3行はNoneのまま(monkeypatch, account):
+    for mode in ("absent", "5xx", "malformed"):
+        report, _ = _diagnose(monkeypatch, account, {"/debug_token": mode})
+        rows = _by_permission(report)
+        for perm in UNVERIFIABLE:
+            p = rows[perm][0]
+            assert p["ok"] is None, (mode, p)
+            assert threads_mod.UNVERIFIABLE_BY_READ in p["detail"], (mode, p)
+        d = _debug_row(report)
+        assert d["ok"] is not True and d["scopes"] is None, (mode, d)
+
+
+def test_debug_tokenの行が記録上のscopeの直後に出る(monkeypatch, account):
+    with _server() as (base_url, _requests):
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        lines: list = []
+        rc = doctor_mod.run_doctor(account["name"], log=lines.append)
+    assert rc == 0, "\n".join(lines)
+    i = next(i for i, l in enumerate(lines) if l.startswith("記録上の scope"))
+    assert lines[i + 1] == "debug_token の scope: 11 個（DEFAULT_SCOPES と一致）", lines[i + 1]
+    with _server({"/debug_token": "partial"}) as (base_url, _requests):
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        lines = []
+        rc = doctor_mod.run_doctor(account["name"], log=lines.append)
+    assert rc == 1
+    line = next(l for l in lines if l.startswith("debug_token の scope"))
+    assert line == ("debug_token の scope: 9 個（不一致: "
+                    "足りない=threads_delete,threads_share_to_instagram）"), line
+
+
+def test_doctorはtokenを書き換えない(monkeypatch, account):
+    """`.token` の scopes が null で debug_token が取れても、**読むだけ**。"""
+    import os
+    before = open(account["token_path"], "rb").read()
+    mtime = os.stat(account["token_path"]).st_mtime_ns
+    with _server() as (base_url, _requests):
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        doctor_mod.run_doctor(account["name"], log=lambda _l: None)
+        doctor_mod.run_doctor(account["name"], as_json=True, log=lambda _l: None)
+    assert open(account["token_path"], "rb").read() == before
+    assert os.stat(account["token_path"]).st_mtime_ns == mtime
+    assert json.loads(before)["scopes"] is None
