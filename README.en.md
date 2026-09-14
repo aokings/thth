@@ -1,7 +1,7 @@
 # THTH (ThreadsThrower)
 
-THTH posts approved drafts to Threads (Bluesky and Mastodon adapters exist but are
-not yet running in production). It does not decide what to write.
+THTH posts approved drafts to Threads, Bluesky and Mastodon. It does not decide
+what to write.
 
 **Where to start** (the same three lines `thth --help` opens with)
 - Post one draft, once → `thth send` (a rehearsal by default; nothing goes out
@@ -51,15 +51,16 @@ not yet running in production). It does not decide what to write.
 
 ## Install
 
-There is no PyPI release yet — the wheel builds and installs (`thth` and
-`thth-mcp` entry points, zero runtime dependencies), but uploading it is a
-manual step the maintainer has not taken. Today:
-
 ```bash
-git clone <this repo>
-cd thth
-python -m thth --version   # or: put bin/thth on your PATH
+pip install thth
+thth --version
 ```
+
+Zero runtime dependencies; `thth` and `thth-mcp` entry points. Released on
+[PyPI](https://pypi.org/project/thth/) and listed in the
+[MCP registry](https://registry.modelcontextprotocol.io/?q=io.github.aokings/thth)
+as `io.github.aokings/thth`. From source: `git clone`, then `python -m thth --version`
+or put `bin/thth` on your PATH.
 
 ### Where your account ledgers live
 

@@ -31,7 +31,7 @@ timer（systemd・`thth systemd` で生成）で毎時投稿、返信の採集�
 
 **入口は 4 つ**: 厚い CLI（`bin/thth`・`python -m thth`）、薄い MCP（`mcp/server.py`・読み取りと
 同席の投稿・`before_you_post`）、timer、そして `pip install`（`thth`・`thth-mcp` の entry point・
-**依存 0**。ただし **PyPI への登録と upload は masaru の手で、まだしていない**）。
+**依存 0**。PyPI に公開済み・MCP registry に `io.github.aokings/thth` として登録済み）。
 
 **トピックの棚**（`thth topics`）: 観測者ごとに並ぶ・打ち消し `retract-note`・`history`。
 
@@ -63,7 +63,7 @@ timer（systemd・`thth systemd` で生成）で毎時投稿、返信の採集�
 - **最初の本番投稿の記録**: 2026-09-09、@aoking に疎通確認を 1 本（`17916074118445631`）。
 - **未着手**: X・Facebook ページ・Instagram の各アダプタ。トピック検索の権限（tester には降りない）。泉のサーバ（v2-5）。
 - **権限の制約**: tester に降りる scope は 5 つ。削除はできない。
-- **masaru の手が要るもの**: PyPI の登録と upload、repo を public にする切替と `LICENSE`、MCP registry への登録、tag と `release` を進める操作。
+- **masaru の手が要るもの**: repo を public にする切替と `LICENSE`、tag と `release` を進める操作（PyPI と MCP registry は 2.0.1 まで公開済み）。
 
 ## MCP registry
 
