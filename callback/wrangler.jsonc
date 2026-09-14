@@ -7,6 +7,15 @@
   "routes": [
     { "pattern": "thth.me", "custom_domain": true }
   ],
+  // 製品の紹介ページ（設計 v2 §3「ドメイン」: thth.me ＝製品の入口）。
+  // 中身は `python tools/build_site.py` が repo の正本から生成する
+  // （`README.en.md`・`skills/thth/SKILL.md`・`llms.txt`。手で書かない）。
+  // assets が先に見られ、当たらなかった path だけ Worker が処理する
+  // （`/callback/` は public/ に無いので従来どおり Worker が応える）。
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
   // observability は有効にしない。認可コードはクエリに乗るので、
   // ログに残す動機を最初から作らない（設計 §3.6 の礼儀と同じ趣旨）。
   "observability": { "enabled": false }

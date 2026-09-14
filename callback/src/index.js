@@ -1,5 +1,11 @@
 /**
- * THTH の認可の受け口（thth.me）。
+ * THTH の認可の受け口（thth.me）と、製品の紹介ページの配り手。
+ *
+ * この Worker が自分で書くのは **`/callback/` の受け口と Meta 用の 3 本だけ**。
+ * それ以外（`/`・`/llms.txt`・`/robots.txt`）は `public/` の静的ファイル
+ * （`wrangler.jsonc` の `assets`）に任せる——中身は `tools/build_site.py` が
+ * repo の正本（`README.en.md`・`skills/thth/SKILL.md`・`llms.txt`）から作る。
+ * 設計 v2 §3「ドメイン」: `thth.me` ＝製品の入口（認可ページは残す）。
  *
  * Threads の OAuth は redirect_uri が HTTPS でなければならず localhost も使えない
  * ので、着地点が要る。研究所やアスモンの公開サイトに置くと (1) 意味が合わない
@@ -93,12 +99,14 @@ function callbackPage(url) {
 }
 
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const url = new URL(request.url);
 
-    if (url.pathname === "/robots.txt") {
-      return new Response("User-agent: *\nDisallow: /\n",
-        { headers: { "content-type": "text/plain; charset=utf-8" } });
+    // 認可の受け口。**ここの振る舞いは紹介ページを足す前と 1 バイトも変えない**
+    // （path・本文・ヘッダ・referrer-policy・history.replaceState・秘密を残さない）。
+    // 登録してある redirect_uri は https://thth.me/callback/ （docs/導入_…§4）。
+    if (url.pathname === "/callback" || url.pathname.startsWith("/callback/")) {
+      return callbackPage(url);
     }
 
     // Meta が要求する 2 本。開発モードで masaru 自身のアカウントしか使わないが、
@@ -120,6 +128,14 @@ export default {
          <p class="note">削除の依頼は repository の所有者へ直接どうぞ。</p>`);
     }
 
-    return callbackPage(url);
+    // 残りは静的な紹介ページ（public/）。`assets` を先に見る設定なので通常は
+    // ここへ来ないが、来たときも同じものを返す（どちらの経路でも同じ画面）。
+    if (env && env.ASSETS) {
+      return env.ASSETS.fetch(request);
+    }
+    return new Response("Not Found\n", {
+      status: 404,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
   },
 };
