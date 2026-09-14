@@ -2620,12 +2620,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_collect.add_argument("account", nargs="?")
     p_collect.set_defaults(func=cmd_collect)
 
-    p_auth = sub.add_parser("auth", help="認可コードから長期トークンを取得する（運用者が対話で実行。MCPには出さない）")
+    p_auth = sub.add_parser(
+        "auth",
+        help="OAuth の往復で長期トークンを取る（運用者が対話で実行。MCPには出さない）",
+        description=(
+            "認可 URL を表示 → ブラウザで承認 → 戻り URL 全体を貼る → 長期トークンを .token に保存。\n"
+            "Threads: 権限の内訳を変える（増やす・減らす）のはこの口だけ。管理画面の"
+            "生成ツール（thth token set）は、そのアカウントが過去に承認した範囲でしか出さない。\n"
+            "Bluesky: handle と App Password を対話で受ける。Mastodon: thth token set へ。"),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     p_auth.add_argument("account")
     p_auth.add_argument("--redirect-uri", dest="redirect_uri", default=None,
-                         help="省略時は accounts/<account>.json の redirect_uri を使う")
+                         help="省略時は accounts/<account>.json の redirect_uri を使う"
+                              "（Meta アプリに登録した値と 1 文字違わず同じにする）")
     p_auth.add_argument("--code", dest="code", default=None,
-                         help="非対話用（テスト等）。省略時は標準入力から読む")
+                         help="戻り URL 全体（code と state の両方が要る。code の値だけでは受け付けない）。"
+                              "省略時は URL を出したあと端末から読む。ssh に -t が無いときはこちら")
     p_auth.set_defaults(func=cmd_auth)
 
     p_refresh = sub.add_parser("refresh", help="長期トークンを更新する（50日超・--forceで無条件。MCPには出さない）")
@@ -2679,9 +2689,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_token = sub.add_parser("token", help="長期トークンを直接扱う（現状 set のみ。MCPには出さない）")
     token_sub = p_token.add_subparsers(dest="token_command", required=True)
     p_token_set = token_sub.add_parser(
-        "set", help="管理画面で発行したトークンを貼り付けて検証し .token に保存する")
+        "set",
+        help="管理画面で発行したトークンを貼り付けて検証し .token に保存する",
+        description=(
+            "Threads の生成ツール・Mastodon の管理画面で発行したトークンを貼る。本人確認できたときだけ書く。\n"
+            "Threads の生成ツールは、そのアカウントが過去に承認した範囲でしかトークンを出さない——"
+            "期限の入れ替えには足りるが、権限の内訳は変わらない。権限を変えるなら thth auth。"),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     p_token_set.add_argument("account")
-    p_token_set.add_argument("--force", action="store_true", help="既存の .token を上書きする")
+    p_token_set.add_argument("--force", action="store_true", help="既存の .token を上書きする（期限の入れ替え）")
     p_token_set.add_argument("--stdin", action="store_true",
                               help="標準入力から黙って1行読む（非対話・パイプ用）")
     p_token_set.set_defaults(func=cmd_token_set)
