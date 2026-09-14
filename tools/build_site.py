@@ -50,8 +50,8 @@ EN_SECTIONS = ["What it guarantees", "What it refuses", "What it never does"]
 JA_SECTIONS = ["何を保証するか", "何を拒むか", "何を絶対にしないか"]
 
 DESCRIPTION = (
-    "AI が書いた下書きを、人が読んで承認してから投稿する道具。"
-    "Threads・Bluesky・Mastodon。画面はなく、コマンドと MCP で動く。記録はあなたの git に残る。"
+    "AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツール。"
+    "Threads、Bluesky、Mastodon に対応。原稿も投稿後の記録も、自分の Git リポジトリで管理できます。"
 )
 
 
@@ -189,82 +189,80 @@ STYLE = """\
 
 
 def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
-    """紹介ページ。**訪問者向けの文で、短く**（masaru 2026-09-14「文言が気持ち悪い」）。
+    """紹介ページ。**読む人に向けた製品紹介**で、開発側の申し送りを混ぜない。
 
-    以前は README.en.md と SKILL.md の 3 節を要約せずに写し、日本語と英語を交互に並べ、
-    「このページは正本から生成される」「泉はまだ無い」「LLM に選ばせる試験 5/5」のような
-    作り手の作業メモまで載せていた。**正本を写す**ことと**読める**ことは別で、訪問者には
-    後者だけが要る。内部の語（digest・approval_stale・loud reject・泉）はここでは使わない。
-    保証の中身は README.en.md / SKILL.md と食い違わないよう、**同じ事実を平たい言葉で**
-    書く（引数 `en`・`ja` は互換のため受けるが、写さない）。
+    文案は masaru が Codex に書かせたもの（2026-09-14）。参考にした調子: サクラエディタの
+    用途の端的な説明・CotEditor の機能を利用場面につなげる書き方・jq の気取らない案内。
+    実行ログは載せない（現行の出力には投稿先や予約時刻の行も出るので、抜粋を「本物の出力」と
+    しない）。使用例はコマンドだけ。
     """
     del en, ja
     esc = lambda s: html_mod.escape(s, quote=True)  # noqa: E731
     parts: list[str] = []
     add = parts.append
+    guide = lambda name: f"{GITHUB_BLOB}docs/{name}"  # noqa: E731
 
     add("<!doctype html>")
     add('<html lang="ja"><head>')
     add('<meta charset="utf-8">')
     add('<meta name="viewport" content="width=device-width, initial-scale=1">')
     add('<meta name="referrer" content="no-referrer">')
-    add("<title>THTH — 人が承認してから投稿する道具</title>")
+    add("<title>THTH — AI と一緒に SNS の投稿を作成・管理するコマンドラインツール</title>")
     add(f'<meta name="description" content="{esc(DESCRIPTION)}">')
-    add('<meta property="og:title" content="THTH — 人が承認してから投稿する道具">')
+    add('<meta property="og:title" content="THTH">')
     add(f'<meta property="og:description" content="{esc(DESCRIPTION)}">')
     add(f"<style>\n{STYLE}</style>")
     add("</head><body><main>")
 
     add("<h1>THTH</h1>")
-    add('<p class="lead">AI が書いた下書きを、人が読んで承認してから投稿する道具です。'
-        "Threads・Bluesky・Mastodon に対応しています。画面はなく、コマンドと MCP で動きます。</p>")
+    add("<p>THTH は、AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツールです。"
+        "Threads、Bluesky、Mastodon に対応しています。</p>")
+    add("<p>いつものエディタや AI エージェントで下書きを作り、内容を確認して承認すると、"
+        "予約した時刻に投稿されます。原稿も投稿後の記録も、自分の Git リポジトリで管理できます。</p>")
+    add("<pre><code>pip install thth</code></pre>")
 
-    add("<h2>しくみ</h2>")
-    add("<ol>")
-    add("  <li>エージェントが下書きを書きます。置き場はあなたの repo の中です。</li>")
-    add("  <li>あなたが本文を読んで承認します。承認していない本文は出ません。</li>")
-    add("  <li>THTH が投稿し、投稿の ID・返信・閲覧数を同じ repo に記録します。</li>")
-    add("</ol>")
+    add("<h2>使い方</h2>")
+    add("<p>下書きは Markdown ファイルに保存します。本文のほか、投稿先のアカウントや予約時刻、"
+        "トピックなどを指定できます。</p>")
+    add("<p>まず、投稿する内容を確認します。</p>")
+    add("<pre><code>thth approve docs/sns/queue/2026-09-14-oolong.md</code></pre>")
+    add("<p>本文と投稿先などが表示されます。この段階では、まだ承認されません。</p>")
+    add("<p>内容がよければ、表示された確認コードと承認者の名前を付けて、もう一度実行します。</p>")
+    add("<pre><code>thth approve docs/sns/queue/2026-09-14-oolong.md --confirm &lt;確認コード&gt; --by masaru</code></pre>")
+    add("<p>承認した下書きは、タイマーを設定しておけば自動で投稿されます。承認後に本文や投稿先、"
+        "予約時刻などを変更した場合は、あらためて承認が必要です。</p>")
 
-    add("<h2>約束</h2>")
-    add("<ul>")
-    add("  <li>承認していない本文は 1 文字も出ません。承認は、本文を見せてから、その本文の"
-        "指紋を渡す 2 段です。承認のあとに本文が変わると、出しません。</li>")
-    add("  <li>出したものは全部あなたの git に残ります。THTH のサーバはありません。</li>")
-    add("  <li>何も外に送りません。共有の機能は既定で切れていて、入れても送り先はまだありません。</li>")
-    add("  <li>DM は読みません。定型文で自動返信もしません。返信の下書きも同じ承認を通ります。</li>")
-    add("  <li>数字には件数と期間が付きます。分からないことは分からないと言います。</li>")
-    add("  <li>1 回の実行で出すのは 1 件。静かな時間帯と最短間隔を守ります。</li>")
-    add("</ul>")
+    add("<h2>投稿したあとの管理も</h2>")
+    add("<p>投稿が完了すると、原稿に投稿 ID が記録されます。返信や閲覧数も取得して、同じリポジトリに"
+        "保存できます。投稿の履歴をたどったり、次の原稿を考えるときの資料として使えます。</p>")
+    add("<p>THTH は自分の PC やサーバで動かします。原稿や記録の保管に、THTH 専用のクラウドサービスは"
+        "使いません。</p>")
 
-    add("<h2>入れ方</h2>")
+    add("<h2>AI エージェントから使う</h2>")
+    add("<p>MCP サーバと Claude Code 用のスキルを同梱しています。コマンドラインから直接使うほか、"
+        "AI エージェントとやり取りしながら下書きや投稿の記録を扱えます。</p>")
+
+    add("<h2>インストールと設定</h2>")
     add("<pre><code>pip install thth\n"
         "thth account add my-threads --media threads --project my-project\n"
         "thth doctor my-threads</code></pre>")
-    add("<p>Threads は自分の Meta アプリで使います。初回の設定は "
-        f'<a href="{GITHUB_BLOB}docs/導入_自分のMetaアプリで動かす.md">導入の手引き</a>'
-        "を見てください。Bluesky と Mastodon は "
-        f'<a href="{GITHUB_BLOB}docs/導入_Bluesky_2026-09-13.md">Bluesky</a>・'
-        f'<a href="{GITHUB_BLOB}docs/導入_Mastodon_2026-09-13.md">Mastodon</a> の手引きがあります。</p>')
-    add("<p>MCP サーバと Claude Code 用の skill は <code>pip install thth</code> に同梱です。"
-        f'MCP registry では <a href="{esc(REGISTRY_SEARCH)}">io.github.aokings/thth</a> です。</p>')
+    add("<p>利用する SNS のアカウントと API の設定が必要です。Threads では、自分の Meta アプリを"
+        "登録して使います。詳しい手順は、それぞれの導入ガイドをご覧ください。</p>")
+    add(f'<p><a href="{guide("導入_自分のMetaアプリで動かす.md")}">Threads の導入ガイド</a> ／ '
+        f'<a href="{guide("導入_Bluesky_2026-09-13.md")}">Bluesky の導入ガイド</a> ／ '
+        f'<a href="{guide("導入_Mastodon_2026-09-13.md")}">Mastodon の導入ガイド</a></p>')
 
     add("<h2>English</h2>")
-    add('<p class="en">THTH publishes an LLM-drafted post only after a person has read and '
-        "approved it. It works with Threads, Bluesky and Mastodon, has no dashboard, and runs "
-        "from the command line or as an MCP server. Everything it posts and collects is recorded "
-        f'in your own git repository. Nothing leaves your machine. See <a href="{GITHUB_BLOB}README.en.md">README.en.md</a>.</p>')
+    add('<p class="en">THTH is a command-line tool for drafting and publishing social media posts with AI. '
+        "It supports Threads, Bluesky, and Mastodon.</p>")
+    add('<p class="en">Review and approve a draft, then let THTH publish it at the scheduled time. '
+        "Drafts, published post IDs, replies, and view counts are stored in your own Git repository. "
+        "THTH runs on your computer or server and includes an MCP server and a skill for Claude Code.</p>")
 
-    add("<h2>リンク</h2>")
-    add("<ul>")
-    add(f'  <li><a href="{GITHUB}">GitHub</a></li>')
-    add(f'  <li><a href="{PYPI}">PyPI</a></li>')
-    add(f'  <li><a href="{esc(REGISTRY_SEARCH)}">MCP registry</a></li>')
-    add('  <li><a href="/llms.txt">llms.txt</a>（LLM 向けの案内）</li>')
-    add("</ul>")
+    add(f'<p><a href="{GITHUB}">GitHub</a> ／ <a href="{PYPI}">PyPI</a> ／ '
+        f'<a href="{esc(REGISTRY_SEARCH)}">MCP Registry</a> ／ <a href="/llms.txt">llms.txt</a></p>')
 
-    add("<footer>MIT License (c) 2026 gotoq。このページは外部の CSS・JS・フォント・画像を読み込みません。"
-        "<code>thth.me/callback/</code> は Threads の認可の受け口です。</footer>")
+    add("<footer>Free and open source · MIT License<br>© 2026 gotoq</footer>")
     add("</main></body></html>")
     return "\n".join(parts) + "\n"
 

@@ -3,10 +3,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>THTH — 人が承認してから投稿する道具</title>
-<meta name="description" content="AI が書いた下書きを、人が読んで承認してから投稿する道具。Threads・Bluesky・Mastodon。画面はなく、コマンドと MCP で動く。記録はあなたの git に残る。">
-<meta property="og:title" content="THTH — 人が承認してから投稿する道具">
-<meta property="og:description" content="AI が書いた下書きを、人が読んで承認してから投稿する道具。Threads・Bluesky・Mastodon。画面はなく、コマンドと MCP で動く。記録はあなたの git に残る。">
+<title>THTH — AI と一緒に SNS の投稿を作成・管理するコマンドラインツール</title>
+<meta name="description" content="AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツール。Threads、Bluesky、Mastodon に対応。原稿も投稿後の記録も、自分の Git リポジトリで管理できます。">
+<meta property="og:title" content="THTH">
+<meta property="og:description" content="AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツール。Threads、Bluesky、Mastodon に対応。原稿も投稿後の記録も、自分の Git リポジトリで管理できます。">
 <style>
   /* 見た目は認可の受け口（src/index.js）に揃える（masaru 2026-09-14「あのシンプルなテイスト」）:
      小さめの見出し・罫線なし・淡い角丸の背景・余白で区切る。装飾を足さない。 */
@@ -35,36 +35,31 @@
 </style>
 </head><body><main>
 <h1>THTH</h1>
-<p class="lead">AI が書いた下書きを、人が読んで承認してから投稿する道具です。Threads・Bluesky・Mastodon に対応しています。画面はなく、コマンドと MCP で動きます。</p>
-<h2>しくみ</h2>
-<ol>
-  <li>エージェントが下書きを書きます。置き場はあなたの repo の中です。</li>
-  <li>あなたが本文を読んで承認します。承認していない本文は出ません。</li>
-  <li>THTH が投稿し、投稿の ID・返信・閲覧数を同じ repo に記録します。</li>
-</ol>
-<h2>約束</h2>
-<ul>
-  <li>承認していない本文は 1 文字も出ません。承認は、本文を見せてから、その本文の指紋を渡す 2 段です。承認のあとに本文が変わると、出しません。</li>
-  <li>出したものは全部あなたの git に残ります。THTH のサーバはありません。</li>
-  <li>何も外に送りません。共有の機能は既定で切れていて、入れても送り先はまだありません。</li>
-  <li>DM は読みません。定型文で自動返信もしません。返信の下書きも同じ承認を通ります。</li>
-  <li>数字には件数と期間が付きます。分からないことは分からないと言います。</li>
-  <li>1 回の実行で出すのは 1 件。静かな時間帯と最短間隔を守ります。</li>
-</ul>
-<h2>入れ方</h2>
+<p>THTH は、AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツールです。Threads、Bluesky、Mastodon に対応しています。</p>
+<p>いつものエディタや AI エージェントで下書きを作り、内容を確認して承認すると、予約した時刻に投稿されます。原稿も投稿後の記録も、自分の Git リポジトリで管理できます。</p>
+<pre><code>pip install thth</code></pre>
+<h2>使い方</h2>
+<p>下書きは Markdown ファイルに保存します。本文のほか、投稿先のアカウントや予約時刻、トピックなどを指定できます。</p>
+<p>まず、投稿する内容を確認します。</p>
+<pre><code>thth approve docs/sns/queue/2026-09-14-oolong.md</code></pre>
+<p>本文と投稿先などが表示されます。この段階では、まだ承認されません。</p>
+<p>内容がよければ、表示された確認コードと承認者の名前を付けて、もう一度実行します。</p>
+<pre><code>thth approve docs/sns/queue/2026-09-14-oolong.md --confirm &lt;確認コード&gt; --by masaru</code></pre>
+<p>承認した下書きは、タイマーを設定しておけば自動で投稿されます。承認後に本文や投稿先、予約時刻などを変更した場合は、あらためて承認が必要です。</p>
+<h2>投稿したあとの管理も</h2>
+<p>投稿が完了すると、原稿に投稿 ID が記録されます。返信や閲覧数も取得して、同じリポジトリに保存できます。投稿の履歴をたどったり、次の原稿を考えるときの資料として使えます。</p>
+<p>THTH は自分の PC やサーバで動かします。原稿や記録の保管に、THTH 専用のクラウドサービスは使いません。</p>
+<h2>AI エージェントから使う</h2>
+<p>MCP サーバと Claude Code 用のスキルを同梱しています。コマンドラインから直接使うほか、AI エージェントとやり取りしながら下書きや投稿の記録を扱えます。</p>
+<h2>インストールと設定</h2>
 <pre><code>pip install thth
 thth account add my-threads --media threads --project my-project
 thth doctor my-threads</code></pre>
-<p>Threads は自分の Meta アプリで使います。初回の設定は <a href="https://github.com/aokings/thth/blob/main/docs/導入_自分のMetaアプリで動かす.md">導入の手引き</a>を見てください。Bluesky と Mastodon は <a href="https://github.com/aokings/thth/blob/main/docs/導入_Bluesky_2026-09-13.md">Bluesky</a>・<a href="https://github.com/aokings/thth/blob/main/docs/導入_Mastodon_2026-09-13.md">Mastodon</a> の手引きがあります。</p>
-<p>MCP サーバと Claude Code 用の skill は <code>pip install thth</code> に同梱です。MCP registry では <a href="https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.aokings/thth">io.github.aokings/thth</a> です。</p>
+<p>利用する SNS のアカウントと API の設定が必要です。Threads では、自分の Meta アプリを登録して使います。詳しい手順は、それぞれの導入ガイドをご覧ください。</p>
+<p><a href="https://github.com/aokings/thth/blob/main/docs/導入_自分のMetaアプリで動かす.md">Threads の導入ガイド</a> ／ <a href="https://github.com/aokings/thth/blob/main/docs/導入_Bluesky_2026-09-13.md">Bluesky の導入ガイド</a> ／ <a href="https://github.com/aokings/thth/blob/main/docs/導入_Mastodon_2026-09-13.md">Mastodon の導入ガイド</a></p>
 <h2>English</h2>
-<p class="en">THTH publishes an LLM-drafted post only after a person has read and approved it. It works with Threads, Bluesky and Mastodon, has no dashboard, and runs from the command line or as an MCP server. Everything it posts and collects is recorded in your own git repository. Nothing leaves your machine. See <a href="https://github.com/aokings/thth/blob/main/README.en.md">README.en.md</a>.</p>
-<h2>リンク</h2>
-<ul>
-  <li><a href="https://github.com/aokings/thth">GitHub</a></li>
-  <li><a href="https://pypi.org/project/thth/">PyPI</a></li>
-  <li><a href="https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.aokings/thth">MCP registry</a></li>
-  <li><a href="/llms.txt">llms.txt</a>（LLM 向けの案内）</li>
-</ul>
-<footer>MIT License (c) 2026 gotoq。このページは外部の CSS・JS・フォント・画像を読み込みません。<code>thth.me/callback/</code> は Threads の認可の受け口です。</footer>
+<p class="en">THTH is a command-line tool for drafting and publishing social media posts with AI. It supports Threads, Bluesky, and Mastodon.</p>
+<p class="en">Review and approve a draft, then let THTH publish it at the scheduled time. Drafts, published post IDs, replies, and view counts are stored in your own Git repository. THTH runs on your computer or server and includes an MCP server and a skill for Claude Code.</p>
+<p><a href="https://github.com/aokings/thth">GitHub</a> ／ <a href="https://pypi.org/project/thth/">PyPI</a> ／ <a href="https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.aokings/thth">MCP Registry</a> ／ <a href="/llms.txt">llms.txt</a></p>
+<footer>Free and open source · MIT License<br>© 2026 gotoq</footer>
 </main></body></html>

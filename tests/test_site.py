@@ -192,11 +192,12 @@ def test_robots_は紹介ページを開き_認可の受け口を閉じる():
 
 
 def test_紹介ページは訪問者向けの言葉で書く():
-    """masaru（2026-09-14）「文言が気持ち悪い」。内部の語・作業メモ・二重言語をページに出さない。"""
+    """masaru（2026-09-14）「製品紹介の中に開発側の申し送りが混ざっている」。内部の語・作業メモ・
+    「まだ無い」の類・実行ログの抜粋をページに出さない。文案は Codex が書き masaru が採ったもの。"""
     page = (PUBLIC / "index.html").read_text(encoding="utf-8")
-    for word in ("approval_stale", "loud reject", "正本から生成", "泉はまだ無い", "5/5", "cannot_say",
-                 "What it guarantees", "What it refuses"):
-        assert word not in page, f"訪問者向けのページに内部の語が出ている: {word}"
-    assert "承認していない本文は 1 文字も出ません" in page
-    assert "THTH のサーバはありません" in page
+    for word in ("approval_stale", "loud reject", "正本から生成", "泉", "5/5", "cannot_say",
+                 "What it guarantees", "送り先はまだ", "何も変えません", "投稿しました: post_id"):
+        assert word not in page, f"訪問者向けのページに開発側の語が出ている: {word}"
+    assert "AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツール" in page
+    assert "THTH 専用のクラウドサービスは使いません" in page
     assert page.count("<h2>English</h2>") == 1
