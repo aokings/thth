@@ -346,7 +346,7 @@ def build_privacy() -> str:
     add("<h2>Retention</h2>")
     add("<p>Data stays on your machine for as long as you keep the files. You can delete them at any time.</p>")
 
-    add("<h2>Deleting your data / revoking access</h2>")
+    add('<h2 id="delete">Deleting your data / revoking access</h2>')
     add("<ul>")
     add("<li>To revoke THTH's access to your Threads account, remove it in the Threads app "
         "(Settings → Account → Website permissions) or delete the token file on your machine.</li>")
