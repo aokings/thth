@@ -130,7 +130,10 @@ step() {                         # 見出し → コマンド表示 → 実行 �
   permission="$1"; shift
   banner "$permission"
   printf '$ thth'
-  for arg in "$@"; do printf ' %q' "$arg"; done
+  # `%q` は日本語を \202?? のように化かす（審査員が見る行）。空白を含むものだけ引用符で囲む。
+  for arg in "$@"; do
+    case "$arg" in *[[:space:]]*) printf ' "%s"' "$arg" ;; *) printf ' %s' "$arg" ;; esac
+  done
   printf '\n\n'
   sleep 2
   "$THTH" "$@"
@@ -248,7 +251,7 @@ fi
 
 # 1. 認可（同意画面を見せる。戻り URL に一度きりの code が映るが、貼った瞬間に使い切る）
 banner "login and consent (all requested permissions)"
-printf '$ thth auth %q\n\n' "$ACCOUNT"
+printf '$ thth auth %s\n\n' "$ACCOUNT"
 sleep 2
 "$THTH" auth "$ACCOUNT"
 rc=$?
