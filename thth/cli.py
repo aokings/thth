@@ -2101,7 +2101,8 @@ def cmd_run(args) -> int:
     # しか返らないので、逃した経過時間は永久に復元できない。採取の失敗で timer の
     # 終了コードを悪くしない（次の実行で埋まる）が、黙らせもしない。
     try:
-        collect_rc = collect_mod.run_collect(args.account, log=print)
+        collect_rc = collect_mod.run_collect(
+            args.account, log=print, trigger=collect_mod.TRIGGER_RUN)
         if collect_rc:
             print(f"（採取は完全ではありません: exit={collect_rc}。次の実行で埋めます）")
     except Exception as e:  # 採取の失敗で投稿の経路を壊さない
@@ -2118,7 +2119,9 @@ def cmd_collect(args) -> int:
     names = [args.account] if args.account else accounts_mod.list_account_names()
     worst = 0
     for name in names:
-        rc = collect_mod.run_collect(name, log=print)
+        # **手で打った採取も runs に残す**（引継ぎ 2026-09-15 §3-D）。
+        rc = collect_mod.run_collect(name, log=print,
+                                      trigger=collect_mod.TRIGGER_MANUAL)
         worst = max(worst, rc)
     return worst
 

@@ -22,11 +22,15 @@ RUNS_FIELDS = [
     "collected", "refreshed", "quota", "status", "error",
 ]
 # 必須ではない追加項目（欠けていても None として書く。上の docstring 参照）。
+# `trigger`（引継ぎ 2026-09-15 §3-D）: **誰がその実行を始めたか**。
+# `"manual"`＝人が `thth collect` を手で打った・`"run"`＝`thth run`（timer が
+# 10 分ごとに呼ぶ形）の中から。**None は「名乗っていない」**——古い行・
+# 道具の中から直に呼ばれた場合で、`"manual"` と読み替えてはいけない。
 # `mismatch_fields`（外部レビュー第 3 巡・持ち越し項目 C）: error が
 # `text_mismatch_before_writeback`・`text_mismatch_after_rebase` のとき、5 項目
 # （body・account・reply_to・topic・publish_at）のうちどれが食い違ったか。
 # それ以外の error では None（人がなぜ止まったかを探さずに済むように）。
-OPTIONAL_FIELDS = ["topic", "mismatch_fields"]
+OPTIONAL_FIELDS = ["topic", "mismatch_fields", "trigger"]
 
 
 def path_for(state_dir: str, jst_month: str) -> str:

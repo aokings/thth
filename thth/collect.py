@@ -46,6 +46,7 @@ from . import measured as measured_mod
 from . import postid as postid_mod
 from . import queuefile
 from . import redact as redact_mod
+from . import runs as runs_mod
 from . import writeback
 from .adapters import base as adapter_base
 
@@ -843,8 +844,82 @@ def _collect_account_daily(account_name, account_cfg, adapter, *, now, errors,
     return path
 
 
-def run_collect(account_name: str, *, adapter=None, now=None, log=print) -> int:
-    """`thth collect <account>`／`thth run` から呼ぶ入口。ロック・同期・push まで。
+# **誰がこの採取を始めたか**（`runs` の `trigger`・引継ぎ 2026-09-15 §3-D）。
+TRIGGER_MANUAL = "manual"   # 人が `thth collect` を手で打った
+TRIGGER_RUN = "run"         # `thth run`（timer が 10 分ごとに呼ぶ形）の中から
+
+
+def run_collect(account_name: str, *, adapter=None, now=None, log=print,
+                 trigger: str | None = None) -> int:
+    """`thth collect <account>`／`thth run` から呼ぶ入口。**runs に 1 行残す。**
+
+    中身は `_collect_entry()`。ここはその周りの薄い包みで、**採取を 1 度走らせた
+    という事実を `state/<account>/runs-YYYY-MM.ndjson` に残す**のが仕事
+    （引継ぎ 2026-09-15 §3-D）。それまで採取は runs に何も残しておらず、
+    **手で打った `thth collect` も timer 経由の採取も、後から見分けられない
+    どころか、走ったこと自体が台帳に無かった**（`thth run` の投稿の行はあるが、
+    採取が走ったかはそこからは読めない）。`thth maintain` が
+    `action: "maintain"` を毎回書くのと同じ扱いにする。
+
+    `trigger` は `TRIGGER_MANUAL`（手で打った）か `TRIGGER_RUN`（`thth run` の
+    中から）。**省略は `None`＝「名乗っていない」**——道具の中から直に呼ばれた
+    場合で、`"manual"` と読み替えない（判らないことを判った形で残す）。
+    """
+    now = now if now is not None else jst.now_jst()
+    info: dict = {}
+    rc = _collect_entry(account_name, adapter=adapter, now=now, log=log, info=info)
+    _record_collect_run(account_name, rc=rc, trigger=trigger, now=now, info=info)
+    return rc
+
+
+def _record_collect_run(account_name: str, *, rc: int, trigger, now, info: dict) -> None:
+    """採取 1 回を `runs` に 1 行（`action: "collect"`・設計 §4.6）。
+
+    **毎回書く**——「この刻みで採取が走った」ことそのものが見たい情報だから
+    （走らなかった刻みを後から見分けられる）。**台帳を引けなかったときだけ
+    書かない**（`state/<その名前>/` を作ってしまうと、打ち間違えた名前の
+    置き場が board の目の前に残る）。**記録の失敗で採取を失敗にしない。**
+    """
+    if info.get("skipped") == "no_account":
+        return
+    try:
+        state_dir = accounts_mod.state_dir_for(account_name)
+    except accounts_mod.AccountError:
+        return
+    try:
+        runs_mod.append_run(state_dir, {
+            "account": account_name,
+            "run_id": "collect-" + jst.iso(now),
+            "mode": "collect",
+            "action": "collect",
+            "file": None,
+            "post_id": None,
+            # **見に行った投稿の本数**（`None` は「そこまで行かなかった」——
+            # token が無い・repo を同期できない・ロックが空かなかった）。
+            # **0 と混ぜない**（`_append_run()` の `collected` と同じ物差し）。
+            "collected": info.get("posts"),
+            "refreshed": False,
+            "quota": None,
+            "status": "ok" if rc == 0 else "error",
+            "error": redact_mod.redact("・".join(info["errors"])[:220])
+                     if info.get("errors") else (info.get("skipped") if rc else None),
+            "trigger": trigger,
+        }, jst.month_str(now))
+    except OSError:
+        # **記録が書けなくても採取は成功のまま**（台帳は git に載る側で、
+        # runs は state 側。片方が書けないことで他方を巻き戻さない）。
+        pass
+
+
+def _note(info: dict, result: dict) -> None:
+    """`collect_once()` の結果のうち、runs に残す要点だけを写す（本文は写さない）。"""
+    info["posts"] = result.get("posts")
+    info["touched"] = len(result.get("touched") or [])
+    info["errors"] = list(result.get("errors") or [])
+
+
+def _collect_entry(account_name: str, *, adapter, now, log, info: dict) -> int:
+    """採取の本体（ロック・同期・push まで）。`info` に結果の要点を書き残す。
 
     **投稿と同じ clone ロックを取る**（同じ作業ツリーに書くので）。同期できなければ
     採取しない（fail-closed。書いたものが push できない状態を作らない）。
@@ -854,11 +929,11 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print) -> int:
     """
     from . import lock as lock_mod
 
-    now = now if now is not None else jst.now_jst()
     try:
         account_cfg = accounts_mod.load_account(account_name)
     except accounts_mod.AccountError as e:
         log(str(e))
+        info["skipped"] = "no_account"
         return 2
     repo_dir = account_cfg.get("repo_dir")
 
@@ -866,6 +941,7 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print) -> int:
         token = accounts_mod.load_token(account_cfg)
         if token is None:
             log(f"token が無いので採取しません: {account_name}")
+            info["skipped"] = "no_token"
             return 2
         adapter = core._default_adapter_factory(account_cfg, token)
 
@@ -877,6 +953,7 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print) -> int:
     if 状態 == accounts_mod.REPO_BROKEN:
         log(f"repo を同期できないので採取しません: "
             f"{accounts_mod.repo_problem(account_cfg)}")
+        info["skipped"] = "repo_broken"
         return 2
 
     # **repo を持たないなら git を一切呼ばない**（設計 v2.0.1 §1・2026-09-14）。
@@ -894,11 +971,13 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print) -> int:
         except lock_mod.LockBusy:
             # **待たない・見送る**（repo 付きと同じ作法。次の実行で採る）。
             log(f"別の実行が使っているので採取を見送ります: {account_name}")
+            info["skipped"] = "locked"
             return 0
         try:
             result = collect_once(account_name, adapter=adapter, now=now, log=log)
         finally:
             account_lock.release()
+        _note(info, result)
         if result["touched"]:
             log(f"採取しました: {len(result['touched'])} ファイル"
                 f"（投稿 {result['posts']} 本を見ました・repo が無いので state に"
@@ -912,15 +991,18 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print) -> int:
         repo_lock.acquire()
     except lock_mod.LockBusy:
         log(f"repo を別の実行が使っているので採取を見送ります: {repo_dir}")
+        info["skipped"] = "locked"
         return 0  # 次の実行（10 分後）で採る
 
     try:
         synced, sync_err, _sha = writeback.sync_repo(repo_dir)
         if not synced:
             log(f"repo を同期できないので採取しません: {sync_err}")
+            info["skipped"] = "not_synced"
             return 2
 
         result = collect_once(account_name, adapter=adapter, now=now, log=log)
+        _note(info, result)
 
         if result["touched"]:
             rel = [os.path.relpath(os.path.realpath(p), os.path.realpath(repo_dir))
@@ -939,6 +1021,7 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print) -> int:
                        if undone else
                        "。**commit を取り消せませんでした。投稿が止まる可能性があります。**")
                     + " `thth board` の 未送信 に出ます。次の実行で送り直します。")
+                info["skipped"] = "not_pushed"
                 return 1
             log(f"採取しました: {len(rel)} ファイル（投稿 {result['posts']} 本を見ました）")
         # **採れなかった理由を、どこにも出さずに捨てていた**（運用セッション指摘
