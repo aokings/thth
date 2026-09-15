@@ -5,8 +5,9 @@
   - `thth profile <account> <username> [--json]`（`threads_profile_discovery`）
 
 `--search` は**観測の材料**（誰がどれだけ居るか）に加えて、**絡みに行く先**
-（`post_id`・`permalink`・投稿ごとの返信）を指す（設計 v2 §4.4・2026-09-15）。
-**棚（`topics.json`）に書く内容は変えない**——`post_id` は棚にも泉にも落ちない。
+（`post_id`・`permalink`・投稿ごとの返信・「もう返した」印）を指す（設計 v2 §4.4・
+2026-09-15）。**棚（`topics.json`）に書く内容は変えない**——`post_id` は棚にも
+泉にも落ちない。
 
 **`thth/cli.py` の `build_parser()` に足すのは `threads_read_cli.register(sub)` の
 1 行だけ**（`ask_cli` と同じ筋）。`--search`/`--recent` は `topics` の既存 parser の
@@ -25,11 +26,13 @@ from __future__ import annotations
 
 import collections
 import json
+import os
 import sys
 import unicodedata
 
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
+from . import queuefile
 from . import redact as redact_mod
 from .adapters import base as adapter_base
 
@@ -43,6 +46,11 @@ TOP_AUTHORS = 3
 # ——`has_replies`（真偽）が判れば `有` / `無`、それも無ければ `—`。
 # **`n/a` を 0 と混ぜない**（設計 v1 §3.2.2）。
 REPLY_COUNT_KEYS = ("replies", "reply_count", "replies_count", "reply_counts")
+
+# 「もう返した」印（設計 v2 §4.4）。**強い順**——同じ先に複数の原稿があれば
+# 先にあるものを出す。`withdrawn` は入れない（取り下げた原稿は「返した」ではない）。
+REPLIED_STATUSES = ("posted", "approved", "draft")
+REPLIED_MARKS = {"posted": "返信済", "approved": "承認済", "draft": "下書き"}
 
 # **権限が乗っていないときの断り**（設計 v2 §4.3 受け入れ (c)）。
 REAUTH_HINT = "`thth auth {account}` をやり直してください"
@@ -89,8 +97,8 @@ def register_topics_flags(p_topics) -> None:
         "--search", default=None, metavar="語",
         help="語で公開投稿を検索し、観測の材料（投稿者の異なり数・直近の時刻・"
              "タグ付きの割合）と、絡みに行く先（post_id・permalink・投稿ごとの"
-             "返信）を出す。本文は表示するだけで保存しない"
-             "（threads_keyword_search）")
+             "返信・queue に reply_to がある投稿の印）を出す。本文は表示する"
+             "だけで保存しない（threads_keyword_search）")
     p_topics.add_argument(
         "--recent", action="store_true",
         help="--search と併用: TOP でなく RECENT（新しい順）で検索する")
@@ -239,8 +247,13 @@ def reply_count(row: dict):
     return None
 
 
-def post_rows(rows: list) -> list:
-    """**絡みに行く先**の一覧（設計 v2 §4.4・純粋関数）。**本文は入らない。**"""
+def post_rows(rows: list, *, replied: dict | None) -> list:
+    """**絡みに行く先**の一覧（設計 v2 §4.4・純粋関数）。**本文は入らない。**
+
+    `replied` は `post_id → {"status", "file"}`（`replied_index()`）。**None は
+    「台帳を読めなかった」**で、各行の `replied` も None になる——**印が無いことを
+    「返していない」にしない。**
+    """
     out = []
     for r in rows:
         post_id = r.get("message_id")
@@ -253,8 +266,66 @@ def post_rows(rows: list) -> list:
             # **数と真偽を別の鍵にする**（§4.4）。数が無いことを 0 と混ぜない。
             "replies": reply_count(r),
             "has_replies": has_replies if isinstance(has_replies, bool) else None,
+            "replied": (replied or {}).get(post_id) if replied is not None else None,
         })
     return out
+
+
+# ------------------------------------------------- 「もう返した」印（自分の台帳）
+
+def replied_index(account_cfg: dict, account: str):
+    """その account の queue から `reply_to` → 状態の索引を作る（**読むだけ**）。
+
+    戻りは `(index, 読めなかった理由)`。**読めなければ index は None**（空 dict に
+    しない）——空 dict は「1 件も返していない」を意味してしまう（設計 v2 §4.4）。
+
+    見るのは **front-matter の `account` が一致する原稿**だけ。状態は
+    `REPLIED_STATUSES` の強い順で、同じ先に複数あれば強い方を残す。`withdrawn` は
+    印にしない。**queue の本文は読まない**（front-matter だけ）。
+    """
+    repo_dir = accounts_mod.resolved_repo_dir(account_cfg)
+    queue_rel = account_cfg.get("queue_dir") or ""
+    if not repo_dir or not queue_rel:
+        return None, "台帳に repo_dir / queue_dir が無いので「返信済み」印は出せません"
+    queue_dir = os.path.join(repo_dir, queue_rel)
+    if not os.path.isdir(queue_dir):
+        return None, f"queue が読めないので「返信済み」印は出せません（{queue_dir}）"
+    index: dict = {}
+    try:
+        names = sorted(os.listdir(queue_dir))
+    except OSError as e:
+        return None, f"queue が読めないので「返信済み」印は出せません（{type(e).__name__}）"
+    for name in names:
+        if not name.endswith(".md"):
+            continue
+        path = os.path.join(queue_dir, name)
+        try:
+            qf = queuefile.parse(path)
+        except (OSError, UnicodeDecodeError):
+            # **1 本読めなくても他の印は出す**（読めなかったことは下の行数で判る）。
+            continue
+        if qf.malformed:
+            continue
+        fm = qf.front_matter
+        if fm.get("account") != account:
+            continue
+        target = (fm.get("reply_to") or "").strip()
+        status = fm.get("status")
+        if not target or status not in REPLIED_STATUSES:
+            continue
+        current = index.get(target)
+        if current is not None and (REPLIED_STATUSES.index(current["status"])
+                                    <= REPLIED_STATUSES.index(status)):
+            continue
+        index[target] = {"status": status, "file": name}
+    return index, None
+
+
+def _replied_cell(entry) -> str:
+    """画面に出す印。**読めなかった／返していない**はどちらも空白にしない。"""
+    if entry is None:
+        return ""
+    return f"[{REPLIED_MARKS.get(entry['status'], entry['status'])}]"
 
 
 def _replies_cell(post: dict) -> str:
@@ -293,10 +364,20 @@ def cmd_topics_search(args) -> int:
 
     def render(rows):
         material = search_material(rows, q=q, search_type=search_type, limit=limit)
-        # **絡みに行く先**（設計 v2 §4.4）。棚には何も書かない——`post_id` は
-        # `topics.json` にも泉にも落ちない。
-        posts = post_rows(rows)
+        # **絡みに行く先**（設計 v2 §4.4）。台帳（queue）は**読むだけ**で、棚には
+        # 何も書かない——`post_id` は `topics.json` にも泉にも落ちない。
+        try:
+            index, why = replied_index(accounts_mod.load_account(account), account)
+        except accounts_mod.AccountError as e:
+            index, why = None, str(e)
+        posts = post_rows(rows, replied=index)
         material["posts"] = posts
+        material["replied_lookup"] = {
+            "available": index is not None,
+            "reason": why,
+            "n": len(index) if index is not None else None,
+            "statuses": list(REPLIED_STATUSES),
+        }
         if as_json:
             # **本文は出さない**（材料と、指す先だけ）。
             print(json.dumps(material, ensure_ascii=False, indent=2))
@@ -323,18 +404,26 @@ def cmd_topics_search(args) -> int:
               f"（その投稿への返信の数ではありません。それは下の一覧の `返信` 欄）")
         if rows:
             print("")
-            print("  絡みに行く先（post_id・permalink・返信。"
+            print("  絡みに行く先（post_id・permalink・返信・印。"
                   f"本文は先頭 {TEXT_PREVIEW_CHARS} 字・**表示するだけで保存しません**）:")
             for r, post in zip(rows, posts):
                 stamp = post["timestamp"] or "—"
                 who = post["author"] or "—"
                 print(f"    {stamp}  @{_pad(who, 16)} {_pad(post['post_id'] or '—', 20)}"
-                      f" 返信 {_replies_cell(post)}")
+                      f" 返信 {_pad(_replies_cell(post), 4)} {_replied_cell(post['replied'])}")
                 print(f"      {post['permalink'] or '（permalink 無し）'}"
                       f"  {_one_line(r.get('text'))}")
             print("")
             print("  返信: 数が返る媒体は数、Threads の検索は `有`／`無` だけ"
                   "（数は返りません）。`—` は判らない（0 ではありません）。")
+            if index is None:
+                # **印が無いことを「返していない」にしない**（設計 v2 §4.4）。
+                print(f"  印: 出せません——{why}")
+            else:
+                print(f"  印: [返信済]=posted ／ [承認済]=approved ／ [下書き]=draft"
+                      f"（同じ account の queue に `reply_to: <post_id>` を持つ原稿"
+                      f"・{len(index)} 件）。印の無い行は、この queue に原稿が"
+                      f"見当たらないという意味です。")
             print("  絡む道: 下書きに `reply_to: <post_id>` → `thth lint` → "
                   "`thth approve`（二段）→ `thth throw` → `thth collect`。")
         print("")
