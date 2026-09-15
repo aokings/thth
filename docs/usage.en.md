@@ -76,8 +76,41 @@ Practical notes:
 Check a topic before using it by logging into Threads and opening
 `https://www.threads.com/search?q=<topic>&filter=topic`. Look at three things:
 recent activity, whether the people there overlap with your audience, and
-whether the language matches. THTH itself cannot query topic search (that
-permission hasn't been granted).
+whether the language matches.
+
+### Finding somewhere to reply (`thth topics … --search`)
+
+```bash
+thth topics <your-account> --search <word> [--recent] [--json]
+```
+
+1. Each row is **time · @author · `post_id` · replies · mark**, with the
+   **permalink and the first 60 characters of the body** underneath. The body
+   is printed, never stored — and it is not in `--json` at all.
+2. The **replies** column is the count when the medium returns one. Threads'
+   keyword search returns only `has_replies`, so you get `有` / `無`
+   (yes / no); `—` means *unknown*, **never zero**. The summary line above the
+   list ("返信だった投稿") counts something else: posts that are themselves
+   replies.
+3. The **mark** means your own queue already holds a draft with
+   `reply_to: <post_id>`: `[返信済]` posted, `[承認済]` approved but not sent,
+   `[下書き]` draft. **No mark means "no draft found in this queue"**, not
+   "nobody has replied". If the queue can't be read, no marks are printed and
+   the tool says so (`replied_lookup.available: false` in `--json`).
+4. To reply, put `reply_to: <post_id>` in a draft's front matter (§5 — it works
+   for other people's public posts too), then the usual `thth lint` →
+   `thth approve` (two steps) → `thth throw`.
+5. Your reply is your own post, so `thth collect` picks up its views, likes and
+   replies; `thth replies` shows which branch got a response.
+6. **THTH does not decide who to engage with.** It hands you the material (who,
+   when, how many replies, whether you already replied) and the gate (human
+   approval). **The Threads API has no trending endpoint** — "hot" can only be
+   inferred from TOP ordering, recent timestamps and reply volume. `--json`
+   gives `posts[]` with `post_id`, `permalink`, `timestamp`, `author`,
+   `replies`, `has_replies` and `replied`.
+
+A medium without the `keyword_search` capability (Bluesky, Mastodon today) says
+so in one line and exits non-zero — it never prints an empty list.
 
 ## 4. The topic shelf (shared observations, per-account judgments)
 
