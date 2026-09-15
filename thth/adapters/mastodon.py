@@ -48,6 +48,13 @@ DEFAULT_VISIBILITY = "public"
 DEFAULT_CHAR_LIMIT = 500
 VISIBILITIES = ("public", "unlisted", "private", "direct")
 
+# この媒体が**持ちうる**指標（`insights()` の `available`・設計 v2 §4.2）。
+# **views は無い**（**L3**——Mastodon の公開 API の一覧に表示回数が載っていない
+# ことの裏返しで、実測ではない）。Bluesky・Threads と同じく**定数**にする:
+# `available` は「この媒体が答えられる指標」であって「今回取れた指標」ではない。
+# 取れたかどうかは `metrics` に鍵が在るかで言う（**0 と混ぜない**）。
+AVAILABLE_METRICS = ("likes", "replies", "reposts")
+
 MEDIUM = "mastodon"
 
 # 台帳の項目名（設計 v2 §4.2「台帳と登録」）。**アダプタの中に閉じる**——core は
@@ -574,6 +581,8 @@ class MastodonAdapter(base.Adapter):
 
     # ----- 実測 ------------------------------------------------------------
 
+    # 指標の名前 → 応答の field。**名前の側は `AVAILABLE_METRICS` と同じ順・
+    # 同じ顔ぶれ**（下の assert で固定する）。
     _METRICS = (("likes", "favourites_count"),
                 ("replies", "replies_count"),
                 ("reposts", "reblogs_count"))
@@ -623,18 +632,23 @@ class MastodonAdapter(base.Adapter):
         `views: 0` と書けば「見られなかった」に読めてしまう。`available` に
         載らないことで「この媒体は答えられない」と分かる（設計 v2 §4.2・
         `comparable_views` はこれを理由に除外する）。
+
+        **`available` は「この媒体が持ちうる指標」**（定数・Bluesky と Threads と
+        同じ）。以前はここだけ「**今回取れた指標**」を返していたので、応答から
+        `favourites_count` が落ちた回に `available` からも `likes` が消え、
+        **「この媒体にいいねは無い」と読めた**——「今回取れなかった」と「媒体に
+        無い」を混ぜないための鍵なのに、その 2 つを混ぜていた（引継ぎ
+        2026-09-15 §3-D）。取れたかどうかは `metrics` の鍵の有無で言う。
         """
         body = self._get_json(f"/api/v1/statuses/{urllib.parse.quote(str(post_id))}",
                               "投稿の数")
         metrics: dict = {}
-        available: list = []
         for name, field in self._METRICS:
             value = body.get(field)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 continue        # 取れなかった指標は入れない（**0 と混ぜない**）
             metrics[name] = value
-            available.append(name)
-        return {"metrics": metrics, "available": available}
+        return {"metrics": metrics, "available": list(AVAILABLE_METRICS)}
 
     # ----- 素性・検査 ------------------------------------------------------
 

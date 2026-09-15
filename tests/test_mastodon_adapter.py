@@ -207,6 +207,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             mode = self.behavior.get("status", "ok")
             if mode == "ok":
                 self._json(200, STATUS_FIXTURE)
+            elif mode == "missing_likes":
+                # **今回の応答に `favourites_count` が無い**（取れなかった回）。
+                # 媒体にいいねが無いわけではない——`available` はこれで動かない。
+                self._json(200, {k: v for k, v in STATUS_FIXTURE.items()
+                                 if k != "favourites_count"})
             else:
                 self._fail(mode)
             return
@@ -555,6 +560,28 @@ def test_insightsにviewsが無い():
     assert sorted(got["available"]) == ["likes", "replies", "reposts"]
     assert "views" not in got["metrics"]
     assert "views" not in got["available"]
+
+
+def test_insightsのavailableは媒体が持ちうる指標の定数():
+    """**「今回取れた指標」ではない**（Bluesky・Threads と同じ・引継ぎ 2026-09-15 §3-D）。
+
+    以前はここだけ `available` に「取れた指標」を積んでいたので、応答から
+    `favourites_count` が落ちた回に `available` からも `likes` が消え、
+    **「この媒体にいいねは無い」と読めた**。
+    """
+    with fake_mastodon({"status": "missing_likes"}) as fake:
+        got = _adapter(fake).insights(ROOT_ID)
+    assert "likes" not in got["metrics"], "取れなかった指標は metrics に入れない"
+    assert got["metrics"] == {"replies": 3, "reposts": 2}
+    assert got["available"] == list(mastodon_mod.AVAILABLE_METRICS)
+    assert "likes" in got["available"], "媒体にいいねはある（今回取れなかっただけ）"
+    assert "views" not in got["available"]
+
+
+def test_availableの顔ぶれは実際に引く指標と同じ():
+    """定数と `_METRICS` がずれたら落ちる（片方だけ足したときの黙った食い違い）。"""
+    assert tuple(name for name, _field
+                 in mastodon_mod.MastodonAdapter._METRICS) == mastodon_mod.AVAILABLE_METRICS
 
 
 def test_whoamiはidとacctを返す():
