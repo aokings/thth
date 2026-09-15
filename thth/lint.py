@@ -101,6 +101,12 @@ def lint_file(path: str) -> list:
     fm = qf.front_matter
     errors: list = []
 
+    # **front-matter の鍵の重複を名指しで error にする**（セキュリティ監査
+    # 2026-09-14「撤回が効かない嘘」）。`qf.malformed` は `thth: 1` 欠落とも
+    # 共有するので、ここで理由を分けて言う。
+    if qf.duplicate_keys:
+        errors.append(queuefile.duplicate_keys_message(qf.duplicate_keys))
+
     if fm.get("thth") != "1":
         errors.append("thth: front-matter に `thth: 1` が無い")
 

@@ -21,6 +21,7 @@ import re
 import subprocess
 
 from . import postid as postid_mod
+from . import queuefile as queuefile_mod
 from . import redact as redact_mod
 
 # front-matter は 1 行 1 項目の平たい `key: value`。**値に改行が入れば、そこから
@@ -99,6 +100,35 @@ def _split_front_matter_lines(lines: list) -> int:
     raise ValueError("front-matter が壊れている（閉じ --- が無い）")
 
 
+def _find_duplicate_front_matter_keys(lines: list, end_idx: int) -> list:
+    """`lines[1:end_idx]`（front-matter の中身）に同じ**top-level**の鍵が
+    2 回以上あれば、その鍵名の一覧を返す（`thth/queuefile.py::_parse_kv()` と
+    同じ判定・セキュリティ監査 2026-09-14「撤回が効かない嘘」）。
+
+    **字下げした行は見ない**（`thth: 2` の `posts:` 配列・`bundle.py` 参照）。
+    束の原稿は段ごとに `  - index: 1`・`  - index: 2` … と同じ形の行が複数
+    並ぶのが正常なので、字下げまで対象にすると**それ自体を重複と誤検知する**
+    （実際にスレッド連投の `thth revoke` で踏んだ）。`set_front_matter_fields()`
+    はキーの並び替えを字下げの有無で区別している（`end_idx` の中を平たく走査
+    しているのは従来どおりだが、**重複の判定だけ**は top-level に絞る）。
+    """
+    seen: set = set()
+    duplicates: list = []
+    for i in range(1, end_idx):
+        line = lines[i]
+        if line[:1] in (" ", "\t"):
+            continue
+        if not line.strip() or ":" not in line:
+            continue
+        key = line.split(":", 1)[0].strip()
+        if not key:
+            continue
+        if key in seen and key not in duplicates:
+            duplicates.append(key)
+        seen.add(key)
+    return duplicates
+
+
 def set_front_matter_fields(path: str, fields: dict) -> None:
     """front-matter の任意のキーを書き換える（無ければ閉じ `---` の直前に追加）。
 
@@ -120,6 +150,18 @@ def set_front_matter_fields(path: str, fields: dict) -> None:
         end_idx = _split_front_matter_lines(lines)
     except ValueError as e:
         raise ValueError(f"{e}: {path}") from e
+
+    # **重複した鍵があれば 1 文字も書かない**（セキュリティ監査 2026-09-14・
+    # 「撤回が効かない嘘」）。この関数は最初に見つかった行**だけ**を書き換える
+    # ので、鍵が重複していると 2 つ目以降の行が後勝ちで効いたまま残る
+    # ——`thth revoke` はこの検査より前（`queuefile.parse()` の `malformed`）で
+    # 止まるが、`thth approve`・`select` の post_id 書き戻しなど、この関数を
+    # 通る他の経路も同じ穴を持つ。書く前に断る（作法 5・loud reject）。
+    duplicate_keys = _find_duplicate_front_matter_keys(lines, end_idx)
+    if duplicate_keys:
+        raise ValueError(
+            queuefile_mod.duplicate_keys_message(duplicate_keys)
+            + f"。**書きませんでした。**: {path}")
 
     remaining = dict(fields)
     for i in range(1, end_idx):

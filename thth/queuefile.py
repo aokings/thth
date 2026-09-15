@@ -42,6 +42,12 @@ class QueueFile:
     # **既定は False（確認できていない）**。`core.list_queue_files()` だけが
     # True を立てる。select はこれが False の approved を候補にしない。
     verified: bool = False
+    # front-matter に同じ鍵が 2 回以上あったら、その鍵名の一覧（無ければ空）
+    # （セキュリティ監査 2026-09-14「撤回が効かない嘘」）。`_parse_kv()` は
+    # 従来どおり後勝ちで `front_matter` を組み立てるが、重複があったこと自体は
+    # ここに残す——`malformed` を立てる根拠と、`lint`/エラーメッセージが
+    # 「どの鍵が重複したか」を名指しできるようにするため。
+    duplicate_keys: list = dataclasses.field(default_factory=list)
 
     def get(self, key: str, default=None):
         return self.front_matter.get(key, default)
@@ -61,16 +67,37 @@ def _split_front_matter(text: str) -> tuple[str, str] | None:
     return None
 
 
-def _parse_kv(fm_text: str) -> dict:
+def _parse_kv(fm_text: str) -> tuple:
+    """front-matter の 1 行 1 項目を読む。`(dict, 重複した鍵の一覧)`。
+
+    **重複した鍵は今までどおり後勝ちで dict に残す**（読み方自体は変えない
+    ——`thth/writeback.py::set_front_matter_fields()` が最初に見つけた行だけを
+    書き換えるのと表裏で、「最後に書かれた行が効く」という前提は他の読み手にも
+    広く使われている）。重複があったこと自体は 2 つめの戻り値で呼び出し側に返す。
+    `parse_text()` はこれを見て `malformed` を立てる——`status: approved` を
+    2 回書いた原稿に `thth revoke` をかけると、1 つ目の行だけが `draft` に
+    書き換わり、読む側（ここ）は 2 つ目を後勝ちで採るので、**取り消したはずの
+    原稿が承認済みのまま**になっていた（セキュリティ監査 2026-09-14）。
+    """
     out: dict = {}
+    seen: set = set()
+    duplicates: list = []
     for line in fm_text.split("\n"):
         if not line.strip() or ":" not in line:
             continue
         key, _, value = line.partition(":")
         key = key.strip()
         value = value.strip()
+        if key in seen and key not in duplicates:
+            duplicates.append(key)
+        seen.add(key)
         out[key] = value if value else None
-    return out
+    return out, duplicates
+
+
+def duplicate_keys_message(keys: list) -> str:
+    """`duplicate_keys` を人が読める 1 行にする（`lint`・`writeback` で使い回す）。"""
+    return "front-matter の鍵が重複しています: " + "、".join(keys)
 
 
 def parse(path: str) -> QueueFile:
@@ -87,14 +114,19 @@ def parse_text(text: str, path: str) -> QueueFile:
     「commit と一致するか」の検査も行う（外部レビュー第 4 巡 P1）。読み直すと、
     検査したバイト列と select が見るバイト列が別物になりうる（検査と使用の間に
     書き換えられる）ため、口を分けてある。
+
+    **front-matter の鍵が重複していれば malformed にする**（セキュリティ監査
+    2026-09-14）。型外として扱えば、`select`・`thth revoke` はどちらも既存の
+    「malformed は候補にしない・書き換えない」という fail-closed にそのまま乗る。
     """
     split = _split_front_matter(text)
     if split is None:
         return QueueFile(path=path, malformed=True, front_matter={}, body=text)
     fm_text, body = split
-    fm = _parse_kv(fm_text)
-    malformed = fm.get("thth") != "1"
-    return QueueFile(path=path, malformed=malformed, front_matter=fm, body=body)
+    fm, duplicate_keys = _parse_kv(fm_text)
+    malformed = fm.get("thth") != "1" or bool(duplicate_keys)
+    return QueueFile(path=path, malformed=malformed, front_matter=fm, body=body,
+                      duplicate_keys=duplicate_keys)
 
 
 def extract_section(body: str, media: str) -> str | None:
