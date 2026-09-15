@@ -21,6 +21,34 @@ _FM_DELIM = "---"
 # `#語` のハッシュタグ検出。行頭または空白の後に `#` + 語構成文字が続く形。
 _HASHTAG_RE = re.compile(r"(?:^|\s)#\w")
 
+# 制御文字（`\n`・`\t`・`\r` は許す・セキュリティ監査 2026-09-16「連投指紋の
+# 境界の曖昧さ」）。`thth/approval.py::compute_bundle_components()` は段の本文を
+# `\x1e`（ASCII record separator）で連結してハッシュする。段の本文にその文字が
+# 混じっていると、承認後に段の境界をずらしても同じハッシュになる
+# （`["a\x1eb","c"]` と `["a","b\x1ec"]` は同じ入力バイト列になる）。
+# **ハッシュの定義自体は変えない**——代わりに、本文・段・front-matter の値に
+# 制御文字が混じっていること自体を lint・approve・select（公開直前）の 3 か所で
+# 拒む。
+CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def find_control_char(text) -> tuple | None:
+    """`text` に混じった制御文字を探す。見つかれば `(先頭からの位置, コードポイント)`、
+    無ければ `None`。`text` が文字列でなければ `None`（呼び出し側で `None` を渡しても
+    落ちないように）。"""
+    if not isinstance(text, str):
+        return None
+    m = CONTROL_CHAR_RE.search(text)
+    if m is None:
+        return None
+    return m.start(), ord(m.group())
+
+
+def control_char_message(index: int, codepoint: int) -> str:
+    """`find_control_char()` の結果を人が読める 1 行にする。"""
+    return f"本文に制御文字が含まれています（位置 {index}・U+{codepoint:04X}）"
+
+
 # トピック（Threads の `topic_tag`。設計 §2.2・§4.1・masaru 裁定 2026-09-09）。
 # 1〜50 字・`.`（ピリオド）と `&`（アンパサンド）は不可・1 投稿に 1 つだけ。
 TOPIC_MIN_LEN = 1

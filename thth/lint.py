@@ -107,6 +107,17 @@ def lint_file(path: str) -> list:
     if qf.duplicate_keys:
         errors.append(queuefile.duplicate_keys_message(qf.duplicate_keys))
 
+    # front-matter の値に制御文字が混じっていないか（セキュリティ監査
+    # 2026-09-16・B-2）。本文（媒体の節）は下で別に見る。
+    for key, value in fm.items():
+        if not isinstance(value, str):
+            continue
+        control = queuefile.find_control_char(value)
+        if control is not None:
+            pos, cp = control
+            errors.append(f"front-matter: {key} に制御文字が含まれています"
+                           f"（位置 {pos}・U+{cp:04X}）")
+
     if fm.get("thth") != "1":
         errors.append("thth: front-matter に `thth: 1` が無い")
 
@@ -150,6 +161,11 @@ def lint_file(path: str) -> list:
         hashtags_allowed = bool(account_cfg.get("hashtags", True)) if account_cfg else False
         if not hashtags_allowed and queuefile.has_hashtag(section):
             errors.append("hashtag: ハッシュタグは付けない規約（`#` を含む）")
+        # 本文に制御文字が混じっていないか（セキュリティ監査 2026-09-16・B-2）。
+        control = queuefile.find_control_char(section)
+        if control is not None:
+            pos, cp = control
+            errors.append(queuefile.control_char_message(pos, cp))
 
     # トピック（`topic_tag`）。省略・空は許す（設計 §4.1・masaru 裁定 2026-09-09）。
     topic = queuefile.normalize_topic(fm.get("topic"))

@@ -245,6 +245,18 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
             return [queuefile.duplicate_keys_message(bundle.duplicate_keys)]
         return ["thth: 2 の原稿として読めません（front matter の形）"]
 
+    # front-matter の値に制御文字が混じっていないか（セキュリティ監査
+    # 2026-09-16・B-2）。段の本文の検査は下（segments のループ）で行う——
+    # ここは top-level の値（`topic`・`form` 等、人が手で書く欄）だけを見る。
+    for key, value in fm.items():
+        if not isinstance(value, str):
+            continue
+        control = queuefile.find_control_char(value)
+        if control is not None:
+            pos, cp = control
+            errors.append(f"front-matter: {key} に制御文字が含まれています"
+                           f"（位置 {pos}・U+{cp:04X}）")
+
     for key in ("account", "publish_at"):
         if not fm.get(key):
             errors.append(f"{key}: 必須です")
@@ -293,6 +305,16 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
                     f"（{n} 字・上限 {limit} 字）")
             if not hashtags_allowed and queuefile.has_hashtag(seg):
                 errors.append(f"hashtag: {i} 段目にハッシュタグがあります")
+            # **段に制御文字が混じっていれば error**（セキュリティ監査
+            # 2026-09-16・B-2）。`compute_bundle_components()` は段を `\x1e`
+            # （ASCII record separator）で連結してハッシュにする——段の本文に
+            # その文字が混じっていると、境界をずらしても同じハッシュになる。
+            # ハッシュの定義は変えず、混入そのものをここで（承認の前に）拒む。
+            control = queuefile.find_control_char(seg)
+            if control is not None:
+                pos, cp = control
+                errors.append(f"{i} 段目に制御文字が含まれています"
+                               f"（位置 {pos}・U+{cp:04X}）")
 
     errors += check_posts(bundle, segments)
 

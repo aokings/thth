@@ -224,6 +224,18 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
             needs_review.append(path)
             continue
 
+        # 6c-2. 本文に制御文字が混じっていれば公開しない（セキュリティ監査
+        # 2026-09-16・B-2「連投指紋の境界の曖昧さ」）。承認時（`thth approve` →
+        # `lint`）に混ざっていなくても、承認後の改竄で本文に紛れ込むことがある
+        # ——承認と本文が一致するかを見る 6b のすぐ後、公開直前にもう一度見る。
+        # ハッシュの定義（`compute_approved_sha()`）は変えない。
+        control = queuefile.find_control_char(section)
+        if control is not None:
+            pos, cp = control
+            rejections.append(Rejection(path, f"control_char(位置{pos}・U+{cp:04X})"))
+            needs_review.append(path)
+            continue
+
         # 6d. Instagram 共有は台帳に `instagram_linked: true` が要る（v2.1-B）。
         # lint も断るが、**承認のあとで台帳から外した**ときは lint を通らない
         # ——公開の側を変える指示を、台帳の前提が消えたまま出さない。
