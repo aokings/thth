@@ -1037,6 +1037,15 @@ class ThreadsAdapter(base.Adapter):
         return (self.SCOPES_FROM_TOKEN if isinstance(self._token_scopes, list)
                 else self.SCOPES_FROM_DEBUG_TOKEN)
 
+    def scopes_source(self) -> str | None:
+        """`granted_scopes()` が答えられたときの**出どころ**（判らなければ None）。
+
+        読み口の CLI（`thth profile` 等）が「権限は乗っているのに API が断った」
+        を言い分けるために使う。**None は「一覧が取れなかった」**——乗っている
+        とも乗っていないとも言わない（`granted_scopes()` の但し書きと同じ）。
+        """
+        return None if self.granted_scopes() is None else self._scopes_source()
+
     def _scope_known_missing(self, permission: str) -> bool:
         """`permission` が **無いと分かっている**か（不明は False）。"""
         granted = self.granted_scopes()
