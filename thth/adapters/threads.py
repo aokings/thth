@@ -207,6 +207,10 @@ class ThreadsAdapter(base.Adapter):
                  timeout: float = DEFAULT_TIMEOUT_SECONDS, scopes=None):
         self.base_url = base_url.rstrip("/")
         self.access_token = access_token
+        # **値そのものを登録**（セキュリティ監査 2026-09-16・P1-1）。サーバが
+        # キー名なしで値を反射しても（`rejected credential <値>`）、`redact()`
+        # が正規表現の綴りに関わらずこの値を消せるようにする。
+        redact_mod.register_secret(access_token)
         self.user_id = user_id
         self.wait_seconds = wait_seconds
         self.timeout = timeout
