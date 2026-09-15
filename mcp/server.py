@@ -198,7 +198,12 @@ def ledger_roots() -> list:
             cfg = accounts_mod.load_account(account)
         except Exception:                          # noqa: BLE001（1 本壊れていても続ける）
             continue
-        repo_dir = cfg.get("repo_dir")
+        # **正規の函数を通す**（監査 2026-09-16）。ここが台帳の `repo_dir` を
+        # 生のまま `os.path.realpath()` していたので、相対パスは**この
+        # プロセスの cwd** 基準で畳まれていた。`thth/accounts.py::resolved_repo_dir()`
+        # は `$THTH_ROOT` 基準——**同じ台帳で許可する場所が MCP だけ食い違って
+        # いた**（cwd は systemd 経由なら `/`、手で打てば人それぞれ）。
+        repo_dir = accounts_mod.resolved_repo_dir(cfg)
         if repo_dir:
             roots.append(os.path.realpath(repo_dir))
     return roots
@@ -429,9 +434,16 @@ def main() -> None:
             continue
         try:
             req = json.loads(line)
-        except json.JSONDecodeError:
-            # id が判らないので返しようがない（JSON-RPC も id:null を許すが、
-            # 従来どおり黙って次の行へ）。
+        except (ValueError, RecursionError):
+            # **`json.JSONDecodeError` だけでは足りない**（監査 2026-09-16）。
+            # `json.JSONDecodeError` は `ValueError` の子だが、Python 3.12 は
+            # 4300 桁を超える整数で別の `ValueError`
+            # （"Exceeds the limit (4300 digits) for integer string conversion"）
+            # を上げる——`except json.JSONDecodeError` だけではここが漏れて
+            # プロセスが死ぬ。深い入れ子（`[` の連続）の `RecursionError` も同じ
+            # 筋で、ここでしか捕まえられない。**id が判らないので返しようがない**
+            # （JSON-RPC も id:null を許すが、従来どおり黙って次の行へ・方針は
+            # 変えない）。
             continue
         if isinstance(req, list):
             # **batch（配列）は受けない。** 受けたふりをして 1 件目だけ処理する

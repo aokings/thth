@@ -46,7 +46,15 @@ DEFAULT_TIMEOUT_SECONDS = 10.0
 DEFAULT_VISIBILITY = "public"
 # 設計 v2 §4.2 の `MEDIA_LIMITS` の mastodon（インスタンスで違うので**既定**でしかない）。
 DEFAULT_CHAR_LIMIT = 500
-VISIBILITIES = ("public", "unlisted", "private", "direct")
+# **読み書きとも、ここだけを通す**（監査 P2-2・2026-09-16）。README.en の
+# 「Never reads direct messages. It only ever touches public posts and public
+# replies」をコードが保証していなかった——`recent_posts()`・`conversation()` は
+# `visibility` を見ずに本文を返し、出す側も `private`・`direct` を許していた。
+# `private`（フォロワー限定）と `direct`（DM）は**どちらも THTH の対象外**:
+# 読み取りは fail-closed（`visibility` が無い行も落とす）、書き込みは明示的に断る。
+READABLE_VISIBILITIES = ("public", "unlisted")
+# 出す側で名指しに断る対象（`__init__` のエラー文の出し分けに使う）。
+NON_PUBLIC_VISIBILITIES = ("private", "direct")
 
 # この媒体が**持ちうる**指標（`insights()` の `available`・設計 v2 §4.2）。
 # **views は無い**（**L3**——Mastodon の公開 API の一覧に表示回数が載っていない
@@ -244,10 +252,16 @@ class MastodonAdapter(base.Adapter):
         # `.token` の `user_id`（`thth token set` が `verify_credentials` の `id` を
         # 書く）。無ければ `recent_posts()` がその場で `whoami()` を 1 回叩く。
         self.account_id = str(account_id or "")
-        if visibility not in VISIBILITIES:
+        if visibility in NON_PUBLIC_VISIBILITIES:
+            # **出す側でも名指しに断る**（監査 P2-2）。README.en の「THTH は
+            # 公開の投稿しか出さない」約束を、init の時点で守る——`publish()` の
+            # 直前まで持ち越すと、`private`・`direct` の台帳がそのまま投げられる。
+            raise ValueError(
+                f"THTH は公開の投稿しか出しません（visibility: {visibility}）")
+        if visibility not in READABLE_VISIBILITIES:
             raise ValueError(
                 f"visibility が未知です: {visibility!r}（使えるのは "
-                f"{'・'.join(VISIBILITIES)}）")
+                f"{'・'.join(READABLE_VISIBILITIES)}）")
         self.visibility = visibility
         self.timeout = timeout
         # 直近の応答の rate limit ヘッダ（**L2**）。`quota()` は None を返す
@@ -560,7 +574,12 @@ class MastodonAdapter(base.Adapter):
                     f"会話: descendants の {i} 番目が object ではありません"
                     f"（{type(row).__name__}）。**件数として数えません**")
 
-        messages = [self._message(row, str(post_id)) for row in rows]
+        # **公開でない status は読み取りから落とす**（監査 P2-2・fail-closed）。
+        # `visibility` が読める行のうち public・unlisted だけを `_message()` に渡す
+        # ——`private`（フォロワー限定）も `direct`（DM）も、**無い場合も含めて**
+        # 落とす。落とした件数は返り値に混ぜない（本文はもちろんログにも出さない）。
+        readable_rows = [row for row in rows if row.get("visibility") in READABLE_VISIBILITIES]
+        messages = [self._message(row, str(post_id)) for row in readable_rows]
         floor = _parse_iso(since) if since else None
         if floor is None:
             return messages
@@ -612,6 +631,10 @@ class MastodonAdapter(base.Adapter):
         out = []
         for row in rows:
             if not isinstance(row, dict) or not row.get("id"):
+                continue
+            # **公開でない status は読み取りから落とす**（監査 P2-2・fail-closed・
+            # `conversation()` と同じ規律）。`visibility` が無い行も落とす。
+            if row.get("visibility") not in READABLE_VISIBILITIES:
                 continue
             out.append({
                 "post_id": str(row["id"]),

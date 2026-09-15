@@ -170,9 +170,11 @@ def test_同席の送信はblueskyのboardとpostsに現れる(tmp_path, thth_ro
 def _mastodon(tmp_path, factory, monkeypatch):
     with fake_mastodon() as fake:
         # 出した 1 本がそのまま `GET /api/v1/accounts/9000/statuses` にも現れる。
+        # **本物の応答は必ず `visibility` を持つ**（監査 P2-2・fail-closed）。
         monkeypatch.setattr(mstdn_fake, "ACCOUNT_STATUSES_FIXTURE", [
             {"id": MASTODON_POST_ID, "created_at": "2026-09-13T10:27:00.000Z",
-             "url": MASTODON_URL, "content": "<p>" + 本文.strip() + "</p>"}])
+             "url": MASTODON_URL, "content": "<p>" + 本文.strip() + "</p>",
+             "visibility": "public"}])
         token_path = str(tmp_path / "mstdn.token")
         _write_token(token_path, {
             "access_token": MASTODON_TOKEN, "no_expiry": True,

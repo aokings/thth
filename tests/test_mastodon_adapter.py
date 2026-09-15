@@ -31,6 +31,8 @@ ROOT_ID = "110000000000000001"
 
 # `content` は HTML で返る（**L2**）。`<br />`・`<p>`・実体参照・リンクの span 分割まで
 # 本物に似せておく（除去の限界は `strip_html()` の docstring にある）。
+# 3 件とも `visibility: public`（本物の応答は必ず持つ・監査 P2-2）。
+# `visibility` の絞り込み自体は `test_mastodon_visibility.py` が別に確かめる。
 CONTEXT_FIXTURE = {
     "ancestors": [],
     "descendants": [
@@ -41,6 +43,7 @@ CONTEXT_FIXTURE = {
             "content": "<p>おいしい&amp;にがい<br />ふたつ目の行</p>",
             "url": "https://example.invalid/@alice/110000000000000002",
             "account": {"id": "9001", "acct": "alice", "username": "alice"},
+            "visibility": "public",
         },
         {
             "id": "110000000000000003",
@@ -50,6 +53,7 @@ CONTEXT_FIXTURE = {
                        '<span class="invisible">https://</span>'
                        '<span class="">example.invalid/x</span></a></p>',
             "account": {"id": "9002", "acct": "bob@other.invalid", "username": "bob"},
+            "visibility": "public",
         },
         {
             "id": "110000000000000004",
@@ -57,6 +61,7 @@ CONTEXT_FIXTURE = {
             "in_reply_to_id": "110000000000000003",
             "content": "<p>三段目</p>",
             "account": {"id": "9001", "acct": "alice", "username": "alice"},
+            "visibility": "public",
         },
     ],
 }
@@ -76,13 +81,14 @@ ACCOUNT_FIXTURE = {"id": "9000", "username": "nigamilab", "acct": "nigamilab",
                    "display_name": "にがみラボ"}
 
 # `GET /api/v1/accounts/:id/statuses`（**L2**）。新しい順・`content` は HTML。
+# 2 件とも `visibility: public`（本物の応答は必ず持つ・監査 P2-2）。
 ACCOUNT_STATUSES_FIXTURE = [
     {"id": "110000000000000010", "created_at": "2026-09-13T05:00:00.000Z",
      "url": "https://example.invalid/@nigamilab/110000000000000010",
-     "content": "<p>あたらしい&amp;ほう</p>"},
+     "content": "<p>あたらしい&amp;ほう</p>", "visibility": "public"},
     {"id": ROOT_ID, "created_at": "2026-09-13T00:00:00.000Z",
      "url": f"https://example.invalid/@nigamilab/{ROOT_ID}",
-     "content": "<p>根の投稿</p>"},
+     "content": "<p>根の投稿</p>", "visibility": "public"},
 ]
 
 INSTANCE_FIXTURE = {
