@@ -517,6 +517,17 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
     user_id = me.get("id", "")
     username = me.get("username", "")
 
+    # **本人確認ができなければ保存しない**（セキュリティ監査 2026-09-16・
+    # P2-1）。下の取り違え防止は `if handle and username and ...` なので、
+    # `username` が空だと**照合そのものを飛ばして保存していた**——`user_id`
+    # も `username` も空のトークンが 600 で書かれる筋があった。`user_id`・
+    # `username` の**どちらか**が空でも、本人が誰かを確かめられていないので
+    # 保存しない。**既存の `.token` には触らない**（読みも書きもしない）。
+    if not user_id or not username:
+        _out("本人確認ができないので保存しません（/me が id・username を"
+             "返しませんでした）。既存のトークンはそのままです。", log=log)
+        return 1
+
     # **取り違え防止**（セキュリティ監査 2026-09-14・P2-4）。`thth token set` は
     # 前からこれを見ていたが、`thth auth` には無かった——**同じ危険の同じ守りが
     # 片方にしか無い**。台帳の handle と、トークンが実際に指しているアカウントが
@@ -885,8 +896,11 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
         return 1
     user_id = me.get("user_id", "")
     username = me.get("username", "")
-    if not user_id:
-        _out("トークンが使えませんでした（me の応答に id が無い）", log=log)
+    # **本人確認ができなければ保存しない**（セキュリティ監査 2026-09-16・
+    # P2-1）。`user_id` だけを見ていたので、`username` が空でも次の取り違え
+    # 防止（`if handle and username and ...`）を素通りして保存していた。
+    if not user_id or not username:
+        _out("トークンが使えませんでした（me の応答に id か username が無い）", log=log)
         return 1
 
     # 取り違え防止（masaru の指摘 2026-09-09）。台帳の handle と、トークンが
