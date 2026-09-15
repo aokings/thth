@@ -10,13 +10,19 @@
 ロックファイルの中身として名乗り、board は**読むだけ**にした
 （`thth.lock.AccountLock.holder_pid()`）。
 
-固定するのは 4 つ:
+固定するのは 6 つ:
 
   1. 別プロセスがロックを握っているあいだ、`thth board` が 1 行足す（`--json` にも）。
   2. 放したあとは出ない。
   3. **board はロックを奪わない**（board を挟んでも `thth throw` が通る）。
   4. **握り主が死んだら「走っている」と言わない**（`kill -9` で flock は OS が
      放すのに、名乗りだけ残る）。
+  5. **採取の最中も 1 行出る**（引継ぎ 2026-09-15 §3-D）。`collect` は repo を
+     持つアカウントでは **repo のロックしか握らない**ので、account のロックを
+     見るだけの 1〜4 には出なかった——10 分ごとの採取が走っていても
+     board は「止まっている」と同じ顔をしていた。
+  6. **`run` を `collect` と二重に数えない**（`thth run` は repo と account の
+     両方を握る。両方握られていれば run の側だけに出す）。
 """
 from __future__ import annotations
 
@@ -35,12 +41,68 @@ HOLD_LOCK = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "helpers", "hold_lock.py")
 
 
-def _hold(account_name, seconds):
+def _hold(account_name, seconds, which="account"):
     holder = subprocess.Popen(
-        [sys.executable, HOLD_LOCK, account_name, str(seconds)],
+        [sys.executable, HOLD_LOCK, account_name, str(seconds), which],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ))
     assert holder.stdout.readline().strip() == "locked"
     return holder
+
+
+def _stop(holder):
+    holder.terminate()
+    holder.wait(timeout=5)
+
+
+def test_collect_中はboardが採取の1行を足す(isolated_account):
+    """`collect` は repo のロックだけを握る（引継ぎ 2026-09-15 §3-D）。"""
+    name = isolated_account["name"]
+    holder = _hold(name, 5, "repo")
+    try:
+        r = run_thth(["board"])
+        assert r.returncode == 0, f"{r.returncode}: {r.stdout}{r.stderr}"
+        assert f"いま collect が走っています（{name}）" in r.stdout, r.stdout
+        # **run とは言わない**（account のロックは握られていない）。
+        assert "いま run が走っています" not in r.stdout, r.stdout
+
+        j = run_thth(["board", "--json"])
+        summary = json.loads(j.stdout)
+        assert summary["collecting"] == [name], summary["collecting"]
+        assert summary["running"] == [], summary["running"]
+        行 = [row for row in summary["accounts"] if row["account"] == name][0]
+        assert 行["repo_running"] is True
+        assert 行["repo_running_pid"] == holder.pid, (行["repo_running_pid"], holder.pid)
+        assert 行["running"] is False
+    finally:
+        _stop(holder)
+
+
+def test_collect_の1行は放したあと出ない(isolated_account):
+    name = isolated_account["name"]
+    _stop(_hold(name, 30, "repo"))
+    r = run_thth(["board"])
+    assert r.returncode == 0, f"{r.returncode}: {r.stdout}{r.stderr}"
+    assert "いま collect が走っています" not in r.stdout, r.stdout
+    summary = json.loads(run_thth(["board", "--json"]).stdout)
+    assert summary["collecting"] == [], summary["collecting"]
+
+
+def test_run_中はcollectと二重に数えない(isolated_account):
+    """`thth run` は repo と account の両方を握る。**run の側にだけ出す。**"""
+    name = isolated_account["name"]
+    repo_holder = _hold(name, 5, "repo")
+    account_holder = _hold(name, 5, "account")
+    try:
+        r = run_thth(["board"])
+        assert r.returncode == 0, f"{r.returncode}: {r.stdout}{r.stderr}"
+        assert f"いま run が走っています（{name}）" in r.stdout, r.stdout
+        assert "いま collect が走っています" not in r.stdout, r.stdout
+        summary = json.loads(run_thth(["board", "--json"]).stdout)
+        assert summary["running"] == [name]
+        assert summary["collecting"] == [], summary["collecting"]
+    finally:
+        _stop(account_holder)
+        _stop(repo_holder)
 
 
 def test_run_中はboardが1行足す(isolated_account):

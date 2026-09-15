@@ -256,7 +256,10 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
         # Mastodon はインスタンスごとに上限が違うので、`MEDIA_LIMITS` の既定
         # （mastodon 500）を account ごとに `char_limit` で差し替える。
         limit = queuefile.limit_for(media, account_cfg)
-        n = queuefile.char_count(section)
+        # **数え方も媒体ごと**（`limit_for()` と対・引継ぎ 2026-09-15 §3-D）。
+        # Bluesky の 300 は grapheme——Threads の数え方で測ると、絵文字の多い
+        # 本文が「超えている」と落ちていた。
+        n = queuefile.count_for(media, section)
         if n > limit:
             rejections.append(Rejection(path, f"too_long({n})"))
             needs_review.append(path)

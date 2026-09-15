@@ -758,7 +758,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         media = account_cfg["media"]
         # **上限は台帳の `char_limit` で上書きできる**（設計 v2 §4.2）。
         limit = queuefile.limit_for(media, account_cfg)
-        n = queuefile.char_count(body)
+        # **数え方も媒体ごと**（`limit_for()` と対・引継ぎ 2026-09-15 §3-D）。
+        n = queuefile.count_for(media, body)
         if n > limit:
             # **次の一手を 1 行**（T2・第 1 回の記録 §3）。第 1 回（2026-09-13・L1）は
             # 3 体中 2 体がここで止まり、自分で本文を縮めるか分けるかを迷った。

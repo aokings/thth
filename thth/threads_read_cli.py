@@ -19,7 +19,9 @@ flag で、`cli._cmd_topics()` の入口からここへ来る。
 
 exit code:
   - `0` … 引けた（0 件でも 0）
-  - `1` … 台帳が無い・壊れている・トークンが無い・媒体に口が無い・API が断った
+  - `1` … 台帳が無い・壊れている・トークンが無い・媒体に口が無い・API が断った。
+    **権限は乗っているのに API が断った**（標準アクセスの範囲外）もここ
+    ——`thth auth` をやり直しても直らないので rc=2 と分ける（2026-09-15）
   - `2` … **権限がトークンに乗っていない**（`thth auth <account>` をやり直す・受け入れ (c)）
 """
 from __future__ import annotations
@@ -61,6 +63,23 @@ CAPABILITY_LABELS = {
     "mentions": "自分への言及の取得",
     "profile_lookup": "公開プロフィールの参照",
 }
+
+# **権限は乗っているのに API が断ったときの断り**（引継ぎ 2026-09-15 §3-D）。
+#
+# `thth profile <他人>` は Meta が HTTP 400 を返し、その本文に `permission` の語が
+# 入っているので `_is_permission_error()` が拾い、道具は「乗っていません・
+# `thth auth` をやり直して」と言っていた。**乗っている**（`doctor` の
+# `/debug_token` で 11 個・2026-09-15 実測）。原因は**標準アクセス（App Review
+# 前）では対象が絞られる**こと——`thth auth` を何度やり直しても直らない。
+#
+# **「乗っていない」と「範囲外」を混ぜない**（doctor の「乗っていない／確かめ
+# られない」を分けたのと同じ物差し）。判る材料があるときだけ言い分ける:
+# `granted_scopes()`（`.token` の `scopes` か `/debug_token`）にその権限が
+# **在ると分かっている**ときだけ、この文面に切り替える。判らなければ従来どおり。
+STANDARD_ACCESS_DOC = "docs/手順_AppReview_2026-09-14.md §0′"
+# 口ごとの「標準アクセスではここまで」（**L2**・同 §0′ の引用と同じ事実）。
+SEARCH_NARROWED_NOTE = "検索の対象は**認証したユーザー自身の投稿だけ**です。"
+MENTIONS_NARROWED_NOTE = "返るのは**テスターからの言及だけ**です。"
 
 
 def register(sub) -> None:
@@ -146,8 +165,47 @@ def _not_granted(account: str, e: adapter_base.PermissionMissing) -> str:
             + (f"（{e.detail}）" if e.detail else ""))
 
 
-def _run(account: str, *, capability: str, call, as_json: bool, render) -> int:
-    """口を 1 つ叩いて出す。失敗の種類ごとに rc を分ける（module docstring）。"""
+def _granted_source(adapter, permission: str) -> str | None:
+    """その権限が**トークンに在ると分かっている**なら、その出どころ。判らなければ None。
+
+    媒体を問わない形で聞く（`granted_scopes()`／`scopes_source()` を持たない
+    アダプタは None）。**取りに行って失敗しても None**——判らないことを
+    「乗っている」にしない。
+    """
+    getter = getattr(adapter, "granted_scopes", None)
+    if not callable(getter):
+        return None
+    try:
+        granted = getter()
+    except Exception:
+        return None
+    if not isinstance(granted, list) or permission not in granted:
+        return None
+    source = getattr(adapter, "scopes_source", None)
+    try:
+        return (source() if callable(source) else None) or "記録"
+    except Exception:
+        return "記録"
+
+
+def _narrowed_by_standard_access(account: str, e: adapter_base.PermissionMissing,
+                                 source: str, note: str | None) -> str:
+    """「権限は乗っています。標準アクセスでは対象が絞られます」の 1 行。"""
+    return (f"{e.permission} は**トークンに乗っています**（{source}）。"
+            f"それでも API が断りました——**標準アクセス（App Review 前）では"
+            f"対象が絞られます**（{STANDARD_ACCESS_DOC}）。"
+            + (f"{note}" if note else "")
+            + f"`thth auth {account}` をやり直しても直りません。"
+            + (f"（{e.detail}）" if e.detail else ""))
+
+
+def _run(account: str, *, capability: str, call, as_json: bool, render,
+          narrowed_note: str | None = None) -> int:
+    """口を 1 つ叩いて出す。失敗の種類ごとに rc を分ける（module docstring）。
+
+    `narrowed_note` は「標準アクセスではこう絞られる」の 1 文（口ごとに違う）。
+    **権限は乗っていると分かっている**ときの断りにだけ添える。
+    """
     try:
         adapter, why = _adapter_for(account, capability=capability)
     except accounts_mod.AccountError as e:
@@ -160,13 +218,26 @@ def _run(account: str, *, capability: str, call, as_json: bool, render) -> int:
         result = call(adapter)
     except adapter_base.PermissionMissing as e:
         # **loud に断る**（受け入れ (c)）。500 を黙って返さない・0 件にしない。
-        message = _not_granted(account, e)
+        #
+        # **ただし「乗っていない」と「範囲外」を言い分ける**（引継ぎ 2026-09-15
+        # §3-D）。権限が在ると分かっているなら再認可の案内は嘘になるので、
+        # 標準アクセスの話に切り替えて rc も 1（API が断った）にする。
+        source = _granted_source(adapter, e.permission)
+        if source is None:
+            message, rc = _not_granted(account, e), 2
+        else:
+            message = _narrowed_by_standard_access(account, e, source, narrowed_note)
+            rc = 1
         if as_json:
             print(json.dumps({"error": message, "permission": e.permission,
-                              "account": account}, ensure_ascii=False, indent=2))
+                              "account": account,
+                              "granted": source is not None,
+                              "scopes_source": source,
+                              "standard_access": source is not None},
+                             ensure_ascii=False, indent=2))
         else:
             print(message, file=sys.stderr)
-        return 2
+        return rc
     except adapter_base.AdapterError as e:
         message = f"{account}: {redact_mod.redact(str(e))}"
         if as_json:
@@ -433,7 +504,7 @@ def cmd_topics_search(args) -> int:
         return 0
 
     return _run(account, capability="keyword_search", call=call, as_json=as_json,
-                render=render)
+                render=render, narrowed_note=SEARCH_NARROWED_NOTE)
 
 
 # ---------------------------------------------------------------- mentions
@@ -469,7 +540,7 @@ def cmd_mentions(args) -> int:
         return 0
 
     return _run(account, capability="mentions", call=call, as_json=as_json,
-                render=render)
+                render=render, narrowed_note=MENTIONS_NARROWED_NOTE)
 
 
 # ---------------------------------------------------------------- profile
@@ -507,4 +578,4 @@ def cmd_profile(args) -> int:
         return 0
 
     return _run(account, capability="profile_lookup", call=call, as_json=as_json,
-                render=render)
+                render=render, narrowed_note=STANDARD_ACCESS_NOTE)

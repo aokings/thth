@@ -289,6 +289,22 @@ class Adapter:
         return set(cls.CAPABILITIES)
 
     @classmethod
+    def count_text(cls, text: str) -> int:
+        """**この媒体の数え方**で本文の長さを数える（`queuefile.limit_for()` と対）。
+
+        **実体を作らずに引ける**（classmethod）——`send`・`select`・`lint` は
+        トークンを持たずに文字数を数えるため。既定は `queuefile.char_count()`
+        （Threads の数え方: 絵文字は UTF-8 バイト数・設計 §2.2）で、**違う
+        数え方を持つ媒体だけが上書きする**（Bluesky は grapheme の近似）。
+
+        以前は 3 か所とも `queuefile.char_count()` を直に呼んでいたので、
+        **Bluesky の 300 を Threads の数え方で測っていた**——絵文字の多い本文が
+        「超えている」と断られていた（引継ぎ 2026-09-15 §3-D）。
+        """
+        from .. import queuefile
+        return queuefile.char_count(text)
+
+    @classmethod
     def permissions_for_post(cls, post: "Post") -> list:
         """この `Post` の任意項目が、この媒体で要求する権限の一覧（無ければ空）。"""
         out = []

@@ -390,9 +390,18 @@ class BlueskyAdapter(base.Adapter):
         raise NotImplementedError(
             "Bluesky の App Password に期限はありません（延長は要りません・設計 v2 §4.2）")
 
-    def count(self, text: str) -> int:
-        """媒体ごとの数え方（`queuefile.char_count` は Threads の数え方）。"""
+    @classmethod
+    def count_text(cls, text: str) -> int:
+        """媒体ごとの数え方（`queuefile.char_count` は Threads の数え方）。
+
+        **実体を作らずに引ける**——`send`・`select`・`lint` はここを通る
+        （`queuefile.count_for()`）。
+        """
         return count(text)
+
+    def count(self, text: str) -> int:
+        """`count_text()` と同じ（実体を持っている呼び手のための別名）。"""
+        return self.count_text(text)
 
     # --- 投稿 ---------------------------------------------------------------
     def publish(self, post: base.Post, *, dry_run: bool, on_container_created=None,

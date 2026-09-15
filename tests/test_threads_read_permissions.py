@@ -29,6 +29,7 @@ import pytest
 
 from tests.conftest import init_git_pair, make_queue_text, run_thth
 from thth import collect as collect_mod
+from thth import scopes as scopes_mod
 from thth import threads_read_cli
 from thth.adapters import base as adapter_base
 from thth.adapters import threads as threads_mod
@@ -442,6 +443,67 @@ def test_profileコマンドは権限不足をrc2で断る(account):
     data = json.loads(r.stdout)
     assert data["permission"] == "threads_profile_discovery"
     assert f"thth auth {account['name']}" in data["error"]
+
+
+# --- 「乗っていない」と「標準アクセスの範囲外」を言い分ける（引継ぎ 2026-09-15 §3-D）
+
+def _write_token_with_scopes(path, scopes):
+    """`thth auth` が書いた形の `.token`（`scopes` が一覧・`scopes_source: response`）。"""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"access_token": "FAKE-SECRET",
+                   "obtained_at": "2026-09-09T00:00:00+09:00",
+                   "expires_in": 5184000, "user_id": "999999", "username": "nigamilab",
+                   "scopes": list(scopes), "scopes_source": "response"}, f)
+
+
+@pytest.fixture
+def account_11権限(tmp_path, isolated_account_factory):
+    """11 権限で認可済みのアカウント（masaru の本番 3 本と同じ形・2026-09-15 実測）。"""
+    token_path = str(tmp_path / "granted.token")
+    acc = isolated_account_factory(token=token_path, handle="nigamilab")
+    _write_token_with_scopes(token_path, scopes_mod.DEFAULT_SCOPES)
+    acc["token_path"] = token_path
+    return acc
+
+
+def test_profileは権限が乗っていれば標準アクセスの範囲外と言う(account_11権限):
+    """**再認可をやり直せと言わない**（やり直しても直らないので）。rc は 1。"""
+    acc = account_11権限
+    with _server({"/profile_lookup": "permission"}) as (base_url, requests):
+        r = _cli(["profile", acc["name"], "someone-else", "--json"], base_url)
+    assert r.returncode == 1, r.stdout + r.stderr
+    data = json.loads(r.stdout)
+    assert data["permission"] == "threads_profile_discovery"
+    assert data["granted"] is True and data["standard_access"] is True
+    assert data["scopes_source"] == threads_mod.ThreadsAdapter.SCOPES_FROM_TOKEN
+    assert "トークンに乗っています" in data["error"]
+    assert "標準アクセス" in data["error"]
+    assert "手順_AppReview_2026-09-14.md §0′" in data["error"]
+    assert "がトークンに乗っていません" not in data["error"]
+    # **再認可の案内をしない**（`thth auth <account>` をやり直せ、とは言わない）。
+    assert "やり直してください" not in data["error"]
+
+
+def test_権限が判らなければ従来どおり再認可を案内する(account):
+    """`.token` の `scopes` が null（`thth token set` 発行）＝**判らない**。
+
+    判らないことを「乗っている」にしない——従来の rc=2・再認可の案内のまま。
+    """
+    with _server({"/profile_lookup": "permission"}) as (base_url, requests):
+        r = _cli(["profile", account["name"], "threads", "--json"], base_url)
+    assert r.returncode == 2, r.stdout + r.stderr
+    data = json.loads(r.stdout)
+    assert data["granted"] is False and data["scopes_source"] is None
+    assert f"thth auth {account['name']}" in data["error"]
+
+
+def test_mentionsも乗っていれば標準アクセスの範囲外と言う(account_11権限):
+    acc = account_11権限
+    with _server({"/mentions": "permission"}) as (base_url, requests):
+        r = _cli(["mentions", acc["name"]], base_url)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "トークンに乗っています" in r.stderr
+    assert "テスターからの言及だけ" in r.stderr
 
 
 def test_tokenが無ければrc1で網に出ない(tmp_path, isolated_account_factory):
