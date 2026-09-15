@@ -202,9 +202,17 @@ class ThreadsAdapter(base.Adapter):
     LOCATION_PERMISSION = "threads_location_tagging"
     DELETE_PERMISSION = "threads_delete"
 
+    # `thth/oauth.py::SCOPES_SOURCE_REQUESTED` と同じ綴り（`oauth` を import
+    # すると循環になるので、値だけをここにも持つ）。`/debug_token` に訊けな
+    # かったので**要求した一覧をそのまま書いた**——「トークンに乗っている」を
+    # 一度も確かめていない。**付与済みとして使ってはいけない**（セキュリティ
+    # 監査 2026-09-16・P3-1）。
+    SCOPES_SOURCE_REQUESTED = "requested"
+
     def __init__(self, *, base_url: str = DEFAULT_BASE_URL, access_token: str = "",
                  user_id: str = "", wait_seconds: float = DEFAULT_WAIT_SECONDS,
-                 timeout: float = DEFAULT_TIMEOUT_SECONDS, scopes=None):
+                 timeout: float = DEFAULT_TIMEOUT_SECONDS, scopes=None,
+                 scopes_source: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.access_token = access_token
         # **値そのものを登録**（セキュリティ監査 2026-09-16・P1-1）。サーバが
@@ -216,7 +224,21 @@ class ThreadsAdapter(base.Adapter):
         self.timeout = timeout
         # **`.token` の `scopes`**（一覧なら「乗っている権限」・それ以外は不明）。
         # `granted_scopes()` が読む。**書かない**（`.token` は読むだけ）。
-        self._token_scopes = list(scopes) if isinstance(scopes, list) else None
+        #
+        # **`scopes_source == "requested"` の一覧は「付与済み」として使わない**
+        # （P3-1）。`thth auth` は `/debug_token` に訊けなかったとき、**要求した
+        # 一覧をそのまま** `scopes` に書く（`oauth.py` の
+        # `SCOPES_SOURCE_REQUESTED` 分岐）。それをここで一覧として受け取ると、
+        # `granted_scopes()` が「訊いた答え」のふりをして返し、`_require_scope()`
+        # が本当は確かめていない権限を「乗っていない」と言い切ったり、
+        # `threads_read_cli._granted_source()` が「トークンに乗っています」と
+        # 言い切ったりする——**要求しただけ**なのに。`requested` なら一覧を
+        # 捨てて `None`（不明）に戻し、`granted_scopes()` が従来どおり
+        # `/debug_token` を 1 回だけ引くようにする。
+        token_scopes = list(scopes) if isinstance(scopes, list) else None
+        if scopes_source == self.SCOPES_SOURCE_REQUESTED:
+            token_scopes = None
+        self._token_scopes = token_scopes
         # `/debug_token` の答え（**プロセス内で 1 回だけ**引く・`granted_scopes()`）。
         self._debug_scopes = None
         self._debug_scopes_asked = False
@@ -232,13 +254,17 @@ class ThreadsAdapter(base.Adapter):
         base_url = os.environ.get("THTH_THREADS_BASE_URL", DEFAULT_BASE_URL)
         wait_seconds = float(os.environ.get("THTH_THREADS_WAIT_SECONDS",
                                             str(DEFAULT_WAIT_SECONDS)))
+        token = token or {}
         return cls(
             base_url=base_url,
-            access_token=(token or {}).get("access_token", ""),
-            user_id=(token or {}).get("user_id") or (account_cfg or {}).get("user_id", ""),
+            access_token=token.get("access_token", ""),
+            user_id=token.get("user_id") or (account_cfg or {}).get("user_id", ""),
             wait_seconds=wait_seconds,
             # `.token` の `scopes`（`thth auth` が書く一覧・`thth token set` は null）。
-            scopes=(token or {}).get("scopes"),
+            scopes=token.get("scopes"),
+            # `.token` の `scopes_source`（P3-1・`__init__` が `"requested"` を
+            # 「付与済み」として使わないよう読み分ける）。
+            scopes_source=token.get("scopes_source"),
         )
 
     def _post(self, path: str, params: dict) -> dict:
