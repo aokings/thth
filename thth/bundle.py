@@ -46,6 +46,10 @@ class Bundle:
     body: str
     segments: list       # 送る本文。**順序を保った配列**（連結しない）
     verified: bool = False
+    # top-level front-matter に同じ鍵が 2 回以上あったら、その鍵名の一覧
+    # （セキュリティ監査 2026-09-14「撤回が効かない嘘」・`queuefile.QueueFile` と
+    # 同じ仕組み）。無ければ空。
+    duplicate_keys: list = dataclasses.field(default_factory=list)
 
     def get(self, key: str, default=None):
         return self.front_matter.get(key, default)
@@ -67,16 +71,22 @@ def is_bundle_text(text: str) -> bool:
 
 
 def parse_front_matter(fm_text: str) -> tuple:
-    """v2 の front matter を読む。`(top_level, posts)`。
+    """v2 の front matter を読む。`(top_level, posts, 重複した top-level の鍵の一覧)`。
 
     **YAML を入れない**（依存を増やさない・発注 §0-4）。読むのは
     「`key: value` の行」と「`posts:` の下の `- index: N` で始まる配列」だけ。
     **それ以外の形は拒否する**——曖昧な解釈を残さない（Codex 最終条件 5）。
+
+    **top-level の鍵が重複していたら一覧に積む**（セキュリティ監査 2026-09-14。
+    `queuefile._parse_kv()` と同じ考え方）。値は今までどおり後勝ちで `top` に
+    残るが、`parse_text()` はこれを見て `malformed` にする。
     """
     top: dict = {}
     posts: list = []
     in_posts = False
     current = None
+    seen_top: set = set()
+    duplicate_keys: list = []
 
     for raw in fm_text.split("\n"):
         if not raw.strip():
@@ -95,7 +105,11 @@ def parse_front_matter(fm_text: str) -> tuple:
             if ":" not in stripped:
                 raise BundleError(f"front matter に読めない行があります: {raw!r}")
             key, _, value = stripped.partition(":")
-            top[key.strip()] = value.strip() or None
+            key = key.strip()
+            if key in seen_top and key not in duplicate_keys:
+                duplicate_keys.append(key)
+            seen_top.add(key)
+            top[key] = value.strip() or None
             continue
 
         if not in_posts:
@@ -119,7 +133,7 @@ def parse_front_matter(fm_text: str) -> tuple:
         key, _, value = stripped.partition(":")
         current[key.strip()] = value.strip() or None
 
-    return top, posts
+    return top, posts, duplicate_keys
 
 
 def split_segments(section: str) -> tuple:
@@ -163,22 +177,24 @@ def split_segments(section: str) -> tuple:
 
 
 def parse_text(text: str, path: str) -> Bundle:
-    """`thth: 2` の原稿を読む。**読めなければ `malformed`。**"""
+    """`thth: 2` の原稿を読む。**読めなければ `malformed`。**
+
+    top-level の鍵が重複していても `malformed` にする（セキュリティ監査
+    2026-09-14）——理由は `queuefile.parse_text()` と同じ。
+    """
     split = queuefile._split_front_matter(text)
     if split is None:
         return Bundle(path=path, malformed=True, front_matter={}, posts=[],
                        body=text, segments=[])
     fm_text, body = split
     try:
-        top, posts = parse_front_matter(fm_text)
+        top, posts, duplicate_keys = parse_front_matter(fm_text)
     except BundleError:
         return Bundle(path=path, malformed=True, front_matter={}, posts=[],
                        body=body, segments=[])
-    if top.get("thth") != VERSION:
-        return Bundle(path=path, malformed=True, front_matter=top, posts=posts,
-                       body=body, segments=[])
-    return Bundle(path=path, malformed=False, front_matter=top, posts=posts,
-                   body=body, segments=[])
+    malformed = top.get("thth") != VERSION or bool(duplicate_keys)
+    return Bundle(path=path, malformed=malformed, front_matter=top, posts=posts,
+                   body=body, segments=[], duplicate_keys=duplicate_keys)
 
 
 def unquote(value):
@@ -194,9 +210,11 @@ def why_malformed(text: str) -> str:
     if split is None:
         return "front matter の区切りがありません"
     try:
-        top, _posts = parse_front_matter(split[0])
+        top, _posts, duplicate_keys = parse_front_matter(split[0])
     except BundleError as e:
         return str(e)
+    if duplicate_keys:
+        return queuefile.duplicate_keys_message(duplicate_keys)
     if top.get("thth") != VERSION:
         return f"thth が {VERSION} ではありません（{top.get('thth')!r}）"
     return "理由を特定できません"
@@ -223,7 +241,21 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
     fm = bundle.front_matter
 
     if bundle.malformed:
+        if bundle.duplicate_keys:
+            return [queuefile.duplicate_keys_message(bundle.duplicate_keys)]
         return ["thth: 2 の原稿として読めません（front matter の形）"]
+
+    # front-matter の値に制御文字が混じっていないか（セキュリティ監査
+    # 2026-09-16・B-2）。段の本文の検査は下（segments のループ）で行う——
+    # ここは top-level の値（`topic`・`form` 等、人が手で書く欄）だけを見る。
+    for key, value in fm.items():
+        if not isinstance(value, str):
+            continue
+        control = queuefile.find_control_char(value)
+        if control is not None:
+            pos, cp = control
+            errors.append(f"front-matter: {key} に制御文字が含まれています"
+                           f"（位置 {pos}・U+{cp:04X}）")
 
     for key in ("account", "publish_at"):
         if not fm.get(key):
@@ -273,6 +305,16 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
                     f"（{n} 字・上限 {limit} 字）")
             if not hashtags_allowed and queuefile.has_hashtag(seg):
                 errors.append(f"hashtag: {i} 段目にハッシュタグがあります")
+            # **段に制御文字が混じっていれば error**（セキュリティ監査
+            # 2026-09-16・B-2）。`compute_bundle_components()` は段を `\x1e`
+            # （ASCII record separator）で連結してハッシュにする——段の本文に
+            # その文字が混じっていると、境界をずらしても同じハッシュになる。
+            # ハッシュの定義は変えず、混入そのものをここで（承認の前に）拒む。
+            control = queuefile.find_control_char(seg)
+            if control is not None:
+                pos, cp = control
+                errors.append(f"{i} 段目に制御文字が含まれています"
+                               f"（位置 {pos}・U+{cp:04X}）")
 
     errors += check_posts(bundle, segments)
 

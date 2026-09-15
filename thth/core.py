@@ -113,6 +113,7 @@ def _is_error_reason(reason: str) -> bool:
         reason in _ERROR_RUN_REASONS
         or reason.startswith("too_long(")
         or reason.startswith("topic_")
+        or reason.startswith("control_char(")
     )
 
 
