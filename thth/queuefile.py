@@ -146,6 +146,22 @@ def limit_for(media: str, account_cfg: dict | None = None) -> int:
     return limit
 
 
+def count_for(media: str, text: str) -> int:
+    """その媒体の数え方で本文を数える（**`limit_for()` と同じ口**）。
+
+    `limit_for()` が「その媒体の上限」を答えるのと対で、こちらは「その媒体の
+    数え方での長さ」。**上限と数え方は必ず対で使う**——`send`・`select`・`lint`
+    はどれもこの 2 つだけを見る。
+
+    数え方の中身はアダプタが持つ（`adapters.count_text_for()`）。**ここで媒体名
+    で分岐しない**（設計 v2 §4.2「媒体名で分岐するコードを 1 か所に集める」）。
+    import は関数の中——`thth.adapters` は `queuefile` を読むので、module 頭で
+    書くと輪になる。
+    """
+    from . import adapters as adapters_mod
+    return adapters_mod.count_text_for(media, text)
+
+
 def char_count(text: str) -> int:
     """Threads の文字数の数え方（設計 §2.2・受け入れ 3）: 500 字上限、絵文字は
     UTF-8 バイト数で数える。絵文字以外は Unicode コードポイント 1 個を 1 字とする。"""

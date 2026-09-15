@@ -130,7 +130,8 @@ def lint_file(path: str) -> list:
         errors.append(f"media: `## {media}` の節が無い")
     else:
         limit = queuefile.limit_for(media, account_cfg)
-        n = queuefile.char_count(section)
+        # **数え方も媒体ごと**（`limit_for()` と対・引継ぎ 2026-09-15 §3-D）。
+        n = queuefile.count_for(media, section)
         if n > limit:
             errors.append(f"length: {media} は {limit} 字以内（{n} 字）")
         else:

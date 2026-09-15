@@ -59,6 +59,18 @@ def capabilities_for(media) -> set:
     return set(cls.CAPABILITIES) if cls is not None else set()
 
 
+def count_text_for(media, text: str) -> int:
+    """台帳の `media` の数え方で本文を数える。**実体（トークン）は要らない。**
+
+    `capabilities_for()` と同じ筋。**知らない媒体は既定の数え方**（`base.Adapter`
+    ＝ Threads の数え方）——`queuefile.limit_for()` が知らない媒体に
+    `DEFAULT_MEDIA_LIMIT` を返すのと揃える。読むだけの口をここで断ると、
+    台帳 1 本の誤字で `thth lint` が丸ごと止まる。
+    """
+    cls = REGISTRY.get(media) if isinstance(media, str) else None
+    return (cls or base.Adapter).count_text(text)
+
+
 def make_adapter(account_cfg: dict, token: dict | None):
     """台帳とトークンからアダプタを 1 つ作る（**core の唯一の入口**）。"""
     media = (account_cfg or {}).get("media")
@@ -67,5 +79,5 @@ def make_adapter(account_cfg: dict, token: dict | None):
 
 
 __all__ = ["REGISTRY", "UnknownMedium", "adapter_class", "base",
-           "capabilities_for", "known_media", "make_adapter",
+           "capabilities_for", "count_text_for", "known_media", "make_adapter",
            "BlueskyAdapter", "MastodonAdapter", "ThreadsAdapter"]
