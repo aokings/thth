@@ -268,6 +268,10 @@ def _error_message(prefix: str, exc: Exception) -> str:
 
 def exchange_short_lived_token(app_id: str, app_secret: str, redirect_uri: str, code: str,
                                 *, timeout: float = 10.0) -> dict:
+    # **値そのものを登録**（セキュリティ監査 2026-09-16・P1-1）。サーバがキー名
+    # なしで値を反射しても `redact()` が消せるようにする。
+    redact_mod.register_secret(app_secret)
+    redact_mod.register_secret(code)
     url = f"{_graph_base_url()}/oauth/access_token"
     params = {
         "client_id": app_id,
@@ -283,6 +287,8 @@ def exchange_short_lived_token(app_id: str, app_secret: str, redirect_uri: str, 
 
 
 def exchange_long_lived_token(app_secret: str, access_token: str, *, timeout: float = 10.0) -> dict:
+    redact_mod.register_secret(app_secret)
+    redact_mod.register_secret(access_token)
     url = f"{_graph_base_url()}/access_token"
     params = {
         "grant_type": "th_exchange_token",
@@ -296,6 +302,7 @@ def exchange_long_lived_token(app_secret: str, access_token: str, *, timeout: fl
 
 
 def fetch_me(access_token: str, *, timeout: float = 10.0) -> dict:
+    redact_mod.register_secret(access_token)
     url = f"{_graph_base_url()}/v1.0/me"
     params = {"fields": "id,username", "access_token": access_token}
     try:
@@ -330,6 +337,7 @@ def fetch_token_scopes(access_token: str, *, timeout: float = 10.0):
     成否を左右しないので、`thth auth` は要求した一覧に落とす）。応答に値が
     無い・形が違うときも None（嘘の一覧を作らない）。
     """
+    redact_mod.register_secret(access_token)
     url = f"{_graph_base_url()}/v1.0/debug_token"
     params = {"access_token": access_token, "input_token": access_token}
     try:
@@ -401,6 +409,10 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
     except appenv.AppEnvError as e:
         _out(str(e), log=log)
         return 2
+    # **app secret を読んだ直後に登録する**（セキュリティ監査 2026-09-16・P1-1）。
+    # `run_auth` はこのあと `exchange_short_lived_token()` 等も呼ぶので二重に
+    # 登録されるが、`register_secret()` は重複を無視する。
+    redact_mod.register_secret(app_secret)
 
     redirect_uri = redirect_uri or account_cfg.get("redirect_uri")
     if not redirect_uri:
@@ -504,6 +516,17 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
         return 1
     user_id = me.get("id", "")
     username = me.get("username", "")
+
+    # **本人確認ができなければ保存しない**（セキュリティ監査 2026-09-16・
+    # P2-1）。下の取り違え防止は `if handle and username and ...` なので、
+    # `username` が空だと**照合そのものを飛ばして保存していた**——`user_id`
+    # も `username` も空のトークンが 600 で書かれる筋があった。`user_id`・
+    # `username` の**どちらか**が空でも、本人が誰かを確かめられていないので
+    # 保存しない。**既存の `.token` には触らない**（読みも書きもしない）。
+    if not user_id or not username:
+        _out("本人確認ができないので保存しません（/me が id・username を"
+             "返しませんでした）。既存のトークンはそのままです。", log=log)
+        return 1
 
     # **取り違え防止**（セキュリティ監査 2026-09-14・P2-4）。`thth token set` は
     # 前からこれを見ていたが、`thth auth` には無かった——**同じ危険の同じ守りが
@@ -840,6 +863,10 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
     if not token_value:
         _out("トークンが読み取れませんでした", log=log)
         return 2
+    # **貼り付けられたトークンを登録する**（セキュリティ監査 2026-09-16・P1-1）。
+    # 直後の `whoami()` がサーバの応答を反映した例外文を上げても、この値が
+    # 綴りに関わらず伏字になる。
+    redact_mod.register_secret(token_value)
 
     # **本人の確認はアダプタの `whoami()` を通す**（設計 v2 §4.2・裁定
     # 2026-09-13）。以前はここが Threads の `me` を直接叩いていた（Threads 固有に
@@ -869,8 +896,11 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
         return 1
     user_id = me.get("user_id", "")
     username = me.get("username", "")
-    if not user_id:
-        _out("トークンが使えませんでした（me の応答に id が無い）", log=log)
+    # **本人確認ができなければ保存しない**（セキュリティ監査 2026-09-16・
+    # P2-1）。`user_id` だけを見ていたので、`username` が空でも次の取り違え
+    # 防止（`if handle and username and ...`）を素通りして保存していた。
+    if not user_id or not username:
+        _out("トークンが使えませんでした（me の応答に id か username が無い）", log=log)
         return 1
 
     # 取り違え防止（masaru の指摘 2026-09-09）。台帳の handle と、トークンが
