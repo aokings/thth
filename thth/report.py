@@ -319,6 +319,21 @@ def board_summary(now=None) -> dict:
         # **ロックを試しに取らない**（`AccountLock.holder_pid()` の docstring）。
         running_pid = lock_mod.AccountLock.holder_pid(
             accounts_mod.account_lock_path_for(name))
+        # **採取の最中も見える口**（引継ぎ 2026-09-15 §3-D）。`collect` は repo を
+        # 持つアカウントでは **repo のロックしか握らない**ので、上の
+        # `running_pid`（account のロック）には出ない——10 分ごとの採取が走って
+        # いても board は「止まっている」と同じ顔をしていた。
+        #
+        # **repo のロックは collect 専用ではない**（`approve`・`revoke`・
+        # スレッド連投の 1 段も握る）。だから言えるのは「この repo で何かが
+        # 走っている」まで。`thth run` は repo と account の両方を握るので、
+        # **account のロックも握られていれば run**、repo だけなら採取の側、と
+        # 読み分ける（`running` に出ているものは `collecting` から外す）。
+        repo_dir_for_lock = account_cfg.get("repo_dir")
+        repo_running_pid = None
+        if isinstance(repo_dir_for_lock, str) and repo_dir_for_lock:
+            repo_running_pid = lock_mod.AccountLock.holder_pid(
+                accounts_mod.repo_lock_path_for(repo_dir_for_lock))
         # **同席の様態（`thth send`）で出したものも「最後に出したもの」に数える**
         # （運用の報告 2026-09-13: 実際に 2 媒体へ出したのに board の
         # `last_post` が `(なし)` のままだった）。
@@ -403,6 +418,10 @@ def board_summary(now=None) -> dict:
             # 握らないので、**採取の最中はここに出ない**。
             "running": running_pid is not None,
             "running_pid": running_pid,
+            # **repo のロックを誰かが握っているか**。`running` と同じ但し書き
+            # （見つかったときだけ True・False は「走っていない」の証明ではない）。
+            "repo_running": repo_running_pid is not None,
+            "repo_running_pid": repo_running_pid,
         })
     # 「動いているのに古い」を見える形にする（設計 §3.2・2026-09-10 に VM が
     # 4 巡分古いまま 10 分ごとに回っていたのを見つけた）。**取りに行かない**
@@ -440,8 +459,14 @@ def board_summary(now=None) -> dict:
     app_pid = lock_mod.AccountLock.holder_pid(accounts_mod.app_lock_path())
     if app_pid is not None:
         running.append("_app")
+    # **採取の側**（repo のロックだけを握っているもの）。`running` に出ている
+    # ものは除く——`thth run` は両方握るので、二重に数えると「run と collect が
+    # 同時に走っている」と読めてしまう。
+    collecting = [row["account"] for row in accounts_out
+                  if row.get("repo_running") and not row.get("running")]
     return {"accounts": accounts_out, "generated_at": jst.iso(),
             "running": running,
+            "collecting": collecting,
             # **どこの台帳を読んで、この一覧を作ったか**（設計 v2 §3・v2-2a）。
             # 「外」と「repo の中（互換）」で並ぶ顔ぶれが変わる。**画面が誰の
             # 台帳を読んだのかを言わないと、移行のさなかに何が正か判らない。**

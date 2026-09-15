@@ -2354,7 +2354,16 @@ def cmd_board(args) -> int:
             print(f"いま run が走っています（{'・'.join(走っている)}）")
         if "_app" in (summary.get("running") or []):
             print("いま自己更新が走っています（`_app.lock`）")
-        if summary.get("running"):
+        # **採取の最中も 1 行**（引継ぎ 2026-09-15 §3-D）。`collect` は repo の
+        # ロックしか握らないので、`running`（account のロック）には出ない。
+        # **言えるのは「この repo で何かが走っている」まで**——同じロックを
+        # `approve`・`revoke`・スレッド連投の 1 段も取るので、そう書く。
+        採っている = summary.get("collecting") or []
+        if 採っている:
+            print(f"いま collect が走っています（{'・'.join(採っている)}）"
+                  "——repo のロックを握っています"
+                  "（`approve`・`revoke` でも同じロックを取ります）")
+        if summary.get("running") or 採っている:
             print("")
 
         # 生の dict をそのまま出さず、人が読む形に整える（--json は機械可読のまま
