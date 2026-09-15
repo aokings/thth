@@ -4,27 +4,28 @@
 #   bash tools/appreview_demo.sh kopicha-threads
 #
 # 流れ: 窓を整える → 3 秒の試し撮り → 本番の録画を始める → auth（同意画面）
-#       → doctor → search → mentions → profile → location → 録画を止める → MP4。
+#       → doctor → search → mentions → profile → location → 録画を止める。
 #
-# 設計の要点は 1 つ: **録画が始められなくても実演は止めない。** 前の版
-# （Codex・AppleScript＋Swift＋screencapture＋ffmpeg）は試し撮りの寸法検査で
-# 自分を止め、一度も本番に届かなかった。ここでは録画に失敗したら「QuickTime で
-# 録ってください」と言って実演を続ける。録画はあくまで従で、主は実演。
+# 設計の要点は 2 つ。
 #
-# Codex 版から取り入れたもの: screencapture を背景で回して SIGINT で止める・
-# 止まったことを確認してから次へ・試し撮り・ブラウザの窓も同じ枠へ・MP4 変換。
-# 外したもの: 窓の位置を取るだけの Swift（osascript の bounds で同じ値が取れる）、
-# 録画の都合で実演を中断する分岐。
+# 1. **録画が始められなくても実演は止めない。** 録画に失敗したら「QuickTime で
+#    録ってください」と言って実演を続ける。録画は従で、主は実演。
 #
-# 前提: Terminal.app で実行（窓の調整と録画範囲の取得に使う）。等倍のモニタなら
-# 1920×1080 の窓 ＝ 1920×1080 の動画（Meta の要求「1080 以上」）。Retina なら 2 倍。
+# 2. **録画は ffmpeg（avfoundation）で、止めるのは標準入力への `q`。** 信号は使わない。
+#    この Mac で実測した結果（tools/appreview_rectest.sh・2026-09-15）:
+#      - screencapture は `-V` の時間で回すしかなく、INT を送るとファイルを書かずに死ぬ
+#      - スクリプトが `&` で起こした ffmpeg は INT も TERM も無視する（孤児が 5 分回った）
+#      - 標準入力（名前付きパイプ）に `q` を書くと、背景の ffmpeg が 1 秒で閉じて
+#        1920×1080 の MP4 が残る（「Exiting normally」）
+#    Codex 版（screencapture を INT で止める）は前提から成り立たなかった。
+#
+# 前提: Terminal.app で実行（窓の調整と録画範囲に使う）。ffmpeg は /opt/homebrew。
 # 画面収録の許可を初めて求められたら、許可してターミナルを開き直し、もう一度。
 set -u
 umask 077
 
 ACCOUNT="${1:-}"
 THTH="${THTH_BIN:-$HOME/.local/bin/thth}"
-SCREENCAPTURE="${SCREENCAPTURE_BIN:-/usr/sbin/screencapture}"
 FFMPEG="${FFMPEG_BIN:-/opt/homebrew/bin/ffmpeg}"
 FFPROBE="${FFPROBE_BIN:-/opt/homebrew/bin/ffprobe}"
 WIN_W="${DEMO_W:-1920}"
@@ -45,41 +46,63 @@ mkdir -p "$OUT" || exit 2
 
 # ---------------------------------------------------------------- 録画 ----
 REC_PID=''
+CTL="$OUT/ctl.fifo"
+SCREEN=''                        # avfoundation の画面 device の番号
+SCALE="${DEMO_SCALE:-}"          # point → pixel の倍率（等倍 1・Retina 2。試し撮りで測る）
 
-start_recording() {              # $1 = 出力 .mov  $2 = 上限秒（保険。INT が届かなくても止まる）
-  # **ジョブ制御を一時的に入れる。** 非対話のスクリプトが `&` で起こした子は SIGINT を
-  # 無視する（bash の仕様）ので、そのままだと後で `kill -INT` が効かず録画が止まらない。
-  # `set -m` の下では子が自分のプロセスグループを持ち、INT が届く。
-  set -m
-  "$SCREENCAPTURE" -R"$REGION" -v -V"$2" "$1" 2>"$1.log" &
+screen_device() {                # "Capture screen 0" の番号を返す（無ければ空）
+  "$FFMPEG" -hide_banner -f avfoundation -list_devices true -i "" 2>&1 \
+    | grep -iE "\] \[[0-9]+\] Capture screen" | head -1 \
+    | sed -E 's/.*\[([0-9]+)\] Capture screen.*/\1/'
+}
+
+crop_filter() {                  # 録画範囲（point）を pixel に直した crop
+  IFS=, read -r x y w h <<<"$REGION"
+  s="${SCALE:-1}"
+  printf 'crop=%d:%d:%d:%d' "$((w * s))" "$((h * s))" "$((x * s))" "$((y * s))"
+}
+
+# ffmpeg 本体を起こす。`exec` で自分自身が ffmpeg になる（`&` で背景に回したとき
+# `$!` が ffmpeg の pid になるように。外側に bash が挟まると、止める相手を間違える）。
+ffmpeg_run() {                   # $1 = 出力 .mp4  残り = 追加オプション（-t 3 など）
+  out="$1"; shift
+  exec "$FFMPEG" -hide_banner -y -f avfoundation -framerate 30 -capture_cursor 1 \
+    -i "$SCREEN:none" -vf "$(crop_filter)" -c:v h264_videotoolbox -b:v 8M \
+    -pix_fmt yuv420p -an "$@" "$out"
+}
+
+start_recording() {              # $1 = 出力 .mp4。標準入力は名前付きパイプ（あとで q を書く）
+  rm -f "$CTL"; mkfifo "$CTL" || return 1
+  exec 3<>"$CTL"                 # 読み書きで開く＝開く側が待たされない
+  ffmpeg_run "$1" <&3 2>"$1.log" &
   REC_PID=$!
-  set +m
   sleep 3
   if ! kill -0 "$REC_PID" 2>/dev/null; then
-    wait "$REC_PID" 2>/dev/null; REC_PID=''
+    wait "$REC_PID" 2>/dev/null; REC_PID=''; exec 3>&-
     return 1
   fi
   return 0
 }
 
-stop_recording() {
+stop_recording() {               # q を書いて、閉じるのを待つ（30 秒）。だめなら KILL
   [ -n "$REC_PID" ] || return 0
-  kill -INT "$REC_PID" 2>/dev/null || true
-  for _ in $(seq 1 150); do
+  printf 'q' >&3 2>/dev/null || true
+  for _ in $(seq 1 300); do
     if ! kill -0 "$REC_PID" 2>/dev/null; then
-      wait "$REC_PID" 2>/dev/null || true; REC_PID=''; return 0
+      wait "$REC_PID" 2>/dev/null || true; REC_PID=''; exec 3>&-; return 0
     fi
     sleep 0.1
   done
-  printf '\n録画の停止を確認できません。メニューバーの停止ボタンで止めてください（%s）。\n' "$OUT"
-  REC_PID=''
+  printf '\n録画が 30 秒たっても閉じません。KILL します（ファイルは壊れます）。\n'
+  kill -KILL "$REC_PID" 2>/dev/null || true
+  wait "$REC_PID" 2>/dev/null || true; REC_PID=''; exec 3>&-
   return 1
 }
 
-video_size() {                   # $1 = 動画 → "WxH" か空
+video_size() {                   # $1 = 動画 → "W,H,秒" か空
   [ -x "$FFPROBE" ] || return 0
   "$FFPROBE" -v error -select_streams v:0 -show_entries stream=width,height \
-    -of csv=s=x:p=0 "$1" 2>/dev/null
+    -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null | tr '\n' ' '
 }
 
 trap 'stop_recording; exit 130' INT TERM
@@ -145,12 +168,10 @@ tell application id "com.apple.Terminal"
   set bounds of front window to {0, $MENUBAR, $WIN_W, $((MENUBAR + WIN_H))}
 end tell
 APPLE
-  # 実際の枠を読み返す（等倍のモニタなら point ＝ pixel）
   BOUNDS="$(/usr/bin/osascript -e 'tell application id "com.apple.Terminal" to get bounds of front window' 2>/dev/null | tr -d ' ')"
   if [[ "$BOUNDS" =~ ^(-?[0-9]+),(-?[0-9]+),(-?[0-9]+),(-?[0-9]+)$ ]]; then
     REGION="${BASH_REMATCH[1]},${BASH_REMATCH[2]},$(( BASH_REMATCH[3] - BASH_REMATCH[1] )),$(( BASH_REMATCH[4] - BASH_REMATCH[2] ))"
   fi
-  # ブラウザも同じ枠へ（同意画面が録画に入るように）。開いていなければ何もしない。
   printf '\n認可に使うブラウザ名（Google Chrome / Safari / 空＝調整しない）: '
   read -r BROWSER </dev/tty || BROWSER=''
   if [ -n "$BROWSER" ]; then
@@ -161,33 +182,51 @@ end tell
 APPLE
   fi
 else
-  printf '\nTerminal.app ではないので窓の調整と自動録画はしません（QuickTime で録ってください）。\n'
+  printf '\nTerminal.app ではないので窓の調整はしません。\n'
 fi
 [ -n "$REGION" ] || RECORD=0
-printf '\n録画範囲: %s\n' "${REGION:-（取れませんでした）}"
+printf '\n録画範囲: %s\n' "${REGION:-（取れませんでした→自動録画なし）}"
 
 # ---------------------------------------------------------------- 試し撮り ----
+if [ "$RECORD" = 1 ] && [ ! -x "$FFMPEG" ]; then
+  printf '%s が無いので自動録画はしません。QuickTime で録ってください。\n' "$FFMPEG"
+  RECORD=0
+fi
 if [ "$RECORD" = 1 ]; then
-  if [ ! -x "$SCREENCAPTURE" ]; then
-    printf '%s が無いので自動録画はしません。QuickTime で録ってください。\n' "$SCREENCAPTURE"
+  SCREEN="$(screen_device)"
+  if [ -z "$SCREEN" ]; then
+    printf 'ffmpeg から画面が見えません（画面収録の許可を確認）。QuickTime で録ってください。\n'
     RECORD=0
   fi
 fi
 if [ "$RECORD" = 1 ]; then
   pause '  [Return で 3 秒の試し撮り] '
-  if start_recording "$OUT/test.mov" 8 && stop_recording && [ -s "$OUT/test.mov" ]; then
-    SIZE="$(video_size "$OUT/test.mov")"
-    printf '試し撮り: %s（%s）\n' "$OUT/test.mov" "${SIZE:-寸法は未確認}"
+  # 前面で 3 秒。ここで画面の pixel 幅も分かる（ログの「Video: rawvideo … 3840x1600」）
+  ( ffmpeg_run "$OUT/test.mp4" -t 3 </dev/null 2>"$OUT/test.mp4.log" )
+  if [ -z "$SCALE" ]; then
+    PIX_W="$(grep -oE 'rawvideo[^,]*, [a-z0-9]+, ([0-9]+)x[0-9]+' "$OUT/test.mp4.log" | head -1 | sed -E 's/.* ([0-9]+)x[0-9]+$/\1/')"
+    PT_W="$(/usr/bin/osascript -e 'tell application "Finder" to get bounds of window of desktop' 2>/dev/null | tr -d ' ' | cut -d, -f3)"
+    if [ -n "$PIX_W" ] && [ -n "$PT_W" ] && [ "$PT_W" -gt 0 ] && [ "$PIX_W" -ge "$((PT_W * 2))" ]; then
+      SCALE=2                    # Retina: point の 2 倍が pixel。crop を 2 倍にして撮り直す
+      printf 'Retina（%s px / %s pt）なので範囲を 2 倍にして撮り直します。\n' "$PIX_W" "$PT_W"
+      ( ffmpeg_run "$OUT/test.mp4" -t 3 </dev/null 2>"$OUT/test.mp4.log" )
+    else
+      SCALE=1
+    fi
+  fi
+  if [ -s "$OUT/test.mp4" ]; then
+    SIZE="$(video_size "$OUT/test.mp4")"
+    printf '試し撮り: %s（%s）\n' "$OUT/test.mp4" "${SIZE:-寸法は未確認}"
     case "$SIZE" in
-      *x*) w="${SIZE%x*}"; h="${SIZE#*x}"
-           if [ "$w" -lt 1920 ] || [ "$h" -lt 1080 ]; then
+      *,*) w="${SIZE%%,*}"; rest="${SIZE#*,}"; h="${rest%%,*}"
+           if [ "${w:-0}" -lt 1920 ] || [ "${h:-0}" -lt 1080 ]; then
              printf '**1920×1080 より小さい。** Meta は 1080 以上を求めます。窓を広げてやり直すか、このまま続けるかは判断してください。\n'
            fi ;;
     esac
-    /usr/bin/open "$OUT/test.mov" 2>/dev/null || true
+    /usr/bin/open "$OUT/test.mp4" 2>/dev/null || true
     pause '  [再生して字が読めたら Return。読めなければ Ctrl-C で中止] '
   else
-    printf '\n**自動録画ができませんでした**（%s）。\n' "$OUT/test.mov.log"
+    printf '\n**試し撮りができませんでした**（%s）。\n' "$OUT/test.mp4.log"
     printf '画面収録の許可（システム設定 → プライバシーとセキュリティ → 画面収録 → ターミナル）を確認してください。\n'
     printf 'このまま続けるなら、QuickTime の「画面の一部を収録」でこの窓を囲んでから Return。\n'
     RECORD=0
@@ -199,8 +238,8 @@ fi
 
 # ---------------------------------------------------------------- 本番 ----
 if [ "$RECORD" = 1 ]; then
-  if ! start_recording "$OUT/review.mov" 1200; then    # 最長 20 分で自動停止
-    printf '\n**本番の録画が始められませんでした。** QuickTime で録ってから Return。\n'
+  if ! start_recording "$OUT/review.mp4"; then
+    printf '\n**本番の録画が始められませんでした**（%s）。QuickTime で録ってから Return。\n' "$OUT/review.mp4.log"
     RECORD=0
     pause '  [Return で続ける] '
   fi
@@ -231,22 +270,11 @@ sleep 2
 
 # ---------------------------------------------------------------- 仕上げ ----
 if [ "$RECORD" = 1 ]; then
-  stop_recording || true
-  if [ -s "$OUT/review.mov" ]; then
-    SIZE="$(video_size "$OUT/review.mov")"
-    printf '録画: %s（%s）\n' "$OUT/review.mov" "${SIZE:-寸法は未確認}"
-    if [ -x "$FFMPEG" ]; then
-      printf 'MP4 に変換しています…\n'
-      if "$FFMPEG" -nostdin -v error -i "$OUT/review.mov" -map 0:v:0 -an \
-           -vf 'scale=trunc(iw/2)*2:trunc(ih/2)*2' -c:v libx264 -crf 18 -pix_fmt yuv420p \
-           -movflags +faststart "$OUT/review.mp4"; then
-        printf '提出用: %s\n' "$OUT/review.mp4"
-      else
-        printf '変換に失敗。.mov のまま提出できます: %s\n' "$OUT/review.mov"
-      fi
-    fi
+  if stop_recording && [ -s "$OUT/review.mp4" ]; then
+    printf '録画: %s（%s）\n' "$OUT/review.mp4" "$(video_size "$OUT/review.mp4")"
+    printf '提出用: %s\n' "$OUT/review.mp4"
   else
-    printf '録画ファイルが空です（%s）。QuickTime で録っていればそちらを使ってください。\n' "$OUT/review.mov.log"
+    printf '録画ファイルが無いか壊れています（%s）。QuickTime で録っていればそちらを。\n' "$OUT/review.mp4.log"
   fi
 else
   printf 'QuickTime の収録を止めて保存してください。\n'
