@@ -4,6 +4,10 @@
   - `thth mentions <account> [--json]`（`threads_manage_mentions`）
   - `thth profile <account> <username> [--json]`（`threads_profile_discovery`）
 
+`--search` は**観測の材料**（誰がどれだけ居るか）に加えて、**絡みに行く先**
+（`post_id`・`permalink`・投稿ごとの返信）を指す（設計 v2 §4.4・2026-09-15）。
+**棚（`topics.json`）に書く内容は変えない**——`post_id` は棚にも泉にも落ちない。
+
 **`thth/cli.py` の `build_parser()` に足すのは `threads_read_cli.register(sub)` の
 1 行だけ**（`ask_cli` と同じ筋）。`--search`/`--recent` は `topics` の既存 parser の
 flag で、`cli._cmd_topics()` の入口からここへ来る。
@@ -34,8 +38,21 @@ TEXT_PREVIEW_CHARS = 60
 # 「上位 N 投稿者の占有率」の N。
 TOP_AUTHORS = 3
 
+# **投稿ごとの返信の数を持ちうる鍵**（設計 v2 §4.4）。媒体によって綴りが違うので
+# 順に見て、**最初に見つかった整数だけ**を使う。どれも無ければ数は作らない
+# ——`has_replies`（真偽）が判れば `有` / `無`、それも無ければ `—`。
+# **`n/a` を 0 と混ぜない**（設計 v1 §3.2.2）。
+REPLY_COUNT_KEYS = ("replies", "reply_count", "replies_count", "reply_counts")
+
 # **権限が乗っていないときの断り**（設計 v2 §4.3 受け入れ (c)）。
 REAUTH_HINT = "`thth auth {account}` をやり直してください"
+
+# 媒体に口が無いときの断りに使う和語（設計 v2 §4.4「媒体差」）。
+CAPABILITY_LABELS = {
+    "keyword_search": "語による公開投稿の検索",
+    "mentions": "自分への言及の取得",
+    "profile_lookup": "公開プロフィールの参照",
+}
 
 
 def register(sub) -> None:
@@ -71,7 +88,8 @@ def register_topics_flags(p_topics) -> None:
     p_topics.add_argument(
         "--search", default=None, metavar="語",
         help="語で公開投稿を検索し、観測の材料（投稿者の異なり数・直近の時刻・"
-             "タグ付きの割合）を出す。本文は表示するだけで保存しない"
+             "タグ付きの割合）と、絡みに行く先（post_id・permalink・投稿ごとの"
+             "返信）を出す。本文は表示するだけで保存しない"
              "（threads_keyword_search）")
     p_topics.add_argument(
         "--recent", action="store_true",
@@ -104,7 +122,10 @@ def _adapter_for(account: str, *, capability: str):
     account_cfg = accounts_mod.load_account(account)
     media = account_cfg.get("media")
     if capability not in adapters_mod.capabilities_for(media):
-        return None, (f"{account}: 媒体 {media} にはこの口（{capability}）がありません")
+        # **黙って空にしない**（設計 v2 §4.4）。「この媒体には無い」と言って rc≠0。
+        label = CAPABILITY_LABELS.get(capability, capability)
+        return None, (f"{account}: この媒体（{media}）ではこの口"
+                      f"（{label}・{capability}）は未対応です")
     token = accounts_mod.load_token(account_cfg)
     if not adapters_mod.adapter_class(media).has_token(token):
         return None, f"{account}: token が無いので引けません"
@@ -196,6 +217,57 @@ def search_material(rows: list, *, q: str, search_type: str, limit: int) -> dict
     }
 
 
+def reply_count(row: dict):
+    """その投稿への**返信の数**（無ければ None）。**数を作らない**（設計 v2 §4.4）。
+
+    Threads の keyword-search が返すのは `has_replies`（真偽）だけで**数は返らない**
+    （**L2**: 資料の field 一覧に count が無い）。数を持つ媒体が来たときのために
+    `REPLY_COUNT_KEYS` を順に見るが、**無ければ None**——0 にしない。
+    """
+    for key in REPLY_COUNT_KEYS:
+        value = row.get(key)
+        # `True` は `int` の仲間なので弾く（`has_replies` 由来の値を数にしない）。
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return value
+        if isinstance(value, dict):
+            # `{"count": 3}` のような入れ子（媒体差）。
+            inner = value.get("count")
+            if isinstance(inner, int) and not isinstance(inner, bool):
+                return inner
+    return None
+
+
+def post_rows(rows: list) -> list:
+    """**絡みに行く先**の一覧（設計 v2 §4.4・純粋関数）。**本文は入らない。**"""
+    out = []
+    for r in rows:
+        post_id = r.get("message_id")
+        has_replies = r.get("has_replies")
+        out.append({
+            "post_id": post_id,
+            "permalink": r.get("permalink"),
+            "timestamp": r.get("timestamp"),
+            "author": r.get("username"),
+            # **数と真偽を別の鍵にする**（§4.4）。数が無いことを 0 と混ぜない。
+            "replies": reply_count(r),
+            "has_replies": has_replies if isinstance(has_replies, bool) else None,
+        })
+    return out
+
+
+def _replies_cell(post: dict) -> str:
+    """返信の欄。数 → 数字、数が無ければ `有` / `無`、判らなければ `—`。"""
+    if post["replies"] is not None:
+        return str(post["replies"])
+    if post["has_replies"] is True:
+        return "有"
+    if post["has_replies"] is False:
+        return "無"
+    return "—"
+
+
 def _pct(ratio) -> str:
     return "—" if ratio is None else f"{ratio * 100:.0f}%"
 
@@ -221,8 +293,12 @@ def cmd_topics_search(args) -> int:
 
     def render(rows):
         material = search_material(rows, q=q, search_type=search_type, limit=limit)
+        # **絡みに行く先**（設計 v2 §4.4）。棚には何も書かない——`post_id` は
+        # `topics.json` にも泉にも落ちない。
+        posts = post_rows(rows)
+        material["posts"] = posts
         if as_json:
-            # **本文は出さない**（材料だけ）。
+            # **本文は出さない**（材料と、指す先だけ）。
             print(json.dumps(material, ensure_ascii=False, indent=2))
             return 0
         a = material["authors"]
@@ -239,14 +315,28 @@ def cmd_topics_search(args) -> int:
             print(f"  タグ付きの割合  : {_pct(t['ratio'])}（{t['count']}/{t['denominator']}）")
         else:
             print("  タグ付きの割合  : —（応答に topic_tag が無いので判りません）")
-        print(f"  返信の件数      : {material['replies']['count']}/{material['replies']['denominator']}")
+        # **下の「絡みに行く先」の `返信` 欄とは別のこと**（設計 v2 §4.4）。ここは
+        # 「検索結果のうち、それ自体が返信である投稿の数」で、投稿ごとの返信の数
+        # ではない（`--json` も同じ——`replies` は集計、`posts[].replies` が投稿ごと）。
+        print(f"  返信だった投稿  : {material['replies']['count']}"
+              f"/{material['replies']['denominator']}"
+              f"（その投稿への返信の数ではありません。それは下の一覧の `返信` 欄）")
         if rows:
             print("")
-            print(f"  本文（先頭 {TEXT_PREVIEW_CHARS} 字・**表示するだけで保存しません**）:")
-            for r in rows:
-                stamp = r.get("timestamp") or "—"
-                who = r.get("username") or "—"
-                print(f"    {stamp}  @{who}  {_one_line(r.get('text'))}")
+            print("  絡みに行く先（post_id・permalink・返信。"
+                  f"本文は先頭 {TEXT_PREVIEW_CHARS} 字・**表示するだけで保存しません**）:")
+            for r, post in zip(rows, posts):
+                stamp = post["timestamp"] or "—"
+                who = post["author"] or "—"
+                print(f"    {stamp}  @{_pad(who, 16)} {_pad(post['post_id'] or '—', 20)}"
+                      f" 返信 {_replies_cell(post)}")
+                print(f"      {post['permalink'] or '（permalink 無し）'}"
+                      f"  {_one_line(r.get('text'))}")
+            print("")
+            print("  返信: 数が返る媒体は数、Threads の検索は `有`／`無` だけ"
+                  "（数は返りません）。`—` は判らない（0 ではありません）。")
+            print("  絡む道: 下書きに `reply_to: <post_id>` → `thth lint` → "
+                  "`thth approve`（二段）→ `thth throw` → `thth collect`。")
         print("")
         print("  この材料で `thth topics <account> --note <語> --status ok "
               "--audience \"…\" --verdict … --by …` を記録するのは人です"
