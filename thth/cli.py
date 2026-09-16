@@ -477,6 +477,20 @@ def _show_bundle_stage(prepared: dict) -> None:
         print("")
 
 
+def _reply_or_topic_line(one: dict) -> str | None:
+    """一段目に添える 1 行——**返信なら語の確認そのものが的外れ**（T6-1）。
+
+    `reply_to` がある原稿は誰かの投稿への返信で、語を選ぶ場面ではない。
+    `topics.verdict_line()` の「未確認です」は的外れな注意になる。
+    `topic` が付いていればその表示は別の場所で従来どおり出す——ここは
+    判定文（◆ の行）だけを reply_to の有無で切り替える。
+    """
+    reply_to = one.get("reply_to")
+    if reply_to:
+        return f"返信（reply_to: {reply_to}）——語の確認は不要"
+    return topics_mod.verdict_line(one.get("topic"), account=one.get("account"))
+
+
 def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str = "") -> None:
     """一段目: **出す本文をすべて全文表示する**。何も書き換えない。"""
     if as_json:
@@ -503,8 +517,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
         if one.get("kind") == "bundle":
             # **各段の全文と返信関係を出す**（Codex 最終条件 5）。
             _show_bundle_stage(one)
-            topic_line = topics_mod.verdict_line(one.get("topic"),
-                                                  account=one.get("account"))
+            topic_line = _reply_or_topic_line(one)
             if topic_line:
                 print(f"  ◆ {topic_line}")
             print(f"digest: {one['digest']}")
@@ -516,7 +529,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
         print(f"  reply_to  : {one['reply_to'] or '（なし）'}")
         if one.get("warning"):
             print(f"  ⚠ {one['warning']}")
-        topic_line = topics_mod.verdict_line(one.get("topic"), account=one.get("account"))
+        topic_line = _reply_or_topic_line(one)
         if topic_line:
             print(f"  ◆ {topic_line}")
         print("--- 出す本文 ---")

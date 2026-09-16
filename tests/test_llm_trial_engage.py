@@ -100,6 +100,15 @@ def test_engageの箱には偽サーバとdemo_bluesky台帳がある(engage_box
         "--engage で demo-threads の台帳が消えている（足すはずが置き換わった）"
 
 
+# T6-4: 台帳の handle が雛形のダミー（`demo.bsky.social`）のままだと
+# `thth doctor` が「ダミーのままです」で rc=1 になり、採点に入らない箱の欠陥で
+# 被験者が「壊れているのか」と迷っていた（試験の摩擦）。
+def test_箱のdoctorはrc0(engage_box):
+    r = _run_in_box(engage_box, "doctor", bb.ENGAGE_ACCOUNT)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "ダミーのままです" not in r.stdout + r.stderr, r.stdout + r.stderr
+
+
 def test_偽サーバはloopbackだけで待ち直接叩いても固定の中身を返す(engage_box):
     """`build_box.py` を経由せず、`fake_bluesky.json` の url を直に叩く——
     箱の外から見ても偽サーバの中身が固定どおりであることの確認。"""

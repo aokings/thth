@@ -22,11 +22,12 @@ from . import jst
 # **行の形の版**（設計「自分の泉」§4）。形を変えたら上げる。
 SCHEMA = "thth.engagement.v1"
 
-# **禁止鍵**（`thth/share.py` の `FORBIDDEN_KEYS` と同じ顔ぶれ）。本文・
-# 相手の名前・自分の判断・秘密・置き場の絶対パスは、この台帳のどこにも書かない。
+# **禁止鍵**（横断の泉の名残ではなく、絡みの台帳と `runs` の共通の禁止鍵・
+# T5-1 で `thth/share.py` を消した後の正本はここ）。本文・相手の名前・自分の
+# 判断・秘密・置き場の絶対パスは、この台帳のどこにも書かない。`thth/runs.py`
+# はこの集合をそのまま import して使う（`runs` 自前の禁止鍵は持たない）。
 #
-# **`share.py` から import しない**（share は後で消える予定・発注 T0）。ここに
-# 自前で持つ。`post_id`・`root_post`・`account` は share.py の一覧にはあるが、
+# `post_id`・`root_post`・`account` は他の台帳では禁止語になりうる語だが、
 # **絡みの台帳ではそれ自体が §4 の正規の鍵**なので、ここでは禁止語から外して
 # ある——さもないと `_assert_clean()` は台帳の正しい 1 行すら常に拒む。
 FORBIDDEN_KEYS = frozenset({

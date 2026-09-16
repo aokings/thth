@@ -129,6 +129,30 @@ def test_2_承認後にreply_toだけ変えると出ない(isolated_account):
     assert result.action == "none"
 
 
+# T6-1: 返信（reply_to あり）の一段目は語を選ぶ場面ではないので「未確認」を出さない。
+# ※ テスト名自体に「未確認」を含めない——pytest の tmp_path にテスト名が入り、
+#   出力の中の**ファイルパス**にその文字列が紛れて assert が誤爆するため。
+def test_返信の一段目には語の確認の注意を出さない(isolated_account):
+    path = write_queue_file(isolated_account["queue_dir"], "a.md", fm_overrides={
+        "status": "draft", "approved_sha": None,
+        "reply_to": "at://did:plc:abc/app.bsky.feed.post/xyz", "topic": "お茶"})
+    first = run_thth(["approve", path])
+    assert first.returncode == 1
+    body = first.stdout.split("--- 出す本文 ---", 1)[0]
+    assert "未確認" not in body, body
+    assert ("返信（reply_to: at://did:plc:abc/app.bsky.feed.post/xyz）——"
+            "語の確認は不要") in first.stdout, first.stdout
+
+
+# T6-1: reply_to が無ければ従来どおり「未確認」が出る（回帰確認）。
+def test_reply_to無しでは従来どおり未確認が出る(isolated_account):
+    path = write_queue_file(isolated_account["queue_dir"], "a.md", fm_overrides={
+        "status": "draft", "approved_sha": None, "topic": "お茶"})
+    first = run_thth(["approve", path])
+    assert first.returncode == 1
+    assert "未確認" in first.stdout, first.stdout
+
+
 # 受け入れ 2: publish_at だけ変える → 出ない。
 def test_2_承認後にpublish_atだけ変えると出ない(isolated_account):
     path = write_queue_file(isolated_account["queue_dir"], "a.md",

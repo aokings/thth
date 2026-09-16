@@ -290,7 +290,23 @@ def _count(app_dir: str, spec: str) -> int | None:
         return None
 
 
+def _has_git(app_dir: str) -> bool:
+    """`app_dir` が git の管理下か（T6-3）。
+
+    `pip install` で入った環境には `.git` が無い——それでも `head()` は import
+    のたびに `git -C <site-packages> rev-parse HEAD` を走らせ、毎回 rc=128 に
+    なっていた（無害だが無駄・試験の記録に 1 コマンドごとに 1 行汚れる）。
+    ここで先に確かめて、**無ければ git を 1 回も呼ばない**。
+
+    **`os.path.isdir` ではなく `os.path.exists` で見る**——worktree では
+    `.git` が（`gitdir: …` を指す）ファイルで、ディレクトリではない。
+    """
+    return os.path.exists(os.path.join(app_dir, ".git"))
+
+
 def head(app_dir: str = APP_DIR) -> str | None:
+    if not _has_git(app_dir):
+        return None
     r = _git(["rev-parse", "HEAD"], cwd=app_dir)
     return r.stdout.strip() if r.returncode == 0 else None
 
@@ -309,7 +325,11 @@ def behind_release(app_dir: str = APP_DIR, *, fetch: bool = False,
 
     **`None` は「遅れていない」ではなく「判らない」。**——配布の枝が origin に
     無い場合もここに来る。**0 と混ぜない。**
+
+    **`.git` が無ければ（pip 版）git を 1 回も呼ばず `None`**（T6-3）。
     """
+    if not _has_git(app_dir):
+        return None
     ref = ref or RELEASE_REF
     if fetch:
         # **取りに行けなかったなら、手元の値は古い。** 数えられるからといって
@@ -351,7 +371,11 @@ def ahead_of_release(app_dir: str = APP_DIR, *, fetch: bool = False,
     起きうる経路が実際にある: VM のローカル枝の upstream が `origin/main` の
     ままなので、**保守で誰かが `git pull` を打てば、そこで配布の境界を迂回
     する。** しかも以後、迂回したことが**どこにも出ない。**
+
+    **`.git` が無ければ（pip 版）git を 1 回も呼ばず `None`**（T6-3）。
     """
+    if not _has_git(app_dir):
+        return None
     ref = ref or RELEASE_REF
     if fetch:
         _begin_check(app_dir, ref)

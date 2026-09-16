@@ -150,6 +150,38 @@ def test_git_repoでなければその旨を返す(tmp_path):
     assert message and "git repo" in message
 
 
+# --- T6-3: `.git` の無い場所（pip 版）では git を叩かない ---------------------
+# `LOADED_REV = head(APP_DIR)` が import のたびに `git -C <site-packages>
+# rev-parse HEAD` を走らせ、pip で入れた環境では毎回 rc=128（無害だが無駄・
+# 試験の記録が 1 コマンドごとに 1 行汚れる）。
+
+
+def test_headはgitが無ければ呼ばずにNoneを返す(tmp_path, monkeypatch):
+    plain = tmp_path / "pip版のつもり"
+    plain.mkdir()
+    calls = []
+    monkeypatch.setattr(selfupdate, "_git",
+                        lambda args, *, cwd: calls.append((args, cwd)))
+    assert selfupdate.head(str(plain)) is None
+    assert calls == [], f"git を呼んでいる: {calls}"
+
+
+def test_headは_gitがあれば従来どおり(tmp_path):
+    pair = _app_pair(tmp_path)
+    assert selfupdate.head(pair["work"]) is not None, ".git がある場所では従来どおり読める"
+
+
+def test_behind_releaseとahead_of_releaseもgitが無ければ呼ばない(tmp_path, monkeypatch):
+    plain = tmp_path / "pip版のつもり2"
+    plain.mkdir()
+    calls = []
+    monkeypatch.setattr(selfupdate, "_git",
+                        lambda args, *, cwd: calls.append((args, cwd)))
+    assert selfupdate.behind_release(str(plain), fetch=True) is None
+    assert selfupdate.ahead_of_release(str(plain), fetch=True) is None
+    assert calls == [], f"git を呼んでいる: {calls}"
+
+
 def test_他のプロセスが先に更新しても読み込んだ版と違えばexecしなおす(tmp_path, monkeypatch):
     """外部レビュー第 6 巡 P2-4。
 

@@ -52,6 +52,16 @@ PERMISSION_BY_MEDIUM = {
     "threads": "threads_read_replies",
 }
 
+# post_id の形が違うときに見せる、媒体ごとの手本（T6-2）。**形の検査そのものは
+# adapter の classmethod（`Adapter.is_post_id()`）に置く**——ここは断り文の
+# 言い回しだけを持つ（media を見て分岐する core の規約は壊さない・
+# `thread_read` は判定を「呼ぶだけ」）。
+POST_ID_FORM_HINT = {
+    "bluesky": "Bluesky の post_id は `at://did:…/app.bsky.feed.post/…` の形です。",
+    "mastodon": "Mastodon の post_id は数字の id です。",
+    "threads": "Threads の post_id は数字の id です。",
+}
+
 
 class ThreadReadError(Exception):
     """問いが受け取れない（post_id が空・max_messages が範囲外 等）。
@@ -175,8 +185,16 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
     if CAPABILITY not in adapters_mod.capabilities_for(media):
         raise adapter_base.AdapterError(
             f"{account_name}: この媒体（{media}）では枝を読む口は未対応です")
-    token = accounts_mod.load_token(account_cfg)
     adapter_cls = adapters_mod.adapter_class(media)
+    # **形違いは adapter を叩く前に断る**（T6-2）。短い id（rkey だけ）を渡す
+    # 取り違いが、adapter の生のエラーとして被験者に届いていた（試験の摩擦）。
+    # 検査そのもの（`is_post_id()`）は媒体ごとの adapter に置く——ここは
+    # それを呼んで、断り文に手本と `--json` の使い方を添えるだけ。
+    if not adapter_cls.is_post_id(post_id):
+        hint = POST_ID_FORM_HINT.get(media, "post_id の形が違います。")
+        _reject(f"{hint}`thth where {account_name} --json` の `post_id` を"
+                "そのまま渡してください")
+    token = accounts_mod.load_token(account_cfg)
     if not adapter_cls.has_token(token):
         raise adapter_base.AdapterError(f"{account_name}: token が無いので読めません")
     adapter = adapters_mod.make_adapter(account_cfg, token)

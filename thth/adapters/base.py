@@ -292,6 +292,21 @@ class Adapter:
         return set(cls.CAPABILITIES)
 
     @classmethod
+    def is_post_id(cls, value) -> bool:
+        """`value` がこの媒体の `post_id` の形として使えるか（T6-2）。
+
+        **実体を作らずに引ける**（classmethod）——`thread_read` は token を
+        取る前にここで形違いを断る。既定は `postid.is_usable()`（書けない値
+        だけを弾く緩い判定）。**媒体固有の形**（Bluesky の AT URI 等）を持つ
+        媒体だけが上書きする——被験者が Bluesky の post_id に rkey だけの
+        短い id を渡して adapter の生のエラーに落ちた試験の摩擦（発注
+        T6-2・`thth-notes/記録/試験_この枝に絡んで_2026-09-16.md`）を、
+        adapter へ渡す前に断るための口。
+        """
+        from .. import postid as postid_mod
+        return postid_mod.is_usable(value)
+
+    @classmethod
     def count_text(cls, text: str) -> int:
         """**この媒体の数え方**で本文の長さを数える（`queuefile.limit_for()` と対）。
 
