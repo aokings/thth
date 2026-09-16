@@ -246,6 +246,19 @@ def _run(account: str, *, capability: str, call, as_json: bool, render,
         else:
             print(message, file=sys.stderr)
         return 1
+    except RuntimeError as e:
+        # **`AdapterError` ではない素の `RuntimeError`**（Bluesky の `_request`
+        # 周りなど）を、`AdapterError` と同じ出し方で受ける（T9-2）。
+        # `AdapterError` は `RuntimeError` の子なので、上の
+        # `except AdapterError` をすり抜けたものだけがここに来る。**adapter が
+        # 投げる例外の型は変えない**——ここは受け口を増やすだけ。
+        message = f"{account}: {redact_mod.redact(str(e))}"
+        if as_json:
+            print(json.dumps({"error": message, "account": account},
+                             ensure_ascii=False, indent=2))
+        else:
+            print(message, file=sys.stderr)
+        return 1
     return render(result)
 
 

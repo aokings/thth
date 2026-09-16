@@ -132,6 +132,54 @@ def pending_paths(repo_dir: str, account_cfg: dict) -> list:
     return sorted(out)
 
 
+def _pending_engagement_paths(repo_dir: str, account_cfg: dict, account_name: str) -> list:
+    """絡みの台帳（`data/sns/engagements/*.ndjson`）のうち、未追跡か変更が
+    あるものを絶対パスで返す（T9-1・照合「X Developer Agreement と自分の泉」
+    検収 1）。
+
+    `collect_once()` の `touched` は「今回の採取で触ったファイル」だけを
+    数える。絡みの台帳（`thth/engagements.py::append()`）は**公開が確定した
+    直後**に書かれ、それは `thth core.py` の queue 経由の投稿だけでなく
+    `_send_locked`（同席送信）でも起きる——だが `_send_locked` は commit しない
+    （`core.py:707,759-780`）。結果、絡みの行は VM の repo に未追跡のまま
+    溜まり、**同期（`sync_repo`）は未追跡を見ないので止まらないが、git には
+    一度も入らない**。
+
+    ここで `git status --porcelain` を見て、採取自身が何も触らなくても
+    絡みの台帳の変更を拾う（`writeback.pending_paths()` と同じ流儀だが、
+    見る先を `data/sns` 全体ではなく **engagements だけ**に絞る——他の
+    `data/sns` 配下の変更を二重に拾わないため）。
+    """
+    if not repo_dir or not os.path.isdir(repo_dir):
+        return []
+    dirs = accounts_mod.data_dirs(account_cfg, account_name)
+    engagements_dir = dirs["engagements"]
+    if not os.path.isdir(engagements_dir):
+        return []
+    rel_dir = os.path.relpath(os.path.realpath(engagements_dir), os.path.realpath(repo_dir))
+    if rel_dir == os.pardir or rel_dir.startswith(os.pardir + os.sep):
+        # engagements が repo の外を指す異常系（state 側の置き場と repo_dir が
+        # 食い違っている）。git には触らない。
+        return []
+    # **`--untracked-files=all` が要る。** 既定の `git status --porcelain` は
+    # 中身が丸ごと未追跡なディレクトリを `?? data/sns/engagements/`（末尾
+    # スラッシュ付きの 1 行）にまとめて返し、個々のファイル名を出さない。
+    # `engagements/` は採取が repo に初めて作る側なので、**最初の 1 回は
+    # ほぼ必ずこの「ディレクトリごと未追跡」の形**になる——`.ndjson` で
+    # 終わらない行として弾かれ、絶対に拾えなかった（この関数を書いた本人が
+    # 変異テストで踏んだ）。
+    status = _git(repo_dir, ["status", "--porcelain", "--untracked-files=all",
+                              "--", rel_dir])
+    if status.returncode != 0:
+        return []
+    out = []
+    for line in status.stdout.splitlines():
+        path = line[3:].strip()
+        if path and path.endswith(".ndjson"):
+            out.append(os.path.join(repo_dir, path))
+    return sorted(out)
+
+
 def _read_ndjson_strict(path: str) -> tuple:
     """`(行, 壊れているか)`。**壊れた行を黙って飛ばさない。**
 
@@ -1004,9 +1052,15 @@ def _collect_entry(account_name: str, *, adapter, now, log, info: dict) -> int:
         result = collect_once(account_name, adapter=adapter, now=now, log=log)
         _note(info, result)
 
-        if result["touched"]:
+        # T9-1: 絡みの台帳（`_send_locked` が書いた行も含む）は `collect_once()`
+        # の `touched` に一度も現れない。採取で他に何も触らなくても、絡みの
+        # 台帳に未追跡・変更があれば同じ commit に含める。
+        engagement_paths = _pending_engagement_paths(repo_dir, account_cfg, account_name)
+        all_touched = sorted(set(result["touched"]) | set(engagement_paths))
+
+        if all_touched:
             rel = [os.path.relpath(os.path.realpath(p), os.path.realpath(repo_dir))
-                   for p in result["touched"]]
+                   for p in all_touched]
             pushed, push_err = writeback.commit_and_push(
                 repo_dir, rel_path=rel,
                 message=f"収集: {len(rel)} ファイル（{account_name}）")

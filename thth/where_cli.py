@@ -163,6 +163,16 @@ def _account_node(account_name: str, words: list, *, search_type: str,
         except adapter_base.AdapterError as e:
             node_cannot_say.append(f"{word}: {redact_mod.redact(str(e))}")
             continue
+        except RuntimeError as e:
+            # **`AdapterError` ではない素の `RuntimeError`**（Bluesky の
+            # `_request` 周りなど）を、`AdapterError` と同じ出し方で受ける
+            # （T9-2）。`AdapterError` は `RuntimeError` の子なので、上の
+            # `except AdapterError` をすり抜けたものだけがここに来る。この
+            # account 全体を落とさず、その語だけ `cannot_say` に流して他の
+            # 語・他の account を続ける（`--project` で 1 account だけ落ちて
+            # も他が出る、という既存の筋と同じ）。
+            node_cannot_say.append(f"{word}: {redact_mod.redact(str(e))}")
+            continue
 
         material = threads_read_cli_mod.search_material(
             rows, q=word, search_type=search_type, limit=limit)

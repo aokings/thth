@@ -95,6 +95,14 @@ def _profile_for(account_cfg: dict, account_name: str, *, username: str | None):
         return None, _permission_message(account_name, adapter, e)
     except adapter_base.AdapterError as e:
         return None, redact_mod.redact(str(e))
+    except RuntimeError as e:
+        # **`AdapterError` ではない素の `RuntimeError`**（Bluesky の
+        # `_request` 周りなど）を、`AdapterError` と同じ出し方で受ける
+        # （T9-2）。`AdapterError` は `RuntimeError` の子なので、上の
+        # `except AdapterError` をすり抜けたものだけがここに来る。呼び出し側
+        # （`_account_node`）はこれを `cannot_say` に足して account 全体は
+        # 落とさない。
+        return None, redact_mod.redact(str(e))
     return profile, None
 
 

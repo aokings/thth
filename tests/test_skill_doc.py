@@ -99,3 +99,29 @@ def test_泉に落とすかどうかの節が削られている():
     """T4-1「『泉に落とすかどうか（§4）』の節は削る」。"""
     text = _read()
     assert "泉に落とすかどうか" not in text
+
+
+def _bullets(text: str) -> list:
+    """トップレベルの `- ` 箇条書きを 1 項目 1 要素に割る。
+
+    続きの行（インデントされた行）は直前の項目にくっつく——1 つの箇条書き
+    項目が複数行にまたがっていても 1 ブロックとして見られるように。
+    """
+    return re.split(r"\n(?=- )", text)
+
+
+def test_replies台帳が相手のusernameと本文を残すと書かれている():
+    """T9-3: 自分の投稿への返信の台帳（`thth collect` が採り、`thth replies` で
+    読む）は相手の `username` と本文を残す——「何を絶対にしないか」の読む口の
+    項（`thread_read`・`where_to_appear`・`who_is_this` は何も保存しない・
+    絡みの台帳は自分の行為と反応だけ）と混同されないよう、この事実を書く
+    （照合「X Developer Agreement と自分の泉」検収 2）。
+
+    **言い方を固定しすぎない検査**: 特定の文言を assert するのではなく、
+    `replies` と `username` が**同じ箇条書き項目**に出てくることだけを見る。
+    """
+    text = _read()
+    bullets = _bullets(text)
+    hit = [b for b in bullets if "replies" in b and "username" in b]
+    assert hit, ("「replies」と「username」が同じ箇条書き項目に出てくる"
+                 "ブロックがありません")
