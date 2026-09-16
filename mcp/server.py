@@ -167,6 +167,27 @@ TOOLS = [
             "required": ["account"],
         },
     },
+    {
+        # **名前と説明文がそのまま売り文句**（設計「自分の泉」§2.1）。
+        # 実装が 1 語でも足したら設計書でなく実装を戻す（§2 の頭書きそのまま）。
+        "name": "thread_read",
+        # **設計「自分の泉」§2.1 の文言そのまま。**
+        "description": (
+            "返信を書く前に呼ぶ。この投稿の枝を、誰が・いつ・何を・誰に向けて"
+            "言ったかの順で返す。何も保存しない"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "account": {"type": "string", "description": "account 名"},
+                "post_id": {"type": "string", "description": "枝の根の post_id"},
+                "since": {"type": "string", "description": "この時刻以降だけ"},
+                "max_messages": {"type": "integer",
+                                   "description": "読む上限（既定 200・上限 1000）"},
+            },
+            "required": ["account", "post_id"],
+        },
+    },
 ]
 
 
@@ -390,10 +411,22 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
+    elif name == "thread_read":
+        # **`after_you_posted` と同じ型**: CLI（`thth thread`）を `--json` で
+        # 呼ぶだけ（設計「自分の泉」§2.1・T1-3）。
+        args = ["thread", arguments["account"], arguments["post_id"]]
+        if arguments.get("since"):
+            args += ["--since", arguments["since"]]
+        if arguments.get("max_messages") is not None:
+            args += ["--max-messages", str(arguments["max_messages"])]
+        args.append("--json")
+        proc = run_cli(args)
+        text = proc.stdout
     else:
         return {"content": [{"type": "text", "text": f"unknown tool: {name}"}], "isError": True}
 
-    if name.startswith("thth_topic_") or name in ("before_you_post", "after_you_posted"):
+    if name.startswith("thth_topic_") or name in (
+            "before_you_post", "after_you_posted", "thread_read"):
         # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）
         # とは意味が違う——こちらは stale_context・不正な候補比較で、
         # **そのまま使ってはいけない**応答。既存の扱いは変えない。

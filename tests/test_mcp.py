@@ -96,9 +96,11 @@ def test_mcp_stdioでtools_listとtools_callが通る(isolated_account):
     # 2026-09-11 にトピック提案の**読み取り 3 本**を足した（設計 §7）。
     # 2026-09-13 に `before_you_post` を足した（設計 v2 §1・§6 v2-1・読むだけ）。
     # 2026-09-16 に `after_you_posted` を足した（設計「自分の泉」§2.2・T0-2・読むだけ）。
+    # 2026-09-16 に `thread_read` を足した（設計「自分の泉」§2.1・T1-3・読むだけ）。
     assert tool_names == {"thth_lint", "thth_queue", "thth_preview", "thth_board",
                           "thth_topic_context", "thth_topic_evaluate",
-                          "thth_topic_decision", "before_you_post", "after_you_posted"}
+                          "thth_topic_decision", "before_you_post", "after_you_posted",
+                          "thread_read"}
     # 副作用のあるものは 1 つも出ていない。
     assert not (tool_names & {"thth_approve", "thth_throw", "thth_token",
                                "thth_auth", "thth_refresh", "thth_revoke",
@@ -107,3 +109,47 @@ def test_mcp_stdioでtools_listとtools_callが通る(isolated_account):
     call_result = by_id[3]["result"]
     payload = json.loads(call_result["content"][0]["text"])
     assert "accounts" in payload
+
+
+# ============================================== thread_read（T1-3）
+
+def test_thread_readの説明文は設計のままで固定(isolated_account):
+    """**実装が 1 語でも足したら設計書でなく実装を戻す**（設計「自分の泉」§2 頭書き）。"""
+    server = _load_server_module()
+    tool = next(t for t in server.TOOLS if t["name"] == "thread_read")
+    assert tool["description"] == (
+        "返信を書く前に呼ぶ。この投稿の枝を、誰が・いつ・何を・誰に向けて"
+        "言ったかの順で返す。何も保存しない")
+
+
+def test_mcp_thread_readはcliと同じjsonが返る(isolated_account_factory, monkeypatch, tmp_path):
+    from tests.conftest import run_thth
+    from tests.test_threads_read_permissions import OTHER_POST, OTHER_POST_ID, _server
+
+    with _server() as (base_url, requests):
+        token_path = str(tmp_path / "threads.token")
+        with open(token_path, "w", encoding="utf-8") as f:
+            json.dump({"access_token": "FAKE-SECRET", "user_id": "999999",
+                      "username": "nigamilab", "scopes": None}, f)
+        account = isolated_account_factory(
+            "nigamilab-mcp-thread-test", media="threads", handle="nigamilab",
+            token=token_path)
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+
+        server = _load_server_module()
+        result = server.call_tool(
+            "thread_read", {"account": account["name"], "post_id": OTHER_POST_ID})
+
+        cli_result = run_thth(["thread", account["name"], OTHER_POST_ID, "--json"])
+
+    assert result["isError"] is False, result
+    mcp_payload = json.loads(result["content"][0]["text"])
+    assert cli_result.returncode == 0, cli_result.stdout + cli_result.stderr
+    cli_payload = json.loads(cli_result.stdout)
+
+    assert mcp_payload["root"]["post_id"] == OTHER_POST_ID
+    assert mcp_payload["root"]["text"] == OTHER_POST["text"]
+    assert mcp_payload["messages"] == []
+    # **CLI と MCP は同じ CLI を呼ぶだけ**（`fetched_at` は毎回変わるので除く）。
+    for key in ("root", "messages", "counts", "you_and_them"):
+        assert mcp_payload[key] == cli_payload[key]
