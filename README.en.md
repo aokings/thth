@@ -106,7 +106,7 @@ Full walkthrough: [docs/usage.en.md](docs/usage.en.md).
 
 ## Commands
 
-All 34 subcommands `thth --help` lists today, one line each:
+All 35 subcommands `thth --help` lists today, one line each:
 
 - `lint` — check a queue file's front matter and length
 - `preview` — show the exact text that would go out
@@ -135,6 +135,9 @@ All 34 subcommands `thth --help` lists today, one line each:
 - `collect` — gather metrics and replies on the elapsed-time schedule, for
   queued posts **and** for posts made with `send`; with no repo configured the
   ledgers go to `$THTH_ROOT/state/<account>/data/sns/` instead of your repo
+- `pull` — explicitly fetch and fast-forward an account's repo (or every repo
+  under a `--project`), the same `sync_repo()` call `approve` already makes;
+  read-only commands (`queue`/`schedule`/`board`) never pull on their own
 - `auth` — exchange an authorization code or credentials for a long-lived token
 - `refresh` — refresh a long-lived token
 - `maintain` — keep every account's token alive (independent of posting)

@@ -82,6 +82,17 @@ def read_json(path: str | None, *, stdin: bool, what: str):
         raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
         origin = "標準入力"
     elif path:
+        # **VM に無いパスは素の traceback でなく案内で断る**（T8-1・kopicha
+        # 続報）。`cli._require_vm_path` の 1 箇所に集約する——ここが `--article`・
+        # `--proposal`・`--profile`・`--input`（`observe`・`record-decision`
+        # など各 sub の入力）の全てが通る合流点なので、ここで確かめれば
+        # 個別の sub を直さずに全部そろう。循環 import を避けるため関数の
+        # 中で import する（`cli.py` は `topic_cli` を `main()` の中でしか
+        # 読まない）。
+        from . import cli as cli_mod
+        vm_msg = cli_mod._require_vm_path(path, what=what)
+        if vm_msg:
+            raise InputError("vm_path_missing", vm_msg)
         try:
             with open(path, "rb") as f:
                 raw = f.read(MAX_INPUT_BYTES + 1)
@@ -226,6 +237,13 @@ def cmd_suggest(args) -> int:
     article だけなら文脈を返して `needs_proposal`。proposal 付きなら検査した
     結果を返す。**THTH 自身が LLM を呼んだかのように振る舞わない。**
     """
+    # **queue ファイル（`args.file`）も VM に無ければ案内で断る**（T8-1）。
+    # `topic_advice.build_context()` はここより先で `open()` するので、
+    # 何も検査していないうちにここで止める。
+    from . import cli as cli_mod
+    vm_msg = cli_mod._require_vm_path(args.file, what="queue ファイル")
+    if vm_msg:
+        raise InputError("vm_path_missing", vm_msg)
     if getattr(args, "input_json_stdin", False):
         # 標準入力は 1 本しかないので、記事と候補比較は 1 つの封筒で受ける。
         # **読んだあとは、ファイルから読んだ場合と同じ検査関数へ合流する。**
@@ -824,6 +842,12 @@ def _draft_sha256(path: str | None, what: str) -> str | None:
     """
     if not path:
         return None
+    # **VM に無いパスは案内で断る**（T8-1・`--draft`・`--revised-draft` もここを
+    # 通る `read_json` と同じ合流点）。
+    from . import cli as cli_mod
+    vm_msg = cli_mod._require_vm_path(path, what=what)
+    if vm_msg:
+        raise InputError("vm_path_missing", vm_msg)
     try:
         with open(path, "rb") as f:
             import hashlib

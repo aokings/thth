@@ -67,6 +67,10 @@ def cmd_lint(args) -> int:
     # どこにも出ず、承認前の `cmd_approve()` にはある同じ関門が lint には無かった。
     # `cmd_approve()` と同じ形（note も使って理由を出す・exit 1）にそろえる。
     paths, note = _expand_targets(args.file, only_draft=False)
+    if paths is None:
+        # **VM に無いパスは `_expand_targets` が案内済み**（T8-1）。ここでは
+        # rc だけ決める——traceback ではなく案内で断ったことが伝わるように。
+        return 2
     if not paths:
         print(f"検査できるものがありません（対象 0 件です）{note}", file=sys.stderr)
         return 1
@@ -100,6 +104,11 @@ def cmd_lint(args) -> int:
 def cmd_preview(args) -> int:
     """本文だけを出す規約（設計 §4.1）。`--json` のときだけ topic 等も返す
     （T2c・masaru 裁定 2026-09-09。本文の規約そのものは変えない）。"""
+    vm_msg = _require_vm_path(args.file)
+    if vm_msg:
+        # **VM に無いパスは素の traceback でなく案内で断る**（T8-1）。
+        print(vm_msg, file=sys.stderr)
+        return 2
     try:
         section = lint_mod.preview_file(args.file)
     except (ValueError, accounts_mod.AccountError) as e:
@@ -119,6 +128,32 @@ def cmd_preview(args) -> int:
     return 0
 
 
+def _require_vm_path(path: str, *, what: str = "") -> str | None:
+    """ファイルを受け取る引数に渡されたパスが VM に無いときの案内文を返す
+    （T8-1・kopicha 続報）。存在すれば None。
+
+    **`~/.local/bin/thth` は Mac から VM へ ssh する薄いラッパ**（発注書の
+    「事実」）。引数はそのまま VM 側の thth に渡るので、Mac 側の相対パスも
+    絶対パスも VM には無い——いままでは素の `FileNotFoundError` の traceback が
+    出ていた（`--article /tmp/x.json` で踏んだのと同じ根）。**ファイルを受け取る
+    全ての引数をこの 1 つの関数に集約し**、案内で断る。
+
+    出し方は呼び出し側が選ぶ（`cli.py` は stderr へ直接・`topic_cli.py` は
+    JSON の `error.message` へ）。`what` は「何のパスか」の短い説明（省略可）。
+    **`repo_dir` は台帳から引ける場合もあるが、ここは account を知らない場所
+    からも呼ばれるので、ヒントは一般形のままにする**（発注書 T8-1）。
+    """
+    if os.path.exists(path):
+        return None
+    label = f"（{what}）" if what else ""
+    return (
+        f"そのパスが VM にありません: {path}{label}\n"
+        "**thth は VM（wt）で動きます。** 手元（Mac）のパスは渡せません。\n"
+        "  - VM 側の絶対パスで渡してください\n"
+        "  - どこにあるかは: thth queue <account>（repo と queue の場所が出ます）"
+    )
+
+
 def _expand_targets(files, *, only_draft: bool) -> tuple:
     """ファイルとディレクトリの混在を受けて、対象のファイル一覧に展開する。
 
@@ -131,9 +166,28 @@ def _expand_targets(files, *, only_draft: bool) -> tuple:
     `status: draft` のものだけ——「下書きを全部承認する」が自然な意味だから。
     **ファイルを名指しで渡した場合は絞らない**（承認済みに `--by` を足し直す用途が
     ある）。何を外したかは呼び出し側が述べる。
+
+    **名指しのファイルが VM に無ければ、ここで rc=2 に落とす**（T8-1）。
+    呼び出し側は `paths is None` を見て `return 2` する。ディレクトリの存在は
+    ここでは確かめない（`os.listdir` が失敗すれば自然に落ちるし、「対象 0 件」の
+    断り方は既にある）。**存在するものだけを黙って処理して進まない**——1 本でも
+    無ければ全部断る（半分だけ処理しない、既存の規律と同じ形）。
     """
+    items = files if isinstance(files, list) else [files]
+    missing_msgs = []
+    for item in items:
+        if os.path.isdir(item):
+            continue
+        msg = _require_vm_path(item)
+        if msg:
+            missing_msgs.append(msg)
+    if missing_msgs:
+        for msg in missing_msgs:
+            print(msg, file=sys.stderr)
+        return None, ""
+
     out, skipped = [], 0
-    for item in files if isinstance(files, list) else [files]:
+    for item in items:
         if not os.path.isdir(item):
             out.append(item)
             continue
@@ -263,6 +317,9 @@ def cmd_approve(args) -> int:
     どこにも書いていなかった。手順を文書に足すのではなく、道具の側でやる。
     """
     paths, note = _expand_targets(args.file, only_draft=True)
+    if paths is None:
+        # **VM に無いパスは `_expand_targets` が案内済み**（T8-1）。
+        return 2
     if not paths:
         print(f"承認できるものがありません{note}", file=sys.stderr)
         return 1
@@ -632,6 +689,11 @@ def cmd_revoke(args) -> int:
     割り込めない。既に出てしまったもの（`post_id` あり）は取り消せないので断る
     ——その場合は Threads の画面から手で消すしかない、とその場で言う。
     """
+    vm_msg = _require_vm_path(args.file)
+    if vm_msg:
+        # **VM に無いパスは素の traceback でなく案内で断る**（T8-1）。
+        print(vm_msg, file=sys.stderr)
+        return 2
     repo_dir = writeback_mod.repo_toplevel(args.file)
     if repo_dir is None:
         print(f"git repo の中のファイルではないので取り消しを記録できません: {args.file}",
@@ -2029,7 +2091,50 @@ def cmd_forms(args) -> int:
     return 0
 
 
+def _behind_notices(account_names: list) -> tuple:
+    """`account_names` に挙がる account の repo を重複排除して確かめ、
+    遅れているものだけを案内の行にする（T8-2・kopicha 続報）。
+
+    `thth queue`・`thth schedule`・`thth board` はどれも**読むだけの口**なので、
+    ここまで `writeback.sync_repo()`（pull を含む）を通していなかった——`thth
+    approve` 等が既に通している同期を、読むだけの口にまで広げるのではなく、
+    **遅れていることだけを言う**のがこの関数の役目（`writeback.behind_remote()`
+    の docstring と同じ理由）。
+
+    同じ repo を複数 account が共有していても `git fetch` は 1 回で済ませる
+    （repo_dir で重複排除）。戻り値は `(案内の行のリスト, {account名:
+    behind_remote() の dict})`——後者は呼び出し側が `--json` に足したり、
+    account ごとの行に使ったりする。
+    """
+    by_repo: dict = {}
+    for name in account_names:
+        try:
+            account_cfg = accounts_mod.load_account(name)
+        except accounts_mod.AccountError:
+            continue
+        repo_dir = account_cfg.get("repo_dir")
+        if not repo_dir:
+            continue
+        by_repo.setdefault(repo_dir, []).append(name)
+
+    lines = []
+    repo_by_account: dict = {}
+    for repo_dir, names_here in by_repo.items():
+        info = writeback_mod.behind_remote(repo_dir)
+        for name in names_here:
+            repo_by_account[name] = info
+        if info.get("behind"):
+            example = sorted(names_here)[0]
+            lines.append(
+                f"remote に {info['behind']} commit 分の新しいものがあります"
+                "（この一覧は取り込み前の状態です）。"
+                f"`thth pull {example}` か `thth approve` で取り込まれます")
+    return lines, repo_by_account
+
+
 def cmd_queue(args) -> int:
+    account_names = [args.account] if args.account else accounts_mod.list_account_names()
+    notice_lines, repo_by_account = _behind_notices(account_names)
     summary = report_mod.queue_summary(args.account)
     # **読めなかった台帳があれば終了コードを立てる**（監査 2 回目・P3-3）。
     # 名前が不正・台帳が無い・壊れているとき、画面には 1 行出るのに **rc は 0**
@@ -2037,9 +2142,16 @@ def cmd_queue(args) -> int:
     # 返るので、**script から呼ぶと黙って素通りする**（作法 5・loud reject）。
     rc = 2 if any("error" in info for info in summary.values()) else 0
     if args.json:
+        # **`--json` には `repo`（`behind_remote()` の dict）を足す**（T8-2）。
+        for name, info in summary.items():
+            if name in repo_by_account:
+                info["repo"] = repo_by_account[name]
         _print_json(summary)
         return rc
     else:
+        # **先頭に 1 行**（T8-2）。遅れていなければ何も出さない（静かに）。
+        for line in notice_lines:
+            print(line)
         for name, info in summary.items():
             if "error" in info:
                 print(f"{name}: {info['error']}", file=sys.stderr)
@@ -2060,10 +2172,20 @@ def cmd_schedule(args) -> int:
     読むだけ（asmon 関東セッション指摘 2026-09-10）。承認済みと下書きの両方を出す
     ——連載を組むときに見たいのは全体だから。
     """
+    account_names = [args.account] if args.account else accounts_mod.list_account_names()
+    notice_lines, repo_by_account = _behind_notices(account_names)
     rows = report_mod.schedule(args.account, days=args.days)
     if args.json:
+        # **`--json` には `repo`（`behind_remote()` の dict）を足す**（T8-2）。
+        for row in rows:
+            info = repo_by_account.get(row["account"])
+            if info is not None:
+                row["repo"] = info
         _print_json(rows)
         return 0
+    # **先頭に 1 行**（T8-2）。遅れていなければ何も出さない（静かに）。
+    for line in notice_lines:
+        print(line)
     if not rows:
         print("これから出る予定はありません")
         return 0
@@ -2128,6 +2250,121 @@ def cmd_run(args) -> int:
     return result.exit_code
 
 
+def _accounts_for_project(project: str) -> list:
+    """台帳の `project` が一致する account 名の一覧（読めない台帳は静かに飛ばす
+    ——`--project` は「関係ある account をまとめて」が目的で、無関係な壊れた
+    台帳 1 本のために全体を止めない）。"""
+    out = []
+    for name in accounts_mod.list_account_names():
+        try:
+            account_cfg = accounts_mod.load_account(name)
+        except accounts_mod.AccountError:
+            continue
+        if account_cfg.get("project") == project:
+            out.append(name)
+    return out
+
+
+def cmd_pull(args) -> int:
+    """`thth pull <account>` / `thth pull --project <project>`: remote の取り込みを
+    明示に行う（T8-3・kopicha 続報）。
+
+    `writeback.sync_repo()` を呼ぶだけ——**`thth approve`（と `revoke`・
+    `throw`・`collect`・`retract`）が既に通しているのと同じ関数・同じ repo
+    ロック**。読むだけの口（`queue`・`schedule`・`board`）は遅れを**言うだけ**
+    （T8-2・`writeback.behind_remote()`）で pull しない——その案内
+    （「`thth pull <account>` か `thth approve` で取り込まれます」）から
+    誘導される、明示の取り込み口がここ。
+
+    `--project` なら台帳の project が一致する account の repo をまとめて
+    取り込む。**同じ repo を 2 回引かない**（repo_dir で重複排除してから
+    1 回だけ `sync_repo()` を呼ぶ）。
+    """
+    if args.project:
+        names = _accounts_for_project(args.project)
+        if not names:
+            print(f"project={args.project} の account が見つかりません", file=sys.stderr)
+            return 2
+    elif args.account:
+        names = [args.account]
+    else:
+        print("account か --project を指定してください"
+              "（`thth pull <account>` か `thth pull --project <project>`）", file=sys.stderr)
+        return 2
+
+    repos: dict = {}
+    for name in names:
+        try:
+            account_cfg = accounts_mod.load_account(name)
+        except accounts_mod.AccountError as e:
+            print(f"{name}: {e}", file=sys.stderr)
+            return 2
+        repo_dir = account_cfg.get("repo_dir")
+        if not repo_dir:
+            print(f"{name}: repo_dir が台帳にありません", file=sys.stderr)
+            return 2
+        # **repo_dir で重複排除**——`--project` に同じ repo を共有する account が
+        # 複数含まれても、`sync_repo()` は 1 回だけ呼ぶ。
+        repos.setdefault(repo_dir, name)
+
+    rows, any_error = [], False
+    for repo_dir, name in repos.items():
+        if not os.path.isdir(repo_dir):
+            print(f"{name}: repo が見当たりません（{repo_dir}）", file=sys.stderr)
+            any_error = True
+            rows.append({"account": name, "repo_dir": repo_dir, "ok": False,
+                         "error": "repo が見当たりません"})
+            continue
+
+        head_before = writeback_mod._run_git(repo_dir, ["rev-parse", "--short", "HEAD"])
+        old7 = head_before.stdout.strip() if head_before.returncode == 0 else None
+
+        # **`thth approve` と同じ repo ロック**（同じ排他制御の下でだけ書き込む）。
+        repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
+        try:
+            repo_lock.acquire()
+        except lock_mod.LockBusy:
+            print(f"{name}: いまこの repo を別の実行が使っています（{repo_dir}）。"
+                  "少し待ってからもう一度 thth pull してください。", file=sys.stderr)
+            any_error = True
+            rows.append({"account": name, "repo_dir": repo_dir, "ok": False,
+                         "error": "repo がロック中です"})
+            continue
+        try:
+            synced, sync_err, _sha = writeback_mod.sync_repo(repo_dir)
+        finally:
+            repo_lock.release()
+
+        if not synced:
+            # **失敗は sync_repo の理由をそのまま**（T8-3）。rc=1。
+            print(f"{name}: 取り込めませんでした: {sync_err}", file=sys.stderr)
+            any_error = True
+            rows.append({"account": name, "repo_dir": repo_dir, "ok": False, "error": sync_err})
+            continue
+
+        # **`--json` は `behind_remote()` の形**（T8-3）。取り込んだ直後にもう一度
+        # 確かめることで、本当に追いついたか（`behind: 0`）を同じ形で言う。
+        info = writeback_mod.behind_remote(repo_dir)
+        new7 = info.get("head") or old7
+        if old7 and new7 and old7 == new7:
+            if not args.json:
+                print(f"{name}: すでに最新です")
+        else:
+            count_n = None
+            if old7 and new7:
+                count = writeback_mod._run_git(repo_dir, ["rev-list", "--count", f"{old7}..{new7}"])
+                if count.returncode == 0 and count.stdout.strip():
+                    count_n = int(count.stdout.strip())
+            if not args.json:
+                suffix = f"（{count_n} commit）" if count_n else ""
+                print(f"{name}: 取り込みました: {old7} → {new7}{suffix}")
+        rows.append({"account": name, "repo_dir": repo_dir, "ok": True, "repo": info})
+
+    if args.json:
+        _print_json(rows)
+    return 1 if any_error else 0
+
+
 def cmd_collect(args) -> int:
     """`thth collect <account>`: 数と返信を採る（`thth run` が自動で呼びます）。
 
@@ -2185,6 +2422,11 @@ def cmd_send(args) -> int:
     import sys as _sys
     from . import core as core_mod
     if args.text_file:
+        vm_msg = _require_vm_path(args.text_file, what="送る本文のファイル")
+        if vm_msg:
+            # **VM に無いパスは素の traceback でなく案内で断る**（T8-1）。
+            print(vm_msg, file=sys.stderr)
+            return 2
         with open(args.text_file, encoding="utf-8") as f:
             text = f.read()
     else:
@@ -2302,6 +2544,13 @@ def cmd_board(args) -> int:
     if args.json:
         _print_json(summary)
     else:
+        # **account ごとの行の下に、遅れているときだけ 1 行**（T8-2）。
+        # board の `--json` はここでは触らない（発注書は text の行だけを求めて
+        # いる・自己更新チェックの「board は取りに行かない」とは別の対象
+        # ——`writeback.behind_remote()` の docstring 参照）。
+        _account_names_for_repo = [row["account"] for row in summary.get("accounts", [])
+                                    if "error" not in row]
+        _, _repo_by_account = _behind_notices(_account_names_for_repo)
         # **道具の版を、いちばん上に出す**（masaru 裁定 2026-09-12・受け入れ条件
         # 「**届かない場合に分かる**」）。`app.head` と遅れは **`--json` にしか
         # 出ていなかった**——2026-09-10 に「4 巡分古いまま timer が回っていた」のを
@@ -2435,6 +2684,15 @@ def cmd_board(args) -> int:
             print(f"{row['account']}: project={row['project']} last_post={last_post} "
                   f"approved_waiting={row['approved_waiting']} type_mismatch={row['type_mismatch']} "
                   f"inflight={inflight} token={token}{pending_note}{retracted_note}{inbox_note}")
+            # **遅れているときだけ 1 行**（T8-2）。`behind` が 0／None（確かめられ
+            # なかった）なら何も出さない——静かに、が既定（T8-2 の queue/schedule
+            # と同じ規律）。
+            _repo_info = _repo_by_account.get(row["account"])
+            if _repo_info and _repo_info.get("behind"):
+                print(f"  repo が {_repo_info['behind']} commit 遅れています"
+                      f"（repo_head={_repo_info.get('head')}・"
+                      f"fetched_at={_repo_info.get('fetched_at')}）。"
+                      f"`thth pull {row['account']}` か `thth approve` で取り込まれます")
             # 指紋の 5 項目のどれが食い違って inflight が残ったか（外部レビュー
             # 第 3 巡・持ち越し項目 C）。人が止まった原因をファイルを開いて
             # 自分で探さずに済むように、board の 1 画面にそのまま出す。
@@ -2678,6 +2936,16 @@ def build_parser() -> argparse.ArgumentParser:
         "collect", help="数と返信を採る（経過時間の刻みで・thth run が自動で呼びます）")
     p_collect.add_argument("account", nargs="?")
     p_collect.set_defaults(func=cmd_collect)
+
+    p_pull = sub.add_parser(
+        "pull", help="remote の取り込みを明示に行う（`thth queue`／`schedule` の"
+                     "遅れの案内から。読むだけの口は勝手に pull しません）")
+    p_pull.add_argument("account", nargs="?")
+    p_pull.add_argument("--project", default=None,
+                        help="account の代わりに project で指定する（同じ repo は"
+                             "重複なく 1 回だけ取り込みます）")
+    p_pull.add_argument("--json", action="store_true")
+    p_pull.set_defaults(func=cmd_pull)
 
     p_auth = sub.add_parser(
         "auth",
