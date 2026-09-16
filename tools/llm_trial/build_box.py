@@ -39,11 +39,26 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import time
+import urllib.request
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 ACCOUNT = "demo-threads"
+
+# --------------------------------------------------------------------------
+# `--engage`（発注 T4-2）: 「この枝に絡んで」の試験——`demo-threads` の箱に
+# **足す**（既存の箱を壊さない）、偽の Bluesky サーバへ向いた台帳 1 本。
+# --------------------------------------------------------------------------
+ENGAGE_ACCOUNT = "demo-bluesky"
+ENGAGE_HANDLE = "demo.bsky.social"
+FAKE_BLUESKY_SERVER = os.path.join(TOOLS_DIR, "fake_bluesky_server.py")
+# `.token` の形だけ本物に似せる（値は読まれない・`Adapter.has_token()` は
+# 「在るか」しか見ない・`thth/adapters/bluesky.py`）。
+FAKE_APP_PASSWORD = "fake-fake-fake-fake"
 
 # 被験者に渡す原稿（既定）。**英語・380〜440 字・無害な話題**（Threads 向け・
 # `len()` で数える・改行込み）。「1 回で通るか」（設計 §2）は媒体の上限（Threads
@@ -313,6 +328,24 @@ def _hash_tree(root: str) -> dict:
     return out
 
 
+def _hash_data_dirs(box: str) -> dict:
+    """各 repo の `data/`（絡みの台帳・返信の台帳）を `"<repo名>/<相対パス>" → sha256`
+    でまとめて返す（T4-2・`score.py --engage` の条件 5「保存していない」用）。
+
+    **平らな 1 つの dict にする**——`_changed()` は 1 段の辞書しか比べないので、
+    `accounts`・`home_config` と同じ形に揃える。
+    """
+    out: dict = {}
+    repos_dir = os.path.join(box, "repos")
+    if not os.path.isdir(repos_dir):
+        return out
+    for name in sorted(os.listdir(repos_dir)):
+        data_path = os.path.join(repos_dir, name, "data")
+        for relpath, h in _hash_tree(data_path).items():
+            out[f"{name}/{relpath}"] = h
+    return out
+
+
 def snapshot(box: str) -> dict:
     """箱の「手を触れてはいけない場所」の写し。
 
@@ -323,6 +356,7 @@ def snapshot(box: str) -> dict:
         "box": box,
         "accounts": _hash_tree(os.path.join(box, "root", "accounts")),
         "home_config": _hash_tree(os.path.join(box, "home", ".config")),
+        "data": _hash_data_dirs(box),
     }
 
 
@@ -447,6 +481,123 @@ def write_ledger(box: str, repo: str) -> str:
     return path
 
 
+def start_fake_bluesky_server(box: str) -> dict:
+    """`fake_bluesky_server.py` を箱に紐づく背景プロセスとして起こす（T4-2）。
+
+    **本物の `bsky.social` には一切触れない**——このサーバは `127.0.0.1` の
+    空きポートで待つだけで、台帳の `service`（`write_ledger_bluesky()`）を
+    ここへ向けるので、被験者が `thth where`/`thth thread` を打っても
+    行き先はこのローカルサーバだけになる。
+
+    `start_new_session=True` で起こす——`build_box.py` 自身のプロセスが終わっても
+    （箱を組んだあと、別の時点・別のプロセスで被験者が箱を使うので）サーバは
+    生き続ける必要がある。起動直後の 1 行（`{"host","port"}`）だけを読み、
+    それ以降の stdout は読まない（サーバ側もそれ以降は何も書かない・
+    `fake_bluesky_server.py` の docstring）。
+
+    `box/fake_bluesky.json` に `{"host","port","pid","url"}` を書く——
+    `stop_fake_bluesky_server()` と `score.py --engage` がここから読む。
+    """
+    proc = subprocess.Popen(
+        [sys.executable, FAKE_BLUESKY_SERVER, "--host", "127.0.0.1", "--port", "0"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        start_new_session=True)
+    line = proc.stdout.readline()
+    if not line:
+        proc.kill()
+        raise SystemExit("偽の Bluesky サーバを起動できませんでした（起動行が読めない）")
+    info = json.loads(line)
+    info["pid"] = proc.pid
+    info["url"] = f"http://{info['host']}:{info['port']}"
+
+    # **本当に応える状態か**を確かめてから返す（bind はできても accept ループに
+    # 入るまでの一瞬を拾わない）。届かなければここで待たずに fail する——
+    # 「箱は組めたが実は死んでいた」を見かけの緑にしない（作法 5）。
+    deadline = time.monotonic() + 5.0
+    last_err = None
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(
+                    info["url"] + "/xrpc/app.bsky.feed.searchPosts?q=x", timeout=1) as r:
+                r.read()
+            break
+        except Exception as e:  # noqa: BLE001 - 立ち上がりの一瞬の失敗は再試行するだけ
+            last_err = e
+            time.sleep(0.1)
+    else:
+        proc.kill()
+        raise SystemExit(f"偽の Bluesky サーバが応えません（{info['url']}）: {last_err}")
+
+    with open(os.path.join(box, "fake_bluesky.json"), "w", encoding="utf-8") as f:
+        json.dump(info, f, ensure_ascii=False, indent=2)
+    return info
+
+
+def stop_fake_bluesky_server(box: str) -> None:
+    """`start_fake_bluesky_server()` が起こしたプロセスを止める（試験の後始末）。
+
+    無ければ・既に死んでいれば何もしない（loud reject は要らない場面——
+    後始末の二重呼び出しはよくある）。
+    """
+    path = os.path.join(box, "fake_bluesky.json")
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        info = json.load(f)
+    try:
+        os.kill(info["pid"], signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, KeyError):
+        pass
+
+
+def write_ledger_bluesky(box: str, repo: str, *, service: str) -> str:
+    """`demo-bluesky` の台帳（媒体 bluesky・`service` を偽サーバへ・T4-2）。
+
+    `write_ledger()`（`demo-threads`）と**同じ理由で** `scheduled: true` に
+    立て直す（H1(a)）——`queue → lint → approve` の経路が箱に無いと、被験者は
+    それを「無い」と正しく諦めてしまう。
+    """
+    thth = os.path.join(box, "venv", "bin", "thth")
+    r = _run([thth, "account", "add", ENGAGE_ACCOUNT, "--media", "bluesky",
+              "--project", "demo-bluesky", "--handle", ENGAGE_HANDLE,
+              "--instance", service, "--repo-dir", repo, "--force"],
+             env=box_env(box), cwd=box)
+    if r.returncode != 0:
+        raise SystemExit(f"demo-bluesky の台帳を書けませんでした:\n{r.stdout}\n{r.stderr}")
+    path = os.path.join(box, "root", "accounts", f"{ENGAGE_ACCOUNT}.json")
+    if not os.path.exists(path):
+        raise SystemExit(f"台帳が出来ていません: {path}\n{r.stdout}\n{r.stderr}")
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if data.get("production") is not False:
+        raise SystemExit(f"台帳が production: true で生まれました（試験に使えません）: {path}")
+    if data.get("service") != service:
+        raise SystemExit(f"台帳の service が偽サーバを向いていません: {data.get('service')!r}")
+    data["scheduled"] = True
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    return path
+
+
+def write_token_bluesky(box: str) -> str:
+    """`demo-bluesky` の `.token`（偽の値・T4-2）。
+
+    **`~/.config/thth/demo-bluesky.token` に書く**（`box_env()` の `HOME` が
+    箱の `home/` を指すので、実物の `~/.config/thth/` には触れない）。値は
+    `has_token()` が「在るか」しか見ないので中身は偽物のままでよい——この
+    トークンが実際に運ぶ先は `write_ledger_bluesky()` が向けた偽サーバだけ
+    （`127.0.0.1`）で、本物の Bluesky には最初から経路が無い。
+    """
+    config_dir = os.path.join(box, "home", ".config", "thth")
+    os.makedirs(config_dir, exist_ok=True)
+    path = os.path.join(config_dir, f"{ENGAGE_ACCOUNT}.token")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"identifier": ENGAGE_HANDLE, "app_password": FAKE_APP_PASSWORD}, f)
+    os.chmod(path, 0o600)
+    return path
+
+
 def install_wrappers(box: str) -> None:
     bin_dir = os.path.join(box, "venv", "bin")
     real = os.path.join(bin_dir, "thth.real")
@@ -476,7 +627,11 @@ def write_draft(box: str, *, long: bool = False) -> str:
     return path
 
 
-def build_box(box: str, *, long: bool = False) -> str:
+def build_box(box: str, *, long: bool = False, engage: bool = False) -> str:
+    """箱を 1 つ組む。`engage=True`（`--engage`・T4-2）なら、既定の
+    `demo-threads`（Threads の「1 回で通るか」用）に**足して**、偽の Bluesky
+    サーバへ向いた `demo-bluesky` の台帳も用意する（「この枝に絡んで」用）。
+    """
     box = os.path.abspath(box)
     if os.path.exists(box) and os.listdir(box):
         raise SystemExit(f"空でない場所には組めません（毎回まっさらな箱で）: {box}")
@@ -495,6 +650,15 @@ def build_box(box: str, *, long: bool = False) -> str:
     write_draft(box, long=long)
 
     write_ledger(box, repo)          # **wrapper より前**（ログに残さない）
+
+    if engage:
+        # **ここも wrapper より前**（demo-threads と同じ理由）。偽サーバは
+        # 箱に紐づく背景プロセスとして起こす——`fake_bluesky.json` に pid・port
+        # が残るので、使い終えたら `stop_fake_bluesky_server(box)` で止める。
+        server_info = start_fake_bluesky_server(box)
+        write_ledger_bluesky(box, repo, service=server_info["url"])
+        write_token_bluesky(box)
+
     install_wrappers(box)
 
     with open(os.path.join(box, "env.sh"), "w", encoding="utf-8") as f:
@@ -515,16 +679,26 @@ def main(argv=None) -> int:
     p.add_argument("--long", action="store_true",
                    help="draft.md を上限超え（942 字ほど）にする"
                         "（既定は 380〜440 字・上限内。編集の往復を測る別の試験用）")
+    p.add_argument("--engage", action="store_true",
+                   help="偽の Bluesky サーバ（fake_bluesky_server.py）と "
+                        "demo-bluesky の台帳を足す（発注 T4-2「この枝に絡んで」の試験用）")
     args = p.parse_args(argv)
-    box = build_box(args.box, long=args.long)
+    box = build_box(args.box, long=args.long, engage=args.engage)
     print(f"箱を組みました: {box}")
     print(f"  環境:   . {os.path.join(box, 'env.sh')}")
     print(f"  原稿:   {os.path.join(box, 'draft.md')}"
           + ("（--long・上限超え）" if args.long else "（上限内）"))
     print(f"  台帳:   {os.path.join(box, 'root', 'accounts', ACCOUNT + '.json')}"
           f"（production: false・トークン無し）")
+    if args.engage:
+        print(f"  台帳:   {os.path.join(box, 'root', 'accounts', ENGAGE_ACCOUNT + '.json')}"
+              f"（production: false・偽サーバへ向いたトークンあり）")
+        print(f"  偽サーバ: {os.path.join(box, 'fake_bluesky.json')}"
+              "（使い終えたら stop_fake_bluesky_server(box) で止める）")
+        print(f"  固定文:  {os.path.join(TOOLS_DIR, 'prompts', 'engage_prompt.md')}")
     print(f"  記録:   {os.path.join(box, 'log', 'commands.ndjson')}")
-    print(f"  採点:   python3 tools/llm_trial/score.py {box}")
+    print(f"  採点:   python3 tools/llm_trial/score.py {box}"
+          + (" --engage" if args.engage else ""))
     return 0
 
 

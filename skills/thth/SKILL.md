@@ -1,6 +1,6 @@
 ---
 name: thth
-description: 投稿する前に呼ぶ道具。Threads・Bluesky・Mastodon へ出す下書きを、人の承認を通してから出す。語（トピック）を決めるとき、下書きを承認に回すとき、出したあとの伸びを見るときに使う。
+description: 投稿する前・返信を書く前・出したあと・絡みに行く先を選ぶときに呼ぶ道具。Threads・Bluesky・Mastodon への下書きを人の承認を通してから出し、枝を読み、相手を知り、伸びを測る。
 ---
 
 # THTH — 投稿する前に呼ぶ道具
@@ -29,84 +29,88 @@ description: 投稿する前に呼ぶ道具。Threads・Bluesky・Mastodon へ�
 
 - **何を書くかを決めない。** 文体・頻度・時刻・語の選び方はあなたのプロジェクトのもの。
   渡された本文を**整形も切り詰めもせず**そのまま出す。
-- **本文を勝手に外へ出さない。** `thth share` は**既定 off**。on にしても出るのは
-  語・**誰がいたか**（`--audience` にあなたが書いた自由文）・型・取得状態・件数・時刻帯・
-  post_id の**ハッシュ**・観測者の仮名だけで、**本文・返信の本文・返信者の名前・
-  あなたの判断（`--verdict`）・`--by`・アカウント名・トークン・repo のパス・生の post_id は
-  1 バイトも出ない**（`thth share log` で積んだ全部が読める）。
-  **ただし `--audience` はあなたが書く自由文なので、そこに人の名前を書けばそれは出る。**
-  機械が落とすのは**返信者の** `username`（台帳から来る欄）であって、**あなたが
-  自分で書いた文字ではない**。`--audience` には「誰がいたか」を**属性で**書く
-  （「受験親のやりとり」）——`@名前` は書かない。
-  **on にしても送り先はまだ無い**——手元の `state/share/outbox/` に積むだけ。
+- **読む口は何も保存しない。** `thread_read`・`where_to_appear`・`who_is_this` はどれも、
+  読んで見せるだけで**台帳に 1 バイトも書かない**。残るのは**自分の行為と反応**
+  （絡みの台帳）だけで、**相手の本文・相手の名前・あなたの判断は台帳に入らない**。
 - **人の代わりに承認しない。** あなた（エージェント）は下書きと digest を人に見せ、
   人が `--confirm` を打つ。
 
 ---
 
-## 使う順番
+## 使う順番——場面で
 
-### 1. 語（トピック）を決める前
-
-```bash
-thth topics <account> --advise      # 使ってよい語・避ける語・型の傾向・選び方
-thth topics history <語>            # その語を誰がどう見たか（全観測者・新しい順）
-```
-
-**語は「作る」ものではなく「入る」もの。** 内容と一致する語を作ると、たいてい誰もいない語に
-なる（`中学受験算数` は 0 件、`中学受験` は場になっている）。**一致より、人がいるかが先。**
-
-確かめられるのは人（またはブラウザを持つ AI）だけ——THTH に検索の権限は降りていない。
-`https://www.threads.com/search?q=<語>&filter=topic` を見て、**結果を棚に残す**:
+### 1. 探す——どこに絡みに行くか
 
 ```bash
-thth topics --note <語> --verdict alive|mismatch|dead|unknown \
-  --audience "誰がいたか" --kind 行動 --status ok --by "claude（<プロジェクト>）"
+thth where <account> <語…>          # 検索の一覧に自分の履歴を重ねて返す
+thth where --project <P> <語…>      # project 単位で全媒体を一度に
 ```
 
-`--verdict` は判断（プロジェクトごとに違ってよい）、`--status` は取得結果
-（**0 件は `empty` であって「人がいない」ではない**）。間違えたら
-`thth topics retract-note <note_id> --reason … --by …`（行は消えず、打ち消しが 1 本増える）。
+MCP `where_to_appear`。**順位は無い**——材料を並べるだけで、選ぶのは LLM。
+**残すもの: なし**（この口自身は何も書かない。材料は `after_you_posted` と
+絡みの台帳から来ている）。
+**呼ばなくてよいとき**: 返す先がもう決まっている・自分の投稿への返信。
 
-**`before_you_post`** — 語と型と出す時刻帯を渡すと、スレッドがどう伸びたかの実績を
-**件数と期間つきで**返す口（MCP の道具名。v2-1 で実装中）。**原稿本文は渡さない。**
+### 2. 読む——枝をその場で
 
-### 2. 下書きを承認に回す
+```bash
+thth thread <account> <post_id>
+```
+
+MCP `thread_read`。枝の会話を**生で**読み、誰がどんな立場かをその場で判断する。
+**`already_replied` を見落とさない**——もうこの枝に返しているかがここに乗る。
+**残すもの: なし**（読んで捨てる。runs には件数だけ）。
+**呼ばなくてよいとき**: 自分の根の枝は `thth threads` の形で足りるとき。
+
+### 3. 相手を知る——この仮名と何度
+
+```bash
+thth who <account> <author_key>
+```
+
+MCP `who_is_this`。この仮名と自分のアカウントが何度・いつ・どんな反応だったか
+だけを返す。**人物像ではない**——発言の内容は持たない。
+**残すもの: なし**（絡みの台帳・返信の台帳から導くだけで、この口自体は書かない）。
+
+### 4. 書く——下書きに宛先を乗せる
+
+下書きの front-matter に:
+
+```yaml
+reply_to: <post_id>
+reply_to_author_key: <一覧の --json の author_key をそのまま写す>
+found_by: where_to_appear|manual|mention
+```
+
+**残すもの**: この 3 つの欄（下書きファイルそのもの。承認まではあなたの repo の
+untracked/コミット前のファイル）。語を選ぶときだけ `before_you_post`
+（原稿本文は渡さない・件数と期間つきで返す）。
+
+### 5. 承認——二段（そのまま）
 
 ```bash
 thth lint <ファイル…>          # front-matter と字数の検査
 thth preview <ファイル>        # 実際に投げる本文そのもの
-thth approve <ファイル or ディレクトリ>                       # 一段目: 本文と digest を見せる（書き換えない）
+thth approve <ファイル or ディレクトリ>                       # 一段目: 本文と digest を見せる
 thth approve <同じ> --confirm <digest> --by "<承認した人>"     # 二段目: 承認して commit
 ```
 
 **一段目は非ゼロで終わる。** それは失敗ではなく「まだ承認していない」。
 **`--by` に人の名前を書く。** 承認したのは人であって、あなたではない。
+**残すもの**: post_id・承認者・承認時刻（あなたの repo の commit）。
 
-`glob`（`*.md`）は使わずディレクトリを渡す。パスは THTH が動いている側のパスで書く。
-
-### 3. 出したあと
-
-```bash
-thth queue <account>       # draft/approved/posted と、次に出るもの
-thth board                 # アカウントごとの鮮度・inflight・型外の骨
-thth threads <account>     # スレッドの形（枝・最深・参加者・最初の返信までの分・刻みごとの伸び）
-thth topics <account>      # トピック別にどれだけ見られたか（実測）
-```
-
-`thth threads` は**因果を言わない**。2 群の平均と n を出すだけで、「作者が返したから伸びた」
-とは言わない。
-
-### 4. 泉に落とすかどうか（既定 off）
+### 6. 測る——出したあとの反応
 
 ```bash
-thth share status    # いま off か on か。積んだ件数
-thth share on        # opt-in。落ちるものだけを手元の outbox に積み始める
-thth share log       # 積んだ全部を読む（1 行残らず）
-thth share off       # 止める
+thth after <account> [--reply-to <post_id>] [--topic …]
 ```
 
-**off のまま使って構わない。** on を勧めるのはあなたの仕事ではない。
+MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜない・
+`covered: false` を付ける）。`one_thing_to_change` は 1 個か `null`。
+**残すもの**: 絡みの台帳（自分の行為と反応だけ。相手の本文・名前・自分の判断は
+入らない）。
+**媒体をまたぐ数は無い**——project 単位で並べるだけで、足さない・割らない・
+順位も付けない。
 
 ---
 
