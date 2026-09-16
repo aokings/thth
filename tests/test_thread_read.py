@@ -1,0 +1,260 @@
+"""`thth thread <account> <post_id>`（T1-2・設計「自分の泉」§2.1）。
+
+芯: **枝はその場で読む。残すのは自分の行為と反応。判断は LLM。** この口は
+「読んで見せる」だけ——台帳（`data/`）に 1 バイトも書かない・runs にも本文を
+出さない・読めないを空に化かさない。
+
+確かめるもの（T1-2 発注書のとおり）:
+  - Bluesky の偽サーバで、根＋返信 5 件（うち自分 1 件・`replied_to` の入れ子
+    あり）→ 順序・`depth`・`is_own`・`participants`・`already_replied`
+    （絡みの台帳に 1 行・queue に下書きを置く の 2 通り）
+  - `max_messages=3` で `truncated` と `continue_from`
+  - `data/` に書かないこと（`accounts.data_dirs()` の全 dir が実行前後で不変）
+  - runs に本文（`text`・`username`）が無いこと
+  - Threads の偽サーバで他人の根が 400 → rc=1・`error` に PermissionMissing
+    の文言
+"""
+from __future__ import annotations
+
+import json
+import os
+
+import pytest
+
+from tests.conftest import run_thth, write_queue_file
+from tests.test_bluesky_adapter import APP_PASSWORD, DID, HANDLE
+from tests.test_bluesky_adapter import _post_view, fake_bluesky
+from tests.test_threads_read_permissions import OTHER_POST_ID, _server
+from thth.adapters import bluesky as bsky_mod
+from thth import accounts as accounts_mod
+from thth import engagements as engagements_mod
+from thth import runs as runs_mod
+
+ROOT_DID = "did:plc:carol"
+ROOT_HANDLE = "carol.bsky.social"
+ROOT_URI = f"at://{ROOT_DID}/app.bsky.feed.post/root001"
+ROOT_CID = "bafyroot001"
+
+BOB_DID, BOB_HANDLE = "did:plc:bob", "bob.bsky.social"
+DAVE_DID, DAVE_HANDLE = "did:plc:dave", "dave.bsky.social"
+EVE_DID, EVE_HANDLE = "did:plc:eve", "eve.bsky.social"
+
+R1_URI = f"at://{BOB_DID}/app.bsky.feed.post/r1"       # bob → root（depth 1）
+R2_URI = f"at://{DID}/app.bsky.feed.post/r2"           # 自分 → r1（depth 2）
+R3_URI = f"at://{DAVE_DID}/app.bsky.feed.post/r3"      # dave → r2（depth 3）
+R4_URI = f"at://{EVE_DID}/app.bsky.feed.post/r4"       # eve → root（depth 1・別の枝）
+R5_URI = f"at://{BOB_DID}/app.bsky.feed.post/r5"       # bob → r4（depth 2）
+
+
+def _node(uri, *, did, handle, text, created, replies=None):
+    return {
+        "$type": "app.bsky.feed.defs#threadViewPost",
+        "post": _post_view(uri, "bafy" + uri[-3:], handle=handle, did=did,
+                            text=text, created_at=created),
+        "replies": replies or [],
+    }
+
+
+def _thread_fixture():
+    r3 = _node(R3_URI, did=DAVE_DID, handle=DAVE_HANDLE, text="孫の返信",
+               created="2026-09-16T03:00:00.000Z")
+    r2 = _node(R2_URI, did=DID, handle=HANDLE, text="自分の返信",
+               created="2026-09-16T02:00:00.000Z", replies=[r3])
+    r1 = _node(R1_URI, did=BOB_DID, handle=BOB_HANDLE, text="bobの返信",
+               created="2026-09-16T01:00:00.000Z", replies=[r2])
+    r5 = _node(R5_URI, did=BOB_DID, handle=BOB_HANDLE, text="bobの別の返信",
+               created="2026-09-16T02:30:00.000Z")
+    r4 = _node(R4_URI, did=EVE_DID, handle=EVE_HANDLE, text="eveの返信",
+               created="2026-09-16T01:30:00.000Z", replies=[r5])
+    root_view = _post_view(ROOT_URI, ROOT_CID, handle=ROOT_HANDLE, did=ROOT_DID,
+                            text="根の投稿", created_at="2026-09-16T00:00:00.000Z")
+    return {"$type": "app.bsky.feed.defs#threadViewPost", "post": root_view,
+            "replies": [r1, r4]}
+
+
+def _write_token(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+
+@pytest.fixture
+def bsky_account(tmp_path, thth_root, isolated_account_factory):
+    """自分の account（Bluesky・偽 PDS）。queue_dir も持つ（already_replied の queue 側）。"""
+    with fake_bluesky(thread=_thread_fixture(),
+                      posts={ROOT_URI: _post_view(
+                          ROOT_URI, ROOT_CID, handle=ROOT_HANDLE, did=ROOT_DID,
+                          text="根の投稿", created_at="2026-09-16T00:00:00.000Z")}) as service:
+        token_path = str(tmp_path / "bsky.token")
+        _write_token(token_path, {
+            "identifier": HANDLE, "app_password": APP_PASSWORD,
+            "did": DID, "handle": HANDLE, "no_expiry": True,
+            "user_id": DID, "username": HANDLE,
+            "obtained_at": "2026-09-16T09:00:00+09:00"})
+        account = isolated_account_factory(
+            "kopicha-thread-test", media="bluesky", handle=HANDLE,
+            service=str(service), token=token_path, production=False)
+        yield account, service
+
+
+def _data_snapshot(account_cfg: dict, account_name: str) -> dict:
+    """`accounts.data_dirs()` の全 dir のファイル一覧とサイズ（規約 (a) の検査用）。"""
+    snap: dict = {}
+    for d in accounts_mod.data_dirs(account_cfg, account_name).values():
+        if not os.path.isdir(d):
+            continue
+        for root, _dirs, names in os.walk(d):
+            for name in names:
+                path = os.path.join(root, name)
+                snap[path] = os.path.getsize(path)
+    return snap
+
+
+def _cli(account_name, post_id, *args, service=None):
+    # `service` は台帳（`isolated_account_factory(... service=...)`）にすでに
+    # 書いてあるので、ここでは env は要らない（引数は呼び出し側の対称性のため）。
+    return run_thth(["thread", account_name, post_id, *args, "--json"])
+
+
+def test_枝を根から時刻順でdepthとis_ownつきで返す(bsky_account):
+    account, service = bsky_account
+    cfg = accounts_mod.load_account(account["name"])
+    before = _data_snapshot(cfg, account["name"])
+
+    r = _cli(account["name"], ROOT_URI, service=service)
+    assert r.returncode == 0, r.stdout + r.stderr
+    result = json.loads(r.stdout)
+
+    # 根。
+    assert result["root"]["post_id"] == ROOT_URI
+    assert result["root"]["username"] == ROOT_HANDLE
+    assert result["root"]["is_own"] is False
+    assert result["root"]["text"] == "根の投稿"
+
+    # 順序は根から時刻順（r1 01:00 → r4 01:30 → r2 02:00 → r5 02:30 → r3 03:00）。
+    ids = [m["message_id"] for m in result["messages"]]
+    assert ids == [R1_URI, R4_URI, R2_URI, R5_URI, R3_URI]
+
+    by_id = {m["message_id"]: m for m in result["messages"]}
+    assert by_id[R1_URI]["depth"] == 1 and by_id[R1_URI]["replied_to"] == ROOT_URI
+    assert by_id[R2_URI]["depth"] == 2 and by_id[R2_URI]["replied_to"] == R1_URI
+    assert by_id[R3_URI]["depth"] == 3 and by_id[R3_URI]["replied_to"] == R2_URI
+    assert by_id[R4_URI]["depth"] == 1 and by_id[R4_URI]["replied_to"] == ROOT_URI
+    assert by_id[R5_URI]["depth"] == 2 and by_id[R5_URI]["replied_to"] == R4_URI
+
+    # is_own（自分の handle は HANDLE。r2 だけが自分）。
+    assert by_id[R2_URI]["is_own"] is True
+    assert by_id[R1_URI]["is_own"] is False
+    assert by_id[R3_URI]["is_own"] is False
+    assert by_id[R4_URI]["is_own"] is False
+    assert by_id[R5_URI]["is_own"] is False
+    assert by_id[R2_URI]["author_key"] == bsky_mod.author_key(DID)
+
+    counts = result["counts"]
+    assert counts["messages"] == 5
+    # 参加者: carol（根）・bob・own・dave・eve の 5 人。
+    assert counts["participants"] == 5
+    assert counts["own"] == 1
+    assert counts["truncated"] is False
+
+    # **`data/` の下に何も書かない**（規約 (a)）。
+    after = _data_snapshot(cfg, account["name"])
+    assert after == before
+
+
+def test_already_repliedは絡みの台帳とqueueの両方から引く(bsky_account, tmp_path):
+    account, service = bsky_account
+    cfg = accounts_mod.load_account(account["name"])
+
+    # (a) 絡みの台帳: r1（bob の投稿）にはもう返信済み。
+    engagements_mod.append(cfg, account["name"], {
+        "post_id": "at://" + DID + "/app.bsky.feed.post/myreply1",
+        "reply_to": R1_URI, "root_post": ROOT_URI,
+        "author_key": bsky_mod.author_key(BOB_DID), "account": account["name"],
+        "medium": "bluesky", "topic": None, "kind": None, "hour_band": "朝",
+        "posted_at": "2026-09-16T05:00:00+09:00", "found_by": "manual",
+    })
+
+    # (b) queue の下書き: r4（eve の投稿）には reply_to 付きの draft がある。
+    write_queue_file(account["queue_dir"], "reply-to-r4.md", fm_overrides={
+        "account": account["name"], "status": "draft", "reply_to": R4_URI,
+        "publish_at": None, "approved_sha": None, "approved_at": None,
+    }, commit=False)
+
+    r = _cli(account["name"], ROOT_URI, service=service)
+    assert r.returncode == 0, r.stdout + r.stderr
+    result = json.loads(r.stdout)
+    by_id = {m["message_id"]: m for m in result["messages"]}
+
+    assert by_id[R1_URI]["already_replied"] == {
+        "post_id": "at://" + DID + "/app.bsky.feed.post/myreply1",
+        "at": "2026-09-16T05:00:00+09:00"}
+    assert by_id[R4_URI]["already_replied"] == {"status": "draft"}
+    # まだ絡んでいない相手には無い。
+    assert by_id[R3_URI]["already_replied"] is None
+    assert by_id[R5_URI]["already_replied"] is None
+
+
+def test_max_messagesを超えたら新しい側を切りcontinue_fromを返す(bsky_account):
+    account, service = bsky_account
+    r = _cli(account["name"], ROOT_URI, "--max-messages", "3", service=service)
+    assert r.returncode == 0, r.stdout + r.stderr
+    result = json.loads(r.stdout)
+
+    ids = [m["message_id"] for m in result["messages"]]
+    assert ids == [R1_URI, R4_URI, R2_URI]
+    assert result["counts"]["truncated"] is True
+    assert result["counts"]["messages"] == 3
+    assert result["provenance"]["continue_from"] == "2026-09-16T02:00:00.000Z"
+
+
+def test_runsに本文が無いこと(bsky_account):
+    account, service = bsky_account
+    r = _cli(account["name"], ROOT_URI, service=service)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    state_dir = accounts_mod.state_dir_for(account["name"])
+    rows = [row for row in runs_mod.read_runs(state_dir) if row.get("action") == "thread_read"]
+    assert len(rows) == 1, rows
+    row = rows[0]
+    assert row["account"] == account["name"]
+    assert row["medium"] == "bluesky"
+    assert row["post_id"] == ROOT_URI
+    assert row["messages"] == 5
+    assert row["truncated"] is False
+    assert row["status"] == "ok"
+    assert row["error"] is None
+
+    # **本文・username が無いこと**（`engagements.FORBIDDEN_KEYS` と同じ、鍵の
+    # 完全一致での検査。`row` の鍵はここで列挙した 8 つだけの構造なので、
+    # `messages` という鍵が `FORBIDDEN_KEYS` の `message` と部分一致しても
+    # 取り違えない——完全一致でしか見ない）。
+    hit = sorted(engagements_mod.FORBIDDEN_KEYS & set(row.keys()))
+    assert not hit, hit
+    # 実測でも本文の綴りがどこにも無いことを見ておく（保険）。
+    dumped = json.dumps(row, ensure_ascii=False)
+    assert "根の投稿" not in dumped
+    assert "bobの返信" not in dumped
+    assert HANDLE not in dumped
+    assert ROOT_HANDLE not in dumped
+
+
+def test_Threadsで他人の根が400ならPermissionMissingのままrc1(isolated_account_factory, tmp_path):
+    with _server({f"/{OTHER_POST_ID}": "permission"}) as (base_url, requests):
+        token_path = str(tmp_path / "threads.token")
+        _write_token(token_path, {"access_token": "FAKE-SECRET", "user_id": "999999",
+                                  "username": "nigamilab", "scopes": None,
+                                  "obtained_at": "2026-09-16T09:00:00+09:00"})
+        account = isolated_account_factory(
+            "nigamilab-thread-test", media="threads", handle="nigamilab",
+            token=token_path, production=False)
+        r = run_thth(["thread", account["name"], OTHER_POST_ID, "--json"],
+                     env={"THTH_THREADS_BASE_URL": base_url})
+    assert r.returncode == 1, r.stdout + r.stderr
+    payload = json.loads(r.stdout)
+    assert payload["permission"] == "threads_basic"
+    assert "がトークンに乗っていません" in payload["error"]
+    assert "FAKE-SECRET" not in r.stdout + r.stderr
+
+    # **「読めない」を空の枝に化かさない**——rc≠0 で、messages が空配列として
+    # 返っているわけではない（そもそも result 本体を返さない）。
+    assert "messages" not in payload or payload.get("messages") is None
