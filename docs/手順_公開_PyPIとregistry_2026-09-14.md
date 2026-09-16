@@ -166,7 +166,9 @@ API トークンは、**もう要らない**。
 4. 確認: `https://pypi.org/project/thth/<版>/` と
    `curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.aokings/thth"`。
 
-**masaru の手が要るのは 1 回だけ**（最初に）: PyPI の画面で「この repo のこの workflow を
+**PyPI の登録は 2026-09-16 に済んだ**（masaru の申告・L3——PyPI の管理画面はこちらから見えないので、最初の tag で workflow が通ったことを見て L1 にする）。
+
+（最初にやったこと・記録として）PyPI の画面で「この repo のこの workflow を
 信頼する」と登録する。Your projects → `thth` → Manage → Publishing →
 owner `aokings`・repository `thth`・workflow `publish.yml`・environment `publish`。
 **API トークンを貼る作業ではない**（貼るのは repo 名と workflow 名）。登録が済めば
@@ -174,3 +176,5 @@ owner `aokings`・repository `thth`・workflow `publish.yml`・environment `publ
 
 GitHub 側の `publish` 環境（Settings → Environments）は、無ければ最初の実行時に作られる。
 枝や tag を絞りたければそこで制限する。
+
+**Linux で全件が通ることは `test.yml` が main への push ごとに確かめる**（開発は macOS で回すので、Linux でだけ落ちるテストを配布の日より前に知るため）。tag を打つ前に、その commit の `test` が緑であることを見る。
