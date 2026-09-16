@@ -288,3 +288,46 @@ def test_Threadsで他人の根が400ならPermissionMissingのままrc1(isolate
     # **「読めない」を空の枝に化かさない**——rc≠0 で、messages が空配列として
     # 返っているわけではない（そもそも result 本体を返さない）。
     assert "messages" not in payload or payload.get("messages") is None
+
+
+# --- T6-2: post_id の形違いは adapter を叩く前に rc=2 で断る ------------------
+# 被験者が Bluesky の post_id に rkey だけの短い id（`hot1`）を渡して 1 回
+# 失敗し、`--json` の `at://` で打ち直した（試験の摩擦）。検査は媒体ごとの
+# adapter の classmethod（`Adapter.is_post_id()`）に置き、`thread_read` は
+# それを呼んで rc=2・`--json` を促す文言で断る。
+
+
+def test_Blueskyで短いpost_idはrc2で形を示す(bsky_account):
+    account, service = bsky_account
+    r = _cli(account["name"], "hot1", service=service)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "at://did" in r.stderr, r.stderr
+    assert "--json" in r.stderr, r.stderr
+
+
+def test_Threadsで形違いのpost_idはrc2で示す(isolated_account_factory, tmp_path):
+    token_path = str(tmp_path / "threads.token")
+    _write_token(token_path, {"access_token": "FAKE-SECRET", "user_id": "999999",
+                              "username": "nigamilab", "scopes": None,
+                              "obtained_at": "2026-09-16T09:00:00+09:00"})
+    account = isolated_account_factory(
+        "nigamilab-thread-test", media="threads", handle="nigamilab",
+        token=token_path, production=False)
+    r = run_thth(["thread", account["name"], ".", "--json"])
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "数字の id" in r.stderr, r.stderr
+    assert "--json" in r.stderr, r.stderr
+
+
+def test_Mastodonで形違いのpost_idはrc2で示す(isolated_account_factory, tmp_path):
+    token_path = str(tmp_path / "mstdn.token")
+    _write_token(token_path, {"access_token": "FAKE-SECRET", "no_expiry": True,
+                              "user_id": "9000", "username": "nigamilab",
+                              "obtained_at": "2026-09-16T09:00:00+09:00"})
+    account = isolated_account_factory(
+        "nigamilab-mastodon-test", media="mastodon", handle="nigamilab",
+        instance="https://mastodon.invalid", token=token_path, production=False)
+    r = run_thth(["thread", account["name"], ".", "--json"])
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "数字の id" in r.stderr, r.stderr
+    assert "--json" in r.stderr, r.stderr

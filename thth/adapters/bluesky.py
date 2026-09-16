@@ -309,6 +309,14 @@ class BlueskyAdapter(base.Adapter):
     # `remaining_days: None`。「判らない」ではなく「期限を持たない」）。
     TOKEN_NO_EXPIRY = True
 
+    @classmethod
+    def is_post_id(cls, value) -> bool:
+        """Bluesky の `post_id` は AT URI（`at://did:…/app.bsky.feed.post/…`）だけ
+        （T6-2）。rkey だけの短い id（例: `hot1`）を渡す取り違いは、ここで
+        adapter の生のエラーに落とす前に断る。
+        """
+        return isinstance(value, str) and value.startswith("at://")
+
     def __init__(self, *, service: str = DEFAULT_SERVICE, identifier: str = "",
                  app_password: str = "", timeout: float = DEFAULT_TIMEOUT_SECONDS,
                  thread_depth: int = DEFAULT_THREAD_DEPTH):
