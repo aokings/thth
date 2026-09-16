@@ -204,6 +204,55 @@ def test_TB0_conversationはmediumとauthor_keyを足すが既存の鍵は変え
     assert row["author_key"] == adapter_base.author_key("threads", "someone")
 
 
+# --- T7-1: normalize_message() ----------------------------------------------
+# `thth/thread_read.py`が`conversation()`・`fetch_post()`の生の行を読む直前に
+# 通す変換（設計「自分の泉」§2.1）。**`conversation()`自身は変えない**——ここは
+# 変換の単体テストだけ（`thread_read`側の配線は`tests/test_thread_read.py`）。
+
+
+def test_T71_normalize_messageはidをmessage_idに写しreplied_toのdictをidに開く():
+    row = {"id": "R1", "username": "someone", "text": "やあ",
+           "timestamp": "2026-09-12T10:00:00+0000",
+           "replied_to": {"id": "P1"}, "root_post": {"id": "P0"}}
+    out = adapter_base.normalize_message(row, medium="threads")
+    assert out["message_id"] == "R1"
+    assert out["replied_to"] == "P1"
+    assert out["root_post"] == "P0"
+    assert out["author_key"] == adapter_base.author_key("threads", "someone")
+    # 他の鍵はそのまま素通し。
+    assert out["text"] == "やあ" and out["timestamp"] == "2026-09-12T10:00:00+0000"
+    # 元の行は書き換えない（コピーを返す）。
+    assert "message_id" not in row
+
+
+def test_T71_normalize_messageはreplied_toが文字列ならそのまま無ければNoneのまま():
+    already_str = adapter_base.normalize_message(
+        {"message_id": "R2", "username": "u", "replied_to": "P1", "root_post": "P1"},
+        medium="bluesky")
+    assert already_str["replied_to"] == "P1" and already_str["root_post"] == "P1"
+
+    無し = adapter_base.normalize_message(
+        {"id": "R3", "username": "u"}, medium="mastodon")
+    assert 無し.get("replied_to") is None and 無し.get("root_post") is None
+    assert 無し["message_id"] == "R3"
+
+
+def test_T71_normalize_messageは既にmessage_idやauthor_keyがあれば変えない():
+    already = {"message_id": "R4", "id": "RAW4", "username": "someone",
+              "author_key": "0" * 16, "replied_to": {"id": "P1"}}
+    out = adapter_base.normalize_message(already, medium="threads")
+    assert out["message_id"] == "R4"       # `id` ではなく既存の値のまま
+    assert out["author_key"] == "0" * 16   # 上書きしない
+
+
+def test_T71_normalize_messageは冪等():
+    row = {"id": "R5", "username": "someone", "replied_to": {"id": "P1"},
+           "root_post": {"id": "P1"}}
+    once = adapter_base.normalize_message(row, medium="threads")
+    twice = adapter_base.normalize_message(once, medium="threads")
+    assert once == twice
+
+
 def _select_1件(tmp_path, *, media: str, topic: str, char_limit=None):
     """`select` に 1 本だけ流して、落ちた理由を返す（時刻の関門より手前を見る）。"""
     path = tmp_path / "a.md"

@@ -268,6 +268,74 @@ def test_you_and_themにlast_reactionがある(bsky_account):
     assert you_and_them[dave_key]["last_reaction"] is None
 
 
+# --- T7-1: Threadsの偽サーバで枝を読む（conversation()の生の行をMessageの形に揃える） ---
+# `ThreadsAdapter.conversation()`は生の行（`id`・`replied_to: {"id": …}`・
+# `root_post: {"id": …}`）を返す（返信の台帳との互換のため adapter 自身は
+# 変えない・設計「自分の泉」T7-1発注書）。`thread_read`は`normalize_message()`
+# を通してから読むので、Threadsでも`message_id`・`depth`・`already_replied`が
+# ちゃんと埋まることをここで確かめる（T1-2はBluesky・Mastodonの偽サーバだけで
+# 枝を確かめていた・Threadsは400の経路だけだった、という所見の穴）。
+
+C1_ID, C2_ID, C3_ID = "C1", "C2", "C3"
+
+
+def _threads_conversation_rows():
+    """根（`OTHER_POST_ID`・alice）→ C1（bob）→ C2（nigamilab・自分）→ C3（carol）。"""
+    return [
+        {"id": C1_ID, "username": "bob", "text": "bobの返信",
+         "timestamp": "2026-09-16T01:00:00+0000",
+         "replied_to": {"id": OTHER_POST_ID}, "root_post": {"id": OTHER_POST_ID},
+         "permalink": "https://t/c1", "has_replies": True, "is_reply": True},
+        {"id": C2_ID, "username": "nigamilab", "text": "自分の返信",
+         "timestamp": "2026-09-16T02:00:00+0000",
+         "replied_to": {"id": C1_ID}, "root_post": {"id": OTHER_POST_ID},
+         "permalink": "https://t/c2", "has_replies": True, "is_reply": True},
+        {"id": C3_ID, "username": "carol", "text": "孫の返信",
+         "timestamp": "2026-09-16T03:00:00+0000",
+         "replied_to": {"id": C2_ID}, "root_post": {"id": OTHER_POST_ID},
+         "permalink": "https://t/c3", "has_replies": False, "is_reply": True},
+    ]
+
+
+def test_Threadsの枝も根から時刻順でdepthとis_ownつきで返る(isolated_account_factory, tmp_path):
+    token_path = str(tmp_path / "threads.token")
+    _write_token(token_path, {"access_token": "FAKE-SECRET", "user_id": "999999",
+                              "username": "nigamilab", "scopes": None,
+                              "obtained_at": "2026-09-16T09:00:00+09:00"})
+    account = isolated_account_factory(
+        "nigamilab-threads-branch-test", media="threads", handle="nigamilab",
+        token=token_path, production=False)
+
+    with _server(conversation_rows=_threads_conversation_rows()) as (base_url, requests):
+        r = run_thth(["thread", account["name"], OTHER_POST_ID, "--json"],
+                     env={"THTH_THREADS_BASE_URL": base_url})
+    assert r.returncode == 0, r.stdout + r.stderr
+    result = json.loads(r.stdout)
+
+    assert result["root"]["post_id"] == OTHER_POST_ID
+    assert result["root"]["username"] == "alice"
+
+    ids = [m["message_id"] for m in result["messages"]]
+    assert ids == [C1_ID, C2_ID, C3_ID], ids   # Threadsの生の`id`から写った
+
+    by_id = {m["message_id"]: m for m in result["messages"]}
+    assert by_id[C1_ID]["depth"] == 1 and by_id[C1_ID]["replied_to"] == OTHER_POST_ID
+    assert by_id[C2_ID]["depth"] == 2 and by_id[C2_ID]["replied_to"] == C1_ID
+    assert by_id[C3_ID]["depth"] == 3 and by_id[C3_ID]["replied_to"] == C2_ID
+
+    # `replied_to`は`{"id": …}`のdictではなく、id文字列に開かれていること。
+    for m in result["messages"]:
+        assert isinstance(m["replied_to"], str)
+
+    assert by_id[C2_ID]["is_own"] is True
+    assert by_id[C1_ID]["is_own"] is False
+    assert by_id[C3_ID]["is_own"] is False
+    assert by_id[C2_ID]["author_key"] is not None
+
+    counts = result["counts"]
+    assert counts["messages"] == 3 and counts["own"] == 1 and counts["participants"] == 4
+
+
 def test_Threadsで他人の根が400ならPermissionMissingのままrc1(isolated_account_factory, tmp_path):
     with _server({f"/{OTHER_POST_ID}": "permission"}) as (base_url, requests):
         token_path = str(tmp_path / "threads.token")

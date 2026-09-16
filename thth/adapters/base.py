@@ -158,6 +158,42 @@ def author_key(medium: str, username: str | None) -> str | None:
     return digest[:16]
 
 
+def normalize_message(row: dict, *, medium: str) -> dict:
+    """媒体の生の行を`Message`の形（`message_id`・`replied_to`・`root_post`は
+    id の文字列）に揃える（T7-1・設計「自分の泉」§2.1）。
+
+    **`conversation()`自身の戻りは変えない**——`collect`・`threadshape`・
+    `replies`の台帳（ndjson）は媒体ごとの生の鍵（Threadsなら`id`・
+    `replied_to: {"id": …}`）をそのまま読むので、そこを揃えると既存の台帳の
+    互換が壊れる（設計「自分の泉」T7-1発注書）。ここは`thread_read`など
+    「読んで見せる」口が、adapterの生の行を使う直前にだけ通す変換。
+
+    やること（3 つ）:
+      - `message_id`が無ければ`id`から写す（あれば触らない）。
+      - `replied_to`・`root_post`が dict（Threadsの`{"id": …}`）なら`.get("id")`
+        を、文字列ならそのまま、無ければ`None`のまま。
+      - `author_key`が無ければ`author_key(medium, username)`で埋める。
+
+    他の鍵（`text`・`username`・`timestamp`・`permalink`・`has_replies`・
+    `is_reply`等）はそのまま素通しする。
+
+    **冪等**: 既に`Message`の形の行（Bluesky・Mastodonの`conversation()`・
+    Threadsの`_message_row()`・`fetch_post()`の戻り）を渡しても同じ行が返る
+    ——2 回通しても壊れない。
+    """
+    out = dict(row)
+    if not out.get("message_id"):
+        out["message_id"] = out.get("id")
+    for key in ("replied_to", "root_post"):
+        value = out.get(key)
+        if isinstance(value, dict):
+            out[key] = value.get("id")
+        # 文字列・None はそのまま（既に揃っている・またはそもそも無い）。
+    if not out.get("author_key"):
+        out["author_key"] = author_key(medium, out.get("username"))
+    return out
+
+
 @dataclasses.dataclass
 class Message:
     """会話の 1 行（設計 v2 §4.2。旧 `Reply` の改名）。

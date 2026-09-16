@@ -199,8 +199,15 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
         raise adapter_base.AdapterError(f"{account_name}: token が無いので読めません")
     adapter = adapters_mod.make_adapter(account_cfg, token)
 
-    root_row = adapter.fetch_post(post_id)
-    raw_messages = adapter.conversation(post_id, since=since)
+    # **`conversation()`・`fetch_post()`の生の行を`Message`の形に揃える**
+    # （T7-1・設計「自分の泉」§2.1）。Threadsの`conversation()`は`id`・
+    # `replied_to: {"id": …}`の生の行を返す（返信の台帳との互換のため
+    # adapter自身は変えない）——ここで読む直前にだけ通す。Bluesky・Mastodon・
+    # Threadsの`fetch_post()`は既に`Message`の形なので、通しても変わらない
+    # （`normalize_message()`は冪等）。
+    root_row = adapter_base.normalize_message(adapter.fetch_post(post_id), medium=media)
+    raw_messages = [adapter_base.normalize_message(m, medium=media)
+                    for m in adapter.conversation(post_id, since=since)]
 
     own_handles, unreadable_accounts = replies_mod._own_handles()
     incomplete = bool(unreadable_accounts)
