@@ -40,7 +40,12 @@ MEDIUM = "bluesky"
 # --- 固定した身元（試験のたびに変えない・score.py 側も知っている前提はいらない
 #     ——判定はログと差分だけで行い、この固定値そのものには依存しない） -------
 DID_DEMO = "did:plc:demobluesky0000001"
-HANDLE_DEMO = "demo.bsky.social"
+# **雛形のダミー（`accounts.DUMMY_HANDLES["bluesky"]` = `demo.bsky.social`）と
+# 一致させない**（T6-4）。`build_box.py` の `write_ledger_bluesky()` が台帳の
+# `handle` にここと同じ値を書く——雛形のダミーと一致すると `thth doctor` が
+# 「ダミーのままです」で rc=1 になっていた（採点に入らない箱の欠陥）。
+# `build_box.ENGAGE_HANDLE` と**揃えたまま**、値だけ変える。
+HANDLE_DEMO = "trial-demo.bsky.social"
 
 DID_ALICE = "did:plc:alicecoffee0000001"
 HANDLE_ALICE = "alice.bsky.social"

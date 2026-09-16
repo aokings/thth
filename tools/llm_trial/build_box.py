@@ -53,8 +53,14 @@ ACCOUNT = "demo-threads"
 # `--engage`（発注 T4-2）: 「この枝に絡んで」の試験——`demo-threads` の箱に
 # **足す**（既存の箱を壊さない）、偽の Bluesky サーバへ向いた台帳 1 本。
 # --------------------------------------------------------------------------
+# **雛形のダミー（`accounts.DUMMY_HANDLES["bluesky"]` = `demo.bsky.social`）と
+# 揃えない**（T6-4）。台帳の handle がそれと一致すると `thth doctor` が
+# 「ダミーのままです」で rc=1 になり、採点に入らない箱の欠陥で被験者が
+# 「壊れているのか」と迷っていた（試験の摩擦）。偽サーバの whoami が返す
+# handle（`fake_bluesky_server.HANDLE_DEMO`）とここは**揃えたまま**、値だけ
+# 雛形と違うものにする。
 ENGAGE_ACCOUNT = "demo-bluesky"
-ENGAGE_HANDLE = "demo.bsky.social"
+ENGAGE_HANDLE = "trial-demo.bsky.social"
 FAKE_BLUESKY_SERVER = os.path.join(TOOLS_DIR, "fake_bluesky_server.py")
 # `.token` の形だけ本物に似せる（値は読まれない・`Adapter.has_token()` は
 # 「在るか」しか見ない・`thth/adapters/bluesky.py`）。
