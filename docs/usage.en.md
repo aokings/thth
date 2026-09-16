@@ -25,7 +25,8 @@ truncating it. Platform caps (e.g. Threads' 250 posts / 1,000 replies per 24h)
 are not enforced by THTH itself.
 
 Setting up a new account? Read §9 (where the account ledger file lives) first —
-it is not in this repo. §10 is `thth ask before-you-post`, §11 is `thth share`.
+it is not in this repo. §10 is `thth ask before-you-post`, §11 is reading
+before you reply (`thth where` / `thth thread` / `thth who`) and `thth after`.
 
 ## 2. Posting in person (`thth send`)
 
@@ -378,48 +379,34 @@ exit 2 rather than quietly ignored. An account with no ledger exits 1.
 
 The same thing is available over MCP as the `before_you_post` tool.
 
-## 11. Contributing observations (`thth share`)
+## 11. Reading before you reply (`thth where` / `thth thread` / `thth who`) and `thth after`
 
-```bash
-thth share            # or: status — where it is, on or off, how many bytes
-thth share on         # start queuing (also: sync, immediately)
-thth share off        # stop
-thth share log        # print every line ever queued
-thth share sync       # re-queue from the ledgers you already have
-```
+These four commands only read — none of them writes to `data/`, and none of
+them sends anything anywhere (design "自分の泉"):
 
-**Off by default**, and off in every ambiguous case: if
-`$THTH_ROOT/state/share/config.json` is missing, or unreadable, or malformed,
-the answer is off. While off, the outbox is **zero bytes** — the pseudonym file
-and the hash salt are not even created.
+- **`thth where (<account>|--project P) <word…> [--recent] [--limit N] [--json]`**
+  — where to go engage next: overlays your own history on top of a live
+  keyword search (1–5 words), one section per account (no cross-account
+  totals, no ranking). `--project` runs it across every account in that
+  project; an account that can't be read there is dropped into `cannot_say`
+  and the rest continue. A single, unreadable `<account>` is a loud failure
+  (exit 1, or `{"error", "account"}` with `--json`) rather than a silent empty
+  answer.
+- **`thth thread <account> <post_id> [--since ISO] [--max-messages N] [--json]`**
+  — read a thread's branches on the spot. Nothing is saved.
+- **`thth who (<account>|--project P) (<author_key>|@<username>) [--profile] [--json]`**
+  — a pseudonym's history with you: how many times you've crossed paths, when,
+  and how they reacted — never what anyone wrote. `--profile` fetches a live
+  public profile (Threads only) without storing it. A single, unreadable
+  `<account>` exits 1, the same as `where`.
+- **`thth after <account> [--reply-to ID] [--author-key KEY] [--topic WORD]
+  [--hour-band BAND] [--window-days N] [--min-n N] [--json]`** — after you've
+  replied to someone, how it landed: counts and a window, never bodies.
 
-**There is nowhere for it to send.** Turning it on appends lines to
-`$THTH_ROOT/state/share/outbox/<YYYY-MM>.ndjson` on your own disk. No server
-exists to receive them; `thth share` opens no socket. `thth share log` prints
-every line, so you can read exactly what you would be contributing before
-anyone ever asks for it.
+All four answer from **your own local ledgers only**; none of them talks to a
+spring or a shared pool. Each records one minimal line per call in
+`runs-YYYY-MM.ndjson` (`account`, `run_id`, `mode: "read"`, `action`, `status`,
+`error`, plus a few call-specific counts) — never post bodies or usernames.
 
-What it queues:
-
-- **Observations** — the topic word, the free-text `audience` note, the topic
-  kind, the fetch status, a pseudonym for the observer, and the date.
-- **Thread shape** — a **salted SHA-256** of the post id (the salt stays on
-  your disk and is never queued, so the hash cannot be turned back into a
-  permalink), the medium, the kind, the word, the hour band, and the counts at
-  each collection tick.
-- **Your pseudonym** — a random 16-digit id in
-  `$THTH_ROOT/state/share/observer_id`, stable across runs. It is the only name
-  that ever appears.
-
-What never gets queued, enforced by a check that raises before the line is
-written (`_assert_clean`): post bodies, reply bodies, **repliers'** usernames,
-your own `verdict`/`by`/`note`/`reason`, account names, access tokens, repo
-paths, and raw post ids.
-
-**The check cannot strip what you typed yourself.** `audience` is a free-text
-note you write with `thth topics --note --audience "…"`, and it is queued as
-written. What the machine drops is the *replier's* `username` — a field that
-comes from the platform's ledger — not characters you chose. Describe who was
-in the room by attribute ("parents comparing schools"), never by handle.
-
-Turning it on is recorded locally with `--by`; that name is not queued.
+The same four are available over MCP as `where_to_appear`, `thread_read`,
+`who_is_this`, and `after_you_posted`.

@@ -32,17 +32,9 @@ what to write.
   Authorization headers are redacted before anything is written or printed.
 
 **What it never does**
-- Never sends anything to a third party. `thth share` is **off by default** and,
-  even when you turn it on, **there is nowhere for it to send**: it only appends
-  to a local file under `$THTH_ROOT/state/share/outbox/`, and `thth share log`
-  prints every line of it. What it queues is words, audience notes, topic kinds,
-  counts, time-of-day bands and a **salted hash** of the post id — never post
-  bodies, replies, **repliers'** usernames, your own verdicts, account names,
-  tokens, repo paths, or raw post ids — see
-  [docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md) §2.
-  The one thing the machine cannot strip is **what you typed yourself**: the
-  free-text `audience` note is queued as written, so describe who was there by
-  attribute ("parents comparing schools"), not by handle.
+- Never sends anything to a third party. The read-only lookups (`thth where`,
+  `thth thread`, `thth who`) save nothing; all that persists is the engagement
+  ledger (your own acts and reactions).
 - Never reads direct messages. It only ever touches public posts and public replies.
 - Never auto-replies with canned text. Reply drafts go through the same
   human-approval path as any other post.
@@ -114,7 +106,7 @@ Full walkthrough: [docs/usage.en.md](docs/usage.en.md).
 
 ## Commands
 
-All 27 subcommands `thth --help` lists today, one line each:
+All 26 subcommands `thth --help` lists today, one line each:
 
 - `lint` — check a queue file's front matter and length
 - `preview` — show the exact text that would go out
@@ -148,10 +140,6 @@ All 27 subcommands `thth --help` lists today, one line each:
 - `doctor` — read-only capability check for a token
 - `app` — store or show the local Meta app config
 - `token` — set a long-lived token directly (paste-in, e.g. Mastodon)
-
-- `share` — `on|off|status|log|sync`. **Off by default.** Queues the shareable
-  subset (§2) to a local outbox; **nothing is sent anywhere** — the spring that
-  would receive it does not exist yet (v2-5).
 
 - `ask` — `before-you-post`: what happened last time you used this word, at this
   hour, in this shape.

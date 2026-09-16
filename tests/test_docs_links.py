@@ -171,3 +171,29 @@ def test_docs_records_directory_is_empty_or_absent():
         "docs/記録/ に日誌が戻っている（thth-notes/記録/ へ置くこと）:\n"
         + "\n".join(strays)
     )
+
+
+def test_thth_share_の語が出てこない():
+    """`thth share` は T5-1 で消した（裁定 2026-09-16「横断の泉はやめる」・
+    T5 発注書「`thth share` を消す」）。利用者向けの現在形の文書（README・
+    README.en・llms.txt・docs/usage.en.md・skills/）に、消したコマンドの
+    綴りが 1 つでも残っていたら落ちる（`top_share`・`shares`・
+    `share_to_instagram` は別の意味なので検査の対象にしない——ここは
+    文字どおり `"thth share"` という並びだけを見る）。
+    """
+    targets = [
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "README.en.md",
+        REPO_ROOT / "llms.txt",
+        DOCS / "usage.en.md",
+    ]
+    targets += sorted((REPO_ROOT / "skills").rglob("*.md"))
+
+    hits: list[str] = []
+    for path in targets:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "thth share" in text:
+            hits.append(str(path.relative_to(REPO_ROOT)))
+    assert not hits, "`thth share` がまだ残っている:\n" + "\n".join(hits)
