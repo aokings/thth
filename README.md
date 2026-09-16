@@ -9,7 +9,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 版
 
-**2.0.1**。門を無料で開ける版（2.0.1: 同席送信の採集・セキュリティ監査 2 回の直し）（`pip install`・`thth ask`・`thth share`・台帳を repo の外へ）。範囲と裁定は [docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md) §3・§7、その前の版は [docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md](docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md)、導入は [docs/導入_自分のMetaアプリで動かす.md](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
+**2.0.1**。門を無料で開ける版（2.0.1: 同席送信の採集・セキュリティ監査 2 回の直し）（`pip install`・`thth ask`・台帳を repo の外へ）。範囲と裁定は [docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md) §3・§7、その前の版は [docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md](docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md)、導入は [docs/導入_自分のMetaアプリで動かす.md](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
 
 `thth/VERSION` は `2.0.1`（版は `thth/VERSION` の 1 か所・`server.json` はテストで一致を強制）。`origin/release` は v2.0.0（`216af9f`）で、**v2.0.1 はまだ配っていない**（配布は masaru の一言）。出口条件の試験は（運用日誌 thth-notes: `記録/試験_LLMに選ばせる_2026-09-13.md`）。
 
@@ -50,16 +50,12 @@ timer（systemd・`thth systemd` で生成）で毎時投稿、返信の採集�
   は `local`。泉のサーバはまだ無い）。原稿本文は渡さないし、答えにも出ない。
   **n が閾値（既定 20）に満たない群は中央値を返さず `cannot_say` に理由を出す**——
   手元の水ではほとんどが `cannot_say` になる。それが正しい答えで、rc は 0。MCP からは `before_you_post`。
-- **`thth share on|off|status|log|sync`**（設計 v2 §3・裁定 §7-3）。**既定 off**、設定が無い・壊れて
-  いるときも off。off のあいだは outbox が **0 バイト**。on にしても
-  `$THTH_ROOT/state/share/outbox/<YYYY-MM>.ndjson` に積むだけで、**送り先はまだ無い**（v2-5）。
-  積んだ全部は `thth share log` で読める。落ちるのは語・audience・型・件数・時刻帯・
-  post_id の**塩つき sha256**（塩は outbox に出ない）。本文・返信本文・返信者の username・
-  自分の判断・アカウント名・トークン・repo のパス・生の post_id は落ちない。
+- **読む口（`thth where`・`thth thread`・`thth who`）は何も保存しない**（裁定
+  2026-09-16「横断の泉はやめる」）。残るのは絡みの台帳（自分の行為と反応）だけ。
 - **英語の文書**: [README.en.md](README.en.md)・[docs/usage.en.md](docs/usage.en.md)・[llms.txt](llms.txt)。
 - **skill**: `skills/thth/SKILL.md`（wheel にも入る）。
 
-- **動くもの**（`thth --help` の全 27 サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`share`・`board`・`collect`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`。
+- **動くもの**（`thth --help` の全 26 サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`。
 - **最初の本番投稿の記録**: 2026-09-09、@aoking に疎通確認を 1 本（`17916074118445631`）。
 - **未着手**: X・Facebook ページ・Instagram の各アダプタ。トピック検索の権限（tester には降りない）。泉のサーバ（v2-5）。
 - **権限の制約**: tester に降りる scope は 5 つ。削除はできない。

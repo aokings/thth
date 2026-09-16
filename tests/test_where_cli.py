@@ -268,3 +268,44 @@ def test_accountもprojectも無ければ断る():
     from thth import where_cli
     with pytest.raises(where_cli.WhereError):
         where_cli.answer(words=["x"])
+
+
+# ---------------------------------------------------------------- T5-2
+
+def test_単一accountが不正ならrc1で断る(two_media_project):
+    """T5-2: `where` を `who` と揃える（loud reject）。
+
+    以前は単一 account の名前が不正（台帳が無い）でも rc=0・`by_account={}`・
+    `cannot_say=[理由]` だった——呼んだ側からは「そんな account は無い」を
+    見落としやすい。`who` と同じ「読めなければ例外→rc=1」に揃える。
+    `--project` は今までどおり（下のテストで別に固定）。
+    """
+    r = run_thth(["where", "kopicha-ghost", "コーヒー"])
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "台帳が無い" in r.stderr
+
+    r = run_thth(["where", "kopicha-ghost", "コーヒー", "--json"])
+    assert r.returncode == 1, r.stdout + r.stderr
+    payload = json.loads(r.stdout)
+    assert set(payload) == {"error", "account"}
+    assert payload["account"] == "kopicha-ghost"
+    assert "台帳が無い" in payload["error"]
+
+
+def test_projectのときは不正accountが混ざってもrc0で続ける(two_media_project):
+    """--project は今までどおり: 読めない account は `cannot_say` に流れて
+    rc=0 のまま続ける（それが project の意味・T5-2 発注書のとおり）。
+
+    `test_projectで読めない台帳が1本混ざっていても他が出る` と同じ確認だが、
+    T5-2 の変異（`_account_node()` の `AccountError` を投げ直す変更）の
+    直後を明示的に固定するために別立てで置く。
+    """
+    threads_acc, bluesky_acc = two_media_project
+    broken_path = os.path.join(threads_acc["accounts_dir"], "kopicha-ghost2.json")
+    with open(broken_path, "w", encoding="utf-8") as f:
+        f.write("{not valid json")
+
+    with _server() as (base_url, _requests):
+        r = run_thth(["where", "--project", PROJECT, "コーヒー"],
+                     env={"THTH_THREADS_BASE_URL": base_url})
+    assert r.returncode == 0, r.stdout + r.stderr

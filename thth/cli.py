@@ -2647,12 +2647,6 @@ def build_parser() -> argparse.ArgumentParser:
                                 "アカウント用。thth-collect@<account>）")
     p_systemd.set_defaults(func=cmd_systemd)
 
-    # `thth share on|off|status|log`（設計 v2 §3・裁定 §7-3）。**口は
-    # `thth/share_cli.py` に閉じる**——ここは並行して別の Track が触るので、
-    # 足すのはこの 1 行だけにする。
-    from . import share_cli
-    share_cli.register(sub)
-
     p_board = sub.add_parser("board", help="アカウントごとの鮮度・inflight・型外の骨")
     p_board.add_argument("--json", action="store_true")
     p_board.set_defaults(func=cmd_board)

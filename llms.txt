@@ -28,13 +28,9 @@ Looking for a post to reply to: `thth topics <account> --search <word> [--json]`
   least `--min-n` (default 20) comparable posts inside `--window-days`
   (default 30). `cannot_say` is a correct answer, not an error — exit 0. Same
   tool over MCP as `before_you_post`.
-- `thth share on|off|status|log|sync` — **off by default**, and off whenever
-  the config is missing or unreadable. While off the outbox is zero bytes.
-  On, it only appends to `$THTH_ROOT/state/share/outbox/<YYYY-MM>.ndjson`;
-  **there is no server to send to** and `thth share log` prints every line.
-  Queues topic words, audience notes, topic kinds, counts, hour bands and a
-  **salted** hash of the post id — never bodies, reply bodies, replier
-  usernames, verdicts, account names, tokens, repo paths or raw post ids.
+- The read-only lookups (`thth where`, `thth thread`, `thth who`) save
+  nothing; all that persists is the engagement ledger (your own acts and
+  reactions).
 - `thth account add <name> --media threads|bluesky|mastodon --project <p>` —
   writes one ledger from the bundled template to `$THTH_ROOT/accounts/`,
   **outside the repo**, always `production: false`. `thth account migrate`
@@ -44,7 +40,7 @@ Looking for a post to reply to: `thth topics <account> --search <word> [--json]`
 ## Docs
 
 - [README.en.md](README.en.md): what it guarantees, refuses, and never does; install; where ledgers live; daily flow; every real CLI command
-- [docs/usage.en.md](docs/usage.en.md): day-to-day usage — topics, queueing, two-step approval, troubleshooting, account ledgers (§9), `thth ask` (§10), `thth share` (§11)
+- [docs/usage.en.md](docs/usage.en.md): day-to-day usage — topics, queueing, two-step approval, troubleshooting, account ledgers (§9), `thth ask` (§10), reading before you reply — `thth where` / `thth thread` / `thth who` and `thth after` (§11)
 - [docs/導入_自分のMetaアプリで動かす.md](docs/導入_自分のMetaアプリで動かす.md) (Japanese): first-time Threads setup with your own Meta app
 - [docs/導入_Bluesky_2026-09-13.md](docs/導入_Bluesky_2026-09-13.md) (Japanese): first-time Bluesky account setup
 - [docs/導入_Mastodon_2026-09-13.md](docs/導入_Mastodon_2026-09-13.md) (Japanese): first-time Mastodon account setup
