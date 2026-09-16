@@ -219,6 +219,38 @@ TOOLS = [
             "required": ["words"],
         },
     },
+    {
+        # **名前と説明文がそのまま売り文句**（設計「自分の泉」§2.4）。
+        # 実装が 1 語でも足したら設計書でなく実装を戻す（§2 の頭書きそのまま）。
+        "name": "who_is_this",
+        # **設計「自分の泉」§2.4 の文言そのまま。**
+        "description": (
+            "返信する相手を確かめる。この仮名と自分のアカウントの接触の"
+            "回数・時期・反応を返す。発言の内容は持たない"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "account": {"type": "string",
+                             "description": "account 名（project の代わり）"},
+                "project": {"type": "string",
+                             "description": "この project の account 全部"
+                                            "（account の代わり）"},
+                "author_key": {"type": "string",
+                                "description": "仮名（16 進 16 桁・username の代わり）"},
+                "username": {"type": "string",
+                              "description": "@ 無しでも可。その場で author_key に"
+                                             "写す（保存しない・author_key の代わり）"},
+                "profile": {"type": "boolean",
+                             "description": "その場で公開プロフィールを引く"
+                                            "（Threads だけ・保存しない・既定 false）"},
+            },
+            # **`account`/`project` と `author_key`/`username`、どちらも
+            # 「片方だけ必須」の OR**（`where_to_appear` と同じ理由で
+            # `required` には入れない——`validate_arguments()` の
+            # `who_is_this` 専用の分岐で見る）。
+        },
+    },
 ]
 
 
@@ -367,11 +399,18 @@ def validate_arguments(name: str, arguments) -> dict:
                         f"CLI の旗と区別できないので受け取りません")
         if key == "file":
             check_file_argument(name, value)
-    if name == "where_to_appear" and not arguments.get("account") and not arguments.get("project"):
+    if name in ("where_to_appear", "who_is_this") and not arguments.get("account") \
+            and not arguments.get("project"):
         # **`account` か `project` のどちらか必須**（`required` は AND の意味しか
-        # 持てないので、ここで OR を見る・T2-3 発注書）。
+        # 持てないので、ここで OR を見る・T2-3 発注書・T3-3 も同じ形）。
         raise ToolInputError(
             f"{name}: account か project のどちらかが要ります")
+    if name == "who_is_this" and not arguments.get("author_key") \
+            and not arguments.get("username"):
+        # **`author_key` か `username` のどちらか必須**（同じ理由で OR を
+        # ここで見る・T3-3 発注書）。
+        raise ToolInputError(
+            f"{name}: author_key か username のどちらかが要ります")
     return arguments
 
 
@@ -495,11 +534,31 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
+    elif name == "who_is_this":
+        # **`where_to_appear` と同じ型**: CLI（`thth who`）を `--json` で呼ぶ
+        # だけ（設計「自分の泉」§2.4・T3-3）。`account`／`project` と
+        # `author_key`／`username` のどちらかずつ必須は `validate_arguments()`
+        # が先に見ているので、ここでは組み立てるだけでよい。
+        args = ["who"]
+        if arguments.get("project"):
+            args += ["--project", arguments["project"]]
+        else:
+            args.append(arguments["account"])
+        if arguments.get("author_key"):
+            args.append(arguments["author_key"])
+        else:
+            args.append("@" + arguments["username"])
+        if arguments.get("profile"):
+            args.append("--profile")
+        args.append("--json")
+        proc = run_cli(args)
+        text = proc.stdout
     else:
         return {"content": [{"type": "text", "text": f"unknown tool: {name}"}], "isError": True}
 
     if name.startswith("thth_topic_") or name in (
-            "before_you_post", "after_you_posted", "thread_read", "where_to_appear"):
+            "before_you_post", "after_you_posted", "thread_read", "where_to_appear",
+            "who_is_this"):
         # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）
         # とは意味が違う——こちらは stale_context・不正な候補比較で、
         # **そのまま使ってはいけない**応答。既存の扱いは変えない。
