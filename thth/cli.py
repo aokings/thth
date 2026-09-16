@@ -2091,7 +2091,50 @@ def cmd_forms(args) -> int:
     return 0
 
 
+def _behind_notices(account_names: list) -> tuple:
+    """`account_names` に挙がる account の repo を重複排除して確かめ、
+    遅れているものだけを案内の行にする（T8-2・kopicha 続報）。
+
+    `thth queue`・`thth schedule`・`thth board` はどれも**読むだけの口**なので、
+    ここまで `writeback.sync_repo()`（pull を含む）を通していなかった——`thth
+    approve` 等が既に通している同期を、読むだけの口にまで広げるのではなく、
+    **遅れていることだけを言う**のがこの関数の役目（`writeback.behind_remote()`
+    の docstring と同じ理由）。
+
+    同じ repo を複数 account が共有していても `git fetch` は 1 回で済ませる
+    （repo_dir で重複排除）。戻り値は `(案内の行のリスト, {account名:
+    behind_remote() の dict})`——後者は呼び出し側が `--json` に足したり、
+    account ごとの行に使ったりする。
+    """
+    by_repo: dict = {}
+    for name in account_names:
+        try:
+            account_cfg = accounts_mod.load_account(name)
+        except accounts_mod.AccountError:
+            continue
+        repo_dir = account_cfg.get("repo_dir")
+        if not repo_dir:
+            continue
+        by_repo.setdefault(repo_dir, []).append(name)
+
+    lines = []
+    repo_by_account: dict = {}
+    for repo_dir, names_here in by_repo.items():
+        info = writeback_mod.behind_remote(repo_dir)
+        for name in names_here:
+            repo_by_account[name] = info
+        if info.get("behind"):
+            example = sorted(names_here)[0]
+            lines.append(
+                f"remote に {info['behind']} commit 分の新しいものがあります"
+                "（この一覧は取り込み前の状態です）。"
+                f"`thth pull {example}` か `thth approve` で取り込まれます")
+    return lines, repo_by_account
+
+
 def cmd_queue(args) -> int:
+    account_names = [args.account] if args.account else accounts_mod.list_account_names()
+    notice_lines, repo_by_account = _behind_notices(account_names)
     summary = report_mod.queue_summary(args.account)
     # **読めなかった台帳があれば終了コードを立てる**（監査 2 回目・P3-3）。
     # 名前が不正・台帳が無い・壊れているとき、画面には 1 行出るのに **rc は 0**
@@ -2099,9 +2142,16 @@ def cmd_queue(args) -> int:
     # 返るので、**script から呼ぶと黙って素通りする**（作法 5・loud reject）。
     rc = 2 if any("error" in info for info in summary.values()) else 0
     if args.json:
+        # **`--json` には `repo`（`behind_remote()` の dict）を足す**（T8-2）。
+        for name, info in summary.items():
+            if name in repo_by_account:
+                info["repo"] = repo_by_account[name]
         _print_json(summary)
         return rc
     else:
+        # **先頭に 1 行**（T8-2）。遅れていなければ何も出さない（静かに）。
+        for line in notice_lines:
+            print(line)
         for name, info in summary.items():
             if "error" in info:
                 print(f"{name}: {info['error']}", file=sys.stderr)
@@ -2122,10 +2172,20 @@ def cmd_schedule(args) -> int:
     読むだけ（asmon 関東セッション指摘 2026-09-10）。承認済みと下書きの両方を出す
     ——連載を組むときに見たいのは全体だから。
     """
+    account_names = [args.account] if args.account else accounts_mod.list_account_names()
+    notice_lines, repo_by_account = _behind_notices(account_names)
     rows = report_mod.schedule(args.account, days=args.days)
     if args.json:
+        # **`--json` には `repo`（`behind_remote()` の dict）を足す**（T8-2）。
+        for row in rows:
+            info = repo_by_account.get(row["account"])
+            if info is not None:
+                row["repo"] = info
         _print_json(rows)
         return 0
+    # **先頭に 1 行**（T8-2）。遅れていなければ何も出さない（静かに）。
+    for line in notice_lines:
+        print(line)
     if not rows:
         print("これから出る予定はありません")
         return 0
@@ -2369,6 +2429,13 @@ def cmd_board(args) -> int:
     if args.json:
         _print_json(summary)
     else:
+        # **account ごとの行の下に、遅れているときだけ 1 行**（T8-2）。
+        # board の `--json` はここでは触らない（発注書は text の行だけを求めて
+        # いる・自己更新チェックの「board は取りに行かない」とは別の対象
+        # ——`writeback.behind_remote()` の docstring 参照）。
+        _account_names_for_repo = [row["account"] for row in summary.get("accounts", [])
+                                    if "error" not in row]
+        _, _repo_by_account = _behind_notices(_account_names_for_repo)
         # **道具の版を、いちばん上に出す**（masaru 裁定 2026-09-12・受け入れ条件
         # 「**届かない場合に分かる**」）。`app.head` と遅れは **`--json` にしか
         # 出ていなかった**——2026-09-10 に「4 巡分古いまま timer が回っていた」のを
@@ -2502,6 +2569,15 @@ def cmd_board(args) -> int:
             print(f"{row['account']}: project={row['project']} last_post={last_post} "
                   f"approved_waiting={row['approved_waiting']} type_mismatch={row['type_mismatch']} "
                   f"inflight={inflight} token={token}{pending_note}{retracted_note}{inbox_note}")
+            # **遅れているときだけ 1 行**（T8-2）。`behind` が 0／None（確かめられ
+            # なかった）なら何も出さない——静かに、が既定（T8-2 の queue/schedule
+            # と同じ規律）。
+            _repo_info = _repo_by_account.get(row["account"])
+            if _repo_info and _repo_info.get("behind"):
+                print(f"  repo が {_repo_info['behind']} commit 遅れています"
+                      f"（repo_head={_repo_info.get('head')}・"
+                      f"fetched_at={_repo_info.get('fetched_at')}）。"
+                      f"`thth pull {row['account']}` か `thth approve` で取り込まれます")
             # 指紋の 5 項目のどれが食い違って inflight が残ったか（外部レビュー
             # 第 3 巡・持ち越し項目 C）。人が止まった原因をファイルを開いて
             # 自分で探さずに済むように、board の 1 画面にそのまま出す。

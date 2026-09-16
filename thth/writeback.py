@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 
+from . import jst as jst_mod
 from . import postid as postid_mod
 from . import queuefile as queuefile_mod
 from . import redact as redact_mod
@@ -216,6 +217,71 @@ def upstream_sha(repo_dir: str) -> str | None:
     if head.stdout.strip() != upstream.stdout.strip():
         return None
     return head.stdout.strip() or None
+
+
+def behind_remote(repo_dir: str) -> dict:
+    """利用者 repo（queue の repo）を **fetch だけして** remote と比べる（T8-2・
+    kopicha 続報）。**pull はしない**——`git fetch` は実際に行うが、
+    remote-tracking ref が進むだけで作業ツリーは動かない。
+
+    なぜ要るか: `thth approve`（と `revoke`・`throw`・`collect`・`retract`）は
+    既に `sync_repo()` を通しているが、**読むだけの口**（`thth queue`・
+    `schedule`・`board`）は通していない——**読むだけの口が勝手に pull するのは
+    避ける**のが設計の芯（loud reject と対になる規律）。だから push 直後に
+    `schedule` で見ると、まだ取り込み前の一覧が出て「反映されていない」と
+    見えていた。ここは**遅れていることを言う**ための土台で、取り込みは
+    `thth pull`（T8-3）か `thth approve` に任せる。
+
+    **これは `thth board` の道具自身の自己更新チェック（`_pull_locked` の
+    docstring「board は取りに行かない」）とは別の対象**——あちらは配布 repo
+    （app 自身）の話で board は意図して fetch しない。こちらは account ごとの
+    **利用者 queue の repo**の話で、ここでだけ fetch する。
+
+    戻り値: `{"behind": n|None, "ahead": n|None, "head": "<7桁>",
+    "fetched_at": "<ISO 8601>", "reason": "<読めない理由>"|None}`。
+
+    `behind`/`ahead` は fetch できて HEAD と `@{u}` の差分を数えられたときだけ
+    整数。**読めなければ `None`**（`0` と混ぜない——`0` は「確かめて遅れて
+    いない」の意味なので、「確かめられなかった」と絶対に同じ値にしない）。
+    そのときは `reason` に理由が入る。
+    """
+    fetched_at = jst_mod.iso()
+    if not repo_dir or not os.path.isdir(repo_dir):
+        return {"behind": None, "ahead": None, "head": None,
+                "fetched_at": fetched_at, "reason": "repo が見当たりません"}
+    if not os.path.exists(os.path.join(repo_dir, ".git")):
+        return {"behind": None, "ahead": None, "head": None,
+                "fetched_at": fetched_at, "reason": "git repository ではありません"}
+
+    head_now = _run_git(repo_dir, ["rev-parse", "--short", "HEAD"])
+    head7 = head_now.stdout.strip() if head_now.returncode == 0 else None
+
+    remote = _run_git(repo_dir, ["remote"])
+    if remote.returncode != 0 or "origin" not in remote.stdout.split():
+        return {"behind": None, "ahead": None, "head": head7,
+                "fetched_at": fetched_at, "reason": "origin という remote が見つかりません"}
+
+    fetch = _run_git(repo_dir, ["fetch", "origin"])
+    # **fetch した直後の時刻に取り直す**（呼んだ時刻ではなく、実際に確かめた時刻）。
+    fetched_at = jst_mod.iso()
+    if fetch.returncode != 0:
+        return {"behind": None, "ahead": None, "head": head7,
+                "fetched_at": fetched_at,
+                "reason": "git fetch に失敗しました: " + redact_mod.redact(fetch.stderr)}
+
+    counts = _run_git(repo_dir, ["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+    if counts.returncode != 0:
+        return {"behind": None, "ahead": None, "head": head7,
+                "fetched_at": fetched_at,
+                "reason": "HEAD と upstream の差分を確認できませんでした: "
+                          + redact_mod.redact(counts.stderr)}
+    parts = counts.stdout.split()
+    if len(parts) != 2:
+        return {"behind": None, "ahead": None, "head": head7,
+                "fetched_at": fetched_at, "reason": "差分の出力を読めませんでした"}
+    ahead_str, behind_str = parts
+    return {"behind": int(behind_str), "ahead": int(ahead_str), "head": head7,
+            "fetched_at": fetched_at, "reason": None}
 
 
 def repo_toplevel(path: str) -> str | None:
