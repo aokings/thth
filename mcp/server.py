@@ -180,7 +180,17 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "account": {"type": "string", "description": "account 名"},
-                "post_id": {"type": "string", "description": "枝の根の post_id"},
+                "post_id": {
+                    "type": "string",
+                    "description": (
+                        "枝の根の post_id。各 message の already_replied は"
+                        " 3 値（T7-3）: object（source 付き。ledger＝絡みの台帳／"
+                        "queue＝queue の下書き／thread＝枝の中の自分の返信）＝返した"
+                        "／false＝台帳・queue・枝のどこにも見当たらない"
+                        "（「返していない」の確定ではない）"
+                        "／null＝台帳か queue が読めず判らない"
+                        "（理由は provenance.ledgers_unreadable）"),
+                },
                 "since": {"type": "string", "description": "この時刻以降だけ"},
                 "max_messages": {"type": "integer",
                                    "description": "読む上限（既定 200・上限 1000）"},

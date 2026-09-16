@@ -185,13 +185,67 @@ def test_already_repliedは絡みの台帳とqueueの両方から引く(bsky_acc
     result = json.loads(r.stdout)
     by_id = {m["message_id"]: m for m in result["messages"]}
 
+    # T7-3: object には `source`（ledger／queue／thread のどこで見つかったか）が付く。
     assert by_id[R1_URI]["already_replied"] == {
         "post_id": "at://" + DID + "/app.bsky.feed.post/myreply1",
-        "at": "2026-09-16T05:00:00+09:00"}
-    assert by_id[R4_URI]["already_replied"] == {"status": "draft"}
-    # まだ絡んでいない相手には無い。
+        "at": "2026-09-16T05:00:00+09:00", "source": "ledger"}
+    assert by_id[R4_URI]["already_replied"] == {"status": "draft", "source": "queue"}
+    # まだ絡んでいない相手には`False`（台帳・queueは両方読めているので
+    # 「見当たらない」と言い切れる・「返していない」の確定ではない・T7-3）。
+    assert by_id[R3_URI]["already_replied"] is False
+    assert by_id[R5_URI]["already_replied"] is False
+
+
+# --- T7-3: already_replied を枝の中の自分の返信からも埋める（3 値の意味） -----
+# 設計「自分の泉」§2.1・T7-3 発注書「その枝に is_own: true の返信があり、
+# その replied_to がこの message なら、台帳に無くても already_replied を
+# 埋める」。`false`＝見当たらない（返していない、の確定ではない）／
+# `null`＝台帳か queue が読めず判らない、の 2 つも別々に確かめる。
+
+
+def test_台帳queueに無くても枝の中の自分の返信からalready_repliedが埋まる(bsky_account):
+    account, service = bsky_account
+    # 台帳にも queue にも何も無い状態（このテストは追加しない）。
+    r = _cli(account["name"], ROOT_URI, service=service)
+    assert r.returncode == 0, r.stdout + r.stderr
+    result = json.loads(r.stdout)
+    by_id = {m["message_id"]: m for m in result["messages"]}
+
+    # R2（自分）は R1（bob）への返信——台帳に無くても枝そのものから拾う。
+    assert by_id[R1_URI]["already_replied"] == {
+        "post_id": R2_URI, "at": "2026-09-16T02:00:00.000Z", "source": "thread"}
+    # R2・R3・R4・R5 には自分からの返信がぶら下がっていない
+    # ——台帳・queue も空なので`False`（見当たらない。「返していない」の確定ではない）。
+    assert by_id[R2_URI]["already_replied"] is False
+    assert by_id[R3_URI]["already_replied"] is False
+    assert by_id[R4_URI]["already_replied"] is False
+    assert by_id[R5_URI]["already_replied"] is False
+
+
+def test_台帳が読めなければ見当たらなくてもFalseでなくNoneになる(bsky_account, tmp_path):
+    account, service = bsky_account
+    cfg = accounts_mod.load_account(account["name"])
+    eng_dir = accounts_mod.data_dirs(cfg, account["name"])["engagements"]
+    os.makedirs(eng_dir, exist_ok=True)
+    # 壊れた ndjson（JSON として読めない行）を 1 本置く——
+    # `engagements.load()` はこのファイルを `broken` として中身を捨てる
+    # （`thth/engagements.py::_read_ndjson()` と同じ流儀）。
+    with open(os.path.join(eng_dir, "2026-09.ndjson"), "w", encoding="utf-8") as f:
+        f.write("これは JSON ではありません\n")
+
+    r = _cli(account["name"], ROOT_URI, service=service)
+    assert r.returncode == 0, r.stdout + r.stderr
+    result = json.loads(r.stdout)
+    by_id = {m["message_id"]: m for m in result["messages"]}
+
+    # R1 は枝の中の自分の返信（R2）があるので、台帳が読めなくても object のまま
+    # （見つかったものを取り消さない）。
+    assert by_id[R1_URI]["already_replied"]["source"] == "thread"
+    # どこにも見当たらない行は、`False`（見当たらない）ではなく`None`
+    # （「台帳が読めないので判らない」・T7-3 規約）。
     assert by_id[R3_URI]["already_replied"] is None
     assert by_id[R5_URI]["already_replied"] is None
+    assert any("絡みの台帳" in reason for reason in result["provenance"]["ledgers_unreadable"])
 
 
 def test_max_messagesを超えたら新しい側を切りcontinue_fromを返す(bsky_account):
