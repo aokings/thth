@@ -17,6 +17,10 @@ from __future__ import annotations
 import json
 import os
 
+from . import accounts as accounts_mod
+from . import engagements as engagements_mod
+from . import jst as jst_mod
+
 RUNS_FIELDS = [
     "account", "run_id", "mode", "action", "file", "post_id",
     "collected", "refreshed", "quota", "status", "error",
@@ -48,6 +52,35 @@ def append_run(state_dir: str, record: dict, jst_month: str) -> str:
         line[k] = record.get(k)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    return path
+
+
+def record_minimal(account_name: str, line: dict, *, now=None) -> str:
+    """`runs-YYYY-MM.ndjson` に、標準 11 項目（`RUNS_FIELDS`）ではない**最小の
+    1 行**を足す（読むだけの口の共通口・設計「自分の泉」§2.1・§2.3）。
+
+    `thread_read`（T1-2）が自前で持っていた `_record_run()` を、`where_cli`
+    （T2-2）と共有するためにここへ括り出した——**同じ「禁止語を検査してから
+    書く」網を 2 か所に置かない**（発注 T2-2「`_record_run` を共通化して
+    使う」）。`line` は呼ぶ側が組んだ辞書をそのまま書く（例:
+    `{"action": "thread_read", "account", "medium", "post_id", "messages",
+    "truncated", "status", "error"}` や `{"action": "where_to_appear",
+    "account", "words", "n", "status", "error"}`）——`RUNS_FIELDS` の
+    11 項目とは別物なので `append_run()` は使わない。
+
+    **禁止語（`engagements.FORBIDDEN_KEYS`）が 1 つでも混ざっていたら
+    1 バイトも書かずに `RuntimeError`**——本文・username が runs に紛れ
+    込まないことを機械的に守る（`engagements._assert_clean()` と同じ考え方）。
+    """
+    now = now if now is not None else jst_mod.now_jst()
+    state_dir = accounts_mod.state_dir_for(account_name)
+    os.makedirs(state_dir, exist_ok=True)
+    path = path_for(state_dir, jst_mod.month_str(now))
+    hit = sorted(engagements_mod.FORBIDDEN_KEYS & set(line.keys()))
+    if hit:
+        raise RuntimeError(f"runs に書けない鍵が含まれています（書きません）: {hit}")
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(line, ensure_ascii=False, sort_keys=True) + "\n")
     return path
 
 

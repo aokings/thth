@@ -1,0 +1,358 @@
+"""`thth where` / MCP `where_to_appear`——次にどこへ絡みに行くか（設計「自分の
+泉」§2.3・§2.5・§2.6・T2-2）。
+
+芯（設計 §0・§2.3・§5）: **検索の一覧に自分の履歴を重ねて並べるだけ**。順位
+付け・おすすめは作らない——材料を並べ、選ぶのは呼ぶ側（LLM）。account ごと
+（＝媒体ごと）の節を並べる。**account をまたぐ集計は一切作らない**（トップ
+レベルに `n` を置かない・媒体ごとの数を足さない・割らない・順位も付けない・
+設計「自分の泉」§2.6）。
+
+規約（発注 T2-2）:
+
+  (a) **`data/` の下に何も書かない**（`thread_read` の T1-2 と同じ検査。
+      `keyword_search`・`after_cli.answer()`・`engagements.load()` はどれも
+      読むだけで、この口自身も書かない）。
+  (b) runs には **account ごとに 1 行**: `{"action": "where_to_appear",
+      "account", "words", "n", "status", "error"}`。**本文・username を
+      含めない**——`thread_read._record_run()` と同じ網（`runs.
+      record_minimal()` に T2-2 で共通化）。
+  (c) 本文は 1 行プレビューだけ（鍵名は `preview`——`text` という鍵は使わない。
+      `preview` は保存しない・画面と `--json` の両方に出るが、`data/` にも
+      runs にも残らない）。
+  (d) 権限が無い（`PermissionMissing`）は、その account の `cannot_say` に
+      `threads_read_cli._narrowed_by_standard_access()` / `_not_granted()`
+      と同じ文言で出し、他の語・他の account は続ける。token が無い・媒体に
+      `keyword_search` が無い・台帳が読めない account は、その account
+      自体を `by_account` に**入れず**、トップレベルの `cannot_say` に
+      名前で出す（例:「kopicha-mastodon: token が無い」）。
+"""
+from __future__ import annotations
+
+import json
+import sys
+
+from . import accounts as accounts_mod
+from . import adapters as adapters_mod
+from . import after_cli as after_cli_mod
+from . import engagements as engagements_mod
+from . import jst
+from . import redact as redact_mod
+from . import runs as runs_mod
+from . import threads_read_cli as threads_read_cli_mod
+from .adapters import base as adapter_base
+
+CAPABILITY = "keyword_search"
+
+MIN_WORDS = 1
+MAX_WORDS = 5
+DEFAULT_LIMIT = 25
+MAX_LIMIT = 100
+
+# Mastodon の検索の限界（T2-1 の adapter docstring と同じ事実・**L2**:
+# docs.joinmastodon.org/methods/search/「statuses depend on an ElasticSearch
+# backend being present and the API request being authenticated」）。
+# **応答の件数だけからは全文検索が効いているか区別できない**——黙って隠さず、
+# 呼ぶ側の provenance に必ず出す（T2-1 発注書のとおり）。
+MASTODON_SEARCH_NOTE = (
+    "mastodon の検索はインスタンスの設定次第です（全文検索を有効にしている"
+    "とは限りません。無効なら自分の投稿・自分が触れた投稿しか返らない"
+    "可能性がありますが、件数だけからは判別できません）")
+# Mastodon の検索 API に並び順の指定は無い（一次資料の param 一覧に sort 系が
+# 無い・**L2**）。**嘘の並びを作らない**——`--recent` を受け取っても無視した
+# ことを言う。
+MASTODON_RECENT_IGNORED_NOTE = (
+    "mastodon の検索に並び順の指定は無いので、--recent（RECENT）は無視しました")
+
+
+class WhereError(Exception):
+    """問いが受け取れない（account/project どちらも無い・語が 1〜5 個でない 等）。
+
+    **黙って空の答えを返さない**（`thread_read.ThreadReadError` と同じ筋）。
+    """
+
+
+def _reject(message: str) -> None:
+    raise WhereError(message)
+
+
+def _posts_with_preview(rows: list, replied) -> list:
+    """`threads_read_cli.post_rows()` の一覧に `preview`（1 行の抜粋）を足す。
+
+    **本文そのもの（`text`）は鍵にしない**——`preview` は画面にも `--json` にも
+    出るが、`data/` にも runs にも残らない（規約 (c)）。`rows`（`keyword_search()`
+    の生の行）と `post_rows()` の戻りは同じ順序で対応するので `zip()` で足す。
+    """
+    posts = threads_read_cli_mod.post_rows(rows, replied=replied)
+    for row, post in zip(rows, posts):
+        post["preview"] = threads_read_cli_mod._one_line(row.get("text"))
+    return posts
+
+
+def _permission_message(account_name: str, adapter, e: adapter_base.PermissionMissing) -> str:
+    """`threads_read_cli._run()` と同じ言い分け（「乗っていない」／「標準アクセス
+    では絞られる」）を、CLI の出力を経由せずにここで直に組む。
+    """
+    source = threads_read_cli_mod._granted_source(adapter, e.permission)
+    if source is None:
+        return threads_read_cli_mod._not_granted(account_name, e)
+    return threads_read_cli_mod._narrowed_by_standard_access(
+        account_name, e, source, threads_read_cli_mod.SEARCH_NARROWED_NOTE)
+
+
+def _my_history(account_name: str, word: str) -> tuple[dict | None, str | None]:
+    """`after_cli.answer(account_name, topic=word)` の `engagements` から
+    `n`・`reacted`・`likes_24h`・`replies_back_24h` を**写す**（新しい集計を
+    作らない・発注 T2-2）。戻りは `(my_history, cannot_say理由)`。
+    """
+    try:
+        result = after_cli_mod.answer(account_name, topic=word)
+    except (accounts_mod.AccountError, after_cli_mod.AfterError) as e:
+        return None, f"{word}: 自分の履歴が読めません（{e}）"
+    eng = result["engagements"]
+    return {"n": eng["n"], "reacted": eng["reacted"],
+            "likes_24h": eng["likes_24h"], "replies_back_24h": eng["replies_back_24h"]}, None
+
+
+def _account_node(account_name: str, words: list, *, search_type: str,
+                  limit: int) -> tuple[dict | None, str | None]:
+    """1 account 分の節。戻りは `(node, トップレベル cannot_say 理由)`——どちらか
+    一方だけが非 `None`。台帳が読めない・token が無い・媒体に `keyword_search`
+    が無いときは `node` が `None`（`by_account` に**入れない**・規約 (d)）。
+    """
+    try:
+        account_cfg = accounts_mod.load_account(account_name)
+    except accounts_mod.AccountError as e:
+        return None, f"{account_name}: {e}"
+    media = account_cfg.get("media")
+    if CAPABILITY not in adapters_mod.capabilities_for(media):
+        return None, (f"{account_name}: この媒体（{media}）では語による検索"
+                      f"（{CAPABILITY}）は未対応です")
+    token = accounts_mod.load_token(account_cfg)
+    adapter_cls = adapters_mod.adapter_class(media)
+    if not adapter_cls.has_token(token):
+        return None, f"{account_name}: token が無いので検索できません"
+    adapter = adapters_mod.make_adapter(account_cfg, token)
+
+    try:
+        replied_idx, replied_why = threads_read_cli_mod.replied_index(
+            account_cfg, account_name)
+    except accounts_mod.AccountError as e:
+        replied_idx, replied_why = None, str(e)
+
+    node_cannot_say: list = []
+    if replied_why:
+        # **印が無いことを「返していない」にしない**（`post_rows()` と同じ規律）。
+        node_cannot_say.append(f"「返信済み」印: {replied_why}")
+
+    by_word: dict = {}
+    author_keys: set = set()
+    for word in words:
+        try:
+            rows = adapter.keyword_search(word, search_type=search_type, limit=limit)
+        except adapter_base.PermissionMissing as e:
+            node_cannot_say.append(f"{word}: {_permission_message(account_name, adapter, e)}")
+            continue
+        except adapter_base.AdapterError as e:
+            node_cannot_say.append(f"{word}: {redact_mod.redact(str(e))}")
+            continue
+
+        material = threads_read_cli_mod.search_material(
+            rows, q=word, search_type=search_type, limit=limit)
+        material["medium"] = media
+        posts = _posts_with_preview(rows, replied_idx)
+        for post in posts:
+            if post.get("author_key"):
+                author_keys.add(post["author_key"])
+
+        my_history, history_reason = _my_history(account_name, word)
+        if history_reason:
+            node_cannot_say.append(history_reason)
+
+        by_word[word] = {"posts": posts, "material": material, "my_history": my_history}
+
+    eng_rows = engagements_mod.records(account_cfg, account_name)
+    summary = engagements_mod.author_summary(author_keys, eng_rows)
+    you_and_them = {row["author_key"]: {"met": row["met"], "last": row["last"]}
+                   for row in summary}
+
+    node = {"medium": media, "by_word": by_word, "you_and_them": you_and_them,
+            "cannot_say": node_cannot_say}
+    return node, None
+
+
+def _resolve_names(*, account_name: str | None, project: str | None) -> tuple[list, list]:
+    """対象の account 名の一覧と、そこに至るまでの top-level `cannot_say`。
+
+    `--project` は台帳の `project` が一致する account 全部（`list_account_names()`
+    → `load_account()`）。**読めない台帳が 1 本混ざっていても他は続ける**——
+    その account がこの project に属するかどうかは判らないままだが、読めな
+    かったこと自体を隠さない（発注 T2-2「--project で読めない台帳が 1 本
+    混ざっていても他が出る」）。
+    """
+    if account_name is not None:
+        return [account_name], []
+
+    top_cannot_say: list = []
+    names: list = []
+    for name in accounts_mod.list_account_names():
+        try:
+            cfg = accounts_mod.load_account(name)
+        except accounts_mod.AccountError as e:
+            top_cannot_say.append(f"{name}: {e}")
+            continue
+        if cfg.get("project") == project:
+            names.append(name)
+    if not names:
+        top_cannot_say.append(f"project={project!r} に一致する account がありません")
+    return names, top_cannot_say
+
+
+def answer(*, account_name: str | None = None, project: str | None = None,
+          words: list, recent: bool = False, limit: int = DEFAULT_LIMIT,
+          now=None) -> dict:
+    """`where_to_appear` の答え（設計「自分の泉」§2.3・§2.6）。**読むだけ。**"""
+    if account_name and project:
+        _reject("account と --project は同時に指定できません")
+    if not account_name and not project:
+        _reject("account か --project のどちらかが要ります")
+    if not isinstance(words, list):
+        _reject(f"words は配列です: {words!r}")
+    cleaned: list = []
+    for w in words:
+        if not isinstance(w, str) or not w.strip():
+            _reject(f"語は空でない文字列です: {w!r}")
+        cleaned.append(w.strip())
+    if not (MIN_WORDS <= len(cleaned) <= MAX_WORDS):
+        _reject(f"語は {MIN_WORDS}〜{MAX_WORDS} 個です（受け取ったのは {len(cleaned)} 個）")
+    words = cleaned
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= MAX_LIMIT):
+        _reject(f"limit は 1〜{MAX_LIMIT} です: {limit!r}")
+
+    now = now if now is not None else jst.now_jst()
+    search_type = "RECENT" if recent else "TOP"
+
+    names, top_cannot_say = _resolve_names(account_name=account_name, project=project)
+
+    by_account: dict = {}
+    notes: list = []
+    for name in names:
+        node, reason = _account_node(name, words, search_type=search_type, limit=limit)
+        if node is None:
+            top_cannot_say.append(reason)
+            runs_mod.record_minimal(name, {
+                "action": "where_to_appear", "account": name, "words": words,
+                "n": None, "status": "error", "error": reason}, now=now)
+            continue
+
+        by_account[name] = node
+        n = sum(len(entry["posts"]) for entry in node["by_word"].values())
+        runs_mod.record_minimal(name, {
+            "action": "where_to_appear", "account": name, "words": words,
+            "n": n, "status": "ok", "error": None}, now=now)
+
+        if node["medium"] == "mastodon":
+            if MASTODON_SEARCH_NOTE not in notes:
+                notes.append(MASTODON_SEARCH_NOTE)
+            if recent and MASTODON_RECENT_IGNORED_NOTE not in notes:
+                notes.append(MASTODON_RECENT_IGNORED_NOTE)
+
+    return {
+        "account": account_name, "project": project, "words": words,
+        "by_account": by_account, "cannot_say": top_cannot_say,
+        "provenance": {"fetched_at": jst.iso(now), "notes": notes},
+    }
+
+
+# ---------------------------------------------------------------------- CLI
+
+def _render_human(result: dict) -> None:
+    """人向けの画面: account ごとに見出し → 語ごとに 1 行の要約 → 行ごとに
+    印・時刻・@username・仮名 8 桁・本文 1 行・permalink。**順位の数字を
+    付けない**（規約・設計「自分の泉」§5 規約 6）。
+    """
+    who = f"project {result['project']}" if result["project"] else result["account"]
+    print(f"where  {who}  語: {'・'.join(result['words'])}")
+    for name, node in result["by_account"].items():
+        print(f"\n[{name}]（{node['medium']}）")
+        for word, entry in node["by_word"].items():
+            material = entry["material"]
+            authors = material["authors"]
+            print(f"  語「{word}」  件数={material['n']}  異なり={authors['distinct']}"
+                 f"  直近={material['latest_timestamp'] or '—'}")
+            history = entry["my_history"]
+            if history:
+                print(f"    自分の履歴: n={history['n']}  反応あり={history['reacted']}")
+            for post in entry["posts"]:
+                mark = threads_read_cli_mod._replied_cell(post["replied"])
+                stamp = post["timestamp"] or "—"
+                print(f"    {mark}{stamp}  @{post['author'] or '—'}"
+                     f"（{post['author_key'] or '—'}）  {post['preview']}")
+                if post["permalink"]:
+                    print(f"      {post['permalink']}")
+        if node["cannot_say"]:
+            for line in node["cannot_say"]:
+                print(f"  言えない: {line}")
+    if result["cannot_say"]:
+        print("")
+        for line in result["cannot_say"]:
+            print(f"言えない: {line}")
+    if result["provenance"]["notes"]:
+        print("")
+        for line in result["provenance"]["notes"]:
+            print(f"注記: {line}")
+
+
+def register(sub) -> None:
+    """`thth where (<account> | --project P) <語…>` を親の subparsers に
+    ぶら下げる（`thread_read.register()` と同じ型）。
+
+    **1 本の `nargs='+'` 位置引数**にする（`account` と `words` を別々の位置
+    引数にすると、`--project` のとき argparse が最初の語を account 側に
+    食う——`nargs='?'` + `nargs='+'` は値の個数だけで割り振るので、`--project`
+    の有無を見て後から `cmd_where()` で割る）。
+    """
+    p = sub.add_parser(
+        "where",
+        help="次にどこへ絡みに行くか——検索の一覧に自分の履歴を重ねて返す"
+             "（設計「自分の泉」§2.3・§2.6・読むだけ）")
+    p.add_argument("targets", nargs="+", metavar="ACCOUNT_OR_WORD",
+                   help="<account> <語…>（1〜5 語）。--project のときは語だけ")
+    p.add_argument("--project", default=None, metavar="P",
+                   help="account の代わりに、この project の account 全部を対象にする")
+    p.add_argument("--recent", action="store_true",
+                   help="TOP でなく RECENT（新しい順）で検索する")
+    p.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
+                   help=f"1 account・1 語あたりの上限（既定 {DEFAULT_LIMIT}）")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_where)
+
+
+def cmd_where(args) -> int:
+    """`thth where (<account>|--project P) <語…> [--recent] [--limit N] [--json]`。"""
+    as_json = bool(getattr(args, "json", False))
+    if args.project:
+        account_name = None
+        words = list(args.targets)
+    else:
+        if len(args.targets) < 2:
+            print("account と語（1〜5 個）が要ります: thth where <account> <語…>"
+                 "（project ごとなら --project P <語…>）", file=sys.stderr)
+            return 2
+        account_name = args.targets[0]
+        words = args.targets[1:]
+
+    try:
+        result = answer(account_name=account_name, project=args.project, words=words,
+                        recent=args.recent, limit=args.limit)
+    except accounts_mod.AccountError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    except WhereError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+
+    if as_json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    _render_human(result)
+    return 0
