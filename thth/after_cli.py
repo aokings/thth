@@ -128,6 +128,39 @@ def _replies_back_from_ledger(account_name: str, post_id: str | None):
     return counts["other"]
 
 
+def reaction_metrics(account_name: str, measured_by_post: dict, post_id: str | None) -> dict:
+    """1 件の `post_id`（絡みの台帳の自分の返信）の反応（`views_24h`・
+    `likes_24h`・`replies_back_24h`・`covered`）。`_measured_24h_metrics()`・
+    `_replies_back_from_ledger()` を組み立てる、この口の中の唯一の場所——
+    `who_is_this`（`who_cli._account_node()`・T3-1）と `thread_read`・
+    `where_cli` の `you_and_them.last_reaction`（T3-2）が共通してここを呼ぶ
+    （発注 T3-2「同じ計算を 2 か所に置かない」）。
+    """
+    metrics, covered = _measured_24h_metrics(measured_by_post.get(post_id))
+    views_24h = metrics.get("views") if covered else None
+    likes_24h = metrics.get("likes") if covered else None
+    replies_metric = metrics.get("replies") if covered else None
+    replies_back_24h = (replies_metric if replies_metric is not None
+                        else _replies_back_from_ledger(account_name, post_id))
+    return {"views_24h": views_24h, "likes_24h": likes_24h,
+           "replies_back_24h": replies_back_24h, "covered": covered}
+
+
+def reaction_lookup(account_name: str):
+    """`account_name` の実測を 1 回読み、`post_id → reaction_metrics()` の
+    関数を返す（`thread_read`・`where_cli` の `you_and_them.last_reaction`
+    （T3-2）向けの便利口。実測を読むのも反応を組み立てるのも、どちらも
+    `after_cli` の中の 1 か所だけで行う）。
+    """
+    measured_result = measured_mod.load(account_name)
+    measured_by_post = {p["post_id"]: p for p in measured_result["posts"]}
+
+    def _for(post_id):
+        return reaction_metrics(account_name, measured_by_post, post_id)
+
+    return _for
+
+
 def _reacted(branch: dict) -> bool:
     return (branch["likes_24h"] or 0) >= 1 or (branch["replies_back_24h"] or 0) >= 1
 

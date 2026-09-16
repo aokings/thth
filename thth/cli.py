@@ -23,6 +23,7 @@ from . import ask_cli
 from . import threads_read_cli
 from . import thread_read as thread_read_mod
 from . import where_cli as where_cli_mod
+from . import who_cli as who_cli_mod
 from . import collect as collect_mod
 from . import core
 from . import jst
@@ -2756,6 +2757,10 @@ def build_parser() -> argparse.ArgumentParser:
     # T2-2）。検索の一覧に自分の履歴を重ねるだけ——**口の中身は
     # `thth/where_cli.py` に閉じる**。
     where_cli_mod.register(sub)
+    # `thth who (<account>|--project P) (<author_key>|@<username>)`（設計
+    # 「自分の泉」§2.4・T3-1）。仮名の履歴——**口の中身は `thth/who_cli.py`
+    # に閉じる**。
+    who_cli_mod.register(sub)
 
     # `thth retract` / `thth location search`（設計 v2 §4.3・v2.1-B）。口は
     # `thth/retract_cli.py` に閉じる——ここに足すのはこの 1 行だけ。
