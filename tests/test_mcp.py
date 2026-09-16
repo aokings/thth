@@ -95,9 +95,10 @@ def test_mcp_stdioでtools_listとtools_callが通る(isolated_account):
     # `approve` や `throw` や `token` が黙って混ざらないための見張り。
     # 2026-09-11 にトピック提案の**読み取り 3 本**を足した（設計 §7）。
     # 2026-09-13 に `before_you_post` を足した（設計 v2 §1・§6 v2-1・読むだけ）。
+    # 2026-09-16 に `after_you_posted` を足した（設計「自分の泉」§2.2・T0-2・読むだけ）。
     assert tool_names == {"thth_lint", "thth_queue", "thth_preview", "thth_board",
                           "thth_topic_context", "thth_topic_evaluate",
-                          "thth_topic_decision", "before_you_post"}
+                          "thth_topic_decision", "before_you_post", "after_you_posted"}
     # 副作用のあるものは 1 つも出ていない。
     assert not (tool_names & {"thth_approve", "thth_throw", "thth_token",
                                "thth_auth", "thth_refresh", "thth_revoke",
