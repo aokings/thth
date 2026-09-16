@@ -114,15 +114,23 @@ def _my_history(account_name: str, word: str) -> tuple[dict | None, str | None]:
 
 
 def _account_node(account_name: str, words: list, *, search_type: str,
-                  limit: int) -> tuple[dict | None, str | None]:
-    """1 account 分の節。戻りは `(node, トップレベル cannot_say 理由)`——どちらか
-    一方だけが非 `None`。台帳が読めない・token が無い・媒体に `keyword_search`
-    が無いときは `node` が `None`（`by_account` に**入れない**・規約 (d)）。
+                  limit: int) -> tuple[dict | None, Exception | str | None]:
+    """1 account 分の節。戻りは `(node, 理由)`——どちらか一方だけが非 `None`。
+    台帳が読めない・token が無い・媒体に `keyword_search` が無いときは
+    `node` が `None`（`by_account` に**入れない**・規約 (d)）。
+
+    **理由の型で役割が違う**（T5-2・`who_cli._account_node()` と揃える）:
+    account 自体が読めない（`AccountError`）ときだけ**例外そのまま**を返す
+    ——単一 account 呼び出しはこれをそのまま投げ直す（`answer()` 参照）。
+    それ以外（媒体未対応・token 無し）は account 自体は読めているので、
+    文字列のまま（`--project` と同じく `cannot_say` に流れて rc=0 のまま
+    続ける・単一 account でもここは変えない——「読めない」ではなく
+    「この account ではこの機能が使えない」だから）。
     """
     try:
         account_cfg = accounts_mod.load_account(account_name)
     except accounts_mod.AccountError as e:
-        return None, f"{account_name}: {e}"
+        return None, e
     media = account_cfg.get("media")
     if CAPABILITY not in adapters_mod.capabilities_for(media):
         return None, (f"{account_name}: この媒体（{media}）では語による検索"
@@ -242,10 +250,17 @@ def answer(*, account_name: str | None = None, project: str | None = None,
     for name in names:
         node, reason = _account_node(name, words, search_type=search_type, limit=limit)
         if node is None:
-            top_cannot_say.append(reason)
+            if isinstance(reason, accounts_mod.AccountError) and project is None:
+                # **単一 account: そのまま投げ直す**（T5-2・`who_cli.answer()`
+                # と揃える・loud reject）。account 名の不正・台帳が無いを
+                # rc=0・空の答えで隠さない。`--project` はこれまでどおり
+                # 他の account を続ける（下の else へ）。
+                raise reason
+            reason_text = f"{name}: {reason}" if isinstance(reason, Exception) else reason
+            top_cannot_say.append(reason_text)
             runs_mod.record_minimal(name, {
                 "action": "where_to_appear", "account": name, "words": words,
-                "n": None, "status": "error", "error": reason}, now=now)
+                "n": None, "status": "error", "error": reason_text}, now=now)
             continue
 
         by_account[name] = node
@@ -349,7 +364,14 @@ def cmd_where(args) -> int:
         result = answer(account_name=account_name, project=args.project, words=words,
                         recent=args.recent, limit=args.limit)
     except accounts_mod.AccountError as e:
-        print(str(e), file=sys.stderr)
+        # **単一 account が読めなければ loud reject**（T5-2・`who` と揃える）。
+        # `--json` は人向けの文言でなく `{"error", "account"}` を出す——
+        # 呼ぶ側（LLM・MCP）がプロパティで拾えるように。
+        if as_json:
+            print(json.dumps({"error": str(e), "account": account_name},
+                             ensure_ascii=False))
+        else:
+            print(str(e), file=sys.stderr)
         return 1
     except WhereError as e:
         print(str(e), file=sys.stderr)
