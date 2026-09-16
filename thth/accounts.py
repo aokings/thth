@@ -449,7 +449,8 @@ def data_dirs(account_cfg: dict, account_name: str) -> dict:
     state 側で `replies_dir` を効かせないのは、**合わせる相手の repo が無い**から
     （あの指定は「利用者 repo のどこに置くか」の話）。置き場は道具が決める。
 
-    戻り値の鍵は `insights_posts`・`insights_account`・`replies`・`inbox`。
+    戻り値の鍵は `insights_posts`・`insights_account`・`replies`・`inbox`・
+    `engagements`（絡みの台帳・発注 T0-1）。
     **読み手も書き手もここを通る**——直書きが 1 か所でも残ると、そこだけ別の
     場所を見る（`thth/measured.py`・`thth/replies.py`・`thth/account_report.py`）。
     """
@@ -466,6 +467,9 @@ def data_dirs(account_cfg: dict, account_name: str) -> dict:
         "insights_account": os.path.join(base, "data", "sns", "insights", "account"),
         "replies": replies,
         "inbox": os.path.join(base, "data", "sns", "inbox"),
+        # 絡みの台帳（設計「自分の泉」§4・発注 T0-1）。`insights_posts` 等と
+        # 同じ流儀——repo が無い account は state 側、あれば repo の中。
+        "engagements": os.path.join(base, "data", "sns", "engagements"),
     }
 
 
