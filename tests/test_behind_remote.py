@@ -46,6 +46,11 @@ def test_behind_remoteはfetchできないとNoneとreason(tmp_path):
         ["git", "init", "-b", "main", str(broken)], capture_output=True, text=True)
     assert run_git_init.returncode == 0
     run_git(str(broken), ["remote", "add", "origin", "/does/not/exist/repo.git"])
+    # **git の名前とメールを repo に持たせる**（`conftest.init_git_pair()` と同じ）。
+    # 開発機（macOS）は全体の設定があるので通っていたが、GitHub Actions の
+    # Linux には無く、`commit` が "Author identity unknown" で落ちた（2026-09-16）。
+    run_git(str(broken), ["config", "user.email", "thth-test@example.invalid"])
+    run_git(str(broken), ["config", "user.name", "thth-test"])
     run_git(str(broken), ["commit", "--allow-empty", "-m", "x"])
 
     info = writeback.behind_remote(str(broken))
