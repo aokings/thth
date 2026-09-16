@@ -75,6 +75,8 @@ STATUS_FIXTURE = {
     "replies_count": 3,
     "reblogs_count": 2,
     "account": {"id": "9000", "acct": "nigamilab"},
+    # 本物の応答は必ず持つ（監査 P2-2）。`fetch_post()`（T1-1）の C-1 検査対象。
+    "visibility": "public",
 }
 
 ACCOUNT_FIXTURE = {"id": "9000", "username": "nigamilab", "acct": "nigamilab",
@@ -218,6 +220,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 # 媒体にいいねが無いわけではない——`available` はこれで動かない。
                 self._json(200, {k: v for k, v in STATUS_FIXTURE.items()
                                  if k != "favourites_count"})
+            elif mode == "private":
+                # **フォロワー限定の投稿**（`fetch_post()` の C-1 検査用）。
+                self._json(200, {**STATUS_FIXTURE, "visibility": "private"})
+            elif mode == "no_visibility":
+                # **`visibility` が無い応答**（fail-closed の対象・監査 P2-2）。
+                self._json(200, {k: v for k, v in STATUS_FIXTURE.items()
+                                 if k != "visibility"})
             else:
                 self._fail(mode)
             return
@@ -508,6 +517,39 @@ def test_descendantsが無いnullなら取れて0件にしない(mode):
     assert "descendants" in str(e.value)
 
 
+# ----------------------------------------------------------- fetch_post（T1-1）
+def test_fetch_postは根を1件Messageの形に写す():
+    """`GET /api/v1/statuses/:id` の 1 件を根として返す（設計「自分の泉」§2.1）。"""
+    with fake_mastodon() as fake:
+        row = _adapter(fake).fetch_post(ROOT_ID)
+    assert row["message_id"] == ROOT_ID
+    assert row["username"] == "nigamilab"
+    assert row["text"] == "根の投稿"
+    assert row["timestamp"] == "2026-09-13T00:00:00.000Z"
+    # **枝の根として使うので、自分自身への参照になる**（設計「自分の泉」§2.1）。
+    assert row["replied_to"] is None
+    assert row["root_post"] == ROOT_ID
+    assert row["medium"] == "mastodon"
+    assert row["reply_deadline"] is None
+    assert row["permalink"] == f"https://example.invalid/@nigamilab/{ROOT_ID}"
+
+
+def test_fetch_postはprivateをC1で断る():
+    """**C-1 の規律**: public・unlisted 以外は本文を返さない（監査 P2-2 と同じ fail-closed）。"""
+    with fake_mastodon({"status": "private"}) as fake:
+        with pytest.raises(adapter_base.AdapterError) as e:
+            _adapter(fake).fetch_post(ROOT_ID)
+    assert "公開の投稿ではありません" in str(e.value)
+
+
+def test_fetch_postはvisibilityが無い応答も断る():
+    """**無い場合も拒む**（T1-1 発注書の文言そのまま）。"""
+    with fake_mastodon({"status": "no_visibility"}) as fake:
+        with pytest.raises(adapter_base.AdapterError) as e:
+            _adapter(fake).fetch_post(ROOT_ID)
+    assert "公開の投稿ではありません" in str(e.value)
+
+
 # ---------------------------------------------------------------------------
 # insights・whoami・probe・char_limit
 # ---------------------------------------------------------------------------
@@ -636,10 +678,11 @@ def test_capabilitiesはrecent_postsだけでquotaはNone():
     """topic 無し・views 無し・inbox 無し・refresh 無し（設計 v2 §4.2）。
 
     `recent_posts` だけは在る（`GET /api/v1/accounts/:id/statuses`・F2・2026-09-13）。
+    `thread_read` は T1-1（`fetch_post()`・2026-09-16）で足した。
     """
     with fake_mastodon() as fake:
         adapter = _adapter(fake)
-        assert adapter.capabilities() == {"recent_posts"}
+        assert adapter.capabilities() == {"recent_posts", "thread_read"}
         assert adapter.quota() is None
         assert adapter.inbox() == []
 
@@ -685,8 +728,9 @@ def test_秘密は例外文に出ない(call):
 
 def test_capabilitiesは実体を作らずに引ける():
     """`select` がトークンを読まずにトピック検査の要否を決められる（T0・受け入れ 6）。"""
-    assert mastodon_mod.MastodonAdapter.capabilities() == {"recent_posts"}
-    assert mastodon_mod.MastodonAdapter.CAPABILITIES == frozenset({"recent_posts"})
+    assert mastodon_mod.MastodonAdapter.capabilities() == {"recent_posts", "thread_read"}
+    assert mastodon_mod.MastodonAdapter.CAPABILITIES == frozenset(
+        {"recent_posts", "thread_read"})
 
 
 def test_from_accountは台帳とトークンから組み立てる():

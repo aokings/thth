@@ -21,6 +21,7 @@ from . import accounts as accounts_mod
 from . import approval as approval_mod
 from . import ask_cli
 from . import threads_read_cli
+from . import thread_read as thread_read_mod
 from . import collect as collect_mod
 from . import core
 from . import jst
@@ -2747,6 +2748,9 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth mentions` / `thth profile` と `topics --search`（設計 v2 §4.3・v2.1-A）。
     # **口の中身は `thth/threads_read_cli.py` に閉じる**——ここに足すのはこの 1 行だけ。
     threads_read_cli.register(sub)
+    # `thth thread <account> <post_id>`（設計「自分の泉」§2.1・T1-2）。枝を
+    # その場で読むだけ——**口の中身は `thth/thread_read.py` に閉じる**。
+    thread_read_mod.register(sub)
 
     # `thth retract` / `thth location search`（設計 v2 §4.3・v2.1-B）。口は
     # `thth/retract_cli.py` に閉じる——ここに足すのはこの 1 行だけ。

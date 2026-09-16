@@ -488,6 +488,34 @@ def test_遮断された枝は飛ばすがほかの枝は取れる():
     assert len(messages) == 4
 
 
+# ----------------------------------------------------------- fetch_post（T1-1）
+def test_fetch_postは根を1件Messageの形に写す():
+    """`app.bsky.feed.getPosts` の 1 件を根として返す（設計「自分の泉」§2.1）。"""
+    other_uri = "at://did:plc:c/app.bsky.feed.post/otherpost1"
+    view = _post_view(other_uri, "bafyother", did="did:plc:c", handle="c.bsky.social",
+                       text="誰かの根の投稿", created_at="2026-09-16T00:00:00.000Z")
+    with fake_bluesky(posts={other_uri: view}) as service:
+        row = _adapter(service).fetch_post(other_uri)
+    assert row["message_id"] == other_uri
+    assert row["username"] == "c.bsky.social"
+    assert row["text"] == "誰かの根の投稿"
+    assert row["timestamp"] == "2026-09-16T00:00:00.000Z"
+    # **枝の根として使うので、自分自身への参照になる**（設計「自分の泉」§2.1）。
+    assert row["replied_to"] is None
+    assert row["root_post"] == other_uri
+    assert row["medium"] == "bluesky"
+    assert row["author_key"] == bsky.author_key("did:plc:c")
+    assert row["reply_deadline"] is None
+    assert row["permalink"] == "https://bsky.app/profile/c.bsky.social/post/otherpost1"
+
+
+def test_fetch_postは見つからない投稿を失敗として上げる():
+    """**取れて 0 件と区別できないものを、0 件にしない**（`_post_view` と同じ規律）。"""
+    with fake_bluesky(posts={}) as service:
+        with pytest.raises(RuntimeError):
+            _adapter(service).fetch_post(ROOT_URI)
+
+
 # ------------------------------------------------------------- recent_posts
 def _feed_item(uri, *, text, created_at, reason=None):
     item = {"post": _post_view(uri, "bafy" + uri[-4:], handle=HANDLE, did=DID,
@@ -593,9 +621,10 @@ def test_probeはgetProfileの失敗を隠さない():
 
 def test_capabilitiesにviewsもtopicも入らない():
     adapter = bsky.BlueskyAdapter(identifier=HANDLE, app_password=APP_PASSWORD)
-    # `recent_posts` は在る（`getAuthorFeed`・F2・2026-09-13）。views・topic・
-    # quota・inbox・refresh は無いまま。
-    assert adapter.capabilities() == {"link_preview", "recent_posts"}
+    # `recent_posts` は在る（`getAuthorFeed`・F2・2026-09-13）。`thread_read` は
+    # T1-1（`fetch_post()`・2026-09-16）で足した。views・topic・quota・inbox・
+    # refresh は無いまま。
+    assert adapter.capabilities() == {"link_preview", "recent_posts", "thread_read"}
     assert adapter.quota() is None
 
 
