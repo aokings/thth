@@ -143,4 +143,34 @@ curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.aok
 | `server.json` | `packages[0].version` |
 
 3 つとも揃えて commit したら `tests/test_packaging.py`・`tests/test_server_json.py` を
-再度通す。**upload と publish はそのたびに masaru の手**（(b)(d) を版ごとに繰り返す）。
+再度通す。README の版と全件の件数も直す。
+
+---
+
+## (f) 2026-09-16 から: **tag を push すれば PyPI と registry は機械が出す**
+
+`.github/workflows/publish.yml`（OIDC）を入れた。**秘密はこの repo にも Actions にも置かない**
+——GitHub がその場で発行する短命の証明で、PyPI（Trusted Publishing）と MCP registry
+（`mcp-publisher login github-oidc`）の両方に認証する。それまで版ごとに要った
+`mcp-publisher login github`（ブラウザ・**資格は実測 40 分で切れる**）と `~/.pypirc` の
+API トークンは、**もう要らない**。
+
+**版を出す手順（新）**:
+
+1. 版上げを commit（上の 3 か所＋ README）し、全件が緑であることを確かめる。
+2. **`release` を進める**（`git push origin main:refs/heads/release`）——本番（VM）の配布。
+   **これは人の判断**（機械はやらない・`docs/定型_開発セッションの引き継ぎ開始文.md`）。
+3. `git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z` —— ここで workflow が走る。
+   tag と `thth/VERSION` が違えば**出る前に落ちる**。全件テストも配布物の検査
+   （台帳・記録・秘密が混ざっていないか）も workflow の中で通る。
+4. 確認: `https://pypi.org/project/thth/<版>/` と
+   `curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.aokings/thth"`。
+
+**masaru の手が要るのは 1 回だけ**（最初に）: PyPI の画面で「この repo のこの workflow を
+信頼する」と登録する。Your projects → `thth` → Manage → Publishing →
+owner `aokings`・repository `thth`・workflow `publish.yml`・environment `publish`。
+**API トークンを貼る作業ではない**（貼るのは repo 名と workflow 名）。登録が済めば
+`~/.pypirc` のトークンは消してよい。
+
+GitHub 側の `publish` 環境（Settings → Environments）は、無ければ最初の実行時に作られる。
+枝や tag を絞りたければそこで制限する。

@@ -1,0 +1,98 @@
+# 版の tag を push したら、PyPI と MCP registry に出す（2026-09-16）。
+#
+# **なぜ要るか。** それまでは配布のたびに masaru が `mcp-publisher login github`
+# をブラウザで通していた（発行される資格が短命で、実測 40 分以内に切れる）。
+# PyPI は `~/.pypirc` のトークンを twine が読んでいた。どちらも人の手が要り、
+# registry は「login の直後でないと 401」という綱渡りだった。
+#
+# **どうやって人の手を無くすか。** どちらも **GitHub が発行する短命の証明**
+# （OIDC）で認証する。秘密はこの repo にも Actions にも置かない。
+#   - MCP registry: `mcp-publisher login github-oidc`（`id-token: write` が要る）
+#   - PyPI: Trusted Publishing（PyPI 側で「この repo のこの workflow を信頼する」
+#     と 1 回だけ登録する。API トークンは要らなくなる）
+#
+# **本番（VM）への配布はここではやらない。** VM が拾うのは `release` の枝で、
+# それを進めるのは人の判断（`docs/定型_開発セッションの引き継ぎ開始文.md` の
+# 「`main` への push は本番を変えません」）。ここがやるのは **tag を打った版を
+# 外の 2 か所へ出すこと**だけ。順番は今までと同じ: 版上げを commit → 全件が
+# 緑 → `release` を進める（人）→ tag を push（ここが走る）。
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: publish
+    permissions:
+      # PyPI の Trusted Publishing と registry の OIDC の両方がこれを使う。
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # **tag と版が食い違ったまま出さない。** `thth/VERSION`・`server.json` の
+      # 2 か所は `tests/test_server_json.py` が揃っていることを見ているので、
+      # ここは tag との一致だけを見る。
+      - name: tag と VERSION が同じことを確かめる
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/v}"
+          version="$(cat thth/VERSION)"
+          if [ "$tag" != "$version" ]; then
+            echo "tag（$tag）と thth/VERSION（$version）が違います。版上げを commit してから tag を打ってください。" >&2
+            exit 1
+          fi
+          echo "版: $version"
+
+      - name: 依存を入れる
+        run: python -m pip install --quiet --upgrade build pytest pytest-xdist
+
+      # **緑でないものを外に出さない。** ここが落ちたら PyPI にも registry にも
+      # 出ない（tag は残るので、直して版を上げ直す）。
+      - name: 全件テスト
+        run: python -m pytest tests/ -q -n auto -p no:cacheprovider
+
+      - name: 配布物を建てる
+        run: python -m build
+
+      # **台帳・記録・秘密が混ざっていないこと。** `tests/test_packaging.py` も
+      # 見ているが、外へ出す直前にもう一度見る（出てしまったら取り消せない）。
+      - name: 配布物に混ざってはいけないものが無いことを確かめる
+        run: |
+          set -euo pipefail
+          if tar tzf dist/thth-*.tar.gz | grep -Ei 'accounts/|記録|\.git/|\.token$|\.env$|pypirc'; then
+            echo "配布物に入ってはいけないものが含まれています。" >&2
+            exit 1
+          fi
+          echo "配布物は綺麗です"
+
+      # PyPI の Trusted Publishing（API トークンを使わない）。
+      # **PyPI 側で 1 回だけ登録が要る**: Your projects → thth → Manage →
+      # Publishing → owner `aokings`・repository `thth`・workflow `publish.yml`・
+      # environment `publish`。
+      - name: PyPI へ出す
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: mcp-publisher を入れる
+        run: |
+          set -euo pipefail
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      # OIDC。ブラウザも個人アクセストークンも要らない（`id-token: write` の
+      # 権限で GitHub がその場の証明を出す）。
+      - name: MCP registry に認証する
+        run: ./mcp-publisher login github-oidc
+
+      - name: MCP registry へ出す
+        run: ./mcp-publisher publish
