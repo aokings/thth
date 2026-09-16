@@ -17,6 +17,7 @@ import pytest
 from tests.conftest import run_thth, write_queue_file
 from tests.test_topic_advice import (candidate, evaluate, ids, make_article,
                                       make_context, make_observation)
+from thth import jst
 from thth import topic_advice as advice
 from thth import topic_models as models
 from thth import topic_store as store
@@ -620,11 +621,22 @@ def test_参考記録だけでは推奨にならないが理由が正しい(isol
 
     引き方の記録が無いだけで、keyword で引いたわけではない。理由が違えば
     **次にすることも違う**（tag で引き直す、ではなく、投稿例を控える）。
+
+    `topics_mod.record()` はこのテストと同じプロセスで呼ぶので `now` を渡さな
+    ければ `frozen_now_jst`（2026-09-09 固定）が `checked_at` に入る。しかし
+    このあとの `_run()`（`thth topics suggest` をサブプロセスで呼ぶ）は実の
+    壁時計で新鮮さ（`FRESH_DAYS`＝7 日）を判定するので、壁時計がそこから
+    7 日を超えて進むと観測が「古い」側に落ちて `_shortfalls()` の分岐が変わり、
+    このテストが確かめたい「参考記録（legacy）」の理由文に届かなくなる
+    （2026-09-16 に発見）。`jst.now_jst()` は monkeypatch 済みなので使わず、
+    `datetime.datetime.now()` から直接、実の壁時計をそのまま渡す——観測時刻を
+    「いま」にしておけば、実行が何日先でも新鮮さの判定は変わらない。
     """
     from thth import topics as topics_mod
     account = isolated_account["name"]
+    real_now = datetime.datetime.now(tz=datetime.timezone.utc).astimezone(jst.JST)
     topics_mod.record("コーヒー", verdict="alive", audience="焙煎士",
-                       by="関東", account=account)
+                       by="関東", account=account, now=real_now)
     path = write_queue_file(isolated_account["queue_dir"], "lg.md", body=BODY,
                              fm_overrides={"status": "draft"})
     _run(["topics", "profile", account, "--json-stdin", "--by", "t"],
