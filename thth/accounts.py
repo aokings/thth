@@ -123,7 +123,8 @@ def thth_root() -> str:
 
     4 を足した理由（監査 1・P1-2・2026-09-13）: `pip install thth` で入れた人が
     `THTH_ROOT` を設定せずに打つと、`APP_DIR` は **`site-packages/`** になる。
-    台帳も state も share の outbox も塩も仮名も、そこに落ちていた——
+    台帳も state も share の outbox（横断の泉の名残——`share.py` ごと T5-1 で
+    消えた。当時はまだあった）も塩も仮名も、そこに落ちていた——
     **`pip install --upgrade thth` が黙って全部消す**（wheel の入れ替えで
     site-packages の中身が作り直される）。しかも消えたことは誰にも言われない。
     **道具の入れ替えで利用者のデータが消える置き場は、置き場ではない。**
