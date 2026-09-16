@@ -24,6 +24,7 @@ from tests.conftest import init_git_pair, make_queue_text, run_thth, write_queue
 from thth import accounts as accounts_mod
 from thth import core
 from thth import inflight as inflight_mod
+from thth import jst
 from thth import runs as runs_mod
 from thth.adapters import base as adapter_base
 from thth.adapters import threads as threads_mod
@@ -177,7 +178,16 @@ def test_6_公開成功直後の中断は次回inflightで停止する(isolated_
     """post_id 書き戻し前にプロセスが落ちても、次回の throw は inflight を見て
     exit 1 になる（二重投稿しない・設計 §3.5）。"""
     account = isolated_account_factory(production=True)
-    write_queue_file(account["queue_dir"], "a.md")
+    # write_queue_file() の既定 publish_at（固定日付 2026-09-09）のままだと、
+    # 壁時計がそこから stale_days（既定 7 日）を超えて進んだ時点で select が
+    # この候補を拾わなくなり、このテストが確かめたい「公開成功直後の中断」に
+    # 到達できなくなる（2026-09-16 に発見）。`run_thth()` はサブプロセスなので
+    # `frozen_now_jst` は届かない（conftest 参照）——実の壁時計からの相対
+    # （1 時間前）で作れば、いつ走らせても stale_days を超えない。
+    real_now = datetime.datetime.now(tz=datetime.timezone.utc).astimezone(jst.JST)
+    publish_at = (real_now - datetime.timedelta(hours=1)).isoformat(timespec="seconds")
+    write_queue_file(account["queue_dir"], "a.md",
+                      fm_overrides={"publish_at": publish_at})
 
     token_path = os.path.join(account["repo_dir"], "..", "fake.token")
     with open(token_path, "w", encoding="utf-8") as f:

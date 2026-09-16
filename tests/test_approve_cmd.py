@@ -8,8 +8,11 @@ reply_to＋topic＋publish_at の hash）を front-matter に書き、`select` �
 """
 from __future__ import annotations
 
+import datetime
+
 from tests.conftest import approve_via_cli, run_thth, write_queue_file
 from thth import core
+from thth import jst
 from thth import queuefile
 from thth import select as select_mod
 
@@ -277,10 +280,20 @@ def test_lintは複数本を一度に見る(isolated_account):
 
 def test_予定時刻を過ぎていたら承認の前にすぐ出ると言う(isolated_account):
     """起草する人と承認する人が別なので、承認までに時刻が過ぎるのは普通に起きる。
-    「承認したらいつ出るのか」を知らないまま押す形にしない。"""
+    「承認したらいつ出るのか」を知らないまま押す形にしない。
+
+    `run_thth()` はサブプロセスなので `frozen_now_jst` が届かない（conftest 参照）。
+    固定の日付を書くと、壁時計がその日から `stale_days`（既定 7 日）を超えて
+    進んだ時点でこのテストが「承認しても出ません」に化けて落ちる（2026-09-16 に
+    発見）。実の壁時計（`jst.now_jst()` は monkeypatch 済みなので使わず、
+    `datetime.datetime.now()` から直接組む）からの相対（2 時間前）で作れば、
+    いつテストを走らせても「過ぎてはいるが stale_days は超えていない」が保たれる。
+    """
+    real_now = datetime.datetime.now(tz=datetime.timezone.utc).astimezone(jst.JST)
+    publish_at = (real_now - datetime.timedelta(hours=2)).isoformat(timespec="seconds")
     path = write_queue_file(isolated_account["queue_dir"], "a.md", fm_overrides={
         "status": "draft", "approved_sha": None,
-        "publish_at": "2026-09-09T08:00:00+09:00"})  # frozen now は 09-09 10:00
+        "publish_at": publish_at})
     first = run_thth(["approve", path])
     assert "承認するとすぐ出ます" in first.stdout, first.stdout
 
