@@ -293,7 +293,8 @@ class BlueskyAdapter(base.Adapter):
     # 当たるものが無い）・`views` 無し（**L2**: `#postView` に views は無い）・
     # `quota` 無し・`inbox` 無し・`refresh` 無し（App Password に期限が無いので
     # 延長という概念が無い）・`account_insights` 無し（アカウント単位の日次は無い）。
-    CAPABILITIES: frozenset = frozenset({"link_preview", "recent_posts"})
+    # `thread_read`（T1-1）: `fetch_post()` が `getPosts` で根を 1 件引ける。
+    CAPABILITIES: frozenset = frozenset({"link_preview", "recent_posts", "thread_read"})
 
     # `.token` の鍵（`thth auth <account>` が書く形・設計 v2 §4.2「認可とトークン」）。
     # **`access_token` ではない**——doctor が `access_token` だけを見ていたので、
@@ -603,6 +604,36 @@ class BlueskyAdapter(base.Adapter):
             # SNS に会話の窓の期限は無い（**WhatsApp の芽**・設計 v2 §4.2）。
             "reply_deadline": None,
         }
+
+    # --- 根を 1 件 -----------------------------------------------------------
+    def fetch_post(self, post_id: str) -> dict:
+        """`app.bsky.feed.getPosts` で根を 1 件引く（T1-1・設計「自分の泉」§2.1）。
+
+        **`_post_view()` をそのまま使う**（`_reply_ref()` と同じ口）。この口で
+        返す行は**枝の根**として使うので、`replied_to` は常に `None`・
+        `root_post` は自分自身の id にする（この投稿自身が誰かへの返信で
+        あっても、`thread_read` が組む枝の根はこの投稿）。
+        """
+        view = self._post_view(post_id)
+        record = view.get("record") if isinstance(view.get("record"), dict) else {}
+        author = view.get("author") if isinstance(view.get("author"), dict) else {}
+        handle = author.get("handle")
+        uri = view.get("uri")
+        out = {
+            "message_id": uri,
+            "username": handle,
+            "text": record.get("text"),
+            "timestamp": record.get("createdAt") or view.get("indexedAt"),
+            "replied_to": None,
+            "root_post": uri,
+            "medium": MEDIUM,
+            "author_key": author_key(author.get("did") or ""),
+            "reply_deadline": None,
+        }
+        permalink = post_url(handle, uri) if handle and uri else None
+        if permalink:
+            out["permalink"] = permalink
+        return out
 
     # --- 直近の投稿 ---------------------------------------------------------
     def recent_posts(self, *, limit: int = 25) -> list:

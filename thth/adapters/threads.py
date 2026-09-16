@@ -184,6 +184,9 @@ class ThreadsAdapter(base.Adapter):
     # 同じ行を触らないため）。
     CAPABILITIES = CAPABILITIES | frozenset({"keyword_search", "mentions",
                                              "profile_lookup", "inbox"})
+    # `thread_read`（T1-1）: `fetch_post()` が `GET /{id}`（`threads_basic`）で
+    # 根を 1 件引ける。
+    CAPABILITIES = CAPABILITIES | frozenset({"thread_read"})
 
     # `thth auth`（OAuth の往復）に Meta の app.env が要る **唯一の媒体**。
     AUTH_NEEDS_APP_ENV = True
@@ -1202,6 +1205,47 @@ class ThreadsAdapter(base.Adapter):
             lambda: self._all_pages(f"/v1.0/{self.user_id}/mentions", params, "言及"),
             permission="threads_manage_mentions", what="言及の取得")
         return [self._message_row(r) for r in rows]
+
+    # **L2**（threads-media・2026-09-16 に WebFetch で読解）: `GET /{id}` の
+    # field 一覧に `id`・`username`・`text`・`timestamp`・`permalink` はあるが、
+    # `replied_to`・`root_post`・`is_reply` は**無い**（それらは会話・返信の
+    # 一次資料（reply-management）の field で、単体投稿の一覧には出てこない）。
+    # **無い field は落とす**——ここでは確認できた field だけを要求する。
+    # 「他人の投稿は `threads_basic` の advanced access 承認後に取得可能」
+    # （**L2**）なので、未承認・404・その他の 4xx は `_read()` の読み分けで
+    # `PermissionMissing` か `AdapterError` に化ける——**「無い」に化かさない**。
+    FETCH_POST_FIELDS = "id,username,text,timestamp,permalink"
+
+    def fetch_post(self, post_id: str) -> dict:
+        """根を 1 件だけ引く（T1-1・設計「自分の泉」§2.1）。`GET /{id}`（`threads_basic`）。
+
+        **この口が返す行は枝の根**として使うので、`replied_to` は常に
+        `None`・`root_post` は自分自身の id にする（単体投稿の一覧に
+        `replied_to`・`root_post` は無いので、そもそも読めない）。
+        """
+        if not isinstance(post_id, str) or not post_id.strip():
+            raise base.AdapterError("post_id が空です")
+        post_id = post_id.strip()
+        body = self._read(
+            lambda: self._get(f"/v1.0/{post_id}", {"fields": self.FETCH_POST_FIELDS}),
+            permission="threads_basic", what="投稿の取得")
+        if not isinstance(body, dict) or not body.get("id"):
+            raise base.AdapterError("投稿の取得: 応答に id がありません")
+        username = body.get("username")
+        out = {
+            "message_id": body.get("id"),
+            "username": username,
+            "text": body.get("text"),
+            "timestamp": body.get("timestamp"),
+            "replied_to": None,
+            "root_post": body.get("id"),
+            "medium": MEDIUM,
+            "author_key": base.author_key(MEDIUM, username),
+            "reply_deadline": None,
+        }
+        if body.get("permalink"):
+            out["permalink"] = body["permalink"]
+        return out
 
     def inbox(self, *, since=None) -> list:
         """**言及を `inbox` に流す**（設計 v2 §4.3「v2-3 の芽がそのまま受け皿」）。

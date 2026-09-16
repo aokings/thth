@@ -236,7 +236,9 @@ class MastodonAdapter(base.Adapter):
     # `account_insights`（アカウント単位の日次）は無い——`collect` はここを見て
     # 呼ばずに済ませる（T0 の残件・2026-09-13）。`recent_posts` は在る
     # （`GET /api/v1/accounts/:id/statuses`・F2・2026-09-13）。
-    CAPABILITIES: frozenset = frozenset({"recent_posts"})
+    # `thread_read`（T1-1）: `fetch_post()` が `GET /api/v1/statuses/:id` で
+    # 根を 1 件引ける（C-1 の規律で public・unlisted 以外は断る）。
+    CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read"})
 
     # `.token` の鍵（`thth token set <account>` が書く形・設計 v2 §4.2）。
     TOKEN_KEYS = ("access_token",)
@@ -588,6 +590,28 @@ class MastodonAdapter(base.Adapter):
             at = _parse_iso(m.get("timestamp"))
             if at is None or at >= floor:
                 out.append(m)     # **読めない時刻は落とさない**
+        return out
+
+    def fetch_post(self, post_id: str) -> dict:
+        """`GET /api/v1/statuses/:id` で根を 1 件引く（T1-1・**L2**・`insights()` と同じ口）。
+
+        **C-1 の規律**: `visibility` が `public`・`unlisted` 以外（無い場合も）
+        なら `AdapterError`（本文を返さない・`conversation()`・`recent_posts()`
+        と同じ fail-closed）。`replied_to` は常に `None`・`root_post` は
+        自分自身の id にする（この口が返す行は`thread_read` が組む枝の根）。
+        """
+        if not isinstance(post_id, str) or not post_id.strip():
+            raise AdapterError("post_id が空です")
+        status = self._get_json(
+            f"/api/v1/statuses/{urllib.parse.quote(post_id.strip())}", "投稿の取得")
+        if status.get("visibility") not in READABLE_VISIBILITIES:
+            raise AdapterError("公開の投稿ではありません")
+        message_id = str(status.get("id")) if status.get("id") is not None else None
+        out = self._message(status, message_id)
+        out["replied_to"] = None
+        url = status.get("url")
+        if url:
+            out["permalink"] = url
         return out
 
     def inbox(self, *, since: str | None = None) -> list:

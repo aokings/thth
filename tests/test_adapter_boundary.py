@@ -95,9 +95,12 @@ def test_TB0_capabilitiesは実体を作らずに引ける():
     # `keyword_search`・`mentions`・`profile_lookup`・`inbox` は v2.1-A（設計 v2
     # §4.3・2026-09-14）で足した語。Threads の 11 権限を使う読み取りの口 3 つと、
     # 言及を `inbox` に流す配管（v2-3 の芽がそのまま受け皿）。
+    # `thread_read` は設計「自分の泉」T1-1（2026-09-16）で足した語。
+    # `fetch_post()` が根を 1 件引ける（3 媒体とも持つ）。
     assert threads_mod.ThreadsAdapter.capabilities() == {
         "topic", "link_preview", "views", "quota", "refresh", "recent_posts",
-        "account_insights", "keyword_search", "mentions", "profile_lookup", "inbox"}
+        "account_insights", "keyword_search", "mentions", "profile_lookup", "inbox",
+        "thread_read"}
 
 
 def test_F3_metrics_ofは新しい形だけを受ける():

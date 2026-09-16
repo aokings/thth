@@ -65,6 +65,12 @@ PROFILE = {"username": "threads", "name": "Threads", "biography": "Say more",
            "follower_count": 12345678, "is_verified": True,
            "profile_picture_url": "https://t/pic"}
 
+# `fetch_post()`（T1-1）が引く単体投稿（他人の根・**L2** threads-media の field）。
+OTHER_POST_ID = "OTHERPOST1"
+OTHER_POST = {"id": OTHER_POST_ID, "username": "alice", "text": "誰かの根の投稿",
+             "timestamp": "2026-09-15T09:00:00+0000",
+             "permalink": "https://t/otherpost1"}
+
 
 class _ReadOnlyThreads(http.server.BaseHTTPRequestHandler):
     """読み取り専用の偽 Threads API。**GET 以外は全部記録して 405**（テストは
@@ -116,6 +122,8 @@ class _ReadOnlyThreads(http.server.BaseHTTPRequestHandler):
             return self._json(200, {"data": [{"name": "views", "values": [{"value": 7}]}]})
         if p.endswith("/conversation"):
             return self._json(200, {"data": []})
+        if p == f"/v1.0/{OTHER_POST_ID}":
+            return self._json(200, OTHER_POST)
         return self._json(200, {"data": []})
 
     def _refuse(self):
@@ -246,6 +254,29 @@ def test_profile_lookupはGETで資料のfieldを返す():
     assert "biography" in params["fields"] and "follower_count" in params["fields"]
 
 
+def test_fetch_postはGETで単体投稿をMessageの形に写す():
+    """T1-1: 根を 1 件だけ引く（設計「自分の泉」§2.1）。"""
+    with _server() as (base_url, requests):
+        row = _adapter(base_url).fetch_post(OTHER_POST_ID)
+    assert row["message_id"] == OTHER_POST_ID
+    assert row["username"] == "alice"
+    assert row["text"] == "誰かの根の投稿"
+    assert row["timestamp"] == OTHER_POST["timestamp"]
+    # **枝の根として使うので、自分自身への参照になる**（設計「自分の泉」§2.1）。
+    assert row["replied_to"] is None
+    assert row["root_post"] == OTHER_POST_ID
+    assert row["medium"] == "threads"
+    assert row["author_key"] == adapter_base.author_key("threads", "alice")
+    assert row["reply_deadline"] is None
+    assert row["permalink"] == OTHER_POST["permalink"]
+    (method, path, params), = [r for r in requests if r[1] == f"/v1.0/{OTHER_POST_ID}"]
+    assert method == "GET"
+    assert "text" in params["fields"] and "username" in params["fields"]
+    # **無い field は要求しない**（threads-media の field 一覧に無い・T1-1）。
+    assert "replied_to" not in params["fields"] and "root_post" not in params["fields"]
+    assert "thread_read" in threads_mod.ThreadsAdapter.capabilities()
+
+
 def test_profile_lookupは標準アクセスの断りを権限不足と混ぜない():
     """公式 4 つ以外は API が 400（権限とは別の理由）→ `AdapterError`。"""
     with _server() as (base_url, requests):
@@ -262,6 +293,7 @@ def test_profile_lookupは標準アクセスの断りを権限不足と混ぜな
     ("/mentions", lambda a: a.mentions(), "threads_manage_mentions"),
     ("/mentions", lambda a: a.inbox(), "threads_manage_mentions"),
     ("/profile_lookup", lambda a: a.profile_lookup("threads"), "threads_profile_discovery"),
+    (f"/{OTHER_POST_ID}", lambda a: a.fetch_post(OTHER_POST_ID), "threads_basic"),
 ])
 def test_権限不足はPermissionMissing(suffix, call, permission):
     """**黙って 0 件にしない**（受け入れ (c)）。doctor と同じ判定。"""

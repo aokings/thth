@@ -135,6 +135,9 @@ KNOWN_CAPABILITIES = frozenset({
     "mentions",
     # 公開プロフィールを引ける（`profile_lookup()`・`threads_profile_discovery`）。
     "profile_lookup",
+    # 根を 1 件だけ引ける（`fetch_post()`・設計「自分の泉」§2.1・T1-1）。
+    # `thread_read` がこの口で根を取り、`conversation()` で枝を辿る。
+    "thread_read",
 })
 
 
@@ -370,6 +373,21 @@ class Adapter:
         **返信の台帳（ndjson）の既存の鍵は変えない——足すだけ。**
         """
         raise NotImplementedError
+
+    def fetch_post(self, post_id: str) -> dict:
+        """根を 1 件だけ引く（設計「自分の泉」§2.1・T1-1）。**読み取りだけ。**
+
+        返す形は `Message` と同じ鍵（`message_id`・`username`・`text`・
+        `timestamp`・`replied_to`・`root_post`・`medium`・`author_key`・
+        `reply_deadline`）に `permalink`（あれば）を足したもの。**`thread_read`
+        が枝の根を取るための口**で、`conversation()` と組み合わせて使う
+        （`conversation()` は投稿そのものを含まないので、根は別に引く）。
+
+        持たない媒体は `AdapterError`（既定）。**媒体差はここに閉じる**——
+        core は媒体名を知らない（§8「何を裏返さないか」）。
+        """
+        raise AdapterError(
+            f"{type(self).__name__}: この媒体では投稿を単体で引けません")
 
     def inbox(self, *, since: str | None = None) -> list:
         """利用者から始まった会話（`root_post` 無し）。**WhatsApp の芽**。
