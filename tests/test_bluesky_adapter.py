@@ -60,6 +60,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     posts: dict = {}
     thread: dict = {}
     feed: list = []
+    search: list = []
     created: list = []
     seen: list = []
 
@@ -172,6 +173,21 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._respond_json(200, {"did": DID, "handle": HANDLE, "postsCount": 7})
             return
 
+        if nsid == "app.bsky.feed.searchPosts":
+            if mode == "4xx":
+                self._respond_json(400, {"error": "InvalidRequest"})
+                return
+            if mode == "no_posts":
+                # **200 だが posts が無い**（「取れて 0 件」と区別できない）。
+                self._respond_json(200, {"cursor": "c1"})
+                return
+            self.__class__.seen.append(
+                "searchPosts:q=" + ",".join(params.get("q", []))
+                + "/sort=" + ",".join(params.get("sort", []))
+                + "/limit=" + ",".join(params.get("limit", [])))
+            self._respond_json(200, {"posts": list(self.search), "cursor": "c1"})
+            return
+
         self._respond_json(404, {"error": "MethodNotImplemented", "message": nsid})
 
     def log_message(self, format, *args):  # noqa: A002 - テスト出力を汚さない
@@ -184,12 +200,13 @@ class _ServerURL(str):
 
 
 @contextlib.contextmanager
-def fake_bluesky(behavior=None, *, posts=None, thread=None, feed=None):
+def fake_bluesky(behavior=None, *, posts=None, thread=None, feed=None, search=None):
     handler_cls = type("Handler", (_Handler,), {
         "behavior": dict(behavior or {}),
         "posts": dict(posts or {}),
         "thread": dict(thread or {}),
         "feed": list(feed or []),
+        "search": list(search or []),
         "created": [],
         "seen": [],
     })
@@ -622,9 +639,11 @@ def test_probeはgetProfileの失敗を隠さない():
 def test_capabilitiesにviewsもtopicも入らない():
     adapter = bsky.BlueskyAdapter(identifier=HANDLE, app_password=APP_PASSWORD)
     # `recent_posts` は在る（`getAuthorFeed`・F2・2026-09-13）。`thread_read` は
-    # T1-1（`fetch_post()`・2026-09-16）で足した。views・topic・quota・inbox・
+    # T1-1（`fetch_post()`・2026-09-16）で足した。`keyword_search` は
+    # T2-1（`searchPosts`・2026-09-16）で足した。views・topic・quota・inbox・
     # refresh は無いまま。
-    assert adapter.capabilities() == {"link_preview", "recent_posts", "thread_read"}
+    assert adapter.capabilities() == {"link_preview", "recent_posts", "thread_read",
+                                      "keyword_search"}
     assert adapter.quota() is None
 
 
@@ -726,3 +745,73 @@ def test_トークンが無ければ_loudに断る():
     with pytest.raises(RuntimeError) as excinfo:
         adapter.whoami()
     assert "thth auth" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------- keyword_search（T2-1）
+
+BOB_DID_SEARCH = "did:plc:searchbob"
+BOB_HANDLE_SEARCH = "searchbob.bsky.social"
+
+
+def test_keyword_searchはMessageの形でreply_countつきで返る():
+    uri = f"at://{BOB_DID_SEARCH}/app.bsky.feed.post/s1"
+    rows = [_post_view(uri, "bafys1", handle=BOB_HANDLE_SEARCH, did=BOB_DID_SEARCH,
+                       text="苦いコーヒー", created_at="2026-09-16T01:00:00.000Z",
+                       counts={"replyCount": 3})]
+    with fake_bluesky(search=rows) as service:
+        result = _adapter(service).keyword_search("コーヒー", search_type="TOP", limit=10)
+    assert len(result) == 1
+    row = result[0]
+    assert row["message_id"] == uri
+    assert row["username"] == BOB_HANDLE_SEARCH
+    assert row["text"] == "苦いコーヒー"
+    assert row["medium"] == "bluesky"
+    assert row["author_key"] == bsky.author_key(BOB_DID_SEARCH)
+    # **検索結果はどの枝の中かを返さない**（T2-1・`_search_row()` の docstring）。
+    assert row["replied_to"] is None and row["root_post"] is None
+    assert row["reply_count"] == 3
+    assert row["has_replies"] is True
+    assert row["permalink"] == f"https://bsky.app/profile/{BOB_HANDLE_SEARCH}/post/s1"
+
+    # `search_type` の `TOP` → `sort=top`。
+    assert "searchPosts:q=コーヒー/sort=top/limit=10" in service.handler_cls.seen
+
+
+def test_keyword_searchのRECENTはsortのlatestに写る():
+    with fake_bluesky(search=[]) as service:
+        _adapter(service).keyword_search("苦味", search_type="RECENT", limit=5)
+    assert "searchPosts:q=苦味/sort=latest/limit=5" in service.handler_cls.seen
+
+
+def test_keyword_searchはreply_countが無ければhas_repliesも無い():
+    uri = f"at://{BOB_DID_SEARCH}/app.bsky.feed.post/s2"
+    rows = [_post_view(uri, "bafys2", handle=BOB_HANDLE_SEARCH, did=BOB_DID_SEARCH,
+                       text="無印", created_at="2026-09-16T02:00:00.000Z")]
+    with fake_bluesky(search=rows) as service:
+        result = _adapter(service).keyword_search("無印")
+    assert "reply_count" not in result[0]
+    assert "has_replies" not in result[0]
+
+
+def test_keyword_searchはsearch_typeが違えば断る():
+    with fake_bluesky() as service:
+        with pytest.raises(adapter_base.AdapterError):
+            _adapter(service).keyword_search("苦味", search_type="HOT")
+
+
+def test_keyword_searchはlimitの上限を超えたら断る():
+    with fake_bluesky() as service:
+        with pytest.raises(adapter_base.AdapterError):
+            _adapter(service).keyword_search("苦味", limit=101)
+
+
+def test_keyword_searchが4xxなら断る():
+    with fake_bluesky({"app.bsky.feed.searchPosts": "4xx"}) as service:
+        with pytest.raises(Exception):  # noqa: PT011 - urllib.error.HTTPError
+            _adapter(service).keyword_search("苦味")
+
+
+def test_keyword_searchはpostsが無いと取れて0件と区別する():
+    with fake_bluesky({"app.bsky.feed.searchPosts": "no_posts"}) as service:
+        with pytest.raises(adapter_base.AdapterError):
+            _adapter(service).keyword_search("苦味")

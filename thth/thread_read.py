@@ -19,7 +19,6 @@ LLM。** この口は「読んで見せる」だけ——**台帳に 1 バイト
 from __future__ import annotations
 
 import json
-import os
 import sys
 
 from . import accounts as accounts_mod
@@ -158,23 +157,6 @@ def _sort_key(message: dict) -> tuple:
     return (1, "")
 
 
-def _you_and_them(author_keys: set, rows: list) -> list:
-    """この枝に現れた `author_key` ごとの `met`（絡みの台帳の行数）・`last`
-    （最新の `posted_at`）（設計「自分の泉」§2.1・T1 では絡みの台帳だけ）。
-
-    **`last_reaction` は T3 で足すので鍵ごと省く**（発注 T1-2「設計 §2.1 の
-    形との差は報告に」の指示どおり・報告参照）。
-    """
-    out = []
-    for key in sorted(author_keys):
-        matched = [r for r in rows if r.get("author_key") == key]
-        met = len(matched)
-        stamps = sorted((r.get("posted_at") for r in matched
-                         if isinstance(r.get("posted_at"), str)), reverse=True)
-        out.append({"author_key": key, "met": met, "last": stamps[0] if stamps else None})
-    return out
-
-
 def answer(account_name: str, post_id: str, *, since: str | None = None,
            max_messages: int = DEFAULT_MAX_MESSAGES, now=None) -> dict:
     """`thread_read` の答え（設計「自分の泉」§2.1）。**読むだけ・何も書かない。**"""
@@ -271,7 +253,7 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
             "own": own_count,
             "truncated": truncated,
         },
-        "you_and_them": _you_and_them(author_keys, eng_rows),
+        "you_and_them": engagements_mod.author_summary(author_keys, eng_rows),
         "provenance": {
             "fetched_at": jst.iso(now),
             "source": SOURCE_BY_MEDIUM.get(media, media),
@@ -290,27 +272,16 @@ def _record_run(account_name: str, *, media: str | None, post_id: str,
     """runs に 1 行だけ足す。**本文・username は絶対に入れない**（規約 (b)）。
 
     既存の `runs.append_run()` は投稿の実行専用の 11 項目を要求するので使わない
-    ——`thread_read` は読むだけの別種の行なので、同じ `runs-YYYY-MM.ndjson` に
-    最小の形（発注書のとおり）で直接足す。
+    ——`thread_read` は読むだけの別種の行なので、`runs.record_minimal()`
+    （T2-2 で `where_cli` と共通化・元はここにあった）に最小の形（発注書の
+    とおり）で渡すだけ。
     """
-    now = now if now is not None else jst.now_jst()
-    state_dir = accounts_mod.state_dir_for(account_name)
-    os.makedirs(state_dir, exist_ok=True)
-    path = runs_mod.path_for(state_dir, jst.month_str(now))
     line = {
         "action": "thread_read", "account": account_name, "medium": media,
         "post_id": post_id, "messages": messages, "truncated": truncated,
         "status": status, "error": error,
     }
-    # **禁止語（`text`・`username` 等）が紛れていないかの機械の網**
-    # （`engagements._assert_clean()` と同じ、鍵の完全一致での検査。`messages`
-    # という鍵はここに列挙した 8 鍵だけの**構造**なので、`FORBIDDEN_KEYS` の
-    # `message` と部分一致しても取り違えない——完全一致でしか見ない）。
-    hit = sorted(engagements_mod.FORBIDDEN_KEYS & set(line.keys()))
-    if hit:
-        raise RuntimeError(f"runs に書けない鍵が含まれています（書きません）: {hit}")
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(line, ensure_ascii=False, sort_keys=True) + "\n")
+    runs_mod.record_minimal(account_name, line, now=now)
 
 
 # ---------------------------------------------------------------------- CLI

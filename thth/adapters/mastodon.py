@@ -238,7 +238,10 @@ class MastodonAdapter(base.Adapter):
     # （`GET /api/v1/accounts/:id/statuses`・F2・2026-09-13）。
     # `thread_read`（T1-1）: `fetch_post()` が `GET /api/v1/statuses/:id` で
     # 根を 1 件引ける（C-1 の規律で public・unlisted 以外は断る）。
-    CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read"})
+    # `keyword_search`（T2-1・設計「自分の泉」§2.3・§3）: `GET /api/v2/search`
+    # で語による投稿の検索ができる（審査の壁が無い媒体。全文検索の可否は
+    # インスタンス次第——`keyword_search()` の docstring・呼ぶ側の provenance 参照）。
+    CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "keyword_search"})
 
     # `.token` の鍵（`thth token set <account>` が書く形・設計 v2 §4.2）。
     TOKEN_KEYS = ("access_token",)
@@ -613,6 +616,92 @@ class MastodonAdapter(base.Adapter):
         if url:
             out["permalink"] = url
         return out
+
+    # --- 語で検索（T2-1・設計「自分の泉」§2.3・§3） -------------------------
+    # `GET /api/v2/search` の param（**L2**: docs.joinmastodon.org/methods/search/
+    # 2026-09-16 に WebFetch で読解）: `q`（必須）・`type`（`accounts`／`hashtags`／
+    # `statuses`）・`limit`（既定 20・**最大 40**・カテゴリごと）・
+    # `resolve`・`following`・`account_id`・`exclude_unreviewed`・`max_id`・
+    # `min_id`・`offset`。出力は `{"accounts": [...], "statuses": [...],
+    # "hashtags": [...]}`——ここでは `statuses` だけを使う。
+    #
+    # **全文検索の限界（一次資料の原文・L2）**: 「the availability of results
+    # depends on the specific backend search configuration of the server
+    # being queried. By default, accounts and hashtags are always
+    # searchable, while statuses depend on an ElasticSearch backend being
+    # present and the API request being authenticated (full text search is
+    # not available to unauthenticated users)」。**ElasticSearch が無いイン
+    # スタンスでは検索対象が絞られる**——一次資料はその絞り方（自分の投稿・
+    # 自分が触れた投稿だけ、等）までは明記していない（**L3**・慣行）。
+    # **応答の件数だけからは「全文検索が効いているか」を区別できない**——
+    # 0 件も少数件も両方の場合に起こりうる。呼ぶ側（`thth where`）は
+    # provenance に必ずこの限界を書くこと（**ここで黙って隠さない**）。
+    #
+    # **並び順の指定は無い**（一次資料の param 一覧に sort 系が無い）。
+    # `search_type` の `RECENT` を受け取っても**無視する**——嘘の並びを
+    # 返すよりは、呼ぶ側に「無視した」と言わせる（設計「自分の泉」§5 規約 6）。
+    SEARCH_MAX_LIMIT = 40
+
+    def _search_row(self, status: dict) -> dict:
+        """検索結果の 1 件を `Message` の形に写す（T2-1）。`_message()` と違い
+        **根を持たない**（検索結果はどの枝の中かを返さない）ので `root_post`
+        は `None`。`replied_to` は応答にあれば残す（`_message()` と同じ拾い方）。
+        """
+        message_id = status.get("id")
+        if not message_id:
+            raise AdapterError("検索: 投稿に id がありません（**件数として数えません**）")
+        account = status.get("account") if isinstance(status.get("account"), dict) else {}
+        acct = account.get("acct")
+        out = {
+            "message_id": str(message_id),
+            "username": acct,
+            "text": strip_html(status.get("content")),
+            "timestamp": status.get("created_at"),
+            "replied_to": status.get("in_reply_to_id"),
+            "root_post": None,
+            "medium": MEDIUM,
+            "author_key": self.author_key(acct),
+            "reply_deadline": None,
+        }
+        url = status.get("url")
+        if url:
+            out["permalink"] = url
+        # `replies_count`（**L2**）。**数と真偽を分ける**（`threads_read_cli.
+        # REPLY_COUNT_KEYS`・設計 v2 §4.4）——無ければどちらも入れない。
+        replies_count = status.get("replies_count")
+        if isinstance(replies_count, int) and not isinstance(replies_count, bool):
+            out["replies_count"] = replies_count
+            out["has_replies"] = replies_count > 0
+        return out
+
+    def keyword_search(self, q: str, *, search_type: str = "TOP",
+                       limit: int = 25) -> list:
+        """`GET /api/v2/search?q=&type=statuses&limit=`（**L2**・上の表・T2-1）。
+
+        **全文検索の限界・`search_type` の扱いはクラス docstring のとおり**
+        ——ここではその規約を実行するだけ。`visibility` は C-1 の規律
+        （`conversation()`・`fetch_post()` と同じ fail-closed）: `public`・
+        `unlisted` 以外（無い場合も含む）は落とす。
+        """
+        if not isinstance(q, str) or not q.strip():
+            raise AdapterError("検索の語が空です")
+        if search_type not in ("TOP", "RECENT"):
+            raise AdapterError(
+                f"search_type は TOP / RECENT のどちらかです（{search_type!r}）")
+        if (not isinstance(limit, int) or isinstance(limit, bool)
+                or limit < 1 or limit > self.SEARCH_MAX_LIMIT):
+            raise AdapterError(f"limit は 1〜{self.SEARCH_MAX_LIMIT} です（{limit!r}）")
+        params = urllib.parse.urlencode({"q": q.strip(), "type": "statuses",
+                                         "limit": limit})
+        body = self._get_json(f"/api/v2/search?{params}", "投稿の検索")
+        statuses = body.get("statuses")
+        if not isinstance(statuses, list):
+            raise AdapterError(
+                "検索: 応答に statuses の配列がありません"
+                f"（{type(statuses).__name__}）。取れて 0 件とは区別できません")
+        readable = [s for s in statuses if isinstance(s, dict)
+                   and s.get("visibility") in READABLE_VISIBILITIES]
+        return [self._search_row(row) for row in readable]
 
     def inbox(self, *, since: str | None = None) -> list:
         """利用者から始まった会話（**WhatsApp の芽**・設計 v2 §4.2）。

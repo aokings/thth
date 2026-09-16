@@ -58,6 +58,29 @@ FIVE_ROWS_STATUSES = [
 ]
 
 
+FIVE_ROWS_SEARCH_STATUSES = [
+    {"id": "1", "created_at": "2026-09-13T01:00:00.000Z", "content": "<p>こうかい</p>",
+     "account": {"acct": "pub@x"}, "visibility": "public"},
+    {"id": "2", "created_at": "2026-09-13T01:01:00.000Z", "content": "<p>みしゅうさい</p>",
+     "account": {"acct": "unl@x"}, "visibility": "unlisted"},
+    {"id": "3", "created_at": "2026-09-13T01:02:00.000Z", "content": "<p>ひみつ(フォロワー限定)</p>",
+     "account": {"acct": "priv@x"}, "visibility": "private"},
+    {"id": "4", "created_at": "2026-09-13T01:03:00.000Z", "content": "<p>ひみつ(DM)</p>",
+     "account": {"acct": "dm@x"}, "visibility": "direct"},
+    {"id": "5", "created_at": "2026-09-13T01:04:00.000Z", "content": "<p>ひみつ(visibility無し)</p>",
+     "account": {"acct": "none@x"}},
+]
+
+
+def test_keyword_searchは公開とunlistedだけ返す(monkeypatch):
+    """T2-1: `keyword_search()` も他の読む口と同じ C-1 の規律（fail-closed）。"""
+    monkeypatch.setattr(fixture_mod, "SEARCH_STATUSES_FIXTURE", FIVE_ROWS_SEARCH_STATUSES)
+    with fake_mastodon() as fake:
+        rows = _adapter(fake).keyword_search("語")
+    assert [r["message_id"] for r in rows] == ["1", "2"]
+    assert "ひみつ" not in " ".join(r["text"] for r in rows)
+
+
 def test_conversationは公開とunlistedだけ返す(monkeypatch):
     monkeypatch.setattr(fixture_mod, "CONTEXT_FIXTURE", FIVE_ROWS_CONTEXT)
     with fake_mastodon() as fake:

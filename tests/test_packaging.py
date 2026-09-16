@@ -384,7 +384,9 @@ def test_別のvenvでMCPサーバが起動してtoolsを返す(venv_thth, tmp_p
     names = {t["name"] for t in lines[1]["result"]["tools"]}
     assert "thth_board" in names and "thth_lint" in names, names
     # **秘密を書く道具は MCP に出さない**（`tests/test_app_env_cli.py` と対）。
-    assert not [n for n in names if "app" in n or "token" in n], names
+    # `"app" in n.split("_")` は語の区切りで見る——`where_to_appear`（T2-3）は
+    # 文字列としては "app" を含む（"appear" の一部）が `thth app` とは無関係。
+    assert not [n for n in names if "app" in n.split("_") or "token" in n], names
 
 
 def test_別のvenvのMCPが本物のCLIを呼べる(venv_thth, tmp_path):

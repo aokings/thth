@@ -257,17 +257,22 @@ def test_d_json経路でも棚に何も落ちない(capsys, account, thth_root):
 # ===================================================== (e) 口の無い媒体
 
 def test_e_検索の口を持たない媒体は1行言ってrc1(capsys, isolated_account_factory):
-    """**黙って空にしない**（設計 v2 §4.4「媒体差」）。"""
-    acc = isolated_account_factory(media="bluesky")
+    """**黙って空にしない**（設計 v2 §4.4「媒体差」）。
+
+    Bluesky・Mastodon は T2-1（設計「自分の泉」§2.3・§3・2026-09-16）で
+    `keyword_search` を持ったので、ここでは**知らない媒体**
+    （`test_adapter_boundary.py` と同じ例）で「口が無い」を確かめる。
+    """
+    acc = isolated_account_factory(media="carrier-pigeon")
     rc, out, err = _run(capsys, ["topics", acc["name"], "--search", "お茶"])
     assert rc == 1, out + err
-    assert "bluesky" in err and "未対応" in err, err
+    assert "carrier-pigeon" in err and "未対応" in err, err
     assert "keyword_search" in err
     assert out == "", "**0 件の一覧を出している**"
 
 
 def test_e_json経路でも黙って空の一覧にしない(capsys, isolated_account_factory):
-    acc = isolated_account_factory(media="mastodon")
+    acc = isolated_account_factory(media="carrier-pigeon")
     rc, out, err = _run(capsys, ["topics", acc["name"], "--search", "お茶", "--json"])
     assert rc == 1
     assert "未対応" in err

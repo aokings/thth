@@ -100,6 +100,18 @@ INSTANCE_FIXTURE = {
                                    "characters_reserved_per_url": 23}},
 }
 
+# `GET /api/v2/search`（T2-1・**L2**）の `statuses`。1 件は `direct`（**C-1 の
+# 規律で落ちる**べき）を混ぜる。
+SEARCH_STATUSES_FIXTURE = [
+    {"id": "110000000000000020", "created_at": "2026-09-16T00:00:00.000Z",
+     "url": "https://example.invalid/@alice/110000000000000020",
+     "content": "<p>苦いコーヒー</p>", "visibility": "public",
+     "account": {"id": "9001", "acct": "alice"}, "replies_count": 2},
+    {"id": "110000000000000021", "created_at": "2026-09-16T00:05:00.000Z",
+     "content": "<p>内緒の話</p>", "visibility": "direct",
+     "account": {"id": "9002", "acct": "bob"}},
+]
+
 
 class _Handler(http.server.BaseHTTPRequestHandler):
     behavior: dict
@@ -227,6 +239,19 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 # **`visibility` が無い応答**（fail-closed の対象・監査 P2-2）。
                 self._json(200, {k: v for k, v in STATUS_FIXTURE.items()
                                  if k != "visibility"})
+            else:
+                self._fail(mode)
+            return
+        if path == "/api/v2/search":
+            mode = self.behavior.get("search", "ok")
+            if mode == "ok":
+                self._json(200, {"accounts": [], "hashtags": [],
+                                 "statuses": SEARCH_STATUSES_FIXTURE})
+            elif mode == "empty":
+                self._json(200, {"accounts": [], "hashtags": [], "statuses": []})
+            elif mode == "no_statuses":
+                # **200 だが statuses が無い**（「取れて 0 件」と区別できない）。
+                self._json(200, {"accounts": [], "hashtags": []})
             else:
                 self._fail(mode)
             return
@@ -678,11 +703,12 @@ def test_capabilitiesはrecent_postsだけでquotaはNone():
     """topic 無し・views 無し・inbox 無し・refresh 無し（設計 v2 §4.2）。
 
     `recent_posts` だけは在る（`GET /api/v1/accounts/:id/statuses`・F2・2026-09-13）。
-    `thread_read` は T1-1（`fetch_post()`・2026-09-16）で足した。
+    `thread_read` は T1-1（`fetch_post()`・2026-09-16）、`keyword_search` は
+    T2-1（`GET /api/v2/search`・2026-09-16）で足した。
     """
     with fake_mastodon() as fake:
         adapter = _adapter(fake)
-        assert adapter.capabilities() == {"recent_posts", "thread_read"}
+        assert adapter.capabilities() == {"recent_posts", "thread_read", "keyword_search"}
         assert adapter.quota() is None
         assert adapter.inbox() == []
 
@@ -728,9 +754,10 @@ def test_秘密は例外文に出ない(call):
 
 def test_capabilitiesは実体を作らずに引ける():
     """`select` がトークンを読まずにトピック検査の要否を決められる（T0・受け入れ 6）。"""
-    assert mastodon_mod.MastodonAdapter.capabilities() == {"recent_posts", "thread_read"}
+    assert mastodon_mod.MastodonAdapter.capabilities() == {
+        "recent_posts", "thread_read", "keyword_search"}
     assert mastodon_mod.MastodonAdapter.CAPABILITIES == frozenset(
-        {"recent_posts", "thread_read"})
+        {"recent_posts", "thread_read", "keyword_search"})
 
 
 def test_from_accountは台帳とトークンから組み立てる():
@@ -779,3 +806,65 @@ def test_例外はAdapterErrorでRuntimeErrorの網にも入る():
             _adapter(fake).conversation(ROOT_ID)
         with pytest.raises(RuntimeError):
             _adapter(fake).conversation(ROOT_ID)
+
+
+# ---------------------------------------------------------------- keyword_search（T2-1）
+
+def test_keyword_searchはMessageの形で返りvisibilityで絞る():
+    """`direct` の 1 件は **C-1 の規律で落ちる**（本文が返らない）。"""
+    with fake_mastodon() as fake:
+        result = _adapter(fake).keyword_search("コーヒー", search_type="TOP", limit=10)
+    assert len(result) == 1
+    row = result[0]
+    assert row["message_id"] == "110000000000000020"
+    assert row["username"] == "alice"
+    assert row["text"] == "苦いコーヒー"
+    assert row["medium"] == "mastodon"
+    assert row["author_key"] == mastodon_mod.base.author_key(
+        "mastodon", _adapter(fake).qualified_acct("alice"))
+    assert row["root_post"] is None
+    assert row["replies_count"] == 2
+    assert row["has_replies"] is True
+    assert row["permalink"] == "https://example.invalid/@alice/110000000000000020"
+    # 内緒の話（bob・direct）は出ない。
+    assert all(r["message_id"] != "110000000000000021" for r in result)
+
+    req = [r for r in fake.requests if r["path"].startswith("/api/v2/search")][0]
+    assert "type=statuses" in req["path"]
+    assert "limit=10" in req["path"]
+
+
+def test_keyword_searchは検索結果が空でも0件():
+    with fake_mastodon({"search": "empty"}) as fake:
+        result = _adapter(fake).keyword_search("無風")
+    assert result == []
+
+
+def test_keyword_searchはstatusesが無いと取れて0件と区別する():
+    with fake_mastodon({"search": "no_statuses"}) as fake:
+        with pytest.raises(mastodon_mod.AdapterError):
+            _adapter(fake).keyword_search("無風")
+
+
+def test_keyword_searchはsearch_typeが違えば断る():
+    with fake_mastodon() as fake:
+        with pytest.raises(mastodon_mod.AdapterError):
+            _adapter(fake).keyword_search("苦味", search_type="HOT")
+
+
+def test_keyword_searchはlimitの上限を超えたら断る():
+    with fake_mastodon() as fake:
+        with pytest.raises(mastodon_mod.AdapterError):
+            _adapter(fake).keyword_search("苦味", limit=41)
+
+
+def test_keyword_searchのvisibilityの絞りを外すと非公開が漏れる_変異の対象():
+    """**変異テストの対象**（発注 T2-1）: `keyword_search()` の
+    `s.get("visibility") in READABLE_VISIBILITIES` を外すと、`direct` の
+    投稿（bob の「内緒の話」）が結果に混ざる——このテストは**その状態でこそ
+    落ちる**（今は通る）。変異の証拠は報告に貼る。
+    """
+    with fake_mastodon() as fake:
+        result = _adapter(fake).keyword_search("コーヒー")
+    assert all(r["message_id"] != "110000000000000021" for r in result), (
+        "direct の投稿が混ざっています（visibility の絞りが外れています）")

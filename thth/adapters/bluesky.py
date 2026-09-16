@@ -294,7 +294,10 @@ class BlueskyAdapter(base.Adapter):
     # `quota` 無し・`inbox` 無し・`refresh` 無し（App Password に期限が無いので
     # 延長という概念が無い）・`account_insights` 無し（アカウント単位の日次は無い）。
     # `thread_read`（T1-1）: `fetch_post()` が `getPosts` で根を 1 件引ける。
-    CAPABILITIES: frozenset = frozenset({"link_preview", "recent_posts", "thread_read"})
+    # `keyword_search`（T2-1・設計「自分の泉」§2.3・§3）: `searchPosts` で
+    # 語による公開投稿の検索ができる（審査の壁が無い媒体）。
+    CAPABILITIES: frozenset = frozenset({"link_preview", "recent_posts", "thread_read",
+                                         "keyword_search"})
 
     # `.token` の鍵（`thth auth <account>` が書く形・設計 v2 §4.2「認可とトークン」）。
     # **`access_token` ではない**——doctor が `access_token` だけを見ていたので、
@@ -634,6 +637,84 @@ class BlueskyAdapter(base.Adapter):
         if permalink:
             out["permalink"] = permalink
         return out
+
+    # --- 語で検索（T2-1・設計「自分の泉」§2.3・§3） -------------------------
+    # **L2**（`docs.bsky.app/docs/api/app-bsky-feed-search-posts` →
+    # `endpoints.bsky.app` へ 301・2026-09-16 に WebFetch で読解。lexicon の
+    # 生 JSON も GitHub 経由で確認）: `app.bsky.feed.searchPosts` の param は
+    # `q`（必須）・`sort`（`top`|`latest`・**既定 `latest`**）・`since`・
+    # `until`・`mentions`・`author`・`lang`・`domain`・`url`・`tag`・
+    # `limit`（1〜100・既定 25）・`cursor`。出力は `{"posts": [...], "cursor",
+    # "hitsTotal"}` で、`posts` は `getPosts`/`getPostThread` と同じ
+    # `#postView` の配列。
+    SEARCH_TYPES = ("TOP", "RECENT")
+    KEYWORD_SEARCH_MAX_LIMIT = 100
+    # `search_type`（Threads の語に揃えた呼び名）→ lexicon の `sort` の値。
+    _SORT_BY_SEARCH_TYPE = {"TOP": "top", "RECENT": "latest"}
+
+    def _search_row(self, view: dict) -> dict:
+        """`#postView` 1 件を、B-1 の一覧が使う形（`Message` の鍵＋`reply_count`・
+        `has_replies`）に写す。**検索結果はどの枝の中かを返さない**——lexicon の
+        `#postView` に `reply`（親）は乗らないので、`replied_to`・`root_post` は
+        Threads の `keyword_search`（`_message_row()`）と同じく `None`。
+        """
+        record = view.get("record") if isinstance(view.get("record"), dict) else {}
+        author = view.get("author") if isinstance(view.get("author"), dict) else {}
+        handle = author.get("handle")
+        uri = view.get("uri")
+        out = {
+            "message_id": uri,
+            "username": handle,
+            "text": record.get("text"),
+            "timestamp": record.get("createdAt") or view.get("indexedAt"),
+            "replied_to": None,
+            "root_post": None,
+            "medium": MEDIUM,
+            "author_key": author_key(author.get("did") or ""),
+            "reply_deadline": None,
+        }
+        permalink = post_url(handle, uri) if handle and uri else None
+        if permalink:
+            out["permalink"] = permalink
+        # `#postView.replyCount`（**L2**）。**数と真偽を分ける**（`threads_read_cli.
+        # REPLY_COUNT_KEYS`・設計 v2 §4.4）——無ければどちらも入れない（0 と混ぜない）。
+        reply_count = view.get("replyCount")
+        if isinstance(reply_count, int) and not isinstance(reply_count, bool):
+            out["reply_count"] = reply_count
+            out["has_replies"] = reply_count > 0
+        return out
+
+    def keyword_search(self, q: str, *, search_type: str = "TOP",
+                       limit: int = 25) -> list:
+        """`GET app.bsky.feed.searchPosts`（**L2**・上の表・T2-1）。**1 頁だけ。**
+
+        `search_type` は Threads と同じ 2 値（`TOP`→`sort=top`・`RECENT`→
+        `sort=latest`）。認証つき（`_request()` の流儀のまま——lexicon は
+        「一部のサーバでは認証が要る場合がある」としか言っていないが、この
+        アダプタは全部の呼び出しを認証つきにしている・T0 の境界どおり）。
+        返るのは B-1 の形の行（`_search_row()`）。**本文はここで返すだけ**
+        ——どこにも書かない（保存しないのは呼ぶ側の規律・設計「自分の泉」§5）。
+        """
+        if not isinstance(q, str) or not q.strip():
+            raise base.AdapterError("検索の語が空です")
+        if search_type not in self.SEARCH_TYPES:
+            raise base.AdapterError(
+                f"search_type は {' / '.join(self.SEARCH_TYPES)} のどちらかです"
+                f"（{search_type!r}）")
+        if (not isinstance(limit, int) or isinstance(limit, bool)
+                or limit < 1 or limit > self.KEYWORD_SEARCH_MAX_LIMIT):
+            raise base.AdapterError(
+                f"limit は 1〜{self.KEYWORD_SEARCH_MAX_LIMIT} です（{limit!r}）")
+        params = {"q": q.strip(), "sort": self._SORT_BY_SEARCH_TYPE[search_type],
+                  "limit": limit}
+        body = self._request("GET", "app.bsky.feed.searchPosts", params=params)
+        posts = body.get("posts")
+        if not isinstance(posts, list):
+            raise base.AdapterError(
+                "searchPosts: 応答に posts の配列がありません"
+                f"（{type(posts).__name__}）。取れて 0 件とは区別できません")
+        return [self._search_row(view) for view in posts
+                if isinstance(view, dict) and view.get("uri")]
 
     # --- 直近の投稿 ---------------------------------------------------------
     def recent_posts(self, *, limit: int = 25) -> list:

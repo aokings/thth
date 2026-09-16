@@ -188,6 +188,37 @@ TOOLS = [
             "required": ["account", "post_id"],
         },
     },
+    {
+        # **名前と説明文がそのまま売り文句**（設計「自分の泉」§2.3）。
+        # 実装が 1 語でも足したら設計書でなく実装を戻す（§2 の頭書きそのまま）。
+        "name": "where_to_appear",
+        # **設計「自分の泉」§2.3 の文言そのまま。**
+        "description": (
+            "絡みに行く先を選ぶ前に呼ぶ。検索の一覧に、自分の履歴（この語・"
+            "この相手で何が起きたか）を重ねて返す。選ぶのは呼ぶ側"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "account": {"type": "string",
+                             "description": "account 名（project の代わり）"},
+                "project": {"type": "string",
+                             "description": "この project の account 全部"
+                                            "（account の代わり）"},
+                "words": {"type": "array", "items": {"type": "string"},
+                           "description": "検索の語（1〜5 個）"},
+                "recent": {"type": "boolean",
+                            "description": "TOP でなく RECENT（新しい順）で検索する"},
+                "limit": {"type": "integer",
+                           "description": "1 account・1 語あたりの上限（既定 25）"},
+            },
+            # **`account` か `project` のどちらか必須**（両方無ければ
+            # `validate_arguments()` が `-32602`）。`required` は AND
+            # （全部要る）の意味しか持てないので、ここには入れない——OR の
+            # 検査は `validate_arguments()` の `where_to_appear` 専用の分岐で行う。
+            "required": ["words"],
+        },
+    },
 ]
 
 
@@ -217,6 +248,10 @@ _TYPES = {
     "boolean": ((bool,), "真偽値"),
     "integer": ((int,), "整数"),
     "number": ((int, float), "数"),
+    # `where_to_appear` の `words`（T2-3）で初めて使う型。**配列だけを通す**
+    # ——足しておかないと `_TYPES.get(...)` の既定（`(object,)`）に落ちて、
+    # 文字列 1 個を渡しても素通りしてしまう。
+    "array": ((list,), "配列"),
 }
 
 
@@ -315,8 +350,28 @@ def validate_arguments(name: str, arguments) -> dict:
             raise ToolInputError(
                 f"{name}: {key} が `-` で始まっています（{value!r}）。"
                 f"CLI の旗と区別できないので受け取りません")
+        if (spec.get("type") == "array"
+                and (spec.get("items") or {}).get("type") == "string"):
+            # **`words` の各要素も同じ理由で縛る**（監査 2026-09-14・P3-2 と同じ筋・
+            # T2-3）。`call_tool()` は要素を argv にそのまま並べるので、ここで
+            # 文字列でないもの・`-` で始まるものを通すと `thth where` の別の旗と
+            # 区別できなくなる。
+            for item in value:
+                if not isinstance(item, str):
+                    raise ToolInputError(
+                        f"{name}: {key} の要素は文字列です"
+                        f"（受け取った: {type(item).__name__}）")
+                if item.startswith("-"):
+                    raise ToolInputError(
+                        f"{name}: {key} の要素が `-` で始まっています（{item!r}）。"
+                        f"CLI の旗と区別できないので受け取りません")
         if key == "file":
             check_file_argument(name, value)
+    if name == "where_to_appear" and not arguments.get("account") and not arguments.get("project"):
+        # **`account` か `project` のどちらか必須**（`required` は AND の意味しか
+        # 持てないので、ここで OR を見る・T2-3 発注書）。
+        raise ToolInputError(
+            f"{name}: account か project のどちらかが要ります")
     return arguments
 
 
@@ -422,11 +477,29 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
+    elif name == "where_to_appear":
+        # **`thread_read` と同じ型**: CLI（`thth where`）を `--json` で呼ぶ
+        # だけ（設計「自分の泉」§2.3・T2-3）。`account`／`project` のどちらか
+        # 必須は `validate_arguments()` が先に見ているので、ここでは
+        # `project` を優先するだけでよい。
+        args = ["where"]
+        if arguments.get("project"):
+            args += ["--project", arguments["project"]]
+        else:
+            args.append(arguments["account"])
+        args += list(arguments.get("words") or [])
+        if arguments.get("recent"):
+            args.append("--recent")
+        if arguments.get("limit") is not None:
+            args += ["--limit", str(arguments["limit"])]
+        args.append("--json")
+        proc = run_cli(args)
+        text = proc.stdout
     else:
         return {"content": [{"type": "text", "text": f"unknown tool: {name}"}], "isError": True}
 
     if name.startswith("thth_topic_") or name in (
-            "before_you_post", "after_you_posted", "thread_read"):
+            "before_you_post", "after_you_posted", "thread_read", "where_to_appear"):
         # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）
         # とは意味が違う——こちらは stale_context・不正な候補比較で、
         # **そのまま使ってはいけない**応答。既存の扱いは変えない。

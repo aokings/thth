@@ -151,3 +151,23 @@ def load(account_cfg: dict, account_name: str) -> dict:
 def records(account_cfg: dict, account_name: str) -> list:
     """絡みの台帳の行だけを並べる（`load()` の便利口）。壊れたファイルは除く。"""
     return load(account_cfg, account_name)["rows"]
+
+
+def author_summary(author_keys, rows: list) -> list:
+    """`author_key` ごとの `met`（絡みの台帳の行数）・`last`（最新の
+    `posted_at`）（設計「自分の泉」§2.1・§2.3・T1-2 の `thread_read._you_and_them`
+    から T2-2 で共通化）。`thread_read`（枝の中の `you_and_them`）と
+    `where_cli`（account ごとの `you_and_them`）の両方がここを呼ぶ——
+    **同じ計算を 2 か所に置かない**（発注 T2-2「共通の関数に括り出してよい」）。
+
+    **発言内容は持たない**（設計「自分の泉」§2.4 と同じ規律）——`rows` は
+    絡みの台帳の行（`load()["rows"]`）で、本文・username を含まない。
+    """
+    out = []
+    for key in sorted(author_keys):
+        matched = [r for r in rows if r.get("author_key") == key]
+        met = len(matched)
+        stamps = sorted((r.get("posted_at") for r in matched
+                         if isinstance(r.get("posted_at"), str)), reverse=True)
+        out.append({"author_key": key, "met": met, "last": stamps[0] if stamps else None})
+    return out
