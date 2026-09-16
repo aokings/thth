@@ -2250,6 +2250,121 @@ def cmd_run(args) -> int:
     return result.exit_code
 
 
+def _accounts_for_project(project: str) -> list:
+    """台帳の `project` が一致する account 名の一覧（読めない台帳は静かに飛ばす
+    ——`--project` は「関係ある account をまとめて」が目的で、無関係な壊れた
+    台帳 1 本のために全体を止めない）。"""
+    out = []
+    for name in accounts_mod.list_account_names():
+        try:
+            account_cfg = accounts_mod.load_account(name)
+        except accounts_mod.AccountError:
+            continue
+        if account_cfg.get("project") == project:
+            out.append(name)
+    return out
+
+
+def cmd_pull(args) -> int:
+    """`thth pull <account>` / `thth pull --project <project>`: remote の取り込みを
+    明示に行う（T8-3・kopicha 続報）。
+
+    `writeback.sync_repo()` を呼ぶだけ——**`thth approve`（と `revoke`・
+    `throw`・`collect`・`retract`）が既に通しているのと同じ関数・同じ repo
+    ロック**。読むだけの口（`queue`・`schedule`・`board`）は遅れを**言うだけ**
+    （T8-2・`writeback.behind_remote()`）で pull しない——その案内
+    （「`thth pull <account>` か `thth approve` で取り込まれます」）から
+    誘導される、明示の取り込み口がここ。
+
+    `--project` なら台帳の project が一致する account の repo をまとめて
+    取り込む。**同じ repo を 2 回引かない**（repo_dir で重複排除してから
+    1 回だけ `sync_repo()` を呼ぶ）。
+    """
+    if args.project:
+        names = _accounts_for_project(args.project)
+        if not names:
+            print(f"project={args.project} の account が見つかりません", file=sys.stderr)
+            return 2
+    elif args.account:
+        names = [args.account]
+    else:
+        print("account か --project を指定してください"
+              "（`thth pull <account>` か `thth pull --project <project>`）", file=sys.stderr)
+        return 2
+
+    repos: dict = {}
+    for name in names:
+        try:
+            account_cfg = accounts_mod.load_account(name)
+        except accounts_mod.AccountError as e:
+            print(f"{name}: {e}", file=sys.stderr)
+            return 2
+        repo_dir = account_cfg.get("repo_dir")
+        if not repo_dir:
+            print(f"{name}: repo_dir が台帳にありません", file=sys.stderr)
+            return 2
+        # **repo_dir で重複排除**——`--project` に同じ repo を共有する account が
+        # 複数含まれても、`sync_repo()` は 1 回だけ呼ぶ。
+        repos.setdefault(repo_dir, name)
+
+    rows, any_error = [], False
+    for repo_dir, name in repos.items():
+        if not os.path.isdir(repo_dir):
+            print(f"{name}: repo が見当たりません（{repo_dir}）", file=sys.stderr)
+            any_error = True
+            rows.append({"account": name, "repo_dir": repo_dir, "ok": False,
+                         "error": "repo が見当たりません"})
+            continue
+
+        head_before = writeback_mod._run_git(repo_dir, ["rev-parse", "--short", "HEAD"])
+        old7 = head_before.stdout.strip() if head_before.returncode == 0 else None
+
+        # **`thth approve` と同じ repo ロック**（同じ排他制御の下でだけ書き込む）。
+        repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
+        try:
+            repo_lock.acquire()
+        except lock_mod.LockBusy:
+            print(f"{name}: いまこの repo を別の実行が使っています（{repo_dir}）。"
+                  "少し待ってからもう一度 thth pull してください。", file=sys.stderr)
+            any_error = True
+            rows.append({"account": name, "repo_dir": repo_dir, "ok": False,
+                         "error": "repo がロック中です"})
+            continue
+        try:
+            synced, sync_err, _sha = writeback_mod.sync_repo(repo_dir)
+        finally:
+            repo_lock.release()
+
+        if not synced:
+            # **失敗は sync_repo の理由をそのまま**（T8-3）。rc=1。
+            print(f"{name}: 取り込めませんでした: {sync_err}", file=sys.stderr)
+            any_error = True
+            rows.append({"account": name, "repo_dir": repo_dir, "ok": False, "error": sync_err})
+            continue
+
+        # **`--json` は `behind_remote()` の形**（T8-3）。取り込んだ直後にもう一度
+        # 確かめることで、本当に追いついたか（`behind: 0`）を同じ形で言う。
+        info = writeback_mod.behind_remote(repo_dir)
+        new7 = info.get("head") or old7
+        if old7 and new7 and old7 == new7:
+            if not args.json:
+                print(f"{name}: すでに最新です")
+        else:
+            count_n = None
+            if old7 and new7:
+                count = writeback_mod._run_git(repo_dir, ["rev-list", "--count", f"{old7}..{new7}"])
+                if count.returncode == 0 and count.stdout.strip():
+                    count_n = int(count.stdout.strip())
+            if not args.json:
+                suffix = f"（{count_n} commit）" if count_n else ""
+                print(f"{name}: 取り込みました: {old7} → {new7}{suffix}")
+        rows.append({"account": name, "repo_dir": repo_dir, "ok": True, "repo": info})
+
+    if args.json:
+        _print_json(rows)
+    return 1 if any_error else 0
+
+
 def cmd_collect(args) -> int:
     """`thth collect <account>`: 数と返信を採る（`thth run` が自動で呼びます）。
 
@@ -2821,6 +2936,16 @@ def build_parser() -> argparse.ArgumentParser:
         "collect", help="数と返信を採る（経過時間の刻みで・thth run が自動で呼びます）")
     p_collect.add_argument("account", nargs="?")
     p_collect.set_defaults(func=cmd_collect)
+
+    p_pull = sub.add_parser(
+        "pull", help="remote の取り込みを明示に行う（`thth queue`／`schedule` の"
+                     "遅れの案内から。読むだけの口は勝手に pull しません）")
+    p_pull.add_argument("account", nargs="?")
+    p_pull.add_argument("--project", default=None,
+                        help="account の代わりに project で指定する（同じ repo は"
+                             "重複なく 1 回だけ取り込みます）")
+    p_pull.add_argument("--json", action="store_true")
+    p_pull.set_defaults(func=cmd_pull)
 
     p_auth = sub.add_parser(
         "auth",
