@@ -21,6 +21,7 @@ from thth import accounts as accounts_mod
 from thth import core
 from thth import engagements as engagements_mod
 from thth import lint as lint_mod
+from thth import runs as runs_mod
 
 
 def _row(**over):
@@ -149,6 +150,46 @@ def test_c_reply_to付きの原稿を出すと台帳に1行_author_keyも写る(
     # 本文・username は 1 バイトも書かれていない。
     for forbidden in ("text", "body", "content", "username", "author", "handle"):
         assert forbidden not in row, row
+
+
+# --- T7-2: queue の門（`_throw_chosen`）も best-effort に `fetch_post` を試す ---
+# kopicha の実物の所見が挙げた「queue の門でも同じ best-effort を入れる」の側。
+# `fake_threads_server`（`tests/test_fake_api.py`）は POST しか持たない偽サーバ
+# なので、`fetch_post()` の `GET /v1.0/<reply_to>` は 501 になる——「読めなかった」
+# を自然に再現できる（`AdapterError` に化けて `author_key` は `None` のまま・
+# 公開は止まらない）。
+
+
+def test_c_reply_to_author_key省略でもfetch_postをbesteffortに試し失敗してもauthor_keyはnullのまま(
+        isolated_account_factory):
+    account = isolated_account_factory(production=True)
+    text = make_queue_text(fm_overrides={"reply_to": "THIRDPARTY777", "topic": None})
+    os.makedirs(account["queue_dir"], exist_ok=True)
+    path = os.path.join(account["queue_dir"], "with-reply-no-key.md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    commit_and_push_path(path, message="test: with-reply-no-key")
+
+    with fake_threads_server({"create": "ok", "publish": "ok"}) as base_url:
+        def factory(_cfg, _token):
+            return _adapter(base_url)
+
+        result = core.throw_once(account["name"], production_flag=True,
+                                  adapter_factory=factory, now=NOW)
+
+    assert result.exit_code == 0 and result.action == "post", result
+    cfg = accounts_mod.load_account(account["name"])
+    rows = engagements_mod.records(cfg, account["name"])
+    assert len(rows) == 1, rows
+    assert rows[0]["author_key"] is None   # 偽サーバに GET が無いので best-effort は失敗する
+    assert rows[0]["reply_to"] == "THIRDPARTY777"
+
+    state_dir = accounts_mod.state_dir_for(account["name"])
+    run_rows = [r for r in runs_mod.read_runs(state_dir) if r.get("post_id") == result.post_id]
+    assert len(run_rows) == 1, run_rows
+    assert run_rows[0]["status"] == "ok"
+    assert run_rows[0]["engagement_write_failed"] is False
+    assert run_rows[0]["engagement_author_lookup_failed"] is True
 
 
 def test_c_reply_to無しなら0行(isolated_account_factory):
