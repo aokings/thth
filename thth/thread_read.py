@@ -474,6 +474,22 @@ def cmd_thread(args) -> int:
         else:
             print(message, file=sys.stderr)
         return 1
+    except RuntimeError as e:
+        # **`AdapterError` ではない素の `RuntimeError`**（Bluesky の `_request`
+        # 周りなど）を、`AdapterError` と同じ出し方で受ける（T9-2・照合
+        # 「X Developer Agreement と自分の泉」検収 5）。`AdapterError` は
+        # `RuntimeError` の子なので、この節は上の `except AdapterError` を
+        # すり抜けたものだけを拾う。**adapter が投げる例外の型は変えない**
+        # ——ここは受け口を増やすだけ。
+        message = f"{args.account}: {redact_mod.redact(str(e))}"
+        _record_run(args.account, media=media, post_id=args.post_id, messages=None,
+                   truncated=False, status="error", error=message)
+        if as_json:
+            print(json.dumps({"error": message, "account": args.account},
+                             ensure_ascii=False, indent=2))
+        else:
+            print(message, file=sys.stderr)
+        return 1
 
     _record_run(args.account, media=media, post_id=args.post_id,
                messages=result["counts"]["messages"],
