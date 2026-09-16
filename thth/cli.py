@@ -26,6 +26,7 @@ from . import where_cli as where_cli_mod
 from . import who_cli as who_cli_mod
 from . import collect as collect_mod
 from . import core
+from . import engagements as engagements_mod
 from . import jst
 from . import lint as lint_mod
 from . import lock as lock_mod
@@ -2173,6 +2174,13 @@ def cmd_send(args) -> int:
     **`--confirm`**（外部レビュー §1b・受け入れ 6）: dry-run（`--production` を
     付けない実行）が表示する短い digest を、`--production` のときに
     `--confirm <digest>` として渡す。省略・不一致はどちらも送らない。
+
+    **`--reply-to-author-key`・`--reply-to-root`・`--found-by`**（T7-2・設計
+    「自分の泉」§4）: `--reply-to` で返信として出すとき、絡みの台帳（誰に・
+    どの枝へ絡みに行ったか）に残す任意項目。queue の front-matter
+    `reply_to_author_key`・`reply_to_root`・`found_by` と同じ意味。
+    `--reply-to-author-key` を省略すると、`reply_to` の投稿を 1 回
+    best-effort に読みに行って埋める（失敗しても送信は止めない）。
     """
     import sys as _sys
     from . import core as core_mod
@@ -2183,6 +2191,8 @@ def cmd_send(args) -> int:
         text = _sys.stdin.read()
     result = core_mod.send_once(
         args.account, text=text, topic=args.topic, reply_to=args.reply_to,
+        reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
+        found_by=args.found_by,
         production_flag=args.production, confirm=args.confirm, log=print)
     return result.exit_code
 
@@ -2709,6 +2719,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="本文のファイル。省略時は標準入力から読む")
     p_send.add_argument("--topic", default=None)
     p_send.add_argument("--reply-to", dest="reply_to", default=None)
+    # T7-2（設計「自分の泉」§4）: queue の front-matter と同じ意味の 3 つ。
+    # `--reply-to` があるときだけ絡みの台帳に 1 行残る。
+    p_send.add_argument("--reply-to-author-key", dest="reply_to_author_key", default=None,
+                        help="相手の仮名（16 進 16 桁）。省略すると reply_to の投稿を"
+                             "best-effort に読みに行って埋める（失敗しても送信は止めない）")
+    p_send.add_argument("--reply-to-root", dest="reply_to_root", default=None,
+                        help="この返信がぶら下がる枝の根の post_id（判れば）")
+    p_send.add_argument("--found-by", dest="found_by", default=None,
+                        choices=sorted(engagements_mod.FOUND_BY_VALUES),
+                        help="絡みに行った先をどう見つけたか（where_to_appear／manual／mention）")
     p_send.add_argument("--production", action="store_true",
                         help="本番で出す（台帳 production: true が無ければ dry-run のまま）")
     p_send.add_argument("--confirm", default=None,

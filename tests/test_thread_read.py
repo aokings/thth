@@ -185,13 +185,67 @@ def test_already_repliedは絡みの台帳とqueueの両方から引く(bsky_acc
     result = json.loads(r.stdout)
     by_id = {m["message_id"]: m for m in result["messages"]}
 
+    # T7-3: object には `source`（ledger／queue／thread のどこで見つかったか）が付く。
     assert by_id[R1_URI]["already_replied"] == {
         "post_id": "at://" + DID + "/app.bsky.feed.post/myreply1",
-        "at": "2026-09-16T05:00:00+09:00"}
-    assert by_id[R4_URI]["already_replied"] == {"status": "draft"}
-    # まだ絡んでいない相手には無い。
+        "at": "2026-09-16T05:00:00+09:00", "source": "ledger"}
+    assert by_id[R4_URI]["already_replied"] == {"status": "draft", "source": "queue"}
+    # まだ絡んでいない相手には`False`（台帳・queueは両方読めているので
+    # 「見当たらない」と言い切れる・「返していない」の確定ではない・T7-3）。
+    assert by_id[R3_URI]["already_replied"] is False
+    assert by_id[R5_URI]["already_replied"] is False
+
+
+# --- T7-3: already_replied を枝の中の自分の返信からも埋める（3 値の意味） -----
+# 設計「自分の泉」§2.1・T7-3 発注書「その枝に is_own: true の返信があり、
+# その replied_to がこの message なら、台帳に無くても already_replied を
+# 埋める」。`false`＝見当たらない（返していない、の確定ではない）／
+# `null`＝台帳か queue が読めず判らない、の 2 つも別々に確かめる。
+
+
+def test_台帳queueに無くても枝の中の自分の返信からalready_repliedが埋まる(bsky_account):
+    account, service = bsky_account
+    # 台帳にも queue にも何も無い状態（このテストは追加しない）。
+    r = _cli(account["name"], ROOT_URI, service=service)
+    assert r.returncode == 0, r.stdout + r.stderr
+    result = json.loads(r.stdout)
+    by_id = {m["message_id"]: m for m in result["messages"]}
+
+    # R2（自分）は R1（bob）への返信——台帳に無くても枝そのものから拾う。
+    assert by_id[R1_URI]["already_replied"] == {
+        "post_id": R2_URI, "at": "2026-09-16T02:00:00.000Z", "source": "thread"}
+    # R2・R3・R4・R5 には自分からの返信がぶら下がっていない
+    # ——台帳・queue も空なので`False`（見当たらない。「返していない」の確定ではない）。
+    assert by_id[R2_URI]["already_replied"] is False
+    assert by_id[R3_URI]["already_replied"] is False
+    assert by_id[R4_URI]["already_replied"] is False
+    assert by_id[R5_URI]["already_replied"] is False
+
+
+def test_台帳が読めなければ見当たらなくてもFalseでなくNoneになる(bsky_account, tmp_path):
+    account, service = bsky_account
+    cfg = accounts_mod.load_account(account["name"])
+    eng_dir = accounts_mod.data_dirs(cfg, account["name"])["engagements"]
+    os.makedirs(eng_dir, exist_ok=True)
+    # 壊れた ndjson（JSON として読めない行）を 1 本置く——
+    # `engagements.load()` はこのファイルを `broken` として中身を捨てる
+    # （`thth/engagements.py::_read_ndjson()` と同じ流儀）。
+    with open(os.path.join(eng_dir, "2026-09.ndjson"), "w", encoding="utf-8") as f:
+        f.write("これは JSON ではありません\n")
+
+    r = _cli(account["name"], ROOT_URI, service=service)
+    assert r.returncode == 0, r.stdout + r.stderr
+    result = json.loads(r.stdout)
+    by_id = {m["message_id"]: m for m in result["messages"]}
+
+    # R1 は枝の中の自分の返信（R2）があるので、台帳が読めなくても object のまま
+    # （見つかったものを取り消さない）。
+    assert by_id[R1_URI]["already_replied"]["source"] == "thread"
+    # どこにも見当たらない行は、`False`（見当たらない）ではなく`None`
+    # （「台帳が読めないので判らない」・T7-3 規約）。
     assert by_id[R3_URI]["already_replied"] is None
     assert by_id[R5_URI]["already_replied"] is None
+    assert any("絡みの台帳" in reason for reason in result["provenance"]["ledgers_unreadable"])
 
 
 def test_max_messagesを超えたら新しい側を切りcontinue_fromを返す(bsky_account):
@@ -266,6 +320,74 @@ def test_you_and_themにlast_reactionがある(bsky_account):
     dave_key = bsky_mod.author_key(DAVE_DID)
     assert you_and_them[dave_key]["met"] == 0
     assert you_and_them[dave_key]["last_reaction"] is None
+
+
+# --- T7-1: Threadsの偽サーバで枝を読む（conversation()の生の行をMessageの形に揃える） ---
+# `ThreadsAdapter.conversation()`は生の行（`id`・`replied_to: {"id": …}`・
+# `root_post: {"id": …}`）を返す（返信の台帳との互換のため adapter 自身は
+# 変えない・設計「自分の泉」T7-1発注書）。`thread_read`は`normalize_message()`
+# を通してから読むので、Threadsでも`message_id`・`depth`・`already_replied`が
+# ちゃんと埋まることをここで確かめる（T1-2はBluesky・Mastodonの偽サーバだけで
+# 枝を確かめていた・Threadsは400の経路だけだった、という所見の穴）。
+
+C1_ID, C2_ID, C3_ID = "C1", "C2", "C3"
+
+
+def _threads_conversation_rows():
+    """根（`OTHER_POST_ID`・alice）→ C1（bob）→ C2（nigamilab・自分）→ C3（carol）。"""
+    return [
+        {"id": C1_ID, "username": "bob", "text": "bobの返信",
+         "timestamp": "2026-09-16T01:00:00+0000",
+         "replied_to": {"id": OTHER_POST_ID}, "root_post": {"id": OTHER_POST_ID},
+         "permalink": "https://t/c1", "has_replies": True, "is_reply": True},
+        {"id": C2_ID, "username": "nigamilab", "text": "自分の返信",
+         "timestamp": "2026-09-16T02:00:00+0000",
+         "replied_to": {"id": C1_ID}, "root_post": {"id": OTHER_POST_ID},
+         "permalink": "https://t/c2", "has_replies": True, "is_reply": True},
+        {"id": C3_ID, "username": "carol", "text": "孫の返信",
+         "timestamp": "2026-09-16T03:00:00+0000",
+         "replied_to": {"id": C2_ID}, "root_post": {"id": OTHER_POST_ID},
+         "permalink": "https://t/c3", "has_replies": False, "is_reply": True},
+    ]
+
+
+def test_Threadsの枝も根から時刻順でdepthとis_ownつきで返る(isolated_account_factory, tmp_path):
+    token_path = str(tmp_path / "threads.token")
+    _write_token(token_path, {"access_token": "FAKE-SECRET", "user_id": "999999",
+                              "username": "nigamilab", "scopes": None,
+                              "obtained_at": "2026-09-16T09:00:00+09:00"})
+    account = isolated_account_factory(
+        "nigamilab-threads-branch-test", media="threads", handle="nigamilab",
+        token=token_path, production=False)
+
+    with _server(conversation_rows=_threads_conversation_rows()) as (base_url, requests):
+        r = run_thth(["thread", account["name"], OTHER_POST_ID, "--json"],
+                     env={"THTH_THREADS_BASE_URL": base_url})
+    assert r.returncode == 0, r.stdout + r.stderr
+    result = json.loads(r.stdout)
+
+    assert result["root"]["post_id"] == OTHER_POST_ID
+    assert result["root"]["username"] == "alice"
+
+    ids = [m["message_id"] for m in result["messages"]]
+    assert ids == [C1_ID, C2_ID, C3_ID], ids   # Threadsの生の`id`から写った
+
+    by_id = {m["message_id"]: m for m in result["messages"]}
+    assert by_id[C1_ID]["depth"] == 1 and by_id[C1_ID]["replied_to"] == OTHER_POST_ID
+    assert by_id[C2_ID]["depth"] == 2 and by_id[C2_ID]["replied_to"] == C1_ID
+    assert by_id[C3_ID]["depth"] == 3 and by_id[C3_ID]["replied_to"] == C2_ID
+
+    # `replied_to`は`{"id": …}`のdictではなく、id文字列に開かれていること。
+    for m in result["messages"]:
+        assert isinstance(m["replied_to"], str)
+
+    assert by_id[C2_ID]["is_own"] is True
+    assert by_id[C1_ID]["is_own"] is False
+    assert by_id[C3_ID]["is_own"] is False
+    assert by_id[C2_ID]["author_key"] is not None
+
+    counts = result["counts"]
+    assert counts["messages"] == 3 and counts["own"] == 1 and counts["participants"] == 4
 
 
 def test_Threadsで他人の根が400ならPermissionMissingのままrc1(isolated_account_factory, tmp_path):

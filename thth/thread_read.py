@@ -18,6 +18,7 @@ LLM。** この口は「読んで見せる」だけ——**台帳に 1 バイト
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 
@@ -147,17 +148,59 @@ def _already_replied_index(account_cfg: dict, account_name: str):
     return ledger_by_reply_to, queue_index, unreadable
 
 
+def _self_reply_index(messages: list, *, is_own) -> dict:
+    """message_id（親）→ その枝の中で自分が返した行（T7-3・設計「自分の泉」§2.1）。
+
+    台帳（`engagements`）にも queue にも無くても、**枝そのものの中に
+    `is_own: True` で `replied_to` がその message_id の行があれば**、
+    「もう返した」と言える（kopicha の実物の所見: 審査前でも `thth thread`
+    では他人の枝が読め、台帳に載らない過去の返信もそこに見える）。
+
+    同じ親に複数の自分の返信がぶら下がっていれば、`timestamp` が最も古い
+    ものを残す（**最初に絡みに行った記録**・`_already_replied_index()` の
+    ledger 側と同じ考え方）。`message_id`・`replied_to` の読めない行は無視
+    する（推測しない）。
+    """
+    out: dict = {}
+    for m in messages:
+        if is_own(m.get("username")) is not True:
+            continue
+        parent = m.get("replied_to")
+        mid = m.get("message_id")
+        if parent is None or mid is None:
+            continue
+        parent = str(parent)
+        candidate = {"post_id": str(mid), "at": m.get("timestamp")}
+        current = out.get(parent)
+        if current is None or (candidate.get("at") or "") < (current.get("at") or ""):
+            out[parent] = candidate
+    return out
+
+
 def _already_replied_for(message_id: str, *, ledger_by_reply_to: dict,
-                         queue_index: dict | None):
-    """規約 (c) の 3 段: (a) 絡みの台帳 → (b) queue の下書き → (c) `None`。"""
+                         queue_index: dict | None, self_reply_by_parent: dict,
+                         ledgers_unreadable: bool):
+    """3 値（T7-3・設計「自分の泉」§2.1）: **object＝返した**（`source` 付き）／
+    **`False`＝台帳・queue・枝のどこにも見当たらない**／**`None`＝台帳か queue
+    が読めず判らない**。`False` は「返していない」の確定ではなく「見当たら
+    ない」——見つける先が 3 段（台帳→queue→枝そのもの）ある。
+
+    優先順位: (a) 絡みの台帳 → (b) queue の下書き → (c) 枝の中の自分の返信
+    （`_self_reply_index()`）→ (d) 台帳・queue が両方読めていれば `False`、
+    どちらかが読めていなければ `None`。
+    """
     ledger_row = ledger_by_reply_to.get(str(message_id))
     if ledger_row is not None:
-        return {"post_id": ledger_row.get("post_id"), "at": ledger_row.get("posted_at")}
+        return {"post_id": ledger_row.get("post_id"), "at": ledger_row.get("posted_at"),
+                "source": "ledger"}
     if queue_index:
         entry = queue_index.get(str(message_id))
         if entry is not None:
-            return {"status": entry["status"]}
-    return None
+            return {"status": entry["status"], "source": "queue"}
+    thread_row = self_reply_by_parent.get(str(message_id))
+    if thread_row is not None:
+        return {"post_id": thread_row["post_id"], "at": thread_row["at"], "source": "thread"}
+    return None if ledgers_unreadable else False
 
 
 def _sort_key(message: dict) -> tuple:
@@ -199,8 +242,15 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
         raise adapter_base.AdapterError(f"{account_name}: token が無いので読めません")
     adapter = adapters_mod.make_adapter(account_cfg, token)
 
-    root_row = adapter.fetch_post(post_id)
-    raw_messages = adapter.conversation(post_id, since=since)
+    # **`conversation()`・`fetch_post()`の生の行を`Message`の形に揃える**
+    # （T7-1・設計「自分の泉」§2.1）。Threadsの`conversation()`は`id`・
+    # `replied_to: {"id": …}`の生の行を返す（返信の台帳との互換のため
+    # adapter自身は変えない）——ここで読む直前にだけ通す。Bluesky・Mastodon・
+    # Threadsの`fetch_post()`は既に`Message`の形なので、通しても変わらない
+    # （`normalize_message()`は冪等）。
+    root_row = adapter_base.normalize_message(adapter.fetch_post(post_id), medium=media)
+    raw_messages = [adapter_base.normalize_message(m, medium=media)
+                    for m in adapter.conversation(post_id, since=since)]
 
     own_handles, unreadable_accounts = replies_mod._own_handles()
     incomplete = bool(unreadable_accounts)
@@ -214,8 +264,17 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
     if incomplete:
         ledgers_unreadable = list(ledgers_unreadable) + [
             f"account の handle が読めません: {', '.join(unreadable_accounts)}"]
+    # 台帳（ledger）・queue のどちらかが読めていなければ、そこで見つからな
+    # かった already_replied は「見当たらない」（False）ではなく「判らない」
+    # （None）にする（T7-3・規約 (c)）。
+    ledgers_unreadable_flag = bool(ledgers_unreadable)
 
     ordered = sorted(raw_messages, key=_sort_key)
+    # **枝の中の自分の返信からも already_replied を埋める**（T7-3・設計
+    # 「自分の泉」§2.1）。台帳・queue に載らない過去の返信でも、枝そのもの
+    # に残っていれば拾える——`truncated` で切り落とされる前の全件（`ordered`）
+    # を見る（自分の返信が `max_messages` の外に出ていても拾うため）。
+    self_reply_by_parent = _self_reply_index(ordered, is_own=_is_own)
     truncated = len(ordered) > max_messages
     continue_from = None
     if truncated:
@@ -246,7 +305,8 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
             "text": m.get("text"),
             "already_replied": _already_replied_for(
                 m.get("message_id"), ledger_by_reply_to=ledger_by_reply_to,
-                queue_index=queue_index),
+                queue_index=queue_index, self_reply_by_parent=self_reply_by_parent,
+                ledgers_unreadable=ledgers_unreadable_flag),
         })
 
     root_is_own = _is_own(root_row.get("username"))
@@ -348,7 +408,18 @@ def register(sub) -> None:
     （`threads_read_cli.register()` と同じ型）。"""
     p = sub.add_parser(
         "thread",
-        help="投稿の枝をその場で読む。保存しない（設計「自分の泉」§2.1・T1-2）")
+        help="投稿の枝をその場で読む。保存しない（設計「自分の泉」§2.1・T1-2）",
+        description=(
+            "投稿の枝をその場で読む。保存しない（設計「自分の泉」§2.1）。\n"
+            "各 message の `already_replied` は 3 値（T7-3）:\n"
+            "  object（{post_id, at, source}）＝返した。source は"
+            " ledger（絡みの台帳）／queue（queue の下書き）／"
+            "thread（枝の中の自分の返信）のどれで見つかったか\n"
+            "  false ＝台帳・queue・枝のどこにも見当たらない"
+            "（**「返していない」の確定ではない**——見当たらないだけ）\n"
+            "  null ＝台帳か queue が読めず判らない"
+            "（理由は provenance.ledgers_unreadable）"),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("account")
     p.add_argument("post_id")
     p.add_argument("--since", default=None, help="この時刻以降（ISO）だけ")

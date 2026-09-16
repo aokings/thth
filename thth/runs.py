@@ -53,9 +53,17 @@ REQUIRED_FIELDS = ["account", "run_id", "mode", "action", "status", "error"]
 # `messages`・`truncated`（`thread_read`）・`words`・`n`（`where_to_appear`）・
 # `medium`・`author_key`・`met`・`profile_fetched`（`who_is_this`）は T5-3 で
 # 足した——読み取りの行（`record_minimal()` 経由）が運ぶ call 固有の数・鍵。
+# `engagement_write_failed`（発注 T0-1）・`engagement_author_lookup_failed`
+# （T7-2）: **`append_run()` が持っているキーだけを出力に残す allowlist が
+# ここ**（`RUNS_FIELDS`＋`OPTIONAL_FIELDS`）なので、`core._append_run()` が
+# `record` に積んでも、ここに無ければディスクに 1 バイトも出ない。T7-2 実装中に
+# 発覚（`engagement_write_failed` は発注 T0-1 で `core.py` が積んでいたが、
+# ここに列挙されておらず、実際には毎回黙って捨てられていた——「絡みの台帳が
+# 書けなかったら runs に loud に残す」という規約が実際には効いていなかった）。
 OPTIONAL_FIELDS = ["topic", "mismatch_fields", "trigger",
                    "messages", "truncated", "words", "n",
-                   "medium", "author_key", "met", "profile_fetched"]
+                   "medium", "author_key", "met", "profile_fetched",
+                   "engagement_write_failed", "engagement_author_lookup_failed"]
 
 
 def path_for(state_dir: str, jst_month: str) -> str:

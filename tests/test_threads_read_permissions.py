@@ -80,6 +80,8 @@ class _ReadOnlyThreads(http.server.BaseHTTPRequestHandler):
     """
     behavior: dict = {}
     requests: list = []
+    # `/conversation` が返す行（既定は空・T7-1 の枝テストで差し替える）。
+    conversation_rows: list = []
 
     def _json(self, status, payload):
         body = json.dumps(payload).encode("utf-8")
@@ -121,7 +123,7 @@ class _ReadOnlyThreads(http.server.BaseHTTPRequestHandler):
         if p.endswith("/insights"):
             return self._json(200, {"data": [{"name": "views", "values": [{"value": 7}]}]})
         if p.endswith("/conversation"):
-            return self._json(200, {"data": []})
+            return self._json(200, {"data": self.conversation_rows})
         if p == f"/v1.0/{OTHER_POST_ID}":
             return self._json(200, OTHER_POST)
         return self._json(200, {"data": []})
@@ -138,10 +140,11 @@ class _ReadOnlyThreads(http.server.BaseHTTPRequestHandler):
 
 
 @contextlib.contextmanager
-def _server(behavior=None):
+def _server(behavior=None, *, conversation_rows=None):
     requests: list = []
     handler = type("H", (_ReadOnlyThreads,), {"behavior": dict(behavior or {}),
-                                               "requests": requests})
+                                               "requests": requests,
+                                               "conversation_rows": list(conversation_rows or [])})
     server = http.server.HTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

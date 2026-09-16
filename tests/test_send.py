@@ -11,7 +11,10 @@ import os
 from thth import accounts as accounts_mod
 from thth import approval as approval_mod
 from thth import core
+from thth import engagements as engagements_mod
 from thth import inflight as inflight_mod
+from thth import runs as runs_mod
+from thth.adapters import base as adapter_base
 
 
 def _digest_for(account_name: str, text: str, *, reply_to=None, topic=None) -> str:
@@ -136,3 +139,114 @@ def test_inflightが残っていれば何もしない(isolated_account_factory):
     r = core.send_once(account["name"], text="本文", production_flag=True,
                        adapter_factory=lambda *_: _Spy())
     assert r.exit_code == 1 and r.action == "inflight"
+
+
+# --- T7-2: `send --reply-to` も絡みの台帳に 1 行書く（設計「自分の泉」§4） --------
+# kopicha の実物の所見: `_throw_chosen()`（queue の門）は絡みの台帳に書くが、
+# 同席の様態（`send_once()`）には配線が無く、`thth send --reply-to <id>` で
+# 出した返信は台帳に残らなかった。
+
+
+class _SpyWithFetch:
+    """`publish()` に加えて `fetch_post()` を持つ偽アダプタ（T7-2）。
+
+    `reply_to_author_key` を渡さないときの best-effort 経路を確かめる。
+    """
+
+    def __init__(self, *, fetch_row=None, fetch_error=None):
+        self.fetch_calls: list = []
+        self._fetch_row = fetch_row
+        self._fetch_error = fetch_error
+
+    def publish(self, post, *, dry_run, on_container_created=None):
+        return adapter_base.PublishResult(
+            post_id="ENG1", url=None, ts="2026-09-16T10:00:00+09:00")
+
+    def fetch_post(self, post_id):
+        self.fetch_calls.append(post_id)
+        if self._fetch_error is not None:
+            raise self._fetch_error
+        return self._fetch_row
+
+
+def test_replyToがあれば絡みの台帳に1行書く_author_keyは明示した値を使う(isolated_account_factory):
+    account = isolated_account_factory(production=True)
+    cfg = accounts_mod.load_account(account["name"])
+    spy = _SpyWithFetch()
+    digest = _digest_for(account["name"], "返信です", reply_to="R1")
+    r = core.send_once(
+        account["name"], text="返信です", reply_to="R1", reply_to_root="ROOT1",
+        reply_to_author_key="a" * 16, found_by="manual",
+        production_flag=True, confirm=digest, adapter_factory=lambda *_: spy)
+    assert r.exit_code == 0 and r.post_id == "ENG1"
+
+    # 明示した author_key があるので fetch_post は best-effort でも叩かない。
+    assert spy.fetch_calls == []
+
+    rows = engagements_mod.records(cfg, account["name"])
+    assert len(rows) == 1, rows
+    row = rows[0]
+    assert row["post_id"] == "ENG1" and row["reply_to"] == "R1"
+    assert row["root_post"] == "ROOT1"
+    assert row["author_key"] == "a" * 16
+    assert row["found_by"] == "manual"
+    assert row["account"] == account["name"] and row["medium"] == "threads"
+
+
+def test_reply_to_author_keyが無ければfetch_postでbesteffortに埋める(isolated_account_factory):
+    account = isolated_account_factory(production=True)
+    cfg = accounts_mod.load_account(account["name"])
+    expected_key = adapter_base.author_key("threads", "someone")
+    spy = _SpyWithFetch(fetch_row={"message_id": "R1", "username": "someone",
+                                   "author_key": expected_key})
+    digest = _digest_for(account["name"], "返信です", reply_to="R1")
+    r = core.send_once(
+        account["name"], text="返信です", reply_to="R1",
+        production_flag=True, confirm=digest, adapter_factory=lambda *_: spy)
+    assert r.exit_code == 0
+    assert spy.fetch_calls == ["R1"]   # 1 回だけ叩く
+
+    rows = engagements_mod.records(cfg, account["name"])
+    assert len(rows) == 1
+    assert rows[0]["author_key"] == expected_key
+    # best-effort が成功しているので、runs に失敗の印は立たない。
+    state_dir = accounts_mod.state_dir_for(account["name"])
+    run_rows = [r for r in runs_mod.read_runs(state_dir) if r.get("post_id") == "ENG1"]
+    assert len(run_rows) == 1
+    assert run_rows[0]["engagement_write_failed"] is False
+    assert run_rows[0]["engagement_author_lookup_failed"] is False
+
+
+def test_fetch_postが失敗してもauthor_keyがnullになるだけで公開は成功する(isolated_account_factory):
+    account = isolated_account_factory(production=True)
+    cfg = accounts_mod.load_account(account["name"])
+    spy = _SpyWithFetch(fetch_error=adapter_base.AdapterError("投稿の取得: HTTP 400 不明"))
+    digest = _digest_for(account["name"], "返信です", reply_to="R1")
+    r = core.send_once(
+        account["name"], text="返信です", reply_to="R1",
+        production_flag=True, confirm=digest, adapter_factory=lambda *_: spy)
+    assert r.exit_code == 0, "author_key が埋まらなくても公開は止めない"
+    assert spy.fetch_calls == ["R1"]
+
+    rows = engagements_mod.records(cfg, account["name"])
+    assert len(rows) == 1
+    assert rows[0]["author_key"] is None   # 「見当たらない」であって公開の失敗ではない
+
+    state_dir = accounts_mod.state_dir_for(account["name"])
+    run_rows = [r for r in runs_mod.read_runs(state_dir) if r.get("post_id") == "ENG1"]
+    assert len(run_rows) == 1
+    assert run_rows[0]["status"] == "ok"
+    assert run_rows[0]["engagement_write_failed"] is False
+    assert run_rows[0]["engagement_author_lookup_failed"] is True
+
+
+def test_reply_toが無ければ絡みの台帳には何も書かない(isolated_account_factory):
+    account = isolated_account_factory(production=True)
+    cfg = accounts_mod.load_account(account["name"])
+    spy = _SpyWithFetch()
+    digest = _digest_for(account["name"], "独り言です")
+    r = core.send_once(account["name"], text="独り言です",
+                       production_flag=True, confirm=digest, adapter_factory=lambda *_: spy)
+    assert r.exit_code == 0
+    assert spy.fetch_calls == []
+    assert engagements_mod.records(cfg, account["name"]) == []

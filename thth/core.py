@@ -217,7 +217,8 @@ def throw_once(account_name: str, *, production_flag: bool = False,
 def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, action: str,
                  file: str | None, post_id: str | None, now, *, status: str, error: str | None,
                  topic: str | None = None, mismatch_fields: list | None = None,
-                 engagement_write_failed: bool = False) -> None:
+                 engagement_write_failed: bool = False,
+                 engagement_author_lookup_failed: bool = False) -> None:
     record = {
         "account": account_name,
         "run_id": run_id,
@@ -245,6 +246,10 @@ def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, actio
         # 絡みの台帳（`engagements.append()`）が書けなかったか（発注 T0-1）。
         # **公開そのものは成功のまま**——loud だが exit code は変えない。
         "engagement_write_failed": engagement_write_failed,
+        # best-effort の `fetch_post()`（`author_key` を埋める・T7-2）が
+        # 例外で終わったか。**これも公開の成否とは無関係**——`author_key` が
+        # 単に無かった（None のまま）だけでは立たない。
+        "engagement_author_lookup_failed": engagement_author_lookup_failed,
     }
     runs_mod.append_run(state_dir, record, jst.month_str(now))
 
@@ -491,41 +496,79 @@ def _engagement_found_by(value) -> str | None:
     return value if value in engagements_mod.FOUND_BY_VALUES else None
 
 
-def _record_engagement(account_cfg, account_name, chosen, *, media, topic, post_id,
-                        posted_at, now, log) -> bool:
-    """絡みの台帳に 1 行足す（設計「自分の泉」§4・発注 T0-1）。
+def _fetch_author_key_best_effort(adapter, reply_to: str, *, log) -> tuple:
+    """`reply_to` の投稿を 1 回だけ `fetch_post()` して `author_key` を
+    best-effort で埋める（T7-2・設計「自分の泉」§4）。
 
-    `reply_to` が front-matter に無ければ何もしない。**書けなかったら（disk 等）
-    公開は成功のまま**——ここは loud に 1 行 log するだけで、例外を外へ出さない
-    （呼び出し側は戻り値の bool で `runs` の `engagement_write_failed` を立てる）。
+    呼ぶのは front-matter（`reply_to_author_key`）／`send` の
+    `--reply-to-author-key` に値が無いときだけ。**`PermissionMissing`・
+    `AdapterError` は `None` に化ける**——絡みの台帳の `author_key` は
+    best-effort の添え物で、これが引けないことは公開の成否と無関係
+    （止めない）。**本文（`fetch_post()` が返す `text` 等）はここで捨てる**
+    ——使うのは `author_key` だけ。
+
+    戻り値 `(author_key, lookup_failed)`。`lookup_failed` が `True` のときだけ
+    呼び出し側が `runs` に `engagement_author_lookup_failed` を立てる
+    （`author_key` が単に取れなかった＝`None` だっただけでは立てない——
+    `fetch_post()` が例外を投げたときだけ「引こうとして失敗した」）。
     """
-    reply_to = chosen.get("reply_to")
+    try:
+        root_row = adapter.fetch_post(reply_to)
+    except (adapter_base.PermissionMissing, adapter_base.AdapterError) as e:
+        log("絡みの台帳の author_key を引けませんでした"
+            f"（公開は続けます・reply_to={reply_to}）: {redact_mod.redact(str(e))}")
+        return None, True
+    return root_row.get("author_key"), False
+
+
+def _record_engagement(account_cfg, account_name, *, media, topic, form, post_id,
+                        posted_at, now, log, reply_to, reply_to_root,
+                        reply_to_author_key, found_by, adapter=None) -> tuple:
+    """絡みの台帳に 1 行足す（設計「自分の泉」§4・発注 T0-1・T7-2 で経路を広げる）。
+
+    `reply_to` が無ければ何もしない。**`chosen`（queue の front-matter）を
+    直接は読まない**——呼び出し側（`_throw_chosen()`・`_send_locked()`）が
+    それぞれの経由（front-matter／`send` の flag）から組んだ値を渡す
+    （T7-2 発注書「chosen でなく引数から組む形に広げる」・queue の門
+    （`_throw_chosen`）も `send`（同席送信）も同じ 1 か所を通る）。
+
+    `reply_to_author_key` が渡されなければ、`adapter` が渡されているときだけ
+    `_fetch_author_key_best_effort()` で埋める。**書けなかったら（disk 等）
+    公開は成功のまま**——ここは loud に 1 行 log するだけで、例外を外へ出さない。
+
+    戻り値 `(engagement_write_failed, engagement_author_lookup_failed)`。
+    どちらも公開の成否を変えない——呼び出し側が `runs` に記録するだけ。
+    """
     if not reply_to:
-        return False
+        return False, False
     # 遅延 import（`thth/threadshape.py` は `thth/collect.py` を import し、
     # `collect.py` は `thth/core.py` を import する——モジュール先頭で読み込むと
     # 循環 import になる）。
     from . import threadshape as threadshape_mod
+    author_key = _engagement_author_key(reply_to_author_key)
+    lookup_failed = False
+    if author_key is None and adapter is not None:
+        author_key, lookup_failed = _fetch_author_key_best_effort(adapter, reply_to, log=log)
     row = {
         "schema": engagements_mod.SCHEMA,
         "post_id": post_id,
         "reply_to": reply_to,
-        "root_post": _engagement_root_post(chosen.get("reply_to_root")),
-        "author_key": _engagement_author_key(chosen.get("reply_to_author_key")),
+        "root_post": _engagement_root_post(reply_to_root),
+        "author_key": author_key,
         "account": account_name,
         "medium": media,
         "topic": topic,
-        "form": chosen.get("form"),
+        "form": form,
         "hour_band": threadshape_mod.hour_band(jst.parse(posted_at)),
         "posted_at": posted_at,
-        "found_by": _engagement_found_by(chosen.get("found_by")),
+        "found_by": _engagement_found_by(found_by),
     }
     try:
         engagements_mod.append(account_cfg, account_name, row, now=now)
     except (OSError, engagements_mod.EngagementError) as e:
         log(f"絡みの台帳に書けませんでした（公開は成功したまま・post_id={post_id}）: {e}")
-        return True
-    return False
+        return True, lookup_failed
+    return False, lookup_failed
 
 
 def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, section,
@@ -663,9 +706,12 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
 
     # 絡みの台帳（設計「自分の泉」§4・発注 T0-1）。**公開の確定直後・書き戻しより
     # 前**——post_id の書き戻しが失敗しても、出た事実そのものは変わらない。
-    engagement_write_failed = _record_engagement(
-        account_cfg, account_name, chosen, media=media, topic=topic, post_id=post_id,
-        posted_at=posted_at, now=now, log=log)
+    engagement_write_failed, engagement_author_lookup_failed = _record_engagement(
+        account_cfg, account_name, media=media, topic=topic, form=chosen.get("form"),
+        post_id=post_id, posted_at=posted_at, now=now, log=log,
+        reply_to=chosen.get("reply_to"), reply_to_root=chosen.get("reply_to_root"),
+        reply_to_author_key=chosen.get("reply_to_author_key"), found_by=chosen.get("found_by"),
+        adapter=adapter)
 
     # テスト専用フック（受け入れ 10・公開成功直後の中断→次回 inflight で停止すること）。
     # 本番コードパスには影響しない（環境変数が立っているときだけ発火する）。
@@ -699,7 +745,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
                     status="error", error="text_mismatch_before_writeback",
                     mismatch_fields=mismatch_fields,
-                    engagement_write_failed=engagement_write_failed)
+                    engagement_write_failed=engagement_write_failed,
+                    engagement_author_lookup_failed=engagement_author_lookup_failed)
         # inflight は消さない（§3.5 の「曖昧な失敗」と同じ扱い。人が直すまで
         # このアカウントは次回以降も止まる）。board が同じ内訳を出せるよう
         # inflight にも書いておく（`thth.report.board_summary()` 参照）。
@@ -738,7 +785,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
                     status="error", error="text_mismatch_after_rebase",
                     mismatch_fields=mismatch_fields,
-                    engagement_write_failed=engagement_write_failed)
+                    engagement_write_failed=engagement_write_failed,
+                    engagement_author_lookup_failed=engagement_author_lookup_failed)
         # push していない（commit はローカルに残る）。inflight も消さない
         # （§3.5 と同じ扱い。次回実行も inflight チェックで止まる・外部レビュー
         # 再レビュー B の受け入れ）。board が同じ内訳を出せるよう inflight にも
@@ -754,7 +802,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         # push 失敗では inflight を消さない（§3.5・§4.3・post_id が origin に届くまで残す）
         _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
                     status="error", error=err,
-                    engagement_write_failed=engagement_write_failed)
+                    engagement_write_failed=engagement_write_failed,
+                    engagement_author_lookup_failed=engagement_author_lookup_failed)
         return ThrowResult(exit_code=1, mode=mode, action="post",
                             message="投稿には成功したが push に失敗しました",
                             file=chosen.path, post_id=post_id, error=err)
@@ -762,13 +811,16 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     inflight_mod.clear(state_dir)
     _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
                 status="ok", error=None, topic=topic,
-                engagement_write_failed=engagement_write_failed)
+                engagement_write_failed=engagement_write_failed,
+                engagement_author_lookup_failed=engagement_author_lookup_failed)
     return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました",
                         file=chosen.path, post_id=post_id)
 
 
 def send_once(account_name: str, *, text: str, topic: str | None = None,
-               reply_to: str | None = None, production_flag: bool = False,
+               reply_to: str | None = None, reply_to_root: str | None = None,
+               reply_to_author_key: str | None = None, found_by: str | None = None,
+               production_flag: bool = False,
                confirm: str | None = None, adapter_factory=None, log=None,
                now=None) -> ThrowResult:
     """`thth send`（**同席の様態**・設計 §3.7）。queue を通さずその場で 1 本出す。
@@ -787,6 +839,13 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
     を表示するだけ。`--production` で実際に送るときは、その digest を
     `--confirm <digest>` として渡さなければならない。省略・不一致はどちらも拒否
     （「見せたものと送るものが同じ」を機械で担保する）。
+
+    **`reply_to_root`・`reply_to_author_key`・`found_by`**（T7-2・設計「自分の泉」
+    §4）: queue の front-matter と同じ意味の 3 つ。`reply_to` があるときだけ
+    絡みの台帳に 1 行残るが、**同席の様態には queue の front-matter が無い**
+    ので、これらを `send` の flag として直接受け取る（`thth send --reply-to-root`
+    ・`--reply-to-author-key`・`--found-by`）。`reply_to_author_key` を渡さなければ
+    best-effort に `adapter.fetch_post(reply_to)` で埋める。
     """
     log = log or (lambda line: None)
     adapter_factory = adapter_factory or _default_adapter_factory
@@ -799,7 +858,9 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
     try:
         return _send_locked(
             account_name, account_cfg, state_dir, run_id, text=text, topic=topic,
-            reply_to=reply_to, production_flag=production_flag, confirm=confirm,
+            reply_to=reply_to, reply_to_root=reply_to_root,
+            reply_to_author_key=reply_to_author_key, found_by=found_by,
+            production_flag=production_flag, confirm=confirm,
             adapter_factory=adapter_factory, log=log, now=now,
         )
     except lock_mod.LockBusy:
@@ -809,6 +870,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
 
 
 def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, reply_to,
+                  reply_to_root=None, reply_to_author_key=None, found_by=None,
                   production_flag, confirm, adapter_factory, log, now) -> ThrowResult:
     with _account_locks(account_name, account_cfg, state_dir):
         existing_inflight = inflight_mod.read(state_dir)
@@ -948,9 +1010,22 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                         # queue の 5 項目の指紋ではなく `--confirm` の digest を残す。
                         approved_fingerprint=digest)
 
+        # 絡みの台帳（設計「自分の泉」§4・T7-2）。**不在の様態（`_throw_chosen()`）
+        # にしか配線が無かった**——`thth send --reply-to` で出した返信は台帳に
+        # 残らず、`after --reply-to`・`already_replied`・`who` の「→」が埋まら
+        # なかった（kopicha の実物の所見）。ここも `_record_engagement()` の
+        # 同じ 1 か所を通す（`form` は queue front-matter が無いので `None`）。
+        engagement_write_failed, engagement_author_lookup_failed = _record_engagement(
+            account_cfg, account_name, media=media, topic=topic_value, form=None,
+            post_id=result.post_id, posted_at=result.ts or jst.iso(), now=now, log=log,
+            reply_to=reply_to, reply_to_root=reply_to_root,
+            reply_to_author_key=reply_to_author_key, found_by=found_by, adapter=adapter)
+
         inflight_mod.clear(state_dir)
         _append_run(state_dir, account_name, run_id, mode, "post", None, result.post_id, now,
-                    status="ok", error=None)
+                    status="ok", error=None,
+                    engagement_write_failed=engagement_write_failed,
+                    engagement_author_lookup_failed=engagement_author_lookup_failed)
         log(f"投稿しました: post_id={result.post_id}")
         # **出たものを見に行ける形で言う**（運用の報告 2026-09-13: 出したあと、
         # 実物を確かめるのに `post_id` から URL を組み立て直していた）。URL を
