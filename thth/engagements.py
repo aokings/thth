@@ -153,21 +153,42 @@ def records(account_cfg: dict, account_name: str) -> list:
     return load(account_cfg, account_name)["rows"]
 
 
-def author_summary(author_keys, rows: list) -> list:
+def author_summary(author_keys, rows: list, *, reaction_for) -> list:
     """`author_key` ごとの `met`（絡みの台帳の行数）・`last`（最新の
-    `posted_at`）（設計「自分の泉」§2.1・§2.3・T1-2 の `thread_read._you_and_them`
-    から T2-2 で共通化）。`thread_read`（枝の中の `you_and_them`）と
-    `where_cli`（account ごとの `you_and_them`）の両方がここを呼ぶ——
-    **同じ計算を 2 か所に置かない**（発注 T2-2「共通の関数に括り出してよい」）。
+    `posted_at`）・`last_reaction`（設計「自分の泉」§2.1・§2.3・T1-2 の
+    `thread_read._you_and_them` から T2-2 で共通化・T3-2 で `last_reaction`
+    を追加）。`thread_read`（枝の中の `you_and_them`）と `where_cli`
+    （account ごとの `you_and_them`）の両方がここを呼ぶ——**同じ計算を
+    2 か所に置かない**（発注 T2-2「共通の関数に括り出してよい」・T3-2
+    「計算は 1 か所」）。
 
     **発言内容は持たない**（設計「自分の泉」§2.4 と同じ規律）——`rows` は
     絡みの台帳の行（`load()["rows"]`）で、本文・username を含まない。
+
+    `reaction_for`（**必須**）は `post_id -> {"views_24h", "likes_24h",
+    "replies_back_24h", "covered"}` を返す関数（`after_cli.reaction_lookup
+    (account_name)`）。**ここでは反応の中身を計算しない**——`likes`・
+    `replies` を組み立てる元の値は `after_cli`（`_measured_24h_metrics`・
+    `_replies_back_from_ledger`）の 1 か所だけが計算する（`who_is_this`
+    と同じ・T3-2）。`author_key` に対応する絡みの台帳の行のうち、`posted_at`
+    が最新の 1 行（`i_replied_to_them` に相当）の反応を渡す。行が 1 本も
+    無ければ `last_reaction: None`（設計 §2.1 の形。鍵は `likes`・`replies`
+    の 2 つだけ——`views`・`covered` は出さない）。
     """
     out = []
     for key in sorted(author_keys):
         matched = [r for r in rows if r.get("author_key") == key]
         met = len(matched)
-        stamps = sorted((r.get("posted_at") for r in matched
-                         if isinstance(r.get("posted_at"), str)), reverse=True)
-        out.append({"author_key": key, "met": met, "last": stamps[0] if stamps else None})
+        dated = sorted((r for r in matched if isinstance(r.get("posted_at"), str)
+                        and r["posted_at"]),
+                       key=lambda r: r["posted_at"], reverse=True)
+        last_reaction = None
+        if dated:
+            full = reaction_for(dated[0].get("post_id"))
+            last_reaction = {"likes": full["likes_24h"], "replies": full["replies_back_24h"]}
+        out.append({
+            "author_key": key, "met": met,
+            "last": dated[0]["posted_at"] if dated else None,
+            "last_reaction": last_reaction,
+        })
     return out

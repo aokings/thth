@@ -8,11 +8,13 @@
 材料は 2 方向・どちらも既存の台帳（**新しい台帳は作らない**・発注 T3-1）:
 
   1. **自分 → 相手**（`i_replied_to_them`）: 絡みの台帳（`thth/engagements.py`）
-     のうち `author_key` が一致する行。反応は `thth/after_cli.py` の**既存の
-     関数**（`_measured_24h_metrics`・`_replies_back_from_ledger`）を**import
-     して**使う——`thread_read.py` が `replies_mod._own_handles()` /
-     `replies_mod._classify_own()` を直に呼ぶのと同じ流儀（この repo の
-     既存の作法。同じ計算を 2 か所に書かない）。
+     のうち `author_key` が一致する行。反応は `thth/after_cli.py` の
+     `reaction_metrics()`（**既存の関数** `_measured_24h_metrics`・
+     `_replies_back_from_ledger` を組み立てる、この口の中の唯一の場所）を
+     **import して**使う——`thread_read`・`where_cli` の `you_and_them.
+     last_reaction`（T3-2）も同じ関数を呼ぶ（`engagements.author_summary()`
+     の `reaction_for` 引数）。**計算は 1 か所**（T3-2 発注書）。
+
   2. **相手 → 自分**（`they_replied_to_me`）: 返信台帳（`thth/replies.py`）の
      うち `own is False` で `author_key(medium, username)` が一致する行。
      出すのは `root`（`post_id`＝自分の投稿）・`message_id`・`at`
@@ -143,21 +145,17 @@ def _account_node(account_name: str, *, author_key: str | None, username: str | 
             continue
         post_id = row.get("post_id")
         # **`after_cli` の計算をそのまま import して使う**（写し取らない・
-        # 発注 T3-1「同じ計算を 2 か所に置かない」）。
-        metrics, covered = after_cli_mod._measured_24h_metrics(measured_by_post.get(post_id))
-        views_24h = metrics.get("views") if covered else None
-        likes_24h = metrics.get("likes") if covered else None
-        replies_metric = metrics.get("replies") if covered else None
-        replies_back_24h = (replies_metric if replies_metric is not None
-                            else after_cli_mod._replies_back_from_ledger(account_name, post_id))
-        if not covered:
+        # 発注 T3-1「同じ計算を 2 か所に置かない」）。T3-2 で `thread_read`・
+        # `where_cli` の `last_reaction` もここと同じ `after_cli.
+        # reaction_metrics()` を呼ぶよう揃えた——**計算は 1 か所**。
+        reaction = after_cli_mod.reaction_metrics(account_name, measured_by_post, post_id)
+        if not reaction["covered"]:
             uncovered += 1
         threads.append({
             "root": row.get("root_post"), "role": "i_replied_to_them",
             "at": row.get("posted_at"), "post_id": post_id,
             "reply_to": row.get("reply_to"),
-            "reaction": {"views_24h": views_24h, "likes_24h": likes_24h,
-                        "replies_back_24h": replies_back_24h, "covered": covered},
+            "reaction": reaction,
         })
     if uncovered:
         cannot_say.append(f"24h の刻みが未採取: {uncovered} 本")

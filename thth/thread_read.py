@@ -23,6 +23,7 @@ import sys
 
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
+from . import after_cli as after_cli_mod
 from . import engagements as engagements_mod
 from . import jst
 from . import redact as redact_mod
@@ -253,7 +254,11 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
             "own": own_count,
             "truncated": truncated,
         },
-        "you_and_them": engagements_mod.author_summary(author_keys, eng_rows),
+        # `last_reaction`（T3-2・設計「自分の泉」§2.1）: 計算は
+        # `after_cli.reaction_lookup()` の 1 か所だけ（`who_is_this`・
+        # `where_cli` と同じ）。
+        "you_and_them": engagements_mod.author_summary(
+            author_keys, eng_rows, reaction_for=after_cli_mod.reaction_lookup(account_name)),
         "provenance": {
             "fetched_at": jst.iso(now),
             "source": SOURCE_BY_MEDIUM.get(media, media),

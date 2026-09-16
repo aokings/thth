@@ -101,6 +101,16 @@ def test_2媒体をproject単位で並べる(two_media_project):
         "medium": "threads", "topic": "コーヒー", "kind": None, "hour_band": "朝",
         "posted_at": jst.iso(jst.now_jst()), "found_by": "manual",
     })
+    # 24h の実測（T3-2: `you_and_them.last_reaction` が `null` に化けない
+    # ことも見る）。
+    insights_dir = accounts_mod.data_dirs(threads_cfg, threads_acc["name"])["insights_posts"]
+    os.makedirs(insights_dir, exist_ok=True)
+    with open(os.path.join(insights_dir, "MYREPLY1.ndjson"), "w", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "post_id": "MYREPLY1", "account": threads_acc["name"], "topic": "コーヒー",
+            "posted_at": jst.iso(jst.now_jst()), "collected_at": jst.iso(jst.now_jst()),
+            "age_hours": 24.1, "marks": [24],
+            "metrics": {"views": 40, "likes": 3, "replies": 1}}, ensure_ascii=False) + "\n")
 
     before = {
         threads_acc["name"]: _data_snapshot(threads_cfg, threads_acc["name"]),
@@ -141,10 +151,20 @@ def test_2媒体をproject単位で並べる(two_media_project):
     # 絡みの台帳の 1 行が my_history と you_and_them に出る。
     coffee = threads_node["by_word"]["コーヒー"]
     assert coffee["my_history"]["n"] == 1
-    assert coffee["my_history"]["reacted"] == 0
+    # 24h の実測（likes=3）があるので反応ありに数わる。
+    assert coffee["my_history"]["reacted"] == 1
     bitter = threads_node["by_word"]["苦い"]
     assert bitter["my_history"]["n"] == 0
-    assert threads_node["you_and_them"].get(ALICE_KEY, {}).get("met") == 1
+    alice_you_and_them = threads_node["you_and_them"].get(ALICE_KEY, {})
+    assert alice_you_and_them.get("met") == 1
+    # T3-2: `last_reaction` は `after_cli.reaction_lookup()` と同じ計算
+    # （24h の刻みがあるので `null` に化けない）。
+    assert alice_you_and_them.get("last_reaction") == {"likes": 3, "replies": 1}
+    # bluesky 側には絡みの台帳の行が無いので、参加者がいれば `met==0`・
+    # `last_reaction` は `None`。
+    for row in bluesky_node["you_and_them"].values():
+        if row["met"] == 0:
+            assert row["last_reaction"] is None
 
     # **account をまたぐ集計を作らない**——各節の中にしか数が無い。
     assert "n" not in threads_node and "n" not in bluesky_node

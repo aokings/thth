@@ -238,6 +238,36 @@ def test_runsに本文が無いこと(bsky_account):
     assert ROOT_HANDLE not in dumped
 
 
+def test_you_and_themにlast_reactionがある(bsky_account):
+    """T3-2: `you_and_them` の各行に `last_reaction`（`likes`・`replies`）が
+    付く。計算は `after_cli.reaction_lookup()` の 1 か所（`who_is_this` と
+    同じ）——ここでは実測（24h の刻み）を採っていないので、絡みの台帳に
+    行がある相手（bob）でも `null`（**取れていない刻みは 0 と混ぜない**）。
+    絡みの台帳に行が無い相手（dave）は `last_reaction` そのものが `None`。
+    """
+    account, service = bsky_account
+    cfg = accounts_mod.load_account(account["name"])
+    engagements_mod.append(cfg, account["name"], {
+        "post_id": "at://" + DID + "/app.bsky.feed.post/myreply1",
+        "reply_to": R1_URI, "root_post": ROOT_URI,
+        "author_key": bsky_mod.author_key(BOB_DID), "account": account["name"],
+        "medium": "bluesky", "topic": None, "kind": None, "hour_band": "朝",
+        "posted_at": "2026-09-16T05:00:00+09:00", "found_by": "manual",
+    })
+
+    r = _cli(account["name"], ROOT_URI, service=service)
+    assert r.returncode == 0, r.stdout + r.stderr
+    result = json.loads(r.stdout)
+    you_and_them = {row["author_key"]: row for row in result["you_and_them"]}
+
+    bob_key = bsky_mod.author_key(BOB_DID)
+    assert you_and_them[bob_key]["last_reaction"] == {"likes": None, "replies": None}
+
+    dave_key = bsky_mod.author_key(DAVE_DID)
+    assert you_and_them[dave_key]["met"] == 0
+    assert you_and_them[dave_key]["last_reaction"] is None
+
+
 def test_Threadsで他人の根が400ならPermissionMissingのままrc1(isolated_account_factory, tmp_path):
     with _server({f"/{OTHER_POST_ID}": "permission"}) as (base_url, requests):
         token_path = str(tmp_path / "threads.token")

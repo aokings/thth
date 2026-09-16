@@ -171,8 +171,12 @@ def _account_node(account_name: str, words: list, *, search_type: str,
         by_word[word] = {"posts": posts, "material": material, "my_history": my_history}
 
     eng_rows = engagements_mod.records(account_cfg, account_name)
-    summary = engagements_mod.author_summary(author_keys, eng_rows)
-    you_and_them = {row["author_key"]: {"met": row["met"], "last": row["last"]}
+    # `last_reaction`（T3-2・設計 §2.3「要約」= met・last・last_reaction の
+    # 3 つ）。計算は `after_cli.reaction_lookup()` の 1 か所だけ。
+    summary = engagements_mod.author_summary(
+        author_keys, eng_rows, reaction_for=after_cli_mod.reaction_lookup(account_name))
+    you_and_them = {row["author_key"]: {"met": row["met"], "last": row["last"],
+                                        "last_reaction": row["last_reaction"]}
                    for row in summary}
 
     node = {"medium": media, "by_word": by_word, "you_and_them": you_and_them,
