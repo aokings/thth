@@ -106,7 +106,7 @@ Full walkthrough: [docs/usage.en.md](docs/usage.en.md).
 
 ## Commands
 
-All 26 subcommands `thth --help` lists today, one line each:
+All 34 subcommands `thth --help` lists today, one line each:
 
 - `lint` — check a queue file's front matter and length
 - `preview` — show the exact text that would go out
@@ -122,6 +122,8 @@ All 26 subcommands `thth --help` lists today, one line each:
 - `replies` — read the collected-reply ledger
 - `measured` — read the collected-metrics ledger
 - `threads` — thread shape: branches, depth, participants, time to first reply
+- `after` — called after posting: how the replies you went and engaged in were
+  received, with counts and timing (read-only)
 - `topics` — how much each topic was seen
 - `forms` — vocabulary and guidance for post shapes (no measurement yet)
 - `queue` — draft/approved/posted counts and what's next
@@ -160,6 +162,22 @@ Expect **mostly `cannot_say`** at first: medians are withheld below `--min-n`
 (default 20) comparable posts inside `--window-days` (default 30), and one
 account's first weeks rarely reach that. That is the intended answer, not an
 error — rc stays 0, and `cannot_say` names each reason with its `n`.
+
+The remaining 7 subcommands, one line each:
+
+- `mentions` — list mentions of your account (Threads, read-only,
+  `threads_manage_mentions`)
+- `profile` — look up a public profile (Threads, read-only,
+  `threads_profile_discovery`)
+- `thread` — read a post's branch on the spot; nothing is saved
+- `where` — where to go engage next: search results with your own history
+  layered on top (read-only)
+- `who` — pseudonymous history: how often you've crossed paths, when, and how
+  it went; it never holds what was said (read-only)
+- `retract` — take down a published post (two-step confirmation; the record is
+  kept, not deleted; Threads only)
+- `location` — search for a place (`thth location search <account> <word>`,
+  read-only)
 
 ## What's not here
 
