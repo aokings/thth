@@ -14,6 +14,7 @@ import uuid
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
 from . import approval as approval_mod
+from . import engagements as engagements_mod
 from . import inflight as inflight_mod
 from . import jst
 from . import lock as lock_mod
@@ -215,7 +216,8 @@ def throw_once(account_name: str, *, production_flag: bool = False,
 
 def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, action: str,
                  file: str | None, post_id: str | None, now, *, status: str, error: str | None,
-                 topic: str | None = None, mismatch_fields: list | None = None) -> None:
+                 topic: str | None = None, mismatch_fields: list | None = None,
+                 engagement_write_failed: bool = False) -> None:
     record = {
         "account": account_name,
         "run_id": run_id,
@@ -240,6 +242,9 @@ def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, actio
         "topic": topic,
         # 指紋が食い違ったときの内訳（外部レビュー第 3 巡・持ち越し項目 C）。
         "mismatch_fields": mismatch_fields,
+        # 絡みの台帳（`engagements.append()`）が書けなかったか（発注 T0-1）。
+        # **公開そのものは成功のまま**——loud だが exit code は変えない。
+        "engagement_write_failed": engagement_write_failed,
     }
     runs_mod.append_run(state_dir, record, jst.month_str(now))
 
@@ -467,6 +472,62 @@ def _mismatch_fields(path: str, media: str, expected_components: dict) -> list:
             if (current_components.get(key) or "") != (expected_components.get(key) or "")]
 
 
+def _engagement_root_post(value) -> str | None:
+    """front-matter `reply_to_root`。post_id の形でなければ `None`（設計「自分の泉」§4）。"""
+    if not value or not postid_mod.is_usable(value):
+        return None
+    return value
+
+
+def _engagement_author_key(value) -> str | None:
+    """front-matter `reply_to_author_key`。16 進 16 桁でなければ `None`。"""
+    if isinstance(value, str) and engagements_mod.AUTHOR_KEY_RE.match(value):
+        return value
+    return None
+
+
+def _engagement_found_by(value) -> str | None:
+    """front-matter `found_by`。3 値以外は `None`。"""
+    return value if value in engagements_mod.FOUND_BY_VALUES else None
+
+
+def _record_engagement(account_cfg, account_name, chosen, *, media, topic, post_id,
+                        posted_at, now, log) -> bool:
+    """絡みの台帳に 1 行足す（設計「自分の泉」§4・発注 T0-1）。
+
+    `reply_to` が front-matter に無ければ何もしない。**書けなかったら（disk 等）
+    公開は成功のまま**——ここは loud に 1 行 log するだけで、例外を外へ出さない
+    （呼び出し側は戻り値の bool で `runs` の `engagement_write_failed` を立てる）。
+    """
+    reply_to = chosen.get("reply_to")
+    if not reply_to:
+        return False
+    # 遅延 import（`thth/threadshape.py` は `thth/collect.py` を import し、
+    # `collect.py` は `thth/core.py` を import する——モジュール先頭で読み込むと
+    # 循環 import になる）。
+    from . import threadshape as threadshape_mod
+    row = {
+        "schema": engagements_mod.SCHEMA,
+        "post_id": post_id,
+        "reply_to": reply_to,
+        "root_post": _engagement_root_post(chosen.get("reply_to_root")),
+        "author_key": _engagement_author_key(chosen.get("reply_to_author_key")),
+        "account": account_name,
+        "medium": media,
+        "topic": topic,
+        "form": chosen.get("form"),
+        "hour_band": threadshape_mod.hour_band(jst.parse(posted_at)),
+        "posted_at": posted_at,
+        "found_by": _engagement_found_by(chosen.get("found_by")),
+    }
+    try:
+        engagements_mod.append(account_cfg, account_name, row, now=now)
+    except (OSError, engagements_mod.EngagementError) as e:
+        log(f"絡みの台帳に書けませんでした（公開は成功したまま・post_id={post_id}）: {e}")
+        return True
+    return False
+
+
 def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, section,
                    now, log, adapter_factory) -> ThrowResult:
     """select_one() が選んだ 1 件を投げる（dry-run ならログに出すだけ）。
@@ -600,6 +661,12 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     sent_mod.write(state_dir, post_id=post_id, text=section, body_hash=body_hash,
                     sent_at=posted_at, approved_fingerprint=expected_fingerprint)
 
+    # 絡みの台帳（設計「自分の泉」§4・発注 T0-1）。**公開の確定直後・書き戻しより
+    # 前**——post_id の書き戻しが失敗しても、出た事実そのものは変わらない。
+    engagement_write_failed = _record_engagement(
+        account_cfg, account_name, chosen, media=media, topic=topic, post_id=post_id,
+        posted_at=posted_at, now=now, log=log)
+
     # テスト専用フック（受け入れ 10・公開成功直後の中断→次回 inflight で停止すること）。
     # 本番コードパスには影響しない（環境変数が立っているときだけ発火する）。
     if os.environ.get("THTH_TEST_CRASH_AFTER_PUBLISH") == "1":
@@ -631,7 +698,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         log(msg)
         _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
                     status="error", error="text_mismatch_before_writeback",
-                    mismatch_fields=mismatch_fields)
+                    mismatch_fields=mismatch_fields,
+                    engagement_write_failed=engagement_write_failed)
         # inflight は消さない（§3.5 の「曖昧な失敗」と同じ扱い。人が直すまで
         # このアカウントは次回以降も止まる）。board が同じ内訳を出せるよう
         # inflight にも書いておく（`thth.report.board_summary()` 参照）。
@@ -669,7 +737,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         log(msg)
         _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
                     status="error", error="text_mismatch_after_rebase",
-                    mismatch_fields=mismatch_fields)
+                    mismatch_fields=mismatch_fields,
+                    engagement_write_failed=engagement_write_failed)
         # push していない（commit はローカルに残る）。inflight も消さない
         # （§3.5 と同じ扱い。次回実行も inflight チェックで止まる・外部レビュー
         # 再レビュー B の受け入れ）。board が同じ内訳を出せるよう inflight にも
@@ -684,14 +753,16 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         log(f"push に失敗しました: {err}")
         # push 失敗では inflight を消さない（§3.5・§4.3・post_id が origin に届くまで残す）
         _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
-                    status="error", error=err)
+                    status="error", error=err,
+                    engagement_write_failed=engagement_write_failed)
         return ThrowResult(exit_code=1, mode=mode, action="post",
                             message="投稿には成功したが push に失敗しました",
                             file=chosen.path, post_id=post_id, error=err)
 
     inflight_mod.clear(state_dir)
     _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
-                status="ok", error=None, topic=topic)
+                status="ok", error=None, topic=topic,
+                engagement_write_failed=engagement_write_failed)
     return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました",
                         file=chosen.path, post_id=post_id)
 

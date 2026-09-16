@@ -23,6 +23,7 @@ import pytest
 
 from tests.conftest import write_queue_file
 from tests.helpers import fake_search_adapter as fake
+from thth.adapters import base
 from thth import adapters as adapters_mod
 from thth import cli as cli_mod
 from thth import threads_read_cli
@@ -102,6 +103,7 @@ def test_a_jsonのpostsの形(capsys, account):
     first = data["posts"][0]
     assert first == {"post_id": "POST7QXA1", "permalink": "https://fake/POST7QXA1",
                      "timestamp": "2026-09-13T10:00:00+0000", "author": "alice",
+                     "author_key": base.author_key(MEDIUM, "alice"),
                      "replies": None, "has_replies": True, "replied": None}
     # **本文は `--json` に入らない**（指す先を渡すのが仕事）。
     for post in data["posts"]:
@@ -109,6 +111,19 @@ def test_a_jsonのpostsの形(capsys, account):
     assert fake.TEXT_A not in out and fake.TEXT_B not in out
     assert data["replied_lookup"]["available"] is True
     assert data["replied_lookup"]["n"] == 0
+
+
+def test_a_author_keyは16hexでauthorと対応する(capsys, account):
+    """設計「自分の泉」§4・T0-3: LLM が `reply_to_author_key` に写せるように。"""
+    rc, out, err = _search(capsys, account, "--json")
+    assert rc == 0, out + err
+    posts = json.loads(out)["posts"]
+    assert len(posts) == 3
+    for post in posts:
+        author_key = post["author_key"]
+        assert isinstance(author_key, str) and len(author_key) == 16
+        int(author_key, 16)  # 16 進として読めること
+        assert author_key == base.author_key(MEDIUM, post["author"])
 
 
 def test_a_並び順は媒体が返した順のまま(capsys, account, monkeypatch):

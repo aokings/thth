@@ -6,6 +6,8 @@ CLI と MCP（`thth_lint`・`thth_preview`）の両方から呼ばれる純粋�
 from __future__ import annotations
 
 from . import accounts as accounts_mod
+from . import engagements as engagements_mod
+from . import postid as postid_mod
 from . import queuefile
 
 
@@ -173,6 +175,24 @@ def lint_file(path: str) -> list:
         topic_err = queuefile.topic_error(topic)
         if topic_err is not None:
             errors.append(topic_err)
+
+    # 絡みの台帳（設計「自分の泉」§4・発注 T0-1）の任意の 3 鍵。**形だけ検査する**
+    # ——値が無ければ通す。承認の 5 項目の指紋には入れない（別物）。
+    reply_to_author_key = fm.get("reply_to_author_key")
+    if reply_to_author_key not in (None, "") and \
+            not engagements_mod.AUTHOR_KEY_RE.match(str(reply_to_author_key)):
+        errors.append(
+            f"reply_to_author_key: 16 進 16 桁で書いてください（{reply_to_author_key!r}）")
+
+    reply_to_root = fm.get("reply_to_root")
+    if reply_to_root not in (None, "") and not postid_mod.is_usable(reply_to_root):
+        errors.append(f"reply_to_root: post_id の形ではありません（{reply_to_root!r}）")
+
+    found_by = fm.get("found_by")
+    if found_by not in (None, "") and found_by not in engagements_mod.FOUND_BY_VALUES:
+        errors.append(
+            "found_by: where_to_appear／manual／mention のどれかで書いてください"
+            f"（{found_by!r}）")
 
     errors.extend(publish_option_errors(fm, account_cfg, account_name=account_name))
     return errors

@@ -15,6 +15,7 @@ import unicodedata
 
 from . import __version__ as _pkg_version
 from . import account_cli as account_cli_mod
+from . import after_cli as after_cli_mod
 from . import account_report as account_report_mod
 from . import accounts as accounts_mod
 from . import approval as approval_mod
@@ -2525,6 +2526,32 @@ def build_parser() -> argparse.ArgumentParser:
     p_threads.add_argument("--post", default=None, help="この post_id だけ")
     p_threads.add_argument("--json", action="store_true")
     p_threads.set_defaults(func=cmd_threads)
+
+    p_after = sub.add_parser(
+        "after",
+        help="出したあとに呼ぶ: 絡みに行った返信がどう受け取られたかを、"
+             "件数と期間つきで返す（設計「自分の泉」§2.2・§4・読むだけ）")
+    p_after.add_argument("account")
+    p_after.add_argument("--reply-to", dest="reply_to", default=None,
+                         help="この post_id への返信だけに絞る")
+    p_after.add_argument("--author-key", dest="author_key", default=None,
+                         help="この仮名（16 進 16 桁）への返信だけに絞る")
+    p_after.add_argument("--topic", default=None, help="この語だけに絞る")
+    p_after.add_argument("--hour-band", dest="hour_band", default=None,
+                         help="この時刻帯だけに絞る"
+                              f"（{'・'.join(after_cli_mod.HOUR_BAND_NAMES)}）")
+    # **絡みの台帳に `kind` の欄が無いので絞り込みには使わない**
+    # （T0 発注書の inputSchema と CLI 引数一覧の食い違い・報告参照）。
+    # MCP の inputSchema に合わせて受け取るだけは受け取る。
+    p_after.add_argument("--kind", default=None, help="（現状は絞り込みに使わない）")
+    p_after.add_argument("--window-days", dest="window_days", type=int,
+                         default=after_cli_mod.DEFAULT_WINDOW_DAYS,
+                         help=f"直近何日を数えるか（既定 {after_cli_mod.DEFAULT_WINDOW_DAYS}）")
+    p_after.add_argument("--min-n", dest="min_n", type=int,
+                         default=after_cli_mod.DEFAULT_MIN_N,
+                         help=f"中央値を返す下限（既定 {after_cli_mod.DEFAULT_MIN_N}）")
+    p_after.add_argument("--json", action="store_true")
+    p_after.set_defaults(func=after_cli_mod.cmd_after)
 
     p_topics = sub.add_parser(
         "topics", help="トピック別にどれだけ見られたかを並べる（読むだけ）")

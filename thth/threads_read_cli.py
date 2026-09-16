@@ -334,6 +334,12 @@ def post_rows(rows: list, *, replied: dict | None) -> list:
             "permalink": r.get("permalink"),
             "timestamp": r.get("timestamp"),
             "author": r.get("username"),
+            # **仮名（設計「自分の泉」§4・T0-3）。** LLM がこれを原稿の
+            # `reply_to_author_key` に写せるように——画面の表示は変えない
+            # （`--json` の一覧にだけ足す）。`search_material()` と同じ由来
+            # （行に無ければその場で計算する）。
+            "author_key": r.get("author_key") or adapter_base.author_key(
+                r.get("medium") or "threads", r.get("username")),
             # **数と真偽を別の鍵にする**（§4.4）。数が無いことを 0 と混ぜない。
             "replies": reply_count(r),
             "has_replies": has_replies if isinstance(has_replies, bool) else None,
