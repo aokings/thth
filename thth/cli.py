@@ -67,6 +67,10 @@ def cmd_lint(args) -> int:
     # どこにも出ず、承認前の `cmd_approve()` にはある同じ関門が lint には無かった。
     # `cmd_approve()` と同じ形（note も使って理由を出す・exit 1）にそろえる。
     paths, note = _expand_targets(args.file, only_draft=False)
+    if paths is None:
+        # **VM に無いパスは `_expand_targets` が案内済み**（T8-1）。ここでは
+        # rc だけ決める——traceback ではなく案内で断ったことが伝わるように。
+        return 2
     if not paths:
         print(f"検査できるものがありません（対象 0 件です）{note}", file=sys.stderr)
         return 1
@@ -100,6 +104,11 @@ def cmd_lint(args) -> int:
 def cmd_preview(args) -> int:
     """本文だけを出す規約（設計 §4.1）。`--json` のときだけ topic 等も返す
     （T2c・masaru 裁定 2026-09-09。本文の規約そのものは変えない）。"""
+    vm_msg = _require_vm_path(args.file)
+    if vm_msg:
+        # **VM に無いパスは素の traceback でなく案内で断る**（T8-1）。
+        print(vm_msg, file=sys.stderr)
+        return 2
     try:
         section = lint_mod.preview_file(args.file)
     except (ValueError, accounts_mod.AccountError) as e:
@@ -119,6 +128,32 @@ def cmd_preview(args) -> int:
     return 0
 
 
+def _require_vm_path(path: str, *, what: str = "") -> str | None:
+    """ファイルを受け取る引数に渡されたパスが VM に無いときの案内文を返す
+    （T8-1・kopicha 続報）。存在すれば None。
+
+    **`~/.local/bin/thth` は Mac から VM へ ssh する薄いラッパ**（発注書の
+    「事実」）。引数はそのまま VM 側の thth に渡るので、Mac 側の相対パスも
+    絶対パスも VM には無い——いままでは素の `FileNotFoundError` の traceback が
+    出ていた（`--article /tmp/x.json` で踏んだのと同じ根）。**ファイルを受け取る
+    全ての引数をこの 1 つの関数に集約し**、案内で断る。
+
+    出し方は呼び出し側が選ぶ（`cli.py` は stderr へ直接・`topic_cli.py` は
+    JSON の `error.message` へ）。`what` は「何のパスか」の短い説明（省略可）。
+    **`repo_dir` は台帳から引ける場合もあるが、ここは account を知らない場所
+    からも呼ばれるので、ヒントは一般形のままにする**（発注書 T8-1）。
+    """
+    if os.path.exists(path):
+        return None
+    label = f"（{what}）" if what else ""
+    return (
+        f"そのパスが VM にありません: {path}{label}\n"
+        "**thth は VM（wt）で動きます。** 手元（Mac）のパスは渡せません。\n"
+        "  - VM 側の絶対パスで渡してください\n"
+        "  - どこにあるかは: thth queue <account>（repo と queue の場所が出ます）"
+    )
+
+
 def _expand_targets(files, *, only_draft: bool) -> tuple:
     """ファイルとディレクトリの混在を受けて、対象のファイル一覧に展開する。
 
@@ -131,9 +166,28 @@ def _expand_targets(files, *, only_draft: bool) -> tuple:
     `status: draft` のものだけ——「下書きを全部承認する」が自然な意味だから。
     **ファイルを名指しで渡した場合は絞らない**（承認済みに `--by` を足し直す用途が
     ある）。何を外したかは呼び出し側が述べる。
+
+    **名指しのファイルが VM に無ければ、ここで rc=2 に落とす**（T8-1）。
+    呼び出し側は `paths is None` を見て `return 2` する。ディレクトリの存在は
+    ここでは確かめない（`os.listdir` が失敗すれば自然に落ちるし、「対象 0 件」の
+    断り方は既にある）。**存在するものだけを黙って処理して進まない**——1 本でも
+    無ければ全部断る（半分だけ処理しない、既存の規律と同じ形）。
     """
+    items = files if isinstance(files, list) else [files]
+    missing_msgs = []
+    for item in items:
+        if os.path.isdir(item):
+            continue
+        msg = _require_vm_path(item)
+        if msg:
+            missing_msgs.append(msg)
+    if missing_msgs:
+        for msg in missing_msgs:
+            print(msg, file=sys.stderr)
+        return None, ""
+
     out, skipped = [], 0
-    for item in files if isinstance(files, list) else [files]:
+    for item in items:
         if not os.path.isdir(item):
             out.append(item)
             continue
@@ -263,6 +317,9 @@ def cmd_approve(args) -> int:
     どこにも書いていなかった。手順を文書に足すのではなく、道具の側でやる。
     """
     paths, note = _expand_targets(args.file, only_draft=True)
+    if paths is None:
+        # **VM に無いパスは `_expand_targets` が案内済み**（T8-1）。
+        return 2
     if not paths:
         print(f"承認できるものがありません{note}", file=sys.stderr)
         return 1
@@ -632,6 +689,11 @@ def cmd_revoke(args) -> int:
     割り込めない。既に出てしまったもの（`post_id` あり）は取り消せないので断る
     ——その場合は Threads の画面から手で消すしかない、とその場で言う。
     """
+    vm_msg = _require_vm_path(args.file)
+    if vm_msg:
+        # **VM に無いパスは素の traceback でなく案内で断る**（T8-1）。
+        print(vm_msg, file=sys.stderr)
+        return 2
     repo_dir = writeback_mod.repo_toplevel(args.file)
     if repo_dir is None:
         print(f"git repo の中のファイルではないので取り消しを記録できません: {args.file}",
@@ -2185,6 +2247,11 @@ def cmd_send(args) -> int:
     import sys as _sys
     from . import core as core_mod
     if args.text_file:
+        vm_msg = _require_vm_path(args.text_file, what="送る本文のファイル")
+        if vm_msg:
+            # **VM に無いパスは素の traceback でなく案内で断る**（T8-1）。
+            print(vm_msg, file=sys.stderr)
+            return 2
         with open(args.text_file, encoding="utf-8") as f:
             text = f.read()
     else:
