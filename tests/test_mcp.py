@@ -10,6 +10,8 @@ import sys
 
 import importlib.util
 
+import pytest
+
 from tests.conftest import FIXTURES_DIR
 
 MCP_SERVER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mcp", "server.py")
@@ -97,10 +99,11 @@ def test_mcp_stdioでtools_listとtools_callが通る(isolated_account):
     # 2026-09-13 に `before_you_post` を足した（設計 v2 §1・§6 v2-1・読むだけ）。
     # 2026-09-16 に `after_you_posted` を足した（設計「自分の泉」§2.2・T0-2・読むだけ）。
     # 2026-09-16 に `thread_read` を足した（設計「自分の泉」§2.1・T1-3・読むだけ）。
+    # 2026-09-16 に `where_to_appear` を足した（設計「自分の泉」§2.3・T2-3・読むだけ）。
     assert tool_names == {"thth_lint", "thth_queue", "thth_preview", "thth_board",
                           "thth_topic_context", "thth_topic_evaluate",
                           "thth_topic_decision", "before_you_post", "after_you_posted",
-                          "thread_read"}
+                          "thread_read", "where_to_appear"}
     # 副作用のあるものは 1 つも出ていない。
     assert not (tool_names & {"thth_approve", "thth_throw", "thth_token",
                                "thth_auth", "thth_refresh", "thth_revoke",
@@ -153,3 +156,87 @@ def test_mcp_thread_readはcliと同じjsonが返る(isolated_account_factory, m
     # **CLI と MCP は同じ CLI を呼ぶだけ**（`fetched_at` は毎回変わるので除く）。
     for key in ("root", "messages", "counts", "you_and_them"):
         assert mcp_payload[key] == cli_payload[key]
+
+
+# ============================================== where_to_appear（T2-3）
+
+def test_where_to_appearの説明文は設計のままで固定(isolated_account):
+    """**実装が 1 語でも足したら設計書でなく実装を戻す**（設計「自分の泉」§2 頭書き）。"""
+    server = _load_server_module()
+    tool = next(t for t in server.TOOLS if t["name"] == "where_to_appear")
+    assert tool["description"] == (
+        "絡みに行く先を選ぶ前に呼ぶ。検索の一覧に、自分の履歴（この語・"
+        "この相手で何が起きたか）を重ねて返す。選ぶのは呼ぶ側")
+
+
+def test_where_to_appearはaccountもprojectも無ければ32602(isolated_account):
+    server = _load_server_module()
+    with pytest.raises(server.ToolInputError):
+        server.validate_arguments("where_to_appear", {"words": ["お茶"]})
+    # account か project のどちらかがあれば通る。
+    server.validate_arguments("where_to_appear",
+                              {"account": "a", "words": ["お茶"]})
+    server.validate_arguments("where_to_appear",
+                              {"project": "p", "words": ["お茶"]})
+
+
+def test_where_to_appearはwordsの要素が文字列でなければ断る(isolated_account):
+    server = _load_server_module()
+    with pytest.raises(server.ToolInputError):
+        server.validate_arguments(
+            "where_to_appear", {"account": "a", "words": [1]})
+    with pytest.raises(server.ToolInputError):
+        server.validate_arguments(
+            "where_to_appear", {"account": "a", "words": ["--json"]})
+
+
+def test_mcp_where_to_appearはcliと同じjsonが返る(isolated_account_factory, monkeypatch, tmp_path):
+    from tests.conftest import run_thth
+    from tests.test_threads_read_permissions import _server
+
+    with _server() as (base_url, _requests):
+        token_path = str(tmp_path / "threads.token")
+        with open(token_path, "w", encoding="utf-8") as f:
+            json.dump({"access_token": "FAKE-SECRET", "user_id": "999999",
+                      "username": "nigamilab", "scopes": None}, f)
+        account = isolated_account_factory(
+            "nigamilab-mcp-where-test", media="threads", handle="nigamilab",
+            token=token_path)
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+
+        server = _load_server_module()
+        result = server.call_tool(
+            "where_to_appear", {"account": account["name"], "words": ["お茶"]})
+
+        cli_result = run_thth(["where", account["name"], "お茶", "--json"])
+
+    assert result["isError"] is False, result
+    mcp_payload = json.loads(result["content"][0]["text"])
+    assert cli_result.returncode == 0, cli_result.stdout + cli_result.stderr
+    cli_payload = json.loads(cli_result.stdout)
+
+    assert account["name"] in mcp_payload["by_account"]
+    # **CLI と MCP は同じ CLI を呼ぶだけ**（`fetched_at` は毎回変わるので除く）。
+    for key in ("account", "project", "words", "by_account", "cannot_say"):
+        assert mcp_payload[key] == cli_payload[key]
+
+
+def test_mcp_where_to_appearはprojectとrecentとlimitも渡す(tmp_path, monkeypatch):
+    """`call_tool()` が `--project`・`--recent`・`--limit` を正しく組み立てることを、
+    CLI を差し替えて確かめる（`test_mcpに業務論理が無い` と同じ手法）。"""
+    server = _load_server_module()
+    fake_cli = tmp_path / "fake-thth"
+    fake_cli.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys, json\n"
+        "print(json.dumps({'args': sys.argv[1:]}))\n"
+    )
+    fake_cli.chmod(fake_cli.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setattr(server, "THTH_BIN", str(fake_cli))
+
+    result = server.call_tool("where_to_appear", {
+        "project": "kopicha", "words": ["お茶", "コーヒー"],
+        "recent": True, "limit": 10})
+    payload = json.loads(result["content"][0]["text"])
+    assert payload == {"args": ["where", "--project", "kopicha", "お茶", "コーヒー",
+                               "--recent", "--limit", "10", "--json"]}

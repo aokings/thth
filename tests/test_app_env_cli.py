@@ -221,4 +221,8 @@ def test_app_はMCPに出ていない():
     spec.loader.exec_module(mod)
 
     names = {t["name"] for t in mod.TOOLS}
-    assert not [n for n in names if "app" in n], names
+    # **語の区切りで見る**（部分一致ではない）——`where_to_appear`（設計「自分の
+    # 泉」§2.3・T2-3）は文字列としては "app" を含む（"appear" の一部）が、
+    # `thth app` の秘密コマンドとは無関係。`_` で割った語のどれかが厳密に
+    # "app" のときだけ引っかける。
+    assert not [n for n in names if "app" in n.split("_")], names
