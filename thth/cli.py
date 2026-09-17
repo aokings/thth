@@ -27,6 +27,7 @@ from . import who_cli as who_cli_mod
 from . import collect as collect_mod
 from . import core
 from . import engagements as engagements_mod
+from . import healthcheck as healthcheck_mod
 from . import jst
 from . import lint as lint_mod
 from . import lock as lock_mod
@@ -2221,33 +2222,77 @@ def cmd_run(args) -> int:
     （外部レビュー §5・`thth/maintain.py` の docstring）。
     token が無ければ何も投げずに exit 2（設計 §3.2・T3a 訂正 2026-09-09。env は任意
     ・`accounts.token_exists()` docstring 参照）。"""
-    # app 自身を最新にしてから走る（設計 §3.2・**lock を取る前**）。進んでいたら
-    # 同じ引数で 1 回だけ exec しなおすので、以降の行は新しいコードで動く。
-    stale = selfupdate_mod.pull_and_reexec(sys.argv, log=print)
-    if stale:
-        print(stale, file=sys.stderr)
+    account_cfg = None
+    # load_account() と同じ名前検査より先に、state のパスを組み立てない。
+    # `../outside` を通知状態の書込先に使わせないため。
+    state_dir = (accounts_mod.state_dir_for(args.account)
+                 if accounts_mod.name_is_safe(args.account) else None)
+
+    def notify(state: str, *, result=None, reason=None, exception=None) -> None:
+        """通知の失敗で、投稿の rc や元の例外を上書きしない。"""
+        if state_dir is None:
+            return
+        try:
+            diagnostic = healthcheck_mod.diagnostic(
+                args.account, state, state_dir=state_dir, result=result,
+                reason=reason, exception=exception)
+            attempt = healthcheck_mod.notify(
+                args.account, account_cfg, diagnostic, state_dir=state_dir)
+        except Exception:
+            # custom 例外のクラス名も外部入力になり得るので固定語だけを出す。
+            print("死活通知に失敗しました: notification_internal_error", file=sys.stderr)
+            return
+        if attempt.delivery == "not_configured":
+            print("死活通知: 未設定（HEALTHCHECK_URL）。通知は送っていません",
+                  file=sys.stderr)
+        elif attempt.delivery == "failed":
+            print(f"死活通知に失敗しました: {attempt.category or 'unknown'}",
+                  file=sys.stderr)
+        if not attempt.state_saved:
+            print("死活通知の状態を保存できませんでした", file=sys.stderr)
 
     try:
-        account_cfg = accounts_mod.load_account(args.account)
-    except accounts_mod.AccountError as e:
-        print(str(e), file=sys.stderr)
-        return 2
-    if not accounts_mod.token_exists(account_cfg):
-        print(f"token が無いので実行しません: {args.account}", file=sys.stderr)
-        return 2
-    result = core.throw_once(args.account, production_flag=True, log=print)
+        # app 自身を最新にしてから走る（設計 §3.2・**lock を取る前**）。進んでいたら
+        # 同じ引数で 1 回だけ exec しなおすので、以降の行は新しいコードで動く。
+        stale = selfupdate_mod.pull_and_reexec(sys.argv, log=print)
+        if stale:
+            print(stale, file=sys.stderr)
 
-    # **投稿のあとに必ず採る**（masaru 裁定 2026-09-10）。数は「読んだ時点の累計」
-    # しか返らないので、逃した経過時間は永久に復元できない。採取の失敗で timer の
-    # 終了コードを悪くしない（次の実行で埋まる）が、黙らせもしない。
-    try:
-        collect_rc = collect_mod.run_collect(
-            args.account, log=print, trigger=collect_mod.TRIGGER_RUN)
-        if collect_rc:
-            print(f"（採取は完全ではありません: exit={collect_rc}。次の実行で埋めます）")
-    except Exception as e:  # 採取の失敗で投稿の経路を壊さない
-        print(f"（採取に失敗しました: {e}。次の実行で埋めます）", file=sys.stderr)
-    return result.exit_code
+        try:
+            account_cfg = accounts_mod.load_account(args.account)
+        except accounts_mod.AccountError as e:
+            print(str(e), file=sys.stderr)
+            notify("fail", reason="account_config_error")
+            return 2
+        if not accounts_mod.token_exists(account_cfg):
+            print(f"token が無いので実行しません: {args.account}", file=sys.stderr)
+            notify("fail", reason="missing_token")
+            return 2
+        result = core.throw_once(args.account, production_flag=True, log=print)
+
+        # **投稿のあとに必ず採る**（masaru 裁定 2026-09-10）。数は「読んだ時点の累計」
+        # しか返らないので、逃した経過時間は永久に復元できない。採取の失敗で timer の
+        # 終了コードを悪くしない（次の実行で埋まる）が、黙らせもしない。
+        try:
+            collect_rc = collect_mod.run_collect(
+                args.account, log=print, trigger=collect_mod.TRIGGER_RUN)
+            if collect_rc:
+                print(f"（採取は完全ではありません: exit={collect_rc}。次の実行で埋めます）")
+        except Exception as e:  # 採取の失敗で投稿の経路を壊さない
+            print(f"（採取に失敗しました: {e}。次の実行で埋めます）", file=sys.stderr)
+        try:
+            blocked = healthcheck_mod.has_blocking_state(args.account, state_dir)
+        except Exception:
+            # 診断側の不調で healthy を送らない。元の投稿 rc はそのまま返す。
+            blocked = True
+            print("死活通知の停止状態を判定できませんでした", file=sys.stderr)
+        notify("success" if result.exit_code == 0 and not blocked else "fail",
+               result=result)
+        return result.exit_code
+    except Exception as e:
+        # これまで traceback になった例外は、通知を試したあとも同じ例外として返す。
+        notify("fail", exception=e)
+        raise
 
 
 def _accounts_for_project(project: str) -> list:
@@ -2684,6 +2729,20 @@ def cmd_board(args) -> int:
             print(f"{row['account']}: project={row['project']} last_post={last_post} "
                   f"approved_waiting={row['approved_waiting']} type_mismatch={row['type_mismatch']} "
                   f"inflight={inflight} token={token}{pending_note}{retracted_note}{inbox_note}")
+            notification_configured = row.get("notification_configured")
+            notification_delivery = row.get("notification_delivery")
+            if notification_configured is False:
+                print("  死活通知: **未設定**（最後の run は通知を送っていません）")
+            elif notification_delivery == "failed":
+                print("  死活通知: **配送失敗**"
+                      f"（{row.get('notification_category') or 'unknown'}・"
+                      f"{row.get('notification_last_attempt_at') or '時刻不明'}）")
+            elif notification_delivery == "delivered":
+                print("  死活通知: 監視サービス受領済み（利用者への配送は未確認）"
+                      f"（{row.get('notification_last_state') or '状態不明'}・"
+                      f"{row.get('notification_last_attempt_at') or '時刻不明'}）")
+            else:
+                print("  死活通知: 実行記録なし（設定有無は未確認）")
             # **遅れているときだけ 1 行**（T8-2）。`behind` が 0／None（確かめられ
             # なかった）なら何も出さない——静かに、が既定（T8-2 の queue/schedule
             # と同じ規律）。
@@ -2699,6 +2758,11 @@ def cmd_board(args) -> int:
             mismatch_fields = row.get("inflight_mismatch_fields")
             if inflight != "(なし)" and mismatch_fields:
                 print(f"  食い違った項目: {', '.join(mismatch_fields)}")
+            if inflight != "(なし)":
+                print("  停止診断: "
+                      f"開始={row.get('inflight_started') or '不明'} "
+                      f"理由={row.get('inflight_reason') or 'unknown'} "
+                      f"次={row.get('inflight_next_action') or 'inspect_board_and_timer_log'}")
             # **採集が止まっていることを黙らない**（監査 2 回目・P2-5）。
             # 同席専用（`scheduled: false`）のアカウントは投稿の timer を持たない
             # ので、**採集を呼ぶものが誰もいなくても画面には何も出なかった**。

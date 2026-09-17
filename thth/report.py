@@ -8,6 +8,7 @@ from . import accounts as accounts_mod
 from . import collect as collect_mod
 from . import core
 from . import inflight as inflight_mod
+from . import healthcheck as healthcheck_mod
 from . import lock as lock_mod
 from . import maintain as maintain_mod
 from . import selfupdate as selfupdate_mod
@@ -305,6 +306,9 @@ def board_summary(now=None) -> dict:
         type_mismatch = sum(1 for qf in files if qf.malformed)
         state_dir = accounts_mod.state_dir_for(name)
         inflight = inflight_mod.read(state_dir)
+        notification_status = healthcheck_mod.read_status(state_dir)
+        inflight_diagnostic = (healthcheck_mod.diagnostic(
+            name, "fail", state_dir=state_dir) if inflight else None)
         # **取り下げ済み**の数（`thth retract`・設計 v2 §4.3）。queue の
         # front-matter と `sent/` の両方から（同じ post_id は 1 つに数える）。
         retracted_ids = {
@@ -385,6 +389,29 @@ def board_summary(now=None) -> dict:
             "type_mismatch": type_mismatch,
             "retracted_count": len(retracted_ids),
             "inflight": inflight.get("file") if inflight else None,
+            # endpoint は check の秘密なので board は env を読まない。最後の run が
+            # 安全な状態ファイルへ残した「設定有無・配送結果」だけを表示する。
+            "inflight_started": (inflight_diagnostic.since
+                                  if inflight_diagnostic else None),
+            "inflight_reason": (inflight_diagnostic.reason
+                                 if inflight_diagnostic else None),
+            "inflight_reason_code": (inflight_diagnostic.reason_code
+                                      if inflight_diagnostic else None),
+            "inflight_next_action": (inflight_diagnostic.next_action
+                                      if inflight_diagnostic else None),
+            "inflight_next_action_code": (inflight_diagnostic.next_action_code
+                                           if inflight_diagnostic else None),
+            "notification_configured": (
+                notification_status.get("endpoint_configured")
+                if notification_status else None),
+            "notification_delivery": (
+                notification_status.get("delivery") if notification_status else None),
+            "notification_last_attempt_at": (
+                notification_status.get("last_attempt_at") if notification_status else None),
+            "notification_last_state": (
+                notification_status.get("last_state") if notification_status else None),
+            "notification_category": (
+                notification_status.get("category") if notification_status else None),
             # 指紋の 5 項目のどれが食い違って inflight が残ったか（外部レビュー
             # 第 3 巡・持ち越し項目 C）。`core._throw_chosen()` が
             # `text_mismatch_before_writeback`・`text_mismatch_after_rebase` の

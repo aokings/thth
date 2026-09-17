@@ -8,6 +8,7 @@
 | [使い方_プロジェクトのセッション向け_2026-09-09.md](使い方_プロジェクトのセッション向け_2026-09-09.md) | THTH を使う各プロジェクトのセッション | 承認・投稿の流れを知る。**まずこれだけ読めばよい** |
 | [usage.en.md](usage.en.md) | 英語で読む利用者・LLM | 使い方の英語版（`使い方_…` の要約 ＋ §9 台帳の置き場・§10 `thth ask`・§11 `thth where`／`thth thread`／`thth who`／`thth after`）。**食い違ったら日本語が正** |
 | [導入_Bluesky_2026-09-13.md](導入_Bluesky_2026-09-13.md) | Bluesky のアカウントを 1 本足す人 | App Password の発行から台帳・`thth auth`・dry-run まで（v2・**未稼働**） |
+| [運用_停止通知.md](運用_停止通知.md) | timer の停止を通知したい人 | Healthchecks URL、失敗 ping、安全な診断本文、board での確認 |
 | [導入_Mastodon_2026-09-13.md](導入_Mastodon_2026-09-13.md) | Mastodon のアカウントを 1 本足す人 | インスタンスの選び方・access token の発行・台帳・`thth token set` まで（v2・**未稼働**） |
 | [手順_公開_PyPIとregistry_2026-09-14.md](手順_公開_PyPIとregistry_2026-09-14.md) | masaru | v2.0.0 を PyPI と MCP registry に出す手順（masaru の手／開発でよい を行ごとに明示） |
 | [手順_LLM_トピック選定.md](手順_LLM_トピック選定.md) | THTH を使う LLM | 記事のトピックを選ぶ手順 |
