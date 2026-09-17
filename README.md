@@ -9,9 +9,9 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 版
 
-**2.0.1**。門を無料で開ける版（2.0.1: 同席送信の採集・セキュリティ監査 2 回の直し）（`pip install`・`thth ask`・台帳を repo の外へ）。範囲と裁定は [docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md) §3・§7、その前の版は [docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md](docs/設計_v1.0.0_他人が導入できる版_2026-09-12.md)、導入は [docs/導入_自分のMetaアプリで動かす.md](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
+公開済みの版は **2.3.3**。現在の設計は [自分の泉](docs/設計_自分の泉_2026-09-16.md)、導入は [自分の Meta アプリで動かす](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
 
-`thth/VERSION` は `2.0.1`（版は `thth/VERSION` の 1 か所・`server.json` はテストで一致を強制）。`origin/release` は v2.0.0（`216af9f`）で、**v2.0.1 はまだ配っていない**（配布は masaru の一言）。出口条件の試験は（運用日誌 thth-notes: `記録/試験_LLMに選ばせる_2026-09-13.md`）。
+版の正本は `thth/VERSION`（`server.json` はテストで一致を強制）。開発中の `main` には未配布の変更も含まれます。インストール済みの版は `thth --version`、VM の版と revision は `thth board` で確認してください。
 
 **`main` への push は保存だけ。`release` を進める操作が配布**（VM は `release` だけを追う。設計 §3.2.1）。
 
@@ -19,9 +19,9 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 各プロジェクトのセッションが読むのは [docs/使い方_プロジェクトのセッション向け_2026-09-09.md](docs/使い方_プロジェクトのセッション向け_2026-09-09.md) **だけ**。設計書は作った側の記録なので読まなくてよい。
 
-## いまの状態（2026-09-13）
+## 配布済みの状態（2026-09-17）
 
-版 **2.3.3**。全件テスト **2320 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip・rc=0）。
+版 **2.3.3** の全件テストは **2320 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip・rc=0）。開発中の変更の検証は対象 revision の CI を参照してください。
 
 **媒体**: Threads（稼働）・Bluesky・Mastodon（同席用の台帳あり・未稼働）。
 
@@ -66,4 +66,3 @@ timer（systemd・`thth systemd` で生成）で毎時投稿、返信の採集�
 registry は「この PyPI の名前を名乗ってよいのは誰か」を、**配布物の README にこの 1 行があるか**で確かめる（設計 v2-4 §3・一次資料は quickstart・**L2**）。だから消さないこと——消すと登録（`mcp-publisher publish`）が通らなくなる。形（`server.json` と版の一致）は `tests/test_server_json.py` が見張る。
 
 mcp-name: io.github.aokings/thth
-
