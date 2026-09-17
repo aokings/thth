@@ -2162,6 +2162,11 @@ def cmd_queue(args) -> int:
             print(f"{name}: draft={c['draft']} approved={c['approved']} posted={c['posted']} "
                   f"型外={info['type_mismatch']} 次={info['next_file']}（{info['next_publish_at']}）"
                   f"{topic_suffix}")
+            if info.get("queue_dir"):
+                print(f"  repo: {info['repo_dir']}")
+                print(f"  原稿の置き場（queue）: {info['queue_dir']}")
+            else:
+                print("  原稿の置き場（queue）: 未設定（同席送信は thth send）")
             for rej in info.get("next_rejections") or []:
                 print(f"  いま出ない: {rej['file']} — {rej['reason']}")
     return rc
@@ -2959,7 +2964,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_forms.add_argument("--json", action="store_true")
     p_forms.set_defaults(func=cmd_forms)
 
-    p_queue = sub.add_parser("queue", help="draft/approved/posted/型外 と次に出るもの")
+    p_queue = sub.add_parser("queue", help="原稿の置き場・draft/approved/posted/型外 と次に出るもの",
+                             description="原稿は表示される queue の場所に作ります。"
+                                         "repo の直下や別の場所の原稿は定期投稿の対象になりません。")
     p_queue.add_argument("account", nargs="?")
     p_queue.add_argument("--json", action="store_true")
     p_queue.set_defaults(func=cmd_queue)

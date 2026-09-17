@@ -17,8 +17,44 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 from tests.conftest import run_thth
 from thth import lint as lint_mod
+
+
+def test_empty_queue_still_shows_draft_destination(isolated_account_factory):
+    import json
+    account = isolated_account_factory()
+    result = run_thth(["queue", account["name"], "--json"])
+    assert result.returncode == 0, result.stderr
+    row = json.loads(result.stdout)[account["name"]]
+    assert row["queue_dir"] == os.path.abspath(account["queue_dir"])
+    assert row["repo_dir"] == os.path.abspath(account["repo_dir"])
+    assert row["counts"]["draft"] == 0
+    human = run_thth(["queue", account["name"]])
+    assert human.returncode == 0
+    assert row["queue_dir"] in human.stdout
+    assert "原稿の置き場" in human.stdout
+
+
+@pytest.mark.parametrize("repo_value", [None, "", "_none"])
+def test_send_only_queue_does_not_invent_a_draft_destination(isolated_account_factory, repo_value):
+    import json
+    from thth import accounts, report
+    account = isolated_account_factory(scheduled=False)
+    cfg_path = os.path.join(accounts.accounts_dir(), account["name"] + ".json")
+    with open(cfg_path, encoding="utf-8") as stream:
+        cfg = json.load(stream)
+    cfg["repo_dir"] = (os.path.join(os.path.dirname(account["repo_dir"]), "_none")
+                       if repo_value == "_none" else repo_value)
+    with open(cfg_path, "w", encoding="utf-8") as stream:
+        json.dump(cfg, stream)
+    row = report.queue_summary(account["name"])[account["name"]]
+    assert row["repo_dir"] is None and row["queue_dir"] is None
+    human = run_thth(["queue", account["name"]])
+    assert human.returncode == 0
+    assert "未設定（同席送信は thth send）" in human.stdout
 
 
 素の原稿 = """# Why I started keeping a "boring notes" file

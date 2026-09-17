@@ -96,8 +96,10 @@ def queue_summary(account_name: str | None, now=None) -> dict:
             out[name] = {"error": str(e)}
             continue
         # 同期を伴わない読み手の照合先（外部レビュー第 5 巡 P2）。
-        files = core.list_queue_files(
+        has_queue_repo = accounts_mod.repo_state(account_cfg) != accounts_mod.REPO_NONE
+        files = (core.list_queue_files(
             account_cfg, tree_sha=writeback_mod.upstream_sha(account_cfg.get("repo_dir")))
+            if has_queue_repo else [])
         counts = {k: 0 for k in STATUS_KEYS}
         type_mismatch = 0
         for qf in files:
@@ -113,6 +115,11 @@ def queue_summary(account_name: str | None, now=None) -> dict:
         next_file, next_at, next_topic, next_rejections = _next_via_select_one(
             files, account_name=name, account_cfg=account_cfg, now=now_val)
         out[name] = {
+            # list_queue_files と同じ場所を示す。空の queue でも新しい原稿の
+            # 置き場を発見できるよう、次のファイルの有無に依存させない。
+            "repo_dir": os.path.abspath(account_cfg["repo_dir"]) if has_queue_repo else None,
+            "queue_dir": (os.path.abspath(os.path.join(
+                account_cfg["repo_dir"], account_cfg["queue_dir"])) if has_queue_repo else None),
             "counts": counts,
             "type_mismatch": type_mismatch,
             "next_file": next_file,
