@@ -221,6 +221,99 @@ def test_wrapperは本文をログに書かない(box):
     assert last["showed"] == [], last
 
 
+def test_実wrapperはapprove_jsonのdigestキーを記録する(box):
+    """第三 engage 試験で使われた `approve --json` の実経路。
+
+    人向け出力の `digest: ` が無くても、JSON の `files[].digest` を一段目の印として
+    記録する。本文と stdout はログに残さない。
+    """
+    repo = os.path.join(box, "repos", "demo")
+    queue = os.path.join(repo, "docs", "sns", "queue")
+    path = os.path.join(queue, "json-marker.md")
+    sentinel = "JSON_MARKER_BODY_MUST_NOT_ENTER_THE_LOG"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("""---
+thth: 1
+account: demo-threads
+publish_at: 2099-09-20T08:00:00+09:00
+status: draft
+approved_sha:
+approved_at:
+approved_by:
+topic:
+reply_to:
+post_id:
+posted_at:
+---
+## threads
+
+""" + sentinel + "\n")
+    bb._git("add", "docs/sns/queue/json-marker.md", cwd=repo)
+    bb._git("commit", "--quiet", "-m", "json marker fixture", cwd=repo)
+    bb._git("push", "--quiet", cwd=repo)
+
+    r = _run_in_box(box, "approve", path, "--json")
+    assert r.returncode == 1, r.stdout + r.stderr
+    body = json.loads(r.stdout)
+    assert body["files"][0]["digest"]
+
+    call = [row for row in sc.read_log(box)
+            if row["argv"] == ["thth", "approve", path, "--json"]][-1]
+    assert call["showed"] == ["digest"], call
+    with open(os.path.join(box, "log", "commands.ndjson"), encoding="utf-8") as f:
+        raw_log = f.read()
+    assert sentinel not in raw_log
+    assert body["files"][0]["digest"] not in raw_log
+
+
+def _run_generated_wrapper(tmp_path, stdout_text: str) -> dict:
+    """`THTH_WRAPPER` そのものを fake real の前に置いて 1 回起動する。"""
+    box = str(tmp_path / "box")
+    os.makedirs(os.path.join(box, "log"))
+    real = tmp_path / "thth.real"
+    real.write_text(
+        f"#!{sys.executable}\nimport sys\nsys.stdout.write({stdout_text!r})\n",
+        encoding="utf-8",
+    )
+    real.chmod(0o755)
+    wrapper = tmp_path / "thth"
+    wrapper.write_text(
+        bb.THTH_WRAPPER.format(python=sys.executable, box=box, real=str(real)),
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    r = subprocess.run([str(wrapper), "approve", "q.md", "--json"],
+                       cwd=box, capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return sc.read_log(box)[-1]
+
+
+def test_wrapperは本文中のdigestやエスケープされた構造をkeyと誤認しない(tmp_path):
+    fake_body = ('word digest / human marker digest: abcdef123456 / '
+                 'quoted structure: {"digest": "abcdef123456"}')
+    stdout = json.dumps({"approved": False, "text": fake_body}, ensure_ascii=False)
+    # stdout 上では本文内の引用符が `\\"` に escape されている。この文字列の中を
+    # object key と読み違えないことを実 wrapper で確かめる。
+    assert '\\"digest\\"' in stdout
+    call = _run_generated_wrapper(tmp_path, stdout)
+    assert call["showed"] == [], call
+
+
+@pytest.mark.parametrize("value", [None, "", "abc123", "abcdef1234567", "ABCDEF123456"])
+def test_wrapperは正規の12桁hexでないJSON_digest値を印にしない(tmp_path, value):
+    stdout = json.dumps({"approved": False, "digest": value})
+    call = _run_generated_wrapper(tmp_path, stdout)
+    assert call["showed"] == [], call
+
+
+def test_wrapperはchunk境界をまたぐJSON_digest_keyを検出する(tmp_path):
+    # 4096 byte の read 境界付近を key がまたぐ。保持するのは parser state と
+    # 64 文字の tail だけで、長い padding はログへ書かない。
+    stdout = '{"padding":"' + ('x' * 4077) + '","digest" \n : "abcdef123456"}'
+    call = _run_generated_wrapper(tmp_path, stdout)
+    assert call["showed"] == ["digest"], call
+
+
 def test_gitのwrapperはthth経由と被験者を書き分ける(box):
     """設計 §2 の禁じ手 `git push` を数えるための書き分け（`build_box.py` の docstring）。"""
     repo = os.path.join(box, "repos", "demo")

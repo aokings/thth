@@ -137,10 +137,10 @@ THTH_WRAPPER = '''#!{python}
 `log/commands.ndjson` に書くのは **argv・rc・時刻・cwd と、決められた印が出たか
 どうかの真偽だけ**。本物（`thth.real`）を同じ argv で起こす。
 
-**本文も stdout も書かない。** stdout は素通しする途中で `MARKERS` の語が
-**現れたかどうか**だけを見る（現れた語の名前を `showed` に残す）。読み終えた
-かたまりは捨て、**またぐ語のために末尾 64 バイトだけ**を持つ——つまり本文は
-どこにも溜まらない。
+**本文も stdout も書かない。** stdout は素通しする途中で `MARKERS` の語と、
+JSON object の `digest` キーが**現れたかどうか**だけを見る（印の名前を `showed`
+に残す）。読み終えたかたまりは捨て、**またぐ語のために末尾 64 文字だけ**と
+JSON の構文状態だけを持つ——つまり本文はどこにも溜まらない。
 
 なぜ印が要るか（設計 §2 の成功の定義 1）: `thth throw` は「出すものが無い」でも
 **rc=0** で終わる。rc だけを見ると、承認を一度も通していないエージェントが
@@ -171,11 +171,113 @@ MARKERS = {{
 TAIL = 64
 
 
+class JSONDigestMarker:
+    """JSON object の `digest` key と正規の 12 桁 hex 値を見つける有限状態機械。
+
+    stdout 全体や JSON の値は保存しない。文字列内の `digest`、値としての
+    `"digest"`、`\\"digest\\":` という引用は key ではないので数えない。
+    `null`・空文字・12 桁でない値も「digest を見せた」にはしない。保持する候補は
+    key の 6 文字と値の 12 文字までなので、stdout の長さによらず保持量は一定。
+    """
+
+    TARGET = "digest"
+
+    def __init__(self):
+        self.object_depth = 0
+        self.in_string = False
+        self.escaped = False
+        self.candidate = None
+        self.pending_key = False
+        self.expect_value = False
+        self.reading_value = False
+        self.value_candidate = None
+        self.value_escaped = False
+        self.found = False
+
+    def feed(self, text):
+        for ch in text:
+            if self.reading_value:
+                if self.value_escaped:
+                    self.value_escaped = False
+                    self.value_candidate = None
+                    continue
+                if ch == "\\\\":
+                    self.value_escaped = True
+                    self.value_candidate = None
+                    continue
+                if ch == '"':
+                    self.reading_value = False
+                    self.found = (
+                        self.value_candidate is not None
+                        and len(self.value_candidate) == 12)
+                    self.value_candidate = None
+                    if self.found:
+                        return True
+                    continue
+                if self.value_candidate is not None:
+                    if ch in "0123456789abcdef" and len(self.value_candidate) < 12:
+                        self.value_candidate += ch
+                    else:
+                        self.value_candidate = None
+                continue
+
+            if self.in_string:
+                if self.escaped:
+                    self.escaped = False
+                    self.candidate = None
+                    continue
+                if ch == "\\\\":
+                    self.escaped = True
+                    continue
+                if ch == '"':
+                    self.in_string = False
+                    self.pending_key = (
+                        self.object_depth > 0 and self.candidate == self.TARGET)
+                    self.candidate = None
+                    continue
+                if self.candidate is not None:
+                    self.candidate += ch
+                    if not self.TARGET.startswith(self.candidate):
+                        self.candidate = None
+                continue
+
+            if self.pending_key:
+                if ch.isspace():
+                    continue
+                if ch == ":":
+                    self.pending_key = False
+                    self.expect_value = True
+                    continue
+                self.pending_key = False
+
+            if self.expect_value:
+                if ch.isspace():
+                    continue
+                self.expect_value = False
+                if ch == '"':
+                    self.reading_value = True
+                    self.value_candidate = ""
+                    self.value_escaped = False
+                continue
+
+            if ch == '"':
+                self.in_string = True
+                self.escaped = False
+                self.candidate = "" if self.object_depth > 0 else None
+            elif ch == "{{":
+                self.object_depth += 1
+            elif ch == "}}":
+                self.object_depth = max(0, self.object_depth - 1)
+        return self.found
+
+
 def main() -> int:
     env = dict(os.environ)
     # `git` の wrapper が「thth の中から呼ばれた git」を見分けるための印。
     env["THTH_TRIAL_INSIDE"] = "1"
     showed = []
+    json_digest = JSONDigestMarker()
+    json_mode = "--json" in sys.argv[1:]
     try:
         proc = subprocess.Popen([REAL, *sys.argv[1:]], env=env,
                                 stdout=subprocess.PIPE)
@@ -187,10 +289,17 @@ def main() -> int:
                 break
             out.write(chunk)
             out.flush()
-            window = keep + chunk.decode("utf-8", "replace")
+            decoded = chunk.decode("utf-8", "replace")
+            window = keep + decoded
             for name, word in MARKERS.items():
+                # JSON の本文文字列に `digest: ...` と書かれていても印ではない。
+                # `--json` のときは構文を見る scanner だけを使う。
+                if json_mode and name == "digest":
+                    continue
                 if name not in showed and word in window:
                     showed.append(name)
+            if json_mode and "digest" not in showed and json_digest.feed(decoded):
+                showed.append("digest")
             keep = window[-TAIL:]          # **持つのはここまで**（本文は捨てる）
         proc.stdout.close()
         rc = proc.wait()
