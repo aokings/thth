@@ -365,6 +365,19 @@ def cmd_add(args) -> int:
         print(f"雛形がありません: {e}", file=sys.stderr)
         return 2
 
+    email_file = getattr(args, "notification_email_file", None)
+    if email_file:
+        from . import incident
+        try:
+            with open(email_file, encoding="utf-8") as f:
+                recipient = f.read().strip()
+            if not incident.address(recipient):
+                raise ValueError("invalid_email")
+            data["notification_email"] = recipient
+        except (OSError, ValueError):
+            print("通知先ファイルを確認してください（単一メールアドレス）", file=sys.stderr)
+            return 2
+
     dst_dir = target_accounts_dir()
     path = os.path.join(dst_dir, f"{name}.json")
     if os.path.exists(path):
@@ -372,7 +385,8 @@ def cmd_add(args) -> int:
         return 1
     try:
         os.makedirs(dst_dir, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
             f.write("\n")
     except OSError as e:
@@ -386,8 +400,9 @@ def cmd_add(args) -> int:
         return 2
 
     if args.json:
-        print(json.dumps({"path": path, "account": data}, ensure_ascii=False))
+        print(json.dumps({"path": path, "account": {k: v for k, v in data.items() if k != "notification_email"}}, ensure_ascii=False))
         return 0
+    print("本番有効化前に thth notifications config/status/test で利用者・管理者への到達と外部死活監視を確認してください。")
     print(f"書きました: {path}")
     print(f"  production: false（**このままでは投げません**。"
           f"本番にするときだけ手で true に）")
@@ -453,6 +468,7 @@ def register(sub) -> None:
     p.add_argument("--redirect-uri", default=None, dest="redirect_uri",
                    help="`add`（threads）のとき: Meta アプリに登録した認可の戻り先。"
                         "省略すると雛形のダミーのままで、`thth auth` が rc=2 で断ります")
+    p.add_argument("--notification-email-file", help="利用者の通知先メール1件を記した private file")
     p.add_argument("--repo-dir", default=None, dest="repo_dir",
                    help="`add` のとき: 原稿 repo（既定 `$THTH_ROOT/repos/<project>`）")
     p.add_argument("--dry-run", action="store_true", dest="dry_run",

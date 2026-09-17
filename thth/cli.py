@@ -28,6 +28,7 @@ from . import collect as collect_mod
 from . import core
 from . import engagements as engagements_mod
 from . import healthcheck as healthcheck_mod
+from . import incident as incident_mod
 from . import jst
 from . import lint as lint_mod
 from . import lock as lock_mod
@@ -2241,6 +2242,13 @@ def cmd_run(args) -> int:
             diagnostic = healthcheck_mod.diagnostic(
                 args.account, state, state_dir=state_dir, result=result,
                 reason=reason, exception=exception)
+            try:
+                incident_mod.notify(args.account, account_cfg, diagnostic, state_dir=state_dir, result=result)
+                incident_summary = incident_mod.summary(account_cfg, state_dir)
+                if incident_summary.get("mail_pending") or incident_summary.get("repo_pending"):
+                    print("運用通知に未完了があります: thth notifications status で確認してください", file=sys.stderr)
+            except Exception:
+                print("運用通知を完了できませんでした: incident_notification_pending", file=sys.stderr)
             attempt = healthcheck_mod.notify(
                 args.account, account_cfg, diagnostic, state_dir=state_dir)
         except Exception:
@@ -2734,6 +2742,9 @@ def cmd_board(args) -> int:
             print(f"{row['account']}: project={row['project']} last_post={last_post} "
                   f"approved_waiting={row['approved_waiting']} type_mismatch={row['type_mismatch']} "
                   f"inflight={inflight} token={token}{pending_note}{retracted_note}{inbox_note}")
+            incident_status = row.get("incident_notifications", {})
+            print("  停止メール: " + ("設定済み" if all(incident_status.get(k) for k in ("user_configured", "admin_configured", "smtp_configured")) else "設定不足")
+                  + f" / 未完了メール={incident_status.get('mail_pending', '?')} repo={incident_status.get('repo_pending', '?')} outbox={incident_status.get('outbox', '?')}")
             notification_configured = row.get("notification_configured")
             notification_delivery = row.get("notification_delivery")
             if notification_configured is False:
@@ -2838,6 +2849,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_account.add_argument("--no-remote", action="store_true", dest="no_remote",
                            help="Threads 側を引きに行かない（網に出ない・速い）")
     p_account.set_defaults(func=cmd_account)
+    incident_mod.register(sub)
     account_cli_mod.register(sub)  # `account add` / `account migrate`（設計 v2 §3）
 
     p_revoke = sub.add_parser(

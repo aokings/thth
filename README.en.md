@@ -106,7 +106,7 @@ Full walkthrough: [docs/usage.en.md](docs/usage.en.md).
 
 ## Commands
 
-All 35 subcommands `thth --help` lists today, one line each:
+All 36 subcommands `thth --help` lists today, one line each:
 
 - `lint` — check a queue file's front matter and length
 - `preview` — show the exact text that would go out
@@ -141,6 +141,7 @@ All 35 subcommands `thth --help` lists today, one line each:
 - `auth` — exchange an authorization code or credentials for a long-lived token
 - `refresh` — refresh a long-lived token
 - `maintain` — keep every account's token alive (independent of posting)
+- `notifications` — configure and test user/admin incident emails, and inspect pending notifications (development main)
 - `send` — post one text immediately, bypassing the queue (in-person approval)
 - `doctor` — read-only capability check for a token
 - `app` — store or show the local Meta app config

@@ -9,6 +9,7 @@ from . import collect as collect_mod
 from . import core
 from . import inflight as inflight_mod
 from . import healthcheck as healthcheck_mod
+from . import incident as incident_mod
 from . import lock as lock_mod
 from . import maintain as maintain_mod
 from . import selfupdate as selfupdate_mod
@@ -398,6 +399,7 @@ def board_summary(now=None) -> dict:
             "inflight": inflight.get("file") if inflight else None,
             # endpoint は check の秘密なので board は env を読まない。最後の run が
             # 安全な状態ファイルへ残した「設定有無・配送結果」だけを表示する。
+            "incident_notifications": incident_mod.summary(account_cfg, state_dir),
             "inflight_started": (inflight_diagnostic.since
                                   if inflight_diagnostic else None),
             "inflight_reason": (inflight_diagnostic.reason

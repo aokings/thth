@@ -126,3 +126,9 @@ MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜ�
 - `thth --help` / `thth <subcommand> --help` が正本。
 - `thth doctor <account>` が「いま投稿できる状態か」を最初から最後まで言う。
 - 使い方の全文: `docs/使い方_プロジェクトのセッション向け_2026-09-09.md`。
+
+## 停止通知と運用状況（開発版 main）
+
+新規 account は利用者メール・管理者メール・TLS SMTP を `thth notifications config` で設定し、`status` → `test` を実行する。両宛先の受信箱で到達、account 専用 HEALTHCHECK_URL の missed-ping 通知を確認してから production/scheduled を有効にする。既存 account にも同じ設定を追加する。詳細は `docs/停止通知と運用記録.md`。
+
+プロジェクトの作業開始・再開時は `git fetch` 後にリモート `docs/sns/queue/` の `thth_run_state`・`thth_run_detail`・`thth_run_next` を確認する。dirty worktree へ無条件に pull しない。リモートの確認は `git show origin/main:docs/sns/queue/FILE.md` 等で行える。停止・成否不明なら inflight を消して再投稿せず、示された確認を行う。復旧状態は投稿成功の保証ではなく、公開結果は status/post_id/posted_at を見る。

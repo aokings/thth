@@ -20,6 +20,7 @@ from . import account_cli as account_cli_mod
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
 from . import appenv as appenv_mod
+from . import incident as incident_mod
 from . import httpsafe
 from . import redact as redact_mod
 from . import topics as topics_mod
@@ -278,6 +279,9 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
             for n in notices:
                 log(n)
         return 2
+
+    if not all(incident_mod.readiness(account_cfg).values()):
+        notices.append("停止メール通知が未設定です。thth notifications status/config/test を実行してください（既存の投稿動作は維持）。")
 
     # **台帳は読めた。その中身が雛形のダミーのままなら、名指しで言う**（C10）。
     # rc の意味づけは変えない——ここは「台帳が読めない」（2）でも「トークンが
