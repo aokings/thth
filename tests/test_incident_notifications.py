@@ -347,3 +347,70 @@ def test_broken_inflight_type_sends_account_notice_without_changing_it(setup, br
     assert p.read_text() == original
     assert row(s)["events"][0]["file"] is None
     assert s.path.read_text() == s.original
+
+
+def test_config_cli_refuses_git_root_before_creating_any_file(tmp_path, monkeypatch, capsys):
+    from thth import cli
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init")
+    private = tmp_path / "input.json"
+    private.write_text(json.dumps({"admin_email": "admin@example.org", "smtp": {"password": "do-not-show"}}))
+    for root in (repo, repo / "nested/not-created"):
+        monkeypatch.setenv("THTH_ROOT", str(root))
+        args = cli.build_parser().parse_args(["notifications", "config", "--input", str(private)])
+        assert args.func(args) == 2
+        assert not (root / incident.CONFIG_FILE).exists()
+        assert not (root / (incident.CONFIG_FILE + ".lock")).exists()
+    output = capsys.readouterr()
+    assert "Git repo 外" in output.err
+    assert "do-not-show" not in output.err + output.out
+    assert "admin@example.org" not in output.err + output.out
+    assert git(repo, "status", "--porcelain") == ""
+
+
+def test_config_cli_external_root_saves_mode600(tmp_path, monkeypatch, capsys):
+    from thth import cli
+    root = tmp_path / "private-root"
+    monkeypatch.setenv("THTH_ROOT", str(root))
+    private = tmp_path / "input.json"
+    private.write_text(json.dumps({"admin_email": "admin@example.org", "smtp": {"host": "smtp.example.org", "tls": "ssl", "sender": "sender@example.org"}}))
+    args = cli.build_parser().parse_args(["notifications", "config", "--input", str(private)])
+    assert args.func(args) == 0
+    path = root / incident.CONFIG_FILE
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert json.loads(path.read_text())["admin_email"] == "admin@example.org"
+    output = capsys.readouterr()
+    assert "admin@example.org" not in output.out + output.err
+
+
+def test_config_path_refuses_symlink_to_git_worktree(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").write_text("gitdir: elsewhere")  # linked worktree marker is a file
+    alias = tmp_path / "alias"
+    alias.symlink_to(repo, target_is_directory=True)
+    monkeypatch.setenv("THTH_ROOT", str(alias))
+    with pytest.raises(incident.ConfigLocationError):
+        incident.config_path()
+
+
+def test_account_add_email_requires_private_ledger_location(tmp_path, monkeypatch, capsys):
+    from thth import cli
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init")
+    recipient = tmp_path / "email.txt"
+    recipient.write_text("user@example.org")
+    monkeypatch.setenv("THTH_ROOT", str(repo))
+    args = cli.build_parser().parse_args(["account", "add", "privacy-test", "--media", "threads", "--project", "demo", "--force", "--notification-email-file", str(recipient)])
+    assert args.func(args) == 2
+    assert not (repo / "accounts/privacy-test.json").exists()
+    assert "Git repo 外" in capsys.readouterr().err
+    private_root = tmp_path / "private-root"
+    monkeypatch.setenv("THTH_ROOT", str(private_root))
+    assert args.func(args) == 0
+    path = private_root / "accounts/privacy-test.json"
+    assert json.loads(path.read_text())["notification_email"] == "user@example.org"
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert "user@example.org" not in capsys.readouterr().out

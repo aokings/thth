@@ -61,8 +61,24 @@ def address(value):
             bool(re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}", value)))
 
 
+class ConfigLocationError(ValueError):
+    """Never store or read email credentials from a Git working tree."""
+
+
+def require_private_directory(path):
+    root = Path(path).expanduser().resolve()
+    for directory in (root, *root.parents):
+        if (directory / ".git").exists():
+            raise ConfigLocationError("通知設定は Git repo 外の THTH_ROOT に保存してください。")
+    return root
+
+
+def config_path():
+    return require_private_directory(accounts.thth_root()) / CONFIG_FILE
+
+
 def settings(cfg):
-    global_cfg = _load(Path(accounts.thth_root()) / CONFIG_FILE, {})
+    global_cfg = _load(config_path(), {})
     if not isinstance(global_cfg, dict):
         raise ValueError("invalid_notification_config")
     users = global_cfg.get("users", {})
@@ -436,7 +452,7 @@ def cmd_notifications(args):
                     raise ValueError("invalid_smtp_config")
                 if smtp.get("tls", "ssl") not in {"ssl", "starttls"}:
                     raise ValueError("tls_required")
-            path = Path(accounts.thth_root()) / CONFIG_FILE
+            path = config_path()
             with lock.AccountLock(str(path) + ".lock"):
                 current = _load(path, {})
                 if not isinstance(current, dict):
@@ -478,6 +494,9 @@ def cmd_notifications(args):
         print(json.dumps(result))
         print("accepted は SMTP サーバ受領です。両宛先の受信箱で到達を確認してください。")
         return 0 if all(v == "accepted" for v in result.values()) else 1
+    except ConfigLocationError:
+        print("通知設定は Git repo 外の THTH_ROOT に保存してください。repo 内には保存しませんでした。", file=sys.stderr)
+        return 2
     except Exception:
         print("通知操作に失敗しました。設定・private state・接続を確認してください（秘密値は表示しません）。", file=sys.stderr)
         return 2

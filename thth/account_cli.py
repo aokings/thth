@@ -369,11 +369,15 @@ def cmd_add(args) -> int:
     if email_file:
         from . import incident
         try:
+            incident.require_private_directory(target_accounts_dir())
             with open(email_file, encoding="utf-8") as f:
                 recipient = f.read().strip()
             if not incident.address(recipient):
                 raise ValueError("invalid_email")
             data["notification_email"] = recipient
+        except incident.ConfigLocationError:
+            print("通知先を含む台帳は Git repo 外の THTH_ROOT に作成してください。台帳は作成しませんでした。", file=sys.stderr)
+            return 2
         except (OSError, ValueError):
             print("通知先ファイルを確認してください（単一メールアドレス）", file=sys.stderr)
             return 2
