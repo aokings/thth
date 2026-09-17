@@ -884,6 +884,21 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         mode = "production" if production else "rehearsal"
         log(f"mode: {mode}")
 
+        # send の指紋もフィールド区切りに制御文字を使う。queue と同じく、
+        # 正規化や digest 表示より前に拒否する（既存のハッシュ定義は変えない）。
+        for field, value in (("text", text), ("reply_to", reply_to), ("topic", topic)):
+            control = queuefile.find_control_char(value)
+            if control is not None:
+                index, codepoint = control
+                msg = (f"{field} に制御文字が含まれています"
+                       f"（位置 {index}・U+{codepoint:04X}）。送信しません")
+                log(msg)
+                error = f"control_char({field},U+{codepoint:04X})"
+                _append_run(state_dir, account_name, run_id, mode, "skip", None, None,
+                            now, status="error", error=error)
+                return ThrowResult(exit_code=1, mode=mode, action="skip",
+                                   message=msg, error=error)
+
         body = (text or "").strip()
         if not body:
             log("本文が空です")
