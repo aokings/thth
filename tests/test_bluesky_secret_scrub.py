@@ -198,10 +198,14 @@ def test_collectのerrorsとログに値が出ない(tmp_path, isolated_account_
                 assert APP_PASSWORD not in f.read(), os.path.join(root, name)
 
 
-def test_scrubは名前が付いていない値も消す():
+def test_scrubは名前が付いていない値も消す(monkeypatch):
     """伏字の本体（module 関数）。**値を渡せば名前が無くても消える。**"""
+    # 他のadapter試験が登録した値を引き継がず、未登録/登録済みを両方試す。
+    monkeypatch.setattr(redact_mod, "_registered_secrets", [])
     文 = f"rejected credential {APP_PASSWORD} for /xrpc/foo"
-    assert APP_PASSWORD in bsky.scrub(文)          # 値を渡さなければ素通り（従来）
+    assert APP_PASSWORD in bsky.scrub(文)          # 未登録で値も渡さなければ不明
     assert APP_PASSWORD not in bsky.scrub(文, APP_PASSWORD)
+    redact_mod.register_secret(APP_PASSWORD)
+    assert APP_PASSWORD not in bsky.scrub(文)      # 共通登録後は引数が無くても消す
     # 短すぎる値は置き換えない（"a" で全文が伏字になるのを防ぐ既存の規律）。
     assert bsky.scrub("abc の話", "abc") == "abc の話"
