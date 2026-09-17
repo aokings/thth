@@ -35,6 +35,11 @@ def _run(args, payload=None):
         input=None if payload is None else json.dumps(payload, ensure_ascii=False))
 
 
+def _wall_now_jst():
+    """サブプロセスも共有する実時間。現在性を試す記録だけに使う。"""
+    return datetime.datetime.now(tz=datetime.timezone.utc).astimezone(jst.JST)
+
+
 # --- 指摘 1: 投稿の URL と記事証拠の対応 ------------------------------------
 
 def _evaluate_with(article, *, main_url="https://example.test/coffee"):
@@ -167,7 +172,7 @@ def test_投稿例が多ければ削るが削ったと言う(isolated_account):
 def test_既存22語も根拠として返る(isolated_account, thth_root):
     from thth import topics as topics_mod
     topics_mod.record("コーヒー", verdict="alive", audience="焙煎士・喫茶店",
-                       by="nigamilab セッション")
+                       by="nigamilab セッション", now=_wall_now_jst())
     path = write_queue_file(isolated_account["queue_dir"], "l.md", body=BODY,
                              fm_overrides={"status": "draft"})
     out = json.loads(_run(["topics", "suggest", path]).stdout)
@@ -510,9 +515,10 @@ def test_自分の不適合が他所の適合に置き換わらない(isolated_a
                              fm_overrides={"status": "draft"})
 
     topics_mod.record("お茶", verdict="mismatch", by="自分", account=account,
-                       note="研究所は効能を扱わない")
+                       note="研究所は効能を扱わない", now=_wall_now_jst())
     topics_mod.record("お茶", verdict="alive", by="別のセッション",
-                       note="日本茶の場として活きている")   # account 無し
+                       note="日本茶の場として活きている",
+                       now=_wall_now_jst())   # account 無し
 
     out = json.loads(_run(["topics", "suggest", path]).stdout)
     row = next(r for r in out["evidence"]["legacy_notes"] if r["topic"] == "お茶")
@@ -530,8 +536,10 @@ def test_他accountの判断も自分の判断を消さない(isolated_account, 
     account = isolated_account["name"]
     path = write_queue_file(isolated_account["queue_dir"], "j2.md", body=BODY,
                              fm_overrides={"status": "draft"})
-    topics_mod.record("お茶", verdict="mismatch", by="自分", account=account)
-    topics_mod.record("お茶", verdict="alive", by="kopicha", account="kopicha-threads")
+    topics_mod.record("お茶", verdict="mismatch", by="自分", account=account,
+                       now=_wall_now_jst())
+    topics_mod.record("お茶", verdict="alive", by="kopicha", account="kopicha-threads",
+                       now=_wall_now_jst())
 
     out = json.loads(_run(["topics", "suggest", path]).stdout)
     row = next(r for r in out["evidence"]["legacy_notes"] if r["topic"] == "お茶")
@@ -544,7 +552,8 @@ def test_自分の判断が無ければNoneで返す(isolated_account, thth_root
     from thth import topics as topics_mod
     path = write_queue_file(isolated_account["queue_dir"], "j3.md", body=BODY,
                              fm_overrides={"status": "draft"})
-    topics_mod.record("お茶", verdict="alive", by="別のセッション")
+    topics_mod.record("お茶", verdict="alive", by="別のセッション",
+                       now=_wall_now_jst())
 
     out = json.loads(_run(["topics", "suggest", path]).stdout)
     row = next(r for r in out["evidence"]["legacy_notes"] if r["topic"] == "お茶")
@@ -558,7 +567,7 @@ def test_観測と判断が別の物として返る(isolated_account, thth_root)
     path = write_queue_file(isolated_account["queue_dir"], "j4.md", body=BODY,
                              fm_overrides={"status": "draft"})
     topics_mod.record("精製", verdict="mismatch", audience="レアアース・重加工",
-                       by="THTH セッション", kind="専門語")
+                       by="THTH セッション", kind="専門語", now=_wall_now_jst())
 
     out = json.loads(_run(["topics", "suggest", path]).stdout)
     row = next(r for r in out["evidence"]["legacy_notes"] if r["topic"] == "精製")
@@ -584,7 +593,8 @@ def test_既存22語が参照できるIDを持つ(isolated_account, thth_root):
     from thth import topics as topics_mod
     account = isolated_account["name"]
     topics_mod.record("中学受験", verdict="alive", audience="受験親のやりとり",
-                       by="関東セッション", account=account, kind="行動")
+                       by="関東セッション", account=account, kind="行動",
+                       now=_wall_now_jst())
     path = write_queue_file(isolated_account["queue_dir"], "k.md", body=BODY,
                              fm_overrides={"status": "draft"})
 
@@ -634,9 +644,8 @@ def test_参考記録だけでは推奨にならないが理由が正しい(isol
     """
     from thth import topics as topics_mod
     account = isolated_account["name"]
-    real_now = datetime.datetime.now(tz=datetime.timezone.utc).astimezone(jst.JST)
     topics_mod.record("コーヒー", verdict="alive", audience="焙煎士",
-                       by="関東", account=account, now=real_now)
+                       by="関東", account=account, now=_wall_now_jst())
     path = write_queue_file(isolated_account["queue_dir"], "lg.md", body=BODY,
                              fm_overrides={"status": "draft"})
     _run(["topics", "profile", account, "--json-stdin", "--by", "t"],
@@ -857,7 +866,8 @@ def test_legacy_notesのobservationの中にIDがある(isolated_account, thth_r
     """
     from thth import topics as topics_mod
     topics_mod.record("日本茶", verdict="alive", audience="煎茶・玉露",
-                       by="kopicha", account=isolated_account["name"])
+                       by="kopicha", account=isolated_account["name"],
+                       now=_wall_now_jst())
     path = write_queue_file(isolated_account["queue_dir"], "lid.md", body=BODY,
                              fm_overrides={"status": "draft"})
     out = json.loads(_run(["topics", "suggest", path]).stdout)
@@ -873,8 +883,9 @@ def test_既存22語はevidenceのobservationsに重ねない(isolated_account, 
     `legacy_notes[].observation.observation_id` にある。
     """
     from thth import topics as topics_mod
-    topics_mod.record("お茶", verdict="alive", by="1 回目")
-    topics_mod.record("お茶", verdict="mismatch", by="2 回目")   # 同じ語の履歴
+    topics_mod.record("お茶", verdict="alive", by="1 回目", now=_wall_now_jst())
+    topics_mod.record("お茶", verdict="mismatch", by="2 回目",
+                       now=_wall_now_jst())   # 同じ語の履歴
     path = write_queue_file(isolated_account["queue_dir"], "dup.md", body=BODY,
                              fm_overrides={"status": "draft"})
     _run(["topics", "observe", "--json-stdin", "--by", "t"],
@@ -944,7 +955,8 @@ def test_adviseも他accountの判断をそう書く(isolated_account, thth_root
     """
     from thth import topics as topics_mod
     topics_mod.record("お茶", verdict="alive", by="kopicha",
-                       account="kopicha-threads", audience="煎茶の話")
+                       account="kopicha-threads", audience="煎茶の話",
+                       now=_wall_now_jst())
     out = run_thth(["topics", isolated_account["name"], "--advise"]).stdout
     line = next(l for l in out.splitlines() if "お茶" in l)
     assert "このアカウントの判断ではありません" in line, line

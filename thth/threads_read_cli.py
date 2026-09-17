@@ -450,10 +450,12 @@ def cmd_topics_search(args) -> int:
 
     def call(adapter):
         rows = adapter.keyword_search(q, search_type=search_type, limit=limit)
-        return rows
+        return rows, getattr(adapter, "KEYWORD_SEARCH_NOTE", None)
 
-    def render(rows):
+    def render(result):
+        rows, provider_note = result
         material = search_material(rows, q=q, search_type=search_type, limit=limit)
+        material["provider_note"] = provider_note
         # **絡みに行く先**（設計 v2 §4.4）。台帳（queue）は**読むだけ**で、棚には
         # 何も書かない——`post_id` は `topics.json` にも泉にも落ちない。
         try:
@@ -476,6 +478,8 @@ def cmd_topics_search(args) -> int:
         t = material["tagged"]
         print(f"{account}  検索 {q!r}（{search_type}・{material['note']}）")
         print(f"  件数            : {material['n']}")
+        if provider_note:
+            print(f"  検索の制約      : {provider_note}")
         print(f"  投稿者の異なり数: {a['distinct']}"
               f"（username の判る {a['with_username']} 件のうち）")
         print(f"  上位 {a['top_k']} 投稿者の占有率: {_pct(a['top_share'])}"

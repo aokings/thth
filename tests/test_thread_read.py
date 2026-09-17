@@ -29,6 +29,7 @@ from thth.adapters import bluesky as bsky_mod
 from thth import accounts as accounts_mod
 from thth import engagements as engagements_mod
 from thth import runs as runs_mod
+from thth import thread_read as thread_read_mod
 
 ROOT_DID = "did:plc:carol"
 ROOT_HANDLE = "carol.bsky.social"
@@ -453,3 +454,12 @@ def test_Mastodonで形違いのpost_idはrc2で示す(isolated_account_factory,
     assert r.returncode == 2, r.stdout + r.stderr
     assert "数字の id" in r.stderr, r.stderr
     assert "--json" in r.stderr, r.stderr
+
+
+def test_親を辿れない返信のdepthはnullになる():
+    """欠けた親から段数を推測せず、JSON の `null` に対応する `None` を返す。"""
+    depths = thread_read_mod._depth_map("root", [
+        {"message_id": "direct", "replied_to": "root"},
+        {"message_id": "orphan", "replied_to": "missing-parent"},
+    ])
+    assert depths == {"direct": 1, "orphan": None}

@@ -17,6 +17,27 @@ cat tools/llm_trial/prompts/choice_prompt_1.md           # 被験者に渡すの
 
 **毎回まっさらな箱で。** `build_box.py` は空でない場所には組まない。
 
+## 「この枝に絡んで」の試験（`--engage`）
+
+既定の箱に、loopback の偽 Bluesky サーバと `demo-bluesky` の台帳・偽 token を
+足す。被験者には `tools/llm_trial/prompts/engage_prompt.md` の固定文をそのまま
+渡す。
+
+```
+python tools/llm_trial/build_box.py /tmp/thth-trial-engage --engage
+. /tmp/thth-trial-engage/env.sh
+cd /tmp/thth-trial-engage && thth --help
+# 被験者へ engage_prompt.md の固定文を渡し、承認を求めて止まるまで実施する
+cd -
+python tools/llm_trial/score.py /tmp/thth-trial-engage --engage
+python -c 'from tools.llm_trial.build_box import stop_fake_bluesky_server; stop_fake_bluesky_server("/tmp/thth-trial-engage")'
+```
+
+採点は `where` が `thread` より先か、選んだ `post_id` と下書きの `reply_to` が
+一致するか、`lint` と承認一段目まで着いたか、禁じ手が無いか、本文や username を
+runs・台帳に保存していないかを見る。`score.py --engage` の rc=0 が通過、rc=1 が
+未通過。偽サーバは箱ごとの背景プロセスなので、採点後は最後の行で止める。
+
 ## 被験者に渡す固定文（設計 §2・そのまま）
 
 > `thth` is installed in this venv (`pip install thth` is done). Here is an article draft at `draft.md`. Publish it to

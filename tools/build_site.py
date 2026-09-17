@@ -2,16 +2,17 @@
 """`thth.me` の紹介ページ（`callback/public/`）を **repo の正本から生成する**。
 
 設計 v2 §3「ドメイン」: `thth.me` ＝製品の入口（README 相当・導入・`llms.txt`・
-認可ページは残す）。その入口に置く 3 つのファイルをここで作る:
+認可ページは残す）。その入口に置く 4 つのファイルをここで作る:
 
 | 出力 | 正本 |
 |---|---|
-| `callback/public/index.html` | `README.en.md` の「何を保証し、何を拒み、何を絶対にしないか」＋ `skills/thth/SKILL.md` の同じ 3 節（日本語） |
+| `callback/public/index.html` | このスクリプトの `build_index()` に置く固定の製品紹介文 |
 | `callback/public/llms.txt` | repo の `llms.txt`（**1 バイトも変えずに写す**） |
 | `callback/public/robots.txt` | このスクリプト（認可の受け口だけを索引から外す） |
 | `callback/public/privacy/index.html` | このスクリプト（`build_privacy()`。Meta の App Review が要求するプライバシーポリシー。2026-09-15） |
 
-**手で二重管理しない。** 正本を直したらこのスクリプトを走らせ直す。
+生成物を手で直さない。紹介文を直したら `build_index()` を直して、このスクリプトを
+走らせ直す。
 `--check` は書かずに突き合わせるだけで、ずれていれば非ゼロで終わる
 （`tests/test_site.py` がこれと同じ突き合わせをする・作法 5 loud reject）。
 

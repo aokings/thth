@@ -190,6 +190,7 @@ class ThreadsAdapter(base.Adapter):
 
     # `thth auth`（OAuth の往復）に Meta の app.env が要る **唯一の媒体**。
     AUTH_NEEDS_APP_ENV = True
+    POST_ID_FORM_HINT = "Threads の post_id は数字の id です。"
 
     # **承認を通る書き込みの口に要る権限**（設計 v2 §4.3・v2.1-B）。
     # **L2** create-posts/location-tagging: 「`threads_location_tagging` — Required

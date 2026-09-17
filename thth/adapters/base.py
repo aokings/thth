@@ -292,6 +292,14 @@ class Adapter:
     # `thth token set` ではなく `thth auth`（App Password を対話で受ける）。
     TOKEN_SETUP_HINT: str = "thth token set"
 
+    # `thread_read` が post_id の形違いを断るときに添える手本。形の知識は
+    # `is_post_id()` と同じ adapter 境界に置き、呼ぶ側は媒体名で分岐しない。
+    POST_ID_FORM_HINT: str = "post_id の形が違います。"
+
+    # 語検索の結果を読むときに利用者へ伝える、媒体側の制約。たとえば
+    # Mastodon の全文検索可否はインスタンスの検索設定に依存する。
+    KEYWORD_SEARCH_NOTE: str | None = None
+
     # `thth auth` に Meta の `app.env`（app id と secret）が要るか。**Threads だけ**
     # （OAuth の往復をこちらが組み立てるので）。Bluesky は App Password を対話で
     # 受けるだけ、Mastodon はそもそも `thth auth` を使わない。`doctor` が

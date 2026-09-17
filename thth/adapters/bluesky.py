@@ -310,6 +310,8 @@ class BlueskyAdapter(base.Adapter):
     TOKEN_KEYS = ("identifier", "app_password")
     # 次の一手は `thth token set` ではない（App Password は対話で受ける）。
     TOKEN_SETUP_HINT = "thth auth"
+    POST_ID_FORM_HINT = (
+        "Bluesky の post_id は `at://did:…/app.bsky.feed.post/…` の形です。")
     # App Password に期限は無い（`maintain` は `token_state: ok`・
     # `remaining_days: None`。「判らない」ではなく「期限を持たない」）。
     TOKEN_NO_EXPIRY = True

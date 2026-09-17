@@ -245,6 +245,10 @@ class MastodonAdapter(base.Adapter):
 
     # `.token` の鍵（`thth token set <account>` が書く形・設計 v2 §4.2）。
     TOKEN_KEYS = ("access_token",)
+    POST_ID_FORM_HINT = "Mastodon の post_id は数字の id です。"
+    KEYWORD_SEARCH_NOTE = (
+        "Mastodon の投稿の全文検索はインスタンスの検索設定に依存します。"
+        "0 件でも、該当投稿が無いとは限りません。")
     # access token に期限は無い（`.token` に `expires_in` を書かず
     # `no_expiry: true` を立てる。`maintain` が「期限を持たない」と言い分ける）。
     TOKEN_NO_EXPIRY = True
