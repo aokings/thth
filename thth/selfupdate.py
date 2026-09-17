@@ -73,13 +73,17 @@ def require_signed_release() -> bool:
     return os.environ.get(REQUIRE_SIGNED_ENV) == "1"
 
 
-def verify_release_signature(app_dir: str, ref: str) -> bool:
-    """`origin/<ref>` の commit 署名を確かめられるか（`git verify-commit`）。
+def verify_release_signature(app_dir: str, oid: str) -> bool:
+    """固定した commit `oid` の署名を確かめられるか（`git verify-commit`）。
 
     **確かめられないこと**と**署名が偽物であること**を区別しない——どちらも
     「取り込まない」で同じだから（作法 5・fail-closed）。
+
+    **可変の `origin/<ref>` は受け取らない。** 署名を確かめたあと merge までの間に
+    remote-tracking ref が動くと、確かめた commit と取り込む commit が分かれる。
+    呼び手が fetch 直後の OID を 1 回だけ読み、検証と merge の両方へ渡す。
     """
-    return _git(["verify-commit", _remote_ref(ref)], cwd=app_dir).returncode == 0
+    return _git(["verify-commit", oid], cwd=app_dir).returncode == 0
 
 # **「渡していない」と「渡したが不明」を分ける**（外部レビュー・2026-09-12）。
 #
@@ -181,7 +185,7 @@ def _begin_check(app_dir: str, ref: str) -> bool:
 
 
 def _record_check(app_dir: str, ref: str, *, ok: bool,
-                   error: str | None = None) -> bool:
+                   error: str | None = None, release: str | None = None) -> bool:
     """**取りに行った結果を残す。** 書けたかどうかを返す。
 
     **失敗しても呼び出し側は止めない**（記録係が転んだせいで投稿が止まるのは
@@ -190,7 +194,9 @@ def _record_check(app_dir: str, ref: str, *, ok: bool,
     """
     payload = {"ref": ref, "ok": ok, "checked_at": jst.iso(), "error": error}
     if ok:
-        payload["release"] = _cached_release(app_dir, ref)
+        # `_pull_locked()` は fetch 直後に固定した OID を渡す。ここで可変の ref を
+        # 読み直すと、記録だけが検証・merge と別の commit を指しうる。
+        payload["release"] = release or _cached_release(app_dir, ref)
     return _write_check(app_dir, ref, payload)
 
 
@@ -504,9 +510,8 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
     # **取りに行った結果を、成否どちらでも残す**（外部レビュー F2 残件・
     # 2026-09-12）。board は別プロセスで `fetch=False` で呼ぶので、**ここで
     # 残さないと「確かめられているか」を board が知る術がない。**
-    _record_check(app_dir, ref, ok=fetch.returncode == 0,
-                   error=None if fetch.returncode == 0 else "取りに行けませんでした")
     if fetch.returncode != 0:
+        _record_check(app_dir, ref, ok=False, error="取りに行けませんでした")
         # **枝が無いのと、取りに行けなかったのを混ぜない。** 枝が無いなら
         # 「配ってもらえていない」であって、ネットワークの話ではない。
         #
@@ -535,11 +540,22 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
                  f"（古いまま走ります。**枝が無いのか、届かないのかは"
                  f"区別できていません**）"), None
 
+    # **この取得で得た commit を 1 回だけ固定する。** 以後は署名検証・merge・
+    # 記録・結果判定のすべてに同じ OID を使う。`origin/<ref>` は別の git process
+    # でも動かせるため、検証後に読み直してはいけない（監査 D11・2026-09-17）。
+    release_oid = _cached_release(app_dir, ref)
+    if release_oid is None:
+        _record_check(app_dir, ref, ok=False,
+                      error="取得した配布参照の commit を読めませんでした")
+        return (log_prefix + f"配布の枝 `origin/{ref}` の commit を読めませんでした"
+                f"（取り込まずに古いまま走ります）"), None
+    _record_check(app_dir, ref, ok=True, release=release_oid)
+
     # **署名を確かめてから取り込む**（セキュリティ監査 2026-09-14・P2-5）。
     # `THTH_REQUIRE_SIGNED_RELEASE=1` のときだけ（既定 off の理由は
     # `REQUIRE_SIGNED_ENV` の注記）。確かめられなければ**更新せず、古いまま走る**
     # ——止めない（取りに行けない日に投稿を全部止めるのが重すぎるのと同じ理由）。
-    if require_signed_release() and not verify_release_signature(app_dir, ref):
+    if require_signed_release() and not verify_release_signature(app_dir, release_oid):
         # **失敗を記録に残す**（監査 2 回目・P2-4）。前は `fetch` が成功した時点の
         # `ok=True` がそのまま残り、**署名を確かめられずに取り込まなかった回でも
         # board が「署名: 確認」と出していた**——`signature_checked` が見ていたのは
@@ -548,7 +564,7 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
         return (log_prefix + f"**配布参照の署名を確かめられません**（`origin/{ref}`・"
                  f"{REQUIRE_SIGNED_ENV}=1）。**取り込まずに古いまま走ります**"), None
 
-    merged = _git(["merge", "--ff-only", f"origin/{ref}"], cwd=app_dir)
+    merged = _git(["merge", "--ff-only", release_oid], cwd=app_dir)
     if merged.returncode != 0:
         n = behind_release(app_dir, ref=ref)
         if n == 0:
@@ -575,10 +591,10 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
     #
     # **止めはしない**（取りに行けない日に投稿を全部止めるのが重すぎるのと同じ
     # 理由）。出すのは「いま何で動いているか」の事実。
-    released = _cached_release(app_dir, ref)
+    released = release_oid
     unreleased = None
     if released is not None and after != released:
-        n = _count(app_dir, f"origin/{ref}..HEAD")
+        n = _count(app_dir, f"{release_oid}..HEAD")
         count = "" if n is None else f" {n} commit"
         unreleased = (log_prefix + f"**配っていない commit で動いています**"
                        f"（`origin/{ref}` より{count}先。配布の枝: "

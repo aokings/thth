@@ -272,9 +272,14 @@ def create_session(service: str, identifier: str, app_password: str, *,
     **実行ごとに 1 回**（設計 v2 §4.2。呼び出し上限は 30/5 分・300/日と読んだ・**L3**。
     10 分刻みの timer なら足りる）。戻り値は `accessJwt`・`refreshJwt`・`handle`・`did`。
     """
+    redact_mod.register_secret(app_password)
     body = _xrpc(service, "POST", "com.atproto.server.createSession",
                  payload={"identifier": identifier, "password": app_password},
                  timeout=timeout, secrets=(app_password,))
+    # 応答の形を検査する前に登録する。必須の `did` / `handle` が欠けた異常応答でも、
+    # すでに受け取った JWT はこの時点から秘密である。
+    redact_mod.register_secret(body.get("accessJwt"))
+    redact_mod.register_secret(body.get("refreshJwt"))
     for key in ("accessJwt", "did", "handle"):
         if not body.get(key):
             raise RuntimeError(f"createSession: 応答に {key} がありません")
@@ -323,6 +328,9 @@ class BlueskyAdapter(base.Adapter):
         self.service = (service or DEFAULT_SERVICE).rstrip("/")
         self.identifier = identifier
         self.app_password = app_password
+        # adapter の局所 `scrub()` だけに頼らず、core・ログ・runs が共通で通す
+        # `redact()` にも値を知らせる（監査 D12・2026-09-17）。
+        redact_mod.register_secret(app_password)
         self.timeout = timeout
         self.thread_depth = thread_depth
         self._session: dict | None = None
@@ -370,6 +378,8 @@ class BlueskyAdapter(base.Adapter):
             try:
                 self._session = create_session(self.service, self.identifier,
                                                 self.app_password, timeout=self.timeout)
+                redact_mod.register_secret(self._session.get("accessJwt"))
+                redact_mod.register_secret(self._session.get("refreshJwt"))
             except RuntimeError as e:
                 raise RuntimeError(self._scrub(str(e))) from None
         return self._session

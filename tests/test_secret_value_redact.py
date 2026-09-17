@@ -28,6 +28,8 @@ from tests.conftest import run_thth
 from thth import oauth as oauth_mod
 from thth import redact as redact_mod
 from thth.adapters import base as adapter_base
+from thth.adapters import bluesky as bluesky_mod
+from thth.adapters import mastodon as mastodon_mod
 from thth.adapters import threads as threads_mod
 
 FAKE_TOKEN_VALUE = "FAKE_TOKEN_VALUE_1234"
@@ -144,6 +146,59 @@ def test_b_delete_postの例外文にも値が残らない():
         with pytest.raises(adapter_base.AdapterError) as e:
             adapter.delete_post("123")
     assert FAKE_TOKEN_VALUE not in str(e.value)
+
+
+# =============================== (b2) Bluesky / Mastodon adapter の共通登録簿
+
+def test_b2_BlueskyAdapterの全secretが共通redactを通る(monkeypatch):
+    app_password = "BLUESKY_APP_PASSWORD_1234"
+    access_jwt = "BLUESKY_ACCESS_JWT_5678"
+    refresh_jwt = "BLUESKY_REFRESH_JWT_9012"
+    adapter = bluesky_mod.BlueskyAdapter(
+        service="http://127.0.0.1:1", identifier="name.example",
+        app_password=app_password,
+    )
+    monkeypatch.setattr(
+        bluesky_mod, "create_session",
+        lambda *_a, **_k: {"did": "did:plc:test", "handle": "name.example",
+                           "accessJwt": access_jwt, "refreshJwt": refresh_jwt},
+    )
+    adapter.session()
+
+    error = redact_mod.redact(
+        f"adapter error reflected {app_password} {access_jwt} {refresh_jwt}")
+    for secret in (app_password, access_jwt, refresh_jwt):
+        assert secret not in error
+    assert error.count("***") == 3
+
+
+def test_b2_Blueskyの異常session応答でも受け取ったJWTを直ちに登録する(monkeypatch):
+    access_jwt = "BLUESKY_MALFORMED_ACCESS_JWT_1234"
+    refresh_jwt = "BLUESKY_MALFORMED_REFRESH_JWT_5678"
+    monkeypatch.setattr(
+        bluesky_mod, "_xrpc",
+        lambda *_a, **_k: {"accessJwt": access_jwt, "refreshJwt": refresh_jwt},
+    )
+
+    with pytest.raises(RuntimeError, match="did がありません"):
+        bluesky_mod.create_session(
+            "http://127.0.0.1:1", "name.example", "APP_PASSWORD_FOR_MALFORMED_1234")
+
+    error = redact_mod.redact(f"adapter error reflected {access_jwt} {refresh_jwt}")
+    assert access_jwt not in error
+    assert refresh_jwt not in error
+    assert error.count("***") == 2
+
+
+def test_b2_MastodonAdapterのtokenが共通redactを通る():
+    token = "MASTODON_ACCESS_TOKEN_1234"
+    mastodon_mod.MastodonAdapter(
+        instance="http://127.0.0.1:1", access_token=token,
+    )
+
+    error = redact_mod.redact(f"adapter error reflected {token}")
+    assert token not in error
+    assert "***" in error
 
 
 # ==================================================== (c) oauth の各経路

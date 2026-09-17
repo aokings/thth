@@ -851,6 +851,62 @@ def test_P2_5_既定では従来どおり取り込む(tmp_path, monkeypatch):
     assert selfupdate.head(pair["work"]) != before, "既定の挙動が変わっている"
 
 
+def test_D11_署名検証後にrefが動いても検証したOIDだけをmergeする(tmp_path,
+                                                        monkeypatch):
+    """fetch 後の remote-tracking ref は別 process でも動く。
+
+    v2 の署名検証が成功した直後に `origin/release` を v3 へ進める。merge の引数が
+    可変 ref のままなら未検証の v3 が入る。固定した OID を使えば v2 で止まる。
+    """
+    pair = _app_pair(tmp_path)
+    _advance_origin(pair, "v2\n")
+    verified = []
+
+    def 検証後にrefを進める(app_dir, oid):
+        verified.append(oid)
+        _advance_origin(pair, "v3\n")
+        subprocess.run(
+            ["git", "-C", app_dir, "fetch", "-q", "origin",
+             "+refs/heads/release:refs/remotes/origin/release"],
+            check=True,
+        )
+        return True
+
+    monkeypatch.setenv(selfupdate.REQUIRE_SIGNED_ENV, "1")
+    monkeypatch.setattr(selfupdate, "verify_release_signature", 検証後にrefを進める)
+
+    message, moved = selfupdate._pull_locked(pair["work"])
+    merged = selfupdate.head(pair["work"])
+    current_ref = subprocess.run(
+        ["git", "-C", pair["work"], "rev-parse", "origin/release"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    assert verified and merged == verified[0], "署名を検証した OID 以外を取り込んだ"
+    assert current_ref != merged, "前提が崩れている（検証後に ref が動いていない）"
+    assert selfupdate.release_check(pair["work"])["release"] == verified[0], \
+        "取得記録が検証・merge と別の OID を指している"
+    assert moved is not None
+    assert message is None
+
+
+def test_D11_verify_commitの実git引数はrefでなく固定OID(tmp_path, monkeypatch):
+    pair = _app_pair(tmp_path)
+    oid = selfupdate.head(pair["work"])
+    calls = []
+    real_git = selfupdate._git
+
+    def 記録して実行(args, *, cwd):
+        calls.append(list(args))
+        return real_git(args, cwd=cwd)
+
+    monkeypatch.setattr(selfupdate, "_git", 記録して実行)
+    # fixture の commit は未署名なので結果は False。ここで確かめるのは、実際の
+    # `git verify-commit` が可変 ref でなく固定 OID を受け取ること。
+    assert selfupdate.verify_release_signature(pair["work"], oid) is False
+    assert calls == [["verify-commit", oid]]
+
+
 def test_P2_5_boardは署名を確かめているかを1語出す(tmp_path, monkeypatch, capsys):
     """既定は「未確認」——確かめていないことを黙らない。"""
     monkeypatch.delenv(selfupdate.REQUIRE_SIGNED_ENV, raising=False)

@@ -254,6 +254,9 @@ class MastodonAdapter(base.Adapter):
                  timeout: float = DEFAULT_TIMEOUT_SECONDS):
         self.instance = _instance_url(instance)
         self.access_token = access_token
+        # adapter の局所 `_scrub()` を抜けた例外・ログでも値を消せるよう、秘密を
+        # 得た時点で共通登録簿へ入れる（監査 D12・2026-09-17）。
+        redact_mod.register_secret(access_token)
         # `.token` の `user_id`（`thth token set` が `verify_credentials` の `id` を
         # 書く）。無ければ `recent_posts()` がその場で `whoami()` を 1 回叩く。
         self.account_id = str(account_id or "")
