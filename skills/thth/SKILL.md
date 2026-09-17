@@ -106,15 +106,18 @@ thth approve <同じ> --confirm <digest> --by "<承認した人>"     # 二段�
 ### 6. 測る——出したあとの反応
 
 ```bash
-thth after <account> [--reply-to <post_id>] [--topic …]
+thth after (<account>|--project <project>) [--reply-to <post_id>] [--topic …] [--kind …]
 ```
 
 MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜない・
 `covered: false` を付ける）。`one_thing_to_change` は 1 個か `null`。
+`posts` は所有を確認できた実測台帳の根投稿だけ（`n` と 24h views の中央値・
+分母）、`engagements` は絡みに行った返信。`kind` は現在の topic shelf の分類で、
+投稿構成の `form` や投稿時点の分類ではない。
 **残すもの: なし**（この口は読むだけ。絡みの台帳は**公開の瞬間**に 1 行書かれる——
 自分の行為と反応だけで、相手の本文・名前・自分の判断は入らない）。
-**媒体をまたぐ数は無い**——project 単位で並べるだけで、足さない・割らない・
-順位も付けない。
+**媒体・account をまたぐ数は無い**——`--project` は `by_account` に並べるだけで、
+足さない・割らない・順位も付けない。
 
 ---
 

@@ -399,9 +399,13 @@ them sends anything anywhere (design "自分の泉"):
   and how they reacted — never what anyone wrote. `--profile` fetches a live
   public profile (Threads only) without storing it. A single, unreadable
   `<account>` exits 1, the same as `where`.
-- **`thth after <account> [--reply-to ID] [--author-key KEY] [--topic WORD]
+- **`thth after (<account>|--project P) [--reply-to ID] [--author-key KEY] [--topic WORD]
   [--hour-band BAND] [--window-days N] [--min-n N] [--json]`** — after you've
-  replied to someone, how it landed: counts and a window, never bodies.
+  posted or replied, how it landed: owned measured root posts and replies are
+  separate sections, with 24-hour views, counts, and a window, never bodies.
+  A project result contains per-account sections only; it has no cross-account
+  totals or ranking. `--kind` uses the current topic-shelf classification, not
+  the post structure (`form`) or a historical classification.
 
 All four answer from **your own local ledgers only**; none of them talks to a
 spring or a shared pool. Each records one minimal line per call in

@@ -2813,9 +2813,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_after = sub.add_parser(
         "after",
-        help="出したあとに呼ぶ: 絡みに行った返信がどう受け取られたかを、"
+        help="出したあとに呼ぶ: 自分の投稿と絡みに行った返信がどう受け取られたかを、"
              "件数と期間つきで返す（設計「自分の泉」§2.2・§4・読むだけ）")
-    p_after.add_argument("account")
+    p_after.add_argument("account", nargs="?",
+                         help="account 名（--project の代わり）")
+    p_after.add_argument("--project", default=None, metavar="P",
+                         help="account の代わりに、この project の account 全部を対象にする")
     p_after.add_argument("--reply-to", dest="reply_to", default=None,
                          help="この post_id への返信だけに絞る")
     p_after.add_argument("--author-key", dest="author_key", default=None,
@@ -2824,10 +2827,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_after.add_argument("--hour-band", dest="hour_band", default=None,
                          help="この時刻帯だけに絞る"
                               f"（{'・'.join(after_cli_mod.HOUR_BAND_NAMES)}）")
-    # **絡みの台帳に `kind` の欄が無いので絞り込みには使わない**
-    # （T0 発注書の inputSchema と CLI 引数一覧の食い違い・報告参照）。
-    # MCP の inputSchema に合わせて受け取るだけは受け取る。
-    p_after.add_argument("--kind", default=None, help="（現状は絞り込みに使わない）")
+    # `kind` は topic shelf の分類。絡みの台帳の投稿構成 `form` とは別物。
+    p_after.add_argument("--kind", default=None,
+                         help="現在の topic shelf の型（行動・年度付き 等）で絞る")
     p_after.add_argument("--window-days", dest="window_days", type=int,
                          default=after_cli_mod.DEFAULT_WINDOW_DAYS,
                          help=f"直近何日を数えるか（既定 {after_cli_mod.DEFAULT_WINDOW_DAYS}）")

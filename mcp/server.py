@@ -151,7 +151,10 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "account": {"type": "string", "description": "account 名"},
+                "account": {"type": "string",
+                            "description": "account 名（project の代わり）"},
+                "project": {"type": "string",
+                            "description": "この project の account 全部（account の代わり）"},
                 "topic": {"type": "string", "description": "語（トピック）"},
                 "kind": {"type": "string", "description": "型（行動・年度付き 等）"},
                 "hour_band": {"type": "string",
@@ -164,7 +167,7 @@ TOOLS = [
                 "min_n": {"type": "integer",
                            "description": "中央値を返す下限（既定 5）"},
             },
-            "required": ["account"],
+            # account / project の排他的 OR は validate_arguments() で見る。
         },
     },
     {
@@ -409,12 +412,17 @@ def validate_arguments(name: str, arguments) -> dict:
                         f"CLI の旗と区別できないので受け取りません")
         if key == "file":
             check_file_argument(name, value)
-    if name in ("where_to_appear", "who_is_this") and not arguments.get("account") \
+    if name in ("after_you_posted", "where_to_appear", "who_is_this") \
+            and not arguments.get("account") \
             and not arguments.get("project"):
         # **`account` か `project` のどちらか必須**（`required` は AND の意味しか
         # 持てないので、ここで OR を見る・T2-3 発注書・T3-3 も同じ形）。
         raise ToolInputError(
             f"{name}: account か project のどちらかが要ります")
+    if name == "after_you_posted" and arguments.get("account") \
+            and arguments.get("project"):
+        raise ToolInputError(
+            f"{name}: account と project は同時に指定できません")
     if name == "who_is_this" and not arguments.get("author_key") \
             and not arguments.get("username"):
         # **`author_key` か `username` のどちらか必須**（同じ理由で OR を
@@ -497,7 +505,11 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         text = proc.stdout
     elif name == "after_you_posted":
         # **`before_you_post` と同じ型**（発注 T0-2）: CLI を `--json` で呼ぶだけ。
-        args = ["after", arguments["account"]]
+        args = ["after"]
+        if arguments.get("project"):
+            args += ["--project", arguments["project"]]
+        else:
+            args.append(arguments["account"])
         if arguments.get("topic"):
             args += ["--topic", arguments["topic"]]
         if arguments.get("kind"):

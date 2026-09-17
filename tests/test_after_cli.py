@@ -15,11 +15,14 @@ import importlib.util
 import json
 import os
 
+import pytest
+
 from thth import accounts as accounts_mod
 from thth import after_cli as after_cli_mod
 from thth import cli as cli_mod
 from thth import engagements as engagements_mod
 from thth import jst
+from thth import topics as topics_mod
 
 MCP_SERVER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "mcp", "server.py")
@@ -85,6 +88,33 @@ def _seed(account, *, min_n_ready=False):
     return cfg
 
 
+def _seed_measured(account, post_id: str, *, posted_at="2026-09-10T08:00:00+09:00",
+                   topic="コーヒー", reply_to_marker=None, include_reply_to=True,
+                   source="queue", marks=(24,), metrics=None, account_name=None):
+    """所有の裏付けがある実測 1 行。reply_to の鍵の有無も作り分ける。"""
+    row = {
+        "post_id": post_id, "account": account_name or account["name"],
+        "topic": topic, "source": source, "posted_at": posted_at,
+        "collected_at": "2026-09-11T08:05:00+09:00", "age_hours": 24.08,
+        "marks": list(marks), "metrics": {"views": 100} if metrics is None else metrics,
+    }
+    if include_reply_to:
+        row["reply_to"] = reply_to_marker
+    _write_ndjson(_insight_path(account, post_id), [row])
+
+
+def _seed_engagement(account, post_id: str, *, topic="コーヒー",
+                     posted_at="2026-09-10T08:00:00+09:00"):
+    cfg = accounts_mod.load_account(account["name"])
+    engagements_mod.append(cfg, account["name"], {
+        "schema": engagements_mod.SCHEMA, "post_id": post_id,
+        "reply_to": f"parent-{post_id}", "root_post": f"root-{post_id}",
+        "author_key": None, "account": account["name"], "medium": "threads",
+        "topic": topic, "form": "問い→理由", "hour_band": "朝",
+        "posted_at": posted_at, "found_by": "manual",
+    })
+
+
 # ===================================================== n / covered / cannot_say
 
 
@@ -127,6 +157,168 @@ def test_reacted_の数え方(isolated_account_factory):
     result = after_cli_mod.answer(account["name"])
     # P1: likes=3 → 反応あり。P2: likes=0・replies=0 → 反応なし。P3: null → 反応なし。
     assert result["engagements"]["reacted"] == 1, result["engagements"]
+
+
+# ===================================================== 自分の根投稿 / 24h views
+
+
+def test_postsは根だけを数え返信と帰属不明を混ぜない(isolated_account_factory):
+    account = isolated_account_factory()
+    _seed_measured(account, "ROOT", metrics={"views": 120})
+    _seed_measured(account, "DIRECT-REPLY", reply_to_marker="OTHER")
+    _seed_measured(account, "OLD-UNKNOWN", include_reply_to=False)
+    _seed_measured(account, "SENT-UNKNOWN", source="sent")
+    _seed_measured(account, "LEDGER-REPLY")
+    _seed_engagement(account, "LEDGER-REPLY")
+
+    result = after_cli_mod.answer(account["name"], min_n=1,
+                                  now=jst.parse("2026-09-17T12:00:00+09:00"))
+    posts = result["posts"]
+    assert posts["n"] == 1
+    assert posts["views_24h"] == {"median": 120, "n": 1}
+    assert [p["post_id"] for p in posts["by_post"]] == ["ROOT"]
+    assert any("根投稿か返信か判らず" in line for line in result["cannot_say"])
+
+
+def test_postsの欠測はnullでmin_nとcannot_sayを伴う(isolated_account_factory):
+    account = isolated_account_factory()
+    _seed_measured(account, "OK", metrics={"views": 80})
+    _seed_measured(account, "NO-MARK", marks=(6,), metrics={"views": 20})
+    _seed_measured(account, "NO-VIEWS", metrics={"likes": 2})
+
+    result = after_cli_mod.answer(account["name"], min_n=2,
+                                  now=jst.parse("2026-09-17T12:00:00+09:00"))
+    posts = result["posts"]
+    assert posts["n"] == 3
+    assert posts["views_24h"] == {"median": None, "n": 1}
+    by_post = {p["post_id"]: p for p in posts["by_post"]}
+    assert by_post["NO-MARK"]["views_24h"] is None
+    assert by_post["NO-MARK"]["covered"] is False
+    assert by_post["NO-VIEWS"]["views_24h"] is None
+    assert by_post["NO-VIEWS"]["covered"] is True
+    assert any("24h の刻みが未採取: 1 本" in line for line in result["cannot_say"])
+    assert any("24h views が欠測: 1 本" in line for line in result["cannot_say"])
+    assert any("views 中央値: n=1（2 未満）" in line for line in result["cannot_say"])
+
+
+def test_postsの期間は下端を含み未来を含まない(isolated_account_factory):
+    account = isolated_account_factory()
+    _seed_measured(account, "AT-CUTOFF", posted_at="2026-09-07T12:00:00+09:00")
+    _seed_measured(account, "TOO-OLD", posted_at="2026-09-07T11:59:59+09:00")
+    _seed_measured(account, "FUTURE", posted_at="2026-09-17T12:00:01+09:00")
+    result = after_cli_mod.answer(account["name"], window_days=10, min_n=1,
+                                  now=jst.parse("2026-09-17T12:00:00+09:00"))
+    assert [p["post_id"] for p in result["posts"]["by_post"]] == ["AT-CUTOFF"]
+
+
+def test_reply_to条件では根投稿節を対象外にする(isolated_account_factory):
+    account = isolated_account_factory()
+    _seed_measured(account, "ROOT")
+    _seed_engagement(account, "REPLY")
+    result = after_cli_mod.answer(account["name"], reply_to="parent-REPLY", min_n=1,
+                                  now=jst.parse("2026-09-17T12:00:00+09:00"))
+    assert result["posts"]["n"] == 0
+    assert result["engagements"]["n"] == 1
+    assert any("返信だけの条件" in line for line in result["cannot_say"])
+
+
+# ===================================================== kind / project
+
+
+def test_kindはtopic分類でformには読み替えない(isolated_account_factory, monkeypatch):
+    account = isolated_account_factory()
+    _seed_measured(account, "ACTION", topic="中学受験")
+    _seed_measured(account, "NOUN", topic="コーヒー")
+    _seed_engagement(account, "ENG-ACTION", topic="中学受験")
+    _seed_engagement(account, "ENG-NOUN", topic="コーヒー")
+    calls = []
+
+    def fake_kind(topic, account_name):
+        calls.append((topic, account_name))
+        return {"中学受験": "行動", "コーヒー": "一般名詞"}.get(topic)
+
+    monkeypatch.setattr(topics_mod, "kind_of", fake_kind)
+    result = after_cli_mod.answer(account["name"], kind="行動", min_n=1,
+                                  now=jst.parse("2026-09-17T12:00:00+09:00"))
+    assert [p["post_id"] for p in result["posts"]["by_post"]] == ["ACTION"]
+    assert [b["post_id"] for b in result["engagements"]["by_branch"]] == ["ENG-ACTION"]
+    assert calls and all(call[1] == account["name"] for call in calls)
+    assert any("現在の topic shelf" in line for line in result["cannot_say"])
+
+
+def test_未知kindはloud_reject(isolated_account_factory):
+    account = isolated_account_factory()
+    try:
+        after_cli_mod.answer(account["name"], kind="投稿構成")
+    except after_cli_mod.AfterError as exc:
+        assert "知らない型" in str(exc)
+    else:
+        raise AssertionError("未知 kind を受け取ってしまった")
+
+
+def test_projectは同じ媒体の複数accountも節を分ける(isolated_account_factory):
+    a1 = isolated_account_factory("a1-threads", project="same", handle="a1")
+    a2 = isolated_account_factory("a2-threads", project="same", handle="a2")
+    _seed_measured(a1, "A1", account_name=a1["name"], metrics={"views": 10})
+    _seed_measured(a2, "A2", account_name=a2["name"], metrics={"views": 90})
+    _seed_engagement(a1, "E1")
+    _seed_engagement(a2, "E2")
+
+    result = after_cli_mod.answer(project="same", min_n=1,
+                                  now=jst.parse("2026-09-17T12:00:00+09:00"))
+    assert set(result["by_account"]) == {a1["name"], a2["name"]}
+    assert result["by_account"][a1["name"]]["posts"]["views_24h"]["median"] == 10
+    assert result["by_account"][a2["name"]]["posts"]["views_24h"]["median"] == 90
+    assert "posts" not in result and "engagements" not in result
+    assert result["by_account"][a1["name"]]["engagements"]["n"] == 1
+    assert result["by_account"][a2["name"]]["engagements"]["n"] == 1
+
+
+def test_account_projectの排他と不正project(isolated_account_factory, capsys):
+    account = isolated_account_factory()
+    rc = cli_mod.main(["after", account["name"], "--project", "nigamilab", "--json"])
+    assert rc == 2
+    assert "同時に指定" in capsys.readouterr().err
+    rc = cli_mod.main(["after", "--project", "missing", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["by_account"] == {}
+    assert any("一致する account がありません" in line for line in payload["cannot_say"])
+    rc = cli_mod.main(["after", "--project", "missing"])
+    human = capsys.readouterr()
+    assert rc == 0
+    assert "after  project missing" in human.out
+    assert "一致する account がありません" in human.out
+
+
+def test_壊れた台帳を0件に化けさせない(isolated_account_factory):
+    account = isolated_account_factory()
+    bad_measured = _insight_path(account, "BROKEN")
+    os.makedirs(os.path.dirname(bad_measured), exist_ok=True)
+    with open(bad_measured, "w", encoding="utf-8") as f:
+        f.write("[]\n")
+    bad_engagement = os.path.join(account["repo_dir"], "data", "sns", "engagements",
+                                  "broken.ndjson")
+    os.makedirs(os.path.dirname(bad_engagement), exist_ok=True)
+    with open(bad_engagement, "w", encoding="utf-8") as f:
+        f.write("not-json\n")
+    result = after_cli_mod.answer(account["name"])
+    assert any("読めない実測台帳: 1" in line for line in result["cannot_say"])
+    assert any("読めない絡み台帳: 1" in line for line in result["cannot_say"])
+
+
+def test_非文字列topicと非有限viewsは数に化けない(isolated_account_factory):
+    account = isolated_account_factory()
+    _seed_measured(account, "BAD-TOPIC", topic=123)
+    _seed_measured(account, "NAN-VIEWS", metrics={"views": float("nan")})
+    _seed_measured(account, "NEG-VIEWS", metrics={"views": -1})
+    result = after_cli_mod.answer(account["name"], min_n=1,
+                                  now=jst.parse("2026-09-17T12:00:00+09:00"))
+    assert result["posts"]["n"] == 2
+    assert result["posts"]["views_24h"] == {"median": None, "n": 0}
+    assert all(p["views_24h"] is None for p in result["posts"]["by_post"])
+    assert any("topic が文字列でなく" in line for line in result["cannot_say"])
+    assert any("24h views が欠測: 2 本" in line for line in result["cannot_say"])
 
 
 # ===================================================== --reply-to で絞る
@@ -203,3 +395,28 @@ def test_mcp_ツール一覧にafter_you_postedがある(isolated_account_factor
     assert tool["description"] == (
         "出したあとに呼ぶ。この語・この型・この枝で、自分の投稿と返信が"
         "どう受け取られたかを、件数と期間つきで返す")
+    assert "project" in tool["inputSchema"]["properties"]
+
+
+def test_mcp_afterのaccount_projectは排他的OR(isolated_account_factory):
+    account = isolated_account_factory()
+    server = _load_server_module()
+    with pytest.raises(server.ToolInputError, match="account か project"):
+        server.validate_arguments("after_you_posted", {})
+    with pytest.raises(server.ToolInputError, match="同時に指定"):
+        server.validate_arguments("after_you_posted", {
+            "account": account["name"], "project": "nigamilab"})
+
+
+def test_mcp_after_projectはCLIと同じby_accountを返す(isolated_account_factory):
+    a1 = isolated_account_factory("mcp-a1", project="mcp-project", handle="a1")
+    a2 = isolated_account_factory("mcp-a2", project="mcp-project", handle="a2")
+    _seed_measured(a1, "MCP-A1", account_name=a1["name"], metrics={"views": 11})
+    _seed_measured(a2, "MCP-A2", account_name=a2["name"], metrics={"views": 22})
+    server = _load_server_module()
+    result = server.call_tool("after_you_posted", {
+        "project": "mcp-project", "min_n": 1, "window_days": 30})
+    assert result["isError"] is False, result
+    payload = json.loads(result["content"][0]["text"])
+    assert set(payload["by_account"]) == {a1["name"], a2["name"]}
+    assert "posts" not in payload and "engagements" not in payload

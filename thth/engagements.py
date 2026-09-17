@@ -118,9 +118,12 @@ def _read_ndjson(path: str) -> tuple[list, bool]:
         if not line:
             continue
         try:
-            rows.append(json.loads(line))
+            row = json.loads(line)
         except ValueError:
             return [], True
+        if not isinstance(row, dict):
+            return [], True
+        rows.append(row)
     return rows, False
 
 

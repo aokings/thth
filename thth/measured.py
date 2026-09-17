@@ -133,9 +133,12 @@ def _read_ndjson(path: str) -> tuple[list, bool]:
         if not line:
             continue
         try:
-            rows.append(json.loads(line))
+            row = json.loads(line)
         except ValueError:
             return [], True
+        if not isinstance(row, dict):
+            return [], True
+        rows.append(row)
     return rows, False
 
 
@@ -369,6 +372,10 @@ def load(account_name: str) -> dict:
                 # （`form_now` と違い、行そのものに残っている値）。
                 "medium": first.get("medium"),
                 "reply_to": first.get("reply_to"),
+                # `None` だけでは「根」と「古い行に鍵が無く不明」を区別できない。
+                # `after_you_posted` が自分の根投稿だけを数えるため、採取時点の行に
+                # 鍵そのものがあったかも残す（現在の原稿からは補わない）。
+                "reply_to_known": "reply_to" in first,
                 "form_now": 型,
                 # **読めたかどうかを別に持つ。** `form_now` の `None` だけでは
                 # 「型が無い」と「読めなかった」を区別できない（外部レビュー C2）。
