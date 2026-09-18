@@ -3033,9 +3033,11 @@ def build_parser() -> argparse.ArgumentParser:
                                 "アカウント用。thth-collect@<account>）")
     p_systemd.set_defaults(func=cmd_systemd)
 
-    p_http = sub.add_parser("serve-reports", help="専用環境の非公開レポートHTTP（loopbackのみ）")
+    p_http = sub.add_parser("serve-reports", help="専用環境の非公開レポートHTTP（Unix socket推奨）")
     p_http.add_argument("--credentials", required=True, help="管理者設定の資格情報JSON（0600、digestのみ）")
-    p_http.add_argument("--port", type=int, default=8765)
+    transport = p_http.add_mutually_exclusive_group(required=True)
+    transport.add_argument("--socket", help="管理者が用意した0700ディレクトリ内のsocketパス")
+    transport.add_argument("--tcp-port", type=int, help="明示的にloopback TCPを使うport")
     p_http.set_defaults(func=report_http.cmd_serve_reports)
 
     p_handoff = sub.add_parser("handoff-report", help="ローカル運用記録を引き継ぐ（読むだけ）")

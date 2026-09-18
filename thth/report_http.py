@@ -1,4 +1,4 @@
-"""Private, loopback-only read-only report transport; not a public HTTP server.
+"""Private, Unix-socket or explicitly selected loopback read-only report transport; not a public HTTP server.
 
 One OS-isolated user per process. Credentials are administrator-issued service
 credentials, not human identity or publication approval. Never log requests.
@@ -15,6 +15,9 @@ import os
 from pathlib import Path
 import re
 import stat
+import socket
+import socketserver
+import threading
 import sys
 
 from .report_service import ReportContext, ReportServiceError, execute_report
@@ -22,6 +25,8 @@ from .report_isolation import IsolationError, validate_environment
 
 MAX_BODY = 16384
 MAX_CONFIG = 131072
+READ_TIMEOUT = 5
+REQUEST_DEADLINE = 10
 
 
 class ConfigurationError(ValueError):
@@ -101,17 +106,56 @@ class PrivateReportServer(HTTPServer):
     """Serialized requests; never switches process environment per request."""
     allow_reuse_address = True
 
-    def __init__(self, credentials_path, port=8765, *, executor=execute_report):
+    def __init__(self, credentials_path, port=None, *, socket_path=None, executor=execute_report):
+        if (port is None) == (socket_path is None):
+            raise ValueError("transport_required")
+        self.unix_path = None
+        self.socket_identity = None
         self.credentials_path = Path(credentials_path).absolute()
         root, credentials = load_credentials(self.credentials_path)
         for _, _, _, context in credentials:
             validate_environment(root, context.allowed_accounts)  # Fail before binding.
         self.executor = executor
-        super().__init__(("127.0.0.1", port), ReportHandler)
+        if socket_path is not None:
+            path = Path(socket_path).absolute()
+            parent = path.parent
+            info = parent.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                    or info.st_mode & 0o077):
+                raise ValueError("private_socket_directory_required")
+            if path.exists() or path.is_symlink():
+                raise ValueError("socket_path_in_use")
+            self.unix_path = path
+            self.address_family = socket.AF_UNIX
+            address = str(path)
+        else:
+            if type(port) is not int or not 0 <= port <= 65535:
+                raise ValueError("invalid_port")
+            address = ("127.0.0.1", port)
+        super().__init__(address, ReportHandler)
+
+    def server_bind(self):
+        if self.unix_path is None:
+            return super().server_bind()
+        socketserver.TCPServer.server_bind(self)
+        info = self.unix_path.lstat()
+        self.socket_identity = (info.st_dev, info.st_ino)
+        self.unix_path.chmod(0o600)  # Before listen; parent is owner-private.
+        self.server_name, self.server_port = "localhost", None
+
+    def server_close(self):
+        super().server_close()
+        if self.unix_path is not None and self.socket_identity is not None:
+            try:
+                info = self.unix_path.lstat()
+                if stat.S_ISSOCK(info.st_mode) and (info.st_dev, info.st_ino) == self.socket_identity:
+                    self.unix_path.unlink()
+            except FileNotFoundError:
+                pass
 
     def get_request(self):
         connection, address = super().get_request()
-        connection.settimeout(5)
+        connection.settimeout(READ_TIMEOUT)
         return connection, address
 
     def handle_error(self, request, client_address):
@@ -123,6 +167,26 @@ class ReportHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
     server_version = "THTH-Private"
     sys_version = ""
+
+    def setup(self):
+        super().setup()
+        # A recv timeout resets after every byte; the watchdog does not.
+        self._deadline = threading.Timer(REQUEST_DEADLINE, self._expire_read)
+        self._deadline.daemon = True
+        self._deadline.start()
+
+    def _expire_read(self):
+        try:
+            self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def _read_complete(self):
+        self._deadline.cancel()
+
+    def finish(self):
+        self._read_complete()
+        super().finish()
 
     def log_message(self, *args):
         pass
@@ -150,7 +214,8 @@ class ReportHandler(BaseHTTPRequestHandler):
     def _valid_host(self):
         hosts = self.headers.get_all("Host", [])
         port = self.server.server_port
-        if len(hosts) != 1 or hosts[0] not in {f"127.0.0.1:{port}", f"localhost:{port}"}:
+        allowed = {"localhost"} if self.server.unix_path is not None else {f"127.0.0.1:{port}", f"localhost:{port}"}
+        if len(hosts) != 1 or hosts[0] not in allowed:
             self._reply(400, {"error": "invalid_host"})
             return False
         return True
@@ -163,6 +228,7 @@ class ReportHandler(BaseHTTPRequestHandler):
             return None
 
     def do_GET(self):
+        self._read_complete()
         if not self._valid_host():
             return
         if self.path != "/health":
@@ -205,6 +271,7 @@ class ReportHandler(BaseHTTPRequestHandler):
             return self._reply(413, {"error": "request_too_large"})
         try:
             raw = self.rfile.read(length)
+            self._read_complete()
             if len(raw) != length:
                 raise ValueError("short_body")
             request = _json(raw)
@@ -235,10 +302,11 @@ class ReportHandler(BaseHTTPRequestHandler):
 
 def cmd_serve_reports(args):
     try:
-        if not 1 <= args.port <= 65535:
+        if args.tcp_port is not None and not 1 <= args.tcp_port <= 65535:
             raise ValueError("invalid_port")
-        with PrivateReportServer(args.credentials, args.port) as server:
-            print(f"Private read-only reports: http://127.0.0.1:{args.port} (TLS proxy required for remote access)", flush=True)
+        with PrivateReportServer(args.credentials, args.tcp_port, socket_path=args.socket) as server:
+            transport = "Unix socket" if args.socket is not None else "explicit loopback TCP"
+            print(f"Private read-only reports: {transport}", flush=True)
             server.serve_forever()
     except KeyboardInterrupt:
         return 0
@@ -246,7 +314,8 @@ def cmd_serve_reports(args):
         reasons = {"root_mismatch", "account_scope_mismatch", "private_root_required",
                    "account_registry_mismatch", "invalid_report_scope", "resource_outside_root",
                    "unsafe_report_tree", "report_tree_too_large", "unreadable_report_tree",
-                   "invalid_report_environment", "configuration_unavailable", "invalid_port"}
+                   "invalid_report_environment", "configuration_unavailable", "invalid_port",
+                   "private_socket_directory_required", "socket_path_in_use", "transport_required"}
         reason = str(error) if isinstance(error, (IsolationError, ConfigurationError, ValueError)) and str(error) in reasons else "server_unavailable"
         if isinstance(error, OSError) and error.errno == errno.EADDRINUSE:
             reason = "address_in_use"

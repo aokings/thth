@@ -240,3 +240,92 @@ def test_real_core_http_snapshot_does_not_write(tmp_path, operation):
         assert set(payload["reports"]) == {"allowed"}
         assert payload["operation"] == operation
         assert {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("phase", ["request_line", "headers", "body"])
+def test_total_read_deadline_releases_next_request(tmp_path, monkeypatch, phase):
+    import time
+    monkeypatch.setattr(report_http, "REQUEST_DEADLINE", 0.35)
+    with running(tmp_path) as (port, _, calls):
+        with socket.create_connection(("127.0.0.1", port), timeout=2) as slow:
+            if phase == "request_line":
+                prefix = b"P"
+            elif phase == "headers":
+                prefix = b"POST /report HTTP/1.1\r\nX-Slow: "
+            else:
+                prefix = (f"POST /report HTTP/1.1\r\nHost: localhost:{port}\r\n"
+                          f"Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n"
+                          "Content-Length: 1000\r\n\r\n{").encode()
+            slow.sendall(prefix)
+            stopped = threading.Event()
+            def drip():
+                while not stopped.wait(0.03):
+                    try:
+                        slow.sendall(b" ")
+                    except OSError:
+                        return
+            thread = threading.Thread(target=drip, daemon=True)
+            thread.start()
+            started = time.monotonic()
+            try:
+                assert request(port, method="GET", target="/health")[0] == 200
+                assert time.monotonic() - started < 1.2
+            finally:
+                stopped.set()
+                thread.join(2)
+            assert not calls
+        # A completed request's watchdog must not affect a later request.
+        time.sleep(0.4)
+        assert request(port)[0] == 200
+
+
+def test_unix_permissions_health_cleanup_and_existing_path(tmp_path, short_socket_dir):
+    path = tmp_path / "credentials.json"
+    config(path)
+    private = short_socket_dir
+    endpoint = private / "report.sock"
+    with report_http.PrivateReportServer(path, socket_path=endpoint) as server:
+        assert endpoint.stat().st_mode & 0o777 == 0o600
+        with pytest.raises(ValueError, match="socket_path_in_use"):
+            report_http.PrivateReportServer(path, socket_path=endpoint)
+        thread = threading.Thread(target=server.handle_request)
+        thread.start()
+        with socket.socket(socket.AF_UNIX) as client:
+            client.settimeout(3)
+            client.connect(str(endpoint))
+            client.sendall(b"GET /health HTTP/1.0\r\nHost: localhost\r\n\r\n")
+            assert b" 200 " in client.recv(4096)
+        thread.join(3)
+    assert not endpoint.exists()
+    endpoint.write_text("do not overwrite")
+    with pytest.raises(ValueError, match="socket_path_in_use"):
+        report_http.PrivateReportServer(path, socket_path=endpoint)
+    assert endpoint.read_text() == "do not overwrite"
+    endpoint.unlink()
+    private.chmod(0o755)
+    with pytest.raises(ValueError, match="private_socket_directory_required"):
+        report_http.PrivateReportServer(path, socket_path=endpoint)
+
+
+def test_unix_cleanup_does_not_remove_replacement(tmp_path, short_socket_dir):
+    path = tmp_path / "credentials.json"
+    config(path)
+    private = short_socket_dir
+    endpoint = private / "report.sock"
+    with report_http.PrivateReportServer(path, socket_path=endpoint):
+        endpoint.unlink()
+        endpoint.write_text("replacement")
+    assert endpoint.read_text() == "replacement"
+
+
+def test_cli_requires_explicit_transport():
+    from thth import cli
+    with pytest.raises(SystemExit):
+        cli.main(["serve-reports", "--credentials", "/unused"])
+
+
+@pytest.fixture
+def short_socket_dir():
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="thth-sock-", dir="/tmp") as directory:
+        yield Path(directory)
