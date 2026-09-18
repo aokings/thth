@@ -48,3 +48,16 @@ def test_a1_malformed_mark_types():
             value = row(mark, mark)
             value['marks'] = [bad]
             assert c._observation({'rows': [value]}, POSTED, NOW + dt.timedelta(days=10), mark)[0] is None
+
+def test_a2_reaction_identity_and_missing(monkeypatch):
+    from thth import analytics_threads as t
+    ledger = {'broken': [], 'unreadable_accounts': [], 'fetches': [], 'replies': []}
+    monkeypatch.setattr(t.replies, 'load', lambda *a, **k: ledger)
+    e = {'post_id': 'mine', 'author_key': '0123456789abcdef'}
+    assert t.reaction('a', 'threads', e, POSTED, NOW) == (None, None)
+    ledger['fetches'] = [{'collected_at': jst.iso(NOW)}]
+    assert t.reaction('a', 'threads', e, POSTED, NOW) == (False, None)
+    ledger['replies'] = [{'collected_at': jst.iso(NOW), 'timestamp': jst.iso(POSTED+dt.timedelta(hours=2)), 'own': False, 'replied_to': {'id':'mine'}, 'author_key': e['author_key'], 'text':'SECRET'}]
+    assert t.reaction('a', 'threads', e, POSTED, NOW) == (True, 2)
+    ledger['replies'][0]['replied_to'] = {'id': 'someone_else'}
+    assert t.reaction('a', 'threads', e, POSTED, NOW) == (False, None)

@@ -231,6 +231,8 @@ def _account(name, previous_start, current_start, now, min_n):
         current = _population(items, current_start, now, now, min_n)
         deltas = _differences(previous, current, min_n)
         node[kind] = {"previous": previous, "current": current, "comparison": deltas}
+    from .analytics_threads import summarize
+    node["engagements"].update(summarize(name, cfg, eng, by_id, current_start, now, now, min_n))
     if any(broken.values()):
         node["cannot_say"].append("読めない台帳があり、母集団全体の件数・変化は判断できない")
     node["cannot_say"].append("比較は観測できた標本だけ。差の原因・施策の効果・推奨行動は判断しない")

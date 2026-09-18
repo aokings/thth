@@ -67,6 +67,10 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
             node["engagements"][key].update(comparison._spread(
                 [p[key] for p in node["engagements"]["by_branch"] if p[key] is not None], min_n))
 
+        from .analytics_threads import summarize
+        node["engagements"].update(summarize(name, cfg, engagements.load(cfg, name),
+            {str(p["post_id"]): p for p in ledger["posts"]}, start,
+            now + datetime.timedelta(microseconds=1), now, min_n))
         lookup = {p["post_id"]: p for p in curves["marks_by_post"]}
         for post in node["posts"]["by_post"]:
             post["marks"] = lookup.get(str(post["post_id"]), {}).get("marks")
