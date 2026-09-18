@@ -126,3 +126,39 @@ def test_c2_conflict_and_broken_fail_closed(tmp_path):
     # UTC previous date is JST current date: use the observation's JST date.
     utc_now=(POSTED+dt.timedelta(hours=1)).astimezone(dt.timezone.utc)
     assert followers('a',tmp_path,utc_now)['followers_count']==7
+
+@pytest.mark.parametrize('medium',['threads','bluesky','mastodon'])
+@pytest.mark.parametrize('route',['queue','sent','bundle'])
+def test_c5_media_marks_and_native_metrics(tmp_path,isolated_account_factory,monkeypatch,medium,route):
+    from thth.adapters import bluesky, mastodon
+    import socket
+    a=setup_route(tmp_path,isolated_account_factory,monkeypatch,route,medium=medium)
+    def no_network(*a,**k):raise AssertionError('network forbidden')
+    monkeypatch.setattr(socket,'socket',no_network)
+    adapter=Adapter()
+    if medium=='bluesky':
+        native=object.__new__(bluesky.BlueskyAdapter)
+        native._post_view=lambda pid:{'likeCount':2,'replyCount':3,'repostCount':4,'quoteCount':5}
+    elif medium=='mastodon':
+        native=object.__new__(mastodon.MastodonAdapter)
+        native._get_json=lambda *a,**k:{'favourites_count':2,'replies_count':3,'reblogs_count':4}
+    else:native=None
+    if native:
+        def insights(pid):
+            adapter.insight_calls.append(pid)
+            return native.insights(pid)
+        adapter.insights=insights
+    for hour in [1,6,24,72,168,720,721,960]:
+        result=c.collect_once(a['name'],adapter=adapter,now=POSTED+dt.timedelta(hours=hour),log=lambda x:None)
+        assert not result['errors']
+    rows=c._read_ndjson(str(Path(accounts.data_dirs(a,a['name'])['insights_posts'])/'P.ndjson'))
+    assert len(adapter.insight_calls)==6 and len(adapter.reply_calls)==5
+    assert [r['marks'] for r in rows]==[[1],[6],[24],[72],[168],[720]]
+    for row in rows:
+        assert row['account']==a['name'] and row['medium']==medium
+        assert {k:row['metrics'][k] for k in ('likes','replies','reposts')}=={'likes':2,'replies':3,'reposts':4}
+        assert row['metrics']['views']==(0 if medium=='threads' else None)
+        assert row['metrics']['quotes']==(None if medium=='mastodon' else 5)
+    from thth.analytics_comparison import _marks_population
+    report=_marks_population([('P',POSTED,{'rows':rows})],POSTED,POSTED+dt.timedelta(days=41),POSTED+dt.timedelta(days=41),1)
+    assert report['by_mark']['720']['metrics']['views']['median']==(0 if medium=='threads' else None)
