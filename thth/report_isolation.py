@@ -75,6 +75,11 @@ def _validate(root, allowed):
     def scan(path):
         # Lexical ancestry is important: resolve() alone would hide symlinks.
         path = Path(os.path.abspath(path))
+        # Canonicalize only the trusted root prefix (e.g. macOS /var -> /private/var).
+        # Never resolve the suffix: in-root symlinks must remain visible to lstat.
+        lexical_root = Path(os.path.abspath(root))
+        if path.is_relative_to(lexical_root):
+            path = resolved / path.relative_to(lexical_root)
         if not path.is_relative_to(resolved):
             raise IsolationError("resource_outside_root")
         for ancestor in reversed((path, *path.parents)):

@@ -112,3 +112,20 @@ def test_read_path_ancestor_symlink_rejected(dedicated):
     (dedicated / "state").symlink_to(target)
     with pytest.raises(IsolationError, match="unsafe_report_tree"):
         validate_environment(str(dedicated), {"demo": "project"})
+
+
+def test_root_parent_alias_preserves_in_root_symlink_detection(dedicated, tmp_path, monkeypatch):
+    alias = tmp_path / "parent-alias"
+    alias.symlink_to(dedicated.parent, target_is_directory=True)
+    root = alias / dedicated.name
+    monkeypatch.setenv("THTH_ROOT", str(root))
+    cfg_path = dedicated / "accounts/demo.json"
+    cfg = json.loads(cfg_path.read_text())
+    cfg["repo_dir"] = str(root / "repos/_none")
+    cfg_path.write_text(json.dumps(cfg))
+    validate_environment(str(root), {"demo": "project"})
+    target = dedicated / "actual"
+    target.mkdir()
+    (dedicated / "state").symlink_to(target)
+    with pytest.raises(IsolationError, match="unsafe_report_tree"):
+        validate_environment(str(root), {"demo": "project"})
