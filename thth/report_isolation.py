@@ -20,7 +20,7 @@ class IsolationError(ValueError):
 def validate_environment(root: str, allowed_accounts: Mapping) -> None:
     """Validate dedicated root and configured scope without reading secrets.
 
-    Root must be explicit, private (0700), and owned by the running identity.
+    Root must be explicit, have no group/other permissions, and be owned by the running identity.
     Reject every symlink/special file in the root, including dangling symlinks.
     All configured account resource paths must remain beneath that root.
     Filesystem mutation races require host-enforced isolation, not this check.
