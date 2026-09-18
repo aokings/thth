@@ -127,9 +127,9 @@ MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜ�
 - `thth doctor <account>` が「いま投稿できる状態か」を最初から最後まで言う。
 - 使い方の全文: `docs/使い方_プロジェクトのセッション向け_2026-09-09.md`。
 
-## 運用と分析のレポート（v3系の開発版・未配布）
+## 運用と分析のレポート（v3系・2.5.0 から）
 
-公開済み2.4.0には無い入口を含む。接続先のhelp/tools一覧にある場合だけ使う。
+2.4.0 以前には無い入口を含む。接続先のhelp/tools一覧にある場合だけ使う。
 
 - 再開時は `handoff-report` / MCP `operations_handoff`。ローカルの停止・要確認・通知記録を読む。`waiting`をtimer正常や投稿成功と解釈しない。
 - `analytics-report` / MCP `analytics_report` は期間・母数・欠測・根拠付きsnapshot。生成時刻とデータ更新時刻を混同しない。

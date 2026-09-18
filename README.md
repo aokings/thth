@@ -9,7 +9,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 版
 
-このソースの版は **2.4.0**。現在の設計は [自分の泉](docs/設計_自分の泉_2026-09-16.md)、導入は [自分の Meta アプリで動かす](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
+このソースの版は **2.5.0**。現在の設計は [自分の泉](docs/設計_自分の泉_2026-09-16.md)、導入は [自分の Meta アプリで動かす](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
 
 版の正本は `thth/VERSION`（`server.json` はテストで一致を強制）。開発中の `main` には未配布の変更も含まれます。インストール済みの版は `thth --version`、VM の版と revision は `thth board` で確認してください。
 
@@ -21,7 +21,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 実装と運用の状態（2026-09-18）
 
-2.4.0 の実装 revision の全件テストは **2452 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip・rc=0）。開発中の変更の検証は対象 revision の CI を参照してください。
+2.5.0 の実装 revision の全件テストは **2690 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip・rc=0）。開発中の変更の検証は対象 revision の CI を参照してください。
 
 **媒体**: Threads（稼働）・Bluesky・Mastodon（同席用の台帳あり・未稼働）。
 
@@ -34,6 +34,13 @@ timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿
 **依存 0**。PyPI に公開済み・MCP registry に `io.github.aokings/thth` として登録済み）。
 
 **トピックの棚**（`thth topics`）: 観測者ごとに並ぶ・打ち消し `retract-note`・`history`。
+
+### v2.5.0 の変更
+
+- 読み取り専用のレポート 3 本: `analytics-report`（活動のスナップショット・`--compare-previous` で隣接期間の比較）・`handoff-report`（ローカル運用記録の引継ぎ）・`study-report`（施策の宣言と本人の観測の結合）。MCP に `analytics_report`・`operations_handoff`・`study_report`。数値は期間・母数・欠測・根拠を連れて歩き、因果や推奨は出しません。
+- `serve-reports`: 専用環境向けの非公開レポート HTTP（Unix socket 既定・service credential・読むだけ）。**開発版**で、人の認証・TLS・一般提供は含みません。[限界](docs/非公開レポートHTTP_v1.md)。
+- X の本人公開指標の純粋な変換関数（API・投稿・台帳には未接続）。
+- 独立監査（P2 4・P3 7）とその直し: Unix socket 既定・要求全体の 10 秒 deadline・分離検査の走査を読取 dir に限定・期間比較の母集団から時刻不一致の返信を除外・git 無しでも import 可。
 
 ### v2.4.0 の変更
 
@@ -75,11 +82,11 @@ registry は「この PyPI の名前を名乗ってよいのは誰か」を、**
 
 mcp-name: io.github.aokings/thth
 
-## 開発中（v3 基盤・未配布）
+## v3 基盤（2.5.0 から）
 
-`study-report` は明示した施策の宣言と本人の投稿観測を結ぶ読み取り専用レポートです。採用者の本人確認や因果効果は主張しません。[使い方と契約](docs/施策レポート_v1.md)。開発中で公開済み2.4.0には含まれません。
+`study-report` は明示した施策の宣言と本人の投稿観測を結ぶ読み取り専用レポートです。採用者の本人確認や因果効果は主張しません。[使い方と契約](docs/施策レポート_v1.md)。
 
-`analytics-report` はローカル台帳から期間・母数・欠測・根拠を揃えたスナップショットを返します。公開済み 2.4.0 には含まれません。
+`analytics-report` はローカル台帳から期間・母数・欠測・根拠を揃えたスナップショットを返します。
 [形式と使い方](docs/分析レポート_v1.md)。
 
-開発中の `handoff-report` / MCP `operations_handoff` はローカル運用状態・通知未処理を鮮度の制約付きで返します。公開済み 2.4.0 には含まれません。[形式と使い方](docs/運用引継ぎレポート_v1.md)。
+`handoff-report` / MCP `operations_handoff` はローカル運用状態・通知未処理を鮮度の制約付きで返します。[形式と使い方](docs/運用引継ぎレポート_v1.md)。

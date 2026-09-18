@@ -42,6 +42,10 @@ what to write.
 
 ---
 
+## Version 2.5.0
+
+Adds three read-only reports — `analytics-report` (activity snapshot, `--compare-previous` for adjacent-period comparison), `handoff-report` (local operations evidence for a session handoff) and `study-report` (links a declared study to the owner's own observations) — plus the MCP tools `analytics_report`, `operations_handoff` and `study_report`. Numbers always carry their period, sample size, missing data and evidence; no causal claims, no recommendations. `serve-reports` is a development-grade private report transport (Unix socket by default, service credentials, read-only) for a dedicated Unix environment; it is not a public server and includes no human login or TLS. A pure offline normalizer for X owned public metrics is included but not connected to any API. Independently audited (4×P2, 7×P3) and fixed before release.
+
 ## Version 2.4.0
 
 Adds per-account user and administrator incident emails, recovery notices, and
@@ -132,10 +136,10 @@ All 40 subcommands `thth --help` lists in this development checkout, one line ea
 - `replies` — read the collected-reply ledger
 - `measured` — read the collected-metrics ledger
 - `threads` — thread shape: branches, depth, participants, time to first reply
-- `serve-reports` — in development: private read-only HTTP reports over a Unix socket (or explicitly selected loopback TCP) for a dedicated Unix environment; see the [setup and limitations](docs/非公開レポートHTTP_v1.md).
-- `handoff-report` — in development, not in published 2.4.0: local operations evidence, pending notifications and explicit freshness limits.
-- `study-report` — in development, not in published 2.4.0: link an unverified study declaration to explicitly selected owned root-post observations; read-only, no causal-effect claim. See the [contract](docs/施策レポート_v1.md).
-- `analytics-report` — in development, not in published 2.4.0: read-only activity snapshot with evidence, missing data, JSON and Markdown.
+- `serve-reports` — development-grade (since 2.5.0): private read-only HTTP reports over a Unix socket (or explicitly selected loopback TCP) for a dedicated Unix environment; see the [setup and limitations](docs/非公開レポートHTTP_v1.md).
+- `handoff-report` — since 2.5.0: local operations evidence, pending notifications and explicit freshness limits.
+- `study-report` — since 2.5.0: link an unverified study declaration to explicitly selected owned root-post observations; read-only, no causal-effect claim. See the [contract](docs/施策レポート_v1.md).
+- `analytics-report` — since 2.5.0: read-only activity snapshot with evidence, missing data, JSON and Markdown.
 - `after` — called after posting: how the replies you went and engaged in were
   received, with counts and timing (read-only)
 - `topics` — how much each topic was seen
@@ -210,8 +214,8 @@ MIT, per the September 2026 design ruling
 `LICENSE` file and the switch to a public repo are still pending, done by hand
 by the maintainer.
 
-## In development (v3 foundation, unreleased)
+## v3 foundation (since 2.5.0)
 
-`analytics-report` reads local ledgers and returns a snapshot with period, sample sizes, missing data, and evidence. It is not included in published 2.4.0. See the [schema and usage](docs/分析レポート_v1.md).
+`analytics-report` reads local ledgers and returns a snapshot with period, sample sizes, missing data, and evidence. See the [schema and usage](docs/分析レポート_v1.md).
 
-The development-only `handoff-report` / MCP `operations_handoff` reads local operations evidence without syncing or retrying. See the [schema and limits](docs/運用引継ぎレポート_v1.md).
+`handoff-report` / MCP `operations_handoff` reads local operations evidence without syncing or retrying. See the [schema and limits](docs/運用引継ぎレポート_v1.md).
