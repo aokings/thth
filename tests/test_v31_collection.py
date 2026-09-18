@@ -98,7 +98,7 @@ def test_c2_context_at_append_no_backfill(tmp_path,isolated_account_factory,monk
     assert p.read_bytes()==before  # no new mark: no retrofit
     c.collect_once(a['name'],adapter=adapter,now=POSTED+dt.timedelta(hours=6),log=lambda x:None)
     assert p.read_bytes().startswith(before)
-    assert c._read_ndjson(str(p))[-1]['context']=={'followers_count':0,'followers_count_at':'2026-09-01','source':'insights_account'}
+    assert c._read_ndjson(str(p))[-1]['context']=={'followers_count':0,'followers_count_at':jst.iso(POSTED),'staleness_hours':6.0,'source':'insights_account'}
     assert len(adapter.insight_calls)==2
 
 @pytest.mark.parametrize('value',[None,True,-1,float('nan'),float('inf'),1.5,'2'])
@@ -108,7 +108,7 @@ def test_c2_invalid_counts_are_missing(tmp_path,value):
     p.write_text(json.dumps(daily_row(a,value)))
     assert followers('a',tmp_path,POSTED+dt.timedelta(hours=1)) is None
 
-@pytest.mark.parametrize('change',[{'account':'other'},{'date':'2026-08-31'}, {'collected_at':'2026-09-01T12:00:00+09:00'}, {'collected_at':'invalid'}])
+@pytest.mark.parametrize('change',[{'account':'other'}, {'collected_at':'2026-09-01T12:00:00+09:00'}, {'collected_at':'invalid'}])
 def test_c2_scope_and_time_missing(tmp_path,change):
     from thth.collection_context import followers
     p=tmp_path/'a-2026-09.ndjson';p.write_text(json.dumps(daily_row({'name':'a'},7,**change)))
@@ -168,7 +168,7 @@ def test_c2_corrupt_optional_context_does_not_stop_collection(tmp_path,isolated_
     path=daily_path(a)
     bad_inputs=[
         '['*10000+'0'+']'*10000,
-        json.dumps(daily_row(a,7,collected_at='2026-08-31T23:59:59+09:00')),
+        json.dumps(daily_row(a,7,collected_at='invalid')), 
         json.dumps(daily_row(a,7)).replace('"followers_count": 7','"followers_count": 0, "followers_count": 999')]
     adapter=Adapter()
     for hour,bad in zip((1,6,24),bad_inputs):

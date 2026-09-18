@@ -602,6 +602,7 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 errors.append(f"{post_id}: insights: {redact_mod.redact(str(e))}")
                 metrics = None
         if metrics is not None:
+            context = followers_context(account_name, dirs["insights_account"], now)
             _append_ndjson(insight_path, [{
                 "post_id": post_id,
                 # **同席の様態には原稿が無い**（設計 v2.0.1 §3）。`file` に
@@ -643,7 +644,8 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 "age_hours": round(age_hours, 2),
                 "marks": marks,
                 "metrics": metrics,
-                "context": followers_context(account_name, dirs["insights_account"], now),
+                "context": context,
+                "context_reason": None if context is not None else "no_recent_daily_record",
             }])
             touched.append(insight_path)
 
