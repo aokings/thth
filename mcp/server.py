@@ -140,6 +140,12 @@ TOOLS = [
         },
     },
     {
+        "name": "operations_handoff",
+        "description": "ローカル運用記録の状態・承認待ち・inflight・通知未処理を根拠と鮮度の制約付きで返す。同期・承認・再送はしない",
+        "inputSchema": {"type": "object", "properties": {
+            "account": {"type": "string"}, "project": {"type": "string"}}},
+    },
+    {
         "name": "analytics_report",
         "description": "自分の活動のスナップショットを期間・母数・欠測・根拠つきで返す。ローカル台帳を読むだけ。前期間比較や推奨は含まない",
         "inputSchema": {
@@ -425,14 +431,14 @@ def validate_arguments(name: str, arguments) -> dict:
                         f"CLI の旗と区別できないので受け取りません")
         if key == "file":
             check_file_argument(name, value)
-    if name in ("analytics_report", "after_you_posted", "where_to_appear", "who_is_this") \
+    if name in ("operations_handoff", "analytics_report", "after_you_posted", "where_to_appear", "who_is_this") \
             and not arguments.get("account") \
             and not arguments.get("project"):
         # **`account` か `project` のどちらか必須**（`required` は AND の意味しか
         # 持てないので、ここで OR を見る・T2-3 発注書・T3-3 も同じ形）。
         raise ToolInputError(
             f"{name}: account か project のどちらかが要ります")
-    if name in ("analytics_report", "after_you_posted") and arguments.get("account") \
+    if name in ("operations_handoff", "analytics_report", "after_you_posted") and arguments.get("account") \
             and arguments.get("project"):
         raise ToolInputError(
             f"{name}: account と project は同時に指定できません")
@@ -513,6 +519,15 @@ def call_tool(name: str, arguments: dict | None) -> dict:
             args += ["--window-days", str(arguments["window_days"])]
         if arguments.get("min_n") is not None:
             args += ["--min-n", str(arguments["min_n"])]
+        args.append("--json")
+        proc = run_cli(args)
+        text = proc.stdout
+    elif name == "operations_handoff":
+        args = ["handoff-report"]
+        if arguments.get("project"):
+            args += ["--project", arguments["project"]]
+        else:
+            args.append(arguments["account"])
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
@@ -604,7 +619,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         return {"content": [{"type": "text", "text": f"unknown tool: {name}"}], "isError": True}
 
     if name.startswith("thth_topic_") or name in (
-            "before_you_post", "after_you_posted", "analytics_report", "thread_read", "where_to_appear",
+            "before_you_post", "after_you_posted", "analytics_report", "operations_handoff", "thread_read", "where_to_appear",
             "who_is_this"):
         # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）
         # とは意味が違う——こちらは stale_context・不正な候補比較で、

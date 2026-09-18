@@ -116,7 +116,7 @@ Full walkthrough: [docs/usage.en.md](docs/usage.en.md).
 
 ## Commands
 
-All 37 subcommands `thth --help` lists in this development checkout, one line each:
+All 38 subcommands `thth --help` lists in this development checkout, one line each:
 
 - `lint` — check a queue file's front matter and length
 - `preview` — show the exact text that would go out
@@ -132,6 +132,7 @@ All 37 subcommands `thth --help` lists in this development checkout, one line ea
 - `replies` — read the collected-reply ledger
 - `measured` — read the collected-metrics ledger
 - `threads` — thread shape: branches, depth, participants, time to first reply
+- `handoff-report` — in development, not in published 2.4.0: local operations evidence, pending notifications and explicit freshness limits.
 - `analytics-report` — in development, not in published 2.4.0: read-only activity snapshot with evidence, missing data, JSON and Markdown.
 - `after` — called after posting: how the replies you went and engaged in were
   received, with counts and timing (read-only)
@@ -210,3 +211,5 @@ by the maintainer.
 ## In development (v3 foundation, unreleased)
 
 `analytics-report` reads local ledgers and returns a snapshot with period, sample sizes, missing data, and evidence. It is not included in published 2.4.0. See the [schema and usage](docs/分析レポート_v1.md).
+
+The development-only `handoff-report` / MCP `operations_handoff` reads local operations evidence without syncing or retrying. See the [schema and limits](docs/運用引継ぎレポート_v1.md).

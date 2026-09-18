@@ -17,6 +17,7 @@ from . import __version__ as _pkg_version
 from . import account_cli as account_cli_mod
 from . import after_cli as after_cli_mod
 from . import analytics_report as analytics_report_mod
+from . import operations_handoff as operations_handoff_mod
 from . import account_report as account_report_mod
 from . import accounts as accounts_mod
 from . import approval as approval_mod
@@ -3022,6 +3023,12 @@ def build_parser() -> argparse.ArgumentParser:
                            help="採集だけの unit を出す（同席専用＝scheduled: false の"
                                 "アカウント用。thth-collect@<account>）")
     p_systemd.set_defaults(func=cmd_systemd)
+
+    p_handoff = sub.add_parser("handoff-report", help="ローカル運用記録を引き継ぐ（読むだけ）")
+    p_handoff.add_argument("account", nargs="?")
+    p_handoff.add_argument("--project", default=None)
+    p_handoff.add_argument("--json", action="store_true")
+    p_handoff.set_defaults(func=operations_handoff_mod.cmd_handoff_report)
 
     p_board = sub.add_parser("board", help="アカウントごとの鮮度・inflight・型外の骨")
     p_board.add_argument("--json", action="store_true")
