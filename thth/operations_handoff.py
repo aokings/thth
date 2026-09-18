@@ -219,7 +219,8 @@ def answer(account_name=None, *, project=None, now=None, since_last_read=False):
                 node["changes_since"] = {"read_at": previous["read_at"], "by": previous["by"],
                     "changes": handoff_cursor.changes(previous["snapshot"], handoff_cursor.snapshot(node))}
                 node["cannot_say"].remove("no_previous_session_cursor")
-            elif reason == "cursor_unreadable":
+            elif reason in {"cursor_unreadable", "cursor_directory_unavailable"}:
+                node["cannot_say"].remove("no_previous_session_cursor")
                 node["cannot_say"].append(reason)
     return {"schema_version": 1, "report_type": "operations_handoff",
             "generated_at": jst.iso(now), "filters": {"account": account_name, "project": project},

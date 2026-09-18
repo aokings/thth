@@ -10,17 +10,34 @@ KEYS = {'queue_counts','inflight','notification_last_event_id','notification_rec
         'run_last_attempt_at','run_recorded_state','last_post_observed_at','sent_count'}
 QUEUE_KEYS = {'draft','approved_waiting','overdue','malformed','unattributed_malformed'}
 
+class CursorDirectoryUnavailable(OSError):
+    """The configured state directory cannot be opened safely."""
+
 
 def _directory(name, create=False):
-    path = Path(accounts.state_dir_for(name)).absolute()
+    # Resolve only the trusted configured root; components below it stay pinned.
+    configured_root = Path(accounts.thth_root()).absolute()
+    configured_path = Path(accounts.state_dir_for(name)).absolute()
+    expected = configured_root / "state" / name
+    # Keep compatibility with callers/tests supplying an explicit state path;
+    # production accounts.state_dir_for follows the configured root above.
+    if configured_path == expected:
+        root = Path(os.path.realpath(configured_root))
+        path = root / "state" / name
+    else:
+        root = Path(os.path.realpath(configured_path.parents[1]))
+        path = root / configured_path.relative_to(configured_path.parents[1])
     # Keep each opened ancestor pinned. Checking a path and then reopening the
     # absolute name would permit a symlink swap between those two operations.
-    if ".." in path.parts:
-        raise ValueError('cursor_unreadable')
+    if ".." in path.parts or not path.is_absolute():
+        raise CursorDirectoryUnavailable('cursor_directory_unavailable')
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    directory = os.open(path.anchor, flags)
     try:
-        for component in path.parts[1:]:
+        directory = os.open(str(root), flags)
+    except OSError as exc:
+        raise CursorDirectoryUnavailable('cursor_directory_unavailable') from exc
+    try:
+        for component in path.relative_to(root).parts:
             try:
                 child = os.open(component, flags, dir_fd=directory)
             except FileNotFoundError:
@@ -35,8 +52,12 @@ def _directory(name, create=False):
             os.close(directory)
             directory = child
         return directory
-    except BaseException:
+    except BaseException as exc:
         os.close(directory)
+        if isinstance(exc, CursorDirectoryUnavailable):
+            raise
+        if isinstance(exc, OSError):
+            raise CursorDirectoryUnavailable('cursor_directory_unavailable') from exc
         raise
 
 
@@ -93,6 +114,8 @@ def read(name, now):
             data=stream.read(65537)
         if len(data)>65536:raise ValueError('cursor_unreadable')
         return _validate(json.loads(data,object_pairs_hook=_pairs),now),None
+    except CursorDirectoryUnavailable:
+        return None,'cursor_directory_unavailable'
     except FileNotFoundError:
         return None,'no_previous_session_cursor'
     except (OSError,ValueError,TypeError,OverflowError,RecursionError):
