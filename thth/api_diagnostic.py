@@ -1,4 +1,5 @@
 """Small, non-text API diagnostics safe for persisted notifications."""
+import http.client
 import json
 
 MAX_ERROR_BYTES = 16384
@@ -35,7 +36,7 @@ def read_http_error(error):
             detail.update(clean({k: v for k, v in err.items() if k != "http_status"}))
             message = err.get("message", "")
             message = message[:170] if isinstance(message, str) else ""
-    except (ValueError, UnicodeError, OSError, TypeError):
+    except (ValueError, UnicodeError, OSError, TypeError, http.client.HTTPException):
         pass
     return detail, err, message
 

@@ -153,3 +153,29 @@ def test_bundle_actual_adapter_to_notification(thread_account, monkeypatch, stat
     assert diagnosis.api_diagnostic == result.api_diagnostic
     assert incident.source(accounts.load_account(account["name"]),state,result) == "docs/sns/queue/thread.md"
     assert threadrun.open_runs(account["name"])[0]["posts"][0]["api_diagnostic"] == result.api_diagnostic
+
+
+@pytest.mark.parametrize("stage,status,failure", [("create",400,"container"), ("publish",400,"publish_definite"), ("publish",500,"publish_ambiguous")])
+@pytest.mark.parametrize("read_failure", ["incomplete", "disconnect", "timeout"])
+def test_failed_error_body_read_preserves_publication_classification(monkeypatch, stage, status, failure, read_failure):
+    import http.client
+    failures = {
+        "incomplete": http.client.IncompleteRead(b"private partial body", 200),
+        "disconnect": http.client.RemoteDisconnected("private connection reason"),
+        "timeout": TimeoutError("private timeout reason"),
+    }
+    class BrokenBody:
+        def read(self, size):
+            assert size == d.MAX_ERROR_BYTES + 1
+            raise failures[read_failure]
+        def close(self): pass
+    adapter = threads.ThreadsAdapter(access_token="private token", user_id="1", wait_seconds=0)
+    def post(path, params):
+        if stage == "create" or path.endswith("threads_publish"):
+            raise urllib.error.HTTPError("https://example.org/private", status, "private reason", {}, BrokenBody())
+        return {"id": "123"}
+    monkeypatch.setattr(adapter, "_post", post)
+    result = adapter.publish(base.Post("private text"), dry_run=False)
+    assert result.failure == failure
+    assert result.api_diagnostic == {"http_status": status}
+    assert "private" not in result.error
