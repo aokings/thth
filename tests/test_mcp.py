@@ -104,7 +104,7 @@ def test_mcp_stdioでtools_listとtools_callが通る(isolated_account):
     assert tool_names == {"thth_lint", "thth_queue", "thth_preview", "thth_board",
                           "thth_topic_context", "thth_topic_evaluate",
                           "thth_topic_decision", "before_you_post", "after_you_posted",
-                          "thread_read", "where_to_appear", "who_is_this"}
+                          "thread_read", "where_to_appear", "who_is_this", "analytics_report"}
     # 副作用のあるものは 1 つも出ていない。
     assert not (tool_names & {"thth_approve", "thth_throw", "thth_token",
                                "thth_auth", "thth_refresh", "thth_revoke",

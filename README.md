@@ -63,7 +63,7 @@ timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿
 - **英語の文書**: [README.en.md](README.en.md)・[docs/usage.en.md](docs/usage.en.md)・[llms.txt](llms.txt)。
 - **skill**: `skills/thth/SKILL.md`（wheel にも入る）。
 
-- **動くもの**（`thth --help` の全 36 サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`who`・`retract`・`location`・`notifications`。
+- **動くもの**（`thth --help` の全 37 サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`who`・`retract`・`location`・`notifications`。
 - **最初の本番投稿の記録**: 2026-09-09、@aoking に疎通確認を 1 本（`17916074118445631`）。
 - **未着手**: X・Facebook ページ・Instagram の各アダプタ。トピック検索の権限（tester には降りない）。泉のサーバ（v2-5）。
 - **権限の制約**: tester に降りる scope は 5 つ。削除はできない。
@@ -74,3 +74,8 @@ timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿
 registry は「この PyPI の名前を名乗ってよいのは誰か」を、**配布物の README にこの 1 行があるか**で確かめる（設計 v2-4 §3・一次資料は quickstart・**L2**）。だから消さないこと——消すと登録（`mcp-publisher publish`）が通らなくなる。形（`server.json` と版の一致）は `tests/test_server_json.py` が見張る。
 
 mcp-name: io.github.aokings/thth
+
+## 開発中（v3 基盤・未配布）
+
+`analytics-report` はローカル台帳から期間・母数・欠測・根拠を揃えたスナップショットを返します。公開済み 2.4.0 には含まれません。
+[形式と使い方](docs/分析レポート_v1.md)。

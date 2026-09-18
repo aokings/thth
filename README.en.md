@@ -132,6 +132,7 @@ All 36 subcommands `thth --help` lists today, one line each:
 - `replies` — read the collected-reply ledger
 - `measured` — read the collected-metrics ledger
 - `threads` — thread shape: branches, depth, participants, time to first reply
+- `analytics-report` — in development, not in published 2.4.0: read-only activity snapshot with evidence, missing data, JSON and Markdown.
 - `after` — called after posting: how the replies you went and engaged in were
   received, with counts and timing (read-only)
 - `topics` — how much each topic was seen
@@ -205,3 +206,7 @@ MIT, per the September 2026 design ruling
 ([docs/設計_v2_泉と門_2026-09-13.md](docs/設計_v2_泉と門_2026-09-13.md) §7-2). The
 `LICENSE` file and the switch to a public repo are still pending, done by hand
 by the maintainer.
+
+## In development (v3 foundation, unreleased)
+
+`analytics-report` reads local ledgers and returns a snapshot with period, sample sizes, missing data, and evidence. It is not included in published 2.4.0. See the [schema and usage](docs/分析レポート_v1.md).

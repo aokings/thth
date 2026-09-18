@@ -60,13 +60,13 @@ def _readme_ja_commands() -> list:
     text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     m = re.search(r"動くもの.*?: (.+?)。\n", text)
     assert m, "README.md に「動くもの」の行が見つかりません"
-    return re.findall(r"`([a-z_]+)`", m.group(1))
+    return re.findall(r"`([a-z_-]+)`", m.group(1))
 
 
 def _readme_en_commands() -> list:
     """README.en.md の Commands 節、`- \\`name\\` — ...` の形の行から名前を拾う。"""
     text = (REPO_ROOT / "README.en.md").read_text(encoding="utf-8")
-    return re.findall(r"^- `([a-z_]+)` — ", text, flags=re.MULTILINE)
+    return re.findall(r"^- `([a-z_-]+)` — ", text, flags=re.MULTILINE)
 
 
 def test_READMEの動くものの列挙はthth_helpの選択肢と一致する():

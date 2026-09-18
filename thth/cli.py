@@ -16,6 +16,7 @@ import unicodedata
 from . import __version__ as _pkg_version
 from . import account_cli as account_cli_mod
 from . import after_cli as after_cli_mod
+from . import analytics_report as analytics_report_mod
 from . import account_report as account_report_mod
 from . import accounts as accounts_mod
 from . import approval as approval_mod
@@ -2891,6 +2892,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_threads.add_argument("--post", default=None, help="この post_id だけ")
     p_threads.add_argument("--json", action="store_true")
     p_threads.set_defaults(func=cmd_threads)
+
+    p_report = sub.add_parser(
+        "analytics-report", help="自分の活動を根拠・欠測つきでまとめる（読むだけ）")
+    p_report.add_argument("account", nargs="?")
+    p_report.add_argument("--project", default=None)
+    p_report.add_argument("--window-days", type=int, default=7)
+    p_report.add_argument("--min-n", type=int, default=5)
+    p_report.add_argument("--json", action="store_true")
+    p_report.set_defaults(func=analytics_report_mod.cmd_analytics_report)
 
     p_after = sub.add_parser(
         "after",
