@@ -149,7 +149,8 @@ def test_broken_source_immature_and_sparse_remain_unknown(isolated_account_facto
     assert r["observations"]["changed"]["n_immature"] == 1
     assert r["observations"]["baseline"]["metrics"]["views"]["n_eligible"] == 1
     assert all(v["absolute_median_change"] is None for v in r["comparison"].values())
-    assert len(r["cannot_say"]) == 2
+    assert len(r["cannot_say"]) == 3
+    assert r["cannot_say"][-1] == "forecast_assumes_collection_runs"
 
 
 def test_invalid_cli_is_error_without_input_disclosure(isolated_account_factory, capsys):

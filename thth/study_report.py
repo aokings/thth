@@ -98,6 +98,15 @@ def load_declaration(path, now):
     return value
 
 
+def _eligibility_forecast(population):
+    immature = [row for row in population["evidence"] if row["status"] == "immature"]
+    if not immature:
+        return None
+    return {"posts_immature": len(immature),
+            "all_eligible_at": jst.iso(max(_time(row["posted_at"]) for row in immature) + datetime.timedelta(hours=24)),
+            "basis": "posted_at_plus_24h"}
+
+
 from .report_details import detailed
 
 @detailed
@@ -116,7 +125,7 @@ def answer(path, *, min_n=5, now=None):
               "measurement": comparison._measurement_contract(),
               "selection": {"basis": "explicit_post_ids_and_posted_at", "timezone": "Asia/Tokyo",
                             "baseline": "posted_at < decision.at", "changed": "decision.at <= posted_at < generated_at"},
-              "observations": None, "comparison": None, "data_updated_at": None,
+              "observations": None, "comparison": None, "data_updated_at": None, "eligibility_forecast": None,
               "data_updated_at_scope": "selected_observations", "cannot_say": [],
               "limitations": ["採用宣言は利用者の入力。本人確認・投稿承認を証明しない",
                               "差は観測値の差であり、因果効果・成功失敗・推奨ではない",
@@ -174,6 +183,9 @@ def answer(path, *, min_n=5, now=None):
         result["cannot_say"].append("読めない台帳があるため対象投稿や分類を網羅できない")
     if any(not entry["comparable"] for entry in result["comparison"].values()):
         result["cannot_say"].append("一方または両群の有効母数が不足する指標は差を算出しない")
+    result["eligibility_forecast"] = _eligibility_forecast(populations["changed"])
+    if result["eligibility_forecast"] is not None:
+        result["cannot_say"].append("forecast_assumes_collection_runs")
     return result
 
 

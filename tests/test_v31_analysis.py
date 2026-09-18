@@ -104,3 +104,13 @@ def test_a7_collected_time_bounds_history(monkeypatch):
     assert 'SECRET' not in str(value) and 'private' not in str(value)
     ledger['fetches']=[]
     assert s.shape_at('a','p',POSTED,NOW)['24'] is None
+
+def test_a9_forecast_only_immature():
+    from thth.study_report import _eligibility_forecast
+    late=NOW-dt.timedelta(hours=1)
+    value=_eligibility_forecast({'evidence':[
+        {'status':'immature','posted_at':jst.iso(NOW-dt.timedelta(hours=2))},
+        {'status':'immature','posted_at':jst.iso(late)},
+        {'status':'incomplete','posted_at':jst.iso(POSTED)}]})
+    assert value=={'posts_immature':2, 'all_eligible_at':jst.iso(late+dt.timedelta(hours=24)), 'basis':'posted_at_plus_24h'}
+    assert _eligibility_forecast({'evidence':[]}) is None
