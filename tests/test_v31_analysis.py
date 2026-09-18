@@ -158,3 +158,62 @@ def test_a4_unknown_counts_not_zero():
           'last_post_observed_at':None,'sent_count':None}
     current=copy.deepcopy(base);current['queue_counts']['draft']=0
     assert changes(base,current)==[{'field':'queue_counts.draft','previous':None,'current':0,'delta':None}]
+
+def test_a4_ancestor_swap_does_not_redirect(tmp_path, monkeypatch):
+    import os
+    from thth import handoff_cursor as cursor
+    from pathlib import Path
+    state=tmp_path/'state';state.mkdir()
+    (state/'a').mkdir()
+    outside=tmp_path/'outside';outside.mkdir();(outside/'a').mkdir()
+    original=tmp_path/'original'
+    monkeypatch.setattr(cursor.accounts,'state_dir_for',lambda name:state/name)
+    real_open=os.open
+    swapped=False
+    def race(path, flags, *args, **kwargs):
+        nonlocal swapped
+        # The state descriptor must already be held when its child is opened.
+        if path=='a' and not swapped:
+            state.rename(original)
+            state.symlink_to(outside,target_is_directory=True)
+            swapped=True
+        return real_open(path,flags,*args,**kwargs)
+    monkeypatch.setattr(cursor.os,'open',race)
+    fd=cursor._directory('a',create=True)
+    try:
+        child=real_open('proof',os.O_CREAT|os.O_WRONLY,0o600,dir_fd=fd)
+        os.close(child)
+    finally:os.close(fd)
+    assert swapped
+    assert (original/'a'/'proof').exists()
+    assert not (outside/'a'/'proof').exists()
+
+
+def test_a4_read_mode_limitations(isolated_account_factory):
+    from thth import operations_handoff as h
+    name=isolated_account_factory()['name']
+    assert h.answer(name,now=NOW)['limitations'][0]=='ローカル保存記録の現在の読み取り。前回セッション以降の差分ではない'
+    assert h.answer(name,now=NOW,since_last_read=True)['limitations'][0]=='保存済みsnapshotと現在の値の差分。間に起きた全イベントを復元するものではない'
+
+def test_a4_ancestor_swap_before_open_is_rejected(tmp_path, monkeypatch):
+    import os
+    import pytest
+    from thth import handoff_cursor as cursor
+    state=tmp_path/'state';state.mkdir()
+    outside=tmp_path/'outside';outside.mkdir();(outside/'a').mkdir()
+    monkeypatch.setattr(cursor.accounts,'state_dir_for',lambda name:state/name)
+    real_open=os.open
+    swapped=False
+    def race(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if path=='state' and not swapped:
+            state.rename(tmp_path/'original')
+            state.symlink_to(outside,target_is_directory=True)
+            swapped=True
+        return real_open(path,flags,*args,**kwargs)
+    monkeypatch.setattr(cursor.os,'open',race)
+    with pytest.raises(OSError):
+        fd=cursor._directory('a',create=True)
+        os.close(fd)
+    assert swapped
+    assert list((outside/'a').iterdir())==[]

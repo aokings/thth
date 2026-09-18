@@ -224,7 +224,9 @@ def answer(account_name=None, *, project=None, now=None, since_last_read=False):
     return {"schema_version": 1, "report_type": "operations_handoff",
             "generated_at": jst.iso(now), "filters": {"account": account_name, "project": project},
             "by_account": nodes, "scope_complete": not skipped,
-            "limitations": ["ローカル保存記録の現在の読み取り。前回セッション以降の差分ではない",
+            "limitations": [("保存済みsnapshotと現在の値の差分。間に起きた全イベントを復元するものではない"
+                              if since_last_read else
+                              "ローカル保存記録の現在の読み取り。前回セッション以降の差分ではない"),
                 "waiting は承認済み原稿の存在を表す。公開可能・timer正常の保証ではない",
                 "鮮度は未検証。ファイル更新時刻はSNS情報の取得時刻ではない",
                 "通知の未処理数はoutbox基準。SMTP受付は受信者への配送完了ではない",

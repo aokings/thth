@@ -13,13 +13,31 @@ QUEUE_KEYS = {'draft','approved_waiting','overdue','malformed','unattributed_mal
 
 def _directory(name, create=False):
     path = Path(accounts.state_dir_for(name)).absolute()
-    # Reject symlink traversal, including ancestors. No directory is created on reads.
-    for parent in reversed((path, *path.parents)):
-        if parent.is_symlink():
-            raise ValueError('cursor_unreadable')
-    if create:
-        path.mkdir(parents=True, exist_ok=True)
-    return os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    # Keep each opened ancestor pinned. Checking a path and then reopening the
+    # absolute name would permit a symlink swap between those two operations.
+    if ".." in path.parts:
+        raise ValueError('cursor_unreadable')
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory = os.open(path.anchor, flags)
+    try:
+        for component in path.parts[1:]:
+            try:
+                child = os.open(component, flags, dir_fd=directory)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                try:
+                    os.mkdir(component, mode=0o700, dir_fd=directory)
+                except FileExistsError:
+                    # Another creator may have won; never follow what it made.
+                    pass
+                child = os.open(component, flags, dir_fd=directory)
+            os.close(directory)
+            directory = child
+        return directory
+    except BaseException:
+        os.close(directory)
+        raise
 
 
 def snapshot(node):
