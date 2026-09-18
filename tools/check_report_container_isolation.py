@@ -62,7 +62,10 @@ def main():
             (root / 'accounts/demo.json').write_text(json.dumps(cfg))
             roots.append(root)
 
-        def run(root):
+        checkout_git = Path(directory) / 'checkout-git'
+        checkout_git.mkdir()
+
+        def run(root, *, checkout=False):
             container_name = 'thth-isolation-' + uuid.uuid4().hex
             command = ['docker','run','--name',container_name,'--rm','--pull','never','--network','none',
                 '--read-only','--cap-drop','ALL','--security-opt','no-new-privileges',
@@ -72,6 +75,23 @@ def main():
                 '--mount',f'type=bind,src={root},dst=/tenant,readonly',
                 '--env','PYTHONPATH=/code','--env','PYTHONDONTWRITEBYTECODE=1',
                 '--env','THTH_ROOT=/tenant','--entrypoint','python3', args.image, '-c',PROBE]
+            if checkout:
+                prefix = """
+import os, shutil
+from pathlib import Path
+assert Path('/code/.git').is_dir()
+os.environ['PATH'] = '/no-binaries'
+assert shutil.which('git') is None
+from thth import selfupdate
+assert selfupdate.APP_DIR == '/code'
+assert selfupdate.LOADED_REV is None
+"""
+                # Add a .git marker alongside the mounted package: the checkout
+                # import path is now exercised, independently of image packages.
+                insert_at = command.index('--entrypoint')
+                command[insert_at:insert_at] = ['--mount',
+                    f'type=bind,src={checkout_git},dst=/code/.git,readonly']
+                command[-1] = prefix + PROBE
             try:
                 result = subprocess.run(command, capture_output=True, text=True, timeout=60)
             finally:
@@ -85,9 +105,12 @@ def main():
             results = list(pool.map(run, roots))
         assert [value['count'] for value in results] == [1,2], results
         assert all(value['uid'] == uid for value in results), results
+        checkout_result = run(roots[0], checkout=True)
+        assert checkout_result == results[0], checkout_result
         assert all(not (root / 'write-probe').exists() for root in roots)
         print(json.dumps({'result':'passed','parallel_tenants':2,
             'same_account_and_project':True, 'distinct_observations':[1,2],
+            'checkout_without_git_import':True,
             'read_only_mounts':True, 'network':'none', 'image':args.image}))
 
 

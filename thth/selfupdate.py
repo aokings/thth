@@ -96,7 +96,12 @@ _未指定 = object()
 
 
 def _git(args: list, *, cwd: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
+    command = ["git", "-C", cwd, *args]
+    try:
+        return subprocess.run(command, capture_output=True, text=True)
+    except OSError:
+        # Missing/unexecutable Git is unavailable, never a successful check.
+        return subprocess.CompletedProcess(command, 127, stdout="", stderr="git_unavailable")
 
 
 def _refspec(ref: str) -> str:
