@@ -46,7 +46,7 @@ def execute_report(context: ReportContext, request: dict) -> dict:
     operation = request.get("operation")
     if not isinstance(operation, str) or operation not in {"analytics_report", "operations_handoff"}:
         raise ReportServiceError("unsupported_operation")
-    options = {"window_days", "min_n", "compare_previous", "by"} if operation == "analytics_report" else set()
+    options = {"window_days", "min_n", "compare_previous", "by"} if operation == "analytics_report" else {"since_last_read"}
     if set(request) - {"operation", "account", "project"} - options:
         raise ReportServiceError("invalid_request")
     # Presence, rather than truthiness, rejects null and ambiguous scope.
@@ -60,7 +60,9 @@ def execute_report(context: ReportContext, request: dict) -> dict:
         raise ReportServiceError("invalid_options")
     if "by" in request and (request["by"] not in ("kind", "hour_band", "topic") or request.get("compare_previous") is not True):
         raise ReportServiceError("invalid_options")
-    for key in options - {"compare_previous", "by"}:
+    if "since_last_read" in request and type(request["since_last_read"]) is not bool:
+        raise ReportServiceError("invalid_options")
+    for key in options - {"compare_previous", "by", "since_last_read"}:
         if key in request and (type(request[key]) is not int or request[key] < 1):
             raise ReportServiceError("invalid_options")
     if scope_key == "account":
@@ -78,7 +80,7 @@ def execute_report(context: ReportContext, request: dict) -> dict:
             if operation == "analytics_report":
                 reports[name] = analytics_report.answer(name, now=now, **kwargs)
             else:
-                reports[name] = operations_handoff.answer(name, now=now)
+                reports[name] = operations_handoff.answer(name, now=now, **kwargs)
     except (accounts.AccountError, after_cli.AfterError, operations_handoff.HandoffError,
             OSError, ValueError, TypeError, KeyError, OverflowError):
         raise ReportServiceError("report_unavailable") from None

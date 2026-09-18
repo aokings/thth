@@ -143,7 +143,8 @@ TOOLS = [
         "name": "operations_handoff",
         "description": "ローカル運用記録の状態・承認待ち・inflight・通知未処理を根拠と鮮度の制約付きで返す。同期・承認・再送はしない",
         "inputSchema": {"type": "object", "properties": {
-            "account": {"type": "string"}, "project": {"type": "string"}}},
+            "account": {"type": "string"}, "project": {"type": "string"},
+            "since_last_read": {"type": "boolean"}}},
     },
     {
         "name": "study_report",
@@ -401,6 +402,8 @@ def validate_arguments(name: str, arguments) -> dict:
     if name == "analytics_report" and "by" in arguments:
         if arguments["by"] not in ("kind", "hour_band", "topic") or arguments.get("compare_previous") is not True:
             raise ToolInputError("analytics_report: by は compare_previous=true と kind/hour_band/topic が必要です")
+    if name == "operations_handoff" and "since_last_read" in arguments and type(arguments["since_last_read"]) is not bool:
+        raise ToolInputError("operations_handoff: since_last_read は boolean です")
     props = schema.get("properties") or {}
     for key in schema.get("required") or []:
         if arguments.get(key) is None:
@@ -537,6 +540,10 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         text = proc.stdout
     elif name == "operations_handoff":
         args = ["handoff-report"]
+        if "mark_read" in arguments or "by" in arguments:
+            raise ValueError("operations_handoff is read-only")
+        if arguments.get("since_last_read"):
+            args.append("--since-last-read")
         if arguments.get("project"):
             args += ["--project", arguments["project"]]
         else:

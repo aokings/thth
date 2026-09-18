@@ -88,6 +88,7 @@ def _account(name, cfg, now):
 
     sent_dir = state_dir / "sent"
     sent_state = "available"
+    sent_count = 0
     try:
         for path in sorted(sent_dir.iterdir()):
             if path.suffix != ".json":
@@ -98,6 +99,7 @@ def _account(name, cfg, now):
                 sent_state = "unreadable"
             elif at <= now:
                 last.append((at, "sent"))
+                sent_count += 1
     except FileNotFoundError:
         sent_state = "missing"
     except OSError:
@@ -123,11 +125,12 @@ def _account(name, cfg, now):
     path = state_dir / incident.STATE_FILE
     outbox, available = _json(path)
     notifications = {"availability": available, "mail_pending": None, "repo_pending": None,
-                     "recorded_state": None, "recorded_at": None, "reason_code": None}
+                     "recorded_state": None, "recorded_at": None, "reason_code": None, "last_event_id": None}
     if available == "available":
         try:
             incident._validate(outbox)
             latest_event = outbox["events"][-1] if outbox["events"] else {}
+            notifications["last_event_id"] = latest_event.get("id")
             notifications.update(recorded_state=outbox["last"], recorded_at=latest_event.get("at"),
                                  reason_code=latest_event.get("reason"))
             notifications.update(mail_pending=sum(2-len(e["accepted"]) for e in outbox["events"]),
@@ -160,6 +163,7 @@ def _account(name, cfg, now):
              "waiting" if queue_state == "available" and counts["approved_waiting"] else "unknown")
     latest = max(last, key=lambda item: item[0]) if last else None
     return {"state": state, "queue": queue, "inflight": diagnostic,
+            "sent_count": sent_count if sent_state == "available" else 0 if sent_state == "missing" else None,
             "notifications": notifications, "last_run_notification": run,
             "last_post": {"observed_at": jst.iso(latest[0]) if latest else None,
                           "source": latest[1] if latest else None,
@@ -173,7 +177,7 @@ def _account(name, cfg, now):
 from .report_details import detailed
 
 @detailed
-def answer(account_name=None, *, project=None, now=None):
+def answer(account_name=None, *, project=None, now=None, since_last_read=False):
     for value in (account_name, project):
         if value is not None and (not isinstance(value, str) or not value.strip()):
             raise HandoffError("account/project は空でない文字列です")
@@ -182,6 +186,8 @@ def answer(account_name=None, *, project=None, now=None):
     now = now if now is not None else jst.now_jst()
     if not isinstance(now, datetime.datetime) or now.tzinfo is None:
         raise HandoffError("now はタイムゾーン付きの日時です")
+    if type(since_last_read) is not bool:
+        raise HandoffError("since_last_read は boolean です")
     configs = {}
     skipped = False
     if account_name is not None:
@@ -204,6 +210,17 @@ def answer(account_name=None, *, project=None, now=None):
         if not configs:
             raise HandoffError("project に読める account がありません")
     nodes = {name: _account(name, cfg, now) for name, cfg in configs.items()}
+    from . import handoff_cursor
+    for name, node in nodes.items():
+        node["changes_since"] = None
+        if since_last_read:
+            previous, reason = handoff_cursor.read(name, now)
+            if previous is not None:
+                node["changes_since"] = {"read_at": previous["read_at"], "by": previous["by"],
+                    "changes": handoff_cursor.changes(previous["snapshot"], handoff_cursor.snapshot(node))}
+                node["cannot_say"].remove("no_previous_session_cursor")
+            elif reason == "cursor_unreadable":
+                node["cannot_say"].append(reason)
     return {"schema_version": 1, "report_type": "operations_handoff",
             "generated_at": jst.iso(now), "filters": {"account": account_name, "project": project},
             "by_account": nodes, "scope_complete": not skipped,
@@ -218,6 +235,9 @@ def answer(account_name=None, *, project=None, now=None):
 def render_markdown(payload):
     lines = ["# Operations handoff", "", f"生成時刻: {payload['generated_at']}", ""]
     for name, row in payload["by_account"].items():
+        if row.get("changes_since") is not None:
+            for change in row["changes_since"]["changes"]:
+                lines.append(f"- {analytics_report._markdown_text(name)}: {analytics_report._markdown_text(change['field'])}: {analytics_report._markdown_text(change['previous'])} → {analytics_report._markdown_text(change['current'])}")
         lines += [f"- {analytics_report._markdown_text(name)}: {row['state']}（timer正常性は不明）"]
     lines += ["", *["- " + item for item in payload["limitations"]], "", "## 根拠と構造化データ", ""]
     lines += ["    " + line for line in json.dumps(payload, ensure_ascii=False, indent=2).splitlines()]
@@ -226,8 +246,16 @@ def render_markdown(payload):
 
 def cmd_handoff_report(args):
     try:
-        payload = answer(args.account, project=args.project)
-    except HandoffError as exc:
+        mark_read = getattr(args, "mark_read", False)
+        by = getattr(args, "by", None)
+        if type(mark_read) is not bool or (mark_read and (not isinstance(by, str) or not by.strip())) or (by is not None and not mark_read):
+            raise HandoffError("--mark-read と --by 名前は組で指定してください")
+        payload = answer(args.account, project=args.project, since_last_read=getattr(args,"since_last_read",False))
+        if mark_read:
+            from . import handoff_cursor
+            for name, node in payload["by_account"].items():
+                handoff_cursor.write(name, node, by, jst.parse(payload["generated_at"]))
+    except (HandoffError, OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     print(json.dumps(payload, ensure_ascii=False, indent=2) if args.json else render_markdown(payload))

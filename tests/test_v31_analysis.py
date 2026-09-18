@@ -114,3 +114,47 @@ def test_a9_forecast_only_immature():
         {'status':'incomplete','posted_at':jst.iso(POSTED)}]})
     assert value=={'posts_immature':2, 'all_eligible_at':jst.iso(late+dt.timedelta(hours=24)), 'basis':'posted_at_plus_24h'}
     assert _eligibility_forecast({'evidence':[]}) is None
+
+def test_a4_explicit_cli_write_and_readonly_delta(isolated_account_factory, monkeypatch, capsys):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    from thth import operations_handoff as h, handoff_cursor as cursor, accounts
+    from tests.test_operations_handoff import seed
+    a=isolated_account_factory()
+    name=a['name']
+    monkeypatch.setattr(h.jst,'now_jst',lambda:NOW)
+    seed(a,'draft.md','draft')
+    path=Path(accounts.state_dir_for(name))/'handoff_cursor.json'
+    args=SimpleNamespace(account=name,project=None,json=True,mark_read=False,by=None,since_last_read=True)
+    assert h.cmd_handoff_report(args)==0
+    assert not path.exists()
+    args.mark_read=True
+    assert h.cmd_handoff_report(args)==2
+    assert not path.exists()
+    args.by='reader'
+    assert h.cmd_handoff_report(args)==0
+    saved=path.read_bytes()
+    node=h.answer(name,now=NOW,since_last_read=True)['by_account'][name]
+    assert node['changes_since']['changes']==[]
+    assert 'no_previous_session_cursor' not in node['cannot_say']
+    seed(a,'draft2.md','draft')
+    node=h.answer(name,now=NOW,since_last_read=True)['by_account'][name]
+    assert next(r for r in node['changes_since']['changes'] if r['field']=='queue_counts.draft')['delta']==1
+    assert path.read_bytes()==saved
+    path.unlink()
+    path.symlink_to(path.parent/'outside')
+    assert cursor.read(name,NOW)[1]=='cursor_unreadable'
+    args.mark_read=True
+    assert h.cmd_handoff_report(args)==2
+    assert not (path.parent/'outside').exists()
+
+def test_a4_unknown_counts_not_zero():
+    from thth.handoff_cursor import changes
+    import copy
+    base={'queue_counts':dict.fromkeys(['draft','approved_waiting','overdue','malformed','unattributed_malformed']),
+          'inflight':{'present':None,'since':None},'notification_last_event_id':None,
+          'notification_recorded_state':None,'run_last_attempt_at':None,'run_recorded_state':None,
+          'last_post_observed_at':None,'sent_count':None}
+    current=copy.deepcopy(base);current['queue_counts']['draft']=0
+    assert changes(base,current)==[{'field':'queue_counts.draft','previous':None,'current':0,'delta':None}]

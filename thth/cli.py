@@ -3045,6 +3045,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_handoff.add_argument("account", nargs="?")
     p_handoff.add_argument("--project", default=None)
     p_handoff.add_argument("--json", action="store_true")
+    p_handoff.add_argument("--since-last-read", action="store_true")
+    p_handoff.add_argument("--mark-read", action="store_true")
+    p_handoff.add_argument("--by", default=None)
     p_handoff.set_defaults(func=operations_handoff_mod.cmd_handoff_report)
 
     p_board = sub.add_parser("board", help="アカウントごとの鮮度・inflight・型外の骨")
