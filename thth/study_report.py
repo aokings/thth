@@ -44,6 +44,10 @@ def _pairs(pairs):
     return result
 
 
+def _reject_constant(_):
+    raise StudyError("施策JSONに非有限数があります")
+
+
 def load_declaration(path, now):
     try:
         # Nonblocking open prevents FIFO input from waiting indefinitely.
@@ -60,7 +64,7 @@ def load_declaration(path, now):
         raise StudyError("施策JSONの上限は1MiBです")
     try:
         value = json.loads(data.decode("utf-8"), object_pairs_hook=_pairs,
-                           parse_constant=lambda _: (_ for _ in ()).throw(StudyError("施策JSONに非有限数があります")))
+                           parse_constant=_reject_constant)
     except (UnicodeError, ValueError, RecursionError):
         raise StudyError("施策JSONを解釈できません（形式・重複キーを確認）") from None
     required = {"schema_version", "id", "account", "hypothesis", "change", "decision", "baseline_post_ids", "changed_post_ids"}

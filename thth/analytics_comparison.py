@@ -12,10 +12,17 @@ METRICS = ("views", "likes", "replies")
 
 
 
+def _timestamp(raw):
+    try:
+        return jst.parse(raw)
+    except (ValueError, OverflowError):
+        return None
+
 def _measurement_contract():
     return {"mark": 24, "minimum_age_hours_inclusive": 24,
             "maximum_age_hours_exclusive": 30, "selection": "earliest_eligible_observation",
             "age_basis": "collected_at_minus_posted_at", "collapsed_marks_allowed": False}
+
 
 def _metric(value):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
@@ -42,10 +49,10 @@ def _observation(post, posted, now):
         if not isinstance(row, dict):
             rejected["malformed_row"] += 1
             continue
-        collected = jst.parse(row.get("collected_at"))
+        collected = _timestamp(row.get("collected_at"))
         marks = row.get("marks")
         reason = None
-        if jst.parse(row.get("posted_at")) != posted:
+        if _timestamp(row.get("posted_at")) != posted:
             reason = "invalid_or_conflicting_posted_at"
         elif collected is None:
             reason = "invalid_collected_at"
@@ -104,7 +111,6 @@ def _population(items, start, end, now, min_n):
             "data_updated_at": max(times) if times else None}
 
 
-
 def _root_exclusion(post, *, known_reply=False):
     """Shared root-population gate for period and explicitly declared studies."""
     if known_reply or post.get("reply_to"):
@@ -114,7 +120,7 @@ def _root_exclusion(post, *, known_reply=False):
     if any(row.get("reply_to") or row.get("source") != "queue"
            for row in post.get("rows", []) if isinstance(row, dict)):
         return "conflicting_root_classification"
-    if jst.parse(post.get("posted_at")) is None:
+    if _timestamp(post.get("posted_at")) is None:
         return "invalid_root_posted_at"
     return None
 
@@ -129,6 +135,7 @@ def _differences(previous, current, min_n):
                           "comparability_scope": "measurement_band_and_minimum_sample_only",
                           "reason": None if eligible else "insufficient_samples_in_one_or_both_periods"}
     return deltas
+
 
 def _account(name, previous_start, current_start, now, min_n):
     cfg = accounts.load_account(name)
@@ -149,13 +156,13 @@ def _account(name, previous_start, current_start, now, min_n):
         own_engagements[str(row["post_id"])].append(row)
     reply_items = []
     for post_id, rows in own_engagements.items():
-        times = [jst.parse(row.get("posted_at")) for row in rows]
+        times = [_timestamp(row.get("posted_at")) for row in rows]
         if None in times or len(set(times)) != 1:
             exclusions["invalid_or_conflicting_engagement_posted_at"] += 1
             continue
         posted = times[0]
         post = by_id.get(post_id)
-        if post and jst.parse(post.get("posted_at")) != posted:
+        if post and _timestamp(post.get("posted_at")) != posted:
             exclusions["conflicting_measured_engagement_posted_at"] += 1
             post = None
         reply_items.append((post_id, posted, post))
@@ -166,7 +173,7 @@ def _account(name, previous_start, current_start, now, min_n):
             if reason != "reply_not_root":
                 exclusions[reason] += 1
             continue
-        posted = jst.parse(post.get("posted_at"))
+        posted = _timestamp(post.get("posted_at"))
         root_items.append((post_id, posted, post))
     exclusions["unknown_ownership"] = len(measured_result.get("posts_unknown_ownership", []))
     broken = {"measured_files": len(measured_result.get("broken", [])),

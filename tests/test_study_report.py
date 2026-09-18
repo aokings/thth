@@ -1,5 +1,4 @@
 """Study declarations stay distinct from observed values and posting approval."""
-import copy
 import datetime
 import json
 from pathlib import Path
@@ -138,3 +137,33 @@ def test_cli_mcp_and_file_boundary(isolated_account_factory, monkeypatch, capsys
         server.validate_arguments("study_report", {"file": str(tmp_path/"outside.json")})
     with pytest.raises(server.ToolInputError):
         server.validate_arguments("study_report", {"file": str(path), "min_n": True})
+
+
+def test_broken_source_immature_and_sparse_remain_unknown(isolated_account_factory):
+    a = isolated_account_factory()
+    seed(a, "before", NOW-datetime.timedelta(days=8), value=0)
+    seed(a, "after", NOW-datetime.timedelta(hours=1), age=0.5)
+    Path(_insight_path(a, "broken")).write_text("{broken")
+    r = study_report.answer(write(a, declaration(a)), now=NOW)
+    assert r["incomplete_sources"]["measured_files"] == 1
+    assert r["observations"]["changed"]["n_immature"] == 1
+    assert r["observations"]["baseline"]["metrics"]["views"]["n_eligible"] == 1
+    assert all(v["absolute_median_change"] is None for v in r["comparison"].values())
+    assert len(r["cannot_say"]) == 2
+
+
+def test_invalid_cli_is_error_without_input_disclosure(isolated_account_factory, capsys):
+    a = isolated_account_factory()
+    d = declaration(a)
+    d["SECRET"] = "secret contents"
+    path = write(a, d)
+    assert cli.main(["study-report", str(path), "--json"]) == 2
+    captured = capsys.readouterr()
+    assert not captured.out and "SECRET" not in captured.err and "secret contents" not in captured.err
+
+
+def test_extreme_invalid_ledger_time_is_excluded(isolated_account_factory):
+    a = isolated_account_factory()
+    seed(a, "before", NOW-datetime.timedelta(days=8), extra={"posted_at": "0001-01-01T00:00:00+23:00"})
+    r = study_report.answer(write(a, declaration(a)), now=NOW)
+    assert r["observations"]["baseline"]["excluded"] == [{"post_id": "before", "reason": "invalid_root_posted_at"}]
