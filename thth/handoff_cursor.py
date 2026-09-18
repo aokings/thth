@@ -118,6 +118,11 @@ def read(name, now):
         if len(data)>65536:raise ValueError('cursor_unreadable')
         return _validate(json.loads(data,object_pairs_hook=_pairs),now),None
     except CursorDirectoryUnavailable:
+        # A symlink below the trusted root is an unreadable cursor location;
+        # an absent/unopenable root is a directory availability failure.
+        root = Path(os.path.realpath(accounts.thth_root()))
+        if any((root / part).is_symlink() for part in ('state', name)):
+            return None,'cursor_unreadable'
         return None,'cursor_directory_unavailable'
     except FileNotFoundError:
         return None,'no_previous_session_cursor'
