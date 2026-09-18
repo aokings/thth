@@ -146,6 +146,14 @@ TOOLS = [
             "account": {"type": "string"}, "project": {"type": "string"}}},
     },
     {
+        "name": "study_report",
+        "description": "ローカル施策JSONの未検証の採用宣言と本人の観測を結ぶ。proposedは集計せず、adoptedも因果効果や投稿承認を証明しない。読むだけ",
+        "inputSchema": {
+            "type": "object", "required": ["file"],
+            "properties": {"file": {"type": "string"}, "min_n": {"type": "integer"}},
+        },
+    },
+    {
         "name": "analytics_report",
         "description": "自分の活動のスナップショットを期間・母数・欠測・根拠つきで返す。ローカル台帳を読むだけ。compare_previous=trueで前期間比較。推奨は含まない",
         "inputSchema": {
@@ -532,6 +540,13 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
+    elif name == "study_report":
+        args = ["study-report", arguments["file"]]
+        if arguments.get("min_n") is not None:
+            args += ["--min-n", str(arguments["min_n"])]
+        args.append("--json")
+        proc = run_cli(args)
+        text = proc.stdout
     elif name == "analytics_report":
         args = ["analytics-report"]
         if arguments.get("project"):
@@ -622,7 +637,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         return {"content": [{"type": "text", "text": f"unknown tool: {name}"}], "isError": True}
 
     if name.startswith("thth_topic_") or name in (
-            "before_you_post", "after_you_posted", "analytics_report", "operations_handoff", "thread_read", "where_to_appear",
+            "before_you_post", "after_you_posted", "analytics_report", "operations_handoff", "study_report", "thread_read", "where_to_appear",
             "who_is_this"):
         # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）
         # とは意味が違う——こちらは stale_context・不正な候補比較で、

@@ -11,6 +11,12 @@ from . import accounts, after_cli, engagements, jst, measured
 METRICS = ("views", "likes", "replies")
 
 
+
+def _measurement_contract():
+    return {"mark": 24, "minimum_age_hours_inclusive": 24,
+            "maximum_age_hours_exclusive": 30, "selection": "earliest_eligible_observation",
+            "age_basis": "collected_at_minus_posted_at", "collapsed_marks_allowed": False}
+
 def _metric(value):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         return None
@@ -98,6 +104,32 @@ def _population(items, start, end, now, min_n):
             "data_updated_at": max(times) if times else None}
 
 
+
+def _root_exclusion(post, *, known_reply=False):
+    """Shared root-population gate for period and explicitly declared studies."""
+    if known_reply or post.get("reply_to"):
+        return "reply_not_root"
+    if post.get("source") != "queue" or not post.get("reply_to_known"):
+        return "root_or_reply_unknown"
+    if any(row.get("reply_to") or row.get("source") != "queue"
+           for row in post.get("rows", []) if isinstance(row, dict)):
+        return "conflicting_root_classification"
+    if jst.parse(post.get("posted_at")) is None:
+        return "invalid_root_posted_at"
+    return None
+
+
+def _differences(previous, current, min_n):
+    deltas = {}
+    for metric in METRICS:
+        before, after = previous["metrics"][metric], current["metrics"][metric]
+        eligible = before["n_eligible"] >= min_n and after["n_eligible"] >= min_n
+        deltas[metric] = {"absolute_median_change": after["median"] - before["median"] if eligible else None,
+                          "comparable": eligible,
+                          "comparability_scope": "measurement_band_and_minimum_sample_only",
+                          "reason": None if eligible else "insufficient_samples_in_one_or_both_periods"}
+    return deltas
+
 def _account(name, previous_start, current_start, now, min_n):
     cfg = accounts.load_account(name)
     # Existing loader supplies account-at-observation ownership guarantees. A
@@ -129,19 +161,12 @@ def _account(name, previous_start, current_start, now, min_n):
         reply_items.append((post_id, posted, post))
     root_items = []
     for post_id, post in by_id.items():
-        if post_id in own_engagements or post.get("reply_to"):
-            continue
-        if post.get("source") != "queue" or not post.get("reply_to_known"):
-            exclusions["root_or_reply_unknown"] += 1
-            continue
-        if any(row.get("reply_to") or row.get("source") != "queue"
-               for row in post.get("rows", []) if isinstance(row, dict)):
-            exclusions["conflicting_root_classification"] += 1
+        reason = _root_exclusion(post, known_reply=post_id in own_engagements)
+        if reason:
+            if reason != "reply_not_root":
+                exclusions[reason] += 1
             continue
         posted = jst.parse(post.get("posted_at"))
-        if posted is None:
-            exclusions["invalid_root_posted_at"] += 1
-            continue
         root_items.append((post_id, posted, post))
     exclusions["unknown_ownership"] = len(measured_result.get("posts_unknown_ownership", []))
     broken = {"measured_files": len(measured_result.get("broken", [])),
@@ -151,14 +176,7 @@ def _account(name, previous_start, current_start, now, min_n):
     for kind, items in (("posts", root_items), ("engagements", reply_items)):
         previous = _population(items, previous_start, current_start, now, min_n)
         current = _population(items, current_start, now, now, min_n)
-        deltas = {}
-        for metric in METRICS:
-            before, after = previous["metrics"][metric], current["metrics"][metric]
-            eligible = before["n_eligible"] >= min_n and after["n_eligible"] >= min_n
-            deltas[metric] = {"absolute_median_change": after["median"] - before["median"] if eligible else None,
-                              "comparable": eligible,
-                              "comparability_scope": "measurement_band_and_minimum_sample_only",
-                              "reason": None if eligible else "insufficient_samples_in_one_or_both_periods"}
+        deltas = _differences(previous, current, min_n)
         node[kind] = {"previous": previous, "current": current, "comparison": deltas}
     if any(broken.values()):
         node["cannot_say"].append("読めない台帳があり、母集団全体の件数・変化は判断できない")
@@ -196,9 +214,7 @@ def answer(account_name, *, project, window_days, min_n, now):
             "data_updated_at_basis": "latest_selected_observation",
             "data_updated_at_scope": "selected_observations", "periods": periods,
             "filters": {"account": account_name, "project": project}, "min_n": min_n,
-            "measurement": {"mark": 24, "minimum_age_hours_inclusive": 24,
-                            "maximum_age_hours_exclusive": 30, "selection": "earliest_eligible_observation",
-                            "age_basis": "collected_at_minus_posted_at", "collapsed_marks_allowed": False},
+            "measurement": _measurement_contract(),
             "by_account": nodes, "cannot_say": cannot_say,
             "limitations": ["24時間ちょうどの測定ではなく24時間以上30時間未満の観測",
                             "data_updated_atは採用観測だけの最終時刻。全台帳の鮮度・最終採取試行ではない",

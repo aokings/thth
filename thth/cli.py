@@ -17,6 +17,7 @@ from . import __version__ as _pkg_version
 from . import account_cli as account_cli_mod
 from . import after_cli as after_cli_mod
 from . import analytics_report as analytics_report_mod
+from . import study_report as study_report_mod
 from . import operations_handoff as operations_handoff_mod
 from . import account_report as account_report_mod
 from . import accounts as accounts_mod
@@ -2893,6 +2894,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_threads.add_argument("--post", default=None, help="この post_id だけ")
     p_threads.add_argument("--json", action="store_true")
     p_threads.set_defaults(func=cmd_threads)
+
+    p_study = sub.add_parser("study-report", help="施策の宣言と自分の観測を結ぶ（読むだけ）")
+    p_study.add_argument("file")
+    p_study.add_argument("--min-n", type=int, default=5)
+    p_study.add_argument("--json", action="store_true")
+    p_study.set_defaults(func=study_report_mod.cmd_study_report)
 
     p_report = sub.add_parser(
         "analytics-report", help="自分の活動を根拠・欠測つきでまとめる（読むだけ）")

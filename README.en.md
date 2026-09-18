@@ -116,7 +116,7 @@ Full walkthrough: [docs/usage.en.md](docs/usage.en.md).
 
 ## Commands
 
-All 38 subcommands `thth --help` lists in this development checkout, one line each:
+All 39 subcommands `thth --help` lists in this development checkout, one line each:
 
 - `lint` — check a queue file's front matter and length
 - `preview` — show the exact text that would go out
@@ -133,6 +133,7 @@ All 38 subcommands `thth --help` lists in this development checkout, one line ea
 - `measured` — read the collected-metrics ledger
 - `threads` — thread shape: branches, depth, participants, time to first reply
 - `handoff-report` — in development, not in published 2.4.0: local operations evidence, pending notifications and explicit freshness limits.
+- `study-report` — in development, not in published 2.4.0: link an unverified study declaration to explicitly selected owned root-post observations; read-only, no causal-effect claim. See the [contract](docs/施策レポート_v1.md).
 - `analytics-report` — in development, not in published 2.4.0: read-only activity snapshot with evidence, missing data, JSON and Markdown.
 - `after` — called after posting: how the replies you went and engaged in were
   received, with counts and timing (read-only)
