@@ -75,3 +75,54 @@ def test_c1_reply_failure_retries_without_extra_insights(tmp_path,isolated_accou
     assert len(adapter.insight_calls)==1 and len(adapter.reply_calls)==2
     targets,_=c._refresh_targets(a['name'],a,now=POSTED+dt.timedelta(hours=720),errors=[],post_id=None)
     assert targets==[]
+
+def daily_path(a):
+    dirs=accounts.data_dirs(a,a['name'])
+    path=Path(dirs['insights_account'])/f'{a["name"]}-2026-09.ndjson'
+    path.parent.mkdir(parents=True,exist_ok=True)
+    return path
+
+def daily_row(a,value,**extra):
+    return {'account':a['name'],'date':'2026-09-01','collected_at':jst.iso(POSTED),
+            'metrics':{'followers_count':value},**extra}
+
+@pytest.mark.parametrize('route',['queue','sent','bundle'])
+def test_c2_context_at_append_no_backfill(tmp_path,isolated_account_factory,monkeypatch,route):
+    a=setup_route(tmp_path,isolated_account_factory,monkeypatch,route)
+    adapter=Adapter()
+    c.collect_once(a['name'],adapter=adapter,now=POSTED+dt.timedelta(hours=1),log=lambda x:None)
+    p=Path(accounts.data_dirs(a,a['name'])['insights_posts'])/'P.ndjson'
+    before=p.read_bytes();assert json.loads(before)['context'] is None
+    daily_path(a).write_text(json.dumps(daily_row(a,0))+'\n')
+    c.collect_once(a['name'],adapter=adapter,now=POSTED+dt.timedelta(hours=2),log=lambda x:None)
+    assert p.read_bytes()==before  # no new mark: no retrofit
+    c.collect_once(a['name'],adapter=adapter,now=POSTED+dt.timedelta(hours=6),log=lambda x:None)
+    assert p.read_bytes().startswith(before)
+    assert c._read_ndjson(str(p))[-1]['context']=={'followers_count':0,'followers_count_at':'2026-09-01','source':'insights_account'}
+    assert len(adapter.insight_calls)==2
+
+@pytest.mark.parametrize('value',[None,True,-1,float('nan'),float('inf'),1.5,'2'])
+def test_c2_invalid_counts_are_missing(tmp_path,value):
+    from thth.collection_context import followers
+    a={'name':'a'};p=tmp_path/'a-2026-09.ndjson'
+    p.write_text(json.dumps(daily_row(a,value)))
+    assert followers('a',tmp_path,POSTED+dt.timedelta(hours=1)) is None
+
+@pytest.mark.parametrize('change',[{'account':'other'},{'date':'2026-08-31'}, {'collected_at':'2026-09-01T12:00:00+09:00'}, {'collected_at':'invalid'}])
+def test_c2_scope_and_time_missing(tmp_path,change):
+    from thth.collection_context import followers
+    p=tmp_path/'a-2026-09.ndjson';p.write_text(json.dumps(daily_row({'name':'a'},7,**change)))
+    assert followers('a',tmp_path,POSTED+dt.timedelta(hours=1)) is None
+
+def test_c2_conflict_and_broken_fail_closed(tmp_path):
+    from thth.collection_context import followers
+    p=tmp_path/'a-2026-09.ndjson'
+    rows=[daily_row({'name':'a'},7),daily_row({'name':'a'},8)]
+    p.write_text('\n'.join(map(json.dumps,rows)))
+    assert followers('a',tmp_path,POSTED+dt.timedelta(hours=1)) is None
+    p.write_text(json.dumps(rows[0])+'\n{broken')
+    assert followers('a',tmp_path,POSTED+dt.timedelta(hours=1)) is None
+    p.write_text(json.dumps(rows[0]))
+    # UTC previous date is JST current date: use the observation's JST date.
+    utc_now=(POSTED+dt.timedelta(hours=1)).astimezone(dt.timezone.utc)
+    assert followers('a',tmp_path,utc_now)['followers_count']==7

@@ -220,7 +220,8 @@ def test_d_従来の台帳は置き場も行の中身も変わらない(tmp_path
     assert set(rows[0]) == {
         "post_id", "file", "source", "account", "medium", "topic", "reply_to",
         "text_length", "has_link", "collected_at", "posted_at", "age_hours",
-        "marks", "metrics"}, sorted(rows[0])
+        "marks", "metrics", "context"}, sorted(rows[0])
+    assert rows[0]["context"] is None
     assert rows[0]["source"] == "queue"
     assert rows[0]["file"] == "a.md"
     assert rows[0]["age_hours"] == 2.0

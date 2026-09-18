@@ -46,6 +46,7 @@ import re
 
 from . import accounts as accounts_mod
 from . import core
+from .collection_context import followers as followers_context
 from . import jst
 from . import measured as measured_mod
 from . import postid as postid_mod
@@ -642,6 +643,7 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 "age_hours": round(age_hours, 2),
                 "marks": marks,
                 "metrics": metrics,
+                "context": followers_context(account_name, dirs["insights_account"], now),
             }])
             touched.append(insight_path)
 
