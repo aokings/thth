@@ -133,3 +133,24 @@ def test_bad_response_rejected(response):
                                    "2026-09-18 12:00:00Z", "2026-09-18"])
 def test_invalid_timestamp_forms(value):
     assert run(row(created_at=value))["rejected"][0]["reason"] == "invalid_posted_at"
+
+
+@pytest.mark.parametrize("metrics", [None, {}, {"like_count": True}])
+def test_coverage_distinguishes_missing_metrics_from_accepted_records(metrics):
+    result = run([row(), row(id="124", public_metrics=metrics)])
+    assert result["coverage"]["complete"] is True
+    assert result["coverage"]["accepted_records"] == 2
+    assert result["coverage"]["metrics_missing_records"] == 1
+    assert run(row())["coverage"]["metrics_missing_records"] == 0
+
+
+def test_errors_only_is_explicit_invalid_data_contract():
+    error = {"detail": "PRIVATE_ERROR_CANARY"}
+    with pytest.raises(XMetricsError, match="^invalid_data$"):
+        normalize_owned_metrics({"errors": [error]}, connected_user_id="456", observed_at=NOW, now=NOW)
+    result = normalize_owned_metrics({"data": [], "errors": [error]},
+                                    connected_user_id="456", observed_at=NOW, now=NOW)
+    assert result["coverage"]["accepted_records"] == 0
+    assert result["coverage"]["api_error_count"] == 1
+    assert result["coverage"]["complete"] is False
+    assert "PRIVATE_ERROR_CANARY" not in json.dumps(result)

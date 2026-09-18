@@ -78,7 +78,9 @@ def _account(name, cfg, now):
             queue_state = "unreadable"
         evidence["queue"] = _source(path, queue_state, now)
     else:
-        evidence["queue"] = {"availability": queue_state, "freshness": "not_applicable"}
+        evidence["queue"] = {"availability": queue_state, "freshness": "not_applicable",
+                             "local_modified_at": None, "observed_at": jst.iso(now),
+                             "remote_current_verified": False}
     if queue_state in {"missing", "unreadable"}:
         problems.append("queue_" + queue_state)
     queue = {"availability": queue_state, "counts": counts if queue_state == "available" else None,

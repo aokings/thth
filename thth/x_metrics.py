@@ -143,7 +143,10 @@ def normalize_owned_metrics(response, *, connected_user_id, observed_at, now,
             "records": accepted, "rejected": rejected,
             "coverage": {"input_records": len(rows), "accepted_records": len(accepted),
                          "rejected_records": len(rejected), "api_error_count": len(errors),
-                         "complete": not rejected and not errors},
+                         "complete": not rejected and not errors,
+                         "metrics_missing_records": sum(
+                             any(metric["value"] is None for metric in record["metrics"].values())
+                             for record in accepted)},
             "metric_definitions": {"views": "public_post_impressions_not_unique_people",
                                    "likes": "public_post_likes", "replies": "public_post_replies",
                                    "reposts": "public_post_reposts", "quotes": "public_post_quotes",

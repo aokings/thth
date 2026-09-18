@@ -58,3 +58,7 @@ preflightは設定誤りを検出するもので、確認後にファイルを�
 TCPは`--tcp-port <port>`を明示した場合のみ。portは全ユーザー共有で、多利用者ホストでは停止中・再起動の隙に別ユーザーが先取りしてBearer tokenを取得できる。信頼できない別ユーザーがいるホストではUnix socketを使う。TCP loopbackにはTLSも接続相手の本人確認もない。
 
 1 recvあたりのタイムアウトは5秒。これとは独立にaccept直後のhandler開始から要求行・header・bodyを合計10秒で遮断するwatchdogを持つ。少量ずつ送り続けても延長しない。直列処理なので読み込み待ちは1接続分までだが、処理・台帳走査自体の実行時間制限ではない。読み込み終了またはhandler終了でwatchdogを解除し、後続接続を誤って切断しない。
+
+## エラーとクライアントの扱い
+
+起動失敗はstderrに固定reason（例: `root_mismatch`、`account_scope_mismatch`、`unsafe_report_tree`、`report_tree_too_large`、`address_in_use`）を出し、パスや秘密は出さない。HTTPエラーpayloadは固定のまま。16KiBを超えるbodyは読み捨てず413を返して切断するため、送信途中のクライアントからは接続resetとして観測され、413本文が読めない場合がある。再送時はbodyを縮小する。JSONのmedia typeとcharsetは別々に判定し、大小文字・セミコロン周りの空白・quoted UTF-8を許容する。UTF-8以外や未知/重複パラメータは拒否する。

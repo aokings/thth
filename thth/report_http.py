@@ -50,6 +50,19 @@ def _json(raw):
     return json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_constant)
 
 
+def _json_content_type(value):
+    parts = value.split(";")
+    if parts[0].strip().lower() != "application/json":
+        return False
+    if len(parts) == 1:
+        return True
+    if len(parts) != 2:
+        return False
+    key, separator, charset = parts[1].partition("=")
+    return (bool(separator) and key.strip().lower() == "charset"
+            and charset.strip().lower() in {"utf-8", '"utf-8"'})
+
+
 def _expiry(value):
     if not isinstance(value, str):
         raise ValueError("invalid_expiry")
@@ -261,7 +274,7 @@ class ReportHandler(BaseHTTPRequestHandler):
         if self.headers.get_all("Content-Encoding"):
             return self._reply(415, {"error": "json_required"})
         types = self.headers.get_all("Content-Type", [])
-        if len(types) != 1 or types[0].lower().strip() not in {"application/json", "application/json; charset=utf-8"}:
+        if len(types) != 1 or not _json_content_type(types[0]):
             return self._reply(415, {"error": "json_required"})
         lengths = self.headers.get_all("Content-Length", [])
         if self.headers.get_all("Transfer-Encoding") or len(lengths) != 1 or not re.fullmatch(r"[0-9]{1,8}", lengths[0]):

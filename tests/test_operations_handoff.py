@@ -141,3 +141,16 @@ def test_delivered_incident_failure_still_requires_review(isolated_account_facto
     assert node["state"] == "review_required"
     assert node["notifications"]["mail_pending"] == 0
     assert node["notifications"]["reason_code"] == "missing_token"
+
+
+def test_queue_evidence_keys_stable_without_repo(isolated_account_factory, monkeypatch):
+    item = isolated_account_factory()
+    cfg = accounts.load_account(item["name"])
+    configured = handoff._account(item["name"], cfg, NOW)["evidence"]["queue"]
+    cfg["repo_dir"] = None
+    unconfigured = handoff._account(item["name"], cfg, NOW)["evidence"]["queue"]
+    assert set(configured) == set(unconfigured) == {
+        "availability", "freshness", "local_modified_at", "observed_at", "remote_current_verified"}
+    assert unconfigured == {"availability": "not_configured", "freshness": "not_applicable",
+                            "local_modified_at": None, "observed_at": jst.iso(NOW),
+                            "remote_current_verified": False}

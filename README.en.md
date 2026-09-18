@@ -132,7 +132,7 @@ All 40 subcommands `thth --help` lists in this development checkout, one line ea
 - `replies` — read the collected-reply ledger
 - `measured` — read the collected-metrics ledger
 - `threads` — thread shape: branches, depth, participants, time to first reply
-- `serve-reports` — in development: private loopback-only read-only HTTP reports for a dedicated Unix environment; see the [setup and limitations](docs/非公開レポートHTTP_v1.md).
+- `serve-reports` — in development: private read-only HTTP reports over a Unix socket (or explicitly selected loopback TCP) for a dedicated Unix environment; see the [setup and limitations](docs/非公開レポートHTTP_v1.md).
 - `handoff-report` — in development, not in published 2.4.0: local operations evidence, pending notifications and explicit freshness limits.
 - `study-report` — in development, not in published 2.4.0: link an unverified study declaration to explicitly selected owned root-post observations; read-only, no causal-effect claim. See the [contract](docs/施策レポート_v1.md).
 - `analytics-report` — in development, not in published 2.4.0: read-only activity snapshot with evidence, missing data, JSON and Markdown.

@@ -41,3 +41,9 @@
 - [Developer Policy](https://docs.x.com/developer-terms/policy): Content compliance。保存された削除/変更済み内容への追随を要求。この変換関数だけでは履行できない。
 
 検証: 所有不一致、混合不正行、ID重複、時刻境界、未知provider、欠測/型不正/巨大整数、本文/生エラーcanaryの非混入、alias競合、入力非変更をオフラインテストする。
+
+### 開発版の欠測・全件error契約
+
+`coverage.metrics_missing_records`は採用行のうち6公開指標のいずれかがnullである行数（欠落・型不正・alias不一致等を含む）。`complete=true`でもこの値が正なら指標は揃っていない。行の採用完了と指標の完備を分けて読む。
+
+`data`欠落＋`errors`のみは現在も`XMetricsError("invalid_data")`で拒否する。全件失敗時の実API応答形は一次資料で確認できておらず、これをXの仕様とは主張しない。このオフライン変換器の現行入力契約として固定し、実接続前に一次資料・実応答fixtureで再確認する。`data=[]`＋有効な`errors`配列は採用0件・APIエラー件数・`complete=false`を返す。生errorの文言はどちらも返さない。

@@ -329,3 +329,38 @@ def short_socket_dir():
     import tempfile
     with tempfile.TemporaryDirectory(prefix="thth-sock-", dir="/tmp") as directory:
         yield Path(directory)
+
+
+@pytest.mark.parametrize("content_type,status", [
+    ("application/json;charset=utf-8", 200),
+    ('Application/JSON ; CHARSET = "UTF-8"', 200),
+    ("application/json; charset=shift_jis", 415),
+    ("application/json; charset=utf-8; charset=utf-8", 415),
+    ("application/json; other=utf-8", 415),
+])
+def test_content_type_media_and_charset(tmp_path, content_type, status):
+    with running(tmp_path) as (port, _, _):
+        assert request(port, headers={"Content-Type": content_type})[0] == status
+
+
+@pytest.mark.parametrize("reason", ["root_mismatch", "account_scope_mismatch",
+                                    "report_tree_too_large", "unsafe_report_tree"])
+def test_startup_reason_bounded_stderr(tmp_path, monkeypatch, capsys, reason):
+    from types import SimpleNamespace
+    def bad(*args, **kwargs):
+        raise report_http.IsolationError(reason)
+    monkeypatch.setattr(report_http, "PrivateReportServer", bad)
+    assert report_http.cmd_serve_reports(SimpleNamespace(credentials="/SECRET", tcp_port=8765, socket=None)) == 2
+    assert capsys.readouterr() == ("", f"private_report_server_unavailable: {reason}\n")
+
+
+def test_startup_address_in_use_reason(tmp_path, capsys):
+    from types import SimpleNamespace
+    path = tmp_path / "credentials.json"
+    config(path)
+    with socket.socket() as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        occupied.listen()
+        args = SimpleNamespace(credentials=path, tcp_port=occupied.getsockname()[1], socket=None)
+        assert report_http.cmd_serve_reports(args) == 2
+    assert capsys.readouterr() == ("", "private_report_server_unavailable: address_in_use\n")
