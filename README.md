@@ -21,7 +21,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 実装と運用の状態（2026-09-18）
 
-2.7.0 の実装 revision `6107a86` の全件テストは **2741 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip・rc=0）。開発中の変更の検証は対象 revision の CI を参照してください。
+2.7.0 の実装 revision `f331e8c` の全件テストは **2743 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip・rc=0）。開発中の変更の検証は対象 revision の CI を参照してください。
 
 **媒体**: Threads（稼働）・Bluesky・Mastodon（同席用の台帳あり・未稼働）。
 

@@ -42,6 +42,14 @@ what to write.
 
 ---
 
+## Version 2.7.0
+
+Adds the 720-hour (30-day) insights mark; the metrics collection window is now derived from the marks (38 days) while the reply window stays independent. New observations carry the most recent daily follower count from the previous 48 hours as context (`followers_count_at`, `staleness_hours`, or a `context_reason` when none); no extra API calls, no backfilling of existing rows. Collection marks are aligned across Threads, Bluesky and Mastodon; metrics a medium does not have stay `null`. Real 30-day collection against live APIs is not yet observed.
+
+## Version 2.6.0
+
+Analytics polish using existing ledgers only: per-mark values (1h/6h/24h/72h/168h/720h bands), IQR/min/max next to every median, outcomes per engaged thread, collection success/attempt freshness, stratified period comparisons (`--by kind|hour_band|topic`), thread shapes bounded by collection time, `cannot_say_details` codes beside the existing prose, an eligibility forecast for immature study posts, and `handoff-report --since-last-read` (a cursor is written only with an explicit `--mark-read --by NAME`; MCP and HTTP stay read-only). Existing keys are unchanged and `schema_version` stays 1. Independently audited and fixed before release.
+
 ## Version 2.5.0
 
 Adds three read-only reports — `analytics-report` (activity snapshot, `--compare-previous` for adjacent-period comparison), `handoff-report` (local operations evidence for a session handoff) and `study-report` (links a declared study to the owner's own observations) — plus the MCP tools `analytics_report`, `operations_handoff` and `study_report`. Numbers always carry their period, sample size, missing data and evidence; no causal claims, no recommendations. `serve-reports` is a development-grade private report transport (Unix socket by default, service credentials, read-only) for a dedicated Unix environment; it is not a public server and includes no human login or TLS. A pure offline normalizer for X owned public metrics is included but not connected to any API. Independently audited (4×P2, 7×P3) and fixed before release.
