@@ -10,7 +10,7 @@ KEYS = {'queue_counts','inflight','notification_last_event_id','notification_rec
         'run_last_attempt_at','run_recorded_state','last_post_observed_at','sent_count'}
 QUEUE_KEYS = {'draft','approved_waiting','overdue','malformed','unattributed_malformed'}
 
-class CursorDirectoryUnavailable(OSError):
+class CursorDirectoryUnavailable(OSError, ValueError):
     """The configured state directory cannot be opened safely."""
 
 

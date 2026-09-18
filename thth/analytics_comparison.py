@@ -22,7 +22,7 @@ def _measurement_contract():
     return {"mark": 24, "minimum_age_hours_inclusive": 24,
             "maximum_age_hours_exclusive": 30, "selection": "earliest_eligible_observation",
             "age_basis": "collected_at_minus_posted_at", "collapsed_marks_allowed": False,
-            "quartile_method": "tukey_hinges", "quartile_algorithm": "median_of_halves_excluding_odd_center"}
+            "quartile_method": "exclusive_median_of_halves", "quartile_algorithm": "median_of_halves_excluding_odd_center"}
 
 
 def _metric(value):
