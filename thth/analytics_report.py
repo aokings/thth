@@ -65,6 +65,8 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
                  if not comparison._root_exclusion(p, known_reply=str(p["post_id"]) in reply_ids)]
         # Legacy snapshot includes its upper boundary; additive strict marks do too.
         curves = comparison._marks_population(items, start, now + datetime.timedelta(microseconds=1), now, min_n)
+        from .analytics_shapes import attach as attach_shapes
+        attach_shapes(name, curves, now)
         node["posts"].update(curves)
         node["posts"]["views_24h"].update(comparison._spread(
             [p["views_24h"] for p in node["posts"]["by_post"] if p["views_24h"] is not None], min_n))
@@ -79,6 +81,7 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
         lookup = {p["post_id"]: p for p in curves["marks_by_post"]}
         for post in node["posts"]["by_post"]:
             post["marks"] = lookup.get(str(post["post_id"]), {}).get("marks")
+            post["shape_at"] = lookup.get(str(post["post_id"]), {}).get("shape_at")
 
     return {
         "schema_version": 1, "report_type": "activity_snapshot",

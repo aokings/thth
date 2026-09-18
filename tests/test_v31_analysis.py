@@ -88,3 +88,19 @@ def test_a6_unknown_stratum_reconciles(isolated_account_factory):
     assert group['stratified']['strata']['unknown']['current']['n_total'] == 1
     assert group['stratified']['reconciliation']['current'] == {'sum_n_total':1,'n_total':1}
     assert group['stratified']['strata']['unknown']['current']['metrics']['views']['median'] == 0
+
+def test_a7_collected_time_bounds_history(monkeypatch):
+    from thth import analytics_shapes as s
+    early = POSTED+dt.timedelta(hours=23)
+    late = POSTED+dt.timedelta(hours=25)
+    ledger = {'broken': [], 'fetches':[{'post_id':'p', 'collected_at':jst.iso(early)}], 'replies':[
+        {'post_id':'p','id':'r','own':False,'username':'private','text':'SECRET','replied_to':{'id':'p'},
+         'timestamp':jst.iso(POSTED+dt.timedelta(hours=1)), 'collected_at':jst.iso(late)}]}
+    monkeypatch.setattr(s.replies,'load',lambda *a,**k:ledger)
+    value=s.shape_at('a','p',POSTED,NOW)
+    assert value['24']['replies_total']==0
+    assert value['72']['replies_total']==1
+    assert value['168'] is None
+    assert 'SECRET' not in str(value) and 'private' not in str(value)
+    ledger['fetches']=[]
+    assert s.shape_at('a','p',POSTED,NOW)['24'] is None

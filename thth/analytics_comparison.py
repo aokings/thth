@@ -228,10 +228,13 @@ def _account(name, previous_start, current_start, now, min_n, by=None):
             "incomplete_sources": broken, "cannot_say": []}
     from .collection_status import summarize as collection_summary
     node["collection"], collection_reasons = collection_summary(name, now)
-    node["cannot_say"].extend(collection_reasons)
     for kind, items in (("posts", root_items), ("engagements", reply_items)):
         previous = _population(items, previous_start, current_start, now, min_n)
         current = _population(items, current_start, now, now, min_n)
+        if kind == "posts":
+            from .analytics_shapes import attach as attach_shapes
+            attach_shapes(name, previous, now)
+            attach_shapes(name, current, now)
         deltas = _differences(previous, current, min_n)
         node[kind] = {"previous": previous, "current": current, "comparison": deltas}
         if by:
@@ -267,6 +270,7 @@ def _account(name, previous_start, current_start, now, min_n, by=None):
     if any(broken.values()):
         node["cannot_say"].append("読めない台帳があり、母集団全体の件数・変化は判断できない")
     node["cannot_say"].append("比較は観測できた標本だけ。差の原因・施策の効果・推奨行動は判断しない")
+    node["cannot_say"].extend(collection_reasons)
     return node
 
 

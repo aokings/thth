@@ -15,7 +15,10 @@ def reaction(name, medium, engagement, posted, now):
     fetched = any(posted <= at <= now and f.get('post_id') == engagement['post_id'] and f.get('id_missing', 0) == 0
                   for f in ledger['fetches'] if (at := c._timestamp(f.get('collected_at'))) is not None)
     direct = []
-    uncertain = bool(ledger.get('unreadable_accounts'))
+    uncertain = bool(ledger.get('unreadable_accounts')) or any(
+        f.get('post_id') == engagement['post_id'] and
+        (type(f.get('id_missing', 0)) is not int or f.get('id_missing', 0) != 0)
+        for f in ledger['fetches'])
     for row in ledger['replies']:
         if row.get('post_id') != engagement['post_id']:
             uncertain = True

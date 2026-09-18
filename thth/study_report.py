@@ -160,6 +160,8 @@ def answer(path, *, min_n=5, now=None):
         # selection as period comparisons; IDs and decision time select the group.
         start = min((item[1] for item in items), default=now)
         population = comparison._population(items, start, now, now, min_n)
+        from .analytics_shapes import attach as attach_shapes
+        attach_shapes(name, population, now)
         population.update(n_requested=len(declaration[group + "_post_ids"]), excluded=excluded,
                           n_excluded=len(excluded))
         populations[group] = population
