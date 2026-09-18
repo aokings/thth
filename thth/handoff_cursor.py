@@ -121,7 +121,7 @@ def read(name, now):
         # A symlink below the trusted root is an unreadable cursor location;
         # an absent/unopenable root is a directory availability failure.
         root = Path(os.path.realpath(accounts.thth_root()))
-        if any((root / part).is_symlink() for part in ('state', name)):
+        if (root / 'state').is_symlink() or (root / 'state' / name).is_symlink():
             return None,'cursor_unreadable'
         return None,'cursor_directory_unavailable'
     except FileNotFoundError:
