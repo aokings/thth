@@ -9,7 +9,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 版
 
-公開済みの版は **2.3.3**。現在の設計は [自分の泉](docs/設計_自分の泉_2026-09-16.md)、導入は [自分の Meta アプリで動かす](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
+このソースの版は **2.4.0**。現在の設計は [自分の泉](docs/設計_自分の泉_2026-09-16.md)、導入は [自分の Meta アプリで動かす](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
 
 版の正本は `thth/VERSION`（`server.json` はテストで一致を強制）。開発中の `main` には未配布の変更も含まれます。インストール済みの版は `thth --version`、VM の版と revision は `thth board` で確認してください。
 
@@ -19,14 +19,14 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 各プロジェクトのセッションが読むのは [docs/使い方_プロジェクトのセッション向け_2026-09-09.md](docs/使い方_プロジェクトのセッション向け_2026-09-09.md) **だけ**。設計書は作った側の記録なので読まなくてよい。
 
-## 配布済みの状態（2026-09-17）
+## 実装と運用の状態（2026-09-18）
 
-版 **2.3.3** の全件テストは **2320 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip・rc=0）。開発中の変更の検証は対象 revision の CI を参照してください。
+2.4.0 の実装 revision の全件テストは **2452 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip・rc=0）。開発中の変更の検証は対象 revision の CI を参照してください。
 
 **媒体**: Threads（稼働）・Bluesky・Mastodon（同席用の台帳あり・未稼働）。
 
-**本番稼働中**: Threads の 4 アカウント（nigamilab・asmon 関東・kopicha・masaru の同席用）。
-timer（systemd・`thth systemd` で生成）で毎時投稿、返信の採集（`thth replies`）と数の採集
+**定期実行中**: Threads の 3 アカウント（nigamilab・asmon 関東・kopicha）。masaru の Threads は同席用です。
+timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿間隔と静かな時間帯を尊重します。返信の採集（`thth replies`）と数の採集
 （`thth measured`）は稼働、トークン更新は `thth maintain` が毎日。
 
 **入口は 4 つ**: 厚い CLI（`bin/thth`・`python -m thth`）、薄い MCP（`mcp/server.py`・読み取りと
@@ -34,6 +34,14 @@ timer（systemd・`thth systemd` で生成）で毎時投稿、返信の採集�
 **依存 0**。PyPI に公開済み・MCP registry に `io.github.aokings/thth` として登録済み）。
 
 **トピックの棚**（`thth topics`）: 観測者ごとに並ぶ・打ち消し `retract-note`・`history`。
+
+### v2.4.0 の変更
+
+- 利用者・管理者への停止／復旧メールと、元原稿の運用記録。設定・秘密は repo 外に保存します。導入時は [共通通知手順](docs/停止通知と運用記録.md) を実施します。
+- VM・プロセス停止を検知する外部 missed-ping 監視と、board の停止理由表示。
+- Threads の投稿エラーに HTTP 番号・許可した API コード等を記録。本文や任意のエラーメッセージは保存しません。
+- `after` の投稿集計、project 指定、topic kind 別集計。
+- self-update の署名検証と merge を同一 commit に固定し、媒体固有の秘密値を伏字対象へ追加。
 
 ### v2.0.0 で増えた口
 
@@ -59,7 +67,7 @@ timer（systemd・`thth systemd` で生成）で毎時投稿、返信の採集�
 - **最初の本番投稿の記録**: 2026-09-09、@aoking に疎通確認を 1 本（`17916074118445631`）。
 - **未着手**: X・Facebook ページ・Instagram の各アダプタ。トピック検索の権限（tester には降りない）。泉のサーバ（v2-5）。
 - **権限の制約**: tester に降りる scope は 5 つ。削除はできない。
-- **masaru の手が要るもの**: repo を public にする切替と `LICENSE`、tag と `release` を進める操作（PyPI と MCP registry は 2.0.1 まで公開済み）。
+- **配布**: `release` への反映と version tag の push を分けます。tag の CI が全件テスト後に PyPI と MCP registry へ OIDC で公開します。
 
 ## MCP registry
 

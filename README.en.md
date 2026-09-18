@@ -32,14 +32,23 @@ what to write.
   Authorization headers are redacted before anything is written or printed.
 
 **What it never does**
-- Never sends anything to a third party. The read-only lookups (`thth where`,
-  `thth thread`, `thth who`) save nothing; all that persists is the engagement
-  ledger (your own acts and reactions).
+- Read-only lookups (`thth where`, `thth thread`, `thth who`) save nothing;
+  the engagement ledger keeps your own acts and reactions. Configured monitoring
+  services and email recipients receive operational status, not post bodies.
 - Never reads direct messages. It only ever touches public posts and public replies.
 - Never auto-replies with canned text. Reply drafts go through the same
   human-approval path as any other post.
 
 ---
+
+## Version 2.4.0
+
+Adds per-account user and administrator incident emails, recovery notices, and
+operational fields in the original queue file. Configure external missed-ping
+monitoring for VM or process outages. Notification settings and secrets stay
+outside Git. Threads posting failures retain bounded, allowlisted API diagnostics.
+`after` now includes owned posts, project scope, and topic-kind summaries.
+See [notification setup](docs/停止通知と運用記録.md).
 
 ## Install
 
