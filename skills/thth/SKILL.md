@@ -127,6 +127,16 @@ MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜ�
 - `thth doctor <account>` が「いま投稿できる状態か」を最初から最後まで言う。
 - 使い方の全文: `docs/使い方_プロジェクトのセッション向け_2026-09-09.md`。
 
+## 運用と分析のレポート（v3系の開発版・未配布）
+
+公開済み2.4.0には無い入口を含む。接続先のhelp/tools一覧にある場合だけ使う。
+
+- 再開時は `handoff-report` / MCP `operations_handoff`。ローカルの停止・要確認・通知記録を読む。`waiting`をtimer正常や投稿成功と解釈しない。
+- `analytics-report` / MCP `analytics_report` は期間・母数・欠測・根拠付きsnapshot。生成時刻とデータ更新時刻を混同しない。
+- 前期間比較は `--compare-previous` / `compare_previous: true`。投稿後24〜30時間未満の実観測で比較し、欠測をゼロにしない。
+- 施策メモの振り返りは `study-report` / `study_report`。採用宣言と観測を分け、提案を自動で採用済みにしない。投稿の承認には使えない。
+- 観測差を因果効果と断定しない。accountをまたいだ合算・順位を作らない。詳しい読み順は `docs/手順_LLM_分析と運用の引継ぎ.md`。
+
 ## 停止通知と運用状況（開発版 main）
 
 新規 account は利用者メール・管理者メール・TLS SMTP を `thth notifications config` で設定し、`status` → `test` を実行する。両宛先の受信箱で到達、account 専用 HEALTHCHECK_URL の missed-ping 通知を確認してから production/scheduled を有効にする。既存 account にも同じ設定を追加する。詳細は `docs/停止通知と運用記録.md`。
