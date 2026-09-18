@@ -9,7 +9,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 版
 
-このソースの版は **2.6.0**。現在の設計は [自分の泉](docs/設計_自分の泉_2026-09-16.md)、導入は [自分の Meta アプリで動かす](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
+このソースの版は **2.7.0**。現在の設計は [自分の泉](docs/設計_自分の泉_2026-09-16.md)、導入は [自分の Meta アプリで動かす](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
 
 版の正本は `thth/VERSION`（`server.json` はテストで一致を強制）。開発中の `main` には未配布の変更も含まれます。インストール済みの版は `thth --version`、VM の版と revision は `thth board` で確認してください。
 
@@ -21,7 +21,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 実装と運用の状態（2026-09-18）
 
-2.6.0 の実装 revision `3a3b4ef` の全件テストは **2705 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip・rc=0）。開発中の変更の検証は対象 revision の CI を参照してください。
+2.7.0 の実装 revision `6107a86` の全件テストは **2741 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip・rc=0）。開発中の変更の検証は対象 revision の CI を参照してください。
 
 **媒体**: Threads（稼働）・Bluesky・Mastodon（同席用の台帳あり・未稼働）。
 
@@ -34,6 +34,13 @@ timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿
 **依存 0**。PyPI に公開済み・MCP registry に `io.github.aokings/thth` として登録済み）。
 
 **トピックの棚**（`thth topics`）: 観測者ごとに並ぶ・打ち消し `retract-note`・`history`。
+
+### v2.7.0 の変更
+
+- 指標採集に720時間（30日）を追加し、対象窓を刻みから38日と計算。正常時は指標6回、返信は従来の5回です。返信の採集窓は独立して維持します。
+- 新しい観測に、既存の同JST日の日次フォロワー数を文脈として添えます。追加APIや過去行の後補完はありません。現在の通常日次は前日分なので、文脈は通常nullです。
+- Threads・Bluesky・Mastodonの刻みを揃え、媒体にないviewsはnullのまま維持。[合成検証と限界](docs/検証_v31_C実装_2026-09-18.md)。実SNS APIでの30日後採集は未確認です。
+- C3・C4は実装保留。[独立規約照合報告](docs/照合_MetaPlatformTerms_枝と語の観測_2026-09-18_Codex.md)の未確認事項とApp Reviewの結果を踏まえて別途判断します。
 
 ### v2.6.0 の変更
 
