@@ -232,7 +232,7 @@ def _mark_collapsed(rows: list) -> None:
         row["marks_collapsed"] = len(marks) >= 2
 
 
-def load(account_name: str) -> dict:
+def load(account_name: str, *, observation_metadata: bool = False) -> dict:
     """1 つの account の実測を台帳から機械的に並べる。
 
     **account をまたいで並べない。** ここは 1 account だけを扱う。複数 account を
@@ -394,6 +394,10 @@ def load(account_name: str) -> dict:
                 "rows_unattributed": len(unattributed),
                 "rows": [
                     {
+                        **({"posted_at": row.get("posted_at"),
+                            "reply_to": row.get("reply_to"),
+                            "reply_to_known": "reply_to" in row}
+                           if observation_metadata else {}),
                         "collected_at": row.get("collected_at"),
                         "age_hours": row.get("age_hours"),
                         "marks": row.get("marks"),

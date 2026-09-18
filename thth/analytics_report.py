@@ -12,7 +12,7 @@ DEFAULT_WINDOW_DAYS = 7
 
 
 def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
-           min_n=after_cli.DEFAULT_MIN_N, now=None):
+           min_n=after_cli.DEFAULT_MIN_N, now=None, compare_previous=False):
     """One payload for CLI Markdown/JSON and MCP; never collect or persist data."""
     for label, value in (("account", account_name), ("project", project)):
         if value is not None and (not isinstance(value, str) or not value.strip()):
@@ -22,6 +22,8 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
     for label, value in (("window_days", window_days), ("min_n", min_n)):
         if type(value) is not int or value < 1:
             raise after_cli.AfterError(f"{label} は 1 以上の整数です")
+    if type(compare_previous) is not bool:
+        raise after_cli.AfterError("compare_previous は boolean です")
     now = now if now is not None else jst.now_jst()
     if not isinstance(now, datetime.datetime) or now.tzinfo is None:
         raise after_cli.AfterError("now はタイムゾーン付きの日時です")
@@ -31,6 +33,10 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
         start = now - datetime.timedelta(days=window_days)
     except OverflowError as exc:
         raise after_cli.AfterError("window_days が日時の範囲を超えています") from exc
+    if compare_previous:
+        from . import analytics_comparison
+        return analytics_comparison.answer(account_name, project=project, window_days=window_days,
+                                           min_n=min_n, now=now)
     source = after_cli.answer(account_name, project=project, window_days=window_days,
                               min_n=min_n, now=now)
     nodes = source["by_account"] if project is not None else {account_name: source}
@@ -75,6 +81,9 @@ def _markdown_text(value):
 
 def render_markdown(payload):
     """Human summary and complete evidence are rendered from one payload."""
+    if payload.get("report_type") == "period_comparison":
+        from . import analytics_comparison
+        return analytics_comparison.render_markdown(payload)
     period = payload["period"]
     lines = ["# Activity snapshot", "",
              f"対象期間: {period['start']} ～ {period['end']}（両端を含む、投稿日時基準）",
@@ -106,7 +115,8 @@ def render_markdown(payload):
 def cmd_analytics_report(args):
     try:
         payload = answer(args.account, project=args.project,
-                         window_days=args.window_days, min_n=args.min_n)
+                         window_days=args.window_days, min_n=args.min_n,
+                         compare_previous=getattr(args, "compare_previous", False))
         output = (json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False)
                   if args.json else render_markdown(payload))
     except accounts.AccountError as exc:

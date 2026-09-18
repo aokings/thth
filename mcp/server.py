@@ -147,10 +147,11 @@ TOOLS = [
     },
     {
         "name": "analytics_report",
-        "description": "自分の活動のスナップショットを期間・母数・欠測・根拠つきで返す。ローカル台帳を読むだけ。前期間比較や推奨は含まない",
+        "description": "自分の活動のスナップショットを期間・母数・欠測・根拠つきで返す。ローカル台帳を読むだけ。compare_previous=trueで前期間比較。推奨は含まない",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "compare_previous": {"type": "boolean", "description": "直前の同じ日数との比較（既定false）"},
                 "account": {"type": "string"},
                 "project": {"type": "string"},
                 "window_days": {"type": "integer", "description": "直近何日（既定7）"},
@@ -540,6 +541,8 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         for key in ("window_days", "min_n"):
             if arguments.get(key) is not None:
                 args += ["--" + key.replace("_", "-"), str(arguments[key])]
+        if arguments.get("compare_previous"):
+            args.append("--compare-previous")
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
