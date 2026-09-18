@@ -32,8 +32,9 @@ what to write.
   Authorization headers are redacted before anything is written or printed.
 
 **What it never does**
-- Read-only lookups (`thth where`, `thth thread`, `thth who`) save nothing;
-  the engagement ledger keeps your own acts and reactions. Configured monitoring
+- Read-only lookups (`thth where`, `thth thread`, `thth who`) do not persist
+  fetched post bodies; minimal execution metadata is logged. The engagement ledger
+  keeps your own acts and reactions. Configured monitoring
   services and email recipients receive operational status, not post bodies.
 - Never reads direct messages. It only ever touches public posts and public replies.
 - Never auto-replies with canned text. Reply drafts go through the same

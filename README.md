@@ -58,8 +58,8 @@ timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿
   は `local`。泉のサーバはまだ無い）。原稿本文は渡さないし、答えにも出ない。
   **n が閾値（既定 20）に満たない群は中央値を返さず `cannot_say` に理由を出す**——
   手元の水ではほとんどが `cannot_say` になる。それが正しい答えで、rc は 0。MCP からは `before_you_post`。
-- **読む口（`thth where`・`thth thread`・`thth who`）は何も保存しない**（裁定
-  2026-09-16「横断の泉はやめる」）。残るのは絡みの台帳（自分の行為と反応）だけ。
+- **読む口（`thth where`・`thth thread`・`thth who`）は取得した投稿本文を保存しません**（裁定
+  2026-09-16「横断の泉はやめる」）。検索語・投稿ID・件数等の最小限の実行記録と、絡みの台帳（自分の行為と反応）は残ります。
 - **英語の文書**: [README.en.md](README.en.md)・[docs/usage.en.md](docs/usage.en.md)・[llms.txt](llms.txt)。
 - **skill**: `skills/thth/SKILL.md`（wheel にも入る）。
 
