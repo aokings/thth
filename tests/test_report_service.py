@@ -35,6 +35,10 @@ def test_context_copies_and_freezes_host_mapping():
     {"operation":"analytics_report", "account":"one", "window_days":True},
     {"operation":"analytics_report", "account":"one", "min_n":0},
     {"operation":"analytics_report", "account":"one", "compare":True},
+    {"operation":"analytics_report", "account":"one", "compare_previous":1},
+    {"operation":"analytics_report", "account":"one", "compare_previous":"true"},
+    {"operation":"analytics_report", "account":"one", "compare_previous":None},
+    {"operation":"operations_handoff", "account":"one", "compare_previous":False},
     {"operation":"operations_handoff", "account":"one", "window_days":7},
     *[{"operation":"analytics_report", "account":"one", key:"secret"}
       for key in ("tenant", "root", "env", "path", "auth", "output")],
@@ -88,3 +92,16 @@ def test_failure_hides_core_exception_and_resource_existence(monkeypatch):
     for name in ("nonexistent", "existing_other_tenant"):
         with pytest.raises(service.ReportServiceError, match="^scope_unavailable$"):
             service.execute_report(context, {"operation":"operations_handoff","account":name})
+
+
+@pytest.mark.parametrize("compare_previous", [False, True])
+def test_comparison_matches_direct_report(compare_previous, isolated_account_factory, monkeypatch):
+    isolated_account_factory(name="one", project="p")
+    monkeypatch.setattr(jst, "now_jst", lambda: NOW)
+    payload = service.execute_report(service.ReportContext({"one":"p"}), {
+        "operation":"analytics_report", "account":"one", "compare_previous":compare_previous,
+    })
+    assert payload["reports"]["one"] == analytics_report.answer(
+        "one", now=NOW, compare_previous=compare_previous)
+    markdown = service.render_markdown(payload)
+    assert json.loads("\n".join(line[4:] for line in markdown.splitlines() if line.startswith("    "))) == payload

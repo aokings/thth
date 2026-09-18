@@ -16,7 +16,7 @@ payload = execute_report(context, {
 markdown = render_markdown(payload)
 ```
 
-対応操作は `analytics_report` と `operations_handoff` のみ。account/project はどちらか一方を必須とし、空文字・null・bool・両方指定を拒否する。分析のみ正整数 window_days/min_n を受ける。compare、study、任意CLI、投稿、承認、tenant/root/env/path/auth/outputなど未定義引数を拒否する。
+対応操作は `analytics_report` と `operations_handoff` のみ。account/project はどちらか一方を必須とし、空文字・null・bool・両方指定を拒否する。分析のみ正整数 window_days/min_n と boolean の compare_previous（既定 false）を受ける。true なら既存の期間比較 payload を変更せず含める。study、任意CLI、投稿、承認、tenant/root/env/path/auth/outputなど未定義引数を拒否する。
 
 context は渡された mapping をコピーして変更不可にする。project は context にある許可 account だけへ展開し、既存の全台帳を列挙する project API を呼ばず、単一 account API を呼ぶ。project 名が同じでも許可されない account は対象にならない。context の外にある資源は、存在の有無にかかわらず同じ `scope_unavailable` エラー。全要求の形式・scope・引数検証は core の読み取りより前に行う。
 
