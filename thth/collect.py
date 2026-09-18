@@ -16,6 +16,10 @@
 のたびに「まだ記録していない刻みを跨いだか」だけを見る。跨いでいれば 1 回読んで
 1 行足す。**追記のみ・冪等**（同じ刻みを二度書かない）。
 
+指標の対象窓は刻みから ceil(max(AGE_MARKS_HOURS)*1.25/24) 日（現在38日）を導く。
+返信は collect_days（既定14日）と独立の REPLY_MARKS_HOURS を守る。
+失敗は各窓内で未達刻みを再試行するが、正常時の720h追加は指標だけ1回。
+
 置き場（設計 §4.4・§4.5・利用者 repo）:
 
 - `data/sns/insights/posts/<post_id>.ndjson` — 1 回の採取 1 行
@@ -36,6 +40,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import json
+import math
 import os
 import re
 
@@ -52,7 +57,13 @@ from .adapters import base as adapter_base
 
 # 投稿からの経過時間の刻み（時間）。**比較の単位はここ。**
 # 初速（1h・6h）と、落ち着いたあと（24h・72h・7d）。
-AGE_MARKS_HOURS = [1, 6, 24, 72, 168]
+AGE_MARKS_HOURS = [1, 6, 24, 72, 168, 720]
+# Replies retain their existing five marks and configurable collection window.
+REPLY_MARKS_HOURS = [1, 6, 24, 72, 168]
+
+def metric_window_days():
+    return math.ceil(max(AGE_MARKS_HOURS) * 1.25 / 24)
+
 
 # 利用者から始まった会話の置き場（設計 v2 §4.2「採集と実測の媒体差」）。
 # **WhatsApp の芽**——`inbox` を持つアダプタがあれば、`collect` がここへ追記する。
@@ -307,13 +318,13 @@ def reply_row_id(row):
     return row.get("message_id") or row.get("id")
 
 
-def due_marks(age_hours: float, recorded: list) -> list:
+def due_marks(age_hours: float, recorded: list, *, marks=None) -> list:
     """まだ記録していない刻みのうち、もう跨いだもの。"""
     done = set()
     for row in recorded:
         for mark in row.get("marks") or []:
             done.add(mark)
-    return [m for m in AGE_MARKS_HOURS if age_hours >= m and m not in done]
+    return [m for m in (AGE_MARKS_HOURS if marks is None else marks) if age_hours >= m and m not in done]
 
 
 def _with_bundle_posts(files: list, account_name: str, account_cfg: dict, *,
@@ -549,7 +560,7 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
             errors.append(f"{post_id}: posted_at を読めません（{posted_at_raw!r}）")
             continue
         age_hours = (now - posted_at).total_seconds() / 3600.0
-        if age_hours < 0 or age_hours > collect_days * 24:
+        if age_hours < 0 or age_hours > max(collect_days, metric_window_days()) * 24:
             continue
         posts_seen += 1
 
@@ -563,8 +574,8 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
         # 失敗すると、その刻みは「済んだ」ことになり、返信は二度と取りに行かなかった**。
         # 最後の刻み（168 時間）で失敗すると、その投稿の返信は永久に取れない。
         # 「部分的な成功は次の実行で埋まる」という約束に反していた。
-        marks = due_marks(age_hours, _read_ndjson(insight_path))
-        reply_marks = due_marks(age_hours, _reply_fetches(reply_path))
+        marks = due_marks(age_hours, _read_ndjson(insight_path)) if age_hours <= metric_window_days() * 24 else []
+        reply_marks = due_marks(age_hours, _reply_fetches(reply_path), marks=REPLY_MARKS_HOURS) if age_hours <= collect_days * 24 else []
         if not marks and not reply_marks:
             continue
 
