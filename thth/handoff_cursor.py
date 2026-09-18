@@ -1,5 +1,6 @@
 """One explicit local read receipt; report readers never call write()."""
 import json
+import errno
 import os
 from pathlib import Path
 import stat
@@ -56,6 +57,8 @@ def _directory(name, create=False):
         os.close(directory)
         if isinstance(exc, CursorDirectoryUnavailable):
             raise
+        if isinstance(exc, OSError) and exc.errno == errno.ELOOP:
+            raise ValueError('cursor_unreadable') from exc
         if isinstance(exc, OSError):
             raise CursorDirectoryUnavailable('cursor_directory_unavailable') from exc
         raise
