@@ -32,7 +32,14 @@ def test_boundaries_evidence_missing_and_no_writes(isolated_account_factory):
     node = result["by_account"][account["name"]]
     original = after_cli.answer(account["name"], now=NOW, window_days=7)
     for key in ("posts", "engagements", "comparable", "cannot_say"):
-        assert node[key] == original[key]
+        def legacy_projection(actual, original):
+            if isinstance(original, dict):
+                return {k: legacy_projection(actual[k], v) for k, v in original.items()}
+            if isinstance(original, list):
+                assert len(actual) == len(original)
+                return [legacy_projection(a, b) for a, b in zip(actual, original)]
+            return actual
+        assert legacy_projection(node[key], original[key]) == original[key]
     assert {p["post_id"] for p in node["posts"]["by_post"]} == {"start", "end"}
     assert node["posts"]["views_24h"] == {"median": None, "n": 1}
     end = next(p for p in node["posts"]["by_post"] if p["post_id"] == "end")

@@ -43,10 +43,25 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
     if not nodes:
         raise after_cli.AfterError("project に読める account がありません")
     nodes = copy.deepcopy(nodes)
-    for node in nodes.values():
+    for name, node in nodes.items():
         # Advice is not an observation. Keep it outside this snapshot contract.
         node.pop("one_thing_to_change", None)
         node["provenance"].pop("updated", None)
+        from . import analytics_comparison as comparison, measured, engagements
+        cfg = accounts.load_account(name)
+        ledger = measured.load(name, observation_metadata=True)
+        reply_ids = {str(row.get("post_id")) for row in engagements.load(cfg, name)["rows"]
+                     if isinstance(row, dict) and row.get("account") == name}
+        items = [(str(p["post_id"]), comparison._timestamp(p.get("posted_at")), p)
+                 for p in ledger["posts"]
+                 if not comparison._root_exclusion(p, known_reply=str(p["post_id"]) in reply_ids)]
+        # Legacy snapshot includes its upper boundary; additive strict marks do too.
+        curves = comparison._marks_population(items, start, now + datetime.timedelta(microseconds=1), now, min_n)
+        node["posts"].update(curves)
+        lookup = {p["post_id"]: p for p in curves["marks_by_post"]}
+        for post in node["posts"]["by_post"]:
+            post["marks"] = lookup.get(str(post["post_id"]), {}).get("marks")
+
     return {
         "schema_version": 1, "report_type": "activity_snapshot",
         "generated_at": jst.iso(now), "data_updated_at": None,

@@ -42,7 +42,7 @@ def _median(values):
     return ordered[middle - 1] / 2 + ordered[middle] / 2
 
 
-def _observation(post, posted, now):
+def _observation(post, posted, now, mark=24):
     """Select one earliest time-eligible observation, independently of metric values."""
     candidates, rejected = [], collections.Counter()
     for row in (post or {}).get("rows", []):
@@ -58,13 +58,13 @@ def _observation(post, posted, now):
             reason = "invalid_collected_at"
         elif collected > now:
             reason = "future_observation"
-        elif not isinstance(marks, list) or marks != [24] or row.get("marks_collapsed"):
-            reason = "missing_or_collapsed_24h_mark"
+        elif not isinstance(marks, list) or marks != [mark] or row.get("marks_collapsed"):
+            reason = f"missing_or_collapsed_{mark}h_mark"
         else:
             age = (collected - posted).total_seconds() / 3600
-            if age < 24:
+            if age < mark:
                 reason = "premature_observation"
-            elif age >= 30:
+            elif age >= mark * 1.25:
                 reason = "late_observation"
         if reason:
             rejected[reason] += 1
@@ -82,6 +82,7 @@ def _observation(post, posted, now):
 
 
 def _population(items, start, end, now, min_n):
+    items = list(items)
     evidence = []
     for post_id, posted, measured_post in items:
         if not start <= posted < end:
@@ -108,7 +109,40 @@ def _population(items, start, end, now, min_n):
             "n_missing": counts["immature"] + counts["incomplete"],
             "n_immature": counts["immature"], "n_incomplete": counts["incomplete"],
             "metrics": metrics, "evidence": evidence,
-            "data_updated_at": max(times) if times else None}
+            "data_updated_at": max(times) if times else None,
+            **_marks_population(items, start, end, now, min_n)}
+
+
+def _marks_population(items, start, end, now, min_n):
+    from .collect import AGE_MARKS_HOURS
+    by_post = []
+    for post_id, posted, post in items:
+        if not start <= posted < end:
+            continue
+        marks, rejected, reasons = {}, {}, {}
+        for mark in AGE_MARKS_HOURS:
+            key = str(mark)
+            marks[key], rejected[key] = _observation(post, posted, now, mark)
+            reasons[key] = None if marks[key] else (
+                "not_yet_mark" if now < posted + datetime.timedelta(hours=mark)
+                else "no_eligible_mark_observation")
+        by_post.append({"post_id": post_id, "posted_at": jst.iso(posted), "marks": marks,
+                        "missing_reasons": reasons, "rejected_observations": rejected})
+    by_post.sort(key=lambda row: (row["posted_at"], row["post_id"]))
+    by_mark = {}
+    for mark in AGE_MARKS_HOURS:
+        key = str(mark)
+        observations = [p["marks"][key] for p in by_post if p["marks"][key]]
+        metrics = {}
+        for metric in METRICS:
+            values = [o["metrics"][metric] for o in observations if o["metrics"][metric] is not None]
+            metrics[metric] = {"n_eligible": len(values),
+                               "median": _median(values) if len(values) >= min_n else None}
+        by_mark[key] = {"n_total": len(by_post), "n_eligible": len(observations), "metrics": metrics,
+                        "measurement": {"minimum_age_hours_inclusive": mark,
+                            "maximum_age_hours_exclusive": mark * 1.25,
+                            "selection": "earliest_eligible_observation", "collapsed_marks_allowed": False}}
+    return {"by_mark": by_mark, "marks_by_post": by_post}
 
 
 def _root_exclusion(post, *, known_reply=False):
