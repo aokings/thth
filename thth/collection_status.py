@@ -49,6 +49,9 @@ def summarize(name, now):
     verdicts = {ok for at, ok in attempts if at == last}
     ok = verdicts.pop() if len(verdicts) == 1 else None
     success = [at for at, valid in attempts if valid is True and {ok for time, ok in attempts if time == at} == {True}]
+    if incomplete:
+        return {'last_success_at': None, 'last_attempt_at': None, 'last_attempt_ok': None,
+                'source':'runs', 'coverage':'incomplete', 'last_attempt_reason':'collection_records_incomplete'}, ['collection_records_incomplete']
     return {'last_success_at': jst.iso(max(success)) if success else None,
             'last_attempt_at': jst.iso(last), 'last_attempt_ok': ok, 'source': 'runs',
             'coverage': 'incomplete' if incomplete else 'local_records_only',

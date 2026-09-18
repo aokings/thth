@@ -93,7 +93,7 @@ def test_a7_collected_time_bounds_history(monkeypatch):
     from thth import analytics_shapes as s
     early = POSTED+dt.timedelta(hours=23)
     late = POSTED+dt.timedelta(hours=25)
-    ledger = {'broken': [], 'fetches':[{'post_id':'p', 'collected_at':jst.iso(early)}], 'replies':[
+    ledger = {'broken': [], 'fetches':[{'post_id':'p', 'collected_at':jst.iso(early)}, {'post_id':'p', 'collected_at':jst.iso(late)}], 'replies':[
         {'post_id':'p','id':'r','own':False,'username':'private','text':'SECRET','replied_to':{'id':'p'},
          'timestamp':jst.iso(POSTED+dt.timedelta(hours=1)), 'collected_at':jst.iso(late)}]}
     monkeypatch.setattr(s.replies,'load',lambda *a,**k:ledger)

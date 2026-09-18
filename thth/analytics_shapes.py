@@ -16,13 +16,15 @@ def shape_at(name, post_id, posted, now):
         if cutoff > now:
             continue
         fetches = [f for f in ledger['fetches'] if f.get('post_id') == post_id
-                   and (at := c._timestamp(f.get('collected_at'))) is not None and posted <= at <= cutoff
-                   and f.get('id_missing',0) == 0]
+                   and (at := c._timestamp(f.get('collected_at'))) is not None and posted <= at <= cutoff]
         if not fetches:
             continue
         observed = max(c._timestamp(f['collected_at']) for f in fetches)
+        latest = [f for f in fetches if c._timestamp(f['collected_at']) == observed]
+        if any(type(f.get('id_missing', 0)) is not int or f.get('id_missing', 0) != 0 for f in latest):
+            continue
         candidates = [r for r in ledger['replies'] if r.get('post_id') == post_id
-                      and (at := c._timestamp(r.get('collected_at'))) is not None and posted <= at <= cutoff
+                      and (at := c._timestamp(r.get('collected_at'))) is not None and posted <= at <= observed
                       and (ts := c._timestamp(r.get('timestamp'))) is not None and posted <= ts <= at]
         # Earliest known version wins; a later duplicate cannot rewrite history.
         candidates.sort(key=lambda r: (c._timestamp(r['collected_at']), str(r.get('id',''))))

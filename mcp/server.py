@@ -398,6 +398,9 @@ def validate_arguments(name: str, arguments) -> dict:
         raise ToolInputError(
             f"{name}: arguments は object で渡してください"
             f"（受け取った: {type(arguments).__name__}）")
+    if name == "analytics_report" and "by" in arguments:
+        if arguments["by"] not in ("kind", "hour_band", "topic") or arguments.get("compare_previous") is not True:
+            raise ToolInputError("analytics_report: by は compare_previous=true と kind/hour_band/topic が必要です")
     props = schema.get("properties") or {}
     for key in schema.get("required") or []:
         if arguments.get(key) is None:
