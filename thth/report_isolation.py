@@ -21,7 +21,7 @@ def validate_environment(root: str, allowed_accounts: Mapping) -> None:
     """Validate dedicated root and configured scope without reading secrets.
 
     Root must be explicit, have no group/other permissions, and be owned by the running identity.
-    Reject every symlink/special file in the root, including dangling symlinks.
+    Reject symlinks/special files at root and in report-readable trees and ancestors.
     All configured account resource paths must remain beneath that root.
     Filesystem mutation races require host-enforced isolation, not this check.
     """
@@ -53,20 +53,41 @@ def _validate(root, allowed):
     if not allowed or any(not accounts.name_is_safe(name) for name in allowed):
         raise IsolationError("invalid_report_scope")
 
-    # No content is read here. Bound traversal so a bad deployment fails closed.
-    count = 0
-    for directory, dirs, files in os.walk(resolved, followlinks=False, onerror=_walk_error):
-        for name in dirs + files:
-            count += 1
-            if count > 100_000:
-                raise IsolationError("report_tree_too_large")
-            entry = Path(directory) / name
-            entry_stat = entry.lstat()
-            if not (stat.S_ISDIR(entry_stat.st_mode) or stat.S_ISREG(entry_stat.st_mode)):
-                raise IsolationError("unsafe_report_tree")
-            # Hard links could expose a file outside the dedicated tree.
-            if stat.S_ISREG(entry_stat.st_mode) and entry_stat.st_nlink > 1:
-                raise IsolationError("unsafe_report_tree")
+    # Inspect the root's immediate entries without descending unrelated repos.
+    # Read locations and every existing ancestor are checked before loaders run.
+    seen = set()
+
+    def inspect(entry):
+        if entry in seen:
+            return
+        seen.add(entry)
+        if len(seen) > 100_000:
+            raise IsolationError("report_tree_too_large")
+        info = entry.lstat()
+        if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+            raise IsolationError("unsafe_report_tree")
+        if stat.S_ISREG(info.st_mode) and info.st_nlink > 1:
+            raise IsolationError("unsafe_report_tree")
+
+    for entry in resolved.iterdir():
+        inspect(entry)
+
+    def scan(path):
+        # Lexical ancestry is important: resolve() alone would hide symlinks.
+        path = Path(os.path.abspath(path))
+        if not path.is_relative_to(resolved):
+            raise IsolationError("resource_outside_root")
+        for ancestor in reversed((path, *path.parents)):
+            if ancestor == resolved or not ancestor.is_relative_to(resolved):
+                continue
+            if ancestor.exists() or ancestor.is_symlink():
+                inspect(ancestor)
+        if path.is_dir():
+            for directory, dirs, files in os.walk(path, followlinks=False, onerror=_walk_error):
+                for name in dirs + files:
+                    inspect(Path(directory) / name)
+
+    scan(account_dir)  # Account definitions must be safe before load_account opens them.
 
     def inside(path):
         if not isinstance(path, str) or not os.path.isabs(path):
@@ -87,12 +108,15 @@ def _validate(root, allowed):
                 value = cfg.get(field)
                 if value:
                     inside(os.path.join(repo, value))
+                    scan(os.path.join(repo, value))
         for field in ("env", "token"):
             if cfg.get(field):
                 inside(cfg[field])
         inside(accounts.state_dir_for(name))
+        scan(accounts.state_dir_for(name))
         for path in accounts.data_dirs(cfg, name).values():
             inside(path)
+            scan(path)
 
 
 def _walk_error(_):

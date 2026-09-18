@@ -6,6 +6,7 @@ credentials, not human identity or publication approval. Never log requests.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import errno
 import hashlib
 import hmac
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -241,7 +242,14 @@ def cmd_serve_reports(args):
             server.serve_forever()
     except KeyboardInterrupt:
         return 0
-    except (OSError, ValueError):
-        print("private_report_server_unavailable: check private credential configuration and loopback port", file=sys.stderr)
+    except (OSError, ValueError) as error:
+        reasons = {"root_mismatch", "account_scope_mismatch", "private_root_required",
+                   "account_registry_mismatch", "invalid_report_scope", "resource_outside_root",
+                   "unsafe_report_tree", "report_tree_too_large", "unreadable_report_tree",
+                   "invalid_report_environment", "configuration_unavailable", "invalid_port"}
+        reason = str(error) if isinstance(error, (IsolationError, ConfigurationError, ValueError)) and str(error) in reasons else "server_unavailable"
+        if isinstance(error, OSError) and error.errno == errno.EADDRINUSE:
+            reason = "address_in_use"
+        print(f"private_report_server_unavailable: {reason}", file=sys.stderr)
         return 2
     return 0

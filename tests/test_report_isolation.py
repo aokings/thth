@@ -81,3 +81,34 @@ def test_explicit_root_required(dedicated, monkeypatch):
     monkeypatch.delenv('THTH_ROOT')
     with pytest.raises(IsolationError, match='root_mismatch'):
         validate_environment(str(dedicated), {'demo': 'project'})
+
+
+def test_unrelated_git_objects_not_walked_but_read_paths_are(dedicated, tmp_path, monkeypatch):
+    repo = dedicated / "repos/_none"
+    objects = repo / ".git/objects"
+    objects.mkdir(parents=True)
+    outside = tmp_path / "object"
+    outside.write_text("not report data")
+    os.link(outside, objects / "hardlink")
+    import thth.report_isolation as isolation
+    walk = isolation.os.walk
+    visited = []
+    def tracked(path, **kwargs):
+        visited.append(Path(path))
+        return walk(path, **kwargs)
+    monkeypatch.setattr(isolation.os, "walk", tracked)
+    validate_environment(str(dedicated), {"demo": "project"})
+    assert all(not objects.is_relative_to(path) for path in visited)
+    data = dedicated / "state/demo"
+    data.mkdir(parents=True)
+    os.link(outside, data / "hardlink")
+    with pytest.raises(IsolationError, match="unsafe_report_tree"):
+        validate_environment(str(dedicated), {"demo": "project"})
+
+
+def test_read_path_ancestor_symlink_rejected(dedicated):
+    target = dedicated / "actual"
+    target.mkdir()
+    (dedicated / "state").symlink_to(target)
+    with pytest.raises(IsolationError, match="unsafe_report_tree"):
+        validate_environment(str(dedicated), {"demo": "project"})
