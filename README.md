@@ -9,7 +9,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 版
 
-このソースの版は **2.5.0**。現在の設計は [自分の泉](docs/設計_自分の泉_2026-09-16.md)、導入は [自分の Meta アプリで動かす](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
+このソースの版は **2.6.0**。現在の設計は [自分の泉](docs/設計_自分の泉_2026-09-16.md)、導入は [自分の Meta アプリで動かす](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
 
 版の正本は `thth/VERSION`（`server.json` はテストで一致を強制）。開発中の `main` には未配布の変更も含まれます。インストール済みの版は `thth --version`、VM の版と revision は `thth board` で確認してください。
 
@@ -21,7 +21,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 実装と運用の状態（2026-09-18）
 
-2.5.0 の実装 revision の全件テストは **2690 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip・rc=0）。開発中の変更の検証は対象 revision の CI を参照してください。
+2.6.0 の実装 revision `3a3b4ef` の全件テストは **2705 件**（`python -m pytest tests/ -q -n auto -p no:cacheprovider`・1 skip・rc=0）。開発中の変更の検証は対象 revision の CI を参照してください。
 
 **媒体**: Threads（稼働）・Bluesky・Mastodon（同席用の台帳あり・未稼働）。
 
@@ -34,6 +34,13 @@ timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿
 **依存 0**。PyPI に公開済み・MCP registry に `io.github.aokings/thth` として登録済み）。
 
 **トピックの棚**（`thth topics`）: 観測者ごとに並ぶ・打ち消し `retract-note`・`history`。
+
+### v2.6.0 の変更
+
+- 既存台帳から刻み別の値、中央値の IQR・min・max、枝別の帰結、採集成否と鮮度、層別比較、採集時刻を上限とした枝の形を追加。既存キーは維持し `schema_version=1` のままです。
+- `cannot_say_details` にコードと既存の説明文を併記。施策レポートには未成熟投稿が24時間に達する予定を添え、採集保証とは分けます。
+- `handoff-report --since-last-read` で保存済みsnapshotとの差分。cursor保存は CLI の `--mark-read --by 名前` を明示したときだけ。MCP・HTTPは読むだけです。
+- API呼出を増やさない分析の改良です。VM5accountの読取検証と限界は [検証記録](docs/検証_v31_A実装_2026-09-18.md) に記載。Bluesky/Mastodon の非空実台帳と実採用施策の検証は未確認です。
 
 ### v2.5.0 の変更
 
