@@ -7,6 +7,15 @@ from pathlib import Path
 from . import jst
 
 
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('duplicate context key')
+        result[key] = value
+    return result
+
+
 def followers(account, account_dir, now):
     now=jst.to_jst(now)
     day=now.date().isoformat()
@@ -17,8 +26,8 @@ def followers(account, account_dir, now):
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):return None
             data=stream.read(1024*1024+1)
         if len(data)>1024*1024:return None
-        rows=[json.loads(line) for line in data.splitlines() if line.strip()]
-    except (OSError,ValueError,UnicodeError,TypeError):
+        rows=[json.loads(line, object_pairs_hook=_unique_object) for line in data.splitlines() if line.strip()]
+    except (OSError,ValueError,UnicodeError,TypeError,RecursionError):
         return None
     candidates=[]
     for row in rows:
@@ -28,6 +37,7 @@ def followers(account, account_dir, now):
         except (ValueError,TypeError,OverflowError):return None
         if at is None:return None
         if at>now:continue
+        if jst.to_jst(at).date().isoformat()!=day:return None
         metrics=row.get('metrics')
         value=metrics.get('followers_count') if isinstance(metrics,dict) else None
         try:

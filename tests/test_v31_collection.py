@@ -162,3 +162,20 @@ def test_c5_media_marks_and_native_metrics(tmp_path,isolated_account_factory,mon
     from thth.analytics_comparison import _marks_population
     report=_marks_population([('P',POSTED,{'rows':rows})],POSTED,POSTED+dt.timedelta(days=41),POSTED+dt.timedelta(days=41),1)
     assert report['by_mark']['720']['metrics']['views']['median']==(0 if medium=='threads' else None)
+
+def test_c2_corrupt_optional_context_does_not_stop_collection(tmp_path,isolated_account_factory,monkeypatch):
+    a=setup_route(tmp_path,isolated_account_factory,monkeypatch,'sent')
+    path=daily_path(a)
+    bad_inputs=[
+        '['*10000+'0'+']'*10000,
+        json.dumps(daily_row(a,7,collected_at='2026-08-31T23:59:59+09:00')),
+        json.dumps(daily_row(a,7)).replace('"followers_count": 7','"followers_count": 0, "followers_count": 999')]
+    adapter=Adapter()
+    for hour,bad in zip((1,6,24),bad_inputs):
+        path.write_text(bad)
+        from thth.collection_context import followers
+        assert followers(a['name'],path.parent,POSTED+dt.timedelta(hours=1)) is None
+        result=c.collect_once(a['name'],adapter=adapter,now=POSTED+dt.timedelta(hours=hour),log=lambda x:None)
+        assert not result['errors']
+    rows=c._read_ndjson(str(Path(accounts.data_dirs(a,a['name'])['insights_posts'])/'P.ndjson'))
+    assert len(rows)==3 and all(row['context'] is None for row in rows)
