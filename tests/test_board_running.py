@@ -49,6 +49,39 @@ def _hold(account_name, seconds, which="account"):
     return holder
 
 
+def _hold_until_released(account_name):
+    """Keep the lock until the parent closes stdin, regardless of CLI latency."""
+    code = """
+import sys
+from thth import accounts, lock
+held = lock.AccountLock(accounts.account_lock_path_for(sys.argv[1]))
+held.acquire()
+try:
+    print("locked", flush=True)
+    sys.stdin.read()
+finally:
+    held.release()
+"""
+    holder = subprocess.Popen(
+        [sys.executable, "-c", code, account_name],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, env=dict(os.environ),
+        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    assert holder.stdout.readline().strip() == "locked"
+    return holder
+
+
+def _release(holder):
+    try:
+        # communicate closes stdin: that EOF is the explicit release event.
+        stdout, stderr = holder.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        holder.kill()
+        holder.communicate(timeout=5)
+        raise
+    assert holder.returncode == 0, stdout + stderr
+
+
 def _stop(holder):
     holder.terminate()
     holder.wait(timeout=5)
@@ -146,7 +179,7 @@ def test_boardはロックを奪わない(isolated_account):
     name = isolated_account["name"]
     lock_path = accounts_mod.account_lock_path_for(name)
 
-    holder = _hold(name, 3)
+    holder = _hold_until_released(name)
     try:
         for _ in range(3):
             run_thth(["board"])
@@ -156,9 +189,8 @@ def test_boardはロックを奪わない(isolated_account):
         blocked = run_thth(["throw", name])
         assert blocked.returncode == 1, blocked.stdout + blocked.stderr
     finally:
-        holder.wait(timeout=15)
+        _release(holder)
 
-    time.sleep(0.2)
     # 放したあとは通る（board が握りっぱなしにしていない証拠）。
     assert lock_mod.AccountLock.holder_pid(lock_path) is None
     ok = run_thth(["throw", name])
