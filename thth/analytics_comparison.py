@@ -21,7 +21,8 @@ def _timestamp(raw):
 def _measurement_contract():
     return {"mark": 24, "minimum_age_hours_inclusive": 24,
             "maximum_age_hours_exclusive": 30, "selection": "earliest_eligible_observation",
-            "age_basis": "collected_at_minus_posted_at", "collapsed_marks_allowed": False}
+            "age_basis": "collected_at_minus_posted_at", "collapsed_marks_allowed": False,
+            "quartile_method": "tukey_hinges", "quartile_algorithm": "median_of_halves_excluding_odd_center"}
 
 
 def _metric(value):
@@ -40,6 +41,17 @@ def _median(values):
         return ordered[middle]
     # Finite nonnegative operands can overflow when summed before division.
     return ordered[middle - 1] / 2 + ordered[middle] / 2
+
+
+def _spread(values, min_n):
+    ordered = sorted(values)
+    n = len(ordered)
+    if n < min_n:
+        return {"iqr": None, "min": None, "max": None, "spread_reason": "below_min_n"}
+    middle = n // 2
+    return {"iqr": _median(ordered[(n + 1) // 2:]) - _median(ordered[:middle]) if n >= 4 else None,
+            "min": ordered[0], "max": ordered[-1],
+            "spread_reason": None if n >= 4 else "too_few_for_quartiles"}
 
 
 def _observation(post, posted, now, mark=24):
@@ -102,7 +114,7 @@ def _population(items, start, end, now, min_n):
                   if row["observation"] and row["observation"]["metrics"][key] is not None]
         metrics[key] = {"n_total": len(evidence), "n_eligible": len(values),
                         "n_missing": len(evidence) - len(values),
-                        "median": _median(values) if len(values) >= min_n else None}
+                        "median": _median(values) if len(values) >= min_n else None, **_spread(values, min_n)}
     counts = collections.Counter(row["status"] for row in evidence)
     times = [row["observation"]["collected_at"] for row in evidence if row["observation"]]
     return {"n_total": len(evidence), "n_eligible": counts["eligible"],
@@ -137,7 +149,7 @@ def _marks_population(items, start, end, now, min_n):
         for metric in METRICS:
             values = [o["metrics"][metric] for o in observations if o["metrics"][metric] is not None]
             metrics[metric] = {"n_eligible": len(values),
-                               "median": _median(values) if len(values) >= min_n else None}
+                               "median": _median(values) if len(values) >= min_n else None, **_spread(values, min_n)}
         by_mark[key] = {"n_total": len(by_post), "n_eligible": len(observations), "metrics": metrics,
                         "measurement": {"minimum_age_hours_inclusive": mark,
                             "maximum_age_hours_exclusive": mark * 1.25,

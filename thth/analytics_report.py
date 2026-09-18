@@ -58,6 +58,12 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
         # Legacy snapshot includes its upper boundary; additive strict marks do too.
         curves = comparison._marks_population(items, start, now + datetime.timedelta(microseconds=1), now, min_n)
         node["posts"].update(curves)
+        node["posts"]["views_24h"].update(comparison._spread(
+            [p["views_24h"] for p in node["posts"]["by_post"] if p["views_24h"] is not None], min_n))
+        for key in ("views_24h", "likes_24h", "replies_back_24h"):
+            node["engagements"][key].update(comparison._spread(
+                [p[key] for p in node["engagements"]["by_branch"] if p[key] is not None], min_n))
+
         lookup = {p["post_id"]: p for p in curves["marks_by_post"]}
         for post in node["posts"]["by_post"]:
             post["marks"] = lookup.get(str(post["post_id"]), {}).get("marks")
@@ -72,6 +78,7 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
                    "window_days": window_days, "mode": "rolling"},
         "filters": {"account": account_name, "project": project}, "min_n": min_n,
         "by_account": nodes,
+        "measurement": comparison._measurement_contract(),
         "cannot_say": list(source.get("cannot_say", [])) if project is not None else [],
         "limitations": [
             "前期間との比較・因果推論・推奨行動は含まない",

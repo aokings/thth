@@ -85,7 +85,7 @@ def test_invalid_metric_does_not_become_zero(isolated_account_factory, value):
     seed(a, "p", NOW - datetime.timedelta(days=3), value=value)
     p = report(a, min_n=1)["by_account"][a["name"]]["posts"]["current"]
     assert p["n_eligible"] == 1  # time-eligible does not imply every metric exists
-    assert p["metrics"]["views"] == {"n_total": 1, "n_eligible": 0, "n_missing": 1, "median": None}
+    assert p["metrics"]["views"] == {"n_total": 1, "n_eligible": 0, "n_missing": 1, "median": None, "iqr": None, "min": None, "max": None, "spread_reason": "below_min_n"}
     json.dumps(p, allow_nan=False)
 
 

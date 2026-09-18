@@ -24,3 +24,10 @@ def test_a1_reject_collapsed_future_conflicting():
     rows[2]['posted_at'] = jst.iso(POSTED-dt.timedelta(hours=1))
     assert c._observation({'rows': rows}, POSTED, NOW, 1)[0] is None
     assert c._observation({'rows': [row(168, 168)]}, POSTED, NOW, 168)[0] is None
+
+def test_a5_spread_gate_and_odd_center():
+    assert c._spread([1, 2, 3, 4], 5) == {'iqr': None, 'min': None, 'max': None, 'spread_reason': 'below_min_n'}
+    assert c._spread([0], 1) == {'iqr': None, 'min': 0, 'max': 0, 'spread_reason': 'too_few_for_quartiles'}
+    assert c._spread([1, 2, 3], 1)['iqr'] is None
+    assert c._spread([1, 2, 50, 80, 100], 1)['iqr'] == 88.5
+    assert c._spread([1, 2, 3, 4], 1)['iqr'] == 2

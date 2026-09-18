@@ -41,7 +41,7 @@ def test_boundaries_evidence_missing_and_no_writes(isolated_account_factory):
             return actual
         assert legacy_projection(node[key], original[key]) == original[key]
     assert {p["post_id"] for p in node["posts"]["by_post"]} == {"start", "end"}
-    assert node["posts"]["views_24h"] == {"median": None, "n": 1}
+    assert node["posts"]["views_24h"] == {"median": None, "n": 1, "iqr": None, "min": None, "max": None, "spread_reason": "below_min_n"}
     end = next(p for p in node["posts"]["by_post"] if p["post_id"] == "end")
     assert end["views_24h"] is None and end["covered"] is False
     assert node["engagements"]["by_branch"][0]["post_id"] == "reply"
