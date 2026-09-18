@@ -39,7 +39,10 @@ def test_boundaries_evidence_missing_and_no_writes(isolated_account_factory):
                 assert len(actual) == len(original)
                 return [legacy_projection(a, b) for a, b in zip(actual, original)]
             return actual
-        assert legacy_projection(node[key], original[key]) == original[key]
+        actual = node[key]
+        if key == "cannot_say":
+            actual = [x for x in actual if not x.startswith("collection_records_")]
+        assert legacy_projection(actual, original[key]) == original[key]
     assert {p["post_id"] for p in node["posts"]["by_post"]} == {"start", "end"}
     assert node["posts"]["views_24h"] == {"median": None, "n": 1, "iqr": None, "min": None, "max": None, "spread_reason": "below_min_n"}
     end = next(p for p in node["posts"]["by_post"] if p["post_id"] == "end")

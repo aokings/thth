@@ -50,6 +50,9 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
         # Advice is not an observation. Keep it outside this snapshot contract.
         node.pop("one_thing_to_change", None)
         node["provenance"].pop("updated", None)
+        from .collection_status import summarize as collection_summary
+        node["collection"], collection_reasons = collection_summary(name, now)
+        node["cannot_say"].extend(collection_reasons)
         from . import analytics_comparison as comparison, measured, engagements
         cfg = accounts.load_account(name)
         ledger = measured.load(name, observation_metadata=True)

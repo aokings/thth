@@ -226,6 +226,9 @@ def _account(name, previous_start, current_start, now, min_n):
               "engagement_files": eng.get("broken", 0)}
     node = {"medium": cfg.get("media"), "excluded_records": dict(exclusions),
             "incomplete_sources": broken, "cannot_say": []}
+    from .collection_status import summarize as collection_summary
+    node["collection"], collection_reasons = collection_summary(name, now)
+    node["cannot_say"].extend(collection_reasons)
     for kind, items in (("posts", root_items), ("engagements", reply_items)):
         previous = _population(items, previous_start, current_start, now, min_n)
         current = _population(items, current_start, now, now, min_n)

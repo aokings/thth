@@ -61,3 +61,19 @@ def test_a2_reaction_identity_and_missing(monkeypatch):
     assert t.reaction('a', 'threads', e, POSTED, NOW) == (True, 2)
     ledger['replies'][0]['replied_to'] = {'id': 'someone_else'}
     assert t.reaction('a', 'threads', e, POSTED, NOW) == (False, None)
+
+def test_a3_skip_not_success(tmp_path, monkeypatch):
+    import json
+    from thth import collection_status as s
+    monkeypatch.setattr(s.accounts, 'state_dir_for', lambda name: tmp_path)
+    assert s.summarize('a', NOW)[0] is None
+    p = tmp_path/'runs-2026-09.ndjson'
+    rows = [{'account':'a', 'action':'collect', 'run_id':'collect-'+jst.iso(POSTED), 'status':'ok','collected':0},
+            {'account':'a', 'action':'collect', 'run_id':'collect-'+jst.iso(NOW), 'status':'ok','collected':None}]
+    p.write_text('\n'.join(map(json.dumps,rows)))
+    value, reasons = s.summarize('a', NOW)
+    assert value['last_success_at'] == jst.iso(POSTED)
+    assert value['last_attempt_ok'] is None
+    rows[-1]['collected'] = True
+    p.write_text('\n'.join(map(json.dumps,rows)))
+    assert s.summarize('a', NOW)[0]['last_attempt_ok'] is None
