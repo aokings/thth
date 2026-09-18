@@ -31,3 +31,20 @@ def test_a5_spread_gate_and_odd_center():
     assert c._spread([1, 2, 3], 1)['iqr'] is None
     assert c._spread([1, 2, 50, 80, 100], 1)['iqr'] == 88.5
     assert c._spread([1, 2, 3, 4], 1)['iqr'] == 2
+
+def test_a8_details_preserve_order_text():
+    from thth.report_details import attach
+    messages = ['timer_health_unknown', '自分の投稿の 24h views が欠測: 2 本', '未知の説明']
+    result = attach({'cannot_say': list(messages)})
+    assert result['cannot_say'] == messages
+    assert result['cannot_say_details'] == [
+        {'code': 'timer_health_unknown', 'text': messages[0]},
+        {'code': 'post_views_missing', 'text': messages[1]},
+        {'code': 'report_limitation', 'text': messages[2]}]
+
+def test_a1_malformed_mark_types():
+    for mark in (1, 6, 24, 72, 168):
+        for bad in (True, False, str(mark), float(mark)):
+            value = row(mark, mark)
+            value['marks'] = [bad]
+            assert c._observation({'rows': [value]}, POSTED, NOW + dt.timedelta(days=10), mark)[0] is None

@@ -170,6 +170,9 @@ def _account(name, cfg, now):
             "evidence": evidence}
 
 
+from .report_details import detailed
+
+@detailed
 def answer(account_name=None, *, project=None, now=None):
     for value in (account_name, project):
         if value is not None and (not isinstance(value, str) or not value.strip()):

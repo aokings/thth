@@ -70,7 +70,7 @@ def _observation(post, posted, now, mark=24):
             reason = "invalid_collected_at"
         elif collected > now:
             reason = "future_observation"
-        elif not isinstance(marks, list) or marks != [mark] or row.get("marks_collapsed"):
+        elif not isinstance(marks, list) or any(type(m) is not int for m in marks) or marks != [mark] or row.get("marks_collapsed"):
             reason = f"missing_or_collapsed_{mark}h_mark"
         else:
             age = (collected - posted).total_seconds() / 3600
@@ -237,6 +237,9 @@ def _account(name, previous_start, current_start, now, min_n):
     return node
 
 
+from .report_details import detailed
+
+@detailed
 def answer(account_name, *, project, window_days, min_n, now):
     try:
         current_start = now - datetime.timedelta(days=window_days)

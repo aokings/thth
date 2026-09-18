@@ -98,6 +98,9 @@ def load_declaration(path, now):
     return value
 
 
+from .report_details import detailed
+
+@detailed
 def answer(path, *, min_n=5, now=None):
     if type(min_n) is not int or min_n < 1:
         raise StudyError("min_nは1以上の整数です")

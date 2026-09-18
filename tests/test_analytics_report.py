@@ -53,7 +53,16 @@ def test_boundaries_evidence_missing_and_no_writes(isolated_account_factory):
     assert result["generated_at"] == "2026-09-17T08:00:00+09:00"
     text = json.dumps(result)
     assert "PRIVATE BODY" not in text
-    assert '"username"' not in text and '"text"' not in text
+    assert '"username"' not in text
+    def assert_text_only_in_details(value, details=False):
+        if isinstance(value, dict):
+            assert "text" not in value or details
+            for key, child in value.items():
+                assert_text_only_in_details(child, key == "cannot_say_details")
+        elif isinstance(value, list):
+            for child in value:
+                assert_text_only_in_details(child, details)
+    assert_text_only_in_details(result)
     markdown = analytics_report.render_markdown(result)
     recovered = "\n".join(line[4:] for line in markdown.splitlines() if line.startswith("    "))
     assert json.loads(recovered) == result

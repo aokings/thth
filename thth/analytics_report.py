@@ -11,6 +11,9 @@ from . import accounts, after_cli, jst
 DEFAULT_WINDOW_DAYS = 7
 
 
+from .report_details import detailed
+
+@detailed
 def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
            min_n=after_cli.DEFAULT_MIN_N, now=None, compare_previous=False):
     """One payload for CLI Markdown/JSON and MCP; never collect or persist data."""
