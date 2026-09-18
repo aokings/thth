@@ -116,7 +116,7 @@ Full walkthrough: [docs/usage.en.md](docs/usage.en.md).
 
 ## Commands
 
-All 36 subcommands `thth --help` lists today, one line each:
+All 37 subcommands `thth --help` lists in this development checkout, one line each:
 
 - `lint` — check a queue file's front matter and length
 - `preview` — show the exact text that would go out
