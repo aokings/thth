@@ -29,7 +29,7 @@ def summarize(name, now):
                 if not isinstance(row, dict):
                     incomplete = True
                     continue
-                if row.get('account') != name or row.get('action') != 'collect':
+                if row.get('account') != name or row.get('action') != 'collect' or row.get('mode') != 'collect':
                     continue
                 run_id = row.get('run_id')
                 at = c._timestamp(run_id[8:]) if isinstance(run_id, str) and run_id.startswith('collect-') else None
@@ -48,7 +48,7 @@ def summarize(name, now):
     last = attempts[-1][0]
     verdicts = {ok for at, ok in attempts if at == last}
     ok = verdicts.pop() if len(verdicts) == 1 else None
-    success = [at for at, valid in attempts if valid is True]
+    success = [at for at, valid in attempts if valid is True and {ok for time, ok in attempts if time == at} == {True}]
     return {'last_success_at': jst.iso(max(success)) if success else None,
             'last_attempt_at': jst.iso(last), 'last_attempt_ok': ok, 'source': 'runs',
             'coverage': 'incomplete' if incomplete else 'local_records_only',

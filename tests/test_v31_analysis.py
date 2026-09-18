@@ -55,9 +55,9 @@ def test_a2_reaction_identity_and_missing(monkeypatch):
     monkeypatch.setattr(t.replies, 'load', lambda *a, **k: ledger)
     e = {'post_id': 'mine', 'author_key': '0123456789abcdef'}
     assert t.reaction('a', 'threads', e, POSTED, NOW) == (None, None)
-    ledger['fetches'] = [{'collected_at': jst.iso(NOW)}]
+    ledger['fetches'] = [{'post_id':'mine', 'collected_at': jst.iso(NOW)}]
     assert t.reaction('a', 'threads', e, POSTED, NOW) == (False, None)
-    ledger['replies'] = [{'collected_at': jst.iso(NOW), 'timestamp': jst.iso(POSTED+dt.timedelta(hours=2)), 'own': False, 'replied_to': {'id':'mine'}, 'author_key': e['author_key'], 'text':'SECRET'}]
+    ledger['replies'] = [{'post_id':'mine', 'collected_at': jst.iso(NOW), 'timestamp': jst.iso(POSTED+dt.timedelta(hours=2)), 'own': False, 'replied_to': {'id':'mine'}, 'author_key': e['author_key'], 'text':'SECRET'}]
     assert t.reaction('a', 'threads', e, POSTED, NOW) == (True, 2)
     ledger['replies'][0]['replied_to'] = {'id': 'someone_else'}
     assert t.reaction('a', 'threads', e, POSTED, NOW) == (False, None)
@@ -68,8 +68,8 @@ def test_a3_skip_not_success(tmp_path, monkeypatch):
     monkeypatch.setattr(s.accounts, 'state_dir_for', lambda name: tmp_path)
     assert s.summarize('a', NOW)[0] is None
     p = tmp_path/'runs-2026-09.ndjson'
-    rows = [{'account':'a', 'action':'collect', 'run_id':'collect-'+jst.iso(POSTED), 'status':'ok','collected':0},
-            {'account':'a', 'action':'collect', 'run_id':'collect-'+jst.iso(NOW), 'status':'ok','collected':None}]
+    rows = [{'account':'a', 'mode':'collect', 'action':'collect', 'run_id':'collect-'+jst.iso(POSTED), 'status':'ok','collected':0},
+            {'account':'a', 'mode':'collect', 'action':'collect', 'run_id':'collect-'+jst.iso(NOW), 'status':'ok','collected':None}]
     p.write_text('\n'.join(map(json.dumps,rows)))
     value, reasons = s.summarize('a', NOW)
     assert value['last_success_at'] == jst.iso(POSTED)
@@ -77,3 +77,14 @@ def test_a3_skip_not_success(tmp_path, monkeypatch):
     rows[-1]['collected'] = True
     p.write_text('\n'.join(map(json.dumps,rows)))
     assert s.summarize('a', NOW)[0]['last_attempt_ok'] is None
+
+def test_a6_unknown_stratum_reconciles(isolated_account_factory):
+    from tests.test_analytics_comparison import seed, report
+    from thth import analytics_report
+    a = isolated_account_factory()
+    seed(a, 'p', NOW-dt.timedelta(days=3), value=0)
+    result = analytics_report.answer(a['name'], now=NOW, compare_previous=True, by='kind', min_n=1)
+    group = result['by_account'][a['name']]['posts']
+    assert group['stratified']['strata']['unknown']['current']['n_total'] == 1
+    assert group['stratified']['reconciliation']['current'] == {'sum_n_total':1,'n_total':1}
+    assert group['stratified']['strata']['unknown']['current']['metrics']['views']['median'] == 0

@@ -183,7 +183,7 @@ def _differences(previous, current, min_n):
     return deltas
 
 
-def _account(name, previous_start, current_start, now, min_n):
+def _account(name, previous_start, current_start, now, min_n, by=None):
     cfg = accounts.load_account(name)
     # Existing loader supplies account-at-observation ownership guarantees. A
     # malformed ledger that prevents loading is an error, never an empty sample.
@@ -234,6 +234,34 @@ def _account(name, previous_start, current_start, now, min_n):
         current = _population(items, current_start, now, now, min_n)
         deltas = _differences(previous, current, min_n)
         node[kind] = {"previous": previous, "current": current, "comparison": deltas}
+        if by:
+            from . import threadshape, topics
+            lookup, shelf_broken = after_cli._kind_lookup(name)
+            groups = collections.defaultdict(list)
+            for item in items:
+                pid, posted, post = item
+                source = own_engagements[pid][0] if kind == "engagements" else post
+                topic, valid = after_cli._normalized_topic(source.get("topic"))
+                value = (topic if by == "topic" and valid else
+                         threadshape.hour_band(posted) if by == "hour_band" else
+                         lookup(topic) if by == "kind" and valid else None)
+                if by == "kind" and value not in topics.KINDS:
+                    value = None
+                groups[value or "unknown"].append(item)
+            strata = {}
+            for label, members in sorted(groups.items()):
+                before = _population(members, previous_start, current_start, now, min_n)
+                after = _population(members, current_start, now, now, min_n)
+                if before["n_total"] or after["n_total"]:
+                    strata[label] = {"previous": before, "current": after,
+                                     "comparison": _differences(before, after, min_n)}
+            node[kind]["stratified"] = {"by": by, "strata": strata,
+                "reconciliation": {period: {"sum_n_total": sum(g[period]["n_total"] for g in strata.values()),
+                                            "n_total": node[kind][period]["n_total"]}
+                                   for period in ("previous", "current")},
+                "kind_basis": "current_topic_shelf" if by == "kind" else None,
+                "kind_shelf_broken": shelf_broken() if by == "kind" else None}
+
     from .analytics_threads import summarize
     node["engagements"].update(summarize(name, cfg, eng, by_id, current_start, now, now, min_n))
     if any(broken.values()):
@@ -245,7 +273,7 @@ def _account(name, previous_start, current_start, now, min_n):
 from .report_details import detailed
 
 @detailed
-def answer(account_name, *, project, window_days, min_n, now):
+def answer(account_name, *, project, window_days, min_n, now, by=None):
     try:
         current_start = now - datetime.timedelta(days=window_days)
         previous_start = current_start - datetime.timedelta(days=window_days)
@@ -255,7 +283,7 @@ def answer(account_name, *, project, window_days, min_n, now):
     nodes = {}
     for name in names:
         try:
-            nodes[name] = _account(name, previous_start, current_start, now, min_n)
+            nodes[name] = _account(name, previous_start, current_start, now, min_n, by)
         except accounts.AccountError as exc:
             if project is None:
                 raise

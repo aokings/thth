@@ -46,7 +46,7 @@ def execute_report(context: ReportContext, request: dict) -> dict:
     operation = request.get("operation")
     if not isinstance(operation, str) or operation not in {"analytics_report", "operations_handoff"}:
         raise ReportServiceError("unsupported_operation")
-    options = {"window_days", "min_n", "compare_previous"} if operation == "analytics_report" else set()
+    options = {"window_days", "min_n", "compare_previous", "by"} if operation == "analytics_report" else set()
     if set(request) - {"operation", "account", "project"} - options:
         raise ReportServiceError("invalid_request")
     # Presence, rather than truthiness, rejects null and ambiguous scope.
@@ -58,7 +58,9 @@ def execute_report(context: ReportContext, request: dict) -> dict:
         raise ReportServiceError("invalid_scope")
     if "compare_previous" in request and type(request["compare_previous"]) is not bool:
         raise ReportServiceError("invalid_options")
-    for key in options - {"compare_previous"}:
+    if "by" in request and (request["by"] not in ("kind", "hour_band", "topic") or request.get("compare_previous") is not True):
+        raise ReportServiceError("invalid_options")
+    for key in options - {"compare_previous", "by"}:
         if key in request and (type(request[key]) is not int or request[key] < 1):
             raise ReportServiceError("invalid_options")
     if scope_key == "account":

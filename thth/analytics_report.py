@@ -15,7 +15,7 @@ from .report_details import detailed
 
 @detailed
 def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
-           min_n=after_cli.DEFAULT_MIN_N, now=None, compare_previous=False):
+           min_n=after_cli.DEFAULT_MIN_N, now=None, compare_previous=False, by=None):
     """One payload for CLI Markdown/JSON and MCP; never collect or persist data."""
     for label, value in (("account", account_name), ("project", project)):
         if value is not None and (not isinstance(value, str) or not value.strip()):
@@ -27,6 +27,8 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
             raise after_cli.AfterError(f"{label} は 1 以上の整数です")
     if type(compare_previous) is not bool:
         raise after_cli.AfterError("compare_previous は boolean です")
+    if by is not None and (by not in ("kind", "hour_band", "topic") or not compare_previous):
+        raise after_cli.AfterError("by は compare_previous と kind/hour_band/topic の指定が必要です")
     now = now if now is not None else jst.now_jst()
     if not isinstance(now, datetime.datetime) or now.tzinfo is None:
         raise after_cli.AfterError("now はタイムゾーン付きの日時です")
@@ -39,7 +41,7 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
     if compare_previous:
         from . import analytics_comparison
         return analytics_comparison.answer(account_name, project=project, window_days=window_days,
-                                           min_n=min_n, now=now)
+                                           min_n=min_n, now=now, by=by)
     source = after_cli.answer(account_name, project=project, window_days=window_days,
                               min_n=min_n, now=now)
     nodes = source["by_account"] if project is not None else {account_name: source}
@@ -148,7 +150,7 @@ def cmd_analytics_report(args):
     try:
         payload = answer(args.account, project=args.project,
                          window_days=args.window_days, min_n=args.min_n,
-                         compare_previous=getattr(args, "compare_previous", False))
+                         compare_previous=getattr(args, "compare_previous", False), by=getattr(args, "by", None))
         output = (json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False)
                   if args.json else render_markdown(payload))
     except accounts.AccountError as exc:

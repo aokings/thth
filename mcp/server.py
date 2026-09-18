@@ -159,6 +159,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
+                "by": {"type": "string", "enum": ["kind", "hour_band", "topic"]},
                 "compare_previous": {"type": "boolean", "description": "直前の同じ日数との比較（既定false）"},
                 "account": {"type": "string"},
                 "project": {"type": "string"},
@@ -558,6 +559,8 @@ def call_tool(name: str, arguments: dict | None) -> dict:
                 args += ["--" + key.replace("_", "-"), str(arguments[key])]
         if arguments.get("compare_previous"):
             args.append("--compare-previous")
+        if arguments.get("by"):
+            args.extend(["--by", arguments["by"]])
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
