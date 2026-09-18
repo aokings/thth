@@ -227,3 +227,16 @@ def test_environment_rechecked_without_root_switching(tmp_path, monkeypatch):
         assert request(port)[2] == {"error": "environment_unavailable"}
         assert not calls
         assert os.environ["THTH_ROOT"] == root_before
+
+
+@pytest.mark.parametrize("operation", ["analytics_report", "operations_handoff"])
+def test_real_core_http_snapshot_does_not_write(tmp_path, operation):
+    with running(tmp_path, execute_report) as (port, _, _):
+        root = tmp_path / "tenant"
+        before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        status, _, payload = request(port, json.dumps({"operation": operation, "account": "allowed"}))
+        assert status == 200
+        assert payload["report_type"] == "scoped_report_batch"
+        assert set(payload["reports"]) == {"allowed"}
+        assert payload["operation"] == operation
+        assert {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
