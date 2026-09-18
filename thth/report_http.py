@@ -1,0 +1,247 @@
+"""Private, loopback-only read-only report transport; not a public HTTP server.
+
+One OS-isolated user per process. Credentials are administrator-issued service
+credentials, not human identity or publication approval. Never log requests.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import hashlib
+import hmac
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+from .report_service import ReportContext, ReportServiceError, execute_report
+from .report_isolation import IsolationError, validate_environment
+
+MAX_BODY = 16384
+MAX_CONFIG = 131072
+
+
+class ConfigurationError(ValueError):
+    pass
+
+
+def _pairs(pairs):
+    obj = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ValueError("duplicate_key")
+        obj[key] = value
+    return obj
+
+
+def _constant(value):
+    raise ValueError("invalid_number")
+
+
+def _json(raw):
+    return json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_constant)
+
+
+def _expiry(value):
+    if not isinstance(value, str):
+        raise ValueError("invalid_expiry")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("invalid_expiry")
+    return parsed
+
+
+def load_credentials(path: Path):
+    """Reload every request. Only owner-private regular files, never symlinks/FIFO.
+
+    Atomic replacement in a trusted owner-private directory supports revocation.
+    Filesystem ownership of all parent directories remains deployment policy.
+    """
+    try:
+        flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
+        fd = os.open(path, flags)
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or info.st_mode & 0o077 or info.st_size > MAX_CONFIG):
+                raise ValueError("invalid_file")
+            raw = stream.read(MAX_CONFIG + 1)
+        if len(raw) > MAX_CONFIG:
+            raise ValueError("invalid_file")
+        config = _json(raw)
+        if (type(config) is not dict or set(config) != {"schema_version", "root", "credentials"}
+                or type(config["schema_version"]) is not int or config["schema_version"] != 1
+                or type(config["credentials"]) is not list or not 1 <= len(config["credentials"]) <= 100):
+            raise ValueError("invalid_config")
+        root = config["root"]
+        if not isinstance(root, str) or not os.path.isabs(root):
+            raise ValueError("invalid_root")
+        credentials = []
+        seen = set()
+        for item in config["credentials"]:
+            if type(item) is not dict or set(item) != {"sha256", "expires_at", "revoked", "accounts"}:
+                raise ValueError("invalid_credential")
+            digest = item["sha256"]
+            if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                    or digest in seen or type(item["revoked"]) is not bool
+                    or type(item["accounts"]) is not dict or not item["accounts"]):
+                raise ValueError("invalid_credential")
+            seen.add(digest)
+            context = ReportContext(item["accounts"])
+            credentials.append((digest, _expiry(item["expires_at"]), item["revoked"], context))
+        return root, credentials
+    except (OSError, ValueError, TypeError, KeyError, RecursionError, OverflowError):
+        raise ConfigurationError("configuration_unavailable") from None
+
+
+class PrivateReportServer(HTTPServer):
+    """Serialized requests; never switches process environment per request."""
+    allow_reuse_address = True
+
+    def __init__(self, credentials_path, port=8765, *, executor=execute_report):
+        self.credentials_path = Path(credentials_path).absolute()
+        root, credentials = load_credentials(self.credentials_path)
+        for _, _, _, context in credentials:
+            validate_environment(root, context.allowed_accounts)  # Fail before binding.
+        self.executor = executor
+        super().__init__(("127.0.0.1", port), ReportHandler)
+
+    def get_request(self):
+        connection, address = super().get_request()
+        connection.settimeout(5)
+        return connection, address
+
+    def handle_error(self, request, client_address):
+        # BaseServer would print an exception traceback with implementation data.
+        pass
+
+
+class ReportHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.0"
+    server_version = "THTH-Private"
+    sys_version = ""
+
+    def log_message(self, *args):
+        pass
+
+    def send_error(self, code, message=None, explain=None):
+        self._reply(code, {"error": "invalid_http_request"})
+
+    def _reply(self, status, payload):
+        try:
+            body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (ValueError, TypeError, OverflowError, RecursionError):
+            status, body = 503, b'{"error":"report_unavailable"}'
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Connection", "close")
+        if status == 401:
+            self.send_header("WWW-Authenticate", 'Bearer realm="thth-private-report"')
+        self.end_headers()
+        self.close_connection = True
+        self.wfile.write(body)
+
+    def _valid_host(self):
+        hosts = self.headers.get_all("Host", [])
+        port = self.server.server_port
+        if len(hosts) != 1 or hosts[0] not in {f"127.0.0.1:{port}", f"localhost:{port}"}:
+            self._reply(400, {"error": "invalid_host"})
+            return False
+        return True
+
+    def _credentials(self):
+        try:
+            return load_credentials(self.server.credentials_path)
+        except ConfigurationError:
+            self._reply(503, {"error": "configuration_unavailable"})
+            return None
+
+    def do_GET(self):
+        if not self._valid_host():
+            return
+        if self.path != "/health":
+            self._reply(404, {"error": "not_found"})
+        elif self._credentials() is not None:
+            self._reply(200, {"status": "serving", "scope": "http_process_only"})
+
+    def do_POST(self):
+        if not self._valid_host():
+            return
+        if self.path != "/report":
+            return self._reply(404, {"error": "not_found"})
+        loaded = self._credentials()
+        if loaded is None:
+            return
+        root, credentials = loaded
+        auth = self.headers.get_all("Authorization", [])
+        match = re.fullmatch(r"Bearer ([A-Za-z0-9_-]{43,128})", auth[0]) if len(auth) == 1 else None
+        digest = hashlib.sha256(match[1].encode("ascii")).hexdigest() if match else ""
+        now = datetime.now(timezone.utc)
+        context = None
+        for expected, expires, revoked, allowed in credentials:
+            if hmac.compare_digest(digest, expected) and not revoked and now < expires:
+                context = allowed
+        if context is None:
+            return self._reply(401, {"error": "unauthorized"})
+        # Browser requests never need CORS here. Reject Origin, including null.
+        if self.headers.get_all("Origin"):
+            return self._reply(403, {"error": "origin_not_allowed"})
+        if self.headers.get_all("Content-Encoding"):
+            return self._reply(415, {"error": "json_required"})
+        types = self.headers.get_all("Content-Type", [])
+        if len(types) != 1 or types[0].lower().strip() not in {"application/json", "application/json; charset=utf-8"}:
+            return self._reply(415, {"error": "json_required"})
+        lengths = self.headers.get_all("Content-Length", [])
+        if self.headers.get_all("Transfer-Encoding") or len(lengths) != 1 or not re.fullmatch(r"[0-9]{1,8}", lengths[0]):
+            return self._reply(400, {"error": "invalid_length"})
+        length = int(lengths[0])
+        if length > MAX_BODY:
+            return self._reply(413, {"error": "request_too_large"})
+        try:
+            raw = self.rfile.read(length)
+            if len(raw) != length:
+                raise ValueError("short_body")
+            request = _json(raw)
+            if type(request) is not dict:
+                raise ValueError("invalid_request")
+            # Bound calculations before ledger access as well as payload size.
+            for key, limit in (("window_days", 3650), ("min_n", 100000)):
+                if key in request and (type(request[key]) is not int or not 1 <= request[key] <= limit):
+                    raise ValueError("invalid_options")
+        except (ValueError, OSError, RecursionError, OverflowError):
+            return self._reply(400, {"error": "invalid_request"})
+        try:
+            validate_environment(root, context.allowed_accounts)
+        except IsolationError:
+            return self._reply(503, {"error": "environment_unavailable"})
+        try:
+            payload = self.server.executor(context, request)
+        except ReportServiceError as error:
+            # Fixed allowlist prevents future exception text exposing core details.
+            reason = str(error)
+            public = {"invalid_request", "unsupported_operation", "invalid_scope", "invalid_options", "scope_unavailable"}
+            return self._reply(400 if reason in public else 503,
+                               {"error": reason if reason in public else "report_unavailable"})
+        except Exception:
+            return self._reply(503, {"error": "report_unavailable"})
+        self._reply(200, payload)
+
+
+def cmd_serve_reports(args):
+    try:
+        if not 1 <= args.port <= 65535:
+            raise ValueError("invalid_port")
+        with PrivateReportServer(args.credentials, args.port) as server:
+            print(f"Private read-only reports: http://127.0.0.1:{args.port} (TLS proxy required for remote access)", flush=True)
+            server.serve_forever()
+    except KeyboardInterrupt:
+        return 0
+    except (OSError, ValueError):
+        print("private_report_server_unavailable: check private credential configuration and loopback port", file=sys.stderr)
+        return 2
+    return 0

@@ -19,6 +19,7 @@ from . import after_cli as after_cli_mod
 from . import analytics_report as analytics_report_mod
 from . import study_report as study_report_mod
 from . import operations_handoff as operations_handoff_mod
+from . import report_http
 from . import account_report as account_report_mod
 from . import accounts as accounts_mod
 from . import approval as approval_mod
@@ -3031,6 +3032,11 @@ def build_parser() -> argparse.ArgumentParser:
                            help="採集だけの unit を出す（同席専用＝scheduled: false の"
                                 "アカウント用。thth-collect@<account>）")
     p_systemd.set_defaults(func=cmd_systemd)
+
+    p_http = sub.add_parser("serve-reports", help="専用環境の非公開レポートHTTP（loopbackのみ）")
+    p_http.add_argument("--credentials", required=True, help="管理者設定の資格情報JSON（0600、digestのみ）")
+    p_http.add_argument("--port", type=int, default=8765)
+    p_http.set_defaults(func=report_http.cmd_serve_reports)
 
     p_handoff = sub.add_parser("handoff-report", help="ローカル運用記録を引き継ぐ（読むだけ）")
     p_handoff.add_argument("account", nargs="?")
