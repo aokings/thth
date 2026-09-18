@@ -15,6 +15,8 @@
 """
 from __future__ import annotations
 
+from . import api_diagnostic
+
 import dataclasses
 import os
 
@@ -46,6 +48,8 @@ class StepResult:
     reason: str
     run_id: str | None = None
     post_id: str | None = None
+    api_diagnostic: dict | None = None
+    file: str | None = None
 
 
 def due_bundles(account_cfg: dict, *, now, tree_sha) -> list:
@@ -437,18 +441,21 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
                            run_id=run["run_id"])
 
     if result.error or not result.post_id:
+        detail_data = api_diagnostic.clean(result.api_diagnostic)
         err = redact_mod.redact(result.error or "不明なエラー")
         if result.failure == "publish_ambiguous":
             # **出たか分からない。自動で再送しない。後続も止める。**
-            threadrun.mark(run, index, threadrun.UNRESOLVED, note=err)
+            threadrun.mark(run, index, threadrun.UNRESOLVED, note=err, api_diagnostic=detail_data)
             log(f"公開の結果が分かりません（{index} 段目）。inflight を残します")
             return StepResult("unresolved", index,
                                f"公開の結果が分かりません: {err}",
-                               run_id=run["run_id"])
+                               run_id=run["run_id"], api_diagnostic=detail_data,
+                               file=os.path.join(account_cfg["repo_dir"], rel_path))
         inflight_mod.clear(state_dir)
-        threadrun.mark(run, index, threadrun.PENDING, note=err)
+        threadrun.mark(run, index, threadrun.PENDING, note=err, api_diagnostic=detail_data)
         return StepResult("failed", index, f"公開に失敗しました: {err}",
-                           run_id=run["run_id"])
+                           run_id=run["run_id"], api_diagnostic=detail_data,
+                               file=os.path.join(account_cfg["repo_dir"], rel_path))
 
     # **公開は成功した。ここから先が失敗しても再公開しない。**
     #

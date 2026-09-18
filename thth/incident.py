@@ -7,6 +7,8 @@ message; a stable Message-ID makes that ambiguity visible to the mail system.
 """
 from __future__ import annotations
 
+from . import api_diagnostic
+
 import contextlib
 import hashlib
 import json
@@ -129,7 +131,7 @@ def _send(s, recipient, event, account):
     message["Message-ID"] = f"<{event['id']}.{hashlib.sha256(recipient.lower().encode()).hexdigest()[:16]}@thth.local>"
     repo_status = "repo へ反映済み" if event.get("repo") == "written" else "repo 未反映（後続実行で再試行。原稿を特定できない場合は account 単位の通知のみ）"
     file_hint = healthcheck._safe_file(event.get("file")) or "特定できません（account 全体の状況）"
-    message.set_content(f"原稿: {file_hint}\naccount: {account}\n状況: {event['state']}\n発生日時: {event['at']}\n理由: {healthcheck.reason_text(event['reason'])}\n次の対応: {healthcheck.next_action_text(healthcheck.next_action_for(event['reason']))}\n{repo_status}\n\nこの通知は定期実行から送信しました。VM 自体の停止は外部の死活監視で検知してください。\n")
+    message.set_content(f"原稿: {file_hint}\naccount: {account}\n状況: {event['state']}\n発生日時: {event['at']}\n理由: {healthcheck.reason_text(event['reason'])}{api_diagnostic.suffix(event.get('api_diagnostic'))}\n次の対応: {healthcheck.next_action_text(healthcheck.next_action_for(event['reason']))}\n{repo_status}\n\nこの通知は定期実行から送信しました。VM 自体の停止は外部の死活監視で検知してください。\n")
     client = None
     accepted = False
     try:
@@ -284,7 +286,7 @@ def _repo_write(cfg, account, event, persist):
         "thth_run_state": event["state"], "thth_run_at": event["at"],
         "thth_run_reason": event["reason"], "thth_run_action": healthcheck.next_action_for(event["reason"]),
         "thth_incident_id": event["id"],
-        "thth_run_detail": healthcheck.reason_text(event["reason"]),
+        "thth_run_detail": healthcheck.reason_text(event["reason"]) + api_diagnostic.suffix(event.get("api_diagnostic")),
         "thth_run_next": healthcheck.next_action_text(healthcheck.next_action_for(event["reason"]))})
     if _fingerprint(path) != current:
         raise ValueError("queue_changed")
@@ -350,7 +352,8 @@ def notify(account, cfg, diag, *, state_dir, result=None):
                 file = source(cfg, state_dir, result) if diag.state == "fail" else prior["file"]
                 event = {"id": uuid.uuid4().hex, "state": "blocked" if diag.state == "fail" else "recovered",
                          "at": jst.iso(jst.now_jst()), "reason": diag.reason_code,
-                         "file": file, "repo": "pending", "accepted": {}}
+                         "file": file, "repo": "pending", "accepted": {},
+                         "api_diagnostic": api_diagnostic.clean(diag.api_diagnostic) if diag.state == "fail" else {}}
                 # Pin original content immediately, before later edits / git sync.
                 if file:
                     try:

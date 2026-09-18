@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 
+from . import api_diagnostic
 from . import accounts as accounts_mod
 from . import engagements as engagements_mod
 from . import jst as jst_mod
@@ -83,6 +84,8 @@ def append_run(state_dir: str, record: dict, jst_month: str) -> str:
     line = {k: record.get(k) for k in RUNS_FIELDS}
     for k in OPTIONAL_FIELDS:
         line[k] = record.get(k)
+    if record.get("api_diagnostic"):
+        line["api_diagnostic"] = api_diagnostic.clean(record["api_diagnostic"])
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
     return path

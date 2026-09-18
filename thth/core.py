@@ -5,6 +5,8 @@ CLI（`thth throw`・`thth run`）も MCP も、投稿を伴う操作はすべ�
 """
 from __future__ import annotations
 
+from . import api_diagnostic as api_diagnostic_mod
+
 import contextlib
 import dataclasses
 import datetime
@@ -50,6 +52,7 @@ class ThrowResult:
     # 食い違ったか（外部レビュー第 3 巡・持ち越し項目 C）。それ以外の error では
     # None のまま。
     mismatch_fields: list | None = None
+    api_diagnostic: dict | None = None
 
 
 def list_queue_files(account_cfg: dict, *, tree_sha: str | None) -> list:
@@ -193,13 +196,19 @@ def throw_once(account_name: str, *, production_flag: bool = False,
         last = bundle_results[-1]
         published = [r for r in bundle_results if r.action == "published"]
         mode = "production" if (bool(account_cfg.get('production')) and production_flag) else "rehearsal"
+        detail_data = api_diagnostic_mod.clean(last.api_diagnostic)
+        if detail_data:
+            _append_run(state_dir, account_name, last.run_id or run_id, mode, "post",
+                        last.file, None, now or jst.now_jst(), status="error",
+                        error=last.reason, api_diagnostic=detail_data)
         return ThrowResult(
             exit_code=0 if last.action in ("published", "skipped", "stopped") else 1,
             mode=mode,
             action="posted" if published else last.action,
             message=(f"スレッド連投: {len(published)} 段を公開しました"
                       if published else f"スレッド連投: {last.reason}"),
-            file=None, post_id=last.post_id)
+            file=last.file, post_id=last.post_id,
+            error=last.reason if detail_data else None, api_diagnostic=detail_data)
 
     try:
         with _account_locks(account_name, account_cfg, state_dir):
@@ -218,7 +227,8 @@ def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, actio
                  file: str | None, post_id: str | None, now, *, status: str, error: str | None,
                  topic: str | None = None, mismatch_fields: list | None = None,
                  engagement_write_failed: bool = False,
-                 engagement_author_lookup_failed: bool = False) -> None:
+                 engagement_author_lookup_failed: bool = False,
+                 api_diagnostic: dict | None = None) -> None:
     record = {
         "account": account_name,
         "run_id": run_id,
@@ -238,6 +248,7 @@ def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, actio
         "quota": None,
         "status": status,
         "error": redact_mod.redact(error),
+        "api_diagnostic": api_diagnostic_mod.clean(api_diagnostic),
         # topic は「付けたこと」の記録（設計 §2.2: 読み返す field が無い）。
         # 実際に付けた（投稿に使った）ときだけ渡す・それ以外は None のまま。
         "topic": topic,
@@ -645,6 +656,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     publish_result = adapter.publish(post, dry_run=False, on_container_created=on_container_created)
 
     if publish_result.error or not publish_result.post_id:
+        detail_data = api_diagnostic_mod.clean(publish_result.api_diagnostic)
         err = redact_mod.redact(publish_result.error or "不明なエラー")
         log(f"公開失敗: {err}")
         if publish_result.failure == "permission":
@@ -653,9 +665,9 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
             err = err.replace("<account>", account_name)
             inflight_mod.clear(state_dir)
             _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
-                        status="error", error=err)
+                        status="error", error=err, api_diagnostic=detail_data)
             return ThrowResult(exit_code=2, mode=mode, action="post", message=err,
-                                file=chosen.path, error=err)
+                                file=chosen.path, error=err, api_diagnostic=detail_data)
         # 失敗の三分類（設計 §3.5・T1 検収 2026-09-09）。core は `failure` だけを見て
         # 分岐する（HTTP の状態番号は core が解釈しない・アダプタに閉じる・§3.4）。
         if publish_result.failure == "publish_ambiguous":
@@ -664,15 +676,15 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
             msg = f"公開の結果が分からないので inflight を残します: {chosen.path}"
             log(msg)
             _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
-                        status="error", error=err)
+                        status="error", error=err, api_diagnostic=detail_data)
             return ThrowResult(exit_code=1, mode=mode, action="inflight", message=msg,
-                                file=chosen.path, error=err)
+                                file=chosen.path, error=err, api_diagnostic=detail_data)
         # コンテナ作成の失敗・公開が 4xx は「実際には出ていない」ので inflight を残す理由が無い。
         inflight_mod.clear(state_dir)
         _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
-                    status="error", error=err)
+                    status="error", error=err, api_diagnostic=detail_data)
         return ThrowResult(exit_code=1, mode=mode, action="post", message="公開に失敗しました",
-                            file=chosen.path, error=err)
+                            file=chosen.path, error=err, api_diagnostic=detail_data)
 
     post_id = publish_result.post_id
     # **媒体が返した `post_id` を、確かめずに書き戻さない**（セキュリティ監査
@@ -974,6 +986,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         result = adapter.publish(post, dry_run=False, on_container_created=on_container_created)
 
         if result.error or not result.post_id:
+            detail_data = api_diagnostic_mod.clean(result.api_diagnostic)
             err = redact_mod.redact(result.error or "不明なエラー")
             log(f"公開失敗: {err}")
             if result.failure == "publish_ambiguous":
@@ -981,13 +994,13 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                 msg = "公開の結果が分からないので inflight を残します"
                 log(msg)
                 _append_run(state_dir, account_name, run_id, mode, "post", None, None, now,
-                            status="error", error=err)
-                return ThrowResult(exit_code=1, mode=mode, action="inflight", message=msg, error=err)
+                            status="error", error=err, api_diagnostic=detail_data)
+                return ThrowResult(exit_code=1, mode=mode, action="inflight", message=msg, error=err, api_diagnostic=detail_data)
             inflight_mod.clear(state_dir)
             _append_run(state_dir, account_name, run_id, mode, "post", None, None, now,
-                        status="error", error=err)
+                        status="error", error=err, api_diagnostic=detail_data)
             return ThrowResult(exit_code=1, mode=mode, action="post",
-                                message="公開に失敗しました", error=err)
+                                message="公開に失敗しました", error=err, api_diagnostic=detail_data)
 
         # **媒体が返した `post_id` を、確かめずに台帳の鍵にしない**（監査 2 回目・
         # P2-3）。不在の様態（`_throw_chosen()`）には 2026-09-14 に入れた検査が、

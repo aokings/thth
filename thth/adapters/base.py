@@ -60,6 +60,7 @@ class PublishResult:
     #                       手前、または作成が権限不足で断られた）。core は inflight
     #                       を消し、`thth auth` のやり直しを促して rc=2（v2.1-B）
     failure: str = "none"
+    api_diagnostic: dict | None = None
 
 
 class AdapterError(RuntimeError):

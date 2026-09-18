@@ -7,6 +7,8 @@ T2 以降の範囲なので実装しない（呼ばれたら NotImplementedError
 """
 from __future__ import annotations
 
+from .. import api_diagnostic
+
 import json
 import os
 import time
@@ -319,18 +321,18 @@ class ThreadsAdapter(base.Adapter):
         try:
             create = self._post(f"/{self.user_id}/threads", params)
         except urllib.error.HTTPError as e:
-            err, message = _read_error(e)
+            detail_data, err, message = api_diagnostic.read_http_error(e)
             if needed and _is_permission_error(err, message):
                 # 場所・Instagram 共有の権限がトークンに乗っていない（doctor と同じ
                 # 物差し）。**出ていない**。core は inflight を消して rc=2。
-                detail = redact_mod.redact(f"HTTP {e.code} {message}".strip())
+                detail = f"HTTP {e.code}" + api_diagnostic.suffix(detail_data)
                 return base.PublishResult(
                     None, None, ts,
                     error=base.not_granted_message(needed[0], detail),
-                    failure="permission")
+                    failure="permission", api_diagnostic=detail_data)
             return base.PublishResult(None, None, ts,
-                                       error=redact_mod.redact(f"container作成失敗: {e.code} {e.reason}"),
-                                       failure="container")
+                                       error=f"container作成失敗: HTTP {e.code}" + api_diagnostic.suffix(detail_data),
+                                       failure="container", api_diagnostic=detail_data)
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             return base.PublishResult(None, None, ts,
                                        error=redact_mod.redact(f"container作成失敗: {e}"),
@@ -366,10 +368,11 @@ class ThreadsAdapter(base.Adapter):
                 "access_token": self.access_token,
             })
         except urllib.error.HTTPError as e:
+            detail_data, _, _ = api_diagnostic.read_http_error(e)
             failure = "publish_definite" if 400 <= e.code < 500 else "publish_ambiguous"
             return base.PublishResult(None, None, ts,
-                                       error=redact_mod.redact(f"公開失敗: {e.code} {e.reason}"),
-                                       failure=failure)
+                                       error=f"公開失敗: HTTP {e.code}" + api_diagnostic.suffix(detail_data),
+                                       failure=failure, api_diagnostic=detail_data)
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             return base.PublishResult(None, None, ts,
                                        error=redact_mod.redact(f"公開失敗: {e}"),

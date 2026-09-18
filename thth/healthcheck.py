@@ -5,6 +5,8 @@ Healthchecks の ping URL は check の秘密そのものなので、プロセ�
 """
 from __future__ import annotations
 
+from . import api_diagnostic
+
 import dataclasses
 import json
 import os
@@ -68,6 +70,7 @@ class Diagnostic:
     next_action: str
     reason_code: str
     next_action_code: str
+    api_diagnostic: dict | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -363,7 +366,8 @@ def diagnostic(account: str, state: str, *, state_dir: str,
     return Diagnostic(
         account=_safe_account(account), state=state, since=since, file=file_name,
         reason=reason_text(safe_reason), next_action=next_action_text(next_action_code),
-        reason_code=safe_reason, next_action_code=next_action_code)
+        reason_code=safe_reason, next_action_code=next_action_code,
+        api_diagnostic=api_diagnostic.clean(getattr(result, "api_diagnostic", None)) if state == "fail" else {})
 
 
 def _failure_url(url: str) -> str:
