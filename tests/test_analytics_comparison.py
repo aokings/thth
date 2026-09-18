@@ -197,3 +197,17 @@ def test_malformed_loader_data_is_error_not_empty_population(isolated_account_fa
     seed(a, "p", NOW - datetime.timedelta(days=3), extra={"metrics": [1]})
     with pytest.raises(after_cli.AfterError, match="台帳の形式"):
         report(a)
+
+
+def test_conflicting_measured_reply_time_is_excluded_from_population(isolated_account_factory):
+    a = isolated_account_factory()
+    posted = NOW - datetime.timedelta(days=3)
+    seed(a, "reply-conflict", posted, extra={"reply_to": "parent"})
+    _seed_engagement(a, "reply-conflict", posted_at=jst.iso(posted - datetime.timedelta(days=1)))
+    node = report(a)["by_account"][a["name"]]
+    assert node["excluded_records"]["conflicting_measured_engagement_posted_at"] == 1
+    for kind in ("posts", "engagements"):
+        for period in ("previous", "current"):
+            population = node[kind][period]
+            assert population["n_total"] == population["n_missing"] == population["n_incomplete"] == 0
+            assert population["evidence"] == []

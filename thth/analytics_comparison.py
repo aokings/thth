@@ -164,7 +164,7 @@ def _account(name, previous_start, current_start, now, min_n):
         post = by_id.get(post_id)
         if post and _timestamp(post.get("posted_at")) != posted:
             exclusions["conflicting_measured_engagement_posted_at"] += 1
-            post = None
+            continue
         reply_items.append((post_id, posted, post))
     root_items = []
     for post_id, post in by_id.items():
