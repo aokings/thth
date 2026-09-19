@@ -254,7 +254,16 @@ def guarded(function):
             import sys
             print('admin_change_refused: --by and a private writable event log are required', file=sys.stderr)
             return 2
-        except accounts.AccountError:
-            # Preserve the original bounded account diagnostic from the operation.
-            return function(*args, **kwargs)
+        except accounts.AccountError as exc:
+            # An AccountError may arrive after the operation has changed a token.
+            # The aborted transaction recorded no event, so restore its snapshot.
+            if mutated and path is not None:
+                if snapshot is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    from . import secrets_fs
+                    secrets_fs.atomic_write_text(str(path), snapshot[0].decode('utf-8'), mode=snapshot[1])
+            import sys
+            print(str(exc), file=sys.stderr)
+            return 2
     return call
