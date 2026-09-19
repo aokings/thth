@@ -484,11 +484,7 @@ def board_summary(now=None) -> dict:
     # **1 枚の画面は、1 組の SHA で作る**（外部レビュー F5 残件・P2・2026-09-12）。
     # 記録と `HEAD` を**ここで 1 度だけ読み**、以後この 2 値だけを使う。数える側で
     # 読み直すと、**その間に自己更新が終わったとき、表示と計数が別の SHA を指す。**
-    check = selfupdate_mod.release_check()
-    basis = (check or {}).get("release")
-    head_sha = selfupdate_mod.head()
-    behind = selfupdate_mod.behind_release(base=basis, head_sha=head_sha)
-    ahead = selfupdate_mod.ahead_of_release(base=basis, head_sha=head_sha)
+    app = release_summary()
     # **走っているものの一覧**（`--json` の読み手用）。アカウントの実行ロックを
     # 握っているものの名前と、自己更新（`_app.lock`）が走っていれば `"_app"`。
     running = [row["account"] for row in accounts_out if row.get("running")]
@@ -507,7 +503,17 @@ def board_summary(now=None) -> dict:
             # 「外」と「repo の中（互換）」で並ぶ顔ぶれが変わる。**画面が誰の
             # 台帳を読んだのかを言わないと、移行のさなかに何が正か判らない。**
             "accounts_dir": accounts_mod.accounts_dir_info(),
-            "app": {"head": head_sha,
+            "app": app}
+
+
+def release_summary():
+    """One shared cached release observation for board and administrator reports."""
+    check = selfupdate_mod.release_check()
+    basis = (check or {}).get("release")
+    head_sha = selfupdate_mod.head()
+    behind = selfupdate_mod.behind_release(base=basis, head_sha=head_sha)
+    ahead = selfupdate_mod.ahead_of_release(base=basis, head_sha=head_sha)
+    return {"head": head_sha,
                     "release_ref": selfupdate_mod.RELEASE_REF,
                     "release_check": check,
                     "behind_cached_release": behind,
@@ -526,4 +532,4 @@ def board_summary(now=None) -> dict:
                     "signature_state": _signature_state(check),
                     "comparison_ref_sha": basis,
                     # **board は取りに行かないので、常に未確認。**
-                    "remote_current_verified": False}}
+                    "remote_current_verified": False}

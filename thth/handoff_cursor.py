@@ -150,18 +150,24 @@ def write(name, node, by, now):
     if not isinstance(by,str) or not by.strip() or len(by)>256:raise ValueError('cursor_by_required')
     value={'schema_version':1,'read_at':jst.iso(now),'by':by,'snapshot':snapshot(node)}
     _validate(value,now)
+    write_snapshot(name, 'handoff_cursor.json', value)
+
+
+def write_snapshot(name, filename, value):
+    if filename not in ('handoff_cursor.json', 'admin_cursor.json'):
+        raise ValueError('invalid_cursor_filename')
     directory=_directory(name,create=True)
     temporary='.handoff-cursor-'+uuid.uuid4().hex
     try:
         try:
-            info=os.stat('handoff_cursor.json',dir_fd=directory,follow_symlinks=False)
+            info=os.stat(filename,dir_fd=directory,follow_symlinks=False)
             if not stat.S_ISREG(info.st_mode):raise ValueError('cursor_unreadable')
         except FileNotFoundError:pass
         fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=directory)
         with os.fdopen(fd,'w') as stream:
             json.dump(value,stream,ensure_ascii=False,allow_nan=False)
             stream.flush();os.fsync(stream.fileno())
-        os.replace(temporary,'handoff_cursor.json',src_dir_fd=directory,dst_dir_fd=directory)
+        os.replace(temporary,filename,src_dir_fd=directory,dst_dir_fd=directory)
     finally:
         try:os.unlink(temporary,dir_fd=directory)
         except FileNotFoundError:pass

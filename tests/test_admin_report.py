@@ -65,3 +65,32 @@ def test_unreadable_and_missing_sources_retained(fixture):
     token=value['by_account']['test-threads']['token']
     assert token['present'] is False and all(token[k] is None for k in admin_report.TOKEN_FIELDS)
     assert value['summary']['accounts']==2
+
+def test_tokens_release_and_diff(fixture):
+    root,now,cfg=fixture
+    from thth import report
+    token=admin_report.answer('tokens',now=now)['tokens'][0]
+    assert token['remaining_days']==5
+    assert 'threads_basic' not in token['missing_scopes']
+    assert token['last_refresh'] is None
+    release=admin_report.answer('release',now=now)['release']
+    assert all(release[k]==v for k,v in report.release_summary().items())
+    cursor=root/'state/_admin/admin_cursor.json'
+    first=admin_report.answer('diff',since_last_read=True,now=now)
+    assert first['cannot_say']==['no_previous_session_cursor'] and not cursor.exists()
+    with pytest.raises(ValueError):admin_report.answer('diff',since_last_read=True,mark_read=True,now=now)
+    admin_report.answer('diff',since_last_read=True,mark_read=True,by='tester',now=now)
+    assert cursor.stat().st_mode & 0o777==0o600
+    same=admin_report.answer('diff',since_last_read=True,now=now)
+    assert same['changes']==[]
+    path=root/'accounts/test-threads.json';cfg=json.loads(path.read_text());cfg['production']=True;path.write_text(json.dumps(cfg))
+    changed=admin_report.answer('diff',since_last_read=True,now=now)
+    assert any(c['field']=='production' and c['previous'] is False and c['current'] is True for c in changed['changes'])
+    assert json.loads(cursor.read_text())['snapshot']['by_account']['test-threads']['production'] is False
+
+def test_http_never_probes_or_marks_and_timers_cached_only(fixture,monkeypatch):
+    root,now,cfg=fixture
+    monkeypatch.setattr(admin_report.subprocess,'run',lambda *a,**k:pytest.fail('systemctl/git must not run'))
+    assert admin_report.answer('timers',via='http',now=now)['by_account']['test-threads']['units'] is None
+    with pytest.raises(ValueError):admin_report.answer('inventory',probe=True,via='http',now=now)
+    with pytest.raises(ValueError):admin_report.answer('diff',since_last_read=True,mark_read=True,by='tester',via='http',now=now)

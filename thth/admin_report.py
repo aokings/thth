@@ -234,11 +234,6 @@ def _account(name, now, probe=False, via='cli', detail=False, limit=20):
     return _scrub(row)
 
 
-def timer(name, *, via='cli'):
-    # Shared implementation is completed in §3.5. A missing observation is not a stopped timer.
-    return dict(observed_at=None, units=None, timer_reason='timer_observation_unavailable')
-
-
 def _summary(rows):
     valid = [row for row in rows.values() if row.get('ledger') == 'available']
     return dict(accounts=len(rows), by_medium=dict(collections.Counter(row['medium'] for row in valid)),
@@ -319,3 +314,146 @@ def register(sub):
             p.add_argument('--mark-read', action='store_true')
             p.add_argument('--by')
         p.set_defaults(func=command)
+
+
+def timer(name, *, via='cli'):
+    unavailable = dict(observed_at=None, units=None, timer_reason='timer_observation_unavailable')
+    if via == 'http':
+        cached = _json(Path(accounts.thth_root()) / 'state/_admin/timers.json')
+        value = (cached or {}).get('by_account', {}).get(name)
+        if isinstance(value, dict) and jst.parse(value.get('observed_at')) and isinstance(value.get('units'), list):
+            return value
+        return unavailable
+    if not Path('/run/systemd/system').is_dir():
+        return {**unavailable, 'timer_reason': 'systemd_unavailable'}
+    units = []
+    try:
+        for unit in ('thth-run@' + name, 'thth-collect@' + name, 'thth-maintain'):
+            proc = subprocess.run(['systemctl', 'show', unit + '.timer',
+                '--property=Id,LoadState,ActiveState,LastTriggerUSec,NextElapseUSecRealtime'],
+                capture_output=True, text=True, timeout=10)
+            if proc.returncode:
+                raise ValueError('systemctl_failed')
+            fields = dict(line.split('=', 1) for line in proc.stdout.splitlines() if '=' in line)
+            if fields.get('LoadState') != 'loaded':
+                units.append(dict(unit=unit+'.timer',active=None,last_trigger=None,next_trigger=None,
+                                  exec_main_status=None, reason='timer_not_loaded'))
+                continue
+            service = subprocess.run(['systemctl', 'show', unit + '.service', '--property=ExecMainStatus'],
+                                     capture_output=True, text=True, timeout=10)
+            status = dict(line.split('=',1) for line in service.stdout.splitlines() if '=' in line)
+            units.append(dict(unit=unit+'.timer',active=fields.get('ActiveState'),
+                last_trigger=fields.get('LastTriggerUSec') or None,
+                next_trigger=fields.get('NextElapseUSecRealtime') or None,
+                exec_main_status=int(status['ExecMainStatus']) if service.returncode == 0 and status.get('ExecMainStatus','').isdigit() else None))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {**unavailable, 'timer_reason': 'systemctl_unavailable'}
+    return dict(observed_at=jst.iso(), units=units, timer_reason=None)
+
+
+def _release():
+    from . import report, __version__
+    return dict(version=__version__, **report.release_summary(), app_env=appenv.describe())
+
+
+def _snapshot(value):
+    # Drop observation timestamps; diff records changes in facts, not read times.
+    rows = {}
+    for name, row in value['by_account'].items():
+        if row.get('ledger') != 'available':
+            rows[name] = {'ledger': 'unreadable'}
+            continue
+        token = row['token']
+        remaining = token.get('remaining_days')
+        rows[name] = dict(production=row['production'], token_obtained_at=token['obtained_at'],
+                         token_present=token['present'], token_expires_at=token['expires_at'],
+                         token_expiring=remaining <= 7 if isinstance(remaining,(int,float)) else None,
+                         inflight=row['inflight'], queue_counts=(row.get('queue') or {}).get('counts'),
+                         timers={u['unit']:u['active'] for u in row['timer'].get('units') or []})
+    release = _release()
+    return dict(by_account=rows, release={key:release.get(key) for key in ('version','head')})
+
+
+def _diff(current, now, *, mark_read, by):
+    from . import handoff_cursor
+    if mark_read:
+        admin_log.actor(by)
+    elif by is not None:
+        raise ValueError('by_requires_mark_read')
+    previous = None
+    reason = 'no_previous_session_cursor'
+    directory = None
+    try:
+        directory = handoff_cursor._directory('_admin')
+        fd = os.open('admin_cursor.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        with os.fdopen(fd, 'rb') as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError('cursor_unreadable')
+            data = stream.read(4*1024*1024+1)
+        if len(data)>4*1024*1024:
+            raise ValueError('cursor_unreadable')
+        value = json.loads(data, object_pairs_hook=handoff_cursor._pairs)
+        if (value.get('schema_version') != 1 or not jst.parse(value.get('read_at')) or
+            jst.parse(value['read_at']) > now or not isinstance(value.get('snapshot'),dict) or
+            not isinstance(value['snapshot'].get('by_account'),dict) or not isinstance(value['snapshot'].get('release'),dict)):
+            raise ValueError('cursor_unreadable')
+        admin_log.actor(value.get('by'))
+        previous, reason = value, None
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError, TypeError, AttributeError):
+        reason = 'cursor_unreadable'
+    finally:
+        if directory is not None: os.close(directory)
+    changes=[]
+    if previous:
+        old=previous['snapshot']
+        for name in sorted(set(old['by_account']) | set(current['by_account'])):
+            before,after=old['by_account'].get(name),current['by_account'].get(name)
+            if before is None or after is None:
+                changes.append(dict(account=name, field='account', previous=before, current=after))
+            else:
+                for key in sorted(set(before)|set(after)):
+                    if before.get(key)!=after.get(key):
+                        changes.append(dict(account=name,field=key,previous=before.get(key),current=after.get(key)))
+        if old['release']!=current['release']:
+            changes.append(dict(account=None,field='release',previous=old['release'],current=current['release']))
+    if mark_read:
+        handoff_cursor.write_snapshot('_admin','admin_cursor.json',dict(schema_version=1,read_at=jst.iso(now),
+                                                                       by=by,snapshot=current))
+    return dict(changes=changes, read_at=previous['read_at'] if previous else None,
+                by=previous['by'] if previous else None, cannot_say=[reason] if reason else [], snapshot=current)
+
+
+def extra(operation, *, account, via, now, since_last_read=False, mark_read=False, by=None):
+    if operation=='release':
+        return {'release':_release()}
+    names = [account] if account else accounts.list_account_names()
+    if operation=='timers':
+        return {'by_account':{name:timer(name,via=via) for name in names}}
+    if operation=='tokens':
+        from . import scopes
+        rows=[]
+        for name in names:
+            try:
+                cfg=accounts.load_account(name);_register(cfg)
+                token=_token(cfg,now)
+                expected=scopes.DEFAULT_SCOPES if cfg.get('media')=='threads' else None
+                actual=token['scopes']
+                token.update(account=name,default_scopes=expected,
+                             missing_scopes=sorted(set(expected)-set(actual)) if expected is not None and actual is not None else None)
+                history=runs.read_runs(accounts.state_dir_for(name))
+                maintenance=[r for r in history if isinstance(r,dict) and r.get('account')==name and r.get('action')=='maintain']
+                last=maintenance[-1] if maintenance else None
+                token['last_refresh']={key:last.get(key) for key in ('run_id','status','refreshed','error')} if last else None
+                rows.append(token)
+            except (OSError, ValueError, TypeError, accounts.AccountError):
+                rows.append(dict(account=name,remaining_days=None,reason='token_records_unavailable'))
+        rows.sort(key=lambda r:(r.get('remaining_days') is None,r.get('remaining_days') or 0,r['account']))
+        return {'tokens':rows}
+    if operation=='diff':
+        if not since_last_read:
+            raise ValueError('since_last_read_required')
+        value=answer('inventory',via=via,now=now)
+        return _diff(_snapshot(value),now,mark_read=mark_read,by=by)
+    raise ValueError('unsupported_operation')
