@@ -67,6 +67,10 @@ def load_declaration(path, now):
                            parse_constant=_reject_constant)
     except (UnicodeError, ValueError, RecursionError):
         raise StudyError("施策JSONを解釈できません（形式・重複キーを確認）") from None
+    return validate_declaration(value, now)
+
+
+def validate_declaration(value, now):
     required = {"schema_version", "id", "account", "hypothesis", "change", "decision", "baseline_post_ids", "changed_post_ids"}
     _keys(value, required)
     if type(value["schema_version"]) is not int or value["schema_version"] != 1:

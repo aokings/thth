@@ -2976,6 +2976,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_threads.add_argument("--json", action="store_true")
     p_threads.set_defaults(func=cmd_threads)
 
+    from . import study_cli
+    study_cli.register(sub)
     p_study = sub.add_parser("study-report", help="施策の宣言と自分の観測を結ぶ（読むだけ）")
     p_study.add_argument("file")
     p_study.add_argument("--min-n", type=int, default=5)
