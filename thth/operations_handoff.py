@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import accounts, analytics_report, healthcheck, incident, jst, queuefile, report
+from . import accounts, analytics_report, healthcheck, incident, jst, queuefile, report, tool_version
 
 
 class HandoffError(ValueError):
@@ -213,9 +213,11 @@ def answer(account_name=None, *, project=None, now=None, since_last_read=False):
     from . import handoff_cursor
     for name, node in nodes.items():
         node["changes_since"] = None
+        node["tool"] = tool_version.summary()
         if since_last_read:
             previous, reason = handoff_cursor.read(name, now)
             if previous is not None:
+                node["tool"] = tool_version.summary(previous['snapshot'].get('tool_version'))
                 node["changes_since"] = {"read_at": previous["read_at"], "by": previous["by"],
                     "changes": handoff_cursor.changes(previous["snapshot"], handoff_cursor.snapshot(node))}
                 node["cannot_say"].remove("no_previous_session_cursor")
@@ -225,6 +227,7 @@ def answer(account_name=None, *, project=None, now=None, since_last_read=False):
     return {"schema_version": 1, "report_type": "operations_handoff",
             "generated_at": jst.iso(now), "filters": {"account": account_name, "project": project},
             "by_account": nodes, "scope_complete": not skipped,
+            "tool": nodes[account_name]['tool'] if account_name else tool_version.summary(),
             "limitations": [("保存済みsnapshotと現在の値の差分。間に起きた全イベントを復元するものではない"
                               if since_last_read else
                               "ローカル保存記録の現在の読み取り。前回セッション以降の差分ではない"),

@@ -5,10 +5,10 @@ import os
 from pathlib import Path
 import stat
 import uuid
-from . import accounts, jst
+from . import accounts, jst, tool_version
 
 KEYS = {'queue_counts','inflight','notification_last_event_id','notification_recorded_state',
-        'run_last_attempt_at','run_recorded_state','last_post_observed_at','sent_count'}
+        'run_last_attempt_at','run_recorded_state','last_post_observed_at','sent_count','tool_version'}
 QUEUE_KEYS = {'draft','approved_waiting','overdue','malformed','unattributed_malformed'}
 
 class CursorDirectoryUnavailable(OSError, ValueError):
@@ -67,7 +67,7 @@ def _directory(name, create=False):
 def snapshot(node):
     counts = node['queue']['counts']
     present = node['evidence']['inflight']['availability']
-    return {'queue_counts': {k:counts[k] if counts is not None else None for k in sorted(QUEUE_KEYS)},
+    return {'tool_version': node.get('tool', {}).get('version', tool_version.__version__), 'queue_counts': {k:counts[k] if counts is not None else None for k in sorted(QUEUE_KEYS)},
         'inflight': {'present': True if present=='available' else False if present=='missing' else None,
                      'since': (node['inflight'] or {}).get('since')},
         'notification_last_event_id':node['notifications'].get('last_event_id'),
@@ -86,7 +86,10 @@ def _validate(value, now):
     if not isinstance(value['by'],str) or not value['by'].strip() or len(value['by'])>256:
         raise ValueError('cursor_unreadable')
     s=value['snapshot']
-    if not isinstance(s,dict) or set(s)!=KEYS or not isinstance(s['queue_counts'],dict) or set(s['queue_counts'])!=QUEUE_KEYS:
+    if not isinstance(s,dict) or set(s) not in (KEYS, KEYS-{'tool_version'}) or not isinstance(s['queue_counts'],dict) or set(s['queue_counts'])!=QUEUE_KEYS:
+        raise ValueError('cursor_unreadable')
+    s.setdefault('tool_version', None)
+    if s['tool_version'] is not None and tool_version.numbers(s['tool_version']) is None:
         raise ValueError('cursor_unreadable')
     for count in [*s['queue_counts'].values(),s['sent_count']]:
         if count is not None and (type(count) is not int or count<0):raise ValueError('cursor_unreadable')
@@ -135,7 +138,7 @@ def read(name, now):
 def changes(previous, current):
     result=[]
     for key in sorted(KEYS):
-        before,after=previous[key],current[key]
+        before,after=previous.get(key),current.get(key)
         if key in ('queue_counts','inflight'):
             pairs=[(key+'.'+k,before[k],after[k]) for k in sorted(before)]
         else:pairs=[(key,before,after)]

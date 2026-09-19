@@ -3,6 +3,9 @@ name: thth
 description: 投稿する前・返信を書く前・出したあと・絡みに行く先を選ぶときに呼ぶ道具。Threads・Bluesky・Mastodon への下書きを人の承認を通してから出し、枝を読み、相手を知り、伸びを測る。
 ---
 
+開始時に `thth handoff-report <account> --since-last-read --json` を読む。`tool.changed_since_last_read` が真なら、`tool.notes_root` に対する `tool.release_notes` を読んでから作業する。既読の記録は `--mark-read --by <名前>` の明示時だけ。
+
+
 # THTH — 投稿する前に呼ぶ道具
 
 ## 何を保証するか
