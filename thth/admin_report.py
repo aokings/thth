@@ -357,7 +357,7 @@ def _release(via='cli'):
     return dict(version=__version__, **report.release_summary(), app_env=env)
 
 
-def _snapshot(value):
+def _snapshot(value, *, via="cli"):
     # Drop observation timestamps; diff records changes in facts, not read times.
     rows = {}
     for name, row in value['by_account'].items():
@@ -371,8 +371,8 @@ def _snapshot(value):
                          token_expiring=remaining <= 7 if isinstance(remaining,(int,float)) else None,
                          inflight=row['inflight'], queue_counts=(row.get('queue') or {}).get('counts'),
                          timers={u['unit']:u['active'] for u in row['timer'].get('units') or []})
-    release = _release()
-    return dict(by_account=rows, release={key:release.get(key) for key in ('version','head')})
+    release = _release(via)
+    return dict(inventory=value, by_account=rows, release={key:release.get(key) for key in ('version','head')})
 
 
 def _diff(current, now, *, mark_read, by):
@@ -477,5 +477,5 @@ def extra(operation, *, account, via, now, since_last_read=False, mark_read=Fals
         if not since_last_read:
             raise ValueError('since_last_read_required')
         value=answer('inventory',via=via,now=now)
-        return _diff(_snapshot(value),now,mark_read=mark_read,by=by)
+        return _diff(_snapshot(value, via=via),now,mark_read=mark_read,by=by)
     raise ValueError('unsupported_operation')

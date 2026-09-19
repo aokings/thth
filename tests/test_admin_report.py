@@ -110,3 +110,23 @@ def test_bad_provenance_and_nested_secret_do_not_leak(fixture):
     text=json.dumps(result)
     assert 'FAKE_METADATA_PASSWORD' not in text and 'FAKE_METADATA_APP_SECRET' not in text
     assert result['by_account']['test-threads']['provenance_reason']=='provenance_unreadable'
+
+def test_refresh_history_skips_nonrefresh_maintenance(fixture):
+    root,now,cfg=fixture
+    path=root/'state/test-threads/runs-2026-09.ndjson'
+    path.write_text('\n'.join(json.dumps(row) for row in [
+        dict(account='test-threads',action='maintain',run_id='maintain-2026-09-18T12:00:00+09:00',status='error',refreshed=False,error='refresh_failed'),
+        dict(account='test-threads',action='maintain',run_id='maintain-2026-09-19T12:00:00+09:00',status='ok',refreshed=False,error=None)]))
+    result=admin_report.answer('tokens',now=now)
+    assert result['tokens'][0]['last_refresh']['error']=='refresh_failed'
+
+def test_http_diff_does_not_read_external_app_env(fixture,monkeypatch):
+    root,now,cfg=fixture
+    from thth import appenv
+    monkeypatch.setattr(appenv,'default_path',lambda:'/outside/private/app.env')
+    original=appenv._parse_env_file
+    def parse(path):
+        assert path!='/outside/private/app.env'
+        return original(path)
+    monkeypatch.setattr(appenv,'_parse_env_file',parse)
+    admin_report.answer('diff',since_last_read=True,via='http',now=now)
