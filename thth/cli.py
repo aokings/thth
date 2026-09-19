@@ -2219,8 +2219,13 @@ def cmd_schedule(args) -> int:
 
 
 def cmd_throw(args) -> int:
-    result = core.throw_once(args.account, production_flag=args.production,
-                              bypass_pace=args.now, log=print)
+    try:
+        result = core.throw_once(args.account, production_flag=args.production,
+            bypass_pace=args.now,
+            log=(lambda line: print(line, file=sys.stderr)) if args.json else print)
+    except accounts_mod.AccountError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     if args.json:
         _print_json(dataclasses.asdict(result))
     elif result.action == "none" and result.rejections:
@@ -2516,7 +2521,7 @@ def cmd_doctor(args) -> int:
     try:
         return doctor_mod.run_doctor(args.account, as_json=args.as_json)
     except accounts_mod.AccountError as e:
-        print(str(e))
+        print(str(e), file=sys.stderr)
         return 2
 
 

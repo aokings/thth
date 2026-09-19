@@ -26,6 +26,7 @@ throw が握ったままのロックを待つことになり、「投稿が詰�
 from __future__ import annotations
 
 import json
+import sys
 
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
@@ -225,7 +226,11 @@ def run_maintain(account: str | None = None, *, check: bool = False,
     else:
         names = accounts_mod.list_account_names()
     if not names:
-        log("アカウントが 1 つもありません（accounts/ を確認してください）")
+        message = "アカウントが 1 つもありません（accounts/ を確認してください）"
+        if as_json:
+            print(message, file=sys.stderr)
+        else:
+            log(message)
         return 1
 
     rows = []
