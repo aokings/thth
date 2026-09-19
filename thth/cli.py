@@ -111,6 +111,11 @@ def cmd_lint(args) -> int:
 def cmd_preview(args) -> int:
     """本文だけを出す規約（設計 §4.1）。`--json` のときだけ topic 等も返す
     （T2c・masaru 裁定 2026-09-09。本文の規約そのものは変えない）。"""
+    try:
+        args.file = _resolve_repo_path(args.file)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     vm_msg = _require_vm_path(args.file)
     if vm_msg:
         # **VM に無いパスは素の traceback でなく案内で断る**（T8-1）。
@@ -135,6 +140,35 @@ def cmd_preview(args) -> int:
     return 0
 
 
+def _resolve_repo_path(path: str) -> str:
+    """Existing cwd wins; otherwise require one matching registered repo."""
+    if os.path.exists(path):
+        return path
+    if os.path.isabs(path):
+        raise ValueError(_require_vm_path(path))
+    candidates = {}
+    for name in accounts_mod.list_account_names():
+        try:
+            cfg = accounts_mod.load_account(name)
+        except accounts_mod.AccountError:
+            continue
+        repo = cfg.get('repo_dir')
+        if not isinstance(repo, str) or not os.path.isdir(repo):
+            continue
+        root = os.path.realpath(repo)
+        candidate = os.path.realpath(os.path.join(root, path))
+        if os.path.commonpath([root, candidate]) == root and os.path.exists(candidate):
+            candidates[candidate] = root
+    if len(candidates) == 1:
+        candidate, root = next(iter(candidates.items()))
+        print(f'repo 相対パスを解決しました: {path} → {candidate}（repo: {root}）', file=sys.stderr)
+        return candidate
+    if candidates:
+        raise ValueError('複数の repo に同じパスがあります。絶対パスで指定してください: '
+                         + ' / '.join(sorted(candidates)))
+    raise ValueError(f'VM の repo に無いパスです: {path}。thth queue <account> で置き場を確認してください')
+
+
 def _require_vm_path(path: str, *, what: str = "") -> str | None:
     """ファイルを受け取る引数に渡されたパスが VM に無いときの案内文を返す
     （T8-1・kopicha 続報）。存在すれば None。
@@ -153,6 +187,9 @@ def _require_vm_path(path: str, *, what: str = "") -> str | None:
     if os.path.exists(path):
         return None
     label = f"（{what}）" if what else ""
+    if path.startswith('/Users/'):
+        return (f'手元のパスは VM の repo へ対応させてください: {path}{label}。'
+                'thth queue <account> で VM 側の repo を確認し、repo 相対パスか VM の絶対パスを渡してください')
     return (
         f"そのパスが VM にありません: {path}{label}\n"
         "**thth は VM（wt）で動きます。** 手元（Mac）のパスは渡せません。\n"
@@ -181,6 +218,11 @@ def _expand_targets(files, *, only_draft: bool) -> tuple:
     無ければ全部断る（半分だけ処理しない、既存の規律と同じ形）。
     """
     items = files if isinstance(files, list) else [files]
+    try:
+        items = [_resolve_repo_path(item) for item in items]
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return None, ''
     missing_msgs = []
     for item in items:
         if os.path.isdir(item):
@@ -703,6 +745,11 @@ def cmd_revoke(args) -> int:
     割り込めない。既に出てしまったもの（`post_id` あり）は取り消せないので断る
     ——その場合は Threads の画面から手で消すしかない、とその場で言う。
     """
+    try:
+        args.file = _resolve_repo_path(args.file)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     vm_msg = _require_vm_path(args.file)
     if vm_msg:
         # **VM に無いパスは素の traceback でなく案内で断る**（T8-1）。
