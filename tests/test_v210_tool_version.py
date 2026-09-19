@@ -51,3 +51,24 @@ def test_legacy_tolerance_does_not_allow_other_schema_errors(notes, isolated_acc
     handoff_cursor.write('one',node,'tester',NOW)
     path=Path(accounts.state_dir_for('one'))/'handoff_cursor.json'; value=json.loads(path.read_text());value['snapshot'].update(change);path.write_text(json.dumps(value))
     assert handoff_cursor.read('one',NOW)==(None,'cursor_unreadable')
+
+
+# Literal receipt as written by 2.9.0: never derived from the current snapshot.
+LEGACY_CURSOR = '''{"schema_version":1,"read_at":"2026-09-19T07:00:00+09:00","by":"legacy-reader","snapshot":{"queue_counts":{"draft":0,"approved_waiting":0,"overdue":0,"malformed":0,"unattributed_malformed":0},"inflight":{"present":false,"since":null},"notification_last_event_id":null,"notification_recorded_state":"unknown","run_last_attempt_at":null,"run_recorded_state":"unknown","last_post_observed_at":null,"sent_count":0}}'''
+
+
+def test_literal_legacy_receipt_validate_changes_and_handoff(notes,isolated_account_factory):
+    isolated_account_factory('legacy')
+    old=handoff_cursor._validate(json.loads(LEGACY_CURSOR),NOW)
+    assert old['snapshot']['tool_version'] is None
+    node=operations_handoff.answer('legacy',now=NOW)['by_account']['legacy']
+    current=handoff_cursor.snapshot(node)
+    change=next(c for c in handoff_cursor.changes(old['snapshot'],current) if c['field']=='tool_version')
+    assert change=={'field':'tool_version','previous':None,'current':'2.10.0','delta':None}
+    state=Path(accounts.state_dir_for('legacy'));state.mkdir(parents=True,exist_ok=True)
+    cursor=state/'handoff_cursor.json';cursor.write_text(LEGACY_CURSOR)
+    result=operations_handoff.answer('legacy',now=NOW,since_last_read=True)
+    assert result['tool']['previous_version'] is None
+    assert result['tool']['changed_since_last_read'] is None
+    assert 'cursor_unreadable' not in result['by_account']['legacy']['cannot_say']
+    assert cursor.read_text()==LEGACY_CURSOR
