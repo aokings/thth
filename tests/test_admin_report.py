@@ -11,6 +11,8 @@ def fixture(tmp_path, monkeypatch):
     monkeypatch.setenv('THTH_ACCOUNTS_DIR', str(tmp_path / 'accounts'))
     monkeypatch.setenv('HOME', str(tmp_path))
     monkeypatch.setattr(doctor, 'diagnose', lambda _: pytest.fail('unexpected API probe'))
+    real_is_dir = Path.is_dir
+    monkeypatch.setattr(Path, 'is_dir', lambda p: False if str(p) == '/run/systemd/system' else real_is_dir(p))
     repo = tmp_path / 'repo'; (repo / 'data/sns/queue').mkdir(parents=True)
     assert account_cli.cmd_add(args(repo_dir=str(repo))) == 0
     path = tmp_path / 'accounts/test-threads.json'; cfg = json.loads(path.read_text())
