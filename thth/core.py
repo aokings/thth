@@ -22,6 +22,7 @@ from . import jst
 from . import lock as lock_mod
 from . import postid as postid_mod
 from . import queuefile
+from . import tags as tags_mod
 from . import redact as redact_mod
 from . import runs as runs_mod
 from . import select as select_mod
@@ -406,7 +407,21 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
     return last_result
 
 
-def _current_fingerprint(path: str, media: str) -> str | None:
+def _fingerprint_account_cfg(fm: dict, media: str, account_cfg: dict | None):
+    if account_cfg is not None:
+        return account_cfg
+    try:
+        return accounts_mod.load_account(fm.get("account"))
+    except accounts_mod.AccountError:
+        # Legacy Threads fixture/incident callers have no account ledger; its
+        # untransformed fingerprint does not depend on account tag policy.
+        if media == "threads":
+            return {"media": "threads"}
+        raise
+
+
+def _current_fingerprint(path: str, media: str,
+                         account_cfg: dict | None = None) -> str | None:
     """`path` の**いまの**内容から、`approval.compute_approved_sha()` と同じ 5 項目
     （本文・account・reply_to・topic・publish_at）の指紋を計算する（外部レビュー
     再々レビュー P1・1）。ファイルが読めない・型外・media の節が無い・publish_at が
@@ -422,16 +437,18 @@ def _current_fingerprint(path: str, media: str) -> str | None:
     fm = current_qf.front_matter
     current_section = queuefile.extract_section(current_qf.body, media)
     try:
+        cfg = _fingerprint_account_cfg(fm, media, account_cfg)
         return approval_mod.compute_approved_sha(
-            section=current_section or "", account=fm.get("account"),
+            section=approval_mod.effective_section(current_section or "", cfg, fm.get("topic")), account=fm.get("account"),
             reply_to=fm.get("reply_to"), topic=fm.get("topic"),
             publish_at=fm.get("publish_at"),
             **approval_mod.publish_options(fm))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, accounts_mod.AccountError):
         return None
 
 
-def _fingerprint_matches(path: str, media: str, expected_fingerprint: str) -> bool:
+def _fingerprint_matches(path: str, media: str, expected_fingerprint: str,
+                         account_cfg: dict | None = None) -> bool:
     """`path` の**いまの** 5 項目の指紋が、公開の直前に固定した `expected_fingerprint`
     と一致するか（外部レビュー再々レビュー P1・1）。
 
@@ -450,11 +467,12 @@ def _fingerprint_matches(path: str, media: str, expected_fingerprint: str) -> bo
     ケースを見逃す（外部レビュー再レビュー §「validation occurs before remote
     changes are incorporated」）ので、両方が要る。
     """
-    current_fingerprint = _current_fingerprint(path, media)
+    current_fingerprint = _current_fingerprint(path, media, account_cfg)
     return current_fingerprint is not None and current_fingerprint == expected_fingerprint
 
 
-def _mismatch_fields(path: str, media: str, expected_components: dict) -> list:
+def _mismatch_fields(path: str, media: str, expected_components: dict,
+                     account_cfg: dict | None = None) -> list:
     """`_fingerprint_matches()` が False を返したとき、5 項目のうち**どれが**
     食い違ったのかを返す（外部レビュー第 3 巡・持ち越し項目 C）。
 
@@ -476,12 +494,13 @@ def _mismatch_fields(path: str, media: str, expected_components: dict) -> list:
     fm = current_qf.front_matter
     current_section = queuefile.extract_section(current_qf.body, media)
     try:
+        cfg = _fingerprint_account_cfg(fm, media, account_cfg)
         current_components = approval_mod.compute_approved_components(
-            section=current_section or "", account=fm.get("account"),
+            section=approval_mod.effective_section(current_section or "", cfg, fm.get("topic")), account=fm.get("account"),
             reply_to=fm.get("reply_to"), topic=fm.get("topic"),
             publish_at=fm.get("publish_at"),
             **approval_mod.publish_options(fm))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, accounts_mod.AccountError):
         return ["file_unreadable"]
     # 5 項目＋任意項目（`location_id`・`share_to_instagram`・v2.1-B）。
     return [key for key in approval_mod.COMPARED_KEYS
@@ -599,25 +618,27 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # 任意項目（場所・Instagram 共有・設計 v2 §4.3）も指紋に入る——承認後に
     # 変えれば select が `approval_stale` で落としている。
     options = approval_mod.publish_options(chosen.front_matter)
+    effective_section = approval_mod.effective_section(
+        section, account_cfg, chosen.get("topic"))
     expected_fingerprint = approval_mod.compute_approved_sha(
-        section=section, account=account_name, reply_to=chosen.get("reply_to"),
+        section=effective_section, account=account_name, reply_to=chosen.get("reply_to"),
         topic=chosen.get("topic"), publish_at=chosen.get("publish_at"), **options)
     # 上と同じ 5 項目を、hash にする前の正規化済みの値のまま持っておく
     # （外部レビュー第 3 巡・持ち越し項目 C）。指紋が食い違ったときに
     # `_mismatch_fields()` へ渡して「どの項目が」違ったかを特定するため
     # （hash 自体からは個々の項目を復元できない）。
     expected_components = approval_mod.compute_approved_components(
-        section=section, account=account_name, reply_to=chosen.get("reply_to"),
+        section=effective_section, account=account_name, reply_to=chosen.get("reply_to"),
         topic=chosen.get("topic"), publish_at=chosen.get("publish_at"), **options)
     # 送る本文の hash（後方互換・`tests/test_sent_integrity.py` が参照）も併せて
     # inflight に書く（外部レビュー §3・受け入れ 9・10）。実際の照合は上の指紋で行う。
-    body_hash = approval_mod.compute_body_hash(section)
+    body_hash = approval_mod.compute_body_hash(effective_section)
     inflight_mod.write(state_dir, file=chosen.path, started=started, container_id=None,
                         body_hash=body_hash, approved_fingerprint=expected_fingerprint)
 
     if mode == "rehearsal":
         log("投げるはずの本文:")
-        log(section)
+        log(effective_section)
         inflight_mod.clear(state_dir)
         _append_run(state_dir, account_name, run_id, mode, "skip", chosen.path, None, now,
                     status="ok", error=None)
@@ -630,7 +651,9 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # topic は select_one() の条件 9b で既に検査済み（不正なら候補から落ちている）。
     # ここでは正規化だけ行う（前後の空白・先頭の `#` を落とす・設計 §4.1）。
     topic = queuefile.normalize_topic(chosen.get("topic"))
-    post = adapter_base.Post(text=section, reply_to=chosen.get("reply_to") or None, topic=topic,
+    post = adapter_base.Post(text=effective_section,
+                             reply_to=chosen.get("reply_to") or None, topic=topic,
+                             hashtags_allowed=bool(account_cfg.get("hashtags", True)),
                              location_id=options["location_id"],
                              share_to_instagram=options["share_to_instagram"])
 
@@ -713,7 +736,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # 送った本文そのものを動かせない記録として残す（外部レビュー §3・受け入れ 9・
     # 10・これが正本）。書き戻し（front-matter 書き換え）より前に書く。指紋
     # （外部レビュー再々レビュー P1・1）も併せて残す。
-    sent_mod.write(state_dir, post_id=post_id, text=section, body_hash=body_hash,
+    sent_mod.write(state_dir, post_id=post_id, text=post.text,
+                    body_hash=approval_mod.compute_body_hash(post.text),
                     sent_at=posted_at, approved_fingerprint=expected_fingerprint)
 
     # 絡みの台帳（設計「自分の泉」§4・発注 T0-1）。**公開の確定直後・書き戻しより
@@ -745,11 +769,11 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # **本文だけでは足りない**（外部レビュー再々レビュー P1・1）: account・topic・
     # reply_to・publish_at だけを別 clone から書き換えられても、本文の hash は
     # 変わらないのですり抜ける。5 項目の指紋（`expected_fingerprint`）で照合する。
-    if not _fingerprint_matches(chosen.path, media, expected_fingerprint):
+    if not _fingerprint_matches(chosen.path, media, expected_fingerprint, account_cfg):
         # どの項目が食い違ったのかを特定する（外部レビュー第 3 巡・持ち越し項目 C）。
         # ログ・runs・board（inflight 経由）の 3 箇所に出す。人が止まった原因を
         # ファイルを開いて自分で探さずに済むように。
-        mismatch_fields = _mismatch_fields(chosen.path, media, expected_components)
+        mismatch_fields = _mismatch_fields(chosen.path, media, expected_components, account_cfg)
         msg = (f"送った内容（本文・account・reply_to・topic・publish_at）と repo の"
                f"内容が食い違います（食い違った項目: {', '.join(mismatch_fields)}）"
                f"（書き戻しません・再公開もしません）: {chosen.path}")
@@ -781,9 +805,9 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     rebase_mismatch_fields: list = []
 
     def _validate_after_rebase() -> bool:
-        ok = _fingerprint_matches(chosen.path, media, expected_fingerprint)
+        ok = _fingerprint_matches(chosen.path, media, expected_fingerprint, account_cfg)
         if not ok:
-            rebase_mismatch_fields[:] = _mismatch_fields(chosen.path, media, expected_components)
+            rebase_mismatch_fields[:] = _mismatch_fields(chosen.path, media, expected_components, account_cfg)
         return ok
 
     try:
@@ -920,7 +944,9 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         # **上限は台帳の `char_limit` で上書きできる**（設計 v2 §4.2）。
         limit = queuefile.limit_for(media, account_cfg)
         # **数え方も媒体ごと**（`limit_for()` と対・引継ぎ 2026-09-15 §3-D）。
-        n = queuefile.count_for(media, body)
+        effective = tags_mod.prepared(media, body, queuefile.normalize_topic(topic),
+                                      hashtags=bool(account_cfg.get("hashtags", True)))
+        n = queuefile.count_for(media, effective)
         if n > limit:
             # **次の一手を 1 行**（T2・第 1 回の記録 §3）。第 1 回（2026-09-13・L1）は
             # 3 体中 2 体がここで止まり、自分で本文を縮めるか分けるかを迷った。
@@ -936,21 +962,31 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
 
         topic_value = queuefile.normalize_topic(topic)
         if topic_value is not None:
-            topic_err = queuefile.topic_error(topic_value)
+            topic_err = (queuefile.topic_error(topic_value) if media == "threads"
+                         else tags_mod.topic_error(media, topic_value))
             if topic_err is not None:
                 log(f"トピックが不正です: {topic_err}")
                 _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
                             status="error", error=topic_err)
                 return ThrowResult(exit_code=1, mode=mode, action="skip", message=topic_err)
 
+        tag_issues = [e for e in tags_mod.errors(media, body, topic_value, account_cfg)
+                      if not e.startswith("warning:")]
+        if tag_issues:
+            msg = tag_issues[0]
+            log(msg)
+            _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                        status="error", error=msg)
+            return ThrowResult(exit_code=1, mode=mode, action="skip", message=msg)
+
         # 確認用 digest（外部レビュー §1b・受け入れ 6）。`approved_sha` と同じ正規化
         # だが `publish_at` は含めない（send に予約時刻という概念が無いため）。
         digest = approval_mod.compute_send_digest(
-            text=body, account=account_name, reply_to=reply_to, topic=topic_value)
+            text=effective, account=account_name, reply_to=reply_to, topic=topic_value)
 
         if mode == "rehearsal":
             log("投げるはずの本文:")
-            log(body)
+            log(effective)
             if topic_value:
                 log(f"トピック: {topic_value}")
             log(f"digest: {digest}")
@@ -978,7 +1014,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         inflight_mod.write(state_dir, file="(send)", started=jst.iso(), container_id=None)
         token = accounts_mod.load_token(account_cfg)
         adapter = adapter_factory(account_cfg, token)
-        post = adapter_base.Post(text=body, reply_to=reply_to or None, topic=topic_value)
+        post = adapter_base.Post(text=effective, reply_to=reply_to or None, topic=topic_value,
+                                 hashtags_allowed=bool(account_cfg.get("hashtags", True)))
 
         def on_container_created(container_id):
             inflight_mod.update(state_dir, container_id=container_id)
@@ -1031,8 +1068,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         # 無い以上、ここが唯一の正本になる（v2-3・2026-09-13）。`post_id` は媒体に
         # よって `/` を含む（Bluesky の AT URI）ので、パスは `postid` を通す
         # （`sent.path_for()`）。
-        sent_mod.write(state_dir, post_id=result.post_id, text=body,
-                        body_hash=approval_mod.compute_body_hash(body),
+        sent_mod.write(state_dir, post_id=result.post_id, text=post.text,
+                        body_hash=approval_mod.compute_body_hash(post.text),
                         sent_at=result.ts or jst.iso(),
                         # 承認の在り処が「masaru がその場で見た本文」なので、
                         # queue の 5 項目の指紋ではなく `--confirm` の digest を残す。

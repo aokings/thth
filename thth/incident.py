@@ -230,9 +230,9 @@ def _publication_fingerprint(path, cfg):
         segments, problems = bundle.load_segments(b, cfg["media"])
         if b.malformed or problems:
             raise ValueError("invalid_bundle")
-        return approval.compute_bundle_sha(segments=segments, account=b.get("account"), topic=b.get("topic"),
+        return approval.compute_bundle_sha(segments=bundle.effective_segments(segments, cfg, b.get("topic")), account=b.get("account"), topic=b.get("topic"),
                                            publish_at=b.get("publish_at"), continue_until=b.get("continue_until"))
-    value = core._current_fingerprint(str(path), cfg["media"])
+    value = core._current_fingerprint(str(path), cfg["media"], cfg)
     if not value:
         raise ValueError("invalid_queue")
     return value
@@ -366,7 +366,7 @@ def notify(account, cfg, diag, *, state_dir, result=None):
                         if diag.state == "fail" and record:
                             from . import core
                             if (record.get("post_id") or not record.get("approved_fingerprint") or
-                                    not core._fingerprint_matches(str(Path(accounts.resolved_repo_dir(cfg)) / file), cfg["media"], record["approved_fingerprint"])):
+                                    not core._fingerprint_matches(str(Path(accounts.resolved_repo_dir(cfg)) / file), cfg["media"], record["approved_fingerprint"], cfg)):
                                 event["file"] = None
                         elif diag.state == "fail" and not getattr(result, "file", None):
                             from . import threadrun

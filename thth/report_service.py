@@ -58,7 +58,7 @@ def execute_report(context: ReportContext, request: dict) -> dict:
         raise ReportServiceError("invalid_scope")
     if "compare_previous" in request and type(request["compare_previous"]) is not bool:
         raise ReportServiceError("invalid_options")
-    if "by" in request and (request["by"] not in ("kind", "hour_band", "topic") or request.get("compare_previous") is not True):
+    if "by" in request and (request["by"] not in ("kind", "hour_band", "topic", "tag") or request.get("compare_previous") is not True):
         raise ReportServiceError("invalid_options")
     if "since_last_read" in request and type(request["since_last_read"]) is not bool:
         raise ReportServiceError("invalid_options")

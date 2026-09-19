@@ -16,6 +16,15 @@ import datetime
 import hashlib
 
 from . import queuefile
+from . import tags as tags_mod
+
+
+def effective_section(section: str, account_cfg: dict | None, topic: str | None) -> str:
+    """Exact text shown and sent for a v1 queue item under this account policy."""
+    cfg = account_cfg or {}
+    return tags_mod.prepared(cfg.get("media"), section,
+                             queuefile.normalize_topic(topic),
+                             hashtags=bool(cfg.get("hashtags", True)))
 
 # フィールド区切り: ASCII unit separator（本文にまず現れない制御文字。
 # 区切り文字の衝突でハッシュが化けるのを避けるため、印字可能文字を避けた）。

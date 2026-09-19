@@ -450,12 +450,27 @@ def cmd_topics_search(args) -> int:
 
     def call(adapter):
         rows = adapter.keyword_search(q, search_type=search_type, limit=limit)
-        return rows, getattr(adapter, "KEYWORD_SEARCH_NOTE", None)
+        tag_material = None
+        tag_reason = None
+        cfg = accounts_mod.load_account(account)
+        tag = q.lstrip("#")
+        try:
+            if cfg.get("media") == "bluesky":
+                tag_material = adapter.tag_search(
+                    tag, tags=[tag], sort="latest" if search_type == "RECENT" else "top",
+                    pages=cfg.get("search_pages", 4), limit=min(limit, 100))
+            elif cfg.get("media") == "mastodon":
+                tag_material = adapter.tag_observation(tag, limit=min(limit, 40))
+        except (adapter_base.AdapterError, RuntimeError, ValueError) as e:
+            tag_reason = str(e)
+        return rows, getattr(adapter, "KEYWORD_SEARCH_NOTE", None), tag_material, tag_reason
 
     def render(result):
-        rows, provider_note = result
+        rows, provider_note, tag_material, tag_reason = result
         material = search_material(rows, q=q, search_type=search_type, limit=limit)
         material["provider_note"] = provider_note
+        material["by_tag"] = [tag_material] if tag_material else []
+        material["tag_cannot_say"] = tag_reason
         # **絡みに行く先**（設計 v2 §4.4）。台帳（queue）は**読むだけ**で、棚には
         # 何も書かない——`post_id` は `topics.json` にも泉にも落ちない。
         try:
@@ -482,6 +497,12 @@ def cmd_topics_search(args) -> int:
             print(f"  検索の制約      : {provider_note}")
         print(f"  投稿者の異なり数: {a['distinct']}"
               f"（username の判る {a['with_username']} 件のうち）")
+        if tag_material:
+            print(f"  タグ #{tag_material.get('tag') or q}: n={tag_material['n']}  "
+                  f"異なり={tag_material['distinct_authors']}  "
+                  f"観測元={tag_material['observed_from']}")
+        elif tag_reason:
+            print(f"  タグの観測はできません: {tag_reason}")
         print(f"  上位 {a['top_k']} 投稿者の占有率: {_pct(a['top_share'])}"
               f"（分母 {a['with_username']}）")
         print(f"  直近の投稿時刻  : {material['latest_timestamp'] or '—'}"

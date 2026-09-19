@@ -603,6 +603,16 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 metrics = None
         if metrics is not None:
             context = followers_context(account_name, dirs["insights_account"], now)
+            # The API observation, not the planned front-matter topic, determines
+            # actual tags. A failed read is unknown, never an empty tag list.
+            observed_tags = None
+            if account_cfg.get("media") in ("bluesky", "mastodon"):
+                read_tags = getattr(adapter, "observed_tags", None)
+                if callable(read_tags):
+                    try:
+                        observed_tags = read_tags(post_id)
+                    except Exception as e:
+                        errors.append(f"{post_id}: tags: {redact_mod.redact(str(e))}")
             _append_ndjson(insight_path, [{
                 "post_id": post_id,
                 # **同席の様態には原稿が無い**（設計 v2.0.1 §3）。`file` に
@@ -636,6 +646,8 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 # ではなくトピック**なので、数と一緒に記録しないと後から
                 # 突き合わせられない。front-matter から取るので API は増やさない。
                 "topic": queuefile.normalize_topic(fm.get("topic")),
+                **({"tags": observed_tags} if account_cfg.get("media") in
+                   ("bluesky", "mastodon") else {}),
                 "reply_to": fm.get("reply_to") or None,
                 "text_length": len(section) if section is not None else None,
                 "has_link": ("http://" in (section or "")) or ("https://" in (section or "")),

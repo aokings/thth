@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import init_git_pair, run_git
-from thth import approval, bundle, inflight, threadrun, threadthrow
+from thth import approval, bundle, cli, inflight, threadrun, threadthrow
 from thth.adapters.base import PublishResult
 
 NOW = datetime.datetime.fromisoformat("2026-09-15T19:00:00+09:00")
@@ -115,6 +115,72 @@ def write_and_push(pair, text):
     run_git(pair["work"], ["add", REL])
     run_git(pair["work"], ["commit", "-m", "更新"])
     run_git(pair["work"], ["push"])
+
+
+def _bluesky_bundle_text(account: str, *, transformed: bool = True,
+                         include_body_tag: bool = True) -> str:
+    segments = ["本文 #苦味" if include_body_tag else "本文", "続きです"]
+    text = bundle_text(account=account, topic="茶", segments=segments).replace(
+        "## threads", "## bluesky")
+    old = approval.compute_bundle_sha(
+        segments=segments, account=account, topic="茶",
+        publish_at="2026-09-15T19:00:00+09:00",
+        continue_until="2026-09-15T20:00:00+09:00")
+    effective = [segments[0] + "\n#茶", "続きです"]
+    new = approval.compute_bundle_sha(
+        segments=effective, account=account, topic="茶",
+        publish_at="2026-09-15T19:00:00+09:00",
+        continue_until="2026-09-15T20:00:00+09:00")
+    assert text.count("approved_sha: " + old) == 1
+    return text.replace("approved_sha: " + old, "approved_sha: " + new) if transformed else text
+
+
+def test_bluesky_bundle_displays_and_publishes_effective_segments(
+        tmp_path, isolated_account_factory):
+    name = "bluesky-bundle"
+    source = _bluesky_bundle_text(name)
+    pair = init_git_pair(tmp_path, seed_content=source, seed_name="thread.md")
+    account = isolated_account_factory(name=name, repo_dir=pair["work"],
+                                       media="bluesky", hashtags=True,
+                                       production=True, quiet_hours=None,
+                                       min_interval_hours=0)
+    path = os.path.join(pair["work"], REL)
+    prepared, error = cli._prepare_bundle(path, source)
+    assert error is None
+    assert prepared["segments"] == ["本文 #苦味\n#茶", "続きです"]
+    adapter = FakeAdapter()
+    results = threadthrow.publish_bundle(name, REL, adapter_factory=lambda *_: adapter,
+                                         now=NOW)
+    assert [r.action for r in results] == ["published", "published"]
+    assert [call["text"] for call in adapter.calls] == prepared["segments"]
+
+
+def test_bluesky_bundle_old_published_segment_stays_frozen_after_policy_change(
+        tmp_path, isolated_account_factory):
+    name = "bluesky-frozen"
+    source = _bluesky_bundle_text(name, transformed=False, include_body_tag=False)
+    pair = init_git_pair(tmp_path, seed_content=source, seed_name="thread.md")
+    account = isolated_account_factory(name=name, repo_dir=pair["work"],
+                                       media="bluesky", hashtags=False,
+                                       production=True, quiet_hours=None,
+                                       min_interval_hours=0)
+    adapter = FakeAdapter()
+    first = threadthrow.publish_bundle(name, REL, adapter_factory=lambda *_: adapter,
+                                       now=NOW, max_posts=1)
+    assert first[0].action == "published"
+    assert adapter.calls[0]["text"] == "本文"
+    ledger = Path(account["accounts_dir"]) / f"{name}.json"
+    cfg = json.loads(ledger.read_text())
+    cfg["hashtags"] = True
+    ledger.write_text(json.dumps(cfg))
+    path = os.path.join(pair["work"], REL)
+    prepared, error = cli._prepare_bundle(path, Path(path).read_text())
+    assert prepared is None
+    assert "公開済みの段の本文は変えられません" in error
+    later = threadthrow.publish_bundle(name, REL, adapter_factory=lambda *_: adapter,
+                                       now=NOW)
+    assert all(r.action != "published" for r in later)
+    assert len(adapter.calls) == 1
 
 
 # --- 正常系 -----------------------------------------------------------------

@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime
 
 from tests.conftest import make_queue_text, parse_verified
-from thth import queuefile, select as select_mod
+from thth import approval, queuefile, select as select_mod
 
 ACCOUNT = "nigamilab-threads"
 NOW = datetime.datetime.fromisoformat("2026-09-09T10:00:00+09:00")
@@ -42,6 +42,19 @@ def select(files, **kwargs):
     kwargs.setdefault("last_post_at", None)
     kwargs.setdefault("recent_texts", set())
     return select_mod.select_one(files, **kwargs)
+
+
+def test_bluesky_hashtags_policy_change_stales_old_approval(tmp_path):
+    body = "## bluesky\n本文です。\n"
+    old_sha = approval.compute_approved_sha(
+        section="本文です。", account=ACCOUNT, reply_to=None, topic="茶",
+        publish_at="2026-09-09T08:00:00+09:00")
+    p = write(tmp_path, "bluesky.md", body=body, media="bluesky",
+              fm_overrides={"topic": "茶", "approved_sha": old_sha,
+                            "publish_at": "2026-09-09T08:00:00+09:00"})
+    result = select(parse_all([p]), account_cfg=account_cfg(media="bluesky", hashtags=True))
+    assert result.chosen is None
+    assert any(r.reason == "approval_stale" for r in result.rejections)
 
 
 # 1. post_id が入っている → status より先に落とす（approved に戻されても出ない・§3.5）

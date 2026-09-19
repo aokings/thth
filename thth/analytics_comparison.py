@@ -89,8 +89,11 @@ def _observation(post, posted, now, mark=24):
     collected, _tie, row, age = min(candidates, key=lambda item: item[:2])
     metrics = row.get("metrics")
     metrics = metrics if isinstance(metrics, dict) else {}
-    return {"collected_at": jst.iso(collected), "actual_age_hours": age,
-            "metrics": {key: _metric(metrics.get(key)) for key in METRICS}}, dict(rejected)
+    selected = {"collected_at": jst.iso(collected), "actual_age_hours": age,
+                "metrics": {key: _metric(metrics.get(key)) for key in METRICS}}
+    if "tags" in row:
+        selected["tags"] = row["tags"] if isinstance(row["tags"], list) else None
+    return selected, dict(rejected)
 
 
 def _population(items, start, end, now, min_n):
@@ -183,6 +186,38 @@ def _differences(previous, current, min_n):
     return deltas
 
 
+def _tag_strata(items, previous_start, current_start, now, min_n):
+    """Presence partitions exactly; named tags may overlap across one post."""
+    groups = {"tagged": [], "untagged": [], "unknown": []}
+    for item in items:
+        _post_id, posted, post = item
+        selected, _rejected = _observation(post, posted, now)
+        observed = selected.get("tags") if selected else None
+        if not isinstance(observed, list) or any(not isinstance(t, str) for t in observed):
+            groups["unknown"].append(item)
+        elif not observed:
+            groups["untagged"].append(item)
+        else:
+            groups["tagged"].append(item)
+            for tag in set(observed):
+                if tag:
+                    groups.setdefault("#" + tag, []).append(item)
+    strata = {}
+    for label, members in sorted(groups.items()):
+        before = _population(members, previous_start, current_start, now, min_n)
+        current = _population(members, current_start, now, now, min_n)
+        strata[label] = {"previous": before, "current": current,
+                         "comparison": _differences(before, current, min_n)}
+    return {"by": "tag", "strata": strata, "tag_groups_overlap": True,
+            "reconciliation": {period: {
+                "sum_n_total": sum(strata[label][period]["n_total"]
+                                   for label in ("tagged", "untagged", "unknown")),
+                "n_total": sum(1 for _post_id, posted, _post in items
+                               if (previous_start <= posted < current_start if period == "previous"
+                                   else current_start <= posted < now))}
+                for period in ("previous", "current")}}
+
+
 def _account(name, previous_start, current_start, now, min_n, by=None):
     cfg = accounts.load_account(name)
     # Existing loader supplies account-at-observation ownership guarantees. A
@@ -238,6 +273,10 @@ def _account(name, previous_start, current_start, now, min_n, by=None):
         deltas = _differences(previous, current, min_n)
         node[kind] = {"previous": previous, "current": current, "comparison": deltas}
         if by:
+            if by == "tag":
+                node[kind]["stratified"] = _tag_strata(items, previous_start,
+                                                       current_start, now, min_n)
+                continue
             from . import threadshape, topics
             lookup, shelf_broken = after_cli._kind_lookup(name)
             groups = collections.defaultdict(list)

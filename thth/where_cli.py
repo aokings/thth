@@ -28,6 +28,7 @@
 """
 from __future__ import annotations
 
+import datetime
 import json
 import sys
 
@@ -114,7 +115,7 @@ def _my_history(account_name: str, word: str) -> tuple[dict | None, str | None]:
 
 
 def _account_node(account_name: str, words: list, *, search_type: str,
-                  limit: int) -> tuple[dict | None, Exception | str | None]:
+                  limit: int, now) -> tuple[dict | None, Exception | str | None]:
     """1 account 分の節。戻りは `(node, 理由)`——どちらか一方だけが非 `None`。
     台帳が読めない・token が無い・媒体に `keyword_search` が無いときは
     `node` が `None`（`by_account` に**入れない**・規約 (d)）。
@@ -153,8 +154,25 @@ def _account_node(account_name: str, words: list, *, search_type: str,
         node_cannot_say.append(f"「返信済み」印: {replied_why}")
 
     by_word: dict = {}
+    by_tag: list = []
     author_keys: set = set()
     for word in words:
+        if media in ("bluesky", "mastodon"):
+            tag = word.lstrip("#")
+            try:
+                since = jst.iso(now - datetime.timedelta(hours=24))
+                if media == "bluesky":
+                    pages = account_cfg.get("search_pages", 4)
+                    tagged = adapter.tag_search(tag, tags=[tag],
+                                                sort="latest" if search_type == "RECENT" else "top",
+                                                since=since, until=jst.iso(now),
+                                                pages=pages, limit=limit)
+                    tagged["tag"] = tag
+                else:
+                    tagged = adapter.tag_observation(tag, limit=min(limit, 40), since=since)
+                by_tag.append(tagged)
+            except (adapter_base.AdapterError, RuntimeError, ValueError) as e:
+                node_cannot_say.append(f"{word}: タグの観測: {redact_mod.redact(str(e))}")
         try:
             rows = adapter.keyword_search(word, search_type=search_type, limit=limit)
         except adapter_base.PermissionMissing as e:
@@ -197,7 +215,8 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                                         "last_reaction": row["last_reaction"]}
                    for row in summary}
 
-    node = {"medium": media, "by_word": by_word, "you_and_them": you_and_them,
+    node = {"medium": media, "by_word": by_word, "by_tag": by_tag,
+            "you_and_them": you_and_them,
             "cannot_say": node_cannot_say}
     return node, None
 
@@ -258,7 +277,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
     by_account: dict = {}
     notes: list = []
     for name in names:
-        node, reason = _account_node(name, words, search_type=search_type, limit=limit)
+        node, reason = _account_node(name, words, search_type=search_type,
+                                     limit=limit, now=now)
         if node is None:
             if isinstance(reason, accounts_mod.AccountError) and project is None:
                 # **単一 account: そのまま投げ直す**（T5-2・`who_cli.answer()`
@@ -287,6 +307,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
 
     return {
         "account": account_name, "project": project, "words": words,
+        "by_tag": [{"account": name, **entry} for name, node in by_account.items()
+                   for entry in node["by_tag"]],
         "by_account": by_account, "cannot_say": top_cannot_say,
         "provenance": {"fetched_at": jst.iso(now), "notes": notes},
     }
@@ -318,6 +340,18 @@ def _render_human(result: dict) -> None:
                      f"（{post['author_key'] or '—'}）  {post['preview']}")
                 if post["permalink"]:
                     print(f"      {post['permalink']}")
+        for tagged in node["by_tag"]:
+            print(f"  タグ #{tagged['tag']}: n={tagged['n']}  "
+                  f"異なり={tagged['distinct_authors']}  "
+                  f"直近={tagged['latest_at'] or '—'}  "
+                  f"観測元={tagged['observed_from']}")
+            if tagged.get("co_tags"):
+                print("    同時タグ: " + "・".join(
+                    f"#{item['tag']} ({item['n']})" for item in tagged["co_tags"]))
+            if tagged.get("history"):
+                print("    日次 history（インスタンスの視界）: " + "・".join(
+                    f"{item['day']}: {item['uses']} 投稿/{item['accounts']} account"
+                    for item in tagged["history"]))
         if node["cannot_say"]:
             for line in node["cannot_say"]:
                 print(f"  言えない: {line}")

@@ -31,6 +31,7 @@ Threads と同じ境界（`Post` / `PublishResult` / 三分類の `failure`）�
 """
 from __future__ import annotations
 
+import collections
 import datetime
 import getpass
 import json
@@ -42,6 +43,7 @@ import urllib.request
 
 from .. import httpsafe
 from .. import jst
+from .. import tags as tags_mod
 from .. import redact as redact_mod
 from . import base
 
@@ -109,7 +111,8 @@ def _trim_url(url: str) -> str:
     return url
 
 
-def build_facets(text: str) -> list:
+def build_facets(text: str, *, topic: str | None = None,
+                 include_tags: bool = False) -> list:
     """本文から URL を拾い、`app.bsky.richtext.facet#link` の配列を作る。
 
     **付けなければリンクにならない**（Bluesky は本文の URL を自動でリンクにしない）。
@@ -126,7 +129,21 @@ def build_facets(text: str) -> list:
             "index": {"byteStart": byte_start, "byteEnd": byte_end},
             "features": [{"$type": "app.bsky.richtext.facet#link", "uri": url}],
         })
-    return facets
+    # Facets cannot overlap. A #fragment inside a URL remains part of the link.
+    occupied = {(f["index"]["byteStart"], f["index"]["byteEnd"])
+                for f in facets}
+    for span in tags_mod.spans(text, topic if topic else None):
+        if not include_tags and span.tag != topic:
+            continue
+        start = len(text[:span.start].encode("utf-8"))
+        end = len(text[:span.end].encode("utf-8"))
+        if any(start < link_end and end > link_start
+               for link_start, link_end in occupied):
+            continue
+        facets.append({"index": {"byteStart": start, "byteEnd": end},
+                       "features": [{"$type": "app.bsky.richtext.facet#tag",
+                                     "tag": span.tag}]})
+    return sorted(facets, key=lambda f: f["index"]["byteStart"])
 
 
 # --- 文字数（300 grapheme の近似） -----------------------------------------
@@ -447,12 +464,15 @@ class BlueskyAdapter(base.Adapter):
             return base.PublishResult(post_id=None, url=None, ts=ts, error=None,
                                        failure="none")
 
+        text = tags_mod.prepared(MEDIUM, post.text, post.topic,
+                                 hashtags=post.hashtags_allowed)
         record = {
             "$type": POST_COLLECTION,
-            "text": post.text,
+            "text": text,
             "createdAt": created_at(),
         }
-        facets = build_facets(post.text)
+        facets = build_facets(text, topic=post.topic if post.hashtags_allowed else None,
+                              include_tags=post.hashtags_allowed)
         if facets:
             record["facets"] = facets
         # `post.topic` は Threads だけのもの。**黙って無視する**（設計 v2 §4.2:
@@ -737,6 +757,103 @@ class BlueskyAdapter(base.Adapter):
                 if isinstance(view, dict) and view.get("uri")]
 
     # --- 直近の投稿 ---------------------------------------------------------
+    @staticmethod
+    def _observed_tags(view: dict) -> set[str]:
+        """Read both facet tags and record.tags; neither text nor handles are kept."""
+        record = view.get("record") if isinstance(view.get("record"), dict) else {}
+        raw_tags = record.get("tags")
+        found = {tag for tag in raw_tags if isinstance(tag, str) and tag} if isinstance(raw_tags, list) else set()
+        facets = record.get("facets")
+        for facet in facets if isinstance(facets, list) else []:
+            if not isinstance(facet, dict):
+                continue
+            features = facet.get("features")
+            for feature in features if isinstance(features, list) else []:
+                if isinstance(feature, dict) and feature.get("$type") == "app.bsky.richtext.facet#tag":
+                    tag = feature.get("tag")
+                    if isinstance(tag, str) and tag:
+                        found.add(tag)
+        return found
+
+    def observed_tags(self, post_id: str) -> list[str]:
+        """Tags actually returned with an owned post at collection time."""
+        return sorted(self._observed_tags(self._post_view(post_id)))
+
+    def tag_search(self, q: str, *, tags: list[str], sort: str = "latest",
+                   since: str | None = None, until: str | None = None,
+                   pages: int = 4, limit: int = 100) -> dict:
+        """Bounded searchPosts pagination; return aggregates without post content."""
+        if not isinstance(q, str) or not q.strip():
+            raise base.AdapterError("tag search: q は空にできません")
+        if not isinstance(tags, list) or not tags or any(
+                not isinstance(tag, str) or not tag or tag.startswith("#") for tag in tags):
+            raise base.AdapterError("tag search: tag は # なしの非空文字列の配列です")
+        if sort not in ("top", "latest"):
+            raise base.AdapterError("tag search: sort は top/latest です")
+        if type(pages) is not int or not 1 <= pages <= 10:
+            raise base.AdapterError("tag search: pages は 1〜10 です")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise base.AdapterError("tag search: limit は 1〜100 です")
+        params = {"q": q.strip(), "tag": tags, "sort": sort, "limit": limit}
+        if since is not None:
+            params["since"] = since
+        if until is not None:
+            params["until"] = until
+        seen_ids, authors, co_tags = set(), set(), collections.Counter()
+        n = tagged_n = 0
+        latest_at = None
+        latest_dt = None
+        cursor = None
+        page_count = 0
+        seen_cursors = set()
+        for _ in range(pages):
+            request = dict(params)
+            if cursor:
+                request["cursor"] = cursor
+            body = self._request("GET", "app.bsky.feed.searchPosts", params=request)
+            page_count += 1
+            posts = body.get("posts")
+            if not isinstance(posts, list):
+                raise base.AdapterError("searchPosts: 応答に posts の配列がありません")
+            for view in posts:
+                if not isinstance(view, dict):
+                    continue
+                uri = view.get("uri")
+                if not isinstance(uri, str) or not uri or uri in seen_ids:
+                    continue
+                seen_ids.add(uri)
+                n += 1
+                author = view.get("author") if isinstance(view.get("author"), dict) else {}
+                if isinstance(author.get("did"), str) and author["did"]:
+                    authors.add(author["did"])
+                record = view.get("record") if isinstance(view.get("record"), dict) else {}
+                stamp = record.get("createdAt") or view.get("indexedAt")
+                if isinstance(stamp, str):
+                    try:
+                        parsed = jst.parse(stamp)
+                    except (ValueError, TypeError):
+                        parsed = None
+                    if parsed is not None and (latest_dt is None or parsed > latest_dt):
+                        latest_dt, latest_at = parsed, stamp
+                observed = self._observed_tags(view)
+                if set(tags).issubset(observed):
+                    tagged_n += 1
+                for other in observed - set(tags):
+                    co_tags[other] += 1
+            next_cursor = body.get("cursor")
+            if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen_cursors:
+                cursor = None
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+        return {"n": n, "distinct_authors": len(authors), "latest_at": latest_at,
+                "tagged_n": tagged_n, "tagged_share": tagged_n / n if n else None,
+                "co_tags": [{"tag": tag, "n": count} for tag, count in
+                            sorted(co_tags.items(), key=lambda item: (-item[1], item[0]))[:5]],
+                "observed_from": self.service, "window": {"since": since, "until": until},
+                "pages_fetched": page_count, "cursor_available": bool(cursor),
+                "search_tags": list(tags), "sort": sort}
+
     def recent_posts(self, *, limit: int = 25) -> list:
         """`app.bsky.feed.getAuthorFeed`（**L2**——lexicon を 2026-09-13 に読解）。
 
