@@ -130,7 +130,7 @@ Full walkthrough: [docs/usage.en.md](docs/usage.en.md).
 
 - `admin` — authenticated read-only inventory, account, log, tokens, timers, release and diff reports.
 
-All 40 subcommands `thth --help` lists in this development checkout, one line each:
+All subcommands `thth --help` lists in this development checkout, one line each:
 
 - `lint` — check a queue file's front matter and length
 - `preview` — show the exact text that would go out
