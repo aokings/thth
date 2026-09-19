@@ -230,3 +230,29 @@ def test_admin_explicit_probe_records_and_corrupt_record_is_unknown(credentials,
     value = json.loads(cache.read_text()); value['probes'][0]['ok'] = 'FAKE_INVALID_OK'; cache.write_text(json.dumps(value))
     unknown = admin_report.answer('account', account='first')['by_account']['first']['permissions']
     assert unknown['result'] is None and unknown['reason'] == 'permissions_not_recorded'
+
+
+def test_missing_ledger_is_cli_error_existing_corrupt_is_row(credentials, capsys):
+    from thth import cli
+    _, _, config = credentials
+    assert cli.main(['admin', 'account', 'absent', '--json']) == 2
+    output = capsys.readouterr()
+    assert not output.out and 'ledger_missing' in output.err
+    (Path(config['root'])/'accounts/broken.json').write_text('{')
+    assert cli.main(['admin', 'account', 'broken', '--json']) == 0
+    assert json.loads(capsys.readouterr().out)['by_account']['broken']['ledger'] == 'unreadable'
+
+
+@pytest.mark.parametrize('event', ['nonsense', '', [], 42])
+def test_unknown_event_rejected_before_log_io_http_mcp(credentials, monkeypatch, event):
+    from thth import admin_log
+    from thth.report_service import ReportServiceError
+    path, token, _ = credentials
+    _, creds = report_http.load_credentials(path)
+    with pytest.raises(ValueError, match='^invalid_options$'):
+        admin_log.read(event=event)
+    with pytest.raises(ReportServiceError, match='^invalid_options$'):
+        execute_report(creds[0][3], {'operation': 'admin_log', 'event': event})
+    monkeypatch.setenv('THTH_REPORT_CREDENTIALS', str(path)); monkeypatch.setenv('THTH_REPORT_TOKEN', token)
+    result = _load_server_module().call_tool('thth_admin_log', {'event': event})
+    assert result['isError'] and result['content'][0]['text'] == 'invalid_options'

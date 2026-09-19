@@ -543,8 +543,9 @@ def call_tool(name: str, arguments: dict | None) -> dict:
             request = {"operation": name[len("thth_"):], **arguments}
             result = execute_report(context, request)
             return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
-        except (ValueError, TypeError, ReportServiceError):
-            return {"content": [{"type": "text", "text": "invalid_request"}], "isError": True}
+        except (ValueError, TypeError, ReportServiceError) as error:
+            reason = "invalid_options" if str(error) == "invalid_options" else "invalid_request"
+            return {"content": [{"type": "text", "text": reason}], "isError": True}
     if name == "thth_lint":
         proc = run_cli(["lint", arguments["file"], "--json"])
         text = proc.stdout

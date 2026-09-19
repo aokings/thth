@@ -115,6 +115,8 @@ def append(event, account, cfg, *, by, via='cli', diff=None, run_id=None):
 
 
 def read(*, since=None, account=None, event=None):
+    if event is not None and (not isinstance(event, str) or event not in EVENTS):
+        raise ValueError('invalid_options')
     cutoff = jst.parse(since) if since is not None else None
     if since is not None and cutoff is None:
         raise ValueError('invalid_since')

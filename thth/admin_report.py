@@ -264,8 +264,13 @@ def answer(operation='inventory', *, account=None, probe=False, via='cli', now=N
         raise ValueError('invalid_admin_request')
     if account is not None and not accounts.name_is_safe(account):
         raise ValueError('invalid_account')
-    if operation == 'account' and account is None:
-        raise ValueError('account_required')
+    if operation == 'account':
+        if account is None:
+            raise ValueError('account_required')
+        try:
+            (Path(accounts.accounts_dir()) / (account + '.json')).lstat()
+        except FileNotFoundError:
+            raise ValueError('ledger_missing') from None
     if type(limit) is not int or not 1 <= limit <= 1000:
         raise ValueError('invalid_limit')
     if via == 'http' and (probe or mark_read):
@@ -299,8 +304,9 @@ def command(args):
     try:
         payload = answer(args.admin_operation, **{key: getattr(args, key) for key in
             ('account', 'probe', 'since', 'event', 'limit', 'since_last_read', 'mark_read', 'by') if hasattr(args, key)})
-    except (OSError, ValueError, TypeError, accounts.AccountError):
-        print('admin_report_unavailable: check account, options and local records', file=sys.stderr)
+    except (OSError, ValueError, TypeError, accounts.AccountError) as error:
+        reason = str(error) if str(error) in ('ledger_missing', 'invalid_options') else 'admin_report_unavailable'
+        print(reason + ': check account, options and local records', file=sys.stderr)
         return 2
     print(json.dumps(payload, ensure_ascii=False, indent=2) if args.json else render_markdown(payload))
     return 0

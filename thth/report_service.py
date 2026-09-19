@@ -48,7 +48,7 @@ def execute_report(context: ReportContext, request: dict) -> dict:
     if isinstance(operation, str) and operation.startswith("admin_"):
         if context.scope != "admin":
             raise ReportServiceError("unsupported_operation")
-        from . import admin_report
+        from . import admin_log, admin_report
         name = operation[6:]
         if name not in admin_report.OPERATIONS:
             raise ReportServiceError("unsupported_operation")
@@ -58,6 +58,9 @@ def execute_report(context: ReportContext, request: dict) -> dict:
         if "account" in request and request["account"] not in context.allowed_accounts:
             raise ReportServiceError("scope_unavailable")
         if "since_last_read" in request and type(request["since_last_read"]) is not bool:
+            raise ReportServiceError("invalid_options")
+        event = request.get("event")
+        if name == "log" and event is not None and (not isinstance(event, str) or event not in admin_log.EVENTS):
             raise ReportServiceError("invalid_options")
         kwargs = {key: value for key, value in request.items() if key != "operation"}
         if name == "diff":
