@@ -76,3 +76,16 @@ def test_add_and_token_set_scope_guidance_is_stderr(thth_root, capsys, monkeypat
     assert oauth.run_token_set('new-masto',by='tester')==1
     output=capsys.readouterr()
     assert all(scope in output.err for scope in scopes.MASTODON_SCOPES)
+
+
+@pytest.mark.parametrize('status',[403,500])
+def test_notifications_permission_guidance(status,monkeypatch):
+    adapter=mastodon.MastodonAdapter(instance='https://fixture.invalid')
+    monkeypatch.setattr(adapter,'_request',lambda *a,**k:(_ for _ in ()).throw(urllib.error.HTTPError('url',status,'fixture',{},None)))
+    with pytest.raises(mastodon.AdapterError) as exc:adapter.mentions()
+    message=str(exc.value)
+    if status==403:
+        assert exc.value.failure=='permission'
+        assert all(part in message for part in ('read:notifications','token set','--by'))
+    else:
+        assert exc.value.failure is None and 'read:notifications' not in message

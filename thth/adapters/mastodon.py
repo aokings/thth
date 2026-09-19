@@ -362,8 +362,10 @@ class MastodonAdapter(base.Adapter):
         detail = f"{what}: HTTP {error.code} {self._scrub(error.reason)}"
         if error.code == 403:
             detail += '（permission: アクセスが拒否されました）'
-            if path.startswith('/api/v2/search'):
-                detail += ('。token の read:search を確認してください。scope 不足のほか、'
+            permission = ('read:search' if path.startswith('/api/v2/search') else
+                          'read:notifications' if path.startswith('/api/v1/notifications') else None)
+            if permission:
+                detail += (f'。token の {permission} を確認してください。scope 不足のほか、'
                            'アカウント制限等でも拒否されます。アプリ設定で必要なら追加し '
                            'thth token set <account> --by … で再設定してください')
         return AdapterError(detail, failure='permission' if error.code == 403 else None,
