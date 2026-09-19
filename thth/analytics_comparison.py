@@ -8,7 +8,7 @@ import math
 
 from . import accounts, after_cli, engagements, jst, measured
 
-METRICS = ("views", "likes", "replies")
+METRICS = ("views", "likes", "replies", "reposts")
 
 
 
