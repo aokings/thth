@@ -15,7 +15,7 @@
 | [設計_v3_施策の振り返り.md](設計_v3_施策の振り返り.md) | 開発セッション | 施策宣言と観測を分ける設計、公開承認との区別 |
 | [設計_v3_提供形態と分離.md](設計_v3_提供形態と分離.md) | 開発セッション | インストール型と将来のサーバ型の共通契約、認証・分離・退出の責任境界 |
 | [分析レポート_v1.md](分析レポート_v1.md) | 開発セッション・LLM | 2.5.0 からの analytics-report / analytics_report。構造化スナップショットの期間・根拠・欠測の契約 |
-| [設計_v3.2_タグと話題_BlueskyとMastodon_2026-09-19.md](設計_v3.2_タグと話題_BlueskyとMastodon_2026-09-19.md) | 開発セッション・masaru | 2.8.0 の契約: topic を Bluesky の tag facet／Mastodon の末尾タグに写す・タグ軸の観測（searchPosts tag・timelines/tag・trends/tags）・--by tag。§6 が裁定待ち |
+| [設計_2.8.0_タグと話題_BlueskyとMastodon_2026-09-19.md](設計_2.8.0_タグと話題_BlueskyとMastodon_2026-09-19.md) | 開発セッション・masaru | 2.8.0 の契約（旧称 v3.2）: topic を Bluesky の tag facet／Mastodon の末尾タグに写す・タグ軸の観測（searchPosts tag・timelines/tag・trends/tags）・--by tag。§6 が裁定待ち |
 | [設計_v3.1_分析の磨きと採集_2026-09-18.md](設計_v3.1_分析の磨きと採集_2026-09-18.md) | 開発セッション・masaru | 2.6.0／2.7.0 の契約: 刻みごとの値・絡んだ枝の帰結・鮮度・cursor・散らばり・層別・枝の形・cannot_say のコード／720h・フォロワー数の文脈。§5 が裁定待ち |
 | [導入_自分のMetaアプリで動かす.md](導入_自分のMetaアプリで動かす.md) | これから THTH を自分の環境に入れる人 | 最短の道は Meta アプリ → 台帳 → 生成ツールで発行したトークンを `thth token set` → timer。`app.env` と `thth auth`（OAuth）は権限の内訳を変えるときだけの迂回路。各手順に出典と証拠段階 |
 | [リリースノート_2.7.0_2026-09-18.md](リリースノート_2.7.0_2026-09-18.md) | プロジェクトのセッション | 2.5.0→2.7.0 で読めるようになったもの（刻み別・散らばり・枝の帰結・鮮度・cursor・コード）と読むときの約束 |
