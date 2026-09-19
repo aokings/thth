@@ -199,7 +199,7 @@ def _require_vm_path(path: str, *, what: str = "") -> str | None:
     )
 
 
-def _expand_targets(files, *, only_draft: bool) -> tuple:
+def _expand_targets(files, *, only_draft: bool, account=None) -> tuple:
     """ファイルとディレクトリの混在を受けて、対象のファイル一覧に展開する。
 
     **ディレクトリを受けられるようにした**（kopicha セッション指摘 2026-09-10）。
@@ -247,13 +247,14 @@ def _expand_targets(files, *, only_draft: bool) -> tuple:
             path = os.path.join(item, name)
             if only_draft:
                 try:
-                    if queuefile.parse(path).front_matter.get("status") != "draft":
+                    fm = queuefile.parse(path).front_matter
+                    if fm.get("status") != "draft" or account is not None and fm.get("account") != account:
                         skipped += 1
                         continue
                 except OSError:
                     continue
             out.append(path)
-    note = (f"（ディレクトリから {skipped} 本を対象外にしました: status が draft ではない）"
+    note = (f"（ディレクトリから {skipped} 本を対象外にしました: draft または account の条件外）"
             if skipped else "")
     return out, note
 
@@ -368,7 +369,7 @@ def cmd_approve(args) -> int:
     `writeback.sync_repo()` を通す。以前は「承認の前に VM で git pull が要る」ことが
     どこにも書いていなかった。手順を文書に足すのではなく、道具の側でやる。
     """
-    paths, note = _expand_targets(args.file, only_draft=True)
+    paths, note = _expand_targets(args.file, only_draft=True, account=getattr(args, "account", None))
     if paths is None:
         # **VM に無いパスは `_expand_targets` が案内済み**（T8-1）。
         return 2
@@ -406,6 +407,8 @@ def cmd_approve(args) -> int:
         prepared, problems = [], []
         for path in sorted(paths):
             one, problem = _prepare_one(path)
+            if not problem and getattr(args, "account", None) and one['account'] != args.account:
+                problem = f"{path}: 指定 account と一致しないので承認しません"
             (problems if problem else prepared).append(problem or one)
         if problems:
             for problem in problems:
@@ -2913,6 +2916,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_approve.add_argument("file", nargs="+",
                            help="ファイルでもディレクトリでも可（ディレクトリなら draft の .md をまとめて）")
     p_approve.add_argument("--json", action="store_true")
+    p_approve.add_argument("--account", default=None, help="ディレクトリからこの account の draft だけを拾う")
     p_approve.add_argument("--confirm", default=None,
                            help="一段目が表示した digest。これが無いと承認しない")
     p_approve.add_argument("--by", default=None,
