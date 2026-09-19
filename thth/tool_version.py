@@ -16,7 +16,13 @@ def summary(previous_version=None):
     current = numbers(__version__)
     previous = numbers(previous_version)
     found = []
-    for path in (NOTES_ROOT / 'docs').glob('リリースノート_*.md'):
+    notes_reason = None
+    try:
+        candidates = list((NOTES_ROOT / 'docs').iterdir())
+    except OSError:
+        candidates = []
+        notes_reason = 'notes_directory_unavailable'
+    for path in candidates:
         match = re.fullmatch(r'リリースノート_(\d+\.\d+\.\d+)_\d{4}-\d{2}-\d{2}\.md', path.name)
         if match and path.is_file():
             version = numbers(match[1])
@@ -27,4 +33,4 @@ def summary(previous_version=None):
     return dict(version=__version__, previous_version=previous_version if previous else None,
                 changed_since_last_read=(previous != current) if previous else None,
                 release_notes=['docs/' + name for _, name in notes],
-                notes_root_local_hint='~/Developer/thth')
+                notes_root_local_hint='~/Developer/thth', notes_reason=notes_reason)

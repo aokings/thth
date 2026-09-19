@@ -73,3 +73,26 @@ def test_literal_legacy_receipt_validate_changes_and_handoff(notes,isolated_acco
     assert result['tool']['changed_since_last_read'] is None
     assert 'cursor_unreadable' not in result['by_account']['legacy']['cannot_say']
     assert cursor.read_text()==LEGACY_CURSOR
+
+
+@pytest.mark.parametrize('case', ['missing','not_directory','unreadable','empty','available'])
+def test_notes_unavailability_is_distinct_from_available_empty(case,tmp_path,monkeypatch):
+    root=tmp_path/'package';root.mkdir();docs=root/'docs'
+    monkeypatch.setattr(tool_version,'NOTES_ROOT',root)
+    if case=='not_directory':docs.write_text('not a directory')
+    elif case!='missing':
+        docs.mkdir()
+        if case=='available':(docs/'リリースノート_2.10.0_2026-09-20.md').write_text('notes')
+    if case=='unreadable':
+        original=Path.iterdir
+        def unreadable(path):
+            if path==docs:raise PermissionError('FAKE_PRIVATE_DIRECTORY')
+            return original(path)
+        monkeypatch.setattr(Path,'iterdir',unreadable)
+    result=tool_version.summary()
+    assert result['version']=='2.10.0'
+    assert result['notes_root_local_hint']=='~/Developer/thth'
+    assert 'notes_root' not in result and str(root) not in json.dumps(result)
+    assert result['notes_reason']==('notes_directory_unavailable' if case in ('missing','not_directory','unreadable') else None)
+    assert result['release_notes']==(['docs/リリースノート_2.10.0_2026-09-20.md'] if case=='available' else [])
+    assert 'FAKE_PRIVATE_DIRECTORY' not in json.dumps(result)
