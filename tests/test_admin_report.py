@@ -130,3 +130,16 @@ def test_http_diff_does_not_read_external_app_env(fixture,monkeypatch):
         return original(path)
     monkeypatch.setattr(appenv,'_parse_env_file',parse)
     admin_report.answer('diff',since_last_read=True,via='http',now=now)
+
+def test_nested_bluesky_credentials_are_scrubbed(fixture):
+    root,now,cfg=fixture
+    path=root/'accounts/test-threads.json';value=json.loads(path.read_text());value['handle']={'accessJwt':'FAKE_BSKY_ACCESS_JWT','refreshJwt':'FAKE_BSKY_REFRESH_JWT'};path.write_text(json.dumps(value))
+    assert 'FAKE_BSKY_' not in json.dumps(admin_report.answer(now=now))
+
+def test_missing_required_setting_is_null_not_default(fixture):
+    root,now,cfg=fixture
+    path=root/'accounts/test-threads.json';value=json.loads(path.read_text());value.pop('quiet_hours');path.write_text(json.dumps(value))
+    result=admin_report.answer(now=now)['by_account']['test-threads']
+    assert result['ledger']=='available' and result['quiet_hours'] is None
+    assert result['defaults']['quiet_hours'] is not None
+    assert 'ledger_fields_unavailable' in result['cannot_say']

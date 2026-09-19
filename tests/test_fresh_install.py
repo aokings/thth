@@ -276,7 +276,7 @@ def test_auth_reads_app_env_and_stops_at_the_code_prompt(fresh):
     `--code ""` で非対話にしてあるので HTTP には届かない。app.env → redirect_uri
     → 認可 URL の表示まで進み、code が空なので rc=2 で止まる。
     """
-    r = fresh.run("auth", ACCOUNT, "--code", "")
+    r = fresh.run("auth", ACCOUNT, "--code", "", "--by", "test-operator")
     assert r.returncode == 2, f"rc={r.returncode}\nout={r.stdout}\nerr={r.stderr}"
     assert "app.env が無い" not in r.stdout, r.stdout
     assert "/oauth/authorize?" in r.stdout, r.stdout
@@ -293,7 +293,7 @@ def test_auth_stops_loudly_when_app_env_is_missing(tmp_path, cloned_app):
     """
     fresh = FreshInstall(tmp_path, cloned_app, write_app_env=False).build()
     assert not os.path.exists(fresh.app_env)
-    r = fresh.run("auth", ACCOUNT, "--code", "")
+    r = fresh.run("auth", ACCOUNT, "--code", "", "--by", "test-operator")
     assert r.returncode == 2, f"rc={r.returncode}\nout={r.stdout}\nerr={r.stderr}"
     assert "app.env が無い" in r.stdout, r.stdout
     assert "/oauth/authorize?" not in r.stdout, r.stdout
@@ -358,7 +358,7 @@ def test_step_3b_THTH_APP_DIRを設定しない導入者のboard(fresh):
     assert not os.path.isdir(os.path.join(fresh.thth_root, "accounts")), \
         "この試験の前提が崩れている（外が最初からある）"
 
-    add = 導入者として打つ(fresh, "account", "add", ACCOUNT,
+    add = 導入者として打つ(fresh, "account", "add", ACCOUNT, "--by", "test-operator",
                           "--media", "threads", "--project", "demo")
     assert add.returncode == 0, f"rc={add.returncode}\nout={add.stdout}\nerr={add.stderr}"
 
@@ -416,7 +416,7 @@ def test_v2_2a_clone_は台帳0本_addは断られずに通る(fresh):
     assert not os.path.isdir(外), "この試験の前提が崩れている（外が最初からある）"
 
     # --- `thth account add` を 1 本（**`--force` は要らない**）--------------
-    add = 導入者として打つ(fresh, "account", "add", ACCOUNT,
+    add = 導入者として打つ(fresh, "account", "add", ACCOUNT, "--by", "test-operator",
                           "--media", "threads", "--project", "demo")
     assert add.returncode == 0, f"rc={add.returncode}\nout={add.stdout}\nerr={add.stderr}"
     # 断りの文言が出ていないこと（**ここが `--force` を要らなくした変更の的**）。
@@ -482,7 +482,7 @@ def test_C10_addした台帳のダミーをdoctorが言う(fresh):
     # **`--force` は付けない**（2026-09-14・repo に台帳が無いので互換 (c) に
     # 落ちず、`add` は断らない）。ここで `--force` を付けたままにすると、
     # 「断りが出る形」に戻っても試験が気づかない。
-    add = 導入者として打つ(fresh, "account", "add", ACCOUNT,
+    add = 導入者として打つ(fresh, "account", "add", ACCOUNT, "--by", "test-operator",
                           "--media", "threads", "--project", "demo")
     assert add.returncode == 0, f"rc={add.returncode}\nout={add.stdout}\nerr={add.stderr}"
     # (1) 書いたその場で 1 行（`thth auth` の前に直すこと・直し方 2 通り）。
@@ -500,7 +500,7 @@ def test_C10_addした台帳のダミーをdoctorが言う(fresh):
     assert "HTTP" not in doctor.stdout, doctor.stdout
 
     # (3) `auth` は認可 URL を出す前に断る（偽の app.env・実 Meta には行かない）。
-    auth = 導入者として打つ(fresh, "auth", ACCOUNT, "--code", "")
+    auth = 導入者として打つ(fresh, "auth", ACCOUNT, "--code", "", "--by", "test-operator")
     assert auth.returncode == 2, auth.stdout + auth.stderr
     assert "/oauth/authorize?" not in auth.stdout, auth.stdout
     assert "ダミー" in auth.stdout, auth.stdout

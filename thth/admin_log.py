@@ -26,7 +26,7 @@ def _emit(fd, data):
 
 EVENTS = frozenset(('account_added', 'account_updated', 'account_removed', 'token_set',
                    'token_refreshed', 'token_revoked', 'production_enabled', 'production_disabled'))
-SECRET = re.compile(r'token|secret|password|env|email|notification|smtp|ping', re.I)
+SECRET = re.compile(r'token|secret|password|jwt|env|email|notification|smtp|ping', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 
 

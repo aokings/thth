@@ -31,12 +31,33 @@ def _json(path):
         return None
 
 
+
+def _admin_json(filename):
+    from . import handoff_cursor
+    directory = None
+    try:
+        directory = handoff_cursor._directory('_admin')
+        fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        with os.fdopen(fd, 'rb') as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return None
+            data = stream.read(4 * 1024 * 1024 + 1)
+        if len(data) > 4 * 1024 * 1024:
+            return None
+        value = json.loads(data)
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError, TypeError):
+        return None
+    finally:
+        if directory is not None:
+            os.close(directory)
+
 def _scrub(value):
     # Preserve report schema; only values (and untrusted object keys) are scrubbed.
     if isinstance(value, str):
         return admin_log.MAIL.sub('[redacted-email]', redact.redact(value))
     if isinstance(value, dict):
-        return {_scrub(k): ('[redacted]' if any(word in k.lower() for word in ('password', 'secret', 'access_token', 'refresh_token', 'authorization', 'email')) else _scrub(v)) for k, v in value.items()}
+        return {_scrub(k): ('[redacted]' if any(word in k.lower() for word in ('password', 'secret', 'access_token', 'refresh_token', 'accessjwt', 'refreshjwt', 'authorization', 'email')) else _scrub(v)) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_scrub(v) for v in value]
     return value
@@ -156,8 +177,13 @@ def _account(name, now, probe=False, via='cli', detail=False, limit=20):
         cfg = accounts.load_account(name)
     except (accounts.AccountError, OSError, ValueError, TypeError, KeyError):
         pass
-    if cfg is None or raw is None:
+    if raw is None:
         return dict(account=name, ledger='unreadable', cannot_say=['ledger_unreadable'])
+    missing_fields = cfg is None
+    if cfg is None:
+        cfg = dict(raw)
+        for key in ('repo_dir','env','token'):
+            cfg[key] = accounts._expand(raw.get(key))
     if not isinstance(raw.get('media'), str) or any(cfg.get(k) is not None and not isinstance(cfg.get(k),str) for k in ('token','env','repo_dir','queue_dir','replies_dir')):
         return dict(account=name, ledger='unreadable', cannot_say=['ledger_unreadable'])
     _register(cfg, via=via)
@@ -172,7 +198,11 @@ def _account(name, now, probe=False, via='cli', detail=False, limit=20):
         row['permissions'] = _permissions(name, probe)
     except (OSError, ValueError, TypeError):
         row['permissions'] = dict(probed_at=None, result=None, reason='permissions_unavailable')
-    handoff = operations_handoff._account(name, cfg, now)
+    try:
+        handoff = operations_handoff._account(name, cfg, now)
+    except (OSError, ValueError, TypeError, KeyError):
+        handoff = dict(queue=None, inflight=None, last_post=None, sent_count=None, notifications={}, last_run_notification=None)
+        missing_fields = True
     row.update({key: handoff[key] for key in ('queue', 'inflight', 'last_post', 'sent_count')})
     if accounts.repo_state(cfg) == accounts.REPO_NONE:
         row.update(queue=None, inflight=None, last_post=None, sent_count=None)
@@ -201,6 +231,8 @@ def _account(name, now, probe=False, via='cli', detail=False, limit=20):
     row['last_change'] = log[-1] if log else None
     row['cannot_say'] = reasons + [r for r in (row['provenance_reason'], row['timer'].get('timer_reason'),
                                              row['repo'].get('repo_reason')) if r]
+    if missing_fields:
+        row['cannot_say'].append('ledger_fields_unavailable')
     if broken:
         row['cannot_say'].append('admin_log_incomplete')
     if detail:
@@ -317,7 +349,7 @@ def register(sub):
 def timer(name, *, via='cli'):
     unavailable = dict(observed_at=None, units=None, timer_reason='timer_observation_unavailable')
     if via == 'http':
-        cached = _json(Path(accounts.thth_root()) / 'state/_admin/timers.json')
+        cached = _admin_json('timers.json')
         value = (cached or {}).get('by_account', {}).get(name)
         if isinstance(value, dict) and jst.parse(value.get('observed_at')) and isinstance(value.get('units'), list):
             return value

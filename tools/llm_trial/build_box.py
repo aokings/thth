@@ -576,7 +576,7 @@ def write_ledger(box: str, repo: str) -> str:
     が試験。
     """
     thth = os.path.join(box, "venv", "bin", "thth")
-    r = _run([thth, "account", "add", ACCOUNT, "--media", "threads",
+    r = _run([thth, "account", "add", ACCOUNT, "--by", "trial-builder", "--media", "threads",
               "--project", "demo", "--repo-dir", repo, "--force"],
              env=box_env(box), cwd=box)
     if r.returncode != 0:
@@ -673,7 +673,7 @@ def write_ledger_bluesky(box: str, repo: str, *, service: str) -> str:
     それを「無い」と正しく諦めてしまう。
     """
     thth = os.path.join(box, "venv", "bin", "thth")
-    r = _run([thth, "account", "add", ENGAGE_ACCOUNT, "--media", "bluesky",
+    r = _run([thth, "account", "add", ENGAGE_ACCOUNT, "--by", "trial-builder", "--media", "bluesky",
               "--project", "demo-bluesky", "--handle", ENGAGE_HANDLE,
               "--instance", service, "--repo-dir", repo, "--force"],
              env=box_env(box), cwd=box)

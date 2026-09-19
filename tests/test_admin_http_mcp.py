@@ -49,3 +49,12 @@ def test_admin_preflight_checks_unlisted_account(credentials):
     path,token,value=credentials
     root=path.parent/'tenant';cfgpath=root/'accounts/second.json';cfg=json.loads(cfgpath.read_text());cfg['token']='/outside/secret';cfgpath.write_text(json.dumps(cfg))
     with pytest.raises(ValueError):report_http.PrivateReportServer(path,0)
+
+def test_admin_shared_state_symlink_is_rejected(credentials):
+    path,token,value=credentials
+    root=path.parent/'tenant';outside=path.parent/'external';outside.mkdir()
+    (root/'state').mkdir();(root/'state/_admin').symlink_to(outside)
+    (outside/'timers.json').write_text(json.dumps(dict(by_account={'first':dict(observed_at=datetime.now(timezone.utc).isoformat(),units=[dict(unit='FAKE_EXTERNAL_SECRET')])})))
+    with pytest.raises(ValueError):report_http.PrivateReportServer(path,0)
+    report=admin_report.answer('timers',via='http')
+    assert 'FAKE_EXTERNAL_SECRET' not in json.dumps(report)

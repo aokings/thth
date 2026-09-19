@@ -93,6 +93,7 @@ def _validate(root, allowed):
                     inspect(Path(directory) / name)
 
     scan(account_dir)  # Account definitions must be safe before load_account opens them.
+    scan(resolved / "state" / "_admin")  # Shared administrator state is report-readable too.
 
     def inside(path):
         if not isinstance(path, str) or not os.path.isabs(path):

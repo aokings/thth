@@ -128,6 +128,8 @@ Full walkthrough: [docs/usage.en.md](docs/usage.en.md).
 
 ## Commands
 
+- `admin` — authenticated read-only inventory, account, log, tokens, timers, release and diff reports.
+
 All 40 subcommands `thth --help` lists in this development checkout, one line each:
 
 - `lint` — check a queue file's front matter and length
@@ -227,3 +229,5 @@ by the maintainer.
 `analytics-report` reads local ledgers and returns a snapshot with period, sample sizes, missing data, and evidence. See the [schema and usage](docs/分析レポート_v1.md).
 
 `handoff-report` / MCP `operations_handoff` reads local operations evidence without syncing or retrying. See the [schema and limits](docs/運用引継ぎレポート_v1.md).
+
+Account creation/overwrite, auth, token set and local token revoke require `--by <name>` as of 2.9.0. See [the administrator skill](skills/thth-admin/SKILL.md) for the six credential-gated MCP reports and HTTP admin scope.

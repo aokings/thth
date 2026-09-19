@@ -115,3 +115,7 @@ def test_fsync_failure_keeps_record_and_change_consistent(root, monkeypatch, cap
     rows,broken=admin_log.read()
     assert rows[-1]['diff']['handle']==['tester','changed'] and broken==0
     assert 'durability_unconfirmed' in capsys.readouterr().err
+
+def test_bluesky_jwt_diff_is_presence_only():
+    diff=admin_log.difference({'accessJwt':'FAKE_BSKY_ACCESS_JWT','refreshJwt':'FAKE_BSKY_REFRESH_JWT'}, {})
+    assert diff=={'accessJwt':['present','absent'],'refreshJwt':['present','absent']}

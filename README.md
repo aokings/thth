@@ -84,7 +84,7 @@ timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿
 - **英語の文書**: [README.en.md](README.en.md)・[docs/usage.en.md](docs/usage.en.md)・[llms.txt](llms.txt)。
 - **skill**: `skills/thth/SKILL.md`（wheel にも入る）。
 
-- **動くもの**（`thth --help` の全 40 サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`handoff-report`・`serve-reports`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`who`・`retract`・`location`・`notifications`。
+- **動くもの**（`thth --help` の全 41 サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`handoff-report`・`serve-reports`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`who`・`retract`・`location`・`notifications`・`admin`。
 - **最初の本番投稿の記録**: 2026-09-09、@aoking に疎通確認を 1 本（`17916074118445631`）。
 - **未着手**: X・Facebook ページ・Instagram の各アダプタ。トピック検索の権限（tester には降りない）。泉のサーバ（v2-5）。
 - **権限の制約**: tester に降りる scope は 5 つ。削除はできない。
@@ -104,3 +104,11 @@ mcp-name: io.github.aokings/thth
 [形式と使い方](docs/分析レポート_v1.md)。
 
 `handoff-report` / MCP `operations_handoff` はローカル運用状態・通知未処理を鮮度の制約付きで返します。[形式と使い方](docs/運用引継ぎレポート_v1.md)。
+
+## 管理者の読み口（2.9.0）
+
+`thth admin inventory|account|log|tokens|timers|release|diff` は秘密値を出さない読み取り専用レポートです。開始時は `thth admin diff --since-last-read`、変化した account は `thth admin account <name>`、週1回 `thth admin tokens`。`--json` で構造化結果を取得できます。保存するのは `admin diff --since-last-read --mark-read --by <名前>` の明示時だけです。
+
+`account add`（`--force` の上書きも）・`auth`・`token set`・`token revoke` には `--by <名前>` が必須です。既存の作成来歴は上書きしません。`token revoke` はローカルcredential削除でありリモート側の認可取消ではありません。選定した管理変更は既定で管理者へ通知し、台帳の `notify_admin_on_change: false` で停止できます。
+
+認証付きMCPの6道具とHTTPのadmin scopeは [管理者skill](skills/thth-admin/SKILL.md) を参照してください。管理レポートから承認・投稿・設定変更は行いません。ログ追記後のfsync失敗は変更を保持して `durability_unconfirmed`、部分追記は `outcome_uncertain` と報告します。再試行前に台帳とログを確認してください。
