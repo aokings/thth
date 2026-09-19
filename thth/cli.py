@@ -3240,6 +3240,8 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth mentions` / `thth profile` と `topics --search`（設計 v2 §4.3・v2.1-A）。
     # **口の中身は `thth/threads_read_cli.py` に閉じる**——ここに足すのはこの 1 行だけ。
     threads_read_cli.register(sub)
+    from . import unanswered
+    unanswered.register(sub)
     # `thth thread <account> <post_id>`（設計「自分の泉」§2.1・T1-2）。枝を
     # その場で読むだけ——**口の中身は `thth/thread_read.py` に閉じる**。
     thread_read_mod.register(sub)

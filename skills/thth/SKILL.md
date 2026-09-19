@@ -145,3 +145,5 @@ MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜ�
 新規 account は利用者メール・管理者メール・TLS SMTP を `thth notifications config` で設定し、`status` → `test` を実行する。両宛先の受信箱で到達、account 専用 HEALTHCHECK_URL の missed-ping 通知を確認してから production/scheduled を有効にする。既存 account にも同じ設定を追加する。詳細は `docs/停止通知と運用記録.md`。
 
 プロジェクトの作業開始・再開時は `git fetch` 後にリモート `docs/sns/queue/` の `thth_run_state`・`thth_run_detail`・`thth_run_next` を確認する。dirty worktree へ無条件に pull しない。リモートの確認は `git show origin/main:docs/sns/queue/FILE.md` 等で行える。停止・成否不明なら inflight を消して再投稿せず、示された確認を行う。復旧状態は投稿成功の保証ではなく、公開結果は status/post_id/posted_at を見る。
+
+`mentions <account> --json` は 3 媒体の言及を同じ項目で読む。返信前に `replied` の object／false／null を区別する。`unanswered <account> --since 7d --json` は自分の根投稿の未回答候補を台帳で読む。`cannot_say` と採集の古さを確認し、`--refresh` は明示されたときだけ使う。件数は account ごとに扱い、送信は既存の承認・digest・production の門を通す。

@@ -162,15 +162,18 @@ def _account(name, cfg, now):
              "review_required" if review or pending or recorded_failure else
              "waiting" if queue_state == "available" and counts["approved_waiting"] else "unknown")
     latest = max(last, key=lambda item: item[0]) if last else None
+    from . import unanswered
+    unanswered_result = unanswered.answer(name, now=now)
     return {"state": state, "queue": queue, "inflight": diagnostic,
+            "unanswered": unanswered_result['summary'],
             "sent_count": sent_count if sent_state == "available" else 0 if sent_state == "missing" else None,
             "notifications": notifications, "last_run_notification": run,
             "last_post": {"observed_at": jst.iso(latest[0]) if latest else None,
                           "source": latest[1] if latest else None,
                           "coverage": "partial" if problems else "local_records_only"},
-            "cannot_say": problems + ["timer_health_unknown", "thread_runs_not_inspected",
+            "cannot_say": problems + unanswered_result["cannot_say"] + ["timer_health_unknown", "thread_runs_not_inspected",
                 "remote_queue_not_verified", "approval_validity_not_verified",
-                "unresolved_replies_not_measured", "no_previous_session_cursor"],
+                "no_previous_session_cursor"],
             "evidence": evidence}
 
 

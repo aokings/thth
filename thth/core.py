@@ -739,7 +739,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # （外部レビュー再々レビュー P1・1）も併せて残す。
     sent_mod.write(state_dir, post_id=post_id, text=post.text,
                     body_hash=approval_mod.compute_body_hash(post.text),
-                    sent_at=posted_at, approved_fingerprint=expected_fingerprint)
+                    sent_at=posted_at, approved_fingerprint=expected_fingerprint, reply_to=post.reply_to)
 
     # 絡みの台帳（設計「自分の泉」§4・発注 T0-1）。**公開の確定直後・書き戻しより
     # 前**——post_id の書き戻しが失敗しても、出た事実そのものは変わらない。
@@ -1077,7 +1077,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                         sent_at=result.ts or jst.iso(),
                         # 承認の在り処が「masaru がその場で見た本文」なので、
                         # queue の 5 項目の指紋ではなく `--confirm` の digest を残す。
-                        approved_fingerprint=digest)
+                        approved_fingerprint=digest, reply_to=post.reply_to)
 
         # 絡みの台帳（設計「自分の泉」§4・T7-2）。**不在の様態（`_throw_chosen()`）
         # にしか配線が無かった**——`thth send --reply-to` で出した返信は台帳に

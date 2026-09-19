@@ -30,7 +30,7 @@ def path_for(state_dir: str, post_id: str) -> str:
 
 
 def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: str,
-          approved_fingerprint: str | None = None) -> str:
+          approved_fingerprint: str | None = None, reply_to: str | None = None) -> str:
     """送った本文そのものを動かせない記録として保存する。返り値は書いたパス。
 
     `approved_fingerprint`（外部レビュー再々レビュー P1・1）は公開直前に固定した
@@ -52,7 +52,7 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
     p = path_for(state_dir, post_id)
     tmp = p + ".tmp"
     data = {"post_id": post_id, "text": text, "body_hash": body_hash, "sent_at": sent_at,
-            "approved_fingerprint": approved_fingerprint}
+            "approved_fingerprint": approved_fingerprint, "reply_to": reply_to}
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
         f.write("\n")
