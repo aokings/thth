@@ -6,6 +6,19 @@ import socket
 import stat
 from . import accounts, handoff_cursor, jst, redact
 
+class AdminLogError(Exception):
+    pass
+
+
+def _emit(fd, data):
+    try:
+        if os.write(fd, data) != len(data):
+            raise OSError('admin_log_short_write')
+        os.fsync(fd)
+    except OSError as exc:
+        raise AdminLogError('admin_log_write_failed') from exc
+
+
 EVENTS = frozenset(('account_added', 'account_updated', 'account_removed', 'token_set',
                    'token_refreshed', 'token_revoked', 'production_enabled', 'production_disabled'))
 SECRET = re.compile(r'token|secret|password|env|email|notification|smtp|ping', re.I)
@@ -53,9 +66,7 @@ def append(event, account, cfg, *, by, via='cli', diff=None, run_id=None):
                       if SECRET.search(k) else clean(v)) for k, v in row['diff'].items()}
     if _active_fd.get() is not None:
         data = (json.dumps(row, ensure_ascii=False, allow_nan=False) + '\n').encode()
-        if os.write(_active_fd.get(), data) != len(data):
-            raise OSError('admin_log_short_write')
-        os.fsync(_active_fd.get())
+        _emit(_active_fd.get(), data)
         return row
     directory = handoff_cursor._directory('_admin', create=True)
     try:
@@ -66,9 +77,7 @@ def append(event, account, cfg, *, by, via='cli', diff=None, run_id=None):
             if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
                 raise ValueError('admin_log_unreadable')
             data = (json.dumps(row, ensure_ascii=False, allow_nan=False) + '\n').encode()
-            if os.write(fd, data) != len(data):
-                raise OSError('admin_log_short_write')
-            os.fsync(fd)
+            _emit(fd, data)
         finally:
             os.close(fd)
     finally:
@@ -160,12 +169,41 @@ def guarded(function):
         by = kwargs.get('by') if function.__name__ != 'cmd_add' else getattr(args[0], 'by', None)
         if function.__name__ == 'run_refresh':
             by = 'thth-refresh'
+        snapshot = None
+        path = None
+        mutated = False
         try:
             actor(by)
+            from pathlib import Path
+            if function.__name__ == 'cmd_add':
+                from . import account_cli
+                if accounts.name_is_safe(args[0].name):
+                    path = Path(account_cli.target_accounts_dir()) / (args[0].name + '.json')
+            else:
+                cfg = accounts.load_account(args[0])
+                path = Path(cfg['token']) if cfg.get('token') else None
+            if path is not None:
+                if path.is_symlink():
+                    raise ValueError('unsafe_mutation_path')
+                if path.exists():
+                    snapshot = (path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
+            Path(accounts.thth_root()).mkdir(parents=True, exist_ok=True)
             with transaction():
+                mutated = True
                 return function(*args, **kwargs)
-        except (OSError, ValueError):
+        except (OSError, ValueError, AdminLogError):
+            # A late append/fsync failure must not leave an unlogged mutation.
+            # Restoration uses a private atomic replacement and retains exact bytes/mode.
+            if mutated and path is not None:
+                if snapshot is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    from . import secrets_fs
+                    secrets_fs.atomic_write_text(str(path), snapshot[0].decode('utf-8'), mode=snapshot[1])
             import sys
             print('admin_change_refused: --by and a private writable event log are required', file=sys.stderr)
             return 2
+        except accounts.AccountError:
+            # Preserve the original bounded account diagnostic from the operation.
+            return function(*args, **kwargs)
     return call

@@ -98,3 +98,10 @@ def test_log_rejects_malformed_diff_and_scrubs_other_columns(root):
     with path.open('a') as f:f.write(json.dumps(row)+'\n')
     rows,broken=admin_log.read()
     assert broken==1 and len(rows)==1 and 'FAKE_RAW_TOKEN' not in json.dumps(rows)
+
+def test_late_log_failure_restores_original(root, monkeypatch):
+    assert account_cli.cmd_add(args()) == 0
+    path=root/'accounts/test-threads.json'; before=path.read_bytes()
+    monkeypatch.setattr(admin_log.os,'write',lambda *a: (_ for _ in ()).throw(OSError('disk full')))
+    assert account_cli.cmd_add(args(force=True,by='second',handle='changed'))==2
+    assert path.read_bytes()==before
