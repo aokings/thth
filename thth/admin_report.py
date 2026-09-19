@@ -216,7 +216,7 @@ def _account(name, now, probe=False, via='cli', detail=False, limit=20):
         eligible = [(jst.parse(obs.get('collected_at')), obs.get('marks')) for obs in observations
                     if jst.parse(obs.get('collected_at')) and jst.parse(obs.get('collected_at')) <= now and obs.get('marks')]
         row['last_reached_mark'] = max(eligible, key=lambda item: item[0])[1] if eligible else None
-    except (OSError, ValueError, TypeError, KeyError):
+    except (OSError, ValueError, TypeError, KeyError, accounts.AccountError):
         pass
     row['collection_reason'] = reasons[0] if reasons else None
     row['notifications'] = dict(handoff['notifications'])
