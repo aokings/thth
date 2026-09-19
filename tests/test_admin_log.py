@@ -77,3 +77,24 @@ def test_revoke_logs_no_secret(root):
     assert not token.exists()
     rows, _ = admin_log.read(event='token_revoked')
     assert rows[0]['diff']['token'] == ['present','absent']
+
+@pytest.mark.parametrize('bad', ['permissions','symlink','fifo'])
+def test_invalid_log_blocks_mutation(root, bad):
+    assert account_cli.cmd_add(args()) == 0
+    path = root/'accounts/test-threads.json'; old = path.read_bytes()
+    log=root/'state/_admin/accounts.ndjson'
+    if bad=='permissions': log.chmod(0o644)
+    else:
+        log.unlink()
+        if bad=='symlink': log.symlink_to(root/'outside')
+        else: os.mkfifo(log)
+    assert account_cli.cmd_add(args(force=True,by='second',handle='changed'))==2
+    assert path.read_bytes()==old
+
+def test_log_rejects_malformed_diff_and_scrubs_other_columns(root):
+    admin_log.append('token_set','demo',{'media':'threads'},by='tester')
+    path=root/'state/_admin/accounts.ndjson'; row=json.loads(path.read_text())
+    row['diff']={'token':'FAKE_RAW_TOKEN'}
+    with path.open('a') as f:f.write(json.dumps(row)+'\n')
+    rows,broken=admin_log.read()
+    assert broken==1 and len(rows)==1 and 'FAKE_RAW_TOKEN' not in json.dumps(rows)

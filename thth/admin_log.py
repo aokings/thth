@@ -51,6 +51,12 @@ def append(event, account, cfg, *, by, via='cli', diff=None, run_id=None):
     # Diff is produced here as well as at call sites; no raw private values can pass.
     row['diff'] = {k: (['present' if x not in (None, False, '', 'absent') else 'absent' for x in v]
                       if SECRET.search(k) else clean(v)) for k, v in row['diff'].items()}
+    if _active_fd.get() is not None:
+        data = (json.dumps(row, ensure_ascii=False, allow_nan=False) + '\n').encode()
+        if os.write(_active_fd.get(), data) != len(data):
+            raise OSError('admin_log_short_write')
+        os.fsync(_active_fd.get())
+        return row
     directory = handoff_cursor._directory('_admin', create=True)
     try:
         fd = os.open('accounts.ndjson', os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
@@ -89,6 +95,8 @@ def read(*, since=None, account=None, event=None):
                             or not accounts.name_is_safe(row.get('account')) or not isinstance(row.get('diff'), dict)):
                         raise ValueError('broken')
                     actor(row.get('by'))
+                    if any(not isinstance(k, str) or not isinstance(v, list) or len(v) != 2 for k, v in row['diff'].items()):
+                        raise ValueError('broken_diff')
                 except (ValueError, TypeError):
                     broken += 1
                     continue
@@ -97,6 +105,8 @@ def read(*, since=None, account=None, event=None):
                 safe = {k: row.get(k) for k in ('at', 'by', 'via', 'host', 'event', 'account', 'medium', 'diff', 'run_id')}
                 safe['diff'] = {k: (['present' if x not in (None, False, '', 'absent') else 'absent' for x in v]
                                if SECRET.search(k) and isinstance(v, list) else clean(v)) for k, v in row['diff'].items()}
+                for key in ('by', 'host', 'medium', 'run_id'):
+                    safe[key] = clean(safe[key])
                 rows.append(safe)
     except FileNotFoundError:
         pass
@@ -106,3 +116,56 @@ def read(*, since=None, account=None, event=None):
         if directory is not None:
             os.close(directory)
     return rows, broken
+
+
+# Pin and lock the validated append destination before any account/token mutation.
+# This prevents a bad log path from allowing an unrecorded credential change.
+import contextlib
+import contextvars
+import functools
+import fcntl
+_active_fd = contextvars.ContextVar('admin_event_fd', default=None)
+
+
+@contextlib.contextmanager
+def transaction():
+    if _active_fd.get() is not None:
+        yield
+        return
+    directory = handoff_cursor._directory('_admin', create=True)
+    fd = None
+    try:
+        fd = os.open('accounts.ndjson', os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                     0o600, dir_fd=directory)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
+            raise ValueError('admin_log_unreadable')
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        reset = _active_fd.set(fd)
+        try:
+            yield
+        finally:
+            _active_fd.reset(reset)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        os.close(directory)
+
+
+def guarded(function):
+    @functools.wraps(function)
+    def call(*args, **kwargs):
+        if kwargs.get('check'):
+            return function(*args, **kwargs)
+        by = kwargs.get('by') if function.__name__ != 'cmd_add' else getattr(args[0], 'by', None)
+        if function.__name__ == 'run_refresh':
+            by = 'thth-refresh'
+        try:
+            actor(by)
+            with transaction():
+                return function(*args, **kwargs)
+        except (OSError, ValueError):
+            import sys
+            print('admin_change_refused: --by and a private writable event log are required', file=sys.stderr)
+            return 2
+    return call

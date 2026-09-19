@@ -24,6 +24,8 @@ masaru が VM で対話的に実行する。ブラウザは masaru の Mac に�
 """
 from __future__ import annotations
 
+from . import admin_log
+
 import getpass
 import json
 import os
@@ -365,6 +367,7 @@ def refresh_long_lived_token(access_token: str, *, timeout: float = 10.0) -> dic
         raise OAuthError(_error_message("トークンの更新に失敗しました", e)) from e
 
 
+@admin_log.guarded
 def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | None = None,
              input_func=input, identifier_input=None, password_input=None,
              log=print, by=None) -> int:
@@ -540,7 +543,7 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
     # 食い違ったら保存しない。通してしまうと、そのアカウントの queue の本文が
     # 別のアカウントから出る（取り消せない公開行為）。
     handle = (account_cfg.get("handle") or "").strip()
-    if handle and username and handle.lower() != username.lower():
+    if handle_matches(handle, username) is False:
         _out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
              f"このトークンは {username} のものです。", log=log)
         _out("正しいアカウントで認可し直すか、台帳の handle を直してください。", log=log)
@@ -606,6 +609,7 @@ def token_age_and_remaining(token: dict, now):
     return age_seconds, remaining_days
 
 
+@admin_log.guarded
 def run_refresh(account_name: str, *, force: bool = False, check: bool = False,
                  log=print, now=None) -> int:
     """`thth refresh <account>`。50 日超で更新（`--force` で無条件）。24 時間未満は
@@ -723,6 +727,7 @@ def _ask_bluesky(prompt: str, *, secret: bool):
     return getpass.getpass(prompt) if secret else input(prompt)
 
 
+@admin_log.guarded
 def run_auth_bluesky(account_name: str, *, account_cfg=None,
                      identifier_input=None, password_input=None, log=print, by=None) -> int:
     """`thth auth <account>`（Bluesky・設計 v2 §4.2「認可とトークン」）。
@@ -835,6 +840,7 @@ def _read_pasted_token(*, stdin: bool, input_func, prompt: str | None = None) ->
     return getpass.getpass(prompt or TOKEN_PASTE_PROMPTS["threads"])
 
 
+@admin_log.guarded
 def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False,
                    input_func=None, log=print, by=None) -> int:
     """`thth token set <account>`（T2b・masaru の指示 2026-09-09）。
@@ -938,7 +944,7 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
     # 通してしまうと、そのアカウントの queue の本文が別のアカウントから出る。
     # 取り消せない公開行為なので、疑わしければ保存しない（--force でも覆さない）。
     handle = (account_cfg.get("handle") or "").strip()
-    if handle and username and handle.lower() != username.lower():
+    if handle_matches(handle, username) is False:
         _out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
              f"このトークンは {username} のものです。", log=log)
         _out("正しいアカウントで発行し直すか、台帳の handle を直してください。", log=log)
@@ -972,6 +978,7 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
     return 0
 
 
+@admin_log.guarded
 def run_token_revoke(account_name, *, by=None, log=print):
     """Remove the local credential only; no remote revocation API is called."""
     from . import admin_log
@@ -988,3 +995,12 @@ def run_token_revoke(account_name, *, by=None, log=print):
         _out('token revoke requires --by and a readable local token', log=log)
         return 2
     return 0
+
+
+def handle_matches(handle, username, *, media=None):
+    """The same identity comparison used before saving an authenticated token."""
+    if not isinstance(handle, str) or not isinstance(username, str) or not handle or not username:
+        return None
+    if media == 'bluesky':
+        return handle.strip().lstrip('@').lower() == username.strip().lstrip('@').lower()
+    return handle.strip().lower() == username.lower()

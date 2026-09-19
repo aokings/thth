@@ -21,6 +21,8 @@ subparsers が同じ位置を取り合って `thth account <name>` が壊れる�
 """
 from __future__ import annotations
 
+from . import admin_log
+
 import argparse
 import json
 import os
@@ -265,6 +267,7 @@ def _互換の台帳() -> dict | None:
     return {"path": info["path"], "names": names}
 
 
+@admin_log.guarded
 def cmd_add(args) -> int:
     """`thth account add <name> --media … --project … [--handle …] [--instance …] [--repo-dir …]`。
 
