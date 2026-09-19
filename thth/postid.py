@@ -86,3 +86,18 @@ def from_filename(name: str) -> str:
     そのまま返す。
     """
     return urllib.parse.unquote(name)
+
+
+class PostIdError(ValueError):
+    """A user URL cannot be converted to a stable platform id."""
+
+
+def for_account(account_cfg, value):
+    """Only Bluesky web URLs need conversion; no credentials are loaded."""
+    if account_cfg.get('media') != 'bluesky' or not isinstance(value, str):
+        return value
+    text=value.strip()
+    if not text.startswith(('https://', 'http://')):
+        return value
+    from .adapters import bluesky
+    return bluesky.normalize_post_url(text)

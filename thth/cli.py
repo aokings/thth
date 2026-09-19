@@ -1024,6 +1024,13 @@ def cmd_replies(args) -> int:
     """
     # **`--refresh` を付けたときだけ取りに行く**（masaru 指示 2026-09-12）。
     # **付けなければ従来どおり台帳を読むだけ**——API も git も触らない。
+    if args.post:
+        from . import postid
+        try:
+            args.post = postid.for_account(accounts_mod.load_account(args.account), args.post)
+        except (accounts_mod.AccountError, postid.PostIdError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
     取り直し = None
     if getattr(args, "refresh", False):
         取り直し = collect_mod.refresh_replies(
@@ -2554,11 +2561,16 @@ def cmd_send(args) -> int:
             text = f.read()
     else:
         text = _sys.stdin.read()
-    result = core_mod.send_once(
-        args.account, text=text, topic=args.topic, reply_to=args.reply_to,
-        reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
-        found_by=args.found_by,
-        production_flag=args.production, confirm=args.confirm, log=print, wait=getattr(args, "wait", 0))
+    from .postid import PostIdError
+    try:
+        result = core_mod.send_once(
+            args.account, text=text, topic=args.topic, reply_to=args.reply_to,
+            reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
+            found_by=args.found_by,
+            production_flag=args.production, confirm=args.confirm, log=print, wait=getattr(args, "wait", 0))
+    except PostIdError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     return result.exit_code
 
 

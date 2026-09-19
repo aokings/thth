@@ -213,6 +213,11 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
 
     now = now if now is not None else jst.now_jst()
     account_cfg = accounts_mod.load_account(account_name)
+    from . import postid
+    try:
+        post_id = postid.for_account(account_cfg, post_id)
+    except postid.PostIdError as exc:
+        _reject(str(exc))
     media = account_cfg.get("media")
     if CAPABILITY not in adapters_mod.capabilities_for(media):
         raise adapter_base.AdapterError(

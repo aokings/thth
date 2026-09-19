@@ -303,6 +303,36 @@ def create_session(service: str, identifier: str, app_password: str, *,
     return body
 
 
+
+def normalize_post_url(value):
+    """Convert only bsky.app/profile/.../post/... using public handle lookup."""
+    from ..postid import PostIdError
+    try:
+        parsed = urllib.parse.urlsplit(value)
+    except ValueError:
+        raise PostIdError('invalid_post_url: 投稿 URL の形式を確認してください') from None
+    parts = parsed.path.split('/')
+    if (parsed.scheme != 'https' or parsed.netloc != 'bsky.app' or parsed.query or parsed.fragment
+            or len(parts) != 5 or parts[1] != 'profile' or parts[3] != 'post'):
+        raise PostIdError('invalid_post_url: https://bsky.app/profile/<handle|did>/post/<rkey> を指定してください')
+    identity, rkey = parts[2], parts[4]
+    if not re.fullmatch(r'[A-Za-z0-9._:~-]{1,512}', rkey) or rkey in ('.', '..'):
+        raise PostIdError('invalid_post_url: 投稿の rkey が不正です')
+    if identity.startswith('did:'):
+        did = identity
+    else:
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9.-]+', identity):
+            raise PostIdError('handle_unresolved: handle の形式を確認してください')
+        try:
+            result = _xrpc(DEFAULT_SERVICE, 'GET', 'com.atproto.identity.resolveHandle',
+                           params={'handle': identity}, bearer=None)
+            did = result.get('did')
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, ValueError, AttributeError):
+            raise PostIdError('handle_unresolved: 公開 resolveHandle で DID を確認できませんでした') from None
+    if not isinstance(did, str) or not re.fullmatch(r'did:[a-z0-9]+:[A-Za-z0-9._:%-]+', did):
+        raise PostIdError('handle_unresolved: 有効な DID を確認できませんでした')
+    return f'at://{did}/app.bsky.feed.post/{rkey}'
+
 class BlueskyAdapter(base.Adapter):
     """1 実行ぶんの Bluesky アダプタ（session をこの中に 1 本だけ持つ）。"""
 

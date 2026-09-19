@@ -296,6 +296,11 @@ def _account_answer(account_name: str, *, topic: str | None, kind: str | None,
     """1 account の節。数値はこの関数の外へ持ち出さない。"""
 
     account_cfg = accounts_mod.load_account(account_name)
+    from . import postid
+    try:
+        reply_to = postid.for_account(account_cfg, reply_to)
+    except postid.PostIdError as exc:
+        _reject(str(exc))
     since = now - datetime.timedelta(days=window_days)
     topic_norm = queuefile_mod.normalize_topic(topic) if topic is not None else None
     kind_of, kind_shelf_broken = _kind_lookup(account_name)

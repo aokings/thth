@@ -340,6 +340,7 @@ def _render_human(result: dict) -> None:
                      f"（{post['author_key'] or '—'}）  {post['preview']}")
                 if post["permalink"]:
                     print(f"      {post['permalink']}")
+                print(f"      post_id: {post['post_id']}")
         for tagged in node["by_tag"]:
             print(f"  タグ #{tagged['tag']}: n={tagged['n']}  "
                   f"異なり={tagged['distinct_authors']}  "

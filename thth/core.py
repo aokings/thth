@@ -889,6 +889,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
     run_id = uuid.uuid4().hex[:12]
 
     account_cfg = accounts_mod.load_account(account_name)
+    reply_to = postid_mod.for_account(account_cfg, reply_to)
     state_dir = accounts_mod.state_dir_for(account_name)
     now = now if now is not None else jst.now_jst()
 
