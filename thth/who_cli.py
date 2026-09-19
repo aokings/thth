@@ -373,6 +373,10 @@ def register(sub) -> None:
 def cmd_who(args) -> int:
     """`thth who (<account>|--project P) (<author_key>|@<username>) [--profile] [--json]`。"""
     as_json = bool(getattr(args, "json", False))
+    received = len(args.targets) if args.project else max(0, len(args.targets)-1)
+    if received > 1:
+        print(f"{received} 人を受け取りました。who は 1 度に 1 人を指定してください", file=sys.stderr)
+        return 2
     if args.project:
         if len(args.targets) != 1:
             print("--project のときは author_key か @username を 1 つだけ渡してください"
