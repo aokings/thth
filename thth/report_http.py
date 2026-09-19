@@ -21,7 +21,7 @@ import threading
 import sys
 
 from .report_service import ReportContext, ReportServiceError, execute_report
-from .report_isolation import IsolationError, validate_environment
+from .report_isolation import IsolationError, validate_environment, read_registry_ledger
 
 MAX_BODY = 16384
 MAX_CONFIG = 131072
@@ -115,8 +115,8 @@ def load_credentials(path: Path):
                 for ledger in sorted((Path(root) / "accounts").glob("*.json")):
                     if ledger.is_symlink() or not ledger.is_file():
                         raise ValueError("invalid_registry")
-                    value = _json(ledger.read_bytes())
-                    allowed[ledger.stem] = value.get("project")
+                    value = read_registry_ledger(ledger)
+                    allowed[ledger.stem] = value.get("project") if value is not None else None
             context = ReportContext(allowed, scope=scope)
             credentials.append((digest, _expiry(item["expires_at"]), item["revoked"], context))
         return root, credentials
@@ -136,7 +136,7 @@ class PrivateReportServer(HTTPServer):
         self.credentials_path = Path(credentials_path).absolute()
         root, credentials = load_credentials(self.credentials_path)
         for _, _, _, context in credentials:
-            validate_environment(root, context.allowed_accounts)  # Fail before binding.
+            validate_environment(root, context.allowed_accounts, allow_unreadable=context.scope == "admin")  # Fail before binding.
         self.executor = executor
         if socket_path is not None:
             path = Path(socket_path).absolute()
@@ -306,7 +306,7 @@ class ReportHandler(BaseHTTPRequestHandler):
         except (ValueError, OSError, RecursionError, OverflowError):
             return self._reply(400, {"error": "invalid_request"})
         try:
-            validate_environment(root, context.allowed_accounts)
+            validate_environment(root, context.allowed_accounts, allow_unreadable=context.scope == "admin")
         except IsolationError:
             return self._reply(503, {"error": "environment_unavailable"})
         try:

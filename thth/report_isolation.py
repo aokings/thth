@@ -6,6 +6,7 @@ cross-root paths and symlinks; it cannot prevent changes after validation.
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 import stat
 from collections.abc import Mapping
@@ -17,7 +18,29 @@ class IsolationError(ValueError):
     """Bounded diagnostic that never includes paths or account values."""
 
 
-def validate_environment(root: str, allowed_accounts: Mapping) -> None:
+def read_registry_ledger(path):
+    """A safe regular ledger can be unreadable without making it an unsafe tree."""
+    path = Path(path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fd = os.open(path.name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
+        with os.fdopen(fd, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise IsolationError('invalid_registry')
+            raw = stream.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            return None
+        try:
+            value = json.loads(raw)
+        except (ValueError, UnicodeError, RecursionError):
+            return None
+        return value if isinstance(value, dict) else None
+    finally:
+        os.close(directory)
+
+
+def validate_environment(root: str, allowed_accounts: Mapping, *, allow_unreadable=False) -> None:
     """Validate dedicated root and configured scope without reading secrets.
 
     Root must be explicit, have no group/other permissions, and be owned by the running identity.
@@ -26,7 +49,7 @@ def validate_environment(root: str, allowed_accounts: Mapping) -> None:
     Filesystem mutation races require host-enforced isolation, not this check.
     """
     try:
-        _validate(root, allowed_accounts)
+        _validate(root, allowed_accounts, allow_unreadable=allow_unreadable)
     except IsolationError:
         raise
     except (OSError, ValueError, TypeError, KeyError, AttributeError,
@@ -34,7 +57,7 @@ def validate_environment(root: str, allowed_accounts: Mapping) -> None:
         raise IsolationError("invalid_report_environment") from None
 
 
-def _validate(root, allowed):
+def _validate(root, allowed, *, allow_unreadable=False):
     if not isinstance(root, str) or not os.path.isabs(root) or not isinstance(allowed, Mapping):
         raise IsolationError("invalid_report_environment")
     base = Path(root)
@@ -104,8 +127,24 @@ def _validate(root, allowed):
     for name, project in allowed.items():
         if not isinstance(project, (str, type(None))):
             raise IsolationError("invalid_report_scope")
-        cfg = accounts.load_account(name)
-        if cfg.get("account") != name or cfg.get("project") != project:
+        # Even a corrupt ledger has a report-readable state subtree.
+        inside(accounts.state_dir_for(name))
+        scan(accounts.state_dir_for(name))
+        if allow_unreadable:
+            raw = read_registry_ledger(account_dir / (name + '.json'))
+            if raw is None:
+                continue
+            try:
+                cfg = accounts.load_account(name)
+            except (accounts.AccountError, TypeError, ValueError, KeyError):
+                # Partial dictionaries still declare resource paths. Validate them
+                # before allowing the admin row to describe missing settings.
+                cfg = dict(raw)
+                for key in ('repo_dir', 'env', 'token'):
+                    cfg[key] = accounts._expand(raw.get(key))
+        else:
+            cfg = accounts.load_account(name)
+        if cfg.get("account", name) != name or cfg.get("project") != project:
             raise IsolationError("account_scope_mismatch")
         repo = cfg.get("repo_dir")
         if repo:

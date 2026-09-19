@@ -55,11 +55,12 @@ def _admin_json(filename):
 def _scrub(value):
     # Preserve report schema; only values (and untrusted object keys) are scrubbed.
     if isinstance(value, str):
+        value = redact.redact(value)
         stem = value.removesuffix('.timer')
         prefix, separator, name = stem.partition('@')
         if separator and accounts.name_is_safe(name) and prefix in ('thth', 'thth-collect') and value.endswith('.timer'):
             return value  # A generated systemd instance name is not an email address.
-        return admin_log.MAIL.sub('[redacted-email]', redact.redact(value))
+        return admin_log.MAIL.sub('[redacted-email]', value)
     if isinstance(value, dict):
         return {_scrub(k): ('[redacted]' if any(word in k.lower() for word in ('password', 'secret', 'access_token', 'refresh_token', 'accessjwt', 'refreshjwt', 'authorization', 'email')) else _scrub(v)) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -175,8 +176,14 @@ def _defaults(cfg):
 
 
 def _account(name, now, probe=False, via='cli', detail=False, limit=20):
+    from .report_isolation import read_registry_ledger
     cfg = None
-    raw = _json(Path(accounts.accounts_dir()) / (name + '.json'))
+    try:
+        raw = read_registry_ledger(Path(accounts.accounts_dir()) / (name + '.json'))
+    except (OSError, ValueError):
+        raw = None
+    if raw is None:
+        return dict(account=name, ledger='unreadable', cannot_say=['ledger_unreadable'])
     try:
         cfg = accounts.load_account(name)
     except (accounts.AccountError, OSError, ValueError, TypeError, KeyError):

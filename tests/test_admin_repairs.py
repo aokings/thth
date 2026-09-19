@@ -94,3 +94,56 @@ def test_inventory_does_not_record_timer_and_non_systemd_preserves_cache(credent
     result = admin_report.answer('timers')
     assert result['by_account']['first']['timer_reason'] == 'systemd_unavailable'
     assert cache.read_bytes() == before
+
+
+def test_registered_secret_wins_over_timer_email_exception():
+    from thth import redact
+    secret = 'thth@fixture-secret.timer'
+    redact.register_secret(secret)
+    assert secret not in admin_report._scrub(secret)
+    assert admin_report._scrub('thth@ordinary.timer') == 'thth@ordinary.timer'
+
+
+@pytest.mark.parametrize('bad', ['{not json', 'null', '[]', 'false', '"not a ledger"'])
+def test_broken_regular_ledger_keeps_http_user_and_admin_available(credentials, monkeypatch, bad):
+    import hashlib
+    import threading
+    from tests.test_report_http import request
+    path, admin_token, config = credentials
+    root = Path(config['root']); (root/'accounts/broken.json').write_text(bad)
+    user_token = 'b' * 43
+    user = dict(config['credentials'][0], scope='user', accounts={'first': 'first'},
+                sha256=hashlib.sha256(user_token.encode()).hexdigest())
+    config['credentials'].append(user); path.write_text(json.dumps(config))
+    with report_http.PrivateReportServer(path, 0) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            status, _, payload = request(server.server_port, json.dumps({'operation': 'admin_inventory'}),
+                                         {'Authorization': 'Bearer ' + admin_token})
+            assert status == 200
+            assert payload['by_account']['broken']['ledger'] == 'unreadable'
+            assert payload['summary']['accounts'] == 3
+            status, _, payload = request(server.server_port, json.dumps({'operation': 'operations_handoff', 'account': 'first'}),
+                                         {'Authorization': 'Bearer ' + user_token})
+            assert status == 200 and payload['scope'] == {'account': 'first'}
+        finally:
+            server.shutdown(); thread.join(5)
+    monkeypatch.setenv('THTH_REPORT_CREDENTIALS', str(path)); monkeypatch.setenv('THTH_REPORT_TOKEN', admin_token)
+    result = _load_server_module().call_tool('thth_admin_inventory', {})
+    assert json.loads(result['content'][0]['text'])['by_account']['broken']['ledger'] == 'unreadable'
+
+
+@pytest.mark.parametrize('unsafe', ['partial_external', 'corrupt_state_symlink', 'ledger_symlink', 'ledger_fifo'])
+def test_unreadable_tolerance_never_skips_safety(credentials, unsafe):
+    path, _, config = credentials
+    root = Path(config['root']); bad = root/'accounts/broken.json'
+    if unsafe == 'partial_external':
+        bad.write_text(json.dumps({'account': 'broken', 'project': None, 'media': 'threads', 'token': '/outside/secret'}))
+    elif unsafe == 'corrupt_state_symlink':
+        bad.write_text('{'); (root/'state').mkdir(); (root/'state/broken').symlink_to(path.parent)
+    elif unsafe == 'ledger_symlink':
+        bad.symlink_to(path)
+    else:
+        os.mkfifo(bad)
+    with pytest.raises(ValueError):
+        report_http.PrivateReportServer(path, 0)
