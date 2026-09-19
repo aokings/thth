@@ -258,7 +258,7 @@ def _account(name, now, probe=False, via='cli', detail=False, limit=20):
         try:
             analysis = analytics_report.answer(name, now=now)['by_account'][name]
             row['analytics_collection'] = analysis['collection']
-        except (OSError, ValueError, TypeError, KeyError):
+        except (OSError, ValueError, TypeError, KeyError, accounts.AccountError):
             row['analytics_collection'] = None
             row['cannot_say'].append('analytics_collection_unavailable')
     return _scrub(row)
@@ -350,7 +350,8 @@ def timer(name, *, via='cli'):
     unavailable = dict(observed_at=None, units=None, timer_reason='timer_observation_unavailable')
     if via == 'http':
         cached = _admin_json('timers.json')
-        value = (cached or {}).get('by_account', {}).get(name)
+        nodes = (cached or {}).get('by_account')
+        value = nodes.get(name) if isinstance(nodes, dict) else None
         if isinstance(value, dict) and jst.parse(value.get('observed_at')) and isinstance(value.get('units'), list):
             return value
         return unavailable

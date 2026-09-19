@@ -143,3 +143,10 @@ def test_missing_required_setting_is_null_not_default(fixture):
     assert result['ledger']=='available' and result['quiet_hours'] is None
     assert result['defaults']['quiet_hours'] is not None
     assert 'ledger_fields_unavailable' in result['cannot_say']
+
+def test_malformed_timer_cache_is_unknown(fixture):
+    root,now,cfg=fixture
+    (root/'state/_admin/timers.json').write_text('{"by_account": []}')
+    result=admin_report.answer('timers',via='http',now=now)
+    assert result['by_account']['test-threads']['units'] is None
+    assert result['by_account']['test-threads']['timer_reason']=='timer_observation_unavailable'
