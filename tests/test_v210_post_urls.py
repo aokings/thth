@@ -68,3 +68,11 @@ def test_where_human_shows_stable_id_below_web_url(capsys):
     where_cli._render_human(dict(account='one',project=None,words=['tea'],by_account={'one':dict(medium='bluesky',by_word={'tea':dict(material=dict(n=1,authors={'distinct':1},latest_timestamp=None),my_history=None,posts=[post])},by_tag=[],cannot_say=[])},cannot_say=[],provenance={'notes':[]}))
     output=capsys.readouterr().out
     assert output.index(URL)<output.index('post_id: '+URI)
+
+@pytest.mark.parametrize('char', ['\n','\t','\r','\x00','\x1f','\x7f','\x85'])
+def test_control_characters_are_rejected_before_resolver_or_send(char,resolved,isolated_account_factory):
+    isolated_account_factory('one',media='bluesky')
+    value=URL[:-1]+char+URL[-1]
+    with pytest.raises(postid.PostIdError,match='invalid_post_url'):
+        core.send_once('one',text='tea',reply_to=value)
+    assert resolved==[]

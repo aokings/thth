@@ -209,13 +209,11 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
         _reject(f"max_messages は整数です: {max_messages!r}")
     if max_messages < 1 or max_messages > MAX_MESSAGES_LIMIT:
         _reject(f"max_messages は 1〜{MAX_MESSAGES_LIMIT} です: {max_messages!r}")
-    post_id = post_id.strip()
-
     now = now if now is not None else jst.now_jst()
     account_cfg = accounts_mod.load_account(account_name)
     from . import postid
     try:
-        post_id = postid.for_account(account_cfg, post_id)
+        post_id = postid.for_account(account_cfg, post_id).strip()
     except postid.PostIdError as exc:
         _reject(str(exc))
     media = account_cfg.get("media")
