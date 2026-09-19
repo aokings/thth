@@ -51,6 +51,8 @@ def _relations(name, cfg, now):
                         if value.malformed:
                             reasons.add('queue_unreadable');continue
                         if value.front_matter.get('account') != name:continue
+                        if value.front_matter.get('status') not in ('approved', 'posted'):
+                            reasons.add('queue_publication_not_recorded');continue
                         for row in value.posts:
                             # Missing bundle reply_to is unknown, never a root.
                             normalized = {k: bundle.unquote(v) for k, v in row.items()}
@@ -62,6 +64,9 @@ def _relations(name, cfg, now):
                         if value.malformed:
                             reasons.add('queue_unreadable');continue
                         if value.front_matter.get('account') == name:
+                            if value.front_matter.get('status') != 'posted':
+                                if value.front_matter.get('post_id'):reasons.add('queue_publication_not_recorded')
+                                continue
                             accept(value.front_matter, timestamp='posted_at')
                 except (OSError, ValueError, TypeError, AttributeError):
                     reasons.add('queue_unreadable')
@@ -70,7 +75,7 @@ def _relations(name, cfg, now):
     ledger = engagements.load(cfg, name)
     if ledger['broken']:reasons.add('engagements_unreadable')
     for row in ledger['rows']:
-        if row.get('account') == name:
+        if row.get('account') == name and row.get('medium') == cfg['media']:
             accept(row, timestamp='posted_at')
     for pid, parents in relations.items():
         if len(parents)>1:reasons.add('own_post_parent_conflict')
@@ -91,13 +96,40 @@ def answer(account_name, *, since='7d', now=None):
         data = {'replies': [], 'fetches': [], 'broken': ['unreadable'], 'unreadable_accounts': []}
     if data['broken']:reasons.add('replies_unreadable')
     if data['unreadable_accounts']:reasons.add('reply_ownership_unknown')
-    selected = [row for row in data['replies'] if _id(row.get('post_id')) in roots]
-    if any(_id(row.get('post_id')) not in roots for row in data['replies']):
-        reasons.add('unproven_roots_excluded')
+    # Shared repositories may contain identical platform-local ids. Metadata
+    # can disambiguate; an old row without it cannot choose between owners.
+    owners = {pid: {(account_name, cfg['media'])} for pid in roots}
+    directory = Path(accounts.data_dirs(cfg, account_name)['replies']).resolve()
+    for other in accounts.list_account_names():
+        if other == account_name:continue
+        try:
+            other_cfg = accounts.load_account(other)
+            if Path(accounts.data_dirs(other_cfg, other)['replies']).resolve() != directory:continue
+            other_roots, _, _ = _relations(other, other_cfg, now)
+            for pid in roots & other_roots:owners[pid].add((other, other_cfg['media']))
+        except (accounts.AccountError, OSError, ValueError, TypeError, KeyError):
+            reasons.add('reply_ownership_unknown')
+
+    def belongs(row):
+        pid = _id(row.get('post_id'))
+        if pid not in roots:
+            reasons.add('unproven_roots_excluded');return False
+        if ('account' in row and row['account'] != account_name
+                or 'medium' in row and row['medium'] != cfg['media']):
+            reasons.add('foreign_reply_evidence_excluded');return False
+        candidates = {(name, medium) for name, medium in owners[pid]
+                      if ('account' not in row or row['account'] == name)
+                      and ('medium' not in row or row['medium'] == medium)}
+        if candidates != {(account_name, cfg['media'])}:
+            reasons.add('reply_scope_ambiguous');return False
+        return True
+
+    selected = [row for row in data['replies'] if belongs(row)]
     # Exact parent edges only: replying elsewhere under this root proves nothing
     # about whether a different participant's reply received an answer.
     for row in selected:
-        if row.get('own') is True:
+        if (row.get('own') is True and replies._normalize_handle(row.get('username'))
+                == replies._normalize_handle(cfg.get('handle'))):
             message = base.normalize_message(row, medium=cfg['media'])
             parent = _id(message.get('replied_to'))
             if parent:answered.add(parent)
@@ -127,7 +159,7 @@ def answer(account_name, *, since='7d', now=None):
     observed = {}
     for row in data['fetches']:
         pid=_id(row.get('post_id'));at=jst.parse(row.get('collected_at'))
-        if pid in roots and at is not None and at <= now:
+        if belongs(row) and at is not None and at <= now:
             observed[pid]=max(observed.get(pid, at), at)
     stale = max(((now-at).total_seconds()/3600 for at in observed.values()), default=None)
     if roots-set(observed):reasons.add('collection_not_recorded')
