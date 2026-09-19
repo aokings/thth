@@ -102,9 +102,15 @@ def _repo_state(account_cfg: dict) -> dict:
     return out
 
 
+def timer_units(account_name: str) -> tuple[str, str, str]:
+    """The timer names installed for posting, collection and maintenance."""
+    return (f"thth@{account_name}.timer",
+            f"thth-collect@{account_name}.timer", "thth-maintain.timer")
+
+
 def _timer_state(account_name: str) -> dict:
     """systemd の timer の状態。**この機械に systemd が無ければ「判らない」。**"""
-    unit = f"thth@{account_name}.timer"
+    unit = timer_units(account_name)[0]
     out = {"unit": unit, "known": False, "enabled": None, "active": None}
     if shutil.which("systemctl") is None:
         return out

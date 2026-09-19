@@ -154,7 +154,7 @@ def write(name, node, by, now):
 
 
 def write_snapshot(name, filename, value):
-    if filename not in ('handoff_cursor.json', 'admin_cursor.json', 'admin_notifications.json'):
+    if filename not in ('handoff_cursor.json', 'admin_cursor.json', 'admin_notifications.json', 'timers.json'):
         raise ValueError('invalid_cursor_filename')
     directory=_directory(name,create=True)
     temporary='.handoff-cursor-'+uuid.uuid4().hex

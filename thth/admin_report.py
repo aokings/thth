@@ -9,7 +9,7 @@ import socket
 import stat
 import subprocess
 import sys
-from . import (accounts, admin_log, analytics_report, appenv, collection_status, doctor,
+from . import (accounts, account_report, admin_log, analytics_report, appenv, collection_status, doctor,
                incident, jst, oauth, operations_handoff, redact, report_details, runs)
 
 FIELDS = ('production', 'hashtags', 'max_hashtags', 'min_interval_hours', 'quiet_hours',
@@ -55,6 +55,10 @@ def _admin_json(filename):
 def _scrub(value):
     # Preserve report schema; only values (and untrusted object keys) are scrubbed.
     if isinstance(value, str):
+        stem = value.removesuffix('.timer')
+        prefix, separator, name = stem.partition('@')
+        if separator and accounts.name_is_safe(name) and prefix in ('thth', 'thth-collect') and value.endswith('.timer'):
+            return value  # A generated systemd instance name is not an email address.
         return admin_log.MAIL.sub('[redacted-email]', redact.redact(value))
     if isinstance(value, dict):
         return {_scrub(k): ('[redacted]' if any(word in k.lower() for word in ('password', 'secret', 'access_token', 'refresh_token', 'accessjwt', 'refreshjwt', 'authorization', 'email')) else _scrub(v)) for k, v in value.items()}
@@ -359,21 +363,21 @@ def timer(name, *, via='cli'):
         return {**unavailable, 'timer_reason': 'systemd_unavailable'}
     units = []
     try:
-        for unit in ('thth-run@' + name, 'thth-collect@' + name, 'thth-maintain'):
-            proc = subprocess.run(['systemctl', 'show', unit + '.timer',
+        for unit in account_report.timer_units(name):
+            proc = subprocess.run(['systemctl', 'show', unit,
                 '--property=Id,LoadState,ActiveState,LastTriggerUSec,NextElapseUSecRealtime'],
                 capture_output=True, text=True, timeout=10)
             if proc.returncode:
                 raise ValueError('systemctl_failed')
             fields = dict(line.split('=', 1) for line in proc.stdout.splitlines() if '=' in line)
             if fields.get('LoadState') != 'loaded':
-                units.append(dict(unit=unit+'.timer',active=None,last_trigger=None,next_trigger=None,
+                units.append(dict(unit=unit,active=None,last_trigger=None,next_trigger=None,
                                   exec_main_status=None, reason='timer_not_loaded'))
                 continue
-            service = subprocess.run(['systemctl', 'show', unit + '.service', '--property=ExecMainStatus'],
+            service = subprocess.run(['systemctl', 'show', unit.removesuffix('.timer') + '.service', '--property=ExecMainStatus'],
                                      capture_output=True, text=True, timeout=10)
             status = dict(line.split('=',1) for line in service.stdout.splitlines() if '=' in line)
-            units.append(dict(unit=unit+'.timer',active=fields.get('ActiveState'),
+            units.append(dict(unit=unit,active=fields.get('ActiveState'),
                 last_trigger=fields.get('LastTriggerUSec') or None,
                 next_trigger=fields.get('NextElapseUSecRealtime') or None,
                 exec_main_status=int(status['ExecMainStatus']) if service.returncode == 0 and status.get('ExecMainStatus','').isdigit() else None))
@@ -485,7 +489,17 @@ def extra(operation, *, account, via, now, since_last_read=False, mark_read=Fals
         return {'release':_release(via)}
     names = [account] if account else accounts.list_account_names()
     if operation=='timers':
-        return {'by_account':{name:timer(name,via=via) for name in names}}
+        rows = {name: timer(name, via=via) for name in names}
+        # Only the explicit CLI timers command records observations. Inventory,
+        # HTTP and MCP remain read-only; a non-systemd host preserves the last cache.
+        if via == 'cli' and any(row['observed_at'] is not None for row in rows.values()):
+            from . import handoff_cursor
+            try:
+                handoff_cursor.write_snapshot('_admin', 'timers.json',
+                                              _scrub(dict(schema_version=1, by_account=rows)))
+            except (OSError, ValueError, TypeError):
+                raise ValueError('timer_snapshot_unavailable') from None
+        return {'by_account': rows}
     if operation=='tokens':
         from . import scopes
         rows=[]
