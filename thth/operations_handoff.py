@@ -163,7 +163,11 @@ def _account(name, cfg, now):
              "waiting" if queue_state == "available" and counts["approved_waiting"] else "unknown")
     latest = max(last, key=lambda item: item[0]) if last else None
     from . import unanswered
-    unanswered_result = unanswered.answer(name, now=now)
+    try:
+        unanswered_result = unanswered.answer(name, now=now)
+    except accounts.AccountError:
+        unanswered_result = {'summary': {'n': None, 'oldest_age_hours': None},
+                             'cannot_say': ['unanswered_ledger_unavailable']}
     return {"state": state, "queue": queue, "inflight": diagnostic,
             "unanswered": unanswered_result['summary'],
             "sent_count": sent_count if sent_state == "available" else 0 if sent_state == "missing" else None,

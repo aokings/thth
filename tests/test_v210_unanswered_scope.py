@@ -51,3 +51,13 @@ def test_foreign_legacy_sent_still_proves_a_possible_owner(isolated_account_fact
     save(alpha,'100')
     result=unanswered.answer('alpha',now=NOW)
     assert result['n_total']==0 and 'reply_scope_ambiguous' in result['cannot_say']
+
+
+def test_handoff_incomplete_ledger_preserves_unknown_summary(isolated_account_factory):
+    from thth import operations_handoff
+    cfg=isolated_account_factory('alpha',handle='a');config=accounts.load_account('alpha')
+    path=Path(accounts.accounts_dir())/'alpha.json'
+    value=json.loads(path.read_text());value.pop('quiet_hours');path.write_text(json.dumps(value))
+    result=operations_handoff._account('alpha',config,NOW)
+    assert result['unanswered']=={'n':None,'oldest_age_hours':None}
+    assert 'unanswered_ledger_unavailable' in result['cannot_say']
