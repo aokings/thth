@@ -148,6 +148,8 @@ All 40 subcommands `thth --help` lists in this development checkout, one line ea
 - `threads` — thread shape: branches, depth, participants, time to first reply
 - `serve-reports` — development-grade (since 2.5.0): private read-only HTTP reports over a Unix socket (or explicitly selected loopback TCP) for a dedicated Unix environment; see the [setup and limitations](docs/非公開レポートHTTP_v1.md).
 - `handoff-report` — since 2.5.0: local operations evidence, pending notifications and explicit freshness limits.
+- `study` — add an explicit post ID or queue post ID to a local study JSON with `--by`; no adoption or git commit.
+- `unanswered` — list locally evidenced unanswered replies to this account's root posts, with freshness and uncertainty.
 - `study-report` — since 2.5.0: link an unverified study declaration to explicitly selected owned root-post observations; read-only, no causal-effect claim. See the [contract](docs/施策レポート_v1.md).
 - `analytics-report` — since 2.5.0: read-only activity snapshot with evidence, missing data, JSON and Markdown.
 - `after` — called after posting: how the replies you went and engaged in were

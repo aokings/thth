@@ -26,8 +26,10 @@ def write(a, data):
 
 def test_observation_linkage_old_ids_zero_and_read_only(isolated_account_factory):
     a = isolated_account_factory()
-    seed(a, "before", NOW - datetime.timedelta(days=100), value=0)
-    seed(a, "after", NOW - datetime.timedelta(days=7), value=8)
+    seed(a, "before", NOW - datetime.timedelta(days=100), value=0,
+         extra={"text": "FAKE_STUDY_PRIVATE_BODY", "username": "FAKE_STUDY_PRIVATE_NAME"})
+    seed(a, "after", NOW - datetime.timedelta(days=7), value=8,
+         extra={"text": "FAKE_STUDY_PRIVATE_BODY", "username": "FAKE_STUDY_PRIVATE_NAME"})
     path = write(a, declaration(a))
     root = Path(a["repo_dir"])
     before = {str(p): p.read_bytes() for p in root.rglob("*") if p.is_file()}
@@ -40,7 +42,14 @@ def test_observation_linkage_old_ids_zero_and_read_only(isolated_account_factory
     markdown = study_report.render_markdown(r)
     assert "<script>" not in markdown.split("## 宣言と観測の構造化データ")[0]
     assert json.loads("\n".join(s[4:] for s in markdown.splitlines() if s.startswith("    "))) == r
-    assert '"username"' not in json.dumps(r) and '"text"' not in json.dumps(r)
+    diagnostics = r['cannot_say_details']
+    assert diagnostics
+    assert all(set(item) == {'code', 'text'} and item['text'] in r['cannot_say']
+               for item in diagnostics)
+    evidence = {key: value for key, value in r.items() if key != 'cannot_say_details'}
+    assert '"username"' not in json.dumps(evidence) and '"text"' not in json.dumps(evidence)
+    assert 'FAKE_STUDY_PRIVATE_BODY' not in json.dumps(r)
+    assert 'FAKE_STUDY_PRIVATE_NAME' not in json.dumps(r)
 
 
 def test_proposed_never_loads_ledgers(isolated_account_factory, monkeypatch):
