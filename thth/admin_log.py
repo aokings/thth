@@ -7,9 +7,10 @@ import stat
 from . import accounts, handoff_cursor, jst, redact
 
 class AdminLogError(Exception):
-    def __init__(self, message, *, appended=False):
+    def __init__(self, message, *, appended=False, complete=False):
         super().__init__(message)
         self.appended = appended
+        self.complete = complete
 
 
 def _emit(fd, data):
@@ -20,7 +21,7 @@ def _emit(fd, data):
             raise OSError('admin_log_short_write')
         os.fsync(fd)
     except OSError as exc:
-        raise AdminLogError('admin_log_write_failed', appended=written > 0) from exc
+        raise AdminLogError('admin_log_write_failed', appended=written > 0, complete=written == len(data)) from exc
 
 
 EVENTS = frozenset(('account_added', 'account_updated', 'account_removed', 'token_set',
@@ -162,6 +163,16 @@ def transaction():
             yield
             if events:
                 _emit(fd, b''.join(events))
+                from . import admin_notifications
+                for data in events:
+                    event = json.loads(data)
+                    try:
+                        cfg = accounts.load_account(event['account'])
+                        admin_notifications.notify(event, cfg)
+                    except (OSError, ValueError, TypeError, accounts.AccountError):
+                        # The committed audit event remains the durable retry evidence.
+                        import sys
+                        print('admin_notification_pending', file=sys.stderr)
         finally:
             _active_events.reset(reset_events)
             _active_fd.reset(reset)
@@ -204,7 +215,7 @@ def guarded(function):
         except (OSError, ValueError, AdminLogError) as exc:
             if isinstance(exc, AdminLogError) and exc.appended:
                 import sys
-                print("admin_change_recorded_durability_unconfirmed: change retained; inspect account and log before retry", file=sys.stderr)
+                print(("admin_change_recorded_durability_unconfirmed" if exc.complete else "admin_change_partially_recorded_outcome_uncertain") + ": change retained; inspect account and log before retry", file=sys.stderr)
                 return 2
             # A late append/fsync failure must not leave an unlogged mutation.
             # Restoration uses a private atomic replacement and retains exact bytes/mode.

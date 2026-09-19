@@ -158,6 +158,8 @@ def _account(name, now, probe=False, via='cli', detail=False, limit=20):
         pass
     if cfg is None or raw is None:
         return dict(account=name, ledger='unreadable', cannot_say=['ledger_unreadable'])
+    if not isinstance(raw.get('media'), str) or any(cfg.get(k) is not None and not isinstance(cfg.get(k),str) for k in ('token','env','repo_dir','queue_dir','replies_dir')):
+        return dict(account=name, ledger='unreadable', cannot_say=['ledger_unreadable'])
     _register(cfg, via=via)
     row = {key: raw.get(key) for key in ('account', 'project', 'handle', 'instance')}
     row.update(account=name, medium=raw.get('media'), ledger='available', **{key: raw.get(key) for key in FIELDS})
@@ -463,7 +465,7 @@ def extra(operation, *, account, via, now, since_last_read=False, mark_read=Fals
                 token.update(account=name,default_scopes=expected,
                              missing_scopes=sorted(set(expected)-set(actual)) if expected is not None and actual is not None else None)
                 history=runs.read_runs(accounts.state_dir_for(name))
-                maintenance=[r for r in history if isinstance(r,dict) and r.get('account')==name and r.get('action')=='maintain']
+                maintenance=[r for r in history if isinstance(r,dict) and r.get('account')==name and r.get('action')=='maintain' and (r.get('refreshed') is True or r.get('error')=='refresh_failed')]
                 last=maintenance[-1] if maintenance else None
                 token['last_refresh']={key:last.get(key) for key in ('run_id','status','refreshed','error')} if last else None
                 rows.append(token)

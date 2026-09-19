@@ -132,6 +132,9 @@ def _send(s, recipient, event, account):
     repo_status = "repo へ反映済み" if event.get("repo") == "written" else "repo 未反映（後続実行で再試行。原稿を特定できない場合は account 単位の通知のみ）"
     file_hint = healthcheck._safe_file(event.get("file")) or "特定できません（account 全体の状況）"
     message.set_content(f"原稿: {file_hint}\naccount: {account}\n状況: {event['state']}\n発生日時: {event['at']}\n理由: {healthcheck.reason_text(event['reason'])}{api_diagnostic.suffix(event.get('api_diagnostic'))}\n次の対応: {healthcheck.next_action_text(healthcheck.next_action_for(event['reason']))}\n{repo_status}\n\nこの通知は定期実行から送信しました。VM 自体の停止は外部の死活監視で検知してください。\n")
+    if event.get("state") == "admin_change":
+        message.replace_header("Subject", f"THTH {account}: 管理変更")
+        message.set_content(json.dumps(event["admin_event"], ensure_ascii=False, sort_keys=True) + "\n")
     client = None
     accepted = False
     try:
