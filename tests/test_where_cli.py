@@ -127,7 +127,7 @@ def test_2媒体をproject単位で並べる(two_media_project):
     # **トップレベルに数が無い**（設計「自分の泉」§2.6・T2-2 規約）。
     assert "n" not in result
     assert set(result.keys()) == {"account", "project", "words", "by_account",
-                                  "cannot_say", "provenance"}
+                                  "by_tag", "cannot_say", "provenance"}
 
     by_account = result["by_account"]
     assert set(by_account) == {threads_acc["name"], bluesky_acc["name"]}
@@ -139,6 +139,12 @@ def test_2媒体をproject単位で並べる(two_media_project):
     bluesky_node = by_account[bluesky_acc["name"]]
     assert bluesky_node["medium"] == "bluesky"
     assert set(bluesky_node["by_word"]) == {"コーヒー", "苦い"}
+    assert [item["tag"] for item in bluesky_node["by_tag"]] == ["コーヒー", "苦い"]
+    assert len(result["by_tag"]) == 2
+    assert all(item["n"] == 1 and item["observed_from"] for item in result["by_tag"])
+    tag_json = json.dumps(result["by_tag"], ensure_ascii=False)
+    assert "苦いコーヒーの話" not in tag_json
+    assert BSKY_BOB_HANDLE not in tag_json
 
     # posts に author_key。
     t_posts = threads_node["by_word"]["コーヒー"]["posts"]

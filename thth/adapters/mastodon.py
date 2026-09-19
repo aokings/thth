@@ -755,8 +755,12 @@ class MastodonAdapter(base.Adapter):
             if not isinstance(status, dict) or status.get("visibility") != "public":
                 continue
             stamp = status.get("created_at")
-            if since and (not isinstance(stamp, str) or stamp < since):
-                continue
+            if since:
+                try:
+                    if not isinstance(stamp, str) or jst.parse(stamp) < jst.parse(since):
+                        continue
+                except ValueError:
+                    continue
             n += 1
             if isinstance(stamp, str) and (latest_at is None or stamp > latest_at):
                 latest_at = stamp
