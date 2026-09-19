@@ -152,13 +152,19 @@ def cmd_migrate(args) -> int:
     冪等: 2 回目からは全部 `same` になり、何も書かない。
     """
     plan = plan_migration()
-    log = print
+    as_json = getattr(args, 'json', False)
+    log = (lambda line: print(line, file=sys.stderr)) if as_json else print
+    def finish(rc):
+        if as_json:
+            print(json.dumps({'migration': plan, 'dry_run': getattr(args, 'dry_run', False),
+                              'ok': rc == 0}, ensure_ascii=False))
+        return rc
     if plan["same_place"]:
         log(f"写す先と写し元が同じです（{plan['dst']}）。することはありません。")
-        return 0
+        return finish(0)
     if plan["src_missing"]:
         log(f"repo の中に台帳はありません（{plan['src']}）。することはありません。")
-        return 0
+        return finish(0)
 
     dry = getattr(args, "dry_run", False)
     log(f"写し元（repo の中）: {plan['src']}")
@@ -166,7 +172,7 @@ def cmd_migrate(args) -> int:
     log("")
     if not plan["copy"] and not plan["same"] and not plan["differ"]:
         log("台帳が 1 本もありません。することはありません。")
-        return 0
+        return finish(0)
 
     for name in plan["copy"]:
         log(f"  {'写す（予定）' if dry else '写した'}: {name}")
@@ -186,7 +192,7 @@ def cmd_migrate(args) -> int:
         log(f"**{len(plan['differ'])} 本は写していません**——外の台帳と repo の台帳の"
             f"中身が違います。外が正です。repo の側が古いだけなら、"
             f"repo の `accounts/` を消す日にまとめて片付けてください。")
-        return 1
+        return finish(1)
     総数 = len(plan["copy"]) + len(plan["same"])
     if dry:
         log(f"--dry-run なので何も書いていません。"
@@ -198,7 +204,7 @@ def cmd_migrate(args) -> int:
     else:
         # **冪等。** 2 回目からはここに来る——「写した」と言わない。
         log(f"写すものはありませんでした（{総数} 本とも写し済み）。")
-    return 0
+    return finish(0)
 
 
 # --------------------------------------------------------------------------

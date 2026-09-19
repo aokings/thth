@@ -17,11 +17,13 @@ def json_parsers():
                 for name, child in action.choices.items():visit(child, [*path, name])
     visit(cli.build_parser(), [])
     visit(topic_cli.build_parser(), ['topics'])
+    found["account add"] = found["account"]
+    found["account migrate"] = found["account"]
     return found
 
 # This list is independent of the parser traversal: a newly added JSON command
 # must acquire a table row, rather than quietly escaping the contract.
-COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads|study-report|analytics-report|after|topics|forms|queue|schedule|throw|handoff-report|board|pull|maintain|doctor|app show|admin inventory|admin account|admin log|admin tokens|admin timers|admin release|admin diff|ask before-you-post|mentions|profile|thread|where|who|retract|location|topics suggest|topics observe|topics record-decision|topics decision|topics observation|topics retract|topics unretract|topics profile|topics adopt-reason|topics adoptions|topics record-vocabulary|topics vocabulary|topics record-review|topics review|topics record-form-spec|topics form-spec|topics form-check|topics improvements|topics impact|topics record-hypothesis|topics hypotheses'''.split('|')
+COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads|study-report|analytics-report|after|topics|forms|queue|schedule|throw|handoff-report|board|pull|maintain|doctor|app show|admin inventory|admin account|admin log|admin tokens|admin timers|admin release|admin diff|ask before-you-post|mentions|profile|thread|where|who|retract|location|topics suggest|topics observe|topics record-decision|topics decision|topics observation|topics retract|topics unretract|topics profile|topics adopt-reason|topics adoptions|topics record-vocabulary|topics vocabulary|topics record-review|topics review|topics record-form-spec|topics form-spec|topics form-check|topics improvements|topics impact|topics record-hypothesis|topics hypotheses'''.split('|') + ['account add', 'account migrate']
 
 
 def test_json_table_covers_every_parser():
