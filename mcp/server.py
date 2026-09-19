@@ -160,7 +160,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "by": {"type": "string", "enum": ["kind", "hour_band", "topic"]},
+                "by": {"type": "string", "enum": ["kind", "hour_band", "topic", "tag"]},
                 "compare_previous": {"type": "boolean", "description": "直前の同じ日数との比較（既定false）"},
                 "account": {"type": "string"},
                 "project": {"type": "string"},
@@ -400,8 +400,8 @@ def validate_arguments(name: str, arguments) -> dict:
             f"{name}: arguments は object で渡してください"
             f"（受け取った: {type(arguments).__name__}）")
     if name == "analytics_report" and "by" in arguments:
-        if arguments["by"] not in ("kind", "hour_band", "topic") or arguments.get("compare_previous") is not True:
-            raise ToolInputError("analytics_report: by は compare_previous=true と kind/hour_band/topic が必要です")
+        if arguments["by"] not in ("kind", "hour_band", "topic", "tag") or arguments.get("compare_previous") is not True:
+            raise ToolInputError("analytics_report: by は compare_previous=true と kind/hour_band/topic/tag が必要です")
     if name == "operations_handoff" and "since_last_read" in arguments and type(arguments["since_last_read"]) is not bool:
         raise ToolInputError("operations_handoff: since_last_read は boolean です")
     props = schema.get("properties") or {}

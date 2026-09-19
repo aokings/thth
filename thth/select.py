@@ -217,7 +217,7 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
         # 入る——承認したあとに場所や共有を足す・変えると、ここで落ちる。
         approved_sha = fm.get("approved_sha")
         expected_sha = approval_mod.compute_approved_sha(
-            section=section, account=account_name, reply_to=fm.get("reply_to"),
+            section=approval_mod.effective_section(section, account_cfg, fm.get("topic")), account=account_name, reply_to=fm.get("reply_to"),
             topic=fm.get("topic"), publish_at=publish_at,
             **approval_mod.publish_options(fm))
         if not approved_sha or approved_sha != expected_sha:

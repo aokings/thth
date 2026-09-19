@@ -305,7 +305,8 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
                     f"その段が出ているかを確かめてください",
                     run_id=run.get("run_id"))
 
-    segments = b.segments
+    segments = bundle_mod.effective_segments(
+        b.segments, account_cfg, fm.get("topic"))
     frozen = threadrun.frozen_records(run) if run else []
     expected = approval_mod.compute_bundle_sha(
         segments=segments, account=account_name, topic=fm.get("topic"),
@@ -410,7 +411,8 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
 
     token = accounts_mod.load_token(account_cfg)
     adapter = adapter_factory(account_cfg, token)
-    post = adapter_base.Post(text=section, reply_to=parent or None, topic=topic)
+    post = adapter_base.Post(text=section, reply_to=parent or None, topic=topic,
+                             hashtags_allowed=bool(account_cfg.get("hashtags", True)))
 
     def on_container_created(container_id):
         inflight_mod.update(state_dir, container_id=container_id)
@@ -523,7 +525,8 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
                 why = f"取り込みのあと段が読めません: {problems[0]}"
             elif len(segs) != len(segments):
                 why = f"取り込みのあと段の数が変わりました（{len(segs)}）"
-            elif approval_mod.segment_sha(segs[index - 1]) != sent_sha:
+            elif approval_mod.segment_sha(bundle_mod.effective_segments(
+                    segs, account_cfg, after.front_matter.get("topic"))[index - 1]) != sent_sha:
                 why = (f"取り込みのあと {index} 段目の本文が変わっています"
                         f"——**送ったのは別の本文です**")
             else:

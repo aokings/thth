@@ -51,6 +51,24 @@ def account_cfg(**over):
     return cfg
 
 
+def test_bluesky_bundle_uses_effective_first_segment_and_preserves_body_tags():
+    fm = FM.replace("nigamilab-threads", "sample-bluesky")
+    body = BODY.replace("## threads", "## bluesky")
+    b = bundle.parse_text(make(fm, body), "b.md")
+    cfg = account_cfg(media="bluesky", hashtags=True)
+    assert not [issue for issue in bundle.check(b, account_cfg=cfg)
+                if not issue.startswith("warning:")]
+    assert bundle.effective_segments(b.segments, cfg, b.get("topic"))[0].endswith(
+        "\n#コーヒー")
+
+
+def test_mastodon_bundle_disabled_topic_has_one_warning():
+    b = bundle.parse_text(make(FM, BODY.replace("## threads", "## mastodon")), "b.md")
+    issues = bundle.check(b, account_cfg=account_cfg(media="mastodon", hashtags=False))
+    assert [issue for issue in issues if "topic が効きません" in issue] == [
+        "warning: 1 段目: この媒体では topic が効きません（hashtags: false）"]
+
+
 # --- v1 を壊さない ---------------------------------------------------------
 
 def test_旧版の解析はthth2を型外にする():

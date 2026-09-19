@@ -14,6 +14,7 @@ import dataclasses
 import re
 
 from . import queuefile
+from . import tags as tags_mod
 from . import writeback as writeback_mod
 
 VERSION = "2"
@@ -235,6 +236,15 @@ def load_segments(bundle: Bundle, media: str) -> tuple:
     return segments, problems
 
 
+def effective_segments(segments: list[str], account_cfg: dict, topic: str | None) -> list[str]:
+    """The exact ordered texts displayed, approved, published, and frozen."""
+    normalized = queuefile.normalize_topic(topic)
+    return [tags_mod.prepared(account_cfg["media"], segment,
+                              normalized if index == 0 else None,
+                              hashtags=bool(account_cfg.get("hashtags", True)))
+            for index, segment in enumerate(segments)]
+
+
 def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
     """v2 の形式検査（設計 §1・§7）。**問題の配列を返す。**"""
     errors: list = []
@@ -287,6 +297,8 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
     media = account_cfg["media"] if account_cfg else "threads"
     segments, seg_problems = load_segments(bundle, media)
     errors += seg_problems
+    topic = queuefile.normalize_topic(fm.get("topic"))
+    effective = effective_segments(segments, account_cfg or {"media": media}, topic)
 
     if segments:
         if not (MIN_SEGMENTS <= len(segments) <= MAX_SEGMENTS):
@@ -296,7 +308,7 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
         warn_limit = queuefile.WARN_LIMITS.get(media)
         hashtags_allowed = bool(account_cfg.get("hashtags", True)) if account_cfg else False
         for i, seg in enumerate(segments, start=1):
-            n = queuefile.char_count(seg)
+            n = queuefile.count_for(media, effective[i - 1])
             if n > limit:
                 errors.append(f"length: {i} 段目は {limit} 字以内（{n} 字）")
             elif warn_limit is not None and n > warn_limit:
@@ -305,6 +317,13 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
                     f"（{n} 字・上限 {limit} 字）")
             if not hashtags_allowed and queuefile.has_hashtag(seg):
                 errors.append(f"hashtag: {i} 段目にハッシュタグがあります")
+            if media in ("bluesky", "mastodon"):
+                for issue in tags_mod.errors(media, seg, topic if i == 1 else None,
+                                             account_cfg):
+                    if issue.startswith("warning:"):
+                        errors.append(f"warning: {i} 段目: {issue.removeprefix('warning: ').strip()}")
+                    else:
+                        errors.append(f"{i} 段目: {issue}")
             # **段に制御文字が混じっていれば error**（セキュリティ監査
             # 2026-09-16・B-2）。`compute_bundle_components()` は段を `\x1e`
             # （ASCII record separator）で連結してハッシュにする——段の本文に
@@ -318,9 +337,9 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
 
     errors += check_posts(bundle, segments)
 
-    topic = queuefile.normalize_topic(fm.get("topic"))
     if topic is not None:
-        topic_err = queuefile.topic_error(topic)
+        topic_err = (tags_mod.topic_error(media, topic)
+                     if media in ("bluesky", "mastodon") else queuefile.topic_error(topic))
         if topic_err is not None:
             errors.append(topic_err)
 

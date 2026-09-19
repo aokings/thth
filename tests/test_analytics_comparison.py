@@ -48,6 +48,27 @@ def test_half_open_zero_delta_and_read_only(isolated_account_factory):
     assert json.loads("\n".join(s[4:] for s in markdown.splitlines() if s.startswith("    "))) == r
 
 
+def test_tag_strata_use_observed_tags_and_suppress_small_samples(isolated_account_factory):
+    a = isolated_account_factory(media="bluesky")
+    seed(a, "old", NOW - datetime.timedelta(days=10), value=5,
+         extra={"tags": ["茶"], "topic": "予定だけの語"})
+    seed(a, "new1", NOW - datetime.timedelta(days=3), value=10,
+         extra={"tags": ["茶", "苦味"], "topic": "予定だけの語"})
+    seed(a, "new2", NOW - datetime.timedelta(days=2), value=20,
+         extra={"tags": ["茶"], "topic": "予定だけの語"})
+    seed(a, "untagged", NOW - datetime.timedelta(days=1, hours=3), value=30,
+         extra={"tags": [], "topic": "予定だけの語"})
+    result = report(a, min_n=2, by="tag")
+    group = result["by_account"][a["name"]]["posts"]["stratified"]
+    assert group["strata"]["tagged"]["current"]["n_total"] == 2
+    assert group["strata"]["untagged"]["current"]["n_total"] == 1
+    assert group["strata"]["#茶"]["current"]["metrics"]["views"]["median"] == 15
+    assert group["strata"]["#苦味"]["current"]["metrics"]["views"]["median"] is None
+    assert group["strata"]["#茶"]["comparison"]["views"]["absolute_median_change"] is None
+    assert "#予定だけの語" not in group["strata"]
+    assert group["reconciliation"]["current"] == {"sum_n_total": 3, "n_total": 3}
+
+
 @pytest.mark.parametrize("age,marks,extra,reason", [
     (23.99, [24], {}, "premature_observation"),
     (30, [24], {}, "late_observation"),

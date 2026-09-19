@@ -27,8 +27,8 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
             raise after_cli.AfterError(f"{label} は 1 以上の整数です")
     if type(compare_previous) is not bool:
         raise after_cli.AfterError("compare_previous は boolean です")
-    if by is not None and (by not in ("kind", "hour_band", "topic") or not compare_previous):
-        raise after_cli.AfterError("by は compare_previous と kind/hour_band/topic の指定が必要です")
+    if by is not None and (by not in ("kind", "hour_band", "topic", "tag") or not compare_previous):
+        raise after_cli.AfterError("by は compare_previous と kind/hour_band/topic/tag の指定が必要です")
     now = now if now is not None else jst.now_jst()
     if not isinstance(now, datetime.datetime) or now.tzinfo is None:
         raise after_cli.AfterError("now はタイムゾーン付きの日時です")

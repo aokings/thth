@@ -89,6 +89,24 @@ def test_刻みを跨いだら1行だけ足す(tmp_path, isolated_account_factor
     assert rows[0]["age_hours"] == 2.0
 
 
+def test_bluesky_observed_tags_are_saved_without_body_or_handle(tmp_path, isolated_account_factory):
+    pair = init_git_pair(tmp_path, seed_content=make_queue_text({
+        "status": "posted", "post_id": "POST1",
+        "posted_at": "2026-09-10T10:00:00+09:00", "topic": "予定だけの語"}))
+    account = isolated_account_factory(repo_dir=pair["work"], production=True,
+                                       media="bluesky")
+    class TaggedAdapter(FakeAdapter):
+        def observed_tags(self, post_id):
+            assert post_id == "POST1"
+            return ["実測の茶"]
+    collect_mod.run_collect(account["name"], adapter=TaggedAdapter(), now=NOW,
+                            log=lambda _line: None)
+    row = _rows(pair["work"], "data/sns/insights/posts/POST1.ndjson")[0]
+    assert row["tags"] == ["実測の茶"]
+    assert row["topic"] == "予定だけの語"  # planned metadata stays separate
+    assert not {"text", "body", "username", "handle"} & row.keys()
+
+
 def test_採取時点の所有accountが行に書かれる(tmp_path, isolated_account_factory):
     """外部レビュー再判定 R3・2026-09-12: 台帳の行そのものに、採取時点の所有
     `account` を残す。これが無いと、`thth/measured.py` は「いまの原稿の

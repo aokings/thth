@@ -365,6 +365,7 @@ def load(account_name: str, *, observation_metadata: bool = False) -> dict:
             posts.append({
                 "post_id": post_id,
                 "topic": first.get("topic"),
+                "tags": first.get("tags"),
                 # **採取時点に帰属する 2 つ**（`thth/collect.py` が行に書いている）。
                 # `thth/ask.py`（設計 v2 §1）がここから読む——`medium` は
                 # 「媒体をまたいで比較しない」（設計 v2 §2.1）ため、`reply_to` は
@@ -404,6 +405,7 @@ def load(account_name: str, *, observation_metadata: bool = False) -> dict:
                         "marks_collapsed": row.get("marks_collapsed", False),
                         "source": row.get("source") or "queue",
                         "metrics": row.get("metrics"),
+                        **({"tags": row.get("tags")} if "tags" in row else {}),
                         # **この行に無い指標**（採取の版が上がる前の行かどうかが
                         # 読める）。全体の判定では翌日の行に隠される。
                         "missing": _row_missing(row.get("metrics"), POST_METRIC_NAMES),

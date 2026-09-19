@@ -775,6 +775,10 @@ class BlueskyAdapter(base.Adapter):
                         found.add(tag)
         return found
 
+    def observed_tags(self, post_id: str) -> list[str]:
+        """Tags actually returned with an owned post at collection time."""
+        return sorted(self._observed_tags(self._post_view(post_id)))
+
     def tag_search(self, q: str, *, tags: list[str], sort: str = "latest",
                    since: str | None = None, until: str | None = None,
                    pages: int = 4, limit: int = 100) -> dict:
@@ -798,6 +802,7 @@ class BlueskyAdapter(base.Adapter):
         seen_ids, authors, co_tags = set(), set(), collections.Counter()
         n = tagged_n = 0
         latest_at = None
+        latest_dt = None
         cursor = None
         page_count = 0
         seen_cursors = set()
@@ -823,8 +828,13 @@ class BlueskyAdapter(base.Adapter):
                     authors.add(author["did"])
                 record = view.get("record") if isinstance(view.get("record"), dict) else {}
                 stamp = record.get("createdAt") or view.get("indexedAt")
-                if isinstance(stamp, str) and (latest_at is None or stamp > latest_at):
-                    latest_at = stamp
+                if isinstance(stamp, str):
+                    try:
+                        parsed = jst.parse(stamp)
+                    except (ValueError, TypeError):
+                        parsed = None
+                    if parsed is not None and (latest_dt is None or parsed > latest_dt):
+                        latest_dt, latest_at = parsed, stamp
                 observed = self._observed_tags(view)
                 if set(tags).issubset(observed):
                     tagged_n += 1

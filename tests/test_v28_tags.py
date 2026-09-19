@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from thth import cli, lint, tags
+from thth import approval, cli, lint, tags
 from thth.adapters import base, bluesky, mastodon
 from tests.test_bluesky_adapter import _adapter, fake_bluesky
 
@@ -63,6 +63,18 @@ def test_punctuation_topic_and_combining_mark_are_single_facets():
     assert tags.topic_error("bluesky", "あ" * 65) == "topic_too_long(65)"
 
 
+def test_emoji_and_internal_punctuation_are_real_bluesky_tags():
+    text = "#🍵 #a.b #茶 #苦味"
+    facets = bluesky.build_facets(text, include_tags=True)
+    assert [f["features"][0]["tag"] for f in facets] == ["🍵", "a.b", "茶", "苦味"]
+    assert "上限 3 個" in tags.errors("bluesky", text, None, {"hashtags": True})[0]
+    assert tags.prepared("bluesky", "本文 #a.b", "a.b", hashtags=True) == "本文 #a.b"
+
+
+def test_mastodon_number_only_topic_is_rejected():
+    assert tags.topic_error("mastodon", "123") is not None
+
+
 def test_mastodon_topic_uses_one_final_line(monkeypatch):
     seen = []
     adapter = mastodon.MastodonAdapter(instance="https://example.invalid", access_token="fixture")
@@ -95,6 +107,15 @@ def test_topic_limit_and_length_include_appended_tag(tmp_path, monkeypatch):
     assert error is None
     assert one["text"] == lint.preview_file(str(path))
     assert one["text"].endswith("\n#苦味")
+    assert one["approved_sha"] == approval.compute_approved_sha(
+        section=one["text"], account="sample", reply_to=None, topic="苦味",
+        publish_at="2026-09-20T09:00:00+09:00", location_id=None,
+        share_to_instagram=False)
+    monkeypatch.setattr(cli.accounts_mod, "load_account", lambda _: {"media": "bluesky", "hashtags": False})
+    without, error = cli._prepare_one(str(path))
+    assert error is None
+    assert without["text"] == "本文"
+    assert without["approved_sha"] != one["approved_sha"]
 
 
 def test_max_hashtags_counts_topic_and_body_with_default_three():
@@ -150,6 +171,15 @@ def test_bluesky_tag_search_paginates_and_keeps_only_aggregates(monkeypatch):
         adapter.tag_search("", tags=["茶"])
 
 
+def test_bluesky_latest_at_compares_instants(monkeypatch):
+    adapter = bluesky.BlueskyAdapter(identifier="fixture", app_password="fixture")
+    monkeypatch.setattr(adapter, "_request", lambda *args, **kwargs: {"posts": [
+        {"uri": "at://one", "record": {"createdAt": "2026-09-19T09:00:00+09:00"}},
+        {"uri": "at://two", "record": {"createdAt": "2026-09-19T01:00:00Z"}},
+    ]})
+    assert adapter.tag_search("茶", tags=["茶"])["latest_at"] == "2026-09-19T01:00:00Z"
+
+
 def test_mastodon_tag_observation_is_instance_scoped_and_aggregate(monkeypatch):
     adapter = mastodon.MastodonAdapter(instance="https://instance.example", access_token="fixture")
     requested = []
@@ -179,3 +209,16 @@ def test_mastodon_tag_observation_is_instance_scoped_and_aggregate(monkeypatch):
     assert result["observed_from"] == "https://instance.example"
     serialized = json.dumps(result, ensure_ascii=False)
     assert "secret-body" not in serialized and "secret-user" not in serialized
+
+
+def test_mastodon_bad_created_at_and_timezone_order(monkeypatch):
+    adapter = mastodon.MastodonAdapter(instance="https://instance.example", access_token="fixture")
+    monkeypatch.setattr(adapter, "_get_list", lambda path, what: [
+        {"visibility": "public", "created_at": ["bad"]},
+        {"visibility": "public", "created_at": "2026-09-19T09:00:00+09:00"},
+        {"visibility": "public", "created_at": "2026-09-19T01:00:00Z"},
+    ] if "timeline" in path else [])
+    monkeypatch.setattr(adapter, "_get_json", lambda *args: {"hashtags": []})
+    result = adapter.tag_observation("茶", since="2026-09-19T00:00:00Z")
+    assert result["n"] == 2
+    assert result["latest_at"] == "2026-09-19T01:00:00Z"

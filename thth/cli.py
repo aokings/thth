@@ -249,8 +249,9 @@ def _prepare_one(path: str):
     # 任意項目（場所・Instagram 共有・設計 v2 §4.3・v2.1-B）は**指紋に入る**——
     # 一段目で見せた場所と共有の有無が、承認の対象そのもの。
     options = approval_mod.publish_options(fm)
+    effective = approval_mod.effective_section(section, account_cfg, fm.get("topic"))
     approved_sha = approval_mod.compute_approved_sha(
-        section=section, account=account_name, reply_to=fm.get("reply_to"),
+        section=effective, account=account_name, reply_to=fm.get("reply_to"),
         topic=fm.get("topic"), publish_at=fm.get("publish_at"), **options)
 
     # **予定時刻を過ぎた原稿の扱いを、承認の前に言う**（nigamilab セッション指摘
@@ -281,8 +282,7 @@ def _prepare_one(path: str):
         "publish_at": fm.get("publish_at"),
         "topic": queuefile.normalize_topic(fm.get("topic")),
         "reply_to": fm.get("reply_to"),
-        "text": tags_mod.prepared(media, section, queuefile.normalize_topic(fm.get("topic")),
-                                  hashtags=bool(account_cfg.get("hashtags", True))),
+        "text": effective,
         "location": (fm.get("location") or "").strip() or None,
         "location_id": options["location_id"],
         "share_to_instagram": options["share_to_instagram"],
@@ -473,6 +473,8 @@ def _prepare_bundle(path: str, text: str):
     hard = [p for p in problems if not p.startswith("warning:")]
     if hard:
         return None, f"{path}: lint に通りません（{hard[0]}）"
+    effective_segments = bundle_mod.effective_segments(
+        b.segments, account_cfg, b.front_matter.get("topic"))
 
     repo_dir = writeback_mod.repo_toplevel(path)
     rel_path = (os.path.relpath(os.path.realpath(path), os.path.realpath(repo_dir))
@@ -491,19 +493,19 @@ def _prepare_bundle(path: str, text: str):
     # Codex 最終条件 4「承認時と公開時にも拒否する」）。
     for row in frozen:
         i = row["index"]
-        if i > len(b.segments) or \
-                approval_mod.segment_sha(b.segments[i - 1]) != row["text_sha256"]:
+        if i > len(effective_segments) or \
+                approval_mod.segment_sha(effective_segments[i - 1]) != row["text_sha256"]:
             return None, (f"{path}: {i} 段目はすでに公開されています。"
                            f"**公開済みの段の本文は変えられません**"
                            f"（誤字修正でも公開履歴を書き換えません）")
 
     approved_sha = approval_mod.compute_bundle_sha(
-        segments=b.segments, account=account_name, topic=b.front_matter.get("topic"),
+        segments=effective_segments, account=account_name, topic=b.front_matter.get("topic"),
         publish_at=b.front_matter.get("publish_at"),
         continue_until=b.front_matter.get("continue_until"))
     return {
         "path": path, "kind": "bundle", "account": account_name,
-        "segments": b.segments, "frozen": frozen,
+        "segments": effective_segments, "frozen": frozen,
         "topic": b.front_matter.get("topic"),
         "publish_at": b.front_matter.get("publish_at"),
         "continue_until": b.front_matter.get("continue_until"),
@@ -2911,7 +2913,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--window-days", type=int, default=7)
     p_report.add_argument("--min-n", type=int, default=5)
     p_report.add_argument("--compare-previous", action="store_true", help="直前の同じ日数と24h条件を揃えて比較")
-    p_report.add_argument("--by", choices=("kind", "hour_band", "topic"), help="比較の層別")
+    p_report.add_argument("--by", choices=("kind", "hour_band", "topic", "tag"), help="比較の層別")
     p_report.add_argument("--json", action="store_true")
     p_report.set_defaults(func=analytics_report_mod.cmd_analytics_report)
 

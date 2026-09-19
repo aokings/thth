@@ -750,20 +750,22 @@ class MastodonAdapter(base.Adapter):
         trend_rows = [row for row in trends if isinstance(row, dict)]
         authors, co_tags = set(), collections.Counter()
         latest_at = None
+        latest_dt = None
         n = 0
         for status in statuses:
             if not isinstance(status, dict) or status.get("visibility") != "public":
                 continue
             stamp = status.get("created_at")
+            parsed = _parse_iso(stamp)
             if since:
-                try:
-                    if not isinstance(stamp, str) or jst.parse(stamp) < jst.parse(since):
-                        continue
-                except ValueError:
+                since_dt = _parse_iso(since)
+                if since_dt is None:
+                    raise AdapterError("since は ISO 時刻にしてください")
+                if parsed is None or parsed < since_dt:
                     continue
             n += 1
-            if isinstance(stamp, str) and (latest_at is None or stamp > latest_at):
-                latest_at = stamp
+            if parsed is not None and (latest_dt is None or parsed > latest_dt):
+                latest_dt, latest_at = parsed, stamp
             account = status.get("account") if isinstance(status.get("account"), dict) else {}
             author = account.get("id") or account.get("acct")
             if author:
@@ -789,6 +791,18 @@ class MastodonAdapter(base.Adapter):
                 "history_scope": "instance_view", "candidates": candidate_summary,
                 "trending_tags": [{"tag": row.get("name"), "history": self._tag_history(row)}
                                   for row in trend_rows if isinstance(row.get("name"), str)]}
+
+    def observed_tags(self, post_id: str) -> list[str]:
+        """Tags actually returned on the status at collection time."""
+        status = self._get_json("/api/v1/statuses/" + urllib.parse.quote(str(post_id), safe=""),
+                                "投稿のタグ")
+        if status.get("visibility") not in READABLE_VISIBILITIES:
+            raise AdapterError("投稿のタグ: 公開範囲を確認できません")
+        raw = status.get("tags")
+        if not isinstance(raw, list):
+            raise AdapterError("投稿のタグ: tags の配列がありません")
+        return sorted({row["name"] for row in raw if isinstance(row, dict)
+                       and isinstance(row.get("name"), str) and row["name"]})
 
     def inbox(self, *, since: str | None = None) -> list:
         """利用者から始まった会話（**WhatsApp の芽**・設計 v2 §4.2）。
