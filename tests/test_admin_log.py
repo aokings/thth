@@ -105,3 +105,13 @@ def test_late_log_failure_restores_original(root, monkeypatch):
     monkeypatch.setattr(admin_log.os,'write',lambda *a: (_ for _ in ()).throw(OSError('disk full')))
     assert account_cli.cmd_add(args(force=True,by='second',handle='changed'))==2
     assert path.read_bytes()==before
+
+def test_fsync_failure_keeps_record_and_change_consistent(root, monkeypatch, capsys):
+    assert account_cli.cmd_add(args())==0
+    monkeypatch.setattr(admin_log.os,'fsync',lambda *a: (_ for _ in ()).throw(OSError('fsync failed')))
+    assert account_cli.cmd_add(args(force=True,by='second',handle='changed'))==2
+    path=root/'accounts/test-threads.json'
+    assert json.loads(path.read_text())['handle']=='changed'
+    rows,broken=admin_log.read()
+    assert rows[-1]['diff']['handle']==['tester','changed'] and broken==0
+    assert 'durability_unconfirmed' in capsys.readouterr().err

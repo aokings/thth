@@ -7,16 +7,20 @@ import stat
 from . import accounts, handoff_cursor, jst, redact
 
 class AdminLogError(Exception):
-    pass
+    def __init__(self, message, *, appended=False):
+        super().__init__(message)
+        self.appended = appended
 
 
 def _emit(fd, data):
+    written = 0
     try:
-        if os.write(fd, data) != len(data):
+        written = os.write(fd, data)
+        if written != len(data):
             raise OSError('admin_log_short_write')
         os.fsync(fd)
     except OSError as exc:
-        raise AdminLogError('admin_log_write_failed') from exc
+        raise AdminLogError('admin_log_write_failed', appended=written > 0) from exc
 
 
 EVENTS = frozenset(('account_added', 'account_updated', 'account_removed', 'token_set',
@@ -66,7 +70,7 @@ def append(event, account, cfg, *, by, via='cli', diff=None, run_id=None):
                       if SECRET.search(k) else clean(v)) for k, v in row['diff'].items()}
     if _active_fd.get() is not None:
         data = (json.dumps(row, ensure_ascii=False, allow_nan=False) + '\n').encode()
-        _emit(_active_fd.get(), data)
+        _active_events.get().append(data)
         return row
     directory = handoff_cursor._directory('_admin', create=True)
     try:
@@ -134,6 +138,7 @@ import contextvars
 import functools
 import fcntl
 _active_fd = contextvars.ContextVar('admin_event_fd', default=None)
+_active_events = contextvars.ContextVar('admin_event_buffer', default=None)
 
 
 @contextlib.contextmanager
@@ -151,9 +156,14 @@ def transaction():
             raise ValueError('admin_log_unreadable')
         fcntl.flock(fd, fcntl.LOCK_EX)
         reset = _active_fd.set(fd)
+        events = []
+        reset_events = _active_events.set(events)
         try:
             yield
+            if events:
+                _emit(fd, b''.join(events))
         finally:
+            _active_events.reset(reset_events)
             _active_fd.reset(reset)
     finally:
         if fd is not None:
@@ -191,7 +201,11 @@ def guarded(function):
             with transaction():
                 mutated = True
                 return function(*args, **kwargs)
-        except (OSError, ValueError, AdminLogError):
+        except (OSError, ValueError, AdminLogError) as exc:
+            if isinstance(exc, AdminLogError) and exc.appended:
+                import sys
+                print("admin_change_recorded_durability_unconfirmed: change retained; inspect account and log before retry", file=sys.stderr)
+                return 2
             # A late append/fsync failure must not leave an unlogged mutation.
             # Restoration uses a private atomic replacement and retains exact bytes/mode.
             if mutated and path is not None:
