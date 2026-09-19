@@ -438,6 +438,10 @@ def cmd_add(args) -> int:
                   f"（ディレクトリでなければなりません）", file=sys.stderr)
         return 2
 
+    if args.media == 'mastodon':
+        from . import scopes
+        print(scopes.mastodon_guidance(name), file=sys.stderr)
+
     if args.json:
         print(json.dumps({"path": path, "account": {k: v for k, v in data.items() if k != "notification_email"}}, ensure_ascii=False))
         return 0

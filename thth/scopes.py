@@ -20,3 +20,12 @@ DEFAULT_SCOPES = [
     "threads_read_replies",
     "threads_share_to_instagram",
 ]
+
+
+MASTODON_SCOPES = ['read:accounts', 'read:statuses', 'read:search',
+                   'read:notifications', 'write:statuses']
+
+
+def mastodon_guidance(account):
+    return ('Mastodon に必要な scope: ' + ' '.join(MASTODON_SCOPES) +
+            f'。アプリ設定を確認し thth token set {account} --by … で再設定してください')

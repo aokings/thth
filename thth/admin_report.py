@@ -495,6 +495,19 @@ def extra(operation, *, account, via, now, since_last_read=False, mark_read=Fals
                 actual=token['scopes']
                 token.update(account=name,default_scopes=expected,
                              missing_scopes=sorted(set(expected)-set(actual)) if expected is not None and actual is not None else None)
+                if cfg.get('media') == 'mastodon':
+                    observation = doctor.read_observation(name)
+                    token['default_scopes'] = scopes.MASTODON_SCOPES
+                    token['recorded_scopes_source'] = token['scopes_source']
+                    token['scopes_source'] = 'probe' if observation else None
+                    token['scopes_observed_at'] = observation['probed_at'] if observation else None
+                    token['missing_scopes_inferred'] = True
+                    probes = observation['probes'] if observation else []
+                    relevant = [p for p in probes if p.get('permission') in scopes.MASTODON_SCOPES]
+                    missing = sorted({p['permission'] for p in relevant if p.get('failure') == 'permission'})
+                    reached = {p['permission'] for p in relevant if p.get('ok') is True}
+                    token['missing_scopes'] = missing if missing or reached else None
+                    token['unknown_scopes'] = sorted(set(scopes.MASTODON_SCOPES) - reached - set(missing))
                 history=runs.read_runs(accounts.state_dir_for(name))
                 maintenance=[r for r in history if isinstance(r,dict) and r.get('account')==name and r.get('action')=='maintain' and (r.get('refreshed') is True or r.get('error')=='refresh_failed')]
                 last=maintenance[-1] if maintenance else None

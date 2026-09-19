@@ -877,6 +877,10 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
         _out(str(e), log=log)
         return 2
 
+    if account_cfg.get('media') == 'mastodon':
+        from . import scopes
+        print(scopes.mastodon_guidance(account_name), file=sys.stderr)
+
     token_path = account_cfg["token"]
     if os.path.exists(token_path) and not force:
         _out(f"既に token があります（{account_name}）。**入れ替える**なら --force を"

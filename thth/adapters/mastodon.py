@@ -74,7 +74,12 @@ INSTANCE_ENV = "THTH_MASTODON_INSTANCE"
 # T0（境界）が `base.AdapterError`（`RuntimeError` の子）を入れた。**まだ入って
 # いない木でも動くように**ここで解決する（新旧どちらでも `except RuntimeError` の
 # 網に入る）。T0 が main に入り切ったら `base.AdapterError` に直接書き換えてよい。
-AdapterError = getattr(base, "AdapterError", RuntimeError)
+class AdapterError(base.AdapterError):
+    def __init__(self, message, *, failure=None, http_status=None):
+        super().__init__(message)
+        self.failure = failure
+        self.http_status = http_status
+
 
 
 # --------------------------------------------------------------------------
@@ -353,6 +358,17 @@ class MastodonAdapter(base.Adapter):
             raw = resp.read()
         return json.loads(raw) if raw else {}
 
+    def _http_error(self, path, what, error):
+        detail = f"{what}: HTTP {error.code} {self._scrub(error.reason)}"
+        if error.code == 403:
+            detail += '（permission: アクセスが拒否されました）'
+            if path.startswith('/api/v2/search'):
+                detail += ('。token の read:search を確認してください。scope 不足のほか、'
+                           'アカウント制限等でも拒否されます。アプリ設定で必要なら追加し '
+                           'thth token set <account> --by … で再設定してください')
+        return AdapterError(detail, failure='permission' if error.code == 403 else None,
+                            http_status=error.code)
+
     def _get_json(self, path: str, what: str) -> dict:
         """GET して object を返す。**取れなかったら失敗として上げる**（作法 5）。
 
@@ -362,7 +378,7 @@ class MastodonAdapter(base.Adapter):
         try:
             body = self._request("GET", path)
         except urllib.error.HTTPError as e:
-            raise AdapterError(f"{what}: HTTP {e.code} {self._scrub(e.reason)}") from None
+            raise self._http_error(path, what, e) from None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
             raise AdapterError(f"{what}: {self._scrub(e)}") from None
         if not isinstance(body, dict):
@@ -382,7 +398,7 @@ class MastodonAdapter(base.Adapter):
         try:
             body = self._request("GET", path)
         except urllib.error.HTTPError as e:
-            raise AdapterError(f"{what}: HTTP {e.code} {self._scrub(e.reason)}") from None
+            raise self._http_error(path, what, e) from None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
             raise AdapterError(f"{what}: {self._scrub(e)}") from None
         if isinstance(body, dict) and body.get("error"):
@@ -905,7 +921,7 @@ class MastodonAdapter(base.Adapter):
 
         `get` は取得口の差し替え（doctor が「書き込みの口を持たない」ことを自分の
         source への検査で担保しているため・T0 の `base.Adapter.probe` 参照）。
-        **Mastodon 側は使わない**——ここで叩く 2 つは GET だけで、doctor の
+        **Mastodon 側は使わない**——ここで叩く口は GET だけで、doctor の
         `_get(base_url, path, params, token)`（`access_token` を**クエリに載せる**
         Threads 向けの形）とは認可の載せ方が違う。**トークンをクエリに移してまで
         口を共有しない。**
@@ -937,6 +953,21 @@ class MastodonAdapter(base.Adapter):
                             "permission": "（認可不要）", "key": "instance",
                             "ok": True, "detail": f"max_characters={limit}",
                             "body": None})
+        for key, label, permission, path, is_list in (
+            ('search', '投稿の検索', 'read:search', '/api/v2/search?type=statuses&q=thth&limit=1', False),
+            ('notifications', '通知の取得', 'read:notifications', '/api/v1/notifications?limit=1', True),
+        ):
+            try:
+                (self._get_list if is_list else self._get_json)(path, label)
+            except Exception as exc:
+                results.append(dict(name=key, key=key, label=label, permission=permission,
+                                    ok=False, detail=self._scrub(exc)[:500], body=None,
+                                    failure=getattr(exc, 'failure', None),
+                                    http_status=getattr(exc, 'http_status', None)))
+            else:
+                results.append(dict(name=key, key=key, label=label, permission=permission,
+                                    ok=True, detail='GET 到達（scope の推定）', body=None,
+                                    failure=None, http_status=200))
         return results
 
     def char_limit(self) -> int:

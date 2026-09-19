@@ -207,7 +207,7 @@ def recorded_scopes_line(rec: dict | None) -> str:
     return f"記録上の scope: {rec['count']} 個（source={rec.get('source')}）"
 
 
-OBSERVATION_FIELDS = ('key', 'label', 'permission', 'ok', 'detail', 'status',
+OBSERVATION_FIELDS = ('failure', 'key', 'label', 'permission', 'ok', 'detail', 'status',
                       'http_status', 'http', 'reason')
 
 

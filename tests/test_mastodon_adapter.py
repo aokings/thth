@@ -204,6 +204,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             else:
                 self._fail(mode)
             return
+        if path == "/api/v1/notifications":
+            self._json(200, [])
+            return
         if path == "/api/v1/accounts/verify_credentials":
             mode = self.behavior.get("whoami", "ok")
             if mode == "ok":
@@ -687,7 +690,7 @@ def test_char_limitは読めなければ既定に黙って落とさない():
 def test_probeはverify_credentialsとinstanceを見る():
     with fake_mastodon() as fake:
         probes = _adapter(fake).probe()
-    assert [p["name"] for p in probes] == ["verify_credentials", "instance"]
+    assert [p["name"] for p in probes] == ["verify_credentials", "instance", "search", "notifications"]
     assert all(p["ok"] for p in probes)
     assert "nigamilab" in probes[0]["detail"]
     assert "1234" in probes[1]["detail"]
@@ -696,7 +699,7 @@ def test_probeはverify_credentialsとinstanceを見る():
 def test_probeは失敗しても落ちずに理由を返す():
     with fake_mastodon({"whoami": "4xx", "instance": "broken"}) as fake:
         probes = _adapter(fake).probe()
-    assert [p["ok"] for p in probes] == [False, False]
+    assert [p["ok"] for p in probes] == [False, False, True, True]
     assert TOKEN not in json.dumps(probes, ensure_ascii=False)
 
 
@@ -797,7 +800,7 @@ def test_probeはgetを渡されても受け取る():
     """doctor は取得口を渡す（T0）。Mastodon 側は使わないが、**署名は合わせる**。"""
     with fake_mastodon() as fake:
         probes = _adapter(fake).probe(get=lambda *a, **k: {})
-    assert [p["ok"] for p in probes] == [True, True]
+    assert [p["ok"] for p in probes] == [True, True, True, True]
 
 
 def test_例外はAdapterErrorでRuntimeErrorの網にも入る():
