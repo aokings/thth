@@ -1,6 +1,10 @@
 """2.8.0 tag contracts against local fixtures only."""
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from thth import cli, lint, tags
 from thth.adapters import base, bluesky, mastodon
 from tests.test_bluesky_adapter import _adapter, fake_bluesky
@@ -110,3 +114,37 @@ def test_tag_limits_do_not_treat_url_fragment_as_a_hashtag():
                            {"hashtags": True, "max_hashtags": 1})
     assert "タグが Bluesky 上限" in tags.errors(
         "bluesky", "#" + "あ" * 65, None, {"hashtags": True})[0]
+
+
+def test_bluesky_tag_search_paginates_and_keeps_only_aggregates(monkeypatch):
+    adapter = bluesky.BlueskyAdapter(identifier="fixture", app_password="fixture")
+    calls = []
+    pages = [
+        {"posts": [
+            {"uri": "at://one", "author": {"did": "did:a", "handle": "secret-user"},
+             "record": {"text": "secret-body", "createdAt": "2026-09-19T01:00:00Z",
+                        "facets": [{"features": [{"$type": "app.bsky.richtext.facet#tag", "tag": "茶"},
+                                                  {"$type": "app.bsky.richtext.facet#tag", "tag": "苦味"}]}]}},
+            {"uri": "at://two", "author": {"did": "did:a", "handle": "secret-user"},
+             "record": {"text": "secret-body", "createdAt": "2026-09-19T02:00:00Z",
+                        "tags": ["茶", "旨味"]}}], "cursor": "next"},
+        {"posts": [{"uri": "at://two"},
+                   {"uri": "at://three", "author": {"did": "did:b", "handle": "secret-user"},
+                    "record": {"text": "secret-body", "tags": ["茶", "苦味"]}}]},
+    ]
+    def get(method, nsid, *, params):
+        calls.append(params)
+        return pages[len(calls) - 1]
+    monkeypatch.setattr(adapter, "_request", get)
+    result = adapter.tag_search("茶", tags=["茶"], sort="latest", pages=4,
+                                since="2026-09-18", until="2026-09-20")
+    assert calls[0] == {"q": "茶", "tag": ["茶"], "sort": "latest", "limit": 100,
+                        "since": "2026-09-18", "until": "2026-09-20"}
+    assert calls[1]["cursor"] == "next"
+    assert result["n"] == 3 and result["distinct_authors"] == 2
+    assert result["tagged_n"] == 3 and result["tagged_share"] == 1
+    assert result["co_tags"] == [{"tag": "苦味", "n": 2}, {"tag": "旨味", "n": 1}]
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert "secret-body" not in serialized and "secret-user" not in serialized
+    with pytest.raises(Exception, match="q は空"):
+        adapter.tag_search("", tags=["茶"])
