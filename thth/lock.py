@@ -15,10 +15,38 @@ mkdir ロック（プロセスの生死を pid ファイルで確認し、死ん
 from __future__ import annotations
 
 import os
+import time
+import math
+import argparse
 
 
 class LockBusy(Exception):
     """ロックがすでに別プロセスに取られている。"""
+
+
+def wait_seconds(value):
+    try:
+        seconds = float(value)
+    except (ValueError, TypeError):
+        raise argparse.ArgumentTypeError('--wait は 0 以上の秒数です')
+    if not math.isfinite(seconds) or seconds < 0:
+        raise argparse.ArgumentTypeError('--wait は有限の 0 以上の秒数です')
+    return seconds
+
+
+def acquire(lock, seconds=0):
+    """Retry only contention; preserve immediate mode and one monotonic deadline."""
+    seconds = wait_seconds(seconds)
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            lock.acquire()
+            return
+        except LockBusy:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LockBusy('ロック取得失敗。--wait <秒> で空くのを待てます') from None
+            time.sleep(min(0.05, remaining))
 
 
 class AccountLock:

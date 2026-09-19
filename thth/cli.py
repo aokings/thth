@@ -348,10 +348,10 @@ def cmd_approve(args) -> int:
 
     repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
     try:
-        repo_lock.acquire()
+        lock_mod.acquire(repo_lock, getattr(args, "wait", 0))
     except lock_mod.LockBusy:
         print(f"いまこの repo を別の実行が使っています（{repo_dir}）。"
-              "少し待ってからもう一度 thth approve してください。", file=sys.stderr)
+              "--wait <秒> で空くのを待てます。", file=sys.stderr)
         return 1
 
     try:
@@ -734,10 +734,10 @@ def cmd_revoke(args) -> int:
 
     repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
     try:
-        repo_lock.acquire()
+        lock_mod.acquire(repo_lock, getattr(args, "wait", 0))
     except lock_mod.LockBusy:
         print(f"いまこの repo を別の実行が使っています（{repo_dir}）。"
-              "少し待ってからもう一度 thth revoke してください。", file=sys.stderr)
+              "--wait <秒> で空くのを待てます。", file=sys.stderr)
         return 1
 
     try:
@@ -979,7 +979,7 @@ def cmd_replies(args) -> int:
     取り直し = None
     if getattr(args, "refresh", False):
         取り直し = collect_mod.refresh_replies(
-            args.account, post_id=args.post,
+            args.account, post_id=args.post, wait=getattr(args, "wait", 0),
             log=lambda line: print(line, file=sys.stderr))
 
     try:
@@ -2510,7 +2510,7 @@ def cmd_send(args) -> int:
         args.account, text=text, topic=args.topic, reply_to=args.reply_to,
         reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
         found_by=args.found_by,
-        production_flag=args.production, confirm=args.confirm, log=print)
+        production_flag=args.production, confirm=args.confirm, log=print, wait=getattr(args, "wait", 0))
     return result.exit_code
 
 
@@ -2857,6 +2857,7 @@ def build_parser() -> argparse.ArgumentParser:
                            help="一段目が表示した digest。これが無いと承認しない")
     p_approve.add_argument("--by", default=None,
                            help="誰が承認したか（front-matter と commit に残す）")
+    p_approve.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
     p_approve.set_defaults(func=cmd_approve)
 
     p_account = sub.add_parser(
@@ -2875,6 +2876,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_revoke.add_argument("--reason", default=None, help="なぜ止めたか（記録に残す）")
     p_revoke.add_argument("--by", default=None, help="誰が止めたか（記録に残す）")
     p_revoke.add_argument("--json", action="store_true")
+    p_revoke.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
     p_revoke.set_defaults(func=cmd_revoke)
 
     p_posts = sub.add_parser(
@@ -2892,6 +2894,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_replies.add_argument(
         "--refresh", action="store_true",
         help="刻みを待たずに会話を取り直す（**刻みは進めません**）")
+    p_replies.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
     p_replies.set_defaults(func=cmd_replies)
 
     p_measured = sub.add_parser(
@@ -3137,6 +3140,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="本番で出す（台帳 production: true が無ければ dry-run のまま）")
     p_send.add_argument("--confirm", default=None,
                         help="dry-run が表示した digest。--production のときはこれが一致しないと送らない")
+    p_send.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
     p_send.set_defaults(func=cmd_send)
 
     p_doctor = sub.add_parser(

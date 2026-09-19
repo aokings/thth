@@ -135,7 +135,7 @@ def _default_adapter_factory(account_cfg: dict, token: dict | None) -> adapter_b
 
 
 @contextlib.contextmanager
-def _account_locks(account_name: str, account_cfg: dict, state_dir: str):
+def _account_locks(account_name: str, account_cfg: dict, state_dir: str, wait=0):
     """1 アカウント分の実行の前に、**repo → account の順で**ロックを取る
     （外部レビュー §2・受け入れ 7・8）。
 
@@ -155,9 +155,10 @@ def _account_locks(account_name: str, account_cfg: dict, state_dir: str):
     repo_lock = lock_mod.AccountLock(repo_lock_path)
     account_lock = lock_mod.AccountLock(account_lock_path)
 
-    repo_lock.acquire()
+    deadline = lock_mod.time.monotonic() + lock_mod.wait_seconds(wait)
+    lock_mod.acquire(repo_lock, wait)
     try:
-        account_lock.acquire()
+        lock_mod.acquire(account_lock, max(0, deadline - lock_mod.time.monotonic()))
         try:
             yield
         finally:
@@ -858,7 +859,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
                reply_to_author_key: str | None = None, found_by: str | None = None,
                production_flag: bool = False,
                confirm: str | None = None, adapter_factory=None, log=None,
-               now=None) -> ThrowResult:
+               now=None, wait=0) -> ThrowResult:
     """`thth send`（**同席の様態**・設計 §3.7）。queue を通さずその場で 1 本出す。
 
     対話の中で masaru が本文を読んで「出して」と言ったときの経路。承認は既に
@@ -897,19 +898,24 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
             reply_to=reply_to, reply_to_root=reply_to_root,
             reply_to_author_key=reply_to_author_key, found_by=found_by,
             production_flag=production_flag, confirm=confirm,
-            adapter_factory=adapter_factory, log=log, now=now,
+            adapter_factory=adapter_factory, log=log, now=now, wait=wait,
         )
     except lock_mod.LockBusy:
-        msg = f"{account_name} は既に実行中です（ロック取得失敗）"
+        msg = f"{account_name} は既に実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます"
         log(msg)
         return ThrowResult(exit_code=1, mode="rehearsal", action="locked", message=msg)
 
 
 def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, reply_to,
                   reply_to_root=None, reply_to_author_key=None, found_by=None,
-                  production_flag, confirm, adapter_factory, log, now) -> ThrowResult:
-    with _account_locks(account_name, account_cfg, state_dir):
-        existing_inflight = inflight_mod.read(state_dir)
+                  production_flag, confirm, adapter_factory, log, now, wait=0) -> ThrowResult:
+    def record(*args, **kwargs):
+        if production_flag:
+            _append_run(*args, **kwargs)
+    locks = (_account_locks(account_name, account_cfg, state_dir, wait=wait)
+             if production_flag else contextlib.nullcontext())
+    with locks:
+        existing_inflight = inflight_mod.read(state_dir) if production_flag else None
         if existing_inflight is not None:
             msg = f"inflight が残っています: {existing_inflight.get('file')}"
             log(msg)
@@ -930,7 +936,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                        f"（位置 {index}・U+{codepoint:04X}）。送信しません")
                 log(msg)
                 error = f"control_char({field},U+{codepoint:04X})"
-                _append_run(state_dir, account_name, run_id, mode, "skip", None, None,
+                record(state_dir, account_name, run_id, mode, "skip", None, None,
                             now, status="error", error=error)
                 return ThrowResult(exit_code=1, mode=mode, action="skip",
                                    message=msg, error=error)
@@ -956,7 +962,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             msg = (f"長すぎます（{n} 字・上限 {limit} 字）。切り詰めません。\n"
                    f"分けるかどうかは `thth forms`")
             log(msg)
-            _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+            record(state_dir, account_name, run_id, mode, "skip", None, None, now,
                         status="error", error=f"too_long({n})")
             return ThrowResult(exit_code=1, mode=mode, action="skip", message=msg)
 
@@ -966,7 +972,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                          else tags_mod.topic_error(media, topic_value))
             if topic_err is not None:
                 log(f"トピックが不正です: {topic_err}")
-                _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                record(state_dir, account_name, run_id, mode, "skip", None, None, now,
                             status="error", error=topic_err)
                 return ThrowResult(exit_code=1, mode=mode, action="skip", message=topic_err)
 
@@ -975,7 +981,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         if tag_issues:
             msg = tag_issues[0]
             log(msg)
-            _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+            record(state_dir, account_name, run_id, mode, "skip", None, None, now,
                         status="error", error=msg)
             return ThrowResult(exit_code=1, mode=mode, action="skip", message=msg)
 
@@ -991,7 +997,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                 log(f"トピック: {topic_value}")
             log(queuefile.length_line(media, effective, account_cfg))
             log(f"digest: {digest}")
-            _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+            record(state_dir, account_name, run_id, mode, "skip", None, None, now,
                         status="ok", error=None)
             return ThrowResult(exit_code=0, mode=mode, action="skip",
                                 message="dry-run: 投げるはずの本文をログに出した", digest=digest)
@@ -1008,7 +1014,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                 msg = "digest が一致しないので送信しません"
                 error = "confirm_mismatch"
             log(msg)
-            _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+            record(state_dir, account_name, run_id, mode, "skip", None, None, now,
                         status="error", error=error)
             return ThrowResult(exit_code=1, mode=mode, action="skip", message=msg, digest=digest)
 
@@ -1031,11 +1037,11 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                 # 出たか分からない → inflight を残して人を呼ぶ（§3.5）
                 msg = "公開の結果が分からないので inflight を残します"
                 log(msg)
-                _append_run(state_dir, account_name, run_id, mode, "post", None, None, now,
+                record(state_dir, account_name, run_id, mode, "post", None, None, now,
                             status="error", error=err, api_diagnostic=detail_data)
                 return ThrowResult(exit_code=1, mode=mode, action="inflight", message=msg, error=err, api_diagnostic=detail_data)
             inflight_mod.clear(state_dir)
-            _append_run(state_dir, account_name, run_id, mode, "post", None, None, now,
+            record(state_dir, account_name, run_id, mode, "post", None, None, now,
                         status="error", error=err, api_diagnostic=detail_data)
             return ThrowResult(exit_code=1, mode=mode, action="post",
                                 message="公開に失敗しました", error=err, api_diagnostic=detail_data)
@@ -1056,7 +1062,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             msg = ("媒体が返した post_id が台帳に書けない形です"
                    "（記録できないので inflight を残します・再送はしません）")
             log(msg)
-            _append_run(state_dir, account_name, run_id, mode, "post", None, None, now,
+            record(state_dir, account_name, run_id, mode, "post", None, None, now,
                         status="error", error="unusable_post_id")
             inflight_mod.update(state_dir, mismatch_fields=["post_id"])
             return ThrowResult(exit_code=1, mode=mode, action="inflight", message=msg,
@@ -1088,7 +1094,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             reply_to_author_key=reply_to_author_key, found_by=found_by, adapter=adapter)
 
         inflight_mod.clear(state_dir)
-        _append_run(state_dir, account_name, run_id, mode, "post", None, result.post_id, now,
+        record(state_dir, account_name, run_id, mode, "post", None, result.post_id, now,
                     status="ok", error=None,
                     engagement_write_failed=engagement_write_failed,
                     engagement_author_lookup_failed=engagement_author_lookup_failed)

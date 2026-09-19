@@ -1179,7 +1179,7 @@ def _refresh_targets(account_name: str, account_cfg: dict, *, now, errors: list,
 
 
 def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
-                     post_id: str | None = None) -> dict:
+                     post_id: str | None = None, wait=0) -> dict:
     """**刻みを待たずに会話を取り直す**（`thth replies <account> --refresh`）。
 
     **定期取得と何が違うか**——対象の選び方・保存・重複除去は**同じものを使う**。
@@ -1236,12 +1236,12 @@ def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
         accounts_mod.repo_lock_path_for(repo_dir) if repo_backed
         else accounts_mod.account_lock_path_for(account_name))
     try:
-        repo_lock.acquire()
+        lock_mod.acquire(repo_lock, wait)
     except lock_mod.LockBusy:
         # **待たない。** 投稿を塞ぐより見送る（定期取得と同じ扱い）。
         out["skipped"] = "locked"
         log(f"別の実行が使っているので取り直しを見送ります: "
-            f"{repo_dir if repo_backed else account_name}")
+            f"{repo_dir if repo_backed else account_name}。--wait <秒> で空くのを待てます")
         return out
 
     replies_dir = accounts_mod.data_dirs(account_cfg, account_name)["replies"]

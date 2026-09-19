@@ -63,6 +63,7 @@ def register(sub) -> None:
     p.add_argument("--confirm", default=None,
                    help="一段目が表示した digest。これが無いと何もしない")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
     p.set_defaults(func=cmd_retract)
 
     p_loc = sub.add_parser(
@@ -283,7 +284,7 @@ def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
     # 別の実行が触らないように。
     state_dir = accounts_mod.state_dir_for(account_name)
     try:
-        with core._account_locks(account_name, account_cfg, state_dir):
+        with core._account_locks(account_name, account_cfg, state_dir, wait=getattr(args, "wait", 0)):
             repo_dir = None
             rel_path = None
             if record["source"] == "queue":
@@ -331,7 +332,7 @@ def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
                 wrote.append(sent_mod.path_for(state_dir, post_id))
     except lock_mod.LockBusy:
         return _fail(args, 1, f"{account_name} は既に実行中です（ロック取得失敗）。"
-                              "少し待ってからもう一度")
+                              "--wait <秒> で空くのを待てます")
 
     payload = {"ok": True, "retracted": True, "account": account_name, "post_id": post_id,
                "deleted_id": result.get("deleted_id"), "url": url,
