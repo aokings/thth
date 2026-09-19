@@ -100,15 +100,24 @@ def load_credentials(path: Path):
         credentials = []
         seen = set()
         for item in config["credentials"]:
-            if type(item) is not dict or set(item) != {"sha256", "expires_at", "revoked", "accounts"}:
+            if type(item) is not dict or set(item) - {"sha256", "expires_at", "revoked", "accounts", "scope"} or not {"sha256", "expires_at", "revoked", "accounts"} <= set(item):
                 raise ValueError("invalid_credential")
             digest = item["sha256"]
             if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
                     or digest in seen or type(item["revoked"]) is not bool
-                    or type(item["accounts"]) is not dict or not item["accounts"]):
+                    or type(item["accounts"]) is not dict or (not item["accounts"] and item.get("scope") != "admin")):
                 raise ValueError("invalid_credential")
             seen.add(digest)
-            context = ReportContext(item["accounts"])
+            scope = item.get("scope", "user")
+            allowed = item["accounts"]
+            if scope == "admin":
+                allowed = {}
+                for ledger in sorted((Path(root) / "accounts").glob("*.json")):
+                    if ledger.is_symlink() or not ledger.is_file():
+                        raise ValueError("invalid_registry")
+                    value = _json(ledger.read_bytes())
+                    allowed[ledger.stem] = value.get("project")
+            context = ReportContext(allowed, scope=scope)
             credentials.append((digest, _expiry(item["expires_at"]), item["revoked"], context))
         return root, credentials
     except (OSError, ValueError, TypeError, KeyError, RecursionError, OverflowError):

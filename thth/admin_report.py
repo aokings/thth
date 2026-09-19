@@ -36,13 +36,13 @@ def _scrub(value):
     if isinstance(value, str):
         return admin_log.MAIL.sub('[redacted-email]', redact.redact(value))
     if isinstance(value, dict):
-        return {_scrub(k): _scrub(v) for k, v in value.items()}
+        return {_scrub(k): ('[redacted]' if any(word in k.lower() for word in ('password', 'secret', 'access_token', 'refresh_token', 'authorization', 'email')) else _scrub(v)) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_scrub(v) for v in value]
     return value
 
 
-def _register(cfg):
+def _register(cfg, *, via="cli"):
     """Register only configured secret files; never enumerate the secret directory."""
     try:
         token = accounts.load_token(cfg)
@@ -52,7 +52,7 @@ def _register(cfg):
                     redact.register_secret(value)
     except (OSError, ValueError, TypeError):
         pass
-    for path in (cfg.get('env'), appenv.default_path()):
+    for path in (cfg.get('env'), appenv.default_path() if via == 'cli' else None):
         if path:
             try:
                 for value in appenv._parse_env_file(path).values():
@@ -158,13 +158,13 @@ def _account(name, now, probe=False, via='cli', detail=False, limit=20):
         pass
     if cfg is None or raw is None:
         return dict(account=name, ledger='unreadable', cannot_say=['ledger_unreadable'])
-    _register(cfg)
+    _register(cfg, via=via)
     row = {key: raw.get(key) for key in ('account', 'project', 'handle', 'instance')}
     row.update(account=name, medium=raw.get('media'), ledger='available', **{key: raw.get(key) for key in FIELDS})
     row['defaults'] = _defaults(cfg)
     row['repo'] = _repo(cfg)
-    row['provenance'] = {key: (raw.get('provenance') or {}).get(key) for key in PROVENANCE_FIELDS}
-    row['provenance_reason'] = None if raw.get('provenance') else 'recorded_before_2.9.0'
+    row['provenance'] = {key: (raw.get('provenance') if isinstance(raw.get('provenance'), dict) else {}).get(key) for key in PROVENANCE_FIELDS}
+    row['provenance_reason'] = None if isinstance(raw.get('provenance'), dict) else 'provenance_unreadable' if raw.get('provenance') is not None else 'recorded_before_2.9.0'
     row['token'] = _token(cfg, now)
     try:
         row['permissions'] = _permissions(name, probe)
@@ -180,7 +180,7 @@ def _account(name, now, probe=False, via='cli', detail=False, limit=20):
     try:
         from . import measured
         observations = [obs for post in measured.load(name, observation_metadata=True)['posts']
-                        for obs in post.get('observations', []) if isinstance(obs, dict)]
+                        for obs in post.get('rows', []) if isinstance(obs, dict)]
         eligible = [(jst.parse(obs.get('collected_at')), obs.get('marks')) for obs in observations
                     if jst.parse(obs.get('collected_at')) and jst.parse(obs.get('collected_at')) <= now and obs.get('marks')]
         row['last_reached_mark'] = max(eligible, key=lambda item: item[0])[1] if eligible else None
@@ -224,12 +224,8 @@ def _account(name, now, probe=False, via='cli', detail=False, limit=20):
         try:
             analysis = analytics_report.answer(name, now=now)['by_account'][name]
             row['analytics_collection'] = analysis['collection']
-            marks = analysis.get('posts', {}).get('marks_by_post', [])
-            reached = [(obs.get('collected_at'), mark) for post in marks for mark, obs in post.get('marks', {}).items() if obs]
-            row['last_reached_mark'] = max(reached)[1] if reached else None
         except (OSError, ValueError, TypeError, KeyError):
             row['analytics_collection'] = None
-            row['last_reached_mark'] = None
             row['cannot_say'].append('analytics_collection_unavailable')
     return _scrub(row)
 
@@ -264,7 +260,7 @@ def answer(operation='inventory', *, account=None, probe=False, via='cli', now=N
     if operation == 'log':
         # Register secrets before reading arbitrary historical diff text.
         for name in accounts.list_account_names():
-            try: _register(accounts.load_account(name))
+            try: _register(accounts.load_account(name), via=via)
             except (accounts.AccountError, ValueError, TypeError): pass
         result['events'], result['broken'] = admin_log.read(since=since, account=account, event=event)
     elif operation in ('inventory', 'account'):
@@ -351,9 +347,12 @@ def timer(name, *, via='cli'):
     return dict(observed_at=jst.iso(), units=units, timer_reason=None)
 
 
-def _release():
+def _release(via='cli'):
     from . import report, __version__
-    return dict(version=__version__, **report.release_summary(), app_env=appenv.describe())
+    env_path = Path(appenv.default_path())
+    allowed = via == 'cli' or env_path.resolve().is_relative_to(Path(accounts.thth_root()).resolve())
+    env = appenv.describe() if allowed else dict(exists=None, keys_present=None, mode_ok=None, reason='app_env_outside_report_root')
+    return dict(version=__version__, **report.release_summary(), app_env=env)
 
 
 def _snapshot(value):
@@ -398,6 +397,27 @@ def _diff(current, now, *, mark_read, by):
             not isinstance(value['snapshot'].get('by_account'),dict) or not isinstance(value['snapshot'].get('release'),dict)):
             raise ValueError('cursor_unreadable')
         admin_log.actor(value.get('by'))
+        for name, node in value['snapshot']['by_account'].items():
+            if not accounts.name_is_safe(name) or not isinstance(node, dict):
+                raise ValueError('cursor_unreadable')
+            allowed = {'production','token_obtained_at','token_present','token_expires_at','token_expiring','inflight','queue_counts','timers'}
+            if node != {'ledger':'unreadable'} and set(node) != allowed:
+                raise ValueError('cursor_unreadable')
+            if node == {'ledger':'unreadable'}:
+                continue
+            if any(node[k] is not None and type(node[k]) is not bool for k in ('production','token_present','token_expiring')):
+                raise ValueError('cursor_unreadable')
+            if any(node[k] is not None and (not isinstance(node[k],str) or not jst.parse(node[k])) for k in ('token_obtained_at','token_expires_at')):
+                raise ValueError('cursor_unreadable')
+            if node['inflight'] is not None and (not isinstance(node['inflight'],dict) or set(node['inflight']) != {'since','reason_code','next_action_code'}):
+                raise ValueError('cursor_unreadable')
+            counts=node['queue_counts']
+            if counts is not None and (not isinstance(counts,dict) or any(type(v) is not int or v < 0 for v in counts.values())):
+                raise ValueError('cursor_unreadable')
+            if not isinstance(node['timers'],dict) or any(not isinstance(k,str) or v is not None and not isinstance(v,str) for k,v in node['timers'].items()):
+                raise ValueError('cursor_unreadable')
+        if set(value['snapshot']['release']) != {'version','head'} or any(v is not None and not isinstance(v,str) for v in value['snapshot']['release'].values()):
+            raise ValueError('cursor_unreadable')
         previous, reason = value, None
     except FileNotFoundError:
         pass
@@ -427,7 +447,7 @@ def _diff(current, now, *, mark_read, by):
 
 def extra(operation, *, account, via, now, since_last_read=False, mark_read=False, by=None):
     if operation=='release':
-        return {'release':_release()}
+        return {'release':_release(via)}
     names = [account] if account else accounts.list_account_names()
     if operation=='timers':
         return {'by_account':{name:timer(name,via=via) for name in names}}
@@ -436,7 +456,7 @@ def extra(operation, *, account, via, now, since_last_read=False, mark_read=Fals
         rows=[]
         for name in names:
             try:
-                cfg=accounts.load_account(name);_register(cfg)
+                cfg=accounts.load_account(name);_register(cfg, via=via)
                 token=_token(cfg,now)
                 expected=scopes.DEFAULT_SCOPES if cfg.get('media')=='threads' else None
                 actual=token['scopes']

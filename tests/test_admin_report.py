@@ -94,3 +94,19 @@ def test_http_never_probes_or_marks_and_timers_cached_only(fixture,monkeypatch):
     assert admin_report.answer('timers',via='http',now=now)['by_account']['test-threads']['units'] is None
     with pytest.raises(ValueError):admin_report.answer('inventory',probe=True,via='http',now=now)
     with pytest.raises(ValueError):admin_report.answer('diff',since_last_read=True,mark_read=True,by='tester',via='http',now=now)
+
+@pytest.mark.parametrize('node',['bad',{'token':{'password':'FAKE_CURSOR_PASSWORD'}}])
+def test_corrupt_cursor_is_unreadable(fixture,node):
+    root,now,cfg=fixture
+    admin_report.answer('diff',since_last_read=True,mark_read=True,by='tester',now=now)
+    path=root/'state/_admin/admin_cursor.json';value=json.loads(path.read_text());value['snapshot']['by_account']['test-threads']=node;path.write_text(json.dumps(value))
+    result=admin_report.answer('diff',since_last_read=True,now=now)
+    assert result['cannot_say']==['cursor_unreadable'] and 'FAKE_CURSOR_PASSWORD' not in json.dumps(result)
+
+def test_bad_provenance_and_nested_secret_do_not_leak(fixture):
+    root,now,cfg=fixture
+    path=root/'accounts/test-threads.json';value=json.loads(path.read_text());value.update(provenance='bad',handle={'password':'FAKE_METADATA_PASSWORD'},production={'client_secret':'FAKE_METADATA_APP_SECRET'});path.write_text(json.dumps(value))
+    result=admin_report.answer(now=now)
+    text=json.dumps(result)
+    assert 'FAKE_METADATA_PASSWORD' not in text and 'FAKE_METADATA_APP_SECRET' not in text
+    assert result['by_account']['test-threads']['provenance_reason']=='provenance_unreadable'

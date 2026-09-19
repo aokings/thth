@@ -22,9 +22,10 @@ class ReportContext:
     """Host-trusted account -> project metadata, copied and immutable."""
 
     allowed_accounts: Mapping[str, str | None]
+    scope: str = "user"
 
     def __post_init__(self):
-        if not isinstance(self.allowed_accounts, Mapping):
+        if self.scope not in ("user", "admin") or not isinstance(self.allowed_accounts, Mapping):
             raise ReportServiceError("invalid_context")
         allowed = dict(self.allowed_accounts)
         for account, project in allowed.items():
@@ -44,6 +45,27 @@ def execute_report(context: ReportContext, request: dict) -> dict:
     if type(context) is not ReportContext or type(request) is not dict:
         raise ReportServiceError("invalid_request")
     operation = request.get("operation")
+    if isinstance(operation, str) and operation.startswith("admin_"):
+        if context.scope != "admin":
+            raise ReportServiceError("unsupported_operation")
+        from . import admin_report
+        name = operation[6:]
+        if name not in admin_report.OPERATIONS:
+            raise ReportServiceError("unsupported_operation")
+        options = {"account", "limit"} if name == "account" else {"account", "since", "event"} if name == "log" else {"since_last_read"} if name == "diff" else set()
+        if set(request) - {"operation"} - options:
+            raise ReportServiceError("invalid_request")
+        if "account" in request and request["account"] not in context.allowed_accounts:
+            raise ReportServiceError("scope_unavailable")
+        if "since_last_read" in request and type(request["since_last_read"]) is not bool:
+            raise ReportServiceError("invalid_options")
+        kwargs = {key: value for key, value in request.items() if key != "operation"}
+        if name == "diff":
+            kwargs.setdefault("since_last_read", True)
+        try:
+            return admin_report.answer(name, via="http", **kwargs)
+        except (OSError, ValueError, TypeError, KeyError, accounts.AccountError):
+            raise ReportServiceError("report_unavailable") from None
     if not isinstance(operation, str) or operation not in {"analytics_report", "operations_handoff"}:
         raise ReportServiceError("unsupported_operation")
     options = {"window_days", "min_n", "compare_previous", "by"} if operation == "analytics_report" else {"since_last_read"}

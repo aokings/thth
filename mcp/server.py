@@ -390,7 +390,7 @@ def validate_arguments(name: str, arguments) -> dict:
     **型が合っていること**（知らない鍵も断る——綴りを間違えたまま既定値で
     動いたことにしない）。判断はしない（中身の意味は CLI の仕事）。
     """
-    schema = _schema_for(name)
+    schema = next((tool["inputSchema"] for tool in ADMIN_TOOLS if tool["name"] == name), None) or _schema_for(name)
     if schema is None:
         return {}                     # 知らない道具は `call_tool()` が断る
     if arguments is None:
@@ -495,9 +495,56 @@ def _topic_stdin(arguments: dict, *, with_proposal: bool) -> tuple:
     return args, json.dumps(payload, ensure_ascii=False)
 
 
+ADMIN_TOOLS = [
+    {"name": "thth_admin_" + name, "description": "Read-only administrator " + name,
+     "inputSchema": {"type": "object", "properties":
+         ({"account": {"type": "string"}, "limit": {"type": "integer"}} if name == "account" else
+          {"account": {"type": "string"}, "since": {"type": "string"}, "event": {"type": "string"}} if name == "log" else
+          {"since_last_read": {"type": "boolean"}} if name == "diff" else {}),
+         "required": ["account"] if name == "account" else [], "additionalProperties": False}}
+    for name in ("inventory", "account", "log", "tokens", "release", "diff")]
+
+
+def admin_context():
+    """Authenticate the startup environment, rechecked on list and every call."""
+    import hashlib
+    import hmac
+    from datetime import datetime, timezone
+    from pathlib import Path
+    path = os.environ.get("THTH_REPORT_CREDENTIALS")
+    token = os.environ.get("THTH_REPORT_TOKEN")
+    if not path or not token:
+        return None
+    if APP_DIR not in sys.path:
+        sys.path.insert(0, APP_DIR)
+    from thth.report_http import load_credentials
+    from thth.report_isolation import validate_environment
+    try:
+        root, credentials = load_credentials(Path(path))
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        for expected, expiry, revoked, context in credentials:
+            if hmac.compare_digest(digest, expected) and not revoked and datetime.now(timezone.utc) < expiry and context.scope == "admin":
+                validate_environment(root, context.allowed_accounts)
+                return context
+    except (OSError, ValueError, TypeError):
+        pass
+    return None
+
+
 def call_tool(name: str, arguments: dict | None) -> dict:
     """CLI を呼んで結果を返すだけ。判断（条件分岐・整形）をここに書かない。"""
     arguments = arguments or {}
+    if isinstance(name, str) and name.startswith("thth_admin_"):
+        context = admin_context()
+        if context is None:
+            return {"content": [{"type": "text", "text": "unauthorized"}], "isError": True}
+        from thth.report_service import execute_report, ReportServiceError
+        try:
+            request = {"operation": name[len("thth_"):], **arguments}
+            result = execute_report(context, request)
+            return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
+        except (ValueError, TypeError, ReportServiceError):
+            return {"content": [{"type": "text", "text": "invalid_request"}], "isError": True}
     if name == "thth_lint":
         proc = run_cli(["lint", arguments["file"], "--json"])
         text = proc.stdout
@@ -709,7 +756,7 @@ def _handle_request(req: dict):
     if method == "notifications/initialized":
         return None
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": TOOLS}}
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": TOOLS + (ADMIN_TOOLS if admin_context() is not None else [])}}
     if method == "tools/call":
         params = req.get("params") or {}
         if not isinstance(params, dict):
