@@ -9,7 +9,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 版
 
-このソースの版は **2.7.0**。現在の設計は [自分の泉](docs/設計_自分の泉_2026-09-16.md)、導入は [自分の Meta アプリで動かす](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
+このソースの版は **2.9.0**。現在の設計は [自分の泉](docs/設計_自分の泉_2026-09-16.md)、導入は [自分の Meta アプリで動かす](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
 
 版の正本は `thth/VERSION`（`server.json` はテストで一致を強制）。開発中の `main` には未配布の変更も含まれます。インストール済みの版は `thth --version`、VM の版と revision は `thth board` で確認してください。
 
@@ -34,6 +34,12 @@ timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿
 **依存 0**。PyPI に公開済み・MCP registry に `io.github.aokings/thth` として登録済み）。
 
 **トピックの棚**（`thth topics`）: 観測者ごとに並ぶ・打ち消し `retract-note`・`history`。
+
+### v2.8.0: Bluesky／Mastodon のタグ
+
+台帳の `hashtags: true` では本文のタグと `topic` を使えます。`topic: 茶` は公開本文の末尾に `#茶` を付け、同じタグが既にあれば重ねません。`hashtags: false` ではタグを追加せず、`topic` が効かないことを警告します。`max_hashtags` は公開本文のタグの上限（省略時 3、0 以上の整数）です。承認の指紋はタグを含む公開本文を使うため、以前の本文で承認した原稿は `approval_stale` になり、再確認・再承認が必要です。
+
+`where`／`topics --search` の JSON は `by_tag` にタグ検索・観測の結果を分けます。ローカルの期間比較は `thth analytics-report <account> --compare-previous --by tag --json`。API で確認できたタグだけを使い、未観測はタグなしと混ぜません。媒体をまたぐ合算はしません。[利用手順](docs/使い方_プロジェクトのセッション向け_2026-09-09.md)・[2.8.0 リリースノート](docs/リリースノート_2.8.0_2026-09-19.md)。
 
 ### v2.7.0 の変更
 
@@ -107,7 +113,7 @@ mcp-name: io.github.aokings/thth
 
 ## 管理者の読み口（2.9.0）
 
-`thth admin inventory|account|log|tokens|timers|release|diff` は秘密値を出さない読み取り専用レポートです。開始時は `thth admin diff --since-last-read`、変化した account は `thth admin account <name>`、週1回 `thth admin tokens`。`--json` で構造化結果を取得できます。保存するのは `admin diff --since-last-read --mark-read --by <名前>` の明示時だけです。
+`thth admin inventory|account|log|tokens|timers|release|diff` は秘密値を出さない読み取り専用レポートです。開始時は `thth admin diff --since-last-read`、変化した account は `thth admin account <name>`、週1回 `thth admin tokens`。`--json` で構造化結果を取得できます。既読 cursor の保存は `admin diff --since-last-read --mark-read --by <名前>` の明示時だけです。VM の `admin timers` は観測を `state/_admin/timers.json` に保存します。`doctor <name>` と admin の明示的な `--probe` は秘密を除いた診断記録を `state/<name>/doctor.json` に保存します。HTTP／MCP は時刻付きの記録を読むだけで、観測・保存を実行しません。
 
 `account add`（`--force` の上書きも）・`auth`・`token set`・`token revoke` には `--by <名前>` が必須です。既存の作成来歴は上書きしません。`token revoke` はローカルcredential削除でありリモート側の認可取消ではありません。選定した管理変更は既定で管理者へ通知し、台帳の `notify_admin_on_change: false` で停止できます。
 
