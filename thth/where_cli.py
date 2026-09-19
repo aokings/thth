@@ -36,7 +36,7 @@ from . import accounts as accounts_mod
 from . import adapters as adapters_mod
 from . import after_cli as after_cli_mod
 from . import engagements as engagements_mod
-from . import jst
+from . import jst, read_window
 from . import redact as redact_mod
 from . import runs as runs_mod
 from . import threads_read_cli as threads_read_cli_mod
@@ -86,6 +86,7 @@ def _posts_with_preview(rows: list, replied) -> list:
     posts = threads_read_cli_mod.post_rows(rows, replied=replied)
     for row, post in zip(rows, posts):
         post["preview"] = threads_read_cli_mod._one_line(row.get("text"))
+        post["reply_count"] = threads_read_cli_mod.reply_count(row)
     return posts
 
 
@@ -115,7 +116,7 @@ def _my_history(account_name: str, word: str) -> tuple[dict | None, str | None]:
 
 
 def _account_node(account_name: str, words: list, *, search_type: str,
-                  limit: int, now) -> tuple[dict | None, Exception | str | None]:
+                  limit: int, now, since=None, exclude_engaged=False, max_per_author=None) -> tuple[dict | None, Exception | str | None]:
     """1 account 分の節。戻りは `(node, 理由)`——どちらか一方だけが非 `None`。
     台帳が読めない・token が無い・媒体に `keyword_search` が無いときは
     `node` が `None`（`by_account` に**入れない**・規約 (d)）。
@@ -128,6 +129,12 @@ def _account_node(account_name: str, words: list, *, search_type: str,
     続ける・単一 account でもここは変えない——「読めない」ではなく
     「この account ではこの機能が使えない」だから）。
     """
+    try:
+        floor = read_window.cutoff(since, now=now)
+    except ValueError as exc:
+        _reject(str(exc))
+    if max_per_author is not None and (isinstance(max_per_author, bool) or not isinstance(max_per_author, int) or max_per_author < 1):
+        _reject('max_per_author は 1 以上の整数です')
     try:
         account_cfg = accounts_mod.load_account(account_name)
     except accounts_mod.AccountError as e:
@@ -153,6 +160,12 @@ def _account_node(account_name: str, words: list, *, search_type: str,
         # **印が無いことを「返していない」にしない**（`post_rows()` と同じ規律）。
         node_cannot_say.append(f"「返信済み」印: {replied_why}")
 
+    eng_ledger = engagements_mod.load(account_cfg, account_name)
+    eng_rows = [r for r in eng_ledger['rows'] if r.get('account') == account_name
+                and r.get('medium') == media]
+    engaged = {r.get('author_key') for r in eng_rows if r.get('author_key')}
+    if exclude_engaged and eng_ledger['broken']:
+        node_cannot_say.append('engagements_unreadable: 除外対象の一部は不明です')
     by_word: dict = {}
     by_tag: list = []
     author_keys: set = set()
@@ -160,21 +173,24 @@ def _account_node(account_name: str, words: list, *, search_type: str,
         if media in ("bluesky", "mastodon"):
             tag = word.lstrip("#")
             try:
-                since = jst.iso(now - datetime.timedelta(hours=24))
+                tag_since = jst.iso(now - datetime.timedelta(hours=24))
                 if media == "bluesky":
                     pages = account_cfg.get("search_pages", 4)
                     tagged = adapter.tag_search(tag, tags=[tag],
                                                 sort="latest" if search_type == "RECENT" else "top",
-                                                since=since, until=jst.iso(now),
+                                                since=tag_since, until=jst.iso(now),
                                                 pages=pages, limit=limit)
                     tagged["tag"] = tag
                 else:
-                    tagged = adapter.tag_observation(tag, limit=min(limit, 40), since=since)
+                    tagged = adapter.tag_observation(tag, limit=min(limit, 40), since=tag_since)
+                tagged["window_basis"] = "independent_24h"
                 by_tag.append(tagged)
             except (adapter_base.AdapterError, RuntimeError, ValueError) as e:
                 node_cannot_say.append(f"{word}: タグの観測: {redact_mod.redact(str(e))}")
         try:
-            rows = adapter.keyword_search(word, search_type=search_type, limit=limit)
+            kwargs = {'search_type': search_type, 'limit': limit}
+            if floor is not None and media == 'bluesky':kwargs['since'] = jst.iso(floor)
+            rows = adapter.keyword_search(word, **kwargs)
         except adapter_base.PermissionMissing as e:
             node_cannot_say.append(f"{word}: {_permission_message(account_name, adapter, e)}")
             continue
@@ -192,6 +208,26 @@ def _account_node(account_name: str, words: list, *, search_type: str,
             node_cannot_say.append(f"{word}: {redact_mod.redact(str(e))}")
             continue
 
+        dropped = {'since': None if floor and media == 'bluesky' else 0,
+                   'exclude_engaged': 0, 'max_per_author': 0}
+        filtered, per_author = [], {}
+        for row in rows:
+            if floor is not None and media != 'bluesky':
+                stamp = jst.parse(row.get('timestamp'))
+                if stamp is None or stamp < floor:
+                    dropped['since'] += 1
+                    continue
+            key = row.get('author_key') or adapter_base.author_key(row.get('medium') or media, row.get('username'))
+            if exclude_engaged and key and key in engaged:
+                dropped['exclude_engaged'] += 1
+                continue
+            if max_per_author is not None and key:
+                if per_author.get(key, 0) >= max_per_author:
+                    dropped['max_per_author'] += 1
+                    continue
+                per_author[key] = per_author.get(key, 0) + 1
+            filtered.append(row)
+        rows = filtered
         material = threads_read_cli_mod.search_material(
             rows, q=word, search_type=search_type, limit=limit)
         material["medium"] = media
@@ -204,9 +240,11 @@ def _account_node(account_name: str, words: list, *, search_type: str,
         if history_reason:
             node_cannot_say.append(history_reason)
 
-        by_word[word] = {"posts": posts, "material": material, "my_history": my_history}
+        by_word[word] = {"posts": posts, "material": material, "my_history": my_history,
+                         "dropped": dropped,
+                         "window": {"since": jst.iso(floor) if floor else None,
+                                    "basis": "server_sortAt" if media == 'bluesky' else 'timestamp'}}
 
-    eng_rows = engagements_mod.records(account_cfg, account_name)
     # `last_reaction`（T3-2・設計 §2.3「要約」= met・last・last_reaction の
     # 3 つ）。計算は `after_cli.reaction_lookup()` の 1 か所だけ。
     summary = engagements_mod.author_summary(
@@ -250,7 +288,7 @@ def _resolve_names(*, account_name: str | None, project: str | None) -> tuple[li
 
 def answer(*, account_name: str | None = None, project: str | None = None,
           words: list, recent: bool = False, limit: int = DEFAULT_LIMIT,
-          now=None) -> dict:
+          now=None, since=None, exclude_engaged=False, max_per_author=None) -> dict:
     """`where_to_appear` の答え（設計「自分の泉」§2.3・§2.6）。**読むだけ。**"""
     if account_name and project:
         _reject("account と --project は同時に指定できません")
@@ -270,6 +308,12 @@ def answer(*, account_name: str | None = None, project: str | None = None,
         _reject(f"limit は 1〜{MAX_LIMIT} です: {limit!r}")
 
     now = now if now is not None else jst.now_jst()
+    try:
+        read_window.cutoff(since, now=now)
+    except ValueError as exc:
+        _reject(str(exc))
+    if max_per_author is not None and (type(max_per_author) is not int or max_per_author < 1):
+        _reject('max_per_author は 1 以上の整数です')
     search_type = "RECENT" if recent else "TOP"
 
     names, top_cannot_say = _resolve_names(account_name=account_name, project=project)
@@ -278,7 +322,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
     notes: list = []
     for name in names:
         node, reason = _account_node(name, words, search_type=search_type,
-                                     limit=limit, now=now)
+                                     limit=limit, now=now, since=since,
+                                     exclude_engaged=exclude_engaged, max_per_author=max_per_author)
         if node is None:
             if isinstance(reason, accounts_mod.AccountError) and project is None:
                 # **単一 account: そのまま投げ直す**（T5-2・`who_cli.answer()`
@@ -330,6 +375,8 @@ def _render_human(result: dict) -> None:
             authors = material["authors"]
             print(f"  語「{word}」  件数={material['n']}  異なり={authors['distinct']}"
                  f"  直近={material['latest_timestamp'] or '—'}")
+            if entry.get('dropped'):
+                print(f"    除外: {entry['dropped']}")
             history = entry["my_history"]
             if history:
                 print(f"    自分の履歴: n={history['n']}  反応あり={history['reacted']}")
@@ -389,6 +436,9 @@ def register(sub) -> None:
                    help=f"1 account・1 語あたりの上限（既定 {DEFAULT_LIMIT}）")
     p.add_argument("--json", action="store_true")
     p.add_argument("--word", action="append", default=[], help="検索語（繰り返し指定できます）")
+    p.add_argument('--since', default=None, help='検索期間（7d/1h/ISO）')
+    p.add_argument('--exclude-engaged', action='store_true')
+    p.add_argument('--max-per-author', type=int, default=None)
     p.set_defaults(func=cmd_where)
 
 
@@ -408,7 +458,8 @@ def cmd_where(args) -> int:
 
     try:
         result = answer(account_name=account_name, project=args.project, words=words,
-                        recent=args.recent, limit=args.limit)
+                        recent=args.recent, limit=args.limit, since=args.since,
+                        exclude_engaged=args.exclude_engaged, max_per_author=args.max_per_author)
     except accounts_mod.AccountError as e:
         # **単一 account が読めなければ loud reject**（T5-2・`who` と揃える）。
         # `--json` は人向けの文言でなく `{"error", "account"}` を出す——

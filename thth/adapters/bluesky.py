@@ -803,7 +803,7 @@ class BlueskyAdapter(base.Adapter):
         raise base.AdapterError('通知: 100 頁を超えたため全件を確認できません')
 
     def keyword_search(self, q: str, *, search_type: str = "TOP",
-                       limit: int = 25) -> list:
+                       limit: int = 25, since: str | None = None) -> list:
         """`GET app.bsky.feed.searchPosts`（**L2**・上の表・T2-1）。**1 頁だけ。**
 
         `search_type` は Threads と同じ 2 値（`TOP`→`sort=top`・`RECENT`→
@@ -825,6 +825,7 @@ class BlueskyAdapter(base.Adapter):
                 f"limit は 1〜{self.KEYWORD_SEARCH_MAX_LIMIT} です（{limit!r}）")
         params = {"q": q.strip(), "sort": self._SORT_BY_SEARCH_TYPE[search_type],
                   "limit": limit}
+        if since is not None:params["since"] = since
         body = self._request("GET", "app.bsky.feed.searchPosts", params=params)
         posts = body.get("posts")
         if not isinstance(posts, list):
