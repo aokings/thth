@@ -72,6 +72,21 @@ def errors(media: str, text: str, topic: str | None, cfg: dict | None) -> list[s
         nbytes = len(prepared(media, text, topic, hashtags=allowed).encode("utf-8"))
         if nbytes > 3000:
             out.append(f"length: bluesky は 3000 UTF-8 bytes 以内（{nbytes} bytes）")
+    if media in ("bluesky", "mastodon"):
+        maximum = cfg.get("max_hashtags", 3)
+        if type(maximum) is not int or maximum < 0:
+            out.append("max_hashtags: 0 以上の整数にしてください")
+        elif allowed:
+            effective = prepared(media, text, topic, hashtags=True)
+            found = spans(effective, topic)
+            if len(found) > maximum:
+                out.append(f"hashtag: 上限 {maximum} 個を超えています（{len(found)} 個）")
+            if media == "bluesky":
+                from .adapters.bluesky import count
+                for span in found:
+                    if count(span.tag) > 64 or len(span.tag.encode("utf-8")) > 640:
+                        out.append(f"hashtag: タグが Bluesky 上限を超えています（#{span.tag}）")
+                        break
     if topic is not None and media in ("bluesky", "mastodon"):
         issue = topic_error(media, topic)
         if issue:

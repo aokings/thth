@@ -91,3 +91,22 @@ def test_topic_limit_and_length_include_appended_tag(tmp_path, monkeypatch):
     assert error is None
     assert one["text"] == lint.preview_file(str(path))
     assert one["text"].endswith("\n#苦味")
+
+
+def test_max_hashtags_counts_topic_and_body_with_default_three():
+    assert not tags.errors("bluesky", "#茶 #珈琲", "苦味", {"hashtags": True})
+    assert "上限 3 個" in tags.errors(
+        "bluesky", "#茶 #珈琲 #山菜", "苦味", {"hashtags": True})[0]
+    assert "上限 1 個" in tags.errors(
+        "mastodon", "#茶", "苦味", {"hashtags": True, "max_hashtags": 1})[0]
+    assert tags.errors("bluesky", "本文", None,
+                       {"hashtags": True, "max_hashtags": True}) == [
+                           "max_hashtags: 0 以上の整数にしてください"]
+
+
+def test_tag_limits_do_not_treat_url_fragment_as_a_hashtag():
+    text = "https://example.invalid/#url #茶"
+    assert not tags.errors("bluesky", text, None,
+                           {"hashtags": True, "max_hashtags": 1})
+    assert "タグが Bluesky 上限" in tags.errors(
+        "bluesky", "#" + "あ" * 65, None, {"hashtags": True})[0]
