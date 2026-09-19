@@ -3272,5 +3272,10 @@ def main(argv=None) -> int:
         return topic_cli.dispatch(real_argv)
 
     parser = build_parser()
-    args = parser.parse_args(argv)
+    if real_argv and real_argv[0] == 'where':
+        commands = next(action for action in parser._actions
+                        if isinstance(action, argparse._SubParsersAction))
+        args = commands.choices['where'].parse_intermixed_args(real_argv[1:])
+    else:
+        args = parser.parse_args(argv)
     return args.func(args)

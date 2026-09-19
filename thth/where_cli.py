@@ -378,7 +378,7 @@ def register(sub) -> None:
         "where",
         help="次にどこへ絡みに行くか——検索の一覧に自分の履歴を重ねて返す"
              "（設計「自分の泉」§2.3・§2.6・読むだけ）")
-    p.add_argument("targets", nargs="+", metavar="ACCOUNT_OR_WORD",
+    p.add_argument("targets", nargs="*", metavar="ACCOUNT_OR_WORD",
                    help="<account> <語…>（1〜5 語）。--project のときは語だけ")
     p.add_argument("--project", default=None, metavar="P",
                    help="account の代わりに、この project の account 全部を対象にする")
@@ -387,6 +387,7 @@ def register(sub) -> None:
     p.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
                    help=f"1 account・1 語あたりの上限（既定 {DEFAULT_LIMIT}）")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--word", action="append", default=[], help="検索語（繰り返し指定できます）")
     p.set_defaults(func=cmd_where)
 
 
@@ -395,14 +396,14 @@ def cmd_where(args) -> int:
     as_json = bool(getattr(args, "json", False))
     if args.project:
         account_name = None
-        words = list(args.targets)
+        words = list(args.targets) + list(getattr(args, "word", []))
     else:
-        if len(args.targets) < 2:
+        if len(args.targets) < 1:
             print("account と語（1〜5 個）が要ります: thth where <account> <語…>"
                  "（project ごとなら --project P <語…>）", file=sys.stderr)
             return 2
         account_name = args.targets[0]
-        words = args.targets[1:]
+        words = args.targets[1:] + list(getattr(args, "word", []))
 
     try:
         result = answer(account_name=account_name, project=args.project, words=words,
