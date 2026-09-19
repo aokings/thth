@@ -148,3 +148,34 @@ def test_bluesky_tag_search_paginates_and_keeps_only_aggregates(monkeypatch):
     assert "secret-body" not in serialized and "secret-user" not in serialized
     with pytest.raises(Exception, match="q は空"):
         adapter.tag_search("", tags=["茶"])
+
+
+def test_mastodon_tag_observation_is_instance_scoped_and_aggregate(monkeypatch):
+    adapter = mastodon.MastodonAdapter(instance="https://instance.example", access_token="fixture")
+    requested = []
+    def get_list(path, what):
+        requested.append(path)
+        if "/timelines/tag/" in path:
+            return [{"id": "1", "visibility": "public", "content": "secret-body",
+                     "created_at": "2026-09-19T01:00:00Z",
+                     "account": {"id": "a", "acct": "secret-user"},
+                     "tags": [{"name": "茶"}, {"name": "苦味"}]},
+                    {"id": "2", "visibility": "private", "content": "secret-body"}]
+        return [{"name": "茶", "history": [{"day": "1789776000", "uses": "7",
+                                                "accounts": "4"}]}]
+    def get_json(path, what):
+        requested.append(path)
+        return {"hashtags": [{"name": "茶", "history": []},
+                              {"name": "茶道", "history": []}]}
+    monkeypatch.setattr(adapter, "_get_list", get_list)
+    monkeypatch.setattr(adapter, "_get_json", get_json)
+    result = adapter.tag_observation("茶")
+    assert any("/api/v1/timelines/tag/%E8%8C%B6" in path for path in requested)
+    assert any("type=hashtags" in path for path in requested)
+    assert any("/api/v1/trends/tags" in path for path in requested)
+    assert result["n"] == result["distinct_authors"] == 1
+    assert result["co_tags"] == [{"tag": "苦味", "n": 1}]
+    assert result["history"] == [{"day": "1789776000", "uses": 7, "accounts": 4}]
+    assert result["observed_from"] == "https://instance.example"
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert "secret-body" not in serialized and "secret-user" not in serialized

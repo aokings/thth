@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import datetime
+import collections
 import hashlib
 import html.parser
 import json
@@ -714,6 +715,76 @@ class MastodonAdapter(base.Adapter):
         readable = [s for s in statuses if isinstance(s, dict)
                    and s.get("visibility") in READABLE_VISIBILITIES]
         return [self._search_row(row) for row in readable]
+
+    @staticmethod
+    def _tag_history(tag: dict) -> list[dict]:
+        rows = tag.get("history") if isinstance(tag, dict) else None
+        out = []
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            try:
+                uses, accounts = int(row["uses"]), int(row["accounts"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if uses >= 0 and accounts >= 0:
+                out.append({"day": row.get("day"), "uses": uses, "accounts": accounts})
+        return out
+
+    def tag_observation(self, tag: str, *, limit: int = 40,
+                        since: str | None = None) -> dict:
+        """One instance's public tag timeline, search candidates and trends."""
+        if not isinstance(tag, str) or not tag or tag.startswith("#") or "/" in tag:
+            raise AdapterError("tag は # と / を含まない非空文字列です")
+        if type(limit) is not int or not 1 <= limit <= 40:
+            raise AdapterError("limit は 1〜40 です")
+        timeline_path = ("/api/v1/timelines/tag/" + urllib.parse.quote(tag, safe="")
+                         + "?" + urllib.parse.urlencode({"limit": limit}))
+        statuses = self._get_list(timeline_path, "タグの公開タイムライン")
+        candidates = self._get_json("/api/v2/search?" + urllib.parse.urlencode(
+            {"q": tag, "type": "hashtags", "limit": 40}), "タグ候補")
+        candidate_rows = candidates.get("hashtags")
+        if not isinstance(candidate_rows, list):
+            raise AdapterError("タグ候補: hashtags の配列がありません")
+        trends = self._get_list("/api/v1/trends/tags?limit=20", "トレンドタグ")
+        trend_rows = [row for row in trends if isinstance(row, dict)]
+        authors, co_tags = set(), collections.Counter()
+        latest_at = None
+        n = 0
+        for status in statuses:
+            if not isinstance(status, dict) or status.get("visibility") != "public":
+                continue
+            stamp = status.get("created_at")
+            if since and (not isinstance(stamp, str) or stamp < since):
+                continue
+            n += 1
+            if isinstance(stamp, str) and (latest_at is None or stamp > latest_at):
+                latest_at = stamp
+            account = status.get("account") if isinstance(status.get("account"), dict) else {}
+            author = account.get("id") or account.get("acct")
+            if author:
+                authors.add(str(author))
+            for item in status.get("tags", []) if isinstance(status.get("tags"), list) else []:
+                name = item.get("name") if isinstance(item, dict) else None
+                if isinstance(name, str) and name and name.casefold() != tag.casefold():
+                    co_tags[name] += 1
+        candidate_summary = [{"tag": row.get("name"), "history": self._tag_history(row)}
+                             for row in candidate_rows if isinstance(row, dict)
+                             and isinstance(row.get("name"), str)][:5]
+        selected = next((row for row in trend_rows + candidate_rows
+                         if isinstance(row, dict) and isinstance(row.get("name"), str)
+                         and row["name"].casefold() == tag.casefold()), None)
+        return {"tag": tag, "n": n, "distinct_authors": len(authors),
+                "latest_at": latest_at,
+                "co_tags": [{"tag": name, "n": count} for name, count in
+                            sorted(co_tags.items(), key=lambda item: (-item[1], item[0]))[:5]],
+                "observed_from": self.instance, "window": {"since": since, "limit": limit,
+                                                             "scope": "instance_public_timeline"},
+                "tagged_n": n, "tagged_share": 1 if n else None,
+                "history": self._tag_history(selected) if selected else None,
+                "history_scope": "instance_view", "candidates": candidate_summary,
+                "trending_tags": [{"tag": row.get("name"), "history": self._tag_history(row)}
+                                  for row in trend_rows if isinstance(row.get("name"), str)]}
 
     def inbox(self, *, since: str | None = None) -> list:
         """利用者から始まった会話（**WhatsApp の芽**・設計 v2 §4.2）。
