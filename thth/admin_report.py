@@ -182,13 +182,13 @@ def _account(name, now, probe=False, via='cli', detail=False, limit=20):
         raw = read_registry_ledger(Path(accounts.accounts_dir()) / (name + '.json'))
     except (OSError, ValueError):
         raw = None
-    if raw is None:
+    if raw is None or raw.get('project') is not None and (not isinstance(raw['project'], str) or not raw['project'].strip()):
         return dict(account=name, ledger='unreadable', cannot_say=['ledger_unreadable'])
     try:
         cfg = accounts.load_account(name)
     except (accounts.AccountError, OSError, ValueError, TypeError, KeyError):
         pass
-    if raw is None:
+    if raw is None or raw.get('project') is not None and (not isinstance(raw['project'], str) or not raw['project'].strip()):
         return dict(account=name, ledger='unreadable', cannot_say=['ledger_unreadable'])
     missing_fields = cfg is None
     if cfg is None:

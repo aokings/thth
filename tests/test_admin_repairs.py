@@ -104,13 +104,17 @@ def test_registered_secret_wins_over_timer_email_exception():
     assert admin_report._scrub('thth@ordinary.timer') == 'thth@ordinary.timer'
 
 
-@pytest.mark.parametrize('bad', ['{not json', 'null', '[]', 'false', '"not a ledger"'])
+@pytest.mark.parametrize('bad', ['{not json', 'null', '[]', 'false', '"not a ledger"', *({'project': p} for p in ('', [], {}, 1))])
 def test_broken_regular_ledger_keeps_http_user_and_admin_available(credentials, monkeypatch, bad):
     import hashlib
     import threading
     from tests.test_report_http import request
     path, admin_token, config = credentials
-    root = Path(config['root']); (root/'accounts/broken.json').write_text(bad)
+    root = Path(config['root'])
+    if isinstance(bad, dict):
+        value = json.loads((root/'accounts/first.json').read_text())
+        value.update(bad, account='broken'); bad = json.dumps(value)
+    (root/'accounts/broken.json').write_text(bad)
     user_token = 'b' * 43
     user = dict(config['credentials'][0], scope='user', accounts={'first': 'first'},
                 sha256=hashlib.sha256(user_token.encode()).hexdigest())
@@ -133,12 +137,16 @@ def test_broken_regular_ledger_keeps_http_user_and_admin_available(credentials, 
     assert json.loads(result['content'][0]['text'])['by_account']['broken']['ledger'] == 'unreadable'
 
 
-@pytest.mark.parametrize('unsafe', ['partial_external', 'corrupt_state_symlink', 'ledger_symlink', 'ledger_fifo'])
+@pytest.mark.parametrize('unsafe', ['partial_external', 'oversized_external', 'corrupt_state_symlink', 'ledger_symlink', 'ledger_fifo'])
 def test_unreadable_tolerance_never_skips_safety(credentials, unsafe):
     path, _, config = credentials
     root = Path(config['root']); bad = root/'accounts/broken.json'
     if unsafe == 'partial_external':
         bad.write_text(json.dumps({'account': 'broken', 'project': None, 'media': 'threads', 'token': '/outside/secret'}))
+    elif unsafe == 'oversized_external':
+        value = json.loads((root/'accounts/first.json').read_text())
+        value.update(account='broken', token='/outside/secret', padding='x' * (1024 * 1024))
+        bad.write_text(json.dumps(value))
     elif unsafe == 'corrupt_state_symlink':
         bad.write_text('{'); (root/'state').mkdir(); (root/'state/broken').symlink_to(path.parent)
     elif unsafe == 'ledger_symlink':

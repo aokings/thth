@@ -18,6 +18,11 @@ class IsolationError(ValueError):
     """Bounded diagnostic that never includes paths or account values."""
 
 
+def registry_project(value):
+    project = value.get('project') if isinstance(value, dict) else None
+    return project if isinstance(project, str) and project.strip() else None
+
+
 def read_registry_ledger(path):
     """A safe regular ledger can be unreadable without making it an unsafe tree."""
     path = Path(path)
@@ -30,7 +35,7 @@ def read_registry_ledger(path):
                 raise IsolationError('invalid_registry')
             raw = stream.read(1024 * 1024 + 1)
         if len(raw) > 1024 * 1024:
-            return None
+            raise IsolationError('invalid_registry')
         try:
             value = json.loads(raw)
         except (ValueError, UnicodeError, RecursionError):
@@ -144,7 +149,8 @@ def _validate(root, allowed, *, allow_unreadable=False):
                     cfg[key] = accounts._expand(raw.get(key))
         else:
             cfg = accounts.load_account(name)
-        if cfg.get("account", name) != name or cfg.get("project") != project:
+        configured_project = registry_project(cfg) if allow_unreadable else cfg.get("project")
+        if cfg.get("account", name) != name or configured_project != project:
             raise IsolationError("account_scope_mismatch")
         repo = cfg.get("repo_dir")
         if repo:

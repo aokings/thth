@@ -21,7 +21,7 @@ import threading
 import sys
 
 from .report_service import ReportContext, ReportServiceError, execute_report
-from .report_isolation import IsolationError, validate_environment, read_registry_ledger
+from .report_isolation import IsolationError, validate_environment, read_registry_ledger, registry_project
 
 MAX_BODY = 16384
 MAX_CONFIG = 131072
@@ -116,7 +116,7 @@ def load_credentials(path: Path):
                     if ledger.is_symlink() or not ledger.is_file():
                         raise ValueError("invalid_registry")
                     value = read_registry_ledger(ledger)
-                    allowed[ledger.stem] = value.get("project") if value is not None else None
+                    allowed[ledger.stem] = registry_project(value)
             context = ReportContext(allowed, scope=scope)
             credentials.append((digest, _expiry(item["expires_at"]), item["revoked"], context))
         return root, credentials
