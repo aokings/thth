@@ -86,7 +86,7 @@ def register(sub) -> None:
     """`thth mentions` / `thth profile` を親の subparsers にぶら下げる。"""
     p_m = sub.add_parser(
         "mentions",
-        help="自分への言及を一覧する（Threads・読むだけ・threads_manage_mentions）")
+        help="自分への言及を一覧する（Threads・Bluesky・Mastodon、読むだけ）")
     p_m.add_argument("account")
     p_m.add_argument("--since", default=None,
                      help="この時刻以降（Unix 時刻か ISO の日付・資料どおり API に渡す）")
@@ -556,11 +556,28 @@ def cmd_topics_search(args) -> int:
 def cmd_mentions(args) -> int:
     """`thth mentions <account> [--since …] [--json]`。**台帳には書かない**
     （書くのは `collect` の `inbox` 経路）。"""
+    from . import thread_read, runs
     account = args.account
+    observed = None
     as_json = bool(args.json)
 
     def call(adapter):
-        return adapter.mentions(since=args.since)
+        nonlocal observed
+        rows = adapter.mentions(since=args.since)
+        cfg = accounts_mod.load_account(account)
+        ledger, queue, unreadable = thread_read._already_replied_index(cfg, account)
+        result = []
+        for row in rows:
+            item = dict(row)
+            pid = row.get('message_id')
+            item.update(kind=row.get('kind') or 'mention', post_id=pid,
+                        author_key=row.get('author_key'), username=row.get('username'),
+                        timestamp=row.get('timestamp'), preview=_one_line(row.get('text')),
+                        replied=thread_read._already_replied_for(pid, ledger_by_reply_to=ledger,
+                            queue_index=queue, self_reply_by_parent={}, ledgers_unreadable=bool(unreadable)))
+            result.append(item)
+        observed = len(result)
+        return result
 
     def render(rows):
         if as_json:
@@ -568,7 +585,7 @@ def cmd_mentions(args) -> int:
                              ensure_ascii=False, indent=2))
             return 0
         print(f"{account}  言及 {len(rows)} 件（全頁・読むだけ。"
-              f"台帳への追記は `thth collect` の inbox 経路）")
+              f"SNS 台帳には追記しません）")
         for r in rows:
             stamp = r.get("timestamp") or "—"
             who = r.get("username") or "—"
@@ -577,14 +594,21 @@ def cmd_mentions(args) -> int:
             if r.get("permalink"):
                 print(f"      {r['permalink']}")
         if not rows:
-            print("  （0 件。承認前は tester による言及だけが返ります・非公開の利用者の"
-                  "投稿は返りません）")
+            print("  （取得できた言及は 0 件です）")
         else:
             print("  返信は既存の門（queue の `reply_to: <message_id>`）を通します。")
         return 0
 
-    return _run(account, capability="mentions", call=call, as_json=as_json,
-                render=render, narrowed_note=MENTIONS_NARROWED_NOTE)
+    rc = _run(account, capability="mentions", call=call, as_json=as_json,
+              render=render, narrowed_note=MENTIONS_NARROWED_NOTE)
+    try:
+        cfg = accounts_mod.load_account(account)
+        runs.record_minimal(account, dict(account=account, action='mentions', medium=cfg['media'],
+                            n=observed, status='ok' if rc == 0 else 'error',
+                            error=None if rc == 0 else 'mentions_failed'))
+    except (accounts_mod.AccountError, OSError, ValueError):
+        pass
+    return rc
 
 
 # ---------------------------------------------------------------- profile

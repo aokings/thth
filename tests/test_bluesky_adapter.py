@@ -643,7 +643,7 @@ def test_capabilitiesにviewsもtopicも入らない():
     # T2-1（`searchPosts`・2026-09-16）で足した。views・topic・quota・inbox・
     # refresh は無いまま。
     assert adapter.capabilities() == {"link_preview", "recent_posts", "thread_read",
-                                      "keyword_search"}
+                                      "keyword_search", "mentions"}
     assert adapter.quota() is None
 
 

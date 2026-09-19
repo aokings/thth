@@ -248,7 +248,7 @@ class MastodonAdapter(base.Adapter):
     # `keyword_search`（T2-1・設計「自分の泉」§2.3・§3）: `GET /api/v2/search`
     # で語による投稿の検索ができる（審査の壁が無い媒体。全文検索の可否は
     # インスタンス次第——`keyword_search()` の docstring・呼ぶ側の provenance 参照）。
-    CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "keyword_search"})
+    CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "keyword_search", "mentions"})
 
     # `.token` の鍵（`thth token set <account>` が書く形・設計 v2 §4.2）。
     TOKEN_KEYS = ("access_token",)
@@ -819,6 +819,45 @@ class MastodonAdapter(base.Adapter):
             raise AdapterError("投稿のタグ: tags の配列がありません")
         return sorted({row["name"] for row in raw if isinstance(row, dict)
                        and isinstance(row.get("name"), str) and row["name"]})
+
+    def mentions(self, *, since=None) -> list:
+        """Notification ids paginate; status ids identify the displayed posts."""
+        from ..read_window import cutoff
+        try:
+            floor = cutoff(since)
+        except ValueError as exc:
+            raise AdapterError(str(exc)) from None
+        out, seen, cursors = [], set(), set()
+        cursor = None
+        for _ in range(100):
+            params = {'types[]': 'mention', 'limit': 80}
+            if cursor:
+                params['max_id'] = cursor
+            rows = self._get_list('/api/v1/notifications?' + urllib.parse.urlencode(params), '言及')
+            if not rows:
+                return out
+            for notification in rows:
+                if not isinstance(notification, dict) or notification.get('type') != 'mention':
+                    continue
+                status = notification.get('status')
+                if not isinstance(status, dict) or not status.get('id') or status.get('visibility') not in READABLE_VISIBILITIES:
+                    continue
+                if str(status['id']) in seen:
+                    continue
+                stamp = notification.get('created_at')
+                at = _parse_iso(stamp)
+                if floor and at and at < floor:
+                    continue
+                seen.add(str(status['id']))
+                row = self._message(status, None)
+                row.update(kind='mention', timestamp=stamp, permalink=status.get('url'))
+                out.append(row)
+            last = rows[-1]
+            cursor = str(last.get('id') or '') if isinstance(last, dict) else ''
+            if not cursor.isdigit() or cursor in cursors:
+                raise AdapterError('言及: 通知のページが進みません')
+            cursors.add(cursor)
+        raise AdapterError('言及: 100 頁を超えたため全件を確認できません')
 
     def inbox(self, *, since: str | None = None) -> list:
         """利用者から始まった会話（**WhatsApp の芽**・設計 v2 §4.2）。

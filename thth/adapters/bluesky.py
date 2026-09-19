@@ -319,7 +319,7 @@ class BlueskyAdapter(base.Adapter):
     # `keyword_search`（T2-1・設計「自分の泉」§2.3・§3）: `searchPosts` で
     # 語による公開投稿の検索ができる（審査の壁が無い媒体）。
     CAPABILITIES: frozenset = frozenset({"link_preview", "recent_posts", "thread_read",
-                                         "keyword_search"})
+                                         "keyword_search", "mentions"})
 
     # `.token` の鍵（`thth auth <account>` が書く形・設計 v2 §4.2「認可とトークン」）。
     # **`access_token` ではない**——doctor が `access_token` だけを見ていたので、
@@ -725,6 +725,52 @@ class BlueskyAdapter(base.Adapter):
             out["reply_count"] = reply_count
             out["has_replies"] = reply_count > 0
         return out
+
+    def mentions(self, *, since=None) -> list:
+        """Read notification pages without adding them to collect's inbox."""
+        from ..read_window import cutoff
+        try:
+            floor = cutoff(since)
+        except ValueError as exc:
+            raise base.AdapterError(str(exc)) from None
+        out, seen, cursors = [], set(), set()
+        cursor = None
+        for _ in range(100):
+            params = {'limit': 100}
+            if cursor:
+                params['cursor'] = cursor
+            try:
+                body = self._request('GET', 'app.bsky.notification.listNotifications', params=params)
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+                raise base.AdapterError('通知: ' + self._scrub(str(exc))) from None
+            rows = body.get('notifications')
+            if not isinstance(rows, list):
+                raise base.AdapterError('通知: notifications の配列がありません')
+            for row in rows:
+                if not isinstance(row, dict) or row.get('reason') not in ('mention', 'reply', 'quote'):
+                    continue
+                uri = row.get('uri')
+                if not isinstance(uri, str) or not uri.startswith('at://') or uri in seen:
+                    continue
+                record = row.get('record') if isinstance(row.get('record'), dict) else {}
+                author = row.get('author') if isinstance(row.get('author'), dict) else {}
+                stamp = row.get('indexedAt')
+                at = jst.parse(stamp) if isinstance(stamp, str) else None
+                if floor and at and at < floor:
+                    continue
+                seen.add(uri)
+                handle = author.get('handle')
+                out.append(dict(message_id=uri, text=record.get('text') if isinstance(record.get('text'), str) else '',
+                    kind=row['reason'], username=handle, timestamp=stamp,
+                    author_key=author_key(author.get('did') or ''), medium=MEDIUM,
+                    permalink=post_url(handle, uri) if handle else None))
+            cursor = body.get('cursor')
+            if not cursor:
+                return out
+            if not isinstance(cursor, str) or cursor in cursors:
+                raise base.AdapterError('通知: cursor が進みません')
+            cursors.add(cursor)
+        raise base.AdapterError('通知: 100 頁を超えたため全件を確認できません')
 
     def keyword_search(self, q: str, *, search_type: str = "TOP",
                        limit: int = 25) -> list:
