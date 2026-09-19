@@ -28,6 +28,37 @@ def test_topic_already_present_is_not_appended_twice():
     assert facet["index"] == {"byteStart": 0, "byteEnd": len("#苦味".encode())}
 
 
+def test_all_body_tags_have_non_overlapping_byte_facets():
+    text = "日本語 #苦味 と #旨味 https://example.invalid/#url_fragment"
+    facets = bluesky.build_facets(text, include_tags=True)
+    tags_found = [f for f in facets if f["features"][0]["$type"].endswith("#tag")]
+    assert [f["features"][0]["tag"] for f in tags_found] == ["苦味", "旨味"]
+    for facet, wanted in zip(tags_found, ("#苦味", "#旨味")):
+        index = facet["index"]
+        assert text.encode()[index["byteStart"]:index["byteEnd"]] == wanted.encode()
+    assert len(facets) == 3  # one URL link, two tags
+
+
+def test_url_fragment_does_not_suppress_topic_append():
+    text = "記事 https://example.invalid/#個人開発"
+    effective = tags.prepared("bluesky", text, "個人開発", hashtags=True)
+    assert effective.endswith("\n#個人開発")
+    facets = bluesky.build_facets(effective, topic="個人開発", include_tags=True)
+    tag_facets = [f for f in facets if f["features"][0]["$type"].endswith("#tag")]
+    assert len(tag_facets) == 1
+    assert effective.encode()[tag_facets[0]["index"]["byteStart"]:] == "#個人開発".encode()
+
+
+def test_punctuation_topic_and_combining_mark_are_single_facets():
+    text = "#a.b と #か\u3099"
+    assert tags.prepared("bluesky", text, "a.b", hashtags=True) == text
+    facets = bluesky.build_facets(text, topic="a.b", include_tags=True)
+    tag_facets = [f for f in facets if f["features"][0]["$type"].endswith("#tag")]
+    assert [f["features"][0]["tag"] for f in tag_facets] == ["a.b", "か\u3099"]
+    assert tags.topic_error("bluesky", "あ" * 64) is None
+    assert tags.topic_error("bluesky", "あ" * 65) == "topic_too_long(65)"
+
+
 def test_mastodon_topic_uses_one_final_line(monkeypatch):
     seen = []
     adapter = mastodon.MastodonAdapter(instance="https://example.invalid", access_token="fixture")

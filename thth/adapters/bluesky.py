@@ -110,7 +110,8 @@ def _trim_url(url: str) -> str:
     return url
 
 
-def build_facets(text: str, *, topic: str | None = None) -> list:
+def build_facets(text: str, *, topic: str | None = None,
+                 include_tags: bool = False) -> list:
     """本文から URL を拾い、`app.bsky.richtext.facet#link` の配列を作る。
 
     **付けなければリンクにならない**（Bluesky は本文の URL を自動でリンクにしない）。
@@ -127,13 +128,20 @@ def build_facets(text: str, *, topic: str | None = None) -> list:
             "index": {"byteStart": byte_start, "byteEnd": byte_end},
             "features": [{"$type": "app.bsky.richtext.facet#link", "uri": url}],
         })
-    if topic:
-        for m in re.finditer(r"(?<!\w)#" + re.escape(topic) + r"(?!\w)", text):
-            start = len(text[:m.start()].encode("utf-8"))
-            facets.append({"index": {"byteStart": start,
-                                      "byteEnd": start + len(m.group().encode("utf-8"))},
-                           "features": [{"$type": "app.bsky.richtext.facet#tag",
-                                         "tag": topic}]})
+    # Facets cannot overlap. A #fragment inside a URL remains part of the link.
+    occupied = {(f["index"]["byteStart"], f["index"]["byteEnd"])
+                for f in facets}
+    for span in tags_mod.spans(text, topic if topic else None):
+        if not include_tags and span.tag != topic:
+            continue
+        start = len(text[:span.start].encode("utf-8"))
+        end = len(text[:span.end].encode("utf-8"))
+        if any(start < link_end and end > link_start
+               for link_start, link_end in occupied):
+            continue
+        facets.append({"index": {"byteStart": start, "byteEnd": end},
+                       "features": [{"$type": "app.bsky.richtext.facet#tag",
+                                     "tag": span.tag}]})
     return sorted(facets, key=lambda f: f["index"]["byteStart"])
 
 
@@ -462,7 +470,8 @@ class BlueskyAdapter(base.Adapter):
             "text": text,
             "createdAt": created_at(),
         }
-        facets = build_facets(text, topic=post.topic if post.hashtags_allowed else None)
+        facets = build_facets(text, topic=post.topic if post.hashtags_allowed else None,
+                              include_tags=post.hashtags_allowed)
         if facets:
             record["facets"] = facets
         # `post.topic` は Threads だけのもの。**黙って無視する**（設計 v2 §4.2:

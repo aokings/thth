@@ -2,15 +2,41 @@
 from __future__ import annotations
 
 import re
+import unicodedata
+from collections import namedtuple
 
-from . import queuefile
-
-# A hashtag starts at a word boundary; URL fragments and email addresses are not tags.
-TAG_RE = re.compile(r"(?<!\w)#([\w]+)", re.UNICODE)
+TagSpan = namedtuple("TagSpan", "start end tag")
+URL_RE = re.compile(r"https?://[^\s　]+")
 
 
-def matches(text: str):
-    return list(TAG_RE.finditer(text))
+def _is_word(ch: str) -> bool:
+    return ch == "_" or unicodedata.category(ch)[0] in "LNM"
+
+
+def spans(text: str, topic: str | None = None) -> list[TagSpan]:
+    """Tag spans outside URLs; a supplied topic takes precedence over a partial word match."""
+    urls = [(m.start(), m.end()) for m in URL_RE.finditer(text)]
+
+    def in_url(start, end):
+        return any(start < b and end > a for a, b in urls)
+
+    selected = []
+    if topic:
+        for m in re.finditer(r"(?<!\w)#" + re.escape(topic) + r"(?!\w)", text):
+            if not in_url(m.start(), m.end()):
+                selected.append(TagSpan(m.start(), m.end(), topic))
+    for i, ch in enumerate(text):
+        if ch != "#" or (i and _is_word(text[i - 1])):
+            continue
+        j = i + 1
+        while j < len(text) and _is_word(text[j]):
+            j += 1
+        if j == i + 1 or in_url(i, j):
+            continue
+        if any(i < chosen.end and j > chosen.start for chosen in selected):
+            continue
+        selected.append(TagSpan(i, j, text[i + 1:j]))
+    return sorted(selected, key=lambda span: span.start)
 
 
 def topic_error(media: str, topic: str | None) -> str | None:
@@ -33,7 +59,7 @@ def prepared(media: str, text: str, topic: str | None, *, hashtags: bool) -> str
     """Append one topic tag when enabled; an existing identical tag wins."""
     if media not in ("bluesky", "mastodon") or not hashtags or not topic:
         return text
-    if re.search(r"(?<!\w)#" + re.escape(topic) + r"(?!\w)", text):
+    if any(span.tag == topic for span in spans(text, topic)):
         return text
     return text.rstrip() + "\n#" + topic
 
