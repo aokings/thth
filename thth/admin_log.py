@@ -175,6 +175,7 @@ def transaction():
         return
     directory = handoff_cursor._directory('_admin', create=True)
     fd = None
+    committed_events = ()
     try:
         fd = os.open('accounts.ndjson', os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
                      0o600, dir_fd=directory)
@@ -189,16 +190,7 @@ def transaction():
             yield
             if events:
                 _emit(fd, b''.join(events))
-                from . import admin_notifications
-                for data in events:
-                    event = json.loads(data)
-                    try:
-                        cfg = accounts.load_account(event['account'])
-                        admin_notifications.notify(event, cfg)
-                    except (OSError, ValueError, TypeError, accounts.AccountError):
-                        # The committed audit event remains the durable retry evidence.
-                        import sys
-                        print('admin_notification_pending', file=sys.stderr)
+                committed_events = tuple(events)
         finally:
             _active_events.reset(reset_events)
             _active_fd.reset(reset)
@@ -206,6 +198,19 @@ def transaction():
         if fd is not None:
             os.close(fd)
         os.close(directory)
+    # SMTP and its outbox writes run only after the durable append and flock
+    # release. A notice failure cannot undo a committed account/log change.
+    if committed_events:
+        for data in committed_events:
+            try:
+                from . import admin_notifications
+                event = json.loads(data)
+                cfg = accounts.load_account(event['account'])
+                admin_notifications.notify(event, cfg)
+            except Exception:
+                # The committed audit event remains the durable retry evidence.
+                import sys
+                print('admin_notification_pending', file=sys.stderr)
 
 
 def guarded(function):
