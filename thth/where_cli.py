@@ -458,8 +458,9 @@ def cmd_where(args) -> int:
 
     try:
         result = answer(account_name=account_name, project=args.project, words=words,
-                        recent=args.recent, limit=args.limit, since=args.since,
-                        exclude_engaged=args.exclude_engaged, max_per_author=args.max_per_author)
+                        recent=args.recent, limit=args.limit, since=getattr(args, "since", None),
+                        exclude_engaged=getattr(args, "exclude_engaged", False),
+                        max_per_author=getattr(args, "max_per_author", None))
     except accounts_mod.AccountError as e:
         # **単一 account が読めなければ loud reject**（T5-2・`who` と揃える）。
         # `--json` は人向けの文言でなく `{"error", "account"}` を出す——
