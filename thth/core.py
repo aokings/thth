@@ -989,6 +989,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             log(effective)
             if topic_value:
                 log(f"トピック: {topic_value}")
+            log(queuefile.length_line(media, effective, account_cfg))
             log(f"digest: {digest}")
             _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
                         status="ok", error=None)

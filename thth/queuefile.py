@@ -222,6 +222,12 @@ def count_for(media: str, text: str) -> int:
     return adapters_mod.count_text_for(media, text)
 
 
+def length_line(media: str, text: str, account_cfg=None) -> str:
+    from . import adapters
+    unit = adapters.adapter_class(media).COUNT_UNIT
+    return f"文字数: {count_for(media, text)}/{limit_for(media, account_cfg)}（{media}・{unit}）"
+
+
 def char_count(text: str) -> int:
     """Threads の文字数の数え方（設計 §2.2・受け入れ 3）: 500 字上限、絵文字は
     UTF-8 バイト数で数える。絵文字以外は Unicode コードポイント 1 個を 1 字とする。"""

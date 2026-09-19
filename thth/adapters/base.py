@@ -352,6 +352,8 @@ class Adapter:
         from .. import postid as postid_mod
         return postid_mod.is_usable(value)
 
+    COUNT_UNIT = "codepoint・emoji UTF-8"
+
     @classmethod
     def count_text(cls, text: str) -> int:
         """**この媒体の数え方**で本文の長さを数える（`queuefile.limit_for()` と対）。

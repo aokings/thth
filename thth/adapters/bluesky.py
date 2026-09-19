@@ -431,6 +431,8 @@ class BlueskyAdapter(base.Adapter):
         raise NotImplementedError(
             "Bluesky の App Password に期限はありません（延長は要りません・設計 v2 §4.2）")
 
+    COUNT_UNIT = "grapheme"
+
     @classmethod
     def count_text(cls, text: str) -> int:
         """媒体ごとの数え方（`queuefile.char_count` は Threads の数え方）。

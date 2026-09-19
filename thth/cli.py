@@ -283,6 +283,7 @@ def _prepare_one(path: str):
         "topic": queuefile.normalize_topic(fm.get("topic")),
         "reply_to": fm.get("reply_to"),
         "text": effective,
+        "length_line": queuefile.length_line(media, effective, account_cfg),
         "location": (fm.get("location") or "").strip() or None,
         "location_id": options["location_id"],
         "share_to_instagram": options["share_to_instagram"],
@@ -521,6 +522,7 @@ def _show_bundle_stage(prepared: dict) -> None:
     """束の一段目の表示。**各段の全文と返信関係を出す。**"""
     frozen = {row["index"]: row for row in prepared.get("frozen") or []}
     total = len(prepared["segments"])
+    cfg = accounts_mod.load_account(prepared['account'])
     print(f"■ {prepared['path']}（スレッド連投・{total} 段）")
     print(f"  account: {prepared['account']}")
     print(f"  開始: {prepared['publish_at']}　続けてよい期限: {prepared['continue_until']}")
@@ -538,6 +540,7 @@ def _show_bundle_stage(prepared: dict) -> None:
         print(f"  ── {i}/{total}　{rel}{mark}")
         for line in seg.split("\n"):
             print(f"     {line}")
+        print(queuefile.length_line(cfg['media'], seg, cfg))
         print("")
     if frozen:
         print("  ※ 公開済みの段は凍結されています。**未公開の段と期限だけを"
@@ -609,6 +612,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
             print(f"  場所: {one.get('location') or '（名前なし）'}（id {one['location_id']}）")
         if one.get("share_to_instagram"):
             print("  Instagram のストーリーズにも出ます（share_to_instagram: true）")
+        print(one['length_line'])
         print(f"digest: {one['digest']}")
     warned = [one for one in prepared if one.get("warning")]
     if warned:
