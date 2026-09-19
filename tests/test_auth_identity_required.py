@@ -63,7 +63,7 @@ def test_meが空dictならrc1で既存tokenは不変(tmp_path, monkeypatch, iso
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         monkeypatch.setattr(oauth_mod, "fetch_me", lambda *a, **k: {})
         lines = []
-        rc = oauth_mod.run_auth(account["name"], code=_戻り(), log=lines.append)
+        rc = oauth_mod.run_auth(account["name"], code=_戻り(), log=lines.append, by="test-operator")
 
     assert rc == 1
     out = "\n".join(lines)
@@ -82,7 +82,7 @@ def test_usernameだけ無ければrc1で既存tokenは不変(tmp_path, monkeypa
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         monkeypatch.setattr(oauth_mod, "fetch_me", lambda *a, **k: {"id": "1"})
         lines = []
-        rc = oauth_mod.run_auth(account["name"], code=_戻り(), log=lines.append)
+        rc = oauth_mod.run_auth(account["name"], code=_戻り(), log=lines.append, by="test-operator")
 
     assert rc == 1
     assert "本人確認ができない" in "\n".join(lines)
@@ -101,7 +101,7 @@ def test_idもusernameも有れば従来どおり保存する(tmp_path, monkeypa
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         monkeypatch.setattr(oauth_mod, "fetch_me", lambda *a, **k: {"id": "1", "username": "x"})
         lines = []
-        rc = oauth_mod.run_auth(account["name"], code=_戻り(), log=lines.append)
+        rc = oauth_mod.run_auth(account["name"], code=_戻り(), log=lines.append, by="test-operator")
 
     assert rc == 0, "\n".join(lines)
     with open(account["token_path"], encoding="utf-8") as f:
@@ -124,7 +124,7 @@ def test_token_setもusernameが無ければrc1で既存tokenは不変(tmp_path,
         # 「既に token があります」で先に rc=1 になり、本人確認の検査を通らない。
         # ここで見たいのは本人確認の検査そのもの。
         rc = oauth_mod.run_token_set(account["name"], force=True,
-                                     input_func=lambda: "PASTED-TOKEN", log=lines.append)
+                                     input_func=lambda: "PASTED-TOKEN", log=lines.append, by="test-operator")
     finally:
         threads_mod.ThreadsAdapter.whoami = orig_whoami
 
@@ -142,7 +142,7 @@ def test_token_setはidとusernameが有れば従来どおり保存する(tmp_pa
     try:
         lines = []
         rc = oauth_mod.run_token_set(account["name"], input_func=lambda: "PASTED-TOKEN",
-                                     log=lines.append)
+                                     log=lines.append, by="test-operator")
     finally:
         threads_mod.ThreadsAdapter.whoami = orig_whoami
 

@@ -326,7 +326,7 @@ def test_g_乾式_account_addした同席専用の台帳で採ってmeasuredに1
 
     add = run_thth(["account", "add", "demo-bluesky", "--media", "bluesky",
                     "--project", "demo", "--handle", "demo.bsky.social",
-                    "--repo-dir", "$THTH_ROOT/repos/_none"], env=env)
+                    "--repo-dir", "$THTH_ROOT/repos/_none", "--by", "test-operator"], env=env)
     assert add.returncode == 0, f"{add.stdout}\n{add.stderr}"
     cfg = accounts_mod.load_account("demo-bluesky")
     assert not accounts_mod.is_repo_backed(cfg), cfg["repo_dir"]

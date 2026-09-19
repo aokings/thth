@@ -33,7 +33,7 @@ def test_1_正常系は貼り付けたトークンをmeで確認してtokenを�
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         lines = []
         rc = oauth_mod.run_token_set(
-            account["name"], input_func=lambda: "PASTED-LONG-LIVED-TOKEN\n", log=lines.append)
+            account["name"], input_func=lambda: "PASTED-LONG-LIVED-TOKEN\n", log=lines.append, by="test-operator")
 
     assert rc == 0
     with open(account["token_path"], encoding="utf-8") as f:
@@ -60,7 +60,7 @@ def test_2_access_token接頭辞つきの貼り付けも通る(tmp_path, monkeyp
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         rc = oauth_mod.run_token_set(
             account["name"], input_func=lambda: "access_token=PASTED-LONG-LIVED-TOKEN&foo=bar\n",
-            log=lambda _l: None)
+            log=lambda _l: None, by="test-operator")
 
     assert rc == 0
     with open(account["token_path"], encoding="utf-8") as f:
@@ -75,7 +75,7 @@ def test_3_前後の空白と引用符を落として通る(tmp_path, monkeypatc
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         rc = oauth_mod.run_token_set(
             account["name"], input_func=lambda: '  "PASTED-LONG-LIVED-TOKEN"  \n',
-            log=lambda _l: None)
+            log=lambda _l: None, by="test-operator")
 
     assert rc == 0
     with open(account["token_path"], encoding="utf-8") as f:
@@ -90,7 +90,7 @@ def test_4_meが4xxならexit1でtokenを作らない(tmp_path, monkeypatch, iso
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         lines = []
         rc = oauth_mod.run_token_set(
-            account["name"], input_func=lambda: "BAD-TOKEN-VALUE\n", log=lines.append)
+            account["name"], input_func=lambda: "BAD-TOKEN-VALUE\n", log=lines.append, by="test-operator")
 
     assert rc == 1
     assert not os.path.exists(account["token_path"])
@@ -109,7 +109,7 @@ def test_5_既存tokenはforce無しでは拒否しforceで上書きする(tmp_p
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         lines = []
         rc = oauth_mod.run_token_set(
-            account["name"], input_func=lambda: "NEW-TOKEN-VALUE\n", log=lines.append)
+            account["name"], input_func=lambda: "NEW-TOKEN-VALUE\n", log=lines.append, by="test-operator")
         assert rc == 1
         with open(account["token_path"], encoding="utf-8") as f:
             still_old = json.load(f)
@@ -117,7 +117,7 @@ def test_5_既存tokenはforce無しでは拒否しforceで上書きする(tmp_p
         assert any("--force" in line for line in lines)
 
         rc2 = oauth_mod.run_token_set(
-            account["name"], force=True, input_func=lambda: "NEW-TOKEN-VALUE\n", log=lambda _l: None)
+            account["name"], force=True, input_func=lambda: "NEW-TOKEN-VALUE\n", log=lambda _l: None, by="test-operator")
 
     assert rc2 == 0
     with open(account["token_path"], encoding="utf-8") as f:
@@ -134,7 +134,7 @@ def test_20260909_token_setが標準出力に秘密を一切出さない(tmp_pat
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         lines = []
         rc = oauth_mod.run_token_set(
-            account["name"], input_func=lambda: secret_token + "\n", log=lines.append)
+            account["name"], input_func=lambda: secret_token + "\n", log=lines.append, by="test-operator")
 
     assert rc == 0
     out = "\n".join(lines)
@@ -146,7 +146,7 @@ def test_20260909_token_setが標準出力に秘密を一切出さない(tmp_pat
         token_path2 = str(tmp_path / "account2.token")
         account2 = isolated_account_factory("nigamilab-threads-2", token=token_path2,
                                              repo_dir=account["repo_dir"])
-        oauth_mod.run_token_set(account2["name"], input_func=lambda: secret_token + "\n")  # log=print(既定)
+        oauth_mod.run_token_set(account2["name"], input_func=lambda: secret_token + "\n", by="test-operator")  # log=print(既定)
     captured = capsys.readouterr()
     assert secret_token not in captured.out
     assert secret_token not in captured.err
@@ -183,7 +183,7 @@ def test_7_CLI経由でパイプで渡しても動く_stdinフラグ(tmp_path, m
         full_env = dict(os.environ)  # isolated_account_factory が THTH_APP_DIR 等を既に setenv 済み
         full_env["THTH_THREADS_BASE_URL"] = base_url
         proc = subprocess.run(
-            [sys.executable, bin_thth, "token", "set", account["name"], "--stdin"],
+            [sys.executable, bin_thth, "token", "set", account["name"], "--stdin", "--by", "test-operator"],
             input=secret_token + "\n", capture_output=True, text=True, env=full_env,
         )
 
@@ -214,7 +214,7 @@ def test_20260909_handle_mismatch_would_post_as_the_wrong_account(
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         lines = []
         rc = oauth_mod.run_token_set(
-            account["name"], input_func=lambda: "PASTED-TOKEN", log=lines.append)
+            account["name"], input_func=lambda: "PASTED-TOKEN", log=lines.append, by="test-operator")
 
     assert rc == 1
     assert not os.path.exists(account["token_path"]), "食い違ったのに .token を書いてしまった"
@@ -229,7 +229,7 @@ def test_20260909_handle_が一致すれば通る(tmp_path, monkeypatch, isolate
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         rc = oauth_mod.run_token_set(
-            account["name"], input_func=lambda: "PASTED-TOKEN", log=lambda *_: None)
+            account["name"], input_func=lambda: "PASTED-TOKEN", log=lambda *_: None, by="test-operator")
     assert rc == 0
     assert os.path.exists(account["token_path"])
 
@@ -250,7 +250,7 @@ def test_20260910_端末でない標準入力からは黙って読まない(tmp_
 
     monkeypatch.setattr(oauth_mod.sys, "stdin", _NotATty())
     lines = []
-    rc = oauth_mod.run_token_set(account["name"], log=lines.append)
+    rc = oauth_mod.run_token_set(account["name"], log=lines.append, by="test-operator")
 
     assert rc == 2
     assert not os.path.exists(str(tmp_path / "new.token"))
@@ -276,7 +276,7 @@ def test_T3_mastodonのtoken_setがwhoami経由で通る(tmp_path, isolated_acco
             instance=fake.instance, handle=ACCOUNT_FIXTURE["acct"])
         lines = []
         rc = oauth_mod.run_token_set(account["name"], input_func=lambda: MASTODON_TOKEN,
-                                      log=lines.append)
+                                      log=lines.append, by="test-operator")
 
     assert rc == 0, lines
     with open(account["token_path"], encoding="utf-8") as f:
@@ -302,7 +302,7 @@ def test_T3_mastodonのverify_credentialsが落ちたらtokenを作らない(
             instance=fake.instance, handle="nigamilab")
         lines = []
         rc = oauth_mod.run_token_set(account["name"], input_func=lambda: MASTODON_TOKEN,
-                                      log=lines.append)
+                                      log=lines.append, by="test-operator")
 
     assert rc == 1
     assert not os.path.exists(account["token_path"])
@@ -319,7 +319,7 @@ def test_T3_mastodonも取り違えを保存しない(tmp_path, isolated_account
             instance=fake.instance, handle="someone-else")
         lines = []
         rc = oauth_mod.run_token_set(account["name"], input_func=lambda: MASTODON_TOKEN,
-                                      log=lines.append)
+                                      log=lines.append, by="test-operator")
 
     assert rc == 1
     assert not os.path.exists(account["token_path"])
@@ -334,7 +334,7 @@ def test_T3_threadsのtokenは現行のままexpires_inが入る(tmp_path, monke
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         rc = oauth_mod.run_token_set(account["name"], input_func=lambda: "T",
-                                      log=lambda _l: None)
+                                      log=lambda _l: None, by="test-operator")
     assert rc == 0
     with open(account["token_path"], encoding="utf-8") as f:
         token = json.load(f)
@@ -349,7 +349,7 @@ def test_T3_blueskyはtoken_setでは入らないと断る(tmp_path, isolated_ac
         handle="aoking.bsky.social")
     lines = []
     rc = oauth_mod.run_token_set(account["name"], input_func=lambda: "whatever",
-                                  log=lines.append)
+                                  log=lines.append, by="test-operator")
     assert rc == 2
     assert not os.path.exists(account["token_path"])
     out = "\n".join(lines)
@@ -370,7 +370,7 @@ def test_T3_期限を持たないtokenをmaintainがokと言う(tmp_path, isolat
             instance=fake.instance, handle=ACCOUNT_FIXTURE["acct"])
         assert oauth_mod.run_token_set(account["name"],
                                         input_func=lambda: MASTODON_TOKEN,
-                                        log=lambda _l: None) == 0
+                                        log=lambda _l: None, by="test-operator") == 0
 
     # 1 年後でも「まもなく切れます」と言わない。
     later = jst.now_jst() + datetime.timedelta(days=365)

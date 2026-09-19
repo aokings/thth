@@ -403,7 +403,7 @@ def test_account_add_email_requires_private_ledger_location(tmp_path, monkeypatc
     recipient = tmp_path / "email.txt"
     recipient.write_text("user@example.org")
     monkeypatch.setenv("THTH_ROOT", str(repo))
-    args = cli.build_parser().parse_args(["account", "add", "privacy-test", "--media", "threads", "--project", "demo", "--force", "--notification-email-file", str(recipient)])
+    args = cli.build_parser().parse_args(["account", "add", "privacy-test", "--media", "threads", "--project", "demo", "--force", "--notification-email-file", str(recipient), "--by", "test-operator"])
     assert args.func(args) == 2
     assert not (repo / "accounts/privacy-test.json").exists()
     assert "Git repo 外" in capsys.readouterr().err

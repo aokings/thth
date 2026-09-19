@@ -298,7 +298,7 @@ def 媒体ごとの必須(media: str) -> list:
 @pytest.mark.parametrize("media", ["threads", "bluesky", "mastodon"])
 def test_addは雛形から外へ1本書く(置き場, media):
     r = run_thth(["account", "add", f"demo-{media}", "--media", media,
-                  "--project", "demo", *媒体ごとの必須(media)])
+                  "--project", "demo", *媒体ごとの必須(media), "--by", "test-operator"])
     assert r.returncode == 0, r.stdout + r.stderr
 
     path = os.path.join(置き場["外"], f"demo-{media}.json")
@@ -318,7 +318,7 @@ def test_addが作るものは必ずproduction_false(置き場, media):
     """**道具が作ったものが、いきなり本物を投げる形で生まれてはいけない**
     （設計 §4.2「`production: true` を自分で書かない限り dry-run」）。"""
     r = run_thth(["account", "add", f"demo-{media}", "--media", media,
-                  "--project", "demo", *媒体ごとの必須(media)])
+                  "--project", "demo", *媒体ごとの必須(media), "--by", "test-operator"])
     assert r.returncode == 0, r.stdout + r.stderr
     with open(os.path.join(置き場["外"], f"demo-{media}.json"), encoding="utf-8") as f:
         data = json.load(f)
@@ -336,7 +336,7 @@ def test_addが作った台帳は_productionを付けて打っても_rehearsal�
     もう一方の関門は開けた状態で見る。
     """
     assert run_thth(["account", "add", "demo-threads", "--media", "threads",
-                     "--project", "demo"]).returncode == 0
+                     "--project", "demo", "--by", "test-operator"]).returncode == 0
     r = run_thth(["throw", "demo-threads", "--now", "--production"])
     assert r.stdout.splitlines()[0] == "mode: rehearsal", r.stdout + r.stderr
 
@@ -344,7 +344,7 @@ def test_addが作った台帳は_productionを付けて打っても_rehearsal�
 def test_addは既にあるものを上書きしない(置き場):
     台帳を置く(置き場["外"], "demo-threads", handle="先にあったほう")
     r = run_thth(["account", "add", "demo-threads", "--media", "threads",
-                  "--project", "demo"])
+                  "--project", "demo", "--by", "test-operator"])
     assert r.returncode == 1, r.stdout + r.stderr
     assert "上書きしません" in r.stderr
     with open(os.path.join(置き場["外"], "demo-threads.json"), encoding="utf-8") as f:
@@ -364,7 +364,7 @@ def test_addは互換のときは書く前にloudに断る_順番を間違えさ
     台帳を置く(置き場["repo の中"], "repo2-threads")
 
     r = run_thth(["account", "add", "demo-threads", "--media", "threads",
-                  "--project", "demo"])
+                  "--project", "demo", "--by", "test-operator"])
     assert r.returncode == 1, r.stdout + r.stderr
     assert "thth account migrate" in r.stderr
     assert "以後読まれません" in r.stderr
@@ -381,7 +381,7 @@ def test_addは互換のときでもrepoの中に書かない(置き場):
     """**読みが互換 (c) に落ちていても、書く先は外**（`--force` で進んだとき）。"""
     台帳を置く(置き場["repo の中"], "repo-threads")
     r = run_thth(["account", "add", "demo-threads", "--media", "threads",
-                  "--project", "demo", "--force"])
+                  "--project", "demo", "--force", "--by", "test-operator"])
     assert r.returncode == 0, r.stdout + r.stderr
     assert os.path.exists(os.path.join(置き場["外"], "demo-threads.json"))
     assert not os.path.exists(os.path.join(置き場["repo の中"], "demo-threads.json"))
@@ -396,7 +396,7 @@ def test_addのhandleの既定はprojectであってアカウント名ではな�
     **既定が残るのは Threads だけ**（監査 2・C10）——下の 2 本を見よ。
     """
     assert run_thth(["account", "add", "nigamilab-threads", "--media", "threads",
-                     "--project", "nigamilab"]).returncode == 0
+                     "--project", "nigamilab", "--by", "test-operator"]).returncode == 0
     with open(os.path.join(置き場["外"], "nigamilab-threads.json"), encoding="utf-8") as f:
         assert json.load(f)["handle"] == "nigamilab"
 
@@ -408,7 +408,7 @@ def test_addのhandleの既定はprojectであってアカウント名ではな�
 def test_addのredirect_uriが台帳に入る(置き場):
     """(a) `--redirect-uri` で渡した値がそのまま台帳に入り、**ダミーは残らない**。"""
     r = run_thth(["account", "add", "demo-threads", "--media", "threads",
-                  "--project", "demo", "--redirect-uri", "https://thth.me/callback/"])
+                  "--project", "demo", "--redirect-uri", "https://thth.me/callback/", "--by", "test-operator"])
     assert r.returncode == 0, r.stdout + r.stderr
     with open(os.path.join(置き場["外"], "demo-threads.json"), encoding="utf-8") as f:
         data = json.load(f)
@@ -428,7 +428,7 @@ def test_addはredirect_uriを省いたら次の一手で1行言う(置き場):
     （**`add` と `auth` の間に、どこにも書かれていない手作業**）。
     """
     r = run_thth(["account", "add", "demo-threads", "--media", "threads",
-                  "--project", "demo"])
+                  "--project", "demo", "--by", "test-operator"])
     assert r.returncode == 0, r.stdout + r.stderr
     with open(os.path.join(置き場["外"], "demo-threads.json"), encoding="utf-8") as f:
         assert json.load(f)["redirect_uri"] == "https://example.invalid/"
@@ -442,7 +442,7 @@ def test_addのredirect_uriはthreads以外では黙って捨てない(置き場
     """`redirect_uri` を読むのは Threads の `thth auth` だけ。**黙って捨てない**。"""
     r = run_thth(["account", "add", "demo-bluesky", "--media", "bluesky",
                   "--project", "demo", "--handle", "demo2.bsky.social",
-                  "--redirect-uri", "https://thth.me/callback/"])
+                  "--redirect-uri", "https://thth.me/callback/", "--by", "test-operator"])
     assert r.returncode == 2, r.stdout + r.stderr
     assert "--redirect-uri は threads" in r.stderr, r.stderr
     assert not os.path.exists(os.path.join(置き場["外"], "demo-bluesky.json"))
@@ -456,7 +456,7 @@ def test_addはblueskyのhandleを必須にする(置き場):
     **認可を保存しない**。黙って外れた値を書くより、ここで 1 回聞くほうが安い。
     """
     r = run_thth(["account", "add", "demo-bluesky", "--media", "bluesky",
-                  "--project", "demo"])
+                  "--project", "demo", "--by", "test-operator"])
     assert r.returncode == 2, r.stdout + r.stderr
     assert "--handle が要ります" in r.stderr, r.stderr
     assert "name.bsky.social" in r.stderr, r.stderr   # **例を添える**
@@ -467,13 +467,13 @@ def test_addはblueskyのhandleを必須にする(置き場):
 def test_addはmastodonのhandleとinstanceを必須にする(置き場):
     """(e) Mastodon は利用者名＋インスタンス。**どちらも道具には推測できない。**"""
     handle無し = run_thth(["account", "add", "demo-mastodon", "--media", "mastodon",
-                           "--project", "demo", "--instance", "https://mastodon.social"])
+                           "--project", "demo", "--instance", "https://mastodon.social", "--by", "test-operator"])
     assert handle無し.returncode == 2, handle無し.stdout + handle無し.stderr
     assert "--handle が要ります" in handle無し.stderr, handle無し.stderr
     assert "--instance https://mastodon.social" in handle無し.stderr, handle無し.stderr
 
     instance無し = run_thth(["account", "add", "demo-mastodon", "--media", "mastodon",
-                             "--project", "demo", "--handle", "user"])
+                             "--project", "demo", "--handle", "user", "--by", "test-operator"])
     assert instance無し.returncode == 2, instance無し.stdout + instance無し.stderr
     assert "--instance が要ります" in instance無し.stderr, instance無し.stderr
     assert "--handle user" in instance無し.stderr, instance無し.stderr
@@ -486,7 +486,7 @@ def test_addはthreadsのhandleを今までどおり既定で埋める(置き場
     """(f) **Threads は従来どおり。** `--handle` を必須にしたのは他の 2 媒体だけ
     ——Threads の handle は利用者名そのもので、`--project` の値がだいたい当たる。"""
     r = run_thth(["account", "add", "nigamilab-threads", "--media", "threads",
-                  "--project", "nigamilab"])
+                  "--project", "nigamilab", "--by", "test-operator"])
     assert r.returncode == 0, r.stdout + r.stderr
     with open(os.path.join(置き場["外"], "nigamilab-threads.json"), encoding="utf-8") as f:
         assert json.load(f)["handle"] == "nigamilab"
@@ -496,13 +496,13 @@ def test_addのinstanceは媒体で綴りが変わる(置き場):
     """Mastodon は `instance`、Bluesky は `service`（既存の台帳の綴り）。"""
     assert run_thth(["account", "add", "demo-mastodon", "--media", "mastodon",
                      "--project", "demo", "--handle", "demo2", "--instance",
-                     "https://example.social"]).returncode == 0
+                     "https://example.social", "--by", "test-operator"]).returncode == 0
     with open(os.path.join(置き場["外"], "demo-mastodon.json"), encoding="utf-8") as f:
         assert json.load(f)["instance"] == "https://example.social"
 
     assert run_thth(["account", "add", "demo-bluesky", "--media", "bluesky",
                      "--project", "demo", "--handle", "demo2.bsky.social",
-                     "--instance", "https://pds.example"]).returncode == 0
+                     "--instance", "https://pds.example", "--by", "test-operator"]).returncode == 0
     with open(os.path.join(置き場["外"], "demo-bluesky.json"), encoding="utf-8") as f:
         assert json.load(f)["service"] == "https://pds.example"
 
@@ -520,7 +520,7 @@ def test_addは置き場の外に書けない_名前を検査する(置き場, t
     気づけない。`thth posts` が post_id を検査するのと同じ守り方で断る。
     """
     外 = 置き場["外"]
-    r = run_thth(["account", "add", name, "--media", "threads", "--project", "demo"])
+    r = run_thth(["account", "add", name, "--media", "threads", "--project", "demo", "--by", "test-operator"])
     assert r.returncode == 2, r.stdout + r.stderr
     assert "使えない字" in r.stderr, r.stderr
 
@@ -536,23 +536,23 @@ def test_addは普通の名前を断らない(置き場):
     """検査が厳しすぎて実在の綴りを弾いていないこと（`.`・`-`・`_` は通る）。"""
     for name in ("nigamilab-threads", "asmon_kanto-threads", "a.b-mastodon"):
         r = run_thth(["account", "add", name, "--media", "threads",
-                      "--project", "demo"])
+                      "--project", "demo", "--by", "test-operator"])
         assert r.returncode == 0, f"{name}: {r.stdout}{r.stderr}"
         assert os.path.exists(os.path.join(置き場["外"], f"{name}.json"))
 
 
 def test_addは足りない指定を黙って埋めない(置き場):
     知らない媒体 = run_thth(["account", "add", "demo-x", "--media", "mixi",
-                             "--project", "demo"])
+                             "--project", "demo", "--by", "test-operator"])
     assert 知らない媒体.returncode == 2
     assert "invalid choice" in 知らない媒体.stderr
 
-    project無し = run_thth(["account", "add", "demo-threads", "--media", "threads"])
+    project無し = run_thth(["account", "add", "demo-threads", "--media", "threads", "--by", "test-operator"])
     assert project無し.returncode == 2, project無し.stdout + project無し.stderr
     assert "--project" in project無し.stderr
     assert not os.path.exists(os.path.join(置き場["外"], "demo-threads.json"))
 
-    media無し = run_thth(["account", "add", "demo-threads", "--project", "demo"])
+    media無し = run_thth(["account", "add", "demo-threads", "--project", "demo", "--by", "test-operator"])
     assert media無し.returncode == 2, media無し.stdout + media無し.stderr
     assert "--media" in media無し.stderr
 
@@ -656,7 +656,7 @@ def test_置き場がファイルならaddは言葉で断る(置き場):
         f.write("これはディレクトリではない\n")
 
     r = run_thth(["account", "add", "demo-threads", "--media", "threads",
-                  "--project", "demo"])
+                  "--project", "demo", "--by", "test-operator"])
     assert "Traceback" not in r.stderr, r.stderr
     assert r.returncode == 2, r.stdout + r.stderr
     assert "台帳を書けませんでした" in r.stderr, r.stderr

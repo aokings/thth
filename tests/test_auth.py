@@ -68,7 +68,7 @@ def test_1_正常系は短期長期めをたどってtokenを書く(tmp_path, mo
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         lines = []
-        rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lines.append)
+        rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lines.append, by="test-operator")
 
     assert rc == 0
     with open(account["token_path"], encoding="utf-8") as f:
@@ -96,7 +96,7 @@ def test_2_hash_underscore付きの貼り付けも通る(tmp_path, monkeypatch, 
 
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
-        rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lambda _l: None)
+        rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lambda _l: None, by="test-operator")
 
     assert rc == 0
     assert os.path.exists(account["token_path"])
@@ -109,7 +109,7 @@ def test_3_url全体の貼り付けも通る(tmp_path, monkeypatch, isolated_acc
 
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
-        rc = oauth_mod.run_auth(account["name"], code=pasted, log=lambda _l: None)
+        rc = oauth_mod.run_auth(account["name"], code=pasted, log=lambda _l: None, by="test-operator")
 
     assert rc == 0
     with open(account["token_path"], encoding="utf-8") as f:
@@ -122,7 +122,7 @@ def test_4_app_env無しはexit2(tmp_path, monkeypatch, isolated_account_factory
     account = _account_with_token_path(isolated_account_factory, tmp_path)
 
     lines = []
-    rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lines.append)
+    rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lines.append, by="test-operator")
 
     assert rc == 2
     assert not os.path.exists(account["token_path"])
@@ -136,7 +136,7 @@ def test_5_交換が4xxならexit1でtokenを作らない(tmp_path, monkeypatch,
     with fake_oauth_server({"short": "4xx"}) as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         lines = []
-        rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lines.append)
+        rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lines.append, by="test-operator")
 
     assert rc == 1
     assert not os.path.exists(account["token_path"])
@@ -148,7 +148,7 @@ def test_6_長期交換が4xxならexit1でtokenを作らない(tmp_path, monkey
 
     with fake_oauth_server({"long": "4xx"}) as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
-        rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lambda _l: None)
+        rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lambda _l: None, by="test-operator")
 
     assert rc == 1
     assert not os.path.exists(account["token_path"])
@@ -160,7 +160,7 @@ def test_7_meが失敗してもexit1でtokenを作らない(tmp_path, monkeypatc
 
     with fake_oauth_server({"me": "5xx"}) as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
-        rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lambda _l: None)
+        rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lambda _l: None, by="test-operator")
 
     assert rc == 1
     assert not os.path.exists(account["token_path"])
@@ -171,7 +171,7 @@ def test_8_redirect_uri無しはexit2(tmp_path, monkeypatch, isolated_account_fa
     token_path = str(tmp_path / "account.token")
     account = isolated_account_factory(token=token_path)  # redirect_uri を渡さない
 
-    rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lambda _l: None)
+    rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lambda _l: None, by="test-operator")
 
     assert rc == 2
     assert not os.path.exists(token_path)
@@ -192,7 +192,7 @@ def test_C10_ダミーのredirect_uriでは認可URLを出さない(
                                         redirect_uri="https://example.invalid/")
 
     lines = []
-    rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lines.append)
+    rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lines.append, by="test-operator")
     out = "\n".join(lines)
 
     assert rc == 2, out
@@ -208,7 +208,7 @@ def test_C10_ダミーのredirect_uriでは認可URLを出さない(
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         lines2 = []
         rc2 = oauth_mod.run_auth(account["name"], redirect_uri=REDIRECT_URI,
-                                 code=戻り("ABC123"), log=lines2.append)
+                                 code=戻り("ABC123"), log=lines2.append, by="test-operator")
     assert rc2 == 0, "\n".join(lines2)
     assert os.path.exists(token_path)
 
@@ -227,7 +227,7 @@ def test_9_CLI経由でも動く_codeフラグ(tmp_path, monkeypatch, isolated_a
     env = {"THTH_APP_ENV_PATH": os.environ["THTH_APP_ENV_PATH"]}
 
     # 1 段目: 認可 URL を出す（state を残す）。標準入力は空なので読めずに rc=2。
-    first = run_thth(["auth", account["name"]], env=env, stdin="")
+    first = run_thth(["auth", account["name"], "--by", "test-operator"], env=env, stdin="")
     assert first.returncode == 2, first.stdout + first.stderr
     url = next(line for line in first.stdout.splitlines() if "oauth/authorize" in line)
     state = _up.parse_qs(_up.urlsplit(url).query)["state"][0]
@@ -238,7 +238,7 @@ def test_9_CLI経由でも動く_codeフラグ(tmp_path, monkeypatch, isolated_a
     with fake_oauth_server() as base_url:
         env2 = dict(env, THTH_THREADS_BASE_URL=base_url)
         result = run_thth(
-            ["auth", account["name"], "--code", 戻り("ABC123", state=state)], env=env2)
+            ["auth", account["name"], "--code", 戻り("ABC123", state=state), "--by", "test-operator"], env=env2)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "LONG-SECRET-TOKEN" not in result.stdout
@@ -258,7 +258,7 @@ def test_10_app_envのパーミッションが600でなければ直す(tmp_path,
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         lines = []
-        rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lines.append)
+        rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lines.append, by="test-operator")
 
     assert rc == 0
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
@@ -275,7 +275,7 @@ def test_20260909_authが標準出力に秘密を一切出さない(tmp_path, mo
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         lines = []
-        rc = oauth_mod.run_auth(account["name"], code=戻り(secret_code), log=lines.append)
+        rc = oauth_mod.run_auth(account["name"], code=戻り(secret_code), log=lines.append, by="test-operator")
 
     assert rc == 0
     out = "\n".join(lines)
@@ -290,7 +290,7 @@ def test_20260909_authが標準出力に秘密を一切出さない(tmp_path, mo
         token_path2 = str(tmp_path / "account2.token")
         account2 = isolated_account_factory("nigamilab-threads-2", token=token_path2,
                                              redirect_uri=REDIRECT_URI, repo_dir=account["repo_dir"])
-        oauth_mod.run_auth(account2["name"], code=戻り(secret_code))  # log=print(既定)
+        oauth_mod.run_auth(account2["name"], code=戻り(secret_code), by="test-operator")  # log=print(既定)
     captured = capsys.readouterr()
     for secret in (secret_code, APP_SECRET_VALUE, "LONG-SECRET-TOKEN", "SHORT-SECRET-TOKEN"):
         assert secret not in captured.out
@@ -305,7 +305,7 @@ def test_T3_mastodonはtoken_setへ案内してrc2(tmp_path, isolated_account_fa
         isolated_account_factory, tmp_path, media="mastodon",
         instance="https://mastodon.invalid")
     lines = []
-    rc = oauth_mod.run_auth(account["name"], log=lines.append)
+    rc = oauth_mod.run_auth(account["name"], log=lines.append, by="test-operator")
     assert rc == 2
     out = "\n".join(lines)
     assert "thth token set" in out and account["name"] in out
@@ -316,7 +316,7 @@ def test_T3_知らない媒体はloudに断る(tmp_path, isolated_account_factor
     account = _account_with_token_path(
         isolated_account_factory, tmp_path, media="carrier-pigeon")
     lines = []
-    assert oauth_mod.run_auth(account["name"], log=lines.append) == 2
+    assert oauth_mod.run_auth(account["name"], log=lines.append, by="test-operator") == 2
     out = "\n".join(lines)
     assert "carrier-pigeon" in out and "知っている媒体" in out
 
@@ -333,7 +333,7 @@ def test_T3_blueskyはtokenを600で書く(tmp_path, isolated_account_factory):
         rc = oauth_mod.run_auth(
             account["name"], log=lines.append,
             identifier_input=lambda: HANDLE,
-            password_input=lambda: APP_PASSWORD)
+            password_input=lambda: APP_PASSWORD, by="test-operator")
 
     assert rc == 0, lines
     with open(account["token_path"], encoding="utf-8") as f:
@@ -366,7 +366,7 @@ def test_T3_blueskyのcreateSessionが落ちたらtokenを作らない(tmp_path,
         rc = oauth_mod.run_auth(
             account["name"], log=lines.append,
             identifier_input=lambda: HANDLE,
-            password_input=lambda: APP_PASSWORD)
+            password_input=lambda: APP_PASSWORD, by="test-operator")
 
     assert rc == 1
     assert not os.path.exists(account["token_path"])
@@ -386,7 +386,7 @@ def test_T3_blueskyは秘密を返してくるサーバでも値を出さない(
         rc = oauth_mod.run_auth(
             account["name"], log=lines.append,
             identifier_input=lambda: HANDLE,
-            password_input=lambda: APP_PASSWORD)
+            password_input=lambda: APP_PASSWORD, by="test-operator")
 
     assert rc == 1
     assert not os.path.exists(account["token_path"])
@@ -408,7 +408,7 @@ def test_T3_blueskyはアカウントの取り違えを保存しない(tmp_path,
         rc = oauth_mod.run_auth(
             account["name"], log=lines.append,
             identifier_input=lambda: HANDLE,
-            password_input=lambda: APP_PASSWORD)
+            password_input=lambda: APP_PASSWORD, by="test-operator")
 
     assert rc == 1
     assert not os.path.exists(account["token_path"])
@@ -431,7 +431,7 @@ def test_T3_blueskyはアカウントのパスワードを断る(tmp_path, isola
         rc = oauth_mod.run_auth(
             account["name"], log=lines.append,
             identifier_input=lambda: HANDLE,
-            password_input=lambda: "my-real-account-password")
+            password_input=lambda: "my-real-account-password", by="test-operator")
 
     assert rc == 1
     assert not os.path.exists(account["token_path"])
@@ -453,7 +453,7 @@ def test_T3_端末でなければ読まない(tmp_path, monkeypatch, isolated_ac
         isolated_account_factory, tmp_path, media="bluesky",
         handle="x.bsky.social", service="https://bsky.invalid")
     lines = []
-    rc = oauth_mod.run_auth(account["name"], log=lines.append)
+    rc = oauth_mod.run_auth(account["name"], log=lines.append, by="test-operator")
     assert rc == 2
     assert "端末ではありません" in "\n".join(lines)
     assert not os.path.exists(account["token_path"])
@@ -467,7 +467,7 @@ def test_T3_threadsの経路は現行のまま(tmp_path, monkeypatch, isolated_a
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         monkeypatch.setenv("THTH_THREADS_AUTH_BASE_URL", base_url)
         rc = oauth_mod.run_auth(account["name"], code=戻り("THE-CODE"),
-                                 log=lambda _l: None)
+                                 log=lambda _l: None, by="test-operator")
     assert rc == 0
     with open(account["token_path"], encoding="utf-8") as f:
         token = json.load(f)
@@ -488,7 +488,7 @@ def test_P2_4_認可URLにstateが載る(tmp_path, monkeypatch, isolated_account
     lines = []
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
-        oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lines.append)
+        oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lines.append, by="test-operator")
     url = next(line for line in lines if "oauth/authorize" in line)
     assert _up.parse_qs(_up.urlsplit(url).query)["state"] == [FIXED_STATE]
 
@@ -500,7 +500,7 @@ def test_P2_4_stateが無い戻りは受け付けない(tmp_path, monkeypatch, i
     lines = []
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
-        rc = oauth_mod.run_auth(account["name"], code="ABC123", log=lines.append)
+        rc = oauth_mod.run_auth(account["name"], code="ABC123", log=lines.append, by="test-operator")
     assert rc == 2
     out = "\n".join(lines)
     assert "state がありません" in out
@@ -516,7 +516,7 @@ def test_P2_4_stateが違う戻りは受け付けない(tmp_path, monkeypatch, i
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         rc = oauth_mod.run_auth(account["name"],
                                  code=戻り("ABC123", state="よその-state"),
-                                 log=lines.append)
+                                 log=lines.append, by="test-operator")
     assert rc == 1 or rc == 2
     assert "state が一致しません" in "\n".join(lines)
     assert not os.path.exists(account["token_path"])
@@ -529,14 +529,14 @@ def test_P2_4_前回の実行が出したstateなら通る(tmp_path, monkeypatch
 
     # 1 段目（URL を出すだけ。state が残る）。
     monkeypatch.setattr(oauth_mod, "_new_state", lambda: "前回の-state")
-    oauth_mod.run_auth(account["name"], code="", log=lambda _l: None)
+    oauth_mod.run_auth(account["name"], code="", log=lambda _l: None, by="test-operator")
     # 2 段目は別の state を作るが、前回の戻りも受け付ける。
     monkeypatch.setattr(oauth_mod, "_new_state", lambda: "こんかいの-state")
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         rc = oauth_mod.run_auth(account["name"],
                                  code=戻り("ABC123", state="前回の-state"),
-                                 log=lambda _l: None)
+                                 log=lambda _l: None, by="test-operator")
     assert rc == 0
     assert os.path.exists(account["token_path"])
 
@@ -550,7 +550,7 @@ def test_P2_4_handleが食い違えば保存しない(tmp_path, monkeypatch, iso
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"),
-                                 log=lines.append)
+                                 log=lines.append, by="test-operator")
     assert rc == 1
     out = "\n".join(lines)
     assert "保存しませんでした" in out and "べつのひと" in out and "nigamilab" in out
@@ -565,6 +565,6 @@ def test_P2_4_handleが合っていれば今までどおり保存する(tmp_path
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         rc = oauth_mod.run_auth(account["name"], code=戻り("ABC123"),
-                                 log=lambda _l: None)
+                                 log=lambda _l: None, by="test-operator")
     assert rc == 0
     assert os.path.exists(account["token_path"])

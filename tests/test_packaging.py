@@ -304,7 +304,7 @@ def test_別のvenvでthth_account_addが雛形から1本書ける(venv_thth, tm
     os.rmdir(互換の置き場)
 
     r = _run([venv_thth["thth"], "account", "add", ACCOUNT,
-              "--media", "threads", "--project", "demo"],
+              "--media", "threads", "--project", "demo", "--by", "test-operator"],
              env=env, cwd=_elsewhere(tmp_path))
     both = r.stdout + r.stderr
     assert "雛形がありません" not in both, both
@@ -352,7 +352,7 @@ def test_THTH_ROOTが無くてもsite_packagesに置き場を作らない(venv_t
     home = env["HOME"]
 
     r = _run([venv_thth["thth"], "account", "add", ACCOUNT,
-              "--media", "threads", "--project", "demo", "--json"],
+              "--media", "threads", "--project", "demo", "--json", "--by", "test-operator"],
              env=env, cwd=_elsewhere(tmp_path))
     assert r.returncode == 0, f"{r.stdout}{r.stderr}"
     out = json.loads(r.stdout)

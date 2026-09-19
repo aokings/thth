@@ -73,7 +73,7 @@ def test_authはdebug_tokenの一覧をresponseとして書く(tmp_path, monkeyp
     with fake_oauth_server({"debug": "ok"}) as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         lines: list = []
-        rc = oauth_mod.run_auth(acc["name"], code=_戻り(), log=lines.append)
+        rc = oauth_mod.run_auth(acc["name"], code=_戻り(), log=lines.append, by="test-operator")
     assert rc == 0, lines
     token = _read(acc["token_path"])
     assert token["scopes"] == ["threads_basic", "threads_content_publish"]
@@ -87,7 +87,7 @@ def test_authはdebug_tokenが無ければ要求した一覧をrequestedとし�
     acc = _account(isolated_account_factory, tmp_path)
     with fake_oauth_server() as base_url:               # debug は既定で 404
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
-        rc = oauth_mod.run_auth(acc["name"], code=_戻り(), log=lambda _l: None)
+        rc = oauth_mod.run_auth(acc["name"], code=_戻り(), log=lambda _l: None, by="test-operator")
     assert rc == 0
     token = _read(acc["token_path"])
     assert token["scopes"] == list(scopes_mod.DEFAULT_SCOPES)
@@ -101,7 +101,7 @@ def test_authはdebug_tokenが5xxでも認可を落とさずrequestedにする(
     acc = _account(isolated_account_factory, tmp_path)
     with fake_oauth_server({"debug": "5xx"}) as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
-        rc = oauth_mod.run_auth(acc["name"], code=_戻り(), log=lambda _l: None)
+        rc = oauth_mod.run_auth(acc["name"], code=_戻り(), log=lambda _l: None, by="test-operator")
     assert rc == 0
     token = _read(acc["token_path"])
     assert token["scopes_source"] == oauth_mod.SCOPES_SOURCE_REQUESTED
@@ -122,7 +122,7 @@ def test_token_setはnullとunknownを書く(tmp_path, monkeypatch, isolated_acc
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
         rc = oauth_mod.run_token_set(acc["name"], input_func=lambda: "PASTED-TOKEN\n",
-                                     log=lambda _l: None)
+                                     log=lambda _l: None, by="test-operator")
     assert rc == 0
     token = _read(acc["token_path"])
     assert token["scopes"] is None
