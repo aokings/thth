@@ -2454,7 +2454,7 @@ def cmd_auth(args) -> int:
     Threads は OAuth の往復、Bluesky は handle と App Password の対話
     （`thth auth masaru-bluesky`）、Mastodon は `thth token set` へ案内する。
     """
-    return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code)
+    return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code, by=args.by)
 
 
 def cmd_maintain(args) -> int:
@@ -2524,7 +2524,7 @@ def cmd_refresh(args) -> int:
 def cmd_token_set(args) -> int:
     """masaru が Meta 管理画面で発行した長期トークンを貼り付けて保存する
     （T2b・OAuth 往復を経ない tester 向け経路・MCP には出さない・§3.7 と同じ理由）。"""
-    return oauth_mod.run_token_set(args.account, force=args.force, stdin=args.stdin)
+    return oauth_mod.run_token_set(args.account, force=args.force, stdin=args.stdin, by=args.by)
 
 
 def cmd_app_set(args) -> int:
@@ -3083,6 +3083,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Bluesky: handle と App Password を対話で受ける。Mastodon: thth token set へ。"),
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p_auth.add_argument("account")
+    p_auth.add_argument("--by", required=True)
     p_auth.add_argument("--redirect-uri", dest="redirect_uri", default=None,
                          help="省略時は accounts/<account>.json の redirect_uri を使う"
                               "（Meta アプリに登録した値と 1 文字違わず同じにする）")
@@ -3160,10 +3161,15 @@ def build_parser() -> argparse.ArgumentParser:
             "期限の入れ替えには足りるが、権限の内訳は変わらない。権限を変えるなら thth auth。"),
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p_token_set.add_argument("account")
+    p_token_set.add_argument("--by", required=True)
     p_token_set.add_argument("--force", action="store_true", help="既存の .token を上書きする（期限の入れ替え）")
     p_token_set.add_argument("--stdin", action="store_true",
                               help="標準入力から黙って1行読む（非対話・パイプ用）")
     p_token_set.set_defaults(func=cmd_token_set)
+    p_token_revoke = token_sub.add_parser("revoke", help="ローカルtokenを削除（リモート権限は取り消さない）")
+    p_token_revoke.add_argument("account")
+    p_token_revoke.add_argument("--by", required=True)
+    p_token_revoke.set_defaults(func=lambda args: oauth_mod.run_token_revoke(args.account, by=args.by))
 
     # `thth ask before-you-post`（設計 v2 §1・§6 v2-1）。**口の中身は
     # `thth/ask_cli.py` に閉じる**——ここに足すのはこの 1 行だけ。

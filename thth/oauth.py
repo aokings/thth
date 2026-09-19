@@ -367,7 +367,7 @@ def refresh_long_lived_token(access_token: str, *, timeout: float = 10.0) -> dic
 
 def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | None = None,
              input_func=input, identifier_input=None, password_input=None,
-             log=print) -> int:
+             log=print, by=None) -> int:
     """`thth auth <account>`。**媒体で分ける**（T3 の配線 2026-09-13）。
 
     以前はここが Threads 固有（OAuth の往復）だった——設計 v2 §4.2 が挙げた
@@ -381,6 +381,12 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
                    しない**）。
       - それ以外   知っている媒体の一覧を添えて loud に断る（T-B0）。
     """
+    from . import admin_log
+    try:
+        admin_log.actor(by)
+    except ValueError as exc:
+        _out(str(exc), log=log)
+        return 2
     try:
         account_cfg = accounts_mod.load_account(account_name)
     except accounts_mod.AccountError as e:
@@ -398,7 +404,7 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
         if media == "bluesky":
             return run_auth_bluesky(
                 account_name, account_cfg=account_cfg, log=log,
-                identifier_input=identifier_input, password_input=password_input)
+                identifier_input=identifier_input, password_input=password_input, by=by)
         _out(f"{media} は `thth auth` では認可できません。"
              f"インスタンスの管理画面（設定 → 開発 → 新規アプリ）で access token を"
              f"作って、`thth token set {account_name}` で貼り付けてください。", log=log)
@@ -559,7 +565,9 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
         "scopes": scopes_recorded,
         "scopes_source": scopes_source,
     }
+    token_was_present = os.path.exists(token_path)
     secrets_fs.atomic_write_json(token_path, token_data, mode=0o600)
+    admin_log.append("token_set", account_name, account_cfg, by=by, diff={"token": ["present" if token_was_present else "absent", "present"]})
     # 使い終わった `state` は残さない（1 回きり）。
     _clear_auth_state(account_name)
 
@@ -692,6 +700,8 @@ def run_refresh(account_name: str, *, force: bool = False, check: bool = False,
     updated["obtained_at"] = jst.iso(now)
     updated["expires_in"] = resp.get("expires_in", token.get("expires_in", DEFAULT_TOKEN_LIFETIME_SECONDS))
     secrets_fs.atomic_write_json(account_cfg["token"], updated, mode=0o600)
+    from . import admin_log
+    admin_log.append("token_refreshed", account_name, account_cfg, by="thth-refresh", diff={"token": ["present", "present"]})
 
     _out(f"更新しました: {account_name}", log=log)
     return 0
@@ -714,7 +724,7 @@ def _ask_bluesky(prompt: str, *, secret: bool):
 
 
 def run_auth_bluesky(account_name: str, *, account_cfg=None,
-                     identifier_input=None, password_input=None, log=print) -> int:
+                     identifier_input=None, password_input=None, log=print, by=None) -> int:
     """`thth auth <account>`（Bluesky・設計 v2 §4.2「認可とトークン」）。
 
     handle と **App Password** を対話で受け（`getpass` なので画面に出ない）、
@@ -729,6 +739,12 @@ def run_auth_bluesky(account_name: str, *, account_cfg=None,
     `user_id`・`username` を足したもの。**`expires_in` は書かない**——App Password
     に期限は無い（`maintain` が「判らない」ではなく「期限を持たない」と言う）。
     """
+    from . import admin_log
+    try:
+        admin_log.actor(by)
+    except ValueError as exc:
+        _out(str(exc), log=log)
+        return 2
     from .adapters import bluesky as bluesky_mod
 
     if account_cfg is None:
@@ -771,7 +787,9 @@ def run_auth_bluesky(account_name: str, *, account_cfg=None,
     # `whoami()` と同じ鍵（`board`・`doctor` がここを読む）。
     token_data["user_id"] = token_data.get("did")
     token_data["username"] = token_data.get("handle")
+    token_was_present = os.path.exists(account_cfg["token"])
     secrets_fs.atomic_write_json(account_cfg["token"], token_data, mode=0o600)
+    admin_log.append("token_set", account_name, account_cfg, by=by, diff={"token": ["present" if token_was_present else "absent", "present"]})
 
     _out(f"handle={token_data['handle']} did={token_data['did']}", log=log)
     _out(f"保存しました: {account_cfg['token']}（600）", log=log)
@@ -818,7 +836,7 @@ def _read_pasted_token(*, stdin: bool, input_func, prompt: str | None = None) ->
 
 
 def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False,
-                   input_func=None, log=print) -> int:
+                   input_func=None, log=print, by=None) -> int:
     """`thth token set <account>`（T2b・masaru の指示 2026-09-09）。
 
     Meta 管理画面の「ユーザートークン生成ツール」で発行した Threads テスターの
@@ -841,6 +859,12 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
     `TOKEN_NO_EXPIRY`。Mastodon は `no_expiry: true` を書いて `expires_in` を
     書かない。**貼り付けで入らない媒体（Bluesky）は loud に断る。**
     """
+    from . import admin_log
+    try:
+        admin_log.actor(by)
+    except ValueError as exc:
+        _out(str(exc), log=log)
+        return 2
     try:
         account_cfg = accounts_mod.load_account(account_name)
     except accounts_mod.AccountError as e:
@@ -939,8 +963,28 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
         token_data["no_expiry"] = True
     else:
         token_data["expires_in"] = DEFAULT_TOKEN_LIFETIME_SECONDS
+    token_was_present = os.path.exists(token_path)
     secrets_fs.atomic_write_json(token_path, token_data, mode=0o600)
+    admin_log.append("token_set", account_name, account_cfg, by=by, diff={"token": ["present" if token_was_present else "absent", "present"]})
 
     _out(f"user_id={user_id} username={username}", log=log)
     _out(f"保存しました: {token_path}（600）", log=log)
+    return 0
+
+
+def run_token_revoke(account_name, *, by=None, log=print):
+    """Remove the local credential only; no remote revocation API is called."""
+    from . import admin_log
+    try:
+        admin_log.actor(by)
+        cfg = accounts_mod.load_account(account_name)
+        path = cfg['token']
+        if not path or not os.path.isfile(path) or os.path.islink(path):
+            raise ValueError('token_unavailable')
+        os.unlink(path)
+        admin_log.append('token_revoked', account_name, cfg, by=by,
+                         diff={'token': ['present', 'absent']})
+    except (OSError, ValueError, accounts_mod.AccountError):
+        _out('token revoke requires --by and a readable local token', log=log)
+        return 2
     return 0

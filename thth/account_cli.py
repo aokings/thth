@@ -271,6 +271,12 @@ def cmd_add(args) -> int:
     書く先は **`$THTH_ROOT/accounts/<name>.json`**（repo の中ではない）。
     既にあれば**上書きしない**（loud reject・作法 5）。
     """
+    from . import admin_log
+    try:
+        by = admin_log.actor(getattr(args, "by", None))
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     name = args.name
     if not name:
         print("account add には名前が要ります: thth account add <name> --media … --project …",
@@ -384,15 +390,35 @@ def cmd_add(args) -> int:
 
     dst_dir = target_accounts_dir()
     path = os.path.join(dst_dir, f"{name}.json")
+    previous = {}
     if os.path.exists(path):
-        print(f"既にあります。上書きしません: {path}", file=sys.stderr)
-        return 1
+        if not getattr(args, "force", False):
+            print(f"既にあります。上書きしません: {path}", file=sys.stderr)
+            return 1
+        try:
+            with open(path, encoding="utf-8") as stream:
+                previous = json.load(stream)
+            if not isinstance(previous, dict):
+                raise ValueError("invalid_ledger")
+        except (OSError, ValueError):
+            print("既存台帳を読めません", file=sys.stderr)
+            return 2
+    data["provenance"] = previous.get("provenance") if previous else admin_log.provenance(by)
     try:
         os.makedirs(dst_dir, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
+        if previous:
+            from . import secrets_fs
+            secrets_fs.atomic_write_json(path, data)
+        else:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+        admin_log.append("account_updated" if previous else "account_added", name, data,
+                         by=by, diff=admin_log.difference(previous, data))
+        if previous and previous.get("production") != data.get("production"):
+            admin_log.append("production_enabled" if data.get("production") else "production_disabled",
+                             name, data, by=by, diff={"production": [previous.get("production"), data.get("production")]})
     except OSError as e:
         # **traceback にしない**（監査 1・P3）。`$THTH_ROOT/accounts` がファイル
         # だと `FileExistsError`、書けない場所だと `PermissionError` が素通りして
@@ -461,6 +487,7 @@ def register(sub) -> None:
     p.formatter_class = argparse.RawDescriptionHelpFormatter
     p.add_argument("name", nargs="?",
                    help="`add` のときのアカウント名（`<project>-<media>`）")
+    p.add_argument("--by", help="作成・変更した人（add では必須）")
     p.add_argument("--media", default=None, choices=MEDIA_CHOICES,
                    help="`add` のとき: 媒体")
     p.add_argument("--project", default=None,
