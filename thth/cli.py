@@ -150,7 +150,8 @@ def _resolve_repo_path(path: str) -> str:
     for name in accounts_mod.list_account_names():
         try:
             cfg = accounts_mod.load_account(name)
-        except accounts_mod.AccountError:
+        except (accounts_mod.AccountError, OSError, ValueError, TypeError, KeyError):
+            print(f'台帳 {name} を読めないため repo 探索から除外しました', file=sys.stderr)
             continue
         repo = cfg.get('repo_dir')
         if not isinstance(repo, str) or not os.path.isdir(repo):
