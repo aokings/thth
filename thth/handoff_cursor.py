@@ -154,7 +154,7 @@ def write(name, node, by, now):
 
 
 def write_snapshot(name, filename, value):
-    if filename not in ('handoff_cursor.json', 'admin_cursor.json', 'admin_notifications.json', 'timers.json'):
+    if filename not in ('handoff_cursor.json', 'admin_cursor.json', 'admin_notifications.json', 'timers.json', 'doctor.json'):
         raise ValueError('invalid_cursor_filename')
     directory=_directory(name,create=True)
     temporary='.handoff-cursor-'+uuid.uuid4().hex
@@ -172,3 +172,26 @@ def write_snapshot(name, filename, value):
         try:os.unlink(temporary,dir_fd=directory)
         except FileNotFoundError:pass
         os.close(directory)
+
+
+def read_snapshot(name, filename):
+    """Read an observation without following state ancestors or special files."""
+    if filename not in ('timers.json', 'doctor.json'):
+        raise ValueError('invalid_observation_filename')
+    directory = None
+    try:
+        directory = _directory(name)
+        fd = os.open(filename, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
+        with os.fdopen(fd, 'rb') as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return None
+            raw = stream.read(4 * 1024 * 1024 + 1)
+        if len(raw) > 4 * 1024 * 1024:
+            return None
+        value = json.loads(raw, object_pairs_hook=_pairs)
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError, TypeError, RecursionError):
+        return None
+    finally:
+        if directory is not None:
+            os.close(directory)

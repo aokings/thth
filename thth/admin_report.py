@@ -34,23 +34,8 @@ def _json(path):
 
 def _admin_json(filename):
     from . import handoff_cursor
-    directory = None
-    try:
-        directory = handoff_cursor._directory('_admin')
-        fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-        with os.fdopen(fd, 'rb') as stream:
-            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                return None
-            data = stream.read(4 * 1024 * 1024 + 1)
-        if len(data) > 4 * 1024 * 1024:
-            return None
-        value = json.loads(data)
-        return value if isinstance(value, dict) else None
-    except (OSError, ValueError, TypeError):
-        return None
-    finally:
-        if directory is not None:
-            os.close(directory)
+    return handoff_cursor.read_snapshot('_admin', filename)
+
 
 def _scrub(value):
     # Preserve report schema; only values (and untrusted object keys) are scrubbed.
@@ -69,26 +54,7 @@ def _scrub(value):
 
 
 def _register(cfg, *, via="cli"):
-    """Register only configured secret files; never enumerate the secret directory."""
-    try:
-        token = accounts.load_token(cfg)
-        if isinstance(token, dict):
-            for key, value in token.items():
-                if admin_log.SECRET.search(key) or key.lower().endswith('jwt'):
-                    redact.register_secret(value)
-    except (OSError, ValueError, TypeError):
-        pass
-    for path in (cfg.get('env'), appenv.default_path() if via == 'cli' else None):
-        if path:
-            try:
-                for value in appenv._parse_env_file(path).values():
-                    redact.register_secret(value)
-            except (OSError, ValueError):
-                pass
-    try:
-        incident.settings(cfg)  # registers configured recipients and SMTP secrets
-    except (OSError, ValueError, TypeError):
-        pass
+    admin_log.register_account_secrets(cfg, via=via)
 
 
 def _file_meta(path):
@@ -157,12 +123,17 @@ def _repo(cfg):
 def _permissions(name, probe):
     if probe:
         observed = doctor.diagnose(name)
-        return dict(probed_at=jst.iso(), source='live_readonly_probe', result=observed)
-    cached = _json(Path(accounts.state_dir_for(name)) / 'doctor.json')
-    if cached and isinstance(cached.get('probes'), list) and jst.parse(cached.get('probed_at')):
-        return dict(probed_at=cached['probed_at'], source='recorded', result={
-            'probes': [{k: row.get(k) for k in ('key', 'ok', 'status', 'http_status', 'http', 'reason')}
-                       for row in cached['probes'] if isinstance(row, dict)]})
+        at = jst.iso()
+        result = dict(probed_at=at, source='live_readonly_probe', result=observed)
+        try:
+            doctor.record_observation(name, observed, probed_at=at)
+        except (OSError, ValueError, TypeError):
+            result['reason'] = 'permissions_recording_unavailable'
+        return result
+    cached = doctor.read_observation(name)
+    if cached:
+        return dict(probed_at=cached['probed_at'], source='recorded',
+                    result={key: cached[key] for key in ('probes', 'error')})
     return dict(probed_at=None, source=None, result=None, reason='permissions_not_recorded')
 
 

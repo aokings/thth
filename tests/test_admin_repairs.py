@@ -155,3 +155,78 @@ def test_unreadable_tolerance_never_skips_safety(credentials, unsafe):
         os.mkfifo(bad)
     with pytest.raises(ValueError):
         report_http.PrivateReportServer(path, 0)
+
+
+def test_doctor_cli_records_sanitized_observation_then_http_mcp_read(credentials, monkeypatch):
+    from thth import doctor
+    path, token, config = credentials; root = Path(config['root'])
+    (root/'secret').mkdir()
+    (root/'secret/first').write_text(json.dumps({'access_token': 'FAKE_DOCTOR_TOKEN_123'}))
+    (root/'secret/env-first').write_text('CLIENT_SECRET=FAKE_DOCTOR_SECRET_123\n')
+    probe = dict(key='me', label='profile', permission='read', ok=False, http_status=403,
+                 detail='FAKE_DOCTOR_TOKEN_123 FAKE_DOCTOR_SECRET_123 private@example.test',
+                 body={'password': 'FAKE_DOCTOR_BODY'}, accessJwt='FAKE_DOCTOR_JWT')
+    report = dict(account='first', username='first', user_id='1', probes=[probe])
+    monkeypatch.setattr(doctor, 'diagnose', lambda _: report.copy())
+    lines = []
+    assert doctor.run_doctor('first', as_json=True, log=lines.append) == 1
+    assert json.loads(lines[-1])['probes'] == [probe]  # Existing doctor output preserved.
+    cache = root/'state/first/doctor.json'; saved = json.loads(cache.read_text())
+    assert cache.stat().st_mode & 0o777 == 0o600
+    assert saved['probed_at'] and saved['probes'][0]['http_status'] == 403
+    assert all(s not in cache.read_text() for s in ('FAKE_DOCTOR_', 'private@example.test'))
+    before = cache.read_bytes(), cache.stat().st_mtime_ns
+    monkeypatch.setattr(doctor, 'diagnose', lambda _: pytest.fail('implicit API'))
+    monkeypatch.setattr(handoff_cursor, 'write_snapshot', lambda *a, **k: pytest.fail('HTTP write'))
+    _, creds = report_http.load_credentials(path)
+    payload = execute_report(creds[0][3], {'operation': 'admin_account', 'account': 'first'})
+    permissions = payload['by_account']['first']['permissions']
+    assert permissions['source'] == 'recorded' and permissions['probed_at'] == saved['probed_at']
+    assert permissions['result']['probes'][0]['ok'] is False
+    monkeypatch.setenv('THTH_REPORT_CREDENTIALS', str(path)); monkeypatch.setenv('THTH_REPORT_TOKEN', token)
+    result = _load_server_module().call_tool('thth_admin_account', {'account': 'first'})
+    assert json.loads(result['content'][0]['text'])['by_account']['first']['permissions'] == permissions
+    assert (cache.read_bytes(), cache.stat().st_mtime_ns) == before
+
+
+@pytest.mark.parametrize('fault', ['fsync', 'replace', 'symlink', 'fifo', 'parent_symlink'])
+def test_doctor_record_failure_is_bounded_and_keeps_previous(credentials, monkeypatch, capsys, fault):
+    from thth import doctor
+    path, _, config = credentials; root = Path(config['root'])
+    observed = dict(probes=[dict(key='me', ok=True)])
+    doctor.record_observation('first', observed)
+    cache = root/'state/first/doctor.json'; before = cache.read_bytes()
+    outside = path.parent/'doctor-external'; outside.mkdir(); victim = outside/'doctor.json'; victim.write_bytes(b'UNCHANGED')
+    if fault == 'symlink':
+        cache.unlink(); cache.symlink_to(victim)
+    elif fault == 'fifo':
+        cache.unlink(); os.mkfifo(cache)
+    elif fault == 'parent_symlink':
+        cache.unlink(); cache.parent.rmdir(); cache.parent.symlink_to(outside)
+    else:
+        def fail(*a, **k): raise OSError('FAKE_PERSISTENCE_SECRET')
+        monkeypatch.setattr(handoff_cursor.os, fault, fail)
+    monkeypatch.setattr(doctor, 'diagnose', lambda _: observed)
+    assert doctor.run_doctor('first', as_json=True, log=lambda _: None) == 0
+    stderr = capsys.readouterr().err
+    assert 'doctor_observation_unavailable' in stderr and 'FAKE_PERSISTENCE_SECRET' not in stderr
+    assert victim.read_bytes() == b'UNCHANGED'
+    if fault in ('fsync', 'replace'):
+        assert cache.read_bytes() == before
+    else:
+        assert doctor.read_observation('first') is None
+
+
+def test_admin_explicit_probe_records_and_corrupt_record_is_unknown(credentials, monkeypatch):
+    from thth import doctor
+    path, _, config = credentials
+    monkeypatch.setattr(doctor, 'diagnose', lambda _: {'probes': [{'key': 'me', 'ok': True, 'http': 200}]})
+    live = admin_report.answer('account', account='first', probe=True)['by_account']['first']['permissions']
+    monkeypatch.setattr(doctor, 'diagnose', lambda _: pytest.fail('implicit probe'))
+    recorded = admin_report.answer('account', account='first')['by_account']['first']['permissions']
+    assert live['probed_at'] == recorded['probed_at']
+    assert recorded['result']['probes'][0]['http'] == 200
+    cache = Path(config['root'])/'state/first/doctor.json'
+    value = json.loads(cache.read_text()); value['probes'][0]['ok'] = 'FAKE_INVALID_OK'; cache.write_text(json.dumps(value))
+    unknown = admin_report.answer('account', account='first')['by_account']['first']['permissions']
+    assert unknown['result'] is None and unknown['reason'] == 'permissions_not_recorded'

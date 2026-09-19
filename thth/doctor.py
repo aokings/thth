@@ -13,6 +13,7 @@ tester の認可画面に降りてくるのは 5 つだけだった（設計 §2
 from __future__ import annotations
 
 import json
+import sys
 import urllib.parse
 import urllib.request
 
@@ -206,6 +207,61 @@ def recorded_scopes_line(rec: dict | None) -> str:
     return f"記録上の scope: {rec['count']} 個（source={rec.get('source')}）"
 
 
+OBSERVATION_FIELDS = ('key', 'label', 'permission', 'ok', 'detail', 'status',
+                      'http_status', 'http', 'reason')
+
+
+def _observation_probes(probes):
+    from . import admin_log
+    if not isinstance(probes, list):
+        raise ValueError('doctor_observation_unavailable')
+    rows = []
+    for probe in probes:
+        if not isinstance(probe, dict) or not isinstance(probe.get('key'), str):
+            raise ValueError('doctor_observation_unavailable')
+        row = {}
+        for key in OBSERVATION_FIELDS:
+            value = probe.get(key)
+            if key == 'ok':
+                valid = value is None or type(value) is bool
+            elif key in ('http', 'http_status'):
+                valid = value is None or type(value) is int and 100 <= value <= 599
+            else:
+                valid = value is None or isinstance(value, str)
+            if not valid:
+                raise ValueError('doctor_observation_unavailable')
+            row[key] = admin_log.clean(value)
+        rows.append(row)
+    return rows
+
+
+def record_observation(account_name, report, *, probed_at=None):
+    """Persist only diagnostic metadata after an explicit CLI probe."""
+    from . import admin_log, handoff_cursor, jst
+    admin_log.register_account_secrets(accounts_mod.load_account(account_name))
+    error = report.get('error')
+    if error is not None and not isinstance(error, str):
+        raise ValueError('doctor_observation_unavailable')
+    value = dict(schema_version=1, account=account_name, probed_at=probed_at or jst.iso(),
+                 probes=_observation_probes(report.get('probes')), error=admin_log.clean(error))
+    handoff_cursor.write_snapshot(account_name, 'doctor.json', value)
+    return value
+
+
+def read_observation(account_name):
+    from . import admin_log, handoff_cursor, jst
+    value = handoff_cursor.read_snapshot(account_name, 'doctor.json')
+    if (not value or value.get('schema_version') != 1 or value.get('account') != account_name
+            or not jst.parse(value.get('probed_at')) or jst.parse(value['probed_at']) > jst.now_jst()
+            or value.get('error') is not None and not isinstance(value['error'], str)):
+        return None
+    try:
+        return dict(probed_at=value['probed_at'], probes=_observation_probes(value.get('probes')),
+                    error=admin_log.clean(value.get('error')))
+    except (TypeError, ValueError):
+        return None
+
+
 def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     """導入手順のどこが足りないかを、実際にトークンを叩く前に机上で見る（設計
     §2 の C1）。順番は app.env → accounts/<account>.json → token。**既存の検査
@@ -293,6 +349,12 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         notices.append(f"次の一手: {d['next']}")
 
     report = diagnose(account_name)
+    try:
+        record_observation(account_name, report)
+    except (OSError, ValueError, TypeError, accounts_mod.AccountError):
+        # Keep the existing diagnostic payload/exit meaning; recording failure is
+        # separate and bounded, never the raw filesystem or provider exception.
+        print('doctor_observation_unavailable: diagnostic was not recorded', file=sys.stderr)
     if report.get("error"):
         notices.append(NEXT_STEP_TOKEN)
         if app_env_state == appenv_mod.ABSENT and _auth_needs_app_env(account_name):

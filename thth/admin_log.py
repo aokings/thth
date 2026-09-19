@@ -30,6 +30,30 @@ SECRET = re.compile(r'token|secret|password|jwt|env|email|notification|smtp|ping
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 
 
+def register_account_secrets(cfg, *, via="cli"):
+    """Register only configured secret files; never enumerate the secret directory."""
+    from . import appenv, incident
+    try:
+        token = accounts.load_token(cfg)
+        if isinstance(token, dict):
+            for key, value in token.items():
+                if SECRET.search(key) or key.lower().endswith('jwt'):
+                    redact.register_secret(value)
+    except (OSError, ValueError, TypeError):
+        pass
+    for path in (cfg.get('env'), appenv.default_path() if via == 'cli' else None):
+        if path:
+            try:
+                for value in appenv._parse_env_file(path).values():
+                    redact.register_secret(value)
+            except (OSError, ValueError):
+                pass
+    try:
+        incident.settings(cfg)  # registers configured recipients and SMTP secrets
+    except (OSError, ValueError, TypeError):
+        pass
+
+
 def actor(by):
     if not isinstance(by, str) or not by.strip() or len(by) > 256 or any(ord(c) < 32 for c in by):
         raise ValueError('admin_by_required: --by is required')
