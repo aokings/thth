@@ -41,3 +41,13 @@ def test_foreign_fetch_does_not_make_collection_fresh(isolated_account_factory):
     alpha=isolated_account_factory('alpha',handle='a');own_sent('alpha','ROOT')
     save(alpha,extra=[dict(kind='fetch',post_id='ROOT',account='beta',medium='mastodon',collected_at='2026-09-09T10:00:00+09:00')])
     assert unanswered.answer('alpha',now=NOW)['collection_stale_hours']==1
+
+
+def test_foreign_legacy_sent_still_proves_a_possible_owner(isolated_account_factory):
+    alpha=isolated_account_factory('alpha',handle='a');isolated_account_factory('beta',handle='b')
+    own_sent('alpha','100');own_sent('beta','100')
+    path=Path(sent.path_for(accounts.state_dir_for('beta'),'100'))
+    row=json.loads(path.read_text());row.pop('reply_to');path.write_text(json.dumps(row))
+    save(alpha,'100')
+    result=unanswered.answer('alpha',now=NOW)
+    assert result['n_total']==0 and 'reply_scope_ambiguous' in result['cannot_say']

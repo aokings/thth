@@ -13,7 +13,7 @@ def _id(value):
 
 
 def _relations(name, cfg, now):
-    relations, reasons = {}, set()
+    relations, reasons, owned = {}, set(), set()
 
     def accept(row, *, timestamp):
         pid = _id(row.get('post_id'))
@@ -23,6 +23,7 @@ def _relations(name, cfg, now):
         if at is None or at > now:
             reasons.add('own_post_time_unknown')
             return
+        owned.add(pid)
         if 'reply_to' not in row:
             reasons.add('own_post_parent_unknown')
             return
@@ -82,14 +83,14 @@ def _relations(name, cfg, now):
     roots = {pid for pid, parents in relations.items() if parents == {None}}
     answered = {next(iter(parents)) for parents in relations.values()
                 if len(parents)==1 and None not in parents}
-    return roots, answered, reasons
+    return roots, answered, reasons, owned
 
 
 def answer(account_name, *, since='7d', now=None):
     now = now or jst.now_jst()
     floor = read_window.cutoff(since, now=now)
     cfg = accounts.load_account(account_name)
-    roots, answered, reasons = _relations(account_name, cfg, now)
+    roots, answered, reasons, _ = _relations(account_name, cfg, now)
     try:
         data = replies.load(account_name)
     except (OSError, ValueError, TypeError, AttributeError):
@@ -105,8 +106,8 @@ def answer(account_name, *, since='7d', now=None):
         try:
             other_cfg = accounts.load_account(other)
             if Path(accounts.data_dirs(other_cfg, other)['replies']).resolve() != directory:continue
-            other_roots, _, _ = _relations(other, other_cfg, now)
-            for pid in roots & other_roots:owners[pid].add((other, other_cfg['media']))
+            _, _, _, other_owned = _relations(other, other_cfg, now)
+            for pid in roots & other_owned:owners[pid].add((other, other_cfg['media']))
         except (accounts.AccountError, OSError, ValueError, TypeError, KeyError):
             reasons.add('reply_ownership_unknown')
 
