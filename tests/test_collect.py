@@ -107,6 +107,21 @@ def test_bluesky_observed_tags_are_saved_without_body_or_handle(tmp_path, isolat
     assert not {"text", "body", "username", "handle"} & row.keys()
 
 
+def test_bluesky_tag_read_failure_is_unknown_not_untagged(tmp_path, isolated_account_factory):
+    pair = init_git_pair(tmp_path, seed_content=make_queue_text({
+        "status": "posted", "post_id": "POST1",
+        "posted_at": "2026-09-10T10:00:00+09:00"}))
+    account = isolated_account_factory(repo_dir=pair["work"], production=True,
+                                       media="bluesky")
+    class BadTaggedAdapter(FakeAdapter):
+        def observed_tags(self, post_id):
+            raise ValueError("malformed record")
+    collect_mod.run_collect(account["name"], adapter=BadTaggedAdapter(), now=NOW,
+                            log=lambda _line: None)
+    row = _rows(pair["work"], "data/sns/insights/posts/POST1.ndjson")[0]
+    assert row["tags"] is None
+
+
 def test_採取時点の所有accountが行に書かれる(tmp_path, isolated_account_factory):
     """外部レビュー再判定 R3・2026-09-12: 台帳の行そのものに、採取時点の所有
     `account` を残す。これが無いと、`thth/measured.py` は「いまの原稿の

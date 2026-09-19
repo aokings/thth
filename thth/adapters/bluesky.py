@@ -760,19 +760,31 @@ class BlueskyAdapter(base.Adapter):
     @staticmethod
     def _observed_tags(view: dict) -> set[str]:
         """Read both facet tags and record.tags; neither text nor handles are kept."""
-        record = view.get("record") if isinstance(view.get("record"), dict) else {}
+        record = view.get("record")
+        if not isinstance(record, dict):
+            raise base.AdapterError("投稿のタグ: record を確認できません")
         raw_tags = record.get("tags")
+        if "tags" in record and (not isinstance(raw_tags, list) or
+                                  any(not isinstance(tag, str) for tag in raw_tags)):
+            raise base.AdapterError("投稿のタグ: record.tags が配列ではありません")
         found = {tag for tag in raw_tags if isinstance(tag, str) and tag} if isinstance(raw_tags, list) else set()
         facets = record.get("facets")
+        if "facets" in record and not isinstance(facets, list):
+            raise base.AdapterError("投稿のタグ: record.facets が配列ではありません")
         for facet in facets if isinstance(facets, list) else []:
             if not isinstance(facet, dict):
-                continue
+                raise base.AdapterError("投稿のタグ: facet の形式を確認できません")
             features = facet.get("features")
+            if not isinstance(features, list):
+                raise base.AdapterError("投稿のタグ: facet.features が配列ではありません")
             for feature in features if isinstance(features, list) else []:
-                if isinstance(feature, dict) and feature.get("$type") == "app.bsky.richtext.facet#tag":
+                if not isinstance(feature, dict):
+                    raise base.AdapterError("投稿のタグ: facet feature の形式を確認できません")
+                if feature.get("$type") == "app.bsky.richtext.facet#tag":
                     tag = feature.get("tag")
-                    if isinstance(tag, str) and tag:
-                        found.add(tag)
+                    if not isinstance(tag, str) or not tag:
+                        raise base.AdapterError("投稿のタグ: facet.tag を確認できません")
+                    found.add(tag)
         return found
 
     def observed_tags(self, post_id: str) -> list[str]:

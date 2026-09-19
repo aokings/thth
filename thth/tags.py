@@ -35,10 +35,6 @@ def spans(text: str, topic: str | None = None, *, media: str = "bluesky") -> lis
         return any(start < b and end > a for a, b in urls)
 
     selected = []
-    if topic:
-        for m in re.finditer(r"(?<!\w)[#＃]" + re.escape(topic) + r"(?!\w)", text):
-            if not in_url(m.start(), m.end()):
-                selected.append(TagSpan(m.start(), m.end(), topic))
     for i, ch in enumerate(text):
         if ch not in "#＃" or (i and not text[i - 1].isspace()):
             continue
@@ -52,9 +48,18 @@ def spans(text: str, topic: str | None = None, *, media: str = "bluesky") -> lis
                 continue
         if j == i + 1 or in_url(i, j):
             continue
-        if any(i < chosen.end and j > chosen.start for chosen in selected):
-            continue
         selected.append(TagSpan(i, j, text[i + 1:j]))
+    if topic:
+        for m in re.finditer(r"(?<!\w)[#＃]" + re.escape(topic) + r"(?!\w)", text):
+            if in_url(m.start(), m.end()):
+                continue
+            overlapping = [span for span in selected
+                           if m.start() < span.end and m.end() > span.start]
+            # A shorter topic prefix must not relabel a longer body hashtag.
+            if any(span.end > m.end() for span in overlapping):
+                continue
+            selected = [span for span in selected if span not in overlapping]
+            selected.append(TagSpan(m.start(), m.end(), topic))
     return sorted(selected, key=lambda span: span.start)
 
 

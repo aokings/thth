@@ -71,6 +71,14 @@ def test_emoji_and_internal_punctuation_are_real_bluesky_tags():
     assert tags.prepared("bluesky", "本文 #a.b", "a.b", hashtags=True) == "本文 #a.b"
 
 
+def test_topic_prefix_does_not_relabel_longer_punctuation_tag():
+    effective = tags.prepared("bluesky", "#a.b", "a", hashtags=True)
+    assert effective == "#a.b\n#a"
+    facets = bluesky.build_facets(effective, topic="a", include_tags=True)
+    assert [f["features"][0]["tag"] for f in facets] == ["a.b", "a"]
+    assert tags.prepared("bluesky", "#茶.味", "茶", hashtags=True) == "#茶.味\n#茶"
+
+
 def test_mastodon_number_only_topic_is_rejected():
     assert tags.topic_error("mastodon", "123") is not None
 
@@ -178,6 +186,16 @@ def test_bluesky_latest_at_compares_instants(monkeypatch):
         {"uri": "at://two", "record": {"createdAt": "2026-09-19T01:00:00Z"}},
     ]})
     assert adapter.tag_search("茶", tags=["茶"])["latest_at"] == "2026-09-19T01:00:00Z"
+
+
+@pytest.mark.parametrize("record", [None, {"tags": "broken"}, {"facets": "broken"}])
+def test_bluesky_missing_or_malformed_record_is_unknown_not_untagged(monkeypatch, record):
+    adapter = bluesky.BlueskyAdapter(identifier="fixture", app_password="fixture")
+    monkeypatch.setattr(adapter, "_post_view", lambda _: {"record": record})
+    with pytest.raises(base.AdapterError, match="投稿のタグ"):
+        adapter.observed_tags("at://fake")
+    monkeypatch.setattr(adapter, "_post_view", lambda _: {"record": {}})
+    assert adapter.observed_tags("at://fake") == []
 
 
 def test_mastodon_tag_observation_is_instance_scoped_and_aggregate(monkeypatch):
