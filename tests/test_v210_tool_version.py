@@ -31,7 +31,8 @@ def test_tool_version_cursor_states_and_read_only(notes, isolated_account_factor
     result=operations_handoff.answer(name,now=NOW,since_last_read=True)
     tool=result['tool']; assert tool['version']=='2.10.0'
     assert result['by_account'][name]['tool']==tool
-    assert tool['notes_root']==str(notes)
+    assert 'notes_root' not in tool
+    assert tool['notes_root_local_hint']=='~/Developer/thth'
     assert tool['previous_version']==(cursor_version if cursor_version not in ('absent','legacy') else None)
     assert tool['changed_since_last_read'] is (True if cursor_version=='2.9.0' else False if cursor_version=='2.10.0' else None)
     assert tool['release_notes']==([] if cursor_version=='2.10.0' else

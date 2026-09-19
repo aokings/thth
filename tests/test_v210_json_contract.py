@@ -68,3 +68,108 @@ def test_json_real_account_read_and_rehearsal(command, isolated_account_factory,
     value=json.loads(output.out)
     assert isinstance(value, dict)
     assert value
+
+# Successful report transports: nonempty evidence, not just error/empty replies.
+# The existing draft-file MCP tools intentionally expose user-supplied paths and
+# are separate from this server-path-free report contract.
+from tests.test_admin_report import fixture as report_seed
+
+# Admin paths are an unresolved specification conflict (tracked in the
+# revalidation report); their nonempty failures are retained outside the repo.
+REPORT_CASES = [('http','analytics_report'),('http','operations_handoff'),
+                ('mcp','analytics_report'),('mcp','operations_handoff'),('mcp','study_report')]
+
+
+
+def _all_strings(value):
+    if isinstance(value,str):yield value
+    elif isinstance(value,dict):
+        for key,child in value.items():
+            yield str(key)
+            yield from _all_strings(child)
+    elif isinstance(value,list):
+        for child in value:yield from _all_strings(child)
+
+
+def _assert_no_server_paths(value):
+    import re
+    assert not [s for s in _all_strings(value)
+                if re.match(r'^/(?:Users|private|tmp|srv|Volumes)',s)]
+
+
+@pytest.mark.parametrize('prefix',['/Users','/private','/tmp','/srv','/Volumes'])
+def test_report_path_scanner_covers_each_deployment_root(prefix):
+    with pytest.raises(AssertionError):_assert_no_server_paths({'nested':[{'path':prefix+'/FAKE_INTERNAL'}]})
+
+
+REPORT_TARGET_CASES = [(via,operation,'account') for via,operation in REPORT_CASES] + [
+    (via,operation,'project') for via in ('http','mcp')
+    for operation in ('analytics_report','operations_handoff')]
+
+
+@pytest.mark.parametrize('via,operation,target', REPORT_TARGET_CASES)
+def test_successful_http_mcp_reports_have_evidence_without_server_paths(via,operation,target,report_seed,tmp_path,monkeypatch):
+    import datetime, hashlib, http.client, subprocess, threading
+    from thth import accounts, admin_report, handoff_cursor, jst, operations_handoff, report_http, sent
+    from tests.test_analytics_comparison import seed
+    from tests.test_mcp import _load_server_module
+    root,_,cfg=report_seed
+    # All runtime resources remain in a private temporary root for preflight.
+    now=datetime.datetime.now(datetime.timezone.utc)
+    monkeypatch.setattr(jst,'now_jst',lambda:now)
+    repo=Path(cfg['repo_dir']);subprocess.run(['git','init','-q',str(repo)],check=True)
+    name='test-threads';account={'name':name,'repo_dir':str(repo)}
+    seed(account,'BEFORE',now-datetime.timedelta(days=10),value=2)
+    seed(account,'AFTER',now-datetime.timedelta(days=3),value=9)
+    state=Path(accounts.state_dir_for(name))
+    sent.write(str(state),post_id='OWNED',text='FAKE_PRIVATE_BODY',body_hash='hash',sent_at=jst.iso(now-datetime.timedelta(days=1)),reply_to=None)
+    node=operations_handoff.answer(name,now=now)['by_account'][name]
+    handoff_cursor.write(name,node,'tester',now)
+    admin_report.answer('diff',since_last_read=True,mark_read=True,by='tester',now=now)
+    # An actual changed field makes admin diff a nonempty success response.
+    ledger=root/'accounts'/f'{name}.json';raw=json.loads(ledger.read_text());raw['production']=True;ledger.write_text(json.dumps(raw))
+    timers=root/'state/_admin/timers.json'
+    timers.write_text(json.dumps({'by_account':{name:{'observed_at':jst.iso(now),'units':[{'unit':'thth@test-threads.timer','active':'active'}]}}}));timers.chmod(0o600)
+    policy=repo/'study.json';policy.write_text(json.dumps(dict(schema_version=1,id='study',account=name,hypothesis='h',change='c',decision={'status':'adopted','by':'tester','at':jst.iso(now-datetime.timedelta(days=7))},baseline_post_ids=['BEFORE'],changed_post_ids=['AFTER'])))
+    token='a'*43
+    credential=tmp_path/'transport-credential.json'
+    credential.write_text(json.dumps(dict(schema_version=1,root=str(root),credentials=[dict(sha256=hashlib.sha256(token.encode()).hexdigest(),expires_at=(now+datetime.timedelta(hours=1)).isoformat(),revoked=False,scope='user',accounts={name:'test'})])))
+    credential.chmod(0o600)
+    request={'operation':operation}
+    if operation in ('analytics_report','operations_handoff','admin_account'):request['account']=name
+    if target=='project':request.pop('account');request['project']='test'
+    if operation=='analytics_report':request.update(compare_previous=True,min_n=1)
+    if operation in ('operations_handoff','admin_diff'):request['since_last_read']=True
+    if via=='http':
+        with report_http.PrivateReportServer(credential,0) as server:
+            worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
+            try:
+                connection=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=10)
+                connection.request('POST','/report',json.dumps(request),{'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+                response=connection.getresponse();payload=json.loads(response.read());connection.close()
+                assert response.status==200, payload
+            finally:server.shutdown();worker.join(5)
+    else:
+        server=_load_server_module();monkeypatch.setattr(server,'THTH_BIN',None)
+        monkeypatch.setenv('THTH_REPORT_CREDENTIALS',str(credential));monkeypatch.setenv('THTH_REPORT_TOKEN',token)
+        args={key:value for key,value in request.items() if key!='operation'}
+        if operation=='study_report':args={'file':str(policy),'min_n':1}
+        response=server.call_tool('thth_'+operation if operation.startswith('admin_') else operation,args)
+        assert not response.get('isError'),response
+        payload=json.loads(response['content'][0]['text'])
+    _assert_no_server_paths(payload)
+    dumped=json.dumps(payload)
+    assert all(secret not in dumped for secret in ('FAKE_PRIVATE_TOKEN_12345','FAKE_APP_SECRET_98765','fake-private@example.test','FAKE_PRIVATE_BODY'))
+    core=payload['reports'][name] if via=='http' and not operation.startswith('admin_') else payload
+    if operation=='analytics_report':assert core['by_account'][name]['posts']['current']['metrics']['views']['median']==9
+    elif operation=='operations_handoff':
+        assert core['by_account'][name]['sent_count']==1
+        assert core['tool']['version']=='2.10.0' and core['tool']['notes_root_local_hint']=='~/Developer/thth'
+        assert 'notes_root' not in core['tool'] and 'notes_root' not in core['by_account'][name]['tool']
+    elif operation in ('admin_inventory','admin_account'):assert core['by_account'][name]['production'] is True
+    elif operation=='admin_log':assert core['events'] and core['events'][0]['event']=='account_added'
+    elif operation=='admin_tokens':assert core['tokens'][0]['present'] is True
+    elif operation=='admin_timers':assert core['by_account'][name]['units'][0]['active']=='active'
+    elif operation=='admin_release':assert core['release']['version']=='2.10.0'
+    elif operation=='admin_diff':assert any(c['field']=='production' for c in core['changes'])
+    elif operation=='study_report':assert core['observations']['changed']['metrics']['views']['median']==9

@@ -27,4 +27,4 @@ def summary(previous_version=None):
     return dict(version=__version__, previous_version=previous_version if previous else None,
                 changed_since_last_read=(previous != current) if previous else None,
                 release_notes=['docs/' + name for _, name in notes],
-                notes_root=str(NOTES_ROOT), notes_root_local_hint='~/Developer/thth')
+                notes_root_local_hint='~/Developer/thth')
