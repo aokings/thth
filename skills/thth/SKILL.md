@@ -33,7 +33,7 @@ description: 投稿する前・返信を書く前・出したあと・絡みに�
 
 - **何を書くかを決めない。** 文体・頻度・時刻・語の選び方はあなたのプロジェクトのもの。
   渡された本文を**整形も切り詰めもせず**そのまま出す。
-- **読む口は何も保存しない。** `thread_read`・`where_to_appear`・`who_is_this` はどれも、
+- **読む口は SNS 台帳に書かない。** `thread_read`・`where_to_appear`・`who_is_this` はどれも、
   読んで見せるだけで**台帳に 1 バイトも書かない**。この 3 つと絡みの台帳
   （`data/sns/engagements/`）だけを見れば、残るのは**自分の行為と反応**だけで、
   **相手の本文・相手の名前・あなたの判断は入らない**。**別の台帳**——自分の投稿への
@@ -54,8 +54,7 @@ thth where --project <P> <語…>      # project 単位で全媒体を一度に
 ```
 
 MCP `where_to_appear`。**順位は無い**——材料を並べるだけで、選ぶのは LLM。
-**残すもの: なし**（この口自身は何も書かない。材料は `after_you_posted` と
-絡みの台帳から来ている）。
+**SNS 台帳への保存: なし**。運用 runs には account・検索語・件数・成否だけを記録し、本文・username は残さない。
 **呼ばなくてよいとき**: 返す先がもう決まっている・自分の投稿への返信。
 
 ### 2. 読む——枝をその場で
@@ -77,7 +76,7 @@ thth who <account> <author_key>
 
 MCP `who_is_this`。この仮名と自分のアカウントが何度・いつ・どんな反応だったか
 だけを返す。**人物像ではない**——発言の内容は持たない。
-**残すもの: なし**（絡みの台帳・返信の台帳から導くだけで、この口自体は書かない）。
+**SNS 台帳への保存: なし**。既存の最小運用 runs は残る。`who` は 1 度に 1 人。
 
 ### 4. 書く——下書きに宛先を乗せる
 
@@ -147,3 +146,13 @@ MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜ�
 プロジェクトの作業開始・再開時は `git fetch` 後にリモート `docs/sns/queue/` の `thth_run_state`・`thth_run_detail`・`thth_run_next` を確認する。dirty worktree へ無条件に pull しない。リモートの確認は `git show origin/main:docs/sns/queue/FILE.md` 等で行える。停止・成否不明なら inflight を消して再投稿せず、示された確認を行う。復旧状態は投稿成功の保証ではなく、公開結果は status/post_id/posted_at を見る。
 
 `mentions <account> --json` は 3 媒体の言及を同じ項目で読む。返信前に `replied` の object／false／null を区別する。`unanswered <account> --since 7d --json` は自分の根投稿の未回答候補を台帳で読む。`cannot_say` と採集の古さを確認し、`--refresh` は明示されたときだけ使う。件数は account ごとに扱い、送信は既存の承認・digest・production の門を通す。
+
+## 2.10.0 の入口
+
+- `where <account> --recent 茶 --word コーヒー --since 7d --exclude-engaged --max-per-author 2 --json`。位置引数とオプションを混在できる。各語の `dropped` と `material.n` は絞り込み後の内訳。Bluesky の期間は API の sortAt、他媒体は投稿日時。タグ観測は独立した 24 時間。
+- Bluesky の `thread`・`send --reply-to`・`after --reply-to`・`replies --post` は `https://bsky.app/profile/<handle|did>/post/<rkey>` も受ける。公開 handle 解決後の AT URI を用い、解決不能は止める。
+- `approve <queue ディレクトリ> --account <name>` はその account の draft だけ。glob は手元で展開されるので使わず、VM のディレクトリを渡す。承認二段・digest・`--by` は同じ。
+- `send` dry-run はロックなし、最小運用 runs は 1 行。書く口の `--wait <秒>` はロック待機（既定 0）。`send` と `approve` の一段目は媒体の数え方と文字数上限を表示する。
+- `study add <施策JSON> <post_id|queueのパス> --by <名前>` は `changed_post_ids` に追加。`--baseline` は `baseline_post_ids`。この口は利用者の JSON だけを保存し、採用判断・投稿承認・git commit は行わない。VM ラッパ経由なら JSON と queue のパスは VM 上のもの。
+- 比較の `by_mark` は views が無くても likes・replies・reposts を表示。3 媒体とも採集済みの値を使い、欠測は null。媒体・account を足さない。
+- `mentions` と `unanswered` の CLI も最小運用 runs を残す。本文・username・投稿 ID は運用記録へ保存しない。`unanswered` の計算共有先の handoff-report は純粋な読み取りのまま。
