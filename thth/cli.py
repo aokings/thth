@@ -3173,6 +3173,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # `thth ask before-you-post`（設計 v2 §1・§6 v2-1）。**口の中身は
     # `thth/ask_cli.py` に閉じる**——ここに足すのはこの 1 行だけ。
+    from . import admin_report
+    admin_report.register(sub)
     ask_cli.register(sub)
     # `thth mentions` / `thth profile` と `topics --search`（設計 v2 §4.3・v2.1-A）。
     # **口の中身は `thth/threads_read_cli.py` に閉じる**——ここに足すのはこの 1 行だけ。
