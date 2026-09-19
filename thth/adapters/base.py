@@ -29,6 +29,7 @@ class Post:
     # 壊さないため——ここで loud に断ると、媒体を足した瞬間に既存の queue が
     # 全部止まる。**使わない媒体が受け取っても何も起きない**が正しい。
     topic: str | None = None
+    hashtags_allowed: bool = False
     # --- 承認を通る書き込みの口（設計 v2 §4.3・v2.1-B・2026-09-14） ---
     # 場所（Threads の `location_id`）。queue の front-matter `location:`（人が
     # 書く語）と `location_id:`（`thth location search` が引いた id を人が書く）

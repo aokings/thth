@@ -40,6 +40,7 @@ from . import maintain as maintain_mod
 from . import measured as measured_mod
 from . import oauth as oauth_mod
 from . import queuefile
+from . import tags as tags_mod
 from . import replies as replies_mod
 from . import report as report_mod
 from . import selfupdate as selfupdate_mod
@@ -280,7 +281,8 @@ def _prepare_one(path: str):
         "publish_at": fm.get("publish_at"),
         "topic": queuefile.normalize_topic(fm.get("topic")),
         "reply_to": fm.get("reply_to"),
-        "text": section,
+        "text": tags_mod.prepared(media, section, queuefile.normalize_topic(fm.get("topic")),
+                                  hashtags=bool(account_cfg.get("hashtags", True))),
         "location": (fm.get("location") or "").strip() or None,
         "location_id": options["location_id"],
         "share_to_instagram": options["share_to_instagram"],

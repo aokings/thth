@@ -9,6 +9,7 @@ from . import accounts as accounts_mod
 from . import engagements as engagements_mod
 from . import postid as postid_mod
 from . import queuefile
+from . import tags as tags_mod
 
 
 def _account_cfg_or_none(account_name: str | None) -> dict | None:
@@ -150,7 +151,9 @@ def lint_file(path: str) -> list:
     else:
         limit = queuefile.limit_for(media, account_cfg)
         # **数え方も媒体ごと**（`limit_for()` と対・引継ぎ 2026-09-15 §3-D）。
-        n = queuefile.count_for(media, section)
+        topic = queuefile.normalize_topic(fm.get("topic"))
+        effective = tags_mod.prepared(media, section, topic, hashtags=bool(account_cfg.get("hashtags", True)) if account_cfg else False)
+        n = queuefile.count_for(media, effective)
         if n > limit:
             errors.append(f"length: {media} は {limit} 字以内（{n} 字）")
         else:
@@ -163,6 +166,7 @@ def lint_file(path: str) -> list:
         hashtags_allowed = bool(account_cfg.get("hashtags", True)) if account_cfg else False
         if not hashtags_allowed and queuefile.has_hashtag(section):
             errors.append("hashtag: ハッシュタグは付けない規約（`#` を含む）")
+        errors.extend(tags_mod.errors(media, section, topic, account_cfg))
         # 本文に制御文字が混じっていないか（セキュリティ監査 2026-09-16・B-2）。
         control = queuefile.find_control_char(section)
         if control is not None:
@@ -172,7 +176,7 @@ def lint_file(path: str) -> list:
     # トピック（`topic_tag`）。省略・空は許す（設計 §4.1・masaru 裁定 2026-09-09）。
     topic = queuefile.normalize_topic(fm.get("topic"))
     if topic is not None:
-        topic_err = queuefile.topic_error(topic)
+        topic_err = queuefile.topic_error(topic) if media == "threads" else None
         if topic_err is not None:
             errors.append(topic_err)
 
@@ -269,4 +273,5 @@ def preview_file(path: str) -> str:
     section = queuefile.extract_section(qf.body, media)
     if section is None:
         raise ValueError(f"media section が無い（`## {media}`）: {path}")
-    return section
+    return tags_mod.prepared(media, section, queuefile.normalize_topic(qf.front_matter.get("topic")),
+                             hashtags=bool(account_cfg.get("hashtags", True)) if account_cfg else False)

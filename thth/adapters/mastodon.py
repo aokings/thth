@@ -36,6 +36,7 @@ import urllib.request
 
 from .. import httpsafe
 from .. import jst
+from .. import tags as tags_mod
 from .. import redact as redact_mod
 from . import base
 
@@ -404,7 +405,9 @@ class MastodonAdapter(base.Adapter):
         """
         material = "\x1f".join([
             "mastodon", self.instance, visibility,
-            post.reply_to or "", post.text or "",
+            post.reply_to or "",
+            tags_mod.prepared(MEDIUM, post.text, post.topic,
+                              hashtags=post.hashtags_allowed) or "",
         ])
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
@@ -429,7 +432,9 @@ class MastodonAdapter(base.Adapter):
                                       failure="none")
 
         visibility = self.visibility
-        params = {"status": post.text, "visibility": visibility}
+        text = tags_mod.prepared(MEDIUM, post.text, post.topic,
+                                 hashtags=post.hashtags_allowed)
+        params = {"status": text, "visibility": visibility}
         if post.reply_to:
             params["in_reply_to_id"] = post.reply_to
 

@@ -42,6 +42,7 @@ import urllib.request
 
 from .. import httpsafe
 from .. import jst
+from .. import tags as tags_mod
 from .. import redact as redact_mod
 from . import base
 
@@ -109,7 +110,7 @@ def _trim_url(url: str) -> str:
     return url
 
 
-def build_facets(text: str) -> list:
+def build_facets(text: str, *, topic: str | None = None) -> list:
     """本文から URL を拾い、`app.bsky.richtext.facet#link` の配列を作る。
 
     **付けなければリンクにならない**（Bluesky は本文の URL を自動でリンクにしない）。
@@ -126,7 +127,14 @@ def build_facets(text: str) -> list:
             "index": {"byteStart": byte_start, "byteEnd": byte_end},
             "features": [{"$type": "app.bsky.richtext.facet#link", "uri": url}],
         })
-    return facets
+    if topic:
+        for m in re.finditer(r"(?<!\w)#" + re.escape(topic) + r"(?!\w)", text):
+            start = len(text[:m.start()].encode("utf-8"))
+            facets.append({"index": {"byteStart": start,
+                                      "byteEnd": start + len(m.group().encode("utf-8"))},
+                           "features": [{"$type": "app.bsky.richtext.facet#tag",
+                                         "tag": topic}]})
+    return sorted(facets, key=lambda f: f["index"]["byteStart"])
 
 
 # --- 文字数（300 grapheme の近似） -----------------------------------------
@@ -447,12 +455,14 @@ class BlueskyAdapter(base.Adapter):
             return base.PublishResult(post_id=None, url=None, ts=ts, error=None,
                                        failure="none")
 
+        text = tags_mod.prepared(MEDIUM, post.text, post.topic,
+                                 hashtags=post.hashtags_allowed)
         record = {
             "$type": POST_COLLECTION,
-            "text": post.text,
+            "text": text,
             "createdAt": created_at(),
         }
-        facets = build_facets(post.text)
+        facets = build_facets(text, topic=post.topic if post.hashtags_allowed else None)
         if facets:
             record["facets"] = facets
         # `post.topic` は Threads だけのもの。**黙って無視する**（設計 v2 §4.2:

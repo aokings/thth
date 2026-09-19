@@ -22,6 +22,7 @@ from . import jst
 from . import lock as lock_mod
 from . import postid as postid_mod
 from . import queuefile
+from . import tags as tags_mod
 from . import redact as redact_mod
 from . import runs as runs_mod
 from . import select as select_mod
@@ -617,7 +618,9 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
 
     if mode == "rehearsal":
         log("投げるはずの本文:")
-        log(section)
+        log(tags_mod.prepared(account_cfg["media"], section,
+                              queuefile.normalize_topic(chosen.get("topic")),
+                              hashtags=bool(account_cfg.get("hashtags", True))))
         inflight_mod.clear(state_dir)
         _append_run(state_dir, account_name, run_id, mode, "skip", chosen.path, None, now,
                     status="ok", error=None)
@@ -630,7 +633,10 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # topic は select_one() の条件 9b で既に検査済み（不正なら候補から落ちている）。
     # ここでは正規化だけ行う（前後の空白・先頭の `#` を落とす・設計 §4.1）。
     topic = queuefile.normalize_topic(chosen.get("topic"))
-    post = adapter_base.Post(text=section, reply_to=chosen.get("reply_to") or None, topic=topic,
+    post = adapter_base.Post(text=tags_mod.prepared(account_cfg["media"], section, topic,
+                                                    hashtags=bool(account_cfg.get("hashtags", True))),
+                             reply_to=chosen.get("reply_to") or None, topic=topic,
+                             hashtags_allowed=bool(account_cfg.get("hashtags", True)),
                              location_id=options["location_id"],
                              share_to_instagram=options["share_to_instagram"])
 
@@ -920,7 +926,9 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         # **上限は台帳の `char_limit` で上書きできる**（設計 v2 §4.2）。
         limit = queuefile.limit_for(media, account_cfg)
         # **数え方も媒体ごと**（`limit_for()` と対・引継ぎ 2026-09-15 §3-D）。
-        n = queuefile.count_for(media, body)
+        effective = tags_mod.prepared(media, body, queuefile.normalize_topic(topic),
+                                      hashtags=bool(account_cfg.get("hashtags", True)))
+        n = queuefile.count_for(media, effective)
         if n > limit:
             # **次の一手を 1 行**（T2・第 1 回の記録 §3）。第 1 回（2026-09-13・L1）は
             # 3 体中 2 体がここで止まり、自分で本文を縮めるか分けるかを迷った。
@@ -936,12 +944,22 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
 
         topic_value = queuefile.normalize_topic(topic)
         if topic_value is not None:
-            topic_err = queuefile.topic_error(topic_value)
+            topic_err = (queuefile.topic_error(topic_value) if media == "threads"
+                         else tags_mod.topic_error(media, topic_value))
             if topic_err is not None:
                 log(f"トピックが不正です: {topic_err}")
                 _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
                             status="error", error=topic_err)
                 return ThrowResult(exit_code=1, mode=mode, action="skip", message=topic_err)
+
+        tag_issues = [e for e in tags_mod.errors(media, body, topic_value, account_cfg)
+                      if not e.startswith("warning:")]
+        if tag_issues:
+            msg = tag_issues[0]
+            log(msg)
+            _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                        status="error", error=msg)
+            return ThrowResult(exit_code=1, mode=mode, action="skip", message=msg)
 
         # 確認用 digest（外部レビュー §1b・受け入れ 6）。`approved_sha` と同じ正規化
         # だが `publish_at` は含めない（send に予約時刻という概念が無いため）。
@@ -950,7 +968,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
 
         if mode == "rehearsal":
             log("投げるはずの本文:")
-            log(body)
+            log(effective)
             if topic_value:
                 log(f"トピック: {topic_value}")
             log(f"digest: {digest}")
@@ -978,7 +996,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         inflight_mod.write(state_dir, file="(send)", started=jst.iso(), container_id=None)
         token = accounts_mod.load_token(account_cfg)
         adapter = adapter_factory(account_cfg, token)
-        post = adapter_base.Post(text=body, reply_to=reply_to or None, topic=topic_value)
+        post = adapter_base.Post(text=effective, reply_to=reply_to or None, topic=topic_value,
+                                 hashtags_allowed=bool(account_cfg.get("hashtags", True)))
 
         def on_container_created(container_id):
             inflight_mod.update(state_dir, container_id=container_id)

@@ -18,6 +18,7 @@ import os
 from . import adapters as adapters_mod
 from . import approval as approval_mod
 from . import queuefile
+from . import tags as tags_mod
 
 
 @dataclasses.dataclass
@@ -271,7 +272,9 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
         # **数え方も媒体ごと**（`limit_for()` と対・引継ぎ 2026-09-15 §3-D）。
         # Bluesky の 300 は grapheme——Threads の数え方で測ると、絵文字の多い
         # 本文が「超えている」と落ちていた。
-        n = queuefile.count_for(media, section)
+        topic = queuefile.normalize_topic(fm.get("topic"))
+        effective = tags_mod.prepared(media, section, topic, hashtags=hashtags_allowed)
+        n = queuefile.count_for(media, effective)
         if n > limit:
             rejections.append(Rejection(path, f"too_long({n})"))
             needs_review.append(path)
@@ -301,6 +304,13 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
                     rejections.append(Rejection(path, topic_err))
                     needs_review.append(path)
                     continue
+
+        tag_issues = [e for e in tags_mod.errors(media, section, topic, account_cfg)
+                      if not e.startswith("warning:")]
+        if tag_issues:
+            rejections.append(Rejection(path, tag_issues[0]))
+            needs_review.append(path)
+            continue
 
         # 8. 直近 30 日の投稿済み本文と完全一致
         if section.strip() in recent_texts:
