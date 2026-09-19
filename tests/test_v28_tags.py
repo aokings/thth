@@ -77,6 +77,11 @@ def test_topic_prefix_does_not_relabel_longer_punctuation_tag():
     facets = bluesky.build_facets(effective, topic="a", include_tags=True)
     assert [f["features"][0]["tag"] for f in facets] == ["a.b", "a"]
     assert tags.prepared("bluesky", "#茶.味", "茶", hashtags=True) == "#茶.味\n#茶"
+    bracketed = tags.prepared("bluesky", "(#a.b)", "a", hashtags=True)
+    assert bracketed == "(#a.b)\n#a"
+    facets = bluesky.build_facets(bracketed, topic="a", include_tags=True)
+    assert [f["features"][0]["tag"] for f in facets] == ["a.b", "a"]
+    assert tags.prepared("bluesky", "「#茶.味」", "茶", hashtags=True).endswith("\n#茶")
 
 
 def test_mastodon_number_only_topic_is_rejected():

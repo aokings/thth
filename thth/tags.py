@@ -36,7 +36,9 @@ def spans(text: str, topic: str | None = None, *, media: str = "bluesky") -> lis
 
     selected = []
     for i, ch in enumerate(text):
-        if ch not in "#＃" or (i and not text[i - 1].isspace()):
+        if ch not in "#＃" or (i and not (
+                text[i - 1].isspace() or
+                unicodedata.category(text[i - 1]) in ("Ps", "Pi"))):
             continue
         j = i + 1
         if media == "bluesky":
@@ -52,6 +54,8 @@ def spans(text: str, topic: str | None = None, *, media: str = "bluesky") -> lis
     if topic:
         for m in re.finditer(r"(?<!\w)[#＃]" + re.escape(topic) + r"(?!\w)", text):
             if in_url(m.start(), m.end()):
+                continue
+            if media == "bluesky" and _bluesky_tag_end(text, m.start() + 1) > m.end():
                 continue
             overlapping = [span for span in selected
                            if m.start() < span.end and m.end() > span.start]

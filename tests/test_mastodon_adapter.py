@@ -74,6 +74,7 @@ STATUS_FIXTURE = {
     "favourites_count": 7,
     "replies_count": 3,
     "reblogs_count": 2,
+    "tags": [],  # real Status shape: observed_tags can distinguish empty from missing
     "account": {"id": "9000", "acct": "nigamilab"},
     # 本物の応答は必ず持つ（監査 P2-2）。`fetch_post()`（T1-1）の C-1 検査対象。
     "visibility": "public",
