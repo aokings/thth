@@ -368,3 +368,39 @@ def test_paste_internal_control_rejected_before_url_parser(env,control):
     with pytest.raises(authflow.FlowError,match='auth_paste_control_character'):
         authflow.paste(raw,session)
     assert authflow.paste('  '+url(session,env['code'])+'\n',session)==env['code']
+
+
+@pytest.mark.parametrize('register',[False,True])
+def test_relay_product_user_agent_on_actual_http(env,monkeypatch,register):
+    import thth
+    seen=[]
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def do_GET(self):
+            seen.append(dict(self.headers));self.send_response(404);self.end_headers()
+        def do_POST(self):
+            self.rfile.read(int(self.headers['Content-Length']))
+            seen.append(dict(self.headers));self.send_response(201);self.end_headers()
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    monkeypatch.setenv('THTH_AUTH_RELAY_BASE_URL',f'http://127.0.0.1:{server.server_port}')
+    try:
+        assert authflow.relay_request({'state':opaque(),'read_key':opaque()},register=register)[0]==(201 if register else 404)
+    finally:server.shutdown();server.server_close();thread.join()
+    assert seen[0]['User-Agent']==f'thth/{thth.__version__} (+https://thth.me)'
+
+
+@pytest.mark.parametrize('when',['register','poll','rehearse'])
+def test_relay_403_reason_fallback_or_readonly(env,monkeypatch,when):
+    before=snapshot(env['root'].parent);lines=[];human=[]
+    def request(session,register=False,**kw):
+        return (201,{}) if register and when=='poll' else (403,{})
+    monkeypatch.setattr(authflow,'relay_request',request)
+    monkeypatch.setattr('builtins.input',lambda:url(authflow._read_session('alpha'),env['code']))
+    rc=oauth.run_auth('alpha',by='operator',rehearse=when=='rehearse',log=lines.append,human_output=human.append)
+    assert rc==(2 if when=='rehearse' else 0)
+    assert len(human)==1
+    assert sum('relay_unavailable_http_403' in line and 'User-Agent' in line for line in lines)==1
+    if when=='rehearse':assert snapshot(env['root'].parent)==before
+    else:assert json.loads(Path(env['cfg']['token']).read_text())['auth_via']=='paste'
+    assert env['code'] not in '\n'.join(lines)

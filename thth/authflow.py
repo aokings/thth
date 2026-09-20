@@ -174,12 +174,14 @@ def _relay_base():
 
 
 def relay_request(session, *, register=False, timeout=10):
+    from . import __version__
+    headers = {'User-Agent': f'thth/{__version__} (+https://thth.me)'}
     url = _relay_base() + '/relay/' + urllib.parse.quote(session['state'], safe='')
     if register:
         data = json.dumps({'read_key_hash': hashlib.sha256(session['read_key'].encode()).hexdigest()}).encode()
-        request = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'}, method='POST')
+        request = urllib.request.Request(url, data=data, headers={**headers, 'Content-Type': 'application/json'}, method='POST')
     else:
-        request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + session['read_key']}, method='GET')
+        request = urllib.request.Request(url, headers={**headers, 'Authorization': 'Bearer ' + session['read_key']}, method='GET')
     try:
         with httpsafe.urlopen(request, timeout=timeout) as response:
             status = response.status
@@ -196,6 +198,12 @@ def relay_request(session, *, register=False, timeout=10):
         return exc.code, {}
     except (OSError, ValueError) as exc:
         raise FlowError('relay_unavailable') from None
+
+
+def _relay_status_reason(status):
+    if status == 403:
+        return 'relay_unavailable_http_403: User-Agent が拒否の原因である可能性があります'
+    return 'relay_unavailable'
 
 
 def poll(session, *, rehearsing=False):
@@ -215,7 +223,7 @@ def poll(session, *, rehearsing=False):
             _remaining(session)
             return code
         if status not in (404, 429):
-            raise FlowError('relay_unavailable')
+            raise FlowError(_relay_status_reason(status))
         time.sleep(min(POLL_SECONDS, max(0, deadline-time.monotonic())))
     raise FlowError('auth_timeout: 600 秒以内に届きませんでした')
 
@@ -347,6 +355,8 @@ def run(account, cfg, profile, *, code=None, input_func=None, log=print, by, hum
                 try:
                     status, _ = relay_request(session, register=True)
                     use_relay = status == 201
+                    if status == 403:
+                        log(_relay_status_reason(status))
                 except FlowError:
                     use_relay = False
             # The authorization URL is a deliberate human output, never a logger input.
@@ -358,6 +368,8 @@ def run(account, cfg, profile, *, code=None, input_func=None, log=print, by, hum
                 except FlowError as exc:
                     if not str(exc).startswith('relay_unavailable'):
                         raise
+                    if str(exc).startswith('relay_unavailable_http_403'):
+                        log(str(exc))
                     log('預かり所を使えません。戻り URL 全体を貼ってください')
                     code_value = paste((input_func or input)(), session)
             else:
