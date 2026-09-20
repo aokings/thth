@@ -100,7 +100,7 @@ def load_credentials(path: Path):
         credentials = []
         seen = set()
         for item in config["credentials"]:
-            if type(item) is not dict or set(item) - {"sha256", "expires_at", "revoked", "accounts", "scope"} or not {"sha256", "expires_at", "revoked", "accounts"} <= set(item):
+            if type(item) is not dict or set(item) - {"sha256", "expires_at", "revoked", "accounts", "scope", "writes", "actor"} or not {"sha256", "expires_at", "revoked", "accounts"} <= set(item):
                 raise ValueError("invalid_credential")
             digest = item["sha256"]
             if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
@@ -117,7 +117,8 @@ def load_credentials(path: Path):
                         raise ValueError("invalid_registry")
                     value = read_registry_ledger(ledger)
                     allowed[ledger.stem] = registry_project(value)
-            context = ReportContext(allowed, scope=scope)
+            context = ReportContext(allowed, scope=scope, writes=item.get('writes', False), actor=item.get('actor'),
+                                    credential_digest=digest, credentials_path=str(Path(path).absolute()))
             credentials.append((digest, _expiry(item["expires_at"]), item["revoked"], context))
         return root, credentials
     except (OSError, ValueError, TypeError, KeyError, RecursionError, OverflowError):
@@ -261,7 +262,7 @@ class ReportHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._valid_host():
             return
-        if self.path != "/report":
+        if self.path not in ("/report", "/write"):
             return self._reply(404, {"error": "not_found"})
         loaded = self._credentials()
         if loaded is None:
@@ -310,13 +311,21 @@ class ReportHandler(BaseHTTPRequestHandler):
         except IsolationError:
             return self._reply(503, {"error": "environment_unavailable"})
         try:
-            payload = self.server.executor(context, request)
+            if self.path == '/write':
+                from .server_writes import execute
+                payload = execute(context, request, via='http')
+            else:
+                payload = self.server.executor(context, request)
         except ReportServiceError as error:
             # Fixed allowlist prevents future exception text exposing core details.
             reason = str(error)
-            public = {"invalid_request", "unsupported_operation", "invalid_scope", "invalid_options", "scope_unavailable"}
+            public = {"invalid_request", "unsupported_operation", "invalid_scope", "invalid_options", "scope_unavailable", "writes_not_allowed", "invalid_draft", "draft_changed", "draft_not_editable", "managed_repo_required", "production_disabled"}
+            fallback = "report_unavailable"
+            if self.path == '/write':
+                from .server_writes import SAFE_ERRORS
+                fallback = reason if reason in SAFE_ERRORS else 'write_unavailable'
             return self._reply(400 if reason in public else 503,
-                               {"error": reason if reason in public else "report_unavailable"})
+                               {"error": reason if reason in public else fallback, **({"reason": error.reason} if getattr(error, "reason", None) in ("body_not_representable", "lint_failed") else {})})
         except Exception:
             return self._reply(503, {"error": "report_unavailable"})
         self._reply(200, payload)

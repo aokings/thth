@@ -64,7 +64,8 @@ timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿
 ### v2.5.0 の変更
 
 - 読み取り専用のレポート 3 本: `analytics-report`（活動のスナップショット・`--compare-previous` で隣接期間の比較）・`handoff-report`（ローカル運用記録の引継ぎ）・`study-report`（施策の宣言と本人の観測の結合）。MCP に `analytics_report`・`operations_handoff`・`study_report`。数値は期間・母数・欠測・根拠を連れて歩き、因果や推奨は出しません。
-- `serve-reports`: 専用環境向けの非公開レポート HTTP（Unix socket 既定・service credential・読むだけ）。**開発版**で、人の認証・TLS・一般提供は含みません。[限界](docs/非公開レポートHTTP_v1.md)。
+- `serve-reports`: 専用環境向けの非公開レポート HTTP（Unix socket 既定・service credential・読むだけ）。**開発版**で、人の認証・TLS・一般提供は含みません。[限界](docs/非公開レポートHTTP_v1.md)。 2.12 の明示的な user `writes: true` は [承認ページ経由の書く口](docs/運用_サーバ書込_2.12.md) を追加し、既存の read-only credential は維持します。
+- `approval-worker`: 短い request 応答から分離した永続承認 job の検査・実行。管理者が同じ隔離環境で常駐させます。
 - X の本人公開指標の純粋な変換関数（API・投稿・台帳には未接続）。
 - 独立監査（P2 4・P3 7）とその直し: Unix socket 既定・要求全体の 10 秒 deadline・分離検査の走査を読取 dir に限定・期間比較の母集団から時刻不一致の返信を除外・git 無しでも import 可。
 
@@ -96,7 +97,7 @@ timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿
 - **英語の文書**: [README.en.md](README.en.md)・[docs/usage.en.md](docs/usage.en.md)・[llms.txt](llms.txt)。
 - **skill**: `skills/thth/SKILL.md`（wheel にも入る）。
 
-- **動くもの**（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`unanswered`・`handoff-report`・`serve-reports`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`who`・`retract`・`location`・`notifications`・`admin`。
+- **動くもの**（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`unanswered`・`handoff-report`・`serve-reports`・`approval-worker`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`who`・`retract`・`location`・`notifications`・`admin`。
 - **最初の本番投稿の記録**: 2026-09-09、@aoking に疎通確認を 1 本（`17916074118445631`）。
 - **未着手**: X・Facebook ページ・Instagram の各アダプタ。トピック検索の権限（tester には降りない）。泉のサーバ（v2-5）。
 - **権限の制約**: tester に降りる scope は 5 つ。削除はできない。

@@ -458,15 +458,7 @@ def cmd_approve(args) -> int:
             print(str(e), file=sys.stderr)
             return 2
         for one in prepared:
-            writeback_mod.set_front_matter_fields(one["path"], {
-                "status": "approved",
-                "approved_sha": one["approved_sha"],
-                "approved_at": approved_at,
-                "approved_by": approved_by,
-                "revoked_at": None,
-                "revoked_by": None,
-                "revoked_reason": None,
-            })
+            writeback_mod.set_front_matter_fields(one["path"], approval_mod.approved_fields(one, approved_by, approved_at))
 
         rel_paths = [os.path.relpath(os.path.realpath(one["path"]), repo_dir) for one in prepared]
         label = (os.path.basename(prepared[0]["path"]) if len(prepared) == 1
@@ -3125,6 +3117,9 @@ def build_parser() -> argparse.ArgumentParser:
     transport.add_argument("--socket", help="管理者が用意した0700ディレクトリ内のsocketパス")
     transport.add_argument("--tcp-port", type=int, help="明示的にloopback TCPを使うport")
     p_http.set_defaults(func=report_http.cmd_serve_reports)
+
+    from . import approval_jobs
+    approval_jobs.register(sub)
 
     p_handoff = sub.add_parser("handoff-report", help="ローカル運用記録を引き継ぐ（読むだけ）")
     p_handoff.add_argument("account", nargs="?")

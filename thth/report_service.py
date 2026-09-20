@@ -23,9 +23,18 @@ class ReportContext:
 
     allowed_accounts: Mapping[str, str | None]
     scope: str = "user"
+    writes: bool = False
+    actor: str | None = None
+    credential_digest: str | None = None
+    credentials_path: str | None = None
 
     def __post_init__(self):
         if self.scope not in ("user", "admin") or not isinstance(self.allowed_accounts, Mapping):
+            raise ReportServiceError("invalid_context")
+        from .approval_relay import PERSON
+        if (type(self.writes) is not bool or self.writes and (self.scope != 'user'
+                or not isinstance(self.actor, str) or not PERSON.fullmatch(self.actor))
+                or self.actor is not None and (not isinstance(self.actor, str) or not PERSON.fullmatch(self.actor))):
             raise ReportServiceError("invalid_context")
         allowed = dict(self.allowed_accounts)
         for account, project in allowed.items():
@@ -45,6 +54,9 @@ def execute_report(context: ReportContext, request: dict) -> dict:
     if type(context) is not ReportContext or type(request) is not dict:
         raise ReportServiceError("invalid_request")
     operation = request.get("operation")
+    if operation in ('draft_list', 'queue', 'request_status'):
+        from .server_writes import read
+        return read(context, request)
     if isinstance(operation, str) and operation.startswith("admin_"):
         if context.scope != "admin":
             raise ReportServiceError("unsupported_operation")

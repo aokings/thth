@@ -21,6 +21,9 @@ ITERATIONS = 600_000
 
 class RelayError(Exception):
     """Only static, non-secret reason codes cross the CLI boundary."""
+    def __init__(self, message, *, status=None):
+        super().__init__(message)
+        self.status = status
 
 
 def b64(value):
@@ -130,6 +133,8 @@ def signed_request(kind, subject, operation, body):
             value=json.loads(data)
             if not isinstance(value,dict):raise RelayError('approval_relay_invalid')
             return value
+    except urllib.error.HTTPError as exc:
+        raise RelayError('approval_relay_outcome_unknown', status=exc.code) from None
     except (OSError, ValueError, urllib.error.URLError) as exc:
         raise RelayError('approval_relay_outcome_unknown') from exc
 

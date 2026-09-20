@@ -26,7 +26,7 @@ def _emit(fd, data):
 
 EVENTS = frozenset(('account_added', 'account_updated', 'account_removed', 'token_set',
                    'token_refreshed', 'token_revoked', 'app_set', 'production_enabled', 'production_disabled', 'relay_key_initialized',
-                   'approver_set', 'approver_revoked', 'approver_unlocked'))
+                   'approver_set', 'approver_revoked', 'approver_unlocked', 'approval_requested', 'send_requested', 'retract_requested', 'sent'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 
@@ -87,7 +87,7 @@ def provenance(by, via='cli'):
 
 def append(event, account, cfg, *, by, via='cli', diff=None, run_id=None):
     actor(by)
-    if event not in EVENTS or not accounts.name_is_safe(account) or via not in ('cli', 'mcp'):
+    if event not in EVENTS or not accounts.name_is_safe(account) or via not in ('cli', 'mcp', 'http'):
         raise ValueError('invalid_admin_event')
     row = dict(at=jst.iso(), by=clean(by), via=via, host=socket.gethostname(), event=event,
                account=account, medium=cfg.get('media'), diff=diff or {}, run_id=run_id)

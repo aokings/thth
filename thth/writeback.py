@@ -142,10 +142,18 @@ def set_front_matter_fields(path: str, fields: dict) -> None:
     `thth revoke --reason`・`THTH_ACTOR`・媒体が返す `post_id` はどれもここを
     通るので、検査はこの 1 か所に置く。
     """
-    for key, value in fields.items():
-        check_front_matter_field(key, value)
     with open(path, encoding="utf-8") as f:
         text = f.read()
+    updated = front_matter_text(text, fields, label=path)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(updated)
+
+
+def front_matter_text(text, fields, *, label="draft"):
+    """One pure transformation shared by CLI and pinned server writes."""
+    for key, value in fields.items():
+        check_front_matter_field(key, value)
+    path = label
     lines = text.split("\n")
     try:
         end_idx = _split_front_matter_lines(lines)
@@ -173,11 +181,13 @@ def set_front_matter_fields(path: str, fields: dict) -> None:
     if remaining:
         new_lines = [f"{key}: {value if value is not None else ''}" for key, value in remaining.items()]
         lines[end_idx:end_idx] = new_lines
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    return "\n".join(lines)
 
 
 def _run_git(repo_dir: str, args: list) -> subprocess.CompletedProcess:
+    from . import managed_repo
+    if managed_repo.account_for(repo_dir) is not None:
+        return managed_repo.run(repo_dir, args)
     return subprocess.run(
         ["git", "-C", repo_dir, *args],
         capture_output=True, text=True,
@@ -186,6 +196,9 @@ def _run_git(repo_dir: str, args: list) -> subprocess.CompletedProcess:
 
 def _run_git_bytes(repo_dir: str, args: list) -> subprocess.CompletedProcess:
     """`_run_git` のバイト列版（blob をそのまま取り出して比較するため）。"""
+    from . import managed_repo
+    if managed_repo.account_for(repo_dir) is not None:
+        return managed_repo.run(repo_dir, args, text=False)
     return subprocess.run(["git", "-C", repo_dir, *args], capture_output=True)
 
 

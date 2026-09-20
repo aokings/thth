@@ -859,7 +859,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
                reply_to_author_key: str | None = None, found_by: str | None = None,
                production_flag: bool = False,
                confirm: str | None = None, adapter_factory=None, log=None,
-               now=None, wait=0) -> ThrowResult:
+               now=None, wait=0, before_execute=None, lock_context=None) -> ThrowResult:
     """`thth send`（**同席の様態**・設計 §3.7）。queue を通さずその場で 1 本出す。
 
     対話の中で masaru が本文を読んで「出して」と言ったときの経路。承認は既に
@@ -900,6 +900,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
             reply_to_author_key=reply_to_author_key, found_by=found_by,
             production_flag=production_flag, confirm=confirm,
             adapter_factory=adapter_factory, log=log, now=now, wait=wait,
+            before_execute=before_execute, lock_context=lock_context,
         )
     except lock_mod.LockBusy:
         msg = f"{account_name} は既に実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます"
@@ -909,8 +910,8 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
 
 def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, reply_to,
                   reply_to_root=None, reply_to_author_key=None, found_by=None,
-                  production_flag, confirm, adapter_factory, log, now, wait=0) -> ThrowResult:
-    locks = (_account_locks(account_name, account_cfg, state_dir, wait=wait)
+                  production_flag, confirm, adapter_factory, log, now, wait=0, before_execute=None, lock_context=None) -> ThrowResult:
+    locks = ((lock_context or _account_locks(account_name, account_cfg, state_dir, wait=wait))
              if production_flag else contextlib.nullcontext())
     with locks:
         existing_inflight = inflight_mod.read(state_dir) if production_flag else None
@@ -1016,8 +1017,9 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                         status="error", error=error)
             return ThrowResult(exit_code=1, mode=mode, action="skip", message=msg, digest=digest)
 
+        bound_token = before_execute(account_cfg) if before_execute is not None else None
         inflight_mod.write(state_dir, file="(send)", started=jst.iso(), container_id=None)
-        token = accounts_mod.load_token(account_cfg)
+        token = bound_token if before_execute is not None else accounts_mod.load_token(account_cfg)
         adapter = adapter_factory(account_cfg, token)
         post = adapter_base.Post(text=effective, reply_to=reply_to or None, topic=topic_value,
                                  hashtags_allowed=bool(account_cfg.get("hashtags", True)))
