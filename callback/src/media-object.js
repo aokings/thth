@@ -119,7 +119,10 @@ export class MediaObject extends DurableObject {
     return {key:row.key,version:row.version,mime:row.mime,size:row.size,expires_at:row.expires_at};
   }
   async grant(purpose,body,ticket){
-    if(!keys(body,['actor','account','sha256','media_id','source','expires_at'])||!validHash(body.media_id)||!validOpaque(body.source)||!validHash(body.sha256)||typeof body.actor!=='string'||!MEDIA_NAME.test(body.actor)||typeof body.account!=='string'||!MEDIA_NAME.test(body.account)||!Number.isSafeInteger(body.expires_at)||body.expires_at<=this.now()||body.expires_at>this.now()+MEDIA_TTL)return fail();
+    if(!keys(body,['actor','account','sha256','media_id','source','expires_at'])||!validHash(body.media_id)||!validOpaque(body.source)||!validHash(body.sha256)||typeof body.actor!=='string'||!MEDIA_NAME.test(body.actor)||typeof body.account!=='string'||!MEDIA_NAME.test(body.account)||!Number.isSafeInteger(body.expires_at))return fail();
+    // Provider TTL is issued exclusively from this Worker's clock. The legacy
+    // integer field cannot extend it or reject issuance due to a VM clock skew.
+    if(purpose==='preview'&&(body.expires_at<=this.now()||body.expires_at>this.now()+MEDIA_TTL))return fail();
     if(!await this.active(body.account))return fail(410,'account_revoked');
     const source=await mediaStub(this.env,body.source),original=await source.previewSource(body);if(!original)return fail(404,'not_found');
     const expires_at=purpose==='preview'?Math.min(body.expires_at,original.expires_at):this.now()+(original.mime.startsWith('video/')?1_800_000:MEDIA_TTL);

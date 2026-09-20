@@ -414,3 +414,15 @@ test('unsatisfiable and unsafe ranges refuse without returning private bytes',as
   assert.equal(response.status,206);assert.equal((await response.arrayBuffer()).byteLength,1);
  }
 });
+
+test('provider grant ignores VM expiry clock while preview retains its bound',async()=>{
+ const f=data(undefined,'sanitized');await ready(f);
+ for(const expires_at of [0,Date.now()+660000]){
+  const body={...binding(f),media_id:f.body.sha256,source:f.id,expires_at};
+  assert.equal((await call(opaque(),'preview',body)).status,400);
+  const before=Date.now(),created=await call(opaque(),'provider',body),after=Date.now();
+  assert.equal(created.status,201);const value=await created.json();
+  assert.ok(value.expires_at>=before+600000&&value.expires_at<=after+600000);
+ }
+ for(const expires_at of [null,'600000',1.5])assert.equal((await call(opaque(),'provider',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at})).status,400);
+});
