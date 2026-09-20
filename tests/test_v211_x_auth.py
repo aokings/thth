@@ -274,3 +274,14 @@ def test_missing_refresh_never_causes_maintain_http(env):
     _,now=old_token(env,refresh_token=None)
     assert maintain.inspect('alpha',now=now)['state']==maintain.TOKEN_INCOMPLETE
     assert maintain.run_maintain('alpha',now=now,log=lambda _:None)==1 and env['calls']==[]
+
+
+
+@pytest.mark.parametrize('token',[{}, {'access_token':'present'}])
+def test_incomplete_x_token_guides_to_working_auth_not_token_set(env,token):
+    Path(env['cfg']['token']).write_text(json.dumps(token))
+    row=maintain.inspect('alpha',now=jst.now_jst())
+    assert row['state']==maintain.TOKEN_INCOMPLETE
+    assert 'thth auth <account> --by <actor>' in row['message']
+    assert 'thth token set' not in row['message']
+    assert run(env)==0 and saved(env)['scopes_source']=='response'

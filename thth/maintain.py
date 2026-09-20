@@ -118,7 +118,8 @@ def inspect(account_name: str, *, now) -> dict:
         if not isinstance(token,dict):
             return _finish(row, UNREADABLE, detail='X のtoken形式が読めません')
         if not token.get('access_token') or not token.get('refresh_token'):
-            return _finish(row, TOKEN_INCOMPLETE, detail='access_token / refresh_token が必要です')
+            return _finish(row, TOKEN_INCOMPLETE, hint='thth auth <account> --by <actor>',
+                           detail='access_token / refresh_token が必要です')
         try:
             seconds = remaining(token, now)
         except ValueError:
