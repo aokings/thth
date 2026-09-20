@@ -307,7 +307,7 @@ def test_three_oauth_media_report_response_scope_difference(env,media,shape):
 def test_version_client_help_and_current_guide_links():
     from thth import __version__
     root=Path(__file__).parents[1]
-    assert __version__=='2.11.0'
+    assert __version__==(Path(__file__).resolve().parents[1]/'thth'/'VERSION').read_text().strip()  # follow the VERSION file, not a literal
     server=json.loads((root/'server.json').read_text());assert server['version']==__version__==server['packages'][0]['version']
     guide=(root/'docs/導入_承認を押すだけ.md').read_text()
     assert all(s in guide for s in ['masaru','利用者自身が VM','接続」ページはまだ','client_type','confidential','auth_observed_at','probed_at','op read','300 秒','600 秒','30 秒','5 分','1 日 1 回','auth-only','App Password','--stdin','--by'])
