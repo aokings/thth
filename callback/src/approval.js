@@ -49,7 +49,7 @@ const accepted={approve:'原稿の承認を受け付けました',send:'公開�
 const labels={media:'媒体',reply_to:'返信先',publish_at:'公開予定',target:'削除する投稿',reason:'削除理由',topic:'話題',options:'公開オプション'};
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function page(status,body) {
-  return new Response('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>THTH 承認</title><style>body{max-width:44rem;margin:2rem auto;padding:0 1rem;font:1rem/1.7 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;border:1px solid;padding:1rem}input{max-width:100%;font:inherit}button{display:block;margin:1rem 0;padding:.6rem 1.4rem;font:inherit}</style><body>'+body+'</body></html>',{status,headers:{
+  return new Response('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>THTH 承認</title><style>body{overflow-wrap:anywhere;max-width:44rem;margin:2rem auto;padding:0 1rem;font:1rem/1.7 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;border:1px solid;padding:1rem}input{max-width:100%;font:inherit}button{display:block;margin:1rem 0;padding:.6rem 1.4rem;font:inherit}</style><body>'+body+'</body></html>',{status,headers:{
     'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer',
     'content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     'x-content-type-options':'nosniff','x-frame-options':'DENY'}});

@@ -138,3 +138,15 @@ test('person correct attempt resets consecutive failures and successful receipt 
   assert.equal((await consume(s)).status,200);assert.equal((await signed('session',s.token,'create',s.body)).status,409);
   assert.equal((await approve(s,p,p.secret,opaque())).status,410);
 });
+
+
+test('long digest and URL metadata inherit wrapping without changing visible values',async()=>{
+  const p=await person(),url='https://example.test/'+opaque().repeat(8);
+  const s=await session(p,{context:{media:'threads',topic:null,options:null,reply_to:url,publish_at:null,target:null,reason:null}});
+  const response=await page(s),html=await response.text();
+  assert.equal(response.status,200);
+  assert.match(html, /body\{[^}]*overflow-wrap:anywhere/);
+  assert.ok(html.includes('<p>digest: '+s.body.digest+'</p>'));
+  assert.ok(html.includes('<p>返信先: '+url+'</p>'));
+  assert.ok(response.headers.get('content-security-policy').includes("default-src 'none'"));
+});
