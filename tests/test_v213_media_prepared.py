@@ -146,14 +146,20 @@ def test_captions_sha_and_video_index(setup):
 def test_send_cli_multiple_media_no_stdin_and_no_provider(setup,monkeypatch,capsys):
     root,cfg=setup
     monkeypatch.setattr('sys.stdin',type('NoRead',(),{'read':lambda self:pytest.fail('image-only must not wait stdin')})())
-    monkeypatch.setattr(core,'_default_adapter_factory',lambda *a:pytest.fail('provider unavailable'))
+    # Threads is now supported; an adapter without prepared-media capability must
+    # still refuse without entering its provider method.
+    from thth.adapters.base import Adapter
+    class Incapable(Adapter):
+        def publish(self,*a,**kw):pytest.fail('incapable provider called')
+    monkeypatch.setattr(core,'_default_adapter_factory',lambda *a:Incapable())
     from thth import read_coordination
     monkeypatch.setattr(read_coordination,'invoke',lambda args,name,fn=None:fn() if fn else args.func(args))
     argv=['send','demo','--media','docs/red.png','--alt','赤','--media','docs/grey.jpg','--alt','灰']
     assert cli.main(argv)==0
     output=capsys.readouterr().out;assert output.count('public SHA256:')==2
     digest=next(x.split(': ',1)[1] for x in output.splitlines() if x.startswith('digest:'))
-    assert cli.main(argv+['--production','--confirm',digest])==2
+    assert cli.main(argv+['--production','--confirm',digest])==1
+    assert 'media_provider_unavailable' in capsys.readouterr().out
     assert cli.main(['send','demo','--media','docs/red.png'])==2
 
 

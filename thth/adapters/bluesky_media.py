@@ -113,8 +113,9 @@ def publish(adapter,post,*,before_publish=None):
     except (OSError,ValueError,RuntimeError,urllib.error.URLError) as exc:
         http=isinstance(exc,urllib.error.HTTPError)
         redirect=isinstance(exc,httpsafe.RedirectBlocked)
-        preconnect=isinstance(exc,httpsafe.EndpointRejected) or isinstance(exc,urllib.error.URLError) and isinstance(exc.reason,OSError) and exc.reason.errno==errno.ECONNREFUSED
-        reason='media_redirect_refused' if redirect else 'media_connection_refused' if preconnect else ('media_'+phase+'_http_'+str(exc.code)) if http else str(exc) if isinstance(exc,media.MediaError) else 'media_'+phase+'_failed'
+        endpoint=isinstance(exc,httpsafe.EndpointRejected)
+        preconnect=endpoint or isinstance(exc,urllib.error.URLError) and isinstance(exc.reason,OSError) and exc.reason.errno==errno.ECONNREFUSED
+        reason='media_redirect_refused' if redirect else 'media_endpoint_rejected' if endpoint else 'media_connection_refused' if preconnect else ('media_'+phase+'_http_'+str(exc.code)) if http else str(exc) if isinstance(exc,media.MediaError) else 'media_'+phase+'_failed'
         definite=(redirect or preconnect or http and 400<=exc.code<500) and phase=='uploading' and not ids
         held=bool(ids) and (phase=='ready' or (http and 400<=exc.code<500 and phase in ('uploading','publishing')))
         uncertain=phase!='preflight' and not definite and not held

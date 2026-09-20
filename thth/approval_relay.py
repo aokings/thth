@@ -117,16 +117,19 @@ def signed_request(kind, subject, operation, body):
     path = f'/approval/{kind}/{subject}/{operation}'
     raw = json.dumps(body, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode()
     timestamp, nonce = int(time.time()*1000), secrets.token_urlsafe(32)
+    base = os.environ.get('THTH_APPROVAL_BASE_URL', 'https://thth.me')
+    try:base=httpsafe.validated_url(base,base=True)
+    except httpsafe.EndpointRejected:
+        raise RelayError('approval_origin_invalid') from None
+    url = urllib.parse.urlsplit(base)
+    # Test HTTP allowance (flag and exact hosts) belongs only to httpsafe.
+    # Real signed control requests remain pinned to the thth.me origin.
+    if url.path not in ('','/') or not (base == 'https://thth.me' or url.scheme == 'http'):
+        raise RelayError('approval_origin_invalid')
     with private_key() as fd:
         signature = _openssl(['dgst','-sha256','-sign',f'/dev/fd/{fd}',
             '-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],
             canonical('POST',path,role,subject,operation,timestamp,nonce,raw),fd=fd)
-    base = os.environ.get('THTH_APPROVAL_BASE_URL', 'https://thth.me')
-    url = urllib.parse.urlsplit(base)
-    if (any(ord(c)<33 or ord(c)==127 for c in base) or url.username or url.password or url.query or url.fragment
-            or url.path not in ('','/') or not (base.rstrip('/') == 'https://thth.me' or
-                url.scheme == 'http' and url.hostname in ('127.0.0.1','::1','localhost'))):
-        raise RelayError('approval_origin_invalid')
     request = urllib.request.Request(base.rstrip('/')+path, data=raw, method='POST', headers={
         'Content-Type':'application/json', 'User-Agent':f'thth/{__version__} (+https://thth.me)',
         'X-Thth-Time':str(timestamp),'X-Thth-Nonce':nonce,'X-Thth-Signature':b64(signature)})
@@ -141,6 +144,8 @@ def signed_request(kind, subject, operation, body):
             value=json.loads(data)
             if not isinstance(value,dict):raise RelayError('approval_relay_invalid')
             return value
+    except httpsafe.EndpointRejected:
+        raise RelayError('approval_relay_endpoint_rejected') from None
     except urllib.error.HTTPError as exc:
         raise RelayError('approval_relay_outcome_unknown', status=exc.code) from None
     except (OSError, ValueError, urllib.error.URLError) as exc:
