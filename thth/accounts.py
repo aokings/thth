@@ -300,6 +300,15 @@ def name_is_safe(name) -> bool:
             and bool(NAME_RE.match(name)) and name not in (".", ".."))
 
 
+def validate_name(name):
+    """Shared name check, before filesystem/stop-state observation."""
+    if not name_is_safe(name):
+        raise AccountError(
+            f"アカウント名に使えない字が入っています: {name!r}"
+            f"（使えるのは英数字と `_`・`.`・`-` だけ。名前はそのまま"
+            f"ファイル名になるので、`/` や `..` は置き場の外を指せます）")
+
+
 def load_account(name: str) -> dict:
     """`accounts/<name>.json` を読んで検査する。$THTH_ROOT・~ を展開したコピーを返す。
 
@@ -309,11 +318,7 @@ def load_account(name: str) -> dict:
     置き場の外を指せる綴りは、読む前に同じ 1 つの文言で断る——**存在の探りを
     させない**（在る／無い／壊れているで文言が変わらない）。
     """
-    if not name_is_safe(name):
-        raise AccountError(
-            f"アカウント名に使えない字が入っています: {name!r}"
-            f"（使えるのは英数字と `_`・`.`・`-` だけ。名前はそのまま"
-            f"ファイル名になるので、`/` や `..` は置き場の外を指せます）")
+    validate_name(name)
     from .leave_gate import require_active
     require_active(name)
     d = accounts_dir()

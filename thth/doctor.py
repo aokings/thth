@@ -379,7 +379,7 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     if static['error']:
         if as_json:log(json.dumps(static,ensure_ascii=False))
         else:
-            log(static['error'])
+            log(static.get('message') or static['error'])
             for row in static['directory_checks']:
                 if row['warning']:log(row['directory']+': '+row['warning']+' (mode='+str(row['mode'])+')')
         return 2

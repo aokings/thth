@@ -28,6 +28,11 @@ def directories():
 
 
 def diagnostic(account):
+    try:accounts.validate_name(account)
+    except accounts.AccountError:
+        return {'account':None,'error':'invalid_account_name','cannot_say':['invalid_account_name'],
+                'message':'アカウント名に使えない字が入っています。英数字と _・.・- で指定してください。',
+                'probes':[],'directory_checks':[]}
     rows=directories();code=None
     try:leave_gate.require_active(account)
     except accounts.AccountStopped as exc:code=reason(exc)

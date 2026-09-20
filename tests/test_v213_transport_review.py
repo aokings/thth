@@ -12,7 +12,9 @@ BAD=['','file:///tmp/not-a-provider','ftp://example.invalid/x','data:text/plain,
 def test_production_endpoint_refusal_before_any_adapter_request(monkeypatch,value):
     monkeypatch.delenv('THTH_TEST_ALLOW_HTTP',raising=False)
     for create in (lambda:bluesky.BlueskyAdapter(service=value),lambda:mastodon.MastodonAdapter(instance=value),lambda:threads.ThreadsAdapter(base_url=value)):
-        with pytest.raises(httpsafe.EndpointRejected,match='^endpoint_invalid$'):create()
+        expected=('endpoint_http_forbidden: 平文 HTTP は使えません。https を指定してください' if value.startswith('http://') else 'endpoint_scheme_invalid: scheme は https を指定してください' if value.startswith(('file:','ftp:','data:')) else 'endpoint_invalid')
+        with pytest.raises(httpsafe.EndpointRejected) as caught:create()
+        assert str(caught.value)==expected
 
 
 @pytest.mark.parametrize('host',['localhost','127.0.0.1','[::1]'])

@@ -63,14 +63,16 @@ def validated_url(value, *, base=False):
         raise EndpointRejected('endpoint_invalid')
     try:
         parsed=urllib.parse.urlsplit(value)
+        if parsed.scheme not in ('http','https'):
+            raise EndpointRejected('endpoint_scheme_invalid: scheme は https を指定してください')
         if not parsed.hostname or parsed.username is not None or parsed.password is not None or parsed.fragment:
             raise ValueError
         parsed.port
         if base and parsed.query:raise ValueError
-        if parsed.scheme=='https':pass
-        elif (parsed.scheme=='http' and os.environ.get('THTH_TEST_ALLOW_HTTP')=='1'
-              and parsed.hostname in ('localhost','127.0.0.1','::1')):pass
-        else:raise ValueError
+        if parsed.scheme=='http' and not (os.environ.get('THTH_TEST_ALLOW_HTTP')=='1'
+              and parsed.hostname in ('localhost','127.0.0.1','::1')):
+            raise EndpointRejected('endpoint_http_forbidden: 平文 HTTP は使えません。https を指定してください')
+    except EndpointRejected:raise
     except ValueError:raise EndpointRejected('endpoint_invalid') from None
     return value.rstrip('/') if base else value
 

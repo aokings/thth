@@ -720,7 +720,7 @@ def test_capabilitiesはrecent_postsだけでquotaはNone():
 def test_instanceはschemeを勝手に補わない():
     with pytest.raises(ValueError) as e:
         mastodon_mod.MastodonAdapter(instance="mastodon.social")
-    assert str(e.value) == "endpoint_invalid"
+    assert str(e.value) == "endpoint_scheme_invalid: scheme は https を指定してください"
 
 
 # ---------------------------------------------------------------------------
