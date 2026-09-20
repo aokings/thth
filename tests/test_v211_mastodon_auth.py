@@ -70,7 +70,7 @@ def run(env,**overrides):
     return result
 
 
-def client_path(env):return authclients.path_for('mastodon',env['base'],env['cfg'])
+def client_path(env):return authclients.path_for('mastodon',env['base'],env['cfg'],required_scopes=masto.SCOPES)
 
 
 def test_registration_pkce_identity_response_scopes_and_private_cache(env,capsys):

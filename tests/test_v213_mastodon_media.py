@@ -521,3 +521,33 @@ def test_cli_source_only_stale_is_loud_and_has_no_provider(env,wire,monkeypatch,
     assert 'private fixture only' not in shown.out+shown.err and not wire['calls']
     result=core.send_once('alpha',text='',media_rows=[{'file':'a.png','alt':'点'}],production_flag=True,confirm=digest,adapter_factory=lambda *a:adapter,log=lambda _:None)
     assert result.action=='approval_stale' and result.exit_code==2 and not wire['calls']
+
+
+@pytest.mark.parametrize('granted,source,blocked', [
+    (['write:statuses'],'response',True),([], 'response',True),
+    (['write:media'],'response',False),(['write'],'response',False),
+    (None,'unknown',False),(['write:statuses'],'requested',False),
+])
+def test_media_known_grant_missing_stops_before_upload(env,wire,granted,source,blocked):
+    cfg,original,repo=env
+    adapter=mastodon.MastodonAdapter.from_account(cfg,{'access_token':original.access_token,'scopes':granted,'scopes_source':source})
+    result,journal,_=invoke((cfg,adapter,repo))
+    if blocked:
+        assert result.failure=='publish_definite'
+        assert 'mastodon_scope_missing: write:media' in result.error and 'thth auth alpha --by' in result.error
+        assert not posts(wire,'/api/v2/media') and not posts(wire,'/api/v1/statuses')
+    else:assert result.post_id=='100'
+
+
+def test_unknown_grant_403_is_not_claimed_missing(env,wire):
+    cfg,adapter,repo=env;wire['upload']=[(403,{'error':secrets.token_urlsafe(32)})]
+    result,_,_=invoke(env)
+    assert 'provider_forbidden' in result.error and 'write:media' in result.error
+    assert 'mastodon_scope_missing' not in result.error and not posts(wire,'/api/v1/statuses')
+
+
+def test_old_grant_text_only_still_posts(env,wire):
+    cfg,original,_=env
+    adapter=mastodon.MastodonAdapter.from_account(cfg,{'access_token':original.access_token,'scopes':['write:statuses'],'scopes_source':'response'})
+    result=adapter.publish(base.Post(text='text'),dry_run=False)
+    assert result.post_id=='100' and not posts(wire,'/api/v2/media')

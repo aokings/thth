@@ -267,6 +267,8 @@ class MastodonAdapter(base.Adapter):
                  timeout: float = DEFAULT_TIMEOUT_SECONDS):
         self.instance = _instance_url(instance)
         self.access_token = access_token
+        self.granted_scopes = None
+        self.auth_account = "<account>"
         # adapter の局所 `_scrub()` を抜けた例外・ログでも値を消せるよう、秘密を
         # 得た時点で共通登録簿へ入れる（監査 D12・2026-09-17）。
         redact_mod.register_secret(access_token)
@@ -312,6 +314,11 @@ class MastodonAdapter(base.Adapter):
             visibility=cfg.get("visibility") or DEFAULT_VISIBILITY,
             account_id=(token or {}).get("user_id") or cfg.get("user_id") or "",
         )
+        recorded=(token or {}).get('scopes')
+        if ((token or {}).get('scopes_source')=='response' and type(recorded) is list
+                and all(type(value) is str for value in recorded)):
+            adapter.granted_scopes=frozenset(recorded)
+        adapter.auth_account=account_cfg.get('account') or '<account>'
         return leave_gate.bind(adapter, account_cfg)
 
     # ----- 秘密 ------------------------------------------------------------

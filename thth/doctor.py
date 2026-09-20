@@ -148,6 +148,13 @@ def diagnose(account_name: str) -> dict:
     except adapter_base.AdapterError as e:
         return {"account": account_name, "error": str(e), "probes": []}
 
+    required_scope_info={}
+    if account_cfg.get('media')=='mastodon':
+        from .scopes import MASTODON_SCOPES
+        granted=token.get('scopes')
+        known=(token.get('scopes_source')=='response' and type(granted) is list and all(type(v) is str for v in granted))
+        required_scope_info={'required_scopes':list(MASTODON_SCOPES),
+                             'missing_scopes_recorded':sorted(set(MASTODON_SCOPES)-set(granted)) if known else None}
     results = adapter.probe(get=_get)
 
     for r in results:
@@ -157,7 +164,7 @@ def diagnose(account_name: str) -> dict:
             "scopes_recorded": recorded_scopes(token),
             "auth_via": token.get("auth_via") if token.get("auth_via") in ("relay","paste","token_set") else None,
             "auth_observed_at": (read_observation(account_name) or {}).get("auth_observed_at"),
-            "probes": results}
+            "probes": results, **required_scope_info}
 
 
 # **記録上の scope**（運用の観測 2026-09-14）。VM の `.token` は Threads 4 本・
@@ -487,6 +494,10 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         return 2
     log(f"{report['account']}（{report['username']}・user_id={report['user_id']}）")
     log(recorded_scopes_line(report.get("scopes_recorded")))
+    if report.get('required_scopes'):
+        log('必要な scope: '+ ' '.join(report['required_scopes']))
+        if report.get('missing_scopes_recorded'):
+            log('記録上不足: '+', '.join(report['missing_scopes_recorded'])+'（thth auth <account> --by <名前> で再認可）')
     debug_line = debug_token_line(report["probes"])
     if debug_line:
         log(debug_line)

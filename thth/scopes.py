@@ -23,7 +23,7 @@ DEFAULT_SCOPES = [
 
 
 MASTODON_SCOPES = ['read:accounts', 'read:statuses', 'read:search',
-                   'read:notifications', 'write:statuses']
+                   'read:notifications', 'write:statuses', 'write:media']
 
 
 def mastodon_guidance(account):

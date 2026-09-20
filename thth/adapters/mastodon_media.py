@@ -159,6 +159,9 @@ def publish(adapter,post,*,before_publish=None):
         phase=value;progress(value,remote_ids=list(ids),**details)
     try:
         require(callable(progress),'media_journal_required')
+        granted=getattr(adapter,'granted_scopes',None)
+        require(granted is None or bool({'write','write:media'} & set(granted)),
+                'mastodon_scope_missing: write:media; thth auth '+getattr(adapter,'auth_account','<account>')+' --by <名前>')
         why=intent_error(post.media_manifest);require(why is None,why or '')
         require(len(post.media_files)==len(post.media_manifest['files']) and all(x.manifest==row for x,row in zip(post.media_files,post.media_manifest['files'])),'media_prepared_mismatch')
         code,value=_json(adapter,'GET','/api/v2/instance');require(code==200,'media_capability_unavailable')
@@ -210,6 +213,8 @@ def publish(adapter,post,*,before_publish=None):
     except (OSError,ValueError,urllib.error.URLError) as exc:
         if isinstance(exc,urllib.error.HTTPError):
             reason=f'media_{phase}_http_{exc.code}'
+            if exc.code==403:
+                reason='provider_forbidden: 権限（write:media）の確認か再認可: thth auth '+getattr(adapter,'auth_account','<account>')+' --by <名前> (HTTP 403)'
             definite=400<=exc.code<500 and phase=='uploading' and not ids
         else:
             reason=str(exc) if isinstance(exc,(media.MediaError,mediaformats.FormatError)) else f'media_{phase}_failed'
