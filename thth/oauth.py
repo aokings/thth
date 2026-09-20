@@ -417,6 +417,17 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
         return authflow.rehearse(account_cfg, redirect_uri=redirect_uri, log=log, human_output=human_output)
 
     media = account_cfg.get("media")
+    if media == "mastodon":
+        from . import authflow
+        from .adapters.auth_mastodon import MastodonAuthProfile
+        try:
+            profile = MastodonAuthProfile.prepare(account_cfg, redirect_uri=redirect_uri, resume=code is not None)
+        except (OSError, ValueError) as exc:
+            detail = str(exc) if isinstance(exc, authflow.FlowError) else "client設定を確認してください"
+            _out("mastodon_auth_setup_failed: " + detail, log=log)
+            return 2
+        return authflow.run(account_name, account_cfg, profile, code=code, input_func=input_func,
+                            log=log, by=by, human_output=human_output)
     if media != "threads":
         from . import adapters as adapters_mod
         try:

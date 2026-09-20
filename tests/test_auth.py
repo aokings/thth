@@ -303,8 +303,12 @@ def test_20260909_authが標準出力に秘密を一切出さない(tmp_path, mo
 
 # --- T3 の配線（2026-09-13）: `thth auth` を媒体で分ける ------------------------
 
-def test_T3_mastodonはtoken_setへ案内してrc2(tmp_path, isolated_account_factory):
-    """認可はインスタンスの管理画面。**黙って何もしない終わり方をしない。**"""
+def test_T3_mastodonのsetup不明はrc2で保存しない(tmp_path, isolated_account_factory, monkeypatch):
+    """2.11: 不明なmetadataからPKCEなしへ降りない。"""
+    from thth.adapters import auth_mastodon
+    def unavailable(*args, **kwargs):
+        raise auth_mastodon.FlowError('metadata unavailable')
+    monkeypatch.setattr(auth_mastodon, 'request', unavailable)
     account = _account_with_token_path(
         isolated_account_factory, tmp_path, media="mastodon",
         instance="https://mastodon.invalid")
@@ -312,7 +316,7 @@ def test_T3_mastodonはtoken_setへ案内してrc2(tmp_path, isolated_account_fa
     rc = oauth_mod.run_auth(account["name"], log=lines.append, by="test-operator")
     assert rc == 2
     out = "\n".join(lines)
-    assert "thth token set" in out and account["name"] in out
+    assert "mastodon_auth_setup_failed" in out
     assert not os.path.exists(account["token_path"])
 
 

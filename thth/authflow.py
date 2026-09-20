@@ -222,6 +222,17 @@ def poll(session, *, rehearsing=False):
 
 def rehearse(cfg, *, redirect_uri=None, log, human_output):
     from . import appenv, oauth
+    if cfg.get('media') == 'mastodon':
+        from .adapters.auth_mastodon import MastodonAuthProfile
+        try:
+            profile = MastodonAuthProfile.prepare(cfg, redirect_uri=redirect_uri, rehearse=True)
+            session = {'state': secret(secrets.token_urlsafe(32)), 'read_key': secret(secrets.token_urlsafe(32)),
+                       'code_verifier': secret(secrets.token_urlsafe(32))}
+            human_output(profile.authorize(session))
+            poll(session, rehearsing=True)
+        except (OSError, ValueError) as exc:
+            log(redact.redact(str(exc)) if isinstance(exc, FlowError) else 'rehearse_client_unavailable')
+        return 2
     if cfg.get('media') != 'threads':
         log('rehearse_unsupported_medium: この媒体のOAuthはまだ対応していません')
         return 2
