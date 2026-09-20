@@ -2630,6 +2630,20 @@ def cmd_systemd(args) -> int:
     食い違っていた）ので、生成に一本化する。MCP には出さない（運用コマンド・§3.7
     の auth／refresh と同じ扱い）。"""
     from . import systemd_gen
+    if getattr(args, "approval_worker", False):
+        if args.account or getattr(args, "maintain", False) or getattr(args, "collect_only", False):
+            print("--approval-worker は account／--maintain／--collect-only と併用できません", file=sys.stderr)
+            return 2
+        try:
+            unit = systemd_gen.render_approval_worker_service(getattr(args, "credentials", None))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        sys.stdout.write(unit)
+        return 0
+    if getattr(args, "credentials", None) is not None:
+        print("--credentials は --approval-worker と併用してください", file=sys.stderr)
+        return 2
     if getattr(args, "maintain", False):
         # `thth maintain` の timer/service は 1 日 1 回・アカウント別ではない。
         sys.stdout.write(systemd_gen.render_maintain_service() if args.service
@@ -3121,6 +3135,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_systemd.add_argument("--collect-only", action="store_true",
                            help="採集だけの unit を出す（同席専用＝scheduled: false の"
                                 "アカウント用。thth-collect@<account>）")
+    p_systemd.add_argument("--approval-worker", action="store_true",
+                           help="承認jobの常駐serviceを出す（account/timer指定と排他）")
+    p_systemd.add_argument("--credentials",
+                           help="approval-workerとserve-reportsが共用する私有設定の絶対パス（ASCII、空白/$/%%不可。内容は読みません）")
     p_systemd.set_defaults(func=cmd_systemd)
 
     p_http = sub.add_parser("serve-reports", help="専用環境の非公開レポートHTTP（Unix socket推奨）")
