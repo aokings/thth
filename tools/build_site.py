@@ -246,6 +246,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
         "AI エージェントとやり取りしながら下書きや投稿の記録を扱えます。</p>")
 
     add("<h2>認可と運営者の設定</h2>")
+    add("<p>Mastodon の auth は expires_in または refresh_token を返す非標準実装に未対応です。手動 token set も期限・更新情報を受け取らず期限なしとして保存するため、その回避策にはなりません。</p>")
     add("<p>masaru がサーバ側で <code>thth auth &lt;account&gt; --by masaru</code> を開始し、"
         "利用者が URL を開いて承認します。Threads・対応 Mastodon・X の共通入口です。"
         "X は認可だけ対応し、投稿・採集は未対応。Bluesky は App Password の stdin 入力です。</p>")
