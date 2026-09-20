@@ -505,6 +505,10 @@ ADMIN_TOOLS = [
     for name in ("inventory", "account", "log", "tokens", "release", "diff")]
 
 
+ADMIN_TOOLS.append({'name':'thth_admin_budget_set','description':'Set the X monthly read estimate cap; administrator only, by required; no provider call',
+    'inputSchema':{'type':'object','properties':{key:{'type':'string'} for key in ('monthly','currency','rate','rate_source','by')},
+                   'required':['monthly','by'],'additionalProperties':False}})
+
 SERVER_TOOLS = [
     {"name":"thth_"+name,"description":"Scoped server "+name,
      "inputSchema":{"type":"object","properties":{key:{"type":"string"} for key in ("account",*keys)},
@@ -556,7 +560,10 @@ def server_call(name, arguments):
     operation=name[5:] if name.startswith('thth_') else name
     request={**arguments,'operation':operation}
     try:
-        if operation in WRITE_OPERATIONS:
+        if operation=='admin_budget_set':
+            from thth.report_service import execute_admin_write
+            result=execute_admin_write(context,request)
+        elif operation in WRITE_OPERATIONS:
             result=execute(context,request,via='mcp')
         elif operation in ('analytics_report', 'operations_handoff', 'study_report'):
             result=execute_mcp_report(context,request)
@@ -566,7 +573,7 @@ def server_call(name, arguments):
     except ReportServiceError as exc:
         if str(exc)=='invalid_draft':
             return failure('invalid_draft: '+(getattr(exc,'reason',None) or 'validation_failed'))
-        return failure(str(exc) if str(exc) in SAFE_ERRORS else 'request_unavailable')
+        return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused') else 'request_unavailable')
     except Exception:
         return failure('request_unavailable')
 

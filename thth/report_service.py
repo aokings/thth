@@ -270,3 +270,27 @@ def render_markdown(payload: dict) -> str:
     lines += ["    " + line for line in json.dumps(payload, ensure_ascii=False, indent=2,
                                                    allow_nan=False).splitlines()]
     return "\n".join(lines) + "\n"
+
+
+def execute_admin_write(context,request):
+    """Explicit MCP-only admin mutation; execute_report never dispatches here."""
+    if type(context) is not ReportContext or context.scope!='admin':raise ReportServiceError('unsupported_operation')
+    if (type(request) is not dict or request.get('operation')!='admin_budget_set'
+        or set(request)-{'operation','monthly','currency','rate','rate_source','by'}
+        or not {'monthly','by'}<=set(request)):raise ReportServiceError('invalid_request')
+    from . import budget_x,admin_log
+    def current():
+        from .report_http import load_credentials
+        from datetime import datetime,timezone
+        if not context.credentials_path or not context.credential_digest:raise ReportServiceError('invalid_context')
+        root,credentials=load_credentials(Path(context.credentials_path))
+        if Path(root).resolve()!=Path(accounts.thth_root()).resolve():raise ReportServiceError('invalid_context')
+        found=next((item[3] for item in credentials if item[0]==context.credential_digest and not item[2] and datetime.now(timezone.utc)<item[1]),None)
+        if found!=context:raise ReportServiceError('credential_changed')
+    try:
+        current()
+        return budget_x.configure(**{k:v for k,v in request.items() if k!='operation'},via='mcp',before_save=current)
+    except ReportServiceError:raise
+    except admin_log.AdminLogError as exc:
+        raise ReportServiceError('budget_change_durability_unconfirmed' if exc.complete else 'budget_change_partially_recorded' if exc.appended else 'budget_change_refused') from None
+    except (OSError,ValueError,TypeError):raise ReportServiceError('invalid_options') from None

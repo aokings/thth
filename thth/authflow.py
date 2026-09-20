@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from . import leave_gate
+from . import leave_gate, budget_x
 
 import hashlib
 import json
@@ -423,7 +423,7 @@ def run(account, cfg, profile, *, code=None, input_func=None, log=print, by, hum
         return 2
     except (OSError, ValueError, accounts.AccountError, appenv.AppEnvError) as exc:
         # Never print raw OS/request messages containing session paths/URLs.
-        log(redact.redact(str(exc)) if isinstance(exc, FlowError) else 'auth_failed: 保存しませんでした')
+        log(redact.redact(str(exc)) if isinstance(exc, (FlowError,budget_x.BudgetError)) else 'auth_failed: 保存しませんでした')
         return 2
 
 

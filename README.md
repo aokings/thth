@@ -19,6 +19,10 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 各プロジェクトのセッションが読むのは [docs/使い方_プロジェクトのセッション向け_2026-09-09.md](docs/使い方_プロジェクトのセッション向け_2026-09-09.md) **だけ**。設計書は作った側の記録なので読まなくてよい。
 
+## 2.12 のローカル実装候補
+
+管理者用の [サーバ書込](docs/運用_サーバ書込_2.12.md)、[停止・退出](docs/運用_サーバ退出_2.12.md)、[X 読取予算](docs/運用_X読取予算_2.12.md) を追加しています。配布・本番検収とは別です。X の認可・refresh の本人読取も予算対象で、既定 USD 0 のままでは token 交換前に停止します。X 投稿・採集 adapter はまだありません。
+
 ## 認可（2.11.0）
 
 招待した利用者は、masaru がサーバ側で始めた認可 URL を開いて承認します。利用者に VM や Meta アプリの準備を求めません。Threads/Mastodon/X は `thth auth <account> --by masaru`、Bluesky は秘密管理ツールから App Password を `thth token set <account> --stdin --by masaru` へ渡します。X は認可だけ対応し、投稿・採集は未対応です。「接続」ページはこの版にはありません。

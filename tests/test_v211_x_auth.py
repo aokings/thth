@@ -44,6 +44,11 @@ def env(tmp_path,monkeypatch):
             self.send_response(status);self.end_headers();self.wfile.write(json.dumps(body).encode())
     server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
     monkeypatch.setenv('THTH_X_BASE_URL',f'http://127.0.0.1:{server.server_port}')
+    # This auth fixture now explicitly provisions a synthetic read cap.
+    # Budget default-zero and setter/audit contracts have separate 2.12 tests.
+    from thth import budget_x,server_files
+    value=budget_x.empty();value['policy']=budget_x.policy('10')
+    with server_files.directory(budget_x.folder(),create=True,private=True) as fd:budget_x._save(fd,value)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     try:yield data
     finally:server.shutdown();server.server_close();thread.join()

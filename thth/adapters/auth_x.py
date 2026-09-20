@@ -1,5 +1,5 @@
 """X OAuth only. This profile does not register a posting/collection adapter."""
-from .. import leave_gate
+from .. import leave_gate, budget_x
 
 import base64
 import datetime
@@ -60,11 +60,14 @@ def request(path, *, data=None, pair=None, token=None):
         headers['Content-Type']='application/x-www-form-urlencoded'
         raw=urllib.parse.urlencode(data).encode()
     req=urllib.request.Request(api_origin()+path,data=raw,headers=headers,method='POST' if data is not None else 'GET')
+    if data is None:budget_x.before_get(path)
+    elif path=='/2/oauth2/token':budget_x.before_post()
     try:
         with httpsafe.urlopen(req,timeout=10) as response:raw=response.read(262145)
         if len(raw)>262144:raise ValueError
         value=json.loads(raw,object_pairs_hook=handoff_cursor._pairs)
         if not isinstance(value,dict):raise ValueError
+        if data is None:budget_x.observed(value)
         return value
     except urllib.error.HTTPError as exc:
         status=exc.code;exc.close()
@@ -128,9 +131,10 @@ class XAuthProfile(AuthProfile):
             raise FlowError('x_code_expired: 認可をやり直してください')
         # A pasted code has no trustworthy issuance time. Exchange immediately;
         # provider invalid_grant is not retried or relabelled as a successful flow.
-        body=request('/2/oauth2/token',pair=(self.client_id,self.client_secret),data=dict(
-            grant_type='authorization_code',code=credential(code_value),redirect_uri=CALLBACK,code_verifier=credential(session.get('code_verifier'))))
-        return token_result(body,account_cfg)
+        with budget_x.user_read(leave_gate.name_for(account_cfg)):
+            body=request('/2/oauth2/token',pair=(self.client_id,self.client_secret),data=dict(
+                grant_type='authorization_code',code=credential(code_value),redirect_uri=CALLBACK,code_verifier=credential(session.get('code_verifier'))))
+            return token_result(body,account_cfg)
 
 
 def remaining(token,now):
@@ -171,7 +175,7 @@ def run_refresh(account,*,force=False,check=False,log=print,now=None):
             return 0
         if not force and seconds>REFRESH_BEFORE_SECONDS:
             log('まだ更新の必要がありません（X: 期限5分前から更新）');return 0
-        with leave_gate.lease(account),leave_gate.credentials():
+        with leave_gate.lease(account),leave_gate.credentials(),budget_x.user_read(account):
             body=request('/2/oauth2/token',pair=(profile.client_id,profile.client_secret),data=dict(
                 grant_type='refresh_token',refresh_token=token['refresh_token']))
             updated=token_result(body,cfg,now=now,previous=token)
@@ -192,5 +196,5 @@ def run_refresh(account,*,force=False,check=False,log=print,now=None):
             'admin_change_partially_recorded_outcome_uncertain' if exc.appended else 'admin_change_refused')
         return 2
     except (OSError,ValueError,accounts.AccountError) as exc:
-        log((str(exc) if isinstance(exc,FlowError) else 'x_refresh_failed') + ': 必要なら認可をやり直してください。旧ファイル保持は旧 refresh token の再利用を保証しません')
+        log((str(exc) if isinstance(exc,(FlowError,budget_x.BudgetError)) else 'x_refresh_failed') + ': 必要なら認可をやり直してください。旧ファイル保持は旧 refresh token の再利用を保証しません')
         return 2

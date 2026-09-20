@@ -349,6 +349,8 @@ def register(sub):
     approval_relay.register(commands)
     from . import deletion
     deletion.register(commands)
+    from . import budget_x
+    budget_x.register(commands)
     for name in OPERATIONS:
         p = commands.add_parser(name)
         p.add_argument('--json', action='store_true')

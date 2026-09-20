@@ -234,3 +234,7 @@ by the maintainer.
 `handoff-report` / MCP `operations_handoff` reads local operations evidence without syncing or retrying. See the [schema and limits](docs/運用引継ぎレポート_v1.md).
 
 Account creation/overwrite, auth, token set and local token revoke require `--by <name>` as of 2.9.0. See [the administrator skill](skills/thth-admin/SKILL.md) for the six credential-gated MCP reports and HTTP admin scope.
+
+## Local 2.12 candidate
+
+Server write requests, resumable account leave, and an administrator X read budget are implemented locally; this is not a deployment or production acceptance claim. X auth/refresh identity reads require a budget before token exchange (default USD 0). See [budget operations](docs/運用_X読取予算_2.12.md). X posting/collection adapters remain unsupported.
