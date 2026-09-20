@@ -1038,6 +1038,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         media_error=media_delivery.error_for(account_cfg,manifest)
         if media_error or (manifest and confirm is not None and confirm!=digest):
             error = 'approval_stale' if confirm is not None and confirm != digest else media_error
+            log(error)
             return ThrowResult(exit_code=2, mode=mode, action=error, message=error, error=error, digest=digest)
 
         # ---- production ----

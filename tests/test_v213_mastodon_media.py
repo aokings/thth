@@ -502,3 +502,22 @@ def test_processing_get_socket_timeout_is_capped(env,wire,monkeypatch):
     mm._json(adapter,'GET','/api/v2/instance',timeout=.75)
     mm._json(adapter,'GET','/api/v2/instance',timeout=20)
     assert observed==[.75,10]
+
+
+def test_cli_source_only_stale_is_loud_and_has_no_provider(env,wire,monkeypatch,capsys):
+    import zlib
+    from thth import cli,read_coordination
+    cfg,adapter,repo=env;monkeypatch.setattr(core,'_default_adapter_factory',lambda *a:adapter)
+    monkeypatch.setattr(read_coordination,'invoke',lambda args,name,fn=None:fn() if fn else args.func(args))
+    argv=['send','alpha','--media','a.png','--alt','点']
+    assert cli.main(argv)==0;shown=capsys.readouterr().out
+    digest=next(line.split(': ',1)[1] for line in shown.splitlines() if line.startswith('digest: '))
+    raw=(repo/'a.png').read_bytes();data=b'Note\0private fixture only';kind=b'tEXt'
+    changed=raw[:-12]+struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))+raw[-12:]
+    assert mediaformats.png(raw).public_bytes==mediaformats.png(changed).public_bytes
+    (repo/'a.png').write_bytes(changed)
+    assert cli.main(argv+['--production','--confirm',digest])==2
+    shown=capsys.readouterr();assert 'approval_stale' in shown.out
+    assert 'private fixture only' not in shown.out+shown.err and not wire['calls']
+    result=core.send_once('alpha',text='',media_rows=[{'file':'a.png','alt':'点'}],production_flag=True,confirm=digest,adapter_factory=lambda *a:adapter,log=lambda _:None)
+    assert result.action=='approval_stale' and result.exit_code==2 and not wire['calls']
