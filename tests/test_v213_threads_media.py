@@ -204,3 +204,37 @@ def test_unsupported_intent_is_not_silently_discarded(env,wire):
     fm={'media':[{'file':'a.png','alt':'dot'}],'post_options':{'reply_control':'everyone'}}
     result,_,_=invoke(env,fm);assert result.error=='unsupported_attachment: threads/image_post_options'
     assert not wire['calls'] and not env[3]['upload']
+
+
+@pytest.mark.parametrize('nth',[1,2])
+@pytest.mark.parametrize('ack_failed',[False,True])
+def test_ack_detail_save_failure_preserves_durable_publication(env,wire,monkeypatch,nth,ack_failed):
+    from thth import core
+    original=media_delivery._save;published_attempts=[];persisted=[]
+    def fail(name,data):
+        detail=data.get('media',{})
+        if detail.get('phase')=='published':
+            published_attempts.append(detail['publication_ack'])
+            if len(published_attempts)==nth:raise OSError('synthetic detail save failure')
+        result=original(name,data);persisted.append(copy.deepcopy(detail));return result
+    monkeypatch.setattr(media_delivery,'_save',fail)
+    env[3]['fail']=ack_failed
+    result,journal,_=invoke(env)
+    assert len(posts(wire,'/threads_publish'))==1
+    if nth==1:
+        assert result.post_id is None and result.failure=='media_ambiguous'
+        assert journal['media']['phase']=='unknown' and env[3]['results']==[]
+        assert not any(row.get('phase')=='published' for row in persisted)
+    else:
+        assert result.post_id=='100' and result.failure=='none'
+        assert journal['media']['phase']=='published' and journal['media']['post_id']=='100'
+        assert journal['media']['publication_ack']=='pending'
+        assert any(row.get('phase')=='published' and row.get('publication_ack')=='pending' for row in persisted)
+        assert published_attempts==['pending','unconfirmed' if ack_failed else 'acknowledged']
+        assert env[3]['results']==[True]  # Exactly one ACK attempt, never renewal.
+    before=(len(wire['calls']),len(env[3]['upload']),len(env[3]['grants']),len(env[3]['results']))
+    monkeypatch.setattr(accounts,'load_token',lambda cfg:{'access_token':env[1].access_token,'user_id':'123'})
+    monkeypatch.setattr(core,'_append_run',lambda *a,**k:None)
+    again=core.send_once('alpha',text='',media_rows=[{'file':'a.png','alt':'dot'}],production_flag=True,confirm='unused',adapter_factory=lambda *a:pytest.fail('restart provider entered'),log=lambda _:None)
+    assert again.action=='inflight'
+    assert before==(len(wire['calls']),len(env[3]['upload']),len(env[3]['grants']),len(env[3]['results']))

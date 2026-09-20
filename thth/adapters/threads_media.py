@@ -125,7 +125,10 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         for grant in grants:
             try:require(relay.result(grant,published=True).get('status')=='acknowledged','media_ack_unconfirmed')
             except (OSError,ValueError,approval_relay.RelayError,accounts.AccountStopped):acknowledged=False
-        record('published',post_id=result,publication_ack='acknowledged' if acknowledged else 'unconfirmed')
+        # Provider ID and pending acknowledgement are already durable. A failure
+        # to enrich that record must not erase publication or retry either API.
+        try:record('published',post_id=result,publication_ack='acknowledged' if acknowledged else 'unconfirmed')
+        except (OSError,ValueError,RuntimeError,accounts.AccountStopped):pass
         return base.PublishResult(result,None,ts,media=[{'sha256':item.manifest['public_sha256'],'kind':'image','alt_present':True,'remote_id':remote} for item,remote in zip(post.media_files,ids)])
     except accounts.AccountStopped:
         return base.PublishResult(None,None,ts,error='account_stopped',failure='media_held' if ids and phase not in ('publishing','published') else 'media_ambiguous' if phase!='preflight' else 'publish_vetoed')
