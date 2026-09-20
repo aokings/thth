@@ -247,7 +247,10 @@ def _credential_generation(cfg):
     import hashlib
     from pathlib import Path
     from . import authflow
-    token_generation = authflow._generation(authflow._token_snapshot(Path(cfg['token'])))
+    token_path = cfg.get('token')
+    if not token_path:
+        return None
+    token_generation = authflow._generation(authflow._token_snapshot(Path(token_path)))
     if token_generation is None:
         return None
     # Bind the observed credential to the exact ledger used for the request.
