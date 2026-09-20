@@ -21,7 +21,7 @@ subparsers が同じ位置を取り合って `thth account <name>` が壊れる�
 """
 from __future__ import annotations
 
-from . import admin_log
+from . import admin_log, leave_gate
 
 import argparse
 import json
@@ -141,6 +141,7 @@ def plan_migration() -> dict:
     return out
 
 
+@leave_gate.protect_migration
 def cmd_migrate(args) -> int:
     """`thth account migrate [--dry-run]`: repo の中の台帳を外へ **copy** する。
 
@@ -182,6 +183,9 @@ def cmd_migrate(args) -> int:
         log(f"  **中身が違います。上書きしません**: {name}")
 
     if not dry:
+        if any(leave_gate.stopped(name[:-5]) for name in plan['copy']):
+            log('account_stopped: 停止済み台帳は migrate で再作成しません')
+            return finish(2)
         os.makedirs(plan["dst"], exist_ok=True)
         for name in plan["copy"]:
             shutil.copy2(os.path.join(plan["src"], name),
@@ -273,6 +277,7 @@ def _互換の台帳() -> dict | None:
     return {"path": info["path"], "names": names}
 
 
+@leave_gate.protect_account_add
 @admin_log.guarded
 def cmd_add(args) -> int:
     """`thth account add <name> --media … --project … [--handle …] [--instance …] [--repo-dir …]`。
@@ -472,6 +477,9 @@ def cmd_add(args) -> int:
 
 def dispatch(args) -> int:
     verb = getattr(args, "account", None)
+    if verb == 'leave':
+        from . import leave
+        return leave.command(args)
     if verb == "migrate":
         if args.name:
             print(f"`thth account migrate` は名前を取りません（受け取った: {args.name}）",
@@ -502,7 +510,7 @@ def register(sub) -> None:
     p.formatter_class = argparse.RawDescriptionHelpFormatter
     p.add_argument("name", nargs="?",
                    help="`add` のときのアカウント名（`<project>-<media>`）")
-    p.add_argument("--by", help="作成・変更した人（add では必須）")
+    p.add_argument("--by", help="作成・変更した人（add / leave では必須）")
     p.add_argument("--media", default=None, choices=MEDIA_CHOICES,
                    help="`add` のとき: 媒体")
     p.add_argument("--project", default=None,
@@ -522,6 +530,7 @@ def register(sub) -> None:
     p.add_argument("--force", action="store_true",
                    help="`add` のとき: repo の中の台帳が読めなくなるのを承知で進む")
     p.epilog = ("thth account                     全アカウントの状態を一枚で\n"
+                "thth account leave <name> --by <actor> 停止・失効・所有物の削除（CLIのみ）\n"
                 "thth account <name>              1 本の状態を一枚で\n"
                 "thth account migrate [--dry-run] repo の中の台帳を "
                 "$THTH_ROOT/accounts/ へ写す（copy・repo は触らない）\n"

@@ -1,3 +1,4 @@
+import {deletionRequest} from './deletion.js';
 import {relayRequest, receiveCallback} from "./relay.js";
 
 /**
@@ -151,22 +152,8 @@ export default {
     if (url.pathname === "/deauthorize") {
       return new Response(null, { status: 200 });
     }
-    if (url.pathname === "/data-deletion") {
-      return Response.json({
-        url: "https://thth.me/data-deletion-status",
-        confirmation_code: "thth-" + Date.now().toString(36),
-      });
-    }
-    if (url.pathname === "/data-deletion-status") {
-      return html(
-        `<h1>データ削除について</h1>
-         <p class="sub">現在の確認応答は、サーバ内のアカウントやデータを削除したことを示しません。
-         停止・削除については運営者へ連絡してください。</p>
-         <p class="note">自動の失効・削除・記録とこれらの URL の接続は、別の版で実装・検証する予定です。</p>
-         <p class="sub">The current acknowledgement does not establish that server-side accounts or data
-         have been deleted. Contact the operator about stopping access or deleting data.</p>
-         <p class="note">Automated revocation, deletion and record keeping, including integration with
-         these callbacks, belong to a later implementation and verification.</p>`);
+    if (url.pathname === "/data-deletion" || url.pathname === "/data-deletion-status") {
+      return deletionRequest(request, env, url);
     }
 
     // 残りは静的な紹介ページ（public/）。`assets` を先に見る設定なので通常は

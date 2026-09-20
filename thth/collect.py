@@ -503,6 +503,10 @@ def _save_replies(reply_path: str, post_id: str, replies: list, *, now,
     return fresh
 
 
+from . import leave_gate
+
+
+@leave_gate.leased
 def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     """1 アカウントぶんの採取。**書き込みと push は呼び出し側（`run_collect`）。**
 
@@ -512,6 +516,8 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     """
     now = now if now is not None else jst.now_jst()
     account_cfg = accounts_mod.load_account(account_name)
+    from . import leave_gate
+    adapter = leave_gate.bind(adapter, account_cfg)
     repo_dir = account_cfg.get("repo_dir") or ""
     collect_days = int(account_cfg.get("collect_days", 14) or 14)
 

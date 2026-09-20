@@ -1,5 +1,7 @@
 """Bluesky app-password ingestion shared by stdin and legacy human auth."""
 from pathlib import Path
+from . import leave_gate
+
 import urllib.parse
 from . import accounts, admin_log, authflow, jst, secrets_fs
 from .adapters import bluesky
@@ -19,6 +21,7 @@ def service_origin(value):
     return value.rstrip('/')
 
 
+@leave_gate.scoped
 def run(account,*,password_input,by,log=print,force=False,identifier_input=None,cfg=None):
     from . import oauth
     try:
@@ -44,7 +47,7 @@ def run(account,*,password_input,by,log=print,force=False,identifier_input=None,
         path=Path(cfg['token'])
         if admin_log._active_fd.get() is not None:raise FlowError('auth_nested_transaction_refused')
         Path(accounts.thth_root()).mkdir(parents=True,exist_ok=True)
-        with admin_log.transaction():
+        with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction():
             if accounts.load_account(account)!=cfg:raise FlowError('auth_account_changed')
             snapshot=authflow._token_snapshot(path)
             session=authflow._read_session(account)
@@ -58,30 +61,32 @@ def run(account,*,password_input,by,log=print,force=False,identifier_input=None,
         password=secret(raw.strip())
         if not password or not bluesky.APP_PASSWORD_RE.fullmatch(password):
             log('App Password の形（xxxx-xxxx-xxxx-xxxx）ではありません');return 1
-        try:
-            token=bluesky.create_session(service,identifier,password)
-        except (OSError,ValueError,RuntimeError):
-            # Provider/network exceptions may contain response bodies or headers.
-            log('Bluesky createSession が失敗しました。App Password と接続先を確認してください');return 1
-        if (not isinstance(token,dict) or not isinstance(token.get('accessJwt'),str) or not token['accessJwt']
-                or not isinstance(token.get('did'),str) or not token['did']
-                or not isinstance(token.get('handle'),str) or not token['handle']
-                or any(ord(c)<32 or ord(c)==127 for c in token['did']+token['handle'])
-                or oauth.handle_matches(identifier,token['handle'],media='bluesky') is not True
-                or cfg.get('user_id') and token['did']!=cfg['user_id']):
-            log('保存しませんでした: 本人の id/handle が欠けているか台帳と一致しません');return 1
-        # Persist only the App Password; temporary JWTs from createSession stay RAM-only.
-        result=dict(identifier=identifier,app_password=password,did=token['did'],handle=token['handle'],
-                    user_id=token['did'],username=token['handle'],no_expiry=True,obtained_at=jst.iso(),
-                    scopes=None,scopes_source='unknown',auth_via='token_set')
-        with admin_log.transaction(rollback=rollback):
-            if (accounts.load_account(account)!=cfg or authflow._read_session(account)!=session
-                    or authflow._generation(authflow._token_snapshot(path))!=authflow._generation(snapshot)):
-                raise FlowError('bluesky_credentials_changed: 別の更新のため保存しません')
-            snapshot=authflow._token_snapshot(path);changed=True
-            secrets_fs.atomic_write_json(str(path),result,mode=0o600)
-            admin_log.append('token_set',account,cfg,by=by,diff={'token':['present' if snapshot else 'absent','present'],
-                                                              'auth_via':[None,'token_set']})
+        with leave_gate.lease(account),leave_gate.credentials():
+            try:
+                token=bluesky.create_session(service,identifier,password)
+            except (OSError,ValueError,RuntimeError):
+                # Provider/network exceptions may contain response bodies or headers.
+                log('Bluesky createSession が失敗しました。App Password と接続先を確認してください');return 1
+            if (not isinstance(token,dict) or not isinstance(token.get('accessJwt'),str) or not token['accessJwt']
+                    or not isinstance(token.get('did'),str) or not token['did']
+                    or not isinstance(token.get('handle'),str) or not token['handle']
+                    or any(ord(c)<32 or ord(c)==127 for c in token['did']+token['handle'])
+                    or oauth.handle_matches(identifier,token['handle'],media='bluesky') is not True
+                    or cfg.get('user_id') and token['did']!=cfg['user_id']):
+                log('保存しませんでした: 本人の id/handle が欠けているか台帳と一致しません');return 1
+            # Persist only the App Password; temporary JWTs from createSession stay RAM-only.
+            result=dict(identifier=identifier,app_password=password,did=token['did'],handle=token['handle'],
+                        user_id=token['did'],username=token['handle'],no_expiry=True,obtained_at=jst.iso(),
+                        scopes=None,scopes_source='unknown',auth_via='token_set')
+            with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction(rollback=rollback):
+                path=authflow._token_path(path)
+                if (accounts.load_account(account)!=cfg or authflow._read_session(account)!=session
+                        or authflow._generation(authflow._token_snapshot(path))!=authflow._generation(snapshot)):
+                    raise FlowError('bluesky_credentials_changed: 別の更新のため保存しません')
+                snapshot=authflow._token_snapshot(path);changed=True
+                secrets_fs.atomic_write_json(str(path),result,mode=0o600)
+                admin_log.append('token_set',account,cfg,by=by,diff={'token':['present' if snapshot else 'absent','present'],
+                                                                  'auth_via':[None,'token_set']})
         from . import doctor
         doctor.record_auth(account, cfg, result, log=log)
         oauth._out(f"handle={result['handle']} did={result['did']}",log=log)

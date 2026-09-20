@@ -3,10 +3,13 @@
   "name": "thth-callback",
   "main": "src/worker.js",
   "compatibility_date": "2026-09-01",
-  "durable_objects": {"bindings": [{"name": "AUTH_RELAY", "class_name": "AuthRelay"}]},
-  "migrations": [{"tag": "v1-relay", "new_sqlite_classes": ["AuthRelay"]}],
-  "ratelimits": [{"name": "AUTH_RATE_LIMIT", "namespace_id": "21101",
-                  "simple": {"limit": 120, "period": 60}}],
+  "durable_objects": {"bindings": [{"name": "AUTH_RELAY", "class_name": "AuthRelay"}, {"name":"APPROVAL_PERSON","class_name":"ApprovalPerson"}, {"name":"APPROVAL_SESSION","class_name":"ApprovalSession"}, {"name":"APPROVAL_ACCOUNT","class_name":"ApprovalAccount"}, {"name":"DELETION_INBOX","class_name":"DeletionInbox"}]},
+  "migrations": [{"tag": "v1-relay", "new_sqlite_classes": ["AuthRelay"]}, {"tag":"v2-approval","new_sqlite_classes":["ApprovalPerson","ApprovalSession"]}, {"tag":"v3-leave","new_sqlite_classes":["ApprovalAccount","DeletionInbox"]}],
+  "ratelimits": [{"name":"DELETION_PUBLIC_LIMIT","namespace_id":"21204","simple":{"limit":120,"period":60}},{"name": "AUTH_RATE_LIMIT", "namespace_id": "21101",
+                  "simple": {"limit": 120, "period": 60}},
+    {"name":"APPROVAL_PUBLIC_LIMIT","namespace_id":"21201","simple":{"limit":120,"period":60}},
+    {"name":"APPROVAL_VERIFY_LIMIT","namespace_id":"21202","simple":{"limit":600,"period":60}},
+    {"name":"APPROVAL_JOB_LIMIT","namespace_id":"21203","simple":{"limit":180,"period":60}}],
   // thth.me を Worker の custom domain にする（DNS レコードは wrangler が作る）。
   "routes": [
     { "pattern": "thth.me", "custom_domain": true }
@@ -18,7 +21,7 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "run_worker_first": ["/relay/*", "/callback", "/callback/*", "/oauth/client-metadata.json"]
+    "run_worker_first": ["/data-deletion", "/data-deletion-status", "/approve/*", "/approval/*", "/relay/*", "/callback", "/callback/*", "/oauth/client-metadata.json"]
   },
   // observability は有効にしない。認可コードはクエリに乗るので、
   // ログに残す動機を最初から作らない（設計 §3.6 の礼儀と同じ趣旨）。

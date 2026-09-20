@@ -261,7 +261,8 @@ class ThreadsAdapter(base.Adapter):
         wait_seconds = float(os.environ.get("THTH_THREADS_WAIT_SECONDS",
                                             str(DEFAULT_WAIT_SECONDS)))
         token = token or {}
-        return cls(
+        from .. import leave_gate
+        adapter = cls(
             base_url=base_url,
             access_token=token.get("access_token", ""),
             user_id=token.get("user_id") or (account_cfg or {}).get("user_id", ""),
@@ -272,6 +273,7 @@ class ThreadsAdapter(base.Adapter):
             # 「付与済み」として使わないよう読み分ける）。
             scopes_source=token.get("scopes_source"),
         )
+        return leave_gate.bind(adapter, account_cfg)
 
     def _post(self, path: str, params: dict) -> dict:
         url = f"{self.base_url}{path}"

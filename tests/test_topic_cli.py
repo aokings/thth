@@ -126,6 +126,14 @@ def test_T17_suggestは原稿もGitもinflightもsentも変えない(isolated_ac
     assert _repo_state(isolated_account["repo_dir"]) == before_repo, "Git を動かした"
     after = sorted(os.listdir(os.path.join(thth_root, "state"))) \
         if os.path.isdir(os.path.join(thth_root, "state")) else []
+    # The approved cleanup coordination exception is one exact empty inode.
+    from pathlib import Path
+    from tests.coordination_snapshot import account_coordination
+    coordination = Path(thth_root) / "state" / "_leave"
+    if "_leave" not in state_before and "_leave" in after:
+        leaves = list(coordination.iterdir())
+        assert len(leaves) == 1 and account_coordination(leaves[0], isolated_account["name"])
+        after.remove("_leave")
     assert [d for d in after if d not in state_before] in ([], ["topic_advice"]), \
         f"提案が state に余計なものを作った: {after}"
 

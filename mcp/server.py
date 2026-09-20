@@ -505,7 +505,85 @@ ADMIN_TOOLS = [
     for name in ("inventory", "account", "log", "tokens", "release", "diff")]
 
 
+ADMIN_TOOLS.append({'name':'thth_admin_budget_set','description':'Set the X monthly read estimate cap; administrator only, by required; no provider call',
+    'inputSchema':{'type':'object','properties':{key:{'type':'string'} for key in ('monthly','currency','rate','rate_source','by')},
+                   'required':['monthly','by'],'additionalProperties':False}})
+
+SERVER_TOOLS = [
+    {"name":"thth_"+name,"description":"Scoped server "+name,
+     "inputSchema":{"type":"object","properties":{key:{"type":"string"} for key in ("account",*keys)},
+                    "required":["account",*required],"additionalProperties":False}}
+    for name,keys,required in (
+        ('draft_put',('body','publish_at','topic','reply_to','draft_id','expected_revision'),('body','publish_at')),
+        ('approval_request',('draft_id',),('draft_id',)),
+        ('send_request',('body','topic','reply_to'),('body',)),
+        ('retract_request',('post_id','reason'),('post_id','reason')),
+        ('draft_list',(),()),('queue',(),()),('request_status',('job_id',),('job_id',))) ]
+
+
+def server_mode():
+    return 'THTH_REPORT_CREDENTIALS' in os.environ or 'THTH_REPORT_TOKEN' in os.environ
+
+
+def server_tools(context):
+    if context is None: return []
+    reports = [tool for tool in TOOLS if tool['name'] in
+               ('analytics_report', 'operations_handoff', 'study_report')]
+    if context.scope=='admin': return reports + ADMIN_TOOLS
+    from thth.server_writes import WRITE_OPERATIONS
+    return reports + [tool for tool in SERVER_TOOLS
+                      if context.writes or tool['name'][5:] not in WRITE_OPERATIONS]
+
+
+def server_call(name, arguments):
+    from thth.report_service import execute_report, execute_mcp_report, ReportServiceError
+    from thth.server_writes import execute, WRITE_OPERATIONS, SAFE_ERRORS
+    context=authenticated_context()
+    failure=lambda value:{'content':[{'type':'text','text':value}],'isError':True}
+    if context is None: return failure('unauthorized')
+    tool=next((tool for tool in server_tools(context) if tool['name']==name),None)
+    if tool is None: return failure('unsupported_operation')
+    if arguments is None: arguments={}
+    schema=tool['inputSchema']
+    if (type(arguments) is not dict or set(arguments)-set(schema['properties'])
+            or not set(schema.get('required',[]))<=set(arguments)):
+        return failure('invalid_request')
+    for key,value in arguments.items():
+        kind=schema['properties'][key].get('type')
+        # admin_log owns the event enum and its invalid_options distinction.
+        # Let every invalid event type reach that validation before log I/O.
+        if name == 'thth_admin_log' and key == 'event':
+            continue
+        if value is not None and (kind=='string' and not isinstance(value,str)
+                or kind=='integer' and type(value) is not int or kind=='boolean' and type(value) is not bool):
+            return failure('invalid_request')
+    operation=name[5:] if name.startswith('thth_') else name
+    request={**arguments,'operation':operation}
+    try:
+        if operation=='admin_budget_set':
+            from thth.report_service import execute_admin_write
+            result=execute_admin_write(context,request)
+        elif operation in WRITE_OPERATIONS:
+            result=execute(context,request,via='mcp')
+        elif operation in ('analytics_report', 'operations_handoff', 'study_report'):
+            result=execute_mcp_report(context,request)
+        else:
+            result=execute_report(context,request)
+        return {'content':[{'type':'text','text':json.dumps(result,ensure_ascii=False,allow_nan=False)}]}
+    except ReportServiceError as exc:
+        if str(exc)=='invalid_draft':
+            return failure('invalid_draft: '+(getattr(exc,'reason',None) or 'validation_failed'))
+        return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused') else 'request_unavailable')
+    except Exception:
+        return failure('request_unavailable')
+
+
 def admin_context():
+    context=authenticated_context()
+    return context if context is not None and context.scope=='admin' else None
+
+
+def authenticated_context():
     """Authenticate the startup environment, rechecked on list and every call."""
     import hashlib
     import hmac
@@ -523,8 +601,8 @@ def admin_context():
         root, credentials = load_credentials(Path(path))
         digest = hashlib.sha256(token.encode()).hexdigest()
         for expected, expiry, revoked, context in credentials:
-            if hmac.compare_digest(digest, expected) and not revoked and datetime.now(timezone.utc) < expiry and context.scope == "admin":
-                validate_environment(root, context.allowed_accounts, allow_unreadable=True)
+            if hmac.compare_digest(digest, expected) and not revoked and datetime.now(timezone.utc) < expiry:
+                validate_environment(root, context.allowed_accounts, allow_unreadable=context.scope=="admin", allow_empty=True)
                 return context
     except (OSError, ValueError, TypeError):
         pass
@@ -533,6 +611,8 @@ def admin_context():
 
 def call_tool(name: str, arguments: dict | None) -> dict:
     """CLI を呼んで結果を返すだけ。判断（条件分岐・整形）をここに書かない。"""
+    if server_mode():
+        return server_call(name, arguments)
     arguments = arguments or {}
     if isinstance(name, str) and name.startswith("thth_admin_"):
         context = admin_context()
@@ -540,7 +620,8 @@ def call_tool(name: str, arguments: dict | None) -> dict:
             return {"content": [{"type": "text", "text": "unauthorized"}], "isError": True}
         from thth.report_service import execute_report, ReportServiceError
         try:
-            request = {"operation": name[len("thth_"):], **arguments}
+            if "operation" in arguments: raise ReportServiceError("invalid_request")
+            request = {**arguments, "operation": name[len("thth_"):]}
             result = execute_report(context, request)
             return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
         except (ValueError, TypeError, ReportServiceError) as error:
@@ -757,7 +838,7 @@ def _handle_request(req: dict):
     if method == "notifications/initialized":
         return None
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": TOOLS + (ADMIN_TOOLS if admin_context() is not None else [])}}
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": server_tools(authenticated_context()) if server_mode() else TOOLS + (ADMIN_TOOLS if admin_context() is not None else [])}}
     if method == "tools/call":
         params = req.get("params") or {}
         if not isinstance(params, dict):
@@ -766,7 +847,7 @@ def _handle_request(req: dict):
         name = params.get("name")
         if not isinstance(name, str) or not name:
             raise ToolInputError("params.name（道具の名前）が要ります")
-        arguments = validate_arguments(name, params.get("arguments"))
+        arguments = params.get("arguments") if server_mode() else validate_arguments(name, params.get("arguments"))
         result = call_tool(name, arguments)
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
     if req_id is not None:

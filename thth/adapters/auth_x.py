@@ -1,4 +1,6 @@
 """X OAuth only. This profile does not register a posting/collection adapter."""
+from .. import leave_gate, budget_x
+
 import base64
 import datetime
 import hashlib
@@ -58,11 +60,14 @@ def request(path, *, data=None, pair=None, token=None):
         headers['Content-Type']='application/x-www-form-urlencoded'
         raw=urllib.parse.urlencode(data).encode()
     req=urllib.request.Request(api_origin()+path,data=raw,headers=headers,method='POST' if data is not None else 'GET')
+    if data is None:budget_x.before_get(path)
+    elif path=='/2/oauth2/token':budget_x.before_post()
     try:
         with httpsafe.urlopen(req,timeout=10) as response:raw=response.read(262145)
         if len(raw)>262144:raise ValueError
         value=json.loads(raw,object_pairs_hook=handoff_cursor._pairs)
         if not isinstance(value,dict):raise ValueError
+        if data is None:budget_x.observed(value)
         return value
     except urllib.error.HTTPError as exc:
         status=exc.code;exc.close()
@@ -71,6 +76,7 @@ def request(path, *, data=None, pair=None, token=None):
         raise FlowError('x_auth_response_unavailable: 認可をやり直してください') from None
 
 
+@leave_gate.configured("cfg")
 def token_result(body,cfg,*,now=None,previous=None):
     now=now or jst.now_jst()
     access=credential(body.get('access_token'));refresh=credential(body.get('refresh_token'))
@@ -96,6 +102,7 @@ class XAuthProfile(AuthProfile):
     pkce=True
 
     @classmethod
+    @leave_gate.configured("cfg")
     def prepare(cls,cfg,*,redirect_uri=None,**_):
         api_origin()
         if redirect_uri not in (None,CALLBACK) or cfg.get('redirect_uri') not in (None,'',CALLBACK):
@@ -116,6 +123,7 @@ class XAuthProfile(AuthProfile):
         return 'https://x.com/i/oauth2/authorize?'+urllib.parse.urlencode(dict(response_type='code',client_id=self.client_id,
             redirect_uri=CALLBACK,scope=' '.join(SCOPES),state=session['state'],code_challenge=challenge,code_challenge_method='S256'))
 
+    @leave_gate.configured("account_cfg")
     def exchange(self,code_value,session,account_cfg,*,log):
         self.validate()
         received=getattr(code_value,'received_at',None)
@@ -123,9 +131,10 @@ class XAuthProfile(AuthProfile):
             raise FlowError('x_code_expired: 認可をやり直してください')
         # A pasted code has no trustworthy issuance time. Exchange immediately;
         # provider invalid_grant is not retried or relabelled as a successful flow.
-        body=request('/2/oauth2/token',pair=(self.client_id,self.client_secret),data=dict(
-            grant_type='authorization_code',code=credential(code_value),redirect_uri=CALLBACK,code_verifier=credential(session.get('code_verifier'))))
-        return token_result(body,account_cfg)
+        with budget_x.user_read(leave_gate.name_for(account_cfg)):
+            body=request('/2/oauth2/token',pair=(self.client_id,self.client_secret),data=dict(
+                grant_type='authorization_code',code=credential(code_value),redirect_uri=CALLBACK,code_verifier=credential(session.get('code_verifier'))))
+            return token_result(body,account_cfg)
 
 
 def remaining(token,now):
@@ -136,6 +145,7 @@ def remaining(token,now):
     return (obtained+datetime.timedelta(seconds=expiry)-now).total_seconds()
 
 
+@leave_gate.scoped
 def run_refresh(account,*,force=False,check=False,log=print,now=None):
     now=now or jst.now_jst();changed=False;snapshot=None;path=None
     def rollback():
@@ -150,7 +160,7 @@ def run_refresh(account,*,force=False,check=False,log=print,now=None):
             token=json.loads(snapshot[0]) if snapshot else {}
         else:
             if admin_log._active_fd.get() is not None:raise FlowError('auth_nested_transaction_refused')
-            with admin_log.transaction():
+            with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction():
                 if accounts.load_account(account)!=cfg:raise FlowError('auth_account_changed')
                 binding=profile.binding(cfg,current=True)
                 if binding!=profile.binding(cfg):raise FlowError('auth_client_changed')
@@ -165,24 +175,26 @@ def run_refresh(account,*,force=False,check=False,log=print,now=None):
             return 0
         if not force and seconds>REFRESH_BEFORE_SECONDS:
             log('まだ更新の必要がありません（X: 期限5分前から更新）');return 0
-        body=request('/2/oauth2/token',pair=(profile.client_id,profile.client_secret),data=dict(
-            grant_type='refresh_token',refresh_token=token['refresh_token']))
-        updated=token_result(body,cfg,now=now,previous=token)
-        if token.get('auth_via') in ('paste','relay'):updated['auth_via']=token['auth_via']
-        with admin_log.transaction(rollback=rollback):
-            if (accounts.load_account(account)!=cfg or profile.binding(cfg,current=True)!=binding
-                    or authflow._read_session(account)!=session
-                    or authflow._generation(authflow._token_snapshot(path))!=authflow._generation(snapshot)):
-                raise FlowError('x_refresh_credentials_changed: 保存しません')
-            # Snapshot and equality check are inside the same final lock.
-            snapshot=authflow._token_snapshot(path);changed=True
-            secrets_fs.atomic_write_json(str(path),updated,mode=0o600)
-            admin_log.append('token_refreshed',account,cfg,by='thth-refresh',diff={'token':['present','present']})
+        with leave_gate.lease(account),leave_gate.credentials(),budget_x.user_read(account):
+            body=request('/2/oauth2/token',pair=(profile.client_id,profile.client_secret),data=dict(
+                grant_type='refresh_token',refresh_token=token['refresh_token']))
+            updated=token_result(body,cfg,now=now,previous=token)
+            if token.get('auth_via') in ('paste','relay'):updated['auth_via']=token['auth_via']
+            with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction(rollback=rollback):
+                path=authflow._token_path(path)
+                if (accounts.load_account(account)!=cfg or profile.binding(cfg,current=True)!=binding
+                        or authflow._read_session(account)!=session
+                        or authflow._generation(authflow._token_snapshot(path))!=authflow._generation(snapshot)):
+                    raise FlowError('x_refresh_credentials_changed: 保存しません')
+                # Snapshot and equality check are inside the same final lock.
+                snapshot=authflow._token_snapshot(path);changed=True
+                secrets_fs.atomic_write_json(str(path),updated,mode=0o600)
+                admin_log.append('token_refreshed',account,cfg,by='thth-refresh',diff={'token':['present','present']})
         log('更新しました: '+account);return 0
     except admin_log.AdminLogError as exc:
         log('admin_change_recorded_durability_unconfirmed' if exc.complete else
             'admin_change_partially_recorded_outcome_uncertain' if exc.appended else 'admin_change_refused')
         return 2
     except (OSError,ValueError,accounts.AccountError) as exc:
-        log((str(exc) if isinstance(exc,FlowError) else 'x_refresh_failed') + ': 必要なら認可をやり直してください。旧ファイル保持は旧 refresh token の再利用を保証しません')
+        log((str(exc) if isinstance(exc,(FlowError,budget_x.BudgetError)) else 'x_refresh_failed') + ': 必要なら認可をやり直してください。旧ファイル保持は旧 refresh token の再利用を保証しません')
         return 2

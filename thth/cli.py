@@ -458,15 +458,7 @@ def cmd_approve(args) -> int:
             print(str(e), file=sys.stderr)
             return 2
         for one in prepared:
-            writeback_mod.set_front_matter_fields(one["path"], {
-                "status": "approved",
-                "approved_sha": one["approved_sha"],
-                "approved_at": approved_at,
-                "approved_by": approved_by,
-                "revoked_at": None,
-                "revoked_by": None,
-                "revoked_reason": None,
-            })
+            writeback_mod.set_front_matter_fields(one["path"], approval_mod.approved_fields(one, approved_by, approved_at))
 
         rel_paths = [os.path.relpath(os.path.realpath(one["path"]), repo_dir) for one in prepared]
         label = (os.path.basename(prepared[0]["path"]) if len(prepared) == 1
@@ -2303,13 +2295,17 @@ def cmd_run(args) -> int:
     （外部レビュー §5・`thth/maintain.py` の docstring）。
     token が無ければ何も投げずに exit 2（設計 §3.2・T3a 訂正 2026-09-09。env は任意
     ・`accounts.token_exists()` docstring 参照）。"""
+    from . import leave_gate
+    try:leave_gate.require_active(args.account)
+    except accounts_mod.AccountStopped:
+        print('account_stopped',file=sys.stderr);return 2
     account_cfg = None
     # load_account() と同じ名前検査より先に、state のパスを組み立てない。
     # `../outside` を通知状態の書込先に使わせないため。
     state_dir = (accounts_mod.state_dir_for(args.account)
                  if accounts_mod.name_is_safe(args.account) else None)
 
-    def notify(state: str, *, result=None, reason=None, exception=None) -> None:
+    def _notify(state: str, *, result=None, reason=None, exception=None) -> None:
         """通知の失敗で、投稿の rc や元の例外を上書きしない。"""
         if state_dir is None:
             return
@@ -2338,6 +2334,12 @@ def cmd_run(args) -> int:
                   file=sys.stderr)
         if not attempt.state_saved:
             print("死活通知の状態を保存できませんでした", file=sys.stderr)
+
+    def notify(state: str, **kwargs) -> None:
+        if state_dir is None:return
+        try:
+            with leave_gate.lease(args.account):_notify(state,**kwargs)
+        except accounts_mod.AccountStopped:return
 
     try:
         # app 自身を最新にしてから走る（設計 §3.2・**lock を取る前**）。進んでいたら
@@ -2567,15 +2569,17 @@ def cmd_send(args) -> int:
         text = _sys.stdin.read()
     from .postid import PostIdError
     try:
-        result = core_mod.send_once(
-            args.account, text=text, topic=args.topic, reply_to=args.reply_to,
-            reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
-            found_by=args.found_by,
-            production_flag=args.production, confirm=args.confirm, log=print, wait=getattr(args, "wait", 0))
+        from . import read_coordination
+        def send():
+            return core_mod.send_once(
+                args.account, text=text, topic=args.topic, reply_to=args.reply_to,
+                reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
+                found_by=args.found_by,
+                production_flag=args.production, confirm=args.confirm, log=print, wait=getattr(args, "wait", 0)).exit_code
+        return read_coordination.invoke(args,'send',send)
     except PostIdError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    return result.exit_code
 
 
 def cmd_doctor(args) -> int:
@@ -3126,6 +3130,9 @@ def build_parser() -> argparse.ArgumentParser:
     transport.add_argument("--tcp-port", type=int, help="明示的にloopback TCPを使うport")
     p_http.set_defaults(func=report_http.cmd_serve_reports)
 
+    from . import approval_jobs
+    approval_jobs.register(sub)
+
     p_handoff = sub.add_parser("handoff-report", help="ローカル運用記録を引き継ぐ（読むだけ）")
     p_handoff.add_argument("account", nargs="?")
     p_handoff.add_argument("--project", default=None)
@@ -3305,4 +3312,5 @@ def main(argv=None) -> int:
         args = commands.choices['where'].parse_intermixed_args(real_argv[1:])
     else:
         args = parser.parse_args(argv)
-    return args.func(args)
+    from . import read_coordination
+    return read_coordination.invoke(args,real_argv[0] if real_argv else '')

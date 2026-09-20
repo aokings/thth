@@ -3,7 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-from . import accounts, admin_log, appenv, authclients, authflow, handoff_cursor, secrets_fs
+from . import accounts, admin_log, leave_gate, appenv, authclients, authflow, handoff_cursor, secrets_fs
 from .authflow import FlowError, secret
 
 
@@ -33,7 +33,7 @@ def save(media,path,data,*,by,expected,origin=None):
                 if old is None:path.unlink(missing_ok=True)
                 else:secrets_fs.atomic_write_text(str(path),old[0].decode(),mode=old[1])
             except (OSError,ValueError):raise FlowError('app_set_rollback_failed_outcome_uncertain') from None
-    with admin_log.transaction(rollback=rollback):
+    with leave_gate.credentials(), admin_log.transaction(rollback=rollback):
         old=snapshot(path)
         if authflow._generation(old)!=authflow._generation(expected):raise FlowError('app_client_changed: 保存しません')
         before = {'client_id': False, 'client_secret': False}

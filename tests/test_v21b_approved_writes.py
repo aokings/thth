@@ -656,7 +656,14 @@ def test_Threadsのdelete_postは数字以外のidを断る():
         adapter.delete_post("555?x=1")
 
 
-def test_MCPには取り下げの口が無い():
-    src = open(os.path.join(os.path.dirname(__file__), "..", "mcp", "server.py"),
-               encoding="utf-8").read()
-    assert "retract" not in src and "delete" not in src
+def test_MCPには直接取り下げの口が無い(monkeypatch):
+    # 2.12 adds an authenticated human-approval request, never a direct DELETE.
+    from tests.test_mcp import _load_server_module
+    for key in ('THTH_REPORT_CREDENTIALS', 'THTH_REPORT_TOKEN'):
+        monkeypatch.delenv(key, raising=False)
+    server = _load_server_module()
+    monkeypatch.setattr(server, 'run_cli', lambda *a, **k: pytest.fail('direct delete reached CLI'))
+    names = {tool['name'] for tool in server.TOOLS + server.ADMIN_TOOLS}
+    for name in ('thth_retract', 'thth_delete', 'thth_retract_request'):
+        assert name not in names
+        assert server.call_tool(name, {'account': 'alpha', 'post_id': '123'})['isError']

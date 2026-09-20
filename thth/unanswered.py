@@ -86,22 +86,40 @@ def _relations(name, cfg, now):
     return roots, answered, reasons, owned
 
 
-def answer(account_name, *, since='7d', now=None):
+def answer(account_name, *, since='7d', now=None, allowed_names=None):
+    if allowed_names is None:
+        allowed_names = replies.active_report_scope()
+    if allowed_names is not None and account_name not in allowed_names:
+        raise accounts.AccountError("scope_unavailable")
     now = now or jst.now_jst()
     floor = read_window.cutoff(since, now=now)
     cfg = accounts.load_account(account_name)
     roots, answered, reasons, _ = _relations(account_name, cfg, now)
     try:
-        data = replies.load(account_name)
+        data = replies.load(account_name, allowed_names=allowed_names)
     except (OSError, ValueError, TypeError, AttributeError):
         data = {'replies': [], 'fetches': [], 'broken': ['unreadable'], 'unreadable_accounts': []}
     if data['broken']:reasons.add('replies_unreadable')
     if data['unreadable_accounts']:reasons.add('reply_ownership_unknown')
+    # Registry *names* are trusted host metadata, unlike the account ledgers.
+    # Consult them only for legacy rows missing the account owner. A credential that
+    # covers the full registry keeps the original CLI inference; a partial
+    # credential cannot rule out an unseen owner of a shared-repo root.
+    incomplete_owner_scope = False
+    if allowed_names is not None and any(
+            'account' not in row
+            for row in data['replies'] + data['fetches']):
+        try:
+            incomplete_owner_scope = not set(accounts.list_account_names()).issubset(
+                set(allowed_names))
+        except accounts.AccountError:
+            incomplete_owner_scope = True
     # Shared repositories may contain identical platform-local ids. Metadata
     # can disambiguate; an old row without it cannot choose between owners.
     owners = {pid: {(account_name, cfg['media'])} for pid in roots}
     directory = Path(accounts.data_dirs(cfg, account_name)['replies']).resolve()
-    for other in accounts.list_account_names():
+    for other in (accounts.list_account_names() if allowed_names is None
+                  else sorted(set(allowed_names))):
         if other == account_name:continue
         try:
             other_cfg = accounts.load_account(other)
@@ -118,6 +136,11 @@ def answer(account_name, *, since='7d', now=None):
         if ('account' in row and row['account'] != account_name
                 or 'medium' in row and row['medium'] != cfg['media']):
             reasons.add('foreign_reply_evidence_excluded');return False
+        # A present account name is a sufficient owner declaration even when
+        # the older row omits medium. Without account, an unseen tenant may
+        # share this directory and platform-local post id.
+        if incomplete_owner_scope and 'account' not in row:
+            reasons.add('reply_scope_ambiguous');return False
         candidates = {(name, medium) for name, medium in owners[pid]
                       if ('account' not in row or row['account'] == name)
                       and ('medium' not in row or row['medium'] == medium)}

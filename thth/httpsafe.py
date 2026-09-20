@@ -73,4 +73,5 @@ def urlopen(req, *, timeout: float):
 
     引数は `Request` でも URL 文字列でもよい（既存の呼び出しをそのまま移せる）。
     """
-    return opener().open(req, timeout=timeout)
+    from . import leave_gate
+    return leave_gate.urlopen(opener().open, req, timeout=timeout)

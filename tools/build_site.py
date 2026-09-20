@@ -246,6 +246,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
         "AI エージェントとやり取りしながら下書きや投稿の記録を扱えます。</p>")
 
     add("<h2>認可と運営者の設定</h2>")
+    add("<p>Mastodon の auth は expires_in または refresh_token を返す非標準実装に未対応です。手動 token set も期限・更新情報を受け取らず期限なしとして保存するため、その回避策にはなりません。</p>")
     add("<p>masaru がサーバ側で <code>thth auth &lt;account&gt; --by masaru</code> を開始し、"
         "利用者が URL を開いて承認します。Threads・対応 Mastodon・X の共通入口です。"
         "X は認可だけ対応し、投稿・採集は未対応。Bluesky は App Password の stdin 入力です。</p>")
@@ -268,7 +269,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-09-20"
+PRIVACY_EFFECTIVE = None  # 2.12 approval update: deployment date is set by the release operator.
 
 
 def build_privacy() -> str:
@@ -299,6 +300,15 @@ def build_privacy() -> str:
         "are not sent to the relay. The application deletes the code when consumed or expired. Removing "
         "application records does not establish physical erasure from the hosting provider's infrastructure "
         "or backups. Unregistered flows can use the existing return-URL paste fallback.</p>")
+    add("<h2>Human approval pages</h2>")
+    add("<p>An approval page temporarily holds the exact proposed text and display context for a logical "
+        "session lifetime of at most 600 seconds. Approval or expiry removes that text and display context "
+        "from the active record; minimal receipt bindings remain until expiry. A separate person record "
+        "holds a salted PBKDF2-SHA256 verifier with 600,000 iterations, generation and failure count, "
+        "not the approval secret itself. The secret is transmitted only when the person submits the form "
+        "and is not retained. The URL holder can read the proposed text but cannot approve without the "
+        "secret. Cloudflare SQLite Durable Object point-in-time recovery (PITR) retains recovery history "
+        "for 30 days: logical deletion is not a promise of immediate physical erasure from backups.</p>")
     add("<h2>Server records and communication</h2>")
     add("<p>Long-lived credentials reside in owner-only files on the operator's server and authenticate "
         "platform API requests. Drafts, post history and collected records also reside in configured "
@@ -331,6 +341,13 @@ def build_privacy() -> str:
         "長期トークン、client secret、PKCE verifier は預かり所へ送りません。消費または失効時にアプリケーション上の"
         "コードを削除します。Cloudflare 内部のバックアップや物理消去まで保証する説明ではありません。未登録などの"
         "場合は従来の戻り URL を貼る経路になります。</p>")
+    add("<h2>本人が押す承認ページ</h2>")
+    add("<p>承認ページは公開予定の本文そのものと表示情報を、最大600秒の論理的な session 期限内で一時的に保持します。"
+        "承認または失効で稼働中 record から本文と表示情報を削除し、最小の受領照合情報だけを期限まで残します。"
+        "本人の別 record には salt 付き PBKDF2-SHA256（600,000回）の verifier、世代、失敗回数を保存し、"
+        "承認 secret 本体は保存しません。secret は本人のフォーム送信時だけ照合に使います。URL の所持者は本文を"
+        "読めますが、secret 無しで承認はできません。Cloudflare SQLite Durable Object の PITR は30日間の復元履歴を"
+        "持つため、論理削除をバックアップからの即時物理消去とは約束しません。</p>")
     add("<h2>サーバの記録と通信</h2>")
     add("<p>長期の認証情報は運営者のサーバの所有者専用ファイルへ保存し、媒体の API への認証に使います。"
         "下書き・投稿履歴・採集した記録等も設定されたサーバ側の置き場にあります。通信先は媒体 API だけとは限らず、"

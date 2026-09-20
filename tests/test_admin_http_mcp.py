@@ -37,7 +37,9 @@ def test_admin_all_registry_and_mcp_auth_rechecked(credentials,monkeypatch):
     assert server.call_tool('thth_admin_inventory',{})['content'][0]['text']=='unauthorized'
     monkeypatch.setenv('THTH_REPORT_CREDENTIALS',str(path));monkeypatch.setenv('THTH_REPORT_TOKEN',token)
     assert server.admin_context().scope=='admin'
-    assert len(server.ADMIN_TOOLS)==6
+    assert {tool['name'] for tool in server.ADMIN_TOOLS}=={
+        'thth_admin_inventory','thth_admin_account','thth_admin_diff','thth_admin_log',
+        'thth_admin_tokens','thth_admin_release','thth_admin_budget_set'}
     result=server.call_tool('thth_admin_inventory',{})
     assert set(json.loads(result['content'][0]['text'])['by_account'])=={'first','second'}
     assert server.call_tool('thth_admin_diff',{'mark_read':True})['isError']

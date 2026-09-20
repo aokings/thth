@@ -39,6 +39,21 @@ class AccountError(Exception):
     """台帳が無い・壊れている・必須項目が足りない。"""
 
 
+class AccountStopped(AccountError):
+    """Known account was stopped before dispatch; never a publish ambiguity."""
+
+
+class AccountLeaving(AccountStopped):
+    """Exit currently holds the exclusive lease; readers must never wait."""
+
+
+class AccountConfig(dict):
+    def copy(self):
+        value=AccountConfig(self)
+        value._thth_account_name=self._thth_account_name
+        return value
+
+
 # --------------------------------------------------------------------------
 # 雛形のダミー値（監査 2・C10「あるべきもの 9」・masaru 裁定 2026-09-13
 # 「手がかかっても最善を」）
@@ -299,6 +314,8 @@ def load_account(name: str) -> dict:
             f"アカウント名に使えない字が入っています: {name!r}"
             f"（使えるのは英数字と `_`・`.`・`-` だけ。名前はそのまま"
             f"ファイル名になるので、`/` や `..` は置き場の外を指せます）")
+    from .leave_gate import require_active
+    require_active(name)
     d = accounts_dir()
     path = os.path.join(d, f"{name}.json")
     try:
@@ -321,7 +338,8 @@ def load_account(name: str) -> dict:
     missing = [k for k in REQUIRED_FIELDS if k not in data]
     if missing:
         raise AccountError(f"{name}: 台帳に項目が足りません: {missing}")
-    out = dict(data)
+    out = AccountConfig(data)
+    out._thth_account_name=name
     for key in ("repo_dir", "env", "token"):
         out[key] = _expand(out[key])
     return out
@@ -514,6 +532,8 @@ def app_lock_path() -> str:
 
 def load_token(account_cfg: dict) -> dict | None:
     """`<account>.token` を読む。無ければ None（T1 はここに触れない・秘密を扱わない）。"""
+    from .leave_gate import check_config
+    check_config(account_cfg)
     path = account_cfg.get("token")
     if not path or not os.path.exists(path):
         return None

@@ -53,6 +53,7 @@
 <h2>AI エージェントから使う</h2>
 <p>MCP サーバと Claude Code 用のスキルを同梱しています。コマンドラインから直接使うほか、AI エージェントとやり取りしながら下書きや投稿の記録を扱えます。</p>
 <h2>認可と運営者の設定</h2>
+<p>Mastodon の auth は expires_in または refresh_token を返す非標準実装に未対応です。手動 token set も期限・更新情報を受け取らず期限なしとして保存するため、その回避策にはなりません。</p>
 <p>masaru がサーバ側で <code>thth auth &lt;account&gt; --by masaru</code> を開始し、利用者が URL を開いて承認します。Threads・対応 Mastodon・X の共通入口です。X は認可だけ対応し、投稿・採集は未対応。Bluesky は App Password の stdin 入力です。</p>
 <p><a href="https://github.com/aokings/thth/blob/main/docs/導入_承認を押すだけ.md">導入: 承認を押すだけ（利用者と masaru の手順）</a></p>
 <h2>English</h2>

@@ -320,3 +320,10 @@ def compute_bundle_sha(*, segments: list, account: str, topic: str | None,
 def segment_sha(text: str) -> str:
     """1 段の本文の指紋。**公開記録に残して、あとから照合する。**"""
     return hashlib.sha256((text or "").strip().encode("utf-8")).hexdigest()
+
+
+def approved_fields(prepared, by, at):
+    """Identical approval writeback for local two-stage and server human receipt."""
+    return {'status':'approved', 'approved_sha':prepared['approved_sha'],
+            'approved_at':at, 'approved_by':by, 'revoked_at':None,
+            'revoked_by':None, 'revoked_reason':None}

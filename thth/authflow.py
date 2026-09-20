@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from . import leave_gate, budget_x
+
 import hashlib
 import json
 import os
@@ -146,7 +148,7 @@ def begin(account, cfg, profile, *, resume=False):
     if admin_log._active_fd.get() is not None:
         raise FlowError("auth_nested_transaction_refused")
     Path(accounts.thth_root()).mkdir(parents=True, exist_ok=True)
-    with admin_log.transaction():
+    with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction():
         current = accounts.load_account(account)
         if current != cfg or profile.binding(current, current=True) != profile.binding(cfg):
             raise FlowError('auth_account_changed')
@@ -305,10 +307,18 @@ def paste(raw, session):
     return codes[0]
 
 
+def _token_path(path):
+    # Resolve trusted host aliases (including symlinked HOME) only in parents.
+    # Never resolve the credential leaf: its symlink/type/link checks still apply.
+    path = Path(path)
+    resolved = path.parent.resolve() / path.name
+    if resolved.is_symlink():
+        raise FlowError('unsafe_mutation_path')
+    return resolved
+
+
 def _token_snapshot(path):
-    for part in (path, *path.parents):
-        if part.is_symlink():
-            raise FlowError('unsafe_mutation_path')
+    path = _token_path(path)
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
@@ -338,12 +348,13 @@ def commit(account, cfg, profile, session, token, *, by, via):
                 _write_session(account, session)
             except (OSError, ValueError):
                 raise FlowError('auth_rollback_failed_outcome_uncertain: 保存状態を確認してください') from None
-    with admin_log.transaction(rollback=rollback):
+    with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction(rollback=rollback):
         latest = accounts.load_account(account)
         current = _read_session(account)
         if latest != cfg or profile.binding(latest, current=True) != session['binding'] or current != session:
             raise FlowError('auth_session_changed: 新しい認可または台帳変更のため保存しません')
         _remaining(session)
+        path = _token_path(path)
         snapshot = _token_snapshot(path)
         if _generation(snapshot) != session['credential_generation']:
             raise FlowError('auth_credential_changed: 別の操作で認証情報が変わったため保存しません')
@@ -354,6 +365,7 @@ def commit(account, cfg, profile, session, token, *, by, via):
         _clear_session(account)
 
 
+@leave_gate.scoped
 def run(account, cfg, profile, *, code=None, input_func=None, log=print, by, human_output=print):
     from . import oauth
     try:
@@ -388,9 +400,10 @@ def run(account, cfg, profile, *, code=None, input_func=None, log=print, by, hum
                 code_value = paste((input_func or input)(), session)
         else:
             code_value = paste(code, session)
-        token = profile.exchange(code_value, session, cfg, log=log)
-        token['auth_via'] = via
-        commit(account, cfg, profile, session, token, by=by, via=via)
+        with leave_gate.lease(account),leave_gate.credentials():
+            token = profile.exchange(code_value, session, cfg, log=log)
+            token['auth_via'] = via
+            commit(account, cfg, profile, session, token, by=by, via=via)
         from . import doctor
         doctor.record_auth(account, cfg, token, log=log)
         oauth._out(f"user_id={token['user_id']} username={token['username']}", log=log)
@@ -410,7 +423,7 @@ def run(account, cfg, profile, *, code=None, input_func=None, log=print, by, hum
         return 2
     except (OSError, ValueError, accounts.AccountError, appenv.AppEnvError) as exc:
         # Never print raw OS/request messages containing session paths/URLs.
-        log(redact.redact(str(exc)) if isinstance(exc, FlowError) else 'auth_failed: 保存しませんでした')
+        log(redact.redact(str(exc)) if isinstance(exc, (FlowError,budget_x.BudgetError)) else 'auth_failed: 保存しませんでした')
         return 2
 
 
@@ -424,7 +437,8 @@ def commit_manual(account, cfg, token, *, snapshot, session, by):
                 if snapshot is None:path.unlink(missing_ok=True)
                 else:secrets_fs.atomic_write_text(str(path),snapshot[0].decode(),mode=snapshot[1])
             except (OSError,ValueError):raise FlowError('token_set_rollback_failed_outcome_uncertain') from None
-    with admin_log.transaction(rollback=rollback):
+    with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction(rollback=rollback):
+        path = _token_path(path)
         if (accounts.load_account(account)!=cfg or _read_session(account)!=session
                 or _generation(_token_snapshot(path))!=_generation(snapshot)):
             raise FlowError('token_set_credentials_changed: 別の更新のため保存しません')

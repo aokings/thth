@@ -10,16 +10,26 @@ description: 投稿する前・返信を書く前・出したあと・絡みに�
 
 ## 何を保証するか
 
-- **人が承認していない本文は 1 文字も出ない。** 承認は 2 段（見せる → digest を渡す）。
+- **人が承認していない本文は 1 文字も出ない。** ローカル CLI の承認は 2 段（見せる → digest を渡す）。サーバ MCP は本人の承認ページだけで承認する。
   digest が違えば拒否する。**「見せた本文」と「出す本文」が同じであることを機械が確かめる。**
 - **`--production` を付けるまで出ない。** 付けない実行は、投げるはずの本文と digest を
   表示して終わる。
 - **記録は利用者の git に残る。** post_id・承認者・承認時刻・返信・実測は、あなたの repo の
-  commit として残る。THTH のサーバには何も無い。絡みの台帳（`data/sns/engagements/`）は
+  commit として残る。招待者のサーバ mode では管理者の専用 managed repo に残る。絡みの台帳（`data/sns/engagements/`）は
   公開の commit とは別で、**次の採取（`thth collect`・最大 10 分の遅れ）**で commit される。
 - **数値には分母が付く。** 件数・期間・揃えた条件が無い数字は返さない。取れていない刻みは
   `null` であって `0` ではない。
 - **黙って間違えない。** 拒むときは理由と次の一手を言って非ゼロで終わる（loud reject）。
+
+## 招待されたサーバ MCP の書く口
+
+credential の user scope / writes がある場合だけ `thth_draft_put`、`thth_approval_request`、
+`thth_send_request`、`thth_retract_request` を使える。account は本人の許可範囲だけ。
+actor/by/person/confirm/digest/ファイルパスを引数に加えない。本文は body、下書き更新は draft_id と expected_revision。
+返った approval_url は本人に私的に渡し、承認 secret を聞かない・入力しない・会話へ貼らせない。
+URL を返しただけでは承認/公開/削除の完了ではない。`thth_request_status` の job_id で結果を確認する。
+unknown は自動再依頼・再公開で解消せず、管理者が媒体と記録を照合する。
+詳しい管理設定と入力は `docs/運用_サーバ書込_2.12.md`。無 credential のローカル MCP とは別の入口。
 
 ## 何を拒むか
 

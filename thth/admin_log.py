@@ -24,9 +24,10 @@ def _emit(fd, data):
         raise AdminLogError('admin_log_write_failed', appended=written > 0, complete=written == len(data)) from exc
 
 
-EVENTS = frozenset(('account_added', 'account_updated', 'account_removed', 'token_set',
-                   'token_refreshed', 'token_revoked', 'app_set', 'production_enabled', 'production_disabled'))
-SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping', re.I)
+EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'account_removed', 'token_set',
+                   'token_refreshed', 'token_revoked', 'app_set', 'production_enabled', 'production_disabled', 'relay_key_initialized',
+                   'budget_set', 'approver_set', 'approver_revoked', 'approver_unlocked', 'approval_requested', 'send_requested', 'retract_requested', 'sent'))
+SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 
 
@@ -86,7 +87,7 @@ def provenance(by, via='cli'):
 
 def append(event, account, cfg, *, by, via='cli', diff=None, run_id=None):
     actor(by)
-    if event not in EVENTS or not accounts.name_is_safe(account) or via not in ('cli', 'mcp'):
+    if event not in EVENTS or not accounts.name_is_safe(account) or via not in ('cli', 'mcp', 'http'):
         raise ValueError('invalid_admin_event')
     row = dict(at=jst.iso(), by=clean(by), via=via, host=socket.gethostname(), event=event,
                account=account, medium=cfg.get('media'), diff=diff or {}, run_id=run_id)
@@ -211,7 +212,7 @@ def transaction(*, rollback=None):
             try:
                 from . import admin_notifications
                 event = json.loads(data)
-                if event['event'] == 'app_set':
+                if event['event'] in ('app_set', 'relay_key_initialized', 'approver_set', 'approver_revoked', 'approver_unlocked', 'account_removed', 'deletion_requested', 'budget_set'):
                     continue
                 cfg = accounts.load_account(event['account'])
                 admin_notifications.notify(event, cfg)
@@ -219,6 +220,27 @@ def transaction(*, rollback=None):
                 # The committed audit event remains the durable retry evidence.
                 import sys
                 print('admin_notification_pending', file=sys.stderr)
+
+
+def repair_append_boundary():
+    """Append a delimiter after a partial record, without rewriting its bytes.
+
+    Recovery callers already hold the validated admin transaction/flock. A new
+    full event must not be concatenated into an earlier incomplete JSON line.
+    """
+    active=_active_fd.get()
+    if active is None:raise ValueError('admin_transaction_required')
+    directory=handoff_cursor._directory('_admin')
+    try:
+        fd=os.open('accounts.ndjson',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=directory)
+        try:
+            current=os.fstat(fd);locked=os.fstat(active)
+            if (current.st_dev,current.st_ino)!=(locked.st_dev,locked.st_ino):raise ValueError('admin_log_changed')
+            if current.st_size:
+                os.lseek(fd,-1,os.SEEK_END)
+                if os.read(fd,1)!=b'\n':_emit(active,b'\n')
+        finally:os.close(fd)
+    finally:os.close(directory)
 
 
 def guarded(function):

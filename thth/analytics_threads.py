@@ -5,9 +5,9 @@ from . import analytics_comparison as c, replies, threadshape, jst, after_cli
 from .adapters.base import author_key
 
 
-def reaction(name, medium, engagement, posted, now):
+def reaction(name, medium, engagement, posted, now, *, allowed_names=None):
     try:
-        ledger = replies.load(name, post_id=engagement['post_id'])
+        ledger = replies.load(name, post_id=engagement['post_id'], allowed_names=allowed_names)
     except (OSError, ValueError, TypeError, AttributeError):
         return None, None
     if ledger.get('broken'):
@@ -46,7 +46,7 @@ def reaction(name, medium, engagement, posted, now):
     return returned, min(((at-posted).total_seconds()/3600 for at, _ in direct), default=None)
 
 
-def summarize(name, cfg, eng, by_id, start, end, now, min_n):
+def summarize(name, cfg, eng, by_id, start, end, now, min_n, *, allowed_names=None):
     grouped = collections.defaultdict(list)
     for row in eng['rows']:
         if isinstance(row, dict) and row.get('account') == name and row.get('post_id'):
@@ -64,7 +64,8 @@ def summarize(name, cfg, eng, by_id, start, end, now, min_n):
         if post and c._timestamp(post.get('posted_at')) != posted:
             continue
         curve = c._marks_population([(pid, posted, post)], start, end, now, min_n)['marks_by_post'][0]
-        back, first = reaction(name, cfg.get('media'), row, posted, now)
+        back, first = reaction(name, cfg.get('media'), row, posted, now,
+                               allowed_names=allowed_names)
         observation = curve['marks'].get('24')
         topic, valid = after_cli._normalized_topic(row.get('topic'))
         root = row.get('root_post')

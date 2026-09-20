@@ -3,10 +3,10 @@ import datetime
 from . import analytics_comparison as c, replies, threadshape, jst
 
 
-def shape_at(name, post_id, posted, now):
+def shape_at(name, post_id, posted, now, *, allowed_names=None):
     out = dict.fromkeys(('24','72','168'))
     try:
-        ledger = replies.load(name, post_id=post_id)
+        ledger = replies.load(name, post_id=post_id, allowed_names=allowed_names)
     except (OSError, ValueError, TypeError, AttributeError):
         return out
     if ledger.get('broken'):
@@ -46,6 +46,7 @@ def shape_at(name, post_id, posted, now):
     return out
 
 
-def attach(name, population, now):
+def attach(name, population, now, *, allowed_names=None):
     for post in population.get('marks_by_post', []):
-        post['shape_at'] = shape_at(name, post['post_id'], c._timestamp(post['posted_at']), now)
+        post['shape_at'] = shape_at(name, post['post_id'], c._timestamp(post['posted_at']), now,
+                                    allowed_names=allowed_names)

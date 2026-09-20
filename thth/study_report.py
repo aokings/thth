@@ -60,7 +60,12 @@ def load_declaration(path, now):
         if isinstance(exc, StudyError):
             raise
         raise StudyError("施策JSONファイルを読めません") from None
-    if len(data) > MAX_BYTES:
+    return parse_declaration_bytes(data, now)
+
+
+def parse_declaration_bytes(data, now):
+    """Parse the exact bytes a caller already opened and checked for ownership."""
+    if not isinstance(data, bytes) or len(data) > MAX_BYTES:
         raise StudyError("施策JSONの上限は1MiBです")
     try:
         value = json.loads(data.decode("utf-8"), object_pairs_hook=_pairs,
@@ -114,14 +119,18 @@ def _eligibility_forecast(population):
 from .report_details import detailed
 
 @detailed
-def answer(path, *, min_n=5, now=None):
+def answer(path, *, min_n=5, now=None, verified_declaration=None,
+           allowed_names=None):
     if type(min_n) is not int or min_n < 1:
         raise StudyError("min_nは1以上の整数です")
     now = now if now is not None else jst.now_jst()
     if not isinstance(now, datetime.datetime) or now.tzinfo is None or now.utcoffset() is None:
         raise StudyError("nowはtimezone付き日時です")
     now = jst.to_jst(now).replace(microsecond=0)
-    declaration = load_declaration(path, now)
+    declaration = (load_declaration(path, now) if verified_declaration is None
+                   else validate_declaration(verified_declaration, now))
+    if allowed_names is not None and declaration['account'] not in allowed_names:
+        raise StudyError('scope_unavailable')
     result = {"report_type": "study_review", "schema_version": 1,
               "generated_at": jst.iso(now), "declaration": declaration,
               "decision_provenance": "user_declared_unverified",
@@ -174,7 +183,7 @@ def answer(path, *, min_n=5, now=None):
         start = min((item[1] for item in items), default=now)
         population = comparison._population(items, start, now, now, min_n)
         from .analytics_shapes import attach as attach_shapes
-        attach_shapes(name, population, now)
+        attach_shapes(name, population, now, allowed_names=allowed_names)
         population.update(n_requested=len(declaration[group + "_post_ids"]), excluded=excluded,
                           n_excluded=len(excluded))
         populations[group] = population

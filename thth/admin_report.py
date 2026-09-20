@@ -158,7 +158,25 @@ def _defaults(cfg):
         return dict.fromkeys(FIELDS)
 
 
+def _admin_names():
+    from . import leave
+    return sorted(set(accounts.list_account_names())|set(leave.names()))
+
+
+def _stopped_row(name):
+    from . import leave,leave_gate
+    if not leave_gate.stopped(name):return None
+    try:state=leave.public(leave.read(name))
+    except (OSError,ValueError,TypeError,KeyError):state={'phase':'unreadable'}
+    log,broken=admin_log.read(account=name)
+    return dict(account=name,ledger='removed' if state.get('phase')=='completed' else 'stopped',
+                leave=state,last_change=log[-1] if log else None,change_log=log,
+                cannot_say=['account_stopped']+(['admin_log_incomplete'] if broken else []))
+
+
 def _account(name, now, probe=False, via='cli', detail=False, limit=20):
+    stopped=_stopped_row(name)
+    if stopped is not None:return stopped
     from .report_isolation import read_registry_ledger
     cfg = None
     try:
@@ -190,7 +208,7 @@ def _account(name, now, probe=False, via='cli', detail=False, limit=20):
     row['token'] = _token(cfg, now)
     try:
         row['permissions'] = _permissions(name, probe)
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, accounts.AccountError):
         row['permissions'] = dict(probed_at=None, result=None, reason='permissions_unavailable')
     try:
         handoff = operations_handoff._account(name, cfg, now)
@@ -282,7 +300,7 @@ def answer(operation='inventory', *, account=None, probe=False, via='cli', now=N
         try:
             (Path(accounts.accounts_dir()) / (account + '.json')).lstat()
         except FileNotFoundError:
-            raise ValueError('ledger_missing') from None
+            if _stopped_row(account) is None:raise ValueError('ledger_missing') from None
     if type(limit) is not int or not 1 <= limit <= 1000:
         raise ValueError('invalid_limit')
     if via == 'http' and (probe or mark_read):
@@ -297,7 +315,7 @@ def answer(operation='inventory', *, account=None, probe=False, via='cli', now=N
             except (accounts.AccountError, ValueError, TypeError): pass
         result['events'], result['broken'] = admin_log.read(since=since, account=account, event=event)
     elif operation in ('inventory', 'account'):
-        names = [account] if account else accounts.list_account_names()
+        names = [account] if account else _admin_names()
         result['by_account'] = {name: _account(name, now, probe=probe, via=via,
                                               detail=operation == 'account', limit=limit) for name in names}
         result['summary'] = _summary(result['by_account'])
@@ -325,8 +343,14 @@ def command(args):
 
 
 def register(sub):
-    parser = sub.add_parser('admin', help='管理者用の読み取り専用レポート')
+    parser = sub.add_parser('admin', help='管理者用レポートと管理者 CLI 操作')
     commands = parser.add_subparsers(dest='admin_operation', required=True)
+    from . import approval_relay
+    approval_relay.register(commands)
+    from . import deletion
+    deletion.register(commands)
+    from . import budget_x
+    budget_x.register(commands)
     for name in OPERATIONS:
         p = commands.add_parser(name)
         p.add_argument('--json', action='store_true')
@@ -483,7 +507,7 @@ def _diff(current, now, *, mark_read, by):
 def extra(operation, *, account, via, now, since_last_read=False, mark_read=False, by=None):
     if operation=='release':
         return {'release':_release(via)}
-    names = [account] if account else accounts.list_account_names()
+    names = [account] if account else _admin_names()
     if operation=='timers':
         rows = {name: timer(name, via=via) for name in names}
         # Only the explicit CLI timers command records observations. Inventory,
@@ -500,6 +524,9 @@ def extra(operation, *, account, via, now, since_last_read=False, mark_read=Fals
         from . import scopes
         rows=[]
         for name in names:
+            stopped=_stopped_row(name)
+            if stopped is not None:
+                rows.append(dict(account=name,present=None,reason='account_stopped',leave=stopped['leave']));continue
             try:
                 cfg=accounts.load_account(name);_register(cfg, via=via)
                 token=_token(cfg,now)

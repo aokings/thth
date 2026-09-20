@@ -72,6 +72,19 @@ def path_for(state_dir: str, jst_month: str) -> str:
 
 
 def append_run(state_dir: str, record: dict, jst_month: str) -> str:
+    from pathlib import Path
+    from . import leave_gate
+    name=record.get('account')
+    if accounts_mod.name_is_safe(name) and Path(state_dir).absolute()==Path(accounts_mod.state_dir_for(name)).absolute():
+        try:
+            with leave_gate.lease(name):return _append_run(state_dir,record,jst_month)
+        except accounts_mod.AccountStopped:
+            # A late read/maintenance completion must not recreate deleted state.
+            return path_for(state_dir,jst_month)
+    return _append_run(state_dir,record,jst_month)
+
+
+def _append_run(state_dir: str, record: dict, jst_month: str) -> str:
     """`record` から 1 行を組んで追記する。**必須は `REQUIRED_FIELDS` の
     6 個だけ**（T5-3）——`RUNS_FIELDS` の残り 5 個・`OPTIONAL_FIELDS` は
     渡さなければ `None` として書く（出力の行の形は変わらない）。

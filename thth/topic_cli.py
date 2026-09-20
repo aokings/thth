@@ -2246,7 +2246,8 @@ def dispatch(argv: list) -> int:
     # 2026-09-12）。parser の default に形を持たせ、断るときにそのまま渡す。
     shape = getattr(args, "expected_schema", None)
     try:
-        return args.func(args)
+        from . import read_coordination
+        return read_coordination.invoke(args,'topic-read')
     except topics_mod.ShelfBroken as e:
         # **読めなかったことを、無かったことにしない**（独立監査 1・P1-1）。
         # `_fail()` の形に混ぜず、**直せる場所（path）と原因（detail）**を出す。

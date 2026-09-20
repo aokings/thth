@@ -80,7 +80,9 @@ def _print_json(payload) -> None:
 
 
 def _fail(args, code: int, message: str, **extra) -> int:
-    if getattr(args, "json", False):
+    if getattr(args, "result_sink", None) is not None:
+        args.result_sink({"ok": False})
+    elif getattr(args, "json", False):
         _print_json({"ok": False, "error": message, **extra})
     else:
         print(message, file=sys.stderr)
@@ -277,14 +279,14 @@ def _cmd_retract(args) -> int:
 
 
 def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
-                reason, by, url) -> int:
+                reason, by, url, before_execute=None, lock_context=None) -> int:
     """**DELETE を 1 回**。成功したら記録に 3 項目を足す（消さない）。"""
     account_name = args.account
     # 公開の経路と同じロック（repo → account）。取り下げの最中に同じ clone を
     # 別の実行が触らないように。
     state_dir = accounts_mod.state_dir_for(account_name)
     try:
-        with core._account_locks(account_name, account_cfg, state_dir, wait=getattr(args, "wait", 0)):
+        with (lock_context or core._account_locks(account_name, account_cfg, state_dir, wait=getattr(args, "wait", 0))):
             repo_dir = None
             rel_path = None
             if record["source"] == "queue":
@@ -303,6 +305,8 @@ def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
                     return _fail(args, 1, f"post_id {post_id} は既に取り下げ済みです"
                                           f"（{fm_now.get('retracted_at')}）")
 
+            if before_execute is not None:
+                token = before_execute(account_cfg)
             adapter = adapters_mod.make_adapter(account_cfg, token)
             try:
                 result = adapter.delete_post(post_id)      # ← DELETE はここ 1 回だけ
@@ -338,7 +342,9 @@ def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
                "deleted_id": result.get("deleted_id"), "url": url,
                "retracted_at": retracted_at, "retracted_by": by, "retract_reason": reason,
                "records": wrote, "push_error": push_err}
-    if args.json:
+    if getattr(args, "result_sink", None) is not None:
+        args.result_sink(payload)
+    elif args.json:
         _print_json(payload)
     else:
         print(f"取り下げました: {account_name} post_id {post_id}（{retracted_at}・{by}）")
