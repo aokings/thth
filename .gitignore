@@ -13,3 +13,6 @@ callback/node_modules/
 # Defense in depth: notification credentials must use a repo-external THTH_ROOT.
 /notifications.json
 /notifications.json.*
+
+# wrangler のローカルキャッシュ（deploy 時に生成される）
+.wrangler/
