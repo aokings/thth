@@ -614,11 +614,34 @@ def _tree_fingerprint(root: str) -> dict:
     return out
 
 
+def _exclude_new_coordination(root, account, before, after):
+    """Only the approved empty account lease and its new private parents."""
+    from pathlib import Path
+    import stat
+    from tests.coordination_snapshot import account_coordination
+    root = Path(root)
+    leaf = root / "state" / "_leave" / (account + ".lock")
+    assert account_coordination(leaf, account)
+    assert leaf.relative_to(root).as_posix() not in before
+    result = dict(after)
+    result.pop(leaf.relative_to(root).as_posix())
+    for directory, child in ((leaf.parent, leaf), (leaf.parent.parent, leaf.parent)):
+        relative = directory.relative_to(root).as_posix() + "/"
+        if relative not in before:
+            info = directory.lstat()
+            assert stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid()
+            assert stat.S_IMODE(info.st_mode) == 0o700
+            assert list(directory.iterdir()) == [child]
+            result.pop(relative)
+    return result
+
+
 def test_f6_読むだけで何も書かない(account, thth_root):
     """**読むだけの口**。呼んでも repo にも state にも書き込みが起きない。
 
     見るのは `$THTH_ROOT` の**ツリー全体**と原稿 repo の**ツリー全体**——
-    パス・大きさ・更新時刻・中身の sha256 を前後で丸ごと比べる。`.git/` は
+    承認済みの空 coordination inode と新規の専用親だけを厳密に区別し、
+    他のパス・大きさ・更新時刻・中身の sha256 を前後で丸ごと比べる。`.git/` は
     除く（`git status` を挟むと index の `mtime` が動くため。代わりに
     `git status --porcelain` と `rev-parse HEAD` を見る）。
     """
@@ -640,8 +663,8 @@ def test_f6_読むだけで何も書かない(account, thth_root):
     台帳_before = _tree_fingerprint(台帳の置き場)
     repo_before = 原稿repo()
     git_before = gitの状態()
-    # **`$THTH_ROOT` はこの時点で空**（`state/` はまだ 1 つも無い）。空のまま
-    # であることこそ見たいものなので、前提は「在ること」だけ確かめる。
+    # **`$THTH_ROOT` はこの時点で空**（`state/` はまだ 1 つも無い）。
+    # 後では厳密な coordination 例外以外が増えないことを確認する。
     assert os.path.isdir(thth_root), "この試験の前提が崩れている（$THTH_ROOT が無い）"
     assert 台帳_before, "この試験の前提が崩れている（台帳が 1 本も無い）"
     assert repo_before, "この試験の前提が崩れている（原稿 repo が空）"
@@ -649,7 +672,8 @@ def test_f6_読むだけで何も書かない(account, thth_root):
     assert run_ask(["ask", "before-you-post", ACCOUNT,
                     "--topic", TOPIC]).returncode == 0
 
-    root_after = _tree_fingerprint(thth_root)
+    root_after = _exclude_new_coordination(
+        thth_root, ACCOUNT, root_before, _tree_fingerprint(thth_root))
     repo_after = 原稿repo()
 
     # 差分は**名指しで**出す（「違う」だけでは、何を書いたのか分からない）。
