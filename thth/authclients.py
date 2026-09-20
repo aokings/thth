@@ -89,7 +89,13 @@ def write(path, data):
 def registration_lock(path):
     directory=_directory(path,create=True);fd=None
     try:
-        fd=os.open(path.name+'.lock',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,0o600,dir_fd=directory)
+        # Separate exclusive creation from opening an existing lock. Darwin can
+        # return ENOENT for simultaneous O_CREAT|O_NOFOLLOW on the same name.
+        flags=os.O_RDWR|os.O_NOFOLLOW|os.O_NONBLOCK
+        try:
+            fd=os.open(path.name+'.lock',flags|os.O_CREAT|os.O_EXCL,0o600,dir_fd=directory)
+        except FileExistsError:
+            fd=os.open(path.name+'.lock',flags,dir_fd=directory)
         info=os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or stat.S_IMODE(info.st_mode)!=0o600:
             raise FlowError('auth_client_lock_unreadable')

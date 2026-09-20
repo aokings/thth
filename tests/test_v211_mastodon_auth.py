@@ -249,3 +249,37 @@ def test_metadata_transport_errors_are_bounded(env,monkeypatch,error):
     monkeypatch.setattr(httpsafe,'urlopen',broken)
     assert run(env)==2 and not client_path(env).exists()
     assert env['client_secret'] not in '\n'.join(env['lines'])
+
+
+
+def test_registration_lock_uses_exclusive_create_then_pinned_existing(env,monkeypatch):
+    import os
+    path=client_path(env)
+    with authclients.registration_lock(path):pass
+    original=os.open;seen=[]
+    def opened(name,flags,*args,**kwargs):
+        if name==path.name+'.lock':
+            seen.append(flags)
+            if flags & os.O_CREAT and not flags & os.O_EXCL:
+                raise FileNotFoundError('Darwin simultaneous create boundary')
+        return original(name,flags,*args,**kwargs)
+    monkeypatch.setattr(authclients.os,'open',opened)
+    with authclients.registration_lock(path):pass
+    assert len(seen)==2 and seen[0]&os.O_EXCL and not seen[1]&os.O_CREAT
+    assert all(flags & os.O_NOFOLLOW for flags in seen)
+
+
+@pytest.mark.parametrize('kind',['symlink','fifo','mode','hardlink'])
+def test_registration_lock_special_or_public_file_never_accepted(env,kind):
+    import os
+    path=client_path(env)
+    with authclients.registration_lock(path):pass
+    lock=path.with_name(path.name+'.lock');lock.unlink()
+    target=env['root']/'untouched';target.write_bytes(b'fixture');target.chmod(0o600)
+    if kind=='symlink':lock.symlink_to(target)
+    elif kind=='fifo':os.mkfifo(lock)
+    elif kind=='hardlink':os.link(target,lock)
+    else:lock.write_bytes(b'');lock.chmod(0o644)
+    with pytest.raises((OSError,ValueError)):
+        with authclients.registration_lock(path):pytest.fail('unsafe lock accepted')
+    assert target.read_bytes()==b'fixture'
