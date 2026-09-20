@@ -609,6 +609,10 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     `_throw_locked()` の max_per_run ループから 1 本ごとに呼ばれる（§3.3）。
     """
     started = jst.iso()
+    from . import media as media_mod
+    if media_mod.declared(chosen.front_matter):
+        return ThrowResult(exit_code=2, mode=mode, action="media_provider_unavailable",
+                           message="media_provider_unavailable", file=chosen.path)
     media = account_cfg["media"]
     # 公開の直前に、いま選ばれている内容（`compute_approved_sha()` と同じ 5 項目:
     # 本文・account・reply_to・topic・publish_at）の指紋を固定する（外部レビュー
@@ -859,7 +863,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
                reply_to_author_key: str | None = None, found_by: str | None = None,
                production_flag: bool = False,
                confirm: str | None = None, adapter_factory=None, log=None,
-               now=None, wait=0, before_execute=None, lock_context=None) -> ThrowResult:
+               now=None, wait=0, before_execute=None, lock_context=None, media_rows=None) -> ThrowResult:
     """`thth send`（**同席の様態**・設計 §3.7）。queue を通さずその場で 1 本出す。
 
     対話の中で masaru が本文を読んで「出して」と言ったときの経路。承認は既に
@@ -900,7 +904,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
             reply_to_author_key=reply_to_author_key, found_by=found_by,
             production_flag=production_flag, confirm=confirm,
             adapter_factory=adapter_factory, log=log, now=now, wait=wait,
-            before_execute=before_execute, lock_context=lock_context,
+            before_execute=before_execute, lock_context=lock_context, media_rows=media_rows,
         )
     except lock_mod.LockBusy:
         msg = f"{account_name} は既に実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます"
@@ -910,7 +914,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
 
 def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, reply_to,
                   reply_to_root=None, reply_to_author_key=None, found_by=None,
-                  production_flag, confirm, adapter_factory, log, now, wait=0, before_execute=None, lock_context=None) -> ThrowResult:
+                  production_flag, confirm, adapter_factory, log, now, wait=0, before_execute=None, lock_context=None, media_rows=None) -> ThrowResult:
     locks = ((lock_context or _account_locks(account_name, account_cfg, state_dir, wait=wait))
              if production_flag else contextlib.nullcontext())
     with locks:
@@ -940,8 +944,13 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                 return ThrowResult(exit_code=1, mode=mode, action="skip",
                                    message=msg, error=error)
 
+        from . import media as media_mod
+        try:
+            manifest = media_mod.manifest_for({'media': media_rows or []}, account_cfg)
+        except media_mod.MediaError as exc:
+            return ThrowResult(exit_code=2, mode=mode, action='invalid_attachment', message=str(exc), error=str(exc))
         body = (text or "").strip()
-        if not body:
+        if not body and not media_rows:
             log("本文が空です")
             return ThrowResult(exit_code=2, mode=mode, action="none", message="本文が空です")
 
@@ -987,7 +996,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         # 確認用 digest（外部レビュー §1b・受け入れ 6）。`approved_sha` と同じ正規化
         # だが `publish_at` は含めない（send に予約時刻という概念が無いため）。
         digest = approval_mod.compute_send_digest(
-            text=effective, account=account_name, reply_to=reply_to, topic=topic_value)
+            text=effective, account=account_name, reply_to=reply_to, topic=topic_value, media_manifest=manifest)
 
         if mode == "rehearsal":
             log("投げるはずの本文:")
@@ -995,11 +1004,16 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             if topic_value:
                 log(f"トピック: {topic_value}")
             log(queuefile.length_line(media, effective, account_cfg))
+            if manifest: log(media_mod.display(manifest))
             log(f"digest: {digest}")
             _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
                         status="ok", error=None)
             return ThrowResult(exit_code=0, mode=mode, action="skip",
                                 message="dry-run: 投げるはずの本文をログに出した", digest=digest)
+
+        if manifest:
+            error = 'approval_stale' if confirm is not None and confirm != digest else 'media_provider_unavailable'
+            return ThrowResult(exit_code=2, mode=mode, action=error, message=error, error=error, digest=digest)
 
         # ---- production ----
         # dry-run で見せた digest と一致する `--confirm` が無ければ送らない

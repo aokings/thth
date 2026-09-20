@@ -76,6 +76,7 @@ class QueueFile:
     # ここに残す——`malformed` を立てる根拠と、`lint`/エラーメッセージが
     # 「どの鍵が重複したか」を名指しできるようにするため。
     duplicate_keys: list = dataclasses.field(default_factory=list)
+    parse_error: str | None = None
 
     def get(self, key: str, default=None):
         return self.front_matter.get(key, default)
@@ -110,7 +111,19 @@ def _parse_kv(fm_text: str) -> tuple:
     out: dict = {}
     seen: set = set()
     duplicates: list = []
-    for line in fm_text.split("\n"):
+    from . import media as media_mod
+    lines = fm_text.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.partition(":")[0].strip() in media_mod.STRUCTURED_KEYS:
+            key = line.partition(":")[0].strip()
+            if key in seen:
+                duplicates.append(key)
+            seen.add(key)
+            out[key], i = media_mod.parse_structured(lines, i, 0, key)
+            continue
+        i += 1
         if not line.strip() or ":" not in line:
             continue
         key, _, value = line.partition(":")
@@ -151,13 +164,17 @@ def parse_text(text: str, path: str) -> QueueFile:
     if split is None:
         return QueueFile(path=path, malformed=True, front_matter={}, body=text)
     fm_text, body = split
-    fm, duplicate_keys = _parse_kv(fm_text)
+    from . import media as media_mod
+    try:
+        fm, duplicate_keys = _parse_kv(fm_text)
+    except media_mod.MediaError as exc:
+        return QueueFile(path=path, malformed=True, front_matter={}, body=body, parse_error=str(exc))
     malformed = fm.get("thth") != "1" or bool(duplicate_keys)
     return QueueFile(path=path, malformed=malformed, front_matter=fm, body=body,
                       duplicate_keys=duplicate_keys)
 
 
-def extract_section(body: str, media: str) -> str | None:
+def extract_section(body: str, media: str, *, allow_empty=False) -> str | None:
     """`## <media>` の節の本文を抜き出す。**前後の空白を落とした文字列**を「送る本文」
     として返す（設計 §4.1・T1 検収 2026-09-09 で確定。末尾改行は数に含めない・
     表示上の改行は printer の都合であって本文ではない）。節が無ければ None。
@@ -177,7 +194,7 @@ def extract_section(body: str, media: str) -> str | None:
             end = i
             break
     section = "\n".join(lines[start:end]).strip()
-    if not section:
+    if not section and not allow_empty:
         return None
     return section
 
