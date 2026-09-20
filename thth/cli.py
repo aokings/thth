@@ -2330,6 +2330,15 @@ def cmd_run(args) -> int:
     （外部レビュー §5・`thth/maintain.py` の docstring）。
     token が無ければ何も投げずに exit 2（設計 §3.2・T3a 訂正 2026-09-09。env は任意
     ・`accounts.token_exists()` docstring 参照）。"""
+    # Invalid names are input errors, before any stop-journal/path observation.
+    try:accounts_mod.validate_name(args.account)
+    except accounts_mod.AccountError:
+        code='invalid_account_name'
+        print(code,file=sys.stderr)
+        print(json.dumps({'account':None,'mode':'production','action':'skip','status':'error',
+                          'error':code,'runs_recorded':False,'record_unavailable':code,
+                          'message':'アカウント名に使えない字が入っています。英数字と _・.・- で指定してください。'},ensure_ascii=False))
+        return 2
     from . import leave_gate
     try:leave_gate.require_active(args.account)
     except accounts_mod.AccountStopped as exc:
