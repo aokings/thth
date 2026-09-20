@@ -54,3 +54,32 @@ def test_caption_display_language_not_alt(tmp_path):
     with media.prepare(root,{'media':[{'file':'v.mp4','alt':'動画'}],'captions':[{'media_index':1,'file':'ja.vtt','lang':'ja'}]},'bluesky') as (manifest,_):
         shown=media.display(manifest)
         assert 'lang: ja' in shown and 'alt: ja' not in shown and 'alt: 動画' in shown
+
+
+@pytest.mark.parametrize('extension,accepted', [
+    (box(b'uuid',bytes(16)+b'exif:GPSLatitude=35'),False),
+    (box(b'ZZZZ',box(b'\xa9xyz',b'location')),False),
+    (box(b'free',b'location'),False),
+    (box(b'avcC',b'\x01\x64\0\x1f\xff\xe0\0'),True),
+    (box(b'free',bytes(16)),True),
+])
+def test_visual_sample_entry_extensions_are_not_opaque(tmp_path,extension,accepted):
+    from tests.test_v213_mastodon_media import video_timing
+    raw=video_timing([(30,1000)],scale=30000)
+    def rewrite(data):
+        out=[];at=0
+        while at<len(data):
+            size=int.from_bytes(data[at:at+4],'big');kind=data[at+4:at+8];payload=data[at+8:at+size]
+            if kind in (b'moov',b'trak',b'mdia',b'minf',b'stbl'):payload=rewrite(payload)
+            elif kind==b'stsd':
+                entry=payload[16:];assert len(entry)==78
+                payload=payload[:8]+box(b'avc1',entry+extension)
+            out.append(box(kind,payload));at+=size
+        return b''.join(out)
+    path=tmp_path/'sample.mp4';path.write_bytes(rewrite(raw))
+    if accepted:
+        with media.prepare(tmp_path,{'media':[{'file':'sample.mp4','alt':'sample'}]},'mastodon') as (_,items):
+            assert b''.join(items[0].chunks())==path.read_bytes()
+    else:
+        with pytest.raises(media.MediaError,match='location_metadata_unverifiable'):
+            with media.prepare(tmp_path,{'media':[{'file':'sample.mp4','alt':'sample'}]},'mastodon'):pass

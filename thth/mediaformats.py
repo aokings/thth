@@ -405,7 +405,7 @@ def bmff(fd,size):
     containers={b'moov',b'trak',b'mdia',b'minf',b'stbl',b'udta',b'edts',b'dinf',b'mvex',b'moof',b'traf'}
     # Known binary structure is not a container for arbitrary metadata. Unknown
     # boxes cannot be skipped as if location absence had been established.
-    structure={b'mdhd',b'vmhd',b'smhd',b'hmhd',b'nmhd',b'dref',b'stsd',b'stts',
+    structure={b'mdhd',b'vmhd',b'smhd',b'hmhd',b'nmhd',b'dref',b'stts',
                b'ctts',b'cslg',b'stsc',b'stsz',b'stz2',b'stco',b'co64',b'stss',
                b'stsh',b'padb',b'stdp',b'sbgp',b'sgpd',b'subs',b'sdtp',b'stps',
                b'elng',b'mehd',b'trex',b'mfhd',b'tfhd',b'tfdt',b'trun',b'sidx'}
@@ -413,6 +413,26 @@ def bmff(fd,size):
         while a<b:
             n=min(1024*1024,b-a)
             require(not any(read(a,n)),'location_metadata_unverifiable');a+=n
+    def sample_entries(a,b):
+        require(b-a>=8 and read(a,4)==b'\0'*4)
+        count=int.from_bytes(read(a+4,4),'big');seen=0
+        for codec,sa,sb in boxes(a+8,b):
+            seen+=1
+            if codec in (b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v',b'jpeg',b'mjpa',b'mjpb'):
+                prefix=78
+                allowed={b'avcC',b'hvcC',b'av1C',b'vpcC',b'esds',b'pasp',b'clap',b'colr',b'btrt',b'fiel',b'gama'}
+            elif codec in (b'mp4a',b'ac-3',b'ec-3',b'Opus',b'fLaC',b'alac',b'sowt',b'twos'):
+                require(sb-sa>=28,'location_metadata_unverifiable')
+                version=int.from_bytes(read(sa+8,2),'big')
+                require(version in (0,1),'location_metadata_unverifiable')
+                prefix=28+(16 if version else 0)
+                allowed={b'esds',b'dac3',b'dec3',b'dOps',b'dfLa',b'alac',b'btrt',b'chan'}
+            else:raise FormatError('location_metadata_unverifiable')
+            require(sb-sa>=prefix,'location_metadata_unverifiable')
+            for ext,ea,eb in boxes(sa+prefix,sb):
+                if ext in (b'free',b'skip'):padding(ea,eb)
+                elif ext not in allowed:raise FormatError('location_metadata_unverifiable')
+        require(seen==count)
     def walk(start,end,depth=0,metadata=False):
         nonlocal brand,duration,video,audio,moov,mdat
         require(depth <= 32,'invalid_attachment_structure: box nesting')
@@ -442,6 +462,7 @@ def bmff(fd,size):
                     # A static meta handler is walked separately; a timed metadata
                     # track can contain GPS samples in mdat and is not proven safe.
                     raise FormatError('location_metadata_unverifiable')
+            elif kind==b'stsd':sample_entries(a,b)
             elif kind==b'meta':
                 require(b-a>=4 and read(a,4)==b'\0'*4)
                 for mk,ma,mb in boxes(a+4,b):
