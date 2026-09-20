@@ -42,6 +42,11 @@ class Post:
     # 台帳に `instagram_linked: true` が無ければ lint が断る。指紋に入る。
     share_to_instagram: bool = False
 
+    media_manifest: dict | None = None
+    media_files: tuple = dataclasses.field(default=(), repr=False)
+    media_progress: object = dataclasses.field(default=None, repr=False)
+    media_cache: object = dataclasses.field(default=None, repr=False)
+
 
 @dataclasses.dataclass
 class PublishResult:
@@ -56,12 +61,15 @@ class PublishResult:
     #   "publish_definite"  公開が HTTP 4xx → 出ていない
     #   "publish_ambiguous" 公開が timeout・接続断・5xx・200 だが id 無し → 分からない
     #   "publish_vetoed"    公開要求の直前の関門で止めた → **出ていない**
+    #   "media_ambiguous"  添付または公開の結果不明 → inflight 保持
+    #   "media_held"       公開前停止・添付は作成済み → inflight 保持、再uploadしない
     #   "permission"        この投稿の任意項目（場所・Instagram 共有）に要る権限が
     #                       トークンに乗っていない → **出ていない**（コンテナ作成の
     #                       手前、または作成が権限不足で断られた）。core は inflight
     #                       を消し、`thth auth` のやり直しを促して rc=2（v2.1-B）
     failure: str = "none"
     api_diagnostic: dict | None = None
+    media: list | None = None
 
 
 class AdapterError(RuntimeError):

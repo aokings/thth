@@ -96,9 +96,13 @@ def lint_file(path: str) -> list:
         from . import bundle as bundle_mod
         # **編集方針の診断は lint にだけ足す**（再検収 F1）。`bundle.check()` は
         # 公開経路からも呼ばれるので、あちらに profile を読ませない。
-        return bundle_mod.check(
-            b, account_cfg=_account_cfg_or_none(b.front_matter.get("account"))
-        ) + bundle_mod.editorial_notes(b)
+        cfg=_account_cfg_or_none(b.front_matter.get("account"))
+        notes=bundle_mod.check(b,account_cfg=cfg)+bundle_mod.editorial_notes(b)
+        if cfg and not b.malformed:
+            from . import media as media_mod, media_delivery
+            for row in b.posts:
+                if media_mod.declared(row):notes.extend(media_delivery.lint_notes(cfg,row))
+        return notes
 
     qf = queuefile.parse(path)
     fm = qf.front_matter
@@ -149,7 +153,10 @@ def lint_file(path: str) -> list:
     media = account_cfg["media"] if account_cfg else "threads"
     from . import media as media_mod
     try:
-        media_mod.manifest_for(fm, account_cfg)
+        manifest=media_mod.manifest_for(fm, account_cfg)
+        if manifest:
+            from . import media_delivery
+            errors.extend(media_delivery.lint_notes(account_cfg,fm))
     except media_mod.MediaError as exc:
         errors.append(str(exc))
     section = queuefile.extract_section(qf.body, media, allow_empty=bool(fm.get('media') or fm.get('attachments')))
@@ -272,7 +279,11 @@ def preview_file(path: str) -> str:
             out.append(seg)
             from . import media as media_mod
             manifest = media_mod.manifest_for(b.posts[i-1], cfg)
-            if manifest: out.append(media_mod.display(manifest))
+            if manifest:
+                out.append(media_mod.display(manifest))
+                from . import media_delivery
+                note=media_delivery.cached_note(cfg)
+                if note:out.append(note)
             out.append("")
         return "\n".join(out).rstrip() + "\n"
 
@@ -288,4 +299,6 @@ def preview_file(path: str) -> str:
         raise ValueError(f"media section が無い（`## {media}`）: {path}")
     text = tags_mod.prepared(media, section, queuefile.normalize_topic(qf.front_matter.get("topic")),
                              hashtags=bool(account_cfg.get("hashtags", True)) if account_cfg else False)
-    return text + ("\n" + media_mod.display(manifest) if manifest else "")
+    from . import media_delivery
+    note=media_delivery.cached_note(account_cfg) if manifest else None
+    return text + ("\n" + media_mod.display(manifest) if manifest else "") + ("\n"+note if note else "")

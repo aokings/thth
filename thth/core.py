@@ -18,6 +18,8 @@ from . import adapters as adapters_mod
 from . import approval as approval_mod
 from . import engagements as engagements_mod
 from . import inflight as inflight_mod
+from . import media_delivery
+from . import media as media_mod
 from . import jst, leave_gate
 from . import lock as lock_mod
 from . import postid as postid_mod
@@ -443,6 +445,7 @@ def _current_fingerprint(path: str, media: str,
             section=approval_mod.effective_section(current_section or "", cfg, fm.get("topic")), account=fm.get("account"),
             reply_to=fm.get("reply_to"), topic=fm.get("topic"),
             publish_at=fm.get("publish_at"),
+            media_manifest=media_mod.manifest_for(fm,cfg),
             **approval_mod.publish_options(fm))
     except (ValueError, TypeError, accounts_mod.AccountError):
         return None
@@ -500,6 +503,7 @@ def _mismatch_fields(path: str, media: str, expected_components: dict,
             section=approval_mod.effective_section(current_section or "", cfg, fm.get("topic")), account=fm.get("account"),
             reply_to=fm.get("reply_to"), topic=fm.get("topic"),
             publish_at=fm.get("publish_at"),
+            media_manifest=media_mod.manifest_for(fm,cfg),
             **approval_mod.publish_options(fm))
     except (ValueError, TypeError, accounts_mod.AccountError):
         return ["file_unreadable"]
@@ -610,9 +614,15 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     """
     started = jst.iso()
     from . import media as media_mod
-    if media_mod.declared(chosen.front_matter):
-        return ThrowResult(exit_code=2, mode=mode, action="media_provider_unavailable",
-                           message="media_provider_unavailable", file=chosen.path)
+    if media_mod.declared(chosen.front_matter) and media_delivery.unavailable(account_cfg):
+        return ThrowResult(exit_code=2,mode=mode,action='media_provider_unavailable',message='media_provider_unavailable',file=chosen.path)
+    try:
+        manifest = media_mod.manifest_for(chosen.front_matter, account_cfg)
+    except media_mod.MediaError as exc:
+        return ThrowResult(exit_code=2,mode=mode,action='approval_stale',message=str(exc),file=chosen.path)
+    media_error=media_delivery.error_for(account_cfg,manifest)
+    if media_error:
+        return ThrowResult(exit_code=2,mode=mode,action='media_provider_unavailable',message=media_error,file=chosen.path)
     media = account_cfg["media"]
     # 公開の直前に、いま選ばれている内容（`compute_approved_sha()` と同じ 5 項目:
     # 本文・account・reply_to・topic・publish_at）の指紋を固定する（外部レビュー
@@ -627,14 +637,14 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         section, account_cfg, chosen.get("topic"))
     expected_fingerprint = approval_mod.compute_approved_sha(
         section=effective_section, account=account_name, reply_to=chosen.get("reply_to"),
-        topic=chosen.get("topic"), publish_at=chosen.get("publish_at"), **options)
+        topic=chosen.get("topic"), publish_at=chosen.get("publish_at"), media_manifest=manifest, **options)
     # 上と同じ 5 項目を、hash にする前の正規化済みの値のまま持っておく
     # （外部レビュー第 3 巡・持ち越し項目 C）。指紋が食い違ったときに
     # `_mismatch_fields()` へ渡して「どの項目が」違ったかを特定するため
     # （hash 自体からは個々の項目を復元できない）。
     expected_components = approval_mod.compute_approved_components(
         section=effective_section, account=account_name, reply_to=chosen.get("reply_to"),
-        topic=chosen.get("topic"), publish_at=chosen.get("publish_at"), **options)
+        topic=chosen.get("topic"), publish_at=chosen.get("publish_at"), media_manifest=manifest, **options)
     # 送る本文の hash（後方互換・`tests/test_sent_integrity.py` が参照）も併せて
     # inflight に書く（外部レビュー §3・受け入れ 9・10）。実際の照合は上の指紋で行う。
     body_hash = approval_mod.compute_body_hash(effective_section)
@@ -681,7 +691,16 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     def on_container_created(container_id):
         inflight_mod.update(state_dir, container_id=container_id)
 
-    publish_result = adapter.publish(post, dry_run=False, on_container_created=on_container_created)
+    def final_media_veto():
+        try:
+            current=queuefile.parse(chosen.path)
+            if current.malformed or current.get('status')!='approved' or current.get('approved_sha')!=expected_fingerprint or current.get('revoked_at'):return 'approval_stale'
+        except (OSError,ValueError):return 'approval_stale'
+        return None if _fingerprint_matches(chosen.path,media,expected_fingerprint,account_cfg) else 'approval_stale'
+    publish_result = media_delivery.publish(adapter,post,cfg=account_cfg,
+        fm=chosen.front_matter,manifest=manifest,state_dir=state_dir,
+        on_container_created=on_container_created,
+        before_publish=final_media_veto if manifest else None)
 
     if publish_result.error or not publish_result.post_id:
         detail_data = api_diagnostic_mod.clean(publish_result.api_diagnostic)
@@ -698,10 +717,10 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                                 file=chosen.path, error=err, api_diagnostic=detail_data)
         # 失敗の三分類（設計 §3.5・T1 検収 2026-09-09）。core は `failure` だけを見て
         # 分岐する（HTTP の状態番号は core が解釈しない・アダプタに閉じる・§3.4）。
-        if publish_result.failure == "publish_ambiguous":
+        if publish_result.failure in ("publish_ambiguous", "media_ambiguous", "media_held"):
             # 出たか分からない失敗 → inflight を残す（消すと二重投稿になりうる）。
             # 次の実行の冒頭の inflight チェックに乗る（board にもそのまま出る）。
-            msg = f"公開の結果が分からないので inflight を残します: {chosen.path}"
+            msg = ("添付作成後に公開を停止したので inflight を残します" if publish_result.failure=="media_held" else "公開の結果が分からないので inflight を残します") + f": {chosen.path}"
             log(msg)
             _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
                         status="error", error=err, api_diagnostic=detail_data)
@@ -735,15 +754,20 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         inflight_mod.update(state_dir, mismatch_fields=["post_id"])
         return ThrowResult(exit_code=1, mode=mode, action="inflight", message=msg,
                             file=chosen.path, error="unusable_post_id")
-    inflight_mod.update(state_dir, post_id=post_id)
+    try:
+        inflight_mod.update(state_dir, post_id=post_id)
 
-    posted_at = publish_result.ts
-    # 送った本文そのものを動かせない記録として残す（外部レビュー §3・受け入れ 9・
-    # 10・これが正本）。書き戻し（front-matter 書き換え）より前に書く。指紋
-    # （外部レビュー再々レビュー P1・1）も併せて残す。
-    sent_mod.write(state_dir, post_id=post_id, text=post.text,
-                    body_hash=approval_mod.compute_body_hash(post.text),
-                    sent_at=posted_at, approved_fingerprint=expected_fingerprint, reply_to=post.reply_to)
+        posted_at = publish_result.ts
+        # 送った本文そのものを動かせない記録として残す（外部レビュー §3・受け入れ 9・
+        # 10・これが正本）。書き戻し（front-matter 書き換え）より前に書く。指紋
+        # （外部レビュー再々レビュー P1・1）も併せて残す。
+        sent_mod.write(state_dir, post_id=post_id, text=post.text,
+                        body_hash=approval_mod.compute_body_hash(post.text),
+                        sent_at=posted_at, approved_fingerprint=expected_fingerprint, reply_to=post.reply_to,
+                        **({"media":publish_result.media} if publish_result.media else {}))
+    except (OSError,ValueError):
+        if not manifest:raise
+        return ThrowResult(exit_code=1,mode=mode,action="inflight",message="公開後の記録を確定できません。再送せず inflight を保持します",file=chosen.path,post_id=post_id,error="media_record_unconfirmed")
 
     # 絡みの台帳（設計「自分の泉」§4・発注 T0-1）。**公開の確定直後・書き戻しより
     # 前**——post_id の書き戻しが失敗しても、出た事実そのものは変わらない。
@@ -1011,8 +1035,9 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             return ThrowResult(exit_code=0, mode=mode, action="skip",
                                 message="dry-run: 投げるはずの本文をログに出した", digest=digest)
 
-        if manifest:
-            error = 'approval_stale' if confirm is not None and confirm != digest else 'media_provider_unavailable'
+        media_error=media_delivery.error_for(account_cfg,manifest)
+        if media_error or (manifest and confirm is not None and confirm!=digest):
+            error = 'approval_stale' if confirm is not None and confirm != digest else media_error
             return ThrowResult(exit_code=2, mode=mode, action=error, message=error, error=error, digest=digest)
 
         # ---- production ----
@@ -1041,15 +1066,18 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         def on_container_created(container_id):
             inflight_mod.update(state_dir, container_id=container_id)
 
-        result = adapter.publish(post, dry_run=False, on_container_created=on_container_created)
+        result = media_delivery.publish(adapter,post,cfg=account_cfg,
+            fm={'media':media_rows or []},manifest=manifest,state_dir=state_dir,
+            on_container_created=on_container_created,
+            before_publish=None)
 
         if result.error or not result.post_id:
             detail_data = api_diagnostic_mod.clean(result.api_diagnostic)
             err = redact_mod.redact(result.error or "不明なエラー")
             log(f"公開失敗: {err}")
-            if result.failure == "publish_ambiguous":
+            if result.failure in ("publish_ambiguous", "media_ambiguous", "media_held"):
                 # 出たか分からない → inflight を残して人を呼ぶ（§3.5）
-                msg = "公開の結果が分からないので inflight を残します"
+                msg = "添付作成後に公開を停止したので inflight を残します" if result.failure=="media_held" else "公開の結果が分からないので inflight を残します"
                 log(msg)
                 _append_run(state_dir, account_name, run_id, mode, "post", None, None, now,
                             status="error", error=err, api_diagnostic=detail_data)
@@ -1089,12 +1117,17 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         # 無い以上、ここが唯一の正本になる（v2-3・2026-09-13）。`post_id` は媒体に
         # よって `/` を含む（Bluesky の AT URI）ので、パスは `postid` を通す
         # （`sent.path_for()`）。
-        sent_mod.write(state_dir, post_id=result.post_id, text=post.text,
-                        body_hash=approval_mod.compute_body_hash(post.text),
-                        sent_at=result.ts or jst.iso(),
-                        # 承認の在り処が「masaru がその場で見た本文」なので、
-                        # queue の 5 項目の指紋ではなく `--confirm` の digest を残す。
-                        approved_fingerprint=digest, reply_to=post.reply_to)
+        try:
+            sent_mod.write(state_dir, post_id=result.post_id, text=post.text,
+                            body_hash=approval_mod.compute_body_hash(post.text),
+                            sent_at=result.ts or jst.iso(),
+                            # 承認の在り処が「masaru がその場で見た本文」なので、
+                            # queue の 5 項目の指紋ではなく `--confirm` の digest を残す。
+                            approved_fingerprint=digest, reply_to=post.reply_to,
+                            **({"media":result.media} if result.media else {}))
+        except (OSError,ValueError):
+            if not manifest:raise
+            return ThrowResult(exit_code=1,mode=mode,action="inflight",message="公開後の記録を確定できません。再送せず inflight を保持します",post_id=result.post_id,error="media_record_unconfirmed")
 
         # 絡みの台帳（設計「自分の泉」§4・T7-2）。**不在の様態（`_throw_chosen()`）
         # にしか配線が無かった**——`thth send --reply-to` で出した返信は台帳に

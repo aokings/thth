@@ -260,6 +260,8 @@ class MastodonAdapter(base.Adapter):
     # `no_expiry: true` を立てる。`maintain` が「期限を持たない」と言い分ける）。
     TOKEN_NO_EXPIRY = True
 
+    prepared_media_supported = True
+
     def __init__(self, *, instance: str = DEFAULT_INSTANCE, access_token: str = "",
                  visibility: str = DEFAULT_VISIBILITY, account_id: str = "",
                  timeout: float = DEFAULT_TIMEOUT_SECONDS):
@@ -430,6 +432,9 @@ class MastodonAdapter(base.Adapter):
             tags_mod.prepared(MEDIUM, post.text, post.topic,
                               hashtags=post.hashtags_allowed) or "",
         ])
+        if post.media_manifest:
+            from .. import media
+            material += "\x1fmedia:" + media.prepared_component(post.media_manifest)
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
     def publish(self, post: base.Post, *, dry_run: bool,
@@ -451,6 +456,13 @@ class MastodonAdapter(base.Adapter):
         if dry_run:
             return base.PublishResult(post_id=None, url=None, ts=ts, error=None,
                                       failure="none")
+
+        if post.media_manifest:
+            import dataclasses
+            from . import mastodon_media
+            prepared = dataclasses.replace(post, text=tags_mod.prepared(
+                MEDIUM, post.text, post.topic, hashtags=post.hashtags_allowed))
+            return mastodon_media.publish(self, prepared, before_publish=before_publish)
 
         visibility = self.visibility
         text = tags_mod.prepared(MEDIUM, post.text, post.topic,
