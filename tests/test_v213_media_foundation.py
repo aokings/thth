@@ -1,4 +1,4 @@
-"""Media source foundation; provider/public preparation deliberately unavailable."""
+"""Media source foundation and supported/unsupported provider safety boundaries."""
 import hashlib
 import json
 import os
@@ -159,7 +159,7 @@ def test_legacy_hash_bytes_and_media_binding(repo):
     assert approval.compute_bundle_sha(**ba, media_sources=[manifest, []]) != approval.compute_bundle_sha(**ba, media_sources=[[], manifest])
 
 
-def test_stage1_prepares_and_approves_but_provider_is_unavailable(repo, monkeypatch):
+def test_prepared_approved_threads_image_is_selected_until_source_changes(repo, monkeypatch):
     from thth import cli, select, accounts
     cfg = {'account': 'demo', 'media': 'threads', 'repo_dir': str(repo)}
     monkeypatch.setattr(accounts, 'load_account', lambda name: cfg)
@@ -171,7 +171,27 @@ def test_stage1_prepares_and_approves_but_provider_is_unavailable(repo, monkeypa
     q = queuefile.parse_text(writeback.front_matter_text(v1(), {'status': 'approved', 'approved_sha': prepared['approved_sha']}), str(p))
     q.verified = True
     result = select._validate_all([q], account_name='demo', account_cfg=cfg, recent_texts=set())
+    assert len(result[0]) == 1 and result[0][0][0] is q
+    assert result[1:] == ([], [], [])
+    (repo / 'docs/red.png').write_bytes(jpeg())
+    stale = select._validate_all([q], account_name='demo', account_cfg=cfg, recent_texts=set())
+    assert not stale[0] and stale[1][0].reason == 'approval_stale'
+    assert stale[3] == [str(p)]
+
+
+def test_approved_attachment_for_unsupported_provider_is_rejected(repo):
+    from thth import select
+    cfg = {'account': 'demo', 'media': 'x', 'repo_dir': str(repo)}
+    original = v1().replace('## threads', '## x')
+    draft = queuefile.parse_text(original, 'q.md')
+    manifest = media.manifest_for(draft.front_matter, cfg)
+    approved_sha = approval.compute_approved_sha(**args(), media_manifest=manifest)
+    q = queuefile.parse_text(writeback.front_matter_text(original, {
+        'status': 'approved', 'approved_sha': approved_sha}), 'q.md')
+    q.verified = True
+    result = select._validate_all([q], account_name='demo', account_cfg=cfg, recent_texts=set())
     assert not result[0] and result[1][0].reason == 'media_provider_unavailable'
+    assert result[3] == ['q.md']
 
 
 @pytest.mark.parametrize('old,new', [
@@ -192,14 +212,20 @@ def test_legacy_nondefault_posts_indent_writeback():
     assert b.posts == [{'index': '1'}, {'index': '2', 'post_id': '123'}]
 
 
-def test_direct_core_guard_never_constructs_adapter():
+@pytest.mark.parametrize('medium,expected', [
+    ('x', 'media_provider_unavailable'),
+    ('threads', 'approval_stale'),
+])
+def test_direct_core_guard_never_constructs_adapter(medium, expected):
     from thth import core
     q = queuefile.parse_text(v1(), 'q')
-    result = core._throw_chosen('demo', {'media': 'threads'}, '/unused', 'run',
+    result = core._throw_chosen('demo', {'media': medium}, '/unused', 'run',
                                 'production', q, '本文', None,
                                 lambda *args: None,
                                 lambda *args: pytest.fail('adapter must not be constructed'))
-    assert result.exit_code == 2 and result.action == 'media_provider_unavailable'
+    assert result.exit_code == 2 and result.action == expected
+    if medium == 'threads':
+        assert result.message == 'media: account repo_dir required'
 
 
 @pytest.mark.parametrize('bad', [False, {}, 'ignored', [{'file': 'a', 'alt': 'a', 'source_sha256': '0'*64, 'size': True}],
