@@ -56,18 +56,18 @@ def test_video_ratio_is_asymmetric(tmp_path,w,h,ok):
 @pytest.mark.parametrize('scale,ok',[(22999,False),(23000,True),(23976,True),(60000,True),(60001,False)])
 def test_observed_average_fps_has_no_mastodon_floor(tmp_path,scale,ok):
     with prepared(tmp_path,video_timing([(30,1000)],scale=scale)) as(m,items):
-        if ok:assert any('not certified' in x for x in tm.notes(m,items))
-        else:
-            with pytest.raises(media.MediaError,match='frame_rate'):tm.notes(m,items)
+        notes=tm.notes(m,items)
+        assert any('frame_rate_outside_23_60' in n for n in notes) is (not ok)
+        assert any('not certified' in n for n in notes)
 
 
 @pytest.mark.parametrize('codec,ok',[(b'avc1',True),(b'hev1',True),(b'vp09',False)])
 def test_known_codec_vs_unobserved_bitstream(tmp_path,codec,ok):
     raw=video_timing([(30,1000)],scale=30000).replace(b'avc1',codec)
     with prepared(tmp_path,raw) as(m,items):
-        if ok:assert any('GOP/chroma' in x for x in tm.notes(m,items))
-        else:
-            with pytest.raises(media.MediaError,match='video_codec'):tm.notes(m,items)
+        notes=tm.notes(m,items)
+        assert any('GOP/chroma' in n for n in notes)
+        assert any('video_codec_declared_not_recommended' in n for n in notes) is (not ok)
 
 
 @pytest.mark.parametrize('order',[['v.mp4'],['a.png','v.mp4'],['v.mp4','a.png']])
@@ -115,9 +115,9 @@ def test_audio_header_observations_unknown_is_not_zero_failure(tmp_path,channels
     sample=b'\0'*16+struct.pack('>HHHHI',channels,16,0,0,rate<<16)
     track=box(b'trak',box(b'mdia',box(b'hdlr',b'\0'*8+b'soun'+b'\0'*12)+box(b'minf',box(b'stbl',box(b'stsd',b'\0'*4+struct.pack('>I',1)+box(codec,sample))))))
     with prepared(tmp_path,mp4(track)) as(m,items):
-        if ok:assert any('audio AAC/bitrate' in n for n in tm.notes(m,items))
-        else:
-            with pytest.raises(media.MediaError):tm.notes(m,items)
+        notes=tm.notes(m,items)
+        assert any('audio AAC/bitrate' in n for n in notes)
+        assert any('audio_codec_declared_not_recommended' in n or 'audio_channels_declared_above_2' in n or 'audio_sample_rate_declared_above_48k' in n for n in notes) is (not ok)
 
 
 @pytest.mark.parametrize('ext,ok',[(box(b'fiel',b'\x01\0'),True),(box(b'fiel',b'\x02\0'),False),(box(b'btrt',struct.pack('>III',0,100000000,1)),True),(box(b'btrt',struct.pack('>III',0,100000001,1)),False)])
@@ -125,17 +125,16 @@ def test_known_video_header_constraints(tmp_path,ext,ok):
     sample=b'\0'*24+struct.pack('>HH',640,480)+b'\0'*50
     raw=mp4(box(b'stsd',b'\0'*4+struct.pack('>I',1)+box(b'avc1',sample+ext)))
     with prepared(tmp_path,raw) as(m,items):
-        if ok:tm.notes(m,items)
-        else:
-            with pytest.raises(media.MediaError):tm.notes(m,items)
+        notes=tm.notes(m,items)
+        assert any('interlaced_video_declared' in n or 'video_bitrate_declared_above_100mbps' in n for n in notes) is (not ok)
 
 
-def test_known_video_overlimit_lint_and_publish_both_stop_before_upload(env,wire):
+def test_declared_frame_rate_warning_does_not_preempt_provider(env,wire):
     raw=video_timing([(30,1000)],scale=61000);(env[2]/'v.mp4').write_bytes(raw)
     fm={'media':[{'file':'v.mp4','alt':'動画'}]}
     assert any('frame_rate' in note for note in media_delivery.lint_notes(env[0],fm))
     result,_,_=invoke(env,fm)
-    assert result.error=='media_limit_exceeded: frame_rate' and not env[3]['upload'] and not wire['calls']
+    assert result.post_id and result.failure=='none' and env[3]['upload'] and posts(wire,'/threads_publish')
 
 
 @pytest.mark.parametrize('version,entry',[(0,struct.pack('>IiHH',2500,-1,1,0)),(1,struct.pack('>QqHH',2500,-1,1,0))])
@@ -170,3 +169,55 @@ def test_audio_only_never_becomes_video_success(env,wire):
     result,_,_=invoke(env,{'media':[{'file':'a.mp4','alt':'audio'}]})
     assert result.post_id is None and result.error.startswith('unsupported_attachment: threads/')
     assert not env[3]['upload'] and not wire['calls']
+
+
+def declared_movie(kind,maximum=None,average=0):
+    ext=b'' if maximum is None else box(b'btrt',struct.pack('>III',0,maximum,average))
+    if kind=='audio':
+        sample=b'\0'*16+struct.pack('>HHHHI',2,16,0,0,48000<<16)
+        table=box(b'stsd',b'\0'*4+struct.pack('>I',1)+box(b'mp4a',sample+ext))
+        extra=box(b'trak',box(b'mdia',box(b'hdlr',b'\0'*8+b'soun'+b'\0'*12)+box(b'minf',box(b'stbl',table))))
+    else:
+        sample=b'\0'*24+struct.pack('>HH',640,480)+b'\0'*50
+        extra=box(b'stsd',b'\0'*4+struct.pack('>I',1)+box(b'avc1',sample+ext))
+    return mp4(extra)
+
+
+@pytest.mark.parametrize('kind,limit',[('audio',128000),('video',100000000)])
+@pytest.mark.parametrize('which',['missing','zero','below','equal','max','avg','both'])
+def test_c12_declared_bitrates_are_separate_observations_not_rejections(tmp_path,kind,limit,which):
+    maximum,average={'missing':(None,0),'zero':(0,0),'below':(limit-1,limit-1),
+                     'equal':(limit,limit),'max':(limit+1,0),'avg':(0,limit+1),
+                     'both':(limit+1,limit+2)}[which]
+    raw=declared_movie(kind,maximum,average)
+    with prepared(tmp_path,raw) as(m,items):
+        notes=tm.notes(m,items)
+        facts=mediaformats.threads_video_info(items[0]._public_fd,len(raw))
+        observed=facts['audio'][0]['bitrate_declared'] if kind=='audio' else (facts['bitrates'][0] if facts['bitrates'] else None)
+        assert observed==(None if maximum is None else {'max':maximum,'avg':average})
+        assert any(kind+'_bitrate_declared_above_' in n for n in notes) is (which in ('max','avg','both'))
+        if maximum is not None:assert any(f'{kind}_bitrate_declared: max={maximum}, avg={average}' in n for n in notes)
+        assert any('not certified' in n for n in notes)
+        assert tm.intent_error(m) is None and b''.join(items[0].chunks())==raw
+
+
+@pytest.mark.parametrize('kind,maximum,average',[('audio',128001,0),('audio',0,128001),('video',0,100000001)])
+def test_c12_high_declarations_warn_in_lint_and_reach_provider(env,wire,kind,maximum,average):
+    raw=declared_movie(kind,maximum,average);(env[2]/'v.mp4').write_bytes(raw)
+    fm={'media':[{'file':'v.mp4','alt':'動画'}]}
+    notes=media_delivery.lint_notes(env[0],fm)
+    assert all(n.startswith('warning: ') for n in notes)
+    assert any(kind+'_bitrate_declared_above_' in n for n in notes)
+    assert not env[3]['upload'] and not wire['calls']
+    result,journal,_=invoke(env,fm)
+    assert result.post_id and result.failure=='none'
+    assert journal['media']['phase']=='published' and posts(wire,'/threads_publish')
+
+
+@pytest.mark.parametrize('payload',[b'\0'*11,b'\0'*13])
+def test_c12_warning_does_not_accept_malformed_bitrate_box(tmp_path,payload):
+    sample=b'\0'*16+struct.pack('>HHHHI',2,16,0,0,48000<<16)
+    table=box(b'stsd',b'\0'*4+struct.pack('>I',1)+box(b'mp4a',sample+box(b'btrt',payload)))
+    with prepared(tmp_path,mp4(table)) as(m,items):
+        with pytest.raises(mediaformats.FormatError,match='invalid_attachment_structure'):
+            tm.notes(m,items)

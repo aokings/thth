@@ -56,17 +56,24 @@ def video_notes(items):
         facts=mediaformats.threads_video_info(item._public_fd,row['public_size'])
         if facts['edit_lists']:notes.append('warning: threads video has edit lists; provider may refuse')
         if not facts['moov_at_front']:notes.append('warning: threads video moov follows mdat; provider may refuse')
-        require(all(c in ('avc1','avc3','hvc1','hev1') for c in facts['video_codecs']),'unsupported_attachment: threads/video_codec')
-        require(False not in facts['progressive'],'unsupported_attachment: threads/interlaced_video')
-        require(all(v is None or v<=100_000_000 for v in facts['bitrates']),'media_limit_exceeded: video_bitrate')
+        if any(c not in ('avc1','avc3','hvc1','hev1') for c in facts['video_codecs']):notes.append('warning: threads video_codec_declared_not_recommended; provider may refuse')
+        if False in facts['progressive']:notes.append('warning: threads interlaced_video_declared; provider may refuse')
+        for declared in facts['bitrates']:
+            notes.append(f"warning: video_bitrate_declared: max={declared['max']}, avg={declared['avg']}; not certified")
+            if any(v>100_000_000 for v in declared.values()):notes.append('warning: video_bitrate_declared_above_100mbps; provider may refuse')
         for audio in facts['audio']:
-            require(audio['codec']=='mp4a','unsupported_attachment: threads/audio_codec')
-            require(audio['channels'] is None or audio['channels'] in (1,2),'media_limit_exceeded: audio_channels')
-            require(audio['sample_rate'] is None or audio['sample_rate']<=48000,'media_limit_exceeded: audio_sample_rate')
+            if audio['codec']!='mp4a':notes.append('warning: threads audio_codec_declared_not_recommended; provider may refuse')
+            if audio['channels'] is not None and audio['channels'] not in (1,2):notes.append('warning: threads audio_channels_declared_above_2; provider may refuse')
+            if audio['sample_rate'] is not None and audio['sample_rate']>48000:notes.append('warning: threads audio_sample_rate_declared_above_48k; provider may refuse')
+            declared=audio['bitrate_declared']
+            if declared is not None:
+                notes.append(f"warning: audio_bitrate_declared: max={declared['max']}, avg={declared['avg']}; not certified")
+                if any(v>128_000 for v in declared.values()):notes.append('warning: audio_bitrate_declared_above_128k; provider may refuse')
         try:width,height,rate=mediaformats.video_metrics(item._public_fd,row['public_size'])
         except mediaformats.FormatError:notes.append('warning: threads video frame rate unobserved; provider may refuse')
         else:
-            require(23<=rate<=60,'media_limit_exceeded: frame_rate')
+            notes.append(f'warning: frame_rate_observed: {rate}; not bitstream-certified')
+            if not 23<=rate<=60:notes.append('warning: frame_rate_outside_23_60; provider may refuse')
             require(width<=1920,'media_limit_exceeded: width')
             require(width*100>=height and width<=10*height,'media_limit_exceeded: aspect_ratio')
         notes.append('warning: threads video bitstream codec/GOP/chroma/VBR and audio AAC/bitrate are not certified; provider may refuse')

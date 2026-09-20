@@ -587,12 +587,15 @@ def threads_video_info(fd,size):
                     else:
                         require(eb-ea>=28);version=int.from_bytes(read(ea+8,2),'big');prefix=28+(16 if version else 0)
                         channels=int.from_bytes(read(ea+16,2),'big');rate=int.from_bytes(read(ea+24,4),'big')/65536
-                        facts['audio'].append({'codec':codec.decode('ascii'),'channels':channels or None,'sample_rate':rate or None})
+                        facts['audio'].append({'codec':codec.decode('ascii'),'channels':channels or None,'sample_rate':rate or None,'bitrate_declared':None})
                     for ext,xa,xb in boxes(ea+prefix,eb):
                         if video and ext==b'fiel':
                             require(xb-xa==2);fields=read(xa,2)[0]
                             facts['progressive'].append(True if fields==1 else False if fields==2 else None)
-                        elif video and ext==b'btrt':
-                            require(xb-xa==12);maximum=int.from_bytes(read(xa+4,4),'big');facts['bitrates'].append(maximum or None)
+                        elif ext==b'btrt':
+                            require(xb-xa==12)
+                            declared={'max':int.from_bytes(read(xa+4,4),'big'),'avg':int.from_bytes(read(xa+8,4),'big')}
+                            if video:facts['bitrates'].append(declared)
+                            else:facts['audio'][-1]['bitrate_declared']=declared
     walk(0,size)
     return facts
