@@ -39,7 +39,7 @@ def verify(blob):
         with leave_gate.recovery(name):
             cfg=accounts.load_account(name)
             if cfg.get('media')!='threads':continue
-            token=accounts.load_token(cfg)
+            token,_=leave._token(cfg)
             if type(token) is dict and token.get('user_id')==payload['user_id']:matched.append(name)
     if len(matched)!=1:raise ValueError('identity_unmatched')
     return matched[0]

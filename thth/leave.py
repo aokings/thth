@@ -113,7 +113,7 @@ def _path(value):
     return Path(value).parent.resolve()/Path(value).name
 
 
-def _identity(path, *, private=False):
+def _file(path, *, private=False):
     try:
         with _parent(path) as fd:
             leaf=os.open(path.name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
@@ -121,8 +121,23 @@ def _identity(path, *, private=False):
                 info=os.fstat(stream.fileno());server_files.regular(info,private=private)
                 if info.st_size>16777216:raise ValueError('owned_file_too_large')
                 raw=stream.read(16777217)
-        return {'dev':info.st_dev,'ino':info.st_ino,'sha256':hashlib.sha256(raw).hexdigest(),'mode':stat.S_IMODE(info.st_mode)}
-    except FileNotFoundError:return None
+        if len(raw)>16777216:raise ValueError('owned_file_too_large')
+        return raw,{'dev':info.st_dev,'ino':info.st_ino,'sha256':hashlib.sha256(raw).hexdigest(),'mode':stat.S_IMODE(info.st_mode)}
+    except FileNotFoundError:return None,None
+
+
+def _identity(path, *, private=False):
+    return _file(path,private=private)[1]
+
+
+def _token(cfg):
+    if not cfg.get('token'):return {},None
+    raw,identity=_file(_path(cfg['token']),private=True)
+    if raw is None:return {},None
+    from .handoff_cursor import _pairs
+    token=json.loads(raw,object_pairs_hook=_pairs)
+    if type(token) is not dict:raise ValueError('credential_unreadable')
+    return token,identity
 
 
 def _tree(path):
@@ -177,13 +192,13 @@ def _shared_globals():
 
 def inventory(account,cfg):
     root=Path(accounts.thth_root()).resolve();registry=_registry();targets=[];preserved=[]
-    token=accounts.load_token(cfg) or {}
+    token,token_identity=_token(cfg)
     if type(token) is not dict:raise ValueError('credential_unreadable')
     token_shared=False
     for category in ('token','env'):
         value=cfg.get(category)
         if not value:continue
-        path=_path(value);identity=_identity(path,private=True)
+        path=_path(value);identity=token_identity if category=='token' else _identity(path,private=True)
         if identity is None:continue
         shared=False
         for name,other in registry.items():
@@ -193,7 +208,7 @@ def inventory(account,cfg):
                 other_path=_path(other[key]);other_id=_identity(other_path,private=True)
                 if path==other_path or other_id and (identity['dev'],identity['ino'])==(other_id['dev'],other_id['ino']):shared=True
             if category=='token' and other.get('media')==cfg.get('media'):
-                with gate.recovery(name):other_token=accounts.load_token(other) or {}
+                with gate.recovery(name):other_token,_=_token(other)
                 if type(other_token) is not dict:raise ValueError('ownership_unproved')
                 credentials={'access_token','refresh_token','app_password'}
                 same_value=any(isinstance(token.get(k),str) and token[k] and token[k]==other_token.get(k) for k in credentials)
@@ -361,10 +376,10 @@ def _run_locked(account,*,by):
                         row['inventory_sha256']=_hash(row['targets'])
                         row['preserved']=sorted(set(row['preserved'])|{'token_shared'})
                     row['phase']='remote_pending';_save(row)
-                    token=accounts.load_token(cfg) or {}
+                    token,token_identity=_token(cfg)
                     # Same saved credential bytes; never revoke a replacement made by a different operator.
                     own=next((t for t in row['targets'] if t['category']=='token'),None)
-                    if own and _identity(Path(own['path']),private=True)!=own['identity']:raise ValueError('credential_changed')
+                    if own and token_identity!=own['identity']:raise ValueError('credential_changed')
                     row['remote']=revoke(cfg,token,row['revoked'],lambda:_save(row))
                     if row['token_shared'] and row['remote']=='unconfirmed_manual':row['remote']='unconfirmed_shared'
                     row['phase']='remote_confirmed' if row['remote']=='confirmed' else 'manual_unconfirmed';_save(row)
