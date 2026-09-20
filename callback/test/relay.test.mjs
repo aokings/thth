@@ -202,3 +202,17 @@ test("alarm failure rolls back registration/ready record with its alarm", async 
   const after=await control(f);assert.equal(after.row.status,"pending");assert.equal(after.alarm,before.alarm);
   await control(f,{alarmFault:null});await callback(f);assert.equal((await req(f)).status,200);
 });
+
+test("consumed callback displays received status, never future delivery", async () => {
+  const f=flow();await register(f);await callback(f);
+  const duplicate=await callback({...f,code:opaque()});
+  assert.ok((await duplicate.text()).includes("ターミナル（VM）が受け取ります"));
+  assert.equal((await req(f)).status,200);
+  const replay=await callback({...f,code:opaque()});const body=await replay.text();
+  assert.ok(body.includes("すでに受け取り済み"));
+  assert.ok(body.includes("認可をやり直して"));
+  assert.ok(!body.includes("ターミナル（VM）が受け取ります"));
+  assert.ok(!body.includes(f.code));assert.ok(body.includes("history.replaceState"));
+  assert.equal((await req(f)).status,404);
+  assert.equal((await control(f)).row.status,"consumed");
+});

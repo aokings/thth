@@ -138,7 +138,10 @@ export default {
       const received = (url.pathname === "/callback" || url.pathname === "/callback/")
         ? await receiveCallback(request, env, url) : null;
       if (received instanceof Response) return received;
-      if (received === 200 || received === 409) return html(
+      if (received === "consumed") return html(
+        `<h1>すでに受け取り済みです</h1><p>完了しなかった場合は、ターミナルで認可をやり直してください。</p>
+         <script>try { history.replaceState(null, "", location.pathname); } catch (e) {}</script>`);
+      if (received === "ready") return html(
         `<h1>承認を受け付けました</h1><p>ターミナル（VM）が受け取ります。貼り付けは要りません。</p>
          <script>try { history.replaceState(null, "", location.pathname); } catch (e) {}</script>`);
       return callbackPage(url);

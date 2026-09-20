@@ -48,7 +48,7 @@ export class AuthRelay extends DurableObject {
         const row = this.ctx.storage.kv.get("session");
         if (!row) return missing();
         if (row.status === "expired" || this.expired(row, now)) { this.expire(row); return missing(); }
-        if (row.status !== "pending") return {status: 409};
+        if (row.status !== "pending") return {status: 409, body: {status: row.status}};
         expiry = Math.min(row.expires_at, now + CODE_MS);
         this.put({...row, status: "ready", code, received_at: now, code_expires_at: expiry});
         return {status: 200};
