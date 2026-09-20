@@ -360,3 +360,11 @@ def test_auth_and_rehearse_do_not_depend_on_systemd(env,monkeypatch,systemd,bina
     assert oauth.run_auth('alpha',by='operator',rehearse=True,human_output=lambda _:None,log=lambda _:None)==2
     assert clock[0]==600 and not marker.exists()
     assert snapshot(env['root'].parent)==before
+
+@pytest.mark.parametrize('control',['\r','\n','\t'])
+def test_paste_internal_control_rejected_before_url_parser(env,control):
+    session=authflow.begin('alpha',env['cfg'],env['profile'])
+    raw=url(session,env['code'])+control+'suffix'
+    with pytest.raises(authflow.FlowError,match='auth_paste_control_character'):
+        authflow.paste(raw,session)
+    assert authflow.paste('  '+url(session,env['code'])+'\n',session)==env['code']

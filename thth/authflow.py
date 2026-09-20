@@ -258,6 +258,8 @@ def rehearse(cfg, *, redirect_uri=None, log, human_output):
 def paste(raw, session):
     # Strict keys/duplicates: parse_qs must not silently choose one of two states.
     raw = str(raw or '').strip()
+    if any(ord(c) < 32 or ord(c) == 127 for c in raw):
+        raise FlowError('auth_paste_control_character: 戻り URL の内部に制御文字があります')
     query = urllib.parse.urlsplit(raw).query if '?' in raw else raw.split('#', 1)[0]
     values = urllib.parse.parse_qs(query, keep_blank_values=True)
     states, codes = values.get('state', []), values.get('code', [])
