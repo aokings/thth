@@ -12,12 +12,24 @@ def reason(exc):
 
 def directories():
     root=Path(accounts.thth_root())
-    paths={'state':root/'state','repos':root/'repos','accounts':Path(accounts.accounts_dir())}
+    paths={'state':root/'state','repos':root/'repos','accounts':Path(accounts.accounts_dir()),
+           'state/_leave':root/'state/_leave','state/_leave/coordination':root/'state/_leave/coordination'}
     rows=[]
     for name,path in paths.items():
         row={'directory':name,'present':None,'mode':None,'warning':None}
         try:
-            info=path.lstat();row.update(present=True,mode=format(stat.S_IMODE(info.st_mode),'04o'))
+            if name.startswith('state/'):
+                # Pin every parent: diagnosing a symlink must not inspect its target.
+                fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+                try:
+                    parts=name.split('/')
+                    for part in parts[:-1]:
+                        child=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd)
+                        os.close(fd);fd=child
+                    info=os.stat(parts[-1],dir_fd=fd,follow_symlinks=False)
+                finally:os.close(fd)
+            else:info=path.lstat()
+            row.update(present=True,mode=format(stat.S_IMODE(info.st_mode),'04o'))
             if not stat.S_ISDIR(info.st_mode):row['warning']='unsafe_directory_type'
             elif info.st_uid!=os.getuid():row['warning']='unsafe_directory_owner'
             elif info.st_mode&0o022:row['warning']='unsafe_directory_mode'
