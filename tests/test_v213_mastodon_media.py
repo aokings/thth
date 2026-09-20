@@ -463,3 +463,42 @@ def test_lint_instance_failure_never_uses_permissive_cache(env,wire,monkeypatch)
     def unavailable(*a,**k):raise OSError('synthetic connectivity failure')
     monkeypatch.setattr(mm,'_json',unavailable)
     assert media_delivery.lint_notes(cfg,{'media':[{'file':'a.png','alt':'点'}]})==['media_capability_unavailable']
+
+
+@pytest.mark.parametrize('boundary', ['sleep', 'response_equal', 'response_late', 'legal'])
+def test_poll_budget_applies_after_sleep_and_response(env,wire,monkeypatch,boundary):
+    import types
+    clock=types.SimpleNamespace(now=0.0)
+    monkeypatch.setattr(mm,'time',types.SimpleNamespace(monotonic=lambda:clock.now,sleep=lambda seconds:setattr(clock,'now',clock.now+seconds)))
+    monkeypatch.setattr(mm,'POLL_SECONDS',1.0)
+    monkeypatch.setattr(mm,'POLL_INTERVAL',1.0 if boundary=='sleep' else .25)
+    wire['upload']=[(202,{'id':'1','type':'image','url':None})]
+    wire['poll']=[(200,{'id':'1','type':'image','url':'https://example.invalid/a'})]
+    observed=[];original=mm._json
+    def request(adapter,method,path,**kwargs):
+        if path.startswith('/api/v1/media/'):
+            observed.append(kwargs.get('timeout'))
+        result=original(adapter,method,path,**kwargs)
+        if path.startswith('/api/v1/media/'):
+            clock.now={'response_equal':1.0,'response_late':2.0}.get(boundary,.5)
+        return result
+    monkeypatch.setattr(mm,'_json',request)
+    result,journal,_=invoke(env)
+    if boundary=='legal':
+        assert result.post_id=='100' and len(posts(wire,'/api/v1/statuses'))==1
+    else:
+        assert result.failure=='media_held' and result.error=='media_processing_timeout'
+        assert journal['media']['remote_ids']==['1'] and journal['media']['phase']=='held'
+        assert not posts(wire,'/api/v1/statuses')
+    assert observed==([] if boundary=='sleep' else [.75])
+
+
+def test_processing_get_socket_timeout_is_capped(env,wire,monkeypatch):
+    from thth import leave_gate
+    cfg,adapter,_=env;adapter.timeout=10;observed=[];original=leave_gate.urlopen
+    def request(*args,**kwargs):
+        observed.append(kwargs['timeout']);return original(*args,**kwargs)
+    monkeypatch.setattr(leave_gate,'urlopen',request)
+    mm._json(adapter,'GET','/api/v2/instance',timeout=.75)
+    mm._json(adapter,'GET','/api/v2/instance',timeout=20)
+    assert observed==[.75,10]

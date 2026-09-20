@@ -115,10 +115,10 @@ class _NoRedirect(httpsafe.SameOriginRedirectHandler):
 _transport=urllib.request.build_opener(_NoRedirect())
 
 
-def _json(adapter,method,path,*,data=None,headers=None):
+def _json(adapter,method,path,*,data=None,headers=None,timeout=None):
     req=urllib.request.Request(adapter.instance+path,data=data,method=method,headers=adapter._headers(headers))
     from .. import leave_gate
-    with leave_gate.urlopen(_transport.open,req,timeout=adapter.timeout) as resp:
+    with leave_gate.urlopen(_transport.open,req,timeout=adapter.timeout if timeout is None else min(adapter.timeout,timeout)) as resp:
         code=resp.status;adapter._remember_rate_limit(resp)
         raw=resp.read(1024*1024+1)
     require(len(raw)<=1024*1024,'media_response_invalid')
@@ -179,9 +179,14 @@ def publish(adapter,post,*,before_publish=None):
             while code!=200:
                 require(time.monotonic()<deadline,'media_processing_timeout')
                 time.sleep(min(POLL_INTERVAL,max(0,deadline-time.monotonic())))
+                require(time.monotonic()<deadline,'media_processing_timeout')
                 if before_publish:
                     veto=before_publish();require(not veto,str(veto))
-                code,value=_json(adapter,'GET','/api/v1/media/'+identifier)
+                remaining=deadline-time.monotonic()
+                require(remaining>0,'media_processing_timeout')
+                code,value=_json(adapter,'GET','/api/v1/media/'+identifier,timeout=remaining)
+                # A late ready response does not extend the processing budget.
+                require(time.monotonic()<deadline,'media_processing_timeout')
                 require(code in (200,206),'media_response_invalid: processing status')
                 if code==200:_entity(value,identifier,ready=True,kind=item.manifest['kind']);record('ready',index=i)
             item.verify()
