@@ -178,3 +178,33 @@ def test_video_bad_timescale_and_nested_zero_size(tmp_path):
     bad=mp4().replace(struct.pack('>II',1000,2500),struct.pack('>II',0,2500))
     with pytest.raises(f.FormatError):inspect(tmp_path,bad)
     with pytest.raises(f.FormatError):inspect(tmp_path,mp4(box(b'udta',b'\0'*4+b'free')))
+
+
+@pytest.mark.parametrize('kind,payload',[
+    (b'tEXt',b'Comment\0PRIVATE'),
+    (b'zTXt',b'Comment\0\0'+zlib.compress(b'PRIVATE')),
+    (b'iTXt',b'Comment\0\0\0en\0Comment\0PRIVATE'),
+])
+def test_png_repeated_text_chunks_removed_without_render_changes(kind,payload):
+    original=png()
+    color=f._chunk(b'gAMA',struct.pack('>I',45455))
+    icc=f._chunk(b'iCCP',b'ICC\0\0'+zlib.compress(b'synthetic-profile-bytes'))
+    baseline=original[:33]+color+icc+original[33:]
+    texts=f._chunk(kind,payload)*2
+    source=original[:33]+color+icc+texts+original[33:]
+    result=f.png(source)
+    assert result.public_bytes==baseline
+    assert b'PRIVATE' not in result.public_bytes
+    assert result.width==result.height==1 and result.orientation is None
+    assert f.png(result.public_bytes).public_bytes==baseline
+    broken=bytearray(source);broken[33+len(color)+len(icc)+len(texts)-1]^=1
+    with pytest.raises(f.FormatError):f.png(bytes(broken))
+
+
+@pytest.mark.parametrize('kind',[b'IHDR',b'PLTE',b'IEND'])
+def test_png_nonrepeatable_critical_chunks_still_rejected(kind):
+    original=png()
+    if kind==b'IHDR':bad=original[:33]+original[8:33]+original[33:]
+    elif kind==b'PLTE':bad=original[:33]+f._chunk(b'PLTE',b'\0\0\0')*2+original[33:]
+    else:bad=original+f._chunk(b'IEND',b'')
+    with pytest.raises(f.FormatError):f.png(bad)

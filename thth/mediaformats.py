@@ -208,7 +208,7 @@ def png(data):
         require(binascii.crc32(kind+payload)&0xffffffff == int.from_bytes(data[pos+8+length:pos+12+length], 'big'))
         pos += length+12; kept = payload
         if shape is None: require(kind == b'IHDR')
-        if kind not in (b'IDAT', b'fdAT', b'fcTL'): require(kind not in seen)
+        if kind not in (b'IDAT', b'fdAT', b'fcTL', b'tEXt', b'zTXt', b'iTXt'): require(kind not in seen)
         seen.add(kind)
         if kind == b'IHDR':
             require(length == 13)
