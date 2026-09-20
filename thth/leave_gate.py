@@ -246,11 +246,12 @@ def bind(adapter,cfg):
                 with scope(account):
                     with lease(account) if _lease else contextlib.nullcontext():
                         return _call(*args,**kwargs)
-            except accounts.AccountStopped:
+            except accounts.AccountStopped as exc:
                 if not _publish:raise
                 from .adapters.base import PublishResult
                 from . import jst
-                return PublishResult(None,None,jst.iso(),error='account_stopped',failure='publish_vetoed')
+                from .stop_observation import reason
+                return PublishResult(None,None,jst.iso(),error=reason(exc),failure='publish_vetoed')
         setattr(adapter,name,functools.wraps(original)(wrapped))
     adapter._thth_account_bound=account
     return adapter

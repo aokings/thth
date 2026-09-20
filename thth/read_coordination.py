@@ -77,10 +77,24 @@ def invoke(args, command, call=None):
     try:selected=names(args,command)
     except accounts.AccountLeaving:return refusal(args,'account_leaving')
     except (accounts.AccountError,OSError,ValueError):return call()
+    if command=='doctor' and selected:
+        from .stop_observation import diagnostic
+        if diagnostic(selected[0])['error']:
+            # Static diagnosis never creates state. Preserve a known live leave
+            # conflict, but an unreadable lock path is itself a diagnostic.
+            try:leave_gate.check_busy(selected[0])
+            except accounts.AccountLeaving:return refusal(args,'account_leaving')
+            except (OSError,ValueError):pass
+            return call()
     stack=contextlib.ExitStack()
     try:stack.enter_context(leave_gate.read_leases(selected))
     except accounts.AccountLeaving:return refusal(args,'account_leaving')
-    except accounts.AccountStopped:return refusal(args,'account_stopped')
+    except accounts.AccountStopped as exc:
+        # Static doctor diagnostics need no network/state lease and must expose
+        # the unsafe directory that prevented acquisition.
+        if command=='doctor':return call()
+        from .stop_observation import reason
+        return refusal(args,reason(exc))
     except (OSError,ValueError):return refusal(args,'account_stop_state_unreadable')
     with stack:
         try:return call()

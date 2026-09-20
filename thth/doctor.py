@@ -105,8 +105,17 @@ def _auth_needs_app_env(account_name: str) -> bool:
         return False
 
 
-@leave_gate.scoped
 def diagnose(account_name: str) -> dict:
+    from . import stop_observation
+    static=stop_observation.diagnostic(account_name)
+    if static['error']:return static
+    report=_diagnose(account_name)
+    report['directory_checks']=static['directory_checks']
+    return report
+
+
+@leave_gate.scoped
+def _diagnose(account_name: str) -> dict:
     """読み取りだけで能力を測る。トークンの値は返り値にも入れない。
 
     **probe は媒体が持つ**（設計 v2 §4.2・T-B5）。doctor は台帳の `media` から
@@ -365,6 +374,15 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     「次の一手」（導入文書の節番号）を 1 行言う。値は一切出力しない——app.env は
     存在と項目の有無だけを見て、中身は読み捨てる。
     """
+    from . import stop_observation
+    static=stop_observation.diagnostic(account_name)
+    if static['error']:
+        if as_json:log(json.dumps(static,ensure_ascii=False))
+        else:
+            log(static['error'])
+            for row in static['directory_checks']:
+                if row['warning']:log(row['directory']+': '+row['warning']+' (mode='+str(row['mode'])+')')
+        return 2
     notices: list[str] = []
 
     # **台帳の置き場を 1 行で言う**（設計 v2 §3・v2-2a）。台帳が「外」なのか
@@ -466,6 +484,7 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
             notices.append(NEXT_STEP_AUTH_NEEDS_APP_ENV)
 
     if as_json:
+        report["directory_checks"] = static["directory_checks"]
         report["notices"] = notices
         report["app_env"] = app_env_state
         report["accounts_dir"] = accounts_dir_info

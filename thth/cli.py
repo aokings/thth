@@ -2332,8 +2332,15 @@ def cmd_run(args) -> int:
     ・`accounts.token_exists()` docstring 参照）。"""
     from . import leave_gate
     try:leave_gate.require_active(args.account)
-    except accounts_mod.AccountStopped:
-        print('account_stopped',file=sys.stderr);return 2
+    except accounts_mod.AccountStopped as exc:
+        from .stop_observation import reason
+        code=reason(exc)
+        if code not in ('account_stopped','account_stop_state_unreadable'):code='account_stopped'
+        print(code,file=sys.stderr)
+        print(json.dumps({'account':args.account if accounts_mod.name_is_safe(args.account) else None,
+                          'mode':'production','action':'skip','status':'error','error':code,
+                          'runs_recorded':False,'record_unavailable':code},ensure_ascii=False))
+        return 2
     account_cfg = None
     # load_account() と同じ名前検査より先に、state のパスを組み立てない。
     # `../outside` を通知状態の書込先に使わせないため。

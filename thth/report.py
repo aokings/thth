@@ -298,6 +298,11 @@ def board_summary(now=None) -> dict:
     for name in accounts_mod.list_account_names():
         try:
             account_cfg = accounts_mod.load_account(name)
+        except accounts_mod.AccountStopped as e:
+            from .stop_observation import reason
+            code=reason(e)
+            accounts_out.append({'account':name,'error':code,'stop_reason':code,'cannot_say':[code]})
+            continue
         except accounts_mod.AccountError as e:
             accounts_out.append({"account": name, "error": str(e)})
             continue
