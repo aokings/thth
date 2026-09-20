@@ -50,7 +50,7 @@ test('one file complete once, exact private bytes, owner binding and retired rea
  assert.equal((await call(f.id,'read',{...binding(f),account:'beta'})).status,404);
  assert.equal((await call(f.id,'read',{...binding(f),actor:'other'})).status,404);
  const read=await call(f.id,'read',binding(f));assert.equal(read.status,200);assert.ok(Buffer.from(await read.arrayBuffer()).equals(f.bytes),'private bytes mismatch');
- assert.equal((await mf.dispatchFetch('https://media.test/m/'+f.id)).status,404);
+ assert.equal((await mf.dispatchFetch('https://media.test/m/'+f.id)).status,410);
  assert.equal((await call(f.id,'ack',binding(f))).status,200);
  assert.equal((await call(f.id,'read',binding(f))).status,410);
 });
@@ -276,7 +276,7 @@ test('public grant copy failure never exposes partially committed bytes',async()
  await control(cap,{afterR2:{operation:'put',action:'fail'}});
  const body={...binding(f),media_id:f.body.sha256,source:f.id,expires_at:Date.now()+500000};
  assert.equal((await call(cap,'provider',body)).status,503);
- assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap)).status,404);
+ assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap)).status,410);
  assert.equal((await call(cap,'provider',body)).status,409);
 });
 
@@ -425,4 +425,16 @@ test('provider grant ignores VM expiry clock while preview retains its bound',as
   assert.ok(value.expires_at>=before+600000&&value.expires_at<=after+600000);
  }
  for(const expires_at of [null,'600000',1.5])assert.equal((await call(opaque(),'provider',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at})).status,400);
+});
+
+
+test('public private-object oracle is identical to unknown across methods',async()=>{
+ const pending=data(),stored=data();assert.equal((await call(pending.id,'create',pending.body)).status,201);await ready(stored);
+ for(const init of [{},{method:'HEAD'},{headers:{range:'bytes=0-1'}}]){
+  for(const id of [pending.id,stored.id,opaque()]){
+   const response=await mf.dispatchFetch('https://media.test/m/'+id,init);assert.equal(response.status,410);
+   if(init.method!=='HEAD')assert.deepEqual(await response.json(),{error:'media_expired'});
+  }
+ }
+ assert.equal((await call(stored.id,'read',binding(stored))).status,200);
 });

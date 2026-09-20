@@ -155,7 +155,7 @@ export class MediaObject extends DurableObject {
   async view(request){
     const row=this.row();if(!row)return reply(410,{error:'media_expired'});
     if(!this.current(row))return reply(410,{error:'media_expired'});
-    if(!['preview','provider'].includes(row.kind)||row.status!=='ready')return reply(404,{error:'not_found'});
+    if(!['preview','provider'].includes(row.kind)||row.status!=='ready')return reply(410,{error:'media_expired'});
     if(!await this.active(row.account))return reply(410,{error:'account_revoked'});
     const range=request.headers.get('range');
     if(range&&!/^bytes=\d+-\d*$/.test(range))return reply(416,{error:'invalid_range'});
