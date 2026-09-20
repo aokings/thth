@@ -25,8 +25,8 @@ def _emit(fd, data):
 
 
 EVENTS = frozenset(('account_added', 'account_updated', 'account_removed', 'token_set',
-                   'token_refreshed', 'token_revoked', 'production_enabled', 'production_disabled'))
-SECRET = re.compile(r'token|secret|password|jwt|env|email|notification|smtp|ping', re.I)
+                   'token_refreshed', 'token_revoked', 'app_set', 'production_enabled', 'production_disabled'))
+SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 
 
@@ -169,7 +169,7 @@ _active_events = contextvars.ContextVar('admin_event_buffer', default=None)
 
 
 @contextlib.contextmanager
-def transaction():
+def transaction(*, rollback=None):
     if _active_fd.get() is not None:
         yield
         return
@@ -191,6 +191,12 @@ def transaction():
             if events:
                 _emit(fd, b''.join(events))
                 committed_events = tuple(events)
+        except BaseException as exc:
+            # Auth snapshots are taken after this flock. Restore before releasing
+            # it, never over a newer credential saved by another transaction.
+            if rollback is not None and not (isinstance(exc, AdminLogError) and exc.appended):
+                rollback()
+            raise
         finally:
             _active_events.reset(reset_events)
             _active_fd.reset(reset)
@@ -205,6 +211,8 @@ def transaction():
             try:
                 from . import admin_notifications
                 event = json.loads(data)
+                if event['event'] == 'app_set':
+                    continue
                 cfg = accounts.load_account(event['account'])
                 admin_notifications.notify(event, cfg)
             except Exception:

@@ -1,0 +1,13 @@
+{
+  "name": "thth-callback",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260919.1",
+    "miniflare": "5.20260918.0-alpha",
+    "wrangler": "4.135.0"
+  }
+}

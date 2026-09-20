@@ -9,7 +9,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 版
 
-このソースの版は **2.9.0**。現在の設計は [自分の泉](docs/設計_自分の泉_2026-09-16.md)、導入は [自分の Meta アプリで動かす](docs/導入_自分のMetaアプリで動かす.md)、文書の索引は [docs/README.md](docs/README.md)。
+このソースの版は **2.11.0**。現在の設計は [自分の泉](docs/設計_自分の泉_2026-09-16.md)、導入は [承認を押すだけ](docs/導入_承認を押すだけ.md)、文書の索引は [docs/README.md](docs/README.md)。
 
 版の正本は `thth/VERSION`（`server.json` はテストで一致を強制）。開発中の `main` には未配布の変更も含まれます。インストール済みの版は `thth --version`、VM の版と revision は `thth board` で確認してください。
 
@@ -18,6 +18,12 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 ## 使う人へ
 
 各プロジェクトのセッションが読むのは [docs/使い方_プロジェクトのセッション向け_2026-09-09.md](docs/使い方_プロジェクトのセッション向け_2026-09-09.md) **だけ**。設計書は作った側の記録なので読まなくてよい。
+
+## 認可（2.11.0）
+
+招待した利用者は、masaru がサーバ側で始めた認可 URL を開いて承認します。利用者に VM や Meta アプリの準備を求めません。Threads/Mastodon/X は `thth auth <account> --by masaru`、Bluesky は秘密管理ツールから App Password を `thth token set <account> --stdin --by masaru` へ渡します。X は認可だけ対応し、投稿・採集は未対応です。「接続」ページはこの版にはありません。
+
+運営者の client 設定、貼付の逃げ道、scope と doctor 観測、X の更新間隔の限界は [統一ガイド](docs/導入_承認を押すだけ.md) にまとめています。認可の成功で承認・digest・production の条件は変わりません。
 
 ## 実装と運用の状態（2026-09-18）
 
@@ -115,6 +121,6 @@ mcp-name: io.github.aokings/thth
 
 `thth admin inventory|account|log|tokens|timers|release|diff` は秘密値を出さない読み取り専用レポートです。開始時は `thth admin diff --since-last-read`、変化した account は `thth admin account <name>`、週1回 `thth admin tokens`。`--json` で構造化結果を取得できます。既読 cursor の保存は `admin diff --since-last-read --mark-read --by <名前>` の明示時だけです。VM の `admin timers` は観測を `state/_admin/timers.json` に保存します。`doctor <name>` と admin の明示的な `--probe` は秘密を除いた診断記録を `state/<name>/doctor.json` に保存します。HTTP／MCP は時刻付きの記録を読むだけで、観測・保存を実行しません。
 
-`account add`（`--force` の上書きも）・`auth`・`token set`・`token revoke` には `--by <名前>` が必須です。既存の作成来歴は上書きしません。`token revoke` はローカルcredential削除でありリモート側の認可取消ではありません。選定した管理変更は既定で管理者へ通知し、台帳の `notify_admin_on_change: false` で停止できます。
+`account add`（`--force` の上書きも）・`app set`（旧 flags も）・`auth`・`token set`・`token revoke` には `--by <名前>` が必須です。既存の作成来歴は上書きしません。`token revoke` はローカルcredential削除でありリモート側の認可取消ではありません。選定した管理変更は既定で管理者へ通知し、台帳の `notify_admin_on_change: false` で停止できます。
 
 認証付きMCPの6道具とHTTPのadmin scopeは [管理者skill](skills/thth-admin/SKILL.md) を参照してください。管理レポートから承認・投稿・設定変更は行いません。ログ追記後のfsync失敗は変更を保持して `durability_unconfirmed`、部分追記は `outcome_uncertain` と報告します。再試行前に台帳とログを確認してください。

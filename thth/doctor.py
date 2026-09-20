@@ -33,7 +33,7 @@ TIMEOUT_SECONDS = 20.0
 # 導入手順のどこが足りないかを、節番号で指す（設計 §2 の C1・節番号は
 # Track C2 の導入文書と合わせて決め打ち: §2 Meta アプリ・§3 app.env・
 # §4 アカウント台帳・§5 トークン・§6 timer）。
-NEXT_STEP_APP_ENV = "次の一手: 導入文書 §3 app.env を見てください。"
+NEXT_STEP_APP_ENV = "次の一手: 導入文書 §3 client 準備（Threads は app.env）を見てください。"
 NEXT_STEP_ACCOUNT = "次の一手: 導入文書 §4 アカウント台帳 を見てください。"
 NEXT_STEP_TOKEN = "次の一手: 導入文書 §5 トークン を見てください。"
 
@@ -60,7 +60,7 @@ APP_ENV_ABSENT_NOTICE = (
     "置くなら `thth app set`）")
 # トークンが無い／使えないときだけ、`thth auth` へ進む道も一応示す（そちらを
 # 選ぶなら app.env が先に要る）。**app.env が無いときにしか出さない。**
-NEXT_STEP_AUTH_NEEDS_APP_ENV = "`thth auth` を使うなら先に `thth app set`（導入文書 §3）。"
+NEXT_STEP_AUTH_NEEDS_APP_ENV = "`thth auth` を使うなら先に `thth app set`（--by masaru・導入文書 §3）。"
 
 # **probe の中身は媒体側へ移した**（設計 v2 §4.2・T-B5）。どの口を叩けばどの
 # 権限が確かめられるかは媒体の知識で、doctor の知識ではない。doctor に残るのは
@@ -114,6 +114,12 @@ def diagnose(account_name: str) -> dict:
     account_cfg = accounts_mod.load_account(account_name)
     token = accounts_mod.load_token(account_cfg)
 
+    if account_cfg.get('media') == 'x':
+        observation = read_observation(account_name) or {}
+        return dict(account=account_name, error='X は認可だけ対応しています。投稿・採集とその probe は未対応です。認可の修復は thth auth <account> --by <actor>。',
+                    probes=[], auth_only=True, auth_via=(token.get('auth_via') if isinstance(token,dict) and token.get('auth_via') in ('relay','paste','token_set') else None),
+                    auth_observed_at=observation.get('auth_observed_at'), scopes_recorded=recorded_scopes(token))
+
     # **媒体を先に引く。** トークンの「在る／無い」の判定が媒体ごとに違うので
     # （下）、知らない媒体をここで loud に断らないと、`media` の誤字が
     # 「トークンが無い」という**別の理由**に化けて出る（T-B0）。
@@ -146,6 +152,8 @@ def diagnose(account_name: str) -> dict:
     return {"account": account_name, "handle": account_cfg.get("handle"),
             "username": token.get("username"), "user_id": user_id,
             "scopes_recorded": recorded_scopes(token),
+            "auth_via": token.get("auth_via") if token.get("auth_via") in ("relay","paste","token_set") else None,
+            "auth_observed_at": (read_observation(account_name) or {}).get("auth_observed_at"),
             "probes": results}
 
 
@@ -162,7 +170,7 @@ SCOPES_SOURCE_UNKNOWN = "unknown"
 
 def recorded_scopes(token: dict) -> dict:
     """`.token` の `scopes`／`scopes_source` を「不明」を不明のまま返す。"""
-    token = token or {}
+    token = token if isinstance(token,dict) else {}
     scopes = token.get("scopes")
     source = token.get("scopes_source")
     if not isinstance(scopes, list):
@@ -235,31 +243,106 @@ def _observation_probes(probes):
     return rows
 
 
-def record_observation(account_name, report, *, probed_at=None):
-    """Persist only diagnostic metadata after an explicit CLI probe."""
+def _credential_generation(cfg):
+    import hashlib
+    from pathlib import Path
+    from . import authflow
+    token_generation = authflow._generation(authflow._token_snapshot(Path(cfg['token'])))
+    if token_generation is None:
+        return None
+    # Bind the observed credential to the exact ledger used for the request.
+    # A changed origin/identity/path cannot inherit an old permission result.
+    # Keep this digest private; public observations expose only current/unknown.
+    binding = json.dumps({'ledger': cfg, 'token_generation': token_generation},
+                         sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+    return hashlib.sha256(binding.encode()).hexdigest()
+
+
+def _observation_raw(account_name):
+    from . import handoff_cursor, jst
+    value = handoff_cursor.read_snapshot(account_name, 'doctor.json')
+    if (not isinstance(value, dict) or type(value.get('schema_version')) is not int or value.get('schema_version') not in (1, 2)
+            or value.get('account') != account_name):
+        return None
+    probed = value.get('probed_at')
+    if probed is not None and (not jst.parse(probed) or jst.parse(probed) > jst.now_jst()):
+        return None
+    auth_at = value.get('auth_observed_at')
+    if auth_at is not None and (not jst.parse(auth_at) or jst.parse(auth_at) > jst.now_jst()):
+        return None
+    if probed is None and (value.get('schema_version') == 1 or not auth_at):
+        return None
+    if value.get('auth_via') not in (None, 'relay', 'paste', 'token_set'):
+        return None
+    if value.get('error') is not None and not isinstance(value['error'], str):
+        return None
+    for key in ('auth_credential_generation', 'probe_credential_generation'):
+        gen=value.get(key)
+        if gen is not None and (not isinstance(gen,str) or len(gen)!=64 or any(c not in '0123456789abcdef' for c in gen)):
+            return None
+    try:
+        _observation_probes(value.get('probes'))
+    except (TypeError, ValueError):
+        return None
+    return value
+
+
+def record_auth(account_name, cfg, token, *, log=print):
+    """After token+event commit only. Failure does not turn auth success into a probe."""
     from . import admin_log, handoff_cursor, jst
-    admin_log.register_account_secrets(accounts_mod.load_account(account_name))
-    error = report.get('error')
-    if error is not None and not isinstance(error, str):
-        raise ValueError('doctor_observation_unavailable')
-    value = dict(schema_version=1, account=account_name, probed_at=probed_at or jst.iso(),
-                 probes=_observation_probes(report.get('probes')), error=admin_log.clean(error))
-    handoff_cursor.write_snapshot(account_name, 'doctor.json', value)
+    try:
+        if token.get('auth_via') not in ('relay','paste','token_set'):
+            raise ValueError('auth_via_unavailable')
+        with admin_log.transaction():
+            if accounts_mod.load_account(account_name)!=cfg or accounts_mod.load_token(cfg)!=token:
+                raise ValueError('auth_credential_changed')
+            previous=_observation_raw(account_name) or {}
+            value=dict(schema_version=2,account=account_name,
+                       probed_at=previous.get('probed_at'),probes=_observation_probes(previous.get('probes',[])),error=admin_log.clean(previous.get('error')),
+                       probe_credential_generation=previous.get('probe_credential_generation'),
+                       auth_via=token['auth_via'],auth_observed_at=jst.iso(),
+                       auth_credential_generation=_credential_generation(cfg))
+            handoff_cursor.write_snapshot(account_name,'doctor.json',value)
+        return True
+    except (OSError,ValueError,TypeError,accounts_mod.AccountError,admin_log.AdminLogError):
+        log('auth_observation_not_recorded: 認可は保存済みですが doctor の認可経路を記録できませんでした')
+        return False
+
+
+_GENERATION_UNSET = object()
+
+def record_observation(account_name, report, *, probed_at=None, credential_generation=_GENERATION_UNSET):
+    """Persist explicit probe results, retaining separate authorization history."""
+    from . import admin_log, handoff_cursor, jst
+    cfg=accounts_mod.load_account(account_name)
+    admin_log.register_account_secrets(cfg)
+    if cfg.get('media')=='x':
+        return read_observation(account_name) # Auth-only: no API probe took place.
+    error=report.get('error')
+    if error is not None and not isinstance(error,str):raise ValueError('doctor_observation_unavailable')
+    with admin_log.transaction():
+        previous=_observation_raw(account_name) or {}
+        value=dict(schema_version=2,account=account_name,probed_at=probed_at or jst.iso(),
+                   probes=_observation_probes(report.get('probes')),error=admin_log.clean(error),
+                   probe_credential_generation=(_credential_generation(cfg) if credential_generation is _GENERATION_UNSET else credential_generation),
+                   auth_via=previous.get('auth_via'),auth_observed_at=previous.get('auth_observed_at'),
+                   auth_credential_generation=previous.get('auth_credential_generation'))
+        handoff_cursor.write_snapshot(account_name,'doctor.json',value)
     return value
 
 
 def read_observation(account_name):
-    from . import admin_log, handoff_cursor, jst
-    value = handoff_cursor.read_snapshot(account_name, 'doctor.json')
-    if (not value or value.get('schema_version') != 1 or value.get('account') != account_name
-            or not jst.parse(value.get('probed_at')) or jst.parse(value['probed_at']) > jst.now_jst()
-            or value.get('error') is not None and not isinstance(value['error'], str)):
-        return None
-    try:
-        return dict(probed_at=value['probed_at'], probes=_observation_probes(value.get('probes')),
-                    error=admin_log.clean(value.get('error')))
-    except (TypeError, ValueError):
-        return None
+    from . import admin_log
+    value=_observation_raw(account_name)
+    if value is None:return None
+    try:current=_credential_generation(accounts_mod.load_account(account_name))
+    except (OSError,ValueError,accounts_mod.AccountError):current=None
+    probe_gen=value.get('probe_credential_generation')
+    return dict(probed_at=value.get('probed_at'),probes=_observation_probes(value.get('probes')),
+                error=admin_log.clean(value.get('error')),auth_via=value.get('auth_via'),
+                auth_observed_at=value.get('auth_observed_at'),
+                auth_current_credentials=bool(current and current==value.get('auth_credential_generation')),
+                probe_current_credentials=(bool(current and current==probe_gen) if probe_gen or value.get('auth_observed_at') or value.get('schema_version') == 2 else None))
 
 
 def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
@@ -289,7 +372,9 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         直した.append(str(msg))
     # `absent` / `ok` / `broken`。**無い（任意）と、置いたのに使えない（要修理）を
     # 分ける**（masaru 裁定 2026-09-13・上の `APP_ENV_ABSENT_NOTICE` の理由）。
-    app_env_state, app_env_detail = appenv_mod.probe(log=env_log)
+    try: auth_only = accounts_mod.load_account(account_name).get('media') == 'x'
+    except accounts_mod.AccountError: auth_only = False
+    app_env_state, app_env_detail = (appenv_mod.ABSENT, '') if auth_only else appenv_mod.probe(log=env_log)
     # **app.env が要るのはその媒体の `thth auth` だけ**（`AUTH_NEEDS_APP_ENV`・
     # 独立監査 1・P2-3・2026-09-13）。以前はここが媒体を見ずに出していたので、
     # Bluesky の診断に「`thth auth` を使うときだけ app.env が要ります」と出た
@@ -348,9 +433,11 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         notices.append(f"台帳の `{d['field']}` が{DUMMY_LABEL}: {d['value']}")
         notices.append(f"次の一手: {d['next']}")
 
+    try: probe_generation = _credential_generation(account_cfg)
+    except (OSError,ValueError): probe_generation = None
     report = diagnose(account_name)
     try:
-        record_observation(account_name, report)
+        record_observation(account_name, report, credential_generation=probe_generation)
     except (OSError, ValueError, TypeError, accounts_mod.AccountError):
         # Keep the existing diagnostic payload/exit meaning; recording failure is
         # separate and bounded, never the raw filesystem or provider exception.
@@ -373,6 +460,8 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         if topics_shelf:
             report["topics_shelf_broken"] = topics_shelf
         log(json.dumps(report, ensure_ascii=False))
+        if report.get("auth_only"):
+            return 2
         if topics_shelf:
             # **壊れた台帳を「異常なし」で返さない**（独立監査 1・P1-1）。
             return 2
@@ -395,6 +484,7 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     debug_line = debug_token_line(report["probes"])
     if debug_line:
         log(debug_line)
+    log(f"認可経路: {report.get('auth_via') or '不明'}（記録時刻: {report.get('auth_observed_at') or '不明'}。probe の実測時刻とは別）")
     log("")
     failed = 0
     for p in report["probes"]:

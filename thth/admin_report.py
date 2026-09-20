@@ -15,7 +15,7 @@ from . import (accounts, account_report, admin_log, analytics_report, appenv, co
 FIELDS = ('production', 'hashtags', 'max_hashtags', 'min_interval_hours', 'quiet_hours',
           'collect_days', 'stale_days', 'scheduled')
 TOKEN_FIELDS = ('mode_ok', 'obtained_at', 'expires_at', 'remaining_days', 'no_expiry',
-                'user_id', 'username', 'scopes', 'scopes_source', 'handle_matches')
+                'user_id', 'username', 'scopes', 'scopes_source', 'handle_matches', 'auth_via')
 PROVENANCE_FIELDS = ('created_at', 'created_by', 'created_via', 'created_host')
 OPERATIONS = ('inventory', 'account', 'log', 'tokens', 'timers', 'release', 'diff')
 
@@ -80,10 +80,16 @@ def _token(cfg, now):
             raise ValueError('token_unreadable')
         for key in ('obtained_at', 'no_expiry', 'user_id', 'username'):
             result[key] = token.get(key)
+        result['auth_via'] = token.get('auth_via') if token.get('auth_via') in ('relay','paste','token_set') else None
         scopes = doctor.recorded_scopes(token)
         result.update(scopes=scopes['scopes'], scopes_source=scopes['source'])
         try:
-            _, remaining = oauth.token_age_and_remaining(token, now)
+            if cfg.get('media') == 'x':
+                from .adapters.auth_x import remaining as x_remaining
+                seconds = x_remaining(token, now)
+                remaining = seconds / 86400 if seconds is not None else None
+            else:
+                _, remaining = oauth.token_age_and_remaining(token, now)
             result['remaining_days'] = remaining
             result['expires_at'] = jst.iso(now + datetime.timedelta(days=remaining)) if remaining is not None else None
         except (ValueError, TypeError, OverflowError, oauth.OAuthError):
@@ -122,18 +128,24 @@ def _repo(cfg):
 
 def _permissions(name, probe):
     if probe:
+        cfg = accounts.load_account(name)
+        if cfg.get('media') == 'x':
+            return dict(probed_at=None, source=None, result=doctor.diagnose(name), reason='auth_only_probe_unsupported')
+        try: generation = doctor._credential_generation(cfg)
+        except (OSError, ValueError): generation = None
         observed = doctor.diagnose(name)
         at = jst.iso()
         result = dict(probed_at=at, source='live_readonly_probe', result=observed)
         try:
-            doctor.record_observation(name, observed, probed_at=at)
+            doctor.record_observation(name, observed, probed_at=at, credential_generation=generation)
         except (OSError, ValueError, TypeError):
             result['reason'] = 'permissions_recording_unavailable'
         return result
     cached = doctor.read_observation(name)
     if cached:
         return dict(probed_at=cached['probed_at'], source='recorded',
-                    result={key: cached[key] for key in ('probes', 'error')})
+                    result={key: cached[key] for key in ('probes', 'error')},
+                    **{key:cached.get(key) for key in ('auth_via','auth_observed_at','auth_current_credentials','probe_current_credentials')})
     return dict(probed_at=None, source=None, result=None, reason='permissions_not_recorded')
 
 
@@ -491,23 +503,29 @@ def extra(operation, *, account, via, now, since_last_read=False, mark_read=Fals
             try:
                 cfg=accounts.load_account(name);_register(cfg, via=via)
                 token=_token(cfg,now)
-                expected=scopes.DEFAULT_SCOPES if cfg.get('media')=='threads' else None
+                from .adapters import auth_x
+                expected=(scopes.DEFAULT_SCOPES if cfg.get('media')=='threads' else auth_x.SCOPES if cfg.get('media')=='x' else None)
                 actual=token['scopes']
                 token.update(account=name,default_scopes=expected,
-                             missing_scopes=sorted(set(expected)-set(actual)) if expected is not None and actual is not None else None)
+                             missing_scopes=sorted(set(expected)-set(actual)) if expected is not None and actual is not None and token['scopes_source']=='response' else None)
                 if cfg.get('media') == 'mastodon':
                     observation = doctor.read_observation(name)
                     token['default_scopes'] = scopes.MASTODON_SCOPES
                     token['recorded_scopes_source'] = token['scopes_source']
-                    token['scopes_source'] = 'probe' if observation else None
-                    token['scopes_observed_at'] = observation['probed_at'] if observation else None
-                    token['missing_scopes_inferred'] = True
-                    probes = observation['probes'] if observation else []
-                    relevant = [p for p in probes if p.get('permission') in scopes.MASTODON_SCOPES]
-                    missing = sorted({p['permission'] for p in relevant if p.get('failure') == 'permission'})
-                    reached = {p['permission'] for p in relevant if p.get('ok') is True}
-                    token['missing_scopes'] = missing if missing or reached else None
-                    token['unknown_scopes'] = sorted(set(scopes.MASTODON_SCOPES) - reached - set(missing))
+                    if token['scopes_source'] == 'response' and isinstance(actual, list):
+                        token.update(missing_scopes=sorted(set(scopes.MASTODON_SCOPES)-set(actual)),
+                                     missing_scopes_inferred=False, unknown_scopes=[], scopes_observed_at=token['obtained_at'])
+                    else:
+                        current = observation if observation and observation.get('probed_at') and observation.get('probe_current_credentials') is not False else None
+                        token['scopes_source'] = 'probe' if current else None
+                        token['scopes_observed_at'] = current['probed_at'] if current else None
+                        token['missing_scopes_inferred'] = True
+                        probes = current['probes'] if current else []
+                        relevant = [p for p in probes if p.get('permission') in scopes.MASTODON_SCOPES]
+                        missing = sorted({p['permission'] for p in relevant if p.get('failure') == 'permission'})
+                        reached = {p['permission'] for p in relevant if p.get('ok') is True}
+                        token['missing_scopes'] = missing if missing or reached else None
+                        token['unknown_scopes'] = sorted(set(scopes.MASTODON_SCOPES) - reached - set(missing))
                 history=runs.read_runs(accounts.state_dir_for(name))
                 maintenance=[r for r in history if isinstance(r,dict) and r.get('account')==name and r.get('action')=='maintain' and (r.get('refreshed') is True or r.get('error')=='refresh_failed')]
                 last=maintenance[-1] if maintenance else None

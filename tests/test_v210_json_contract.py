@@ -120,6 +120,8 @@ def test_successful_http_mcp_reports_have_evidence_without_server_paths(via,oper
     from thth import accounts, admin_report, handoff_cursor, jst, operations_handoff, report_http, sent
     from tests.test_analytics_comparison import seed
     from tests.test_mcp import _load_server_module
+    # Reports describe the running distribution, independently checked from its source.
+    package_version=(Path(__file__).resolve().parents[1]/'thth'/'VERSION').read_text().strip()
     root,_,cfg=report_seed
     # All runtime resources remain in a private temporary root for preflight.
     now=datetime.datetime.now(datetime.timezone.utc)
@@ -181,7 +183,7 @@ def test_successful_http_mcp_reports_have_evidence_without_server_paths(via,oper
     if operation=='analytics_report':assert core['by_account'][name]['posts']['current']['metrics']['views']['median']==9
     elif operation=='operations_handoff':
         assert core['by_account'][name]['sent_count']==1
-        assert core['tool']['version']=='2.10.0' and core['tool']['notes_root_local_hint']=='~/Developer/thth'
+        assert core['tool']['version']==package_version and core['tool']['notes_root_local_hint']=='~/Developer/thth'
         assert 'notes_root' not in core['tool'] and 'notes_root' not in core['by_account'][name]['tool']
     elif operation in ('admin_inventory','admin_account'):
         row=core['by_account'][name]
@@ -195,7 +197,7 @@ def test_successful_http_mcp_reports_have_evidence_without_server_paths(via,oper
     elif operation=='admin_tokens':assert core['tokens'][0]['present'] is True
     elif operation=='admin_timers':assert core['by_account'][name]['units'][0]['active']=='active'
     elif operation=='admin_release':
-        assert core['release']['version']=='2.10.0'
+        assert core['release']['version']==package_version
         assert core['release']['app_env']['path']==str(root/'.config/thth/app.env')
     elif operation=='admin_diff':
         assert any(c['field']=='production' for c in core['changes'])

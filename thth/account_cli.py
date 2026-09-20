@@ -55,7 +55,7 @@ def _find_example_dir() -> str:
 
 EXAMPLE_DIR = _find_example_dir()
 
-MEDIA_CHOICES = ("threads", "bluesky", "mastodon")
+MEDIA_CHOICES = ("threads", "bluesky", "mastodon", "x")
 
 # **アカウント名はファイル名になる**（`<accounts_dir>/<name>.json`）。区切りや
 # `..` を混ぜると置き場の外に書けてしまう——`thth account add ../pwned` が
@@ -320,12 +320,14 @@ def cmd_add(args) -> int:
     #   - Bluesky は `thth auth` の取り違え検査が「台帳の handle と App Password の
     #     handle が違う」と言って**認可を保存しない**（`oauth.run_auth_bluesky()`）
     # **黙って外れた値を書くより、ここで 1 回止まって聞くほうが安い。**
-    if args.media in ("bluesky", "mastodon") and not args.handle:
+    if args.media in ("bluesky", "mastodon", "x") and not args.handle:
         print(f"--handle が要ります（{args.media} は `--project` の値では当たりません）",
               file=sys.stderr)
         if args.media == "bluesky":
             print(f"  例: thth account add {name} --media bluesky "
                   f"--project {args.project} --handle name.bsky.social", file=sys.stderr)
+        elif args.media == "x":
+            print(f"  例: thth account add {name} --media x --project {args.project} --handle user --by <actor>", file=sys.stderr)
         else:
             print(f"  例: thth account add {name} --media mastodon "
                   f"--project {args.project} --handle user "

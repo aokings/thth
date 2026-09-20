@@ -58,6 +58,8 @@ def _account_with_token_path(isolated_account_factory, tmp_path, **overrides):
     overrides.setdefault("redirect_uri", REDIRECT_URI)
     account = isolated_account_factory(token=token_path, **overrides)
     account["token_path"] = token_path
+    # --code resumes a previously issued state; it must not create a fresh flow.
+    oauth_mod._save_auth_state(account["name"], FIXED_STATE)
     return account
 
 
@@ -203,6 +205,8 @@ def test_C10_ダミーのredirect_uriでは認可URLを出さない(
     assert f"{account['name']}.json" in out, out  # 直し方 その 2（台帳の場所を名指し）
     assert not os.path.exists(token_path)
 
+    # --codeは既存stateの再開なので、前回発行したstateを置く。
+    oauth_mod._save_auth_state(account["name"], FIXED_STATE)
     # **`--redirect-uri` で本物を渡した分には通る**（断る条件が広すぎない）。
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
@@ -299,8 +303,12 @@ def test_20260909_authが標準出力に秘密を一切出さない(tmp_path, mo
 
 # --- T3 の配線（2026-09-13）: `thth auth` を媒体で分ける ------------------------
 
-def test_T3_mastodonはtoken_setへ案内してrc2(tmp_path, isolated_account_factory):
-    """認可はインスタンスの管理画面。**黙って何もしない終わり方をしない。**"""
+def test_T3_mastodonのsetup不明はrc2で保存しない(tmp_path, isolated_account_factory, monkeypatch):
+    """2.11: 不明なmetadataからPKCEなしへ降りない。"""
+    from thth.adapters import auth_mastodon
+    def unavailable(*args, **kwargs):
+        raise auth_mastodon.FlowError('metadata unavailable')
+    monkeypatch.setattr(auth_mastodon, 'request', unavailable)
     account = _account_with_token_path(
         isolated_account_factory, tmp_path, media="mastodon",
         instance="https://mastodon.invalid")
@@ -308,7 +316,7 @@ def test_T3_mastodonはtoken_setへ案内してrc2(tmp_path, isolated_account_fa
     rc = oauth_mod.run_auth(account["name"], log=lines.append, by="test-operator")
     assert rc == 2
     out = "\n".join(lines)
-    assert "thth token set" in out and account["name"] in out
+    assert "mastodon_auth_setup_failed" in out
     assert not os.path.exists(account["token_path"])
 
 
@@ -328,7 +336,7 @@ def test_T3_blueskyはtokenを600で書く(tmp_path, isolated_account_factory):
     with fake_bluesky() as service:
         account = _account_with_token_path(
             isolated_account_factory, tmp_path, media="bluesky",
-            handle=HANDLE, service=str(service))
+            handle=HANDLE, user_id=DID, service=str(service))
         lines = []
         rc = oauth_mod.run_auth(
             account["name"], log=lines.append,
@@ -488,7 +496,8 @@ def test_P2_4_認可URLにstateが載る(tmp_path, monkeypatch, isolated_account
     lines = []
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
-        oauth_mod.run_auth(account["name"], code=戻り("ABC123"), log=lines.append, by="test-operator")
+        oauth_mod.run_auth(account["name"], input_func=lambda: 戻り("ABC123"),
+                           log=lambda _: None, human_output=lines.append, by="test-operator")
     url = next(line for line in lines if "oauth/authorize" in line)
     assert _up.parse_qs(_up.urlsplit(url).query)["state"] == [FIXED_STATE]
 
@@ -529,8 +538,8 @@ def test_P2_4_前回の実行が出したstateなら通る(tmp_path, monkeypatch
 
     # 1 段目（URL を出すだけ。state が残る）。
     monkeypatch.setattr(oauth_mod, "_new_state", lambda: "前回の-state")
-    oauth_mod.run_auth(account["name"], code="", log=lambda _l: None, by="test-operator")
-    # 2 段目は別の state を作るが、前回の戻りも受け付ける。
+    oauth_mod.run_auth(account["name"], input_func=lambda: "", log=lambda _l: None, by="test-operator")
+    # 2 段目は保存済みstateを再開し、新しいstateで上書きしない。
     monkeypatch.setattr(oauth_mod, "_new_state", lambda: "こんかいの-state")
     with fake_oauth_server() as base_url:
         monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)

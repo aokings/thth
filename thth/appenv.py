@@ -31,20 +31,23 @@ def default_path() -> str:
     return os.environ.get("THTH_APP_ENV_PATH") or os.path.expanduser("~/.config/thth/app.env")
 
 
-def _parse_env_file(path: str) -> dict:
+def parse_app_env(text: str) -> dict:
     data = {}
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-            data[key] = value
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, _, value = line.partition('=')
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        data[key.strip()] = value
     return data
+
+
+def _parse_env_file(path: str) -> dict:
+    with open(path, encoding='utf-8') as f:
+        return parse_app_env(f.read())
 
 
 def load_app_env(path: str | None = None, *, log=print) -> tuple[str, str]:
@@ -148,40 +151,10 @@ def render_app_env(app_id: str, app_secret: str) -> str:
 
 
 def run_app_set(*, app_id: str | None, stdin: bool = False, input_func=None,
-                path: str | None = None, log=print) -> int:
-    """`thth app set --app-id <ID>`（masaru 裁定 2026-09-13）。
-
-    「手で `~/.config/thth/app.env` を書く」を道具にする。**Secret は画面に
-    出さず、標準出力・標準エラー・ログのどこにも出さない**——成功時に言うのは
-    path と 600 だけ。書きは一時ファイル ＋ `os.replace` で原子的に（`token set`
-    と同じ `thth/secrets_fs.py` の作法）。
-    """
-    path = path or default_path()
-    app_id = (app_id or "").strip()
-    if not app_id:
-        log("--app-id が空です。Threads app ID を渡してください。書きませんでした。")
-        return 2
-    if "\n" in app_id or "\r" in app_id:
-        log("--app-id に改行が含まれています。書きませんでした。")
-        return 2
-
-    try:
-        raw = _read_secret(stdin=stdin, input_func=input_func)
-    except AppEnvError as e:
-        log(str(e))
-        return 2
-    # **値は変数の外へ出さない。** strip 以外の加工もしない。
-    app_secret = (raw or "").strip()
-    if not app_secret:
-        log("App Secret が空です。書きませんでした。")
-        return 2
-    if "\n" in app_secret or "\r" in app_secret:
-        log("App Secret に改行が含まれています。書きませんでした。")
-        return 2
-
-    secrets_fs.atomic_write_text(path, render_app_env(app_id, app_secret))
-    log(f"app.env を書きました: {path}（600）")
-    return 0
+                path: str | None = None, log=print, by=None) -> int:
+    """Legacy Threads flags retain their spelling; all changes require --by."""
+    from . import appconfig
+    return appconfig.run('threads',app_id=app_id,secret_stdin=stdin,input_func=input_func,path=path,log=log,by=by)
 
 
 def run_app_show(*, as_json: bool = False, path: str | None = None, log=print) -> int:

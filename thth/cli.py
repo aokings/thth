@@ -2519,9 +2519,10 @@ def cmd_auth(args) -> int:
 
     **媒体で分かれる**（`oauth.run_auth()` の中・T3 の配線 2026-09-13）。
     Threads は OAuth の往復、Bluesky は handle と App Password の対話
-    （`thth auth masaru-bluesky`）、Mastodon は `thth token set` へ案内する。
+    （正式 stdin は `token set --stdin`）、Mastodon/X は共通 relay 認可。
     """
-    return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code, by=args.by)
+    return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code, by=args.by, rehearse=getattr(args, "rehearse", False),
+                              input_func=input if getattr(args, "paste", False) else None)
 
 
 def cmd_maintain(args) -> int:
@@ -2607,7 +2608,9 @@ def cmd_app_set(args) -> int:
     （秘密は人の手のまま・設計 §3.7。`auth`・`refresh`・`token set` と同じ扱い）。
     """
     from . import appenv as appenv_mod
-    return appenv_mod.run_app_set(app_id=args.app_id, stdin=args.secret_stdin)
+    from . import appconfig
+    return appconfig.run(args.medium or 'threads', app_id=args.app_id, secret_stdin=args.secret_stdin,
+                         stdin=args.stdin, by=args.by)
 
 
 def cmd_app_show(args) -> int:
@@ -3155,7 +3158,8 @@ def build_parser() -> argparse.ArgumentParser:
         "auth",
         help="OAuth の往復で長期トークンを取る（運用者が対話で実行。MCPには出さない）",
         description=(
-            "認可 URL を表示 → ブラウザで承認 → 戻り URL 全体を貼る → 長期トークンを .token に保存。\n"
+            "認可 URL を表示 → ブラウザで承認 → relayで取得 → 長期トークンを .token に保存。\n"
+            "relayが使えなければ戻りURLを貼る。--pasteで明示的に貼る経路を使う。\n"
             "Threads: 権限の内訳を変える（増やす・減らす）のはこの口だけ。管理画面の"
             "生成ツール（thth token set）は、そのアカウントが過去に承認した範囲でしか出さない。\n"
             "Bluesky: handle と App Password を対話で受ける。Mastodon: thth token set へ。"),
@@ -3167,7 +3171,9 @@ def build_parser() -> argparse.ArgumentParser:
                               "（Meta アプリに登録した値と 1 文字違わず同じにする）")
     p_auth.add_argument("--code", dest="code", default=None,
                          help="戻り URL 全体（code と state の両方が要る。code の値だけでは受け付けない）。"
-                              "省略時は URL を出したあと端末から読む。ssh に -t が無いときはこちら")
+                              "省略時は relayを待つ。--codeは前回発行したstateの再開にだけ使う")
+    p_auth.add_argument("--rehearse", action="store_true", help="RAMだけで未登録relayを最長600秒待つ。保存・認可・交換しない")
+    p_auth.add_argument("--paste", action="store_true", help="relayを使わず戻りURLを貼る（後方互換）")
     p_auth.set_defaults(func=cmd_auth)
 
     p_refresh = sub.add_parser("refresh", help="長期トークンを更新する（50日超・--forceで無条件。MCPには出さない）")
@@ -3216,11 +3222,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor.set_defaults(func=cmd_doctor)
 
     p_app = sub.add_parser(
-        "app", help="~/.config/thth/app.env を置く・見る（thth auth を使うときだけ要る。MCPには出さない）")
+        "app", help="運営者の OAuth client を保存する（Threads/X。MCPには出さない）")
     app_sub = p_app.add_subparsers(dest="app_command", required=True)
     p_app_set = app_sub.add_parser(
-        "set", help="app.env を書く（App Secret は表示されない入力で受け取る）")
-    p_app_set.add_argument("--app-id", dest="app_id", required=True, help="Threads app ID")
+        "set", help="client を 600 で書き presence-only 記録（--by 必須・値は出さない）")
+    p_app_set.add_argument("medium", nargs="?", choices=("threads", "x"), help="Mastodon は auth で自動登録")
+    p_app_set.add_argument("--by", required=True)
+    p_app_set.add_argument("--stdin", action="store_true", help="client_id/client_secret の JSON（X は client_type=confidential/redirect_uri も必要）")
+    p_app_set.add_argument("--app-id", dest="app_id", help="旧 Threads app ID flag（--by 必須）")
     p_app_set.add_argument("--secret-stdin", dest="secret_stdin", action="store_true",
                            help="App Secret を標準入力から黙って 1 行読む（非対話・パイプ用）")
     p_app_set.set_defaults(func=cmd_app_set)
@@ -3229,13 +3238,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_app_show.add_argument("--json", action="store_true", dest="as_json")
     p_app_show.set_defaults(func=cmd_app_show)
 
-    p_token = sub.add_parser("token", help="長期トークンを直接扱う（現状 set のみ。MCPには出さない）")
+    p_token = sub.add_parser("token", help="credential の stdin 入力とローカル取消（MCPには出さない）")
     token_sub = p_token.add_subparsers(dest="token_command", required=True)
     p_token_set = token_sub.add_parser(
         "set",
         help="管理画面で発行したトークンを貼り付けて検証し .token に保存する",
         description=(
-            "Threads の生成ツール・Mastodon の管理画面で発行したトークンを貼る。本人確認できたときだけ書く。\n"
+            "Threads の生成ツール・Mastodon の管理画面で発行したトークンを貼る。本人確認できたときだけ書く。\nBluesky の --stdin は App Password を受け、identifier は台帳の handle を使う。\n"
             "Threads の生成ツールは、そのアカウントが過去に承認した範囲でしかトークンを出さない——"
             "期限の入れ替えには足りるが、権限の内訳は変わらない。権限を変えるなら thth auth。"),
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -3243,7 +3252,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_token_set.add_argument("--by", required=True)
     p_token_set.add_argument("--force", action="store_true", help="既存の .token を上書きする（期限の入れ替え）")
     p_token_set.add_argument("--stdin", action="store_true",
-                              help="標準入力から黙って1行読む（非対話・パイプ用）")
+                              help="標準入力から黙って1行読む（Bluesky は App Password、Threads/Mastodon は access token）")
     p_token_set.set_defaults(func=cmd_token_set)
     p_token_revoke = token_sub.add_parser("revoke", help="ローカルtokenを削除（リモート権限は取り消さない）")
     p_token_revoke.add_argument("account")

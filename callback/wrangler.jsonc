@@ -1,8 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "thth-callback",
-  "main": "src/index.js",
+  "main": "src/worker.js",
   "compatibility_date": "2026-09-01",
+  "durable_objects": {"bindings": [{"name": "AUTH_RELAY", "class_name": "AuthRelay"}]},
+  "migrations": [{"tag": "v1-relay", "new_sqlite_classes": ["AuthRelay"]}],
+  "ratelimits": [{"name": "AUTH_RATE_LIMIT", "namespace_id": "21101",
+                  "simple": {"limit": 120, "period": 60}}],
   // thth.me を Worker の custom domain にする（DNS レコードは wrangler が作る）。
   "routes": [
     { "pattern": "thth.me", "custom_domain": true }
@@ -10,11 +14,11 @@
   // 製品の紹介ページ（設計 v2 §3「ドメイン」: thth.me ＝製品の入口）。
   // 中身は `python tools/build_site.py` が repo の正本から生成する
   // （`README.en.md`・`skills/thth/SKILL.md`・`llms.txt`。手で書かない）。
-  // assets が先に見られ、当たらなかった path だけ Worker が処理する
-  // （`/callback/` は public/ に無いので従来どおり Worker が応える）。
+  // 通常は assets 優先。認可・relay・延期中metadata は Worker を先に通す。
   "assets": {
     "directory": "./public",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    "run_worker_first": ["/relay/*", "/callback", "/callback/*", "/oauth/client-metadata.json"]
   },
   // observability は有効にしない。認可コードはクエリに乗るので、
   // ログに残す動機を最初から作らない（設計 §3.6 の礼儀と同じ趣旨）。

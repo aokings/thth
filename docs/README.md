@@ -18,13 +18,11 @@
 | [設計_2.9.0_管理者の視点_2026-09-19.md](設計_2.9.0_管理者の視点_2026-09-19.md) | 開発セッション・masaru | 2.9.0 の契約: account add --by と来歴・追記のみの変更ログ・`thth admin inventory/account/log/tokens/timers/release/diff`（読むだけ）・serve-reports の admin scope・MCP・skill・変更の通知。§7 が裁定待ち |
 | [設計_2.8.0_タグと話題_BlueskyとMastodon_2026-09-19.md](設計_2.8.0_タグと話題_BlueskyとMastodon_2026-09-19.md) | 開発セッション・masaru | 2.8.0 の契約（旧称 v3.2）: topic を Bluesky の tag facet／Mastodon の末尾タグに写す・タグ軸の観測（searchPosts tag・timelines/tag・trends/tags）・--by tag。§6 が裁定待ち |
 | [設計_v3.1_分析の磨きと採集_2026-09-18.md](設計_v3.1_分析の磨きと採集_2026-09-18.md) | 開発セッション・masaru | 2.6.0／2.7.0 の契約: 刻みごとの値・絡んだ枝の帰結・鮮度・cursor・散らばり・層別・枝の形・cannot_say のコード／720h・フォロワー数の文脈。§5 が裁定待ち |
-| [導入_自分のMetaアプリで動かす.md](導入_自分のMetaアプリで動かす.md) | これから THTH を自分の環境に入れる人 | 最短の道は Meta アプリ → 台帳 → 生成ツールで発行したトークンを `thth token set` → timer。`app.env` と `thth auth`（OAuth）は権限の内訳を変えるときだけの迂回路。各手順に出典と証拠段階 |
+| [導入_承認を押すだけ.md](導入_承認を押すだけ.md) | 招待した利用者と masaru | 利用者は URL を開いて承認。masaru 側の client・台帳・auth・stdin・doctor を分離。X は認可のみ、Bluesky は App Password |
 | [リリースノート_2.7.0_2026-09-18.md](リリースノート_2.7.0_2026-09-18.md) | プロジェクトのセッション | 2.5.0→2.7.0 で読めるようになったもの（刻み別・散らばり・枝の帰結・鮮度・cursor・コード）と読むときの約束 |
 | [使い方_プロジェクトのセッション向け_2026-09-09.md](使い方_プロジェクトのセッション向け_2026-09-09.md) | THTH を使う各プロジェクトのセッション | 承認・投稿の流れを知る。**まずこれだけ読めばよい** |
 | [usage.en.md](usage.en.md) | 英語で読む利用者・LLM | 使い方の英語版（`使い方_…` の要約 ＋ §9 台帳の置き場・§10 `thth ask`・§11 `thth where`／`thth thread`／`thth who`／`thth after`）。**食い違ったら日本語が正** |
-| [導入_Bluesky_2026-09-13.md](導入_Bluesky_2026-09-13.md) | Bluesky のアカウントを 1 本足す人 | App Password の発行から台帳・`thth auth`・dry-run まで（v2・**未稼働**） |
 | [運用_停止通知.md](運用_停止通知.md) | timer の停止を通知したい人 | Healthchecks URL、失敗 ping、安全な診断本文、board での確認 |
-| [導入_Mastodon_2026-09-13.md](導入_Mastodon_2026-09-13.md) | Mastodon のアカウントを 1 本足す人 | インスタンスの選び方・access token の発行・台帳・`thth token set` まで（v2・**未稼働**） |
 | [手順_公開_PyPIとregistry_2026-09-14.md](手順_公開_PyPIとregistry_2026-09-14.md) | masaru | v2.0.0 を PyPI と MCP registry に出す手順（masaru の手／開発でよい を行ごとに明示） |
 | [手順_LLM_トピック選定.md](手順_LLM_トピック選定.md) | THTH を使う LLM | 記事のトピックを選ぶ手順 |
 | [手順_LLM_スレッド連投.md](手順_LLM_スレッド連投.md) | THTH を使う LLM | スレッド連投（`thth: 2` 以上）を書く手順 |

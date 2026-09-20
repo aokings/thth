@@ -273,10 +273,24 @@ def test_step_4_dry_run_is_rehearsal_and_posts_nothing(fresh):
 def test_auth_reads_app_env_and_stops_at_the_code_prompt(fresh):
     """**偽の `app.env` が実際に読まれていること**を見る（変異の的）。
 
-    `--code ""` で非対話にしてあるので HTTP には届かない。app.env → redirect_uri
+    `--paste` で新しい認可を開始し、その state と空 code を返す。HTTP には届かない。app.env → redirect_uri
     → 認可 URL の表示まで進み、code が空なので rc=2 で止まる。
     """
-    r = fresh.run("auth", ACCOUNT, "--code", "", "--by", "test-operator")
+    # Start a fresh flow, then return its state with an empty code. --code now
+    # resumes an existing session and cannot exercise this first-flow boundary.
+    import select
+    import urllib.parse
+    with subprocess.Popen([sys.executable, "-m", "thth", "auth", ACCOUNT, "--paste", "--by", "test-operator"],
+            cwd=fresh.app, env={**fresh.env(), "PYTHONUNBUFFERED":"1"}, text=True,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+        ready, _, _ = select.select([process.stdout], [], [], 15)
+        if not ready:
+            process.kill()
+            pytest.fail("authorization URL was not produced")
+        first = process.stdout.readline()
+        state = urllib.parse.parse_qs(urllib.parse.urlsplit(first.strip()).query)['state'][0]
+        tail, err = process.communicate('https://demo.example.test/?' + urllib.parse.urlencode({'state':state,'code':''}) + "\n", timeout=30)
+        r = subprocess.CompletedProcess(process.args, process.returncode, first+tail, err)
     assert r.returncode == 2, f"rc={r.returncode}\nout={r.stdout}\nerr={r.stderr}"
     assert "app.env が無い" not in r.stdout, r.stdout
     assert "/oauth/authorize?" in r.stdout, r.stdout

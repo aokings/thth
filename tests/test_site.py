@@ -224,7 +224,9 @@ def test_紹介ページは訪問者向けの言葉で書く():
                  "What it guarantees", "送り先はまだ", "何も変えません", "投稿しました: post_id"):
         assert word not in page, f"訪問者向けのページに開発側の語が出ている: {word}"
     assert "AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツール" in page
-    assert "THTH 専用のクラウドサービスは使いません" in page
+    assert "masaru がアプリ・サーバ・台帳を管理します" in page
+    assert "利用者が VM や Meta アプリを用意する必要はありません" in page
+    assert "X は認可だけ対応" in page
     assert page.count("<h2>English</h2>") == 1
 
 
@@ -242,14 +244,30 @@ def test_プライバシーポリシーは正本から生成され_外へ出る�
     assert "<script" not in page
     # 英語が先（審査担当が読む）・日本語も同じ内容
     assert page.index("Privacy Policy") < page.index("プライバシーポリシー")
-    for must in ("does not store, log, or transmit the code",
-                 "your own computer or server",
-                 "graph.threads.net",
-                 "どこにも保存・記録・送信せず",
+    for must in ("operator-managed server", "at most 300 seconds", "600-second session lifetime",
+                 "Long-lived tokens, client secrets and PKCE verifiers", "do not establish",
+                 "削除したことを示しません",
                  "https://github.com/aokings/thth/issues"):
         assert must in page, must
+    for obsolete in ("does not store, log, or transmit the code", "your own computer or server",
+                     "どこにも保存・記録・送信せず", "2026-09-15 施行"):
+        assert obsolete not in page
     # 紹介ページから辿れる・robots は開いている
     index = (PUBLIC / "index.html").read_text(encoding="utf-8")
     assert 'href="/privacy/"' in index
     robots = (PUBLIC / "robots.txt").read_text(encoding="utf-8")
     assert "Disallow: /privacy" not in robots
+
+
+@pytest.mark.parametrize("effective", [None, "2030-01-02"])
+def test_privacy_date_is_explicit_not_invented(monkeypatch, effective):
+    # Fixture date only: the checked-in default remains unset until deployment.
+    monkeypatch.setattr(build_site, "PRIVACY_EFFECTIVE", effective)
+    page = build_site.build_privacy()
+    if effective is None:
+        assert "Unpublished update — deployment date not set" in page
+        assert "未公開の更新案 — 配布日未設定" in page
+        assert "Effective " not in page and " 施行" not in page
+    else:
+        assert "Effective " + effective in page and effective + " 施行" in page
+        assert "Unpublished update" not in page and "未公開の更新案" not in page

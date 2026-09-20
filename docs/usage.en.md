@@ -414,3 +414,7 @@ spring or a shared pool. Each records one minimal line per call in
 
 The same four are available over MCP as `where_to_appear`, `thread_read`,
 `who_is_this`, and `after_you_posted`.
+
+## Authorization in 2.11
+
+Masaru operates the clients, server and ledgers. Invited users approve the URL; they do not set up a VM or developer app. The operator uses `thth auth <account> --by masaru` for Threads, supported Mastodon instances and X. X remains auth-only. Bluesky uses an App Password through `token set --stdin --by`; this is not atproto OAuth. Do not put credentials or authorization URLs into an LLM conversation. See the [unified guide](導入_承認を押すだけ.md) for operator JSON client input, `op read` examples, scope/probe distinctions and refresh limits. A connection page is future work.

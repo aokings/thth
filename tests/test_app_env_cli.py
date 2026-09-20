@@ -45,7 +45,7 @@ def _mode(path) -> int:
 
 def _set(app_id=DUMMY_APP_ID, secret=DUMMY_SECRET, extra=None):
     """`thth app set --app-id … --secret-stdin`（標準入力から 1 行）。"""
-    args = ["app", "set", "--app-id", app_id, "--secret-stdin", *(extra or [])]
+    args = ["app", "set", "--by", "operator", "--app-id", app_id, "--secret-stdin", *(extra or [])]
     return run_thth(args, stdin=(secret + "\n"))
 
 

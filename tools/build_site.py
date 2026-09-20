@@ -238,29 +238,25 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
     add("<h2>投稿したあとの管理も</h2>")
     add("<p>投稿が完了すると、原稿に投稿 ID が記録されます。返信や閲覧数も取得して、同じリポジトリに"
         "保存できます。投稿の履歴をたどったり、次の原稿を考えるときの資料として使えます。</p>")
-    add("<p>THTH は自分の PC やサーバで動かします。原稿や記録の保管に、THTH 専用のクラウドサービスは"
-        "使いません。</p>")
+    add("<p>招待した利用者は認可 URL を開いて承認し、masaru がアプリ・サーバ・台帳を管理します。"
+        "利用者が VM や Meta アプリを用意する必要はありません。接続ページは今後の実装です。</p>")
 
     add("<h2>AI エージェントから使う</h2>")
     add("<p>MCP サーバと Claude Code 用のスキルを同梱しています。コマンドラインから直接使うほか、"
         "AI エージェントとやり取りしながら下書きや投稿の記録を扱えます。</p>")
 
-    add("<h2>インストールと設定</h2>")
-    add("<pre><code>pip install thth\n"
-        "thth account add my-threads --media threads --project my-project\n"
-        "thth doctor my-threads</code></pre>")
-    add("<p>利用する SNS のアカウントと API の設定が必要です。Threads では、自分の Meta アプリを"
-        "登録して使います。詳しい手順は、それぞれの導入ガイドをご覧ください。</p>")
-    add(f'<p><a href="{guide("導入_自分のMetaアプリで動かす.md")}">Threads の導入ガイド</a> ／ '
-        f'<a href="{guide("導入_Bluesky_2026-09-13.md")}">Bluesky の導入ガイド</a> ／ '
-        f'<a href="{guide("導入_Mastodon_2026-09-13.md")}">Mastodon の導入ガイド</a></p>')
+    add("<h2>認可と運営者の設定</h2>")
+    add("<p>masaru がサーバ側で <code>thth auth &lt;account&gt; --by masaru</code> を開始し、"
+        "利用者が URL を開いて承認します。Threads・対応 Mastodon・X の共通入口です。"
+        "X は認可だけ対応し、投稿・採集は未対応。Bluesky は App Password の stdin 入力です。</p>")
+    add(f'<p><a href="{guide("導入_承認を押すだけ.md")}">導入: 承認を押すだけ（利用者と masaru の手順）</a></p>')
 
     add("<h2>English</h2>")
     add('<p class="en">THTH is a command-line tool for drafting and publishing social media posts with AI. '
         "It supports Threads, Bluesky, and Mastodon.</p>")
     add('<p class="en">Review and approve a draft, then let THTH publish it at the scheduled time. '
         "Drafts, published post IDs, replies, and view counts are stored in your own Git repository. "
-        "THTH runs on your computer or server and includes an MCP server and a skill for Claude Code.</p>")
+        "Masaru operates the server and apps; invited users approve an authorization URL. X is authorization-only. A connection page is not implemented yet.</p>")
 
     add(f'<p><a href="{GITHUB}">GitHub</a> ／ <a href="{PYPI}">PyPI</a> ／ '
         f'<a href="{esc(REGISTRY_SEARCH)}">MCP Registry</a> ／ <a href="/llms.txt">llms.txt</a></p>')
@@ -270,24 +266,16 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
     return "\n".join(parts) + "\n"
 
 
-PRIVACY_EFFECTIVE = "2026-09-15"
+# The operator sets the effective date when the relay and policy are deployed
+# together. Generating a candidate must not invent a publication date.
+PRIVACY_EFFECTIVE = None
 
 
 def build_privacy() -> str:
-    """プライバシーポリシー（`/privacy/`）。Meta の App Review が「プライバシーポリシー URL」を
-    要求する（`docs/手順_AppReview_2026-09-14.md` §1.3・2026-09-15 に masaru の指示で作成）。
-
-    **書いてあることは全部この repo で確かめられる事実だけ**にする（盛らない・約束しない）:
-    THTH はサーバを持たない（`README`・設計 v2 §3）、受け口は code を表示するだけで保存も送信もしない
-    （`callback/src/index.js`・`wrangler.jsonc` の observability は無効）、外部リソースを読まない
-    （`tests/test_site.py`）、トークンは利用者の機械の 600 のファイル（`thth/secrets_fs.py`）。
-
-    英語を先に置く——読むのは Meta の審査担当と海外の利用者。日本語は同じ内容を下に。
-    """
+    """Approved factual wording (Claude, 2026-09-20); no new retention promises."""
     esc = lambda s: html_mod.escape(s, quote=True)  # noqa: E731
     parts: list[str] = []
     add = parts.append
-
     add("<!doctype html>")
     add('<html lang="en"><head>')
     add('<meta charset="utf-8">')
@@ -296,144 +284,67 @@ def build_privacy() -> str:
     add("<title>THTH — Privacy Policy / プライバシーポリシー</title>")
     add(f"<style>\n{STYLE}</style>")
     add("</head><body><main>")
-
     add("<h1>THTH — Privacy Policy</h1>")
-    add(f'<p class="note">Effective {esc(PRIVACY_EFFECTIVE)} · <a href="#ja">日本語はこの下</a></p>')
-
-    add("<h2>What THTH is</h2>")
-    add("<p>THTH is a free, open-source command-line tool for drafting, approving, and publishing "
-        "social media posts (Threads, Bluesky, Mastodon). It runs on <strong>your own computer or "
-        "server</strong>. There is no THTH cloud service, no THTH account, and no server operated by "
-        "THTH that receives or stores your content.</p>")
-
-    add("<h2>What this website (thth.me) does</h2>")
-    add("<ul>")
-    add("<li><strong>Static pages</strong> (this page and the product introduction). They load no "
-        "third-party scripts, fonts, images, or analytics, and set no cookies.</li>")
-    add("<li><strong>Authorization receiver</strong> (<code>/callback/</code>). When you authorize THTH "
-        "with Threads, Meta redirects your browser here with a one-time authorization code. The page "
-        "<strong>only displays that code so you can paste it into your terminal</strong>. It does not store, "
-        "log, or transmit the code anywhere, and it removes the code from the address bar immediately. "
-        "Server-side logging for this site is disabled. The hosting provider (Cloudflare) may keep "
-        "standard aggregate traffic metrics, which THTH does not use.</li>")
-    add("<li><strong>Meta callbacks</strong> (<code>/deauthorize</code>, <code>/data-deletion</code>). "
-        "These acknowledge Meta's requests and store nothing (see “Deleting your data”).</li>")
-    add("</ul>")
-
-    add("<h2>Data THTH accesses on your behalf</h2>")
-    add("<p>When <strong>you</strong> authorize THTH for a Threads account and run its commands, THTH "
-        "calls the Threads API with your access token to:</p>")
-    add("<ul>")
-    add("<li>publish posts and replies that <strong>you wrote and explicitly approved</strong> "
-        "(a two-step approval is required for every post);</li>")
-    add("<li>read your profile (id, username), your posts, replies to them, view/like/follower counts, "
-        "and mentions of your account;</li>")
-    add("<li>search public posts and locations, look up public profiles, tag a location on a post, "
-        "share a post to Instagram, and delete a post — <strong>only when you run that command</strong>.</li>")
-    add("</ul>")
-    add("<p>THTH does not access any data you did not authorize, and never acts on Threads without "
-        "a command from you.</p>")
-
-    add("<h2>Where the data is stored</h2>")
-    add("<p>Everything THTH obtains is written to <strong>files on the machine where you run it</strong>: "
-        "your own Git repository (drafts, post IDs, replies, counts) and a configuration directory "
-        "for access tokens (created with owner-only permissions). Nothing is sent to the author of THTH "
-        "or to any third party. The only network destinations are the social media platforms you "
-        "configured (for Threads, Meta's <code>graph.threads.net</code>).</p>")
-
-    add("<h2>Sharing</h2>")
-    add("<p>THTH does not sell, share, or transfer your data. There is no server on our side that holds it.</p>")
-
-    add("<h2>Retention</h2>")
-    add("<p>Data stays on your machine for as long as you keep the files. You can delete them at any time.</p>")
-
-    add('<h2 id="delete">Deleting your data / revoking access</h2>')
-    add("<ul>")
-    add("<li>To revoke THTH's access to your Threads account, remove it in the Threads app "
-        "(Settings → Account → Website permissions) or delete the token file on your machine.</li>")
-    add("<li>Because THTH stores nothing on its own servers, there is nothing for us to delete on our side. "
-        "Meta's data-deletion callback is answered with a confirmation for that reason. "
-        "Data on your own machine is yours to delete.</li>")
-    add("</ul>")
-
-    add("<h2>Who uses the Meta app “THTH”</h2>")
-    add("<p>The Meta app named “THTH” is operated by the author for accounts that hold a role on that app. "
-        "Other people who want to use THTH register <strong>their own</strong> Meta app; their data never "
-        "passes through ours.</p>")
-
+    date_en = "Effective " + esc(PRIVACY_EFFECTIVE) if PRIVACY_EFFECTIVE else "Unpublished update — deployment date not set"
+    add(f'<p class="note">{date_en} · <a href="#ja">日本語はこの下</a></p>')
+    add("<h2>Operator and authorization</h2>")
+    add("<p>THTH runs authorization and posting management on an operator-managed server for invited accounts. "
+        "Users do not need their own VM or Meta app. The operator starts authorization; users review the "
+        "account and permissions on the platform and approve. This does not mean that a user connection "
+        "page, posting interface, or account exit workflow has all been implemented.</p>")
+    add("<h2>Authorization relay</h2>")
+    add("<p>The relay uses a Cloudflare Worker and Durable Object. It temporarily holds a registered "
+        "authorization code for at most 300 seconds after receipt and within the 600-second session lifetime, "
+        "and releases it once to the initiating server. Long-lived tokens, client secrets and PKCE verifiers "
+        "are not sent to the relay. The application deletes the code when consumed or expired. Removing "
+        "application records does not establish physical erasure from the hosting provider's infrastructure "
+        "or backups. Unregistered flows can use the existing return-URL paste fallback.</p>")
+    add("<h2>Server records and communication</h2>")
+    add("<p>Long-lived credentials reside in owner-only files on the operator's server and authenticate "
+        "platform API requests. Drafts, post history and collected records also reside in configured "
+        "server locations. Network destinations are not limited to platform APIs: authorization uses "
+        "thth.me/Cloudflare, and configured repositories may also receive requests. Static pages include "
+        "no third-party scripts or analytics. Worker application observability logs are disabled; this "
+        "does not guarantee that no infrastructure records exist.</p>")
+    add('<h2 id="delete">Stopping access and deleting data</h2>')
+    add("<p>The current <code>/deauthorize</code> and <code>/data-deletion</code> responses do not establish "
+        "that server-side accounts or data have been deleted. Contact the operator about stopping access "
+        "or deleting data. Automated revocation, deletion and record keeping, including integration with "
+        "these callbacks, belong to a later implementation and verification.</p>")
     add("<h2>Contact</h2>")
     add(f'<p>Questions about this policy: open an issue at <a href="{GITHUB}/issues">{esc(GITHUB)}/issues</a>. '
         "Operator: gotoq.</p>")
-
     add("<h2>Changes</h2>")
     add("<p>This page is generated from the THTH source repository; its history is public there.</p>")
 
-    # ---- 日本語 ----
     add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
-    add(f'<p class="note">{esc(PRIVACY_EFFECTIVE)} 施行</p>')
-
-    add("<h2>THTH とは</h2>")
-    add("<p>THTH は、SNS（Threads・Bluesky・Mastodon）の投稿を下書きし、承認し、投稿するための無料の"
-        "オープンソースのコマンドラインツールです。<strong>あなた自身の PC やサーバ</strong>で動きます。"
-        "THTH のクラウドサービスや THTH のアカウントは存在せず、あなたの内容を受け取ったり保存したりする"
-        "THTH 側のサーバはありません。</p>")
-
-    add("<h2>このサイト（thth.me）がすること</h2>")
-    add("<ul>")
-    add("<li><strong>静的なページ</strong>（このページと製品紹介）。第三者のスクリプト・フォント・画像・"
-        "解析ツールを読み込まず、Cookie も使いません。</li>")
-    add("<li><strong>認可の受け口</strong>（<code>/callback/</code>）。Threads で THTH を認可すると、Meta が"
-        "使い捨ての認可コードを付けてブラウザをここへ戻します。このページは<strong>そのコードをターミナルに"
-        "貼れるよう表示するだけ</strong>です。どこにも保存・記録・送信せず、アドレスバーからも直ちに消します。"
-        "サーバ側のログは無効にしています。ホスティング事業者（Cloudflare）が標準的な集計トラフィック指標を"
-        "保持することはありますが、THTH はそれを使いません。</li>")
-    add("<li><strong>Meta 向けの応答</strong>（<code>/deauthorize</code>・<code>/data-deletion</code>）。"
-        "Meta からの通知に応答するだけで、何も保存しません（「データの削除」参照）。</li>")
-    add("</ul>")
-
-    add("<h2>THTH があなたの代わりに扱うデータ</h2>")
-    add("<p><strong>あなた</strong>が Threads アカウントで THTH を認可し、コマンドを実行したとき、THTH は"
-        "あなたのアクセストークンで Threads API を呼び、次のことをします。</p>")
-    add("<ul>")
-    add("<li><strong>あなたが書き、明示的に承認した</strong>投稿・返信を出す（すべての投稿に二段階の承認が要ります）</li>")
-    add("<li>あなたのプロフィール（id・ユーザー名）、投稿、その返信、閲覧数・いいね数・フォロワー数、"
-        "あなたへの言及を読む</li>")
-    add("<li>公開投稿と場所の検索、公開プロフィールの参照、投稿への場所の付与、Instagram への共有、投稿の削除"
-        "——<strong>あなたがそのコマンドを実行したときだけ</strong></li>")
-    add("</ul>")
-    add("<p>認可していないデータには触れず、あなたの指示なしに Threads 上で何かをすることはありません。</p>")
-
-    add("<h2>データの置き場所</h2>")
-    add("<p>THTH が取得したものはすべて、<strong>THTH を動かしている機械のファイル</strong>に書かれます。"
-        "あなた自身の Git リポジトリ（下書き・投稿 ID・返信・数）と、アクセストークンの設定ディレクトリ"
-        "（所有者だけが読める権限で作られます）です。THTH の作者にも第三者にも送られません。通信先は、"
-        "あなたが設定した SNS だけです（Threads なら Meta の <code>graph.threads.net</code>）。</p>")
-
-    add("<h2>第三者提供</h2>")
-    add("<p>THTH はあなたのデータを販売・共有・譲渡しません。こちら側にデータを持つサーバがありません。</p>")
-
-    add("<h2>保存期間</h2>")
-    add("<p>あなたがファイルを残す限り、あなたの機械に残ります。いつでも削除できます。</p>")
-
-    add("<h2>データの削除・認可の取り消し</h2>")
-    add("<ul>")
-    add("<li>Threads アカウントへの THTH のアクセスを取り消すには、Threads アプリ（設定 → アカウント → "
-        "ウェブサイトの許可）で外すか、あなたの機械のトークンファイルを削除してください。</li>")
-    add("<li>THTH は自分のサーバに何も保存していないので、こちら側で削除するものはありません。Meta からの"
-        "データ削除要求には、その理由で確認応答を返します。あなたの機械のデータはあなたが削除します。</li>")
-    add("</ul>")
-
-    add("<h2>Meta アプリ「THTH」を使うのは誰か</h2>")
-    add("<p>「THTH」という名前の Meta アプリは、作者が、そのアプリで役割を持つアカウントのために運用しています。"
-        "THTH を使いたい他の方は<strong>ご自身の</strong> Meta アプリを登録して使うので、その方のデータが"
-        "こちらのアプリを通ることはありません。</p>")
-
+    date_ja = esc(PRIVACY_EFFECTIVE) + " 施行" if PRIVACY_EFFECTIVE else "未公開の更新案 — 配布日未設定"
+    add(f'<p class="note">{date_ja}</p>')
+    add("<h2>運営者と認可</h2>")
+    add("<p>THTH は、運営者が管理するサーバで認可と投稿管理を行うソフトウェアです。今回の導入は招待された"
+        "アカウントが対象で、利用者が自分の VM や Meta アプリを用意する手順ではありません。運営者が認可を開始し、"
+        "利用者は媒体の画面で内容を確認して承認します。利用者向けの接続画面・投稿操作・退出の仕組みがすべて"
+        "実装済みという意味ではありません。</p>")
+    add("<h2>認可の預かり所</h2>")
+    add("<p>認可の預かり所は Cloudflare Worker と Durable Object を使います。登録済みの認可コードを、受付から"
+        "最大300秒、かつ開始から最大600秒の範囲で一時的に保持し、認可を開始したサーバへ一度だけ渡します。"
+        "長期トークン、client secret、PKCE verifier は預かり所へ送りません。消費または失効時にアプリケーション上の"
+        "コードを削除します。Cloudflare 内部のバックアップや物理消去まで保証する説明ではありません。未登録などの"
+        "場合は従来の戻り URL を貼る経路になります。</p>")
+    add("<h2>サーバの記録と通信</h2>")
+    add("<p>長期の認証情報は運営者のサーバの所有者専用ファイルへ保存し、媒体の API への認証に使います。"
+        "下書き・投稿履歴・採集した記録等も設定されたサーバ側の置き場にあります。通信先は媒体 API だけとは限らず、"
+        "認可時の thth.me/Cloudflare や設定された repository 等があります。静的ページには第三者のスクリプトや解析"
+        "ツールを組み込んでいません。Worker のアプリケーション観測ログは無効にしていますが、基盤全体に記録が存在"
+        "しないとの保証はしません。</p>")
+    add("<h2>停止とデータの削除</h2>")
+    add("<p>現在の <code>/deauthorize</code> と <code>/data-deletion</code> の応答は、サーバ内のアカウントやデータを"
+        "削除したことを示しません。停止・削除については運営者へ連絡してください。自動の失効・削除・記録とこれらの"
+        "URL の接続は、別の版で実装・検証する予定です。</p>")
     add("<h2>連絡先</h2>")
     add(f'<p>このポリシーについての質問は <a href="{GITHUB}/issues">{esc(GITHUB)}/issues</a> へ。運用者: gotoq。</p>')
-
     add("<h2>変更</h2>")
     add("<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。</p>")
-
     add('<footer><a href="/">THTH</a> · Free and open source · MIT License<br>© 2026 gotoq</footer>')
     add("</main></body></html>")
     return "\n".join(parts) + "\n"

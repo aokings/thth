@@ -58,6 +58,8 @@ def _account(isolated_account_factory, tmp_path, **overrides):
     overrides.setdefault("redirect_uri", REDIRECT_URI)
     acc = isolated_account_factory(token=token_path, **overrides)
     acc["token_path"] = token_path
+    # --code resumes a previously issued state; it must not create a fresh flow.
+    oauth_mod._save_auth_state(acc["name"], FIXED_STATE)
     return acc
 
 

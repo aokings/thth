@@ -1,7 +1,9 @@
+import {relayRequest, receiveCallback} from "./relay.js";
+
 /**
  * THTH の認可の受け口（thth.me）と、製品の紹介ページの配り手。
  *
- * この Worker が自分で書くのは **`/callback/` の受け口と Meta 用の 3 本だけ**。
+ * この Worker は認可の受け口・短命relay・Meta 用の 3 本を持つ。
  * それ以外（`/`・`/llms.txt`・`/robots.txt`）は `public/` の静的ファイル
  * （`wrangler.jsonc` の `assets`）に任せる——中身は `tools/build_site.py` が
  * repo の正本（`README.en.md`・`skills/thth/SKILL.md`・`llms.txt`）から作る。
@@ -13,7 +15,7 @@
  * 乗る、の 2 つが起きるため、THTH 専用のドメインを 1 つ持つことにした
  * （masaru 裁定 2026-09-09）。
  *
- * このページは受け取ったコードを画面に出すだけで、どこにも送らない。
+ * 登録済みflowは短命relayへ保存し、未登録なら貼付用の画面を出す。
  * 外部リソースも読み込まない（フォントも解析も無し）。
  */
 
@@ -124,15 +126,28 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // 認可の受け口。**ここの振る舞いは紹介ページを足す前と 1 バイトも変えない**
+    if (url.pathname === "/oauth/client-metadata.json") return new Response("Not Found\n", {
+      status: 404, headers: {"cache-control": "no-store", "referrer-policy": "no-referrer"}});
+    if (url.pathname.startsWith("/relay/")) return relayRequest(request, env, url);
+
+    // Existing paste fallback remains byte-compatible when relay is unavailable.
+    // 貼付fallbackは紹介ページを足す前の振る舞いを保つ。
     // （path・本文・ヘッダ・referrer-policy・history.replaceState・秘密を残さない）。
     // 登録してある redirect_uri は https://thth.me/callback/ （docs/導入_…§4）。
     if (url.pathname === "/callback" || url.pathname.startsWith("/callback/")) {
+      const received = (url.pathname === "/callback" || url.pathname === "/callback/")
+        ? await receiveCallback(request, env, url) : null;
+      if (received instanceof Response) return received;
+      if (received === "consumed") return html(
+        `<h1>すでに受け取り済みです</h1><p>完了しなかった場合は、ターミナルで認可をやり直してください。</p>
+         <script>try { history.replaceState(null, "", location.pathname); } catch (e) {}</script>`);
+      if (received === "ready") return html(
+        `<h1>承認を受け付けました</h1><p>ターミナル（VM）が受け取ります。貼り付けは要りません。</p>
+         <script>try { history.replaceState(null, "", location.pathname); } catch (e) {}</script>`);
       return callbackPage(url);
     }
 
-    // Meta が要求する 2 本。開発モードで masaru 自身のアカウントしか使わないが、
-    // 欄を埋めないとアプリの設定が保存できないので、素直に応答だけ返す。
+    // Existing acknowledgement endpoints only; these do not perform account/data deletion.
     if (url.pathname === "/deauthorize") {
       return new Response(null, { status: 200 });
     }
@@ -145,9 +160,13 @@ export default {
     if (url.pathname === "/data-deletion-status") {
       return html(
         `<h1>データ削除について</h1>
-         <p class="sub">THTH は masaru 個人の道具で、Threads から取得した内容は
-         本人の repository にのみ保存されます。</p>
-         <p class="note">削除の依頼は repository の所有者へ直接どうぞ。</p>`);
+         <p class="sub">現在の確認応答は、サーバ内のアカウントやデータを削除したことを示しません。
+         停止・削除については運営者へ連絡してください。</p>
+         <p class="note">自動の失効・削除・記録とこれらの URL の接続は、別の版で実装・検証する予定です。</p>
+         <p class="sub">The current acknowledgement does not establish that server-side accounts or data
+         have been deleted. Contact the operator about stopping access or deleting data.</p>
+         <p class="note">Automated revocation, deletion and record keeping, including integration with
+         these callbacks, belong to a later implementation and verification.</p>`);
     }
 
     // 残りは静的な紹介ページ（public/）。`assets` を先に見る設定なので通常は

@@ -110,6 +110,26 @@ def inspect(account_name: str, *, now) -> dict:
     except accounts_mod.AccountError as e:
         return _finish(row, CONFIG_ERROR, detail=str(e))
 
+    if account_cfg.get('media') == 'x':
+        from .adapters.auth_x import remaining, REFRESH_BEFORE_SECONDS
+        token = accounts_mod.load_token(account_cfg)
+        if token is None:
+            return _finish(row, NO_TOKEN, hint='thth auth <account> --by <actor>')
+        if not isinstance(token,dict):
+            return _finish(row, UNREADABLE, detail='X のtoken形式が読めません')
+        if not token.get('access_token') or not token.get('refresh_token'):
+            return _finish(row, TOKEN_INCOMPLETE, hint='thth auth <account> --by <actor>',
+                           detail='access_token / refresh_token が必要です')
+        try:
+            seconds = remaining(token, now)
+        except ValueError:
+            return _finish(row, UNREADABLE, detail='X の応答由来の期限が判りません')
+        row['obtained_at'] = token.get('obtained_at')
+        row['age_days'] = round((now-jst.parse(token['obtained_at'])).total_seconds()/86400, 2)
+        row['remaining_days'] = round(seconds/86400, 5)
+        return _finish(row, REFRESH_DUE if seconds <= REFRESH_BEFORE_SECONDS else OK,
+                       detail='X は短命です。毎日1回の timer では期限維持を保証しません')
+
     # **媒体を先に引く**（独立監査 1・P1-1・2026-09-13）。期限を持つかどうかも、
     # 更新の口があるかどうかも**媒体の知識**で、`.token` の中身から推し量る
     # ものではない。以前はここが `.token` の `no_expiry` という**データの印
