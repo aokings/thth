@@ -399,3 +399,18 @@ print(json.dumps({'multipart_bytes':size,'same_public_sha':True,'video_wire':Tru
  assert.equal(result.code,0,'Python video bridge failed: '+result.err.split('\n').filter(s=>/^\w+(?:Error|Exception):/.test(s)).map(s=>s.split(':')[0]).join(','));
  assert.equal(result.err,'');assert.deepEqual(JSON.parse(result.out),{multipart_bytes:100000001,same_public_sha:true,video_wire:true,provider_1800:true,published:true});
 });
+
+test('unsatisfiable and unsafe ranges refuse without returning private bytes',async()=>{
+ const f=data(Buffer.alloc(60,65),'sanitized');await ready(f);const cap=opaque();
+ assert.equal((await call(cap,'preview',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at:Date.now()+500000})).status,201);
+ for(const range of ['bytes=60-','bytes=70-','bytes=70-80','bytes=5-4','bytes=9007199254740992-','bytes=0-9007199254740992']){
+  for(const method of ['GET','HEAD']){
+   const response=await mf.dispatchFetch('https://media.test/m/'+cap,{method,headers:{range}});
+   assert.equal(response.status,416);assert.notEqual(response.headers.get('content-type'),'image/png');
+  }
+ }
+ for(const range of ['bytes=59-','bytes=59-100','bytes=0-0']){
+  const response=await mf.dispatchFetch('https://media.test/m/'+cap,{headers:{range}});
+  assert.equal(response.status,206);assert.equal((await response.arrayBuffer()).byteLength,1);
+ }
+});
