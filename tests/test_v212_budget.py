@@ -138,7 +138,7 @@ def test_two_processes_cap_one_cannot_both_reserve(env):
 import time
 try:
  with b.user_read('alpha'):
-  b.before_post(); b.before_get('/2/users/me'); time.sleep(.2); b.observed({'data':{'id':'one'}})
+  b.before_post(); b.before_get('/2/users/me'); b.observed({'data':{'id':'one'}})
  print('accepted')
 except (OSError,ValueError): print('refused')
 """

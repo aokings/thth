@@ -9,12 +9,15 @@ from pathlib import Path
 import re
 import secrets
 import sys
+import time
 from . import accounts, admin_log, jst, server_files
 
 PRICE = Decimal('0.010')
 PRICE_VERSION = '2026-09-20-user-read'
 PRICE_SOURCE = 'https://docs.x.com/x-api/getting-started/pricing'
 _current = contextvars.ContextVar('thth_x_read_reservation', default=None)
+LOCK_WAIT_SECONDS = 5.0
+LOCK_RETRY_SECONDS = 0.01
 STATES = {'reserved', 'post_started', 'get_started', 'uncertain', 'settled', 'released'}
 
 
@@ -119,7 +122,19 @@ def locked():
     if admin_log._active_fd.get() is not None:raise BudgetError('budget_lock_order_refused')
     Path(accounts.thth_root()).mkdir(parents=True,exist_ok=True,mode=0o700)
     with server_files.directory(folder(),create=True,private=True) as fd:
-        with server_files.lock_at(fd,'budget_x.lock'):yield fd
+        # Only lock acquisition may retry; never the caller body or provider I/O.
+        deadline=time.monotonic()+LOCK_WAIT_SECONDS
+        with contextlib.ExitStack() as stack:
+            while True:
+                try:
+                    stack.enter_context(server_files.lock_at(fd,'budget_x.lock'))
+                    break
+                except BlockingIOError:
+                    remaining=deadline-time.monotonic()
+                    if remaining<=0:raise BudgetError('budget_busy') from None
+                    time.sleep(min(LOCK_RETRY_SECONDS,remaining))
+                    if time.monotonic()>=deadline:raise BudgetError('budget_busy') from None
+            yield fd
 
 
 def read():
