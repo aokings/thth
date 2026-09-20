@@ -26,25 +26,41 @@ def require(ok, code):
 def intent_error(manifest):
     attachments=manifest['attachments']
     kinds={row['type'] for row in attachments}
-    if kinds-{'poll','quote'}:
+    if kinds-{'poll','quote','link'}:
         return 'unsupported_attachment: mastodon/typed_attachment_pending'
     if 'poll' in kinds and manifest['files']:return 'unsupported_attachment: mastodon/poll_media_exclusive'
     quote=next((row for row in attachments if row['type']=='quote'),None)
     if quote is not None and (set(quote)!={'type','uri'} or not quote['uri'].isascii() or not quote['uri'].isdecimal()):
         return 'invalid_quote_target: mastodon/local_status_id_required'
+    link=next((row for row in attachments if row['type']=='link'),None)
+    if link is not None and set(link)!={'type','url'}:
+        return 'unsupported_attachment: mastodon/custom_card_fields'
     if manifest['captions']: return 'unsupported_attachment: mastodon/captions'
     options=manifest['post_options']
     if 'poll' in kinds and 'focus' in options:return 'unsupported_attachment: mastodon/poll_focus'
+    if not manifest['files'] and 'focus' in options:return 'unsupported_attachment: mastodon/fileless_focus'
     if set(options)-{'visibility','language','sensitive','spoiler_text','focus','quote_approval_policy'}:
         return 'unsupported_attachment: mastodon/post_options'
     if options.get('visibility','public') not in ('public','unlisted'):
         return 'unsupported_attachment: mastodon/non_public_visibility'
     if 'quote_approval_policy' in options and options['quote_approval_policy'] not in ('public','followers','nobody'):
         return 'invalid_quote_approval_policy: mastodon'
-    if not manifest['files'] and not attachments and 'quote_approval_policy' not in options:return 'unsupported_attachment: mastodon/no_media'
+    if not manifest['files'] and not attachments and not options:return 'unsupported_attachment: mastodon/no_media'
     if any(x['role']!='media' or x['kind'] not in ('image','video') or x['format'] not in MIME for x in manifest['files']):
         return 'unsupported_attachment: mastodon/format'
     return None
+
+
+def check_text_intent(manifest,text):
+    kinds={row['type'] for row in manifest['attachments']}
+    if not manifest['files']:
+        reason='poll_text_required' if 'poll' in kinds else 'quote_text_required' if 'quote' in kinds or 'quote_approval_policy' in manifest['post_options'] else 'status_text_required'
+        require(type(text) is str and bool(text.strip()),reason+': mastodon')
+    link=next((row for row in manifest['attachments'] if row['type']=='link'),None)
+    if link is not None:
+        # Card generation belongs to Mastodon, from the approved plaintext URL.
+        # Exact whitespace-delimited token avoids accepting a host/path prefix.
+        require(type(text) is str and link['url'] in text.split(),'link_text_mismatch: mastodon')
 
 
 def quote_capabilities(body):
@@ -247,10 +263,10 @@ def publish(adapter,post,*,before_publish=None):
         options=post.media_manifest['post_options']
         quote=next((row for row in post.media_manifest['attachments'] if row['type']=='quote'),None)
         quote_intent=quote is not None or 'quote_approval_policy' in options
-        if quote_intent and not post.media_files:require(type(post.text) is str and bool(post.text.strip()),'quote_text_required: mastodon')
         poll=next((row for row in post.media_manifest['attachments'] if row['type']=='poll'),None)
-        if poll is not None:require(type(post.text) is str and bool(post.text.strip()),'poll_text_required: mastodon')
-        code,value=_json(adapter,'GET','/api/v2/instance');require(code==200,'media_capability_unavailable')
+        check_text_intent(post.media_manifest,post.text)
+        if post.media_files or poll is not None or quote_intent:
+            code,value=_json(adapter,'GET','/api/v2/instance');require(code==200,'media_capability_unavailable')
         if poll is not None:
             cap=poll_capabilities(value,adapter.instance);check_poll(cap,poll,post.text)
         if quote_intent:quote_capabilities(value)

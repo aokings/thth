@@ -142,15 +142,14 @@ def lint_notes(cfg,fm,*,text=None):
         # Preserve the existing file-media lint order: unavailable live limits
         # take precedence over opening local media; never fall back to cache.
         special=bool(fm.get('attachments')) or 'quote_approval_policy' in fm.get('post_options',{})
-        cap=mastodon_media.observe(cfg) if not special else None
+        cap=mastodon_media.observe(cfg) if fm.get('media') and not special else None
         with media.prepare(cfg['repo_dir'],fm,cfg['media']) as (manifest,items):
             reason=mastodon_media.intent_error(manifest)
             if reason:return [reason]
             poll=next((row for row in manifest['attachments'] if row['type']=='poll'),None)
             quote=any(row['type']=='quote' for row in manifest['attachments']) or 'quote_approval_policy' in manifest['post_options']
-            if poll is not None and (type(text) is not str or not text.strip()):return ['poll_text_required: mastodon']
-            if quote and not items and (type(text) is not str or not text.strip()):return ['quote_text_required: mastodon']
-            if special:
+            mastodon_media.check_text_intent(manifest,text)
+            if special and (items or poll is not None or quote):
                 body,instance=mastodon_media.observe_instance(cfg);notes=[]
                 if poll is not None:
                     limits=mastodon_media.poll_capabilities(body,instance)
@@ -163,7 +162,8 @@ def lint_notes(cfg,fm,*,text=None):
                     limits=mastodon_media.capabilities(body,instance);mastodon_media.check_limits(limits,items)
                     mastodon_media.cache(cfg,limits);notes.append('warning: '+cached_note(cfg))
                 return notes
-            mastodon_media.check_limits(cap,items)
+            if items:mastodon_media.check_limits(cap,items)
+            else:return ['warning: Mastodon generates a preview from the approved body URL; display is unobserved'] if any(row['type']=='link' for row in manifest['attachments']) else []
         return ['warning: '+cached_note(cfg)]
     except (OSError,ValueError) as exc:
         code=str(exc) if isinstance(exc,(media.MediaError,FormatError)) else 'media_capability_unavailable'
