@@ -1,19 +1,22 @@
-"""Threads image containers from immutable prepared bytes and private R2 grants.
+"""Threads image/video containers from immutable bytes and private R2 grants.
 
 C11: JPEG/PNG, provisional SI 8 MB, ratio <=10 either way. Numeric byte
 boundary is an adjudicated temporary contract, not a verified API integer cap.
 """
 from __future__ import annotations
 import json
+import math
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from . import base
-from .. import accounts,approval_relay,httpsafe,jst,leave_gate,media,media_relay
+from .. import accounts,approval_relay,httpsafe,jst,leave_gate,media,media_relay,mediaformats
 
 MAX_BYTES=8_000_000
 POLL_SECONDS=120.0
+VIDEO_POLL_SECONDS=1800.0
+MAX_VIDEO_BYTES=1_000_000_000
 POLL_INTERVAL=2.0
 
 
@@ -27,18 +30,51 @@ def intent_error(manifest):
     rows=manifest['files']
     if not 1<=len(rows)<=20:return 'media_limit_exceeded: count'
     for row in rows:
-        if row['role']!='media' or row['kind']!='image' or row['format'] not in ('jpeg','png'):
-            return 'unsupported_attachment: threads/'+str(row['format'])
+        video=row['kind']=='video' and row['format'] in ('mp4','mov')
+        image=row['kind']=='image' and row['format'] in ('jpeg','png')
+        if row['role']!='media' or not (video or image):return 'unsupported_attachment: threads/'+str(row['format'])
         if type(row['public_size']) is not int or row['public_size']<1:return 'media_size_unavailable'
-        if row['public_size']>MAX_BYTES:return 'media_limit_exceeded: bytes (provisional SI 8000000)'
+        if row['public_size']>(MAX_VIDEO_BYTES if video else MAX_BYTES):return 'media_limit_exceeded: bytes (provisional SI '+str(MAX_VIDEO_BYTES if video else MAX_BYTES)+')'
         w,h=row.get('width'),row.get('height')
-        if type(w) is not int or type(h) is not int or w<=0 or h<=0:return 'media_dimensions_unavailable'
-        if max(w,h)>10*min(w,h):return 'media_limit_exceeded: aspect_ratio'
+        if type(w) not in (int,float) or type(h) not in (int,float) or not math.isfinite(w) or not math.isfinite(h) or w<=0 or h<=0:return 'media_dimensions_unavailable'
+        if video:
+            d=row.get('duration')
+            if type(d) not in (int,float) or not math.isfinite(d):return 'media_duration_unavailable'
+            if not 0<d<=300:return 'media_limit_exceeded: duration'
+            if w>1920:return 'media_limit_exceeded: width'
+            if w*100<h or w>10*h:return 'media_limit_exceeded: aspect_ratio'
+        elif type(w) is not int or type(h) is not int:return 'media_dimensions_unavailable'
+        elif max(w,h)>10*min(w,h):return 'media_limit_exceeded: aspect_ratio'
     return None
 
 
-def notes(manifest):
-    return ['warning: threads provider scales image width below 320 or above 1440; ICC retained, provider converts color space' for row in manifest['files'] if (row['height'] if row['orientation'] in (5,6,7,8) else row['width']) not in range(320,1441)]
+def video_notes(items):
+    notes=[]
+    for item in items:
+        row=item.manifest
+        if row['kind']!='video':continue
+        facts=mediaformats.threads_video_info(item._public_fd,row['public_size'])
+        if facts['edit_lists']:notes.append('warning: threads video has edit lists; provider may refuse')
+        if not facts['moov_at_front']:notes.append('warning: threads video moov follows mdat; provider may refuse')
+        require(all(c in ('avc1','avc3','hvc1','hev1') for c in facts['video_codecs']),'unsupported_attachment: threads/video_codec')
+        require(False not in facts['progressive'],'unsupported_attachment: threads/interlaced_video')
+        require(all(v is None or v<=100_000_000 for v in facts['bitrates']),'media_limit_exceeded: video_bitrate')
+        for audio in facts['audio']:
+            require(audio['codec']=='mp4a','unsupported_attachment: threads/audio_codec')
+            require(audio['channels'] is None or audio['channels'] in (1,2),'media_limit_exceeded: audio_channels')
+            require(audio['sample_rate'] is None or audio['sample_rate']<=48000,'media_limit_exceeded: audio_sample_rate')
+        try:width,height,rate=mediaformats.video_metrics(item._public_fd,row['public_size'])
+        except mediaformats.FormatError:notes.append('warning: threads video frame rate unobserved; provider may refuse')
+        else:
+            require(23<=rate<=60,'media_limit_exceeded: frame_rate')
+            require(width<=1920,'media_limit_exceeded: width')
+            require(width*100>=height and width<=10*height,'media_limit_exceeded: aspect_ratio')
+        notes.append('warning: threads video bitstream codec/GOP/chroma/VBR and audio AAC/bitrate are not certified; provider may refuse')
+    return notes
+
+
+def notes(manifest,items=()):
+    return ['warning: threads provider scales image width below 320 or above 1440; ICC retained, provider converts color space' for row in manifest['files'] if row['kind']=='image' and (row['height'] if row['orientation'] in (5,6,7,8) else row['width']) not in range(320,1441)]+video_notes(items)
 
 
 class NoRedirect(httpsafe.SameOriginRedirectHandler):
@@ -78,8 +114,8 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         if before_publish:
             reason=before_publish();require(not reason,str(reason))
         require(all(time.time()*1000<g['expires_at'] for g in grants),'media_provider_url_expired')
-    def wait(container):
-        deadline=time.monotonic()+POLL_SECONDS
+    def wait(container,*,video=False):
+        deadline=time.monotonic()+(VIDEO_POLL_SECONDS if video else POLL_SECONDS)
         while True:
             veto();remaining=min(deadline-time.monotonic(),min(g['expires_at']/1000-time.time() for g in grants))
             require(remaining>0,'media_processing_timeout')
@@ -93,6 +129,7 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         require(callable(progress) and relay is not None,'media_journal_required')
         reason=intent_error(post.media_manifest);require(reason is None,reason or '')
         require(len(post.media_files)==len(post.media_manifest['files']) and all(item.manifest==row for item,row in zip(post.media_files,post.media_manifest['files'])),'media_prepared_mismatch')
+        video_notes(post.media_files)  # Same measured facts as lint, before any upload.
         require(type(adapter.user_id) is str and adapter.user_id.isascii() and adapter.user_id.isdecimal(),'media_account_id_invalid')
         common={'text':post.text}
         if post.reply_to:common['reply_to_id']=post.reply_to
@@ -105,16 +142,17 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
             veto();record('granting',index=index)
             grant=relay.grant(item,source);grants.append(grant)
             veto();record('creating',index=index)
-            params={'media_type':'IMAGE','image_url':grant['url'],'alt_text':item.manifest['alt']}
+            is_video=item.manifest['kind']=='video'
+            params={'media_type':'VIDEO' if is_video else 'IMAGE','video_url' if is_video else 'image_url':grant['url'],'alt_text':item.manifest['alt']}
             if len(post.media_files)>1:params['is_carousel_item']='true'
             else:params.update(common)
             container=identifier(_json(adapter,'POST','/'+adapter.user_id+'/threads',params))
-            ids.append(container);record('processing',index=index);wait(container);record('ready',index=index)
+            ids.append(container);record('processing',index=index);wait(container,video=is_video);record('ready',index=index)
         container=ids[0]
         if len(ids)>1:
             veto();record('creating_carousel')
             container=identifier(_json(adapter,'POST','/'+adapter.user_id+'/threads',{'media_type':'CAROUSEL','children':','.join(ids),**common}))
-            record('processing_carousel',container_id=container);wait(container);record('ready',container_id=container)
+            record('processing_carousel',container_id=container);wait(container,video=any(i.manifest['kind']=='video' for i in post.media_files));record('ready',container_id=container)
         if on_container_created:on_container_created(container)
         veto();record('publishing',container_id=container)
         result=identifier(_json(adapter,'POST','/'+adapter.user_id+'/threads_publish',{'creation_id':container}))
@@ -129,7 +167,7 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         # to enrich that record must not erase publication or retry either API.
         try:record('published',post_id=result,publication_ack='acknowledged' if acknowledged else 'unconfirmed')
         except (OSError,ValueError,RuntimeError,accounts.AccountStopped):pass
-        return base.PublishResult(result,None,ts,media=[{'sha256':item.manifest['public_sha256'],'kind':'image','alt_present':True,'remote_id':remote} for item,remote in zip(post.media_files,ids)])
+        return base.PublishResult(result,None,ts,media=[{'sha256':item.manifest['public_sha256'],'kind':item.manifest['kind'],'alt_present':True,'remote_id':remote} for item,remote in zip(post.media_files,ids)])
     except accounts.AccountStopped:
         return base.PublishResult(None,None,ts,error='account_stopped',failure='media_held' if ids and phase not in ('publishing','published') else 'media_ambiguous' if phase!='preflight' else 'publish_vetoed')
     except (OSError,ValueError,RuntimeError,urllib.error.URLError,approval_relay.RelayError) as exc:

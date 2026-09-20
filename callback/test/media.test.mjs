@@ -342,3 +342,60 @@ test('lost empty multipart allocation cannot accept parts and malformed public r
 });
 
 test('workerd outbound service canary denies external fetch',async()=>{const response=await mf.dispatchFetch('https://media.test/__media-egress-canary');assert.equal(response.status,503);assert.equal(await response.text(),'external_denied');});
+
+test('real Python video multipart retains bytes and VIDEO publication through Worker R2',async()=>{
+ const apps=join(runtimeDirectory,'video-apps');await mkdir(apps,{mode:0o700});
+ await writeFile(join(apps,'relay-signer.key'),privateKey.export({type:'pkcs8',format:'pem'}),{mode:0o600});
+ const origin=String(await mf.ready).replace(/\/$/,'');
+ const script=`import hashlib,http.server,json,os,secrets,struct,threading,time,urllib.parse
+from pathlib import Path
+from thth import accounts,inflight,media,media_delivery,media_relay,httpsafe
+from thth.adapters import base,threads
+from tests.test_v213_mastodon_media import video_timing
+root=Path(os.environ['HOME'])/'video-repo';root.mkdir()
+raw=video_timing([(30,1000)],scale=30000);at=raw.index(b'mdat')-4
+prefix=raw[:at];size=100_000_001
+with (root/'v.mp4').open('wb') as f:
+ f.write(prefix+struct.pack('>I',size-len(prefix))+b'mdat');f.truncate(size)
+fm={'media':[{'file':'v.mp4','alt':'generated video'}]};cfg={'account':'video-e2e','media':'threads','repo_dir':str(root)}
+manifest=media.manifest_for(fm,cfg);expected=manifest['files'][0]['public_sha256'];assert manifest['files'][0]['public_size']==size
+seen=[];grants=[]
+original_grant=media_relay.MediaRelay.grant
+def grant(self,item,source,**kw):
+ start=time.time()*1000;value=original_grant(self,item,source,**kw)
+ assert start+1_700_000<value['expires_at']<=time.time()*1000+1_800_000
+ grants.append(value);return value
+media_relay.MediaRelay.grant=grant
+class Graph(http.server.BaseHTTPRequestHandler):
+ def log_message(self,*args):pass
+ def reply(self,value):
+  b=json.dumps(value).encode();self.send_response(200);self.send_header('Content-Length',str(len(b)));self.end_headers();self.wfile.write(b)
+ def do_GET(self):self.reply({'status':'FINISHED'})
+ def do_POST(self):
+  form=urllib.parse.parse_qs(self.rfile.read(int(self.headers['Content-Length'])).decode())
+  if self.path.endswith('/threads'):
+   assert form['media_type']==['VIDEO'] and form['alt_text']==['generated video'] and 'image_url' not in form
+   h=hashlib.sha256();n=0
+   with httpsafe.urlopen(form['video_url'][0],timeout=10) as response:
+    while True:
+     b=response.read(1024*1024)
+     if not b:break
+     n+=len(b);h.update(b)
+   assert n==size and h.hexdigest()==expected
+   seen.append('video');self.reply({'id':'551'})
+  else:seen.append('publish');self.reply({'id':'991'})
+server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Graph);worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
+try:
+ state=accounts.state_dir_for('video-e2e');inflight.write(state,file='fixture',started='2030-01-01T00:00:00+09:00')
+ adapter=threads.ThreadsAdapter(base_url='http://127.0.0.1:'+str(server.server_port),user_id='123',access_token=secrets.token_urlsafe(30),wait_seconds=0)
+ result=media_delivery.publish(adapter,base.Post(''),cfg=cfg,fm=fm,manifest=manifest,state_dir=state)
+ assert result.post_id=='991' and result.media[0]['kind']=='video' and seen==['video','publish']
+ assert len(grants)==1 and inflight.read(state)['media']['publication_ack']=='acknowledged'
+finally:server.shutdown();server.server_close();worker.join(3)
+print(json.dumps({'multipart_bytes':size,'same_public_sha':True,'video_wire':True,'provider_1800':True,'published':True}))`;
+ const {spawn}=await import('node:child_process');
+ const child=spawn('/opt/homebrew/Caskroom/miniforge/base/bin/python',['-B','-c',script],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'video-root'),THTH_MEDIA_BASE_URL:origin,THTH_TEST_ALLOW_HTTP:'1',TMPDIR:runtimeDirectory,PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},stdio:['ignore','pipe','pipe']});
+ const result=await new Promise(resolve=>{let out='',err='';const timer=setTimeout(()=>child.kill('SIGKILL'),60000);child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);child.on('close',code=>{clearTimeout(timer);resolve({code,out,err});});});
+ assert.equal(result.code,0,'Python video bridge failed: '+result.err.split('\n').filter(s=>/^\w+(?:Error|Exception):/.test(s)).map(s=>s.split(':')[0]).join(','));
+ assert.equal(result.err,'');assert.deepEqual(JSON.parse(result.out),{multipart_bytes:100000001,same_public_sha:true,video_wire:true,provider_1800:true,published:true});
+});

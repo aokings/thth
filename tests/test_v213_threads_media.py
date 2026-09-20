@@ -29,7 +29,8 @@ def wire(monkeypatch):
         def do_POST(self):
             body=urllib.parse.parse_qs(self.rfile.read(int(self.headers['Content-Length'])).decode(),keep_blank_values=True);state['calls'].append(('POST',self.path,body))
             if self.path.endswith('/threads'):
-                if 'image_url' in body:state['fetched'].append(state['images'][body['image_url'][0]])
+                for key in ('image_url','video_url'):
+                    if key in body:state['fetched'].append(state['images'][body[key][0]])
                 if state['on_create']:state['on_create']()
                 self.reply(*(state['create'] or (200,{'id':str(10+len(posts(state,'/threads')))})))
             elif self.path.endswith('/threads_publish'):self.reply(*(state['publish'] or (200,{'id':'100'})))
@@ -58,7 +59,7 @@ def env(tmp_path,monkeypatch,wire):
             return secrets.token_urlsafe(32)
         def grant(self,item,source):
             url='https://media.invalid/m/'+secrets.token_urlsafe(32);wire['images'][url]=client['upload'][-1]
-            value={'url':url,'expires_at':int(time.time()*1000)+600000};client['grants'].append(value);return value
+            value={'url':url,'expires_at':int(time.time()*1000)+(1800000 if item.manifest['kind']=='video' else 600000)};client['grants'].append(value);return value
         def result(self,grant,*,published):
             client['results'].append(published)
             if client['fail']:raise media_relay.MediaRelayError('media_relay_outcome_unknown')

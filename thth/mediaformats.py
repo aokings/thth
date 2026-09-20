@@ -386,7 +386,7 @@ def gif(data):
     return Inspection('gif','image',width,height,duration if frames>1 else None)
 
 
-def bmff(fd,size):
+def bmff(fd,size,*,allow_edit_lists=False):
     """Walk bounded boxes without loading video payloads or rewriting bytes."""
     def read(at,n):
         require(0 <= at <= size-n); result = os.pread(fd,n,at); require(len(result)==n); return result
@@ -485,6 +485,13 @@ def bmff(fd,size):
                     elif mk in containers: walk(ma,mb,depth+1)
                     elif mk in (b'free',b'skip'):padding(ma,mb)
                     else:raise FormatError('location_metadata_unverifiable')
+            elif kind==b'elst' and allow_edit_lists:
+                # Threads C11: a structurally valid edit list is a provider
+                # warning. It never exempts adjacent metadata from this walk.
+                require(b-a>=8);version=read(a,1)[0]
+                require(version in (0,1) and read(a+1,3)==b'\0'*3)
+                count=int.from_bytes(read(a+4,4),'big')
+                require(b-a==8+count*(20 if version else 12))
             elif kind in (b'moof',b'mvex',b'elst'):
                 raise FormatError('duration_unverifiable')
             elif kind in containers:
@@ -500,9 +507,9 @@ def bmff(fd,size):
     return Inspection('mov' if brand==b'qt  ' else 'mp4','video' if video else 'audio',w,h,duration)
 
 
-def inspect(fd,size):
+def inspect(fd,size,*,allow_edit_lists=False):
     head=os.pread(fd,16,0)
-    if len(head)>=8 and head[4:8] in (b'ftyp',b'free',b'wide',b'moov',b'mdat'): return bmff(fd,size)
+    if len(head)>=8 and head[4:8] in (b'ftyp',b'free',b'wide',b'moov',b'mdat'): return bmff(fd,size,allow_edit_lists=allow_edit_lists)
     data=os.pread(fd,size,0); require(len(data)==size)
     if head.startswith(b'\xff\xd8'): return jpeg(data)
     if head.startswith(b'\x89PNG\r\n\x1a\n'): return png(data)
@@ -549,3 +556,43 @@ def video_metrics(fd,size):
         width,height=struct.unpack('>HH',read(a+24,4));require(width>0 and height>0,'video_dimensions_unverifiable')
         return width,height,Fraction(samples*scale,ticks)
     raise FormatError('video_rate_unverifiable')
+
+
+def threads_video_info(fd,size):
+    """Observable BMFF headers only; no bitstream codec certification.
+
+    Call after the privacy/structure walk. Movie time is already in Inspection;
+    unknown bitstream GOP/chroma/bitrate is not invented from container labels.
+    """
+    def read(a,n):
+        require(0<=a<=size-n);v=os.pread(fd,n,a);require(len(v)==n);return v
+    def boxes(a,b):
+        while a<b:
+            require(a+8<=b);h=read(a,8);n=int.from_bytes(h[:4],'big');prefix=8
+            if n==1:n=int.from_bytes(read(a+8,8),'big');prefix=16
+            if n==0:n=b-a
+            require(n>=prefix and a+n<=b);yield h[4:],a+prefix,a+n;a+=n
+    top=list(boxes(0,size));kinds=[k for k,_,_ in top]
+    facts={'moov_at_front':kinds.index(b'moov')<kinds.index(b'mdat'),'edit_lists':False,'video_codecs':[],'audio':[],'progressive':[],'bitrates':[]}
+    def walk(a,b):
+        for k,x,y in boxes(a,b):
+            if k==b'elst':facts['edit_lists']=True
+            elif k in (b'moov',b'trak',b'mdia',b'minf',b'stbl',b'edts'):walk(x,y)
+            elif k==b'stsd':
+                require(y-x>=8)
+                for codec,ea,eb in boxes(x+8,y):
+                    video=codec in (b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v',b'jpeg',b'mjpa',b'mjpb')
+                    if video:
+                        facts['video_codecs'].append(codec.decode('ascii'));prefix=78
+                    else:
+                        require(eb-ea>=28);version=int.from_bytes(read(ea+8,2),'big');prefix=28+(16 if version else 0)
+                        channels=int.from_bytes(read(ea+16,2),'big');rate=int.from_bytes(read(ea+24,4),'big')/65536
+                        facts['audio'].append({'codec':codec.decode('ascii'),'channels':channels or None,'sample_rate':rate or None})
+                    for ext,xa,xb in boxes(ea+prefix,eb):
+                        if video and ext==b'fiel':
+                            require(xb-xa==2);fields=read(xa,2)[0]
+                            facts['progressive'].append(True if fields==1 else False if fields==2 else None)
+                        elif video and ext==b'btrt':
+                            require(xb-xa==12);maximum=int.from_bytes(read(xa+4,4),'big');facts['bitrates'].append(maximum or None)
+    walk(0,size)
+    return facts
