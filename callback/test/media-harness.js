@@ -1,7 +1,7 @@
 import worker from '../src/worker.js';
 import {MediaObject} from '../src/media-object.js';
 import {mediaStub} from '../src/media.js';
-import {ApprovalAccount,ApprovalPerson,ApprovalSession} from '../src/approval-object.js';
+import {ApprovalAccount as BaseAccount,ApprovalPerson,ApprovalSession} from '../src/approval-object.js';
 import {accountStub} from '../src/approval.js';
 export class TestMedia extends MediaObject {
   constructor(ctx,env){
@@ -30,6 +30,16 @@ export class TestMedia extends MediaObject {
     }});
     super(ctx,{...env,MEDIA_BUCKET:bucket});target=this;
   }
+  async cleanupAuthority(row){
+    const stub=await super.cleanupAuthority(row),target=this,result={};
+    for(const key of ['cleanupRegister','cleanupRemove','cleanupFailed'])result[key]=async(...args)=>{
+      if(target.cleanupFault===key){target.cleanupFault=null;throw Error('synthetic_cleanup_rpc_failure');}
+      const value=await stub[key](...args);
+      if(target.cleanupLoss===key){target.cleanupLoss=null;throw Error('synthetic_cleanup_rpc_response_loss');}
+      return value;
+    };
+    return result;
+  }
   async schedule(row){if(this.failAlarm){this.failAlarm=false;throw Error('synthetic_alarm_fault');}return super.schedule(row);}
   atomic(fn){return super.atomic(()=>{const value=fn();if(this.failSave){this.failSave=false;throw Error('synthetic_storage_fault');}return value;});}
   now(){return this.clock??Date.now();}
@@ -40,11 +50,22 @@ export class TestMedia extends MediaObject {
     if(this.afterPut==='revoke')await(await accountStub(this.env,this.row().account)).manage('revoke',{}, {nonce:'a'.repeat(43),time:Date.now()});
     return result;
   }
-  async control(data){this.clock=data.clock;this.afterPut=data.afterPut;this.afterR2=data.afterR2;this.failSave=data.failSave;this.failAlarm=data.failAlarm;this.failR2=data.failR2;if(data.alarm)await this.alarm();return data.inspect?{rows:[...this.ctx.storage.kv.list()],alarm:await this.ctx.storage.getAlarm()}:[...this.ctx.storage.kv.list()];}
+  async control(data){this.clock=data.clock;this.afterPut=data.afterPut;this.afterR2=data.afterR2;this.failSave=data.failSave;this.failAlarm=data.failAlarm;this.failR2=data.failR2;this.cleanupFault=data.cleanupFault;this.cleanupLoss=data.cleanupLoss;if(data.alarm)await this.alarm();return data.inspect?{rows:[...this.ctx.storage.kv.list()],alarm:await this.ctx.storage.getAlarm()}:[...this.ctx.storage.kv.list()];}
 }
-export {ApprovalAccount,ApprovalPerson,ApprovalSession};
+export class ApprovalAccount extends BaseAccount {
+  replay(ticket){const clock=this.clock;this.clock=undefined;try{return super.replay(ticket);}finally{this.clock=clock;}}
+  now(){return this.clock??Date.now();}
+  async control(data){
+    this.clock=data.clock;
+    if(data.failed)await this.cleanupFailed(data.failed);
+    return {rows:[...this.ctx.storage.kv.list({prefix:'media_cleanup:'})],cleanup:this.cleanupStatus()};
+  }
+}
+export {ApprovalPerson,ApprovalSession};
 export default {async fetch(request,env){
   const url=new URL(request.url);if(url.pathname==='/__media-egress-canary')return fetch('https://egress-canary.invalid/blocked');
+  const account=/^\/__cleanup\/([A-Za-z0-9_.-]+)$/.exec(url.pathname);
+  if(account)return Response.json(await(await accountStub(env,account[1])).control(await request.json()));
   const match=/^\/__media\/([A-Za-z0-9_-]{43})$/.exec(url.pathname);
   if(match)return Response.json(await(await mediaStub(env,match[1])).control(await request.json()));
   return worker.fetch(request,env);

@@ -132,10 +132,22 @@ def test_final_stale_holds_known_blob(env,wire):
     assert len(journal['media']['remote_ids'])==1 and not calls(wire,'createRecord')
 
 
-def test_source_change_after_upload_is_held(env,wire):
-    wire['after_upload']=lambda:(env[2]/'a.png').write_bytes(png()+b'changed')
-    result,journal,_=invoke(env);assert result.error=='media_source_changed' or 'source_changed' in result.error
-    assert result.failure in ('media_held','media_ambiguous') and not calls(wire,'createRecord') and journal['media']['remote_ids']
+def test_source_change_after_upload_is_held(env,wire,monkeypatch):
+    # The server's after_upload hook races the client's final chunks() check.
+    # Replace only after a validated blob ID is durably ready, before final veto.
+    original=media_delivery._progress;ready=[]
+    def progress(name,manifest,origin,phase,**details):
+        original(name,manifest,origin,phase,**details)
+        if phase=='ready':
+            ready.append(inflight.read(accounts.state_dir_for(name))['media']['remote_ids'])
+            replacement=env[2]/'replacement.png';replacement.write_bytes(png()+b'changed')
+            replacement.replace(env[2]/'a.png')
+    monkeypatch.setattr(media_delivery,'_progress',progress)
+    result,journal,_=invoke(env)
+    assert result.error and 'source_changed' in result.error
+    assert result.failure=='media_held' and journal['media']['phase']=='held'
+    assert ready==[[expected_cid(png())]] and journal['media']['remote_ids']==ready[0]
+    assert len(calls(wire,'uploadBlob'))==1 and not calls(wire,'createRecord')
 
 
 @pytest.mark.parametrize('status,phase',[(400,'held'),(500,'unknown')])

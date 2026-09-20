@@ -109,7 +109,7 @@ def signed_request(kind, subject, operation, body):
         role = 'operator'
     elif kind == 'deletion' and (subject == 'inbox' and operation == 'list' or OPAQUE.fullmatch(subject) and operation in ('read','verify','complete','discard')):
         role = 'operator'
-    elif kind == 'account' and PERSON.fullmatch(subject) and operation in ('revoke','status'):
+    elif kind == 'account' and PERSON.fullmatch(subject) and operation in ('revoke','status','cleanup-retry'):
         role = 'operator'
     elif kind == 'session' and OPAQUE.fullmatch(subject) and operation in ('create','consume','status','cancel'):
         role = 'job'

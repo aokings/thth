@@ -7,7 +7,9 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
-import {canonical} from '../src/media.js';
+import {pythonForTests} from './python-runtime.js';
+import {canonical,mediaRequest} from '../src/media.js';
+import {canonical as approvalCanonical} from '../src/approval.js';
 const opaque=()=>randomBytes(32).toString('base64url'),sha=b=>createHash('sha256').update(b).digest('hex');
 const logs=[],secrets=[];let mf,privateKey,runtimeDirectory,options;
 class Silent extends Log{constructor(){super(LogLevel.NONE);}log(v){logs.push(String(v));}}
@@ -15,7 +17,7 @@ before(async()=>{
   const pair=generateKeyPairSync('rsa',{modulusLength:3072});privateKey=pair.privateKey;
   const files=['test/media-harness.js','src/media-object.js','src/media.js','src/worker.js','src/index.js','src/relay.js','src/relay-object.js','src/approval.js','src/approval-object.js','src/deletion.js','src/deletion-object.js'];
   runtimeDirectory=await realpath(await mkdtemp(join(tmpdir(),'media-runtime-')));
-  options=convertV4MiniflareOptions({modules:await Promise.all(files.map(async name=>({type:'ESModule',path:fileURLToPath(new URL('../'+name,import.meta.url)),contents:await readFile(new URL('../'+name,import.meta.url),'utf8')}))),compatibilityDate:'2026-09-01',cf:false,outboundService:()=>new Response('external_denied',{status:503}),log:new Silent(),bindings:{APPROVAL_PUBLIC_KEY:pair.publicKey.export({type:'spki',format:'der'}).toString('base64url')},durableObjects:{MEDIA_OBJECT:{className:'TestMedia',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},APPROVAL_PERSON:{className:'ApprovalPerson',useSQLite:true},APPROVAL_SESSION:{className:'ApprovalSession',useSQLite:true}},ratelimits:{APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}}},r2Buckets:['MEDIA_BUCKET']});options.resourcePersistencePath=join(runtimeDirectory,'storage');
+  options=convertV4MiniflareOptions({modules:await Promise.all(files.map(async name=>({type:'ESModule',path:fileURLToPath(new URL('../'+name,import.meta.url)),contents:await readFile(new URL('../'+name,import.meta.url),'utf8')}))),compatibilityDate:'2026-09-01',cf:false,outboundService:()=>new Response('external_denied',{status:503}),log:new Silent(),bindings:{APPROVAL_PUBLIC_KEY:pair.publicKey.export({type:'spki',format:'der'}).toString('base64url')},durableObjects:{MEDIA_OBJECT:{className:'TestMedia',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},APPROVAL_PERSON:{className:'ApprovalPerson',useSQLite:true},APPROVAL_SESSION:{className:'ApprovalSession',useSQLite:true}},ratelimits:{MEDIA_PUBLIC_LIMIT:{namespace_id:'21301',simple:{limit:120,period:60}},MEDIA_CONTROL_LIMIT:{namespace_id:'21302',simple:{limit:600,period:60}},MEDIA_UPLOAD_LIMIT:{namespace_id:'21303',simple:{limit:240,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}}},r2Buckets:['MEDIA_BUCKET']});options.resourcePersistencePath=join(runtimeDirectory,'storage');
   mf=new Miniflare(options);await mf.ready;
 });
 after(async()=>{await mf?.dispose();await rm(runtimeDirectory,{recursive:true,force:true});assert.equal(logs.filter(s=>secrets.some(x=>s.includes(x))).length,0,'secret in runtime logs');});
@@ -50,7 +52,7 @@ test('one file complete once, exact private bytes, owner binding and retired rea
  assert.equal((await call(f.id,'read',{...binding(f),account:'beta'})).status,404);
  assert.equal((await call(f.id,'read',{...binding(f),actor:'other'})).status,404);
  const read=await call(f.id,'read',binding(f));assert.equal(read.status,200);assert.ok(Buffer.from(await read.arrayBuffer()).equals(f.bytes),'private bytes mismatch');
- assert.equal((await mf.dispatchFetch('https://media.test/m/'+f.id)).status,404);
+ assert.equal((await mf.dispatchFetch('https://media.test/m/'+f.id)).status,410);
  assert.equal((await call(f.id,'ack',binding(f))).status,200);
  assert.equal((await call(f.id,'read',binding(f))).status,410);
 });
@@ -143,7 +145,7 @@ socket.socket.connect=lambda *a,**k: (_ for _ in ()).throw(OSError('network_deni
 from thth import media_relay
 r=media_relay.request_for(sys.argv[1],'create',json.loads(sys.argv[2]))
 print(json.dumps({'url':r.full_url,'headers':dict(r.header_items()),'body':r.data.decode()}))`;
- const child=spawnSync('/opt/homebrew/Caskroom/miniforge/base/bin/python',['-B','-c',script,f.id,JSON.stringify(f.body)],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'root'),PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},encoding:'utf8',timeout:10000});
+ const child=spawnSync(pythonForTests(),['-B','-c',script,f.id,JSON.stringify(f.body)],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'root'),PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},encoding:'utf8',timeout:10000});
  assert.equal(child.status,0,'Python signing failed');assert.equal(child.stderr,'');
  const w=JSON.parse(child.stdout),res=await mf.dispatchFetch(w.url,{method:'POST',headers:w.headers,body:w.body});assert.equal(res.status,201);
 });
@@ -221,7 +223,7 @@ with media.prepare(str(root),{'media':[{'file':'a.png','alt':'generated'}]},'thr
   with urllib.request.urlopen(grant['url'],timeout=10) as response:assert response.read()==expected
  result=client.result(provider,published=True);assert result['status']=='acknowledged'
  try:client.result(provider,published=True)
- except media_relay.MediaRelayError:pass
+ except urllib.error.HTTPError as error:assert error.code==409
  else:raise AssertionError('ack replay accepted')
 # Real Graph wire consumes the public grant from the actual local Worker/R2.
 import http.server,threading
@@ -253,7 +255,7 @@ try:
 finally:server.shutdown();server.server_close();worker.join(3)
 print(json.dumps({'sanitized':True,'exact_bytes':True,'preview':True,'provider':True,'ack_once':True,'threads_graph':True}))`;
  const {spawn}=await import('node:child_process');
- const child=spawn('/opt/homebrew/Caskroom/miniforge/base/bin/python',['-B','-c',script],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'e2e-root'),THTH_MEDIA_BASE_URL:origin,THTH_TEST_ALLOW_HTTP:'1',TMPDIR:runtimeDirectory,PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},stdio:['ignore','pipe','pipe']});
+ const child=spawn(pythonForTests(),['-B','-c',script],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'e2e-root'),THTH_MEDIA_BASE_URL:origin,THTH_TEST_ALLOW_HTTP:'1',TMPDIR:runtimeDirectory,PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},stdio:['ignore','pipe','pipe']});
  const result=await new Promise(resolve=>{let out='',err='';const timer=setTimeout(()=>child.kill('SIGKILL'),20000);child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);child.on('close',code=>{clearTimeout(timer);resolve({code,out,err});});});
  assert.equal(result.code,0,'Python local media flow failed: '+result.err.split('\n').filter(s=>/^\w+(?:Error|Exception):/.test(s)).map(s=>s.split(':')[0]).join(','));
  assert.equal(result.err,'');assert.deepEqual(JSON.parse(result.out),{sanitized:true,exact_bytes:true,preview:true,provider:true,ack_once:true,threads_graph:true});
@@ -276,7 +278,7 @@ test('public grant copy failure never exposes partially committed bytes',async()
  await control(cap,{afterR2:{operation:'put',action:'fail'}});
  const body={...binding(f),media_id:f.body.sha256,source:f.id,expires_at:Date.now()+500000};
  assert.equal((await call(cap,'provider',body)).status,503);
- assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap)).status,404);
+ assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap)).status,410);
  assert.equal((await call(cap,'provider',body)).status,409);
 });
 
@@ -394,8 +396,152 @@ try:
 finally:server.shutdown();server.server_close();worker.join(3)
 print(json.dumps({'multipart_bytes':size,'same_public_sha':True,'video_wire':True,'provider_1800':True,'published':True}))`;
  const {spawn}=await import('node:child_process');
- const child=spawn('/opt/homebrew/Caskroom/miniforge/base/bin/python',['-B','-c',script],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'video-root'),THTH_MEDIA_BASE_URL:origin,THTH_TEST_ALLOW_HTTP:'1',TMPDIR:runtimeDirectory,PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},stdio:['ignore','pipe','pipe']});
+ const child=spawn(pythonForTests(),['-B','-c',script],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'video-root'),THTH_MEDIA_BASE_URL:origin,THTH_TEST_ALLOW_HTTP:'1',TMPDIR:runtimeDirectory,PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},stdio:['ignore','pipe','pipe']});
  const result=await new Promise(resolve=>{let out='',err='';const timer=setTimeout(()=>child.kill('SIGKILL'),60000);child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);child.on('close',code=>{clearTimeout(timer);resolve({code,out,err});});});
  assert.equal(result.code,0,'Python video bridge failed: '+result.err.split('\n').filter(s=>/^\w+(?:Error|Exception):/.test(s)).map(s=>s.split(':')[0]).join(','));
  assert.equal(result.err,'');assert.deepEqual(JSON.parse(result.out),{multipart_bytes:100000001,same_public_sha:true,video_wire:true,provider_1800:true,published:true});
 });
+
+test('unsatisfiable and unsafe ranges refuse without returning private bytes',async()=>{
+ const f=data(Buffer.alloc(60,65),'sanitized');await ready(f);const cap=opaque();
+ assert.equal((await call(cap,'preview',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at:Date.now()+500000})).status,201);
+ for(const range of ['bytes=60-','bytes=70-','bytes=70-80','bytes=5-4','bytes=9007199254740992-','bytes=0-9007199254740992']){
+  for(const method of ['GET','HEAD']){
+   const response=await mf.dispatchFetch('https://media.test/m/'+cap,{method,headers:{range}});
+   assert.equal(response.status,416);assert.notEqual(response.headers.get('content-type'),'image/png');
+  }
+ }
+ for(const range of ['bytes=59-','bytes=59-100','bytes=0-0']){
+  const response=await mf.dispatchFetch('https://media.test/m/'+cap,{headers:{range}});
+  assert.equal(response.status,206);assert.equal((await response.arrayBuffer()).byteLength,1);
+ }
+});
+
+test('provider grant ignores VM expiry clock while preview retains its bound',async()=>{
+ const f=data(undefined,'sanitized');await ready(f);
+ for(const expires_at of [0,Date.now()+660000]){
+  const body={...binding(f),media_id:f.body.sha256,source:f.id,expires_at};
+  assert.equal((await call(opaque(),'preview',body)).status,400);
+  const before=Date.now(),created=await call(opaque(),'provider',body),after=Date.now();
+  assert.equal(created.status,201);const value=await created.json();
+  assert.ok(value.expires_at>=before+600000&&value.expires_at<=after+600000);
+ }
+ for(const expires_at of [null,'600000',1.5])assert.equal((await call(opaque(),'provider',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at})).status,400);
+});
+
+
+test('public private-object oracle is identical to unknown across methods',async()=>{
+ const pending=data(),stored=data();assert.equal((await call(pending.id,'create',pending.body)).status,201);await ready(stored);
+ for(const init of [{},{method:'HEAD'},{headers:{range:'bytes=0-1'}}]){
+  for(const id of [pending.id,stored.id,opaque()]){
+   const response=await mf.dispatchFetch('https://media.test/m/'+id,init);assert.equal(response.status,410);
+   if(init.method!=='HEAD')assert.deepEqual(await response.json(),{error:'media_expired'});
+  }
+ }
+ assert.equal((await call(stored.id,'read',binding(stored))).status,200);
+});
+
+
+test('media rate rejection precedes signing, body, DO and R2; missing binding closes',async()=>{
+ const id=opaque(),ip='192.0.2.8';
+ for(const [path,method,binding,key] of [[`/media/${id}/create`,'POST','MEDIA_CONTROL_LIMIT',sha(ip)],[`/media-upload/${id}/1`,'PUT','MEDIA_UPLOAD_LIMIT',sha(id)],[`/m/${id}`,'GET','MEDIA_PUBLIC_LIMIT',sha(ip)],[`/m/${id}`,'HEAD','MEDIA_PUBLIC_LIMIT',sha(ip)]]){
+  for(const present of [true,false]){
+   const seen=[],env={MEDIA_BUCKET:{},MEDIA_OBJECT:{getByName(){assert.fail('DO after rate refusal');}}};
+   if(present)env[binding]={async limit(value){seen.push(value);return {success:false};}};
+   const request=new Request('https://media.test'+path,{method,headers:{'cf-connecting-ip':ip,range:'bytes=0-1','content-type':'application/json'}});
+   Object.defineProperty(request,'body',{get(){assert.fail('body after rate refusal');}});
+   const response=await mediaRequest(request,env,new URL(request.url));assert.equal(response.status,429);
+   assert.deepEqual(await response.json(),{error:'rate_limited'});assert.deepEqual(seen,present?[{key}]:[]);
+  }
+ }
+});
+
+test('media limiter keys separate peers and upload subjects and cover HEAD Range',async()=>{
+ const seen=[],id=opaque(),other=opaque(),env={MEDIA_BUCKET:{},MEDIA_OBJECT:{getByName(){return {view:()=>new Response('gone',{status:410}),upload:()=>new Response('unknown',{status:404})};}}};
+ for(const binding of ['MEDIA_PUBLIC_LIMIT','MEDIA_UPLOAD_LIMIT'])env[binding]={async limit({key}){seen.push([binding,key]);return {success:true};}};
+ for(const [path,method,ip] of [[`/m/${id}`,'GET','192.0.2.1'],[`/m/${other}`,'HEAD','192.0.2.1'],[`/m/${id}`,'GET','192.0.2.2'],[`/media-upload/${id}/1`,'PUT','192.0.2.1'],[`/media-upload/${id}/2`,'PUT','192.0.2.2'],[`/media-upload/${other}/1`,'PUT','192.0.2.1']]){
+  const request=new Request('https://media.test'+path,{method,headers:{'cf-connecting-ip':ip,range:'bytes=0-1'}});assert.ok([404,410].includes((await mediaRequest(request,env,new URL(request.url))).status));
+ }
+ assert.equal(seen[0][1],seen[1][1]);assert.notEqual(seen[0][1],seen[2][1]);assert.equal(seen[3][1],seen[4][1]);assert.notEqual(seen[3][1],seen[5][1]);
+});
+
+
+test('Worker caps distinguish raw transport from sanitized publication bytes',async()=>{
+ for(const [kind,mime,limit] of [['source','image/jpeg',1000000000],['source','video/mp4',1000000000],['sanitized','image/png',8000000],['sanitized','video/mp4',1000000000]]){
+  for(const delta of [0,1]){
+   const f=data();Object.assign(f.body,{kind,mime,size:limit+delta,part_size:limit+delta>100000000?5242880:null});
+   const response=await call(f.id,'create',f.body);assert.equal(response.status,delta?413:201);
+   if(delta)assert.deepEqual(await control(f.id,{inspect:true}),{rows:[],alarm:null});
+  }
+ }
+ const raw=data();Object.assign(raw.body,{size:8000001,kind:'source'});
+ assert.equal((await call(raw.id,'create',raw.body)).status,201);
+});
+
+
+const cleanupControl=async(account,body={})=>(await mf.dispatchFetch('https://media.test/__cleanup/'+account,{method:'POST',body:JSON.stringify(body)})).json();
+async function accountCall(account,operation,role='operator'){
+ const path='/approval/account/'+account+'/'+operation,raw='{}',time=Date.now(),nonce=opaque();
+ const signature=sign('sha256',Buffer.from(approvalCanonical('POST',path,role,account,operation,time,nonce,sha(raw))),{key:privateKey,padding:constants.RSA_PKCS1_PSS_PADDING,saltLength:32}).toString('base64url');
+ secrets.push(signature,nonce);
+ return mf.dispatchFetch('https://media.test'+path,{method:'POST',headers:{'content-type':'application/json','x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw});
+}
+test('cleanup registers before bytes, caps ten attempts and signed recovery only schedules deletion',async()=>{
+ const f=data();f.body.account='cleanup-ten';await ready(f);
+ const first=(await control(f.id)).find(([key])=>key==='media')[1];
+ let observed=await cleanupControl(f.body.account);assert.equal(observed.rows.length,1);assert.equal(observed.cleanup.pending_count,0);
+ for(let attempt=1;attempt<=10;attempt++){
+  const state=await control(f.id,{clock:first.cleanup_at+(attempt-1)*60000,failR2:'delete',alarm:true,inspect:true});
+  const row=state.rows.find(([key])=>key==='media')[1];assert.equal(row.cleanup_attempts,attempt);
+  assert.equal(row.cleanup_failed===true,attempt===10);assert.equal(state.alarm===null,attempt===10);
+ }
+ await mf.dispose();mf=new Miniflare(options);await mf.ready;
+ await control(f.id,{clock:first.cleanup_at+600000});
+ await cleanupControl(f.body.account,{clock:first.cleanup_at+600000});
+ let status=await accountCall(f.body.account,'status');assert.equal(status.status,200);
+ assert.deepEqual((await status.json()).cleanup,{pending_count:1,failed_count:1,reason:'cleanup_failed'});
+ const stopped=await control(f.id,{clock:first.cleanup_at+600000,alarm:true,inspect:true});assert.equal(stopped.rows.find(([k])=>k==='media')[1].cleanup_attempts,10);
+ // A neighbour cannot schedule this account's obligation.
+ const neighbour=await accountCall('cleanup-neighbour','cleanup-retry');assert.equal((await neighbour.json()).scheduled_count,0);
+ assert.equal((await accountCall(f.body.account,'cleanup-retry','job')).status,401);
+ const retry=await accountCall(f.body.account,'cleanup-retry');assert.equal(retry.status,200);assert.equal((await retry.json()).scheduled_count,1);
+ assert.equal((await mf.dispatchFetch('https://media.test/m/'+f.id)).status,410);
+ assert.deepEqual(await control(f.id,{clock:first.cleanup_at+700000,alarm:true,inspect:true}),{rows:[],alarm:null});
+ const subject=observed.rows[0][0].slice('media_cleanup:'.length);
+ observed=await cleanupControl(f.body.account,{clock:first.cleanup_at+700000,failed:subject});assert.equal(observed.rows.length,0);assert.equal(observed.cleanup.pending_count,0);
+});
+test('cleanup registration failure precedes R2 and remove ACK loss is recoverable',async()=>{
+ const failed=data();failed.body.account='cleanup-registration';await control(failed.id,{cleanupFault:'cleanupRegister'});
+ assert.equal((await call(failed.id,'create',failed.body)).status,503);
+ assert.equal((await cleanupControl(failed.body.account)).rows.length,0);
+ assert.equal((await upload(failed)).status,503);
+ assert.equal((await call(failed.id,'complete',binding(failed))).status,409);
+ const f=data();f.body.account='cleanup-remove';await ready(f);
+ const row=(await control(f.id)).find(([key])=>key==='media')[1];
+ await control(f.id,{clock:row.cleanup_at,cleanupLoss:'cleanupRemove',alarm:true});
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).rows.length,0);
+ // Physical deletion was confirmed before the lost aggregate ACK; retained row
+ // permits idempotent removal without re-upload or publication.
+ assert.equal((await control(f.id)).find(([key])=>key==='media')[1].cleanup_attempts,1);
+ assert.deepEqual(await control(f.id,{clock:row.cleanup_at+60000,alarm:true,inspect:true}),{rows:[],alarm:null});
+});
+test('aggregate failure keeps due obligation unconfirmed, never a healthy zero',async()=>{
+ const f=data();f.body.account='cleanup-aggregate';await ready(f);
+ const row=(await control(f.id)).find(([key])=>key==='media')[1];
+ for(let i=0;i<10;i++)await control(f.id,{clock:row.cleanup_at+i*60000,failR2:'delete',cleanupFault:'cleanupFailed',alarm:true});
+ const observed=await cleanupControl(f.body.account,{clock:row.cleanup_at+600000});
+ assert.deepEqual(observed.cleanup,{pending_count:1,failed_count:0,reason:'cleanup_unconfirmed'});
+});
+
+
+test('preview capability cannot acknowledge publication or be invalidated as provider',async()=>{
+ const f=data(undefined,'sanitized');await ready(f);const cap=opaque();
+ assert.equal((await call(cap,'preview',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at:Date.now()+500000})).status,201);
+ const row=(await control(cap)).find(([k])=>k==='media')[1];
+ const body={...binding(f),media_id:f.body.sha256,purpose:'provider',generation:row.version};
+ for(const operation of ['published','invalidate'])assert.equal((await call(cap,operation,body)).status,404);
+ const after=(await control(cap)).find(([k])=>k==='media')[1];assert.deepEqual(after,row);
+ assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap)).status,200);
+});
+
+test('test Python uses explicit override and portable PATH fallback',()=>{assert.equal(pythonForTests({PYTHON_FOR_TESTS:'/synthetic/python'}),'/synthetic/python');assert.equal(pythonForTests({}),'python3');});
