@@ -87,6 +87,12 @@ def public_key():
         return b64(_openssl(['pkey', '-in', f'/dev/fd/{fd}', '-pubout', '-outform', 'DER'], fd=fd))
 
 
+def show_key(by):
+    """Recover public output without generating, rotating, or modifying a key."""
+    admin_log.actor(by)
+    return public_key()
+
+
 def canonical(method, path, role, subject, operation, timestamp, nonce, body):
     return '\n'.join(('thth-approval-v1', method, path, role, subject, operation,
                       str(timestamp), nonce, hashlib.sha256(body).hexdigest())).encode()
@@ -198,8 +204,8 @@ def manage_person(operation, person, by):
 def command(args):
     import sys
     try:
-        if args.relay_command=='init':
-            value=init_key(args.by)
+        if args.relay_command in ('init','show'):
+            value=init_key(args.by) if args.relay_command=='init' else show_key(args.by)
             print('APPROVAL_PUBLIC_KEY='+value)
         else:
             manage_person(args.relay_command,args.person,args.by)
@@ -216,8 +222,10 @@ def command(args):
 
 def register(commands):
     key=commands.add_parser('relay-key',help='承認 relay の署名鍵（管理者 CLI のみ）')
-    init=key.add_subparsers(required=True).add_parser('init')
-    init.add_argument('--by',required=True);init.set_defaults(func=command,relay_command='init')
+    key_operations=key.add_subparsers(required=True)
+    for name in ('init','show'):
+        p=key_operations.add_parser(name)
+        p.add_argument('--by',required=True);p.set_defaults(func=command,relay_command=name)
     person=commands.add_parser('approver',help='承認 secret の登録・失効・解除（生成値は tty に一度だけ）')
     operations=person.add_subparsers(required=True)
     for name in ('set','revoke','unlock'):

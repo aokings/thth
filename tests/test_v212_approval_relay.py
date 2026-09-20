@@ -194,3 +194,45 @@ def test_project_key_store_refused_without_traceback(isolated,monkeypatch,capsys
     assert cli.main(['admin','relay-key','init','--by','operator'])==2
     assert 'relay_signer_store_invalid' in capsys.readouterr().err
     assert not (isolated[0]/'apps').exists()
+
+
+def test_show_recovers_committed_key_after_export_failure(isolated,monkeypatch,capsys):
+    export=relay.public_key
+    monkeypatch.setattr(relay,'public_key',lambda:(_ for _ in ()).throw(relay.RelayError('relay_signer_unavailable')))
+    assert cli.main(['admin','relay-key','init','--by','operator'])==2
+    assert relay.key_path().exists()
+    capsys.readouterr()
+    before={str(p):(p.read_bytes(),stat.S_IMODE(p.stat().st_mode)) for parent in isolated for p in parent.rglob('*') if p.is_file()}
+    monkeypatch.setattr(relay,'public_key',export)
+    expected=export()
+    monkeypatch.setattr(relay,'init_key',lambda *a:pytest.fail('show must never initialize'))
+    for _ in range(2):
+        assert cli.main(['admin','relay-key','show','--by','operator'])==0
+        output=capsys.readouterr();assert output.out=='APPROVAL_PUBLIC_KEY='+expected+'\n' and output.err==''
+        assert 'PRIVATE KEY' not in output.out
+    after={str(p):(p.read_bytes(),stat.S_IMODE(p.stat().st_mode)) for parent in isolated for p in parent.rglob('*') if p.is_file()}
+    assert before==after
+    rows,broken=admin_log.read();assert not broken and len(rows)==1 and rows[0]['event']=='relay_key_initialized'
+
+
+def test_show_missing_key_never_creates_and_requires_actor(isolated,monkeypatch,capsys):
+    monkeypatch.setattr(relay,'_openssl',lambda *a,**k:pytest.fail('missing key must not run openssl'))
+    assert cli.main(['admin','relay-key','show','--by','operator'])==2
+    assert not list(isolated[0].rglob('*')) and not list(isolated[1].rglob('*'))
+    with pytest.raises(ValueError):relay.show_key(None)
+    with pytest.raises(SystemExit):cli.main(['admin','relay-key','show'])
+    output=capsys.readouterr();assert 'PRIVATE KEY' not in output.out+output.err
+
+
+@pytest.mark.parametrize('kind',['symlink','hardlink','fifo','mode','parent_mode'])
+def test_show_unsafe_key_refused_at_cli(isolated,kind,capsys):
+    path=relay.key_path();value=secrets.token_urlsafe(32)
+    target=isolated[1]/'target';target.write_text(value);target.chmod(0o600)
+    if kind=='symlink':path.symlink_to(target)
+    elif kind=='hardlink':os.link(target,path)
+    elif kind=='fifo':os.mkfifo(path,0o600)
+    else:path.write_text(value);path.chmod(0o644 if kind=='mode' else 0o600)
+    if kind=='parent_mode':isolated[1].chmod(0o755)
+    assert cli.main(['admin','relay-key','show','--by','operator'])==2
+    output=capsys.readouterr();assert output.out=='' and value not in output.err
+    assert not list(isolated[0].rglob('*'))

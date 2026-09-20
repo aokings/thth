@@ -15,6 +15,9 @@
 `~/.config/thth/apps/relay-signer.key` に mode 600 で新規作成します。
 親 apps ディレクトリは本人所有の mode 700 が必要です。既存の鍵は上書きしません。
 表示する `APPROVAL_PUBLIC_KEY` は公開鍵だけです。配布担当がこれを Worker の同名 secret に設定します。
+初回表示を失った場合や鍵の作成後に公開鍵出力が失敗した場合は、
+`thth admin relay-key show --by masaru` で同じ公開鍵だけを再表示できます。
+`show` は鍵や変更ログを更新せず、鍵が無い場合や安全でない置き場なら拒否します。
 秘密鍵は Worker に置きません。`THTH_APPS_DIR` による既存のプロジェクト外の置き場指定も使えます。
 
 `thth admin approver set <person> --by masaru` は 43 文字のランダムな承認 secret を生成し、
