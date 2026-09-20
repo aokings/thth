@@ -3,7 +3,7 @@ import {digest, STATE_PATTERN, HASH_PATTERN, reply} from './relay.js';
 import {deletionStub} from './deletion.js';
 export const PERSON = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
 export const TTL = 600_000;
-export const ITERATIONS = 600_000;
+export const ITERATIONS = 100_000; // Workers WebCrypto caps PBKDF2 at 100,000 iterations (production NotSupportedError above it).
 const encoder = new TextEncoder();
 export const fail = (status=400, error='invalid_request') => ({status, body:{error}});
 export const opaque = () => b64(crypto.getRandomValues(new Uint8Array(32)));

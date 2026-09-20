@@ -104,9 +104,9 @@ def test_set_secret_only_tty_and_presence_event(isolated,monkeypatch,capsys):
     assert cli.main(['admin','approver','set','person','--by','operator'])==0
     secret=tty.getvalue().strip().split(': ')[1];assert len(secret)>=16 and tty.getvalue().count(secret)==1
     data=received[0][3]
-    assert data['iterations']==600000
+    assert data['iterations']==100000
     import hashlib,base64
-    assert relay.b64(hashlib.pbkdf2_hmac('sha256',secret.encode(),base64.urlsafe_b64decode(data['salt']+'='),600000,32))==data['verifier']
+    assert relay.b64(hashlib.pbkdf2_hmac('sha256',secret.encode(),base64.urlsafe_b64decode(data['salt']+'='),100000,32))==data['verifier']
     rows,broken=admin_log.read();assert not broken and rows[0]['event']=='approver_set'
     assert rows[0]['diff']=={'credential_present':[None,True]}
     output=capsys.readouterr();observed=output.out+output.err+json.dumps(rows)
@@ -236,3 +236,11 @@ def test_show_unsafe_key_refused_at_cli(isolated,kind,capsys):
     assert cli.main(['admin','relay-key','show','--by','operator'])==2
     output=capsys.readouterr();assert output.out=='' and value not in output.err
     assert not list(isolated[0].rglob('*'))
+
+
+def test_pbkdf2_iterations_within_workers_cap():
+    # 本番の workerd は PBKDF2 を 100,000 回までしか受け付けない（2.12.0 配布時に実測）。Worker 側の定数と一致すること。
+    import re
+    assert 0 < relay.ITERATIONS <= 100_000
+    js=(Path(__file__).resolve().parents[1]/'callback'/'src'/'approval.js').read_text()
+    assert int(re.search(r'export const ITERATIONS = ([0-9_]+);',js).group(1).replace('_',''))==relay.ITERATIONS

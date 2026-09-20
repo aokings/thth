@@ -40,8 +40,8 @@ test('real approval routing bypasses assets, two DOs survive restart and consume
   };
   try{
     await start();const unknown=await fetch(origin+'/approve/'+token);assert.equal(unknown.status,410);assert.ok(!(await unknown.text()).includes('shadow'));
-    const verifier=pbkdf2Sync(secret,Buffer.from(salt,'base64url'),600000,32,'sha256').toString('base64url');hidden.push(verifier);
-    assert.equal((await signed('person','person','set',{salt,verifier,iterations:600000})).status,200);
+    const verifier=pbkdf2Sync(secret,Buffer.from(salt,'base64url'),100000,32,'sha256').toString('base64url');hidden.push(verifier);
+    assert.equal((await signed('person','person','set',{salt,verifier,iterations:100000})).status,200);
     assert.equal((await signed('session',token,'create',{person:'person',job_id:opaque(),digest:hash(bodyText),account:'alpha',kind:'retract',text:bodyText,read_key_hash:hash(readKey),context:{media:'threads',reply_to:null,publish_at:null,target:'123',reason:'requested',topic:null,options:null}})).status,201);
     await stop();await start();const page=await(await fetch(origin+'/approve/'+token)).text();assert.ok(page.includes(bodyText)&&page.includes('この投稿を削除'));
     const csrf=/name="csrf" value="([^"]+)"/.exec(page)[1];hidden.push(csrf);

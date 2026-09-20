@@ -7,9 +7,12 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
-import {canonical} from '../src/approval.js';
+import {canonical,ITERATIONS} from '../src/approval.js';
 const opaque=()=>randomBytes(32).toString('base64url'),hash=s=>createHash('sha256').update(s).digest('hex');
 const logs=[],sensitive=[];
+
+// Production workerd refuses PBKDF2 above 100,000 iterations (NotSupportedError); Miniflare does not enforce it.
+test('PBKDF2 iterations stay within the Workers production cap',()=>{assert.ok(Number.isInteger(ITERATIONS)&&ITERATIONS>0&&ITERATIONS<=100_000,String(ITERATIONS));});
 class SilentLog extends Log {constructor(){super(LogLevel.NONE);}log(value){logs.push(String(value));}}
 let mf,directory,key;
 const openssl=process.platform==='darwin'?'/opt/homebrew/bin/openssl':'/usr/bin/openssl';
@@ -35,7 +38,7 @@ function wire(type,subject,op,body={},options={}){
 async function signed(type,id,op,body={},options={}){const w=wire(type,id,op,body,options);return mf.dispatchFetch(w.url,w.init);}
 async function control(type,id,settings){return(await mf.dispatchFetch(`https://approval.test/__approval/${type}/${id}`,settings?{method:'POST',body:JSON.stringify(settings)}:{})).json();}
 async function person(){const id='p'+randomBytes(8).toString('hex'),secret=opaque(),salt=opaque();sensitive.push(secret);
-  const data={salt,verifier:pbkdf2Sync(secret,Buffer.from(salt,'base64url'),600000,32,'sha256').toString('base64url'),iterations:600000};sensitive.push(data.verifier);
+  const data={salt,verifier:pbkdf2Sync(secret,Buffer.from(salt,'base64url'),100000,32,'sha256').toString('base64url'),iterations:100000};sensitive.push(data.verifier);
   assert.equal((await signed('person',id,'set',data)).status,200);return{id,secret,data};}
 async function session(p,options={}){const token=opaque(),readKey=opaque(),text='本文 '+opaque();sensitive.push(token,readKey,text);
   const body={person:p.id,job_id:opaque(),digest:hash(text),account:'alpha',kind:'send',text,read_key_hash:hash(readKey),context:{media:'threads',topic:null,options:null,reply_to:'reply-1',publish_at:'2026-09-20T12:00:00Z',target:null,reason:null},...options};

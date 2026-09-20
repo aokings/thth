@@ -42,7 +42,7 @@ tty が無ければ生成・登録前に拒否します。`--stdin-out` はあ�
 ## 保存と一回限りの受領
 
 本文・表示情報は最大 600 秒の論理期限で、承認または失効で稼働中の session から除きます。
-管理者の登録では secret 本体を Worker に送りません。本人のフォーム送信時だけ照合に使い、保存しません。32 byte の salt と PBKDF2-SHA256 600,000 回の verifier を
+管理者の登録では secret 本体を Worker に送りません。本人のフォーム送信時だけ照合に使い、保存しません。32 byte の salt と PBKDF2-SHA256 100,000 回の verifier（Workers の WebCrypto が受け付ける上限。secret は 32 byte の乱数なので伸長回数は本人確認の強さを左右しない） を
 本人専用 DO に置き、本文の session DO と分けます。
 同時承認、受領、失効の判定は本人 DO の世代と一回限りの grant で照合します。
 本文や URL、secret、署名を観測ログへ出さず、ページには no-store と no-referrer を設定します。

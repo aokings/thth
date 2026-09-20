@@ -17,7 +17,10 @@ from . import __version__, accounts, admin_log, authclients, redact
 
 PERSON = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z')
 OPAQUE = re.compile(r'[A-Za-z0-9_-]{43}\Z')
-ITERATIONS = 600_000
+# Cloudflare Workers の WebCrypto は PBKDF2 の反復を 100,000 までしか受け付けない
+# （本番で実測: NotSupportedError "iteration counts above 100000 are not supported"）。
+# 承認 secret は 32 byte の乱数なので、伸長はこの回数で十分。Worker 側と一致させること。
+ITERATIONS = 100_000
 
 class RelayError(Exception):
     """Only static, non-secret reason codes cross the CLI boundary."""
