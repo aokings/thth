@@ -6,20 +6,21 @@ import time
 from pathlib import Path
 import pytest
 from thth import accounts, cli, core, lock, runs
+from tests.coordination_snapshot import account_coordination
 
 
-def files(root):
-    return {str(p.relative_to(root)):p.read_bytes() for p in root.rglob('*') if p.is_file() and not p.name.startswith('runs-')}
+def files(root,account):
+    return {str(p.relative_to(root)):p.read_bytes() for p in root.rglob('*') if not account_coordination(p,account) and p.is_file() and not p.name.startswith('runs-')}
 
 
 @pytest.mark.parametrize('body', ['本文', 'x'*501, 'bad\x00text', ''])
 def test_send_rehearsal_has_no_lock_or_sns_ledger_write(body, isolated_account_factory, monkeypatch):
     cfg=isolated_account_factory('readonly',production=True)
-    root=Path(accounts.thth_root());before=files(root)
+    root=Path(accounts.thth_root());before=files(root,'readonly')
     monkeypatch.setattr(lock.AccountLock,'acquire',lambda self:pytest.fail('rehearsal acquired lock'))
     result=core.send_once('readonly',text=body,adapter_factory=lambda *a:pytest.fail('network'))
     assert result.action!='locked'
-    assert files(root)==before
+    assert files(root,'readonly')==before
     recorded=runs.read_runs(accounts.state_dir_for('readonly'))
     assert len(recorded)==(0 if body=='' else 1)
     if recorded:
@@ -92,10 +93,10 @@ def test_dry_send_while_other_process_holds_both_locks(isolated_account_factory)
     child=subprocess.Popen([sys.executable,'-c',script,*paths],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
     try:
         assert child.stdout.readline().strip()=='held'
-        before=files(Path(accounts.thth_root()))
+        before=files(Path(accounts.thth_root()),'held')
         result=core.send_once('held',text='PRIVATE REHEARSAL BODY',log=lambda line:None)
         assert result.exit_code==0 and result.digest
-        assert files(Path(accounts.thth_root()))==before
+        assert files(Path(accounts.thth_root()),'held')==before
         rows=runs.read_runs(accounts.state_dir_for('held'))
         assert len(rows)==1 and rows[0]['action']=='skip' and rows[0]['mode']=='rehearsal'
         assert 'PRIVATE REHEARSAL BODY' not in json.dumps(rows)

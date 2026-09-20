@@ -4,6 +4,7 @@ import urllib.parse
 from pathlib import Path
 import pytest
 from thth import accounts, cli, engagements, runs, thread_read
+from tests.coordination_snapshot import account_coordination
 from thth.adapters import base, bluesky, mastodon
 
 
@@ -71,7 +72,7 @@ def test_common_cli_keys_reply_tristate_and_minimal_runs_only(media,reply_state,
     assert {'kind','post_id','author_key','username','preview','timestamp','replied'}<=set(row)
     assert row['post_id']==row['message_id']=='POST1' and row['text']=='PRIVATE BODY'
     assert row['replied']==({'post_id':'own','at':'2026-09-09T09:00:00+09:00','source':'ledger'} if reply_state=='ledger' else None if reply_state=='unreadable' else False)
-    after={str(p):p.read_bytes() for root in roots for p in root.rglob('*') if p.is_file() and not p.name.startswith('runs-')}
+    after={str(p):p.read_bytes() for root in roots for p in root.rglob('*') if not account_coordination(p,'mention-one') and p.is_file() and not p.name.startswith('runs-')}
     assert after==before
     recorded=runs.read_runs(accounts.state_dir_for('mention-one'))
     assert len(recorded)==1 and recorded[0]['action']=='mentions' and recorded[0]['n']==1

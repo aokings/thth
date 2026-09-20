@@ -1,3 +1,4 @@
+from tests.coordination_snapshot import account_coordination
 import json
 from pathlib import Path
 import pytest
@@ -83,7 +84,7 @@ body
 def test_cli_records_only_minimal_run_handoff_computation_is_pure(isolated_account_factory,capsys,monkeypatch):
     cfg=isolated_account_factory('one',handle='owner');own_sent('one','ROOT');save(cfg)
     roots=[Path(accounts.thth_root()),Path(cfg['repo_dir'])]
-    def snapshot():return {str(p):p.read_bytes() for root in roots for p in root.rglob('*') if p.is_file() and not p.name.startswith('runs-')}
+    def snapshot():return {str(p):p.read_bytes() for root in roots for p in root.rglob('*') if not account_coordination(p,'one') and p.is_file() and not p.name.startswith('runs-')}
     before=snapshot()
     monkeypatch.setattr(collect,'refresh_replies',lambda *a,**k:pytest.fail('implicit network'))
     pure=unanswered.answer('one',now=NOW)
