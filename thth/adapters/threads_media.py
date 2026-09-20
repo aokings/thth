@@ -179,10 +179,11 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         return base.PublishResult(None,None,ts,error='account_stopped',failure='media_held' if ids and phase not in ('publishing','published') else 'media_ambiguous' if phase!='preflight' else 'publish_vetoed')
     except (OSError,ValueError,RuntimeError,urllib.error.URLError,approval_relay.RelayError) as exc:
         http=isinstance(exc,urllib.error.HTTPError)
-        definite=http and 400<=exc.code<500
+        endpoint=isinstance(exc,httpsafe.EndpointRejected)
+        definite=endpoint or http and 400<=exc.code<500
         held=bool(grants) and (phase in ('ready','processing','processing_carousel') or definite)
-        uncertain=phase!='preflight' and not held
-        reason=str(exc) if isinstance(exc,media.MediaError) else 'media_relay_failed' if isinstance(exc,(media_relay.MediaRelayError,approval_relay.RelayError)) else 'media_'+phase+('_http_'+str(exc.code) if http else '_failed')
+        uncertain=phase!='preflight' and not held and not definite
+        reason='media_relay_endpoint_rejected' if endpoint else str(exc) if isinstance(exc,media.MediaError) else 'media_relay_failed' if isinstance(exc,(media_relay.MediaRelayError,approval_relay.RelayError)) else 'media_'+phase+('_http_'+str(exc.code) if http else '_failed')
         # Explicit refusal/veto: retire grants once, never retry an unknown POST.
         if held:
             for grant in grants:
