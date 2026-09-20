@@ -49,6 +49,8 @@ export class MediaObject extends DurableObject {
   }
   async create(body,ticket){
     if(!keys(body,['actor','account','sha256','size','mime','kind','part_size'])||typeof body.actor!=='string'||!MEDIA_NAME.test(body.actor)||typeof body.account!=='string'||!MEDIA_NAME.test(body.account)||!validHash(body.sha256)||!Number.isSafeInteger(body.size)||body.size<1||!MIME.has(body.mime)||!['source','sanitized'].includes(body.kind))return fail();
+    const sizeLimit=body.kind==='source'?1_000_000_000:body.mime.startsWith('image/')?8_000_000:1_000_000_000;
+    if(body.size>sizeLimit)return fail(413,'media_size_exceeded');
     const multi=body.size>MULTIPART_THRESHOLD;
     if(multi?(!Number.isSafeInteger(body.part_size)||body.part_size<MIN_PART||body.part_size>5*1024**3||Math.ceil(body.size/body.part_size)>10000):body.part_size!==null)return fail();
     if(!await this.active(body.account))return fail(410,'account_revoked');

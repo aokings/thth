@@ -462,3 +462,16 @@ test('media limiter keys separate peers and upload subjects and cover HEAD Range
  }
  assert.equal(seen[0][1],seen[1][1]);assert.notEqual(seen[0][1],seen[2][1]);assert.equal(seen[3][1],seen[4][1]);assert.notEqual(seen[3][1],seen[5][1]);
 });
+
+
+test('Worker caps distinguish raw transport from sanitized publication bytes',async()=>{
+ for(const [kind,mime,limit] of [['source','image/jpeg',1000000000],['source','video/mp4',1000000000],['sanitized','image/png',8000000],['sanitized','video/mp4',1000000000]]){
+  for(const delta of [0,1]){
+   const f=data();Object.assign(f.body,{kind,mime,size:limit+delta,part_size:limit+delta>100000000?5242880:null});
+   const response=await call(f.id,'create',f.body);assert.equal(response.status,delta?413:201);
+   if(delta)assert.deepEqual(await control(f.id,{inspect:true}),{rows:[],alarm:null});
+  }
+ }
+ const raw=data();Object.assign(raw.body,{size:8000001,kind:'source'});
+ assert.equal((await call(raw.id,'create',raw.body)).status,201);
+});
