@@ -104,3 +104,21 @@ def test_relay_preconnect_rejected_but_post_send_failure_unknown(monkeypatch,pha
     reason='approval_relay_endpoint_rejected' if phase=='preconnect' else 'approval_relay_outcome_unknown'
     with pytest.raises(relay.RelayError,match='^'+reason+'$'):relay.signed_request('person','tester','status',{})
     assert calls==[phase]
+
+
+
+def test_same_origin_fragment_redirect_still_refuses_before_next_request():
+    import http.server,threading
+    from thth import httpsafe
+    calls=[]
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self,*a):pass
+        def do_GET(self):
+            calls.append(self.path);self.send_response(302);self.send_header('Location','/target#private-fragment');self.end_headers()
+    server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        with pytest.raises(httpsafe.EndpointRejected,match='^endpoint_invalid$'):
+            httpsafe.build_opener().open(f'http://127.0.0.1:{server.server_port}/start',timeout=2)
+        assert calls==['/start']
+    finally:server.shutdown();server.server_close();thread.join(3)

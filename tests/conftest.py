@@ -50,6 +50,19 @@ def local_http_test_transport(monkeypatch):
     Only exact loopback hostnames are allowed; proxy/file/FTP/data stay disabled.
     """
     monkeypatch.setenv('THTH_TEST_ALLOW_HTTP','1')
+    # The suite-wide fake allowance must never permit a non-loopback request.
+    # Check the actual opener before its HTTP handler, without any DNS/socket.
+    import urllib.request
+    from thth import httpsafe
+    with monkeypatch.context() as boundary:
+        def must_not_connect(*args,**kwargs):
+            pytest.fail('test HTTP allowance reached a non-loopback transport')
+        boundary.setattr(urllib.request.HTTPHandler,'http_open',must_not_connect)
+        opener=httpsafe.build_opener()
+        for host in ('example.invalid','localhost.example','127.0.0.2','127.1',
+                     '0x7f000001','2130706433','[::2]'):
+            with pytest.raises(httpsafe.EndpointRejected):
+                opener.open('http://'+host,timeout=0.01)
 
 
 @pytest.fixture(autouse=True)

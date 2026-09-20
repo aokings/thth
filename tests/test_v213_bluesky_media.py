@@ -312,3 +312,16 @@ def test_redirect_is_loud_definite_without_blob_or_follow(env,wire):
     assert result.failure=='publish_definite' and result.error=='media_redirect_refused'
     assert journal['media']['remote_ids']==[] and journal['media']['phase']=='failed'
     assert len(calls(wire,'uploadBlob'))==1 and not calls(wire,'createRecord')
+
+
+
+def test_static_endpoint_refusal_is_not_connection_refused(env,wire,monkeypatch):
+    from thth import httpsafe
+    original=bm._json
+    def reject(adapter,nsid,**kw):
+        if nsid=='com.atproto.repo.uploadBlob':raise httpsafe.EndpointRejected('synthetic')
+        return original(adapter,nsid,**kw)
+    monkeypatch.setattr(bm,'_json',reject)
+    result,journal,_=invoke(env)
+    assert result.error=='media_endpoint_rejected' and result.failure=='publish_definite'
+    assert journal['media']['phase']=='failed' and not calls(wire,'uploadBlob') and not calls(wire,'createRecord')
