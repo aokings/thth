@@ -103,6 +103,8 @@ def lint_file(path: str) -> list:
     qf = queuefile.parse(path)
     fm = qf.front_matter
     errors: list = []
+    if qf.parse_error:
+        errors.append(qf.parse_error)
 
     # **front-matter の鍵の重複を名指しで error にする**（セキュリティ監査
     # 2026-09-14「撤回が効かない嘘」）。`qf.malformed` は `thth: 1` 欠落とも
@@ -145,7 +147,12 @@ def lint_file(path: str) -> list:
 
     account_cfg = _account_cfg_or_none(account_name)
     media = account_cfg["media"] if account_cfg else "threads"
-    section = queuefile.extract_section(qf.body, media)
+    from . import media as media_mod
+    try:
+        media_mod.manifest_for(fm, account_cfg)
+    except media_mod.MediaError as exc:
+        errors.append(str(exc))
+    section = queuefile.extract_section(qf.body, media, allow_empty=bool(fm.get('media') or fm.get('attachments')))
     if section is None:
         errors.append(f"media: `## {media}` の節が無い")
     else:
@@ -263,6 +270,9 @@ def preview_file(path: str) -> str:
             rel = "返信先なし（先頭）" if i == 1 else f"{i - 1} 段目への返信"
             out.append(f"── {i}/{total}　{rel}")
             out.append(seg)
+            from . import media as media_mod
+            manifest = media_mod.manifest_for(b.posts[i-1], cfg)
+            if manifest: out.append(media_mod.display(manifest))
             out.append("")
         return "\n".join(out).rstrip() + "\n"
 
@@ -270,8 +280,12 @@ def preview_file(path: str) -> str:
     account_name = qf.front_matter.get("account")
     account_cfg = _account_cfg_or_none(account_name)
     media = account_cfg["media"] if account_cfg else "threads"
-    section = queuefile.extract_section(qf.body, media)
+    from . import media as media_mod
+    fm = qf.front_matter
+    manifest = media_mod.manifest_for(fm, account_cfg)
+    section = queuefile.extract_section(qf.body, media, allow_empty=bool(fm.get('media') or fm.get('attachments')))
     if section is None:
         raise ValueError(f"media section が無い（`## {media}`）: {path}")
-    return tags_mod.prepared(media, section, queuefile.normalize_topic(qf.front_matter.get("topic")),
+    text = tags_mod.prepared(media, section, queuefile.normalize_topic(qf.front_matter.get("topic")),
                              hashtags=bool(account_cfg.get("hashtags", True)) if account_cfg else False)
+    return text + ("\n" + media_mod.display(manifest) if manifest else "")

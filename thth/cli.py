@@ -92,6 +92,18 @@ def cmd_lint(args) -> int:
         next_step = lint_mod.next_step(path) if errors else None
         if next_step:
             row["next_step"] = next_step
+        if not errors:
+            from . import media as media_mod, bundle as bundle_mod
+            raw = open(path, encoding='utf-8').read()
+            if bundle_mod.is_bundle_text(raw):
+                b = bundle_mod.parse_text(raw, path)
+                cfg = lint_mod._account_cfg_or_none(b.front_matter.get('account'))
+                manifests = [media_mod.manifest_for(post, cfg) for post in b.posts]
+                if any(manifests): row['media_manifests'] = manifests
+            else:
+                fm = queuefile.parse_text(raw, path).front_matter
+                manifest = media_mod.manifest_for(fm, lint_mod._account_cfg_or_none(fm.get('account')))
+                if manifest: row['media_manifest'] = manifest
         rows.append(row)
 
     if args.json:
@@ -105,6 +117,9 @@ def cmd_lint(args) -> int:
                 print(prefix + m)
             if row.get("next_step"):
                 print(prefix + row["next_step"])
+            from . import media as media_mod
+            for manifest in ([row.get('media_manifest')] + row.get('media_manifests', [])):
+                if manifest: print(media_mod.display(manifest))
     return 0 if not any_error else 1
 
 
@@ -286,7 +301,12 @@ def _prepare_one(path: str):
         return None, f"{path}: {e}"
 
     media = account_cfg["media"]
-    section = queuefile.extract_section(qf.body, media)
+    from . import media as media_mod
+    try:
+        manifest = media_mod.manifest_for(fm, account_cfg)
+    except media_mod.MediaError as exc:
+        return None, f"{path}: {exc}"
+    section = queuefile.extract_section(qf.body, media, allow_empty=bool(fm.get('media') or fm.get('attachments')))
     if section is None:
         return None, f"{path}: `## {media}` の節がありません"
 
@@ -296,7 +316,7 @@ def _prepare_one(path: str):
     effective = approval_mod.effective_section(section, account_cfg, fm.get("topic"))
     approved_sha = approval_mod.compute_approved_sha(
         section=effective, account=account_name, reply_to=fm.get("reply_to"),
-        topic=fm.get("topic"), publish_at=fm.get("publish_at"), **options)
+        topic=fm.get("topic"), publish_at=fm.get("publish_at"), media_manifest=manifest, **options)
 
     # **予定時刻を過ぎた原稿の扱いを、承認の前に言う**（nigamilab セッション指摘
     # 2026-09-10）。起草する人と承認する人が別なので、承認までに時刻が過ぎるのは
@@ -321,6 +341,7 @@ def _prepare_one(path: str):
 
     return {
         "path": path,
+        **({"media_manifest": manifest} if manifest else {}),
         "warning": warning,
         "account": account_name,
         "publish_at": fm.get("publish_at"),
@@ -538,11 +559,17 @@ def _prepare_bundle(path: str, text: str):
                            f"**公開済みの段の本文は変えられません**"
                            f"（誤字修正でも公開履歴を書き換えません）")
 
+    from . import media as media_mod
+    try:
+        manifests = [media_mod.manifest_for(post, account_cfg) for post in b.posts]
+    except media_mod.MediaError as exc:
+        return None, f"{path}: {exc}"
     approved_sha = approval_mod.compute_bundle_sha(
         segments=effective_segments, account=account_name, topic=b.front_matter.get("topic"),
         publish_at=b.front_matter.get("publish_at"),
-        continue_until=b.front_matter.get("continue_until"))
+        continue_until=b.front_matter.get("continue_until"), media_manifest=manifests)
     return {
+        **({"media_manifests": manifests} if any(manifests) else {}),
         "path": path, "kind": "bundle", "account": account_name,
         "segments": effective_segments, "frozen": frozen,
         "topic": b.front_matter.get("topic"),
@@ -579,6 +606,9 @@ def _show_bundle_stage(prepared: dict) -> None:
         for line in seg.split("\n"):
             print(f"     {line}")
         print(queuefile.length_line(cfg['media'], seg, cfg))
+        if prepared.get('media_manifests'):
+            from . import media as media_mod
+            print(media_mod.display(prepared['media_manifests'][i-1]))
         print("")
     if frozen:
         print("  ※ 公開済みの段は凍結されています。**未公開の段と期限だけを"
@@ -616,6 +646,8 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
                                 "location": one.get("location"),
                                 "location_id": one.get("location_id"),
                                 "share_to_instagram": bool(one.get("share_to_instagram")),
+                                **({"media_manifest": one["media_manifest"]} if one.get("media_manifest") else {}),
+                                **({"media_manifests": one["media_manifests"]} if one.get("media_manifests") else {}),
                                 "digest": one["digest"]} for one in prepared]})
         return
     print(f"承認しません（確認の一段目です）: {len(prepared)} 本")
@@ -644,6 +676,9 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
         print("--- 出す本文 ---")
         sys.stdout.write(one["text"] if one["text"].endswith("\n") else one["text"] + "\n")
         print("--- ここまで ---")
+        if one.get('media_manifest'):
+            from . import media as media_mod
+            print(media_mod.display(one['media_manifest']))
         # **公開の側を変える任意項目は本文の下に見せる**（設計 v2 §4.3・v2.1-B）。
         # どちらも digest に入っている——見せたものが承認の対象。
         if one.get("location_id"):
@@ -2565,8 +2600,21 @@ def cmd_send(args) -> int:
             return 2
         with open(args.text_file, encoding="utf-8") as f:
             text = f.read()
+    elif getattr(args, 'media_files', None):
+        text = ''
     else:
         text = _sys.stdin.read()
+    from . import media as media_mod
+    files, alts = getattr(args, 'media_files', None) or [], getattr(args, 'alts', None) or []
+    if len(files) != len(alts):
+        print('media: one --alt per --media required', file=sys.stderr)
+        return 2
+    declarations = [{'file': file, 'alt': alt} for file, alt in zip(files, alts)]
+    try:
+        media_mod.validate(declarations)
+    except media_mod.MediaError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     from .postid import PostIdError
     try:
         from . import read_coordination
@@ -2575,7 +2623,8 @@ def cmd_send(args) -> int:
                 args.account, text=text, topic=args.topic, reply_to=args.reply_to,
                 reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
                 found_by=args.found_by,
-                production_flag=args.production, confirm=args.confirm, log=print, wait=getattr(args, "wait", 0)).exit_code
+                production_flag=args.production, confirm=args.confirm, log=print, wait=getattr(args, "wait", 0),
+                **({'media_rows': declarations} if declarations else {})).exit_code
         return read_coordination.invoke(args,'send',send)
     except PostIdError as exc:
         print(str(exc), file=sys.stderr)
@@ -3238,6 +3287,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.add_argument("--confirm", default=None,
                         help="dry-run が表示した digest。--production のときはこれが一致しないと送らない")
     p_send.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
+    p_send.add_argument('--media', dest='media_files', action='append', help='repo 相対の添付ファイル（繰返し可）')
+    p_send.add_argument('--alt', dest='alts', action='append', help='対応する添付の説明（各 --media に必須）')
     p_send.set_defaults(func=cmd_send)
 
     p_doctor = sub.add_parser(

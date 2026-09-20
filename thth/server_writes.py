@@ -169,6 +169,7 @@ def prepare(context, request):
         from .cli import _prepare_one
         value,problem=_prepare_one(str(_queue(cfg)[1]/name))
         if problem or not value or value.get('bundle'): error('invalid_draft')
+        if value.get('media_manifest') or value.get('media_manifests'): error('media_approval_ui_unavailable')
         text=value['text'];source=hashlib.sha256(raw).hexdigest()
         for key in ('reply_to','publish_at','topic'): display[key]=value.get(key)
         display['options']=json.dumps({k:value[k] for k in ('location','location_id','share_to_instagram')},ensure_ascii=False,sort_keys=True)

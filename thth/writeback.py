@@ -174,6 +174,8 @@ def front_matter_text(text, fields, *, label="draft"):
 
     remaining = dict(fields)
     for i in range(1, end_idx):
+        if lines[i][:1] in (" ", "\t"):
+            continue
         key = lines[i].split(":", 1)[0].strip()
         if key in remaining:
             value = remaining.pop(key)

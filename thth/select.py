@@ -78,7 +78,7 @@ def recent_posted_texts(files, *, account_name: str, media: str,
             continue
         if posted_at < cutoff:
             continue
-        section = queuefile.extract_section(qf.body, media)
+        section = queuefile.extract_section(qf.body, media, allow_empty=bool(fm.get("media") or fm.get("attachments")))
         if section:
             out.add(section.strip())
     return out
@@ -199,7 +199,7 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
             continue
 
         # 6. 媒体の節が無い／文字数超過
-        section = queuefile.extract_section(qf.body, media)
+        section = queuefile.extract_section(qf.body, media, allow_empty=bool(fm.get("media") or fm.get("attachments")))
         if section is None:
             rejections.append(Rejection(path, "no_section"))
             needs_review.append(path)
@@ -215,13 +215,25 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
         # 必ず届く**（時刻の関門より前・外部レビュー第 3 巡 P2）。
         # 任意項目（`location_id`・`share_to_instagram`・設計 v2 §4.3）も指紋に
         # 入る——承認したあとに場所や共有を足す・変えると、ここで落ちる。
+        from . import media as media_mod
+        try:
+            manifest = media_mod.manifest_for(fm, account_cfg)
+        except media_mod.MediaError as exc:
+            rejections.append(Rejection(path, "approval_stale" if fm.get('approved_sha') else str(exc)))
+            needs_review.append(path)
+            continue
         approved_sha = fm.get("approved_sha")
         expected_sha = approval_mod.compute_approved_sha(
             section=approval_mod.effective_section(section, account_cfg, fm.get("topic")), account=account_name, reply_to=fm.get("reply_to"),
             topic=fm.get("topic"), publish_at=publish_at,
-            **approval_mod.publish_options(fm))
+            media_manifest=manifest, **approval_mod.publish_options(fm))
         if not approved_sha or approved_sha != expected_sha:
             rejections.append(Rejection(path, "approval_stale"))
+            needs_review.append(path)
+            continue
+
+        if manifest:
+            rejections.append(Rejection(path, "media_provider_unavailable"))
             needs_review.append(path)
             continue
 

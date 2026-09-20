@@ -23,7 +23,7 @@ def test_worker_unit_cli_and_actual_worker_parser_agree(monkeypatch, capsys):
     assert parsed.credentials == credentials and not parsed.once
 
 
-@pytest.mark.parametrize('path', ['', 'relative.json', '/', '/a//b', '/a/../b', '/a/./b', '/a/', '/a b', '/a\nb', '/a\rb', '/a\tb', '/a\x00b', '/a"b', "/a'b", '/a\\b', '/a%ib', '/a${HOME}', '/a;b', '/日本語.json'])
+@pytest.mark.parametrize('path', ['', 'relative.json', '/', '/a//b', '/a/../b', '/a/./b', '/a/', '/a b', '/a\nb', '/a\rb', '/a\tb', '/a\x00b', '/a"b', "/a'b", '/a\\b', '/a%ib', '/a${HOME}', '/a$b', '/a%b', '/a;b', '/日本語.json'])
 def test_worker_unsafe_path_loud_reject(path, capsys):
     rc = cli.main(['systemd', '--approval-worker', '--credentials', path])
     captured = capsys.readouterr()

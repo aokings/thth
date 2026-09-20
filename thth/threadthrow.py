@@ -308,13 +308,21 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
     segments = bundle_mod.effective_segments(
         b.segments, account_cfg, fm.get("topic"))
     frozen = threadrun.frozen_records(run) if run else []
+    from . import media as media_mod
+    try:
+        manifests = [media_mod.manifest_for(post, account_cfg) for post in b.posts]
+    except media_mod.MediaError:
+        return StepResult("skipped", None, "approval_stale: attachment changed or unreadable")
     expected = approval_mod.compute_bundle_sha(
         segments=segments, account=account_name, topic=fm.get("topic"),
         publish_at=fm.get("publish_at"), continue_until=fm.get("continue_until"),
-        frozen=frozen)
+        frozen=frozen, media_manifest=manifests)
     if fm.get("approved_sha") != expected:
         return StepResult("skipped", None,
                            "approved_sha が中身と合いません（approval_stale）")
+
+    if any(manifests):
+        return StepResult("skipped", None, "media_provider_unavailable")
 
     # **公開済み部分の凍結**（設計 §5・Codex 最終条件 2）。
     if run is not None:

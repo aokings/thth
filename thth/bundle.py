@@ -27,7 +27,7 @@ MAX_SEGMENTS = 4
 
 # 段ごとに持てる項目。**`topic` は先頭だけ**（設計 §7）。
 POST_KEYS = ("index", "post_id", "posted_at", "reply_to", "run_id",
-             "bundle_sha", "text_sha256", "topic")
+             "bundle_sha", "text_sha256", "topic", "media", "attachments", "post_options", "captions")
 # 分類するだけのラベル（**承認の対象ではない**・設計 §8.3）。
 LABEL_KEYS = ("form", "outlet", "numbering")
 
@@ -89,7 +89,21 @@ def parse_front_matter(fm_text: str) -> tuple:
     seen_top: set = set()
     duplicate_keys: list = []
 
-    for raw in fm_text.split("\n"):
+    from . import media as media_mod
+    lines = fm_text.split("\n")
+    cursor = 0
+    while cursor < len(lines):
+        raw = lines[cursor]
+        if raw.partition(":")[0].strip() in media_mod.STRUCTURED_KEYS:
+            key = raw.partition(":")[0].strip()
+            if not in_posts or current is None or not raw.startswith("    " + key + ":") or key in current:
+                raise BundleError("media: requires a unique posts item field")
+            try:
+                current[key], cursor = media_mod.parse_structured(lines, cursor, 4, key)
+            except media_mod.MediaError as exc:
+                raise BundleError(str(exc)) from exc
+            continue
+        cursor += 1
         if not raw.strip():
             continue
         stripped = raw.strip()
@@ -124,6 +138,8 @@ def parse_front_matter(fm_text: str) -> tuple:
                 if ":" not in item:
                     raise BundleError(f"posts の項目が読めません: {raw!r}")
                 key, _, value = item.partition(":")
+                if key.strip() in media_mod.STRUCTURED_KEYS:
+                    raise BundleError("media: write below the post index as an indented array")
                 current[key.strip()] = value.strip() or None
             continue
 
@@ -132,12 +148,14 @@ def parse_front_matter(fm_text: str) -> tuple:
         if ":" not in stripped:
             raise BundleError(f"posts の項目が読めません: {raw!r}")
         key, _, value = stripped.partition(":")
+        if key.strip() in current:
+            raise BundleError("posts: duplicate field")
         current[key.strip()] = value.strip() or None
 
     return top, posts, duplicate_keys
 
 
-def split_segments(section: str) -> tuple:
+def split_segments(section: str, *, attachment_posts=None) -> tuple:
     """媒体の節を段に割る。`(段の配列, 問題の配列)`。
 
     **連結したものは返さない。** 承認指紋もトピック提案も「段の境界と順序を
@@ -159,7 +177,7 @@ def split_segments(section: str) -> tuple:
     segments.append("\n".join(buffer).strip())
 
     for i, seg in enumerate(segments, start=1):
-        if not seg:
+        if not seg and not (attachment_posts and i <= len(attachment_posts) and (attachment_posts[i-1].get('media') or attachment_posts[i-1].get('attachments'))):
             problems.append(f"{i} 段目が空です")
 
     total = len(segments)
@@ -228,10 +246,10 @@ def parse(path: str) -> Bundle:
 
 def load_segments(bundle: Bundle, media: str) -> tuple:
     """媒体の節を段に割って `bundle.segments` に入れる。`(段, 問題)`。"""
-    section = queuefile.extract_section(bundle.body, media)
+    section = queuefile.extract_section(bundle.body, media, allow_empty=any(p.get("media") or p.get("attachments") for p in bundle.posts))
     if section is None:
         return [], [f"media: `## {media}` の節が無い"]
-    segments, problems = split_segments(section)
+    segments, problems = split_segments(section, attachment_posts=bundle.posts)
     bundle.segments = segments
     return segments, problems
 
@@ -336,6 +354,12 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
                                f"（位置 {pos}・U+{cp:04X}）")
 
     errors += check_posts(bundle, segments)
+    from . import media as media_mod
+    for index, post in enumerate(bundle.posts, 1):
+        try:
+            media_mod.manifest_for(post, account_cfg)
+        except media_mod.MediaError as exc:
+            errors.append(f"{index} 段目: {exc}")
 
     if topic is not None:
         topic_err = (tags_mod.topic_error(media, topic)
@@ -460,7 +484,18 @@ def set_post_fields(text: str, index: int, fields: dict) -> str:
     if fm_end is None:
         raise BundleError("front matter が見つかりません")
 
-    starts = [i for i in range(1, fm_end) if lines[i].strip().startswith("- ")]
+    # Skip nested media rows, while retaining legacy posts indentation.
+    from . import media as media_mod
+    starts = []
+    cursor = 1
+    while cursor < fm_end:
+        raw = lines[cursor]
+        if raw.partition(":")[0].strip() in media_mod.STRUCTURED_KEYS:
+            _, cursor = media_mod.parse_structured(lines, cursor, len(raw) - len(raw.lstrip(" ")), raw.partition(":")[0].strip())
+            continue
+        if raw.strip().startswith("- "):
+            starts.append(cursor)
+        cursor += 1
     if index < 1 or index > len(starts):
         raise BundleError(f"{index} 段目が posts: にありません")
     start = starts[index - 1]
@@ -482,6 +517,8 @@ def set_post_fields(text: str, index: int, fields: dict) -> str:
     for key, value in fields.items():
         rendered = f"{indent}{key}: {'' if value is None else value}"
         for j, line in enumerate(block):
+            if j and len(line) - len(line.lstrip(" ")) != len(indent):
+                continue
             body = line.strip()
             if body.startswith("- "):
                 body = body[2:].strip()
