@@ -43,6 +43,16 @@ FIXED_NOW_JST = datetime.datetime(2026, 9, 9, 10, 0, 0, tzinfo=jst.JST)
 
 
 @pytest.fixture(autouse=True)
+def local_http_test_transport(monkeypatch):
+    """Explicit fake-server allowance; production defaults remain HTTPS-only.
+
+    Endpoint refusal tests remove this variable to exercise the actual default.
+    Only exact loopback hostnames are allowed; proxy/file/FTP/data stay disabled.
+    """
+    monkeypatch.setenv('THTH_TEST_ALLOW_HTTP','1')
+
+
+@pytest.fixture(autouse=True)
 def frozen_now_jst(monkeypatch):
     """`thth.jst.now_jst()` を既定で静かな時間帯の外（2026-09-09 10:00 JST）に固定する。
 

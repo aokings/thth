@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -53,25 +54,57 @@ class SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+class EndpointRejected(ValueError):
+    """Static pre-connection refusal; never includes the supplied endpoint."""
+
+
+def validated_url(value, *, base=False):
+    if not isinstance(value,str) or not value or any(ord(c)<=32 or ord(c)==127 for c in value):
+        raise EndpointRejected('endpoint_invalid')
+    try:
+        parsed=urllib.parse.urlsplit(value)
+        if not parsed.hostname or parsed.username is not None or parsed.password is not None or parsed.fragment:
+            raise ValueError
+        parsed.port
+        if base and parsed.query:raise ValueError
+        if parsed.scheme=='https':pass
+        elif (parsed.scheme=='http' and os.environ.get('THTH_TEST_ALLOW_HTTP')=='1'
+              and parsed.hostname in ('localhost','127.0.0.1','::1')):pass
+        else:raise ValueError
+    except ValueError:raise EndpointRejected('endpoint_invalid') from None
+    return value.rstrip('/') if base else value
+
+
+class _HTTPOnlyOpener(urllib.request.OpenerDirector):
+    def open(self,fullurl,*args,**kwargs):
+        request=fullurl if isinstance(fullurl,urllib.request.Request) else None
+        validated_url(request.full_url if request else fullurl)
+        if request and (request.has_proxy() or getattr(request,'_tunnel_host',None)):
+            raise EndpointRejected('endpoint_proxy_forbidden')
+        return super().open(fullurl,*args,**kwargs)
+
+
+def build_opener(redirect_handler=None):
+    """Explicit HTTP(S) transport; urllib defaults never add file/FTP/data/proxy."""
+    result=_HTTPOnlyOpener()
+    for handler in (urllib.request.HTTPHandler(),urllib.request.HTTPSHandler(),
+                    urllib.request.HTTPDefaultErrorHandler(),
+                    redirect_handler or SameOriginRedirectHandler(),
+                    urllib.request.HTTPErrorProcessor()):
+        result.add_handler(handler)
+    return result
+
+
 _opener = None
 
 
 def opener() -> urllib.request.OpenerDirector:
-    """媒体の口へ投げるときの opener（**1 本だけ作って使い回す**）。
-
-    `build_opener()` は渡した handler と同じ系統の既定 handler を外すので、
-    ここで渡した `SameOriginRedirectHandler` が `HTTPRedirectHandler` を置き換える。
-    """
     global _opener
-    if _opener is None:
-        _opener = urllib.request.build_opener(SameOriginRedirectHandler())
+    if _opener is None:_opener=build_opener()
     return _opener
 
 
 def urlopen(req, *, timeout: float):
-    """`urllib.request.urlopen()` の置き換え。**別ホストへは追わない。**
-
-    引数は `Request` でも URL 文字列でもよい（既存の呼び出しをそのまま移せる）。
-    """
+    """Same-origin redirects, explicit HTTP(S), and account stop lease."""
     from . import leave_gate
     return leave_gate.urlopen(opener().open, req, timeout=timeout)

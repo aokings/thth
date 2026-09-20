@@ -1,4 +1,5 @@
 """Local PDS wire verifies prepared bytes, CID binding and durable unknowns."""
+import errno
 import base64
 import copy
 import hashlib
@@ -277,3 +278,37 @@ def test_v2_each_segment_and_reply_parent(tmp_path,isolated_account_factory,wire
         record=json.loads(calls(wire,'createRecord')[1][1])['record']
         assert record['reply']['parent']['uri']==record['reply']['root']['uri']=='at://did:plc:synthetic/app.bsky.feed.post/abc'
         assert [r['media'][0]['remote_id'] for r in threadrun.load(result[0].run_id)['posts']]==[expected_cid(png())]*2
+
+
+def test_dimensions_fail_before_session_or_upload(env,wire):
+    cfg,_,_=env;m=media.manifest_for({'media':[{'file':'a.png','alt':'alt'}]},cfg)
+    for key in ('width','height'):
+        old=m['files'][0][key];m['files'][0][key]=None
+        assert bm.intent_error(m)=='media_dimensions_unavailable';m['files'][0][key]=old
+    assert wire['calls']==[]
+
+
+@pytest.mark.parametrize('format,kind',[('mp4','video'),('mov','video'),('unsupported','image')])
+def test_format_rejection_is_specific(env,format,kind):
+    m=media.manifest_for({'media':[{'file':'a.png','alt':'alt'}]},env[0]);m['files'][0].update(format=format,kind=kind)
+    assert bm.intent_error(m)=='unsupported_attachment: bluesky/'+format
+
+
+@pytest.mark.parametrize('failure,expected',[(ConnectionRefusedError(errno.ECONNREFUSED,'refused'),'publish_definite'),(ConnectionResetError(errno.ECONNRESET,'reset'),'media_ambiguous'),(TimeoutError('timeout'),'media_ambiguous')])
+def test_only_proven_preconnect_failure_is_definite(env,wire,monkeypatch,failure,expected):
+    import urllib.error
+    original=bm._json
+    def failing(adapter,nsid,**kw):
+        if nsid=='com.atproto.repo.uploadBlob':raise urllib.error.URLError(failure)
+        return original(adapter,nsid,**kw)
+    monkeypatch.setattr(bm,'_json',failing)
+    result,journal,_=invoke(env);assert result.failure==expected
+    assert journal['media']['phase']==('failed' if expected=='publish_definite' else 'unknown')
+    assert not calls(wire,'createRecord')
+
+
+def test_redirect_is_loud_definite_without_blob_or_follow(env,wire):
+    wire['redirect']=True;result,journal,_=invoke(env)
+    assert result.failure=='publish_definite' and result.error=='media_redirect_refused'
+    assert journal['media']['remote_ids']==[] and journal['media']['phase']=='failed'
+    assert len(calls(wire,'uploadBlob'))==1 and not calls(wire,'createRecord')

@@ -261,7 +261,7 @@ def _xrpc(service: str, method: str, nsid: str, *, params=None, payload=None,
     ログまで届く（独立監査 1・P1-2・2026-09-13）。**ここは秘密の値が通る唯一の
     関門**なので、名前でなく値で塞ぐ。
     """
-    url = f"{service.rstrip('/')}/xrpc/{nsid}"
+    url = f"{httpsafe.validated_url(service,base=True)}/xrpc/{nsid}"
     if params:
         url += "?" + urllib.parse.urlencode(params, doseq=True)
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
@@ -374,7 +374,7 @@ class BlueskyAdapter(base.Adapter):
     def __init__(self, *, service: str = DEFAULT_SERVICE, identifier: str = "",
                  app_password: str = "", timeout: float = DEFAULT_TIMEOUT_SECONDS,
                  thread_depth: int = DEFAULT_THREAD_DEPTH):
-        self.service = (service or DEFAULT_SERVICE).rstrip("/")
+        self.service = httpsafe.validated_url(DEFAULT_SERVICE if service is None else service,base=True)
         self.identifier = identifier
         self.app_password = app_password
         # adapter の局所 `scrub()` だけに頼らず、core・ログ・runs が共通で通す

@@ -720,7 +720,7 @@ def test_capabilitiesはrecent_postsだけでquotaはNone():
 def test_instanceはschemeを勝手に補わない():
     with pytest.raises(ValueError) as e:
         mastodon_mod.MastodonAdapter(instance="mastodon.social")
-    assert "https://mastodon.social" in str(e.value)
+    assert str(e.value) == "endpoint_invalid"
 
 
 # ---------------------------------------------------------------------------

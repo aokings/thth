@@ -551,3 +551,45 @@ def test_old_grant_text_only_still_posts(env,wire):
     adapter=mastodon.MastodonAdapter.from_account(cfg,{'access_token':original.access_token,'scopes':['write:statuses'],'scopes_source':'response'})
     result=adapter.publish(base.Post(text='text'),dry_run=False)
     assert result.post_id=='100' and not posts(wire,'/api/v2/media')
+
+
+def test_jpeg_metadata_never_crosses_real_multipart_wire(env,wire):
+    from tests.test_v213_media_foundation import jpeg
+    from tests.test_v213_media_formats import exif,segment
+    cfg,adapter,repo=env
+    plain=jpeg();source=plain[:2]+segment(0xe1,b'Exif\0\0'+exif())+segment(0xe1,b'http://ns.adobe.com/xap/1.0/\0PRIVATE-XMP')+segment(0xfe,b'PRIVATE-COM')+plain[2:]
+    (repo/'private.jpg').write_bytes(source)
+    wire['caps']['configuration']['media_attachments']['supported_mime_types'].append('image/jpeg')
+    result,_,manifest=invoke(env,{'media':[{'file':'private.jpg','alt':'rotated'}]});assert result.post_id=='100'
+    call=posts(wire,'/api/v2/media')[0]
+    msg=email.parser.BytesParser(policy=email.policy.default).parsebytes(('Content-Type: '+call[3]['Content-Type']+'\r\n\r\n').encode()+call[2])
+    body=next(p for p in msg.iter_parts() if p.get_param('name',header='Content-Disposition')=='file').get_payload(decode=True)
+    assert body!=source and b'PRIVATE' not in body
+    assert body==mediaformats.jpeg(source).public_bytes
+    assert hashlib.sha256(body).hexdigest()==manifest['files'][0]['public_sha256']
+
+
+def test_context_exit_stale_preserves_known_held(env,wire):
+    wire['on_upload']=lambda:(env[2]/'a.png').write_bytes(png()+b'changed')
+    result,journal,_=invoke(env)
+    assert result.failure=='media_held' and journal['media']['phase']=='held'
+    assert not posts(wire,'/api/v1/statuses')
+
+
+def test_context_exit_stale_preserves_durably_published(env,wire,monkeypatch):
+    original=mm._json
+    def changed(adapter,method,path,**kw):
+        value=original(adapter,method,path,**kw)
+        if path=='/api/v1/statuses':(env[2]/'a.png').write_bytes(png()+b'changed after publication')
+        return value
+    monkeypatch.setattr(mm,'_json',changed)
+    result,journal,_=invoke(env)
+    assert result.post_id=='100' and result.failure=='none' and journal['media']['phase']=='published'
+    assert len(posts(wire,'/api/v1/statuses'))==1
+
+
+@pytest.mark.parametrize('url',['http://example.invalid/1','http://127.0.0.1/1','https://user:secret@example.invalid/1','https://','https://example.invalid:bad/1'])
+def test_ready_url_requires_https_authority(env,wire,url):
+    wire['upload']=[(200,{'id':'1','type':'image','url':url})]
+    result,_,_=invoke(env);assert result.error=='media_response_invalid: ready URL'
+    assert not posts(wire,'/api/v1/statuses')

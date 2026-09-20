@@ -73,7 +73,7 @@ def publish(adapter,post,*,cfg,fm,manifest,state_dir,before_publish=None,on_cont
     if reason:return base.PublishResult(None,None,jst.iso(),error=reason,failure='publish_definite')
     if getattr(adapter,'prepared_media_supported',False) is not True:
         return base.PublishResult(None,None,jst.iso(),error='media_provider_unavailable',failure='publish_definite')
-    started=False
+    started=False;result=None;durable_phase=None
     try:
         if os.path.realpath(state_dir)!=os.path.realpath(accounts.state_dir_for(cfg['account'])):raise media.MediaError('media_journal_account_mismatch')
         with media.prepare(cfg['repo_dir'],fm,cfg['media']) as (current,items):
@@ -84,10 +84,11 @@ def publish(adapter,post,*,cfg,fm,manifest,state_dir,before_publish=None,on_cont
             stopped=veto()
             if stopped:raise media.MediaError(str(stopped))
             def progress(phase,**details):
-                nonlocal started
+                nonlocal started,durable_phase
                 if phase=='uploading':started=True
                 try:_progress(cfg['account'],manifest,adapter.service if cfg['media']=='bluesky' else adapter.instance,phase,**details)
                 except (OSError,ValueError) as exc:raise media.MediaError('media_journal_unavailable') from exc
+                durable_phase=phase
             from .adapters import mastodon_media
             bound=dataclasses.replace(post,media_manifest=manifest,media_files=tuple(items),media_progress=progress,media_cache=(lambda cap:mastodon_media.cache(cfg,cap)) if cfg['media']=='mastodon' else None)
             # No request precedes this durable intent. It also changes the old
@@ -100,6 +101,11 @@ def publish(adapter,post,*,cfg,fm,manifest,state_dir,before_publish=None,on_cont
     except accounts.AccountStopped:
         return base.PublishResult(None,None,jst.iso(),error="account_stopped",failure="media_ambiguous" if started else "publish_vetoed")
     except (OSError,ValueError) as exc:
+        # Context-exit stale detection must not erase a known remote outcome.
+        # A successful result is retained only after its published journal saved.
+        if isinstance(exc,media.MediaError) and str(exc)=='media: source_changed' and result is not None:
+            if result.failure=='media_held' or (result.post_id and result.failure=='none' and durable_phase=='published'):
+                return result
         reason=str(exc) if isinstance(exc,media.MediaError) else 'media_journal_unavailable'
         return base.PublishResult(None,None,jst.iso(),error=reason,failure='media_ambiguous' if started else 'publish_vetoed')
 

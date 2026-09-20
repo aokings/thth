@@ -112,7 +112,7 @@ class _NoRedirect(httpsafe.SameOriginRedirectHandler):
         raise httpsafe.RedirectBlocked(req.full_url,code,'media_redirect_refused',headers,fp)
 
 
-_transport=urllib.request.build_opener(_NoRedirect())
+_transport=httpsafe.build_opener(_NoRedirect())
 
 
 def _json(adapter,method,path,*,data=None,headers=None,timeout=None):
@@ -146,7 +146,11 @@ def _entity(value,expected=None,ready=False,kind=None):
     require(expected is None or identifier==expected,'media_response_invalid: id changed')
     require(value.get('type') in ('image','video','gifv','audio'),'media_response_invalid: type')
     require(kind is None or value['type'] in ({'image','gifv'} if kind=='image' else {'video','gifv'}),'media_response_invalid: type mismatch')
-    if ready:require(type(value.get('url')) is str and value['url'].startswith(('https://','http://')),'media_response_invalid: ready URL')
+    if ready:
+        url=value.get('url')
+        try:valid=type(url) is str and url.startswith('https://') and bool(httpsafe.validated_url(url))
+        except ValueError:valid=False
+        require(valid,'media_response_invalid: ready URL')
     return identifier
 
 

@@ -5,6 +5,7 @@ images max4, gallery max20 (UI soft10), each image max2,000,000 bytes.
 """
 from __future__ import annotations
 import base64
+import errno
 import json
 import urllib.error
 import urllib.request
@@ -25,8 +26,11 @@ def intent_error(manifest):
     if set(manifest['post_options'])-{'gallery'}:return 'unsupported_attachment: bluesky/image_post_options'
     rows=manifest['files']
     if not rows:return 'unsupported_attachment: bluesky/no_images'
-    if any(row['role']!='media' or row['kind']!='image' or row['format'] not in MIME for row in rows):
-        return 'unsupported_attachment: bluesky/image_format'
+    for row in rows:
+        if row['role']!='media' or row['kind']!='image' or row['format'] not in MIME:
+            return 'unsupported_attachment: bluesky/'+str(row['format'])
+        if any(type(row.get(key)) is not int or row[key]<=0 for key in ('width','height')):
+            return 'media_dimensions_unavailable'
     if len(rows)>(20 if manifest['post_options'].get('gallery') else 4):return 'media_limit_exceeded: count'
     if any(row['public_size']>MAX_BYTES for row in rows):return 'media_limit_exceeded: bytes'
     return None
@@ -51,7 +55,7 @@ class _NoRedirect(httpsafe.SameOriginRedirectHandler):
         raise httpsafe.RedirectBlocked(req.full_url,code,'media_redirect_refused',headers,fp)
 
 
-_transport=urllib.request.build_opener(_NoRedirect())
+_transport=httpsafe.build_opener(_NoRedirect())
 
 
 def _json(adapter,nsid,*,data,content_type,length):
@@ -108,8 +112,10 @@ def publish(adapter,post,*,before_publish=None):
         return base.PublishResult(None,None,ts,error='account_stopped',failure='media_held' if ids and phase=='ready' else 'media_ambiguous' if phase!='preflight' else 'publish_vetoed')
     except (OSError,ValueError,RuntimeError,urllib.error.URLError) as exc:
         http=isinstance(exc,urllib.error.HTTPError)
-        reason=('media_'+phase+'_http_'+str(exc.code)) if http else str(exc) if isinstance(exc,media.MediaError) else 'media_'+phase+'_failed'
-        definite=http and 400<=exc.code<500 and phase=='uploading' and not ids
+        redirect=isinstance(exc,httpsafe.RedirectBlocked)
+        preconnect=isinstance(exc,httpsafe.EndpointRejected) or isinstance(exc,urllib.error.URLError) and isinstance(exc.reason,OSError) and exc.reason.errno==errno.ECONNREFUSED
+        reason='media_redirect_refused' if redirect else 'media_connection_refused' if preconnect else ('media_'+phase+'_http_'+str(exc.code)) if http else str(exc) if isinstance(exc,media.MediaError) else 'media_'+phase+'_failed'
+        definite=(redirect or preconnect or http and 400<=exc.code<500) and phase=='uploading' and not ids
         held=bool(ids) and (phase=='ready' or (http and 400<=exc.code<500 and phase in ('uploading','publishing')))
         uncertain=phase!='preflight' and not definite and not held
         try:

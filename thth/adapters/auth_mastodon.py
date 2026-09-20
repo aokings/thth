@@ -24,6 +24,7 @@ def origin(value):
     if not isinstance(value,str) or any(ord(c)<32 or ord(c)==127 for c in value):
         raise FlowError('mastodon_instance_invalid')
     try:
+        httpsafe.validated_url(value,base=True)
         p=urllib.parse.urlsplit(value)
         if (not p.hostname or p.username or p.password or p.query or p.fragment or p.path not in ('','/')
                 or not (p.scheme=='https' or p.scheme=='http' and p.hostname in ('127.0.0.1','localhost','::1'))):
