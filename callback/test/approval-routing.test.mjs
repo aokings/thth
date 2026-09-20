@@ -65,7 +65,7 @@ test('real approval routing bypasses assets, two DOs survive restart and consume
     await stop();await start();
     assert.equal((await(await fetch(origin+'/data-deletion-status?code='+receipt)).json()).completed_at,completed);
     const python=process.env.PYTHON_FOR_TESTS||(process.platform==='darwin'?'/opt/homebrew/Caskroom/miniforge/base/bin/python':'python3');
-    const vm=spawnSync(python,['test/deletion-vm.py',key],{cwd,env:{PATH:process.env.PATH,HOME:home,PYTHONPATH:join(cwd,'..'),THTH_ROOT:join(dir,'vm'),THTH_ACCOUNTS_DIR:join(dir,'vm/accounts'),THTH_APPS_DIR:join(vmHome,'apps'),THTH_APPROVAL_BASE_URL:origin},encoding:'utf8',timeout:20000});
+    const vm=spawnSync(python,['test/deletion-vm.py',key],{cwd,env:{PATH:process.env.PATH,HOME:home,PYTHONPATH:join(cwd,'..'),THTH_ROOT:join(dir,'vm'),THTH_ACCOUNTS_DIR:join(dir,'vm/accounts'),THTH_TEST_ALLOW_HTTP:'1',THTH_APPS_DIR:join(vmHome,'apps'),THTH_APPROVAL_BASE_URL:origin},encoding:'utf8',timeout:20000});
     assert.equal(vm.status,0,'local Python deletion/leave integration failed: '+[...vm.stderr.matchAll(/line (\d+), in ([^\n]+)/g)].map(m=>m[1]+':'+m[2]).join(',')+' '+vm.stderr.trim().split('\n').at(-1)?.split(':')[0]);assert.equal(vm.stderr,'');
     assert.deepEqual(JSON.parse(vm.stdout),{verified:1,unmatched:1,discarded_invalid_signature:1,local_completed:true,remote_completed:true,events:2});
   }finally{await stop();await rm(dir,{recursive:true,force:true});await rm(vmHome,{recursive:true,force:true});const hits=logs.filter(line=>hidden.some(secret=>line.includes(secret))).length;assert.equal(hits,0,'HTTP runtime logs contain private data');console.log('approval routing log scan: '+logs.length+' chunks, '+hits+' hits; 7 local starts');}
