@@ -211,3 +211,21 @@ def test_public_sha_and_alt_order_change_digest(setup):
         assert approval.compute_send_digest(**args,media_manifest=other)!=expected
     swapped=copy.deepcopy(manifest);swapped['files'].reverse()
     assert approval.compute_send_digest(**args,media_manifest=swapped)!=expected
+
+
+@pytest.mark.parametrize('hint',['default','gif','future-presentation-hint'])
+def test_bluesky_presentation_is_open_string_bound_to_digest(setup,hint):
+    root,cfg=setup;cfg['media']='bluesky'
+    manifest=media.manifest_for({'post_options':{'presentation':hint}},cfg)
+    assert manifest['post_options']['presentation']==hint
+    assert hint in media.display(manifest)
+    args=dict(text='body',account='demo',topic=None,reply_to=None)
+    other=media.manifest_for({'post_options':{'presentation':hint+'-changed'}},cfg)
+    assert approval.compute_send_digest(**args,media_manifest=manifest)!=approval.compute_send_digest(**args,media_manifest=other)
+
+
+@pytest.mark.parametrize('hint',[None,False,42,[],{}])
+def test_bluesky_presentation_rejects_non_string(setup,hint):
+    root,cfg=setup;cfg['media']='bluesky'
+    with pytest.raises(media.MediaError):
+        media.manifest_for({'post_options':{'presentation':hint}},cfg)

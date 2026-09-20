@@ -385,7 +385,7 @@ def validate_declarations(fm,medium):
                     if field is None or set(feature)!={'$type',field}:raise MediaError('post_options: unknown feature')
                     _text(feature[field],field)
         else:_text(value,key,empty=key=='spoiler_text')
-    for key,values in {'visibility':{'public','unlisted','private','direct'},'quote_approval_policy':{'public','followers','nobody'},'presentation':{'video','gif'},'reply_control':{'everyone','accounts_you_follow','mentioned_only'}}.items():
+    for key,values in {'visibility':{'public','unlisted','private','direct'},'quote_approval_policy':{'public','followers','nobody'},'reply_control':{'everyone','accounts_you_follow','mentioned_only'}}.items():
         if key in options and options[key] not in values:raise MediaError(f'post_options: invalid {key}')
     seen_captions=set()
     for caption in captions:
