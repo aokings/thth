@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import time
@@ -10,6 +11,57 @@ from . import accounts, admin_log, approval, approval_relay as relay, core, doct
 from .report_service import ReportServiceError
 
 TERMINAL = frozenset(('completed','failed','unknown','expired'))
+STATES = TERMINAL | {'registering','pending','consuming','ready','executing'}
+REASONS = {'approval_registration_unknown','interrupted_outcome_unknown','approval_timeout',
+           'operation_outcome_unknown','approval_no_longer_valid'}
+
+
+def _valid_job(value, job_id):
+    """Private storage is fallible: validate both shape and redundant bindings."""
+    def string(v, maximum=48000):
+        return isinstance(v,str) and len(v.encode()) <= maximum
+    def matches(pattern, v):
+        return isinstance(v,str) and pattern.fullmatch(v) is not None
+    sha = re.compile(r'[0-9a-f]{64}\Z')
+    required = {'schema_version','job_id','token','read_key','account','kind','actor','credential_digest',
+                'request','binding','digest','status','expires_at','via'}
+    if (type(value) is not dict or not required <= value.keys()
+            or value.keys()-required-{'receipt','reason','post_id'}
+            or type(value['schema_version']) is not int or value['schema_version'] != 1
+            or value['job_id'] != job_id or not matches(relay.OPAQUE,job_id)
+            or not all(matches(relay.OPAQUE,value[k]) for k in ('token','read_key'))
+            or not isinstance(value['account'],str) or not accounts.name_is_safe(value['account'])
+            or not matches(relay.PERSON,value['actor'])
+            or not all(matches(sha,value[k]) for k in ('credential_digest','digest'))
+            or not isinstance(value['status'],str) or value['status'] not in STATES
+            or not isinstance(value['kind'],str) or value['kind'] not in ('approve','send','retract')
+            or not isinstance(value['via'],str) or value['via'] not in ('http','mcp')
+            or type(value['expires_at']) is not int or value['expires_at'] <= 0):
+        return False
+    if 'reason' in value and (not isinstance(value['reason'],str) or value['reason'] not in REASONS): return False
+    if 'post_id' in value and (not string(value['post_id'],4096) or not value['post_id'] or writeback.has_control_chars(value['post_id'])): return False
+    binding=value['binding'];request=value['request']
+    if (type(binding) is not dict or set(binding) != {'kind','account','actor','text','context','ledger','credential_generation','source'}
+            or any(binding[k] != value[k] for k in ('kind','account','actor'))
+            or not string(binding['text']) or not all(matches(sha,binding[k]) for k in ('ledger','credential_generation'))
+            or binding['source'] is not None and not matches(sha,binding['source'])): return False
+    display=binding['context']
+    if (type(display) is not dict or set(display) != {'media','reply_to','publish_at','target','reason','topic','options'}
+            or not isinstance(display['media'],str) or display['media'] not in ('threads','mastodon','bluesky','x')
+            or any(v is not None and not string(v,4096) for v in display.values())): return False
+    required_request={'approve':{'draft_id'},'send':{'body'},'retract':{'post_id','reason'}}[value['kind']]
+    optional={'send':{'topic','reply_to'}}.get(value['kind'],set())
+    if (type(request) is not dict or not required_request|{'operation','account'} <= request.keys()
+            or request.keys()-required_request-optional-{'operation','account'}
+            or request['account'] != value['account']
+            or request['operation'] != {'approve':'approval_request','send':'send_request','retract':'retract_request'}[value['kind']]
+            or any(not string(request[k]) or not request[k].strip() for k in required_request)
+            or any(request.get(k) is not None and not string(request[k],4096) for k in optional)
+            or value['kind']=='approve' and not matches(sha,request['draft_id'])): return False
+    if hashlib.sha256(server_files.encode(binding)).hexdigest() != value['digest']: return False
+    if value['status']=='ready' and 'receipt' not in value: return False
+    if 'receipt' in value and not _receipt_matches(value,value['receipt']): return False
+    return True
 
 
 def directory(account):
@@ -19,8 +71,9 @@ def directory(account):
 
 def _load(fd, job_id):
     if not isinstance(job_id,str) or not relay.OPAQUE.fullmatch(job_id): raise ReportServiceError('invalid_request')
-    value=json.loads(server_files.read_at(fd,job_id+'.json',private=True))
-    if not isinstance(value,dict) or value.get('job_id')!=job_id: raise ValueError('invalid_job')
+    try: value=json.loads(server_files.read_at(fd,job_id+'.json',private=True))
+    except RecursionError: raise ValueError('invalid_job') from None
+    if not _valid_job(value,job_id): raise ValueError('invalid_job')
     return value
 
 
@@ -71,13 +124,19 @@ def create(context, request, binding, via):
             'approval_url':os.environ.get('THTH_APPROVAL_BASE_URL','https://thth.me').rstrip('/')+'/approve/'+token}
 
 
-def _validate_receipt(job, receipt):
+def _receipt_matches(job, receipt):
     expected=dict(job_id=job['job_id'],digest=job['digest'],account=job['account'],kind=job['kind'],approver=job['actor'])
-    if (not isinstance(receipt,dict) or any(receipt.get(k)!=v for k,v in expected.items())
+    return not (type(receipt) is not dict or set(receipt) != set(expected)|{'generation','approved_at','expires_at'}
+            or any(receipt.get(k)!=v for k,v in expected.items())
             or not isinstance(receipt.get('generation'),str) or not relay.OPAQUE.fullmatch(receipt['generation'])
             or type(receipt.get('approved_at')) is not int or type(receipt.get('expires_at')) is not int
             or not job['expires_at']-600000 <= receipt['approved_at'] < job['expires_at']
-            or receipt['expires_at'] < job['expires_at'] or int(time.time()*1000)>=job['expires_at']):
+            or receipt['expires_at'] < job['expires_at'])
+
+
+def _validate_receipt(job, receipt):
+    now=int(time.time()*1000)
+    if not _receipt_matches(job,receipt) or now>=job['expires_at'] or receipt['approved_at']>now:
         raise ReportServiceError('approval_receipt_invalid')
 
 
@@ -145,6 +204,7 @@ def process(account, job_id, contexts):
     try:
         with server_files.directory(directory(account),private=True) as fd, server_files.lock_at(fd,job_id+'.lock'):
             job=_load(fd,job_id)
+            if job['account'] != account: raise ValueError('invalid_job')
             if job.get('status') in TERMINAL: return
             if job.get('status') in ('registering','consuming','executing'):
                 job.update(status='unknown',reason='interrupted_outcome_unknown');_save(fd,job);return
@@ -168,7 +228,9 @@ def process(account, job_id, contexts):
                     job['status']='consuming';_save(fd,job)
                     receipt=relay.signed_request('session',job['token'],'consume',{'read_key':job['read_key']})
                     _validate_receipt(job,receipt);job.update(status='ready',receipt=receipt);_save(fd,job)
-                if job['status']=='ready': _perform(fd,job,context)
+                if job['status']=='ready':
+                    _validate_receipt(job,job['receipt'])
+                    _perform(fd,job,context)
             except lock.LockBusy: return
             except Exception:
                 job.update(status='unknown' if job['status'] in ('consuming','executing') else 'failed',

@@ -3,6 +3,7 @@ import configparser
 import os
 from pathlib import Path
 import subprocess
+import stat
 from . import accounts, server_files
 
 
@@ -37,6 +38,30 @@ def _config(path, *, bare, origin):
         raise ValueError('managed_git_origin_changed')
 
 
+def _storage_tree(fd, *, depth=0, remaining=None):
+    """Check every Git administrative leaf without following filesystem links.
+
+    Git itself opens these paths after this check; this rejects pre-existing
+    redirects, not arbitrary concurrent replacement by the same OS user.
+    """
+    if remaining is None: remaining = [100000]
+    if depth > 64: raise ValueError('managed_git_store_too_large')
+    for name in os.listdir(fd):
+        remaining[0] -= 1
+        if remaining[0] < 0: raise ValueError('managed_git_store_too_large')
+        info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        if stat.S_ISDIR(info.st_mode):
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            try:
+                opened = os.fstat(child)
+                if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino) or opened.st_uid != os.getuid() or opened.st_mode & 0o022:
+                    raise ValueError('managed_git_store_unsafe')
+                _storage_tree(child, depth=depth+1, remaining=remaining)
+            finally: os.close(child)
+        else:
+            server_files.regular(info)
+
+
 def validate(repo):
     account = account_for(repo)
     if account is None: raise ValueError('managed_repo_required')
@@ -44,6 +69,7 @@ def validate(repo):
     with server_files.directory(clone/'.git'): pass
     with server_files.directory(origin): pass
     for gitdir in (clone/'.git', origin):
+        with server_files.directory(gitdir) as fd: _storage_tree(fd)
         for special in ('commondir','objects/info/alternates','objects/info/http-alternates'):
             if (gitdir/special).exists() or (gitdir/special).is_symlink():
                 raise ValueError('managed_git_external_store')
