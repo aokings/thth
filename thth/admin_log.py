@@ -169,7 +169,7 @@ _active_events = contextvars.ContextVar('admin_event_buffer', default=None)
 
 
 @contextlib.contextmanager
-def transaction():
+def transaction(*, rollback=None):
     if _active_fd.get() is not None:
         yield
         return
@@ -191,6 +191,12 @@ def transaction():
             if events:
                 _emit(fd, b''.join(events))
                 committed_events = tuple(events)
+        except BaseException as exc:
+            # Auth snapshots are taken after this flock. Restore before releasing
+            # it, never over a newer credential saved by another transaction.
+            if rollback is not None and not (isinstance(exc, AdminLogError) and exc.appended):
+                rollback()
+            raise
         finally:
             _active_events.reset(reset_events)
             _active_fd.reset(reset)

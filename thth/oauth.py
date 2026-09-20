@@ -67,6 +67,23 @@ def _graph_base_url() -> str:
     return os.environ.get("THTH_THREADS_BASE_URL", threads_mod.DEFAULT_BASE_URL).rstrip("/")
 
 
+def _auth_graph_base_url() -> str:
+    """Only the official token origin or an explicit loopback fake server."""
+    raw = _graph_base_url()
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        valid = (not any(ord(c) < 32 or ord(c) == 127 for c in raw)
+                 and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
+                 and parsed.path in ('', '/')
+                 and ((parsed.scheme == 'https' and parsed.hostname == 'graph.threads.net' and parsed.port in (None, 443))
+                      or (parsed.scheme == 'http' and parsed.hostname in ('127.0.0.1', 'localhost', '::1'))))
+    except ValueError:
+        valid = False
+    if not valid:
+        raise OAuthError('auth_token_endpoint_invalid: 公式HTTPSかloopback試験先だけを使えます')
+    return raw
+
+
 def _authorize_base_url() -> str:
     return os.environ.get("THTH_THREADS_AUTH_BASE_URL", AUTHORIZE_BASE_URL_DEFAULT).rstrip("/")
 
@@ -92,7 +109,7 @@ def build_authorize_url(app_id: str, redirect_uri: str, scopes: list,
 
 def _new_state() -> str:
     """推測できない `state`（テストはここを差し替える）。"""
-    return secrets.token_urlsafe(16)
+    return secrets.token_urlsafe(32)
 
 
 def _auth_state_path(account_name: str) -> str:
@@ -274,7 +291,7 @@ def exchange_short_lived_token(app_id: str, app_secret: str, redirect_uri: str, 
     # なしで値を反射しても `redact()` が消せるようにする。
     redact_mod.register_secret(app_secret)
     redact_mod.register_secret(code)
-    url = f"{_graph_base_url()}/oauth/access_token"
+    url = f"{_auth_graph_base_url()}/oauth/access_token"
     params = {
         "client_id": app_id,
         "client_secret": app_secret,
@@ -291,7 +308,7 @@ def exchange_short_lived_token(app_id: str, app_secret: str, redirect_uri: str, 
 def exchange_long_lived_token(app_secret: str, access_token: str, *, timeout: float = 10.0) -> dict:
     redact_mod.register_secret(app_secret)
     redact_mod.register_secret(access_token)
-    url = f"{_graph_base_url()}/access_token"
+    url = f"{_auth_graph_base_url()}/access_token"
     params = {
         "grant_type": "th_exchange_token",
         "client_secret": app_secret,
@@ -305,7 +322,7 @@ def exchange_long_lived_token(app_secret: str, access_token: str, *, timeout: fl
 
 def fetch_me(access_token: str, *, timeout: float = 10.0) -> dict:
     redact_mod.register_secret(access_token)
-    url = f"{_graph_base_url()}/v1.0/me"
+    url = f"{_auth_graph_base_url()}/v1.0/me"
     params = {"fields": "id,username", "access_token": access_token}
     try:
         return _get_json(url, params, timeout=timeout)
@@ -340,7 +357,7 @@ def fetch_token_scopes(access_token: str, *, timeout: float = 10.0):
     無い・形が違うときも None（嘘の一覧を作らない）。
     """
     redact_mod.register_secret(access_token)
-    url = f"{_graph_base_url()}/v1.0/debug_token"
+    url = f"{_auth_graph_base_url()}/v1.0/debug_token"
     params = {"access_token": access_token, "input_token": access_token}
     try:
         body = _get_json(url, params, timeout=timeout)
@@ -367,10 +384,9 @@ def refresh_long_lived_token(access_token: str, *, timeout: float = 10.0) -> dic
         raise OAuthError(_error_message("トークンの更新に失敗しました", e)) from e
 
 
-@admin_log.guarded
 def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | None = None,
-             input_func=input, identifier_input=None, password_input=None,
-             log=print, by=None) -> int:
+             input_func=None, identifier_input=None, password_input=None,
+             log=print, by=None, rehearse=False, human_output=print) -> int:
     """`thth auth <account>`。**媒体で分ける**（T3 の配線 2026-09-13）。
 
     以前はここが Threads 固有（OAuth の往復）だった——設計 v2 §4.2 が挙げた
@@ -396,6 +412,10 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
         _out(str(e), log=log)
         return 2
 
+    if rehearse:
+        from . import authflow
+        return authflow.rehearse(account_cfg, redirect_uri=redirect_uri, log=log, human_output=human_output)
+
     media = account_cfg.get("media")
     if media != "threads":
         from . import adapters as adapters_mod
@@ -405,7 +425,7 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
             _out(str(e), log=log)
             return 2
         if media == "bluesky":
-            return run_auth_bluesky(
+            return admin_log.guarded(run_auth_bluesky)(
                 account_name, account_cfg=account_cfg, log=log,
                 identifier_input=identifier_input, password_input=password_input, by=by)
         _out(f"{media} は `thth auth` では認可できません。"
@@ -449,134 +469,11 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
 
     scope_list = account_cfg.get("scopes") or scopes_mod.DEFAULT_SCOPES
 
-    # **`state` を載せて出し、戻りで照合する**（セキュリティ監査 2026-09-14・P2-4）。
-    # 前は `state` が無かったので、**この道具が出した URL の戻りかどうかを
-    # 確かめる術が無かった**——別のところで作られた `code` を貼られても、
-    # そのまま交換して `.token` に書いていた。
-    #
-    # 照合先は 2 つ: いま出した URL の `state`（対話でその場で貼る筋）と、
-    # **前回の実行が出した URL の `state`**（`--code` で後から貼る筋。URL を
-    # 出したのは別のプロセスなので、残しておかないと照合できない）。
-    state = _new_state()
-    previous_state = _saved_auth_state(account_name)
-    _save_auth_state(account_name, state)
-
-    url = build_authorize_url(app_id, redirect_uri, scope_list, state=state)
-    _out("次の URL をブラウザで開いて認可してください:", log=log)
-    _out(url, log=log)
-    _out("承認後の戻り URL を**そのまま**貼ってください"
-         "（`code` と `state` の両方が要ります。#_ が付いていても構いません）:", log=log)
-
-    if code is not None:
-        raw = code
-    else:
-        try:
-            raw = input_func()
-        except EOFError:
-            # 対話でない口から呼ばれた（パイプ・`ssh` に `-t` が無い）。
-            # **黙って traceback にしない**（作法 5）。
-            _out("戻り URL を読めませんでした（端末から読めません）。"
-                 "上の URL をブラウザで開いて、戻り URL を "
-                 f"`thth auth {account_name} --code '<戻り URL 全体>'` で渡してください。",
-                 log=log)
-            return 2
-    code_value = extract_code(raw)
-    if not code_value:
-        _out("code が読み取れませんでした", log=log)
-        return 2
-
-    got_state = extract_state(raw)
-    if not got_state:
-        _out("戻り URL に state がありません。**受け付けません。**"
-             "（`code` の値だけでなく、**戻り URL 全体**を貼ってください。"
-             "この道具が出した URL の戻りであることを確かめられません）", log=log)
-        return 2
-    if got_state != state and got_state != previous_state:
-        _out("state が一致しません。**受け付けません。**"
-             "（この道具が出した認可 URL の戻りではありません。"
-             "もう一度 `thth auth` から始めてください）", log=log)
-        return 2
-
-    try:
-        short = exchange_short_lived_token(app_id, app_secret, redirect_uri, code_value)
-    except OAuthError as e:
-        _out(str(e), log=log)
-        return 1
-    short_token = short.get("access_token")
-    if not short_token:
-        _out("短期トークンの取得に失敗しました（応答に access_token が無い）", log=log)
-        return 1
-
-    try:
-        long_ = exchange_long_lived_token(app_secret, short_token)
-    except OAuthError as e:
-        _out(str(e), log=log)
-        return 1
-    long_token = long_.get("access_token")
-    if not long_token:
-        _out("長期トークンの交換に失敗しました（応答に access_token が無い）", log=log)
-        return 1
-    expires_in = long_.get("expires_in", DEFAULT_TOKEN_LIFETIME_SECONDS)
-
-    try:
-        me = fetch_me(long_token)
-    except OAuthError as e:
-        _out(str(e), log=log)
-        return 1
-    user_id = me.get("id", "")
-    username = me.get("username", "")
-
-    # **本人確認ができなければ保存しない**（セキュリティ監査 2026-09-16・
-    # P2-1）。下の取り違え防止は `if handle and username and ...` なので、
-    # `username` が空だと**照合そのものを飛ばして保存していた**——`user_id`
-    # も `username` も空のトークンが 600 で書かれる筋があった。`user_id`・
-    # `username` の**どちらか**が空でも、本人が誰かを確かめられていないので
-    # 保存しない。**既存の `.token` には触らない**（読みも書きもしない）。
-    if not user_id or not username:
-        _out("本人確認ができないので保存しません（/me が id・username を"
-             "返しませんでした）。既存のトークンはそのままです。", log=log)
-        return 1
-
-    # **取り違え防止**（セキュリティ監査 2026-09-14・P2-4）。`thth token set` は
-    # 前からこれを見ていたが、`thth auth` には無かった——**同じ危険の同じ守りが
-    # 片方にしか無い**。台帳の handle と、トークンが実際に指しているアカウントが
-    # 食い違ったら保存しない。通してしまうと、そのアカウントの queue の本文が
-    # 別のアカウントから出る（取り消せない公開行為）。
-    handle = (account_cfg.get("handle") or "").strip()
-    if handle_matches(handle, username) is False:
-        _out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
-             f"このトークンは {username} のものです。", log=log)
-        _out("正しいアカウントで認可し直すか、台帳の handle を直してください。", log=log)
-        return 1
-
-    # **認可の範囲を記録する**（2026-09-14・`fetch_token_scopes` の説明）。
-    # `/debug_token` が言った一覧なら `"response"`、訊けなければ要求した一覧を
-    # `"requested"` として書く。**どちらを書いたかを残す。**
-    granted = fetch_token_scopes(long_token)
-    if granted is not None:
-        scopes_recorded, scopes_source = granted, SCOPES_SOURCE_RESPONSE
-    else:
-        scopes_recorded, scopes_source = list(scope_list), SCOPES_SOURCE_REQUESTED
-
-    token_path = account_cfg["token"]
-    token_data = {
-        "access_token": long_token,
-        "obtained_at": jst.iso(),
-        "expires_in": expires_in,
-        "user_id": user_id,
-        "username": username,
-        "scopes": scopes_recorded,
-        "scopes_source": scopes_source,
-    }
-    token_was_present = os.path.exists(token_path)
-    secrets_fs.atomic_write_json(token_path, token_data, mode=0o600)
-    admin_log.append("token_set", account_name, account_cfg, by=by, diff={"token": ["present" if token_was_present else "absent", "present"]})
-    # 使い終わった `state` は残さない（1 回きり）。
-    _clear_auth_state(account_name)
-
-    _out(f"user_id={user_id} username={username}", log=log)
-    _out(f"保存しました: {token_path}（600）", log=log)
-    return 0
+    from . import authflow
+    from .adapters.auth_threads import ThreadsAuthProfile
+    profile = ThreadsAuthProfile(app_id, app_secret, redirect_uri, list(scope_list))
+    return authflow.run(account_name, account_cfg, profile, code=code,
+                        input_func=input_func, log=log, by=by, human_output=human_output)
 
 
 def _parse_obtained_at(token: dict):

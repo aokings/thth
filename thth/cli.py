@@ -2521,7 +2521,8 @@ def cmd_auth(args) -> int:
     Threads は OAuth の往復、Bluesky は handle と App Password の対話
     （`thth auth masaru-bluesky`）、Mastodon は `thth token set` へ案内する。
     """
-    return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code, by=args.by)
+    return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code, by=args.by, rehearse=getattr(args, "rehearse", False),
+                              input_func=input if getattr(args, "paste", False) else None)
 
 
 def cmd_maintain(args) -> int:
@@ -3155,7 +3156,8 @@ def build_parser() -> argparse.ArgumentParser:
         "auth",
         help="OAuth の往復で長期トークンを取る（運用者が対話で実行。MCPには出さない）",
         description=(
-            "認可 URL を表示 → ブラウザで承認 → 戻り URL 全体を貼る → 長期トークンを .token に保存。\n"
+            "認可 URL を表示 → ブラウザで承認 → relayで取得 → 長期トークンを .token に保存。\n"
+            "relayが使えなければ戻りURLを貼る。--pasteで明示的に貼る経路を使う。\n"
             "Threads: 権限の内訳を変える（増やす・減らす）のはこの口だけ。管理画面の"
             "生成ツール（thth token set）は、そのアカウントが過去に承認した範囲でしか出さない。\n"
             "Bluesky: handle と App Password を対話で受ける。Mastodon: thth token set へ。"),
@@ -3167,7 +3169,9 @@ def build_parser() -> argparse.ArgumentParser:
                               "（Meta アプリに登録した値と 1 文字違わず同じにする）")
     p_auth.add_argument("--code", dest="code", default=None,
                          help="戻り URL 全体（code と state の両方が要る。code の値だけでは受け付けない）。"
-                              "省略時は URL を出したあと端末から読む。ssh に -t が無いときはこちら")
+                              "省略時は relayを待つ。--codeは前回発行したstateの再開にだけ使う")
+    p_auth.add_argument("--rehearse", action="store_true", help="RAMだけで未登録relayを最長600秒待つ。保存・認可・交換しない")
+    p_auth.add_argument("--paste", action="store_true", help="relayを使わず戻りURLを貼る（後方互換）")
     p_auth.set_defaults(func=cmd_auth)
 
     p_refresh = sub.add_parser("refresh", help="長期トークンを更新する（50日超・--forceで無条件。MCPには出さない）")
