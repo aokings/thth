@@ -37,19 +37,17 @@ def current(context, account, *, write=False):
         root, credentials = load_credentials(Path(context.credentials_path))
         found = next((item[3] for item in credentials if item[0] == context.credential_digest
                       and not item[2] and datetime.now(timezone.utc) < item[1]), None)
-        if found != context: error('credential_changed')
+        from dataclasses import replace
+        if (found is None or account not in found.allowed_accounts
+                or found.allowed_accounts[account] != context.allowed_accounts[account]
+                or found != replace(context,allowed_accounts=found.allowed_accounts)):
+            error('credential_changed')
         from .report_isolation import validate_environment
-        validate_environment(root, context.allowed_accounts)
+        validate_environment(root, found.allowed_accounts)
+    from . import leave_gate
+    if leave_gate.stopped(account):error('account_stopped')
     cfg = accounts.load_account(account)
     if cfg.get('project') != context.allowed_accounts[account]: error('scope_unavailable')
-    # The leave item uses this durable stop marker before remote revocation.
-    try:
-        with server_files.directory(Path(accounts.state_dir_for(account)), create=write) as fd:
-            try: os.stat('leave.json', dir_fd=fd, follow_symlinks=False)
-            except FileNotFoundError: pass
-            else: error('account_stopped')
-    except FileNotFoundError:
-        if write: raise
     return cfg
 
 

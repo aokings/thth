@@ -18,17 +18,17 @@ before(async()=>{
   directory=await realpath(await mkdtemp(join(tmpdir(),'thth-approval-')));key=join(directory,'ephemeral.key');
   const pem=run(['genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072']);sensitive.push(pem.toString());await writeFile(key,pem,{mode:0o600});
   const publicKey=run(['pkey','-in',key,'-pubout','-outform','DER']).toString('base64url');
-  const files=['test/approval-harness.js','src/worker.js','src/index.js','src/relay.js','src/relay-object.js','src/approval.js','src/approval-object.js'];
+  const files=['test/approval-harness.js','src/worker.js','src/index.js','src/relay.js','src/relay-object.js','src/approval.js','src/approval-object.js','src/deletion.js','src/deletion-object.js'];
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,
     log:new SilentLog(),handleStructuredLogs:item=>logs.push(JSON.stringify(item)),bindings:{APPROVAL_PUBLIC_KEY:publicKey},
-    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'TestPerson',useSQLite:true},APPROVAL_SESSION:{className:'TestSession',useSQLite:true}},
-    ratelimits:{AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:120,period:60}},APPROVAL_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:120,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}}}}));await mf.ready;
+    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'TestPerson',useSQLite:true},APPROVAL_SESSION:{className:'TestSession',useSQLite:true},APPROVAL_ACCOUNT:{className:'TestAccount',useSQLite:true},DELETION_INBOX:{className:'TestDeletion',useSQLite:true}},
+    ratelimits:{DELETION_PUBLIC_LIMIT:{namespace_id:'21204',simple:{limit:120,period:60}},AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:120,period:60}},APPROVAL_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:120,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}}}}));await mf.ready;
 });
 after(async()=>{await mf?.dispose();await rm(directory,{recursive:true,force:true});const hits=logs.filter(line=>sensitive.some(value=>line.includes(value))).length;assert.equal(hits,0,'secret in runtime logs');console.log('approval runtime log scan: '+logs.length+' chunks, '+hits+' hits');});
 function wire(type,subject,op,body={},options={}){
   const path=`/approval/${type}/${subject}/${op}`,raw=JSON.stringify(body),time=Date.now(),nonce=opaque();
-  const signature=run(['dgst','-sha256','-sign',key,'-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],Buffer.from(canonical('POST',path,options.role??(type==='person'?'operator':'job'),subject,op,time,nonce,hash(raw)))).toString('base64url');
+  const signature=run(['dgst','-sha256','-sign',key,'-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],Buffer.from(canonical('POST',path,options.role??(type==='session'?'job':'operator'),subject,op,time,nonce,hash(raw)))).toString('base64url');
   sensitive.push(signature,nonce);
   return{url:'https://approval.test'+path,init:{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':options.ip??opaque(),'x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw}};
 }
@@ -149,4 +149,96 @@ test('long digest and URL metadata inherit wrapping without changing visible val
   assert.ok(html.includes('<p>digest: '+s.body.digest+'</p>'));
   assert.ok(html.includes('<p>返信先: '+url+'</p>'));
   assert.ok(response.headers.get('content-security-policy').includes("default-src 'none'"));
+});
+
+test('account revoke invalidates A pending and approved sessions, preserves shared-person B',async()=>{
+  const p=await person(),account='a'+randomBytes(8).toString('hex');
+  const pending=await session(p,{account}),approved=await session(p,{account}),other=await session(p,{account:'b'+randomBytes(8).toString('hex')});
+  assert.equal((await approve(approved,p)).status,200);
+  assert.equal((await signed('account',account,'revoke',{}, {role:'job'})).status,401);
+  assert.equal((await signed('account',account,'revoke')).status,200);
+  assert.equal((await(await signed('account',account,'status')).json()).active,false);
+  for(const s of [pending,approved]){
+    assert.equal((await page(s)).status,410);
+    assert.notEqual((await consume(s)).status,200);
+    assert.ok(!JSON.stringify(await control('session',s.token)).includes(s.body.text));
+  }
+  assert.equal((await approve(other,p)).status,200);assert.equal((await consume(other)).status,200);
+  assert.equal((await(await signed('person',p.id,'status')).json()).active,true);
+  assert.equal((await signed('session',opaque(),'create',pending.body)).status,410);
+});
+test('deletion receipt is unverified until signed VM matching; completed only after verified leave',async()=>{
+  const blob=opaque()+'.'+opaque();sensitive.push(blob);
+  const response=await mf.dispatchFetch('https://approval.test/data-deletion',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded','cf-connecting-ip':opaque()},body:new URLSearchParams({signed_request:blob})});
+  assert.equal(response.status,200);const initial=await response.json(),code=initial.confirmation_code;sensitive.push(code);
+  assert.equal(initial.url,'https://thth.me/data-deletion-status?code='+code);
+  const status=()=>mf.dispatchFetch('https://approval.test/data-deletion-status?code='+code,{headers:{'cf-connecting-ip':opaque()}});
+  let observed=await(await status()).json();assert.equal(observed.status,'unverified');assert.equal(observed.completed_at,undefined);assert.equal(observed.account,undefined);
+  assert.equal((await signed('deletion',code,'read',{}, {role:'job'})).status,401);
+  const operation=opaque(),completed=Date.now()-1;
+  assert.equal((await signed('deletion',code,'complete',{account:'alpha',operation_id:operation,completed_at:completed})).status,409);
+  const privateRow=await(await signed('deletion',code,'read')).json();assert.equal(privateRow.signed_request,blob);assert.equal(privateRow.expires_at-privateRow.received_at,30*86400000);
+  assert.equal((await signed('deletion',code,'verify',{account:'alpha',blob_sha256:hash('different')})).status,409);
+  assert.equal((await signed('deletion',code,'verify',{account:'alpha',blob_sha256:hash(blob)})).status,200);
+  assert.equal((await(await signed('deletion',code,'read')).json()).signed_request,undefined);
+  assert.equal((await signed('deletion',code,'complete',{account:'beta',operation_id:operation,completed_at:completed})).status,409);
+  assert.equal((await signed('deletion',code,'complete',{account:'alpha',operation_id:operation,completed_at:completed})).status,200);
+  observed=await(await status()).json();assert.equal(observed.status,'completed');assert.equal(observed.completed_at,completed);
+  assert.equal((await signed('deletion',code,'complete',{account:'alpha',operation_id:operation,completed_at:completed})).status,200);
+  assert.equal((await signed('deletion',code,'complete',{account:'alpha',operation_id:opaque(),completed_at:completed})).status,409);
+});
+
+test('account revoke after Person consume wins before final Account gate; shared-person B still works',async()=>{
+  const p=await person(),account='r'+randomBytes(8).toString('hex'),a=await session(p,{account}),b=await session(p,{account:'b'+randomBytes(8).toString('hex')});
+  assert.equal((await approve(a,p)).status,200);assert.equal((await approve(b,p)).status,200);
+  await control('person',p.id,{revokeAccountAfterConsume:account});
+  assert.notEqual((await consume(a)).status,200);assert.notEqual((await consume(a)).status,200);
+  assert.equal((await consume(b)).status,200);
+});
+test('Account gate storage failure after Person consume cannot redeliver on retry',async()=>{
+  const p=await person(),account='f'+randomBytes(8).toString('hex'),a=await session(p,{account});
+  assert.equal((await approve(a,p)).status,200);await control('account',account,{fault:true});
+  assert.notEqual((await consume(a)).status,200);await control('account',account,{fault:false});
+  assert.notEqual((await consume(a)).status,200);
+});
+test('receipt logical thirty-day expiry and alarm erase blob and binding',async()=>{
+  const blob=opaque()+'.'+opaque(),response=await mf.dispatchFetch('https://approval.test/data-deletion',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded','cf-connecting-ip':opaque()},body:new URLSearchParams({signed_request:blob})});
+  const code=(await response.json()).confirmation_code,read=await(await signed('deletion',code,'read')).json();
+  await control('deletion','inbox',{clock:read.expires_at});
+  assert.equal((await mf.dispatchFetch('https://approval.test/data-deletion-status?code='+code,{headers:{'cf-connecting-ip':opaque()}})).status,404);
+  const rows=await control('deletion','inbox',{clock:read.expires_at,alarm:true});
+  assert.ok(!JSON.stringify(rows).includes(blob));assert.ok(!new Map(rows).has('receipt:'+code));
+  await control('deletion','inbox',{});
+});
+test('invalid-signature discard is operator-only, hash-bound, retry-safe and frees full inbox capacity',async()=>{
+  const submit=blob=>mf.dispatchFetch('https://approval.test/data-deletion',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded','cf-connecting-ip':opaque()},body:new URLSearchParams({signed_request:blob})});
+  for(const bad of ['.','x.y',opaque()+'.a.b',opaque()+'.'])assert.equal((await submit(bad)).status,400);
+  const blob=opaque()+'.'+Buffer.from('synthetic-payload').toString('base64url');sensitive.push(blob);
+  const codes=[];
+  for(let i=0;i<1000;i++){const r=await submit(blob);assert.equal(r.status,200);codes.push((await r.json()).confirmation_code);}
+  assert.equal((await control('deletion','inbox')).filter(([k])=>k.startsWith('receipt:')).length,1000);
+  assert.equal((await submit(blob)).status,503);
+  const code=codes[0],body={blob_sha256:hash(blob)};
+  assert.equal((await signed('deletion',code,'discard',body,{role:'job'})).status,401);
+  assert.equal((await signed('deletion',code,'discard',{blob_sha256:hash('other')})).status,409);
+  assert.equal((await submit(blob)).status,503);
+  const w=wire('deletion',code,'discard',body);
+  assert.equal((await mf.dispatchFetch(w.url,w.init)).status,200);
+  assert.equal((await mf.dispatchFetch(w.url,w.init)).status,409);
+  assert.equal((await signed('deletion',code,'discard',body)).status,200);
+  assert.equal((await signed('deletion',code,'discard',{blob_sha256:hash('other')})).status,404);
+  assert.equal((await signed('deletion',code,'read')).status,404);
+  assert.equal((await mf.dispatchFetch('https://approval.test/data-deletion-status?code='+code,{headers:{'cf-connecting-ip':opaque()}})).status,404);
+  assert.equal((await signed('deletion',code,'complete',{account:'alpha',operation_id:opaque(),completed_at:Date.now()})).status,404);
+  const accepted=await submit(blob);assert.equal(accepted.status,200);
+  const legitimate=(await accepted.json()).confirmation_code;
+  assert.equal((await signed('deletion',legitimate,'verify',{account:'alpha',blob_sha256:hash(blob)})).status,200);
+  assert.equal((await signed('deletion',legitimate,'discard',body)).status,409);
+  const rows=await control('deletion','inbox');
+  const marker=rows.find(([k])=>k==='discarded:'+code)[1];
+  assert.deepEqual(Object.keys(marker).sort(),['blob_sha256','expires_at']);
+  assert.equal(rows.filter(([k])=>k.startsWith('receipt:')).length,1000);
+  await control('deletion','inbox',{clock:Date.now()+31*86400000,alarm:true});
+  assert.equal((await control('deletion','inbox')).filter(([k])=>k.startsWith('discarded:')||k.startsWith('receipt:')).length,0);
+  await control('deletion','inbox',{});
 });

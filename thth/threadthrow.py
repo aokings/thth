@@ -24,7 +24,7 @@ from . import accounts as accounts_mod
 from . import approval as approval_mod
 from . import bundle as bundle_mod
 from . import inflight as inflight_mod
-from . import jst
+from . import jst, leave_gate
 from . import lock as lock_mod
 from . import postid as postid_mod
 from . import queuefile
@@ -410,7 +410,7 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
     threadrun.mark(run, index, threadrun.REQUESTED, reply_to=parent or None)
 
     token = accounts_mod.load_token(account_cfg)
-    adapter = adapter_factory(account_cfg, token)
+    adapter = leave_gate.bind(adapter_factory(account_cfg, token), account_cfg)
     post = adapter_base.Post(text=section, reply_to=parent or None, topic=topic,
                              hashtags_allowed=bool(account_cfg.get("hashtags", True)))
 

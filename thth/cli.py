@@ -2295,13 +2295,17 @@ def cmd_run(args) -> int:
     （外部レビュー §5・`thth/maintain.py` の docstring）。
     token が無ければ何も投げずに exit 2（設計 §3.2・T3a 訂正 2026-09-09。env は任意
     ・`accounts.token_exists()` docstring 参照）。"""
+    from . import leave_gate
+    try:leave_gate.require_active(args.account)
+    except accounts_mod.AccountStopped:
+        print('account_stopped',file=sys.stderr);return 2
     account_cfg = None
     # load_account() と同じ名前検査より先に、state のパスを組み立てない。
     # `../outside` を通知状態の書込先に使わせないため。
     state_dir = (accounts_mod.state_dir_for(args.account)
                  if accounts_mod.name_is_safe(args.account) else None)
 
-    def notify(state: str, *, result=None, reason=None, exception=None) -> None:
+    def _notify(state: str, *, result=None, reason=None, exception=None) -> None:
         """通知の失敗で、投稿の rc や元の例外を上書きしない。"""
         if state_dir is None:
             return
@@ -2330,6 +2334,12 @@ def cmd_run(args) -> int:
                   file=sys.stderr)
         if not attempt.state_saved:
             print("死活通知の状態を保存できませんでした", file=sys.stderr)
+
+    def notify(state: str, **kwargs) -> None:
+        if state_dir is None:return
+        try:
+            with leave_gate.lease(args.account):_notify(state,**kwargs)
+        except accounts_mod.AccountStopped:return
 
     try:
         # app 自身を最新にしてから走る（設計 §3.2・**lock を取る前**）。進んでいたら

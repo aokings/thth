@@ -1,5 +1,5 @@
 import {DurableObject} from 'cloudflare:workers';
-import {TTL,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64,personStub} from './approval.js';
+import {TTL,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64,personStub,accountStub} from './approval.js';
 import {HASH_PATTERN,STATE_PATTERN,digest} from './relay.js';
 
 class AtomicObject extends DurableObject {
@@ -68,6 +68,57 @@ export class ApprovalPerson extends AtomicObject {
     if(next!==null)await this.ctx.storage.setAlarm(next);
   }
 }
+export class ApprovalAccount extends AtomicObject {
+  active(){return this.ctx.storage.kv.get('revoked')!==true;}
+  async manage(operation,body,ticket){
+    const result=this.atomic(()=>{
+      if(!['status','revoke'].includes(operation)||!fields(body,[]))return fail();
+      if(!this.replay(ticket))return fail(409,'replayed_request');
+      if(operation==='status')return {status:200,body:{active:this.active()}};
+      // This commit is the account revocation linearization point.
+      this.put('revoked',true);return {status:200};
+    });
+    if(result.status!==200||operation==='status')return result;
+    // The stop already holds if an invalidation RPC fails; a retry completes it.
+    for(const [,row] of this.ctx.storage.kv.list({prefix:'session:'})){
+      if(row.expires_at>this.now())await this.env.APPROVAL_SESSION.get(this.env.APPROVAL_SESSION.idFromString(row.session)).invalidate();
+    }
+    return {status:200,body:{status:'revoked'}};
+  }
+  async register(binding,generation,session){
+    const result=this.atomic(()=>{
+      if(!this.active())return fail(410,'account_revoked');
+      if(this.now()>=binding.expires_at)return fail(410,'expired');
+      const key='session:'+binding.job_id;
+      if(this.ctx.storage.kv.get(key))return fail(409,'session_exists');
+      this.put(key,{...binding,generation,session,status:'pending'});return {status:200};
+    });
+    if(result.status===200){const alarm=await this.ctx.storage.getAlarm();if(alarm===null||binding.expires_at<alarm)await this.ctx.storage.setAlarm(binding.expires_at);}
+    return result;
+  }
+  grant(binding,generation,approved_at){return this.atomic(()=>{
+    const key='session:'+binding.job_id,row=this.ctx.storage.kv.get(key);
+    if(!this.active())return fail(410,'account_revoked');
+    if(!this.matches(row,binding,generation)||row.status!=='pending')return fail(404,'not_ready');
+    this.put(key,{...row,status:'approved',approved_at});return {status:200};
+  });}
+  matches(row,binding,generation){return row&&row.generation===generation&&this.now()<row.expires_at&&
+    ['job_id','digest','account','kind','expires_at'].every(k=>row[k]===binding[k]);}
+  consume(binding,generation,approved_at){return this.atomic(()=>{
+    const key='session:'+binding.job_id,row=this.ctx.storage.kv.get(key);
+    // No awaited status result can authorize this atomic final gate.
+    if(!this.active())return fail(410,'account_revoked');
+    if(!this.matches(row,binding,generation)||row.status!=='approved'||row.approved_at!==approved_at)return fail(404,'not_ready');
+    this.put(key,{...row,status:'consumed'});return {status:200};
+  });}
+  async alarm(){
+    let next=null;const now=this.now();
+    this.ctx.storage.transactionSync(()=>{for(const [key,row] of this.ctx.storage.kv.list({prefix:'session:'})){
+      if(row.expires_at<=now)this.ctx.storage.kv.delete(key);else next=Math.min(next??Infinity,row.expires_at);
+    }});
+    if(next!==null)await this.ctx.storage.setAlarm(next);
+  }
+}
 export class ApprovalSession extends AtomicObject {
   row(){const row=this.ctx.storage.kv.get('session');
     if(row&&this.now()>=row.expires_at){this.clear(row,'expired');return null;}return row;}
@@ -77,13 +128,16 @@ export class ApprovalSession extends AtomicObject {
     this.put('session',{person,generation,job_id,digest,account,kind,expires_at,read_key_hash,
       ...(approved_at?{approved_at}:{}),status});
   }
+  invalidate(){const row=this.ctx.storage.kv.get('session');if(row)this.clear(row,'expired');}
   async manage(operation,body,ticket){
     if(operation==='create'){
       if(!fields(body,['person','job_id','digest','account','kind','text','context','read_key_hash'])||['person','account','job_id','digest','read_key_hash'].some(k=>typeof body[k]!=='string')||!PERSON.test(body.person)||!PERSON.test(body.account)||!STATE_PATTERN.test(body.job_id)||!HASH_PATTERN.test(body.digest)||!HASH_PATTERN.test(body.read_key_hash)||!['approve','send','retract'].includes(body.kind)||typeof body.text!=='string'||!body.text||new TextEncoder().encode(body.text).length>48_000||!fields(body.context,['media','reply_to','publish_at','target','reason','topic','options'])||!['threads','mastodon','bluesky','x'].includes(body.context.media)||Object.values(body.context).some(v=>v!==null&&(typeof v!=='string'||v.length>4096)))return fail();
+      const authority=await accountStub(this.env,body.account);
+      if(!await authority.active())return fail(410,'account_revoked');
       const generation=await (await personStub(this.env,body.person)).current();
       if(!generation)return fail(409,'approver_unavailable');
       const deadline=this.now()+TTL;
-      try{return await this.ctx.storage.transaction(async()=>{
+      try{const created=await this.ctx.storage.transaction(async()=>{
         const result=this.atomic(()=>{
           if(!this.replay(ticket))return fail(409,'replayed_request');
           if(this.ctx.storage.kv.get('session'))return fail(409,'session_exists');
@@ -91,7 +145,12 @@ export class ApprovalSession extends AtomicObject {
           return {status:201,body:{status:'pending',expires_at:deadline}};
         });
         if(result.status===201)await this.ctx.storage.setAlarm(deadline);return result;
-      });}catch{return fail(503,'approval_unavailable');}
+      });
+        if(created.status!==201)return created;
+        const registered=await authority.register(this.binding(this.row()),generation,this.ctx.id.toString());
+        if(registered.status!==200){this.invalidate();return registered;}
+        return created;
+      }catch{return fail(503,'approval_unavailable');}
     }
     if(!['consume','status','cancel'].includes(operation)||!fields(body,['read_key'])||typeof body.read_key!=='string'||!STATE_PATTERN.test(body.read_key))return fail();
     const hash=await digest(body.read_key), before=this.row();
@@ -104,6 +163,8 @@ export class ApprovalSession extends AtomicObject {
       return {status:200};
     });
     if(admission.status!==200||operation==='cancel')return admission;
+    const authority=await accountStub(this.env,before.account);
+    if(!await authority.active()){this.invalidate();return fail(410,'account_revoked');}
     const person=await personStub(this.env,before.person);
     if(operation==='status'){
       const current=await person.current(before.generation), row=this.row();
@@ -114,6 +175,8 @@ export class ApprovalSession extends AtomicObject {
     const row=this.row();if(!row||row.status!=='approved')return fail(404,'not_ready');
     const result=await person.consume(row.generation,this.binding(row));
     if(result.status!==200)return result;
+    const permission=await authority.consume(this.binding(row),row.generation,result.body.approved_at);
+    if(permission.status!==200)return permission;
     // Person.consume is the authoritative one-shot generation gate. A subsequent
     // local storage failure must never redeliver its receipt: VM reports unknown.
     return this.atomic(()=>{
@@ -127,7 +190,7 @@ export class ApprovalSession extends AtomicObject {
 
   async view(){
     const before=this.row();if(!before||before.status!=='pending')return fail(410,'expired');
-    if(!await (await personStub(this.env,before.person)).current(before.generation)){
+    if(!await (await accountStub(this.env,before.account)).active()||!await (await personStub(this.env,before.person)).current(before.generation)){
       this.clear(before,'expired');return fail(410,'approver_unavailable');}
     const row=this.row();if(!row||row.status!=='pending')return fail(410,'expired');
     const {text,account,kind,digest,csrf,context}=row;return {status:200,body:{text,account,kind,digest,csrf,context}};
@@ -142,6 +205,10 @@ export class ApprovalSession extends AtomicObject {
     });
     if(allowed!==true)return fail(410,'expired');
     const approved_at=await (await personStub(this.env,row.person)).check(secret,row.generation,this.binding(row));
+    if(approved_at!==null){
+      const grant=await (await accountStub(this.env,row.account)).grant(this.binding(row),row.generation,approved_at);
+      if(grant.status!==200){this.invalidate();return grant;}
+    }
     return this.atomic(()=>{
       const current=this.row();if(!current||current.status!=='pending')return fail(410,'expired');
       if(approved_at===null){if(current.failures>=5)this.clear(current,'expired');return fail(403,'approval_failed');}

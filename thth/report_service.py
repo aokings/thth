@@ -87,7 +87,7 @@ def execute_report(context: ReportContext, request: dict) -> dict:
     operation, scope_key, scope_value, names, now, kwargs = _scoped_request(context, request)
     reports = {}
     try:
-        with replies.report_scope(context.allowed_accounts):
+        with replies.report_scope(_active_names(context)):
             for name in names:
                 if operation == "analytics_report":
                     reports[name] = analytics_report.answer(name, now=now, **kwargs)
@@ -102,6 +102,11 @@ def execute_report(context: ReportContext, request: dict) -> dict:
             "limitations": ["Host-trusted scope only; authentication and filesystem isolation are external",
                             "Projects contain only accounts allowed by this context",
                             "Underlying report freshness and coverage limits remain applicable"]}
+
+
+def _active_names(context):
+    from . import leave_gate
+    return tuple(name for name in context.allowed_accounts if not leave_gate.stopped(name))
 
 
 def _scoped_request(context: ReportContext, request: dict):
@@ -139,6 +144,9 @@ def _scoped_request(context: ReportContext, request: dict):
     if not names:
         # Same error for missing and existing-but-unpermitted resources.
         raise ReportServiceError("scope_unavailable")
+    active = _active_names(context)
+    names = [name for name in names if name in active]
+    if not names:raise ReportServiceError('scope_unavailable')
     now = jst.now_jst()
     kwargs = {key: request[key] for key in options if key in request}
     return operation, scope_key, scope_value, names, now, kwargs
@@ -161,10 +169,10 @@ def execute_mcp_report(context: ReportContext, request: dict) -> dict:
         if operation == "analytics_report":
             return analytics_report.answer(account, project=project, now=now,
                                            trusted_names=tuple(names),
-                                           allowed_names=tuple(context.allowed_accounts), **kwargs)
+                                           allowed_names=_active_names(context), **kwargs)
         return operations_handoff.answer(account, project=project, now=now,
                                          trusted_names=tuple(names),
-                                         allowed_names=tuple(context.allowed_accounts), **kwargs)
+                                         allowed_names=_active_names(context), **kwargs)
     except (accounts.AccountError, after_cli.AfterError, operations_handoff.HandoffError,
             OSError, ValueError, TypeError, KeyError, OverflowError):
         raise ReportServiceError("report_unavailable") from None
@@ -200,7 +208,7 @@ def _mcp_study(context: ReportContext, request: dict) -> dict:
     path = Path(os.path.abspath(file_arg))
     try:
         repos = {}
-        for name in context.allowed_accounts:
+        for name in _active_names(context):
             cfg = accounts.load_account(name)
             repo = accounts.resolved_repo_dir(cfg)
             if repo:
@@ -232,7 +240,7 @@ def _mcp_study(context: ReportContext, request: dict) -> dict:
             finally:
                 os.close(descriptor)
             declaration = study_report.parse_declaration_bytes(data, now)
-            if declaration["account"] not in context.allowed_accounts:
+            if declaration["account"] not in _active_names(context):
                 raise ReportServiceError("scope_unavailable")
             declared_repo = repos.get(declaration["account"])
             if declared_repo is not None and path.is_relative_to(declared_repo):
@@ -242,7 +250,7 @@ def _mcp_study(context: ReportContext, request: dict) -> dict:
             raise ReportServiceError("scope_unavailable")
         return study_report.answer(None, min_n=min_n, now=now,
                                    verified_declaration=declaration,
-                                   allowed_names=tuple(context.allowed_accounts))
+                                   allowed_names=_active_names(context))
     except ReportServiceError:
         raise
     except (accounts.AccountError, study_report.StudyError, OSError, ValueError, TypeError,

@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from . import admin_log
 
+from . import leave_gate
+
 import getpass
 import json
 import os
@@ -384,6 +386,7 @@ def refresh_long_lived_token(access_token: str, *, timeout: float = 10.0) -> dic
         raise OAuthError(_error_message("トークンの更新に失敗しました", e)) from e
 
 
+@leave_gate.scoped
 def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | None = None,
              input_func=None, identifier_input=None, password_input=None,
              log=print, by=None, rehearse=False, human_output=print) -> int:
@@ -429,7 +432,7 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
             log('admin_change_recorded_durability_unconfirmed' if exc.complete else
                 'admin_change_partially_recorded_outcome_uncertain' if exc.appended else 'admin_change_refused')
             return 2
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, accounts_mod.AccountError) as exc:
             detail = str(exc) if isinstance(exc, authflow.FlowError) else "client設定を確認してください"
             _out(media + "_auth_setup_failed: " + detail, log=log)
             return 2
@@ -524,6 +527,7 @@ def token_age_and_remaining(token: dict, now):
     return age_seconds, remaining_days
 
 
+@leave_gate.protect_admin_change
 @admin_log.guarded
 def run_refresh(account_name: str, *, force: bool = False, check: bool = False,
                  log=print, now=None) -> int:
@@ -657,6 +661,7 @@ def _ask_bluesky(prompt: str, *, secret: bool):
     return getpass.getpass(prompt) if secret else input(prompt)
 
 
+@leave_gate.scoped
 def run_auth_bluesky(account_name: str, *, account_cfg=None,
                      identifier_input=None, password_input=None, log=print, by=None) -> int:
     """Legacy human App Password auth; same validation/commit as stdin token set."""
@@ -796,59 +801,60 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
              f"{'・'.join(adapter_cls.TOKEN_KEYS)}）。"
              f"`thth auth {account_name}` を使ってください。", log=log)
         return 2
-    try:
-        adapter = adapters_mod.make_adapter(account_cfg, {"access_token": token_value})
-        me = adapter.whoami()
-    except adapters_mod.base.AdapterError as e:
-        _out(f"トークンが使えませんでした（{redact_mod.redact(str(e))}）", log=log)
-        return 1
-    user_id = me.get("user_id", "")
-    username = me.get("username", "")
-    # **本人確認ができなければ保存しない**（セキュリティ監査 2026-09-16・
-    # P2-1）。`user_id` だけを見ていたので、`username` が空でも次の取り違え
-    # 防止（`if handle and username and ...`）を素通りして保存していた。
-    if not user_id or not username:
-        _out("トークンが使えませんでした（me の応答に id か username が無い）", log=log)
-        return 1
+    with leave_gate.lease(account_name),leave_gate.credentials():
+        try:
+            adapter = adapters_mod.make_adapter(account_cfg, {"access_token": token_value})
+            me = adapter.whoami()
+        except adapters_mod.base.AdapterError as e:
+            _out(f"トークンが使えませんでした（{redact_mod.redact(str(e))}）", log=log)
+            return 1
+        user_id = me.get("user_id", "")
+        username = me.get("username", "")
+        # **本人確認ができなければ保存しない**（セキュリティ監査 2026-09-16・
+        # P2-1）。`user_id` だけを見ていたので、`username` が空でも次の取り違え
+        # 防止（`if handle and username and ...`）を素通りして保存していた。
+        if not user_id or not username:
+            _out("トークンが使えませんでした（me の応答に id か username が無い）", log=log)
+            return 1
 
-    # 取り違え防止（masaru の指摘 2026-09-09）。台帳の handle と、トークンが
-    # 実際に指しているアカウントが食い違ったら保存しない。
-    #
-    # Meta 側にも「選択中のテスタープロフィールと一致しません」という検査があるが、
-    # それが見ているのは「管理画面で押した行」と「ブラウザでログイン中のアカウント」の
-    # 一致だけ。**正しく発行したトークンを、別のアカウントの枠に貼る**取り違えは
-    # 見てくれない（nigamilab のトークンを kopicha-threads に入れる等）。そこを塞ぐ。
-    #
-    # 通してしまうと、そのアカウントの queue の本文が別のアカウントから出る。
-    # 取り消せない公開行為なので、疑わしければ保存しない（--force でも覆さない）。
-    handle = (account_cfg.get("handle") or "").strip()
-    if handle_matches(handle, username) is False:
-        _out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
-             f"このトークンは {username} のものです。", log=log)
-        _out("正しいアカウントで発行し直すか、台帳の handle を直してください。", log=log)
-        return 1
+        # 取り違え防止（masaru の指摘 2026-09-09）。台帳の handle と、トークンが
+        # 実際に指しているアカウントが食い違ったら保存しない。
+        #
+        # Meta 側にも「選択中のテスタープロフィールと一致しません」という検査があるが、
+        # それが見ているのは「管理画面で押した行」と「ブラウザでログイン中のアカウント」の
+        # 一致だけ。**正しく発行したトークンを、別のアカウントの枠に貼る**取り違えは
+        # 見てくれない（nigamilab のトークンを kopicha-threads に入れる等）。そこを塞ぐ。
+        #
+        # 通してしまうと、そのアカウントの queue の本文が別のアカウントから出る。
+        # 取り消せない公開行為なので、疑わしければ保存しない（--force でも覆さない）。
+        handle = (account_cfg.get("handle") or "").strip()
+        if handle_matches(handle, username) is False:
+            _out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
+                 f"このトークンは {username} のものです。", log=log)
+            _out("正しいアカウントで発行し直すか、台帳の handle を直してください。", log=log)
+            return 1
 
-    token_data = {
-        "access_token": token_value,
-        "obtained_at": jst.iso(),
-        "user_id": user_id,
-        "username": username,
-        "scopes": None,
-        "scopes_source": SCOPES_SOURCE_UNKNOWN,
-        "auth_via": "token_set",
-    }
-    # **期限の有無は媒体の知識**（`TOKEN_NO_EXPIRY`・T3 の配線 2026-09-13）。
-    # Threads の長期トークンは 60 日で切れるので、管理画面が発行時刻を返さない
-    # ぶんを既定寿命で埋める。Mastodon の access token に期限は無いので、
-    # **`expires_in` を書かず `no_expiry: true` を立てる**——書いてしまうと
-    # `maintain` が 60 日後に「まもなく切れます」と嘘の督促を出し、`thth refresh`
-    # が更新できないまま毎日 rc=1 で鳴り続ける。「判らない」ではなく
-    # 「期限を持たない」（設計 v2 §4.2）。
-    if adapter_cls.TOKEN_NO_EXPIRY:
-        token_data["no_expiry"] = True
-    else:
-        token_data["expires_in"] = DEFAULT_TOKEN_LIFETIME_SECONDS
-    authflow.commit_manual(account_name,account_cfg,token_data,snapshot=snapshot,session=session,by=by)
+        token_data = {
+            "access_token": token_value,
+            "obtained_at": jst.iso(),
+            "user_id": user_id,
+            "username": username,
+            "scopes": None,
+            "scopes_source": SCOPES_SOURCE_UNKNOWN,
+            "auth_via": "token_set",
+        }
+        # **期限の有無は媒体の知識**（`TOKEN_NO_EXPIRY`・T3 の配線 2026-09-13）。
+        # Threads の長期トークンは 60 日で切れるので、管理画面が発行時刻を返さない
+        # ぶんを既定寿命で埋める。Mastodon の access token に期限は無いので、
+        # **`expires_in` を書かず `no_expiry: true` を立てる**——書いてしまうと
+        # `maintain` が 60 日後に「まもなく切れます」と嘘の督促を出し、`thth refresh`
+        # が更新できないまま毎日 rc=1 で鳴り続ける。「判らない」ではなく
+        # 「期限を持たない」（設計 v2 §4.2）。
+        if adapter_cls.TOKEN_NO_EXPIRY:
+            token_data["no_expiry"] = True
+        else:
+            token_data["expires_in"] = DEFAULT_TOKEN_LIFETIME_SECONDS
+        authflow.commit_manual(account_name,account_cfg,token_data,snapshot=snapshot,session=session,by=by)
     from . import doctor
     doctor.record_auth(account_name,account_cfg,token_data,log=log)
 
@@ -857,6 +863,7 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
     return 0
 
 
+@leave_gate.scoped
 def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False,
                    input_func=None, log=print, by=None) -> int:
     try:
@@ -884,6 +891,7 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
         password_input=lambda: _read_pasted_token(stdin=True, input_func=input_func))
 
 
+@leave_gate.protect_admin_change
 @admin_log.guarded
 def run_token_revoke(account_name, *, by=None, log=print):
     """Remove the local credential only; no remote revocation API is called."""

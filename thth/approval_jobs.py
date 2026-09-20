@@ -78,7 +78,9 @@ def _load(fd, job_id):
 
 
 def _save(fd, job):
-    server_files.replace_at(fd,job['job_id']+'.json',server_files.encode(job),private=True)
+    from . import leave_gate
+    with leave_gate.lease(job['account']):
+        server_files.replace_at(fd,job['job_id']+'.json',server_files.encode(job),private=True)
 
 
 def _public(job):
@@ -239,7 +241,7 @@ def process(account, job_id, contexts):
                 job.update(status='unknown' if uncertain else 'failed',
                            reason='operation_outcome_unknown' if uncertain else 'approval_no_longer_valid')
                 _save(fd,job)
-    except (OSError,ValueError):
+    except (OSError,ValueError,accounts.AccountStopped):
         # Leave durable prior intent in place; never turn storage failure into retry.
         return
 
@@ -250,7 +252,7 @@ def run_once(credentials_path):
     root, credentials=load_credentials(Path(credentials_path))
     from .report_isolation import validate_environment
     for item in credentials:
-        validate_environment(root,item[3].allowed_accounts,allow_unreadable=item[3].scope=='admin')
+        validate_environment(root,item[3].allowed_accounts,allow_unreadable=item[3].scope=='admin',allow_empty=True)
     contexts=[item[3] for item in credentials if not item[2] and datetime.now(timezone.utc)<item[1]]
     for account in accounts.list_account_names():
         try:

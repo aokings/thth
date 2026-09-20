@@ -1,4 +1,6 @@
 """Threads provider: existing exchange helpers; Meta does not support PKCE."""
+from .. import leave_gate
+
 from ..authflow import AuthProfile
 from .. import jst
 
@@ -19,6 +21,7 @@ class ThreadsAuthProfile(AuthProfile):
         from .. import appenv
         return appenv.load_app_env(log=lambda _: None)
 
+    @leave_gate.configured("account_cfg")
     def exchange(self, code_value, session, account_cfg, *, log):
         from .. import oauth
         app_id, app_secret, redirect_uri, scope_list = self.client_id, self.client_secret, self.redirect_uri, self.scopes

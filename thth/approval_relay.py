@@ -104,6 +104,10 @@ def canonical(method, path, role, subject, operation, timestamp, nonce, body):
 def signed_request(kind, subject, operation, body):
     if (kind == 'person' and PERSON.fullmatch(subject) and operation in ('set','revoke','unlock','status')):
         role = 'operator'
+    elif kind == 'deletion' and (subject == 'inbox' and operation == 'list' or OPAQUE.fullmatch(subject) and operation in ('read','verify','complete','discard')):
+        role = 'operator'
+    elif kind == 'account' and PERSON.fullmatch(subject) and operation in ('revoke','status'):
+        role = 'operator'
     elif kind == 'session' and OPAQUE.fullmatch(subject) and operation in ('create','consume','status','cancel'):
         role = 'job'
     else: raise RelayError('invalid_approval_operation')
@@ -128,8 +132,9 @@ def signed_request(kind, subject, operation, body):
         def redirect_request(self, *args, **kwargs): return None
     try:
         with urllib.request.build_opener(NoRedirect()).open(request, timeout=10) as response:
-            data = response.read(4097)
-            if len(data)>4096 or response.status not in (200,201): raise RelayError('approval_relay_unavailable')
+            limit=16384 if kind=='deletion' else 4096
+            data = response.read(limit+1)
+            if len(data)>limit or response.status not in (200,201): raise RelayError('approval_relay_unavailable')
             value=json.loads(data)
             if not isinstance(value,dict):raise RelayError('approval_relay_invalid')
             return value

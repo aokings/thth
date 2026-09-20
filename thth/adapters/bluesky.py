@@ -399,12 +399,14 @@ class BlueskyAdapter(base.Adapter):
         実際に叩く段（`session()`）で「`thth auth` を先に」と loud に断る。
         """
         cfg = account_cfg or {}
-        return cls(
+        from .. import leave_gate
+        adapter = cls(
             service=cfg.get("service") or DEFAULT_SERVICE,
             identifier=((token or {}).get("identifier")
                         or cfg.get("handle") or ""),
             app_password=(token or {}).get("app_password", ""),
         )
+        return leave_gate.bind(adapter, account_cfg)
 
     # --- 秘密を通さない ----------------------------------------------------
     def _secrets(self) -> tuple:

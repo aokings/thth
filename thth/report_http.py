@@ -119,6 +119,14 @@ def load_credentials(path: Path):
                     allowed[ledger.stem] = registry_project(value)
             context = ReportContext(allowed, scope=scope, writes=item.get('writes', False), actor=item.get('actor'),
                                     credential_digest=digest, credentials_path=str(Path(path).absolute()))
+            from . import leave, leave_gate
+            from dataclasses import replace
+            if scope == 'admin':
+                context=replace(context,allowed_accounts={**context.allowed_accounts,**{
+                    name:context.allowed_accounts.get(name) for name in leave.names()}})
+            else:
+                context=replace(context,allowed_accounts={name:project for name,project in context.allowed_accounts.items()
+                                                        if not leave_gate.stopped(name)})
             credentials.append((digest, _expiry(item["expires_at"]), item["revoked"], context))
         return root, credentials
     except (OSError, ValueError, TypeError, KeyError, RecursionError, OverflowError):
@@ -137,7 +145,7 @@ class PrivateReportServer(HTTPServer):
         self.credentials_path = Path(credentials_path).absolute()
         root, credentials = load_credentials(self.credentials_path)
         for _, _, _, context in credentials:
-            validate_environment(root, context.allowed_accounts, allow_unreadable=context.scope == "admin")  # Fail before binding.
+            validate_environment(root, context.allowed_accounts, allow_unreadable=context.scope == "admin", allow_empty=True)  # Fail before binding.
         self.executor = executor
         if socket_path is not None:
             path = Path(socket_path).absolute()
@@ -307,7 +315,7 @@ class ReportHandler(BaseHTTPRequestHandler):
         except (ValueError, OSError, RecursionError, OverflowError):
             return self._reply(400, {"error": "invalid_request"})
         try:
-            validate_environment(root, context.allowed_accounts, allow_unreadable=context.scope == "admin")
+            validate_environment(root, context.allowed_accounts, allow_unreadable=context.scope == "admin", allow_empty=True)
         except IsolationError:
             return self._reply(503, {"error": "environment_unavailable"})
         try:

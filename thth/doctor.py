@@ -12,6 +12,8 @@ tester の認可画面に降りてくるのは 5 つだけだった（設計 §2
 """
 from __future__ import annotations
 
+from . import leave_gate
+
 import json
 import sys
 import urllib.parse
@@ -103,6 +105,7 @@ def _auth_needs_app_env(account_name: str) -> bool:
         return False
 
 
+@leave_gate.scoped
 def diagnose(account_name: str) -> dict:
     """読み取りだけで能力を測る。トークンの値は返り値にも入れない。
 
@@ -296,7 +299,7 @@ def record_auth(account_name, cfg, token, *, log=print):
     try:
         if token.get('auth_via') not in ('relay','paste','token_set'):
             raise ValueError('auth_via_unavailable')
-        with admin_log.transaction():
+        with leave_gate.lease(account_name),admin_log.transaction():
             if accounts_mod.load_account(account_name)!=cfg or accounts_mod.load_token(cfg)!=token:
                 raise ValueError('auth_credential_changed')
             previous=_observation_raw(account_name) or {}
@@ -323,7 +326,7 @@ def record_observation(account_name, report, *, probed_at=None, credential_gener
         return read_observation(account_name) # Auth-only: no API probe took place.
     error=report.get('error')
     if error is not None and not isinstance(error,str):raise ValueError('doctor_observation_unavailable')
-    with admin_log.transaction():
+    with leave_gate.lease(account_name),admin_log.transaction():
         previous=_observation_raw(account_name) or {}
         value=dict(schema_version=2,account=account_name,probed_at=probed_at or jst.iso(),
                    probes=_observation_probes(report.get('probes')),error=admin_log.clean(error),

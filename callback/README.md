@@ -62,3 +62,11 @@ stable組Wrangler4.116.0/Miniflare4.20260730.0はworkerd最大日付2026-08-06�
 全fixtureのcode/read keyは実行時生成し、Worker/runtime/stdout/stderrを走査する。
 `observability.enabled=false` は認可経路の要件であり変更しない。
 `npm test` は deploy/login/Cloudflare API を実行しない。public/ は従来どおり生成物で編集しない。
+
+## 2.12 の承認と退出（未 deploy）
+
+`ApprovalAccount` は account ごとの最後の consume 許可点を持ちます。Person の承認後でも account revoke が先に確定していれば receipt を渡しません。すでに consume が確定した receipt も、VM の停止 journal と job 最終確認で実行を止めます。別 account の Person verifier は失効させません。
+
+`DeletionInbox` は `/data-deletion` の signed request を未照合で受け付け、receipt を返します。VM の署名付き照合→永続化した退出→完了通知だけが完了に進めます。未照合は最大 30 日、照合時に blob を除去します。VM が HMAC 不一致を確認したものだけは署名管理口で回収し、元の期限まで retry 用 SHA と期限だけを残します。1000 件の受付上限と定期 sync 不在時の枯渇は残ります。論理期限・稼働中 storage からの削除と PITR の物理保持は別です。管理者の手順は [サーバ退出](../docs/運用_サーバ退出_2.12.md) を参照してください。
+
+ローカル試験は secret/code/receipt/本文を実行時生成し、実 Wrangler の assets 優先経路、SQLite 保存、再起動、stdout/stderr 非出力を確認します。実サービスの callback や revoke の動作確認、migration の本番適用は別途必要です。

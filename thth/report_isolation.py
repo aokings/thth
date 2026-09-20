@@ -45,7 +45,7 @@ def read_registry_ledger(path):
         os.close(directory)
 
 
-def validate_environment(root: str, allowed_accounts: Mapping, *, allow_unreadable=False) -> None:
+def validate_environment(root: str, allowed_accounts: Mapping, *, allow_unreadable=False, allow_empty=False) -> None:
     """Validate dedicated root and configured scope without reading secrets.
 
     Root must be explicit, have no group/other permissions, and be owned by the running identity.
@@ -54,7 +54,7 @@ def validate_environment(root: str, allowed_accounts: Mapping, *, allow_unreadab
     Filesystem mutation races require host-enforced isolation, not this check.
     """
     try:
-        _validate(root, allowed_accounts, allow_unreadable=allow_unreadable)
+        _validate(root, allowed_accounts, allow_unreadable=allow_unreadable, allow_empty=allow_empty)
     except IsolationError:
         raise
     except (OSError, ValueError, TypeError, KeyError, AttributeError,
@@ -62,7 +62,7 @@ def validate_environment(root: str, allowed_accounts: Mapping, *, allow_unreadab
         raise IsolationError("invalid_report_environment") from None
 
 
-def _validate(root, allowed, *, allow_unreadable=False):
+def _validate(root, allowed, *, allow_unreadable=False, allow_empty=False):
     if not isinstance(root, str) or not os.path.isabs(root) or not isinstance(allowed, Mapping):
         raise IsolationError("invalid_report_environment")
     base = Path(root)
@@ -78,7 +78,7 @@ def _validate(root, allowed, *, allow_unreadable=False):
         raise IsolationError("account_registry_mismatch")
 
     # Check names before constructing paths or opening account definitions.
-    if not allowed or any(not accounts.name_is_safe(name) for name in allowed):
+    if (not allowed and not allow_empty) or any(not accounts.name_is_safe(name) for name in allowed):
         raise IsolationError("invalid_report_scope")
 
     # Inspect the root's immediate entries without descending unrelated repos.
@@ -121,6 +121,7 @@ def _validate(root, allowed, *, allow_unreadable=False):
                     inspect(Path(directory) / name)
 
     scan(account_dir)  # Account definitions must be safe before load_account opens them.
+    scan(resolved / "state" / "_leave")
     scan(resolved / "state" / "_admin")  # Shared administrator state is report-readable too.
 
     def inside(path):
@@ -136,7 +137,11 @@ def _validate(root, allowed, *, allow_unreadable=False):
         inside(accounts.state_dir_for(name))
         scan(accounts.state_dir_for(name))
         if allow_unreadable:
-            raw = read_registry_ledger(account_dir / (name + '.json'))
+            try:raw = read_registry_ledger(account_dir / (name + '.json'))
+            except FileNotFoundError:
+                from . import leave_gate
+                if leave_gate.stopped(name):continue
+                raise
             if raw is None:
                 continue
             try:

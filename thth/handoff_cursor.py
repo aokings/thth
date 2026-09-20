@@ -157,6 +157,12 @@ def write(name, node, by, now):
 
 
 def write_snapshot(name, filename, value):
+    if name=='_admin' and filename in ('admin_cursor.json','timers.json','admin_notifications.json'):return _write_snapshot(name,filename,value)
+    from . import leave_gate
+    with leave_gate.lease(name):return _write_snapshot(name,filename,value)
+
+
+def _write_snapshot(name, filename, value):
     if filename not in ('handoff_cursor.json', 'admin_cursor.json', 'admin_notifications.json', 'timers.json', 'doctor.json'):
         raise ValueError('invalid_cursor_filename')
     directory=_directory(name,create=True)

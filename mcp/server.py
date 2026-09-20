@@ -595,7 +595,7 @@ def authenticated_context():
         digest = hashlib.sha256(token.encode()).hexdigest()
         for expected, expiry, revoked, context in credentials:
             if hmac.compare_digest(digest, expected) and not revoked and datetime.now(timezone.utc) < expiry:
-                validate_environment(root, context.allowed_accounts, allow_unreadable=context.scope=="admin")
+                validate_environment(root, context.allowed_accounts, allow_unreadable=context.scope=="admin", allow_empty=True)
                 return context
     except (OSError, ValueError, TypeError):
         pass

@@ -1,5 +1,6 @@
 // Approval capabilities are never emitted outside their dedicated page/URL.
 import {digest, STATE_PATTERN, HASH_PATTERN, reply} from './relay.js';
+import {deletionStub} from './deletion.js';
 export const PERSON = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
 export const TTL = 600_000;
 export const ITERATIONS = 600_000;
@@ -28,6 +29,7 @@ export async function boundedBody(request,max=65_536) {
   } finally {reader.releaseLock();}
 }
 export async function personStub(env,person) {return env.APPROVAL_PERSON.getByName(await digest(person));}
+export async function accountStub(env,account) {return env.APPROVAL_ACCOUNT.getByName(await digest(account));}
 export async function sessionStub(env,token) {return env.APPROVAL_SESSION.getByName(await digest(token));}
 // Canonical wire binding: role/subject/operation are signed, not caller-selected authority.
 export function canonical(method,path,role,subject,operation,time,nonce,bodyHash) {
@@ -57,7 +59,7 @@ function page(status,body) {
 export async function approvalRequest(request,env,url) {
   try {
     if(url.search||url.hash||url.pathname.includes('%'))return reply(400,{error:'invalid_request'});
-    if(!env.APPROVAL_PERSON||!env.APPROVAL_SESSION)return reply(503);
+    if(!env.APPROVAL_PERSON||!env.APPROVAL_SESSION||!env.APPROVAL_ACCOUNT)return reply(503);
     const browser=/^\/approve\/([A-Za-z0-9_-]{43})$/.exec(url.pathname);
     if(browser){
       if(!env.APPROVAL_PUBLIC_LIMIT || !(await env.APPROVAL_PUBLIC_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
@@ -74,18 +76,18 @@ export async function approvalRequest(request,env,url) {
       const result=await stub.approve(form.get('secret'),form.get('csrf'));
       return page(result.status,result.status===200?`<h1>${accepted[result.body.kind]}</h1><p>サーバが内容を再確認します。操作の完了は元のセッションで確認してください。</p>`:'<h1>承認できませんでした</h1><p>承認 secret または有効期限を確認してください。繰り返し失敗すると管理者による解除が必要です。</p>');
     }
-    const route=/^\/approval\/(person|session)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|consume|cancel)$/.exec(url.pathname);
+    const route=/^\/approval\/(person|session|account|deletion)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|consume|cancel|list|read|verify|complete|discard)$/.exec(url.pathname);
     if(!route||request.method!=='POST')return reply(404,{error:'not_found'});
     const [,type,subject,operation]=route;
-    if(type==='person'?!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation):!STATE_PATTERN.test(subject)||!['create','consume','status','cancel'].includes(operation))return reply(400,{error:'invalid_request'});
+    if(type==='deletion'?!(subject==='inbox'&&operation==='list'||STATE_PATTERN.test(subject)&&['read','verify','complete','discard'].includes(operation)):type==='account'?!PERSON.test(subject)||!['revoke','status'].includes(operation):type==='person'?!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation):!STATE_PATTERN.test(subject)||!['create','consume','status','cancel'].includes(operation))return reply(400,{error:'invalid_request'});
     if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(400,{error:'invalid_request'});
     if(!env.APPROVAL_VERIFY_LIMIT || !(await env.APPROVAL_VERIFY_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
-    const raw=await boundedBody(request), ticket=await authenticate(request,env,url,raw,type==='person'?'operator':'job',subject,operation);
+    const raw=await boundedBody(request), ticket=await authenticate(request,env,url,raw,type==='session'?'job':'operator',subject,operation);
     if(!ticket)return reply(401,{error:'unauthorized'});
     if(!env.APPROVAL_JOB_LIMIT || !(await env.APPROVAL_JOB_LIMIT.limit({key:await digest(type+'/'+subject)})).success)return reply(429,{error:'rate_limited'});
     const body=JSON.parse(raw);
-    const stub=type==='person'?await personStub(env,subject):await sessionStub(env,subject);
-    const result=await stub.manage(operation,body,ticket);
+    const stub=type==='deletion'?deletionStub(env):type==='account'?await accountStub(env,subject):type==='person'?await personStub(env,subject):await sessionStub(env,subject);
+    const result=await stub.manage(operation,body,ticket,subject);
     return reply(result.status,result.body);
   }catch{return reply(503,{error:'approval_unavailable'});}
 }

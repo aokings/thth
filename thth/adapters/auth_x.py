@@ -1,4 +1,6 @@
 """X OAuth only. This profile does not register a posting/collection adapter."""
+from .. import leave_gate
+
 import base64
 import datetime
 import hashlib
@@ -71,6 +73,7 @@ def request(path, *, data=None, pair=None, token=None):
         raise FlowError('x_auth_response_unavailable: 認可をやり直してください') from None
 
 
+@leave_gate.configured("cfg")
 def token_result(body,cfg,*,now=None,previous=None):
     now=now or jst.now_jst()
     access=credential(body.get('access_token'));refresh=credential(body.get('refresh_token'))
@@ -96,6 +99,7 @@ class XAuthProfile(AuthProfile):
     pkce=True
 
     @classmethod
+    @leave_gate.configured("cfg")
     def prepare(cls,cfg,*,redirect_uri=None,**_):
         api_origin()
         if redirect_uri not in (None,CALLBACK) or cfg.get('redirect_uri') not in (None,'',CALLBACK):
@@ -116,6 +120,7 @@ class XAuthProfile(AuthProfile):
         return 'https://x.com/i/oauth2/authorize?'+urllib.parse.urlencode(dict(response_type='code',client_id=self.client_id,
             redirect_uri=CALLBACK,scope=' '.join(SCOPES),state=session['state'],code_challenge=challenge,code_challenge_method='S256'))
 
+    @leave_gate.configured("account_cfg")
     def exchange(self,code_value,session,account_cfg,*,log):
         self.validate()
         received=getattr(code_value,'received_at',None)
@@ -136,6 +141,7 @@ def remaining(token,now):
     return (obtained+datetime.timedelta(seconds=expiry)-now).total_seconds()
 
 
+@leave_gate.scoped
 def run_refresh(account,*,force=False,check=False,log=print,now=None):
     now=now or jst.now_jst();changed=False;snapshot=None;path=None
     def rollback():
@@ -150,7 +156,7 @@ def run_refresh(account,*,force=False,check=False,log=print,now=None):
             token=json.loads(snapshot[0]) if snapshot else {}
         else:
             if admin_log._active_fd.get() is not None:raise FlowError('auth_nested_transaction_refused')
-            with admin_log.transaction():
+            with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction():
                 if accounts.load_account(account)!=cfg:raise FlowError('auth_account_changed')
                 binding=profile.binding(cfg,current=True)
                 if binding!=profile.binding(cfg):raise FlowError('auth_client_changed')
@@ -165,20 +171,21 @@ def run_refresh(account,*,force=False,check=False,log=print,now=None):
             return 0
         if not force and seconds>REFRESH_BEFORE_SECONDS:
             log('まだ更新の必要がありません（X: 期限5分前から更新）');return 0
-        body=request('/2/oauth2/token',pair=(profile.client_id,profile.client_secret),data=dict(
-            grant_type='refresh_token',refresh_token=token['refresh_token']))
-        updated=token_result(body,cfg,now=now,previous=token)
-        if token.get('auth_via') in ('paste','relay'):updated['auth_via']=token['auth_via']
-        with admin_log.transaction(rollback=rollback):
-            path=authflow._token_path(path)
-            if (accounts.load_account(account)!=cfg or profile.binding(cfg,current=True)!=binding
-                    or authflow._read_session(account)!=session
-                    or authflow._generation(authflow._token_snapshot(path))!=authflow._generation(snapshot)):
-                raise FlowError('x_refresh_credentials_changed: 保存しません')
-            # Snapshot and equality check are inside the same final lock.
-            snapshot=authflow._token_snapshot(path);changed=True
-            secrets_fs.atomic_write_json(str(path),updated,mode=0o600)
-            admin_log.append('token_refreshed',account,cfg,by='thth-refresh',diff={'token':['present','present']})
+        with leave_gate.lease(account),leave_gate.credentials():
+            body=request('/2/oauth2/token',pair=(profile.client_id,profile.client_secret),data=dict(
+                grant_type='refresh_token',refresh_token=token['refresh_token']))
+            updated=token_result(body,cfg,now=now,previous=token)
+            if token.get('auth_via') in ('paste','relay'):updated['auth_via']=token['auth_via']
+            with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction(rollback=rollback):
+                path=authflow._token_path(path)
+                if (accounts.load_account(account)!=cfg or profile.binding(cfg,current=True)!=binding
+                        or authflow._read_session(account)!=session
+                        or authflow._generation(authflow._token_snapshot(path))!=authflow._generation(snapshot)):
+                    raise FlowError('x_refresh_credentials_changed: 保存しません')
+                # Snapshot and equality check are inside the same final lock.
+                snapshot=authflow._token_snapshot(path);changed=True
+                secrets_fs.atomic_write_json(str(path),updated,mode=0o600)
+                admin_log.append('token_refreshed',account,cfg,by='thth-refresh',diff={'token':['present','present']})
         log('更新しました: '+account);return 0
     except admin_log.AdminLogError as exc:
         log('admin_change_recorded_durability_unconfirmed' if exc.complete else

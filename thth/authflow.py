@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from . import leave_gate
+
 import hashlib
 import json
 import os
@@ -146,7 +148,7 @@ def begin(account, cfg, profile, *, resume=False):
     if admin_log._active_fd.get() is not None:
         raise FlowError("auth_nested_transaction_refused")
     Path(accounts.thth_root()).mkdir(parents=True, exist_ok=True)
-    with admin_log.transaction():
+    with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction():
         current = accounts.load_account(account)
         if current != cfg or profile.binding(current, current=True) != profile.binding(cfg):
             raise FlowError('auth_account_changed')
@@ -346,7 +348,7 @@ def commit(account, cfg, profile, session, token, *, by, via):
                 _write_session(account, session)
             except (OSError, ValueError):
                 raise FlowError('auth_rollback_failed_outcome_uncertain: 保存状態を確認してください') from None
-    with admin_log.transaction(rollback=rollback):
+    with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction(rollback=rollback):
         latest = accounts.load_account(account)
         current = _read_session(account)
         if latest != cfg or profile.binding(latest, current=True) != session['binding'] or current != session:
@@ -363,6 +365,7 @@ def commit(account, cfg, profile, session, token, *, by, via):
         _clear_session(account)
 
 
+@leave_gate.scoped
 def run(account, cfg, profile, *, code=None, input_func=None, log=print, by, human_output=print):
     from . import oauth
     try:
@@ -397,9 +400,10 @@ def run(account, cfg, profile, *, code=None, input_func=None, log=print, by, hum
                 code_value = paste((input_func or input)(), session)
         else:
             code_value = paste(code, session)
-        token = profile.exchange(code_value, session, cfg, log=log)
-        token['auth_via'] = via
-        commit(account, cfg, profile, session, token, by=by, via=via)
+        with leave_gate.lease(account),leave_gate.credentials():
+            token = profile.exchange(code_value, session, cfg, log=log)
+            token['auth_via'] = via
+            commit(account, cfg, profile, session, token, by=by, via=via)
         from . import doctor
         doctor.record_auth(account, cfg, token, log=log)
         oauth._out(f"user_id={token['user_id']} username={token['username']}", log=log)
@@ -433,7 +437,7 @@ def commit_manual(account, cfg, token, *, snapshot, session, by):
                 if snapshot is None:path.unlink(missing_ok=True)
                 else:secrets_fs.atomic_write_text(str(path),snapshot[0].decode(),mode=snapshot[1])
             except (OSError,ValueError):raise FlowError('token_set_rollback_failed_outcome_uncertain') from None
-    with admin_log.transaction(rollback=rollback):
+    with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction(rollback=rollback):
         path = _token_path(path)
         if (accounts.load_account(account)!=cfg or _read_session(account)!=session
                 or _generation(_token_snapshot(path))!=_generation(snapshot)):

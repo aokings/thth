@@ -95,7 +95,9 @@ def encode(value):
 @contextlib.contextmanager
 def account_locks(account, cfg):
     from .lock import LockBusy
-    paths = [Path(accounts.repo_lock_path_for(cfg['repo_dir'])), Path(accounts.account_lock_path_for(account))]
+    repo=cfg.get('repo_dir')
+    if repo is not None and not isinstance(repo,str):raise ValueError('invalid_repo')
+    paths = ([Path(accounts.repo_lock_path_for(repo))] if repo else []) + [Path(accounts.account_lock_path_for(account))]
     try:
         with contextlib.ExitStack() as stack:
             for path in paths:

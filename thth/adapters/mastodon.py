@@ -303,12 +303,14 @@ class MastodonAdapter(base.Adapter):
             raise ValueError(
                 f"台帳に instance がありません（例: \"instance\": \"{DEFAULT_INSTANCE}\"）"
                 f"——Mastodon はインスタンスごとに別のサーバなので、既定では決められません")
-        return cls(
+        from .. import leave_gate
+        adapter = cls(
             instance=instance,
             access_token=(token or {}).get("access_token", ""),
             visibility=cfg.get("visibility") or DEFAULT_VISIBILITY,
             account_id=(token or {}).get("user_id") or cfg.get("user_id") or "",
         )
+        return leave_gate.bind(adapter, account_cfg)
 
     # ----- 秘密 ------------------------------------------------------------
 

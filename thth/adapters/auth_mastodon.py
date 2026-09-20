@@ -1,4 +1,6 @@
 """Mastodon 4.3+ metadata, confidential client and S256 authorization."""
+from .. import leave_gate
+
 import base64
 import hashlib
 import http.client
@@ -93,6 +95,7 @@ class MastodonAuthProfile(AuthProfile):
     pkce=True
 
     @classmethod
+    @leave_gate.configured("cfg")
     def prepare(cls,cfg,*,redirect_uri=None,rehearse=False,resume=False,by=None):
         from .. import admin_log, appconfig
         if not rehearse and not resume:admin_log.actor(by)
@@ -145,6 +148,7 @@ class MastodonAuthProfile(AuthProfile):
             redirect_uri=CALLBACK,scope=' '.join(SCOPES),state=session['state'],code_challenge=challenge,
             code_challenge_method='S256',force_login='true'))
 
+    @leave_gate.configured("account_cfg")
     def exchange(self,code_value,session,account_cfg,*,log):
         from .. import oauth
         self.validate()

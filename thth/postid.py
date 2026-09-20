@@ -102,4 +102,6 @@ def for_account(account_cfg, value):
     if any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in value):
         raise PostIdError('invalid_post_url: URL に制御文字は使えません')
     from .adapters import bluesky
-    return bluesky.normalize_post_url(text)
+    from . import leave_gate
+    with leave_gate.scope(account_cfg), leave_gate.lease():
+        return bluesky.normalize_post_url(text)

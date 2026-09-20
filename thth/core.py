@@ -18,7 +18,7 @@ from . import adapters as adapters_mod
 from . import approval as approval_mod
 from . import engagements as engagements_mod
 from . import inflight as inflight_mod
-from . import jst
+from . import jst, leave_gate
 from . import lock as lock_mod
 from . import postid as postid_mod
 from . import queuefile
@@ -648,7 +648,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
 
     # ---- production ----
     token = accounts_mod.load_token(account_cfg)
-    adapter = adapter_factory(account_cfg, token)
+    adapter = leave_gate.bind(adapter_factory(account_cfg, token), account_cfg)
     # topic は select_one() の条件 9b で既に検査済み（不正なら候補から落ちている）。
     # ここでは正規化だけ行う（前後の空白・先頭の `#` を落とす・設計 §4.1）。
     topic = queuefile.normalize_topic(chosen.get("topic"))
@@ -1020,7 +1020,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         bound_token = before_execute(account_cfg) if before_execute is not None else None
         inflight_mod.write(state_dir, file="(send)", started=jst.iso(), container_id=None)
         token = bound_token if before_execute is not None else accounts_mod.load_token(account_cfg)
-        adapter = adapter_factory(account_cfg, token)
+        adapter = leave_gate.bind(adapter_factory(account_cfg, token), account_cfg)
         post = adapter_base.Post(text=effective, reply_to=reply_to or None, topic=topic_value,
                                  hashtags_allowed=bool(account_cfg.get("hashtags", True)))
 
