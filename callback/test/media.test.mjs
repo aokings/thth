@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
+import {pythonForTests} from './python-runtime.js';
 import {canonical,mediaRequest} from '../src/media.js';
 import {canonical as approvalCanonical} from '../src/approval.js';
 const opaque=()=>randomBytes(32).toString('base64url'),sha=b=>createHash('sha256').update(b).digest('hex');
@@ -144,7 +145,7 @@ socket.socket.connect=lambda *a,**k: (_ for _ in ()).throw(OSError('network_deni
 from thth import media_relay
 r=media_relay.request_for(sys.argv[1],'create',json.loads(sys.argv[2]))
 print(json.dumps({'url':r.full_url,'headers':dict(r.header_items()),'body':r.data.decode()}))`;
- const child=spawnSync('/opt/homebrew/Caskroom/miniforge/base/bin/python',['-B','-c',script,f.id,JSON.stringify(f.body)],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'root'),PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},encoding:'utf8',timeout:10000});
+ const child=spawnSync(pythonForTests(),['-B','-c',script,f.id,JSON.stringify(f.body)],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'root'),PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},encoding:'utf8',timeout:10000});
  assert.equal(child.status,0,'Python signing failed');assert.equal(child.stderr,'');
  const w=JSON.parse(child.stdout),res=await mf.dispatchFetch(w.url,{method:'POST',headers:w.headers,body:w.body});assert.equal(res.status,201);
 });
@@ -254,7 +255,7 @@ try:
 finally:server.shutdown();server.server_close();worker.join(3)
 print(json.dumps({'sanitized':True,'exact_bytes':True,'preview':True,'provider':True,'ack_once':True,'threads_graph':True}))`;
  const {spawn}=await import('node:child_process');
- const child=spawn('/opt/homebrew/Caskroom/miniforge/base/bin/python',['-B','-c',script],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'e2e-root'),THTH_MEDIA_BASE_URL:origin,THTH_TEST_ALLOW_HTTP:'1',TMPDIR:runtimeDirectory,PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},stdio:['ignore','pipe','pipe']});
+ const child=spawn(pythonForTests(),['-B','-c',script],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'e2e-root'),THTH_MEDIA_BASE_URL:origin,THTH_TEST_ALLOW_HTTP:'1',TMPDIR:runtimeDirectory,PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},stdio:['ignore','pipe','pipe']});
  const result=await new Promise(resolve=>{let out='',err='';const timer=setTimeout(()=>child.kill('SIGKILL'),20000);child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);child.on('close',code=>{clearTimeout(timer);resolve({code,out,err});});});
  assert.equal(result.code,0,'Python local media flow failed: '+result.err.split('\n').filter(s=>/^\w+(?:Error|Exception):/.test(s)).map(s=>s.split(':')[0]).join(','));
  assert.equal(result.err,'');assert.deepEqual(JSON.parse(result.out),{sanitized:true,exact_bytes:true,preview:true,provider:true,ack_once:true,threads_graph:true});
@@ -395,7 +396,7 @@ try:
 finally:server.shutdown();server.server_close();worker.join(3)
 print(json.dumps({'multipart_bytes':size,'same_public_sha':True,'video_wire':True,'provider_1800':True,'published':True}))`;
  const {spawn}=await import('node:child_process');
- const child=spawn('/opt/homebrew/Caskroom/miniforge/base/bin/python',['-B','-c',script],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'video-root'),THTH_MEDIA_BASE_URL:origin,THTH_TEST_ALLOW_HTTP:'1',TMPDIR:runtimeDirectory,PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},stdio:['ignore','pipe','pipe']});
+ const child=spawn(pythonForTests(),['-B','-c',script],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'video-root'),THTH_MEDIA_BASE_URL:origin,THTH_TEST_ALLOW_HTTP:'1',TMPDIR:runtimeDirectory,PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},stdio:['ignore','pipe','pipe']});
  const result=await new Promise(resolve=>{let out='',err='';const timer=setTimeout(()=>child.kill('SIGKILL'),60000);child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);child.on('close',code=>{clearTimeout(timer);resolve({code,out,err});});});
  assert.equal(result.code,0,'Python video bridge failed: '+result.err.split('\n').filter(s=>/^\w+(?:Error|Exception):/.test(s)).map(s=>s.split(':')[0]).join(','));
  assert.equal(result.err,'');assert.deepEqual(JSON.parse(result.out),{multipart_bytes:100000001,same_public_sha:true,video_wire:true,provider_1800:true,published:true});
@@ -542,3 +543,5 @@ test('preview capability cannot acknowledge publication or be invalidated as pro
  const after=(await control(cap)).find(([k])=>k==='media')[1];assert.deepEqual(after,row);
  assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap)).status,200);
 });
+
+test('test Python uses explicit override and portable PATH fallback',()=>{assert.equal(pythonForTests({PYTHON_FOR_TESTS:'/synthetic/python'}),'/synthetic/python');assert.equal(pythonForTests({}),'python3');});
