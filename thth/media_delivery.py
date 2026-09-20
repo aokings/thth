@@ -141,16 +141,28 @@ def lint_notes(cfg,fm,*,text=None):
     try:
         # Preserve the existing file-media lint order: unavailable live limits
         # take precedence over opening local media; never fall back to cache.
-        cap=mastodon_media.observe(cfg) if not fm.get('attachments') else None
+        special=bool(fm.get('attachments')) or 'quote_approval_policy' in fm.get('post_options',{})
+        cap=mastodon_media.observe(cfg) if not special else None
         with media.prepare(cfg['repo_dir'],fm,cfg['media']) as (manifest,items):
             reason=mastodon_media.intent_error(manifest)
             if reason:return [reason]
             poll=next((row for row in manifest['attachments'] if row['type']=='poll'),None)
-            if poll is not None:
-                if type(text) is not str or not text.strip():return ['poll_text_required: mastodon']
-                cap=mastodon_media.observe_poll(cfg)
-                mastodon_media.check_poll(cap,poll,text)
-                return ['warning: poll limits: latest instance version='+cap['version']+' observed_at='+cap['observed_at']+'; rechecked before publish']
+            quote=any(row['type']=='quote' for row in manifest['attachments']) or 'quote_approval_policy' in manifest['post_options']
+            if poll is not None and (type(text) is not str or not text.strip()):return ['poll_text_required: mastodon']
+            if quote and not items and (type(text) is not str or not text.strip()):return ['quote_text_required: mastodon']
+            if special:
+                body,instance=mastodon_media.observe_instance(cfg);notes=[]
+                if poll is not None:
+                    limits=mastodon_media.poll_capabilities(body,instance)
+                    mastodon_media.check_poll(limits,poll,text)
+                    notes.append('warning: poll limits: latest instance version='+limits['version']+' observed_at='+limits['observed_at']+'; rechecked before publish')
+                if quote:
+                    version=mastodon_media.quote_capabilities(body)
+                    notes.append('warning: quote capability: latest instance API='+str(version)+'; target checked before publish')
+                if items:
+                    limits=mastodon_media.capabilities(body,instance);mastodon_media.check_limits(limits,items)
+                    mastodon_media.cache(cfg,limits);notes.append('warning: '+cached_note(cfg))
+                return notes
             mastodon_media.check_limits(cap,items)
         return ['warning: '+cached_note(cfg)]
     except (OSError,ValueError) as exc:

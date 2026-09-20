@@ -25,20 +25,55 @@ def require(ok, code):
 
 def intent_error(manifest):
     attachments=manifest['attachments']
-    if attachments and (len(attachments)!=1 or attachments[0]['type']!='poll'):
+    kinds={row['type'] for row in attachments}
+    if kinds-{'poll','quote'}:
         return 'unsupported_attachment: mastodon/typed_attachment_pending'
-    if attachments and manifest['files']:return 'unsupported_attachment: mastodon/poll_media_exclusive'
+    if 'poll' in kinds and manifest['files']:return 'unsupported_attachment: mastodon/poll_media_exclusive'
+    quote=next((row for row in attachments if row['type']=='quote'),None)
+    if quote is not None and (set(quote)!={'type','uri'} or not quote['uri'].isascii() or not quote['uri'].isdecimal()):
+        return 'invalid_quote_target: mastodon/local_status_id_required'
     if manifest['captions']: return 'unsupported_attachment: mastodon/captions'
     options=manifest['post_options']
-    if attachments and 'focus' in options:return 'unsupported_attachment: mastodon/poll_focus'
-    if set(options)-{'visibility','language','sensitive','spoiler_text','focus'}:
+    if 'poll' in kinds and 'focus' in options:return 'unsupported_attachment: mastodon/poll_focus'
+    if set(options)-{'visibility','language','sensitive','spoiler_text','focus','quote_approval_policy'}:
         return 'unsupported_attachment: mastodon/post_options'
     if options.get('visibility','public') not in ('public','unlisted'):
         return 'unsupported_attachment: mastodon/non_public_visibility'
-    if not manifest['files'] and not attachments:return 'unsupported_attachment: mastodon/no_media'
+    if 'quote_approval_policy' in options and options['quote_approval_policy'] not in ('public','followers','nobody'):
+        return 'invalid_quote_approval_policy: mastodon'
+    if not manifest['files'] and not attachments and 'quote_approval_policy' not in options:return 'unsupported_attachment: mastodon/no_media'
     if any(x['role']!='media' or x['kind'] not in ('image','video') or x['format'] not in MIME for x in manifest['files']):
         return 'unsupported_attachment: mastodon/format'
     return None
+
+
+def quote_capabilities(body):
+    versions=body.get('api_versions') if type(body) is dict else None
+    version=versions.get('mastodon') if type(versions) is dict else None
+    require(type(version) is int and version>=0,'quote_capability_unavailable: mastodon/api_versions')
+    require(version>=7,'unsupported_attachment: mastodon/quote_requires_api_7')
+    return version
+
+
+def quote_target(adapter,quote):
+    # Only the local numeric status ID is accepted. No URL resolution/fetch.
+    try:code,value=_json(adapter,'GET','/api/v1/statuses/'+quote['uri'])
+    except urllib.error.HTTPError as exc:
+        raise media.MediaError('quote_target_http_'+str(exc.code)+': mastodon') from exc
+    require(code==200 and value.get('id')==quote['uri'],'quote_target_unavailable: mastodon')
+    # A private quote can make Mastodon silently narrow our posted visibility.
+    # Preserve the existing public-only boundary before any upload/status POST.
+    require(value.get('visibility') in ('public','unlisted'),'quote_target_non_public: mastodon')
+
+
+def observe_instance(cfg):
+    from .mastodon import MastodonAdapter
+    from .. import leave_gate
+    adapter=MastodonAdapter(instance=cfg.get('instance',''))
+    with leave_gate.scope(cfg):
+        code,value=_json(adapter,'GET','/api/v2/instance')
+        require(code==200,'media_capability_unavailable')
+        return value,adapter.instance
 
 
 def poll_capabilities(body,instance):
@@ -209,12 +244,18 @@ def publish(adapter,post,*,before_publish=None):
                 'mastodon_scope_missing: write:media; thth auth '+getattr(adapter,'auth_account','<account>')+' --by <名前>')
         why=intent_error(post.media_manifest);require(why is None,why or '')
         require(len(post.media_files)==len(post.media_manifest['files']) and all(x.manifest==row for x,row in zip(post.media_files,post.media_manifest['files'])),'media_prepared_mismatch')
+        options=post.media_manifest['post_options']
+        quote=next((row for row in post.media_manifest['attachments'] if row['type']=='quote'),None)
+        quote_intent=quote is not None or 'quote_approval_policy' in options
+        if quote_intent and not post.media_files:require(type(post.text) is str and bool(post.text.strip()),'quote_text_required: mastodon')
         poll=next((row for row in post.media_manifest['attachments'] if row['type']=='poll'),None)
         if poll is not None:require(type(post.text) is str and bool(post.text.strip()),'poll_text_required: mastodon')
         code,value=_json(adapter,'GET','/api/v2/instance');require(code==200,'media_capability_unavailable')
         if poll is not None:
             cap=poll_capabilities(value,adapter.instance);check_poll(cap,poll,post.text)
-        else:
+        if quote_intent:quote_capabilities(value)
+        if quote is not None:quote_target(adapter,quote)
+        if post.media_files:
             cap=capabilities(value,adapter.instance);check_limits(cap,post.media_files)
             if post.media_cache:post.media_cache(cap)
         options=post.media_manifest['post_options']
@@ -253,12 +294,14 @@ def publish(adapter,post,*,before_publish=None):
             params.append(('poll[expires_in]',str(poll['expires_in'])))
             for key in ('multiple','hide_totals'):
                 if key in poll:params.append(('poll['+key+']',str(poll[key]).lower()))
-        for key in ('language','sensitive','spoiler_text'):
+        if quote is not None:params.append(('quoted_status_id',quote['uri']))
+        for key in ('language','sensitive','spoiler_text','quote_approval_policy'):
             if key in options:params.append((key,str(options[key]).lower() if type(options[key]) is bool else options[key]))
         record('publishing')
         headers={'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':adapter._idempotency_key(post,options.get('visibility',adapter.visibility))}
         code,value=_json(adapter,'POST','/api/v1/statuses',data=urllib.parse.urlencode(params).encode(),headers=headers)
         require(code in (200,201) and type(value.get('id')) is str and value['id'].isascii() and value['id'].isdecimal(),'media_response_invalid: status id')
+        if quote is not None:require(value.get('visibility') in ('public','unlisted'),'quote_result_non_public: mastodon')
         record('published',post_id=value['id'])
         return base.PublishResult(value['id'],value.get('url'),ts,media=[{'sha256':x.manifest['public_sha256'],'kind':x.manifest['kind'],'alt_present':True,'remote_id':identifier} for x,identifier in zip(post.media_files,ids)])
     except accounts.AccountStopped:

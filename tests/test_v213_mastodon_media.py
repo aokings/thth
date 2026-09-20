@@ -251,8 +251,8 @@ def test_lint_fresh_limits_no_credentials_and_production_rechecks(env,wire):
     other={**cfg,'instance':'https://different.invalid'};assert mm.cached(other) is None
 
 
-@pytest.mark.parametrize('options',[{'quote_approval_policy':'public'},{'visibility':'private'}])
-def test_unimplemented_post_options_refused_without_network(env,wire,options):
+@pytest.mark.parametrize('options',[{'visibility':'private'},{'visibility':'direct'}])
+def test_non_public_post_options_refused_without_network(env,wire,options):
     result,_,_=invoke(env,{'media':[{'file':'a.png','alt':'点'}],'post_options':options})
     assert 'unsupported_attachment: mastodon/' in result.error and not wire['calls']
 
