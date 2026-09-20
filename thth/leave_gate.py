@@ -5,6 +5,7 @@ import fcntl
 import functools
 import inspect
 import os
+import stat
 import urllib.error
 from pathlib import Path
 from . import accounts, server_files
@@ -157,6 +158,12 @@ def protect_admin_change(function):
     return call
 
 
+def _regular_lease(leaf):
+    info=os.fstat(leaf);server_files.regular(info,private=True)
+    if info.st_size or stat.S_IMODE(info.st_mode)!=0o600:
+        raise server_files.UnsafeFile('unsafe_account_lease')
+
+
 @contextlib.contextmanager
 def lease(account=None, *, exclusive=False):
     account=account or _current.get()
@@ -173,8 +180,11 @@ def lease(account=None, *, exclusive=False):
             except FileNotFoundError:
                 if attempt==2:raise
         try:
-            server_files.regular(os.fstat(leaf),private=True)
-            fcntl.flock(leaf,fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+            _regular_lease(leaf)
+            try:
+                fcntl.flock(leaf,fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH|fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise accounts.AccountLeaving('account_leaving') from None
             reset=_held.set(_held.get()|{account})
             try:
                 if not exclusive:require_active(account)
@@ -244,3 +254,30 @@ def bind(adapter,cfg):
         setattr(adapter,name,functools.wraps(original)(wrapped))
     adapter._thth_account_bound=account
     return adapter
+
+
+@contextlib.contextmanager
+def read_leases(names):
+    """Read a selected account set atomically against cleanup; never wait."""
+    with contextlib.ExitStack() as stack:
+        for name in sorted(set(names)):
+            stack.enter_context(lease(name))
+        yield
+
+
+def check_busy(account):
+    """Only a trusted, excluded account may be probed; never create metadata.
+
+    A completed stop is not called 'leaving'. This only distinguishes a live
+    exclusive lease from a historical tombstone at the authorization boundary.
+    """
+    if not accounts.name_is_safe(account):return
+    try:
+        with server_files.directory(location(),private=True) as fd:
+            leaf=os.open(account+'.lock',os.O_RDWR|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
+            try:
+                _regular_lease(leaf)
+                try:fcntl.flock(leaf,fcntl.LOCK_SH|fcntl.LOCK_NB)
+                except BlockingIOError:raise accounts.AccountLeaving('account_leaving') from None
+            finally:os.close(leaf)
+    except FileNotFoundError:return

@@ -239,7 +239,9 @@ def test_real_core_http_snapshot_does_not_write(tmp_path, operation):
         assert payload["report_type"] == "scoped_report_batch"
         assert set(payload["reports"]) == {"allowed"}
         assert payload["operation"] == operation
-        assert {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+        from tests.coordination_snapshot import account_coordination
+    assert {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*")
+            if p.is_file() and not account_coordination(p, 'allowed')} == before
 
 
 @pytest.mark.parametrize("phase", ["request_line", "headers", "body"])

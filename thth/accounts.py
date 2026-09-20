@@ -43,6 +43,10 @@ class AccountStopped(AccountError):
     """Known account was stopped before dispatch; never a publish ambiguity."""
 
 
+class AccountLeaving(AccountStopped):
+    """Exit currently holds the exclusive lease; readers must never wait."""
+
+
 class AccountConfig(dict):
     def copy(self):
         value=AccountConfig(self)

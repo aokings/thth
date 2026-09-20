@@ -6,14 +6,14 @@ an already isolated execution environment. Never derive it from report input.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
 import stat
 from types import MappingProxyType
 
-from . import accounts, after_cli, analytics_report, jst, operations_handoff, replies
+from . import accounts, after_cli, analytics_report, jst, operations_handoff, replies, leave_gate
 
 
 class ReportServiceError(ValueError):
@@ -30,6 +30,9 @@ class ReportContext:
     actor: str | None = None
     credential_digest: str | None = None
     credentials_path: str | None = None
+    # Diagnostic-only original scope. Not authority and not an equality binding:
+    # A stopping must not invalidate an otherwise unchanged B job capability.
+    excluded_accounts: Mapping[str, str | None] = field(default_factory=dict, compare=False, repr=False)
 
     def __post_init__(self):
         if self.scope not in ("user", "admin") or not isinstance(self.allowed_accounts, Mapping):
@@ -46,6 +49,12 @@ class ReportContext:
             if project is not None and (not isinstance(project, str) or not project.strip()):
                 raise ReportServiceError("invalid_context")
         object.__setattr__(self, "allowed_accounts", MappingProxyType(allowed))
+        if not isinstance(self.excluded_accounts, Mapping):raise ReportServiceError('invalid_context')
+        excluded=dict(self.excluded_accounts)
+        if any(not accounts.name_is_safe(name) or name in allowed or project is not None and
+               (not isinstance(project,str) or not project.strip()) for name,project in excluded.items()):
+            raise ReportServiceError('invalid_context')
+        object.__setattr__(self,'excluded_accounts',MappingProxyType(excluded))
 
 
 def execute_report(context: ReportContext, request: dict) -> dict:
@@ -87,12 +96,14 @@ def execute_report(context: ReportContext, request: dict) -> dict:
     operation, scope_key, scope_value, names, now, kwargs = _scoped_request(context, request)
     reports = {}
     try:
-        with replies.report_scope(_active_names(context)):
+        with leave_gate.read_leases(set(_active_names(context)) | set(names)), replies.report_scope(_active_names(context)):
             for name in names:
                 if operation == "analytics_report":
                     reports[name] = analytics_report.answer(name, now=now, **kwargs)
                 else:
                     reports[name] = operations_handoff.answer(name, now=now, **kwargs)
+    except accounts.AccountLeaving:
+        raise ReportServiceError('account_leaving') from None
     except (accounts.AccountError, after_cli.AfterError, operations_handoff.HandoffError,
             OSError, ValueError, TypeError, KeyError, OverflowError):
         raise ReportServiceError("report_unavailable") from None
@@ -107,6 +118,12 @@ def execute_report(context: ReportContext, request: dict) -> dict:
 def _active_names(context):
     from . import leave_gate
     return tuple(name for name in context.allowed_accounts if not leave_gate.stopped(name))
+
+
+def check_excluded(context, name):
+    if isinstance(name,str) and name in context.excluded_accounts:
+        try:leave_gate.check_busy(name)
+        except accounts.AccountLeaving:raise ReportServiceError('account_leaving') from None
 
 
 def _scoped_request(context: ReportContext, request: dict):
@@ -138,15 +155,24 @@ def _scoped_request(context: ReportContext, request: dict):
         if key in request and (type(request[key]) is not int or request[key] < 1):
             raise ReportServiceError("invalid_options")
     if scope_key == "account":
+        check_excluded(context,scope_value)
         names = [scope_value] if scope_value in context.allowed_accounts else []
     else:
         names = sorted(name for name, project in context.allowed_accounts.items() if project == scope_value)
     if not names:
+        if scope_key=='project':
+            for name,project in context.excluded_accounts.items():
+                if project==scope_value:check_excluded(context,name)
         # Same error for missing and existing-but-unpermitted resources.
         raise ReportServiceError("scope_unavailable")
     active = _active_names(context)
-    names = [name for name in names if name in active]
-    if not names:raise ReportServiceError('scope_unavailable')
+    selected = [name for name in names if name in active]
+    if not selected:
+        try:
+            for name in names:leave_gate.check_busy(name)
+        except accounts.AccountLeaving:raise ReportServiceError('account_leaving') from None
+        raise ReportServiceError('scope_unavailable')
+    names=selected
     now = jst.now_jst()
     kwargs = {key: request[key] for key in options if key in request}
     return operation, scope_key, scope_value, names, now, kwargs
@@ -166,13 +192,16 @@ def execute_mcp_report(context: ReportContext, request: dict) -> dict:
     account = scope_value if scope_key == "account" else None
     project = scope_value if scope_key == "project" else None
     try:
-        if operation == "analytics_report":
-            return analytics_report.answer(account, project=project, now=now,
-                                           trusted_names=tuple(names),
-                                           allowed_names=_active_names(context), **kwargs)
-        return operations_handoff.answer(account, project=project, now=now,
-                                         trusted_names=tuple(names),
-                                         allowed_names=_active_names(context), **kwargs)
+        with leave_gate.read_leases(set(_active_names(context)) | set(names)):
+            if operation == "analytics_report":
+                return analytics_report.answer(account, project=project, now=now,
+                                               trusted_names=tuple(names),
+                                               allowed_names=_active_names(context), **kwargs)
+            return operations_handoff.answer(account, project=project, now=now,
+                                             trusted_names=tuple(names),
+                                             allowed_names=_active_names(context), **kwargs)
+    except accounts.AccountLeaving:
+        raise ReportServiceError('account_leaving') from None
     except (accounts.AccountError, after_cli.AfterError, operations_handoff.HandoffError,
             OSError, ValueError, TypeError, KeyError, OverflowError):
         raise ReportServiceError("report_unavailable") from None
@@ -207,52 +236,67 @@ def _mcp_study(context: ReportContext, request: dict) -> dict:
     now = jst.now_jst()
     path = Path(os.path.abspath(file_arg))
     try:
-        repos = {}
-        for name in _active_names(context):
-            cfg = accounts.load_account(name)
-            repo = accounts.resolved_repo_dir(cfg)
-            if repo:
-                repos[name] = Path(repo)
-        # The lexical path must be below an allowed repo. Each component is
-        # then opened relative to an fd with O_NOFOLLOW, including the leaf.
-        matches = [(name, repo, path.relative_to(repo)) for name, repo in repos.items()
-                   if path.is_relative_to(repo)]
-        if not matches:
-            raise ReportServiceError("scope_unavailable")
-        declaration = None
-        for _name, repo, relative in matches:
-            if not relative.parts:
-                continue
-            descriptor = _open_directory_nofollow(repo)
-            try:
-                for component in relative.parts[:-1]:
-                    next_descriptor = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                                              dir_fd=descriptor)
-                    os.close(descriptor)
-                    descriptor = next_descriptor
-                leaf = os.open(relative.parts[-1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
-                               dir_fd=descriptor)
-                with os.fdopen(leaf, "rb") as stream:
-                    info = os.fstat(stream.fileno())
-                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                        raise ReportServiceError("invalid_options")
-                    data = stream.read(study_report.MAX_BYTES + 1)
-            finally:
-                os.close(descriptor)
-            declaration = study_report.parse_declaration_bytes(data, now)
-            if declaration["account"] not in _active_names(context):
+        with leave_gate.read_leases(_active_names(context)):
+            repos = {}
+            for name in _active_names(context):
+                cfg = accounts.load_account(name)
+                repo = accounts.resolved_repo_dir(cfg)
+                if repo:
+                    repos[name] = Path(repo)
+            # The lexical path must be below an allowed repo. Each component is
+            # then opened relative to an fd with O_NOFOLLOW, including the leaf.
+            matches = [(name, repo, path.relative_to(repo)) for name, repo in repos.items()
+                       if path.is_relative_to(repo)]
+            if not matches:
+                # A known, excluded account may still be draining. Inspect only
+                # its trusted registry metadata, never the requested file here.
+                from .report_isolation import read_registry_ledger
+                candidates=set(context.excluded_accounts)|{
+                    name for name in context.allowed_accounts if leave_gate.stopped(name)}
+                for name in candidates:
+                    try:
+                        raw=read_registry_ledger(Path(accounts.accounts_dir())/(name+'.json'))
+                        repo=accounts.resolved_repo_dir({'repo_dir':accounts._expand((raw or {}).get('repo_dir'))})
+                    except (OSError,ValueError,TypeError):continue
+                    if repo and path.is_relative_to(Path(repo)):
+                        leave_gate.check_busy(name)
                 raise ReportServiceError("scope_unavailable")
-            declared_repo = repos.get(declaration["account"])
-            if declared_repo is not None and path.is_relative_to(declared_repo):
-                break
             declaration = None
-        if declaration is None:
-            raise ReportServiceError("scope_unavailable")
-        return study_report.answer(None, min_n=min_n, now=now,
-                                   verified_declaration=declaration,
-                                   allowed_names=_active_names(context))
+            for _name, repo, relative in matches:
+                if not relative.parts:
+                    continue
+                descriptor = _open_directory_nofollow(repo)
+                try:
+                    for component in relative.parts[:-1]:
+                        next_descriptor = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                                  dir_fd=descriptor)
+                        os.close(descriptor)
+                        descriptor = next_descriptor
+                    leaf = os.open(relative.parts[-1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
+                                   dir_fd=descriptor)
+                    with os.fdopen(leaf, "rb") as stream:
+                        info = os.fstat(stream.fileno())
+                        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                            raise ReportServiceError("invalid_options")
+                        data = stream.read(study_report.MAX_BYTES + 1)
+                finally:
+                    os.close(descriptor)
+                declaration = study_report.parse_declaration_bytes(data, now)
+                if declaration["account"] not in _active_names(context):
+                    raise ReportServiceError("scope_unavailable")
+                declared_repo = repos.get(declaration["account"])
+                if declared_repo is not None and path.is_relative_to(declared_repo):
+                    break
+                declaration = None
+            if declaration is None:
+                raise ReportServiceError("scope_unavailable")
+            return study_report.answer(None, min_n=min_n, now=now,
+                                       verified_declaration=declaration,
+                                       allowed_names=_active_names(context))
     except ReportServiceError:
         raise
+    except accounts.AccountLeaving:
+        raise ReportServiceError('account_leaving') from None
     except (accounts.AccountError, study_report.StudyError, OSError, ValueError, TypeError,
             KeyError, UnicodeError, RecursionError):
         raise ReportServiceError("report_unavailable") from None

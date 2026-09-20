@@ -125,8 +125,9 @@ def load_credentials(path: Path):
                 context=replace(context,allowed_accounts={**context.allowed_accounts,**{
                     name:context.allowed_accounts.get(name) for name in leave.names()}})
             else:
+                excluded={name:project for name,project in context.allowed_accounts.items() if leave_gate.stopped(name)}
                 context=replace(context,allowed_accounts={name:project for name,project in context.allowed_accounts.items()
-                                                        if not leave_gate.stopped(name)})
+                                                        if name not in excluded},excluded_accounts=excluded)
             credentials.append((digest, _expiry(item["expires_at"]), item["revoked"], context))
         return root, credentials
     except (OSError, ValueError, TypeError, KeyError, RecursionError, OverflowError):
@@ -327,6 +328,8 @@ class ReportHandler(BaseHTTPRequestHandler):
         except ReportServiceError as error:
             # Fixed allowlist prevents future exception text exposing core details.
             reason = str(error)
+            if reason == 'account_leaving':
+                return self._reply(503, {'error':reason, 'cannot_say':[reason]})
             public = {"invalid_request", "unsupported_operation", "invalid_scope", "invalid_options", "scope_unavailable", "writes_not_allowed", "invalid_draft", "draft_changed", "draft_not_editable", "managed_repo_required", "production_disabled"}
             fallback = "report_unavailable"
             if self.path == '/write':

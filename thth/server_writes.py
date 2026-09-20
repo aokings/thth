@@ -16,7 +16,7 @@ DRAFT_ID = re.compile(r'[0-9a-f]{64}\Z')
 JOB_ID = approval_relay.OPAQUE
 SAFE_ERRORS = frozenset(('invalid_request','unsupported_operation','invalid_scope','invalid_options','scope_unavailable',
     'writes_not_allowed','invalid_draft','draft_changed','draft_not_editable','managed_repo_required','production_disabled',
-    'credential_changed','draft_commit_unconfirmed','draft_not_verified','account_stopped','approval_registration_unknown',
+    'credential_changed','draft_commit_unconfirmed','draft_not_verified','account_stopped','account_leaving','approval_registration_unknown',
     'credential_unavailable','write_unavailable'))
 
 
@@ -28,6 +28,9 @@ def error(reason, detail=None):
 
 def current(context, account, *, write=False):
     """Reauthenticate the trusted capability; no request field creates identity."""
+    if type(context) is ReportContext:
+        from .report_service import check_excluded
+        check_excluded(context,account)
     if type(context) is not ReportContext or context.scope != 'user' or account not in context.allowed_accounts:
         error('scope_unavailable')
     if write and (not context.writes or not context.actor or not context.credential_digest or not context.credentials_path):
@@ -38,6 +41,7 @@ def current(context, account, *, write=False):
         found = next((item[3] for item in credentials if item[0] == context.credential_digest
                       and not item[2] and datetime.now(timezone.utc) < item[1]), None)
         from dataclasses import replace
+        if found is not None:check_excluded(found,account)
         if (found is None or account not in found.allowed_accounts
                 or found.allowed_accounts[account] != context.allowed_accounts[account]
                 or found != replace(context,allowed_accounts=found.allowed_accounts)):
@@ -45,7 +49,10 @@ def current(context, account, *, write=False):
         from .report_isolation import validate_environment
         validate_environment(root, found.allowed_accounts)
     from . import leave_gate
-    if leave_gate.stopped(account):error('account_stopped')
+    if leave_gate.stopped(account):
+        try:leave_gate.check_busy(account)
+        except accounts.AccountLeaving:error('account_leaving')
+        error('account_stopped')
     cfg = accounts.load_account(account)
     if cfg.get('project') != context.allowed_accounts[account]: error('scope_unavailable')
     return cfg
@@ -221,15 +228,20 @@ def read(context, request):
     op=request.get('operation')
     _schema(request,('job_id',) if op=='request_status' else (),('job_id',) if op=='request_status' else ())
     cfg=current(context,request['account'])
-    if op=='request_status':
-        from .approval_jobs import status
-        return status(context,request['account'],request['job_id'])
-    rows=[]
+    from . import leave_gate
     try:
-        for name,raw,q,verified in _rows(cfg,request['account']):
-            fm=q.front_matter
-            rows.append(dict(draft_id=_id(name),revision=hashlib.sha256(raw).hexdigest(),status=fm.get('status'),
-                             body=queuefile.extract_section(q.body,cfg['media']),topic=fm.get('topic') or None,
-                             publish_at=fm.get('publish_at'),reply_to=fm.get('reply_to') or None,verified=verified))
-    except FileNotFoundError: pass
-    return {'account':request['account'],'drafts':rows}
+        with leave_gate.lease(request['account']):
+            if op=='request_status':
+                from .approval_jobs import status
+                return status(context,request['account'],request['job_id'])
+            rows=[]
+            try:
+                for name,raw,q,verified in _rows(cfg,request['account']):
+                    fm=q.front_matter
+                    rows.append(dict(draft_id=_id(name),revision=hashlib.sha256(raw).hexdigest(),status=fm.get('status'),
+                                     body=queuefile.extract_section(q.body,cfg['media']),topic=fm.get('topic') or None,
+                                     publish_at=fm.get('publish_at'),reply_to=fm.get('reply_to') or None,verified=verified))
+            except FileNotFoundError: pass
+            return {'account':request['account'],'drafts':rows}
+    except accounts.AccountLeaving:
+        error('account_leaving')

@@ -2569,15 +2569,17 @@ def cmd_send(args) -> int:
         text = _sys.stdin.read()
     from .postid import PostIdError
     try:
-        result = core_mod.send_once(
-            args.account, text=text, topic=args.topic, reply_to=args.reply_to,
-            reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
-            found_by=args.found_by,
-            production_flag=args.production, confirm=args.confirm, log=print, wait=getattr(args, "wait", 0))
+        from . import read_coordination
+        def send():
+            return core_mod.send_once(
+                args.account, text=text, topic=args.topic, reply_to=args.reply_to,
+                reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
+                found_by=args.found_by,
+                production_flag=args.production, confirm=args.confirm, log=print, wait=getattr(args, "wait", 0)).exit_code
+        return read_coordination.invoke(args,'send',send)
     except PostIdError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    return result.exit_code
 
 
 def cmd_doctor(args) -> int:
@@ -3310,4 +3312,5 @@ def main(argv=None) -> int:
         args = commands.choices['where'].parse_intermixed_args(real_argv[1:])
     else:
         args = parser.parse_args(argv)
-    return args.func(args)
+    from . import read_coordination
+    return read_coordination.invoke(args,real_argv[0] if real_argv else '')
