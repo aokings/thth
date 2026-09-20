@@ -244,9 +244,18 @@ def _observation_probes(probes):
 
 
 def _credential_generation(cfg):
+    import hashlib
     from pathlib import Path
     from . import authflow
-    return authflow._generation(authflow._token_snapshot(Path(cfg['token'])))
+    token_generation = authflow._generation(authflow._token_snapshot(Path(cfg['token'])))
+    if token_generation is None:
+        return None
+    # Bind the observed credential to the exact ledger used for the request.
+    # A changed origin/identity/path cannot inherit an old permission result.
+    # Keep this digest private; public observations expose only current/unknown.
+    binding = json.dumps({'ledger': cfg, 'token_generation': token_generation},
+                         sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+    return hashlib.sha256(binding.encode()).hexdigest()
 
 
 def _observation_raw(account_name):
