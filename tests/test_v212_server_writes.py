@@ -185,13 +185,19 @@ def test_mcp_scope_list_and_direct_call_never_falls_back(env,monkeypatch):
 
 def test_readonly_and_admin_credentials_never_list_or_call_writes(env,monkeypatch):
     from tests.test_mcp import _load_server_module
+    from thth.server_writes import WRITE_OPERATIONS
     server=_load_server_module();monkeypatch.setenv('THTH_REPORT_CREDENTIALS',str(env['path']));monkeypatch.setenv('THTH_REPORT_TOKEN',env['bearer'])
+    write_tools={'thth_'+operation for operation in WRITE_OPERATIONS}
+    read_reports={'analytics_report','operations_handoff','study_report'}
     for scope in ('user','admin'):
         env['value']['credentials'][0].update(writes=False,scope=scope);save_config(env)
         names={x['name'] for x in server._handle_request({'id':1,'method':'tools/list'})['result']['tools']}
-        assert 'thth_send_request' not in names
-        assert server.call_tool('thth_send_request',dict(account='alpha',body='本文'))['isError']
-        if scope=='admin':assert names=={x['name'] for x in server.ADMIN_TOOLS}
+        assert read_reports <= names and names.isdisjoint(write_tools)
+        for tool in write_tools:
+            denied=server.call_tool(tool,{'account':'alpha','body':'本文'})
+            assert denied['isError'] and denied['content'][0]['text']=='unsupported_operation'
+        if scope=='admin':
+            assert names=={x['name'] for x in server.ADMIN_TOOLS}|read_reports
 
 
 def test_actual_http_short_request_and_scoped_status(env,remote,monkeypatch):

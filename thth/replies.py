@@ -19,9 +19,29 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from . import accounts as accounts_mod
 from . import postid as postid_mod
+
+
+_report_allowed_names = ContextVar("thth_reply_report_allowed_names", default=None)
+
+
+def active_report_scope():
+    """Authorized owner names for this report call, or None for normal CLI."""
+    return _report_allowed_names.get()
+
+
+@contextmanager
+def report_scope(allowed_names):
+    """Keep the HTTP legacy core-call signature without a process-wide scope."""
+    token = _report_allowed_names.set(tuple(allowed_names))
+    try:
+        yield
+    finally:
+        _report_allowed_names.reset(token)
 
 
 def _normalize_handle(value) -> str | None:
@@ -38,7 +58,7 @@ def _normalize_handle(value) -> str | None:
     return v.lower() or None
 
 
-def _own_handles() -> tuple:
+def _own_handles(allowed_names=None) -> tuple:
     """`accounts/*.json` の**すべての account** の handle を正規化して集める。
 
     1 つの account の台帳が壊れていても、他の account の handle は使いたいので、
@@ -51,9 +71,12 @@ def _own_handles() -> tuple:
     確定していた。呼び出し側（`_classify_own`）が「不一致を他者と確定してよいか」
     を判断できるよう、不完全だったという事実を一緒に返す。
     """
+    if allowed_names is None:
+        allowed_names = active_report_scope()
     handles = set()
     unreadable = []
-    for name in accounts_mod.list_account_names():
+    for name in (accounts_mod.list_account_names() if allowed_names is None
+                 else sorted(set(allowed_names))):
         try:
             cfg = accounts_mod.load_account(name)
         except accounts_mod.AccountError:
@@ -128,7 +151,7 @@ def _fetch_sources(fetches: list) -> dict:
     return dict(sorted(out.items()))
 
 
-def load(account_name: str, *, post_id: str | None = None) -> dict:
+def load(account_name: str, *, post_id: str | None = None, allowed_names=None) -> dict:
     """返信の台帳を読む。
 
     `post_id` を渡せばその投稿だけ、省略すれば `replies_dir` 配下の全 `*.ndjson`。
@@ -144,6 +167,10 @@ def load(account_name: str, *, post_id: str | None = None) -> dict:
         `unknown` に入っている（一致したものは `own` のまま）。
       - `counts`: `{"replies": n, "own": n, "other": n, "unknown": n, "fetches": n}`
     """
+    if allowed_names is None:
+        allowed_names = active_report_scope()
+    if allowed_names is not None and account_name not in allowed_names:
+        raise accounts_mod.AccountError("scope_unavailable")
     account_cfg = accounts_mod.load_account(account_name)
     # **置き場の解決は 1 か所**（設計 v2.0.1 §1・`accounts.data_dirs()`）。
     # `collect.py` の `collect_once()` が書く先と**同じ helper** から引く
@@ -158,7 +185,7 @@ def load(account_name: str, *, post_id: str | None = None) -> dict:
         names = sorted(n for n in os.listdir(base) if n.endswith(".ndjson")) \
             if os.path.isdir(base) else []
 
-    own_handles, unreadable_accounts = _own_handles()
+    own_handles, unreadable_accounts = _own_handles(allowed_names)
     incomplete = bool(unreadable_accounts)
 
     all_replies, all_fetches, broken = [], [], []

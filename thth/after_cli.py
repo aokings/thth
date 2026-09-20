@@ -169,7 +169,8 @@ def _kind_lookup(account_name: str):
     return lookup, is_broken
 
 
-def _replies_back_from_ledger(account_name: str, post_id: str | None):
+def _replies_back_from_ledger(account_name: str, post_id: str | None,
+                              *, allowed_names=None):
     """`metrics.replies` が無いときの二段目: 返信の台帳の他者返信の数。
 
     **一度も取得していない（台帳にその post_id の記録が無い）のか、取得して
@@ -178,7 +179,8 @@ def _replies_back_from_ledger(account_name: str, post_id: str | None):
     if not post_id:
         return None
     try:
-        result = replies_mod.load(account_name, post_id=post_id)
+        result = replies_mod.load(account_name, post_id=post_id,
+                                  allowed_names=allowed_names)
     except accounts_mod.AccountError:
         return None
     if result["broken"]:
@@ -272,9 +274,18 @@ def _validate_filters(*, kind: str | None, hour_band: str | None,
         _reject(f"author_key は 16 進 16 桁です: {author_key!r}")
 
 
-def _resolve_names(*, account_name: str | None, project: str | None) -> tuple[list, list]:
+def _resolve_names(*, account_name: str | None, project: str | None,
+                   trusted_names=None) -> tuple[list, list]:
     if account_name is not None:
+        if trusted_names is not None and account_name not in trusted_names:
+            _reject("scope_unavailable")
         return [account_name], []
+    # A server host supplies names from its authenticated account/project scope.
+    # Never enumerate the global registry for that path: a project name is not
+    # proof that every account in the project belongs to the caller.
+    if trusted_names is not None:
+        names = sorted(set(trusted_names))
+        return names, [] if names else [f"project={project!r} に一致する account がありません"]
     names, cannot_say = [], []
     for name in accounts_mod.list_account_names():
         try:
@@ -292,7 +303,7 @@ def _resolve_names(*, account_name: str | None, project: str | None) -> tuple[li
 def _account_answer(account_name: str, *, topic: str | None, kind: str | None,
                     hour_band: str | None, reply_to: str | None,
                     author_key: str | None, window_days: int, min_n: int,
-                    now) -> dict:
+                    now, allowed_names=None) -> dict:
     """1 account の節。数値はこの関数の外へ持ち出さない。"""
 
     account_cfg = accounts_mod.load_account(account_name)
@@ -360,7 +371,8 @@ def _account_answer(account_name: str, *, topic: str | None, kind: str | None,
         likes_24h = metrics.get("likes") if covered else None
         replies_metric = metrics.get("replies") if covered else None
         replies_back_24h = (replies_metric if replies_metric is not None
-                            else _replies_back_from_ledger(account_name, post_id))
+                            else _replies_back_from_ledger(account_name, post_id,
+                                                           allowed_names=allowed_names))
         if not covered:
             uncovered += 1
         by_branch.append({
@@ -555,7 +567,8 @@ def answer(account_name: str | None = None, *, project: str | None = None,
            topic: str | None = None, kind: str | None = None,
            hour_band: str | None = None, reply_to: str | None = None,
            author_key: str | None = None, window_days: int = DEFAULT_WINDOW_DAYS,
-           min_n: int = DEFAULT_MIN_N, now=None) -> dict:
+           min_n: int = DEFAULT_MIN_N, now=None, trusted_names=None,
+           allowed_names=None) -> dict:
     """単一 account は従来の形、project は `by_account` に同じ節を並べる。"""
     if account_name and project:
         _reject("account と --project は同時に指定できません")
@@ -564,12 +577,13 @@ def answer(account_name: str | None = None, *, project: str | None = None,
     _validate_filters(kind=kind, hour_band=hour_band, author_key=author_key,
                       window_days=window_days, min_n=min_n)
     now = now if now is not None else jst.now_jst()
-    names, top_cannot_say = _resolve_names(account_name=account_name, project=project)
+    names, top_cannot_say = _resolve_names(account_name=account_name, project=project,
+                                            trusted_names=trusted_names)
     if project is None:
         return _account_answer(
             account_name, topic=topic, kind=kind, hour_band=hour_band,
             reply_to=reply_to, author_key=author_key, window_days=window_days,
-            min_n=min_n, now=now)
+            min_n=min_n, now=now, allowed_names=allowed_names)
 
     by_account = {}
     for name in names:
@@ -577,7 +591,7 @@ def answer(account_name: str | None = None, *, project: str | None = None,
             by_account[name] = _account_answer(
                 name, topic=topic, kind=kind, hour_band=hour_band,
                 reply_to=reply_to, author_key=author_key, window_days=window_days,
-                min_n=min_n, now=now)
+                min_n=min_n, now=now, allowed_names=allowed_names)
         except accounts_mod.AccountError as exc:
             top_cannot_say.append(f"{name}: {exc}")
     return {

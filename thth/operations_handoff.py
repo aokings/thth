@@ -33,7 +33,7 @@ def _source(path, state, now):
             "freshness": "unknown"}
 
 
-def _account(name, cfg, now):
+def _account(name, cfg, now, *, allowed_names=None):
     state_dir = Path(accounts.state_dir_for(name))
     evidence, problems = {}, []
     counts = {key: 0 for key in report.STATUS_KEYS}
@@ -164,7 +164,8 @@ def _account(name, cfg, now):
     latest = max(last, key=lambda item: item[0]) if last else None
     from . import unanswered
     try:
-        unanswered_result = unanswered.answer(name, now=now)
+        unanswered_result = unanswered.answer(name, now=now,
+                                               allowed_names=allowed_names)
     except accounts.AccountError:
         unanswered_result = {'summary': {'n': None, 'oldest_age_hours': None},
                              'cannot_say': ['unanswered_ledger_unavailable']}
@@ -184,7 +185,8 @@ def _account(name, cfg, now):
 from .report_details import detailed
 
 @detailed
-def answer(account_name=None, *, project=None, now=None, since_last_read=False):
+def answer(account_name=None, *, project=None, now=None, since_last_read=False,
+           trusted_names=None, allowed_names=None):
     for value in (account_name, project):
         if value is not None and (not isinstance(value, str) or not value.strip()):
             raise HandoffError("account/project は空でない文字列です")
@@ -198,13 +200,16 @@ def answer(account_name=None, *, project=None, now=None, since_last_read=False):
     configs = {}
     skipped = False
     if account_name is not None:
+        if allowed_names is not None and account_name not in allowed_names:
+            raise HandoffError("scope_unavailable")
         try:
             configs[account_name] = accounts.load_account(account_name)
         except (accounts.AccountError, ValueError, TypeError):
             raise HandoffError("account_configuration_unavailable") from None
     else:
         try:
-            for name in accounts.list_account_names():
+            for name in (sorted(set(trusted_names)) if trusted_names is not None
+                         else accounts.list_account_names()):
                 try:
                     cfg = accounts.load_account(name)
                 except (accounts.AccountError, ValueError, TypeError):
@@ -216,7 +221,8 @@ def answer(account_name=None, *, project=None, now=None, since_last_read=False):
             raise HandoffError("account_registry_unavailable") from None
         if not configs:
             raise HandoffError("project に読める account がありません")
-    nodes = {name: _account(name, cfg, now) for name, cfg in configs.items()}
+    nodes = {name: _account(name, cfg, now, allowed_names=allowed_names)
+             for name, cfg in configs.items()}
     from . import handoff_cursor
     for name, node in nodes.items():
         node["changes_since"] = None

@@ -15,7 +15,8 @@ from .report_details import detailed
 
 @detailed
 def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
-           min_n=after_cli.DEFAULT_MIN_N, now=None, compare_previous=False, by=None):
+           min_n=after_cli.DEFAULT_MIN_N, now=None, compare_previous=False, by=None,
+           trusted_names=None, allowed_names=None):
     """One payload for CLI Markdown/JSON and MCP; never collect or persist data."""
     for label, value in (("account", account_name), ("project", project)):
         if value is not None and (not isinstance(value, str) or not value.strip()):
@@ -41,9 +42,12 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
     if compare_previous:
         from . import analytics_comparison
         return analytics_comparison.answer(account_name, project=project, window_days=window_days,
-                                           min_n=min_n, now=now, by=by)
+                                           min_n=min_n, now=now, by=by,
+                                           trusted_names=trusted_names,
+                                           allowed_names=allowed_names)
     source = after_cli.answer(account_name, project=project, window_days=window_days,
-                              min_n=min_n, now=now)
+                              min_n=min_n, now=now, trusted_names=trusted_names,
+                              allowed_names=allowed_names)
     nodes = source["by_account"] if project is not None else {account_name: source}
     if not nodes:
         raise after_cli.AfterError("project に読める account がありません")
@@ -66,7 +70,7 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
         # Legacy snapshot includes its upper boundary; additive strict marks do too.
         curves = comparison._marks_population(items, start, now + datetime.timedelta(microseconds=1), now, min_n)
         from .analytics_shapes import attach as attach_shapes
-        attach_shapes(name, curves, now)
+        attach_shapes(name, curves, now, allowed_names=allowed_names)
         node["posts"].update(curves)
         node["posts"]["views_24h"].update(comparison._spread(
             [p["views_24h"] for p in node["posts"]["by_post"] if p["views_24h"] is not None], min_n))
@@ -77,7 +81,8 @@ def answer(account_name=None, *, project=None, window_days=DEFAULT_WINDOW_DAYS,
         from .analytics_threads import summarize
         node["engagements"].update(summarize(name, cfg, engagements.load(cfg, name),
             {str(p["post_id"]): p for p in ledger["posts"]}, start,
-            now + datetime.timedelta(microseconds=1), now, min_n))
+            now + datetime.timedelta(microseconds=1), now, min_n,
+            allowed_names=allowed_names))
         lookup = {p["post_id"]: p for p in curves["marks_by_post"]}
         for post in node["posts"]["by_post"]:
             post["marks"] = lookup.get(str(post["post_id"]), {}).get("marks")

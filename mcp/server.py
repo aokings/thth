@@ -523,14 +523,16 @@ def server_mode():
 
 def server_tools(context):
     if context is None: return []
-    if context.scope=='admin': return ADMIN_TOOLS
+    reports = [tool for tool in TOOLS if tool['name'] in
+               ('analytics_report', 'operations_handoff', 'study_report')]
+    if context.scope=='admin': return reports + ADMIN_TOOLS
     from thth.server_writes import WRITE_OPERATIONS
-    return ([tool for tool in TOOLS if tool['name'] in ('analytics_report','operations_handoff')]
-            + [tool for tool in SERVER_TOOLS if context.writes or tool['name'][5:] not in WRITE_OPERATIONS])
+    return reports + [tool for tool in SERVER_TOOLS
+                      if context.writes or tool['name'][5:] not in WRITE_OPERATIONS]
 
 
 def server_call(name, arguments):
-    from thth.report_service import execute_report, ReportServiceError
+    from thth.report_service import execute_report, execute_mcp_report, ReportServiceError
     from thth.server_writes import execute, WRITE_OPERATIONS, SAFE_ERRORS
     context=authenticated_context()
     failure=lambda value:{'content':[{'type':'text','text':value}],'isError':True}
@@ -544,13 +546,22 @@ def server_call(name, arguments):
         return failure('invalid_request')
     for key,value in arguments.items():
         kind=schema['properties'][key].get('type')
+        # admin_log owns the event enum and its invalid_options distinction.
+        # Let every invalid event type reach that validation before log I/O.
+        if name == 'thth_admin_log' and key == 'event':
+            continue
         if value is not None and (kind=='string' and not isinstance(value,str)
                 or kind=='integer' and type(value) is not int or kind=='boolean' and type(value) is not bool):
             return failure('invalid_request')
     operation=name[5:] if name.startswith('thth_') else name
     request={**arguments,'operation':operation}
     try:
-        result=execute(context,request,via='mcp') if operation in WRITE_OPERATIONS else execute_report(context,request)
+        if operation in WRITE_OPERATIONS:
+            result=execute(context,request,via='mcp')
+        elif operation in ('analytics_report', 'operations_handoff', 'study_report'):
+            result=execute_mcp_report(context,request)
+        else:
+            result=execute_report(context,request)
         return {'content':[{'type':'text','text':json.dumps(result,ensure_ascii=False,allow_nan=False)}]}
     except ReportServiceError as exc:
         if str(exc)=='invalid_draft':

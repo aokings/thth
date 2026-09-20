@@ -218,7 +218,8 @@ def _tag_strata(items, previous_start, current_start, now, min_n):
                 for period in ("previous", "current")}}
 
 
-def _account(name, previous_start, current_start, now, min_n, by=None):
+def _account(name, previous_start, current_start, now, min_n, by=None,
+             *, allowed_names=None):
     cfg = accounts.load_account(name)
     # Existing loader supplies account-at-observation ownership guarantees. A
     # malformed ledger that prevents loading is an error, never an empty sample.
@@ -268,8 +269,8 @@ def _account(name, previous_start, current_start, now, min_n, by=None):
         current = _population(items, current_start, now, now, min_n)
         if kind == "posts":
             from .analytics_shapes import attach as attach_shapes
-            attach_shapes(name, previous, now)
-            attach_shapes(name, current, now)
+            attach_shapes(name, previous, now, allowed_names=allowed_names)
+            attach_shapes(name, current, now, allowed_names=allowed_names)
         deltas = _differences(previous, current, min_n)
         node[kind] = {"previous": previous, "current": current, "comparison": deltas}
         if by:
@@ -305,7 +306,8 @@ def _account(name, previous_start, current_start, now, min_n, by=None):
                 "kind_shelf_broken": shelf_broken() if by == "kind" else None}
 
     from .analytics_threads import summarize
-    node["engagements"].update(summarize(name, cfg, eng, by_id, current_start, now, now, min_n))
+    node["engagements"].update(summarize(name, cfg, eng, by_id, current_start, now, now,
+                                         min_n, allowed_names=allowed_names))
     if any(broken.values()):
         node["cannot_say"].append("読めない台帳があり、母集団全体の件数・変化は判断できない")
     node["cannot_say"].append("比較は観測できた標本だけ。差の原因・施策の効果・推奨行動は判断しない")
@@ -316,17 +318,20 @@ def _account(name, previous_start, current_start, now, min_n, by=None):
 from .report_details import detailed
 
 @detailed
-def answer(account_name, *, project, window_days, min_n, now, by=None):
+def answer(account_name, *, project, window_days, min_n, now, by=None,
+           trusted_names=None, allowed_names=None):
     try:
         current_start = now - datetime.timedelta(days=window_days)
         previous_start = current_start - datetime.timedelta(days=window_days)
     except OverflowError as exc:
         raise after_cli.AfterError("window_days が比較日時の範囲を超えています") from exc
-    names, cannot_say = after_cli._resolve_names(account_name=account_name, project=project)
+    names, cannot_say = after_cli._resolve_names(account_name=account_name, project=project,
+                                                   trusted_names=trusted_names)
     nodes = {}
     for name in names:
         try:
-            nodes[name] = _account(name, previous_start, current_start, now, min_n, by)
+            nodes[name] = _account(name, previous_start, current_start, now, min_n, by,
+                                   allowed_names=allowed_names)
         except accounts.AccountError as exc:
             if project is None:
                 raise
