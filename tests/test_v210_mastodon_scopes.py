@@ -63,8 +63,14 @@ def test_network_failure_is_not_permission(monkeypatch):
     assert 'read:search' not in str(exc.value)
 
 
-def test_add_and_token_set_scope_guidance_is_stderr(thth_root, capsys, monkeypatch):
+def test_add_and_token_set_scope_guidance_is_stderr(thth_root, tmp_path, capsys, monkeypatch):
     from thth import cli, oauth
+    # デフォルトの token パスは `~/.config/thth/<account>.token`（account_cli.cmd_add()）。
+    # `thth_root` は THTH_ROOT だけを隔離し HOME はいじらないので、このテストが
+    # HOME を隔離しないと本物の `~/.config/thth/` に書き込んでしまう
+    # （CI の runner にはそのディレクトリが無く FileNotFoundError で落ちる）。
+    monkeypatch.setenv('HOME', str(tmp_path))
+    (tmp_path / '.config' / 'thth').mkdir(parents=True)
     args=['account','add','new-masto','--media','mastodon','--project','scope-project',
           '--handle','reader','--instance','https://fixture.invalid','--by','tester','--json']
     assert cli.main(args)==0
