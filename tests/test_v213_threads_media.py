@@ -239,3 +239,28 @@ def test_ack_detail_save_failure_preserves_durable_publication(env,wire,monkeypa
     again=core.send_once('alpha',text='',media_rows=[{'file':'a.png','alt':'dot'}],production_flag=True,confirm='unused',adapter_factory=lambda *a:pytest.fail('restart provider entered'),log=lambda _:None)
     assert again.action=='inflight'
     assert before==(len(wire['calls']),len(env[3]['upload']),len(env[3]['grants']),len(env[3]['results']))
+
+
+def test_unknown_publication_is_one_post_and_fresh_interpreter_does_not_retry(env,wire):
+    import os, subprocess, sys
+    wire['publish']=(500,{'error':'synthetic'})
+    result,journal,_=invoke(env)
+    assert result.failure=='media_ambiguous' and journal['media']['phase']=='unknown'
+    assert len(posts(wire,'/threads_publish'))==1 and env[3]['results']==[]
+    before=(len(wire['calls']),len(env[3]['upload']),len(env[3]['grants']))
+    script="""
+import json, sys
+from thth import accounts,core
+cfg=json.loads(sys.argv[1])
+accounts.load_account=lambda name:cfg
+accounts.load_token=lambda cfg:{}
+core._append_run=lambda *a,**k:None
+def denied(*a,**k):raise AssertionError('provider entered after restart')
+result=core.send_once('alpha',text='',media_rows=[{'file':'a.png','alt':'dot'}],production_flag=True,confirm='unused',adapter_factory=denied,log=lambda _:None)
+assert result.action=='inflight'
+print('inflight_no_retry')
+"""
+    child=subprocess.run([sys.executable,'-B','-c',script,json.dumps(env[0])],env=dict(os.environ),capture_output=True,text=True,timeout=10)
+    assert child.returncode==0,child.stderr
+    assert child.stdout.strip()=='inflight_no_retry'
+    assert before==(len(wire['calls']),len(env[3]['upload']),len(env[3]['grants']))

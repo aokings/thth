@@ -531,3 +531,14 @@ test('aggregate failure keeps due obligation unconfirmed, never a healthy zero',
  const observed=await cleanupControl(f.body.account,{clock:row.cleanup_at+600000});
  assert.deepEqual(observed.cleanup,{pending_count:1,failed_count:0,reason:'cleanup_unconfirmed'});
 });
+
+
+test('preview capability cannot acknowledge publication or be invalidated as provider',async()=>{
+ const f=data(undefined,'sanitized');await ready(f);const cap=opaque();
+ assert.equal((await call(cap,'preview',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at:Date.now()+500000})).status,201);
+ const row=(await control(cap)).find(([k])=>k==='media')[1];
+ const body={...binding(f),media_id:f.body.sha256,purpose:'provider',generation:row.version};
+ for(const operation of ['published','invalidate'])assert.equal((await call(cap,operation,body)).status,404);
+ const after=(await control(cap)).find(([k])=>k==='media')[1];assert.deepEqual(after,row);
+ assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap)).status,200);
+});
