@@ -14,14 +14,14 @@ from .adapters import base
 
 
 def unavailable(cfg):
-    return cfg.get("media")!="mastodon"
+    return cfg.get("media") not in ("mastodon","bluesky")
 
 
 def error_for(cfg,manifest):
     if not manifest:return None
     if unavailable(cfg):return 'media_provider_unavailable'
-    from .adapters import mastodon_media
-    return mastodon_media.intent_error(manifest)
+    from .adapters import mastodon_media,bluesky_media
+    return (bluesky_media if cfg.get('media')=='bluesky' else mastodon_media).intent_error(manifest)
 
 
 def _save(name,data):
@@ -86,10 +86,10 @@ def publish(adapter,post,*,cfg,fm,manifest,state_dir,before_publish=None,on_cont
             def progress(phase,**details):
                 nonlocal started
                 if phase=='uploading':started=True
-                try:_progress(cfg['account'],manifest,adapter.instance,phase,**details)
+                try:_progress(cfg['account'],manifest,adapter.service if cfg['media']=='bluesky' else adapter.instance,phase,**details)
                 except (OSError,ValueError) as exc:raise media.MediaError('media_journal_unavailable') from exc
             from .adapters import mastodon_media
-            bound=dataclasses.replace(post,media_manifest=manifest,media_files=tuple(items),media_progress=progress,media_cache=lambda cap:mastodon_media.cache(cfg,cap))
+            bound=dataclasses.replace(post,media_manifest=manifest,media_files=tuple(items),media_progress=progress,media_cache=(lambda cap:mastodon_media.cache(cfg,cap)) if cfg['media']=='mastodon' else None)
             # No request precedes this durable intent. It also changes the old
             # legacy inflight leaf to a private 0600 file without copying blobs.
             progress('prepared',remote_ids=[])
@@ -114,7 +114,14 @@ def cached_note(cfg):
 
 def lint_notes(cfg,fm):
     """Fresh public limits; unknown or excessive attachments never pass lint."""
-    if not cfg or cfg.get('media')!='mastodon' or not fm.get('media'):return []
+    if not cfg or not fm.get('media'):return []
+    if cfg.get('media')=='bluesky':
+        try:
+            with media.prepare(cfg['repo_dir'],fm,'bluesky') as (manifest,_):reason=error_for(cfg,manifest)
+            return [reason] if reason else []
+        except (OSError,ValueError) as exc:
+            return [str(exc) if isinstance(exc,media.MediaError) else 'media_unavailable']
+    if cfg.get('media')!='mastodon':return []
     from .adapters import mastodon_media
     from .mediaformats import FormatError
     try:

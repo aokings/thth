@@ -478,6 +478,22 @@ class BlueskyAdapter(base.Adapter):
         """`count_text()` と同じ（実体を持っている呼び手のための別名）。"""
         return self.count_text(text)
 
+    def _post_record(self,post):
+        text = tags_mod.prepared(MEDIUM, post.text, post.topic,
+                                 hashtags=post.hashtags_allowed)
+        record = {
+            "$type": POST_COLLECTION,
+            "text": text,
+            "createdAt": created_at(),
+        }
+        facets = build_facets(text, topic=post.topic if post.hashtags_allowed else None,
+                              include_tags=post.hashtags_allowed)
+        if facets:
+            record["facets"] = facets
+        return record
+
+    prepared_media_supported = True
+
     # --- 投稿 ---------------------------------------------------------------
     def publish(self, post: base.Post, *, dry_run: bool, on_container_created=None,
                 before_publish=None) -> base.PublishResult:
@@ -498,17 +514,11 @@ class BlueskyAdapter(base.Adapter):
             return base.PublishResult(post_id=None, url=None, ts=ts, error=None,
                                        failure="none")
 
-        text = tags_mod.prepared(MEDIUM, post.text, post.topic,
-                                 hashtags=post.hashtags_allowed)
-        record = {
-            "$type": POST_COLLECTION,
-            "text": text,
-            "createdAt": created_at(),
-        }
-        facets = build_facets(text, topic=post.topic if post.hashtags_allowed else None,
-                              include_tags=post.hashtags_allowed)
-        if facets:
-            record["facets"] = facets
+        if post.media_manifest is not None:
+            from . import bluesky_media
+            return bluesky_media.publish(self,post,before_publish=before_publish)
+
+        record = self._post_record(post)
         # `post.topic` は Threads だけのもの。**黙って無視する**（設計 v2 §4.2:
         # 1 つの queue ファイルを Threads と Bluesky の 2 account が拾う形を壊さない）。
         # `post.link` も同じ——本文中の URL が facets でリンクになるので使わない。
