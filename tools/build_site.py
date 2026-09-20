@@ -268,7 +268,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = None
+PRIVACY_EFFECTIVE = "2026-09-20"
 
 
 def build_privacy() -> str:
