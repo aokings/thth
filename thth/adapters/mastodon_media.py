@@ -24,17 +24,58 @@ def require(ok, code):
 
 
 def intent_error(manifest):
-    if manifest['attachments']: return 'unsupported_attachment: mastodon/typed_attachment_pending'
+    attachments=manifest['attachments']
+    if attachments and (len(attachments)!=1 or attachments[0]['type']!='poll'):
+        return 'unsupported_attachment: mastodon/typed_attachment_pending'
+    if attachments and manifest['files']:return 'unsupported_attachment: mastodon/poll_media_exclusive'
     if manifest['captions']: return 'unsupported_attachment: mastodon/captions'
     options=manifest['post_options']
+    if attachments and 'focus' in options:return 'unsupported_attachment: mastodon/poll_focus'
     if set(options)-{'visibility','language','sensitive','spoiler_text','focus'}:
         return 'unsupported_attachment: mastodon/post_options'
     if options.get('visibility','public') not in ('public','unlisted'):
         return 'unsupported_attachment: mastodon/non_public_visibility'
-    if not manifest['files']:return 'unsupported_attachment: mastodon/no_media'
+    if not manifest['files'] and not attachments:return 'unsupported_attachment: mastodon/no_media'
     if any(x['role']!='media' or x['kind'] not in ('image','video') or x['format'] not in MIME for x in manifest['files']):
         return 'unsupported_attachment: mastodon/format'
     return None
+
+
+def poll_capabilities(body,instance):
+    require(type(body) is dict and type(body.get('configuration')) is dict,'poll_capability_unavailable')
+    version=body.get('version');limits=body['configuration'].get('polls')
+    require(type(version) is str and 0<len(version)<=128 and all(32<=ord(c)<127 for c in version),'poll_capability_unavailable: version')
+    require(type(limits) is dict,'poll_capability_unavailable')
+    out={'instance':instance,'version':version,'observed_at':jst.iso()}
+    for key in ('max_options','max_characters_per_option','min_expiration','max_expiration'):
+        value=limits.get(key)
+        require(type(value) is int and value>0,'poll_capability_unavailable: '+key)
+        out[key]=value
+    require(out['max_options']>=2 and out['min_expiration']<=out['max_expiration'],'poll_capability_unavailable')
+    return out
+
+
+def check_poll(cap,poll,text):
+    from .. import graphemes
+    require(type(text) is str and bool(text.strip()),'poll_text_required: mastodon')
+    # Upstream Poll.prepare_options uses Ruby String#strip (ASCII whitespace),
+    # followed by its grapheme-cluster validator, not Python code-point length.
+    values=[value.strip('\x00\t\n\v\f\r ') for value in poll['options']]
+    require(all(values) and len(set(values))==len(values),'invalid_poll_options: mastodon')
+    require(2<=len(values)<=cap['max_options'],'poll_limit_exceeded: options')
+    require(all(graphemes.count(value,stop_after=cap['max_characters_per_option'])<=cap['max_characters_per_option'] for value in values),'poll_limit_exceeded: option_characters')
+    require(cap['min_expiration']<=poll['expires_in']<=cap['max_expiration'],'poll_limit_exceeded: expires_in')
+
+
+def observe_poll(cfg):
+    """Poll-only checks require no media limits, token, or persistent cache."""
+    from .mastodon import MastodonAdapter
+    from .. import leave_gate
+    adapter=MastodonAdapter(instance=cfg.get('instance',''))
+    with leave_gate.scope(cfg):
+        code,value=_json(adapter,'GET','/api/v2/instance')
+        require(code==200,'poll_capability_unavailable')
+        return poll_capabilities(value,adapter.instance)
 
 
 def _positive(obj,key):
@@ -164,13 +205,18 @@ def publish(adapter,post,*,before_publish=None):
     try:
         require(callable(progress),'media_journal_required')
         granted=getattr(adapter,'granted_scopes',None)
-        require(granted is None or bool({'write','write:media'} & set(granted)),
+        require(not post.media_manifest['files'] or granted is None or bool({'write','write:media'} & set(granted)),
                 'mastodon_scope_missing: write:media; thth auth '+getattr(adapter,'auth_account','<account>')+' --by <名前>')
         why=intent_error(post.media_manifest);require(why is None,why or '')
         require(len(post.media_files)==len(post.media_manifest['files']) and all(x.manifest==row for x,row in zip(post.media_files,post.media_manifest['files'])),'media_prepared_mismatch')
+        poll=next((row for row in post.media_manifest['attachments'] if row['type']=='poll'),None)
+        if poll is not None:require(type(post.text) is str and bool(post.text.strip()),'poll_text_required: mastodon')
         code,value=_json(adapter,'GET','/api/v2/instance');require(code==200,'media_capability_unavailable')
-        cap=capabilities(value,adapter.instance);check_limits(cap,post.media_files)
-        if post.media_cache:post.media_cache(cap)
+        if poll is not None:
+            cap=poll_capabilities(value,adapter.instance);check_poll(cap,poll,post.text)
+        else:
+            cap=capabilities(value,adapter.instance);check_limits(cap,post.media_files)
+            if post.media_cache:post.media_cache(cap)
         options=post.media_manifest['post_options']
         for i,item in enumerate(post.media_files):
             item.verify()
@@ -202,6 +248,11 @@ def publish(adapter,post,*,before_publish=None):
         params=[('status',post.text),('visibility',options.get('visibility',adapter.visibility))]
         if post.reply_to:params.append(('in_reply_to_id',post.reply_to))
         params.extend(('media_ids[]',identifier) for identifier in ids)
+        if poll is not None:
+            params.extend(('poll[options][]',value) for value in poll['options'])
+            params.append(('poll[expires_in]',str(poll['expires_in'])))
+            for key in ('multiple','hide_totals'):
+                if key in poll:params.append(('poll['+key+']',str(poll[key]).lower()))
         for key in ('language','sensitive','spoiler_text'):
             if key in options:params.append((key,str(options[key]).lower() if type(options[key]) is bool else options[key]))
         record('publishing')
@@ -218,8 +269,9 @@ def publish(adapter,post,*,before_publish=None):
         if isinstance(exc,urllib.error.HTTPError):
             reason=f'media_{phase}_http_{exc.code}'
             if exc.code==403:
-                reason='provider_forbidden: 権限（write:media）の確認か再認可: thth auth '+getattr(adapter,'auth_account','<account>')+' --by <名前> (HTTP 403)'
-            definite=400<=exc.code<500 and phase=='uploading' and not ids
+                scope='write:media' if phase=='uploading' else 'write:statuses' if phase=='publishing' else 'write:media'
+                reason='provider_forbidden: 権限（'+scope+'）の確認か再認可: thth auth '+getattr(adapter,'auth_account','<account>')+' --by <名前> (HTTP 403)'
+            definite=400<=exc.code<500 and phase in ('uploading','publishing') and not ids
         else:
             reason=str(exc) if isinstance(exc,(media.MediaError,mediaformats.FormatError)) else f'media_{phase}_failed'
             definite=False

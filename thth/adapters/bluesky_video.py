@@ -75,7 +75,8 @@ def pds_audience(session):
         url=urllib.parse.urlsplit(selected['serviceEndpoint'])
     except (ValueError,TypeError):raise media.MediaError('video_pds_unavailable') from None
     require(url.scheme=='https' and url.path in ('','/') and type(url.hostname) is str and re.fullmatch(r'[A-Za-z0-9.-]+',url.hostname) is not None,'video_pds_unavailable')
-    # Official video guide derives service DID from hostname, not entryway/port.
+    # Official social-app getServiceAuthAudFromUrl uses hostname. The guide's
+    # example uses host; nondefault production-port interoperability is untested.
     return 'did:web:'+url.hostname.lower()
 
 

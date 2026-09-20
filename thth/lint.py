@@ -100,8 +100,8 @@ def lint_file(path: str) -> list:
         notes=bundle_mod.check(b,account_cfg=cfg)+bundle_mod.editorial_notes(b)
         if cfg and not b.malformed:
             from . import media as media_mod, media_delivery
-            for row in b.posts:
-                if media_mod.declared(row):notes.extend(media_delivery.lint_notes(cfg,row))
+            for index,row in enumerate(b.posts):
+                if media_mod.declared(row):notes.extend(media_delivery.lint_notes(cfg,row,text=b.segments[index] if index<len(b.segments) else None))
         return notes
 
     qf = queuefile.parse(path)
@@ -156,7 +156,7 @@ def lint_file(path: str) -> list:
         manifest=media_mod.manifest_for(fm, account_cfg)
         if manifest:
             from . import media_delivery
-            errors.extend(media_delivery.lint_notes(account_cfg,fm))
+            errors.extend(media_delivery.lint_notes(account_cfg,fm,text=queuefile.extract_section(qf.body,media,allow_empty=True)))
     except media_mod.MediaError as exc:
         errors.append(str(exc))
     section = queuefile.extract_section(qf.body, media, allow_empty=bool(fm.get('media') or fm.get('attachments')))

@@ -119,9 +119,9 @@ def cached_note(cfg):
     return f"media limits: cached instance={value['instance']} version={value['version']} observed_at={value['observed_at']} (rechecked before upload)"
 
 
-def lint_notes(cfg,fm):
+def lint_notes(cfg,fm,*,text=None):
     """Fresh public limits; unknown or excessive attachments never pass lint."""
-    if not cfg or not fm.get('media'):return []
+    if not cfg or not media.declared(fm):return []
     if cfg.get('media')=='threads':
         from .adapters import threads_media
         try:
@@ -139,8 +139,19 @@ def lint_notes(cfg,fm):
     from .adapters import mastodon_media
     from .mediaformats import FormatError
     try:
-        cap=mastodon_media.observe(cfg)
-        with media.prepare(cfg['repo_dir'],fm,cfg['media']) as (_,items):mastodon_media.check_limits(cap,items)
+        # Preserve the existing file-media lint order: unavailable live limits
+        # take precedence over opening local media; never fall back to cache.
+        cap=mastodon_media.observe(cfg) if not fm.get('attachments') else None
+        with media.prepare(cfg['repo_dir'],fm,cfg['media']) as (manifest,items):
+            reason=mastodon_media.intent_error(manifest)
+            if reason:return [reason]
+            poll=next((row for row in manifest['attachments'] if row['type']=='poll'),None)
+            if poll is not None:
+                if type(text) is not str or not text.strip():return ['poll_text_required: mastodon']
+                cap=mastodon_media.observe_poll(cfg)
+                mastodon_media.check_poll(cap,poll,text)
+                return ['warning: poll limits: latest instance version='+cap['version']+' observed_at='+cap['observed_at']+'; rechecked before publish']
+            mastodon_media.check_limits(cap,items)
         return ['warning: '+cached_note(cfg)]
     except (OSError,ValueError) as exc:
         code=str(exc) if isinstance(exc,(media.MediaError,FormatError)) else 'media_capability_unavailable'
