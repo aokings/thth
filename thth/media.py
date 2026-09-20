@@ -116,7 +116,14 @@ def _open_dir(path):
         for part in path.split('/')[1:]:
             if not part:
                 continue
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            try:
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            except OSError:
+                # Preserve NOFOLLOW; distinguish account repo configuration
+                # from a bad attachment leaf without resolving the alias.
+                if stat.S_ISLNK(os.stat(part,dir_fd=fd,follow_symlinks=False).st_mode):
+                    raise MediaError('media: repo_dir_symlink') from None
+                raise
             os.close(fd)
             fd = child
         return fd
@@ -322,7 +329,8 @@ def validate_declarations(fm,medium):
         if not isinstance(row,dict) or not isinstance(row.get('type'),str) or row['type'] not in fields: raise MediaError('attachments: unknown type')
         kind=row['type'];required,optional=fields[kind]
         if not required<=set(row) or set(row)-required-optional: raise MediaError('attachments: unknown or missing field')
-        if kind in seen or kind not in allowed.get(medium,set()): raise MediaError(f'unsupported_attachment: {medium}/{kind}')
+        if kind in seen:raise MediaError(f'duplicate_attachment_type: {medium}/{kind}')
+        if kind not in allowed.get(medium,set()): raise MediaError(f'unsupported_attachment: {medium}/{kind}')
         seen.add(kind)
         if kind=='quote':
             _text(row['uri'],'uri')
@@ -494,7 +502,8 @@ def display(manifest):
         seconds=f" / {row['duration']}秒" if row['duration'] is not None else ''
         lines.append(f"添付 {row['role']} {row['index']}: {row['file']} / {row['format']} / {shape}{seconds}")
         lines.append(f"size: source {row['size']} bytes / public {row['public_size']} bytes")
-        lines.append(f"alt: {row['alt']}")
+        label="lang" if row["role"]=="caption" else "alt"
+        lines.append(f"{label}: {row['alt']}")
         lines.append(f"source SHA256: {row['source_sha256']}")
         lines.append(f"public SHA256: {row['public_sha256']}")
     for key in ('attachments','post_options','captions'):

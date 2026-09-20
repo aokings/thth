@@ -146,7 +146,7 @@ def test_signer_actual_rsa_signature_and_canonical_wire(key,monkeypatch,tmp_path
         def read(self,n):return b'{"status":"unlocked"}'
     class Opener:
         def open(self,request,timeout):captured.append(request);return Response()
-    monkeypatch.setattr(relay.urllib.request,'build_opener',lambda *a:Opener())
+    monkeypatch.setattr(relay.httpsafe,'build_opener',lambda *a:Opener())
     assert relay.signed_request('person','person','unlock',{})=={'status':'unlocked'}
     request=captured[0];headers={k.lower():v for k,v in request.header_items()}
     import base64

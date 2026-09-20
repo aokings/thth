@@ -24,6 +24,7 @@ from . import accounts as accounts_mod
 from . import approval as approval_mod
 from . import bundle as bundle_mod
 from . import inflight as inflight_mod
+from . import media_delivery
 from . import jst, leave_gate
 from . import lock as lock_mod
 from . import postid as postid_mod
@@ -321,8 +322,24 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
         return StepResult("skipped", None,
                            "approved_sha が中身と合いません（approval_stale）")
 
-    if any(manifests):
-        return StepResult("skipped", None, "media_provider_unavailable")
+    media_errors=[media_delivery.error_for(account_cfg,m) for m in manifests]
+    if any(media_errors):
+        return StepResult("skipped", None, next(x for x in media_errors if x))
+
+    def media_stale(require_approved=True):
+        try:
+            with open(path,encoding='utf-8') as stream:current=bundle_mod.parse_text(stream.read(),path)
+            _,problems=bundle_mod.load_segments(current,account_cfg['media'])
+            if problems or current.front_matter.get('account')!=account_name:return True
+            if require_approved and (current.front_matter.get('status')!='approved' or current.front_matter.get('revoked_at')):return True
+            now_manifests=[media_mod.manifest_for(row,account_cfg) for row in current.posts]
+            actual=approval_mod.compute_bundle_sha(
+                segments=bundle_mod.effective_segments(current.segments,account_cfg,current.front_matter.get('topic')),
+                account=account_name,topic=current.front_matter.get('topic'),
+                publish_at=current.front_matter.get('publish_at'),continue_until=current.front_matter.get('continue_until'),
+                frozen=frozen,media_manifest=now_manifests)
+            return current.malformed or actual!=expected or current.front_matter.get('approved_sha')!=expected
+        except (OSError,ValueError,TypeError):return True
 
     # **公開済み部分の凍結**（設計 §5・Codex 最終条件 2）。
     if run is not None:
@@ -432,14 +449,15 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
         独立検収 P1-3: 以前はここが `adapter.publish()` の**外側**にあり、
         **待機のあいだに継続期限を越えても公開していた。**
         """
+        if any(manifests) and media_stale():return 'approval_stale'
         if jst.now_jst() > until:
             return (f"継続期限を越えました（{fm['continue_until']}）。"
                      f"公開要求は送っていません")
         return None
 
-    result = adapter.publish(post, dry_run=False,
-                              on_container_created=on_container_created,
-                              before_publish=before_publish)
+    result = media_delivery.publish(adapter,post,cfg=account_cfg,
+        fm=b.posts[index-1],manifest=manifests[index-1],state_dir=state_dir,
+        on_container_created=on_container_created,before_publish=before_publish)
 
     if result.failure == "publish_vetoed":
         # **container は作ったが公開していない。** 出ていないので inflight は消す。
@@ -453,7 +471,7 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
     if result.error or not result.post_id:
         detail_data = api_diagnostic.clean(result.api_diagnostic)
         err = redact_mod.redact(result.error or "不明なエラー")
-        if result.failure == "publish_ambiguous":
+        if result.failure in ("publish_ambiguous", "media_ambiguous", "media_held"):
             # **出たか分からない。自動で再送しない。後続も止める。**
             threadrun.mark(run, index, threadrun.UNRESOLVED, note=err, api_diagnostic=detail_data)
             log(f"公開の結果が分かりません（{index} 段目）。inflight を残します")
@@ -489,9 +507,14 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
 
     posted_at = result.ts or jst.iso()
     sent_sha = approval_mod.segment_sha(section)
-    threadrun.mark(run, index, threadrun.PUBLISHED, post_id=result.post_id,
-                    posted_at=posted_at, reply_to=parent or None,
-                    text_sha256=sent_sha, bundle_sha=expected, last_ok="publish")
+    try:
+        threadrun.mark(run, index, threadrun.PUBLISHED, post_id=result.post_id,
+                        posted_at=posted_at, reply_to=parent or None,
+                        text_sha256=sent_sha, bundle_sha=expected, last_ok="publish",
+                        **({"media":result.media} if result.media else {}))
+    except (OSError,ValueError):
+        if not manifests[index-1]:raise
+        return StepResult("unresolved",index,"media_record_unconfirmed: 公開後の記録未確定。inflight を保持し再送しません",run_id=run["run_id"],post_id=result.post_id)
 
     updated = bundle_mod.set_post_fields(text, index, {
         "post_id": result.post_id,
@@ -525,6 +548,8 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
         why = None
         if after.malformed:
             why = f"取り込みのあと原稿が読めなくなりました（{bundle_mod.why_malformed(current)}）"
+        elif any(manifests) and media_stale(require_approved=False):
+            why = 'approval_stale: attachment intent changed'
         elif after.front_matter.get("approved_sha") != expected:
             why = "取り込みのあと承認版が変わっています"
         else:

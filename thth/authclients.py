@@ -11,7 +11,14 @@ from . import accounts, redact
 from .authflow import FlowError
 
 
-def path_for(media, origin, cfg):
+def scope_generation(required_scopes):
+    if not isinstance(required_scopes,(list,tuple)) or not required_scopes or not all(isinstance(v,str) and v for v in required_scopes):
+        raise FlowError('auth_client_scopes_invalid')
+    canonical=json.dumps(sorted(set(required_scopes)),ensure_ascii=True,separators=(',',':'))
+    return hashlib.sha256(canonical.encode('ascii')).hexdigest()[:8]
+
+
+def path_for(media, origin, cfg, *, required_scopes=None):
     directory = Path(os.environ.get('THTH_APPS_DIR') or Path.home()/'.config/thth/apps').absolute()
     forbidden = [Path(accounts.thth_root()).resolve(), Path(__file__).resolve().parents[1]]
     if cfg.get('repo_dir'):
@@ -19,7 +26,10 @@ def path_for(media, origin, cfg):
     resolved = directory.resolve()
     if any(resolved == parent or parent in resolved.parents for parent in forbidden):
         raise FlowError('auth_client_store_must_be_outside_project')
-    name = media + ('.' + hashlib.sha256(origin.encode()).hexdigest() if origin else '') + '.env'
+    generation=''
+    if required_scopes is not None:
+        generation='.'+scope_generation(required_scopes)
+    name = media + ('.' + hashlib.sha256(origin.encode()).hexdigest() if origin else '') + generation + '.env'
     return directory/name
 
 

@@ -403,6 +403,36 @@ def bmff(fd,size):
         require(at==end)
     brand=None; duration=None; dimensions=[]; video=False; audio=False; moov=False; mdat=False
     containers={b'moov',b'trak',b'mdia',b'minf',b'stbl',b'udta',b'edts',b'dinf',b'mvex',b'moof',b'traf'}
+    # Known binary structure is not a container for arbitrary metadata. Unknown
+    # boxes cannot be skipped as if location absence had been established.
+    structure={b'mdhd',b'vmhd',b'smhd',b'hmhd',b'nmhd',b'dref',b'stts',
+               b'ctts',b'cslg',b'stsc',b'stsz',b'stz2',b'stco',b'co64',b'stss',
+               b'stsh',b'padb',b'stdp',b'sbgp',b'sgpd',b'subs',b'sdtp',b'stps',
+               b'elng',b'mehd',b'trex',b'mfhd',b'tfhd',b'tfdt',b'trun',b'sidx'}
+    def padding(a,b):
+        while a<b:
+            n=min(1024*1024,b-a)
+            require(not any(read(a,n)),'location_metadata_unverifiable');a+=n
+    def sample_entries(a,b):
+        require(b-a>=8 and read(a,4)==b'\0'*4)
+        count=int.from_bytes(read(a+4,4),'big');seen=0
+        for codec,sa,sb in boxes(a+8,b):
+            seen+=1
+            if codec in (b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v',b'jpeg',b'mjpa',b'mjpb'):
+                prefix=78
+                allowed={b'avcC',b'hvcC',b'av1C',b'vpcC',b'esds',b'pasp',b'clap',b'colr',b'btrt',b'fiel',b'gama'}
+            elif codec in (b'mp4a',b'ac-3',b'ec-3',b'Opus',b'fLaC',b'alac',b'sowt',b'twos'):
+                require(sb-sa>=28,'location_metadata_unverifiable')
+                version=int.from_bytes(read(sa+8,2),'big')
+                require(version in (0,1),'location_metadata_unverifiable')
+                prefix=28+(16 if version else 0)
+                allowed={b'esds',b'dac3',b'dec3',b'dOps',b'dfLa',b'alac',b'btrt',b'chan'}
+            else:raise FormatError('location_metadata_unverifiable')
+            require(sb-sa>=prefix,'location_metadata_unverifiable')
+            for ext,ea,eb in boxes(sa+prefix,sb):
+                if ext in (b'free',b'skip'):padding(ea,eb)
+                elif ext not in allowed:raise FormatError('location_metadata_unverifiable')
+        require(seen==count)
     def walk(start,end,depth=0,metadata=False):
         nonlocal brand,duration,video,audio,moov,mdat
         require(depth <= 32,'invalid_attachment_structure: box nesting')
@@ -412,6 +442,7 @@ def bmff(fd,size):
                 require(brand is None and b-a>=8 and (b-a)%4==0); brand=read(a,4)
                 require(brand in (b'isom',b'iso2',b'iso4',b'iso5',b'iso6',b'iso8',b'mp41',b'mp42',b'avc1',b'qt  ',b'M4V ',b'M4A '),'unsupported_attachment: bmff brand')
             elif kind==b'uuid': raise FormatError('location_metadata_unverifiable')
+            elif kind in (b'free',b'skip'):padding(a,b)
             elif kind==b'mdat': mdat=True
             elif kind==b'mvhd':
                 require(b-a >= 20); version=read(a,1)[0]; require(version in (0,1))
@@ -431,6 +462,7 @@ def bmff(fd,size):
                     # A static meta handler is walked separately; a timed metadata
                     # track can contain GPS samples in mdat and is not proven safe.
                     raise FormatError('location_metadata_unverifiable')
+            elif kind==b'stsd':sample_entries(a,b)
             elif kind==b'meta':
                 require(b-a>=4 and read(a,4)==b'\0'*4)
                 for mk,ma,mb in boxes(a+4,b):
@@ -446,16 +478,20 @@ def bmff(fd,size):
                         for ik,ia,ib in boxes(ma,mb):
                             if ik in (b'\xa9xyz',b'loci') or b'location' in ik.lower(): raise FormatError('location_metadata_present')
                             # Validate nested value boxes, without interpreting mdat.
-                            list(boxes(ia,ib))
+                            for vk,va,vb in boxes(ia,ib):
+                                if vk in (b'free',b'skip'):padding(va,vb)
+                                elif vk not in (b'data',b'mean',b'name'):raise FormatError('location_metadata_unverifiable')
                     elif mk==b'hdlr': require(mb-ma>=12 and read(ma,4)==b'\0'*4)
                     elif mk in containers: walk(ma,mb,depth+1)
-                    elif mk not in (b'free',b'skip'): raise FormatError('location_metadata_unverifiable')
+                    elif mk in (b'free',b'skip'):padding(ma,mb)
+                    else:raise FormatError('location_metadata_unverifiable')
             elif kind in (b'moof',b'mvex',b'elst'):
                 raise FormatError('duration_unverifiable')
             elif kind in containers:
                 if kind==b'moov': require(not moov); moov=True
                 walk(a,b,depth+1,metadata=metadata or kind==b'udta')
-            elif metadata and kind not in (b'\xa9nam',b'\xa9ART',b'\xa9alb',b'\xa9day',b'\xa9too',b'\xa9cmt',b'cprt',b'name',b'free',b'skip'):
+            elif metadata and kind in (b'\xa9nam',b'\xa9ART',b'\xa9alb',b'\xa9day',b'\xa9too',b'\xa9cmt',b'cprt',b'name'):pass
+            elif metadata or kind not in structure:
                 raise FormatError('location_metadata_unverifiable')
     walk(0,size)
     require(brand is not None and moov and mdat and duration is not None and (video or audio))
@@ -473,3 +509,43 @@ def inspect(fd,size):
     if head.startswith(b'RIFF') and head[8:12]==b'WEBP': return webp(data)
     if head[:6] in (b'GIF87a',b'GIF89a'): return gif(data)
     raise FormatError('unsupported_attachment: unknown format')
+
+
+def video_metrics(fd,size):
+    """First video stream's sample dimensions and average rate (no transcoding).
+
+    Non-fragmented ISO BMFF stts counts / mdhd timescale. VFR uses the average,
+    not the largest instantaneous rate. Missing or inconsistent sample timing
+    is unknown; this does not invent ffprobe's codec-derived r_frame_rate.
+    """
+    from fractions import Fraction
+    def read(at,n):
+        require(0<=at<=size-n,'video_rate_unverifiable');b=os.pread(fd,n,at);require(len(b)==n);return b
+    def boxes(a,b):
+        while a<b:
+            require(a+8<=b);header=read(a,8);n=int.from_bytes(header[:4],'big');prefix=8
+            if n==1:n=int.from_bytes(read(a+8,8),'big');prefix=16
+            require(n>=prefix and a+n<=b);yield header[4:],a+prefix,a+n;a+=n
+    def children(a,b,kind):return [(x,y) for k,x,y in boxes(a,b) if k==kind]
+    def one(a,b,kind):
+        values=children(a,b,kind);require(len(values)==1,'video_rate_unverifiable');return values[0]
+    ma,mb=one(0,size,b'moov')
+    for ta,tb in children(ma,mb,b'trak'):
+        da,db=one(ta,tb,b'mdia');ha,hb=one(da,db,b'hdlr');require(hb-ha>=12)
+        if read(ha+8,4)!=b'vide':continue
+        a,b=one(da,db,b'mdhd');v=read(a,1)[0];require(v in (0,1));offset=20 if v else 12
+        require(a+offset+(12 if v else 8)<=b);scale=int.from_bytes(read(a+offset,4),'big');duration=int.from_bytes(read(a+offset+4,8 if v else 4),'big');require(scale>0 and duration>0,'video_rate_unverifiable')
+        na,nb=one(da,db,b'minf');sa,sb=one(na,nb,b'stbl');a,b=one(sa,sb,b'stts')
+        require(b-a>=8 and read(a,4)==b'\0'*4);count=int.from_bytes(read(a+4,4),'big');require(b-a==8+count*8)
+        samples=ticks=0
+        for at in range(a+8,b,8):
+            n,d=struct.unpack('>II',read(at,8));require(n>0 and d>0,'video_rate_unverifiable');samples+=n;ticks+=n*d
+        require(samples>0 and ticks==duration,'video_rate_unverifiable')
+        za,zb=one(sa,sb,b'stsz');require(zb-za>=12 and read(za,4)==b'\0'*4)
+        unit,total=struct.unpack('>II',read(za+4,8));require(total==samples and zb-za==(12 if unit else 12+4*total),'video_rate_unverifiable')
+        a,b=one(sa,sb,b'stsd');require(b-a>=8 and read(a,4)==b'\0'*4 and int.from_bytes(read(a+4,4),'big')==1,'video_dimensions_unverifiable')
+        entries=list(boxes(a+8,b));require(len(entries)==1)
+        codec,a,b=entries[0];require(codec in (b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v') and b-a>=78,'video_dimensions_unverifiable')
+        width,height=struct.unpack('>HH',read(a+24,4));require(width>0 and height>0,'video_dimensions_unverifiable')
+        return width,height,Fraction(samples*scale,ticks)
+    raise FormatError('video_rate_unverifiable')

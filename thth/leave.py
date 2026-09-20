@@ -253,8 +253,8 @@ def revoke(cfg,token,progress,save):
     media=cfg.get('media')
     if media in ('threads','bluesky'):return 'unconfirmed_manual'
     if media=='mastodon':
-        from .adapters.auth_mastodon import origin,valid_client,request
-        base=origin(cfg.get('instance'));client=valid_client(authclients.read(authclients.path_for(media,base,cfg)),base)
+        from .adapters.auth_mastodon import client_for_token,request
+        base,client=client_for_token(cfg,token)
         access=token.get('access_token')
         if not isinstance(access,str) or not access:raise ValueError('revoke_credential_unavailable')
         if 'access' not in progress:

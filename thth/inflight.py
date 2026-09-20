@@ -23,6 +23,11 @@ def read(state_dir: str) -> dict | None:
 
 
 def _write(state_dir: str, data: dict) -> None:
+    if data.get('media'):
+        from . import media_delivery, accounts
+        name=data['media']['account']
+        if os.path.realpath(accounts.state_dir_for(name))!=os.path.realpath(state_dir):raise ValueError('media_journal_account_mismatch')
+        return media_delivery._save(name,data)
     os.makedirs(state_dir, exist_ok=True)
     p = path_for(state_dir)
     tmp = p + ".tmp"

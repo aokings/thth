@@ -39,8 +39,8 @@ def configure(env,provider,monkeypatch,media):
     path.write_text(json.dumps(cfg));cfg=accounts.load_account('alpha')
     pair={k:provider[k] for k in ('client_id','client_secret')}
     if media=='mastodon':
-        metadata={'issuer':provider['base'],**{k:provider['base']+p for k,p in masto.ENDPOINTS.items()},'code_challenge_methods_supported':['S256'],'grant_types_supported':['authorization_code'],'response_types_supported':['code'],'scopes_supported':masto.SCOPES,'token_endpoint_auth_methods_supported':['client_secret_post']}
-        client=dict(pair,instance=provider['base'],redirect_uri=masto.CALLBACK,scopes=masto.SCOPES,metadata=metadata,created_at='2026-09-20T00:00:00Z')
+        metadata={'issuer':provider['base'],**{k:provider['base']+p for k,p in masto.ENDPOINTS.items()},'code_challenge_methods_supported':['S256'],'grant_types_supported':['authorization_code'],'response_types_supported':['code'],'scopes_supported':masto.LEGACY_SCOPES,'token_endpoint_auth_methods_supported':['client_secret_post']}
+        client=dict(pair,instance=provider['base'],redirect_uri=masto.CALLBACK,scopes=masto.LEGACY_SCOPES,metadata=metadata,created_at='2026-09-20T00:00:00Z')
         p=authclients.path_for(media,provider['base'],cfg)
     else:
         monkeypatch.setenv('THTH_X_BASE_URL',provider['base'])

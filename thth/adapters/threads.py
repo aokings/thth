@@ -219,7 +219,7 @@ class ThreadsAdapter(base.Adapter):
                  user_id: str = "", wait_seconds: float = DEFAULT_WAIT_SECONDS,
                  timeout: float = DEFAULT_TIMEOUT_SECONDS, scopes=None,
                  scopes_source: str | None = None):
-        self.base_url = base_url.rstrip("/")
+        self.base_url = httpsafe.validated_url(base_url,base=True)
         self.access_token = access_token
         # **値そのものを登録**（セキュリティ監査 2026-09-16・P1-1）。サーバが
         # キー名なしで値を反射しても（`rejected credential <値>`）、`redact()`

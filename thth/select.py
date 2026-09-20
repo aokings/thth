@@ -232,8 +232,10 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
             needs_review.append(path)
             continue
 
-        if manifest:
-            rejections.append(Rejection(path, "media_provider_unavailable"))
+        from . import media_delivery
+        media_error=media_delivery.error_for(account_cfg,manifest)
+        if media_error:
+            rejections.append(Rejection(path, media_error))
             needs_review.append(path)
             continue
 

@@ -13,7 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from . import __version__, accounts, admin_log, authclients, redact
+from . import __version__, accounts, admin_log, authclients, redact, httpsafe
 
 PERSON = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z')
 OPAQUE = re.compile(r'[A-Za-z0-9_-]{43}\Z')
@@ -134,7 +134,7 @@ def signed_request(kind, subject, operation, body):
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs): return None
     try:
-        with urllib.request.build_opener(NoRedirect()).open(request, timeout=10) as response:
+        with httpsafe.build_opener(NoRedirect()).open(request, timeout=10) as response:
             limit=16384 if kind=='deletion' else 4096
             data = response.read(limit+1)
             if len(data)>limit or response.status not in (200,201): raise RelayError('approval_relay_unavailable')

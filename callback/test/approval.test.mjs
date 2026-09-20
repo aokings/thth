@@ -112,7 +112,7 @@ class Response:
 class Opener:
  def open(self,request,timeout):
   print(json.dumps({'url':request.full_url,'headers':dict(request.header_items()),'body':request.data.decode()}));return Response()
-r.urllib.request.build_opener=lambda *a:Opener()
+r.httpsafe.build_opener=lambda *a:Opener()
 r.signed_request('person',sys.argv[1],'status',{})`;
   // This test-only wire capture stays in RAM; product CLI never prints signatures.
   const child=spawnSync(process.env.THTH_TEST_PYTHON||'python3',['-c',script,p.id],{cwd:root,env:{PATH:'/usr/bin:/bin',PYTHONPATH:root,HOME:directory,THTH_APPS_DIR:directory,PYTHONDONTWRITEBYTECODE:'1'}});

@@ -105,8 +105,17 @@ def _auth_needs_app_env(account_name: str) -> bool:
         return False
 
 
-@leave_gate.scoped
 def diagnose(account_name: str) -> dict:
+    from . import stop_observation
+    static=stop_observation.diagnostic(account_name)
+    if static['error']:return static
+    report=_diagnose(account_name)
+    report['directory_checks']=static['directory_checks']
+    return report
+
+
+@leave_gate.scoped
+def _diagnose(account_name: str) -> dict:
     """読み取りだけで能力を測る。トークンの値は返り値にも入れない。
 
     **probe は媒体が持つ**（設計 v2 §4.2・T-B5）。doctor は台帳の `media` から
@@ -148,6 +157,13 @@ def diagnose(account_name: str) -> dict:
     except adapter_base.AdapterError as e:
         return {"account": account_name, "error": str(e), "probes": []}
 
+    required_scope_info={}
+    if account_cfg.get('media')=='mastodon':
+        from .scopes import MASTODON_SCOPES
+        granted=token.get('scopes')
+        known=(token.get('scopes_source')=='response' and type(granted) is list and all(type(v) is str for v in granted))
+        required_scope_info={'required_scopes':list(MASTODON_SCOPES),
+                             'missing_scopes_recorded':sorted(set(MASTODON_SCOPES)-set(granted)) if known else None}
     results = adapter.probe(get=_get)
 
     for r in results:
@@ -157,7 +173,7 @@ def diagnose(account_name: str) -> dict:
             "scopes_recorded": recorded_scopes(token),
             "auth_via": token.get("auth_via") if token.get("auth_via") in ("relay","paste","token_set") else None,
             "auth_observed_at": (read_observation(account_name) or {}).get("auth_observed_at"),
-            "probes": results}
+            "probes": results, **required_scope_info}
 
 
 # **記録上の scope**（運用の観測 2026-09-14）。VM の `.token` は Threads 4 本・
@@ -358,6 +374,15 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     「次の一手」（導入文書の節番号）を 1 行言う。値は一切出力しない——app.env は
     存在と項目の有無だけを見て、中身は読み捨てる。
     """
+    from . import stop_observation
+    static=stop_observation.diagnostic(account_name)
+    if static['error']:
+        if as_json:log(json.dumps(static,ensure_ascii=False))
+        else:
+            log(static.get('message') or static['error'])
+            for row in static['directory_checks']:
+                if row['warning']:log(row['directory']+': '+row['warning']+' (mode='+str(row['mode'])+')')
+        return 2
     notices: list[str] = []
 
     # **台帳の置き場を 1 行で言う**（設計 v2 §3・v2-2a）。台帳が「外」なのか
@@ -459,6 +484,7 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
             notices.append(NEXT_STEP_AUTH_NEEDS_APP_ENV)
 
     if as_json:
+        report["directory_checks"] = static["directory_checks"]
         report["notices"] = notices
         report["app_env"] = app_env_state
         report["accounts_dir"] = accounts_dir_info
@@ -487,6 +513,10 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         return 2
     log(f"{report['account']}（{report['username']}・user_id={report['user_id']}）")
     log(recorded_scopes_line(report.get("scopes_recorded")))
+    if report.get('required_scopes'):
+        log('必要な scope: '+ ' '.join(report['required_scopes']))
+        if report.get('missing_scopes_recorded'):
+            log('記録上不足: '+', '.join(report['missing_scopes_recorded'])+'（thth auth <account> --by <名前> で再認可）')
     debug_line = debug_token_line(report["probes"])
     if debug_line:
         log(debug_line)

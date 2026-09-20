@@ -163,7 +163,7 @@ def write_snapshot(name, filename, value):
 
 
 def _write_snapshot(name, filename, value):
-    if filename not in ('handoff_cursor.json', 'admin_cursor.json', 'admin_notifications.json', 'timers.json', 'doctor.json'):
+    if filename not in ('handoff_cursor.json', 'admin_cursor.json', 'admin_notifications.json', 'timers.json', 'doctor.json', 'media_capabilities.json'):
         raise ValueError('invalid_cursor_filename')
     directory=_directory(name,create=True)
     temporary='.handoff-cursor-'+uuid.uuid4().hex
@@ -171,12 +171,14 @@ def _write_snapshot(name, filename, value):
         try:
             info=os.stat(filename,dir_fd=directory,follow_symlinks=False)
             if not stat.S_ISREG(info.st_mode):raise ValueError('cursor_unreadable')
+            if filename=='media_capabilities.json' and (info.st_nlink!=1 or info.st_uid!=os.geteuid() or stat.S_IMODE(info.st_mode)!=0o600):raise ValueError('cursor_unreadable')
         except FileNotFoundError:pass
         fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=directory)
         with os.fdopen(fd,'w') as stream:
             json.dump(value,stream,ensure_ascii=False,allow_nan=False)
             stream.flush();os.fsync(stream.fileno())
         os.replace(temporary,filename,src_dir_fd=directory,dst_dir_fd=directory)
+        if filename=='media_capabilities.json':os.fsync(directory)
     finally:
         try:os.unlink(temporary,dir_fd=directory)
         except FileNotFoundError:pass
@@ -185,14 +187,16 @@ def _write_snapshot(name, filename, value):
 
 def read_snapshot(name, filename):
     """Read an observation without following state ancestors or special files."""
-    if filename not in ('timers.json', 'doctor.json'):
+    if filename not in ('timers.json', 'doctor.json', 'media_capabilities.json'):
         raise ValueError('invalid_observation_filename')
     directory = None
     try:
         directory = _directory(name)
         fd = os.open(filename, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
         with os.fdopen(fd, 'rb') as stream:
-            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            info=os.fstat(stream.fileno())
+            if filename=='media_capabilities.json' and (info.st_nlink!=1 or info.st_uid!=os.geteuid() or stat.S_IMODE(info.st_mode)!=0o600):return None
+            if not stat.S_ISREG(info.st_mode):
                 return None
             raw = stream.read(4 * 1024 * 1024 + 1)
         if len(raw) > 4 * 1024 * 1024:
