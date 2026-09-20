@@ -118,3 +118,15 @@ def test_future_ready_receipt_no_effect(env,remote,publisher):
     path.write_text(json.dumps(job));jobs.run_once(env['path'])
     assert publisher==[]
     assert json.loads(path.read_text())['status']=='failed'
+
+
+def test_storage_walk_ignores_entries_that_vanish(env,monkeypatch):
+    # git の自動 gc が作る短命な maintenance.lock が listdir と stat の間に消えても
+    # 検証は落ちない（CI で実際に競合した）。危険な実在 entry の拒否は上の試験のまま。
+    draft(env)
+    clone,origin=managed_repo.locations('alpha')
+    real=os.listdir
+    monkeypatch.setattr(managed_repo.os,'listdir',lambda fd:real(fd)+['maintenance.lock'] if isinstance(fd,int) else real(fd))
+    assert managed_repo.validate(clone)==(clone,origin)
+    response=writes.execute(env['context'],dict(operation='draft_put',account='alpha',body='second body',publish_at='2030-01-01T12:00:00+09:00'))
+    assert response['account']=='alpha'

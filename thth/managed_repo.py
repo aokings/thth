@@ -49,7 +49,13 @@ def _storage_tree(fd, *, depth=0, remaining=None):
     for name in os.listdir(fd):
         remaining[0] -= 1
         if remaining[0] < 0: raise ValueError('managed_git_store_too_large')
-        info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        try:
+            info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            # git's own background maintenance creates and removes short-lived
+            # files (maintenance.lock, tmp packs). An entry that vanished between
+            # listdir and stat cannot redirect anything; it is not a hazard.
+            continue
         if stat.S_ISDIR(info.st_mode):
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             try:
@@ -88,7 +94,8 @@ def environment():
     return env
 
 
-CONFIG = ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-c','commit.gpgsign=false',
+CONFIG = ['-c','gc.auto=0','-c','maintenance.auto=false',  # no background gc racing the store walk
+          '-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-c','commit.gpgsign=false',
           '-c','tag.gpgsign=false','-c','credential.helper=','-c','init.templateDir=',
           '-c','protocol.allow=never','-c','protocol.file.allow=always',
           '-c','remote.origin.uploadpack=git-upload-pack','-c','remote.origin.receivepack=git-receive-pack']
