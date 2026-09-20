@@ -137,6 +137,9 @@ def _receipt_matches(job, receipt):
 
 
 def _validate_receipt(job, receipt):
+    # status/consume may cross the deadline after process() checked it. Reject
+    # that receipt here; _perform() and its locked before() gate independently
+    # recheck immediately before effects. These checks are defense in depth.
     now=int(time.time()*1000)
     if not _receipt_matches(job,receipt) or now>=job['expires_at'] or receipt['approved_at']>now:
         raise ReportServiceError('approval_receipt_invalid')
