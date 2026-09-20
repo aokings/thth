@@ -3239,7 +3239,7 @@ def build_parser() -> argparse.ArgumentParser:
         "set",
         help="管理画面で発行したトークンを貼り付けて検証し .token に保存する",
         description=(
-            "Threads の生成ツール・Mastodon の管理画面で発行したトークンを貼る。本人確認できたときだけ書く。\n"
+            "Threads の生成ツール・Mastodon の管理画面で発行したトークンを貼る。本人確認できたときだけ書く。\nBluesky の --stdin は App Password を受け、identifier は台帳の handle を使う。\n"
             "Threads の生成ツールは、そのアカウントが過去に承認した範囲でしかトークンを出さない——"
             "期限の入れ替えには足りるが、権限の内訳は変わらない。権限を変えるなら thth auth。"),
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -3247,7 +3247,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_token_set.add_argument("--by", required=True)
     p_token_set.add_argument("--force", action="store_true", help="既存の .token を上書きする（期限の入れ替え）")
     p_token_set.add_argument("--stdin", action="store_true",
-                              help="標準入力から黙って1行読む（非対話・パイプ用）")
+                              help="標準入力から黙って1行読む（Bluesky は App Password、Threads/Mastodon は access token）")
     p_token_set.set_defaults(func=cmd_token_set)
     p_token_revoke = token_sub.add_parser("revoke", help="ローカルtokenを削除（リモート権限は取り消さない）")
     p_token_revoke.add_argument("account")

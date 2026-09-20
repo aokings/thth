@@ -336,7 +336,7 @@ def test_T3_blueskyはtokenを600で書く(tmp_path, isolated_account_factory):
     with fake_bluesky() as service:
         account = _account_with_token_path(
             isolated_account_factory, tmp_path, media="bluesky",
-            handle=HANDLE, service=str(service))
+            handle=HANDLE, user_id=DID, service=str(service))
         lines = []
         rc = oauth_mod.run_auth(
             account["name"], log=lines.append,

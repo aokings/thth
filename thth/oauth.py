@@ -439,7 +439,7 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
             _out(str(e), log=log)
             return 2
         if media == "bluesky":
-            return admin_log.guarded(run_auth_bluesky)(
+            return run_auth_bluesky(
                 account_name, account_cfg=account_cfg, log=log,
                 identifier_input=identifier_input, password_input=password_input, by=by)
         _out(f"{media} は `thth auth` では認可できません。"
@@ -653,78 +653,14 @@ def _ask_bluesky(prompt: str, *, secret: bool):
     return getpass.getpass(prompt) if secret else input(prompt)
 
 
-@admin_log.guarded
 def run_auth_bluesky(account_name: str, *, account_cfg=None,
                      identifier_input=None, password_input=None, log=print, by=None) -> int:
-    """`thth auth <account>`（Bluesky・設計 v2 §4.2「認可とトークン」）。
-
-    handle と **App Password** を対話で受け（`getpass` なので画面に出ない）、
-    `createSession` が通ったものだけを `~/.config/thth/<account>.token` に
-    **600 で原子的に**書く（`thth/secrets_fs.py` の作法・`thth app set` と同じ）。
-
-    **値はどこにも出さない**——標準出力・ログ・例外文のどれにも。成功時に言うのは
-    handle と did と path と 600 だけ。
-
-    書く中身は `bluesky.auth_interactive()` の戻り（`identifier`・`app_password`・
-    `did`・`handle`・`no_expiry: true`・`obtained_at`）に、取り違え防止の
-    `user_id`・`username` を足したもの。**`expires_in` は書かない**——App Password
-    に期限は無い（`maintain` が「判らない」ではなく「期限を持たない」と言う）。
-    """
-    from . import admin_log
-    try:
-        admin_log.actor(by)
-    except ValueError as exc:
-        _out(str(exc), log=log)
-        return 2
-    from .adapters import bluesky as bluesky_mod
-
-    if account_cfg is None:
-        try:
-            account_cfg = accounts_mod.load_account(account_name)
-        except accounts_mod.AccountError as e:
-            _out(str(e), log=log)
-            return 2
-
-    service = account_cfg.get("service") or bluesky_mod.DEFAULT_SERVICE
-    ask_id = identifier_input or (
-        lambda: _ask_bluesky(f"Bluesky の handle（例: name.bsky.social・{service}）: ",
-                             secret=False))
-    ask_pw = password_input or (
-        lambda: _ask_bluesky("App Password（xxxx-xxxx-xxxx-xxxx・表示されません）: ",
-                             secret=True))
-
-    try:
-        token_data = bluesky_mod.auth_interactive(ask_id, ask_pw, service=service)
-    except OAuthError as e:
-        _out(str(e), log=log)
-        return 2
-    except (ValueError, RuntimeError) as e:
-        # `auth_interactive()` は既に `scrub()` を通した文だけを投げる。
-        _out(f"認可できませんでした（{redact_mod.redact(str(e))}）", log=log)
-        return 1
-
-    # 取り違え防止（`token set` と同じ筋・masaru の指摘 2026-09-09）。台帳の
-    # handle と、App Password が実際に指しているアカウントが食い違ったら
-    # 保存しない。**通すと、そのアカウントの queue の本文が別のアカウントから出る。**
-    handle = (account_cfg.get("handle") or "").strip().lstrip("@")
-    got = (token_data.get("handle") or "").strip().lstrip("@")
-    if handle and got and handle.lower() != got.lower():
-        _out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
-             f"この App Password は {got} のものです。", log=log)
-        _out("正しいアカウントで発行し直すか、台帳の handle を直してください。", log=log)
-        return 1
-
-    token_data = dict(token_data)
-    # `whoami()` と同じ鍵（`board`・`doctor` がここを読む）。
-    token_data["user_id"] = token_data.get("did")
-    token_data["username"] = token_data.get("handle")
-    token_was_present = os.path.exists(account_cfg["token"])
-    secrets_fs.atomic_write_json(account_cfg["token"], token_data, mode=0o600)
-    admin_log.append("token_set", account_name, account_cfg, by=by, diff={"token": ["present" if token_was_present else "absent", "present"]})
-
-    _out(f"handle={token_data['handle']} did={token_data['did']}", log=log)
-    _out(f"保存しました: {account_cfg['token']}（600）", log=log)
-    return 0
+    """Legacy human App Password auth; same validation/commit as stdin token set."""
+    from . import authpassword
+    ask_id = identifier_input or (lambda: _ask_bluesky("Bluesky の handle: ", secret=False))
+    ask_pw = password_input or (lambda: _ask_bluesky("App Password（表示されません）: ", secret=True))
+    return authpassword.run(account_name, cfg=account_cfg, password_input=ask_pw,
+                            identifier_input=ask_id, force=True, by=by, log=log)
 
 
 # **媒体ごとの貼り付けの案内**（masaru 報告 2026-09-13: Mastodon なのに「Threads の長期
@@ -767,7 +703,7 @@ def _read_pasted_token(*, stdin: bool, input_func, prompt: str | None = None) ->
 
 
 @admin_log.guarded
-def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False,
+def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool = False,
                    input_func=None, log=print, by=None) -> int:
     """`thth token set <account>`（T2b・masaru の指示 2026-09-09）。
 
@@ -906,6 +842,24 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
     _out(f"user_id={user_id} username={username}", log=log)
     _out(f"保存しました: {token_path}（600）", log=log)
     return 0
+
+
+def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False,
+                   input_func=None, log=print, by=None) -> int:
+    try:
+        admin_log.actor(by)
+        cfg = accounts_mod.load_account(account_name)
+    except (ValueError, accounts_mod.AccountError) as exc:
+        _out(str(exc), log=log)
+        return 2
+    if cfg.get('media') != 'bluesky':
+        return _run_token_set_legacy(account_name, force=force, stdin=stdin, input_func=input_func, log=log, by=by)
+    if not stdin:
+        _out('Bluesky app_password は --stdin で渡すか、thth auth で対話入力してください', log=log)
+        return 2
+    from . import authpassword
+    return authpassword.run(account_name, cfg=cfg, force=force, by=by, log=log,
+        password_input=lambda: _read_pasted_token(stdin=True, input_func=input_func))
 
 
 @admin_log.guarded
