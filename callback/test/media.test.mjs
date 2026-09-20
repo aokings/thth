@@ -545,3 +545,67 @@ test('preview capability cannot acknowledge publication or be invalidated as pro
 });
 
 test('test Python uses explicit override and portable PATH fallback',()=>{assert.equal(pythonForTests({PYTHON_FOR_TESTS:'/synthetic/python'}),'/synthetic/python');assert.equal(pythonForTests({}),'python3');});
+
+
+test('late single PUT and grant copy keep debt through cleanup and failed compensation',async()=>{
+ for(const copy of [false,true]){
+  const f=data(undefined,'sanitized');f.body.account=copy?'late-copy':'late-put';
+  if(copy)await ready(f);else assert.equal((await call(f.id,'create',f.body)).status,201);
+  const id=copy?opaque():f.id;
+  await control(id,{beforeR2:{operation:'put',compensationFailure:'delete'}});
+  const response=copy?await call(id,'provider',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at:0}):await upload(f);
+  assert.equal(response.status,503);
+  const during=await control(id,{ioInspect:true});assert.ok(during.row.io_ticket);assert.equal(during.row.cleanup_attempts,1);assert.equal(during.alarm,during.row.cleanup_at+60000);
+  const row=(await control(id)).find(([k])=>k==='media')[1];assert.equal(row.io_ticket,null);
+  if(copy){const sourceRow=(await control(f.id)).find(([k])=>k==='media')[1];await control(f.id,{clock:sourceRow.cleanup_at,alarm:true});}
+  const bucket=await mf.getR2Bucket('MEDIA_BUCKET');assert.ok(await bucket.head(row.key));
+  assert.deepEqual((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup,{pending_count:1,failed_count:0,reason:'cleanup_unconfirmed'});
+  assert.equal((await mf.dispatchFetch('https://media.test/m/'+id)).status,410);
+  await control(id,{clock:row.cleanup_at});assert.equal((await accountCall(f.body.account,'cleanup-retry')).status,200);
+  assert.deepEqual(await control(id,{clock:row.cleanup_at,alarm:true,inspect:true}),{rows:[],alarm:null});
+  assert.equal(await bucket.head(row.key),null);assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,0);
+ }
+});
+
+test('late multipart allocation retains returned upload ID when abort compensation fails',async()=>{
+ const f=data();f.body.account='late-allocation';f.body.size=100000001;f.body.part_size=5*1024*1024;
+ await control(f.id,{beforeR2:{operation:'createMultipartUpload',compensationFailure:'abort'}});
+ assert.equal((await call(f.id,'create',f.body)).status,503);
+ const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.ok(row.upload_id);assert.equal(row.io_ticket,null);
+ assert.ok((await control(f.id,{ioInspect:true})).row.io_ticket);
+ await cleanupControl(f.body.account,{clock:row.cleanup_at});await control(f.id,{clock:row.cleanup_at});
+ assert.equal((await accountCall(f.body.account,'cleanup-retry')).status,200);
+ assert.deepEqual(await control(f.id,{clock:row.cleanup_at,alarm:true,inspect:true}),{rows:[],alarm:null});
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,0);
+});
+
+test('late multipart completion cannot be cleaned before its resulting object arrives',async()=>{
+ const f=data();f.body.account='late-completion';f.body.size=100000001;f.body.part_size=5*1024*1024;
+ assert.equal((await call(f.id,'create',f.body)).status,201);
+ for(let n=1;n<=Math.ceil(f.body.size/f.body.part_size);n++){
+  const part=Buffer.alloc(Math.min(f.body.part_size,f.body.size-(n-1)*f.body.part_size),8);
+  assert.equal((await mf.dispatchFetch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,200);
+ }
+ await control(f.id,{beforeR2:{operation:'complete'}});
+ assert.equal((await call(f.id,'complete',binding(f))).status,410);
+ const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.equal(row.multipart_closed,'completed');assert.equal(row.io_ticket,null);
+ assert.ok((await control(f.id,{ioInspect:true})).row.io_ticket);
+ const bucket=await mf.getR2Bucket('MEDIA_BUCKET');assert.ok(await bucket.head(row.key));
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,1);
+ assert.deepEqual(await control(f.id,{clock:row.cleanup_at,failR2:'abort',alarm:true,inspect:true}),{rows:[],alarm:null});
+ assert.equal(await bucket.head(row.key),null);assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,0);
+});
+
+test('restart with unresolved I/O never clears debt or spins beyond ten attempts',async()=>{
+ const f=data();f.body.account='unknown-io';await ready(f);
+ const row=(await control(f.id)).find(([k])=>k==='media')[1];
+ await control(f.id,{unresolvedIO:true});await mf.dispose();mf=new Miniflare(options);await mf.ready;
+ for(let n=0;n<10;n++)await control(f.id,{clock:row.cleanup_at+n*60000,alarm:true});
+ const after=await control(f.id,{clock:row.cleanup_at+600000,inspect:true});
+ assert.equal(after.rows.find(([k])=>k==='media')[1].io_ticket,'synthetic-unresolved');assert.equal(after.alarm,null);
+ assert.deepEqual((await cleanupControl(f.body.account,{clock:row.cleanup_at+600000})).cleanup,{pending_count:1,failed_count:1,reason:'cleanup_failed'});
+ assert.ok(await(await mf.getR2Bucket('MEDIA_BUCKET')).head(row.key));
+ assert.equal((await accountCall(f.body.account,'cleanup-retry')).status,200);
+ await control(f.id,{clock:row.cleanup_at+600000,alarm:true});
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at+600000})).cleanup.pending_count,1);
+});

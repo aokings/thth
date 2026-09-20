@@ -11,11 +11,13 @@ export class TestMedia extends MediaObject {
       if(key==='resumeMultipartUpload')return (...args)=>{
         const upload=value.apply(object,args);
         return new Proxy(upload,{get(u,method){const f=u[method];if(typeof f!=='function')return f;return async(...values)=>{
+          await target?.beforeOperation(method);
           if(target?.failR2===method){target.failR2=null;throw Error('synthetic_r2_before_failure');}
           return f.apply(u,values);
         };}});
       };
       return async(...args)=>{
+        await target?.beforeOperation(key);
         if(target?.failR2===key){target.failR2=null;throw Error('synthetic_r2_before_failure');}
         const result=await value.apply(object,args);
         if(target?.afterR2?.operation===key){
@@ -25,10 +27,20 @@ export class TestMedia extends MediaObject {
           if(action==='rotate')target.atomic(()=>target.put({...target.row(),version:'changed'}));
           if(action==='revoke')await(await accountStub(env,target.row().account)).manage('revoke',{}, {nonce:'b'.repeat(43),time:Date.now()});
         }
+        if(key==='createMultipartUpload')return new Proxy(result,{get(upload,method){
+          const fn=upload[method];if(typeof fn!=='function')return fn;
+          return async(...args)=>{if(target.failR2===method){target.failR2=null;throw Error('synthetic_r2_before_failure');}return fn.apply(upload,args);};
+        }});
         return result;
       };
     }});
     super(ctx,{...env,MEDIA_BUCKET:bucket});target=this;
+  }
+  async beforeOperation(operation){
+    if(this.beforeR2?.operation!==operation)return;
+    const action=this.beforeR2;this.beforeR2=null;this.clock=this.row().cleanup_at;
+    await this.alarm();this.duringIO={row:this.row(),alarm:await this.ctx.storage.getAlarm()};
+    this.failR2=action.compensationFailure;
   }
   async cleanupAuthority(row){
     const stub=await super.cleanupAuthority(row),target=this,result={};
@@ -50,7 +62,7 @@ export class TestMedia extends MediaObject {
     if(this.afterPut==='revoke')await(await accountStub(this.env,this.row().account)).manage('revoke',{}, {nonce:'a'.repeat(43),time:Date.now()});
     return result;
   }
-  async control(data){this.clock=data.clock;this.afterPut=data.afterPut;this.afterR2=data.afterR2;this.failSave=data.failSave;this.failAlarm=data.failAlarm;this.failR2=data.failR2;this.cleanupFault=data.cleanupFault;this.cleanupLoss=data.cleanupLoss;if(data.alarm)await this.alarm();return data.inspect?{rows:[...this.ctx.storage.kv.list()],alarm:await this.ctx.storage.getAlarm()}:[...this.ctx.storage.kv.list()];}
+  async control(data){this.clock=data.clock;this.afterPut=data.afterPut;this.afterR2=data.afterR2;this.beforeR2=data.beforeR2;this.failSave=data.failSave;this.failAlarm=data.failAlarm;this.failR2=data.failR2;this.cleanupFault=data.cleanupFault;this.cleanupLoss=data.cleanupLoss;if(data.unresolvedIO)this.atomic(()=>this.put({...this.row(),io_ticket:'synthetic-unresolved'}));if(data.alarm)await this.alarm();if(data.ioInspect)return this.duringIO;return data.inspect?{rows:[...this.ctx.storage.kv.list()],alarm:await this.ctx.storage.getAlarm()}:[...this.ctx.storage.kv.list()];}
 }
 export class ApprovalAccount extends BaseAccount {
   replay(ticket){const clock=this.clock;this.clock=undefined;try{return super.replay(ticket);}finally{this.clock=clock;}}
