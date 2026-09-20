@@ -221,7 +221,7 @@ with media.prepare(str(root),{'media':[{'file':'a.png','alt':'generated'}]},'thr
   with urllib.request.urlopen(grant['url'],timeout=10) as response:assert response.read()==expected
  result=client.result(provider,published=True);assert result['status']=='acknowledged'
  try:client.result(provider,published=True)
- except media_relay.MediaRelayError:pass
+ except urllib.error.HTTPError as error:assert error.code==409
  else:raise AssertionError('ack replay accepted')
 # Real Graph wire consumes the public grant from the actual local Worker/R2.
 import http.server,threading
