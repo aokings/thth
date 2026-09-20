@@ -132,7 +132,7 @@ def lint_notes(cfg,fm):
     if cfg.get('media')=='bluesky':
         try:
             with media.prepare(cfg['repo_dir'],fm,'bluesky') as (manifest,_):reason=error_for(cfg,manifest)
-            return [reason] if reason else []
+            return [reason] if reason else ['warning: bluesky video daily quota/email permission unobserved; rechecked before upload'] if any(r['kind']=='video' for r in manifest['files']) else []
         except (OSError,ValueError) as exc:
             return [str(exc) if isinstance(exc,media.MediaError) else 'media_unavailable']
     if cfg.get('media')!='mastodon':return []

@@ -288,7 +288,7 @@ def test_dimensions_fail_before_session_or_upload(env,wire):
     assert wire['calls']==[]
 
 
-@pytest.mark.parametrize('format,kind',[('mp4','video'),('mov','video'),('unsupported','image')])
+@pytest.mark.parametrize('format,kind',[('mov','video'),('unsupported','image')])
 def test_format_rejection_is_specific(env,format,kind):
     m=media.manifest_for({'media':[{'file':'a.png','alt':'alt'}]},env[0]);m['files'][0].update(format=format,kind=kind)
     assert bm.intent_error(m)=='unsupported_attachment: bluesky/'+format
