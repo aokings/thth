@@ -190,7 +190,7 @@ def _account(name, now, probe=False, via='cli', detail=False, limit=20):
     row['token'] = _token(cfg, now)
     try:
         row['permissions'] = _permissions(name, probe)
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, accounts.AccountError):
         row['permissions'] = dict(probed_at=None, result=None, reason='permissions_unavailable')
     try:
         handoff = operations_handoff._account(name, cfg, now)

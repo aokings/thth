@@ -39,3 +39,20 @@ def test_missing_token_can_be_diagnosed_without_network(env,monkeypatch,capsys,v
     raw=handoff_cursor.read_snapshot('alpha','doctor.json')
     assert raw['probe_credential_generation'] is None
     assert doctor.read_observation('alpha')['probe_current_credentials'] is False
+
+
+def test_missing_required_token_field_does_not_stop_other_accounts(env,monkeypatch,capsys):
+    cfg=dict(env['cfg']);cfg.pop('token')
+    env['ledger'].write_text(json.dumps(cfg))
+    good=dict(env['cfg'],account='beta',token=None)
+    env['ledger'].with_name('beta.json').write_text(json.dumps(good))
+    monkeypatch.setattr(socket.socket,'connect',lambda *args:pytest.fail('missing credentials must not call API'))
+    assert cli.main(['admin','inventory','--probe','--json'])==0
+    rows=json.loads(capsys.readouterr().out)['by_account']
+    assert set(rows)=={'alpha','beta'}
+    assert rows['alpha']['permissions']['result'] is None
+    assert rows['alpha']['permissions']['reason']=='permissions_unavailable'
+    assert 'ledger_fields_unavailable' in rows['alpha']['cannot_say']
+    assert rows['beta']['permissions']['result']['probes']==[]
+    assert rows['beta']['permissions']['result']['error']
+    with pytest.raises(accounts.AccountError):accounts.load_account('alpha')
