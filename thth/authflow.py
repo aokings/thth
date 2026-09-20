@@ -206,6 +206,14 @@ def _relay_status_reason(status):
     return 'relay_unavailable'
 
 
+class ReceivedCode(str):
+    """RAM-only callback timestamp; never added to persisted auth sessions."""
+    def __new__(cls, code, received_at):
+        value = super().__new__(cls, code)
+        value.received_at = received_at
+        return value
+
+
 def poll(session, *, rehearsing=False):
     deadline = time.monotonic() + (TTL if rehearsing else _remaining(session))
     while time.monotonic() < deadline:
@@ -221,7 +229,7 @@ def poll(session, *, rehearsing=False):
                     or any(ord(c) < 32 or ord(c) == 127 for c in code) or age < 0 or age >= 300):
                 raise FlowError('relay_invalid_code')
             _remaining(session)
-            return code
+            return ReceivedCode(code, received)
         if status not in (404, 429):
             raise FlowError(_relay_status_reason(status))
         time.sleep(min(POLL_SECONDS, max(0, deadline-time.monotonic())))
@@ -230,10 +238,13 @@ def poll(session, *, rehearsing=False):
 
 def rehearse(cfg, *, redirect_uri=None, log, human_output):
     from . import appenv, oauth
-    if cfg.get('media') == 'mastodon':
-        from .adapters.auth_mastodon import MastodonAuthProfile
+    if cfg.get('media') in ('mastodon', 'x'):
+        if cfg.get('media') == 'x':
+            from .adapters.auth_x import XAuthProfile as Profile
+        else:
+            from .adapters.auth_mastodon import MastodonAuthProfile as Profile
         try:
-            profile = MastodonAuthProfile.prepare(cfg, redirect_uri=redirect_uri, rehearse=True)
+            profile = Profile.prepare(cfg, redirect_uri=redirect_uri, rehearse=True)
             session = {'state': secret(secrets.token_urlsafe(32)), 'read_key': secret(secrets.token_urlsafe(32)),
                        'code_verifier': secret(secrets.token_urlsafe(32))}
             human_output(profile.authorize(session))

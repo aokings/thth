@@ -417,14 +417,17 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
         return authflow.rehearse(account_cfg, redirect_uri=redirect_uri, log=log, human_output=human_output)
 
     media = account_cfg.get("media")
-    if media == "mastodon":
+    if media in ("mastodon", "x"):
         from . import authflow
-        from .adapters.auth_mastodon import MastodonAuthProfile
+        if media == "x":
+            from .adapters.auth_x import XAuthProfile as Profile
+        else:
+            from .adapters.auth_mastodon import MastodonAuthProfile as Profile
         try:
-            profile = MastodonAuthProfile.prepare(account_cfg, redirect_uri=redirect_uri, resume=code is not None)
+            profile = Profile.prepare(account_cfg, redirect_uri=redirect_uri, resume=code is not None)
         except (OSError, ValueError) as exc:
             detail = str(exc) if isinstance(exc, authflow.FlowError) else "client設定を確認してください"
-            _out("mastodon_auth_setup_failed: " + detail, log=log)
+            _out(media + "_auth_setup_failed: " + detail, log=log)
             return 2
         return authflow.run(account_name, account_cfg, profile, code=code, input_func=input_func,
                             log=log, by=by, human_output=human_output)
@@ -617,6 +620,21 @@ def run_refresh(account_name: str, *, force: bool = False, check: bool = False,
 
     _out(f"更新しました: {account_name}", log=log)
     return 0
+
+
+_run_refresh_legacy = run_refresh
+
+
+def run_refresh(account_name: str, *, force: bool = False, check: bool = False, log=print, now=None) -> int:
+    try:
+        cfg = accounts_mod.load_account(account_name)
+    except accounts_mod.AccountError as exc:
+        _out(str(exc), log=log)
+        return 2
+    if cfg.get('media') == 'x':
+        from .adapters.auth_x import run_refresh as refresh_x
+        return refresh_x(account_name, force=force, check=check, log=log, now=now)
+    return _run_refresh_legacy(account_name, force=force, check=check, log=log, now=now)
 
 
 def _ask_bluesky(prompt: str, *, secret: bool):
