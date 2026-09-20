@@ -172,6 +172,7 @@ def _run_probe(get, base_url: str, probe: _Probe, token: str) -> dict:
 
 
 class ThreadsAdapter(base.Adapter):
+    prepared_media_supported = True
     # 設計 v2 §4.2。`inbox` は持たない（Threads は push 型ではない）。
     # `account_insights`（アカウント単位の日次）を**持つのは Threads だけ**
     # （T3 の配線 2026-09-13）。`collect._collect_account_daily()` はこの語を見て
@@ -294,6 +295,10 @@ class ThreadsAdapter(base.Adapter):
         ts = jst.iso()
         if dry_run:
             return base.PublishResult(post_id=None, url=None, ts=ts, error=None, failure="none")
+
+        if post.media_manifest:
+            from . import threads_media
+            return threads_media.publish(self,post,before_publish=before_publish,on_container_created=on_container_created)
 
         params = {
             "media_type": "TEXT",

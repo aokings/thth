@@ -46,6 +46,7 @@ class Post:
     media_files: tuple = dataclasses.field(default=(), repr=False)
     media_progress: object = dataclasses.field(default=None, repr=False)
     media_cache: object = dataclasses.field(default=None, repr=False)
+    media_relay: object = dataclasses.field(default=None, repr=False)
 
 
 @dataclasses.dataclass
