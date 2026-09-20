@@ -233,8 +233,11 @@ def process(account, job_id, contexts):
                     _perform(fd,job,context)
             except lock.LockBusy: return
             except Exception:
-                job.update(status='unknown' if job['status'] in ('consuming','executing') else 'failed',
-                           reason='operation_outcome_unknown' if job['status'] in ('consuming','executing') else 'approval_no_longer_valid')
+                # completed is set in memory before its durable save. If that
+                # save fails, the provider/Git effect has already happened.
+                uncertain=job['status'] in ('consuming','executing','completed')
+                job.update(status='unknown' if uncertain else 'failed',
+                           reason='operation_outcome_unknown' if uncertain else 'approval_no_longer_valid')
                 _save(fd,job)
     except (OSError,ValueError):
         # Leave durable prior intent in place; never turn storage failure into retry.
