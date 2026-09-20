@@ -8,6 +8,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
 import {canonical,mediaRequest} from '../src/media.js';
+import {canonical as approvalCanonical} from '../src/approval.js';
 const opaque=()=>randomBytes(32).toString('base64url'),sha=b=>createHash('sha256').update(b).digest('hex');
 const logs=[],secrets=[];let mf,privateKey,runtimeDirectory,options;
 class Silent extends Log{constructor(){super(LogLevel.NONE);}log(v){logs.push(String(v));}}
@@ -474,4 +475,59 @@ test('Worker caps distinguish raw transport from sanitized publication bytes',as
  }
  const raw=data();Object.assign(raw.body,{size:8000001,kind:'source'});
  assert.equal((await call(raw.id,'create',raw.body)).status,201);
+});
+
+
+const cleanupControl=async(account,body={})=>(await mf.dispatchFetch('https://media.test/__cleanup/'+account,{method:'POST',body:JSON.stringify(body)})).json();
+async function accountCall(account,operation,role='operator'){
+ const path='/approval/account/'+account+'/'+operation,raw='{}',time=Date.now(),nonce=opaque();
+ const signature=sign('sha256',Buffer.from(approvalCanonical('POST',path,role,account,operation,time,nonce,sha(raw))),{key:privateKey,padding:constants.RSA_PKCS1_PSS_PADDING,saltLength:32}).toString('base64url');
+ secrets.push(signature,nonce);
+ return mf.dispatchFetch('https://media.test'+path,{method:'POST',headers:{'content-type':'application/json','x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw});
+}
+test('cleanup registers before bytes, caps ten attempts and signed recovery only schedules deletion',async()=>{
+ const f=data();f.body.account='cleanup-ten';await ready(f);
+ const first=(await control(f.id)).find(([key])=>key==='media')[1];
+ let observed=await cleanupControl(f.body.account);assert.equal(observed.rows.length,1);assert.equal(observed.cleanup.pending_count,0);
+ for(let attempt=1;attempt<=10;attempt++){
+  const state=await control(f.id,{clock:first.cleanup_at+(attempt-1)*60000,failR2:'delete',alarm:true,inspect:true});
+  const row=state.rows.find(([key])=>key==='media')[1];assert.equal(row.cleanup_attempts,attempt);
+  assert.equal(row.cleanup_failed===true,attempt===10);assert.equal(state.alarm===null,attempt===10);
+ }
+ await mf.dispose();mf=new Miniflare(options);await mf.ready;
+ await control(f.id,{clock:first.cleanup_at+600000});
+ await cleanupControl(f.body.account,{clock:first.cleanup_at+600000});
+ let status=await accountCall(f.body.account,'status');assert.equal(status.status,200);
+ assert.deepEqual((await status.json()).cleanup,{pending_count:1,failed_count:1,reason:'cleanup_failed'});
+ const stopped=await control(f.id,{clock:first.cleanup_at+600000,alarm:true,inspect:true});assert.equal(stopped.rows.find(([k])=>k==='media')[1].cleanup_attempts,10);
+ // A neighbour cannot schedule this account's obligation.
+ const neighbour=await accountCall('cleanup-neighbour','cleanup-retry');assert.equal((await neighbour.json()).scheduled_count,0);
+ assert.equal((await accountCall(f.body.account,'cleanup-retry','job')).status,401);
+ const retry=await accountCall(f.body.account,'cleanup-retry');assert.equal(retry.status,200);assert.equal((await retry.json()).scheduled_count,1);
+ assert.equal((await mf.dispatchFetch('https://media.test/m/'+f.id)).status,410);
+ assert.deepEqual(await control(f.id,{clock:first.cleanup_at+700000,alarm:true,inspect:true}),{rows:[],alarm:null});
+ const subject=observed.rows[0][0].slice('media_cleanup:'.length);
+ observed=await cleanupControl(f.body.account,{clock:first.cleanup_at+700000,failed:subject});assert.equal(observed.rows.length,0);assert.equal(observed.cleanup.pending_count,0);
+});
+test('cleanup registration failure precedes R2 and remove ACK loss is recoverable',async()=>{
+ const failed=data();failed.body.account='cleanup-registration';await control(failed.id,{cleanupFault:'cleanupRegister'});
+ assert.equal((await call(failed.id,'create',failed.body)).status,503);
+ assert.equal((await cleanupControl(failed.body.account)).rows.length,0);
+ assert.equal((await upload(failed)).status,503);
+ assert.equal((await call(failed.id,'complete',binding(failed))).status,409);
+ const f=data();f.body.account='cleanup-remove';await ready(f);
+ const row=(await control(f.id)).find(([key])=>key==='media')[1];
+ await control(f.id,{clock:row.cleanup_at,cleanupLoss:'cleanupRemove',alarm:true});
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).rows.length,0);
+ // Physical deletion was confirmed before the lost aggregate ACK; retained row
+ // permits idempotent removal without re-upload or publication.
+ assert.equal((await control(f.id)).find(([key])=>key==='media')[1].cleanup_attempts,1);
+ assert.deepEqual(await control(f.id,{clock:row.cleanup_at+60000,alarm:true,inspect:true}),{rows:[],alarm:null});
+});
+test('aggregate failure keeps due obligation unconfirmed, never a healthy zero',async()=>{
+ const f=data();f.body.account='cleanup-aggregate';await ready(f);
+ const row=(await control(f.id)).find(([key])=>key==='media')[1];
+ for(let i=0;i<10;i++)await control(f.id,{clock:row.cleanup_at+i*60000,failR2:'delete',cleanupFault:'cleanupFailed',alarm:true});
+ const observed=await cleanupControl(f.body.account,{clock:row.cleanup_at+600000});
+ assert.deepEqual(observed.cleanup,{pending_count:1,failed_count:0,reason:'cleanup_unconfirmed'});
 });

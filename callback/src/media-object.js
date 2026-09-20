@@ -12,6 +12,23 @@ export class MediaObject extends DurableObject {
   atomic(fn){return this.ctx.storage.transactionSync(fn);}
   current(row){return row&&this.now()<row.expires_at&&!['retired','failed'].includes(row.status);}
   async active(account){return !!this.env.APPROVAL_ACCOUNT&&await(await accountStub(this.env,account)).active();}
+  async cleanupAuthority(row){return accountStub(this.env,row.account);}
+  async enroll(row){
+    const result=await(await this.cleanupAuthority(row)).cleanupRegister(this.ctx.id.toString(),row.account,row.cleanup_at);
+    if(result.status!==200)throw Error('cleanup_registration_unconfirmed');
+    this.atomic(()=>{const current=this.row();if(current?.version===row.version)this.put({...current,cleanup_registered:true});});
+  }
+  async cleanupRetry(account){
+    // A retry only restarts deletion; it cannot renew any public capability.
+    return this.ctx.storage.transaction(async()=>{
+      const changed=this.atomic(()=>{
+        const row=this.row();if(!row||row.account!==account||this.now()<row.cleanup_at)return fail(409,'cleanup_not_due');
+        this.put({...row,status:'retired',cleanup_attempts:0,cleanup_failed:false});return {status:200};
+      });
+      if(changed.status===200)await this.ctx.storage.setAlarm(this.now());
+      return changed;
+    });
+  }
   replay(ticket){
     const now=this.now(),seen=this.ctx.storage.kv.get('nonces')||{};
     for(const [n,t] of Object.entries(seen))if(now-t>60_000)delete seen[n];
@@ -62,6 +79,8 @@ export class MediaObject extends DurableObject {
     });if(claimed.status===201)await this.schedule(claimed.row);return claimed;});
     if(result.status!==201)return result;
     const row=result.row;
+    await this.enroll(row);
+    if(!this.current(this.row())||this.row().version!==row.version)return fail(410,'media_expired');
     if(multi){
       const upload=await this.env.MEDIA_BUCKET.createMultipartUpload(row.key,{httpMetadata:{contentType:row.mime}});
       const active=await this.active(row.account);
@@ -81,6 +100,7 @@ export class MediaObject extends DurableObject {
   }
   async upload(request,part){
     const first=this.row();if(!this.current(first))return reply(404,{error:'not_found'});
+    if(!first.cleanup_registered)return reply(503,{error:'cleanup_registration_unconfirmed'});
     if(!await this.active(first.account))return reply(410,{error:'account_revoked'});
     const claim=this.atomic(()=>{
       const row=this.row();if(!this.current(row)||row.version!==first.version)return null;
@@ -131,6 +151,8 @@ export class MediaObject extends DurableObject {
     const claim=await this.ctx.storage.transaction(async()=>{const claimed=this.atomic(()=>{if(this.row())return null;if(!this.replay(ticket))return null;
       const row={actor:body.actor,account:body.account,sha256:body.sha256,media_id:body.media_id,kind:purpose,mime:original.mime,size:original.size,version:opaque(),key:'media/'+opaque(),status:'copying',expires_at,cleanup_at:purpose==='provider'?this.now()+RAW_RETENTION:expires_at};this.put(row);return row;});if(claimed)await this.schedule(claimed);return claimed;});
     if(!claim)return fail(409,'media_exists');
+    await this.enroll(claim);
+    if(!this.current(this.row())||this.row().version!==claim.version)return fail(410,'media_expired');
     const object=await this.env.MEDIA_BUCKET.get(original.key);if(!object)return fail(404,'not_found');
     await this.env.MEDIA_BUCKET.put(claim.key,object.body,{httpMetadata:{contentType:claim.mime}});
     const latest=await source.previewSource(body),active=await this.active(body.account);
@@ -175,21 +197,34 @@ export class MediaObject extends DurableObject {
     return new Response(request.method==='HEAD'?null:object.body,{status:range&&object.range?206:200,headers});
   }
   async alarm(){
-    const row=this.row();if(!row)return;
+    let row=this.row();if(!row)return;
     if(this.now()>=row.expires_at&&row.status!=='retired')this.atomic(()=>this.put({...this.row(),status:'retired'}));
     if(this.now()<row.cleanup_at){await this.ctx.storage.setAlarm(row.cleanup_at);return;}
-    // Retry downstream outages beyond the platform's six automatic retries.
-    // Keep the private object/upload identity until both operations succeed.
-    await this.ctx.storage.setAlarm(this.now()+60_000);
+    // Persist each attempt before downstream work. Ten includes the first.
+    if((row.cleanup_attempts||0)>=10){await this.ctx.storage.deleteAlarm();return;}
+    const attempts=(row.cleanup_attempts||0)+1;
+    await this.ctx.storage.transaction(async()=>{
+      this.atomic(()=>this.put({...this.row(),status:'retired',cleanup_attempts:attempts}));
+      if(attempts<10)await this.ctx.storage.setAlarm(this.now()+60_000);else await this.ctx.storage.deleteAlarm();
+    });
     try{
+      if(!row.cleanup_registered)await this.enroll(row);
+      row=this.row();
       if(row.upload_id&&!row.multipart_closed){
         await this.env.MEDIA_BUCKET.resumeMultipartUpload(row.key,row.upload_id).abort();
         this.atomic(()=>this.put({...this.row(),multipart_closed:'aborted'}));
       }
       await this.env.MEDIA_BUCKET.delete(row.key);
-    }catch{return;}
+      const removed=await(await this.cleanupAuthority(row)).cleanupRemove(this.ctx.id.toString());
+      if(removed.status!==200)throw Error('cleanup_remove_unconfirmed');
+    }catch{
+      if(attempts>=10){
+        this.atomic(()=>this.put({...this.row(),cleanup_failed:true}));
+        try{await(await this.cleanupAuthority(row)).cleanupFailed(this.ctx.id.toString());}catch{}
+      }
+      return;
+    }
     await this.ctx.storage.deleteAll();await this.ctx.storage.deleteAlarm();
-    // Unknown well-formed public capabilities are also 410. No permanent
-    // tombstone, nonce, account or hash survives successful physical cleanup.
+    // No permanent public marker or cleanup subject survives confirmed deletion.
   }
 }
