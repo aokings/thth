@@ -82,6 +82,8 @@ def run(account,*,password_input,by,log=print,force=False,identifier_input=None,
             secrets_fs.atomic_write_json(str(path),result,mode=0o600)
             admin_log.append('token_set',account,cfg,by=by,diff={'token':['present' if snapshot else 'absent','present'],
                                                               'auth_via':[None,'token_set']})
+        from . import doctor
+        doctor.record_auth(account, cfg, result, log=log)
         oauth._out(f"handle={result['handle']} did={result['did']}",log=log)
         oauth._out(f"保存しました: {path}（600）",log=log)
         return 0

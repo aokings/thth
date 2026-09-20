@@ -2519,7 +2519,7 @@ def cmd_auth(args) -> int:
 
     **媒体で分かれる**（`oauth.run_auth()` の中・T3 の配線 2026-09-13）。
     Threads は OAuth の往復、Bluesky は handle と App Password の対話
-    （`thth auth masaru-bluesky`）、Mastodon は `thth token set` へ案内する。
+    （正式 stdin は `token set --stdin`）、Mastodon/X は共通 relay 認可。
     """
     return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code, by=args.by, rehearse=getattr(args, "rehearse", False),
                               input_func=input if getattr(args, "paste", False) else None)
@@ -2608,7 +2608,9 @@ def cmd_app_set(args) -> int:
     （秘密は人の手のまま・設計 §3.7。`auth`・`refresh`・`token set` と同じ扱い）。
     """
     from . import appenv as appenv_mod
-    return appenv_mod.run_app_set(app_id=args.app_id, stdin=args.secret_stdin)
+    from . import appconfig
+    return appconfig.run(args.medium or 'threads', app_id=args.app_id, secret_stdin=args.secret_stdin,
+                         stdin=args.stdin, by=args.by)
 
 
 def cmd_app_show(args) -> int:
@@ -3220,11 +3222,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor.set_defaults(func=cmd_doctor)
 
     p_app = sub.add_parser(
-        "app", help="~/.config/thth/app.env を置く・見る（thth auth を使うときだけ要る。MCPには出さない）")
+        "app", help="運営者の OAuth client を保存する（Threads/X。MCPには出さない）")
     app_sub = p_app.add_subparsers(dest="app_command", required=True)
     p_app_set = app_sub.add_parser(
-        "set", help="app.env を書く（App Secret は表示されない入力で受け取る）")
-    p_app_set.add_argument("--app-id", dest="app_id", required=True, help="Threads app ID")
+        "set", help="client を 600 で書き presence-only 記録（--by 必須・値は出さない）")
+    p_app_set.add_argument("medium", nargs="?", choices=("threads", "x"), help="Mastodon は auth で自動登録")
+    p_app_set.add_argument("--by", required=True)
+    p_app_set.add_argument("--stdin", action="store_true", help="client_id/client_secret の JSON（X は client_type=confidential/redirect_uri も必要）")
+    p_app_set.add_argument("--app-id", dest="app_id", help="旧 Threads app ID flag（--by 必須）")
     p_app_set.add_argument("--secret-stdin", dest="secret_stdin", action="store_true",
                            help="App Secret を標準入力から黙って 1 行読む（非対話・パイプ用）")
     p_app_set.set_defaults(func=cmd_app_set)
@@ -3233,7 +3238,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_app_show.add_argument("--json", action="store_true", dest="as_json")
     p_app_show.set_defaults(func=cmd_app_show)
 
-    p_token = sub.add_parser("token", help="長期トークンを直接扱う（現状 set のみ。MCPには出さない）")
+    p_token = sub.add_parser("token", help="credential の stdin 入力とローカル取消（MCPには出さない）")
     token_sub = p_token.add_subparsers(dest="token_command", required=True)
     p_token_set = token_sub.add_parser(
         "set",

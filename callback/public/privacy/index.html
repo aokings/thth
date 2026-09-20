@@ -33,71 +33,29 @@
 </style>
 </head><body><main>
 <h1>THTH — Privacy Policy</h1>
-<p class="note">Effective 2026-09-15 · <a href="#ja">日本語はこの下</a></p>
-<h2>What THTH is</h2>
-<p>THTH is a free, open-source command-line tool for drafting, approving, and publishing social media posts (Threads, Bluesky, Mastodon). It runs on <strong>your own computer or server</strong>. There is no THTH cloud service, no THTH account, and no server operated by THTH that receives or stores your content.</p>
-<h2>What this website (thth.me) does</h2>
-<ul>
-<li><strong>Static pages</strong> (this page and the product introduction). They load no third-party scripts, fonts, images, or analytics, and set no cookies.</li>
-<li><strong>Authorization receiver</strong> (<code>/callback/</code>). When you authorize THTH with Threads, Meta redirects your browser here with a one-time authorization code. The page <strong>only displays that code so you can paste it into your terminal</strong>. It does not store, log, or transmit the code anywhere, and it removes the code from the address bar immediately. Server-side logging for this site is disabled. The hosting provider (Cloudflare) may keep standard aggregate traffic metrics, which THTH does not use.</li>
-<li><strong>Meta callbacks</strong> (<code>/deauthorize</code>, <code>/data-deletion</code>). These acknowledge Meta's requests and store nothing (see “Deleting your data”).</li>
-</ul>
-<h2>Data THTH accesses on your behalf</h2>
-<p>When <strong>you</strong> authorize THTH for a Threads account and run its commands, THTH calls the Threads API with your access token to:</p>
-<ul>
-<li>publish posts and replies that <strong>you wrote and explicitly approved</strong> (a two-step approval is required for every post);</li>
-<li>read your profile (id, username), your posts, replies to them, view/like/follower counts, and mentions of your account;</li>
-<li>search public posts and locations, look up public profiles, tag a location on a post, share a post to Instagram, and delete a post — <strong>only when you run that command</strong>.</li>
-</ul>
-<p>THTH does not access any data you did not authorize, and never acts on Threads without a command from you.</p>
-<h2>Where the data is stored</h2>
-<p>Everything THTH obtains is written to <strong>files on the machine where you run it</strong>: your own Git repository (drafts, post IDs, replies, counts) and a configuration directory for access tokens (created with owner-only permissions). Nothing is sent to the author of THTH or to any third party. The only network destinations are the social media platforms you configured (for Threads, Meta's <code>graph.threads.net</code>).</p>
-<h2>Sharing</h2>
-<p>THTH does not sell, share, or transfer your data. There is no server on our side that holds it.</p>
-<h2>Retention</h2>
-<p>Data stays on your machine for as long as you keep the files. You can delete them at any time.</p>
-<h2 id="delete">Deleting your data / revoking access</h2>
-<ul>
-<li>To revoke THTH's access to your Threads account, remove it in the Threads app (Settings → Account → Website permissions) or delete the token file on your machine.</li>
-<li>Because THTH stores nothing on its own servers, there is nothing for us to delete on our side. Meta's data-deletion callback is answered with a confirmation for that reason. Data on your own machine is yours to delete.</li>
-</ul>
-<h2>Who uses the Meta app “THTH”</h2>
-<p>The Meta app named “THTH” is operated by the author for accounts that hold a role on that app. Other people who want to use THTH register <strong>their own</strong> Meta app; their data never passes through ours.</p>
+<p class="note">Unpublished update — deployment date not set · <a href="#ja">日本語はこの下</a></p>
+<h2>Operator and authorization</h2>
+<p>THTH runs authorization and posting management on an operator-managed server for invited accounts. Users do not need their own VM or Meta app. The operator starts authorization; users review the account and permissions on the platform and approve. This does not mean that a user connection page, posting interface, or account exit workflow has all been implemented.</p>
+<h2>Authorization relay</h2>
+<p>The relay uses a Cloudflare Worker and Durable Object. It temporarily holds a registered authorization code for at most 300 seconds after receipt and within the 600-second session lifetime, and releases it once to the initiating server. Long-lived tokens, client secrets and PKCE verifiers are not sent to the relay. The application deletes the code when consumed or expired. Removing application records does not establish physical erasure from the hosting provider's infrastructure or backups. Unregistered flows can use the existing return-URL paste fallback.</p>
+<h2>Server records and communication</h2>
+<p>Long-lived credentials reside in owner-only files on the operator's server and authenticate platform API requests. Drafts, post history and collected records also reside in configured server locations. Network destinations are not limited to platform APIs: authorization uses thth.me/Cloudflare, and configured repositories may also receive requests. Static pages include no third-party scripts or analytics. Worker application observability logs are disabled; this does not guarantee that no infrastructure records exist.</p>
+<h2 id="delete">Stopping access and deleting data</h2>
+<p>The current <code>/deauthorize</code> and <code>/data-deletion</code> responses do not establish that server-side accounts or data have been deleted. Contact the operator about stopping access or deleting data. Automated revocation, deletion and record keeping, including integration with these callbacks, belong to a later implementation and verification.</p>
 <h2>Contact</h2>
 <p>Questions about this policy: open an issue at <a href="https://github.com/aokings/thth/issues">https://github.com/aokings/thth/issues</a>. Operator: gotoq.</p>
 <h2>Changes</h2>
 <p>This page is generated from the THTH source repository; its history is public there.</p>
 <h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>
-<p class="note">2026-09-15 施行</p>
-<h2>THTH とは</h2>
-<p>THTH は、SNS（Threads・Bluesky・Mastodon）の投稿を下書きし、承認し、投稿するための無料のオープンソースのコマンドラインツールです。<strong>あなた自身の PC やサーバ</strong>で動きます。THTH のクラウドサービスや THTH のアカウントは存在せず、あなたの内容を受け取ったり保存したりするTHTH 側のサーバはありません。</p>
-<h2>このサイト（thth.me）がすること</h2>
-<ul>
-<li><strong>静的なページ</strong>（このページと製品紹介）。第三者のスクリプト・フォント・画像・解析ツールを読み込まず、Cookie も使いません。</li>
-<li><strong>認可の受け口</strong>（<code>/callback/</code>）。Threads で THTH を認可すると、Meta が使い捨ての認可コードを付けてブラウザをここへ戻します。このページは<strong>そのコードをターミナルに貼れるよう表示するだけ</strong>です。どこにも保存・記録・送信せず、アドレスバーからも直ちに消します。サーバ側のログは無効にしています。ホスティング事業者（Cloudflare）が標準的な集計トラフィック指標を保持することはありますが、THTH はそれを使いません。</li>
-<li><strong>Meta 向けの応答</strong>（<code>/deauthorize</code>・<code>/data-deletion</code>）。Meta からの通知に応答するだけで、何も保存しません（「データの削除」参照）。</li>
-</ul>
-<h2>THTH があなたの代わりに扱うデータ</h2>
-<p><strong>あなた</strong>が Threads アカウントで THTH を認可し、コマンドを実行したとき、THTH はあなたのアクセストークンで Threads API を呼び、次のことをします。</p>
-<ul>
-<li><strong>あなたが書き、明示的に承認した</strong>投稿・返信を出す（すべての投稿に二段階の承認が要ります）</li>
-<li>あなたのプロフィール（id・ユーザー名）、投稿、その返信、閲覧数・いいね数・フォロワー数、あなたへの言及を読む</li>
-<li>公開投稿と場所の検索、公開プロフィールの参照、投稿への場所の付与、Instagram への共有、投稿の削除——<strong>あなたがそのコマンドを実行したときだけ</strong></li>
-</ul>
-<p>認可していないデータには触れず、あなたの指示なしに Threads 上で何かをすることはありません。</p>
-<h2>データの置き場所</h2>
-<p>THTH が取得したものはすべて、<strong>THTH を動かしている機械のファイル</strong>に書かれます。あなた自身の Git リポジトリ（下書き・投稿 ID・返信・数）と、アクセストークンの設定ディレクトリ（所有者だけが読める権限で作られます）です。THTH の作者にも第三者にも送られません。通信先は、あなたが設定した SNS だけです（Threads なら Meta の <code>graph.threads.net</code>）。</p>
-<h2>第三者提供</h2>
-<p>THTH はあなたのデータを販売・共有・譲渡しません。こちら側にデータを持つサーバがありません。</p>
-<h2>保存期間</h2>
-<p>あなたがファイルを残す限り、あなたの機械に残ります。いつでも削除できます。</p>
-<h2>データの削除・認可の取り消し</h2>
-<ul>
-<li>Threads アカウントへの THTH のアクセスを取り消すには、Threads アプリ（設定 → アカウント → ウェブサイトの許可）で外すか、あなたの機械のトークンファイルを削除してください。</li>
-<li>THTH は自分のサーバに何も保存していないので、こちら側で削除するものはありません。Meta からのデータ削除要求には、その理由で確認応答を返します。あなたの機械のデータはあなたが削除します。</li>
-</ul>
-<h2>Meta アプリ「THTH」を使うのは誰か</h2>
-<p>「THTH」という名前の Meta アプリは、作者が、そのアプリで役割を持つアカウントのために運用しています。THTH を使いたい他の方は<strong>ご自身の</strong> Meta アプリを登録して使うので、その方のデータがこちらのアプリを通ることはありません。</p>
+<p class="note">未公開の更新案 — 配布日未設定</p>
+<h2>運営者と認可</h2>
+<p>THTH は、運営者が管理するサーバで認可と投稿管理を行うソフトウェアです。今回の導入は招待されたアカウントが対象で、利用者が自分の VM や Meta アプリを用意する手順ではありません。運営者が認可を開始し、利用者は媒体の画面で内容を確認して承認します。利用者向けの接続画面・投稿操作・退出の仕組みがすべて実装済みという意味ではありません。</p>
+<h2>認可の預かり所</h2>
+<p>認可の預かり所は Cloudflare Worker と Durable Object を使います。登録済みの認可コードを、受付から最大300秒、かつ開始から最大600秒の範囲で一時的に保持し、認可を開始したサーバへ一度だけ渡します。長期トークン、client secret、PKCE verifier は預かり所へ送りません。消費または失効時にアプリケーション上のコードを削除します。Cloudflare 内部のバックアップや物理消去まで保証する説明ではありません。未登録などの場合は従来の戻り URL を貼る経路になります。</p>
+<h2>サーバの記録と通信</h2>
+<p>長期の認証情報は運営者のサーバの所有者専用ファイルへ保存し、媒体の API への認証に使います。下書き・投稿履歴・採集した記録等も設定されたサーバ側の置き場にあります。通信先は媒体 API だけとは限らず、認可時の thth.me/Cloudflare や設定された repository 等があります。静的ページには第三者のスクリプトや解析ツールを組み込んでいません。Worker のアプリケーション観測ログは無効にしていますが、基盤全体に記録が存在しないとの保証はしません。</p>
+<h2>停止とデータの削除</h2>
+<p>現在の <code>/deauthorize</code> と <code>/data-deletion</code> の応答は、サーバ内のアカウントやデータを削除したことを示しません。停止・削除については運営者へ連絡してください。自動の失効・削除・記録とこれらのURL の接続は、別の版で実装・検証する予定です。</p>
 <h2>連絡先</h2>
 <p>このポリシーについての質問は <a href="https://github.com/aokings/thth/issues">https://github.com/aokings/thth/issues</a> へ。運用者: gotoq。</p>
 <h2>変更</h2>

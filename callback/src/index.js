@@ -147,8 +147,7 @@ export default {
       return callbackPage(url);
     }
 
-    // Meta が要求する 2 本。開発モードで masaru 自身のアカウントしか使わないが、
-    // 欄を埋めないとアプリの設定が保存できないので、素直に応答だけ返す。
+    // Existing acknowledgement endpoints only; these do not perform account/data deletion.
     if (url.pathname === "/deauthorize") {
       return new Response(null, { status: 200 });
     }
@@ -161,9 +160,13 @@ export default {
     if (url.pathname === "/data-deletion-status") {
       return html(
         `<h1>データ削除について</h1>
-         <p class="sub">THTH は masaru 個人の道具で、Threads から取得した内容は
-         本人の repository にのみ保存されます。</p>
-         <p class="note">削除の依頼は repository の所有者へ直接どうぞ。</p>`);
+         <p class="sub">現在の確認応答は、サーバ内のアカウントやデータを削除したことを示しません。
+         停止・削除については運営者へ連絡してください。</p>
+         <p class="note">自動の失効・削除・記録とこれらの URL の接続は、別の版で実装・検証する予定です。</p>
+         <p class="sub">The current acknowledgement does not establish that server-side accounts or data
+         have been deleted. Contact the operator about stopping access or deleting data.</p>
+         <p class="note">Automated revocation, deletion and record keeping, including integration with
+         these callbacks, belong to a later implementation and verification.</p>`);
     }
 
     // 残りは静的な紹介ページ（public/）。`assets` を先に見る設定なので通常は

@@ -391,6 +391,8 @@ def run(account, cfg, profile, *, code=None, input_func=None, log=print, by, hum
         token = profile.exchange(code_value, session, cfg, log=log)
         token['auth_via'] = via
         commit(account, cfg, profile, session, token, by=by, via=via)
+        from . import doctor
+        doctor.record_auth(account, cfg, token, log=log)
         oauth._out(f"user_id={token['user_id']} username={token['username']}", log=log)
         oauth._out(f"保存しました: {cfg['token']}（600）", log=log)
         return 0
@@ -410,3 +412,23 @@ def run(account, cfg, profile, *, code=None, input_func=None, log=print, by, hum
         # Never print raw OS/request messages containing session paths/URLs.
         log(redact.redact(str(exc)) if isinstance(exc, FlowError) else 'auth_failed: 保存しませんでした')
         return 2
+
+
+
+def commit_manual(account, cfg, token, *, snapshot, session, by):
+    """Token ingestion final save; input/API and observation writes are outside."""
+    path=Path(cfg['token']);changed=False
+    def rollback():
+        if changed:
+            try:
+                if snapshot is None:path.unlink(missing_ok=True)
+                else:secrets_fs.atomic_write_text(str(path),snapshot[0].decode(),mode=snapshot[1])
+            except (OSError,ValueError):raise FlowError('token_set_rollback_failed_outcome_uncertain') from None
+    with admin_log.transaction(rollback=rollback):
+        if (accounts.load_account(account)!=cfg or _read_session(account)!=session
+                or _generation(_token_snapshot(path))!=_generation(snapshot)):
+            raise FlowError('token_set_credentials_changed: 別の更新のため保存しません')
+        snapshot=_token_snapshot(path);changed=True
+        secrets_fs.atomic_write_json(str(path),token,mode=0o600)
+        admin_log.append('token_set',account,cfg,by=by,diff={'token':['present' if snapshot else 'absent','present'],
+                                                         'auth_via':[None,'token_set']})

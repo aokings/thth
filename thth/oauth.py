@@ -424,7 +424,11 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
         else:
             from .adapters.auth_mastodon import MastodonAuthProfile as Profile
         try:
-            profile = Profile.prepare(account_cfg, redirect_uri=redirect_uri, resume=code is not None)
+            profile = Profile.prepare(account_cfg, redirect_uri=redirect_uri, resume=code is not None, by=by)
+        except admin_log.AdminLogError as exc:
+            log('admin_change_recorded_durability_unconfirmed' if exc.complete else
+                'admin_change_partially_recorded_outcome_uncertain' if exc.appended else 'admin_change_refused')
+            return 2
         except (OSError, ValueError) as exc:
             detail = str(exc) if isinstance(exc, authflow.FlowError) else "client設定を確認してください"
             _out(media + "_auth_setup_failed: " + detail, log=log)
@@ -702,7 +706,6 @@ def _read_pasted_token(*, stdin: bool, input_func, prompt: str | None = None) ->
     return getpass.getpass(prompt or TOKEN_PASTE_PROMPTS["threads"])
 
 
-@admin_log.guarded
 def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool = False,
                    input_func=None, log=print, by=None) -> int:
     """`thth token set <account>`（T2b・masaru の指示 2026-09-09）。
@@ -743,8 +746,17 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
         from . import scopes
         print(scopes.mastodon_guidance(account_name), file=sys.stderr)
 
+    from pathlib import Path
+    from . import authflow
     token_path = account_cfg["token"]
-    if os.path.exists(token_path) and not force:
+    if admin_log._active_fd.get() is not None:raise authflow.FlowError("token_set_nested_transaction_refused")
+    Path(accounts_mod.thth_root()).mkdir(parents=True,exist_ok=True)
+    with admin_log.transaction():
+        if accounts_mod.load_account(account_name)!=account_cfg:
+            raise authflow.FlowError('auth_account_changed')
+        snapshot=authflow._token_snapshot(Path(token_path))
+        session=authflow._read_session(account_name)
+    if snapshot is not None and not force:
         _out(f"既に token があります（{account_name}）。**入れ替える**なら --force を"
              f"付けてください: thth token set {account_name} --force", log=log)
         return 1
@@ -823,6 +835,7 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
         "username": username,
         "scopes": None,
         "scopes_source": SCOPES_SOURCE_UNKNOWN,
+        "auth_via": "token_set",
     }
     # **期限の有無は媒体の知識**（`TOKEN_NO_EXPIRY`・T3 の配線 2026-09-13）。
     # Threads の長期トークンは 60 日で切れるので、管理画面が発行時刻を返さない
@@ -835,9 +848,9 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
         token_data["no_expiry"] = True
     else:
         token_data["expires_in"] = DEFAULT_TOKEN_LIFETIME_SECONDS
-    token_was_present = os.path.exists(token_path)
-    secrets_fs.atomic_write_json(token_path, token_data, mode=0o600)
-    admin_log.append("token_set", account_name, account_cfg, by=by, diff={"token": ["present" if token_was_present else "absent", "present"]})
+    authflow.commit_manual(account_name,account_cfg,token_data,snapshot=snapshot,session=session,by=by)
+    from . import doctor
+    doctor.record_auth(account_name,account_cfg,token_data,log=log)
 
     _out(f"user_id={user_id} username={username}", log=log)
     _out(f"保存しました: {token_path}（600）", log=log)
@@ -853,7 +866,16 @@ def run_token_set(account_name: str, *, force: bool = False, stdin: bool = False
         _out(str(exc), log=log)
         return 2
     if cfg.get('media') != 'bluesky':
-        return _run_token_set_legacy(account_name, force=force, stdin=stdin, input_func=input_func, log=log, by=by)
+        try:
+            return _run_token_set_legacy(account_name, force=force, stdin=stdin, input_func=input_func, log=log, by=by)
+        except admin_log.AdminLogError as exc:
+            log('admin_change_recorded_durability_unconfirmed' if exc.complete else
+                'admin_change_partially_recorded_outcome_uncertain' if exc.appended else 'admin_change_refused')
+            return 2
+        except (OSError,ValueError,accounts_mod.AccountError) as exc:
+            from .authflow import FlowError
+            log(str(exc) if isinstance(exc,FlowError) else 'token_set_failed: 保存を完了できませんでした')
+            return 2
     if not stdin:
         _out('Bluesky app_password は --stdin で渡すか、thth auth で対話入力してください', log=log)
         return 2

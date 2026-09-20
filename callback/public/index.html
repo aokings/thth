@@ -49,18 +49,15 @@
 <p>承認した下書きは、タイマーを設定しておけば自動で投稿されます。承認後に本文や投稿先、予約時刻などを変更した場合は、あらためて承認が必要です。</p>
 <h2>投稿したあとの管理も</h2>
 <p>投稿が完了すると、原稿に投稿 ID が記録されます。返信や閲覧数も取得して、同じリポジトリに保存できます。投稿の履歴をたどったり、次の原稿を考えるときの資料として使えます。</p>
-<p>THTH は自分の PC やサーバで動かします。原稿や記録の保管に、THTH 専用のクラウドサービスは使いません。</p>
+<p>招待した利用者は認可 URL を開いて承認し、masaru がアプリ・サーバ・台帳を管理します。利用者が VM や Meta アプリを用意する必要はありません。接続ページは今後の実装です。</p>
 <h2>AI エージェントから使う</h2>
 <p>MCP サーバと Claude Code 用のスキルを同梱しています。コマンドラインから直接使うほか、AI エージェントとやり取りしながら下書きや投稿の記録を扱えます。</p>
-<h2>インストールと設定</h2>
-<pre><code>pip install thth
-thth account add my-threads --media threads --project my-project
-thth doctor my-threads</code></pre>
-<p>利用する SNS のアカウントと API の設定が必要です。Threads では、自分の Meta アプリを登録して使います。詳しい手順は、それぞれの導入ガイドをご覧ください。</p>
-<p><a href="https://github.com/aokings/thth/blob/main/docs/導入_自分のMetaアプリで動かす.md">Threads の導入ガイド</a> ／ <a href="https://github.com/aokings/thth/blob/main/docs/導入_Bluesky_2026-09-13.md">Bluesky の導入ガイド</a> ／ <a href="https://github.com/aokings/thth/blob/main/docs/導入_Mastodon_2026-09-13.md">Mastodon の導入ガイド</a></p>
+<h2>認可と運営者の設定</h2>
+<p>masaru がサーバ側で <code>thth auth &lt;account&gt; --by masaru</code> を開始し、利用者が URL を開いて承認します。Threads・対応 Mastodon・X の共通入口です。X は認可だけ対応し、投稿・採集は未対応。Bluesky は App Password の stdin 入力です。</p>
+<p><a href="https://github.com/aokings/thth/blob/main/docs/導入_承認を押すだけ.md">導入: 承認を押すだけ（利用者と masaru の手順）</a></p>
 <h2>English</h2>
 <p class="en">THTH is a command-line tool for drafting and publishing social media posts with AI. It supports Threads, Bluesky, and Mastodon.</p>
-<p class="en">Review and approve a draft, then let THTH publish it at the scheduled time. Drafts, published post IDs, replies, and view counts are stored in your own Git repository. THTH runs on your computer or server and includes an MCP server and a skill for Claude Code.</p>
+<p class="en">Review and approve a draft, then let THTH publish it at the scheduled time. Drafts, published post IDs, replies, and view counts are stored in your own Git repository. Masaru operates the server and apps; invited users approve an authorization URL. X is authorization-only. A connection page is not implemented yet.</p>
 <p><a href="https://github.com/aokings/thth">GitHub</a> ／ <a href="https://pypi.org/project/thth/">PyPI</a> ／ <a href="https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.aokings/thth">MCP Registry</a> ／ <a href="/llms.txt">llms.txt</a></p>
 <footer>Free and open source · MIT License<br>© 2026 gotoq · <a href="/privacy/">プライバシーポリシー / Privacy Policy</a></footer>
 </main></body></html>

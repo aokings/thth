@@ -77,6 +77,8 @@ def test_literal_legacy_receipt_validate_changes_and_handoff(notes,isolated_acco
 
 @pytest.mark.parametrize('case', ['missing','not_directory','unreadable','empty','available'])
 def test_notes_unavailability_is_distinct_from_available_empty(case,tmp_path,monkeypatch):
+    # This receipt describes the 2.10 interval independently of the installed release.
+    monkeypatch.setattr(tool_version, '__version__', '2.10.0')
     root=tmp_path/'package';root.mkdir();docs=root/'docs'
     monkeypatch.setattr(tool_version,'NOTES_ROOT',root)
     if case=='not_directory':docs.write_text('not a directory')

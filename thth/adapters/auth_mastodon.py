@@ -93,7 +93,9 @@ class MastodonAuthProfile(AuthProfile):
     pkce=True
 
     @classmethod
-    def prepare(cls,cfg,*,redirect_uri=None,rehearse=False,resume=False):
+    def prepare(cls,cfg,*,redirect_uri=None,rehearse=False,resume=False,by=None):
+        from .. import admin_log, appconfig
+        if not rehearse and not resume:admin_log.actor(by)
         base=origin(cfg.get('instance'))
         if redirect_uri not in (None,CALLBACK) or cfg.get('redirect_uri') not in (None,'',CALLBACK):
             raise FlowError('mastodon_callback_must_match_registered_uri')
@@ -108,6 +110,13 @@ class MastodonAuthProfile(AuthProfile):
             with authclients.registration_lock(path):
                 client=authclients.read(path)
                 if client is None:
+                    from pathlib import Path
+                    from .. import accounts
+                    Path(accounts.thth_root()).mkdir(parents=True, exist_ok=True)
+                    # Reject known-bad audit destinations before remote registration.
+                    # Release the global flock before the potentially slow HTTP call.
+                    with admin_log.transaction():
+                        expected=appconfig.snapshot(path)
                     body=request(base,'/api/v1/apps',data={'client_name':'THTH','redirect_uris':CALLBACK,
                                                          'scopes':' '.join(SCOPES),'website':'https://thth.me'})
                     for key in ('client_id','client_secret'):secret(body.get(key))
@@ -116,7 +125,7 @@ class MastodonAuthProfile(AuthProfile):
                         raise FlowError('mastodon_registration_binding_invalid')
                     client=valid_client(dict(client_id=body.get('client_id'),client_secret=body.get('client_secret'),
                                              instance=base,redirect_uri=CALLBACK,scopes=list(SCOPES),metadata=observed,created_at=jst.iso()),base)
-                    authclients.write(path,client)
+                    appconfig.save('mastodon',path,client,by=by,expected=expected,origin=base)
                 else:valid_client(client,base)
         profile=cls(client['client_id'],client['client_secret'],CALLBACK,list(SCOPES))
         profile.instance=base;profile.client_path=path

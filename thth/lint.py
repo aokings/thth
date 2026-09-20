@@ -39,7 +39,7 @@ def is_warning(message: str) -> bool:
 NEXT_STEP_NO_FRONT_MATTER = (
     "次の一手: 素の原稿を 1 回だけ出すなら `thth send <account> --text-file {file}`"
     "（乾式試験が既定）。queue で運用するなら front-matter 付きのファイル"
-    "（`thth queue --help`／導入文書 §6）"
+    "（`thth queue --help`）"
 )
 
 

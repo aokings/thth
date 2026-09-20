@@ -133,14 +133,14 @@ def test_token_scope_missing_refuses_before_identity_and_old_token_preserved(env
     assert run(env)==2
     assert Path(env['cfg']['token']).read_text()==old
     assert not any(p=='/api/v1/accounts/verify_credentials' for _,p,_,_ in env['calls'])
-    assert admin_log.read()[0]==[]
+    assert [r for r in admin_log.read()[0] if r['event']!='app_set']==[]
 
 
 @pytest.mark.parametrize('values',[{'id':''},{'id':{}},{'acct':None},{'acct':{}},{'acct':'someone_else'}])
 def test_identity_must_have_id_and_matching_acct(env,values):
     old=opaque();Path(env['cfg']['token']).write_text(old);env['behavior']['me']=values
     assert run(env)==2
-    assert Path(env['cfg']['token']).read_text()==old and admin_log.read()[0]==[]
+    assert Path(env['cfg']['token']).read_text()==old and [r for r in admin_log.read()[0] if r['event']!='app_set']==[]
 
 
 @pytest.mark.parametrize('status',[400,401,403,500])
@@ -175,7 +175,7 @@ def test_callback_override_refused_and_project_store_refused(env,monkeypatch):
 
 
 def test_resume_keeps_verifier_and_rehearse_sends_only_relay_get(env,monkeypatch):
-    profile=masto.MastodonAuthProfile.prepare(env['cfg'])
+    profile=masto.MastodonAuthProfile.prepare(env['cfg'], by='operator')
     session=authflow.begin('alpha',env['cfg'],profile)
     before_calls=len(env['calls'])
     code=masto.CALLBACK+'?'+urllib.parse.urlencode({'state':session['state'],'code':env['code']})
@@ -201,7 +201,7 @@ def test_client_change_during_wait_refuses_old_flow_save(env,change):
         authclients.write(path,client)
         return masto.CALLBACK+'?'+urllib.parse.urlencode({'state':session['state'],'code':env['code']})
     assert oauth.run_auth('alpha',by='operator',input_func=entered,human_output=lambda _:None,log=lambda _:None)==2
-    assert not Path(env['cfg']['token']).exists() and admin_log.read()[0]==[]
+    assert not Path(env['cfg']['token']).exists() and [r for r in admin_log.read()[0] if r['event']!='app_set']==[]
 
 
 @pytest.mark.parametrize('kind',['symlink','fifo','mode'])
@@ -228,7 +228,7 @@ def test_registration_write_failure_keeps_old_token_and_no_client(env,monkeypatc
 def test_parallel_registration_uses_one_per_instance_client(env):
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=4) as pool:
-        profiles=list(pool.map(lambda _:masto.MastodonAuthProfile.prepare(env['cfg']),range(4)))
+        profiles=list(pool.map(lambda _:masto.MastodonAuthProfile.prepare(env['cfg'], by='operator'),range(4)))
     assert sum(path=='/api/v1/apps' for _,path,_,_ in env['calls'])==1
     assert all(p.client_id==env['client_id'] for p in profiles)
 

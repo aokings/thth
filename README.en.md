@@ -76,38 +76,38 @@ Zero runtime dependencies; `thth` and `thth-mcp` entry points. Released on
 as `io.github.aokings/thth`. From source: `git clone`, then `python -m thth --version`
 or put `bin/thth` on your PATH.
 
-### Where your account ledgers live
+### Operator setup and invited users
 
-One JSON file per account, **outside this repo**:
-`$THTH_ROOT/accounts/<account>.json` (override with `$THTH_ACCOUNTS_DIR`).
-Nothing you configure is committed here. **A fresh clone ships no ledgers at
-all** (the in-repo `accounts/` directory was removed on 2026-09-14); you start
-by writing your own:
+Masaru runs the server and the developer apps. Invited users open the authorization
+URL and approve their own SNS account; they do not create a VM, a Meta app, or a
+THTH account ledger. The connection page is future work. Version 2.11 implements
+the operator CLI and temporary callback relay, not that page.
 
-```bash
-thth account add your-project-threads --media threads --project your-project \
-  --redirect-uri https://your.domain/callback/
-```
+The operator creates ledgers outside this repo under
+`$THTH_ROOT/accounts/<account>.json`, with `account add --by masaru`; new ledgers
+have `production: false` and `scheduled: false`. Fill the real handle, instance
+where applicable, and registered callback `https://thth.me/callback/`. The
+operator stores Threads/X clients using `app set <medium> --stdin --by masaru`.
+Client JSON comes from a secret manager, never from command arguments or a chat.
+Mastodon registers automatically only when its metadata confirms the required
+PKCE and scope capabilities. App events record presence only, including client ID.
 
-writes one from the bundled template (`accounts.example/<media>.json`) with
-`production: false` and `scheduled: false` — it will **not** post until you
-edit those by hand. Bluesky and Mastodon require `--handle` (and Mastodon
-`--instance`), because the default cannot match there. Any template
-placeholder you leave behind is named by `account add`, by `thth doctor`, and
-by `thth auth`, which refuses before it prints an authorization URL. If you are upgrading from a version that kept ledgers in
-the repo's own `accounts/` directory, `thth account migrate` copies them out
-(copy, never move; it refuses to overwrite anything that differs). That old
-location is still read for one release, with a warning.
+- **Threads / Mastodon / X**: `thth auth <account> --by masaru`. Open the human URL,
+  approve, and let the server receive the code. Paste fallback remains available.
+  X is **authorization only**; posting and collection remain unsupported.
+- **Bluesky**: pipe an App Password from a secret manager into
+  `thth token set <account> --stdin --by masaru`. This is not atproto OAuth.
+- **Threads / Mastodon escape hatch**: the same `token set --stdin` accepts an
+  access token, with identity validation. Existing credentials require `--force`.
+  `op read` is one possible source; the 1Password CLI is not bundled.
 
-Authorizing an account (one line each):
-
-- **Threads**: `thth auth <account>` — walks you through the OAuth code exchange
-  for your own Meta app. First-time setup (creating that app) is
-  [docs/導入_自分のMetaアプリで動かす.md](docs/導入_自分のMetaアプリで動かす.md).
-- **Bluesky**: `thth auth <account>` — prompts for your handle and an App
-  Password. Setup: [docs/導入_Bluesky_2026-09-13.md](docs/導入_Bluesky_2026-09-13.md).
-- **Mastodon**: `thth token set <account>` — paste an access token issued by
-  your instance. Setup: [docs/導入_Mastodon_2026-09-13.md](docs/導入_Mastodon_2026-09-13.md).
+`doctor` keeps authorization history separate from explicit probe timestamps.
+Response scopes take priority over probe inference. X expiry is response-derived;
+the unchanged daily timer cannot guarantee timely refresh of a short-lived X
+token. Keeping old local bytes after a failed rotation does not guarantee the
+old remote refresh token still works; reauthorize when necessary.
+See the [unified guide](docs/導入_承認を押すだけ.md) for operator preparation,
+private JSON schemas, failure semantics, and unverified deployment/API limits.
 
 ## Daily flow
 

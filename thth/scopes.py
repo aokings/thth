@@ -28,4 +28,4 @@ MASTODON_SCOPES = ['read:accounts', 'read:statuses', 'read:search',
 
 def mastodon_guidance(account):
     return ('Mastodon に必要な scope: ' + ' '.join(MASTODON_SCOPES) +
-            f'。アプリ設定を確認し thth token set {account} --by … で再設定してください')
+            f'。まず thth auth {account} --by … で再認可してください。手入力の逃げ道は thth token set {account} --stdin --by …（管理者が発行した access token）です')
