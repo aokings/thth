@@ -74,8 +74,8 @@ def test_json_real_account_read_and_rehearsal(command, isolated_account_factory,
 # are separate from this server-path-free report contract.
 from tests.test_admin_report import fixture as report_seed
 
-# Admin paths are an unresolved specification conflict (tracked in the
-# revalidation report); their nonempty failures are retained outside the repo.
+# Clarification 5: user reports hide server paths; admin reports preserve
+# their established location fields. Every scope still protects secret values.
 REPORT_CASES = [('http','analytics_report'),('http','operations_handoff'),
                 ('mcp','analytics_report'),('mcp','operations_handoff'),('mcp','study_report')]
 
@@ -102,13 +102,20 @@ def test_report_path_scanner_covers_each_deployment_root(prefix):
     with pytest.raises(AssertionError):_assert_no_server_paths({'nested':[{'path':prefix+'/FAKE_INTERNAL'}]})
 
 
-REPORT_TARGET_CASES = [(via,operation,'account') for via,operation in REPORT_CASES] + [
+USER_REPORT_TARGETS = [(via,operation,'account') for via,operation in REPORT_CASES] + [
     (via,operation,'project') for via in ('http','mcp')
     for operation in ('analytics_report','operations_handoff')]
+ADMIN_REPORT_CASES = [('http', name) for name in (
+    'admin_inventory','admin_account','admin_log','admin_tokens','admin_timers',
+    'admin_release','admin_diff')] + [('mcp', name) for name in (
+    'admin_inventory','admin_account','admin_log','admin_tokens','admin_release','admin_diff')]
+REPORT_TARGET_CASES = [(via,operation,target,scope)
+    for via,operation,target in USER_REPORT_TARGETS for scope in ('user','admin')] + [
+    (via,operation,'account','admin') for via,operation in ADMIN_REPORT_CASES]
 
 
-@pytest.mark.parametrize('via,operation,target', REPORT_TARGET_CASES)
-def test_successful_http_mcp_reports_have_evidence_without_server_paths(via,operation,target,report_seed,tmp_path,monkeypatch):
+@pytest.mark.parametrize('via,operation,target,scope', REPORT_TARGET_CASES)
+def test_successful_http_mcp_reports_have_evidence_without_server_paths(via,operation,target,scope,report_seed,tmp_path,monkeypatch):
     import datetime, hashlib, http.client, subprocess, threading
     from thth import accounts, admin_report, handoff_cursor, jst, operations_handoff, report_http, sent
     from tests.test_analytics_comparison import seed
@@ -133,7 +140,7 @@ def test_successful_http_mcp_reports_have_evidence_without_server_paths(via,oper
     policy=repo/'study.json';policy.write_text(json.dumps(dict(schema_version=1,id='study',account=name,hypothesis='h',change='c',decision={'status':'adopted','by':'tester','at':jst.iso(now-datetime.timedelta(days=7))},baseline_post_ids=['BEFORE'],changed_post_ids=['AFTER'])))
     token='a'*43
     credential=tmp_path/'transport-credential.json'
-    credential.write_text(json.dumps(dict(schema_version=1,root=str(root),credentials=[dict(sha256=hashlib.sha256(token.encode()).hexdigest(),expires_at=(now+datetime.timedelta(hours=1)).isoformat(),revoked=False,scope='user',accounts={name:'test'})])))
+    credential.write_text(json.dumps(dict(schema_version=1,root=str(root),credentials=[dict(sha256=hashlib.sha256(token.encode()).hexdigest(),expires_at=(now+datetime.timedelta(hours=1)).isoformat(),revoked=False,scope=scope,accounts={name:'test'} if scope=='user' else {})])))
     credential.chmod(0o600)
     request={'operation':operation}
     if operation in ('analytics_report','operations_handoff','admin_account'):request['account']=name
@@ -157,7 +164,17 @@ def test_successful_http_mcp_reports_have_evidence_without_server_paths(via,oper
         response=server.call_tool('thth_'+operation if operation.startswith('admin_') else operation,args)
         assert not response.get('isError'),response
         payload=json.loads(response['content'][0]['text'])
-    _assert_no_server_paths(payload)
+    if not operation.startswith('admin_'):_assert_no_server_paths(payload)
+    # Tool metadata obeys the same boundary even when embedded in admin cursors.
+    def check_tools(value):
+        if isinstance(value,dict):
+            if isinstance(value.get('tool'),dict):
+                _assert_no_server_paths(value['tool'])
+                assert 'notes_root' not in value['tool']
+            for child in value.values():check_tools(child)
+        elif isinstance(value,list):
+            for child in value:check_tools(child)
+    check_tools(payload)
     dumped=json.dumps(payload)
     assert all(secret not in dumped for secret in ('FAKE_PRIVATE_TOKEN_12345','FAKE_APP_SECRET_98765','fake-private@example.test','FAKE_PRIVATE_BODY'))
     core=payload['reports'][name] if via=='http' and not operation.startswith('admin_') else payload
@@ -166,10 +183,21 @@ def test_successful_http_mcp_reports_have_evidence_without_server_paths(via,oper
         assert core['by_account'][name]['sent_count']==1
         assert core['tool']['version']=='2.10.0' and core['tool']['notes_root_local_hint']=='~/Developer/thth'
         assert 'notes_root' not in core['tool'] and 'notes_root' not in core['by_account'][name]['tool']
-    elif operation in ('admin_inventory','admin_account'):assert core['by_account'][name]['production'] is True
-    elif operation=='admin_log':assert core['events'] and core['events'][0]['event']=='account_added'
+    elif operation in ('admin_inventory','admin_account'):
+        row=core['by_account'][name]
+        assert row['production'] is True and row['repo']['dir']==str(repo)
+        if operation=='admin_account':
+            assert row['ledger_fields']['env']['path']==cfg['env']
+            assert row['ledger_fields']['token']['path']==cfg['token']
+    elif operation=='admin_log':
+        assert core['events'] and core['events'][0]['event']=='account_added'
+        assert str(repo) in set(_all_strings(core['events'][0]['diff']))
     elif operation=='admin_tokens':assert core['tokens'][0]['present'] is True
     elif operation=='admin_timers':assert core['by_account'][name]['units'][0]['active']=='active'
-    elif operation=='admin_release':assert core['release']['version']=='2.10.0'
-    elif operation=='admin_diff':assert any(c['field']=='production' for c in core['changes'])
+    elif operation=='admin_release':
+        assert core['release']['version']=='2.10.0'
+        assert core['release']['app_env']['path']==str(root/'.config/thth/app.env')
+    elif operation=='admin_diff':
+        assert any(c['field']=='production' for c in core['changes'])
+        assert core['snapshot']['inventory']['by_account'][name]['repo']['dir']==str(repo)
     elif operation=='study_report':assert core['observations']['changed']['metrics']['views']['median']==9
