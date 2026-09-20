@@ -1,2 +1,9 @@
-export {default} from "./index.js";
-export {AuthRelay} from "./relay-object.js";
+import base from './index.js';
+import {approvalRequest} from './approval.js';
+export {AuthRelay} from './relay-object.js';
+export {ApprovalPerson,ApprovalSession} from './approval-object.js';
+export default {fetch(request,env){
+  const url=new URL(request.url);
+  if(url.pathname.startsWith('/approve/')||url.pathname.startsWith('/approval/'))return approvalRequest(request,env,url);
+  return base.fetch(request,env);
+}};

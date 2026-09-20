@@ -325,8 +325,10 @@ def command(args):
 
 
 def register(sub):
-    parser = sub.add_parser('admin', help='管理者用の読み取り専用レポート')
+    parser = sub.add_parser('admin', help='管理者用レポートと管理者 CLI 操作')
     commands = parser.add_subparsers(dest='admin_operation', required=True)
+    from . import approval_relay
+    approval_relay.register(commands)
     for name in OPERATIONS:
         p = commands.add_parser(name)
         p.add_argument('--json', action='store_true')

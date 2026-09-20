@@ -25,8 +25,9 @@ def _emit(fd, data):
 
 
 EVENTS = frozenset(('account_added', 'account_updated', 'account_removed', 'token_set',
-                   'token_refreshed', 'token_revoked', 'app_set', 'production_enabled', 'production_disabled'))
-SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping', re.I)
+                   'token_refreshed', 'token_revoked', 'app_set', 'production_enabled', 'production_disabled', 'relay_key_initialized',
+                   'approver_set', 'approver_revoked', 'approver_unlocked'))
+SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 
 
@@ -211,7 +212,7 @@ def transaction(*, rollback=None):
             try:
                 from . import admin_notifications
                 event = json.loads(data)
-                if event['event'] == 'app_set':
+                if event['event'] in ('app_set', 'relay_key_initialized', 'approver_set', 'approver_revoked', 'approver_unlocked'):
                     continue
                 cfg = accounts.load_account(event['account'])
                 admin_notifications.notify(event, cfg)

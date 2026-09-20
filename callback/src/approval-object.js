@@ -1,0 +1,156 @@
+import {DurableObject} from 'cloudflare:workers';
+import {TTL,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64,personStub} from './approval.js';
+import {HASH_PATTERN,STATE_PATTERN,digest} from './relay.js';
+
+class AtomicObject extends DurableObject {
+  now(){return Date.now();}
+  put(key,value){this.ctx.storage.kv.put(key,value);}
+  atomic(fn){try{return this.ctx.storage.transactionSync(fn);}catch{return fail(503,'approval_unavailable');}}
+  // Signature validated at the sole public HTTP entry; RPC bindings are private.
+  replay(ticket){
+    const now=this.now();
+    if(!ticket||!STATE_PATTERN.test(ticket.nonce)||!Number.isSafeInteger(ticket.time)||Math.abs(now-ticket.time)>60_000)return false;
+    const seen=this.ctx.storage.kv.get('nonces')||{};
+    for(const [key,expiry] of Object.entries(seen))if(expiry<now)delete seen[key];
+    if(seen[ticket.nonce]||Object.keys(seen).length>=1024)return false;
+    seen[ticket.nonce]=ticket.time+60_001;this.put('nonces',seen);return true;
+  }
+}
+export class ApprovalPerson extends AtomicObject {
+  manage(operation,body,ticket){return this.atomic(()=>{
+    if(!['set','revoke','unlock','status'].includes(operation))return fail();
+    if(operation==='set'?!fields(body,['salt','verifier','iterations'])||typeof body.salt!=='string'||typeof body.verifier!=='string'||!STATE_PATTERN.test(body.salt)||!STATE_PATTERN.test(body.verifier)||body.iterations!==ITERATIONS:!fields(body,[]))return fail();
+    if(!this.replay(ticket))return fail(409,'replayed_request');
+    const old=this.ctx.storage.kv.get('person');
+    if(operation==='status')return {status:200,body:old?{active:old.active,locked:old.failures>=5,generation:old.generation}:{active:false,locked:false,generation:null}};
+    if(operation==='set')this.put('person',{...body,active:true,generation:opaque(),failures:0});
+    else if(!old)return fail(404,'not_found');
+    else if(operation==='revoke')this.put('person',{active:false,generation:opaque(),failures:0});
+    else this.put('person',{...old,failures:0});
+    return {status:200,body:{status:operation==='set'?'configured':operation==='revoke'?'revoked':'unlocked'}};
+  });}
+  current(generation=null){
+    const row=this.ctx.storage.kv.get('person');
+    return row?.active&&row.failures<5&&(!generation||generation===row.generation)?row.generation:null;
+  }
+  async check(secret,generation,binding){
+    const before=this.ctx.storage.kv.get('person');
+    if(!this.current(generation))return null;
+    const valid=typeof secret==='string' && secret.length>=16 && secret.length<=128;
+    const computed=valid?await verifier(secret,before.salt):null;
+    const result=this.atomic(()=>{
+      const row=this.ctx.storage.kv.get('person');
+      if(!row?.active||row.generation!==generation||row.failures>=5||this.now()>=binding.expires_at)return null;
+      if(this.ctx.storage.kv.get('grant:'+binding.job_id))return null;
+      const ok=valid && equal(unb64(computed),unb64(row.verifier));
+      this.put('person',{...row,failures:ok?0:row.failures+1});
+      if(!ok)return null;
+      const approved_at=this.now();
+      this.put('grant:'+binding.job_id,{...binding,generation,approved_at,status:'approved'});return approved_at;
+    });
+    if(typeof result!=='number')return null;
+    const alarm=await this.ctx.storage.getAlarm();
+    if(alarm===null||binding.expires_at<alarm)await this.ctx.storage.setAlarm(binding.expires_at);
+    return result;
+  }
+  consume(generation,binding){return this.atomic(()=>{
+    if(!this.current(generation))return fail(410,'approver_changed');
+    const key='grant:'+binding.job_id, grant=this.ctx.storage.kv.get(key);
+    if(!grant||grant.status!=='approved'||grant.generation!==generation||this.now()>=grant.expires_at||
+       ['job_id','digest','account','kind','expires_at'].some(k=>grant[k]!==binding[k]))return fail(404,'not_ready');
+    this.put(key,{...grant,status:'consumed'});return {status:200,body:{approved_at:grant.approved_at}};
+  });}
+  async alarm(){
+    const now=this.now();let next=null;
+    this.ctx.storage.transactionSync(()=>{for(const [key,row] of this.ctx.storage.kv.list({prefix:'grant:'})){
+      if(row.expires_at<=now)this.ctx.storage.kv.delete(key);else next=Math.min(next??Infinity,row.expires_at);
+    }});
+    if(next!==null)await this.ctx.storage.setAlarm(next);
+  }
+}
+export class ApprovalSession extends AtomicObject {
+  row(){const row=this.ctx.storage.kv.get('session');
+    if(row&&this.now()>=row.expires_at){this.clear(row,'expired');return null;}return row;}
+  clear(row,status){
+    // Keep only receipt binding and expiry; never display text/metadata/CSRF after resolution.
+    const {person,generation,job_id,digest,account,kind,expires_at,read_key_hash,approved_at}=row;
+    this.put('session',{person,generation,job_id,digest,account,kind,expires_at,read_key_hash,
+      ...(approved_at?{approved_at}:{}),status});
+  }
+  async manage(operation,body,ticket){
+    if(operation==='create'){
+      if(!fields(body,['person','job_id','digest','account','kind','text','context','read_key_hash'])||['person','account','job_id','digest','read_key_hash'].some(k=>typeof body[k]!=='string')||!PERSON.test(body.person)||!PERSON.test(body.account)||!STATE_PATTERN.test(body.job_id)||!HASH_PATTERN.test(body.digest)||!HASH_PATTERN.test(body.read_key_hash)||!['approve','send','retract'].includes(body.kind)||typeof body.text!=='string'||!body.text||new TextEncoder().encode(body.text).length>48_000||!fields(body.context,['media','reply_to','publish_at','target','reason','topic','options'])||!['threads','mastodon','bluesky','x'].includes(body.context.media)||Object.values(body.context).some(v=>v!==null&&(typeof v!=='string'||v.length>4096)))return fail();
+      const generation=await (await personStub(this.env,body.person)).current();
+      if(!generation)return fail(409,'approver_unavailable');
+      const deadline=this.now()+TTL;
+      try{return await this.ctx.storage.transaction(async()=>{
+        const result=this.atomic(()=>{
+          if(!this.replay(ticket))return fail(409,'replayed_request');
+          if(this.ctx.storage.kv.get('session'))return fail(409,'session_exists');
+          this.put('session',{...body,generation,status:'pending',csrf:opaque(),failures:0,expires_at:deadline});
+          return {status:201,body:{status:'pending',expires_at:deadline}};
+        });
+        if(result.status===201)await this.ctx.storage.setAlarm(deadline);return result;
+      });}catch{return fail(503,'approval_unavailable');}
+    }
+    if(!['consume','status','cancel'].includes(operation)||!fields(body,['read_key'])||typeof body.read_key!=='string'||!STATE_PATTERN.test(body.read_key))return fail();
+    const hash=await digest(body.read_key), before=this.row();
+    if(!before)return fail(404,'not_found');
+    if(!equal(new TextEncoder().encode(hash),new TextEncoder().encode(before.read_key_hash)))return fail(401,'unauthorized');
+    const admission=this.atomic(()=>{
+      if(!this.replay(ticket))return fail(409,'replayed_request');
+      const row=this.row();if(!row)return fail(404,'not_found');
+      if(operation==='cancel'){this.clear(row,'expired');return {status:200,body:{status:'expired'}};}
+      return {status:200};
+    });
+    if(admission.status!==200||operation==='cancel')return admission;
+    const person=await personStub(this.env,before.person);
+    if(operation==='status'){
+      const current=await person.current(before.generation), row=this.row();
+      if(!row)return fail(404,'not_found');
+      if(!current){this.clear(row,'expired');return fail(410,'approver_changed');}
+      return {status:200,body:{status:row.status,expires_at:row.expires_at}};
+    }
+    const row=this.row();if(!row||row.status!=='approved')return fail(404,'not_ready');
+    const result=await person.consume(row.generation,this.binding(row));
+    if(result.status!==200)return result;
+    // Person.consume is the authoritative one-shot generation gate. A subsequent
+    // local storage failure must never redeliver its receipt: VM reports unknown.
+    return this.atomic(()=>{
+      const latest=this.row();if(!latest||latest.status!=='approved')return fail(409,'outcome_unknown');
+      this.clear(latest,'consumed');
+      const {job_id,digest,account,kind,person:approver,generation,expires_at}=row;
+      return {status:200,body:{job_id,digest,account,kind,approver,generation,approved_at:result.body.approved_at,expires_at}};
+    });
+  }
+  binding(row){const {job_id,digest,account,kind,expires_at}=row;return {job_id,digest,account,kind,expires_at};}
+
+  async view(){
+    const before=this.row();if(!before||before.status!=='pending')return fail(410,'expired');
+    if(!await (await personStub(this.env,before.person)).current(before.generation)){
+      this.clear(before,'expired');return fail(410,'approver_unavailable');}
+    const row=this.row();if(!row||row.status!=='pending')return fail(410,'expired');
+    const {text,account,kind,digest,csrf,context}=row;return {status:200,body:{text,account,kind,digest,csrf,context}};
+  }
+  async approve(secret,csrf){
+    const row=this.row();if(!row||row.status!=='pending')return fail(410,'expired');
+    if(typeof csrf!=='string'||!STATE_PATTERN.test(csrf)||!equal(unb64(csrf),unb64(row.csrf)))return fail(403,'forbidden');
+    // Reserve an attempt synchronously before the KDF so concurrent POSTs cannot exceed five.
+    const allowed=this.atomic(()=>{
+      const current=this.row();if(!current||current.status!=='pending'||current.failures>=5)return false;
+      this.put('session',{...current,failures:current.failures+1});return true;
+    });
+    if(allowed!==true)return fail(410,'expired');
+    const approved_at=await (await personStub(this.env,row.person)).check(secret,row.generation,this.binding(row));
+    return this.atomic(()=>{
+      const current=this.row();if(!current||current.status!=='pending')return fail(410,'expired');
+      if(approved_at===null){if(current.failures>=5)this.clear(current,'expired');return fail(403,'approval_failed');}
+      this.clear({...current,approved_at},'approved');return {status:200,body:{status:'approved',kind:current.kind}};
+    });
+  }
+  async alarm(){
+    const row=this.ctx.storage.kv.get('session');
+    if(!row||this.now()>=row.expires_at)await this.ctx.storage.deleteAll();
+    else await this.ctx.storage.setAlarm(row.expires_at);
+  }
+}

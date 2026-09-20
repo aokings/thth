@@ -33,11 +33,13 @@
 </style>
 </head><body><main>
 <h1>THTH — Privacy Policy</h1>
-<p class="note">Effective 2026-09-20 · <a href="#ja">日本語はこの下</a></p>
+<p class="note">Unpublished update — deployment date not set · <a href="#ja">日本語はこの下</a></p>
 <h2>Operator and authorization</h2>
 <p>THTH runs authorization and posting management on an operator-managed server for invited accounts. Users do not need their own VM or Meta app. The operator starts authorization; users review the account and permissions on the platform and approve. This does not mean that a user connection page, posting interface, or account exit workflow has all been implemented.</p>
 <h2>Authorization relay</h2>
 <p>The relay uses a Cloudflare Worker and Durable Object. It temporarily holds a registered authorization code for at most 300 seconds after receipt and within the 600-second session lifetime, and releases it once to the initiating server. Long-lived tokens, client secrets and PKCE verifiers are not sent to the relay. The application deletes the code when consumed or expired. Removing application records does not establish physical erasure from the hosting provider's infrastructure or backups. Unregistered flows can use the existing return-URL paste fallback.</p>
+<h2>Human approval pages</h2>
+<p>An approval page temporarily holds the exact proposed text and display context for a logical session lifetime of at most 600 seconds. Approval or expiry removes that text and display context from the active record; minimal receipt bindings remain until expiry. A separate person record holds a salted PBKDF2-SHA256 verifier with 600,000 iterations, generation and failure count, not the approval secret itself. The secret is transmitted only when the person submits the form and is not retained. The URL holder can read the proposed text but cannot approve without the secret. Cloudflare SQLite Durable Object point-in-time recovery (PITR) retains recovery history for 30 days: logical deletion is not a promise of immediate physical erasure from backups.</p>
 <h2>Server records and communication</h2>
 <p>Long-lived credentials reside in owner-only files on the operator's server and authenticate platform API requests. Drafts, post history and collected records also reside in configured server locations. Network destinations are not limited to platform APIs: authorization uses thth.me/Cloudflare, and configured repositories may also receive requests. Static pages include no third-party scripts or analytics. Worker application observability logs are disabled; this does not guarantee that no infrastructure records exist.</p>
 <h2 id="delete">Stopping access and deleting data</h2>
@@ -47,11 +49,13 @@
 <h2>Changes</h2>
 <p>This page is generated from the THTH source repository; its history is public there.</p>
 <h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>
-<p class="note">2026-09-20 施行</p>
+<p class="note">未公開の更新案 — 配布日未設定</p>
 <h2>運営者と認可</h2>
 <p>THTH は、運営者が管理するサーバで認可と投稿管理を行うソフトウェアです。今回の導入は招待されたアカウントが対象で、利用者が自分の VM や Meta アプリを用意する手順ではありません。運営者が認可を開始し、利用者は媒体の画面で内容を確認して承認します。利用者向けの接続画面・投稿操作・退出の仕組みがすべて実装済みという意味ではありません。</p>
 <h2>認可の預かり所</h2>
 <p>認可の預かり所は Cloudflare Worker と Durable Object を使います。登録済みの認可コードを、受付から最大300秒、かつ開始から最大600秒の範囲で一時的に保持し、認可を開始したサーバへ一度だけ渡します。長期トークン、client secret、PKCE verifier は預かり所へ送りません。消費または失効時にアプリケーション上のコードを削除します。Cloudflare 内部のバックアップや物理消去まで保証する説明ではありません。未登録などの場合は従来の戻り URL を貼る経路になります。</p>
+<h2>本人が押す承認ページ</h2>
+<p>承認ページは公開予定の本文そのものと表示情報を、最大600秒の論理的な session 期限内で一時的に保持します。承認または失効で稼働中 record から本文と表示情報を削除し、最小の受領照合情報だけを期限まで残します。本人の別 record には salt 付き PBKDF2-SHA256（600,000回）の verifier、世代、失敗回数を保存し、承認 secret 本体は保存しません。secret は本人のフォーム送信時だけ照合に使います。URL の所持者は本文を読めますが、secret 無しで承認はできません。Cloudflare SQLite Durable Object の PITR は30日間の復元履歴を持つため、論理削除をバックアップからの即時物理消去とは約束しません。</p>
 <h2>サーバの記録と通信</h2>
 <p>長期の認証情報は運営者のサーバの所有者専用ファイルへ保存し、媒体の API への認証に使います。下書き・投稿履歴・採集した記録等も設定されたサーバ側の置き場にあります。通信先は媒体 API だけとは限らず、認可時の thth.me/Cloudflare や設定された repository 等があります。静的ページには第三者のスクリプトや解析ツールを組み込んでいません。Worker のアプリケーション観測ログは無効にしていますが、基盤全体に記録が存在しないとの保証はしません。</p>
 <h2>停止とデータの削除</h2>
