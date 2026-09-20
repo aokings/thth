@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
-import {canonical} from '../src/media.js';
+import {canonical,mediaRequest} from '../src/media.js';
 const opaque=()=>randomBytes(32).toString('base64url'),sha=b=>createHash('sha256').update(b).digest('hex');
 const logs=[],secrets=[];let mf,privateKey,runtimeDirectory,options;
 class Silent extends Log{constructor(){super(LogLevel.NONE);}log(v){logs.push(String(v));}}
@@ -15,7 +15,7 @@ before(async()=>{
   const pair=generateKeyPairSync('rsa',{modulusLength:3072});privateKey=pair.privateKey;
   const files=['test/media-harness.js','src/media-object.js','src/media.js','src/worker.js','src/index.js','src/relay.js','src/relay-object.js','src/approval.js','src/approval-object.js','src/deletion.js','src/deletion-object.js'];
   runtimeDirectory=await realpath(await mkdtemp(join(tmpdir(),'media-runtime-')));
-  options=convertV4MiniflareOptions({modules:await Promise.all(files.map(async name=>({type:'ESModule',path:fileURLToPath(new URL('../'+name,import.meta.url)),contents:await readFile(new URL('../'+name,import.meta.url),'utf8')}))),compatibilityDate:'2026-09-01',cf:false,outboundService:()=>new Response('external_denied',{status:503}),log:new Silent(),bindings:{APPROVAL_PUBLIC_KEY:pair.publicKey.export({type:'spki',format:'der'}).toString('base64url')},durableObjects:{MEDIA_OBJECT:{className:'TestMedia',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},APPROVAL_PERSON:{className:'ApprovalPerson',useSQLite:true},APPROVAL_SESSION:{className:'ApprovalSession',useSQLite:true}},ratelimits:{APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}}},r2Buckets:['MEDIA_BUCKET']});options.resourcePersistencePath=join(runtimeDirectory,'storage');
+  options=convertV4MiniflareOptions({modules:await Promise.all(files.map(async name=>({type:'ESModule',path:fileURLToPath(new URL('../'+name,import.meta.url)),contents:await readFile(new URL('../'+name,import.meta.url),'utf8')}))),compatibilityDate:'2026-09-01',cf:false,outboundService:()=>new Response('external_denied',{status:503}),log:new Silent(),bindings:{APPROVAL_PUBLIC_KEY:pair.publicKey.export({type:'spki',format:'der'}).toString('base64url')},durableObjects:{MEDIA_OBJECT:{className:'TestMedia',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},APPROVAL_PERSON:{className:'ApprovalPerson',useSQLite:true},APPROVAL_SESSION:{className:'ApprovalSession',useSQLite:true}},ratelimits:{MEDIA_PUBLIC_LIMIT:{namespace_id:'21301',simple:{limit:120,period:60}},MEDIA_CONTROL_LIMIT:{namespace_id:'21302',simple:{limit:600,period:60}},MEDIA_UPLOAD_LIMIT:{namespace_id:'21303',simple:{limit:240,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}}},r2Buckets:['MEDIA_BUCKET']});options.resourcePersistencePath=join(runtimeDirectory,'storage');
   mf=new Miniflare(options);await mf.ready;
 });
 after(async()=>{await mf?.dispose();await rm(runtimeDirectory,{recursive:true,force:true});assert.equal(logs.filter(s=>secrets.some(x=>s.includes(x))).length,0,'secret in runtime logs');});
@@ -437,4 +437,28 @@ test('public private-object oracle is identical to unknown across methods',async
   }
  }
  assert.equal((await call(stored.id,'read',binding(stored))).status,200);
+});
+
+
+test('media rate rejection precedes signing, body, DO and R2; missing binding closes',async()=>{
+ const id=opaque(),ip='192.0.2.8';
+ for(const [path,method,binding,key] of [[`/media/${id}/create`,'POST','MEDIA_CONTROL_LIMIT',sha(ip)],[`/media-upload/${id}/1`,'PUT','MEDIA_UPLOAD_LIMIT',sha(id)],[`/m/${id}`,'GET','MEDIA_PUBLIC_LIMIT',sha(ip)],[`/m/${id}`,'HEAD','MEDIA_PUBLIC_LIMIT',sha(ip)]]){
+  for(const present of [true,false]){
+   const seen=[],env={MEDIA_BUCKET:{},MEDIA_OBJECT:{getByName(){assert.fail('DO after rate refusal');}}};
+   if(present)env[binding]={async limit(value){seen.push(value);return {success:false};}};
+   const request=new Request('https://media.test'+path,{method,headers:{'cf-connecting-ip':ip,range:'bytes=0-1','content-type':'application/json'}});
+   Object.defineProperty(request,'body',{get(){assert.fail('body after rate refusal');}});
+   const response=await mediaRequest(request,env,new URL(request.url));assert.equal(response.status,429);
+   assert.deepEqual(await response.json(),{error:'rate_limited'});assert.deepEqual(seen,present?[{key}]:[]);
+  }
+ }
+});
+
+test('media limiter keys separate peers and upload subjects and cover HEAD Range',async()=>{
+ const seen=[],id=opaque(),other=opaque(),env={MEDIA_BUCKET:{},MEDIA_OBJECT:{getByName(){return {view:()=>new Response('gone',{status:410}),upload:()=>new Response('unknown',{status:404})};}}};
+ for(const binding of ['MEDIA_PUBLIC_LIMIT','MEDIA_UPLOAD_LIMIT'])env[binding]={async limit({key}){seen.push([binding,key]);return {success:true};}};
+ for(const [path,method,ip] of [[`/m/${id}`,'GET','192.0.2.1'],[`/m/${other}`,'HEAD','192.0.2.1'],[`/m/${id}`,'GET','192.0.2.2'],[`/media-upload/${id}/1`,'PUT','192.0.2.1'],[`/media-upload/${id}/2`,'PUT','192.0.2.2'],[`/media-upload/${other}/1`,'PUT','192.0.2.1']]){
+  const request=new Request('https://media.test'+path,{method,headers:{'cf-connecting-ip':ip,range:'bytes=0-1'}});assert.ok([404,410].includes((await mediaRequest(request,env,new URL(request.url))).status));
+ }
+ assert.equal(seen[0][1],seen[1][1]);assert.notEqual(seen[0][1],seen[2][1]);assert.equal(seen[3][1],seen[4][1]);assert.notEqual(seen[3][1],seen[5][1]);
 });

@@ -10,6 +10,7 @@ export const validHash=v=>typeof v==='string'&&HASH_PATTERN.test(v);
 export const validOpaque=v=>typeof v==='string'&&STATE_PATTERN.test(v);
 export const keys=(b,fields)=>b&&typeof b==='object'&&!Array.isArray(b)&&Object.keys(b).sort().join(',')===[...fields].sort().join(',');
 export const mediaStub=async(env,id)=>env.MEDIA_OBJECT.getByName(await digest(id));
+async function allowed(binding,key){return !!binding&&(await binding.limit({key:await digest(key)})).success===true;}
 export function canonical(method,path,subject,operation,time,nonce,bodyHash){
   return ['thth-media-v1',method,path,'media',subject,operation,time,nonce,bodyHash].join('\n');
 }
@@ -28,6 +29,7 @@ export async function mediaRequest(request,env,url){
     let match=/^\/media\/([A-Za-z0-9_-]{43})\/(create|complete|read|ack|preview|provider|published|invalidate|status)$/.exec(url.pathname);
     if(match){
       if(request.method!=='POST')return reply(405,{error:'method_not_allowed'});
+      if(!await allowed(env.MEDIA_CONTROL_LIMIT,request.headers.get('cf-connecting-ip')||'unknown-peer'))return reply(429,{error:'rate_limited'});
       if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(400,{error:'invalid_media_request'});
       const [,id,op]=match,raw=await boundedBody(request,16384),ticket=await authenticate(request,env,url,raw,id,op);
       if(!ticket)return reply(401,{error:'unauthorized'});
@@ -37,11 +39,13 @@ export async function mediaRequest(request,env,url){
     match=/^\/media-upload\/([A-Za-z0-9_-]{43})(?:\/(\d+))?$/.exec(url.pathname);
     if(match){
       if(request.method!=='PUT')return reply(405,{error:'method_not_allowed'});
+      if(!await allowed(env.MEDIA_UPLOAD_LIMIT,match[1]))return reply(429,{error:'rate_limited'});
       return await(await mediaStub(env,match[1])).upload(request,match[2]===undefined?null:Number(match[2]));
     }
     match=/^\/m\/([A-Za-z0-9_-]{43})$/.exec(url.pathname);
     if(match){
       if(!['GET','HEAD'].includes(request.method))return reply(405,{error:'method_not_allowed'});
+      if(!await allowed(env.MEDIA_PUBLIC_LIMIT,request.headers.get('cf-connecting-ip')||'unknown-peer'))return reply(429,{error:'rate_limited'});
       return await(await mediaStub(env,match[1])).view(request);
     }
     return reply(404,{error:'not_found'});
