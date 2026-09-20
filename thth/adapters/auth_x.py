@@ -170,6 +170,7 @@ def run_refresh(account,*,force=False,check=False,log=print,now=None):
         updated=token_result(body,cfg,now=now,previous=token)
         if token.get('auth_via') in ('paste','relay'):updated['auth_via']=token['auth_via']
         with admin_log.transaction(rollback=rollback):
+            path=authflow._token_path(path)
             if (accounts.load_account(account)!=cfg or profile.binding(cfg,current=True)!=binding
                     or authflow._read_session(account)!=session
                     or authflow._generation(authflow._token_snapshot(path))!=authflow._generation(snapshot)):

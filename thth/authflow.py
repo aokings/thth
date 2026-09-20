@@ -305,10 +305,18 @@ def paste(raw, session):
     return codes[0]
 
 
+def _token_path(path):
+    # Resolve trusted host aliases (including symlinked HOME) only in parents.
+    # Never resolve the credential leaf: its symlink/type/link checks still apply.
+    path = Path(path)
+    resolved = path.parent.resolve() / path.name
+    if resolved.is_symlink():
+        raise FlowError('unsafe_mutation_path')
+    return resolved
+
+
 def _token_snapshot(path):
-    for part in (path, *path.parents):
-        if part.is_symlink():
-            raise FlowError('unsafe_mutation_path')
+    path = _token_path(path)
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
@@ -344,6 +352,7 @@ def commit(account, cfg, profile, session, token, *, by, via):
         if latest != cfg or profile.binding(latest, current=True) != session['binding'] or current != session:
             raise FlowError('auth_session_changed: 新しい認可または台帳変更のため保存しません')
         _remaining(session)
+        path = _token_path(path)
         snapshot = _token_snapshot(path)
         if _generation(snapshot) != session['credential_generation']:
             raise FlowError('auth_credential_changed: 別の操作で認証情報が変わったため保存しません')
@@ -425,6 +434,7 @@ def commit_manual(account, cfg, token, *, snapshot, session, by):
                 else:secrets_fs.atomic_write_text(str(path),snapshot[0].decode(),mode=snapshot[1])
             except (OSError,ValueError):raise FlowError('token_set_rollback_failed_outcome_uncertain') from None
     with admin_log.transaction(rollback=rollback):
+        path = _token_path(path)
         if (accounts.load_account(account)!=cfg or _read_session(account)!=session
                 or _generation(_token_snapshot(path))!=_generation(snapshot)):
             raise FlowError('token_set_credentials_changed: 別の更新のため保存しません')

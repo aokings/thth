@@ -75,6 +75,7 @@ def run(account,*,password_input,by,log=print,force=False,identifier_input=None,
                     user_id=token['did'],username=token['handle'],no_expiry=True,obtained_at=jst.iso(),
                     scopes=None,scopes_source='unknown',auth_via='token_set')
         with admin_log.transaction(rollback=rollback):
+            path=authflow._token_path(path)
             if (accounts.load_account(account)!=cfg or authflow._read_session(account)!=session
                     or authflow._generation(authflow._token_snapshot(path))!=authflow._generation(snapshot)):
                 raise FlowError('bluesky_credentials_changed: 別の更新のため保存しません')
