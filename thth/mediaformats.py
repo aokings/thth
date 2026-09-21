@@ -571,6 +571,11 @@ def bmff(fd,size,*,allow_edit_lists=False):
 
 def inspect(fd,size,*,allow_edit_lists=False):
     head=os.pread(fd,16,0)
+    if head.startswith(b'RIFF') and head[8:12]==b'WAVE':
+        from .audioformats import wav
+        return wav(fd,size)
+    if head[:4] in (b'RF64',b'RIFX'):
+        raise FormatError('unsupported_attachment_structure: wav variant')
     if len(head)>=8 and head[4:8] in (b'ftyp',b'free',b'wide',b'moov',b'mdat'): return bmff(fd,size,allow_edit_lists=allow_edit_lists)
     data=os.pread(fd,size,0); require(len(data)==size)
     if head.startswith(b'\xff\xd8'): return jpeg(data)
