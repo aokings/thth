@@ -419,7 +419,7 @@ test('unsatisfiable and unsafe ranges refuse without returning private bytes',as
  for(const range of ['bytes=60-','bytes=70-','bytes=70-80','bytes=5-4','bytes=9007199254740992-','bytes=0-9007199254740992']){
   for(const method of ['GET','HEAD']){
    const response=await mf.dispatchFetch('https://media.test/m/'+cap,{method,headers:{range}});
-   assert.equal(response.status,416);assert.notEqual(response.headers.get('content-type'),'image/png');
+   assert.equal(response.status,416);assert.notEqual(response.headers.get('content-type'),'image/png');assert.equal(response.headers.get('content-range'),'bytes */60');
   }
  }
  for(const range of ['bytes=59-','bytes=59-100','bytes=0-0']){
