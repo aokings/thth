@@ -202,8 +202,9 @@ def test_two_stage_cli_media_confirm_and_compact_receipt(env,wire,monkeypatch,ca
 
 
 def test_unsupported_intent_is_not_silently_discarded(env,wire):
-    fm={'media':[{'file':'a.png','alt':'dot'}],'post_options':{'reply_control':'everyone'}}
-    result,_,_=invoke(env,fm);assert result.error=='unsupported_attachment: threads/image_post_options'
+    # reply_control is now implemented; unknown intent must still never disappear.
+    fm={'media':[{'file':'a.png','alt':'dot'}],'post_options':{'future_unknown_option':True}}
+    with pytest.raises(media.MediaError):invoke(env,fm)
     assert not wire['calls'] and not env[3]['upload']
 
 

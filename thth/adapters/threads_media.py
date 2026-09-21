@@ -59,9 +59,9 @@ def intent_error(manifest):
                 if set(a)!={'type','provider','id'}:return 'unsupported_attachment: threads/gif_option'
                 if a['provider']!='GIPHY':return 'unsupported_attachment: threads/gif_provider'
             else:return 'unsupported_attachment: threads/typed_attachment'
-    if manifest['post_options']:return 'unsupported_attachment: threads/image_post_options'
+    if set(manifest['post_options'])-{'reply_control','reply_approvals'}:return 'unsupported_attachment: threads/image_post_options'
     rows=manifest['files']
-    if not rows and manifest['attachments']:return None
+    if not rows and (manifest['attachments'] or manifest['post_options']):return None
     if not 1<=len(rows)<=20:return 'media_limit_exceeded: count'
     for row in rows:
         video=row['kind']=='video' and row['format'] in ('mp4','mov')
@@ -87,6 +87,7 @@ def text_params(manifest,text):
     """C15 explicit link preview: publication data only; never fetch the URL."""
     if manifest['files']:return None
     require(type(text) is str,'media_text_unavailable')
+    require(bool(text.strip()) or bool(manifest['attachments']),'media_text_required')
     links=[a['url'] for a in manifest['attachments'] if a['type']=='link']
     # Count lexical HTTP(S) links without network normalization or fetching.
     texts=[a for a in manifest['attachments'] if a['type']=='text']
@@ -200,6 +201,9 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         typed=text_params(post.media_manifest,post.text) if not post.media_files else None
         require(type(adapter.user_id) is str and adapter.user_id.isascii() and adapter.user_id.isdecimal(),'media_account_id_invalid')
         common={'text':post.text}
+        options=post.media_manifest['post_options']
+        if 'reply_control' in options:common['reply_control']=options['reply_control']
+        if 'reply_approvals' in options:common['enable_reply_approvals']='true' if options['reply_approvals'] else 'false'
         quotes=[a['uri'] for a in post.media_manifest['attachments'] if a['type']=='quote']
         if quotes:common['quote_post_id']=quotes[0]
         if post.reply_to:common['reply_to_id']=post.reply_to
