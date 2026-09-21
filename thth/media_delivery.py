@@ -91,7 +91,7 @@ def publish(adapter,post,*,cfg,fm,manifest,state_dir,before_publish=None,on_cont
                 durable_phase=phase
             from .adapters import mastodon_media
             from .media_relay import MediaRelay
-            bound=dataclasses.replace(post,media_manifest=manifest,media_files=tuple(items),media_progress=progress,media_cache=(lambda cap:mastodon_media.cache(cfg,cap)) if cfg['media']=='mastodon' else None,media_relay=MediaRelay(cfg['account'],'operator') if cfg['media']=='threads' else None)
+            bound=dataclasses.replace(post,media_manifest=manifest,media_files=tuple(items),media_progress=progress,media_cache=(lambda cap:mastodon_media.cache(cfg,cap)) if cfg['media']=='mastodon' else None,media_relay=MediaRelay(cfg['account'],'operator') if cfg['media']=='threads' and items else None)
             # No request precedes this durable intent. It also changes the old
             # legacy inflight leaf to a private 0600 file without copying blobs.
             progress('prepared',remote_ids=[])
@@ -127,6 +127,7 @@ def lint_notes(cfg,fm,*,text=None):
         try:
             with media.prepare(cfg['repo_dir'],fm,'threads') as (manifest,items):
                 reason=threads_media.intent_error(manifest)
+                if not reason and not items:threads_media.text_params(manifest,text)
                 return [reason] if reason else threads_media.notes(manifest,items)
         except (OSError,ValueError) as exc:return [str(exc) if isinstance(exc,media.MediaError) else 'media_unavailable']
     if cfg.get('media')=='bluesky':

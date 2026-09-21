@@ -6,6 +6,7 @@ boundary is an adjudicated temporary contract, not a verified API integer cap.
 from __future__ import annotations
 import json
 import math
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -25,9 +26,14 @@ def require(ok,reason):
 
 
 def intent_error(manifest):
-    if manifest['attachments'] or manifest['captions']:return 'unsupported_attachment: threads/typed_attachment'
+    if manifest['captions']:return 'unsupported_attachment: threads/typed_attachment'
+    if manifest['attachments']:
+        if any(a['type']!='link' for a in manifest['attachments']):return 'unsupported_attachment: threads/typed_attachment'
+        if manifest['files']:return 'unsupported_attachment: threads/link_requires_text'
+        if any(set(a)!={'type','url'} for a in manifest['attachments']):return 'unsupported_attachment: threads/link_option'
     if manifest['post_options']:return 'unsupported_attachment: threads/image_post_options'
     rows=manifest['files']
+    if not rows and manifest['attachments']:return None
     if not 1<=len(rows)<=20:return 'media_limit_exceeded: count'
     for row in rows:
         video=row['kind']=='video' and row['format'] in ('mp4','mov')
@@ -46,6 +52,18 @@ def intent_error(manifest):
         elif type(w) is not int or type(h) is not int:return 'media_dimensions_unavailable'
         elif max(w,h)>10*min(w,h):return 'media_limit_exceeded: aspect_ratio'
     return None
+
+
+
+def text_params(manifest,text):
+    """C15 explicit link preview: publication data only; never fetch the URL."""
+    if manifest['files']:return None
+    require(type(text) is str,'media_text_unavailable')
+    links=[a['url'] for a in manifest['attachments'] if a['type']=='link']
+    # Count lexical HTTP(S) links without network normalization or fetching.
+    visible={v.rstrip('.,!?;:)]}') for v in re.findall(r'https?://[^\s<>"\\]+',text)}
+    require(len(visible|set(links))<=5,'media_limit_exceeded: links')
+    return {'link_attachment':links[0]} if links else {}
 
 
 def video_notes(items):
@@ -124,7 +142,7 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
     def wait(container,*,video=False):
         deadline=time.monotonic()+(VIDEO_POLL_SECONDS if video else POLL_SECONDS)
         while True:
-            veto();remaining=min(deadline-time.monotonic(),min(g['expires_at']/1000-time.time() for g in grants))
+            veto();remaining=min(deadline-time.monotonic(),min((g['expires_at']/1000-time.time() for g in grants),default=float('inf')))
             require(remaining>0,'media_processing_timeout')
             value=_json(adapter,'GET','/'+container,{'fields':'status,error_message'},timeout=remaining)
             require(time.monotonic()<deadline,'media_processing_timeout');veto()
@@ -133,10 +151,11 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
             require(status=='IN_PROGRESS','media_container_'+(status.lower() if status in ('ERROR','EXPIRED','PUBLISHED') else 'invalid'))
             time.sleep(min(POLL_INTERVAL,max(0,deadline-time.monotonic())))
     try:
-        require(callable(progress) and relay is not None,'media_journal_required')
+        require(callable(progress) and (relay is not None or not post.media_files),'media_journal_required')
         reason=intent_error(post.media_manifest);require(reason is None,reason or '')
         require(len(post.media_files)==len(post.media_manifest['files']) and all(item.manifest==row for item,row in zip(post.media_files,post.media_manifest['files'])),'media_prepared_mismatch')
         video_notes(post.media_files)  # Same measured facts as lint, before any upload.
+        typed=text_params(post.media_manifest,post.text) if not post.media_files else None
         require(type(adapter.user_id) is str and adapter.user_id.isascii() and adapter.user_id.isdecimal(),'media_account_id_invalid')
         common={'text':post.text}
         if post.reply_to:common['reply_to_id']=post.reply_to
@@ -155,7 +174,11 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
             else:params.update(common)
             container=identifier(_json(adapter,'POST','/'+adapter.user_id+'/threads',params))
             ids.append(container);record('processing',index=index);wait(container,video=is_video);record('ready',index=index)
-        container=ids[0]
+        if typed is not None:
+            veto();record('creating')
+            container=identifier(_json(adapter,'POST','/'+adapter.user_id+'/threads',{'media_type':'TEXT',**common,**typed}))
+            ids.append(container);record('processing');wait(container);record('ready')
+        else:container=ids[0]
         if len(ids)>1:
             veto();record('creating_carousel')
             container=identifier(_json(adapter,'POST','/'+adapter.user_id+'/threads',{'media_type':'CAROUSEL','children':','.join(ids),**common}))
@@ -181,7 +204,7 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         http=isinstance(exc,urllib.error.HTTPError)
         endpoint=isinstance(exc,httpsafe.EndpointRejected)
         definite=endpoint or http and 400<=exc.code<500
-        held=bool(grants) and (phase in ('ready','processing','processing_carousel') or definite)
+        held=bool(ids or grants) and (phase in ('ready','processing','processing_carousel') or definite)
         uncertain=phase!='preflight' and not held and not definite
         reason='media_relay_endpoint_rejected' if endpoint else str(exc) if isinstance(exc,media.MediaError) else 'media_relay_failed' if isinstance(exc,(media_relay.MediaRelayError,approval_relay.RelayError)) else 'media_'+phase+('_http_'+str(exc.code) if http else '_failed')
         # Explicit refusal/veto: retire grants once, never retry an unknown POST.
