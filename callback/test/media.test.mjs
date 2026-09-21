@@ -280,6 +280,8 @@ test('public grant copy failure never exposes partially committed bytes',async()
  assert.equal((await call(cap,'provider',body)).status,503);
  assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap)).status,410);
  assert.equal((await call(cap,'provider',body)).status,409);
+ const row=(await control(cap)).find(([k])=>k==='media')[1];assert.ok(row.io_ticket);
+ await control(cap,{clock:row.cleanup_at,alarm:true});assert.ok((await control(cap)).find(([k])=>k==='media')[1].io_ticket);
 });
 
 
@@ -339,7 +341,7 @@ test('lost empty multipart allocation cannot accept parts and malformed public r
  const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.equal(row.status,'initializing');assert.equal(row.upload_id,undefined);
  const part=Buffer.alloc(f.body.part_size,1);
  assert.equal((await mf.dispatchFetch('https://media.test/media-upload/'+f.id+'/1',{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,409);
- assert.deepEqual(await control(f.id,{clock:row.cleanup_at,alarm:true,inspect:true}),{rows:[],alarm:null});
+ const retained=await control(f.id,{clock:row.cleanup_at,alarm:true,inspect:true});assert.ok(retained.rows.find(([k])=>k==='media')[1].io_ticket);assert.equal(retained.alarm,row.cleanup_at+60000);
  for(const suffix of ['invalid',opaque()+'?query=1','%41'+opaque().slice(1)])for(const init of [{},{method:'HEAD'},{headers:{range:'bytes=0-1'}}])assert.equal((await mf.dispatchFetch('https://media.test/m/'+suffix,init)).status,404);
 });
 
@@ -608,4 +610,37 @@ test('restart with unresolved I/O never clears debt or spins beyond ten attempts
  assert.equal((await accountCall(f.body.account,'cleanup-retry')).status,200);
  await control(f.id,{clock:row.cleanup_at+600000,alarm:true});
  assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at+600000})).cleanup.pending_count,1);
+});
+
+
+test('rejected PUT promise followed by late remote commit retains unknown obligation',async()=>{
+ const f=data();f.body.account='late-rejected';assert.equal((await call(f.id,'create',f.body)).status,201);
+ await control(f.id,{lateR2:'put'});assert.equal((await upload(f)).status,503);
+ const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.ok(row.io_ticket);
+ const bucket=await mf.getR2Bucket('MEDIA_BUCKET');assert.equal(await bucket.head(row.key),null);
+ await control(f.id,{clock:row.cleanup_at,alarm:true});
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,1);
+ await control(f.id,{clock:row.cleanup_at,finishLateR2:true});assert.ok(await bucket.head(row.key));
+ for(let i=1;i<10;i++)await control(f.id,{clock:row.cleanup_at+i*60000,alarm:true});
+ const after=await control(f.id,{clock:row.cleanup_at+600000,inspect:true});assert.ok(after.rows.find(([k])=>k==='media')[1].io_ticket);assert.equal(after.alarm,null);
+ assert.deepEqual((await cleanupControl(f.body.account,{clock:row.cleanup_at+600000})).cleanup,{pending_count:1,failed_count:1,reason:'cleanup_failed'});
+ assert.equal((await mf.dispatchFetch('https://media.test/m/'+f.id)).status,410);
+ assert.equal((await accountCall(f.body.account,'cleanup-retry')).status,200);await control(f.id,{clock:row.cleanup_at+600000,alarm:true});
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at+600000})).cleanup.pending_count,1);
+});
+
+
+test('multipart complete response loss retains unknown debt despite object existence',async()=>{
+ const f=data();f.body.account='unknown-complete';f.body.size=100000001;f.body.part_size=5*1024*1024;
+ assert.equal((await call(f.id,'create',f.body)).status,201);
+ for(let n=1;n<=Math.ceil(f.body.size/f.body.part_size);n++){
+  const part=Buffer.alloc(Math.min(f.body.part_size,f.body.size-(n-1)*f.body.part_size),8);
+  assert.equal((await mf.dispatchFetch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,200);
+ }
+ await control(f.id,{afterR2:{operation:'complete',action:'fail'}});
+ assert.equal((await call(f.id,'complete',binding(f))).status,503);
+ const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.ok(row.io_ticket);assert.equal(row.multipart_closed,undefined);
+ const bucket=await mf.getR2Bucket('MEDIA_BUCKET');assert.ok(await bucket.head(row.key));
+ await control(f.id,{clock:row.cleanup_at,alarm:true});assert.ok(await bucket.head(row.key));
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,1);
 });
