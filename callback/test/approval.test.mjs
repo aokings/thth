@@ -275,7 +275,7 @@ const attachment=(over={})=>({index:1,role:'media',kind:'image',format:'jpeg',pu
   public_size:1200,width:1200,height:800,duration:null,alt:'湯呑みに注いだ玉露',preview:opaque(),...over});
 test('approval page renders images, video/audio/caption lines and typed attachments under img-src self',async()=>{
   const p=await person();
-  const first=attachment(),second=attachment({index:2,format:'png',public_sha256:'cd'.repeat(32),width:640,height:640,alt:'茶葉の拡大'});
+  const first=attachment({preview:await preview()}),second=attachment({index:2,format:'png',public_sha256:'cd'.repeat(32),width:640,height:640,alt:'茶葉の拡大',preview:await preview()});
   const video=attachment({index:3,kind:'video',format:'mp4',public_sha256:'ef'.repeat(32),width:1920,height:1080,duration:72,alt:'湯を注ぐ',preview:null});
   const audio=attachment({index:4,kind:'audio',format:'m4a',public_sha256:'12'.repeat(32),width:null,height:null,duration:5.4,alt:'注ぐ音',preview:null});
   const caption=attachment({index:1,role:'caption',kind:'caption',format:'vtt',public_sha256:'34'.repeat(32),width:null,height:null,duration:null,alt:'ja',preview:null});
@@ -286,10 +286,10 @@ test('approval page renders images, video/audio/caption lines and typed attachme
   assert.equal(response.status,200);
   assert.ok(response.headers.get('content-security-policy').includes("img-src 'self'"));
   assert.ok(response.headers.get('content-security-policy').includes("default-src 'none'"));
-  assert.ok(html.includes('<img src="/m/'+first.preview+'" alt="湯呑みに注いだ玉露">'),'first preview img');
-  assert.ok(html.includes('<img src="/m/'+second.preview+'" alt="茶葉の拡大">'),'second preview img');
-  assert.ok(html.includes('<figcaption>添付 1: JPEG 1200×800 · sha abababababab · alt: 湯呑みに注いだ玉露</figcaption>'),html);
-  assert.ok(html.includes('<figcaption>添付 2: PNG 640×640 · sha cdcdcdcdcdcd · alt: 茶葉の拡大</figcaption>'),html);
+  assert.ok(html.includes('<img src="/m/'+first.preview+'" alt="湯呑みに注いだ玉露" loading="lazy">'),'first preview img');
+  assert.ok(html.includes('<img src="/m/'+second.preview+'" alt="茶葉の拡大" loading="lazy">'),'second preview img');
+  assert.ok(html.includes('<figcaption>添付 1: JPEG 1200×800 · sha abababababab · alt: 湯呑みに注いだ玉露 · 画像が表示されない場合は承認しないでください</figcaption>'),html);
+  assert.ok(html.includes('<figcaption>添付 2: PNG 640×640 · sha cdcdcdcdcdcd · alt: 茶葉の拡大 · 画像が表示されない場合は承認しないでください</figcaption>'),html);
   assert.ok(html.includes('<p>添付 3: 動画 01:12 · sha efefefefefef · alt: 湯を注ぐ</p>'),html);
   assert.ok(html.includes('<p>添付 4: 音声 00:05 · sha 121212121212 · alt: 注ぐ音</p>'),html);
   assert.ok(html.includes('<p>字幕 (ja) sha 343434343434</p>'),html);
@@ -335,14 +335,44 @@ test('attachment rows are strictly validated and a rejected create registers not
   assert.equal((await signed('session',opaque(),'create',{...base,job_id:opaque(),attachments:[],typed:''})).status,201);
 });
 test('attachment alt and typed JSON are escaped like the body',async()=>{
-  const p=await person(),preview=opaque();sensitive.push(preview);
+  const p=await person(),capability=await preview();sensitive.push(capability);
   const evil='"><script>alert(1)</script>';
-  const s=await session(p,{attachments:[attachment({alt:evil,preview})],typed:'{"note":"'+evil+'"}'});
+  const s=await session(p,{attachments:[attachment({alt:evil,preview:capability})],typed:'{"note":"'+evil+'"}'});
   const html=await(await page(s)).text();
   assert.equal(html.includes('<script>alert(1)</script>'),false);
-  assert.ok(html.includes('<img src="/m/'+preview+'" alt="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;">'),html);
-  assert.ok(html.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;</figcaption>'),html);
+  assert.ok(html.includes('<img src="/m/'+capability+'" alt="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;" loading="lazy">'),html);
+  assert.ok(html.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt; · 画像が表示されない場合は承認しないでください</figcaption>'),html);
 });
+// F2: the page is honest about what it can show.
+const UNAVAILABLE='<p>添付を表示できないため、この承認ページは使えません。サーバから新しく承認を求めてください。</p>';
+test('a preview that stopped serving removes the approve form and says so',async()=>{
+  const p=await person(),capability=await preview();
+  const s=await session(p,{attachments:[attachment({preview:capability})]});
+  const before=await page(s),live=await before.text();
+  assert.equal(before.status,200);
+  assert.ok(live.includes('<form method="post">'),'a live preview must keep the form');
+  assert.equal(live.includes(UNAVAILABLE),false);
+  await control('media',capability,{clock:Date.now()+700_000});
+  assert.equal((await shown(capability)).status,410);
+  const after=await page(s),html=await after.text();
+  assert.equal(after.status,200);
+  assert.equal(html.includes('<form'),false,'a dead preview still offered the form');
+  assert.equal(html.includes('name="secret"'),false);
+  assert.ok(html.includes(UNAVAILABLE),html);
+  // The body and the digest stay readable: only the approval is withdrawn.
+  assert.ok(html.includes('<p>digest: '+s.body.digest+'</p>'),html);
+});
+test('an image whose preview never existed cannot be approved from the page',async()=>{
+  const p=await person(),capability=opaque();sensitive.push(capability);
+  const s=await session(p,{attachments:[attachment({preview:capability})]});
+  const html=await(await page(s)).text();
+  assert.equal(html.includes('<form'),false);
+  assert.ok(html.includes(UNAVAILABLE),html);
+  // A page with no image preview at all is unaffected.
+  const plain=await session(p,{attachments:[attachment({kind:'video',format:'mp4',duration:3,preview:null})]});
+  assert.ok((await(await page(plain)).text()).includes('<form method="post">'));
+});
+
 // F1: a resolved or expired page must stop showing its images.
 test('consuming an approval revokes every preview the page showed',async()=>{
   const p=await person(),first=await preview(),second=await preview();

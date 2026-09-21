@@ -213,6 +213,12 @@ export class MediaObject extends DurableObject {
     if(changed)await this.schedule(this.row());
     return {status:200,body:{expires_at:this.row()?.expires_at??expires_at}};
   }
+  // Private RPC: `view`'s gate without the bytes, so the approval page can tell
+  // whether this capability would still show an image.
+  async live(){
+    const row=this.row();
+    return !!row&&this.current(row)&&['preview','provider'].includes(row.kind)&&row.status==='ready'&&await this.active(row.account);
+  }
   invalidate(){
     const row=this.row();if(!row||row.kind!=='preview')return fail(404,'not_found');
     this.atomic(()=>{const current=this.row();

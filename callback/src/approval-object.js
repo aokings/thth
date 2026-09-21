@@ -292,7 +292,20 @@ export class ApprovalSession extends AtomicObject {
     const row=this.row();if(!row||row.status!=='pending')return fail(410,'expired');
     const {text,account,kind,digest,csrf,context,attachments,typed}=row;
     // Only the page sees attachments. `clear()` drops them before any receipt.
-    return {status:200,body:{text,account,kind,digest,csrf,context,attachments:attachments??[],typed:typed??null}};
+    return {status:200,body:{text,account,kind,digest,csrf,context,attachments:attachments??[],typed:typed??null,
+      live:await this.livePreviews(attachments)}};
+  }
+  // A page that cannot show one of its images must not offer the approve form:
+  // ask each image's media object whether it would still serve those bytes.
+  // Anything but a live answer — a retired grant, a revoked account, a missing
+  // binding, an RPC that throws — counts as not showable.
+  async livePreviews(rows){
+    for(const row of Array.isArray(rows)?rows:[]){
+      if(row?.kind!=='image'||typeof row.preview!=='string')continue;
+      if(!this.env.MEDIA_OBJECT)return false;
+      try{if(await (await mediaStub(this.env,row.preview)).live()!==true)return false;}catch{return false;}
+    }
+    return true;
   }
   async approve(secret,csrf){try{return await this.attempt(secret,csrf);}finally{await this.settle();}}
   async attempt(secret,csrf){

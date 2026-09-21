@@ -61,8 +61,13 @@ function attachment(row){
   if(row.kind==='caption')return '<p>'+escape(kindWord.caption)+' ('+escape(row.alt)+') '+sha+'</p>';
   if(row.kind==='image'){
     const shape=row.width===null||row.height===null?'寸法: 適用外':escape(row.width)+'×'+escape(row.height);
-    const image=row.preview===null||row.preview===undefined?'':'<img src="/m/'+escape(row.preview)+'" alt="'+escape(row.alt)+'">';
-    return '<figure>'+image+'<figcaption>'+head+': '+escape(row.format.toUpperCase())+' '+shape+' · '+sha+alt+'</figcaption></figure>';
+    // `loading="lazy"` keeps a reload from fetching every capability at once:
+    // /m/ shares the 120/IP/min public quota (docs/運用_承認relay_2.12.md).
+    const missing=row.preview===null||row.preview===undefined;
+    const image=missing?'':'<img src="/m/'+escape(row.preview)+'" alt="'+escape(row.alt)+'" loading="lazy">';
+    // The human is the last check: an image that did not load is not an approval.
+    const warn=missing?'':' · 画像が表示されない場合は承認しないでください';
+    return '<figure>'+image+'<figcaption>'+head+': '+escape(row.format.toUpperCase())+' '+shape+' · '+sha+alt+warn+'</figcaption></figure>';
   }
   const length=row.duration===null||row.duration===undefined?'長さ: 未取得':clock(row.duration);
   return '<p>'+head+': '+escape(kindWord[row.kind])+' '+length+' · '+sha+alt+'</p>';
@@ -90,7 +95,12 @@ export async function approvalRequest(request,env,url) {
       if(request.method==='GET'){
         const result=await stub.view();if(result.status!==200)return page(result.status,'<h1>承認ページは無効です</h1><p>サーバから新しく承認を求めてください。</p>');
         const d=result.body;
-        return page(200,`<h1>${kindLabel[d.kind]}</h1><p>アカウント: ${escape(d.account)}</p><pre>${escape(d.text)}</pre>${attachments(d.attachments,d.typed)}${Object.entries(d.context).filter(([,v])=>v!==null).map(([k,v])=>`<p>${labels[k]}: ${escape(v)}</p>`).join('')}<p>digest: ${escape(d.digest)}</p><p>10 分で失効します。</p><form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><label>承認 secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label><button type="submit">承認</button></form>`);
+        // No form when the page cannot show every image it lists: a human must
+        // never be asked to approve attachments they could not look at.
+        const act=d.live===true
+          ?`<p>10 分で失効します。</p><form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><label>承認 secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label><button type="submit">承認</button></form>`
+          :'<p>添付を表示できないため、この承認ページは使えません。サーバから新しく承認を求めてください。</p>';
+        return page(200,`<h1>${kindLabel[d.kind]}</h1><p>アカウント: ${escape(d.account)}</p><pre>${escape(d.text)}</pre>${attachments(d.attachments,d.typed)}${Object.entries(d.context).filter(([,v])=>v!==null).map(([k,v])=>`<p>${labels[k]}: ${escape(v)}</p>`).join('')}<p>digest: ${escape(d.digest)}</p>${act}`);
       }
       if(request.headers.get('origin')!==url.origin||!/^application\/x-www-form-urlencoded(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(403,{error:'forbidden'});
       const form=new URLSearchParams(await boundedBody(request,2048));
