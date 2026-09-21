@@ -144,12 +144,17 @@ class MediaRelay:
         if count!=size or hash_value.hexdigest()!=binding['sha256']:raise MediaRelayError('media_source_mismatch')
 
     @contextlib.contextmanager
-    def source_snapshot(self,subject,sha256):
+    def source_snapshot(self,subject,sha256,size):
+        # `size` is the VM's own record, written before the bytes existed. The
+        # Worker only repeats it, so a different answer is a mismatch and not a
+        # new truth: refuse it here, before a single byte is read or buffered.
+        if type(size) is not int or size<1:raise MediaRelayError('media_prepared_invalid')
         binding=self.binding(sha256);value=self.control(subject,'status',binding)
         if value.get('status')!='ready' or value.get('sha256')!=sha256 or type(value.get('size')) is not int or value['size']<1:
             raise MediaRelayError('media_source_unavailable')
+        if value['size']!=size:raise MediaRelayError('media_source_mismatch')
         with tempfile.TemporaryFile() as snapshot:
-            self._receive(subject,binding,value['size'],snapshot)
+            self._receive(subject,binding,size,snapshot)
             snapshot.flush();snapshot.seek(0)
             if self.control(subject,'ack',binding).get('status')!='retired':raise MediaRelayError('media_retirement_unconfirmed')
             yield snapshot

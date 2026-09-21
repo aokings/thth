@@ -345,7 +345,7 @@ def complete(context, request, via):
                     # retires the R2 source. Retirement happens once, right after
                     # the verified read: the VM holds the bytes from here on, and
                     # neither a refusal nor a success needs the source again.
-                    with client.source_snapshot(record['subject'], record['sha256']) as snapshot:
+                    with client.source_snapshot(record['subject'], record['sha256'], record['size']) as snapshot:
                         size = os.fstat(snapshot.fileno()).st_size
                         if size != record['size']:
                             raise MediaRelayError('media_source_mismatch')
