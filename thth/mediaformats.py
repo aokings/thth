@@ -595,7 +595,7 @@ def bmff(fd,size,*,allow_edit_lists=False):
 def inspect(fd,size,*,allow_edit_lists=False):
     head=os.pread(fd,16,0)
     if head.startswith(b'\x1a\x45\xdf\xa3'):
-        from .ebmlaudio import webm
+        from .ebmlvideo import webm
         return webm(fd,size)
     if head.startswith(b'OggS'):
         from .oggformats import ogg
@@ -626,8 +626,13 @@ def video_metrics(fd,size):
     Non-fragmented ISO BMFF stts counts / mdhd timescale. VFR uses the average,
     not the largest instantaneous rate. Missing or inconsistent sample timing
     is unknown; this does not invent ffprobe's codec-derived r_frame_rate.
+    WebM uses its DefaultDuration declaration or bounded full-block timeline;
+    finite provider probes and standard-rate heuristics can differ.
     """
     from fractions import Fraction
+    if os.pread(fd,4,0)==b'\x1a\x45\xdf\xa3':
+        from .ebmlvideo import metrics
+        return metrics(fd,size)
     def read(at,n):
         require(0<=at<=size-n,'video_rate_unverifiable');b=os.pread(fd,n,at);require(len(b)==n);return b
     def boxes(a,b):

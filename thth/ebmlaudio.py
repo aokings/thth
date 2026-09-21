@@ -30,7 +30,7 @@ REPEATED={('segment',0x1254c367),('segment',0x1f43b675),('segment',0x114d9b74),(
 
 
 class WebM:
-    def __init__(self,r):self.r=r;self.notes=set();self.tracks={};self.uid=set();self.file_uid=set();self.blocks=0;self.block_order=[];self.maxsize=8
+    def __init__(self,r):self.r=r;self.notes=set();self.tracks={};self.uid=set();self.file_uid=set();self.blocks=0;self.block_order=[];self.maxsize=8;self.schema=SCHEMA
     def vint(self,at,end,*,ident=False):
         require(at<end);first=self.r.read(at,1)[0];require(first!=0);n=9-first.bit_length();require(n<=(4 if ident else 8) and at+n<=end)
         raw=self.r.read(at,n);value=int.from_bytes(raw,'big');data=value&((1<<(7*n))-1)
@@ -83,9 +83,9 @@ class WebM:
         for ident,x,y,start in self.elements(a,b):
             if ident==VOID:self.zero(x,y);continue
             if ident==CRC:require(checksum is None and y-x==4);checksum=(start,y,self.r.read(x,4));continue
-            typ=SCHEMA[kind].get(ident);require(typ is not None,'location_metadata_unverifiable: webm extension')
+            typ=self.schema[kind].get(ident);require(typ is not None,'location_metadata_unverifiable: webm extension')
             require(ident not in out or (kind,ident) in REPEATED)
-            if typ in SCHEMA:value=self.fields(x,y,typ,depth+1)
+            if typ in self.schema:value=self.fields(x,y,typ,depth+1)
             else:value=self.scalar(typ,x,y,capture='key' if ident==0x45a3 else ident in (0x4282,0x86,0x4660))
             if typ in ('simple','block'):self.block_order.append((x,y,typ=='simple'))
             out.setdefault(ident,[]).append(value)
@@ -105,7 +105,7 @@ class WebM:
             mime=self.one(out,0x4660);cover=self.one(out,0x465c);require(mime in ('image/jpeg','image/png') and cover,'location_metadata_unverifiable: embedded_cover_remove_cover')
             data=self.r.read(cover[0],cover[1]-cover[0]);require(data.startswith(b'\xff\xd8') if mime=='image/jpeg' else data.startswith(b'\x89PNG\r\n\x1a\n'))
             inspect_embedded_cover(data);self.notes.add('embedded_cover_retained')
-        if kind in ('info','track','file') and any(SCHEMA[kind].get(x) in ('s','t','date') for x in out):self.notes.add('non_location_metadata_retained')
+        if kind in ('info','track','file') and any(self.schema[kind].get(x) in ('s','t','date') for x in out):self.notes.add('non_location_metadata_retained')
         required={'info':(0x4d80,0x5741),'seek':(0x4dbb,),'seekentry':(0x53ab,0x53ac),'tracks':(0xae,),'cues':(0xbb,),'cue':(0xb3,0xb7),'cuepos':(0xf7,0xf1),'group':(0xa1,),'tags':(0x7373,),'tag':(0x63c0,0x67c8),'attachments':(0x61a7,)}
         require(all(x in out for x in required.get(kind,())))
         if kind=='track':
@@ -160,14 +160,17 @@ class WebM:
         lengths.append(b-a-sum(lengths));require(all(n>=0 for n in lengths));state=self.tracks[number]
         for n in lengths:
             packet=self.packet(a,a+n)
-            if state['codec']=='A_OPUS':_audio(packet,state['streams'])
-            else:vorbisformats.audio(packet,state['vorbis'])
+            self.consume_packet(state,packet)
             a+=n;state['seen']+=1;self.blocks+=1
         require(a==b)
 
+    def consume_packet(self,state,packet):
+        if state['codec']=='A_OPUS':_audio(packet,state['streams'])
+        else:vorbisformats.audio(packet,state['vorbis'])
 
-def webm(fd,size):
-    w=WebM(Reader(fd,size));roots=[]
+
+def parse(fd,size,reader_type=WebM):
+    w=reader_type(Reader(fd,size));roots=[]
     for row in w.elements(0,size):
         if row[0]==VOID:w.zero(row[1],row[2])
         else:roots.append(row)
@@ -188,4 +191,9 @@ def webm(fd,size):
     require(w.blocks>0 and all(t['seen']>0 for t in w.tracks.values()))
     scale=get(info,0x2ad7b1,1000000);require(scale>0);duration=get(info,0x4489)
     if duration is not None:require(duration>0);duration=duration*scale/1e9;require(math.isfinite(duration))
+    return w,segment,scale,duration
+
+
+def webm(fd,size):
+    w,_,_,duration=parse(fd,size)
     return Inspection('webm','audio',None,None,duration,metadata_notes=tuple(sorted(w.notes)))

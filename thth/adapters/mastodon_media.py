@@ -14,7 +14,7 @@ import uuid
 from . import base
 from .. import accounts, httpsafe, jst, media, mediaformats
 
-MIME = {'jpeg':'image/jpeg','png':'image/png','webp':'image/webp','gif':'image/gif','mp4':'video/mp4','mov':'video/quicktime'}
+MIME = {'jpeg':'image/jpeg','png':'image/png','webp':'image/webp','gif':'image/gif','mp4':'video/mp4','mov':'video/quicktime','webm':'video/webm'}
 POLL_SECONDS = 120.0
 POLL_INTERVAL = 2.0
 
