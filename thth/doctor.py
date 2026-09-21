@@ -112,7 +112,9 @@ def diagnose(account_name: str) -> dict:
     report=_diagnose(account_name)
     report['directory_checks']=static['directory_checks']
     from . import media_cleanup
-    if media_cleanup.configured():report['media_cleanup']=media_cleanup.observe(account_name)
+    #未設定でも key と行は出す。**送信はしない**——観測していないことを
+    # 静的な形（`cleanup_observation_unavailable`）でそのまま言う。
+    report['media_cleanup']=media_cleanup.observe(account_name) if media_cleanup.configured() else dict(media_cleanup.UNAVAILABLE)
     return report
 
 

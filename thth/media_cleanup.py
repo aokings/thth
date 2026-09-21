@@ -13,13 +13,19 @@ def configured():
     return True
 
 
+# The one static shape for "we did not learn anything". `doctor` prints this
+# even when no relay is configured, so an unobserved obligation is never shown
+# as a healthy zero and never becomes a missing line.
+UNAVAILABLE = dict(pending_count=None, failed_count=None, reason='cleanup_observation_unavailable')
+
+
 def _counts(value, fields):
     return type(value) is dict and set(value) == set(fields) and all(
         type(value[key]) is int and value[key] >= 0 for key in fields if key != 'reason')
 
 
 def observe(account):
-    unavailable = dict(pending_count=None, failed_count=None, reason='cleanup_observation_unavailable')
+    unavailable = dict(UNAVAILABLE)
     try:
         if not accounts.name_is_safe(account):return unavailable
         result = approval_relay.signed_request('account', account, 'status', {})
