@@ -213,6 +213,17 @@ def create_timeout():
     return min(max(value,CREATE_TIMEOUT_MIN),CREATE_TIMEOUT_MAX)
 
 
+def socket_timed_out(error):
+    """Did this call run out of time on the socket? Never the provider's text.
+
+    `urllib` wraps a connect timeout in `URLError`; a read timeout arrives bare.
+    An `HTTPError` is an answer, however slow it was, so it is never a timeout.
+    """
+    if isinstance(error,urllib.error.HTTPError):return False
+    if isinstance(error,TimeoutError):return True
+    return isinstance(error,urllib.error.URLError) and isinstance(getattr(error,'reason',None),TimeoutError)
+
+
 def _json(adapter,method,path,params,*,timeout=None,socket_timeout=None):
     values={**params,'access_token':adapter.access_token}
     data=urllib.parse.urlencode(values).encode()
@@ -349,7 +360,13 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         definite=endpoint or http and 400<=exc.code<500
         held=bool(ids or grants) and (phase in ('ready','processing','processing_carousel') or definite)
         uncertain=phase!='preflight' and not held and not definite
-        reason='media_relay_endpoint_rejected' if endpoint else str(exc) if isinstance(exc,media.MediaError) else 'media_relay_failed' if isinstance(exc,(media_relay.MediaRelayError,approval_relay.RelayError)) else 'media_'+phase+('_http_'+str(exc.code) if http else '_failed')
+        # 作成で時間切れになったときは「container ができたかどうか分からない」。
+        # Meta は POST を開いたまま媒体を取りに行くので、こちらが諦めたあとに
+        # 作成が終わっていることがある。phase は unknown のままにしたうえで、
+        # 理由だけを `media_creating_timeout` と名指す——generic な `_failed` は
+        # 「出ていない・作り直してよい」と読まれ、container が二重に残る。
+        timed_out=phase in ('creating','creating_carousel') and socket_timed_out(exc)
+        reason='media_relay_endpoint_rejected' if endpoint else str(exc) if isinstance(exc,media.MediaError) else 'media_relay_failed' if isinstance(exc,(media_relay.MediaRelayError,approval_relay.RelayError)) else 'media_'+phase+('_http_'+str(exc.code) if http else '_timeout' if timed_out else '_failed')
         # 4xx の本文には Graph の番号が入っている。**番号だけ**を理由の尾に足す
         # ——「まだ出せない」と「その要求が不正」を運用が見分けられない限り、
         # 同じ `media_publishing_http_400` を見て打つ手が決まらない。provider の

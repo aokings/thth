@@ -144,6 +144,10 @@ MEDIA_NEXT_STEPS=(
  ('unsupported_attachment','次の一歩: この媒体が受け取れない形式です。`thth forms` で受かる形を見る'),
  ('media_limit_exceeded','次の一歩: 媒体の上限を超えています。小さくするか分ける'),
  ('media_capability_unavailable','次の一歩: 媒体の上限を読めていません。instance に届くところで出し直す'),
+ # 作成で時間切れ（`threads_media.socket_timed_out`）。container ができたか
+ # どうかは分からないので、消す前に必ず確かめさせる。
+ ('media_creating_timeout','次の一歩: 媒体が画像/動画を取り込むのに時間がかかっています。しばらくして inflight を確認し、投稿が無ければ消してから再実行'),
+ ('media_creating_carousel_timeout','次の一歩: 媒体が画像/動画を取り込むのに時間がかかっています。しばらくして inflight を確認し、投稿が無ければ消してから再実行'),
  ('media: alt_too_long','次の一歩: alt が長すぎます。2000 バイト以内に縮める'),
  ('media: source_unreadable','次の一歩: 添付を repo から読めません。パスと権限を確かめる'),
  ('media: source_changed','次の一歩: 読んでいる間にファイルが変わりました。もう一度'),
