@@ -12,6 +12,10 @@ import struct
 import zlib
 
 
+# Shared visual sample-entry classification for privacy and observation readers.
+VIDEO_SAMPLE_CODECS=frozenset((b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v',b'jpeg',b'mjpa',b'mjpb'))
+
+
 class FormatError(ValueError):
     pass
 
@@ -418,7 +422,7 @@ def bmff(fd,size,*,allow_edit_lists=False):
         count=int.from_bytes(read(a+4,4),'big');seen=0
         for codec,sa,sb in boxes(a+8,b):
             seen+=1
-            if codec in (b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v',b'jpeg',b'mjpa',b'mjpb'):
+            if codec in VIDEO_SAMPLE_CODECS:
                 prefix=78
                 allowed={b'avcC',b'hvcC',b'av1C',b'vpcC',b'esds',b'pasp',b'clap',b'colr',b'btrt',b'fiel',b'gama'}
             elif codec in (b'mp4a',b'ac-3',b'ec-3',b'Opus',b'fLaC',b'alac',b'sowt',b'twos'):
@@ -581,7 +585,7 @@ def threads_video_info(fd,size):
             elif k==b'stsd':
                 require(y-x>=8)
                 for codec,ea,eb in boxes(x+8,y):
-                    video=codec in (b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v',b'jpeg',b'mjpa',b'mjpb')
+                    video=codec in VIDEO_SAMPLE_CODECS
                     if video:
                         facts['video_codecs'].append(codec.decode('ascii'));prefix=78
                     else:

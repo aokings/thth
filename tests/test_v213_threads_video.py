@@ -240,3 +240,12 @@ def test_mixed_poll_timeout_uses_minimum_live_grant(env,wire,monkeypatch,order):
     assert result.error=='media_provider_url_expired' and result.failure=='media_held'
     assert len(timeouts)==1 and not posts(wire,'/threads_publish')
     assert env[3]['results']==[False,False]
+
+
+@pytest.mark.parametrize('codec',[b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v',b'jpeg',b'mjpa',b'mjpb'])
+def test_visual_sample_entry_privacy_and_observation_agree(tmp_path,codec):
+    sample=bytes(24)+struct.pack('>HH',640,480)+bytes(50)
+    raw=mp4(box(b'stsd',bytes(4)+struct.pack('>I',1)+box(codec,sample)))
+    with prepared(tmp_path,raw) as(manifest,items):
+        facts=mediaformats.threads_video_info(items[0]._public_fd,len(raw))
+        assert codec.decode('ascii') in facts['video_codecs'] and facts['audio']==[]
