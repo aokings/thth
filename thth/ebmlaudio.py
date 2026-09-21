@@ -26,7 +26,7 @@ SCHEMA={
  'tagvalue':{0x45a3:'t',0x447a:'s',0x447b:'s',0x4484:'u',0x4487:'t',0x67c8:'tagvalue'},
  'attachments':{0x61a7:'file'},'file':{0x467e:'t',0x466e:'t',0x4660:'s',0x465c:'cover',0x46ae:'u'},
 }
-REPEATED={('segment',0x1f43b675),('segment',0x114d9b74),('info',0x4444),('tracks',0xae),('cluster',0xa3),('cluster',0xa0),('group',0xfb),('seek',0x4dbb),('cues',0xbb),('cue',0xb7),('tags',0x7373),('tag',0x67c8),('tagvalue',0x67c8),('targets',0x63c5),('targets',0x63c9),('targets',0x63c4),('targets',0x63c6),('attachments',0x61a7)}
+REPEATED={('segment',0x1254c367),('segment',0x1f43b675),('segment',0x114d9b74),('info',0x4444),('tracks',0xae),('cluster',0xa3),('cluster',0xa0),('group',0xfb),('seek',0x4dbb),('cues',0xbb),('cue',0xb7),('tags',0x7373),('tag',0x67c8),('tagvalue',0x67c8),('targets',0x63c5),('targets',0x63c9),('targets',0x63c4),('targets',0x63c6),('attachments',0x61a7)}
 
 
 class WebM:
@@ -112,6 +112,7 @@ class WebM:
             require(all(self.one(out,x,1) in (0,1) for x in (0xb9,0x88,0x9c,0xaa)))
             require(self.one(out,0x55aa,0) in (0,1))
             if 0x23e383 in out:require(self.one(out,0x23e383)>0)
+        if kind=='targets':require(self.one(out,0x68ca,50)>0)
         if kind=='audio' and 0x6264 in out:require(self.one(out,0x6264)>0)
         return out
     @staticmethod
