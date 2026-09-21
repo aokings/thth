@@ -113,7 +113,7 @@ def test_capabilities_fail_before_upload(env,wire,field,value,reason):
 def test_instance_exact_count_size_matrix_alt_bounds(env,wire):
     cfg,adapter,repo=env;fm={'media':[]}
     for i in range(5):(repo/f'{i}.png').write_bytes(png());fm['media'].append({'file':f'{i}.png','alt':'字'})
-    wire['caps']['configuration']['media_attachments'].update(image_size_limit=len(png()),image_matrix_limit=1,description_limit=1)
+    wire['caps']['configuration']['media_attachments'].update(image_size_limit=len(png())+1,image_matrix_limit=1,description_limit=1)
     wire['upload']=[(200,{'id':str(i+1),'type':'image','url':'https://example.invalid/a'}) for i in range(5)]
     result,_,_=invoke(env,fm);assert result.post_id=='100' and len(posts(wire,'/api/v2/media'))==5
     (repo/'six.png').write_bytes(png());fm['media'].append({'file':'six.png','alt':'字'});wire['calls']=[]
@@ -251,8 +251,8 @@ def test_lint_fresh_limits_no_credentials_and_production_rechecks(env,wire):
     other={**cfg,'instance':'https://different.invalid'};assert mm.cached(other) is None
 
 
-@pytest.mark.parametrize('options',[{'quote_approval_policy':'public'},{'visibility':'private'}])
-def test_unimplemented_post_options_refused_without_network(env,wire,options):
+@pytest.mark.parametrize('options',[{'visibility':'private'},{'visibility':'direct'}])
+def test_non_public_post_options_refused_without_network(env,wire,options):
     result,_,_=invoke(env,{'media':[{'file':'a.png','alt':'点'}],'post_options':options})
     assert 'unsupported_attachment: mastodon/' in result.error and not wire['calls']
 

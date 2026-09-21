@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from . import base,bluesky_media as images
-from .. import accounts,httpsafe,jst,leave_gate,media,redact
+from .. import accounts,httpsafe,jst,leave_gate,media,redact,bluesky_metadata
 
 SERVICE='https://video.bsky.app'
 SERVICE_DID='did:web:video.bsky.app'
@@ -32,8 +32,12 @@ def require(value,reason):
 
 
 def intent_error(manifest):
-    if manifest['attachments']:return 'unsupported_attachment: bluesky/typed_attachment_pending'
-    if set(manifest['post_options'])-{'presentation'}:return 'unsupported_attachment: bluesky/video_post_options'
+    try:bluesky_metadata.validate(manifest['post_options'])
+    except media.MediaError as exc:return str(exc)
+    why=images.quote_error(manifest)
+    if why:return why
+    if any(a['type']!='quote' for a in manifest['attachments']):return 'unsupported_attachment: bluesky/typed_attachment_pending'
+    if set(manifest['post_options'])-{'presentation'}-bluesky_metadata.FIELDS:return 'unsupported_attachment: bluesky/video_post_options'
     rows=[r for r in manifest['files'] if r['role']=='media']
     if len(rows)!=1:return 'media_limit_exceeded: video_count'
     row=rows[0]
@@ -75,7 +79,8 @@ def pds_audience(session):
         url=urllib.parse.urlsplit(selected['serviceEndpoint'])
     except (ValueError,TypeError):raise media.MediaError('video_pds_unavailable') from None
     require(url.scheme=='https' and url.path in ('','/') and type(url.hostname) is str and re.fullmatch(r'[A-Za-z0-9.-]+',url.hostname) is not None,'video_pds_unavailable')
-    # Official video guide derives service DID from hostname, not entryway/port.
+    # Official social-app getServiceAuthAudFromUrl uses hostname. The guide's
+    # example uses host; nondefault production-port interoperability is untested.
     return 'did:web:'+url.hostname.lower()
 
 
@@ -178,8 +183,8 @@ def publish(adapter,post,*,before_publish=None):
         why=intent_error(post.media_manifest);require(why is None,why or '')
         require(len(post.media_files)==len(post.media_manifest['files']) and all(item.manifest==row for item,row in zip(post.media_files,post.media_manifest['files'])),'media_prepared_mismatch')
         item=post.media_files[0];row=item.manifest;veto()
-        session=adapter.session();did=session['did'];aud=pds_audience(session);url=service_url()
         body=adapter._post_record(post)
+        session=adapter.session();did=session['did'];aud=pds_audience(session);url=service_url()
         if post.reply_to:body['reply']=adapter._reply_ref(post.reply_to)
         _limits(adapter,url,row['public_size']);veto()
         token,expires=_service_token(adapter,aud,'com.atproto.repo.uploadBlob')
@@ -209,7 +214,7 @@ def publish(adapter,post,*,before_publish=None):
             caption_blob=_caption_blob(response,caption.manifest);ids.append(caption_blob['ref']['$link']);record('ready')
             captions.append({'lang':declaration['lang'],'file':caption_blob})
         if captions:embed['captions']=captions
-        body['embed']=embed;veto()
+        body['embed']=images.with_quote(embed,post.media_manifest);veto()
         payload=json.dumps({'repo':did,'collection':POST_COLLECTION,'record':body},ensure_ascii=False).encode()
         record('publishing')
         response=images._json(adapter,'com.atproto.repo.createRecord',data=payload,content_type='application/json',length=len(payload))

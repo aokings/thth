@@ -160,14 +160,19 @@ def test_redirect_not_followed(env,wire):
 
 
 @pytest.mark.parametrize('option,value',[('languages',['ja']),('labels',['porn']),('presentation','default'),('facets',[])])
-def test_unsupported_options_loud_before_http(env,wire,option,value):
+def test_metadata_options_and_video_only_option_are_distinct(env,wire,option,value):
     result,_,_=invoke(env,fm={'media':[{'file':'a.png','alt':'a'}],'post_options':{option:value}})
-    assert result.error=='unsupported_attachment: bluesky/image_post_options' and not wire['calls']
+    if option=='presentation':assert result.error=='unsupported_attachment: bluesky/image_post_options' and not wire['calls']
+    else:
+        assert result.post_id
+        record=json.loads(calls(wire,'createRecord')[0][1])['record']
+        key={'languages':'langs','labels':'labels','facets':'facets'}[option]
+        assert record[key]==({'$type':'com.atproto.label.defs#selfLabels','values':[{'val':v} for v in value]} if option=='labels' else value)
 
 
-def test_typed_quote_not_dropped(env,wire):
+def test_invalid_quote_reference_refused_before_network(env,wire):
     result,_,_=invoke(env,fm={'media':[{'file':'a.png','alt':'a'}],'attachments':[{'type':'quote','uri':'at://did:plc:other/app.bsky.feed.post/x','cid':'c'}]})
-    assert result.error=='unsupported_attachment: bluesky/typed_attachment_pending' and not wire['calls']
+    assert result.error=='invalid_attachment: bluesky/quote_reference' and not wire['calls']
 
 
 def test_lint_local_count_limit_no_http(env,wire):

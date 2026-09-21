@@ -55,8 +55,8 @@ def validate(rows):
         raise MediaError('media: array required')
     seen = set()
     for row in rows:
-        if not isinstance(row, dict) or set(row) != {'file', 'alt'}:
-            raise MediaError('media: exactly file and alt required')
+        if not isinstance(row, dict) or set(row) not in ({'file', 'alt'}, {'file', 'alt', 'thumbnail_file', 'thumbnail_alt'}):
+            raise MediaError('media: exactly file and alt required, with optional paired thumbnail fields')
         validate_path(row['file'])
         alt = row['alt']
         if not isinstance(alt, str) or not alt.strip() or any(ord(c) < 32 or ord(c) == 127 for c in alt):
@@ -64,6 +64,11 @@ def validate(rows):
         if row['file'] in seen:
             raise MediaError('media: duplicate file')
         seen.add(row['file'])
+        if 'thumbnail_file' in row:
+            validate_path(row['thumbnail_file'])
+            validate([{'file':row['thumbnail_file'],'alt':row['thumbnail_alt']}])
+            if row['thumbnail_file'] in seen:raise MediaError('media: duplicate file')
+            seen.add(row['thumbnail_file'])
     return rows
 
 
@@ -96,7 +101,7 @@ def parse_block(lines, start, indent):
         else:
             raise MediaError('media: invalid indentation')
         key, colon, value = item.partition(':')
-        if not colon or key not in ('file', 'alt') or key in current:
+        if not colon or key not in ('file', 'alt', 'thumbnail_file', 'thumbnail_alt') or key in current:
             raise MediaError('media: unknown or duplicate field')
         current[key] = _scalar(value)
         i += 1
@@ -184,6 +189,7 @@ class Source:
 def pin_sources(repo_dir, rows):
     """No writes, network or format claims; hash exactly the pinned source bytes."""
     validate(rows)
+    if any(set(row)!={'file','alt'} for row in rows):raise MediaError('media: source pins require flattened files')
     sources = []
     root_fd = None
     try:
@@ -311,14 +317,36 @@ def _https(value,field):
     if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password: raise MediaError(f'attachments: HTTPS {field} required')
 
 
+def _strong_ref(value):
+    """Lexicon strongRef syntax only; never fetch or rewrite referenced records."""
+    import base64
+    import re
+    if type(value) is not dict or set(value)!={'uri','cid'}: raise MediaError('attachments: invalid strongRef')
+    uri,cid=value['uri'],value['cid']
+    if type(uri) is not str or len(uri)>8192 or not uri.startswith('at://'): raise MediaError('attachments: invalid strongRef uri')
+    parts=uri[5:].split('/')
+    if len(parts)!=3: raise MediaError('attachments: invalid strongRef uri')
+    authority,nsid,rkey=parts
+    label=r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
+    did=len(authority)<=2048 and re.fullmatch(r'did:[a-z]+:[a-zA-Z0-9._:%-]*[a-zA-Z0-9._-]',authority)
+    handle=len(authority)<=253 and re.fullmatch(label+r'(?:\.'+label+r')*\.[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?',authority)
+    domain,_,name=nsid.rpartition('.')
+    nsid_ok=len(nsid)<=317 and len(domain)<=253 and re.fullmatch(r'[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.'+label+r')+',domain) and re.fullmatch(r'[A-Za-z][A-Za-z0-9]{0,62}',name)
+    if not (did or handle) or not nsid_ok or rkey in ('.','..') or not re.fullmatch(r'[A-Za-z0-9._~:-]{1,512}',rkey): raise MediaError('attachments: invalid strongRef uri')
+    if type(cid) is not str or not re.fullmatch(r'b[a-z2-7]{58}',cid): raise MediaError('attachments: invalid strongRef cid')
+    raw=base64.b32decode(cid[1:].upper()+'='*((-len(cid[1:]))%8))
+    if len(raw)!=36 or raw[:4]!=b'\x01\x71\x12\x20' or 'b'+base64.b32encode(raw).decode().lower().rstrip('=')!=cid: raise MediaError('attachments: invalid strongRef cid')
+
+
 def validate_declarations(fm,medium):
     """No provider calls or guessed limits. Every accepted effect enters digest."""
     rows=fm.get('media',[]); validate(rows)
+    if medium!='mastodon' and any('thumbnail_file' in row for row in rows):raise MediaError('media: parent thumbnail requires mastodon')
     attachments=fm.get('attachments',[]); options=fm.get('post_options',{}); captions=fm.get('captions',[])
     if type(attachments) is not list or type(options) is not dict or type(captions) is not list: raise MediaError('attachments: wrong container type')
     fields={
         'quote':({'type','uri'},{'cid'}),
-        'link':({'type','url'},{'title','description','thumbnail_file','thumbnail_alt'}),
+        'link':({'type','url'},{'title','description','thumbnail_file','thumbnail_alt','associated_refs'}),
         'poll':({'type','options'},{'expires_in','multiple','hide_totals'}),
         'text':({'type','text'},{'link','styles'}),
         'gif':({'type','provider','id'},set()),
@@ -341,6 +369,9 @@ def validate_declarations(fm,medium):
             for key in ('title','description'):
                 if key in row: _text(row[key],key,empty=True)
             if medium=='bluesky' and not {'title','description'}<=set(row): raise MediaError('attachments: Bluesky card title/description required')
+            if 'associated_refs' in row:
+                if medium!='bluesky' or type(row['associated_refs']) is not list: raise MediaError('attachments: invalid associated_refs')
+                for ref in row['associated_refs']: _strong_ref(ref)
             if ('thumbnail_file' in row)!=('thumbnail_alt' in row): raise MediaError('attachments: thumbnail file and alt required together')
             if 'thumbnail_file' in row: validate([{'file':row['thumbnail_file'],'alt':row['thumbnail_alt']}])
         elif kind=='poll':
@@ -366,17 +397,20 @@ def validate_declarations(fm,medium):
     if medium=='bluesky' and rows and 'link' in seen: raise MediaError('attachments: media/card mutually exclusive')
     option_fields={
         'mastodon':{'visibility','language','sensitive','spoiler_text','quote_approval_policy','focus'},
-        'bluesky':{'languages','labels','presentation','gallery','facets'},
+        'bluesky':{'languages','labels','presentation','gallery','facets','tags'},
         'threads':{'text_spoiler','media_spoiler','ghost','reply_control','reply_approvals'},
     }
     if set(options)-option_fields.get(medium,set()): raise MediaError('post_options: unknown, duplicate legacy or unsupported field')
     booleans={'sensitive','gallery','text_spoiler','media_spoiler','ghost','reply_approvals'}
     for key,value in options.items():
-        if key in booleans:
+        if key=='text_spoiler' and type(value) is list:
+            for span in value:
+                if type(span) is not dict or set(span)!={'offset','length'} or type(span['offset']) is not int or type(span['length']) is not int or span['offset']<0 or span['length']<=0:raise MediaError('post_options: invalid text_spoiler range')
+        elif key in booleans:
             if type(value) is not bool: raise MediaError(f'post_options: boolean {key} required')
-        elif key in ('languages','labels'):
+        elif key in ('languages','labels','tags'):
             if type(value) is not list: raise MediaError(f'post_options: array {key} required')
-            for item in value:_text(item,key)
+            for item in value:_text(item,key,empty=key in ('labels','tags'))
         elif key=='focus':
             if type(value) is not list or len(value)!=len(rows): raise MediaError('post_options: focus needs one coordinate pair per file')
             for pair in value:
@@ -389,11 +423,13 @@ def validate_declarations(fm,medium):
                 if type(begin) is not int or type(end) is not int or not 0<=begin<end or type(facet['features']) is not list:raise MediaError('post_options: invalid facet range')
                 for feature in facet['features']:
                     if not isinstance(feature,dict):raise MediaError('post_options: invalid feature')
-                    typ=feature.get('$type'); field={'app.bsky.richtext.facet#link':'uri','app.bsky.richtext.facet#mention':'did','app.bsky.richtext.facet#tag':'tag'}.get(typ)
+                    typ=feature.get('$type')
+                    if type(typ) is not str:raise MediaError('post_options: unknown feature')
+                    field={'app.bsky.richtext.facet#link':'uri','app.bsky.richtext.facet#mention':'did','app.bsky.richtext.facet#tag':'tag'}.get(typ)
                     if field is None or set(feature)!={'$type',field}:raise MediaError('post_options: unknown feature')
-                    _text(feature[field],field)
+                    _text(feature[field],field,empty=field=='tag')
         else:_text(value,key,empty=key=='spoiler_text')
-    for key,values in {'visibility':{'public','unlisted','private','direct'},'quote_approval_policy':{'public','followers','nobody'},'reply_control':{'everyone','accounts_you_follow','mentioned_only'}}.items():
+    for key,values in {'visibility':{'public','unlisted','private','direct'},'quote_approval_policy':{'public','followers','nobody'},'reply_control':{'everyone','accounts_you_follow','mentioned_only','parent_post_author_only','followers_only'}}.items():
         if key in options and options[key] not in values:raise MediaError(f'post_options: invalid {key}')
     seen_captions=set()
     for caption in captions:
@@ -436,16 +472,20 @@ def prepare(repo_dir,fm,medium):
     """Shared exact bytes and metadata; pins remain live for the caller's use."""
     from . import mediaformats
     attachments,options,captions=validate_declarations(fm,medium)
-    files=list(fm.get('media',[])); roles=[('media',i+1) for i in range(len(files))]
+    media_rows=fm.get('media',[])
+    files=[{'file':row['file'],'alt':row['alt']} for row in media_rows]; roles=[('media',i+1,None) for i in range(len(files))]
+    for index,row in enumerate(media_rows,1):
+        if 'thumbnail_file' in row:
+            files.append({'file':row['thumbnail_file'],'alt':row['thumbnail_alt']});roles.append(('thumbnail',index,index))
     for index,row in enumerate(attachments,1):
         if 'thumbnail_file' in row:
-            files.append({'file':row['thumbnail_file'],'alt':row['thumbnail_alt']}); roles.append(('thumbnail',index))
+            files.append({'file':row['thumbnail_file'],'alt':row['thumbnail_alt']}); roles.append(('thumbnail',index,None))
     for index,row in enumerate(captions,1):
-        files.append({'file':row['file'],'alt':row['lang']}); roles.append(('caption',index))
+        files.append({'file':row['file'],'alt':row['lang']}); roles.append(('caption',index,None))
     prepared=[]
     try:
         with pin_sources(repo_dir,files) as sources, contextlib.ExitStack() as snapshots:
-            for source,(role,index) in zip(sources,roles):
+            for source,(role,index,parent) in zip(sources,roles):
                 # Anonymous, private snapshot: no provider ever reads mutable repo bytes.
                 snapshot=snapshots.enter_context(tempfile.TemporaryFile(mode='w+b'))
                 snapshot_hash=hashlib.sha256(); offset=0
@@ -462,7 +502,9 @@ def prepare(repo_dir,fm,medium):
                     if not (text.startswith('WEBVTT\n') or text.startswith('WEBVTT\r\n') or text.startswith('WEBVTT ') or text.startswith('WEBVTT\t')) or '\x00' in text:raise MediaError('captions: invalid WebVTT')
                     info=mediaformats.Inspection('vtt','caption',None,None,None)
                 else:
-                    info=mediaformats.inspect(snapshot.fileno(),source.size,**({'allow_edit_lists':True} if medium=='threads' else {}))
+                    # Threads takes MP4/MOV only: WebM is named and refused here,
+                    # before any structure parsing or provider call.
+                    info=mediaformats.inspect(snapshot.fileno(),source.size,**({'allow_edit_lists':True,'allow_webm':False} if medium=='threads' else {}))
                     if role=='thumbnail' and info.kind!='image':raise MediaError('attachments: image thumbnail required')
                 public=info.public_bytes
                 if public is not None:
@@ -471,8 +513,12 @@ def prepare(repo_dir,fm,medium):
                         raise MediaError('media: public structure is not stable')
                 sha=hashlib.sha256(public).hexdigest() if public is not None else source.source_sha256
                 row={**source.fingerprint(),'role':role,'index':index,'public_sha256':sha,'public_size':len(public) if public is not None else source.size,'format':info.format,'kind':info.kind,'width':info.width,'height':info.height,'duration':info.duration,'orientation':info.orientation}
+                if parent is not None:row['parent']=parent
+                if info.metadata_notes:row['metadata_notes']=list(info.metadata_notes)
                 source.verify();prepared.append(Prepared(row,source,public,snapshot.fileno()))
             media_files=[x.manifest for x in prepared if x.manifest['role']=='media']
+            for item in prepared:
+                if 'parent' in item.manifest and media_files[item.manifest['parent']-1]['kind'] not in ('audio','video'):raise MediaError('media: thumbnail parent must be audio or video')
             if medium=='bluesky' and len({x['kind'] for x in media_files})>1:raise MediaError('attachments: incompatible Bluesky media types')
             for caption in captions:
                 if media_files[caption['media_index']-1]['kind']!='video':raise MediaError('captions: video required')
@@ -499,11 +545,13 @@ def display(manifest):
     lines=[]
     for row in manifest['files']:
         shape=f"{row['width']}×{row['height']}" if row['width'] is not None else '寸法: 適用外'
-        seconds=f" / {row['duration']}秒" if row['duration'] is not None else ''
+        seconds=f" / {row['duration']}秒" if row['duration'] is not None else ' / 秒数: 未取得' if row['kind'] in ('audio','video') else ''
         lines.append(f"添付 {row['role']} {row['index']}: {row['file']} / {row['format']} / {shape}{seconds}")
         lines.append(f"size: source {row['size']} bytes / public {row['public_size']} bytes")
         label="lang" if row["role"]=="caption" else "alt"
         lines.append(f"{label}: {row['alt']}")
+        if 'parent' in row:lines.append(f"parent: {row['parent']} / warning: thumbnail_alt is approval-only (no provider alt field)")
+        for note in row.get('metadata_notes',[]):lines.append('warning: '+note)
         lines.append(f"source SHA256: {row['source_sha256']}")
         lines.append(f"public SHA256: {row['public_sha256']}")
     for key in ('attachments','post_options','captions'):
@@ -517,8 +565,14 @@ def prepared_component(manifest):
     # This API accepts only the manifest produced by prepare, never binary bytes.
     if type(manifest['files']) is not list or type(manifest['attachments']) is not list or type(manifest['post_options']) is not dict or type(manifest['captions']) is not list:
         raise MediaError('media: invalid prepared container')
+    thumbnail_parents=set()
     for row in manifest['files']:
-        if not isinstance(row,dict) or set(row)!={'file','alt','source_sha256','size','role','index','public_sha256','public_size','format','kind','width','height','duration','orientation'}:raise MediaError('media: invalid prepared file')
+        if not isinstance(row,dict) or set(row)-{'metadata_notes','parent'}!={'file','alt','source_sha256','size','role','index','public_sha256','public_size','format','kind','width','height','duration','orientation'}:raise MediaError('media: invalid prepared file')
+        if 'parent' in row:
+            parent=row['parent'];parents=[x for x in manifest['files'] if isinstance(x,dict) and x.get('role')=='media' and x.get('index')==parent]
+            if type(parent)is not int or parent<1 or row['role']!='thumbnail' or row['kind']!='image' or row['index']!=parent or len(parents)!=1 or parents[0].get('kind') not in ('audio','video') or parent in thumbnail_parents:raise MediaError('media: invalid thumbnail parent')
+            thumbnail_parents.add(parent)
+        if 'metadata_notes' in row and (type(row['metadata_notes']) is not list or any(note not in ('non_location_metadata_retained','embedded_cover_retained') for note in row['metadata_notes'])):raise MediaError('media: invalid metadata notes')
         fingerprint_component([{k:row[k] for k in ('file','alt','source_sha256','size')}])
         if not isinstance(row['public_sha256'],str) or not re.fullmatch('[0-9a-f]{64}',row['public_sha256']) or type(row['public_size']) is not int or row['public_size']<0:raise MediaError('media: invalid public fingerprint')
     try:

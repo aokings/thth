@@ -44,7 +44,9 @@ def test_known_scalar_keeps_bytes(tmp_path,kind,value):
     with media.prepare(tmp_path,{'media':[{'file':'v.mp4','alt':'video'}]},'threads') as (manifest,items):
         assert b''.join(items[0].chunks())==raw
         row=manifest['files'][0];assert row['source_sha256']==row['public_sha256']==hashlib.sha256(raw).hexdigest()
-        assert 'metadata_notes' not in row and row['duration']==2.5
+        # C14 (第 7 段) から、保持した非位置メタデータは notes で申告する。
+        # 受け入れたのは「書き換えていない」ことで、無申告であることではない。
+        assert row['metadata_notes']==['non_location_metadata_retained'] and row['duration']==2.5
 
 
 @pytest.mark.parametrize('kind,value',[(1,b'\xff'),(2,b'a'),(21,b''),(21,bytes(5)),(23,bytes(8)),(79,bytes(8))])

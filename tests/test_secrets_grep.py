@@ -17,6 +17,12 @@ SECRET_RE = re.compile(r"(sk-ant-[a-zA-Z0-9_-]{20,}|[a-f0-9]{32,})")
 
 TARGET_DIRS = ["thth", "bin", "accounts", "systemd", "mcp"]
 ALLOWED_SUFFIXES = {".pyc"}
+# 正規表現は緩めない。**生成物だけを名指しで除く。** `thth/_grapheme_data.py` は
+# tools/generate_graphemes.py が Unicode 17 の表から起こす自動生成ファイルで、
+# 中の 64 桁 16 進は取り込んだ元データ（GraphemeBreakProperty.txt など）の
+# SHA256 ——秘密ではなく、むしろ出所を証明するために置いてある。
+# 手で書いたファイルを足さないこと。足すなら生成元と理由をここに書く。
+ALLOWED_PATHS = {"thth/_grapheme_data.py"}
 
 
 def _iter_target_files():
@@ -26,6 +32,8 @@ def _iter_target_files():
             continue
         for path in base.rglob("*"):
             if path.is_file() and path.suffix not in ALLOWED_SUFFIXES and "__pycache__" not in path.parts:
+                if path.relative_to(REPO_ROOT).as_posix() in ALLOWED_PATHS:
+                    continue
                 yield path
 
 
@@ -57,5 +65,7 @@ def test_grepコマンド自体でも確認する():
         ],
         capture_output=True, text=True,
     )
-    hits = [line for line in result.stdout.splitlines() if ".example" not in line]
+    allowed = tuple(str(REPO_ROOT / p) + ":" for p in ALLOWED_PATHS)
+    hits = [line for line in result.stdout.splitlines()
+            if ".example" not in line and not line.startswith(allowed)]
     assert not hits, "秘密らしき文字列:\n" + "\n".join(hits)

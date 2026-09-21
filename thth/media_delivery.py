@@ -91,7 +91,7 @@ def publish(adapter,post,*,cfg,fm,manifest,state_dir,before_publish=None,on_cont
                 durable_phase=phase
             from .adapters import mastodon_media
             from .media_relay import MediaRelay
-            bound=dataclasses.replace(post,media_manifest=manifest,media_files=tuple(items),media_progress=progress,media_cache=(lambda cap:mastodon_media.cache(cfg,cap)) if cfg['media']=='mastodon' else None,media_relay=MediaRelay(cfg['account'],'operator') if cfg['media']=='threads' else None)
+            bound=dataclasses.replace(post,media_manifest=manifest,media_files=tuple(items),media_progress=progress,media_cache=(lambda cap:mastodon_media.cache(cfg,cap)) if cfg['media']=='mastodon' else None,media_relay=MediaRelay(cfg['account'],'operator') if cfg['media']=='threads' and items else None)
             # No request precedes this durable intent. It also changes the old
             # legacy inflight leaf to a private 0600 file without copying blobs.
             progress('prepared',remote_ids=[])
@@ -119,29 +119,60 @@ def cached_note(cfg):
     return f"media limits: cached instance={value['instance']} version={value['version']} observed_at={value['observed_at']} (rechecked before upload)"
 
 
-def lint_notes(cfg,fm):
+def lint_notes(cfg,fm,*,text=None):
     """Fresh public limits; unknown or excessive attachments never pass lint."""
-    if not cfg or not fm.get('media'):return []
+    if not cfg or not media.declared(fm):return []
     if cfg.get('media')=='threads':
         from .adapters import threads_media
         try:
             with media.prepare(cfg['repo_dir'],fm,'threads') as (manifest,items):
                 reason=threads_media.intent_error(manifest)
+                if not reason:
+                    threads_media.common_options(manifest,text,reply_to=fm.get('reply_to'),topic=fm.get('topic'),location_id=fm.get('location_id'),share_to_instagram=fm.get('share_to_instagram',False))
+                    if not items:threads_media.text_params(manifest,text)
                 return [reason] if reason else threads_media.notes(manifest,items)
         except (OSError,ValueError) as exc:return [str(exc) if isinstance(exc,media.MediaError) else 'media_unavailable']
     if cfg.get('media')=='bluesky':
         try:
             with media.prepare(cfg['repo_dir'],fm,'bluesky') as (manifest,_):reason=error_for(cfg,manifest)
-            return [reason] if reason else ['warning: bluesky video daily quota/email permission unobserved; rechecked before upload'] if any(r['kind']=='video' for r in manifest['files']) else []
+            if not reason:
+                from . import bluesky_metadata
+                bluesky_metadata.lint(cfg,fm,text)
+            return [reason] if reason else ['warning: bluesky video daily quota/email permission unobserved; rechecked before upload'] if any(r['kind']=='video' for r in manifest['files']) else ['warning: bluesky external thumbnail_alt is a local approval note; provider has no thumbnail alt field'] if any(a['type']=='link' and 'thumbnail_alt' in a for a in manifest['attachments']) else []
         except (OSError,ValueError) as exc:
             return [str(exc) if isinstance(exc,media.MediaError) else 'media_unavailable']
     if cfg.get('media')!='mastodon':return []
     from .adapters import mastodon_media
     from .mediaformats import FormatError
     try:
-        cap=mastodon_media.observe(cfg)
-        with media.prepare(cfg['repo_dir'],fm,cfg['media']) as (_,items):mastodon_media.check_limits(cap,items)
-        return ['warning: '+cached_note(cfg)]
+        # Preserve the existing file-media lint order: unavailable live limits
+        # take precedence over opening local media; never fall back to cache.
+        special=bool(fm.get('attachments')) or 'quote_approval_policy' in fm.get('post_options',{})
+        cap=mastodon_media.observe(cfg) if fm.get('media') and not special else None
+        with media.prepare(cfg['repo_dir'],fm,cfg['media']) as (manifest,items):
+            reason=mastodon_media.intent_error(manifest)
+            if reason:return [reason]
+            poll=next((row for row in manifest['attachments'] if row['type']=='poll'),None)
+            quote=any(row['type']=='quote' for row in manifest['attachments']) or 'quote_approval_policy' in manifest['post_options']
+            mastodon_media.check_text_intent(manifest,text)
+            if special and (items or poll is not None or quote):
+                body,instance=mastodon_media.observe_instance(cfg);notes=[]
+                if poll is not None:
+                    limits=mastodon_media.poll_capabilities(body,instance)
+                    mastodon_media.check_poll(limits,poll,text)
+                    notes.append('warning: poll limits: latest instance version='+limits['version']+' observed_at='+limits['observed_at']+'; rechecked before publish')
+                if quote:
+                    version=mastodon_media.quote_capabilities(body)
+                    notes.append('warning: quote capability: latest instance API='+str(version)+'; target checked before publish')
+                if items:
+                    limits=mastodon_media.capabilities(body,instance);mastodon_media.check_limits(limits,items)
+                    mastodon_media.cache(cfg,limits);notes.append('warning: '+cached_note(cfg));notes.extend(mastodon_media.metadata_notes(items))
+                return notes
+            if items:
+                mastodon_media.check_limits(cap,items)
+                retained_notes=mastodon_media.metadata_notes(items)
+            else:return ['warning: Mastodon generates a preview from the approved body URL; display is unobserved'] if any(row['type']=='link' for row in manifest['attachments']) else []
+        return ['warning: '+cached_note(cfg)]+retained_notes
     except (OSError,ValueError) as exc:
         code=str(exc) if isinstance(exc,(media.MediaError,FormatError)) else 'media_capability_unavailable'
         return [code]

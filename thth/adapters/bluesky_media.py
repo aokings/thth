@@ -10,7 +10,7 @@ import json
 import urllib.error
 import urllib.request
 from . import base
-from .. import accounts, httpsafe, jst, media
+from .. import accounts, httpsafe, jst, media, bluesky_metadata
 
 MIME={'jpeg':'image/jpeg','png':'image/png','webp':'image/webp','gif':'image/gif'}
 MAX_BYTES=2_000_000
@@ -20,15 +20,47 @@ def require(ok,reason):
     if not ok:raise media.MediaError(reason)
 
 
+def quote_error(manifest):
+    for row in manifest['attachments']:
+        if row['type']=='quote':
+            try:media._strong_ref({'uri':row['uri'],'cid':row['cid']})
+            except (KeyError,ValueError):return 'invalid_attachment: bluesky/quote_reference'
+    return None
+
+
+def with_quote(embed,manifest):
+    """Fixed record/recordWithMedia Lexicons; no referenced-record fetch."""
+    quote=next((a for a in manifest['attachments'] if a['type']=='quote'),None)
+    if quote is None:return embed
+    record={'$type':'app.bsky.embed.record','record':{'uri':quote['uri'],'cid':quote['cid']}}
+    return {'$type':'app.bsky.embed.recordWithMedia','record':record,'media':embed} if embed is not None else record
+
+
 def intent_error(manifest):
+    try:bluesky_metadata.validate(manifest['post_options'])
+    except media.MediaError as exc:return str(exc)
+    why=quote_error(manifest)
+    if why:return why
     if any(row['role']=='media' and row['kind']=='video' for row in manifest['files']):
         from . import bluesky_video
         return bluesky_video.intent_error(manifest)
-    if manifest['attachments']:return 'unsupported_attachment: bluesky/typed_attachment_pending'
+    attachments=[a for a in manifest['attachments'] if a['type']!='quote']
+    if attachments:
+        if len(attachments)!=1 or attachments[0]['type']!='link':return 'unsupported_attachment: bluesky/typed_attachment_pending'
+        if manifest['captions'] or set(manifest['post_options'])-bluesky_metadata.FIELDS:return 'unsupported_attachment: bluesky/external_post_options'
+        card=attachments[0];rows=manifest['files']
+        if len(rows)!=(1 if 'thumbnail_file' in card else 0):return 'media_prepared_mismatch'
+        for row in rows:
+            if row['role']!='thumbnail' or row['kind']!='image' or row['format'] not in MIME:return 'unsupported_attachment: bluesky/external_thumbnail'
+            if row['public_size']>1_000_000:return 'media_limit_exceeded: external_thumbnail_bytes'
+            if any(type(row.get(k)) is not int or row[k]<=0 for k in ('width','height')):return 'media_dimensions_unavailable'
+        return None
     if manifest['captions']:return 'unsupported_attachment: bluesky/image_captions'
-    if set(manifest['post_options'])-{'gallery'}:return 'unsupported_attachment: bluesky/image_post_options'
+    if set(manifest['post_options'])-{'gallery'}-bluesky_metadata.FIELDS:return 'unsupported_attachment: bluesky/image_post_options'
     rows=manifest['files']
-    if not rows:return 'unsupported_attachment: bluesky/no_images'
+    if not rows:
+        if (manifest['attachments'] or bluesky_metadata.FIELDS.intersection(manifest['post_options'])) and not set(manifest['post_options'])-bluesky_metadata.FIELDS:return None
+        return 'unsupported_attachment: bluesky/no_images'
     for row in rows:
         if row['role']!='media' or row['kind']!='image' or row['format'] not in MIME:
             return 'unsupported_attachment: bluesky/'+str(row['format'])
@@ -94,6 +126,7 @@ def publish(adapter,post,*,before_publish=None):
         session=adapter.session()
         if post.reply_to:record_body['reply']=adapter._reply_ref(post.reply_to)
         entries=[];gallery=post.media_manifest['post_options'].get('gallery',False)
+        card=next((a for a in post.media_manifest['attachments'] if a['type']=='link'),None)
         for index,item in enumerate(post.media_files):
             veto();row=item.manifest
             width,height=row['width'],row['height']
@@ -105,7 +138,14 @@ def publish(adapter,post,*,before_publish=None):
             entry={'image':blob,'alt':row['alt'],'aspectRatio':{'width':width,'height':height}}
             if gallery:entry['$type']='app.bsky.embed.gallery#image'
             entries.append(entry)
-        record_body['embed']={'$type':'app.bsky.embed.gallery','items':entries} if gallery else {'$type':'app.bsky.embed.images','images':entries}
+        if card:
+            external={'uri':card['url'],'title':card['title'],'description':card['description']}
+            if entries:external['thumb']=entries[0]['image']
+            if 'associated_refs' in card:external['associatedRefs']=card['associated_refs']
+            record_body['embed']={'$type':'app.bsky.embed.external','external':external}
+        elif entries:record_body['embed']={'$type':'app.bsky.embed.gallery','items':entries} if gallery else {'$type':'app.bsky.embed.images','images':entries}
+        embed=with_quote(record_body.get('embed'),post.media_manifest)
+        if embed is not None:record_body['embed']=embed
         veto()
         payload=json.dumps({'repo':session['did'],'collection':POST_COLLECTION,'record':record_body},ensure_ascii=False).encode('utf-8')
         record('publishing')
@@ -122,7 +162,7 @@ def publish(adapter,post,*,before_publish=None):
         endpoint=isinstance(exc,httpsafe.EndpointRejected)
         preconnect=endpoint or isinstance(exc,urllib.error.URLError) and isinstance(exc.reason,OSError) and exc.reason.errno==errno.ECONNREFUSED
         reason='media_redirect_refused' if redirect else 'media_endpoint_rejected' if endpoint else 'media_connection_refused' if preconnect else ('media_'+phase+'_http_'+str(exc.code)) if http else str(exc) if isinstance(exc,media.MediaError) else 'media_'+phase+'_failed'
-        definite=(redirect or preconnect or http and 400<=exc.code<500) and phase=='uploading' and not ids
+        definite=(redirect or preconnect or http and 400<=exc.code<500) and phase in ('uploading','publishing') and not ids
         held=bool(ids) and (phase=='ready' or (http and 400<=exc.code<500 and phase in ('uploading','publishing')))
         uncertain=phase!='preflight' and not definite and not held
         try:
