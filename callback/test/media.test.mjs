@@ -9,6 +9,7 @@ import {fileURLToPath} from 'node:url';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
 import {pythonForTests} from './python-runtime.js';
 import {canonical,mediaRequest} from '../src/media.js';
+import {reply} from '../src/relay.js';
 import {canonical as approvalCanonical} from '../src/approval.js';
 const opaque=()=>randomBytes(32).toString('base64url'),sha=b=>createHash('sha256').update(b).digest('hex');
 const logs=[],secrets=[];let mf,privateKey,runtimeDirectory,options;
@@ -745,13 +746,38 @@ test('unknown multipart retry returns explicit conflict without a second claim',
 });
 
 
-test('real upload IP quota rejects request121 across subjects and isolates peers',async()=>{
+// The configured quota, read back from the runtime options this file boots.
+const configured=binding=>options.workers[0].config.env[binding].simple;
+// A fixed window over a clock the test owns. 121 real dispatches take real time,
+// so under load they can straddle a real 60 s boundary and the 121st then
+// succeeds — the flake had nothing to do with the behaviour under test.
+function counter(binding){
+ const simple=configured(binding),seen=new Map();let now=0;
+ return {simple,advance(ms){now+=ms;},
+  limit:{async limit({key}){
+   const id=key+'@'+Math.floor(now/(simple.period*1000)),count=(seen.get(id)||0)+1;
+   seen.set(id,count);return {success:count<=simple.limit};
+  }}};
+}
+test('upload IP quota rejects request121 across subjects, isolates peers and resets next window',async()=>{
+ const quota=counter('MEDIA_UPLOAD_IP_LIMIT');
+ assert.deepEqual(quota.simple,{limit:120,period:60},'configured upload IP quota changed');
+ const env={MEDIA_BUCKET:{},MEDIA_OBJECT:{getByName:()=>({upload:async()=>reply(404,{error:'not_found'})})},
+   MEDIA_UPLOAD_IP_LIMIT:quota.limit,MEDIA_UPLOAD_LIMIT:{limit:async()=>({success:true})}};
+ const put=(id,ip)=>{const request=new Request('https://media.test/media-upload/'+id,{method:'PUT',headers:{'cf-connecting-ip':ip}});
+   return mediaRequest(request,env,new URL(request.url));};
  const peer='203.0.113.200',other='203.0.113.201';
- const put=(id,ip)=>dispatch('https://media.test/media-upload/'+id,{method:'PUT',headers:{'cf-connecting-ip':ip}});
- for(let n=0;n<120;n++)assert.equal((await put(opaque(),peer)).status,404);
+ for(let n=0;n<quota.simple.limit;n++)assert.equal((await put(opaque(),peer)).status,404,'request'+(n+1));
  const refused=await put(opaque(),peer);assert.equal(refused.status,429);assert.deepEqual(await refused.json(),{error:'rate_limited'});
- assert.equal((await put(opaque(),other)).status,404);
- assert.equal((await put(opaque(),peer)).status,429);
+ assert.equal((await put(opaque(),other)).status,404,'a second peer must keep its own quota');
+ assert.equal((await put(opaque(),peer)).status,429,'a new subject must not refresh the peer quota');
+ quota.advance(quota.simple.period*1000);
+ assert.equal((await put(opaque(),peer)).status,404,'the next window starts empty');
+});
+test('the real upload IP limiter is bound and does not refuse a first request',async()=>{
+ // Window-independent: one request can never exhaust a 120/60 s quota.
+ assert.equal((await dispatch('https://media.test/media-upload/'+opaque(),
+   {method:'PUT',headers:{'cf-connecting-ip':'203.0.113.202'}})).status,404);
 });
 
 
