@@ -154,3 +154,19 @@ def test_worker_refusal_on_create_is_definite_and_5xx_stays_unknown(env, monkeyp
     job = only_job()
     assert job['reason'] == expected
     assert job['status'] == ('failed' if expected.endswith('rejected') else 'unknown')
+
+
+def test_analytics_report_by_names_every_accepted_word(tmp_path, monkeypatch):
+    """`attachment_kind` は受け付けるのに、断り文句だけが古いままだった。"""
+    import importlib.util
+    from pathlib import Path as _Path
+    root = _Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location('thth_mcp_server_audit', root / 'mcp/server.py')
+    server = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(server)
+    words = server._schema_for('analytics_report')['properties']['by']['enum']
+    assert 'attachment_kind' in words
+    with pytest.raises(server.ToolInputError) as caught:
+        server.validate_arguments('analytics_report', {'by': 'attachment_kind'})
+    for word in words:
+        assert word in str(caught.value), word
