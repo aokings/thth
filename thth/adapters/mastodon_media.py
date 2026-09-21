@@ -46,7 +46,7 @@ def intent_error(manifest):
     if 'quote_approval_policy' in options and options['quote_approval_policy'] not in ('public','followers','nobody'):
         return 'invalid_quote_approval_policy: mastodon'
     if not manifest['files'] and not attachments and not options:return 'unsupported_attachment: mastodon/no_media'
-    if any(x['role']!='media' or x['kind'] not in ('image','video','audio') or x['format'] not in (set(MIME)|{'wav'}) for x in manifest['files']):
+    if any(x['role']!='media' or x['kind'] not in ('image','video','audio') or x['format'] not in (set(MIME)|{'wav','flac'}) for x in manifest['files']):
         return 'unsupported_attachment: mastodon/format'
     return None
 
@@ -151,7 +151,7 @@ def capabilities(body,instance):
 
 def mime_for(row,cap=None):
     if row['kind']=='audio':
-        choices={'mp4':('audio/mp4','audio/m4a','audio/x-m4a'),'mov':('video/quicktime',),'wav':('audio/wav','audio/wave','audio/x-wav','audio/vnd.wave')}.get(row['format'],())
+        choices={'mp4':('audio/mp4','audio/m4a','audio/x-m4a'),'mov':('video/quicktime',),'wav':('audio/wav','audio/wave','audio/x-wav','audio/vnd.wave'),'flac':('audio/flac','audio/x-flac')}.get(row['format'],())
     else:choices=(MIME.get(row['format']),)
     supported=cap['supported_mime_types'] if cap is not None else choices
     chosen=next((mime for mime in choices if mime and mime in supported),None)

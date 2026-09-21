@@ -594,6 +594,9 @@ def bmff(fd,size,*,allow_edit_lists=False):
 
 def inspect(fd,size,*,allow_edit_lists=False):
     head=os.pread(fd,16,0)
+    if head.startswith(b'fLaC'):
+        from .flacformats import flac
+        return flac(fd,size)
     if head.startswith(b'RIFF') and head[8:12]==b'WAVE':
         from .audioformats import wav
         return wav(fd,size)
