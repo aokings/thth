@@ -26,6 +26,26 @@ cd callback && npx wrangler deploy  # ← 本番反映。masaru か開発セッ�
 **打つのは masaru か、public 化のあとに masaru の一言を受けた開発セッション。**
 `node_modules/` と `.wrangler/` は repo に入れない（`.gitignore` 済み）。
 
+## 試験（`npm test`）
+
+```bash
+cd callback && npm ci && npm test
+```
+
+Miniflare と実 Wrangler の local runtime を使う。一部の case は VM 側の署名を
+**実際の Python** で作らせて workerd に検証させる（`test/python-runtime.js`）。
+その Python は既定で PATH の `python3`。橋渡しの script は repo の `thth` を
+import するだけで pytest を持つ module には触らないので、**3.9 でも通る**
+（`pyproject.toml` の `requires-python` は 3.10 以上だが、これは道具本体の話）。
+
+別の interpreter を使わせたいときだけ `PYTHON_FOR_TESTS` を置く:
+
+```bash
+PYTHON_FOR_TESTS=/opt/homebrew/bin/python3 npm test
+```
+
+置き場を machine ごとに hardcode しない。**環境変数で指す。**
+
 
 ## Relay（2.11、未 deploy）
 

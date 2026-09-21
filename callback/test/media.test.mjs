@@ -566,7 +566,7 @@ test('preview capability cannot acknowledge publication or be invalidated as pro
  assert.equal((await dispatch('https://media.test/m/'+cap)).status,200);
 });
 
-test('test Python uses explicit override and portable PATH fallback',()=>{assert.equal(pythonForTests({PYTHON_FOR_TESTS:'/synthetic/python'}),'/synthetic/python');assert.equal(pythonForTests({},'linux'),'python3');assert.equal(pythonForTests({},'darwin'),'/opt/homebrew/Caskroom/miniforge/base/bin/python');});
+test('test Python uses explicit override and a portable PATH default',()=>{assert.equal(pythonForTests({PYTHON_FOR_TESTS:'/synthetic/python'}),'/synthetic/python');assert.equal(pythonForTests({}),'python3');});
 
 
 test('late single PUT and grant copy keep debt through cleanup and failed compensation',async()=>{
