@@ -200,6 +200,25 @@ export class MediaObject extends DurableObject {
     });if(changed.status===200)await this.schedule(this.row());return changed;});
     return result;
   }
+  // Private RPC for the approval session that shows this preview. `boundExpiry`
+  // only shortens a preview to the session's deadline (never extends it) and
+  // `invalidate` retires it now. Neither creates, extends or reads a capability,
+  // and neither touches a provider grant, which keeps its own ack protocol.
+  async boundExpiry(expires_at){
+    if(!Number.isSafeInteger(expires_at))return fail();
+    const row=this.row();if(!row||row.kind!=='preview')return fail(404,'not_found');
+    const changed=this.atomic(()=>{const current=this.row();
+      if(!current||current.kind!=='preview'||expires_at>=current.expires_at)return false;
+      this.put({...current,expires_at,cleanup_at:Math.min(current.cleanup_at,expires_at)});return true;});
+    if(changed)await this.schedule(this.row());
+    return {status:200,body:{expires_at:this.row()?.expires_at??expires_at}};
+  }
+  invalidate(){
+    const row=this.row();if(!row||row.kind!=='preview')return fail(404,'not_found');
+    this.atomic(()=>{const current=this.row();
+      if(current?.kind==='preview'&&current.status!=='retired')this.put({...current,status:'retired'});});
+    return {status:200,body:{status:'retired'}};
+  }
   async view(request){
     const row=this.row();if(!row)return reply(410,{error:'media_expired'});
     if(!this.current(row))return reply(410,{error:'media_expired'});
