@@ -127,6 +127,40 @@ UNSUPPORTED_ATTACHMENT_NOTES={
 }
 
 
+# Static next steps for the media refusals `thth send` can end on, keyed on the
+# reason's own prefix. Like UNSUPPORTED_ATTACHMENT_NOTES above, no input value,
+# file name or path is ever reflected into one of these lines.
+MEDIA_NEXT_STEPS=(
+ ('duration_unverifiable','次の一歩: 動画の構造から秒数を確認できません。ffmpeg -movflags +faststart で出し直す'),
+ ('dimensions_unavailable','次の一歩: 動画の寸法を確認できません。ffmpeg で出し直す'),
+ ('location_metadata_present','次の一歩: 位置情報が入っています。位置を落としてから出し直す'),
+ ('location_metadata_unverifiable','次の一歩: 読み取れない metadata が入っています。ffmpeg で入れ直す'),
+ ('invalid_attachment_structure','次の一歩: ファイルの構造が壊れています。作り直す'),
+ ('unsupported_attachment','次の一歩: この媒体が受け取れない形式です。`thth forms` で受かる形を見る'),
+ ('media_limit_exceeded','次の一歩: 媒体の上限を超えています。小さくするか分ける'),
+ ('media_capability_unavailable','次の一歩: 媒体の上限を読めていません。instance に届くところで出し直す'),
+ ('media: alt_too_long','次の一歩: alt が長すぎます。2000 バイト以内に縮める'),
+ ('media: source_unreadable','次の一歩: 添付を repo から読めません。パスと権限を確かめる'),
+ ('media: source_changed','次の一歩: 読んでいる間にファイルが変わりました。もう一度'),
+)
+
+
+def next_step(reason):
+    """The static next step for a media refusal, or nothing when none fits."""
+    if not isinstance(reason,str):return None
+    for prefix,line in MEDIA_NEXT_STEPS:
+        if reason==prefix or reason.startswith(prefix+':') or reason.startswith(prefix+' '):return line
+    return None
+
+
+def refusal_lines(result):
+    """Every non-zero送信結果が言う理由と、媒体の理由なら次の一歩を 1 行。"""
+    reason=result.message or result.error
+    if not reason:return []
+    step=next_step(result.error or result.message)
+    return [reason,*([step] if step else [])]
+
+
 def unsupported_notes(exc,*,fallback='media_unavailable'):
     """The refusal line, plus its static note/next step when one is defined."""
     from .mediaformats import FormatError
