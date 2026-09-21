@@ -249,3 +249,20 @@ def test_bounded_rational_nearest_independent_exhaustive_small_oracle(value,limi
         assert abs(got-value)==min(abs(x-value) for x in candidates)
     else:assert got==value
     assert got.numerator<=limit and got.denominator<=limit
+
+
+
+@pytest.mark.parametrize('reverse',[False,True])
+def test_duplicate_timestamp_mixed_duration_is_static_not_typeerror(env,wire,reverse):
+    from tests.test_v213_mastodon_webm_audio import block
+    a=element(0xa3,block(b'coded-a'));b=master(0xa0,element(0xa1,block(b'coded-b',simple=False)),uint(0x9b,40))
+    cluster=master(0x1f43b675,uint(0xe7,0),*( [b,a] if reverse else [a,b]))
+    fm=configure(env,wire,video(default=None,cluster_data=cluster));result,_,_=invoke(env,fm)
+    assert result.error=='video_rate_unverifiable' and not posts(wire,'/api/v2/media') and not posts(wire,'/api/v1/statuses')
+
+
+def test_distinct_timestamp_mixed_duration_remains_accepted(env,wire):
+    from tests.test_v213_mastodon_webm_audio import block
+    a=element(0xa3,block(b'coded-a'));raw=block(b'coded-b',simple=False);b=master(0xa0,element(0xa1,raw[:1]+b'\0\x28'+raw[3:]),uint(0x9b,40))
+    fm=configure(env,wire,video(default=None,cluster_data=master(0x1f43b675,uint(0xe7,0),a,b)))
+    assert invoke(env,fm)[0].post_id

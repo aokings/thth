@@ -107,7 +107,7 @@ def metrics(fd,size):
     if row['default_duration'] is not None:
         rate=_bounded_rate(Fraction(1000000000,row['default_duration']));require(rate>0,'video_rate_unverifiable')
         return row['width'],row['height'],rate
-    timing=sorted(row['timing']);require(timing,'video_rate_unverifiable')
+    timing=sorted(row['timing'],key=lambda entry:entry[0]);require(timing,'video_rate_unverifiable')
     starts=[tick*scale for tick,_,_ in timing];require(all(b>a for a,b in zip(starts,starts[1:])),'video_rate_unverifiable')
     last=timing[-1];duration=last[2]*scale if last[2] is not None else (row['default_duration'] or 0)*last[1]
     require(duration>0,'video_rate_unverifiable');elapsed=starts[-1]-starts[0]+duration;count=sum(n for _,n,_ in timing)
