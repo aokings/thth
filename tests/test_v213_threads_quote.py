@@ -39,7 +39,7 @@ def test_unimplemented_quote_effect_is_not_dropped(env,wire,field,value):
     if field=='media':fm[field]=value
     else:fm['attachments'][0][field]=value
     result,_,_=invoke(env,fm=fm)
-    assert result.error=='unsupported_attachment: threads/'+('quote_requires_text' if field=='media' else 'quote_option')
+    assert result.error=='unsupported_attachment: threads/'+('quote_media_combination_unverified' if field=='media' else 'quote_option')
     assert wire['calls']==[]
 
 

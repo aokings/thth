@@ -33,7 +33,8 @@ def intent_error(manifest):
                 if manifest['files']:return 'unsupported_attachment: threads/link_requires_text'
                 if set(a)!={'type','url'}:return 'unsupported_attachment: threads/link_option'
             elif a['type']=='quote':
-                if manifest['files']:return 'unsupported_attachment: threads/quote_requires_text'
+                # The fixed source demonstrates TEXT, not a prohibition of file quotes.
+                if manifest['files']:return 'unsupported_attachment: threads/quote_media_combination_unverified'
                 if set(a)!={'type','uri'}:return 'unsupported_attachment: threads/quote_option'
                 if type(a['uri']) is not str or not a['uri'].isascii() or not a['uri'].isdecimal():return 'invalid_attachment: threads/quote_id'
             else:return 'unsupported_attachment: threads/typed_attachment'
