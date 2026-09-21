@@ -45,7 +45,6 @@ def test_nonascii_offsets_are_unverified_without_guessing(env,wire,value):
 @pytest.mark.parametrize('styles,reason',[
     ([style(0,2),style(1,1)],'style_overlap'),([style(0,1),style(0,1)],'style_overlap'),
     ([style(3,2)],'style_range'),([style(names=['BOLD'])],'style_name'),
-    ([style(names=['bold','bold'])],'style_name'),
     ([dict(offset=0,length=1,styling_info=[])],'style_name'),
 ])
 def test_invalid_styles_have_static_reason(env,wire,styles,reason):
@@ -109,3 +108,9 @@ def test_actual_git_approved_long_text(tmp_path,isolated_account_factory,wire,mo
     else:threadthrow.publish_bundle('alpha',str(path.relative_to(pair['work'])),adapter_factory=lambda *a:adapter,now=jst.parse('2030-01-01T12:01:00+09:00'),log=lambda _:None,max_posts=1)
     if outcome=='success':assert posts(wire,'/threads_publish') and json.loads(posts(wire,'/threads')[0][2]['text_attachment'][0])['plaintext']=='approved long text'
     else:assert not posts(wire,'/threads_publish') and 'changed long text' in path.read_text()
+
+
+def test_repeated_known_style_names_are_preserved(env,wire):
+    styles=[style(0,2,['bold','bold','italic'])]
+    result,_,_=invoke(env,fm=text_attachment('ABCD',styles=styles))
+    assert result.post_id and json.loads(posts(wire,'/threads')[0][2]['text_attachment'][0])['text_with_styling_info']==styles

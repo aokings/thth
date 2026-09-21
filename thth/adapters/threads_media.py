@@ -49,7 +49,7 @@ def intent_error(manifest):
                 for style in styles:
                     begin=style['offset'];end=begin+style['length'];names=style['styling_info']
                     if end>len(a['text']):return 'invalid_attachment: threads/style_range'
-                    if not names or len(names)!=len(set(names)) or any(n not in ('bold','italic','highlight','underline','strikethrough') for n in names):return 'invalid_attachment: threads/style_name'
+                    if not names or any(n not in ('bold','italic','highlight','underline','strikethrough') for n in names):return 'invalid_attachment: threads/style_name'
                     occupied.append((begin,end))
                 occupied.sort()
                 if any(right[0]<left[1] for left,right in zip(occupied,occupied[1:])):return 'invalid_attachment: threads/style_overlap'
