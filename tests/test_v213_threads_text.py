@@ -2,7 +2,7 @@
 import json
 import pytest
 from thth import accounts,core,media,media_delivery,media_relay
-from thth.adapters import base
+from thth.adapters import base,threads_media
 from tests.test_v213_threads_media import env,wire,invoke,posts
 
 
@@ -28,11 +28,19 @@ def test_over_limit_precedes_network(env,wire,value):
 def style(offset=0,length=1,names=None):return dict(offset=offset,length=length,styling_info=names or ['bold'])
 
 
+def wire_style(row):
+    """承認する値は小文字、線に出る値は文書どおりの大文字始まり（C15）。"""
+    return {**row,'styling_info':[threads_media.STYLING_INFO[n] for n in row['styling_info']]}
+
+
 def test_ascii_styling_adjacent_ranges_and_link_exact_wire(env,wire):
     styles=[style(2,2,['highlight','underline','strikethrough']),style(0,2,['bold','italic'])]
     fm=text_attachment('ABCD',styles=styles,link='https://card.invalid')
     result,_,_=invoke(env,fm=fm)
-    assert result.post_id and json.loads(posts(wire,'/threads')[0][2]['text_attachment'][0])=={'plaintext':'ABCD','text_with_styling_info':styles,'link_attachment_url':'https://card.invalid'}
+    sent=json.loads(posts(wire,'/threads')[0][2]['text_attachment'][0])
+    assert result.post_id and sent=={'plaintext':'ABCD','text_with_styling_info':[wire_style(x) for x in styles],'link_attachment_url':'https://card.invalid'}
+    assert sent['text_with_styling_info'][0]['styling_info']==['Highlight','Underline','Strikethrough']
+    assert sent['text_with_styling_info'][1]['styling_info']==['Bold','Italic']
     assert not wire['fetched']
 
 
@@ -113,4 +121,4 @@ def test_actual_git_approved_long_text(tmp_path,isolated_account_factory,wire,mo
 def test_repeated_known_style_names_are_preserved(env,wire):
     styles=[style(0,2,['bold','bold','italic'])]
     result,_,_=invoke(env,fm=text_attachment('ABCD',styles=styles))
-    assert result.post_id and json.loads(posts(wire,'/threads')[0][2]['text_attachment'][0])['text_with_styling_info']==styles
+    assert result.post_id and json.loads(posts(wire,'/threads')[0][2]['text_attachment'][0])['text_with_styling_info']==[wire_style(x) for x in styles]

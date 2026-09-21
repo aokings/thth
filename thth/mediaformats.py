@@ -6,6 +6,7 @@ GIF and ISO BMFF bytes stay untouched. Provider codec support is checked later.
 from __future__ import annotations
 
 import binascii
+import codecs
 import dataclasses
 import os
 import struct
@@ -14,6 +15,35 @@ import zlib
 
 # Shared visual sample-entry classification for privacy and observation readers.
 VIDEO_SAMPLE_CODECS=frozenset((b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v',b'jpeg',b'mjpa',b'mjpb'))
+
+# One table for every BMFF metadata *key name*: `keys` box `mdta` entries, ilst
+# atom types and freeform `----` mean/name. Case-insensitive substring, so
+# `GPSCoordinates` and `com.apple.quicktime.location.ISO6709` are both caught.
+# Nothing is excluded: `geo` also matches a benign `geometry`-like key, which is
+# refused as location-ish. Failing closed is deliberate — a refused benign key
+# is a refusal the author can see and fix, a missed one is a leaked coordinate.
+# A location *word inside a value* is not a key and stays accepted.
+LOCATION_KEY_WORDS=(b'location',b'gps',b'coord',b'geo',b'iso6709')
+
+# Advanced Systems Format (ASF/WMV/WMA) top-level header object GUID. C14 defers
+# the format rather than half-inspecting it, so it is named, never parsed.
+# Written as bytes, not as a hex string: a 32-character hex run in a .py file is
+# what the repo's secret grep looks for, and that pattern is not loosened.
+ASF_HEADER_GUID=b'\x30\x26\xb2\x75\x8e\x66\xcf\x11\xa6\xd9\x00\xaa\x00\x62\xce\x6c'
+
+# Cost bound for the bounded walks, applied before any of them starts.
+# FLAC is the expensive one: proving that nothing but audio frames follows the
+# metadata means decoding every residual, which is linear in samples. The walk
+# itself cannot be shortened — stopping after N frames would leave the bytes in
+# between unexamined, and unexamined bytes are exactly what a hidden payload
+# hides in — so the size is refused up front instead. 1 GB is the ceiling the
+# Worker already enforces on a raw source upload; nothing here accepts more.
+MAX_INSPECTION_BYTES=1_000_000_000
+
+
+def location_key(name):
+    lowered=bytes(name).lower()
+    return any(word in lowered for word in LOCATION_KEY_WORDS)
 
 
 class FormatError(ValueError):
@@ -442,11 +472,11 @@ def inspect_embedded_cover(data):
 def _bmff_metadata_scalar(value_type,read,start,end):
     # Apple well-known types28 (nested metadata) and27 (BMP) are not scalars.
     # Reserved/implicit or unknown types cannot establish location absence.
-    codecs={1:'utf-8',2:'utf-16-be',3:'shift_jis',4:'utf-8',5:'utf-16-be'}
-    sizes={21:(1,2,3,4),22:(1,2,3,4),23:(4,),24:(8,),65:(1,),66:(2,),67:(4,),70:(8,),71:(8,),72:(16,),74:(8,),75:(1,),76:(2,),77:(4,),78:(8,),79:(72,)}
-    if value_type in codecs:
-        import codecs as codec_module
-        decoder=codec_module.getincrementaldecoder(codecs[value_type])()
+    encodings={1:'utf-8',2:'utf-16-be',3:'shift_jis',4:'utf-8',5:'utf-16-be'}
+    # QuickTime signed/unsigned BE integers are 1, 2, 3, 4 or 8 bytes wide.
+    sizes={21:(1,2,3,4,8),22:(1,2,3,4,8),23:(4,),24:(8,),65:(1,),66:(2,),67:(4,),70:(8,),71:(8,),72:(16,),74:(8,),75:(1,),76:(2,),77:(4,),78:(8,),79:(72,)}
+    if value_type in encodings:
+        decoder=codecs.getincrementaldecoder(encodings[value_type])()
         try:
             for at in range(start,end,65536):decoder.decode(read(at,min(65536,end-at)))
             decoder.decode(b'',final=True)
@@ -542,12 +572,12 @@ def bmff(fd,size,*,allow_edit_lists=False):
                         for _ in range(count):
                             require(pos+8<=mb); n=int.from_bytes(read(pos,4),'big'); require(n>=8 and pos+n<=mb)
                             key=read(pos+8,n-8)
-                            if b'location' in key.lower() or key in (b'\xa9xyz',b'loci'): raise FormatError('location_metadata_present')
+                            if location_key(key) or key in (b'\xa9xyz',b'loci'): raise FormatError('location_metadata_present')
                             pos+=n
                         require(pos==mb)
                     elif mk==b'ilst':
                         for ik,ia,ib in boxes(ma,mb):
-                            if ik in (b'\xa9xyz',b'loci') or b'location' in ik.lower(): raise FormatError('location_metadata_present')
+                            if ik in (b'\xa9xyz',b'loci') or location_key(ik): raise FormatError('location_metadata_present')
                             # Validate nested value boxes, without interpreting mdat.
                             cover_seen=False
                             for vk,va,vb in boxes(ia,ib):
@@ -570,7 +600,7 @@ def bmff(fd,size,*,allow_edit_lists=False):
                                     key=read(va+4,vb-va-4)
                                     try:key.decode('utf-8')
                                     except UnicodeDecodeError:raise FormatError('invalid_attachment_structure: metadata key') from None
-                                    require(not any(word in key.lower() for word in (b'location',b'gpslatitude',b'gpslongitude',b'gpsaltitude')),'location_metadata_present')
+                                    require(not location_key(key),'location_metadata_present')
                             require(ik!=b'covr' or cover_seen,'invalid_attachment_structure: embedded_cover')
                     elif mk==b'hdlr': require(mb-ma>=12 and read(ma,4)==b'\0'*4)
                     elif mk in containers: walk(ma,mb,depth+1)
@@ -623,7 +653,12 @@ def _webm_header(fd,size):
 
 
 def inspect(fd,size,*,allow_edit_lists=False,allow_webm=True):
+    require(size<=MAX_INSPECTION_BYTES,'media_limit_exceeded: inspection_bytes')
     head=os.pread(fd,16,0)
+    if head==ASF_HEADER_GUID:
+        # Named before any structure walk, like WebM below: a deferred format is
+        # reported as that format, never as broken bytes of another one.
+        raise FormatError('unsupported_attachment: asf')
     if head.startswith(b'\x1aE\xdf\xa3'):
         # Name the container from its bounded EBML DocType first. A provider that
         # cannot take WebM must refuse by format before deep structure parsing,
@@ -636,7 +671,10 @@ def inspect(fd,size,*,allow_edit_lists=False,allow_webm=True):
         from .oggformats import ogg
         return ogg(fd,size)
     if head.startswith(b'ID3') or len(head)>=2 and head[0]==255 and head[1]&0xe0==0xe0 and not head.startswith(b'\xff\xd8'):
-        from .mpeg_audio import mp3
+        from .mpeg_audio import is_adts,mp3
+        # Standalone AAC is named before the MPEG sniff, so a well-formed ADTS
+        # stream is refused as AAC rather than as a broken MPEG layer.
+        if is_adts(head):raise FormatError('unsupported_attachment: aac_adts')
         return mp3(fd,size)
     if head.startswith(b'fLaC'):
         from .flacformats import flac

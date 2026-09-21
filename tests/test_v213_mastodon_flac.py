@@ -233,3 +233,24 @@ def test_audio_sample_bytes_are_not_searched_for_metadata(tmp_path):
     body=frame()[:7]+b'\x02'+sample
     raw=flac(frames=body+crc(body,16,0x8005))
     assert inspect(tmp_path,raw).duration==.002
+
+
+def test_oversize_declaration_is_refused_before_any_residual_decode(tmp_path,monkeypatch):
+    """第 5・6 段 P3: 残差復号は sample に比例する。大きさは先に断る（O(1)）。
+
+    走査そのものは短くできない——先頭 N frame で止めれば残りが未検査になり、
+    未検査の byte こそ隠し payload の置き場になる。だから走査は全走査のまま、
+    宣言された大きさだけを先に見る。
+    """
+    from thth import flacformats
+    monkeypatch.setattr(flacformats,'_residual',lambda *a:pytest.fail('residual decoded'))
+    raw=flac(kind='lpc')
+    path=tmp_path/'sound.flac';path.write_bytes(raw);fd=os.open(path,os.O_RDONLY)
+    try:
+        with pytest.raises(mediaformats.FormatError,match='media_limit_exceeded: inspection_bytes'):
+            mediaformats.inspect(fd,mediaformats.MAX_INSPECTION_BYTES+1)
+        # 上限ちょうどまでは従来どおり（この fixture は実寸で走査される）。
+        assert mediaformats.MAX_INSPECTION_BYTES==1_000_000_000
+    finally:
+        os.close(fd)
+    assert inspect(tmp_path,flac(kind='constant')).format=='flac'

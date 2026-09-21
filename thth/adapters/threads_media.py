@@ -14,6 +14,10 @@ import urllib.request
 from . import base
 from .. import accounts,approval_relay,httpsafe,jst,leave_gate,media,media_relay,mediaformats
 
+# Accepted locally in lower case; sent capitalised exactly as Meta's Threads
+# documentation lists them ("Bold, Italic, Highlight, Underline, Strikethrough",
+# C15). The casing comes from the documentation, not from an observed response.
+STYLING_INFO={'bold':'Bold','italic':'Italic','highlight':'Highlight','underline':'Underline','strikethrough':'Strikethrough'}
 MAX_BYTES=8_000_000
 POLL_SECONDS=120.0
 VIDEO_POLL_SECONDS=1800.0
@@ -49,7 +53,7 @@ def intent_error(manifest):
                 for style in styles:
                     begin=style['offset'];end=begin+style['length'];names=style['styling_info']
                     if end>len(a['text']):return 'invalid_attachment: threads/style_range'
-                    if not names or any(n not in ('bold','italic','highlight','underline','strikethrough') for n in names):return 'invalid_attachment: threads/style_name'
+                    if not names or any(n not in STYLING_INFO for n in names):return 'invalid_attachment: threads/style_name'
                     occupied.append((begin,end))
                 occupied.sort()
                 if any(right[0]<left[1] for left,right in zip(occupied,occupied[1:])):return 'invalid_attachment: threads/style_overlap'
@@ -102,7 +106,7 @@ def text_params(manifest,text):
     if texts:
         value={'plaintext':texts[0]['text']}
         if 'link' in texts[0]:value['link_attachment_url']=texts[0]['link']
-        if 'styles' in texts[0]:value['text_with_styling_info']=texts[0]['styles']
+        if 'styles' in texts[0]:value['text_with_styling_info']=[{**style,'styling_info':[STYLING_INFO[n] for n in style['styling_info']]} for style in texts[0]['styles']]
         params['text_attachment']=json.dumps(value,ensure_ascii=False,separators=(',',':'))
     quotes=[a['uri'] for a in manifest['attachments'] if a['type']=='quote']
     if quotes:params['quote_post_id']=quotes[0]

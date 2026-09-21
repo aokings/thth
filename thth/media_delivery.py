@@ -119,6 +119,22 @@ def cached_note(cfg):
     return f"media limits: cached instance={value['instance']} version={value['version']} observed_at={value['observed_at']} (rechecked before upload)"
 
 
+# Static next steps for refusals the author can act on, keyed on the reason's
+# own suffix. No input value, file name or path is ever reflected into a line.
+UNSUPPORTED_ATTACHMENT_NOTES={
+ 'aac_adts':('warning: privacy_inspection_boundary_unverified','次の一歩: m4a に入れ直す'),
+ 'asf':('warning: deferred_by_ruling_c14',),
+}
+
+
+def unsupported_notes(exc,*,fallback='media_unavailable'):
+    """The refusal line, plus its static note/next step when one is defined."""
+    from .mediaformats import FormatError
+    reason=str(exc) if isinstance(exc,(media.MediaError,FormatError)) else fallback
+    if not reason.startswith('unsupported_attachment: '):return [reason]
+    return [reason,*UNSUPPORTED_ATTACHMENT_NOTES.get(reason.rsplit('/',1)[-1],())]
+
+
 def lint_notes(cfg,fm,*,text=None):
     """Fresh public limits; unknown or excessive attachments never pass lint."""
     if not cfg or not media.declared(fm):return []
@@ -131,7 +147,7 @@ def lint_notes(cfg,fm,*,text=None):
                     threads_media.common_options(manifest,text,reply_to=fm.get('reply_to'),topic=fm.get('topic'),location_id=fm.get('location_id'),share_to_instagram=fm.get('share_to_instagram',False))
                     if not items:threads_media.text_params(manifest,text)
                 return [reason] if reason else threads_media.notes(manifest,items)
-        except (OSError,ValueError) as exc:return [str(exc) if isinstance(exc,media.MediaError) else 'media_unavailable']
+        except (OSError,ValueError) as exc:return unsupported_notes(exc)
     if cfg.get('media')=='bluesky':
         try:
             with media.prepare(cfg['repo_dir'],fm,'bluesky') as (manifest,_):reason=error_for(cfg,manifest)
@@ -140,7 +156,7 @@ def lint_notes(cfg,fm,*,text=None):
                 bluesky_metadata.lint(cfg,fm,text)
             return [reason] if reason else ['warning: bluesky video daily quota/email permission unobserved; rechecked before upload'] if any(r['kind']=='video' for r in manifest['files']) else ['warning: bluesky external thumbnail_alt is a local approval note; provider has no thumbnail alt field'] if any(a['type']=='link' and 'thumbnail_alt' in a for a in manifest['attachments']) else []
         except (OSError,ValueError) as exc:
-            return [str(exc) if isinstance(exc,media.MediaError) else 'media_unavailable']
+            return unsupported_notes(exc)
     if cfg.get('media')!='mastodon':return []
     from .adapters import mastodon_media
     from .mediaformats import FormatError
@@ -174,5 +190,4 @@ def lint_notes(cfg,fm,*,text=None):
             else:return ['warning: Mastodon generates a preview from the approved body URL; display is unobserved'] if any(row['type']=='link' for row in manifest['attachments']) else []
         return ['warning: '+cached_note(cfg)]+retained_notes
     except (OSError,ValueError) as exc:
-        code=str(exc) if isinstance(exc,(media.MediaError,FormatError)) else 'media_capability_unavailable'
-        return [code]
+        return unsupported_notes(exc,fallback='media_capability_unavailable')

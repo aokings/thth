@@ -70,3 +70,33 @@ def test_queueとdoctorが同じ言葉で断る(isolated_account):
     d = run_thth(["doctor", "../x"])
     assert d.returncode == 2, d.stdout + d.stderr
     assert "使えない字" in d.stdout + d.stderr
+
+
+def test_名前の長さは64まで(isolated_account):
+    """第 5・6 段 P3: 名前はそのままファイル名になるので上から切る。"""
+    assert accounts_mod.NAME_MAX == 64
+    assert accounts_mod.name_is_safe("a" * 64) is True
+    assert accounts_mod.name_is_safe("a" * 65) is False
+    with pytest.raises(accounts_mod.AccountError) as e:
+        accounts_mod.load_account("a" * 65)
+    assert "使えない字" in str(e.value)
+    # 既存の呼び手（ふつうの長さ）は変わらない。
+    assert accounts_mod.name_is_safe(isolated_account["name"]) is True
+
+
+def test_admin_logのsubjectは口座名の長さ上限に縛られない():
+    """`appconfig.subject()` の `app-<媒体>-<origin sha256>` は 77 字。
+
+    置き場の中のファイル名ではないので、口座名の上限（64）を緩める理由に
+    しない。形で受ける（第 5・6 段 P3）。
+    """
+    from thth import admin_log, appconfig
+    subject = appconfig.subject('mastodon', 'https://instance.invalid')
+    assert len(subject) > accounts_mod.NAME_MAX
+    assert accounts_mod.name_is_safe(subject) is False
+    assert admin_log.subject_is_safe(subject) is True
+    assert admin_log.subject_is_safe('app-mastodon') is True
+    assert admin_log.subject_is_safe('alpha') is True
+    # 長い subject は形が合うものだけ。口座名として通る短い綴りは従来どおり。
+    for bad in ('app-mastodon-' + 'z' * 64, 'app-Mastodon-' + 'a' * 64, 'a' * 65, '../x'):
+        assert admin_log.subject_is_safe(bad) is False

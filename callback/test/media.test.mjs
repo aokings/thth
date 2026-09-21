@@ -279,7 +279,7 @@ test('R2 response loss and SQLite failure do not acknowledge completion or silen
  assert.equal((await upload(f)).status,404);
  assert.equal((await call(f.id,'complete',binding(f))).status,410);
  const good=data();assert.equal((await call(good.id,'create',good.body)).status,201);assert.equal((await upload(good)).status,200);
- await control(good.id,{failSave:true});assert.equal((await call(good.id,'complete',binding(good))).status,503);
+ await control(good.id,{failSave:true});assert.equal((await call(good.id,'complete',binding(good))).status,500);
  const state=await call(good.id,'status',binding(good));assert.equal((await state.json()).status,'uploaded');
  assert.equal((await call(good.id,'complete',binding(good))).status,200);
 });
@@ -287,7 +287,7 @@ test('public grant copy failure never exposes partially committed bytes',async()
  const f=data(undefined,'sanitized');await ready(f);const cap=opaque();
  await control(cap,{afterR2:{operation:'put',action:'fail'}});
  const body={...binding(f),media_id:f.body.sha256,source:f.id,expires_at:Date.now()+500000};
- assert.equal((await call(cap,'provider',body)).status,503);
+ assert.equal((await call(cap,'provider',body)).status,500);
  assert.equal((await dispatch('https://media.test/m/'+cap)).status,410);
  assert.equal((await call(cap,'provider',body)).status,409);
  const row=(await control(cap)).find(([k])=>k==='media')[1];assert.ok(row.io_ticket);
@@ -310,12 +310,12 @@ test('strict upload schema and byte-count failures cannot create a readable obje
 
 
 test('alarm failure rolls back initialization and publication extension',async()=>{
- const f=data();await control(f.id,{failAlarm:true});assert.equal((await call(f.id,'create',f.body)).status,503);
+ const f=data();await control(f.id,{failAlarm:true});assert.equal((await call(f.id,'create',f.body)).status,500);
  assert.deepEqual(await control(f.id,{inspect:true}),{rows:[],alarm:null});
  const good=data(undefined,'sanitized');await ready(good);const cap=opaque();
  const made=await call(cap,'provider',{...binding(good),media_id:good.body.sha256,source:good.id,expires_at:Date.now()+500000});const value=await made.json();
  await control(cap,{failAlarm:true});const body={...binding(good),media_id:good.body.sha256,purpose:'provider',generation:value.generation};
- assert.equal((await call(cap,'published',body)).status,503);
+ assert.equal((await call(cap,'published',body)).status,500);
  const row=(await control(cap)).find(([k])=>k==='media')[1];assert.equal(row.expires_at,value.expires_at);assert.equal(row.acked_at,undefined);
  assert.equal((await call(cap,'published',body)).status,200);
 });
@@ -347,7 +347,7 @@ test('known completed multipart cleanup never repeats abort',async()=>{
 test('lost empty multipart allocation cannot accept parts and malformed public routes are 404',async()=>{
  const f=data();f.body.size=100000001;f.body.part_size=5*1024*1024;
  await control(f.id,{afterR2:{operation:'createMultipartUpload',action:'fail'}});
- assert.equal((await call(f.id,'create',f.body)).status,503);
+ assert.equal((await call(f.id,'create',f.body)).status,500);
  const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.equal(row.status,'initializing');assert.equal(row.upload_id,undefined);
  const part=Buffer.alloc(f.body.part_size,1);
  assert.equal((await dispatch('https://media.test/media-upload/'+f.id+'/1',{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,409);
@@ -534,7 +534,7 @@ test('cleanup registers before bytes, caps ten attempts and signed recovery only
 });
 test('cleanup registration failure precedes R2 and remove ACK loss is recoverable',async()=>{
  const failed=data();failed.body.account='cleanup-registration';await control(failed.id,{cleanupFault:'cleanupRegister'});
- assert.equal((await call(failed.id,'create',failed.body)).status,503);
+ assert.equal((await call(failed.id,'create',failed.body)).status,500);
  assert.equal((await cleanupControl(failed.body.account)).rows.length,0);
  assert.equal((await upload(failed)).status,503);
  assert.equal((await call(failed.id,'complete',binding(failed))).status,409);
@@ -566,7 +566,7 @@ test('preview capability cannot acknowledge publication or be invalidated as pro
  assert.equal((await dispatch('https://media.test/m/'+cap)).status,200);
 });
 
-test('test Python uses explicit override and portable PATH fallback',()=>{assert.equal(pythonForTests({PYTHON_FOR_TESTS:'/synthetic/python'}),'/synthetic/python');assert.equal(pythonForTests({},'linux'),'python3');assert.equal(pythonForTests({},'darwin'),'/opt/homebrew/Caskroom/miniforge/base/bin/python');});
+test('test Python uses explicit override and a portable PATH default',()=>{assert.equal(pythonForTests({PYTHON_FOR_TESTS:'/synthetic/python'}),'/synthetic/python');assert.equal(pythonForTests({}),'python3');});
 
 
 test('late single PUT and grant copy keep debt through cleanup and failed compensation',async()=>{
@@ -576,7 +576,7 @@ test('late single PUT and grant copy keep debt through cleanup and failed compen
   const id=copy?opaque():f.id;
   await control(id,{beforeR2:{operation:'put',compensationFailure:'delete'}});
   const response=copy?await call(id,'provider',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at:0}):await upload(f);
-  assert.equal(response.status,503);
+  assert.equal(response.status,copy?500:503);
   const during=await control(id,{ioInspect:true});assert.ok(during.row.io_ticket);assert.equal(during.row.cleanup_attempts,1);assert.equal(during.alarm,during.row.cleanup_at+60000);
   const row=(await control(id)).find(([k])=>k==='media')[1];assert.equal(row.io_ticket,null);
   if(copy){const sourceRow=(await control(f.id)).find(([k])=>k==='media')[1];await control(f.id,{clock:sourceRow.cleanup_at,alarm:true});}
@@ -592,7 +592,7 @@ test('late single PUT and grant copy keep debt through cleanup and failed compen
 test('late multipart allocation retains returned upload ID when abort compensation fails',async()=>{
  const f=data();f.body.account='late-allocation';f.body.size=100000001;f.body.part_size=5*1024*1024;
  await control(f.id,{beforeR2:{operation:'createMultipartUpload',compensationFailure:'abort'}});
- assert.equal((await call(f.id,'create',f.body)).status,503);
+ assert.equal((await call(f.id,'create',f.body)).status,500);
  const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.ok(row.upload_id);assert.equal(row.io_ticket,null);
  assert.ok((await control(f.id,{ioInspect:true})).row.io_ticket);
  await cleanupControl(f.body.account,{clock:row.cleanup_at});await control(f.id,{clock:row.cleanup_at});
@@ -734,4 +734,34 @@ test('real upload IP quota rejects request121 across subjects and isolates peers
  const refused=await put(opaque(),peer);assert.equal(refused.status,429);assert.deepEqual(await refused.json(),{error:'rate_limited'});
  assert.equal((await put(opaque(),other)).status,404);
  assert.equal((await put(opaque(),peer)).status,429);
+});
+
+
+test('unresolved I/O refuses every manage claim before it mutates the row',async()=>{
+ const f=data();f.body.account='precheck';await ready(f);
+ const before=(await control(f.id)).find(([k])=>k==='media')[1];
+ await control(f.id,{unresolvedIO:true});
+ const nonces=(await control(f.id)).find(([k])=>k==='nonces')[1];
+ for(const op of ['complete','status','read','ack']){
+  const response=await call(f.id,op,binding(f));
+  assert.equal(response.status,409,op);assert.deepEqual(await response.json(),{error:'media_upload_unconfirmed_pending'});
+ }
+ const after=(await control(f.id)).find(([k])=>k==='media')[1];
+ assert.equal(after.status,before.status);assert.equal(after.status,'ready');
+ assert.equal(after.ticket,before.ticket);assert.equal(after.io_ticket,'synthetic-unresolved');
+ // A refusal before the claim also leaves the replay record untouched.
+ assert.deepEqual((await control(f.id)).find(([k])=>k==='nonces')[1],nonces);
+});
+test('missing binding is 503 media_unavailable and any other fault is 500 media_internal',async()=>{
+ const url=new URL('https://media.test/media/'+opaque()+'/status');
+ const request=()=>new Request(url,{method:'POST',headers:{'cf-connecting-ip':'203.0.113.9','content-type':'application/json'},body:'{}'});
+ const base={MEDIA_OBJECT:{},MEDIA_BUCKET:{},MEDIA_CONTROL_LIMIT:null};
+ const unavailable=await mediaRequest(request(),base,url);
+ assert.equal(unavailable.status,503);assert.deepEqual(await unavailable.json(),{error:'media_unavailable'});
+ const boom={...base,MEDIA_CONTROL_LIMIT:{async limit(){throw new Error('synthetic-secret-detail');}}};
+ const internal=await mediaRequest(request(),boom,url);
+ assert.equal(internal.status,500);
+ const body=await internal.text();
+ assert.deepEqual(JSON.parse(body),{error:'media_internal'});
+ assert.ok(!body.includes('synthetic-secret-detail'),'error message leaked');
 });

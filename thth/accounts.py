@@ -294,9 +294,14 @@ def dir_is_unreadable(d: str) -> bool:
 NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
+# 名前はそのままファイル名になる。拡張子や `.<用途>.json` の添字を足しても
+# どの filesystem の 255 byte 制限にも収まる長さで、上から切る。
+NAME_MAX = 64
+
+
 def name_is_safe(name) -> bool:
     """置き場の中の 1 ファイルに必ず収まる名前か。`.`・`..` は名前ではない。"""
-    return (isinstance(name, str) and bool(name)
+    return (isinstance(name, str) and bool(name) and len(name) <= NAME_MAX
             and bool(NAME_RE.match(name)) and name not in (".", ".."))
 
 

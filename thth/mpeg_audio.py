@@ -16,6 +16,15 @@ _TEXT24=(_TEXT23-set(b'TDAT TIME TORY TRDA TSIZ TYER'.split()))|set(b'TDEN TDOR 
 _URLS=set(b'WCOM WCOP WOAF WOAR WOAS WORS WPAY WPUB'.split())
 
 
+def is_adts(head):
+    """ADTS AAC shares the 12-bit 0xFFF syncword with MPEG audio.
+
+    The two-bit layer field is `00` for ADTS and is *reserved* — never valid —
+    in MPEG-1/2/2.5 audio, so this test names the container without parsing it.
+    """
+    return len(head)>=2 and head[0]==0xff and head[1]&0xf6==0xf0
+
+
 def _sync(raw):
     require(len(raw)==4 and all(x<128 for x in raw));value=0
     for x in raw:value=(value<<7)|x
