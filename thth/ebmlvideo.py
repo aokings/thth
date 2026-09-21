@@ -65,7 +65,11 @@ class VideoWebM(WebM):
         # The inherited reader checks full block/lacing bounds before use.
         super().block(a,b,simple=simple)
         if state['codec'].startswith('V_'):
-            relative=int.from_bytes(self.r.read(a+n,2),'big',signed=True);cluster,duration=self.context[(a,b,simple)]
+            relative=int.from_bytes(self.r.read(a+n,2),'big',signed=True)
+            # A block reached without its cluster's timestamp has no timing
+            # context; refuse rather than raise a bare KeyError from the walk.
+            require((a,b,simple) in self.context,'invalid_attachment_structure')
+            cluster,duration=self.context[(a,b,simple)]
             state['timing'].append((cluster+relative,state['seen']-before,duration))
 
 

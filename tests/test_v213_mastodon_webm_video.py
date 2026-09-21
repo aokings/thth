@@ -266,3 +266,28 @@ def test_distinct_timestamp_mixed_duration_remains_accepted(env,wire):
     a=element(0xa3,block(b'coded-a'));raw=block(b'coded-b',simple=False);b=master(0xa0,element(0xa1,raw[:1]+b'\0\x28'+raw[3:]),uint(0x9b,40))
     fm=configure(env,wire,video(default=None,cluster_data=master(0x1f43b675,uint(0xe7,0),a,b)))
     assert invoke(env,fm)[0].post_id
+
+
+def test_block_without_cluster_context_is_a_static_refusal(tmp_path):
+    """第 5・6 段 P3: cluster の timestamp を伴わない block は素の KeyError に
+    せず、`invalid_attachment_structure` で断る。
+
+    通常の walk では cluster の `fields()` が必ず context を埋めるので構成
+    できない。防御の分岐そのものを method 単位で固定する。
+    """
+    import os
+    from thth import ebmlvideo,mediaformats
+    from thth.audioformats import Reader
+    raw=b'\x81\x00\x00\x00\x01'   # track 1・相対 timestamp 0・flags 0・1 byte
+    path=tmp_path/'block';path.write_bytes(raw);fd=os.open(path,os.O_RDONLY)
+    try:
+        reader=ebmlvideo.VideoWebM(Reader(fd,len(raw)))
+        reader.tracks[1]={'codec':'V_VP8','seen':0,'lacing':0,'timing':[]}
+        with pytest.raises(mediaformats.FormatError,match='invalid_attachment_structure'):
+            reader.block(0,len(raw),simple=True)
+        # context があれば従来どおり timing を積む。
+        reader.tracks[1]['seen']=0;reader.context[(0,len(raw),True)]=(0,None)
+        reader.block(0,len(raw),simple=True)
+        assert reader.tracks[1]['timing']==[(0,1,None)]
+    finally:
+        os.close(fd)
