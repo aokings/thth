@@ -15,6 +15,20 @@ import zlib
 # Shared visual sample-entry classification for privacy and observation readers.
 VIDEO_SAMPLE_CODECS=frozenset((b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v',b'jpeg',b'mjpa',b'mjpb'))
 
+# One table for every BMFF metadata *key name*: `keys` box `mdta` entries, ilst
+# atom types and freeform `----` mean/name. Case-insensitive substring, so
+# `GPSCoordinates` and `com.apple.quicktime.location.ISO6709` are both caught.
+# Nothing is excluded: `geo` also matches a benign `geometry`-like key, which is
+# refused as location-ish. Failing closed is deliberate — a refused benign key
+# is a refusal the author can see and fix, a missed one is a leaked coordinate.
+# A location *word inside a value* is not a key and stays accepted.
+LOCATION_KEY_WORDS=(b'location',b'gps',b'coord',b'geo',b'iso6709')
+
+
+def location_key(name):
+    lowered=bytes(name).lower()
+    return any(word in lowered for word in LOCATION_KEY_WORDS)
+
 
 class FormatError(ValueError):
     pass
@@ -542,12 +556,12 @@ def bmff(fd,size,*,allow_edit_lists=False):
                         for _ in range(count):
                             require(pos+8<=mb); n=int.from_bytes(read(pos,4),'big'); require(n>=8 and pos+n<=mb)
                             key=read(pos+8,n-8)
-                            if b'location' in key.lower() or key in (b'\xa9xyz',b'loci'): raise FormatError('location_metadata_present')
+                            if location_key(key) or key in (b'\xa9xyz',b'loci'): raise FormatError('location_metadata_present')
                             pos+=n
                         require(pos==mb)
                     elif mk==b'ilst':
                         for ik,ia,ib in boxes(ma,mb):
-                            if ik in (b'\xa9xyz',b'loci') or b'location' in ik.lower(): raise FormatError('location_metadata_present')
+                            if ik in (b'\xa9xyz',b'loci') or location_key(ik): raise FormatError('location_metadata_present')
                             # Validate nested value boxes, without interpreting mdat.
                             cover_seen=False
                             for vk,va,vb in boxes(ia,ib):
@@ -570,7 +584,7 @@ def bmff(fd,size,*,allow_edit_lists=False):
                                     key=read(va+4,vb-va-4)
                                     try:key.decode('utf-8')
                                     except UnicodeDecodeError:raise FormatError('invalid_attachment_structure: metadata key') from None
-                                    require(not any(word in key.lower() for word in (b'location',b'gpslatitude',b'gpslongitude',b'gpsaltitude')),'location_metadata_present')
+                                    require(not location_key(key),'location_metadata_present')
                             require(ik!=b'covr' or cover_seen,'invalid_attachment_structure: embedded_cover')
                     elif mk==b'hdlr': require(mb-ma>=12 and read(ma,4)==b'\0'*4)
                     elif mk in containers: walk(ma,mb,depth+1)

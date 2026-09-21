@@ -69,3 +69,30 @@ def test_ordinary_freeform_and_mdat_are_not_keyword_scanned(tmp_path):
     payload=box(b'mean',bytes(4)+b'example')+box(b'name',bytes(4)+b'title')+box(b'data',struct.pack('>II',1,0)+b'GPS word is ordinary title')
     raw=mp4(item(payload)).replace(b'synthetic-sample',b'GPSLatitude-mdat')
     assert inspect(tmp_path,raw).public_bytes is None
+
+
+def keys_box(*names):
+    """A `mdta` keys box whose entries are the given metadata key names."""
+    entries=b''.join(box(b'mdta',name) for name in names)
+    return box(b'meta',bytes(4)+box(b'keys',bytes(4)+struct.pack('>I',len(names))+entries))
+
+
+@pytest.mark.parametrize('name',[b'GPSLatitude',b'gpslongitude',b'GPSCoordinates',b'com.apple.quicktime.location.ISO6709',b'ISO6709',b'geotag'])
+def test_keys_box_location_words_are_one_table(tmp_path,name):
+    # 第 5・6 段 P2: `keys` box と freeform が同じ表を見る（部分一致・大小無視）。
+    with pytest.raises(mediaformats.FormatError,match='location_metadata_present'):inspect(tmp_path,mp4(keys_box(name)))
+
+
+@pytest.mark.parametrize('key',[b'mean',b'name'])
+@pytest.mark.parametrize('name',[b'GPSCoordinates',b'GPSPosition',b'coordinates',b'geotag',b'ISO6709Value'])
+def test_freeform_location_words_are_one_table(tmp_path,key,name):
+    payload=box(key,bytes(4)+name)+box(b'data',struct.pack('>II',1,0)+b'+35.6895+139.6917/')
+    with pytest.raises(mediaformats.FormatError,match='location_metadata_present'):inspect(tmp_path,mp4(item(payload)))
+
+
+def test_geometry_like_key_is_refused_but_a_location_word_value_is_accepted(tmp_path):
+    # `geo` は `geometry` にも当たる。値側の「Georgia」は key ではないので通る。
+    with pytest.raises(mediaformats.FormatError,match='location_metadata_present'):
+        inspect(tmp_path,mp4(item(box(b'name',bytes(4)+b'geometry'))))
+    accepted=inspect(tmp_path,mp4(typed(1,'Georgia'.encode())))
+    assert accepted.public_bytes is None and accepted.metadata_notes==('non_location_metadata_retained',)
