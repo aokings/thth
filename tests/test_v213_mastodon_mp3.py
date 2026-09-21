@@ -203,7 +203,9 @@ def test_unknown_publication_durable_no_retry(env,wire):
 
 
 @pytest.mark.parametrize('mask,value,reason',[
-    (3<<19,1<<19,'invalid_attachment_structure'),(3<<17,0,'invalid_attachment_structure'),
+    (3<<19,1<<19,'invalid_attachment_structure'),
+    # Layer 00 with the 0xFFF syncword is ADTS AAC, named before the MP3 parse.
+    (3<<17,0,'unsupported_attachment: aac_adts'),
     (3<<17,2<<17,'unsupported_attachment_structure: mpeg layer'),
     (15<<12,0,'unsupported_attachment_structure: mp3 free bitrate'),
     (15<<12,15<<12,'invalid_attachment_structure'),(3<<10,3<<10,'invalid_attachment_structure'),

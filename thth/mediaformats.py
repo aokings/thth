@@ -24,6 +24,10 @@ VIDEO_SAMPLE_CODECS=frozenset((b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b
 # A location *word inside a value* is not a key and stays accepted.
 LOCATION_KEY_WORDS=(b'location',b'gps',b'coord',b'geo',b'iso6709')
 
+# Advanced Systems Format (ASF/WMV/WMA) top-level header object GUID. C14 defers
+# the format rather than half-inspecting it, so it is named, never parsed.
+ASF_HEADER_GUID=bytes.fromhex('3026b2758e66cf11a6d900aa0062ce6c')
+
 
 def location_key(name):
     lowered=bytes(name).lower()
@@ -638,6 +642,10 @@ def _webm_header(fd,size):
 
 def inspect(fd,size,*,allow_edit_lists=False,allow_webm=True):
     head=os.pread(fd,16,0)
+    if head==ASF_HEADER_GUID:
+        # Named before any structure walk, like WebM below: a deferred format is
+        # reported as that format, never as broken bytes of another one.
+        raise FormatError('unsupported_attachment: asf')
     if head.startswith(b'\x1aE\xdf\xa3'):
         # Name the container from its bounded EBML DocType first. A provider that
         # cannot take WebM must refuse by format before deep structure parsing,
@@ -650,7 +658,10 @@ def inspect(fd,size,*,allow_edit_lists=False,allow_webm=True):
         from .oggformats import ogg
         return ogg(fd,size)
     if head.startswith(b'ID3') or len(head)>=2 and head[0]==255 and head[1]&0xe0==0xe0 and not head.startswith(b'\xff\xd8'):
-        from .mpeg_audio import mp3
+        from .mpeg_audio import is_adts,mp3
+        # Standalone AAC is named before the MPEG sniff, so a well-formed ADTS
+        # stream is refused as AAC rather than as a broken MPEG layer.
+        if is_adts(head):raise FormatError('unsupported_attachment: aac_adts')
         return mp3(fd,size)
     if head.startswith(b'fLaC'):
         from .flacformats import flac
