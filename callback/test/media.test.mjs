@@ -699,3 +699,18 @@ test('concurrent cleanup retry reserves rotating batches before RPC and excludes
  let calls=0;for(const {f} of items){const value=(await control(f.id,{clock:due,retryInspect:true})).calls;assert.ok(value>=1);calls+=value;}assert.equal(calls,128);
  assert.equal((await control(future.id,{clock:due,retryInspect:true})).calls,0);
 });
+
+test('unknown multipart retry returns explicit conflict without a second claim',async()=>{
+ const f=data();f.body.size=100000001;f.body.part_size=5242880;
+ assert.equal((await call(f.id,'create',f.body)).status,201);
+ await control(f.id,{afterR2:{operation:'uploadPart',action:'fail'}});
+ const part=Buffer.alloc(f.body.part_size,7),put=n=>mf.dispatchFetch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(part.length)},body:part});
+ assert.equal((await put(1)).status,503);
+ const before=(await control(f.id)).find(([k])=>k==='media')[1];assert.ok(before.io_ticket);assert.equal(before.status,'pending');
+ for(const n of [1,2]){
+  const response=await put(n);assert.equal(response.status,409);assert.deepEqual(await response.json(),{error:'media_upload_unconfirmed_pending'});
+  assert.deepEqual((await control(f.id)).find(([k])=>k==='media')[1],before);
+ }
+ assert.equal((await call(f.id,'complete',binding(f))).status,409);
+ assert.equal((await control(f.id)).find(([k])=>k==='media')[1].io_ticket,before.io_ticket);
+});
