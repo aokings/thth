@@ -461,7 +461,8 @@ def _bmff_metadata_scalar(value_type,read,start,end):
     # Apple well-known types28 (nested metadata) and27 (BMP) are not scalars.
     # Reserved/implicit or unknown types cannot establish location absence.
     codecs={1:'utf-8',2:'utf-16-be',3:'shift_jis',4:'utf-8',5:'utf-16-be'}
-    sizes={21:(1,2,3,4),22:(1,2,3,4),23:(4,),24:(8,),65:(1,),66:(2,),67:(4,),70:(8,),71:(8,),72:(16,),74:(8,),75:(1,),76:(2,),77:(4,),78:(8,),79:(72,)}
+    # QuickTime signed/unsigned BE integers are 1, 2, 3, 4 or 8 bytes wide.
+    sizes={21:(1,2,3,4,8),22:(1,2,3,4,8),23:(4,),24:(8,),65:(1,),66:(2,),67:(4,),70:(8,),71:(8,),72:(16,),74:(8,),75:(1,),76:(2,),77:(4,),78:(8,),79:(72,)}
     if value_type in codecs:
         import codecs as codec_module
         decoder=codec_module.getincrementaldecoder(codecs[value_type])()

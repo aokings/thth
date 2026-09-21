@@ -38,7 +38,7 @@ def test_reject_before_provider_and_keep_original(tmp_path,monkeypatch,medium,ex
     assert 'metadata_value_type' in result.error and calls==[] and p.read_bytes()==raw
 
 
-@pytest.mark.parametrize('kind,value',[(1,'曲名'.encode()),(2,'曲名'.encode('utf-16-be')),(3,'曲名'.encode('shift_jis')),(4,b'title'),(5,b'\0t'),(21,b'\0'),(22,bytes(3)),(23,bytes(4)),(24,bytes(8)),(65,bytes(1)),(66,bytes(2)),(67,bytes(4)),(70,bytes(8)),(71,bytes(8)),(72,bytes(16)),(74,bytes(8)),(75,bytes(1)),(76,bytes(2)),(77,bytes(4)),(78,bytes(8)),(79,bytes(72)),(1,b'a'*65535+'茶'.encode())])
+@pytest.mark.parametrize('kind,value',[(1,'曲名'.encode()),(2,'曲名'.encode('utf-16-be')),(3,'曲名'.encode('shift_jis')),(4,b'title'),(5,b'\0t'),(21,b'\0'),(21,bytes(8)),(22,bytes(3)),(22,bytes(8)),(23,bytes(4)),(24,bytes(8)),(65,bytes(1)),(66,bytes(2)),(67,bytes(4)),(70,bytes(8)),(71,bytes(8)),(72,bytes(16)),(74,bytes(8)),(75,bytes(1)),(76,bytes(2)),(77,bytes(4)),(78,bytes(8)),(79,bytes(72)),(1,b'a'*65535+'茶'.encode())])
 def test_known_scalar_keeps_bytes(tmp_path,kind,value):
     raw=mp4(typed(kind,value));(tmp_path/'v.mp4').write_bytes(raw)
     with media.prepare(tmp_path,{'media':[{'file':'v.mp4','alt':'video'}]},'threads') as (manifest,items):
@@ -49,7 +49,7 @@ def test_known_scalar_keeps_bytes(tmp_path,kind,value):
         assert row['metadata_notes']==['non_location_metadata_retained'] and row['duration']==2.5
 
 
-@pytest.mark.parametrize('kind,value',[(1,b'\xff'),(2,b'a'),(21,b''),(21,bytes(5)),(23,bytes(8)),(79,bytes(8))])
+@pytest.mark.parametrize('kind,value',[(1,b'\xff'),(2,b'a'),(21,b''),(21,bytes(5)),(22,bytes(5)),(21,bytes(9)),(23,bytes(8)),(79,bytes(8))])
 def test_scalar_width_and_encoding(tmp_path,kind,value):
     with pytest.raises(mediaformats.FormatError,match='invalid_attachment_structure'):inspect(tmp_path,mp4(typed(kind,value)))
 
