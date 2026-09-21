@@ -6,6 +6,7 @@ GIF and ISO BMFF bytes stay untouched. Provider codec support is checked later.
 from __future__ import annotations
 
 import binascii
+import codecs
 import dataclasses
 import os
 import struct
@@ -460,12 +461,11 @@ def inspect_embedded_cover(data):
 def _bmff_metadata_scalar(value_type,read,start,end):
     # Apple well-known types28 (nested metadata) and27 (BMP) are not scalars.
     # Reserved/implicit or unknown types cannot establish location absence.
-    codecs={1:'utf-8',2:'utf-16-be',3:'shift_jis',4:'utf-8',5:'utf-16-be'}
+    encodings={1:'utf-8',2:'utf-16-be',3:'shift_jis',4:'utf-8',5:'utf-16-be'}
     # QuickTime signed/unsigned BE integers are 1, 2, 3, 4 or 8 bytes wide.
     sizes={21:(1,2,3,4,8),22:(1,2,3,4,8),23:(4,),24:(8,),65:(1,),66:(2,),67:(4,),70:(8,),71:(8,),72:(16,),74:(8,),75:(1,),76:(2,),77:(4,),78:(8,),79:(72,)}
-    if value_type in codecs:
-        import codecs as codec_module
-        decoder=codec_module.getincrementaldecoder(codecs[value_type])()
+    if value_type in encodings:
+        decoder=codecs.getincrementaldecoder(encodings[value_type])()
         try:
             for at in range(start,end,65536):decoder.decode(read(at,min(65536,end-at)))
             decoder.decode(b'',final=True)

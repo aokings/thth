@@ -96,3 +96,12 @@ def test_geometry_like_key_is_refused_but_a_location_word_value_is_accepted(tmp_
         inspect(tmp_path,mp4(item(box(b'name',bytes(4)+b'geometry'))))
     accepted=inspect(tmp_path,mp4(typed(1,'Georgia'.encode())))
     assert accepted.public_bytes is None and accepted.metadata_notes==('non_location_metadata_retained',)
+
+
+def test_codecs_name_is_the_hoisted_module_not_a_local_table(tmp_path):
+    # 第 5・6 段 P3: `_bmff_metadata_scalar` の局所 dict が `import codecs` を
+    # 隠していた。module 直下の名前は stdlib のまま、復号も従来どおり。
+    import codecs as stdlib
+    assert mediaformats.codecs is stdlib
+    for kind,value in ((1,'茶'.encode()),(2,'茶'.encode('utf-16-be')),(3,'茶'.encode('shift_jis'))):
+        assert inspect(tmp_path,mp4(typed(kind,value))).public_bytes is None
