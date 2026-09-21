@@ -33,13 +33,10 @@ def test_quote_id_is_not_a_resolution_or_coercion_request(env,wire,value):
     assert wire['calls']==[]
 
 
-@pytest.mark.parametrize('field,value',[('cid','bafyexample'),('media',[{'file':'a.png','alt':'x'}])])
-def test_unimplemented_quote_effect_is_not_dropped(env,wire,field,value):
-    fm=quote()
-    if field=='media':fm[field]=value
-    else:fm['attachments'][0][field]=value
+def test_unimplemented_quote_effect_is_not_dropped(env,wire):
+    fm=quote();fm['attachments'][0]['cid']='bafyexample'
     result,_,_=invoke(env,fm=fm)
-    assert result.error=='unsupported_attachment: threads/'+('quote_media_combination_unverified' if field=='media' else 'quote_option')
+    assert result.error=='unsupported_attachment: threads/quote_option'
     assert wire['calls']==[]
 
 

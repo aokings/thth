@@ -33,8 +33,6 @@ def intent_error(manifest):
                 if manifest['files']:return 'unsupported_attachment: threads/link_requires_text'
                 if set(a)!={'type','url'}:return 'unsupported_attachment: threads/link_option'
             elif a['type']=='quote':
-                # The fixed source demonstrates TEXT, not a prohibition of file quotes.
-                if manifest['files']:return 'unsupported_attachment: threads/quote_media_combination_unverified'
                 if set(a)!={'type','uri'}:return 'unsupported_attachment: threads/quote_option'
                 if type(a['uri']) is not str or not a['uri'].isascii() or not a['uri'].isdecimal():return 'invalid_attachment: threads/quote_id'
             else:return 'unsupported_attachment: threads/typed_attachment'
@@ -168,6 +166,8 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         typed=text_params(post.media_manifest,post.text) if not post.media_files else None
         require(type(adapter.user_id) is str and adapter.user_id.isascii() and adapter.user_id.isdecimal(),'media_account_id_invalid')
         common={'text':post.text}
+        quotes=[a['uri'] for a in post.media_manifest['attachments'] if a['type']=='quote']
+        if quotes:common['quote_post_id']=quotes[0]
         if post.reply_to:common['reply_to_id']=post.reply_to
         if post.topic:common['topic_tag']=post.topic
         if post.location_id:common['location_id']=post.location_id
