@@ -41,6 +41,19 @@ def intent_error(manifest):
                 if not 2<=len(a['options'])<=4:return 'media_limit_exceeded: poll_options'
                 # C20-B: provisional code-point count for this new field only.
                 if any(not 1<=len(option)<=25 for option in a['options']):return 'media_limit_exceeded: poll_option_characters'
+            elif a['type']=='text':
+                if len(a['text'])>10000:return 'media_limit_exceeded: text_attachment_characters'
+                styles=a.get('styles',[])
+                if styles and not a['text'].isascii():return 'threads_offset_unit_unverified'
+                occupied=[]
+                for style in styles:
+                    begin=style['offset'];end=begin+style['length'];names=style['styling_info']
+                    if end>len(a['text']):return 'invalid_attachment: threads/style_range'
+                    if not names or len(names)!=len(set(names)) or any(n not in ('bold','italic','highlight','underline','strikethrough') for n in names):return 'invalid_attachment: threads/style_name'
+                    occupied.append((begin,end))
+                occupied.sort()
+                if any(right[0]<left[1] for left,right in zip(occupied,occupied[1:])):return 'invalid_attachment: threads/style_overlap'
+                if 'link' in a and any(row['type']=='link' for row in manifest['attachments']):return 'invalid_attachment: threads/text_link_conflict'
             elif a['type']=='gif':
                 if manifest['files']:return 'unsupported_attachment: threads/gif_requires_text'
                 if set(a)!={'type','provider','id'}:return 'unsupported_attachment: threads/gif_option'
@@ -76,9 +89,16 @@ def text_params(manifest,text):
     require(type(text) is str,'media_text_unavailable')
     links=[a['url'] for a in manifest['attachments'] if a['type']=='link']
     # Count lexical HTTP(S) links without network normalization or fetching.
-    visible={v.rstrip('.,!?;:)]}') for v in re.findall(r'https?://[^\s<>"\\]+',text)}
-    require(len(visible|set(links))<=5,'media_limit_exceeded: links')
+    texts=[a for a in manifest['attachments'] if a['type']=='text']
+    link_text='\n'.join([text]+[a['text'] for a in texts])
+    visible={v.rstrip('.,!?;:)]}') for v in re.findall(r'https?://[^\s<>"\\]+',link_text)}
+    require(len(visible|set(links)|{a['link'] for a in texts if 'link' in a})<=5,'media_limit_exceeded: links')
     params={'link_attachment':links[0]} if links else {}
+    if texts:
+        value={'plaintext':texts[0]['text']}
+        if 'link' in texts[0]:value['link_attachment_url']=texts[0]['link']
+        if 'styles' in texts[0]:value['text_with_styling_info']=texts[0]['styles']
+        params['text_attachment']=json.dumps(value,ensure_ascii=False,separators=(',',':'))
     quotes=[a['uri'] for a in manifest['attachments'] if a['type']=='quote']
     if quotes:params['quote_post_id']=quotes[0]
     polls=[a for a in manifest['attachments'] if a['type']=='poll']
@@ -121,7 +141,7 @@ def video_notes(items):
 
 
 def notes(manifest,items=()):
-    return (['warning: threads poll option characters use provisional Unicode code points; live-provider counting unverified'] if any(a['type']=='poll' for a in manifest['attachments']) else [])+['warning: threads provider scales image width below 320 or above 1440; ICC retained, provider converts color space' for row in manifest['files'] if row['kind']=='image' and (row['height'] if row['orientation'] in (5,6,7,8) else row['width']) not in range(320,1441)]+video_notes(items)
+    return (['warning: threads plaintext characters use provisional Unicode code points; live-provider counting unverified'] if any(a['type']=='text' for a in manifest['attachments']) else [])+(['warning: threads poll option characters use provisional Unicode code points; live-provider counting unverified'] if any(a['type']=='poll' for a in manifest['attachments']) else [])+['warning: threads provider scales image width below 320 or above 1440; ICC retained, provider converts color space' for row in manifest['files'] if row['kind']=='image' and (row['height'] if row['orientation'] in (5,6,7,8) else row['width']) not in range(320,1441)]+video_notes(items)
 
 
 class NoRedirect(httpsafe.SameOriginRedirectHandler):
