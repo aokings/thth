@@ -251,7 +251,7 @@ def test_visual_sample_entry_privacy_and_observation_agree(tmp_path,codec):
         assert codec.decode('ascii') in facts['video_codecs'] and facts['audio']==[]
 
 @pytest.mark.parametrize('doctype,reason',[(b'webm','webm'),(b'matroska','unknown format')])
-def test_webm_rejection_is_named_without_upload(env,wire,doctype,monkeypatch):
+def test_webm_rejection_is_named_without_upload(env,wire,doctype,reason,monkeypatch):
     raw=b'\x42\x82'+bytes([0x80+len(doctype)])+doctype
     (env[2]/'v.webm').write_bytes(b'\x1aE\xdf\xa3'+bytes([0x80+len(raw)])+raw)
     monkeypatch.setattr(media_relay,'MediaRelay',lambda *a:pytest.fail('unsupported WebM relay'))
