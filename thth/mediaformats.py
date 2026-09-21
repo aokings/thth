@@ -435,6 +435,22 @@ def inspect_embedded_cover(data):
     require('unverifiable' not in privacy,'location_metadata_unverifiable: embedded_cover_remove_cover')
 
 
+def _bmff_metadata_scalar(value_type,read,start,end):
+    # Apple well-known types28 (nested metadata) and27 (BMP) are not scalars.
+    # Reserved/implicit or unknown types cannot establish location absence.
+    codecs={1:'utf-8',2:'utf-16-be',3:'shift_jis',4:'utf-8',5:'utf-16-be'}
+    sizes={21:(1,2,3,4),22:(1,2,3,4),23:(4,),24:(8,),65:(1,),66:(2,),67:(4,),70:(8,),71:(8,),72:(16,),74:(8,),75:(1,),76:(2,),77:(4,),78:(8,),79:(72,)}
+    if value_type in codecs:
+        import codecs as codec_module
+        decoder=codec_module.getincrementaldecoder(codecs[value_type])()
+        try:
+            for at in range(start,end,65536):decoder.decode(read(at,min(65536,end-at)))
+            decoder.decode(b'',final=True)
+        except UnicodeDecodeError:raise FormatError('invalid_attachment_structure: metadata text') from None
+    elif value_type in sizes:require(end-start in sizes[value_type])
+    else:raise FormatError('location_metadata_unverifiable: metadata_value_type')
+
+
 def bmff(fd,size,*,allow_edit_lists=False):
     """Walk bounded boxes without loading video payloads or rewriting bytes."""
     def read(at,n):
@@ -541,6 +557,13 @@ def bmff(fd,size,*,allow_edit_lists=False):
                                         cover=read(va+8,vb-va-8)
                                         require(cover.startswith(b'\xff\xd8') if value_type==13 else cover.startswith(b'\x89PNG\r\n\x1a\n'),'invalid_attachment_structure: embedded_cover')
                                         inspect_embedded_cover(cover);metadata_notes.add('embedded_cover_retained');cover_seen=True
+                                    else:_bmff_metadata_scalar(value_type,read,va+8,vb)
+                                else:
+                                    require(vb-va>=4 and read(va,4)==bytes(4))
+                                    key=read(va+4,vb-va-4)
+                                    try:key.decode('utf-8')
+                                    except UnicodeDecodeError:raise FormatError('invalid_attachment_structure: metadata key') from None
+                                    require(not any(word in key.lower() for word in (b'location',b'gpslatitude',b'gpslongitude',b'gpsaltitude')),'location_metadata_present')
                             require(ik!=b'covr' or cover_seen,'invalid_attachment_structure: embedded_cover')
                     elif mk==b'hdlr': require(mb-ma>=12 and read(ma,4)==b'\0'*4)
                     elif mk in containers: walk(ma,mb,depth+1)
