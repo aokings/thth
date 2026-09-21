@@ -276,7 +276,7 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         # to enrich that record must not erase publication or retry either API.
         try:record('published',post_id=result,publication_ack='acknowledged' if acknowledged else 'unconfirmed')
         except (OSError,ValueError,RuntimeError,accounts.AccountStopped):pass
-        return base.PublishResult(result,None,ts,media=[{'sha256':item.manifest['public_sha256'],'kind':item.manifest['kind'],'alt_present':True,'remote_id':remote} for item,remote in zip(post.media_files,ids)])
+        return base.PublishResult(result,None,ts,media=[{'sha256':item.manifest['public_sha256'],'kind':item.manifest['kind'],'alt_present':base.alt_present(item.manifest),'remote_id':remote} for item,remote in zip(post.media_files,ids)])
     except accounts.AccountStopped:
         return base.PublishResult(None,None,ts,error='account_stopped',failure='media_held' if ids and phase not in ('publishing','published') else 'media_ambiguous' if phase!='preflight' else 'publish_vetoed')
     except (OSError,ValueError,RuntimeError,urllib.error.URLError,approval_relay.RelayError) as exc:

@@ -5,6 +5,8 @@ description: 投稿する前・返信を書く前・出したあと・絡みに�
 
 開始時に `thth handoff-report <account> --since-last-read --json` を読む。`tool.changed_since_last_read` が真なら、手元の `tool.notes_root_local_hint` を手掛かりに `tool.release_notes` の相対名を読んでから作業する。既読の記録は `--mark-read --by <名前>` の明示時だけ。`tool.notes_reason` が `notes_directory_unavailable` なら、このインストールには読める docs がない。空の `release_notes` を「変更なし」と解釈しない。
 
+添付を付ける前に `tool.capabilities` を読む（媒体ごとの「出せるもの」表。`thth doctor` にも同じ表が出る。`unverified` は「非対応」ではない）。
+
 
 # THTH — 投稿する前に呼ぶ道具
 

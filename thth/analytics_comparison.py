@@ -93,6 +93,9 @@ def _observation(post, posted, now, mark=24):
                 "metrics": {key: _metric(metrics.get(key)) for key in METRICS}}
     if "tags" in row:
         selected["tags"] = row["tags"] if isinstance(row["tags"], list) else None
+    if "attachment_kinds" in row:
+        selected["attachment_kinds"] = (row["attachment_kinds"]
+                                        if isinstance(row["attachment_kinds"], list) else None)
     return selected, dict(rejected)
 
 
@@ -218,6 +221,48 @@ def _tag_strata(items, previous_start, current_start, now, min_n):
                 for period in ("previous", "current")}}
 
 
+def _attachment_kind_strata(items, previous_start, current_start, now, min_n):
+    """Presence partitions exactly; one row counts in every kind it carries.
+
+    設計 2.13.0 §5・C6。`image` と `poll` の両方が付いた 1 本は**両方の層に
+    出る**（重ならない層ではない——`attachment_kind_groups_overlap` で言う）。
+    `none` は「添付が無かったと記録されている」、`unknown` は「記録が無い／
+    読めない」。**この 2 つを混ぜない**——2.13.0 より前の投稿は `unknown` で、
+    「添付が無かった」と数えてはいけない。母数は `attached`／`none`／`unknown`
+    の 3 つでちょうど分割され、`reconciliation` がその和を見せる。
+    """
+    from . import sent as sent_mod
+    groups = {"attached": [], "none": [], "unknown": []}
+    for item in items:
+        _post_id, posted, post = item
+        selected, _rejected = _observation(post, posted, now)
+        observed = selected.get("attachment_kinds") if selected else None
+        if (not isinstance(observed, list) or not observed
+                or any(kind not in sent_mod.ATTACHMENT_KINDS for kind in observed)):
+            groups["unknown"].append(item)
+        elif observed == [sent_mod.ATTACHMENT_NONE_LABEL]:
+            groups["none"].append(item)
+        else:
+            groups["attached"].append(item)
+            for kind in set(observed):
+                if kind != sent_mod.ATTACHMENT_NONE_LABEL:
+                    groups.setdefault(kind, []).append(item)
+    strata = {}
+    for label, members in sorted(groups.items()):
+        before = _population(members, previous_start, current_start, now, min_n)
+        current = _population(members, current_start, now, now, min_n)
+        strata[label] = {"previous": before, "current": current,
+                         "comparison": _differences(before, current, min_n)}
+    return {"by": "attachment_kind", "strata": strata, "attachment_kind_groups_overlap": True,
+            "reconciliation": {period: {
+                "sum_n_total": sum(strata[label][period]["n_total"]
+                                   for label in ("attached", "none", "unknown")),
+                "n_total": sum(1 for _post_id, posted, _post in items
+                               if (previous_start <= posted < current_start if period == "previous"
+                                   else current_start <= posted < now))}
+                for period in ("previous", "current")}}
+
+
 def _account(name, previous_start, current_start, now, min_n, by=None,
              *, allowed_names=None):
     cfg = accounts.load_account(name)
@@ -277,6 +322,10 @@ def _account(name, previous_start, current_start, now, min_n, by=None,
             if by == "tag":
                 node[kind]["stratified"] = _tag_strata(items, previous_start,
                                                        current_start, now, min_n)
+                continue
+            if by == "attachment_kind":
+                node[kind]["stratified"] = _attachment_kind_strata(
+                    items, previous_start, current_start, now, min_n)
                 continue
             from . import threadshape, topics
             lookup, shelf_broken = after_cli._kind_lookup(name)

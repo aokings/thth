@@ -16,6 +16,7 @@ from thth.report_service import ReportServiceError
 from tests.test_v212_server_writes import draft, env  # noqa: F401
 from tests.test_v213_media_foundation import jpeg
 from tests.test_v213_media_formats import box, exif, mp4, segment
+from tests.test_v213_mastodon_wav import wav
 
 GPS_JPEG = jpeg()[:2] + segment(0xe1, b'Exif\0\0' + exif()) + jpeg()[2:]
 LOCATED_MP4 = mp4(box(b'udta', box(b'\xa9xyz', b'+00.0+00.0/')))
@@ -48,7 +49,8 @@ def worker(env, monkeypatch):
         subject, operation, body = request.subject, request.operation, request.body
         state['ops'].append((subject, operation))
         if operation == 'create':
-            state['intent_seen'].append((uploads.directory(body['account']) / (subject + '.json')).exists())
+            state['intent_seen'].append((uploads.directory(body['account'])
+                                         / (uploads.derive_media_id(subject) + '.json')).exists())
             fail_for('create')
             state['objects'][subject] = dict(body, status='pending')
             return {'status': 'pending', 'size': body['size'], 'part_size': body['part_size'],
@@ -91,9 +93,14 @@ def ask(env, **values):
     return writes.execute(env['context'], dict(operation='media_upload_url', account='alpha', **values))
 
 
+def subject_of(issued):
+    """The invited user only ever holds the URL; its last segment is the subject."""
+    return issued['upload_url'].rsplit('/', 1)[-1]
+
+
 def put(worker, issued, data):
     """What the invited user does with the URL: one PUT of exactly those bytes."""
-    worker['data'][issued['media_id']] = data
+    worker['data'][subject_of(issued)] = data
 
 
 def upload(env, worker, data, *, kind='image', mime='image/jpeg'):
@@ -120,7 +127,10 @@ def test_intent_is_durable_before_the_worker_sees_create(env, worker):
     issued = ask(env, kind='image', mime='image/jpeg', size=len(data), sha256=hashlib.sha256(data).hexdigest())
     assert worker['intent_seen'] == [True], 'the Worker was asked before the intent was durable'
     assert [op for _, op in worker['ops']] == ['create']
-    assert issued['upload_url'] == 'http://127.0.0.1:12345/media-upload/' + issued['media_id']
+    subject = subject_of(issued)
+    assert issued['upload_url'] == 'http://127.0.0.1:12345/media-upload/' + subject
+    # 第 10 段: media_id は subject の一方向の像。**media_id から URL は作れない。**
+    assert subject != issued['media_id'] and uploads.derive_media_id(subject) == issued['media_id']
     assert issued['part_size'] is None and issued['expires_at'] > int(time.time() * 1000)
     path = uploads.directory('alpha') / (issued['media_id'] + '.json')
     assert os.stat(path).st_mode & 0o777 == 0o600
@@ -129,6 +139,30 @@ def test_intent_is_durable_before_the_worker_sees_create(env, worker):
     assert stored['kind'] == 'image' and stored['mime'] == 'image/jpeg' and stored['size'] == len(data)
     assert stored['sha256'] == hashlib.sha256(data).hexdigest()
     assert stored['expires_at'] - stored['created_at'] <= 600_000
+
+
+def test_a_media_id_alone_cannot_rebuild_the_upload_url(env, worker):
+    """第 10 段: `media_id` は subject の一方向の像。
+
+    第 9 段は両者が同じ文字列だったので、`draft_put` に渡すだけの識別子から
+    **一回限りの PUT URL を組み立てられた**。いまは `media_id` から subject は
+    作れず、subject は控え（mode 600）の中にしかない。**控えは media_id で引ける。**
+    """
+    data = jpeg()
+    issued = upload(env, worker, data)
+    subject = subject_of(issued)
+    assert uploads.derive_media_id(subject) == issued['media_id'] != subject
+    assert issued['media_id'] not in issued['upload_url']
+    # media_id を subject の位置に置いた URL は、この session ではない。
+    assert issued['media_id'] not in worker['data'] and issued['media_id'] not in worker['objects']
+    assert subject in worker['data']
+    # 控えは media_id で開き、subject を内側に持つ（外には出さない）。
+    stored = record_of(issued['media_id'])
+    assert stored['subject'] == subject and stored['media_id'] == issued['media_id']
+    with pytest.raises(ReportServiceError) as caught:
+        finish(env, subject)
+    assert str(caught.value) == 'media_unknown'
+    assert finish(env, issued['media_id'])['public_sha256'] == hashlib.sha256(data).hexdigest()
 
 
 def test_the_url_appears_in_the_reply_and_nowhere_else(env, worker, capsys):
@@ -157,7 +191,8 @@ def test_the_url_appears_in_the_reply_and_nowhere_else(env, worker, capsys):
     (dict(kind='document', mime='image/jpeg', size=10), 'media_kind_unsupported'),
     (dict(kind='image', mime='image/svg+xml', size=10), 'media_mime_unsupported'),
     (dict(kind='image', mime='video/mp4', size=10), 'media_mime_unsupported'),
-    (dict(kind='audio', mime='audio/mpeg', size=10), 'media_mime_unsupported'),
+    (dict(kind='audio', mime='audio/aac', size=10), 'media_mime_unsupported'),
+    (dict(kind='audio', mime='audio/mpeg', size=100_000_001), 'media_size_exceeded'),
 ])
 def test_declaration_is_refused_before_any_worker_call(env, worker, values, reason):
     with pytest.raises(ReportServiceError) as caught:
@@ -227,6 +262,28 @@ def test_video_keeps_its_bytes_and_uses_the_declared_extension(env, worker):
     assert result['public_sha256'] == hashlib.sha256(data).hexdigest()
     assert (result['kind'], result['format'], result['duration']) == ('video', 'mp4', 2.5)
     assert repo_media(env) == [result['public_sha256'] + '.mp4']
+
+
+def test_audio_is_issued_a_url_and_sanitized_by_the_audio_inspectors(env, worker):
+    """第 10 段: the Worker's transport set carries audio, so an invited user can
+    attach the audio Mastodon accepts. The declared mime is still only a
+    declaration: `complete` reads the bytes back and the WAV inspector decides."""
+    data = wav()
+    issued = upload(env, worker, data, kind='audio', mime='audio/wav')
+    assert issued['part_size'] is None
+    result = finish(env, issued['media_id'])
+    assert (result['kind'], result['format']) == ('audio', 'wav')
+    assert result['public_sha256'] == hashlib.sha256(data).hexdigest()
+    assert repo_media(env) == [result['public_sha256'] + '.wav']
+    assert record_of(issued['media_id'])['status'] == 'ready'
+
+
+def test_audio_mime_is_checked_against_the_inspected_bytes(env, worker):
+    issued = upload(env, worker, wav(), kind='audio', mime='audio/mpeg')
+    with pytest.raises(ReportServiceError) as caught:
+        finish(env, issued['media_id'])
+    assert str(caught.value) == 'media_mime_mismatch'
+    assert repo_media(env) == []
 
 
 @pytest.mark.parametrize('kind,mime,data', [('video', 'video/mp4', jpeg()), ('image', 'image/png', jpeg())])

@@ -141,7 +141,7 @@ TOOLS = [
     },
     {
         "name": "operations_handoff",
-        "description": "ローカル運用記録の状態・承認待ち・inflight・通知未処理を根拠と鮮度の制約付きで返す。同期・承認・再送はしない",
+        "description": "ローカル運用記録の状態・承認待ち・inflight・通知未処理を根拠と鮮度の制約付きで返す。tool.capabilities に媒体ごとの添付の対応表が付く（添付を付ける前に読む）。同期・承認・再送はしない",
         "inputSchema": {"type": "object", "properties": {
             "account": {"type": "string"}, "project": {"type": "string"},
             "since_last_read": {"type": "boolean"}}},
@@ -160,7 +160,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "by": {"type": "string", "enum": ["kind", "hour_band", "topic", "tag"]},
+                "by": {"type": "string", "enum": ["kind", "hour_band", "topic", "tag", "attachment_kind"]},
                 "compare_previous": {"type": "boolean", "description": "直前の同じ日数との比較（既定false）"},
                 "account": {"type": "string"},
                 "project": {"type": "string"},
@@ -400,7 +400,7 @@ def validate_arguments(name: str, arguments) -> dict:
             f"{name}: arguments は object で渡してください"
             f"（受け取った: {type(arguments).__name__}）")
     if name == "analytics_report" and "by" in arguments:
-        if arguments["by"] not in ("kind", "hour_band", "topic", "tag") or arguments.get("compare_previous") is not True:
+        if arguments["by"] not in ("kind", "hour_band", "topic", "tag", "attachment_kind") or arguments.get("compare_previous") is not True:
             raise ToolInputError("analytics_report: by は compare_previous=true と kind/hour_band/topic/tag が必要です")
     if name == "operations_handoff" and "since_last_read" in arguments and type(arguments["since_last_read"]) is not bool:
         raise ToolInputError("operations_handoff: since_last_read は boolean です")
@@ -523,7 +523,7 @@ SERVER_TOOLS = [
 # 添付の 2 本だけは型が文字列でないので、表に足さず個別に書く（日本語 1 行）。
 SERVER_TOOLS += [
     {"name":"thth_media_upload_url",
-     "description":"添付を置く一回限りのアップロード URL を発行する（種類・大きさ・sha256 を先に申告。URL はこの応答にだけ出る・10 分で失効・もう一度呼ぶと別の URL）",
+     "description":"添付を置く一回限りのアップロード URL を発行する（添付を付ける前に tool.capabilities を読む。種類・大きさ・sha256 を先に申告。URL はこの応答にだけ出る・10 分で失効・もう一度呼ぶと別の URL）",
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"kind":{"type":"string"},
                     "size":{"type":"integer"},"sha256":{"type":"string"},"mime":{"type":"string"}},
                     "required":["account","kind","size","sha256","mime"],"additionalProperties":False}},
@@ -536,7 +536,7 @@ SERVER_TOOLS += [
 for _tool in SERVER_TOOLS:
     if _tool["name"] == "thth_draft_put":
         _tool["inputSchema"]["properties"]["media"] = {"type":"array"}
-        _tool["description"] = "下書きを置く（media に確定済みの添付 [{media_id, alt}] を並べられる。alt は必須）"
+        _tool["description"] = "下書きを置く（media に確定済みの添付 [{media_id, alt}] を並べられる。alt は必須。添付を付ける前に tool.capabilities を読む）"
 del _tool
 
 

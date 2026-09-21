@@ -115,6 +115,11 @@ def diagnose(account_name: str) -> dict:
     #未設定でも key と行は出す。**送信はしない**——観測していないことを
     # 静的な形（`cleanup_observation_unavailable`）でそのまま言う。
     report['media_cleanup']=media_cleanup.observe(account_name) if media_cleanup.configured() else dict(media_cleanup.UNAVAILABLE)
+    # **媒体ごとの「出せるもの」表**（設計 2.13.0 §0.1）。`handoff-report` の
+    # `tool.capabilities` と**同じ 1 本**（`thth/media_capabilities.py`）から出る。
+    # 静的なので token も probe も要らない——probe が全部×でもこの行は出る。
+    from . import media_capabilities
+    report['media_capabilities']=media_capabilities.summary()
     return report
 
 
@@ -509,6 +514,10 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
 
     cleanup=report.get('media_cleanup')
     if cleanup:log('media cleanup: '+str(cleanup['reason'] or 'confirmed')+' (pending='+str(cleanup['pending_count'])+', failed='+str(cleanup['failed_count'])+')')
+    if report.get('media_capabilities'):
+        from . import media_capabilities
+        for line in media_capabilities.lines(account_cfg.get('media')):log(line)
+        log('')
     log(どこ)
     for n in notices:
         log(n)

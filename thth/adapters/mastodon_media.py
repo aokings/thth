@@ -354,7 +354,7 @@ def publish(adapter,post,*,before_publish=None):
         require(code in (200,201) and type(value.get('id')) is str and value['id'].isascii() and value['id'].isdecimal(),'media_response_invalid: status id')
         if quote is not None:require(value.get('visibility') in ('public','unlisted'),'quote_result_non_public: mastodon')
         record('published',post_id=value['id'])
-        return base.PublishResult(value['id'],value.get('url'),ts,media=[{'sha256':x.manifest['public_sha256'],'kind':x.manifest['kind'],'alt_present':True,'remote_id':identifier} for x,identifier in zip(primary,ids)])
+        return base.PublishResult(value['id'],value.get('url'),ts,media=[{'sha256':x.manifest['public_sha256'],'kind':x.manifest['kind'],'alt_present':base.alt_present(x.manifest),'remote_id':identifier} for x,identifier in zip(primary,ids)])
     except accounts.AccountStopped:
         # The stop authority forbids new state writes; keep the last durable
         # intent, including uploaded IDs, and never downgrade it to clearable.

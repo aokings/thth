@@ -338,6 +338,33 @@ def _strong_ref(value):
     if len(raw)!=36 or raw[:4]!=b'\x01\x71\x12\x20' or 'b'+base64.b32encode(raw).decode().lower().rstrip('=')!=cid: raise MediaError('attachments: invalid strongRef cid')
 
 
+# 型付き添付の種類と、媒体ごとに通す集合。**module 定数に置く**（第 10 段）——
+# ここから `unsupported_attachment: <媒体>/<種類>` が出るので、
+# `thth/media_capabilities.py` の表と突き合わせる試験が読める場所に要る。
+TYPED_KINDS=('quote','link','poll','text','gif')
+TYPED_ALLOWED={'threads':{'quote','link','poll','text','gif'},'mastodon':{'quote','link','poll'},'bluesky':{'quote','link'}}
+# 記録に残す「添付の種類」（`sent`／`insights` の `attachment_kinds`・第 10 段）。
+# ファイルの kind と型付きの種類を**同じ 1 つの list** に並べる——`analytics-report
+# --by attachment_kind` は 1 行を種類ごとに数えるので、image と poll が付いた 1 本は
+# 両方の層に出る。何も付いていない行は `none`（**空 list にしない**——「無かった」と
+# 「判らない」を同じ形にすると、母数が読めなくなる）。
+ATTACHMENT_NONE='none'
+CAROUSEL='carousel'
+
+
+def attachment_kinds(manifest):
+    """manifest から種類の list を作る（重複なし・昇順・空なら `['none']`）。"""
+    if not manifest:return [ATTACHMENT_NONE]
+    files=[row for row in manifest.get('files') or () if isinstance(row,dict) and row.get('role')=='media']
+    kinds={row['kind'] for row in files if isinstance(row.get('kind'),str)}
+    # 2 点以上のファイルは媒体をまたいで「並べて出したもの」（Threads の CAROUSEL・
+    # Bluesky の gallery／images・Mastodon の複数 media_ids）。媒体名は混ぜない。
+    if len(files)>1:kinds.add(CAROUSEL)
+    kinds|={row['type'] for row in manifest.get('attachments') or ()
+            if isinstance(row,dict) and row.get('type') in TYPED_KINDS}
+    return sorted(kinds) or [ATTACHMENT_NONE]
+
+
 def validate_declarations(fm,medium):
     """No provider calls or guessed limits. Every accepted effect enters digest."""
     rows=fm.get('media',[]); validate(rows)
@@ -351,7 +378,7 @@ def validate_declarations(fm,medium):
         'text':({'type','text'},{'link','styles'}),
         'gif':({'type','provider','id'},set()),
     }
-    allowed={'threads':{'quote','link','poll','text','gif'},'mastodon':{'quote','link','poll'},'bluesky':{'quote','link'}}
+    allowed=TYPED_ALLOWED
     seen=set()
     for row in attachments:
         if not isinstance(row,dict) or not isinstance(row.get('type'),str) or row['type'] not in fields: raise MediaError('attachments: unknown type')

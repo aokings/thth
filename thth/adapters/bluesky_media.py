@@ -153,7 +153,7 @@ def publish(adapter,post,*,before_publish=None):
         uri=value.get('uri');prefix='at://'+session['did']+'/'+POST_COLLECTION+'/'
         require(type(uri) is str and uri.startswith(prefix) and bool(uri[len(prefix):]) and '/' not in uri[len(prefix):] and all(32<ord(c)<127 for c in uri),'media_response_invalid: post URI')
         record('published',post_id=uri)
-        return base.PublishResult(uri,post_url(session.get('handle'),uri),ts,media=[{'sha256':item.manifest['public_sha256'],'kind':'image','alt_present':True,'remote_id':identifier} for item,identifier in zip(post.media_files,ids)])
+        return base.PublishResult(uri,post_url(session.get('handle'),uri),ts,media=[{'sha256':item.manifest['public_sha256'],'kind':'image','alt_present':base.alt_present(item.manifest),'remote_id':identifier} for item,identifier in zip(post.media_files,ids)])
     except accounts.AccountStopped:
         return base.PublishResult(None,None,ts,error='account_stopped',failure='media_held' if ids and phase=='ready' else 'media_ambiguous' if phase!='preflight' else 'publish_vetoed')
     except (OSError,ValueError,RuntimeError,urllib.error.URLError) as exc:

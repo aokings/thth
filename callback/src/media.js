@@ -3,7 +3,11 @@ import {digest,STATE_PATTERN,HASH_PATTERN,reply} from './relay.js';
 import {boundedBody,unb64} from './approval.js';
 export const MEDIA_TTL=600_000, RAW_RETENTION=86_400_000;
 export const MEDIA_NAME=/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
-export const MIME=new Set(['image/jpeg','image/png','image/webp','image/gif','video/mp4','video/quicktime']);
+// Transport allowlist for uploaded source bytes. Audio joined in stage 10 so
+// an invited user can attach the audio Mastodon accepts; the VM still decides
+// the real format from magic bytes and never trusts this declaration.
+export const MIME=new Set(['image/jpeg','image/png','image/webp','image/gif','video/mp4','video/quicktime',
+  'audio/mpeg','audio/flac','audio/ogg','audio/wav','audio/x-wav','audio/webm','audio/mp4']);
 export const MULTIPART_THRESHOLD=100_000_000, MIN_PART=5*1024*1024;
 export const fail=(status=400,error='invalid_media_request')=>({status,body:{error}});
 export const validHash=v=>typeof v==='string'&&HASH_PATTERN.test(v);

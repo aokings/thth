@@ -295,6 +295,24 @@ test('public grant copy failure never exposes partially committed bytes',async()
 });
 
 
+test('the transport allowlist carries audio so an invited user can upload it',async()=>{
+ // 第 10 段: Mastodon が受ける音声を招待者が置けること。Worker は宣言された mime を
+ // 通すだけで、実際の形式は VM が magic bytes で決める。allowlist から音声を 1 つでも
+ // 外すと、その kind の upload session が 400 になってこの試験が落ちる。
+ for(const mime of ['audio/mpeg','audio/flac','audio/ogg','audio/wav','audio/x-wav','audio/webm','audio/mp4']){
+  const f=data();f.body.mime=mime;
+  assert.equal((await call(f.id,'create',f.body)).status,201,mime);
+  assert.equal((await upload(f)).status,200,mime);
+  assert.equal((await call(f.id,'complete',binding(f))).status,200,mime);
+ }
+ for(const mime of ['audio/aac','audio/basic','application/ogg']){
+  const f=data();f.body.mime=mime;
+  assert.equal((await call(f.id,'create',f.body)).status,400,mime);
+  assert.deepEqual(await control(f.id,{inspect:true}),{rows:[],alarm:null});
+ }
+});
+
+
 test('strict upload schema and byte-count failures cannot create a readable object',async()=>{
  for(const change of [{size:0},{size:1.5},{size:'1'},{mime:'text/html'},{kind:'provider'},{actor:'a@b'},{account:[]},{sha256:'invalid'},{part_size:5242880},{extra:true}]){
   const f=data();assert.equal((await call(f.id,'create',{...f.body,...change})).status,400);
