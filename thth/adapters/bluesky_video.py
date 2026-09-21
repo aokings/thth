@@ -195,7 +195,7 @@ def publish(adapter,post,*,before_publish=None):
             if job.get('error')=='already_exists':blob=checked_video_blob(job.get('blob'));break
             require(not job.get('error') and job['state']!='JOB_STATE_FAILED','video_processing_failed')
             if job['state']=='JOB_STATE_COMPLETED':blob=checked_video_blob(job.get('blob'));break
-            time.sleep(min(POLL_INTERVAL,remaining()))
+            time.sleep(max(0.1,min(POLL_INTERVAL,remaining())))
             timeout=remaining()
             response=_request(url+'/xrpc/app.bsky.video.getJobStatus?'+urllib.parse.urlencode({'jobId':job_id}),timeout=timeout,already_exists=True)
             remaining();job=_job(response,did,job_id)

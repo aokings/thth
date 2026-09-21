@@ -434,3 +434,15 @@ def test_poll_already_exists_uses_only_same_bound_job(env,wire,monkeypatch):
     result,journal,_=invoke(env)
     assert result.post_id and journal['media']['phase']=='published'
     assert len(calls(wire,'app.bsky.video.uploadVideo'))==1 and len(calls(wire,'app.bsky.video.getJobStatus'))==1 and len(wire['records'])==1
+
+
+def test_near_deadline_sleep_is_bounded_and_does_not_poll_late(env,wire,monkeypatch):
+    clock=[0.];sleeps=[]
+    monkeypatch.setattr(bv.time,'monotonic',lambda:clock[0]);monkeypatch.setattr(bv,'POLL_SECONDS',.05)
+    def sleep(seconds):sleeps.append(seconds);clock[0]+=seconds
+    monkeypatch.setattr(bv.time,'sleep',sleep)
+    wire['jobs'][0]['state']='JOB_STATE_PROCESSING'
+    result,journal,_=invoke(env)
+    assert sleeps==[.1] and result.error=='video_processing_timeout' and result.failure=='media_held'
+    assert not calls(wire,'app.bsky.video.getJobStatus') and not wire['records']
+    assert journal['media']['phase']=='held'
