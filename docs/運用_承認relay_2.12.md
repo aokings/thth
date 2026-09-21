@@ -64,4 +64,6 @@ VM は毎回新しい承認 token と読取鍵を生成します。期限後の�
 添付のある原稿の承認ページは、本文の下に添付一覧を出します。画像は同じ Worker の `/m/<capability>` を `<img>` で読み、CSP に `img-src 'self'` が 1 行増えます。動画・音声・字幕は「種類・長さ・公開 SHA の先頭 12 桁・alt」の文字だけで、先頭フレームは作りません。型付き添付と `post_options` は canonical JSON を `<pre>` に出します。
 preview capability は承認 session を登録する直前に発行し、寿命は Worker の時計で最大 600 秒です。upload の所要時間のぶんだけ session より数秒早く切れることがあり、その後は `/m/…` が 410 を返して画像だけが消えます（本文と digest は残ります）。capability は承認ページの HTML にだけ現れ、`request_status`・受領・管理ログには出しません。upload か発行に失敗したときは session を登録せず、要求は `media_preview_unavailable` で止まります。
 公開ページのレート制限（送信元ごと毎分 120）とは別に、`/m/…` にも同じ毎分 120 の枠があります。1 ページ 20 枚までの添付はこの枠に収まります。
+既知の制限: Worker の sanitized upload は画像 1 枚あたり公開 bytes 8,000,000 までです。これを超える画像（Mastodon の instance 上限が大きい場合など）は preview を作れず、承認要求が `media_preview_unavailable` で止まります。本文だけに落として公開する経路はありません。
+承認時の upload は公開時の provider 向け upload とは別です（承認と公開は別の実行で、間に何日も空きます）。job JSON の `media_subjects` は再利用の手掛かりとして残しますが、いまの実装は公開時に改めて upload します。
 
