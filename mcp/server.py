@@ -520,6 +520,26 @@ SERVER_TOOLS = [
         ('retract_request',('post_id','reason'),('post_id','reason')),
         ('draft_list',(),()),('queue',(),()),('request_status',('job_id',),('job_id',))) ]
 
+# 添付の 2 本だけは型が文字列でないので、表に足さず個別に書く（日本語 1 行）。
+SERVER_TOOLS += [
+    {"name":"thth_media_upload_url",
+     "description":"添付を置く一回限りのアップロード URL を発行する（種類・大きさ・sha256 を先に申告。URL はこの応答にだけ出る・10 分で失効・もう一度呼ぶと別の URL）",
+     "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"kind":{"type":"string"},
+                    "size":{"type":"integer"},"sha256":{"type":"string"},"mime":{"type":"string"}},
+                    "required":["account","kind","size","sha256","mime"],"additionalProperties":False}},
+    {"name":"thth_media_complete",
+     "description":"置き終えた添付を確定する（サーバが読み戻して sha256 を照合し、位置情報などを落としてから repo に置く。公開 sha を返す）",
+     "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"media_id":{"type":"string"}},
+                    "required":["account","media_id"],"additionalProperties":False}},
+]
+# `media` だけは配列（`[{media_id, alt}]`・alt は必須）。
+for _tool in SERVER_TOOLS:
+    if _tool["name"] == "thth_draft_put":
+        _tool["inputSchema"]["properties"]["media"] = {"type":"array"}
+        _tool["description"] = "下書きを置く（media に確定済みの添付 [{media_id, alt}] を並べられる。alt は必須）"
+del _tool
+
+
 
 def server_mode():
     return 'THTH_REPORT_CREDENTIALS' in os.environ or 'THTH_REPORT_TOKEN' in os.environ

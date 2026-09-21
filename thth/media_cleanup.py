@@ -62,9 +62,28 @@ def command(args):
     return 2 if result.get('reason') or result.get('remaining_count') else 0
 
 
+def gc_command(args):
+    """参照されていない公開ファイルを 1 日経ってから消す（件数だけを出す）。"""
+    from . import media_uploads
+    try:
+        result = media_uploads.gc(args.account, by=args.by)
+    except (OSError, ValueError, TypeError, admin_log.AdminLogError, accounts.AccountError):
+        result = {'account': args.account, 'removed_count': None, 'kept_count': None,
+                  'intents_removed': None, 'reason': 'media_gc_unavailable'}
+    print(json.dumps(result, ensure_ascii=False) if args.json else
+          'media gc: ' + str(result.get('reason') or 'done') +
+          ' (removed=' + str(result.get('removed_count')) +
+          ' kept=' + str(result.get('kept_count')) +
+          ' intents=' + str(result.get('intents_removed')) + ')')
+    return 2 if result.get('reason') else 0
+
+
 def register(commands):
     parser = commands.add_parser('media', help='添付の物理削除を観測・回復（再投稿しない）')
     operations = parser.add_subparsers(required=True)
     recovery = operations.add_parser('cleanup-retry', description='期限済みの削除を再試行します。結果不明の書込みは強制解除せず、本口だけでは回復できない場合があります。再投稿はしません。')
     recovery.add_argument('account');recovery.add_argument('--by', required=True)
     recovery.add_argument('--json', action='store_true');recovery.set_defaults(func=command)
+    collect = operations.add_parser('gc', description='下書きから参照されていない docs/sns/media のファイルを、1 日経ってから managed repo の commit で消します。参照されている間は消しません。')
+    collect.add_argument('account');collect.add_argument('--by', required=True)
+    collect.add_argument('--json', action='store_true');collect.set_defaults(func=gc_command)
