@@ -178,7 +178,7 @@ def check_limits(cap,items):
         mime_for(row,cap)
         # Mastodon larger_media_format? includes audio. Audio has no matrix/fps.
         limit=_positive(cap,('video' if kind=='audio' else kind)+'_size_limit')
-        below=row['public_size']<limit if row['role']=='thumbnail' else row['public_size']<=limit
+        below=row['public_size']<limit
         require(below,'media_limit_exceeded: bytes')
         if row['role']=='media':require(len(row['alt'])<=_positive(cap,'description_limit'),'media_limit_exceeded: alt')
         # The pinned thumbnail validation shares IMAGE_LIMIT/MIME, not the

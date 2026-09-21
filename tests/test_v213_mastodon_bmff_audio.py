@@ -24,7 +24,7 @@ def metadata(cover=None,kind=14):
 def configure(env,wire,raw,*,mime='audio/mp4'):
     path=env[2]/'sound.m4a';path.write_bytes(raw)
     cap=wire['caps']['configuration']['media_attachments']
-    cap.update(supported_mime_types=[mime],image_size_limit=1,image_matrix_limit=None,video_size_limit=len(raw),video_matrix_limit=None,video_frame_rate_limit=None)
+    cap.update(supported_mime_types=[mime],image_size_limit=1,image_matrix_limit=None,video_size_limit=len(raw)+1,video_matrix_limit=None,video_frame_rate_limit=None)
     wire['upload']=[(200,{'id':'7','type':'audio','url':'https://instance.invalid/audio'})]
     return {'media':[{'file':'sound.m4a','alt':'音声の説明'}]}
 

@@ -19,7 +19,7 @@ def source(frames):
 def setup(env,wire,frames=2):
     raw=source(frames);(env[2]/'a.gif').write_bytes(raw)
     wire['caps']['configuration']['media_attachments'].update(
-        supported_mime_types=['image/gif','image/png'],image_size_limit=len(raw),
+        supported_mime_types=['image/gif','image/png'],image_size_limit=len(raw)+1,
         image_matrix_limit=1,video_size_limit=1,video_matrix_limit=1,video_frame_rate_limit=1)
     return raw,{'media':[{'file':'a.gif','alt':'二つの点 🌿'}]}
 

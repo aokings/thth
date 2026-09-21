@@ -50,7 +50,7 @@ def inspect(tmp_path,raw):
 
 def configure(env,wire,raw,mime='audio/mpeg'):
     (env[2]/'sound.mp3').write_bytes(raw)
-    wire['caps']['configuration']['media_attachments'].update(supported_mime_types=[mime],image_size_limit=1,image_matrix_limit=None,video_size_limit=len(raw),video_matrix_limit=None,video_frame_rate_limit=None)
+    wire['caps']['configuration']['media_attachments'].update(supported_mime_types=[mime],image_size_limit=1,image_matrix_limit=None,video_size_limit=len(raw)+1,video_matrix_limit=None,video_frame_rate_limit=None)
     wire['upload']=[(200,{'id':'7','type':'audio','url':'https://instance.invalid/audio'})]
     return {'media':[{'file':'sound.mp3','alt':'音声の説明'}]}
 
