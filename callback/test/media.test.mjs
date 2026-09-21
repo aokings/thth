@@ -644,3 +644,49 @@ test('multipart complete response loss retains unknown debt despite object exist
  await control(f.id,{clock:row.cleanup_at,alarm:true});assert.ok(await bucket.head(row.key));
  assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,1);
 });
+
+
+test('cleanup round robin reaches healthy tail despite failed prefix, concurrency and removed cursor',async()=>{
+ const account='round-robin',fixtures=[];
+ for(let i=0;i<65;i++){const f=data();f.body.account=account;await ready(f);fixtures.push(f);}
+ const obligations=(await cleanupControl(account)).rows.map(([key])=>key);
+ const keyed=[];
+ for(const f of fixtures){const row=(await control(f.id)).find(([k])=>k==='media')[1];keyed.push({f,row});}
+ const due=Math.max(...keyed.map(x=>x.row.cleanup_at));for(const {f} of keyed)await control(f.id,{clock:due});
+ await cleanupControl(account,{clock:due});
+ const first=await accountCall(account,'cleanup-retry');assert.equal(first.status,200);assert.equal((await first.json()).scheduled_count,64);
+ let selected=[],tail;
+ for(const item of keyed){const seen=await control(item.f.id,{clock:due,retryInspect:true});if(seen.calls)selected.push(item);else tail=item;}
+ assert.equal(selected.length,64);assert.ok(tail);
+ for(const {f} of selected)await control(f.id,{clock:due,failR2:'delete',alarm:true});
+ assert.equal((await cleanupControl(account,{clock:due})).cleanup.pending_count,65);
+ const second=await accountCall(account,'cleanup-retry');assert.equal(second.status,200);
+ assert.equal((await control(tail.f.id,{clock:due,retryInspect:true})).calls,1);
+ await control(tail.f.id,{clock:due,alarm:true});
+ assert.equal(await(await mf.getR2Bucket('MEDIA_BUCKET')).head(tail.row.key),null);
+ assert.equal((await cleanupControl(account,{clock:due})).cleanup.pending_count,64);
+ // Remove the exact last-selected subject through real R2 cleanup. Remaining
+ // subjects must still be reachable from the now-absent lexical cursor.
+ const cursor=(await cleanupControl(account,{clock:due,cursor:true})).cursor;
+ for(const item of selected){const info=await control(item.f.id,{clock:due,retryInspect:true});if('media_cleanup:'+info.subject===cursor){await control(item.f.id,{clock:due,alarm:true});selected=selected.filter(x=>x!==item);break;}}
+ assert.equal(selected.length,63);
+ const before=[];for(const {f} of selected)before.push((await control(f.id,{clock:due,retryInspect:true})).calls);
+ const both=await Promise.all([accountCall(account,'cleanup-retry'),accountCall(account,'cleanup-retry')]);assert.deepEqual(both.map(r=>r.status),[200,200]);
+ for(let i=0;i<selected.length;i++)assert.equal((await control(selected[i].f.id,{clock:due,retryInspect:true})).calls,before[i]+2);
+ assert.equal((await accountCall('other-round-robin','cleanup-retry')).status,200);
+ assert.equal((await cleanupControl('other-round-robin',{clock:due})).cleanup.pending_count,0);
+ assert.equal(obligations.length,65);
+});
+
+
+test('concurrent cleanup retry reserves rotating batches before RPC and excludes future work',async()=>{
+ const account='parallel-cleanup',items=[];
+ for(let i=0;i<65;i++){const f=data();f.body.account=account;assert.equal((await call(f.id,'create',f.body)).status,201);const row=(await control(f.id)).find(([k])=>k==='media')[1];items.push({f,row});}
+ const due=Math.max(...items.map(x=>x.row.cleanup_at));for(const {f} of items)await control(f.id,{clock:due});
+ const future=data();future.body.account=account;await control(future.id,{clock:due});assert.equal((await call(future.id,'create',future.body)).status,201);
+ await cleanupControl(account,{clock:due});
+ const replies=await Promise.all([accountCall(account,'cleanup-retry'),accountCall(account,'cleanup-retry')]);
+ for(const response of replies){assert.equal(response.status,200);assert.deepEqual(await response.json(),{scheduled_count:64,unavailable_count:0,remaining_count:1,reason:null});}
+ let calls=0;for(const {f} of items){const value=(await control(f.id,{clock:due,retryInspect:true})).calls;assert.ok(value>=1);calls+=value;}assert.equal(calls,128);
+ assert.equal((await control(future.id,{clock:due,retryInspect:true})).calls,0);
+});

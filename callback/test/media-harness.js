@@ -44,6 +44,7 @@ export class TestMedia extends MediaObject {
     }});
     super(ctx,{...env,MEDIA_BUCKET:bucket});target=this;
   }
+  async cleanupRetry(account){this.retryCalls=(this.retryCalls||0)+1;return super.cleanupRetry(account);}
   async beforeOperation(operation){
     if(this.beforeR2?.operation!==operation)return;
     const action=this.beforeR2;this.beforeR2=null;this.clock=this.row().cleanup_at;
@@ -70,7 +71,7 @@ export class TestMedia extends MediaObject {
     if(this.afterPut==='revoke')await(await accountStub(this.env,this.row().account)).manage('revoke',{}, {nonce:'a'.repeat(43),time:Date.now()});
     return result;
   }
-  async control(data){this.clock=data.clock;this.afterPut=data.afterPut;this.afterR2=data.afterR2;this.beforeR2=data.beforeR2;this.lateR2=data.lateR2;this.failSave=data.failSave;this.failAlarm=data.failAlarm;this.failR2=data.failR2;this.cleanupFault=data.cleanupFault;this.cleanupLoss=data.cleanupLoss;if(data.finishLateR2&&this.lateWrite){await this.lateWrite();this.lateWrite=null;}if(data.unresolvedIO)this.atomic(()=>this.put({...this.row(),io_ticket:'synthetic-unresolved'}));if(data.alarm)await this.alarm();if(data.ioInspect)return this.duringIO;return data.inspect?{rows:[...this.ctx.storage.kv.list()],alarm:await this.ctx.storage.getAlarm()}:[...this.ctx.storage.kv.list()];}
+  async control(data){this.clock=data.clock;this.afterPut=data.afterPut;this.afterR2=data.afterR2;this.beforeR2=data.beforeR2;this.lateR2=data.lateR2;this.failSave=data.failSave;this.failAlarm=data.failAlarm;this.failR2=data.failR2;this.cleanupFault=data.cleanupFault;this.cleanupLoss=data.cleanupLoss;if(data.finishLateR2&&this.lateWrite){await this.lateWrite();this.lateWrite=null;}if(data.unresolvedIO)this.atomic(()=>this.put({...this.row(),io_ticket:'synthetic-unresolved'}));if(data.alarm)await this.alarm();if(data.retryInspect)return {calls:this.retryCalls||0,row:this.row()||null,subject:this.ctx.id.toString()};if(data.ioInspect)return this.duringIO;return data.inspect?{rows:[...this.ctx.storage.kv.list()],alarm:await this.ctx.storage.getAlarm()}:[...this.ctx.storage.kv.list()];}
 }
 export class ApprovalAccount extends BaseAccount {
   replay(ticket){const clock=this.clock;this.clock=undefined;try{return super.replay(ticket);}finally{this.clock=clock;}}
@@ -78,7 +79,8 @@ export class ApprovalAccount extends BaseAccount {
   async control(data){
     this.clock=data.clock;
     if(data.failed)await this.cleanupFailed(data.failed);
-    return {rows:[...this.ctx.storage.kv.list({prefix:'media_cleanup:'})],cleanup:this.cleanupStatus()};
+    const result={rows:[...this.ctx.storage.kv.list({prefix:'media_cleanup:'})],cleanup:this.cleanupStatus()};
+    if(data.cursor)result.cursor=this.ctx.storage.kv.get('media_cleanup_cursor')||null;return result;
   }
 }
 export {ApprovalPerson,ApprovalSession};
