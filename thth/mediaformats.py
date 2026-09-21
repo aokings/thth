@@ -511,9 +511,34 @@ def bmff(fd,size,*,allow_edit_lists=False):
     return Inspection('mov' if brand==b'qt  ' else 'mp4','video' if video else 'audio',w,h,duration)
 
 
+def _webm_header(fd,size):
+    """Name a bounded EBML DocType only; no WebM acceptance or codec parsing."""
+    data=os.pread(fd,min(size,65536),0)
+    def vint(at,identifier=False):
+        if at>=len(data) or not data[at]:raise ValueError
+        width=9-data[at].bit_length()
+        if width>8 or at+width>len(data):raise ValueError
+        value=int.from_bytes(data[at:at+width],'big')
+        if not identifier:value&=(1<<(7*width))-1
+        return value,at+width
+    try:
+        length,at=vint(4);end=at+length
+        if end>len(data):return False
+        found=[]
+        while at<end:
+            key,at=vint(at,True);length,at=vint(at)
+            if at+length>end:return False
+            if key==0x4282:found.append(data[at:at+length])
+            at+=length
+        return found==[b'webm']
+    except ValueError:return False
+
+
 def inspect(fd,size,*,allow_edit_lists=False):
     head=os.pread(fd,16,0)
     if len(head)>=8 and head[4:8] in (b'ftyp',b'free',b'wide',b'moov',b'mdat'): return bmff(fd,size,allow_edit_lists=allow_edit_lists)
+    if head.startswith(b'\x1aE\xdf\xa3'):
+        raise FormatError('unsupported_attachment: '+('webm' if _webm_header(fd,size) else 'unknown format'))
     data=os.pread(fd,size,0); require(len(data)==size)
     if head.startswith(b'\xff\xd8'): return jpeg(data)
     if head.startswith(b'\x89PNG\r\n\x1a\n'): return png(data)
