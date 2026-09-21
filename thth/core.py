@@ -943,7 +943,12 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
     locks = ((lock_context or _account_locks(account_name, account_cfg, state_dir, wait=wait))
              if production_flag else contextlib.nullcontext())
     with locks:
-        existing_inflight = inflight_mod.read(state_dir) if production_flag else None
+        # **dry-run でも断る**（実機 2026-09-22）。inflight が残ったまま
+        # `thth send`（`--production` なし）を打つと、digest まで出して 0 で
+        # 終わっていた——次に `--production` を付けたら必ず断られるのに、
+        # 残っていることを一言も言わない。不在の様態（`_throw_locked`）は
+        # 最初から様態に関わらず断っている。同じにする。
+        existing_inflight = inflight_mod.read(state_dir)
         if existing_inflight is not None:
             msg = f"inflight が残っています: {existing_inflight.get('file')}"
             log(msg)

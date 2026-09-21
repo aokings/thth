@@ -2608,6 +2608,7 @@ def cmd_send(args) -> int:
     """
     import sys as _sys
     from . import core as core_mod
+    from . import inflight as inflight_mod
     if args.text_file:
         vm_msg = _require_vm_path(args.text_file, what="送る本文のファイル")
         if vm_msg:
@@ -2657,6 +2658,11 @@ def cmd_send(args) -> int:
         result = outcome.get('result')
         if code and result is not None:
             lines = media_delivery_mod.refusal_lines(result)
+            # inflight で止まったなら「確かめてから消す」を必ず 1 行足す。
+            # 媒体の理由（`media_creating_timeout` 等）が既に次の一歩を持って
+            # いるなら、そちらの方が具体的なので重ねない。
+            if result.action == 'inflight' and not any(line.startswith('次の一歩') for line in lines):
+                lines = [*lines, inflight_mod.NEXT_STEP]
             # 個別の次の一歩が既に出ているなら、一般の次の一歩は重ねない。
             if any(line.startswith('次の一歩') for line in printed):
                 lines = [line for line in lines if not line.startswith('次の一歩')]
