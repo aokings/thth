@@ -221,3 +221,22 @@ def test_c12_warning_does_not_accept_malformed_bitrate_box(tmp_path,payload):
     with prepared(tmp_path,mp4(table)) as(m,items):
         with pytest.raises(mediaformats.FormatError,match='invalid_attachment_structure'):
             tm.notes(m,items)
+
+@pytest.mark.parametrize('order',[['a.png','v.mp4'],['v.mp4','a.png']])
+def test_mixed_poll_timeout_uses_minimum_live_grant(env,wire,monkeypatch,order):
+    (env[2]/'v.mp4').write_bytes(mp4());clock=[tm.time.time()];timeouts=[]
+    monkeypatch.setattr(tm.time,'time',lambda:clock[0]);monkeypatch.setattr(tm.time,'monotonic',lambda:0.)
+    def created():
+        if len(posts(wire,'/threads'))==2:clock[0]+=590
+    wire['on_create']=created
+    original=tm._json
+    def request(adapter,method,path,params,**kwargs):
+        if method=='GET' and len(posts(wire,'/threads'))==2:
+            timeouts.append(kwargs['timeout']);assert 9<=kwargs['timeout']<=10
+            clock[0]+=11
+        return original(adapter,method,path,params,**kwargs)
+    monkeypatch.setattr(tm,'_json',request)
+    result,_,_=invoke(env,{'media':[{'file':f,'alt':f} for f in order]})
+    assert result.error=='media_provider_url_expired' and result.failure=='media_held'
+    assert len(timeouts)==1 and not posts(wire,'/threads_publish')
+    assert env[3]['results']==[False,False]
