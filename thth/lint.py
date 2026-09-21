@@ -101,7 +101,10 @@ def lint_file(path: str) -> list:
         if cfg and not b.malformed:
             from . import media as media_mod, media_delivery
             for index,row in enumerate(b.posts):
-                if media_mod.declared(row):notes.extend(media_delivery.lint_notes(cfg,row,text=b.segments[index] if index<len(b.segments) else None))
+                if media_mod.declared(row):
+                    # Bundle topic belongs to the first effective segment only.
+                    intent={**row,'topic':b.front_matter.get('topic') if index==0 else None}
+                    notes.extend(media_delivery.lint_notes(cfg,intent,text=b.segments[index] if index<len(b.segments) else None))
         return notes
 
     qf = queuefile.parse(path)

@@ -390,7 +390,7 @@ def validate_declarations(fm,medium):
     if medium=='bluesky' and rows and 'link' in seen: raise MediaError('attachments: media/card mutually exclusive')
     option_fields={
         'mastodon':{'visibility','language','sensitive','spoiler_text','quote_approval_policy','focus'},
-        'bluesky':{'languages','labels','presentation','gallery','facets'},
+        'bluesky':{'languages','labels','presentation','gallery','facets','tags'},
         'threads':{'text_spoiler','media_spoiler','ghost','reply_control','reply_approvals'},
     }
     if set(options)-option_fields.get(medium,set()): raise MediaError('post_options: unknown, duplicate legacy or unsupported field')
@@ -398,9 +398,9 @@ def validate_declarations(fm,medium):
     for key,value in options.items():
         if key in booleans:
             if type(value) is not bool: raise MediaError(f'post_options: boolean {key} required')
-        elif key in ('languages','labels'):
+        elif key in ('languages','labels','tags'):
             if type(value) is not list: raise MediaError(f'post_options: array {key} required')
-            for item in value:_text(item,key)
+            for item in value:_text(item,key,empty=key in ('labels','tags'))
         elif key=='focus':
             if type(value) is not list or len(value)!=len(rows): raise MediaError('post_options: focus needs one coordinate pair per file')
             for pair in value:
@@ -413,9 +413,11 @@ def validate_declarations(fm,medium):
                 if type(begin) is not int or type(end) is not int or not 0<=begin<end or type(facet['features']) is not list:raise MediaError('post_options: invalid facet range')
                 for feature in facet['features']:
                     if not isinstance(feature,dict):raise MediaError('post_options: invalid feature')
-                    typ=feature.get('$type'); field={'app.bsky.richtext.facet#link':'uri','app.bsky.richtext.facet#mention':'did','app.bsky.richtext.facet#tag':'tag'}.get(typ)
+                    typ=feature.get('$type')
+                    if type(typ) is not str:raise MediaError('post_options: unknown feature')
+                    field={'app.bsky.richtext.facet#link':'uri','app.bsky.richtext.facet#mention':'did','app.bsky.richtext.facet#tag':'tag'}.get(typ)
                     if field is None or set(feature)!={'$type',field}:raise MediaError('post_options: unknown feature')
-                    _text(feature[field],field)
+                    _text(feature[field],field,empty=field=='tag')
         else:_text(value,key,empty=key=='spoiler_text')
     for key,values in {'visibility':{'public','unlisted','private','direct'},'quote_approval_policy':{'public','followers','nobody'},'reply_control':{'everyone','accounts_you_follow','mentioned_only'}}.items():
         if key in options and options[key] not in values:raise MediaError(f'post_options: invalid {key}')

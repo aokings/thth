@@ -490,6 +490,9 @@ class BlueskyAdapter(base.Adapter):
                               include_tags=post.hashtags_allowed)
         if facets:
             record["facets"] = facets
+        if post.media_manifest:
+            from .. import bluesky_metadata
+            bluesky_metadata.apply(record,post.media_manifest['post_options'],has_embed=bool(post.media_manifest['files'] or post.media_manifest['attachments']),hashtags_allowed=post.hashtags_allowed)
         return record
 
     prepared_media_supported = True

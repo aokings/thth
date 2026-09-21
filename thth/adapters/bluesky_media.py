@@ -10,7 +10,7 @@ import json
 import urllib.error
 import urllib.request
 from . import base
-from .. import accounts, httpsafe, jst, media
+from .. import accounts, httpsafe, jst, media, bluesky_metadata
 
 MIME={'jpeg':'image/jpeg','png':'image/png','webp':'image/webp','gif':'image/gif'}
 MAX_BYTES=2_000_000
@@ -37,6 +37,8 @@ def with_quote(embed,manifest):
 
 
 def intent_error(manifest):
+    try:bluesky_metadata.validate(manifest['post_options'])
+    except media.MediaError as exc:return str(exc)
     why=quote_error(manifest)
     if why:return why
     if any(row['role']=='media' and row['kind']=='video' for row in manifest['files']):
@@ -45,7 +47,7 @@ def intent_error(manifest):
     attachments=[a for a in manifest['attachments'] if a['type']!='quote']
     if attachments:
         if len(attachments)!=1 or attachments[0]['type']!='link':return 'unsupported_attachment: bluesky/typed_attachment_pending'
-        if manifest['captions'] or manifest['post_options']:return 'unsupported_attachment: bluesky/external_post_options'
+        if manifest['captions'] or set(manifest['post_options'])-bluesky_metadata.FIELDS:return 'unsupported_attachment: bluesky/external_post_options'
         card=attachments[0];rows=manifest['files']
         if len(rows)!=(1 if 'thumbnail_file' in card else 0):return 'media_prepared_mismatch'
         for row in rows:
@@ -54,10 +56,10 @@ def intent_error(manifest):
             if any(type(row.get(k)) is not int or row[k]<=0 for k in ('width','height')):return 'media_dimensions_unavailable'
         return None
     if manifest['captions']:return 'unsupported_attachment: bluesky/image_captions'
-    if set(manifest['post_options'])-{'gallery'}:return 'unsupported_attachment: bluesky/image_post_options'
+    if set(manifest['post_options'])-{'gallery'}-bluesky_metadata.FIELDS:return 'unsupported_attachment: bluesky/image_post_options'
     rows=manifest['files']
     if not rows:
-        if manifest['attachments'] and not manifest['post_options']:return None
+        if (manifest['attachments'] or bluesky_metadata.FIELDS.intersection(manifest['post_options'])) and not set(manifest['post_options'])-bluesky_metadata.FIELDS:return None
         return 'unsupported_attachment: bluesky/no_images'
     for row in rows:
         if row['role']!='media' or row['kind']!='image' or row['format'] not in MIME:
@@ -142,7 +144,8 @@ def publish(adapter,post,*,before_publish=None):
             if 'associated_refs' in card:external['associatedRefs']=card['associated_refs']
             record_body['embed']={'$type':'app.bsky.embed.external','external':external}
         elif entries:record_body['embed']={'$type':'app.bsky.embed.gallery','items':entries} if gallery else {'$type':'app.bsky.embed.images','images':entries}
-        record_body['embed']=with_quote(record_body.get('embed'),post.media_manifest)
+        embed=with_quote(record_body.get('embed'),post.media_manifest)
+        if embed is not None:record_body['embed']=embed
         veto()
         payload=json.dumps({'repo':session['did'],'collection':POST_COLLECTION,'record':record_body},ensure_ascii=False).encode('utf-8')
         record('publishing')

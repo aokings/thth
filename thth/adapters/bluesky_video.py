@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from . import base,bluesky_media as images
-from .. import accounts,httpsafe,jst,leave_gate,media,redact
+from .. import accounts,httpsafe,jst,leave_gate,media,redact,bluesky_metadata
 
 SERVICE='https://video.bsky.app'
 SERVICE_DID='did:web:video.bsky.app'
@@ -32,10 +32,12 @@ def require(value,reason):
 
 
 def intent_error(manifest):
+    try:bluesky_metadata.validate(manifest['post_options'])
+    except media.MediaError as exc:return str(exc)
     why=images.quote_error(manifest)
     if why:return why
     if any(a['type']!='quote' for a in manifest['attachments']):return 'unsupported_attachment: bluesky/typed_attachment_pending'
-    if set(manifest['post_options'])-{'presentation'}:return 'unsupported_attachment: bluesky/video_post_options'
+    if set(manifest['post_options'])-{'presentation'}-bluesky_metadata.FIELDS:return 'unsupported_attachment: bluesky/video_post_options'
     rows=[r for r in manifest['files'] if r['role']=='media']
     if len(rows)!=1:return 'media_limit_exceeded: video_count'
     row=rows[0]
@@ -181,8 +183,8 @@ def publish(adapter,post,*,before_publish=None):
         why=intent_error(post.media_manifest);require(why is None,why or '')
         require(len(post.media_files)==len(post.media_manifest['files']) and all(item.manifest==row for item,row in zip(post.media_files,post.media_manifest['files'])),'media_prepared_mismatch')
         item=post.media_files[0];row=item.manifest;veto()
-        session=adapter.session();did=session['did'];aud=pds_audience(session);url=service_url()
         body=adapter._post_record(post)
+        session=adapter.session();did=session['did'];aud=pds_audience(session);url=service_url()
         if post.reply_to:body['reply']=adapter._reply_ref(post.reply_to)
         _limits(adapter,url,row['public_size']);veto()
         token,expires=_service_token(adapter,aud,'com.atproto.repo.uploadBlob')
