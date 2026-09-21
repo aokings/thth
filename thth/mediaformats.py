@@ -594,6 +594,9 @@ def bmff(fd,size,*,allow_edit_lists=False):
 
 def inspect(fd,size,*,allow_edit_lists=False):
     head=os.pread(fd,16,0)
+    if head.startswith(b'\x1a\x45\xdf\xa3'):
+        from .ebmlaudio import webm
+        return webm(fd,size)
     if head.startswith(b'OggS'):
         from .oggformats import ogg
         return ogg(fd,size)
