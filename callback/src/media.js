@@ -39,6 +39,7 @@ export async function mediaRequest(request,env,url){
     match=/^\/media-upload\/([A-Za-z0-9_-]{43})(?:\/(\d+))?$/.exec(url.pathname);
     if(match){
       if(request.method!=='PUT')return reply(405,{error:'method_not_allowed'});
+      if(!await allowed(env.MEDIA_UPLOAD_IP_LIMIT,request.headers.get('cf-connecting-ip')||'unknown-peer'))return reply(429,{error:'rate_limited'});
       if(!await allowed(env.MEDIA_UPLOAD_LIMIT,match[1]))return reply(429,{error:'rate_limited'});
       return await(await mediaStub(env,match[1])).upload(request,match[2]===undefined?null:Number(match[2]));
     }
