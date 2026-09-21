@@ -2,6 +2,7 @@
 import contextlib
 import json
 import os
+import tempfile
 from pathlib import Path
 import subprocess
 import sys
@@ -67,7 +68,7 @@ def test_caller_blocking_error_runs_once_and_unlocks(env,monkeypatch):
 
 @pytest.mark.parametrize('kind',['symlink','hardlink','fifo','mode'])
 def test_special_lock_leaf_is_not_retried(env,monkeypatch,kind):
-    setcap('1');leaf=b.folder()/'budget_x.lock';leaf.unlink();target=Path(os.environ['TMPDIR'])/'unrelated';target.write_bytes(b'');target.chmod(0o600)
+    setcap('1');leaf=b.folder()/'budget_x.lock';leaf.unlink();target=Path(os.environ.get('TMPDIR') or tempfile.gettempdir())/'unrelated';target.write_bytes(b'');target.chmod(0o600)
     if kind=='symlink':leaf.symlink_to(target)
     elif kind=='hardlink':os.link(target,leaf)
     elif kind=='fifo':os.mkfifo(leaf)
