@@ -35,6 +35,10 @@ def intent_error(manifest):
             elif a['type']=='quote':
                 if set(a)!={'type','uri'}:return 'unsupported_attachment: threads/quote_option'
                 if type(a['uri']) is not str or not a['uri'].isascii() or not a['uri'].isdecimal():return 'invalid_attachment: threads/quote_id'
+            elif a['type']=='gif':
+                if manifest['files']:return 'unsupported_attachment: threads/gif_requires_text'
+                if set(a)!={'type','provider','id'}:return 'unsupported_attachment: threads/gif_option'
+                if a['provider']!='GIPHY':return 'unsupported_attachment: threads/gif_provider'
             else:return 'unsupported_attachment: threads/typed_attachment'
     if manifest['post_options']:return 'unsupported_attachment: threads/image_post_options'
     rows=manifest['files']
@@ -71,6 +75,8 @@ def text_params(manifest,text):
     params={'link_attachment':links[0]} if links else {}
     quotes=[a['uri'] for a in manifest['attachments'] if a['type']=='quote']
     if quotes:params['quote_post_id']=quotes[0]
+    gifs=[a for a in manifest['attachments'] if a['type']=='gif']
+    if gifs:params['gif_attachment']=json.dumps({'gif_id':gifs[0]['id'],'provider':gifs[0]['provider']},ensure_ascii=False,separators=(',',':'))
     return params
 
 
