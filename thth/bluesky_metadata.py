@@ -5,6 +5,7 @@ Automatic legacy facets remain unchanged unless explicit facets are present.
 """
 from __future__ import annotations
 import json
+import ipaddress
 import re
 from . import graphemes,media
 
@@ -52,6 +53,45 @@ def _text(value,reason,*,limit=None,clusters=None):
     if clusters is not None:require(graphemes.count(value,stop_after=clusters)<=clusters,reason)
 
 
+def uri(value):
+    """RFC3986 absolute URI syntax, not scheme-specific endpoint policy.
+
+    No decoding, normalization, lookup or fetch. Lexicon uri limits ASCII
+    syntax to 8192 bytes. Empty authority/port and IPvFuture are generic URI
+    forms; endpoint restrictions must not be imported into publication data.
+    """
+    if type(value) is not str or not value.isascii() or len(value)>8192:return False
+    match=re.fullmatch(r'[A-Za-z][A-Za-z0-9+.-]*:([^?#]*)(?:\?([^#]*))?(?:#([^#]*))?',value)
+    if match is None:return False
+    hierarchy,query,fragment=match.groups()
+    atom=r"(?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f]{2})"
+    pchar=rf'(?:{atom}|[:@])'
+    for part in (query,fragment):
+        if part is not None and re.fullmatch(rf'(?:{pchar}|[/?])*',part) is None:return False
+    if hierarchy.startswith('//'):
+        authority,separator,tail=hierarchy[2:].partition('/')
+        path='/'+tail if separator else ''
+        if authority.count('@')>1:return False
+        if '@' in authority:
+            userinfo,authority=authority.split('@',1)
+            if re.fullmatch(rf'(?:{atom}|:)*',userinfo) is None:return False
+        if authority.startswith('['):
+            close=authority.find(']')
+            if close<0:return False
+            host=authority[1:close];port=authority[close+1:]
+            if port and re.fullmatch(r':[0-9]*',port) is None:return False
+            if re.fullmatch(r"[vV][0-9A-Fa-f]+\.[A-Za-z0-9._~!$&'()*+,;=:-]+",host) is None:
+                if '%' in host:return False  # zone IDs are not RFC3986 IP-literals
+                try:ipaddress.IPv6Address(host)
+                except ValueError:return False
+        else:
+            host,colon,port=authority.partition(':')
+            if colon and re.fullmatch(r'[0-9]*',port) is None:return False
+            if re.fullmatch(rf'{atom}*',host) is None:return False
+    else:path=hierarchy
+    return re.fullmatch(rf'(?:{pchar}|/)*',path) is not None
+
+
 def validate(options):
     for key,cap in (('languages',3),('labels',10),('tags',8)):
         if key not in options:continue
@@ -76,7 +116,7 @@ def validate(options):
             elif key=='did':require(len(value)<=2048 and re.fullmatch(r'did:[a-z]+:[a-zA-Z0-9._:%-]*[a-zA-Z0-9._-]',value),'metadata_invalid: mention_did')
             else:
                 # URI-valued publication data, not an endpoint opened by thth.
-                require(re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*:[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*",value) is not None and not re.search(r'%(?![0-9A-Fa-f]{2})',value),'metadata_invalid: link_uri')
+                require(uri(value),'metadata_invalid: link_uri')
 
 
 def merged_facets(text,automatic,explicit):
