@@ -70,3 +70,15 @@ def test_queueとdoctorが同じ言葉で断る(isolated_account):
     d = run_thth(["doctor", "../x"])
     assert d.returncode == 2, d.stdout + d.stderr
     assert "使えない字" in d.stdout + d.stderr
+
+
+def test_名前の長さは64まで(isolated_account):
+    """第 5・6 段 P3: 名前はそのままファイル名になるので上から切る。"""
+    assert accounts_mod.NAME_MAX == 64
+    assert accounts_mod.name_is_safe("a" * 64) is True
+    assert accounts_mod.name_is_safe("a" * 65) is False
+    with pytest.raises(accounts_mod.AccountError) as e:
+        accounts_mod.load_account("a" * 65)
+    assert "使えない字" in str(e.value)
+    # 既存の呼び手（ふつうの長さ）は変わらない。
+    assert accounts_mod.name_is_safe(isolated_account["name"]) is True
