@@ -34,8 +34,8 @@ def observe(account):
 
 
 def retry(account, *, by):
-    admin_log.actor(by)
     if not accounts.name_is_safe(account):raise ValueError('invalid_account')
+    admin_log.actor(by)
     # No active-account requirement: recovery must remain possible after leave.
     result = approval_relay.signed_request('account', account, 'cleanup-retry', {})
     if not _counts(result, ('scheduled_count', 'unavailable_count', 'remaining_count', 'reason')):

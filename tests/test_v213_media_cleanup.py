@@ -84,3 +84,10 @@ def test_cleanup_help_discloses_unknown_write_recovery_limit(capsys):
     assert '結果不明の書込みは強制解除せず' in text
     assert '本口だけでは回復できない場合があります' in text
     assert '再投稿はしません' in text
+
+
+@pytest.mark.parametrize('account',['../alpha','a/b',''])
+def test_invalid_account_precedes_actor_and_request(monkeypatch,account):
+    monkeypatch.setattr(admin_log,'actor',lambda *a:pytest.fail('actor before name'))
+    monkeypatch.setattr(approval_relay,'signed_request',lambda *a:pytest.fail('request before name'))
+    with pytest.raises(ValueError,match='invalid_account'):media_cleanup.retry(account,by='operator')
