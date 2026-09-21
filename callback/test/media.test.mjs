@@ -461,8 +461,8 @@ test('media rate rejection precedes signing, body, DO and R2; missing binding cl
    if(present)env[binding]={async limit(value){seen.push(value);return {success:false};}};
    const request=new Request('https://media.test'+path,{method,headers:{'cf-connecting-ip':ip,range:'bytes=0-1','content-type':'application/json'}});
    Object.defineProperty(request,'body',{get(){assert.fail('body after rate refusal');}});
-   const response=await mediaRequest(request,env,new URL(request.url));assert.equal(response.status,429);
-   assert.deepEqual(await response.json(),{error:'rate_limited'});assert.deepEqual(seen,present?[{key}]:[]);
+   const response=await mediaRequest(request,env,new URL(request.url));assert.equal(response.status,present?429:503);
+   assert.deepEqual(await response.json(),{error:present?'rate_limited':'media_unavailable'});assert.deepEqual(seen,present?[{key}]:[]);
   }
  }
 });

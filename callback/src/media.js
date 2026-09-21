@@ -10,7 +10,7 @@ export const validHash=v=>typeof v==='string'&&HASH_PATTERN.test(v);
 export const validOpaque=v=>typeof v==='string'&&STATE_PATTERN.test(v);
 export const keys=(b,fields)=>b&&typeof b==='object'&&!Array.isArray(b)&&Object.keys(b).sort().join(',')===[...fields].sort().join(',');
 export const mediaStub=async(env,id)=>env.MEDIA_OBJECT.getByName(await digest(id));
-async function allowed(binding,key){return !!binding&&(await binding.limit({key:await digest(key)})).success===true;}
+async function allowed(binding,key){if(!binding)throw Error('media_unavailable');return (await binding.limit({key:await digest(key)})).success===true;}
 export function canonical(method,path,subject,operation,time,nonce,bodyHash){
   return ['thth-media-v1',method,path,'media',subject,operation,time,nonce,bodyHash].join('\n');
 }
