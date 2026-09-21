@@ -12,8 +12,21 @@ from .report_service import ReportServiceError
 
 TERMINAL = frozenset(('completed','failed','unknown','expired'))
 STATES = TERMINAL | {'registering','pending','consuming','ready','executing'}
-REASONS = {'approval_registration_unknown','interrupted_outcome_unknown','approval_timeout',
-           'operation_outcome_unknown','approval_no_longer_valid','media_preview_unavailable'}
+REASONS = {'approval_registration_unknown','approval_registration_rejected','interrupted_outcome_unknown',
+           'approval_timeout','operation_outcome_unknown','approval_no_longer_valid','media_preview_unavailable',
+           'approval_request_too_large','approval_attachments_too_many'}
+# The Worker accepts a 96 KiB `create` body and at most 20 attachment rows
+# (callback/src/approval.js の cap・`validAttachments`). Refuse here, before any
+# byte is uploaded, with the margin the signature/transport headers do not take.
+MAX_ATTACHMENT_ROWS = 20
+MAX_CREATE_BODY = 90 * 1024
+# A preview capability is 43 url-safe characters, so the preflight body is the
+# byte-exact size of the body that will be sent once the grants exist.
+PREVIEW_PLACEHOLDER = 'p' * 43
+
+
+class BoundsRefused(ReportServiceError):
+    """A definite refusal decided before any upload, grant or registration."""
 
 
 def _valid_job(value, job_id):
@@ -100,12 +113,28 @@ def status(context, account, job_id):
     except (OSError,ValueError,KeyError): raise ReportServiceError('scope_unavailable') from None
 
 
-def _attachments(account, actor, media, subjects):
+def _display_row(row,preview):
+    return {'index':row['index'],'role':row['role'],'kind':row['kind'],'format':row['format'],
+            'public_sha256':row['public_sha256'],'public_size':row['public_size'],
+            'width':row['width'],'height':row['height'],'duration':row['duration'],
+            'alt':row['alt'],'preview':preview}
+
+
+def _body_bytes(body):
+    return len(json.dumps(body,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode())
+
+
+def _attachments(account, actor, media, subjects, payload):
     """Display rows for the approval page; images also get a preview capability.
 
     No repo path, source hash or capability is returned to the caller's log:
     only the closed key set the Worker accepts. The sanitized public bytes are
     uploaded here so the page shows exactly what publication would send.
+
+    The rows are assembled and measured **before the first upload**: a request
+    the Worker would refuse must not leave uploaded bytes, granted capabilities
+    or an `unknown` job behind. `payload` builds the exact `create` body from
+    the display rows so the preflight counts the bytes that will be sent.
     """
     from . import media as media_mod
     from .media_relay import MediaRelay
@@ -113,20 +142,24 @@ def _attachments(account, actor, media, subjects):
     with media_mod.prepare(media['repo_dir'],media['front_matter'],media['medium']) as (current,items):
         if media_mod.prepared_component(current)!=media_mod.prepared_component(manifest):
             raise media_mod.MediaError('approval_stale')
+        prepared=[item.manifest for item in items]
+        typed=None
+        if any(manifest[key] for key in ('attachments','post_options','captions')):
+            typed=json.dumps({key:manifest[key] for key in ('attachments','post_options','captions')},
+                             ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False)
+        # Thumbnails and captions are rows of their own; they count here too.
+        if len(prepared)>MAX_ATTACHMENT_ROWS:
+            raise BoundsRefused('approval_attachments_too_many')
+        preflight=[_display_row(row,PREVIEW_PLACEHOLDER if row['kind']=='image' else None) for row in prepared]
+        if _body_bytes(payload(preflight,typed))>MAX_CREATE_BODY:
+            raise BoundsRefused('approval_request_too_large')
         for position,item in enumerate(items):
             row=item.manifest;preview=None
             if row['kind']=='image':
                 # Upload first: a preview grant can only copy stored bytes.
                 source=client.upload_prepared(item);subjects[str(position)]=source
                 preview=client.grant(item,source,purpose='preview')['subject']
-            rows.append({'index':row['index'],'role':row['role'],'kind':row['kind'],'format':row['format'],
-                         'public_sha256':row['public_sha256'],'public_size':row['public_size'],
-                         'width':row['width'],'height':row['height'],'duration':row['duration'],
-                         'alt':row['alt'],'preview':preview})
-    typed=None
-    if any(manifest[key] for key in ('attachments','post_options','captions')):
-        typed=json.dumps({key:manifest[key] for key in ('attachments','post_options','captions')},
-                         ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False)
+            rows.append(_display_row(row,preview))
     return rows,typed
 
 
@@ -145,30 +178,42 @@ def create(context, request, binding, via, media=None):
                 server_files.replace_at(fd,job_id+'.json',server_files.encode(job),new=True)
                 admin_log.append({'approve':'approval_requested','send':'send_requested','retract':'retract_requested'}[job['kind']],
                                  job['account'],{},by=context.actor,via=via,diff={'request_present':[False,True]},run_id=job_id)
-            extra={};subjects={}
+            def payload(rows,typed):
+                extra={} if rows is None else {'attachments':rows}
+                if typed is not None:extra['typed']=typed
+                return dict(person=context.actor,job_id=job_id,digest=digest,account=job['account'],
+                            kind=job['kind'],text=binding['text'],context=binding['context'],
+                            read_key_hash=hashlib.sha256(read_key.encode()).hexdigest(),**extra)
+            rows=typed=None;subjects={}
             if media:
                 # A session is never registered without every image the human
                 # must look at: no preview, no approval (design 2.13.0 §1-2).
                 try:
-                    rows,typed=_attachments(job['account'],context.actor,media,subjects)
-                    extra['attachments']=rows
-                    if typed is not None:extra['typed']=typed
+                    rows,typed=_attachments(job['account'],context.actor,media,subjects,payload)
+                except BoundsRefused as refused:
+                    # Decided before any upload or grant: definitely not sent.
+                    job.update(status='failed',reason=str(refused));_save(fd,job)
+                    raise ReportServiceError(str(refused)) from None
                 except Exception:
                     if subjects:job['media_subjects']=dict(subjects)
                     job.update(status='failed',reason='media_preview_unavailable');_save(fd,job)
                     raise ReportServiceError('media_preview_unavailable') from None
                 if subjects:job['media_subjects']=dict(subjects);_save(fd,job)
             try:
-                value=relay.signed_request('session',token,'create',dict(person=context.actor,job_id=job_id,digest=digest,
-                     account=job['account'],kind=job['kind'],text=binding['text'],context=binding['context'],
-                     read_key_hash=hashlib.sha256(read_key.encode()).hexdigest(),**extra))
+                value=relay.signed_request('session',token,'create',payload(rows,typed))
                 if (value.get('status')!='pending' or type(value.get('expires_at')) is not int
                         or not now < value['expires_at'] <= int(time.time()*1000)+600000):
                     raise ValueError('invalid_registration')
                 job['expires_at']=min(job['expires_at'],value['expires_at']);job['status']='pending';_save(fd,job)
-            except Exception:
-                job.update(status='unknown',reason='approval_registration_unknown');_save(fd,job)
-                raise ReportServiceError('approval_registration_unknown') from None
+            except Exception as exc:
+                # A Worker 4xx is a refusal: nothing was registered, so the job
+                # is definitely `failed`. 5xx, a transport fault or an invalid
+                # answer leaves the registration unknown.
+                rejected=isinstance(exc,relay.RelayError) and isinstance(exc.status,int) and 400<=exc.status<500
+                job.update(status='failed' if rejected else 'unknown',
+                           reason='approval_registration_rejected' if rejected else 'approval_registration_unknown')
+                _save(fd,job)
+                raise ReportServiceError(job['reason']) from None
     return {**_public(job),'text':binding['text'],'digest':digest,'context':binding['context'],
             'approval_url':os.environ.get('THTH_APPROVAL_BASE_URL','https://thth.me').rstrip('/')+'/approve/'+token}
 

@@ -8,6 +8,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
 import {canonical,ITERATIONS} from '../src/approval.js';
+import {canonical as mediaCanonical} from '../src/media.js';
 const opaque=()=>randomBytes(32).toString('base64url'),hash=s=>createHash('sha256').update(s).digest('hex');
 const logs=[],sensitive=[];
 
@@ -25,8 +26,8 @@ before(async()=>{
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,
     log:new SilentLog(),handleStructuredLogs:item=>logs.push(JSON.stringify(item)),bindings:{APPROVAL_PUBLIC_KEY:publicKey},
-    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'TestPerson',useSQLite:true},APPROVAL_SESSION:{className:'TestSession',useSQLite:true},APPROVAL_ACCOUNT:{className:'TestAccount',useSQLite:true},DELETION_INBOX:{className:'TestDeletion',useSQLite:true}},
-    ratelimits:{DELETION_PUBLIC_LIMIT:{namespace_id:'21204',simple:{limit:120,period:60}},AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:120,period:60}},APPROVAL_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:120,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}}}}));await mf.ready;
+    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'TestPerson',useSQLite:true},APPROVAL_SESSION:{className:'TestSession',useSQLite:true},APPROVAL_ACCOUNT:{className:'TestAccount',useSQLite:true},DELETION_INBOX:{className:'TestDeletion',useSQLite:true},MEDIA_OBJECT:{className:'TestMedia',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
+    ratelimits:{DELETION_PUBLIC_LIMIT:{namespace_id:'21204',simple:{limit:120,period:60}},AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:120,period:60}},APPROVAL_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:120,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}},MEDIA_CONTROL_LIMIT:{namespace_id:'21302',simple:{limit:600,period:60}},MEDIA_UPLOAD_LIMIT:{namespace_id:'21303',simple:{limit:240,period:60}},MEDIA_UPLOAD_IP_LIMIT:{namespace_id:'21304',simple:{limit:120,period:60}},MEDIA_PUBLIC_LIMIT:{namespace_id:'21301',simple:{limit:120,period:60}}}}));await mf.ready;
 });
 after(async()=>{await mf?.dispose();await rm(directory,{recursive:true,force:true});const hits=logs.filter(line=>sensitive.some(value=>line.includes(value))).length;assert.equal(hits,0,'secret in runtime logs');console.log('approval runtime log scan: '+logs.length+' chunks, '+hits+' hits');});
 function wire(type,subject,op,body={},options={}){
@@ -47,6 +48,29 @@ async function page(s){return mf.dispatchFetch('https://approval.test/approve/'+
 async function csrf(s){return /name="csrf" value="([^"]+)"/.exec(await(await page(s)).text())?.[1];}
 async function approve(s,p,secret=p.secret,nonce){return mf.dispatchFetch('https://approval.test/approve/'+s.token,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded',origin:'https://approval.test','cf-connecting-ip':opaque()},body:new URLSearchParams({secret,csrf:nonce??await csrf(s)})});}
 const consume=s=>signed('session',s.token,'consume',{read_key:s.readKey});
+// 第 8-10 段の直し F1/F2: the page's images are real capabilities in these tests,
+// so liveness, revocation and the bounded expiry are observed, not asserted.
+async function mediaCall(subject,op,body){
+  const path='/media/'+subject+'/'+op,raw=JSON.stringify(body),time=Date.now(),nonce=opaque();
+  const signature=run(['dgst','-sha256','-sign',key,'-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],
+    Buffer.from(mediaCanonical('POST',path,subject,op,time,nonce,hash(raw)))).toString('base64url');
+  sensitive.push(signature,nonce);
+  return mf.dispatchFetch('https://approval.test'+path,{method:'POST',headers:{'content-type':'application/json',
+    'cf-connecting-ip':opaque(),'x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw});
+}
+async function preview(account='alpha'){
+  const bytes=Buffer.from('synthetic preview '+opaque()),source=opaque(),capability=opaque();
+  const bound={actor:'operator',account,sha256:hash(bytes)};
+  sensitive.push(source,capability);
+  assert.equal((await mediaCall(source,'create',{...bound,size:bytes.length,mime:'image/png',kind:'sanitized',part_size:null})).status,201);
+  assert.equal((await mf.dispatchFetch('https://approval.test/media-upload/'+source,{method:'PUT',
+    headers:{'content-length':String(bytes.length),'cf-connecting-ip':opaque()},body:bytes})).status,200);
+  assert.equal((await mediaCall(source,'complete',bound)).status,200);
+  assert.equal((await mediaCall(capability,'preview',{...bound,media_id:hash(bytes),source,expires_at:Date.now()+600_000})).status,201);
+  return capability;
+}
+const shown=capability=>mf.dispatchFetch('https://approval.test/m/'+capability,{headers:{'cf-connecting-ip':opaque()}});
+const previewRow=async capability=>(await control('media',capability)).find(([k])=>k==='media')?.[1];
 test('OpenSSL PSS to Worker; exact escaped body/context; parallel one-shot receipt',async()=>{
   const p=await person(),s=await session(p,{text:'<script>private & text</script>'}),response=await page(s),html=await response.text();
   assert.equal(response.headers.get('cache-control'),'no-store');assert.ok(response.headers.get('content-security-policy').includes("frame-ancestors 'none'"));
@@ -251,7 +275,7 @@ const attachment=(over={})=>({index:1,role:'media',kind:'image',format:'jpeg',pu
   public_size:1200,width:1200,height:800,duration:null,alt:'湯呑みに注いだ玉露',preview:opaque(),...over});
 test('approval page renders images, video/audio/caption lines and typed attachments under img-src self',async()=>{
   const p=await person();
-  const first=attachment(),second=attachment({index:2,format:'png',public_sha256:'cd'.repeat(32),width:640,height:640,alt:'茶葉の拡大'});
+  const first=attachment({preview:await preview()}),second=attachment({index:2,format:'png',public_sha256:'cd'.repeat(32),width:640,height:640,alt:'茶葉の拡大',preview:await preview()});
   const video=attachment({index:3,kind:'video',format:'mp4',public_sha256:'ef'.repeat(32),width:1920,height:1080,duration:72,alt:'湯を注ぐ',preview:null});
   const audio=attachment({index:4,kind:'audio',format:'m4a',public_sha256:'12'.repeat(32),width:null,height:null,duration:5.4,alt:'注ぐ音',preview:null});
   const caption=attachment({index:1,role:'caption',kind:'caption',format:'vtt',public_sha256:'34'.repeat(32),width:null,height:null,duration:null,alt:'ja',preview:null});
@@ -262,10 +286,10 @@ test('approval page renders images, video/audio/caption lines and typed attachme
   assert.equal(response.status,200);
   assert.ok(response.headers.get('content-security-policy').includes("img-src 'self'"));
   assert.ok(response.headers.get('content-security-policy').includes("default-src 'none'"));
-  assert.ok(html.includes('<img src="/m/'+first.preview+'" alt="湯呑みに注いだ玉露">'),'first preview img');
-  assert.ok(html.includes('<img src="/m/'+second.preview+'" alt="茶葉の拡大">'),'second preview img');
-  assert.ok(html.includes('<figcaption>添付 1: JPEG 1200×800 · sha abababababab · alt: 湯呑みに注いだ玉露</figcaption>'),html);
-  assert.ok(html.includes('<figcaption>添付 2: PNG 640×640 · sha cdcdcdcdcdcd · alt: 茶葉の拡大</figcaption>'),html);
+  assert.ok(html.includes('<img src="/m/'+first.preview+'" alt="湯呑みに注いだ玉露" loading="lazy">'),'first preview img');
+  assert.ok(html.includes('<img src="/m/'+second.preview+'" alt="茶葉の拡大" loading="lazy">'),'second preview img');
+  assert.ok(html.includes('<figcaption>添付 1: JPEG 1200×800 · sha abababababab · alt: 湯呑みに注いだ玉露 · 画像が表示されない場合は承認しないでください</figcaption>'),html);
+  assert.ok(html.includes('<figcaption>添付 2: PNG 640×640 · sha cdcdcdcdcdcd · alt: 茶葉の拡大 · 画像が表示されない場合は承認しないでください</figcaption>'),html);
   assert.ok(html.includes('<p>添付 3: 動画 01:12 · sha efefefefefef · alt: 湯を注ぐ</p>'),html);
   assert.ok(html.includes('<p>添付 4: 音声 00:05 · sha 121212121212 · alt: 注ぐ音</p>'),html);
   assert.ok(html.includes('<p>字幕 (ja) sha 343434343434</p>'),html);
@@ -311,14 +335,90 @@ test('attachment rows are strictly validated and a rejected create registers not
   assert.equal((await signed('session',opaque(),'create',{...base,job_id:opaque(),attachments:[],typed:''})).status,201);
 });
 test('attachment alt and typed JSON are escaped like the body',async()=>{
-  const p=await person(),preview=opaque();sensitive.push(preview);
+  const p=await person(),capability=await preview();sensitive.push(capability);
   const evil='"><script>alert(1)</script>';
-  const s=await session(p,{attachments:[attachment({alt:evil,preview})],typed:'{"note":"'+evil+'"}'});
+  const s=await session(p,{attachments:[attachment({alt:evil,preview:capability})],typed:'{"note":"'+evil+'"}'});
   const html=await(await page(s)).text();
   assert.equal(html.includes('<script>alert(1)</script>'),false);
-  assert.ok(html.includes('<img src="/m/'+preview+'" alt="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;">'),html);
-  assert.ok(html.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;</figcaption>'),html);
+  assert.ok(html.includes('<img src="/m/'+capability+'" alt="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;" loading="lazy">'),html);
+  assert.ok(html.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt; · 画像が表示されない場合は承認しないでください</figcaption>'),html);
 });
+// F2: the page is honest about what it can show.
+const UNAVAILABLE='<p>添付を表示できないため、この承認ページは使えません。サーバから新しく承認を求めてください。</p>';
+test('a preview that stopped serving removes the approve form and says so',async()=>{
+  const p=await person(),capability=await preview();
+  const s=await session(p,{attachments:[attachment({preview:capability})]});
+  const before=await page(s),live=await before.text();
+  assert.equal(before.status,200);
+  assert.ok(live.includes('<form method="post">'),'a live preview must keep the form');
+  assert.equal(live.includes(UNAVAILABLE),false);
+  await control('media',capability,{clock:Date.now()+700_000});
+  assert.equal((await shown(capability)).status,410);
+  const after=await page(s),html=await after.text();
+  assert.equal(after.status,200);
+  assert.equal(html.includes('<form'),false,'a dead preview still offered the form');
+  assert.equal(html.includes('name="secret"'),false);
+  assert.ok(html.includes(UNAVAILABLE),html);
+  // The body and the digest stay readable: only the approval is withdrawn.
+  assert.ok(html.includes('<p>digest: '+s.body.digest+'</p>'),html);
+});
+test('an image whose preview never existed cannot be approved from the page',async()=>{
+  const p=await person(),capability=opaque();sensitive.push(capability);
+  const s=await session(p,{attachments:[attachment({preview:capability})]});
+  const html=await(await page(s)).text();
+  assert.equal(html.includes('<form'),false);
+  assert.ok(html.includes(UNAVAILABLE),html);
+  // A page with no image preview at all is unaffected.
+  const plain=await session(p,{attachments:[attachment({kind:'video',format:'mp4',duration:3,preview:null})]});
+  assert.ok((await(await page(plain)).text()).includes('<form method="post">'));
+});
+
+// F1: a resolved or expired page must stop showing its images.
+test('consuming an approval revokes every preview the page showed',async()=>{
+  const p=await person(),first=await preview(),second=await preview();
+  const s=await session(p,{attachments:[attachment({preview:first}),attachment({index:2,preview:second})]});
+  for(const capability of [first,second])assert.equal((await shown(capability)).status,200,'preview not live before approval');
+  assert.equal((await approve(s,p)).status,200);
+  const receipt=await consume(s);assert.equal(receipt.status,200);
+  for(const capability of [first,second])assert.equal((await shown(capability)).status,410,'preview outlived the consumed session');
+});
+test('an expired approval page revokes its previews before its own clock kills them',async()=>{
+  const p=await person(),capability=await preview();
+  const s=await session(p,{attachments:[attachment({preview:capability})]});
+  assert.equal((await shown(capability)).status,200);
+  // Only the session's clock moves: the grant is still live by the media
+  // object's own clock, so a 410 here can only come from the revocation.
+  await control('session',s.token,{clock:Date.now()+700_000});
+  assert.equal((await page(s)).status,410);
+  assert.equal((await shown(capability)).status,410,'preview outlived the expired session');
+});
+test('approval still completes when one preview object is already gone',async()=>{
+  const p=await person(),live=await preview(),gone=await preview();
+  const s=await session(p,{attachments:[attachment({preview:live}),attachment({index:2,preview:gone})]});
+  const nonce=await csrf(s);
+  await control('media',gone,{clock:Date.now()+700_000});
+  assert.equal((await shown(gone)).status,410);
+  assert.equal((await approve(s,p,p.secret,nonce)).status,200);
+  assert.equal((await shown(live)).status,410,'the surviving preview was not revoked');
+});
+test('a preview never outlives the approval session that shows it',async()=>{
+  const p=await person(),capability=await preview(),token=opaque(),readKey=opaque();
+  const granted=(await previewRow(capability)).expires_at;
+  // The session's own clock is 300 s behind, so its deadline lands before the
+  // grant's: `create` must pull the grant back to it.
+  await control('session',token,{clock:Date.now()-300_000});
+  const text='本文 '+opaque();sensitive.push(token,readKey,text);
+  const created=await signed('session',token,'create',{person:p.id,job_id:opaque(),digest:hash(text),account:'alpha',
+    kind:'send',text,read_key_hash:hash(readKey),attachments:[attachment({preview:capability})],
+    context:{media:'threads',topic:null,options:null,reply_to:null,publish_at:null,target:null,reason:null}});
+  assert.equal(created.status,201);
+  const deadline=(await created.json()).expires_at;
+  assert.ok(deadline<granted,'fixture did not produce a session shorter than its grant');
+  const row=await previewRow(capability);
+  assert.equal(row.expires_at,deadline,'preview expiry was not bounded to the session');
+  assert.equal(row.cleanup_at,deadline,'preview cleanup was not bounded to the session');
+});
+
 // 第 9 段の後追い: only session `create` carries attachments, so only it takes 96 KiB.
 test('session create accepts a 70 KiB body and still refuses 100 KiB',async()=>{
   const p=await person();

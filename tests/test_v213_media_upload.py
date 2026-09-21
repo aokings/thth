@@ -400,6 +400,88 @@ def test_gc_removes_only_unreferenced_files_older_than_a_day(env, worker):
     assert uploads.gc('alpha', by='operator')['removed_count'] == 0
 
 
+def aged(env, *names):
+    folder = Path(env['root']) / 'repos/_server/alpha/docs/sns/media'
+    old = time.time() - 2 * 86_400
+    for name in names:
+        os.utime(folder / name, (old, old))
+    return folder
+
+
+def test_gc_commits_tracked_files_and_unlinks_an_untracked_leftover(env, worker):
+    """An untracked leftover used to break `git add` for the whole invocation,
+    leaving the tracked files deleted from the working tree with no commit."""
+    first = finish(env, upload(env, worker, GPS_JPEG)['media_id'])['public_sha256']
+    second = finish(env, upload(env, worker, mp4(), kind='video', mime='video/mp4')['media_id'])['public_sha256']
+    folder = aged(env, first + '.jpg', second + '.mp4')
+    leftover = folder / ('0' * 64 + '.png')
+    leftover.write_bytes(b'half-written leftover')
+    os.utime(leftover, (time.time() - 2 * 86_400,) * 2)
+    repo = Path(env['root']) / 'repos/_server/alpha'
+    before = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+    result = uploads.gc('alpha', by='operator')
+    assert result['reason'] is None and result['removed_count'] == 3
+    assert repo_media(env) == []
+    assert subprocess.check_output(['git', '-C', str(repo), 'status', '--porcelain'], text=True).strip() == ''
+    log = subprocess.check_output(['git', '-C', str(repo), 'log', '--format=%H', before + '..HEAD'], text=True).split()
+    assert len(log) == 1, 'the two tracked files must leave in exactly one commit'
+
+
+def test_gc_sweeps_stale_locks_and_counts_corrupt_intents_without_deleting_them(env, worker):
+    issued = upload(env, worker, GPS_JPEG)
+    finish(env, issued['media_id'])
+    folder = uploads.directory('alpha')
+    old = time.time() - 2 * 86_400
+    stale = folder / ('m' + 'a' * 42 + '.lock')
+    stale.write_bytes(b'')
+    stale.chmod(0o600)
+    os.utime(stale, (old, old))
+    fresh = folder / ('m' + 'b' * 42 + '.lock')
+    fresh.write_bytes(b'')
+    fresh.chmod(0o600)
+    broken = folder / ('m' + 'c' * 42 + '.json')
+    broken.write_text('{"schema_version": 1, "truncated"')
+    result = uploads.gc('alpha', by='operator')
+    assert result['reason'] is None
+    assert result['locks_removed'] == 1 and not stale.exists()
+    assert fresh.exists(), 'a lock younger than the backstop was removed'
+    assert result['corrupt_count'] == 1
+    assert broken.exists(), 'an unreadable intent was deleted instead of reported'
+    assert broken.read_text() == '{"schema_version": 1, "truncated"'
+
+
+def test_gc_reads_a_manuscript_larger_than_four_mebibytes(env, worker):
+    """A 5 MiB manuscript used to be skipped whole: its attachment looked unused."""
+    sha = finish(env, upload(env, worker, GPS_JPEG)['media_id'])['public_sha256']
+    aged(env, sha + '.jpg')
+    repo = Path(env['root']) / 'repos/_server/alpha'
+    long = repo / 'docs/sns/長い原稿.md'
+    long.parent.mkdir(parents=True, exist_ok=True)
+    # The name also straddles the first 1 MiB read boundary.
+    long.write_bytes(b'x' * (1024 * 1024 - 30) + (sha + '.jpg').encode() + b'\n' + b'y' * (4 * 1024 * 1024))
+    assert long.stat().st_size > 4 * 1024 * 1024
+    git = ['git', '-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@invalid']
+    for args in (['add', '-A'], ['commit', '-m', 'long'], ['push', 'origin', 'HEAD']):
+        subprocess.run(git + args, check=True, capture_output=True)
+    result = uploads.gc('alpha', by='operator')
+    assert result['removed_count'] == 0 and result['kept_count'] == 1 and result['reason'] is None
+    assert repo_media(env) == [sha + '.jpg']
+
+
+def test_a_failed_gc_commit_restores_every_tracked_file(env, worker, monkeypatch):
+    first = finish(env, upload(env, worker, GPS_JPEG)['media_id'])['public_sha256']
+    second = finish(env, upload(env, worker, mp4(), kind='video', mime='video/mp4')['media_id'])['public_sha256']
+    aged(env, first + '.jpg', second + '.mp4')
+    before = sorted(repo_media(env))
+    monkeypatch.setattr(uploads.writeback, 'commit_and_push', lambda *a, **k: (False, 'synthetic staging failure'))
+    result = uploads.gc('alpha', by='operator')
+    assert result['reason'] == 'media_gc_unconfirmed'
+    assert result['removed_count'] == 0 and result['restored_count'] == 2
+    assert sorted(repo_media(env)) == before, 'files stayed deleted without a commit'
+    repo = Path(env['root']) / 'repos/_server/alpha'
+    assert subprocess.check_output(['git', '-C', str(repo), 'status', '--porcelain'], text=True).strip() == ''
+
+
 def test_mcp_exposes_both_tools_only_with_write_credentials(env, monkeypatch):
     from tests.test_mcp import _load_server_module
     monkeypatch.setenv('THTH_REPORT_CREDENTIALS', str(env['path']))

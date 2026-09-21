@@ -1,6 +1,7 @@
 import {DurableObject} from 'cloudflare:workers';
 import {TTL,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64,personStub,accountStub} from './approval.js';
 import {HASH_PATTERN,STATE_PATTERN,digest} from './relay.js';
+import {mediaStub} from './media.js';
 
 class AtomicObject extends DurableObject {
   now(){return Date.now();}
@@ -192,13 +193,28 @@ export class ApprovalSession extends AtomicObject {
   row(){const row=this.ctx.storage.kv.get('session');
     if(row&&this.now()>=row.expires_at){this.clear(row,'expired');return null;}return row;}
   clear(row,status){
+    // A resolved page must stop showing its images: note every preview this row
+    // still carries before the attachments are dropped, then `settle()` revokes
+    // them outside the storage transaction this runs inside.
+    this.collect(row);
     // Keep only receipt binding and expiry; never display text/metadata/CSRF after resolution.
     const {person,generation,job_id,digest,account,kind,expires_at,read_key_hash,approved_at}=row;
     this.put('session',{person,generation,job_id,digest,account,kind,expires_at,read_key_hash,
       ...(approved_at?{approved_at}:{}),status});
   }
-  invalidate(){const row=this.ctx.storage.kv.get('session');if(row)this.clear(row,'expired');}
-  async manage(operation,body,ticket){
+  collect(row){
+    if(!this.env.MEDIA_OBJECT||!Array.isArray(row?.attachments))return;
+    for(const a of row.attachments)if(a&&typeof a.preview==='string')(this.revoking??=[]).push(a.preview);
+  }
+  async settle(){
+    // Previews are display-only: a capability that is already gone (404/410) or
+    // a media object that cannot answer must never change an approval outcome.
+    const list=this.revoking;if(!list?.length)return;this.revoking=[];
+    for(const capability of list){try{await (await mediaStub(this.env,capability)).invalidate();}catch{}}
+  }
+  async invalidate(){const row=this.ctx.storage.kv.get('session');if(row)this.clear(row,'expired');await this.settle();}
+  async manage(operation,body,ticket){try{return await this.handle(operation,body,ticket);}finally{await this.settle();}}
+  async handle(operation,body,ticket){
     if(operation==='create'){
       const required=['person','job_id','digest','account','kind','text','context','read_key_hash'];
       if(!body||typeof body!=='object'||Array.isArray(body))return fail();
@@ -221,8 +237,14 @@ export class ApprovalSession extends AtomicObject {
         if(result.status===201)await this.ctx.storage.setAlarm(deadline);return result;
       });
         if(created.status!==201)return created;
+        // A preview must not outlive the page that shows it: lower each grant to
+        // this session's deadline. A grant that is already gone stays gone.
+        const shown=this.ctx.storage.kv.get('session');
+        if(this.env.MEDIA_OBJECT&&Array.isArray(shown?.attachments))
+          for(const a of shown.attachments)if(a&&typeof a.preview==='string'){
+            try{await (await mediaStub(this.env,a.preview)).boundExpiry(deadline);}catch{}}
         const registered=await authority.register(this.binding(this.row()),generation,this.ctx.id.toString());
-        if(registered.status!==200){this.invalidate();return registered;}
+        if(registered.status!==200){await this.invalidate();return registered;}
         return created;
       }catch{return fail(503,'approval_unavailable');}
     }
@@ -238,7 +260,7 @@ export class ApprovalSession extends AtomicObject {
     });
     if(admission.status!==200||operation==='cancel')return admission;
     const authority=await accountStub(this.env,before.account);
-    if(!await authority.active()){this.invalidate();return fail(410,'account_revoked');}
+    if(!await authority.active()){await this.invalidate();return fail(410,'account_revoked');}
     const person=await personStub(this.env,before.person);
     if(operation==='status'){
       const current=await person.current(before.generation), row=this.row();
@@ -262,16 +284,31 @@ export class ApprovalSession extends AtomicObject {
   }
   binding(row){const {job_id,digest,account,kind,expires_at}=row;return {job_id,digest,account,kind,expires_at};}
 
-  async view(){
+  async view(){try{return await this.render();}finally{await this.settle();}}
+  async render(){
     const before=this.row();if(!before||before.status!=='pending')return fail(410,'expired');
     if(!await (await accountStub(this.env,before.account)).active()||!await (await personStub(this.env,before.person)).current(before.generation)){
       this.clear(before,'expired');return fail(410,'approver_unavailable');}
     const row=this.row();if(!row||row.status!=='pending')return fail(410,'expired');
     const {text,account,kind,digest,csrf,context,attachments,typed}=row;
     // Only the page sees attachments. `clear()` drops them before any receipt.
-    return {status:200,body:{text,account,kind,digest,csrf,context,attachments:attachments??[],typed:typed??null}};
+    return {status:200,body:{text,account,kind,digest,csrf,context,attachments:attachments??[],typed:typed??null,
+      live:await this.livePreviews(attachments)}};
   }
-  async approve(secret,csrf){
+  // A page that cannot show one of its images must not offer the approve form:
+  // ask each image's media object whether it would still serve those bytes.
+  // Anything but a live answer — a retired grant, a revoked account, a missing
+  // binding, an RPC that throws — counts as not showable.
+  async livePreviews(rows){
+    for(const row of Array.isArray(rows)?rows:[]){
+      if(row?.kind!=='image'||typeof row.preview!=='string')continue;
+      if(!this.env.MEDIA_OBJECT)return false;
+      try{if(await (await mediaStub(this.env,row.preview)).live()!==true)return false;}catch{return false;}
+    }
+    return true;
+  }
+  async approve(secret,csrf){try{return await this.attempt(secret,csrf);}finally{await this.settle();}}
+  async attempt(secret,csrf){
     const row=this.row();if(!row||row.status!=='pending')return fail(410,'expired');
     if(typeof csrf!=='string'||!STATE_PATTERN.test(csrf)||!equal(unb64(csrf),unb64(row.csrf)))return fail(403,'forbidden');
     // Reserve an attempt synchronously before the KDF so concurrent POSTs cannot exceed five.
@@ -283,7 +320,7 @@ export class ApprovalSession extends AtomicObject {
     const approved_at=await (await personStub(this.env,row.person)).check(secret,row.generation,this.binding(row));
     if(approved_at!==null){
       const grant=await (await accountStub(this.env,row.account)).grant(this.binding(row),row.generation,approved_at);
-      if(grant.status!==200){this.invalidate();return grant;}
+      if(grant.status!==200){await this.invalidate();return grant;}
     }
     return this.atomic(()=>{
       const current=this.row();if(!current||current.status!=='pending')return fail(410,'expired');
@@ -293,7 +330,7 @@ export class ApprovalSession extends AtomicObject {
   }
   async alarm(){
     const row=this.ctx.storage.kv.get('session');
-    if(!row||this.now()>=row.expires_at)await this.ctx.storage.deleteAll();
+    if(!row||this.now()>=row.expires_at){this.collect(row);await this.ctx.storage.deleteAll();await this.settle();}
     else await this.ctx.storage.setAlarm(row.expires_at);
   }
 }

@@ -91,8 +91,28 @@ def test_raw_source_bad_transfer_never_acknowledged(env,monkeypatch,fault):
     body=expected[:-1] if fault=='short' else expected+b'x' if fault=='extra' else b'K'*len(expected)
     monkeypatch.setattr(relay.httpsafe,'build_opener',lambda *a:type('Opener',(),{'open':lambda *a,**kw:Response(body)})())
     with pytest.raises(relay.MediaRelayError,match='media_source_(mismatch|unavailable)'):
-        with client.source_snapshot(secrets.token_urlsafe(32),sha):pytest.fail('bad transfer yielded')
+        with client.source_snapshot(secrets.token_urlsafe(32),sha,len(expected)):pytest.fail('bad transfer yielded')
     assert calls==['status']
+
+
+@pytest.mark.parametrize('declared',[+1,-1])
+def test_worker_size_that_differs_from_the_vm_record_buffers_nothing(env,monkeypatch,declared):
+    """The Worker only repeats the size the VM wrote before the bytes existed."""
+    data=secrets.token_bytes(40);sha=hashlib.sha256(data).hexdigest();calls=[]
+    client=relay.MediaRelay('alpha','person')
+    def control(subject,op,body):
+        calls.append(op);return {'status':'ready','size':len(data)+declared,'sha256':sha}
+    monkeypatch.setattr(client,'control',control)
+    monkeypatch.setattr(relay,'request_for',lambda *a:pytest.fail('a read was signed before the size was checked'))
+    opened=[]
+    class Spy(io.BytesIO):
+        def __init__(self):super().__init__();self.writes=0;opened.append(self)
+        def write(self,payload):self.writes+=1;return super().write(payload)
+    monkeypatch.setattr(relay.tempfile,'TemporaryFile',lambda *a,**kw:Spy())
+    with pytest.raises(relay.MediaRelayError,match='media_source_mismatch'):
+        with client.source_snapshot(secrets.token_urlsafe(32),sha,len(data)):pytest.fail('mismatched size yielded')
+    assert calls==['status'], 'the source was retired or read after a mismatch'
+    assert opened==[], 'bytes were buffered for a size the VM never recorded'
 
 
 def test_raw_source_verified_then_ack_then_closed(env,monkeypatch):
@@ -103,7 +123,7 @@ def test_raw_source_verified_then_ack_then_closed(env,monkeypatch):
     monkeypatch.setattr(relay,'request_for',lambda *a:urllib.request.Request('http://127.0.0.1/read'))
     class Response(io.BytesIO):status=200
     monkeypatch.setattr(relay.httpsafe,'build_opener',lambda *a:type('Opener',(),{'open':lambda *a,**kw:Response(data)})())
-    with client.source_snapshot(secrets.token_urlsafe(32),sha) as snapshot:
+    with client.source_snapshot(secrets.token_urlsafe(32),sha,len(data)) as snapshot:
         assert calls==['status','ack'] and snapshot.read()==data
         assert os.fstat(snapshot.fileno()).st_mode&0o777==0o600
     assert snapshot.closed

@@ -14,6 +14,10 @@ import stat
 import tempfile
 
 UNAVAILABLE = 'media_preparation_unavailable'
+# One alt ceiling for every口 (invited upload and manuscript alike): the Worker
+# accepts 4096 characters per row, but 20 rows of them do not fit in one
+# approval `create` body, so the declaration is bounded here first.
+MAX_ALT_BYTES = 2000
 
 
 class MediaError(ValueError):
@@ -61,6 +65,8 @@ def validate(rows):
         alt = row['alt']
         if not isinstance(alt, str) or not alt.strip() or any(ord(c) < 32 or ord(c) == 127 for c in alt):
             raise MediaError('media: nonempty alt without control characters required')
+        if len(alt.encode()) > MAX_ALT_BYTES:
+            raise MediaError('media: alt_too_long')
         if row['file'] in seen:
             raise MediaError('media: duplicate file')
         seen.add(row['file'])

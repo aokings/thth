@@ -21,6 +21,7 @@ import urllib.error
 from pathlib import Path
 
 from . import accounts, managed_repo, redact, server_files, writeback
+from .media import MAX_ALT_BYTES
 from .approval_relay import OPAQUE
 from .report_service import ReportServiceError
 
@@ -80,7 +81,7 @@ MULTIPART_THRESHOLD = 100_000_000
 PART_SIZE = 5 * 1024 * 1024
 GC_AGE_SECONDS = 86_400     # the lifecycle 24h backstop, mirrored on the VM
 MAX_DRAFT_MEDIA = 8         # transport bound only; lint stays the policy authority
-MAX_ALT_BYTES = 2000
+# `MAX_ALT_BYTES` は thth/media.py の 1 本（原稿の宣言と招待者の口で同じ上限）。
 
 STATES = ('pending', 'ready', 'rejected', 'unknown')
 # Leading refusal codes produced by the stage-1 sanitize. Only these (and the
@@ -344,7 +345,7 @@ def complete(context, request, via):
                     # retires the R2 source. Retirement happens once, right after
                     # the verified read: the VM holds the bytes from here on, and
                     # neither a refusal nor a success needs the source again.
-                    with client.source_snapshot(record['subject'], record['sha256']) as snapshot:
+                    with client.source_snapshot(record['subject'], record['sha256'], record['size']) as snapshot:
                         size = os.fstat(snapshot.fileno()).st_size
                         if size != record['size']:
                             raise MediaRelayError('media_source_mismatch')
@@ -430,12 +431,24 @@ def execute(context, request, via):
     return complete(context, request, via)
 
 
+SCAN_CHUNK = 1024 * 1024
+# A name is 64 hex digits, a dot and 2-4 characters. Carrying that much of the
+# previous chunk keeps a name that straddles a read boundary findable.
+SCAN_OVERLAP = 128
+MEDIA_NAME_PATTERN = re.compile(rb'[0-9a-f]{64}\.[a-z0-9]{2,4}')
+
+
 def _referenced(clone):
     """Every media file name mentioned by a tracked non-media file.
 
     Deliberately textual and deliberately generous: a name that appears in any
     manuscript, bundle or note counts as referenced. Over-keeping costs a file;
     over-deleting costs an approved attachment.
+
+    Large files are **scanned, never skipped**: a 5 MiB manuscript that names an
+    attachment is exactly the file whose reference must not be missed. The read
+    is a bounded loop (one chunk plus an overlap in memory), and the scan is on
+    bytes, so an undecodable file still yields its ASCII names.
     """
     listed = managed_repo.run(clone, ['ls-files', '-z'], check=False)
     if listed.returncode:
@@ -446,13 +459,17 @@ def _referenced(clone):
             continue
         leaf = Path(clone) / path
         try:
-            if leaf.is_symlink() or not leaf.is_file() or leaf.stat().st_size > 4 * 1024 * 1024:
+            if leaf.is_symlink() or not leaf.is_file():
                 continue
-            text = leaf.read_text(encoding='utf-8', errors='ignore')
+            with open(leaf, 'rb') as stream:
+                tail = b''
+                while chunk := stream.read(SCAN_CHUNK):
+                    window = tail + chunk
+                    for found in MEDIA_NAME_PATTERN.findall(window):
+                        names.add(found.decode())
+                    tail = window[-SCAN_OVERLAP:]
         except OSError:
             continue
-        for found in re.findall(r'[0-9a-f]{64}\.[a-z0-9]{2,4}', text):
-            names.add(found)
     return names
 
 
@@ -467,7 +484,7 @@ def gc(account, *, by, now=None):
     if cfg.get('repo_dir') != str(clone):
         raise ValueError('managed_repo_required')
     moment = time.time() if now is None else now
-    removed = kept = intents = 0
+    removed = kept = intents = corrupt = locks = 0
     with server_files.account_locks(account, cfg):
         ok, _, _ = writeback.sync_repo(cfg['repo_dir'])
         if not ok:
@@ -482,22 +499,64 @@ def gc(account, *, by, now=None):
                 kept += 1
                 continue
             drop.append(MEDIA_DIRECTORY + '/' + leaf.name)
-        for path in drop:
-            os.unlink(Path(clone) / path)
+        # A leftover that Git never tracked cannot be staged: `git add -- <path>`
+        # refuses the whole invocation, and the old code had already unlinked the
+        # tracked files by then — deleted from the working tree with no commit.
+        # Separate the two sets first, commit the tracked ones, and only unlink
+        # the leftovers once that commit exists. Any failure puts the tracked
+        # files back and reports counts instead of a half-emptied directory.
+        tracked, untracked, restored = [], list(drop), 0
         if drop:
-            ok, _ = writeback.commit_and_push(str(clone), rel_path=drop, message=f'media gc by={by}')
+            listed = managed_repo.run(clone, ['ls-files', '-z', '--', *drop], check=False)
+            if listed.returncode:
+                raise ValueError('managed_repo_unreadable')
+            known = {path for path in listed.stdout.split('\0') if path}
+            tracked = [path for path in drop if path in known]
+            untracked = [path for path in drop if path not in known]
+        if tracked:
+            for path in tracked:
+                os.unlink(Path(clone) / path)
+            try:
+                ok, _ = writeback.commit_and_push(str(clone), rel_path=tracked, message=f'media gc by={by}')
+            except Exception:
+                ok = False
             if not ok:
-                raise ValueError('media_gc_unconfirmed')
-            removed = len(drop)
+                repair = managed_repo.run(clone, ['checkout', '--', *tracked], check=False)
+                restored = len(tracked) if not repair.returncode else 0
+                return {'account': account, 'removed_count': 0, 'kept_count': kept,
+                        'intents_removed': 0, 'locks_removed': 0, 'corrupt_count': 0,
+                        'restored_count': restored, 'reason': 'media_gc_unconfirmed'}
+        for path in untracked:
+            os.unlink(Path(clone) / path)
+        removed = len(tracked) + len(untracked)
         gone = {Path(path).name for path in drop}
         try:
             with server_files.directory(directory(account), private=True) as fd:
                 for name in sorted(os.listdir(fd)):
+                    if name.endswith('.lock'):
+                        # An interrupted session leaves its rendezvous file
+                        # behind. Take the lock first (so a running session is
+                        # never unlinked underneath) and only drop one older
+                        # than the 24h backstop — a session lives 10 minutes.
+                        try:
+                            with server_files.lock_at(fd, name):
+                                if moment - os.stat(name, dir_fd=fd, follow_symlinks=False).st_mtime > GC_AGE_SECONDS:
+                                    os.unlink(name, dir_fd=fd)
+                                    locks += 1
+                        except (OSError, server_files.UnsafeFile):
+                            # Held by a running session, or not a plain private
+                            # file: leave it alone and report nothing.
+                            pass
+                        continue
                     if not name.endswith('.json'):
                         continue
                     try:
                         record = _load(fd, name[:-5])
                     except ReportServiceError:
+                        # Unreadable or invalid: counted, never deleted. A record
+                        # nobody can read is the one a human must look at, and
+                        # silence here used to hide it forever.
+                        corrupt += 1
                         continue
                     stale = moment * 1000 - record['created_at'] > GC_AGE_SECONDS * 1000
                     held = record['status'] == 'ready' and Path(record['file']).name not in gone
@@ -507,4 +566,5 @@ def gc(account, *, by, now=None):
         except FileNotFoundError:
             pass
     return {'account': account, 'removed_count': removed, 'kept_count': kept,
-            'intents_removed': intents, 'reason': None}
+            'intents_removed': intents, 'locks_removed': locks, 'corrupt_count': corrupt,
+            'restored_count': 0, 'reason': None}

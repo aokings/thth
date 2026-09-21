@@ -401,7 +401,7 @@ def validate_arguments(name: str, arguments) -> dict:
             f"（受け取った: {type(arguments).__name__}）")
     if name == "analytics_report" and "by" in arguments:
         if arguments["by"] not in ("kind", "hour_band", "topic", "tag", "attachment_kind") or arguments.get("compare_previous") is not True:
-            raise ToolInputError("analytics_report: by は compare_previous=true と kind/hour_band/topic/tag が必要です")
+            raise ToolInputError("analytics_report: by は compare_previous=true と kind/hour_band/topic/tag/attachment_kind が必要です")
     if name == "operations_handoff" and "since_last_read" in arguments and type(arguments["since_last_read"]) is not bool:
         raise ToolInputError("operations_handoff: since_last_read は boolean です")
     props = schema.get("properties") or {}
