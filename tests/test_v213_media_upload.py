@@ -400,6 +400,47 @@ def test_gc_removes_only_unreferenced_files_older_than_a_day(env, worker):
     assert uploads.gc('alpha', by='operator')['removed_count'] == 0
 
 
+def aged(env, *names):
+    folder = Path(env['root']) / 'repos/_server/alpha/docs/sns/media'
+    old = time.time() - 2 * 86_400
+    for name in names:
+        os.utime(folder / name, (old, old))
+    return folder
+
+
+def test_gc_commits_tracked_files_and_unlinks_an_untracked_leftover(env, worker):
+    """An untracked leftover used to break `git add` for the whole invocation,
+    leaving the tracked files deleted from the working tree with no commit."""
+    first = finish(env, upload(env, worker, GPS_JPEG)['media_id'])['public_sha256']
+    second = finish(env, upload(env, worker, mp4(), kind='video', mime='video/mp4')['media_id'])['public_sha256']
+    folder = aged(env, first + '.jpg', second + '.mp4')
+    leftover = folder / ('0' * 64 + '.png')
+    leftover.write_bytes(b'half-written leftover')
+    os.utime(leftover, (time.time() - 2 * 86_400,) * 2)
+    repo = Path(env['root']) / 'repos/_server/alpha'
+    before = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+    result = uploads.gc('alpha', by='operator')
+    assert result['reason'] is None and result['removed_count'] == 3
+    assert repo_media(env) == []
+    assert subprocess.check_output(['git', '-C', str(repo), 'status', '--porcelain'], text=True).strip() == ''
+    log = subprocess.check_output(['git', '-C', str(repo), 'log', '--format=%H', before + '..HEAD'], text=True).split()
+    assert len(log) == 1, 'the two tracked files must leave in exactly one commit'
+
+
+def test_a_failed_gc_commit_restores_every_tracked_file(env, worker, monkeypatch):
+    first = finish(env, upload(env, worker, GPS_JPEG)['media_id'])['public_sha256']
+    second = finish(env, upload(env, worker, mp4(), kind='video', mime='video/mp4')['media_id'])['public_sha256']
+    aged(env, first + '.jpg', second + '.mp4')
+    before = sorted(repo_media(env))
+    monkeypatch.setattr(uploads.writeback, 'commit_and_push', lambda *a, **k: (False, 'synthetic staging failure'))
+    result = uploads.gc('alpha', by='operator')
+    assert result['reason'] == 'media_gc_unconfirmed'
+    assert result['removed_count'] == 0 and result['restored_count'] == 2
+    assert sorted(repo_media(env)) == before, 'files stayed deleted without a commit'
+    repo = Path(env['root']) / 'repos/_server/alpha'
+    assert subprocess.check_output(['git', '-C', str(repo), 'status', '--porcelain'], text=True).strip() == ''
+
+
 def test_mcp_exposes_both_tools_only_with_write_credentials(env, monkeypatch):
     from tests.test_mcp import _load_server_module
     monkeypatch.setenv('THTH_REPORT_CREDENTIALS', str(env['path']))

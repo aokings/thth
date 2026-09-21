@@ -483,13 +483,36 @@ def gc(account, *, by, now=None):
                 kept += 1
                 continue
             drop.append(MEDIA_DIRECTORY + '/' + leaf.name)
-        for path in drop:
-            os.unlink(Path(clone) / path)
+        # A leftover that Git never tracked cannot be staged: `git add -- <path>`
+        # refuses the whole invocation, and the old code had already unlinked the
+        # tracked files by then — deleted from the working tree with no commit.
+        # Separate the two sets first, commit the tracked ones, and only unlink
+        # the leftovers once that commit exists. Any failure puts the tracked
+        # files back and reports counts instead of a half-emptied directory.
+        tracked, untracked, restored = [], list(drop), 0
         if drop:
-            ok, _ = writeback.commit_and_push(str(clone), rel_path=drop, message=f'media gc by={by}')
+            listed = managed_repo.run(clone, ['ls-files', '-z', '--', *drop], check=False)
+            if listed.returncode:
+                raise ValueError('managed_repo_unreadable')
+            known = {path for path in listed.stdout.split('\0') if path}
+            tracked = [path for path in drop if path in known]
+            untracked = [path for path in drop if path not in known]
+        if tracked:
+            for path in tracked:
+                os.unlink(Path(clone) / path)
+            try:
+                ok, _ = writeback.commit_and_push(str(clone), rel_path=tracked, message=f'media gc by={by}')
+            except Exception:
+                ok = False
             if not ok:
-                raise ValueError('media_gc_unconfirmed')
-            removed = len(drop)
+                repair = managed_repo.run(clone, ['checkout', '--', *tracked], check=False)
+                restored = len(tracked) if not repair.returncode else 0
+                return {'account': account, 'removed_count': 0, 'kept_count': kept,
+                        'intents_removed': 0, 'restored_count': restored,
+                        'reason': 'media_gc_unconfirmed'}
+        for path in untracked:
+            os.unlink(Path(clone) / path)
+        removed = len(tracked) + len(untracked)
         gone = {Path(path).name for path in drop}
         try:
             with server_files.directory(directory(account), private=True) as fd:
@@ -508,4 +531,4 @@ def gc(account, *, by, now=None):
         except FileNotFoundError:
             pass
     return {'account': account, 'removed_count': removed, 'kept_count': kept,
-            'intents_removed': intents, 'reason': None}
+            'intents_removed': intents, 'restored_count': 0, 'reason': None}
