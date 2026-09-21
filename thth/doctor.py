@@ -112,7 +112,7 @@ def diagnose(account_name: str) -> dict:
     report=_diagnose(account_name)
     report['directory_checks']=static['directory_checks']
     from . import media_cleanup
-    report['media_cleanup']=media_cleanup.observe(account_name)
+    if media_cleanup.configured():report['media_cleanup']=media_cleanup.observe(account_name)
     return report
 
 

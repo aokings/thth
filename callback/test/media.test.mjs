@@ -1,4 +1,4 @@
-import {test,before,after} from 'node:test';
+import {test,before,after,beforeEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomBytes,createHash,generateKeyPairSync,sign,constants} from 'node:crypto';
 import {readFile,writeFile,mkdir,mkdtemp,rm,realpath} from 'node:fs/promises';
@@ -13,11 +13,21 @@ import {canonical as approvalCanonical} from '../src/approval.js';
 const opaque=()=>randomBytes(32).toString('base64url'),sha=b=>createHash('sha256').update(b).digest('hex');
 const logs=[],secrets=[];let mf,privateKey,runtimeDirectory,options;
 class Silent extends Log{constructor(){super(LogLevel.NONE);}log(v){logs.push(String(v));}}
+// Miniflare is shared for persistence/restart tests, but unrelated cases are
+// separate clients. Keep one peer within a case, including retries and parts.
+let fixturePeer,fixturePeerIndex=0;
+beforeEach(()=>{fixturePeer=`198.51.100.${++fixturePeerIndex}`;});
+function dispatch(url,init={}){
+ const headers=new Headers(init.headers);
+ if(!headers.has('cf-connecting-ip'))headers.set('cf-connecting-ip',fixturePeer);
+ return mf.dispatchFetch(url,{...init,headers});
+}
+
 before(async()=>{
   const pair=generateKeyPairSync('rsa',{modulusLength:3072});privateKey=pair.privateKey;
   const files=['test/media-harness.js','src/media-object.js','src/media.js','src/worker.js','src/index.js','src/relay.js','src/relay-object.js','src/approval.js','src/approval-object.js','src/deletion.js','src/deletion-object.js'];
   runtimeDirectory=await realpath(await mkdtemp(join(tmpdir(),'media-runtime-')));
-  options=convertV4MiniflareOptions({modules:await Promise.all(files.map(async name=>({type:'ESModule',path:fileURLToPath(new URL('../'+name,import.meta.url)),contents:await readFile(new URL('../'+name,import.meta.url),'utf8')}))),compatibilityDate:'2026-09-01',cf:false,outboundService:()=>new Response('external_denied',{status:503}),log:new Silent(),bindings:{APPROVAL_PUBLIC_KEY:pair.publicKey.export({type:'spki',format:'der'}).toString('base64url')},durableObjects:{MEDIA_OBJECT:{className:'TestMedia',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},APPROVAL_PERSON:{className:'ApprovalPerson',useSQLite:true},APPROVAL_SESSION:{className:'ApprovalSession',useSQLite:true}},ratelimits:{MEDIA_PUBLIC_LIMIT:{namespace_id:'21301',simple:{limit:120,period:60}},MEDIA_CONTROL_LIMIT:{namespace_id:'21302',simple:{limit:600,period:60}},MEDIA_UPLOAD_LIMIT:{namespace_id:'21303',simple:{limit:240,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}}},r2Buckets:['MEDIA_BUCKET']});options.resourcePersistencePath=join(runtimeDirectory,'storage');
+  options=convertV4MiniflareOptions({modules:await Promise.all(files.map(async name=>({type:'ESModule',path:fileURLToPath(new URL('../'+name,import.meta.url)),contents:await readFile(new URL('../'+name,import.meta.url),'utf8')}))),compatibilityDate:'2026-09-01',cf:false,outboundService:()=>new Response('external_denied',{status:503}),log:new Silent(),bindings:{APPROVAL_PUBLIC_KEY:pair.publicKey.export({type:'spki',format:'der'}).toString('base64url')},durableObjects:{MEDIA_OBJECT:{className:'TestMedia',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},APPROVAL_PERSON:{className:'ApprovalPerson',useSQLite:true},APPROVAL_SESSION:{className:'ApprovalSession',useSQLite:true}},ratelimits:{MEDIA_UPLOAD_IP_LIMIT:{namespace_id:'21304',simple:{limit:120,period:60}},MEDIA_PUBLIC_LIMIT:{namespace_id:'21301',simple:{limit:120,period:60}},MEDIA_CONTROL_LIMIT:{namespace_id:'21302',simple:{limit:600,period:60}},MEDIA_UPLOAD_LIMIT:{namespace_id:'21303',simple:{limit:240,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}}},r2Buckets:['MEDIA_BUCKET']});options.resourcePersistencePath=join(runtimeDirectory,'storage');
   mf=new Miniflare(options);await mf.ready;
 });
 after(async()=>{await mf?.dispose();await rm(runtimeDirectory,{recursive:true,force:true});assert.equal(logs.filter(s=>secrets.some(x=>s.includes(x))).length,0,'secret in runtime logs');});
@@ -29,19 +39,19 @@ function wire(id,op,body,overrides={}){
   secrets.push(id,signature,nonce);
   return {url:'https://media.test'+path,init:{method:'POST',headers:{'content-type':'application/json','x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw}};
 }
-async function call(id,op,body,options){const w=wire(id,op,body,options);return mf.dispatchFetch(w.url,w.init);}
-const control=async(id,body={})=>(await mf.dispatchFetch('https://media.test/__media/'+id,{method:'POST',body:JSON.stringify(body)})).json();
+async function call(id,op,body,options){const w=wire(id,op,body,options);return dispatch(w.url,w.init);}
+const control=async(id,body={})=>(await dispatch('https://media.test/__media/'+id,{method:'POST',body:JSON.stringify(body)})).json();
 function data(bytes=Buffer.from('dynamic synthetic image '+opaque()),kind='source'){
  return {id:opaque(),bytes,body:{actor:'person',account:'alpha',sha256:sha(bytes),size:bytes.length,mime:'image/png',kind,part_size:null}};
 }
 const binding=f=>({actor:f.body.actor,account:f.body.account,sha256:f.body.sha256});
-async function upload(f){return mf.dispatchFetch('https://media.test/media-upload/'+f.id,{method:'PUT',headers:{'content-length':String(f.bytes.length)},body:f.bytes});}
+async function upload(f){return dispatch('https://media.test/media-upload/'+f.id,{method:'PUT',headers:{'content-length':String(f.bytes.length)},body:f.bytes});}
 async function ready(f){assert.equal((await call(f.id,'create',f.body)).status,201);assert.equal((await upload(f)).status,200);assert.equal((await call(f.id,'complete',binding(f))).status,200);}
 
 test('unknown public/read/upload do not persist records',async()=>{
  const f=data();
- for(const init of [{method:'GET'},{method:'HEAD'},{headers:{range:'bytes=0-2'}}])assert.equal((await mf.dispatchFetch('https://media.test/m/'+f.id,init)).status,410);
- assert.equal((await mf.dispatchFetch('https://media.test/m/invalid')).status,404);
+ for(const init of [{method:'GET'},{method:'HEAD'},{headers:{range:'bytes=0-2'}}])assert.equal((await dispatch('https://media.test/m/'+f.id,init)).status,410);
+ assert.equal((await dispatch('https://media.test/m/invalid')).status,404);
  assert.equal((await upload(f)).status,404);assert.equal((await call(f.id,'read',binding(f))).status,404);
  assert.deepEqual(await control(f.id,{inspect:true}),{rows:[],alarm:null});
 });
@@ -52,15 +62,15 @@ test('one file complete once, exact private bytes, owner binding and retired rea
  assert.equal((await call(f.id,'read',{...binding(f),account:'beta'})).status,404);
  assert.equal((await call(f.id,'read',{...binding(f),actor:'other'})).status,404);
  const read=await call(f.id,'read',binding(f));assert.equal(read.status,200);assert.ok(Buffer.from(await read.arrayBuffer()).equals(f.bytes),'private bytes mismatch');
- assert.equal((await mf.dispatchFetch('https://media.test/m/'+f.id)).status,410);
+ assert.equal((await dispatch('https://media.test/m/'+f.id)).status,410);
  assert.equal((await call(f.id,'ack',binding(f))).status,200);
  assert.equal((await call(f.id,'read',binding(f))).status,410);
 });
 test('signed domain/operation/body replay cannot confer authority',async()=>{
- const f=data(),w=wire(f.id,'create',f.body);assert.equal((await mf.dispatchFetch(w.url,w.init)).status,201);
- assert.equal((await mf.dispatchFetch(w.url,w.init)).status,409);
+ const f=data(),w=wire(f.id,'create',f.body);assert.equal((await dispatch(w.url,w.init)).status,201);
+ assert.equal((await dispatch(w.url,w.init)).status,409);
  const other=data();assert.equal((await call(other.id,'create',other.body,{domain:'thth-approval-v1'})).status,401);
- const changed=wire(other.id,'create',other.body);changed.init.body=JSON.stringify({...other.body,account:'beta'});assert.equal((await mf.dispatchFetch(changed.url,changed.init)).status,401);
+ const changed=wire(other.id,'create',other.body);changed.init.body=JSON.stringify({...other.body,account:'beta'});assert.equal((await dispatch(changed.url,changed.init)).status,401);
  assert.equal((await control(other.id)).length,0);
 });
 test('source cannot be public and preview has separate capability/owner/TTL',async()=>{
@@ -68,11 +78,11 @@ test('source cannot be public and preview has separate capability/owner/TTL',asy
  const body={...binding(f),media_id:f.body.sha256,source:f.id,expires_at:expires};
  assert.equal((await call(opaque(),'preview',{...body,account:'beta'})).status,404);
  assert.equal((await call(cap,'preview',body)).status,201);
- const get=await mf.dispatchFetch('https://media.test/m/'+cap);assert.equal(get.status,200);assert.equal(get.headers.get('cache-control'),'no-store');assert.ok(Buffer.from(await get.arrayBuffer()).equals(f.bytes),'public bytes mismatch');
- const head=await mf.dispatchFetch('https://media.test/m/'+cap,{method:'HEAD'});assert.equal(head.status,200);assert.equal(await head.text(),'');
+ const get=await dispatch('https://media.test/m/'+cap);assert.equal(get.status,200);assert.equal(get.headers.get('cache-control'),'no-store');assert.ok(Buffer.from(await get.arrayBuffer()).equals(f.bytes),'public bytes mismatch');
+ const head=await dispatch('https://media.test/m/'+cap,{method:'HEAD'});assert.equal(head.status,200);assert.equal(await head.text(),'');
  await control(cap,{clock:expires});
- for(const method of ['GET','HEAD'])assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap,{method})).status,410);
- assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap,{headers:{range:'bytes=0-2'}})).status,410);
+ for(const method of ['GET','HEAD'])assert.equal((await dispatch('https://media.test/m/'+cap,{method})).status,410);
+ assert.equal((await dispatch('https://media.test/m/'+cap,{headers:{range:'bytes=0-2'}})).status,410);
 });
 test('simultaneous complete has exactly one success',async()=>{
  const f=data();assert.equal((await call(f.id,'create',f.body)).status,201);assert.equal((await upload(f)).status,200);
@@ -85,7 +95,7 @@ test('provider acknowledgement is bound and extends only once from acknowledgeme
  assert.equal((await call(cap,'published',{...body,purpose:'preview'})).status,400);
  const ack=await call(cap,'published',body);assert.equal(ack.status,200);const expiry=(await ack.json()).expires_at;
  assert.equal((await call(cap,'published',body)).status,409);
- await control(cap,{clock:expiry});assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap)).status,410);
+ await control(cap,{clock:expiry});assert.equal((await dispatch('https://media.test/m/'+cap)).status,410);
 });
 
 
@@ -102,8 +112,8 @@ test('same public hash separate grants have independent cleanup',async()=>{
  const bytes=Buffer.from('same synthetic '+opaque()),a=data(bytes,'sanitized'),b=data(bytes,'sanitized');b.body.actor='other';b.body.account='beta';await ready(a);await ready(b);
  const ca=opaque(),cb=opaque(),expiry=Date.now()+500000;
  for(const [f,cap] of [[a,ca],[b,cb]])assert.equal((await call(cap,'preview',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at:expiry})).status,201);
- await control(ca,{clock:expiry,alarm:true});assert.equal((await mf.dispatchFetch('https://media.test/m/'+ca)).status,410);
- const keep=await mf.dispatchFetch('https://media.test/m/'+cb);assert.equal(keep.status,200);assert.ok(Buffer.from(await keep.arrayBuffer()).equals(bytes),'unrelated bytes changed');
+ await control(ca,{clock:expiry,alarm:true});assert.equal((await dispatch('https://media.test/m/'+ca)).status,410);
+ const keep=await dispatch('https://media.test/m/'+cb);assert.equal(keep.status,200);assert.ok(Buffer.from(await keep.arrayBuffer()).equals(bytes),'unrelated bytes changed');
  const expired=await control(ca,{clock:expiry});assert.deepEqual(expired,[]);assert.deepEqual(await control(ca,{inspect:true}),{rows:[],alarm:null});
 });
 test('late ack cannot revive expiry; explicit invalidation takes effect on every read method',async()=>{
@@ -113,13 +123,13 @@ test('late ack cannot revive expiry; explicit invalidation takes effect on every
   const bindingBody={...binding(f),media_id:f.body.sha256,purpose:'provider',generation:value.generation};
   if(mode==='expire')await control(cap,{clock:value.expires_at});else assert.equal((await call(cap,'invalidate',bindingBody)).status,200);
   assert.equal((await call(cap,'published',bindingBody)).status,410);
-  for(const init of [{},{method:'HEAD'},{headers:{range:'bytes=0-1'}}])assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap,init)).status,410);
+  for(const init of [{},{method:'HEAD'},{headers:{range:'bytes=0-1'}}])assert.equal((await dispatch('https://media.test/m/'+cap,init)).status,410);
  }
 });
 test('public range is bounded and returns original byte interval',async()=>{
  const f=data(undefined,'sanitized');await ready(f);const cap=opaque();assert.equal((await call(cap,'preview',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at:Date.now()+500000})).status,201);
- const get=await mf.dispatchFetch('https://media.test/m/'+cap,{headers:{range:'bytes=2-5'}});assert.equal(get.status,206);assert.ok(Buffer.from(await get.arrayBuffer()).equals(f.bytes.subarray(2,6)),'range mismatch');
- assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap,{headers:{range:'bytes=0-1,3-4'}})).status,416);
+ const get=await dispatch('https://media.test/m/'+cap,{headers:{range:'bytes=2-5'}});assert.equal(get.status,206);assert.ok(Buffer.from(await get.arrayBuffer()).equals(f.bytes.subarray(2,6)),'range mismatch');
+ assert.equal((await dispatch('https://media.test/m/'+cap,{headers:{range:'bytes=0-1,3-4'}})).status,416);
 });
 test('100MB boundary uses real multipart, part retry and complete only once',async()=>{
  const partSize=5*1024*1024,size=100000001,f=data();f.body.size=size;f.body.part_size=partSize;
@@ -127,7 +137,7 @@ test('100MB boundary uses real multipart, part retry and complete only once',asy
  const part=Buffer.alloc(partSize,73),count=Math.ceil(size/partSize);
  for(let n=1;n<=count;n++){
   const bytes=part.subarray(0,Math.min(partSize,size-(n-1)*partSize));
-  const put=()=>mf.dispatchFetch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(bytes.length)},body:bytes});
+  const put=()=>dispatch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(bytes.length)},body:bytes});
   assert.equal((await put()).status,200);if(n===1)assert.equal((await put()).status,200);
  }
  const completed=await Promise.all([call(f.id,'complete',binding(f)),call(f.id,'complete',binding(f))]);assert.equal(completed.filter(x=>x.status===200).length,1);
@@ -147,14 +157,14 @@ r=media_relay.request_for(sys.argv[1],'create',json.loads(sys.argv[2]))
 print(json.dumps({'url':r.full_url,'headers':dict(r.header_items()),'body':r.data.decode()}))`;
  const child=spawnSync(pythonForTests(),['-B','-c',script,f.id,JSON.stringify(f.body)],{cwd:fileURLToPath(new URL('../..',import.meta.url)),env:{PATH:'/usr/bin:/bin',HOME:runtimeDirectory,THTH_APPS_DIR:apps,THTH_ROOT:join(runtimeDirectory,'root'),PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1'},encoding:'utf8',timeout:10000});
  assert.equal(child.status,0,'Python signing failed');assert.equal(child.stderr,'');
- const w=JSON.parse(child.stdout),res=await mf.dispatchFetch(w.url,{method:'POST',headers:w.headers,body:w.body});assert.equal(res.status,201);
+ const w=JSON.parse(child.stdout),res=await dispatch(w.url,{method:'POST',headers:w.headers,body:w.body});assert.equal(res.status,201);
 });
 test('real runtime restart retains ready bytes and publication ack cannot extend again',async()=>{
  const f=data(undefined,'sanitized');await ready(f);const cap=opaque();
  const made=await call(cap,'provider',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at:Date.now()+600000});const grant=await made.json();
  const b={...binding(f),media_id:f.body.sha256,purpose:'provider',generation:grant.generation};const first=await call(cap,'published',b);assert.equal(first.status,200);const expiry=(await first.json()).expires_at;
  await mf.dispose();mf=new Miniflare(options);await mf.ready;
- const get=await mf.dispatchFetch('https://media.test/m/'+cap);assert.equal(get.status,200);assert.ok(Buffer.from(await get.arrayBuffer()).equals(f.bytes),'restart bytes mismatch');
+ const get=await dispatch('https://media.test/m/'+cap);assert.equal(get.status,200);assert.ok(Buffer.from(await get.arrayBuffer()).equals(f.bytes),'restart bytes mismatch');
  assert.equal((await call(cap,'published',b)).status,409);
  const row=(await control(cap)).find(([k])=>k==='media')[1];assert.equal(row.expires_at,expiry);
 });
@@ -174,7 +184,7 @@ test('multipart allocation and private/public reads recheck account after R2 awa
     id=opaque();assert.equal((await call(id,'preview',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at:Date.now()+500000})).status,201);
    }
    await control(id,{afterR2:{operation:'get',action:'revoke'}});
-   const result=operation==='view'?await mf.dispatchFetch('https://media.test/m/'+id):await call(id,'read',binding(f));
+   const result=operation==='view'?await dispatch('https://media.test/m/'+id):await call(id,'read',binding(f));
    assert.equal(result.status,410);
   }
  }
@@ -185,15 +195,15 @@ test('C10 video provisional TTL differs from image without enabling a video prov
   await control(id,{clock:now});
   const created=await call(id,'provider',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at:now+500000});
   assert.equal(created.status,201);const result=await created.json();assert.equal(result.expires_at,now+ttl);
-  await control(id,{clock:now+ttl-1});assert.equal((await mf.dispatchFetch('https://media.test/m/'+id)).status,200);
-  await control(id,{clock:now+ttl});assert.equal((await mf.dispatchFetch('https://media.test/m/'+id)).status,410);
+  await control(id,{clock:now+ttl-1});assert.equal((await dispatch('https://media.test/m/'+id)).status,200);
+  await control(id,{clock:now+ttl});assert.equal((await dispatch('https://media.test/m/'+id)).status,410);
  }
 });
 
 
 test('media signature cannot provision an approval person',async()=>{
  const f=data(),w=wire(f.id,'create',f.body);
- const result=await mf.dispatchFetch('https://media.test/approval/person/person/set',w.init);
+ const result=await dispatch('https://media.test/approval/person/person/set',w.init);
  assert.equal(result.status,401);
 });
 
@@ -278,7 +288,7 @@ test('public grant copy failure never exposes partially committed bytes',async()
  await control(cap,{afterR2:{operation:'put',action:'fail'}});
  const body={...binding(f),media_id:f.body.sha256,source:f.id,expires_at:Date.now()+500000};
  assert.equal((await call(cap,'provider',body)).status,503);
- assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap)).status,410);
+ assert.equal((await dispatch('https://media.test/m/'+cap)).status,410);
  assert.equal((await call(cap,'provider',body)).status,409);
  const row=(await control(cap)).find(([k])=>k==='media')[1];assert.ok(row.io_ticket);
  await control(cap,{clock:row.cleanup_at,alarm:true});assert.ok((await control(cap)).find(([k])=>k==='media')[1].io_ticket);
@@ -293,7 +303,7 @@ test('strict upload schema and byte-count failures cannot create a readable obje
  for(const change of [-1,1]){
   const f=data();assert.equal((await call(f.id,'create',f.body)).status,201);
   const bytes=change<0?f.bytes.subarray(1):Buffer.concat([f.bytes,Buffer.from('x')]);
-  const result=await mf.dispatchFetch('https://media.test/media-upload/'+f.id,{method:'PUT',headers:{'content-length':String(bytes.length)},body:bytes});
+  const result=await dispatch('https://media.test/media-upload/'+f.id,{method:'PUT',headers:{'content-length':String(bytes.length)},body:bytes});
   assert.equal(result.status,503);assert.equal((await call(f.id,'read',binding(f))).status,410);
  }
 });
@@ -315,7 +325,7 @@ test('cleanup preserves multipart identity across abort and delete failures then
  const f=data();f.body.size=100000001;f.body.part_size=5*1024*1024;
  assert.equal((await call(f.id,'create',f.body)).status,201);
  const part=Buffer.alloc(f.body.part_size,7);
- assert.equal((await mf.dispatchFetch('https://media.test/media-upload/'+f.id+'/1',{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,200);
+ assert.equal((await dispatch('https://media.test/media-upload/'+f.id+'/1',{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,200);
  const first=(await control(f.id)).find(([k])=>k==='media')[1];
  const aborted=await control(f.id,{clock:first.cleanup_at,failR2:'abort',alarm:true,inspect:true});
  let row=aborted.rows.find(([k])=>k==='media')[1];assert.equal(row.upload_id,first.upload_id);assert.equal(row.status,'retired');assert.equal(row.multipart_closed,undefined);assert.equal(aborted.alarm,first.cleanup_at+60000);
@@ -328,7 +338,7 @@ test('known completed multipart cleanup never repeats abort',async()=>{
  assert.equal((await call(f.id,'create',f.body)).status,201);
  for(let n=1;n<=Math.ceil(f.body.size/f.body.part_size);n++){
   const part=Buffer.alloc(Math.min(f.body.part_size,f.body.size-(n-1)*f.body.part_size),8);
-  assert.equal((await mf.dispatchFetch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,200);
+  assert.equal((await dispatch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,200);
  }
  assert.equal((await call(f.id,'complete',binding(f))).status,200);
  const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.equal(row.multipart_closed,'completed');
@@ -340,12 +350,12 @@ test('lost empty multipart allocation cannot accept parts and malformed public r
  assert.equal((await call(f.id,'create',f.body)).status,503);
  const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.equal(row.status,'initializing');assert.equal(row.upload_id,undefined);
  const part=Buffer.alloc(f.body.part_size,1);
- assert.equal((await mf.dispatchFetch('https://media.test/media-upload/'+f.id+'/1',{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,409);
+ assert.equal((await dispatch('https://media.test/media-upload/'+f.id+'/1',{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,409);
  const retained=await control(f.id,{clock:row.cleanup_at,alarm:true,inspect:true});assert.ok(retained.rows.find(([k])=>k==='media')[1].io_ticket);assert.equal(retained.alarm,row.cleanup_at+60000);
- for(const suffix of ['invalid',opaque()+'?query=1','%41'+opaque().slice(1)])for(const init of [{},{method:'HEAD'},{headers:{range:'bytes=0-1'}}])assert.equal((await mf.dispatchFetch('https://media.test/m/'+suffix,init)).status,404);
+ for(const suffix of ['invalid',opaque()+'?query=1','%41'+opaque().slice(1)])for(const init of [{},{method:'HEAD'},{headers:{range:'bytes=0-1'}}])assert.equal((await dispatch('https://media.test/m/'+suffix,init)).status,404);
 });
 
-test('workerd outbound service canary denies external fetch',async()=>{const response=await mf.dispatchFetch('https://media.test/__media-egress-canary');assert.equal(response.status,503);assert.equal(await response.text(),'external_denied');});
+test('workerd outbound service canary denies external fetch',async()=>{const response=await dispatch('https://media.test/__media-egress-canary');assert.equal(response.status,503);assert.equal(await response.text(),'external_denied');});
 
 test('real Python video multipart retains bytes and VIDEO publication through Worker R2',async()=>{
  const apps=join(runtimeDirectory,'video-apps');await mkdir(apps,{mode:0o700});
@@ -355,7 +365,16 @@ test('real Python video multipart retains bytes and VIDEO publication through Wo
 from pathlib import Path
 from thth import accounts,inflight,media,media_delivery,media_relay,httpsafe
 from thth.adapters import base,threads
-from tests.test_v213_mastodon_media import video_timing
+# Pure standard-library fixture: no test module (and therefore no pytest) import.
+def box(kind,data):return struct.pack('>I',len(data)+8)+kind+data
+def video_timing(rows,scale=1000):
+ ticks=sum(n*d for n,d in rows);count=sum(n for n,d in rows)
+ timing=box(b'mdhd',bytes(12)+struct.pack('>II',scale,ticks)+bytes(4))
+ sample=bytes(24)+struct.pack('>HH',640,480)+bytes(50)
+ table=box(b'stts',bytes(4)+struct.pack('>I',len(rows))+b''.join(struct.pack('>II',n,d) for n,d in rows))+box(b'stsz',bytes(4)+struct.pack('>II',1,count))+box(b'stsd',bytes(4)+struct.pack('>I',1)+box(b'avc1',sample))
+ mdia=box(b'mdia',box(b'hdlr',bytes(8)+b'vide'+bytes(12))+timing+box(b'minf',box(b'stbl',table)))
+ mvhd=bytes(12)+struct.pack('>II',scale,ticks)+bytes(80);tkhd=bytes(76)+struct.pack('>II',640<<16,480<<16)
+ return box(b'ftyp',b'isom'+bytes(4)+b'isom')+box(b'moov',box(b'mvhd',mvhd)+box(b'trak',box(b'tkhd',tkhd)+mdia))+box(b'mdat',b'synthetic')
 root=Path(os.environ['HOME'])/'video-repo';root.mkdir()
 raw=video_timing([(30,1000)],scale=30000);at=raw.index(b'mdat')-4
 prefix=raw[:at];size=100_000_001
@@ -409,12 +428,12 @@ test('unsatisfiable and unsafe ranges refuse without returning private bytes',as
  assert.equal((await call(cap,'preview',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at:Date.now()+500000})).status,201);
  for(const range of ['bytes=60-','bytes=70-','bytes=70-80','bytes=5-4','bytes=9007199254740992-','bytes=0-9007199254740992']){
   for(const method of ['GET','HEAD']){
-   const response=await mf.dispatchFetch('https://media.test/m/'+cap,{method,headers:{range}});
-   assert.equal(response.status,416);assert.notEqual(response.headers.get('content-type'),'image/png');
+   const response=await dispatch('https://media.test/m/'+cap,{method,headers:{range}});
+   assert.equal(response.status,416);assert.notEqual(response.headers.get('content-type'),'image/png');assert.equal(response.headers.get('content-range'),'bytes */60');
   }
  }
  for(const range of ['bytes=59-','bytes=59-100','bytes=0-0']){
-  const response=await mf.dispatchFetch('https://media.test/m/'+cap,{headers:{range}});
+  const response=await dispatch('https://media.test/m/'+cap,{headers:{range}});
   assert.equal(response.status,206);assert.equal((await response.arrayBuffer()).byteLength,1);
  }
 });
@@ -436,7 +455,7 @@ test('public private-object oracle is identical to unknown across methods',async
  const pending=data(),stored=data();assert.equal((await call(pending.id,'create',pending.body)).status,201);await ready(stored);
  for(const init of [{},{method:'HEAD'},{headers:{range:'bytes=0-1'}}]){
   for(const id of [pending.id,stored.id,opaque()]){
-   const response=await mf.dispatchFetch('https://media.test/m/'+id,init);assert.equal(response.status,410);
+   const response=await dispatch('https://media.test/m/'+id,init);assert.equal(response.status,410);
    if(init.method!=='HEAD')assert.deepEqual(await response.json(),{error:'media_expired'});
   }
  }
@@ -446,25 +465,26 @@ test('public private-object oracle is identical to unknown across methods',async
 
 test('media rate rejection precedes signing, body, DO and R2; missing binding closes',async()=>{
  const id=opaque(),ip='192.0.2.8';
- for(const [path,method,binding,key] of [[`/media/${id}/create`,'POST','MEDIA_CONTROL_LIMIT',sha(ip)],[`/media-upload/${id}/1`,'PUT','MEDIA_UPLOAD_LIMIT',sha(id)],[`/m/${id}`,'GET','MEDIA_PUBLIC_LIMIT',sha(ip)],[`/m/${id}`,'HEAD','MEDIA_PUBLIC_LIMIT',sha(ip)]]){
+ for(const [path,method,binding,key] of [[`/media/${id}/create`,'POST','MEDIA_CONTROL_LIMIT',sha(ip)],[`/media-upload/${id}/1`,'PUT','MEDIA_UPLOAD_LIMIT',sha(id)],[`/media-upload/${id}/1`,'PUT','MEDIA_UPLOAD_IP_LIMIT',sha(ip)],[`/m/${id}`,'GET','MEDIA_PUBLIC_LIMIT',sha(ip)],[`/m/${id}`,'HEAD','MEDIA_PUBLIC_LIMIT',sha(ip)]]){
   for(const present of [true,false]){
    const seen=[],env={MEDIA_BUCKET:{},MEDIA_OBJECT:{getByName(){assert.fail('DO after rate refusal');}}};
+   if(binding==='MEDIA_UPLOAD_LIMIT')env.MEDIA_UPLOAD_IP_LIMIT={limit:async()=>({success:true})};
    if(present)env[binding]={async limit(value){seen.push(value);return {success:false};}};
    const request=new Request('https://media.test'+path,{method,headers:{'cf-connecting-ip':ip,range:'bytes=0-1','content-type':'application/json'}});
    Object.defineProperty(request,'body',{get(){assert.fail('body after rate refusal');}});
-   const response=await mediaRequest(request,env,new URL(request.url));assert.equal(response.status,429);
-   assert.deepEqual(await response.json(),{error:'rate_limited'});assert.deepEqual(seen,present?[{key}]:[]);
+   const response=await mediaRequest(request,env,new URL(request.url));assert.equal(response.status,present?429:503);
+   assert.deepEqual(await response.json(),{error:present?'rate_limited':'media_unavailable'});assert.deepEqual(seen,present?[{key}]:[]);
   }
  }
 });
 
 test('media limiter keys separate peers and upload subjects and cover HEAD Range',async()=>{
  const seen=[],id=opaque(),other=opaque(),env={MEDIA_BUCKET:{},MEDIA_OBJECT:{getByName(){return {view:()=>new Response('gone',{status:410}),upload:()=>new Response('unknown',{status:404})};}}};
- for(const binding of ['MEDIA_PUBLIC_LIMIT','MEDIA_UPLOAD_LIMIT'])env[binding]={async limit({key}){seen.push([binding,key]);return {success:true};}};
+ for(const binding of ['MEDIA_PUBLIC_LIMIT','MEDIA_UPLOAD_LIMIT','MEDIA_UPLOAD_IP_LIMIT'])env[binding]={async limit({key}){seen.push([binding,key]);return {success:true};}};
  for(const [path,method,ip] of [[`/m/${id}`,'GET','192.0.2.1'],[`/m/${other}`,'HEAD','192.0.2.1'],[`/m/${id}`,'GET','192.0.2.2'],[`/media-upload/${id}/1`,'PUT','192.0.2.1'],[`/media-upload/${id}/2`,'PUT','192.0.2.2'],[`/media-upload/${other}/1`,'PUT','192.0.2.1']]){
   const request=new Request('https://media.test'+path,{method,headers:{'cf-connecting-ip':ip,range:'bytes=0-1'}});assert.ok([404,410].includes((await mediaRequest(request,env,new URL(request.url))).status));
  }
- assert.equal(seen[0][1],seen[1][1]);assert.notEqual(seen[0][1],seen[2][1]);assert.equal(seen[3][1],seen[4][1]);assert.notEqual(seen[3][1],seen[5][1]);
+ assert.equal(seen[0][1],seen[1][1]);assert.notEqual(seen[0][1],seen[2][1]);const subjects=seen.filter(x=>x[0]==='MEDIA_UPLOAD_LIMIT'),peers=seen.filter(x=>x[0]==='MEDIA_UPLOAD_IP_LIMIT');assert.equal(subjects[0][1],subjects[1][1]);assert.notEqual(subjects[0][1],subjects[2][1]);assert.equal(peers[0][1],peers[2][1]);assert.notEqual(peers[0][1],peers[1][1]);
 });
 
 
@@ -481,12 +501,12 @@ test('Worker caps distinguish raw transport from sanitized publication bytes',as
 });
 
 
-const cleanupControl=async(account,body={})=>(await mf.dispatchFetch('https://media.test/__cleanup/'+account,{method:'POST',body:JSON.stringify(body)})).json();
+const cleanupControl=async(account,body={})=>(await dispatch('https://media.test/__cleanup/'+account,{method:'POST',body:JSON.stringify(body)})).json();
 async function accountCall(account,operation,role='operator'){
  const path='/approval/account/'+account+'/'+operation,raw='{}',time=Date.now(),nonce=opaque();
  const signature=sign('sha256',Buffer.from(approvalCanonical('POST',path,role,account,operation,time,nonce,sha(raw))),{key:privateKey,padding:constants.RSA_PKCS1_PSS_PADDING,saltLength:32}).toString('base64url');
  secrets.push(signature,nonce);
- return mf.dispatchFetch('https://media.test'+path,{method:'POST',headers:{'content-type':'application/json','x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw});
+ return dispatch('https://media.test'+path,{method:'POST',headers:{'content-type':'application/json','x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw});
 }
 test('cleanup registers before bytes, caps ten attempts and signed recovery only schedules deletion',async()=>{
  const f=data();f.body.account='cleanup-ten';await ready(f);
@@ -507,7 +527,7 @@ test('cleanup registers before bytes, caps ten attempts and signed recovery only
  const neighbour=await accountCall('cleanup-neighbour','cleanup-retry');assert.equal((await neighbour.json()).scheduled_count,0);
  assert.equal((await accountCall(f.body.account,'cleanup-retry','job')).status,401);
  const retry=await accountCall(f.body.account,'cleanup-retry');assert.equal(retry.status,200);assert.equal((await retry.json()).scheduled_count,1);
- assert.equal((await mf.dispatchFetch('https://media.test/m/'+f.id)).status,410);
+ assert.equal((await dispatch('https://media.test/m/'+f.id)).status,410);
  assert.deepEqual(await control(f.id,{clock:first.cleanup_at+700000,alarm:true,inspect:true}),{rows:[],alarm:null});
  const subject=observed.rows[0][0].slice('media_cleanup:'.length);
  observed=await cleanupControl(f.body.account,{clock:first.cleanup_at+700000,failed:subject});assert.equal(observed.rows.length,0);assert.equal(observed.cleanup.pending_count,0);
@@ -543,10 +563,10 @@ test('preview capability cannot acknowledge publication or be invalidated as pro
  const body={...binding(f),media_id:f.body.sha256,purpose:'provider',generation:row.version};
  for(const operation of ['published','invalidate'])assert.equal((await call(cap,operation,body)).status,404);
  const after=(await control(cap)).find(([k])=>k==='media')[1];assert.deepEqual(after,row);
- assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap)).status,200);
+ assert.equal((await dispatch('https://media.test/m/'+cap)).status,200);
 });
 
-test('test Python uses explicit override and portable PATH fallback',()=>{assert.equal(pythonForTests({PYTHON_FOR_TESTS:'/synthetic/python'}),'/synthetic/python');assert.equal(pythonForTests({}),'python3');});
+test('test Python uses explicit override and portable PATH fallback',()=>{assert.equal(pythonForTests({PYTHON_FOR_TESTS:'/synthetic/python'}),'/synthetic/python');assert.equal(pythonForTests({},'linux'),'python3');assert.equal(pythonForTests({},'darwin'),'/opt/homebrew/Caskroom/miniforge/base/bin/python');});
 
 
 test('late single PUT and grant copy keep debt through cleanup and failed compensation',async()=>{
@@ -562,7 +582,7 @@ test('late single PUT and grant copy keep debt through cleanup and failed compen
   if(copy){const sourceRow=(await control(f.id)).find(([k])=>k==='media')[1];await control(f.id,{clock:sourceRow.cleanup_at,alarm:true});}
   const bucket=await mf.getR2Bucket('MEDIA_BUCKET');assert.ok(await bucket.head(row.key));
   assert.deepEqual((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup,{pending_count:1,failed_count:0,reason:'cleanup_unconfirmed'});
-  assert.equal((await mf.dispatchFetch('https://media.test/m/'+id)).status,410);
+  assert.equal((await dispatch('https://media.test/m/'+id)).status,410);
   await control(id,{clock:row.cleanup_at});assert.equal((await accountCall(f.body.account,'cleanup-retry')).status,200);
   assert.deepEqual(await control(id,{clock:row.cleanup_at,alarm:true,inspect:true}),{rows:[],alarm:null});
   assert.equal(await bucket.head(row.key),null);assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,0);
@@ -586,7 +606,7 @@ test('late multipart completion cannot be cleaned before its resulting object ar
  assert.equal((await call(f.id,'create',f.body)).status,201);
  for(let n=1;n<=Math.ceil(f.body.size/f.body.part_size);n++){
   const part=Buffer.alloc(Math.min(f.body.part_size,f.body.size-(n-1)*f.body.part_size),8);
-  assert.equal((await mf.dispatchFetch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,200);
+  assert.equal((await dispatch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,200);
  }
  await control(f.id,{beforeR2:{operation:'complete'}});
  assert.equal((await call(f.id,'complete',binding(f))).status,410);
@@ -624,7 +644,7 @@ test('rejected PUT promise followed by late remote commit retains unknown obliga
  for(let i=1;i<10;i++)await control(f.id,{clock:row.cleanup_at+i*60000,alarm:true});
  const after=await control(f.id,{clock:row.cleanup_at+600000,inspect:true});assert.ok(after.rows.find(([k])=>k==='media')[1].io_ticket);assert.equal(after.alarm,null);
  assert.deepEqual((await cleanupControl(f.body.account,{clock:row.cleanup_at+600000})).cleanup,{pending_count:1,failed_count:1,reason:'cleanup_failed'});
- assert.equal((await mf.dispatchFetch('https://media.test/m/'+f.id)).status,410);
+ assert.equal((await dispatch('https://media.test/m/'+f.id)).status,410);
  assert.equal((await accountCall(f.body.account,'cleanup-retry')).status,200);await control(f.id,{clock:row.cleanup_at+600000,alarm:true});
  assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at+600000})).cleanup.pending_count,1);
 });
@@ -635,7 +655,7 @@ test('multipart complete response loss retains unknown debt despite object exist
  assert.equal((await call(f.id,'create',f.body)).status,201);
  for(let n=1;n<=Math.ceil(f.body.size/f.body.part_size);n++){
   const part=Buffer.alloc(Math.min(f.body.part_size,f.body.size-(n-1)*f.body.part_size),8);
-  assert.equal((await mf.dispatchFetch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,200);
+  assert.equal((await dispatch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,200);
  }
  await control(f.id,{afterR2:{operation:'complete',action:'fail'}});
  assert.equal((await call(f.id,'complete',binding(f))).status,503);
@@ -689,4 +709,29 @@ test('concurrent cleanup retry reserves rotating batches before RPC and excludes
  for(const response of replies){assert.equal(response.status,200);assert.deepEqual(await response.json(),{scheduled_count:64,unavailable_count:0,remaining_count:1,reason:null});}
  let calls=0;for(const {f} of items){const value=(await control(f.id,{clock:due,retryInspect:true})).calls;assert.ok(value>=1);calls+=value;}assert.equal(calls,128);
  assert.equal((await control(future.id,{clock:due,retryInspect:true})).calls,0);
+});
+
+test('unknown multipart retry returns explicit conflict without a second claim',async()=>{
+ const f=data();f.body.size=100000001;f.body.part_size=5242880;
+ assert.equal((await call(f.id,'create',f.body)).status,201);
+ await control(f.id,{afterR2:{operation:'uploadPart',action:'fail'}});
+ const part=Buffer.alloc(f.body.part_size,7),put=n=>dispatch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(part.length)},body:part});
+ assert.equal((await put(1)).status,503);
+ const before=(await control(f.id)).find(([k])=>k==='media')[1];assert.ok(before.io_ticket);assert.equal(before.status,'pending');
+ for(const n of [1,2]){
+  const response=await put(n);assert.equal(response.status,409);assert.deepEqual(await response.json(),{error:'media_upload_unconfirmed_pending'});
+  assert.deepEqual((await control(f.id)).find(([k])=>k==='media')[1],before);
+ }
+ assert.equal((await call(f.id,'complete',binding(f))).status,409);
+ assert.equal((await control(f.id)).find(([k])=>k==='media')[1].io_ticket,before.io_ticket);
+});
+
+
+test('real upload IP quota rejects request121 across subjects and isolates peers',async()=>{
+ const peer='203.0.113.200',other='203.0.113.201';
+ const put=(id,ip)=>dispatch('https://media.test/media-upload/'+id,{method:'PUT',headers:{'cf-connecting-ip':ip}});
+ for(let n=0;n<120;n++)assert.equal((await put(opaque(),peer)).status,404);
+ const refused=await put(opaque(),peer);assert.equal(refused.status,429);assert.deepEqual(await refused.json(),{error:'rate_limited'});
+ assert.equal((await put(opaque(),other)).status,404);
+ assert.equal((await put(opaque(),peer)).status,429);
 });

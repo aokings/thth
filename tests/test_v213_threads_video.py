@@ -3,7 +3,7 @@ import copy
 import os
 import struct
 import pytest
-from thth import media,mediaformats,media_delivery
+from thth import media,mediaformats,media_delivery,media_relay
 from thth.adapters import threads_media as tm
 from tests.test_v213_threads_media import env,wire,invoke,posts
 from tests.test_v213_media_formats import box,mp4
@@ -221,3 +221,40 @@ def test_c12_warning_does_not_accept_malformed_bitrate_box(tmp_path,payload):
     with prepared(tmp_path,mp4(table)) as(m,items):
         with pytest.raises(mediaformats.FormatError,match='invalid_attachment_structure'):
             tm.notes(m,items)
+
+@pytest.mark.parametrize('order',[['a.png','v.mp4'],['v.mp4','a.png']])
+def test_mixed_poll_timeout_uses_minimum_live_grant(env,wire,monkeypatch,order):
+    (env[2]/'v.mp4').write_bytes(mp4());clock=[tm.time.time()];timeouts=[]
+    monkeypatch.setattr(tm.time,'time',lambda:clock[0]);monkeypatch.setattr(tm.time,'monotonic',lambda:0.)
+    def created():
+        if len(posts(wire,'/threads'))==2:clock[0]+=590
+    wire['on_create']=created
+    original=tm._json
+    def request(adapter,method,path,params,**kwargs):
+        if method=='GET' and len(posts(wire,'/threads'))==2:
+            timeouts.append(kwargs['timeout']);assert 9<=kwargs['timeout']<=10
+            clock[0]+=11
+        return original(adapter,method,path,params,**kwargs)
+    monkeypatch.setattr(tm,'_json',request)
+    result,_,_=invoke(env,{'media':[{'file':f,'alt':f} for f in order]})
+    assert result.error=='media_provider_url_expired' and result.failure=='media_held'
+    assert len(timeouts)==1 and not posts(wire,'/threads_publish')
+    assert env[3]['results']==[False,False]
+
+
+@pytest.mark.parametrize('codec',[b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v',b'jpeg',b'mjpa',b'mjpb'])
+def test_visual_sample_entry_privacy_and_observation_agree(tmp_path,codec):
+    sample=bytes(24)+struct.pack('>HH',640,480)+bytes(50)
+    raw=mp4(box(b'stsd',bytes(4)+struct.pack('>I',1)+box(codec,sample)))
+    with prepared(tmp_path,raw) as(manifest,items):
+        facts=mediaformats.threads_video_info(items[0]._public_fd,len(raw))
+        assert codec.decode('ascii') in facts['video_codecs'] and facts['audio']==[]
+
+@pytest.mark.parametrize('doctype,reason',[(b'webm','webm'),(b'matroska','unknown format')])
+def test_webm_rejection_is_named_without_upload(env,wire,doctype,reason,monkeypatch):
+    raw=b'\x42\x82'+bytes([0x80+len(doctype)])+doctype
+    (env[2]/'v.webm').write_bytes(b'\x1aE\xdf\xa3'+bytes([0x80+len(raw)])+raw)
+    monkeypatch.setattr(media_relay,'MediaRelay',lambda *a:pytest.fail('unsupported WebM relay'))
+    with pytest.raises(media.MediaError,match='threads/'+reason):
+        media.manifest_for({'media':[{'file':'v.webm','alt':'video'}]},env[0])
+    assert wire['calls']==[] and env[3]['upload']==[]

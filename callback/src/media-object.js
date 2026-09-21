@@ -120,9 +120,11 @@ export class MediaObject extends DurableObject {
     if(!await this.active(first.account))return reply(410,{error:'account_revoked'});
     const claim=this.atomic(()=>{
       const row=this.row();if(!this.current(row)||row.version!==first.version)return null;
+      if(row.io_ticket)return {unconfirmed:true};
       if(row.status!=='pending'||(row.upload_id?(!Number.isSafeInteger(part)||part<1||part>row.part_count):part!==null))return null;
       const ticket=opaque();this.put({...row,status:'uploading',ticket});return {...row,ticket};
     });
+    if(claim?.unconfirmed)return reply(409,{error:'media_upload_unconfirmed_pending'});
     if(!claim)return reply(409,{error:'media_not_ready'});
     return this.writing(claim,async write=>{try{
       const result=await this.streamPut(claim,request,part,write),active=await this.active(claim.account);
@@ -132,8 +134,8 @@ export class MediaObject extends DurableObject {
       if(!accepted){await this.env.MEDIA_BUCKET.delete(claim.key);return reply(410,{error:'media_expired'});}
       return reply(200,{status:part===null?'uploaded':'part_uploaded'});
     }catch{
-      // Exact same part may be retried; completion cannot happen until a known
-      // ETag is recorded. A single-file ambiguous put is never silently replayed.
+      // Only a settled write permits retry. Unknown I/O retains its marker and
+      // the next claim returns409 without changing this row or accepting bytes.
       this.atomic(()=>{const row=this.row();if(row?.ticket===claim.ticket)this.put({...row,status:part===null?'failed':'pending',ticket:null});});
       return reply(503,{error:'media_upload_unconfirmed'});
     }});
@@ -201,11 +203,12 @@ export class MediaObject extends DurableObject {
     if(!['preview','provider'].includes(row.kind)||row.status!=='ready')return reply(410,{error:'media_expired'});
     if(!await this.active(row.account))return reply(410,{error:'account_revoked'});
     const range=request.headers.get('range');
-    if(range&&!/^bytes=\d+-\d*$/.test(range))return reply(416,{error:'invalid_range'});
+    const invalidRange=()=>{const response=reply(416,{error:'invalid_range'});response.headers.set('content-range',`bytes */${row.size}`);return response;};
+    if(range&&!/^bytes=\d+-\d*$/.test(range))return invalidRange();
     if(range){
       const [start,end]=range.slice(6).split('-');
       if(!Number.isSafeInteger(Number(start))||Number(start)>=row.size||
-         (end!==''&&(!Number.isSafeInteger(Number(end))||Number(end)<Number(start))))return reply(416,{error:'invalid_range'});
+         (end!==''&&(!Number.isSafeInteger(Number(end))||Number(end)<Number(start))))return invalidRange();
     }
     const object=await this.env.MEDIA_BUCKET.get(row.key,range?{range:request.headers}:{});
     const active=await this.active(row.account),current=this.row();if(!active||!object||!this.current(current)||current.version!==row.version||current.status!=='ready'){await object?.body?.cancel();return reply(410,{error:'media_expired'});}

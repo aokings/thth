@@ -12,6 +12,10 @@ import struct
 import zlib
 
 
+# Shared visual sample-entry classification for privacy and observation readers.
+VIDEO_SAMPLE_CODECS=frozenset((b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v',b'jpeg',b'mjpa',b'mjpb'))
+
+
 class FormatError(ValueError):
     pass
 
@@ -483,7 +487,7 @@ def bmff(fd,size,*,allow_edit_lists=False):
         count=int.from_bytes(read(a+4,4),'big');seen=0
         for codec,sa,sb in boxes(a+8,b):
             seen+=1
-            if codec in (b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v',b'jpeg',b'mjpa',b'mjpb'):
+            if codec in VIDEO_SAMPLE_CODECS:
                 prefix=78
                 allowed={b'avcC',b'hvcC',b'av1C',b'vpcC',b'esds',b'pasp',b'clap',b'colr',b'btrt',b'fiel',b'gama'}
             elif codec in (b'mp4a',b'ac-3',b'ec-3',b'Opus',b'fLaC',b'alac',b'sowt',b'twos'):
@@ -592,6 +596,29 @@ def bmff(fd,size,*,allow_edit_lists=False):
     return Inspection('mov' if brand==b'qt  ' else 'mp4','video' if video else 'audio',w,h,duration,metadata_notes=tuple(sorted(metadata_notes)))
 
 
+def _webm_header(fd,size):
+    """Name a bounded EBML DocType only; no WebM acceptance or codec parsing."""
+    data=os.pread(fd,min(size,65536),0)
+    def vint(at,identifier=False):
+        if at>=len(data) or not data[at]:raise ValueError
+        width=9-data[at].bit_length()
+        if width>8 or at+width>len(data):raise ValueError
+        value=int.from_bytes(data[at:at+width],'big')
+        if not identifier:value&=(1<<(7*width))-1
+        return value,at+width
+    try:
+        length,at=vint(4);end=at+length
+        if end>len(data):return False
+        found=[]
+        while at<end:
+            key,at=vint(at,True);length,at=vint(at)
+            if at+length>end:return False
+            if key==0x4282:found.append(data[at:at+length])
+            at+=length
+        return found==[b'webm']
+    except ValueError:return False
+
+
 def inspect(fd,size,*,allow_edit_lists=False):
     head=os.pread(fd,16,0)
     if head.startswith(b'\x1a\x45\xdf\xa3'):
@@ -612,6 +639,8 @@ def inspect(fd,size,*,allow_edit_lists=False):
     if head[:4] in (b'RF64',b'RIFX'):
         raise FormatError('unsupported_attachment_structure: wav variant')
     if len(head)>=8 and head[4:8] in (b'ftyp',b'free',b'wide',b'moov',b'mdat'): return bmff(fd,size,allow_edit_lists=allow_edit_lists)
+    if head.startswith(b'\x1aE\xdf\xa3'):
+        raise FormatError('unsupported_attachment: '+('webm' if _webm_header(fd,size) else 'unknown format'))
     data=os.pread(fd,size,0); require(len(data)==size)
     if head.startswith(b'\xff\xd8'): return jpeg(data)
     if head.startswith(b'\x89PNG\r\n\x1a\n'): return png(data)
@@ -688,7 +717,7 @@ def threads_video_info(fd,size):
             elif k==b'stsd':
                 require(y-x>=8)
                 for codec,ea,eb in boxes(x+8,y):
-                    video=codec in (b'avc1',b'avc3',b'hvc1',b'hev1',b'vp09',b'av01',b'mp4v',b'jpeg',b'mjpa',b'mjpb')
+                    video=codec in VIDEO_SAMPLE_CODECS
                     if video:
                         facts['video_codecs'].append(codec.decode('ascii'));prefix=78
                     else:

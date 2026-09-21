@@ -30,10 +30,30 @@ def test_transport_failure_is_unknown_and_diagnostic_keeps_counts(monkeypatch):
     monkeypatch.setattr(approval_relay,'signed_request',lambda *a:(_ for _ in ()).throw(approval_relay.RelayError('opaque-private-value')))
     monkeypatch.setattr(stop_observation,'diagnostic',lambda a:{'error':None,'directory_checks':[]})
     monkeypatch.setattr(doctor,'_diagnose',lambda a:{'account':a,'probes':[]})
+    monkeypatch.setattr(media_cleanup,'configured',lambda:True)
     report=doctor.diagnose('alpha')
     assert report['media_cleanup']['reason']=='cleanup_observation_unavailable'
     assert report['media_cleanup']['pending_count'] is None
     assert 'opaque-private-value' not in json.dumps(report)
+
+
+@pytest.mark.parametrize('setting',['none','url','signer','unsafe_signer'])
+def test_doctor_observes_only_configured_relay(tmp_path,monkeypatch,setting):
+    from thth import stop_observation
+    monkeypatch.delenv('THTH_APPROVAL_BASE_URL',raising=False);monkeypatch.delenv('THTH_MEDIA_BASE_URL',raising=False)
+    path=tmp_path/'apps'/'relay-signer.key';monkeypatch.setattr(approval_relay,'key_path',lambda:path)
+    if setting=='url':monkeypatch.setenv('THTH_MEDIA_BASE_URL','https://thth.me')
+    if setting in ('signer','unsafe_signer'):
+        path.parent.mkdir();path.write_text('synthetic presence only');path.chmod(0o600 if setting=='signer' else 0o644)
+    before=set(tmp_path.rglob('*'));calls=[]
+    monkeypatch.setattr(stop_observation,'diagnostic',lambda a:{'error':None,'directory_checks':[]})
+    monkeypatch.setattr(doctor,'_diagnose',lambda a:{'account':a,'probes':[]})
+    def observe(account):
+        calls.append(account);return {'pending_count':None,'failed_count':None,'reason':'cleanup_observation_unavailable'}
+    monkeypatch.setattr(media_cleanup,'observe',observe)
+    result=doctor.diagnose('alpha')
+    assert calls==([] if setting=='none' else ['alpha'])
+    assert ('media_cleanup' in result)==(setting!='none') and set(tmp_path.rglob('*'))==before
 
 
 def test_cli_requires_actor_and_recovery_has_no_post_operation(monkeypatch,capsys):
@@ -64,3 +84,10 @@ def test_cleanup_help_discloses_unknown_write_recovery_limit(capsys):
     assert '結果不明の書込みは強制解除せず' in text
     assert '本口だけでは回復できない場合があります' in text
     assert '再投稿はしません' in text
+
+
+@pytest.mark.parametrize('account',['../alpha','a/b',''])
+def test_invalid_account_precedes_actor_and_request(monkeypatch,account):
+    monkeypatch.setattr(admin_log,'actor',lambda *a:pytest.fail('actor before name'))
+    monkeypatch.setattr(approval_relay,'signed_request',lambda *a:pytest.fail('request before name'))
+    with pytest.raises(ValueError,match='invalid_account'):media_cleanup.retry(account,by='operator')

@@ -1,6 +1,16 @@
 """Signed cleanup observation/recovery. No capability or object IDs leave Worker."""
 import json
+import os
 from . import accounts, admin_log, approval_relay
+
+
+def configured():
+    """Read-only presence, never create signer directories or fetch a URL."""
+    if os.environ.get('THTH_APPROVAL_BASE_URL') or os.environ.get('THTH_MEDIA_BASE_URL'):return True
+    try:approval_relay.key_path().lstat()
+    except FileNotFoundError:return False
+    except (OSError, ValueError, approval_relay.RelayError):return True
+    return True
 
 
 def _counts(value, fields):
@@ -24,8 +34,8 @@ def observe(account):
 
 
 def retry(account, *, by):
-    admin_log.actor(by)
     if not accounts.name_is_safe(account):raise ValueError('invalid_account')
+    admin_log.actor(by)
     # No active-account requirement: recovery must remain possible after leave.
     result = approval_relay.signed_request('account', account, 'cleanup-retry', {})
     if not _counts(result, ('scheduled_count', 'unavailable_count', 'remaining_count', 'reason')):
