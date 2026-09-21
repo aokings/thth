@@ -390,6 +390,22 @@ def gif(data):
     return Inspection('gif','image',width,height,duration if frames>1 else None)
 
 
+def _bmff_metadata_scalar(value_type,read,start,end):
+    # Apple well-known types28 (nested metadata) and27 (BMP) are not scalars.
+    # Reserved/implicit or unknown types cannot establish location absence.
+    codecs={1:'utf-8',2:'utf-16-be',3:'shift_jis',4:'utf-8',5:'utf-16-be'}
+    sizes={21:(1,2,3,4),22:(1,2,3,4),23:(4,),24:(8,),65:(1,),66:(2,),67:(4,),70:(8,),71:(8,),72:(16,),74:(8,),75:(1,),76:(2,),77:(4,),78:(8,),79:(72,)}
+    if value_type in codecs:
+        import codecs as codec_module
+        decoder=codec_module.getincrementaldecoder(codecs[value_type])()
+        try:
+            for at in range(start,end,65536):decoder.decode(read(at,min(65536,end-at)))
+            decoder.decode(b'',final=True)
+        except UnicodeDecodeError:raise FormatError('invalid_attachment_structure: metadata text') from None
+    elif value_type in sizes:require(end-start in sizes[value_type])
+    else:raise FormatError('location_metadata_unverifiable: metadata_value_type')
+
+
 def bmff(fd,size,*,allow_edit_lists=False):
     """Walk bounded boxes without loading video payloads or rewriting bytes."""
     def read(at,n):
@@ -485,6 +501,17 @@ def bmff(fd,size,*,allow_edit_lists=False):
                             for vk,va,vb in boxes(ia,ib):
                                 if vk in (b'free',b'skip'):padding(va,vb)
                                 elif vk not in (b'data',b'mean',b'name'):raise FormatError('location_metadata_unverifiable')
+                                elif vk==b'data':
+                                    require(vb-va>=8)
+                                    # This video-only boundary does not inspect binary covers.
+                                    # Nested metadata, implicit data and all unknown types fail closed.
+                                    _bmff_metadata_scalar(int.from_bytes(read(va,4),'big'),read,va+8,vb)
+                                else:
+                                    require(vb-va>=4 and read(va,4)==bytes(4))
+                                    key=read(va+4,vb-va-4)
+                                    try:key.decode('utf-8')
+                                    except UnicodeDecodeError:raise FormatError('invalid_attachment_structure: metadata key') from None
+                                    require(not any(word in key.lower() for word in (b'location',b'gpslatitude',b'gpslongitude',b'gpsaltitude')),'location_metadata_present')
                     elif mk==b'hdlr': require(mb-ma>=12 and read(ma,4)==b'\0'*4)
                     elif mk in containers: walk(ma,mb,depth+1)
                     elif mk in (b'free',b'skip'):padding(ma,mb)
