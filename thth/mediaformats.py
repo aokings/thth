@@ -491,7 +491,7 @@ def _bmff_metadata_scalar(value_type,read,start,end):
     else:raise FormatError('location_metadata_unverifiable: metadata_value_type')
 
 
-def bmff(fd,size,*,allow_edit_lists=False):
+def bmff(fd,size):
     """Walk bounded boxes without loading video payloads or rewriting bytes."""
     def read(at,n):
         require(0 <= at <= size-n); result = os.pread(fd,n,at); require(len(result)==n); return result
@@ -553,8 +553,12 @@ def bmff(fd,size,*,allow_edit_lists=False):
                 require(b-a >= 20); version=read(a,1)[0]; require(version in (0,1))
                 offset=20 if version else 12; require(a+offset+(12 if version else 8)<=b)
                 scale=int.from_bytes(read(a+offset,4),'big'); ticks=int.from_bytes(read(a+offset+4,8 if version else 4),'big')
-                require(not movie_header and scale>0,'duration_unavailable');movie_header=True
-                duration=None if ticks==(2**(64 if version else 32)-1) else ticks/scale
+                require(not movie_header);movie_header=True
+                # Only the movie header states the seconds. A zero timescale or a
+                # zero/unset tick count leaves them genuinely unknown; nothing
+                # else in this container is allowed to stand in for them.
+                require(scale>0,'duration_unverifiable')
+                duration=None if not ticks or ticks==(2**(64 if version else 32)-1) else ticks/scale
             elif kind==b'tkhd':
                 require(b-a>=84); version=read(a,1)[0]; expected=96 if version else 84
                 require(version in (0,1) and b-a>=expected)
@@ -612,14 +616,19 @@ def bmff(fd,size,*,allow_edit_lists=False):
                     elif mk in containers: walk(ma,mb,depth+1)
                     elif mk in (b'free',b'skip'):padding(ma,mb)
                     else:raise FormatError('location_metadata_unverifiable')
-            elif kind==b'elst' and allow_edit_lists:
-                # Threads C11: a structurally valid edit list is a provider
-                # warning. It never exempts adjacent metadata from this walk.
+            elif kind==b'elst':
+                # An edit list is a warning for every medium, never a refusal.
+                # ffmpeg writes one for AAC priming and for +faststart, so a
+                # refusal here would drop what every provider accepts. The movie
+                # header still states the seconds; the note carries the fact.
+                # It never exempts adjacent metadata from this walk.
                 require(b-a>=8);version=read(a,1)[0]
                 require(version in (0,1) and read(a+1,3)==b'\0'*3)
                 count=int.from_bytes(read(a+4,4),'big')
                 require(b-a==8+count*(20 if version else 12))
-            elif kind in (b'moof',b'mvex',b'elst'):
+                metadata_notes.add('edit_list_present')
+            elif kind in (b'moof',b'mvex'):
+                # Fragmented movie time is not in the movie header.
                 raise FormatError('duration_unverifiable')
             elif kind in containers:
                 if kind==b'moov': require(not moov); moov=True
@@ -629,7 +638,7 @@ def bmff(fd,size,*,allow_edit_lists=False):
                 raise FormatError('location_metadata_unverifiable')
     walk(0,size)
     require(brand is not None and moov and mdat and movie_header and (video or audio))
-    require(not video or duration is not None,'duration_unavailable')
+    require(not video or duration is not None,'duration_unverifiable')
     require(not video or dimensions,'dimensions_unavailable')
     w,h=max(dimensions,key=lambda s:s[0]*s[1]) if video and dimensions else (None,None)
     return Inspection('mov' if brand==b'qt  ' else 'mp4','video' if video else 'audio',w,h,duration,metadata_notes=tuple(sorted(metadata_notes)))
@@ -658,7 +667,7 @@ def _webm_header(fd,size):
     except ValueError:return False
 
 
-def inspect(fd,size,*,allow_edit_lists=False,allow_webm=True):
+def inspect(fd,size,*,allow_webm=True):
     require(size<=MAX_INSPECTION_BYTES,'media_limit_exceeded: inspection_bytes')
     head=os.pread(fd,16,0)
     if head==ASF_HEADER_GUID:
@@ -690,7 +699,7 @@ def inspect(fd,size,*,allow_edit_lists=False,allow_webm=True):
         return wav(fd,size)
     if head[:4] in (b'RF64',b'RIFX'):
         raise FormatError('unsupported_attachment_structure: wav variant')
-    if len(head)>=8 and head[4:8] in (b'ftyp',b'free',b'wide',b'moov',b'mdat'): return bmff(fd,size,allow_edit_lists=allow_edit_lists)
+    if len(head)>=8 and head[4:8] in (b'ftyp',b'free',b'wide',b'moov',b'mdat'): return bmff(fd,size)
     data=os.pread(fd,size,0); require(len(data)==size)
     if head.startswith(b'\xff\xd8'): return jpeg(data)
     if head.startswith(b'\x89PNG\r\n\x1a\n'): return png(data)

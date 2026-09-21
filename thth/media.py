@@ -483,7 +483,7 @@ def validate_declarations(fm,medium):
 # MP4/MOV only; Bluesky cannot take WebM either. Mastodon is the one medium that
 # can, so it is the only entry that allows it.
 MEDIUM_POLICY={
- 'threads':{'allow_edit_lists':True,'allow_webm':False},
+ 'threads':{'allow_webm':False},
  'bluesky':{'allow_webm':False},
  'mastodon':{'allow_webm':True},
 }
@@ -615,7 +615,7 @@ def prepared_component(manifest):
             parent=row['parent'];parents=[x for x in manifest['files'] if isinstance(x,dict) and x.get('role')=='media' and x.get('index')==parent]
             if type(parent)is not int or parent<1 or row['role']!='thumbnail' or row['kind']!='image' or row['index']!=parent or len(parents)!=1 or parents[0].get('kind') not in ('audio','video') or parent in thumbnail_parents:raise MediaError('media: invalid thumbnail parent')
             thumbnail_parents.add(parent)
-        if 'metadata_notes' in row and (type(row['metadata_notes']) is not list or any(note not in ('non_location_metadata_retained','embedded_cover_retained') for note in row['metadata_notes'])):raise MediaError('media: invalid metadata notes')
+        if 'metadata_notes' in row and (type(row['metadata_notes']) is not list or any(note not in ('non_location_metadata_retained','embedded_cover_retained','edit_list_present') for note in row['metadata_notes'])):raise MediaError('media: invalid metadata notes')
         fingerprint_component([{k:row[k] for k in ('file','alt','source_sha256','size')}])
         if not isinstance(row['public_sha256'],str) or not re.fullmatch('[0-9a-f]{64}',row['public_sha256']) or type(row['public_size']) is not int or row['public_size']<0:raise MediaError('media: invalid public fingerprint')
     try:

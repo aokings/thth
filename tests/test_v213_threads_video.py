@@ -22,15 +22,44 @@ def prepared(tmp_path,raw,medium='threads'):
     return media.prepare(tmp_path,{'media':[{'file':'v.mp4','alt':'動画'}]},medium)
 
 
-def test_valid_edit_list_and_late_moov_warn_only_threads(tmp_path):
+def test_valid_edit_list_and_late_moov_warn_only(tmp_path):
     raw=edit_movie(front=False)
     with prepared(tmp_path,raw) as(m,items):
         notes=tm.notes(m,items)
         assert b''.join(items[0].chunks())==raw
         assert any('edit lists' in n for n in notes) and any('moov follows' in n for n in notes)
         assert any('frame rate unobserved' in n for n in notes)
+    # The same file on the other media: a warning there too, never a refusal.
+    with prepared(tmp_path,raw,'mastodon') as(m,_):
+        assert m['files'][0]['metadata_notes']==['edit_list_present']
+
+
+def movie_seconds(ticks,scale=1000,*,edit=True,handler=b'vide'):
+    """ffmpeg shape: +faststart moov before mdat and an edts/elst under trak."""
+    edts=box(b'edts',box(b'elst',b'\0'*4+struct.pack('>I',1)+struct.pack('>IiHH',ticks,0,1,0))) if edit else b''
+    mvhd=b'\0'*12+struct.pack('>II',scale,ticks)+b'\0'*80
+    tkhd=b'\0'*76+struct.pack('>II',720<<16,1280<<16)
+    hdlr=b'\0'*8+handler+b'\0'*12
+    return (box(b'ftyp',b'isom\0\0\0\0isom')
+            +box(b'moov',box(b'mvhd',mvhd)+box(b'trak',box(b'tkhd',tkhd)+edts+box(b'mdia',box(b'hdlr',hdlr))))
+            +box(b'mdat',b'synthetic-sample'))
+
+
+@pytest.mark.parametrize('medium',['threads','bluesky','mastodon'])
+def test_ffmpeg_edit_list_is_a_note_on_every_medium(tmp_path,medium):
+    raw=movie_seconds(5000)
+    with prepared(tmp_path,raw,medium) as(m,items):
+        row=m['files'][0]
+        assert (row['format'],row['kind'],row['width'],row['height'])==('mp4','video',720,1280)
+        assert row['duration']==5.0 and row['metadata_notes']==['edit_list_present']
+        assert b''.join(items[0].chunks())==raw
+
+
+@pytest.mark.parametrize('medium',['threads','bluesky','mastodon'])
+@pytest.mark.parametrize('ticks,scale',[(0,1000),(5000,0)])
+def test_movie_header_without_seconds_stays_unverifiable(tmp_path,medium,ticks,scale):
     with pytest.raises(media.MediaError,match='duration_unverifiable'):
-        with prepared(tmp_path,raw,'mastodon'):pass
+        with prepared(tmp_path,movie_seconds(ticks,scale),medium):pass
 
 
 @pytest.mark.parametrize('raw,reason',[(edit_movie(version=2),'invalid_attachment_structure'),(edit_movie(count=2),'invalid_attachment_structure'),(edit_movie(extra=box(b'uuid',b'private')),'location_metadata_unverifiable'),(edit_movie(extra=box(b'free',b'private')),'location_metadata_unverifiable'),(edit_movie(extra=box(b'ZZZZ',b'')),'location_metadata_unverifiable'),(edit_movie(extra=box(b'\xa9xyz',b'private')),'location_metadata_present')])
