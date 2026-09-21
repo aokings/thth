@@ -431,12 +431,24 @@ def execute(context, request, via):
     return complete(context, request, via)
 
 
+SCAN_CHUNK = 1024 * 1024
+# A name is 64 hex digits, a dot and 2-4 characters. Carrying that much of the
+# previous chunk keeps a name that straddles a read boundary findable.
+SCAN_OVERLAP = 128
+MEDIA_NAME_PATTERN = re.compile(rb'[0-9a-f]{64}\.[a-z0-9]{2,4}')
+
+
 def _referenced(clone):
     """Every media file name mentioned by a tracked non-media file.
 
     Deliberately textual and deliberately generous: a name that appears in any
     manuscript, bundle or note counts as referenced. Over-keeping costs a file;
     over-deleting costs an approved attachment.
+
+    Large files are **scanned, never skipped**: a 5 MiB manuscript that names an
+    attachment is exactly the file whose reference must not be missed. The read
+    is a bounded loop (one chunk plus an overlap in memory), and the scan is on
+    bytes, so an undecodable file still yields its ASCII names.
     """
     listed = managed_repo.run(clone, ['ls-files', '-z'], check=False)
     if listed.returncode:
@@ -447,13 +459,17 @@ def _referenced(clone):
             continue
         leaf = Path(clone) / path
         try:
-            if leaf.is_symlink() or not leaf.is_file() or leaf.stat().st_size > 4 * 1024 * 1024:
+            if leaf.is_symlink() or not leaf.is_file():
                 continue
-            text = leaf.read_text(encoding='utf-8', errors='ignore')
+            with open(leaf, 'rb') as stream:
+                tail = b''
+                while chunk := stream.read(SCAN_CHUNK):
+                    window = tail + chunk
+                    for found in MEDIA_NAME_PATTERN.findall(window):
+                        names.add(found.decode())
+                    tail = window[-SCAN_OVERLAP:]
         except OSError:
             continue
-        for found in re.findall(r'[0-9a-f]{64}\.[a-z0-9]{2,4}', text):
-            names.add(found)
     return names
 
 

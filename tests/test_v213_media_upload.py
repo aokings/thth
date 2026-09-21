@@ -427,6 +427,24 @@ def test_gc_commits_tracked_files_and_unlinks_an_untracked_leftover(env, worker)
     assert len(log) == 1, 'the two tracked files must leave in exactly one commit'
 
 
+def test_gc_reads_a_manuscript_larger_than_four_mebibytes(env, worker):
+    """A 5 MiB manuscript used to be skipped whole: its attachment looked unused."""
+    sha = finish(env, upload(env, worker, GPS_JPEG)['media_id'])['public_sha256']
+    aged(env, sha + '.jpg')
+    repo = Path(env['root']) / 'repos/_server/alpha'
+    long = repo / 'docs/sns/長い原稿.md'
+    long.parent.mkdir(parents=True, exist_ok=True)
+    # The name also straddles the first 1 MiB read boundary.
+    long.write_bytes(b'x' * (1024 * 1024 - 30) + (sha + '.jpg').encode() + b'\n' + b'y' * (4 * 1024 * 1024))
+    assert long.stat().st_size > 4 * 1024 * 1024
+    git = ['git', '-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@invalid']
+    for args in (['add', '-A'], ['commit', '-m', 'long'], ['push', 'origin', 'HEAD']):
+        subprocess.run(git + args, check=True, capture_output=True)
+    result = uploads.gc('alpha', by='operator')
+    assert result['removed_count'] == 0 and result['kept_count'] == 1 and result['reason'] is None
+    assert repo_media(env) == [sha + '.jpg']
+
+
 def test_a_failed_gc_commit_restores_every_tracked_file(env, worker, monkeypatch):
     first = finish(env, upload(env, worker, GPS_JPEG)['media_id'])['public_sha256']
     second = finish(env, upload(env, worker, mp4(), kind='video', mime='video/mp4')['media_id'])['public_sha256']
