@@ -28,9 +28,15 @@ def require(ok,reason):
 def intent_error(manifest):
     if manifest['captions']:return 'unsupported_attachment: threads/typed_attachment'
     if manifest['attachments']:
-        if any(a['type']!='link' for a in manifest['attachments']):return 'unsupported_attachment: threads/typed_attachment'
-        if manifest['files']:return 'unsupported_attachment: threads/link_requires_text'
-        if any(set(a)!={'type','url'} for a in manifest['attachments']):return 'unsupported_attachment: threads/link_option'
+        for a in manifest['attachments']:
+            if a['type']=='link':
+                if manifest['files']:return 'unsupported_attachment: threads/link_requires_text'
+                if set(a)!={'type','url'}:return 'unsupported_attachment: threads/link_option'
+            elif a['type']=='quote':
+                if manifest['files']:return 'unsupported_attachment: threads/quote_requires_text'
+                if set(a)!={'type','uri'}:return 'unsupported_attachment: threads/quote_option'
+                if type(a['uri']) is not str or not a['uri'].isascii() or not a['uri'].isdecimal():return 'invalid_attachment: threads/quote_id'
+            else:return 'unsupported_attachment: threads/typed_attachment'
     if manifest['post_options']:return 'unsupported_attachment: threads/image_post_options'
     rows=manifest['files']
     if not rows and manifest['attachments']:return None
@@ -63,7 +69,10 @@ def text_params(manifest,text):
     # Count lexical HTTP(S) links without network normalization or fetching.
     visible={v.rstrip('.,!?;:)]}') for v in re.findall(r'https?://[^\s<>"\\]+',text)}
     require(len(visible|set(links))<=5,'media_limit_exceeded: links')
-    return {'link_attachment':links[0]} if links else {}
+    params={'link_attachment':links[0]} if links else {}
+    quotes=[a['uri'] for a in manifest['attachments'] if a['type']=='quote']
+    if quotes:params['quote_post_id']=quotes[0]
+    return params
 
 
 def video_notes(items):
