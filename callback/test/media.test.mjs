@@ -355,7 +355,16 @@ test('real Python video multipart retains bytes and VIDEO publication through Wo
 from pathlib import Path
 from thth import accounts,inflight,media,media_delivery,media_relay,httpsafe
 from thth.adapters import base,threads
-from tests.test_v213_mastodon_media import video_timing
+# Pure standard-library fixture: no test module (and therefore no pytest) import.
+def box(kind,data):return struct.pack('>I',len(data)+8)+kind+data
+def video_timing(rows,scale=1000):
+ ticks=sum(n*d for n,d in rows);count=sum(n for n,d in rows)
+ timing=box(b'mdhd',bytes(12)+struct.pack('>II',scale,ticks)+bytes(4))
+ sample=bytes(24)+struct.pack('>HH',640,480)+bytes(50)
+ table=box(b'stts',bytes(4)+struct.pack('>I',len(rows))+b''.join(struct.pack('>II',n,d) for n,d in rows))+box(b'stsz',bytes(4)+struct.pack('>II',1,count))+box(b'stsd',bytes(4)+struct.pack('>I',1)+box(b'avc1',sample))
+ mdia=box(b'mdia',box(b'hdlr',bytes(8)+b'vide'+bytes(12))+timing+box(b'minf',box(b'stbl',table)))
+ mvhd=bytes(12)+struct.pack('>II',scale,ticks)+bytes(80);tkhd=bytes(76)+struct.pack('>II',640<<16,480<<16)
+ return box(b'ftyp',b'isom'+bytes(4)+b'isom')+box(b'moov',box(b'mvhd',mvhd)+box(b'trak',box(b'tkhd',tkhd)+mdia))+box(b'mdat',b'synthetic')
 root=Path(os.environ['HOME'])/'video-repo';root.mkdir()
 raw=video_timing([(30,1000)],scale=30000);at=raw.index(b'mdat')-4
 prefix=raw[:at];size=100_000_001
@@ -546,7 +555,7 @@ test('preview capability cannot acknowledge publication or be invalidated as pro
  assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap)).status,200);
 });
 
-test('test Python uses explicit override and portable PATH fallback',()=>{assert.equal(pythonForTests({PYTHON_FOR_TESTS:'/synthetic/python'}),'/synthetic/python');assert.equal(pythonForTests({}),'python3');});
+test('test Python uses explicit override and portable PATH fallback',()=>{assert.equal(pythonForTests({PYTHON_FOR_TESTS:'/synthetic/python'}),'/synthetic/python');assert.equal(pythonForTests({},'linux'),'python3');assert.equal(pythonForTests({},'darwin'),'/opt/homebrew/Caskroom/miniforge/base/bin/python');});
 
 
 test('late single PUT and grant copy keep debt through cleanup and failed compensation',async()=>{
