@@ -46,7 +46,7 @@ def intent_error(manifest):
     if 'quote_approval_policy' in options and options['quote_approval_policy'] not in ('public','followers','nobody'):
         return 'invalid_quote_approval_policy: mastodon'
     if not manifest['files'] and not attachments and not options:return 'unsupported_attachment: mastodon/no_media'
-    if any(x['role']!='media' or x['kind'] not in ('image','video') or x['format'] not in MIME for x in manifest['files']):
+    if any(x['role']!='media' or x['kind'] not in ('image','video','audio') or x['format'] not in MIME for x in manifest['files']):
         return 'unsupported_attachment: mastodon/format'
     return None
 
@@ -149,14 +149,31 @@ def capabilities(body,instance):
     return out
 
 
+def mime_for(row,cap=None):
+    if row['kind']=='audio':
+        choices={'mp4':('audio/mp4','audio/m4a','audio/x-m4a'),'mov':('video/quicktime',)}.get(row['format'],())
+    else:choices=(MIME.get(row['format']),)
+    supported=cap['supported_mime_types'] if cap is not None else choices
+    chosen=next((mime for mime in choices if mime and mime in supported),None)
+    require(chosen is not None,'unsupported_attachment: mastodon/'+row['format'])
+    return chosen
+
+
+def metadata_notes(items):
+    return list(dict.fromkeys('warning: '+note for item in items for note in item.manifest.get('metadata_notes',[])))
+
+
 def check_limits(cap,items):
     require(len(items)<=cap['max_media_attachments'],'media_limit_exceeded: count')
     for item in items:
         row=item.manifest;kind=row['kind'];fmt=row['format']
-        require(MIME.get(fmt) in cap['supported_mime_types'],'unsupported_attachment: mastodon/'+fmt)
-        limit=_positive(cap,kind+'_size_limit');matrix=_positive(cap,kind+'_matrix_limit')
+        mime_for(row,cap)
+        # Mastodon larger_media_format? includes audio. Audio has no matrix/fps.
+        limit=_positive(cap,('video' if kind=='audio' else kind)+'_size_limit')
         require(row['public_size']<=limit,'media_limit_exceeded: bytes')
         require(len(row['alt'])<=_positive(cap,'description_limit'),'media_limit_exceeded: alt')
+        if kind=='audio':continue
+        matrix=_positive(cap,kind+'_matrix_limit')
         width,height=row['width'],row['height']
         if kind=='video':
             width,height,rate=mediaformats.video_metrics(item._public_fd,row['public_size'])
@@ -219,12 +236,12 @@ def _json(adapter,method,path,*,data=None,headers=None,timeout=None):
     return code,value
 
 
-def _multipart(item,focus=None):
+def _multipart(item,focus=None,*,mime=None):
     boundary='thth-'+uuid.uuid4().hex
     fields=[('description',item.manifest['alt'])]
     if focus is not None:fields.append(('focus',','.join(str(v) for v in focus)))
     pre=b''.join((f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n').encode('utf-8') for key,value in fields)
-    pre+=(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="attachment.{item.manifest["format"]}"\r\nContent-Type: {MIME[item.manifest["format"]]}\r\n\r\n').encode('ascii')
+    pre+=(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="attachment.{item.manifest["format"]}"\r\nContent-Type: {mime or mime_for(item.manifest)}\r\n\r\n').encode('ascii')
     end=f'\r\n--{boundary}--\r\n'.encode('ascii')
     def chunks():
         yield pre
@@ -237,7 +254,7 @@ def _entity(value,expected=None,ready=False,kind=None):
     identifier=value.get('id');require(type(identifier) is str and identifier.isascii() and identifier.isdecimal(),'media_response_invalid: id')
     require(expected is None or identifier==expected,'media_response_invalid: id changed')
     require(value.get('type') in ('image','video','gifv','audio'),'media_response_invalid: type')
-    require(kind is None or value['type'] in ({'image','gifv'} if kind=='image' else {'video','gifv'}),'media_response_invalid: type mismatch')
+    require(kind is None or value['type'] in ({'image','gifv'} if kind=='image' else {'audio'} if kind=='audio' else {'video','gifv'}),'media_response_invalid: type mismatch')
     if ready:
         url=value.get('url')
         try:valid=type(url) is str and url.startswith('https://') and bool(httpsafe.validated_url(url))
@@ -279,7 +296,7 @@ def publish(adapter,post,*,before_publish=None):
             item.verify()
             if before_publish:
                 veto=before_publish();require(not veto,str(veto))
-            body,headers=_multipart(item,(options.get('focus') or [None]*len(post.media_files))[i])
+            body,headers=_multipart(item,(options.get('focus') or [None]*len(post.media_files))[i],mime=mime_for(item.manifest,cap))
             record('uploading',index=i)
             code,value=_json(adapter,'POST','/api/v2/media',data=body,headers=headers)
             require(code in (200,202),'media_response_invalid: upload status')

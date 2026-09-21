@@ -30,9 +30,10 @@ class Inspection:
     duration: float | None
     orientation: int | None = None
     public_bytes: bytes | None = dataclasses.field(default=None, repr=False)
+    metadata_notes: tuple[str,...] = ()
 
 
-def orientation_exif(data, *, has_icc=False, requirements=None):
+def orientation_exif(data, *, has_icc=False, requirements=None, privacy=None):
     """Validate TIFF directories/offsets, discard every tag except Orientation."""
     require(len(data) >= 8 and data[:2] in (b'II', b'MM'))
     endian = '<' if data[:2] == b'II' else '>'
@@ -59,6 +60,9 @@ def orientation_exif(data, *, has_icc=False, requirements=None):
             tags.add(tag); length = sizes[typ]*n
             value_at = at+8 if length <= 4 else number(at+8, 'I')
             require(0 <= value_at <= len(data)-length)
+            if privacy is not None:
+                if tag == 0x8825:privacy.add('location')
+                if tag in (0x927c,0x201,0x202):privacy.add('unverifiable')
             if tag in (0x8769, 0x8825, 0xa005):
                 require(typ in (4, 13) and n == 1)
                 pending.append((number(value_at, 'I'), False))
@@ -79,7 +83,19 @@ def orientation_exif(data, *, has_icc=False, requirements=None):
     return orientation, minimal
 
 
-def jpeg(data):
+def _xmp_privacy(data,privacy):
+    # Metadata-only XML, never pixels/audio samples. Do not resolve DTD/entities.
+    import xml.etree.ElementTree as xml
+    privacy.add('unverifiable')
+    if b'<!DOCTYPE' in data.upper() or b'<!ENTITY' in data.upper():return
+    try:root=xml.fromstring(data)
+    except (xml.ParseError,ValueError):return
+    for node in root.iter():
+        names=[node.tag,*node.attrib]
+        if any(name.rsplit('}',1)[-1].lower() in ('gpslatitude','gpslongitude','gpsaltitude','location','locationcreated','locationshown') for name in names):privacy.add('location')
+
+
+def jpeg(data,*,privacy=None):
     require(data[:2] == b'\xff\xd8'); out = bytearray(data[:2]); pos = 2
     shape = None; orientation = None; seen_exif = False; scan = False; icc = {}; requirements = set()
     while pos < len(data):
@@ -97,9 +113,11 @@ def jpeg(data):
             kept = None
             if not payload.startswith((b'Exif\0\0', b'http://ns.adobe.com/xap/1.0/\0', b'http://ns.adobe.com/xmp/extension/\0')):
                 raise FormatError('sanitize_unverifiable: jpeg APP1')
+            if privacy is not None and not payload.startswith(b'Exif\0\0'):
+                _xmp_privacy(payload.split(b'\0',1)[-1],privacy)
             if payload.startswith(b'Exif\0\0'):
                 require(not seen_exif); seen_exif = True
-                orientation, minimal = orientation_exif(payload[6:], requirements=requirements)
+                orientation, minimal = orientation_exif(payload[6:], requirements=requirements,privacy=privacy)
                 if minimal is not None: kept = b'Exif\0\0'+minimal
         elif marker == 0xe2:
             kept = None
@@ -115,12 +133,14 @@ def jpeg(data):
                 # Retain colour interpretation/density; discard embedded thumbnail.
                 kept = payload[:12]+b'\0\0'
             elif payload.startswith(b'JFXX\0'):
+                if privacy is not None:privacy.add('unverifiable')
                 kept = None
             else:
                 raise FormatError('unsupported_attachment_structure: jpeg APP0')
         elif marker == 0xee:
             require(len(payload) == 12 and payload[:5] == b'Adobe' and payload[-1] in (0,1,2))
         elif marker in (0xed, 0xfe):
+            if privacy is not None and marker==0xed:privacy.add('unverifiable')
             kept = None
         elif 0xe0 <= marker <= 0xef:
             raise FormatError('sanitize_unverifiable: jpeg APP')
@@ -196,7 +216,7 @@ def _inflate(parts, expected=None):
     require(decoder.eof and not decoder.unused_data and (expected is None or total == expected))
 
 
-def png(data):
+def png(data,*,privacy=None):
     signature = b'\x89PNG\r\n\x1a\n'; require(data[:8] == signature)
     pos = 8; chunks = []; seen = set(); shape = None; orientation = None; idat = []
     requirements = set(); frames = []; sequence = 0; animation = None; current = None; ended_idat = False
@@ -207,6 +227,17 @@ def png(data):
         require(pos+12+length <= len(data)); payload = data[pos+8:pos+8+length]
         require(binascii.crc32(kind+payload)&0xffffffff == int.from_bytes(data[pos+8+length:pos+12+length], 'big'))
         pos += length+12; kept = payload
+        if privacy is not None and kind in (b'tEXt',b'zTXt',b'iTXt'):
+            keyword=payload.split(b'\0',1)[0].lower()
+            if any(v in keyword for v in (b'gps',b'location',b'latitude',b'longitude')):privacy.add('location')
+            if b'xmp' in keyword or b'xml' in keyword:
+                privacy.add('unverifiable')
+                if kind==b'tEXt':_xmp_privacy(payload.split(b'\0',1)[-1],privacy)
+                elif kind==b'iTXt':
+                    value=payload.split(b'\0',1)[-1]
+                    if value[:2]==b'\0\0':
+                        fields=value[2:].split(b'\0',2)
+                        if len(fields)==3:_xmp_privacy(fields[2],privacy)
         if shape is None: require(kind == b'IHDR')
         if kind not in (b'IDAT', b'fdAT', b'fcTL', b'tEXt', b'zTXt', b'iTXt'): require(kind not in seen)
         seen.add(kind)
@@ -223,7 +254,7 @@ def png(data):
         elif kind == b'IEND':
             require(length == 0 and pos == len(data) and idat)
         elif kind == b'eXIf':
-            orientation, kept = orientation_exif(payload, requirements=requirements)
+            orientation, kept = orientation_exif(payload, requirements=requirements,privacy=privacy)
         elif kind == b'iCCP':
             split = payload.find(b'\0'); require(1 <= split <= 79 and payload[split+1:split+2] == b'\0')
             require(not idat and b'sRGB' not in seen)
@@ -386,6 +417,24 @@ def gif(data):
     return Inspection('gif','image',width,height,duration if frames>1 else None)
 
 
+def inspect_embedded_cover(data):
+    """Validate a retained JPEG/PNG cover without rewriting the parent bytes.
+
+    Location pointers are checked by the same Exif parser as image sanitation.
+    Opaque XMP/IPTC, maker notes and nested thumbnails cannot establish absence.
+    No compressed image/sample bytes are scanned for strings.
+    """
+    privacy=set()
+    try:
+        if data.startswith(b'\xff\xd8'):jpeg(data,privacy=privacy)
+        elif data.startswith(b'\x89PNG\r\n\x1a\n'):png(data,privacy=privacy)
+        else:raise FormatError('location_metadata_unverifiable: embedded_cover_remove_cover')
+    except FormatError as exc:
+        raise FormatError('location_metadata_unverifiable: embedded_cover_remove_cover') from exc
+    require('location' not in privacy,'location_metadata_present: embedded_cover_remove_cover')
+    require('unverifiable' not in privacy,'location_metadata_unverifiable: embedded_cover_remove_cover')
+
+
 def bmff(fd,size,*,allow_edit_lists=False):
     """Walk bounded boxes without loading video payloads or rewriting bytes."""
     def read(at,n):
@@ -401,7 +450,7 @@ def bmff(fd,size,*,allow_edit_lists=False):
             yield kind,at+prefix,at+n
             at+=n
         require(at==end)
-    brand=None; duration=None; dimensions=[]; video=False; audio=False; moov=False; mdat=False
+    brand=None; duration=None; dimensions=[]; video=False; audio=False; moov=False; mdat=False; movie_header=False; metadata_notes=set()
     containers={b'moov',b'trak',b'mdia',b'minf',b'stbl',b'udta',b'edts',b'dinf',b'mvex',b'moof',b'traf'}
     # Known binary structure is not a container for arbitrary metadata. Unknown
     # boxes cannot be skipped as if location absence had been established.
@@ -434,7 +483,7 @@ def bmff(fd,size,*,allow_edit_lists=False):
                 elif ext not in allowed:raise FormatError('location_metadata_unverifiable')
         require(seen==count)
     def walk(start,end,depth=0,metadata=False):
-        nonlocal brand,duration,video,audio,moov,mdat
+        nonlocal brand,duration,video,audio,moov,mdat,movie_header
         require(depth <= 32,'invalid_attachment_structure: box nesting')
         for kind,a,b in boxes(start,end,top=depth==0):
             if kind in (b'\xa9xyz',b'loci',b'xyz '): raise FormatError('location_metadata_present')
@@ -448,7 +497,8 @@ def bmff(fd,size,*,allow_edit_lists=False):
                 require(b-a >= 20); version=read(a,1)[0]; require(version in (0,1))
                 offset=20 if version else 12; require(a+offset+(12 if version else 8)<=b)
                 scale=int.from_bytes(read(a+offset,4),'big'); ticks=int.from_bytes(read(a+offset+4,8 if version else 4),'big')
-                require(scale>0 and ticks!=(2**(64 if version else 32)-1),'duration_unavailable'); duration=ticks/scale
+                require(not movie_header and scale>0,'duration_unavailable');movie_header=True
+                duration=None if ticks==(2**(64 if version else 32)-1) else ticks/scale
             elif kind==b'tkhd':
                 require(b-a>=84); version=read(a,1)[0]; expected=96 if version else 84
                 require(version in (0,1) and b-a>=expected)
@@ -464,6 +514,7 @@ def bmff(fd,size,*,allow_edit_lists=False):
                     raise FormatError('location_metadata_unverifiable')
             elif kind==b'stsd':sample_entries(a,b)
             elif kind==b'meta':
+                metadata_notes.add('non_location_metadata_retained')
                 require(b-a>=4 and read(a,4)==b'\0'*4)
                 for mk,ma,mb in boxes(a+4,b):
                     if mk==b'keys':
@@ -478,9 +529,19 @@ def bmff(fd,size,*,allow_edit_lists=False):
                         for ik,ia,ib in boxes(ma,mb):
                             if ik in (b'\xa9xyz',b'loci') or b'location' in ik.lower(): raise FormatError('location_metadata_present')
                             # Validate nested value boxes, without interpreting mdat.
+                            cover_seen=False
                             for vk,va,vb in boxes(ia,ib):
                                 if vk in (b'free',b'skip'):padding(va,vb)
                                 elif vk not in (b'data',b'mean',b'name'):raise FormatError('location_metadata_unverifiable')
+                                elif vk==b'data':
+                                    require(vb-va>=8)
+                                    value_type=int.from_bytes(read(va,4),'big')
+                                    if ik==b'covr' or value_type in (13,14):
+                                        require(value_type in (13,14),'location_metadata_unverifiable: embedded_cover_remove_cover')
+                                        cover=read(va+8,vb-va-8)
+                                        require(cover.startswith(b'\xff\xd8') if value_type==13 else cover.startswith(b'\x89PNG\r\n\x1a\n'),'invalid_attachment_structure: embedded_cover')
+                                        inspect_embedded_cover(cover);metadata_notes.add('embedded_cover_retained');cover_seen=True
+                            require(ik!=b'covr' or cover_seen,'invalid_attachment_structure: embedded_cover')
                     elif mk==b'hdlr': require(mb-ma>=12 and read(ma,4)==b'\0'*4)
                     elif mk in containers: walk(ma,mb,depth+1)
                     elif mk in (b'free',b'skip'):padding(ma,mb)
@@ -497,14 +558,15 @@ def bmff(fd,size,*,allow_edit_lists=False):
             elif kind in containers:
                 if kind==b'moov': require(not moov); moov=True
                 walk(a,b,depth+1,metadata=metadata or kind==b'udta')
-            elif metadata and kind in (b'\xa9nam',b'\xa9ART',b'\xa9alb',b'\xa9day',b'\xa9too',b'\xa9cmt',b'cprt',b'name'):pass
+            elif metadata and kind in (b'\xa9nam',b'\xa9ART',b'\xa9alb',b'\xa9day',b'\xa9too',b'\xa9cmt',b'cprt',b'name'):metadata_notes.add('non_location_metadata_retained')
             elif metadata or kind not in structure:
                 raise FormatError('location_metadata_unverifiable')
     walk(0,size)
-    require(brand is not None and moov and mdat and duration is not None and (video or audio))
+    require(brand is not None and moov and mdat and movie_header and (video or audio))
+    require(not video or duration is not None,'duration_unavailable')
     require(not video or dimensions,'dimensions_unavailable')
-    w,h=max(dimensions,key=lambda s:s[0]*s[1]) if dimensions else (None,None)
-    return Inspection('mov' if brand==b'qt  ' else 'mp4','video' if video else 'audio',w,h,duration)
+    w,h=max(dimensions,key=lambda s:s[0]*s[1]) if video and dimensions else (None,None)
+    return Inspection('mov' if brand==b'qt  ' else 'mp4','video' if video else 'audio',w,h,duration,metadata_notes=tuple(sorted(metadata_notes)))
 
 
 def inspect(fd,size,*,allow_edit_lists=False):

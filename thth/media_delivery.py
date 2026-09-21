@@ -166,11 +166,13 @@ def lint_notes(cfg,fm,*,text=None):
                     notes.append('warning: quote capability: latest instance API='+str(version)+'; target checked before publish')
                 if items:
                     limits=mastodon_media.capabilities(body,instance);mastodon_media.check_limits(limits,items)
-                    mastodon_media.cache(cfg,limits);notes.append('warning: '+cached_note(cfg))
+                    mastodon_media.cache(cfg,limits);notes.append('warning: '+cached_note(cfg));notes.extend(mastodon_media.metadata_notes(items))
                 return notes
-            if items:mastodon_media.check_limits(cap,items)
+            if items:
+                mastodon_media.check_limits(cap,items)
+                retained_notes=mastodon_media.metadata_notes(items)
             else:return ['warning: Mastodon generates a preview from the approved body URL; display is unobserved'] if any(row['type']=='link' for row in manifest['attachments']) else []
-        return ['warning: '+cached_note(cfg)]
+        return ['warning: '+cached_note(cfg)]+retained_notes
     except (OSError,ValueError) as exc:
         code=str(exc) if isinstance(exc,(media.MediaError,FormatError)) else 'media_capability_unavailable'
         return [code]

@@ -500,6 +500,7 @@ def prepare(repo_dir,fm,medium):
                         raise MediaError('media: public structure is not stable')
                 sha=hashlib.sha256(public).hexdigest() if public is not None else source.source_sha256
                 row={**source.fingerprint(),'role':role,'index':index,'public_sha256':sha,'public_size':len(public) if public is not None else source.size,'format':info.format,'kind':info.kind,'width':info.width,'height':info.height,'duration':info.duration,'orientation':info.orientation}
+                if info.metadata_notes:row['metadata_notes']=list(info.metadata_notes)
                 source.verify();prepared.append(Prepared(row,source,public,snapshot.fileno()))
             media_files=[x.manifest for x in prepared if x.manifest['role']=='media']
             if medium=='bluesky' and len({x['kind'] for x in media_files})>1:raise MediaError('attachments: incompatible Bluesky media types')
@@ -528,11 +529,12 @@ def display(manifest):
     lines=[]
     for row in manifest['files']:
         shape=f"{row['width']}×{row['height']}" if row['width'] is not None else '寸法: 適用外'
-        seconds=f" / {row['duration']}秒" if row['duration'] is not None else ''
+        seconds=f" / {row['duration']}秒" if row['duration'] is not None else ' / 秒数: 未取得' if row['kind'] in ('audio','video') else ''
         lines.append(f"添付 {row['role']} {row['index']}: {row['file']} / {row['format']} / {shape}{seconds}")
         lines.append(f"size: source {row['size']} bytes / public {row['public_size']} bytes")
         label="lang" if row["role"]=="caption" else "alt"
         lines.append(f"{label}: {row['alt']}")
+        for note in row.get('metadata_notes',[]):lines.append('warning: '+note)
         lines.append(f"source SHA256: {row['source_sha256']}")
         lines.append(f"public SHA256: {row['public_sha256']}")
     for key in ('attachments','post_options','captions'):
@@ -547,7 +549,8 @@ def prepared_component(manifest):
     if type(manifest['files']) is not list or type(manifest['attachments']) is not list or type(manifest['post_options']) is not dict or type(manifest['captions']) is not list:
         raise MediaError('media: invalid prepared container')
     for row in manifest['files']:
-        if not isinstance(row,dict) or set(row)!={'file','alt','source_sha256','size','role','index','public_sha256','public_size','format','kind','width','height','duration','orientation'}:raise MediaError('media: invalid prepared file')
+        if not isinstance(row,dict) or set(row)-{'metadata_notes'}!={'file','alt','source_sha256','size','role','index','public_sha256','public_size','format','kind','width','height','duration','orientation'}:raise MediaError('media: invalid prepared file')
+        if 'metadata_notes' in row and (type(row['metadata_notes']) is not list or any(note not in ('non_location_metadata_retained','embedded_cover_retained') for note in row['metadata_notes'])):raise MediaError('media: invalid metadata notes')
         fingerprint_component([{k:row[k] for k in ('file','alt','source_sha256','size')}])
         if not isinstance(row['public_sha256'],str) or not re.fullmatch('[0-9a-f]{64}',row['public_sha256']) or type(row['public_size']) is not int or row['public_size']<0:raise MediaError('media: invalid public fingerprint')
     try:
