@@ -13,7 +13,7 @@ from .report_service import ReportServiceError
 TERMINAL = frozenset(('completed','failed','unknown','expired'))
 STATES = TERMINAL | {'registering','pending','consuming','ready','executing'}
 REASONS = {'approval_registration_unknown','interrupted_outcome_unknown','approval_timeout',
-           'operation_outcome_unknown','approval_no_longer_valid'}
+           'operation_outcome_unknown','approval_no_longer_valid','media_preview_unavailable'}
 
 
 def _valid_job(value, job_id):
@@ -26,7 +26,7 @@ def _valid_job(value, job_id):
     required = {'schema_version','job_id','token','read_key','account','kind','actor','credential_digest',
                 'request','binding','digest','status','expires_at','via'}
     if (type(value) is not dict or not required <= value.keys()
-            or value.keys()-required-{'receipt','reason','post_id'}
+            or value.keys()-required-{'receipt','reason','post_id','media_subjects'}
             or type(value['schema_version']) is not int or value['schema_version'] != 1
             or value['job_id'] != job_id or not matches(relay.OPAQUE,job_id)
             or not all(matches(relay.OPAQUE,value[k]) for k in ('token','read_key'))
@@ -40,6 +40,10 @@ def _valid_job(value, job_id):
         return False
     if 'reason' in value and (not isinstance(value['reason'],str) or value['reason'] not in REASONS): return False
     if 'post_id' in value and (not string(value['post_id'],4096) or not value['post_id'] or writeback.has_control_chars(value['post_id'])): return False
+    if 'media_subjects' in value:
+        subjects=value['media_subjects']
+        if (type(subjects) is not dict or len(subjects) > 40
+                or any(not matches(re.compile(r'[0-9]{1,3}\Z'),k) or not matches(relay.OPAQUE,v) for k,v in subjects.items())): return False
     binding=value['binding'];request=value['request']
     if (type(binding) is not dict or set(binding) != {'kind','account','actor','text','context','ledger','credential_generation','source'}
             or any(binding[k] != value[k] for k in ('kind','account','actor'))
@@ -96,7 +100,37 @@ def status(context, account, job_id):
     except (OSError,ValueError,KeyError): raise ReportServiceError('scope_unavailable') from None
 
 
-def create(context, request, binding, via):
+def _attachments(account, actor, media, subjects):
+    """Display rows for the approval page; images also get a preview capability.
+
+    No repo path, source hash or capability is returned to the caller's log:
+    only the closed key set the Worker accepts. The sanitized public bytes are
+    uploaded here so the page shows exactly what publication would send.
+    """
+    from . import media as media_mod
+    from .media_relay import MediaRelay
+    client=MediaRelay(account,actor);rows=[];manifest=media['manifest']
+    with media_mod.prepare(media['repo_dir'],media['front_matter'],media['medium']) as (current,items):
+        if media_mod.prepared_component(current)!=media_mod.prepared_component(manifest):
+            raise media_mod.MediaError('approval_stale')
+        for position,item in enumerate(items):
+            row=item.manifest;preview=None
+            if row['kind']=='image':
+                # Upload first: a preview grant can only copy stored bytes.
+                source=client.upload_prepared(item);subjects[str(position)]=source
+                preview=client.grant(item,source,purpose='preview')['subject']
+            rows.append({'index':row['index'],'role':row['role'],'kind':row['kind'],'format':row['format'],
+                         'public_sha256':row['public_sha256'],'public_size':row['public_size'],
+                         'width':row['width'],'height':row['height'],'duration':row['duration'],
+                         'alt':row['alt'],'preview':preview})
+    typed=None
+    if any(manifest[key] for key in ('attachments','post_options','captions')):
+        typed=json.dumps({key:manifest[key] for key in ('attachments','post_options','captions')},
+                         ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False)
+    return rows,typed
+
+
+def create(context, request, binding, via, media=None):
     job_id,token,read_key=(secrets.token_urlsafe(32) for _ in range(3))
     now=int(time.time()*1000)
     digest=hashlib.sha256(server_files.encode(binding)).hexdigest()
@@ -111,10 +145,23 @@ def create(context, request, binding, via):
                 server_files.replace_at(fd,job_id+'.json',server_files.encode(job),new=True)
                 admin_log.append({'approve':'approval_requested','send':'send_requested','retract':'retract_requested'}[job['kind']],
                                  job['account'],{},by=context.actor,via=via,diff={'request_present':[False,True]},run_id=job_id)
+            extra={};subjects={}
+            if media:
+                # A session is never registered without every image the human
+                # must look at: no preview, no approval (design 2.13.0 §1-2).
+                try:
+                    rows,typed=_attachments(job['account'],context.actor,media,subjects)
+                    extra['attachments']=rows
+                    if typed is not None:extra['typed']=typed
+                except Exception:
+                    if subjects:job['media_subjects']=dict(subjects)
+                    job.update(status='failed',reason='media_preview_unavailable');_save(fd,job)
+                    raise ReportServiceError('media_preview_unavailable') from None
+                if subjects:job['media_subjects']=dict(subjects);_save(fd,job)
             try:
                 value=relay.signed_request('session',token,'create',dict(person=context.actor,job_id=job_id,digest=digest,
                      account=job['account'],kind=job['kind'],text=binding['text'],context=binding['context'],
-                     read_key_hash=hashlib.sha256(read_key.encode()).hexdigest()))
+                     read_key_hash=hashlib.sha256(read_key.encode()).hexdigest(),**extra))
                 if (value.get('status')!='pending' or type(value.get('expires_at')) is not int
                         or not now < value['expires_at'] <= int(time.time()*1000)+600000):
                     raise ValueError('invalid_registration')

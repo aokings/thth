@@ -167,6 +167,27 @@ export class ApprovalAccount extends AtomicObject {
     if(next!==null)await this.ctx.storage.setAlarm(next);
   }
 }
+// Attachment rows are display-only: they never bind a receipt and never leave
+// the approval page. The key set is closed so an unknown field cannot ride in.
+const ATTACHMENT_KEYS=['index','role','kind','format','public_sha256','public_size','width','height','duration','alt','preview'];
+const FORMAT_PATTERN=/^[a-z0-9]{2,16}$/;
+export function validAttachments(list){
+  if(!Array.isArray(list)||list.length>20)return false;
+  return list.every(a=>a!==null&&typeof a==='object'&&!Array.isArray(a)&&
+    Object.keys(a).sort().join(',')===[...ATTACHMENT_KEYS].sort().join(',')&&
+    Number.isSafeInteger(a.index)&&a.index>=1&&a.index<=1000&&
+    ['media','thumbnail','caption'].includes(a.role)&&
+    ['image','video','audio','caption'].includes(a.kind)&&
+    typeof a.format==='string'&&FORMAT_PATTERN.test(a.format)&&
+    typeof a.public_sha256==='string'&&HASH_PATTERN.test(a.public_sha256)&&
+    Number.isSafeInteger(a.public_size)&&a.public_size>=0&&
+    [a.width,a.height].every(v=>v===null||(Number.isSafeInteger(v)&&v>=0&&v<=1_000_000))&&
+    (a.duration===null||(typeof a.duration==='number'&&Number.isFinite(a.duration)&&a.duration>=0&&a.duration<=86_400))&&
+    typeof a.alt==='string'&&a.alt.length<=4096&&
+    (a.preview===null||(a.kind==='image'&&typeof a.preview==='string'&&STATE_PATTERN.test(a.preview))));
+}
+export function validTyped(value){return typeof value==='string'&&new TextEncoder().encode(value).length<=16_384;}
+
 export class ApprovalSession extends AtomicObject {
   row(){const row=this.ctx.storage.kv.get('session');
     if(row&&this.now()>=row.expires_at){this.clear(row,'expired');return null;}return row;}
@@ -179,7 +200,12 @@ export class ApprovalSession extends AtomicObject {
   invalidate(){const row=this.ctx.storage.kv.get('session');if(row)this.clear(row,'expired');}
   async manage(operation,body,ticket){
     if(operation==='create'){
-      if(!fields(body,['person','job_id','digest','account','kind','text','context','read_key_hash'])||['person','account','job_id','digest','read_key_hash'].some(k=>typeof body[k]!=='string')||!PERSON.test(body.person)||!PERSON.test(body.account)||!STATE_PATTERN.test(body.job_id)||!HASH_PATTERN.test(body.digest)||!HASH_PATTERN.test(body.read_key_hash)||!['approve','send','retract'].includes(body.kind)||typeof body.text!=='string'||!body.text||new TextEncoder().encode(body.text).length>48_000||!fields(body.context,['media','reply_to','publish_at','target','reason','topic','options'])||!['threads','mastodon','bluesky','x'].includes(body.context.media)||Object.values(body.context).some(v=>v!==null&&(typeof v!=='string'||v.length>4096)))return fail();
+      const required=['person','job_id','digest','account','kind','text','context','read_key_hash'];
+      if(!body||typeof body!=='object'||Array.isArray(body))return fail();
+      const present=Object.keys(body);
+      if(required.some(k=>!present.includes(k))||present.some(k=>!required.includes(k)&&!['attachments','typed'].includes(k)))return fail();
+      if(('attachments' in body&&!validAttachments(body.attachments))||('typed' in body&&!validTyped(body.typed)))return fail();
+      if(['person','account','job_id','digest','read_key_hash'].some(k=>typeof body[k]!=='string')||!PERSON.test(body.person)||!PERSON.test(body.account)||!STATE_PATTERN.test(body.job_id)||!HASH_PATTERN.test(body.digest)||!HASH_PATTERN.test(body.read_key_hash)||!['approve','send','retract'].includes(body.kind)||typeof body.text!=='string'||!body.text||new TextEncoder().encode(body.text).length>48_000||!fields(body.context,['media','reply_to','publish_at','target','reason','topic','options'])||!['threads','mastodon','bluesky','x'].includes(body.context.media)||Object.values(body.context).some(v=>v!==null&&(typeof v!=='string'||v.length>4096)))return fail();
       const authority=await accountStub(this.env,body.account);
       if(!await authority.active())return fail(410,'account_revoked');
       const generation=await (await personStub(this.env,body.person)).current();
@@ -241,7 +267,9 @@ export class ApprovalSession extends AtomicObject {
     if(!await (await accountStub(this.env,before.account)).active()||!await (await personStub(this.env,before.person)).current(before.generation)){
       this.clear(before,'expired');return fail(410,'approver_unavailable');}
     const row=this.row();if(!row||row.status!=='pending')return fail(410,'expired');
-    const {text,account,kind,digest,csrf,context}=row;return {status:200,body:{text,account,kind,digest,csrf,context}};
+    const {text,account,kind,digest,csrf,context,attachments,typed}=row;
+    // Only the page sees attachments. `clear()` drops them before any receipt.
+    return {status:200,body:{text,account,kind,digest,csrf,context,attachments:attachments??[],typed:typed??null}};
   }
   async approve(secret,csrf){
     const row=this.row();if(!row||row.status!=='pending')return fail(410,'expired');
