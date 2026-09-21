@@ -350,8 +350,15 @@ def test_publication_saved_then_source_exit_drift_keeps_result(env,wire,monkeypa
     assert len(wire['records'])==1
 
 
-def test_source_change_before_final_publish_holds_without_changed_upload(env,wire):
-    wire['after_upload']=lambda:(env[2]/'v.mp4').write_bytes(mp4()+b'changed')
+def test_source_change_before_final_publish_holds_without_changed_upload(env,wire,monkeypatch):
+    request=bv._request
+    def after_response(url,**kwargs):
+        value=request(url,**kwargs)
+        # The client has consumed chunks(), including its final verify, before
+        # the upload response returns. This tests the later publication veto.
+        if 'app.bsky.video.uploadVideo?' in url:(env[2]/'v.mp4').write_bytes(mp4()+b'changed')
+        return value
+    monkeypatch.setattr(bv,'_request',after_response)
     result,journal,_=invoke(env)
     assert result.failure=='media_held' and not wire['records']
     assert calls(wire,'app.bsky.video.uploadVideo')[0]['body']==mp4()
