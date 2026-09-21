@@ -18,6 +18,20 @@ export class MediaObject extends DurableObject {
     if(result.status!==200)throw Error('cleanup_registration_unconfirmed');
     this.atomic(()=>{const current=this.row();if(current?.version===row.version)this.put({...current,cleanup_registered:true});});
   }
+  async writing(row,operation){
+    // A confirmed R2 write and its compensation finish before this marker clears.
+    // Rejected write promises may still have remote effects: retain the marker.
+    // If the isolate disappears while awaiting R2, the durable marker remains
+    // unknown; an alarm/retry must not infer completion from an absent object.
+    const token=opaque();let started=false,settled=false;
+    this.atomic(()=>{const current=this.row();
+      if(!this.current(current)||current.version!==row.version||current.io_ticket)throw Error('media_write_not_current');
+      this.put({...current,io_ticket:token});
+    });
+    const write=async fn=>{started=true;const result=await fn();settled=true;return result;};
+    try{return await operation(write);}
+    finally{if(!started||settled)this.atomic(()=>{const current=this.row();if(current?.version===row.version&&current.io_ticket===token)this.put({...current,io_ticket:null});});}
+  }
   async cleanupRetry(account){
     // A retry only restarts deletion; it cannot renew any public capability.
     return this.ctx.storage.transaction(async()=>{
@@ -81,20 +95,22 @@ export class MediaObject extends DurableObject {
     const row=result.row;
     await this.enroll(row);
     if(!this.current(this.row())||this.row().version!==row.version)return fail(410,'media_expired');
-    if(multi){
-      const upload=await this.env.MEDIA_BUCKET.createMultipartUpload(row.key,{httpMetadata:{contentType:row.mime}});
+    if(multi)return this.writing(row,async write=>{
+      const upload=await write(()=>this.env.MEDIA_BUCKET.createMultipartUpload(row.key,{httpMetadata:{contentType:row.mime}}));
       const active=await this.active(row.account);
       const accepted=this.atomic(()=>{const current=this.row();if(!active||!this.current(current)||current.version!==row.version||current.status!=='initializing')return false;this.put({...current,status:'pending',upload_id:upload.uploadId});return true;});
-      if(!accepted){await upload.abort();return fail(410,'media_expired');}
-    }
+      // Retain a returned upload ID even if expiry preceded the response.
+      if(!accepted){this.atomic(()=>{const current=this.row();if(current?.version===row.version)this.put({...current,upload_id:upload.uploadId});});await upload.abort();this.atomic(()=>{const current=this.row();if(current?.version===row.version)this.put({...current,multipart_closed:'aborted'});});return fail(410,'media_expired');}
+      return {status:201,body:{status:'pending',expires_at:row.expires_at,size:row.size,part_size:row.part_size}};
+    });
     return {status:201,body:{status:'pending',expires_at:row.expires_at,size:row.size,part_size:row.part_size}};
   }
-  async streamPut(row,request,part){
+  async streamPut(row,request,part,write=fn=>fn()){
     const size=part===null?row.size:Math.min(row.part_size,row.size-(part-1)*row.part_size);
     if(request.headers.get('content-length')!==String(size)||!request.body)throw new Error('media_size_mismatch');
     const fixed=new FixedLengthStream(size),abort=new AbortController();
     const copying=request.body.pipeTo(fixed.writable,{signal:abort.signal});
-    const storing=part===null?this.env.MEDIA_BUCKET.put(row.key,fixed.readable,{httpMetadata:{contentType:row.mime},onlyIf:{etagDoesNotMatch:'*'}}):this.env.MEDIA_BUCKET.resumeMultipartUpload(row.key,row.upload_id).uploadPart(part,fixed.readable);
+    const storing=write(()=>part===null?this.env.MEDIA_BUCKET.put(row.key,fixed.readable,{httpMetadata:{contentType:row.mime},onlyIf:{etagDoesNotMatch:'*'}}):this.env.MEDIA_BUCKET.resumeMultipartUpload(row.key,row.upload_id).uploadPart(part,fixed.readable));
     try{const [,result]=await Promise.all([copying,storing]);if(!result)throw new Error('media_write_failed');return result;}
     catch(error){abort.abort();await Promise.allSettled([copying,storing]);throw error;}
   }
@@ -108,8 +124,8 @@ export class MediaObject extends DurableObject {
       const ticket=opaque();this.put({...row,status:'uploading',ticket});return {...row,ticket};
     });
     if(!claim)return reply(409,{error:'media_not_ready'});
-    try{
-      const result=await this.streamPut(claim,request,part),active=await this.active(claim.account);
+    return this.writing(claim,async write=>{try{
+      const result=await this.streamPut(claim,request,part,write),active=await this.active(claim.account);
       const accepted=this.atomic(()=>{const row=this.row();if(!this.current(row)||row.version!==claim.version||row.ticket!==claim.ticket||!active)return false;
         const parts={...row.parts};if(part!==null)parts[part]={partNumber:part,etag:result.etag};
         this.put({...row,parts,status:part===null?'uploaded':'pending',ticket:null});return true;});
@@ -120,15 +136,16 @@ export class MediaObject extends DurableObject {
       // ETag is recorded. A single-file ambiguous put is never silently replayed.
       this.atomic(()=>{const row=this.row();if(row?.ticket===claim.ticket)this.put({...row,status:part===null?'failed':'pending',ticket:null});});
       return reply(503,{error:'media_upload_unconfirmed'});
-    }
+    }});
   }
   async complete(claim){
-    try{
-      const object=await this.env.MEDIA_BUCKET.resumeMultipartUpload(claim.key,claim.upload_id).complete(Object.values(claim.parts).sort((a,b)=>a.partNumber-b.partNumber));
+    return this.writing(claim,async write=>{try{
+      const object=await write(()=>this.env.MEDIA_BUCKET.resumeMultipartUpload(claim.key,claim.upload_id).complete(Object.values(claim.parts).sort((a,b)=>a.partNumber-b.partNumber)));
+      this.atomic(()=>{const current=this.row();if(current?.version===claim.version)this.put({...current,multipart_closed:'completed'});});
       const active=await this.active(claim.account);
       const accepted=this.atomic(()=>{const row=this.row();if(!this.current(row)||row.ticket!==claim.ticket||row.version!==claim.version||!active||object.size!==row.size)return false;this.put({...row,status:'ready',ticket:null,multipart_closed:'completed'});return true;});
       return accepted?{status:200,body:{status:'ready',sha256:claim.sha256}}:fail(410,'media_expired');
-    }catch{return fail(503,'media_completion_unconfirmed');}
+    }catch{return fail(503,'media_completion_unconfirmed');}});
   }
   async read(row){
     const object=await this.env.MEDIA_BUCKET.get(row.key);
@@ -153,12 +170,14 @@ export class MediaObject extends DurableObject {
     if(!claim)return fail(409,'media_exists');
     await this.enroll(claim);
     if(!this.current(this.row())||this.row().version!==claim.version)return fail(410,'media_expired');
+    return this.writing(claim,async write=>{
     const object=await this.env.MEDIA_BUCKET.get(original.key);if(!object)return fail(404,'not_found');
-    await this.env.MEDIA_BUCKET.put(claim.key,object.body,{httpMetadata:{contentType:claim.mime}});
+    await write(()=>this.env.MEDIA_BUCKET.put(claim.key,object.body,{httpMetadata:{contentType:claim.mime}}));
     const latest=await source.previewSource(body),active=await this.active(body.account);
     const accepted=this.atomic(()=>{const row=this.row();if(!this.current(row)||row.version!==claim.version||row.status!=='copying'||!latest||latest.version!==original.version||!active)return false;this.put({...row,status:'ready'});return true;});
     if(!accepted){await this.env.MEDIA_BUCKET.delete(claim.key);return fail(410,'media_expired');}
     return {status:201,body:{status:'ready',expires_at,generation:claim.version}};
+    });
   }
   async publicResult(op,body,ticket){
     if(!keys(body,['actor','account','sha256','media_id','purpose','generation'])||body.purpose!=='provider')return fail();
@@ -210,6 +229,7 @@ export class MediaObject extends DurableObject {
     try{
       if(!row.cleanup_registered)await this.enroll(row);
       row=this.row();
+      if(row.io_ticket)throw Error('cleanup_io_unconfirmed');
       if(row.upload_id&&!row.multipart_closed){
         await this.env.MEDIA_BUCKET.resumeMultipartUpload(row.key,row.upload_id).abort();
         this.atomic(()=>this.put({...this.row(),multipart_closed:'aborted'}));

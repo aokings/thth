@@ -49,6 +49,6 @@ def command(args):
 def register(commands):
     parser = commands.add_parser('media', help='添付の物理削除を観測・回復（再投稿しない）')
     operations = parser.add_subparsers(required=True)
-    recovery = operations.add_parser('cleanup-retry')
+    recovery = operations.add_parser('cleanup-retry', description='期限済みの削除を再試行します。結果不明の書込みは強制解除せず、本口だけでは回復できない場合があります。再投稿はしません。')
     recovery.add_argument('account');recovery.add_argument('--by', required=True)
     recovery.add_argument('--json', action='store_true');recovery.set_defaults(func=command)

@@ -280,6 +280,8 @@ test('public grant copy failure never exposes partially committed bytes',async()
  assert.equal((await call(cap,'provider',body)).status,503);
  assert.equal((await mf.dispatchFetch('https://media.test/m/'+cap)).status,410);
  assert.equal((await call(cap,'provider',body)).status,409);
+ const row=(await control(cap)).find(([k])=>k==='media')[1];assert.ok(row.io_ticket);
+ await control(cap,{clock:row.cleanup_at,alarm:true});assert.ok((await control(cap)).find(([k])=>k==='media')[1].io_ticket);
 });
 
 
@@ -339,7 +341,7 @@ test('lost empty multipart allocation cannot accept parts and malformed public r
  const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.equal(row.status,'initializing');assert.equal(row.upload_id,undefined);
  const part=Buffer.alloc(f.body.part_size,1);
  assert.equal((await mf.dispatchFetch('https://media.test/media-upload/'+f.id+'/1',{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,409);
- assert.deepEqual(await control(f.id,{clock:row.cleanup_at,alarm:true,inspect:true}),{rows:[],alarm:null});
+ const retained=await control(f.id,{clock:row.cleanup_at,alarm:true,inspect:true});assert.ok(retained.rows.find(([k])=>k==='media')[1].io_ticket);assert.equal(retained.alarm,row.cleanup_at+60000);
  for(const suffix of ['invalid',opaque()+'?query=1','%41'+opaque().slice(1)])for(const init of [{},{method:'HEAD'},{headers:{range:'bytes=0-1'}}])assert.equal((await mf.dispatchFetch('https://media.test/m/'+suffix,init)).status,404);
 });
 
@@ -545,3 +547,146 @@ test('preview capability cannot acknowledge publication or be invalidated as pro
 });
 
 test('test Python uses explicit override and portable PATH fallback',()=>{assert.equal(pythonForTests({PYTHON_FOR_TESTS:'/synthetic/python'}),'/synthetic/python');assert.equal(pythonForTests({}),'python3');});
+
+
+test('late single PUT and grant copy keep debt through cleanup and failed compensation',async()=>{
+ for(const copy of [false,true]){
+  const f=data(undefined,'sanitized');f.body.account=copy?'late-copy':'late-put';
+  if(copy)await ready(f);else assert.equal((await call(f.id,'create',f.body)).status,201);
+  const id=copy?opaque():f.id;
+  await control(id,{beforeR2:{operation:'put',compensationFailure:'delete'}});
+  const response=copy?await call(id,'provider',{...binding(f),media_id:f.body.sha256,source:f.id,expires_at:0}):await upload(f);
+  assert.equal(response.status,503);
+  const during=await control(id,{ioInspect:true});assert.ok(during.row.io_ticket);assert.equal(during.row.cleanup_attempts,1);assert.equal(during.alarm,during.row.cleanup_at+60000);
+  const row=(await control(id)).find(([k])=>k==='media')[1];assert.equal(row.io_ticket,null);
+  if(copy){const sourceRow=(await control(f.id)).find(([k])=>k==='media')[1];await control(f.id,{clock:sourceRow.cleanup_at,alarm:true});}
+  const bucket=await mf.getR2Bucket('MEDIA_BUCKET');assert.ok(await bucket.head(row.key));
+  assert.deepEqual((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup,{pending_count:1,failed_count:0,reason:'cleanup_unconfirmed'});
+  assert.equal((await mf.dispatchFetch('https://media.test/m/'+id)).status,410);
+  await control(id,{clock:row.cleanup_at});assert.equal((await accountCall(f.body.account,'cleanup-retry')).status,200);
+  assert.deepEqual(await control(id,{clock:row.cleanup_at,alarm:true,inspect:true}),{rows:[],alarm:null});
+  assert.equal(await bucket.head(row.key),null);assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,0);
+ }
+});
+
+test('late multipart allocation retains returned upload ID when abort compensation fails',async()=>{
+ const f=data();f.body.account='late-allocation';f.body.size=100000001;f.body.part_size=5*1024*1024;
+ await control(f.id,{beforeR2:{operation:'createMultipartUpload',compensationFailure:'abort'}});
+ assert.equal((await call(f.id,'create',f.body)).status,503);
+ const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.ok(row.upload_id);assert.equal(row.io_ticket,null);
+ assert.ok((await control(f.id,{ioInspect:true})).row.io_ticket);
+ await cleanupControl(f.body.account,{clock:row.cleanup_at});await control(f.id,{clock:row.cleanup_at});
+ assert.equal((await accountCall(f.body.account,'cleanup-retry')).status,200);
+ assert.deepEqual(await control(f.id,{clock:row.cleanup_at,alarm:true,inspect:true}),{rows:[],alarm:null});
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,0);
+});
+
+test('late multipart completion cannot be cleaned before its resulting object arrives',async()=>{
+ const f=data();f.body.account='late-completion';f.body.size=100000001;f.body.part_size=5*1024*1024;
+ assert.equal((await call(f.id,'create',f.body)).status,201);
+ for(let n=1;n<=Math.ceil(f.body.size/f.body.part_size);n++){
+  const part=Buffer.alloc(Math.min(f.body.part_size,f.body.size-(n-1)*f.body.part_size),8);
+  assert.equal((await mf.dispatchFetch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,200);
+ }
+ await control(f.id,{beforeR2:{operation:'complete'}});
+ assert.equal((await call(f.id,'complete',binding(f))).status,410);
+ const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.equal(row.multipart_closed,'completed');assert.equal(row.io_ticket,null);
+ assert.ok((await control(f.id,{ioInspect:true})).row.io_ticket);
+ const bucket=await mf.getR2Bucket('MEDIA_BUCKET');assert.ok(await bucket.head(row.key));
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,1);
+ assert.deepEqual(await control(f.id,{clock:row.cleanup_at,failR2:'abort',alarm:true,inspect:true}),{rows:[],alarm:null});
+ assert.equal(await bucket.head(row.key),null);assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,0);
+});
+
+test('restart with unresolved I/O never clears debt or spins beyond ten attempts',async()=>{
+ const f=data();f.body.account='unknown-io';await ready(f);
+ const row=(await control(f.id)).find(([k])=>k==='media')[1];
+ await control(f.id,{unresolvedIO:true});await mf.dispose();mf=new Miniflare(options);await mf.ready;
+ for(let n=0;n<10;n++)await control(f.id,{clock:row.cleanup_at+n*60000,alarm:true});
+ const after=await control(f.id,{clock:row.cleanup_at+600000,inspect:true});
+ assert.equal(after.rows.find(([k])=>k==='media')[1].io_ticket,'synthetic-unresolved');assert.equal(after.alarm,null);
+ assert.deepEqual((await cleanupControl(f.body.account,{clock:row.cleanup_at+600000})).cleanup,{pending_count:1,failed_count:1,reason:'cleanup_failed'});
+ assert.ok(await(await mf.getR2Bucket('MEDIA_BUCKET')).head(row.key));
+ assert.equal((await accountCall(f.body.account,'cleanup-retry')).status,200);
+ await control(f.id,{clock:row.cleanup_at+600000,alarm:true});
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at+600000})).cleanup.pending_count,1);
+});
+
+
+test('rejected PUT promise followed by late remote commit retains unknown obligation',async()=>{
+ const f=data();f.body.account='late-rejected';assert.equal((await call(f.id,'create',f.body)).status,201);
+ await control(f.id,{lateR2:'put'});assert.equal((await upload(f)).status,503);
+ const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.ok(row.io_ticket);
+ const bucket=await mf.getR2Bucket('MEDIA_BUCKET');assert.equal(await bucket.head(row.key),null);
+ await control(f.id,{clock:row.cleanup_at,alarm:true});
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,1);
+ await control(f.id,{clock:row.cleanup_at,finishLateR2:true});assert.ok(await bucket.head(row.key));
+ for(let i=1;i<10;i++)await control(f.id,{clock:row.cleanup_at+i*60000,alarm:true});
+ const after=await control(f.id,{clock:row.cleanup_at+600000,inspect:true});assert.ok(after.rows.find(([k])=>k==='media')[1].io_ticket);assert.equal(after.alarm,null);
+ assert.deepEqual((await cleanupControl(f.body.account,{clock:row.cleanup_at+600000})).cleanup,{pending_count:1,failed_count:1,reason:'cleanup_failed'});
+ assert.equal((await mf.dispatchFetch('https://media.test/m/'+f.id)).status,410);
+ assert.equal((await accountCall(f.body.account,'cleanup-retry')).status,200);await control(f.id,{clock:row.cleanup_at+600000,alarm:true});
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at+600000})).cleanup.pending_count,1);
+});
+
+
+test('multipart complete response loss retains unknown debt despite object existence',async()=>{
+ const f=data();f.body.account='unknown-complete';f.body.size=100000001;f.body.part_size=5*1024*1024;
+ assert.equal((await call(f.id,'create',f.body)).status,201);
+ for(let n=1;n<=Math.ceil(f.body.size/f.body.part_size);n++){
+  const part=Buffer.alloc(Math.min(f.body.part_size,f.body.size-(n-1)*f.body.part_size),8);
+  assert.equal((await mf.dispatchFetch('https://media.test/media-upload/'+f.id+'/'+n,{method:'PUT',headers:{'content-length':String(part.length)},body:part})).status,200);
+ }
+ await control(f.id,{afterR2:{operation:'complete',action:'fail'}});
+ assert.equal((await call(f.id,'complete',binding(f))).status,503);
+ const row=(await control(f.id)).find(([k])=>k==='media')[1];assert.ok(row.io_ticket);assert.equal(row.multipart_closed,undefined);
+ const bucket=await mf.getR2Bucket('MEDIA_BUCKET');assert.ok(await bucket.head(row.key));
+ await control(f.id,{clock:row.cleanup_at,alarm:true});assert.ok(await bucket.head(row.key));
+ assert.equal((await cleanupControl(f.body.account,{clock:row.cleanup_at})).cleanup.pending_count,1);
+});
+
+
+test('cleanup round robin reaches healthy tail despite failed prefix, concurrency and removed cursor',async()=>{
+ const account='round-robin',fixtures=[];
+ for(let i=0;i<65;i++){const f=data();f.body.account=account;await ready(f);fixtures.push(f);}
+ const obligations=(await cleanupControl(account)).rows.map(([key])=>key);
+ const keyed=[];
+ for(const f of fixtures){const row=(await control(f.id)).find(([k])=>k==='media')[1];keyed.push({f,row});}
+ const due=Math.max(...keyed.map(x=>x.row.cleanup_at));for(const {f} of keyed)await control(f.id,{clock:due});
+ await cleanupControl(account,{clock:due});
+ const first=await accountCall(account,'cleanup-retry');assert.equal(first.status,200);assert.equal((await first.json()).scheduled_count,64);
+ let selected=[],tail;
+ for(const item of keyed){const seen=await control(item.f.id,{clock:due,retryInspect:true});if(seen.calls)selected.push(item);else tail=item;}
+ assert.equal(selected.length,64);assert.ok(tail);
+ for(const {f} of selected)await control(f.id,{clock:due,failR2:'delete',alarm:true});
+ assert.equal((await cleanupControl(account,{clock:due})).cleanup.pending_count,65);
+ const second=await accountCall(account,'cleanup-retry');assert.equal(second.status,200);
+ assert.equal((await control(tail.f.id,{clock:due,retryInspect:true})).calls,1);
+ await control(tail.f.id,{clock:due,alarm:true});
+ assert.equal(await(await mf.getR2Bucket('MEDIA_BUCKET')).head(tail.row.key),null);
+ assert.equal((await cleanupControl(account,{clock:due})).cleanup.pending_count,64);
+ // Remove the exact last-selected subject through real R2 cleanup. Remaining
+ // subjects must still be reachable from the now-absent lexical cursor.
+ const cursor=(await cleanupControl(account,{clock:due,cursor:true})).cursor;
+ for(const item of selected){const info=await control(item.f.id,{clock:due,retryInspect:true});if('media_cleanup:'+info.subject===cursor){await control(item.f.id,{clock:due,alarm:true});selected=selected.filter(x=>x!==item);break;}}
+ assert.equal(selected.length,63);
+ const before=[];for(const {f} of selected)before.push((await control(f.id,{clock:due,retryInspect:true})).calls);
+ const both=await Promise.all([accountCall(account,'cleanup-retry'),accountCall(account,'cleanup-retry')]);assert.deepEqual(both.map(r=>r.status),[200,200]);
+ for(let i=0;i<selected.length;i++)assert.equal((await control(selected[i].f.id,{clock:due,retryInspect:true})).calls,before[i]+2);
+ assert.equal((await accountCall('other-round-robin','cleanup-retry')).status,200);
+ assert.equal((await cleanupControl('other-round-robin',{clock:due})).cleanup.pending_count,0);
+ assert.equal(obligations.length,65);
+});
+
+
+test('concurrent cleanup retry reserves rotating batches before RPC and excludes future work',async()=>{
+ const account='parallel-cleanup',items=[];
+ for(let i=0;i<65;i++){const f=data();f.body.account=account;assert.equal((await call(f.id,'create',f.body)).status,201);const row=(await control(f.id)).find(([k])=>k==='media')[1];items.push({f,row});}
+ const due=Math.max(...items.map(x=>x.row.cleanup_at));for(const {f} of items)await control(f.id,{clock:due});
+ const future=data();future.body.account=account;await control(future.id,{clock:due});assert.equal((await call(future.id,'create',future.body)).status,201);
+ await cleanupControl(account,{clock:due});
+ const replies=await Promise.all([accountCall(account,'cleanup-retry'),accountCall(account,'cleanup-retry')]);
+ for(const response of replies){assert.equal(response.status,200);assert.deepEqual(await response.json(),{scheduled_count:64,unavailable_count:0,remaining_count:1,reason:null});}
+ let calls=0;for(const {f} of items){const value=(await control(f.id,{clock:due,retryInspect:true})).calls;assert.ok(value>=1);calls+=value;}assert.equal(calls,128);
+ assert.equal((await control(future.id,{clock:due,retryInspect:true})).calls,0);
+});

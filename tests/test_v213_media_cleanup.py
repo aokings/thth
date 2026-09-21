@@ -54,3 +54,13 @@ def test_incomplete_recovery_has_nonzero_exit_and_static_reason(monkeypatch,caps
     monkeypatch.setattr(approval_relay,'signed_request',lambda *a:dict(scheduled_count=0,unavailable_count=1,remaining_count=0,reason='cleanup_retry_unavailable'))
     assert media_cleanup.command(SimpleNamespace(account='alpha',by='operator',json=True))==2
     assert json.loads(capsys.readouterr().out)['reason']=='cleanup_retry_unavailable'
+
+
+def test_cleanup_help_discloses_unknown_write_recovery_limit(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.build_parser().parse_args(['admin','media','cleanup-retry','--help'])
+    assert exc.value.code==0
+    text=''.join(capsys.readouterr().out.split())
+    assert '結果不明の書込みは強制解除せず' in text
+    assert '本口だけでは回復できない場合があります' in text
+    assert '再投稿はしません' in text

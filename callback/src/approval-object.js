@@ -83,7 +83,7 @@ export class ApprovalAccount extends AtomicObject {
     if(old)this.put(key,{...old,failed:true});
     return {status:200};
   });}
-  cleanupRemove(subject){return this.atomic(()=>{this.ctx.storage.kv.delete('media_cleanup:'+subject);return {status:200};});}
+  cleanupRemove(subject){return this.atomic(()=>{this.ctx.storage.kv.delete('media_cleanup:'+subject);if(![...this.ctx.storage.kv.list({prefix:'media_cleanup:'})].length)this.ctx.storage.kv.delete('media_cleanup_cursor');return {status:200};});}
   cleanupStatus(){
     let pending_count=0,failed_count=0;
     for(const [,row] of this.ctx.storage.kv.list({prefix:'media_cleanup:'})){
@@ -94,8 +94,17 @@ export class ApprovalAccount extends AtomicObject {
   async cleanupRetry(account){
     let scheduled_count=0,unavailable_count=0;
     // The collection is private; only bounded counts leave this Worker.
-    const due=[...this.ctx.storage.kv.list({prefix:'media_cleanup:'})].filter(([,row])=>row.due_at<=this.now());
-    for(const [key,row] of due.slice(0,64)){
+    const selected=this.atomic(()=>{
+      const due=[...this.ctx.storage.kv.list({prefix:'media_cleanup:'})].filter(([,row])=>row.due_at<=this.now());
+      const cursor=this.ctx.storage.kv.get('media_cleanup_cursor')||'';
+      const next=due.findIndex(([key])=>key>cursor),start=next<0?0:next;
+      const batch=[...due.slice(start),...due.slice(0,start)].slice(0,64);
+      // Advance before RPC: failures and concurrent retries cannot pin a prefix.
+      if(batch.length)this.put('media_cleanup_cursor',batch.at(-1)[0]);
+      return {batch,remaining:Math.max(0,due.length-batch.length)};
+    });
+    if(!Array.isArray(selected?.batch))return fail(503,'cleanup_retry_unavailable');
+    for(const [key,row] of selected.batch){
       if(row.account!==account){unavailable_count++;continue;}
       try{
         const stub=this.env.MEDIA_OBJECT.get(this.env.MEDIA_OBJECT.idFromString(key.slice('media_cleanup:'.length)));
@@ -104,7 +113,7 @@ export class ApprovalAccount extends AtomicObject {
         scheduled_count++;
       }catch{unavailable_count++;}
     }
-    return {status:200,body:{scheduled_count,unavailable_count,remaining_count:Math.max(0,due.length-64),reason:unavailable_count?'cleanup_retry_unavailable':null}};
+    return {status:200,body:{scheduled_count,unavailable_count,remaining_count:selected.remaining,reason:unavailable_count?'cleanup_retry_unavailable':null}};
   }
 
   async manage(operation,body,ticket,account){
