@@ -38,8 +38,8 @@ class Packet:
         for at in range(a,b,65536):require(not any(self.read(at,min(65536,b-at))),'location_metadata_unverifiable: ogg padding')
 
 
-def _comments(p,notes):
-    require(p.read(0,8)==b'OpusTags');a=8
+def _comments(p,notes,*,vorbis=False):
+    marker=b'\x03vorbis' if vorbis else b'OpusTags';require(p.read(0,len(marker))==marker);a=len(marker)
     def field():
         nonlocal a
         require(a+4<=p.size);n=int.from_bytes(p.read(a,4),'little');a+=4;require(a+n<=p.size);x=a;a+=n;_text(p,x,a);return x,a
@@ -53,7 +53,7 @@ def _comments(p,notes):
         require(value_at is not None and all(32<=c<=126 and c!=61 for c in key))
         key=bytes(key).lower()
         require(not any(s in key for s in (b'location',b'gpslatitude',b'gpslongitude',b'gpsaltitude',b'geotag')) and key not in (b'gps',b'latitude',b'longitude',b'altitude'),'location_metadata_present: ogg field')
-        if key in (b'r128_track_gain',b'r128_album_gain'):
+        if not vorbis and key in (b'r128_track_gain',b'r128_album_gain'):
             require(key not in gains and 0<y-value_at<=6);gains.add(key);value=p.read(value_at,y-value_at)
             digits=value[1:] if value[:1] in (b'+',b'-') else value
             require(digits and all(48<=v<=57 for v in digits) and -32768<=int(value)<=32767)
@@ -70,6 +70,8 @@ def _comments(p,notes):
         else:require(key not in (b'coverart',b'coverartmime',b'xmp',b'exif',b'iptc'),'location_metadata_unverifiable: ogg comment extension')
     # RFC7845 permits an unspecified binary extension here. Only inspected
     # zero padding is accepted; the extension is not silently called private-free.
+    if vorbis:
+        require(a<p.size and p.read(a,1)[0]&1);require(p.read(a,1)==b'\x01','location_metadata_unverifiable: vorbis comment padding');a+=1
     p.zero(a,p.size);notes.add('non_location_metadata_retained')
 
 
@@ -132,7 +134,7 @@ def _audio(p,streams):
 
 
 def ogg(fd,size):
-    r=Reader(fd,size);at=0;active={};completed=set();notes=set();total=Fraction(0);group=[];unknown=False
+    r=Reader(fd,size);at=0;active={};completed=set();notes=set();total=Fraction(0);group=[];unknown=False;codecs=set()
     while at<size:
         head=r.read(at,27);require(head[:4]==b'OggS' and head[4]==0 and head[5]&~7==0)
         flags=head[5];granule=int.from_bytes(head[6:14],'little',signed=True);serial=int.from_bytes(head[14:18],'little');seq=int.from_bytes(head[18:22],'little')
@@ -142,24 +144,43 @@ def ogg(fd,size):
         if flags&2:
             require(all(item['stage']==1 and item['seq']==1 for item in active.values()))
             require(serial not in active and serial not in completed and seq==0 and not flags&1)
-            active[serial]={'seq':0,'packet':Packet(r),'continued':False,'stage':0,'samples':0,'last':None,'offset':None,'group_serial':serial}
+            active[serial]={'seq':0,'packet':Packet(r),'continued':False,'stage':0,'samples':0,'last':None,'offset':None,'group_serial':serial,'codec':None,'vorbis':None}
         require(serial in active);s=active[serial];require(seq==s['seq'] and bool(flags&1)==s['continued']);s['seq']=(seq+1)&0xffffffff
-        before_stage=s['stage'];page_samples=0;finished=0
+        before_stage=s['stage'];audio_stage=3 if s['codec']=='vorbis' else 2;page_samples=0;finished=0
         for index,n in enumerate(laces):
             s['packet'].append(payload,n);payload+=n;s['continued']=n==255
             if n==255:continue
             p=s['packet'];s['packet']=Packet(r);finished+=1
             if s['stage']==0:
                 require(flags&2 and index==len(laces)-1 and not flags&4 and granule==0)
-                s['streams'],s['preskip']=_header(p);s['stage']=1
+                if p.size>=7 and p.read(0,7)==b'\x01vorbis':
+                    from . import vorbisformats
+                    s['vorbis']=vorbisformats.header(p);s['codec']='vorbis';s['preskip']=0
+                else:s['streams'],s['preskip']=_header(p);s['codec']='opus'
+                codecs.add(s['codec']);s['stage']=1
             elif s['stage']==1:
-                require(index==len(laces)-1 and not flags&4 and granule==0);_comments(p,notes);s['stage']=2
+                require(not flags&4 and granule==0)
+                if s['codec']=='opus':require(index==len(laces)-1)
+                _comments(p,notes,vorbis=s['codec']=='vorbis');s['stage']=2
+            elif s['codec']=='vorbis' and s['stage']==2:
+                from . import vorbisformats
+                require(index==len(laces)-1 and not flags&4 and granule==0)
+                vorbisformats.setup(p,s['vorbis']);s['stage']=3
+            elif s['codec']=='vorbis':
+                from . import vorbisformats
+                page_samples+=vorbisformats.audio(p,s['vorbis'])
             else:page_samples+=_audio(p,s['streams'])
         if before_stage==0:require(s['stage']==1)
         if not finished:require(granule==-1)
-        elif before_stage>=2:
+        elif before_stage>=audio_stage:
             require(granule>=0)
-            if s['offset'] is None:
+            if s['codec']=='vorbis' and s['offset'] is None:
+                # A first EOS alone cannot distinguish start offset and end trim.
+                # Keep that duration unknown, rather than guessing an origin.
+                if s['vorbis']['packets']>=2 and not flags&4:
+                    s['offset']=granule-(s['samples']+page_samples)
+                    if s['offset']!=0:require(s['vorbis']['packets']==2)
+            elif s['offset'] is None:
                 require(granule>=page_samples or flags&4)
                 s['offset']=max(0,granule-page_samples)
             else:
@@ -167,13 +188,16 @@ def ogg(fd,size):
                 require(s['last']<=granule<=expected if flags&4 else granule==expected)
             s['samples']+=page_samples;s['last']=granule
         if flags&4:
-            require(s['stage']==2 and not s['continued'] and s['last'] is not None)
-            kept=s['last']-s['offset']-s['preskip'];require(kept>=0)
-            group.append(Fraction(kept,48000));del active[serial];completed.add(serial)
+            expected_stage=3 if s['codec']=='vorbis' else 2
+            require(s['stage']==expected_stage and not s['continued'] and s['last'] is not None)
+            if s['offset'] is None:unknown=True;kept=0
+            else:kept=s['last']-max(0,s['offset'])-s['preskip'];require(kept>=0)
+            rate=s['vorbis']['rate'] if s['codec']=='vorbis' else 48000
+            group.append(Fraction(kept,rate));del active[serial];completed.add(serial)
             if not active:
                 if len(group)>1:unknown=True # Multiplexed timelines are not guessed from per-stream lengths.
                 else:total+=group[0]
                 group=[]
         at=end
     require(at==size and not active and completed)
-    return Inspection('ogg','audio',None,None,None if unknown else float(total),metadata_notes=tuple(sorted(notes)))
+    return Inspection('ogg_vorbis' if 'vorbis' in codecs else 'ogg','audio',None,None,None if unknown else float(total),metadata_notes=tuple(sorted(notes)))
