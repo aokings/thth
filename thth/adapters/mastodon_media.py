@@ -46,8 +46,14 @@ def intent_error(manifest):
     if 'quote_approval_policy' in options and options['quote_approval_policy'] not in ('public','followers','nobody'):
         return 'invalid_quote_approval_policy: mastodon'
     if not manifest['files'] and not attachments and not options:return 'unsupported_attachment: mastodon/no_media'
-    if any(x['role']!='media' or x['kind'] not in ('image','video','audio') or x['format'] not in (set(MIME)|{'wav','flac','mp3','ogg','ogg_vorbis','webm'}) for x in manifest['files']):
-        return 'unsupported_attachment: mastodon/format'
+    parents={x['index']:x for x in manifest['files'] if x['role']=='media'}
+    seen_thumbnails=set()
+    for row in manifest['files']:
+        if row['role']=='thumbnail':
+            parent=row.get('parent')
+            if type(parent)is not int or parent not in parents or parent in seen_thumbnails or parents[parent]['kind'] not in ('audio','video') or row['index']!=parent or row['kind']!='image' or row['format'] not in MIME:return 'unsupported_attachment: mastodon/thumbnail_parent'
+            seen_thumbnails.add(parent)
+        elif row['role']!='media' or row['kind'] not in ('image','video','audio') or row['format'] not in (set(MIME)|{'wav','flac','mp3','ogg','ogg_vorbis','webm'}):return 'unsupported_attachment: mastodon/format'
     return None
 
 
@@ -160,19 +166,23 @@ def mime_for(row,cap=None):
 
 
 def metadata_notes(items):
-    return list(dict.fromkeys('warning: '+note for item in items for note in item.manifest.get('metadata_notes',[])))
+    notes=list(dict.fromkeys('warning: '+note for item in items for note in item.manifest.get('metadata_notes',[])))
+    if any('parent' in item.manifest for item in items):notes.append('warning: thumbnail_alt is approval-only (no provider alt field)')
+    return notes
 
 
 def check_limits(cap,items):
-    require(len(items)<=cap['max_media_attachments'],'media_limit_exceeded: count')
+    require(sum(item.manifest['role']=='media' for item in items)<=cap['max_media_attachments'],'media_limit_exceeded: count')
     for item in items:
         row=item.manifest;kind=row['kind'];fmt=row['format']
         mime_for(row,cap)
         # Mastodon larger_media_format? includes audio. Audio has no matrix/fps.
         limit=_positive(cap,('video' if kind=='audio' else kind)+'_size_limit')
         require(row['public_size']<=limit,'media_limit_exceeded: bytes')
-        require(len(row['alt'])<=_positive(cap,'description_limit'),'media_limit_exceeded: alt')
-        if kind=='audio':continue
+        if row['role']=='media':require(len(row['alt'])<=_positive(cap,'description_limit'),'media_limit_exceeded: alt')
+        # The pinned thumbnail validation shares IMAGE_LIMIT/MIME, not the
+        # main attachment matrix constraint; sanitizer still validates structure.
+        if kind=='audio' or row['role']=='thumbnail':continue
         matrix=_positive(cap,kind+'_matrix_limit')
         width,height=row['width'],row['height']
         if kind=='video':
@@ -236,18 +246,22 @@ def _json(adapter,method,path,*,data=None,headers=None,timeout=None):
     return code,value
 
 
-def _multipart(item,focus=None,*,mime=None):
+def _multipart(item,focus=None,*,mime=None,thumbnail=None,thumbnail_mime=None):
     boundary='thth-'+uuid.uuid4().hex
     fields=[('description',item.manifest['alt'])]
     if focus is not None:fields.append(('focus',','.join(str(v) for v in focus)))
     pre=b''.join((f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n').encode('utf-8') for key,value in fields)
     pre+=(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="attachment.{item.manifest["format"]}"\r\nContent-Type: {mime or mime_for(item.manifest)}\r\n\r\n').encode('ascii')
     end=f'\r\n--{boundary}--\r\n'.encode('ascii')
+    thumb_pre=(f'\r\n--{boundary}\r\nContent-Disposition: form-data; name="thumbnail"; filename="thumbnail.{thumbnail.manifest["format"]}"\r\nContent-Type: {thumbnail_mime or mime_for(thumbnail.manifest)}\r\n\r\n').encode('ascii') if thumbnail is not None else b''
     def chunks():
         yield pre
         yield from item.chunks()
+        if thumbnail is not None:
+            yield thumb_pre
+            yield from thumbnail.chunks()
         yield end
-    return chunks(),{'Content-Type':'multipart/form-data; boundary='+boundary,'Content-Length':str(len(pre)+item.manifest['public_size']+len(end))}
+    return chunks(),{'Content-Type':'multipart/form-data; boundary='+boundary,'Content-Length':str(len(pre)+item.manifest['public_size']+len(thumb_pre)+(thumbnail.manifest['public_size'] if thumbnail is not None else 0)+len(end))}
 
 
 def _entity(value,expected=None,ready=False,kind=None):
@@ -292,11 +306,14 @@ def publish(adapter,post,*,before_publish=None):
             cap=capabilities(value,adapter.instance);check_limits(cap,post.media_files)
             if post.media_cache:post.media_cache(cap)
         options=post.media_manifest['post_options']
-        for i,item in enumerate(post.media_files):
+        primary=[item for item in post.media_files if item.manifest['role']=='media']
+        thumbnails={item.manifest['parent']:item for item in post.media_files if 'parent' in item.manifest}
+        for i,item in enumerate(primary):
             item.verify()
             if before_publish:
                 veto=before_publish();require(not veto,str(veto))
-            body,headers=_multipart(item,(options.get('focus') or [None]*len(post.media_files))[i],mime=mime_for(item.manifest,cap))
+            thumbnail=thumbnails.get(item.manifest['index'])
+            body,headers=_multipart(item,(options.get('focus') or [None]*len(primary))[i],mime=mime_for(item.manifest,cap),thumbnail=thumbnail,thumbnail_mime=mime_for(thumbnail.manifest,cap) if thumbnail is not None else None)
             record('uploading',index=i)
             code,value=_json(adapter,'POST','/api/v2/media',data=body,headers=headers)
             require(code in (200,202),'media_response_invalid: upload status')
@@ -336,7 +353,7 @@ def publish(adapter,post,*,before_publish=None):
         require(code in (200,201) and type(value.get('id')) is str and value['id'].isascii() and value['id'].isdecimal(),'media_response_invalid: status id')
         if quote is not None:require(value.get('visibility') in ('public','unlisted'),'quote_result_non_public: mastodon')
         record('published',post_id=value['id'])
-        return base.PublishResult(value['id'],value.get('url'),ts,media=[{'sha256':x.manifest['public_sha256'],'kind':x.manifest['kind'],'alt_present':True,'remote_id':identifier} for x,identifier in zip(post.media_files,ids)])
+        return base.PublishResult(value['id'],value.get('url'),ts,media=[{'sha256':x.manifest['public_sha256'],'kind':x.manifest['kind'],'alt_present':True,'remote_id':identifier} for x,identifier in zip(primary,ids)])
     except accounts.AccountStopped:
         # The stop authority forbids new state writes; keep the last durable
         # intent, including uploaded IDs, and never downgrade it to clearable.

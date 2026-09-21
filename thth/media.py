@@ -55,8 +55,8 @@ def validate(rows):
         raise MediaError('media: array required')
     seen = set()
     for row in rows:
-        if not isinstance(row, dict) or set(row) != {'file', 'alt'}:
-            raise MediaError('media: exactly file and alt required')
+        if not isinstance(row, dict) or set(row) not in ({'file', 'alt'}, {'file', 'alt', 'thumbnail_file', 'thumbnail_alt'}):
+            raise MediaError('media: exactly file and alt required, with optional paired thumbnail fields')
         validate_path(row['file'])
         alt = row['alt']
         if not isinstance(alt, str) or not alt.strip() or any(ord(c) < 32 or ord(c) == 127 for c in alt):
@@ -64,6 +64,11 @@ def validate(rows):
         if row['file'] in seen:
             raise MediaError('media: duplicate file')
         seen.add(row['file'])
+        if 'thumbnail_file' in row:
+            validate_path(row['thumbnail_file'])
+            validate([{'file':row['thumbnail_file'],'alt':row['thumbnail_alt']}])
+            if row['thumbnail_file'] in seen:raise MediaError('media: duplicate file')
+            seen.add(row['thumbnail_file'])
     return rows
 
 
@@ -96,7 +101,7 @@ def parse_block(lines, start, indent):
         else:
             raise MediaError('media: invalid indentation')
         key, colon, value = item.partition(':')
-        if not colon or key not in ('file', 'alt') or key in current:
+        if not colon or key not in ('file', 'alt', 'thumbnail_file', 'thumbnail_alt') or key in current:
             raise MediaError('media: unknown or duplicate field')
         current[key] = _scalar(value)
         i += 1
@@ -184,6 +189,7 @@ class Source:
 def pin_sources(repo_dir, rows):
     """No writes, network or format claims; hash exactly the pinned source bytes."""
     validate(rows)
+    if any(set(row)!={'file','alt'} for row in rows):raise MediaError('media: source pins require flattened files')
     sources = []
     root_fd = None
     try:
@@ -335,6 +341,7 @@ def _strong_ref(value):
 def validate_declarations(fm,medium):
     """No provider calls or guessed limits. Every accepted effect enters digest."""
     rows=fm.get('media',[]); validate(rows)
+    if medium!='mastodon' and any('thumbnail_file' in row for row in rows):raise MediaError('media: parent thumbnail requires mastodon')
     attachments=fm.get('attachments',[]); options=fm.get('post_options',{}); captions=fm.get('captions',[])
     if type(attachments) is not list or type(options) is not dict or type(captions) is not list: raise MediaError('attachments: wrong container type')
     fields={
@@ -465,16 +472,20 @@ def prepare(repo_dir,fm,medium):
     """Shared exact bytes and metadata; pins remain live for the caller's use."""
     from . import mediaformats
     attachments,options,captions=validate_declarations(fm,medium)
-    files=list(fm.get('media',[])); roles=[('media',i+1) for i in range(len(files))]
+    media_rows=fm.get('media',[])
+    files=[{'file':row['file'],'alt':row['alt']} for row in media_rows]; roles=[('media',i+1,None) for i in range(len(files))]
+    for index,row in enumerate(media_rows,1):
+        if 'thumbnail_file' in row:
+            files.append({'file':row['thumbnail_file'],'alt':row['thumbnail_alt']});roles.append(('thumbnail',index,index))
     for index,row in enumerate(attachments,1):
         if 'thumbnail_file' in row:
-            files.append({'file':row['thumbnail_file'],'alt':row['thumbnail_alt']}); roles.append(('thumbnail',index))
+            files.append({'file':row['thumbnail_file'],'alt':row['thumbnail_alt']}); roles.append(('thumbnail',index,None))
     for index,row in enumerate(captions,1):
-        files.append({'file':row['file'],'alt':row['lang']}); roles.append(('caption',index))
+        files.append({'file':row['file'],'alt':row['lang']}); roles.append(('caption',index,None))
     prepared=[]
     try:
         with pin_sources(repo_dir,files) as sources, contextlib.ExitStack() as snapshots:
-            for source,(role,index) in zip(sources,roles):
+            for source,(role,index,parent) in zip(sources,roles):
                 # Anonymous, private snapshot: no provider ever reads mutable repo bytes.
                 snapshot=snapshots.enter_context(tempfile.TemporaryFile(mode='w+b'))
                 snapshot_hash=hashlib.sha256(); offset=0
@@ -500,9 +511,12 @@ def prepare(repo_dir,fm,medium):
                         raise MediaError('media: public structure is not stable')
                 sha=hashlib.sha256(public).hexdigest() if public is not None else source.source_sha256
                 row={**source.fingerprint(),'role':role,'index':index,'public_sha256':sha,'public_size':len(public) if public is not None else source.size,'format':info.format,'kind':info.kind,'width':info.width,'height':info.height,'duration':info.duration,'orientation':info.orientation}
+                if parent is not None:row['parent']=parent
                 if info.metadata_notes:row['metadata_notes']=list(info.metadata_notes)
                 source.verify();prepared.append(Prepared(row,source,public,snapshot.fileno()))
             media_files=[x.manifest for x in prepared if x.manifest['role']=='media']
+            for item in prepared:
+                if 'parent' in item.manifest and media_files[item.manifest['parent']-1]['kind'] not in ('audio','video'):raise MediaError('media: thumbnail parent must be audio or video')
             if medium=='bluesky' and len({x['kind'] for x in media_files})>1:raise MediaError('attachments: incompatible Bluesky media types')
             for caption in captions:
                 if media_files[caption['media_index']-1]['kind']!='video':raise MediaError('captions: video required')
@@ -534,6 +548,7 @@ def display(manifest):
         lines.append(f"size: source {row['size']} bytes / public {row['public_size']} bytes")
         label="lang" if row["role"]=="caption" else "alt"
         lines.append(f"{label}: {row['alt']}")
+        if 'parent' in row:lines.append(f"parent: {row['parent']} / warning: thumbnail_alt is approval-only (no provider alt field)")
         for note in row.get('metadata_notes',[]):lines.append('warning: '+note)
         lines.append(f"source SHA256: {row['source_sha256']}")
         lines.append(f"public SHA256: {row['public_sha256']}")
@@ -548,8 +563,13 @@ def prepared_component(manifest):
     # This API accepts only the manifest produced by prepare, never binary bytes.
     if type(manifest['files']) is not list or type(manifest['attachments']) is not list or type(manifest['post_options']) is not dict or type(manifest['captions']) is not list:
         raise MediaError('media: invalid prepared container')
+    thumbnail_parents=set()
     for row in manifest['files']:
-        if not isinstance(row,dict) or set(row)-{'metadata_notes'}!={'file','alt','source_sha256','size','role','index','public_sha256','public_size','format','kind','width','height','duration','orientation'}:raise MediaError('media: invalid prepared file')
+        if not isinstance(row,dict) or set(row)-{'metadata_notes','parent'}!={'file','alt','source_sha256','size','role','index','public_sha256','public_size','format','kind','width','height','duration','orientation'}:raise MediaError('media: invalid prepared file')
+        if 'parent' in row:
+            parent=row['parent'];parents=[x for x in manifest['files'] if isinstance(x,dict) and x.get('role')=='media' and x.get('index')==parent]
+            if type(parent)is not int or parent<1 or row['role']!='thumbnail' or row['kind']!='image' or row['index']!=parent or len(parents)!=1 or parents[0].get('kind') not in ('audio','video') or parent in thumbnail_parents:raise MediaError('media: invalid thumbnail parent')
+            thumbnail_parents.add(parent)
         if 'metadata_notes' in row and (type(row['metadata_notes']) is not list or any(note not in ('non_location_metadata_retained','embedded_cover_retained') for note in row['metadata_notes'])):raise MediaError('media: invalid metadata notes')
         fingerprint_component([{k:row[k] for k in ('file','alt','source_sha256','size')}])
         if not isinstance(row['public_sha256'],str) or not re.fullmatch('[0-9a-f]{64}',row['public_sha256']) or type(row['public_size']) is not int or row['public_size']<0:raise MediaError('media: invalid public fingerprint')
