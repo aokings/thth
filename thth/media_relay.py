@@ -60,6 +60,13 @@ def _json(account,request):
             if type(value) is not dict or 'error' in value:raise MediaRelayError('media_relay_response_invalid')
             return value
     except accounts.AccountStopped:raise
+    except httpsafe.EndpointRejected:
+        raise httpsafe.EndpointRejected('media_relay_endpoint_rejected') from None
+    except urllib.error.HTTPError as exc:
+        # Preserve only status, never a capability URL, response body or headers.
+        code=exc.code
+        exc.close()
+        raise urllib.error.HTTPError('',code,'media_relay_http_error',None,None) from None
     except (OSError,ValueError,urllib.error.URLError) as exc:
         if isinstance(exc,MediaRelayError):raise
         raise MediaRelayError('media_relay_outcome_unknown') from None

@@ -1,0 +1,69 @@
+"""Stage56 privacy gate: typed metadata is inspected before all video providers."""
+import hashlib
+import struct
+from types import SimpleNamespace
+import pytest
+from thth import accounts,media,media_delivery,mediaformats
+from thth.adapters.base import Post
+from tests.test_v213_media_formats import box,mp4,inspect
+
+
+def item(payload):
+    return box(b'udta',box(b'meta',bytes(4)+box(b'ilst',box(b'\xa9nam',payload))))
+
+
+def typed(kind,value):return item(box(b'data',struct.pack('>II',kind,0)+value))
+
+
+def nested():
+    return typed(28,box(b'meta',bytes(4)+box(b'ilst',box(b'\xa9xyz',box(b'data',struct.pack('>II',1,0)+b'+12+34/')))))
+
+
+@pytest.mark.parametrize('medium',['mastodon','threads','bluesky'])
+@pytest.mark.parametrize('extra',[nested(),typed(0,b'implicit'),typed(27,b'BM opaque'),typed(13,b'\xff\xd8 binary cover'),typed(14,b'\x89PNG\r\n\x1a\n'),typed(255,b'future')])
+def test_reject_before_provider_and_keep_original(tmp_path,monkeypatch,medium,extra):
+    repo=tmp_path/'repo';repo.mkdir();p=repo/'v.mp4';p.write_bytes(mp4())
+    cfg={'account':'alpha','media':medium,'repo_dir':str(repo)}
+    fm={'media':[{'file':'v.mp4','alt':'video'}]}
+    manifest=media.manifest_for(fm,cfg)
+    raw=mp4(extra);p.write_bytes(raw);calls=[]
+    def forbidden(*args,**kwargs):calls.append('effect');raise AssertionError('provider or journal reached')
+    adapter=SimpleNamespace(prepared_media_supported=True,publish=forbidden)
+    monkeypatch.setattr(media_delivery,'_progress',forbidden)
+    monkeypatch.setattr(accounts,'state_dir_for',lambda name:str(tmp_path/'state'))
+    with pytest.raises(media.MediaError,match='location_metadata_unverifiable: metadata_value_type'):
+        media.manifest_for(fm,cfg)
+    result=media_delivery.publish(adapter,Post(text='video'),cfg=cfg,fm=fm,manifest=manifest,state_dir=str(tmp_path/'state'))
+    assert result.post_id is None and result.failure=='publish_vetoed'
+    assert 'metadata_value_type' in result.error and calls==[] and p.read_bytes()==raw
+
+
+@pytest.mark.parametrize('kind,value',[(1,'曲名'.encode()),(2,'曲名'.encode('utf-16-be')),(3,'曲名'.encode('shift_jis')),(4,b'title'),(5,b'\0t'),(21,b'\0'),(22,bytes(3)),(23,bytes(4)),(24,bytes(8)),(65,bytes(1)),(66,bytes(2)),(67,bytes(4)),(70,bytes(8)),(71,bytes(8)),(72,bytes(16)),(74,bytes(8)),(75,bytes(1)),(76,bytes(2)),(77,bytes(4)),(78,bytes(8)),(79,bytes(72)),(1,b'a'*65535+'茶'.encode())])
+def test_known_scalar_keeps_bytes(tmp_path,kind,value):
+    raw=mp4(typed(kind,value));(tmp_path/'v.mp4').write_bytes(raw)
+    with media.prepare(tmp_path,{'media':[{'file':'v.mp4','alt':'video'}]},'threads') as (manifest,items):
+        assert b''.join(items[0].chunks())==raw
+        row=manifest['files'][0];assert row['source_sha256']==row['public_sha256']==hashlib.sha256(raw).hexdigest()
+        assert 'metadata_notes' not in row and row['duration']==2.5
+
+
+@pytest.mark.parametrize('kind,value',[(1,b'\xff'),(2,b'a'),(21,b''),(21,bytes(5)),(23,bytes(8)),(79,bytes(8))])
+def test_scalar_width_and_encoding(tmp_path,kind,value):
+    with pytest.raises(mediaformats.FormatError,match='invalid_attachment_structure'):inspect(tmp_path,mp4(typed(kind,value)))
+
+
+@pytest.mark.parametrize('size',range(8))
+def test_data_header_required(tmp_path,size):
+    with pytest.raises(mediaformats.FormatError,match='invalid_attachment_structure'):inspect(tmp_path,mp4(item(box(b'data',bytes(size)))))
+
+
+@pytest.mark.parametrize('key',[b'mean',b'name'])
+@pytest.mark.parametrize('value,reason',[(bytes(4)+b'com.apple.quicktime.location.ISO6709','location_metadata_present'),(bytes(4)+b'GPSLatitude','location_metadata_present'),(b'bad','invalid_attachment_structure'),(b'\x01\0\0\0title','invalid_attachment_structure'),(bytes(4)+b'\xff','invalid_attachment_structure')])
+def test_freeform_structure_and_location(tmp_path,key,value,reason):
+    with pytest.raises(mediaformats.FormatError,match=reason):inspect(tmp_path,mp4(item(box(key,value))))
+
+
+def test_ordinary_freeform_and_mdat_are_not_keyword_scanned(tmp_path):
+    payload=box(b'mean',bytes(4)+b'example')+box(b'name',bytes(4)+b'title')+box(b'data',struct.pack('>II',1,0)+b'GPS word is ordinary title')
+    raw=mp4(item(payload)).replace(b'synthetic-sample',b'GPSLatitude-mdat')
+    assert inspect(tmp_path,raw).public_bytes is None

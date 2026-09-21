@@ -111,6 +111,8 @@ def diagnose(account_name: str) -> dict:
     if static['error']:return static
     report=_diagnose(account_name)
     report['directory_checks']=static['directory_checks']
+    from . import media_cleanup
+    if media_cleanup.configured():report['media_cleanup']=media_cleanup.observe(account_name)
     return report
 
 
@@ -503,6 +505,8 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         return 0 if report.get("probes") and all(
             p["ok"] is not False for p in report["probes"]) else 1
 
+    cleanup=report.get('media_cleanup')
+    if cleanup:log('media cleanup: '+str(cleanup['reason'] or 'confirmed')+' (pending='+str(cleanup['pending_count'])+', failed='+str(cleanup['failed_count'])+')')
     log(どこ)
     for n in notices:
         log(n)

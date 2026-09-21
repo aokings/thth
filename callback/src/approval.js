@@ -76,10 +76,10 @@ export async function approvalRequest(request,env,url) {
       const result=await stub.approve(form.get('secret'),form.get('csrf'));
       return page(result.status,result.status===200?`<h1>${accepted[result.body.kind]}</h1><p>サーバが内容を再確認します。操作の完了は元のセッションで確認してください。</p>`:'<h1>承認できませんでした</h1><p>承認 secret または有効期限を確認してください。繰り返し失敗すると管理者による解除が必要です。</p>');
     }
-    const route=/^\/approval\/(person|session|account|deletion)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|consume|cancel|list|read|verify|complete|discard)$/.exec(url.pathname);
+    const route=/^\/approval\/(person|session|account|deletion)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|consume|cancel|list|read|verify|complete|discard|cleanup-retry)$/.exec(url.pathname);
     if(!route||request.method!=='POST')return reply(404,{error:'not_found'});
     const [,type,subject,operation]=route;
-    if(type==='deletion'?!(subject==='inbox'&&operation==='list'||STATE_PATTERN.test(subject)&&['read','verify','complete','discard'].includes(operation)):type==='account'?!PERSON.test(subject)||!['revoke','status'].includes(operation):type==='person'?!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation):!STATE_PATTERN.test(subject)||!['create','consume','status','cancel'].includes(operation))return reply(400,{error:'invalid_request'});
+    if(type==='deletion'?!(subject==='inbox'&&operation==='list'||STATE_PATTERN.test(subject)&&['read','verify','complete','discard'].includes(operation)):type==='account'?!PERSON.test(subject)||!['revoke','status','cleanup-retry'].includes(operation):type==='person'?!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation):!STATE_PATTERN.test(subject)||!['create','consume','status','cancel'].includes(operation))return reply(400,{error:'invalid_request'});
     if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(400,{error:'invalid_request'});
     if(!env.APPROVAL_VERIFY_LIMIT || !(await env.APPROVAL_VERIFY_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
     const raw=await boundedBody(request), ticket=await authenticate(request,env,url,raw,type==='session'?'job':'operator',subject,operation);

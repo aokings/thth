@@ -21,6 +21,9 @@ def require(ok,reason):
 
 
 def intent_error(manifest):
+    if any(row['role']=='media' and row['kind']=='video' for row in manifest['files']):
+        from . import bluesky_video
+        return bluesky_video.intent_error(manifest)
     if manifest['attachments']:return 'unsupported_attachment: bluesky/typed_attachment_pending'
     if manifest['captions']:return 'unsupported_attachment: bluesky/image_captions'
     if set(manifest['post_options'])-{'gallery'}:return 'unsupported_attachment: bluesky/image_post_options'
@@ -71,6 +74,9 @@ def _json(adapter,nsid,*,data,content_type,length):
 
 
 def publish(adapter,post,*,before_publish=None):
+    if any(row['role']=='media' and row['kind']=='video' for row in post.media_manifest['files']):
+        from . import bluesky_video
+        return bluesky_video.publish(adapter,post,before_publish=before_publish)
     from .bluesky import POST_COLLECTION,post_url
     ts=jst.iso();phase='preflight';ids=[];progress=post.media_progress
     def record(value,**details):
