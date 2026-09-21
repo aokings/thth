@@ -20,14 +20,33 @@ def require(ok,reason):
     if not ok:raise media.MediaError(reason)
 
 
+def quote_error(manifest):
+    for row in manifest['attachments']:
+        if row['type']=='quote':
+            try:media._strong_ref({'uri':row['uri'],'cid':row['cid']})
+            except (KeyError,ValueError):return 'invalid_attachment: bluesky/quote_reference'
+    return None
+
+
+def with_quote(embed,manifest):
+    """Fixed record/recordWithMedia Lexicons; no referenced-record fetch."""
+    quote=next((a for a in manifest['attachments'] if a['type']=='quote'),None)
+    if quote is None:return embed
+    record={'$type':'app.bsky.embed.record','record':{'uri':quote['uri'],'cid':quote['cid']}}
+    return {'$type':'app.bsky.embed.recordWithMedia','record':record,'media':embed} if embed is not None else record
+
+
 def intent_error(manifest):
+    why=quote_error(manifest)
+    if why:return why
     if any(row['role']=='media' and row['kind']=='video' for row in manifest['files']):
         from . import bluesky_video
         return bluesky_video.intent_error(manifest)
-    if manifest['attachments']:
-        if len(manifest['attachments'])!=1 or manifest['attachments'][0]['type']!='link':return 'unsupported_attachment: bluesky/typed_attachment_pending'
+    attachments=[a for a in manifest['attachments'] if a['type']!='quote']
+    if attachments:
+        if len(attachments)!=1 or attachments[0]['type']!='link':return 'unsupported_attachment: bluesky/typed_attachment_pending'
         if manifest['captions'] or manifest['post_options']:return 'unsupported_attachment: bluesky/external_post_options'
-        card=manifest['attachments'][0];rows=manifest['files']
+        card=attachments[0];rows=manifest['files']
         if len(rows)!=(1 if 'thumbnail_file' in card else 0):return 'media_prepared_mismatch'
         for row in rows:
             if row['role']!='thumbnail' or row['kind']!='image' or row['format'] not in MIME:return 'unsupported_attachment: bluesky/external_thumbnail'
@@ -37,7 +56,9 @@ def intent_error(manifest):
     if manifest['captions']:return 'unsupported_attachment: bluesky/image_captions'
     if set(manifest['post_options'])-{'gallery'}:return 'unsupported_attachment: bluesky/image_post_options'
     rows=manifest['files']
-    if not rows:return 'unsupported_attachment: bluesky/no_images'
+    if not rows:
+        if manifest['attachments'] and not manifest['post_options']:return None
+        return 'unsupported_attachment: bluesky/no_images'
     for row in rows:
         if row['role']!='media' or row['kind']!='image' or row['format'] not in MIME:
             return 'unsupported_attachment: bluesky/'+str(row['format'])
@@ -103,7 +124,7 @@ def publish(adapter,post,*,before_publish=None):
         session=adapter.session()
         if post.reply_to:record_body['reply']=adapter._reply_ref(post.reply_to)
         entries=[];gallery=post.media_manifest['post_options'].get('gallery',False)
-        card=post.media_manifest['attachments'][0] if post.media_manifest['attachments'] else None
+        card=next((a for a in post.media_manifest['attachments'] if a['type']=='link'),None)
         for index,item in enumerate(post.media_files):
             veto();row=item.manifest
             width,height=row['width'],row['height']
@@ -120,7 +141,8 @@ def publish(adapter,post,*,before_publish=None):
             if entries:external['thumb']=entries[0]['image']
             if 'associated_refs' in card:external['associatedRefs']=card['associated_refs']
             record_body['embed']={'$type':'app.bsky.embed.external','external':external}
-        else:record_body['embed']={'$type':'app.bsky.embed.gallery','items':entries} if gallery else {'$type':'app.bsky.embed.images','images':entries}
+        elif entries:record_body['embed']={'$type':'app.bsky.embed.gallery','items':entries} if gallery else {'$type':'app.bsky.embed.images','images':entries}
+        record_body['embed']=with_quote(record_body.get('embed'),post.media_manifest)
         veto()
         payload=json.dumps({'repo':session['did'],'collection':POST_COLLECTION,'record':record_body},ensure_ascii=False).encode('utf-8')
         record('publishing')

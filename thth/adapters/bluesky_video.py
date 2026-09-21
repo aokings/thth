@@ -32,7 +32,9 @@ def require(value,reason):
 
 
 def intent_error(manifest):
-    if manifest['attachments']:return 'unsupported_attachment: bluesky/typed_attachment_pending'
+    why=images.quote_error(manifest)
+    if why:return why
+    if any(a['type']!='quote' for a in manifest['attachments']):return 'unsupported_attachment: bluesky/typed_attachment_pending'
     if set(manifest['post_options'])-{'presentation'}:return 'unsupported_attachment: bluesky/video_post_options'
     rows=[r for r in manifest['files'] if r['role']=='media']
     if len(rows)!=1:return 'media_limit_exceeded: video_count'
@@ -210,7 +212,7 @@ def publish(adapter,post,*,before_publish=None):
             caption_blob=_caption_blob(response,caption.manifest);ids.append(caption_blob['ref']['$link']);record('ready')
             captions.append({'lang':declaration['lang'],'file':caption_blob})
         if captions:embed['captions']=captions
-        body['embed']=embed;veto()
+        body['embed']=images.with_quote(embed,post.media_manifest);veto()
         payload=json.dumps({'repo':did,'collection':POST_COLLECTION,'record':body},ensure_ascii=False).encode()
         record('publishing')
         response=images._json(adapter,'com.atproto.repo.createRecord',data=payload,content_type='application/json',length=len(payload))

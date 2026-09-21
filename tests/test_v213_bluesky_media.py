@@ -165,9 +165,9 @@ def test_unsupported_options_loud_before_http(env,wire,option,value):
     assert result.error=='unsupported_attachment: bluesky/image_post_options' and not wire['calls']
 
 
-def test_typed_quote_not_dropped(env,wire):
+def test_invalid_quote_reference_refused_before_network(env,wire):
     result,_,_=invoke(env,fm={'media':[{'file':'a.png','alt':'a'}],'attachments':[{'type':'quote','uri':'at://did:plc:other/app.bsky.feed.post/x','cid':'c'}]})
-    assert result.error=='unsupported_attachment: bluesky/typed_attachment_pending' and not wire['calls']
+    assert result.error=='invalid_attachment: bluesky/quote_reference' and not wire['calls']
 
 
 def test_lint_local_count_limit_no_http(env,wire):
