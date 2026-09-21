@@ -81,13 +81,25 @@ def difference(before, after):
     return result
 
 
+# この log の `account` 列は、口座名だけでなく **app 設定の subject**
+# （`appconfig.subject()` の `app-<媒体>[-<origin の sha256>]`）も運ぶ。
+# それは置き場の中のファイル名ではないので、口座名の長さ上限
+# （`accounts.NAME_MAX`）を緩める理由にはしない。形で受ける。
+APP_SUBJECT = re.compile(r'^app-[a-z]+(?:-[0-9a-f]{64})?$')
+
+
+def subject_is_safe(value):
+    """口座名、または app 設定の subject か。"""
+    return accounts.name_is_safe(value) or (isinstance(value, str) and bool(APP_SUBJECT.match(value)))
+
+
 def provenance(by, via='cli'):
     return dict(created_at=jst.iso(), created_by=actor(by), created_via=via, created_host=socket.gethostname())
 
 
 def append(event, account, cfg, *, by, via='cli', diff=None, run_id=None):
     actor(by)
-    if event not in EVENTS or not accounts.name_is_safe(account) or via not in ('cli', 'mcp', 'http'):
+    if event not in EVENTS or not subject_is_safe(account) or via not in ('cli', 'mcp', 'http'):
         raise ValueError('invalid_admin_event')
     row = dict(at=jst.iso(), by=clean(by), via=via, host=socket.gethostname(), event=event,
                account=account, medium=cfg.get('media'), diff=diff or {}, run_id=run_id)
@@ -133,7 +145,7 @@ def read(*, since=None, account=None, event=None):
                 try:
                     row = json.loads(line)
                     if (not isinstance(row, dict) or row.get('event') not in EVENTS or not jst.parse(row.get('at'))
-                            or not accounts.name_is_safe(row.get('account')) or not isinstance(row.get('diff'), dict)):
+                            or not subject_is_safe(row.get('account')) or not isinstance(row.get('diff'), dict)):
                         raise ValueError('broken')
                     actor(row.get('by'))
                     if any(not isinstance(k, str) or not isinstance(v, list) or len(v) != 2 for k, v in row['diff'].items()):
