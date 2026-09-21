@@ -311,6 +311,27 @@ def _https(value,field):
     if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password: raise MediaError(f'attachments: HTTPS {field} required')
 
 
+def _strong_ref(value):
+    """Lexicon strongRef syntax only; never fetch or rewrite referenced records."""
+    import base64
+    import re
+    if type(value) is not dict or set(value)!={'uri','cid'}: raise MediaError('attachments: invalid strongRef')
+    uri,cid=value['uri'],value['cid']
+    if type(uri) is not str or len(uri)>8192 or not uri.startswith('at://'): raise MediaError('attachments: invalid strongRef uri')
+    parts=uri[5:].split('/')
+    if len(parts)!=3: raise MediaError('attachments: invalid strongRef uri')
+    authority,nsid,rkey=parts
+    label=r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
+    did=len(authority)<=2048 and re.fullmatch(r'did:[a-z]+:[a-zA-Z0-9._:%-]*[a-zA-Z0-9._-]',authority)
+    handle=len(authority)<=253 and re.fullmatch(label+r'(?:\.'+label+r')*\.[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?',authority)
+    domain,_,name=nsid.rpartition('.')
+    nsid_ok=len(nsid)<=317 and len(domain)<=253 and re.fullmatch(r'[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.'+label+r')+',domain) and re.fullmatch(r'[A-Za-z][A-Za-z0-9]{0,62}',name)
+    if not (did or handle) or not nsid_ok or rkey in ('.','..') or not re.fullmatch(r'[A-Za-z0-9._~:-]{1,512}',rkey): raise MediaError('attachments: invalid strongRef uri')
+    if type(cid) is not str or not re.fullmatch(r'b[a-z2-7]{58}',cid): raise MediaError('attachments: invalid strongRef cid')
+    raw=base64.b32decode(cid[1:].upper()+'='*((-len(cid[1:]))%8))
+    if len(raw)!=36 or raw[:4]!=b'\x01\x71\x12\x20' or 'b'+base64.b32encode(raw).decode().lower().rstrip('=')!=cid: raise MediaError('attachments: invalid strongRef cid')
+
+
 def validate_declarations(fm,medium):
     """No provider calls or guessed limits. Every accepted effect enters digest."""
     rows=fm.get('media',[]); validate(rows)
@@ -318,7 +339,7 @@ def validate_declarations(fm,medium):
     if type(attachments) is not list or type(options) is not dict or type(captions) is not list: raise MediaError('attachments: wrong container type')
     fields={
         'quote':({'type','uri'},{'cid'}),
-        'link':({'type','url'},{'title','description','thumbnail_file','thumbnail_alt'}),
+        'link':({'type','url'},{'title','description','thumbnail_file','thumbnail_alt','associated_refs'}),
         'poll':({'type','options'},{'expires_in','multiple','hide_totals'}),
         'text':({'type','text'},{'link','styles'}),
         'gif':({'type','provider','id'},set()),
@@ -341,6 +362,9 @@ def validate_declarations(fm,medium):
             for key in ('title','description'):
                 if key in row: _text(row[key],key,empty=True)
             if medium=='bluesky' and not {'title','description'}<=set(row): raise MediaError('attachments: Bluesky card title/description required')
+            if 'associated_refs' in row:
+                if medium!='bluesky' or type(row['associated_refs']) is not list: raise MediaError('attachments: invalid associated_refs')
+                for ref in row['associated_refs']: _strong_ref(ref)
             if ('thumbnail_file' in row)!=('thumbnail_alt' in row): raise MediaError('attachments: thumbnail file and alt required together')
             if 'thumbnail_file' in row: validate([{'file':row['thumbnail_file'],'alt':row['thumbnail_alt']}])
         elif kind=='poll':

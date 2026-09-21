@@ -132,7 +132,7 @@ def lint_notes(cfg,fm,*,text=None):
     if cfg.get('media')=='bluesky':
         try:
             with media.prepare(cfg['repo_dir'],fm,'bluesky') as (manifest,_):reason=error_for(cfg,manifest)
-            return [reason] if reason else ['warning: bluesky video daily quota/email permission unobserved; rechecked before upload'] if any(r['kind']=='video' for r in manifest['files']) else []
+            return [reason] if reason else ['warning: bluesky video daily quota/email permission unobserved; rechecked before upload'] if any(r['kind']=='video' for r in manifest['files']) else ['warning: bluesky external thumbnail_alt is a local approval note; provider has no thumbnail alt field'] if any(a['type']=='link' and 'thumbnail_alt' in a for a in manifest['attachments']) else []
         except (OSError,ValueError) as exc:
             return [str(exc) if isinstance(exc,media.MediaError) else 'media_unavailable']
     if cfg.get('media')!='mastodon':return []
