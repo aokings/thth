@@ -35,6 +35,12 @@ def intent_error(manifest):
             elif a['type']=='quote':
                 if set(a)!={'type','uri'}:return 'unsupported_attachment: threads/quote_option'
                 if type(a['uri']) is not str or not a['uri'].isascii() or not a['uri'].isdecimal():return 'invalid_attachment: threads/quote_id'
+            elif a['type']=='poll':
+                if set(a)!={'type','options'}:return 'unsupported_attachment: threads/poll_option'
+                if any(row['type'] not in ('poll','quote') for row in manifest['attachments']):return 'unsupported_attachment: threads/poll_combination'
+                if not 2<=len(a['options'])<=4:return 'media_limit_exceeded: poll_options'
+                # C20-B: provisional code-point count for this new field only.
+                if any(not 1<=len(option)<=25 for option in a['options']):return 'media_limit_exceeded: poll_option_characters'
             elif a['type']=='gif':
                 if manifest['files']:return 'unsupported_attachment: threads/gif_requires_text'
                 if set(a)!={'type','provider','id'}:return 'unsupported_attachment: threads/gif_option'
@@ -75,6 +81,8 @@ def text_params(manifest,text):
     params={'link_attachment':links[0]} if links else {}
     quotes=[a['uri'] for a in manifest['attachments'] if a['type']=='quote']
     if quotes:params['quote_post_id']=quotes[0]
+    polls=[a for a in manifest['attachments'] if a['type']=='poll']
+    if polls:params['poll_attachment']=json.dumps(dict(zip(('option_a','option_b','option_c','option_d'),polls[0]['options'])),ensure_ascii=False,separators=(',',':'))
     gifs=[a for a in manifest['attachments'] if a['type']=='gif']
     if gifs:params['gif_attachment']=json.dumps({'gif_id':gifs[0]['id'],'provider':gifs[0]['provider']},ensure_ascii=False,separators=(',',':'))
     return params
@@ -113,7 +121,7 @@ def video_notes(items):
 
 
 def notes(manifest,items=()):
-    return ['warning: threads provider scales image width below 320 or above 1440; ICC retained, provider converts color space' for row in manifest['files'] if row['kind']=='image' and (row['height'] if row['orientation'] in (5,6,7,8) else row['width']) not in range(320,1441)]+video_notes(items)
+    return (['warning: threads poll option characters use provisional Unicode code points; live-provider counting unverified'] if any(a['type']=='poll' for a in manifest['attachments']) else [])+['warning: threads provider scales image width below 320 or above 1440; ICC retained, provider converts color space' for row in manifest['files'] if row['kind']=='image' and (row['height'] if row['orientation'] in (5,6,7,8) else row['width']) not in range(320,1441)]+video_notes(items)
 
 
 class NoRedirect(httpsafe.SameOriginRedirectHandler):
