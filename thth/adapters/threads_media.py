@@ -59,7 +59,7 @@ def intent_error(manifest):
                 if set(a)!={'type','provider','id'}:return 'unsupported_attachment: threads/gif_option'
                 if a['provider']!='GIPHY':return 'unsupported_attachment: threads/gif_provider'
             else:return 'unsupported_attachment: threads/typed_attachment'
-    if set(manifest['post_options'])-{'reply_control','reply_approvals','media_spoiler'}:return 'unsupported_attachment: threads/image_post_options'
+    if set(manifest['post_options'])-{'reply_control','reply_approvals','media_spoiler','text_spoiler'}:return 'unsupported_attachment: threads/image_post_options'
     if 'media_spoiler' in manifest['post_options'] and not manifest['files']:return 'unsupported_attachment: threads/media_spoiler_requires_media'
     rows=manifest['files']
     if not rows and (manifest['attachments'] or manifest['post_options']):return None
@@ -107,6 +107,27 @@ def text_params(manifest,text):
     if polls:params['poll_attachment']=json.dumps(dict(zip(('option_a','option_b','option_c','option_d'),polls[0]['options'])),ensure_ascii=False,separators=(',',':'))
     gifs=[a for a in manifest['attachments'] if a['type']=='gif']
     if gifs:params['gif_attachment']=json.dumps({'gif_id':gifs[0]['id'],'provider':gifs[0]['provider']},ensure_ascii=False,separators=(',',':'))
+    return params
+
+
+def common_options(manifest,text):
+    options=manifest['post_options'];params={}
+    if 'media_spoiler' in options:params['is_spoiler_media']='true' if options['media_spoiler'] else 'false'
+    if 'reply_control' in options:params['reply_control']=options['reply_control']
+    if 'reply_approvals' in options:params['enable_reply_approvals']='true' if options['reply_approvals'] else 'false'
+    if 'text_spoiler' in options:
+        raw=options['text_spoiler']
+        if raw is True:
+            require(type(text) is str and bool(text),'media_text_required')
+            spans=[{'offset':0,'length':len(text)}]
+        else:spans=raw if type(raw) is list else []
+        require(len(spans)<=10,'media_limit_exceeded: text_spoilers')
+        if spans:
+            require(type(text) is str,'media_text_unavailable')
+            require(text.isascii(),'threads_offset_unit_unverified')
+            require(all(span['offset']+span['length']<=len(text) for span in spans),'invalid_attachment: threads/text_spoiler_range')
+        # C15 does not prohibit overlap or duplicates here; preserve declared order.
+        params['text_entities']=json.dumps([dict(entity_type='SPOILER',**span) for span in spans],separators=(',',':'))
     return params
 
 
@@ -201,11 +222,7 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         video_notes(post.media_files)  # Same measured facts as lint, before any upload.
         typed=text_params(post.media_manifest,post.text) if not post.media_files else None
         require(type(adapter.user_id) is str and adapter.user_id.isascii() and adapter.user_id.isdecimal(),'media_account_id_invalid')
-        common={'text':post.text}
-        options=post.media_manifest['post_options']
-        if 'media_spoiler' in options:common['is_spoiler_media']='true' if options['media_spoiler'] else 'false'
-        if 'reply_control' in options:common['reply_control']=options['reply_control']
-        if 'reply_approvals' in options:common['enable_reply_approvals']='true' if options['reply_approvals'] else 'false'
+        common={'text':post.text,**common_options(post.media_manifest,post.text)}
         quotes=[a['uri'] for a in post.media_manifest['attachments'] if a['type']=='quote']
         if quotes:common['quote_post_id']=quotes[0]
         if post.reply_to:common['reply_to_id']=post.reply_to

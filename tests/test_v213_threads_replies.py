@@ -55,7 +55,7 @@ def test_unknown_reply_setting_publication_no_retry(env,wire):
     assert again.action=='inflight' and len(wire['calls'])==count
 
 
-def approved_options(tmp_path,isolated_account_factory,wire,monkeypatch,version,outcome,options,replacement):
+def approved_options(tmp_path,isolated_account_factory,wire,monkeypatch,version,outcome,options,replacement,body="本文。"):
     """Actual local Git approval reusable by subsequent option-only contracts."""
     import json,secrets
     from pathlib import Path
@@ -64,12 +64,12 @@ def approved_options(tmp_path,isolated_account_factory,wire,monkeypatch,version,
     from thth.adapters.threads import ThreadsAdapter
     declaration=json.dumps(options)
     if version==1:
-        raw=make_queue_text({'account':'alpha','status':'draft','approved_sha':'','topic':''},body='## threads\n\n本文。\n')
+        raw=make_queue_text({'account':'alpha','status':'draft','approved_sha':'','topic':''},body='## threads\n\n'+body+'\n')
         raw=raw.replace('\n---\n','\npost_options: '+declaration+'\n---\n',1)
     else:
         raw='---\nthth: 2\naccount: alpha\npublish_at: 2030-01-01T12:00:00+09:00\ncontinue_until: 2030-01-01T13:00:00+09:00\nstatus: draft\nposts:\n'
         for i in (1,2):raw+='  - index: '+str(i)+'\n    post_options: '+declaration+'\n'
-        raw+='---\n## threads\n本文。\n<!-- thth: 2/2 -->\n次の本文。\n'
+        raw+='---\n## threads\n'+body+'\n<!-- thth: 2/2 -->\n'+body+' next\n'
     pair=init_git_pair(tmp_path,seed_content=raw);path=Path(pair['queue_dir'])/'a.md'
     isolated_account_factory(name='alpha',repo_dir=pair['work'],media='threads',base_url=wire['url'],production=True,hashtags=False,char_limit=500,quiet_hours=None,min_interval_hours=0)
     approved=approve_via_cli(path);assert approved.returncode==0,approved.stderr

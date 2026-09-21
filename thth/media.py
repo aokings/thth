@@ -396,7 +396,10 @@ def validate_declarations(fm,medium):
     if set(options)-option_fields.get(medium,set()): raise MediaError('post_options: unknown, duplicate legacy or unsupported field')
     booleans={'sensitive','gallery','text_spoiler','media_spoiler','ghost','reply_approvals'}
     for key,value in options.items():
-        if key in booleans:
+        if key=='text_spoiler' and type(value) is list:
+            for span in value:
+                if type(span) is not dict or set(span)!={'offset','length'} or type(span['offset']) is not int or type(span['length']) is not int or span['offset']<0 or span['length']<=0:raise MediaError('post_options: invalid text_spoiler range')
+        elif key in booleans:
             if type(value) is not bool: raise MediaError(f'post_options: boolean {key} required')
         elif key in ('languages','labels','tags'):
             if type(value) is not list: raise MediaError(f'post_options: array {key} required')

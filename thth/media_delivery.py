@@ -127,7 +127,9 @@ def lint_notes(cfg,fm,*,text=None):
         try:
             with media.prepare(cfg['repo_dir'],fm,'threads') as (manifest,items):
                 reason=threads_media.intent_error(manifest)
-                if not reason and not items:threads_media.text_params(manifest,text)
+                if not reason:
+                    threads_media.common_options(manifest,text)
+                    if not items:threads_media.text_params(manifest,text)
                 return [reason] if reason else threads_media.notes(manifest,items)
         except (OSError,ValueError) as exc:return [str(exc) if isinstance(exc,media.MediaError) else 'media_unavailable']
     if cfg.get('media')=='bluesky':
