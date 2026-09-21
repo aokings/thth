@@ -128,7 +128,7 @@ def lint_notes(cfg,fm,*,text=None):
             with media.prepare(cfg['repo_dir'],fm,'threads') as (manifest,items):
                 reason=threads_media.intent_error(manifest)
                 if not reason:
-                    threads_media.common_options(manifest,text)
+                    threads_media.common_options(manifest,text,reply_to=fm.get('reply_to'),topic=fm.get('topic'),location_id=fm.get('location_id'),share_to_instagram=fm.get('share_to_instagram',False))
                     if not items:threads_media.text_params(manifest,text)
                 return [reason] if reason else threads_media.notes(manifest,items)
         except (OSError,ValueError) as exc:return [str(exc) if isinstance(exc,media.MediaError) else 'media_unavailable']

@@ -59,8 +59,11 @@ def intent_error(manifest):
                 if set(a)!={'type','provider','id'}:return 'unsupported_attachment: threads/gif_option'
                 if a['provider']!='GIPHY':return 'unsupported_attachment: threads/gif_provider'
             else:return 'unsupported_attachment: threads/typed_attachment'
-    if set(manifest['post_options'])-{'reply_control','reply_approvals','media_spoiler','text_spoiler'}:return 'unsupported_attachment: threads/image_post_options'
+    if set(manifest['post_options'])-{'reply_control','reply_approvals','media_spoiler','text_spoiler','ghost'}:return 'unsupported_attachment: threads/image_post_options'
     if 'media_spoiler' in manifest['post_options'] and not manifest['files']:return 'unsupported_attachment: threads/media_spoiler_requires_media'
+    if manifest['post_options'].get('ghost') is True:
+        if manifest['files']:return 'unsupported_attachment: threads/ghost_requires_text'
+        if manifest['attachments'] or set(manifest['post_options'])-{'ghost','text_spoiler'}:return 'unsupported_attachment: threads/ghost_combination'
     rows=manifest['files']
     if not rows and (manifest['attachments'] or manifest['post_options']):return None
     if not 1<=len(rows)<=20:return 'media_limit_exceeded: count'
@@ -110,8 +113,13 @@ def text_params(manifest,text):
     return params
 
 
-def common_options(manifest,text):
+def common_options(manifest,text,*,reply_to=None,topic=None,location_id=None,share_to_instagram=False):
     options=manifest['post_options'];params={}
+    if 'ghost' in options:
+        if options['ghost']:
+            require(not reply_to,'unsupported_attachment: threads/ghost_reply')
+            require(not (topic or location_id or share_to_instagram),'unsupported_attachment: threads/ghost_combination')
+        params['is_ghost_post']='true' if options['ghost'] else 'false'
     if 'media_spoiler' in options:params['is_spoiler_media']='true' if options['media_spoiler'] else 'false'
     if 'reply_control' in options:params['reply_control']=options['reply_control']
     if 'reply_approvals' in options:params['enable_reply_approvals']='true' if options['reply_approvals'] else 'false'
@@ -164,7 +172,7 @@ def video_notes(items):
 
 
 def notes(manifest,items=()):
-    return (['warning: threads plaintext characters use provisional Unicode code points; live-provider counting unverified'] if any(a['type']=='text' for a in manifest['attachments']) else [])+(['warning: threads poll option characters use provisional Unicode code points; live-provider counting unverified'] if any(a['type']=='poll' for a in manifest['attachments']) else [])+['warning: threads provider scales image width below 320 or above 1440; ICC retained, provider converts color space' for row in manifest['files'] if row['kind']=='image' and (row['height'] if row['orientation'] in (5,6,7,8) else row['width']) not in range(320,1441)]+video_notes(items)
+    return (['warning: threads ghost post is automatically archived by the provider after 24 hours'] if manifest['post_options'].get('ghost') else [])+(['warning: threads plaintext characters use provisional Unicode code points; live-provider counting unverified'] if any(a['type']=='text' for a in manifest['attachments']) else [])+(['warning: threads poll option characters use provisional Unicode code points; live-provider counting unverified'] if any(a['type']=='poll' for a in manifest['attachments']) else [])+['warning: threads provider scales image width below 320 or above 1440; ICC retained, provider converts color space' for row in manifest['files'] if row['kind']=='image' and (row['height'] if row['orientation'] in (5,6,7,8) else row['width']) not in range(320,1441)]+video_notes(items)
 
 
 class NoRedirect(httpsafe.SameOriginRedirectHandler):
@@ -222,7 +230,7 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         video_notes(post.media_files)  # Same measured facts as lint, before any upload.
         typed=text_params(post.media_manifest,post.text) if not post.media_files else None
         require(type(adapter.user_id) is str and adapter.user_id.isascii() and adapter.user_id.isdecimal(),'media_account_id_invalid')
-        common={'text':post.text,**common_options(post.media_manifest,post.text)}
+        common={'text':post.text,**common_options(post.media_manifest,post.text,reply_to=post.reply_to,topic=post.topic,location_id=post.location_id,share_to_instagram=post.share_to_instagram)}
         quotes=[a['uri'] for a in post.media_manifest['attachments'] if a['type']=='quote']
         if quotes:common['quote_post_id']=quotes[0]
         if post.reply_to:common['reply_to_id']=post.reply_to
