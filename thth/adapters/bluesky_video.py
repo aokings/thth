@@ -221,7 +221,7 @@ def publish(adapter,post,*,before_publish=None):
         uri=response.get('uri');prefix='at://'+did+'/'+POST_COLLECTION+'/'
         require(type(uri) is str and uri.startswith(prefix) and bool(uri[len(prefix):]) and '/' not in uri[len(prefix):] and all(32<ord(c)<127 for c in uri),'media_response_invalid: post URI')
         record('published',post_id=uri)
-        return base.PublishResult(uri,post_url(session.get('handle'),uri),ts,media=[{'sha256':row['public_sha256'],'kind':'video','alt_present':True,'remote_id':blob['ref']['$link']}])
+        return base.PublishResult(uri,post_url(session.get('handle'),uri),ts,media=[{'sha256':row['public_sha256'],'kind':'video','alt_present':base.alt_present(row),'remote_id':blob['ref']['$link']}])
     except (OSError,ValueError,RuntimeError,urllib.error.URLError,accounts.AccountStopped) as exc:
         http=isinstance(exc,urllib.error.HTTPError);redirect=isinstance(exc,httpsafe.RedirectBlocked)
         endpoint=isinstance(exc,httpsafe.EndpointRejected)

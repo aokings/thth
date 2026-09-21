@@ -29,8 +29,18 @@ def path_for(state_dir: str, post_id: str) -> str:
                         f"{postid_mod.to_filename(post_id)}.json")
 
 
+# 記録に書いてよい「添付の種類」（第 10 段・設計 2.13.0 §5）。ファイルの kind と
+# 型付きの種類、複数ファイルの `carousel`、何も無い `none`。**`thth/media.py` の
+# 語と一致していること**を `tests/test_v213_attachment_kinds.py` が見る——台帳の
+# 語彙が実装より遅れると、`--by attachment_kind` の層が黙って欠ける。
+ATTACHMENT_NONE_LABEL = "none"
+ATTACHMENT_KINDS = ("none", "image", "video", "audio", "carousel",
+                    "poll", "quote", "link", "gif", "text")
+
+
 def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: str,
-          approved_fingerprint: str | None = None, reply_to: str | None = None, media: list | None = None) -> str:
+          approved_fingerprint: str | None = None, reply_to: str | None = None, media: list | None = None,
+          attachment_kinds: list | None = None) -> str:
     """送った本文そのものを動かせない記録として保存する。返り値は書いたパス。
 
     `approved_fingerprint`（外部レビュー再々レビュー P1・1）は公開直前に固定した
@@ -56,6 +66,16 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
     if media is not None:
         if type(media) is not list or any(type(x) is not dict or set(x)!={'sha256','kind','alt_present','remote_id'} for x in media):raise ValueError('invalid_media_receipt')
         data['media']=media
+    if attachment_kinds is not None:
+        # **観測の側が読む鍵**（`thth/collect.py` → `insights` の行 → `--by
+        # attachment_kind`）。知らない語・重複・空 list はここで断る——記録に
+        # 入ってしまえば、あとから「これは何の層か」を誰も決められない。
+        if (type(attachment_kinds) is not list or not attachment_kinds
+                or any(x not in ATTACHMENT_KINDS for x in attachment_kinds)
+                or len(set(attachment_kinds)) != len(attachment_kinds)
+                or (ATTACHMENT_NONE_LABEL in attachment_kinds and len(attachment_kinds) != 1)):
+            raise ValueError('invalid_attachment_kinds')
+        data['attachment_kinds']=sorted(attachment_kinds)
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
         f.write("\n")

@@ -55,6 +55,12 @@ def require(ok, reason='invalid_attachment_structure'):
         raise FormatError(reason)
 
 
+# 検査が名指しできる形式の全部（`Inspection.format`）。**1 か所に置く**
+# （第 10 段）——adapter が `unsupported_attachment: <媒体>/<形式>` を投げるので、
+# `thth/media_capabilities.py` の表に同じ名前が並んでいるかを試験が見る。
+FORMATS=('jpeg','png','webp','gif','mp4','mov','webm','mp3','wav','flac','ogg','ogg_vorbis','vtt')
+
+
 @dataclasses.dataclass(frozen=True)
 class Inspection:
     format: str

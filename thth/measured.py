@@ -406,6 +406,13 @@ def load(account_name: str, *, observation_metadata: bool = False) -> dict:
                         "source": row.get("source") or "queue",
                         "metrics": row.get("metrics"),
                         **({"tags": row.get("tags")} if "tags" in row else {}),
+                        # **添付の種類**（設計 2.13.0 §5・第 10 段）。`tags` と
+                        # 同じ筋で、**行に鍵が無ければ足さない**——鍵の不在が
+                        # 「2.13.0 より前の行」で、`none`（添付が無かった）とは
+                        # 別のこと。`analytics-report --by attachment_kind` が
+                        # 前者を `unknown`、後者を `none` として分ける。
+                        **({"attachment_kinds": row.get("attachment_kinds")}
+                           if "attachment_kinds" in row else {}),
                         # **この行に無い指標**（採取の版が上がる前の行かどうかが
                         # 読める）。全体の判定では翌日の行に隠される。
                         "missing": _row_missing(row.get("metrics"), POST_METRIC_NAMES),

@@ -532,6 +532,20 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     replies_dir = dirs["replies"]
 
     touched, errors, posts_seen = [], [], 0
+    # **添付の記録は `sent/` にしかない**（設計 2.13.0 §5・第 10 段）。台帳の行に
+    # 写すのは sha256・種類・alt の有無・媒体側 ID と、層別のための
+    # `attachment_kinds` だけ——**元ファイルも alt の文字も本文も写さない。**
+    # 記録が無い投稿（2.13.0 より前・他所から入った post_id）は**鍵を置かない**：
+    # `null` も `none` も書かず、読み手には「不明」として届く（`--by
+    # attachment_kind` の `unknown` 層）。「無かった」と「判らない」を混ぜない。
+    from . import sent as sent_mod
+    sent_index = {}
+    for row in sent_mod.records(accounts_mod.state_dir_for(account_name)):
+        if isinstance(row.get('attachment_kinds'), list):
+            sent_index[str(row['post_id'])] = {
+                'attachment_kinds': list(row['attachment_kinds']),
+                'media': row['media'] if isinstance(row.get('media'), list) else [],
+            }
     # **スレッド連投の段も拾う**（独立検収 2026-09-11・P2-7）。
     # v1 の `qf.malformed` 判定が `thth: 2` を落とすので、3 段公開しても
     # **収集対象は 0 件だった。** 出したものを測れないなら、出す意味が薄い。
@@ -657,6 +671,7 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 "reply_to": fm.get("reply_to") or None,
                 "text_length": len(section) if section is not None else None,
                 "has_link": ("http://" in (section or "")) or ("https://" in (section or "")),
+                **sent_index.get(str(post_id), {}),
                 "collected_at": jst.iso(now),
                 "posted_at": posted_at_raw,
                 "age_hours": round(age_hours, 2),

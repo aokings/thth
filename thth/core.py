@@ -764,6 +764,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         sent_mod.write(state_dir, post_id=post_id, text=post.text,
                         body_hash=approval_mod.compute_body_hash(post.text),
                         sent_at=posted_at, approved_fingerprint=expected_fingerprint, reply_to=post.reply_to,
+                        attachment_kinds=media_mod.attachment_kinds(manifest),
                         **({"media":publish_result.media} if publish_result.media else {}))
     except (OSError,ValueError):
         if not manifest:raise
@@ -1125,6 +1126,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                             # 承認の在り処が「masaru がその場で見た本文」なので、
                             # queue の 5 項目の指紋ではなく `--confirm` の digest を残す。
                             approved_fingerprint=digest, reply_to=post.reply_to,
+                            attachment_kinds=media_mod.attachment_kinds(manifest),
                             **({"media":result.media} if result.media else {}))
         except (OSError,ValueError):
             if not manifest:raise

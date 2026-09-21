@@ -30,7 +30,12 @@ def summary(previous_version=None):
                 found.append((version, path.name))
     found.sort()
     notes = found if previous is not None else found[-1:]
-    return dict(version=__version__, previous_version=previous_version if previous else None,
+    # **媒体ごとの「出せるもの」表**（設計 2.13.0 §0.1・第 10 段）。静的な 1 本
+    # （`thth/media_capabilities.py`）から出る——provider を叩いた結果ではない。
+    # LLM が「この媒体に動画は出せるか」を推測せずに読めるよう、`tool` に常に載せる。
+    from . import media_capabilities
+    return dict(version=__version__, capabilities=media_capabilities.summary(),
+                previous_version=previous_version if previous else None,
                 changed_since_last_read=(previous != current) if previous else None,
                 release_notes=['docs/' + name for _, name in notes],
                 notes_root_local_hint='~/Developer/thth', notes_reason=notes_reason)

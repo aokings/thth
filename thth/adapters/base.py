@@ -49,6 +49,17 @@ class Post:
     media_relay: object = dataclasses.field(default=None, repr=False)
 
 
+def alt_present(row):
+    """台帳に残すのは「alt があったか」だけ（設計 2.13.0 §1-4・§5）。
+
+    **alt の文字そのものは残さない**——残すのは真偽 1 つ。lint が `alt_required`
+    で断るので実運用では必ず真だが、**真と決め打ちしない**: 決め打ちは、将来
+    alt の無い経路ができたときに記録が黙って嘘をつく。
+    """
+    alt = row.get("alt") if isinstance(row, dict) else None
+    return isinstance(alt, str) and bool(alt.strip())
+
+
 @dataclasses.dataclass
 class PublishResult:
     post_id: str | None

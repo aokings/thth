@@ -10,6 +10,7 @@ into a reason: every refusal is one of the static codes below.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -31,18 +32,48 @@ OPERATIONS = frozenset(('media_upload_url', 'media_complete'))
 # with the extension the public file gets, and the number is the size cap in
 # bytes (provisional: image 8 MB is the Threads image ceiling, video 1 GB is the
 # Worker's raw-source ceiling, audio 100 MB is the multipart threshold).
-# `audio` is declared with an empty mime map on purpose: 2.13.0 has no audio
-# mime in the Worker's transport set, so an audio upload is refused *by name*
-# (`media_mime_unsupported`) instead of being a silently missing row.
+# `audio` carries the Worker's audio transport set (stage 10 follow-up): an
+# invited user can now upload the audio Mastodon accepts. The cap is the
+# multipart threshold, so an audio upload is always a single PUT.
 KINDS = {
     'image': (8_000_000, {'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif'}),
     'video': (1_000_000_000, {'video/mp4': 'mp4', 'video/quicktime': 'mov'}),
-    'audio': (100_000_000, {}),
+    'audio': (100_000_000, {'audio/mpeg': 'mp3', 'audio/flac': 'flac', 'audio/ogg': 'ogg',
+                            'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/webm': 'webm',
+                            'audio/mp4': 'm4a'}),
 }
-# Inspected format -> (transport mime, public extension). The declared mime is
-# checked against the *inspected* format, never trusted on its own.
-FORMATS = {'jpeg': ('image/jpeg', 'jpg'), 'png': ('image/png', 'png'), 'webp': ('image/webp', 'webp'),
-           'gif': ('image/gif', 'gif'), 'mp4': ('video/mp4', 'mp4'), 'mov': ('video/quicktime', 'mov')}
+# Inspected (kind, format) -> (accepted transport mimes, public extension). The
+# declared mime is checked against the *inspected* pair, never trusted on its
+# own, and the pair carries the kind because one container name means two
+# things: an inspected `mp4` is video/mp4 or audio/mp4 depending on its tracks,
+# and `webm` is audio here only because the video WebM is refused by policy.
+FORMATS = {
+    ('image', 'jpeg'): (('image/jpeg',), 'jpg'), ('image', 'png'): (('image/png',), 'png'),
+    ('image', 'webp'): (('image/webp',), 'webp'), ('image', 'gif'): (('image/gif',), 'gif'),
+    ('video', 'mp4'): (('video/mp4',), 'mp4'), ('video', 'mov'): (('video/quicktime',), 'mov'),
+    ('audio', 'mp3'): (('audio/mpeg',), 'mp3'), ('audio', 'flac'): (('audio/flac',), 'flac'),
+    ('audio', 'ogg'): (('audio/ogg',), 'ogg'), ('audio', 'ogg_vorbis'): (('audio/ogg',), 'ogg'),
+    ('audio', 'wav'): (('audio/wav', 'audio/x-wav'), 'wav'),
+    ('audio', 'webm'): (('audio/webm',), 'webm'), ('audio', 'mp4'): (('audio/mp4',), 'm4a'),
+}
+
+
+def extension(kind, fmt):
+    row = FORMATS.get((kind, fmt))
+    return row[1] if row else None
+
+
+def derive_media_id(subject):
+    """`media_id` は upload subject の**一方向の像**（第 10 段・第 9 段の直し）。
+
+    第 9 段は `media_id` をそのまま subject（＝ PUT の URL の最後の一節）にして
+    いた。すると **`media_id` を知る者は upload URL を組み立てられる**——応答に
+    だけ出すはずの一回限りの URL が、`draft_put` に渡す識別子から復元できる。
+    ここで切る: 外に出るのは `media_id` だけで、subject は控え（mode 600）の中
+    にしか無い。sha256 は一方向なので、`media_id` から subject は作れない。
+    """
+    digest = hashlib.sha256(subject.encode()).digest()
+    return 'm' + base64.urlsafe_b64encode(digest).decode().rstrip('=')[:42]
 MEDIA_DIRECTORY = 'docs/sns/media'
 TTL_MS = 600_000            # one upload session lives 10 minutes (design §3)
 MULTIPART_THRESHOLD = 100_000_000
@@ -78,13 +109,15 @@ def directory(account):
 
 def _valid(value, media_id):
     """Private storage is fallible: validate shape and every redundant binding."""
-    required = {'schema_version', 'media_id', 'actor', 'account', 'kind', 'mime', 'size',
+    required = {'schema_version', 'media_id', 'subject', 'actor', 'account', 'kind', 'mime', 'size',
                 'sha256', 'status', 'created_at', 'expires_at'}
     optional = {'reason', 'public_sha256', 'format', 'width', 'height', 'duration', 'warnings',
                 'file', 'completed_at'}
     if (type(value) is not dict or not required <= value.keys() or value.keys() - required - optional
             or value['schema_version'] != 1 or value['media_id'] != media_id
             or not isinstance(media_id, str) or not OPAQUE.fullmatch(media_id)
+            or not isinstance(value['subject'], str) or not OPAQUE.fullmatch(value['subject'])
+            or derive_media_id(value['subject']) != media_id
             or not isinstance(value['account'], str) or not accounts.name_is_safe(value['account'])
             or not isinstance(value['actor'], str) or not accounts.name_is_safe(value['actor'])
             or value['kind'] not in KINDS or not isinstance(value['mime'], str)
@@ -99,8 +132,8 @@ def _valid(value, media_id):
         if not {'public_sha256', 'format', 'file', 'warnings'} <= value.keys():
             return False
         if (not isinstance(value['public_sha256'], str) or not SHA256.fullmatch(value['public_sha256'])
-                or value['format'] not in FORMATS
-                or value['file'] != MEDIA_DIRECTORY + '/' + value['public_sha256'] + '.' + FORMATS[value['format']][1]
+                or (value['kind'], value['format']) not in FORMATS
+                or value['file'] != MEDIA_DIRECTORY + '/' + value['public_sha256'] + '.' + extension(value['kind'], value['format'])
                 or type(value['warnings']) is not list or any(not isinstance(x, str) for x in value['warnings'])):
             return False
     return True
@@ -165,10 +198,17 @@ def upload_url(context, request, via):
     if not isinstance(sha, str) or not SHA256.fullmatch(sha):
         error('invalid_request')
     from .media_relay import MediaRelay, MediaRelayError, origin
-    media_id = secrets.token_urlsafe(32)
+    # The Worker's upload subject and the caller's media_id are different names
+    # for the same session: the subject is the one-shot URL's last segment and
+    # never leaves this process except inside that URL; the media_id is derived
+    # from it and is the only handle the caller ever holds.
+    subject = secrets.token_urlsafe(32)
+    redact.register_secret(subject)
+    media_id = derive_media_id(subject)
     now = int(time.time() * 1000)
-    record = dict(schema_version=1, media_id=media_id, actor=context.actor, account=account, kind=kind,
-                  mime=mime, size=size, sha256=sha, status='pending', created_at=now, expires_at=now + TTL_MS)
+    record = dict(schema_version=1, media_id=media_id, subject=subject, actor=context.actor,
+                  account=account, kind=kind, mime=mime, size=size, sha256=sha, status='pending',
+                  created_at=now, expires_at=now + TTL_MS)
     part_size = PART_SIZE if size > MULTIPART_THRESHOLD else None
     with server_files.directory(directory(account), create=True, private=True) as fd:
         with server_files.lock_at(fd, media_id + '.lock'):
@@ -177,8 +217,8 @@ def upload_url(context, request, via):
             server_files.replace_at(fd, media_id + '.json', server_files.encode(record), new=True, private=True)
             try:
                 client = MediaRelay(account, context.actor)
-                value = client.control(media_id, 'create', {**client.binding(sha), 'size': size,
-                                                            'mime': mime, 'kind': 'source', 'part_size': part_size})
+                value = client.control(subject, 'create', {**client.binding(sha), 'size': size,
+                                                          'mime': mime, 'kind': 'source', 'part_size': part_size})
                 if value.get('status') != 'pending' or value.get('size') != size:
                     raise MediaRelayError('media_relay_response_invalid')
                 if type(value.get('expires_at')) is int and 0 < value['expires_at'] < record['expires_at']:
@@ -190,7 +230,7 @@ def upload_url(context, request, via):
                 _save(fd, record)
                 error('media_session_unavailable')
             _save(fd, record)
-    url = origin() + '/media-upload/' + media_id
+    url = origin() + '/media-upload/' + subject
     redact.register_secret(url)
     return {'media_id': media_id, 'upload_url': url, 'expires_at': record['expires_at'], 'part_size': part_size}
 
@@ -282,7 +322,7 @@ def complete(context, request, via):
                     error('media_upload_unknown')
                 client = MediaRelay(account, record['actor'])
                 try:
-                    value = client.control(media_id, 'complete', client.binding(record['sha256']))
+                    value = client.control(record['subject'], 'complete', client.binding(record['sha256']))
                     ready = value.get('status') == 'ready' and value.get('sha256') == record['sha256']
                 except urllib.error.HTTPError as exc:
                     # A 4xx is a definite refusal; anything else stays unknown.
@@ -304,7 +344,7 @@ def complete(context, request, via):
                     # retires the R2 source. Retirement happens once, right after
                     # the verified read: the VM holds the bytes from here on, and
                     # neither a refusal nor a success needs the source again.
-                    with client.source_snapshot(media_id, record['sha256']) as snapshot:
+                    with client.source_snapshot(record['subject'], record['sha256']) as snapshot:
                         size = os.fstat(snapshot.fileno()).st_size
                         if size != record['size']:
                             raise MediaRelayError('media_source_mismatch')
@@ -319,7 +359,7 @@ def complete(context, request, via):
                             record.update(status='rejected', reason='media_kind_mismatch')
                             _save(fd, record)
                             error('media_kind_mismatch')
-                        if FORMATS.get(info.format, (None, None))[0] != record['mime']:
+                        if record['mime'] not in FORMATS.get((info.kind, info.format), ((), None))[0]:
                             record.update(status='rejected', reason='media_mime_mismatch')
                             _save(fd, record)
                             error('media_mime_mismatch')
@@ -329,7 +369,7 @@ def complete(context, request, via):
                             _save(fd, record)
                             error('media_size_exceeded')
                         public_sha = hashlib.sha256(public).hexdigest() if public is not None else record['sha256']
-                        relative = MEDIA_DIRECTORY + '/' + public_sha + '.' + FORMATS[info.format][1]
+                        relative = MEDIA_DIRECTORY + '/' + public_sha + '.' + extension(info.kind, info.format)
                         managed_repo.initialize(account, cfg)
                         ok, _, _ = writeback.sync_repo(cfg['repo_dir'])
                         if not ok:

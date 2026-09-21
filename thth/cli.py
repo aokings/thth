@@ -3077,7 +3077,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--window-days", type=int, default=7)
     p_report.add_argument("--min-n", type=int, default=5)
     p_report.add_argument("--compare-previous", action="store_true", help="直前の同じ日数と24h条件を揃えて比較")
-    p_report.add_argument("--by", choices=("kind", "hour_band", "topic", "tag"), help="比較の層別")
+    p_report.add_argument("--by", choices=analytics_report_mod.BY_CHOICES, help="比較の層別")
     p_report.add_argument("--json", action="store_true")
     p_report.set_defaults(func=analytics_report_mod.cmd_analytics_report)
 
