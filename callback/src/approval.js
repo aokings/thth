@@ -104,7 +104,10 @@ export async function approvalRequest(request,env,url) {
     if(type==='deletion'?!(subject==='inbox'&&operation==='list'||STATE_PATTERN.test(subject)&&['read','verify','complete','discard'].includes(operation)):type==='account'?!PERSON.test(subject)||!['revoke','status','cleanup-retry'].includes(operation):type==='person'?!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation):!STATE_PATTERN.test(subject)||!['create','consume','status','cancel'].includes(operation))return reply(400,{error:'invalid_request'});
     if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(400,{error:'invalid_request'});
     if(!env.APPROVAL_VERIFY_LIMIT || !(await env.APPROVAL_VERIFY_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
-    const raw=await boundedBody(request), ticket=await authenticate(request,env,url,raw,type==='session'?'job':'operator',subject,operation);
+    // Only the session `create` body carries attachments (第 8 段), so only it
+    // gets the larger cap; every other JSON route keeps the 64 KiB default.
+    const cap=type==='session'&&operation==='create'?98_304:65_536;
+    const raw=await boundedBody(request,cap), ticket=await authenticate(request,env,url,raw,type==='session'?'job':'operator',subject,operation);
     if(!ticket)return reply(401,{error:'unauthorized'});
     if(!env.APPROVAL_JOB_LIMIT || !(await env.APPROVAL_JOB_LIMIT.limit({key:await digest(type+'/'+subject)})).success)return reply(429,{error:'rate_limited'});
     const body=JSON.parse(raw);

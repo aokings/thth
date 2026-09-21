@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 from . import accounts, admin_log, approval, approval_relay, core, doctor, jst, managed_repo, queuefile, server_files, tags, writeback
 from .report_service import ReportContext, ReportServiceError
 
-WRITE_OPERATIONS = frozenset(('draft_put','approval_request','send_request','retract_request'))
+WRITE_OPERATIONS = frozenset(('draft_put','approval_request','send_request','retract_request',
+                              'media_upload_url','media_complete'))
 READ_OPERATIONS = frozenset(('draft_list','queue','request_status'))
 DRAFT_ID = re.compile(r'[0-9a-f]{64}\Z')
 JOB_ID = approval_relay.OPAQUE
@@ -18,6 +19,8 @@ SAFE_ERRORS = frozenset(('invalid_request','unsupported_operation','invalid_scop
     'writes_not_allowed','invalid_draft','draft_changed','draft_not_editable','managed_repo_required','production_disabled',
     'credential_changed','draft_commit_unconfirmed','draft_not_verified','account_stopped','account_leaving','approval_registration_unknown',
     'credential_unavailable','write_unavailable','media_preview_unavailable'))
+from .media_uploads import REASONS as MEDIA_REASONS
+SAFE_ERRORS = SAFE_ERRORS | MEDIA_REASONS
 
 
 def error(reason, detail=None):
@@ -110,7 +113,7 @@ def _sync(cfg):
 
 
 def draft_put(context, request, via):
-    _schema(request, ('body','topic','publish_at','reply_to','draft_id','expected_revision'), ('body','publish_at'))
+    _schema(request, ('body','topic','publish_at','reply_to','draft_id','expected_revision','media'), ('body','publish_at'))
     account=request['account'];cfg=current(context,account,write=True)
     clone, _ = managed_repo.locations(account)
     _, queue = _queue(cfg)
@@ -120,6 +123,10 @@ def draft_put(context, request, via):
         value=request.get(key)
         if value is not None and (not isinstance(value,str) or writeback.has_control_chars(value)): error('invalid_draft')
     if len(request['body'].encode())>48000: error('invalid_draft')
+    rows=None
+    if 'media' in request:
+        from . import media_uploads
+        rows=media_uploads.draft_rows(account,context.actor,request['media'])
     with server_files.account_locks(account,cfg):
         current(context,account,write=True)
         managed_repo.initialize(account,cfg);_sync(cfg)
@@ -131,9 +138,14 @@ def draft_put(context, request, via):
         text='---\nthth: 1\naccount: '+account+'\nstatus: draft\npublish_at: '+request['publish_at']+'\n'
         for key in ('topic','reply_to'):
             if request.get(key): text+=key+': '+request[key]+'\n'
+        if rows is not None:
+            # Alt is quoted as JSON so any legal alt survives the round trip;
+            # the file is the repo path a completed upload already committed.
+            text+='media:\n'+''.join('  - file: '+row['file']+'\n    alt: '+json.dumps(row['alt'],ensure_ascii=False)+'\n' for row in rows)
         text+='---\n\n## '+cfg['media']+'\n\n'+request['body'].strip()+'\n'
         q=queuefile.parse_text(text,'draft')
         if queuefile.extract_section(q.body,cfg['media']).strip()!=request['body'].strip(): error('invalid_draft','body_not_representable')
+        if rows is not None and q.front_matter.get('media')!=rows: error('invalid_draft','media_not_representable')
         if old == text.encode():
             return {'draft_id':_id(name),'account':account,'status':'draft','revision':hashlib.sha256(old).hexdigest()}
         # Existing lint is the authority. A private temporary leaf is never queued.
@@ -226,6 +238,9 @@ def execute(context, request, *, via='http'):
     if not isinstance(request.get('account'),str): error('invalid_scope')
     try:
         current(context,request['account'],write=True)
+        if request['operation'] in ('media_upload_url','media_complete'):
+            from . import media_uploads
+            return media_uploads.execute(context,request,via)
         return draft_put(context,request,via) if request['operation']=='draft_put' else request_approval(context,request,via)
     except ReportServiceError: raise
     except (OSError,ValueError,TypeError,KeyError,accounts.AccountError,approval_relay.RelayError,admin_log.AdminLogError):

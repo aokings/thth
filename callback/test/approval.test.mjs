@@ -319,3 +319,24 @@ test('attachment alt and typed JSON are escaped like the body',async()=>{
   assert.ok(html.includes('<img src="/m/'+preview+'" alt="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;">'),html);
   assert.ok(html.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;</figcaption>'),html);
 });
+// 第 9 段の後追い: only session `create` carries attachments, so only it takes 96 KiB.
+test('session create accepts a 70 KiB body and still refuses 100 KiB',async()=>{
+  const p=await person();
+  const wide=n=>({...attachment({index:n,alt:'ぬ'.repeat(4000),preview:null})});
+  const build=count=>({person:p.id,job_id:opaque(),digest:hash('x'),account:'alpha',kind:'send',
+    text:'本'.repeat(15_000),read_key_hash:hash(opaque()),typed:'{"note":"'+'x'.repeat(16_000)+'"}',
+    attachments:Array.from({length:count},(_,i)=>wide(i+1)),
+    context:{media:'threads',topic:null,options:null,reply_to:null,publish_at:null,target:null,reason:null}});
+  const small=build(1),large=build(4);
+  const bytes=body=>Buffer.byteLength(JSON.stringify(body));
+  assert.ok(bytes(small)>71_680&&bytes(small)<98_304,'70 KiB band: '+bytes(small));
+  assert.ok(bytes(large)>98_304,'over the cap: '+bytes(large));
+  const token=opaque();
+  assert.equal((await signed('session',token,'create',small)).status,201);
+  assert.equal((await mf.dispatchFetch('https://approval.test/approve/'+token,{headers:{'cf-connecting-ip':opaque()}})).status,200);
+  const refused=opaque();
+  assert.equal((await signed('session',refused,'create',large)).status,503);
+  assert.equal((await mf.dispatchFetch('https://approval.test/approve/'+refused,{headers:{'cf-connecting-ip':opaque()}})).status,410);
+  // Every other JSON route keeps the 64 KiB default.
+  assert.equal((await signed('person',p.id,'status',{note:'x'.repeat(70_000)})).status,503);
+});
