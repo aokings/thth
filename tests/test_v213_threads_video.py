@@ -3,7 +3,7 @@ import copy
 import os
 import struct
 import pytest
-from thth import media,mediaformats,media_delivery
+from thth import media,mediaformats,media_delivery,media_relay
 from thth.adapters import threads_media as tm
 from tests.test_v213_threads_media import env,wire,invoke,posts
 from tests.test_v213_media_formats import box,mp4
