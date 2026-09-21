@@ -594,6 +594,9 @@ def bmff(fd,size,*,allow_edit_lists=False):
 
 def inspect(fd,size,*,allow_edit_lists=False):
     head=os.pread(fd,16,0)
+    if head.startswith(b'ID3') or len(head)>=2 and head[0]==255 and head[1]&0xe0==0xe0 and not head.startswith(b'\xff\xd8'):
+        from .mpeg_audio import mp3
+        return mp3(fd,size)
     if head.startswith(b'fLaC'):
         from .flacformats import flac
         return flac(fd,size)
