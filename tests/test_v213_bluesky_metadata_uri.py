@@ -14,6 +14,8 @@ INVALID=[
     'urn:x:%','urn:x:%GG','urn:x:?a[b','urn:x:#a[b','https://[v1.]/',
     'https://[fe80::1%25eth0]/','urn:x:\nnext','urn:x:茶',
     'relative/path','//host.invalid/path',
+    'at://did::bad/record','at://did:plc:a@other/path','at://did:plc:a%GGb/path',
+    'https://did:plc:example/path',
 ]
 VALID=[
     'urn:example:animal:ferret:nose','did:example:a','ipfs://synthetic/path',
@@ -22,6 +24,9 @@ VALID=[
     'custom://host:/a','custom://%41/%5B%5D?x=/?:@#x?/a',
     'https://[2001:db8::1]/a%20b','custom://[::ffff:192.0.2.1]:/',
     'custom://[v1.a:b!]/a','custom://[VF.future]/',
+    'at://did:plc:aaaaaaaaaaaaaaaaaaaaaaaa/app.bsky.feed.post/one',
+    'at://did:example:a','at://example.invalid',
+    'at://did:example:a/any/path?query#fragment',
 ]
 
 

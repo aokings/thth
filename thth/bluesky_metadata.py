@@ -71,6 +71,13 @@ def uri(value):
     if hierarchy.startswith('//'):
         authority,separator,tail=hierarchy[2:].partition('/')
         path='/'+tail if separator else ''
+        # Lexicon uri explicitly includes AT URIs. Their DID authority has
+        # unescaped colons by design (AT URI Generic URI Compliance), not a
+        # host:port pair. This is not the restricted at-uri strong-ref type.
+        if value.startswith('at://') and authority.startswith('did:'):
+            return (len(authority)<=2048 and re.fullmatch(r'did:[a-z]+:[a-zA-Z0-9._:%-]*[a-zA-Z0-9._-]',authority) is not None
+                    and re.fullmatch(rf'(?:{atom}|:)*',authority) is not None
+                    and re.fullmatch(rf'(?:{pchar}|/)*',path) is not None)
         if authority.count('@')>1:return False
         if '@' in authority:
             userinfo,authority=authority.split('@',1)
