@@ -63,7 +63,7 @@ def test_thumbnail_latest_caps_refuse_before_upload(env,wire,field,value):
 
 
 def test_thumbnail_exact_cap_and_internal_alt(env,wire):
-    fm=configure(env,wire);wire['caps']['configuration']['media_attachments'].update(image_size_limit=len(png()),image_matrix_limit=1)
+    fm=configure(env,wire);wire['caps']['configuration']['media_attachments'].update(image_size_limit=len(png())+1,image_matrix_limit=1)
     assert invoke(env,fm)[0].post_id
 
 
@@ -198,3 +198,11 @@ def test_actual_git_child_source_change_needs_reapproval(tmp_path,isolated_accou
     core.throw_once('alpha',production_flag=True,adapter_factory=lambda *a:adapter,log=lambda _:None,bypass_pace=True)
     assert len(posts(wire,'/api/v2/media'))==len(posts(wire,'/api/v1/statuses'))==1
     assert parts(posts(wire,'/api/v2/media')[0])[-1].get_payload(decode=True)==png()
+
+
+@pytest.mark.parametrize('difference',[-1,0,1])
+def test_thumbnail_less_than_model_limit(env,wire,difference):
+    fm=configure(env,wire);wire['caps']['configuration']['media_attachments']['image_size_limit']=len(png())-difference
+    result,_,_=invoke(env,fm)
+    if difference<0:assert result.post_id and len(posts(wire,'/api/v2/media'))==1
+    else:assert result.error=='media_limit_exceeded: bytes' and not posts(wire,'/api/v2/media') and not posts(wire,'/api/v1/statuses')
