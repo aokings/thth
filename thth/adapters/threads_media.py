@@ -59,7 +59,8 @@ def intent_error(manifest):
                 if set(a)!={'type','provider','id'}:return 'unsupported_attachment: threads/gif_option'
                 if a['provider']!='GIPHY':return 'unsupported_attachment: threads/gif_provider'
             else:return 'unsupported_attachment: threads/typed_attachment'
-    if set(manifest['post_options'])-{'reply_control','reply_approvals'}:return 'unsupported_attachment: threads/image_post_options'
+    if set(manifest['post_options'])-{'reply_control','reply_approvals','media_spoiler'}:return 'unsupported_attachment: threads/image_post_options'
+    if 'media_spoiler' in manifest['post_options'] and not manifest['files']:return 'unsupported_attachment: threads/media_spoiler_requires_media'
     rows=manifest['files']
     if not rows and (manifest['attachments'] or manifest['post_options']):return None
     if not 1<=len(rows)<=20:return 'media_limit_exceeded: count'
@@ -202,6 +203,7 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         require(type(adapter.user_id) is str and adapter.user_id.isascii() and adapter.user_id.isdecimal(),'media_account_id_invalid')
         common={'text':post.text}
         options=post.media_manifest['post_options']
+        if 'media_spoiler' in options:common['is_spoiler_media']='true' if options['media_spoiler'] else 'false'
         if 'reply_control' in options:common['reply_control']=options['reply_control']
         if 'reply_approvals' in options:common['enable_reply_approvals']='true' if options['reply_approvals'] else 'false'
         quotes=[a['uri'] for a in post.media_manifest['attachments'] if a['type']=='quote']
