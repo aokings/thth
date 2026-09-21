@@ -556,7 +556,10 @@ def bmff(fd,size,*,allow_edit_lists=False):
                                 elif vk==b'data':
                                     require(vb-va>=8)
                                     value_type=int.from_bytes(read(va,4),'big')
-                                    if ik==b'covr' or value_type in (13,14):
+                                    # C14 cover inspection is keyed on `covr`, not on the
+                                    # binary type alone: a JPEG/PNG payload under any other
+                                    # key is not a cover and stays an uninspectable value.
+                                    if ik==b'covr':
                                         require(value_type in (13,14),'location_metadata_unverifiable: embedded_cover_remove_cover')
                                         cover=read(va+8,vb-va-8)
                                         require(cover.startswith(b'\xff\xd8') if value_type==13 else cover.startswith(b'\x89PNG\r\n\x1a\n'),'invalid_attachment_structure: embedded_cover')
