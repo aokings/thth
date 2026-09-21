@@ -60,6 +60,9 @@ export class MediaObject extends DurableObject {
     if(!await this.active(before.account))return fail(410,'account_revoked');
     const claim=this.atomic(()=>{
       const row=this.row();if(!this.bound(row,body)||!this.current(row))return fail(410,'media_expired');
+      // Unknown I/O is checked before any claim: `complete` must not leave a
+      // `completing` state (or consume a nonce) while a write is unresolved.
+      if(row.io_ticket)return fail(409,'media_upload_unconfirmed_pending');
       if(!this.replay(ticket))return fail(409,'replayed_request');
       if(op==='status')return {status:200,body:{status:row.status,size:row.size,sha256:row.sha256,expires_at:row.expires_at}};
       if(op==='read')return row.status==='ready'&&['source','sanitized'].includes(row.kind)?{status:200,row}:fail(409,'media_not_ready');
