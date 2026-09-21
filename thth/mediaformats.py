@@ -29,6 +29,15 @@ LOCATION_KEY_WORDS=(b'location',b'gps',b'coord',b'geo',b'iso6709')
 # the format rather than half-inspecting it, so it is named, never parsed.
 ASF_HEADER_GUID=bytes.fromhex('3026b2758e66cf11a6d900aa0062ce6c')
 
+# Cost bound for the bounded walks, applied before any of them starts.
+# FLAC is the expensive one: proving that nothing but audio frames follows the
+# metadata means decoding every residual, which is linear in samples. The walk
+# itself cannot be shortened — stopping after N frames would leave the bytes in
+# between unexamined, and unexamined bytes are exactly what a hidden payload
+# hides in — so the size is refused up front instead. 1 GB is the ceiling the
+# Worker already enforces on a raw source upload; nothing here accepts more.
+MAX_INSPECTION_BYTES=1_000_000_000
+
 
 def location_key(name):
     lowered=bytes(name).lower()
@@ -642,6 +651,7 @@ def _webm_header(fd,size):
 
 
 def inspect(fd,size,*,allow_edit_lists=False,allow_webm=True):
+    require(size<=MAX_INSPECTION_BYTES,'media_limit_exceeded: inspection_bytes')
     head=os.pread(fd,16,0)
     if head==ASF_HEADER_GUID:
         # Named before any structure walk, like WebM below: a deferred format is
