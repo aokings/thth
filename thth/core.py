@@ -1024,12 +1024,29 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             text=effective, account=account_name, reply_to=reply_to, topic=topic_value, media_manifest=manifest)
 
         if mode == "rehearsal":
+            # **dry-run は publish が断るものを断る**（実機 2026-09-22: 8 MB を
+            # 超える公開 JPEG に digest が出て、本番の preflight で初めて落ちた）。
+            # 媒体の上限を見る場所は lint と同じ 1 か所（`lint_notes`）にする
+            # ——2 か所に書けば必ずずれる。instance に届かないときだけ断らず、
+            # 既存の capability_unobserved を警告として言う（上限は upload の
+            # 直前にもう一度観測するので、ここで断る根拠にならない）。
+            media_notes = (media_delivery.lint_notes(account_cfg, {'media': media_rows or []},
+                                                     text=effective, unreachable_warns=True)
+                           if manifest else [])
+            refusals = [note for note in media_notes if not note.startswith('warning: ')]
+            if refusals:
+                for note in media_notes:
+                    log(note)
+                return ThrowResult(exit_code=2, mode=mode, action='invalid_attachment',
+                                   message=refusals[0], error=refusals[0])
             log("投げるはずの本文:")
             log(effective)
             if topic_value:
                 log(f"トピック: {topic_value}")
             log(queuefile.length_line(media, effective, account_cfg))
             if manifest: log(media_mod.display(manifest))
+            for note in media_notes:
+                log(note)
             log(f"digest: {digest}")
             _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
                         status="ok", error=None)

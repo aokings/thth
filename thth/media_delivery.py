@@ -111,11 +111,16 @@ def publish(adapter,post,*,cfg,fm,manifest,state_dir,before_publish=None,on_cont
         return base.PublishResult(None,None,jst.iso(),error=reason,failure='media_ambiguous' if started else 'publish_vetoed')
 
 
+# Nothing was observed in this run. The same line serves the empty cache and a
+# rehearsal that could not reach the instance: neither checked any live limit.
+CAPABILITY_UNOBSERVED='media limits: capability_unobserved (latest instance check required before upload)'
+
+
 def cached_note(cfg):
     if cfg.get('media')!='mastodon':return None
     from .adapters import mastodon_media
     value=mastodon_media.cached(cfg)
-    if value is None:return 'media limits: capability_unobserved (latest instance check required before upload)'
+    if value is None:return CAPABILITY_UNOBSERVED
     return f"media limits: cached instance={value['instance']} version={value['version']} observed_at={value['observed_at']} (rechecked before upload)"
 
 
@@ -169,8 +174,23 @@ def unsupported_notes(exc,*,fallback='media_unavailable'):
     return [reason,*UNSUPPORTED_ATTACHMENT_NOTES.get(reason.rsplit('/',1)[-1],())]
 
 
-def lint_notes(cfg,fm,*,text=None):
-    """Fresh public limits; unknown or excessive attachments never pass lint."""
+class _Unreachable(Exception):
+    """The instance itself could not be answered; local media is not at fault."""
+
+
+def _observe(call):
+    """Name a connectivity failure apart from a malformed or excessive答え."""
+    try:return call()
+    except OSError as exc:raise _Unreachable from exc
+
+
+def lint_notes(cfg,fm,*,text=None,unreachable_warns=False):
+    """Fresh public limits; unknown or excessive attachments never pass lint.
+
+    `unreachable_warns` is the rehearsal's one difference from lint: a Mastodon
+    instance that cannot be reached warns instead of refusing. A rehearsal is
+    not an upload, and the live limits are observed again before every upload.
+    """
     if not cfg or not media.declared(fm):return []
     if cfg.get('media')=='threads':
         from .adapters import threads_media
@@ -198,7 +218,7 @@ def lint_notes(cfg,fm,*,text=None):
         # Preserve the existing file-media lint order: unavailable live limits
         # take precedence over opening local media; never fall back to cache.
         special=bool(fm.get('attachments')) or 'quote_approval_policy' in fm.get('post_options',{})
-        cap=mastodon_media.observe(cfg) if fm.get('media') and not special else None
+        cap=_observe(lambda:mastodon_media.observe(cfg)) if fm.get('media') and not special else None
         with media.prepare(cfg['repo_dir'],fm,cfg['media']) as (manifest,items):
             reason=mastodon_media.intent_error(manifest)
             if reason:return [reason]
@@ -206,7 +226,7 @@ def lint_notes(cfg,fm,*,text=None):
             quote=any(row['type']=='quote' for row in manifest['attachments']) or 'quote_approval_policy' in manifest['post_options']
             mastodon_media.check_text_intent(manifest,text)
             if special and (items or poll is not None or quote):
-                body,instance=mastodon_media.observe_instance(cfg);notes=[]
+                body,instance=_observe(lambda:mastodon_media.observe_instance(cfg));notes=[]
                 if poll is not None:
                     limits=mastodon_media.poll_capabilities(body,instance)
                     mastodon_media.check_poll(limits,poll,text)
@@ -223,5 +243,8 @@ def lint_notes(cfg,fm,*,text=None):
                 retained_notes=mastodon_media.metadata_notes(items)
             else:return ['warning: Mastodon generates a preview from the approved body URL; display is unobserved'] if any(row['type']=='link' for row in manifest['attachments']) else []
         return ['warning: '+cached_note(cfg)]+retained_notes
+    except _Unreachable as exc:
+        if unreachable_warns:return ['warning: '+CAPABILITY_UNOBSERVED]
+        return unsupported_notes(exc.__cause__,fallback='media_capability_unavailable')
     except (OSError,ValueError) as exc:
         return unsupported_notes(exc,fallback='media_capability_unavailable')

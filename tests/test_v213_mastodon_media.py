@@ -463,6 +463,21 @@ def test_lint_instance_failure_never_uses_permissive_cache(env,wire,monkeypatch)
     def unavailable(*a,**k):raise OSError('synthetic connectivity failure')
     monkeypatch.setattr(mm,'_json',unavailable)
     assert media_delivery.lint_notes(cfg,{'media':[{'file':'a.png','alt':'点'}]})==['media_capability_unavailable']
+    # 予行は upload ではない。届かない instance は断る根拠にならず、lint と
+    # 同じ capability_unobserved を警告として言う（上限は upload 直前に再観測）。
+    warned=media_delivery.lint_notes(cfg,{'media':[{'file':'a.png','alt':'点'}]},unreachable_warns=True)
+    # 保存済みの上限があっても、この run では何も観測していないと言う。
+    assert warned==['warning: '+media_delivery.CAPABILITY_UNOBSERVED]
+    assert mm.cached(cfg) is not None
+
+
+def test_rehearsal_still_refuses_limits_the_instance_did_answer(env,wire,monkeypatch):
+    cfg,adapter,repo=env
+    wire['caps']['configuration']['media_attachments']['image_size_limit']=1
+    fm={'media':[{'file':'a.png','alt':'点'}]}
+    assert media_delivery.lint_notes(cfg,fm,unreachable_warns=True)==['media_limit_exceeded: bytes']
+    del wire['caps']['configuration']['media_attachments']['image_size_limit']
+    assert media_delivery.lint_notes(cfg,fm,unreachable_warns=True)==['media_capability_unavailable: image_size_limit']
 
 
 @pytest.mark.parametrize('boundary', ['sleep', 'response_equal', 'response_late', 'legal'])
@@ -512,6 +527,9 @@ def test_cli_source_only_stale_is_loud_and_has_no_provider(env,wire,monkeypatch,
     argv=['send','alpha','--media','a.png','--alt','点']
     assert cli.main(argv)==0;shown=capsys.readouterr().out
     digest=next(line.split(': ',1)[1] for line in shown.splitlines() if line.startswith('digest: '))
+    # 予行が読むのは公開の instance 上限だけ——資格情報も POST も無い。
+    assert all(call[0]=='GET' and call[1]=='/api/v2/instance' and 'Authorization' not in call[3] for call in wire['calls'])
+    wire['calls'].clear()
     raw=(repo/'a.png').read_bytes();data=b'Note\0private fixture only';kind=b'tEXt'
     changed=raw[:-12]+struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))+raw[-12:]
     assert mediaformats.png(raw).public_bytes==mediaformats.png(changed).public_bytes
