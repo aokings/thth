@@ -1,6 +1,16 @@
 """Signed cleanup observation/recovery. No capability or object IDs leave Worker."""
 import json
+import os
 from . import accounts, admin_log, approval_relay
+
+
+def configured():
+    """Read-only presence, never create signer directories or fetch a URL."""
+    if os.environ.get('THTH_APPROVAL_BASE_URL') or os.environ.get('THTH_MEDIA_BASE_URL'):return True
+    try:approval_relay.key_path().lstat()
+    except FileNotFoundError:return False
+    except (OSError, ValueError, approval_relay.RelayError):return True
+    return True
 
 
 def _counts(value, fields):
