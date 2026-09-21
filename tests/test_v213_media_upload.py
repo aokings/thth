@@ -427,6 +427,29 @@ def test_gc_commits_tracked_files_and_unlinks_an_untracked_leftover(env, worker)
     assert len(log) == 1, 'the two tracked files must leave in exactly one commit'
 
 
+def test_gc_sweeps_stale_locks_and_counts_corrupt_intents_without_deleting_them(env, worker):
+    issued = upload(env, worker, GPS_JPEG)
+    finish(env, issued['media_id'])
+    folder = uploads.directory('alpha')
+    old = time.time() - 2 * 86_400
+    stale = folder / ('m' + 'a' * 42 + '.lock')
+    stale.write_bytes(b'')
+    stale.chmod(0o600)
+    os.utime(stale, (old, old))
+    fresh = folder / ('m' + 'b' * 42 + '.lock')
+    fresh.write_bytes(b'')
+    fresh.chmod(0o600)
+    broken = folder / ('m' + 'c' * 42 + '.json')
+    broken.write_text('{"schema_version": 1, "truncated"')
+    result = uploads.gc('alpha', by='operator')
+    assert result['reason'] is None
+    assert result['locks_removed'] == 1 and not stale.exists()
+    assert fresh.exists(), 'a lock younger than the backstop was removed'
+    assert result['corrupt_count'] == 1
+    assert broken.exists(), 'an unreadable intent was deleted instead of reported'
+    assert broken.read_text() == '{"schema_version": 1, "truncated"'
+
+
 def test_gc_reads_a_manuscript_larger_than_four_mebibytes(env, worker):
     """A 5 MiB manuscript used to be skipped whole: its attachment looked unused."""
     sha = finish(env, upload(env, worker, GPS_JPEG)['media_id'])['public_sha256']

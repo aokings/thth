@@ -484,7 +484,7 @@ def gc(account, *, by, now=None):
     if cfg.get('repo_dir') != str(clone):
         raise ValueError('managed_repo_required')
     moment = time.time() if now is None else now
-    removed = kept = intents = 0
+    removed = kept = intents = corrupt = locks = 0
     with server_files.account_locks(account, cfg):
         ok, _, _ = writeback.sync_repo(cfg['repo_dir'])
         if not ok:
@@ -524,8 +524,8 @@ def gc(account, *, by, now=None):
                 repair = managed_repo.run(clone, ['checkout', '--', *tracked], check=False)
                 restored = len(tracked) if not repair.returncode else 0
                 return {'account': account, 'removed_count': 0, 'kept_count': kept,
-                        'intents_removed': 0, 'restored_count': restored,
-                        'reason': 'media_gc_unconfirmed'}
+                        'intents_removed': 0, 'locks_removed': 0, 'corrupt_count': 0,
+                        'restored_count': restored, 'reason': 'media_gc_unconfirmed'}
         for path in untracked:
             os.unlink(Path(clone) / path)
         removed = len(tracked) + len(untracked)
@@ -533,11 +533,30 @@ def gc(account, *, by, now=None):
         try:
             with server_files.directory(directory(account), private=True) as fd:
                 for name in sorted(os.listdir(fd)):
+                    if name.endswith('.lock'):
+                        # An interrupted session leaves its rendezvous file
+                        # behind. Take the lock first (so a running session is
+                        # never unlinked underneath) and only drop one older
+                        # than the 24h backstop — a session lives 10 minutes.
+                        try:
+                            with server_files.lock_at(fd, name):
+                                if moment - os.stat(name, dir_fd=fd, follow_symlinks=False).st_mtime > GC_AGE_SECONDS:
+                                    os.unlink(name, dir_fd=fd)
+                                    locks += 1
+                        except (OSError, server_files.UnsafeFile):
+                            # Held by a running session, or not a plain private
+                            # file: leave it alone and report nothing.
+                            pass
+                        continue
                     if not name.endswith('.json'):
                         continue
                     try:
                         record = _load(fd, name[:-5])
                     except ReportServiceError:
+                        # Unreadable or invalid: counted, never deleted. A record
+                        # nobody can read is the one a human must look at, and
+                        # silence here used to hide it forever.
+                        corrupt += 1
                         continue
                     stale = moment * 1000 - record['created_at'] > GC_AGE_SECONDS * 1000
                     held = record['status'] == 'ready' and Path(record['file']).name not in gone
@@ -547,4 +566,5 @@ def gc(account, *, by, now=None):
         except FileNotFoundError:
             pass
     return {'account': account, 'removed_count': removed, 'kept_count': kept,
-            'intents_removed': intents, 'restored_count': 0, 'reason': None}
+            'intents_removed': intents, 'locks_removed': locks, 'corrupt_count': corrupt,
+            'restored_count': 0, 'reason': None}

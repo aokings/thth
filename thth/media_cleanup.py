@@ -69,12 +69,15 @@ def gc_command(args):
         result = media_uploads.gc(args.account, by=args.by)
     except (OSError, ValueError, TypeError, admin_log.AdminLogError, accounts.AccountError):
         result = {'account': args.account, 'removed_count': None, 'kept_count': None,
-                  'intents_removed': None, 'reason': 'media_gc_unavailable'}
+                  'intents_removed': None, 'locks_removed': None, 'corrupt_count': None,
+                  'restored_count': None, 'reason': 'media_gc_unavailable'}
     print(json.dumps(result, ensure_ascii=False) if args.json else
           'media gc: ' + str(result.get('reason') or 'done') +
           ' (removed=' + str(result.get('removed_count')) +
           ' kept=' + str(result.get('kept_count')) +
-          ' intents=' + str(result.get('intents_removed')) + ')')
+          ' intents=' + str(result.get('intents_removed')) +
+          ' locks=' + str(result.get('locks_removed')) +
+          ' corrupt=' + str(result.get('corrupt_count')) + ')')
     return 2 if result.get('reason') else 0
 
 
