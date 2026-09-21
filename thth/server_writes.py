@@ -18,7 +18,8 @@ JOB_ID = approval_relay.OPAQUE
 SAFE_ERRORS = frozenset(('invalid_request','unsupported_operation','invalid_scope','invalid_options','scope_unavailable',
     'writes_not_allowed','invalid_draft','draft_changed','draft_not_editable','managed_repo_required','production_disabled',
     'credential_changed','draft_commit_unconfirmed','draft_not_verified','account_stopped','account_leaving','approval_registration_unknown',
-    'credential_unavailable','write_unavailable','media_preview_unavailable'))
+    'credential_unavailable','write_unavailable','media_preview_unavailable','approval_registration_rejected',
+    'approval_request_too_large','approval_attachments_too_many'))
 from .media_uploads import REASONS as MEDIA_REASONS
 SAFE_ERRORS = SAFE_ERRORS | MEDIA_REASONS
 

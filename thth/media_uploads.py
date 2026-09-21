@@ -21,6 +21,7 @@ import urllib.error
 from pathlib import Path
 
 from . import accounts, managed_repo, redact, server_files, writeback
+from .media import MAX_ALT_BYTES
 from .approval_relay import OPAQUE
 from .report_service import ReportServiceError
 
@@ -80,7 +81,7 @@ MULTIPART_THRESHOLD = 100_000_000
 PART_SIZE = 5 * 1024 * 1024
 GC_AGE_SECONDS = 86_400     # the lifecycle 24h backstop, mirrored on the VM
 MAX_DRAFT_MEDIA = 8         # transport bound only; lint stays the policy authority
-MAX_ALT_BYTES = 2000
+# `MAX_ALT_BYTES` は thth/media.py の 1 本（原稿の宣言と招待者の口で同じ上限）。
 
 STATES = ('pending', 'ready', 'rejected', 'unknown')
 # Leading refusal codes produced by the stage-1 sanitize. Only these (and the
