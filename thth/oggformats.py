@@ -50,7 +50,7 @@ def _comments(p,notes,*,vorbis=False):
         for at in range(x,y,65536):
             raw=p.read(at,min(65536,y-at));n=raw.find(b'=');key.extend(raw if n<0 else raw[:n])
             if n>=0:value_at=at+n+1;break
-        require(value_at is not None and all(32<=c<=126 and c!=61 for c in key))
+        require(value_at is not None and all(32<=c<=125 and c!=61 for c in key))
         key=bytes(key).lower()
         require(not any(s in key for s in (b'location',b'gpslatitude',b'gpslongitude',b'gpsaltitude',b'geotag')) and key not in (b'gps',b'latitude',b'longitude',b'altitude'),'location_metadata_present: ogg field')
         if not vorbis and key in (b'r128_track_gain',b'r128_album_gain'):
