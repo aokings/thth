@@ -2632,16 +2632,38 @@ def cmd_send(args) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     from .postid import PostIdError
+    from . import media_delivery as media_delivery_mod
     try:
         from . import read_coordination
+        # **断るときは理由を必ず言う**（実機 2026-09-22）。添付が通らないと
+        # `mode: rehearsal` の 1 行だけ出して 2 で終わっていた——`ThrowResult`
+        # には理由が入っているのに、`exit_code` しか見ていなかった。
+        # core が既に log した行は二度言わない（出したのは同じ 1 行）。
+        printed = []
+        def log(line):
+            printed.append(str(line))
+            print(line)
+        outcome = {}
         def send():
-            return core_mod.send_once(
+            result = core_mod.send_once(
                 args.account, text=text, topic=args.topic, reply_to=args.reply_to,
                 reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
                 found_by=args.found_by,
-                production_flag=args.production, confirm=args.confirm, log=print, wait=getattr(args, "wait", 0),
-                **({'media_rows': declarations} if declarations else {})).exit_code
-        return read_coordination.invoke(args,'send',send)
+                production_flag=args.production, confirm=args.confirm, log=log, wait=getattr(args, "wait", 0),
+                **({'media_rows': declarations} if declarations else {}))
+            outcome['result'] = result
+            return result.exit_code
+        code = read_coordination.invoke(args,'send',send)
+        result = outcome.get('result')
+        if code and result is not None:
+            lines = media_delivery_mod.refusal_lines(result)
+            # 個別の次の一歩が既に出ているなら、一般の次の一歩は重ねない。
+            if any(line.startswith('次の一歩') for line in printed):
+                lines = [line for line in lines if not line.startswith('次の一歩')]
+            for line in lines:
+                if line not in printed:
+                    print(line, file=sys.stderr)
+        return code
     except PostIdError as exc:
         print(str(exc), file=sys.stderr)
         return 2

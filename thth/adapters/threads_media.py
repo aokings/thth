@@ -12,7 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from . import base
-from .. import accounts,approval_relay,httpsafe,jst,leave_gate,media,media_relay,mediaformats
+from .. import accounts,api_diagnostic,approval_relay,httpsafe,jst,leave_gate,media,media_relay,mediaformats
 
 # Accepted locally in lower case; sent capitalised exactly as Meta's Threads
 # documentation lists them ("Bold, Italic, Highlight, Underline, Strikethrough",
@@ -200,6 +200,15 @@ def _json(adapter,method,path,params,*,timeout=None):
     return result
 
 
+def graph_codes(error):
+    """The Graph error numbers as a static suffix; never the provider's text."""
+    try:detail,_,_=api_diagnostic.read_http_error(error)
+    except (OSError,ValueError):return ''
+    parts=[label+'_'+str(detail[key]) for key,label in (('code','code'),('error_subcode','subcode'))
+           if type(detail.get(key)) is int and 0<=detail[key]<10**9]
+    return '_'+'_'.join(parts) if parts else ''
+
+
 def identifier(value):
     value=value.get('id')
     require(type(value) is str and value.isascii() and value.isdecimal(),'media_response_invalid: id')
@@ -216,6 +225,25 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         if before_publish:
             reason=before_publish();require(not reason,str(reason))
         require(all(time.time()*1000<g['expires_at'] for g in grants),'media_provider_url_expired')
+    def settle():
+        """FINISHED は「もう出せる」ではない。本文の経路と同じだけ待つ。
+
+        実機 2026-09-22: 画像の container が FINISHED（`error_message` なし）に
+        なった直後の `threads_publish` が 400 で落ちた。本文の経路
+        （`threads.publish`）は container 作成のあと `wait_seconds`（既定 30 秒・
+        `THTH_THREADS_WAIT_SECONDS`）待ってから公開している。添付の経路だけが
+        即座に公開していた。待ちは付与の期限を越えない——越えれば URL が死んで
+        必ず出せなくなるので、そのときは待たずに出す。
+        """
+        seconds=getattr(adapter,'wait_seconds',0) or 0
+        require(type(seconds) in (int,float) and math.isfinite(seconds) and seconds>=0,'media_wait_seconds_invalid')
+        deadline=time.monotonic()+seconds
+        while True:
+            remaining=deadline-time.monotonic()
+            if remaining<=0:break
+            if min((g['expires_at']/1000-time.time() for g in grants),default=float('inf'))<=remaining:break
+            time.sleep(remaining)
+
     def wait(container,*,video=False):
         deadline=time.monotonic()+(VIDEO_POLL_SECONDS if video else POLL_SECONDS)
         while True:
@@ -263,6 +291,9 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
             container=identifier(_json(adapter,'POST','/'+adapter.user_id+'/threads',{'media_type':'CAROUSEL','children':','.join(ids),**common}))
             record('processing_carousel',container_id=container);wait(container,video=any(i.manifest['kind']=='video' for i in post.media_files));record('ready',container_id=container)
         if on_container_created:on_container_created(container)
+        # 待ってから、待ったあとの様子でもう一度確かめて、それから公開する
+        # （本文の経路と同じ順序・独立検収 2026-09-11 P1-3 と同じ理由）。
+        settle()
         veto();record('publishing',container_id=container)
         result=identifier(_json(adapter,'POST','/'+adapter.user_id+'/threads_publish',{'creation_id':container}))
         record('published',post_id=result,publication_ack='pending')
@@ -286,6 +317,11 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         held=bool(ids or grants) and (phase in ('ready','processing','processing_carousel') or definite)
         uncertain=phase!='preflight' and not held and not definite
         reason='media_relay_endpoint_rejected' if endpoint else str(exc) if isinstance(exc,media.MediaError) else 'media_relay_failed' if isinstance(exc,(media_relay.MediaRelayError,approval_relay.RelayError)) else 'media_'+phase+('_http_'+str(exc.code) if http else '_failed')
+        # 4xx の本文には Graph の番号が入っている。**番号だけ**を理由の尾に足す
+        # ——「まだ出せない」と「その要求が不正」を運用が見分けられない限り、
+        # 同じ `media_publishing_http_400` を見て打つ手が決まらない。provider の
+        # 文面・fbtrace は静的でないので取らない（redact の前提を崩さない）。
+        if http and 400<=exc.code<500:reason+=graph_codes(exc)
         # Explicit refusal/veto: retire grants once, never retry an unknown POST.
         if held:
             for grant in grants:

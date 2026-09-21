@@ -111,11 +111,16 @@ def publish(adapter,post,*,cfg,fm,manifest,state_dir,before_publish=None,on_cont
         return base.PublishResult(None,None,jst.iso(),error=reason,failure='media_ambiguous' if started else 'publish_vetoed')
 
 
+# Nothing was observed in this run. The same line serves the empty cache and a
+# rehearsal that could not reach the instance: neither checked any live limit.
+CAPABILITY_UNOBSERVED='media limits: capability_unobserved (latest instance check required before upload)'
+
+
 def cached_note(cfg):
     if cfg.get('media')!='mastodon':return None
     from .adapters import mastodon_media
     value=mastodon_media.cached(cfg)
-    if value is None:return 'media limits: capability_unobserved (latest instance check required before upload)'
+    if value is None:return CAPABILITY_UNOBSERVED
     return f"media limits: cached instance={value['instance']} version={value['version']} observed_at={value['observed_at']} (rechecked before upload)"
 
 
@@ -127,6 +132,40 @@ UNSUPPORTED_ATTACHMENT_NOTES={
 }
 
 
+# Static next steps for the media refusals `thth send` can end on, keyed on the
+# reason's own prefix. Like UNSUPPORTED_ATTACHMENT_NOTES above, no input value,
+# file name or path is ever reflected into one of these lines.
+MEDIA_NEXT_STEPS=(
+ ('duration_unverifiable','次の一歩: 動画の構造から秒数を確認できません。ffmpeg -movflags +faststart で出し直す'),
+ ('dimensions_unavailable','次の一歩: 動画の寸法を確認できません。ffmpeg で出し直す'),
+ ('location_metadata_present','次の一歩: 位置情報が入っています。位置を落としてから出し直す'),
+ ('location_metadata_unverifiable','次の一歩: 読み取れない metadata が入っています。ffmpeg で入れ直す'),
+ ('invalid_attachment_structure','次の一歩: ファイルの構造が壊れています。作り直す'),
+ ('unsupported_attachment','次の一歩: この媒体が受け取れない形式です。`thth forms` で受かる形を見る'),
+ ('media_limit_exceeded','次の一歩: 媒体の上限を超えています。小さくするか分ける'),
+ ('media_capability_unavailable','次の一歩: 媒体の上限を読めていません。instance に届くところで出し直す'),
+ ('media: alt_too_long','次の一歩: alt が長すぎます。2000 バイト以内に縮める'),
+ ('media: source_unreadable','次の一歩: 添付を repo から読めません。パスと権限を確かめる'),
+ ('media: source_changed','次の一歩: 読んでいる間にファイルが変わりました。もう一度'),
+)
+
+
+def next_step(reason):
+    """The static next step for a media refusal, or nothing when none fits."""
+    if not isinstance(reason,str):return None
+    for prefix,line in MEDIA_NEXT_STEPS:
+        if reason==prefix or reason.startswith(prefix+':') or reason.startswith(prefix+' '):return line
+    return None
+
+
+def refusal_lines(result):
+    """Every non-zero送信結果が言う理由と、媒体の理由なら次の一歩を 1 行。"""
+    reason=result.message or result.error
+    if not reason:return []
+    step=next_step(result.error or result.message)
+    return [reason,*([step] if step else [])]
+
+
 def unsupported_notes(exc,*,fallback='media_unavailable'):
     """The refusal line, plus its static note/next step when one is defined."""
     from .mediaformats import FormatError
@@ -135,8 +174,23 @@ def unsupported_notes(exc,*,fallback='media_unavailable'):
     return [reason,*UNSUPPORTED_ATTACHMENT_NOTES.get(reason.rsplit('/',1)[-1],())]
 
 
-def lint_notes(cfg,fm,*,text=None):
-    """Fresh public limits; unknown or excessive attachments never pass lint."""
+class _Unreachable(Exception):
+    """The instance itself could not be answered; local media is not at fault."""
+
+
+def _observe(call):
+    """Name a connectivity failure apart from a malformed or excessive答え."""
+    try:return call()
+    except OSError as exc:raise _Unreachable from exc
+
+
+def lint_notes(cfg,fm,*,text=None,unreachable_warns=False):
+    """Fresh public limits; unknown or excessive attachments never pass lint.
+
+    `unreachable_warns` is the rehearsal's one difference from lint: a Mastodon
+    instance that cannot be reached warns instead of refusing. A rehearsal is
+    not an upload, and the live limits are observed again before every upload.
+    """
     if not cfg or not media.declared(fm):return []
     if cfg.get('media')=='threads':
         from .adapters import threads_media
@@ -164,7 +218,7 @@ def lint_notes(cfg,fm,*,text=None):
         # Preserve the existing file-media lint order: unavailable live limits
         # take precedence over opening local media; never fall back to cache.
         special=bool(fm.get('attachments')) or 'quote_approval_policy' in fm.get('post_options',{})
-        cap=mastodon_media.observe(cfg) if fm.get('media') and not special else None
+        cap=_observe(lambda:mastodon_media.observe(cfg)) if fm.get('media') and not special else None
         with media.prepare(cfg['repo_dir'],fm,cfg['media']) as (manifest,items):
             reason=mastodon_media.intent_error(manifest)
             if reason:return [reason]
@@ -172,7 +226,7 @@ def lint_notes(cfg,fm,*,text=None):
             quote=any(row['type']=='quote' for row in manifest['attachments']) or 'quote_approval_policy' in manifest['post_options']
             mastodon_media.check_text_intent(manifest,text)
             if special and (items or poll is not None or quote):
-                body,instance=mastodon_media.observe_instance(cfg);notes=[]
+                body,instance=_observe(lambda:mastodon_media.observe_instance(cfg));notes=[]
                 if poll is not None:
                     limits=mastodon_media.poll_capabilities(body,instance)
                     mastodon_media.check_poll(limits,poll,text)
@@ -189,5 +243,8 @@ def lint_notes(cfg,fm,*,text=None):
                 retained_notes=mastodon_media.metadata_notes(items)
             else:return ['warning: Mastodon generates a preview from the approved body URL; display is unobserved'] if any(row['type']=='link' for row in manifest['attachments']) else []
         return ['warning: '+cached_note(cfg)]+retained_notes
+    except _Unreachable as exc:
+        if unreachable_warns:return ['warning: '+CAPABILITY_UNOBSERVED]
+        return unsupported_notes(exc.__cause__,fallback='media_capability_unavailable')
     except (OSError,ValueError) as exc:
         return unsupported_notes(exc,fallback='media_capability_unavailable')
