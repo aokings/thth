@@ -502,7 +502,9 @@ def prepare(repo_dir,fm,medium):
                     if not (text.startswith('WEBVTT\n') or text.startswith('WEBVTT\r\n') or text.startswith('WEBVTT ') or text.startswith('WEBVTT\t')) or '\x00' in text:raise MediaError('captions: invalid WebVTT')
                     info=mediaformats.Inspection('vtt','caption',None,None,None)
                 else:
-                    info=mediaformats.inspect(snapshot.fileno(),source.size,**({'allow_edit_lists':True} if medium=='threads' else {}))
+                    # Threads takes MP4/MOV only: WebM is named and refused here,
+                    # before any structure parsing or provider call.
+                    info=mediaformats.inspect(snapshot.fileno(),source.size,**({'allow_edit_lists':True,'allow_webm':False} if medium=='threads' else {}))
                     if role=='thumbnail' and info.kind!='image':raise MediaError('attachments: image thumbnail required')
                 public=info.public_bytes
                 if public is not None:

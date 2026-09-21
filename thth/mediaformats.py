@@ -622,9 +622,14 @@ def _webm_header(fd,size):
     except ValueError:return False
 
 
-def inspect(fd,size,*,allow_edit_lists=False):
+def inspect(fd,size,*,allow_edit_lists=False,allow_webm=True):
     head=os.pread(fd,16,0)
-    if head.startswith(b'\x1a\x45\xdf\xa3'):
+    if head.startswith(b'\x1aE\xdf\xa3'):
+        # Name the container from its bounded EBML DocType first. A provider that
+        # cannot take WebM must refuse by format before deep structure parsing,
+        # so a malformed WebM is still reported as WebM, never as bad structure.
+        if not allow_webm:
+            raise FormatError('unsupported_attachment: '+('webm' if _webm_header(fd,size) else 'unknown format'))
         from .ebmlvideo import webm
         return webm(fd,size)
     if head.startswith(b'OggS'):
@@ -642,8 +647,6 @@ def inspect(fd,size,*,allow_edit_lists=False):
     if head[:4] in (b'RF64',b'RIFX'):
         raise FormatError('unsupported_attachment_structure: wav variant')
     if len(head)>=8 and head[4:8] in (b'ftyp',b'free',b'wide',b'moov',b'mdat'): return bmff(fd,size,allow_edit_lists=allow_edit_lists)
-    if head.startswith(b'\x1aE\xdf\xa3'):
-        raise FormatError('unsupported_attachment: '+('webm' if _webm_header(fd,size) else 'unknown format'))
     data=os.pread(fd,size,0); require(len(data)==size)
     if head.startswith(b'\xff\xd8'): return jpeg(data)
     if head.startswith(b'\x89PNG\r\n\x1a\n'): return png(data)
