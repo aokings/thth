@@ -50,10 +50,32 @@ const kindLabel={approve:'原稿を承認',send:'この内容を公開',retract:
 const accepted={approve:'原稿の承認を受け付けました',send:'公開の承認を受け付けました',retract:'削除の承認を受け付けました'};
 const labels={media:'媒体',reply_to:'返信先',publish_at:'公開予定',target:'削除する投稿',reason:'削除理由',topic:'話題',options:'公開オプション'};
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const kindWord={image:'画像',video:'動画',audio:'音声',caption:'字幕'};
+const roleWord={media:'添付',thumbnail:'代表画像',caption:'字幕'};
+const clock=value=>{const total=Math.max(0,Math.round(Number(value)));return String(Math.floor(total/60)).padStart(2,'0')+':'+String(total%60).padStart(2,'0');};
+// Every field is escaped; the preview capability appears in this markup only.
+function attachment(row){
+  const head=escape(roleWord[row.role])+' '+escape(row.index);
+  const sha='sha '+escape(row.public_sha256.slice(0,12));
+  const alt=' · alt: '+escape(row.alt);
+  if(row.kind==='caption')return '<p>'+escape(kindWord.caption)+' ('+escape(row.alt)+') '+sha+'</p>';
+  if(row.kind==='image'){
+    const shape=row.width===null||row.height===null?'寸法: 適用外':escape(row.width)+'×'+escape(row.height);
+    const image=row.preview===null||row.preview===undefined?'':'<img src="/m/'+escape(row.preview)+'" alt="'+escape(row.alt)+'">';
+    return '<figure>'+image+'<figcaption>'+head+': '+escape(row.format.toUpperCase())+' '+shape+' · '+sha+alt+'</figcaption></figure>';
+  }
+  const length=row.duration===null||row.duration===undefined?'長さ: 未取得':clock(row.duration);
+  return '<p>'+head+': '+escape(kindWord[row.kind])+' '+length+' · '+sha+alt+'</p>';
+}
+function attachments(rows,typed){
+  const list=Array.isArray(rows)?rows.map(attachment).join(''):'';
+  const structured=typeof typed==='string'&&typed?'<p>型付き添付／公開設定</p><pre>'+escape(typed)+'</pre>':'';
+  return list+structured;
+}
 function page(status,body) {
-  return new Response('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>THTH 承認</title><style>body{overflow-wrap:anywhere;max-width:44rem;margin:2rem auto;padding:0 1rem;font:1rem/1.7 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;border:1px solid;padding:1rem}input{max-width:100%;font:inherit}button{display:block;margin:1rem 0;padding:.6rem 1.4rem;font:inherit}</style><body>'+body+'</body></html>',{status,headers:{
+  return new Response('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>THTH 承認</title><style>body{overflow-wrap:anywhere;max-width:44rem;margin:2rem auto;padding:0 1rem;font:1rem/1.7 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;border:1px solid;padding:1rem}figure{margin:1rem 0}img{max-width:100%;height:auto;border:1px solid}figcaption{font-size:.9rem}input{max-width:100%;font:inherit}button{display:block;margin:1rem 0;padding:.6rem 1.4rem;font:inherit}</style><body>'+body+'</body></html>',{status,headers:{
     'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer',
-    'content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    'content-security-policy':"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     'x-content-type-options':'nosniff','x-frame-options':'DENY'}});
 }
 export async function approvalRequest(request,env,url) {
@@ -68,7 +90,7 @@ export async function approvalRequest(request,env,url) {
       if(request.method==='GET'){
         const result=await stub.view();if(result.status!==200)return page(result.status,'<h1>承認ページは無効です</h1><p>サーバから新しく承認を求めてください。</p>');
         const d=result.body;
-        return page(200,`<h1>${kindLabel[d.kind]}</h1><p>アカウント: ${escape(d.account)}</p><pre>${escape(d.text)}</pre>${Object.entries(d.context).filter(([,v])=>v!==null).map(([k,v])=>`<p>${labels[k]}: ${escape(v)}</p>`).join('')}<p>digest: ${escape(d.digest)}</p><p>10 分で失効します。</p><form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><label>承認 secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label><button type="submit">承認</button></form>`);
+        return page(200,`<h1>${kindLabel[d.kind]}</h1><p>アカウント: ${escape(d.account)}</p><pre>${escape(d.text)}</pre>${attachments(d.attachments,d.typed)}${Object.entries(d.context).filter(([,v])=>v!==null).map(([k,v])=>`<p>${labels[k]}: ${escape(v)}</p>`).join('')}<p>digest: ${escape(d.digest)}</p><p>10 分で失効します。</p><form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><label>承認 secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label><button type="submit">承認</button></form>`);
       }
       if(request.headers.get('origin')!==url.origin||!/^application\/x-www-form-urlencoded(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(403,{error:'forbidden'});
       const form=new URLSearchParams(await boundedBody(request,2048));

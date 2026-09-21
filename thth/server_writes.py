@@ -17,7 +17,7 @@ JOB_ID = approval_relay.OPAQUE
 SAFE_ERRORS = frozenset(('invalid_request','unsupported_operation','invalid_scope','invalid_options','scope_unavailable',
     'writes_not_allowed','invalid_draft','draft_changed','draft_not_editable','managed_repo_required','production_disabled',
     'credential_changed','draft_commit_unconfirmed','draft_not_verified','account_stopped','account_leaving','approval_registration_unknown',
-    'credential_unavailable','write_unavailable'))
+    'credential_unavailable','write_unavailable','media_preview_unavailable'))
 
 
 def error(reason, detail=None):
@@ -157,8 +157,12 @@ def draft_put(context, request, via):
         return {'draft_id':_id(name),'account':account,'status':'draft','revision':hashlib.sha256(text.encode()).hexdigest()}
 
 
-def prepare(context, request):
-    """Return exact public text plus a full private execution binding."""
+def prepare(context, request, *, media_out=None):
+    """Return exact public text plus a full private execution binding.
+
+    `media_out` is filled only for display: the binding and its digest are
+    unchanged by attachments, so a repeated prepare() still compares equal.
+    """
     account=request['account'];cfg=current(context,account,write=True)
     kind={'approval_request':'approve','send_request':'send','retract_request':'retract'}[request['operation']]
     display=dict(media=cfg['media'],reply_to=None,publish_at=None,target=None,reason=None,topic=None,options=None)
@@ -169,7 +173,9 @@ def prepare(context, request):
         from .cli import _prepare_one
         value,problem=_prepare_one(str(_queue(cfg)[1]/name))
         if problem or not value or value.get('bundle'): error('invalid_draft')
-        if value.get('media_manifest') or value.get('media_manifests'): error('media_approval_ui_unavailable')
+        if media_out is not None and value.get('media_manifest'):
+            media_out.update(manifest=value['media_manifest'],repo_dir=cfg['repo_dir'],
+                             front_matter=q.front_matter,medium=cfg['media'])
         text=value['text'];source=hashlib.sha256(raw).hexdigest()
         for key in ('reply_to','publish_at','topic'): display[key]=value.get(key)
         display['options']=json.dumps({k:value[k] for k in ('location','location_id','share_to_instagram')},ensure_ascii=False,sort_keys=True)
@@ -209,9 +215,10 @@ def prepare(context, request):
 
 
 def request_approval(context, request, via):
-    binding=prepare(context,request)
+    media={}
+    binding=prepare(context,request,media_out=media)
     from . import approval_jobs
-    return approval_jobs.create(context,request,binding,via)
+    return approval_jobs.create(context,request,binding,via,media=media or None)
 
 
 def execute(context, request, *, via='http'):

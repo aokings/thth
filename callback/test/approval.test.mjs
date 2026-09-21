@@ -245,3 +245,77 @@ test('invalid-signature discard is operator-only, hash-bound, retry-safe and fre
   assert.equal((await control('deletion','inbox')).filter(([k])=>k.startsWith('discarded:')||k.startsWith('receipt:')).length,0);
   await control('deletion','inbox',{});
 });
+
+// 第 8 段: the approval page shows the attachments a human must look at.
+const attachment=(over={})=>({index:1,role:'media',kind:'image',format:'jpeg',public_sha256:'ab'.repeat(32),
+  public_size:1200,width:1200,height:800,duration:null,alt:'湯呑みに注いだ玉露',preview:opaque(),...over});
+test('approval page renders images, video/audio/caption lines and typed attachments under img-src self',async()=>{
+  const p=await person();
+  const first=attachment(),second=attachment({index:2,format:'png',public_sha256:'cd'.repeat(32),width:640,height:640,alt:'茶葉の拡大'});
+  const video=attachment({index:3,kind:'video',format:'mp4',public_sha256:'ef'.repeat(32),width:1920,height:1080,duration:72,alt:'湯を注ぐ',preview:null});
+  const audio=attachment({index:4,kind:'audio',format:'m4a',public_sha256:'12'.repeat(32),width:null,height:null,duration:5.4,alt:'注ぐ音',preview:null});
+  const caption=attachment({index:1,role:'caption',kind:'caption',format:'vtt',public_sha256:'34'.repeat(32),width:null,height:null,duration:null,alt:'ja',preview:null});
+  const typed=JSON.stringify({attachments:[{type:'poll',options:['はい','いいえ']}],post_options:{},captions:[]});
+  sensitive.push(first.preview,second.preview);
+  const s=await session(p,{attachments:[first,second,video,audio,caption],typed});
+  const response=await page(s),html=await response.text();
+  assert.equal(response.status,200);
+  assert.ok(response.headers.get('content-security-policy').includes("img-src 'self'"));
+  assert.ok(response.headers.get('content-security-policy').includes("default-src 'none'"));
+  assert.ok(html.includes('<img src="/m/'+first.preview+'" alt="湯呑みに注いだ玉露">'),'first preview img');
+  assert.ok(html.includes('<img src="/m/'+second.preview+'" alt="茶葉の拡大">'),'second preview img');
+  assert.ok(html.includes('<figcaption>添付 1: JPEG 1200×800 · sha abababababab · alt: 湯呑みに注いだ玉露</figcaption>'),html);
+  assert.ok(html.includes('<figcaption>添付 2: PNG 640×640 · sha cdcdcdcdcdcd · alt: 茶葉の拡大</figcaption>'),html);
+  assert.ok(html.includes('<p>添付 3: 動画 01:12 · sha efefefefefef · alt: 湯を注ぐ</p>'),html);
+  assert.ok(html.includes('<p>添付 4: 音声 00:05 · sha 121212121212 · alt: 注ぐ音</p>'),html);
+  assert.ok(html.includes('<p>字幕 (ja) sha 343434343434</p>'),html);
+  assert.ok(html.includes('<p>型付き添付／公開設定</p><pre>'+typed.replaceAll('"','&quot;')+'</pre>'),html);
+  assert.ok(html.indexOf('</pre>')<html.indexOf('<figure>'),'attachments follow the body');
+  assert.ok(html.includes('<p>digest: '+s.body.digest+'</p>'));
+  // The capability is page-only: never in status, receipt or the stored row after resolution.
+  const pending=await(await signed('session',s.token,'status',{read_key:s.readKey})).json();
+  assert.equal(JSON.stringify(pending).includes(first.preview),false);
+  assert.equal(pending.attachments,undefined);
+  assert.equal((await approve(s,p)).status,200);
+  const receipt=await(await consume(s)).json();
+  const text=JSON.stringify(receipt)+JSON.stringify(await control('session',s.token));
+  for(const cap of [first.preview,second.preview])assert.equal(text.includes(cap),false,'capability leaked');
+  assert.equal(text.includes('attachments'),false);assert.equal(text.includes('typed'),false);
+  assert.equal(receipt.attachments,undefined);assert.equal(receipt.typed,undefined);
+  assert.equal((await page(s)).status,410);
+});
+test('attachment rows are strictly validated and a rejected create registers nothing',async()=>{
+  const p=await person();
+  const base={person:p.id,job_id:opaque(),digest:hash('x'),account:'alpha',kind:'send',text:'本文',
+    read_key_hash:hash(opaque()),context:{media:'threads',topic:null,options:null,reply_to:null,publish_at:null,target:null,reason:null}};
+  const bad=[
+    {attachments:[{...attachment(),extra:1}]},
+    {attachments:[{...attachment(),preview:undefined}]},
+    {attachments:Array.from({length:21},(_,i)=>attachment({index:i+1}))},
+    {attachments:[attachment({public_sha256:'zz'.repeat(32)})]},
+    {attachments:[attachment({kind:'video',duration:3})]},
+    {attachments:[attachment({role:'poll'})]},
+    {attachments:[attachment({index:0})]},
+    {attachments:[attachment({public_size:-1})]},
+    {attachments:[attachment({width:1.5})]},
+    {attachments:[attachment({alt:'x'.repeat(4097)})]},
+    {attachments:attachment()},
+    {typed:'x'.repeat(16_385)},
+    {typed:42},
+  ];
+  for(const [i,over] of bad.entries()){
+    const token=opaque();
+    assert.equal((await signed('session',token,'create',{...base,job_id:opaque(),...over})).status,400,'case '+i);
+    assert.equal((await mf.dispatchFetch('https://approval.test/approve/'+token,{headers:{'cf-connecting-ip':opaque()}})).status,410,'case '+i);
+  }
+  assert.equal((await signed('session',opaque(),'create',{...base,job_id:opaque(),attachments:[],typed:''})).status,201);
+});
+test('attachment alt and typed JSON are escaped like the body',async()=>{
+  const p=await person(),preview=opaque();sensitive.push(preview);
+  const evil='"><script>alert(1)</script>';
+  const s=await session(p,{attachments:[attachment({alt:evil,preview})],typed:'{"note":"'+evil+'"}'});
+  const html=await(await page(s)).text();
+  assert.equal(html.includes('<script>alert(1)</script>'),false);
+  assert.ok(html.includes('<img src="/m/'+preview+'" alt="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;">'),html);
+  assert.ok(html.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;</figcaption>'),html);
+});
