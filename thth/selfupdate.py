@@ -63,6 +63,17 @@ RELEASE_REF = os.environ.get("THTH_RELEASE_REF") or "release"
 #      以後、署名を確かめられない配布は**取り込まれず、古いまま走る**（止まらない）。
 REQUIRE_SIGNED_ENV = "THTH_REQUIRE_SIGNED_RELEASE"
 
+# **誰の署名なら信じるか**（2.14.0 §5）。SSH 署名の検証は allowed_signers 1 本で
+# 決まる。VM に置くのは配布担当が渡した公開鍵 1 行だけ（600）。試験は
+# `THTH_ALLOWED_SIGNERS` で自分の一時ファイルを指す——**既定の置き場は動かさない。**
+ALLOWED_SIGNERS_ENV = "THTH_ALLOWED_SIGNERS"
+ALLOWED_SIGNERS_DEFAULT = "~/.config/thth/allowed_signers"
+
+# 署名の 3 値。**「無い」と「合わない」を言い分ける**——どちらも取り込まないが、
+# 打つ手が違う（前者は配布担当が署名を始めていない、後者は鍵か commit が疑わしい）。
+SIGNATURE_MISSING = "signature_missing"
+SIGNATURE_INVALID = "signature_invalid"
+
 # **署名を確かめられなかったことを、取得の記録に残す言葉**（監査 2 回目・P2-4）。
 # `board` はこの綴りで「確認できず」を出し分けるので、**1 か所に置く**（文言を
 # 直したときに board だけ古い綴りを探す、を作らない）。
@@ -73,17 +84,54 @@ def require_signed_release() -> bool:
     return os.environ.get(REQUIRE_SIGNED_ENV) == "1"
 
 
-def verify_release_signature(app_dir: str, oid: str) -> bool:
-    """固定した commit `oid` の署名を確かめられるか（`git verify-commit`）。
+def allowed_signers_path() -> str:
+    return os.path.expanduser(os.environ.get(ALLOWED_SIGNERS_ENV) or ALLOWED_SIGNERS_DEFAULT)
 
-    **確かめられないこと**と**署名が偽物であること**を区別しない——どちらも
-    「取り込まない」で同じだから（作法 5・fail-closed）。
 
+def _signature_key(text: str) -> str | None:
+    """`git verify-commit` の出力から**鍵の指紋だけ**を拾う（静的な形）。
+
+    SSH 署名の「Good "git" signature … with ED25519 key SHA256:…」の指紋は公開鍵の
+    指紋であって秘密ではない。形（`SHA256:` ＋ base64 43 字）が合わないものは
+    **拾わない**——board に provider／git の自由文を流さないため。
+    """
+    import re
+    found = re.search(r"SHA256:[A-Za-z0-9+/]{43}", text or "")
+    return found.group(0) if found else None
+
+
+def release_signature(app_dir: str, oid: str) -> dict:
+    """固定した commit `oid` の SSH 署名を確かめる（2.14.0 §5）。
+
+    `{"state": "verified"|"signature_missing"|"signature_invalid", "key_id": …}`。
     **可変の `origin/<ref>` は受け取らない。** 署名を確かめたあと merge までの間に
     remote-tracking ref が動くと、確かめた commit と取り込む commit が分かれる。
     呼び手が fetch 直後の OID を 1 回だけ読み、検証と merge の両方へ渡す。
+
+    **「無い」と「合わない」は別の言葉で残す**（board の 1 行が変わる）。判定は
+    `git log --format=%G?` の `N`（署名が無い）だけを「無い」と読み、それ以外の
+    値・読めなかったときは「合わない」側に倒す（fail-closed）。
     """
-    return _git(["verify-commit", oid], cwd=app_dir).returncode == 0
+    signers = allowed_signers_path()
+    result = _git(["-c", "gpg.ssh.allowedSignersFile=" + signers, "verify-commit", oid],
+                   cwd=app_dir)
+    if result.returncode == 0:
+        return {"state": "verified",
+                "key_id": _signature_key((result.stderr or "") + (result.stdout or ""))}
+    # 「無い」は commit の header に署名が無いこと。`--format=%G?` は手元の
+    # `gpg.format` 設定に左右される（設定していない clone では SSH 署名を
+    # 署名として数えない）ので、**生の header を見る**。読めなければ「合わない」
+    # 側に倒す（fail-closed）。
+    raw = _git(["cat-file", "commit", oid], cwd=app_dir)
+    headers = raw.stdout.split("\n\n", 1)[0] if raw.returncode == 0 else ""
+    signed = any(line.startswith("gpgsig") for line in headers.splitlines())
+    missing = raw.returncode == 0 and not signed
+    return {"state": SIGNATURE_MISSING if missing else SIGNATURE_INVALID, "key_id": None}
+
+
+def verify_release_signature(app_dir: str, oid: str) -> bool:
+    """署名を確かめられたか（`release_signature()` の一語版・fail-closed）。"""
+    return release_signature(app_dir, oid)["state"] == "verified"
 
 # **「渡していない」と「渡したが不明」を分ける**（外部レビュー・2026-09-12）。
 #
@@ -189,8 +237,8 @@ def _begin_check(app_dir: str, ref: str) -> bool:
         "error": "取りに行った結果がまだ書けていません"})
 
 
-def _record_check(app_dir: str, ref: str, *, ok: bool,
-                   error: str | None = None, release: str | None = None) -> bool:
+def _record_check(app_dir: str, ref: str, *, ok: bool, error: str | None = None,
+                   release: str | None = None, signature_key: str | None = None) -> bool:
     """**取りに行った結果を残す。** 書けたかどうかを返す。
 
     **失敗しても呼び出し側は止めない**（記録係が転んだせいで投稿が止まるのは
@@ -198,6 +246,8 @@ def _record_check(app_dir: str, ref: str, *, ok: bool,
     ので、ここが失敗しても**古い成功は残らない。**
     """
     payload = {"ref": ref, "ok": ok, "checked_at": jst.iso(), "error": error}
+    if signature_key:
+        payload["signature_key"] = signature_key
     if ok:
         # `_pull_locked()` は fetch 直後に固定した OID を渡す。ここで可変の ref を
         # 読み直すと、記録だけが検証・merge と別の commit を指しうる。
@@ -560,14 +610,21 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
     # `THTH_REQUIRE_SIGNED_RELEASE=1` のときだけ（既定 off の理由は
     # `REQUIRE_SIGNED_ENV` の注記）。確かめられなければ**更新せず、古いまま走る**
     # ——止めない（取りに行けない日に投稿を全部止めるのが重すぎるのと同じ理由）。
-    if require_signed_release() and not verify_release_signature(app_dir, release_oid):
-        # **失敗を記録に残す**（監査 2 回目・P2-4）。前は `fetch` が成功した時点の
-        # `ok=True` がそのまま残り、**署名を確かめられずに取り込まなかった回でも
-        # board が「署名: 確認」と出していた**——`signature_checked` が見ていたのは
-        # 「確かめる設定か」だけで、**確かめた結果ではなかった**。
-        _record_check(app_dir, ref, ok=False, error=SIGNATURE_ERROR)
-        return (log_prefix + f"**配布参照の署名を確かめられません**（`origin/{ref}`・"
-                 f"{REQUIRE_SIGNED_ENV}=1）。**取り込まずに古いまま走ります**"), None
+    if require_signed_release():
+        found = release_signature(app_dir, release_oid)
+        if found["state"] != "verified":
+            # **失敗を記録に残す**（監査 2 回目・P2-4）。前は `fetch` が成功した時点の
+            # `ok=True` がそのまま残り、**署名を確かめられずに取り込まなかった回でも
+            # board が「署名: 確認」と出していた**——`signature_checked` が見ていたのは
+            # 「確かめる設定か」だけで、**確かめた結果ではなかった**。
+            _record_check(app_dir, ref, ok=False,
+                          error=SIGNATURE_ERROR + ": " + found["state"])
+            return (log_prefix + f"**配布参照の署名を確かめられません**（`origin/{ref}`・"
+                     f"{REQUIRE_SIGNED_ENV}=1・{found['state']}）。"
+                     f"**取り込まずに古いまま走ります**"), None
+        # 確かめた鍵を記録に残す（board が「確認済み（鍵）」と言えるように）。
+        _record_check(app_dir, ref, ok=True, release=release_oid,
+                      signature_key=found["key_id"])
 
     merged = _git(["merge", "--ff-only", release_oid], cwd=app_dir)
     if merged.returncode != 0:

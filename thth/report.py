@@ -284,8 +284,15 @@ def _signature_state(check) -> str:
     """
     if not selfupdate_mod.require_signed_release():
         return "off"
-    if check and not check.get("ok") \
-            and selfupdate_mod.SIGNATURE_ERROR in str(check.get("error") or ""):
+    error = str((check or {}).get("error") or "")
+    if check and not check.get("ok") and selfupdate_mod.SIGNATURE_ERROR in error:
+        # **「無い」と「合わない」を言い分ける**（2.14.0 §5）。古い記録（理由の
+        # 尾が無いもの）は従来どおり「確認できず」に倒す——読めない記録を
+        # 「不正」と言い切らない。
+        if error.endswith(selfupdate_mod.SIGNATURE_MISSING):
+            return "missing"
+        if error.endswith(selfupdate_mod.SIGNATURE_INVALID):
+            return "invalid"
         return "unverified"
     return "verified"
 
@@ -535,6 +542,8 @@ def release_summary():
                     #   `verified`   — 確かめる設定で、最後の取得は署名で止まっていない
                     #   `unverified` — 確かめられず、**取り込んでいない**
                     "signature_state": _signature_state(check),
+                    # 確かめた鍵の指紋（公開鍵の指紋・記録に残っていれば）。
+                    "signature_key": (check or {}).get("signature_key"),
                     "comparison_ref_sha": basis,
                     # **board は取りに行かないので、常に未確認。**
                     "remote_current_verified": False}
