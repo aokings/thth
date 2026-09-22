@@ -238,9 +238,24 @@ def before_post():
         if row is not value['reservations'][holder['id']]:holder['id']=identifier
 
 
+# 従量で計上される読み取りの口。**ここに無い path は予約を消費できない**
+# ——綴りを 1 か所に置いて、予算の外を通る読み取りを構造で作らせない。
+READ_PATH=re.compile(r'/2/users/(?:me|[0-9]{1,19}/tweets)')
+
+
+def before_read(path):
+    """token の POST を伴わない、単体の従量読み取り（adapter の `whoami`・`posts`）。
+
+    予約の状態機械はそのまま使う（`post_at` は「この run が読み取りに踏み切った
+    時刻」・`get_at` は発射そのもの）。**新しい状態も新しい欄も足さない**——
+    記録の形が増えるほど、古い読み手が読み違える。
+    """
+    before_post();before_get(path)
+
+
 def before_get(path):
     holder=_current.get()
-    if holder is None or path!='/2/users/me':raise BudgetError('budget_reservation_required')
+    if holder is None or not isinstance(path,str) or not READ_PATH.fullmatch(path):raise BudgetError('budget_reservation_required')
     with locked() as fd:
         value=_read(fd);row=value['reservations'][holder['id']]
         if row['state']!='post_started':raise BudgetError('budget_reservation_used')
@@ -251,7 +266,11 @@ def observed(value):
     holder=_current.get()
     if holder is None:raise BudgetError('budget_reservation_required')
     identity=value.get('data')
-    if type(identity) is not dict or not isinstance(identity.get('id'),str) or not identity['id']:return
+    # 本人（dict）・一覧（list）・0 件の応答（`meta` だけ）のどれでも「読めた」。
+    # **読めていないときだけ** settled にしないで抜ける（退出時に `uncertain`）。
+    observed_read=(type(identity) is dict and isinstance(identity.get('id'),str) and bool(identity['id'])
+                   or type(identity) is list or type(value.get('meta')) is dict)
+    if not observed_read:return
     with locked() as fd:
         data=_read(fd);row=data['reservations'][holder['id']]
         if row['state']!='get_started':raise BudgetError('budget_reservation_used')
@@ -259,6 +278,15 @@ def observed(value):
 
 
 def command(args):
+    if args.media=='x-posts':
+        # 本数の口（`thth/budget_x_posts.py`）。金額の選択肢はここでは受けない
+        # ——USD の予算と本数の上限を 1 つの語で混ぜない（設計 2.14.0 §0）。
+        from . import budget_x_posts
+        if args.currency!='USD' or args.rate is not None or args.rate_source is not None:
+            print('invalid_budget_options',file=sys.stderr)
+            if args.json:print(json.dumps({'cannot_say':['invalid_budget_options']}))
+            return 2
+        return budget_x_posts.command(args)
     try:
         result=configure(args.monthly,currency=args.currency,rate=args.rate,rate_source=args.rate_source,by=args.by) if args.monthly is not None else report()
         if args.monthly is None and (args.rate is not None or args.rate_source is not None or args.by is not None):raise BudgetError('invalid_budget_options')
@@ -272,6 +300,6 @@ def command(args):
 
 
 def register(commands):
-    parser=commands.add_parser('budget',help='X の月次読取予算（推定USD・UTC月）');parser.add_argument('media',choices=['x'])
+    parser=commands.add_parser('budget',help='X の月次読取予算（推定USD）と月間投稿数（本数）・UTC 月');parser.add_argument('media',choices=['x','x-posts'])
     parser.add_argument('--monthly');parser.add_argument('--currency',choices=['USD','JPY'],default='USD')
     parser.add_argument('--rate');parser.add_argument('--rate-source');parser.add_argument('--by');parser.add_argument('--json',action='store_true');parser.set_defaults(func=command)

@@ -505,8 +505,8 @@ ADMIN_TOOLS = [
     for name in ("inventory", "account", "log", "tokens", "release", "diff")]
 
 
-ADMIN_TOOLS.append({'name':'thth_admin_budget_set','description':'Set the X monthly read estimate cap; administrator only, by required; no provider call',
-    'inputSchema':{'type':'object','properties':{key:{'type':'string'} for key in ('monthly','currency','rate','rate_source','by')},
+ADMIN_TOOLS.append({'name':'thth_admin_budget_set','description':'Set the X monthly read estimate cap (kind x_read, default) or the monthly post count cap (kind x_posts); administrator only, by required; no provider call',
+    'inputSchema':{'type':'object','properties':{key:{'type':'string'} for key in ('monthly','currency','rate','rate_source','by','kind')},
                    'required':['monthly','by'],'additionalProperties':False}})
 
 SERVER_TOOLS = [
