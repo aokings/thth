@@ -113,7 +113,8 @@ def release_signature(app_dir: str, oid: str) -> dict:
     値・読めなかったときは「合わない」側に倒す（fail-closed）。
     """
     signers = allowed_signers_path()
-    result = _git(["-c", "gpg.ssh.allowedSignersFile=" + signers, "verify-commit", oid],
+    result = _git(["-c", "gpg.format=ssh", "-c", "gpg.ssh.program=ssh-keygen",
+                   "-c", "gpg.ssh.allowedSignersFile=" + signers, "verify-commit", oid],
                    cwd=app_dir)
     if result.returncode == 0:
         return {"state": "verified",
@@ -604,7 +605,10 @@ def _pull_locked(app_dir: str, *, anchor: str | None = None,
                       error="取得した配布参照の commit を読めませんでした")
         return (log_prefix + f"配布の枝 `origin/{ref}` の commit を読めませんでした"
                 f"（取り込まずに古いまま走ります）"), None
-    _record_check(app_dir, ref, ok=True, release=release_oid)
+    if not require_signed_release():
+        _record_check(app_dir, ref, ok=True, release=release_oid)
+    # 署名検証が要るときは判定の後にだけ記録する（監査 2.14 P2-2: 途中で死ぬと
+    # 「署名: 確認済み」が残る）。
 
     # **署名を確かめてから取り込む**（セキュリティ監査 2026-09-14・P2-5）。
     # `THTH_REQUIRE_SIGNED_RELEASE=1` のときだけ（既定 off の理由は

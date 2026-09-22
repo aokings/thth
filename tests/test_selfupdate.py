@@ -908,7 +908,8 @@ def test_D11_verify_commitの実git引数はrefでなく固定OID(tmp_path, monk
     # allowed_signers を明示し、落ちたら「無い」と「合わない」を言い分ける）。
     assert selfupdate.verify_release_signature(pair["work"], oid) is False
     signers = selfupdate.allowed_signers_path()
-    assert calls == [["-c", "gpg.ssh.allowedSignersFile=" + signers, "verify-commit", oid],
+    assert calls == [["-c", "gpg.format=ssh", "-c", "gpg.ssh.program=ssh-keygen",
+                      "-c", "gpg.ssh.allowedSignersFile=" + signers, "verify-commit", oid],
                      ["cat-file", "commit", oid]]
     assert selfupdate.release_signature(pair["work"], oid)["state"] == selfupdate.SIGNATURE_MISSING
 

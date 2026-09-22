@@ -269,7 +269,8 @@ class XAdapter(base.Adapter):
             detail = rate_limit(exc) if exc.code == 429 else {}
             return base.PublishResult(None, None, ts, error=reason, failure=failure,
                                       api_diagnostic=detail or None)
-        except (httpsafe.EndpointRejected, urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        except (httpsafe.EndpointRejected, urllib.error.URLError, TimeoutError, OSError, ValueError, base.AdapterError) as exc:
+            # AdapterError（応答が大きすぎる・JSON が dict でない）も「結果不明」として返す（監査 2.14 P2-1）。
             definite = isinstance(exc, httpsafe.EndpointRejected)
             return base.PublishResult(None, None, ts, error=self._scrub(exc) or 'x_publish_failed',
                                       failure='publish_definite' if definite else 'publish_ambiguous')
