@@ -10,6 +10,7 @@ from __future__ import annotations
 from .. import api_diagnostic
 
 import json
+import math
 import os
 import time
 import urllib.error
@@ -24,9 +25,32 @@ from . import base
 DEFAULT_BASE_URL = "https://graph.threads.net"
 DEFAULT_WAIT_SECONDS = 30.0
 DEFAULT_TIMEOUT_SECONDS = 10.0
+# **世間の検索だけは 40 秒**（設計 3.1.0 §4・2026-09-23 実測）。`GET
+# /keyword_search` は Meta 側が索引を引くのに 10 秒では足りず、**こちらが先に
+# 切っていた**——切られた側からは「0 件」と区別が付かないので、`thth where` /
+# `thth topics --search` / `thth morning` の第 3 段が黙って空になっていた。
+# 他の口（言及・実測・会話・公開）は 10 秒のまま（遅いのは索引だけ）。
+SEARCH_TIMEOUT_SECONDS = 40.0
+# 運用者が全部まとめて上書きする口（従前どおり）。**読めない値は既定に落とす**
+# ——上書きは遅い日に窓を広げるためのもので、引けなくするためのものではない。
+TIMEOUT_ENV = "THTH_THREADS_TIMEOUT_SECONDS"
 
 # この媒体の名前（`Message.medium`・`author_key()`・台帳の `media`）。
 MEDIUM = "threads"
+
+
+def timeout_override():
+    """`THTH_THREADS_TIMEOUT_SECONDS`（有限の正の数のときだけ）。無ければ None。"""
+    raw = os.environ.get(TIMEOUT_ENV)
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value <= 0:
+        return None
+    return value
 
 # 投稿 1 本について**この媒体が持っている**指標（設計 v2 §4.2 の `available`）。
 # **取れなかった指標**（`metrics` に無い）と**そもそも媒体に無い指標**
@@ -218,7 +242,8 @@ class ThreadsAdapter(base.Adapter):
 
     def __init__(self, *, base_url: str = DEFAULT_BASE_URL, access_token: str = "",
                  user_id: str = "", wait_seconds: float = DEFAULT_WAIT_SECONDS,
-                 timeout: float = DEFAULT_TIMEOUT_SECONDS, scopes=None,
+                 timeout: float = DEFAULT_TIMEOUT_SECONDS,
+                 search_timeout: float = SEARCH_TIMEOUT_SECONDS, scopes=None,
                  scopes_source: str | None = None):
         self.base_url = httpsafe.validated_url(base_url,base=True)
         self.access_token = access_token
@@ -228,7 +253,11 @@ class ThreadsAdapter(base.Adapter):
         redact_mod.register_secret(access_token)
         self.user_id = user_id
         self.wait_seconds = wait_seconds
-        self.timeout = timeout
+        # **環境変数はどちらも上書きする**（設計 3.1.0 §4）。口ごとの既定
+        # （検索 40 秒・他 10 秒）は運用者が 1 つの値で潰せる。
+        override = timeout_override()
+        self.timeout = override if override is not None else timeout
+        self.search_timeout = override if override is not None else search_timeout
         # **`.token` の `scopes`**（一覧なら「乗っている権限」・それ以外は不明）。
         # `granted_scopes()` が読む。**書かない**（`.token` は読むだけ）。
         #
@@ -476,7 +505,8 @@ class ThreadsAdapter(base.Adapter):
         return {"success": True,
                 "deleted_id": str(body.get("deleted_id") or post_id)}
 
-    def _get(self, path: str, params: dict, *, absolute_url: str | None = None) -> dict:
+    def _get(self, path: str, params: dict, *, absolute_url: str | None = None,
+             timeout: float | None = None) -> dict:
         p = dict(params)
         p["access_token"] = self.access_token
         if absolute_url is not None:
@@ -488,7 +518,7 @@ class ThreadsAdapter(base.Adapter):
                 url = f"{url}{sep}access_token={urllib.parse.quote(self.access_token)}"
         else:
             url = f"{self.base_url.rstrip('/')}{path}?" + urllib.parse.urlencode(p)
-        with httpsafe.urlopen(url, timeout=self.timeout) as resp:
+        with httpsafe.urlopen(url, timeout=self.timeout if timeout is None else timeout) as resp:
             body = json.loads(resp.read() or b"{}")
         # **200 で返ってきた `error` を、取れたことにしない**（監査 2026-09-11）。
         # 失敗すれば `urlopen` が上げるので、採取側は「例外なら記録を書かない」
@@ -1198,7 +1228,8 @@ class ThreadsAdapter(base.Adapter):
         params = {"q": q.strip(), "search_type": search_type,
                   "fields": self.KEYWORD_SEARCH_FIELDS, "limit": limit}
         rows = self._read(
-            lambda: self._rows(self._get("/v1.0/keyword_search", params), "投稿の検索"),
+            lambda: self._rows(self._get("/v1.0/keyword_search", params,
+                                          timeout=self.search_timeout), "投稿の検索"),
             permission="threads_keyword_search", what="投稿の検索")
         return [self._message_row(r) for r in rows]
 

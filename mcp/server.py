@@ -294,6 +294,24 @@ TOOLS = [
             # `who_is_this` 専用の分岐で見る）。
         },
     },
+    {
+        # **名前と説明文がそのまま売り文句**（設計 3.1.0 §1）。
+        "name": "thth_morning",
+        # **設計 3.1.0 §0 の約束そのまま。**
+        "description": (
+            "朝いちばんに呼ぶ。昨日から何があって、今日なにをすればよいかを、"
+            "道具が事実だけで 1 枚にする。本文は作らない"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "project 名か account 名"},
+                "mark": {"type": "boolean",
+                          "description": "栞（前回読んだ時点）を進める（既定 true）"},
+            },
+            "required": ["target"],
+        },
+    },
 ]
 
 
@@ -509,6 +527,13 @@ ADMIN_TOOLS.append({'name':'thth_admin_budget_set','description':'Set the X mont
     'inputSchema':{'type':'object','properties':{key:{'type':'string'} for key in ('monthly','currency','rate','rate_source','by','kind')},
                    'required':['monthly','by'],'additionalProperties':False}})
 
+# 監視語（設計 3.1.0 §3）。**語は管理者が入れる**——読む口（`thth_morning`）
+# からは変えられない。presence-only で管理記録に残る。
+ADMIN_TOOLS.append({'name':'thth_admin_watch_set','description':'Replace the watch words of one account (max 5 words, 40 chars each); administrator only, by required; recorded presence-only; no provider call',
+    'inputSchema':{'type':'object','properties':{'account':{'type':'string'},'by':{'type':'string'},
+                   'words':{'type':'array','items':{'type':'string'}}},
+                   'required':['account','words','by'],'additionalProperties':False}})
+
 SERVER_TOOLS = [
     {"name":"thth_"+name,"description":"Scoped server "+name,
      "inputSchema":{"type":"object","properties":{key:{"type":"string"} for key in ("account",*keys)},
@@ -550,6 +575,9 @@ def server_tools(context):
     reports = [tool for tool in TOOLS if tool['name'] in
                ('analytics_report', 'operations_handoff', 'study_report')]
     if context.scope=='admin': return reports + ADMIN_TOOLS
+    # 毎朝の一枚は**利用者の scope だけ**（設計 3.1.0 §1）。credential が許した
+    # account／project しか対象にできない（`report_service.execute_morning()`）。
+    reports = reports + [tool for tool in TOOLS if tool['name']=='thth_morning']
     from thth.server_writes import WRITE_OPERATIONS
     return reports + [tool for tool in SERVER_TOOLS
                       if context.writes or tool['name'][5:] not in WRITE_OPERATIONS]
@@ -580,11 +608,14 @@ def server_call(name, arguments):
     operation=name[5:] if name.startswith('thth_') else name
     request={**arguments,'operation':operation}
     try:
-        if operation=='admin_budget_set':
+        if operation in ('admin_budget_set','admin_watch_set'):
             from thth.report_service import execute_admin_write
             result=execute_admin_write(context,request)
         elif operation in WRITE_OPERATIONS:
             result=execute(context,request,via='mcp')
+        elif operation=='morning':
+            from thth.report_service import execute_morning
+            result=execute_morning(context,request)
         elif operation in ('analytics_report', 'operations_handoff', 'study_report'):
             result=execute_mcp_report(context,request)
         else:
@@ -595,7 +626,7 @@ def server_call(name, arguments):
             # 理由は静的な符丁の表にあるものだけ。lint の自由文は通さない。
             detail=getattr(exc,'reason',None)
             return failure('invalid_draft: '+(detail if detail in DRAFT_REASONS else 'validation_failed'))
-        return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused') else 'request_unavailable')
+        return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused','watch_change_refused') else 'request_unavailable')
     except Exception:
         return failure('request_unavailable')
 
@@ -778,6 +809,15 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
+    elif name == "thth_morning":
+        # **`where_to_appear` と同じ型**: CLI（`thth morning`）を `--json` で
+        # 呼ぶだけ（設計 3.1.0 §1・§5）。栞を進めないときだけ旗を足す。
+        args = ["morning", arguments["target"]]
+        if arguments.get("mark") is False:
+            args.append("--no-mark")
+        args.append("--json")
+        proc = run_cli(args)
+        text = proc.stdout
     elif name == "who_is_this":
         # **`where_to_appear` と同じ型**: CLI（`thth who`）を `--json` で呼ぶ
         # だけ（設計「自分の泉」§2.4・T3-3）。`account`／`project` と
@@ -802,7 +842,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
 
     if name.startswith("thth_topic_") or name in (
             "before_you_post", "after_you_posted", "analytics_report", "operations_handoff", "study_report", "thread_read", "where_to_appear",
-            "who_is_this"):
+            "who_is_this", "thth_morning"):
         # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）
         # とは意味が違う——こちらは stale_context・不正な候補比較で、
         # **そのまま使ってはいけない**応答。既存の扱いは変えない。

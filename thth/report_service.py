@@ -207,6 +207,39 @@ def execute_mcp_report(context: ReportContext, request: dict) -> dict:
         raise ReportServiceError("report_unavailable") from None
 
 
+def execute_morning(context: ReportContext, request: dict) -> dict:
+    """毎朝の一枚（設計 3.1.0 §1）。**credential が許した account だけ。**
+
+    サーバ型では栞を進めない（`operations_handoff` の MCP 経路が `mark_read` を
+    受けないのと同じ規律・読む口は書かない）。進めなかったことは黙らず
+    `cannot_say` の `server_mode_read_only` で言う。
+    """
+    from . import morning
+    if type(context) is not ReportContext or type(request) is not dict:
+        raise ReportServiceError("invalid_request")
+    if set(request) - {"operation", "target", "mark"}:
+        raise ReportServiceError("invalid_request")
+    target = request.get("target")
+    if not isinstance(target, str) or not target.strip():
+        raise ReportServiceError("invalid_scope")
+    if "mark" in request and type(request["mark"]) is not bool:
+        raise ReportServiceError("invalid_options")
+    allowed = _active_names(context)
+    if not allowed:
+        raise ReportServiceError("scope_unavailable")
+    try:
+        with leave_gate.read_leases(set(allowed)), replies.report_scope(allowed):
+            payload = morning.build(target, mark=False, allowed_names=allowed)
+    except morning.MorningError:
+        raise ReportServiceError("scope_unavailable") from None
+    except accounts.AccountLeaving:
+        raise ReportServiceError("account_leaving") from None
+    except (accounts.AccountError, OSError, ValueError, TypeError, KeyError, OverflowError):
+        raise ReportServiceError("report_unavailable") from None
+    payload["cannot_say"] = sorted(set(payload["cannot_say"]) | {"server_mode_read_only"})
+    return payload
+
+
 def _open_directory_nofollow(path: Path) -> int:
     """Open every absolute repo ancestor without following a symlink."""
     descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
@@ -316,10 +349,43 @@ def render_markdown(payload: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _credential_unchanged(context):
+    """Re-read the credential file: the same check the budget write makes."""
+    from .report_http import load_credentials
+    from datetime import datetime,timezone
+    if not context.credentials_path or not context.credential_digest:raise ReportServiceError('invalid_context')
+    root,credentials=load_credentials(Path(context.credentials_path))
+    if Path(root).resolve()!=Path(accounts.thth_root()).resolve():raise ReportServiceError('invalid_context')
+    found=next((item[3] for item in credentials if item[0]==context.credential_digest and not item[2] and datetime.now(timezone.utc)<item[1]),None)
+    if found!=context:raise ReportServiceError('credential_changed')
+
+
+def _admin_watch_set(context,request):
+    """監視語の入れ替え（設計 3.1.0 §3）。**語は管理者が入れる**——scope も
+    credential の範囲も予算の書き込みと同じ門を通す。"""
+    if (set(request)-{'operation','account','words','by'}
+        or not {'account','words','by'}<=set(request)):raise ReportServiceError('invalid_request')
+    if not isinstance(request['account'],str) or not isinstance(request['by'],str):
+        raise ReportServiceError('invalid_request')
+    if not isinstance(request['words'],list) or not all(isinstance(word,str) for word in request['words']):
+        raise ReportServiceError('invalid_request')
+    if request['account'] not in context.allowed_accounts:raise ReportServiceError('scope_unavailable')
+    from . import admin_log,watch_cli
+    try:
+        _credential_unchanged(context)
+        return watch_cli.set_words(request['account'],request['words'],by=request['by'],via='mcp')
+    except ReportServiceError:raise
+    except admin_log.AdminLogError:raise ReportServiceError('watch_change_refused') from None
+    except watch_cli.WatchError:raise ReportServiceError('invalid_options') from None
+    except (accounts.AccountError,OSError,ValueError,TypeError):raise ReportServiceError('invalid_options') from None
+
+
 def execute_admin_write(context,request):
     """Explicit MCP-only admin mutation; execute_report never dispatches here."""
     if type(context) is not ReportContext or context.scope!='admin':raise ReportServiceError('unsupported_operation')
-    if (type(request) is not dict or request.get('operation')!='admin_budget_set'
+    if type(request) is not dict:raise ReportServiceError('invalid_request')
+    if request.get('operation')=='admin_watch_set':return _admin_watch_set(context,request)
+    if (request.get('operation')!='admin_budget_set'
         or set(request)-{'operation','monthly','currency','rate','rate_source','by','kind'}
         or not {'monthly','by'}<=set(request)):raise ReportServiceError('invalid_request')
     # `kind` は口の選択（既定は 2.12 の読取予算）。**本数の口は金額の選択肢を

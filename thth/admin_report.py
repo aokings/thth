@@ -353,6 +353,10 @@ def register(sub):
     media_cleanup.register(commands)
     from . import budget_x
     budget_x.register(commands)
+    # 監視語（設計 3.1.0 §3）。**語は管理者が入れる**——口の中身は
+    # `thth/watch_cli.py` に閉じる（ここに足すのはこの 2 行だけ）。
+    from . import watch_cli
+    watch_cli.register(commands)
     for name in OPERATIONS:
         p = commands.add_parser(name)
         p.add_argument('--json', action='store_true')

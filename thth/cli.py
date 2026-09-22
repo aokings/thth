@@ -3406,6 +3406,11 @@ def build_parser() -> argparse.ArgumentParser:
     # に閉じる**。
     who_cli_mod.register(sub)
 
+    # `thth morning <project|account>`（設計 3.1.0）。読む口を 1 枚に束ねる
+    # だけ——**口の中身は `thth/morning.py` に閉じる**（ここに足すのはこの 2 行）。
+    from . import morning as morning_mod
+    morning_mod.register(sub)
+
     # `thth retract` / `thth location search`（設計 v2 §4.3・v2.1-B）。口は
     # `thth/retract_cli.py` に閉じる——ここに足すのはこの 1 行だけ。
     from . import retract_cli
