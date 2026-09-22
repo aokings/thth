@@ -10,6 +10,16 @@ import json
 import os
 
 
+# 「確かめてから消す」を 1 行で（設計 §3.5・`docs/原稿_添付_2.13.md`・
+# `docs/使い方_プロジェクトのセッション向け_2026-09-09.md`）。**静的な文**で、
+# アカウント名もパスも値も埋め込まない（`thth send` が stderr に出す）。
+# inflight が残っているのは「出たか出ていないか分からない」ということなので、
+# 消してよいかを決められるのは画面を見た人だけ。
+NEXT_STEP = ("次の一歩: 前回の結果が分かっていません。媒体の画面で出たかどうかを確かめ、"
+             "出ていれば記録してから、出ていなければ state/<アカウント>/inflight.json "
+             "を消してからもう一度（確かめずに消さない）")
+
+
 def path_for(state_dir: str) -> str:
     return os.path.join(state_dir, "inflight.json")
 

@@ -6,6 +6,7 @@ boundary is an adjudicated temporary contract, not a verified API integer cap.
 from __future__ import annotations
 import json
 import math
+import os
 import re
 import time
 import urllib.error
@@ -23,6 +24,16 @@ POLL_SECONDS=120.0
 VIDEO_POLL_SECONDS=1800.0
 MAX_VIDEO_BYTES=1_000_000_000
 POLL_INTERVAL=2.0
+# Container creation with media is not our round trip. Meta fetches the image or
+# the video from the grant URL **while the POST is open**, so the socket has to
+# outlive that fetch. The adapter's own 10 s was enough on 2026-09-20 and not
+# enough on 2026-09-22 for the same file — the difference is Meta's fetch, not
+# ours, and Meta's own documentation describes media processing taking up to a
+# minute for an image and longer for a video. Status polls and the publish POST
+# keep the adapter's timeout: those are ordinary round trips.
+CREATE_TIMEOUT_SECONDS=90.0
+CREATE_TIMEOUT_MIN=10.0
+CREATE_TIMEOUT_MAX=600.0
 
 
 def require(ok,reason):
@@ -187,13 +198,42 @@ class NoRedirect(httpsafe.SameOriginRedirectHandler):
 _transport=httpsafe.build_opener(NoRedirect())
 
 
-def _json(adapter,method,path,params,*,timeout=None):
+def create_timeout():
+    """The socket budget for a container creation, clamped to [10, 600] seconds.
+
+    An unreadable or out-of-range `THTH_THREADS_CREATE_TIMEOUT_SECONDS` falls
+    back to the built-in figure rather than refusing: the override exists to let
+    the operator widen the window on a slow day, not to stop a send.
+    """
+    raw=os.environ.get('THTH_THREADS_CREATE_TIMEOUT_SECONDS')
+    if raw is None:return CREATE_TIMEOUT_SECONDS
+    try:value=float(raw)
+    except (TypeError,ValueError):return CREATE_TIMEOUT_SECONDS
+    if not math.isfinite(value):return CREATE_TIMEOUT_SECONDS
+    return min(max(value,CREATE_TIMEOUT_MIN),CREATE_TIMEOUT_MAX)
+
+
+def socket_timed_out(error):
+    """Did this call run out of time on the socket? Never the provider's text.
+
+    `urllib` wraps a connect timeout in `URLError`; a read timeout arrives bare.
+    An `HTTPError` is an answer, however slow it was, so it is never a timeout.
+    """
+    if isinstance(error,urllib.error.HTTPError):return False
+    if isinstance(error,TimeoutError):return True
+    return isinstance(error,urllib.error.URLError) and isinstance(getattr(error,'reason',None),TimeoutError)
+
+
+def _json(adapter,method,path,params,*,timeout=None,socket_timeout=None):
     values={**params,'access_token':adapter.access_token}
     data=urllib.parse.urlencode(values).encode()
     url=adapter.base_url+path
     if method=='GET':url+='?'+data.decode();data=None
     request=urllib.request.Request(url,data=data,method=method)
-    with leave_gate.urlopen(_transport.open,request,timeout=adapter.timeout if timeout is None else min(adapter.timeout,timeout)) as response:
+    # `socket_timeout` replaces the adapter's figure (creation); `timeout`
+    # only ever narrows whichever figure applies (the poll's own deadline).
+    budget=adapter.timeout if socket_timeout is None else socket_timeout
+    with leave_gate.urlopen(_transport.open,request,timeout=budget if timeout is None else min(budget,timeout)) as response:
         code=response.status;raw=response.read(1024*1024+1)
     require(code==200 and len(raw)<=1024*1024,'media_response_invalid')
     result=json.loads(raw);require(type(result) is dict and not result.get('error'),'media_response_invalid')
@@ -244,8 +284,11 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
             if min((g['expires_at']/1000-time.time() for g in grants),default=float('inf'))<=remaining:break
             time.sleep(remaining)
 
-    def wait(container,*,video=False):
-        deadline=time.monotonic()+(VIDEO_POLL_SECONDS if video else POLL_SECONDS)
+    def wait(container,*,video=False,since=None):
+        # 待ちの期限は**作成を始めた時刻**から数える。作成が 40 秒かかったなら
+        # 画像の 120 秒のうち残りは 80 秒——作成が長引いた分だけ全体が延びると、
+        # 付与の期限（画像 600 秒・動画 1800 秒）との関係が実行ごとに変わる。
+        deadline=(time.monotonic() if since is None else since)+(VIDEO_POLL_SECONDS if video else POLL_SECONDS)
         while True:
             veto();remaining=min(deadline-time.monotonic(),min((g['expires_at']/1000-time.time() for g in grants),default=float('inf')))
             require(remaining>0,'media_processing_timeout')
@@ -279,17 +322,18 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
             params={'media_type':'VIDEO' if is_video else 'IMAGE','video_url' if is_video else 'image_url':grant['url'],'alt_text':item.manifest['alt']}
             if len(post.media_files)>1:params['is_carousel_item']='true'
             else:params.update(common)
-            container=identifier(_json(adapter,'POST','/'+adapter.user_id+'/threads',params))
-            ids.append(container);record('processing',index=index);wait(container,video=is_video);record('ready',index=index)
+            since=time.monotonic()
+            container=identifier(_json(adapter,'POST','/'+adapter.user_id+'/threads',params,socket_timeout=create_timeout()))
+            ids.append(container);record('processing',index=index);wait(container,video=is_video,since=since);record('ready',index=index)
         if typed is not None:
             veto();record('creating')
             container=identifier(_json(adapter,'POST','/'+adapter.user_id+'/threads',{'media_type':'TEXT',**common,**typed}))
             ids.append(container);record('processing');wait(container);record('ready')
         else:container=ids[0]
         if len(ids)>1:
-            veto();record('creating_carousel')
-            container=identifier(_json(adapter,'POST','/'+adapter.user_id+'/threads',{'media_type':'CAROUSEL','children':','.join(ids),**common}))
-            record('processing_carousel',container_id=container);wait(container,video=any(i.manifest['kind']=='video' for i in post.media_files));record('ready',container_id=container)
+            veto();record('creating_carousel');since=time.monotonic()
+            container=identifier(_json(adapter,'POST','/'+adapter.user_id+'/threads',{'media_type':'CAROUSEL','children':','.join(ids),**common},socket_timeout=create_timeout()))
+            record('processing_carousel',container_id=container);wait(container,video=any(i.manifest['kind']=='video' for i in post.media_files),since=since);record('ready',container_id=container)
         if on_container_created:on_container_created(container)
         # 待ってから、待ったあとの様子でもう一度確かめて、それから公開する
         # （本文の経路と同じ順序・独立検収 2026-09-11 P1-3 と同じ理由）。
@@ -316,7 +360,13 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         definite=endpoint or http and 400<=exc.code<500
         held=bool(ids or grants) and (phase in ('ready','processing','processing_carousel') or definite)
         uncertain=phase!='preflight' and not held and not definite
-        reason='media_relay_endpoint_rejected' if endpoint else str(exc) if isinstance(exc,media.MediaError) else 'media_relay_failed' if isinstance(exc,(media_relay.MediaRelayError,approval_relay.RelayError)) else 'media_'+phase+('_http_'+str(exc.code) if http else '_failed')
+        # 作成で時間切れになったときは「container ができたかどうか分からない」。
+        # Meta は POST を開いたまま媒体を取りに行くので、こちらが諦めたあとに
+        # 作成が終わっていることがある。phase は unknown のままにしたうえで、
+        # 理由だけを `media_creating_timeout` と名指す——generic な `_failed` は
+        # 「出ていない・作り直してよい」と読まれ、container が二重に残る。
+        timed_out=phase in ('creating','creating_carousel') and socket_timed_out(exc)
+        reason='media_relay_endpoint_rejected' if endpoint else str(exc) if isinstance(exc,media.MediaError) else 'media_relay_failed' if isinstance(exc,(media_relay.MediaRelayError,approval_relay.RelayError)) else 'media_'+phase+('_http_'+str(exc.code) if http else '_timeout' if timed_out else '_failed')
         # 4xx の本文には Graph の番号が入っている。**番号だけ**を理由の尾に足す
         # ——「まだ出せない」と「その要求が不正」を運用が見分けられない限り、
         # 同じ `media_publishing_http_400` を見て打つ手が決まらない。provider の
