@@ -35,6 +35,39 @@ REQUIRED_FIELDS = [
 ]
 
 
+# **監視語**（設計 3.1.0 §3）。台帳の任意項目 `watch_words`——account ごとに
+# **管理者が入れる**（`thth admin watch set`）。道具（LLM）は語を選ばない
+# （masaru 裁定 3.1.0 §7-2）。`thth morning` の第 3 段（世間）がこの語だけを
+# `where` に渡し、語が無い account はその段を `no_watch_words` で飛ばす。
+WATCH_WORDS_MAX = 5
+WATCH_WORD_MAX_CHARS = 40
+
+
+def valid_watch_words(value) -> bool:
+    """台帳の `watch_words` として受け取れる形か（他の項目と同じく loader が見る）。
+
+    受け取るのは**空でない文字列の配列**（最大 `WATCH_WORDS_MAX` 語・1 語
+    `WATCH_WORD_MAX_CHARS` 字まで・制御文字なし）。**空の配列は正しい**
+    （「監視語を入れていない」）。
+    """
+    if not isinstance(value, list) or len(value) > WATCH_WORDS_MAX:
+        return False
+    for word in value:
+        if not isinstance(word, str) or not word.strip():
+            return False
+        if len(word) > WATCH_WORD_MAX_CHARS:
+            return False
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in word):
+            return False
+    return True
+
+
+def watch_words(account_cfg: dict) -> list:
+    """台帳の監視語（無ければ空）。**推測で語を足さない。**"""
+    value = (account_cfg or {}).get("watch_words")
+    return [word.strip() for word in value] if isinstance(value, list) else []
+
+
 class AccountError(Exception):
     """台帳が無い・壊れている・必須項目が足りない。"""
 
@@ -348,6 +381,12 @@ def load_account(name: str) -> dict:
     missing = [k for k in REQUIRED_FIELDS if k not in data]
     if missing:
         raise AccountError(f"{name}: 台帳に項目が足りません: {missing}")
+    # **監視語も他の項目と同じ入口で検査する**（設計 3.1.0 §3）。形が違えば
+    # 黙って無視せず断る——値そのものは文面に出さない（静的な符丁だけ）。
+    if "watch_words" in data and not valid_watch_words(data["watch_words"]):
+        raise AccountError(
+            f"{name}: 台帳の watch_words が受け取れません（invalid_watch_words・"
+            f"空でない文字列を最大 {WATCH_WORDS_MAX} 語・1 語 {WATCH_WORD_MAX_CHARS} 字まで）")
     out = AccountConfig(data)
     out._thth_account_name=name
     for key in ("repo_dir", "env", "token"):

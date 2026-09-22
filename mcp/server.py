@@ -509,6 +509,13 @@ ADMIN_TOOLS.append({'name':'thth_admin_budget_set','description':'Set the X mont
     'inputSchema':{'type':'object','properties':{key:{'type':'string'} for key in ('monthly','currency','rate','rate_source','by','kind')},
                    'required':['monthly','by'],'additionalProperties':False}})
 
+# 監視語（設計 3.1.0 §3）。**語は管理者が入れる**——読む口（`thth_morning`）
+# からは変えられない。presence-only で管理記録に残る。
+ADMIN_TOOLS.append({'name':'thth_admin_watch_set','description':'Replace the watch words of one account (max 5 words, 40 chars each); administrator only, by required; recorded presence-only; no provider call',
+    'inputSchema':{'type':'object','properties':{'account':{'type':'string'},'by':{'type':'string'},
+                   'words':{'type':'array','items':{'type':'string'}}},
+                   'required':['account','words','by'],'additionalProperties':False}})
+
 SERVER_TOOLS = [
     {"name":"thth_"+name,"description":"Scoped server "+name,
      "inputSchema":{"type":"object","properties":{key:{"type":"string"} for key in ("account",*keys)},
@@ -580,7 +587,7 @@ def server_call(name, arguments):
     operation=name[5:] if name.startswith('thth_') else name
     request={**arguments,'operation':operation}
     try:
-        if operation=='admin_budget_set':
+        if operation in ('admin_budget_set','admin_watch_set'):
             from thth.report_service import execute_admin_write
             result=execute_admin_write(context,request)
         elif operation in WRITE_OPERATIONS:
@@ -595,7 +602,7 @@ def server_call(name, arguments):
             # 理由は静的な符丁の表にあるものだけ。lint の自由文は通さない。
             detail=getattr(exc,'reason',None)
             return failure('invalid_draft: '+(detail if detail in DRAFT_REASONS else 'validation_failed'))
-        return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused') else 'request_unavailable')
+        return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused','watch_change_refused') else 'request_unavailable')
     except Exception:
         return failure('request_unavailable')
 
