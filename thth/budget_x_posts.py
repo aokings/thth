@@ -26,9 +26,7 @@ from . import accounts, admin_log, jst, server_files
 
 # 予約 1 件の状態。`released`（発射しなかった）だけが枠を返す。
 STATES = ('reserved', 'dispatched', 'settled', 'unknown', 'released')
-HELD_STATES = ('reserved', 'dispatched')
 COUNTED_STATES = ('settled', 'unknown', 'reserved', 'dispatched')
-MONTH = re.compile(r'\d{4}-(?:0[1-9]|1[0-2])')
 MAX_ENTRIES = 100000
 EXHAUSTED = 'x_post_budget_exhausted'
 CANNOT_SAY = 'post_budget_exhausted'

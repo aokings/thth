@@ -44,8 +44,6 @@ LENGTH_NOTE = 'warning: x_length_weighting_unverified'
 
 REPLY_SETTINGS = ('following', 'mentionedUsers', 'subscribers', 'verified')
 POST_ID = re.compile(r'[0-9]{1,19}')
-# 読み取りが従量で計上される口（`budget_x.before_read` が受ける path）。
-READ_PATHS = ('/2/users/me',)
 
 
 class AdapterError(base.AdapterError):
