@@ -332,11 +332,15 @@ class ReportHandler(BaseHTTPRequestHandler):
                 return self._reply(503, {'error':reason, 'cannot_say':[reason]})
             public = {"invalid_request", "unsupported_operation", "invalid_scope", "invalid_options", "scope_unavailable", "writes_not_allowed", "invalid_draft", "draft_changed", "draft_not_editable", "managed_repo_required", "production_disabled"}
             fallback = "report_unavailable"
+            detail = {}
             if self.path == '/write':
-                from .server_writes import SAFE_ERRORS
+                from .server_writes import SAFE_ERRORS, DRAFT_REASONS
                 fallback = reason if reason in SAFE_ERRORS else 'write_unavailable'
+                # The refusal carries its static reason; never the lint text or a path.
+                if getattr(error, "reason", None) in DRAFT_REASONS:
+                    detail = {"reason": error.reason}
             return self._reply(400 if reason in public else 503,
-                               {"error": reason if reason in public else fallback, **({"reason": error.reason} if getattr(error, "reason", None) in ("body_not_representable", "lint_failed") else {})})
+                               {"error": reason if reason in public else fallback, **detail})
         except Exception:
             return self._reply(503, {"error": "report_unavailable"})
         self._reply(200, payload)

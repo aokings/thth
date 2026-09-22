@@ -20,6 +20,10 @@ SAFE_ERRORS = frozenset(('invalid_request','unsupported_operation','invalid_scop
     'credential_changed','draft_commit_unconfirmed','draft_not_verified','account_stopped','account_leaving','approval_registration_unknown',
     'credential_unavailable','write_unavailable','media_preview_unavailable','approval_registration_rejected',
     'approval_request_too_large','approval_attachments_too_many'))
+from .lint import REASONS as LINT_REASONS
+# `invalid_draft` に添える理由。**静的な符丁だけ**——lint の日本語 1 行や
+# path をそのままサーバの口から出さない（2.14.1）。
+DRAFT_REASONS = frozenset(('body_not_representable','media_not_representable')) | LINT_REASONS
 from .media_uploads import REASONS as MEDIA_REASONS
 # managed repo をモードで断ったときだけは `write_unavailable` で終わらせない——
 # 運用者が chmod で直せる唯一の理由なので、静的な名前のまま上げる。
@@ -159,7 +163,9 @@ def draft_put(context, request, via):
             try:
                 server_files.replace_at(fd,temp,text.encode(),new=True)
                 problems=lint.lint_file(str(queue/temp))
-                if any(not lint.is_warning(item) for item in problems): error('invalid_draft','lint_failed')
+                # 断るなら理由まで返す。呼び手は何を直せばよいか判らないまま
+                # 同じ本文を送り直す（初回の 3.0 通し運転・2026-09-23）。
+                if any(not lint.is_warning(item) for item in problems): error('invalid_draft',lint.reason_code(problems))
             finally:
                 try: os.unlink(temp,dir_fd=fd)
                 except FileNotFoundError: pass
