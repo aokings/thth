@@ -29,8 +29,10 @@ def directory(path, *, create=False, private=False):
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             os.close(fd); fd = child
             info = os.fstat(fd)
-            if info.st_uid != os.getuid() or info.st_mode & 0o022:
-                raise UnsafeFile('unsafe_server_directory')
+            # 所有者違いとモードを分けて言う（呼び出し側が chmod で
+            # 直せる理由かどうかを静的に判別できるように）。
+            if info.st_uid != os.getuid(): raise UnsafeFile('unsafe_server_owner')
+            if info.st_mode & 0o022: raise UnsafeFile('unsafe_server_directory')
         if private and os.fstat(fd).st_mode & 0o077:
             raise UnsafeFile('private_server_directory_required')
         yield fd

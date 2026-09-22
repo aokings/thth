@@ -27,6 +27,63 @@ def is_warning(message: str) -> bool:
 
 
 # --------------------------------------------------------------------------
+# 断る理由の静的な符丁（2.14.1・初回の 3.0 通し運転 2026-09-23）
+# --------------------------------------------------------------------------
+
+# **断り文句は理由と次の一手を持って帰る。** `thth_draft_put` が
+# `invalid_draft: lint_failed` とだけ返し、実際の理由（台帳の `hashtags: false`
+# が本文の `#語` を弾いた）はサーバの中に留まった。呼び手は何を直せばよいか
+# 判らないまま同じ本文を送り直す。
+#
+# `lint_file()` の 1 行は人向けの日本語で、ファイル名や値を含むことがある。
+# **それはサーバの口から出さない**——ここで同じ 1 行を**固定の符丁 1 語**に
+# 畳む。符丁は `REASONS` に閉じているので、将来 lint の文面が増えても
+# 自由文が外へ漏れることはない（知らない文面は `lint_failed` に落ちる）。
+HASHTAG_DISABLED = "hashtag: ハッシュタグは付けない規約（`#` を含む）"
+
+FALLBACK_REASON = "lint_failed"
+
+# 上から順に見る（`HASHTAG_DISABLED` は `hashtag: ` より先）。
+_REASON_TABLE = (
+    (HASHTAG_DISABLED, "hashtags_disabled_by_ledger"),
+    ("length: ", "too_long"),
+    ("hashtag: ", "hashtag_not_allowed"),
+    ("max_hashtags: ", "invalid_max_hashtags"),
+    ("front-matter", "invalid_front_matter"),
+    ("thth: ", "missing_thth_marker"),
+    ("account: ", "missing_account"),
+    ("publish_at: ", "invalid_publish_at"),
+    ("status: ", "unknown_status"),
+    ("media: ", "invalid_media"),
+    ("本文に制御文字", "control_char_in_body"),
+    ("topic", "invalid_topic"),
+    ("reply_to_author_key: ", "invalid_reply_to_author_key"),
+    ("reply_to_root: ", "invalid_reply_to_root"),
+    ("found_by: ", "invalid_found_by"),
+    ("location: ", "invalid_publish_option"),
+    ("location_id: ", "invalid_publish_option"),
+    ("share_to_instagram: ", "invalid_publish_option"),
+)
+
+REASONS = frozenset([code for _, code in _REASON_TABLE] + [FALLBACK_REASON])
+
+
+def reason_code(problems) -> str:
+    """`lint_file()` の結果を静的な符丁 1 語にする（自由文・path は返さない）。
+
+    最初の実エラー 1 件だけを見る。警告は落とさないので符丁にもしない。
+    """
+    for item in problems:
+        if is_warning(item):
+            continue
+        for prefix, code in _REASON_TABLE:
+            if item.startswith(prefix):
+                return code
+        return FALLBACK_REASON
+    return FALLBACK_REASON
+
+
+# --------------------------------------------------------------------------
 # front-matter の無いファイルに当たったときの次の一手（T1・第 1 回の記録 §3）
 # --------------------------------------------------------------------------
 
@@ -182,7 +239,7 @@ def lint_file(path: str) -> list:
                 )
         hashtags_allowed = bool(account_cfg.get("hashtags", True)) if account_cfg else False
         if not hashtags_allowed and queuefile.has_hashtag(section):
-            errors.append("hashtag: ハッシュタグは付けない規約（`#` を含む）")
+            errors.append(HASHTAG_DISABLED)
         errors.extend(tags_mod.errors(media, section, topic, account_cfg))
         # 本文に制御文字が混じっていないか（セキュリティ監査 2026-09-16・B-2）。
         control = queuefile.find_control_char(section)

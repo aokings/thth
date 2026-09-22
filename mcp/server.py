@@ -557,7 +557,7 @@ def server_tools(context):
 
 def server_call(name, arguments):
     from thth.report_service import execute_report, execute_mcp_report, ReportServiceError
-    from thth.server_writes import execute, WRITE_OPERATIONS, SAFE_ERRORS
+    from thth.server_writes import execute, WRITE_OPERATIONS, SAFE_ERRORS, DRAFT_REASONS
     context=authenticated_context()
     failure=lambda value:{'content':[{'type':'text','text':value}],'isError':True}
     if context is None: return failure('unauthorized')
@@ -592,7 +592,9 @@ def server_call(name, arguments):
         return {'content':[{'type':'text','text':json.dumps(result,ensure_ascii=False,allow_nan=False)}]}
     except ReportServiceError as exc:
         if str(exc)=='invalid_draft':
-            return failure('invalid_draft: '+(getattr(exc,'reason',None) or 'validation_failed'))
+            # 理由は静的な符丁の表にあるものだけ。lint の自由文は通さない。
+            detail=getattr(exc,'reason',None)
+            return failure('invalid_draft: '+(detail if detail in DRAFT_REASONS else 'validation_failed'))
         return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused') else 'request_unavailable')
     except Exception:
         return failure('request_unavailable')

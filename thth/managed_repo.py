@@ -1,5 +1,6 @@
 """Account-owned local Git clones. Never migrate an existing project implicitly."""
 import configparser
+import contextlib
 import os
 from pathlib import Path
 import subprocess
@@ -60,11 +61,16 @@ def _storage_tree(fd, *, depth=0, remaining=None):
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             try:
                 opened = os.fstat(child)
-                if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino) or opened.st_uid != os.getuid() or opened.st_mode & 0o022:
+                # モードだけが理由ならそう名指す（運用者は chmod で直せる）。
+                if opened.st_mode & 0o022: raise ValueError('managed_git_store_unsafe_mode')
+                if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino) or opened.st_uid != os.getuid():
                     raise ValueError('managed_git_store_unsafe')
                 _storage_tree(child, depth=depth+1, remaining=remaining)
             finally: os.close(child)
         else:
+            if (stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+                    and info.st_uid == os.getuid() and info.st_mode & 0o022):
+                raise ValueError('managed_git_store_unsafe_mode')
             server_files.regular(info)
 
 
@@ -72,13 +78,18 @@ def validate(repo):
     account = account_for(repo)
     if account is None: raise ValueError('managed_repo_required')
     clone, origin = locations(account)
-    with server_files.directory(clone/'.git'): pass
-    with server_files.directory(origin): pass
-    for gitdir in (clone/'.git', origin):
-        with server_files.directory(gitdir) as fd: _storage_tree(fd)
-        for special in ('commondir','objects/info/alternates','objects/info/http-alternates'):
-            if (gitdir/special).exists() or (gitdir/special).is_symlink():
-                raise ValueError('managed_git_external_store')
+    try:
+        with server_files.directory(clone/'.git'): pass
+        with server_files.directory(origin): pass
+        for gitdir in (clone/'.git', origin):
+            with server_files.directory(gitdir) as fd: _storage_tree(fd)
+            for special in ('commondir','objects/info/alternates','objects/info/http-alternates'):
+                if (gitdir/special).exists() or (gitdir/special).is_symlink():
+                    raise ValueError('managed_git_external_store')
+    except server_files.UnsafeFile as exc:
+        # 群/他の書込み bit だけが理由のときを静的に名指す。
+        if str(exc) == 'unsafe_server_directory': raise ValueError('managed_git_store_unsafe_mode') from None
+        raise
     _config(clone/'.git'/'config', bare=False, origin=origin)
     _config(origin/'config', bare=True, origin=origin)
     return clone, origin
@@ -101,9 +112,25 @@ CONFIG = ['-c','gc.auto=0','-c','maintenance.auto=false',  # no background gc ra
           '-c','remote.origin.uploadpack=git-upload-pack','-c','remote.origin.receivepack=git-receive-pack']
 
 
+@contextlib.contextmanager
+def private_umask():
+    """Git の作るファイルを所有者だけのものにする（VM の `umask 0002` 対策）。
+
+    `.git` や `FETCH_HEAD` を Git 自身が 0775/0664 で作ると、直後に
+    `validate()` が自分でそれを拒む（初回の 3.0 通し運転・2026-09-23）。
+    `preexec_fn` は fork と exec の間に Python を走らせるので使わない——
+    読み取りの締切タイマー（report_http）が同じ process にいる。
+    process 全体を一時的に厳しくするが、**緩める向きには決してならない**。
+    """
+    previous = os.umask(0o077)
+    try: yield
+    finally: os.umask(previous)
+
+
 def run(repo, arguments, *, text=True, check=True):
     if check: validate(repo)
-    return subprocess.run(['/usr/bin/git',*CONFIG,'-C',str(repo),*arguments],capture_output=True,text=text,env=environment())
+    with private_umask():
+        return subprocess.run(['/usr/bin/git',*CONFIG,'-C',str(repo),*arguments],capture_output=True,text=text,env=environment())
 
 
 def initialize(account, cfg):
