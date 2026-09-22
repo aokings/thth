@@ -42,7 +42,7 @@ def test_app_json_cli_reads_same_profile_store_presence_only(env,monkeypatch,cap
     if media=='x':values.update(client_type='confidential',redirect_uri=auth_x.CALLBACK)
     monkeypatch.setattr('sys.stdin',io.StringIO(json.dumps(values)))
     assert cli.main(['app','set',media,'--stdin','--by','operator'])==0
-    path=env['app'] if media=='threads' else authclients.path_for('x',None,{})
+    path=env['app'] if media=='threads' else auth_x.client_path({})
     if media=='threads':assert appenv.load_app_env()==(values['client_id'],values['client_secret'])
     else:
         cfg=cfg_media(env,'x');profile=auth_x.XAuthProfile.prepare(cfg)
@@ -69,7 +69,7 @@ def test_app_by_before_any_read_input_or_write(env,legacy):
 def test_app_save_fault_retains_append_contract(env,monkeypatch,media,fault):
     values={'client_id':opaque(),'client_secret':opaque()}
     if media=='x':values.update(client_type='confidential',redirect_uri=auth_x.CALLBACK)
-    path=env['app'] if media=='threads' else authclients.path_for('x',None,{})
+    path=env['app'] if media=='threads' else auth_x.client_path({})
     if media=='x':authclients.write(path,values)
     old=path.read_bytes();values['client_secret']=opaque();lines=[]
     emit_fault(monkeypatch,fault)

@@ -14,6 +14,7 @@ from . import base
 from .bluesky import BlueskyAdapter
 from .mastodon import MastodonAdapter
 from .threads import ThreadsAdapter
+from .x import XAdapter
 
 # 媒体名 → アダプタのクラス。**足すのはここに 1 行だけ**——`core`・`select`・
 # `collect`・`doctor`・`token set` は触らなくてよい（それがこの境界の目的）。
@@ -25,6 +26,7 @@ REGISTRY = {
     "threads": ThreadsAdapter,
     "bluesky": BlueskyAdapter,
     "mastodon": MastodonAdapter,
+    "x": XAdapter,
 }
 
 UnknownMedium = base.UnknownMedium
@@ -80,4 +82,4 @@ def make_adapter(account_cfg: dict, token: dict | None):
 
 __all__ = ["REGISTRY", "UnknownMedium", "adapter_class", "base",
            "capabilities_for", "count_text_for", "known_media", "make_adapter",
-           "BlueskyAdapter", "MastodonAdapter", "ThreadsAdapter"]
+           "BlueskyAdapter", "MastodonAdapter", "ThreadsAdapter", "XAdapter"]

@@ -14,7 +14,13 @@ import urllib.request
 from .. import accounts, admin_log, authclients, authflow, handoff_cursor, httpsafe, jst, secrets_fs
 from ..authflow import AuthProfile, FlowError, secret
 
-SCOPES = ['tweet.read', 'tweet.write', 'users.read', 'offline.access']
+SCOPES = ['tweet.read', 'tweet.write', 'users.read', 'offline.access', 'media.write']
+# 2.11 の scope 集合（`media.write` が無い世代）。**旧無印の client は read-only**
+# ——2.14 で `media.write` を足したので、必要 scope 集合ごとに別のファイル
+# （`x.<origin sha>.<scope 集合の sha 先頭 8>.env`）へ書く（C8 の Mastodon と
+# 同じ規則）。新しい世代が無いあいだは旧ファイルを**読むだけ**で使い、本文の
+# 投稿は続けられる。旧世代の pending は `auth_restart_required`。
+LEGACY_SCOPES = [value for value in SCOPES if value != 'media.write']
 CALLBACK = 'https://thth.me/callback/'
 API = 'https://api.x.com'
 REFRESH_BEFORE_SECONDS = 300
@@ -38,6 +44,31 @@ def credential(value):
     if not isinstance(value,str) or not value or len(value)>16384 or any(ord(c)<32 or ord(c)==127 for c in value):
         raise FlowError('x_credential_missing_or_invalid')
     return secret(value)
+
+
+def client_path(cfg=None, *, required_scopes=None):
+    """この世代の client ファイル（`x.<origin sha>.<scope 集合の sha8>.env`）。"""
+    return authclients.path_for('x', api_origin(), cfg or {},
+                                required_scopes=list(required_scopes or SCOPES))
+
+
+def legacy_client_path(cfg=None):
+    """2.11 の無印ファイル（`x.env`）。**読むだけ**——ここへは二度と書かない。"""
+    return authclients.path_for('x', None, cfg or {})
+
+
+def client_for_token(cfg, token):
+    """この token を出した client の世代を選ぶ（取消は発行元の client で行う）。"""
+    generation = token.get('client_scope_generation')
+    if 'client_scope_generation' not in token:
+        path, required = legacy_client_path(cfg), LEGACY_SCOPES
+    elif generation == authclients.scope_generation(SCOPES):
+        path, required = client_path(cfg), SCOPES
+    elif generation == authclients.scope_generation(LEGACY_SCOPES):
+        path, required = legacy_client_path(cfg), LEGACY_SCOPES
+    else:
+        raise FlowError('x_client_generation_unknown')
+    return client(authclients.read(path)), list(required)
 
 
 def client(data):
@@ -77,11 +108,11 @@ def request(path, *, data=None, pair=None, token=None):
 
 
 @leave_gate.configured("cfg")
-def token_result(body,cfg,*,now=None,previous=None):
-    now=now or jst.now_jst()
+def token_result(body,cfg,*,now=None,previous=None,required=None):
+    now=now or jst.now_jst();required=list(required or SCOPES)
     access=credential(body.get('access_token'));refresh=credential(body.get('refresh_token'))
     scope=body.get('scope');expiry=body.get('expires_in')
-    if (not isinstance(scope,str) or not set(SCOPES)<=set(scope.split())
+    if (not isinstance(scope,str) or not set(required)<=set(scope.split())
             or type(expiry) is not int or not 0<expiry<=31536000
             or str(body.get('token_type','')).lower()!='bearer'):
         raise FlowError('x_scope_or_expiry_unobserved')
@@ -94,7 +125,8 @@ def token_result(body,cfg,*,now=None,previous=None):
         raise FlowError('x_identity_mismatch')
     return dict(access_token=access,refresh_token=refresh,user_id=identity['id'],username=identity['username'],
                 obtained_at=jst.iso(now),expires_in=expiry,expires_at=jst.iso(now+datetime.timedelta(seconds=expiry)),
-                scopes=scope.split(),scopes_source='response')
+                scopes=scope.split(),scopes_source='response',
+                client_scope_generation=authclients.scope_generation(required))
 
 
 class XAuthProfile(AuthProfile):
@@ -103,13 +135,25 @@ class XAuthProfile(AuthProfile):
 
     @classmethod
     @leave_gate.configured("cfg")
-    def prepare(cls,cfg,*,redirect_uri=None,**_):
+    def prepare(cls,cfg,*,redirect_uri=None,rehearse=False,resume=False,by=None,**_):
         api_origin()
         if redirect_uri not in (None,CALLBACK) or cfg.get('redirect_uri') not in (None,'',CALLBACK):
             raise FlowError('x_callback_must_match_registered_uri')
-        path=authclients.path_for('x',None,cfg)
+        path=client_path(cfg);selected=list(SCOPES)
+        if authclients.read(path) is None:
+            # 旧無印は**読むだけ**。新しい世代を登録するまでは 2.11 の scope 集合で
+            # 動き続ける（本文の投稿は止めない）。添付は `media.write` が要るので
+            # `thth app set x` をやり直すまで upload に進まない。
+            legacy=legacy_client_path(cfg)
+            if authclients.read(legacy) is None:
+                raise FlowError('x_client_not_registered: thth app set x --by <名前> で登録してください')
+            if resume and authflow._read_session(cfg.get('account')):raise FlowError('auth_restart_required')
+            path=legacy;selected=list(LEGACY_SCOPES)
         pair=client(authclients.read(path))
-        profile=cls(*pair,CALLBACK,list(SCOPES));profile.client_path=path
+        profile=cls(*pair,CALLBACK,selected);profile.client_path=path
+        if resume:
+            session=authflow._read_session(cfg.get('account'))
+            if session and session.get('binding')!=profile.binding(cfg):raise FlowError('auth_restart_required')
         return profile
 
     def validate(self):
@@ -121,7 +165,7 @@ class XAuthProfile(AuthProfile):
     def authorize(self,session):
         challenge=base64.urlsafe_b64encode(hashlib.sha256(session['code_verifier'].encode()).digest()).rstrip(b'=').decode()
         return 'https://x.com/i/oauth2/authorize?'+urllib.parse.urlencode(dict(response_type='code',client_id=self.client_id,
-            redirect_uri=CALLBACK,scope=' '.join(SCOPES),state=session['state'],code_challenge=challenge,code_challenge_method='S256'))
+            redirect_uri=CALLBACK,scope=' '.join(self.scopes),state=session['state'],code_challenge=challenge,code_challenge_method='S256'))
 
     @leave_gate.configured("account_cfg")
     def exchange(self,code_value,session,account_cfg,*,log):
@@ -134,7 +178,7 @@ class XAuthProfile(AuthProfile):
         with budget_x.user_read(leave_gate.name_for(account_cfg)):
             body=request('/2/oauth2/token',pair=(self.client_id,self.client_secret),data=dict(
                 grant_type='authorization_code',code=credential(code_value),redirect_uri=CALLBACK,code_verifier=credential(session.get('code_verifier'))))
-            return token_result(body,account_cfg)
+            return token_result(body,account_cfg,required=self.scopes)
 
 
 def remaining(token,now):
@@ -178,7 +222,7 @@ def run_refresh(account,*,force=False,check=False,log=print,now=None):
         with leave_gate.lease(account),leave_gate.credentials(),budget_x.user_read(account):
             body=request('/2/oauth2/token',pair=(profile.client_id,profile.client_secret),data=dict(
                 grant_type='refresh_token',refresh_token=token['refresh_token']))
-            updated=token_result(body,cfg,now=now,previous=token)
+            updated=token_result(body,cfg,now=now,previous=token,required=profile.scopes)
             if token.get('auth_via') in ('paste','relay'):updated['auth_via']=token['auth_via']
             with leave_gate.lease(account), leave_gate.credentials(), admin_log.transaction(rollback=rollback):
                 path=authflow._token_path(path)

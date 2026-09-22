@@ -263,14 +263,15 @@ def revoke(cfg,token,progress,save):
             progress.append('access');save()
         return 'confirmed'
     if media=='x':
-        from .adapters.auth_x import XAuthProfile,request,credential
-        profile=XAuthProfile.prepare(cfg)
+        from .adapters.auth_x import client_for_token,request,credential
+        # 取消は**その token を出した client の世代**で行う（Mastodon と同じ規律）。
+        pair,_=client_for_token(cfg,token)
         for label,key in (('refresh','refresh_token'),('access','access_token')):
             value=token.get(key)
             if label=='refresh' and not value:continue
             credential(value)
             if label in progress:continue
-            result=request('/2/oauth2/revoke',pair=(profile.client_id,profile.client_secret),data={'token':value})
+            result=request('/2/oauth2/revoke',pair=pair,data={'token':value})
             if result not in ({},{'revoked':True}):raise ValueError('remote_revoke_unconfirmed')
             progress.append(label);save()
         return 'confirmed'
