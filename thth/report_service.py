@@ -207,6 +207,39 @@ def execute_mcp_report(context: ReportContext, request: dict) -> dict:
         raise ReportServiceError("report_unavailable") from None
 
 
+def execute_morning(context: ReportContext, request: dict) -> dict:
+    """毎朝の一枚（設計 3.1.0 §1）。**credential が許した account だけ。**
+
+    サーバ型では栞を進めない（`operations_handoff` の MCP 経路が `mark_read` を
+    受けないのと同じ規律・読む口は書かない）。進めなかったことは黙らず
+    `cannot_say` の `server_mode_read_only` で言う。
+    """
+    from . import morning
+    if type(context) is not ReportContext or type(request) is not dict:
+        raise ReportServiceError("invalid_request")
+    if set(request) - {"operation", "target", "mark"}:
+        raise ReportServiceError("invalid_request")
+    target = request.get("target")
+    if not isinstance(target, str) or not target.strip():
+        raise ReportServiceError("invalid_scope")
+    if "mark" in request and type(request["mark"]) is not bool:
+        raise ReportServiceError("invalid_options")
+    allowed = _active_names(context)
+    if not allowed:
+        raise ReportServiceError("scope_unavailable")
+    try:
+        with leave_gate.read_leases(set(allowed)), replies.report_scope(allowed):
+            payload = morning.build(target, mark=False, allowed_names=allowed)
+    except morning.MorningError:
+        raise ReportServiceError("scope_unavailable") from None
+    except accounts.AccountLeaving:
+        raise ReportServiceError("account_leaving") from None
+    except (accounts.AccountError, OSError, ValueError, TypeError, KeyError, OverflowError):
+        raise ReportServiceError("report_unavailable") from None
+    payload["cannot_say"] = sorted(set(payload["cannot_say"]) | {"server_mode_read_only"})
+    return payload
+
+
 def _open_directory_nofollow(path: Path) -> int:
     """Open every absolute repo ancestor without following a symlink."""
     descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
