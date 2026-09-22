@@ -29,7 +29,7 @@ key は `CAPABILITIES` に、組合せ・形の不正を名指しする key は 
 """
 from __future__ import annotations
 
-MEDIA = ('mastodon', 'bluesky', 'threads')
+MEDIA = ('mastodon', 'bluesky', 'threads', 'x')
 
 # 語彙。`body_only` だけ理由を取らない（「本文に書く」が理由そのもの）。
 PREFIXES = ('unsupported', 'unverified', 'ascii_only')
@@ -55,6 +55,9 @@ ASF = 'unsupported: deferred_by_ruling_c14'
 BMFF_BRAND = 'unsupported: unrecognized_bmff_brand'
 UNKNOWN_FORMAT = 'unsupported: unrecognized_container'
 NOT_MEASURED = 'unverified: provider_not_measured'
+# 引用は「API に無い」のではなく、**自己サーブの tier では使えない**（2.14 §7 の
+# 一次資料: "Quote-posting … requires an Enterprise plan"）。理由を tier に名指す。
+TIER_ONLY = 'unsupported: provider_tier_enterprise_only'
 
 CAPABILITIES = {
     'mastodon': {
@@ -109,6 +112,22 @@ CAPABILITIES = {
         'aac_adts': ADTS, 'asf': ASF,
         'bmff brand': BMFF_BRAND, 'unknown format': UNKNOWN_FORMAT,
     },
+    'x': {
+        'image': 'supported', 'video': 'supported', 'audio': NO_AUDIO,
+        'carousel': 'supported', 'poll': 'supported', 'quote': TIER_ONLY,
+        'link': 'body_only', 'gif': 'supported', 'text': NO_TEXT,
+        'thumbnail': NO_THUMBNAIL, 'captions': NO_CAPTION,
+        'tags': 'body_only', 'labels': NO_LABEL, 'languages': NO_LANGUAGE,
+        'spoiler': NO_SPOILER, 'reply_control': 'supported', 'ghost': NO_GHOST,
+        'visibility_private': PRIVATE, 'offset_styling': PROVIDER_FORMAT,
+        'carousel_quote': TIER_ONLY,
+        'jpeg': 'supported', 'png': 'supported', 'webp': PROVIDER_FORMAT,
+        'mp4': 'supported', 'mov': PROVIDER_FORMAT, 'webm': PROVIDER_FORMAT,
+        'mp3': NO_AUDIO, 'wav': NO_AUDIO, 'flac': NO_AUDIO,
+        'ogg': NO_AUDIO, 'ogg_vorbis': NO_AUDIO, 'vtt': NO_CAPTION,
+        'aac_adts': ADTS, 'asf': ASF,
+        'bmff brand': BMFF_BRAND, 'unknown format': UNKNOWN_FORMAT,
+    },
 }
 
 # 一語の `supported` が嘘にならないための但し書き。値ではなく静的な語。
@@ -132,6 +151,17 @@ NOTES = {
         'tags': 'one_topic_tag_per_post',
         'carousel': 'images_and_video_may_be_mixed',
         'text': 'long_text_attachment_up_to_10000_characters',
+    },
+    'x': {
+        'image': 'up_to_four_images_per_post',
+        'gif': 'gif_file_upload_one_per_post_not_mixed_with_images',
+        'video': 'one_video_per_post_not_mixed_with_images',
+        'carousel': 'images_only_one_kind_per_post',
+        'poll': 'two_to_four_options_duration_minutes_five_to_10080',
+        'reply_control': 'reply_settings_following_mentionedusers_subscribers_verified',
+        'tags': 'body_hashtags_observed_by_the_provider',
+        'link': 'provider_generates_the_card_from_the_body_url',
+        'mov': 'thth_sends_mp4_only_in_this_version',
     },
 }
 
@@ -160,6 +190,17 @@ REFUSALS = {
         'video_post_options': 'post option outside the video set',
         'no_images': 'image intent with no image',
         'caption': 'caption must be vtt on the first video',
+    },
+    'x': {
+        'typed_attachment': 'typed attachment kind not routed for this medium',
+        'poll_media_exclusive': 'poll and files cannot share one post',
+        'poll_option': 'poll field outside {type,options,duration_minutes}',
+        'post_options': 'post option outside the x set',
+        'reply_settings': 'reply_settings outside the provider enum',
+        'media_mixed_kinds': 'images cannot share a post with a gif or a video',
+        'no_media': 'media intent with nothing to send',
+        'captions': 'caption file with a post',
+        'format': 'inspected format outside the x set',
     },
     'threads': {
         'typed_attachment': 'typed attachment kind not routed for this medium',

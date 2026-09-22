@@ -181,8 +181,9 @@ def test_prepared_approved_threads_image_is_selected_until_source_changes(repo, 
 
 def test_approved_attachment_for_unsupported_provider_is_rejected(repo):
     from thth import select
-    cfg = {'account': 'demo', 'media': 'x', 'repo_dir': str(repo)}
-    original = v1().replace('## threads', '## x')
+    # 2.14 で X は載ったので、**まだ載っていない媒体**でこの筋を守る。
+    cfg = {'account': 'demo', 'media': 'whatsapp', 'repo_dir': str(repo)}
+    original = v1().replace('## threads', '## whatsapp')
     draft = queuefile.parse_text(original, 'q.md')
     manifest = media.manifest_for(draft.front_matter, cfg)
     approved_sha = approval.compute_approved_sha(**args(), media_manifest=manifest)
@@ -213,7 +214,7 @@ def test_legacy_nondefault_posts_indent_writeback():
 
 
 @pytest.mark.parametrize('medium,expected', [
-    ('x', 'media_provider_unavailable'),
+    ('whatsapp', 'media_provider_unavailable'),
     ('threads', 'approval_stale'),
 ])
 def test_direct_core_guard_never_constructs_adapter(medium, expected):

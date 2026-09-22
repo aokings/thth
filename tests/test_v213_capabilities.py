@@ -17,7 +17,7 @@ from thth import media, media_capabilities as caps, mediaformats, tool_version
 
 SOURCE = {path: path.read_text(encoding='utf-8')
           for path in sorted(Path(thth.__file__).resolve().parent.rglob('*.py'))}
-LITERAL = re.compile(r"unsupported_attachment: (mastodon|bluesky|threads)/([a-z0-9_]*)")
+LITERAL = re.compile(r"unsupported_attachment: (mastodon|bluesky|threads|x)/([a-z0-9_]*)")
 BARE = re.compile(r"unsupported_attachment: ([a-z0-9_][a-z0-9_ ]*)['\"]")
 INSPECTION = re.compile(r"Inspection\(\s*'([a-z0-9_]+)'")
 REQUIRED = ('image', 'video', 'audio', 'carousel', 'poll', 'quote', 'link', 'gif', 'text',
@@ -91,6 +91,11 @@ def test_the_rulings_are_written_down_as_given():
     assert caps.CAPABILITIES['mastodon']['visibility_private'] == 'unsupported: ledger_public_only'
     assert caps.CAPABILITIES['mastodon']['link'] == 'body_only'
     assert caps.CAPABILITIES['bluesky']['webm'] == 'unsupported: provider_format'
+    # 2.14: 引用は「API に無い」のではなく tier で使えない（設計 §0・§7）。
+    assert caps.CAPABILITIES['x']['quote'] == 'unsupported: provider_tier_enterprise_only'
+    assert caps.CAPABILITIES['x']['carousel_quote'] == 'unsupported: provider_tier_enterprise_only'
+    assert caps.CAPABILITIES['x']['link'] == 'body_only'
+    assert caps.CAPABILITIES['x']['reply_control'] == 'supported'
     for medium in caps.MEDIA:
         assert caps.CAPABILITIES[medium]['aac_adts'] == 'unsupported: privacy_inspection_boundary_unverified'
         assert caps.CAPABILITIES[medium]['asf'] == 'unsupported: deferred_by_ruling_c14'

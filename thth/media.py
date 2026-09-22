@@ -348,7 +348,7 @@ def _strong_ref(value):
 # ここから `unsupported_attachment: <媒体>/<種類>` が出るので、
 # `thth/media_capabilities.py` の表と突き合わせる試験が読める場所に要る。
 TYPED_KINDS=('quote','link','poll','text','gif')
-TYPED_ALLOWED={'threads':{'quote','link','poll','text','gif'},'mastodon':{'quote','link','poll'},'bluesky':{'quote','link'}}
+TYPED_ALLOWED={'threads':{'quote','link','poll','text','gif'},'mastodon':{'quote','link','poll'},'bluesky':{'quote','link'},'x':{'poll'}}
 # 記録に残す「添付の種類」（`sent`／`insights` の `attachment_kinds`・第 10 段）。
 # ファイルの kind と型付きの種類を**同じ 1 つの list** に並べる——`analytics-report
 # --by attachment_kind` は 1 行を種類ごとに数えるので、image と poll が付いた 1 本は
@@ -380,7 +380,7 @@ def validate_declarations(fm,medium):
     fields={
         'quote':({'type','uri'},{'cid'}),
         'link':({'type','url'},{'title','description','thumbnail_file','thumbnail_alt','associated_refs'}),
-        'poll':({'type','options'},{'expires_in','multiple','hide_totals'}),
+        'poll':({'type','options'},{'expires_in','multiple','hide_totals','duration_minutes'}),
         'text':({'type','text'},{'link','styles'}),
         'gif':({'type','provider','id'},set()),
     }
@@ -413,6 +413,10 @@ def validate_declarations(fm,medium):
             if len(set(row['options']))!=len(row['options']): raise MediaError('attachments: duplicate poll option')
             if medium=='mastodon' and 'expires_in' not in row: raise MediaError('attachments: poll expires_in required')
             if 'expires_in' in row and (type(row['expires_in']) is not int or row['expires_in']<=0): raise MediaError('attachments: invalid poll expiry')
+            # X は分で申告する（公式 `poll.duration_minutes` 5〜10080・2.14 §7）。
+            # 秒の `expires_in` と混ぜない——単位の取り違えは黙って別の投票になる。
+            if 'duration_minutes' in row and (medium!='x' or type(row['duration_minutes']) is not int or not 5<=row['duration_minutes']<=10080): raise MediaError('attachments: invalid poll duration_minutes')
+            if medium=='x' and 'duration_minutes' not in row: raise MediaError('attachments: poll duration_minutes required')
             for key in ('multiple','hide_totals'):
                 if key in row and type(row[key]) is not bool: raise MediaError('attachments: invalid poll boolean')
         elif kind=='text':
@@ -432,6 +436,7 @@ def validate_declarations(fm,medium):
         'mastodon':{'visibility','language','sensitive','spoiler_text','quote_approval_policy','focus'},
         'bluesky':{'languages','labels','presentation','gallery','facets','tags'},
         'threads':{'text_spoiler','media_spoiler','ghost','reply_control','reply_approvals'},
+        'x':{'reply_settings'},
     }
     if set(options)-option_fields.get(medium,set()): raise MediaError('post_options: unknown, duplicate legacy or unsupported field')
     booleans={'sensitive','gallery','text_spoiler','media_spoiler','ghost','reply_approvals'}
@@ -462,7 +467,7 @@ def validate_declarations(fm,medium):
                     if field is None or set(feature)!={'$type',field}:raise MediaError('post_options: unknown feature')
                     _text(feature[field],field,empty=field=='tag')
         else:_text(value,key,empty=key=='spoiler_text')
-    for key,values in {'visibility':{'public','unlisted','private','direct'},'quote_approval_policy':{'public','followers','nobody'},'reply_control':{'everyone','accounts_you_follow','mentioned_only','parent_post_author_only','followers_only'}}.items():
+    for key,values in {'visibility':{'public','unlisted','private','direct'},'quote_approval_policy':{'public','followers','nobody'},'reply_control':{'everyone','accounts_you_follow','mentioned_only','parent_post_author_only','followers_only'},'reply_settings':{'following','mentionedUsers','subscribers','verified'}}.items():
         if key in options and options[key] not in values:raise MediaError(f'post_options: invalid {key}')
     seen_captions=set()
     for caption in captions:
@@ -486,6 +491,9 @@ MEDIUM_POLICY={
  'threads':{'allow_webm':False},
  'bluesky':{'allow_webm':False},
  'mastodon':{'allow_webm':True},
+ # X は MP4/画像/GIF だけを受ける。WebM は**名前で**断る（構造解析の前に
+ # 「WebM だから」と言えるように）。edit list は拒否しない（注記のみ）。
+ 'x':{'allow_webm':False},
 }
 
 
