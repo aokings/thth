@@ -217,6 +217,9 @@ def render_approval_worker_service(credentials: str) -> str:
         'Type=simple\n'
         'User=wt\n'
         'Environment=THTH_ROOT=/srv/thth\n'
+        # Git creates the managed clone's own files; a 002 umask would make them
+        # group-writable and thth's isolation checks then refuse the repository.
+        'UMask=0077\n'
         f'ExecStart=/srv/thth/app/bin/thth approval-worker --credentials {credentials}\n'
         'Restart=on-failure\n'
         'RestartSec=5\n\n'
