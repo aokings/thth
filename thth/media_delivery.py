@@ -14,14 +14,14 @@ from .adapters import base
 
 
 def unavailable(cfg):
-    return cfg.get("media") not in ("mastodon","bluesky","threads")
+    return cfg.get("media") not in ("mastodon","bluesky","threads","x")
 
 
 def error_for(cfg,manifest):
     if not manifest:return None
     if unavailable(cfg):return 'media_provider_unavailable'
-    from .adapters import mastodon_media,bluesky_media,threads_media
-    return {'bluesky':bluesky_media,'mastodon':mastodon_media,'threads':threads_media}[cfg['media']].intent_error(manifest)
+    from .adapters import mastodon_media,bluesky_media,threads_media,x_media
+    return {'bluesky':bluesky_media,'mastodon':mastodon_media,'threads':threads_media,'x':x_media}[cfg['media']].intent_error(manifest)
 
 
 def _save(name,data):
@@ -86,7 +86,7 @@ def publish(adapter,post,*,cfg,fm,manifest,state_dir,before_publish=None,on_cont
             def progress(phase,**details):
                 nonlocal started,durable_phase
                 if phase=='uploading':started=True
-                try:_progress(cfg['account'],manifest,adapter.service if cfg['media']=='bluesky' else adapter.base_url if cfg['media']=='threads' else adapter.instance,phase,**details)
+                try:_progress(cfg['account'],manifest,adapter.service if cfg['media']=='bluesky' else adapter.instance if cfg['media']=='mastodon' else adapter.base_url,phase,**details)
                 except (OSError,ValueError) as exc:raise media.MediaError('media_journal_unavailable') from exc
                 durable_phase=phase
             from .adapters import mastodon_media
@@ -205,6 +205,13 @@ def lint_notes(cfg,fm,*,text=None,unreachable_warns=False):
                     threads_media.common_options(manifest,text,reply_to=fm.get('reply_to'),topic=fm.get('topic'),location_id=fm.get('location_id'),share_to_instagram=fm.get('share_to_instagram',False))
                     if not items:threads_media.text_params(manifest,text)
                 return [reason] if reason else threads_media.notes(manifest,items)
+        except (OSError,ValueError) as exc:return unsupported_notes(exc)
+    if cfg.get('media')=='x':
+        from .adapters import x_media
+        try:
+            with media.prepare(cfg['repo_dir'],fm,'x') as (manifest,items):
+                reason=x_media.intent_error(manifest)
+                return [reason] if reason else x_media.notes(manifest,items)
         except (OSError,ValueError) as exc:return unsupported_notes(exc)
     if cfg.get('media')=='bluesky':
         try:

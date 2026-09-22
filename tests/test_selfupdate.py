@@ -870,10 +870,12 @@ def test_D11_署名検証後にrefが動いても検証したOIDだけをmerge�
              "+refs/heads/release:refs/remotes/origin/release"],
             check=True,
         )
-        return True
+        return None
 
     monkeypatch.setenv(selfupdate.REQUIRE_SIGNED_ENV, "1")
-    monkeypatch.setattr(selfupdate, "verify_release_signature", 検証後にrefを進める)
+    monkeypatch.setattr(selfupdate, "release_signature",
+                         lambda app_dir, oid: {"state": "verified",
+                                               "key_id": 検証後にrefを進める(app_dir, oid)})
 
     message, moved = selfupdate._pull_locked(pair["work"])
     merged = selfupdate.head(pair["work"])
@@ -902,9 +904,14 @@ def test_D11_verify_commitの実git引数はrefでなく固定OID(tmp_path, monk
 
     monkeypatch.setattr(selfupdate, "_git", 記録して実行)
     # fixture の commit は未署名なので結果は False。ここで確かめるのは、実際の
-    # `git verify-commit` が可変 ref でなく固定 OID を受け取ること。
+    # `git verify-commit` が可変 ref でなく固定 OID を受け取ること（2.14 から
+    # allowed_signers を明示し、落ちたら「無い」と「合わない」を言い分ける）。
     assert selfupdate.verify_release_signature(pair["work"], oid) is False
-    assert calls == [["verify-commit", oid]]
+    signers = selfupdate.allowed_signers_path()
+    assert calls == [["-c", "gpg.format=ssh", "-c", "gpg.ssh.program=ssh-keygen",
+                      "-c", "gpg.ssh.allowedSignersFile=" + signers, "verify-commit", oid],
+                     ["cat-file", "commit", oid]]
+    assert selfupdate.release_signature(pair["work"], oid)["state"] == selfupdate.SIGNATURE_MISSING
 
 
 def test_P2_5_boardは署名を確かめているかを1語出す(tmp_path, monkeypatch, capsys):

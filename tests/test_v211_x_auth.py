@@ -25,9 +25,7 @@ def env(tmp_path,monkeypatch):
     cfg.update(account='alpha',project='demo',handle='demo',repo_dir=str(root/'repos/_none'),token=str(root/'alpha.token'),env=str(root/'alpha.env'))
     ledger=ledgers/'alpha.json';ledger.write_text(json.dumps(cfg));cfg=accounts.load_account('alpha')
     data=dict(root=root,home=home,cfg=cfg,ledger=ledger,client_id=opaque(),client_secret=opaque(),code=opaque(),token=opaque(),refresh=opaque(),calls=[],behavior={},queries=[],lines=[],hook=None)
-    path=authclients.path_for('x',None,cfg);data['client_path']=path
     data['client']={'client_id':data['client_id'],'client_secret':data['client_secret'],'client_type':'confidential','redirect_uri':x.CALLBACK}
-    authclients.write(path,data['client'])
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*a):pass
         def do_GET(self):self.answer(None)
@@ -44,6 +42,9 @@ def env(tmp_path,monkeypatch):
             self.send_response(status);self.end_headers();self.wfile.write(json.dumps(body).encode())
     server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
     monkeypatch.setenv('THTH_X_BASE_URL',f'http://127.0.0.1:{server.server_port}')
+    # 2.14: client は scope 集合ごとの世代に置く（origin は上書き後に決まる）。
+    path=x.client_path(cfg);data['client_path']=path
+    authclients.write(path,data['client'])
     # This auth fixture now explicitly provisions a synthetic read cap.
     # Budget default-zero and setter/audit contracts have separate 2.12 tests.
     from thth import budget_x,server_files
@@ -88,8 +89,9 @@ def test_success_pkce_basic_observed_expiry_and_auth_only(env,capsys):
     assert (jst.parse(token['expires_at'])-jst.parse(token['obtained_at'])).total_seconds()==7200
     assert token['scopes']==x.SCOPES and token['scopes_source']=='response' and token['auth_via']=='paste'
     assert stat.S_IMODE(Path(env['cfg']['token']).stat().st_mode)==0o600
-    assert adapters.capabilities_for('x')==set()
-    with pytest.raises(adapters.UnknownMedium):adapters.make_adapter(env['cfg'],token)
+    # 2.14: X は投稿 adapter を持つ（2.11 の auth-only ではなくなった）。
+    assert adapters.capabilities_for('x')=={'recent_posts'}
+    assert adapters.make_adapter(env['cfg'],token).user_id=='123'
     output='\n'.join(env['lines'])+json.dumps(admin_log.read())+capsys.readouterr().out
     for value in [env['token'],env['refresh'],env['client_secret'],env['code'],session['state'],session['read_key'],session['code_verifier']]:assert value not in output
 
@@ -212,7 +214,7 @@ def test_cli_account_add_then_auth_reaches_x_profile(env,monkeypatch):
     monkeypatch.setattr('builtins.input',lambda:x.CALLBACK+'?'+urllib.parse.urlencode({'code':env['code'],'state':authflow._read_session('newx')['state']}))
     assert cli.main(['auth','newx','--by','operator','--paste'])==0
     cfg=accounts.load_account('newx');assert cfg['production'] is False and cfg['scheduled'] is False
-    assert accounts.load_token(cfg)['user_id']=='123' and adapters.capabilities_for('x')==set()
+    assert accounts.load_token(cfg)['user_id']=='123' and adapters.capabilities_for('x')=={'recent_posts'}
 
 
 @pytest.mark.parametrize('fault',['zero','partial','fsync','rollback'])

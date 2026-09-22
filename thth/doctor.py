@@ -137,7 +137,7 @@ def _diagnose(account_name: str) -> dict:
 
     if account_cfg.get('media') == 'x':
         observation = read_observation(account_name) or {}
-        return dict(account=account_name, error='X は認可だけ対応しています。投稿・採集とその probe は未対応です。認可の修復は thth auth <account> --by <actor>。',
+        return dict(account=account_name, error='X は投稿と取り下げに対応しています（2.14）。読み取りは従量なので、probe はこの版では叩きません（thth admin budget x で読取予算、thth admin budget x-posts で月間投稿数）。認可の修復は thth auth <account> --by <actor>。',
                     probes=[], auth_only=True, auth_via=(token.get('auth_via') if isinstance(token,dict) and token.get('auth_via') in ('relay','paste','token_set') else None),
                     auth_observed_at=observation.get('auth_observed_at'), scopes_recorded=recorded_scopes(token))
 

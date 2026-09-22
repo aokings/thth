@@ -39,7 +39,7 @@ def test_mastodon_still_accepts_the_same_webm(tmp_path):
 
 
 def test_policy_table_names_every_medium():
-    assert set(media.MEDIUM_POLICY) == {'threads', 'bluesky', 'mastodon'}
+    assert set(media.MEDIUM_POLICY) == {'threads', 'bluesky', 'mastodon', 'x'}
     assert media.MEDIUM_POLICY['mastodon']['allow_webm'] is True
     # An edit list is no longer a per-medium policy: every medium takes one.
     assert all(set(p) <= {'allow_webm'} for p in media.MEDIUM_POLICY.values())

@@ -61,7 +61,12 @@ def run(media='threads',*,app_id=None,secret_stdin=False,stdin=False,by=None,inp
         if media not in ('threads','x'):raise FlowError('app_set_medium_unsupported: Mastodon は auth が自動登録します')
         if stdin and (app_id is not None or secret_stdin):raise FlowError('app_set_input_options_conflict')
         if not stdin and media!='threads':raise FlowError('app_set_x_requires_json_stdin')
-        path=Path(path or (appenv.default_path() if media=='threads' else authclients.path_for('x',None,{})))
+        if path is None and media=='x':
+            # 2.14: `media.write` を足したので client は scope 集合ごとの世代に書く
+            # （旧無印は read-only・`auth_x.legacy_client_path`）。
+            from .adapters.auth_x import client_path as x_client_path
+            path=x_client_path({})
+        path=Path(path or appenv.default_path())
         validate_location(path)
         Path(accounts.thth_root()).mkdir(parents=True,exist_ok=True)
         with admin_log.transaction():expected=snapshot(path)

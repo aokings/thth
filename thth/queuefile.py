@@ -11,7 +11,10 @@ KNOWN_STATUSES = {"draft", "approved", "posted", "withdrawn"}
 # 上書きできる**（`limit_for()`・設計 v2 §4.2「台帳と登録」）——Mastodon は
 # インスタンスで上限が違う（既定 500 だが運用者が変えられる）。
 # Bluesky は 300（grapheme・**L2**: bsky-docs）、Mastodon は既定 500（**L2**）。
-MEDIA_LIMITS = {"threads": 500, "x": 140, "bluesky": 300, "mastodon": 500}
+# X は 2.14 で **暫定 280 コードポイント**（設計 2.14.0 §2）。公式ページに
+# 280 の明記は無く、重み付き計数も実測していない——2.11 まで置いていた 140 は
+# 2017 年より前の数字で、いまの本文を不当に断る。数え方は `XAdapter.count_text`。
+MEDIA_LIMITS = {"threads": 500, "x": 280, "bluesky": 300, "mastodon": 500}
 DEFAULT_MEDIA_LIMIT = 500
 # threads の 450 字警告の閾値（食い違い 2 の裁定・2026-09-09）。絵文字カウントが
 # 実物と一致する保証が無い（L3）ので、上限ぎりぎりに座らないための警告として置く。

@@ -320,8 +320,14 @@ def execute_admin_write(context,request):
     """Explicit MCP-only admin mutation; execute_report never dispatches here."""
     if type(context) is not ReportContext or context.scope!='admin':raise ReportServiceError('unsupported_operation')
     if (type(request) is not dict or request.get('operation')!='admin_budget_set'
-        or set(request)-{'operation','monthly','currency','rate','rate_source','by'}
+        or set(request)-{'operation','monthly','currency','rate','rate_source','by','kind'}
         or not {'monthly','by'}<=set(request)):raise ReportServiceError('invalid_request')
+    # `kind` は口の選択（既定は 2.12 の読取予算）。**本数の口は金額の選択肢を
+    # 受けない**——USD の上限と本数の上限を 1 つの要求で混ぜない。
+    kind=request.get('kind','x_read')
+    if kind not in ('x_read','x_posts'):raise ReportServiceError('invalid_request')
+    if kind=='x_posts' and set(request)-{'operation','monthly','by','kind'}:
+        raise ReportServiceError('invalid_request')
     from . import budget_x,admin_log
     def current():
         from .report_http import load_credentials
@@ -333,7 +339,10 @@ def execute_admin_write(context,request):
         if found!=context:raise ReportServiceError('credential_changed')
     try:
         current()
-        return budget_x.configure(**{k:v for k,v in request.items() if k!='operation'},via='mcp',before_save=current)
+        if kind=='x_posts':
+            from . import budget_x_posts
+            return budget_x_posts.configure(request['monthly'],by=request['by'],via='mcp',before_save=current)
+        return budget_x.configure(**{k:v for k,v in request.items() if k not in ('operation','kind')},via='mcp',before_save=current)
     except ReportServiceError:raise
     except admin_log.AdminLogError as exc:
         raise ReportServiceError('budget_change_durability_unconfirmed' if exc.complete else 'budget_change_partially_recorded' if exc.appended else 'budget_change_refused') from None

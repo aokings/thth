@@ -706,7 +706,7 @@ def test_TB5_知らない媒体のdoctorは黙って異常なしにしない(tmp
 
 # --- T3 の配線（2026-09-13・Bluesky と Mastodon を REGISTRY に載せる） ---------
 
-def test_T3_REGISTRYに3媒体が載っている():
+def test_T3_REGISTRYに4媒体が載っている():
     """**足すのは 1 行だけ**（設計 v2 §4.2「台帳と登録」）。
 
     ここが落ちると、台帳に `media: bluesky` と書いても
@@ -714,9 +714,11 @@ def test_T3_REGISTRYに3媒体が載っている():
     """
     from thth.adapters import bluesky as bluesky_mod
     from thth.adapters import mastodon as mastodon_mod
-    assert adapters_mod.known_media() == ["bluesky", "mastodon", "threads"]
+    from thth.adapters import x as x_mod
+    assert adapters_mod.known_media() == ["bluesky", "mastodon", "threads", "x"]
     assert adapters_mod.REGISTRY["bluesky"] is bluesky_mod.BlueskyAdapter
     assert adapters_mod.REGISTRY["mastodon"] is mastodon_mod.MastodonAdapter
+    assert adapters_mod.REGISTRY["x"] is x_mod.XAdapter
 
 
 def test_T3_全媒体のCAPABILITIESが境界の語彙に収まる():
