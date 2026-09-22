@@ -111,6 +111,10 @@ test('CSRF/origin/query rejection; incorrect read key; revoke approved receipt',
   const p=await person(),s=await session(p);assert.equal((await approve(s,p,p.secret,opaque())).status,403);
   assert.equal((await mf.dispatchFetch('https://approval.test/approve/'+s.token+'?token=x')).status,400);
   assert.equal((await mf.dispatchFetch('https://approval.test/approve/'+s.token,{method:'POST',headers:{origin:'https://evil.test','content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({secret:p.secret,csrf:await csrf(s)})})).status,403);
+  // Referrer-Policy: no-referrer → browsers send Origin: null (or none) on a same-origin form POST.
+  assert.equal((await mf.dispatchFetch('https://approval.test/approve/'+s.token,{method:'POST',headers:{origin:'null','sec-fetch-site':'cross-site','content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({secret:p.secret,csrf:await csrf(s)})})).status,403);
+  assert.equal((await mf.dispatchFetch('https://approval.test/approve/'+s.token,{method:'POST',headers:{'sec-fetch-site':'cross-site','content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({secret:p.secret,csrf:await csrf(s)})})).status,403);
+  assert.equal((await mf.dispatchFetch('https://approval.test/approve/'+s.token,{method:'POST',headers:{origin:'null','sec-fetch-site':'same-origin','content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({secret:'wrong-'+opaque(),csrf:await csrf(s)})})).status,403);
   assert.equal((await approve(s,p)).status,200);assert.equal((await signed('session',s.token,'consume',{read_key:opaque()})).status,401);await signed('person',p.id,'revoke');assert.equal((await consume(s)).status,410);
 });
 test('storage failure does not acknowledge provisioning or approval',async()=>{

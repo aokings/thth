@@ -102,7 +102,12 @@ export async function approvalRequest(request,env,url) {
           :'<p>添付を表示できないため、この承認ページは使えません。サーバから新しく承認を求めてください。</p>';
         return page(200,`<h1>${kindLabel[d.kind]}</h1><p>アカウント: ${escape(d.account)}</p><pre>${escape(d.text)}</pre>${attachments(d.attachments,d.typed)}${Object.entries(d.context).filter(([,v])=>v!==null).map(([k,v])=>`<p>${labels[k]}: ${escape(v)}</p>`).join('')}<p>digest: ${escape(d.digest)}</p>${act}`);
       }
-      if(request.headers.get('origin')!==url.origin||!/^application\/x-www-form-urlencoded(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(403,{error:'forbidden'});
+      // Referrer-Policy: no-referrer makes browsers send `Origin: null` (or omit it) even on a
+      // same-origin form POST (Fetch spec §4.9). Same-origin is then proven by Sec-Fetch-Site;
+      // the per-session csrf field and CSP form-action 'self' remain the CSRF gate.
+      const originHeader=request.headers.get('origin'),site=request.headers.get('sec-fetch-site');
+      const sameOrigin=originHeader===url.origin||((originHeader===null||originHeader==='null')&&(site===null||site==='same-origin'));
+      if(!sameOrigin||!/^application\/x-www-form-urlencoded(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(403,{error:'forbidden'});
       const form=new URLSearchParams(await boundedBody(request,2048));
       if([...form.keys()].sort().join(',')!=='csrf,secret')return reply(400,{error:'invalid_request'});
       const result=await stub.approve(form.get('secret'),form.get('csrf'));
