@@ -320,11 +320,18 @@ class のろい媒体:
 
 出た = []
 どちら = sys.argv[2]
+# **凍結時計を子にも渡す。** 子プロセスは conftest の `frozen_now_jst`
+# （2026-09-09）を継がない。実時計のままだと、台帳に書いた「2 時間前」が
+# `collect_days`（14 日）の窓を実日付が越えた 2026-09-23 08:00 JST に落ちて、
+# `requested: 0` で「1 本しか採らない」が確かめられなくなった（同日発見）。
+from thth import jst
+now = jst.parse(sys.argv[3])
 if どちら == "collect":
-    rc = collect.run_collect(sys.argv[1], adapter=のろい媒体(), log=出た.append)
+    rc = collect.run_collect(sys.argv[1], adapter=のろい媒体(), now=now,
+                             log=出た.append)
     print(json.dumps({"rc": rc, "log": 出た}, ensure_ascii=False))
 else:
-    out = collect.refresh_replies(sys.argv[1], adapter=のろい媒体(),
+    out = collect.refresh_replies(sys.argv[1], adapter=のろい媒体(), now=now,
                                    log=出た.append)
     print(json.dumps({"skipped": out["skipped"], "fetched": out["fetched"]},
                       ensure_ascii=False))
@@ -348,9 +355,10 @@ def 同席専用(tmp_path, thth_root, isolated_account_factory):
 
 
 def _2本同時に(account_name: str, どちら: str) -> list:
+    from thth import jst
     env = {**os.environ, "PYTHONPATH": REPO_ROOT}
     procs = [subprocess.Popen(
-        [sys.executable, "-c", 同時に打つ, account_name, どちら],
+        [sys.executable, "-c", 同時に打つ, account_name, どちら, jst.iso(jst.now_jst())],
         env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         for _ in range(2)]
     出た = []
