@@ -1061,7 +1061,10 @@ def _anonymize(record):
     copy = record.get("open_copy") or {}
     record.update(account=None, by=LEFT_LABEL, left_owner=True,
                   title=copy.get("title") or "", body=copy.get("body") or "",
-                  hypothesis=copy.get("hypothesis"), change=copy.get("change"))
+                  hypothesis=copy.get("hypothesis"), change=copy.get("change"),
+                  scope_note=copy.get("scope_note"), how=copy.get("how"))
+    if record.get("verdict"):
+        record["verdict"].update(by=LEFT_LABEL, reason=copy.get("verdict_reason"))
     for target in record["targets"]:
         target["account"] = None
         target["declaration"] = None

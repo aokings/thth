@@ -916,8 +916,9 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
                 "次の一手は候補の列挙。本文は作らない",
                 "監視語は管理者が入れた語だけ。道具は語を選ばない",
                 "取れなかった段は null と静的な理由。0 件と混ぜない",
-                "不具合・要望・つまずきは report の口へ（thth_report_file）",
-                "施策を試したら広場へ（thth plaza post・thth_plaza_post）。次を決める前に他の媒体の施策を読む"]}
+                "施策を試したら広場へ（thth plaza post・thth_plaza_post）。次を決める前に他の媒体の施策を読む",
+                # 報告の口の 1 行は末尾に置く（設計 3.1.2 §3.5・試験が末尾を見る）。
+                "不具合・要望・つまずきは report の口へ（thth_report_file）"]}
 
 
 # ------------------------------------------------------------------ 人向け
