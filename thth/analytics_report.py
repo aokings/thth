@@ -159,6 +159,10 @@ def render_markdown(payload):
 
 
 def cmd_analytics_report(args):
+    if getattr(args, "weekly_goals", False):
+        # 週の表（設計 3.7.0 §A3）。比較（--compare-previous）とは別の表。
+        from . import analytics_weekly
+        return analytics_weekly.cmd(args)
     try:
         payload = answer(args.account, project=args.project,
                          window_days=args.window_days, min_n=args.min_n,

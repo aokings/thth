@@ -3209,6 +3209,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--min-n", type=int, default=5)
     p_report.add_argument("--compare-previous", action="store_true", help="直前の同じ日数と24h条件を揃えて比較")
     p_report.add_argument("--by", choices=analytics_report_mod.BY_CHOICES, help="比較の層別")
+    # 週の表（設計 3.7.0 §A3）。観察の表で、因果とは言わない。
+    p_report.add_argument("--weekly-goals", action="store_true",
+                          help="週ごとの目的ごとの本数と followers の増分（観察の表・1 account）")
+    p_report.add_argument("--weeks", type=int, default=6, help="--weekly-goals の週の数（既定 6）")
     p_report.add_argument("--json", action="store_true")
     p_report.set_defaults(func=analytics_report_mod.cmd_analytics_report)
 
