@@ -145,7 +145,7 @@ def targets(target) -> list:
 
 # --------------------------------------------------------------- 第 0 段
 
-def _tool_section(handoff):
+def _tool_section(handoff, now=None, admin=False):
     """版・前回から変わったか・リリースノート・出せるもの表（設計 §2 の 0 段）。
 
     **前回との比較は account ごとの栞から来る**（`handoff-report` の
@@ -177,7 +177,15 @@ def _tool_section(handoff):
         # 変化があれば」）。静的な表なので、版が変わらなければ変わらない。
         "capabilities": tool.get("capabilities") if changed else None,
         "capabilities_basis": "static_table_not_a_provider_probe",
+        # 報告の口（設計 3.1.2 §3）。**管理者の 1 枚にだけ**（サーバ型の利用者の
+        # credential では出さない——他 project の件数を渡さない）。
+        "reports": _reports_cell(now) if admin else None,
     }
+
+
+def _reports_cell(now):
+    from . import report_inbox
+    return report_inbox.morning_summary(now or jst.now_jst())
 
 
 # --------------------------------------------------------------- 第 1 段
@@ -549,12 +557,14 @@ def read_refusal(media):
 
 # --------------------------------------------------------------- 第 5 段
 
-def next_steps(unanswered_entries, world_entries, today_entries) -> list:
+def next_steps(unanswered_entries, world_entries, today_entries, reports=None) -> list:
     """**候補の列挙だけ**（masaru 裁定 3.1.0 §7-1）。本文は 1 字も作らない。
 
-    4 種類だけ: 「返す」（1 段の各行）・「絡む」（3 段の各行）・「出す」
-    （4 段で今日の予定が無い account）・「超過」（4 段の時刻超過の各行・3.1.1）。
-    どの要素にも `body` は無い（「超過」も file と時刻だけで、本文の先頭は載せない）。
+    5 種類だけ: 「返す」（1 段の各行）・「絡む」（3 段の各行）・「出す」
+    （4 段で今日の予定が無い account）・「超過」（4 段の時刻超過の各行・3.1.1）・
+    「報告」（管理者の 1 枚だけ・開いている報告 1 件につき 1 行・3.1.2 §3）。
+    どの要素にも `body` は無い（「超過」も file と時刻だけ、「報告」も id と種類と
+    題の先頭 60 字だけで、報告の本文は載せない）。
     """
     steps = []
     for name, entry in unanswered_entries.items():
@@ -587,6 +597,9 @@ def next_steps(unanswered_entries, world_entries, today_entries) -> list:
             steps.append({"kind": "overdue", "account": name, "file": row["file"],
                           "publish_at": row["publish_at"],
                           "elapsed_hours": row["elapsed_hours"]})
+    for row in reports or []:
+        steps.append({"kind": "report", "report_id": row["report_id"],
+                      "report_kind": row["kind"], "title": row["title"][:PREVIEW_CHARS]})
     return steps
 
 
@@ -683,12 +696,17 @@ def build(target, *, now=None, mark=True, allowed_names=None):
     budget_cell = _budget({cfg.get("media") for cfg in configs.values()})
 
     def _steps():
-        steps = next_steps(unanswered_entries, world_entries, today_entries)
+        # 報告は**管理者の 1 枚だけ**（サーバ型の利用者に他 project の報告を並べない）。
+        reports = None
+        if allowed_names is None:
+            from . import report_inbox
+            reports = report_inbox.list_reports(scope=None, status="open")["reports"]
+        steps = next_steps(unanswered_entries, world_entries, today_entries, reports)
         return {"steps": steps, "n": len(steps)}
 
     sections = [
         {"section": "tool", "title": "道具",
-         **(_guard(lambda: _tool_section(handoff)) if handoff is not None
+         **(_guard(lambda: _tool_section(handoff, now, admin=allowed_names is None)) if handoff is not None
             else cell(cannot_say=handoff_cell["cannot_say"]))},
         _section("unanswered", "返していないもの", unanswered_entries),
         _section("yesterday", "昨日の自分", yesterday_entries),
@@ -717,7 +735,8 @@ def build(target, *, now=None, mark=True, allowed_names=None):
                 "本文は先頭 60 字の表示だけ。全文も絶対パスも返さない",
                 "次の一手は候補の列挙。本文は作らない",
                 "監視語は管理者が入れた語だけ。道具は語を選ばない",
-                "取れなかった段は null と静的な理由。0 件と混ぜない"]}
+                "取れなかった段は null と静的な理由。0 件と混ぜない",
+                "不具合と要望は report の口へ（thth_report_file）"]}
 
 
 # ------------------------------------------------------------------ 人向け
@@ -762,6 +781,14 @@ def _render_section(section, out) -> None:
                 f"（{value['capabilities_basis']}）")
         if value["notes_reason"]:
             out(f"  ノート: {value['notes_reason']}")
+        reports = value.get("reports")
+        if reports is not None:
+            if reports["cannot_say"] is not None:
+                out(f"  報告: 言えない: {reports['cannot_say']}")
+            else:
+                out(f"  報告: 開いている {reports['open']} 件（新規 {reports['new']} 件・"
+                    f"直近 {reports['new_window_hours']} 時間）"
+                    + (f"  → {reports['next']}" if reports["next"] else ""))
         return
     if name == "next_steps":
         out(f"  候補 {value['n']} 件（本文は作りません）")
@@ -775,6 +802,8 @@ def _render_section(section, out) -> None:
             elif step["kind"] == "overdue":
                 out(f"  超過  {step['account']}  {step['file']}  {step['publish_at']}"
                     f"（{step['elapsed_hours']}h）")
+            elif step["kind"] == "report":
+                out(f"  報告  {step['report_id']}  {step['report_kind']}  {step['title']}")
             else:
                 out(f"  出す  {step['account']}（今日の予定がありません）")
         return

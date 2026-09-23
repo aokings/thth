@@ -5,6 +5,8 @@ description: 投稿する前・返信を書く前・出したあと・絡みに�
 
 **開始時は、まず `thth_morning`（CLI は `thth morning <project|account> --json`）を 1 回。** 昨日から何があって今日なにをすればよいかが 6 段（道具・返していないもの・昨日の自分・世間・予定・次の一手）で返る。`handoff-report --since-last-read` を包含するので、版の確認もこれ 1 回で済む。呼ぶと栞（前回読んだ時点）が進む——進めたくないときだけ `mark: false`（CLI は `--no-mark`）。取れなかった段は `{"value": null, "cannot_say": "<理由>"}`（`provider_timeout`・`budget_exhausted`・`scope_missing`・`no_watch_words`・`not_supported`・`unavailable`）で、**0 件とは別**。第 3 段の監視語は**管理者が入れる**（`thth admin watch set <account> 語 … --by <名前>`）——語が無い account は `no_watch_words` で飛ぶので、**代わりに語を選ばない**。第 5 段は候補の列挙だけで、**本文は返らない**（書くのはあなたと人の会話の側）。詳しくは `docs/使い方_毎朝の一枚_3.1.md`。
 
+**断られたら・違和感があれば報告の口へ**: `thth_report_file`（CLI は `thth report file <account> --kind bug|request --title … --body-file … --by <名前>`）。道具が断った・結果が期待と違った・欲しい形がある、のどれかなら 1 回で置ける。返事は `thth_report_show` と `handoff-report --since-last-read` の `tool.reports` に出る。秘密らしき値が含まれていたら置かれない（伏せてから置き直す）。
+
 段だけを読み直したいときは `thth handoff-report <account> --since-last-read --json` を読む。`tool.changed_since_last_read` が真なら、手元の `tool.notes_root_local_hint` を手掛かりに `tool.release_notes` の相対名を読んでから作業する。既読の記録は `--mark-read --by <名前>` の明示時だけ。`tool.notes_reason` が `notes_directory_unavailable` なら、このインストールには読める docs がない。空の `release_notes` を「変更なし」と解釈しない。
 
 添付を付ける前に `tool.capabilities` を読む（媒体ごとの「出せるもの」表。`thth doctor` にも同じ表が出る。`unverified` は「非対応」ではない）。
@@ -141,6 +143,7 @@ MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜ�
 
 - `thth --help` / `thth <subcommand> --help` が正本。
 - `thth doctor <account>` が「いま投稿できる状態か」を最初から最後まで言う。
+- 道具の不具合・欲しい形は `thth report file`（MCP `thth_report_file`）で実装側に届ける。
 - 使い方の全文: `docs/使い方_プロジェクトのセッション向け_2026-09-09.md`。
 
 ## 運用と分析のレポート（v3系・2.5.0 から）

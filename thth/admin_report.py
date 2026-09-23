@@ -357,6 +357,9 @@ def register(sub):
     # `thth/watch_cli.py` に閉じる（ここに足すのはこの 2 行だけ）。
     from . import watch_cli
     watch_cli.register(commands)
+    # 報告の口（設計 3.1.2）。口の中身は `thth/report_inbox.py` に閉じる。
+    from . import report_inbox
+    report_inbox.register_admin(commands)
     for name in OPERATIONS:
         p = commands.add_parser(name)
         p.add_argument('--json', action='store_true')

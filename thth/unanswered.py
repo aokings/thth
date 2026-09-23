@@ -122,7 +122,8 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
                   else sorted(set(allowed_names))):
         if other == account_name:continue
         try:
-            other_cfg = accounts.load_account(other)
+            # 退出の途中の台帳も持ち主の見分けには読む（3.1.2 件 7・replies と同じ）。
+            other_cfg = replies.load_for_ownership(other)
             if Path(accounts.data_dirs(other_cfg, other)['replies']).resolve() != directory:continue
             _, _, _, other_owned = _relations(other, other_cfg, now)
             for pid in roots & other_owned:owners[pid].add((other, other_cfg['media']))

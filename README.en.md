@@ -150,6 +150,7 @@ All subcommands `thth --help` lists in this development checkout, one line each:
 - `approval-worker` — operator-run durable approval jobs for explicit user `writes: true` credentials; see the [server write setup](docs/運用_サーバ書込_2.12.md). Existing read-only credentials stay read-only. Requests return a human approval URL, never accept a digest confirmation.
 - `handoff-report` — since 2.5.0: local operations evidence, pending notifications and explicit freshness limits.
 - `morning` — since 3.1.0: one morning page for a project or account — tool version, unanswered replies and mentions, yesterday's own posts, the world around your admin-set watch words, today's plan and budget, and candidate next steps. Read-only; it never drafts text.
+- `report` — since 3.1.2 (development): file a bug or a request inside the tool (`report file <account> --kind bug|request`), read your project's reports and the implementers' replies (`report list`, `report show`). Refused if the text looks like a secret.
 - `study` — add an explicit post ID or queue post ID to a local study JSON with `--by`; no adoption or git commit.
 - `unanswered` — list locally evidenced unanswered replies to this account's root posts, with freshness and uncertainty.
 - `study-report` — since 2.5.0: link an unverified study declaration to explicitly selected owned root-post observations; read-only, no causal-effect claim. See the [contract](docs/施策レポート_v1.md).

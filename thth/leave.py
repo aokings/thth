@@ -200,7 +200,13 @@ def inventory(account,cfg):
         if not value:continue
         path=_path(value);identity=token_identity if category=='token' else _identity(path,private=True)
         if identity is None:continue
-        shared=False
+        # **ファイルの共有と値の共有を分ける**（3.1.2 件 6・masaru 裁定 09-23）。
+        # shared: 同じ path・同じ dev/ino・app directory 配下・同じ利用者（Threads／
+        # Bluesky）——自分のファイルを消すと相手も困るので残す（preserved）。
+        # value_shared: 別ファイルだが token の値が同じ——遠隔の失効だけ投げず、
+        # 自分のファイルは消す（消しても失効にはならず、相手は自分のファイルを持つ。
+        # 退出した account の秘密を VM に残さない）。
+        shared=False;value_shared=False
         for name,other in registry.items():
             if name==account:continue
             for key in ('token','env'):
@@ -219,7 +225,8 @@ def inventory(account,cfg):
                 # 台帳があるだけで退出が worker_revoked で止まらないようにする。Threads と
                 # Bluesky は遠隔の解除が本人の手なので、従前どおり同じ利用者を共有と見る。
                 if same_grant and cfg.get('media') in ('mastodon','x'):same_grant=False
-                if same_value or same_grant:shared=True
+                if same_grant:shared=True
+                if same_value:value_shared=True
         from . import appenv
         app_directory=Path(os.environ.get('THTH_APPS_DIR') or Path.home()/'.config/thth/apps').resolve()
         if path==_path(appenv.default_path()) or path.is_relative_to(app_directory):shared=True
@@ -227,6 +234,7 @@ def inventory(account,cfg):
             preserved.append(category+'_shared')
             if category=='token':token_shared=True
             continue
+        if value_shared:token_shared=True
         if not _credential_owned(path,account):raise ValueError('credential_ownership_unproved')
         targets.append({'category':category,'path':str(path),'identity':identity})
     clone,origin=managed_repo.locations(account)
@@ -373,22 +381,44 @@ def _run_locked(account,*,by):
                 row['phase']='worker_revoked';_save(row)
             if row['phase'] in ('worker_revoked','remote_pending'):
                 with gate.credentials(exclusive=True):
-                    _,_,currently_shared=inventory(account,cfg)
-                    if currently_shared and cfg.get('media') not in ('threads','bluesky'):raise ValueError('shared_credential_revoke_refused')
-                    if row['token_shared'] and cfg.get('media') not in ('threads','bluesky'):raise ValueError('shared_credential_revoke_refused')
-                    if currently_shared and not row['token_shared']:
-                        row['token_shared']=True
+                    current_targets,current_preserved,currently_shared=inventory(account,cfg)
+                    if currently_shared and not row['token_shared']:row['token_shared']=True
+                    has_token=any(target['category']=='token' for target in row['targets'])
+                    if 'token_shared' in current_preserved and has_token:
+                        # いまはファイルごとの共有——自分のファイルも消さない。
                         row['targets']=[target for target in row['targets'] if target['category']!='token']
-                        row['inventory_sha256']=_hash(row['targets'])
                         row['preserved']=sorted(set(row['preserved'])|{'token_shared'})
-                    row['phase']='remote_pending';_save(row)
-                    token,token_identity=_token(cfg)
-                    # Same saved credential bytes; never revoke a replacement made by a different operator.
-                    own=next((t for t in row['targets'] if t['category']=='token'),None)
-                    if own and token_identity!=own['identity']:raise ValueError('credential_changed')
-                    row['remote']=revoke(cfg,token,row['revoked'],lambda:_save(row))
-                    if row['token_shared'] and row['remote']=='unconfirmed_manual':row['remote']='unconfirmed_shared'
-                    row['phase']='remote_confirmed' if row['remote']=='confirmed' else 'manual_unconfirmed';_save(row)
+                    elif ('token_shared' in row['preserved'] and 'token_shared' not in current_preserved
+                          and not has_token):
+                        # 3.1.1 の形で止まった row（値だけの共有でも token を残す対象にしていた）。
+                        # いまのファイルの同一性で消す対象に戻す（裁定: 秘密を VM に残さない）。
+                        own=next((target for target in current_targets if target['category']=='token'),None)
+                        if own is not None:
+                            row['targets']=[own]+list(row['targets'])
+                            row['preserved']=sorted(set(row['preserved'])-{'token_shared'})
+                    row['inventory_sha256']=_hash(row['targets'])
+                    if row['token_shared']:
+                        # **共有の接続は遠隔で失効させず、そのまま退出を終える**（3.1.2 件 6・
+                        # 実測 09-23: 同じ app で同じ利用者が認可すると Mastodon は既存の
+                        # access token を返すので、別台帳でも値が同じになる）。失効すると他の
+                        # 生きている account も死ぬので投げない——が、止まる理由にもしない。
+                        # 値だけの共有なら自分の token file は消す対象に残る（消しても失効に
+                        # はならない）。ファイルごとの共有なら残す（preserved）。解除の切り分け
+                        # は運用者に渡す（`remote_unconfirmed` の 1 行）。
+                        if ('token_shared' in row['preserved']
+                                and any(target['category']=='token' for target in row['targets'])):
+                            # ファイルごと共有なのに消す対象に token が残っている——矛盾なので止める。
+                            raise ValueError('shared_credential_revoke_refused')
+                        row['remote']='unconfirmed_shared'
+                        row['phase']='manual_unconfirmed';_save(row)
+                    else:
+                        row['phase']='remote_pending';_save(row)
+                        token,token_identity=_token(cfg)
+                        # Same saved credential bytes; never revoke a replacement made by a different operator.
+                        own=next((t for t in row['targets'] if t['category']=='token'),None)
+                        if own and token_identity!=own['identity']:raise ValueError('credential_changed')
+                        row['remote']=revoke(cfg,token,row['revoked'],lambda:_save(row))
+                        row['phase']='remote_confirmed' if row['remote']=='confirmed' else 'manual_unconfirmed';_save(row)
             if row['phase'] in ('remote_confirmed','manual_unconfirmed','deleting'):
                 with gate.credentials(exclusive=True),admin_log.transaction():
                     _protect_targets(row)

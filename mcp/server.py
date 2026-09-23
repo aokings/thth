@@ -534,6 +534,24 @@ ADMIN_TOOLS.append({'name':'thth_admin_watch_set','description':'Replace the wat
                    'words':{'type':'array','items':{'type':'string'}}},
                    'required':['account','words','by'],'additionalProperties':False}})
 
+# 報告の口の実装側（設計 3.1.2 §1）。返事と閉じるは `by` 必須・変更ログに
+# presence-only で残る。書き出し（export）は repo に書くので CLI だけ。
+ADMIN_TOOLS += [
+    {'name':'thth_admin_reports_list','description':'List bug reports and requests from every project (status open by default, or closed/all); administrator only; read-only',
+     'inputSchema':{'type':'object','properties':{'status':{'type':'string','enum':['open','closed','all']}},
+                    'required':[],'additionalProperties':False}},
+    {'name':'thth_admin_reports_show','description':'Read one report with its body, reproduction steps and replies; administrator only; read-only',
+     'inputSchema':{'type':'object','properties':{'report_id':{'type':'string'}},
+                    'required':['report_id'],'additionalProperties':False}},
+    {'name':'thth_admin_reports_reply','description':'Add a reply to one report (shown to the reporter in operations_handoff tool.reports); administrator only, by required; refused if the text looks like a secret',
+     'inputSchema':{'type':'object','properties':{'report_id':{'type':'string'},'text':{'type':'string'},'by':{'type':'string'}},
+                    'required':['report_id','text','by'],'additionalProperties':False}},
+    {'name':'thth_admin_reports_close','description':'Close one report with a reason (fixed, wontfix, duplicate, invalid) and the version that settled it; administrator only, by required',
+     'inputSchema':{'type':'object','properties':{'report_id':{'type':'string'},'by':{'type':'string'},
+                    'reason':{'type':'string','enum':['fixed','wontfix','duplicate','invalid']},'version':{'type':'string'}},
+                    'required':['report_id','reason','version','by'],'additionalProperties':False}},
+]
+
 SERVER_TOOLS = [
     {"name":"thth_"+name,"description":"Scoped server "+name,
      "inputSchema":{"type":"object","properties":{key:{"type":"string"} for key in ("account",*keys)},
@@ -566,6 +584,52 @@ del _tool
 
 
 
+# 報告の口の利用者側（設計 3.1.2 §1）。**サーバ型だけに出す**——手元の stdio
+# （pip 版）で置いても実装側には届かないので、届かない口は並べない。誰が置いたかは
+# credential の `actor` が決める（要求の欄からは作らない）。
+REPORT_TOOLS = [
+    {"name": "thth_report_file",
+     "description": "道具が断った・結果が期待と違った・欲しい形がある、のどれかならこれで置く"
+                    "（kind は bug か request。実装側が読み、返事は thth_report_show と "
+                    "operations_handoff の tool.reports に出る。秘密らしき値が含まれていたら置かない）",
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string"},
+         "kind": {"type": "string", "enum": ["bug", "request"]},
+         "title": {"type": "string", "description": "1 行・120 字まで"},
+         "body": {"type": "string", "description": "8,000 字まで"},
+         "repro": {"type": "string", "description": "再現手順（任意・4,000 字まで）"}},
+         "required": ["account", "kind", "title", "body"], "additionalProperties": False}},
+    {"name": "thth_report_list",
+     "description": "自分の project の報告と、実装側の返事の数を読む（読むだけ）",
+     "inputSchema": {"type": "object", "properties": {
+         "status": {"type": "string", "enum": ["open", "closed", "all"]}},
+         "additionalProperties": False}},
+    {"name": "thth_report_show",
+     "description": "報告 1 件の本文と実装側の返事を読む（読むだけ）",
+     "inputSchema": {"type": "object", "properties": {"report_id": {"type": "string"}},
+                     "required": ["report_id"], "additionalProperties": False}},
+]
+
+
+# **うまくいかなければ報告の口へ**（設計 3.1.2 §3.5）。利用者の道具の説明文の
+# 末尾に 1 句。定数（TOOLS 等）は書き換えず、並べるときに足す——「売り文句」の
+# 正本（設計 v2 §1・「自分の泉」§2）はそのまま残る。
+REPORT_HINT = "（うまくいかなければ thth_report_file）"
+
+
+def _with_report_hint(tools):
+    return [tool if tool["name"].startswith("thth_report_")
+            else dict(tool, description=tool["description"] + REPORT_HINT) for tool in tools]
+
+
+def _channel_note():
+    """断りの応答に添える 2 つ目の text（静的な 1 行・本文も account 名も入れない）。"""
+    if APP_DIR not in sys.path:
+        sys.path.insert(0, APP_DIR)
+    from thth.report_inbox import CHANNEL_LINE
+    return {"type": "text", "text": CHANNEL_LINE}
+
+
 def server_mode():
     return 'THTH_REPORT_CREDENTIALS' in os.environ or 'THTH_REPORT_TOKEN' in os.environ
 
@@ -579,15 +643,16 @@ def server_tools(context):
     # account／project しか対象にできない（`report_service.execute_morning()`）。
     reports = reports + [tool for tool in TOOLS if tool['name']=='thth_morning']
     from thth.server_writes import WRITE_OPERATIONS
-    return reports + [tool for tool in SERVER_TOOLS
-                      if context.writes or tool['name'][5:] not in WRITE_OPERATIONS]
+    return _with_report_hint(reports + [tool for tool in SERVER_TOOLS
+                      if context.writes or tool['name'][5:] not in WRITE_OPERATIONS]) + REPORT_TOOLS
 
 
 def server_call(name, arguments):
     from thth.report_service import execute_report, execute_mcp_report, ReportServiceError
     from thth.server_writes import execute, WRITE_OPERATIONS, SAFE_ERRORS, DRAFT_REASONS
     context=authenticated_context()
-    failure=lambda value:{'content':[{'type':'text','text':value}],'isError':True}
+    # 断りは 1 つ目の text が静的な理由、2 つ目が受け口の案内（設計 3.1.2 §3.5）。
+    failure=lambda value:{'content':[{'type':'text','text':value},_channel_note()],'isError':True}
     if context is None: return failure('unauthorized')
     tool=next((tool for tool in server_tools(context) if tool['name']==name),None)
     if tool is None: return failure('unsupported_operation')
@@ -613,6 +678,12 @@ def server_call(name, arguments):
             result=execute_admin_write(context,request)
         elif operation in WRITE_OPERATIONS:
             result=execute(context,request,via='mcp')
+        elif operation.startswith('admin_reports_'):
+            from thth.report_service import execute_admin_reports
+            result=execute_admin_reports(context,request)
+        elif operation in ('report_file','report_list','report_show'):
+            from thth.report_service import execute_user_reports
+            result=execute_user_reports(context,request)
         elif operation=='morning':
             from thth.report_service import execute_morning
             result=execute_morning(context,request)
@@ -626,7 +697,11 @@ def server_call(name, arguments):
             # 理由は静的な符丁の表にあるものだけ。lint の自由文は通さない。
             detail=getattr(exc,'reason',None)
             return failure('invalid_draft: '+(detail if detail in DRAFT_REASONS else 'validation_failed'))
-        return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused','watch_change_refused') else 'request_unavailable')
+        from thth.report_inbox import REASONS as REPORT_REASONS
+        if str(exc)=='duplicate_report' and getattr(exc,'report_id',None):
+            # 既存の id は同じ account の報告だけ（重複の検査がそう絞っている）。
+            return failure('duplicate_report: '+exc.report_id)
+        return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in REPORT_REASONS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused','watch_change_refused') else 'request_unavailable')
     except Exception:
         return failure('request_unavailable')
 
@@ -670,7 +745,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
     if isinstance(name, str) and name.startswith("thth_admin_"):
         context = admin_context()
         if context is None:
-            return {"content": [{"type": "text", "text": "unauthorized"}], "isError": True}
+            return {"content": [{"type": "text", "text": "unauthorized"}, _channel_note()], "isError": True}
         from thth.report_service import execute_report, ReportServiceError
         try:
             if "operation" in arguments: raise ReportServiceError("invalid_request")
@@ -679,7 +754,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
             return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
         except (ValueError, TypeError, ReportServiceError) as error:
             reason = "invalid_options" if str(error) == "invalid_options" else "invalid_request"
-            return {"content": [{"type": "text", "text": reason}], "isError": True}
+            return {"content": [{"type": "text", "text": reason}, _channel_note()], "isError": True}
     if name == "thth_lint":
         proc = run_cli(["lint", arguments["file"], "--json"])
         text = proc.stdout
@@ -838,7 +913,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         proc = run_cli(args)
         text = proc.stdout
     else:
-        return {"content": [{"type": "text", "text": f"unknown tool: {name}"}], "isError": True}
+        return {"content": [{"type": "text", "text": f"unknown tool: {name}"}, _channel_note()], "isError": True}
 
     if name.startswith("thth_topic_") or name in (
             "before_you_post", "after_you_posted", "analytics_report", "operations_handoff", "study_report", "thread_read", "where_to_appear",
@@ -854,7 +929,11 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         is_error = proc.returncode not in (0, 1)  # lint は 1 も正常な「検査結果」
     if not text:
         text = proc.stderr
-    return {"content": [{"type": "text", "text": text}], "isError": is_error}
+    content = [{"type": "text", "text": text}]
+    # 断りなら受け口の案内を 2 つ目に（CLI の理由行に既に載っていれば重ねない）。
+    if is_error and _channel_note()["text"] not in text:
+        content.append(_channel_note())
+    return {"content": content, "isError": is_error}
 
 
 def _send(obj: dict) -> None:

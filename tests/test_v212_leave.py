@@ -149,7 +149,8 @@ def test_shared_manual_grant_does_not_tell_person_to_revoke_other_account(env,wo
     a=env['root']/'secrets/alpha.json';b=env['root']/'secrets/beta.json';b.write_bytes(a.read_bytes())
     assert leave.command(SimpleNamespace(name='alpha',by='operator',json=False))==0
     result=leave.read('alpha')
-    assert result['remote']=='unconfirmed_shared' and a.exists() and b.exists()
+    # 3.1.2 件 6・裁定 09-23: 値だけの共有（別ファイル）なら自分の file は消し、相手の file は残す。
+    assert result['remote']=='unconfirmed_shared' and not a.exists() and b.exists()
     out=capsys.readouterr().out
     assert '切り分け' in out and '本人が解除' not in out
 

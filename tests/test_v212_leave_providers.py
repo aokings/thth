@@ -84,8 +84,11 @@ def test_shared_mastodon_grant_refuses_remote_revoke_but_shared_client_alone_doe
     cfg,tokenpath=configure(env,provider,monkeypatch,'mastodon');old=tokenpath.read_bytes()
     other=env['root']/'accounts/beta.json';b=json.loads(other.read_text());b.update(media='mastodon',instance=provider['base']);other.write_text(json.dumps(b))
     (env['root']/'secrets/beta.json').write_bytes(old)
-    with pytest.raises(ValueError,match='shared_credential'):leave.run('alpha',by='operator')
-    assert provider['calls']==[] and tokenpath.read_bytes()==old
+    # 3.1.2 件 6: 共有の接続は遠隔で失効させず（calls==[]）、止まらずに退出を終える。
+    # 裁定 09-23: 値だけの共有（別ファイル）なら自分の token file は消す。相手の file は残る。
+    result=leave.run('alpha',by='operator')
+    assert result['phase']=='completed' and result['remote']=='unconfirmed_shared' and 'token_shared' not in result['preserved']
+    assert provider['calls']==[] and not tokenpath.exists() and (env['root']/'secrets/beta.json').read_bytes()==old
 
 
 def test_b_credential_commit_before_revoke_is_rechecked_after_inventory(env,provider,monkeypatch):
@@ -99,8 +102,11 @@ def test_b_credential_commit_before_revoke_is_rechecked_after_inventory(env,prov
         authflow.commit_manual('beta',cfg_b,token_a,snapshot=snapshot,session=None,by='operator')
         return {'status':'revoked'}
     monkeypatch.setattr(approval_relay,'signed_request',worker)
-    with pytest.raises(ValueError,match='shared_credential'):leave.run('alpha',by='operator')
-    assert provider['calls']==[] and tokenpath.exists()
+    # 3.1.2 件 6: 共有の接続は遠隔で失効させず（calls==[]）、止まらずに退出を終える。
+    # 裁定 09-23: 値だけの共有（別ファイル）なら自分の token file は消す。相手の file は残る。
+    result=leave.run('alpha',by='operator')
+    assert result['phase']=='completed' and result['remote']=='unconfirmed_shared' and 'token_shared' not in result['preserved']
+    assert provider['calls']==[] and not tokenpath.exists()
     assert json.loads((env['root']/'secrets/beta.json').read_text())==token_a
 
 
@@ -166,5 +172,7 @@ def test_b_exchange_to_commit_holds_registry_lease_and_late_shared_grant_vetoes_
     assert a.is_alive() and provider['calls']==[]
     release.set();a.join(4);b.join(4)
     assert not a.is_alive() and not b.is_alive() and results==[0]
-    assert leave_errors==['shared_credential_revoke_refused'] and provider['calls']==[]
+    # 3.1.2 件 6: 共有の接続は遠隔で失効させず（calls==[]）、止まらずに退出を終える。
+    assert leave_errors==[] and provider['calls']==[]
+    assert leave.read('alpha')['phase']=='completed' and leave.read('alpha')['remote']=='unconfirmed_shared'
     assert accounts.load_token(accounts.load_account('beta'))['access_token']==value['access_token']
