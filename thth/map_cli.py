@@ -1,5 +1,6 @@
 """観測の地図の CLI（設計 3.5.0 §1〜§3）。口の中身は `thth/map_store.py` ほかに閉じる。
 
+利用者: `thth map show <project>`（読むだけ）。
 管理者: `thth admin map node add|remove`・`thth admin map edge add|remove`。
 **点と線は人だけが足す**（`--by` 必須）。
 """
@@ -8,7 +9,7 @@ from __future__ import annotations
 import json
 import sys
 
-from . import map_store
+from . import map_store, map_view
 
 
 def _print_refusal(args, error):
@@ -25,6 +26,32 @@ def _emit(args, payload, render):
     else:
         render(payload)
     return 0
+
+
+# ------------------------------------------------------------------ 利用者
+
+def cmd_show(args) -> int:
+    try:
+        payload = map_view.show(args.project, since=args.since, node=args.node)
+    except map_store.MapError as error:
+        return _print_refusal(args, error)
+    return _emit(args, payload, map_view.render)
+
+
+def register(sub) -> None:
+    """`thth map show`（設計 3.5.0 §3）。"""
+    parser = sub.add_parser(
+        "map", help="観測の地図——話題（点）とつながり（線）に自分・広場・世間の層を重ねる",
+        description="観測の地図（設計 3.5.0）。点と線は管理者が thth admin map で足します。"
+                    "世間の層は管理者が有効にしたときだけ（既定は無効）。")
+    operations = parser.add_subparsers(dest="map_command", required=True)
+    viewer = operations.add_parser("show", help="点ごとの層・包含の線・共起（読むだけ）")
+    viewer.add_argument("project", help="project 名（account 名ならその project）")
+    viewer.add_argument("--node", default=None, metavar="語", help="この点と隣り合う点だけ")
+    viewer.add_argument("--since", default=map_view.DEFAULT_SINCE,
+                        help=f"窓の始まり（既定 {map_view.DEFAULT_SINCE}。12w・ISO 時刻も可）")
+    viewer.add_argument("--json", action="store_true")
+    viewer.set_defaults(func=cmd_show)
 
 
 # ------------------------------------------------------------------ 管理者

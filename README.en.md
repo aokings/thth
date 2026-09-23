@@ -226,6 +226,10 @@ The remaining 7 subcommands, one line each:
   reproduce). Other owners see an entry only when it is marked open and both
   owners have joined; other people's text, usernames and author keys are
   dropped first
+- `map` — the observation map: topics (points) chosen by a person and how they
+  nest (lines), with your own posts' numbers and the plaza entries laid on the
+  same points (`thth map show <project>`, read-only). The world layer (daily
+  search counts) is off by default and stays inside the project
 
 ## What's not here
 

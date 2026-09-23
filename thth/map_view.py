@@ -17,7 +17,9 @@
 """
 from __future__ import annotations
 
-from . import accounts, after_cli, analytics_comparison, map_store, measured
+import os
+
+from . import accounts, after_cli, analytics_comparison, jst, map_store, measured, read_window
 from . import plaza as plaza_mod
 
 # 自分の層で並べる指標（設計 §1「views・likes・replies の中央値と n」）。
@@ -150,3 +152,189 @@ def plaza_layer(viewer, words, *, since=None, now=None):
             if len(cell["recent"]) < PLAZA_RECENT:
                 cell["recent"].append(record["plaza_id"])
     return layer
+
+
+# ------------------------------------------------------------------ 世間の層
+
+WORLD_ENV = "THTH_MAP_WORLD"
+
+
+def world_enabled() -> bool:
+    """世間の層が有効か（**管理者が `THTH_MAP_WORLD=1` を入れたときだけ**・設計 §4・照合 §6-9）。
+
+    有効にする前提（照合 §6-9・§6-8）: Meta の Dashboard の説明と privacy ページを実態に
+    合わせたあと。外部の LLM に渡る口（MCP・observe）に出すなら Service Provider の条件も。
+    既定は無効で、無効のあいだは集めない・見せない（`world_layer_disabled`）。
+    """
+    return os.environ.get(WORLD_ENV) == "1"
+
+
+def _world_cell(project, words, *, since, now):
+    """点ごとの世間の層と共起の線。無効なら全部 null と `world_layer_disabled`。"""
+    if not world_enabled():
+        return ({word: {"cannot_say": "world_layer_disabled", "by_medium": None} for word in words},
+                [], "world_layer_disabled")
+    return ({word: {"cannot_say": "world_layer_empty", "by_medium": None} for word in words},
+            [], None)
+
+
+# ------------------------------------------------------------------ map show
+
+DEFAULT_SINCE = "30d"
+
+
+def _viewer_for(configs, project):
+    return plaza_mod.Viewer({name: project for name in configs})
+
+
+def show(target, *, since=DEFAULT_SINCE, node=None, now=None, allowed=None):
+    """`thth map show <project>`・MCP `thth_map_show` の答え（読むだけ）。
+
+    `allowed`（サーバ型の credential が許した account → project）があれば、その中の
+    project だけ・その中の account だけを読む（**世間の層は project の中だけ**・照合 §6-7:
+    他の持ち主・広場の open の参加者・横断集計には出さない）。
+    """
+    now = now if now is not None else jst.now_jst()
+    try:
+        floor = read_window.cutoff(since, now=now)
+    except ValueError:
+        raise map_store.MapError("invalid_since") from None
+    if floor is None or floor > now:
+        raise map_store.MapError("invalid_since")
+    if allowed is not None:
+        projects = {value for value in allowed.values() if value}
+        project = target if target in projects else allowed.get(target)
+        if not project or project not in projects:
+            raise map_store.MapError("scope_unavailable")
+        configs = {}
+        for name, value in allowed.items():
+            if value != project:
+                continue
+            try:
+                configs[name] = accounts.load_account(name)
+            except accounts.AccountError:
+                continue
+        if not configs:
+            raise map_store.MapError("scope_unavailable")
+    else:
+        project, configs = map_store.project_accounts(target)
+    config = map_store.load_config(project)
+    words = [row["word"] for row in config["nodes"]]
+    edges = [{"narrower": row["narrower"], "broader": row["broader"], "kind": "broader"}
+             for row in config["edges"]]
+    neighbors = None
+    if node is not None:
+        chosen = next((w for w in words if map_store.node_key(w) == map_store.node_key(
+            str(node).strip().lstrip("#＃").strip())), None)
+        if chosen is None:
+            raise map_store.MapError("node_not_found")
+        broader = [e["broader"] for e in edges if e["narrower"] == chosen]
+        narrower = [e["narrower"] for e in edges if e["broader"] == chosen]
+        neighbors = {"node": chosen, "broader": broader, "narrower": narrower, "co": []}
+        words = [chosen] + [w for w in words if w in broader or w in narrower]
+        edges = [e for e in edges if chosen in (e["narrower"], e["broader"])]
+    selfs = self_layer(configs, words, since=floor, now=now)
+    plazas = plaza_layer(_viewer_for(configs, project), words, since=floor, now=now)
+    worlds, co_edges, world_reason = _world_cell(project, words, since=floor, now=now)
+    if neighbors is not None:
+        neighbors["co"] = [e for e in co_edges if neighbors["node"] in e["edge"]]
+    nodes = [{"word": word, "self": selfs[word], "plaza": plazas[word], "world": worlds[word]}
+             for word in words]
+    return {
+        "schema_version": map_store.SCHEMA_VERSION, "report_type": "map_show",
+        "project": project, "generated_at": jst.iso(now),
+        "window": {"since": jst.iso(floor), "until": jst.iso(now)},
+        "accounts": sorted(configs), "nodes": nodes,
+        "edges": {"broader": edges, "co": co_edges}, "neighbors": neighbors,
+        "world_layer": {"enabled": world_enabled(), "cannot_say": world_reason},
+        "limits": {"n_nodes": len(config["nodes"]), "max_nodes": map_store.MAX_NODES,
+                   "n_edges": len(config["edges"]), "retention_days": config["retention_days"]},
+        "cannot_say": [] if config["nodes"] else ["no_map_nodes"],
+        "notes": [
+            "点と包含の線は人が足したものだけ（thth admin map node|edge）。道具は語を選ばない",
+            "自分の層は analytics-report --by topic と同じ計算（24 時間の刻み・根の投稿・min_n 5）。"
+            "account をまたいで足さない",
+            "広場の層は title か scope_note に点の語を含む書き込み（語の一致）",
+            "世間の層は管理者が有効にしたときだけ（既定は無効）。project の外には出さない",
+        ],
+    }
+
+
+# ------------------------------------------------------------------ 人向け
+
+def _num(value):
+    if value is None:
+        return "—"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(round(value, 3)) if isinstance(value, float) else str(value)
+
+
+def render(payload, out=print) -> None:
+    limits = payload["limits"]
+    out(f"地図  {payload['project']}  （{payload['window']['since'][:10]}〜"
+        f"{payload['window']['until'][:10]}・点 {limits['n_nodes']}/{limits['max_nodes']}・"
+        f"線 {limits['n_edges']}・保持 {limits['retention_days']} 日）")
+    world = payload["world_layer"]
+    out("世間の層: " + ("有効" if world["enabled"] else "無効") +
+        (f"（{world['cannot_say']}）" if world["cannot_say"] else ""))
+    if not payload["nodes"]:
+        out("点がありません（thth admin map node add <project> <語> --by <名前>）")
+        return
+    broader = payload["edges"]["broader"]
+    for node in payload["nodes"]:
+        word = node["word"]
+        out("")
+        out(f"[{word}]")
+        ups = [e["broader"] for e in broader if e["narrower"] == word]
+        downs = [e["narrower"] for e in broader if e["broader"] == word]
+        if ups or downs:
+            out("  線: " + "・".join([f"⊂ {w}" for w in ups] + [f"⊃ {w}" for w in downs]))
+        for name, cell in node["self"]["by_account"].items():
+            if cell.get("cannot_say") == "measured_unreadable":
+                out(f"  自分 {name}（{cell['medium']}）: 言えない: measured_unreadable")
+                continue
+            parts = []
+            for metric in SELF_METRICS:
+                stat = cell["metrics"][metric]
+                parts.append(f"{metric} 中央値 {_num(stat['median'])}（n={stat['n']}）")
+            out(f"  自分 {name}（{cell['medium']}）: 投稿 {cell['posts']}/{cell['denominator']}  "
+                + "・".join(parts))
+        plaza_cell = node["plaza"]
+        if plaza_cell.get("cannot_say"):
+            out(f"  広場: 言えない: {plaza_cell['cannot_say']}")
+        else:
+            for scope, label in (("own", "広場（自分の持ち主）"), ("open", "広場（open）")):
+                cell = plaza_cell[scope]
+                if cell is None:
+                    if scope == "open":
+                        continue
+                    out(f"  {label}: —")
+                    continue
+                trials = cell["trials"]
+                verdicts = cell["verdicts"]
+                out(f"  {label}: 施策 {cell['measure']}・気づき {cell['finding']}・問い "
+                    f"{cell['question']}（分母 {cell['denominator']}）  判定 採用 "
+                    f"{verdicts['adopted']}・取りやめ {verdicts['dropped']}・保留 "
+                    f"{verdicts['inconclusive']}・未判定 {verdicts['none']}  追試 再現 "
+                    f"{trials['reproduced']}・再現せず {trials['not_reproduced']}・未試行 "
+                    f"{trials['not_tried']}（分母 {trials['denominator']}）")
+                if cell["recent"]:
+                    out("    " + "・".join(cell["recent"]))
+        world_cell = node["world"]
+        if world_cell.get("by_medium") is None:
+            out(f"  世間: 言えない: {world_cell['cannot_say']}")
+        else:
+            for medium, cell in world_cell["by_medium"].items():
+                latest = cell.get("latest") or {}
+                out(f"  世間 {medium}（{cell['label']}）: {latest.get('date') or '—'}  件数 "
+                    f"{_num(latest.get('n'))}/{_num(latest.get('requested'))}  異なり "
+                    f"{_num(latest.get('distinct'))}  上位 3 の占有率 "
+                    f"{_num(latest.get('top3_share'))}  直近 {latest.get('latest_age_bucket') or '—'}"
+                    + (f"  理由 {latest['reason']}" if latest.get("reason") else ""))
+    if payload["edges"]["co"]:
+        out("")
+        out("共起（強い順）:")
+        for edge in payload["edges"]["co"][:10]:
+            out(f"  {edge['edge'][0]}—{edge['edge'][1]}（{edge['medium']}）: "
+                f"{_num(edge['co'])}/{_num(edge['denominator'])}  {edge['date']}")

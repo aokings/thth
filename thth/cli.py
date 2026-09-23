@@ -3507,6 +3507,11 @@ def build_parser() -> argparse.ArgumentParser:
     from . import plaza_cli
     plaza_cli.register(sub)
 
+    # `thth map show|collect`（設計 3.5.0・観測の地図）。口の中身は
+    # `thth/map_cli.py` に閉じる——ここに足すのはこの 2 行だけ。
+    from . import map_cli
+    map_cli.register(sub)
+
     return p
 
 

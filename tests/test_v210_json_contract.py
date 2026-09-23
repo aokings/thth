@@ -38,7 +38,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      'admin plaza join', 'admin plaza leave', 'admin plaza hide', 'admin plaza list',
      'admin plaza show',
      # 3.5.0 §1: 観測の地図の点と線（管理者の口・--json）。
-     'admin map node add', 'admin map node remove', 'admin map edge add', 'admin map edge remove']
+     'admin map node add', 'admin map node remove', 'admin map edge add', 'admin map edge remove',
+     # 3.5.0 §3: 観測の地図を読む口。
+     'map show']
 
 
 def test_json_table_covers_every_parser():

@@ -241,6 +241,39 @@ def execute_morning(context: ReportContext, request: dict, invoked_as: str = "mo
     return payload
 
 
+def execute_map_show(context: ReportContext, request: dict) -> dict:
+    """観測の地図（設計 3.5.0 §3）。**credential が許した project だけ・読むだけ。**
+
+    世間の層は project の中だけ（照合 §6-7）。他の持ち主の project は、在っても無くても
+    同じ `scope_unavailable`。
+    """
+    from . import map_store, map_view
+    if type(context) is not ReportContext or type(request) is not dict:
+        raise ReportServiceError("invalid_request")
+    if context.scope != "user":
+        raise ReportServiceError("unsupported_operation")
+    if set(request) - {"operation", "project", "node", "since"}:
+        raise ReportServiceError("invalid_request")
+    for key in ("project", "node", "since"):
+        if request.get(key) is not None and not isinstance(request[key], str):
+            raise ReportServiceError("invalid_request")
+    active = _active_names(context)
+    allowed = {name: context.allowed_accounts[name] for name in active}
+    if not allowed:
+        raise ReportServiceError("scope_unavailable")
+    try:
+        with leave_gate.read_leases(set(active)):
+            return map_view.show(request.get("project"), node=request.get("node"),
+                                 since=request.get("since") or map_view.DEFAULT_SINCE,
+                                 allowed=allowed)
+    except map_store.MapError as error:
+        raise ReportServiceError(str(error)) from None
+    except accounts.AccountLeaving:
+        raise ReportServiceError("account_leaving") from None
+    except (accounts.AccountError, OSError, ValueError, TypeError, KeyError, OverflowError):
+        raise ReportServiceError("report_unavailable") from None
+
+
 REPORT_OPERATIONS = frozenset(('report_file', 'report_list', 'report_show', 'report_add'))
 
 

@@ -32,6 +32,23 @@ APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO_BIN = os.path.join(APP_DIR, "bin", "thth")
 THTH_BIN = os.environ.get("THTH_BIN") or (_REPO_BIN if os.path.exists(_REPO_BIN) else None)
 
+# 観測の地図（設計 3.5.0 §3）の読む口。手元の stdio とサーバ型の利用者の両方に同じ
+# 説明と形で出す（サーバ型では credential が許した project だけ）。
+MAP_SHOW_DESCRIPTION = (
+    "話題を選ぶ前に呼ぶ。観測の地図（点＝人が決めた話題・線＝包含と共起）に、自分の投稿の"
+    "数字（topic ごとの投稿数と views・likes・replies の中央値と n）と、広場の施策・気づき・"
+    "追試の数を重ねて返す。読むだけ。世間の層は管理者が有効にしたときだけ")
+MAP_SHOW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "project": {"type": "string", "description": "project 名（account 名ならその project）"},
+        "node": {"type": "string", "description": "この点と隣り合う点だけ（任意）"},
+        "since": {"type": "string", "description": "窓の始まり（既定 30d・12w・ISO 時刻）"},
+    },
+    "required": ["project"],
+    "additionalProperties": False,
+}
+
 TOOLS = [
     {
         "name": "thth_lint",
@@ -327,6 +344,12 @@ TOOLS = [
             },
             "required": ["target"],
         },
+    },
+    {
+        # 観測の地図（設計 3.5.0 §3）。**読むだけ**——点と線は管理者の CLI だけが足す。
+        "name": "thth_map_show",
+        "description": MAP_SHOW_DESCRIPTION,
+        "inputSchema": MAP_SHOW_SCHEMA,
     },
 ]
 
@@ -759,7 +782,8 @@ def server_tools(context):
     if context.scope=='admin': return reports + ADMIN_TOOLS
     # 毎朝の一枚は**利用者の scope だけ**（設計 3.1.0 §1）。credential が許した
     # account／project しか対象にできない（`report_service.execute_morning()`）。
-    reports = reports + [tool for tool in TOOLS if tool['name'] in ('thth_observe', 'thth_morning')]
+    reports = reports + [tool for tool in TOOLS if tool['name'] in ('thth_observe', 'thth_morning',
+                                                                     'thth_map_show')]
     from thth.server_writes import WRITE_OPERATIONS
     return _with_report_hint(reports + [tool for tool in SERVER_TOOLS
                       if context.writes or tool['name'][5:] not in WRITE_OPERATIONS]
@@ -812,6 +836,9 @@ def server_call(name, arguments):
         elif operation in ('report_file','report_list','report_show','report_add'):
             from thth.report_service import execute_user_reports
             result=execute_user_reports(context,request)
+        elif operation == 'map_show':
+            from thth.report_service import execute_map_show
+            result=execute_map_show(context,request)
         elif operation in ('morning', 'observe'):
             from thth.report_service import execute_morning
             request={**request,'operation':'morning'}
@@ -835,6 +862,9 @@ def server_call(name, arguments):
             # 既存の id は同じ account の書き込みだけ（重複の検査がそう絞っている）。
             return failure('duplicate_post: '+exc.plaza_id)
         if str(exc) in PLAZA_REASONS:
+            return failure(str(exc))
+        from thth.map_store import REASONS as MAP_REASONS
+        if str(exc) in MAP_REASONS:
             return failure(str(exc))
         return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in REPORT_REASONS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused','watch_change_refused') else 'request_unavailable')
     except Exception:
@@ -1056,6 +1086,15 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
+    elif name == "thth_map_show":
+        # **`where_to_appear` と同じ型**: CLI（`thth map show`）を `--json` で呼ぶだけ。
+        args = ["map", "show", arguments["project"]]
+        for key in ("node", "since"):
+            if arguments.get(key) is not None:
+                args += ["--" + key, arguments[key]]
+        args.append("--json")
+        proc = run_cli(args)
+        text = proc.stdout
     elif name == "who_is_this":
         # **`where_to_appear` と同じ型**: CLI（`thth who`）を `--json` で呼ぶ
         # だけ（設計「自分の泉」§2.4・T3-3）。`account`／`project` と
@@ -1080,7 +1119,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
 
     if name.startswith("thth_topic_") or name in (
             "before_you_post", "after_you_posted", "analytics_report", "operations_handoff", "study_report", "thread_read", "where_to_appear",
-            "who_is_this", "thth_morning", "thth_observe"):
+            "who_is_this", "thth_morning", "thth_observe", "thth_map_show"):
         # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）
         # とは意味が違う——こちらは stale_context・不正な候補比較で、
         # **そのまま使ってはいけない**応答。既存の扱いは変えない。
