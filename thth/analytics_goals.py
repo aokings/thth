@@ -5,12 +5,14 @@
 | goal   | 物差し（投稿単位） | 投稿単位に無いとき |
 |--------|--------------------|--------------------|
 | reach  | 24h・72h の views（Threads・X）、likes＋reposts（Bluesky・Mastodon） | 媒体に無い指標は null と `metric_unavailable` |
-| click  | —（投稿単位のクリックは一次資料に無い） | `cannot_say: per_post_clicks_unavailable`。click 目的の投稿が 1 本だけの日に限り、日次の clicks を並べる（`basis: single_click_post_day`・観察の差） |
+| click  | 投稿から 72 時間（投稿日を含む 3 暦日）のリンク先のクリック——**そのリンク先を前後 72 時間で 1 本の投稿しか使っていないときだけ**（3.7.0・`basis: unique_url_72h`・`click_attribution`）。クリック率は clicks_72h / views_24h | 共有・リンク無し・プロフィールのリンクは `cannot_say`（`url_shared_72h`・`no_link`・`profile_link`）。click 目的の投稿が 1 本だけの日の日次 clicks も並べる（`basis: single_click_post_day`・観察の差） |
 | follow | —（投稿単位のフォローは API に無い・3.3.0 の照合） | `cannot_say: per_post_follows_unavailable`。日次の followers_count の前日差を、follow 目的の投稿が出た日と出ていない日で並べる（観察の差・因果とは言わない） |
 | reply  | 24h の replies と、返信した人の異なり数（自分の account を除く） | |
 
 **割らない**（設計 D）: Threads の account 日次の `clicks` を投稿の本数で割ったり、
 followers の増分を投稿に配ったりしない——一次資料に無い数を作ることになる。
+3.7.0 の click は割るのではなく、リンク先ごとの日次（`clicks_by_url`）のうち
+**1 本の投稿しか使っていないリンク先**の分だけをその投稿に帰す（共有なら出さない）。
 日次との並べ方は必ず `observational_difference: true`・`causal: false` の印つき。
 """
 from __future__ import annotations
@@ -121,11 +123,25 @@ def _daily_index(account_daily):
     return out
 
 
-def _click(members, goal_days, daily, start, end):
-    """click: 投稿単位は言えない。click 目的の投稿が 1 本だけの日に限り日次の clicks を並べる。"""
-    # **投稿単位のクリックは一次資料に無い**（設計 D）。日次の clicks をこの投稿に
-    # 割り当てない——1 本だけの日の日次を並べるのは「その日の account 全体の数」として。
-    per_post = None
+def _click(members, goal_days, daily, start, end, *, click_index=None, now=None, min_n=1):
+    """click: 一意のリンク先なら投稿から 72 時間のクリック（3.7.0 §A1）。
+
+    **日次の clicks を投稿の本数で割らない**（3.6.0 設計 D）。投稿単位で出すのは、
+    リンク先ごとの日次（`clicks_by_url`）のうち、前後 72 時間で 1 本の投稿しか
+    使っていないリンク先の分だけ（`click_attribution`）。共有・リンク無し・
+    プロフィールのリンクは `cannot_say`。click 目的の投稿が 1 本だけの日の日次を
+    並べるのは従前どおり「その日の account 全体の数」として（観察の差）。
+    """
+    window = _in_window(members, start, end)
+    posts, per_post, cannot_say = [], None, [goals.PER_POST_CANNOT_SAY["click"]]
+    if click_index is not None:
+        for post_id, posted, post in window:
+            observation, _rejected = comparison._observation(post, posted, now, 24)
+            views = ((observation or {}).get("metrics") or {}).get("views")
+            posts.append(click_index.attribute(post_id, posted, views))
+        from . import click_attribution
+        per_post = click_attribution.summarize(posts, min_n)
+        cannot_say = sorted({row["cannot_say"] for row in posts if row["cannot_say"]})
     days, multiple, without = [], 0, 0
     for date in sorted({_day(posted) for _pid, posted, _post in _in_window(members, start, end)}):
         post_ids = goal_days.get(date, [])
@@ -138,8 +154,9 @@ def _click(members, goal_days, daily, start, end):
             continue
         days.append({"date": date, "post_id": post_ids[0], "clicks": metrics["clicks"],
                      "clicks_by_url": metrics.get("clicks_by_url")})
-    return {"goal": "click", "basis": "account_daily", "per_post": per_post,
-            "cannot_say": [goals.PER_POST_CANNOT_SAY["click"]],
+    return {"goal": "click",
+            "basis": "unique_url_72h" if click_index is not None else "account_daily",
+            "per_post": per_post, "posts": posts, "cannot_say": cannot_say,
             "daily": {"basis": "single_click_post_day", **OBSERVATIONAL, "days": days,
                       "n_days": len(days), "excluded_days_multiple_click_posts": multiple,
                       "days_without_daily_clicks": without,
@@ -177,14 +194,16 @@ def _follow(goal_days, daily, start, end, min_n):
                                  "account_daily_unavailable" if not daily else "insufficient_days")}}
 
 
-def yardstick(goal, *, name, medium, members, goal_days, daily, start, end, now, min_n):
+def yardstick(goal, *, name, medium, members, goal_days, daily, start, end, now, min_n,
+              click_index=None):
     """その目的の物差しを 1 期間ぶん。目的なし・不明は物差しを選ばない（None）。"""
     if goal == "reach":
         return _reach(medium, members, start, end, now, min_n)
     if goal == "reply":
         return _reply(name, members, start, end, now, min_n)
     if goal == "click":
-        return _click(members, goal_days.get("click", {}), daily, start, end)
+        return _click(members, goal_days.get("click", {}), daily, start, end,
+                      click_index=click_index, now=now, min_n=min_n)
     if goal == "follow":
         return _follow(goal_days.get("follow", {}), daily, start, end, min_n)
     return None
@@ -205,7 +224,7 @@ def goal_days(items, recorded):
 
 
 def strata(*, name, medium, items, all_items, account_daily, recorded,
-           previous_start, current_start, now, min_n):
+           previous_start, current_start, now, min_n, click_index=None):
     """`--by goal` の層。目的ごとの母集団（既存の 24h の比較）と、目的ごとの物差し。"""
     groups = {label: [] for label in goals.LAYERS}
     for item in items:
@@ -222,7 +241,7 @@ def strata(*, name, medium, items, all_items, account_daily, recorded,
                       "yardstick": {
                           period: yardstick(label, name=name, medium=medium, members=members,
                                             goal_days=days, daily=daily, start=start, end=end,
-                                            now=now, min_n=min_n)
+                                            now=now, min_n=min_n, click_index=click_index)
                           for period, start, end in (("previous", previous_start, current_start),
                                                      ("current", current_start, now))}}
     return {"by": "goal", "strata": out,
@@ -261,7 +280,18 @@ def markdown_lines(stratified) -> list:
                          f"・返信した人の異なり数 中央値 {_fmt(p['median'])}（有効 n={p['n_eligible']}・自分を除く）")
         elif label == "click":
             daily = yard["daily"]
-            lines.append(head + "。投稿単位のクリックは言えません（per_post_clicks_unavailable）。"
+            per_post = yard.get("per_post")
+            if per_post is None:
+                first = "投稿単位のクリックは言えません（per_post_clicks_unavailable）。"
+            else:
+                c, r = per_post["clicks_72h"], per_post["click_rate"]
+                reasons = "・".join(f"{k} {v}" for k, v in per_post["reasons"].items()) or "なし"
+                first = (f"一意のリンク先の投稿から 72 時間のクリック（{per_post['basis']}・"
+                         f"{per_post['window']}＝投稿日を含む 3 暦日）中央値 {_fmt(c['median'])}"
+                         f"（有効 n={c['n_eligible']}/{c['n_total']}）・クリック率"
+                         f"（{r['rate_basis']}）中央値 {_fmt(r['median'])}（有効 n={r['n_eligible']}）。"
+                         f"言えない・値なし: {reasons}。")
+            lines.append(head + "。" + first +
                          f"click の投稿が 1 本だけの日の日次 clicks: {daily['n_days']} 日"
                          f"（2 本以上の日 {daily['excluded_days_multiple_click_posts']} 日は並べない・"
                          f"{daily['note']}）")

@@ -126,8 +126,12 @@ def test_reachは24hと72hのviews(report):
 
 def test_clickは投稿単位に割らず言えないと言う_1本だけの日だけ日次を並べる(report):
     yard = report[1]["strata"]["click"]["yardstick"]["current"]
-    assert yard["per_post"] is None
-    assert yard["cannot_say"] == ["per_post_clicks_unavailable"]
+    # 3.7.0 §A1: 一意のリンク先の投稿だけ投稿単位で出す。この 3 本は本文にリンクが
+    # 無いので、日次を割らず「言えない」（no_link）——日次の clicks は投稿に配らない。
+    assert yard["per_post"]["clicks_72h"]["n_eligible"] == 0
+    assert yard["per_post"]["clicks_72h"]["median"] is None
+    assert [row["clicks_72h"] for row in yard["posts"]] == [None, None, None]
+    assert yard["cannot_say"] == ["no_link"]
     daily = yard["daily"]
     assert daily["basis"] == "single_click_post_day"
     assert daily["observational_difference"] is True and daily["causal"] is False
@@ -165,7 +169,9 @@ def test_replyは24hのrepliesと返信した人の異なり数_自分を除く(
 def test_markdownは言えないと観察の差を書き効果とは書かない(report):
     payload, _stratified = report
     text = analytics_report.render_markdown(payload)
-    assert "per_post_clicks_unavailable" in text and "per_post_follows_unavailable" in text
+    # 3.7.0 §A1: click は一意のリンク先の物差しと、言えない理由の本数（no_link）を書く。
+    assert "unique_url_72h" in text and "no_link 3" in text
+    assert "per_post_follows_unavailable" in text
     assert "観察の差（因果ではない）" in text
     head = text.split("## 根拠と構造化データ")[0]
     assert "効果" not in head.replace("施策の効果・推奨行動は判断しない", "")

@@ -61,8 +61,14 @@ def self_layer(configs, words, *, since, now, min_n=SELF_MIN_N):
                 continue
             in_window.append((str(post["post_id"]), posted, post))
         incomplete = bool(loaded.get("broken"))
-        from . import goals as goals_mod
+        from . import click_attribution, goals as goals_mod
         recorded = goals_mod.recorded_goals(name)
+        # click を投稿単位で（設計 3.7.0 §A1）。共有かどうかは account の投稿の全部と比べる。
+        click_index = click_attribution.Index.for_account(
+            name, configs[name],
+            posts=[(str(p["post_id"]), analytics_comparison._timestamp(p.get("posted_at")))
+                   for p in loaded["posts"]],
+            account_daily=loaded.get("account_daily"), now=now)
         for word in words:
             members = [item for item in in_window if _topic_key(item[2].get("topic")) == keys[word]]
             roots = [item for item in members if analytics_comparison._root_exclusion(item[2]) is None]
@@ -78,7 +84,7 @@ def self_layer(configs, words, *, since, now, min_n=SELF_MIN_N):
                 "root_posts": population["n_total"], "metrics": metrics,
                 # 点×目的の表（設計 3.6.0 §A2）。目的ごとの本数と主な物差しの中央値。
                 "by_goal": goal_table(name, medium, members, recorded, since=since, now=now,
-                                      min_n=min_n),
+                                      min_n=min_n, click_index=click_index),
                 "basis": {"source": "measured", "mark_hours": 24, "min_n": min_n,
                           "population": "root_posts"},
                 "incomplete_sources": incomplete,
@@ -86,12 +92,14 @@ def self_layer(configs, words, *, since, now, min_n=SELF_MIN_N):
     return layer
 
 
-def goal_table(name, medium, members, recorded, *, since, now, min_n):
+def goal_table(name, medium, members, recorded, *, since, now, min_n, click_index=None):
     """その点の投稿を目的ごとに数え、主な物差しの中央値を 1 つ（設計 3.6.0 §A2）。
 
     目的は公開の時点の記録（`goals.recorded_goals()`）。reach と reply は根の投稿の
-    24 時間の値（`analytics-report --by goal` と同じ計算）、click と follow は投稿
-    単位の数字が一次資料に無いので中央値を出さず `cannot_say` を言う（割らない）。
+    24 時間の値（`analytics-report --by goal` と同じ計算）、follow は投稿単位の数字が
+    一次資料に無いので中央値を出さず `cannot_say` を言う（割らない）。click は
+    一意のリンク先の投稿だけ、投稿から 72 時間のクリックとクリック率（設計 3.7.0
+    §A1・`click_attribution`）。言えない投稿は理由ごとの本数（`reasons`）。
     """
     from . import analytics_goals, goals as goals_mod
     table = {}
@@ -99,7 +107,24 @@ def goal_table(name, medium, members, recorded, *, since, now, min_n):
         chosen = [item for item in members if goals_mod.goal_for(recorded, item[0]) == goal]
         roots = [item for item in chosen if analytics_comparison._root_exclusion(item[2]) is None]
         row = {"posts": len(chosen), "root_posts": len(roots), "primary": None, "cannot_say": None}
-        if goal in goals_mod.PER_POST_CANNOT_SAY:
+        if goal == "click" and click_index is not None:
+            rows = []
+            for post_id, posted, post in chosen:
+                observation, _rejected = analytics_comparison._observation(post, posted, now, 24)
+                views = ((observation or {}).get("metrics") or {}).get("views")
+                rows.append(click_index.attribute(post_id, posted, views))
+            from . import click_attribution
+            summary = click_attribution.summarize(rows, min_n)
+            stat, rate = summary["clicks_72h"], summary["click_rate"]
+            row["primary"] = {"metric": "clicks_72h", "median": stat["median"],
+                              "n": stat["n_eligible"], "denominator": stat["n_total"],
+                              "reason": stat["reason"], "basis": summary["basis"],
+                              "window": summary["window"]}
+            row["click_rate"] = {"median": rate["median"], "n": rate["n_eligible"],
+                                 "denominator": rate["n_total"], "reason": rate["reason"],
+                                 "rate_basis": rate["rate_basis"]}
+            row["reasons"] = summary["reasons"]
+        elif goal in goals_mod.PER_POST_CANNOT_SAY:
             row["cannot_say"] = goals_mod.PER_POST_CANNOT_SAY[goal]
         elif goal == "reach":
             yard = analytics_goals.yardstick("reach", name=name, medium=medium, members=roots,
@@ -135,8 +160,11 @@ def goal_line(table) -> str | None:
             parts.append(f"{goal} {row['posts']} 本（言えない: {row['cannot_say']}）")
         elif row["primary"]:
             stat = row["primary"]
+            rate = row.get("click_rate")
+            extra = (f"・クリック率 中央値 {_num(rate['median'])}（{rate['rate_basis']}）"
+                     if rate else "")
             parts.append(f"{goal} {row['posts']} 本（{stat['metric']} 中央値 "
-                         f"{_num(stat['median'])}・n={stat['n']}/{stat['denominator']}）")
+                         f"{_num(stat['median'])}・n={stat['n']}/{stat['denominator']}{extra}）")
         else:
             parts.append(f"{goal} {row['posts']} 本")
     return "目的: " + "・".join(parts) if parts else None

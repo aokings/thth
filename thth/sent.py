@@ -41,7 +41,8 @@ ATTACHMENT_KINDS = ("none", "image", "video", "audio", "carousel",
 def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: str,
           approved_fingerprint: str | None = None, reply_to: str | None = None, media: list | None = None,
           attachment_kinds: list | None = None, resolved_from: dict | None = None,
-          goal: str | None = None, goal_change: dict | None = None) -> str:
+          goal: str | None = None, goal_change: dict | None = None,
+          link_urls: list | None = None) -> str:
     """送った本文そのものを動かせない記録として保存する。返り値は書いたパス。
 
     `approved_fingerprint`（外部レビュー再々レビュー P1・1）は公開直前に固定した
@@ -99,6 +100,15 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
             if not goals_mod.valid_change(goal_change) or goal_change['to'] != goal:
                 raise ValueError('invalid_goal_change')
             data['goal_change'] = dict(goal_change)
+    if link_urls is not None:
+        # **添付のリンク先**（設計 3.7.0 §A1）。本文の URL は `text` にあるが、link・
+        # text 添付のリンク先は本文に出ない——click を投稿単位で数える
+        # （`click_attribution`）のに、どのリンク先を使った投稿かが要る。添付のある
+        # 公開では空でも書く（「無かった」と「控えていない」を分ける）。
+        if (type(link_urls) is not list or len(link_urls) > 10
+                or any(type(x) is not str or not x or len(x) > 2048 for x in link_urls)):
+            raise ValueError('invalid_link_urls')
+        data['link_urls'] = list(link_urls)
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
         f.write("\n")

@@ -289,6 +289,11 @@ def lint_file(path: str) -> list:
     # だけの門で、select は見ない）。
     from . import goals as goals_mod
     errors.extend(goals_mod.lint_errors(fm))
+    # 同じリンク先を前後 72 時間に使う click の原稿（設計 3.7.0 §A1）。**断らない**
+    # ——投稿ごとのクリックが測れなくなると知らせるだけ（警告は `warning:` で始まる）。
+    if not qf.malformed and not goals_mod.lint_errors(fm):
+        from . import click_attribution
+        errors.extend(click_attribution.lint_notes(path, fm, qf.body, account_cfg))
     return errors
 
 

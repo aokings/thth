@@ -384,6 +384,7 @@ def _yesterday_posts(name, now, read_at=None):
     data = measured_mod.load(name)
     # 投稿の目的（設計 3.6.0 §A2）。公開の時点の記録から。目的ごとの主な物差しを先頭に。
     recorded = goals_mod.recorded_goals(name)
+    click_index = None
     posts = []
     for post in data["posts"]:
         at = jst.parse(post.get("posted_at"))
@@ -405,8 +406,15 @@ def _yesterday_posts(name, now, read_at=None):
         goal = goals_mod.goal_for(recorded, post["post_id"])
         entry["goal"] = goal
         entry["lead_metrics"] = list(goals_mod.primary_metrics(goal, post.get("medium")))
-        # click・follow は投稿単位の数字が一次資料に無い——日次を投稿に割らない。
+        # follow は投稿単位の数字が一次資料に無い——日次を投稿に割らない。
         entry["goal_cannot_say"] = goals_mod.PER_POST_CANNOT_SAY.get(goal)
+        if goal == "click":
+            # click は一意のリンク先なら投稿から 72 時間のクリック（設計 3.7.0 §A1）。
+            # 共有・リンク無し・プロフィールのリンクは言えない（割らない）。
+            if click_index is None:
+                click_index = _click_index(name, data, now)
+            entry["click"] = _click_entry(click_index, post, at, now)
+            entry["goal_cannot_say"] = entry["click"]["cannot_say"]
         if latest is None:
             entry["cannot_say"].append("no_observation_recorded")
         else:
@@ -429,6 +437,29 @@ def _yesterday_posts(name, now, read_at=None):
                        "time_field": "posted_at_jst"},
             "posts": posts, "broken": len(data.get("broken") or []),
             "unknown_ownership": len(data.get("posts_unknown_ownership") or [])}
+
+
+def _click_index(name, data, now):
+    """click の材料（`click_attribution.Index` と、24h の views を選ぶための台帳）。"""
+    from . import analytics_comparison as comparison, click_attribution, measured as measured_mod
+    cfg = accounts_mod.load_account(name)
+    posts = [(str(p["post_id"]), comparison._timestamp(p.get("posted_at"))) for p in data["posts"]]
+    index = click_attribution.Index.for_account(name, cfg, posts=posts,
+                                                account_daily=data.get("account_daily"), now=now)
+    # 24h の views は `analytics-report` と同じ選び方（観測の時刻の検査つき）で。
+    detailed = measured_mod.load(name, observation_metadata=True)
+    return index, {str(p["post_id"]): p for p in detailed["posts"]}
+
+
+def _click_entry(material, post, at, now):
+    """observe の 1 行に添える click の升目（設計 3.7.0 §A1）。"""
+    from . import analytics_comparison as comparison
+    index, detailed = material
+    posted = comparison._timestamp(post.get("posted_at")) or at
+    observation, _rejected = comparison._observation(
+        detailed.get(str(post["post_id"])), posted, now, 24)
+    views = ((observation or {}).get("metrics") or {}).get("views")
+    return index.attribute(post["post_id"], posted, views)
 
 
 def _row_24h_before(rows, latest):
@@ -1142,7 +1173,21 @@ def _render_yesterday(account, node, out) -> None:
         # 目的なし（none）と記録なし（unrecorded・3.6.0 より前）は印を付けない（JSON には出る）。
         tag = f"[{goal}] " if goal and goal not in ("none", "unrecorded") else ""
         out(f"    {post['post_id']}  {tag}{numbers}（採取 {post['observations']} 回）")
-        if post.get("goal_cannot_say"):
+        click = post.get("click")
+        if click is not None and click.get("basis"):
+            if click["clicks_72h"] is None:
+                out(f"      click: 一意のリンク先（{click['basis']}）・72h のクリックはまだ言えません"
+                    f"（{click['clicks_missing']}・{click['window']}＝投稿日を含む 3 暦日）")
+            else:
+                rate = (f"クリック率 {click['click_rate']}（{click['rate_basis']}＝"
+                        f"{click['clicks_72h']}/{click['views_24h']}）" if click["click_rate"] is not None
+                        else f"クリック率は言えません（{click['rate_missing']}）")
+                out(f"      click: 72h のクリック {click['clicks_72h']}（{click['basis']}・"
+                    f"{click['window']}＝投稿日を含む 3 暦日）・{rate}")
+        elif click is not None:
+            out(f"      言えない: {click['cannot_say']}（共有・リンク無し・プロフィールのリンクは"
+                "投稿単位のクリックを出しません）")
+        elif post.get("goal_cannot_say"):
             out(f"      言えない: {post['goal_cannot_say']}（日次の数を投稿に割りません）")
         if post["delta_24h"]:
             delta = "・".join(f"{key}{_signed(v)}" for key, v in sorted(post["delta_24h"].items())

@@ -60,6 +60,20 @@ class ThrowResult:
     api_diagnostic: dict | None = None
 
 
+def _link_urls_kwargs(manifest) -> dict:
+    """sent に控える添付のリンク先（設計 3.7.0 §A1）。添付が無ければ何も足さない。
+
+    添付があれば空でも書く——click を投稿単位で数えるとき、「添付にリンクが無かった」と
+    「控えていない（3.7.0 より前）」を分けるため（`click_attribution.recorded_links`）。
+    """
+    if not manifest:
+        return {}
+    from . import click_attribution
+    # 書けない形（長すぎる）で公開後の記録を落とさない——控えられるものだけ。
+    return {"link_urls": [url for url in click_attribution.manifest_links(manifest)
+                          if len(url) <= 2048][:10]}
+
+
 def list_queue_files(account_cfg: dict, *, tree_sha: str | None) -> list:
     """queue を読む。**照合先の commit（`tree_sha`）を必ず受け取る**。
 
@@ -932,6 +946,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                         resolved_from=resolved_from,
                         attachment_kinds=media_mod.attachment_kinds(manifest),
                         goal=goal_value, goal_change=goal_change,
+                        **_link_urls_kwargs(manifest),
                         **({"media":publish_result.media} if publish_result.media else {}))
     except (OSError,ValueError):
         if not manifest:raise
@@ -1355,6 +1370,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                             approved_fingerprint=digest, reply_to=post.reply_to,
                             attachment_kinds=media_mod.attachment_kinds(manifest),
                             goal=goal_value,
+                            **_link_urls_kwargs(manifest),
                             **({"media":result.media} if result.media else {}))
         except (OSError,ValueError):
             if not manifest:raise

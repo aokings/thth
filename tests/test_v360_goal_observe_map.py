@@ -38,7 +38,8 @@ def test_observeの投稿に目的と主な物差し_clickは言えない(isolat
     by_id = {post["post_id"]: post for post in node["posts"]}
     assert by_id["R1"]["goal"] == "reach" and by_id["R1"]["lead_metrics"] == ["views"]
     assert by_id["P1"]["lead_metrics"] == ["replies"]
-    assert by_id["C1"]["goal_cannot_say"] == "per_post_clicks_unavailable"
+    # 3.7.0 §A1: 本文にリンクの無い click は「言えない」（no_link）——日次を割らない。
+    assert by_id["C1"]["goal_cannot_say"] == "no_link"
     assert by_id["C1"]["lead_metrics"] == []
     assert by_id["N1"]["goal"] == "unrecorded", "記録に goal の欄が無い（3.6.0 より前）"
     assert by_id["N1"]["goal_cannot_say"] is None
@@ -48,7 +49,7 @@ def test_observeの投稿に目的と主な物差し_clickは言えない(isolat
     text = "\n".join(lines)
     assert "R1  [reach] views=120・likes=3" in text
     assert "P1  [reply] replies=5・likes=1" in text
-    assert "言えない: per_post_clicks_unavailable（日次の数を投稿に割りません）" in text
+    assert "言えない: no_link（共有・リンク無し・プロフィールのリンクは投稿単位のクリックを出しません）" in text
     assert "N1  likes=1・replies=2" in text, "目的が無ければ従前の並び"
 
 

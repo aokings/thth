@@ -62,6 +62,24 @@ def valid_watch_words(value) -> bool:
     return True
 
 
+# **プロフィールのリンク**（設計 3.7.0 §A1）。台帳の任意項目 `profile_links`——
+# click を投稿単位で数えるとき、プロフィールのリンクと同じリンク先の投稿は日次に
+# プロフィールからのクリックが混ざるので数えない（`click_attribution`）。道具は
+# プロフィールを読みに行かない（推測しない）——人が台帳に書く。
+PROFILE_LINKS_MAX = 5
+
+
+def valid_profile_links(value) -> bool:
+    """`profile_links` として受け取れる形か（http(s) の URL の配列・最大 5 つ）。"""
+    if not isinstance(value, list) or len(value) > PROFILE_LINKS_MAX:
+        return False
+    for url in value:
+        if (not isinstance(url, str) or not url.startswith(("https://", "http://"))
+                or len(url) > 2048 or any(ord(ch) <= 32 or ord(ch) == 127 for ch in url)):
+            return False
+    return True
+
+
 def watch_words(account_cfg: dict) -> list:
     """台帳の監視語（無ければ空）。**推測で語を足さない。**"""
     value = (account_cfg or {}).get("watch_words")
@@ -387,6 +405,10 @@ def load_account(name: str) -> dict:
         raise AccountError(
             f"{name}: 台帳の watch_words が受け取れません（invalid_watch_words・"
             f"空でない文字列を最大 {WATCH_WORDS_MAX} 語・1 語 {WATCH_WORD_MAX_CHARS} 字まで）")
+    if "profile_links" in data and not valid_profile_links(data["profile_links"]):
+        raise AccountError(
+            f"{name}: 台帳の profile_links が受け取れません（invalid_profile_links・"
+            f"http(s) の URL を最大 {PROFILE_LINKS_MAX} つ）")
     out = AccountConfig(data)
     out._thth_account_name=name
     for key in ("repo_dir", "env", "token"):

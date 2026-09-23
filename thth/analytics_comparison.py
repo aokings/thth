@@ -309,7 +309,7 @@ def _account(name, previous_start, current_start, now, min_n, by=None,
             "incomplete_sources": broken, "cannot_say": []}
     from .collection_status import summarize as collection_summary
     node["collection"], collection_reasons = collection_summary(name, now)
-    recorded_goals = None
+    recorded_goals = click_index = None
     for kind, items in (("posts", root_items), ("engagements", reply_items)):
         previous = _population(items, previous_start, current_start, now, min_n)
         current = _population(items, current_start, now, now, min_n)
@@ -331,15 +331,22 @@ def _account(name, previous_start, current_start, now, min_n, by=None,
             if by == "goal":
                 # 投稿の目的（設計 3.6.0 §A2）。公開の時点の記録から層を作り、目的ごとの
                 # 物差しを足す。click と follow は投稿単位に割らない（`analytics_goals`）。
-                from . import analytics_goals, goals
+                from . import analytics_goals, click_attribution, goals
                 if recorded_goals is None:
                     recorded_goals = goals.recorded_goals(name)
+                    # click を投稿単位で（設計 3.7.0 §A1）: 共有かどうかは account の
+                    # 投稿の全部（根と返信）と比べる。
+                    click_index = click_attribution.Index.for_account(
+                        name, cfg, posts=[(pid, posted) for pid, posted, _post
+                                          in root_items + reply_items],
+                        account_daily=measured_result.get("account_daily"), now=now)
                 node[kind]["stratified"] = analytics_goals.strata(
                     name=name, medium=cfg.get("media"), items=items,
                     all_items=root_items + reply_items,
                     account_daily=measured_result.get("account_daily"),
                     recorded=recorded_goals, previous_start=previous_start,
-                    current_start=current_start, now=now, min_n=min_n)
+                    current_start=current_start, now=now, min_n=min_n,
+                    click_index=click_index)
                 continue
             from . import threadshape, topics
             lookup, shelf_broken = after_cli._kind_lookup(name)
