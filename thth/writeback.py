@@ -234,6 +234,37 @@ def upstream_sha(repo_dir: str) -> str | None:
     return head.stdout.strip() or None
 
 
+# `sync_state()` の状態（設計 3.7.0 §B1）。
+SYNC_SYNCED = "synced"            # HEAD == @{u}
+SYNC_BEHIND_ONLY = "behind_only"  # 遅れているだけ（ahead 0）——次の run の sync_repo が取り込む
+SYNC_AHEAD = "ahead"              # push していない commit がある（遅れは無い）
+SYNC_DIVERGED = "diverged"        # 両方
+SYNC_NO_UPSTREAM = "no_upstream"  # upstream が無い・数えられない
+SYNC_NOT_REPO = "not_repo"        # repo が無い・git でない
+
+
+def sync_state(repo_dir: str) -> dict:
+    """HEAD と `@{u}`（**最後に取り込んだ remote の姿**）の差を数える。**fetch しない。**
+
+    `thth account` と `thth board` が同じ 1 つの関数で repo の状態を言うための土台
+    （設計 3.7.0 §B1・「board と食い違わない」）。遅れているだけ（ahead 0）なら、
+    `thth run` の `sync_repo()` が次の実行で取り込む——「投稿できません」ではない。
+    戻り値 `{"state", "ahead", "behind"}`。数えられなければ `ahead`・`behind` は None。
+    """
+    if not repo_dir or not os.path.isdir(repo_dir) or not os.path.exists(
+            os.path.join(repo_dir, ".git")):
+        return {"state": SYNC_NOT_REPO, "ahead": None, "behind": None}
+    counts = _run_git(repo_dir, ["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+    parts = counts.stdout.split() if counts.returncode == 0 else []
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        return {"state": SYNC_NO_UPSTREAM, "ahead": None, "behind": None}
+    ahead, behind = int(parts[0]), int(parts[1])
+    state = (SYNC_SYNCED if not ahead and not behind else
+             SYNC_BEHIND_ONLY if not ahead else
+             SYNC_AHEAD if not behind else SYNC_DIVERGED)
+    return {"state": state, "ahead": ahead, "behind": behind}
+
+
 def behind_remote(repo_dir: str) -> dict:
     """利用者 repo（queue の repo）を **fetch だけして** remote と比べる（T8-2・
     kopicha 続報）。**pull はしない**——`git fetch` は実際に行うが、

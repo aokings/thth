@@ -653,6 +653,12 @@ def account_detail(account_name: str, *, now=None, remote: bool = True) -> dict:
     # 欠陥として数えない。**
     scheduled = account_cfg.get("scheduled", True)
 
+    # **run を止めるもの**と**run が自分で直すもの**を分ける（設計 3.7.0 §B1）。
+    # repo が upstream より遅れているだけ（ahead 0）なら、次の `thth run` の
+    # `sync_repo()` が取り込む——「投稿できません」に入れない。判定は board と同じ
+    # `writeback.sync_state()`（board の `repo_sync` と食い違わない）。
+    sync = writeback_mod.sync_state(account_cfg.get("repo_dir")) if repo["is_git"] else None
+    self_healing = []
     blockers = []
     if token["state"] in maintain_mod.ATTENTION_STATES:
         blockers.append(f"token: {token['state']}（{token['message']}）")
@@ -663,6 +669,9 @@ def account_detail(account_name: str, *, now=None, remote: bool = True) -> dict:
             blockers.append(f"repo: {repo['repo_dir']} がありません")
         elif not repo["is_git"]:
             blockers.append(f"repo: {repo['repo_dir']} は git repo ではありません")
+        elif not repo["synced"] and sync and sync["state"] == writeback_mod.SYNC_BEHIND_ONLY:
+            self_healing.append(f"repo: upstream より {sync['behind']} commit 遅れています"
+                                f"——次の run が取り込みます（遅れ {sync['behind']} commit）")
         elif not repo["synced"]:
             blockers.append("repo: HEAD が upstream と一致していません"
                             "（push していない commit があるか、upstream が無い）")
@@ -670,6 +679,15 @@ def account_detail(account_name: str, *, now=None, remote: bool = True) -> dict:
             blockers.append(f"queue: {repo['queue_dir']} がありません（作って push してください）")
         if not account_cfg.get("production"):
             blockers.append("台帳: production: false（リハーサル。出しません）")
+        # 承認済みなのに出られない原稿（held・board の `held_count` と同じ数え方）。
+        # 遅れているだけの repo では中身を照合できない（`unverified_content`）が、
+        # それは次の run が取り込めば解ける——上の「自分で直すもの」に含める。
+        behind_only = bool(sync and sync["state"] == writeback_mod.SYNC_BEHIND_ONLY)
+        held = [row for row in select_mod.held_items(result, files, now) if row["due"]
+                and not (behind_only and row["reason"] == "unverified_content")]
+        if held:
+            blockers.append(f"held: {select_mod.held_reason_code(held)}"
+                            "（承認済みなのに出られません。thth board の held で名前を確認）")
 
     return {
         "account": account_name,
@@ -701,8 +719,11 @@ def account_detail(account_name: str, *, now=None, remote: bool = True) -> dict:
         # Threads 側の実物（THTH を通していない投稿を含む）。
         "remote": remote_state,
         "inflight": pending.get("file") if pending else None,
+        "repo_sync": sync,
         "ready": not blockers,
         "blockers": blockers,
+        # run が自分で直すもの（設計 3.7.0 §B1）。「投稿できません」には入れない。
+        "self_healing": self_healing,
     }
 
 
@@ -767,6 +788,10 @@ def _append_remote_and_verdict(lines: list, detail: dict) -> str:
     elif detail["ready"]:
         lines.append("  → **投稿できます**")
     else:
-        lines.append("  → **投稿できません**:")
+        lines.append("  → **投稿できません**（run を止めるもの）:")
         lines.extend(f"       - {b}" for b in detail["blockers"])
+    if detail.get("self_healing"):
+        # 止めるものではない（設計 3.7.0 §B1）。結論の行とは分けて言う。
+        lines.append("  → run が自分で直すもの:")
+        lines.extend(f"       - {item}" for item in detail["self_healing"])
     return "\n".join(lines) + "\n"

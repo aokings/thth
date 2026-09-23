@@ -483,6 +483,10 @@ def board_summary(now=None) -> dict:
             "held_count": sum(1 for row in held if row["due"]),
             "held_upcoming_count": sum(1 for row in held if not row["due"]),
             "held_reason_code": select_mod.held_reason_code(held),
+            # repo と upstream の差（設計 3.7.0 §B1・fetch しない）。`thth account` と
+            # 同じ `writeback.sync_state()`——`behind_only` は次の run が取り込むもので、
+            # account でも「投稿できません」に入れない（食い違わない）。
+            "repo_sync": writeback_mod.sync_state(account_cfg.get("repo_dir")),
             # **スレッド連投の進行状態**（独立検収 2026-09-11・P1-1）。
             # 「どこまで出たか」ではなく**確認できた段・要求中の段・未着手の段**
             # を分けて出す。**停止の確認**もここに出る。
