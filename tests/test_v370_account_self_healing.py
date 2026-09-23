@@ -72,17 +72,24 @@ def test_遅れと未pushの両方は止めるもの(tmp_path, isolated_account_
     assert detail["ready"] is False and detail["self_healing"] == []
 
 
-def test_承認済みで出られない原稿はrunを止めるものに入る_boardのheldと同じ(
+def test_出られない原稿は別の段_投稿できますのまま_boardのheld_countと数が一致(
         tmp_path, isolated_account_factory):
+    """裁定 09-24: held は「投稿できません」に入れない。その原稿が出られないだけで、account は
+    他の原稿を出せる。「出られない原稿（held）n 本・名前」の段に出し、board と数を揃える。"""
     from tests.conftest import write_queue_file
     pair, account = _ready_account(tmp_path, isolated_account_factory)
-    write_queue_file(pair["queue_dir"], "stale.md",
-                     fm_overrides={"account": account["name"], "status": "approved",
-                                   "approved_sha": "0" * 64,
-                                   "publish_at": "2026-09-01T08:00:00+09:00"})
+    for name in ("stale1.md", "stale2.md"):
+        write_queue_file(pair["queue_dir"], name, body=f"## threads\n\n{name} の本文。\n",
+                         fm_overrides={"account": account["name"], "status": "approved",
+                                       "approved_sha": "0" * 64,
+                                       "publish_at": "2026-09-01T08:00:00+09:00"})
     run_git(pair["work"], ["pull", "--ff-only"])
     detail = account_report.account_detail(account["name"], remote=False)
     row = _board_row(account["name"])
-    assert row["held_count"] >= 1
-    assert detail["ready"] is False
-    assert any(b.startswith("held: approved_but_held:") for b in detail["blockers"])
+    assert row["held_count"] == detail["held"]["n"] == 2
+    assert sorted(detail["held"]["files"]) == ["stale1.md", "stale2.md"]
+    assert detail["held"]["reason_code"] == "approved_but_held: approval_stale 2"
+    assert detail["ready"] is True and detail["blockers"] == []
+    text = account_report.render(detail)
+    assert "→ **投稿できます**" in text and "→ **投稿できません**" not in text
+    assert "→ 出られない原稿（held）2 本: " in text and "stale1.md" in text

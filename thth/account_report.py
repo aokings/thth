@@ -659,6 +659,7 @@ def account_detail(account_name: str, *, now=None, remote: bool = True) -> dict:
     # `writeback.sync_state()`（board の `repo_sync` と食い違わない）。
     sync = writeback_mod.sync_state(account_cfg.get("repo_dir")) if repo["is_git"] else None
     self_healing = []
+    held = []
     blockers = []
     if token["state"] in maintain_mod.ATTENTION_STATES:
         blockers.append(f"token: {token['state']}（{token['message']}）")
@@ -680,14 +681,13 @@ def account_detail(account_name: str, *, now=None, remote: bool = True) -> dict:
         if not account_cfg.get("production"):
             blockers.append("台帳: production: false（リハーサル。出しません）")
         # 承認済みなのに出られない原稿（held・board の `held_count` と同じ数え方）。
-        # 遅れているだけの repo では中身を照合できない（`unverified_content`）が、
-        # それは次の run が取り込めば解ける——上の「自分で直すもの」に含める。
+        # **「投稿できません」には入れない**（裁定 09-24）——その原稿が出られないだけで、
+        # account は他の原稿を出せる。別の段（`held`）に本数と名前を出す。遅れているだけの
+        # repo では中身を照合できない（`unverified_content`）が、それは次の run が取り込めば
+        # 解ける——上の「自分で直すもの」に含める。
         behind_only = bool(sync and sync["state"] == writeback_mod.SYNC_BEHIND_ONLY)
         held = [row for row in select_mod.held_items(result, files, now) if row["due"]
                 and not (behind_only and row["reason"] == "unverified_content")]
-        if held:
-            blockers.append(f"held: {select_mod.held_reason_code(held)}"
-                            "（承認済みなのに出られません。thth board の held で名前を確認）")
 
     return {
         "account": account_name,
@@ -724,6 +724,9 @@ def account_detail(account_name: str, *, now=None, remote: bool = True) -> dict:
         "blockers": blockers,
         # run が自分で直すもの（設計 3.7.0 §B1）。「投稿できません」には入れない。
         "self_healing": self_healing,
+        # 出られない原稿（held・裁定 09-24）。account 全体は止めない——別の段。
+        "held": {"n": len(held), "files": [row["file"] for row in held],
+                 "reason_code": select_mod.held_reason_code(held)},
     }
 
 
@@ -790,6 +793,11 @@ def _append_remote_and_verdict(lines: list, detail: dict) -> str:
     else:
         lines.append("  → **投稿できません**（run を止めるもの）:")
         lines.extend(f"       - {b}" for b in detail["blockers"])
+    held = detail.get("held") or {}
+    if held.get("n"):
+        # 出られない原稿（裁定 09-24）。account は他の原稿を出せるので結論とは分けて言う。
+        lines.append(f"  → 出られない原稿（held）{held['n']} 本: {'・'.join(held['files'])}"
+                     f"（{held['reason_code']}・thth board の要確認で理由）")
     if detail.get("self_healing"):
         # 止めるものではない（設計 3.7.0 §B1）。結論の行とは分けて言う。
         lines.append("  → run が自分で直すもの:")
