@@ -18,6 +18,9 @@
       両端は既にある点・自分自身への線と輪は作らない。
   (e) 変更ログは presence-only（点の語は記録に書かない・監視語と同じ）。ログに
       書けなければ変更を戻す。
+  (f) **保持は日単位**（既定 180 日・`thth admin map retention`・1〜180）。削除の依頼は
+      `thth admin map purge`（project 全体か、期間の行だけ）。退出でも消す
+      （`map_world.purge_for_leave()`・`thth/leave.py`）。
 """
 from __future__ import annotations
 
@@ -26,7 +29,7 @@ import os
 import re
 import unicodedata
 
-from . import accounts, admin_log, jst, private_store, redact
+from . import accounts, admin_log, handoff_cursor, jst, private_store, redact
 
 SCHEMA_VERSION = 1
 DIRECTORY = "_map"
@@ -390,3 +393,107 @@ def remove_edge(target, narrower, broader, *, by, via="cli", now=None):
             "project": project, "edge": {"narrower": chosen["narrower"], "broader": chosen["broader"],
                                          "kind": "broader"},
             "n_edges": len(config["edges"])}
+
+
+# ------------------------------------------------------------------ 保持と削除
+
+def set_retention(target, days, *, by, via="cli", now=None):
+    """保持の日数（1〜180・日単位で削る）。短くしたら次の collect／purge で消える。"""
+    by = _actor(by)
+    if type(days) is not int or not 1 <= days <= MAX_RETENTION_DAYS:
+        raise MapError("invalid_retention")
+    project, _names = project_accounts(target)
+
+    def change(config):
+        config["retention_days"] = days
+
+    _change(project, "map_retention_set", change, by=by, via=via, now=now,
+            diff=lambda b, a: {"retention_days": [b["retention_days"], a["retention_days"]]})
+    from . import map_world
+    removed = map_world.prune(project, now=now)
+    return {"schema_version": SCHEMA_VERSION, "report_type": "map_retention_set",
+            "project": project, "retention_days": days, "rows_removed": removed}
+
+
+def destroy(project):
+    """project の地図を丸ごと消す（点・線・保持・集計の行・一時ファイル・ロック・置き場）。
+
+    戻り値は消したファイルの数。置き場が無ければ 0。
+    """
+    project_store = store(project)
+    directory = project_store.open()
+    if directory is None:
+        return 0
+    os.close(directory)
+    removed = 0
+    with project_store.locked() as directory:
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            raise MapError("map_store_unavailable") from None
+        for name in names:
+            if name == ".lock":
+                continue
+            project_store.remove_name(directory, name)
+            removed += 1
+        project_store.remove_name(directory, ".lock")
+    try:
+        parent = handoff_cursor._directory(DIRECTORY)
+    except (OSError, ValueError):
+        raise MapError("map_store_unavailable") from None
+    try:
+        os.rmdir(project, dir_fd=parent)
+        os.fsync(parent)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        raise MapError("map_store_unavailable") from None
+    finally:
+        os.close(parent)
+    return removed
+
+
+def _date(value):
+    if value is None:
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise MapError("invalid_range")
+    try:
+        import datetime
+        datetime.date.fromisoformat(value)
+    except ValueError:
+        raise MapError("invalid_range") from None
+    return value
+
+
+def purge(target, *, by, date_from=None, date_to=None, world_only=False, via="cli"):
+    """削除の依頼（照合 §6-6: Meta・User・Client の依頼を project・期間の単位で消す）。
+
+    - 期間も `world_only` も無ければ **project の地図を丸ごと消す**（点・線も）。
+    - 期間があればその期間の集計の行だけ（点と線は残す）。`world_only` だけなら行を全部。
+    消したことは変更ログに presence-only で残る（語・行の中身は残さない）。
+    """
+    by = _actor(by)
+    date_from, date_to = _date(date_from), _date(date_to)
+    if date_from and date_to and date_from > date_to:
+        raise MapError("invalid_range")
+    project, _names = project_accounts(target)
+    from . import map_world
+    whole = not (date_from or date_to or world_only)
+    if whole:
+        removed = destroy(project)
+        diff = {"map": ["present" if removed else "absent", "absent"], "files_removed": [removed, 0]}
+    else:
+        removed = map_world.rewrite(project, lambda row: not (
+            (date_from is None or row["date"] >= date_from)
+            and (date_to is None or row["date"] <= date_to)))
+        diff = {"map_rows": ["present" if removed else "absent", "absent"],
+                "rows_removed": [removed, 0]}
+    try:
+        admin_log.append("map_purged", project, {}, by=by, via=via, diff=diff)
+    except private_store.LOG_ERRORS:
+        # 消した事実は戻せない（削除は戻さない）。記録だけ無いことを言う。
+        raise MapError("map_log_unavailable") from None
+    return {"schema_version": SCHEMA_VERSION, "report_type": "map_purged", "project": project,
+            "scope": "whole_map" if whole else "rows", "from": date_from, "to": date_to,
+            ("files_removed" if whole else "rows_removed"): removed}

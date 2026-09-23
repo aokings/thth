@@ -355,6 +355,10 @@ def run(account,*,by,plaza_open='delete'):
     # not used by normal operations and never reverses their repo/account order.
     with server_files.directory(gate.location(),create=True,private=True) as fd:
         with server_files.lock_at(fd,account+'.operation.lock'):
+            # 観測の地図（設計 3.5.0 §2・照合 §1）: 最後の account なら project の地図を丸ごと、
+            # 他の account が残るならこの媒体の集計の行を消す。**止める前に消す**——地図の置き場が
+            # 壊れていれば何も止めずに断る（下の変更ログの事前検査と同じ筋）。何度呼んでも同じ結果。
+            _purge_map(account,by)
             result=_run_locked(account,by=by)
             from . import deletion
             deletion.complete_for(account,read(account))
@@ -366,6 +370,20 @@ def run(account,*,by,plaza_open='delete'):
             try:plaza.purge_account(account,keep_open=plaza_open=='keep',by=by)
             except plaza.PlazaError:raise ValueError('plaza_cleanup_incomplete') from None
             return result
+
+
+def _purge_map(account,by):
+    from . import map_store,map_world
+    row=read(account)
+    if row and row['phase']=='completed':return None
+    if row:cfg=row['cfg']
+    else:
+        try:cfg=accounts.load_account(account)
+        except accounts.AccountError:return None
+    project=cfg.get('project')
+    if not project:return None
+    try:return map_world.purge_for_leave(account,project,cfg.get('media'),by=by)
+    except map_store.MapError:raise ValueError('map_cleanup_incomplete') from None
 
 
 def _run_locked(account,*,by):

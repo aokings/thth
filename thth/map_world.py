@@ -31,7 +31,7 @@ import json
 import os
 import re
 
-from . import accounts, adapters, jst, map_store, threads_read_cli
+from . import accounts, adapters, admin_log, jst, map_store, private_store, threads_read_cli
 from .adapters import base as adapter_base
 
 # 世間の層を集める媒体（X は読みの従量課金があるので入れない）。
@@ -290,6 +290,65 @@ def rewrite(project, keep):
     return removed
 
 
+def prune(project, *, now=None):
+    """保持の日数を超えた行を**日単位で**消す（照合 §6-4・月単位だと最大約 210 日残る）。
+
+    `thth map collect` は世間の層が無効でも毎回これを呼ぶ（集めるのを止めても、古い行は
+    期限で消える）。戻り値は消した行の数。
+    """
+    now = now or jst.now_jst()
+    days = map_store.load_config(project)["retention_days"]
+    oldest = (jst.to_jst(now).date() - datetime.timedelta(days=days)).isoformat()
+    return rewrite(project, lambda row: row["date"] >= oldest)
+
+
+def retention_floor(project, now):
+    """読むときの下限（保持を過ぎた行は、消える前でも見せない）。"""
+    days = map_store.load_config(project)["retention_days"]
+    return (jst.to_jst(now).date() - datetime.timedelta(days=days)).isoformat()
+
+
+def purge_for_leave(account, project, medium, *, by="leave"):
+    """退出（`thth account leave`）で地図を消す（照合 §1「退出で project の地図を丸ごと消す」）。
+
+    - その project の最後の account が抜けるなら、**project の地図を丸ごと消す**。
+    - 他の account が残るなら、抜ける account の媒体の集計の行を消す（その媒体の検索は
+      抜ける account の権限で取ったもの）。点と線は残る持ち主のもの。
+    読めない台帳は「残っている」と数える（消しすぎより、持ち主の点を残す側）。
+    何度呼んでも同じ結果（退出の再試行で呼び直される）。置き場が無ければ何もしない。
+    """
+    if not accounts.name_is_safe(project or ""):
+        return {"scope": None, "removed": 0}
+    project_store = map_store.store(project)
+    directory = project_store.open()
+    if directory is None:
+        return {"scope": None, "removed": 0}
+    os.close(directory)
+    remaining = False
+    for name in accounts.list_account_names():
+        if name == account:
+            continue
+        try:
+            if accounts.load_account(name).get("project") == project:
+                remaining = True
+        except accounts.AccountError:
+            remaining = True
+    if not remaining:
+        removed = map_store.destroy(project)
+        scope = "whole_map"
+    else:
+        removed = rewrite(project, lambda row: row["medium"] != medium)
+        scope = "medium_rows"
+    try:
+        admin_log.append("map_purged", project, {}, by=by, via="cli",
+                         diff={"map" if scope == "whole_map" else "map_rows":
+                               ["present", "absent"], "removed": [removed, 0]})
+    except private_store.LOG_ERRORS:
+        # 消した事実は戻せない（退出は戻さない）。記録だけ無いことを言う。
+        raise map_store.MapError("map_log_unavailable") from None
+    return {"scope": scope, "removed": removed}
+
+
 def forget_node(project, word):
     """点を消したとき、その点の行と、その点に掛かる共起の行を消す（持ち続けない）。"""
     return rewrite(project, lambda row: row.get("node") != word
@@ -342,7 +401,9 @@ def collect(target, *, now=None):
     date = jst.to_jst(now).date().isoformat()
     result = {"schema_version": map_store.SCHEMA_VERSION, "report_type": "map_collected",
               "project": project, "date": date, "world_enabled": map_view.world_enabled(),
-              "searches": 0, "rows_written": 0, "media": {}, "cannot_say": []}
+              "searches": 0, "rows_written": 0, "rows_pruned": 0, "media": {}, "cannot_say": []}
+    # **保持は集めるかどうかに関わらず毎回**（無効にしても古い行は期限で消える）。
+    result["rows_pruned"] = prune(project, now=now)
     if not map_view.world_enabled():
         result["cannot_say"].append("world_layer_disabled")
         return result
@@ -404,7 +465,8 @@ def view(project, words, *, since, now, edge_words=None):
 
     `edge_words` は線の両端として認める点（既定は `words`。`--node` のときは全部の点）。
     """
-    rows, broken = read_rows(project, since_date=jst.to_jst(since).date().isoformat(),
+    floor = max(jst.to_jst(since).date().isoformat(), retention_floor(project, now))
+    rows, broken = read_rows(project, since_date=floor,
                              until_date=jst.to_jst(now).date().isoformat())
     current = set(words)
     ends = set(edge_words if edge_words is not None else words)

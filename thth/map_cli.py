@@ -2,7 +2,8 @@
 
 利用者: `thth map show <project>`（読むだけ）。
 timer 用: `thth map collect <project>`（世間の層・**既定で無効**・`THTH_MAP_WORLD=1` のときだけ叩く）。
-管理者: `thth admin map node add|remove`・`thth admin map edge add|remove`。
+管理者: `thth admin map node add|remove`・`thth admin map edge add|remove`・
+`thth admin map retention <日数>`・`thth admin map purge`（削除の依頼）。
 **点と線は人だけが足す**（`--by` 必須）。
 """
 from __future__ import annotations
@@ -112,6 +113,32 @@ def cmd_admin_edge(args) -> int:
         f"（{r['n_edges']} 本）"))
 
 
+def cmd_admin_retention(args) -> int:
+    try:
+        result = map_store.set_retention(args.project, args.days, by=args.by)
+    except map_store.MapError as error:
+        return _print_refusal(args, error)
+    return _emit(args, result, lambda r: print(
+        f"{r['project']}: 保持 {r['retention_days']} 日（日単位で削ります・いま消した行 "
+        f"{r['rows_removed']}）"))
+
+
+def cmd_admin_purge(args) -> int:
+    try:
+        result = map_store.purge(args.project, by=args.by, date_from=args.date_from,
+                                 date_to=args.date_to, world_only=args.world_only)
+    except map_store.MapError as error:
+        return _print_refusal(args, error)
+
+    def render(r):
+        if r["scope"] == "whole_map":
+            print(f"{r['project']}: 地図を丸ごと消しました（ファイル {r['files_removed']}）")
+        else:
+            print(f"{r['project']}: 集計の行を {r['rows_removed']} 行消しました"
+                  f"（{r['from'] or '最初'}〜{r['to'] or '最後'}・点と線は残っています）")
+    return _emit(args, result, render)
+
+
 def register_admin(commands) -> None:
     """`thth admin map node|edge`（設計 3.5.0 §1）。"""
     parser = commands.add_parser(
@@ -141,3 +168,25 @@ def register_admin(commands) -> None:
         leaf.add_argument("--by", default=None, help="誰が変えたか（必須）")
         leaf.add_argument("--json", action="store_true")
         leaf.set_defaults(func=cmd_admin_edge)
+
+    keeper = operations.add_parser(
+        "retention", help=f"集計の行の保持の日数（1〜{map_store.MAX_RETENTION_DAYS}・日単位で削る）")
+    keeper.add_argument("project", help="project 名（account 名ならその project）")
+    keeper.add_argument("days", type=int, metavar="日数")
+    keeper.add_argument("--by", default=None, help="誰が変えたか（必須）")
+    keeper.add_argument("--json", action="store_true")
+    keeper.set_defaults(func=cmd_admin_retention)
+
+    purger = operations.add_parser(
+        "purge", help="削除の依頼（既定は project の地図を丸ごと・--from/--to は期間の行だけ）",
+        description="Meta・利用者・持ち主からの削除の依頼を、project か期間の単位で消します。"
+                    "期間も --world-only も無ければ点と線を含む地図を丸ごと消します。"
+                    "消したことは変更ログに presence-only で残ります。")
+    purger.add_argument("project", help="project 名（account 名ならその project）")
+    purger.add_argument("--from", dest="date_from", default=None, metavar="YYYY-MM-DD")
+    purger.add_argument("--to", dest="date_to", default=None, metavar="YYYY-MM-DD")
+    purger.add_argument("--world-only", action="store_true", dest="world_only",
+                        help="集計の行だけ消す（点と線は残す）")
+    purger.add_argument("--by", default=None, help="誰が消したか（必須）")
+    purger.add_argument("--json", action="store_true")
+    purger.set_defaults(func=cmd_admin_purge)
