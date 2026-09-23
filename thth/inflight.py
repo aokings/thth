@@ -49,7 +49,8 @@ def _write(state_dir: str, data: dict) -> None:
 
 def write(state_dir: str, *, file: str, started: str,
           container_id: str | None = None, post_id: str | None = None,
-          body_hash: str | None = None, approved_fingerprint: str | None = None) -> None:
+          body_hash: str | None = None, approved_fingerprint: str | None = None,
+          text_fingerprint: str | None = None, reply_to: str | None = None) -> None:
     """`body_hash`（外部レビュー §3・受け入れ 9・10）は「送るはずの本文」の
     `approval.compute_body_hash()`。公開の**前**にここへ書いておくことで、書き戻し
     直前の「送った本文と repo の本文が同じか」の照合ができる（`thth.core` 参照）。
@@ -61,15 +62,26 @@ def write(state_dir: str, *, file: str, started: str,
     （本文の hash は変わらないため）。書き戻し前・rebase 後の照合はこちらを使う
     （`thth.core._fingerprint_matches()` 参照）。`body_hash` は既存の記録
     （`tests/test_sent_integrity.py`）との後方互換のため残す。
+
+    `text_fingerprint`（設計 3.3.1 §3）は `inflight_resolve.text_fingerprint()`
+    ——媒体が改行や空白を詰め直しても同じ本文を同じと見る指紋。次の run が
+    自分の最近の投稿と照合するときに使う。**本文そのものは書かない。**
+    `reply_to` は公開に渡した返信先の post_id（解けたときの書き戻しに使う）。
+    どちらも無ければ鍵ごと書かない（古い形の inflight と同じ顔のまま）。
     """
-    _write(state_dir, {
+    data = {
         "file": file,
         "started": started,
         "container_id": container_id,
         "post_id": post_id,
         "body_hash": body_hash,
         "approved_fingerprint": approved_fingerprint,
-    })
+    }
+    if text_fingerprint is not None:
+        data["text_fingerprint"] = text_fingerprint
+    if reply_to is not None:
+        data["reply_to"] = reply_to
+    _write(state_dir, data)
 
 
 def update(state_dir: str, **fields) -> None:
@@ -82,3 +94,4 @@ def clear(state_dir: str) -> None:
     p = path_for(state_dir)
     if os.path.exists(p):
         os.remove(p)
+

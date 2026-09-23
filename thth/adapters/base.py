@@ -82,6 +82,12 @@ class PublishResult:
     failure: str = "none"
     api_diagnostic: dict | None = None
     media: list | None = None
+    # 公開の結果が分からなかったあとに媒体へ訊いた答え（設計 3.3.1 §2・静的な語）。
+    # Threads だけが入れる（`retried`・`published_located`・`published_unlocated`・
+    # `retry_failed`・`error`・`expired`・`in_progress`・`query_failed`）。
+    # core は inflight に「最後の問い合わせ結果」として写すだけで、分岐は `failure`
+    # で決める（HTTP の意味をアダプタに閉じるのと同じ理由）。
+    remote_state: str | None = None
 
 
 class AdapterError(RuntimeError):

@@ -68,6 +68,16 @@ def local_http_test_transport(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_threads_status_poll_wait(monkeypatch):
+    """公開の結果が分からないときの container の問い合わせ（設計 3.3.1 §2）を
+    試験では待たない。本番の既定は 20 秒おき・最大 3 回。偽サーバは status の
+    GET に答えない（`query_failed`）ので、従前の試験の結果（inflight を残す）は
+    変わらない——変わるのは待つ時間だけ。subprocess の `bin/thth` にも env で届く。
+    """
+    monkeypatch.setenv('THTH_THREADS_STATUS_POLL_SECONDS', '0')
+
+
+@pytest.fixture(autouse=True)
 def frozen_now_jst(monkeypatch):
     """`thth.jst.now_jst()` を既定で静かな時間帯の外（2026-09-09 10:00 JST）に固定する。
 

@@ -67,6 +67,11 @@ OPTIONAL_FIELDS = ["topic", "mismatch_fields", "trigger",
                    "engagement_write_failed", "engagement_author_lookup_failed",
                    # reply_to_file（設計 3.2.0 §3）: どの原稿から返信先を解決したか。
                    "reply_to_file", "resolved_from"]
+# **値があるときだけ出す**追加項目（設計 3.3.1）。`OPTIONAL_FIELDS` と違い None の
+# ときは鍵ごと書かない——無い run の行の形を変えないため（`api_diagnostic` と同じ）。
+# `remote_state`: 公開の結果が分からなかったあとに媒体へ訊いた答え（静的な語）。
+# `inflight_resolution`: inflight をどう解いたか（道具が訊いて／人が決めて）。
+SPARSE_FIELDS = ["remote_state", "inflight_resolution"]
 
 
 def path_for(state_dir: str, jst_month: str) -> str:
@@ -101,6 +106,9 @@ def _append_run(state_dir: str, record: dict, jst_month: str) -> str:
         line[k] = record.get(k)
     if record.get("api_diagnostic"):
         line["api_diagnostic"] = api_diagnostic.clean(record["api_diagnostic"])
+    for k in SPARSE_FIELDS:
+        if isinstance(record.get(k), str) and record[k]:
+            line[k] = record[k]
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
     return path

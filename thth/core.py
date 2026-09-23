@@ -18,6 +18,7 @@ from . import adapters as adapters_mod
 from . import approval as approval_mod
 from . import engagements as engagements_mod
 from . import inflight as inflight_mod
+from . import inflight_resolve as inflight_resolve_mod
 from . import media_delivery
 from . import media as media_mod
 from . import jst, leave_gate
@@ -269,7 +270,7 @@ def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, actio
                  engagement_write_failed: bool = False,
                  engagement_author_lookup_failed: bool = False,
                  api_diagnostic: dict | None = None,
-                 resolved_from: dict | None = None) -> None:
+                 resolved_from: dict | None = None, extra: dict | None = None) -> None:
     record = {
         "account": account_name,
         "run_id": run_id,
@@ -307,7 +308,44 @@ def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, actio
         "reply_to_file": (resolved_from or {}).get("file"),
         "resolved_from": dict(resolved_from) if resolved_from else None,
     }
+    # 足す鍵（設計 3.3.1: `remote_state`・`inflight_resolution`）。値があるときだけ
+    # 載せる——無い run の行の形は変えない。
+    for key, value in (extra or {}).items():
+        if value is not None:
+            record[key] = value
     runs_mod.append_run(state_dir, record, jst.month_str(now))
+
+
+# 公開の応答は分からなかったが、媒体に訊いて決まったとき（設計 3.3.1 §2）の 1 行。
+_REMOTE_RECOVERED = {
+    "retried": ("公開の応答は分からなかったが container が FINISHED（まだ出ていない）"
+                "だったので、1 回だけ再試行して出ました"),
+    "published_located": ("公開の応答は分からなかったが container は PUBLISHED で、"
+                          "自分の最近の投稿から本文の指紋が一致する 1 件を見つけました"),
+}
+
+
+def _remote_extra(publish_result) -> dict:
+    state = getattr(publish_result, "remote_state", None)
+    return {"remote_state": state} if state in inflight_resolve_mod.REMOTE_STATES else {}
+
+
+def _note_remote_state(state_dir: str, publish_result, log) -> None:
+    """inflight に「最後の問い合わせ結果」を写す（`thth inflight show` が出す）。
+
+    書けなくても止め方は変えない（inflight は残っている）。添付の inflight は
+    journal が別の約束なので触らない。
+    """
+    state = getattr(publish_result, "remote_state", None)
+    if state not in inflight_resolve_mod.REMOTE_STATES:
+        return
+    try:
+        record = inflight_mod.read(state_dir)
+        if not isinstance(record, dict) or record.get("media"):
+            return
+        inflight_mod.update(state_dir, remote_state=state, remote_checked_at=jst.iso())
+    except (OSError, ValueError):
+        log("inflight に問い合わせ結果を書けませんでした（inflight は残っています）")
 
 
 def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
@@ -734,8 +772,12 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # 送る本文の hash（後方互換・`tests/test_sent_integrity.py` が参照）も併せて
     # inflight に書く（外部レビュー §3・受け入れ 9・10）。実際の照合は上の指紋で行う。
     body_hash = approval_mod.compute_body_hash(effective_section)
+    # 本文の指紋（設計 3.3.1 §3）: 結果が分からなかったとき、次の run が自分の
+    # 最近の投稿と照合する。本文そのものは inflight に書かない。
     inflight_mod.write(state_dir, file=chosen.path, started=started, container_id=None,
-                        body_hash=body_hash, approved_fingerprint=expected_fingerprint)
+                        body_hash=body_hash, approved_fingerprint=expected_fingerprint,
+                        text_fingerprint=inflight_resolve_mod.text_fingerprint(effective_section),
+                        reply_to=reply_to)
 
     if mode == "rehearsal":
         if resolved_from:
@@ -810,16 +852,25 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
             # 次の実行の冒頭の inflight チェックに乗る（board にもそのまま出る）。
             msg = ("添付作成後に公開を停止したので inflight を残します" if publish_result.failure=="media_held" else "公開の結果が分からないので inflight を残します") + f": {chosen.path}"
             log(msg)
+            _note_remote_state(state_dir, publish_result, log)
             _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
-                        status="error", error=err, api_diagnostic=detail_data)
+                        status="error", error=err, api_diagnostic=detail_data,
+                        extra=_remote_extra(publish_result))
             return ThrowResult(exit_code=1, mode=mode, action="inflight", message=msg,
                                 file=chosen.path, error=err, api_diagnostic=detail_data)
         # コンテナ作成の失敗・公開が 4xx は「実際には出ていない」ので inflight を残す理由が無い。
+        # 公開が 5xx でも container が ERROR・EXPIRED と答えたら同じ（設計 3.3.1 §2・
+        # 原稿は approved のまま残り、次の run が新しい container から出す）。
         inflight_mod.clear(state_dir)
         _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
-                    status="error", error=err, api_diagnostic=detail_data)
+                    status="error", error=err, api_diagnostic=detail_data,
+                    extra=_remote_extra(publish_result))
         return ThrowResult(exit_code=1, mode=mode, action="post", message="公開に失敗しました",
                             file=chosen.path, error=err, api_diagnostic=detail_data)
+
+    if getattr(publish_result, "remote_state", None):
+        log(_REMOTE_RECOVERED.get(publish_result.remote_state,
+                                  f"公開の応答は分からなかったが媒体に訊いて決まりました: {publish_result.remote_state}"))
 
     post_id = publish_result.post_id
     # **媒体が返した `post_id` を、確かめずに書き戻さない**（セキュリティ監査
@@ -976,7 +1027,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                 status="ok", error=None, topic=topic,
                 engagement_write_failed=engagement_write_failed,
                 engagement_author_lookup_failed=engagement_author_lookup_failed,
-                resolved_from=resolved_from)
+                resolved_from=resolved_from, extra=_remote_extra(publish_result))
     return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました",
                         file=chosen.path, post_id=post_id)
 
@@ -1179,7 +1230,9 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             return ThrowResult(exit_code=1, mode=mode, action="skip", message=msg, digest=digest)
 
         bound_token = before_execute(account_cfg) if before_execute is not None else None
-        inflight_mod.write(state_dir, file="(send)", started=jst.iso(), container_id=None)
+        inflight_mod.write(state_dir, file="(send)", started=jst.iso(), container_id=None,
+                           text_fingerprint=inflight_resolve_mod.text_fingerprint(effective),
+                           reply_to=reply_to or None)
         token = bound_token if before_execute is not None else accounts_mod.load_token(account_cfg)
         adapter = leave_gate.bind(adapter_factory(account_cfg, token), account_cfg)
         post = adapter_base.Post(text=effective, reply_to=reply_to or None, topic=topic_value,
@@ -1201,14 +1254,20 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                 # 出たか分からない → inflight を残して人を呼ぶ（§3.5）
                 msg = "添付作成後に公開を停止したので inflight を残します" if result.failure=="media_held" else "公開の結果が分からないので inflight を残します"
                 log(msg)
+                _note_remote_state(state_dir, result, log)
                 _append_run(state_dir, account_name, run_id, mode, "post", None, None, now,
-                            status="error", error=err, api_diagnostic=detail_data)
+                            status="error", error=err, api_diagnostic=detail_data,
+                            extra=_remote_extra(result))
                 return ThrowResult(exit_code=1, mode=mode, action="inflight", message=msg, error=err, api_diagnostic=detail_data)
             inflight_mod.clear(state_dir)
             _append_run(state_dir, account_name, run_id, mode, "post", None, None, now,
-                        status="error", error=err, api_diagnostic=detail_data)
+                        status="error", error=err, api_diagnostic=detail_data,
+                        extra=_remote_extra(result))
             return ThrowResult(exit_code=1, mode=mode, action="post",
                                 message="公開に失敗しました", error=err, api_diagnostic=detail_data)
+        if getattr(result, "remote_state", None):
+            log(_REMOTE_RECOVERED.get(result.remote_state,
+                                      f"公開の応答は分からなかったが媒体に訊いて決まりました: {result.remote_state}"))
 
         # **媒体が返した `post_id` を、確かめずに台帳の鍵にしない**（監査 2 回目・
         # P2-3）。不在の様態（`_throw_chosen()`）には 2026-09-14 に入れた検査が、
@@ -1267,7 +1326,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         _append_run(state_dir, account_name, run_id, mode, "post", None, result.post_id, now,
                     status="ok", error=None,
                     engagement_write_failed=engagement_write_failed,
-                    engagement_author_lookup_failed=engagement_author_lookup_failed)
+                    engagement_author_lookup_failed=engagement_author_lookup_failed,
+                    extra=_remote_extra(result))
         log(f"投稿しました: post_id={result.post_id}")
         # **出たものを見に行ける形で言う**（運用の報告 2026-09-13: 出したあと、
         # 実物を確かめるのに `post_id` から URL を組み立て直していた）。URL を

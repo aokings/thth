@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .. import api_diagnostic
 
+import dataclasses
 import json
 import math
 import os
@@ -37,6 +38,34 @@ TIMEOUT_ENV = "THTH_THREADS_TIMEOUT_SECONDS"
 
 # この媒体の名前（`Message.medium`・`author_key()`・台帳の `media`）。
 MEDIUM = "threads"
+
+# **公開が 5xx・timeout・接続断で終わったあとの container の問い合わせ**
+# （設計 3.3.1 §2）。一次資料（troubleshooting）は「1 分に 1 回・5 分まで」を
+# 推奨している。公開 1 本につき最大 3 回・20 秒おき（1 分）に留める。**最初の
+# 問い合わせも 20 秒待ってから**——5xx の直後は媒体の側で公開の処理が動いて
+# いる最中かもしれず、その間の FINISHED を「まだ出ていない」と読んで再試行する
+# と 2 度出しうるため。試験は `THTH_THREADS_STATUS_POLL_SECONDS=0` か
+# コンストラクタの `status_poll_seconds`・`sleep` で待たない。
+STATUS_POLL_SECONDS = 20.0
+STATUS_POLL_ATTEMPTS = 3
+STATUS_POLL_ENV = "THTH_THREADS_STATUS_POLL_SECONDS"
+# 上書きの上限（「1 分に 1 回」より長く待つ意味は無い）。
+STATUS_POLL_MAX = 60.0
+
+
+def status_poll_seconds_default() -> float:
+    """`THTH_THREADS_STATUS_POLL_SECONDS`（0 以上の有限の数・60 で頭打ち）。
+    読めなければ既定の 20 秒（上書きは待ちを変える口で、問い合わせを止める口ではない）。"""
+    raw = os.environ.get(STATUS_POLL_ENV)
+    if raw is None:
+        return STATUS_POLL_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return STATUS_POLL_SECONDS
+    if not math.isfinite(value) or value < 0:
+        return STATUS_POLL_SECONDS
+    return min(value, STATUS_POLL_MAX)
 
 
 def timeout_override():
@@ -244,8 +273,14 @@ class ThreadsAdapter(base.Adapter):
                  user_id: str = "", wait_seconds: float = DEFAULT_WAIT_SECONDS,
                  timeout: float = DEFAULT_TIMEOUT_SECONDS,
                  search_timeout: float = SEARCH_TIMEOUT_SECONDS, scopes=None,
-                 scopes_source: str | None = None):
+                 scopes_source: str | None = None,
+                 status_poll_seconds: float | None = None, sleep=None):
         self.base_url = httpsafe.validated_url(base_url,base=True)
+        # 公開の結果が分からないときの container の問い合わせの間隔と待ち方
+        # （設計 3.3.1 §2）。時計と sleep は注入できる（試験は待たない）。
+        self.status_poll_seconds = (status_poll_seconds_default()
+                                    if status_poll_seconds is None else status_poll_seconds)
+        self._sleep = sleep if sleep is not None else time.sleep
         self.access_token = access_token
         # **値そのものを登録**（セキュリティ監査 2026-09-16・P1-1）。サーバが
         # キー名なしで値を反射しても（`rejected credential <値>`）、`redact()`
@@ -406,13 +441,17 @@ class ThreadsAdapter(base.Adapter):
         except urllib.error.HTTPError as e:
             detail_data, _, _ = api_diagnostic.read_http_error(e)
             failure = "publish_definite" if 400 <= e.code < 500 else "publish_ambiguous"
-            return base.PublishResult(None, None, ts,
-                                       error=f"公開失敗: HTTP {e.code}" + api_diagnostic.suffix(detail_data),
-                                       failure=failure, api_diagnostic=detail_data)
+            failed = base.PublishResult(None, None, ts,
+                                        error=f"公開失敗: HTTP {e.code}" + api_diagnostic.suffix(detail_data),
+                                        failure=failure, api_diagnostic=detail_data)
+            if failure == "publish_definite":
+                return failed
+            return self._settle_ambiguous(post, creation_id, ts, failed)
         except (urllib.error.URLError, TimeoutError, OSError) as e:
-            return base.PublishResult(None, None, ts,
-                                       error=redact_mod.redact(f"公開失敗: {e}"),
-                                       failure="publish_ambiguous")
+            failed = base.PublishResult(None, None, ts,
+                                        error=redact_mod.redact(f"公開失敗: {e}"),
+                                        failure="publish_ambiguous")
+            return self._settle_ambiguous(post, creation_id, ts, failed)
 
         post_id = publish.get("id")
         if not post_id:
@@ -420,6 +459,108 @@ class ThreadsAdapter(base.Adapter):
             return base.PublishResult(None, None, ts, error="公開失敗: id無し",
                                        failure="publish_ambiguous")
         return base.PublishResult(post_id=post_id, url=None, ts=ts, error=None, failure="none")
+
+    # ---- 公開の結果が分からないとき（設計 3.3.1 §2）--------------------------
+
+    def container_status(self, container_id: str) -> str:
+        """`GET /{container-id}?fields=status,error_message` の status の語だけ。
+
+        **L2**（troubleshooting・2026-09-23 参照）: `EXPIRED`（24 時間以内に
+        公開されず失効）・`ERROR`（公開処理に失敗）・`FINISHED`（公開の準備が
+        できている）・`IN_PROGRESS`・`PUBLISHED`（公開済み）。`error_message` は
+        媒体の文面（静的でない）なので捨てる。知らない語・形の違う応答は
+        「分からない」として例外にする——知らない語を FINISHED に寄せて
+        再試行しないため。
+        """
+        from .. import inflight_resolve
+        if not (isinstance(container_id, str) and container_id.isascii()
+                and container_id.isdecimal()):
+            raise base.AdapterError("container_id_invalid")
+        body = self._get(f"/{container_id}", {"fields": "status,error_message"})
+        status = body.get("status") if isinstance(body, dict) else None
+        if status not in inflight_resolve.CONTAINER_STATUSES:
+            raise base.AdapterError("container_status_invalid")
+        return status
+
+    def poll_container(self, container_id: str, *, attempts: int = STATUS_POLL_ATTEMPTS,
+                       wait: bool = True) -> str:
+        """container の status を最大 `attempts` 回（間隔 `status_poll_seconds`）。
+
+        返すのは決まった status（`FINISHED`・`PUBLISHED`・`ERROR`・`EXPIRED`）
+        か、決まらなかった理由（`in_progress`・`query_failed`）。問い合わせの
+        失敗は**どれも「分からない」**——失敗を FINISHED にも ERROR にも寄せない。
+        `wait=False` は毎 run の最初の 1 回（§3）——公開した run の中で既に
+        待ってから訊いているので、次の run で改めて待つ理由が無い。
+        """
+        last = "query_failed"
+        for _ in range(max(1, int(attempts))):
+            if wait and self.status_poll_seconds:
+                self._sleep(self.status_poll_seconds)
+            try:
+                status = self.container_status(container_id)
+            except (urllib.error.URLError, OSError, ValueError, RuntimeError):
+                last = "query_failed"
+                continue
+            if status == "IN_PROGRESS":
+                last = "in_progress"
+                continue
+            return status
+        return last
+
+    def _settle_ambiguous(self, post: base.Post, creation_id: str, ts: str,
+                          failed: base.PublishResult) -> base.PublishResult:
+        """`threads_publish` が 5xx・timeout・接続断で終わった直後（設計 3.3.1 §2）。
+
+        inflight を残す前に container に訊く。09-22 の asmon-kanto-threads は
+        HTTP 500（`is_transient=true`）で「分からない」のまま 21 時間止まったが、
+        媒体には出ていなかった——訊けば分かった。
+
+        | status | 道具がすること |
+        |---|---|
+        | FINISHED | `threads_publish` を **1 回だけ**再試行。それも失敗なら inflight |
+        | PUBLISHED | 自分の最近の投稿から本文の指紋が一致する 1 件を探す。無ければ inflight（`published_unlocated`） |
+        | ERROR・EXPIRED | 出ていない（`publish_failed_remote_error`）。inflight を解き、原稿は approved のまま |
+        | 問い合わせ失敗・IN_PROGRESS | 分からない。inflight を残す（従前どおり） |
+
+        **2 度出す経路を作らない**: 再試行は FINISHED を確かめた直後の 1 回だけ。
+        再試行が 4xx でも「出ていない」とは言わない（1 度目が実は通っていて、
+        2 度目を媒体が断った可能性を消せない）——inflight を残して次の run の
+        問い合わせに任せる。同じ container を 2 度公開したときの Threads の
+        振る舞いは文書に無い（未確認）。
+        """
+        from .. import inflight_resolve
+        status = self.poll_container(creation_id)
+        if status == "FINISHED":
+            try:
+                again = self._post(f"/{self.user_id}/threads_publish", {
+                    "creation_id": creation_id,
+                    "access_token": self.access_token,
+                })
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+                return dataclasses.replace(failed, remote_state="retry_failed")
+            post_id = again.get("id") if isinstance(again, dict) else None
+            if not post_id:
+                return dataclasses.replace(failed, remote_state="retry_failed")
+            return base.PublishResult(post_id=post_id, url=None, ts=ts, error=None,
+                                       failure="none", remote_state="retried")
+        if status == "PUBLISHED":
+            found = inflight_resolve.locate(
+                self, inflight_resolve.text_fingerprint(post.text), jst.parse(ts))
+            if found.state == "listing_located":
+                return base.PublishResult(post_id=found.post_id, url=None, ts=ts,
+                                           error=None, failure="none",
+                                           remote_state="published_located")
+            return dataclasses.replace(failed, remote_state="published_unlocated")
+        if status in ("ERROR", "EXPIRED"):
+            # 出ていない。この container ではもう出せないので、inflight を解いて
+            # 次の run が新しい container から出す（select の検査を通り直す）。
+            return base.PublishResult(
+                None, None, ts,
+                error=(f"publish_failed_remote_error: container {status}（出ていません）"
+                       f"・{failed.error}"),
+                failure="publish_definite", api_diagnostic=failed.api_diagnostic,
+                remote_state=status.lower())
+        return dataclasses.replace(failed, remote_state=status)
 
     # ---- 承認を通る書き込みの口（設計 v2 §4.3・v2.1-B）----------------------
 
