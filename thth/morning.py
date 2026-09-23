@@ -204,6 +204,9 @@ def _tool_section(handoff, now=None, admin=False, configs=None, plaza=None):
         # 施策の広場（設計 3.4.0 §5）: 新着 n（自分の持ち主）・open の新着 m（参加して
         # いれば）・最近追試が付いた書き込み 1 件（§9-6）。読める範囲の書き込みだけ。
         "plaza": plaza,
+        # 観測の地図（設計 3.5.0 §3）: 伸びた点・強まった線（候補の列挙だけ）。対象の
+        # project の地図だけ（世間の層は project の外に出さない）。
+        "map": _map_cell(configs or {}, now),
     }
 
 
@@ -247,6 +250,22 @@ def _plaza_cell(configs, since, now, exclude_account=None):
                 "open_denominator": None, "open_reason": None, "since": jst.iso(since),
                 "recent_trial": None, "cannot_say": "plaza_store_unavailable"}
     return summary
+
+
+def _map_cell(configs, now):
+    """0 段の「地図」。対象の account の project ごとに 1 行（読むだけ）。"""
+    from . import map_view
+    projects = sorted({cfg.get("project") for cfg in configs.values()
+                       if isinstance(cfg.get("project"), str) and cfg.get("project")})
+    cells = {}
+    for project in projects:
+        try:
+            cells[project] = map_view.observe_summary(project, now=now)
+        except Exception:  # noqa: BLE001 — 地図の読みで 0 段を落とさない
+            cells[project] = {"project": project, "n_nodes": None, "n_edges": None,
+                              "grown_node": None, "strengthened_edge": None,
+                              "cannot_say": "map_store_unavailable"}
+    return {"by_project": cells, "cannot_say": None if projects else "no_project"}
 
 
 def _plaza_steps(configs, since, now):
@@ -917,6 +936,7 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
                 "監視語は管理者が入れた語だけ。道具は語を選ばない",
                 "取れなかった段は null と静的な理由。0 件と混ぜない",
                 "施策を試したら広場へ（thth plaza post・thth_plaza_post）。次を決める前に他の媒体の施策を読む",
+                "地図は人が足した点だけ（thth map show・thth_map_show）。伸びた点・強まった線は候補の列挙",
                 # 報告の口の 1 行は末尾に置く（設計 3.1.2 §3.5・試験が末尾を見る）。
                 "不具合・要望・つまずきは report の口へ（thth_report_file）"]}
 
@@ -973,6 +993,7 @@ def _render_section(section, out) -> None:
                     f"・この版（{mine['version']}）で閉じた {mine['m']}"
                     + (f"（{titles}）" if titles else ""))
         _render_plaza(value.get("plaza"), out)
+        _render_map(value.get("map"), out)
         from . import notification_route
         for row in value.get("notification_routes") or []:
             text = (notification_route.line(row["cannot_say"])
@@ -1065,6 +1086,15 @@ def _render_plaza(node, out) -> None:
         out(f"  広場の最近の追試: {trial['plaza_id']}  {trial['title']}"
             f"（再現した {counts['reproduced']}・再現しなかった {counts['not_reproduced']}・"
             f"試していない {counts['not_tried']}／{counts['denominator']} 件）")
+
+
+def _render_map(node, out) -> None:
+    """0 段の地図の 1 行（伸びた点・強まった線・候補の列挙だけ）。"""
+    if not node or not node.get("by_project"):
+        return
+    from . import map_view
+    for cell in node["by_project"].values():
+        out("  " + map_view.observe_text(cell))
 
 
 def _render_unanswered(account, node, out) -> None:

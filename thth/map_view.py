@@ -340,3 +340,88 @@ def render(payload, out=print) -> None:
         for edge in payload["edges"]["co"][:10]:
             out(f"  {edge['edge'][0]}—{edge['edge'][1]}（{edge['medium']}）: "
                 f"{_num(edge['co'])}/{_num(edge['denominator'])}  {edge['date']}")
+
+
+# ------------------------------------------------------------------ observe の 1 行
+
+# 伸びた点・強まった線を比べる窓（直近の日と、その前の最大 7 日の平均）。
+OBSERVE_BASE_DAYS = 7
+
+
+def observe_summary(project, *, now=None):
+    """`thth observe` の 0 段の 1 行「地図: 伸びた点・強まった線」（**候補の列挙だけ**）。
+
+    - 伸びた点: 媒体ごとの件数 n が、直近の日で前の最大 7 日の平均より最も伸びた点。
+    - 強まった線: 共起の割合（co／分母）が、直近の日で前の平均より最も上がった線。
+    どちらも世間の層の行だけから決める（無効なら null と `world_layer_disabled`）。
+    本文は作らない。点と線の数は層を問わず出す。
+    """
+    now = now or jst.now_jst()
+    cell = {"project": project, "n_nodes": None, "n_edges": None, "grown_node": None,
+            "strengthened_edge": None, "cannot_say": None}
+    try:
+        config = map_store.load_config(project)
+    except map_store.MapError:
+        cell["cannot_say"] = "map_store_unavailable"
+        return cell
+    cell.update(n_nodes=len(config["nodes"]), n_edges=len(config["edges"]))
+    if not config["nodes"]:
+        cell["cannot_say"] = "no_map_nodes"
+        return cell
+    if not world_enabled():
+        cell["cannot_say"] = "world_layer_disabled"
+        return cell
+    import datetime
+    from . import map_world
+    words = [row["word"] for row in config["nodes"]]
+    since = now - datetime.timedelta(days=OBSERVE_BASE_DAYS + 1)
+    try:
+        cells, co, _broken = map_world.view(project, words, since=since, now=now)
+    except map_store.MapError:
+        cell["cannot_say"] = "map_store_unavailable"
+        return cell
+    best = None
+    for word, node in cells.items():
+        for medium, series in (node["by_medium"] or {}).items():
+            values = [day for day in series["days"] if day["n"] is not None]
+            if len(values) < 2:
+                continue
+            latest, before = values[-1], values[:-1][-OBSERVE_BASE_DAYS:]
+            base = sum(day["n"] for day in before) / len(before)
+            if base <= 0 or latest["n"] <= base:
+                continue
+            change = (latest["n"] - base) / base
+            if best is None or change > best[0]:
+                best = (change, {"node": word, "medium": medium, "date": latest["date"],
+                                 "n": latest["n"], "base": round(base, 1),
+                                 "change_pct": round(change * 100)})
+    cell["grown_node"] = best[1] if best else None
+    strongest = max((edge for edge in co if edge["change"] is not None and edge["change"] > 0),
+                    key=lambda edge: edge["change"], default=None)
+    if strongest is not None:
+        cell["strengthened_edge"] = {"edge": strongest["edge"], "medium": strongest["medium"],
+                                     "date": strongest["date"], "ratio": round(strongest["ratio"], 3),
+                                     "change": round(strongest["change"], 3)}
+    if best is None and strongest is None:
+        cell["cannot_say"] = "no_change"
+    return cell
+
+
+def observe_text(cell):
+    """0 段に出す 1 行（本文は作らない・数と語だけ）。"""
+    head = f"地図 {cell['project']}: "
+    if cell["cannot_say"] in ("map_store_unavailable",):
+        return head + f"言えない: {cell['cannot_say']}"
+    size = f"点 {cell['n_nodes']}・線 {cell['n_edges']}"
+    parts = []
+    grown = cell.get("grown_node")
+    if grown:
+        parts.append(f"伸びた点 {grown['node']}（+{grown['change_pct']}%・{grown['medium']}・"
+                     f"{grown['n']}／前 {grown['base']}）")
+    edge = cell.get("strengthened_edge")
+    if edge:
+        parts.append(f"強まった線 {edge['edge'][0]}—{edge['edge'][1]}（{edge['medium']}・"
+                     f"割合 {edge['ratio']}）")
+    if parts:
+        return head + "・".join(parts) + f"（{size}）"
+    return head + size + (f"（{cell['cannot_say']}）" if cell["cannot_say"] else "")
