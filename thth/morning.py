@@ -155,7 +155,7 @@ def targets(target) -> list:
 
 # --------------------------------------------------------------- 第 0 段
 
-def _tool_section(handoff, now=None, admin=False, configs=None):
+def _tool_section(handoff, now=None, admin=False, configs=None, plaza=None):
     """版・前回から変わったか・リリースノート・出せるもの表（設計 §2 の 0 段）。
 
     **前回との比較は account ごとの栞から来る**（`handoff-report` の
@@ -201,6 +201,9 @@ def _tool_section(handoff, now=None, admin=False, configs=None):
         # 報告の題（置いた報告が効いたことを見せる）。対象の account と project の
         # 報告だけ（サーバ型の利用者でも自分の範囲だけ）。
         "project_reports": _project_reports(configs or {}),
+        # 施策の広場（設計 3.4.0 §5）: 新着 n（自分の持ち主）・open の新着 m（参加して
+        # いれば）・最近追試が付いた書き込み 1 件（§9-6）。読める範囲の書き込みだけ。
+        "plaza": plaza,
     }
 
 
@@ -229,6 +232,28 @@ def _reapproval_cell(handoff):
 def _reports_cell(now):
     from . import report_inbox
     return report_inbox.morning_summary(now or jst.now_jst())
+
+
+def _plaza_cell(configs, since, now, exclude_account=None):
+    """0 段の「広場」。対象の account（とその project）から読める書き込みだけを数える。"""
+    from . import plaza
+    viewer = plaza.Viewer({name: cfg.get("project") for name, cfg in configs.items()})
+    try:
+        summary = plaza.observe_summary(viewer, since=since, now=now,
+                                        exclude_account=exclude_account)
+        summary["recent_trial"] = plaza.recent_trial(viewer)
+    except Exception:  # noqa: BLE001 — 広場の読みで 0 段を落とさない
+        return {"project_new": None, "project_denominator": None, "open_new": None,
+                "open_denominator": None, "open_reason": None, "since": jst.iso(since),
+                "recent_trial": None, "cannot_say": "plaza_store_unavailable"}
+    return summary
+
+
+def _plaza_steps(configs, since, now):
+    from . import plaza
+    viewer = plaza.Viewer({name: cfg.get("project") for name, cfg in configs.items()})
+    return plaza.observe_steps(viewer, {name: cfg.get("media") for name, cfg in configs.items()},
+                               since=since, now=now)
 
 
 # --------------------------------------------------------------- 第 1 段
@@ -670,7 +695,8 @@ def read_refusal(media):
 
 # --------------------------------------------------------------- 第 5 段
 
-def next_steps(unanswered_entries, world_entries, today_entries, reports=None) -> list:
+def next_steps(unanswered_entries, world_entries, today_entries, reports=None,
+               plaza=None) -> list:
     """**候補の列挙だけ**（masaru 裁定 3.1.0 §7-1）。本文は 1 字も作らない。
 
     6 種類だけ: 「返す」（1 段の各行）・「絡む」（3 段の各行）・「出す」
@@ -679,6 +705,9 @@ def next_steps(unanswered_entries, world_entries, today_entries, reports=None) -
     `reapprove`（再承認）、それ以外は `inspect`）・「報告」（管理者の 1 枚だけ・
     開いている報告 1 件につき 1 行・3.1.2 §3）。held に名前がある原稿は「超過」に
     重ねない（同じ原稿に 2 つの候補を出さない）。
+    3.4.0 から「広場」（`kind: "plaza"`・設計 §5）: 返信の付いた自分の施策
+    （`read_replies`）・判定待ちの施策（`verdict`）・判定の付いた施策をまだ試して
+    いない媒体（`try_on_medium`）。id と題の先頭 60 字だけで、本文は作らない。
     どの要素にも `body` は無い（「超過」「出られない」も file と理由と時刻だけ、
     「報告」も id と種類と題の先頭 60 字だけで、報告の本文は載せない）。
     """
@@ -726,6 +755,7 @@ def next_steps(unanswered_entries, world_entries, today_entries, reports=None) -
     for row in reports or []:
         steps.append({"kind": "report", "report_id": row["report_id"],
                       "report_kind": row["kind"], "title": row["title"][:PREVIEW_CHARS]})
+    steps.extend(plaza or [])
     return steps
 
 
@@ -831,6 +861,11 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
             "changes_since_last_read": ((node or {}).get("changes_since") or {}).get("changes"),
         })
     budget_cell = _budget({cfg.get("media") for cfg in configs.values()})
+    # 広場の新着は第 2 段と同じ窓の始まり（前回の観測から・無ければ前日 JST）。account
+    # ごとに窓が違えば、いちばん古い始まりから（見落とすより重ねて見せる）。
+    plaza_since = min(observe_window(now, read_ats[name])[0] for name in names)
+    plaza_cell = _plaza_cell(configs, plaza_since, now,
+                             exclude_account=target if kind == "account" else None)
 
     def _steps():
         # 報告は**管理者の 1 枚だけ**（サーバ型の利用者に他 project の報告を並べない）。
@@ -838,13 +873,18 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
         if allowed_names is None:
             from . import report_inbox
             reports = report_inbox.list_reports(scope=None, status="open")["reports"]
-        steps = next_steps(unanswered_entries, world_entries, today_entries, reports)
+        try:
+            plaza_steps = _plaza_steps(configs, plaza_since, now)
+        except Exception:  # noqa: BLE001 — 広場の読みで次の一手を落とさない
+            plaza_steps = []
+        steps = next_steps(unanswered_entries, world_entries, today_entries, reports,
+                           plaza=plaza_steps)
         return {"steps": steps, "n": len(steps)}
 
     sections = [
         {"section": "tool", "title": "道具",
          **(_guard(lambda: _tool_section(handoff, now, admin=allowed_names is None,
-                                         configs=configs)) if handoff is not None
+                                         configs=configs, plaza=plaza_cell)) if handoff is not None
             else cell(cannot_say=handoff_cell["cannot_say"]))},
         _section("unanswered", "返していないもの", unanswered_entries),
         # 段の id は `yesterday` のまま（JSON の契約）。題は窓で変わる。
@@ -876,7 +916,8 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
                 "次の一手は候補の列挙。本文は作らない",
                 "監視語は管理者が入れた語だけ。道具は語を選ばない",
                 "取れなかった段は null と静的な理由。0 件と混ぜない",
-                "不具合・要望・つまずきは report の口へ（thth_report_file）"]}
+                "不具合・要望・つまずきは report の口へ（thth_report_file）",
+                "施策を試したら広場へ（thth plaza post・thth_plaza_post）。次を決める前に他の媒体の施策を読む"]}
 
 
 # ------------------------------------------------------------------ 人向け
@@ -930,6 +971,7 @@ def _render_section(section, out) -> None:
                 out(f"  あなたの project の報告: 開いている {mine['open']}"
                     f"・この版（{mine['version']}）で閉じた {mine['m']}"
                     + (f"（{titles}）" if titles else ""))
+        _render_plaza(value.get("plaza"), out)
         from . import notification_route
         for row in value.get("notification_routes") or []:
             text = (notification_route.line(row["cannot_say"])
@@ -969,6 +1011,13 @@ def _render_section(section, out) -> None:
                     f"（予定 {step['publish_at'] or '—'}）")
             elif step["kind"] == "report":
                 out(f"  報告  {step['report_id']}  {step['report_kind']}  {step['title']}")
+            elif step["kind"] == "plaza":
+                verb = {"read_replies": f"広場の返信を読む（新しい返信 {step.get('n_new_replies')} 件）",
+                        "verdict": "広場の施策を判定する",
+                        "try_on_medium": f"広場の施策を {step.get('medium') or '—'} で試す"
+                                         f"（まだ試していない媒体・判定 {step.get('verdict')}）"}
+                out(f"  {verb[step['candidate']]}  {step['account']}  {step['plaza_id']}"
+                    f"  {step['title']}")
             else:
                 out(f"  出す  {step['account']}（今日の予定がありません）")
         return
@@ -996,6 +1045,25 @@ def _render_section(section, out) -> None:
                 f"（{read['month_utc']}・推定・{read['read_refusal'] or '止めていません'}）")
             out(f"  予算 X 投稿: 上限 {posts['monthly']} 本/月"
                 f"（{posts['month_utc']}・{posts['post_refusal'] or '止めていません'}）")
+
+
+def _render_plaza(node, out) -> None:
+    """0 段の広場の 1〜2 行（数には分母・不参加は理由）。"""
+    if node is None:
+        return
+    if node.get("cannot_say") is not None:
+        out(f"  広場: 言えない: {node['cannot_say']}")
+        return
+    opened = (f"open の新着 {node['open_new']}（open {node['open_denominator']} 件のうち）"
+              if node["open_new"] is not None else "open: 参加していません")
+    out(f"  広場: 新着 {node['project_new']}（project {node['project_denominator']} 件のうち）"
+        f"・{opened}（{node['since']} から）")
+    trial = node.get("recent_trial")
+    if trial:
+        counts = trial["trials"]
+        out(f"  広場の最近の追試: {trial['plaza_id']}  {trial['title']}"
+            f"（再現した {counts['reproduced']}・再現しなかった {counts['not_reproduced']}・"
+            f"試していない {counts['not_tried']}／{counts['denominator']} 件）")
 
 
 def _render_unanswered(account, node, out) -> None:

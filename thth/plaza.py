@@ -1185,3 +1185,27 @@ def trial_counts(record):
         if row.get("kind") == "trial" and row.get("result") in counts:
             counts[row["result"]] += 1
     return {**counts, "denominator": sum(counts.values())}
+
+
+def recent_trial(viewer):
+    """「最近追試が付いた書き込み 1 件」（設計 §9-6）。読める範囲（自分の持ち主の書き込みと、
+    参加していれば open の写し）で、いちばん新しい追試が付いた 1 件。無ければ None。"""
+    records, _broken = load_all()
+    joined = members()
+    best = None
+    for record in records:
+        level = access(record, viewer, joined)
+        if level is None or record.get("hidden"):
+            continue
+        trials = [row for row in record["replies"] if row.get("kind") == "trial"]
+        if not trials:
+            continue
+        latest = max(trials, key=lambda row: jst.parse(row["at"]))
+        if best is None or jst.parse(latest["at"]) > jst.parse(best[1]["at"]):
+            best = (record, latest, level)
+    if best is None:
+        return None
+    record, latest, level = best
+    title = record["title"] if level == "own" else (record.get("open_copy") or {}).get("title") or ""
+    return {"plaza_id": record["plaza_id"], "title": _preview(title), "at": latest["at"],
+            "result": latest["result"], "trials": trial_counts(record), "view": level}
