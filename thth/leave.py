@@ -374,21 +374,32 @@ def _run_locked(account,*,by):
             if row['phase'] in ('worker_revoked','remote_pending'):
                 with gate.credentials(exclusive=True):
                     _,_,currently_shared=inventory(account,cfg)
-                    if currently_shared and cfg.get('media') not in ('threads','bluesky'):raise ValueError('shared_credential_revoke_refused')
-                    if row['token_shared'] and cfg.get('media') not in ('threads','bluesky'):raise ValueError('shared_credential_revoke_refused')
                     if currently_shared and not row['token_shared']:
                         row['token_shared']=True
                         row['targets']=[target for target in row['targets'] if target['category']!='token']
                         row['inventory_sha256']=_hash(row['targets'])
                         row['preserved']=sorted(set(row['preserved'])|{'token_shared'})
-                    row['phase']='remote_pending';_save(row)
-                    token,token_identity=_token(cfg)
-                    # Same saved credential bytes; never revoke a replacement made by a different operator.
-                    own=next((t for t in row['targets'] if t['category']=='token'),None)
-                    if own and token_identity!=own['identity']:raise ValueError('credential_changed')
-                    row['remote']=revoke(cfg,token,row['revoked'],lambda:_save(row))
-                    if row['token_shared'] and row['remote']=='unconfirmed_manual':row['remote']='unconfirmed_shared'
-                    row['phase']='remote_confirmed' if row['remote']=='confirmed' else 'manual_unconfirmed';_save(row)
+                    if row['token_shared']:
+                        # **共有の接続は遠隔で失効させず、そのまま退出を終える**（3.1.2 件 6・
+                        # 実測 09-23: 同じ app で同じ利用者が認可すると Mastodon は既存の
+                        # access token を返すので、別台帳でも値が同じになる）。失効すると他の
+                        # 生きている account も死ぬので投げない——が、止まる理由にもしない。
+                        # 自分の token file は targets から外してあり（他 account の file とは
+                        # 別でも、値が同じ限り消しても失効にはならない）、解除の切り分けは
+                        # 運用者に渡す（`remote_unconfirmed` の 1 行）。
+                        if any(target['category']=='token' for target in row['targets']):
+                            # 共有なのに消す対象に token が残っている——矛盾なので止める。
+                            raise ValueError('shared_credential_revoke_refused')
+                        row['remote']='unconfirmed_shared'
+                        row['phase']='manual_unconfirmed';_save(row)
+                    else:
+                        row['phase']='remote_pending';_save(row)
+                        token,token_identity=_token(cfg)
+                        # Same saved credential bytes; never revoke a replacement made by a different operator.
+                        own=next((t for t in row['targets'] if t['category']=='token'),None)
+                        if own and token_identity!=own['identity']:raise ValueError('credential_changed')
+                        row['remote']=revoke(cfg,token,row['revoked'],lambda:_save(row))
+                        row['phase']='remote_confirmed' if row['remote']=='confirmed' else 'manual_unconfirmed';_save(row)
             if row['phase'] in ('remote_confirmed','manual_unconfirmed','deleting'):
                 with gate.credentials(exclusive=True),admin_log.transaction():
                     _protect_targets(row)

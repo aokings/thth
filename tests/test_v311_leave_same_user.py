@@ -45,14 +45,15 @@ def test_same_user_different_token_leave_completes_and_leaves_other_account_unto
     assert accounts.load_token(accounts.load_account('beta'))['access_token']==other_access
 
 
-def test_same_token_bytes_still_refuse_remote_revoke(env,provider,monkeypatch):
+def test_same_token_bytes_do_not_revoke_remotely(env,provider,monkeypatch):
     _,tokenpath=configure(env,provider,monkeypatch,'mastodon')
     beta_token,_=same_user_beta(env,provider,tokenpath,'mastodon',same_bytes=True)
     old=tokenpath.read_bytes()
-    with pytest.raises(ValueError,match='shared_credential_revoke_refused'):leave.run('alpha',by='operator')
-    # 失効は投げず、唯一の再試行資格（自分の token file）も消さない。停止は戻さない。
+    # 3.1.2 件 6: 失効は投げない（他方も死ぬ）。止まらずに completed まで進む
+    # （完了までの形は tests/test_v312_leave_shared_token.py）。
+    result=leave.run('alpha',by='operator')
+    assert result['phase']=='completed' and result['remote']=='unconfirmed_shared'
     assert provider['calls']==[] and tokenpath.read_bytes()==old and beta_token.read_bytes()==old
-    assert leave_gate.stopped('alpha') and leave.read('alpha')['phase']=='worker_revoked'
 
 
 def test_threads_same_user_is_still_token_shared_and_preserved(env,monkeypatch):
