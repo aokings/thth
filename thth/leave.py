@@ -214,6 +214,11 @@ def inventory(account,cfg):
                 same_value=any(isinstance(token.get(k),str) and token[k] and token[k]==other_token.get(k) for k in credentials)
                 same_origin=(cfg.get('instance'),cfg.get('service'))==(other.get('instance'),other.get('service'))
                 same_grant=same_origin and token.get('user_id') and token.get('user_id')==other_token.get('user_id')
+                # Mastodon と X の失効は渡した token の値だけに効く（同じ利用者の別 token は
+                # 生き残る）。共有と見るのは値・ファイルが同じときだけにし、同じ利用者の別
+                # 台帳があるだけで退出が worker_revoked で止まらないようにする。Threads と
+                # Bluesky は遠隔の解除が本人の手なので、従前どおり同じ利用者を共有と見る。
+                if same_grant and cfg.get('media') in ('mastodon','x'):same_grant=False
                 if same_value or same_grant:shared=True
         from . import appenv
         app_directory=Path(os.environ.get('THTH_APPS_DIR') or Path.home()/'.config/thth/apps').resolve()
