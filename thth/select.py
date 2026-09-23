@@ -47,12 +47,15 @@ class SelectResult:
 # --------------------------------------------------------------------------
 
 # 解決できない理由の前置き（静的）。後ろに `waiting_for <名前>`・`target_retracted`・
-# `target_unreadable`・`target_missing` のどれかが付く。
+# `target_withdrawn`・`target_unreadable`・`target_missing` のどれかが付く。
 UNRESOLVED = "reply_to_unresolved"
 WAITING_FOR = "waiting_for"
 TARGET_RETRACTED = "target_retracted"
 TARGET_UNREADABLE = "target_unreadable"
 TARGET_MISSING = "target_missing"
+# 指した原稿が未公開のまま取り下げられた（`status: withdrawn`・3.3.0 の追加裁定）。
+# post_id が無いので以前は「待ち」のまま出続けた——待っても出ないので待ちにしない。
+TARGET_WITHDRAWN = "target_withdrawn"
 
 
 def unresolved(detail: str) -> str:
@@ -101,6 +104,8 @@ def resolve_reply_to_file(qf, *, account_name: str, pool=None,
     - `status: posted`・`post_id` が usable・`retracted_at` 無し → 解決
     - `post_id` がまだ無い → `reply_to_unresolved: waiting_for <名前>`（待つ）
     - `retracted_at` あり → `reply_to_unresolved: target_retracted`
+    - `status: withdrawn`（未公開のまま取り下げ）→ `reply_to_unresolved: target_withdrawn`
+      （待っても出ないので待ちにしない・3.3.0 の held に数える）
     - 型外・`post_id` が usable でない → `reply_to_unresolved: target_unreadable`
     - 無い（承認後に消された） → `reply_to_unresolved: target_missing`
 
@@ -138,6 +143,8 @@ def resolve_reply_to_file(qf, *, account_name: str, pool=None,
         return ReplyResolution(name, None, problem)
     if target_fm.get("retracted_at"):
         return ReplyResolution(name, None, unresolved(TARGET_RETRACTED))
+    if target_fm.get("status") == "withdrawn":
+        return ReplyResolution(name, None, unresolved(TARGET_WITHDRAWN))
     post_id = target_fm.get("post_id")
     if post_id:
         if target_fm.get("status") == "posted" and postid_mod.is_usable(post_id):

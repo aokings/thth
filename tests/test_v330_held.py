@@ -247,3 +247,24 @@ def test_SMTPが無ければheldの事象を溜めない(held_run, thth_root):
     assert held_run.run() == 0
     row = json.loads((Path(held_run.state) / incident.STATE_FILE).read_text())
     assert row["events"] == [] and row["held"] == 1
+
+
+# ------------------------------------------------------------------ withdrawn（追加の裁定）
+
+def test_指した原稿がwithdrawnなら待ちでなくtarget_withdrawnでheldに数える(tmp_path):
+    q = parse_verified(_write(str(tmp_path), "q.md", make_queue_text(
+        {"status": "withdrawn", "approved_sha": None}, body="## threads\n\n問い。\n")))
+    a = parse_verified(_write(str(tmp_path), "a.md", make_queue_text(
+        {"reply_to_file": "q.md"}, body="## threads\n\n答え。\n")))
+    files = [q, a]
+    result = _select(files)
+    assert result.chosen is None
+    reasons = {os.path.basename(r.file): r.reason for r in result.rejections}
+    assert reasons["a.md"] == "reply_to_unresolved: target_withdrawn"
+    assert select_mod.waiting_target(reasons["a.md"]) is None
+    [row] = select_mod.held_items(result, files, NOW)
+    assert row["file"] == "a.md" and row["category"] == "reply_to_unresolved" and row["due"]
+    assert select_mod.held_reason_code([row]) == "approved_but_held: reply_to_unresolved 1"
+    # runs に実エラーとして残る（retracted と同じ）。
+    from thth import core
+    assert core._is_error_reason(reasons["a.md"])
