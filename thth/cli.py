@@ -3032,9 +3032,14 @@ def cmd_board(args) -> int:
                 # を board 1 画面で区別できるようにする印。
                 stale = row.get("approval_stale_count", 0)
                 waiting = row.get("waiting_reply_count", 0)
+                held = row.get("held_count", 0)
                 print(f"  要確認: {len(needs_review)} 件（approval_stale {stale} 件"
-                      + (f"・返信待ち {waiting} 件" if waiting else "") + "）")
-                for item in needs_review:
+                      + (f"・返信待ち {waiting} 件" if waiting else "")
+                      + (f"・時刻を過ぎて出られない {held} 件" if held else "") + "）")
+                # **数だけでなく先頭の名前**（設計 3.3.0 A2）。46 行を並べると他の
+                # account の行が画面の外へ流れるので、先頭 BOARD_REVIEW_NAMES 本だけ
+                # 並べ、残りは本数と全部を見る口を言う。
+                for item in needs_review[:BOARD_REVIEW_NAMES]:
                     target = select_mod.waiting_target(item["reason"])
                     if target is not None:
                         # 待ちは誤りではない——名前と待ち先を言う（設計 3.2.0 §2）。
@@ -3042,7 +3047,15 @@ def cmd_board(args) -> int:
                               f"（{item['reason']}）")
                     else:
                         print(f"    {item['file']} — {item['reason']}")
+                if len(needs_review) > BOARD_REVIEW_NAMES:
+                    print(f"    ほか {len(needs_review) - BOARD_REVIEW_NAMES} 件"
+                          f"（全 {len(needs_review)} 件は thth board --json か"
+                          f" thth morning {row['account']}）")
     return 0
+
+
+# board の要確認に名前を並べる本数（設計 3.3.0 A2）。
+BOARD_REVIEW_NAMES = 5
 
 
 # **`thth --help` の冒頭 3 行の道案内**（T4・第 1 回の記録 §3）。第 1 回

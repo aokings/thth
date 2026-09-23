@@ -520,6 +520,24 @@ def _waiting_rows(name, now):
             "basis": "approved_reply_to_file_unresolved"}
 
 
+def _held_rows(name, cfg, now):
+    """承認済みなのに出られない原稿の**名前**（設計 3.3.0 A1・A2）。
+
+    `overdue_items` と同じ形。**時刻前の approval_stale も名前は出す**（`due`
+    が False）——通知はまだしないが、朝のうちに再承認できるように。reply_to_file の
+    待ちは入れない（`waiting_items` が出す）。本文は持たない（名前と理由と時刻）。
+    `n_due` が `thth run` の `held` に数える本数（分母は `n`）。
+    """
+    from . import core
+    rows = core.held_items_for_account(name, cfg, now=now)
+    items = [{"file": row["file"], "reason": row["reason"], "category": row["category"],
+              "publish_at": row["publish_at"], "due": row["due"],
+              "elapsed_hours": row["elapsed_hours"]} for row in rows]
+    return {"n": len(items), "n_due": sum(1 for row in items if row["due"]),
+            "limit": OVERDUE_LIMIT, "items": items[:OVERDUE_LIMIT],
+            "basis": "approved_needs_review_excluding_waiting"}
+
+
 def _queue_cell(node):
     """handoff の節から queue の数だけを写す（置き場のパスは写さない）。"""
     if node is None:
@@ -585,11 +603,14 @@ def read_refusal(media):
 def next_steps(unanswered_entries, world_entries, today_entries, reports=None) -> list:
     """**候補の列挙だけ**（masaru 裁定 3.1.0 §7-1）。本文は 1 字も作らない。
 
-    5 種類だけ: 「返す」（1 段の各行）・「絡む」（3 段の各行）・「出す」
+    6 種類だけ: 「返す」（1 段の各行）・「絡む」（3 段の各行）・「出す」
     （4 段で今日の予定が無い account）・「超過」（4 段の時刻超過の各行・3.1.1）・
-    「報告」（管理者の 1 枚だけ・開いている報告 1 件につき 1 行・3.1.2 §3）。
-    どの要素にも `body` は無い（「超過」も file と時刻だけ、「報告」も id と種類と
-    題の先頭 60 字だけで、報告の本文は載せない）。
+    「出られない」（4 段の held の各行・3.3.0 A2。`candidate` は approval_stale なら
+    `reapprove`（再承認）、それ以外は `inspect`）・「報告」（管理者の 1 枚だけ・
+    開いている報告 1 件につき 1 行・3.1.2 §3）。held に名前がある原稿は「超過」に
+    重ねない（同じ原稿に 2 つの候補を出さない）。
+    どの要素にも `body` は無い（「超過」「出られない」も file と理由と時刻だけ、
+    「報告」も id と種類と題の先頭 60 字だけで、報告の本文は載せない）。
     """
     steps = []
     for name, entry in unanswered_entries.items():
@@ -617,11 +638,21 @@ def next_steps(unanswered_entries, world_entries, today_entries, reports=None) -
         planned = today.get("value")
         if planned is not None and planned["n"] == 0:
             steps.append({"kind": "post", "account": name})
+        held = ((entry["value"] or {}).get("held_items") or {}).get("value") or {}
+        held_files = {row["file"] for row in held.get("items") or []}
         overdue = ((entry["value"] or {}).get("overdue_items") or {}).get("value") or {}
         for row in overdue.get("items") or []:
+            if row["file"] in held_files:
+                continue
             steps.append({"kind": "overdue", "account": name, "file": row["file"],
                           "publish_at": row["publish_at"],
                           "elapsed_hours": row["elapsed_hours"]})
+        for row in held.get("items") or []:
+            steps.append({"kind": "held", "account": name, "file": row["file"],
+                          "reason": row["reason"], "publish_at": row["publish_at"],
+                          "due": row["due"],
+                          "candidate": ("reapprove" if row["category"] == "approval_stale"
+                                        else "inspect")})
     for row in reports or []:
         steps.append({"kind": "report", "report_id": row["report_id"],
                       "report_kind": row["kind"], "title": row["title"][:PREVIEW_CHARS]})
@@ -715,6 +746,7 @@ def build(target, *, now=None, mark=True, allowed_names=None):
             "today": _guard(lambda name=name: _today_rows(name, now)),
             "overdue_items": _guard(lambda name=name: _overdue_rows(name, now)),
             "waiting_items": _guard(lambda name=name: _waiting_rows(name, now)),
+            "held_items": _guard(lambda name=name, cfg=cfg: _held_rows(name, cfg, now)),
             "queue": _queue_cell(node),
             "inflight": _inflight(node),
             "changes_since_last_read": ((node or {}).get("changes_since") or {}).get("changes"),
@@ -828,6 +860,10 @@ def _render_section(section, out) -> None:
             elif step["kind"] == "overdue":
                 out(f"  超過  {step['account']}  {step['file']}  {step['publish_at']}"
                     f"（{step['elapsed_hours']}h）")
+            elif step["kind"] == "held":
+                verb = "再承認" if step["candidate"] == "reapprove" else "確かめる"
+                out(f"  {verb}  {step['account']}  {step['file']}  {step['reason']}"
+                    f"（予定 {step['publish_at'] or '—'}）")
             elif step["kind"] == "report":
                 out(f"  報告  {step['report_id']}  {step['report_kind']}  {step['title']}")
             else:
@@ -954,6 +990,18 @@ def _render_today(account, node, out) -> None:
                 out(f"    返信先を解決できません: {row['file']}（{row['reason']}）")
         if value["n"] > len(value["items"]):
             out(f"    返信待ち: ほか {value['n'] - len(value['items'])} 本（全 {value['n']} 本）")
+    held = node.get("held_items") or {}
+    if held.get("cannot_say") is not None:
+        out(f"    出られない原稿の名前: 言えない: {held['cannot_say']}")
+    elif held.get("value"):
+        value = held["value"]
+        for row in value["items"]:
+            when = (f"{row['elapsed_hours']}h 超過" if row["elapsed_hours"] is not None
+                    else "時刻前" if not row["due"] else "時刻不明")
+            out(f"    出られない: {row['file']}（{row['reason']}・予定 {row['publish_at'] or '—'}"
+                f"・{when}）")
+        if value["n"] > len(value["items"]):
+            out(f"    出られない: ほか {value['n'] - len(value['items'])} 本（全 {value['n']} 本）")
     inflight = node["inflight"]
     if inflight["present"]:
         out(f"    inflight: {inflight['reason_code']}（{inflight['since']}）"

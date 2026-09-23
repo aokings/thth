@@ -140,7 +140,8 @@ def queue_summary(account_name: str | None, now=None) -> dict:
 OVERDUE_HOURS = 1.0
 
 
-def _needs_review_detail(files, *, account_name: str, account_cfg: dict, now) -> list:
+def _needs_review_detail(files, *, account_name: str, account_cfg: dict, now,
+                         held_out: list | None = None) -> list:
     """`select.select_one()` が拾った要確認（`approval_stale`・`stale`・`approved`
     なのに型外）を、board 向けにファイル名と理由の対で返す（外部レビュー再レビュー C）。
 
@@ -161,6 +162,9 @@ def _needs_review_detail(files, *, account_name: str, account_cfg: dict, now) ->
         {"file": os.path.basename(path), "reason": reason_by_path.get(path, "needs_review")}
         for path in result.needs_review
     ]
+    if held_out is not None:
+        # 承認済みなのに出られない原稿（設計 3.3.0 A1）。同じ select の結果から。
+        held_out.extend(select_mod.held_items(result, files, now))
     seen = set(result.needs_review)
 
     # **指定した時刻を過ぎたのに出ていないもの**（masaru 受け入れ条件 2026-09-10:
@@ -404,8 +408,9 @@ def board_summary(now=None) -> dict:
             last_post_source = "sent"
         collected_at = collect_mod.last_collected_at(account_cfg, name)
         inbox_state = collect_mod.read_inbox_state(name)
+        held = []
         needs_review = _needs_review_detail(
-            files, account_name=name, account_cfg=account_cfg, now=now)
+            files, account_name=name, account_cfg=account_cfg, now=now, held_out=held)
         token_row = maintain_mod.inspect(name, now=now)
         approval_stale_count = sum(1 for item in needs_review if item["reason"] == "approval_stale")
         waiting = waiting_items(needs_review)
@@ -471,6 +476,13 @@ def board_summary(now=None) -> dict:
             # ——待っている原稿の名前と待ち先。要確認（needs_review）にも同じ行がある。
             "waiting_reply_count": len(waiting),
             "waiting_items": waiting,
+            # 承認済みなのに出られない原稿（設計 3.3.0 A1・A2）。`held_count` は
+            # publish_at を過ぎた本数（`thth run` が `held` に数える本数）、
+            # `held_upcoming_count` は時刻前（まだ知らせない）の本数。名前は
+            # `needs_review` と `thth morning` の `held_items`。
+            "held_count": sum(1 for row in held if row["due"]),
+            "held_upcoming_count": sum(1 for row in held if not row["due"]),
+            "held_reason_code": select_mod.held_reason_code(held),
             # **スレッド連投の進行状態**（独立検収 2026-09-11・P1-1）。
             # 「どこまで出たか」ではなく**確認できた段・要求中の段・未着手の段**
             # を分けて出す。**停止の確認**もここに出る。

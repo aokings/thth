@@ -183,6 +183,9 @@ def held_items(result: SelectResult, files, now: datetime.datetime) -> list:
     まだ出る時刻でないので黙る。ただし board と morning は `due` を問わず名前を
     出す（設計 A1・A2）。本文は持たない（名前と理由と時刻だけ）。
     """
+    if now.tzinfo is None:
+        # 時刻の無い now（古い呼び出し）は JST とみなす（publish_at は必ず +09:00）。
+        now = now.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=9)))
     reason_by_path = {rej.file: rej.reason for rej in result.rejections}
     by_path = {qf.path: qf for qf in files}
     out, seen = [], set()
@@ -196,8 +199,10 @@ def held_items(result: SelectResult, files, now: datetime.datetime) -> list:
             continue
         qf = by_path.get(path)
         raw = qf.front_matter.get("publish_at") if qf is not None else None
+        # 条件 5 と同じ物差し: +09:00 の無い・壊れた publish_at は「時刻が読めない」。
         try:
-            publish_at = queuefile.parse_publish_at(raw) if raw else None
+            publish_at = (queuefile.parse_publish_at(raw)
+                          if isinstance(raw, str) and "+09:00" in raw else None)
         except ValueError:
             publish_at = None
         due = publish_at is None or publish_at <= now
