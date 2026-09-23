@@ -124,17 +124,22 @@ def test_題の語が重なる開いている報告をsimilarに返す(two_proje
                             title="Replies の数がずれる", body="別の本文")
     _rc, other, _ = _file(tmp_path, capsys, account="other-threads",
                           title="replies の件", body="他 project")
+    # 同じ project の開いている報告でも、題の語が重ならなければ入らない。
+    _rc, unrelated, _ = _file(tmp_path, capsys, title="morning が遅い", body="関係ない")
     rc, filed, _ = _file(tmp_path, capsys, title="replies_to が重複する", body="新しい本文")
     assert rc == 0
     ids = [row["report_id"] for row in filed["similar"]]
     assert set(ids) == {first["report_id"], sibling["report_id"]}
     assert other["report_id"] not in ids and closed["report_id"] not in ids
+    assert unrelated["report_id"] not in ids
     assert set(filed["similar"][0]) == {"report_id", "title", "status"}
 
 
 def test_題の語が重ならなければsimilarは空_1字の語は数えない(two_projects, tmp_path, capsys):
     _file(tmp_path, capsys, title="replies が他 account を返す")
-    rc, filed, _ = _file(tmp_path, capsys, title="a が b・x", body="別の本文")
+    rc, filed, _ = _file(tmp_path, capsys, title="morning が遅い", body="別の本文")
+    assert rc == 0 and filed["similar"] == []
+    rc, filed, _ = _file(tmp_path, capsys, title="a が b・x", body="1 字だけ")
     assert rc == 0 and filed["similar"] == []
 
 
