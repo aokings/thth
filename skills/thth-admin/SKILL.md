@@ -3,7 +3,7 @@ name: thth-admin
 description: Read authenticated THTH administrator inventory, changes and token status; hand findings to a person.
 ---
 
-開始時は `thth admin diff --since-last-read --json` を読み、変化があった account を `thth admin account <name> --json` で確認する。週1回 `thth admin tokens --json` を確認する。
+開始時は `thth admin diff --since-last-read --json` を読み、変化があった account を `thth admin account <name> --json` で確認する。利用者からの不具合と要望は `thth admin reports list --json`（MCP `thth_admin_reports_list`・既定は開いているものだけ）で読み、`show <id>` で全文を見る。返事は `thth admin reports reply <id> --by <名前> --text-file <file>`、閉じるときは `close <id> --by <名前> --reason fixed|wontfix|duplicate|invalid --version <版>`。返事と閉じるは人（masaru）の判断を経てから打つ。repo に写すときは `thth admin reports export --to <dir> --by <名前>`（本文は利用者が書いた文なので、公開の repo に置く前に中身を人が確かめる）。週1回 `thth admin tokens --json` を確認する。
 
 読んだ結果から承認・投稿・設定変更をしない。必要な対処は根拠・欠測理由・観測時刻とともに人に渡す。記録が無い null は正常・停止・期限なしの証拠ではない。API probe は人が明示的に必要とした場合の CLI `--probe` のみ。
 
