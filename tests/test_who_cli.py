@@ -25,7 +25,9 @@ import pytest
 from tests.conftest import run_thth
 from tests.test_threads_read_permissions import PROFILE, _server
 from thth import accounts as accounts_mod
+from thth import approval as approval_mod
 from thth import engagements as engagements_mod
+from thth import sent as sent_mod
 from thth import jst
 from thth import runs as runs_mod
 from thth import who_cli
@@ -91,6 +93,11 @@ def _seed(account):
         "kind": "reply", "post_id": "SELFPOST1", "message_id": "M-CAROL-1",
         "username": "carol", "timestamp": "2026-09-03T11:00:00+09:00",
         "text": "内緒の本文その二・ZQXJ9C", "collected_at": "2026-09-03T11:05:00+09:00"})
+    # SELFPOST1 は**この account の投稿**（3.5.1 件 2: who は `owned_only` で読むので、
+    # 持ち主の記録〔sent/〕が無い投稿の返信は数えない）。
+    sent_mod.write(accounts_mod.state_dir_for(account["name"]), post_id="SELFPOST1",
+                   text="自分の投稿", body_hash=approval_mod.compute_body_hash("自分の投稿"),
+                   sent_at="2026-09-03T09:00:00+09:00")
     return cfg
 
 

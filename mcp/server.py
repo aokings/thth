@@ -738,7 +738,8 @@ PLAZA_TOOLS = [
     {"name": "thth_plaza_reply",
      "description": "返信を 1 つ足す（comment・agree・disagree〔理由必須〕・tried〔自分の measure の id 必須〕・"
                     "trial〔追試: result に reproduced・not_reproduced・not_tried。再現しなかった報告も"
-                    "同じ重さで数える〕）",
+                    "同じ重さで数える〕）。project 範囲の書き込みにだけ返せる（open の書き込みへの返信は"
+                    "他の持ち主にも見えるので、人の CLI の二段確認だけ・open_requires_cli）",
      "inputSchema": {"type": "object", "properties": {
          "plaza_id": {"type": "string"}, "account": {"type": "string"},
          "kind": {"type": "string", "enum": ["comment", "tried", "agree", "disagree", "trial"]},
@@ -749,7 +750,8 @@ PLAZA_TOOLS = [
     {"name": "thth_plaza_update",
      "description": "自分の持ち主の施策の結果を取り直す（refresh）・判定（verdict: adopted・dropped・"
                     "inconclusive と reason）・project の範囲に戻す（visibility: project。open への切り替えは"
-                    "人の CLI の二段確認だけ）",
+                    "人の CLI の二段確認だけ。open の書き込みで他の持ち主に見える写しが変わる更新も同じ・"
+                    "open_requires_cli）",
      "inputSchema": {"type": "object", "properties": {
          "plaza_id": {"type": "string"}, "account": {"type": "string"},
          "refresh": {"type": "boolean"},

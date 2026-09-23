@@ -10,7 +10,7 @@ import stat
 import subprocess
 import sys
 from . import (accounts, account_report, admin_log, analytics_report, appenv, collection_status, doctor,
-               incident, jst, oauth, operations_handoff, redact, report_details, runs)
+               incident, jst, oauth, operations_handoff, redact, report_details, runs, timer_cleanup)
 
 FIELDS = ('production', 'hashtags', 'max_hashtags', 'min_interval_hours', 'quiet_hours',
           'collect_days', 'stale_days', 'scheduled')
@@ -45,6 +45,11 @@ def _scrub(value):
         prefix, separator, name = stem.partition('@')
         if separator and accounts.name_is_safe(name) and prefix in ('thth', 'thth-collect') and value.endswith('.timer'):
             return value  # A generated systemd instance name is not an email address.
+        if timer_cleanup.instance_of(value):
+            return value  # thth-collect@<name>.service（3.5.1 件 1）も同じ。
+        command = value.removeprefix(timer_cleanup.stop_command(()))
+        if command != value and command and all(timer_cleanup.instance_of(u) for u in command.split(' ')):
+            return value  # orphan_unit の止める命令（unit 名だけで組んだ 1 行）。
         return admin_log.MAIL.sub('[redacted-email]', value)
     if isinstance(value, dict):
         return {_scrub(k): ('[redacted]' if any(word in k.lower() for word in ('password', 'secret', 'access_token', 'refresh_token', 'accessjwt', 'refreshjwt', 'authorization', 'email')) else _scrub(v)) for k, v in value.items()}
@@ -524,7 +529,20 @@ def extra(operation, *, account, via, now, since_last_read=False, mark_read=Fals
         return {'release':_release(via)}
     names = [account] if account else _admin_names()
     if operation=='timers':
-        rows = {name: timer(name, via=via) for name in names}
+        from . import leave
+        # 台帳の無い account（退出を終えた等）の unit は `orphan_unit` として別に出す
+        # （3.5.1 件 1）。by_account と timers.json には台帳のある account だけを置く
+        # ——退出した account の記録は次の更新で消える。
+        ledger = set(accounts.list_account_names())
+        rows = {name: timer(name, via=via) for name in names if name in ledger}
+        leave_rows = {}
+        for name in leave.names():
+            try: row = leave.read(name)
+            except (OSError, ValueError, TypeError, KeyError): continue
+            if row and isinstance(row.get('timers'), dict): leave_rows[name] = row['timers']
+        # 生の systemctl は CLI だけ（HTTP・MCP は前回の記録だけを読む）。
+        found = timer_cleanup.orphans(ledger, cached=_admin_json('timers.json'), leave_rows=leave_rows,
+                                      live=via == 'cli', only=account)
         # Only the explicit CLI timers command records observations. Inventory,
         # HTTP and MCP remain read-only; a non-systemd host preserves the last cache.
         if via == 'cli' and any(row['observed_at'] is not None for row in rows.values()):
@@ -534,7 +552,7 @@ def extra(operation, *, account, via, now, since_last_read=False, mark_read=Fals
                                               _scrub(dict(schema_version=1, by_account=rows)))
             except (OSError, ValueError, TypeError):
                 raise ValueError('timer_snapshot_unavailable') from None
-        return {'by_account': rows}
+        return {'by_account': rows, **found}
     if operation=='tokens':
         from . import scopes
         rows=[]

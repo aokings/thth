@@ -16,7 +16,8 @@
      の `reaction_for` 引数）。**計算は 1 か所**（T3-2 発注書）。
 
   2. **相手 → 自分**（`they_replied_to_me`）: 返信台帳（`thth/replies.py`）の
-     うち `own is False` で `author_key(medium, username)` が一致する行。
+     うち**この account の投稿の返信**（`owned_only`・3.5.1）で `own is False` かつ
+     `author_key(medium, username)` が一致する行。
      出すのは `root`（`post_id`＝自分の投稿）・`message_id`・`at`
      （`timestamp`）だけ——**`text`・`username` は捨てる**。
 
@@ -169,10 +170,17 @@ def _account_node(account_name: str, *, author_key: str | None, username: str | 
         cannot_say.append(f"24h の刻みが未採取: {uncovered} 本")
 
     # --- 相手 → 自分（返信台帳・自分の投稿への他者返信だけ） ---
-    replies_result = replies_mod.load(account_name)
+    # **この account の投稿の返信だけを読む**（`owned_only`・3.5.1 件 2）。返信の置き場は
+    # 同じ repo の他 account と共有で、他の媒体の返信行まで読むと、下の `author_key` を
+    # **この account の媒体で**計算するので、同じ username の別媒体の人が「相手→自分」に
+    # 混ざっていた。母集団は `thth replies` と同じ（3.1.1）。
+    replies_result = replies_mod.load(account_name, owned_only=True)
     replies_broken = len(replies_result["broken"])
     if replies_result["broken"]:
         cannot_say.append(f"返信の台帳の一部が読めません（{replies_broken} 本）")
+    if replies_result.get("population_errors"):
+        cannot_say.append(f"自分の投稿の記録の一部が読めません（{replies_result['population_errors']} 件・"
+                          "その投稿への返信は数えていません）")
     for row in replies_result["replies"]:
         # **`own is False` の行だけ**（自分の返信を「相手→自分」に混ぜない）。
         if row.get("own") is not False:
@@ -216,6 +224,10 @@ def _account_node(account_name: str, *, author_key: str | None, username: str | 
         "provenance": {
             "source": SCHEMA_SOURCE, "resolved_from": resolved_from,
             "engagements_broken": eng["broken"], "replies_broken": replies_broken,
+            # 分母: 置き場にあったが他 account の投稿なので読まなかったファイルの本数と、
+            # 母集団（この account の投稿）を作るときに読めなかった記録の数。
+            "replies_other_account_files": replies_result["counts"].get("other_account_files"),
+            "replies_population_errors": replies_result.get("population_errors"),
             "updated": jst.iso(now),
         },
     }
@@ -332,6 +344,10 @@ def _render_node(node: dict) -> None:
         print(f"  {arrow} {at}  root={root}  {tail}")
     if node.get("profile"):
         print(f"  プロフィール @{node['profile'].get('username')}")
+    provenance = node.get("provenance") or {}
+    if provenance.get("replies_other_account_files"):
+        print(f"  返信の台帳: 他 account の投稿のファイル "
+              f"{provenance['replies_other_account_files']} 本は読んでいません（数えていません）")
     for line in node["cannot_say"]:
         print(f"  言えない: {line}")
 
