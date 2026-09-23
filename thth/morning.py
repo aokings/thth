@@ -140,7 +140,7 @@ def targets(target) -> list:
 
 # --------------------------------------------------------------- 第 0 段
 
-def _tool_section(handoff):
+def _tool_section(handoff, now=None, admin=False):
     """版・前回から変わったか・リリースノート・出せるもの表（設計 §2 の 0 段）。
 
     **前回との比較は account ごとの栞から来る**（`handoff-report` の
@@ -172,7 +172,15 @@ def _tool_section(handoff):
         # 変化があれば」）。静的な表なので、版が変わらなければ変わらない。
         "capabilities": tool.get("capabilities") if changed else None,
         "capabilities_basis": "static_table_not_a_provider_probe",
+        # 報告の口（設計 3.1.2 §3）。**管理者の 1 枚にだけ**（サーバ型の利用者の
+        # credential では出さない——他 project の件数を渡さない）。
+        "reports": _reports_cell(now) if admin else None,
     }
+
+
+def _reports_cell(now):
+    from . import report_inbox
+    return report_inbox.morning_summary(now or jst.now_jst())
 
 
 # --------------------------------------------------------------- 第 1 段
@@ -574,7 +582,7 @@ def build(target, *, now=None, mark=True, allowed_names=None):
 
     sections = [
         {"section": "tool", "title": "道具",
-         **(_guard(lambda: _tool_section(handoff)) if handoff is not None
+         **(_guard(lambda: _tool_section(handoff, now, admin=allowed_names is None)) if handoff is not None
             else cell(cannot_say=handoff_cell["cannot_say"]))},
         _section("unanswered", "返していないもの", unanswered_entries),
         _section("yesterday", "昨日の自分", yesterday_entries),
@@ -603,7 +611,8 @@ def build(target, *, now=None, mark=True, allowed_names=None):
                 "本文は先頭 60 字の表示だけ。全文も絶対パスも返さない",
                 "次の一手は候補の列挙。本文は作らない",
                 "監視語は管理者が入れた語だけ。道具は語を選ばない",
-                "取れなかった段は null と静的な理由。0 件と混ぜない"]}
+                "取れなかった段は null と静的な理由。0 件と混ぜない",
+                "不具合と要望は report の口へ（thth_report_file）"]}
 
 
 # ------------------------------------------------------------------ 人向け
@@ -648,6 +657,14 @@ def _render_section(section, out) -> None:
                 f"（{value['capabilities_basis']}）")
         if value["notes_reason"]:
             out(f"  ノート: {value['notes_reason']}")
+        reports = value.get("reports")
+        if reports is not None:
+            if reports["cannot_say"] is not None:
+                out(f"  報告: 言えない: {reports['cannot_say']}")
+            else:
+                out(f"  報告: 開いている {reports['open']} 件（新規 {reports['new']} 件・"
+                    f"直近 {reports['new_window_hours']} 時間）"
+                    + (f"  → {reports['next']}" if reports["next"] else ""))
         return
     if name == "next_steps":
         out(f"  候補 {value['n']} 件（本文は作りません）")

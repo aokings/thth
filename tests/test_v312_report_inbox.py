@@ -296,3 +296,17 @@ def test_本文のTHTH_ROOTとホームの絶対パスは畳んで置く(two_pro
     stored = report_inbox.show(filed["report_id"])["body"]
     assert root not in stored and home not in stored
     assert "$THTH_ROOT/repos/kopicha/docs/sns/queue/a.md" in stored and "~/x" in stored
+
+
+def test_置き場がまだ無ければ0件_symlinkなら読まずに断る(two_projects, tmp_path):
+    assert report_inbox.list_reports(status="all")["n"] == 0
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    state = Path(os.environ["THTH_ROOT"]) / "state"
+    state.mkdir(exist_ok=True)
+    (state / "_reports").symlink_to(elsewhere)
+    with pytest.raises(report_inbox.ReportError, match="^report_store_unavailable$"):
+        report_inbox.list_reports(status="all")
+    with pytest.raises(report_inbox.ReportError, match="^report_store_unavailable$"):
+        report_inbox.file_report("kopicha-threads", kind="bug", title="t", body="b", by="s")
+    assert list(elsewhere.iterdir()) == []

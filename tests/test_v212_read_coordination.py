@@ -61,7 +61,7 @@ def test_cli_reads_do_not_wait_or_call_core_when_leave_holds_exclusive(env,conte
         start=time.monotonic();rc=cli.main(command);elapsed=time.monotonic()-start
     captured=capsys.readouterr();assert rc==2 and elapsed<1
     assert json.loads(captured.out)=={'error':'account_leaving','cannot_say':['account_leaving']}
-    assert captured.err.strip()=='account_leaving'
+    assert captured.err.strip()=='account_leaving\n'+__import__('thth.report_inbox').report_inbox.CHANNEL_LINE  # 3.1.2 §3.5: 断りの理由行の後ろに受け口の案内 1 行
 
 
 def test_dry_send_input_then_nonwaiting_lease(env,tmp_path,capsys):
@@ -69,7 +69,7 @@ def test_dry_send_input_then_nonwaiting_lease(env,tmp_path,capsys):
     with exclusive():
         start=time.monotonic();rc=cli.main(['send','alpha','--text-file',str(text)])
         assert time.monotonic()-start<1 and rc==2
-    assert capsys.readouterr().err.strip()=='account_leaving'
+    assert capsys.readouterr().err.strip()=='account_leaving\n'+__import__('thth.report_inbox').report_inbox.CHANNEL_LINE  # 3.1.2 §3.5: 断りの理由行の後ろに受け口の案内 1 行
     assert not (env['root']/'state/alpha/sent').exists()
 
 
@@ -145,7 +145,7 @@ def test_real_cli_child_rejects_ex_under_deadline(env,content):
             result=subprocess.run([sys.executable,'-c',"from thth.cli import main;raise SystemExit(main(['queue','alpha','--json']))"],capture_output=True,text=True,timeout=2)
         except subprocess.TimeoutExpired:pytest.fail('reader waited for the exit drain')
     assert result.returncode==2 and json.loads(result.stdout)['cannot_say']==['account_leaving']
-    assert result.stderr.strip()=='account_leaving'
+    assert result.stderr.strip()=='account_leaving\n'+__import__('thth.report_inbox').report_inbox.CHANNEL_LINE  # 3.1.2 §3.5: 断りの理由行の後ろに受け口の案内 1 行
 
 
 def test_report_holds_lease_through_calculation_and_release(env,monkeypatch):

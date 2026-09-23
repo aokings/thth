@@ -237,10 +237,26 @@ def answer(account_name=None, *, project=None, now=None, since_last_read=False,
             elif reason in {"cursor_unreadable", "cursor_directory_unavailable"}:
                 node["cannot_say"].remove("no_previous_session_cursor")
                 node["cannot_say"].append(reason)
+    if since_last_read:
+        # 報告の口（設計 3.1.2 §3・§3.5）。開始手順で必ず読む場所なので受け口の案内を
+        # 常に添え、その account の project の報告と前回の栞から増えた返事を出す
+        # （栞の snapshot は `tool.version` だけを見るので、足しても差分は増えない）。
+        from . import report_inbox
+        for name, node in nodes.items():
+            node["tool"] = {**node["tool"], "report_channel": report_inbox.CHANNEL,
+                            "reports": report_inbox.handoff_summary(
+                                {name: configs[name]},
+                                [(node.get("changes_since") or {}).get("read_at")])}
+    tool = nodes[account_name]['tool'] if account_name else tool_version.summary()
+    if since_last_read and account_name is None:
+        tool = {**tool, "report_channel": report_inbox.CHANNEL,
+                "reports": report_inbox.handoff_summary(
+                    configs, [(node.get("changes_since") or {}).get("read_at")
+                              for node in nodes.values()])}
     return {"schema_version": 1, "report_type": "operations_handoff",
             "generated_at": jst.iso(now), "filters": {"account": account_name, "project": project},
             "by_account": nodes, "scope_complete": not skipped,
-            "tool": nodes[account_name]['tool'] if account_name else tool_version.summary(),
+            "tool": tool,
             "limitations": [("保存済みsnapshotと現在の値の差分。間に起きた全イベントを復元するものではない"
                               if since_last_read else
                               "ローカル保存記録の現在の読み取り。前回セッション以降の差分ではない"),
@@ -258,6 +274,17 @@ def render_markdown(payload):
             for change in row["changes_since"]["changes"]:
                 lines.append(f"- {analytics_report._markdown_text(name)}: {analytics_report._markdown_text(change['field'])}: {analytics_report._markdown_text(change['previous'])} → {analytics_report._markdown_text(change['current'])}")
         lines += [f"- {analytics_report._markdown_text(name)}: {row['state']}（timer正常性は不明）"]
+    reports = payload["tool"].get("reports")
+    if reports is not None and reports.get("cannot_say") is None:
+        lines.append(f"- 報告: 開いている {reports['open']}/{reports['denominator']} 件"
+                     f"・新しい返事 {len(reports['new_replies'])} 件（thth report show <id>）")
+        for row in reports["new_replies"]:
+            lines.append(f"  - {analytics_report._markdown_text(row['report_id'])} "
+                         f"{analytics_report._markdown_text(row['by'] or '')}: "
+                         f"{analytics_report._markdown_text(row['text'].splitlines()[0] if row['text'] else '')}")
+    if payload["tool"].get("report_channel"):
+        from . import report_inbox
+        lines.append("- " + report_inbox.CHANNEL_LINE)
     lines += ["", *["- " + item for item in payload["limitations"]], "", "## 根拠と構造化データ", ""]
     lines += ["    " + line for line in json.dumps(payload, ensure_ascii=False, indent=2).splitlines()]
     return "\n".join(lines) + "\n"

@@ -3006,6 +3006,10 @@ queue で運用する     → lint → approve（2 段）→ throw
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="thth", description=道案内,
+        # **受け口の案内を末尾に 1 行**（設計 3.1.2 §3.5）。`→` を使わない
+        # （冒頭の道案内 3 行と数え分ける・tests/test_trial_frictions.py）。
+        epilog="不具合と要望は report の口へ: thth report file <account> --kind bug|request"
+               "（MCP: thth_report_file）",
         # **3 行のまま出す**（argparse の既定は 1 段落に畳む）。
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--version", action="version", version=_version_string())
@@ -3425,11 +3429,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    real_argv = list(sys.argv[1:] if argv is None else argv)
+    rc = _main(argv, real_argv)
+    # **断ったら受け口の案内を 1 行**（設計 3.1.2 §3.5）。理由行の後ろに、静的な
+    # 1 行だけ（account 名も本文も入れない）。成功には載せない。`lint` の 1 は
+    # 検査結果であって断りではないので外す。
+    if rc and not (real_argv[:1] == ["lint"] and rc == 1):
+        from . import report_inbox
+        print(report_inbox.CHANNEL_LINE, file=sys.stderr)
+    return rc
+
+
+def _main(argv, real_argv) -> int:
     # **`topics` の直後の語だけを見て入口を分ける**（設計 §6「CLI 互換性」）。
     # 新方式を既存の argparse へ足すと、`--note` 等と衝突して**既存の呼び方が
     # 壊れる**。`thth topics <account> --advise` はこれまでどおり下を通る。
     from . import topic_cli
-    real_argv = list(sys.argv[1:] if argv is None else argv)
     if topic_cli.is_new_style(real_argv):
         return topic_cli.dispatch(real_argv)
 

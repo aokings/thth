@@ -611,6 +611,25 @@ REPORT_TOOLS = [
 ]
 
 
+# **うまくいかなければ報告の口へ**（設計 3.1.2 §3.5）。利用者の道具の説明文の
+# 末尾に 1 句。定数（TOOLS 等）は書き換えず、並べるときに足す——「売り文句」の
+# 正本（設計 v2 §1・「自分の泉」§2）はそのまま残る。
+REPORT_HINT = "（うまくいかなければ thth_report_file）"
+
+
+def _with_report_hint(tools):
+    return [tool if tool["name"].startswith("thth_report_")
+            else dict(tool, description=tool["description"] + REPORT_HINT) for tool in tools]
+
+
+def _channel_note():
+    """断りの応答に添える 2 つ目の text（静的な 1 行・本文も account 名も入れない）。"""
+    if APP_DIR not in sys.path:
+        sys.path.insert(0, APP_DIR)
+    from thth.report_inbox import CHANNEL_LINE
+    return {"type": "text", "text": CHANNEL_LINE}
+
+
 def server_mode():
     return 'THTH_REPORT_CREDENTIALS' in os.environ or 'THTH_REPORT_TOKEN' in os.environ
 
@@ -624,15 +643,16 @@ def server_tools(context):
     # account／project しか対象にできない（`report_service.execute_morning()`）。
     reports = reports + [tool for tool in TOOLS if tool['name']=='thth_morning']
     from thth.server_writes import WRITE_OPERATIONS
-    return reports + [tool for tool in SERVER_TOOLS
-                      if context.writes or tool['name'][5:] not in WRITE_OPERATIONS] + REPORT_TOOLS
+    return _with_report_hint(reports + [tool for tool in SERVER_TOOLS
+                      if context.writes or tool['name'][5:] not in WRITE_OPERATIONS]) + REPORT_TOOLS
 
 
 def server_call(name, arguments):
     from thth.report_service import execute_report, execute_mcp_report, ReportServiceError
     from thth.server_writes import execute, WRITE_OPERATIONS, SAFE_ERRORS, DRAFT_REASONS
     context=authenticated_context()
-    failure=lambda value:{'content':[{'type':'text','text':value}],'isError':True}
+    # 断りは 1 つ目の text が静的な理由、2 つ目が受け口の案内（設計 3.1.2 §3.5）。
+    failure=lambda value:{'content':[{'type':'text','text':value},_channel_note()],'isError':True}
     if context is None: return failure('unauthorized')
     tool=next((tool for tool in server_tools(context) if tool['name']==name),None)
     if tool is None: return failure('unsupported_operation')
@@ -725,7 +745,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
     if isinstance(name, str) and name.startswith("thth_admin_"):
         context = admin_context()
         if context is None:
-            return {"content": [{"type": "text", "text": "unauthorized"}], "isError": True}
+            return {"content": [{"type": "text", "text": "unauthorized"}, _channel_note()], "isError": True}
         from thth.report_service import execute_report, ReportServiceError
         try:
             if "operation" in arguments: raise ReportServiceError("invalid_request")
@@ -734,7 +754,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
             return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
         except (ValueError, TypeError, ReportServiceError) as error:
             reason = "invalid_options" if str(error) == "invalid_options" else "invalid_request"
-            return {"content": [{"type": "text", "text": reason}], "isError": True}
+            return {"content": [{"type": "text", "text": reason}, _channel_note()], "isError": True}
     if name == "thth_lint":
         proc = run_cli(["lint", arguments["file"], "--json"])
         text = proc.stdout
@@ -893,7 +913,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         proc = run_cli(args)
         text = proc.stdout
     else:
-        return {"content": [{"type": "text", "text": f"unknown tool: {name}"}], "isError": True}
+        return {"content": [{"type": "text", "text": f"unknown tool: {name}"}, _channel_note()], "isError": True}
 
     if name.startswith("thth_topic_") or name in (
             "before_you_post", "after_you_posted", "analytics_report", "operations_handoff", "study_report", "thread_read", "where_to_appear",
@@ -909,7 +929,11 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         is_error = proc.returncode not in (0, 1)  # lint は 1 も正常な「検査結果」
     if not text:
         text = proc.stderr
-    return {"content": [{"type": "text", "text": text}], "isError": is_error}
+    content = [{"type": "text", "text": text}]
+    # 断りなら受け口の案内を 2 つ目に（CLI の理由行に既に載っていれば重ねない）。
+    if is_error and _channel_note()["text"] not in text:
+        content.append(_channel_note())
+    return {"content": content, "isError": is_error}
 
 
 def _send(obj: dict) -> None:

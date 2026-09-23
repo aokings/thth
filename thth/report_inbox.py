@@ -127,7 +127,13 @@ class Scope:
 # ------------------------------------------------------------------ 置き場
 
 def _directory(create=False):
-    """`$THTH_ROOT/state/_reports` を祖先ごと O_NOFOLLOW で開く（fd を返す）。"""
+    """`$THTH_ROOT/state/_reports` を祖先ごと O_NOFOLLOW で開く（fd を返す）。
+
+    読むだけの口で置き場がまだ無い（`state/` ごと無い）ときは `None`＝0 件。
+    在るのに開けない（symlink・権限）ときだけ `report_store_unavailable`。
+    """
+    if not create and not os.path.lexists(accounts.state_dir_for(DIRECTORY)):
+        return None
     try:
         return handoff_cursor._directory(DIRECTORY, create=create)
     except FileNotFoundError:
@@ -593,6 +599,57 @@ def export(to, *, by):
     return {"schema_version": SCHEMA_VERSION, "report_type": "report_export",
             "n_open": len(written), "n_closed_updated": len(updated),
             "files": sorted(written + updated), "unreadable": broken}
+
+
+# ------------------------------------------------------------ 開始手順に載せる
+
+def handoff_summary(configs, read_ats):
+    """`handoff-report --since-last-read` の `tool.reports`（設計 §3・§3.5）。
+
+    読むのは**その呼び出しの account と、その project の報告だけ**（`configs` は
+    既に呼び出しの範囲に絞られている）。「新しい返事」は前回の栞（account ごとの
+    `read_at` の最も古いもの）より後の返事。栞が 1 つも無ければ全部を新しいとみなす
+    ——見落とすより重ねて見せる。
+    """
+    names = set(configs)
+    projects = {cfg.get("project") for cfg in configs.values() if cfg.get("project")}
+    scope = Scope(names, projects)
+    parsed = [jst.parse(value) for value in read_ats if value]
+    since = min(parsed) if parsed else None
+    try:
+        records, _broken = load_all()
+    except ReportError as error:
+        return {"open": None, "closed": None, "denominator": None, "replies": None,
+                "new_replies": None, "since": None, "cannot_say": str(error)}
+    visible = [row for row in records if scope.allows(row)]
+    new = [{"report_id": row["report_id"], "title": row["title"], "status": row["status"],
+            "at": reply_row["at"], "by": reply_row.get("by"), "text": reply_row["text"]}
+           for row in visible for reply_row in row["replies"]
+           if since is None or jst.parse(reply_row["at"]) > since]
+    return {"open": sum(row["status"] == "open" for row in visible),
+            "closed": sum(row["status"] == "closed" for row in visible),
+            "denominator": len(visible),
+            "replies": sum(len(row["replies"]) for row in visible),
+            "new_replies": new, "since": jst.iso(since) if since else None,
+            "cannot_say": None}
+
+
+def morning_summary(now):
+    """管理者の毎朝の一枚の 0 段「道具」に載せる件数（設計 §3）。
+
+    「新規」は直近 24 時間に置かれて、まだ開いている報告。
+    """
+    try:
+        records, broken = load_all()
+    except ReportError as error:
+        return {"open": None, "new": None, "denominator": None, "new_window_hours": 24,
+                "unreadable": None, "next": None, "cannot_say": str(error)}
+    opened = [row for row in records if row["status"] == "open"]
+    new = [row for row in opened if now - jst.parse(row["at"]) < WINDOW]
+    return {"open": len(opened), "new": len(new), "denominator": len(records),
+            "new_window_hours": 24, "unreadable": broken,
+            "next": "thth admin reports list --status open" if opened else None,
+            "cannot_say": None}
 
 
 # ------------------------------------------------------------------ CLI
