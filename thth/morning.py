@@ -557,12 +557,14 @@ def read_refusal(media):
 
 # --------------------------------------------------------------- 第 5 段
 
-def next_steps(unanswered_entries, world_entries, today_entries) -> list:
+def next_steps(unanswered_entries, world_entries, today_entries, reports=None) -> list:
     """**候補の列挙だけ**（masaru 裁定 3.1.0 §7-1）。本文は 1 字も作らない。
 
-    4 種類だけ: 「返す」（1 段の各行）・「絡む」（3 段の各行）・「出す」
-    （4 段で今日の予定が無い account）・「超過」（4 段の時刻超過の各行・3.1.1）。
-    どの要素にも `body` は無い（「超過」も file と時刻だけで、本文の先頭は載せない）。
+    5 種類だけ: 「返す」（1 段の各行）・「絡む」（3 段の各行）・「出す」
+    （4 段で今日の予定が無い account）・「超過」（4 段の時刻超過の各行・3.1.1）・
+    「報告」（管理者の 1 枚だけ・開いている報告 1 件につき 1 行・3.1.2 §3）。
+    どの要素にも `body` は無い（「超過」も file と時刻だけ、「報告」も id と種類と
+    題の先頭 60 字だけで、報告の本文は載せない）。
     """
     steps = []
     for name, entry in unanswered_entries.items():
@@ -595,6 +597,9 @@ def next_steps(unanswered_entries, world_entries, today_entries) -> list:
             steps.append({"kind": "overdue", "account": name, "file": row["file"],
                           "publish_at": row["publish_at"],
                           "elapsed_hours": row["elapsed_hours"]})
+    for row in reports or []:
+        steps.append({"kind": "report", "report_id": row["report_id"],
+                      "report_kind": row["kind"], "title": row["title"][:PREVIEW_CHARS]})
     return steps
 
 
@@ -691,7 +696,12 @@ def build(target, *, now=None, mark=True, allowed_names=None):
     budget_cell = _budget({cfg.get("media") for cfg in configs.values()})
 
     def _steps():
-        steps = next_steps(unanswered_entries, world_entries, today_entries)
+        # 報告は**管理者の 1 枚だけ**（サーバ型の利用者に他 project の報告を並べない）。
+        reports = None
+        if allowed_names is None:
+            from . import report_inbox
+            reports = report_inbox.list_reports(scope=None, status="open")["reports"]
+        steps = next_steps(unanswered_entries, world_entries, today_entries, reports)
         return {"steps": steps, "n": len(steps)}
 
     sections = [
@@ -792,6 +802,8 @@ def _render_section(section, out) -> None:
             elif step["kind"] == "overdue":
                 out(f"  超過  {step['account']}  {step['file']}  {step['publish_at']}"
                     f"（{step['elapsed_hours']}h）")
+            elif step["kind"] == "report":
+                out(f"  報告  {step['report_id']}  {step['report_kind']}  {step['title']}")
             else:
                 out(f"  出す  {step['account']}（今日の予定がありません）")
         return

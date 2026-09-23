@@ -255,3 +255,15 @@ def test_MCPの返事はbyが要り_利用者のcredentialには出ない(admin_
     assert not any(name.startswith("thth_admin_reports_") for name in names)
     denied = server.call_tool("thth_admin_reports_list", {})
     assert denied["isError"] and denied["content"][0]["text"] == "unsupported_operation"
+
+
+def test_書き出しは既定の行き先を持たず_toが要る(filed, capsys):
+    """masaru 裁定 09-23: 公開 repo に利用者の本文を出さない——行き先は呼ぶ側が選ぶ。"""
+    with pytest.raises(SystemExit):
+        cli.main(["admin", "reports", "export", "--by", "masaru"])
+    assert "--to" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        cli.main(["admin", "reports", "export", "--help"])
+    assert "公開 repo には置かない" in capsys.readouterr().out
+    with pytest.raises(report_inbox.ReportError, match="^invalid_export_target$"):
+        report_inbox.export("", by="masaru")

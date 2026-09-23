@@ -525,7 +525,7 @@ def _fence(text):
 
 
 def render_markdown(record, *, by):
-    """書き出しの 1 件（THTH の repo で git が追う形）。**絶対パスも秘密も入れない**
+    """書き出しの 1 件（私有の置き場で git が追う形）。**絶対パスも秘密も入れない**
     ——本文は置く時点で秘密を断り、`$THTH_ROOT`・ホームを畳んである。"""
     lines = [f"# {record['title']}", "",
              f"- report_id: `{record['report_id']}`",
@@ -561,7 +561,11 @@ def render_markdown(record, *, by):
 
 def export(to, *, by):
     """開いている報告を 1 件 1 ファイルで書き出す。閉じた報告は、前に書き出した
-    ファイルがあるときだけ閉じた形に書き直す（repo の写しを実物に揃える）。
+    ファイルがあるときだけ閉じた形に書き直す（写しを実物に揃える）。
+
+    **行き先は呼ぶ側が必ず選ぶ**（既定の行き先を持たない・masaru 裁定 09-23）。
+    THTH の repo は公開なので、利用者が書いた本文を `docs/報告/` に置くと公開される
+    ——私有の置き場へ書き出す。
 
     応答には**書き出し先の絶対パスを返さない**（ファイル名だけ）。
     """
@@ -883,11 +887,12 @@ def register_admin(commands) -> None:
     closer.add_argument("--json", action="store_true")
     closer.set_defaults(func=cmd_admin_close)
     exporter = operations.add_parser(
-        "export", help="開いている報告を Markdown で書き出す（1 件 1 ファイル）",
+        "export", help="開いている報告を Markdown で私有の置き場へ書き出す（1 件 1 ファイル）",
         description="開いている報告を <report_id>_<題>.md で書き出します。前に書き出した報告が"
-                    "閉じていれば閉じた形に書き直します。書き出し先の中身は公開してよいかを"
-                    "確かめてから commit してください（本文は利用者が書いた文です）。")
-    exporter.add_argument("--to", required=True, help="書き出し先のディレクトリ")
+                    "閉じていれば閉じた形に書き直します。**私有の置き場へ。公開 repo には置かない**"
+                    "（本文は利用者が書いた文です。既定の行き先はありません）。")
+    exporter.add_argument("--to", required=True,
+                          help="書き出し先の私有のディレクトリ（公開 repo には置かない）")
     exporter.add_argument("--by", default=None, help="誰が書き出したか（必須）")
     exporter.add_argument("--json", action="store_true")
     exporter.set_defaults(func=cmd_admin_export)

@@ -126,7 +126,34 @@ def test_管理者の毎朝の一枚に開いている件数と新規(projects, 
     morning.render(payload, out=lambda line: print(line))
     out = capsys.readouterr().out
     assert "報告: 開いている 2 件（新規 1 件・直近 24 時間）  → thth admin reports list --status open" in out
-    assert old["report_id"] not in json.dumps(payload)   # 件数だけ・一覧は admin reports で
+    # 0 段は件数だけ（id と題は第 5 段「次の一手」に 1 件 1 行で並ぶ）。
+    assert old["report_id"] not in json.dumps(_tool_section(payload))
+
+
+def test_管理者の次の一手に開いている報告が1件1行で本文は載らない(projects, capsys, monkeypatch):
+    monkeypatch.setattr(morning, "_world", lambda *a, **k: morning.cell(cannot_say="no_watch_words"))
+    long_title = "題" * 70
+    first = report_inbox.file_report("other-threads", kind="bug", title=long_title,
+                                     body="本文は次の一手に載らない", by="o")
+    second = report_inbox.file_report("kopicha-threads", kind="request", title="欲しい形",
+                                      body="これも載らない", by="s")
+    closed = report_inbox.file_report("kopicha-threads", kind="bug", title="閉じた", body="閉", by="s")
+    report_inbox.close(closed["report_id"], by="masaru", reason="fixed", version="3.1.2")
+    payload = morning.build("kopicha", mark=False)
+    steps = next(s for s in payload["sections"] if s["section"] == "next_steps")["value"]["steps"]
+    rows = [step for step in steps if step["kind"] == "report"]
+    assert sorted(rows, key=lambda row: row["report_kind"]) == [
+        {"kind": "report", "report_id": first["report_id"], "report_kind": "bug", "title": "題" * 60},
+        {"kind": "report", "report_id": second["report_id"], "report_kind": "request", "title": "欲しい形"}]
+    dumped = json.dumps(payload, ensure_ascii=False)
+    assert "本文は次の一手に載らない" not in dumped and "これも載らない" not in dumped
+    assert "body" not in json.dumps(rows)
+    morning.render(payload, out=lambda line: print(line))
+    assert f"  報告  {second['report_id']}  request  欲しい形" in capsys.readouterr().out
+    # サーバ型の利用者の 1 枚には並べない。
+    user = morning.build("kopicha", mark=False, allowed_names=("kopicha-threads",))
+    user_steps = next(s for s in user["sections"] if s["section"] == "next_steps")["value"]["steps"]
+    assert not [step for step in user_steps if step["kind"] == "report"]
 
 
 def test_サーバ型の利用者の一枚には件数を出さない(projects, monkeypatch):
