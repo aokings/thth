@@ -75,7 +75,7 @@ def cmd_lint(args) -> int:
     # 2026-09-11・`ba81219` 後の掃討で検出）。for が 0 回まわるだけで「0 本を検査した」が
     # どこにも出ず、承認前の `cmd_approve()` にはある同じ関門が lint には無かった。
     # `cmd_approve()` と同じ形（note も使って理由を出す・exit 1）にそろえる。
-    paths, note = _expand_targets(args.file, only_draft=False)
+    paths, note = _expand_targets(args.file, only_draft=False, purpose="lint")
     if paths is None:
         # **VM に無いパスは `_expand_targets` が案内済み**（T8-1）。ここでは
         # rc だけ決める——traceback ではなく案内で断ったことが伝わるように。
@@ -129,7 +129,7 @@ def cmd_preview(args) -> int:
     """本文だけを出す規約（設計 §4.1）。`--json` のときだけ topic 等も返す
     （T2c・masaru 裁定 2026-09-09。本文の規約そのものは変えない）。"""
     try:
-        args.file = _resolve_repo_path(args.file)
+        args.file = _resolve_repo_path(args.file, "preview")
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -162,11 +162,90 @@ def cmd_preview(args) -> int:
     return 0
 
 
-def _resolve_repo_path(path: str) -> str:
+def _local_path_candidates(path: str) -> tuple:
+    """手元（Mac）の絶対パスを、台帳の repo の中の相対パスに切り出す（設計 3.7.0 §B4）。
+
+    台帳ごとの `queue_dir`（例 `docs/sns/queue`）がパスの途中に現れれば、そこから後ろを
+    repo の中の相対パスとみなす。戻り値 `(在るもの {VM のパス: (repo, account)},
+    切り出せたが VM に無いもの [(repo 内の相対パス, repo, account)])`。
+    """
+    found, missing = {}, []
+    normalized = path.replace(os.sep, "/")
+    for name in accounts_mod.list_account_names():
+        try:
+            cfg = accounts_mod.load_account(name)
+        except (accounts_mod.AccountError, OSError, ValueError, TypeError, KeyError):
+            continue
+        repo, queue_dir = cfg.get('repo_dir'), cfg.get('queue_dir')
+        if not isinstance(repo, str) or not os.path.isdir(repo) or not isinstance(queue_dir, str):
+            continue
+        marker = "/" + queue_dir.strip("/") + "/"
+        index = normalized.rfind(marker)
+        if not queue_dir.strip("/") or index < 0:
+            continue
+        rel = queue_dir.strip("/") + "/" + normalized[index + len(marker):]
+        root = os.path.realpath(repo)
+        candidate = os.path.realpath(os.path.join(root, rel))
+        if os.path.commonpath([root, candidate]) != root:
+            continue
+        if os.path.exists(candidate):
+            found.setdefault(candidate, (root, name))
+        else:
+            missing.append((rel, root, name))
+    return found, missing
+
+
+def _stale_clone_line(root: str, account_name: str) -> str | None:
+    """VM 側の clone が upstream より遅れていれば 1 行（設計 3.7.0 §B4）。"""
+    info = writeback_mod.behind_remote(root)
+    if info.get("behind"):
+        return (f"VM 側は古い（upstream より {info['behind']} commit 遅れています・"
+                f"thth pull {account_name} で取り込めます）")
+    return None
+
+
+def _translate_local_path(path: str, purpose: str | None = None) -> str | None:
+    """手元の絶対パスを VM のパスに読み替える。読み替えたら 1 行言う（無ければ None）。
+
+    `purpose` が `lint`・`preview` なら VM 側の clone の古さも言う（読み替えた先は VM の
+    本文——手元で直したものがまだ届いていないかもしれない）。`approve` なら digest が
+    VM の本文（同期のあと）で出ることを言う。
+    """
+    found, missing = _local_path_candidates(path)
+    if len(found) > 1:
+        raise ValueError('複数の repo に同じパスがあります。VM の絶対パスで指定してください: '
+                         + ' / '.join(sorted(found)))
+    if not found:
+        if missing:
+            rel, root, name = missing[0]
+            stale = _stale_clone_line(root, name)
+            raise ValueError(f'手元のパスを VM の repo の {rel} に読み替えましたが、VM にありません'
+                             f'（repo: {root}）。' + (stale + "。" if stale else "")
+                             + f'push してから thth pull {name} で取り込んでください')
+        return None
+    candidate, (root, name) = next(iter(found.items()))
+    print(f'手元のパスを VM のパスに読み替えました: {path} → {candidate}（repo: {root}）',
+          file=sys.stderr)
+    if purpose in ("lint", "preview"):
+        stale = _stale_clone_line(root, name)
+        if stale:
+            print(f'{stale}——いま見ているのは VM の本文です', file=sys.stderr)
+    elif purpose == "approve":
+        print('承認の digest は VM の本文（同期のあと）で出ます——手元の本文ではありません',
+              file=sys.stderr)
+    return candidate
+
+
+def _resolve_repo_path(path: str, purpose: str | None = None) -> str:
     """Existing cwd wins; otherwise require one matching registered repo."""
     if os.path.exists(path):
         return path
     if os.path.isabs(path):
+        # 手元（Mac）のパスを repo の中の相対パスに切り出せれば VM のパスに読み替える
+        # （設計 3.7.0 §B4）。切り出せなければ従前どおり案内で断る。
+        translated = _translate_local_path(path, purpose)
+        if translated is not None:
+            return translated
         raise ValueError(_require_vm_path(path))
     candidates = {}
     for name in accounts_mod.list_account_names():
@@ -221,7 +300,7 @@ def _require_vm_path(path: str, *, what: str = "") -> str | None:
     )
 
 
-def _expand_targets(files, *, only_draft: bool, account=None) -> tuple:
+def _expand_targets(files, *, only_draft: bool, account=None, purpose=None) -> tuple:
     """ファイルとディレクトリの混在を受けて、対象のファイル一覧に展開する。
 
     **ディレクトリを受けられるようにした**（kopicha セッション指摘 2026-09-10）。
@@ -242,7 +321,7 @@ def _expand_targets(files, *, only_draft: bool, account=None) -> tuple:
     """
     items = files if isinstance(files, list) else [files]
     try:
-        items = [_resolve_repo_path(item) for item in items]
+        items = [_resolve_repo_path(item, purpose) for item in items]
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return None, ''
@@ -403,7 +482,8 @@ def cmd_approve(args) -> int:
     `writeback.sync_repo()` を通す。以前は「承認の前に VM で git pull が要る」ことが
     どこにも書いていなかった。手順を文書に足すのではなく、道具の側でやる。
     """
-    paths, note = _expand_targets(args.file, only_draft=True, account=getattr(args, "account", None))
+    paths, note = _expand_targets(args.file, only_draft=True, account=getattr(args, "account", None),
+                                  purpose="approve")
     if paths is None:
         # **VM に無いパスは `_expand_targets` が案内済み**（T8-1）。
         return 2
