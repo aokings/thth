@@ -168,6 +168,7 @@ def _follow(goal_days, daily, start, end, min_n):
     groups = {"with_goal_posts": [], "without_goal_posts": []}
     # 日は JST の日付で [開始日, 終了日)。日次は閉じた日だけ記録される（`collect`）。
     day, last = jst.to_jst(start).date(), jst.to_jst(end).date()
+    period_days = max((last - day).days, 0)
     while day < last:
         today, yesterday = day.isoformat(), (day - datetime.timedelta(days=1)).isoformat()
         now_count = (daily.get(today) or {}).get("followers_count")
@@ -186,12 +187,30 @@ def _follow(goal_days, daily, start, end, min_n):
     both = all(out[key]["median_delta"] is not None for key in out)
     difference = (out["with_goal_posts"]["median_delta"] - out["without_goal_posts"]["median_delta"]
                   if both else None)
+    cannot_say = [goals.PER_POST_CANNOT_SAY["follow"]]
+    reason = None if both else "account_daily_unavailable" if not daily else "insufficient_days"
+    fact = None
+    with_n, without_n = out["with_goal_posts"]["n_days"], out["without_goal_posts"]["n_days"]
+    if daily and not both and (with_n < min_n or without_n < min_n) and (with_n or without_n):
+        # **比べる日が無い**（設計 3.7.0 §A2）。片方が 0 日（または min_n 未満）なら差は
+        # 言えない——事実だけを 1 行。**推奨はしない**（「出さない日を作るとよい」とは
+        # 言わない——目的と頻度は人と LLM が決める）。
+        reason = "no_comparison_days"
+        cannot_say.append(reason)
+        if without_n == 0:
+            fact = (f"follow の投稿が毎日出ていて、出ていない日がありません（直近 {period_days} 日・"
+                    f"followers の前日差が取れた日 {with_n} 日）")
+        elif with_n == 0:
+            fact = (f"follow の投稿が出た日がありません（直近 {period_days} 日・"
+                    f"followers の前日差が取れた日 {without_n} 日）")
+        else:
+            fact = (f"follow の投稿が出た日 {with_n} 日・出ていない日 {without_n} 日で、"
+                    f"比べるには少なすぎます（min_n={min_n}・直近 {period_days} 日）")
     return {"goal": "follow", "basis": "account_daily", "per_post": None,
-            "cannot_say": [goals.PER_POST_CANNOT_SAY["follow"]],
+            "cannot_say": cannot_say,
             "daily": {"basis": "followers_count_day_over_day", **OBSERVATIONAL, **out,
-                      "difference_of_medians": difference,
-                      "reason": (None if both else
-                                 "account_daily_unavailable" if not daily else "insufficient_days")}}
+                      "difference_of_medians": difference, "period_days": period_days,
+                      "fact": fact, "reason": reason}}
 
 
 def yardstick(goal, *, name, medium, members, goal_days, daily, start, end, now, min_n,
@@ -298,8 +317,12 @@ def markdown_lines(stratified) -> list:
         elif label == "follow":
             daily = yard["daily"]
             with_, without = daily["with_goal_posts"], daily["without_goal_posts"]
-            lines.append(head + "。投稿単位のフォローは言えません（per_post_follows_unavailable）。"
-                         f"followers の前日差の中央値: follow の投稿が出た日 {_fmt(with_['median_delta'])}"
-                         f"（{with_['n_days']} 日）・出ていない日 {_fmt(without['median_delta'])}"
-                         f"（{without['n_days']} 日）——{daily['note']}")
+            line = (head + "。投稿単位のフォローは言えません（per_post_follows_unavailable）。"
+                    f"followers の前日差の中央値: follow の投稿が出た日 {_fmt(with_['median_delta'])}"
+                    f"（{with_['n_days']} 日）・出ていない日 {_fmt(without['median_delta'])}"
+                    f"（{without['n_days']} 日）——{daily['note']}")
+            if daily.get("fact"):
+                # 比べる日が無い（設計 3.7.0 §A2）。事実だけ（推奨しない）。
+                line += f"。比べる日がありません（no_comparison_days）: {daily['fact']}"
+            lines.append(line)
     return lines
