@@ -118,11 +118,14 @@ def record(account, *, command, reason_code, now=None) -> bool:
     try:
         if account not in accounts.list_account_names():
             return False
-        # 退出して止めた account の state には書かない（消す側の手順を増やさない）。
-        from . import leave_gate
-        if leave_gate.stopped(account):
+        # 退出して止めた account・置き場の権限が危ない（775 等）ときは書かない
+        # （止まった状態を観測するだけの口に副作用を足さない・`stop_observation`）。
+        # 台帳が読めない account にも書かない。
+        from . import stop_observation
+        if stop_observation.diagnostic(account)["error"]:
             return False
-    except accounts.AccountError:
+        accounts.load_account(account)
+    except (accounts.AccountError, OSError, ValueError, TypeError):
         return False
     row = {"at": jst.iso(now or jst.now_jst()), "version": __version__,
            "command": command, "reason_code": reason_code, "account": account}
