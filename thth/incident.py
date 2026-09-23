@@ -138,7 +138,7 @@ def _send(s, recipient, event, account):
     message = EmailMessage()
     message["From"] = s["sender"]
     message["To"] = recipient
-    message["Subject"] = f"THTH {account}: {'復旧' if event['state'] == 'recovered' else '停止・要確認' if event['state'] == 'blocked' else '再承認が必要' if event['state'] == 'notice' else '通知テスト'}"
+    message["Subject"] = f"THTH {account}: {'復旧' if event['state'] == 'recovered' else '停止・要確認' if event['state'] == 'blocked' else '承認の確定待ち' if healthcheck.is_confirm_due_code(event.get('reason')) else '再承認が必要' if event['state'] == 'notice' else '通知テスト'}"
     message["Message-ID"] = f"<{event['id']}.{hashlib.sha256(recipient.lower().encode()).hexdigest()[:16]}@thth.local>"
     repo_status = "repo へ反映済み" if event.get("repo") == "written" else "repo 未反映（後続実行で再試行。原稿を特定できない場合は account 単位の通知のみ）"
     file_hint = healthcheck._safe_file(event.get("file")) or "特定できません（account 全体の状況）"
@@ -337,6 +337,10 @@ def _validate(row):
         raise ValueError("invalid_outbox")
     if type(row.get("held_notified", False)) is not bool:
         raise ValueError("invalid_outbox")
+    # 承認の確定待ちで 3 時間を切った本数（前回の run の値・設計 3.7.0 §B3）。
+    confirm_due = row.get("confirm_due", 0)
+    if type(confirm_due) is not int or confirm_due < 0:
+        raise ValueError("invalid_outbox")
     version = row.get("fingerprint_version")
     if version is not None and (type(version) is not int or version < 1):
         raise ValueError("invalid_outbox")
@@ -416,6 +420,26 @@ def _held_transition(row, diag, *, ready):
     return changed
 
 
+def _confirm_due_transition(row, diag, *, confirm_due, ready):
+    """確定待ちで publish_at まで 3 時間を切った本数の遷移（設計 3.7.0 §B3）。
+
+    **増えたときだけ** `notice`（`confirm_due: n`）を 1 件積む。同じ本数・減った本数では
+    何も積まない（毎 10 分の timer で連打しない・held と同じ筋）。数えていない run
+    （`confirm_due` が None・停止中）は本数を動かさない。
+    """
+    if diag.state == "fail" or confirm_due is None:
+        return False
+    previous = row.get("confirm_due", 0)
+    changed = False
+    if confirm_due > previous and ready:
+        row["events"].append(_new_event("notice", f"confirm_due: {confirm_due}"))
+        changed = True
+    if previous != confirm_due:
+        row["confirm_due"] = confirm_due
+        changed = True
+    return changed
+
+
 def _reapproval_transition(row, diag, *, reapproval, ready):
     """指紋の版が変わったら、再承認が要る本数を運用通知に 1 回だけ（設計 3.3.0 A3）。
 
@@ -440,7 +464,7 @@ def _reapproval_transition(row, diag, *, reapproval, ready):
     return changed
 
 
-def notify(account, cfg, diag, *, state_dir, result=None, reapproval=None):
+def notify(account, cfg, diag, *, state_dir, result=None, reapproval=None, confirm_due=None):
     """Invoked after core locks release; lock order repo -> account -> outbox.
 
     `diag.state` は `fail`・`success`・`held`（3.3.0 A1）。`held` は run 自体は
@@ -514,7 +538,8 @@ def notify(account, cfg, diag, *, state_dir, result=None, reapproval=None):
         ready = readiness(cfg)["smtp_configured"]
         held_changed = _held_transition(row, diag, ready=ready)
         notice_changed = _reapproval_transition(row, diag, reapproval=reapproval, ready=ready)
-        if held_changed or notice_changed:
+        confirm_changed = _confirm_due_transition(row, diag, confirm_due=confirm_due, ready=ready)
+        if held_changed or notice_changed or confirm_changed:
             persist()
         s = settings(cfg) if ready else None
         blocked_roles = set()

@@ -689,6 +689,26 @@ def _held_rows(name, cfg, now):
             "basis": "approved_needs_review_excluding_waiting"}
 
 
+def _confirm_rows(name, cfg, now):
+    """承認の確定待ち（設計 3.7.0 §B3）。not_approved を確定待ちと未依頼に分ける。
+
+    確定待ちの行は名前・予定・digest・予定までの時間だけ（本文は持たない）。
+    `n_due` は publish_at まで `approve_pending.CONFIRM_DUE_HOURS` 時間を切った本数。
+    """
+    from . import approve_pending
+    result = approve_pending.for_account(name, cfg, now=now)
+    summary = approve_pending.summary(result)
+    items = [{"file": row["file"], "rel": row["rel"], "publish_at": row["publish_at"],
+              "digest": row["digest"], "hours_to_publish": row["hours_to_publish"],
+              "due": row["due"]} for row in result[approve_pending.AWAITING]]
+    return {"n_awaiting_confirm": summary["awaiting_confirm"],
+            "n_not_requested": summary["not_requested"],
+            "earliest_publish_at": summary["awaiting_confirm_earliest_publish_at"],
+            "n_due": summary["confirm_due"], "due_hours": approve_pending.CONFIRM_DUE_HOURS,
+            "limit": OVERDUE_LIMIT, "items": items[:OVERDUE_LIMIT],
+            "basis": "approve_first_stage_pending"}
+
+
 def _queue_cell(node):
     """handoff の節から queue の数だけを写す（置き場のパスは写さない）。"""
     if node is None:
@@ -764,6 +784,8 @@ def next_steps(unanswered_entries, world_entries, today_entries, reports=None,
                plaza=None) -> list:
     """**候補の列挙だけ**（masaru 裁定 3.1.0 §7-1）。本文は 1 字も作らない。
 
+    3.7.0 から「確定」（`kind: "confirm_due"`・設計 §B3）: 承認の確定待ちで publish_at まで
+    3 時間を切った原稿の名前と確定の命令の 1 行（`--by <名前>` は人が埋める）。
     6 種類だけ: 「返す」（1 段の各行）・「絡む」（3 段の各行）・「出す」
     （4 段で今日の予定が無い account）・「超過」（4 段の時刻超過の各行・3.1.1）・
     「出られない」（4 段の held の各行・3.3.0 A2。`candidate` は approval_stale なら
@@ -817,6 +839,16 @@ def next_steps(unanswered_entries, world_entries, today_entries, reports=None,
                           "due": row["due"],
                           "candidate": ("reapprove" if row["category"] == "approval_stale"
                                         else "inspect")})
+        # 確定待ちの原稿の publish_at まで 3 時間を切った（設計 3.7.0 §B3）。確定の命令の
+        # 1 行を添える（名乗りは人が入れる・本文は作らない）。
+        from . import approve_pending
+        confirm = ((entry["value"] or {}).get("confirm_items") or {}).get("value") or {}
+        for row in confirm.get("items") or []:
+            if row["due"]:
+                steps.append({"kind": "confirm_due", "account": name, "file": row["file"],
+                              "publish_at": row["publish_at"],
+                              "hours_to_publish": row["hours_to_publish"],
+                              "command": approve_pending.confirm_command(row)})
     for row in reports or []:
         steps.append({"kind": "report", "report_id": row["report_id"],
                       "report_kind": row["kind"], "title": row["title"][:PREVIEW_CHARS]})
@@ -919,6 +951,8 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
             "overdue_items": _guard(lambda name=name: _overdue_rows(name, now)),
             "waiting_items": _guard(lambda name=name: _waiting_rows(name, now)),
             "held_items": _guard(lambda name=name, cfg=cfg: _held_rows(name, cfg, now)),
+            # 承認の確定待ち（設計 3.7.0 §B3）。
+            "confirm_items": _guard(lambda name=name, cfg=cfg: _confirm_rows(name, cfg, now)),
             "queue": _queue_cell(node),
             "inflight": _inflight(node),
             # 最後に送った運用通知（設計 3.3.1 §5）。届いたかを人が受信箱と照合する。
@@ -1077,6 +1111,9 @@ def _render_section(section, out) -> None:
                 verb = "再承認" if step["candidate"] == "reapprove" else "確かめる"
                 out(f"  {verb}  {step['account']}  {step['file']}  {step['reason']}"
                     f"（予定 {step['publish_at'] or '—'}）")
+            elif step["kind"] == "confirm_due":
+                out(f"  確定  {step['account']}  {step['file']}（予定 {step['publish_at']}・"
+                    f"あと {step['hours_to_publish']}h・確定するまで出ません）  {step['command']}")
             elif step["kind"] == "report":
                 out(f"  報告  {step['report_id']}  {step['report_kind']}  {step['title']}")
             elif step["kind"] == "plaza":
@@ -1303,6 +1340,17 @@ def _render_today(account, node, out) -> None:
                 f"・{when}）")
         if value["n"] > len(value["items"]):
             out(f"    出られない: ほか {value['n'] - len(value['items'])} 本（全 {value['n']} 本）")
+    confirm = node.get("confirm_items") or {}
+    if confirm.get("cannot_say") is not None:
+        out(f"    確定待ち: 言えない: {confirm['cannot_say']}")
+    elif confirm.get("value") and confirm["value"]["n_awaiting_confirm"]:
+        value = confirm["value"]
+        out(f"    確定待ち {value['n_awaiting_confirm']} 本（最短の publish_at "
+            f"{value['earliest_publish_at'] or '—'}・1 段目がまだの下書き {value['n_not_requested']} 本）"
+            "——確定するまで出ません")
+        for row in value["items"]:
+            mark = "  ⚠ 3 時間を切りました" if row["due"] else ""
+            out(f"    確定待ち: {row['file']}（予定 {row['publish_at'] or '—'}）{mark}")
     inflight = node["inflight"]
     if inflight["present"]:
         out(f"    inflight: {inflight['reason_code']}（{inflight['since']}）"

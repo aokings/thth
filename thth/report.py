@@ -5,6 +5,7 @@ import datetime
 import os
 
 from . import accounts as accounts_mod
+from . import approve_pending as approve_pending_mod
 from . import collect as collect_mod
 from . import core
 from . import inflight as inflight_mod
@@ -131,6 +132,10 @@ def queue_summary(account_name: str | None, now=None) -> dict:
             "next_topic": next_topic,
             "next_rejections": next_rejections,
             "waiting_reply": waiting_reply,
+            # 承認していない原稿を、確定待ち（1 段目が済み確定が残る）と未依頼に分ける
+            # （設計 3.7.0 §B3）。draft の数（counts）の内訳。
+            "approval": approve_pending_mod.summary(approve_pending_mod.split(
+                name, account_cfg, files, now_val)),
         }
     return out
 
@@ -414,6 +419,7 @@ def board_summary(now=None) -> dict:
         token_row = maintain_mod.inspect(name, now=now)
         approval_stale_count = sum(1 for item in needs_review if item["reason"] == "approval_stale")
         waiting = waiting_items(needs_review)
+        approval = approve_pending_mod.summary(approve_pending_mod.split(name, account_cfg, files, now))
         accounts_out.append({
             "account": name,
             "project": account_cfg.get("project"),
@@ -483,6 +489,12 @@ def board_summary(now=None) -> dict:
             "held_count": sum(1 for row in held if row["due"]),
             "held_upcoming_count": sum(1 for row in held if not row["due"]),
             "held_reason_code": select_mod.held_reason_code(held),
+            # 承認の確定待ち（設計 3.7.0 §B3）。not_approved を 1 段目が済んだもの
+            # （awaiting_confirm）と、まだのもの（not_requested）に分ける。
+            "awaiting_confirm_count": approval["awaiting_confirm"],
+            "not_requested_count": approval["not_requested"],
+            "awaiting_confirm_earliest_publish_at": approval["awaiting_confirm_earliest_publish_at"],
+            "confirm_due_count": approval["confirm_due"],
             # repo と upstream の差（設計 3.7.0 §B1・fetch しない）。`thth account` と
             # 同じ `writeback.sync_state()`——`behind_only` は次の run が取り込むもので、
             # account でも「投稿できません」に入れない（食い違わない）。

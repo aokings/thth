@@ -56,6 +56,12 @@ _HELD_CODE = re.compile(rf"approved_but_held: {_HELD_PART}(?:, {_HELD_PART}){{0,
 # 0 本に戻った（held の復旧）・指紋の版が変わって再承認が要る（A3・1 回だけ）。
 HELD_CLEARED = "held_cleared"
 _REAPPROVAL_CODE = re.compile(r"reapproval_required: [1-9][0-9]{0,5}")
+# 承認の確定待ちで publish_at まで 3 時間を切った本数（設計 3.7.0 §B3）。本数だけ。
+_CONFIRM_DUE_CODE = re.compile(r"confirm_due: [1-9][0-9]{0,5}")
+
+
+def is_confirm_due_code(value) -> bool:
+    return isinstance(value, str) and _CONFIRM_DUE_CODE.fullmatch(value) is not None
 # 死活通知の状態（`held` は run が成功したのに承認済みの原稿が出られない）。
 STATES = ("success", "fail", "held")
 
@@ -76,7 +82,8 @@ def _reason_code_is_safe(value, *, allow_legacy: bool = True) -> bool:
         return False
     if value in _KNOWN_REASONS or value in _EXCEPTION_REASONS:
         return True
-    if value == HELD_CLEARED or is_held_code(value) or _REAPPROVAL_CODE.fullmatch(value):
+    if (value == HELD_CLEARED or is_held_code(value) or _REAPPROVAL_CODE.fullmatch(value)
+            or is_confirm_due_code(value)):
         return True
     if re.fullmatch(r"(?:container|publish)_http_[45][0-9]{2}", value):
         return True
@@ -275,6 +282,8 @@ def next_action_for(reason: str) -> str:
         return "none"
     if is_held_code(reason) or (isinstance(reason, str) and _REAPPROVAL_CODE.fullmatch(reason)):
         return "reapprove_or_fix_held"
+    if is_confirm_due_code(reason):
+        return "confirm_pending_approval"
     return "inspect_board_and_timer_log"
 
 
@@ -306,6 +315,10 @@ def reason_text(reason: str) -> str:
                            for part in reason.split(": ", 1)[1].split(", "))
         return (f"承認済みで予定時刻を過ぎた原稿が {held_total(reason)} 本、出られずに"
                 f"止まっています（{detail}） [approved_but_held]")
+    if is_confirm_due_code(reason):
+        count = reason.split(": ", 1)[1]
+        return (f"承認の確定待ち（thth approve の 1 段目だけ済んだ原稿）で、予定時刻まで"
+                f" 3 時間を切ったものが {count} 本あります。確定するまで出ません [confirm_due]")
     if _REAPPROVAL_CODE.fullmatch(reason):
         count = reason.split(": ", 1)[1]
         return (f"この版で承認の指紋の計算が変わりました。再承認が要る原稿: {count} 本"
@@ -340,6 +353,8 @@ def next_action_text(action: str) -> str:
         "inspect_board_and_timer_log": "thth board と timer のログを確認してください",
         "reapprove_or_fix_held": ("thth morning の held_items（または thth board の要確認）で"
                                   "名前を見て、再承認するか原稿を直してください"),
+        "confirm_pending_approval": ("thth observe の次の一手（確定）にある確定の命令を見て、"
+                                     "本文を確かめてから --confirm を実行してください"),
     }
     return f"{fixed.get(action, fixed['inspect_board_and_timer_log'])} [{action}]"
 

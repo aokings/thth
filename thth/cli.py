@@ -460,7 +460,11 @@ def cmd_approve(args) -> int:
                 # **traceback だけを出して途中で止まっていた。** 承認の入口で
                 # traceback を出すのは、いちばんやってはいけない断り方。
                 topics_mod.load()
-                _show_first_stage(prepared, bundle, as_json=args.json, note=note)
+                # 確定待ちの控え（設計 3.7.0 §B3）。本文は残さない（相対パス・digest・時刻・
+                # 中身の sha256）。見せる前に書く——JSON に書けたかを載せるため。
+                pending_saved = _record_pending(prepared, repo_dir, bundle)
+                _show_first_stage(prepared, bundle, as_json=args.json, note=note,
+                                  pending_saved=pending_saved)
             except topics_mod.ShelfBroken as e:
                 return _台帳が壊れている(e, as_json=args.json)
             return 1
@@ -500,6 +504,8 @@ def cmd_approve(args) -> int:
         pushed, push_err = writeback_mod.commit_and_push(
             repo_dir, rel_path=rel_paths,
             message=f"承認: {label}（{prepared[0]['account']}・{approved_by}）")
+        # 確定したので確定待ちの控えを消す（設計 3.7.0 §B3）。
+        _clear_pending(prepared, repo_dir)
     finally:
         repo_lock.release()
 
@@ -522,6 +528,36 @@ def cmd_approve(args) -> int:
               file=sys.stderr)
         return 1
     return 0
+
+
+def _record_pending(prepared: list, repo_dir: str, bundle: str) -> bool:
+    """1 段目の控えを account ごとに書く（設計 3.7.0 §B3）。書けなくても 1 段目は続ける。"""
+    from . import approve_pending
+    by_account = {}
+    for one in prepared:
+        by_account.setdefault(one["account"], []).append(one)
+    try:
+        for account_name, items in by_account.items():
+            approve_pending.record(account_name, repo_dir, items, bundle_digest=bundle)
+    except (OSError, ValueError, accounts_mod.AccountError):
+        print("確定待ちの控えを書けませんでした（1 段目の表示は続けます・"
+              "queue・board・observe に確定待ちとして出ません）", file=sys.stderr)
+        return False
+    return True
+
+
+def _clear_pending(prepared: list, repo_dir: str) -> None:
+    """確定・取り消しで控えを消す（消せなくても承認は変えない——読み手は中身の sha256
+    で古い控えを捨てる）。"""
+    from . import approve_pending
+    by_account = {}
+    for one in prepared:
+        by_account.setdefault(one["account"], []).append(one["path"])
+    for account_name, paths in by_account.items():
+        try:
+            approve_pending.clear(account_name, repo_dir, paths)
+        except (OSError, ValueError, accounts_mod.AccountError):
+            pass
 
 
 def _prepare_bundle(path: str, text: str):
@@ -658,10 +694,20 @@ def _print_goal_line(one: dict) -> None:
               "承認のあとに変えても出て、変更は記録に残ります）")
 
 
-def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str = "") -> None:
-    """一段目: **出す本文をすべて全文表示する**。何も書き換えない。"""
+# 1 段目の知らせ（設計 3.7.0 §B3）。確定するまで出ない——1 段目で済んだと思い込む
+# 形（確定待ちのまま予定時刻を過ぎる）を避けるため、表示の先頭と末尾で言う。
+NOT_UNTIL_CONFIRMED = "確定するまで出ません"
+
+
+def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str = "",
+                      pending_saved: bool | None = None) -> None:
+    """一段目: **出す本文をすべて全文表示する**。原稿は書き換えない（確定待ちの控えだけ
+    state に書く・設計 3.7.0 §B3）。"""
     if as_json:
         _print_json({"approved": False, "count": len(prepared), "bundle_digest": bundle,
+                     "not_until_confirmed": True,
+                     "note": f"{NOT_UNTIL_CONFIRMED}（--confirm {bundle} を付けて実行してください）",
+                     "pending_recorded": pending_saved,
                      "files": [{"file": one["path"], "account": one["account"],
                                 "publish_at": one["publish_at"], "topic": one["topic"],
                                 "reply_to": one.get("reply_to"),
@@ -680,7 +726,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
                                 **({"media_manifests": one["media_manifests"]} if one.get("media_manifests") else {}),
                                 "digest": one["digest"]} for one in prepared]})
         return
-    print(f"承認しません（確認の一段目です）: {len(prepared)} 本")
+    print(f"承認しません（確認の一段目です）: {len(prepared)} 本——**{NOT_UNTIL_CONFIRMED}**")
     if note:
         print(f"  {note}")
     for one in prepared:
@@ -730,6 +776,8 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
         for one in warned:
             print(f"    {os.path.basename(one['path'])} — {one['warning']}")
     print("")
+    print(f"**{NOT_UNTIL_CONFIRMED}**（いまは確定待ちです。queue・board・observe に"
+          "「確定待ち」として出ます）")
     if len(prepared) == 1:
         print(f"この本文でよければ: thth approve {prepared[0]['path']} --confirm {bundle}")
         return
@@ -912,6 +960,9 @@ def cmd_revoke(args) -> int:
         pushed, push_err = writeback_mod.commit_and_push(
             repo_dir, rel_path=rel_path,
             message=f"承認の取り消し: {os.path.basename(args.file)}（{revoked_by}）")
+        # 取り消しで確定待ちの控えも消す（設計 3.7.0 §B3）。
+        if fm.get("account"):
+            _clear_pending([{"account": fm.get("account"), "path": args.file}], repo_dir)
 
         # push の直前に `pull --rebase` が走るので、**その間に別 clone から
         # 公開されたもの**が入ってくることがある。書き終えたあとにもう一度見る。
@@ -2308,6 +2359,10 @@ def cmd_queue(args) -> int:
                 print("  原稿の置き場（queue）: 未設定（同席送信は thth send）")
             for rej in info.get("next_rejections") or []:
                 print(f"  いま出ない: {rej['file']} — {rej['reason']}")
+            from . import approve_pending
+            pending_line = approve_pending.line(info.get("approval") or {})
+            if pending_line:
+                print(f"  {pending_line}")
     return rc
 
 
@@ -2401,7 +2456,7 @@ def cmd_run(args) -> int:
                  if accounts_mod.name_is_safe(args.account) else None)
 
     def _notify(state: str, *, result=None, reason=None, exception=None,
-                reapproval=None) -> None:
+                reapproval=None, confirm_due=None) -> None:
         """通知の失敗で、投稿の rc や元の例外を上書きしない。"""
         if state_dir is None:
             return
@@ -2411,7 +2466,8 @@ def cmd_run(args) -> int:
                 reason=reason, exception=exception)
             try:
                 incident_mod.notify(args.account, account_cfg, diagnostic, state_dir=state_dir,
-                                    result=result, reapproval=reapproval)
+                                    result=result, reapproval=reapproval,
+                                    confirm_due=confirm_due)
                 incident_summary = incident_mod.summary(account_cfg, state_dir)
                 if incident_summary.get("mail_pending") or incident_summary.get("repo_pending"):
                     # そのまま打てる形で言う（account 無しでは account_required になる・3.1.1）。
@@ -2497,7 +2553,22 @@ def cmd_run(args) -> int:
                 print(f"承認済みで出られない原稿があります（{held_reason}）。"
                       f"thth morning {args.account} の held_items か thth board で名前を"
                       "確認してください", file=sys.stderr)
-        notify(state, result=result, reason=held_reason, reapproval=reapproval)
+        # 承認の確定待ちで publish_at まで 3 時間を切った本数（設計 3.7.0 §B3）。
+        # 運用通知は増えたときだけ（`incident._confirm_due_transition`）。数えられなければ
+        # None（本数を動かさない）。
+        confirm_due = None
+        try:
+            from . import approve_pending
+            confirm_due = approve_pending.summary(approve_pending.for_account(
+                args.account, account_cfg))["confirm_due"]
+        except Exception:
+            print("確定待ちの原稿を数えられませんでした: confirm_due_unavailable", file=sys.stderr)
+        if confirm_due:
+            print(f"承認の確定待ちで予定時刻まで 3 時間を切った原稿が {confirm_due} 本あります"
+                  f"（確定するまで出ません）。thth observe {args.account} の次の一手で確認してください",
+                  file=sys.stderr)
+        notify(state, result=result, reason=held_reason, reapproval=reapproval,
+               confirm_due=confirm_due)
         return result.exit_code
     except Exception as e:
         # これまで traceback になった例外は、通知を試したあとも同じ例外として返す。
@@ -3040,6 +3111,14 @@ def cmd_board(args) -> int:
                       f"（repo_head={_repo_info.get('head')}・"
                       f"fetched_at={_repo_info.get('fetched_at')}）。"
                       f"`thth pull {row['account']}` か `thth approve` で取り込まれます")
+            # 承認の確定待ち（設計 3.7.0 §B3）。無ければ何も出さない。
+            from . import approve_pending
+            pending_line = approve_pending.line({
+                "awaiting_confirm": row.get("awaiting_confirm_count"),
+                "awaiting_confirm_earliest_publish_at": row.get(
+                    "awaiting_confirm_earliest_publish_at")})
+            if pending_line:
+                print(f"  {pending_line}")
             # 指紋の 5 項目のどれが食い違って inflight が残ったか（外部レビュー
             # 第 3 巡・持ち越し項目 C）。人が止まった原因をファイルを開いて
             # 自分で探さずに済むように、board の 1 画面にそのまま出す。
