@@ -507,6 +507,35 @@ class ThreadsAdapter(base.Adapter):
             return status
         return last
 
+    def publish_container(self, creation_id: str) -> base.PublishResult:
+        """作ってある container を `threads_publish` で **1 回だけ**公開する。
+
+        毎 run の最初の自己解決（`inflight_resolve._publish_finished`）が、FINISHED・
+        24 時間未満・指紋一致を確かめたあとにだけ呼ぶ。**新しい container は作らない。**
+        失敗の種類は分けない——どれも「分からない」（呼び出し側は inflight を残す）。
+        """
+        ts = jst.iso()
+        if not (isinstance(creation_id, str) and creation_id.isascii()
+                and creation_id.isdecimal()):
+            return base.PublishResult(None, None, ts, error="container_id_invalid",
+                                       failure="publish_ambiguous")
+        try:
+            body = self._post(f"/{self.user_id}/threads_publish", {
+                "creation_id": creation_id,
+                "access_token": self.access_token,
+            })
+        except urllib.error.HTTPError as e:
+            return base.PublishResult(None, None, ts, error=f"公開失敗: HTTP {e.code}",
+                                       failure="publish_ambiguous")
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            return base.PublishResult(None, None, ts, error=redact_mod.redact(f"公開失敗: {e}"),
+                                       failure="publish_ambiguous")
+        post_id = body.get("id") if isinstance(body, dict) else None
+        if not post_id:
+            return base.PublishResult(None, None, ts, error="公開失敗: id無し",
+                                       failure="publish_ambiguous")
+        return base.PublishResult(post_id=post_id, url=None, ts=ts, error=None, failure="none")
+
     def _settle_ambiguous(self, post: base.Post, creation_id: str, ts: str,
                           failed: base.PublishResult) -> base.PublishResult:
         """`threads_publish` が 5xx・timeout・接続断で終わった直後（設計 3.3.1 §2）。

@@ -1,8 +1,10 @@
 """3.3.1 §3: inflight が残っている run は、止まる前に 1 回だけ媒体に訊く。
 
 決まれば解いて進み、決まらなければ従前どおり止まる（理由 `inflight_unresolved`）。
-**自己解決から公開の要求は 1 度も飛ばない**——出ていないと決めたら select から
-（承認の検査を全部通って）新しい container で出し直す。出ていたら書き戻すだけ。
+自己解決から公開の要求が飛ぶのは、FINISHED・24 時間未満・指紋一致のときに**同じ
+container を 1 回だけ**（新しい container は作らない・裁定 2026-09-23）。ERROR・
+EXPIRED・24 時間を過ぎた FINISHED は select から（承認の検査を全部通って）新しい
+container で出し直す。出ていたら書き戻すだけ。
 """
 from __future__ import annotations
 
@@ -71,12 +73,60 @@ def test_ERRORなら解いて同じrunで新しいcontainerから出し直す(is
     assert any("出ていません" in line for line in lines)
 
 
-def test_FINISHEDなら公開せずに解いてselectからやり直す(isolated_account_factory, tmp_path):
+def test_FINISHEDで指紋一致なら古いcontainerを1回だけ公開し新しいcontainerは作らない(isolated_account_factory, tmp_path):
     account, state_dir, _ = _stuck(isolated_account_factory, tmp_path)
-    script = fake.Script(publish=[("ok", "802")], status=["FINISHED"])
+    script = fake.Script(publish=[("ok", "802"), ("ok", "999")], status=["FINISHED"])
+    result, lines = _again(account, script)
+    # 同じ container（900）を 1 回だけ。新しい container は作らない。
+    assert script.publish_ids == [fake.CONTAINER_ID]
+    assert script.create_calls == 0 and script.publish_calls == 1
+    assert inflight_mod.read(state_dir) is None
+    qf = queuefile.parse(_queue_path(account))
+    assert qf.get("status") == "posted" and str(qf.get("post_id")) == "802"
+    assert qf.get("posted_at")
+    assert sent_mod.read(state_dir, "802")["text"].strip() == TEXT
+    rows = runs_mod.read_runs(state_dir)
+    ok = [r for r in rows if r.get("inflight_resolution") == "remote_finished_published"]
+    assert ok and ok[-1]["status"] == "ok" and ok[-1]["post_id"] == "802"
+    assert len(inflight_mod.archives(state_dir)) == 1
+    assert any("同じ container を 1 回だけ公開" in line for line in lines)
+    assert result.action in ("none", "post")
+
+
+def test_FINISHEDでも指紋が違えば公開せずに止まる(isolated_account_factory, tmp_path):
+    account, state_dir, path = _stuck(isolated_account_factory, tmp_path)
+    text = open(path, encoding="utf-8").read().replace("本文です。", "書き換えた本文。")
+    open(path, "w", encoding="utf-8").write(text)
+    from tests.conftest import commit_and_push_path
+    commit_and_push_path(path)
+    script = fake.Script(publish=[("ok", "999")], status=["FINISHED"])
     result, _ = _again(account, script)
-    assert result.post_id == "802"
-    # 古い container を公開しない（新しい container を作ってから 1 回だけ公開）。
+    assert result.action == "inflight" and result.error == "inflight_unresolved"
+    assert script.publish_calls == 0 and script.create_calls == 0
+    assert inflight_mod.read(state_dir)["remote_state"] == "finished_fingerprint_mismatch"
+
+
+def test_FINISHEDで同じcontainerの公開が5xxなら次のrunに任せる(isolated_account_factory, tmp_path):
+    account, state_dir, _ = _stuck(isolated_account_factory, tmp_path)
+    script = fake.Script(publish=[(500, None), ("ok", "999")], status=["FINISHED"])
+    result, _ = _again(account, script)
+    assert result.action == "inflight" and result.error == "inflight_unresolved"
+    assert script.publish_calls == 1 and script.create_calls == 0      # 再試行しない
+    left = inflight_mod.read(state_dir)
+    assert left["remote_state"] == "finished_publish_failed" and not left.get("post_id")
+    qf = queuefile.parse(_queue_path(account))
+    assert qf.get("status") == "approved"
+
+
+def test_FINISHEDのまま24時間を過ぎていれば解いてselectから出し直す(isolated_account_factory, tmp_path):
+    account, state_dir, _ = _stuck(isolated_account_factory, tmp_path)
+    script = fake.Script(publish=[("ok", "803")], status=["FINISHED"])
+    later = NOW + datetime.timedelta(hours=25)
+    with fake.serve(script) as base_url:
+        result = core.throw_once(account["name"], production_flag=True,
+                                 adapter_factory=_factory(base_url), now=later)
+    assert result.post_id == "803"
+    # 古い container は公開しない。新しい container から 1 回。
     assert script.create_calls == 1 and script.publish_calls == 1
     rows = runs_mod.read_runs(state_dir)
     assert any(r.get("inflight_resolution") == "remote_finished"

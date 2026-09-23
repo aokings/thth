@@ -9,9 +9,12 @@
 アダプタ（`ThreadsAdapter.container_status()`）で、core は媒体名を知らない。
 
 **2 度出す経路を作らない。** ここで決めるのは「出た（post_id が 1 件に決まった）」
-「出ていない（container が ERROR・EXPIRED・FINISHED）」だけで、ここから公開の
-要求は 1 度も飛ばない。出ていないと決めたら inflight を解き、次の公開は select
-から（承認の検査を全部通って）やり直す。
+「出ていない（container が ERROR・EXPIRED・24 時間を過ぎた FINISHED）」と、
+「まだ出せる同じ container を 1 回だけ公開する（FINISHED・24 時間未満・指紋一致）」
+だけ。**新しい container はここでは作らない**——1 つの container は 1 つの投稿に
+しかならないので、古い要求があとで通っていても、同じ container を公開する限り
+投稿は 1 本で済む（masaru 側の裁定 2026-09-23）。出ていないと決めたら inflight を
+解き、次の公開は select から（承認の検査を全部通って）やり直す。
 """
 from __future__ import annotations
 
@@ -29,6 +32,10 @@ LOCATE_WINDOW = datetime.timedelta(minutes=10)
 # 引く件数。10 分の窓に 25 本を越えて出すアカウントは無い（max_per_run 既定 1）。
 LOCATE_LIMIT = 25
 
+# container の有効期限（一次資料: 24 時間以内に公開されなければ EXPIRED）。
+# inflight の started（container を作る少し前）から数える。
+CONTAINER_LIFETIME = datetime.timedelta(hours=24)
+
 # container の status（一次資料 troubleshooting・2026-09-23 参照）。
 CONTAINER_STATUSES = frozenset({"EXPIRED", "ERROR", "FINISHED", "IN_PROGRESS", "PUBLISHED"})
 
@@ -38,6 +45,8 @@ REMOTE_STATES = frozenset({
     "published_unlocated", "retry_failed", "retried", "published_located",
     "listing_none", "listing_many", "listing_failed", "listing_located",
     "unsupported",
+    # 自己解決で FINISHED の同じ container を公開しようとして止まった理由。
+    "finished_fingerprint_mismatch", "finished_publish_failed",
 })
 
 
@@ -143,8 +152,8 @@ class Outcome:
 _NOT_PUBLISHED_ERROR = {
     "error": "publish_failed_remote_error",
     "expired": "publish_failed_remote_error",
-    # FINISHED: まだ公開されていない container。自己解決では**公開しない**
-    # （承認の検査を通らずに出すことになる）。解いて select からやり直す。
+    # FINISHED のまま 24 時間を過ぎた container（もう出せない）。解いて select から。
+    # 24 時間未満の FINISHED は同じ container を 1 回だけ公開する（`_publish_finished`）。
     "finished": "inflight_resolved_not_published",
 }
 
@@ -190,9 +199,10 @@ def self_resolve(account_name: str, account_cfg: dict, state_dir: str, record: d
                  adapter_factory, run_id: str, now, log) -> Outcome:
     """inflight が残っている run の最初に 1 回だけ訊いて、決まれば解く（§3）。
 
-    **公開の要求はここから 1 度も飛ばない**（再試行は公開した run の中の 1 回
-    だけ・`ThreadsAdapter._settle_ambiguous()`）。決まらなければ inflight に
-    「最後の問い合わせ結果」を写して止まる（従前どおり）。
+    公開の要求がここから飛ぶのは、FINISHED・container が作られてから 24 時間
+    未満・いまの原稿が公開したときの指紋と一致、のときに**同じ container を
+    1 回だけ**（`_publish_finished`）。新しい container は作らない。決まらなければ
+    inflight に「最後の問い合わせ結果」を写して止まる（従前どおり）。
     """
     from . import inflight as inflight_mod
     if not is_self_resolvable(record):
@@ -213,6 +223,11 @@ def self_resolve(account_name: str, account_cfg: dict, state_dir: str, record: d
             f"thth inflight {account_name} show で中身を見て、媒体の画面で確かめてから"
             f" thth inflight {account_name} resolve で解いてください")
         return Outcome(False, True, state)
+    if answer == "not_published" and state == "finished":
+        started = jst.parse(record.get("started"))
+        if started is not None and (now or jst.now_jst()) - started < CONTAINER_LIFETIME:
+            return _publish_finished(account_name, account_cfg, state_dir, record, adapter,
+                                     run_id=run_id, now=now, log=log)
     if answer == "not_published":
         resolution = "remote_" + state
         inflight_mod.archive(state_dir, record, resolved_at=jst.iso(), resolved_by="thth",
@@ -232,6 +247,65 @@ def self_resolve(account_name: str, account_cfg: dict, state_dir: str, record: d
         return Outcome(False, True, state, resolution, post_id, error)
     log(f"inflight を解きました: 出ていました（post_id {post_id}）。記録を書き戻しました")
     return Outcome(True, True, state, resolution, post_id)
+
+
+def _publish_finished(account_name, account_cfg, state_dir, record, adapter, *,
+                      run_id, now, log) -> Outcome:
+    """FINISHED の**同じ container** を 1 回だけ公開する（masaru 側の裁定 2026-09-23）。
+
+    新しい container を作れば、古い 500 の要求があとで通っていたときに確実に
+    2 本になり得る。同じ container なら投稿は 1 本で済む（2 回目の公開を Threads
+    が断るか同じ投稿になるか——どちらも未確認）。
+
+    条件（どれか欠ければ公開せず止まる・`inflight_unresolved`）:
+    (a) inflight の `approved_fingerprint` がいまの原稿の指紋と一致し、原稿が
+        approved のまま取り消されていない（同期してから見る）
+    (b) container が作られてから 24 時間未満（呼び出し側が見る）
+    (c) status が FINISHED（呼び出し側が見る）
+    公開は 1 回だけ・再試行しない。応答が分からなければ次の run の自己解決に
+    任せる（また status から）。
+    """
+    from . import core, inflight as inflight_mod, queuefile, writeback
+    raw = record.get("file")
+    expected = record.get("approved_fingerprint")
+    publish = getattr(adapter, "publish_container", None)
+    container_id = record.get("container_id")
+
+    def stop(state, message):
+        _note(state_dir, state, log)
+        log(f"inflight: container は FINISHED（まだ出ていない）ですが、{message}。"
+            f"公開しません。thth inflight {account_name} show で中身を見てから"
+            f" thth inflight {account_name} resolve で解いてください")
+        return Outcome(False, True, state)
+
+    if raw == "(send)" or not expected or not callable(publish):
+        return stop("finished_fingerprint_mismatch", "公開したときの内容と照らせません")
+    synced, _err, _sha = writeback.sync_repo(account_cfg.get("repo_dir"))
+    if not synced:
+        return stop("finished_fingerprint_mismatch", "repo を同期できないので原稿と照らせません")
+    try:
+        qf = queuefile.parse(raw)
+    except OSError:
+        qf = None
+    if (qf is None or qf.malformed or qf.get("status") != "approved" or qf.get("revoked_at")
+            or qf.get("post_id")
+            or not core._fingerprint_matches(raw, account_cfg["media"], expected, account_cfg)):
+        return stop("finished_fingerprint_mismatch", "原稿が公開したときの内容・承認と違います")
+    posted_at = jst.iso()
+    result = publish(container_id)
+    post_id = getattr(result, "post_id", None)
+    if not post_id:
+        # 4xx でも「出ていない」とは言わない（古い要求が通っていた可能性を消せない）。
+        return stop("finished_publish_failed", "同じ container の公開の応答が分かりませんでした")
+    ok, error = record_published(account_name, account_cfg, state_dir, record, post_id,
+                                 posted_at=posted_at, resolution="remote_finished_published",
+                                 resolved_by="thth", run_id=run_id, now=now, log=log,
+                                 remote_state="finished")
+    if not ok:
+        return Outcome(False, True, "finished", "remote_finished_published", post_id, error)
+    log(f"inflight を解きました: container は FINISHED（まだ出ていない）だったので、同じ"
+        f" container を 1 回だけ公開しました（post_id {post_id}）")
+    return Outcome(True, True, "finished", "remote_finished_published", post_id)
 
 
 def _note(state_dir, state, log) -> None:

@@ -38,6 +38,8 @@ class Script:
     status_calls: int = 0
     list_calls: int = 0
     create_calls: int = 0
+    # 公開の要求に載っていた creation_id（どの container を公開したか）。
+    publish_ids: list = dataclasses.field(default_factory=list)
 
 
 def _handler(script: Script):
@@ -52,10 +54,11 @@ def _handler(script: Script):
 
         def do_POST(self):  # noqa: N802
             length = int(self.headers.get("Content-Length") or 0)
-            if length:
-                self.rfile.read(length)
+            raw = self.rfile.read(length) if length else b""
             if self.path.endswith("/threads_publish"):
                 script.publish_calls += 1
+                params = urllib.parse.parse_qs(raw.decode("utf-8"))
+                script.publish_ids.append((params.get("creation_id") or [None])[0])
                 kind, value = (script.publish.pop(0) if script.publish else (500, None))
                 if kind == "ok":
                     self._json(200, {"id": value})
