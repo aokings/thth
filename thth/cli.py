@@ -1068,7 +1068,8 @@ def cmd_replies(args) -> int:
             log=lambda line: print(line, file=sys.stderr))
 
     try:
-        result = replies_mod.load(args.account, post_id=args.post)
+        # この account の投稿の返信だけ（同じ repo の他 account と置き場を共有・3.1.1）。
+        result = replies_mod.load(args.account, post_id=args.post, owned_only=True)
     except accounts_mod.AccountError as e:
         print(str(e), file=sys.stderr)
         return 1

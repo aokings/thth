@@ -151,10 +151,20 @@ def _fetch_sources(fetches: list) -> dict:
     return dict(sorted(out.items()))
 
 
-def load(account_name: str, *, post_id: str | None = None, allowed_names=None) -> dict:
+def load(account_name: str, *, post_id: str | None = None, allowed_names=None,
+         owned_only: bool = False) -> dict:
     """返信の台帳を読む。
 
     `post_id` を渡せばその投稿だけ、省略すれば `replies_dir` 配下の全 `*.ndjson`。
+
+    `owned_only=True`（`thth replies <account>`・3.1.1）は、`post_id` を省略した
+    ときに**この account の投稿の返信だけ**を読む。置き場は同じ repo の他 account と
+    共有なので、ファイルがあることは所有の証拠にならない。母集団は採集と同じ
+    （`collect.owned_post_ids()`・年齢の窓は掛けない）。この account の投稿と
+    確かめられたファイルの行は、`account`・`medium` が無ければ account 側から補い、`counts.other_account_files`（読まなかった
+    他 account のファイルの本数）と `population_errors`（母集団を作るときに
+    読めなかった記録の数）を足す。既定（False）は従来どおり——他の読み手
+    （`unanswered` 等）は所有を自分で判定している。
 
     戻り値:
       - `replies`: 返信の配列。元の行の項目に `own`（True/False/None）を足したもの
@@ -177,6 +187,14 @@ def load(account_name: str, *, post_id: str | None = None, allowed_names=None) -
     # ——別々に組み立てると、片方を直したときにもう片方が黙って別の場所を見る。
     base = accounts_mod.data_dirs(account_cfg, account_name)["replies"]
 
+    population_errors: list = []
+    excluded = 0
+    owned = set()
+    if owned_only:
+        from . import collect as collect_mod
+        owned = {f"{postid_mod.to_filename(pid)}.ndjson"
+                 for pid in collect_mod.owned_post_ids(account_name, account_cfg,
+                                                        errors=population_errors)}
     if post_id:
         # **`post_id` をそのままパスにしない**（`thth/postid.py`・T3 2026-09-13）。
         # Bluesky の `post_id` は AT URI で `/` を含む。
@@ -184,6 +202,11 @@ def load(account_name: str, *, post_id: str | None = None, allowed_names=None) -
     else:
         names = sorted(n for n in os.listdir(base) if n.endswith(".ndjson")) \
             if os.path.isdir(base) else []
+        if owned_only:
+            # 他 account の分は読まずに数だけ残す（分母の規律）。
+            present = names
+            names = [n for n in present if n in owned]
+            excluded = len(present) - len(names)
 
     own_handles, unreadable_accounts = _own_handles(allowed_names)
     incomplete = bool(unreadable_accounts)
@@ -196,6 +219,12 @@ def load(account_name: str, *, post_id: str | None = None, allowed_names=None) -
             continue
         for row in rows:
             own = _classify_own(row.get("username"), own_handles, incomplete=incomplete)
+            if name in owned:
+                # 古い行は `account`・`medium` を持たない。この account の投稿だと母集団で
+                # 確かめられたファイルに限って補う——行にあればそのまま（採取時点の記録を
+                # 正とする）。`--post` で他 account の投稿を名指ししたときは補わない。
+                row = {**row, "account": row.get("account") or account_name,
+                       "medium": row.get("medium") or account_cfg.get("media")}
             all_replies.append({**row, "own": own})
         all_fetches.extend(fetch_rows)
 
@@ -211,6 +240,11 @@ def load(account_name: str, *, post_id: str | None = None, allowed_names=None) -
         # 2026-09-14）。0 件の出所は数えない——**出さないことで「無い」と言う。**
         "fetch_sources": _fetch_sources(all_fetches),
     }
-
-    return {"replies": all_replies, "fetches": all_fetches, "broken": broken,
-            "unreadable_accounts": unreadable_accounts, "counts": counts}
+    result = {"replies": all_replies, "fetches": all_fetches, "broken": broken,
+              "unreadable_accounts": unreadable_accounts, "counts": counts}
+    if owned_only:
+        # 置き場にあったが他 account の投稿のファイル（読んでいない）の本数と、
+        # 母集団を作るときに読めなかった記録の数（その投稿の返信は出ていない）。
+        counts["other_account_files"] = excluded
+        result["population_errors"] = len(population_errors)
+    return result

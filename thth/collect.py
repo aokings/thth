@@ -1140,6 +1140,36 @@ def _collect_entry(account_name: str, *, adapter, now, log, info: dict) -> int:
         log("採取の失敗: " + err)
     return 1 if result["errors"] else 0
 
+
+def owned_post_ids(account_name: str, account_cfg: dict, *, errors: list) -> set:
+    """この account が出した投稿の `post_id`（**採集と同じ母集団・年齢の窓は掛けない**）。
+
+    返信の台帳（`data/sns/replies/<post_id>.ndjson`）は、同じ repo を持つ
+    account（threads／bluesky／mastodon の 3 口座など）の間で**置き場を共有する**。
+    ファイル名は post_id だけで account を持たず、古い行は `account`・`medium` も
+    持たない——読み手が置き場の全ファイルを読むと、他 account の返信まで
+    自分のものとして返していた（3.1.1・`thth replies kopicha-bluesky` が
+    Threads の返信 32 行を返した実測）。読み手はここで母集団を絞る。
+
+    母集団は `collect_once()`・`_refresh_targets()` と同じ（queue の
+    `front_matter.account == name`・束の段・`sent/`）。**読むだけ**なので照合先
+    （`tree_sha`）は取らない——所有の判定に要るのは front-matter の account と
+    post_id だけで、git を呼ばない。読めなかった束・記録は `errors` に積む。
+    """
+    files = []
+    if account_cfg.get("repo_dir") and account_cfg.get("queue_dir"):
+        files = core.list_queue_files(account_cfg, tree_sha=None)
+    out = set()
+    for qf in _with_sent_posts(
+            _with_bundle_posts(files, account_name, account_cfg, errors=errors),
+            account_name, account_cfg, errors=errors):
+        if qf.malformed or qf.front_matter.get("account") != account_name:
+            continue
+        pid = qf.front_matter.get("post_id")
+        if pid:
+            out.add(str(pid))
+    return out
+
 # --- 臨時の取り直し（masaru 指示 2026-09-12・外部レビュー B）------------------
 
 def _refresh_targets(account_name: str, account_cfg: dict, *, now, errors: list,
