@@ -214,6 +214,10 @@ The remaining 7 subcommands, one line each:
   it went; it never holds what was said (read-only)
 - `retract` — take down a published post (two-step confirmation; the record is
   kept, not deleted; Threads only)
+- `inflight` — see an unresolved publish (`show`) and, after checking the
+  platform yourself, resolve it (`resolve --not-published` or
+  `--published <post_id>`; two-step confirmation; a copy and a change-log entry
+  are kept; not exposed over MCP)
 - `location` — search for a place (`thth location search <account> <word>`,
   read-only)
 

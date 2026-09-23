@@ -30,7 +30,9 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    # 報告の口（設計 3.1.2 §2）。presence-only——本文・返事は入れない。
                    'report_filed', 'report_replied', 'report_closed',
                    # 報告した側の追記（設計 3.2.0 §4.5-1）。同じく presence-only。
-                   'report_added'))
+                   'report_added',
+                   # 人が inflight を解いた（設計 3.3.1 §4・`thth inflight resolve`）。
+                   'inflight_resolved'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 

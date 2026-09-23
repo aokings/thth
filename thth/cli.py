@@ -3488,6 +3488,11 @@ def build_parser() -> argparse.ArgumentParser:
     from . import retract_cli
     retract_cli.register(sub)
 
+    # `thth inflight <account> [show|resolve]`（設計 3.3.1 §4）。口は
+    # `thth/inflight_cli.py` に閉じる——ここに足すのはこの 2 行だけ。
+    from . import inflight_cli
+    inflight_cli.register(sub)
+
     # `thth report file|list|show`（設計 3.1.2・報告の口）。口の中身は
     # `thth/report_inbox.py` に閉じる——ここに足すのはこの 2 行だけ。
     from . import report_inbox
