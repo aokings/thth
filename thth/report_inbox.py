@@ -768,6 +768,32 @@ def handoff_summary(configs, read_ats):
             "cannot_say": None}
 
 
+def project_summary(scope, version=None):
+    """「あなたの project の報告」（設計 3.3.0 B5・効いたことを見せる）。
+
+    `scope` の報告のうち開いている件数と、**この版で閉じた**報告（`admin reports close
+    --version` の版がいまの道具の版と一致するもの）の id・題・種類・閉じた理由。
+    報告した側の LLM が「効いた実感が無い」と言ったので、置いた報告が直ったことを
+    毎朝の一枚の 0 段で見せる。本文は出さない。
+    """
+    version = version or __version__
+    try:
+        records, _broken = load_all()
+    except ReportError as error:
+        return {"open": None, "closed_this_version": None, "m": None, "denominator": None,
+                "version": version, "cannot_say": str(error)}
+    visible = [row for row in records if scope.allows(row)]
+    closed = [row for row in visible if row["status"] == "closed"
+              and (row.get("closed") or {}).get("version") == version]
+    closed.sort(key=lambda row: ((row.get("closed") or {}).get("at") or "", row["report_id"]))
+    return {"open": sum(row["status"] == "open" for row in visible),
+            "closed_this_version": [
+                {"report_id": row["report_id"], "title": row["title"], "kind": row["kind"],
+                 "reason": (row.get("closed") or {}).get("reason")} for row in closed],
+            "m": len(closed), "denominator": len(visible), "version": version,
+            "cannot_say": None}
+
+
 def morning_summary(now):
     """管理者の毎朝の一枚の 0 段「道具」に載せる件数（設計 §3）。
 

@@ -187,7 +187,17 @@ def _tool_section(handoff, now=None, admin=False, configs=None):
         # 知らせる先が無い scheduled の account（設計 3.3.0 A4）。止まっても誰にも
         # 届かない状態を黙らない。欠けていなければ空（有無だけ・値は出さない）。
         "notification_routes": _routes(configs or {}),
+        # あなたの project の報告（設計 3.3.0 B5）。開いている件数と、この版で閉じた
+        # 報告の題（置いた報告が効いたことを見せる）。対象の account と project の
+        # 報告だけ（サーバ型の利用者でも自分の範囲だけ）。
+        "project_reports": _project_reports(configs or {}),
     }
+
+
+def _project_reports(configs):
+    from . import report_inbox
+    projects = {cfg.get("project") for cfg in configs.values() if cfg.get("project")}
+    return report_inbox.project_summary(report_inbox.Scope(configs, projects))
 
 
 def _routes(configs):
@@ -863,6 +873,15 @@ def _render_section(section, out) -> None:
                 f"（{value['capabilities_basis']}）")
         if value["notes_reason"]:
             out(f"  ノート: {value['notes_reason']}")
+        mine = value.get("project_reports")
+        if mine is not None:
+            if mine["cannot_say"] is not None:
+                out(f"  あなたの project の報告: 言えない: {mine['cannot_say']}")
+            else:
+                titles = "・".join(row["title"] for row in mine["closed_this_version"])
+                out(f"  あなたの project の報告: 開いている {mine['open']}"
+                    f"・この版（{mine['version']}）で閉じた {mine['m']}"
+                    + (f"（{titles}）" if titles else ""))
         from . import notification_route
         for row in value.get("notification_routes") or []:
             text = (notification_route.line(row["cannot_say"])
