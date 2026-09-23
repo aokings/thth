@@ -26,8 +26,14 @@ NONE = "none"
 # 公開の時点で `goal:` の行が 4 語のどれでもなかった（lint を通らない書き換えが承認の
 # あとに入った）ときに記録に残す語。数えるときは「不明」の層。
 UNKNOWN = "unknown"
+# 公開の記録（sent・連投の実行記録）に goal の欄そのものが無い投稿——3.6.0 より前、
+# 目的を書く口が無かった頃の投稿（masaru 裁定 09-24）。`none`（欄はあって目的なし）と
+# 混ぜない。**記録には書かない語**（数えるときだけの層）。
+UNRECORDED = "unrecorded"
 LABELS = {"reach": "表示", "click": "サイト誘導", "follow": "フォロー", "reply": "会話",
-          NONE: "目的なし", UNKNOWN: "不明"}
+          NONE: "目的なし", UNKNOWN: "不明", UNRECORDED: "記録なし（目的を書く口が無かった頃）"}
+# 数えるときの層（分母には `none` と `unrecorded` の両方を出す）。
+LAYERS = GOALS + (NONE, UNRECORDED)
 # 記録に書いてよい語（sent・runs・連投の実行記録）。
 RECORDED = GOALS + (NONE, UNKNOWN)
 
@@ -112,8 +118,9 @@ def recorded_goals(account_name: str) -> dict:
     材料は 2 つだけ: `state/<account>/sent/`（単発の公開・同席の送信・inflight を
     解いた記録）と連投の実行記録（`state/threads/`・段ごとの `goal`）。**いまの原稿は
     読まない**——公開のあとに `goal:` を書き換えても、過去の投稿の層は動かない
-    （`measured` が `account` を採取時点の行から読むのと同じ筋）。記録の無い投稿
-    （3.6.0 より前・記録に `goal` が無い）は呼び出し側が `none` として数える。
+    （`measured` が `account` を採取時点の行から読むのと同じ筋）。記録に goal の欄
+    そのものが無い投稿（3.6.0 より前）はここに入らず、`goal_for()` が `unrecorded`
+    として数える。欄があって値が空なら `none`。
     """
     from . import accounts, sent, threadrun
     out = {}
@@ -122,9 +129,10 @@ def recorded_goals(account_name: str) -> dict:
     except accounts.AccountError:
         return out
     for row in sent.records(state_dir):
+        if KEY not in row:
+            continue
         value = row.get(KEY)
-        if value in RECORDED:
-            out[str(row["post_id"])] = value
+        out[str(row["post_id"])] = value if value in RECORDED else (NONE if not value else UNKNOWN)
     try:
         names = sorted(n for n in os.listdir(threadrun.runs_dir())
                        if n.endswith(".json"))
@@ -138,15 +146,17 @@ def recorded_goals(account_name: str) -> dict:
         if not isinstance(run, dict) or run.get("account") != account_name:
             continue
         for post in run.get("posts") or []:
-            if (isinstance(post, dict) and post.get("post_id")
-                    and post.get(KEY) in RECORDED):
-                out[str(post["post_id"])] = post[KEY]
+            if isinstance(post, dict) and post.get("post_id") and KEY in post:
+                value = post[KEY]
+                out[str(post["post_id"])] = (value if value in RECORDED
+                                             else NONE if not value else UNKNOWN)
     return out
 
 
 def goal_for(recorded: dict, post_id) -> str:
-    """記録から引いた目的。記録が無ければ `none`（3.6.0 より前は目的を書く口が無かった）。"""
-    return recorded.get(str(post_id), NONE)
+    """記録から引いた目的。記録に goal の欄が無ければ `unrecorded`（3.6.0 より前は
+    目的を書く口が無かった——「目的なし」の `none` と混ぜない・masaru 裁定 09-24）。"""
+    return recorded.get(str(post_id), UNRECORDED)
 
 
 # ------------------------------------------------------------ 主な物差し

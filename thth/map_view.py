@@ -95,7 +95,7 @@ def goal_table(name, medium, members, recorded, *, since, now, min_n):
     """
     from . import analytics_goals, goals as goals_mod
     table = {}
-    for goal in goals_mod.GOALS + (goals_mod.NONE,):
+    for goal in goals_mod.LAYERS:
         chosen = [item for item in members if goals_mod.goal_for(recorded, item[0]) == goal]
         roots = [item for item in chosen if analytics_comparison._root_exclusion(item[2]) is None]
         row = {"posts": len(chosen), "root_posts": len(roots), "primary": None, "cannot_say": None}

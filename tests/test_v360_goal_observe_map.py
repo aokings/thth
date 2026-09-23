@@ -40,7 +40,8 @@ def test_observeの投稿に目的と主な物差し_clickは言えない(isolat
     assert by_id["P1"]["lead_metrics"] == ["replies"]
     assert by_id["C1"]["goal_cannot_say"] == "per_post_clicks_unavailable"
     assert by_id["C1"]["lead_metrics"] == []
-    assert by_id["N1"]["goal"] == "none" and by_id["N1"]["goal_cannot_say"] is None
+    assert by_id["N1"]["goal"] == "unrecorded", "記録に goal の欄が無い（3.6.0 より前）"
+    assert by_id["N1"]["goal_cannot_say"] is None
 
     lines = []
     morning._render_yesterday(account["name"], {"medium": "threads", **node}, lines.append)
@@ -58,6 +59,7 @@ def test_地図の自分の層に点と目的の表(isolated_account_factory):
     _post(account, "F1", NOW - datetime.timedelta(days=2, hours=5), "follow")
     _post(account, "P1", NOW - datetime.timedelta(days=2, hours=6), "reply", replies=4)
     _post(account, "T1", NOW - datetime.timedelta(days=2, hours=7), "reach", topic="紅茶")
+    _post(account, "U1", NOW - datetime.timedelta(days=2, hours=8), None)   # 3.6.0 より前の記録
     layer = map_view.self_layer({account["name"]: {"media": "threads"}}, ["コーヒー"],
                                 since=SINCE, now=NOW, min_n=1)
     table = layer["コーヒー"]["by_account"][account["name"]]["by_goal"]
@@ -69,10 +71,11 @@ def test_地図の自分の層に点と目的の表(isolated_account_factory):
     assert table["reply"]["primary"]["metric"] == "replies_24h"
     assert table["reply"]["primary"]["median"] == 4
     assert table["click"]["posts"] == 0 and table["none"]["posts"] == 0
+    assert table["unrecorded"]["posts"] == 1 and table["unrecorded"]["primary"] is None
     line = map_view.goal_line(table)
     assert line.startswith("目的: reach 3 本（views_24h 中央値 20・n=3/3）")
     assert "follow 1 本（言えない: per_post_follows_unavailable）" in line
-    assert "click" not in line
+    assert "click" not in line and "unrecorded 1 本" in line
 
 
 def test_地図の表は小標本なら中央値を出さない(isolated_account_factory):

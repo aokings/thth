@@ -207,7 +207,7 @@ def goal_days(items, recorded):
 def strata(*, name, medium, items, all_items, account_daily, recorded,
            previous_start, current_start, now, min_n):
     """`--by goal` の層。目的ごとの母集団（既存の 24h の比較）と、目的ごとの物差し。"""
-    groups = {label: [] for label in goals.GOALS + (goals.NONE,)}
+    groups = {label: [] for label in goals.LAYERS}
     for item in items:
         groups.setdefault(goals.goal_for(recorded, item[0]), []).append(item)
     days = goal_days(all_items, recorded)
@@ -228,7 +228,8 @@ def strata(*, name, medium, items, all_items, account_daily, recorded,
     return {"by": "goal", "strata": out,
             "goal_source": "recorded_at_publish",
             "goal_basis": ("公開の時点の記録（sent・連投の実行記録）。いまの原稿は読まない。"
-                           "記録の無い投稿（3.6.0 より前を含む）は none"),
+                           "記録に goal の欄が無い投稿（3.6.0 より前）は unrecorded・"
+                           "欄があって目的が無ければ none"),
             "reconciliation": {period: {
                 "sum_n_total": sum(out[label][period]["n_total"] for label in out),
                 "n_total": sum(1 for _pid, posted, _post in items

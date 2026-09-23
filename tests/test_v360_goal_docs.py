@@ -18,7 +18,8 @@ def test_skillに目的の1段落():
     section = skill.split("**原稿に投稿の目的を 1 つ書く**")[1].split("\n\n")[0]
     for text in ("goal: reach|click|follow|reply", "goal_invalid", "**本文のメモ（「目的: 誘導」）は道具が読まない**",
                  "**承認の指紋に入らない**", "--by goal", "per_post_clicks_unavailable",
-                 "per_post_follows_unavailable", "観察の差（因果ではない）", "thth_report_timeline"):
+                 "per_post_follows_unavailable", "観察の差（因果ではない）", "thth_report_timeline",
+                 "`unrecorded`"):
         assert text in section, text
 
 

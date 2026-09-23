@@ -1139,7 +1139,8 @@ def _render_yesterday(account, node, out) -> None:
         keys = lead + [key for key in sorted(metrics) if key not in lead]
         numbers = "・".join(f"{key}={metrics[key]}" for key in keys) or "—"
         goal = post.get("goal")
-        tag = f"[{goal}] " if goal and goal != "none" else ""
+        # 目的なし（none）と記録なし（unrecorded・3.6.0 より前）は印を付けない（JSON には出る）。
+        tag = f"[{goal}] " if goal and goal not in ("none", "unrecorded") else ""
         out(f"    {post['post_id']}  {tag}{numbers}（採取 {post['observations']} 回）")
         if post.get("goal_cannot_say"):
             out(f"      言えない: {post['goal_cannot_say']}（日次の数を投稿に割りません）")

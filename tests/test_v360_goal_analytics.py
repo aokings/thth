@@ -85,16 +85,36 @@ def report(isolated_account_factory):
     return payload, payload["by_account"][account["name"]]["posts"]["stratified"]
 
 
-def test_層は4語と目的なし_記録の無い投稿はnone_分母が合う(report):
+def test_層は4語と目的なしと記録なし_記録の無い投稿はunrecorded_分母が合う(report):
     _payload, stratified = report
     assert stratified["by"] == "goal" and stratified["goal_source"] == "recorded_at_publish"
     strata = stratified["strata"]
-    assert set(strata) == {"reach", "click", "follow", "reply", "none"}
+    assert set(strata) == {"reach", "click", "follow", "reply", "none", "unrecorded"}
     counts = {label: group["current"]["n_total"] for label, group in strata.items()}
-    assert counts == {"reach": 2, "click": 3, "follow": 1, "reply": 1, "none": 1}
+    assert counts == {"reach": 2, "click": 3, "follow": 1, "reply": 1, "none": 0, "unrecorded": 1}
     assert strata["reach"]["previous"]["n_total"] == 1
     assert stratified["reconciliation"]["current"] == {"sum_n_total": 8, "n_total": 8}
-    assert strata["none"]["yardstick"]["current"] is None
+    assert strata["unrecorded"]["yardstick"]["current"] is None
+
+
+def test_前の記録はunrecorded_後の目的なしはnone(isolated_account_factory):
+    """masaru 裁定 09-24: 記録に goal の欄そのものが無ければ unrecorded、欄があって
+    目的が無ければ none。分母には両方を出す（`--by goal`・observe・地図で同じ）。"""
+    account = isolated_account_factory()
+    state_dir = accounts_mod.state_dir_for(account["name"])
+    for post_id, hour in (("OLD1", 9), ("NEW1", 10)):
+        _seed_post(account, post_id, _at(f"15T{hour:02d}:00:00"))
+    sent_mod.write(state_dir, post_id="OLD1", text="本文", body_hash="h",
+                   sent_at=jst.iso(_at("15T09:00:00")))                 # 3.5.0 までの記録（欄なし）
+    sent_mod.write(state_dir, post_id="NEW1", text="本文", body_hash="h",
+                   sent_at=jst.iso(_at("15T10:00:00")), goal=goals.NONE)  # 3.6.0 の目的なし
+    assert goals.recorded_goals(account["name"]) == {"NEW1": "none"}
+    payload = analytics_report.answer(account["name"], now=NOW, compare_previous=True,
+                                      min_n=1, by="goal")
+    strata = payload["by_account"][account["name"]]["posts"]["stratified"]["strata"]
+    assert [row["post_id"] for row in strata["unrecorded"]["current"]["evidence"]] == ["OLD1"]
+    assert [row["post_id"] for row in strata["none"]["current"]["evidence"]] == ["NEW1"]
+    assert strata["unrecorded"]["label"] == "記録なし（目的を書く口が無かった頃）"
 
 
 def test_reachは24hと72hのviews(report):
