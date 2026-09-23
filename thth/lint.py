@@ -401,4 +401,35 @@ def preview_file(path: str) -> str:
                              hashtags=bool(account_cfg.get("hashtags", True)) if account_cfg else False)
     from . import media_delivery
     note=media_delivery.cached_note(account_cfg) if manifest else None
-    return text + ("\n" + media_mod.display(manifest) if manifest else "") + ("\n"+note if note else "")
+    reply = reply_to_file_line(qf)
+    return (text + ("\n" + media_mod.display(manifest) if manifest else "") + ("\n"+note if note else "")
+            + ("\n" + reply if reply else ""))
+
+
+def reply_to_file_state(qf) -> dict | None:
+    """preview 用: `reply_to_file` の解決の見込み（読むだけ・照合しない）。持たなければ None。
+
+    `{"reply_to_file", "reply_to", "unresolved"}`。`reply_to` は指した原稿が出て
+    いればその post_id。**これは見込み**——実際に出すときは select が同期を
+    確かめた原稿だけを信じて解決し直す（設計 3.2.0 §2）。
+    """
+    from . import select as select_mod
+    reply = select_mod.resolve_reply_to_file(qf, account_name=qf.front_matter.get("account"),
+                                             require_verified=False)
+    if reply is None:
+        return None
+    return {"reply_to_file": reply.name, "reply_to": reply.post_id, "unresolved": reply.reason}
+
+
+def reply_to_file_line(qf) -> str | None:
+    """preview の末尾の 1 行（設計 3.2.0 §4）。本文ではないので区切って足す。"""
+    state = reply_to_file_state(qf)
+    if state is None:
+        return None
+    from . import select as select_mod
+    name = state["reply_to_file"]
+    if state["reply_to"]:
+        return f"返信先: {name} → {state['reply_to']}"
+    if select_mod.waiting_target(state["unresolved"]) is not None:
+        return f"返信先: {name}（未解決・待ち）"
+    return f"返信先: {name}（解決できません: {state['unresolved']}）"

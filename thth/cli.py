@@ -43,6 +43,7 @@ from . import queuefile
 from . import tags as tags_mod
 from . import replies as replies_mod
 from . import report as report_mod
+from . import select as select_mod
 from . import selfupdate as selfupdate_mod
 from . import threadshape as threadshape_mod
 from . import topics as topics_mod
@@ -149,7 +150,12 @@ def cmd_preview(args) -> int:
     if getattr(args, "json", False):
         qf = queuefile.parse(args.file)
         topic = queuefile.normalize_topic(qf.front_matter.get("topic"))
-        _print_json({"file": args.file, "text": section, "topic": topic})
+        payload = {"file": args.file, "text": section, "topic": topic}
+        reply = lint_mod.reply_to_file_state(qf) if not qf.malformed else None
+        if reply is not None:
+            # reply_to_file（設計 3.2.0 §4）: 返信先の原稿の名前と解決の見込み。
+            payload.update(reply)
+        _print_json(payload)
         return 0
     sys.stdout.write(section)
     return 0
@@ -2268,9 +2274,11 @@ def cmd_queue(args) -> int:
                 continue
             c = info["counts"]
             topic_suffix = f" topic={info['next_topic']}" if info.get("next_topic") else ""
+            waiting_suffix = (f" 返信待ち={info['waiting_reply']}"
+                              if info.get("waiting_reply") else "")
             print(f"{name}: draft={c['draft']} approved={c['approved']} posted={c['posted']} "
                   f"型外={info['type_mismatch']} 次={info['next_file']}（{info['next_publish_at']}）"
-                  f"{topic_suffix}")
+                  f"{topic_suffix}{waiting_suffix}")
             if info.get("queue_dir"):
                 print(f"  repo: {info['repo_dir']}")
                 print(f"  原稿の置き場（queue）: {info['queue_dir']}")
@@ -2307,6 +2315,9 @@ def cmd_schedule(args) -> int:
     for row in rows:
         mark = "済" if row["status"] == "approved" else "未"
         overdue = "  ← 時刻を過ぎています" if row["past"] else ""
+        if row.get("waiting_for"):
+            # 待ちは時刻超過ではない（設計 3.2.0 §2）。
+            overdue = f"  ← 返信待ち: {row['waiting_for']}"
         topic = f" [{row['topic']}]" if row["topic"] else ""
         print(f"{row['publish_at'][:16]}  {mark}  {row['account']:22} "
               f"{row['file']:28}{topic} {row['head']}{overdue}")
@@ -2999,9 +3010,17 @@ def cmd_board(args) -> int:
                 # 「承認して待っている（正常）」と「承認が古くて永久に出ない（異常）」
                 # を board 1 画面で区別できるようにする印。
                 stale = row.get("approval_stale_count", 0)
-                print(f"  要確認: {len(needs_review)} 件（approval_stale {stale} 件）")
+                waiting = row.get("waiting_reply_count", 0)
+                print(f"  要確認: {len(needs_review)} 件（approval_stale {stale} 件"
+                      + (f"・返信待ち {waiting} 件" if waiting else "") + "）")
                 for item in needs_review:
-                    print(f"    {item['file']} — {item['reason']}")
+                    target = select_mod.waiting_target(item["reason"])
+                    if target is not None:
+                        # 待ちは誤りではない——名前と待ち先を言う（設計 3.2.0 §2）。
+                        print(f"    {item['file']} — 返信待ち: {target} が出たら返信します"
+                              f"（{item['reason']}）")
+                    else:
+                        print(f"    {item['file']} — {item['reason']}")
     return 0
 
 

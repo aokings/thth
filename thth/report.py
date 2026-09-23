@@ -115,6 +115,9 @@ def queue_summary(account_name: str | None, now=None) -> dict:
         now_val = now if now is not None else jst.now_jst()
         next_file, next_at, next_topic, next_rejections = _next_via_select_one(
             files, account_name=name, account_cfg=account_cfg, now=now_val)
+        # reply_to_file の指した原稿が出るのを待っている承認済み（設計 3.2.0 §2）。
+        waiting_reply = sum(1 for rej in next_rejections
+                            if select_mod.waiting_target(rej["reason"]))
         out[name] = {
             # list_queue_files と同じ場所を示す。空の queue でも新しい原稿の
             # 置き場を発見できるよう、次のファイルの有無に依存させない。
@@ -127,6 +130,7 @@ def queue_summary(account_name: str | None, now=None) -> dict:
             "next_publish_at": next_at,
             "next_topic": next_topic,
             "next_rejections": next_rejections,
+            "waiting_reply": waiting_reply,
         }
     return out
 
@@ -168,6 +172,10 @@ def _needs_review_detail(files, *, account_name: str, account_cfg: dict, now) ->
     # 指定した時刻は masaru の明示の指示なので、1 時間を過ぎても出ていなければ
     # 理由を添えて board に出す（理由が判らなければ `overdue`＝timer が止まって
     # いる・実行そのものが無い、など）。
+    #
+    # **reply_to_file の待ちは時刻超過に数えない**（設計 3.2.0 §2）。待っている
+    # 原稿は select が要確認（`reply_to_unresolved: waiting_for <名前>`）に積んで
+    # いるので、上の `seen` に入っていてここへは来ない。
     for qf in files:
         if qf.path in seen or qf.malformed:
             continue
@@ -196,6 +204,16 @@ def _needs_review_detail(files, *, account_name: str, account_cfg: dict, now) ->
             reason = "overdue"
         out.append({"file": os.path.basename(qf.path), "reason": reason})
         seen.add(qf.path)
+    return out
+
+
+def waiting_items(needs_review: list) -> list:
+    """要確認のうち reply_to_file の待ちだけを `{file, waiting_for}` で（設計 3.2.0 §2）。"""
+    out = []
+    for item in needs_review:
+        target = select_mod.waiting_target(item.get("reason"))
+        if target is not None:
+            out.append({"file": item["file"], "waiting_for": target})
     return out
 
 
@@ -238,6 +256,9 @@ def schedule(account_name: str | None = None, *, now=None, days: int | None = No
                 continue
             section = queuefile.extract_section(qf.body, media) or ""
             head = section.strip().split("\n", 1)[0]
+            # reply_to_file（設計 3.2.0 §2）: 解決できていなければその理由（静的）。
+            # 待ちの行は時刻超過に数えない（`morning._overdue_rows()`）。
+            reply = select_mod.resolve_reply_to_file(qf, account_name=name, pool=files)
             rows.append({
                 "account": name,
                 "file": os.path.basename(qf.path),
@@ -245,6 +266,9 @@ def schedule(account_name: str | None = None, *, now=None, days: int | None = No
                 "status": fm.get("status"),
                 "topic": queuefile.normalize_topic(fm.get("topic")),
                 "reply_to": fm.get("reply_to") or None,
+                "reply_to_file": reply.name if reply is not None else None,
+                "reply_to_unresolved": reply.reason if reply is not None else None,
+                "waiting_for": select_mod.waiting_target(reply.reason) if reply is not None else None,
                 "past": publish_at <= now,
                 "head": head[:60],
             })
@@ -384,6 +408,7 @@ def board_summary(now=None) -> dict:
             files, account_name=name, account_cfg=account_cfg, now=now)
         token_row = maintain_mod.inspect(name, now=now)
         approval_stale_count = sum(1 for item in needs_review if item["reason"] == "approval_stale")
+        waiting = waiting_items(needs_review)
         accounts_out.append({
             "account": name,
             "project": account_cfg.get("project"),
@@ -442,6 +467,10 @@ def board_summary(now=None) -> dict:
             "inflight_mismatch_fields": inflight.get("mismatch_fields") if inflight else None,
             "needs_review": needs_review,
             "approval_stale_count": approval_stale_count,
+            # reply_to_file の待ち（設計 3.2.0 §2・§4）。**時刻超過とは別に数える**
+            # ——待っている原稿の名前と待ち先。要確認（needs_review）にも同じ行がある。
+            "waiting_reply_count": len(waiting),
+            "waiting_items": waiting,
             # **スレッド連投の進行状態**（独立検収 2026-09-11・P1-1）。
             # 「どこまで出たか」ではなく**確認できた段・要求中の段・未着手の段**
             # を分けて出す。**停止の確認**もここに出る。

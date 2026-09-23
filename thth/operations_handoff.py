@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import accounts, analytics_report, healthcheck, incident, jst, queuefile, report, tool_version
+from . import accounts, analytics_report, healthcheck, incident, jst, queuefile, report, select, tool_version
 
 
 class HandoffError(ValueError):
@@ -37,7 +37,8 @@ def _account(name, cfg, now, *, allowed_names=None):
     state_dir = Path(accounts.state_dir_for(name))
     evidence, problems = {}, []
     counts = {key: 0 for key in report.STATUS_KEYS}
-    counts.update(approval_needed=0, approved_waiting=0, overdue=0, malformed=0, unattributed_malformed=0)
+    counts.update(approval_needed=0, approved_waiting=0, overdue=0, waiting_reply=0,
+                  malformed=0, unattributed_malformed=0)
     last = []
     queue_state = "not_configured"
     repo = cfg.get("repo_dir")
@@ -46,10 +47,10 @@ def _account(name, cfg, now, *, allowed_names=None):
         try:
             paths = sorted(path.iterdir())
             queue_state = "available"
-            for entry in paths:
-                if entry.suffix != ".md":
-                    continue
-                qf = queuefile.parse_text(entry.read_text(encoding="utf-8"), str(entry))
+            # 先に全部読む（reply_to_file の指した原稿を同じ一覧から探すため）。
+            parsed = [queuefile.parse_text(entry.read_text(encoding="utf-8"), str(entry))
+                      for entry in paths if entry.suffix == ".md"]
+            for qf in parsed:
                 fm = qf.front_matter
                 if qf.malformed:
                     # Cannot assign malformed shared-repo files to an account.
@@ -65,6 +66,13 @@ def _account(name, cfg, now, *, allowed_names=None):
                 counts["approval_needed"] += status == "draft"
                 if status == "approved" and not fm.get("post_id"):
                     counts["approved_waiting"] += 1
+                    # reply_to_file が未解決なら時刻超過に数えず返信待ちに数える
+                    # （設計 3.2.0 §2）。この口は照合しない（読むだけ・鮮度未検証）。
+                    reply = select.resolve_reply_to_file(qf, account_name=name, pool=parsed,
+                                                         require_verified=False)
+                    if reply is not None and reply.reason is not None:
+                        counts["waiting_reply"] += 1
+                        continue
                     at = jst.parse(fm.get("publish_at"))
                     if at and now - at > datetime.timedelta(hours=report.OVERDUE_HOURS):
                         counts["overdue"] += 1

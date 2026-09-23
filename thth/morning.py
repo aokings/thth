@@ -485,6 +485,10 @@ def _overdue_rows(name, now):
         at = jst.parse(row.get("publish_at"))
         if row.get("status") != "approved" or at is None:
             continue
+        # reply_to_file が未解決の原稿は時刻超過に数えない（設計 3.2.0 §2）。
+        # 名前は `_waiting_rows()` が「返信待ち」として出す。
+        if row.get("reply_to_unresolved"):
+            continue
         elapsed = (now - at).total_seconds() / 3600.0
         if elapsed <= report_mod.OVERDUE_HOURS:
             continue
@@ -495,6 +499,27 @@ def _overdue_rows(name, now):
             "basis": "approved_unposted_over_overdue_hours"}
 
 
+def _waiting_rows(name, now):
+    """reply_to_file の指した原稿を待っている承認済みの原稿（設計 3.2.0 §2・§4）。
+
+    待ちは時刻超過ではない。**名前と待ち先**を出す（`overdue_items` と同じ形）。
+    待ち以外の未解決（取り下げ・読めない・消えた）も同じ升目に理由付きで出す
+    ——時刻超過から外した原稿を、どこにも出ない形にしない。
+    """
+    from . import report as report_mod
+    rows = []
+    for row in report_mod.schedule(name, now=now):
+        if row.get("status") != "approved" or not row.get("reply_to_unresolved"):
+            continue
+        rows.append({"file": row["file"], "publish_at": row["publish_at"],
+                     "reply_to_file": row.get("reply_to_file"),
+                     "waiting_for": row.get("waiting_for"),
+                     "reason": row["reply_to_unresolved"], "past": row.get("past"),
+                     "head": _preview(row.get("head"))})
+    return {"n": len(rows), "limit": OVERDUE_LIMIT, "items": rows[:OVERDUE_LIMIT],
+            "basis": "approved_reply_to_file_unresolved"}
+
+
 def _queue_cell(node):
     """handoff の節から queue の数だけを写す（置き場のパスは写さない）。"""
     if node is None:
@@ -503,7 +528,7 @@ def _queue_cell(node):
     if counts is None:
         return cell(cannot_say="unavailable")
     keys = ("draft", "approved", "approval_needed", "approved_waiting", "overdue",
-            "malformed", "unattributed_malformed")
+            "waiting_reply", "malformed", "unattributed_malformed")
     return cell({key: counts.get(key) for key in keys})
 
 
@@ -689,6 +714,7 @@ def build(target, *, now=None, mark=True, allowed_names=None):
             "medium": cfg.get("media"),
             "today": _guard(lambda name=name: _today_rows(name, now)),
             "overdue_items": _guard(lambda name=name: _overdue_rows(name, now)),
+            "waiting_items": _guard(lambda name=name: _waiting_rows(name, now)),
             "queue": _queue_cell(node),
             "inflight": _inflight(node),
             "changes_since_last_read": ((node or {}).get("changes_since") or {}).get("changes"),
@@ -904,7 +930,8 @@ def _render_today(account, node, out) -> None:
         counts = queue["value"]
         out(f"    承認待ちの下書き {counts['approval_needed']}"
             f"・承認済みで待ち {counts['approved_waiting']}"
-            f"・時刻超過 {counts['overdue']}・型外 {counts['malformed']}")
+            f"・時刻超過 {counts['overdue']}・返信待ち {counts.get('waiting_reply')}"
+            f"・型外 {counts['malformed']}")
     overdue = node.get("overdue_items") or {}
     if overdue.get("cannot_say") is not None:
         out(f"    時刻超過の名前: 言えない: {overdue['cannot_say']}")
@@ -914,6 +941,19 @@ def _render_today(account, node, out) -> None:
             out(f"    時刻超過: {row['file']} {row['publish_at']}（{row['elapsed_hours']}h）")
         if value["n"] > len(value["items"]):
             out(f"    時刻超過: ほか {value['n'] - len(value['items'])} 本（全 {value['n']} 本）")
+    waiting = node.get("waiting_items") or {}
+    if waiting.get("cannot_say") is not None:
+        out(f"    返信待ちの名前: 言えない: {waiting['cannot_say']}")
+    elif waiting.get("value"):
+        value = waiting["value"]
+        for row in value["items"]:
+            if row["waiting_for"]:
+                out(f"    返信待ち: {row['file']} → {row['waiting_for']} が出たら返信します"
+                    f"（予定 {row['publish_at']}）")
+            else:
+                out(f"    返信先を解決できません: {row['file']}（{row['reason']}）")
+        if value["n"] > len(value["items"]):
+            out(f"    返信待ち: ほか {value['n'] - len(value['items'])} 本（全 {value['n']} 本）")
     inflight = node["inflight"]
     if inflight["present"]:
         out(f"    inflight: {inflight['reason_code']}（{inflight['since']}）"
