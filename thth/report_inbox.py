@@ -71,6 +71,8 @@ REASONS = frozenset((
     "report_closed",
     # 直前の断りを添える口（設計 3.3.0 B2）: 控えが無い。
     "no_last_refusal",
+    # つまずきの年表（設計 3.6.0 §B）: --since が日付として読めない。
+    "invalid_since",
 ))
 
 # 断りのあとに添える「次の一手」（人と LLM が読む 1 行・静的）。
@@ -99,6 +101,7 @@ NEXT = {
     "report_closed": "閉じた報告には書き足せません。新しく thth report file で置いてください",
     "no_last_refusal": "この account の直前の断りの控えがありません。--body-file で何が起きたかを"
                        "書いて置いてください",
+    "invalid_since": "--since は 2026-09-24 のような日付です",
 }
 
 # 置く前の似た報告（設計 3.2.0 §4.5-2）: 同じ project の開いている報告から、
@@ -883,6 +886,9 @@ def register(sub) -> None:
     adder.add_argument("--by", default=None, help="誰が書き足したか（必須）")
     adder.add_argument("--json", action="store_true")
     adder.set_defaults(func=cmd_add)
+    # つまずきの年表（設計 3.6.0 §B）。読むだけ。
+    from . import report_timeline
+    report_timeline.register(operations)
 
 
 # ------------------------------------------------------------ 管理者の CLI

@@ -274,7 +274,8 @@ def execute_map_show(context: ReportContext, request: dict) -> dict:
         raise ReportServiceError("report_unavailable") from None
 
 
-REPORT_OPERATIONS = frozenset(('report_file', 'report_list', 'report_show', 'report_add'))
+REPORT_OPERATIONS = frozenset(('report_file', 'report_list', 'report_show', 'report_add',
+                               'report_timeline'))
 
 
 def _report_error(error):
@@ -340,6 +341,14 @@ def execute_user_reports(context: ReportContext, request: dict) -> dict:
             if set(request) - {'operation', 'report_id'} or not isinstance(request.get('report_id'), str):
                 raise ReportServiceError("invalid_request")
             return report_inbox.show(request['report_id'], scope=scope)
+        if operation == 'report_timeline':
+            # つまずきの年表（設計 3.6.0 §B）。**credential の account と project の範囲だけ**
+            # ——他の持ち主の報告は行にも id にも出ない（`report_timeline.rows()`）。
+            if (set(request) - {'operation', 'since'}
+                    or (request.get('since') is not None and not isinstance(request['since'], str))):
+                raise ReportServiceError("invalid_request")
+            from . import report_timeline
+            return report_timeline.timeline(scope, since=request.get('since'))
         if operation == 'report_add':
             # 報告した側の追記（設計 3.2.0 §4.5-1）。**自分の project の報告にだけ**
             # （範囲の外は無い報告と同じ `report_not_found`）。誰が足したかは

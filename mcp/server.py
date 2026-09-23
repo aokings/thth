@@ -675,6 +675,16 @@ REPORT_TOOLS = [
      "description": "報告 1 件の本文と実装側の返事を読む（読むだけ）",
      "inputSchema": {"type": "object", "properties": {"report_id": {"type": "string"}},
                      "required": ["report_id"], "additionalProperties": False}},
+    # つまずきの年表（設計 3.6.0 §B）。読むだけ・自分の project の範囲だけ。
+    {"name": "thth_report_timeline",
+     "description": "つまずきの年表: 自分の project の報告（置いた日・種類・題・閉じた版）と、"
+                    "リリースノートの報告 id・「〜の実測から」を日付で並べる（読むだけ）。材料は道具の中の"
+                    "記録と repo の docs だけ。始めて 2 週間の件数と、閉じるまでの日数の中央値と n。"
+                    "新しい持ち主の最初の 2 週間は、広場の open に参加した持ち主の年表の中央値（件数と"
+                    "日数だけ）。他の持ち主の報告は出さない",
+     "inputSchema": {"type": "object", "properties": {
+         "since": {"type": "string", "description": "この日（YYYY-MM-DD）から並べる（集計は全部）"}},
+         "additionalProperties": False}},
     # 報告した側の追記（設計 3.2.0 §4.5-1）。
     {"name": "thth_report_add",
      "description": "自分の project の開いている報告に書き足す（返事と同じ列に並ぶ・4,000 字まで・"
@@ -835,7 +845,7 @@ def server_call(name, arguments):
         elif operation.startswith('plaza_'):
             from thth.report_service import execute_user_plaza
             result=execute_user_plaza(context,request)
-        elif operation in ('report_file','report_list','report_show','report_add'):
+        elif operation in ('report_file','report_list','report_show','report_add','report_timeline'):
             from thth.report_service import execute_user_reports
             result=execute_user_reports(context,request)
         elif operation == 'map_show':
