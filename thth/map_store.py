@@ -318,7 +318,8 @@ def remove_node(target, word, *, by, via="cli", now=None):
 
     config, _ = _change(project, "map_node_removed", change, by=by, via=via, now=now,
                         diff=lambda b, a: {"map_node": ["present", "absent"], **_counts(b, a)})
-    rows = 0
+    from . import map_world
+    rows = map_world.forget_node(project, removed["word"])
     return {"schema_version": SCHEMA_VERSION, "report_type": "map_node_removed",
             "project": project, "node": removed["word"], "n_nodes": len(config["nodes"]),
             "edges_removed": removed["edges"], "rows_removed": rows}

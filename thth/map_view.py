@@ -169,13 +169,15 @@ def world_enabled() -> bool:
     return os.environ.get(WORLD_ENV) == "1"
 
 
-def _world_cell(project, words, *, since, now):
+def _world_cell(project, words, *, since, now, edge_words=None):
     """点ごとの世間の層と共起の線。無効なら全部 null と `world_layer_disabled`。"""
     if not world_enabled():
         return ({word: {"cannot_say": "world_layer_disabled", "by_medium": None} for word in words},
                 [], "world_layer_disabled")
-    return ({word: {"cannot_say": "world_layer_empty", "by_medium": None} for word in words},
-            [], None)
+    from . import map_world
+    cells, co, _broken = map_world.view(project, words, since=since, now=now,
+                                        edge_words=edge_words)
+    return cells, co, None
 
 
 # ------------------------------------------------------------------ map show
@@ -202,20 +204,17 @@ def show(target, *, since=DEFAULT_SINCE, node=None, now=None, allowed=None):
     if floor is None or floor > now:
         raise map_store.MapError("invalid_since")
     if allowed is not None:
-        projects = {value for value in allowed.values() if value}
-        project = target if target in projects else allowed.get(target)
-        if not project or project not in projects:
+        readable = {value for value in allowed.values() if value}
+        try:
+            project, found = map_store.project_accounts(target)
+        except map_store.MapError:
+            # 無い project と読めない project は同じ断り（在ることを漏らさない）。
+            raise map_store.MapError("scope_unavailable") from None
+        # **世間の層は project の中だけ**（照合 §6-7）。広場の open に参加している他の
+        # 持ち主にも、横断の集計にも出さない——読めるのは credential の project だけ。
+        if project not in readable:
             raise map_store.MapError("scope_unavailable")
-        configs = {}
-        for name, value in allowed.items():
-            if value != project:
-                continue
-            try:
-                configs[name] = accounts.load_account(name)
-            except accounts.AccountError:
-                continue
-        if not configs:
-            raise map_store.MapError("scope_unavailable")
+        configs = {name: cfg for name, cfg in found.items() if name in allowed}
     else:
         project, configs = map_store.project_accounts(target)
     config = map_store.load_config(project)
@@ -235,9 +234,12 @@ def show(target, *, since=DEFAULT_SINCE, node=None, now=None, allowed=None):
         edges = [e for e in edges if chosen in (e["narrower"], e["broader"])]
     selfs = self_layer(configs, words, since=floor, now=now)
     plazas = plaza_layer(_viewer_for(configs, project), words, since=floor, now=now)
-    worlds, co_edges, world_reason = _world_cell(project, words, since=floor, now=now)
+    worlds, co_edges, world_reason = _world_cell(
+        project, words, since=floor, now=now,
+        edge_words=[row["word"] for row in config["nodes"]])
     if neighbors is not None:
-        neighbors["co"] = [e for e in co_edges if neighbors["node"] in e["edge"]]
+        co_edges = [e for e in co_edges if neighbors["node"] in e["edge"]]
+        neighbors["co"] = co_edges
     nodes = [{"word": word, "self": selfs[word], "plaza": plazas[word], "world": worlds[word]}
              for word in words]
     return {

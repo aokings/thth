@@ -40,7 +40,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 3.5.0 §1: 観測の地図の点と線（管理者の口・--json）。
      'admin map node add', 'admin map node remove', 'admin map edge add', 'admin map edge remove',
      # 3.5.0 §3: 観測の地図を読む口。
-     'map show']
+     'map show',
+     # 3.5.0 §2: 世間の層を集める口（既定で無効）。
+     'map collect']
 
 
 def test_json_table_covers_every_parser():

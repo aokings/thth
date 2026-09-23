@@ -1,6 +1,7 @@
 """観測の地図の CLI（設計 3.5.0 §1〜§3）。口の中身は `thth/map_store.py` ほかに閉じる。
 
 利用者: `thth map show <project>`（読むだけ）。
+timer 用: `thth map collect <project>`（世間の層・**既定で無効**・`THTH_MAP_WORLD=1` のときだけ叩く）。
 管理者: `thth admin map node add|remove`・`thth admin map edge add|remove`。
 **点と線は人だけが足す**（`--by` 必須）。
 """
@@ -9,7 +10,7 @@ from __future__ import annotations
 import json
 import sys
 
-from . import map_store, map_view
+from . import map_store, map_view, map_world
 
 
 def _print_refusal(args, error):
@@ -38,8 +39,26 @@ def cmd_show(args) -> int:
     return _emit(args, payload, map_view.render)
 
 
+def cmd_collect(args) -> int:
+    try:
+        result = map_world.collect(args.project)
+    except map_store.MapError as error:
+        return _print_refusal(args, error)
+
+    def render(r):
+        if "world_layer_disabled" in r["cannot_say"]:
+            print(f"{r['project']}: 世間の層は無効です（world_layer_disabled）。媒体は叩いていません")
+            return
+        print(f"{r['project']} {r['date']}: 検索 {r['searches']} 回・行 {r['rows_written']} 行")
+        for medium, cell in sorted(r["media"].items()):
+            print(f"  {medium}: {cell['status']}（検索 {cell['searches']} 回）")
+        for reason in r["cannot_say"]:
+            print(f"  言えない: {reason}")
+    return _emit(args, result, render)
+
+
 def register(sub) -> None:
-    """`thth map show`（設計 3.5.0 §3）。"""
+    """`thth map show|collect`（設計 3.5.0 §2・§3）。"""
     parser = sub.add_parser(
         "map", help="観測の地図——話題（点）とつながり（線）に自分・広場・世間の層を重ねる",
         description="観測の地図（設計 3.5.0）。点と線は管理者が thth admin map で足します。"
@@ -52,6 +71,15 @@ def register(sub) -> None:
                         help=f"窓の始まり（既定 {map_view.DEFAULT_SINCE}。12w・ISO 時刻も可）")
     viewer.add_argument("--json", action="store_true")
     viewer.set_defaults(func=cmd_show)
+    collector = operations.add_parser(
+        "collect", help="世間の層を 1 日 1 回集める（timer 用・既定で無効）",
+        description="点ごとに媒体の検索を 1 回だけ呼び、件数・異なり・上位 3 の占有率・直近の"
+                    "投稿までの時間の丸めと、点どうしの共起の本数だけを日ごとに残します（本文・"
+                    "投稿 ID・投稿者は残しません）。管理者が THTH_MAP_WORLD=1 を入れたときだけ"
+                    "媒体を叩きます。")
+    collector.add_argument("project", help="project 名（account 名ならその project）")
+    collector.add_argument("--json", action="store_true")
+    collector.set_defaults(func=cmd_collect)
 
 
 # ------------------------------------------------------------------ 管理者
