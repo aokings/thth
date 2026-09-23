@@ -353,12 +353,31 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
     # inflight が残っていれば何もしない（§3.5）。ここは throw_once 1 回につき
     # 1 度だけ見る（下のループ中に新たに inflight が残るのは「曖昧な失敗」の
     # ときだけで、そのときはその場で打ち切って返すので読み直す必要が無い）。
+    #
+    # **止まる前に 1 回だけ媒体に訊く**（設計 3.3.1 §3）。決まれば道具が解いて
+    # 先へ進み、決まらなければ従前どおり止まる。訊くのは本番の run だけ——
+    # 解いたときの書き戻し（commit と push）は本番の書き込みなので、dry-run の
+    # `thth throw` は従前どおり止まるだけにする。
     existing_inflight = inflight_mod.read(state_dir)
     if existing_inflight is not None:
-        msg = f"inflight が残っています: {existing_inflight.get('file')}"
-        log(msg)
-        return ThrowResult(exit_code=1, mode="rehearsal", action="inflight", message=msg,
-                            file=existing_inflight.get("file"))
+        outcome = None
+        if bool(account_cfg.get("production")) and production_flag:
+            outcome = inflight_resolve_mod.self_resolve(
+                account_name, account_cfg, state_dir, existing_inflight,
+                adapter_factory=adapter_factory, run_id=run_id,
+                now=now if now is not None else jst.now_jst(), log=log)
+        if outcome is None or not outcome.resolved:
+            msg = f"inflight が残っています: {existing_inflight.get('file')}"
+            log(msg)
+            # 訊いても決まらなかったときは `inflight_unresolved`（死活通知の理由・
+            # 次の一手は `thth inflight <account> resolve`）。出たと分かったのに
+            # 記録できなかったときはその理由。訊いていなければ従前どおり None。
+            error = None
+            if outcome is not None and outcome.asked:
+                error = outcome.error or "inflight_unresolved"
+            return ThrowResult(exit_code=1, mode="rehearsal", action="inflight", message=msg,
+                                file=existing_inflight.get("file"), error=error,
+                                post_id=outcome.post_id if outcome is not None else None)
 
     # fail-closed: 台帳 production: true が commit されていない限り dry-run（§0）
     production = bool(account_cfg.get("production")) and production_flag

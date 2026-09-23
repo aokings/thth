@@ -95,3 +95,41 @@ def clear(state_dir: str) -> None:
     if os.path.exists(p):
         os.remove(p)
 
+
+# 解いた inflight の控え（設計 3.3.1 §4）。`inflight.resolved-<日時>.json`。
+ARCHIVE_PREFIX = "inflight.resolved-"
+
+
+def archive(state_dir: str, record: dict, *, resolved_at: str, resolved_by: str,
+            resolution: str, post_id: str | None = None) -> str:
+    """解く**前に**、いまの inflight を控えとして state に残す（返り値は書いたパス）。
+
+    人がファイルを消していた操作（09-23）の代わりに、何を解いたかを後から
+    辿れるようにする。中身は inflight そのもの（本文は入っていない・指紋だけ）
+    と、誰がいつどう解いたか。同じ秒に 2 度解いても上書きしない。
+    """
+    os.makedirs(state_dir, exist_ok=True)
+    stamp = "".join(ch for ch in resolved_at[:19] if ch.isdigit() or ch == "T")
+    base = os.path.join(state_dir, f"{ARCHIVE_PREFIX}{stamp}")
+    path = base + ".json"
+    n = 1
+    while os.path.exists(path):
+        n += 1
+        path = f"{base}-{n}.json"
+    payload = {"inflight": record, "resolved_at": resolved_at, "resolved_by": resolved_by,
+               "resolution": resolution, "post_id": post_id}
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    return path
+
+
+def archives(state_dir: str) -> list:
+    """控えのパス（古い順）。"""
+    try:
+        names = sorted(n for n in os.listdir(state_dir)
+                       if n.startswith(ARCHIVE_PREFIX) and n.endswith(".json"))
+    except FileNotFoundError:
+        return []
+    return [os.path.join(state_dir, n) for n in names]

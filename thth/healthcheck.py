@@ -34,6 +34,9 @@ _KNOWN_REASONS = {
     "publish_result_unknown", "publish_timeout", "repo_sync_failed",
     "text_mismatch_after_rebase", "text_mismatch_before_writeback",
     "unusable_post_id", "writeback_push_failed", "unknown",
+    # 媒体に訊いても公開の結果が決まらなかった（設計 3.3.1 §3）。次の一手は人が
+    # `thth inflight <account> resolve` で決めること。
+    "inflight_unresolved",
 }
 _KNOWN_EXCEPTIONS = {
     "TimeoutError": "exception_timeout",
@@ -257,6 +260,8 @@ def next_action_for(reason: str) -> str:
         return "run_thth_auth"
     if reason.startswith("text_mismatch_"):
         return "inspect_queue_and_inflight"
+    if reason == "inflight_unresolved":
+        return "resolve_inflight_by_hand"
     if reason in {"unusable_post_id", "publish_result_unknown", "publish_timeout"} \
             or reason.startswith("publish_http_5"):
         return "verify_remote_post_then_resolve_inflight"
@@ -288,6 +293,7 @@ def reason_text(reason: str) -> str:
         "text_mismatch_before_writeback": "送信内容と repo の内容が食い違いました",
         "text_mismatch_after_rebase": "同期後に送信内容と repo の内容が食い違いました",
         "unusable_post_id": "媒体が保存できない形式の post_id を返しました",
+        "inflight_unresolved": "媒体に問い合わせても公開の結果が決まらず inflight で停止しています",
         "exception_process_error": "定期実行が予期しない例外で停止しました",
         "unknown": "停止理由を安全に特定できませんでした",
     }
@@ -323,7 +329,11 @@ def next_action_text(action: str) -> str:
         "run_thth_auth": "thth auth で認証と権限を確認してください",
         "inspect_queue_and_inflight": "queue と inflight の食い違いを確認してください",
         "verify_remote_post_then_resolve_inflight":
-            "媒体上の投稿有無を確認してから inflight を解消してください",
+            "媒体上の投稿有無を確認してから inflight を解消してください"
+            "（thth inflight <account> show・resolve）",
+        "resolve_inflight_by_hand":
+            "媒体の画面で出たかどうかを確かめ、thth inflight <account> resolve"
+            " --not-published か --published <post_id> で解いてください",
         "inspect_repo_sync": "repo の同期状態と push 失敗を確認してください",
         "inspect_running_process": "実行中プロセスと timer の重複を確認してください",
         "inspect_timer_log": "timer のログで例外の発生箇所を確認してください",
