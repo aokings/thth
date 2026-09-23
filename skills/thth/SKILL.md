@@ -1,11 +1,13 @@
 ---
 name: thth
-description: 投稿する前・返信を書く前・出したあと・絡みに行く先を選ぶときに呼ぶ道具。Threads・Bluesky・Mastodon への下書きを人の承認を通してから出し、枝を読み、相手を知り、伸びを測る。
+description: 投稿する前・返信を書く前・出したあと・絡みに行く先を選ぶときに呼ぶ道具。Threads・Bluesky・Mastodon への下書きを人の承認を通してから出し、枝を読み、相手を知り、伸びを測る。施策を試したら広場に置き、他の媒体の施策を読んでから次を決める。
 ---
 
 **セッションの始めと区切りごとに `thth_observe`（CLI は `thth observe <project|account> --json`）。** 前回の観測から何があって、いまなにをすればよいかが 6 段（道具・返していないもの・前回の観測から・世間・予定・次の一手）で返る（3.3.0。`thth_morning`／`thth morning` は同じものの別名で、JSON の `invoked_as` だけが違う。第 2 段は前回の栞の時刻から今まで・栞が無い／7 日より古いときは前日 JST で、`window.basis` が `since_last_observe` か `yesterday_jst`）。`handoff-report --since-last-read` を包含するので、版の確認もこれ 1 回で済む。呼ぶと栞（前回読んだ時点）が進む——進めたくないときだけ `mark: false`（CLI は `--no-mark`）。取れなかった段は `{"value": null, "cannot_say": "<理由>"}`（`provider_timeout`・`budget_exhausted`・`scope_missing`・`no_watch_words`・`not_supported`・`unavailable`）で、**0 件とは別**。第 3 段の監視語は**管理者が入れる**（`thth admin watch set <account> 語 … --by <名前>`）——語が無い account は `no_watch_words` で飛ぶので、**代わりに語を選ばない**。第 5 段は候補の列挙だけで、**本文は返らない**（書くのはあなたと人の会話の側）。詳しくは `docs/使い方_毎朝の一枚_3.1.md`。
 
 **断られたら・違和感があれば報告の口へ**: `thth_report_file`（CLI は `thth report file <account> --kind bug|request|friction --title … --body-file … --by <名前>`）。つまずき・迷い・期待との違いの報告は、利用者の作業の一部として歓迎します。小さいものも。重複は道具が束ねます。例: 「止まったのに気づかなかった」「断られた理由が分からなかった」「同じ操作を 3 回繰り返した」。道具が断った・結果が期待と違った・欲しい形がある・迷った（`friction`）、のどれかなら 1 回で置ける。**断られた直後なら、断りの最後の `report_channel:` の行をそのまま打てばよい**（`--from-last-refusal` が、道具が控えた直前の断り——時刻・版・命令・理由の符丁だけで、本文と引数の値は控えていない——を再現手順に添える。MCP は `thth_report_file {"account": …, "title": …, "from_last_refusal": true}`）。置いた報告がこの版で閉じたかは `thth_observe` の 0 段 `project_reports` に出る。返事は `thth_report_show` と `handoff-report --since-last-read` の `tool.reports` に出る。秘密らしき値が含まれていたら置かれない（伏せてから置き直す）。
+
+**施策を試したら広場に置き、次を決める前に他の媒体の施策を読む**（3.4.0・施策の広場）。どちらも利用者の作業の一部です。小さな気づきも。`thth_plaza_post`（CLI は `thth plaza post <account> --kind measure|finding|question --title … --body-file … --scope "<媒体・企画の範囲>" --by <名前>`）。置いたものは**同じ持ち主の全 account（媒体をまたぐ）**だけに見える。施策（`measure`）は `--declaration <study-report の宣言>` を媒体ごとに並べると**観測は道具が付ける**（study-report と同じ計算・両群の分母・欠測は null と理由）。`--how` に数字を出し直せる thth の命令を 1 行（measure は必須・道具は実行しない）。本文に書いた数字は「本文」として分けて表示され、観測とは呼ばれない。`evidence_level` の `observed` は道具だけが付ける（名乗ると断られる）。読むのは `thth_plaza_list`・`thth_plaza_show`（CLI は `thth plaza list <project>`・`thth plaza show <id> --as <account>`）——媒体をまたぐ比較の表と追試の数（再現した・しなかった・試していないを同じ重さで）が出る。他の媒体の施策を自分の媒体で試したら `thth_plaza_reply` の `trial`（結果は reproduced・not_reproduced・not_tried）で返す。判定は `thth_plaza_update`（adopted・dropped・inconclusive・理由必須）。新着と「まだ試していない媒体」は `thth_observe` の 0 段と次の一手に出る。
 
 段だけを読み直したいときは `thth handoff-report <account> --since-last-read --json` を読む。`tool.changed_since_last_read` が真なら、手元の `tool.notes_root_local_hint` を手掛かりに `tool.release_notes` の相対名を読んでから作業する。既読の記録は `--mark-read --by <名前>` の明示時だけ。`tool.notes_reason` が `notes_directory_unavailable` なら、このインストールには読める docs がない。空の `release_notes` を「変更なし」と解釈しない。
 
@@ -152,6 +154,7 @@ MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜ�
 - 道具の不具合・欲しい形・迷ったことは `thth report file`（MCP `thth_report_file`）で実装側に届ける（小さいものも歓迎・重複は道具が束ねる）。
 - 承認済みなのに出ない原稿は `thth_observe` の予定の段 `held_items`（file・理由・予定・経過）と `thth board` の要確認（先頭 5 本）に名前が出る。`approval_stale` は再承認（`thth approve` の二段）で直る。時刻を過ぎて出られないものがあると `thth run` は `held` として死活通知と運用通知に知らせる。
 - 自分の開いている報告に書き足すなら `thth report add <report_id> --body-file <path|-> --by <名前>`（MCP `thth_report_add`）。
+- 他の媒体で試した施策と結果は `thth plaza list <project>`（MCP `thth_plaza_list`）で読める。試したら `thth plaza post`（MCP `thth_plaza_post`）で置く。
 - 使い方の全文: `docs/使い方_プロジェクトのセッション向け_2026-09-09.md`。
 
 ## 運用と分析のレポート（v3系・2.5.0 から）

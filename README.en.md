@@ -220,6 +220,12 @@ The remaining 7 subcommands, one line each:
   are kept; not exposed over MCP)
 - `location` — search for a place (`thth location search <account> <word>`,
   read-only)
+- `plaza` — the measures plaza: share what you tried and how it went across the
+  media of the same owner (measures get observations computed by the tool;
+  findings and questions; replies including re-trials that did or did not
+  reproduce). Other owners see an entry only when it is marked open and both
+  owners have joined; other people's text, usernames and author keys are
+  dropped first
 
 ## What's not here
 
