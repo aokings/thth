@@ -38,10 +38,11 @@ def test_使い方の文書に広場の段():
     assert "--open" not in section
 
 
-def test_リリースノートの下書き():
+def test_リリースノートの見出しとセッション向けの5行():
+    # 版を上げる commit で見出しの「— 下書き」と「版は据え置き」は外れる（配布の手順）。
+    # 見るのは題と、各 project のセッション向けの 5 行があること。
     note = (ROOT / "docs" / "リリースノート_3.4.0_2026-09-23.md").read_text(encoding="utf-8")
-    assert note.startswith("# リリースノート 3.4.0（施策の広場）— 下書き\n")
-    assert "**版は据え置き**" in note
+    assert note.startswith("# リリースノート 3.4.0（施策の広場）")
     section = note.split("## 各 project のセッション向け: いつ何を置くか")[1].split("\n## ")[0]
     assert len([line for line in section.splitlines() if line[:2] in ("1.", "2.", "3.", "4.", "5.")]) == 5
 
