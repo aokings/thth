@@ -72,6 +72,8 @@ REASONS = frozenset((
     "report_store_unavailable", "report_log_unavailable", "invalid_export_target",
     # 報告した側の追記（設計 3.2.0 §4.5-1）: 閉じた報告には足せない。
     "report_closed",
+    # 直前の断りを添える口（設計 3.3.0 B2）: 控えが無い。
+    "no_last_refusal",
 ))
 
 # 断りのあとに添える「次の一手」（人と LLM が読む 1 行・静的）。
@@ -98,6 +100,8 @@ NEXT = {
     "report_log_unavailable": "変更ログに書けなかったので置いていません。管理者に知らせてください",
     "invalid_export_target": "--to は書き込めるディレクトリです",
     "report_closed": "閉じた報告には書き足せません。新しく thth report file で置いてください",
+    "no_last_refusal": "この account の直前の断りの控えがありません。--body-file で何が起きたかを"
+                       "書いて置いてください",
 }
 
 # 置く前の似た報告（設計 3.2.0 §4.5-2）: 同じ project の開いている報告から、
@@ -762,12 +766,36 @@ def _read_input(path):
         raise ReportError("invalid_report") from None
 
 
+def from_last_refusal(account, *, kind=None, body=None, repro=None):
+    """直前の断りを再現手順に添える（設計 3.3.0 B2）。`(kind, body, repro)` を返す。
+
+    **その account の控えだけ**を読む（`refusals.latest()`）。種類を書かなければ
+    `friction`、本文を書かなければ静的な 1 文。自分で書いた再現手順は控えの後ろに
+    足す。控えが無ければ `no_last_refusal`（推測で埋めない）。
+    """
+    from . import refusals
+    if not accounts.name_is_safe(account):
+        raise ReportError("invalid_account")
+    row = refusals.latest(account)
+    if row is None:
+        raise ReportError("no_last_refusal")
+    auto = refusals.repro_text(row)
+    if isinstance(repro, str) and repro.strip():
+        auto = auto + "\n\n" + repro
+    return (kind or "friction",
+            body if isinstance(body, str) and body.strip() else refusals.DEFAULT_BODY, auto)
+
+
 def cmd_file(args) -> int:
     try:
         reporter(args.by)
-        result = file_report(args.account, kind=args.kind, title=args.title,
-                             body=_read_input(args.body_file),
-                             repro=_read_input(args.repro_file), by=args.by, via="cli")
+        kind, body, repro = args.kind, _read_input(args.body_file), _read_input(args.repro_file)
+        if getattr(args, "from_last_refusal", False):
+            kind, body, repro = from_last_refusal(args.account, kind=kind, body=body, repro=repro)
+        elif kind is None:
+            raise ReportError("invalid_kind")
+        result = file_report(args.account, kind=kind, title=args.title,
+                             body=body, repro=repro, by=args.by, via="cli")
     except ReportError as error:
         return _print_refusal(args, error)
     if args.json:
@@ -878,10 +906,15 @@ def register(sub) -> None:
                     f"再現手順は {REPRO_MAX} 字まで。1 account につき直近 24 時間で "
                     f"{DAILY_LIMIT} 件まで。同じ title と本文は 24 時間以内なら既存の id を返します。")
     filer.add_argument("account")
-    filer.add_argument("--kind", required=True, choices=KINDS)
+    filer.add_argument("--kind", default=None, choices=KINDS,
+                       help="bug・request・friction（--from-last-refusal のときの既定は friction）")
     filer.add_argument("--title", required=True)
-    filer.add_argument("--body-file", required=True, dest="body_file",
-                       help="本文のファイル（VM 側のパス。`-` は標準入力）")
+    filer.add_argument("--body-file", default=None, dest="body_file",
+                       help="本文のファイル（VM 側のパス。`-` は標準入力。"
+                            "--from-last-refusal のときは省略できる）")
+    filer.add_argument("--from-last-refusal", action="store_true", dest="from_last_refusal",
+                       help="この account で直前に道具が断った記録（時刻・版・命令・理由の符丁）を"
+                            "再現手順として添える（本文・引数の値は控えていない）")
     filer.add_argument("--repro-file", default=None, dest="repro_file",
                        help="再現手順のファイル（任意）")
     filer.add_argument("--by", default=None, help="誰が置いたか（必須）")

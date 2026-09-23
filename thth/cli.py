@@ -3496,16 +3496,70 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+class _FirstLine:
+    """stderr をそのまま通しつつ、最初の 1 行だけをメモリに控える（設計 3.3.0 B2）。
+
+    控えた 1 行は `refusals.reason_code()` が先頭の静的な符丁だけを取り出すために
+    使い、捨てる（ファイルにもログにも書かない）。
+    """
+
+    LIMIT = 512
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.seen = ""
+
+    def write(self, text):
+        if len(self.seen) < self.LIMIT and "\n" not in self.seen:
+            self.seen += str(text)[:self.LIMIT]
+        return self.inner.write(text)
+
+    def first_line(self) -> str:
+        return self.seen.split("\n", 1)[0]
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+
+# `_main()` が解釈した引数（断りの account を知るため・`main()` の中だけで使う）。
+_PARSED: dict = {}
+
+
 def main(argv=None) -> int:
     real_argv = list(sys.argv[1:] if argv is None else argv)
-    rc = _main(argv, real_argv)
+    _PARSED.clear()
+    tee = _FirstLine(sys.stderr)
+    sys.stderr = tee
+    try:
+        rc = _main(argv, real_argv)
+    finally:
+        if sys.stderr is tee:
+            sys.stderr = tee.inner
     # **断ったら受け口の案内を 1 行**（設計 3.1.2 §3.5）。理由行の後ろに、静的な
     # 1 行だけ（account 名も本文も入れない）。成功には載せない。`lint` の 1 は
     # 検査結果であって断りではないので外す。
     if rc and not (real_argv[:1] == ["lint"] and rc == 1):
+        _remember_refusal(real_argv, rc, tee.first_line())
         from . import report_inbox
         print(report_inbox.CHANNEL_LINE, file=sys.stderr)
     return rc
+
+
+def _remember_refusal(real_argv, rc, first_line) -> None:
+    """直前の断りを account ごとに控える（設計 3.3.0 B2）。**控えの失敗で rc を変えない。**
+
+    残すのは命令の名前・先頭の符丁・版・時刻・account だけ（`thth/refusals.py`）。
+    """
+    try:
+        from . import refusals
+        account = getattr(_PARSED.get("args"), "account", None)
+        if not isinstance(account, str):
+            return
+        command = refusals.command_path(build_parser(), real_argv)
+        code = refusals.reason_code(first_line, argv=real_argv, command=command, rc=rc)
+        refusals.record(account, command=command, reason_code=code)
+    except Exception:  # noqa: BLE001 — 控えは付け足し。断りそのものを壊さない
+        return
 
 
 def _main(argv, real_argv) -> int:
@@ -3523,5 +3577,6 @@ def _main(argv, real_argv) -> int:
         args = commands.choices['where'].parse_intermixed_args(real_argv[1:])
     else:
         args = parser.parse_args(argv)
+    _PARSED["args"] = args
     from . import read_coordination
     return read_coordination.invoke(args,real_argv[0] if real_argv else '')

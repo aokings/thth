@@ -597,9 +597,12 @@ REPORT_TOOLS = [
          "account": {"type": "string"},
          "kind": {"type": "string", "enum": ["bug", "request", "friction"]},
          "title": {"type": "string", "description": "1 行・120 字まで"},
-         "body": {"type": "string", "description": "8,000 字まで"},
-         "repro": {"type": "string", "description": "再現手順（任意・4,000 字まで）"}},
-         "required": ["account", "kind", "title", "body"], "additionalProperties": False}},
+         "body": {"type": "string", "description": "8,000 字まで（from_last_refusal のときは省略可）"},
+         "repro": {"type": "string", "description": "再現手順（任意・4,000 字まで）"},
+         "from_last_refusal": {"type": "boolean",
+                               "description": "この account で直前に道具が断った記録（時刻・版・命令・"
+                                              "理由の符丁）を再現手順として添える。kind の既定は friction"}},
+         "required": ["account", "title"], "additionalProperties": False}},
     {"name": "thth_report_list",
      "description": "自分の project の報告と、実装側の返事の数を読む（読むだけ）",
      "inputSchema": {"type": "object", "properties": {
@@ -660,8 +663,11 @@ def server_call(name, arguments):
     from thth.report_service import execute_report, execute_mcp_report, ReportServiceError
     from thth.server_writes import execute, WRITE_OPERATIONS, SAFE_ERRORS, DRAFT_REASONS
     context=authenticated_context()
-    # 断りは 1 つ目の text が静的な理由、2 つ目が受け口の案内（設計 3.1.2 §3.5）。
-    failure=lambda value:{'content':[{'type':'text','text':value},_channel_note()],'isError':True}
+
+    def failure(value):
+        # 断りは 1 つ目の text が静的な理由、2 つ目が受け口の案内（設計 3.1.2 §3.5）。
+        _remember_refusal(context, name, arguments, value)
+        return {'content':[{'type':'text','text':value},_channel_note()],'isError':True}
     if context is None: return failure('unauthorized')
     tool=next((tool for tool in server_tools(context) if tool['name']==name),None)
     if tool is None: return failure('unsupported_operation')
@@ -713,6 +719,30 @@ def server_call(name, arguments):
         return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in REPORT_REASONS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused','watch_change_refused') else 'request_unavailable')
     except Exception:
         return failure('request_unavailable')
+
+
+def _remember_refusal(context, name, arguments, value):
+    """サーバ型の断りを account ごとに控える（設計 3.3.0 B2）。控えの失敗で断りを変えない。
+
+    account は credential が許した名前のときだけ。残すのは道具の名前と、断りの
+    先頭の静的な符丁だけ（`thth/refusals.py`・引数の値は残さない）。報告の口の
+    断りは控えない（報告しようとしていた元の断りを押し出さないため）。
+    """
+    try:
+        if context is None or not isinstance(arguments, dict) or not isinstance(name, str):
+            return
+        account = arguments.get('account')
+        if not isinstance(account, str) or account not in (context.allowed_accounts or {}):
+            return
+        if name.startswith('thth_report_') or not name.replace('_', '').isalnum():
+            return
+        from thth import refusals
+        command = 'mcp ' + name
+        values = [v for v in arguments.values() if isinstance(v, str)]
+        code = refusals.reason_code(value, argv=values, command=command, rc=2)
+        refusals.record(account, command=command, reason_code=code)
+    except Exception:
+        return
 
 
 def admin_context():

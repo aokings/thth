@@ -268,13 +268,21 @@ def execute_user_reports(context: ReportContext, request: dict) -> dict:
     scope = report_inbox.Scope(context.allowed_accounts, projects)
     try:
         if operation == 'report_file':
-            if (set(request) - {'operation', 'account', 'kind', 'title', 'body', 'repro'}
-                    or not {'account', 'kind', 'title', 'body'} <= set(request)):
+            # `from_last_refusal: true`（設計 3.3.0 B2）なら kind（既定 friction）と
+            # body（既定の 1 文）を省ける。再現手順はその account の直前の断りの控え。
+            from_last = request.get('from_last_refusal', False)
+            if type(from_last) is not bool:
                 raise ReportServiceError("invalid_request")
-            if any(not isinstance(request[key], str) for key in ('account', 'kind', 'title', 'body')):
+            needed = {'account', 'title'} | (set() if from_last else {'kind', 'body'})
+            if (set(request) - {'operation', 'account', 'kind', 'title', 'body', 'repro',
+                                'from_last_refusal'}
+                    or not needed <= set(request)):
                 raise ReportServiceError("invalid_request")
-            if request.get('repro') is not None and not isinstance(request['repro'], str):
+            if any(not isinstance(request[key], str) for key in needed):
                 raise ReportServiceError("invalid_request")
+            for key in ('kind', 'body', 'repro'):
+                if request.get(key) is not None and not isinstance(request[key], str):
+                    raise ReportServiceError("invalid_request")
             account = request['account']
             # 再認証・停止・project の一致は書く口と同じ門（`write=False`）。
             cfg = server_writes.current(context, account)
@@ -282,9 +290,13 @@ def execute_user_reports(context: ReportContext, request: dict) -> dict:
                 raise ReportServiceError("by_required")
             # 台帳が指す秘密の値そのものも当てる（綴りの無い貼り付け）。
             admin_log.register_account_secrets(cfg, via='mcp')
+            kind, body, repro = request.get('kind'), request.get('body'), request.get('repro')
+            if from_last:
+                kind, body, repro = report_inbox.from_last_refusal(
+                    account, kind=kind, body=body, repro=repro)
             return report_inbox.file_report(
-                account, kind=request['kind'], title=request['title'], body=request['body'],
-                repro=request.get('repro'), by=context.actor, via='mcp',
+                account, kind=kind, title=request['title'], body=body,
+                repro=repro, by=context.actor, via='mcp',
                 project=context.allowed_accounts[account], medium=cfg.get('media'), trusted=True)
         if operation == 'report_list':
             if set(request) - {'operation', 'status'}:
