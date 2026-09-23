@@ -89,6 +89,85 @@ def zero_or_filtered(medium) -> dict:
             "unverified": ZERO_UNVERIFIED}
 
 
+# `--aggregate`（設計 3.7.0 §C3）: 語ごとの件数・期間・1 日あたり・問いの形・lexicon の
+# 分類ごとの件数だけを返す。**本文・username・author_key・post_id は返さない**。検索語は
+# 数える前に本文から外す。**表示だけで、道具は保存しない**——集計を毎日保存するのは
+# 観測の地図の世間の層と同じ Platform Data の保持にあたる（照合
+# `docs/照合_観測の地図_集計の定点観測_2026-09-23.md`）。広場へ observed として貼る口も
+# 作らない（世間の層を project の外に出さない条件）。
+AGGREGATE_STORAGE_NOTE = "保存するなら Meta への説明の申請のあとで（世間の層と同じ条件）"
+# 問いの形の静的な判定（本文を外へ出さずに数えるだけ）。
+QUESTION_MARKS = ("？", "?")
+QUESTION_RULES = ("ends_with_question_mark: 検索語を外した本文が「？」か「?」で終わる",
+                  "contains_question_mark: 検索語を外した本文に「？」か「?」がある")
+LEXICON_MAX_CATEGORIES = 30
+LEXICON_MAX_WORDS = 200
+LEXICON_MAX_CHARS = 40
+
+
+def _strip_words(text: str, words: list) -> str:
+    """検索語を本文から外す（大文字小文字を畳む）。数える前に一度だけ。"""
+    import re
+    out = text
+    for word in words:
+        out = re.sub(re.escape(word), "", out, flags=re.IGNORECASE)
+    return out
+
+
+def aggregate(rows: list, words: list, lexicon: dict | None) -> dict:
+    """1 語ぶんの集計。**本文・username・author_key・post_id を持たない**（数と時刻だけ）。"""
+    texts = [_strip_words(row.get("text") if isinstance(row.get("text"), str) else "", words)
+             for row in rows]
+    stamps = sorted(at for at in (jst.parse(row.get("timestamp")) for row in rows) if at is not None)
+    n = len(rows)
+    span_days = ((stamps[-1] - stamps[0]).total_seconds() / 86400) if stamps else None
+    per_day = round(n / max(span_days, 1.0), 2) if span_days is not None else None
+    ends = sum(1 for text in texts if text.rstrip().endswith(QUESTION_MARKS))
+    contains = sum(1 for text in texts if any(mark in text for mark in QUESTION_MARKS))
+    categories = None
+    if lexicon is not None:
+        categories = {}
+        for name, entries in lexicon.items():
+            needles = [entry.casefold() for entry in entries]
+            categories[name] = {
+                "n_posts": sum(1 for text in texts
+                               if any(needle in text.casefold() for needle in needles)),
+                "denominator": n}
+    return {"n": n,
+            "period": {"oldest": jst.iso(stamps[0]) if stamps else None,
+                       "latest": jst.iso(stamps[-1]) if stamps else None,
+                       "span_days": round(span_days, 2) if span_days is not None else None,
+                       "n_with_timestamp": len(stamps)},
+            "per_day": per_day,
+            "per_day_basis": "n / max(期間の日数, 1)",
+            "question_forms": {"ends_with_question_mark": ends,
+                               "contains_question_mark": contains,
+                               "denominator": n, "rules": list(QUESTION_RULES)},
+            "lexicon": categories,
+            "search_words_removed": True}
+
+
+def load_lexicon(path: str) -> dict:
+    """`--lexicon <file>`（JSON `{分類: [語…]}`）を読んで検査する。読めなければ断る。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        _reject(f"lexicon のファイルがありません: {path}（VM のパスで渡してください）")
+    except (OSError, ValueError, UnicodeDecodeError):
+        _reject(f"lexicon のファイルを JSON として読めません: {path}")
+    if not isinstance(data, dict) or not data or len(data) > LEXICON_MAX_CATEGORIES:
+        _reject(f"lexicon は {{分類: [語…]}} の形で、分類は 1〜{LEXICON_MAX_CATEGORIES} 個です")
+    for name, entries in data.items():
+        if (not isinstance(name, str) or not name.strip() or not isinstance(entries, list)
+                or not entries or len(entries) > LEXICON_MAX_WORDS
+                or any(not isinstance(e, str) or not e.strip() or len(e) > LEXICON_MAX_CHARS
+                       for e in entries)):
+            _reject(f"lexicon の分類「{name}」: 空でない語（{LEXICON_MAX_CHARS} 字まで）を"
+                    f" 1〜{LEXICON_MAX_WORDS} 個の配列で書いてください")
+    return {name.strip(): [e.strip() for e in entries] for name, entries in data.items()}
+
+
 class WhereError(Exception):
     """問いが受け取れない（account/project どちらも無い・語が 1〜5 個でない 等）。
 
@@ -151,7 +230,8 @@ def _also_filter(rows: list, also: list) -> tuple[list, dict]:
 
 def _account_node(account_name: str, words: list, *, search_type: str,
                   limit: int, now, since=None, exclude_engaged=False, max_per_author=None,
-                  also=None) -> tuple[dict | None, Exception | str | None]:
+                  also=None, aggregate_mode=False,
+                  lexicon=None) -> tuple[dict | None, Exception | str | None]:
     """1 account 分の節。戻りは `(node, 理由)`——どちらか一方だけが非 `None`。
     台帳が読めない・token が無い・媒体に `keyword_search` が無いときは
     `node` が `None`（`by_account` に**入れない**・規約 (d)）。
@@ -205,7 +285,7 @@ def _account_node(account_name: str, words: list, *, search_type: str,
     by_tag: list = []
     author_keys: set = set()
     for word in words:
-        if media in ("bluesky", "mastodon"):
+        if media in ("bluesky", "mastodon") and not aggregate_mode:
             tag = word.lstrip("#")
             try:
                 tag_since = jst.iso(now - datetime.timedelta(hours=24))
@@ -269,6 +349,17 @@ def _account_node(account_name: str, words: list, *, search_type: str,
         if also:
             # 同じ検索結果を絞るだけ（設計 3.7.0 §C1）。語ごとに 1 回の検索のまま。
             rows, also_counts = _also_filter(rows, also)
+        if aggregate_mode:
+            # 集計だけ（設計 3.7.0 §C3）。本文・username・author_key・post_id を返さない。
+            by_word[word] = {"aggregate": aggregate(rows, words, lexicon), "dropped": dropped,
+                             "window": {"since": jst.iso(floor) if floor else None,
+                                        "basis": "server_sortAt" if media == 'bluesky' else 'timestamp'},
+                             "requested_limit": limit}
+            if also_counts is not None:
+                by_word[word]["also"] = also_counts
+            if raw_n == 0:
+                by_word[word][ZERO_OR_FILTERED] = zero_or_filtered(media)
+            continue
         material = threads_read_cli_mod.search_material(
             rows, q=word, search_type=search_type, limit=limit)
         material["medium"] = media
@@ -289,6 +380,11 @@ def _account_node(account_name: str, words: list, *, search_type: str,
             by_word[word]["also"] = also_counts
         if raw_n == 0:
             by_word[word][ZERO_OR_FILTERED] = zero_or_filtered(media)
+
+    if aggregate_mode:
+        # 相手の仮名（author_key）も返さない——you_and_them は作らない。
+        return {"medium": media, "mode": "aggregate", "by_word": by_word, "by_tag": [],
+                "cannot_say": node_cannot_say}, None
 
     # `last_reaction`（T3-2・設計 §2.3「要約」= met・last・last_reaction の
     # 3 つ）。計算は `after_cli.reaction_lookup()` の 1 か所だけ。
@@ -349,8 +445,14 @@ def _clean_also(also) -> list:
 def answer(*, account_name: str | None = None, project: str | None = None,
           words: list, recent: bool = False, limit: int = DEFAULT_LIMIT,
           now=None, since=None, exclude_engaged=False, max_per_author=None,
-          also=None) -> dict:
-    """`where_to_appear` の答え（設計「自分の泉」§2.3・§2.6）。**読むだけ。**"""
+          also=None, aggregate_mode=False, lexicon=None) -> dict:
+    """`where_to_appear` の答え（設計「自分の泉」§2.3・§2.6）。**読むだけ。**
+
+    `aggregate_mode`（設計 3.7.0 §C3）は語ごとの集計だけを返す——本文・username・
+    author_key・post_id を返さず、何も保存しない（runs の 1 行は従前どおり語と件数だけ）。
+    """
+    if lexicon is not None and not aggregate_mode:
+        _reject("lexicon は --aggregate と一緒に使います")
     if account_name and project:
         _reject("account と --project は同時に指定できません")
     if not account_name and not project:
@@ -386,7 +488,7 @@ def answer(*, account_name: str | None = None, project: str | None = None,
         node, reason = _account_node(name, words, search_type=search_type,
                                      limit=limit, now=now, since=since,
                                      exclude_engaged=exclude_engaged, max_per_author=max_per_author,
-                                     also=also)
+                                     also=also, aggregate_mode=aggregate_mode, lexicon=lexicon)
         if node is None:
             if isinstance(reason, accounts_mod.AccountError) and project is None:
                 # **単一 account: そのまま投げ直す**（T5-2・`who_cli.answer()`
@@ -402,7 +504,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
             continue
 
         by_account[name] = node
-        n = sum(len(entry["posts"]) for entry in node["by_word"].values())
+        n = sum(entry["aggregate"]["n"] if aggregate_mode else len(entry["posts"])
+                for entry in node["by_word"].values())
         runs_mod.record_minimal(name, {
             "action": "where_to_appear", "account": name, "words": words,
             "n": n, "status": "ok", "error": None}, now=now)
@@ -414,6 +517,10 @@ def answer(*, account_name: str | None = None, project: str | None = None,
                 notes.append(MASTODON_RECENT_IGNORED_NOTE)
 
     extra = {"also": also} if also else {}
+    if aggregate_mode:
+        extra.update({"mode": "aggregate", "storage": "display_only",
+                      "storage_note": AGGREGATE_STORAGE_NOTE,
+                      "lexicon_categories": sorted(lexicon) if lexicon else None})
     return {
         "account": account_name, "project": project, "words": words, **extra,
         "by_tag": [{"account": name, **entry} for name, node in by_account.items()
@@ -432,6 +539,9 @@ def _render_human(result: dict) -> None:
     """
     who = f"project {result['project']}" if result["project"] else result["account"]
     print(f"where  {who}  語: {'・'.join(result['words'])}")
+    if result.get("mode") == "aggregate":
+        _render_aggregate(result)
+        return
     for name, node in result["by_account"].items():
         print(f"\n[{name}]（{node['medium']}）")
         for word, entry in node["by_word"].items():
@@ -484,6 +594,36 @@ def _render_human(result: dict) -> None:
             print(f"注記: {line}")
 
 
+def _render_aggregate(result: dict) -> None:
+    """`--aggregate` の画面（数と時刻だけ・本文も名前も出さない）。"""
+    for name, node in result["by_account"].items():
+        print(f"\n[{name}]（{node['medium']}）集計だけ")
+        for word, entry in node["by_word"].items():
+            agg = entry["aggregate"]
+            period = agg["period"]
+            q = agg["question_forms"]
+            print(f"  語「{word}」  件数={agg['n']}（要求上限 {entry['requested_limit']}）"
+                  f"  期間={period['oldest'] or '—'}〜{period['latest'] or '—'}"
+                  f"  1 日あたり={agg['per_day'] if agg['per_day'] is not None else '—'}")
+            print(f"    問いの形: 「？」で終わる {q['ends_with_question_mark']}/{q['denominator']}"
+                  f"・「？」を含む {q['contains_question_mark']}/{q['denominator']}"
+                  "（検索語を外して数えた）")
+            for category, row in (agg["lexicon"] or {}).items():
+                print(f"    分類「{category}」: {row['n_posts']}/{row['denominator']} 件")
+            if entry.get(ZERO_OR_FILTERED):
+                zero = entry[ZERO_OR_FILTERED]
+                print(f"    {zero['message']}。{zero['unverified']}")
+            if entry.get("also"):
+                also = entry["also"]
+                print(f"    also: {also['n_before']} 件中 also に合ったもの {also['n_matched']} 件")
+        for line in node["cannot_say"]:
+            print(f"  言えない: {line}")
+    for line in result["cannot_say"]:
+        print(f"言えない: {line}")
+    print("")
+    print(f"注記: 表示だけで、道具は保存しません。{result['storage_note']}")
+
+
 def register(sub) -> None:
     """`thth where (<account> | --project P) <語…>` を親の subparsers に
     ぶら下げる（`thread_read.register()` と同じ型）。
@@ -513,6 +653,11 @@ def register(sub) -> None:
     p.add_argument("--also", action="append", default=None, metavar="語",
                    help="同じ検索結果のうち、本文にどれかの語を含むものだけを残す"
                         f"（繰り返し指定・{MAX_ALSO} 語まで・追加の検索はしない）")
+    p.add_argument("--aggregate", action="store_true",
+                   help="語ごとの件数・期間・1 日あたり・問いの形・lexicon の分類ごとの件数だけ"
+                        "（本文・username・post_id を返さない・保存しない）")
+    p.add_argument("--lexicon", default=None, metavar="FILE",
+                   help="--aggregate の分類（JSON {分類: [語…]}）")
     p.set_defaults(func=cmd_where)
 
 
@@ -530,12 +675,22 @@ def cmd_where(args) -> int:
         account_name = args.targets[0]
         words = args.targets[1:] + list(getattr(args, "word", []))
 
+    lexicon = None
+    try:
+        if getattr(args, "lexicon", None):
+            if not getattr(args, "aggregate", False):
+                _reject("--lexicon は --aggregate と一緒に使います")
+            lexicon = load_lexicon(args.lexicon)
+    except WhereError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     try:
         result = answer(account_name=account_name, project=args.project, words=words,
                         recent=args.recent, limit=args.limit, since=getattr(args, "since", None),
                         exclude_engaged=getattr(args, "exclude_engaged", False),
                         max_per_author=getattr(args, "max_per_author", None),
-                        also=getattr(args, "also", None))
+                        also=getattr(args, "also", None),
+                        aggregate_mode=bool(getattr(args, "aggregate", False)), lexicon=lexicon)
     except accounts_mod.AccountError as e:
         # **単一 account が読めなければ loud reject**（T5-2・`who` と揃える）。
         # `--json` は人向けの文言でなく `{"error", "account"}` を出す——
