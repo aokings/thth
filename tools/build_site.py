@@ -269,7 +269,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = None  # 2.12 approval update: deployment date is set by the release operator.
+PRIVACY_EFFECTIVE = "2026-09-23"  # 3.4.0 の実態どおりの書き直し（masaru「プライバシーデプロイして下さい」2026-09-23）
 
 
 def build_privacy() -> str:
