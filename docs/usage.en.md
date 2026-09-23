@@ -238,8 +238,14 @@ THTH's core:
 ## 7. Troubleshooting
 
 - **"inflight" won't clear** — a previous run couldn't confirm whether it
-  posted or not. Check the platform manually; don't delete the marker
-  yourself. This exists specifically to prevent double-posting.
+  posted or not. Since 3.3.1 every run first asks the platform once (Threads:
+  the container status; other platforms: your own recent posts) and resolves
+  it by itself when the answer is definite. If it still stops, the answer was
+  not definite: look at it with `thth inflight <account> show`, check the
+  platform yourself, then `thth inflight <account> resolve --not-published`
+  or `--published <post_id>` with `--by <name>` (two-step confirmation; a copy
+  and a change-log entry are kept). Don't delete the marker file by hand. This
+  exists specifically to prevent double-posting.
 - **"already running"** — another run overlapped; wait and retry.
 - **`approval_stale`** — something changed after approval; re-approve.
 - **Token state** — see it with `thth board`; media without a token
