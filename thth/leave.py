@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 import secrets
 import stat
-from . import accounts, admin_log, approval_relay, authclients, authflow, jst, leave_gate as gate, managed_repo, server_files
+from . import accounts, admin_log, approval_relay, authclients, authflow, jst, leave_gate as gate, managed_repo, server_files, timer_cleanup
 
 PHASES={'stopped','worker_revoked','remote_pending','remote_confirmed','manual_unconfirmed','deleting','deleted_pending_log','completed'}
 
@@ -37,7 +37,7 @@ def _hash(value):return hashlib.sha256(server_files.encode(value)).hexdigest()
 def _valid(row,account):
     if type(row) is not dict:return False
     required={'schema_version','account','phase','operation_id','stopped_at','stopped_by','remote','deleted'}
-    optional={'completed_at','cfg','cfg_sha256','targets','inventory_sha256','preserved','token_shared','revoked'}
+    optional={'completed_at','cfg','cfg_sha256','targets','inventory_sha256','preserved','token_shared','revoked','timers'}
     if not required<=set(row) or set(row)-required-optional:return False
     if (type(row['schema_version']) is not int or row['schema_version']!=1 or row['account']!=account
         or not isinstance(row['phase'],str) or row['phase'] not in PHASES
@@ -47,7 +47,11 @@ def _valid(row,account):
     if type(row['deleted']) is not dict or set(row['deleted'])-categories or any(type(n) is not int or n<0 for n in row['deleted'].values()):return False
     if 'preserved' in row and (type(row['preserved']) is not list or any(x not in ('token_shared','env_shared','external_repo') for x in row['preserved'])):return False
     if row['phase']=='completed':
-        return set(row)==required|{'completed_at','preserved'} and bool(jst.parse(row['completed_at'])) and row['remote']!='pending'
+        # `timers`（3.5.1 件 1）は完了のあとに 1 回だけ足す記録。無い row（3.5.0 までの
+        # 完了）もそのまま読む。
+        keys=required|{'completed_at','preserved'}
+        if set(row)-{'timers'}!=keys or 'timers' in row and not timer_cleanup.valid_record(row['timers'],account):return False
+        return bool(jst.parse(row['completed_at'])) and row['remote']!='pending'
     cfg=row.get('cfg')
     if type(cfg) is not dict or cfg.get('account')!=account or row.get('cfg_sha256')!=_hash(cfg):return False
     if type(row.get('revoked')) is not list or any(x not in ('access','refresh') for x in row['revoked']):return False
@@ -88,7 +92,7 @@ def names():
 
 
 def public(row):
-    return {key:row[key] for key in ('account','phase','stopped_at','completed_at','remote','deleted','preserved','reason') if key in row}
+    return {key:row[key] for key in ('account','phase','stopped_at','completed_at','remote','deleted','preserved','reason','timers') if key in row}
 
 
 @contextlib.contextmanager
@@ -360,6 +364,9 @@ def run(account,*,by,plaza_open='delete'):
             # 壊れていれば何も止めずに断る（下の変更ログの事前検査と同じ筋）。何度呼んでも同じ結果。
             _purge_map(account,by)
             result=_run_locked(account,by=by)
+            # 削除の段のあとに unit を止める（3.5.1 件 1）。止められなくても退出は完了のまま
+            # ——台帳も秘密も消えていて、残った timer は空回りするだけ。記録に残して命令を渡す。
+            result=_stop_units(account) or result
             from . import deletion
             deletion.complete_for(account,read(account))
             # 施策の広場（設計 3.4.0 §6）: この account が置いた project 範囲の書き込みは
@@ -370,6 +377,16 @@ def run(account,*,by,plaza_open='delete'):
             try:plaza.purge_account(account,keep_open=plaza_open=='keep',by=by)
             except plaza.PlazaError:raise ValueError('plaza_cleanup_incomplete') from None
             return result
+
+
+def _stop_units(account):
+    # 完了した row に 1 回だけ試す（`sudo -n` を 1 回）。記録があれば再実行でも呼ばない
+    # ——leave を打ち直すたびに sudo を叩かない。残った unit は記録の命令で運用者が止める。
+    row=read(account)
+    if row is None or row['phase']!='completed':return None
+    if 'timers' not in row:
+        row['timers']=timer_cleanup.stop_for_leave(account);_save(row)
+    return public(row)
 
 
 def _purge_map(account,by):
@@ -486,6 +503,12 @@ def command(args):
             print('local_complete: '+args.name)
             if result['remote']=='unconfirmed_shared':print('remote_unconfirmed: 他 account と共有の接続です。解除すると他 account に影響するため、運用者が解除対象を切り分けてください')
             if result['remote']=='unconfirmed_manual':print('remote_unconfirmed: Threads の接続設定、または Bluesky の App Password を本人が解除してください')
+            timers=result.get('timers') or {}
+            if timers.get('pending'):
+                # 貼ってそのまま打てる形（unit 名は台帳の名前から組んだものだけ）。
+                print('timer_cleanup_pending: '+timer_cleanup.stop_command(timers['pending']))
+            elif timers.get('reason')=='unit_listing_failed':
+                print('timer_cleanup_unknown: systemctl list-unit-files '+' '.join(timer_cleanup.account_units(args.name))+' で残りを確かめ、あれば sudo systemctl disable --now <unit> で止めてください')
         return 0
     except (OSError,ValueError,accounts.AccountError,approval_relay.RelayError,admin_log.AdminLogError,LockBusy):
         print('leave_incomplete: 停止状態と再試行用の認証情報を確認し、同じ leave を再実行してください',file=sys.stderr)
