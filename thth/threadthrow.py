@@ -507,10 +507,19 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
 
     posted_at = result.ts or jst.iso()
     sent_sha = approval_mod.segment_sha(section)
+    # 投稿の目的（設計 3.6.0 §A）。束に 1 つ（束の front-matter）。**指紋の外**——
+    # 承認の時点の目的と違えば「目的の変更」として段の実行記録に残す（連投は sent を
+    # 書かないので、実行記録がその控え）。
+    from . import goals as goals_mod
+    goal_value, goal_change = goals_mod.goal_of(b), goals_mod.change(b)
+    if goal_change:
+        log(goals_mod.change_line(goal_change))
     try:
         threadrun.mark(run, index, threadrun.PUBLISHED, post_id=result.post_id,
                         posted_at=posted_at, reply_to=parent or None,
                         text_sha256=sent_sha, bundle_sha=expected, last_ok="publish",
+                        goal=goal_value,
+                        **({"goal_change": goal_change} if goal_change else {}),
                         **({"media":result.media} if result.media else {}))
     except (OSError,ValueError):
         if not manifests[index-1]:raise

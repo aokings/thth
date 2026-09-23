@@ -17,6 +17,7 @@ from . import accounts as accounts_mod
 from . import adapters as adapters_mod
 from . import approval as approval_mod
 from . import engagements as engagements_mod
+from . import goals as goals_mod
 from . import inflight as inflight_mod
 from . import inflight_resolve as inflight_resolve_mod
 from . import media_delivery
@@ -753,6 +754,12 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                            file=chosen.path, error=reply_refusal)
     resolved_from = ({"file": resolution["file"], "post_id": reply_to}
                      if queuefile.reply_to_file_of(chosen.front_matter) is not None else None)
+    # 投稿の目的（設計 3.6.0 §A）。**指紋の外**——承認の時点の目的（`approved_goal`）と
+    # 違っても止めず、runs と sent に「目的の変更」として残す。front-matter だけを読む。
+    goal_value = goals_mod.goal_of(chosen)
+    goal_change = goals_mod.change(chosen)
+    if goal_change:
+        log(goals_mod.change_line(goal_change))
     from . import media as media_mod
     if media_mod.declared(chosen.front_matter) and media_delivery.unavailable(account_cfg):
         return ThrowResult(exit_code=2,mode=mode,action='media_provider_unavailable',message='media_provider_unavailable',file=chosen.path)
@@ -924,6 +931,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                         sent_at=posted_at, approved_fingerprint=expected_fingerprint, reply_to=post.reply_to,
                         resolved_from=resolved_from,
                         attachment_kinds=media_mod.attachment_kinds(manifest),
+                        goal=goal_value, goal_change=goal_change,
                         **({"media":publish_result.media} if publish_result.media else {}))
     except (OSError,ValueError):
         if not manifest:raise
@@ -1046,7 +1054,9 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                 status="ok", error=None, topic=topic,
                 engagement_write_failed=engagement_write_failed,
                 engagement_author_lookup_failed=engagement_author_lookup_failed,
-                resolved_from=resolved_from, extra=_remote_extra(publish_result))
+                resolved_from=resolved_from,
+                extra={**_remote_extra(publish_result), "goal": goal_value,
+                       "goal_change": goal_change})
     return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました",
                         file=chosen.path, post_id=post_id)
 

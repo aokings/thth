@@ -31,6 +31,7 @@ from . import who_cli as who_cli_mod
 from . import collect as collect_mod
 from . import core
 from . import engagements as engagements_mod
+from . import goals as goals_mod
 from . import healthcheck as healthcheck_mod
 from . import incident as incident_mod
 from . import jst
@@ -356,6 +357,9 @@ def _prepare_one(path: str):
         "reply_to": fm.get("reply_to"),
         # 返信先を原稿の名前で書いたもの（設計 3.2.0 §1）。承認の対象はこの名前。
         "reply_to_file": queuefile.reply_to_file_of(fm),
+        # 投稿の目的（設計 3.6.0 §A1）。一段目に見せ、`approved_goal` に控える。
+        # **指紋（approved_sha）には入れない**——札であって公開される中身ではない。
+        "goal": goals_mod.goal_of(qf),
         "text": effective,
         "length_line": queuefile.length_line(media, effective, account_cfg),
         "location": (fm.get("location") or "").strip() or None,
@@ -538,7 +542,7 @@ def _prepare_bundle(path: str, text: str):
     except accounts_mod.AccountError as e:
         return None, f"{path}: {e}"
 
-    problems = bundle_mod.check(b, account_cfg=account_cfg)
+    problems = bundle_mod.check(b, account_cfg=account_cfg) + goals_mod.lint_errors(b.front_matter)
     hard = [p for p in problems if not p.startswith("warning:")]
     if hard:
         return None, f"{path}: lint に通りません（{hard[0]}）"
@@ -585,6 +589,8 @@ def _prepare_bundle(path: str, text: str):
         "publish_at": b.front_matter.get("publish_at"),
         "continue_until": b.front_matter.get("continue_until"),
         "form": b.front_matter.get("form"), "outlet": b.front_matter.get("outlet"),
+        # 束に 1 つの目的（設計 3.6.0 §A1）。指紋には入れない。
+        "goal": goals_mod.goal_of(b),
         "approved_sha": approved_sha, "warning": None,
         "run_id": (run or {}).get("run_id"),
         "digest": approved_sha[:approval_mod.APPROVE_DIGEST_LENGTH],
@@ -641,6 +647,17 @@ def _reply_or_topic_line(one: dict) -> str | None:
     return topics_mod.verdict_line(one.get("topic"), account=one.get("account"))
 
 
+def _print_goal_line(one: dict) -> None:
+    """一段目の目的の 1 行（設計 3.6.0 §A1）。目的が無ければ出さない（既存の表示を変えない）。
+
+    目的は指紋（digest）に入らない——承認のあとに変えても出る、と一段目で言う。
+    """
+    goal = one.get("goal")
+    if goal and goal != goals_mod.NONE:
+        print(f"  goal      : {goal}（{goals_mod.LABELS.get(goal, goal)}・digest には入りません。"
+              "承認のあとに変えても出て、変更は記録に残ります）")
+
+
 def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str = "") -> None:
     """一段目: **出す本文をすべて全文表示する**。何も書き換えない。"""
     if as_json:
@@ -649,6 +666,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
                                 "publish_at": one["publish_at"], "topic": one["topic"],
                                 "reply_to": one.get("reply_to"),
                                 "reply_to_file": one.get("reply_to_file"),
+                                "goal": one.get("goal"),
                                 "text": one.get("text"),
                                 "kind": one.get("kind", "single"),
                                 "segments": one.get("segments"),
@@ -670,6 +688,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
         if one.get("kind") == "bundle":
             # **各段の全文と返信関係を出す**（Codex 最終条件 5）。
             _show_bundle_stage(one)
+            _print_goal_line(one)
             topic_line = _reply_or_topic_line(one)
             if topic_line:
                 print(f"  ◆ {topic_line}")
@@ -686,6 +705,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
                   "出るまで待ちます）")
         if one.get("warning"):
             print(f"  ⚠ {one['warning']}")
+        _print_goal_line(one)
         topic_line = _reply_or_topic_line(one)
         if topic_line:
             print(f"  ◆ {topic_line}")
@@ -886,6 +906,8 @@ def cmd_revoke(args) -> int:
             "revoked_at": revoked_at,
             "revoked_by": revoked_by,
             "revoked_reason": args.reason or "",
+            # 承認の時点の目的の控えも消す（設計 3.6.0 §A1）。持たない原稿には足さない。
+            **({goals_mod.APPROVED_KEY: None} if goals_mod.APPROVED_KEY in fm else {}),
         })
         pushed, push_err = writeback_mod.commit_and_push(
             repo_dir, rel_path=rel_path,

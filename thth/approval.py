@@ -416,7 +416,14 @@ def segment_sha(text: str) -> str:
 
 
 def approved_fields(prepared, by, at):
-    """Identical approval writeback for local two-stage and server human receipt."""
+    """Identical approval writeback for local two-stage and server human receipt.
+
+    `approved_goal`（設計 3.6.0 §A1）は承認の時点の目的の控え。**指紋ではない**——
+    公開の時点の `goal:` と違っても止めず、runs と sent に「目的の変更」として残す
+    ための比べる元（`goals.change()`）。
+    """
+    from . import goals
     return {'status':'approved', 'approved_sha':prepared['approved_sha'],
             'approved_at':at, 'approved_by':by, 'revoked_at':None,
-            'revoked_by':None, 'revoked_reason':None}
+            'revoked_by':None, 'revoked_reason':None,
+            goals.APPROVED_KEY: goals.approved_value(prepared.get('goal'))}

@@ -40,7 +40,8 @@ ATTACHMENT_KINDS = ("none", "image", "video", "audio", "carousel",
 
 def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: str,
           approved_fingerprint: str | None = None, reply_to: str | None = None, media: list | None = None,
-          attachment_kinds: list | None = None, resolved_from: dict | None = None) -> str:
+          attachment_kinds: list | None = None, resolved_from: dict | None = None,
+          goal: str | None = None, goal_change: dict | None = None) -> str:
     """送った本文そのものを動かせない記録として保存する。返り値は書いたパス。
 
     `approved_fingerprint`（外部レビュー再々レビュー P1・1）は公開直前に固定した
@@ -84,6 +85,20 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
                 or (ATTACHMENT_NONE_LABEL in attachment_kinds and len(attachment_kinds) != 1)):
             raise ValueError('invalid_attachment_kinds')
         data['attachment_kinds']=sorted(attachment_kinds)
+    if goal is not None:
+        # **投稿の目的**（設計 3.6.0 §A）。公開の時点の front-matter の `goal:`
+        # （`thth send` は `--goal`）。`--by goal` と observe はここ（と連投の実行
+        # 記録）から読む——いまの原稿は読まない。知らない語はここで断る。
+        from . import goals as goals_mod
+        if goal not in goals_mod.RECORDED:
+            raise ValueError('invalid_goal')
+        data['goal'] = goal
+        if goal_change is not None:
+            # 承認の時点の目的（`approved_goal`）と違った。指紋には入らないので公開は
+            # 止めず、ここに残す（「目的の変更」）。
+            if not goals_mod.valid_change(goal_change) or goal_change['to'] != goal:
+                raise ValueError('invalid_goal_change')
+            data['goal_change'] = dict(goal_change)
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
         f.write("\n")

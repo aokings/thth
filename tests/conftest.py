@@ -37,8 +37,10 @@ DEFAULT_FM = {
 
 # `reply_to_file`（設計 3.2.0）・`retracted_at` は既定の front-matter に入れない
 # （`fm_overrides` で渡したときだけ書く）——既存の試験の原稿を 1 行も変えないため。
+# `goal`・`approved_goal`（設計 3.6.0）も同じ——渡したときだけ書く。
 FM_ORDER = ["thth", "account", "publish_at", "status", "approved_sha", "approved_at",
-            "topic", "reply_to", "reply_to_file", "post_id", "posted_at", "retracted_at"]
+            "topic", "reply_to", "reply_to_file", "post_id", "posted_at", "retracted_at",
+            "goal", "approved_goal"]
 
 # quiet_hours の既定（22:00〜07:00）の外にある値。frozen_now_jst() の既定値に使う。
 FIXED_NOW_JST = datetime.datetime(2026, 9, 9, 10, 0, 0, tzinfo=jst.JST)

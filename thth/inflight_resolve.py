@@ -339,7 +339,7 @@ def record_published(account_name: str, account_cfg: dict, state_dir: str, recor
     残して解くだけ（本文は inflight に無いので `sent/` は書かない）。
     """
     from . import approval as approval_mod
-    from . import core, postid as postid_mod, queuefile, sent as sent_mod, writeback
+    from . import core, goals as goals_mod, postid as postid_mod, queuefile, sent as sent_mod, writeback
     from . import inflight as inflight_mod
     from . import media as media_mod
     if not postid_mod.is_usable(post_id):
@@ -396,7 +396,9 @@ def record_published(account_name: str, account_cfg: dict, state_dir: str, recor
                    body_hash=approval_mod.compute_body_hash(effective), sent_at=posted_at,
                    approved_fingerprint=expected, reply_to=reply_to,
                    resolved_from=resolved_from,
-                   attachment_kinds=media_mod.attachment_kinds(None))
+                   attachment_kinds=media_mod.attachment_kinds(None),
+                   # 投稿の目的（設計 3.6.0 §A）。公開したときの原稿の front-matter から。
+                   goal=goals_mod.goal_of(qf), goal_change=goals_mod.change(qf))
     core._record_engagement(
         account_cfg, account_name, media=media, topic=topic, form=fm.get("form"),
         post_id=post_id, posted_at=posted_at, now=now, log=log, reply_to=reply_to,

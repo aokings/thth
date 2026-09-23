@@ -65,6 +65,8 @@ _REASON_TABLE = (
     ("share_to_instagram: ", "invalid_publish_option"),
     # reply_to_file（設計 3.2.0 §1）。lint の 1 行は符丁そのもので始まる。
     *((code + ": ", code) for code in queuefile.REPLY_TO_FILE_MESSAGES),
+    # 投稿の目的（設計 3.6.0 §A1）。4 語の固定・承認の指紋には入らない。
+    ("goal_invalid: ", "goal_invalid"),
 )
 
 REASONS = frozenset([code for _, code in _REASON_TABLE] + [FALLBACK_REASON])
@@ -157,6 +159,12 @@ def lint_file(path: str) -> list:
         # 公開経路からも呼ばれるので、あちらに profile を読ませない。
         cfg=_account_cfg_or_none(b.front_matter.get("account"))
         notes=bundle_mod.check(b,account_cfg=cfg)+bundle_mod.editorial_notes(b)
+        # **目的は lint と承認の入口でだけ見る**（設計 3.6.0 §A1）。`bundle.check()` は
+        # 公開の経路からも呼ばれる——目的は札なので、承認のあとの書き換えで公開を
+        # 止めない（書き換えは実行記録に「目的の変更」として残る）。
+        if not b.malformed:
+            from . import goals as goals_mod
+            notes.extend(goals_mod.lint_errors(b.front_matter))
         if cfg and not b.malformed:
             from . import media as media_mod, media_delivery
             for index,row in enumerate(b.posts):
@@ -276,6 +284,11 @@ def lint_file(path: str) -> list:
 
     errors.extend(reply_to_file_errors(path, fm, account_name))
     errors.extend(publish_option_errors(fm, account_cfg, account_name=account_name))
+    # 投稿の目的（設計 3.6.0 §A1）。front-matter の `goal:` だけを見る——本文の
+    # メモ（「目的: 誘導」）は読まない。承認の指紋には入れない（lint と承認の入口
+    # だけの門で、select は見ない）。
+    from . import goals as goals_mod
+    errors.extend(goals_mod.lint_errors(fm))
     return errors
 
 

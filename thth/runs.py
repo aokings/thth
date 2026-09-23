@@ -71,7 +71,12 @@ OPTIONAL_FIELDS = ["topic", "mismatch_fields", "trigger",
 # ときは鍵ごと書かない——無い run の行の形を変えないため（`api_diagnostic` と同じ）。
 # `remote_state`: 公開の結果が分からなかったあとに媒体へ訊いた答え（静的な語）。
 # `inflight_resolution`: inflight をどう解いたか（道具が訊いて／人が決めて）。
-SPARSE_FIELDS = ["remote_state", "inflight_resolution"]
+# `goal`（設計 3.6.0 §A）: 公開の時点の投稿の目的（`thth/goals.py` の語）。
+SPARSE_FIELDS = ["remote_state", "inflight_resolution", "goal"]
+# **値があるときだけ出す dict の項目**（設計 3.6.0 §A1）。`goal_change`: 承認の時点の
+# 目的と公開の時点の目的が違った（`{"from", "to"}`）。目的は承認の指紋に入らないので
+# 公開は止めず、ここと sent に残す。形が合わなければ書かない。
+SPARSE_DICT_FIELDS = ["goal_change"]
 
 
 def path_for(state_dir: str, jst_month: str) -> str:
@@ -109,6 +114,11 @@ def _append_run(state_dir: str, record: dict, jst_month: str) -> str:
     for k in SPARSE_FIELDS:
         if isinstance(record.get(k), str) and record[k]:
             line[k] = record[k]
+    for k in SPARSE_DICT_FIELDS:
+        value = record.get(k)
+        if (isinstance(value, dict) and set(value) == {"from", "to"}
+                and all(isinstance(v, str) for v in value.values())):
+            line[k] = {"from": value["from"], "to": value["to"]}
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
     return path
