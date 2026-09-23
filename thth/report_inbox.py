@@ -39,8 +39,10 @@ from . import accounts, admin_log, handoff_cursor, jst, redact
 from . import __version__
 
 SCHEMA_VERSION = 1
-KINDS = ("bug", "request")
-KIND_LABELS = {"bug": "不具合", "request": "要望"}
+# `friction`（3.3.0 B4）: 迷った・分かりにくかった・同じ操作を繰り返した。不具合とも
+# 要望とも言い切れない小さなつまずき。提案が無くても置ける（本文に何が起きたかだけ）。
+KINDS = ("bug", "request", "friction")
+KIND_LABELS = {"bug": "不具合", "request": "要望", "friction": "つまずき"}
 STATUSES = ("open", "closed")
 CLOSE_REASONS = ("fixed", "wontfix", "duplicate", "invalid")
 VIAS = ("cli", "mcp")
@@ -77,7 +79,8 @@ NEXT = {
     "by_required": "--by <名前> を付けてください（誰が置いたかを残します）",
     "invalid_account": "account 名を確かめてください（thth account <account>）",
     "account_unavailable": "account の台帳が読めないか停止中です（thth account <account>）",
-    "invalid_kind": "--kind は bug か request です",
+    "invalid_kind": "--kind は bug・request・friction のどれかです（friction は迷った・"
+                    "分かりにくかった・同じ操作を繰り返した）",
     "invalid_report": "title と本文は空にできません。title は 1 行です",
     "report_too_long": f"title は {TITLE_MAX} 字・本文は {BODY_MAX} 字・再現手順は {REPRO_MAX} 字"
                        f"・返事は {REPLY_MAX} 字までです。分けるか縮めてください",
@@ -861,9 +864,9 @@ def cmd_show(args) -> int:
 def register(sub) -> None:
     parser = sub.add_parser(
         "report",
-        help="不具合と要望を道具に置く（道具が断った・結果が期待と違った・欲しい形がある）",
-        description="不具合と要望を道具の中に置く（設計 3.1.2）。道具が断った・結果が期待と"
-                    "違った・欲しい形がある、のどれかならここへ。実装側は "
+        help="不具合・要望・つまずきを道具に置く（道具が断った・結果が期待と違った・欲しい形がある・迷った）",
+        description="不具合・要望・つまずき（friction）を道具の中に置く（設計 3.1.2・3.3.0）。"
+                    "道具が断った・結果が期待と違った・欲しい形がある・迷った、のどれかならここへ。実装側は "
                     "`thth admin reports` と毎朝の一枚で読み、返事は "
                     "`thth report show <id>` と handoff-report --since-last-read に出ます。"
                     "秘密らしき値が含まれていたら置きません。",

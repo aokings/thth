@@ -590,11 +590,12 @@ del _tool
 REPORT_TOOLS = [
     {"name": "thth_report_file",
      "description": "道具が断った・結果が期待と違った・欲しい形がある、のどれかならこれで置く"
-                    "（kind は bug か request。実装側が読み、返事は thth_report_show と "
+                    "（kind は bug・request・friction〔迷った・分かりにくかった・同じ操作を繰り返した〕。"
+                    "実装側が読み、返事は thth_report_show と "
                     "operations_handoff の tool.reports に出る。秘密らしき値が含まれていたら置かない）",
      "inputSchema": {"type": "object", "properties": {
          "account": {"type": "string"},
-         "kind": {"type": "string", "enum": ["bug", "request"]},
+         "kind": {"type": "string", "enum": ["bug", "request", "friction"]},
          "title": {"type": "string", "description": "1 行・120 字まで"},
          "body": {"type": "string", "description": "8,000 字まで"},
          "repro": {"type": "string", "description": "再現手順（任意・4,000 字まで）"}},
