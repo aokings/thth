@@ -297,8 +297,59 @@ def _row_24h_before(rows, latest):
 
 # --------------------------------------------------------------- 第 3 段
 
-def _world(name, cfg, now, counter):
-    """監視語ごとの世間（件数・異なり・上位 3 の占有率・直近・絡みに行く先 3 件）。"""
+def _own_author_keys(name, cfg, allowed_names=None):
+    """同じ project の**同じ媒体の全 account** の author_key（3.1.1）。
+
+    絡みに行く先に自分（同じ本人の別台帳を含む）を並べないための鍵の集合。
+    `where` の行の `author_key` は媒体ごとに式が違う（Mastodon はドメイン付きの
+    acct・Bluesky は DID）ので、handle は **adapter 自身の `author_key()`** が
+    あればそれで、無ければ境界の `author_key(medium, handle)` で作る。`user_id`
+    （token・台帳）があれば境界の式でも足す。`morning <account>`（単体）でも、
+    同じ project の他 account を見る。サーバ型（`allowed_names`）では許された
+    account の外は読まない。
+
+    戻りは `(keys, {"n": 見た account 数, "unreadable": 読めなかった数})`——
+    読めなかった台帳があれば、除き切れていないかもしれないと分母で言う。
+    """
+    from .adapters import base as adapter_base
+    media, project = cfg.get("media"), cfg.get("project")
+    keys, seen, unreadable = set(), 0, 0
+    for other_name in accounts_mod.list_account_names():
+        if allowed_names is not None and other_name not in allowed_names:
+            continue
+        try:
+            other = cfg if other_name == name else accounts_mod.load_account(other_name)
+        except (accounts_mod.AccountError, ValueError, TypeError, OSError):
+            unreadable += 1
+            continue
+        if other.get("media") != media or other.get("project") != project:
+            continue
+        seen += 1
+        handle = (other.get("handle") or "").strip().lstrip("@")
+        identities = {handle}
+        try:
+            token = accounts_mod.load_token(other) or {}
+            identities.add(str(token.get("user_id") or other.get("user_id") or ""))
+            adapter = adapters_mod.make_adapter(other, token)
+            method = getattr(adapter, "author_key", None)
+            if handle and callable(method):
+                keys.add(method(handle))
+        except Exception:
+            # 鍵が 1 つ作れなくても段は止めない。境界の式の鍵は下で足す。
+            unreadable += 1
+        for identity in identities:
+            keys.add(adapter_base.author_key(media, identity))
+    keys.discard(None)
+    return keys, {"n": seen, "unreadable": unreadable}
+
+
+def _world(name, cfg, now, counter, allowed_names=None):
+    """監視語ごとの世間（件数・異なり・上位 3 の占有率・直近・絡みに行く先 3 件）。
+
+    絡みに行く先（`targets`）からは自分の投稿を除く（`_own_author_keys()`）。
+    件数（`n`・`distinct_authors`）は世間の大きさなので変えない。除いた本数は
+    `own_excluded` として升目に残す（分母の規律・3.1.1）。
+    """
     from . import where_cli as where_cli_mod
     media = cfg.get("media")
     words = accounts_mod.watch_words(cfg)
@@ -309,6 +360,7 @@ def _world(name, cfg, now, counter):
     words = words[:where_cli_mod.MAX_WORDS]
 
     def call():
+        own_keys, own_accounts = _own_author_keys(name, cfg, allowed_names)
         for _word in words:
             counter(media, "keyword_search")
             if media in ("bluesky", "mastodon"):
@@ -330,6 +382,8 @@ def _world(name, cfg, now, counter):
                 continue
             material = entry["material"]
             history = entry.get("my_history") or {}
+            others = [post for post in entry["posts"]
+                      if post.get("author_key") not in own_keys]
             by_word[word] = cell({
                 "n": material["n"], "denominator": material["requested_limit"],
                 "distinct_authors": material["authors"]["distinct"],
@@ -339,6 +393,7 @@ def _world(name, cfg, now, counter):
                 "latest_timestamp": material["latest_timestamp"],
                 "my_history": {"n": history.get("n"), "reacted": history.get("reacted")}
                                if history else None,
+                "own_excluded": len(entry["posts"]) - len(others),
                 "targets": [{"post_id": post["post_id"], "permalink": post["permalink"],
                              "timestamp": post["timestamp"],
                              "author_key": post["author_key"],
@@ -346,9 +401,9 @@ def _world(name, cfg, now, counter):
                              "replied": post["replied"],
                              "my_history_present": bool(history.get("n")),
                              "preview": _preview(post.get("preview"))}
-                            for post in entry["posts"][:ENGAGE_TARGETS]],
+                            for post in others[:ENGAGE_TARGETS]],
             })
-        return {"words": words, "by_word": by_word}
+        return {"words": words, "by_word": by_word, "own_accounts": own_accounts}
 
     node = _guard(call)
     if node["cannot_say"] is None:
@@ -550,7 +605,7 @@ def build(target, *, now=None, mark=True, allowed_names=None):
         if refusals[name]:
             world_entries[name] = cell(cannot_say=refusals[name])
             continue
-        node = _world(name, cfg, now, counter)
+        node = _world(name, cfg, now, counter, allowed_names)
         world_entries[name] = (cell({"medium": cfg.get("media"), **node["value"]})
                                if node["cannot_say"] is None else node)
 
@@ -733,7 +788,8 @@ def _render_world(account, node, out) -> None:
         out(f"    語「{word}」  件数 {value['n']}/{value['denominator']}"
             f"  異なり {value['distinct_authors']}/{value['authors_denominator']}"
             f"  上位{value['top_k']}占有 {_ratio(value['top_share'])}"
-            f"  直近 {value['latest_timestamp'] or '—'}")
+            f"  直近 {value['latest_timestamp'] or '—'}"
+            f"  自分を除外 {value['own_excluded']}")
         for row in value["targets"]:
             out(f"      {row.get('permalink') or row['post_id']}"
                 f"  返信 {_count(row['replies'], row['has_replies'])}"
