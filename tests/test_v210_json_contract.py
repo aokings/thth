@@ -32,7 +32,11 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      'report file', 'report list', 'report show', 'report add', 'admin reports list', 'admin reports show',
      'admin reports reply', 'admin reports close', 'admin reports export',
      # 3.3.1 §4: 人の口 thth inflight（show|resolve・--json）。
-     'inflight']
+     'inflight',
+     # 3.4.0 §4: 施策の広場（利用者と管理者の口・--json）。
+     'plaza post', 'plaza list', 'plaza show', 'plaza reply', 'plaza update',
+     'admin plaza join', 'admin plaza leave', 'admin plaza hide', 'admin plaza list',
+     'admin plaza show']
 
 
 def test_json_table_covers_every_parser():
