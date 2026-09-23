@@ -102,11 +102,12 @@ def test_mcp_stdioでtools_listとtools_callが通る(isolated_account):
     # 2026-09-16 に `where_to_appear` を足した（設計「自分の泉」§2.3・T2-3・読むだけ）。
     # 2026-09-16 に `who_is_this` を足した（設計「自分の泉」§2.4・T3-3・読むだけ）。
     # 2026-09-23 に `thth_morning` を足した（設計 3.1.0 §1・読むだけ・栞だけ進む）。
+    # 2026-09-23 に `thth_observe` を足した（設計 3.3.0 §F・thth_morning は別名）。
     assert tool_names == {"thth_lint", "thth_queue", "thth_preview", "thth_board",
                           "thth_topic_context", "thth_topic_evaluate",
                           "thth_topic_decision", "before_you_post", "after_you_posted",
                           "thread_read", "where_to_appear", "who_is_this", "analytics_report", "operations_handoff", "study_report",
-                          "thth_morning"}
+                          "thth_morning", "thth_observe"}
     # 副作用のあるものは 1 つも出ていない。
     assert not (tool_names & {"thth_approve", "thth_throw", "thth_token",
                                "thth_auth", "thth_refresh", "thth_revoke",

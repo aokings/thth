@@ -285,9 +285,10 @@ def test_既定で栞が進み_no_markでは進まない(one, thth_root):
     assert morning.build(PROJECT, now=NOW, mark=False)["marked"] == []
     assert not path.exists(), "--no-mark なのに栞が進んだ"
     payload = morning.build(PROJECT, now=NOW)
-    assert payload["marked"] == [ACCOUNT] and payload["marked_by"] == "morning"
+    # 3.3.0 §F: 栞の名乗りは呼んだ名前（build の既定は observe）。
+    assert payload["marked"] == [ACCOUNT] and payload["marked_by"] == "observe"
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["by"] == "morning" and saved["snapshot"]["tool_version"]
+    assert saved["by"] == "observe" and saved["snapshot"]["tool_version"]
 
 
 def test_栞を進めたあとは版の変化が読める(one, thth_root):
@@ -349,9 +350,10 @@ def test_MCPのthth_morningは設計の文言でCLIを呼ぶだけ(one, monkeypa
         monkeypatch.delenv(key, raising=False)
     server = _load_server_module()
     tool = next(item for item in server.TOOLS if item["name"] == "thth_morning")
+    # 3.3.0 §F: thth_morning は thth_observe の別名になった（説明文も観測の文言）。
     assert tool["description"] == (
-        "朝いちばんに呼ぶ。昨日から何があって、今日なにをすればよいかを、"
-        "道具が事実だけで 1 枚にする。本文は作らない")
+        "thth_observe の別名（同じ 1 枚を返す）。セッションの始めと区切りごとに呼ぶ。"
+        "前回の観測から何があって、いまなにをすればよいかを、道具が事実だけで 1 枚にする")
     seen = []
 
     class Done:

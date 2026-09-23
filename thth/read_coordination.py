@@ -8,11 +8,11 @@ from . import accounts, leave_gate
 READS = frozenset(('account','posts','replies','measured','threads','topics','forms',
     'queue','schedule','handoff-report','board','doctor','where','thread','mentions',
     'profile','who','location','after','analytics-report','study-report','unanswered',
-    'ask','lint','preview','systemd','topic-read','morning'))
+    'ask','lint','preview','systemd','topic-read','morning','observe'))
 
 
 def names(args, command):
-    if command=='morning':
+    if command in ('morning','observe'):
         # 1 枚の対象は account 名か project 名（解決は `morning.targets()` の 1 か所）。
         from . import morning
         return morning.targets(getattr(args,'target',None))

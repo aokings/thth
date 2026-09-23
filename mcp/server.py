@@ -295,12 +295,28 @@ TOOLS = [
         },
     },
     {
-        # **名前と説明文がそのまま売り文句**（設計 3.1.0 §1）。
-        "name": "thth_morning",
-        # **設計 3.1.0 §0 の約束そのまま。**
+        # **名前と説明文がそのまま売り文句**（設計 3.1.0 §1・3.3.0 §F で観測に）。
+        "name": "thth_observe",
         "description": (
-            "朝いちばんに呼ぶ。昨日から何があって、今日なにをすればよいかを、"
-            "道具が事実だけで 1 枚にする。本文は作らない"
+            "セッションの始めと区切りごとに呼ぶ。前回の観測から何があって、いまなにを"
+            "すればよいかを、道具が事実だけで 1 枚にする。本文は作らない"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "project 名か account 名"},
+                "mark": {"type": "boolean",
+                          "description": "栞（前回読んだ時点）を進める（既定 true）"},
+            },
+            "required": ["target"],
+        },
+    },
+    {
+        # 別名（3.3.0 §F）。既存の skill・セッションを壊さないために残す。
+        "name": "thth_morning",
+        "description": (
+            "thth_observe の別名（同じ 1 枚を返す）。セッションの始めと区切りごとに呼ぶ。"
+            "前回の観測から何があって、いまなにをすればよいかを、道具が事実だけで 1 枚にする"
         ),
         "inputSchema": {
             "type": "object",
@@ -662,7 +678,7 @@ def server_tools(context):
     if context.scope=='admin': return reports + ADMIN_TOOLS
     # 毎朝の一枚は**利用者の scope だけ**（設計 3.1.0 §1）。credential が許した
     # account／project しか対象にできない（`report_service.execute_morning()`）。
-    reports = reports + [tool for tool in TOOLS if tool['name']=='thth_morning']
+    reports = reports + [tool for tool in TOOLS if tool['name'] in ('thth_observe', 'thth_morning')]
     from thth.server_writes import WRITE_OPERATIONS
     return _with_report_hint(reports + [tool for tool in SERVER_TOOLS
                       if context.writes or tool['name'][5:] not in WRITE_OPERATIONS]) + REPORT_TOOLS
@@ -708,9 +724,10 @@ def server_call(name, arguments):
         elif operation in ('report_file','report_list','report_show','report_add'):
             from thth.report_service import execute_user_reports
             result=execute_user_reports(context,request)
-        elif operation=='morning':
+        elif operation in ('morning', 'observe'):
             from thth.report_service import execute_morning
-            result=execute_morning(context,request)
+            request={**request,'operation':'morning'}
+            result=execute_morning(context,request,invoked_as=operation)
         elif operation in ('analytics_report', 'operations_handoff', 'study_report'):
             result=execute_mcp_report(context,request)
         else:
@@ -936,10 +953,10 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
-    elif name == "thth_morning":
+    elif name in ("thth_morning", "thth_observe"):
         # **`where_to_appear` と同じ型**: CLI（`thth morning`）を `--json` で
         # 呼ぶだけ（設計 3.1.0 §1・§5）。栞を進めないときだけ旗を足す。
-        args = ["morning", arguments["target"]]
+        args = [name[len("thth_"):], arguments["target"]]
         if arguments.get("mark") is False:
             args.append("--no-mark")
         args.append("--json")
@@ -969,7 +986,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
 
     if name.startswith("thth_topic_") or name in (
             "before_you_post", "after_you_posted", "analytics_report", "operations_handoff", "study_report", "thread_read", "where_to_appear",
-            "who_is_this", "thth_morning"):
+            "who_is_this", "thth_morning", "thth_observe"):
         # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）
         # とは意味が違う——こちらは stale_context・不正な候補比較で、
         # **そのまま使ってはいけない**応答。既存の扱いは変えない。

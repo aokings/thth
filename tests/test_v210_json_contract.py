@@ -26,6 +26,8 @@ def json_parsers():
 COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads|study-report|analytics-report|after|topics|forms|queue|schedule|throw|handoff-report|board|pull|maintain|doctor|app show|admin inventory|admin account|admin log|admin tokens|admin timers|admin release|admin diff|ask before-you-post|mentions|profile|thread|where|who|retract|location|topics suggest|topics observe|topics record-decision|topics decision|topics observation|topics retract|topics unretract|topics profile|topics adopt-reason|topics adoptions|topics record-vocabulary|topics vocabulary|topics record-review|topics review|topics record-form-spec|topics form-spec|topics form-check|topics improvements|topics impact|topics record-hypothesis|topics hypotheses'''.split('|') + ['account add', 'account migrate', 'unanswered', 'study add', 'admin deletion sync', 'admin budget', 'admin media cleanup-retry', 'admin media gc',
      # 3.1.0: 毎朝の一枚と監視語（設計 3.1.0 §1・§3）。
      'morning', 'admin watch set', 'admin watch show',
+     # 3.3.0 §F: 観測（observe）。morning は別名として残る。
+     'observe',
      # 3.1.2: 報告の口（設計 3.1.2 §1）。
      'report file', 'report list', 'report show', 'report add', 'admin reports list', 'admin reports show',
      'admin reports reply', 'admin reports close', 'admin reports export']

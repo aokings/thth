@@ -1,4 +1,10 @@
-"""`thth morning`——毎朝の一枚（設計 3.1.0）。**束ねるだけ。**
+"""`thth observe`（別名 `thth morning`）——観測の 1 枚（設計 3.1.0・3.3.0 §F）。**束ねるだけ。**
+
+3.3.0 §F: 「毎朝の一枚」を「観測」にし、セッションの始めと区切りごとに引ける
+ようにした。名前は `observe`、`morning` は同じものの別名（既存の skill・セッションを
+壊さない）。JSON の `report_type` はどちらで呼んでも `observe`、呼んだ名前は
+`invoked_as`。第 2 段は「前回の観測から」（栞の時刻から今まで・栞が無い・7 日より
+古いときは前日 JST）。
 
 芯（設計 3.1.0 §0）: **「昨日から何があって、今日なにをすればよいか」を、道具が
 事実だけで 1 枚にする。** 空欄を推測で埋めない。本文は作らない——作るのは人と
@@ -49,6 +55,10 @@ ENGAGE_TARGETS = 3
 OVERDUE_LIMIT = 10
 # 栞を進めるときの名乗り（`handoff-report --mark-read --by` に相当）。
 MARK_BY = "morning"
+# 第 2 段の窓を「前回の観測から」にする栞の古さの上限（これより古ければ前日 JST）。
+OBSERVE_MAX_DAYS = 7
+# 呼び名（`invoked_as`）。どちらも同じ 1 枚（設計 3.3.0 §F）。
+INVOKED_AS = ("observe", "morning")
 
 SECTION_TITLES = (("tool", "道具"), ("unanswered", "返していないもの"),
                   ("yesterday", "昨日の自分"), ("world", "世間"),
@@ -306,10 +316,27 @@ def yesterday_window(now):
     return today - datetime.timedelta(days=1), today
 
 
-def _yesterday_posts(name, now):
-    """昨日出した投稿ごとの実測（分母つき・24h 前と比べられれば差分）。"""
-    from . import measured as measured_mod
+def observe_window(now, read_at=None):
+    """第 2 段の窓（設計 3.3.0 §F）。`(since, until, basis)`。
+
+    前回の栞（`handoff_cursor` の `read_at`）があり、`OBSERVE_MAX_DAYS` 日以内なら
+    その時刻から今まで（`since_last_observe`）。無い・古い・未来なら前日 JST
+    （`yesterday_jst`・3.1.0 と同じ窓）。
+    """
+    at = jst.parse(read_at) if isinstance(read_at, str) else None
+    if at is not None and at <= now and now - at <= datetime.timedelta(days=OBSERVE_MAX_DAYS):
+        return at, now, "since_last_observe"
     start, end = yesterday_window(now)
+    return start, end, "yesterday_jst"
+
+
+def _yesterday_posts(name, now, read_at=None):
+    """窓の中に出した投稿ごとの実測（分母つき・24h 前と比べられれば差分）。
+
+    窓は `observe_window()`（前回の観測から・無ければ前日 JST）。
+    """
+    from . import measured as measured_mod
+    start, end, basis = observe_window(now, read_at)
     data = measured_mod.load(name)
     posts = []
     for post in data["posts"]:
@@ -347,7 +374,8 @@ def _yesterday_posts(name, now):
         posts.append(entry)
     posts.sort(key=lambda entry: entry["posted_at"] or "")
     return {"n": len(posts), "denominator": len(data["posts"]),
-            "window": {"since": jst.iso(start), "until": jst.iso(end), "basis": "posted_at_jst"},
+            "window": {"since": jst.iso(start), "until": jst.iso(end), "basis": basis,
+                       "time_field": "posted_at_jst"},
             "posts": posts, "broken": len(data.get("broken") or []),
             "unknown_ownership": len(data.get("posts_unknown_ownership") or [])}
 
@@ -694,8 +722,10 @@ def next_steps(unanswered_entries, world_entries, today_entries, reports=None) -
 
 # ------------------------------------------------------------------ 組み立て
 
-def build(target, *, now=None, mark=True, allowed_names=None):
-    """毎朝の一枚（設計 3.1.0 §2 の 6 段）。**読むだけ・栞だけ進める。**
+def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observe"):
+    """観測の 1 枚（設計 3.1.0 §2 の 6 段・3.3.0 §F）。**読むだけ・栞だけ進める。**
+
+    `invoked_as` は呼んだ名前（`observe` か別名の `morning`）。中身は同じ。
 
     `allowed_names` はサーバ型の credential が許した account（招待された側の
     MCP）。**渡されたら、その外の account は 1 本も読まない。**
@@ -748,7 +778,12 @@ def build(target, *, now=None, mark=True, allowed_names=None):
             "replies": _guard(lambda: _unanswered_rows(name, now, allowed_names, cfg)),
             "mentions": _mentions_rows(name, cfg, now, counter)})
 
-    # 第 2 段: 昨日の自分。
+    # 第 2 段: 前回の観測から（栞が無い・古ければ昨日の自分）。
+    if invoked_as not in INVOKED_AS:
+        invoked_as = "observe"
+    read_ats = {name: ((nodes.get(name) or {}).get("changes_since") or {}).get("read_at")
+                for name in names}
+    bases = {name: observe_window(now, read_ats[name])[2] for name in names}
     yesterday_entries = {}
     for name in names:
         cfg = configs[name]
@@ -756,7 +791,7 @@ def build(target, *, now=None, mark=True, allowed_names=None):
             yesterday_entries[name] = cell(cannot_say=refusals[name])
             continue
         yesterday_entries[name] = _guard(lambda name=name, cfg=cfg: {
-            "medium": cfg.get("media"), **_yesterday_posts(name, now)})
+            "medium": cfg.get("media"), **_yesterday_posts(name, now, read_ats[name])})
 
     # 第 3 段: 世間。
     world_entries = {}
@@ -801,7 +836,9 @@ def build(target, *, now=None, mark=True, allowed_names=None):
                                          configs=configs)) if handoff is not None
             else cell(cannot_say=handoff_cell["cannot_say"]))},
         _section("unanswered", "返していないもの", unanswered_entries),
-        _section("yesterday", "昨日の自分", yesterday_entries),
+        # 段の id は `yesterday` のまま（JSON の契約）。題は窓で変わる。
+        _section("yesterday", ("昨日の自分" if all(b == "yesterday_jst" for b in bases.values())
+                               else "前回の観測から"), yesterday_entries),
         _section("world", "世間", world_entries),
         {"section": "today", "title": "予定",
          **cell({"by_account": today_entries, "budget": budget_cell})},
@@ -812,15 +849,15 @@ def build(target, *, now=None, mark=True, allowed_names=None):
     if mark and handoff is not None:
         for name, node in nodes.items():
             try:
-                handoff_cursor.write(name, node, MARK_BY, now)
+                handoff_cursor.write(name, node, invoked_as, now)
                 marked.append(name)
             except (accounts_mod.AccountError, OSError, ValueError, TypeError):
                 top_cannot_say.append("cursor_not_advanced")
 
-    return {"schema_version": 1, "report_type": "morning",
+    return {"schema_version": 1, "report_type": "observe", "invoked_as": invoked_as,
             "generated_at": jst.iso(now), "target": target, "target_kind": kind,
             "accounts": names, "sections": sections, "calls": calls,
-            "marked": sorted(marked), "marked_by": MARK_BY if marked else None,
+            "marked": sorted(marked), "marked_by": invoked_as if marked else None,
             "cannot_say": sorted(set(top_cannot_say)),
             "limitations": [
                 "読むだけ。SNS 台帳には書かない（進むのは栞だけ）",
@@ -974,7 +1011,9 @@ def _render_unanswered(account, node, out) -> None:
 
 
 def _render_yesterday(account, node, out) -> None:
-    out(f"  {account}（{node['medium']}）: 昨日の投稿 {node['n']}/{node['denominator']} 本"
+    label = ("前回の観測からの投稿" if node["window"].get("basis") == "since_last_observe"
+             else "昨日の投稿")
+    out(f"  {account}（{node['medium']}）: {label} {node['n']}/{node['denominator']} 本"
         f"（{node['window']['since']}〜{node['window']['until']}）")
     for post in node["posts"]:
         metrics = post["metrics"] or {}
@@ -1086,20 +1125,22 @@ def _count(number, present):
 # ---------------------------------------------------------------------- CLI
 
 def register(sub) -> None:
-    parser = sub.add_parser(
-        "morning",
-        help="毎朝の一枚——昨日から何があって、今日なにをすればよいか"
-             "（設計 3.1.0・読むだけ・栞だけ進める）")
-    parser.add_argument("target", help="project 名か account 名")
-    parser.add_argument("--json", action="store_true")
-    parser.add_argument("--no-mark", action="store_true", dest="no_mark",
-                        help="栞（handoff cursor）を進めない")
-    parser.set_defaults(func=cmd_morning)
+    for name, text in (
+            ("observe", "観測——前回の観測から何があって、いまなにをすればよいか"
+                        "（セッションの始めと区切りごとに・読むだけ・栞だけ進める）"),
+            ("morning", "observe の別名（毎朝の一枚・同じ 1 枚を返す）")):
+        parser = sub.add_parser(name, help=text)
+        parser.add_argument("target", help="project 名か account 名")
+        parser.add_argument("--json", action="store_true")
+        parser.add_argument("--no-mark", action="store_true", dest="no_mark",
+                            help="栞（handoff cursor）を進めない")
+        parser.set_defaults(func=cmd_morning, invoked_as=name)
 
 
 def cmd_morning(args) -> int:
     try:
-        payload = build(args.target, mark=not getattr(args, "no_mark", False))
+        payload = build(args.target, mark=not getattr(args, "no_mark", False),
+                        invoked_as=getattr(args, "invoked_as", "morning"))
     except MorningError as exc:
         reason = str(exc)
         print(reason, file=sys.stderr)

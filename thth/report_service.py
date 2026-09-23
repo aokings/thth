@@ -207,7 +207,7 @@ def execute_mcp_report(context: ReportContext, request: dict) -> dict:
         raise ReportServiceError("report_unavailable") from None
 
 
-def execute_morning(context: ReportContext, request: dict) -> dict:
+def execute_morning(context: ReportContext, request: dict, invoked_as: str = "morning") -> dict:
     """毎朝の一枚（設計 3.1.0 §1）。**credential が許した account だけ。**
 
     サーバ型では栞を進めない（`operations_handoff` の MCP 経路が `mark_read` を
@@ -229,7 +229,8 @@ def execute_morning(context: ReportContext, request: dict) -> dict:
         raise ReportServiceError("scope_unavailable")
     try:
         with leave_gate.read_leases(set(allowed)), replies.report_scope(allowed):
-            payload = morning.build(target, mark=False, allowed_names=allowed)
+            payload = morning.build(target, mark=False, allowed_names=allowed,
+                                    invoked_as=invoked_as)
     except morning.MorningError:
         raise ReportServiceError("scope_unavailable") from None
     except accounts.AccountLeaving:
