@@ -108,6 +108,12 @@ found_by: where_to_appear|manual|mention
 untracked/コミット前のファイル）。語を選ぶときだけ `before_you_post`
 （原稿本文は渡さない・件数と期間つきで返す）。
 
+**まだ出ていない自分の原稿へ返すとき（3.2.0）**: `reply_to` の代わりに
+`reply_to_file: <同じ queue・同じ account の原稿のファイル名>` と書く（パスは書けない・
+`reply_to` との併用不可）。指した原稿が出るまで待ち、出たらその post_id に返す——
+**root には落とさない**。待っている間は `thth board`・`thth morning` に「返信待ち」として
+名前と待ち先が出る（時刻超過には数えない）。承認の指紋は `file:<名前>`。
+
 ### 5. 承認——二段（そのまま）
 
 ```bash
@@ -144,6 +150,7 @@ MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜ�
 - `thth --help` / `thth <subcommand> --help` が正本。
 - `thth doctor <account>` が「いま投稿できる状態か」を最初から最後まで言う。
 - 道具の不具合・欲しい形は `thth report file`（MCP `thth_report_file`）で実装側に届ける。
+- 自分の開いている報告に書き足すなら `thth report add <report_id> --body-file <path|-> --by <名前>`（MCP `thth_report_add`）。
 - 使い方の全文: `docs/使い方_プロジェクトのセッション向け_2026-09-09.md`。
 
 ## 運用と分析のレポート（v3系・2.5.0 から）
