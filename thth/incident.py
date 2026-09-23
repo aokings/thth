@@ -503,6 +503,15 @@ def cmd_notifications(args):
     except ConfigLocationError:
         print("通知設定は Git repo 外の THTH_ROOT に保存してください。repo 内には保存しませんでした。", file=sys.stderr)
         return 2
+    except ValueError as exc:
+        # account の書き忘れは打ち直せば済むので、汎用文に潰さず次の一手を言う
+        # （3.1.1。`thth run` の案内どおりに打って汎用文になっていた）。
+        if str(exc) == "account_required":
+            print(f"account_required: thth notifications {args.action} <account> の形で"
+                  " account を指定してください", file=sys.stderr)
+            return 2
+        print("通知操作に失敗しました。設定・private state・接続を確認してください（秘密値は表示しません）。", file=sys.stderr)
+        return 2
     except Exception:
         print("通知操作に失敗しました。設定・private state・接続を確認してください（秘密値は表示しません）。", file=sys.stderr)
         return 2

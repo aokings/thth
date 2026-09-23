@@ -2368,7 +2368,8 @@ def cmd_run(args) -> int:
                 incident_mod.notify(args.account, account_cfg, diagnostic, state_dir=state_dir, result=result)
                 incident_summary = incident_mod.summary(account_cfg, state_dir)
                 if incident_summary.get("mail_pending") or incident_summary.get("repo_pending"):
-                    print("運用通知に未完了があります: thth notifications status で確認してください", file=sys.stderr)
+                    # そのまま打てる形で言う（account 無しでは account_required になる・3.1.1）。
+                    print(f"運用通知に未完了があります: thth notifications status {args.account} で確認してください", file=sys.stderr)
             except Exception:
                 print("運用通知を完了できませんでした: incident_notification_pending", file=sys.stderr)
             attempt = healthcheck_mod.notify(
