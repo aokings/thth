@@ -28,7 +28,9 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    'token_refreshed', 'token_revoked', 'app_set', 'production_enabled', 'production_disabled', 'relay_key_initialized',
                    'budget_set', 'watch_set', 'approver_set', 'approver_revoked', 'approver_unlocked', 'approval_requested', 'send_requested', 'retract_requested', 'sent',
                    # 報告の口（設計 3.1.2 §2）。presence-only——本文・返事は入れない。
-                   'report_filed', 'report_replied', 'report_closed'))
+                   'report_filed', 'report_replied', 'report_closed',
+                   # 報告した側の追記（設計 3.2.0 §4.5-1）。同じく presence-only。
+                   'report_added'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 
@@ -226,7 +228,7 @@ def transaction(*, rollback=None):
             try:
                 from . import admin_notifications
                 event = json.loads(data)
-                if event['event'] in ('app_set', 'relay_key_initialized', 'approver_set', 'approver_revoked', 'approver_unlocked', 'account_removed', 'deletion_requested', 'budget_set', 'report_filed', 'report_replied', 'report_closed'):
+                if event['event'] in ('app_set', 'relay_key_initialized', 'approver_set', 'approver_revoked', 'approver_unlocked', 'account_removed', 'deletion_requested', 'budget_set', 'report_filed', 'report_replied', 'report_closed', 'report_added'):
                     continue
                 cfg = accounts.load_account(event['account'])
                 admin_notifications.notify(event, cfg)

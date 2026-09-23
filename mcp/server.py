@@ -608,6 +608,14 @@ REPORT_TOOLS = [
      "description": "報告 1 件の本文と実装側の返事を読む（読むだけ）",
      "inputSchema": {"type": "object", "properties": {"report_id": {"type": "string"}},
                      "required": ["report_id"], "additionalProperties": False}},
+    # 報告した側の追記（設計 3.2.0 §4.5-1）。
+    {"name": "thth_report_add",
+     "description": "自分の project の開いている報告に書き足す（返事と同じ列に並ぶ・4,000 字まで・"
+                    "閉じた報告には足せない・秘密らしき値が含まれていたら足さない）",
+     "inputSchema": {"type": "object", "properties": {
+         "report_id": {"type": "string"},
+         "text": {"type": "string", "description": "4,000 字まで"}},
+         "required": ["report_id", "text"], "additionalProperties": False}},
 ]
 
 
@@ -681,7 +689,7 @@ def server_call(name, arguments):
         elif operation.startswith('admin_reports_'):
             from thth.report_service import execute_admin_reports
             result=execute_admin_reports(context,request)
-        elif operation in ('report_file','report_list','report_show'):
+        elif operation in ('report_file','report_list','report_show','report_add'):
             from thth.report_service import execute_user_reports
             result=execute_user_reports(context,request)
         elif operation=='morning':

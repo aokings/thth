@@ -240,7 +240,7 @@ def execute_morning(context: ReportContext, request: dict) -> dict:
     return payload
 
 
-REPORT_OPERATIONS = frozenset(('report_file', 'report_list', 'report_show'))
+REPORT_OPERATIONS = frozenset(('report_file', 'report_list', 'report_show', 'report_add'))
 
 
 def _report_error(error):
@@ -294,6 +294,17 @@ def execute_user_reports(context: ReportContext, request: dict) -> dict:
             if set(request) - {'operation', 'report_id'} or not isinstance(request.get('report_id'), str):
                 raise ReportServiceError("invalid_request")
             return report_inbox.show(request['report_id'], scope=scope)
+        if operation == 'report_add':
+            # 報告した側の追記（設計 3.2.0 §4.5-1）。**自分の project の報告にだけ**
+            # （範囲の外は無い報告と同じ `report_not_found`）。誰が足したかは
+            # credential の `actor`（要求の欄からは作らない）。
+            if (set(request) - {'operation', 'report_id', 'text'}
+                    or any(not isinstance(request.get(key), str) for key in ('report_id', 'text'))):
+                raise ReportServiceError("invalid_request")
+            if not context.actor:
+                raise ReportServiceError("by_required")
+            return report_inbox.add(request['report_id'], by=context.actor, text=request['text'],
+                                    scope=scope, via='mcp')
     except report_inbox.ReportError as error:
         raise _report_error(error) from None
     except accounts.AccountError:

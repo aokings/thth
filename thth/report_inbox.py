@@ -13,7 +13,8 @@
   (c) 断るときは**静的な理由コード**（`REASONS`）と次の一手だけ。本文も
       例外の文面も断りの口から出さない。
   (d) 変更ログ（`admin_log`）には `report_filed`・`report_replied`・
-      `report_closed` を **presence-only** で残す——本文・返事は入れない。
+      `report_closed`・`report_added`（報告した側の追記・3.2.0）を
+      **presence-only** で残す——本文・返事は入れない。
   (e) 利用者 scope は**自分の project の報告だけ**読める（`Scope`）。
       存在しない id と読めない id は同じ `report_not_found` で断る（在る
       ことを漏らさない）。管理者は全部。
@@ -67,6 +68,8 @@ REASONS = frozenset((
     "duplicate_report", "report_not_found", "report_already_closed",
     "invalid_close_reason", "invalid_version", "invalid_status",
     "report_store_unavailable", "report_log_unavailable", "invalid_export_target",
+    # 報告した側の追記（設計 3.2.0 §4.5-1）: 閉じた報告には足せない。
+    "report_closed",
 ))
 
 # 断りのあとに添える「次の一手」（人と LLM が読む 1 行・静的）。
@@ -91,7 +94,15 @@ NEXT = {
     "report_store_unavailable": "報告の置き場が読めません。管理者に知らせてください",
     "report_log_unavailable": "変更ログに書けなかったので置いていません。管理者に知らせてください",
     "invalid_export_target": "--to は書き込めるディレクトリです",
+    "report_closed": "閉じた報告には書き足せません。新しく thth report file で置いてください",
 }
+
+# 置く前の似た報告（設計 3.2.0 §4.5-2）: 同じ project の開いている報告から、
+# 題の語が 1 つ以上重なるものを最大この件数まで。
+SIMILAR_LIMIT = 5
+# 題の語 = 空白・記号（`_` を含む）で切った 2 字以上の並び。静的な照合で LLM は使わない。
+_TITLE_WORD = re.compile(r"[^\W_]+")
+SIMILAR_MIN_CHARS = 2
 
 # **受け口の案内**（設計 §3.5）。文面は 1 種類・静的——account 名も本文も
 # 入れない。断り・cannot_say・開始手順の 3 場面だけに載せ、成功には載せない。
@@ -315,6 +326,29 @@ def _digest(title, body):
     return hashlib.sha256((title + "\n" + body).encode("utf-8")).hexdigest()
 
 
+def title_words(title) -> frozenset:
+    """題の語（空白・記号で切った 2 字以上の語・英字は大小を畳む）。"""
+    return frozenset(word for word in _TITLE_WORD.findall((title or "").casefold())
+                     if len(word) >= SIMILAR_MIN_CHARS)
+
+
+def similar_reports(records, *, title, scope, exclude=None) -> list:
+    """同じ範囲（`scope`）の開いている報告のうち、題の語が 1 つ以上重なるもの。
+
+    **置くのは止めない**——似ているかどうかの判断は置く側に任せ、材料だけ返す。
+    新しい順に最大 `SIMILAR_LIMIT` 件。本文は見ない（題だけ・静的な照合）。
+    """
+    words = title_words(title)
+    if not words:
+        return []
+    found = [row for row in records
+             if row["status"] == "open" and row["report_id"] != exclude
+             and scope.allows(row) and words & title_words(row["title"])]
+    found.sort(key=lambda row: (row["at"], row["report_id"]), reverse=True)
+    return [{"report_id": row["report_id"], "title": row["title"], "status": row["status"]}
+            for row in found[:SIMILAR_LIMIT]]
+
+
 def _new_id(now, directory):
     for _ in range(8):
         report_id = "r" + now.strftime("%Y%m%d") + "-" + secrets.token_hex(4)
@@ -369,6 +403,10 @@ def file_report(account, *, kind, title, body, repro=None, by, via="cli",
                 raise ReportError("duplicate_report", report_id=row["report_id"])
         if len(recent) >= DAILY_LIMIT:
             raise ReportError("report_rate_limited")
+        # 似た報告（設計 3.2.0 §4.5-2）。**同じ project の中だけ**（project を
+        # 持たない account は account の中だけ）——他の project の報告の題を返さない。
+        similar = similar_reports(
+            records, title=title, scope=Scope([account], [project] if project else []))
         report_id = _new_id(now, directory)
         record = {"schema_version": SCHEMA_VERSION, "report_id": report_id,
                   "at": jst.iso(now), "kind": kind, "title": title, "body": body,
@@ -390,7 +428,8 @@ def file_report(account, *, kind, title, body, repro=None, by, via="cli",
             raise ReportError("report_log_unavailable") from None
     return {"schema_version": SCHEMA_VERSION, "report_type": "report_filed",
             "report_id": report_id, "status": "open", "kind": kind, "at": record["at"],
-            "account": account, "project": project, "tool_version": __version__}
+            "account": account, "project": project, "tool_version": __version__,
+            "similar": similar}
 
 
 # ------------------------------------------------------------------ 読む
@@ -488,6 +527,39 @@ def reply(report_id, *, by, text, via="cli", now=None):
             "n_replies": len(record["replies"]), "at": at}
 
 
+def add(report_id, *, by, text, scope=None, via="cli", now=None):
+    """報告した側の追記（設計 3.2.0 §4.5-1）。**自分の project の開いている報告にだけ。**
+
+    追記は返事と同じ列（`replies`）に `role: "reporter"` を付けて入る——`show` と
+    `handoff-report --since-last-read` の `tool.reports` にそのまま出る。上限は
+    返事と同じ 4,000 字・秘密の検査・変更ログは `report_added`（presence-only）。
+    `scope` の外の報告は、無い報告と同じ `report_not_found`（在ることを漏らさない）。
+    閉じた報告は `report_closed`（範囲の中の報告にだけ言う）。
+    """
+    by = reporter(by)
+    if via not in VIAS:
+        raise ReportError("invalid_report")
+    text = _text(text, REPLY_MAX)
+    if redact.looks_like_secret(text):
+        raise ReportError("secret_detected")
+    text = _fold_paths(text)
+    at = jst.iso(now or jst.now_jst())
+
+    def change(record):
+        # 範囲を先に見る（範囲の外の報告が閉じているかどうかも漏らさない）。
+        if scope is not None and not scope.allows(record):
+            raise ReportError("report_not_found")
+        if record["status"] == "closed":
+            raise ReportError("report_closed")
+        record["replies"].append({"at": at, "by": by, "text": text, "role": "reporter"})
+
+    record = _update(report_id, change, event="report_added", by=by, via=via,
+                     diff={"reply": ["absent", "present"]})
+    return {"schema_version": SCHEMA_VERSION, "report_type": "report_added",
+            "report_id": record["report_id"], "status": record["status"],
+            "n_replies": len(record["replies"]), "at": at}
+
+
 def close(report_id, *, by, reason, version, via="cli", now=None):
     """閉じる。理由（fixed・wontfix・duplicate・invalid）と、直した・判断した版を書く。"""
     by = reporter(by)
@@ -550,7 +622,8 @@ def render_markdown(record, *, by):
     lines += ["", f"## 返事（{len(record['replies'])} 件）"]
     for row in record["replies"]:
         fence = _fence(row["text"])
-        lines += ["", f"### {row['at']} {row.get('by')}", "", fence + "text", row["text"], fence]
+        role = "（報告した側の追記）" if row.get("role") == "reporter" else ""
+        lines += ["", f"### {row['at']} {row.get('by')}{role}", "", fence + "text", row["text"], fence]
     lines += ["", "---", "",
               f"書き出し: `thth admin reports export`（by {by}）。返事は "
               f"`thth admin reports reply {record['report_id']} --by <名前> --text-file <file>`、"
@@ -627,7 +700,9 @@ def handoff_summary(configs, read_ats):
                 "new_replies": None, "since": None, "cannot_say": str(error)}
     visible = [row for row in records if scope.allows(row)]
     new = [{"report_id": row["report_id"], "title": row["title"], "status": row["status"],
-            "at": reply_row["at"], "by": reply_row.get("by"), "text": reply_row["text"]}
+            "at": reply_row["at"], "by": reply_row.get("by"), "text": reply_row["text"],
+            # 報告した側の追記は `reporter`、実装側の返事は `implementer`（3.2.0）。
+            "role": reply_row.get("role") or "implementer"}
            for row in visible for reply_row in row["replies"]
            if since is None or jst.parse(reply_row["at"]) > since]
     return {"open": sum(row["status"] == "open" for row in visible),
@@ -699,6 +774,25 @@ def cmd_file(args) -> int:
               f"{result['account']}・版 {result['tool_version']}）")
         print(f"返事は thth report show {result['report_id']} と "
               "handoff-report --since-last-read の tool.reports に出ます")
+        if result.get("similar"):
+            # 置いたあとで重なりに気づけるように（置くのは止めない・3.2.0 §4.5-2）。
+            print("似た報告: " + "・".join(
+                f"{row['report_id']}（{row['title']}）" for row in result["similar"])
+                + "——同じ件なら thth report add <id> で書き足せます")
+    return 0
+
+
+def cmd_add(args) -> int:
+    """`thth report add <report_id> --body-file <path|->`（設計 3.2.0 §4.5-1）。"""
+    try:
+        reporter(args.by)
+        result = add(args.report_id, by=args.by, text=_read_input(args.body_file), via="cli")
+    except ReportError as error:
+        return _print_refusal(args, error)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        print(f"書き足しました: {result['report_id']}（返事と追記 {result['n_replies']} 件）")
     return 0
 
 
@@ -709,7 +803,8 @@ def render_list(payload, out=print):
         closed = row["closed"]
         tail = f"  閉じた: {closed['reason']}（{closed.get('version') or '—'}）" if closed else ""
         out(f"  {row['report_id']}  {KIND_LABELS[row['kind']]}  {row['status']}"
-            f"  {row['account']}  返事 {row['n_replies']}  {row['title']}{tail}")
+            f"  {row['account']}  置いた人 {row.get('reporter') or '—'}"
+            f"  返事 {row['n_replies']}  {row['title']}{tail}")
     if payload.get("unreadable"):
         out(f"  読めない報告: {payload['unreadable']} 件")
 
@@ -729,7 +824,8 @@ def render_report(record, out=print):
     out("")
     out(f"[返事 {len(record['replies'])} 件]")
     for row in record["replies"]:
-        out(f"- {row['at']}  {row.get('by')}")
+        role = "（報告した側の追記）" if row.get("role") == "reporter" else ""
+        out(f"- {row['at']}  {row.get('by')}{role}")
         for line in row["text"].splitlines():
             out(f"  {line}")
     closed = record.get("closed")
@@ -798,6 +894,17 @@ def register(sub) -> None:
     viewer.add_argument("report_id")
     viewer.add_argument("--json", action="store_true")
     viewer.set_defaults(func=cmd_show)
+    adder = operations.add_parser(
+        "add", help="自分の開いている報告に書き足す（報告した側の追記・閉じた報告には足せない）",
+        description=f"開いている報告に報告した側から書き足す（{REPLY_MAX} 字まで・秘密らしき値が"
+                    "含まれていたら足さない）。返事と同じ列に並び、thth report show と "
+                    "handoff-report --since-last-read に出ます。")
+    adder.add_argument("report_id")
+    adder.add_argument("--body-file", required=True, dest="body_file",
+                       help="書き足す文のファイル（VM 側のパス。`-` は標準入力）")
+    adder.add_argument("--by", default=None, help="誰が書き足したか（必須）")
+    adder.add_argument("--json", action="store_true")
+    adder.set_defaults(func=cmd_add)
 
 
 # ------------------------------------------------------------ 管理者の CLI
