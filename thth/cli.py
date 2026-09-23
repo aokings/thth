@@ -3416,6 +3416,11 @@ def build_parser() -> argparse.ArgumentParser:
     from . import retract_cli
     retract_cli.register(sub)
 
+    # `thth report file|list|show`（設計 3.1.2・報告の口）。口の中身は
+    # `thth/report_inbox.py` に閉じる——ここに足すのはこの 2 行だけ。
+    from . import report_inbox
+    report_inbox.register(sub)
+
     return p
 
 

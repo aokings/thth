@@ -93,3 +93,67 @@ def redact(text: str | None) -> str | None:
         if secret in text:
             text = text.replace(secret, "***")
     return text
+
+
+# ------------------------------------------------------------ 秘密らしさの判定
+#
+# **伏字にするのではなく「置かない」ための判定**（設計 3.1.2 §2・報告の口）。
+# 報告の本文は人と LLM が書く自由文なので、伏字にして置くと「どこが消えたか」が
+# 置いた側に見えず、実装側は欠けた本文を読むことになる。秘密らしきものが
+# あれば**置かずに断り、置く側が直す**——その判定だけをここに置く。
+#
+# 上の `redact()` の型（`access_token=`・`client_secret=`・`code=`・`Authorization:`・
+# `hc-ping.com/`・登録された値）を**そのまま再利用**し、足りない形だけを足す。
+# ただし `code:`・`Authorization:` は不具合の報告に普通に出る綴り（`exit code: 2`・
+# `error code: invalid_scope`）なので、**綴りに当たっただけでは秘密としない**——
+# 値がでたらめな文字列らしい（16 字以上で英字と数字が混ざる）ときだけ当てる。
+# 増やした形は `tests/test_v312_report_inbox.py` で 1 つずつ固定している。
+_SECRET_SHAPES = (
+    # Bearer の値（`Authorization:` を伴わない貼り付け）。
+    re.compile(r'\bBearer\s+([A-Za-z0-9._~+/=-]+)', re.IGNORECASE),
+    # API key の接頭辞（`sk-ant-…`・`sk-proj-…` 等）。
+    re.compile(r'(?<![A-Za-z0-9])(sk-[A-Za-z0-9_-]{16,})'),
+    # Meta（Threads・Instagram）の長期 token。
+    re.compile(r'(?<![A-Za-z0-9])((?:THAA|EAA)[A-Za-z0-9]{20,})'),
+    # JWT（Bluesky の accessJwt・refreshJwt が素で貼られた形）。
+    re.compile(r'(?<![A-Za-z0-9])(eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*)'),
+    # 秘密鍵の見出し。
+    re.compile(r'(-----BEGIN [A-Z ]*PRIVATE KEY-----)'),
+    # 綴り付きの汎用形（`token: …`・`secret=…`・`password: …`・`api_key=…`）。
+    re.compile(r'(?:token|secret|password|passwd|api[_-]?key)"?\s*[:=]\s*"?([^\s&"\',}]+)',
+               re.IGNORECASE),
+)
+# 32 桁以上の 16 進（app secret・client secret・sha256 の生値）。長さだけで当てる。
+_LONG_HEX = re.compile(r'(?<![0-9A-Fa-f])[0-9A-Fa-f]{32,}(?![0-9A-Fa-f])')
+
+
+def _random_like(value: str) -> bool:
+    """でたらめな文字列らしいか（16 字以上・英字と数字が混ざる）。"""
+    value = value.strip()
+    return (len(value) >= 16 and any(c.isdigit() for c in value)
+            and any(c.isalpha() for c in value))
+
+
+def looks_like_secret(text) -> bool:
+    """`text` に秘密らしき値が含まれるか（**置かずに断る**ための判定・伏字にはしない）。"""
+    if not isinstance(text, str) or not text:
+        return False
+    # 登録された値そのもの（綴りに関わらず・P1-1 と同じ登録簿）。
+    if any(secret in text for secret in _registered_secrets):
+        return True
+    # `redact()` と同じ綴りの型。値がでたらめな文字列らしいときだけ当てる。
+    for pattern in (*_KV_PATTERNS, _AUTH_RE, _HC_PING_RE):
+        for match in pattern.finditer(text):
+            value = match.group(2)
+            if pattern is _AUTH_RE:
+                value = value.split()[-1] if value.split() else ""
+            if _random_like(value):
+                return True
+    for pattern in _SECRET_SHAPES:
+        for match in pattern.finditer(text):
+            value = match.group(1)
+            if value.startswith("-----BEGIN") or value.startswith(("sk-", "THAA", "EAA", "eyJ")):
+                return True
+            if _random_like(value):
+                return True
+    return bool(_LONG_HEX.search(text))
