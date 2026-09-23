@@ -23,7 +23,7 @@ from thth import admin_log, cli, jst, leave, plaza, plaza_redact, sent, accounts
 from tests.test_analytics_comparison import NOW
 from tests.test_v340_plaza_observe import (measured, post_measure, declaration,  # noqa: F401
                                            DECIDED)
-from tests.test_v340_plaza_store import owners, post, viewer  # noqa: F401  (fixture)
+from tests.test_v340_plaza_store import owners, post, reply, viewer  # noqa: F401  (fixture)
 
 OTHER_NAME = "tanaka_tea_lover"
 OTHER_TEXT = "田中の返信の本文そのもの、苦味がちょうどいいです"
@@ -103,9 +103,9 @@ def test_openの写しは他人の情報を落とす(measured, owners, ledger):
     opened = post(kind="measure", title="問いの冒頭", body=leaky_body().replace(f"@{OTHER_NAME}", OTHER_NAME),
                   declarations=[decl], min_n=1, now=NOW, visibility="open",
                   how="thth study-report question.json", by="kopicha-session")
-    plaza.reply(opened["plaza_id"], account="kopicha-bsky", kind="comment",
-                text=f"{OTHER_NAME} さんは Bluesky にもいる", by="bsky-session",
-                viewer=viewer("kopicha-bsky"), now=NOW)
+    reply(opened["plaza_id"], account="kopicha-bsky", kind="comment",
+          text=f"{OTHER_NAME} さんは Bluesky にもいる", by="bsky-session",
+          viewer=viewer("kopicha-bsky"), now=NOW)
     theirs = plaza.show(opened["plaza_id"], viewer("other-threads"))
     dumped = json.dumps(theirs, ensure_ascii=False)
     for leak in (OTHER_NAME, OTHER_TEXT, AUTHOR_KEY, "someone-else-post", "th-a0", "th-b0",
@@ -145,11 +145,11 @@ def test_openに出す文の他人の名前の形は断る(owners, ledger):
     assert plaza.show(inside["plaza_id"], viewer("kopicha-threads"))["scope"] == "project"
     # open の 1 件への返信も同じ。メールアドレスの @ は名前の形ではない。
     with pytest.raises(plaza.PlazaError, match="^third_party_handle$"):
-        plaza.reply(ok["plaza_id"], account="other-threads", kind="comment",
-                    text="@someone_else さんも言っていた", by="o", viewer=viewer("other-threads"))
-    assert plaza.reply(ok["plaza_id"], account="other-threads", kind="comment",
-                       text="連絡は info@example.com へ", by="o",
-                       viewer=viewer("other-threads"))["n_replies"] == 1
+        reply(ok["plaza_id"], account="other-threads", kind="comment",
+              text="@someone_else さんも言っていた", by="o", viewer=viewer("other-threads"))
+    assert reply(ok["plaza_id"], account="other-threads", kind="comment",
+                 text="連絡は info@example.com へ", by="o",
+                 viewer=viewer("other-threads"))["n_replies"] == 1
 
 
 def test_台帳が読めなければopenの写しを作らない(owners, ledger):
@@ -166,9 +166,9 @@ def test_台帳が読めなければopenの写しを作らない(owners, ledger)
 def test_他の持ち主の返信は写しだけが見える(owners, ledger):
     join("kopicha", "other")
     opened = post(visibility="open", title="朝の問い")
-    plaza.reply(opened["plaza_id"], account="other-threads", kind="disagree",
-                text="うちでは夜のほうが伸びた。other-private-mark", by="other-person",
-                viewer=viewer("other-threads"))
+    reply(opened["plaza_id"], account="other-threads", kind="disagree",
+          text="うちでは夜のほうが伸びた。other-private-mark", by="other-person",
+          viewer=viewer("other-threads"))
     mine = plaza.show(opened["plaza_id"], viewer("kopicha-threads"))
     row = mine["replies"][0]
     assert row["own"] is False and row["owner"] == "other" and "by" not in row
@@ -222,8 +222,8 @@ def test_管理者の非表示(owners, ledger, capsys):
     mine = plaza.show(opened["plaza_id"], viewer("kopicha-threads"))
     assert mine["hidden"]["reason"] == "個人名が入っていた"
     with pytest.raises(plaza.PlazaError, match="^plaza_hidden$"):
-        plaza.reply(opened["plaza_id"], account="kopicha-bsky", kind="agree", text=None, by="b",
-                    viewer=viewer("kopicha-bsky"))
+        reply(opened["plaza_id"], account="kopicha-bsky", kind="agree", text=None, by="b",
+              viewer=viewer("kopicha-bsky"))
     with pytest.raises(plaza.PlazaError, match="^already_hidden$"):
         plaza.hide(opened["plaza_id"], by="operator", reason="again")
     with pytest.raises(plaza.PlazaError, match="^reason_required$"):
@@ -271,10 +271,10 @@ def _seed_for_leave(owners, ledger):
     open_post = post(title="公開", account="kopicha-threads", visibility="open",
                      body="朝の問いが効いた")
     others = post(title="bsky の公開", account="kopicha-bsky", visibility="open")
-    plaza.reply(others["plaza_id"], account="kopicha-threads", kind="comment", text="同感",
-                by="t", viewer=viewer("kopicha-threads"))
-    plaza.reply(open_post["plaza_id"], account="other-threads", kind="agree", text=None, by="o",
-                viewer=viewer("other-threads"))
+    reply(others["plaza_id"], account="kopicha-threads", kind="comment", text="同感",
+          by="t", viewer=viewer("kopicha-threads"))
+    reply(open_post["plaza_id"], account="other-threads", kind="agree", text=None, by="o",
+          viewer=viewer("other-threads"))
     return project_post, open_post, others
 
 

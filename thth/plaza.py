@@ -153,6 +153,8 @@ NEXT = {
                             "一段目からやり直し、表示を読み直してください",
     "open_requires_cli": "open にする（他の持ち主に見せる）のは人の CLI の二段確認だけです"
                          "（thth plaza post … --open / thth plaza update … --visibility open）。"
+                         "open の 1 件への返信と、open の 1 件の写しが変わる更新も同じです"
+                         "（thth plaza reply … / thth plaza update …）。"
                          "MCP では project の範囲まで置けます",
     "third_party_handle": "open に出す文に @名前 の形（自分の handle 以外）があります。他の人の名前は"
                           "open に出せません。消してから置き直してください（project の範囲なら置けます）",
@@ -559,16 +561,49 @@ def open_digest(record):
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
 
 
-def _open_gate(record, confirm):
-    """open にする二段確認。1 回目は見える中身と digest を返す（何も書かない）。"""
+def _open_gate(record, confirm, *, already_open=False):
+    """open にする二段確認。1 回目は見える中身と digest を返す（何も書かない）。
+
+    `already_open` は既に open の 1 件の写しを作り直す更新（3.5.1 件 3 (a)）。"""
     digest = open_digest(record)
     if confirm != digest:
         if confirm is None:
             return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_open_preview",
-                    "opened": False, "digest": digest, "plaza_id": record.get("plaza_id"),
+                    "opened": False, "already_open": already_open, "digest": digest,
+                    "plaza_id": record.get("plaza_id"),
                     "account": record.get("account"), "visible_to_other_owners": open_view(record)}
         raise PlazaError("open_digest_mismatch")
     return None
+
+
+def _copy_digest(record):
+    """他の持ち主に見える**写し**（文・観測の列・伏せた数）の digest。
+
+    判定のコード（adopted・dropped・inconclusive）は写しに数えない——道具が決めた静的な
+    符丁で、他人の情報が混ざりようがないので、それだけの変更は一段でよい（依頼 3.5.1
+    件 3 (a)「判定のコードだけの変更で写しが変わらないなら一段」）。二段目の照合は
+    `open_digest`（コードも含む見える姿の全部）で行う。
+    """
+    view = open_view(record)
+    view.pop("verdict", None)
+    raw = json.dumps(view, ensure_ascii=False, sort_keys=True, allow_nan=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def reply_open_view(row):
+    """open の 1 件への返信が、他の持ち主にどう見えるか（`_reply_view` の他の持ち主の側と
+    同じ欄・時刻を除く）。二段確認の一段目に出し、digest の元にする。"""
+    return {"kind": row["kind"], "text": row.get("open_text") or "",
+            "owner": owner_label(row.get("project"), row.get("account")),
+            "medium": row.get("medium"), "measure_id": row.get("measure_id"),
+            "result": row.get("result")}
+
+
+def reply_open_digest(plaza_id, row):
+    """返信の見える姿の digest（先頭 20 桁）。どの 1 件への返信かも含める。"""
+    raw = json.dumps({"plaza_id": plaza_id, **reply_open_view(row)}, ensure_ascii=False,
+                     sort_keys=True, allow_nan=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
 
 
 def evidence_level_of(record):
@@ -850,9 +885,14 @@ def show(plaza_id, viewer):
 # ---------------------------------------------------------------- 返信
 
 def reply(plaza_id, *, account, kind, text=None, measure_id=None, result=None, by, viewer,
-          via="cli", now=None, trusted_accounts=None):
+          via="cli", now=None, trusted_accounts=None, confirm=None):
     """返信を 1 つ足す（`comment`・`tried`〔自分の measure へのリンク必須〕・`agree`・
     `disagree`〔理由必須〕）。**読めない 1 件には返せない**（無い id と同じ断り）。
+
+    **open の 1 件への返信は二段確認**（3.5.1 件 3 (b)）: 返信は他の持ち主にも（写しで）
+    見える。1 回目（`confirm` 無し）は他の持ち主に見える姿と digest を返すだけで何も
+    足さない。同じ中身で `confirm=<digest>` の 2 回目に足す。人の CLI だけ——MCP からは
+    `open_requires_cli`。project 範囲の 1 件への返信は従前どおり一段。
     """
     from . import plaza_redact
     by = poster(by)
@@ -899,7 +939,7 @@ def reply(plaza_id, *, account, kind, text=None, measure_id=None, result=None, b
     if kind == "trial":
         row["result"] = result
 
-    def change(record):
+    def check(record):
         level = access(record, viewer, joined)
         if level is None:
             raise PlazaError("plaza_not_found")
@@ -909,9 +949,31 @@ def reply(plaza_id, *, account, kind, text=None, measure_id=None, result=None, b
                       account, now) >= DAILY_LIMIT:
             raise PlazaError("plaza_rate_limited")
         if record["scope"] == "open":
+            # 読めない 1 件（無い id と同じ断り）を先に断ってから、open だと明かす。
+            if via != "cli":
+                raise PlazaError("open_requires_cli")
             # open の 1 件への返信は、書いた持ち主の台帳で他人の情報を落とした写しを持つ。
             row["open_text"] = plaza_redact.open_text(text, account, project,
                                                       trusted_accounts=trusted_accounts)
+        else:
+            row.pop("open_text", None)
+
+    # 一段目（ロックの外・何も書かない）: open の 1 件なら見える姿と digest を返す。
+    target = next((r for r in records if r["plaza_id"] == plaza_id), None) \
+        if isinstance(plaza_id, str) else None
+    if target is not None and confirm is None:
+        check(target)
+        if target["scope"] == "open":
+            return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_reply_open_preview",
+                    "replied": False, "digest": reply_open_digest(plaza_id, row),
+                    "plaza_id": plaza_id, "account": account,
+                    "visible_to_other_owners": reply_open_view(row)}
+
+    def change(record):
+        check(record)
+        if record["scope"] == "open" and confirm != reply_open_digest(record["plaza_id"], row):
+            # 一段目のあとで中身（伏せた結果・範囲）が変わった、または一段目を経ていない。
+            raise PlazaError("open_digest_mismatch")
         record["replies"].append(row)
         record["updated_at"] = at
 
@@ -929,7 +991,8 @@ def update(plaza_id, *, account, by, viewer, refresh=False, verdict=None, reason
            visibility=None, via="cli", now=None, trusted_accounts=None, confirm=None):
     """結果の更新（観測の取り直し）・判定・範囲の変更。**置いた持ち主だけ。**
 
-    project から open に切り替えるときは二段確認（`post` と同じ・`confirm`）。"""
+    project から open に切り替えるときは二段確認（`post` と同じ・`confirm`）。既に open の
+    1 件の更新も、他の持ち主に見える写しが変わるなら二段（3.5.1 件 3 (a)）。"""
     from . import plaza_observe, plaza_redact
     by = poster(by)
     if via not in VIAS:
@@ -1004,17 +1067,34 @@ def update(plaza_id, *, account, by, viewer, refresh=False, verdict=None, reason
         record["updated_at"] = at
 
     opening = visibility == "open" and current["scope"] != "open"
-    if opening and confirm is None:
-        # 一段目: 写しに置き換えた後の中身を見せるだけ（置き場には書かない）。
+    # 既に open の 1 件を open のまま変える（判定の理由・観測の取り直し）と、他の持ち主に
+    # 見える写しが作り直される（3.5.1 件 3 (a)・3.4.0 検収で残した穴）。写しが変わるなら
+    # 切り替えと同じ二段確認にする。変わらない（判定のコードだけ・同じ数字の取り直し）なら一段。
+    staying = current["scope"] == "open" and visibility != "project"
+    if opening or staying:
         preview_record = json.loads(json.dumps(current))
         change(preview_record)
         diff.clear()
-        return _open_gate(preview_record, None)
+        if opening or _copy_digest(preview_record) != _copy_digest(current):
+            if via != "cli":
+                # 他の持ち主に見える写しを変えるのは人の CLI の二段確認だけ（MCP は二段目を持たない）。
+                raise PlazaError("open_requires_cli")
+            if confirm is None:
+                # 一段目: 写しに置き換えた後の中身を見せるだけ（置き場には書かない）。
+                return _open_gate(preview_record, None, already_open=staying)
 
     def change_checked(record):
         switching = visibility == "open" and record["scope"] != "open"
+        before = _copy_digest(record) if record["scope"] == "open" else None
         change(record)
-        if switching:
+        rewritten = (before is not None and record["scope"] == "open"
+                     and _copy_digest(record) != before)
+        if switching or rewritten:
+            if via != "cli":
+                raise PlazaError("open_requires_cli")
+            if confirm is None:
+                # 一段目では写しが変わらなかったのに、ロックの中では変わった——黙って出さない。
+                raise PlazaError("open_digest_mismatch")
             _open_gate(record, confirm)
 
     record = STORE.update(plaza_id, change_checked, lambda record: admin_log.append(

@@ -71,6 +71,18 @@ def post(account="kopicha-threads", *, kind="finding", title="冒頭を問いに
                       **kwargs)
 
 
+def reply(plaza_id, **kwargs):
+    """open の 1 件への返信は二段確認（3.5.1 件 3 (b)）。試験の舞台づくりでは一段目の digest で
+    二段目まで進める（`post` と同じ）。project 範囲の 1 件なら一段目でそのまま足される。"""
+    if "confirm" not in kwargs:
+        first = plaza.reply(plaza_id, **kwargs)
+        if first["report_type"] != "plaza_reply_open_preview":
+            return first
+        assert first["replied"] is False
+        kwargs["confirm"] = first["digest"]
+    return plaza.reply(plaza_id, **kwargs)
+
+
 def plaza_dir():
     return Path(os.environ["THTH_ROOT"]) / "state" / "_plaza"
 

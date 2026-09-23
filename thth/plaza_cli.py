@@ -155,8 +155,13 @@ def render_post(payload, out=print):
 def render_preview(result, again, out=print):
     """open の一段目: 他の持ち主に見える中身（道具が落とした後）をそのまま出す。"""
     view = result["visible_to_other_owners"]
-    out("一段目: まだ open にしていません。他の持ち主には次のとおり見えます（道具が他人の情報を"
-        f"落とした後・伏せた数 {view['masked']}）")
+    if result.get("already_open"):
+        # 既に open の 1 件の写しを作り直す更新（3.5.1 件 3 (a)）。
+        out("一段目: まだ反映していません。更新すると、他の持ち主には次のとおり見えます"
+            f"（道具が他人の情報を落とした後・伏せた数 {view['masked']}）")
+    else:
+        out("一段目: まだ open にしていません。他の持ち主には次のとおり見えます（道具が他人の情報を"
+            f"落とした後・伏せた数 {view['masked']}）")
     out(f"  名義: {view['owner']}（{view.get('medium') or '—'}）  種類: {plaza.KIND_LABELS[view['kind']]}"
         f"  印: {plaza.EVIDENCE_LABELS[view['evidence_level']]}")
     out(f"  題: {view['title']}")
@@ -165,6 +170,8 @@ def render_preview(result, again, out=print):
                        ("verdict_reason", "判定の理由")):
         if view.get(key):
             out(f"  {label}: {view[key]}")
+    if view.get("verdict"):
+        out(f"  判定: {plaza.VERDICT_LABELS.get(view['verdict'], view['verdict'])}")
     out("  [本文]")
     for line in (view.get("body") or "").splitlines():
         out(f"  {line}")
@@ -183,10 +190,29 @@ def render_preview(result, again, out=print):
         f"（{again}）")
 
 
+def render_reply_preview(result, out=print):
+    """open の 1 件への返信の一段目（3.5.1 件 3 (b)）: 他の持ち主に見える姿をそのまま出す。"""
+    view = result["visible_to_other_owners"]
+    out("一段目: まだ返信していません。この返信は open の 1 件に付くので、他の持ち主には次のとおり"
+        "見えます（道具が他人の情報を落とした後）")
+    out(f"  名義: {view['owner']}（{view.get('medium') or '—'}）  種類: "
+        f"{plaza.REPLY_LABELS.get(view['kind'], view['kind'])}"
+        + (f"  結果: {view['result']}" if view.get("result") else "")
+        + (f"  施策: {view['measure_id']}" if view.get("measure_id") else ""))
+    out("  [返信]")
+    for line in (view.get("text") or "").splitlines():
+        out(f"  {line}")
+    out(f"digest: {result['digest']}")
+    out(f"二段目: 読み直して良ければ、同じ命令に --confirm {result['digest']} を足して打ってください"
+        "（thth plaza reply …）")
+
+
 def _emit_preview(args, result, again):
     """一段目は何も書かずに終わる（approve の一段目と同じく rc 1）。"""
     if args.json:
         print(json.dumps(result, ensure_ascii=False))
+    elif result["report_type"] == "plaza_reply_open_preview":
+        render_reply_preview(result)
     else:
         render_preview(result, again)
     return 1
@@ -243,9 +269,11 @@ def cmd_reply(args) -> int:
         result = plaza.reply(args.plaza_id, account=args.viewer, kind=args.kind,
                              text=_read(args.text_file, plaza.REPLY_MAX), measure_id=args.measure,
                              result=args.result,
-                             by=args.by, viewer=viewer, via="cli")
+                             by=args.by, viewer=viewer, via="cli", confirm=args.confirm)
     except plaza.PlazaError as error:
         return _print_refusal(args, error)
+    if result["report_type"] == "plaza_reply_open_preview":
+        return _emit_preview(args, result, "thth plaza reply …")
     return _emit(args, result, lambda r: print(
         f"返信しました: {r['plaza_id']}（{plaza.REPLY_LABELS[r['kind']]}・返信 {r['n_replies']} 件）"))
 
@@ -260,9 +288,10 @@ def cmd_update(args) -> int:
     except plaza.PlazaError as error:
         return _print_refusal(args, error)
     if result["report_type"] == "plaza_open_preview":
-        return _emit_preview(args, result, "thth plaza update … --visibility open")
+        return _emit_preview(args, result, "thth plaza update …（同じ命令）" if result.get("already_open")
+                             else "thth plaza update … --visibility open")
     return _emit(args, result, lambda r: print(
-        f"更新しました: {r['plaza_id']}（{r['scope']}・判定 "
+        f"更新しました:{r['plaza_id']}（{r['scope']}・判定 "
         f"{plaza.VERDICT_LABELS.get(r['verdict'], '—') if r['verdict'] else '—'}・"
         f"観測 {r['n_observations']} 回）"))
 
@@ -346,6 +375,9 @@ def register(sub) -> None:
     replier.add_argument("--result", default=None, choices=plaza.TRIAL_RESULTS,
                          help="trial（追試）のとき必須: reproduced（再現した）・not_reproduced"
                               "（再現しなかった）・not_tried（試していない）")
+    replier.add_argument("--confirm", default=None,
+                         help="open の 1 件への返信の二段目: 一段目が出した digest"
+                              "（open の 1 件への返信は他の持ち主にも見えるので二段確認）")
     replier.add_argument("--by", default=None, help="誰が返したか（必須）")
     replier.add_argument("--json", action="store_true")
     replier.set_defaults(func=cmd_reply)
@@ -360,7 +392,8 @@ def register(sub) -> None:
     updater.add_argument("--visibility", default=None, choices=plaza.SCOPES,
                          help="open にする（二段確認）・project に戻す")
     updater.add_argument("--confirm", default=None,
-                         help="--visibility open の二段目: 一段目が出した digest")
+                         help="--visibility open の二段目、または open の 1 件の写しが変わる更新"
+                              "（判定の理由・観測の取り直し）の二段目: 一段目が出した digest")
     updater.add_argument("--by", default=None, help="誰が更新したか（必須）")
     updater.add_argument("--json", action="store_true")
     updater.set_defaults(func=cmd_update)
