@@ -1068,7 +1068,8 @@ def cmd_replies(args) -> int:
             log=lambda line: print(line, file=sys.stderr))
 
     try:
-        result = replies_mod.load(args.account, post_id=args.post)
+        # この account の投稿の返信だけ（同じ repo の他 account と置き場を共有・3.1.1）。
+        result = replies_mod.load(args.account, post_id=args.post, owned_only=True)
     except accounts_mod.AccountError as e:
         print(str(e), file=sys.stderr)
         return 1
@@ -2368,7 +2369,8 @@ def cmd_run(args) -> int:
                 incident_mod.notify(args.account, account_cfg, diagnostic, state_dir=state_dir, result=result)
                 incident_summary = incident_mod.summary(account_cfg, state_dir)
                 if incident_summary.get("mail_pending") or incident_summary.get("repo_pending"):
-                    print("運用通知に未完了があります: thth notifications status で確認してください", file=sys.stderr)
+                    # そのまま打てる形で言う（account 無しでは account_required になる・3.1.1）。
+                    print(f"運用通知に未完了があります: thth notifications status {args.account} で確認してください", file=sys.stderr)
             except Exception:
                 print("運用通知を完了できませんでした: incident_notification_pending", file=sys.stderr)
             attempt = healthcheck_mod.notify(

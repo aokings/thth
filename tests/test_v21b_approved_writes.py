@@ -645,6 +645,9 @@ def test_DELETEが飛ぶ経路はretract_cliのdelete_postだけ():
     src = inspect.getsource(retract_cli)
     assert src.count(".delete_post(") == 1          # 呼び出しは 1 か所（docstring の言及は除く）
     assert inspect.getsource(threads_mod).count('method="DELETE"') == 1
+    # Mastodon の DELETE（3.1.1）も `delete_post` の中の 1 か所だけ。
+    assert inspect.getsource(mastodon).count('"DELETE"') == 1
+    assert '"DELETE"' in inspect.getsource(mastodon.MastodonAdapter.delete_post)
 
 
 def test_Threadsのdelete_postは数字以外のidを断る():

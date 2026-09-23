@@ -12,6 +12,7 @@
 | `GET /api/v1/statuses/:id`（`favourites_count`・`replies_count`・`reblogs_count`） | 同上 | **L2** |
 | Status の `quotes_count`（引用数） | 同上 | **L2**（**このアダプタは取っていない**・監査 2・2026-09-13） |
 | `GET /api/v1/statuses/:id/context`（`ancestors`・`descendants`） | 同上 | **L2** |
+| `DELETE /api/v1/statuses/:id`（scope `write:statuses`・応答は削除した Status・本文は `text`） | 同上 | **L2** |
 | `GET /api/v1/accounts/verify_credentials`（`id`・`acct`） | docs.joinmastodon.org/methods/accounts/ | **L2** |
 | `GET /api/v1/accounts/:id/statuses`（`limit` 既定 20・**最大 40**・`exclude_reblogs`） | 同上（2026-09-13 に読解） | **L2** |
 | `GET /api/v2/instance` の `configuration.statuses.max_characters` | docs.joinmastodon.org/methods/instance/ | **L2** |
@@ -66,6 +67,9 @@ NON_PUBLIC_VISIBILITIES = ("private", "direct")
 AVAILABLE_METRICS = ("likes", "replies", "reposts")
 
 MEDIUM = "mastodon"
+# 取り下げで受ける `post_id` の形（Mastodon の Status の id は数字の文字列）。
+# `str.isdigit()` は全角や他の書記体系の数字も通すので、ASCII に限る。
+POST_ID = re.compile(r"[0-9]{1,32}")
 
 # 台帳の項目名（設計 v2 §4.2「台帳と登録」）。**アダプタの中に閉じる**——core は
 # `media` の名前すら見ない。
@@ -242,6 +246,11 @@ class MastodonAdapter(base.Adapter):
     # access token に期限は無い（`.token` に `expires_in` を書かず
     # `no_expiry: true` を立てる。`maintain` が「期限を持たない」と言い分ける）。
     TOKEN_NO_EXPIRY = True
+    # 取り下げ（`delete_post()`）に要る scope（**L2**: `DELETE /api/v1/statuses/:id`
+    # は `write:statuses`）。`thth/scopes.py` の `MASTODON_SCOPES` に入っているので
+    # 再認可は要らない。`retract_cli`・`server_writes`・`approval_jobs` はこの値の
+    # 有無で「取り下げできる媒体か」を分けている（3.1.1）。
+    DELETE_PERMISSION = "write:statuses"
 
     prepared_media_supported = True
 
@@ -495,6 +504,48 @@ class MastodonAdapter(base.Adapter):
         url = body.get("url") if isinstance(body, dict) else None
         return base.PublishResult(post_id=str(post_id), url=url, ts=ts, error=None,
                                   failure="none")
+
+    # ----- 取り下げ --------------------------------------------------------
+
+    def delete_post(self, post_id: str) -> dict:
+        """公開済みの投稿 1 本を取り下げる（**DELETE を 1 回**・再試行しない・3.1.1）。
+
+        `thth retract` の二段目と、承認を通った取り下げの job からしか呼ばれない
+        （`retract_cli._do_retract`）。骨は Threads と同じ:
+        - `post_id` は ASCII の数字だけ。`/`・`?`・`..` を含む値で別の口へ向かう
+          筋を構造で無くす。
+        - 401／403 は `PermissionMissing`（scope 不足・token 無効を人が直す）。
+        - 404 は `post_missing`（既に無いか、この token から見えない）。**消えたとは
+          言わない**——自分で消したのか別の手で消えたのかを区別できないので。
+        - 応答の Status の `id` が要求した `post_id` と一致したときだけ成功と言う。
+          一致しなければ、何が消えたのかを言えないので失敗として上げる。
+        再試行しないのは、DELETE の応答を失ったあとに同じ要求を投げ直すと、2 回目は
+        404 になり「消えたのか」を言えない形に変わるだけだから（人が見て決める）。
+        """
+        value = post_id.strip() if isinstance(post_id, str) else ""
+        if not POST_ID.fullmatch(value):
+            raise AdapterError("mastodon_post_id_invalid: " + self.POST_ID_FORM_HINT
+                               + "取り下げません")
+        try:
+            body = self._request("DELETE", f"/api/v1/statuses/{value}")
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise base.PermissionMissing(
+                    self.DELETE_PERMISSION, f"HTTP {e.code}") from None
+            if e.code == 404:
+                raise AdapterError(
+                    "post_missing: 媒体にその投稿がありません（既に消えているか、"
+                    "この token から見えません）。記録は変えていません。媒体の画面で"
+                    "確かめてください", http_status=404) from None
+            raise AdapterError(f"mastodon_retract_http_{e.code}: 取り下げたとは言えません",
+                               http_status=e.code) from None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            raise AdapterError("mastodon_retract_failed: 取り下げたとは言えません（"
+                               + self._scrub(e) + "）") from None
+        if not isinstance(body, dict) or str(body.get("id") or "") != value:
+            raise AdapterError("mastodon_retract_unconfirmed: 応答の id が要求した "
+                               "post_id と一致しません（消えたとは言えません）")
+        return {"deleted": True, "post_id": value}
 
     # ----- 会話 ------------------------------------------------------------
 
