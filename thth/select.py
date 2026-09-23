@@ -146,6 +146,87 @@ def resolve_reply_to_file(qf, *, account_name: str, pool=None,
     return ReplyResolution(name, None, unresolved(f"{WAITING_FOR} {name}"))
 
 
+# --------------------------------------------------------------------------
+# 承認済みなのに出られない原稿（設計 3.3.0 A1）
+# --------------------------------------------------------------------------
+
+# `held` の理由の区分（**この 4 語だけ**を外へ出す・並びは通知の文面の順）。
+# - approval_stale: 承認のあとで内容か指紋の計算が変わった（再承認で直る）
+# - reply_to_unresolved: reply_to_file の指した原稿が取り下げ・読めない・消えた
+#   （**待ち（waiting_for）は入れない**——相手が出れば出る・3.2.0 の「待ち」）
+# - stale: publish_at から stale_days を過ぎた（もう出さない）
+# - invalid: それ以外の要確認（型外・文字数・重複本文・未照合の中身 等）
+HELD_CATEGORIES = ("approval_stale", "reply_to_unresolved", "stale", "invalid")
+HELD_PREFIX = "approved_but_held"
+
+
+def held_category(reason) -> str | None:
+    """要確認の理由を `held` の区分に写す。**待ちは None**（数えない）。"""
+    if not isinstance(reason, str):
+        return "invalid"
+    if waiting_target(reason) is not None:
+        return None
+    if reason == "approval_stale":
+        return "approval_stale"
+    if reason.startswith(UNRESOLVED):
+        return "reply_to_unresolved"
+    if reason == "stale":
+        return "stale"
+    return "invalid"
+
+
+def held_items(result: SelectResult, files, now: datetime.datetime) -> list:
+    """select の要確認から、承認済みなのに出られない原稿を `{file, reason, …}` で。
+
+    `due` は publish_at を過ぎたか（壊れた publish_at は「いつまでも出ない」ので
+    True）。**通知（`held`）に数えるのは `due` だけ**——時刻前の approval_stale は
+    まだ出る時刻でないので黙る。ただし board と morning は `due` を問わず名前を
+    出す（設計 A1・A2）。本文は持たない（名前と理由と時刻だけ）。
+    """
+    reason_by_path = {rej.file: rej.reason for rej in result.rejections}
+    by_path = {qf.path: qf for qf in files}
+    out, seen = [], set()
+    for path in result.needs_review:
+        if path in seen:
+            continue
+        seen.add(path)
+        reason = reason_by_path.get(path, "needs_review")
+        category = held_category(reason)
+        if category is None:
+            continue
+        qf = by_path.get(path)
+        raw = qf.front_matter.get("publish_at") if qf is not None else None
+        try:
+            publish_at = queuefile.parse_publish_at(raw) if raw else None
+        except ValueError:
+            publish_at = None
+        due = publish_at is None or publish_at <= now
+        out.append({
+            "file": os.path.basename(path), "reason": reason, "category": category,
+            "publish_at": publish_at.isoformat() if publish_at else None,
+            "due": due,
+            "elapsed_hours": (round((now - publish_at).total_seconds() / 3600.0, 1)
+                              if publish_at is not None and due else None),
+        })
+    out.sort(key=lambda row: (row["publish_at"] or "", row["file"]))
+    return out
+
+
+def held_reason_code(items) -> str | None:
+    """`due` の held を静的な理由 1 つに（`approved_but_held: approval_stale 46`）。
+
+    区分が混ざれば `HELD_CATEGORIES` の順に `, ` でつなぐ。0 本なら None。
+    """
+    counts = {}
+    for row in items or []:
+        if row.get("due") and row.get("category") in HELD_CATEGORIES:
+            counts[row["category"]] = counts.get(row["category"], 0) + 1
+    if not counts:
+        return None
+    parts = [f"{name} {counts[name]}" for name in HELD_CATEGORIES if name in counts]
+    return f"{HELD_PREFIX}: " + ", ".join(parts)
+
+
 def _parse_hhmm(value: str) -> datetime.time:
     h, m = value.split(":")
     return datetime.time(int(h), int(m))

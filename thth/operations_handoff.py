@@ -163,7 +163,9 @@ def _account(name, cfg, now, *, allowed_names=None):
            "next_action_code": status.get("next_action_code") if status else None,
            "timer_health": "unknown", "notification_delivery": status.get("delivery") if status else None}
     review = counts["approval_needed"] or counts["overdue"] or counts["malformed"] or counts["unattributed_malformed"]
-    recorded_failure = status and (status.get("last_state") == "fail" or status.get("delivery") == "failed")
+    # `held`（承認済みなのに出られない・3.3.0 A1）も人が見るべき記録として数える。
+    recorded_failure = status and (status.get("last_state") in ("fail", "held")
+                                   or status.get("delivery") == "failed")
     recorded_failure = recorded_failure or notifications["recorded_state"] == "fail"
     pending = notifications["mail_pending"] or notifications["repo_pending"]
     state = ("blocked" if blocked else "unknown" if problems else

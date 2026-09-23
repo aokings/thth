@@ -2387,7 +2387,8 @@ def cmd_run(args) -> int:
                 args.account, state, state_dir=state_dir, result=result,
                 reason=reason, exception=exception)
             try:
-                incident_mod.notify(args.account, account_cfg, diagnostic, state_dir=state_dir, result=result)
+                incident_mod.notify(args.account, account_cfg, diagnostic, state_dir=state_dir,
+                                    result=result)
                 incident_summary = incident_mod.summary(account_cfg, state_dir)
                 if incident_summary.get("mail_pending") or incident_summary.get("repo_pending"):
                     # そのまま打てる形で言う（account 無しでは account_required になる・3.1.1）。
@@ -2450,8 +2451,28 @@ def cmd_run(args) -> int:
             # 診断側の不調で healthy を送らない。元の投稿 rc はそのまま返す。
             blocked = True
             print("死活通知の停止状態を判定できませんでした", file=sys.stderr)
-        notify("success" if result.exit_code == 0 and not blocked else "fail",
-               result=result)
+        state = "success" if result.exit_code == 0 and not blocked else "fail"
+        held_reason = None
+        if state == "success" and core.held_applies(account_cfg):
+            # **「出すものが無い」と「出せるはずのものが出られない」を分ける**
+            # （設計 3.3.0 A1）。9/21 に承認済み 46 本が approval_stale で 2 日
+            # 出なかったとき、run は「出すものが無い」で成功扱いになり、死活通知も
+            # 運用通知も黙った。publish_at を過ぎた承認済みが要確認で出られなければ
+            # `held`。時刻前と返信待ちは数えない（`select.held_items()`）。
+            try:
+                held = core.held_items_for_account(args.account, account_cfg, now=jst.now_jst())
+                held_reason = select_mod.held_reason_code(held)
+            except Exception:
+                # 数えられないときに healthy を送らない（上と同じ規律）。rc は変えない。
+                state = "fail"
+                print("承認済みで出られない原稿を数えられませんでした: held_unavailable",
+                      file=sys.stderr)
+            if held_reason is not None:
+                state = "held"
+                print(f"承認済みで出られない原稿があります（{held_reason}）。"
+                      f"thth morning {args.account} の held_items か thth board で名前を"
+                      "確認してください", file=sys.stderr)
+        notify(state, result=result, reason=held_reason)
         return result.exit_code
     except Exception as e:
         # これまで traceback になった例外は、通知を試したあとも同じ例外として返す。

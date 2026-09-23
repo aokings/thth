@@ -24,6 +24,8 @@ from email.message import EmailMessage
 from . import accounts, healthcheck, inflight, jst, lock, queuefile, redact, writeback
 
 STATE_FILE = "incident-outbox.json"
+# outbox の事象の種類。`blocked` には承認済みなのに出られない（held）も入る（3.3.0 A1）。
+EVENT_STATES = {"blocked", "recovered"}
 CONFIG_FILE = "notifications.json"
 FIELDS = {"thth_run_state", "thth_run_at", "thth_run_reason", "thth_run_action", "thth_incident_id", "thth_run_detail", "thth_run_next"}
 
@@ -308,7 +310,7 @@ def _validate(row):
         raise ValueError("outbox_full")
     for e in row["events"]:
         if (not isinstance(e, dict) or not re.fullmatch(r"[a-f0-9]{32}", e.get("id", ""))
-                or e.get("state") not in {"blocked", "recovered"} or not jst.parse(e.get("at"))
+                or e.get("state") not in EVENT_STATES or not jst.parse(e.get("at"))
                 or not healthcheck._reason_code_is_safe(e.get("reason"))
                 or not isinstance(e.get("accepted"), dict)
                 or e.get("repo") not in {"pending", "written", "no_source"}
@@ -319,10 +321,63 @@ def _validate(row):
                 raise ValueError("invalid_outbox")
     if row["last"] == "fail" and (not row["events"] or row["events"][-1]["state"] != "blocked"):
         raise ValueError("invalid_outbox")
+    # 承認済みなのに出られない本数（前回の run の値・設計 3.3.0 A1）。
+    # 旧い outbox には無い（無ければ 0 として読む）。
+    held = row.get("held", 0)
+    if type(held) is not int or held < 0:
+        raise ValueError("invalid_outbox")
+    if type(row.get("held_notified", False)) is not bool:
+        raise ValueError("invalid_outbox")
+
+
+def _new_event(state, reason, file=None):
+    """repo に書かない事象（held）。原稿を 1 本に結ばない account 全体の知らせ。"""
+    return {"id": uuid.uuid4().hex, "state": state, "at": jst.iso(jst.now_jst()),
+            "reason": reason, "file": file, "repo": "no_source", "accepted": {},
+            "api_diagnostic": {}}
+
+
+def _held_transition(row, diag, *, ready):
+    """承認済みなのに出られない本数の遷移（設計 3.3.0 A1）。
+
+    **増えたときだけ** `blocked` を 1 件積み、**0 に戻ったら** `recovered`
+    （`held_cleared`）を積む。同じ本数・減った本数では何も積まない——毎 10 分の
+    timer で同じ知らせを連打しない。本数は前回の run の値と比べる（最高値では
+    ない）ので、直して減ったあとに新しく増えればまた知らせる。
+
+    SMTP が使えないときは事象を積まない（送る先が無い事象が outbox に溜まって
+    `outbox_full` で他の知らせまで止めないため）。本数だけは記録する。
+    `fail` の run（inflight 等）では本数を動かさない——その run は held を数えて
+    いない。
+    """
+    if diag.state == "fail":
+        return False
+    previous = row.get("held", 0)
+    current = healthcheck.held_total(diag.reason_code) if diag.state == "held" else 0
+    changed = False
+    if current > previous and ready:
+        row["events"].append(_new_event("blocked", diag.reason_code))
+        row["held_notified"] = True
+        changed = True
+    elif current == 0 and previous > 0 and row.get("held_notified") and ready:
+        row["events"].append(_new_event("recovered", healthcheck.HELD_CLEARED))
+        row["held_notified"] = False
+        changed = True
+    if current == 0 and not ready:
+        row["held_notified"] = False
+    if row.get("held", 0) != current:
+        row["held"] = current
+        changed = True
+    return changed
 
 
 def notify(account, cfg, diag, *, state_dir, result=None):
-    """Invoked after core locks release; lock order repo -> account -> outbox."""
+    """Invoked after core locks release; lock order repo -> account -> outbox.
+
+    `diag.state` は `fail`・`success`・`held`（3.3.0 A1）。`held` は run 自体は
+    成功しているので、停止（fail）の遷移は `success` として進め（前の停止が
+    直っていれば recovered を出す）、そのあとで held の本数の遷移を見る。
+    """
     if not accounts.name_is_safe(account):
         return "invalid_account"
     with contextlib.ExitStack() as stack:
@@ -335,8 +390,11 @@ def notify(account, cfg, diag, *, state_dir, result=None):
         _validate(row)
         def persist():
             _save(path, row)
-        if diag.state not in {"fail", "success"} or not healthcheck._reason_code_is_safe(diag.reason_code):
+        if diag.state not in healthcheck.STATES or not healthcheck._reason_code_is_safe(diag.reason_code):
             raise ValueError("invalid_diagnostic")
+        # 停止（fail）の遷移は held を success として進める（上の docstring）。
+        run_state = "success" if diag.state == "held" else diag.state
+        run_reason = "healthy" if diag.state == "held" else diag.reason_code
         if cfg is not None and not cfg.get("production") and not healthcheck.has_blocking_state(account, state_dir):
             return "rehearsal"
         thread_identity = None
@@ -348,30 +406,30 @@ def notify(account, cfg, diag, *, state_dir, result=None):
         except (OSError, ValueError, TypeError):
             pass
         identity = hashlib.sha256(json.dumps([diag.since, source(cfg, state_dir, result), thread_identity], ensure_ascii=False).encode()).hexdigest()
-        changed_incident = diag.state == "fail" and row["last"] == "fail" and row.get("identity") != identity
-        if row["last"] != diag.state or changed_incident:
-            if diag.state == "fail" or row["last"] == "fail":
+        changed_incident = run_state == "fail" and row["last"] == "fail" and row.get("identity") != identity
+        if row["last"] != run_state or changed_incident:
+            if run_state == "fail" or row["last"] == "fail":
                 prior = row["events"][-1] if row["events"] else None
-                file = source(cfg, state_dir, result) if diag.state == "fail" else prior["file"]
-                event = {"id": uuid.uuid4().hex, "state": "blocked" if diag.state == "fail" else "recovered",
-                         "at": jst.iso(jst.now_jst()), "reason": diag.reason_code,
+                file = source(cfg, state_dir, result) if run_state == "fail" else prior["file"]
+                event = {"id": uuid.uuid4().hex, "state": "blocked" if run_state == "fail" else "recovered",
+                         "at": jst.iso(jst.now_jst()), "reason": run_reason,
                          "file": file, "repo": "pending", "accepted": {},
-                         "api_diagnostic": api_diagnostic.clean(diag.api_diagnostic) if diag.state == "fail" else {}}
+                         "api_diagnostic": api_diagnostic.clean(diag.api_diagnostic) if run_state == "fail" else {}}
                 # Pin original content immediately, before later edits / git sync.
                 if file:
                     try:
                         original_path = Path(accounts.resolved_repo_dir(cfg)) / file
                         event["fingerprint"] = _fingerprint(original_path)
                         event["publication"] = _publication_fingerprint(original_path, cfg)
-                        if diag.state == "success" and event["publication"] != prior.get("publication"):
+                        if run_state == "success" and event["publication"] != prior.get("publication"):
                             event["file"] = None
                         record = inflight.read(state_dir)
-                        if diag.state == "fail" and record:
+                        if run_state == "fail" and record:
                             from . import core
                             if (record.get("post_id") or not record.get("approved_fingerprint") or
                                     not core._fingerprint_matches(str(Path(accounts.resolved_repo_dir(cfg)) / file), cfg["media"], record["approved_fingerprint"], cfg)):
                                 event["file"] = None
-                        elif diag.state == "fail" and not getattr(result, "file", None):
+                        elif run_state == "fail" and not getattr(result, "file", None):
                             from . import threadrun
                             matching = threadrun.has_unresolved(account)
                             if len(matching) != 1 or matching[0].get("bundle_sha") != event["publication"]:
@@ -379,10 +437,12 @@ def notify(account, cfg, diag, *, state_dir, result=None):
                     except (OSError, ValueError, TypeError):
                         event["file"] = None
                 row["events"].append(event)
-            row["last"] = diag.state
+            row["last"] = run_state
             row["identity"] = identity
             persist()
         ready = readiness(cfg)["smtp_configured"]
+        if _held_transition(row, diag, ready=ready):
+            persist()
         s = settings(cfg) if ready else None
         blocked_roles = set()
         for event in row["events"]:

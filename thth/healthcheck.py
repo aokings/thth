@@ -46,11 +46,34 @@ _KNOWN_EXCEPTIONS = {
 }
 _EXCEPTION_REASONS = set(_KNOWN_EXCEPTIONS.values()) | {"exception_process_error"}
 
+# 承認済みなのに出られない（設計 3.3.0 A1）。区分の語は `select.HELD_CATEGORIES`
+# と同じ 4 語だけ・後ろは本数（数字）だけ——本文も原稿名も入らない静的な理由。
+_HELD_PART = r"(?:approval_stale|reply_to_unresolved|stale|invalid) [1-9][0-9]{0,5}"
+_HELD_CODE = re.compile(rf"approved_but_held: {_HELD_PART}(?:, {_HELD_PART}){{0,3}}")
+# 0 本に戻った（held の復旧）・指紋の版が変わって再承認が要る（A3・1 回だけ）。
+HELD_CLEARED = "held_cleared"
+_REAPPROVAL_CODE = re.compile(r"reapproval_required: [1-9][0-9]{0,5}")
+# 死活通知の状態（`held` は run が成功したのに承認済みの原稿が出られない）。
+STATES = ("success", "fail", "held")
+
+
+def is_held_code(value) -> bool:
+    return isinstance(value, str) and _HELD_CODE.fullmatch(value) is not None
+
+
+def held_total(value) -> int:
+    """`approved_but_held: …` の本数の合計（形が違えば 0）。"""
+    if not is_held_code(value):
+        return 0
+    return sum(int(part.rsplit(" ", 1)[1]) for part in value.split(": ", 1)[1].split(", "))
+
 
 def _reason_code_is_safe(value, *, allow_legacy: bool = True) -> bool:
     if not isinstance(value, str):
         return False
     if value in _KNOWN_REASONS or value in _EXCEPTION_REASONS:
+        return True
+    if value == HELD_CLEARED or is_held_code(value) or _REAPPROVAL_CODE.fullmatch(value):
         return True
     if re.fullmatch(r"(?:container|publish)_http_[45][0-9]{2}", value):
         return True
@@ -118,7 +141,7 @@ def read_status(state_dir: str) -> dict | None:
             "delivered", "failed", "not_configured"}:
         delivery = None
     last_state = row.get("last_state")
-    if not isinstance(last_state, str) or last_state not in {"success", "fail"}:
+    if not isinstance(last_state, str) or last_state not in STATES:
         last_state = None
     attempted = jst.parse(row.get("last_attempt_at"))
     incident_since = jst.parse(row.get("incident_since"))
@@ -243,8 +266,10 @@ def next_action_for(reason: str) -> str:
         return "inspect_running_process"
     if reason.startswith("exception_"):
         return "inspect_timer_log"
-    if reason == "healthy":
+    if reason == "healthy" or reason == HELD_CLEARED:
         return "none"
+    if is_held_code(reason) or (isinstance(reason, str) and _REAPPROVAL_CODE.fullmatch(reason)):
+        return "reapprove_or_fix_held"
     return "inspect_board_and_timer_log"
 
 
@@ -268,6 +293,17 @@ def reason_text(reason: str) -> str:
     }
     if reason in fixed:
         return f"{fixed[reason]} [{reason}]"
+    if reason == HELD_CLEARED:
+        return f"承認済みで出られなかった原稿は 0 本になりました [{HELD_CLEARED}]"
+    if is_held_code(reason):
+        detail = "・".join(f"{part.rsplit(' ', 1)[0]} {part.rsplit(' ', 1)[1]} 本"
+                           for part in reason.split(": ", 1)[1].split(", "))
+        return (f"承認済みで予定時刻を過ぎた原稿が {held_total(reason)} 本、出られずに"
+                f"止まっています（{detail}） [approved_but_held]")
+    if _REAPPROVAL_CODE.fullmatch(reason):
+        count = reason.split(": ", 1)[1]
+        return (f"この版で承認の指紋の計算が変わりました。再承認が要る原稿: {count} 本"
+                " [reapproval_required]")
     match = re.fullmatch(r"(container|publish)_http_([45][0-9]{2})", reason)
     if match:
         stage = "コンテナ作成 API" if match.group(1) == "container" else "公開 API"
@@ -292,6 +328,8 @@ def next_action_text(action: str) -> str:
         "inspect_running_process": "実行中プロセスと timer の重複を確認してください",
         "inspect_timer_log": "timer のログで例外の発生箇所を確認してください",
         "inspect_board_and_timer_log": "thth board と timer のログを確認してください",
+        "reapprove_or_fix_held": ("thth morning の held_items（または thth board の要確認）で"
+                                  "名前を見て、再承認するか原稿を直してください"),
     }
     return f"{fixed.get(action, fixed['inspect_board_and_timer_log'])} [{action}]"
 
@@ -342,6 +380,12 @@ def diagnostic(account: str, state: str, *, state_dir: str,
         safe_reason = sanitize_reason(None, exception_class=type(exception).__name__)
     elif state == "success":
         safe_reason = "healthy"
+    elif state == "held":
+        # 承認済みなのに出られない（設計 3.3.0 A1）。理由は呼び出し側が作った
+        # 静的な符丁だけを通す（形が違えば unknown）。原稿は account 全体の話
+        # なので 1 本に結ばない。
+        safe_reason = reason if is_held_code(reason) else "unknown"
+        file_name = None
     else:
         safe_reason = sanitize_reason(raw, action=action)
         if safe_reason in {"unknown", "publish_result_unknown"} and inflight:

@@ -112,6 +112,36 @@ def last_post_at(files, account_name: str):
     return latest
 
 
+def held_items_for_account(account_name: str, account_cfg: dict, *, now) -> list:
+    """承認済みなのに出られない原稿（設計 3.3.0 A1）。**読むだけ**（select を 1 回）。
+
+    照合先は board と同じ `writeback.upstream_sha()`（同期を伴わない読み手）。
+    `thth run` は throw が同期を済ませた直後に呼ぶので、その run が見た状態と
+    同じ commit を読む。`due` を問わず返す（通知に数えるのは呼び出し側で `due`
+    だけ・`select.held_reason_code()`）。
+    """
+    if accounts_mod.repo_state(account_cfg) == accounts_mod.REPO_NONE:
+        return []
+    files = list_queue_files(
+        account_cfg, tree_sha=writeback.upstream_sha(account_cfg.get("repo_dir")))
+    recent = select_mod.recent_posted_texts(
+        files, account_name=account_name, media=account_cfg["media"], now=now)
+    result = select_mod.select_one(
+        files, account_name=account_name, account_cfg=account_cfg, now=now,
+        last_post_at=last_post_at(files, account_name), recent_texts=recent)
+    return select_mod.held_items(result, files, now)
+
+
+def held_applies(account_cfg: dict | None) -> bool:
+    """`held` を数える account か: timer に載る（`scheduled`・既定 true）本番だけ。
+
+    rehearsal は元から何も出さないので「出せるはずのものが出られない」に当たらない
+    （運用通知も rehearsal では黙る・`incident.notify()`）。
+    """
+    cfg = account_cfg or {}
+    return bool(cfg.get("scheduled", True)) and bool(cfg.get("production"))
+
+
 _ERROR_RUN_REASONS = ("hashtag", "duplicate_text", "approval_stale", "unverified_content")
 
 
