@@ -1066,7 +1066,8 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
                reply_to_author_key: str | None = None, found_by: str | None = None,
                production_flag: bool = False,
                confirm: str | None = None, adapter_factory=None, log=None,
-               now=None, wait=0, before_execute=None, lock_context=None, media_rows=None) -> ThrowResult:
+               now=None, wait=0, before_execute=None, lock_context=None, media_rows=None,
+               goal: str | None = None) -> ThrowResult:
     """`thth send`（**同席の様態**・設計 §3.7）。queue を通さずその場で 1 本出す。
 
     対話の中で masaru が本文を読んで「出して」と言ったときの経路。承認は既に
@@ -1090,6 +1091,10 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
     ので、これらを `send` の flag として直接受け取る（`thth send --reply-to-root`
     ・`--reply-to-author-key`・`--found-by`）。`reply_to_author_key` を渡さなければ
     best-effort に `adapter.fetch_post(reply_to)` で埋める。
+
+    **`goal`**（設計 3.6.0 §A1）: 投稿の目的（`reach`・`click`・`follow`・`reply`・
+    省略は `none`）。`sent/` と runs に残る。**digest には入れない**——queue の
+    承認の指紋に入れないのと同じ（目的は測り方の札で、公開される中身ではない）。
     """
     log = log or (lambda line: None)
     adapter_factory = adapter_factory or _default_adapter_factory
@@ -1108,6 +1113,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
             production_flag=production_flag, confirm=confirm,
             adapter_factory=adapter_factory, log=log, now=now, wait=wait,
             before_execute=before_execute, lock_context=lock_context, media_rows=media_rows,
+            goal=goal,
         )
     except lock_mod.LockBusy:
         msg = f"{account_name} は既に実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます"
@@ -1117,7 +1123,8 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
 
 def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, reply_to,
                   reply_to_root=None, reply_to_author_key=None, found_by=None,
-                  production_flag, confirm, adapter_factory, log, now, wait=0, before_execute=None, lock_context=None, media_rows=None) -> ThrowResult:
+                  production_flag, confirm, adapter_factory, log, now, wait=0, before_execute=None, lock_context=None, media_rows=None,
+                  goal=None) -> ThrowResult:
     locks = ((lock_context or _account_locks(account_name, account_cfg, state_dir, wait=wait))
              if production_flag else contextlib.nullcontext())
     with locks:
@@ -1192,6 +1199,16 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                             status="error", error=topic_err)
                 return ThrowResult(exit_code=1, mode=mode, action="skip", message=topic_err)
 
+        # 投稿の目的（設計 3.6.0 §A1）。4 語か省略（`none`）。digest には入れない。
+        goal_value = goals_mod.normalize(goal)
+        if goal_value is None:
+            msg = f"{goals_mod.GOAL_INVALID}: {goals_mod.GOAL_INVALID_MESSAGE}"
+            log(msg)
+            _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                        status="error", error=goals_mod.GOAL_INVALID)
+            return ThrowResult(exit_code=1, mode=mode, action="skip", message=msg,
+                               error=goals_mod.GOAL_INVALID)
+
         tag_issues = [e for e in tags_mod.errors(media, body, topic_value, account_cfg)
                       if not e.startswith("warning:")]
         if tag_issues:
@@ -1226,6 +1243,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             log(effective)
             if topic_value:
                 log(f"トピック: {topic_value}")
+            if goal_value != goals_mod.NONE:
+                log(f"目的: {goal_value}（{goals_mod.LABELS[goal_value]}・digest には入りません）")
             log(queuefile.length_line(media, effective, account_cfg))
             if manifest: log(media_mod.display(manifest))
             for note in media_notes:
@@ -1335,6 +1354,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                             # queue の 5 項目の指紋ではなく `--confirm` の digest を残す。
                             approved_fingerprint=digest, reply_to=post.reply_to,
                             attachment_kinds=media_mod.attachment_kinds(manifest),
+                            goal=goal_value,
                             **({"media":result.media} if result.media else {}))
         except (OSError,ValueError):
             if not manifest:raise
@@ -1356,7 +1376,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                     status="ok", error=None,
                     engagement_write_failed=engagement_write_failed,
                     engagement_author_lookup_failed=engagement_author_lookup_failed,
-                    extra=_remote_extra(result))
+                    extra={**_remote_extra(result), "goal": goal_value})
         log(f"投稿しました: post_id={result.post_id}")
         # **出たものを見に行ける形で言う**（運用の報告 2026-09-13: 出したあと、
         # 実物を確かめるのに `post_id` から URL を組み立て直していた）。URL を

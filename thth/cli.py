@@ -2718,7 +2718,7 @@ def cmd_send(args) -> int:
             result = core_mod.send_once(
                 args.account, text=text, topic=args.topic, reply_to=args.reply_to,
                 reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
-                found_by=args.found_by,
+                found_by=args.found_by, goal=getattr(args, "goal", None),
                 production_flag=args.production, confirm=args.confirm, log=log, wait=getattr(args, "wait", 0),
                 **({'media_rows': declarations} if declarations else {}))
             outcome['result'] = result
@@ -3429,6 +3429,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.add_argument("--found-by", dest="found_by", default=None,
                         choices=sorted(engagements_mod.FOUND_BY_VALUES),
                         help="絡みに行った先をどう見つけたか（where_to_appear／manual／mention）")
+    # 投稿の目的（設計 3.6.0 §A1）。queue の front-matter `goal:` と同じ 4 語。
+    p_send.add_argument("--goal", default=None, choices=goals_mod.GOALS,
+                        help="投稿の目的: reach（表示）・click（サイト誘導）・follow（フォロー）・"
+                             "reply（会話）。省略は none。digest には入らない（sent と runs に残る）")
     p_send.add_argument("--production", action="store_true",
                         help="本番で出す（台帳 production: true が無ければ dry-run のまま）")
     p_send.add_argument("--confirm", default=None,
