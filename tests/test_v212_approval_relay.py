@@ -185,8 +185,11 @@ def test_provision_network_does_not_hold_global_admin_flock(isolated,monkeypatch
 def test_privacy_logical_ttl_and_no_physical_erase_claim():
     from tests.test_site import build_site
     page=build_site.build_privacy()
-    for phrase in ('600 seconds','600秒','600,000','PITR','30 days','30日','not a promise of immediate physical erasure','即時物理消去とは約束しません'):
+    # 100,000: the Worker's WebCrypto caps PBKDF2 at 100,000 (callback/src/approval.js ITERATIONS,
+    # thth/approval_relay.py ITERATIONS). The page said 600,000 until the 2026-09-23 rewrite.
+    for phrase in ('600 seconds','600秒','100,000','PITR','30 days','30日','not a promise of immediate physical erasure','即時物理消去とは約束しません'):
         assert phrase in page
+    assert '600,000' not in page
 
 
 def test_project_key_store_refused_without_traceback(isolated,monkeypatch,capsys):

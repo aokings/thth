@@ -251,8 +251,23 @@ def test_プライバシーポリシーは正本から生成され_外へ出る�
                  "https://github.com/aokings/thth/issues"):
         assert must in page, must
     for obsolete in ("does not store, log, or transmit the code", "your own computer or server",
-                     "どこにも保存・記録・送信せず", "2026-09-15 施行"):
+                     "どこにも保存・記録・送信せず", "2026-09-15 施行",
+                     # 2026-09-23: 退出（thth account leave）と削除依頼の照合は実装済み。
+                     # 「後の版で実装」の文は実態と合わない（Platform Terms §7(a)）。
+                     "belong to a later implementation", "別の版で実装・検証する予定",
+                     "600,000"):
         assert obsolete not in page
+    # 2026-09-23 の書き直し（照合 論点 D）で書いた事実。どれもコードで裏を取った:
+    # 返信・言及は相手の username と本文ごと保存（collect.py）・検索結果は保存しない
+    # （where_cli.py・threads_read_cli.py）・退出（leave.py）・削除依頼（deletion.py）・
+    # 添付（media-object.js）・LLM への受け渡し（mcp/server.py）。英語と日本語の両方。
+    for must in ("the other person's username, the text", "相手のユーザー名・本文",
+                 "The text and authors of search results are not saved", "検索結果の本文と投稿者は保存しません",
+                 "thth account leave", "30 days", "24 hours after it was created",
+                 "THTH itself does not send data to an AI model provider",
+                 "THTH 自身は AI モデルの提供者へデータを送りません",
+                 "unverified, verified or completed", "未照合・照合済み・完了"):
+        assert must in page, must
     # 紹介ページから辿れる・robots は開いている
     index = (PUBLIC / "index.html").read_text(encoding="utf-8")
     assert 'href="/privacy/"' in index

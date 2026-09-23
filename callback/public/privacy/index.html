@@ -34,35 +34,133 @@
 </head><body><main>
 <h1>THTH — Privacy Policy</h1>
 <p class="note">Unpublished update — deployment date not set · <a href="#ja">日本語はこの下</a></p>
-<h2>Operator and authorization</h2>
-<p>THTH runs authorization and posting management on an operator-managed server for invited accounts. Users do not need their own VM or Meta app. The operator starts authorization; users review the account and permissions on the platform and approve. This does not mean that a user connection page, posting interface, or account exit workflow has all been implemented.</p>
-<h2>Authorization relay</h2>
-<p>The relay uses a Cloudflare Worker and Durable Object. It temporarily holds a registered authorization code for at most 300 seconds after receipt and within the 600-second session lifetime, and releases it once to the initiating server. Long-lived tokens, client secrets and PKCE verifiers are not sent to the relay. The application deletes the code when consumed or expired. Removing application records does not establish physical erasure from the hosting provider's infrastructure or backups. Unregistered flows can use the existing return-URL paste fallback.</p>
+<h2>Who runs THTH</h2>
+<p>THTH is open-source software for drafting, approving and publishing social media posts. The operator, gotoq, runs it on an operator-managed server (a virtual machine) for invited users and for the operator's own accounts. On that server THTH handles authorization, drafts, human approval, publishing and records.</p>
+<p>Invited users do not run their own server or register their own Meta app. The operator starts authorization; the user reviews the account and permissions on the platform and approves, and later approves each post on a thth.me approval page. People who install the THTH software and run it themselves operate their own copy; this policy describes the operator's service.</p>
+<h2>Platforms and the data THTH uses</h2>
+<p>THTH works with Threads, Bluesky, Mastodon and X. For each connected account it uses:</p>
+<ul>
+  <li>Threads: the account's user ID and username; its posts and their metrics (views, likes, replies, reposts, quotes, shares); daily account metrics (views, likes, replies, reposts, quotes, followers, link clicks); replies to its posts; and mentions of the account.</li>
+  <li>Bluesky: its posts and their metrics (likes, replies, reposts, quotes), and replies to its posts.</li>
+  <li>Mastodon: its posts and their metrics (likes, replies, reposts), and replies to its posts.</li>
+  <li>X: publishing approved posts, deleting a post on request, and reading the account's own recent posts. Replies and metrics are not collected.</li>
+</ul>
+<p><strong>Replies and mentions.</strong> Replies to the user's posts on Threads, Bluesky and Mastodon, and mentions of the user's Threads account, are saved to that account's records, including the other person's username, the text, the time and the link. THTH keeps them to manage the conversation: to show which replies have been answered and to prepare the user's replies, which go through the same human approval as posts. Mentions on Bluesky and Mastodon are shown on request and not saved.</p>
+<p><strong>Keyword search.</strong> Search (Threads <code>threads_keyword_search</code>, and search on Bluesky and Mastodon) runs only on request: when the user's session asks for a search, or for the observation summary, which uses search terms the operator sets for the account. Results are shown for that request only: counts, the number of distinct authors, the share of the most frequent authors, the latest time, and for individual posts the author, a link and the first 60 characters. The text and authors of search results are not saved. Run logs record at most the search terms and the number of results.</p>
+<p><strong>Profiles and places.</strong> Public profile lookup (Threads <code>threads_profile_discovery</code>) shows another account's public profile fields on request; the result is not saved. Location search (<code>threads_location_tagging</code>) shows candidate places; a place the user chooses is written in the draft and attached only to an approved post.</p>
+<p>To count how often the same person appears without keeping names in those records, some records use a one-way key derived from the platform and the username.</p>
+<h2>Attachments</h2>
+<p>Images, video and audio attached to a draft are checked before use. For images, THTH removes location data and other embedded metadata (XMP, IPTC, MakerNote, thumbnails, comments) without re-encoding. Video and audio are not altered; a file that carries location metadata, or metadata THTH cannot inspect, is refused. The checked file is stored in the account's records.</p>
+<p>Files uploaded by invited users, image previews on approval pages, and files handed to a platform pass through Cloudflare R2 on thth.me. Each is reachable only through an unguessable, short-lived capability URL: 10 minutes for uploads and for images handed to a platform, up to the approval page's lifetime for previews, 30 minutes for video handed to a platform, and one hour after publication is confirmed. The Worker deletes each stored object 24 hours after it was created (image previews when they expire), retrying up to 10 times; the storage bucket is also set to delete these objects after 24 hours.</p>
 <h2>Human approval pages</h2>
-<p>An approval page temporarily holds the exact proposed text and display context for a logical session lifetime of at most 600 seconds. Approval or expiry removes that text and display context from the active record; minimal receipt bindings remain until expiry. A separate person record holds a salted PBKDF2-SHA256 verifier with 600,000 iterations, generation and failure count, not the approval secret itself. The secret is transmitted only when the person submits the form and is not retained. The URL holder can read the proposed text but cannot approve without the secret. Cloudflare SQLite Durable Object point-in-time recovery (PITR) retains recovery history for 30 days: logical deletion is not a promise of immediate physical erasure from backups.</p>
-<h2>Server records and communication</h2>
-<p>Long-lived credentials reside in owner-only files on the operator's server and authenticate platform API requests. Drafts, post history and collected records also reside in configured server locations. Network destinations are not limited to platform APIs: authorization uses thth.me/Cloudflare, and configured repositories may also receive requests. Static pages include no third-party scripts or analytics. Worker application observability logs are disabled; this does not guarantee that no infrastructure records exist.</p>
+<p>An approval page temporarily holds the exact proposed text and display context for a logical session lifetime of at most 600 seconds. Approval or expiry removes that text and display context from the active record; minimal receipt bindings remain until expiry. A separate person record holds a salted PBKDF2-SHA256 verifier with 100,000 iterations, generation and failure count, not the approval secret itself. The secret is transmitted only when the person submits the form and is not retained. The URL holder can read the proposed text but cannot approve without the secret.</p>
+<h2>Authorization relay</h2>
+<p>The relay uses a Cloudflare Worker and Durable Object. It temporarily holds a registered authorization code for at most 300 seconds after receipt and within the 600-second session lifetime, and releases it once to the initiating server. Long-lived tokens, client secrets and PKCE verifiers are not sent to the relay. The application deletes the code when consumed or expired. Unregistered flows can use the existing return-URL paste fallback.</p>
+<h2>Reports</h2>
+<p>An invited user's session can file bug reports and requests. A report is stored in a private location on the operator's server with the account, project, title, text, reproduction steps and replies. A report containing something that looks like a secret (for example a token) is refused rather than stored. The change log records that a report was filed, answered or closed, without its text.</p>
+<h2>What the operator's server keeps</h2>
+<ul>
+  <li>Long-lived credentials (platform tokens, Bluesky App Passwords) in owner-only files, used to authenticate platform API requests.</li>
+  <li>Account settings, including an optional email address for operational notices.</li>
+  <li>Drafts, approval records, the exact text of published posts, and post history.</li>
+  <li>The metrics, replies and mentions described above, and checked attachments.</li>
+  <li>Run logs (action, draft file, post ID, counts, status), reports, and a change log of administrative events.</li>
+</ul>
+<p>It does not keep the text or authors of keyword search results, looked-up public profiles, or the approval secret.</p>
+<h2>Where data goes</h2>
+<ul>
+  <li>The platform API of each connected account.</li>
+  <li>thth.me on Cloudflare (Workers, Durable Objects, R2): the authorization relay, approval pages, attachment transfer and data deletion requests.</li>
+  <li>Operational notices by email through the operator's mail server, when configured: account name, draft file name, state, time and a reason. No post text.</li>
+  <li>A liveness monitor, when configured: account name, run state, draft file name and a reason. No post text.</li>
+  <li>Git: each account's records are kept in a Git repository. For invited users the server creates that repository and its remote on the server itself. The operator's own accounts may use a repository with an external remote, to which records are pushed.</li>
+</ul>
+<p>Pages on thth.me load no third-party scripts, fonts or analytics. Worker application observability logs are disabled; this does not guarantee that no infrastructure records exist. Rate limiting passes a hash of the requester's IP address to Cloudflare's rate limiter; THTH does not write IP addresses to its records.</p>
+<h2>AI (LLM) sessions</h2>
+<p>THTH itself does not send data to an AI model provider. Users work with THTH through their own LLM session (for example over MCP). What a tool returns to that session is passed to that session's LLM provider under the user's own arrangement with it. Depending on the tool, this includes the user's drafts, post history, metrics and reports, and the text or short previews (up to 60 characters) of public replies, mentions and search results, with links and author names or one-way author keys.</p>
 <h2 id="delete">Stopping access and deleting data</h2>
-<p>The current <code>/deauthorize</code> and <code>/data-deletion</code> responses do not establish that server-side accounts or data have been deleted. Contact the operator about stopping access or deleting data. Automated revocation, deletion and record keeping, including integration with these callbacks, belong to a later implementation and verification.</p>
+<p>The operator ends an account's use with <code>thth account leave</code>. This stops the account on the server and on thth.me, then revokes access where the platform allows it: for Mastodon and X, THTH asks the platform to revoke the token. For Threads, remove the connection in your Threads settings; for Bluesky, delete the App Password in your Bluesky settings.</p>
+<p>It then deletes the account's own credential files, its settings entry, its server state (run logs, post history, and the metrics, replies and mentions kept there) and its server-side repository, and records the exit (time, operator, deleted categories and counts) in the change log. Files shared with another account and external repositories are kept. Reports and the change log are not removed by this step.</p>
+<p>Meta data deletion requests: <code>https://thth.me/data-deletion</code> accepts a signed request and returns a confirmation code with a status URL (<code>https://thth.me/data-deletion-status?code=…</code>). Receipt is automatic. The operator then has the server verify the signature and match the request to a Threads account, and runs the exit above; the status URL shows unverified, verified or completed. Requests are kept on thth.me for 30 days. The <code>/deauthorize</code> callback and the receipt of a request do not establish that data has been deleted. You can also contact the operator to stop access or delete data.</p>
+<h2>Retention</h2>
+<ul>
+  <li>Authorization codes on the relay: at most 300 seconds after receipt.</li>
+  <li>Approval pages and their image previews: at most 600 seconds.</li>
+  <li>Attachment objects on R2: deleted 24 hours after creation (image previews when they expire).</li>
+  <li>Data deletion requests on thth.me: 30 days.</li>
+  <li>Sent operational notices in the server's notice record: 30 days (at most 50).</li>
+  <li>Credentials, settings, drafts, post history, metrics, replies, mentions, attachments and run logs on the operator's server: until the account exits.</li>
+  <li>Reports and the change log: no set period.</li>
+</ul>
+<p>Cloudflare SQLite Durable Object point-in-time recovery (PITR) retains recovery history for 30 days: logical deletion is not a promise of immediate physical erasure from backups. Removing application records does not establish physical erasure from the hosting provider's infrastructure or backups.</p>
 <h2>Contact</h2>
 <p>Questions about this policy: open an issue at <a href="https://github.com/aokings/thth/issues">https://github.com/aokings/thth/issues</a>. Operator: gotoq.</p>
 <h2>Changes</h2>
-<p>This page is generated from the THTH source repository; its history is public there.</p>
+<p>This page is generated from the THTH source repository; its history is public there. This revision describes the operator-run service, the data used per platform, replies and mentions, keyword search, attachments, reports, LLM sessions, exit and deletion requests, and retention, and corrects the PBKDF2 iteration count to 100,000.</p>
 <h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>
 <p class="note">未公開の更新案 — 配布日未設定</p>
-<h2>運営者と認可</h2>
-<p>THTH は、運営者が管理するサーバで認可と投稿管理を行うソフトウェアです。今回の導入は招待されたアカウントが対象で、利用者が自分の VM や Meta アプリを用意する手順ではありません。運営者が認可を開始し、利用者は媒体の画面で内容を確認して承認します。利用者向けの接続画面・投稿操作・退出の仕組みがすべて実装済みという意味ではありません。</p>
-<h2>認可の預かり所</h2>
-<p>認可の預かり所は Cloudflare Worker と Durable Object を使います。登録済みの認可コードを、受付から最大300秒、かつ開始から最大600秒の範囲で一時的に保持し、認可を開始したサーバへ一度だけ渡します。長期トークン、client secret、PKCE verifier は預かり所へ送りません。消費または失効時にアプリケーション上のコードを削除します。Cloudflare 内部のバックアップや物理消去まで保証する説明ではありません。未登録などの場合は従来の戻り URL を貼る経路になります。</p>
+<h2>運営者と対象</h2>
+<p>THTH は、SNS の投稿を下書き・承認・公開するためのオープンソースのソフトウェアです。運営者 gotoq が、運営者の管理するサーバ（仮想マシン）で、招待した利用者と運営者自身のアカウントのために動かしています。このサーバで、認可・下書き・人の承認・公開・記録を扱います。</p>
+<p>招待された利用者は、自分のサーバを動かしたり自分の Meta アプリを登録したりしません。運営者が認可を開始し、利用者は媒体の画面でアカウントと権限を確かめて承認し、その後は投稿ごとに thth.me の承認ページで承認します。THTH を自分で導入して動かす人は、その複製を自分で運用しています。このポリシーは運営者のサービスについての説明です。</p>
+<h2>媒体と使うデータ</h2>
+<p>THTH は Threads・Bluesky・Mastodon・X に対応しています。接続したアカウントごとに次を使います。</p>
+<ul>
+  <li>Threads: アカウントのユーザー ID とユーザー名、投稿とその実測（表示・いいね・返信・再投稿・引用・シェア）、アカウントの日ごとの実測（表示・いいね・返信・再投稿・引用・フォロワー・リンクのクリック）、投稿への返信、アカウントへの言及。</li>
+  <li>Bluesky: 投稿とその実測（いいね・返信・再投稿・引用）、投稿への返信。</li>
+  <li>Mastodon: 投稿とその実測（いいね・返信・再投稿）、投稿への返信。</li>
+  <li>X: 承認された投稿の公開、依頼による投稿の削除、アカウント自身の最近の投稿の読み取り。返信と実測は集めません。</li>
+</ul>
+<p><strong>返信と言及。</strong>Threads・Bluesky・Mastodon での本人の投稿への返信と、本人の Threads アカウントへの言及は、そのアカウントの記録に保存します。相手のユーザー名・本文・時刻・リンクを含みます。会話を管理するため（どの返信に答えたかを示し、本人の返信を用意するため）に保存し、本人の返信は投稿と同じ人の承認を通ります。Bluesky と Mastodon の言及は求められたときに表示するだけで、保存しません。</p>
+<p><strong>キーワード検索。</strong>検索（Threads の <code>threads_keyword_search</code>、Bluesky と Mastodon の検索）は求められたときだけ動きます。本人のセッションが検索を求めたとき、または観測の一枚を求めたとき（運営者がアカウントに設定した語を使います）です。結果はその求めに対してだけ表示します。件数、投稿者の異なり数、多く投稿している人の占める割合、最新の時刻、個々の投稿については投稿者・リンク・先頭 60 字です。検索結果の本文と投稿者は保存しません。実行記録に残すのは、検索した語と件数までです。</p>
+<p><strong>プロフィールと場所。</strong>公開プロフィールの参照（Threads の <code>threads_profile_discovery</code>）は、求められたときに相手の公開プロフィールの項目を表示し、結果は保存しません。場所の検索（<code>threads_location_tagging</code>）は候補を表示し、本人が選んだ場所を下書きに書き、承認された投稿にだけ付けます。</p>
+<p>同じ人が何度現れたかを名前を残さずに数えるため、一部の記録では媒体とユーザー名から作った戻せない鍵を使います。</p>
+<h2>添付</h2>
+<p>下書きに付けた画像・動画・音声は、使う前に検査します。画像は、位置情報などの埋め込みメタデータ（XMP・IPTC・MakerNote・サムネイル・コメント）を、再圧縮せずに取り除きます。動画と音声は変えません。位置情報のメタデータを含むもの、THTH が検査できないメタデータを含むものは断ります。検査を通ったファイルはアカウントの記録に保存します。</p>
+<p>招待された利用者がアップロードするファイル、承認ページの画像の表示、媒体へ渡すファイルは、thth.me の Cloudflare R2 を通ります。どれも推測できない短命の capability URL でしか読めません。アップロードと媒体へ渡す画像は10 分、表示は承認ページの期限まで、媒体へ渡す動画は 30 分、公開の確認後は 1 時間です。Worker は置いたものを置いてから 24 時間で削除し（画像の表示は期限が来たとき）、最大 10 回まで試み直します。保管用の bucket も 24 時間で削除する設定です。</p>
 <h2>本人が押す承認ページ</h2>
-<p>承認ページは公開予定の本文そのものと表示情報を、最大600秒の論理的な session 期限内で一時的に保持します。承認または失効で稼働中 record から本文と表示情報を削除し、最小の受領照合情報だけを期限まで残します。本人の別 record には salt 付き PBKDF2-SHA256（600,000回）の verifier、世代、失敗回数を保存し、承認 secret 本体は保存しません。secret は本人のフォーム送信時だけ照合に使います。URL の所持者は本文を読めますが、secret 無しで承認はできません。Cloudflare SQLite Durable Object の PITR は30日間の復元履歴を持つため、論理削除をバックアップからの即時物理消去とは約束しません。</p>
-<h2>サーバの記録と通信</h2>
-<p>長期の認証情報は運営者のサーバの所有者専用ファイルへ保存し、媒体の API への認証に使います。下書き・投稿履歴・採集した記録等も設定されたサーバ側の置き場にあります。通信先は媒体 API だけとは限らず、認可時の thth.me/Cloudflare や設定された repository 等があります。静的ページには第三者のスクリプトや解析ツールを組み込んでいません。Worker のアプリケーション観測ログは無効にしていますが、基盤全体に記録が存在しないとの保証はしません。</p>
+<p>承認ページは公開予定の本文そのものと表示情報を、最大600秒の論理的な session 期限内で一時的に保持します。承認または失効で稼働中 record から本文と表示情報を削除し、最小の受領照合情報だけを期限まで残します。本人の別 record には salt 付き PBKDF2-SHA256（100,000回）の verifier、世代、失敗回数を保存し、承認 secret 本体は保存しません。secret は本人のフォーム送信時だけ照合に使います。URL の所持者は本文を読めますが、secret 無しで承認はできません。</p>
+<h2>認可の預かり所</h2>
+<p>認可の預かり所は Cloudflare Worker と Durable Object を使います。登録済みの認可コードを、受付から最大300秒、かつ開始から最大600秒の範囲で一時的に保持し、認可を開始したサーバへ一度だけ渡します。長期トークン、client secret、PKCE verifier は預かり所へ送りません。消費または失効時にアプリケーション上のコードを削除します。未登録などの場合は従来の戻り URL を貼る経路になります。</p>
+<h2>報告</h2>
+<p>招待された利用者のセッションは、不具合と要望を報告できます。報告は運営者のサーバの私有の置き場に、アカウント・プロジェクト・題・本文・再現手順・返事とともに保存します。秘密らしき文字列（token など）を含む報告は、保存せずに断ります。変更ログには、報告が置かれた・返事した・閉じたことだけを、本文なしで残します。</p>
+<h2>運営者のサーバに保存するもの</h2>
+<ul>
+  <li>長期の認証情報（媒体の token、Bluesky の App Password）。所有者だけが読めるファイルに置き、媒体の API への認証に使います。</li>
+  <li>アカウントの設定。運用通知を受け取るメールアドレス（任意）を含みます。</li>
+  <li>下書き、承認の記録、公開した本文そのもの、投稿の履歴。</li>
+  <li>上に書いた実測・返信・言及、検査を通った添付。</li>
+  <li>実行記録（操作・原稿のファイル・投稿 ID・件数・状態）、報告、管理の変更ログ。</li>
+</ul>
+<p>キーワード検索の結果の本文と投稿者、参照した公開プロフィール、承認 secret は保存しません。</p>
+<h2>データの行き先</h2>
+<ul>
+  <li>接続したアカウントの媒体の API。</li>
+  <li>Cloudflare 上の thth.me（Workers・Durable Objects・R2）: 認可の預かり所、承認ページ、添付の受け渡し、データ削除の依頼。</li>
+  <li>運用通知のメール（設定したときだけ）。運営者のメールサーバから、アカウント名・原稿のファイル名・状態・時刻・理由を送ります。本文は含みません。</li>
+  <li>死活監視（設定したときだけ）。アカウント名・実行の状態・原稿のファイル名・理由を送ります。本文は含みません。</li>
+  <li>Git: アカウントの記録は Git のリポジトリに置きます。招待された利用者の分は、サーバがリポジトリとその送り先をサーバの中に作ります。運営者自身のアカウントは、外部に送り先を持つリポジトリを使うことがあり、記録はそこへ送られます。</li>
+</ul>
+<p>thth.me のページは第三者のスクリプト・フォント・解析ツールを読み込みません。Worker のアプリケーション観測ログは無効にしていますが、基盤全体に記録が存在しないとの保証はしません。流量制限では、アクセス元の IP アドレスのハッシュを Cloudflare の流量制限に渡します。THTH の記録に IP アドレスは書きません。</p>
+<h2>AI（LLM）のセッション</h2>
+<p>THTH 自身は AI モデルの提供者へデータを送りません。利用者は自分の LLM のセッション（例: MCP）から THTH を使います。道具がそのセッションに返したものは、利用者とその提供者との取り決めのもとで、そのセッションの LLM 提供者に渡ります。道具によって、本人の下書き・投稿の履歴・実測・報告と、公開の返信・言及・検索結果の本文または短い抜粋（先頭 60 字まで）、リンク、投稿者の名前または戻せない鍵を含みます。</p>
 <h2>停止とデータの削除</h2>
-<p>現在の <code>/deauthorize</code> と <code>/data-deletion</code> の応答は、サーバ内のアカウントやデータを削除したことを示しません。停止・削除については運営者へ連絡してください。自動の失効・削除・記録とこれらのURL の接続は、別の版で実装・検証する予定です。</p>
+<p>運営者は <code>thth account leave</code> でアカウントの利用を終えます。サーバと thth.me でアカウントを止め、媒体が許す範囲で権限を失効させます。Mastodon と X は、THTH が媒体に token の失効を求めます。Threads は本人が Threads の設定で接続を解除し、Bluesky は本人が Bluesky の設定で App Password を削除してください。</p>
+<p>続けて、そのアカウント専用の認証情報のファイル、設定の項目、サーバの state（実行記録・投稿の履歴と、そこに置いた実測・返信・言及）、サーバ側のリポジトリを削除し、退出（時刻・実行者・削除した種類と件数）を変更ログに残します。他のアカウントと共有しているファイルと、外部のリポジトリは残します。報告と変更ログはこの手順では消えません。</p>
+<p>Meta からのデータ削除の依頼: <code>https://thth.me/data-deletion</code> が署名付きの依頼を受け付け、確認コードと状況の URL（<code>https://thth.me/data-deletion-status?code=…</code>）を返します。受付は自動です。その後、運営者がサーバで署名を検証して Threads のアカウントと照合し、上の退出を実行します。状況の URL は未照合・照合済み・完了を示します。依頼は thth.me に 30 日保持します。<code>/deauthorize</code> の応答と依頼の受付だけでは、データを削除したことを示しません。停止や削除は運営者へ連絡して求めることもできます。</p>
+<h2>保持</h2>
+<ul>
+  <li>預かり所の認可コード: 受付から最大300秒。</li>
+  <li>承認ページとその画像の表示: 最大600秒。</li>
+  <li>R2 の添付: 置いてから24時間で削除（画像の表示は期限が来たとき）。</li>
+  <li>thth.me のデータ削除の依頼: 30日。</li>
+  <li>送った運用通知（サーバの通知の記録）: 30日（最大50件）。</li>
+  <li>運営者のサーバの認証情報・設定・下書き・投稿の履歴・実測・返信・言及・添付・実行記録: 退出まで。</li>
+  <li>報告と変更ログ: 期限を定めていません。</li>
+</ul>
+<p>Cloudflare SQLite Durable Object の PITR は30日間の復元履歴を持つため、論理削除をバックアップからの即時物理消去とは約束しません。アプリケーション上の記録の削除は、Cloudflare 内部のバックアップや物理消去まで保証する説明ではありません。</p>
 <h2>連絡先</h2>
-<p>このポリシーについての質問は <a href="https://github.com/aokings/thth/issues">https://github.com/aokings/thth/issues</a> へ。運用者: gotoq。</p>
+<p>このポリシーについての質問は <a href="https://github.com/aokings/thth/issues">https://github.com/aokings/thth/issues</a> へ。運営者: gotoq。</p>
 <h2>変更</h2>
-<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。</p>
+<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。今回の改訂では、運営者が動かすサービスの形、媒体ごとに使うデータ、返信と言及、キーワード検索、添付、報告、LLM のセッション、退出と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。</p>
 <footer><a href="/">THTH</a> · Free and open source · MIT License<br>© 2026 gotoq</footer>
 </main></body></html>
