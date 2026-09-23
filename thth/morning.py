@@ -37,8 +37,11 @@ REASONS = ("provider_timeout", "budget_exhausted", "scope_missing",
 # 本文の見せ方は `where` と同じ（先頭 60 字・保存しない）。
 PREVIEW_CHARS = threads_read_cli_mod.TEXT_PREVIEW_CHARS
 
-# 第 1 段で数える未回答の窓（`thth unanswered` の既定と同じ）。
-UNANSWERED_SINCE = "7d"
+# 第 1 段で数える未回答の窓は台帳の `collect_days`（採集が返信を取りに行く日数・
+# 既定 14）。以前は 7 日固定で、145 時間前の行があと 1 日で窓から落ちるところだった
+# （3.1.1）。窓の残りがこれを切った行に `window_edge` を立てる。
+UNANSWERED_DEFAULT_DAYS = 14
+WINDOW_EDGE_HOURS = 24
 # 第 3 段が 1 語あたりに要求する件数と、絡みに行く先として並べる上限。
 WORLD_LIMIT = 25
 ENGAGE_TARGETS = 3
@@ -179,19 +182,42 @@ def _tool_section(handoff):
 
 # --------------------------------------------------------------- 第 1 段
 
-def _unanswered_rows(name, now, allowed_names=None):
+def _unanswered_days(cfg):
+    """未回答の窓の日数と、その出所（`collect_days` か既定か）。"""
+    raw = (cfg or {}).get("collect_days")
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        return UNANSWERED_DEFAULT_DAYS, "default"
+    if isinstance(raw, bool) or days < 1:
+        return UNANSWERED_DEFAULT_DAYS, "default"
+    return days, "collect_days"
+
+
+def _unanswered_rows(name, now, allowed_names=None, cfg=None):
     from . import unanswered as unanswered_mod
-    result = unanswered_mod.answer(name, since=UNANSWERED_SINCE, now=now,
+    days, source = _unanswered_days(cfg)
+    result = unanswered_mod.answer(name, since=f"{days}d", now=now,
                                    **({} if allowed_names is None
                                       else {"allowed_names": tuple(allowed_names)}))
+    limit = days * 24
+
+    def edge(age):
+        # 窓の残りが WINDOW_EDGE_HOURS を切った行（次の朝には窓の外かもしれない）。
+        return age is not None and limit - age < WINDOW_EDGE_HOURS
+
     rows = [{"post_id": row["post_id"], "reply_id": row["reply_id"],
              "author_key": row.get("author_key"),
              "age_hours": row.get("age_hours"),
+             "window_edge": edge(row.get("age_hours")),
+             "hours_to_window_edge": (round(limit - row["age_hours"], 1)
+                                      if row.get("age_hours") is not None else None),
              "permalink": row.get("permalink"),
              "preview": _preview(row.get("preview"))}
             for row in result["replies"]]
     return {"n": result["n_total"], "denominator": result["n_total"],
-            "window": result["window"], "items": rows,
+            "window": {**result["window"], "days": days, "days_source": source},
+            "items": rows,
             "collection_stale_hours": result.get("collection_stale_hours"),
             "cannot_say": list(result.get("cannot_say") or [])}
 
@@ -617,7 +643,7 @@ def build(target, *, now=None, mark=True, allowed_names=None):
             continue
         unanswered_entries[name] = _guard(lambda name=name, cfg=cfg: {
             "medium": cfg.get("media"),
-            "replies": _guard(lambda: _unanswered_rows(name, now, allowed_names)),
+            "replies": _guard(lambda: _unanswered_rows(name, now, allowed_names, cfg)),
             "mentions": _mentions_rows(name, cfg, now, counter)})
 
     # 第 2 段: 昨日の自分。
@@ -785,10 +811,12 @@ def _render_unanswered(account, node, out) -> None:
     else:
         rows = replies["value"]
         out(f"  {account}（{node['medium']}）: 未回答の返信 {rows['n']} 件"
-            f"（窓 {rows['window']['since'] or '—'} 以降）")
+            f"（窓 {rows['window'].get('days') or '—'} 日・{rows['window']['since'] or '—'} 以降）")
         for row in rows["items"]:
+            warn = (f"  ⚠ 窓まで {row['hours_to_window_edge']}h"
+                    if row.get("window_edge") else "")
             out(f"    {_hours(row['age_hours'])}  {row['post_id']} ← {row['reply_id']}"
-                f"  {row['preview']}")
+                f"{warn}  {row['preview']}")
     if mentions["cannot_say"] is not None:
         out(f"  {account}: 言及: 言えない: {mentions['cannot_say']}")
         return
