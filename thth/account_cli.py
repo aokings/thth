@@ -525,12 +525,15 @@ def register(sub) -> None:
     p.add_argument("--notification-email-file", help="利用者の通知先メール1件を記した private file")
     p.add_argument("--repo-dir", default=None, dest="repo_dir",
                    help="`add` のとき: 原稿 repo（既定 `$THTH_ROOT/repos/<project>`）")
+    p.add_argument("--plaza-open", default="delete", choices=("delete", "keep"), dest="plaza_open",
+                   help="`leave` のとき: 施策の広場の open の書き込みを消すか（delete・既定）、"
+                        "「退出した持ち主」の名義で残すか（keep）。project 範囲の書き込みは常に消す")
     p.add_argument("--dry-run", action="store_true", dest="dry_run",
                    help="`migrate` のとき: 何も書かずに計画だけ出す")
     p.add_argument("--force", action="store_true",
                    help="`add` のとき: repo の中の台帳が読めなくなるのを承知で進む")
     p.epilog = ("thth account                     全アカウントの状態を一枚で\n"
-                "thth account leave <name> --by <actor> 停止・失効・所有物の削除（CLIのみ）\n"
+                "thth account leave <name> --by <actor> [--plaza-open delete|keep] 停止・失効・所有物の削除（CLIのみ）\n"
                 "thth account <name>              1 本の状態を一枚で\n"
                 "thth account migrate [--dry-run] repo の中の台帳を "
                 "$THTH_ROOT/accounts/ へ写す（copy・repo は触らない）\n"

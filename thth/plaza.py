@@ -272,7 +272,14 @@ def _project_of(target):
         if not project:
             raise PlazaError("plaza_project_required")
         return project
-    return target
+    # 台帳に 1 本も無い project は参加させない（綴りの違いで空の持ち主を作らない）。
+    for name in names:
+        try:
+            if accounts.load_account(name).get("project") == target:
+                return target
+        except accounts.AccountError:
+            continue
+    raise PlazaError("invalid_account")
 
 
 def set_membership(target, *, joined, by, via="cli", now=None):

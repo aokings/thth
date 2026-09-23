@@ -344,9 +344,13 @@ def _confirm_completion(row):
     return public(row)
 
 
-def run(account,*,by):
+PLAZA_OPEN=('delete','keep')
+
+
+def run(account,*,by,plaza_open='delete'):
     admin_log.actor(by)
     if not accounts.name_is_safe(account):raise ValueError('invalid_account')
+    if plaza_open not in PLAZA_OPEN:raise ValueError('invalid_plaza_open')
     # Serialize leave attempts outside every deletable directory. This lock is
     # not used by normal operations and never reverses their repo/account order.
     with server_files.directory(gate.location(),create=True,private=True) as fd:
@@ -354,6 +358,13 @@ def run(account,*,by):
             result=_run_locked(account,by=by)
             from . import deletion
             deletion.complete_for(account,read(account))
+            # 施策の広場（設計 3.4.0 §6）: この account が置いた project 範囲の書き込みは
+            # 消す。open の書き込みは退出時の選択で「退出した持ち主」の名義で残すか消す
+            # （既定は消す）。何度呼んでも同じ結果なので、失敗したら leave を再実行すれば
+            # 続きから消える（`leave_incomplete`）。
+            from . import plaza
+            try:plaza.purge_account(account,keep_open=plaza_open=='keep',by=by)
+            except plaza.PlazaError:raise ValueError('plaza_cleanup_incomplete') from None
             return result
 
 
@@ -451,7 +462,7 @@ def command(args):
     import sys
     from .lock import LockBusy
     try:
-        result=run(args.name,by=args.by)
+        result=run(args.name,by=args.by,plaza_open=getattr(args,'plaza_open',None) or 'delete')
         if args.json:print(json.dumps(result,ensure_ascii=False))
         else:
             print('local_complete: '+args.name)
