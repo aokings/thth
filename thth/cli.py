@@ -3502,6 +3502,11 @@ def build_parser() -> argparse.ArgumentParser:
     from . import report_inbox
     report_inbox.register(sub)
 
+    # `thth plaza post|list|show|reply|update`（設計 3.4.0・施策の広場）。口の中身は
+    # `thth/plaza_cli.py` に閉じる——ここに足すのはこの 2 行だけ。
+    from . import plaza_cli
+    plaza_cli.register(sub)
+
     return p
 
 

@@ -360,6 +360,9 @@ def register(sub):
     # 報告の口（設計 3.1.2）。口の中身は `thth/report_inbox.py` に閉じる。
     from . import report_inbox
     report_inbox.register_admin(commands)
+    # 施策の広場（設計 3.4.0）。口の中身は `thth/plaza_cli.py` に閉じる。
+    from . import plaza_cli
+    plaza_cli.register_admin(commands)
     for name in OPERATIONS:
         p = commands.add_parser(name)
         p.add_argument('--json', action='store_true')

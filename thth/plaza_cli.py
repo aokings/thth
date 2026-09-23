@@ -1,0 +1,350 @@
+"""施策の広場の CLI（設計 3.4.0 §4）。口の中身は `thth/plaza.py` に閉じる。
+
+利用者: `thth plaza post|list|show|reply|update`。管理者: `thth admin plaza
+join|leave|hide|list|show`。
+
+**CLI でも読む側を名指しする**（`show`・`reply`・`update` の `--as`）。VM の CLI は
+複数の持ち主の台帳を持つので、「誰として読むか」を言わないと他の持ち主の project
+範囲の書き込みまで読めてしまう。報告の口の `report show` は範囲を取らないが、
+広場は他の持ち主の書き込みが同じ置き場にあるのが常態なので名指しを必須にした。
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+
+from . import jst, plaza, plaza_observe, private_store
+
+
+def _print_refusal(args, error):
+    reason = str(error)
+    print(f"{reason}: {plaza.NEXT.get(reason, '')}".rstrip(": "), file=sys.stderr)
+    if getattr(args, "json", False):
+        payload = {"cannot_say": [reason]}
+        if error.plaza_id:
+            payload["plaza_id"] = error.plaza_id
+        print(json.dumps(payload, ensure_ascii=False))
+    elif error.plaza_id:
+        print(f"既存の書き込み: {error.plaza_id}", file=sys.stderr)
+    return 2
+
+
+def _read(path, limit):
+    return private_store.read_input(path, limit, error=plaza.PlazaError, invalid="invalid_post")
+
+
+def _emit(args, payload, render):
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        render(payload)
+    return 0
+
+
+# ------------------------------------------------------------------ 人向け
+
+def render_list(payload, out=print):
+    label = {"own": "自分の持ち主の書き込み", "open": "open の広場", "all": "全部（管理者）"}
+    out(f"広場 {payload['n']} 件（{label.get(payload['filter'], payload['filter'])}）")
+    for row in payload["posts"]:
+        verdict = f"  判定: {plaza.VERDICT_LABELS[row['verdict']]}" if row.get("verdict") else ""
+        hidden = "  [非表示]" if row.get("hidden") else ""
+        who = row.get("account") or row["owner"]
+        out(f"  {row['plaza_id']}  {plaza.KIND_LABELS[row['kind']]}  {row['scope']}"
+            f"  {who}（{row.get('medium') or '—'}）  返信 {row['n_replies']}"
+            f"  {row['title']}{verdict}{hidden}")
+    if payload.get("unreadable"):
+        out(f"  読めない書き込み: {payload['unreadable']} 件")
+
+
+def _fmt(value):
+    return "—" if value is None else (f"+{value}" if isinstance(value, (int, float)) and value > 0
+                                      else str(value))
+
+
+def render_comparison(table, out=print):
+    """媒体をまたぐ比較の表（列 = 媒体・行 = 指標・値は差と両群の分母）。"""
+    heads = [f"{c['medium'] or '—'}" + ("（試した）" if c["source"] == "tried" else "")
+             for c in table["columns"]]
+    out(f"[媒体をまたぐ比較] {plaza_observe.LABEL}・観測上の差（因果ではない）")
+    out("  指標 | " + " | ".join(heads))
+    for metric in table["metrics"]:
+        cells = []
+        for cell in table["rows"][metric]:
+            if cell["observational_difference"] is None:
+                cells.append(f"— ({cell['reason']})")
+            else:
+                cells.append(f"{_fmt(cell['observational_difference'])}"
+                             f"（n={cell['baseline_n_eligible']}/{cell['changed_n_eligible']}）")
+        out(f"  {metric} | " + " | ".join(cells))
+
+
+def render_post(payload, out=print):
+    kind = plaza.KIND_LABELS[payload["kind"]]
+    out(f"{payload['plaza_id']}  {kind}  {payload['scope']}  置いた: {payload['at']}"
+        f"  {payload.get('account') or payload['owner']}（{payload.get('medium') or '—'}）")
+    if payload.get("hidden"):
+        hidden = payload["hidden"]
+        out(f"[非表示] {hidden.get('at')}  理由: {hidden.get('reason')}")
+    out(f"題: {payload['title']}")
+    if payload.get("hypothesis"):
+        out(f"仮説: {payload['hypothesis']}")
+    if payload.get("change"):
+        out(f"変えたこと: {payload['change']}")
+    out("")
+    out(f"[{plaza_observe.TEXT_LABEL}]")
+    out(payload["body"])
+    numbers = payload["text_numbers"]["values"]
+    if numbers:
+        out(f"  本文に書かれた数字（観測ではない）: {'・'.join(numbers)}")
+    out("")
+    observation = payload.get("observation")
+    if observation is None:
+        why = {"not_a_measure": "施策ではないので道具は数字を付けていません",
+               "no_declaration": "宣言が無いので道具は数字を付けていません"}
+        out(f"[{plaza_observe.LABEL}] なし（{why.get(payload.get('observation_reason'), '—')}）")
+    else:
+        latest = observation["latest"]
+        out(f"[{plaza_observe.LABEL}] 最新 {latest['at']}（{latest['trigger']}）"
+            f"・置いた時点 {observation['first']['at']}・履歴 {observation['n_history']} 回"
+            + ("・置いた時点から数字が変わった" if observation["changed_since_first"] else ""))
+        for column in latest["columns"]:
+            if not column.get("observed"):
+                out(f"  {column.get('medium') or '—'}: 取れない（{column.get('reason')}）")
+                continue
+            base, changed = column["denominators"]["baseline"], column["denominators"]["changed"]
+            out(f"  {column.get('medium') or '—'}: 前 {base['eligible']}/{base['requested']} 件"
+                f"・後 {changed['eligible']}/{changed['requested']} 件（時間適合/指定）")
+    if payload.get("comparison"):
+        render_comparison(payload["comparison"], out)
+    verdict = payload.get("verdict")
+    if verdict:
+        out(f"[判定] {plaza.VERDICT_LABELS[verdict['verdict']]}  {verdict.get('at')}"
+            f"  理由: {verdict.get('reason') or '—'}")
+    out("")
+    out(f"[返信 {payload['n_replies']} 件]")
+    for row in payload["replies"]:
+        who = row.get("by") or row["owner"]
+        link = f"  施策 {row['measure_id']}" if row.get("measure_id") else ""
+        out(f"- {row['at']}  {plaza.REPLY_LABELS[row['kind']]}  {who}"
+            f"（{row.get('medium') or '—'}）{link}")
+        for line in (row.get("text") or "").splitlines():
+            out(f"  {line}")
+
+
+# ------------------------------------------------------------------ 利用者
+
+def cmd_post(args) -> int:
+    try:
+        plaza.poster(args.by)
+        now = jst.now_jst()
+        declarations = [plaza.load_declaration_file(path, now) for path in args.declaration or []]
+        result = plaza.post(args.account, kind=args.kind, title=args.title,
+                            body=_read(args.body_file, plaza.BODY_MAX), by=args.by,
+                            declarations=declarations, hypothesis=args.hypothesis,
+                            change=args.change, until=args.until, min_n=args.min_n,
+                            visibility="open" if args.open else "project", via="cli", now=now)
+    except plaza.PlazaError as error:
+        return _print_refusal(args, error)
+
+    def render(result):
+        print(f"広場に置きました: {result['plaza_id']}（{plaza.KIND_LABELS[result['kind']]}・"
+              f"{result['scope']}・{result['account']}）")
+        if result["observed"]:
+            print(f"観測は道具が付けました（宣言 {result['n_targets']} 件）。"
+                  f"thth plaza show {result['plaza_id']} --as {result['account']} で読めます")
+    return _emit(args, result, render)
+
+
+def cmd_list(args) -> int:
+    try:
+        payload = plaza.list_posts(plaza.viewer_for_target(args.target), open_only=args.open)
+    except plaza.PlazaError as error:
+        return _print_refusal(args, error)
+    return _emit(args, payload, render_list)
+
+
+def cmd_show(args) -> int:
+    try:
+        payload = plaza.show(args.plaza_id, plaza.viewer_for_target(args.viewer))
+    except plaza.PlazaError as error:
+        return _print_refusal(args, error)
+    return _emit(args, payload, render_post)
+
+
+def cmd_reply(args) -> int:
+    try:
+        plaza.poster(args.by)
+        viewer = plaza.viewer_for_target(args.viewer)
+        result = plaza.reply(args.plaza_id, account=args.viewer, kind=args.kind,
+                             text=_read(args.text_file, plaza.REPLY_MAX), measure_id=args.measure,
+                             by=args.by, viewer=viewer, via="cli")
+    except plaza.PlazaError as error:
+        return _print_refusal(args, error)
+    return _emit(args, result, lambda r: print(
+        f"返信しました: {r['plaza_id']}（{plaza.REPLY_LABELS[r['kind']]}・返信 {r['n_replies']} 件）"))
+
+
+def cmd_update(args) -> int:
+    try:
+        plaza.poster(args.by)
+        viewer = plaza.viewer_for_target(args.viewer)
+        result = plaza.update(args.plaza_id, account=args.viewer, by=args.by, viewer=viewer,
+                              refresh=args.refresh, verdict=args.verdict, reason=args.reason,
+                              visibility=args.visibility, via="cli")
+    except plaza.PlazaError as error:
+        return _print_refusal(args, error)
+    return _emit(args, result, lambda r: print(
+        f"更新しました: {r['plaza_id']}（{r['scope']}・判定 "
+        f"{plaza.VERDICT_LABELS.get(r['verdict'], '—') if r['verdict'] else '—'}・"
+        f"観測 {r['n_observations']} 回）"))
+
+
+def register(sub) -> None:
+    parser = sub.add_parser(
+        "plaza",
+        help="施策の広場（同じ持ち主の媒体どうしで施策と結果を見せ合い、意見を交わす）",
+        description=f"{plaza.WELCOME}。施策（measure・観測は道具が付ける）・気づき（finding）・"
+                    "問い（question）を置き、返信（comment・tried・agree・disagree）を足す"
+                    "（設計 3.4.0）。既定の範囲は project（同じ持ち主の全 account）。--open は"
+                    "参加した他の持ち主にも見える広場で、他人の本文・username・author_key は"
+                    "道具が落とします。秘密らしき値が含まれていたら置きません。",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    operations = parser.add_subparsers(dest="plaza_command", required=True)
+
+    poster = operations.add_parser(
+        "post", help="1 件置く（plaza_id が返る）",
+        description=f"title は {plaza.TITLE_MAX} 字・本文は {plaza.BODY_MAX} 字まで。1 account "
+                    f"につき直近 24 時間で {plaza.DAILY_LIMIT} 件（置く＋返信）まで。measure は "
+                    "--declaration（study-report の宣言 JSON・媒体ごとに 1 つ）を並べると、"
+                    "道具が同じ計算で観測を付けます。")
+    poster.add_argument("account")
+    poster.add_argument("--kind", required=True, choices=plaza.KINDS)
+    poster.add_argument("--title", required=True)
+    poster.add_argument("--body-file", required=True, dest="body_file",
+                        help="本文のファイル（VM 側のパス。`-` は標準入力）")
+    poster.add_argument("--declaration", action="append", default=None,
+                        help="施策の宣言 JSON（study-report の形・同じ持ち主の account・繰り返せる）")
+    poster.add_argument("--hypothesis", default=None, help="仮説（省略すると最初の宣言の仮説）")
+    poster.add_argument("--change", default=None, help="変えたこと（省略すると最初の宣言の変更）")
+    poster.add_argument("--until", default=None, help="期間の終わり（timezone 付きの時刻・任意）")
+    poster.add_argument("--min-n", type=int, default=5, dest="min_n",
+                        help="比べるのに要る各群の最小件数（study-report と同じ・既定 5）")
+    poster.add_argument("--open", action="store_true",
+                        help="参加した他の持ち主にも見せる（1 件ごとの明示の選択・後から戻せる）")
+    poster.add_argument("--by", default=None, help="誰が置いたか（必須）")
+    poster.add_argument("--json", action="store_true")
+    poster.set_defaults(func=cmd_post)
+
+    lister = operations.add_parser("list", help="自分の持ち主の書き込み（--open は open の広場）")
+    lister.add_argument("target", metavar="account|project")
+    lister.add_argument("--open", action="store_true",
+                        help="open の広場（参加した持ち主の open の書き込み）を読む")
+    lister.add_argument("--json", action="store_true")
+    lister.set_defaults(func=cmd_list)
+
+    viewer = operations.add_parser("show", help="1 件の本文・観測・媒体をまたぐ比較・返信を読む")
+    viewer.add_argument("plaza_id")
+    viewer.add_argument("--as", required=True, dest="viewer", metavar="account|project",
+                        help="誰として読むか（その持ち主から見える範囲だけ）")
+    viewer.add_argument("--json", action="store_true")
+    viewer.set_defaults(func=cmd_show)
+
+    replier = operations.add_parser(
+        "reply", help="返信を 1 つ足す（tried は自分の施策の id・disagree は理由が必須）")
+    replier.add_argument("plaza_id")
+    replier.add_argument("--as", required=True, dest="viewer", metavar="account",
+                         help="返信する account（その持ち主から見える書き込みにだけ返せる）")
+    replier.add_argument("--kind", required=True, choices=plaza.REPLY_KINDS)
+    replier.add_argument("--text-file", default=None, dest="text_file",
+                         help=f"返信の文のファイル（`-` は標準入力・{plaza.REPLY_MAX} 字まで）")
+    replier.add_argument("--measure", default=None,
+                         help="tried のとき: うちで試した自分の施策の plaza_id")
+    replier.add_argument("--by", default=None, help="誰が返したか（必須）")
+    replier.add_argument("--json", action="store_true")
+    replier.set_defaults(func=cmd_reply)
+
+    updater = operations.add_parser(
+        "update", help="施策の結果の更新（観測の取り直し）・判定・範囲の変更（置いた持ち主だけ）")
+    updater.add_argument("plaza_id")
+    updater.add_argument("--as", required=True, dest="viewer", metavar="account")
+    updater.add_argument("--refresh", action="store_true", help="観測を取り直す（履歴に足す）")
+    updater.add_argument("--verdict", default=None, choices=plaza.VERDICTS)
+    updater.add_argument("--reason", default=None, help="判定の理由（--verdict のとき必須）")
+    updater.add_argument("--visibility", default=None, choices=plaza.SCOPES,
+                         help="open にする・project に戻す")
+    updater.add_argument("--by", default=None, help="誰が更新したか（必須）")
+    updater.add_argument("--json", action="store_true")
+    updater.set_defaults(func=cmd_update)
+
+
+# ------------------------------------------------------------------ 管理者
+
+def cmd_admin_membership(args) -> int:
+    try:
+        result = plaza.set_membership(args.project, joined=args.plaza_admin == "join",
+                                      by=args.by, via="cli")
+    except plaza.PlazaError as error:
+        return _print_refusal(args, error)
+    return _emit(args, result, lambda r: print(
+        f"{'参加' if r['joined'] else '退出'}: {r['project']}"
+        + ("" if r["changed"] else "（既にその状態です）")))
+
+
+def cmd_admin_hide(args) -> int:
+    try:
+        result = plaza.hide(args.plaza_id, by=args.by, reason=args.reason, via="cli")
+    except plaza.PlazaError as error:
+        return _print_refusal(args, error)
+    return _emit(args, result, lambda r: print(f"非表示にしました: {r['plaza_id']}"))
+
+
+def cmd_admin_list(args) -> int:
+    try:
+        payload = plaza.admin_list()
+    except plaza.PlazaError as error:
+        return _print_refusal(args, error)
+
+    def render(payload):
+        render_list(payload)
+        print("参加している持ち主: " + ("・".join(payload["joined_projects"]) or "なし"))
+    return _emit(args, payload, render)
+
+
+def cmd_admin_show(args) -> int:
+    try:
+        payload = plaza.show(args.plaza_id, plaza.Viewer(admin=True))
+    except plaza.PlazaError as error:
+        return _print_refusal(args, error)
+    return _emit(args, payload, render_post)
+
+
+def register_admin(commands) -> None:
+    """`thth admin plaza join|leave|hide|list|show`（設計 3.4.0 §4）。"""
+    parser = commands.add_parser(
+        "plaza", help="施策の広場（参加・非表示・全件の一覧）",
+        description="持ち主（project）の広場への参加と退出、問題のある書き込みの非表示、"
+                    "全件の一覧（設計 3.4.0）。参加の既定は不参加です。")
+    operations = parser.add_subparsers(dest="plaza_admin", required=True)
+    for verb, text in (("join", "持ち主（project）を広場の open に参加させる"),
+                       ("leave", "持ち主（project）を広場の open から外す")):
+        member = operations.add_parser(verb, help=text)
+        member.add_argument("project", help="project 名（account 名ならその project）")
+        member.add_argument("--by", default=None, help="誰が変えたか（必須）")
+        member.add_argument("--json", action="store_true")
+        member.set_defaults(func=cmd_admin_membership)
+    hider = operations.add_parser("hide", help="書き込みを非表示にする（理由つき・変更ログ）")
+    hider.add_argument("plaza_id")
+    hider.add_argument("--reason", required=True)
+    hider.add_argument("--by", default=None, help="誰が非表示にしたか（必須）")
+    hider.add_argument("--json", action="store_true")
+    hider.set_defaults(func=cmd_admin_hide)
+    lister = operations.add_parser("list", help="全部の書き込み（非表示も含む）")
+    lister.add_argument("--all", action="store_true", help="全部（既定も全部）")
+    lister.add_argument("--json", action="store_true")
+    lister.set_defaults(func=cmd_admin_list)
+    viewer = operations.add_parser("show", help="1 件の原本（非表示も含む）")
+    viewer.add_argument("plaza_id")
+    viewer.add_argument("--json", action="store_true")
+    viewer.set_defaults(func=cmd_admin_show)
