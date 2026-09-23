@@ -86,6 +86,11 @@ def _relations(name, cfg, now):
     return roots, answered, reasons, owned
 
 
+# `collection_stale_hours` の数え始め（設計 3.7.0 §B2）: 根投稿ごとの最後の取得の成功
+# （0 件の成功を含む）のうち最も古いもの。返信が 1 件以上取れた時刻ではない。
+STALE_BASIS = 'oldest_root_last_successful_fetch'
+
+
 def answer(account_name, *, since='7d', now=None, allowed_names=None):
     if allowed_names is None:
         allowed_names = replies.active_report_scope()
@@ -189,10 +194,21 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
     stale = max(((now-at).total_seconds()/3600 for at in observed.values()), default=None)
     if roots-set(observed):reasons.add('collection_not_recorded')
     if stale is not None and stale>24:reasons.add('collection_stale_hours')
+    # **何の時刻から数えたか**（設計 3.7.0 §B2）。`collection_stale_hours` は、根投稿
+    # ごとの「最後に取得が成功した時刻」（`kind: fetch` の行・返信 0 件の成功も書く・
+    # 失敗した試行は台帳に残らない）のうち**いちばん古いもの**からの時間。返信が
+    # 1 件以上取れた時刻とは別物なので、両方の時刻を添える。
+    last_reply = max((at for at in (jst.parse(row.get('collected_at')) for row in selected)
+                      if at is not None and at <= now), default=None)
+    stale_since = min(observed.values()) if observed else None
     rows.sort(key=lambda row: (-row['age_hours'], row['reply_id']))
     return dict(account=account_name, n_total=len(rows), replies=rows,
                 window=dict(since=jst.iso(floor) if floor else None, until=jst.iso(now), basis='reply_timestamp'),
                 collection_stale_hours=round(stale, 3) if stale is not None else None,
+                collection_stale_basis=STALE_BASIS,
+                collection_stale_since=jst.iso(stale_since) if stale_since else None,
+                last_fetch_at=jst.iso(max(observed.values())) if observed else None,
+                last_reply_collected_at=jst.iso(last_reply) if last_reply else None,
                 cannot_say=sorted(reasons),
                 summary=dict(n=len(rows), oldest_age_hours=max((r['age_hours'] for r in rows), default=None)))
 

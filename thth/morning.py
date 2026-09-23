@@ -314,6 +314,14 @@ def _unanswered_rows(name, now, allowed_names=None, cfg=None):
             "window": {**result["window"], "days": days, "days_source": source},
             "items": rows,
             "collection_stale_hours": result.get("collection_stale_hours"),
+            # 何の時刻から数えたか（設計 3.7.0 §B2）。`window.since` と混ぜないよう
+            # `collection_stale_since` と呼ぶ。
+            "collection_stale_basis": result.get("collection_stale_basis"),
+            "collection_stale_since": result.get("collection_stale_since"),
+            "last_fetch_at": result.get("last_fetch_at"),
+            "last_fetch_hours": _ago(result.get("last_fetch_at"), now),
+            "last_reply_collected_at": result.get("last_reply_collected_at"),
+            "last_reply_hours": _ago(result.get("last_reply_collected_at"), now),
             "cannot_say": list(result.get("cannot_say") or [])}
 
 
@@ -1135,6 +1143,32 @@ def _render_map(node, out) -> None:
         out("  " + map_view.observe_text(cell))
 
 
+def _ago(stamp, now):
+    at = jst.parse(stamp) if isinstance(stamp, str) else None
+    if at is None or now is None:
+        return None
+    return round((now - at).total_seconds() / 3600, 1)
+
+
+def fetch_line(rows) -> str | None:
+    """返信の取得の 1 行（設計 3.7.0 §B2）。数え始めの時刻を言う（無ければ None）。
+
+    `collection_stale_hours` は根投稿ごとの最後の取得の成功（0 件の成功を含む）の
+    うち最も古いものから。返信が 1 件以上取れた時刻は別に言う。失敗した試行は台帳に
+    残らないので「試した」時刻は言えない。
+    """
+    if rows.get("collection_stale_since") is None:
+        return None
+    stale = rows.get("collection_stale_hours")
+    newest, reply = rows.get("last_fetch_hours"), rows.get("last_reply_hours")
+    return (f"返信の取得: 最後に取得できた（0 件を含む）のは、いちばん古い根投稿で "
+            f"{_hours(stale)}（{rows['collection_stale_since']}）"
+            + (f"・いちばん新しい取得は {newest}h 前" if newest is not None else "")
+            + (f"・返信が 1 件以上取れたのは {reply}h 前" if reply is not None
+               else "・返信が取れた記録はありません")
+            + "（失敗した試行は台帳に残らないので数えていません）")
+
+
 def _render_unanswered(account, node, out) -> None:
     replies, mentions = node["replies"], node["mentions"]
     if replies["cannot_say"] is not None:
@@ -1148,6 +1182,9 @@ def _render_unanswered(account, node, out) -> None:
                     if row.get("window_edge") else "")
             out(f"    {_hours(row['age_hours'])}  {row['post_id']} ← {row['reply_id']}"
                 f"{warn}  {row['preview']}")
+        line = fetch_line(rows)
+        if line:
+            out(f"    {line}")
     if mentions["cannot_say"] is not None:
         out(f"  {account}: 言及: 言えない: {mentions['cannot_say']}")
         return
