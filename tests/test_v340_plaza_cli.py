@@ -27,7 +27,8 @@ def _body(tmp_path, text=BODY, name="body.txt"):
 def _post(tmp_path, capsys, account="kopicha-threads", *, title=SECRET_TITLE, body=SECRET_BODY,
           kind="finding", extra=()):
     rc = cli.main(["plaza", "post", account, "--kind", kind, "--title", title,
-                   "--body-file", _body(tmp_path, body), "--by", "kopicha-session", *extra,
+                   "--body-file", _body(tmp_path, body), "--scope", "Threads の朝の投稿",
+                   "--by", "kopicha-session", *extra,
                    "--json"])
     captured = capsys.readouterr()
     return rc, json.loads(captured.out) if captured.out.strip() else None, captured.err
@@ -54,7 +55,7 @@ def test_post_list_show_の往復(owners, tmp_path, capsys):
 def test_人向けの出力(owners, tmp_path, capsys):
     assert cli.main(["plaza", "post", "kopicha-threads", "--kind", "question", "--title",
                      "Bluesky でタグは効いていますか", "--body-file", _body(tmp_path),
-                     "--by", "s"]) == 0
+                     "--scope", "Bluesky の全投稿", "--by", "s"]) == 0
     out = capsys.readouterr().out
     assert "広場に置きました: p20260909-" in out and "問い" in out
     plaza_id = out.split("広場に置きました: ")[1].split("（")[0]
@@ -102,7 +103,7 @@ def test_show_reply_update_は読む側の名指しが必須(owners, tmp_path, c
 
 def test_断りは理由と次の一手(owners, tmp_path, capsys):
     rc = cli.main(["plaza", "post", "kopicha-threads", "--kind", "finding", "--title", "t",
-                   "--body-file", _body(tmp_path), "--json"])
+                   "--body-file", _body(tmp_path), "--scope", "朝", "--json"])
     captured = capsys.readouterr()
     assert rc == 2 and json.loads(captured.out)["cannot_say"] == ["by_required"]
     assert captured.err.startswith("by_required: --by")

@@ -51,9 +51,13 @@ def render_list(payload, out=print):
         verdict = f"  判定: {plaza.VERDICT_LABELS[row['verdict']]}" if row.get("verdict") else ""
         hidden = "  [非表示]" if row.get("hidden") else ""
         who = row.get("account") or row["owner"]
+        trials = row.get("trials") or {}
+        if trials.get("denominator"):
+            verdict += (f"  追試 {trials['denominator']} 件（再現した {trials['reproduced']}・"
+                        f"再現しなかった {trials['not_reproduced']}・試していない {trials['not_tried']}）")
         out(f"  {row['plaza_id']}  {plaza.KIND_LABELS[row['kind']]}  {row['scope']}"
-            f"  {who}（{row.get('medium') or '—'}）  返信 {row['n_replies']}"
-            f"  {row['title']}{verdict}{hidden}")
+            f"  {who}（{row.get('medium') or '—'}）  {plaza.EVIDENCE_LABELS[row['evidence_level']]}"
+            f"  返信 {row['n_replies']}  {row['title']}{verdict}{hidden}")
     if payload.get("unreadable"):
         out(f"  読めない書き込み: {payload['unreadable']} 件")
 
@@ -88,6 +92,12 @@ def render_post(payload, out=print):
         hidden = payload["hidden"]
         out(f"[非表示] {hidden.get('at')}  理由: {hidden.get('reason')}")
     out(f"題: {payload['title']}")
+    detail = (f"・{plaza.KIND_DETAIL_LABELS[payload['kind_detail']]}"
+              if payload.get("kind_detail") else "")
+    out(f"印: {plaza.EVIDENCE_LABELS[payload['evidence_level']]}{detail}"
+        f"  範囲: {payload.get('scope_note') or '—'}")
+    if payload.get("how"):
+        out(f"出し直し: {payload['how']}（道具は実行していません）")
     if payload.get("hypothesis"):
         out(f"仮説: {payload['hypothesis']}")
     if payload.get("change"):
@@ -122,11 +132,17 @@ def render_post(payload, out=print):
     if verdict:
         out(f"[判定] {plaza.VERDICT_LABELS[verdict['verdict']]}  {verdict.get('at')}"
             f"  理由: {verdict.get('reason') or '—'}")
+    trials = payload["trials"]
+    if trials["denominator"]:
+        out(f"[追試 {trials['denominator']} 件] 再現した {trials['reproduced']}・"
+            f"再現しなかった {trials['not_reproduced']}・試していない {trials['not_tried']}")
     out("")
     out(f"[返信 {payload['n_replies']} 件]")
     for row in payload["replies"]:
         who = row.get("by") or row["owner"]
         link = f"  施策 {row['measure_id']}" if row.get("measure_id") else ""
+        if row.get("result"):
+            link = f"  {plaza.TRIAL_LABELS[row['result']]}" + link
         out(f"- {row['at']}  {plaza.REPLY_LABELS[row['kind']]}  {who}"
             f"（{row.get('medium') or '—'}）{link}")
         for line in (row.get("text") or "").splitlines():
@@ -142,7 +158,8 @@ def cmd_post(args) -> int:
         declarations = [plaza.load_declaration_file(path, now) for path in args.declaration or []]
         result = plaza.post(args.account, kind=args.kind, title=args.title,
                             body=_read(args.body_file, plaza.BODY_MAX), by=args.by,
-                            declarations=declarations, hypothesis=args.hypothesis,
+                            scope_note=args.scope, kind_detail=args.kind_detail, how=args.how,
+                            evidence_level=args.evidence_level, declarations=declarations, hypothesis=args.hypothesis,
                             change=args.change, until=args.until, min_n=args.min_n,
                             visibility="open" if args.open else "project", via="cli", now=now)
     except plaza.PlazaError as error:
@@ -179,6 +196,7 @@ def cmd_reply(args) -> int:
         viewer = plaza.viewer_for_target(args.viewer)
         result = plaza.reply(args.plaza_id, account=args.viewer, kind=args.kind,
                              text=_read(args.text_file, plaza.REPLY_MAX), measure_id=args.measure,
+                             result=args.result,
                              by=args.by, viewer=viewer, via="cli")
     except plaza.PlazaError as error:
         return _print_refusal(args, error)
@@ -224,6 +242,19 @@ def register(sub) -> None:
     poster.add_argument("--title", required=True)
     poster.add_argument("--body-file", required=True, dest="body_file",
                         help="本文のファイル（VM 側のパス。`-` は標準入力）")
+    poster.add_argument("--scope", default=None,
+                        help=f"媒体・企画の範囲（必須・1 行 {plaza.SCOPE_NOTE_MAX} 字まで。"
+                             "読み手が読者層の違いを知るため。例: Threads の朝の投稿・茶の話題）")
+    poster.add_argument("--kind-detail", default=None, dest="kind_detail",
+                        choices=plaza.KIND_DETAILS,
+                        help="finding の細目: pattern（型）・rule（規則）・pitfall（罠）・tool_tip（道具のコツ）")
+    poster.add_argument("--how", default=None,
+                        help="数字を出し直せる thth の命令 1 行（measure は必須・道具は実行しない。"
+                             "例: thth measured kopicha-threads）")
+    poster.add_argument("--evidence-level", default="stated", dest="evidence_level",
+                        choices=plaza.EVIDENCE_LEVELS,
+                        help="見立てと事実の印: stated（本文だけ・既定）・hypothesis（見立て）。"
+                             "observed は道具だけが付けます（名乗ると断ります）")
     poster.add_argument("--declaration", action="append", default=None,
                         help="施策の宣言 JSON（study-report の形・同じ持ち主の account・繰り返せる）")
     poster.add_argument("--hypothesis", default=None, help="仮説（省略すると最初の宣言の仮説）")
@@ -252,7 +283,7 @@ def register(sub) -> None:
     viewer.set_defaults(func=cmd_show)
 
     replier = operations.add_parser(
-        "reply", help="返信を 1 つ足す（tried は自分の施策の id・disagree は理由が必須）")
+        "reply", help="返信を 1 つ足す（tried は自分の施策の id・disagree は理由・trial は結果が必須）")
     replier.add_argument("plaza_id")
     replier.add_argument("--as", required=True, dest="viewer", metavar="account",
                          help="返信する account（その持ち主から見える書き込みにだけ返せる）")
@@ -260,7 +291,10 @@ def register(sub) -> None:
     replier.add_argument("--text-file", default=None, dest="text_file",
                          help=f"返信の文のファイル（`-` は標準入力・{plaza.REPLY_MAX} 字まで）")
     replier.add_argument("--measure", default=None,
-                         help="tried のとき: うちで試した自分の施策の plaza_id")
+                         help="tried（必須）・trial（任意）のとき: うちで試した自分の施策の plaza_id")
+    replier.add_argument("--result", default=None, choices=plaza.TRIAL_RESULTS,
+                         help="trial（追試）のとき必須: reproduced（再現した）・not_reproduced"
+                              "（再現しなかった）・not_tried（試していない）")
     replier.add_argument("--by", default=None, help="誰が返したか（必須）")
     replier.add_argument("--json", action="store_true")
     replier.set_defaults(func=cmd_reply)

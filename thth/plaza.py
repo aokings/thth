@@ -40,11 +40,23 @@ SCHEMA_VERSION = 1
 KINDS = ("measure", "finding", "question")
 KIND_LABELS = {"measure": "施策", "finding": "気づき", "question": "問い"}
 SCOPES = ("project", "open")
-REPLY_KINDS = ("comment", "tried", "agree", "disagree")
-REPLY_LABELS = {"comment": "意見", "tried": "うちでも試した", "agree": "賛成", "disagree": "反対"}
+REPLY_KINDS = ("comment", "tried", "agree", "disagree", "trial")
+REPLY_LABELS = {"comment": "意見", "tried": "うちでも試した", "agree": "賛成", "disagree": "反対",
+                "trial": "追試"}
 # 本文が要る返信（`disagree` は理由必須・設計 §2）。`tried` は自分の measure への
 # リンクが必須で、本文は任意。`agree` は本文を任意にする（賛成の 1 票だけでもよい）。
 REPLY_TEXT_REQUIRED = ("comment", "disagree")
+# finding の細目（利用者側の設計材料 §9-1）: 型・規則・罠・道具のコツ。
+KIND_DETAILS = ("pattern", "rule", "pitfall", "tool_tip")
+KIND_DETAIL_LABELS = {"pattern": "型", "rule": "規則", "pitfall": "罠", "tool_tip": "道具のコツ"}
+# 見立てと事実の印（§9-4）。**observed は道具だけが付ける**——人や LLM が名乗れるのは
+# stated（本文だけ）と hypothesis（見立て）まで。
+EVIDENCE_LEVELS = ("observed", "stated", "hypothesis")
+DECLARABLE_LEVELS = ("stated", "hypothesis")
+EVIDENCE_LABELS = {"observed": "観測あり（道具が付けた）", "stated": "本文だけ", "hypothesis": "見立て"}
+# 追試（§9-2）の結果。**再現しなかった報告を同じ重さで見せる**（一覧と比較の表で並べて数える）。
+TRIAL_RESULTS = ("reproduced", "not_reproduced", "not_tried")
+TRIAL_LABELS = {"reproduced": "再現した", "not_reproduced": "再現しなかった", "not_tried": "試していない"}
 VERDICTS = ("adopted", "dropped", "inconclusive")
 VERDICT_LABELS = {"adopted": "採用", "dropped": "取りやめ", "inconclusive": "判断保留"}
 VIAS = ("cli", "mcp")
@@ -53,6 +65,8 @@ TITLE_MAX = 120
 BODY_MAX = 8000
 REPLY_MAX = 4000
 TEXT_MAX = 4000       # 仮説・変えたこと
+SCOPE_NOTE_MAX = 120  # 媒体・企画の範囲（自由文・§9-5）
+HOW_MAX = 300         # 数字を出し直せる thth の命令（§9-3）
 REASON_MAX = 1000     # 判定の理由・非表示の理由
 DECLARATIONS_MAX = 8  # 1 件の施策に並べる媒体（宣言）の上限
 # 1 account が 1 日に置ける件数（置く＋返信・直近 24 時間で数える・設計 §6）。
@@ -79,6 +93,10 @@ REASONS = frozenset((
     "invalid_declaration", "declaration_out_of_scope", "plaza_project_required",
     "invalid_visibility", "redaction_unavailable", "invalid_until", "nothing_to_update",
     "plaza_hidden", "already_hidden", "invalid_min_n",
+    # 利用者側の設計材料（設計 §9）。
+    "invalid_kind_detail", "scope_required", "how_required", "invalid_how",
+    "observed_is_tool_only", "invalid_evidence_level", "invalid_trial_result",
+    "third_party_handle",
 ))
 
 NEXT = {
@@ -117,6 +135,20 @@ NEXT = {
     "plaza_hidden": "管理者が非表示にした書き込みです。返信・更新はできません",
     "already_hidden": "既に非表示です",
     "invalid_min_n": "--min-n は 1 以上の整数です",
+    "invalid_kind_detail": "--kind-detail は finding にだけ付けられ、pattern（型）・rule（規則）・"
+                           "pitfall（罠）・tool_tip（道具のコツ）のどれかです",
+    "scope_required": f"--scope に媒体・企画の範囲を 1 行（{SCOPE_NOTE_MAX} 字まで）で書いてください"
+                      "（読み手が読者層の違いを知るため。例: Threads の朝の投稿・茶の話題）",
+    "how_required": "施策（measure）には --how に数字を出し直せる thth の命令を 1 行書いてください"
+                    "（例: thth measured kopicha-threads）",
+    "invalid_how": f"--how は `thth ` で始まる 1 行（{HOW_MAX} 字まで）の命令です。道具は実行しません",
+    "observed_is_tool_only": "observed（観測あり）は道具だけが付けます。--evidence-level は stated"
+                             "（本文だけ）か hypothesis（見立て）です",
+    "invalid_evidence_level": "--evidence-level は stated か hypothesis です",
+    "invalid_trial_result": "追試（trial）には --result reproduced・not_reproduced・not_tried の"
+                            "どれかを付けてください",
+    "third_party_handle": "open に出す文に @名前 の形（自分の handle 以外）があります。他の人の名前は"
+                          "open に出せません。消してから置き直してください（project の範囲なら置けます）",
 }
 
 # **置くのは作業の一部と道具が言う**（設計 §5・報告の口 3.3.0 B と同じ型）。
@@ -137,7 +169,9 @@ class PlazaError(ValueError):
 def _valid_reply(row) -> bool:
     return (isinstance(row, dict) and isinstance(row.get("text"), str)
             and row.get("kind") in REPLY_KINDS and jst.parse(row.get("at")) is not None
-            and (row.get("account") is None or accounts.name_is_safe(row.get("account"))))
+            and (row.get("account") is None or accounts.name_is_safe(row.get("account")))
+            and (row.get("result") in TRIAL_RESULTS if row.get("kind") == "trial"
+                 else row.get("result") is None))
 
 
 def _valid(record) -> bool:
@@ -447,9 +481,62 @@ def _owner_accounts(account, project, trusted_accounts=None):
     return result
 
 
+def _scope_note(value):
+    """媒体・企画の範囲（必須・1 行・120 字）。読み手が読者層の違いを知るため（§9-5）。"""
+    if not (isinstance(value, str) and value.strip()):
+        raise PlazaError("scope_required")
+    return _text(value, SCOPE_NOTE_MAX, one_line=True)
+
+
+def _kind_detail(kind, value):
+    """finding の細目（任意）。finding 以外には付けない。"""
+    if value is None:
+        return None
+    if kind != "finding" or value not in KIND_DETAILS:
+        raise PlazaError("invalid_kind_detail")
+    return value
+
+
+def _how(value, *, required):
+    """数字を出し直せる thth の命令（§9-3）。**形だけを検査し、実行はしない。**"""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if required:
+            raise PlazaError("how_required")
+        return None
+    if not isinstance(value, str):
+        raise PlazaError("invalid_how")
+    value = value.strip()
+    if ("\n" in value or "\r" in value or len(value) > HOW_MAX or not value.startswith("thth ")
+            or any(ord(c) < 32 or c == "\x7f" for c in value)):
+        raise PlazaError("invalid_how")
+    return value
+
+
+def _declared_level(value):
+    """人や LLM が名乗れる印（stated・hypothesis）。observed は道具だけ（§9-4）。"""
+    if value is None:
+        return "stated"
+    if value == "observed":
+        raise PlazaError("observed_is_tool_only")
+    if value not in DECLARABLE_LEVELS:
+        raise PlazaError("invalid_evidence_level")
+    return value
+
+
+def evidence_level_of(record):
+    """見立てと事実の印。**道具が付けた観測の列が 1 つでも取れていれば observed**、
+    それ以外は置いた人が名乗った印（stated か hypothesis）。"""
+    history = record.get("observations") or []
+    if history and any(column.get("observed") for column in history[-1].get("columns") or []):
+        return "observed"
+    declared = record.get("declared_level")
+    return declared if declared in DECLARABLE_LEVELS else "stated"
+
+
 # ------------------------------------------------------------------ 置く
 
-def post(account, *, kind, title, body, by, declarations=(), hypothesis=None, change=None,
+def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, how=None,
+         evidence_level="stated", declarations=(), hypothesis=None, change=None,
          until=None, min_n=5, visibility="project", via="cli", project=None, medium=None,
          now=None, trusted_accounts=None):
     """広場に 1 件置く。`plaza_id` を返す。
@@ -472,6 +559,10 @@ def post(account, *, kind, title, body, by, declarations=(), hypothesis=None, ch
         raise PlazaError("invalid_min_n")
     title = _text(title, TITLE_MAX, one_line=True)
     body = _text(body, BODY_MAX)
+    scope_note = _scope_note(scope_note)
+    kind_detail = _kind_detail(kind, kind_detail)
+    how = _how(how, required=kind == "measure")
+    declared_level = _declared_level(evidence_level)
     hypothesis = _text(hypothesis, TEXT_MAX, required=False)
     change = _text(change, TEXT_MAX, required=False)
     until = _until(until)
@@ -500,9 +591,10 @@ def post(account, *, kind, title, body, by, declarations=(), hypothesis=None, ch
         hypothesis = targets[0]["declaration"]["hypothesis"]
     if kind == "measure" and change is None and targets:
         change = targets[0]["declaration"]["change"]
-    _no_secret(title, body, hypothesis, change, by,
+    _no_secret(title, body, hypothesis, change, by, scope_note, how,
                *(json.dumps(t["declaration"], ensure_ascii=False) for t in targets))
     title, body = private_store.fold_paths(title), private_store.fold_paths(body)
+    scope_note = private_store.fold_paths(scope_note)
     hypothesis, change = private_store.fold_paths(hypothesis), private_store.fold_paths(change)
     if visibility == "open":
         if not project:
@@ -517,10 +609,13 @@ def post(account, *, kind, title, body, by, declarations=(), hypothesis=None, ch
     record = {"schema_version": SCHEMA_VERSION, "plaza_id": None, "at": jst.iso(now),
               "updated_at": jst.iso(now), "kind": kind, "scope": visibility,
               "title": title, "body": body, "hypothesis": hypothesis, "change": change,
+              "kind_detail": kind_detail, "scope_note": scope_note, "how": how,
+              "declared_level": declared_level, "evidence_level": None,
               "project": project, "account": account, "medium": medium, "by": by, "via": via,
               "tool_version": __version__, "targets": targets, "until": until, "min_n": min_n,
               "observations": observations, "verdict": None, "replies": [], "hidden": None,
               "open_copy": None}
+    record["evidence_level"] = evidence_level_of(record)
     if visibility == "open":
         # 他人の情報を落とした写しを**置く時点で**作る（読む側は写しだけを見る）。
         plaza_redact.attach_open_copy(record, trusted_accounts=trusted_accounts)
@@ -542,7 +637,7 @@ def post(account, *, kind, title, body, by, declarations=(), hypothesis=None, ch
             "plaza_id": record["plaza_id"], "kind": kind, "scope": visibility,
             "at": record["at"], "account": account, "project": project,
             "n_targets": len(targets), "observed": bool(observations),
-            "tool_version": __version__}
+            "evidence_level": record["evidence_level"], "tool_version": __version__}
 
 
 # ------------------------------------------------------------------ 読む
@@ -565,11 +660,12 @@ def _reply_view(reply_row, viewer, joined, records_by_id):
                 "by": reply_row.get("by"), "account": reply_row.get("account"),
                 "medium": reply_row.get("medium"), "owner": owner_label(reply_row.get("project"),
                                                                          reply_row.get("account")),
-                "measure_id": link, "own": True}
+                "measure_id": link, "result": reply_row.get("result"), "own": True}
     return {"at": reply_row["at"], "kind": reply_row["kind"],
             "text": reply_row.get("open_text") or "",
             "owner": owner_label(reply_row.get("project"), reply_row.get("account")),
-            "medium": reply_row.get("medium"), "measure_id": link, "own": False}
+            "medium": reply_row.get("medium"), "measure_id": link,
+            "result": reply_row.get("result"), "own": False}
 
 
 def summary_row(record, level, viewer=None) -> dict:
@@ -583,7 +679,11 @@ def summary_row(record, level, viewer=None) -> dict:
                 "owner": owner_label(record.get("project"), record.get("account")),
                 "medium": record.get("medium"), "n_replies": len(replies),
                 "last_reply_at": replies[-1]["at"] if replies else None,
-                "verdict": (record.get("verdict") or {}).get("verdict"), "view": "open"}
+                "verdict": (record.get("verdict") or {}).get("verdict"),
+                "kind_detail": record.get("kind_detail"),
+                "evidence_level": evidence_level_of(record),
+                "scope_note": copy.get("scope_note"), "trials": trial_counts(record),
+                "view": "open"}
     return {"plaza_id": record["plaza_id"], "at": record["at"], "kind": record["kind"],
             "scope": record["scope"], "title": record["title"],
             "owner": owner_label(record.get("project"), record.get("account")),
@@ -591,6 +691,8 @@ def summary_row(record, level, viewer=None) -> dict:
             "medium": record.get("medium"), "by": record.get("by"),
             "n_replies": len(replies), "last_reply_at": replies[-1]["at"] if replies else None,
             "verdict": (record.get("verdict") or {}).get("verdict"),
+            "kind_detail": record.get("kind_detail"), "evidence_level": evidence_level_of(record),
+            "scope_note": record.get("scope_note"), "trials": trial_counts(record),
             "hidden": bool(record.get("hidden")), "view": "own"}
 
 
@@ -646,7 +748,8 @@ def show(plaza_id, viewer):
     replies = [_reply_view(row, viewer, joined, records_by_id) for row in record["replies"]]
     linked = []
     for row in record["replies"]:
-        target = records_by_id.get(row.get("measure_id")) if row.get("kind") == "tried" else None
+        target = (records_by_id.get(row.get("measure_id"))
+                  if row.get("kind") in ("tried", "trial") else None)
         if target is not None:
             target_level = access(target, viewer, joined)
             if target_level is not None and target["plaza_id"] not in {r["plaza_id"] for r, _ in linked}:
@@ -657,6 +760,9 @@ def show(plaza_id, viewer):
                    "at": record["at"], "kind": record["kind"], "scope": "open",
                    "title": copy.get("title") or "", "body": copy.get("body") or "",
                    "hypothesis": copy.get("hypothesis"), "change": copy.get("change"),
+                   "scope_note": copy.get("scope_note"), "how": copy.get("how"),
+                   "kind_detail": record.get("kind_detail"),
+                   "evidence_level": evidence_level_of(record),
                    "owner": owner_label(record.get("project"), record.get("account")),
                    "medium": record.get("medium"), "until": record.get("until"),
                    "verdict": plaza_observe.verdict_view(record.get("verdict"), level, record),
@@ -666,13 +772,16 @@ def show(plaza_id, viewer):
             key: record.get(key) for key in (
                 "plaza_id", "at", "updated_at", "kind", "scope", "title", "body", "hypothesis",
                 "change", "project", "account", "medium", "by", "via", "tool_version", "until",
-                "min_n", "hidden")},
+                "min_n", "hidden", "kind_detail", "scope_note", "how", "declared_level")},
+            "evidence_level": evidence_level_of(record),
             "owner": owner_label(record.get("project"), record.get("account")),
             "verdict": plaza_observe.verdict_view(record.get("verdict"), level, record),
             "open_copy": ({"masked": (record.get("open_copy") or {}).get("masked", 0)}
                           if record["scope"] == "open" else None)}
     payload["replies"] = replies
     payload["n_replies"] = len(replies)
+    # 追試（§9-2）: 再現した・再現しなかった・試していないを**同じ重さで**数える（分母つき）。
+    payload["trials"] = trial_counts(record)
     # **観測は道具が付けたものだけ**。本文の数字は「本文」として別の欄（設計 §6）。
     payload["observation"] = plaza_observe.observation_view(record, level)
     payload["observation_reason"] = plaza_observe.observation_reason(record)
@@ -684,7 +793,7 @@ def show(plaza_id, viewer):
 
 # ---------------------------------------------------------------- 返信
 
-def reply(plaza_id, *, account, kind, text=None, measure_id=None, by, viewer,
+def reply(plaza_id, *, account, kind, text=None, measure_id=None, result=None, by, viewer,
           via="cli", now=None, trusted_accounts=None):
     """返信を 1 つ足す（`comment`・`tried`〔自分の measure へのリンク必須〕・`agree`・
     `disagree`〔理由必須〕）。**読めない 1 件には返せない**（無い id と同じ断り）。
@@ -702,8 +811,13 @@ def reply(plaza_id, *, account, kind, text=None, measure_id=None, by, viewer,
     text = _text(text, REPLY_MAX, required=kind in REPLY_TEXT_REQUIRED) or ""
     if kind == "tried" and not measure_id:
         raise PlazaError("measure_link_required")
-    if kind != "tried" and measure_id is not None:
+    if kind not in ("tried", "trial") and measure_id is not None:
         raise PlazaError("measure_link_invalid")
+    # 追試（§9-2）は結果が必須。本文（note）とリンク（自分の measure）は任意。
+    if kind == "trial" and result not in TRIAL_RESULTS:
+        raise PlazaError("invalid_trial_result")
+    if kind != "trial" and result is not None:
+        raise PlazaError("invalid_trial_result")
     _no_secret(text, by)
     text = private_store.fold_paths(text)
     project = viewer.by_account.get(account)
@@ -726,6 +840,8 @@ def reply(plaza_id, *, account, kind, text=None, measure_id=None, by, viewer,
             raise PlazaError("measure_link_invalid")
     row = {"at": at, "by": by, "account": account, "project": project, "medium": medium,
            "kind": kind, "text": text, "measure_id": measure_id, "via": via}
+    if kind == "trial":
+        row["result"] = result
 
     def change(record):
         level = access(record, viewer, joined)
@@ -747,8 +863,8 @@ def reply(plaza_id, *, account, kind, text=None, measure_id=None, by, viewer,
         "plaza_replied", account, {"media": medium}, by=by, via=via,
         diff={"reply": ["absent", "present"], "kind": [None, kind]}))
     return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_replied",
-            "plaza_id": record["plaza_id"], "kind": kind, "n_replies": len(record["replies"]),
-            "at": at}
+            "plaza_id": record["plaza_id"], "kind": kind, "result": result,
+            "n_replies": len(record["replies"]), "trials": trial_counts(record), "at": at}
 
 
 # ---------------------------------------------------------------- 更新
@@ -819,6 +935,7 @@ def update(plaza_id, *, account, by, viewer, refresh=False, verdict=None, reason
         if visibility is not None and visibility != record["scope"]:
             diff["scope"] = [record["scope"], visibility]
             record["scope"] = visibility
+        record["evidence_level"] = evidence_level_of(record)
         if record["scope"] == "open":
             plaza_redact.attach_open_copy(record, trusted_accounts=trusted_accounts)
         else:
@@ -1043,10 +1160,21 @@ def tried_accounts(record, by_id):
     """その施策を試した account（宣言の account と、`tried` でつながった施策の宣言の account）。"""
     found = {target.get("account") for target in record["targets"] if target.get("account")}
     for row in record["replies"]:
-        if row.get("kind") != "tried":
+        # 「うちでも試した」と、再現した・しなかった追試（試していない追試は数えない）。
+        if not (row.get("kind") == "tried" or row.get("kind") == "trial"
+                and row.get("result") in ("reproduced", "not_reproduced")):
             continue
         linked = by_id.get(row.get("measure_id"))
         if linked is None:
             continue
         found |= {target.get("account") for target in linked["targets"] if target.get("account")}
     return found
+
+
+def trial_counts(record):
+    """追試の数（§9-2）。**再現しなかった報告を再現した報告と同じ重さで数える**（分母つき）。"""
+    counts = {result: 0 for result in TRIAL_RESULTS}
+    for row in record.get("replies") or []:
+        if row.get("kind") == "trial" and row.get("result") in counts:
+            counts[row["result"]] += 1
+    return {**counts, "denominator": sum(counts.values())}

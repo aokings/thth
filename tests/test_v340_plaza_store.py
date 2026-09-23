@@ -54,9 +54,15 @@ def viewer(*names, projects=None):
     return plaza.Viewer({name: table[name] for name in names})
 
 
+SCOPE = "Threads の朝の投稿・茶の話題"
+
+
 def post(account="kopicha-threads", *, kind="finding", title="冒頭を問いにする", body=BODY,
-         by="kopicha-session", **kwargs):
-    return plaza.post(account, kind=kind, title=title, body=body, by=by, **kwargs)
+         by="kopicha-session", scope_note=SCOPE, **kwargs):
+    if kind == "measure":
+        kwargs.setdefault("how", f"thth measured {account}")
+    return plaza.post(account, kind=kind, title=title, body=body, by=by, scope_note=scope_note,
+                      **kwargs)
 
 
 def plaza_dir():
