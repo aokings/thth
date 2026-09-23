@@ -145,7 +145,7 @@ def targets(target) -> list:
 
 # --------------------------------------------------------------- 第 0 段
 
-def _tool_section(handoff, now=None, admin=False):
+def _tool_section(handoff, now=None, admin=False, configs=None):
     """版・前回から変わったか・リリースノート・出せるもの表（設計 §2 の 0 段）。
 
     **前回との比較は account ごとの栞から来る**（`handoff-report` の
@@ -184,7 +184,18 @@ def _tool_section(handoff, now=None, admin=False):
         # 要る原稿の本数を account ごとに（変わっていなければ null）。
         "fingerprint_version": tool.get("fingerprint_version"),
         "reapproval_required": _reapproval_cell(handoff),
+        # 知らせる先が無い scheduled の account（設計 3.3.0 A4）。止まっても誰にも
+        # 届かない状態を黙らない。欠けていなければ空（有無だけ・値は出さない）。
+        "notification_routes": _routes(configs or {}),
     }
+
+
+def _routes(configs):
+    from . import notification_route
+    try:
+        return notification_route.missing(configs)
+    except Exception:  # noqa: BLE001 — 経路の判定で 0 段を落とさない
+        return [{"account": name, "cannot_say": "unavailable"} for name in sorted(configs)]
 
 
 def _reapproval_cell(handoff):
@@ -776,7 +787,8 @@ def build(target, *, now=None, mark=True, allowed_names=None):
 
     sections = [
         {"section": "tool", "title": "道具",
-         **(_guard(lambda: _tool_section(handoff, now, admin=allowed_names is None)) if handoff is not None
+         **(_guard(lambda: _tool_section(handoff, now, admin=allowed_names is None,
+                                         configs=configs)) if handoff is not None
             else cell(cannot_say=handoff_cell["cannot_say"]))},
         _section("unanswered", "返していないもの", unanswered_entries),
         _section("yesterday", "昨日の自分", yesterday_entries),
@@ -851,6 +863,11 @@ def _render_section(section, out) -> None:
                 f"（{value['capabilities_basis']}）")
         if value["notes_reason"]:
             out(f"  ノート: {value['notes_reason']}")
+        from . import notification_route
+        for row in value.get("notification_routes") or []:
+            text = (notification_route.line(row["cannot_say"])
+                    if row["cannot_say"] != "unavailable" else "unavailable")
+            out(f"  知らせる先: {row['account']}: {text}")
         needed = value.get("reapproval_required")
         if needed is not None:
             per = "・".join(f"{name} {n if n is not None else '言えない'}"

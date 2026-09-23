@@ -463,6 +463,16 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
 
     if not all(incident_mod.readiness(account_cfg).values()):
         notices.append("停止メール通知が未設定です。thth notifications status/config/test を実行してください（既存の投稿動作は維持）。")
+    # **知らせる先が無いことを言う**（設計 3.3.0 A4）。timer に載る account で
+    # 死活通知と運用通知のどちらか（または両方）が無ければ静的な符丁で 1 行。
+    # 有無だけ・URL も宛先も出さない。rc は変えない（投稿の動作は変わらない）。
+    from . import notification_route
+    route = notification_route.status(account_cfg)
+    route_info = {"scheduled": notification_route.scheduled(account_cfg), **route}
+    if not route_info["scheduled"]:
+        route_info["cannot_say"] = None
+    if route_info["cannot_say"]:
+        notices.append(notification_route.line(route_info["cannot_say"]))
 
     # **台帳は読めた。その中身が雛形のダミーのままなら、名指しで言う**（C10）。
     # rc の意味づけは変えない——ここは「台帳が読めない」（2）でも「トークンが
@@ -495,6 +505,7 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     if as_json:
         report["directory_checks"] = static["directory_checks"]
         report["notices"] = notices
+        report["notification_route"] = route_info
         report["app_env"] = app_env_state
         report["accounts_dir"] = accounts_dir_info
         report["dummy_fields"] = dummies
