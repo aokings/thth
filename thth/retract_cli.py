@@ -16,12 +16,14 @@ fail-closed:
   - 台帳に `production: true` が無ければ**二段目でも DELETE を呼ばない**。
   - 手元に記録（queue か `sent/`）の無い `post_id` は取り下げない
     （THTH を通していない投稿には触らない）。
-  - トークンに `threads_delete` が乗っていなければ rc=2（`thth auth` のやり直し）。
-  - 他媒体は rc=2「この媒体の取り下げは未対応」（Bluesky / Mastodon は v2.2）。
+  - トークンに媒体の取り下げ権限（Threads `threads_delete`・X `tweet.write`・
+    Mastodon `write:statuses`）が乗っていなければ rc=2（`thth auth` のやり直し）。
+  - 取り下げを持たない媒体は rc=2「この媒体の取り下げは未対応」（Bluesky）。
+    Mastodon は 3.1.1 から対応。
   - MCP には出さない（`approve` と同じ線）。
 
 **DELETE が飛ぶ経路はこのモジュールの `_do_retract()` が呼ぶ `delete_post` だけ**
-（`thth/adapters/threads.py` の `delete_post` は他のどこからも呼ばれない——
+（各 adapter の `delete_post` は他のどこからも呼ばれない——
 `tests/test_v21b_approved_writes.py` が source を見て固定する）。
 """
 from __future__ import annotations
@@ -55,7 +57,7 @@ def register(sub) -> None:
     """`thth/cli.py` の `build_parser()` から 1 行で呼ばれる。"""
     p = sub.add_parser(
         "retract",
-        help="公開済みの投稿を取り下げる（二段確認・記録は消さない・Threads のみ）")
+        help="公開済みの投稿を取り下げる（二段確認・記録は消さない・Threads／X／Mastodon）")
     p.add_argument("account")
     p.add_argument("post_id")
     p.add_argument("--reason", default=None, help="なぜ取り下げるか（記録に残す・必須）")
@@ -213,7 +215,7 @@ def _cmd_retract(args) -> int:
     adapter_cls = adapters_mod.adapter_class(media)
     if not getattr(adapter_cls, "DELETE_PERMISSION", None):
         return _fail(args, 2, f"{media}: この媒体の取り下げは未対応です"
-                              "（Bluesky / Mastodon の delete は v2.2）")
+                              "（取り下げられるのは Threads／X／Mastodon）。消すなら媒体の画面から手で")
 
     record = _find_record(account_cfg, args.account, post_id)
     if record is None:
