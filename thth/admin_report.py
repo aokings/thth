@@ -363,6 +363,9 @@ def register(sub):
     # 施策の広場（設計 3.4.0）。口の中身は `thth/plaza_cli.py` に閉じる。
     from . import plaza_cli
     plaza_cli.register_admin(commands)
+    # 観測の地図（設計 3.5.0）。点と線は人が足す——口の中身は `thth/map_cli.py` に閉じる。
+    from . import map_cli
+    map_cli.register_admin(commands)
     for name in OPERATIONS:
         p = commands.add_parser(name)
         p.add_argument('--json', action='store_true')

@@ -131,13 +131,22 @@ class Store:
 
     def write(self, directory, record, name=None):
         """一時ファイル（0600・O_EXCL・O_NOFOLLOW）→ fsync → rename。"""
-        temporary = self.temporary_prefix + uuid.uuid4().hex
         name = name or record[self.id_key] + ".json"
+        data = json.dumps(record, ensure_ascii=False, allow_nan=False, indent=1).encode("utf-8")
+        self.write_raw(directory, name, data)
+
+    def write_raw(self, directory, name, data):
+        """バイト列を 1 ファイルに（`write` と同じ一時ファイル → fsync → rename）。
+
+        観測の地図（3.5.0）の月ごとの ndjson のように、1 件 1 JSON でない置き場も
+        同じ骨で書くために切り出した。
+        """
+        temporary = self.temporary_prefix + uuid.uuid4().hex
         try:
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
                          dir_fd=directory)
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                json.dump(record, stream, ensure_ascii=False, allow_nan=False, indent=1)
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
@@ -149,6 +158,34 @@ class Store:
                 os.unlink(temporary, dir_fd=directory)
             except OSError:
                 pass
+
+    def read_raw(self, directory, name):
+        """1 ファイルのバイト列（O_NOFOLLOW・通常のファイルだけ・上限つき）。無ければ `None`。"""
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise self.error(self.unavailable) from exc
+        try:
+            with os.fdopen(fd, "rb") as stream:
+                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                    raise self.error(self.unavailable)
+                data = stream.read(self.max_bytes + 1)
+        except OSError as exc:
+            raise self.error(self.unavailable) from exc
+        if len(data) > self.max_bytes:
+            raise self.error(self.unavailable)
+        return data
+
+    def remove_name(self, directory, name):
+        """1 ファイルを消す（無ければ何もしない）。"""
+        try:
+            os.unlink(name, dir_fd=directory)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise self.error(self.unavailable) from exc
 
     def remove(self, directory, record_id):
         try:

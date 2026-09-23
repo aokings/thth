@@ -35,7 +35,10 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    'inflight_resolved',
                    # 施策の広場（設計 3.4.0 §6）。presence-only——本文・返信は入れない。
                    'plaza_posted', 'plaza_replied', 'plaza_updated', 'plaza_hidden',
-                   'plaza_joined', 'plaza_left'))
+                   'plaza_joined', 'plaza_left',
+                   # 観測の地図（設計 3.5.0 §1・§2）。presence-only——点の語・行の中身は入れない。
+                   'map_node_added', 'map_node_removed', 'map_edge_added', 'map_edge_removed',
+                   'map_retention_set', 'map_purged'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 
@@ -235,7 +238,9 @@ def transaction(*, rollback=None):
                 event = json.loads(data)
                 if event['event'] in ('app_set', 'relay_key_initialized', 'approver_set', 'approver_revoked', 'approver_unlocked', 'account_removed', 'deletion_requested', 'budget_set', 'report_filed', 'report_replied', 'report_closed', 'report_added',
                                       'plaza_posted', 'plaza_replied', 'plaza_updated', 'plaza_hidden',
-                                      'plaza_joined', 'plaza_left'):
+                                      'plaza_joined', 'plaza_left',
+                                      'map_node_added', 'map_node_removed', 'map_edge_added',
+                                      'map_edge_removed', 'map_retention_set', 'map_purged'):
                     continue
                 cfg = accounts.load_account(event['account'])
                 admin_notifications.notify(event, cfg)

@@ -36,7 +36,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 3.4.0 §4: 施策の広場（利用者と管理者の口・--json）。
      'plaza post', 'plaza list', 'plaza show', 'plaza reply', 'plaza update',
      'admin plaza join', 'admin plaza leave', 'admin plaza hide', 'admin plaza list',
-     'admin plaza show']
+     'admin plaza show',
+     # 3.5.0 §1: 観測の地図の点と線（管理者の口・--json）。
+     'admin map node add', 'admin map node remove', 'admin map edge add', 'admin map edge remove']
 
 
 def test_json_table_covers_every_parser():
