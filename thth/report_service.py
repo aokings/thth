@@ -407,7 +407,8 @@ PLAZA_OPERATIONS = frozenset(('plaza_post', 'plaza_list', 'plaza_show', 'plaza_r
 # 広場の口の要求の形（`許す鍵`・`要る鍵`）。型は MCP の inputSchema と下の検査で見る。
 _PLAZA_SHAPES = {
     'plaza_post': ({'account', 'kind', 'title', 'body', 'scope', 'kind_detail', 'how',
-                    'evidence_level', 'declarations', 'hypothesis', 'change', 'until', 'min_n'},
+                    'evidence_level', 'declarations', 'hypothesis', 'change', 'until', 'min_n',
+                    'goal'},
                    {'account', 'kind', 'title', 'body'}),
     'plaza_list': ({'project', 'open'}, set()),
     'plaza_show': ({'plaza_id'}, {'plaza_id'}),
@@ -495,7 +496,7 @@ def execute_user_plaza(context: ReportContext, request: dict) -> dict:
                     evidence_level=request.get('evidence_level') or 'stated',
                     declarations=request.get('declarations') or [],
                     hypothesis=request.get('hypothesis'), change=request.get('change'),
-                    until=request.get('until'),
+                    until=request.get('until'), goal=request.get('goal'),
                     min_n=request['min_n'] if request.get('min_n') is not None else 5,
                     visibility='project', via='mcp',
                     project=context.allowed_accounts[account], medium=cfg.get('media'),

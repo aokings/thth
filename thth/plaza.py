@@ -34,6 +34,7 @@ import re
 import secrets
 
 from . import accounts, admin_log, jst, private_store, redact
+from . import goals as _goals
 from . import __version__
 
 SCHEMA_VERSION = 1
@@ -97,6 +98,8 @@ REASONS = frozenset((
     "invalid_kind_detail", "scope_required", "how_required", "invalid_how",
     "observed_is_tool_only", "invalid_evidence_level", "invalid_trial_result",
     "third_party_handle",
+    # 施策の目的（設計 3.6.0 §A2）。4 語の固定。
+    "invalid_goal",
     # open にする二段確認（masaru 裁定 09-23）。
     "open_digest_mismatch", "open_requires_cli",
 ))
@@ -137,6 +140,8 @@ NEXT = {
     "plaza_hidden": "管理者が非表示にした書き込みです。返信・更新はできません",
     "already_hidden": "既に非表示です",
     "invalid_min_n": "--min-n は 1 以上の整数です",
+    "invalid_goal": "--goal は reach（表示）・click（サイト誘導）・follow（フォロー）・reply（会話）の"
+                    "どれかです（無ければ付けない）",
     "invalid_kind_detail": "--kind-detail は finding にだけ付けられ、pattern（型）・rule（規則）・"
                            "pitfall（罠）・tool_tip（道具のコツ）のどれかです",
     "scope_required": f"--scope に媒体・企画の範囲を 1 行（{SCOPE_NOTE_MAX} 字まで）で書いてください"
@@ -209,6 +214,9 @@ def _valid(record) -> bool:
         return False
     verdict = record.get("verdict")
     if verdict is not None and (not isinstance(verdict, dict) or verdict.get("verdict") not in VERDICTS):
+        return False
+    # 施策の目的（設計 3.6.0 §A2）。3.5.0 までの書き込みは持たない（None）。
+    if record.get("goal") is not None and record["goal"] not in _goals.GOALS:
         return False
     hidden = record.get("hidden")
     return hidden is None or isinstance(hidden, dict)
@@ -586,7 +594,7 @@ def evidence_level_of(record):
 def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, how=None,
          evidence_level="stated", declarations=(), hypothesis=None, change=None,
          until=None, min_n=5, visibility="project", via="cli", project=None, medium=None,
-         now=None, trusted_accounts=None, confirm=None):
+         now=None, trusted_accounts=None, confirm=None, goal=None):
     """広場に 1 件置く。`plaza_id` を返す。
 
     **open は二段確認**（masaru 裁定 09-23・approve と同じ線）: `visibility="open"` の
@@ -614,6 +622,9 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
     body = _text(body, BODY_MAX)
     scope_note = _scope_note(scope_note)
     kind_detail = _kind_detail(kind, kind_detail)
+    # 施策の目的（設計 3.6.0 §A2・任意）。媒体をまたいで「reach の型は…」を比べる札。
+    if goal is not None and goal not in _goals.GOALS:
+        raise PlazaError("invalid_goal")
     how = _how(how, required=kind == "measure")
     declared_level = _declared_level(evidence_level)
     hypothesis = _text(hypothesis, TEXT_MAX, required=False)
@@ -667,7 +678,7 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
               "project": project, "account": account, "medium": medium, "by": by, "via": via,
               "tool_version": __version__, "targets": targets, "until": until, "min_n": min_n,
               "observations": observations, "verdict": None, "replies": [], "hidden": None,
-              "open_copy": None}
+              "open_copy": None, "goal": goal}
     record["evidence_level"] = evidence_level_of(record)
     if visibility == "open":
         # 他人の情報を落とした写しを**置く時点で**作る（読む側は写しだけを見る）。
@@ -739,7 +750,7 @@ def summary_row(record, level, viewer=None) -> dict:
                 "kind_detail": record.get("kind_detail"),
                 "evidence_level": evidence_level_of(record),
                 "scope_note": copy.get("scope_note"), "trials": trial_counts(record),
-                "view": "open"}
+                "goal": record.get("goal"), "view": "open"}
     return {"plaza_id": record["plaza_id"], "at": record["at"], "kind": record["kind"],
             "scope": record["scope"], "title": record["title"],
             "owner": owner_label(record.get("project"), record.get("account")),
@@ -749,6 +760,7 @@ def summary_row(record, level, viewer=None) -> dict:
             "verdict": (record.get("verdict") or {}).get("verdict"),
             "kind_detail": record.get("kind_detail"), "evidence_level": evidence_level_of(record),
             "scope_note": record.get("scope_note"), "trials": trial_counts(record),
+            "goal": record.get("goal"),
             "hidden": bool(record.get("hidden")), "view": "own"}
 
 
@@ -822,13 +834,14 @@ def show(plaza_id, viewer):
                    "owner": owner_label(record.get("project"), record.get("account")),
                    "medium": record.get("medium"), "until": record.get("until"),
                    "verdict": plaza_observe.verdict_view(record.get("verdict"), level, record),
-                   "masked": copy.get("masked", 0)}
+                   "goal": record.get("goal"), "masked": copy.get("masked", 0)}
     else:
         payload = {"report_type": "plaza_post", "view": "own", **{
             key: record.get(key) for key in (
                 "plaza_id", "at", "updated_at", "kind", "scope", "title", "body", "hypothesis",
                 "change", "project", "account", "medium", "by", "via", "tool_version", "until",
-                "min_n", "hidden", "kind_detail", "scope_note", "how", "declared_level")},
+                "min_n", "hidden", "kind_detail", "scope_note", "how", "declared_level",
+                "goal")},
             "evidence_level": evidence_level_of(record),
             "owner": owner_label(record.get("project"), record.get("account")),
             "verdict": plaza_observe.verdict_view(record.get("verdict"), level, record),

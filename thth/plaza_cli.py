@@ -14,6 +14,7 @@ import argparse
 import json
 import sys
 
+from . import goals as _goals
 from . import jst, plaza, plaza_observe, private_store
 
 
@@ -57,7 +58,8 @@ def render_list(payload, out=print):
                         f"再現しなかった {trials['not_reproduced']}・試していない {trials['not_tried']}）")
         out(f"  {row['plaza_id']}  {plaza.KIND_LABELS[row['kind']]}  {row['scope']}"
             f"  {who}（{row.get('medium') or '—'}）  {plaza.EVIDENCE_LABELS[row['evidence_level']]}"
-            f"  返信 {row['n_replies']}  {row['title']}{verdict}{hidden}")
+            f"  返信 {row['n_replies']}  {row['title']}{verdict}{hidden}"
+            + (f"  目的 {row['goal']}" if row.get("goal") else ""))
     if payload.get("unreadable"):
         out(f"  読めない書き込み: {payload['unreadable']} 件")
 
@@ -98,7 +100,8 @@ def render_post(payload, out=print):
     detail = (f"・{plaza.KIND_DETAIL_LABELS[payload['kind_detail']]}"
               if payload.get("kind_detail") else "")
     out(f"印: {plaza.EVIDENCE_LABELS[payload['evidence_level']]}{detail}"
-        f"  範囲: {payload.get('scope_note') or '—'}")
+        f"  範囲: {payload.get('scope_note') or '—'}"
+        + (f"  目的: {payload['goal']}" if payload.get("goal") else ""))
     if payload.get("how"):
         out(f"出し直し: {payload['how']}（道具は実行していません）")
     if payload.get("hypothesis"):
@@ -205,7 +208,7 @@ def cmd_post(args) -> int:
                             evidence_level=args.evidence_level, declarations=declarations, hypothesis=args.hypothesis,
                             change=args.change, until=args.until, min_n=args.min_n,
                             visibility="open" if args.open else "project", via="cli", now=now,
-                            confirm=args.confirm)
+                            confirm=args.confirm, goal=getattr(args, "goal", None))
     except plaza.PlazaError as error:
         return _print_refusal(args, error)
     if result["report_type"] == "plaza_open_preview":
@@ -296,6 +299,9 @@ def register(sub) -> None:
     poster.add_argument("--kind-detail", default=None, dest="kind_detail",
                         choices=plaza.KIND_DETAILS,
                         help="finding の細目: pattern（型）・rule（規則）・pitfall（罠）・tool_tip（道具のコツ）")
+    poster.add_argument("--goal", default=None, choices=_goals.GOALS,
+                        help="施策の目的（任意）: reach（表示）・click（サイト誘導）・follow（フォロー）・"
+                             "reply（会話）。媒体をまたいで同じ目的の施策を比べる札")
     poster.add_argument("--how", default=None,
                         help="数字を出し直せる thth の命令 1 行（measure は必須・道具は実行しない。"
                              "例: thth measured kopicha-threads）")

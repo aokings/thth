@@ -711,7 +711,9 @@ PLAZA_TOOLS = [
          "declarations": {"type": "array", "description": "measure の宣言（study-report の形・媒体ごとに 1 つ）"},
          "hypothesis": {"type": "string"}, "change": {"type": "string"},
          "until": {"type": "string", "description": "期間の終わり（timezone 付きの時刻）"},
-         "min_n": {"type": "integer"}},
+         "min_n": {"type": "integer"},
+         "goal": {"type": "string", "enum": ["reach", "click", "follow", "reply"],
+                  "description": "施策の目的（任意）。媒体をまたいで同じ目的の施策を比べる札"}},
          "required": ["account", "kind", "title", "body", "scope"], "additionalProperties": False}},
     {"name": "thth_plaza_list",
      "description": "広場の一覧（既定は自分の持ち主の書き込み・open: true は open の広場）。次を決める前に"
