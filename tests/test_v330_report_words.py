@@ -81,6 +81,19 @@ def test_thth_report_fileの説明に1文と例3つ(user_server):  # noqa: F811
     assert "from_last_refusal" in description
 
 
+@pytest.mark.parametrize("path", ["skills/thth/SKILL.md",
+                                  "docs/使い方_プロジェクトのセッション向け_2026-09-09.md"])
+def test_skillと使い方にも1文と例3つとfrom_last_refusal(path):
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, path), encoding="utf-8") as stream:
+        text = stream.read()
+    assert WELCOME in text
+    for example in EXAMPLES:
+        assert f"「{example}」" in text
+    assert "--from-last-refusal" in text and "friction" in text
+
+
 def test_report_helpにも1文と例(capsys):
     with pytest.raises(SystemExit):
         cli.main(["report", "--help"])

@@ -5,7 +5,7 @@ description: 投稿する前・返信を書く前・出したあと・絡みに�
 
 **セッションの始めと区切りごとに `thth_observe`（CLI は `thth observe <project|account> --json`）。** 前回の観測から何があって、いまなにをすればよいかが 6 段（道具・返していないもの・前回の観測から・世間・予定・次の一手）で返る（3.3.0。`thth_morning`／`thth morning` は同じものの別名で、JSON の `invoked_as` だけが違う。第 2 段は前回の栞の時刻から今まで・栞が無い／7 日より古いときは前日 JST で、`window.basis` が `since_last_observe` か `yesterday_jst`）。`handoff-report --since-last-read` を包含するので、版の確認もこれ 1 回で済む。呼ぶと栞（前回読んだ時点）が進む——進めたくないときだけ `mark: false`（CLI は `--no-mark`）。取れなかった段は `{"value": null, "cannot_say": "<理由>"}`（`provider_timeout`・`budget_exhausted`・`scope_missing`・`no_watch_words`・`not_supported`・`unavailable`）で、**0 件とは別**。第 3 段の監視語は**管理者が入れる**（`thth admin watch set <account> 語 … --by <名前>`）——語が無い account は `no_watch_words` で飛ぶので、**代わりに語を選ばない**。第 5 段は候補の列挙だけで、**本文は返らない**（書くのはあなたと人の会話の側）。詳しくは `docs/使い方_毎朝の一枚_3.1.md`。
 
-**断られたら・違和感があれば報告の口へ**: `thth_report_file`（CLI は `thth report file <account> --kind bug|request --title … --body-file … --by <名前>`）。道具が断った・結果が期待と違った・欲しい形がある、のどれかなら 1 回で置ける。返事は `thth_report_show` と `handoff-report --since-last-read` の `tool.reports` に出る。秘密らしき値が含まれていたら置かれない（伏せてから置き直す）。
+**断られたら・違和感があれば報告の口へ**: `thth_report_file`（CLI は `thth report file <account> --kind bug|request|friction --title … --body-file … --by <名前>`）。つまずき・迷い・期待との違いの報告は、利用者の作業の一部として歓迎します。小さいものも。重複は道具が束ねます。例: 「止まったのに気づかなかった」「断られた理由が分からなかった」「同じ操作を 3 回繰り返した」。道具が断った・結果が期待と違った・欲しい形がある・迷った（`friction`）、のどれかなら 1 回で置ける。**断られた直後なら、断りの最後の `report_channel:` の行をそのまま打てばよい**（`--from-last-refusal` が、道具が控えた直前の断り——時刻・版・命令・理由の符丁だけで、本文と引数の値は控えていない——を再現手順に添える。MCP は `thth_report_file {"account": …, "title": …, "from_last_refusal": true}`）。置いた報告がこの版で閉じたかは `thth_observe` の 0 段 `project_reports` に出る。返事は `thth_report_show` と `handoff-report --since-last-read` の `tool.reports` に出る。秘密らしき値が含まれていたら置かれない（伏せてから置き直す）。
 
 段だけを読み直したいときは `thth handoff-report <account> --since-last-read --json` を読む。`tool.changed_since_last_read` が真なら、手元の `tool.notes_root_local_hint` を手掛かりに `tool.release_notes` の相対名を読んでから作業する。既読の記録は `--mark-read --by <名前>` の明示時だけ。`tool.notes_reason` が `notes_directory_unavailable` なら、このインストールには読める docs がない。空の `release_notes` を「変更なし」と解釈しない。
 
@@ -149,7 +149,8 @@ MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜ�
 
 - `thth --help` / `thth <subcommand> --help` が正本。
 - `thth doctor <account>` が「いま投稿できる状態か」を最初から最後まで言う。
-- 道具の不具合・欲しい形は `thth report file`（MCP `thth_report_file`）で実装側に届ける。
+- 道具の不具合・欲しい形・迷ったことは `thth report file`（MCP `thth_report_file`）で実装側に届ける（小さいものも歓迎・重複は道具が束ねる）。
+- 承認済みなのに出ない原稿は `thth_observe` の予定の段 `held_items`（file・理由・予定・経過）と `thth board` の要確認（先頭 5 本）に名前が出る。`approval_stale` は再承認（`thth approve` の二段）で直る。時刻を過ぎて出られないものがあると `thth run` は `held` として死活通知と運用通知に知らせる。
 - 自分の開いている報告に書き足すなら `thth report add <report_id> --body-file <path|-> --by <名前>`（MCP `thth_report_add`）。
 - 使い方の全文: `docs/使い方_プロジェクトのセッション向け_2026-09-09.md`。
 
