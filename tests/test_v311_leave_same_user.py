@@ -53,7 +53,8 @@ def test_same_token_bytes_do_not_revoke_remotely(env,provider,monkeypatch):
     # （完了までの形は tests/test_v312_leave_shared_token.py）。
     result=leave.run('alpha',by='operator')
     assert result['phase']=='completed' and result['remote']=='unconfirmed_shared'
-    assert provider['calls']==[] and tokenpath.read_bytes()==old and beta_token.read_bytes()==old
+    # 裁定 09-23: 値だけの共有（別ファイル）なら自分の token file は消す。相手の file は残る。
+    assert provider['calls']==[] and not tokenpath.exists() and beta_token.read_bytes()==old
 
 
 def test_threads_same_user_is_still_token_shared_and_preserved(env,monkeypatch):

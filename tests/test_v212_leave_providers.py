@@ -85,9 +85,10 @@ def test_shared_mastodon_grant_refuses_remote_revoke_but_shared_client_alone_doe
     other=env['root']/'accounts/beta.json';b=json.loads(other.read_text());b.update(media='mastodon',instance=provider['base']);other.write_text(json.dumps(b))
     (env['root']/'secrets/beta.json').write_bytes(old)
     # 3.1.2 件 6: 共有の接続は遠隔で失効させず（calls==[]）、止まらずに退出を終える。
+    # 裁定 09-23: 値だけの共有（別ファイル）なら自分の token file は消す。相手の file は残る。
     result=leave.run('alpha',by='operator')
-    assert result['phase']=='completed' and result['remote']=='unconfirmed_shared' and 'token_shared' in result['preserved']
-    assert provider['calls']==[] and tokenpath.read_bytes()==old
+    assert result['phase']=='completed' and result['remote']=='unconfirmed_shared' and 'token_shared' not in result['preserved']
+    assert provider['calls']==[] and not tokenpath.exists() and (env['root']/'secrets/beta.json').read_bytes()==old
 
 
 def test_b_credential_commit_before_revoke_is_rechecked_after_inventory(env,provider,monkeypatch):
@@ -102,9 +103,10 @@ def test_b_credential_commit_before_revoke_is_rechecked_after_inventory(env,prov
         return {'status':'revoked'}
     monkeypatch.setattr(approval_relay,'signed_request',worker)
     # 3.1.2 件 6: 共有の接続は遠隔で失効させず（calls==[]）、止まらずに退出を終える。
+    # 裁定 09-23: 値だけの共有（別ファイル）なら自分の token file は消す。相手の file は残る。
     result=leave.run('alpha',by='operator')
-    assert result['phase']=='completed' and result['remote']=='unconfirmed_shared' and 'token_shared' in result['preserved']
-    assert provider['calls']==[] and tokenpath.exists()
+    assert result['phase']=='completed' and result['remote']=='unconfirmed_shared' and 'token_shared' not in result['preserved']
+    assert provider['calls']==[] and not tokenpath.exists()
     assert json.loads((env['root']/'secrets/beta.json').read_text())==token_a
 
 
