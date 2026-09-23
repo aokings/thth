@@ -58,6 +58,29 @@ def _normalize_handle(value) -> str | None:
     return v.lower() or None
 
 
+def load_for_ownership(name):
+    """「誰の返信か」を見分けるためだけに台帳を読む（handle・媒体・置き場）。
+
+    **退出の途中（停止中）の台帳も読む**（3.1.2 件 7・実測 09-23 12:55）。停止中の
+    1 台帳を unreadable に落とすと handle の集合が不完全になり、project 全体の返信の
+    `own` が None になって未回答から消えていた。同じ本人の handle は退出の途中でも
+    自分。読むだけなので退出の読み手と同じ `recovery` の下で読む。停止の状態そのもの
+    が読めない（`account_stop_state_unreadable`）・台帳が壊れているときは従前どおり
+    `AccountError` を上げる。
+    """
+    try:
+        return accounts_mod.load_account(name)
+    except accounts_mod.AccountStopped as exc:
+        if str(exc) != "account_stopped":
+            raise
+    from . import leave_gate
+    try:
+        with leave_gate.recovery(name):
+            return accounts_mod.load_account(name)
+    except ValueError:
+        raise accounts_mod.AccountError("account_unreadable") from None
+
+
 def _own_handles(allowed_names=None) -> tuple:
     """`accounts/*.json` の**すべての account** の handle を正規化して集める。
 
@@ -78,7 +101,7 @@ def _own_handles(allowed_names=None) -> tuple:
     for name in (accounts_mod.list_account_names() if allowed_names is None
                  else sorted(set(allowed_names))):
         try:
-            cfg = accounts_mod.load_account(name)
+            cfg = load_for_ownership(name)
         except accounts_mod.AccountError:
             unreadable.append(name)
             continue
