@@ -301,6 +301,50 @@ def execute_user_reports(context: ReportContext, request: dict) -> dict:
     raise ReportServiceError("unsupported_operation")
 
 
+ADMIN_REPORT_OPERATIONS = frozenset(('admin_reports_list', 'admin_reports_show',
+                                     'admin_reports_reply', 'admin_reports_close'))
+
+
+def execute_admin_reports(context: ReportContext, request: dict) -> dict:
+    """報告の口の実装側（設計 3.1.2 §1）。**管理者は全 project を読む。**
+
+    返事と閉じるは書く操作なので、予算・監視語と同じ門（credential の読み直し）を
+    通し、`by` は要求に明示させる（管理者 credential の中に人の名前は無い）。
+    """
+    from . import report_inbox
+    if type(context) is not ReportContext or type(request) is not dict:
+        raise ReportServiceError("invalid_request")
+    if context.scope != 'admin':
+        raise ReportServiceError("unsupported_operation")
+    operation = request.get("operation")
+    shapes = {'admin_reports_list': ({'status'}, set()),
+              'admin_reports_show': ({'report_id'}, {'report_id'}),
+              'admin_reports_reply': ({'report_id', 'text', 'by'}, {'report_id', 'text', 'by'}),
+              'admin_reports_close': ({'report_id', 'reason', 'version', 'by'},
+                                      {'report_id', 'reason', 'version', 'by'})}
+    if operation not in shapes:
+        raise ReportServiceError("unsupported_operation")
+    allowed, required = shapes[operation]
+    if set(request) - allowed - {'operation'} or not required <= set(request):
+        raise ReportServiceError("invalid_request")
+    if any(request[key] is not None and not isinstance(request[key], str)
+           for key in allowed & set(request)):
+        raise ReportServiceError("invalid_request")
+    try:
+        if operation == 'admin_reports_list':
+            return report_inbox.list_reports(scope=None, status=request.get('status') or 'open')
+        if operation == 'admin_reports_show':
+            return report_inbox.show(request['report_id'])
+        _credential_unchanged(context)
+        if operation == 'admin_reports_reply':
+            return report_inbox.reply(request['report_id'], by=request['by'],
+                                      text=request['text'], via='mcp')
+        return report_inbox.close(request['report_id'], by=request['by'], reason=request['reason'],
+                                  version=request['version'], via='mcp')
+    except report_inbox.ReportError as error:
+        raise _report_error(error) from None
+
+
 def _open_directory_nofollow(path: Path) -> int:
     """Open every absolute repo ancestor without following a symlink."""
     descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)

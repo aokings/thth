@@ -443,6 +443,158 @@ def scope_for_account(account):
     return Scope([], [account])
 
 
+# ------------------------------------------------------------ 実装側（管理者）
+
+def _update(report_id, change, *, event, by, via, diff):
+    """1 件を書き換えて変更ログに残す。ログに書けなければ元に戻す（記録の無い変更を残さない）。"""
+    with _Locked() as directory:
+        record = _find(directory, report_id)
+        before = json.loads(json.dumps(record))
+        change(record)
+        _write(directory, record)
+        try:
+            admin_log.append(event, record["account"], {"media": record.get("medium")},
+                             by=by, via=via, diff=diff)
+        except (OSError, ValueError, admin_log.AdminLogError):
+            _write(directory, before)
+            raise ReportError("report_log_unavailable") from None
+    return record
+
+
+def reply(report_id, *, by, text, via="cli", now=None):
+    """実装側の返事を 1 つ足す（閉じた報告にも足せる）。本文と同じく秘密は置かない。"""
+    by = reporter(by)
+    if via not in VIAS:
+        raise ReportError("invalid_report")
+    text = _text(text, REPLY_MAX)
+    if redact.looks_like_secret(text):
+        raise ReportError("secret_detected")
+    text = _fold_paths(text)
+    at = jst.iso(now or jst.now_jst())
+
+    def change(record):
+        record["replies"].append({"at": at, "by": by, "text": text})
+
+    record = _update(report_id, change, event="report_replied", by=by, via=via,
+                     diff={"reply": ["absent", "present"]})
+    return {"schema_version": SCHEMA_VERSION, "report_type": "report_replied",
+            "report_id": record["report_id"], "status": record["status"],
+            "n_replies": len(record["replies"]), "at": at}
+
+
+def close(report_id, *, by, reason, version, via="cli", now=None):
+    """閉じる。理由（fixed・wontfix・duplicate・invalid）と、直した・判断した版を書く。"""
+    by = reporter(by)
+    if via not in VIAS:
+        raise ReportError("invalid_report")
+    if reason not in CLOSE_REASONS:
+        raise ReportError("invalid_close_reason")
+    from . import tool_version
+    if tool_version.numbers(version) is None:
+        raise ReportError("invalid_version")
+    at = jst.iso(now or jst.now_jst())
+
+    def change(record):
+        if record["status"] == "closed":
+            raise ReportError("report_already_closed")
+        record["status"] = "closed"
+        record["closed"] = {"at": at, "by": by, "reason": reason, "version": version}
+
+    record = _update(report_id, change, event="report_closed", by=by, via=via,
+                     diff={"status": ["open", "closed"]})
+    return {"schema_version": SCHEMA_VERSION, "report_type": "report_closed",
+            "report_id": record["report_id"], "status": "closed", "closed": record["closed"]}
+
+
+def _slug(title):
+    """ファイル名に使う題（英数字・かな漢字・`-`・`_` だけ・40 字まで）。"""
+    slug = re.sub(r"[^\w-]+", "_", title).strip("_-")[:40].strip("_-")
+    return slug or "report"
+
+
+def _fence(text):
+    """本文をそのまま見せる囲み（本文の中の ``` より長い囲みを使う）。"""
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    return "`" * max(3, longest + 1)
+
+
+def render_markdown(record, *, by):
+    """書き出しの 1 件（THTH の repo で git が追う形）。**絶対パスも秘密も入れない**
+    ——本文は置く時点で秘密を断り、`$THTH_ROOT`・ホームを畳んである。"""
+    lines = [f"# {record['title']}", "",
+             f"- report_id: `{record['report_id']}`",
+             f"- 種類: {record['kind']}（{KIND_LABELS[record['kind']]}）",
+             f"- 状態: {record['status']}",
+             f"- 置いた時刻: {record['at']}",
+             f"- project: {record.get('project') or '—'} / account: {record['account']}"
+             f"（{record.get('medium') or '—'}）",
+             f"- 置いた人: {record.get('reporter')}（via {record.get('via')}）",
+             f"- 置いた時点の版: {record.get('tool_version')}"]
+    closed = record.get("closed")
+    if closed:
+        lines.append(f"- 閉じた: {closed['at']} {closed.get('by')}（{closed['reason']}・"
+                     f"版 {closed.get('version')}）")
+    for heading, text in (("本文", record["body"]), ("再現手順", record.get("repro"))):
+        lines += ["", f"## {heading}", ""]
+        if text:
+            fence = _fence(text)
+            lines += [fence + "text", text, fence]
+        else:
+            lines.append("（なし）")
+    lines += ["", f"## 返事（{len(record['replies'])} 件）"]
+    for row in record["replies"]:
+        fence = _fence(row["text"])
+        lines += ["", f"### {row['at']} {row.get('by')}", "", fence + "text", row["text"], fence]
+    lines += ["", "---", "",
+              f"書き出し: `thth admin reports export`（by {by}）。返事は "
+              f"`thth admin reports reply {record['report_id']} --by <名前> --text-file <file>`、"
+              f"閉じるときは `thth admin reports close {record['report_id']} --by <名前> "
+              "--reason fixed|wontfix|duplicate|invalid --version <版>`。"]
+    return "\n".join(lines) + "\n"
+
+
+def export(to, *, by):
+    """開いている報告を 1 件 1 ファイルで書き出す。閉じた報告は、前に書き出した
+    ファイルがあるときだけ閉じた形に書き直す（repo の写しを実物に揃える）。
+
+    応答には**書き出し先の絶対パスを返さない**（ファイル名だけ）。
+    """
+    by = reporter(by)
+    if not isinstance(to, str) or not to.strip():
+        raise ReportError("invalid_export_target")
+    target = os.path.abspath(to)
+    try:
+        os.makedirs(target, exist_ok=True)
+        if os.path.islink(target) or not os.path.isdir(target) or not os.access(target, os.W_OK):
+            raise ReportError("invalid_export_target")
+        existing = os.listdir(target)
+    except OSError:
+        raise ReportError("invalid_export_target") from None
+    records, broken = load_all()
+    written, updated = [], []
+    for record in records:
+        name = f"{record['report_id']}_{_slug(record['title'])}.md"
+        previous = [entry for entry in existing if entry.startswith(record["report_id"] + "_")
+                    and entry.endswith(".md")]
+        if record["status"] != "open" and not previous:
+            continue
+        try:
+            for stale in previous:
+                if stale != name:
+                    os.unlink(os.path.join(target, stale))
+            path = os.path.join(target, name)
+            if os.path.islink(path):
+                raise ReportError("invalid_export_target")
+            with open(path, "w", encoding="utf-8") as stream:
+                stream.write(render_markdown(record, by=by))
+        except OSError:
+            raise ReportError("invalid_export_target") from None
+        (written if record["status"] == "open" else updated).append(name)
+    return {"schema_version": SCHEMA_VERSION, "report_type": "report_export",
+            "n_open": len(written), "n_closed_updated": len(updated),
+            "files": sorted(written + updated), "unreadable": broken}
+
+
 # ------------------------------------------------------------------ CLI
 
 def _print_refusal(args, error):
@@ -585,3 +737,100 @@ def register(sub) -> None:
     viewer.add_argument("report_id")
     viewer.add_argument("--json", action="store_true")
     viewer.set_defaults(func=cmd_show)
+
+
+# ------------------------------------------------------------ 管理者の CLI
+
+def cmd_admin_list(args) -> int:
+    try:
+        payload = list_reports(scope=None, status=args.status)
+    except ReportError as error:
+        return _print_refusal(args, error)
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        render_list(payload)
+    return 0
+
+
+def cmd_admin_reply(args) -> int:
+    try:
+        reporter(args.by)
+        result = reply(args.report_id, by=args.by, text=_read_input(args.text_file), via="cli")
+    except ReportError as error:
+        return _print_refusal(args, error)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        print(f"返事を足しました: {result['report_id']}（返事 {result['n_replies']} 件）")
+    return 0
+
+
+def cmd_admin_close(args) -> int:
+    try:
+        reporter(args.by)
+        result = close(args.report_id, by=args.by, reason=args.reason, version=args.version, via="cli")
+    except ReportError as error:
+        return _print_refusal(args, error)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        closed = result["closed"]
+        print(f"閉じました: {result['report_id']}（{closed['reason']}・版 {closed['version']}）")
+    return 0
+
+
+def cmd_admin_export(args) -> int:
+    try:
+        result = export(args.to, by=args.by)
+    except ReportError as error:
+        return _print_refusal(args, error)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        print(f"書き出しました: 開いている {result['n_open']} 件・閉じた形に書き直し "
+              f"{result['n_closed_updated']} 件")
+        for name in result["files"]:
+            print(f"  {name}")
+    return 0
+
+
+def register_admin(commands) -> None:
+    """`thth admin reports list|show|reply|close|export`（設計 3.1.2 §1）。"""
+    parser = commands.add_parser(
+        "reports", help="報告の口（全 project の不具合と要望を読み、返事と状態を書く）",
+        description="全 project の報告を読み、返事と状態を書く（設計 3.1.2）。"
+                    "返事は報告した側の handoff-report --since-last-read に出ます。")
+    operations = parser.add_subparsers(dest="reports_command", required=True)
+    lister = operations.add_parser("list", help="報告の一覧（既定は開いているものだけ）")
+    lister.add_argument("--status", default="open", choices=(*STATUSES, "all"))
+    lister.add_argument("--json", action="store_true")
+    lister.set_defaults(func=cmd_admin_list)
+    viewer = operations.add_parser("show", help="報告 1 件の全文と返事")
+    viewer.add_argument("report_id")
+    viewer.add_argument("--json", action="store_true")
+    viewer.set_defaults(func=cmd_show)
+    replier = operations.add_parser(
+        "reply", help="返事を 1 つ足す（秘密らしき値が含まれていたら足さない）")
+    replier.add_argument("report_id")
+    replier.add_argument("--by", default=None, help="誰が返したか（必須）")
+    replier.add_argument("--text-file", required=True, dest="text_file",
+                         help=f"返事のファイル（`-` は標準入力・{REPLY_MAX} 字まで）")
+    replier.add_argument("--json", action="store_true")
+    replier.set_defaults(func=cmd_admin_reply)
+    closer = operations.add_parser("close", help="閉じる（理由と版を書く）")
+    closer.add_argument("report_id")
+    closer.add_argument("--by", default=None, help="誰が閉じたか（必須）")
+    closer.add_argument("--reason", required=True, choices=CLOSE_REASONS)
+    closer.add_argument("--version", required=True, help="直した・判断した版（例 3.1.2）")
+    closer.add_argument("--json", action="store_true")
+    closer.set_defaults(func=cmd_admin_close)
+    exporter = operations.add_parser(
+        "export", help="開いている報告を Markdown で書き出す（1 件 1 ファイル）",
+        description="開いている報告を <report_id>_<題>.md で書き出します。前に書き出した報告が"
+                    "閉じていれば閉じた形に書き直します。書き出し先の中身は公開してよいかを"
+                    "確かめてから commit してください（本文は利用者が書いた文です）。")
+    exporter.add_argument("--to", required=True, help="書き出し先のディレクトリ")
+    exporter.add_argument("--by", default=None, help="誰が書き出したか（必須）")
+    exporter.add_argument("--json", action="store_true")
+    exporter.set_defaults(func=cmd_admin_export)

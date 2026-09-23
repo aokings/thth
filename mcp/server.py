@@ -534,6 +534,24 @@ ADMIN_TOOLS.append({'name':'thth_admin_watch_set','description':'Replace the wat
                    'words':{'type':'array','items':{'type':'string'}}},
                    'required':['account','words','by'],'additionalProperties':False}})
 
+# 報告の口の実装側（設計 3.1.2 §1）。返事と閉じるは `by` 必須・変更ログに
+# presence-only で残る。書き出し（export）は repo に書くので CLI だけ。
+ADMIN_TOOLS += [
+    {'name':'thth_admin_reports_list','description':'List bug reports and requests from every project (status open by default, or closed/all); administrator only; read-only',
+     'inputSchema':{'type':'object','properties':{'status':{'type':'string','enum':['open','closed','all']}},
+                    'required':[],'additionalProperties':False}},
+    {'name':'thth_admin_reports_show','description':'Read one report with its body, reproduction steps and replies; administrator only; read-only',
+     'inputSchema':{'type':'object','properties':{'report_id':{'type':'string'}},
+                    'required':['report_id'],'additionalProperties':False}},
+    {'name':'thth_admin_reports_reply','description':'Add a reply to one report (shown to the reporter in operations_handoff tool.reports); administrator only, by required; refused if the text looks like a secret',
+     'inputSchema':{'type':'object','properties':{'report_id':{'type':'string'},'text':{'type':'string'},'by':{'type':'string'}},
+                    'required':['report_id','text','by'],'additionalProperties':False}},
+    {'name':'thth_admin_reports_close','description':'Close one report with a reason (fixed, wontfix, duplicate, invalid) and the version that settled it; administrator only, by required',
+     'inputSchema':{'type':'object','properties':{'report_id':{'type':'string'},'by':{'type':'string'},
+                    'reason':{'type':'string','enum':['fixed','wontfix','duplicate','invalid']},'version':{'type':'string'}},
+                    'required':['report_id','reason','version','by'],'additionalProperties':False}},
+]
+
 SERVER_TOOLS = [
     {"name":"thth_"+name,"description":"Scoped server "+name,
      "inputSchema":{"type":"object","properties":{key:{"type":"string"} for key in ("account",*keys)},
@@ -640,6 +658,9 @@ def server_call(name, arguments):
             result=execute_admin_write(context,request)
         elif operation in WRITE_OPERATIONS:
             result=execute(context,request,via='mcp')
+        elif operation.startswith('admin_reports_'):
+            from thth.report_service import execute_admin_reports
+            result=execute_admin_reports(context,request)
         elif operation in ('report_file','report_list','report_show'):
             from thth.report_service import execute_user_reports
             result=execute_user_reports(context,request)
