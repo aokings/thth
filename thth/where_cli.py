@@ -68,6 +68,27 @@ MASTODON_RECENT_IGNORED_NOTE = (
     "mastodon の検索に並び順の指定は無いので、--recent（RECENT）は無視しました")
 
 
+# 0 件のときの言い方（設計 3.7.0 §C2）。**0 件を「無い」と言わない**——媒体が語を
+# 受け付けずに空を返した場合と区別できない。Threads の keyword search の文書には
+# 「センシティブと判断した語を含む検索には空の配列を返す」とある（照合
+# `docs/照合_観測の地図_集計の定点観測_2026-09-23.md` の K）。短い語・形容詞の扱いは
+# 一次資料に記載が無い（未確認）。
+ZERO_OR_FILTERED = "zero_or_filtered"
+ZERO_MESSAGE = "0 件でした。本当に無いか、媒体が語を受け付けなかったかは区別できません"
+ZERO_MEDIUM_NOTE = {
+    "threads": "Threads は、センシティブと判断した語の検索に空の配列を返すと文書にあります",
+}
+ZERO_UNVERIFIED = "短い語・形容詞の扱いは一次資料に記載がありません（未確認）"
+
+
+def zero_or_filtered(medium) -> dict:
+    """0 件の検索に添える升目（静的な符丁と固定の文言だけ）。"""
+    note = ZERO_MEDIUM_NOTE.get(medium)
+    return {"code": ZERO_OR_FILTERED,
+            "message": ZERO_MESSAGE + (f"（{note}）" if note else ""),
+            "unverified": ZERO_UNVERIFIED}
+
+
 class WhereError(Exception):
     """問いが受け取れない（account/project どちらも無い・語が 1〜5 個でない 等）。
 
@@ -222,6 +243,8 @@ def _account_node(account_name: str, words: list, *, search_type: str,
             node_cannot_say.append(f"{word}: {redact_mod.redact(str(e))}")
             continue
 
+        # 媒体が返した件数（手元の絞り込みの前）。0 なら「無い」と言わない（§C2）。
+        raw_n = len(rows)
         dropped = {'since': None if floor and media == 'bluesky' else 0,
                    'exclude_engaged': 0, 'max_per_author': 0}
         filtered, per_author = [], {}
@@ -264,6 +287,8 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                                     "basis": "server_sortAt" if media == 'bluesky' else 'timestamp'}}
         if also_counts is not None:
             by_word[word]["also"] = also_counts
+        if raw_n == 0:
+            by_word[word][ZERO_OR_FILTERED] = zero_or_filtered(media)
 
     # `last_reaction`（T3-2・設計 §2.3「要約」= met・last・last_reaction の
     # 3 つ）。計算は `after_cli.reaction_lookup()` の 1 か所だけ。
@@ -416,6 +441,9 @@ def _render_human(result: dict) -> None:
                  f"  直近={material['latest_timestamp'] or '—'}")
             if entry.get('dropped'):
                 print(f"    除外: {entry['dropped']}")
+            if entry.get(ZERO_OR_FILTERED):
+                zero = entry[ZERO_OR_FILTERED]
+                print(f"    {zero['message']}。{zero['unverified']}")
             if entry.get("also"):
                 also = entry["also"]
                 print(f"    also（{'・'.join(also['words'])}）: {also['n_before']} 件中 also に合ったもの"

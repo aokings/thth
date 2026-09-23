@@ -23,6 +23,12 @@ def _setup(isolated_account_factory, monkeypatch, texts, name="one", media="thre
             return [dict(message_id=f"p{i}", author_key=f"{i:016x}", username=f"u{i}",
                          timestamp="2026-09-09T00:00:00Z", text=text)
                     for i, text in enumerate(texts)]
+
+        def tag_search(self, *a, **kw):
+            return {"n": 0}
+
+        def tag_observation(self, *a, **kw):
+            return {"n": 0}
     monkeypatch.setattr(adapters, "make_adapter", lambda *a: Fake())
     return calls
 
