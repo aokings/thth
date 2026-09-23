@@ -780,7 +780,11 @@ def test_本物の台帳でrc0でcannot_sayが出る(tmp_path):
     answer = json.loads(proc.stdout)
     assert answer["provenance"]["source"] == "local"
     assert answer["cannot_say"], "手元の水で言い切ってしまっている"
-    assert answer["expected"]["branches_24h"]["median"] is None
+    # 本物の水は日々増えるので、中央値の有無そのものは固定できない（2026-09-23:
+    # kopicha の 24h の観測が n=24 になり、中央値 0 が正直な答えになった）。見るのは
+    # 規約 2「n が min_n に満たなければ中央値を言わない」が本物の水でも守られること。
+    branches = answer["expected"]["branches_24h"]
+    assert (branches["median"] is None) == (branches["n"] < ask_mod.DEFAULT_MIN_N)
 
 
 def test_P3_6_THTH_NOWで時刻を固定できる(account, thth_root):
