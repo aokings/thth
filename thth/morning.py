@@ -379,9 +379,11 @@ def _yesterday_posts(name, now, read_at=None):
 
     窓は `observe_window()`（前回の観測から・無ければ前日 JST）。
     """
-    from . import measured as measured_mod
+    from . import goals as goals_mod, measured as measured_mod
     start, end, basis = observe_window(now, read_at)
     data = measured_mod.load(name)
+    # 投稿の目的（設計 3.6.0 §A2）。公開の時点の記録から。目的ごとの主な物差しを先頭に。
+    recorded = goals_mod.recorded_goals(name)
     posts = []
     for post in data["posts"]:
         at = jst.parse(post.get("posted_at"))
@@ -400,6 +402,11 @@ def _yesterday_posts(name, now, read_at=None):
                  "metrics": metrics,
                  "missing": list(latest.get("missing") or []) if latest else None,
                  "delta_24h": None, "delta_basis": None, "cannot_say": []}
+        goal = goals_mod.goal_for(recorded, post["post_id"])
+        entry["goal"] = goal
+        entry["lead_metrics"] = list(goals_mod.primary_metrics(goal, post.get("medium")))
+        # click・follow は投稿単位の数字が一次資料に無い——日次を投稿に割らない。
+        entry["goal_cannot_say"] = goals_mod.PER_POST_CANNOT_SAY.get(goal)
         if latest is None:
             entry["cannot_say"].append("no_observation_recorded")
         else:
@@ -1127,8 +1134,15 @@ def _render_yesterday(account, node, out) -> None:
         f"（{node['window']['since']}〜{node['window']['until']}）")
     for post in node["posts"]:
         metrics = post["metrics"] or {}
-        numbers = "・".join(f"{key}={metrics[key]}" for key in sorted(metrics)) or "—"
-        out(f"    {post['post_id']}  {numbers}（採取 {post['observations']} 回）")
+        # 目的の主な物差しを先頭に（設計 3.6.0 §A2）。目的が無ければ従前の並び。
+        lead = [key for key in post.get("lead_metrics") or [] if key in metrics]
+        keys = lead + [key for key in sorted(metrics) if key not in lead]
+        numbers = "・".join(f"{key}={metrics[key]}" for key in keys) or "—"
+        goal = post.get("goal")
+        tag = f"[{goal}] " if goal and goal != "none" else ""
+        out(f"    {post['post_id']}  {tag}{numbers}（採取 {post['observations']} 回）")
+        if post.get("goal_cannot_say"):
+            out(f"      言えない: {post['goal_cannot_say']}（日次の数を投稿に割りません）")
         if post["delta_24h"]:
             delta = "・".join(f"{key}{_signed(v)}" for key, v in sorted(post["delta_24h"].items())
                               if v is not None)

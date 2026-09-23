@@ -61,6 +61,8 @@ def self_layer(configs, words, *, since, now, min_n=SELF_MIN_N):
                 continue
             in_window.append((str(post["post_id"]), posted, post))
         incomplete = bool(loaded.get("broken"))
+        from . import goals as goals_mod
+        recorded = goals_mod.recorded_goals(name)
         for word in words:
             members = [item for item in in_window if _topic_key(item[2].get("topic")) == keys[word]]
             roots = [item for item in members if analytics_comparison._root_exclusion(item[2]) is None]
@@ -74,11 +76,70 @@ def self_layer(configs, words, *, since, now, min_n=SELF_MIN_N):
             layer[word]["by_account"][name] = {
                 "medium": medium, "posts": len(members), "denominator": len(in_window),
                 "root_posts": population["n_total"], "metrics": metrics,
+                # 点×目的の表（設計 3.6.0 §A2）。目的ごとの本数と主な物差しの中央値。
+                "by_goal": goal_table(name, medium, members, recorded, since=since, now=now,
+                                      min_n=min_n),
                 "basis": {"source": "measured", "mark_hours": 24, "min_n": min_n,
                           "population": "root_posts"},
                 "incomplete_sources": incomplete,
                 "cannot_say": "measured_partly_unreadable" if incomplete else None}
     return layer
+
+
+def goal_table(name, medium, members, recorded, *, since, now, min_n):
+    """その点の投稿を目的ごとに数え、主な物差しの中央値を 1 つ（設計 3.6.0 §A2）。
+
+    目的は公開の時点の記録（`goals.recorded_goals()`）。reach と reply は根の投稿の
+    24 時間の値（`analytics-report --by goal` と同じ計算）、click と follow は投稿
+    単位の数字が一次資料に無いので中央値を出さず `cannot_say` を言う（割らない）。
+    """
+    from . import analytics_goals, goals as goals_mod
+    table = {}
+    for goal in goals_mod.GOALS + (goals_mod.NONE,):
+        chosen = [item for item in members if goals_mod.goal_for(recorded, item[0]) == goal]
+        roots = [item for item in chosen if analytics_comparison._root_exclusion(item[2]) is None]
+        row = {"posts": len(chosen), "root_posts": len(roots), "primary": None, "cannot_say": None}
+        if goal in goals_mod.PER_POST_CANNOT_SAY:
+            row["cannot_say"] = goals_mod.PER_POST_CANNOT_SAY[goal]
+        elif goal == "reach":
+            yard = analytics_goals.yardstick("reach", name=name, medium=medium, members=roots,
+                                             goal_days={}, daily={}, start=since, end=now,
+                                             now=now, min_n=min_n)
+            stat = yard["by_mark"]["24"]
+            row["primary"] = {"metric": f"{yard['metric']}_24h", "median": stat["median"],
+                              "n": stat["n_eligible"], "denominator": stat["n_total"],
+                              "reason": stat["reason"]}
+        elif goal == "reply":
+            values = []
+            for post_id, posted, post in roots:
+                if since <= posted < now:
+                    observation, _rejected = analytics_comparison._observation(post, posted, now, 24)
+                    value = ((observation or {}).get("metrics") or {}).get("replies")
+                    if value is not None:
+                        values.append(value)
+            median = analytics_comparison._median(values) if len(values) >= min_n else None
+            row["primary"] = {"metric": "replies_24h", "median": median, "n": len(values),
+                              "denominator": len(roots),
+                              "reason": None if median is not None else "below_min_n"}
+        table[goal] = row
+    return table
+
+
+def goal_line(table) -> str | None:
+    """地図の 1 行（本数のある目的だけ）。無ければ None。"""
+    parts = []
+    for goal, row in (table or {}).items():
+        if not row["posts"]:
+            continue
+        if row["cannot_say"]:
+            parts.append(f"{goal} {row['posts']} 本（言えない: {row['cannot_say']}）")
+        elif row["primary"]:
+            stat = row["primary"]
+            parts.append(f"{goal} {row['posts']} 本（{stat['metric']} 中央値 "
+                         f"{_num(stat['median'])}・n={stat['n']}/{stat['denominator']}）")
+        else:
+            parts.append(f"{goal} {row['posts']} 本")
+    return "目的: " + "・".join(parts) if parts else None
 
 
 # ---------------------------------------------------------------- 広場の層
@@ -302,6 +363,9 @@ def render(payload, out=print) -> None:
                 parts.append(f"{metric} 中央値 {_num(stat['median'])}（n={stat['n']}）")
             out(f"  自分 {name}（{cell['medium']}）: 投稿 {cell['posts']}/{cell['denominator']}  "
                 + "・".join(parts))
+            line = goal_line(cell.get("by_goal"))
+            if line:
+                out(f"    {line}")
         plaza_cell = node["plaza"]
         if plaza_cell.get("cannot_say"):
             out(f"  広場: 言えない: {plaza_cell['cannot_say']}")
