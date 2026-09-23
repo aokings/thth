@@ -566,6 +566,33 @@ del _tool
 
 
 
+# 報告の口の利用者側（設計 3.1.2 §1）。**サーバ型だけに出す**——手元の stdio
+# （pip 版）で置いても実装側には届かないので、届かない口は並べない。誰が置いたかは
+# credential の `actor` が決める（要求の欄からは作らない）。
+REPORT_TOOLS = [
+    {"name": "thth_report_file",
+     "description": "道具が断った・結果が期待と違った・欲しい形がある、のどれかならこれで置く"
+                    "（kind は bug か request。実装側が読み、返事は thth_report_show と "
+                    "operations_handoff の tool.reports に出る。秘密らしき値が含まれていたら置かない）",
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string"},
+         "kind": {"type": "string", "enum": ["bug", "request"]},
+         "title": {"type": "string", "description": "1 行・120 字まで"},
+         "body": {"type": "string", "description": "8,000 字まで"},
+         "repro": {"type": "string", "description": "再現手順（任意・4,000 字まで）"}},
+         "required": ["account", "kind", "title", "body"], "additionalProperties": False}},
+    {"name": "thth_report_list",
+     "description": "自分の project の報告と、実装側の返事の数を読む（読むだけ）",
+     "inputSchema": {"type": "object", "properties": {
+         "status": {"type": "string", "enum": ["open", "closed", "all"]}},
+         "additionalProperties": False}},
+    {"name": "thth_report_show",
+     "description": "報告 1 件の本文と実装側の返事を読む（読むだけ）",
+     "inputSchema": {"type": "object", "properties": {"report_id": {"type": "string"}},
+                     "required": ["report_id"], "additionalProperties": False}},
+]
+
+
 def server_mode():
     return 'THTH_REPORT_CREDENTIALS' in os.environ or 'THTH_REPORT_TOKEN' in os.environ
 
@@ -580,7 +607,7 @@ def server_tools(context):
     reports = reports + [tool for tool in TOOLS if tool['name']=='thth_morning']
     from thth.server_writes import WRITE_OPERATIONS
     return reports + [tool for tool in SERVER_TOOLS
-                      if context.writes or tool['name'][5:] not in WRITE_OPERATIONS]
+                      if context.writes or tool['name'][5:] not in WRITE_OPERATIONS] + REPORT_TOOLS
 
 
 def server_call(name, arguments):
@@ -613,6 +640,9 @@ def server_call(name, arguments):
             result=execute_admin_write(context,request)
         elif operation in WRITE_OPERATIONS:
             result=execute(context,request,via='mcp')
+        elif operation in ('report_file','report_list','report_show'):
+            from thth.report_service import execute_user_reports
+            result=execute_user_reports(context,request)
         elif operation=='morning':
             from thth.report_service import execute_morning
             result=execute_morning(context,request)
@@ -626,7 +656,11 @@ def server_call(name, arguments):
             # 理由は静的な符丁の表にあるものだけ。lint の自由文は通さない。
             detail=getattr(exc,'reason',None)
             return failure('invalid_draft: '+(detail if detail in DRAFT_REASONS else 'validation_failed'))
-        return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused','watch_change_refused') else 'request_unavailable')
+        from thth.report_inbox import REASONS as REPORT_REASONS
+        if str(exc)=='duplicate_report' and getattr(exc,'report_id',None):
+            # 既存の id は同じ account の報告だけ（重複の検査がそう絞っている）。
+            return failure('duplicate_report: '+exc.report_id)
+        return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in REPORT_REASONS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused','watch_change_refused') else 'request_unavailable')
     except Exception:
         return failure('request_unavailable')
 

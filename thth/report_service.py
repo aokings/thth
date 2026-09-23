@@ -240,6 +240,67 @@ def execute_morning(context: ReportContext, request: dict) -> dict:
     return payload
 
 
+REPORT_OPERATIONS = frozenset(('report_file', 'report_list', 'report_show'))
+
+
+def _report_error(error):
+    """`report_inbox.ReportError` を口の断りに写す（静的な符丁と、重複なら既存の id）。"""
+    exc = ReportServiceError(str(error))
+    exc.report_id = getattr(error, 'report_id', None)
+    return exc
+
+
+def execute_user_reports(context: ReportContext, request: dict) -> dict:
+    """報告の口の利用者側（設計 3.1.2 §1）。**credential が account と project を決める。**
+
+    - 置く: 誰が置いたかは credential の `actor`（要求の欄からは作らない）。
+      書く口（`writes`）の credential でなくても置ける——SNS には何も出ない。
+    - 読む: 自分の account と、その project の報告だけ。無い id と読めない id は
+      同じ `report_not_found`。
+    """
+    from . import admin_log, report_inbox, server_writes
+    if type(context) is not ReportContext or type(request) is not dict:
+        raise ReportServiceError("invalid_request")
+    if context.scope != 'user':
+        raise ReportServiceError("unsupported_operation")
+    operation = request.get("operation")
+    projects = {project for project in context.allowed_accounts.values() if project}
+    scope = report_inbox.Scope(context.allowed_accounts, projects)
+    try:
+        if operation == 'report_file':
+            if (set(request) - {'operation', 'account', 'kind', 'title', 'body', 'repro'}
+                    or not {'account', 'kind', 'title', 'body'} <= set(request)):
+                raise ReportServiceError("invalid_request")
+            if any(not isinstance(request[key], str) for key in ('account', 'kind', 'title', 'body')):
+                raise ReportServiceError("invalid_request")
+            if request.get('repro') is not None and not isinstance(request['repro'], str):
+                raise ReportServiceError("invalid_request")
+            account = request['account']
+            # 再認証・停止・project の一致は書く口と同じ門（`write=False`）。
+            cfg = server_writes.current(context, account)
+            if not context.actor:
+                raise ReportServiceError("by_required")
+            # 台帳が指す秘密の値そのものも当てる（綴りの無い貼り付け）。
+            admin_log.register_account_secrets(cfg, via='mcp')
+            return report_inbox.file_report(
+                account, kind=request['kind'], title=request['title'], body=request['body'],
+                repro=request.get('repro'), by=context.actor, via='mcp',
+                project=context.allowed_accounts[account], medium=cfg.get('media'), trusted=True)
+        if operation == 'report_list':
+            if set(request) - {'operation', 'status'}:
+                raise ReportServiceError("invalid_request")
+            return report_inbox.list_reports(scope=scope, status=request.get('status') or 'all')
+        if operation == 'report_show':
+            if set(request) - {'operation', 'report_id'} or not isinstance(request.get('report_id'), str):
+                raise ReportServiceError("invalid_request")
+            return report_inbox.show(request['report_id'], scope=scope)
+    except report_inbox.ReportError as error:
+        raise _report_error(error) from None
+    except accounts.AccountError:
+        raise ReportServiceError("scope_unavailable") from None
+    raise ReportServiceError("unsupported_operation")
+
+
 def _open_directory_nofollow(path: Path) -> int:
     """Open every absolute repo ancestor without following a symlink."""
     descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)

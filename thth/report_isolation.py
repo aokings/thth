@@ -123,6 +123,8 @@ def _validate(root, allowed, *, allow_unreadable=False, allow_empty=False):
     scan(account_dir)  # Account definitions must be safe before load_account opens them.
     scan(resolved / "state" / "_leave")
     scan(resolved / "state" / "_admin")  # Shared administrator state is report-readable too.
+    # 報告の口（設計 3.1.2）の置き場も共有の読み場。symlink・特殊ファイルを同じ門で断る。
+    scan(resolved / "state" / "_reports")
 
     def inside(path):
         if not isinstance(path, str) or not os.path.isabs(path):
