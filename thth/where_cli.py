@@ -46,6 +46,9 @@ CAPABILITY = "keyword_search"
 
 MIN_WORDS = 1
 MAX_WORDS = 5
+# `--also`（設計 3.7.0 §C1）: 同じ検索結果のうち本文にどれかの語を含むものだけを残す
+# 語。**追加の検索はしない**——絞るだけ。observe の監視語には使わない（CLI の下調べ用）。
+MAX_ALSO = 5
 DEFAULT_LIMIT = 25
 MAX_LIMIT = 100
 
@@ -115,8 +118,19 @@ def _my_history(account_name: str, word: str) -> tuple[dict | None, str | None]:
             "likes_24h": eng["likes_24h"], "replies_back_24h": eng["replies_back_24h"]}, None
 
 
+def _also_filter(rows: list, also: list) -> tuple[list, dict]:
+    """本文にどれかの語を含む行だけ残す（大文字小文字を畳んだ部分一致）。**検索はしない。**"""
+    needles = [word.casefold() for word in also]
+    kept = [row for row in rows
+            if isinstance(row.get("text"), str)
+            and any(needle in row["text"].casefold() for needle in needles)]
+    return kept, {"words": list(also), "n_before": len(rows), "n_matched": len(kept),
+                  "basis": "text_contains_any_casefold", "additional_search": False}
+
+
 def _account_node(account_name: str, words: list, *, search_type: str,
-                  limit: int, now, since=None, exclude_engaged=False, max_per_author=None) -> tuple[dict | None, Exception | str | None]:
+                  limit: int, now, since=None, exclude_engaged=False, max_per_author=None,
+                  also=None) -> tuple[dict | None, Exception | str | None]:
     """1 account 分の節。戻りは `(node, 理由)`——どちらか一方だけが非 `None`。
     台帳が読めない・token が無い・媒体に `keyword_search` が無いときは
     `node` が `None`（`by_account` に**入れない**・規約 (d)）。
@@ -228,6 +242,10 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                 per_author[key] = per_author.get(key, 0) + 1
             filtered.append(row)
         rows = filtered
+        also_counts = None
+        if also:
+            # 同じ検索結果を絞るだけ（設計 3.7.0 §C1）。語ごとに 1 回の検索のまま。
+            rows, also_counts = _also_filter(rows, also)
         material = threads_read_cli_mod.search_material(
             rows, q=word, search_type=search_type, limit=limit)
         material["medium"] = media
@@ -244,6 +262,8 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                          "dropped": dropped,
                          "window": {"since": jst.iso(floor) if floor else None,
                                     "basis": "server_sortAt" if media == 'bluesky' else 'timestamp'}}
+        if also_counts is not None:
+            by_word[word]["also"] = also_counts
 
     # `last_reaction`（T3-2・設計 §2.3「要約」= met・last・last_reaction の
     # 3 つ）。計算は `after_cli.reaction_lookup()` の 1 か所だけ。
@@ -286,9 +306,25 @@ def _resolve_names(*, account_name: str | None, project: str | None) -> tuple[li
     return names, top_cannot_say
 
 
+def _clean_also(also) -> list:
+    if also is None:
+        return []
+    if not isinstance(also, list):
+        _reject(f"also は配列です: {also!r}")
+    out = []
+    for word in also:
+        if not isinstance(word, str) or not word.strip():
+            _reject(f"also の語は空でない文字列です: {word!r}")
+        out.append(word.strip())
+    if len(out) > MAX_ALSO:
+        _reject(f"also は {MAX_ALSO} 語までです（受け取ったのは {len(out)} 語）")
+    return out
+
+
 def answer(*, account_name: str | None = None, project: str | None = None,
           words: list, recent: bool = False, limit: int = DEFAULT_LIMIT,
-          now=None, since=None, exclude_engaged=False, max_per_author=None) -> dict:
+          now=None, since=None, exclude_engaged=False, max_per_author=None,
+          also=None) -> dict:
     """`where_to_appear` の答え（設計「自分の泉」§2.3・§2.6）。**読むだけ。**"""
     if account_name and project:
         _reject("account と --project は同時に指定できません")
@@ -314,6 +350,7 @@ def answer(*, account_name: str | None = None, project: str | None = None,
         _reject(str(exc))
     if max_per_author is not None and (type(max_per_author) is not int or max_per_author < 1):
         _reject('max_per_author は 1 以上の整数です')
+    also = _clean_also(also)
     search_type = "RECENT" if recent else "TOP"
 
     names, top_cannot_say = _resolve_names(account_name=account_name, project=project)
@@ -323,7 +360,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
     for name in names:
         node, reason = _account_node(name, words, search_type=search_type,
                                      limit=limit, now=now, since=since,
-                                     exclude_engaged=exclude_engaged, max_per_author=max_per_author)
+                                     exclude_engaged=exclude_engaged, max_per_author=max_per_author,
+                                     also=also)
         if node is None:
             if isinstance(reason, accounts_mod.AccountError) and project is None:
                 # **単一 account: そのまま投げ直す**（T5-2・`who_cli.answer()`
@@ -350,8 +388,9 @@ def answer(*, account_name: str | None = None, project: str | None = None,
             if recent and MASTODON_RECENT_IGNORED_NOTE not in notes:
                 notes.append(MASTODON_RECENT_IGNORED_NOTE)
 
+    extra = {"also": also} if also else {}
     return {
-        "account": account_name, "project": project, "words": words,
+        "account": account_name, "project": project, "words": words, **extra,
         "by_tag": [{"account": name, **entry} for name, node in by_account.items()
                    for entry in node["by_tag"]],
         "by_account": by_account, "cannot_say": top_cannot_say,
@@ -377,6 +416,10 @@ def _render_human(result: dict) -> None:
                  f"  直近={material['latest_timestamp'] or '—'}")
             if entry.get('dropped'):
                 print(f"    除外: {entry['dropped']}")
+            if entry.get("also"):
+                also = entry["also"]
+                print(f"    also（{'・'.join(also['words'])}）: {also['n_before']} 件中 also に合ったもの"
+                      f" {also['n_matched']} 件（追加の検索はしていません）")
             history = entry["my_history"]
             if history:
                 print(f"    自分の履歴: n={history['n']}  反応あり={history['reacted']}")
@@ -439,6 +482,9 @@ def register(sub) -> None:
     p.add_argument('--since', default=None, help='検索期間（7d/1h/ISO）')
     p.add_argument('--exclude-engaged', action='store_true')
     p.add_argument('--max-per-author', type=int, default=None)
+    p.add_argument("--also", action="append", default=None, metavar="語",
+                   help="同じ検索結果のうち、本文にどれかの語を含むものだけを残す"
+                        f"（繰り返し指定・{MAX_ALSO} 語まで・追加の検索はしない）")
     p.set_defaults(func=cmd_where)
 
 
@@ -460,7 +506,8 @@ def cmd_where(args) -> int:
         result = answer(account_name=account_name, project=args.project, words=words,
                         recent=args.recent, limit=args.limit, since=getattr(args, "since", None),
                         exclude_engaged=getattr(args, "exclude_engaged", False),
-                        max_per_author=getattr(args, "max_per_author", None))
+                        max_per_author=getattr(args, "max_per_author", None),
+                        also=getattr(args, "also", None))
     except accounts_mod.AccountError as e:
         # **単一 account が読めなければ loud reject**（T5-2・`who` と揃える）。
         # `--json` は人向けの文言でなく `{"error", "account"}` を出す——
