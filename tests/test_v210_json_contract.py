@@ -30,7 +30,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      'observe',
      # 3.1.2: 報告の口（設計 3.1.2 §1）。
      'report file', 'report list', 'report show', 'report add', 'admin reports list', 'admin reports show',
-     'admin reports reply', 'admin reports close', 'admin reports export']
+     'admin reports reply', 'admin reports close', 'admin reports export',
+     # 3.3.1 §4: 人の口 thth inflight（show|resolve・--json）。
+     'inflight']
 
 
 def test_json_table_covers_every_parser():
