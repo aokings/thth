@@ -2991,6 +2991,10 @@ def cmd_board(args) -> int:
             incident_status = row.get("incident_notifications", {})
             print("  停止メール: " + ("設定済み" if all(incident_status.get(k) for k in ("user_configured", "admin_configured", "smtp_configured")) else "設定不足")
                   + f" / 未完了メール={incident_status.get('mail_pending', '?')} repo={incident_status.get('repo_pending', '?')} outbox={incident_status.get('outbox', '?')}")
+            # 最後に送った運用通知（設計 3.3.1 §5）。届いたかどうかを人が受信箱と照合する。
+            if incident_status.get("outbox") == "ok":
+                print("  最後に送った運用通知: "
+                      + incident_mod.last_sent_line(incident_status.get("last_sent")))
             notification_configured = row.get("notification_configured")
             notification_delivery = row.get("notification_delivery")
             if notification_configured is False:

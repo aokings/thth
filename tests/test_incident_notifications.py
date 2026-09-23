@@ -76,7 +76,8 @@ def test_git_roundtrip_preserves_original_and_deduplicates(setup):
     assert "thth_run_state: recovered" in s.path.read_text()
     assert len(s.captured) == 4
     assert incident._fingerprint(s.path) == before
-    assert len(row(s)["events"]) == 1
+    # 3.3.1 §5: 送り終えた事象も 30 日は残す（以前は 1 件に畳んでいた）。
+    assert len(row(s)["events"]) == 2
 
 
 def test_initial_success_is_quiet(setup):
@@ -99,7 +100,8 @@ def test_role_failure_retries_only_unfinished_and_other_role_gets_recovery(setup
     monkeypatch.setattr(incident, "_send", lambda c, r, e, a: calls.append((r, e["state"])) or True)
     notify(s, "success", result=False)
     assert calls[-2:] == [("user@example.org", "blocked"), ("user@example.org", "recovered")]
-    assert len(row(s)["events"]) == 1
+    # 3.3.1 §5: 送り終えた事象も 30 日は残す（以前は 1 件に畳んでいた）。
+    assert len(row(s)["events"]) == 2
 
 
 def test_same_address_single_message(setup):

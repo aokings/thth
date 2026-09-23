@@ -622,6 +622,15 @@ def _inflight(node):
             "next_action_code": diagnostic.get("next_action_code")}
 
 
+def _last_notification(name, cfg):
+    """最後に SMTP が受領した運用通知（`incident.summary()` と同じ値）。宛先は出さない。"""
+    from . import incident
+    summary = incident.summary(cfg, accounts_mod.state_dir_for(name))
+    if summary.get("outbox") != "ok":
+        raise ValueError("outbox_unreadable")
+    return summary.get("last_sent")
+
+
 def _budget(media_set):
     """X の読取（推定 USD）と投稿（本数）の残り。X が居なければこの段に出さない。"""
     if "x" not in media_set:
@@ -817,6 +826,8 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
             "held_items": _guard(lambda name=name, cfg=cfg: _held_rows(name, cfg, now)),
             "queue": _queue_cell(node),
             "inflight": _inflight(node),
+            # 最後に送った運用通知（設計 3.3.1 §5）。届いたかを人が受信箱と照合する。
+            "last_notification": _guard(lambda cfg=cfg, name=name: _last_notification(name, cfg)),
             "changes_since_last_read": ((node or {}).get("changes_since") or {}).get("changes"),
         })
     budget_cell = _budget({cfg.get("media") for cfg in configs.values()})
@@ -1100,6 +1111,13 @@ def _render_today(account, node, out) -> None:
     if inflight["present"]:
         out(f"    inflight: {inflight['reason_code']}（{inflight['since']}）"
             f" 次 {inflight['next_action_code']}")
+    sent = node.get("last_notification")
+    if sent is not None:
+        from . import incident
+        if sent.get("cannot_say") is not None:
+            out(f"    最後に送った運用通知: 言えない: {sent['cannot_say']}")
+        else:
+            out("    最後に送った運用通知: " + incident.last_sent_line(sent.get("value")))
 
 
 def _yes(value):

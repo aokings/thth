@@ -10,6 +10,7 @@ from __future__ import annotations
 from . import api_diagnostic
 
 import contextlib
+import datetime
 import hashlib
 import json
 import os
@@ -28,6 +29,13 @@ STATE_FILE = "incident-outbox.json"
 # `notice` は指紋の版が変わって再承認が要る知らせ（A3・1 回だけ）。
 EVENT_STATES = {"blocked", "recovered", "notice"}
 CONFIG_FILE = "notifications.json"
+# 送り終えた事象を outbox に残す日数（設計 3.3.1 §5）。以前は両方の宛先が受領した
+# 時点で消していたので、09-22 の停止の通知を送ったかどうかを翌日に言えなかった。
+RETENTION = datetime.timedelta(days=30)
+# それでも数で溢れさせない（`_validate` は 100 件で outbox_full にして通知を止める）。
+# 30 日以内でも、送り終えた事象がこの数を超えたら古い順に畳む。
+RETENTION_CAP = 50
+ROLES = ("user", "admin")
 FIELDS = {"thth_run_state", "thth_run_at", "thth_run_reason", "thth_run_action", "thth_incident_id", "thth_run_detail", "thth_run_next"}
 
 
@@ -332,6 +340,39 @@ def _validate(row):
     version = row.get("fingerprint_version")
     if version is not None and (type(version) is not int or version < 1):
         raise ValueError("invalid_outbox")
+    # 最後に SMTP が受領した運用通知（設計 3.3.1 §5）。旧い outbox には無い。
+    sent = row.get("last_sent")
+    if sent is not None and (
+            not isinstance(sent, dict) or not jst.parse(sent.get("at"))
+            or sent.get("state") not in EVENT_STATES
+            or not healthcheck._reason_code_is_safe(sent.get("reason"))
+            or not isinstance(sent.get("roles"), list)
+            or any(role not in ROLES for role in sent["roles"])):
+        raise ValueError("invalid_outbox")
+
+
+def _mark_sent(row, event):
+    """SMTP が受領した事象を「最後に送った運用通知」として控える（§5）。
+
+    宛先と本文は入れない——時刻・状態・理由の符丁・受領した役割だけ。受信箱に
+    届いたかどうかは道具には分からない（SMTP の受領は到達ではない）ので、人が
+    受信箱と照合するための手掛かり。事象が畳まれても残る。
+    """
+    row["last_sent"] = {"at": jst.iso(jst.now_jst()), "state": event["state"],
+                        "reason": event["reason"], "event_at": event["at"],
+                        "roles": sorted(event["accepted"])}
+
+
+def _prunable(row, now) -> bool:
+    """いちばん古い事象を畳んでよいか（送り終えていて、30 日を過ぎたか数が溢れた）。"""
+    events = row["events"]
+    if len(events) <= 1:
+        return False
+    first = events[0]
+    if len(first["accepted"]) != 2 or first["repo"] not in {"written", "no_source"}:
+        return False
+    at = jst.parse(first.get("at"))
+    return len(events) > RETENTION_CAP or at is None or now - at > RETENTION
 
 
 def _new_event(state, reason, file=None):
@@ -501,12 +542,14 @@ def notify(account, cfg, diag, *, state_dir, result=None, reapproval=None):
                     continue
                 if key in event["accepted"].values():
                     event["accepted"][role] = key
+                    _mark_sent(row, event)
                     persist()
                     continue
                 try:
                     if _send(s, recipient, event, account):
                         event["accepted"][role] = key
                         event.setdefault("mail_errors", {}).pop(role, None)
+                        _mark_sent(row, event)
                         persist()
                     else:
                         event.setdefault("mail_errors", {})[role] = "smtp_failed"
@@ -517,7 +560,9 @@ def notify(account, cfg, diag, *, state_dir, result=None, reapproval=None):
             persist()
 
         # Keep the last transition for recovery linkage, prune only fully handled history.
-        while len(row["events"]) > 1 and len(row["events"][0]["accepted"]) == 2 and row["events"][0]["repo"] in {"written", "no_source"}:
+        # 送り終えた事象も 30 日は残す（設計 3.3.1 §5・送ったかどうかを後から言うため）。
+        now = jst.now_jst()
+        while _prunable(row, now):
             row["events"].pop(0)
         persist()
         return "processed" if ready else "not_configured"
@@ -634,7 +679,36 @@ def summary(cfg, state_dir):
         _validate(row)
         result.update({"outbox": "ok", "repo_pending": sum(e["repo"] == "pending" for e in row["events"]),
                        "mail_pending": sum(2 - len(e["accepted"]) for e in row["events"]),
-                       "last_state": row["last"]})
+                       "last_state": row["last"], "last_sent": last_sent(row)})
     except (OSError, ValueError, TypeError, AttributeError):
-        result.update({"outbox": "unreadable", "repo_pending": None, "mail_pending": None, "last_state": None})
+        result.update({"outbox": "unreadable", "repo_pending": None, "mail_pending": None,
+                       "last_state": None, "last_sent": None})
     return result
+
+
+def last_sent(row) -> dict | None:
+    """最後に SMTP が受領した運用通知（`thth board`・`thth observe` が出す）。
+
+    3.3.1 より前の outbox には控えが無いので、残っている事象のうち受領のある
+    最後のものから言う（そのときの時刻は事象の時刻で、送った時刻ではない——
+    `basis` で分ける）。どちらも無ければ None（「送っていない」とは言わない）。
+    """
+    sent = row.get("last_sent")
+    if isinstance(sent, dict):
+        return {"at": sent["at"], "state": sent["state"], "reason": sent["reason"],
+                "roles": list(sent["roles"]), "basis": "recorded"}
+    for event in reversed(row.get("events") or []):
+        if event.get("accepted"):
+            return {"at": event["at"], "state": event["state"], "reason": event["reason"],
+                    "roles": sorted(event["accepted"]), "basis": "event_at"}
+    return None
+
+
+def last_sent_line(value) -> str:
+    """人向けの 1 行（board・observe で同じ文）。"""
+    if not value:
+        return ("記録なし（SMTP が受領した運用通知は outbox に 30 日残します。"
+                "無いのは送っていないか、30 日より前）")
+    roles = "・".join(value["roles"]) or "なし"
+    when = value["at"] if value.get("basis") == "recorded" else f"{value['at']}（事象の時刻）"
+    return f"{when} {value['state']}（{value['reason']}）受領: {roles}（SMTP 受領・受信箱への到達は未確認）"
