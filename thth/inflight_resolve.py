@@ -175,7 +175,15 @@ def _ask(adapter, record) -> tuple:
                 return "published", "published", found.post_id, found.timestamp
             return None, "published_unlocated", None, None
         return None, status if status in REMOTE_STATES else "query_failed", None, None
-    return None, "unsupported", None, None
+    # container の無い媒体（Mastodon・Bluesky・X）: 自分の最近の投稿との照合だけ。
+    # **0 件では解かない**——出ていないと言い切れない媒体がある（本文を変えて
+    # 返す・索引が遅れる）。人が `thth inflight resolve` で決める。
+    if not callable(getattr(adapter, "recent_posts", None)) or not fingerprint:
+        return None, "unsupported", None, None
+    found = locate(adapter, fingerprint, around)
+    if found.state == "listing_located":
+        return "published", "listing_located", found.post_id, found.timestamp
+    return None, found.state, None, None
 
 
 def self_resolve(account_name: str, account_cfg: dict, state_dir: str, record: dict, *,
