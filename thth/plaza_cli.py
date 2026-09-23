@@ -63,13 +63,16 @@ def render_list(payload, out=print):
 
 
 def _fmt(value):
-    return "—" if value is None else (f"+{value}" if isinstance(value, (int, float)) and value > 0
-                                      else str(value))
+    if value is None:
+        return "—"
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return f"+{value}" if isinstance(value, (int, float)) and value > 0 else str(value)
 
 
 def render_comparison(table, out=print):
     """媒体をまたぐ比較の表（列 = 媒体・行 = 指標・値は差と両群の分母）。"""
-    heads = [f"{c['medium'] or '—'}" + ("（試した）" if c["source"] == "tried" else "")
+    heads = [f"{c['medium'] or '—'}" + {"tried": "（試した）", "trial": "（追試）"}.get(c["source"], "")
              for c in table["columns"]]
     out(f"[媒体をまたぐ比較] {plaza_observe.LABEL}・観測上の差（因果ではない）")
     out("  指標 | " + " | ".join(heads))

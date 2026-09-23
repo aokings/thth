@@ -752,8 +752,8 @@ def show(plaza_id, viewer):
                   if row.get("kind") in ("tried", "trial") else None)
         if target is not None:
             target_level = access(target, viewer, joined)
-            if target_level is not None and target["plaza_id"] not in {r["plaza_id"] for r, _ in linked}:
-                linked.append((target, target_level))
+            if target_level is not None and target["plaza_id"] not in {r["plaza_id"] for r, *_ in linked}:
+                linked.append((target, target_level, row["kind"]))
     if level == "open":
         copy = record.get("open_copy") or {}
         payload = {"report_type": "plaza_post", "view": "open", "plaza_id": record["plaza_id"],
