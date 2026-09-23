@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import os
 import re
 import unicodedata
 
@@ -262,6 +263,123 @@ def char_count(text: str) -> int:
 
 def has_hashtag(text: str) -> bool:
     return bool(_HASHTAG_RE.search(text))
+
+
+# --------------------------------------------------------------------------
+# reply_to_file（設計 3.2.0 §1）: 返信先を「同じ queue の原稿の名前」で書く
+# --------------------------------------------------------------------------
+
+# 「今日は問い・明日は答え」の答えの原稿は、問いの post_id が出るまで書けない。
+# そこで返信先を post_id ではなく**同じ queue の原稿の名前**で書き、その原稿が
+# 出るまで道具が待つ。**解決できないのに root に落とす経路は作らない**（§0）。
+REPLY_TO_FILE_KEY = "reply_to_file"
+# 承認の指紋の reply_to 欄に入れる印（§3・`approval.reply_to_for_fingerprint()`）。
+# post_id を直書きする `reply_to` と**同じ欄**を使うので、`reply_to` の値がこの
+# 印で始まることは許さない——許すと `reply_to_file: a.md` と `reply_to: file:a.md`
+# が同じ指紋になり、承認のあとに一方からもう一方へ書き換えても気づけない。
+REPLY_TO_FILE_MARK = "file:"
+
+# 断る理由の符丁（lint と select が同じ語を使う・静的）。
+REPLY_TO_CONFLICT = "reply_to_conflict"
+REPLY_TO_FILE_INVALID = "reply_to_file_invalid"
+REPLY_TO_FILE_SELF = "reply_to_file_self"
+REPLY_TO_FILE_MISSING = "reply_to_file_missing"
+REPLY_TO_FILE_ACCOUNT_MISMATCH = "reply_to_file_account_mismatch"
+REPLY_TO_FILE_BUNDLE = "reply_to_file_bundle_unsupported"
+# 指した原稿は在るが `thth: 1` の原稿として読めない（設計 §1 の 6 語に 1 語足した
+# ——「在るのに読めない」を「無い」と言うと、直す場所を取り違えるため）。
+REPLY_TO_FILE_UNREADABLE = "reply_to_file_unreadable"
+
+REPLY_TO_FILE_MESSAGES = {
+    REPLY_TO_CONFLICT: "reply_to と reply_to_file は併用できません（どちらか 1 つ）",
+    REPLY_TO_FILE_INVALID: ("同じ queue の原稿のファイル名だけを書いてください"
+                            "（`.md`・`/` `\\` `..` を含まない）"),
+    REPLY_TO_FILE_SELF: "自分自身は指せません",
+    REPLY_TO_FILE_MISSING: "指した原稿が同じ queue にありません",
+    REPLY_TO_FILE_ACCOUNT_MISMATCH: "指した原稿の account が違います（同じ account の原稿だけ）",
+    REPLY_TO_FILE_BUNDLE: "スレッド連投（thth: 2）の原稿は指せません（thth: 1 の原稿だけ）",
+    REPLY_TO_FILE_UNREADABLE: "指した原稿が thth: 1 の原稿として読めません",
+}
+
+
+def reply_to_file_of(fm) -> str | None:
+    """front-matter の `reply_to_file`（前後の空白を落とす）。空・無しは None。"""
+    raw = (fm or {}).get(REPLY_TO_FILE_KEY)
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    return value or None
+
+
+def reply_to_file_name_ok(name) -> bool:
+    """**ファイル名だけ**か（設計 §1）。パスは書けない——同じ queue の外を指させない。"""
+    return (isinstance(name, str) and name.endswith(".md") and len(name) > len(".md")
+            and "/" not in name and "\\" not in name and ".." not in name
+            and not name.startswith(".") and find_control_char(name) is None)
+
+
+def reply_to_file_static_problem(path: str, fm) -> str | None:
+    """指した原稿を読まずに言える問題（併用・名前の形・自己参照）。無ければ None。
+
+    lint（`lint.lint_file()`）と select（`select.resolve_reply_to_file()`）が
+    **同じ関数**を通る——承認のあとに原稿を書き換えれば指紋で落ちるが、門を
+    1 か所にしておけば、片方だけ緩む形にならない。
+    """
+    name = reply_to_file_of(fm)
+    direct = (fm or {}).get("reply_to")
+    direct = str(direct).strip() if direct is not None else ""
+    if name is None:
+        # `reply_to: file:…` は reply_to_file と同じ指紋になるので断る（上の注記）。
+        if direct.startswith(REPLY_TO_FILE_MARK):
+            return REPLY_TO_FILE_INVALID
+        return None
+    if direct:
+        return REPLY_TO_CONFLICT
+    if not reply_to_file_name_ok(name):
+        return REPLY_TO_FILE_INVALID
+    if name == os.path.basename(path):
+        return REPLY_TO_FILE_SELF
+    return None
+
+
+def reply_to_file_target_problem(target_fm, *, account) -> str | None:
+    """指した原稿（`thth: 1` として読めたもの）の側の問題。無ければ None。"""
+    if (target_fm or {}).get("account") != account:
+        return REPLY_TO_FILE_ACCOUNT_MISMATCH
+    return None
+
+
+def classify_reply_target(text: str | None, path: str):
+    """指した原稿の中身を `(種類, QueueFile)` に分ける。
+
+    種類は `missing`（無い）・`bundle`（`thth: 2`）・`unreadable`（型外）・`ok`。
+    `text` が None なら無い。束の判定は `bundle.is_bundle_text()` と同じ
+    （読めなくても `thth: 2` と書いてあれば束）。
+    """
+    if text is None:
+        return "missing", None
+    from . import bundle as bundle_mod
+    if bundle_mod.is_bundle_text(text):
+        return "bundle", None
+    qf = parse_text(text, path)
+    if qf.malformed:
+        return "unreadable", qf
+    return "ok", qf
+
+
+def read_reply_target(candidate_path: str, name: str):
+    """lint・preview 用: 候補と同じディレクトリの `name` を読んで分ける（照合はしない）。"""
+    target_path = os.path.join(os.path.dirname(candidate_path), name)
+    try:
+        with open(target_path, encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        return "missing", None
+    except (OSError, UnicodeDecodeError):
+        return "unreadable", None
+    if not os.path.isfile(target_path):
+        return "missing", None
+    return classify_reply_target(text, target_path)
 
 
 def parse_publish_at(value: str) -> datetime.datetime:

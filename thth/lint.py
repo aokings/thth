@@ -63,6 +63,8 @@ _REASON_TABLE = (
     ("location: ", "invalid_publish_option"),
     ("location_id: ", "invalid_publish_option"),
     ("share_to_instagram: ", "invalid_publish_option"),
+    # reply_to_file（設計 3.2.0 §1）。lint の 1 行は符丁そのもので始まる。
+    *((code + ": ", code) for code in queuefile.REPLY_TO_FILE_MESSAGES),
 )
 
 REASONS = frozenset([code for _, code in _REASON_TABLE] + [FALLBACK_REASON])
@@ -272,8 +274,46 @@ def lint_file(path: str) -> list:
             "found_by: where_to_appear／manual／mention のどれかで書いてください"
             f"（{found_by!r}）")
 
+    errors.extend(reply_to_file_errors(path, fm, account_name))
     errors.extend(publish_option_errors(fm, account_cfg, account_name=account_name))
     return errors
+
+
+# --------------------------------------------------------------------------
+# reply_to_file（設計 3.2.0 §1）: 返信先を同じ queue の原稿の名前で書く
+# --------------------------------------------------------------------------
+
+_TARGET_KIND_PROBLEM = {
+    "missing": queuefile.REPLY_TO_FILE_MISSING,
+    "bundle": queuefile.REPLY_TO_FILE_BUNDLE,
+    "unreadable": queuefile.REPLY_TO_FILE_UNREADABLE,
+}
+
+
+def reply_to_file_problem(path: str, fm: dict, account_name) -> str | None:
+    """`reply_to_file` の検査を符丁 1 語で（無ければ None）。**loud reject**。
+
+    併用・名前の形・自己参照は指した原稿を読まずに言う（`queuefile` の共有の門）。
+    その先は指した原稿を読み、無い・束・型外・account 違いを断る。**指した原稿が
+    まだ出ていないことは断らない**——それは「待つ」であって誤りではない（§2）。
+    """
+    problem = queuefile.reply_to_file_static_problem(path, fm)
+    name = queuefile.reply_to_file_of(fm)
+    if problem is not None or name is None:
+        return problem
+    kind, target = queuefile.read_reply_target(path, name)
+    problem = _TARGET_KIND_PROBLEM.get(kind)
+    if problem is not None:
+        return problem
+    return queuefile.reply_to_file_target_problem(target.front_matter, account=account_name)
+
+
+def reply_to_file_errors(path: str, fm: dict, account_name) -> list:
+    problem = reply_to_file_problem(path, fm, account_name)
+    if problem is None:
+        return []
+    value = queuefile.reply_to_file_of(fm) or fm.get("reply_to")
+    return [f"{problem}: {queuefile.REPLY_TO_FILE_MESSAGES[problem]}（{value!r}）"]
 
 
 # --------------------------------------------------------------------------
