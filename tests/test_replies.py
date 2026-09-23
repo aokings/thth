@@ -24,6 +24,14 @@ def _replies_path(account, post_id: str = "POST1") -> str:
     return os.path.join(account["repo_dir"], "data", "sns", "replies", f"{post_id}.ndjson")
 
 
+def _own_post(account, post_id: str = "POST1") -> None:
+    """その account が出した記録（`sent/`）を置く。`thth replies` は置き場を共有する
+    他 account の返信を返さないので（3.1.1）、CLI の試験は所有の記録を先に置く。"""
+    from thth import accounts, approval, sent
+    sent.write(accounts.state_dir_for(account["name"]), post_id=post_id, text="本文",
+               body_hash=approval.compute_body_hash("本文"), sent_at="2026-09-10T09:00:00+09:00")
+
+
 def test_返信を読めること(isolated_account):
     """`kind: reply` の行だけが `replies` に入り、`kind: fetch` の行は `fetches` に入る。"""
     _write_ndjson(_replies_path(isolated_account), [
@@ -129,14 +137,16 @@ def test_CLIがjsonでloadと同じものを返す(isolated_account, capsys):
          "post_id": "POST1", "collected_at": "2026-09-10T19:00:00+09:00"},
     ])
 
+    _own_post(isolated_account)
+
     args = argparse.Namespace(account=isolated_account["name"], post=None, json=True)
     rc = cli_mod.cmd_replies(args)
     captured = capsys.readouterr()
 
     assert rc == 0
     printed = json.loads(captured.out)
-    expected = replies_mod.load(isolated_account["name"])
-    assert printed == expected
+    expected = replies_mod.load(isolated_account["name"], owned_only=True)
+    assert printed == expected and [r["id"] for r in printed["replies"]] == ["R1"]
 
 
 def test_CLIの人向け出力は身内に印をつける(isolated_account_factory, capsys):
@@ -149,6 +159,7 @@ def test_CLIの人向け出力は身内に印をつける(isolated_account_facto
         {"kind": "reply", "id": "R2", "text": "よその返信", "username": "だれか",
          "post_id": "POST1", "collected_at": "2026-09-10T19:00:00+09:00"},
     ])
+    _own_post(account)
 
     args = argparse.Namespace(account=account["name"], post=None, json=False)
     rc = cli_mod.cmd_replies(args)

@@ -37,11 +37,16 @@ REASONS = ("provider_timeout", "budget_exhausted", "scope_missing",
 # 本文の見せ方は `where` と同じ（先頭 60 字・保存しない）。
 PREVIEW_CHARS = threads_read_cli_mod.TEXT_PREVIEW_CHARS
 
-# 第 1 段で数える未回答の窓（`thth unanswered` の既定と同じ）。
-UNANSWERED_SINCE = "7d"
+# 第 1 段で数える未回答の窓は台帳の `collect_days`（採集が返信を取りに行く日数・
+# 既定 14）。以前は 7 日固定で、145 時間前の行があと 1 日で窓から落ちるところだった
+# （3.1.1）。窓の残りがこれを切った行に `window_edge` を立てる。
+UNANSWERED_DEFAULT_DAYS = 14
+WINDOW_EDGE_HOURS = 24
 # 第 3 段が 1 語あたりに要求する件数と、絡みに行く先として並べる上限。
 WORLD_LIMIT = 25
 ENGAGE_TARGETS = 3
+# 第 4 段に名前を並べる時刻超過の原稿の上限（数は `n` で全部言う）。
+OVERDUE_LIMIT = 10
 # 栞を進めるときの名乗り（`handoff-report --mark-read --by` に相当）。
 MARK_BY = "morning"
 
@@ -177,19 +182,42 @@ def _tool_section(handoff):
 
 # --------------------------------------------------------------- 第 1 段
 
-def _unanswered_rows(name, now, allowed_names=None):
+def _unanswered_days(cfg):
+    """未回答の窓の日数と、その出所（`collect_days` か既定か）。"""
+    raw = (cfg or {}).get("collect_days")
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        return UNANSWERED_DEFAULT_DAYS, "default"
+    if isinstance(raw, bool) or days < 1:
+        return UNANSWERED_DEFAULT_DAYS, "default"
+    return days, "collect_days"
+
+
+def _unanswered_rows(name, now, allowed_names=None, cfg=None):
     from . import unanswered as unanswered_mod
-    result = unanswered_mod.answer(name, since=UNANSWERED_SINCE, now=now,
+    days, source = _unanswered_days(cfg)
+    result = unanswered_mod.answer(name, since=f"{days}d", now=now,
                                    **({} if allowed_names is None
                                       else {"allowed_names": tuple(allowed_names)}))
+    limit = days * 24
+
+    def edge(age):
+        # 窓の残りが WINDOW_EDGE_HOURS を切った行（次の朝には窓の外かもしれない）。
+        return age is not None and limit - age < WINDOW_EDGE_HOURS
+
     rows = [{"post_id": row["post_id"], "reply_id": row["reply_id"],
              "author_key": row.get("author_key"),
              "age_hours": row.get("age_hours"),
+             "window_edge": edge(row.get("age_hours")),
+             "hours_to_window_edge": (round(limit - row["age_hours"], 1)
+                                      if row.get("age_hours") is not None else None),
              "permalink": row.get("permalink"),
              "preview": _preview(row.get("preview"))}
             for row in result["replies"]]
     return {"n": result["n_total"], "denominator": result["n_total"],
-            "window": result["window"], "items": rows,
+            "window": {**result["window"], "days": days, "days_source": source},
+            "items": rows,
             "collection_stale_hours": result.get("collection_stale_hours"),
             "cannot_say": list(result.get("cannot_say") or [])}
 
@@ -297,8 +325,59 @@ def _row_24h_before(rows, latest):
 
 # --------------------------------------------------------------- 第 3 段
 
-def _world(name, cfg, now, counter):
-    """監視語ごとの世間（件数・異なり・上位 3 の占有率・直近・絡みに行く先 3 件）。"""
+def _own_author_keys(name, cfg, allowed_names=None):
+    """同じ project の**同じ媒体の全 account** の author_key（3.1.1）。
+
+    絡みに行く先に自分（同じ本人の別台帳を含む）を並べないための鍵の集合。
+    `where` の行の `author_key` は媒体ごとに式が違う（Mastodon はドメイン付きの
+    acct・Bluesky は DID）ので、handle は **adapter 自身の `author_key()`** が
+    あればそれで、無ければ境界の `author_key(medium, handle)` で作る。`user_id`
+    （token・台帳）があれば境界の式でも足す。`morning <account>`（単体）でも、
+    同じ project の他 account を見る。サーバ型（`allowed_names`）では許された
+    account の外は読まない。
+
+    戻りは `(keys, {"n": 見た account 数, "unreadable": 読めなかった数})`——
+    読めなかった台帳があれば、除き切れていないかもしれないと分母で言う。
+    """
+    from .adapters import base as adapter_base
+    media, project = cfg.get("media"), cfg.get("project")
+    keys, seen, unreadable = set(), 0, 0
+    for other_name in accounts_mod.list_account_names():
+        if allowed_names is not None and other_name not in allowed_names:
+            continue
+        try:
+            other = cfg if other_name == name else accounts_mod.load_account(other_name)
+        except (accounts_mod.AccountError, ValueError, TypeError, OSError):
+            unreadable += 1
+            continue
+        if other.get("media") != media or other.get("project") != project:
+            continue
+        seen += 1
+        handle = (other.get("handle") or "").strip().lstrip("@")
+        identities = {handle}
+        try:
+            token = accounts_mod.load_token(other) or {}
+            identities.add(str(token.get("user_id") or other.get("user_id") or ""))
+            adapter = adapters_mod.make_adapter(other, token)
+            method = getattr(adapter, "author_key", None)
+            if handle and callable(method):
+                keys.add(method(handle))
+        except Exception:
+            # 鍵が 1 つ作れなくても段は止めない。境界の式の鍵は下で足す。
+            unreadable += 1
+        for identity in identities:
+            keys.add(adapter_base.author_key(media, identity))
+    keys.discard(None)
+    return keys, {"n": seen, "unreadable": unreadable}
+
+
+def _world(name, cfg, now, counter, allowed_names=None):
+    """監視語ごとの世間（件数・異なり・上位 3 の占有率・直近・絡みに行く先 3 件）。
+
+    絡みに行く先（`targets`）からは自分の投稿を除く（`_own_author_keys()`）。
+    件数（`n`・`distinct_authors`）は世間の大きさなので変えない。除いた本数は
+    `own_excluded` として升目に残す（分母の規律・3.1.1）。
+    """
     from . import where_cli as where_cli_mod
     media = cfg.get("media")
     words = accounts_mod.watch_words(cfg)
@@ -309,6 +388,7 @@ def _world(name, cfg, now, counter):
     words = words[:where_cli_mod.MAX_WORDS]
 
     def call():
+        own_keys, own_accounts = _own_author_keys(name, cfg, allowed_names)
         for _word in words:
             counter(media, "keyword_search")
             if media in ("bluesky", "mastodon"):
@@ -330,6 +410,8 @@ def _world(name, cfg, now, counter):
                 continue
             material = entry["material"]
             history = entry.get("my_history") or {}
+            others = [post for post in entry["posts"]
+                      if post.get("author_key") not in own_keys]
             by_word[word] = cell({
                 "n": material["n"], "denominator": material["requested_limit"],
                 "distinct_authors": material["authors"]["distinct"],
@@ -339,6 +421,7 @@ def _world(name, cfg, now, counter):
                 "latest_timestamp": material["latest_timestamp"],
                 "my_history": {"n": history.get("n"), "reacted": history.get("reacted")}
                                if history else None,
+                "own_excluded": len(entry["posts"]) - len(others),
                 "targets": [{"post_id": post["post_id"], "permalink": post["permalink"],
                              "timestamp": post["timestamp"],
                              "author_key": post["author_key"],
@@ -346,9 +429,9 @@ def _world(name, cfg, now, counter):
                              "replied": post["replied"],
                              "my_history_present": bool(history.get("n")),
                              "preview": _preview(post.get("preview"))}
-                            for post in entry["posts"][:ENGAGE_TARGETS]],
+                            for post in others[:ENGAGE_TARGETS]],
             })
-        return {"words": words, "by_word": by_word}
+        return {"words": words, "by_word": by_word, "own_accounts": own_accounts}
 
     node = _guard(call)
     if node["cannot_say"] is None:
@@ -378,6 +461,30 @@ def _today_rows(name, now):
                      "head": _preview(row.get("head"))})
     return {"n": len(rows), "items": rows,
             "window": {"since": jst.iso(start), "until": jst.iso(end), "basis": "publish_at_jst"}}
+
+
+def _overdue_rows(name, now):
+    """時刻を過ぎたのに出ていない原稿の**名前**（3.1.1）。
+
+    数（`queue.overdue`）だけでは、どの原稿かを知るのに `thth queue` を別に叩く
+    必要があった。定義は handoff の数え方と同じ（`approved`・`post_id` 無し・
+    `publish_at` から `report.OVERDUE_HOURS` を超えた）。古い順に最大
+    `OVERDUE_LIMIT` 件を並べ、`n` に全体の数を出す（分母）。本文は先頭 60 字。
+    """
+    from . import report as report_mod
+    rows = []
+    for row in report_mod.schedule(name, now=now):
+        at = jst.parse(row.get("publish_at"))
+        if row.get("status") != "approved" or at is None:
+            continue
+        elapsed = (now - at).total_seconds() / 3600.0
+        if elapsed <= report_mod.OVERDUE_HOURS:
+            continue
+        rows.append({"file": row["file"], "publish_at": row["publish_at"],
+                     "status": row["status"], "elapsed_hours": round(elapsed, 1),
+                     "head": _preview(row.get("head"))})
+    return {"n": len(rows), "limit": OVERDUE_LIMIT, "items": rows[:OVERDUE_LIMIT],
+            "basis": "approved_unposted_over_overdue_hours"}
 
 
 def _queue_cell(node):
@@ -445,8 +552,9 @@ def read_refusal(media):
 def next_steps(unanswered_entries, world_entries, today_entries) -> list:
     """**候補の列挙だけ**（masaru 裁定 3.1.0 §7-1）。本文は 1 字も作らない。
 
-    3 種類だけ: 「返す」（1 段の各行）・「絡む」（3 段の各行）・「出す」
-    （4 段で今日の予定が無い account）。どの要素にも `body` は無い。
+    4 種類だけ: 「返す」（1 段の各行）・「絡む」（3 段の各行）・「出す」
+    （4 段で今日の予定が無い account）・「超過」（4 段の時刻超過の各行・3.1.1）。
+    どの要素にも `body` は無い（「超過」も file と時刻だけで、本文の先頭は載せない）。
     """
     steps = []
     for name, entry in unanswered_entries.items():
@@ -474,6 +582,11 @@ def next_steps(unanswered_entries, world_entries, today_entries) -> list:
         planned = today.get("value")
         if planned is not None and planned["n"] == 0:
             steps.append({"kind": "post", "account": name})
+        overdue = ((entry["value"] or {}).get("overdue_items") or {}).get("value") or {}
+        for row in overdue.get("items") or []:
+            steps.append({"kind": "overdue", "account": name, "file": row["file"],
+                          "publish_at": row["publish_at"],
+                          "elapsed_hours": row["elapsed_hours"]})
     return steps
 
 
@@ -530,7 +643,7 @@ def build(target, *, now=None, mark=True, allowed_names=None):
             continue
         unanswered_entries[name] = _guard(lambda name=name, cfg=cfg: {
             "medium": cfg.get("media"),
-            "replies": _guard(lambda: _unanswered_rows(name, now, allowed_names)),
+            "replies": _guard(lambda: _unanswered_rows(name, now, allowed_names, cfg)),
             "mentions": _mentions_rows(name, cfg, now, counter)})
 
     # 第 2 段: 昨日の自分。
@@ -550,7 +663,7 @@ def build(target, *, now=None, mark=True, allowed_names=None):
         if refusals[name]:
             world_entries[name] = cell(cannot_say=refusals[name])
             continue
-        node = _world(name, cfg, now, counter)
+        node = _world(name, cfg, now, counter, allowed_names)
         world_entries[name] = (cell({"medium": cfg.get("media"), **node["value"]})
                                if node["cannot_say"] is None else node)
 
@@ -562,6 +675,7 @@ def build(target, *, now=None, mark=True, allowed_names=None):
         today_entries[name] = cell({
             "medium": cfg.get("media"),
             "today": _guard(lambda name=name: _today_rows(name, now)),
+            "overdue_items": _guard(lambda name=name: _overdue_rows(name, now)),
             "queue": _queue_cell(node),
             "inflight": _inflight(node),
             "changes_since_last_read": ((node or {}).get("changes_since") or {}).get("changes"),
@@ -658,6 +772,9 @@ def _render_section(section, out) -> None:
             elif step["kind"] == "engage":
                 out(f"  絡む  {step['account']}  語「{step['word']}」"
                     f"  {step.get('permalink') or step['post_id']}")
+            elif step["kind"] == "overdue":
+                out(f"  超過  {step['account']}  {step['file']}  {step['publish_at']}"
+                    f"（{step['elapsed_hours']}h）")
             else:
                 out(f"  出す  {step['account']}（今日の予定がありません）")
         return
@@ -694,10 +811,12 @@ def _render_unanswered(account, node, out) -> None:
     else:
         rows = replies["value"]
         out(f"  {account}（{node['medium']}）: 未回答の返信 {rows['n']} 件"
-            f"（窓 {rows['window']['since'] or '—'} 以降）")
+            f"（窓 {rows['window'].get('days') or '—'} 日・{rows['window']['since'] or '—'} 以降）")
         for row in rows["items"]:
+            warn = (f"  ⚠ 窓まで {row['hours_to_window_edge']}h"
+                    if row.get("window_edge") else "")
             out(f"    {_hours(row['age_hours'])}  {row['post_id']} ← {row['reply_id']}"
-                f"  {row['preview']}")
+                f"{warn}  {row['preview']}")
     if mentions["cannot_say"] is not None:
         out(f"  {account}: 言及: 言えない: {mentions['cannot_say']}")
         return
@@ -733,7 +852,8 @@ def _render_world(account, node, out) -> None:
         out(f"    語「{word}」  件数 {value['n']}/{value['denominator']}"
             f"  異なり {value['distinct_authors']}/{value['authors_denominator']}"
             f"  上位{value['top_k']}占有 {_ratio(value['top_share'])}"
-            f"  直近 {value['latest_timestamp'] or '—'}")
+            f"  直近 {value['latest_timestamp'] or '—'}"
+            f"  自分を除外 {value['own_excluded']}")
         for row in value["targets"]:
             out(f"      {row.get('permalink') or row['post_id']}"
                 f"  返信 {_count(row['replies'], row['has_replies'])}"
@@ -756,6 +876,15 @@ def _render_today(account, node, out) -> None:
         out(f"    承認待ちの下書き {counts['approval_needed']}"
             f"・承認済みで待ち {counts['approved_waiting']}"
             f"・時刻超過 {counts['overdue']}・型外 {counts['malformed']}")
+    overdue = node.get("overdue_items") or {}
+    if overdue.get("cannot_say") is not None:
+        out(f"    時刻超過の名前: 言えない: {overdue['cannot_say']}")
+    elif overdue.get("value"):
+        value = overdue["value"]
+        for row in value["items"]:
+            out(f"    時刻超過: {row['file']} {row['publish_at']}（{row['elapsed_hours']}h）")
+        if value["n"] > len(value["items"]):
+            out(f"    時刻超過: ほか {value['n'] - len(value['items'])} 本（全 {value['n']} 本）")
     inflight = node["inflight"]
     if inflight["present"]:
         out(f"    inflight: {inflight['reason_code']}（{inflight['since']}）"
