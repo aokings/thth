@@ -97,6 +97,8 @@ REASONS = frozenset((
     "invalid_kind_detail", "scope_required", "how_required", "invalid_how",
     "observed_is_tool_only", "invalid_evidence_level", "invalid_trial_result",
     "third_party_handle",
+    # open にする二段確認（masaru 裁定 09-23）。
+    "open_digest_mismatch", "open_requires_cli",
 ))
 
 NEXT = {
@@ -147,6 +149,11 @@ NEXT = {
     "invalid_evidence_level": "--evidence-level は stated か hypothesis です",
     "invalid_trial_result": "追試（trial）には --result reproduced・not_reproduced・not_tried の"
                             "どれかを付けてください",
+    "open_digest_mismatch": "他の持ち主に見える本文と観測が一段目のあとで変わりました。--confirm を外して"
+                            "一段目からやり直し、表示を読み直してください",
+    "open_requires_cli": "open にする（他の持ち主に見せる）のは人の CLI の二段確認だけです"
+                         "（thth plaza post … --open / thth plaza update … --visibility open）。"
+                         "MCP では project の範囲まで置けます",
     "third_party_handle": "open に出す文に @名前 の形（自分の handle 以外）があります。他の人の名前は"
                           "open に出せません。消してから置き直してください（project の範囲なら置けます）",
 }
@@ -530,6 +537,40 @@ def _declared_level(value):
     return value
 
 
+def open_view(record):
+    """他の持ち主に見える 1 件（写しだけ）。二段確認の一段目に出し、digest の元にする。"""
+    from . import plaza_observe
+    copy = record.get("open_copy") or {}
+    history = record.get("observations") or []
+    return {"kind": record["kind"], "kind_detail": record.get("kind_detail"),
+            "evidence_level": evidence_level_of(record),
+            "owner": owner_label(record.get("project"), record.get("account")),
+            "medium": record.get("medium"),
+            **{key: copy.get(key) for key in ("title", "body", "hypothesis", "change",
+                                              "scope_note", "how", "verdict_reason")},
+            "verdict": (record.get("verdict") or {}).get("verdict"),
+            "observation": plaza_observe._columns(history[-1], "open") if history else None,
+            "masked": copy.get("masked", 0)}
+
+
+def open_digest(record):
+    """他の持ち主に見える中身の digest（先頭 20 桁）。一段目と二段目で同じ中身かを確かめる。"""
+    raw = json.dumps(open_view(record), ensure_ascii=False, sort_keys=True, allow_nan=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def _open_gate(record, confirm):
+    """open にする二段確認。1 回目は見える中身と digest を返す（何も書かない）。"""
+    digest = open_digest(record)
+    if confirm != digest:
+        if confirm is None:
+            return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_open_preview",
+                    "opened": False, "digest": digest, "plaza_id": record.get("plaza_id"),
+                    "account": record.get("account"), "visible_to_other_owners": open_view(record)}
+        raise PlazaError("open_digest_mismatch")
+    return None
+
+
 def evidence_level_of(record):
     """見立てと事実の印。**道具が付けた観測の列が 1 つでも取れていれば observed**、
     それ以外は置いた人が名乗った印（stated か hypothesis）。"""
@@ -545,8 +586,13 @@ def evidence_level_of(record):
 def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, how=None,
          evidence_level="stated", declarations=(), hypothesis=None, change=None,
          until=None, min_n=5, visibility="project", via="cli", project=None, medium=None,
-         now=None, trusted_accounts=None):
+         now=None, trusted_accounts=None, confirm=None):
     """広場に 1 件置く。`plaza_id` を返す。
+
+    **open は二段確認**（masaru 裁定 09-23・approve と同じ線）: `visibility="open"` の
+    1 回目（`confirm` 無し）は、他人の情報を落とした後の「他の持ち主に見える本文と
+    観測」と digest を返すだけで何も置かない。同じ中身で `confirm=<digest>` の 2 回目に
+    初めて置く。中身が変わっていたら `open_digest_mismatch`。
 
     `trusted_accounts` はサーバの口（credential が account と project を決めた）。
     CLI は台帳から project と媒体を読む。**秘密が混ざっていたら置かない。**
@@ -626,6 +672,9 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
     if visibility == "open":
         # 他人の情報を落とした写しを**置く時点で**作る（読む側は写しだけを見る）。
         plaza_redact.attach_open_copy(record, trusted_accounts=trusted_accounts)
+        preview = _open_gate(record, confirm)
+        if preview is not None:
+            return preview
     digest = _digest(title, body)
     with STORE.locked() as directory:
         records, _broken = STORE.load_all(directory)
@@ -877,8 +926,10 @@ def reply(plaza_id, *, account, kind, text=None, measure_id=None, result=None, b
 # ---------------------------------------------------------------- 更新
 
 def update(plaza_id, *, account, by, viewer, refresh=False, verdict=None, reason=None,
-           visibility=None, via="cli", now=None, trusted_accounts=None):
-    """結果の更新（観測の取り直し）・判定・範囲の変更。**置いた持ち主だけ。**"""
+           visibility=None, via="cli", now=None, trusted_accounts=None, confirm=None):
+    """結果の更新（観測の取り直し）・判定・範囲の変更。**置いた持ち主だけ。**
+
+    project から open に切り替えるときは二段確認（`post` と同じ・`confirm`）。"""
     from . import plaza_observe, plaza_redact
     by = poster(by)
     if via not in VIAS:
@@ -952,7 +1003,21 @@ def update(plaza_id, *, account, by, viewer, refresh=False, verdict=None, reason
                 obs.pop("open_columns", None)
         record["updated_at"] = at
 
-    record = STORE.update(plaza_id, change, lambda record: admin_log.append(
+    opening = visibility == "open" and current["scope"] != "open"
+    if opening and confirm is None:
+        # 一段目: 写しに置き換えた後の中身を見せるだけ（置き場には書かない）。
+        preview_record = json.loads(json.dumps(current))
+        change(preview_record)
+        diff.clear()
+        return _open_gate(preview_record, None)
+
+    def change_checked(record):
+        switching = visibility == "open" and record["scope"] != "open"
+        change(record)
+        if switching:
+            _open_gate(record, confirm)
+
+    record = STORE.update(plaza_id, change_checked, lambda record: admin_log.append(
         "plaza_updated", account, {"media": record.get("medium")}, by=by, via=via,
         diff=diff or {"plaza": ["present", "present"]}))
     return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_updated",

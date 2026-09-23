@@ -247,8 +247,13 @@ def test_CLIのopenの一覧(owners, ledger, capsys, tmp_path):
     join("kopicha")
     body = tmp_path / "b.txt"
     body.write_text("朝の問い", encoding="utf-8")
-    assert cli.main(["plaza", "post", "kopicha-threads", "--kind", "finding", "--title", "open",
-                     "--body-file", str(body), "--scope", "朝", "--open", "--by", "s"]) == 0
+    argv = ["plaza", "post", "kopicha-threads", "--kind", "finding", "--title", "open",
+            "--body-file", str(body), "--scope", "朝", "--open", "--by", "s", "--json"]
+    # 一段目は見える中身と digest だけ（rc 1・何も置かない）。
+    assert cli.main(argv) == 1
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["opened"] is False and plaza.admin_list()["n"] == 0
+    assert cli.main(argv + ["--confirm", preview["digest"]]) == 0
     capsys.readouterr()
     assert cli.main(["plaza", "list", "other", "--open", "--json"]) == 2
     assert json.loads(capsys.readouterr().out)["cannot_say"] == ["plaza_not_joined"]

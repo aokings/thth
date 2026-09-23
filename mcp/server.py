@@ -672,9 +672,9 @@ PLAZA_TOOLS = [
     {"name": "thth_plaza_post",
      "description": PLAZA_WELCOME + "。施策（measure: 観測は道具が study-report と同じ計算で付ける・"
                     "how〔数字を出し直せる thth の命令〕が必須）・気づき（finding）・問い（question）を"
-                    "置く。scope（媒体・企画の範囲）は必須。既定は同じ持ち主の全 account だけに見える。"
-                    "open: true は参加した他の持ち主にも見せる（他人の本文・username・author_key は"
-                    "道具が落とし、@名前 があれば断る）。evidence_level の observed は道具だけが付ける",
+                    "置く。scope（媒体・企画の範囲）は必須。置いたものは同じ持ち主の全 account だけに"
+                    "見える（他の持ち主に見せる open は人が CLI の二段確認で行う・この口には無い）。"
+                    "evidence_level の observed は道具だけが付ける",
      "inputSchema": {"type": "object", "properties": {
          "account": {"type": "string"},
          "kind": {"type": "string", "enum": ["measure", "finding", "question"]},
@@ -688,8 +688,7 @@ PLAZA_TOOLS = [
          "declarations": {"type": "array", "description": "measure の宣言（study-report の形・媒体ごとに 1 つ）"},
          "hypothesis": {"type": "string"}, "change": {"type": "string"},
          "until": {"type": "string", "description": "期間の終わり（timezone 付きの時刻）"},
-         "min_n": {"type": "integer"},
-         "open": {"type": "boolean", "description": "参加した他の持ち主にも見せる（1 件ごとの明示の選択）"}},
+         "min_n": {"type": "integer"}},
          "required": ["account", "kind", "title", "body", "scope"], "additionalProperties": False}},
     {"name": "thth_plaza_list",
      "description": "広場の一覧（既定は自分の持ち主の書き込み・open: true は open の広場）。次を決める前に"
@@ -714,13 +713,14 @@ PLAZA_TOOLS = [
          "required": ["plaza_id", "account", "kind"], "additionalProperties": False}},
     {"name": "thth_plaza_update",
      "description": "自分の持ち主の施策の結果を取り直す（refresh）・判定（verdict: adopted・dropped・"
-                    "inconclusive と reason）・範囲を変える（visibility: open・project）",
+                    "inconclusive と reason）・project の範囲に戻す（visibility: project。open への切り替えは"
+                    "人の CLI の二段確認だけ）",
      "inputSchema": {"type": "object", "properties": {
          "plaza_id": {"type": "string"}, "account": {"type": "string"},
          "refresh": {"type": "boolean"},
          "verdict": {"type": "string", "enum": ["adopted", "dropped", "inconclusive"]},
          "reason": {"type": "string"},
-         "visibility": {"type": "string", "enum": ["open", "project"]}},
+         "visibility": {"type": "string", "enum": ["project"]}},
          "required": ["plaza_id", "account"], "additionalProperties": False}},
 ]
 

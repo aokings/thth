@@ -133,22 +133,41 @@ def test_他の持ち主のproject範囲は読めない(tmp_path, monkeypatch):
     assert denied["isError"] and _text(denied) == "scope_unavailable"
 
 
-def test_openは参加した持ち主どうし(tmp_path, monkeypatch):
-    _root, server = _tenant(tmp_path, monkeypatch)
-    denied = _post(server, open=True)
-    assert denied["isError"] and _text(denied) == "plaza_not_joined"
+def test_MCPにはopenにする口が無い_読むのは参加した持ち主どうし(tmp_path, monkeypatch):
+    # open にするのは人の CLI の二段確認だけ（裁定 09-23）。MCP は project の範囲まで。
+    root, server = _tenant(tmp_path, monkeypatch)
+    names = {tool["name"]: tool for tool in server.server_tools(server.authenticated_context())}
+    assert "open" not in names["thth_plaza_post"]["inputSchema"]["properties"]
+    assert names["thth_plaza_update"]["inputSchema"]["properties"]["visibility"]["enum"] == ["project"]
     plaza.set_membership("kopicha", joined=True, by="operator")
     plaza.set_membership("other", joined=True, by="operator")
+    denied = _post(server, open=True)
+    assert denied["isError"] and _text(denied) == "invalid_request"
+    mine = json.loads(_text(_post(server)))
+    denied = server.call_tool("thth_plaza_update", {"plaza_id": mine["plaza_id"], "account": "first",
+                                                    "visibility": "open"})
+    assert denied["isError"] and _text(denied) == "open_requires_cli"
+    assert plaza.STORE.get(mine["plaza_id"])["scope"] == "project"
+    preview = plaza.post("second", kind="finding", title="other の公開", body="夜が伸びる",
+                         scope_note="other の夜", by="other-person", visibility="open")
     theirs = plaza.post("second", kind="finding", title="other の公開", body="夜が伸びる",
-                        scope_note="other の夜", by="other-person", visibility="open")
+                        scope_note="other の夜", by="other-person", visibility="open",
+                        confirm=preview["digest"])
     listed = json.loads(_text(server.call_tool("thth_plaza_list", {"open": True})))
     row = listed["posts"][0]
     assert row["plaza_id"] == theirs["plaza_id"] and row["view"] == "open"
     shown = json.loads(_text(server.call_tool("thth_plaza_show", {"plaza_id": theirs["plaza_id"]})))
     assert "other-person" not in json.dumps(shown, ensure_ascii=False)
     assert "second" not in json.dumps(shown, ensure_ascii=False)
-    denied = _post(server, open=True, body="@someone_else の型")
-    assert denied["isError"] and _text(denied) == "third_party_handle"
+    # project に戻すのは MCP でもできる（他の持ち主から見えなくする側）。
+    plaza_id = plaza.post("first", kind="finding", title="kopicha の公開", body="朝",
+                          scope_note="朝", by="k", visibility="open",
+                          confirm=plaza.post("first", kind="finding", title="kopicha の公開",
+                                             body="朝", scope_note="朝", by="k",
+                                             visibility="open")["digest"])["plaza_id"]
+    back = server.call_tool("thth_plaza_update", {"plaza_id": plaza_id, "account": "first",
+                                                  "visibility": "project"})
+    assert json.loads(_text(back))["scope"] == "project"
 
 
 @pytest.mark.parametrize("overrides,reason", [

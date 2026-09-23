@@ -61,6 +61,12 @@ def post(account="kopicha-threads", *, kind="finding", title="冒頭を問いに
          by="kopicha-session", scope_note=SCOPE, **kwargs):
     if kind == "measure":
         kwargs.setdefault("how", f"thth measured {account}")
+    if kwargs.get("visibility") == "open" and "confirm" not in kwargs:
+        # open は二段確認（裁定 09-23）。試験の舞台づくりでは一段目の digest で二段目まで進める。
+        preview = plaza.post(account, kind=kind, title=title, body=body, by=by,
+                             scope_note=scope_note, **kwargs)
+        assert preview["report_type"] == "plaza_open_preview" and preview["opened"] is False
+        kwargs["confirm"] = preview["digest"]
     return plaza.post(account, kind=kind, title=title, body=body, by=by, scope_note=scope_note,
                       **kwargs)
 

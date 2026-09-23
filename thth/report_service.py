@@ -374,8 +374,8 @@ PLAZA_OPERATIONS = frozenset(('plaza_post', 'plaza_list', 'plaza_show', 'plaza_r
 # 広場の口の要求の形（`許す鍵`・`要る鍵`）。型は MCP の inputSchema と下の検査で見る。
 _PLAZA_SHAPES = {
     'plaza_post': ({'account', 'kind', 'title', 'body', 'scope', 'kind_detail', 'how',
-                    'evidence_level', 'declarations', 'hypothesis', 'change', 'until', 'min_n',
-                    'open'}, {'account', 'kind', 'title', 'body'}),
+                    'evidence_level', 'declarations', 'hypothesis', 'change', 'until', 'min_n'},
+                   {'account', 'kind', 'title', 'body'}),
     'plaza_list': ({'project', 'open'}, set()),
     'plaza_show': ({'plaza_id'}, {'plaza_id'}),
     'plaza_reply': ({'plaza_id', 'account', 'kind', 'text', 'measure_id', 'result'},
@@ -383,6 +383,7 @@ _PLAZA_SHAPES = {
     'plaza_update': ({'plaza_id', 'account', 'refresh', 'verdict', 'reason', 'visibility'},
                      {'plaza_id', 'account'}),
 }
+# `open` は MCP の口に無い（open にするのは人の CLI の二段確認だけ・masaru 裁定 09-23）。
 _PLAZA_BOOLS = {'open', 'refresh'}
 
 
@@ -444,6 +445,9 @@ def execute_user_plaza(context: ReportContext, request: dict) -> dict:
             return plaza.list_posts(viewer, open_only=bool(request.get('open')))
         if operation == 'plaza_show':
             return plaza.show(request['plaza_id'], viewer)
+        if request.get('visibility') == 'open':
+            # 他の持ち主に見せる切り替えは人が CLI の二段確認で行う（MCP は project まで）。
+            raise ReportServiceError("open_requires_cli")
         account = request['account']
         cfg = server_writes.current(context, account)
         if not context.actor:
@@ -460,7 +464,7 @@ def execute_user_plaza(context: ReportContext, request: dict) -> dict:
                     hypothesis=request.get('hypothesis'), change=request.get('change'),
                     until=request.get('until'),
                     min_n=request['min_n'] if request.get('min_n') is not None else 5,
-                    visibility='open' if request.get('open') else 'project', via='mcp',
+                    visibility='project', via='mcp',
                     project=context.allowed_accounts[account], medium=cfg.get('media'),
                     trusted_accounts=active)
             if operation == 'plaza_reply':

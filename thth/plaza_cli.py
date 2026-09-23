@@ -152,6 +152,46 @@ def render_post(payload, out=print):
             out(f"  {line}")
 
 
+def render_preview(result, again, out=print):
+    """open の一段目: 他の持ち主に見える中身（道具が落とした後）をそのまま出す。"""
+    view = result["visible_to_other_owners"]
+    out("一段目: まだ open にしていません。他の持ち主には次のとおり見えます（道具が他人の情報を"
+        f"落とした後・伏せた数 {view['masked']}）")
+    out(f"  名義: {view['owner']}（{view.get('medium') or '—'}）  種類: {plaza.KIND_LABELS[view['kind']]}"
+        f"  印: {plaza.EVIDENCE_LABELS[view['evidence_level']]}")
+    out(f"  題: {view['title']}")
+    out(f"  範囲: {view.get('scope_note') or '—'}")
+    for key, label in (("hypothesis", "仮説"), ("change", "変えたこと"), ("how", "出し直し"),
+                       ("verdict_reason", "判定の理由")):
+        if view.get(key):
+            out(f"  {label}: {view[key]}")
+    out("  [本文]")
+    for line in (view.get("body") or "").splitlines():
+        out(f"  {line}")
+    for column in view.get("observation") or []:
+        if not column.get("observed"):
+            out(f"  [{plaza_observe.LABEL}] {column.get('medium') or '—'}: 取れない（{column.get('reason')}）")
+        else:
+            out(f"  [{plaza_observe.LABEL}] {column.get('medium') or '—'}: " + "・".join(
+                f"{metric} {_fmt(value['observational_difference'])}"
+                for metric, value in (column.get("metrics") or {}).items()))
+        for row in column.get("posts") or []:
+            if row.get("preview") or row.get("permalink"):
+                out(f"    自分の投稿: {row.get('preview') or '—'}  {row.get('permalink') or ''}".rstrip())
+    out(f"digest: {result['digest']}")
+    out(f"二段目: 読み直して良ければ、同じ命令に --confirm {result['digest']} を足して打ってください"
+        f"（{again}）")
+
+
+def _emit_preview(args, result, again):
+    """一段目は何も書かずに終わる（approve の一段目と同じく rc 1）。"""
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        render_preview(result, again)
+    return 1
+
+
 # ------------------------------------------------------------------ 利用者
 
 def cmd_post(args) -> int:
@@ -164,9 +204,12 @@ def cmd_post(args) -> int:
                             scope_note=args.scope, kind_detail=args.kind_detail, how=args.how,
                             evidence_level=args.evidence_level, declarations=declarations, hypothesis=args.hypothesis,
                             change=args.change, until=args.until, min_n=args.min_n,
-                            visibility="open" if args.open else "project", via="cli", now=now)
+                            visibility="open" if args.open else "project", via="cli", now=now,
+                            confirm=args.confirm)
     except plaza.PlazaError as error:
         return _print_refusal(args, error)
+    if result["report_type"] == "plaza_open_preview":
+        return _emit_preview(args, result, "thth plaza post … --open")
 
     def render(result):
         print(f"広場に置きました: {result['plaza_id']}（{plaza.KIND_LABELS[result['kind']]}・"
@@ -213,9 +256,11 @@ def cmd_update(args) -> int:
         viewer = plaza.viewer_for_target(args.viewer)
         result = plaza.update(args.plaza_id, account=args.viewer, by=args.by, viewer=viewer,
                               refresh=args.refresh, verdict=args.verdict, reason=args.reason,
-                              visibility=args.visibility, via="cli")
+                              visibility=args.visibility, via="cli", confirm=args.confirm)
     except plaza.PlazaError as error:
         return _print_refusal(args, error)
+    if result["report_type"] == "plaza_open_preview":
+        return _emit_preview(args, result, "thth plaza update … --visibility open")
     return _emit(args, result, lambda r: print(
         f"更新しました: {r['plaza_id']}（{r['scope']}・判定 "
         f"{plaza.VERDICT_LABELS.get(r['verdict'], '—') if r['verdict'] else '—'}・"
@@ -266,7 +311,10 @@ def register(sub) -> None:
     poster.add_argument("--min-n", type=int, default=5, dest="min_n",
                         help="比べるのに要る各群の最小件数（study-report と同じ・既定 5）")
     poster.add_argument("--open", action="store_true",
-                        help="参加した他の持ち主にも見せる（1 件ごとの明示の選択・後から戻せる）")
+                        help="参加した他の持ち主にも見せる（二段確認: 1 回目は見える中身と digest を"
+                             "出すだけ。--confirm <digest> を足した 2 回目で置く・後から戻せる）")
+    poster.add_argument("--confirm", default=None,
+                        help="--open の二段目: 一段目が出した digest")
     poster.add_argument("--by", default=None, help="誰が置いたか（必須）")
     poster.add_argument("--json", action="store_true")
     poster.set_defaults(func=cmd_post)
@@ -310,7 +358,9 @@ def register(sub) -> None:
     updater.add_argument("--verdict", default=None, choices=plaza.VERDICTS)
     updater.add_argument("--reason", default=None, help="判定の理由（--verdict のとき必須）")
     updater.add_argument("--visibility", default=None, choices=plaza.SCOPES,
-                         help="open にする・project に戻す")
+                         help="open にする（二段確認）・project に戻す")
+    updater.add_argument("--confirm", default=None,
+                         help="--visibility open の二段目: 一段目が出した digest")
     updater.add_argument("--by", default=None, help="誰が更新したか（必須）")
     updater.add_argument("--json", action="store_true")
     updater.set_defaults(func=cmd_update)
