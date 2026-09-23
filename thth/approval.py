@@ -26,6 +26,41 @@ def effective_section(section: str, account_cfg: dict | None, topic: str | None)
                              queuefile.normalize_topic(topic),
                              hashtags=bool(cfg.get("hashtags", True)))
 
+# **承認の指紋の版**（設計 3.3.0 A3）。`compute_approved_sha()`・
+# `compute_bundle_sha()` の出力が**既知の入力で変わる**変更——本文の正規化・
+# タグの付与（`effective_section()`／`tags.prepared()`）・項目の足し引きや並び——を
+# するときは、次の 3 つを同じ commit で行う:
+#
+#   1. `FINGERPRINT_VERSION` を 1 上げる
+#   2. `FINGERPRINT_HISTORY` に「新しい版 → その変更が入る道具の版」を足す
+#   3. `thth/fingerprint_golden.py` の `GOLDEN` に新しい版の指紋を足す
+#
+# 1〜3 が揃わないと `tests/test_v330_fingerprint_version.py` が落ちる
+# （`fingerprint_golden.drift()` が golden との食い違いを名指しする）。揃えると、
+# 道具はその版へ上がった account に「この版で再承認が要る原稿: n 本」を言う
+# （`handoff-report` の `tool`・`thth morning` の 0 段・運用通知に 1 回）。
+# 2.8.0 はタグを指紋に入れたのに版を言わなかったので、承認済み 46 本が 2 日黙って
+# 止まった（9/21）。
+FINGERPRINT_VERSION = 2
+FINGERPRINT_HISTORY = {
+    1: "0.0.0",   # はじめの指紋（本文・account・reply_to・topic・publish_at）
+    2: "2.8.0",   # 指紋を「公開する本文」（topic のタグを足した本文）で取る
+}
+
+
+def fingerprint_changed_between(previous_version, current_version) -> bool | None:
+    """道具の版 `previous_version` から `current_version` の間に指紋の版が変わったか。
+
+    どちらかの版が読めなければ None（言えない）。前回の版は `handoff-report` の
+    栞（`tool_version`）から来る——栞が無ければ変わったとは言わない。
+    """
+    from . import tool_version
+    before, after = tool_version.numbers(previous_version), tool_version.numbers(current_version)
+    if before is None or after is None:
+        return None
+    return any(before < tool_version.numbers(introduced) <= after
+               for version, introduced in FINGERPRINT_HISTORY.items() if version > 1)
+
 # フィールド区切り: ASCII unit separator（本文にまず現れない制御文字。
 # 区切り文字の衝突でハッシュが化けるのを避けるため、印字可能文字を避けた）。
 _SEP = "\x1f"

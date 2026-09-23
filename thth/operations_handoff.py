@@ -241,6 +241,8 @@ def answer(account_name=None, *, project=None, now=None, since_last_read=False,
             previous, reason = handoff_cursor.read(name, now)
             if previous is not None:
                 node["tool"] = tool_version.summary(previous['snapshot'].get('tool_version'))
+                if node["tool"].get("fingerprint_changed_since_last_read"):
+                    node["tool"]["reapproval_required"] = _reapproval(name, configs[name], now)
                 node["changes_since"] = {"read_at": previous["read_at"], "by": previous["by"],
                     "changes": handoff_cursor.changes(previous["snapshot"], handoff_cursor.snapshot(node))}
                 node["cannot_say"].remove("no_previous_session_cursor")
@@ -258,6 +260,12 @@ def answer(account_name=None, *, project=None, now=None, since_last_read=False,
                                 {name: configs[name]},
                                 [(node.get("changes_since") or {}).get("read_at")])}
     tool = nodes[account_name]['tool'] if account_name else tool_version.summary()
+    if account_name is None:
+        # project をまとめるときは account ごとの本数を束ねる（平均で薄めない）。
+        needed = {name: node["tool"]["reapproval_required"] for name, node in nodes.items()
+                  if node["tool"].get("reapproval_required") is not None}
+        if needed:
+            tool = {**tool, "reapproval_required": reapproval_total(needed)}
     if since_last_read and account_name is None:
         tool = {**tool, "report_channel": report_inbox.CHANNEL,
                 "reports": report_inbox.handoff_summary(
@@ -277,6 +285,31 @@ def answer(account_name=None, *, project=None, now=None, since_last_read=False,
                 "スレッド連投・token・現在のtimer稼働は検査対象外。停止なしとは断定しない"]}
 
 
+def _reapproval(name, cfg, now):
+    """指紋の版が変わったあとで再承認が要る原稿の本数（設計 3.3.0 A3）。
+
+    承認済みで approval_stale のもの（時刻前も含む）。数えられなければ理由 1 語。
+    """
+    from . import approval, core
+    try:
+        rows = core.held_items_for_account(name, cfg, now=now)
+    except Exception:  # noqa: BLE001 — 数えられないことを言い、他の欄は出す
+        return {"n": None, "fingerprint_version": approval.FINGERPRINT_VERSION,
+                "files": [], "cannot_say": "unavailable"}
+    stale = [row["file"] for row in rows if row["category"] == "approval_stale"]
+    return {"n": len(stale), "fingerprint_version": approval.FINGERPRINT_VERSION,
+            "files": stale[:10], "cannot_say": None}
+
+
+def reapproval_total(by_account):
+    """account ごとの `reapproval_required` を 1 つに（数えられない account があれば n は null）。"""
+    counts = {name: value.get("n") for name, value in by_account.items()}
+    total = (None if any(value is None for value in counts.values())
+             else sum(counts.values()))
+    return {"n": total, "by_account": counts,
+            "fingerprint_version": next(iter(by_account.values())).get("fingerprint_version")}
+
+
 def render_markdown(payload):
     lines = ["# Operations handoff", "", f"生成時刻: {payload['generated_at']}", ""]
     for name, row in payload["by_account"].items():
@@ -284,6 +317,12 @@ def render_markdown(payload):
             for change in row["changes_since"]["changes"]:
                 lines.append(f"- {analytics_report._markdown_text(name)}: {analytics_report._markdown_text(change['field'])}: {analytics_report._markdown_text(change['previous'])} → {analytics_report._markdown_text(change['current'])}")
         lines += [f"- {analytics_report._markdown_text(name)}: {row['state']}（timer正常性は不明）"]
+    for name, row in payload["by_account"].items():
+        needed = (row.get("tool") or {}).get("reapproval_required")
+        if needed is not None:
+            lines.append(f"- {analytics_report._markdown_text(name)}: この版で再承認が要る原稿: "
+                         f"{needed['n'] if needed['n'] is not None else '言えない'} 本"
+                         f"（指紋の版 {needed['fingerprint_version']}）")
     reports = payload["tool"].get("reports")
     if reports is not None and reports.get("cannot_say") is None:
         lines.append(f"- 報告: 開いている {reports['open']}/{reports['denominator']} 件"

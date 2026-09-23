@@ -180,7 +180,19 @@ def _tool_section(handoff, now=None, admin=False):
         # 報告の口（設計 3.1.2 §3）。**管理者の 1 枚にだけ**（サーバ型の利用者の
         # credential では出さない——他 project の件数を渡さない）。
         "reports": _reports_cell(now) if admin else None,
+        # 指紋の版（設計 3.3.0 A3）。前回読んだ版から変わっていれば、再承認が
+        # 要る原稿の本数を account ごとに（変わっていなければ null）。
+        "fingerprint_version": tool.get("fingerprint_version"),
+        "reapproval_required": _reapproval_cell(handoff),
     }
+
+
+def _reapproval_cell(handoff):
+    from . import operations_handoff
+    needed = {name: (node.get("tool") or {}).get("reapproval_required")
+              for name, node in (handoff.get("by_account") or {}).items()}
+    needed = {name: value for name, value in needed.items() if value is not None}
+    return operations_handoff.reapproval_total(needed) if needed else None
 
 
 def _reports_cell(now):
@@ -839,6 +851,13 @@ def _render_section(section, out) -> None:
                 f"（{value['capabilities_basis']}）")
         if value["notes_reason"]:
             out(f"  ノート: {value['notes_reason']}")
+        needed = value.get("reapproval_required")
+        if needed is not None:
+            per = "・".join(f"{name} {n if n is not None else '言えない'}"
+                           for name, n in needed["by_account"].items())
+            out(f"  この版で再承認が要る原稿: "
+                f"{needed['n'] if needed['n'] is not None else '言えない'} 本（{per}）"
+                f"——承認の指紋の計算が変わりました（指紋の版 {needed['fingerprint_version']}）")
         reports = value.get("reports")
         if reports is not None:
             if reports["cannot_say"] is not None:

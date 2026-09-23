@@ -2378,7 +2378,8 @@ def cmd_run(args) -> int:
     state_dir = (accounts_mod.state_dir_for(args.account)
                  if accounts_mod.name_is_safe(args.account) else None)
 
-    def _notify(state: str, *, result=None, reason=None, exception=None) -> None:
+    def _notify(state: str, *, result=None, reason=None, exception=None,
+                reapproval=None) -> None:
         """通知の失敗で、投稿の rc や元の例外を上書きしない。"""
         if state_dir is None:
             return
@@ -2388,7 +2389,7 @@ def cmd_run(args) -> int:
                 reason=reason, exception=exception)
             try:
                 incident_mod.notify(args.account, account_cfg, diagnostic, state_dir=state_dir,
-                                    result=result)
+                                    result=result, reapproval=reapproval)
                 incident_summary = incident_mod.summary(account_cfg, state_dir)
                 if incident_summary.get("mail_pending") or incident_summary.get("repo_pending"):
                     # そのまま打てる形で言う（account 無しでは account_required になる・3.1.1）。
@@ -2452,7 +2453,7 @@ def cmd_run(args) -> int:
             blocked = True
             print("死活通知の停止状態を判定できませんでした", file=sys.stderr)
         state = "success" if result.exit_code == 0 and not blocked else "fail"
-        held_reason = None
+        held_reason, reapproval = None, None
         if state == "success" and core.held_applies(account_cfg):
             # **「出すものが無い」と「出せるはずのものが出られない」を分ける**
             # （設計 3.3.0 A1）。9/21 に承認済み 46 本が approval_stale で 2 日
@@ -2462,6 +2463,8 @@ def cmd_run(args) -> int:
             try:
                 held = core.held_items_for_account(args.account, account_cfg, now=jst.now_jst())
                 held_reason = select_mod.held_reason_code(held)
+                # 指紋の版が変わったときに運用通知へ 1 回だけ流す本数（A3）。
+                reapproval = sum(1 for row in held if row["category"] == "approval_stale")
             except Exception:
                 # 数えられないときに healthy を送らない（上と同じ規律）。rc は変えない。
                 state = "fail"
@@ -2472,7 +2475,7 @@ def cmd_run(args) -> int:
                 print(f"承認済みで出られない原稿があります（{held_reason}）。"
                       f"thth morning {args.account} の held_items か thth board で名前を"
                       "確認してください", file=sys.stderr)
-        notify(state, result=result, reason=held_reason)
+        notify(state, result=result, reason=held_reason, reapproval=reapproval)
         return result.exit_code
     except Exception as e:
         # これまで traceback になった例外は、通知を試したあとも同じ例外として返す。

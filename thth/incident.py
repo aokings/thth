@@ -25,7 +25,8 @@ from . import accounts, healthcheck, inflight, jst, lock, queuefile, redact, wri
 
 STATE_FILE = "incident-outbox.json"
 # outbox の事象の種類。`blocked` には承認済みなのに出られない（held）も入る（3.3.0 A1）。
-EVENT_STATES = {"blocked", "recovered"}
+# `notice` は指紋の版が変わって再承認が要る知らせ（A3・1 回だけ）。
+EVENT_STATES = {"blocked", "recovered", "notice"}
 CONFIG_FILE = "notifications.json"
 FIELDS = {"thth_run_state", "thth_run_at", "thth_run_reason", "thth_run_action", "thth_incident_id", "thth_run_detail", "thth_run_next"}
 
@@ -129,7 +130,7 @@ def _send(s, recipient, event, account):
     message = EmailMessage()
     message["From"] = s["sender"]
     message["To"] = recipient
-    message["Subject"] = f"THTH {account}: {'復旧' if event['state'] == 'recovered' else '停止・要確認' if event['state'] == 'blocked' else '通知テスト'}"
+    message["Subject"] = f"THTH {account}: {'復旧' if event['state'] == 'recovered' else '停止・要確認' if event['state'] == 'blocked' else '再承認が必要' if event['state'] == 'notice' else '通知テスト'}"
     message["Message-ID"] = f"<{event['id']}.{hashlib.sha256(recipient.lower().encode()).hexdigest()[:16]}@thth.local>"
     repo_status = "repo へ反映済み" if event.get("repo") == "written" else "repo 未反映（後続実行で再試行。原稿を特定できない場合は account 単位の通知のみ）"
     file_hint = healthcheck._safe_file(event.get("file")) or "特定できません（account 全体の状況）"
@@ -321,17 +322,20 @@ def _validate(row):
                 raise ValueError("invalid_outbox")
     if row["last"] == "fail" and (not row["events"] or row["events"][-1]["state"] != "blocked"):
         raise ValueError("invalid_outbox")
-    # 承認済みなのに出られない本数（前回の run の値・設計 3.3.0 A1）。
-    # 旧い outbox には無い（無ければ 0 として読む）。
+    # 承認済みなのに出られない本数（前回の run の値・設計 3.3.0 A1）と、最後に
+    # 数えた run の指紋の版（A3）。旧い outbox には無い（0・未記録として読む）。
     held = row.get("held", 0)
     if type(held) is not int or held < 0:
         raise ValueError("invalid_outbox")
     if type(row.get("held_notified", False)) is not bool:
         raise ValueError("invalid_outbox")
+    version = row.get("fingerprint_version")
+    if version is not None and (type(version) is not int or version < 1):
+        raise ValueError("invalid_outbox")
 
 
 def _new_event(state, reason, file=None):
-    """repo に書かない事象（held）。原稿を 1 本に結ばない account 全体の知らせ。"""
+    """repo に書かない事象（held・notice）。原稿を 1 本に結ばない account 全体の知らせ。"""
     return {"id": uuid.uuid4().hex, "state": state, "at": jst.iso(jst.now_jst()),
             "reason": reason, "file": file, "repo": "no_source", "accepted": {},
             "api_diagnostic": {}}
@@ -371,12 +375,38 @@ def _held_transition(row, diag, *, ready):
     return changed
 
 
-def notify(account, cfg, diag, *, state_dir, result=None):
+def _reapproval_transition(row, diag, *, reapproval, ready):
+    """指紋の版が変わったら、再承認が要る本数を運用通知に 1 回だけ（設計 3.3.0 A3）。
+
+    記録が無い（初めての run）ときは版を控えるだけで知らせない——どの版から
+    変わったのか言えないので、推測で知らせない。
+    """
+    from . import approval
+    if diag.state == "fail" or reapproval is None:
+        # 数えていない run（停止中・rehearsal）では版の記録も動かさない
+        # ——変わったことを数えられる run まで持ち越す。
+        return False
+    current = approval.FINGERPRINT_VERSION
+    recorded = row.get("fingerprint_version")
+    changed = False
+    if (recorded is not None and recorded < current and ready
+            and type(reapproval) is int and reapproval > 0):
+        row["events"].append(_new_event("notice", f"reapproval_required: {reapproval}"))
+        changed = True
+    if recorded != current:
+        row["fingerprint_version"] = current
+        changed = True
+    return changed
+
+
+def notify(account, cfg, diag, *, state_dir, result=None, reapproval=None):
     """Invoked after core locks release; lock order repo -> account -> outbox.
 
     `diag.state` は `fail`・`success`・`held`（3.3.0 A1）。`held` は run 自体は
     成功しているので、停止（fail）の遷移は `success` として進め（前の停止が
     直っていれば recovered を出す）、そのあとで held の本数の遷移を見る。
+    `reapproval` は再承認が要る本数（承認済みの approval_stale・A3。`None` は
+    数えていない）。指紋の版が前回の記録から上がっていれば 1 回だけ `notice`。
     """
     if not accounts.name_is_safe(account):
         return "invalid_account"
@@ -441,7 +471,9 @@ def notify(account, cfg, diag, *, state_dir, result=None):
             row["identity"] = identity
             persist()
         ready = readiness(cfg)["smtp_configured"]
-        if _held_transition(row, diag, ready=ready):
+        held_changed = _held_transition(row, diag, ready=ready)
+        notice_changed = _reapproval_transition(row, diag, reapproval=reapproval, ready=ready)
+        if held_changed or notice_changed:
             persist()
         s = settings(cfg) if ready else None
         blocked_roles = set()

@@ -34,7 +34,15 @@ def summary(previous_version=None):
     # （`thth/media_capabilities.py`）から出る——provider を叩いた結果ではない。
     # LLM が「この媒体に動画は出せるか」を推測せずに読めるよう、`tool` に常に載せる。
     from . import media_capabilities
+    # **承認の指紋の版**（設計 3.3.0 A3）。前回読んだ版からいまの版の間に指紋の
+    # 計算が変わっていれば True——その版へ上がると承認済みの原稿が approval_stale に
+    # なりうる（再承認の本数は `operations_handoff` が数える）。
+    from . import approval
     return dict(version=__version__, capabilities=media_capabilities.summary(),
+                fingerprint_version=approval.FINGERPRINT_VERSION,
+                fingerprint_changed_since_last_read=(
+                    approval.fingerprint_changed_between(previous_version, __version__)
+                    if previous else None),
                 previous_version=previous_version if previous else None,
                 changed_since_last_read=(previous != current) if previous else None,
                 release_notes=['docs/' + name for _, name in notes],
