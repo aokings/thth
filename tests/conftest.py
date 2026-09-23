@@ -429,3 +429,15 @@ def init_git_pair(tmp_path, *, seed_content: str, seed_name: str = "a.md"):
 
     return {"bare": bare, "seed": seed, "work": work,
             "queue_dir": os.path.join(work, "docs", "sns", "queue")}
+
+
+def is_refusal(err: str, code: str) -> bool:
+    """断りの stderr が「理由の符丁 1 行＋打てる報告の 1 行」か（3.1.2 §3.5・3.3.0 B3）。
+
+    3.3.0 から 2 行目は account と理由の符丁を埋めた `report_inbox.refusal_line()`。
+    account は命令と台帳しだいで `<account>` のままになるので、ここでは形と符丁だけ見る。
+    """
+    lines = err.strip().splitlines()
+    return (len(lines) == 2 and lines[0] == code
+            and lines[1].startswith("report_channel: thth report file ")
+            and f'--title "{code} で断られた"' in lines[1])

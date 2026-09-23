@@ -3076,8 +3076,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="thth", description=道案内,
         # **受け口の案内を末尾に 1 行**（設計 3.1.2 §3.5）。`→` を使わない
         # （冒頭の道案内 3 行と数え分ける・tests/test_trial_frictions.py）。
-        epilog="不具合と要望は report の口へ: thth report file <account> --kind bug|request"
-               "（MCP: thth_report_file）",
+        epilog="不具合・要望・つまずきは report の口へ: thth report file <account>"
+               " --kind bug|request|friction（MCP: thth_report_file）",
         # **3 行のまま出す**（argparse の既定は 1 段落に畳む）。
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--version", action="version", version=_version_string())
@@ -3539,9 +3539,11 @@ def main(argv=None) -> int:
     # 1 行だけ（account 名も本文も入れない）。成功には載せない。`lint` の 1 は
     # 検査結果であって断りではないので外す。
     if rc and not (real_argv[:1] == ["lint"] and rc == 1):
-        _remember_refusal(real_argv, rc, tee.first_line())
+        account, code = _remember_refusal(real_argv, rc, tee.first_line())
+        # **そのまま打てる報告の 1 行**（設計 3.3.0 B3）。account と理由の符丁を
+        # 埋める（分からなければ `<account>`・`<reason_code>` のまま）。
         from . import report_inbox
-        print(report_inbox.CHANNEL_LINE, file=sys.stderr)
+        print(report_inbox.refusal_line(account, code), file=sys.stderr)
     return rc
 
 
@@ -3549,17 +3551,20 @@ def _remember_refusal(real_argv, rc, first_line) -> None:
     """直前の断りを account ごとに控える（設計 3.3.0 B2）。**控えの失敗で rc を変えない。**
 
     残すのは命令の名前・先頭の符丁・版・時刻・account だけ（`thth/refusals.py`）。
+    戻り値は断りの行に埋める `(account, 符丁)`（B3）。
     """
+    account = code = None
     try:
         from . import refusals
         account = getattr(_PARSED.get("args"), "account", None)
-        if not isinstance(account, str):
-            return
         command = refusals.command_path(build_parser(), real_argv)
         code = refusals.reason_code(first_line, argv=real_argv, command=command, rc=rc)
-        refusals.record(account, command=command, reason_code=code)
+        # `--rehearse`（`thth auth` の乾式試験）は「何も書かない」が約束なので控えない。
+        if isinstance(account, str) and "--rehearse" not in real_argv:
+            refusals.record(account, command=command, reason_code=code)
     except Exception:  # noqa: BLE001 — 控えは付け足し。断りそのものを壊さない
-        return
+        pass
+    return (account if isinstance(account, str) else None), code
 
 
 def _main(argv, real_argv) -> int:

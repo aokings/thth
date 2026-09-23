@@ -51,7 +51,7 @@ raise SystemExit(cli.main(json.loads(sys.argv[1])))
         # cannot trap this pytest process before an elapsed-time assertion.
         result = subprocess.run([sys.executable, '-c', code, json.dumps(command), str(marker)],
                                 capture_output=True, text=True, timeout=3)
-    assert result.returncode == 2 and result.stderr.strip() == 'account_leaving\n' + __import__('thth.report_inbox').report_inbox.CHANNEL_LINE  # 3.1.2 §3.5: 断りの理由行の後ろに受け口の案内 1 行
+    assert result.returncode == 2 and __import__('tests.conftest').conftest.is_refusal(result.stderr, 'account_leaving')  # 3.1.2 §3.5・3.3.0 B3: 断りの理由行の後ろに打てる報告の 1 行
     if operation == 'replies':
         assert json.loads(result.stdout) == {'error': 'account_leaving', 'cannot_say': ['account_leaving']}
     assert not marker.exists()

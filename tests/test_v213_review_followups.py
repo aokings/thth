@@ -14,7 +14,7 @@ def test_run_invalid_name_before_any_storage_or_effect(monkeypatch,capsys,name):
     monkeypatch.setattr('thth.incident.notify',forbidden)
     assert cli.main(['run',name])==2
     captured=capsys.readouterr();value=json.loads(captured.out)
-    assert captured.err.strip()=='invalid_account_name\n'+__import__('thth.report_inbox').report_inbox.CHANNEL_LINE  # 3.1.2 §3.5: 断りの理由行の後ろに受け口の案内 1 行
+    assert __import__('tests.conftest').conftest.is_refusal(captured.err, 'invalid_account_name')  # 3.1.2 §3.5・3.3.0 B3: 断りの理由行の後ろに打てる報告の 1 行
     assert value['error']==value['record_unavailable']=='invalid_account_name'
     assert value['account'] is None and value['runs_recorded'] is False
     assert '使えない字' in value['message'] and 'account_stopped' not in captured.out

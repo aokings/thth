@@ -21,17 +21,26 @@ import pytest
 
 from thth import accounts, cli, jst, morning, operations_handoff, report_inbox
 
-# **文面は 1 種類・静的**（設計 §3.5）。ここが正本の写し——変えるなら設計と一緒に。
-CHANNEL_LINE = "report_channel: thth report file <account> --kind bug|request（MCP: thth_report_file）"
-LIMITATION = "不具合と要望は report の口へ（thth_report_file）"
+# **文面は静的**（設計 §3.5）。ここが正本の写し——変えるなら設計と一緒に。
+# 3.3.0 B1・B4: friction と「報告は依頼の範囲内」の 1 文を足した。断りの行は
+# account と理由の符丁を埋めた「打てる 1 行」になった（B3・`refusal_line()`）。
+WELCOME = ("つまずき・迷い・期待との違いの報告は、利用者の作業の一部として歓迎します。"
+           "小さいものも。重複は道具が束ねます")
+CHANNEL_LINE = ("report_channel: thth report file <account> --kind bug|request|friction"
+                "（MCP: thth_report_file）——" + WELCOME)
+LIMITATION = "不具合・要望・つまずきは report の口へ（thth_report_file）"
 HINT = "（うまくいかなければ thth_report_file）"
 
 
 def test_受け口の文面は1種類で設計のまま():
     assert report_inbox.CHANNEL_LINE == CHANNEL_LINE
     assert report_inbox.CHANNEL == {
-        "cli": "thth report file <account> --kind bug|request --title … --body-file … --by <名前>",
-        "mcp": "thth_report_file", "when": "unexpected_or_unsupported"}
+        "cli": "thth report file <account> --kind bug|request|friction --title … --body-file … --by <名前>",
+        "from_last_refusal": "thth report file <account> --from-last-refusal --title … --by <名前>",
+        "mcp": "thth_report_file", "when": "unexpected_or_unsupported",
+        "welcome": WELCOME,
+        "examples": ["止まったのに気づかなかった", "断られた理由が分からなかった",
+                     "同じ操作を 3 回繰り返した"]}
 
 
 @pytest.fixture
@@ -169,7 +178,10 @@ def test_サーバ型の利用者の一枚には件数を出さない(projects, 
 def test_CLIの断りの後ろに受け口の1行_成功には載せない(projects, tmp_path, capsys):
     assert cli.main(["morning", "nobody", "--json"]) == 2
     err = capsys.readouterr().err.strip().splitlines()
-    assert err == ["target_unknown", CHANNEL_LINE]
+    # 3.3.0 B3: 理由の符丁を埋めた打てる 1 行（account を持たない命令は <account> のまま）。
+    assert err == ["target_unknown",
+                   'report_channel: thth report file <account> --kind friction --from-last-refusal'
+                   ' --title "target_unknown で断られた" --by <名前>（' + WELCOME + '）']
     assert cli.main(["report", "list", "kopicha", "--json"]) == 0
     assert CHANNEL_LINE not in capsys.readouterr().err
 
@@ -179,14 +191,14 @@ def test_lintの検査結果の1は断りではない(projects, tmp_path, capsys
     bad.write_text("---\nthth: 1\n---\n本文\n", encoding="utf-8")
     rc = cli.main(["lint", str(bad), "--json"])
     assert rc == 1
-    assert CHANNEL_LINE not in capsys.readouterr().err
+    assert "report_channel" not in capsys.readouterr().err
 
 
 def test_helpの末尾に1行(capsys):
     with pytest.raises(SystemExit):
         cli.main(["--help"])
     out = capsys.readouterr().out.rstrip().splitlines()
-    assert out[-1] == "不具合と要望は report の口へ: thth report file <account> --kind bug|request（MCP: thth_report_file）"
+    assert out[-1] == "不具合・要望・つまずきは report の口へ: thth report file <account> --kind bug|request|friction（MCP: thth_report_file）"
     with pytest.raises(SystemExit):
         cli.main(["report", "--help"])
     assert "道具が断った・結果が期待と違った・欲しい形がある" in capsys.readouterr().out
@@ -255,7 +267,7 @@ def test_利用者のtools_listの説明文の末尾に1句(user_server, monkeyp
         else:
             assert tool["description"].endswith(HINT), tool["name"]
     file_tool = next(tool for tool in listed if tool["name"] == "thth_report_file")
-    assert file_tool["description"].startswith("道具が断った・結果が期待と違った・欲しい形がある、のどれかならこれで置く")
+    assert file_tool["description"].startswith("道具が断った・結果が期待と違った・欲しい形がある・迷った、のどれかならこれで置く")
     # 定数（売り文句の正本）は書き換えない。
     assert not any(tool["description"].endswith(HINT) for tool in server.TOOLS)
     # 管理者の一覧には足さない（管理者は報告を置く側ではない）。

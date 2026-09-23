@@ -111,11 +111,59 @@ SIMILAR_LIMIT = 5
 _TITLE_WORD = re.compile(r"[^\W_]+")
 SIMILAR_MIN_CHARS = 2
 
-# **受け口の案内**（設計 §3.5）。文面は 1 種類・静的——account 名も本文も
-# 入れない。断り・cannot_say・開始手順の 3 場面だけに載せ、成功には載せない。
-CHANNEL_LINE = "report_channel: thth report file <account> --kind bug|request（MCP: thth_report_file）"
-CHANNEL = {"cli": "thth report file <account> --kind bug|request --title … --body-file … --by <名前>",
-           "mcp": "thth_report_file", "when": "unexpected_or_unsupported"}
+# **報告は依頼の範囲内と道具が言う**（設計 3.3.0 B1）。固定の 1 文。報告した側の
+# LLM は「依頼の範囲外に見える」「小さいことを送ってよいか分からない」ので自分からは
+# 置かなかった（報告 r20260923-2f5a1b2d）。skill・使い方・thth_report_file の説明・
+# 断りの report_channel 行に同じ文を置く。
+WELCOME = ("つまずき・迷い・期待との違いの報告は、利用者の作業の一部として歓迎します。"
+           "小さいものも。重複は道具が束ねます")
+# 何を報告してほしいかの例（設計 3.3.0 B6）。
+EXAMPLES = ("止まったのに気づかなかった", "断られた理由が分からなかった", "同じ操作を 3 回繰り返した")
+
+# **受け口の案内**（設計 3.1.2 §3.5）。静的——account 名も本文も入れない。
+# cannot_say・開始手順に載せ、成功には載せない。断りでは `refusal_line()` が
+# account と理由の符丁を埋めた「そのまま打てる 1 行」にする（3.3.0 B3）。
+CHANNEL_LINE = ("report_channel: thth report file <account> --kind bug|request|friction"
+                f"（MCP: thth_report_file）——{WELCOME}")
+CHANNEL = {"cli": "thth report file <account> --kind bug|request|friction --title … --body-file … --by <名前>",
+           "from_last_refusal": "thth report file <account> --from-last-refusal --title … --by <名前>",
+           "mcp": "thth_report_file", "when": "unexpected_or_unsupported",
+           "welcome": WELCOME, "examples": list(EXAMPLES)}
+_CODE_FOR_LINE = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+|exit_[0-9]{1,3}")
+
+
+def _known_account(account):
+    try:
+        return (isinstance(account, str) and accounts.name_is_safe(account)
+                and account in accounts.list_account_names())
+    except accounts.AccountError:
+        return False
+
+
+def _line_code(reason_code):
+    return (reason_code if isinstance(reason_code, str) and _CODE_FOR_LINE.fullmatch(reason_code)
+            else "<reason_code>")
+
+
+def refusal_line(account=None, reason_code=None) -> str:
+    """断りの後ろに添える「そのまま打てる報告の 1 行」（設計 3.3.0 B3）。
+
+    account は台帳にある名前だけ、理由は静的な符丁だけを埋める（違えば
+    `<account>`・`<reason_code>` のまま）。`--by` は誰が置いたかの記録（3.1.2）
+    なので名前だけ打ち足す。
+    """
+    name = account if _known_account(account) else "<account>"
+    return (f"report_channel: thth report file {name} --kind friction --from-last-refusal"
+            f" --title \"{_line_code(reason_code)} で断られた\" --by <名前>（{WELCOME}）")
+
+
+def mcp_refusal_line(account=None, reason_code=None) -> str:
+    """MCP の断りの 2 つ目の text（B3 の MCP 版）。account が分からなければ静的な 1 行。"""
+    if not _known_account(account):
+        return CHANNEL_LINE
+    return (f"report_channel: thth_report_file {{\"account\": \"{account}\", "
+            f"\"from_last_refusal\": true, \"title\": \"{_line_code(reason_code)} で断られた\"}}"
+            f"（{WELCOME}）")
 
 
 class ReportError(ValueError):
@@ -893,8 +941,10 @@ def register(sub) -> None:
     parser = sub.add_parser(
         "report",
         help="不具合・要望・つまずきを道具に置く（道具が断った・結果が期待と違った・欲しい形がある・迷った）",
-        description="不具合・要望・つまずき（friction）を道具の中に置く（設計 3.1.2・3.3.0）。"
-                    "道具が断った・結果が期待と違った・欲しい形がある・迷った、のどれかならここへ。実装側は "
+        description=f"{WELCOME}。例: " + "・".join(f"「{e}」" for e in EXAMPLES) + "。"
+                    "不具合・要望・つまずき（friction）を道具の中に置く（設計 3.1.2・3.3.0）。"
+                    "道具が断った・結果が期待と違った・欲しい形がある・迷った、のどれかならここへ。"
+                    "断られた直後なら --from-last-refusal で道具が控えた断りを添えられる。実装側は "
                     "`thth admin reports` と毎朝の一枚で読み、返事は "
                     "`thth report show <id>` と handoff-report --since-last-read に出ます。"
                     "秘密らしき値が含まれていたら置きません。",

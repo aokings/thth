@@ -30,7 +30,7 @@ def test_run_reason_and_no_side_effect(env,monkeypatch,capsys,state,expected):
     monkeypatch.setattr('thth.healthcheck.notify',lambda *a,**kw:pytest.fail('healthcheck notification'))
     monkeypatch.setattr('thth.incident.notify',lambda *a,**kw:pytest.fail('incident notification'))
     assert cli.main(['run','alpha'])==2
-    shown=capsys.readouterr();assert shown.err.strip()==expected+'\n'+__import__('thth.report_inbox').report_inbox.CHANNEL_LINE  # 3.1.2 §3.5: 断りの理由行の後ろに受け口の案内 1 行
+    shown=capsys.readouterr();assert __import__('tests.conftest').conftest.is_refusal(shown.err, expected)  # 3.1.2 §3.5・3.3.0 B3: 断りの理由行の後ろに打てる報告の 1 行
     value=json.loads(shown.out)
     assert value=={'account':'alpha','mode':'production','action':'skip','status':'error','error':expected,
                    'runs_recorded':False,'record_unavailable':expected}

@@ -589,7 +589,12 @@ del _tool
 # credential の `actor` が決める（要求の欄からは作らない）。
 REPORT_TOOLS = [
     {"name": "thth_report_file",
-     "description": "道具が断った・結果が期待と違った・欲しい形がある、のどれかならこれで置く"
+     "description": "道具が断った・結果が期待と違った・欲しい形がある・迷った、のどれかならこれで置く。"
+                    "つまずき・迷い・期待との違いの報告は、利用者の作業の一部として歓迎します。"
+                    "小さいものも。重複は道具が束ねます。"
+                    "例: 「止まったのに気づかなかった」「断られた理由が分からなかった」"
+                    "「同じ操作を 3 回繰り返した」。断られた直後なら from_last_refusal: true で"
+                    "道具が控えた断りを再現手順に添えられる"
                     "（kind は bug・request・friction〔迷った・分かりにくかった・同じ操作を繰り返した〕。"
                     "実装側が読み、返事は thth_report_show と "
                     "operations_handoff の tool.reports に出る。秘密らしき値が含まれていたら置かない）",
@@ -634,12 +639,16 @@ def _with_report_hint(tools):
             else dict(tool, description=tool["description"] + REPORT_HINT) for tool in tools]
 
 
-def _channel_note():
-    """断りの応答に添える 2 つ目の text（静的な 1 行・本文も account 名も入れない）。"""
+def _channel_note(account=None, reason=None):
+    """断りの応答に添える 2 つ目の text。本文は入れない。
+
+    account（credential が許した・台帳にある名前）と理由の符丁が分かれば、そのまま
+    呼べる `thth_report_file` の 1 行（設計 3.3.0 B3）。分からなければ静的な 1 行。
+    """
     if APP_DIR not in sys.path:
         sys.path.insert(0, APP_DIR)
-    from thth.report_inbox import CHANNEL_LINE
-    return {"type": "text", "text": CHANNEL_LINE}
+    from thth.report_inbox import mcp_refusal_line
+    return {"type": "text", "text": mcp_refusal_line(account, reason)}
 
 
 def server_mode():
@@ -666,8 +675,8 @@ def server_call(name, arguments):
 
     def failure(value):
         # 断りは 1 つ目の text が静的な理由、2 つ目が受け口の案内（設計 3.1.2 §3.5）。
-        _remember_refusal(context, name, arguments, value)
-        return {'content':[{'type':'text','text':value},_channel_note()],'isError':True}
+        account, code = _remember_refusal(context, name, arguments, value)
+        return {'content':[{'type':'text','text':value},_channel_note(account, code)],'isError':True}
     if context is None: return failure('unauthorized')
     tool=next((tool for tool in server_tools(context) if tool['name']==name),None)
     if tool is None: return failure('unsupported_operation')
@@ -724,25 +733,29 @@ def server_call(name, arguments):
 def _remember_refusal(context, name, arguments, value):
     """サーバ型の断りを account ごとに控える（設計 3.3.0 B2）。控えの失敗で断りを変えない。
 
+    戻り値は断りの 2 つ目の text に埋める `(account, 符丁)`（B3・分からなければ None）。
+
     account は credential が許した名前のときだけ。残すのは道具の名前と、断りの
     先頭の静的な符丁だけ（`thth/refusals.py`・引数の値は残さない）。報告の口の
     断りは控えない（報告しようとしていた元の断りを押し出さないため）。
     """
     try:
         if context is None or not isinstance(arguments, dict) or not isinstance(name, str):
-            return
+            return None, None
         account = arguments.get('account')
         if not isinstance(account, str) or account not in (context.allowed_accounts or {}):
-            return
-        if name.startswith('thth_report_') or not name.replace('_', '').isalnum():
-            return
+            return None, None
+        if not name.replace('_', '').isalnum():
+            return None, None
         from thth import refusals
         command = 'mcp ' + name
         values = [v for v in arguments.values() if isinstance(v, str)]
         code = refusals.reason_code(value, argv=values, command=command, rc=2)
-        refusals.record(account, command=command, reason_code=code)
+        if not name.startswith('thth_report_'):
+            refusals.record(account, command=command, reason_code=code)
+        return account, code
     except Exception:
-        return
+        return None, None
 
 
 def admin_context():
