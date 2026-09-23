@@ -27,7 +27,7 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 3.1.0: 毎朝の一枚と監視語（設計 3.1.0 §1・§3）。
      'morning', 'admin watch set', 'admin watch show',
      # 3.1.2: 報告の口（設計 3.1.2 §1）。
-     'report file', 'report list', 'report show', 'admin reports list', 'admin reports show',
+     'report file', 'report list', 'report show', 'report add', 'admin reports list', 'admin reports show',
      'admin reports reply', 'admin reports close', 'admin reports export']
 
 
