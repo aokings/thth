@@ -568,6 +568,25 @@ ADMIN_TOOLS += [
                     'required':['report_id','reason','version','by'],'additionalProperties':False}},
 ]
 
+# 施策の広場の管理者側（設計 3.4.0 §4）。参加・退出・非表示は `by` 必須・変更ログに
+# presence-only で残る。
+ADMIN_TOOLS += [
+    {'name':'thth_admin_plaza_list','description':'List every plaza post (measures, findings, questions) including hidden ones, and the joined projects; administrator only; read-only',
+     'inputSchema':{'type':'object','properties':{},'required':[],'additionalProperties':False}},
+    {'name':'thth_admin_plaza_show','description':'Read one plaza post as stored (original text, observations, replies); administrator only; read-only',
+     'inputSchema':{'type':'object','properties':{'plaza_id':{'type':'string'}},
+                    'required':['plaza_id'],'additionalProperties':False}},
+    {'name':'thth_admin_plaza_join','description':'Let one project (owner) read and post open plaza entries; administrator only, by required; default is not joined',
+     'inputSchema':{'type':'object','properties':{'project':{'type':'string'},'by':{'type':'string'}},
+                    'required':['project','by'],'additionalProperties':False}},
+    {'name':'thth_admin_plaza_leave','description':'Remove one project (owner) from the open plaza; its open entries stop being visible to others; administrator only, by required',
+     'inputSchema':{'type':'object','properties':{'project':{'type':'string'},'by':{'type':'string'}},
+                    'required':['project','by'],'additionalProperties':False}},
+    {'name':'thth_admin_plaza_hide','description':'Hide one plaza post with a reason (the owner still sees it with the reason); administrator only, by required',
+     'inputSchema':{'type':'object','properties':{'plaza_id':{'type':'string'},'reason':{'type':'string'},'by':{'type':'string'}},
+                    'required':['plaza_id','reason','by'],'additionalProperties':False}},
+]
+
 SERVER_TOOLS = [
     {"name":"thth_"+name,"description":"Scoped server "+name,
      "inputSchema":{"type":"object","properties":{key:{"type":"string"} for key in ("account",*keys)},
@@ -644,6 +663,68 @@ REPORT_TOOLS = [
 ]
 
 
+# 施策の広場の利用者側（設計 3.4.0 §4）。**サーバ型だけに出す**（報告の口と同じ——
+# 置き場は VM の私有）。誰が書いたかは credential の `actor`。読めるのは credential が
+# 許した account の持ち主（project）の書き込みと、参加していれば open の写しだけ。
+PLAZA_WELCOME = ("施策を試したら広場に置き、次を決める前に他の媒体の施策を読む——"
+                 "どちらも利用者の作業の一部です")
+PLAZA_TOOLS = [
+    {"name": "thth_plaza_post",
+     "description": PLAZA_WELCOME + "。施策（measure: 観測は道具が study-report と同じ計算で付ける・"
+                    "how〔数字を出し直せる thth の命令〕が必須）・気づき（finding）・問い（question）を"
+                    "置く。scope（媒体・企画の範囲）は必須。既定は同じ持ち主の全 account だけに見える。"
+                    "open: true は参加した他の持ち主にも見せる（他人の本文・username・author_key は"
+                    "道具が落とし、@名前 があれば断る）。evidence_level の observed は道具だけが付ける",
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string"},
+         "kind": {"type": "string", "enum": ["measure", "finding", "question"]},
+         "title": {"type": "string", "description": "1 行・120 字まで"},
+         "body": {"type": "string", "description": "8,000 字まで"},
+         "scope": {"type": "string", "description": "媒体・企画の範囲（1 行・120 字・必須）"},
+         "kind_detail": {"type": "string", "enum": ["pattern", "rule", "pitfall", "tool_tip"],
+                         "description": "finding の細目（任意）"},
+         "how": {"type": "string", "description": "数字を出し直せる thth の命令 1 行（measure は必須・実行しない）"},
+         "evidence_level": {"type": "string", "enum": ["stated", "hypothesis"]},
+         "declarations": {"type": "array", "description": "measure の宣言（study-report の形・媒体ごとに 1 つ）"},
+         "hypothesis": {"type": "string"}, "change": {"type": "string"},
+         "until": {"type": "string", "description": "期間の終わり（timezone 付きの時刻）"},
+         "min_n": {"type": "integer"},
+         "open": {"type": "boolean", "description": "参加した他の持ち主にも見せる（1 件ごとの明示の選択）"}},
+         "required": ["account", "kind", "title", "body", "scope"], "additionalProperties": False}},
+    {"name": "thth_plaza_list",
+     "description": "広場の一覧（既定は自分の持ち主の書き込み・open: true は open の広場）。次を決める前に"
+                    "他の媒体の施策を読む（読むだけ）",
+     "inputSchema": {"type": "object", "properties": {
+         "project": {"type": "string"}, "open": {"type": "boolean"}},
+         "additionalProperties": False}},
+    {"name": "thth_plaza_show",
+     "description": "広場の 1 件（本文・道具が付けた観測・媒体をまたぐ比較の表・追試の数・返信）を読む（読むだけ）",
+     "inputSchema": {"type": "object", "properties": {"plaza_id": {"type": "string"}},
+                     "required": ["plaza_id"], "additionalProperties": False}},
+    {"name": "thth_plaza_reply",
+     "description": "返信を 1 つ足す（comment・agree・disagree〔理由必須〕・tried〔自分の measure の id 必須〕・"
+                    "trial〔追試: result に reproduced・not_reproduced・not_tried。再現しなかった報告も"
+                    "同じ重さで数える〕）",
+     "inputSchema": {"type": "object", "properties": {
+         "plaza_id": {"type": "string"}, "account": {"type": "string"},
+         "kind": {"type": "string", "enum": ["comment", "tried", "agree", "disagree", "trial"]},
+         "text": {"type": "string", "description": "4,000 字まで"},
+         "measure_id": {"type": "string"},
+         "result": {"type": "string", "enum": ["reproduced", "not_reproduced", "not_tried"]}},
+         "required": ["plaza_id", "account", "kind"], "additionalProperties": False}},
+    {"name": "thth_plaza_update",
+     "description": "自分の持ち主の施策の結果を取り直す（refresh）・判定（verdict: adopted・dropped・"
+                    "inconclusive と reason）・範囲を変える（visibility: open・project）",
+     "inputSchema": {"type": "object", "properties": {
+         "plaza_id": {"type": "string"}, "account": {"type": "string"},
+         "refresh": {"type": "boolean"},
+         "verdict": {"type": "string", "enum": ["adopted", "dropped", "inconclusive"]},
+         "reason": {"type": "string"},
+         "visibility": {"type": "string", "enum": ["open", "project"]}},
+         "required": ["plaza_id", "account"], "additionalProperties": False}},
+]
+
+
 # **うまくいかなければ報告の口へ**（設計 3.1.2 §3.5）。利用者の道具の説明文の
 # 末尾に 1 句。定数（TOOLS 等）は書き換えず、並べるときに足す——「売り文句」の
 # 正本（設計 v2 §1・「自分の泉」§2）はそのまま残る。
@@ -681,7 +762,8 @@ def server_tools(context):
     reports = reports + [tool for tool in TOOLS if tool['name'] in ('thth_observe', 'thth_morning')]
     from thth.server_writes import WRITE_OPERATIONS
     return _with_report_hint(reports + [tool for tool in SERVER_TOOLS
-                      if context.writes or tool['name'][5:] not in WRITE_OPERATIONS]) + REPORT_TOOLS
+                      if context.writes or tool['name'][5:] not in WRITE_OPERATIONS]
+                      + PLAZA_TOOLS) + REPORT_TOOLS
 
 
 def server_call(name, arguments):
@@ -721,6 +803,12 @@ def server_call(name, arguments):
         elif operation.startswith('admin_reports_'):
             from thth.report_service import execute_admin_reports
             result=execute_admin_reports(context,request)
+        elif operation.startswith('admin_plaza_'):
+            from thth.report_service import execute_admin_plaza
+            result=execute_admin_plaza(context,request)
+        elif operation.startswith('plaza_'):
+            from thth.report_service import execute_user_plaza
+            result=execute_user_plaza(context,request)
         elif operation in ('report_file','report_list','report_show','report_add'):
             from thth.report_service import execute_user_reports
             result=execute_user_reports(context,request)
@@ -742,6 +830,12 @@ def server_call(name, arguments):
         if str(exc)=='duplicate_report' and getattr(exc,'report_id',None):
             # 既存の id は同じ account の報告だけ（重複の検査がそう絞っている）。
             return failure('duplicate_report: '+exc.report_id)
+        from thth.plaza import REASONS as PLAZA_REASONS
+        if str(exc)=='duplicate_post' and getattr(exc,'plaza_id',None):
+            # 既存の id は同じ account の書き込みだけ（重複の検査がそう絞っている）。
+            return failure('duplicate_post: '+exc.plaza_id)
+        if str(exc) in PLAZA_REASONS:
+            return failure(str(exc))
         return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in REPORT_REASONS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused','watch_change_refused') else 'request_unavailable')
     except Exception:
         return failure('request_unavailable')

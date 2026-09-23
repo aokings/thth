@@ -369,6 +369,161 @@ def execute_admin_reports(context: ReportContext, request: dict) -> dict:
         raise _report_error(error) from None
 
 
+PLAZA_OPERATIONS = frozenset(('plaza_post', 'plaza_list', 'plaza_show', 'plaza_reply',
+                              'plaza_update'))
+# 広場の口の要求の形（`許す鍵`・`要る鍵`）。型は MCP の inputSchema と下の検査で見る。
+_PLAZA_SHAPES = {
+    'plaza_post': ({'account', 'kind', 'title', 'body', 'scope', 'kind_detail', 'how',
+                    'evidence_level', 'declarations', 'hypothesis', 'change', 'until', 'min_n',
+                    'open'}, {'account', 'kind', 'title', 'body'}),
+    'plaza_list': ({'project', 'open'}, set()),
+    'plaza_show': ({'plaza_id'}, {'plaza_id'}),
+    'plaza_reply': ({'plaza_id', 'account', 'kind', 'text', 'measure_id', 'result'},
+                    {'plaza_id', 'account', 'kind'}),
+    'plaza_update': ({'plaza_id', 'account', 'refresh', 'verdict', 'reason', 'visibility'},
+                     {'plaza_id', 'account'}),
+}
+_PLAZA_BOOLS = {'open', 'refresh'}
+
+
+def _plaza_error(error):
+    """`plaza.PlazaError` を口の断りに写す（静的な符丁と、重複なら既存の id）。"""
+    exc = ReportServiceError(str(error))
+    exc.plaza_id = getattr(error, 'plaza_id', None)
+    return exc
+
+
+def _plaza_request(request, operation):
+    allowed, required = _PLAZA_SHAPES[operation]
+    if set(request) - allowed - {'operation'} or not required <= set(request):
+        raise ReportServiceError("invalid_request")
+    for key, value in request.items():
+        if key == 'operation' or value is None:
+            continue
+        if key in _PLAZA_BOOLS:
+            if type(value) is not bool:
+                raise ReportServiceError("invalid_request")
+        elif key == 'min_n':
+            if type(value) is not int:
+                raise ReportServiceError("invalid_request")
+        elif key == 'declarations':
+            if type(value) is not list or any(type(row) is not dict for row in value):
+                raise ReportServiceError("invalid_request")
+        elif not isinstance(value, str):
+            raise ReportServiceError("invalid_request")
+
+
+def execute_user_plaza(context: ReportContext, request: dict) -> dict:
+    """施策の広場の利用者側（設計 3.4.0 §4）。**credential が account と project を決める。**
+
+    - 読む側は credential が許した account（とその project）だけ。他の持ち主の project
+      範囲の書き込みは、無い id と同じ `plaza_not_found`。open は参加した持ち主どうし。
+    - 置く・返す・更新するは、書く口と同じ門（再認証・停止・project の一致）を通す。
+      誰が書いたかは credential の `actor`（要求の欄からは作らない）。SNS には何も出ない
+      ので、書く口（writes）の credential でなくてもよい（報告の口と同じ）。
+    """
+    from . import admin_log, plaza, server_writes
+    if type(context) is not ReportContext or type(request) is not dict:
+        raise ReportServiceError("invalid_request")
+    if context.scope != 'user':
+        raise ReportServiceError("unsupported_operation")
+    operation = request.get("operation")
+    if operation not in PLAZA_OPERATIONS:
+        raise ReportServiceError("unsupported_operation")
+    _plaza_request(request, operation)
+    viewer = plaza.Viewer(context.allowed_accounts)
+    active = {name: context.allowed_accounts[name] for name in _active_names(context)}
+    try:
+        if operation == 'plaza_list':
+            project = request.get('project')
+            if project is not None:
+                if project not in viewer.projects:
+                    raise ReportServiceError("scope_unavailable")
+                viewer = plaza.Viewer({name: value for name, value in context.allowed_accounts.items()
+                                       if value == project})
+            return plaza.list_posts(viewer, open_only=bool(request.get('open')))
+        if operation == 'plaza_show':
+            return plaza.show(request['plaza_id'], viewer)
+        account = request['account']
+        cfg = server_writes.current(context, account)
+        if not context.actor:
+            raise ReportServiceError("by_required")
+        admin_log.register_account_secrets(cfg, via='mcp')
+        with leave_gate.read_leases(set(active)):
+            if operation == 'plaza_post':
+                return plaza.post(
+                    account, kind=request['kind'], title=request['title'], body=request['body'],
+                    by=context.actor, scope_note=request.get('scope'),
+                    kind_detail=request.get('kind_detail'), how=request.get('how'),
+                    evidence_level=request.get('evidence_level') or 'stated',
+                    declarations=request.get('declarations') or [],
+                    hypothesis=request.get('hypothesis'), change=request.get('change'),
+                    until=request.get('until'),
+                    min_n=request['min_n'] if request.get('min_n') is not None else 5,
+                    visibility='open' if request.get('open') else 'project', via='mcp',
+                    project=context.allowed_accounts[account], medium=cfg.get('media'),
+                    trusted_accounts=active)
+            if operation == 'plaza_reply':
+                return plaza.reply(request['plaza_id'], account=account, kind=request['kind'],
+                                   text=request.get('text'), measure_id=request.get('measure_id'),
+                                   result=request.get('result'), by=context.actor, viewer=viewer,
+                                   via='mcp', trusted_accounts=active)
+            return plaza.update(request['plaza_id'], account=account, by=context.actor,
+                                viewer=viewer, refresh=bool(request.get('refresh')),
+                                verdict=request.get('verdict'), reason=request.get('reason'),
+                                visibility=request.get('visibility'), via='mcp',
+                                trusted_accounts=active)
+    except plaza.PlazaError as error:
+        raise _plaza_error(error) from None
+    except accounts.AccountLeaving:
+        raise ReportServiceError('account_leaving') from None
+    except accounts.AccountError:
+        raise ReportServiceError("scope_unavailable") from None
+
+
+ADMIN_PLAZA_OPERATIONS = frozenset(('admin_plaza_list', 'admin_plaza_show', 'admin_plaza_join',
+                                    'admin_plaza_leave', 'admin_plaza_hide'))
+
+
+def execute_admin_plaza(context: ReportContext, request: dict) -> dict:
+    """施策の広場の管理者側（設計 3.4.0 §4）。全部を読み、参加・退出・非表示を書く。
+
+    書く操作は予算・監視語と同じ門（credential の読み直し）を通し、`by` は要求に
+    明示させる（管理者 credential の中に人の名前は無い）。
+    """
+    from . import plaza
+    if type(context) is not ReportContext or type(request) is not dict:
+        raise ReportServiceError("invalid_request")
+    if context.scope != 'admin':
+        raise ReportServiceError("unsupported_operation")
+    operation = request.get("operation")
+    shapes = {'admin_plaza_list': (set(), set()),
+              'admin_plaza_show': ({'plaza_id'}, {'plaza_id'}),
+              'admin_plaza_join': ({'project', 'by'}, {'project', 'by'}),
+              'admin_plaza_leave': ({'project', 'by'}, {'project', 'by'}),
+              'admin_plaza_hide': ({'plaza_id', 'reason', 'by'}, {'plaza_id', 'reason', 'by'})}
+    if operation not in shapes:
+        raise ReportServiceError("unsupported_operation")
+    allowed, required = shapes[operation]
+    if set(request) - allowed - {'operation'} or not required <= set(request):
+        raise ReportServiceError("invalid_request")
+    if any(not isinstance(request[key], str) for key in allowed & set(request)):
+        raise ReportServiceError("invalid_request")
+    try:
+        if operation == 'admin_plaza_list':
+            return plaza.admin_list()
+        if operation == 'admin_plaza_show':
+            return plaza.show(request['plaza_id'], plaza.Viewer(admin=True))
+        _credential_unchanged(context)
+        if operation == 'admin_plaza_hide':
+            return plaza.hide(request['plaza_id'], by=request['by'], reason=request['reason'],
+                              via='mcp')
+        return plaza.set_membership(request['project'], joined=operation == 'admin_plaza_join',
+                                    by=request['by'], via='mcp')
+    except plaza.PlazaError as error:
+        raise _plaza_error(error) from None
+
+
 def _open_directory_nofollow(path: Path) -> int:
     """Open every absolute repo ancestor without following a symlink."""
     descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)

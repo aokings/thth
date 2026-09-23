@@ -41,7 +41,10 @@ def test_admin_all_registry_and_mcp_auth_rechecked(credentials,monkeypatch):
         'thth_admin_inventory','thth_admin_account','thth_admin_diff','thth_admin_log',
         'thth_admin_tokens','thth_admin_release','thth_admin_budget_set','thth_admin_watch_set',
         # 報告の口の実装側（設計 3.1.2 §1）。
-        'thth_admin_reports_list','thth_admin_reports_show','thth_admin_reports_reply','thth_admin_reports_close'}
+        'thth_admin_reports_list','thth_admin_reports_show','thth_admin_reports_reply','thth_admin_reports_close',
+        # 施策の広場の管理者側（設計 3.4.0 §4）。
+        'thth_admin_plaza_list','thth_admin_plaza_show','thth_admin_plaza_join','thth_admin_plaza_leave',
+        'thth_admin_plaza_hide'}
     result=server.call_tool('thth_admin_inventory',{})
     assert set(json.loads(result['content'][0]['text'])['by_account'])=={'first','second'}
     assert server.call_tool('thth_admin_diff',{'mark_read':True})['isError']
