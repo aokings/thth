@@ -520,6 +520,9 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
                         text_sha256=sent_sha, bundle_sha=expected, last_ok="publish",
                         goal=goal_value,
                         **({"goal_change": goal_change} if goal_change else {}),
+                        # 段のリンク先（設計 3.7.0 §A1・裁定 09-24）。連投は sent を書かず本文も
+                        # 実行記録に残らないので、click を投稿単位で数える照合のためにここに控える。
+                        link_urls=_step_link_urls(section, manifests[index-1]),
                         **({"media":result.media} if result.media else {}))
     except (OSError,ValueError):
         if not manifests[index-1]:raise
@@ -623,3 +626,15 @@ def _frozen_drift(run: dict, segments: list) -> list:
         if approval_mod.segment_sha(segments[i - 1]) != post["text_sha256"]:
             drift.append(i)
     return drift
+
+
+def _step_link_urls(section, manifest) -> list:
+    """連投の 1 段のリンク先（本文の URL と添付のリンク先・書いた形のまま・10 まで）。
+
+    照合のときに `click_attribution.normalize_url()` で sent と同じ正規化を通す。
+    本文は残さない——URL だけ。
+    """
+    from . import click_attribution
+    urls = click_attribution.urls_in(section)
+    urls += [u for u in click_attribution.manifest_links(manifest) if u not in urls]
+    return [u for u in urls if len(u) <= 2048][:10]

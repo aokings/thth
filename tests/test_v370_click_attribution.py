@@ -267,3 +267,38 @@ def test_lintは同じリンク先を前後72時間に使うclickの原稿を知
     third = os.path.join(account["queue_dir"], "c.md")
     assert [p for p in lint.lint_file(third) if lint.is_warning(p)] == [], \
         "同じ日でもリンク先が違えば測れる"
+
+
+# ------------------------------------------------------------ 連投の段（裁定 09-24）
+
+def test_連投の段のリンク先を実行記録に残し_別のリンク先ならclickの投稿が測れる(
+        tmp_path, isolated_account_factory):
+    """連投（`thth: 2`）は sent を書かない。段ごとの `link_urls` を実行記録に残し、照合は
+    それを「リンク先が分かる投稿」として扱う（記録の無い過去の連投は従前どおり厳しい側）。"""
+    from tests.conftest import init_git_pair
+    from tests.test_thread_publish import FakeAdapter, bundle_text
+    from thth import threadrun, threadthrow
+    pair = init_git_pair(tmp_path, seed_content=bundle_text(), seed_name="thread.md")
+    account = isolated_account_factory(repo_dir=pair["work"], production=True,
+                                       quiet_hours=None, min_interval_hours=0)
+    thread_at = datetime.datetime.fromisoformat("2026-09-15T19:00:00+09:00")
+    results = threadthrow.publish_bundle(account["name"], "docs/sns/queue/thread.md",
+                                         adapter_factory=lambda *_: FakeAdapter(), now=thread_at)
+    assert [r.action for r in results] == ["published"] * 3, [r.reason for r in results]
+    run = threadrun.load(results[0].run_id)
+    assert [p["link_urls"] for p in run["posts"]] == [[], [], ["https://nigamilab.com/x"]]
+    step_ids = [p["post_id"] for p in run["posts"]]
+
+    _post(account, "OTHER", _at("16T09:00:00"), text="別の記事 https://nigamilab.com/other")
+    _post(account, "SAME", _at("17T09:00:00"), text="同じ記事 https://NIGAMILAB.com/x/")
+    daily = [{"date": f"2026-09-{d}", "metrics": _clicks(
+        {"https://nigamilab.com/other": 2, "https://nigamilab.com/x": 9})} for d in range(14, 24)]
+    index = click_attribution.Index.for_account(
+        account["name"], accounts_mod.load_account(account["name"]),
+        posts=[(pid, thread_at) for pid in step_ids]
+        + [("OTHER", _at("16T09:00:00")), ("SAME", _at("17T09:00:00"))],
+        account_daily=daily, now=NOW)
+    other = index.attribute("OTHER", _at("16T09:00:00"), 100)
+    assert other["basis"] == "unique_url_72h" and other["clicks_72h"] == 6, other
+    same = index.attribute("SAME", _at("17T09:00:00"), 100)
+    assert same["cannot_say"] == "url_shared_72h", "連投の 3 段目と同じリンク先"

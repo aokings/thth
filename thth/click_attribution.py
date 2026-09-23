@@ -20,8 +20,8 @@ Threads の account 日次 `clicks_by_url`（リンク先ごとの日次クリ�
       リンクは台帳の任意項目 `profile_links`（道具は推測しない）。
   (d) リンク先の照合は正規化してから: スキームを外す・末尾の `/` を外す・
       `utm_*` の引数を外す・大文字小文字を畳むのはホストだけ（パスは畳まない）。
-  (e) 近くに**リンク先が記録に無い投稿**（連投の段・THTH を通していない投稿・
-      添付のリンク先を控える前の記録）があれば、共有でないとは言えない
+  (e) 近くに**リンク先が記録に無い投稿**（段のリンク先を控える前の連投・THTH を
+      通していない投稿・添付のリンク先を控える前の記録）があれば、共有でないとは言えない
       （`nearby_link_unrecorded`）。自分のリンク先が記録に無ければ
       `link_unrecorded`。
   (f) **本文に札を付けて書き換えない**（設計 E）。リンク先を投稿ごとに分ければ
@@ -133,10 +133,11 @@ def _neighbors(a, b) -> bool:
 def recorded_links(account_name: str) -> dict:
     """公開の時点の記録から、投稿ごとのリンク先 `{post_id: {"urls", "known"}}`。
 
-    材料は `state/<account>/sent/` だけ（送った本文そのものと、3.7.0 から控える
-    添付のリンク先 `link_urls`）。連投の実行記録は本文を持たないのでここに入らず、
-    リンク先が記録に無い投稿として扱う。添付に link か text があるのに `link_urls`
-    が無い記録（3.7.0 より前）は `known: False`。
+    材料は 2 つ: `state/<account>/sent/`（送った本文そのものと、3.7.0 から控える
+    添付のリンク先 `link_urls`）と、連投の実行記録（3.7.0 から段ごとに控える
+    `link_urls`・裁定 09-24）。添付に link か text があるのに `link_urls` が無い sent
+    （3.7.0 より前）は `known: False`。`link_urls` を持たない過去の連投の段はここに
+    入らず、リンク先が記録に無い投稿として扱う（厳しい側のまま）。
     """
     from . import accounts, sent
     out = {}
@@ -154,6 +155,31 @@ def recorded_links(account_name: str) -> dict:
             # 添付のリンク先を控える前の記録——本文の URL だけでは足りない。
             known = False
         out[str(row["post_id"])] = {"urls": urls, "known": known}
+    out.update(_thread_step_links(account_name))
+    return out
+
+
+def _thread_step_links(account_name: str) -> dict:
+    """連投の実行記録の段ごとのリンク先（`link_urls` を持つ段だけ）。"""
+    from . import threadrun
+    out = {}
+    try:
+        names = sorted(n for n in os.listdir(threadrun.runs_dir()) if n.endswith(".json"))
+    except OSError:
+        return out
+    for name in names:
+        try:
+            run = threadrun.load(name[:-len(".json")])
+        except Exception:   # noqa: BLE001 — 読めない実行記録は公開の経路が止める
+            continue
+        if not isinstance(run, dict) or run.get("account") != account_name:
+            continue
+        for post in run.get("posts") or []:
+            if (isinstance(post, dict) and post.get("post_id")
+                    and isinstance(post.get("link_urls"), list)):
+                out[str(post["post_id"])] = {
+                    "urls": [u for u in post["link_urls"] if isinstance(u, str)],
+                    "known": True}
     return out
 
 
