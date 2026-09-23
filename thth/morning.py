@@ -42,6 +42,8 @@ UNANSWERED_SINCE = "7d"
 # 第 3 段が 1 語あたりに要求する件数と、絡みに行く先として並べる上限。
 WORLD_LIMIT = 25
 ENGAGE_TARGETS = 3
+# 第 4 段に名前を並べる時刻超過の原稿の上限（数は `n` で全部言う）。
+OVERDUE_LIMIT = 10
 # 栞を進めるときの名乗り（`handoff-report --mark-read --by` に相当）。
 MARK_BY = "morning"
 
@@ -435,6 +437,30 @@ def _today_rows(name, now):
             "window": {"since": jst.iso(start), "until": jst.iso(end), "basis": "publish_at_jst"}}
 
 
+def _overdue_rows(name, now):
+    """時刻を過ぎたのに出ていない原稿の**名前**（3.1.1）。
+
+    数（`queue.overdue`）だけでは、どの原稿かを知るのに `thth queue` を別に叩く
+    必要があった。定義は handoff の数え方と同じ（`approved`・`post_id` 無し・
+    `publish_at` から `report.OVERDUE_HOURS` を超えた）。古い順に最大
+    `OVERDUE_LIMIT` 件を並べ、`n` に全体の数を出す（分母）。本文は先頭 60 字。
+    """
+    from . import report as report_mod
+    rows = []
+    for row in report_mod.schedule(name, now=now):
+        at = jst.parse(row.get("publish_at"))
+        if row.get("status") != "approved" or at is None:
+            continue
+        elapsed = (now - at).total_seconds() / 3600.0
+        if elapsed <= report_mod.OVERDUE_HOURS:
+            continue
+        rows.append({"file": row["file"], "publish_at": row["publish_at"],
+                     "status": row["status"], "elapsed_hours": round(elapsed, 1),
+                     "head": _preview(row.get("head"))})
+    return {"n": len(rows), "limit": OVERDUE_LIMIT, "items": rows[:OVERDUE_LIMIT],
+            "basis": "approved_unposted_over_overdue_hours"}
+
+
 def _queue_cell(node):
     """handoff の節から queue の数だけを写す（置き場のパスは写さない）。"""
     if node is None:
@@ -500,8 +526,9 @@ def read_refusal(media):
 def next_steps(unanswered_entries, world_entries, today_entries) -> list:
     """**候補の列挙だけ**（masaru 裁定 3.1.0 §7-1）。本文は 1 字も作らない。
 
-    3 種類だけ: 「返す」（1 段の各行）・「絡む」（3 段の各行）・「出す」
-    （4 段で今日の予定が無い account）。どの要素にも `body` は無い。
+    4 種類だけ: 「返す」（1 段の各行）・「絡む」（3 段の各行）・「出す」
+    （4 段で今日の予定が無い account）・「超過」（4 段の時刻超過の各行・3.1.1）。
+    どの要素にも `body` は無い（「超過」も file と時刻だけで、本文の先頭は載せない）。
     """
     steps = []
     for name, entry in unanswered_entries.items():
@@ -529,6 +556,11 @@ def next_steps(unanswered_entries, world_entries, today_entries) -> list:
         planned = today.get("value")
         if planned is not None and planned["n"] == 0:
             steps.append({"kind": "post", "account": name})
+        overdue = ((entry["value"] or {}).get("overdue_items") or {}).get("value") or {}
+        for row in overdue.get("items") or []:
+            steps.append({"kind": "overdue", "account": name, "file": row["file"],
+                          "publish_at": row["publish_at"],
+                          "elapsed_hours": row["elapsed_hours"]})
     return steps
 
 
@@ -617,6 +649,7 @@ def build(target, *, now=None, mark=True, allowed_names=None):
         today_entries[name] = cell({
             "medium": cfg.get("media"),
             "today": _guard(lambda name=name: _today_rows(name, now)),
+            "overdue_items": _guard(lambda name=name: _overdue_rows(name, now)),
             "queue": _queue_cell(node),
             "inflight": _inflight(node),
             "changes_since_last_read": ((node or {}).get("changes_since") or {}).get("changes"),
@@ -713,6 +746,9 @@ def _render_section(section, out) -> None:
             elif step["kind"] == "engage":
                 out(f"  絡む  {step['account']}  語「{step['word']}」"
                     f"  {step.get('permalink') or step['post_id']}")
+            elif step["kind"] == "overdue":
+                out(f"  超過  {step['account']}  {step['file']}  {step['publish_at']}"
+                    f"（{step['elapsed_hours']}h）")
             else:
                 out(f"  出す  {step['account']}（今日の予定がありません）")
         return
@@ -812,6 +848,15 @@ def _render_today(account, node, out) -> None:
         out(f"    承認待ちの下書き {counts['approval_needed']}"
             f"・承認済みで待ち {counts['approved_waiting']}"
             f"・時刻超過 {counts['overdue']}・型外 {counts['malformed']}")
+    overdue = node.get("overdue_items") or {}
+    if overdue.get("cannot_say") is not None:
+        out(f"    時刻超過の名前: 言えない: {overdue['cannot_say']}")
+    elif overdue.get("value"):
+        value = overdue["value"]
+        for row in value["items"]:
+            out(f"    時刻超過: {row['file']} {row['publish_at']}（{row['elapsed_hours']}h）")
+        if value["n"] > len(value["items"]):
+            out(f"    時刻超過: ほか {value['n'] - len(value['items'])} 本（全 {value['n']} 本）")
     inflight = node["inflight"]
     if inflight["present"]:
         out(f"    inflight: {inflight['reason_code']}（{inflight['since']}）"
