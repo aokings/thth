@@ -25,17 +25,14 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import fcntl
 import hashlib
 import json
 import os
 import re
 import secrets
-import stat
 import sys
-import uuid
 
-from . import accounts, admin_log, handoff_cursor, jst, redact
+from . import accounts, admin_log, jst, private_store, redact
 from . import __version__
 
 SCHEMA_VERSION = 1
@@ -192,44 +189,6 @@ class Scope:
 
 # ------------------------------------------------------------------ 置き場
 
-def _directory(create=False):
-    """`$THTH_ROOT/state/_reports` を祖先ごと O_NOFOLLOW で開く（fd を返す）。
-
-    読むだけの口で置き場がまだ無い（`state/` ごと無い）ときは `None`＝0 件。
-    在るのに開けない（symlink・権限）ときだけ `report_store_unavailable`。
-    """
-    if not create and not os.path.lexists(accounts.state_dir_for(DIRECTORY)):
-        return None
-    try:
-        return handoff_cursor._directory(DIRECTORY, create=create)
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as exc:
-        raise ReportError("report_store_unavailable") from exc
-
-
-class _Locked:
-    """置き場の排他（件数の上限と重複の検査を、書き込みと同じロックの中で行う）。"""
-
-    def __enter__(self):
-        self.directory = _directory(create=True)
-        try:
-            self.fd = os.open(".lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600,
-                              dir_fd=self.directory)
-            fcntl.flock(self.fd, fcntl.LOCK_EX)
-        except OSError as exc:
-            os.close(self.directory)
-            raise ReportError("report_store_unavailable") from exc
-        return self.directory
-
-    def __exit__(self, *exc):
-        try:
-            os.close(self.fd)
-        finally:
-            os.close(self.directory)
-        return False
-
-
 def _valid(record) -> bool:
     """形の検査（壊れた 1 件で一覧全体を止めない・読めないものは数えて飛ばす）。"""
     if not isinstance(record, dict) or record.get("schema_version") != SCHEMA_VERSION:
@@ -251,122 +210,54 @@ def _valid(record) -> bool:
     return closed is None or (isinstance(closed, dict) and closed.get("reason") in CLOSE_REASONS)
 
 
-def _read_one(directory, name):
-    fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
-    with os.fdopen(fd, "rb") as stream:
-        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-            raise ValueError("not_regular")
-        data = stream.read(MAX_FILE_BYTES + 1)
-    if len(data) > MAX_FILE_BYTES:
-        raise ValueError("too_large")
-    record = json.loads(data)
-    if not _valid(record) or record["report_id"] + ".json" != name:
-        raise ValueError("invalid_record")
-    return record
+# 置き場の骨は `thth/private_store.py`（施策の広場と共通）。ここは報告の口の
+# 形の検査・理由コード・id の形だけを渡す。
+STORE = private_store.Store(
+    DIRECTORY, id_key="report_id", id_pattern=REPORT_ID, valid=_valid, error=ReportError,
+    unavailable="report_store_unavailable", not_found="report_not_found",
+    log_unavailable="report_log_unavailable", max_bytes=MAX_FILE_BYTES,
+    temporary_prefix=".report-")
+
+
+def _directory(create=False):
+    """`$THTH_ROOT/state/_reports` を祖先ごと O_NOFOLLOW で開く（無ければ `None`）。"""
+    return STORE.open(create=create)
+
+
+def _Locked():
+    """置き場の排他（件数の上限と重複の検査を、書き込みと同じロックの中で行う）。"""
+    return STORE.locked()
 
 
 def _load_all(directory):
-    """置き場の全件（壊れた件数も返す）。"""
-    records, broken = [], 0
-    if directory is None:
-        return records, broken
-    try:
-        names = sorted(os.listdir(directory))
-    except OSError as exc:
-        raise ReportError("report_store_unavailable") from exc
-    for name in names:
-        if not name.endswith(".json") or not REPORT_ID.match(name[:-5]):
-            continue
-        try:
-            records.append(_read_one(directory, name))
-        except (OSError, ValueError, TypeError, RecursionError):
-            broken += 1
-    records.sort(key=lambda row: (row["at"], row["report_id"]))
-    return records, broken
+    return STORE.load_all(directory)
 
 
 def load_all():
     """読むだけの口（ロックは取らない）。置き場がまだ無ければ 0 件。"""
-    directory = _directory()
-    try:
-        return _load_all(directory)
-    finally:
-        if directory is not None:
-            os.close(directory)
+    return STORE.load()
 
 
 def _write(directory, record):
-    temporary = ".report-" + uuid.uuid4().hex
-    name = record["report_id"] + ".json"
-    try:
-        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
-                     dir_fd=directory)
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(record, stream, ensure_ascii=False, allow_nan=False, indent=1)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
-        os.fsync(directory)
-    except OSError as exc:
-        raise ReportError("report_store_unavailable") from exc
-    finally:
-        try:
-            os.unlink(temporary, dir_fd=directory)
-        except OSError:
-            pass
+    STORE.write(directory, record)
 
 
 def _find(directory, report_id):
-    if not isinstance(report_id, str) or not REPORT_ID.match(report_id):
-        raise ReportError("report_not_found")
-    if directory is None:
-        raise ReportError("report_not_found")
-    try:
-        return _read_one(directory, report_id + ".json")
-    except FileNotFoundError:
-        raise ReportError("report_not_found") from None
-    except (OSError, ValueError, TypeError, RecursionError):
-        raise ReportError("report_store_unavailable") from None
+    return STORE.find(directory, report_id)
 
 
 # ------------------------------------------------------------------ 検査
 
 def _text(value, limit, *, required=True, one_line=False):
     """自由文の検査。空・型違い・制御文字は `invalid_report`、長さは `report_too_long`。"""
-    if value is None and not required:
-        return None
-    if not isinstance(value, str):
-        raise ReportError("invalid_report")
-    value = value.replace("\r\n", "\n").strip()
-    if not value:
-        if required:
-            raise ReportError("invalid_report")
-        return None
-    if one_line and "\n" in value:
-        raise ReportError("invalid_report")
-    if any(ord(c) < 32 and c not in "\n\t" for c in value) or "\x7f" in value:
-        raise ReportError("invalid_report")
-    if len(value) > limit:
-        raise ReportError("report_too_long")
-    return value
+    return private_store.check_text(value, limit, error=ReportError, invalid="invalid_report",
+                                    too_long="report_too_long", required=required,
+                                    one_line=one_line)
 
 
 def _fold_paths(value):
     """本文の中の `$THTH_ROOT` とホームの絶対パスを畳む（応答・書き出しに出さない）。"""
-    if value is None:
-        return None
-    candidates = []
-    for raw in (accounts.thth_root(), os.path.realpath(accounts.thth_root())):
-        if raw and os.path.isabs(raw) and raw != os.sep:
-            candidates.append((raw.rstrip(os.sep), "$THTH_ROOT"))
-    home = os.path.expanduser("~")
-    for raw in (home, os.path.realpath(home)):
-        if raw and os.path.isabs(raw) and raw != os.sep:
-            candidates.append((raw.rstrip(os.sep), "~"))
-    # 長い方から（ホームの下に root があると、先にホームを畳むと root が残る）。
-    for raw, mark in sorted(set(candidates), key=lambda item: len(item[0]), reverse=True):
-        value = value.replace(raw, mark)
-    return value
+    return private_store.fold_paths(value)
 
 
 def reporter(by):
@@ -469,18 +360,11 @@ def file_report(account, *, kind, title, body, repro=None, by, via="cli",
                   "medium": medium, "reporter": by, "via": via,
                   "tool_version": __version__, "status": "open",
                   "replies": [], "closed": None}
-        _write(directory, record)
-        try:
-            # presence-only（本文は入れない）。書けなければ置いた 1 件を戻す
-            # ——記録の無い報告を残さない（`watch_set` と同じ「すべて記録」）。
-            admin_log.append("report_filed", account, {"media": medium}, by=by, via=via,
-                             diff={"report": ["absent", "present"]})
-        except (OSError, ValueError, admin_log.AdminLogError):
-            try:
-                os.unlink(report_id + ".json", dir_fd=directory)
-            except OSError:
-                pass
-            raise ReportError("report_log_unavailable") from None
+        # presence-only（本文は入れない）。書けなければ置いた 1 件を戻す
+        # ——記録の無い報告を残さない（`watch_set` と同じ「すべて記録」）。
+        STORE.create(directory, record, lambda _record: admin_log.append(
+            "report_filed", account, {"media": medium}, by=by, via=via,
+            diff={"report": ["absent", "present"]}))
     return {"schema_version": SCHEMA_VERSION, "report_type": "report_filed",
             "report_id": report_id, "status": "open", "kind": kind, "at": record["at"],
             "account": account, "project": project, "tool_version": __version__,
@@ -547,18 +431,8 @@ def scope_for_account(account):
 
 def _update(report_id, change, *, event, by, via, diff):
     """1 件を書き換えて変更ログに残す。ログに書けなければ元に戻す（記録の無い変更を残さない）。"""
-    with _Locked() as directory:
-        record = _find(directory, report_id)
-        before = json.loads(json.dumps(record))
-        change(record)
-        _write(directory, record)
-        try:
-            admin_log.append(event, record["account"], {"media": record.get("medium")},
-                             by=by, via=via, diff=diff)
-        except (OSError, ValueError, admin_log.AdminLogError):
-            _write(directory, before)
-            raise ReportError("report_log_unavailable") from None
-    return record
+    return STORE.update(report_id, change, lambda record: admin_log.append(
+        event, record["account"], {"media": record.get("medium")}, by=by, via=via, diff=diff))
 
 
 def reply(report_id, *, by, text, via="cli", now=None):
@@ -829,15 +703,7 @@ def _print_refusal(args, error):
 
 def _read_input(path):
     """`--body-file` 等を読む（`-` は標準入力）。読めなければ `invalid_report`。"""
-    if path is None:
-        return None
-    try:
-        if path == "-":
-            return sys.stdin.read(BODY_MAX * 4 + 1)
-        with open(path, encoding="utf-8") as stream:
-            return stream.read(BODY_MAX * 4 + 1)
-    except (OSError, UnicodeError):
-        raise ReportError("invalid_report") from None
+    return private_store.read_input(path, BODY_MAX, error=ReportError, invalid="invalid_report")
 
 
 def from_last_refusal(account, *, kind=None, body=None, repro=None):

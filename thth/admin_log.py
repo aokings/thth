@@ -32,7 +32,10 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    # 報告した側の追記（設計 3.2.0 §4.5-1）。同じく presence-only。
                    'report_added',
                    # 人が inflight を解いた（設計 3.3.1 §4・`thth inflight resolve`）。
-                   'inflight_resolved'))
+                   'inflight_resolved',
+                   # 施策の広場（設計 3.4.0 §6）。presence-only——本文・返信は入れない。
+                   'plaza_posted', 'plaza_replied', 'plaza_updated', 'plaza_hidden',
+                   'plaza_joined', 'plaza_left'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 
@@ -230,7 +233,9 @@ def transaction(*, rollback=None):
             try:
                 from . import admin_notifications
                 event = json.loads(data)
-                if event['event'] in ('app_set', 'relay_key_initialized', 'approver_set', 'approver_revoked', 'approver_unlocked', 'account_removed', 'deletion_requested', 'budget_set', 'report_filed', 'report_replied', 'report_closed', 'report_added'):
+                if event['event'] in ('app_set', 'relay_key_initialized', 'approver_set', 'approver_revoked', 'approver_unlocked', 'account_removed', 'deletion_requested', 'budget_set', 'report_filed', 'report_replied', 'report_closed', 'report_added',
+                                      'plaza_posted', 'plaza_replied', 'plaza_updated', 'plaza_hidden',
+                                      'plaza_joined', 'plaza_left'):
                     continue
                 cfg = accounts.load_account(event['account'])
                 admin_notifications.notify(event, cfg)
