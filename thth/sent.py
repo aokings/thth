@@ -40,7 +40,7 @@ ATTACHMENT_KINDS = ("none", "image", "video", "audio", "carousel",
 
 def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: str,
           approved_fingerprint: str | None = None, reply_to: str | None = None, media: list | None = None,
-          attachment_kinds: list | None = None) -> str:
+          attachment_kinds: list | None = None, resolved_from: dict | None = None) -> str:
     """送った本文そのものを動かせない記録として保存する。返り値は書いたパス。
 
     `approved_fingerprint`（外部レビュー再々レビュー P1・1）は公開直前に固定した
@@ -63,6 +63,14 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
     tmp = p + ".tmp"
     data = {"post_id": post_id, "text": text, "body_hash": body_hash, "sent_at": sent_at,
             "approved_fingerprint": approved_fingerprint, "reply_to": reply_to}
+    if resolved_from is not None:
+        # reply_to_file（設計 3.2.0 §3）。`reply_to` は解決した post_id（記録は事実）。
+        # どの原稿から解決したかを足す——あとから「なぜこの投稿に返したか」を辿れる。
+        if (type(resolved_from) is not dict or set(resolved_from) != {"file", "post_id"}
+                or resolved_from["post_id"] != reply_to):
+            raise ValueError("invalid_resolved_from")
+        data["reply_to_file"] = resolved_from["file"]
+        data["resolved_from"] = {"file": resolved_from["file"], "post_id": resolved_from["post_id"]}
     if media is not None:
         if type(media) is not list or any(type(x) is not dict or set(x)!={'sha256','kind','alt_present','remote_id'} for x in media):raise ValueError('invalid_media_receipt')
         data['media']=media

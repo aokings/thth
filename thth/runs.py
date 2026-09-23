@@ -64,7 +64,9 @@ REQUIRED_FIELDS = ["account", "run_id", "mode", "action", "status", "error"]
 OPTIONAL_FIELDS = ["topic", "mismatch_fields", "trigger",
                    "messages", "truncated", "words", "n",
                    "medium", "author_key", "met", "profile_fetched",
-                   "engagement_write_failed", "engagement_author_lookup_failed"]
+                   "engagement_write_failed", "engagement_author_lookup_failed",
+                   # reply_to_file（設計 3.2.0 §3）: どの原稿から返信先を解決したか。
+                   "reply_to_file", "resolved_from"]
 
 
 def path_for(state_dir: str, jst_month: str) -> str:

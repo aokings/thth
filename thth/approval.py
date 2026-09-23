@@ -76,6 +76,29 @@ def publish_options(fm: dict) -> dict:
     }
 
 
+def reply_to_for_fingerprint(fm: dict) -> str | None:
+    """承認の指紋の `reply_to` 欄に入れる値（設計 3.2.0 §3）。
+
+    `reply_to_file` を持つ原稿は **`file:<名前>`**。承認の対象は「どの原稿への
+    返信か」であって、解決後の post_id ではない（要望どおり・解決した post_id は
+    入れない）。`reply_to`（post_id 直書き）は従前どおりその値——**既存の
+    `approved_sha` は 1 つも変わらない**。
+
+    `reply_to` と `reply_to_file` は同じ欄を使うので、承認のあとにどちらかへ
+    書き換えれば指紋が変わって `approval_stale` で落ちる。両方あるとき（lint も
+    select も断る）は、どちらか一方だけのときの値と一致しない値にする——
+    片方を足しただけで承認が生き残る形を作らない。
+    """
+    fm = fm or {}
+    name = queuefile.reply_to_file_of(fm)
+    direct = fm.get("reply_to")
+    if name is None:
+        return direct
+    if direct is not None and str(direct).strip():
+        return f"{queuefile.REPLY_TO_FILE_MARK}{name}\x1e{str(direct).strip()}"
+    return queuefile.REPLY_TO_FILE_MARK + name
+
+
 def _option_components(location_id, share_to_instagram) -> dict:
     return {
         "location_id": (location_id or "").strip() if isinstance(location_id, str) else "",

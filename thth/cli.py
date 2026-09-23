@@ -315,7 +315,8 @@ def _prepare_one(path: str):
     options = approval_mod.publish_options(fm)
     effective = approval_mod.effective_section(section, account_cfg, fm.get("topic"))
     approved_sha = approval_mod.compute_approved_sha(
-        section=effective, account=account_name, reply_to=fm.get("reply_to"),
+        section=effective, account=account_name,
+        reply_to=approval_mod.reply_to_for_fingerprint(fm),
         topic=fm.get("topic"), publish_at=fm.get("publish_at"), media_manifest=manifest, **options)
 
     # **予定時刻を過ぎた原稿の扱いを、承認の前に言う**（nigamilab セッション指摘
@@ -347,6 +348,8 @@ def _prepare_one(path: str):
         "publish_at": fm.get("publish_at"),
         "topic": queuefile.normalize_topic(fm.get("topic")),
         "reply_to": fm.get("reply_to"),
+        # 返信先を原稿の名前で書いたもの（設計 3.2.0 §1）。承認の対象はこの名前。
+        "reply_to_file": queuefile.reply_to_file_of(fm),
         "text": effective,
         "length_line": queuefile.length_line(media, effective, account_cfg),
         "location": (fm.get("location") or "").strip() or None,
@@ -627,6 +630,8 @@ def _reply_or_topic_line(one: dict) -> str | None:
     reply_to = one.get("reply_to")
     if reply_to:
         return f"返信（reply_to: {reply_to}）——語の確認は不要"
+    if one.get("reply_to_file"):
+        return f"返信（reply_to_file: {one['reply_to_file']}）——語の確認は不要"
     return topics_mod.verdict_line(one.get("topic"), account=one.get("account"))
 
 
@@ -637,6 +642,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
                      "files": [{"file": one["path"], "account": one["account"],
                                 "publish_at": one["publish_at"], "topic": one["topic"],
                                 "reply_to": one.get("reply_to"),
+                                "reply_to_file": one.get("reply_to_file"),
                                 "text": one.get("text"),
                                 "kind": one.get("kind", "single"),
                                 "segments": one.get("segments"),
@@ -668,6 +674,10 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
         print(f"  publish_at: {one['publish_at']}")
         print(f"  topic     : {one['topic'] or '（なし）'}")
         print(f"  reply_to  : {one['reply_to'] or '（なし）'}")
+        if one.get("reply_to_file"):
+            # 承認するのは「どの原稿への返信か」。post_id はその原稿が出てから決まる。
+            print(f"  返信先    : {one['reply_to_file']}（その原稿が出てから返信します・"
+                  "出るまで待ちます）")
         if one.get("warning"):
             print(f"  ⚠ {one['warning']}")
         topic_line = _reply_or_topic_line(one)

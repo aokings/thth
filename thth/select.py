@@ -17,6 +17,7 @@ import os
 
 from . import adapters as adapters_mod
 from . import approval as approval_mod
+from . import postid as postid_mod
 from . import queuefile
 from . import tags as tags_mod
 
@@ -34,6 +35,115 @@ class SelectResult:
     type_mismatch: list
     needs_review: list
     section: str | None = None
+    # `chosen` が `reply_to_file` を持つときだけ `{"file": 名前, "post_id": 解決した
+    # post_id}`（設計 3.2.0 §2）。**解決できていない候補は chosen にならない**ので、
+    # `reply_to_file` を持つ chosen には必ずこれが付く（`core._throw_chosen()` も
+    # 付いていなければ出さない）。
+    resolution: dict | None = None
+
+
+# --------------------------------------------------------------------------
+# reply_to_file の解決（設計 3.2.0 §2）
+# --------------------------------------------------------------------------
+
+# 解決できない理由の前置き（静的）。後ろに `waiting_for <名前>`・`target_retracted`・
+# `target_unreadable`・`target_missing` のどれかが付く。
+UNRESOLVED = "reply_to_unresolved"
+WAITING_FOR = "waiting_for"
+TARGET_RETRACTED = "target_retracted"
+TARGET_UNREADABLE = "target_unreadable"
+TARGET_MISSING = "target_missing"
+
+
+def unresolved(detail: str) -> str:
+    return f"{UNRESOLVED}: {detail}"
+
+
+def waiting_target(reason) -> str | None:
+    """理由が「指した原稿が出るのを待っている」なら、その原稿の名前。違えば None。"""
+    prefix = unresolved(WAITING_FOR) + " "
+    if isinstance(reason, str) and reason.startswith(prefix):
+        return reason[len(prefix):]
+    return None
+
+
+@dataclasses.dataclass
+class ReplyResolution:
+    name: str | None          # reply_to_file の値（併用・名前の形の誤りでも入れる）
+    post_id: str | None       # 解決した post_id（解決できなければ None）
+    reason: str | None        # None なら解決・それ以外は断る理由（静的な符丁）
+
+
+def _target_from_pool(qf, name: str, pool):
+    """候補と同じ queue（同じディレクトリ）の `name` を、読んである一覧から探す。
+
+    **一覧から探す**のは、`core.list_queue_files()` が同期を確かめた commit と
+    照合した結果（`verified`）をそのまま使うため。型外なら束かどうかだけ読み直す
+    （`QueueFile` は元の文字列を持たない）。
+    """
+    directory = os.path.dirname(os.path.abspath(qf.path))
+    for other in pool:
+        if (os.path.basename(other.path) == name
+                and os.path.dirname(os.path.abspath(other.path)) == directory):
+            if not other.malformed:
+                return "ok", other
+            kind, _ = queuefile.read_reply_target(qf.path, name)
+            return ("bundle" if kind == "bundle" else "unreadable"), other
+    return "missing", None
+
+
+def resolve_reply_to_file(qf, *, account_name: str, pool=None,
+                          require_verified: bool = True) -> ReplyResolution | None:
+    """`reply_to_file` を解決する。持たない原稿は None（`reply_to` の道は従前どおり）。
+
+    指した原稿の状態で決める（設計 §2 の表）:
+
+    - `status: posted`・`post_id` が usable・`retracted_at` 無し → 解決
+    - `post_id` がまだ無い → `reply_to_unresolved: waiting_for <名前>`（待つ）
+    - `retracted_at` あり → `reply_to_unresolved: target_retracted`
+    - 型外・`post_id` が usable でない → `reply_to_unresolved: target_unreadable`
+    - 無い（承認後に消された） → `reply_to_unresolved: target_missing`
+
+    lint と同じ門（併用・名前の形・自己参照・account 違い・束）もここでもう一度
+    見る——指した原稿は承認の指紋の外なので、承認のあとに account を書き換えられ
+    たり、束に差し替えられたりしうる。
+
+    `require_verified=True`（select）のとき、同期を確かめた commit と一致しない
+    指した原稿は**信じない**（まだ出ていない扱いで待つ）。手元で `post_id:` を
+    書き足しただけの原稿に、答えの返信先を向けさせないため。同じ run の中で
+    THTH 自身が書き戻した直後もここに当たり、答えは次の run で出る。
+    """
+    fm = qf.front_matter
+    name = queuefile.reply_to_file_of(fm)
+    static = queuefile.reply_to_file_static_problem(qf.path, fm)
+    if static is not None:
+        return ReplyResolution(name, None, static)
+    if name is None:
+        return None
+    if pool is None:
+        kind, target = queuefile.read_reply_target(qf.path, name)
+    else:
+        kind, target = _target_from_pool(qf, name, pool)
+    if kind == "missing":
+        return ReplyResolution(name, None, unresolved(TARGET_MISSING))
+    if kind == "bundle":
+        return ReplyResolution(name, None, queuefile.REPLY_TO_FILE_BUNDLE)
+    if kind != "ok":
+        return ReplyResolution(name, None, unresolved(TARGET_UNREADABLE))
+    if require_verified and not target.verified:
+        return ReplyResolution(name, None, unresolved(f"{WAITING_FOR} {name}"))
+    target_fm = target.front_matter
+    problem = queuefile.reply_to_file_target_problem(target_fm, account=account_name)
+    if problem is not None:
+        return ReplyResolution(name, None, problem)
+    if target_fm.get("retracted_at"):
+        return ReplyResolution(name, None, unresolved(TARGET_RETRACTED))
+    post_id = target_fm.get("post_id")
+    if post_id:
+        if target_fm.get("status") == "posted" and postid_mod.is_usable(post_id):
+            return ReplyResolution(name, post_id, None)
+        return ReplyResolution(name, None, unresolved(TARGET_UNREADABLE))
+    return ReplyResolution(name, None, unresolved(f"{WAITING_FOR} {name}"))
 
 
 def _parse_hhmm(value: str) -> datetime.time:
@@ -86,9 +196,13 @@ def recent_posted_texts(files, *, account_name: str, media: str,
 
 def select_one(files, *, account_name: str, account_cfg: dict,
                 now: datetime.datetime, last_post_at: datetime.datetime | None,
-                recent_texts: set, bypass_pace: bool = False) -> SelectResult:
+                recent_texts: set, bypass_pace: bool = False, pool=None) -> SelectResult:
     """§3.3 の 11 条件。`bypass_pace=True` は `--now`（静かな時間帯・最短間隔だけ無視。
     承認 gate は無視しない・§3.7）。
+
+    `pool` は `reply_to_file` の指した原稿を探す一覧（省略時は `files`）。
+    `core._throw_locked()` は dry-run で一度選んだ原稿を候補から外すが、指した
+    原稿の探し先からは外さない（外すと「指した原稿が無い」に化ける）。
 
     段を 2 つに割り、順序を固定する（外部レビュー第 3 巡 P2）:
 
@@ -115,7 +229,7 @@ def select_one(files, *, account_name: str, account_cfg: dict,
     """
     validated, rejections, type_mismatch, needs_review = _validate_all(
         files, account_name=account_name, account_cfg=account_cfg,
-        recent_texts=recent_texts)
+        recent_texts=recent_texts, pool=pool)
 
     if not validated:
         return SelectResult(None, rejections, type_mismatch, needs_review)
@@ -126,7 +240,8 @@ def select_one(files, *, account_name: str, account_cfg: dict,
         last_post_at=last_post_at, bypass_pace=bypass_pace)
 
 
-def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: set):
+def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: set,
+                  pool=None):
     """妥当性検査（時刻に一切依存しない・全ファイルについて必ず計算する）。
 
     `now` を引数に取らない。ここに時刻を見る条件を足すと、1 段目で候補が
@@ -145,9 +260,11 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
     （それらは 2 段目・`_apply_timing_gate()` にある）。
 
     戻り値: `(validated, rejections, type_mismatch, needs_review)`。
-    `validated` は `(qf, publish_at, section)` のリスト（publish_at はまだ
-    「未来かどうか」を判定していない・型として妥当なだけ）。
+    `validated` は `(qf, publish_at, section, resolution)` のリスト（publish_at は
+    まだ「未来かどうか」を判定していない・型として妥当なだけ。`resolution` は
+    `reply_to_file` を解決したときだけ `{"file", "post_id"}`・それ以外は None）。
     """
+    pool = files if pool is None else pool
     rejections: list[Rejection] = []
     type_mismatch: list = []
     needs_review: list = []
@@ -224,7 +341,8 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
             continue
         approved_sha = fm.get("approved_sha")
         expected_sha = approval_mod.compute_approved_sha(
-            section=approval_mod.effective_section(section, account_cfg, fm.get("topic")), account=account_name, reply_to=fm.get("reply_to"),
+            section=approval_mod.effective_section(section, account_cfg, fm.get("topic")), account=account_name,
+            reply_to=approval_mod.reply_to_for_fingerprint(fm),
             topic=fm.get("topic"), publish_at=publish_at,
             media_manifest=manifest, **approval_mod.publish_options(fm))
         if not approved_sha or approved_sha != expected_sha:
@@ -332,7 +450,21 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
             needs_review.append(path)
             continue
 
-        validated.append((qf, publish_at, section))
+        # 9. reply_to_file（設計 3.2.0 §2）。**解決できない候補は 1 文字も出さない**
+        # ——`reply_to` 無しで送る（root に落とす）分岐はここにも core にも無い。
+        # 待ち（`waiting_for`）も要確認に積む（名前と待ち先が board に出る・§2）。
+        # 指した原稿の front-matter だけで決まり時刻に依存しないのでこの段に置く。
+        # 本文・指紋などの直せる誤りを先に言うため、この段の最後に置く。
+        resolution = None
+        reply = resolve_reply_to_file(qf, account_name=account_name, pool=pool)
+        if reply is not None:
+            if reply.reason is not None:
+                rejections.append(Rejection(path, reply.reason))
+                needs_review.append(path)
+                continue
+            resolution = {"file": reply.name, "post_id": reply.post_id}
+
+        validated.append((qf, publish_at, section, resolution))
 
     return validated, rejections, type_mismatch, needs_review
 
@@ -351,7 +483,7 @@ def _apply_timing_gate(validated, *, rejections: list, type_mismatch: list,
     stale_days = account_cfg.get("stale_days", 7)
     survivors = []
 
-    for qf, publish_at, section in validated:
+    for qf, publish_at, section, resolution in validated:
         # 9. publish_at が未来 → 出せる時刻ではない（診断には影響しない）
         if publish_at > now:
             rejections.append(Rejection(qf.path, "future"))
@@ -364,7 +496,7 @@ def _apply_timing_gate(validated, *, rejections: list, type_mismatch: list,
             needs_review.append(qf.path)
             continue
 
-        survivors.append((qf, publish_at, section))
+        survivors.append((qf, publish_at, section, resolution))
 
     if not survivors:
         return SelectResult(None, rejections, type_mismatch, needs_review)
@@ -372,7 +504,7 @@ def _apply_timing_gate(validated, *, rejections: list, type_mismatch: list,
     # 11. 静かな時間帯 → 妥当性を通った候補（survivors）を全部落とす（出せる時刻
     # ではない、というだけ。妥当性の診断はすでに確定しているので変えない）。
     if not bypass_pace and in_quiet_hours(now, account_cfg["quiet_hours"]):
-        for qf, _publish_at, _section in survivors:
+        for qf, *_rest in survivors:
             rejections.append(Rejection(qf.path, "quiet_hours"))
         return SelectResult(None, rejections, type_mismatch, needs_review)
 
@@ -380,10 +512,11 @@ def _apply_timing_gate(validated, *, rejections: list, type_mismatch: list,
     if not bypass_pace and last_post_at is not None:
         min_interval = datetime.timedelta(hours=account_cfg["min_interval_hours"])
         if now - last_post_at < min_interval:
-            for qf, _publish_at, _section in survivors:
+            for qf, *_rest in survivors:
                 rejections.append(Rejection(qf.path, "min_interval"))
             return SelectResult(None, rejections, type_mismatch, needs_review)
 
     survivors.sort(key=lambda t: (t[1], os.path.basename(t[0].path)))
-    chosen_qf, _chosen_publish_at, chosen_section = survivors[0]
-    return SelectResult(chosen_qf, rejections, type_mismatch, needs_review, section=chosen_section)
+    chosen_qf, _chosen_publish_at, chosen_section, chosen_resolution = survivors[0]
+    return SelectResult(chosen_qf, rejections, type_mismatch, needs_review,
+                        section=chosen_section, resolution=chosen_resolution)

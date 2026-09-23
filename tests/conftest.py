@@ -145,7 +145,7 @@ def make_queue_text(fm_overrides=None, body="## threads\n\n本文です。\n",
                 try:
                     fm["approved_sha"] = approval_mod.compute_approved_sha(
                         section=section, account=fm.get("account"),
-                        reply_to=fm.get("reply_to"), topic=fm.get("topic"),
+                        reply_to=approval_mod.reply_to_for_fingerprint(fm), topic=fm.get("topic"),
                         publish_at=publish_at)
                 except ValueError:
                     pass  # publish_at が壊れている型外テスト等: 計算できないので触らない

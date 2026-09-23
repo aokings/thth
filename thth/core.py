@@ -116,11 +116,17 @@ _ERROR_RUN_REASONS = ("hashtag", "duplicate_text", "approval_stale", "unverified
 
 
 def _is_error_reason(reason: str) -> bool:
+    # reply_to_file（設計 3.2.0 §2）: 指した原稿が取り下げ・読めない・消えた、と
+    # 書き方の誤り（承認後に指した原稿の account が変わった等）は人が直すので
+    # 実エラーとして runs に残す。**待ち（`waiting_for`）は誤りではない**ので残さない。
     return (
         reason in _ERROR_RUN_REASONS
         or reason.startswith("too_long(")
         or reason.startswith("topic_")
         or reason.startswith("control_char(")
+        or reason.startswith(select_mod.unresolved("target_"))
+        or reason == queuefile.REPLY_TO_CONFLICT
+        or reason.startswith("reply_to_file_")
     )
 
 
@@ -232,7 +238,8 @@ def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, actio
                  topic: str | None = None, mismatch_fields: list | None = None,
                  engagement_write_failed: bool = False,
                  engagement_author_lookup_failed: bool = False,
-                 api_diagnostic: dict | None = None) -> None:
+                 api_diagnostic: dict | None = None,
+                 resolved_from: dict | None = None) -> None:
     record = {
         "account": account_name,
         "run_id": run_id,
@@ -265,6 +272,10 @@ def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, actio
         # 例外で終わったか。**これも公開の成否とは無関係**——`author_key` が
         # 単に無かった（None のまま）だけでは立たない。
         "engagement_author_lookup_failed": engagement_author_lookup_failed,
+        # reply_to_file（設計 3.2.0 §3）: どの原稿から返信先を解決したか。
+        # 解決して出しに行った行だけに入る（それ以外は None）。
+        "reply_to_file": (resolved_from or {}).get("file"),
+        "resolved_from": dict(resolved_from) if resolved_from else None,
     }
     runs_mod.append_run(state_dir, record, jst.month_str(now))
 
@@ -362,9 +373,12 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
             files, account_name=account_name, media=account_cfg["media"], now=now)
         candidates = [qf for qf in files if qf.path not in excluded_paths]
 
+        # 指した原稿（reply_to_file）は候補から外したものも含めた全ファイルから探す
+        # （dry-run で一度選んだ問いを外すと、答えの側で「無い」に化ける）。
         result = select_mod.select_one(
             candidates, account_name=account_name, account_cfg=account_cfg,
-            now=now, last_post_at=last_at, recent_texts=recent_texts, bypass_pace=bypass_pace)
+            now=now, last_post_at=last_at, recent_texts=recent_texts, bypass_pace=bypass_pace,
+            pool=files)
 
         for rej in result.rejections:
             if _is_error_reason(rej.reason) and rej.file not in logged_error_paths:
@@ -395,7 +409,7 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
         excluded_paths.add(chosen.path)
         one_result = _throw_chosen(
             account_name, account_cfg, state_dir, run_id, mode, chosen, result.section,
-            now, log, adapter_factory)
+            now, log, adapter_factory, resolution=result.resolution)
         last_result = one_result
         if one_result.action == "post" and one_result.exit_code == 0:
             posted_count += 1
@@ -443,7 +457,7 @@ def _current_fingerprint(path: str, media: str,
         cfg = _fingerprint_account_cfg(fm, media, account_cfg)
         return approval_mod.compute_approved_sha(
             section=approval_mod.effective_section(current_section or "", cfg, fm.get("topic")), account=fm.get("account"),
-            reply_to=fm.get("reply_to"), topic=fm.get("topic"),
+            reply_to=approval_mod.reply_to_for_fingerprint(fm), topic=fm.get("topic"),
             publish_at=fm.get("publish_at"),
             media_manifest=media_mod.manifest_for(fm,cfg),
             **approval_mod.publish_options(fm))
@@ -501,7 +515,7 @@ def _mismatch_fields(path: str, media: str, expected_components: dict,
         cfg = _fingerprint_account_cfg(fm, media, account_cfg)
         current_components = approval_mod.compute_approved_components(
             section=approval_mod.effective_section(current_section or "", cfg, fm.get("topic")), account=fm.get("account"),
-            reply_to=fm.get("reply_to"), topic=fm.get("topic"),
+            reply_to=approval_mod.reply_to_for_fingerprint(fm), topic=fm.get("topic"),
             publish_at=fm.get("publish_at"),
             media_manifest=media_mod.manifest_for(fm,cfg),
             **approval_mod.publish_options(fm))
@@ -606,13 +620,52 @@ def _record_engagement(account_cfg, account_name, *, media, topic, form, post_id
     return False, lookup_failed
 
 
+def _reply_to_for_post(chosen, resolution, account_name) -> tuple:
+    """公開に渡す `reply_to` と、出さない理由（出すなら None）の組。
+
+    **`reply_to_file` を持つのに解決していなければ出さない**（設計 3.2.0 §0・§2）。
+    `reply_to` 無しで送る——root に落とす——分岐はここに**置かない**。select が
+    解決した post_id（`resolution`）が無い・名前が食い違う・usable でない、の
+    どれでも断る。さらに公開の直前に指した原稿を読み直し、select のあとで取り下げ
+    られた・消えた・別の post_id になった場合も断る。`reply_to`（post_id 直書き）
+    の道は従前どおり。
+    """
+    fm = chosen.front_matter
+    name = queuefile.reply_to_file_of(fm)
+    if name is None:
+        if queuefile.reply_to_file_static_problem(chosen.path, fm) is not None:
+            return None, queuefile.REPLY_TO_FILE_INVALID
+        return chosen.get("reply_to") or None, None
+    if (not resolution or resolution.get("file") != name
+            or not postid_mod.is_usable(resolution.get("post_id"))):
+        return None, select_mod.UNRESOLVED
+    again = select_mod.resolve_reply_to_file(chosen, account_name=account_name,
+                                             require_verified=False)
+    if again is None or again.reason is not None or again.post_id != resolution["post_id"]:
+        return None, select_mod.UNRESOLVED
+    return resolution["post_id"], None
+
+
 def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, section,
-                   now, log, adapter_factory) -> ThrowResult:
+                   now, log, adapter_factory, resolution=None) -> ThrowResult:
     """select_one() が選んだ 1 件を投げる（dry-run ならログに出すだけ）。
 
     `_throw_locked()` の max_per_run ループから 1 本ごとに呼ばれる（§3.3）。
+    `resolution` は select が `reply_to_file` を解決した結果（`{"file", "post_id"}`）。
     """
     started = jst.iso()
+    # 返信先を先に決める（inflight を書く前・何も送らないうちに断る）。
+    reply_to, reply_refusal = _reply_to_for_post(chosen, resolution, account_name)
+    if reply_refusal is not None:
+        msg = (f"返信先を解決できないので出しません（root には落としません）: "
+               f"{os.path.basename(chosen.path)}（{reply_refusal}）")
+        log(msg)
+        _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
+                    status="error", error=reply_refusal)
+        return ThrowResult(exit_code=2, mode=mode, action="post", message=msg,
+                           file=chosen.path, error=reply_refusal)
+    resolved_from = ({"file": resolution["file"], "post_id": reply_to}
+                     if queuefile.reply_to_file_of(chosen.front_matter) is not None else None)
     from . import media as media_mod
     if media_mod.declared(chosen.front_matter) and media_delivery.unavailable(account_cfg):
         return ThrowResult(exit_code=2,mode=mode,action='media_provider_unavailable',message='media_provider_unavailable',file=chosen.path)
@@ -635,15 +688,18 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     options = approval_mod.publish_options(chosen.front_matter)
     effective_section = approval_mod.effective_section(
         section, account_cfg, chosen.get("topic"))
+    # reply_to の欄は `file:<名前>`（reply_to_file の原稿・解決した post_id は入れない・
+    # 設計 3.2.0 §3）か `reply_to` の値。adapter に渡すのは解決した post_id。
+    fingerprint_reply_to = approval_mod.reply_to_for_fingerprint(chosen.front_matter)
     expected_fingerprint = approval_mod.compute_approved_sha(
-        section=effective_section, account=account_name, reply_to=chosen.get("reply_to"),
+        section=effective_section, account=account_name, reply_to=fingerprint_reply_to,
         topic=chosen.get("topic"), publish_at=chosen.get("publish_at"), media_manifest=manifest, **options)
     # 上と同じ 5 項目を、hash にする前の正規化済みの値のまま持っておく
     # （外部レビュー第 3 巡・持ち越し項目 C）。指紋が食い違ったときに
     # `_mismatch_fields()` へ渡して「どの項目が」違ったかを特定するため
     # （hash 自体からは個々の項目を復元できない）。
     expected_components = approval_mod.compute_approved_components(
-        section=effective_section, account=account_name, reply_to=chosen.get("reply_to"),
+        section=effective_section, account=account_name, reply_to=fingerprint_reply_to,
         topic=chosen.get("topic"), publish_at=chosen.get("publish_at"), media_manifest=manifest, **options)
     # 送る本文の hash（後方互換・`tests/test_sent_integrity.py` が参照）も併せて
     # inflight に書く（外部レビュー §3・受け入れ 9・10）。実際の照合は上の指紋で行う。
@@ -652,11 +708,13 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                         body_hash=body_hash, approved_fingerprint=expected_fingerprint)
 
     if mode == "rehearsal":
+        if resolved_from:
+            log(f"返信先: {resolved_from['file']} → {resolved_from['post_id']}")
         log("投げるはずの本文:")
         log(effective_section)
         inflight_mod.clear(state_dir)
         _append_run(state_dir, account_name, run_id, mode, "skip", chosen.path, None, now,
-                    status="ok", error=None)
+                    status="ok", error=None, resolved_from=resolved_from)
         return ThrowResult(exit_code=0, mode=mode, action="skip",
                             message="dry-run: 投げるはずの本文をログに出した", file=chosen.path)
 
@@ -667,7 +725,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # ここでは正規化だけ行う（前後の空白・先頭の `#` を落とす・設計 §4.1）。
     topic = queuefile.normalize_topic(chosen.get("topic"))
     post = adapter_base.Post(text=effective_section,
-                             reply_to=chosen.get("reply_to") or None, topic=topic,
+                             reply_to=reply_to, topic=topic,
                              hashtags_allowed=bool(account_cfg.get("hashtags", True)),
                              location_id=options["location_id"],
                              share_to_instagram=options["share_to_instagram"])
@@ -764,6 +822,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         sent_mod.write(state_dir, post_id=post_id, text=post.text,
                         body_hash=approval_mod.compute_body_hash(post.text),
                         sent_at=posted_at, approved_fingerprint=expected_fingerprint, reply_to=post.reply_to,
+                        resolved_from=resolved_from,
                         attachment_kinds=media_mod.attachment_kinds(manifest),
                         **({"media":publish_result.media} if publish_result.media else {}))
     except (OSError,ValueError):
@@ -775,8 +834,10 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     engagement_write_failed, engagement_author_lookup_failed = _record_engagement(
         account_cfg, account_name, media=media, topic=topic, form=chosen.get("form"),
         post_id=post_id, posted_at=posted_at, now=now, log=log,
-        reply_to=chosen.get("reply_to"), reply_to_root=chosen.get("reply_to_root"),
-        reply_to_author_key=chosen.get("reply_to_author_key"), found_by=chosen.get("found_by"),
+        reply_to=reply_to, reply_to_root=chosen.get("reply_to_root"),
+        reply_to_author_key=chosen.get("reply_to_author_key"),
+        # reply_to_file は人が「この原稿に返す」と書いたもの（`manual` 相当・§3）。
+        found_by=chosen.get("found_by") or ("manual" if resolved_from else None),
         adapter=adapter)
 
     # テスト専用フック（受け入れ 10・公開成功直後の中断→次回 inflight で停止すること）。
@@ -822,7 +883,13 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                             error="text_mismatch_before_writeback",
                             mismatch_fields=mismatch_fields)
 
-    writeback.rewrite_front_matter(chosen.path, status="posted", post_id=post_id, posted_at=posted_at)
+    if resolved_from:
+        # 解決した post_id も書き戻す（`reply_to_file` は残す・承認の指紋の外の項目）。
+        writeback.set_front_matter_fields(chosen.path, {
+            "status": "posted", "post_id": post_id, "posted_at": posted_at,
+            "reply_to_resolved": resolved_from["post_id"]})
+    else:
+        writeback.rewrite_front_matter(chosen.path, status="posted", post_id=post_id, posted_at=posted_at)
     repo_dir = account_cfg["repo_dir"]
     rel_path = os.path.relpath(chosen.path, repo_dir)
     commit_message = f"thth: {account_name} {os.path.basename(chosen.path)} を投稿（post_id {post_id}）"
@@ -878,7 +945,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, post_id, now,
                 status="ok", error=None, topic=topic,
                 engagement_write_failed=engagement_write_failed,
-                engagement_author_lookup_failed=engagement_author_lookup_failed)
+                engagement_author_lookup_failed=engagement_author_lookup_failed,
+                resolved_from=resolved_from)
     return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました",
                         file=chosen.path, post_id=post_id)
 
