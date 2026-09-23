@@ -9,7 +9,8 @@ import sys
 from . import accounts, after_cli, jst
 
 DEFAULT_WINDOW_DAYS = 7
-BY_CHOICES = ("kind", "hour_band", "topic", "tag", "attachment_kind")
+# `goal`（設計 3.6.0 §A2）: 投稿の目的ごとの層と、目的ごとの物差し。
+BY_CHOICES = ("kind", "hour_band", "topic", "tag", "attachment_kind", "goal")
 
 
 from .report_details import detailed

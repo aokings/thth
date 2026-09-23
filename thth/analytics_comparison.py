@@ -309,6 +309,7 @@ def _account(name, previous_start, current_start, now, min_n, by=None,
             "incomplete_sources": broken, "cannot_say": []}
     from .collection_status import summarize as collection_summary
     node["collection"], collection_reasons = collection_summary(name, now)
+    recorded_goals = None
     for kind, items in (("posts", root_items), ("engagements", reply_items)):
         previous = _population(items, previous_start, current_start, now, min_n)
         current = _population(items, current_start, now, now, min_n)
@@ -326,6 +327,19 @@ def _account(name, previous_start, current_start, now, min_n, by=None,
             if by == "attachment_kind":
                 node[kind]["stratified"] = _attachment_kind_strata(
                     items, previous_start, current_start, now, min_n)
+                continue
+            if by == "goal":
+                # 投稿の目的（設計 3.6.0 §A2）。公開の時点の記録から層を作り、目的ごとの
+                # 物差しを足す。click と follow は投稿単位に割らない（`analytics_goals`）。
+                from . import analytics_goals, goals
+                if recorded_goals is None:
+                    recorded_goals = goals.recorded_goals(name)
+                node[kind]["stratified"] = analytics_goals.strata(
+                    name=name, medium=cfg.get("media"), items=items,
+                    all_items=root_items + reply_items,
+                    account_daily=measured_result.get("account_daily"),
+                    recorded=recorded_goals, previous_start=previous_start,
+                    current_start=current_start, now=now, min_n=min_n)
                 continue
             from . import threadshape, topics
             lookup, shelf_broken = after_cli._kind_lookup(name)
@@ -428,6 +442,11 @@ def render_markdown(payload):
                 delta = change["absolute_median_change"]
                 ns = [group[p]["metrics"][metric]["n_eligible"] for p in ("previous", "current")]
                 lines.append(f"- {metric} 中央値の差: {delta if delta is not None else '判断不可'}（有効 n={ns[0]} → {ns[1]}）")
+        stratified = node["posts"].get("stratified") or {}
+        if stratified.get("by") == "goal":
+            # 目的ごとの物差し（設計 3.6.0 §A2）。click と follow は「言えない」と観察の差の印。
+            from .analytics_goals import markdown_lines
+            lines += ["", "目的ごと（posts・現在期間）:"] + markdown_lines(stratified)
         lines += ["- " + _markdown_text(reason) for reason in node["cannot_say"]]
     lines += ["", "## 制約", ""]
     lines += ["- " + _markdown_text(reason) for reason in payload["limitations"] + payload["cannot_say"]]
