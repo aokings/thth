@@ -154,6 +154,20 @@ test('human operation labels distinguish delete, send and approve; body wraps on
     const result=await(await approve(s,p)).text();assert.ok(result.includes('操作の完了'));assert.ok(!result.includes('公開の完了'));
   }
 });
+// 3.10.0: 審査員も押すので、見出し・説明・ボタン・断りに英語を添える。原稿そのものは訳さない。
+test('approval page carries English headings, button and refusals under the Japanese; the draft stays as written',async()=>{
+  const p=await person();
+  for(const [kind,heading,received]of [['approve','Approve this draft','Draft approval received'],['send','Publish this content','Publication approval received'],['retract','Delete this post','Deletion approval received']]){
+    const s=await session(p,{kind}),html=await(await page(s)).text();
+    assert.ok(html.includes('<span class="en">'+heading+'</span></h1>'),kind);assert.ok(html.includes('承認 / Approve</button>'));
+    assert.ok(html.includes('Approval secret')&&html.includes('Account: alpha')&&html.includes('<p>媒体: threads</p>')&&html.includes('expires in 10 minutes'));
+    assert.ok(html.includes('<pre>'+s.body.text+'</pre>'));
+    const result=await(await approve(s,p)).text();assert.ok(result.includes(received)&&result.includes('re-checks the content'));
+  }
+  const s=await session(p),refused=await(await approve(s,p,'wrong-'+opaque())).text();
+  assert.ok(refused.includes('承認できませんでした')&&refused.includes('Approval failed')&&refused.includes('operator unlocks'));
+  const gone=await(await page({token:opaque()})).text();assert.ok(gone.includes('This approval page is no longer valid'));
+});
 
 test('strict schema rejects coerced arrays, missing context, duplicate form fields',async()=>{
   const p=await person();assert.equal((await signed('person',p.id,'set',{...p.data,salt:[p.data.salt]})).status,400);
@@ -348,7 +362,7 @@ test('attachment alt and typed JSON are escaped like the body',async()=>{
   assert.ok(html.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt; · 画像が表示されない場合は承認しないでください</figcaption>'),html);
 });
 // F2: the page is honest about what it can show.
-const UNAVAILABLE='<p>添付を表示できないため、この承認ページは使えません。サーバから新しく承認を求めてください。</p>';
+const UNAVAILABLE='<p>添付を表示できないため、この承認ページは使えません。サーバから新しく承認を求めてください。<span class="en">Attachments cannot be shown, so this page cannot be used. Please request a new approval from the server.</span></p>';
 test('a preview that stopped serving removes the approve form and says so',async()=>{
   const p=await person(),capability=await preview();
   const s=await session(p,{attachments:[attachment({preview:capability})]});

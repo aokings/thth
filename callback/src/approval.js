@@ -49,8 +49,13 @@ async function authenticate(request,env,url,raw,role,subject,operation) {
     canonical(request.method,url.pathname,role,subject,operation,time,nonce,await digest(raw))));
   return ok?{nonce,time:Number(time)}:null;
 }
+// 審査員（Meta）も押すので、日本語の下に英語を 1 行ずつ添える（招待のページと同じ作り・3.10.0）。
+// 投稿の原稿そのものは訳さない。
+const en=text=>`<span class="en">${text}</span>`;
 const kindLabel={approve:'原稿を承認',send:'この内容を公開',retract:'この投稿を削除'};
+const kindEnglish={approve:'Approve this draft',send:'Publish this content',retract:'Delete this post'};
 const accepted={approve:'原稿の承認を受け付けました',send:'公開の承認を受け付けました',retract:'削除の承認を受け付けました'};
+const acceptedEnglish={approve:'Draft approval received',send:'Publication approval received',retract:'Deletion approval received'};
 const labels={media:'媒体',reply_to:'返信先',publish_at:'公開予定',target:'削除する投稿',reason:'削除理由',topic:'話題',options:'公開オプション'};
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const kindWord={image:'画像',video:'動画',audio:'音声',caption:'字幕'};
@@ -81,7 +86,7 @@ function attachments(rows,typed){
   return list+structured;
 }
 function page(status,body) {
-  return new Response('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>THTH 承認</title><style>body{overflow-wrap:anywhere;max-width:44rem;margin:2rem auto;padding:0 1rem;font:1rem/1.7 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;border:1px solid;padding:1rem}figure{margin:1rem 0}img{max-width:100%;height:auto;border:1px solid}figcaption{font-size:.9rem}input{max-width:100%;font:inherit}button{display:block;margin:1rem 0;padding:.6rem 1.4rem;font:inherit}</style><body>'+body+'</body></html>',{status,headers:{
+  return new Response('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>THTH 承認</title><style>body{overflow-wrap:anywhere;max-width:44rem;margin:2rem auto;padding:0 1rem;font:1rem/1.7 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;border:1px solid;padding:1rem}figure{margin:1rem 0}img{max-width:100%;height:auto;border:1px solid}figcaption{font-size:.9rem}.en{display:block;font-size:.88rem;opacity:.75}input{max-width:100%;font:inherit}button{display:block;margin:1rem 0;padding:.6rem 1.4rem;font:inherit}</style><body>'+body+'</body></html>',{status,headers:{
     'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer',
     'content-security-policy':"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     'x-content-type-options':'nosniff','x-frame-options':'DENY'}});
@@ -96,14 +101,14 @@ export async function approvalRequest(request,env,url) {
       if(!['GET','POST'].includes(request.method))return reply(405,{error:'method_not_allowed'});
       const stub=await sessionStub(env,browser[1]);
       if(request.method==='GET'){
-        const result=await stub.view();if(result.status!==200)return page(result.status,'<h1>承認ページは無効です</h1><p>サーバから新しく承認を求めてください。</p>');
+        const result=await stub.view();if(result.status!==200)return page(result.status,`<h1>承認ページは無効です${en('This approval page is no longer valid')}</h1><p>サーバから新しく承認を求めてください。${en('Please request a new approval from the server.')}</p>`);
         const d=result.body;
         // No form when the page cannot show every image it lists: a human must
         // never be asked to approve attachments they could not look at.
         const act=d.live===true
-          ?`<p>10 分で失効します。</p><form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><label>承認 secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label><button type="submit">承認</button></form>`
-          :'<p>添付を表示できないため、この承認ページは使えません。サーバから新しく承認を求めてください。</p>';
-        return page(200,`<h1>${kindLabel[d.kind]}</h1><p>アカウント: ${escape(d.account)}</p><pre>${escape(d.text)}</pre>${attachments(d.attachments,d.typed)}${Object.entries(d.context).filter(([,v])=>v!==null).map(([k,v])=>`<p>${labels[k]}: ${escape(v)}</p>`).join('')}<p>digest: ${escape(d.digest)}</p>${act}`);
+          ?`<p>10 分で失効します。${en('This page expires in 10 minutes.')}</p><form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><label>承認 secret / Approval secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label><button type="submit">承認 / Approve</button></form>`
+          :`<p>添付を表示できないため、この承認ページは使えません。サーバから新しく承認を求めてください。${en('Attachments cannot be shown, so this page cannot be used. Please request a new approval from the server.')}</p>`;
+        return page(200,`<h1>${kindLabel[d.kind]}${en(kindEnglish[d.kind])}</h1><p>アカウント / Account: ${escape(d.account)}</p><pre>${escape(d.text)}</pre>${attachments(d.attachments,d.typed)}${Object.entries(d.context).filter(([,v])=>v!==null).map(([k,v])=>`<p>${labels[k]}: ${escape(v)}</p>`).join('')}<p>digest: ${escape(d.digest)}</p>${act}`);
       }
       // Referrer-Policy: no-referrer makes browsers send `Origin: null` (or omit it) even on a
       // same-origin form POST (Fetch spec §4.9). Same-origin is then proven by Sec-Fetch-Site;
@@ -114,7 +119,7 @@ export async function approvalRequest(request,env,url) {
       const form=new URLSearchParams(await boundedBody(request,2048));
       if([...form.keys()].sort().join(',')!=='csrf,secret')return reply(400,{error:'invalid_request'});
       const result=await stub.approve(form.get('secret'),form.get('csrf'));
-      return page(result.status,result.status===200?`<h1>${accepted[result.body.kind]}</h1><p>サーバが内容を再確認します。操作の完了は元のセッションで確認してください。</p>`:'<h1>承認できませんでした</h1><p>承認 secret または有効期限を確認してください。繰り返し失敗すると管理者による解除が必要です。</p>');
+      return page(result.status,result.status===200?`<h1>${accepted[result.body.kind]}${en(acceptedEnglish[result.body.kind])}</h1><p>サーバが内容を再確認します。操作の完了は元のセッションで確認してください。${en('The server re-checks the content. Confirm completion in the original session.')}</p>`:`<h1>承認できませんでした${en('Approval failed')}</h1><p>承認 secret または有効期限を確認してください。繰り返し失敗すると管理者による解除が必要です。${en('Check the approval secret and the expiry. Repeated failures lock you out until the operator unlocks you.')}</p>`);
     }
     const route=/^\/approval\/(person|session|account|deletion|invite)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|consume|cancel|list|read|verify|complete|discard|cleanup-retry|authorize|reset)$/.exec(url.pathname);
     if(!route||request.method!=='POST')return reply(404,{error:'not_found'});
