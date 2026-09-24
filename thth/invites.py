@@ -388,7 +388,44 @@ def _open(directory, record):
         # 手元は open なのに Worker は認可中: 前の巡の reset が届かなかった。
         _reset(record, "auth_failed")
     elif state == "clicked":
+        _notice_stall(directory, record, remote.get("clicked_at"))
         _start(directory, record)
+
+
+# 押されてから常駐が拾うまでにこれだけ掛かったら、常駐が止まっていた（招待のページは
+# 2 分で「運営者に連絡を」と出している・Worker の STALL_MS と同じ）。
+STALL_SECONDS = 120
+
+
+def _notice_stall(directory, record, clicked_at):
+    """常駐が止まっていて招待が進まなかったことを、運用通知で管理者に 1 回だけ知らせる。
+
+    Worker からはメールを送れない。止まっている間は誰も送れないので、常駐が戻って
+    押された招待を拾ったときに送る（止まった VM そのものは外部の死活監視が拾う）。
+    """
+    if record.get("stall_notified") or type(clicked_at) is not int:
+        return
+    waited = (now_ms() - clicked_at) // 1000
+    if waited < STALL_SECONDS:
+        return
+    import json
+    from . import incident
+    try:
+        ready = incident.readiness({})
+        if ready["admin_configured"] and ready["smtp_configured"]:
+            settings = incident.settings({})
+            event = {"event": "invite_stalled", "invite": record["invite_id"], "waited_seconds": waited,
+                     "at": jst.iso(),
+                     "next": "招待が押されてから常駐（thth approval-worker）が拾うまで時間が掛かりました。"
+                             "常駐の状態を確かめてください（systemctl status thth-approval-worker）"}
+            notice = dict(id=hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest(),
+                          state="admin_change", at=event["at"], reason="healthy", repo="no_source",
+                          admin_event=event)
+            incident._send(settings, settings["admin"], notice, subject(record["invite_id"]))
+    except Exception:
+        # 通知の失敗で招待を止めない（1 回だけ・再送しない）。
+        pass
+    _save(directory, record, stall_notified=True)
 
 
 def _profile():
@@ -469,8 +506,25 @@ def _code(value):
     return code
 
 
+def _recovered(directory, record):
+    """口座は書けたのに、記録を used にする前に常駐が止まった。台帳から続ける。"""
+    try:
+        cfg = accounts.load_account(record["account"])
+    except accounts.AccountError:
+        return False
+    if cfg.get("invite_id") != record["invite_id"] or not isinstance(cfg.get("handle"), str) \
+            or not THREADS_HANDLE.fullmatch(cfg["handle"]):
+        return False
+    _forget_session(directory, record["invite_id"])
+    _save(directory, record, status="used", reason=None, handle=cfg["handle"], remote_ready=False, approver_set=False)
+    _announce(directory, record)
+    return True
+
+
 def _authorizing(directory, record):
     from . import authflow
+    if _recovered(directory, record):
+        return
     session = _read_session(directory, record["invite_id"])
     if session is None:
         return _back_to_open(directory, record, "auth_failed")
