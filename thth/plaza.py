@@ -1550,6 +1550,9 @@ def purge_account(account, *, keep_open=False, by="leave", now=None):
     """
     if not accounts.name_is_safe(account):
         raise PlazaError("invalid_account")
+    # 「読んだ」の控え（3.8.0 §B・id と時刻だけ）もその account の分を消す。
+    from . import plaza_reads
+    plaza_reads.forget(account)
     records, _broken = load_all()
     touched = any(row.get("account") == account
                   or any(r.get("account") == account for r in row["replies"]) for row in records)

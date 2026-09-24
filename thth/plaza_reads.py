@@ -145,3 +145,24 @@ def record(by_account, *, plaza_ids=(), picked=None, day=None, now=None):
             data = json.dumps(value, ensure_ascii=False, allow_nan=False, indent=1).encode("utf-8")
             store.write_raw(directory, key + ".json", data)
     return {"recorded": len(ids), "at": at}
+
+
+def forget(account):
+    """退出（`account leave`）で、その account の控えを消す（何度呼んでも同じ・置き場が無ければ何もしない）。"""
+    store = _store()
+    probe = store.open()
+    if probe is None:
+        return 0
+    os.close(probe)
+    removed = 0
+    with store.locked() as directory:
+        for name in sorted(os.listdir(directory)):
+            if not name.endswith(".json") or not _KEY.match(name[:-5]):
+                continue
+            value = _parse(store.read_raw(directory, name), name[:-5])
+            if account in value["accounts"]:
+                value["accounts"].pop(account)
+                data = json.dumps(value, ensure_ascii=False, allow_nan=False, indent=1).encode("utf-8")
+                store.write_raw(directory, name, data)
+                removed += 1
+    return removed

@@ -276,3 +276,16 @@ def test_読んだの記録は壊れていれば言えないと言う(quiet):
     assert cell["pick"] is None and cell["cannot_say"] == "plaza_store_unavailable"
     with pytest.raises(plaza.PlazaError, match="^plaza_store_unavailable$"):
         plaza_reads.load({"kopicha-threads": "kopicha"})
+
+
+def test_退出でそのaccountの読んだの控えを消す(quiet):
+    post(account="kopicha-bsky", title="読む")
+    morning.build("kopicha-threads", now=jst.now_jst(), mark=True)
+    morning.build("kopicha-mstdn", now=jst.now_jst(), mark=True)
+    state = plaza_reads.load({"kopicha-threads": "kopicha", "kopicha-mstdn": "kopicha"})
+    assert state["kopicha-threads"]["read"] and state["kopicha-mstdn"]["read"]
+    plaza.purge_account("kopicha-threads", by="leave")
+    data = json.loads((Path(os.environ["THTH_ROOT"]) / "state" / "_plaza_reads" / "p-kopicha.json")
+                      .read_text(encoding="utf-8"))
+    assert list(data["accounts"]) == ["kopicha-mstdn"]
+    assert plaza.purge_account("kopicha-threads", by="leave")["removed"] == 0
