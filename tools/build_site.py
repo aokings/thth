@@ -322,12 +322,36 @@ def build_privacy() -> str:
         "show which replies have been answered and to prepare the user's replies, which go through the same "
         "human approval as posts. Mentions on Bluesky and Mastodon are shown on request and not saved.</p>")
     add("<p><strong>Keyword search.</strong> Search (Threads <code>threads_keyword_search</code>, and search on "
-        "Bluesky and Mastodon) runs only on request: when the user's session asks for a search, or for the "
-        "observation summary, which uses search terms the operator sets for the account. Results are shown "
+        "Bluesky and Mastodon) runs on request: when the user's session asks for a search, or for the "
+        "observation summary, which uses search terms the operator sets for the account. The only other search "
+        "is the observation map below, when the operator turns it on. Results of a search on request are shown "
         "for that request only: counts, the number of distinct authors, the share of the most frequent "
         "authors, the latest time, and for individual posts the author, a link and the first 60 characters. The text and "
         "authors of search results are not saved. Run logs record at most the search terms and the number "
         "of results.</p>")
+    add("<p><strong>Observation map (daily keyword aggregates).</strong> It is off unless the operator turns it "
+        "on. Its keywords are topic words that a person registers for a project: the operator registers them, "
+        "at most 20 per project. THTH never adds keywords taken from other people's posts, and refuses @handles, "
+        "URLs and words that look like personal names. When it is on, THTH searches each keyword at most once a "
+        "day on Threads, Bluesky and Mastodon, using the project's own connected account on that platform (the "
+        "25 most recent results, of which posts from the last 24 hours are counted). It counts the results in "
+        "memory and saves only daily figures per keyword and platform: the number of posts, the number of "
+        "distinct authors, the share of the three most frequent authors, the number of results with an author "
+        "name, the time since the latest post rounded to one of four ranges (under 1 hour, 1–6 hours, 6–24 "
+        "hours, 24 hours or more), and, for each pair of keywords, how many of one keyword's results also "
+        "contain the other. A number below 5 (posts, distinct authors or a pair count) is saved as missing "
+        "instead of its value. Post text, post IDs, usernames, author keys, links and exact times are not "
+        "saved.</p>")
+    add("<p>These figures are kept in a private location on the operator's server, outside Git, for at most "
+        "180 days: each collection run deletes older days one day at a time, and days past 180 days are not "
+        "shown even before they are deleted. When the project's last account exits, its whole map is deleted; "
+        "when other accounts in the project remain, the figures for the leaving account's platform are deleted. "
+        "On request, the operator deletes the figures for the whole project or for a date range. The figures "
+        "are shown only within that project: through <code>thth map show</code>, the map line of the "
+        "observation summary, and the same tools over MCP, to sessions whose credential covers that project. "
+        "They are not shown to other owners, on the shared plaza, or in totals across projects. When the "
+        "user's LLM session calls these tools, the keywords and figures are passed to that session's LLM "
+        "provider.</p>")
     add("<p><strong>Profiles and places.</strong> Public profile lookup (Threads "
         "<code>threads_profile_discovery</code>) shows another account's public profile fields on request; "
         "the result is not saved. Location search (<code>threads_location_tagging</code>) shows candidate "
@@ -377,6 +401,8 @@ def build_privacy() -> str:
     add("  <li>Account settings, including an optional email address for operational notices.</li>")
     add("  <li>Drafts, approval records, the exact text of published posts, and post history.</li>")
     add("  <li>The metrics, replies and mentions described above, and checked attachments.</li>")
+    add("  <li>The observation map: its keywords, the links between keywords that a person drew, and, when "
+        "turned on, its daily aggregate figures described above.</li>")
     add("  <li>Run logs (action, draft file, post ID, counts, status), reports, and a change log of "
         "administrative events.</li>")
     add("</ul>")
@@ -405,7 +431,7 @@ def build_privacy() -> str:
     add("<p>THTH itself does not send data to an AI model provider. Users work with THTH through their own "
         "LLM session (for example over MCP). What a tool returns to that session is passed to that session's "
         "LLM provider under the user's own arrangement with it. Depending on the tool, this includes the "
-        "user's drafts, post history, metrics and reports, and the text or short previews (up to 60 "
+        "user's drafts, post history, metrics and reports, the observation map's keywords and daily figures, and the text or short previews (up to 60 "
         "characters) of public replies, mentions and search results, with links and author names or one-way "
         "author keys.</p>")
 
@@ -434,6 +460,8 @@ def build_privacy() -> str:
     add("  <li>Attachment objects on R2: deleted 24 hours after creation (image previews when they expire).</li>")
     add("  <li>Data deletion requests on thth.me: 30 days.</li>")
     add("  <li>Sent operational notices in the server's notice record: 30 days (at most 50).</li>")
+    add("  <li>Observation map daily figures on the operator's server: at most 180 days, deleted one day at a "
+        "time; also deleted on exit or on request.</li>")
     add("  <li>Credentials, settings, drafts, post history, metrics, replies, mentions, attachments and run "
         "logs on the operator's server: until the account exits.</li>")
     add("  <li>Reports and the change log: no set period.</li>")
@@ -449,7 +477,8 @@ def build_privacy() -> str:
     add("<p>This page is generated from the THTH source repository; its history is public there. This revision "
         "describes the operator-run service, the data used per platform, replies and mentions, keyword "
         "search, attachments, reports, LLM sessions, exit and deletion requests, and retention, and corrects "
-        "the PBKDF2 iteration count to 100,000.</p>")
+        "the PBKDF2 iteration count to 100,000. Revision: adds the saved daily aggregates of the observation "
+        "map (keyword search).</p>")
 
     # ---------------------------------------------------------------- 日本語
     add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
@@ -481,10 +510,28 @@ def build_privacy() -> str:
         "会話を管理するため（どの返信に答えたかを示し、本人の返信を用意するため）に保存し、本人の返信は投稿と"
         "同じ人の承認を通ります。Bluesky と Mastodon の言及は求められたときに表示するだけで、保存しません。</p>")
     add("<p><strong>キーワード検索。</strong>検索（Threads の <code>threads_keyword_search</code>、Bluesky と "
-        "Mastodon の検索）は求められたときだけ動きます。本人のセッションが検索を求めたとき、または観測の一枚を"
-        "求めたとき（運営者がアカウントに設定した語を使います）です。結果はその求めに対してだけ表示します。件数、"
+        "Mastodon の検索）は求められたときに動きます。本人のセッションが検索を求めたとき、または観測の一枚を"
+        "求めたとき（運営者がアカウントに設定した語を使います）です。これ以外の検索は、運営者が有効にしたときの"
+        "下の観測の地図だけです。求めに応じた検索の結果は、その求めに対してだけ表示します。件数、"
         "投稿者の異なり数、多く投稿している人の占める割合、最新の時刻、個々の投稿については投稿者・リンク・先頭 60 字です。"
         "検索結果の本文と投稿者は保存しません。実行記録に残すのは、検索した語と件数までです。</p>")
+    add("<p><strong>観測の地図（語ごとの日々の集計）。</strong>運営者が有効にしない限り動きません。語は、人が"
+        "プロジェクトごとに登録する話題の語です。登録するのは運営者で、プロジェクトごとに最大 20 語です。THTH が"
+        "他人の投稿から語を拾って足すことはなく、@名前・URL・個人名らしき語は登録できません。有効なとき、THTH は "
+        "Threads・Bluesky・Mastodon で、そのプロジェクトがその媒体に接続したアカウントを使い、語ごとに 1 日 1 回まで"
+        "検索します（新しい順の先頭 25 件のうち、直近 24 時間の投稿を数えます）。結果はメモリの中で数え、語と媒体"
+        "ごとに日々の数だけを保存します。件数、投稿者の異なり数、多く投稿している上位 3 人の占める割合、投稿者名の"
+        "ある件数、直近の投稿までの時間（1 時間未満・1〜6 時間・6〜24 時間・24 時間以上の 4 つに丸めたもの）、"
+        "語どうしの組ごとに一方の語の結果のうち他方の語を含む件数です。5 未満の数（件数・投稿者の異なり数・組の"
+        "件数）は値を保存せず、欠測として記録します。本文・投稿 ID・ユーザー名・投稿者の鍵・リンク・正確な時刻は"
+        "保存しません。</p>")
+    add("<p>この数は運営者のサーバの私有の置き場（Git の外）に最大 180 日保存します。集計が走るたびに古い日を"
+        "日単位で削り、180 日を過ぎた日は削る前でも表示しません。プロジェクトの最後のアカウントが退出すると地図を"
+        "丸ごと削除し、ほかのアカウントが残るときは、退出するアカウントの媒体の数を削除します。依頼があれば、運営者"
+        "がプロジェクト全体か期間を指定して削除します。数を見られるのはそのプロジェクトの中だけです（"
+        "<code>thth map show</code>、観測の一枚の地図の行、MCP の同じ道具。そのプロジェクトを許された credential "
+        "のセッションだけ）。ほかの持ち主、広場、プロジェクトをまたぐ集計には出しません。本人の LLM セッションが"
+        "これらの道具を呼ぶと、語と数はそのセッションの LLM 提供者に渡ります。</p>")
     add("<p><strong>プロフィールと場所。</strong>公開プロフィールの参照（Threads の "
         "<code>threads_profile_discovery</code>）は、求められたときに相手の公開プロフィールの項目を表示し、"
         "結果は保存しません。場所の検索（<code>threads_location_tagging</code>）は候補を表示し、本人が選んだ場所を"
@@ -529,6 +576,7 @@ def build_privacy() -> str:
     add("  <li>アカウントの設定。運用通知を受け取るメールアドレス（任意）を含みます。</li>")
     add("  <li>下書き、承認の記録、公開した本文そのもの、投稿の履歴。</li>")
     add("  <li>上に書いた実測・返信・言及、検査を通った添付。</li>")
+    add("  <li>観測の地図: 語、人が引いた語どうしの線、有効なときは上に書いた日々の集計。</li>")
     add("  <li>実行記録（操作・原稿のファイル・投稿 ID・件数・状態）、報告、管理の変更ログ。</li>")
     add("</ul>")
     add("<p>キーワード検索の結果の本文と投稿者、参照した公開プロフィール、承認 secret は保存しません。</p>")
@@ -553,7 +601,7 @@ def build_privacy() -> str:
     add("<h2>AI（LLM）のセッション</h2>")
     add("<p>THTH 自身は AI モデルの提供者へデータを送りません。利用者は自分の LLM のセッション（例: MCP）から "
         "THTH を使います。道具がそのセッションに返したものは、利用者とその提供者との取り決めのもとで、そのセッションの "
-        "LLM 提供者に渡ります。道具によって、本人の下書き・投稿の履歴・実測・報告と、公開の返信・言及・検索結果の"
+        "LLM 提供者に渡ります。道具によって、本人の下書き・投稿の履歴・実測・報告、観測の地図の語と日々の集計と、公開の返信・言及・検索結果の"
         "本文または短い抜粋（先頭 60 字まで）、リンク、投稿者の名前または戻せない鍵を含みます。</p>")
 
     add("<h2>停止とデータの削除</h2>")
@@ -577,6 +625,7 @@ def build_privacy() -> str:
     add("  <li>R2 の添付: 置いてから24時間で削除（画像の表示は期限が来たとき）。</li>")
     add("  <li>thth.me のデータ削除の依頼: 30日。</li>")
     add("  <li>送った運用通知（サーバの通知の記録）: 30日（最大50件）。</li>")
+    add("  <li>運営者のサーバの観測の地図の日々の集計: 最大180日（日単位で削除）。退出と依頼でも削除。</li>")
     add("  <li>運営者のサーバの認証情報・設定・下書き・投稿の履歴・実測・返信・言及・添付・実行記録: 退出まで。</li>")
     add("  <li>報告と変更ログ: 期限を定めていません。</li>")
     add("</ul>")
@@ -589,7 +638,7 @@ def build_privacy() -> str:
     add("<h2>変更</h2>")
     add("<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。今回の改訂では、"
         "運営者が動かすサービスの形、媒体ごとに使うデータ、返信と言及、キーワード検索、添付、報告、LLM のセッション、"
-        "退出と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。</p>")
+        "退出と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。改訂: 観測の地図の集計の保存（キーワード検索・世間の層）を追記しました。</p>")
     add('<footer><a href="/">THTH</a> · Free and open source · MIT License<br>© 2026 gotoq</footer>')
     add("</main></body></html>")
     return "\n".join(parts) + "\n"

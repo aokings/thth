@@ -275,6 +275,42 @@ def test_プライバシーポリシーは正本から生成され_外へ出る�
     assert "Disallow: /privacy" not in robots
 
 
+def test_privacy_は観測の地図の集計の保存を英日で書く():
+    """2026-09-24: 世間の層（`thth/map_world.py`）を有効にする前に、保存する集計を書き足した。
+
+    裏: 既定で無効（`map_view.world_enabled()`）・点は管理者だけ・20 まで・@名前/URL/個人名を
+    断る（`map_store.py`）・1 日 1 回まで・先頭 25 件・24 時間（`map_world.collect`）・許可リストの
+    項目（`NODE_KEYS`・`EDGE_KEYS`）・5 未満は null（`SMALL_SAMPLE`）・保持 180 日を日単位
+    （`prune`・`retention_floor`）・退出（`purge_for_leave`）・依頼（`map_store.purge`）・
+    project の中だけ（`map_view.show` の `allowed`）。
+    """
+    page = (PUBLIC / "privacy" / "index.html").read_text(encoding="utf-8")
+    for must in ("It is off unless the operator turns it on", "at most 20 per project",
+                 "at most once a day", "25 most recent results",
+                 "the share of the three most frequent authors",
+                 "A number below 5 (posts, distinct authors or a pair count) is saved as missing",
+                 "Post text, post IDs, usernames, author keys, links and exact times are not saved",
+                 "for at most 180 days", "deletes older days one day at a time",
+                 "project's last account exits",
+                 "for the whole project or for a date range",
+                 "shown only within that project", "thth map show",
+                 "passed to that session's LLM provider",
+                 "Observation map daily figures on the operator's server: at most 180 days",
+                 "Revision: adds the saved daily aggregates of the observation map",
+                 # 日本語
+                 "運営者が有効にしない限り動きません", "プロジェクトごとに最大 20 語",
+                 "語ごとに 1 日 1 回まで", "新しい順の先頭 25 件",
+                 "5 未満の数（件数・投稿者の異なり数・組の件数）は値を保存せず",
+                 "本文・投稿 ID・ユーザー名・投稿者の鍵・リンク・正確な時刻は保存しません",
+                 "最大 180 日保存します", "日単位で削り", "プロジェクト全体か期間を指定して削除",
+                 "数を見られるのはそのプロジェクトの中だけです",
+                 "観測の地図の日々の集計: 最大180日",
+                 "改訂: 観測の地図の集計の保存"):
+        assert must in page, must
+    # 「検索は求められたときだけ」は世間の層と両立しない（有効なら毎日動く）。
+    assert "runs only on request" not in page and "求められたときだけ動きます" not in page
+
+
 @pytest.mark.parametrize("effective", [None, "2030-01-02"])
 def test_privacy_date_is_explicit_not_invented(monkeypatch, effective):
     # Fixture date only: the checked-in default remains unset until deployment.
