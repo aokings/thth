@@ -1614,6 +1614,79 @@ def _anonymize(record):
         obs["by"] = LEFT_LABEL
 
 
+# ---------------------------------------------------------- 生きたコツ集
+
+# 生きたコツ集に載せる条件: 再現した追試がそろった媒体の数（設計 3.8.0 §E「2 媒体以上」）。
+DIGEST_MIN_MEDIA = 2
+
+
+def viewer_for_digest(target):
+    """`digest <owner|project>` の読む側。組の名前なら組の全 project、account か project なら
+    その project（組があれば組の他の project の owner の範囲も `access` が読ませる）。"""
+    if not isinstance(target, str) or not accounts.name_is_safe(target):
+        raise PlazaError("invalid_account")
+    groups = owner_groups()
+    if target in groups:
+        projects = set(groups[target]["projects"])
+        try:
+            names = accounts.list_account_names()
+        except accounts.AccountError:
+            raise PlazaError("account_unavailable") from None
+        allowed = {}
+        for name in names:
+            try:
+                project = accounts.load_account(name).get("project")
+            except accounts.AccountError:
+                continue
+            if project in projects:
+                allowed[name] = project
+        if not allowed:
+            raise PlazaError("invalid_account")
+        return Viewer(allowed), "owner"
+    return viewer_for_target(target), "project"
+
+
+def digest(viewer, *, target=None, basis="project"):
+    """生きたコツ集（設計 3.8.0 §E）: 2 媒体以上で reproduced の追試がそろった finding・measure。
+
+    **再現しなかった媒体も同じ重さで並べる**（試していない媒体も）。分母は読める施策・
+    気づきの数と、追試の付いた数。読める範囲は自分の project と同じ持ち主の組（open の
+    写しは入れない——組の中の生きたコツ集）。本文は出さない（題・範囲・出し直しと id）。
+    """
+    records, _broken = load_all()
+    joined = members()
+    items, candidates, with_trials = [], 0, 0
+    for record in records:
+        if record["kind"] not in ("finding", "measure") or record.get("hidden"):
+            continue
+        level = access(record, viewer, joined)
+        if level not in ("own", "owner"):
+            continue
+        candidates += 1
+        media = {result: set() for result in TRIAL_RESULTS}
+        for row in record["replies"]:
+            if row.get("kind") == "trial" and row.get("result") in media:
+                media[row["result"]].add(row.get("medium") or "unknown")
+        if any(media.values()):
+            with_trials += 1
+        if len(media["reproduced"]) < DIGEST_MIN_MEDIA:
+            continue
+        items.append({"plaza_id": record["plaza_id"], "at": record["at"], "kind": record["kind"],
+                      "kind_detail": record.get("kind_detail"), "title": record["title"],
+                      "owner": owner_label(record.get("project"), record.get("account")),
+                      "medium": record.get("medium"), "goal": record.get("goal"),
+                      "scope_note": record.get("scope_note"), "how": record.get("how"),
+                      "evidence_level": evidence_level_of(record), "view": level,
+                      "trials": trial_counts(record),
+                      "media": {result: sorted(values) for result, values in media.items()}})
+    items.sort(key=lambda item: (len(item["media"]["reproduced"]), item["at"], item["plaza_id"]),
+               reverse=True)
+    return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_digest", "target": target,
+            "basis": basis, "min_media": DIGEST_MIN_MEDIA, "n": len(items), "items": items,
+            "denominator": candidates, "n_with_trials": with_trials,
+            "rule": "reproduced_trials_from_at_least_2_media_not_reproduced_listed_alongside"}
+
+
 # ---------------------------------------------------------- observe に載せる
 
 def received_summary(records, authors, *, since, now):

@@ -1,6 +1,6 @@
 """施策の広場の CLI（設計 3.4.0 §4）。口の中身は `thth/plaza.py` に閉じる。
 
-利用者: `thth plaza post|list|show|reply|update`。管理者: `thth admin plaza
+利用者: `thth plaza post|list|show|reply|update|digest`。管理者: `thth admin plaza
 join|leave|hide|list|show|owner`。
 
 **CLI でも読む側を名指しする**（`show`・`reply`・`update` の `--as`）。VM の CLI は
@@ -307,6 +307,35 @@ def cmd_list(args) -> int:
     return _emit(args, payload, render_list)
 
 
+def render_digest(payload, out=print):
+    """生きたコツ集（再現しなかった媒体も並べる・分母つき）。"""
+    out(f"生きたコツ集（{payload['target']}・{payload['min_media']} 媒体以上で再現した書き込み "
+        f"{payload['n']} 件／読める施策・気づき {payload['denominator']} 件のうち・追試の付いたもの "
+        f"{payload['n_with_trials']} 件）")
+    for item in payload["items"]:
+        detail = (f"・{plaza.KIND_DETAIL_LABELS[item['kind_detail']]}"
+                  if item.get("kind_detail") else "")
+        media, trials = item["media"], item["trials"]
+        out(f"- {item['plaza_id']}  {plaza.KIND_LABELS[item['kind']]}{detail}  {item['title']}"
+            f"（{item['owner']}・{item.get('medium') or '—'}"
+            + (f"・goal {item['goal']}" if item.get("goal") else "") + "）")
+        out(f"  再現した媒体: {'・'.join(media['reproduced']) or '—'} ／ 再現しなかった媒体: "
+            f"{'・'.join(media['not_reproduced']) or '—'} ／ 試していない: "
+            f"{'・'.join(media['not_tried']) or '—'}（追試 {trials['denominator']} 件: 再現 "
+            f"{trials['reproduced']}・再現せず {trials['not_reproduced']}・試していない {trials['not_tried']}）")
+        out(f"  範囲: {item.get('scope_note') or '—'}"
+            + (f"  出し直し: {item['how']}" if item.get("how") else ""))
+
+
+def cmd_digest(args) -> int:
+    try:
+        viewer, basis = plaza.viewer_for_digest(args.target)
+        payload = plaza.digest(viewer, target=args.target, basis=basis)
+    except plaza.PlazaError as error:
+        return _print_refusal(args, error)
+    return _emit(args, payload, render_digest)
+
+
 def cmd_show(args) -> int:
     try:
         viewer = plaza.viewer_for_target(args.viewer)
@@ -437,6 +466,13 @@ def register(sub) -> None:
                         help="open の広場（参加した持ち主の open の書き込み）を読む")
     lister.add_argument("--json", action="store_true")
     lister.set_defaults(func=cmd_list)
+
+    digester = operations.add_parser(
+        "digest", help="生きたコツ集（2 媒体以上で再現した施策・気づき・再現しなかった媒体も並べる）",
+        description="新しいセッションが最初に読むもの（設計 3.8.0 §E）。組の名前か project か account。")
+    digester.add_argument("target", metavar="owner|project")
+    digester.add_argument("--json", action="store_true")
+    digester.set_defaults(func=cmd_digest)
 
     viewer = operations.add_parser("show", help="1 件の本文・観測・媒体をまたぐ比較・返信を読む")
     viewer.add_argument("plaza_id")
