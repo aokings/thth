@@ -103,6 +103,19 @@ QUESTION_RULES = ("ends_with_question_mark: 検索語を外した本文が「？
 LEXICON_MAX_CATEGORIES = 30
 LEXICON_MAX_WORDS = 200
 LEXICON_MAX_CHARS = 40
+# 速さの見え方（設計 3.9.0 §C・報告 r20260924-a1ba1829）。検索は 1 語あたり新しい方の 10 件前後しか返さないことが
+# 実測で多い（`--limit 25` でも 9〜12 件）。`per_day`（n ÷ max(期間の日数, 1)）は、期間が
+# 1 日より短いとどの語も「n 件／日」に揃って見える。`rate_by_span` は返った投稿の期間
+# （最古〜最新）そのもので割る——分母（n・期間の時間）を必ず添える。
+RATE_BY_SPAN_BASIS = "n ÷ 返った投稿の期間（最古〜最新）の日数"
+ROUGH_N = 20
+# 上限の印: 要求数に届かず、しかも期間が短い（24 時間未満で n が 5 以上）。媒体が返す件数の
+# 上限の値は一次資料で未確認——「これで全部」とも「もっとある」とも言えない。
+MORE_MAY_EXIST = "more_may_exist"
+MORE_MAY_EXIST_MESSAGE = "これで全部か、もっとあるかは区別できません"
+MORE_MAY_EXIST_UNVERIFIED = "媒体が 1 回の検索で返す件数の上限の値は一次資料で未確認です"
+SHORT_SPAN_HOURS = 24
+MORE_MIN_N = 5
 
 
 def _strip_words(text: str, words: list) -> str:
@@ -114,7 +127,46 @@ def _strip_words(text: str, words: list) -> str:
     return out
 
 
-def aggregate(rows: list, words: list, lexicon: dict | None) -> dict:
+def _stamps(rows: list) -> list:
+    return sorted(at for at in (jst.parse(row.get("timestamp")) for row in rows) if at is not None)
+
+
+def _span_hours(stamps: list):
+    return ((stamps[-1] - stamps[0]).total_seconds() / 3600) if stamps else None
+
+
+def more_may_exist(rows: list, requested_limit) -> list:
+    """上限の印（設計 3.9.0 §C）。媒体が返した行（手元の絞り込みの前）と要求数で見る。"""
+    n, span_hours = len(rows), _span_hours(_stamps(rows))
+    if (requested_limit is None or n >= requested_limit or span_hours is None
+            or span_hours >= SHORT_SPAN_HOURS or n < MORE_MIN_N):
+        return []
+    return [{"code": MORE_MAY_EXIST, "message": MORE_MAY_EXIST_MESSAGE,
+             "unverified": MORE_MAY_EXIST_UNVERIFIED,
+             "rule": (f"返った件数 {n} が要求数 {requested_limit} に届かず、"
+                      f"期間が {SHORT_SPAN_HOURS} 時間未満で n が {MORE_MIN_N} 以上"),
+             "n_returned": n, "requested_limit": requested_limit,
+             "span_hours": round(span_hours, 2)}]
+
+
+def rate_by_span(n: int, stamps: list) -> dict:
+    """返った投稿の期間で割った速さ（設計 3.9.0 §C）。分母（n・期間の時間）を添える。"""
+    span_hours = _span_hours(stamps)
+    if span_hours is None:
+        value, reason = None, "no_timestamp"
+    elif span_hours <= 0:
+        value, reason = None, "span_zero"
+    else:
+        # **per_day と違って max(…, 1) で底上げしない**——24 時間未満の期間もそのまま割る。
+        value, reason = round(n / (span_hours / 24), 2), None
+    out = {"value": value, "unit": "per_day", "n": n,
+           "span_hours": round(span_hours, 2) if span_hours is not None else None,
+           "basis": RATE_BY_SPAN_BASIS, "rough": n < ROUGH_N, "rough_below_n": ROUGH_N,
+           "reason": reason}
+    return out
+
+
+def aggregate(rows: list, words: list, lexicon: dict | None, returned=None) -> dict:
     """1 語ぶんの集計。**本文・username・author_key・post_id を持たない**（数と時刻だけ）。"""
     texts = [_strip_words(row.get("text") if isinstance(row.get("text"), str) else "", words)
              for row in rows]
@@ -133,6 +185,8 @@ def aggregate(rows: list, words: list, lexicon: dict | None) -> dict:
                 "n_posts": sum(1 for text in texts
                                if any(needle in text.casefold() for needle in needles)),
                 "denominator": n}
+    by_span = rate_by_span(n, stamps)
+    cannot_say = more_may_exist(*returned) if returned is not None else []
     return {"n": n,
             "period": {"oldest": jst.iso(stamps[0]) if stamps else None,
                        "latest": jst.iso(stamps[-1]) if stamps else None,
@@ -140,6 +194,8 @@ def aggregate(rows: list, words: list, lexicon: dict | None) -> dict:
                        "n_with_timestamp": len(stamps)},
             "per_day": per_day,
             "per_day_basis": "n / max(期間の日数, 1)",
+            "rate_by_span": by_span,
+            "cannot_say": cannot_say,
             "question_forms": {"ends_with_question_mark": ends,
                                "contains_question_mark": contains,
                                "denominator": n, "rules": list(QUESTION_RULES)},
@@ -329,6 +385,7 @@ def _account_node(account_name: str, words: list, *, search_type: str,
 
         # 媒体が返した件数（手元の絞り込みの前）。0 なら「無い」と言わない（§C2）。
         raw_n = len(rows)
+        raw_rows = rows
         dropped = {'since': None if floor and media == 'bluesky' else 0,
                    'exclude_engaged': 0, 'max_per_author': 0}
         filtered, per_author = [], {}
@@ -360,7 +417,10 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                 matched_rows.setdefault(str(key), row)
         if aggregate_mode:
             # 集計だけ（設計 3.7.0 §C3）。本文・username・author_key・post_id を返さない。
-            by_word[word] = {"aggregate": aggregate(rows, words, lexicon), "dropped": dropped,
+            # 上限の印は媒体が返した件数（手元の絞り込みの前）と要求数で見る（§C）。
+            by_word[word] = {"aggregate": aggregate(rows, words, lexicon,
+                                                    returned=(raw_rows, limit)),
+                             "dropped": dropped,
                              "window": {"since": jst.iso(floor) if floor else None,
                                         "basis": "server_sortAt" if media == 'bluesky' else 'timestamp'},
                              "requested_limit": limit}
@@ -646,6 +706,13 @@ def _render_aggregate(result: dict) -> None:
             print(f"  語「{word}」  件数={agg['n']}（要求上限 {entry['requested_limit']}）"
                   f"  期間={period['oldest'] or '—'}〜{period['latest'] or '—'}"
                   f"  1 日あたり={agg['per_day'] if agg['per_day'] is not None else '—'}")
+            span = agg.get("rate_by_span") or {}
+            if span:
+                value = span["value"] if span["value"] is not None else f"—（{span['reason']}）"
+                print(f"    期間あたり={value}/日（n={span['n']}・期間 {span['span_hours'] if span['span_hours'] is not None else '—'} 時間"
+                      f"・{span['basis']}）" + (f"  粗い（n<{span['rough_below_n']}）" if span["rough"] else ""))
+            for item in agg.get("cannot_say") or []:
+                print(f"    言えない: {item['message']}（{item['code']}・{item['rule']}）。{item['unverified']}")
             print(f"    問いの形: 「？」で終わる {q['ends_with_question_mark']}/{q['denominator']}"
                   f"・「？」を含む {q['contains_question_mark']}/{q['denominator']}"
                   "（検索語を外して数えた）")
