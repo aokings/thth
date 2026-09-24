@@ -94,6 +94,14 @@ def cmd_lint(args) -> int:
         next_step = lint_mod.next_step(path) if errors else None
         if next_step:
             row["next_step"] = next_step
+        # 同じ goal・topic の広場の書き込み（題と id だけ・設計 3.8.0 §B2）。無ければ何も足さない。
+        from . import plaza_moments
+        try:
+            related = plaza_moments.related_for_file(path)
+        except Exception:  # noqa: BLE001 — 広場の読みで lint を落とさない
+            related = {"items": None, "cannot_say": "plaza_store_unavailable"}
+        if related is not None and (related.get("items") or related.get("cannot_say")):
+            row["plaza_related"] = related
         if not errors:
             from . import media as media_mod, bundle as bundle_mod
             raw = open(path, encoding='utf-8').read()
@@ -122,6 +130,9 @@ def cmd_lint(args) -> int:
             from . import media as media_mod
             for manifest in ([row.get('media_manifest')] + row.get('media_manifests', [])):
                 if manifest: print(media_mod.display(manifest))
+            from . import plaza_moments
+            for line in plaza_moments.related_lines(row.get("plaza_related"), indent=""):
+                print(prefix + line)
     return 0 if not any_error else 1
 
 
@@ -543,6 +554,8 @@ def cmd_approve(args) -> int:
                 # 確定待ちの控え（設計 3.7.0 §B3）。本文は残さない（相対パス・digest・時刻・
                 # 中身の sha256）。見せる前に書く——JSON に書けたかを載せるため。
                 pending_saved = _record_pending(prepared, repo_dir, bundle)
+                # 同じ goal・topic の広場の書き込み（題と id だけ・設計 3.8.0 §B2）。
+                _attach_plaza_related(prepared)
                 _show_first_stage(prepared, bundle, as_json=args.json, note=note,
                                   pending_saved=pending_saved)
             except topics_mod.ShelfBroken as e:
@@ -763,6 +776,27 @@ def _reply_or_topic_line(one: dict) -> str | None:
     return topics_mod.verdict_line(one.get("topic"), account=one.get("account"))
 
 
+def _attach_plaza_related(prepared: list) -> None:
+    """承認の 1 段目に、同じ goal か同じ topic の広場の書き込みを 1〜3 件（設計 3.8.0 §B2）。
+
+    **題と id だけ**——1 段目は出す本文を読む場所なので、他の書き込みの本文は並べない。
+    広場が読めなくても承認は止めない（理由 1 語を添える）。
+    """
+    from . import plaza_moments
+    for one in prepared:
+        try:
+            one["plaza_related"] = plaza_moments.related(one["account"], goal=one.get("goal"),
+                                                         topic=one.get("topic"))
+        except Exception:  # noqa: BLE001 — 広場の読みで承認の 1 段目を落とさない
+            one["plaza_related"] = {"items": None, "cannot_say": "plaza_store_unavailable"}
+
+
+def _print_plaza_related(one: dict) -> None:
+    from . import plaza_moments
+    for line in plaza_moments.related_lines(one.get("plaza_related")):
+        print(line)
+
+
 def _print_goal_line(one: dict) -> None:
     """一段目の目的の 1 行（設計 3.6.0 §A1）。目的が無ければ出さない（既存の表示を変えない）。
 
@@ -804,6 +838,8 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
                                 "share_to_instagram": bool(one.get("share_to_instagram")),
                                 **({"media_manifest": one["media_manifest"]} if one.get("media_manifest") else {}),
                                 **({"media_manifests": one["media_manifests"]} if one.get("media_manifests") else {}),
+                                **({"plaza_related": one["plaza_related"]}
+                                   if one.get("plaza_related") is not None else {}),
                                 "digest": one["digest"]} for one in prepared]})
         return
     print(f"承認しません（確認の一段目です）: {len(prepared)} 本——**{NOT_UNTIL_CONFIRMED}**")
@@ -815,6 +851,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
             # **各段の全文と返信関係を出す**（Codex 最終条件 5）。
             _show_bundle_stage(one)
             _print_goal_line(one)
+            _print_plaza_related(one)
             topic_line = _reply_or_topic_line(one)
             if topic_line:
                 print(f"  ◆ {topic_line}")
@@ -832,6 +869,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
         if one.get("warning"):
             print(f"  ⚠ {one['warning']}")
         _print_goal_line(one)
+        _print_plaza_related(one)
         topic_line = _reply_or_topic_line(one)
         if topic_line:
             print(f"  ◆ {topic_line}")

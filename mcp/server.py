@@ -152,6 +152,9 @@ TOOLS = [
                 "window_days": {"type": "integer", "description": "直近何日（既定 30）"},
                 "min_n": {"type": "integer",
                            "description": "中央値を返す下限（既定 20）"},
+                "goal": {"type": "string", "enum": ["reach", "click", "follow", "reply"],
+                         "description": "出す予定の投稿の目的（任意）。広場に同じ goal で他の媒体の"
+                                        "観測があれば 1 行（plaza_same_goal）"},
             },
             "required": ["account", "topic"],
         },
@@ -999,6 +1002,8 @@ def call_tool(name: str, arguments: dict | None) -> dict:
             args += ["--window-days", str(arguments["window_days"])]
         if arguments.get("min_n") is not None:
             args += ["--min-n", str(arguments["min_n"])]
+        if arguments.get("goal"):
+            args += ["--goal", arguments["goal"]]
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout

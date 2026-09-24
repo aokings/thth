@@ -1010,13 +1010,42 @@ def list_posts(viewer, *, open_only=False):
             continue
         rows.append(summary_row(record, level))
     rows.sort(key=lambda row: (row["at"], row["plaza_id"]), reverse=True)
+    hint = None if viewer.admin else _list_hint(viewer, rows, joined)
     return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_list",
             "filter": "open" if open_only else "own", "n": len(rows), "posts": rows,
+            # 0 件か自分の書き込みだけのとき、管理者に頼む命令の形の案内（設計 3.8.0 §B3）。
+            "hint": hint,
             "joined": bool(viewer.projects & joined) if not viewer.admin else None,
             # 持ち主の組（設計 3.8.0 §A）。組が無ければ空（従前どおり project の範囲だけ）。
             "owner_projects": sorted(viewer.siblings()) if not viewer.admin else None,
             # 壊れた件数は管理者にだけ（他の持ち主の件数の手掛かりを渡さない）。
             "unreadable": broken if viewer.admin else None}
+
+
+def _list_hint(viewer, rows, joined):
+    """読めるのが 0 件か自分の書き込みだけなら、組と open への参加の案内（命令の形）。
+
+    足りないものだけを言う（組に入っていれば組の命令は出さない・参加していれば join は
+    出さない）。両方そろっていれば何も言わない（管理者に頼めることが無い）。
+    """
+    if any(not viewer.owns(row.get("project"), row.get("account")) for row in rows):
+        return None
+    projects = sorted(viewer.projects)
+    if not projects:
+        return None
+    commands = []
+    groups = owner_groups()
+    if any(owner_of(project, groups) is None for project in projects):
+        commands.append(f"thth admin plaza owner set <組の名前> {' '.join(projects)} "
+                        "<同じ持ち主の他の project> --by <名前>")
+    if not (viewer.projects & joined):
+        commands.append(f"thth admin plaza join {projects[0]} --by <名前>")
+    if not commands:
+        return None
+    return {"reason": "no_posts" if not rows else "only_own_posts", "commands": commands,
+            "line": ("広場: 読めるのは" + ("まだ 0 件" if not rows else "自分の書き込みだけ")
+                     + "です。同じ持ち主の他の project や他の持ち主の書き込みを読むには、管理者に"
+                     "次を頼んでください: " + " ／ ".join(commands))}
 
 
 def text_numbers(text):
@@ -1085,6 +1114,16 @@ def show(plaza_id, viewer):
     payload["text_numbers"] = {"source": "text", "verified": False,
                                "values": text_numbers(payload["body"])}
     return payload
+
+
+def mark_read(by_account, plaza_id, now=None):
+    """読んだことを控える（`plaza_reads`・id と時刻だけ）。控えられたか（bool）。"""
+    from . import plaza_reads
+    try:
+        plaza_reads.record(by_account, plaza_ids=[plaza_id], now=now)
+    except PlazaError:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------- 返信

@@ -50,6 +50,10 @@ def register(sub) -> None:
     p.add_argument("--min-n", dest="min_n", type=int,
                    default=ask_mod.DEFAULT_MIN_N,
                    help=f"中央値を返す下限（既定 {ask_mod.DEFAULT_MIN_N}）")
+    from . import goals as goals_mod
+    p.add_argument("--goal", default=None, choices=goals_mod.GOALS,
+                   help="出す予定の投稿の目的（任意）。広場に同じ goal で他の媒体の観測（道具が"
+                        "付けた数字）があれば 1 行添える（設計 3.8.0 §B4）")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_before_you_post)
 
@@ -120,6 +124,17 @@ def cmd_before_you_post(args) -> int:
     except accounts_mod.AccountError as e:
         print(str(e), file=sys.stderr)
         return 1
+    if getattr(args, "goal", None):
+        # 同じ goal で他の媒体ではこうだった（広場の observed の書き込みがあるときだけ・
+        # 設計 3.8.0 §B4）。答えの本体（手元の水）とは分けた鍵に置く。
+        from . import plaza_moments
+        try:
+            medium = accounts_mod.load_account(args.account).get("media")
+            same = plaza_moments.same_goal(args.account, args.goal, medium=medium)
+        except Exception:  # noqa: BLE001 — 広場の読みで答えを落とさない
+            same = {"line": None, "items": None, "cannot_say": "plaza_store_unavailable"}
+        if same is not None:
+            answer["plaza_same_goal"] = same
 
     if args.json:
         print(json.dumps(answer, ensure_ascii=False, indent=2))
@@ -174,4 +189,8 @@ def cmd_before_you_post(args) -> int:
 
     print(f"  出所 {prov['source']}・観測者 {prov['observers']} 人"
           f"・更新 {prov['updated'] or '不明'}・schema {prov['schema']}")
+    same = answer.get("plaza_same_goal")
+    if same:
+        print("")
+        print(f"  {same['line']}" if same.get("line") else f"  広場: 言えない: {same['cannot_say']}")
     return 0

@@ -487,7 +487,11 @@ def execute_user_plaza(context: ReportContext, request: dict) -> dict:
                                        if value == project})
             return plaza.list_posts(viewer, open_only=bool(request.get('open')))
         if operation == 'plaza_show':
-            return plaza.show(request['plaza_id'], viewer)
+            payload = plaza.show(request['plaza_id'], viewer)
+            # 読んだことを控える（id と時刻だけ・設計 3.8.0 §B）。credential の全 account。
+            payload['read_recorded'] = plaza.mark_read(dict(context.allowed_accounts),
+                                                       payload['plaza_id'])
+            return payload
         if request.get('visibility') == 'open':
             # 他の持ち主に見せる切り替えは人が CLI の二段確認で行う（MCP は project まで）。
             raise ReportServiceError("open_requires_cli")

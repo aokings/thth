@@ -713,9 +713,10 @@ def test_g_MCPのtool一覧に固定の説明文で載っている():
     tool = tools["before_you_post"]
     assert tool["description"] == MCP_DESCRIPTION
     # 引数は CLI と同じ（`account` と `topic` だけ必須）。**本文は受け取らない。**
+    # `goal`（3.8.0 §B4）は CLI の `--goal` と同じ（広場の同じ goal の 1 行を添えるだけ）。
     props = tool["inputSchema"]["properties"]
     assert set(props) == {"account", "topic", "kind", "hour_band", "is_reply",
-                          "window_days", "min_n"}
+                          "window_days", "min_n", "goal"}
     assert tool["inputSchema"]["required"] == ["account", "topic"]
 
 

@@ -50,6 +50,9 @@ def render_list(payload, out=print):
     if payload.get("owner_projects"):
         label["own"] = "自分の持ち主の書き込み（組の他の project: " + "・".join(payload["owner_projects"]) + "）"
     out(f"広場 {payload['n']} 件（{label.get(payload['filter'], payload['filter'])}）")
+    if payload.get("hint"):
+        # 0 件か自分の書き込みだけのとき（設計 3.8.0 §B3）。一覧の前に出す（読まれる場所）。
+        out(payload["hint"]["line"])
     for row in payload["posts"]:
         verdict = f"  判定: {plaza.VERDICT_LABELS[row['verdict']]}" if row.get("verdict") else ""
         hidden = "  [非表示]" if row.get("hidden") else ""
@@ -265,9 +268,15 @@ def cmd_list(args) -> int:
 
 def cmd_show(args) -> int:
     try:
-        payload = plaza.show(args.plaza_id, plaza.viewer_for_target(args.viewer))
+        viewer = plaza.viewer_for_target(args.viewer)
+        payload = plaza.show(args.plaza_id, viewer)
     except plaza.PlazaError as error:
         return _print_refusal(args, error)
+    # 読んだことを控える（id と時刻だけ・設計 3.8.0 §B）。account を名指ししたらその
+    # account、project を名指ししたらその全 account。控えられなくても読むのは止めない。
+    readers = ({args.viewer: viewer.by_account[args.viewer]} if args.viewer in viewer.by_account
+               else dict(viewer.by_account))
+    payload["read_recorded"] = plaza.mark_read(readers, payload["plaza_id"])
     return _emit(args, payload, render_post)
 
 

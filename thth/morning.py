@@ -237,14 +237,20 @@ def _reports_cell(now):
     return report_inbox.morning_summary(now or jst.now_jst())
 
 
-def _plaza_cell(configs, since, now, exclude_account=None):
-    """0 段の「広場」。対象の account（とその project）から読める書き込みだけを数える。"""
-    from . import plaza
+def _plaza_cell(configs, since, now, exclude_account=None, record_pick=False):
+    """0 段の「広場」。対象の account（とその project）から読める書き込みだけを数える。
+
+    3.8.0 §B1: 同じ持ち主の他の媒体の新しい書き込み 1 件（1 日 1 件・読んだものは出さない・
+    `plaza_moments.observe_pick`）。`record_pick` なら出した 1 件を「読んだ」に控える。
+    """
+    from . import plaza, plaza_moments
     viewer = plaza.Viewer({name: cfg.get("project") for name, cfg in configs.items()})
     try:
         summary = plaza.observe_summary(viewer, since=since, now=now,
                                         exclude_account=exclude_account)
         summary["recent_trial"] = plaza.recent_trial(viewer)
+        summary["pick"] = plaza_moments.observe_pick(configs, list(configs), now=now,
+                                                     record=record_pick)
     except Exception:  # noqa: BLE001 — 広場の読みで 0 段を落とさない
         return {"project_new": None, "project_denominator": None, "open_new": None,
                 "open_denominator": None, "open_reason": None, "owner_new": None,
@@ -964,8 +970,11 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
     # 広場の新着は第 2 段と同じ窓の始まり（前回の観測から・無ければ前日 JST）。account
     # ごとに窓が違えば、いちばん古い始まりから（見落とすより重ねて見せる）。
     plaza_since = min(observe_window(now, read_ats[name])[0] for name in names)
+    # 1 日 1 件の控えは、人が `--no-mark` で覗いたときだけ残さない（サーバ型の利用者の
+    # 1 枚は栞を進めないが、読んだ 1 件は控える——同じ 1 件を翌日も出さないため）。
     plaza_cell = _plaza_cell(configs, plaza_since, now,
-                             exclude_account=target if kind == "account" else None)
+                             exclude_account=target if kind == "account" else None,
+                             record_pick=mark or allowed_names is not None)
 
     def _steps():
         # 報告は**管理者の 1 枚だけ**（サーバ型の利用者に他 project の報告を並べない）。
@@ -1166,6 +1175,10 @@ def _render_plaza(node, out) -> None:
              if node.get("owner_new") is not None else "")
     out(f"  広場: 新着 {node['project_new']}（project {node['project_denominator']} 件のうち）"
         f"{owner}・{opened}（{node['since']} から）")
+    from . import plaza_moments
+    line = plaza_moments.pick_line(node.get("pick"))
+    if line:
+        out(f"  {line}")
     trial = node.get("recent_trial")
     if trial:
         counts = trial["trials"]
