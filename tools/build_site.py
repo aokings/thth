@@ -2,7 +2,7 @@
 """`thth.me` の紹介ページ（`callback/public/`）を **repo の正本から生成する**。
 
 設計 v2 §3「ドメイン」: `thth.me` ＝製品の入口（README 相当・導入・`llms.txt`・
-認可ページは残す）。その入口に置く 4 つのファイルをここで作る:
+認可ページは残す）。その入口に置く 5 つのファイルをここで作る:
 
 | 出力 | 正本 |
 |---|---|
@@ -10,6 +10,7 @@
 | `callback/public/llms.txt` | repo の `llms.txt`（**1 バイトも変えずに写す**） |
 | `callback/public/robots.txt` | このスクリプト（認可の受け口だけを索引から外す） |
 | `callback/public/privacy/index.html` | このスクリプト（`build_privacy()`。Meta の App Review が要求するプライバシーポリシー。2026-09-15） |
+| `callback/public/terms/index.html` | このスクリプト（`build_terms()`。外の利用者向けの利用規約。2026-09-25） |
 
 生成物を手で直さない。紹介文を直したら `build_index()` を直して、このスクリプトを
 走らせ直す。
@@ -262,7 +263,8 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
     add(f'<p><a href="{GITHUB}">GitHub</a> ／ <a href="{PYPI}">PyPI</a> ／ '
         f'<a href="{esc(REGISTRY_SEARCH)}">MCP Registry</a> ／ <a href="/llms.txt">llms.txt</a></p>')
 
-    add('<footer>Free and open source · MIT License<br>© 2026 gotoq · <a href="/privacy/">プライバシーポリシー / Privacy Policy</a></footer>')
+    add('<footer>Free and open source · MIT License<br>© 2026 gotoq · <a href="/privacy/">プライバシーポリシー / Privacy Policy</a>'
+        ' · <a href="/terms/">利用規約 / Terms of Service</a></footer>')
     add("</main></body></html>")
     return "\n".join(parts) + "\n"
 
@@ -644,6 +646,165 @@ def build_privacy() -> str:
     return "\n".join(parts) + "\n"
 
 
+# 施行日は deploy のとき主セッションが入れる（privacy と同じ・生成で日付を作らない）。
+TERMS_EFFECTIVE = None
+
+
+def contact_html(lang: str) -> str:
+    """サポートの連絡先。privacy と利用規約の**両方に同じ文**を出す（片方だけ直さない）。
+
+    メールアドレスは repo に無いので書かない。正は GitHub の issues。招待された利用者は
+    自分のセッションから報告の口（`thth report file`・`thth/report_inbox.py`）も使える。
+    """
+    esc = lambda s: html_mod.escape(s, quote=True)  # noqa: E731
+    issues = f'<a href="{GITHUB}/issues">{esc(GITHUB)}/issues</a>'
+    if lang == "en":
+        return (f"<p>Open an issue at {issues}. Issues are public: do not include tokens, App Passwords "
+                "or personal information. Invited users can also file a report from their THTH session "
+                "(<code>thth report file</code>); reports are kept in a private location on the "
+                "operator's server. Operator: gotoq.</p>")
+    return (f"<p>{issues} に issue を立ててください。issue は公開されます。token・App Password・"
+            "個人情報は書かないでください。招待された利用者は、自分の THTH のセッションから報告"
+            "（<code>thth report file</code>）もできます。報告は運営者のサーバの私有の置き場に保存します。"
+            "運営者: gotoq。</p>")
+
+
+def build_terms() -> str:
+    """利用規約（2026-09-25・Meta の申請の段取り #3）。
+
+    書くのは事実と、運営者がしていること・しないことだけ。法的な保証を約束しない。
+    準拠法・管轄など運営者が決めていないことは入れない。英語が先（審査担当が読む）、
+    日本語も同じ内容。データの扱いは privacy に任せ、ここでは繰り返さない。
+    """
+    esc = lambda s: html_mod.escape(s, quote=True)  # noqa: E731
+    parts: list[str] = []
+    add = parts.append
+    add("<!doctype html>")
+    add('<html lang="en"><head>')
+    add('<meta charset="utf-8">')
+    add('<meta name="viewport" content="width=device-width, initial-scale=1">')
+    add('<meta name="referrer" content="no-referrer">')
+    add("<title>THTH — Terms of Service / 利用規約</title>")
+    add(f"<style>\n{STYLE}</style>")
+    add("</head><body><main>")
+    add("<h1>THTH — Terms of Service</h1>")
+    date_en = "Effective " + esc(TERMS_EFFECTIVE) if TERMS_EFFECTIVE else "Unpublished draft — effective date not set"
+    add(f'<p class="note">{date_en} · <a href="#ja">日本語はこの下</a> · '
+        '<a href="/privacy/">Privacy Policy</a></p>')
+
+    add("<h2>What THTH is</h2>")
+    add("<p>THTH is a tool for drafting, approving and publishing social media posts on your own accounts. "
+        "The operator, gotoq, runs it on an operator-managed server for people the operator has invited or "
+        "otherwise verified. Invited users connect their own accounts and do not run their own server or "
+        "register their own app. These terms cover that service.</p>")
+
+    add("<h2>What you do</h2>")
+    add("<ul>")
+    add("  <li>Authorize THTH only for accounts you control, on the platform's own screen, after checking the "
+        "account and the permissions it asks for.</li>")
+    add("  <li>Approve each post yourself. Drafts may be written with an AI model; read each one before you "
+        "approve it.</li>")
+    add("  <li>Follow the terms and rules of each platform you post to.</li>")
+    add("  <li>Approve only content that does not infringe other people's rights, such as copyright, privacy "
+        "or portrait rights.</li>")
+    add("  <li>Keep your approval secret and your platform credentials to yourself. Do not paste them into "
+        "chats, drafts or issues.</li>")
+    add("</ul>")
+
+    add("<h2>What the operator does and does not do</h2>")
+    add("<ul>")
+    add("  <li>THTH does not publish a post that has not been approved. Changing the text, account, topic, "
+        "reply target or scheduled time after approval requires approval again.</li>")
+    add("  <li>Credentials (platform tokens and Bluesky App Passwords) are received through the authorization "
+        "flow or from standard input, kept in owner-only files on the operator's server, and redacted from "
+        "logs and printed output. They are not passed through chats or command arguments, and THTH's tools "
+        "do not return them to LLM sessions.</li>")
+    add("  <li>THTH does not read direct messages.</li>")
+    add("  <li>The operator can stop an account's use of the service at any time and can hide a post on the "
+        "plaza. The operator stops an account when you ask, and may stop it when these terms or a platform's "
+        "terms are not followed, when a platform requires it, or when the service ends. Stopping may happen "
+        "without advance notice.</li>")
+    add('  <li>How data is used, kept and deleted is described in the <a href="/privacy/">Privacy Policy</a>.</li>')
+    add("</ul>")
+
+    add("<h2>How the service is provided</h2>")
+    add("<p>The service is free of charge and provided as is. It may stop, change or be unavailable at times, "
+        "and a post may be delayed or not published. The operator does not guarantee that the service is "
+        "available, free of errors or suitable for any purpose.</p>")
+
+    add("<h2>Leaving</h2>")
+    add("<p>To leave, contact the operator (see Contact). The operator ends the account with "
+        "<code>thth account leave</code>, which stops the account and deletes its data on the operator's "
+        'server as described in the <a href="/privacy/#delete">Privacy Policy</a>. THTH asks Mastodon and X '
+        "to revoke the token. For Threads, remove the connection in your Threads settings; for Bluesky, "
+        "delete the App Password in your Bluesky settings.</p>")
+
+    add("<h2>Contact</h2>")
+    add(contact_html("en"))
+    add("<h2>Changes</h2>")
+    add("<p>This page is generated from the THTH source repository; its history is public there.</p>")
+    add("<h2>Software license</h2>")
+    add("<p>The THTH software is open source under the MIT License. That license covers the software; these "
+        "terms cover the operator's service.</p>")
+
+    # ---------------------------------------------------------------- 日本語
+    add('<h1 id="ja" style="margin-top:56px">THTH — 利用規約</h1>')
+    date_ja = esc(TERMS_EFFECTIVE) + " 施行" if TERMS_EFFECTIVE else "未公開の案 — 施行日未設定"
+    add(f'<p class="note">{date_ja} · <a href="/privacy/">プライバシーポリシー</a></p>')
+
+    add("<h2>THTH とは</h2>")
+    add("<p>THTH は、自分の SNS のアカウントで投稿を下書き・承認・公開するための道具です。運営者 gotoq が、"
+        "運営者の管理するサーバで、運営者が招待した人または確かめた人のために動かしています。招待された利用者は"
+        "自分のアカウントを接続し、自分のサーバを動かしたり自分のアプリを登録したりしません。この規約はその"
+        "サービスについてのものです。</p>")
+
+    add("<h2>利用者がすること</h2>")
+    add("<ul>")
+    add("  <li>自分が管理するアカウントだけを、媒体の画面でアカウントと求められる権限を確かめてから認可する。</li>")
+    add("  <li>投稿は一つずつ自分で承認する。下書きは AI モデルで書かれていることがあるので、承認の前に読む。</li>")
+    add("  <li>投稿する各媒体の規約と決まりを守る。</li>")
+    add("  <li>著作権・プライバシー・肖像権など、他人の権利を侵さない内容だけを承認する。</li>")
+    add("  <li>承認の secret と媒体の認証情報は自分だけで持つ。チャット・原稿・issue に貼らない。</li>")
+    add("</ul>")
+
+    add("<h2>運営者がすること・しないこと</h2>")
+    add("<ul>")
+    add("  <li>THTH は承認されていない投稿を公開しません。承認のあとで本文・アカウント・トピック・返信先・"
+        "予約時刻を変えたら、あらためて承認が要ります。</li>")
+    add("  <li>認証情報（媒体の token と Bluesky の App Password）は、認可の流れか標準入力で受け取り、運営者の"
+        "サーバの所有者だけが読めるファイルに置き、ログと画面の出力では伏せます。チャットやコマンドの引数を"
+        "通さず、THTH の道具が LLM のセッションに返すこともありません。</li>")
+    add("  <li>THTH はダイレクトメッセージを読みません。</li>")
+    add("  <li>運営者は、いつでもアカウントの利用を止められ、広場の書き込みを非表示にできます。利用者が求めたときは"
+        "止めます。この規約や媒体の規約が守られないとき、媒体が求めたとき、サービスを終えるときにも止めることが"
+        "あります。止めるときに前もって知らせないことがあります。</li>")
+    add('  <li>データの使い方・保存・削除は<a href="/privacy/#ja">プライバシーポリシー</a>に書いています。</li>')
+    add("</ul>")
+
+    add("<h2>提供の形</h2>")
+    add("<p>サービスは無償で、現状のまま提供します。止まる・変わる・使えない時間があり、投稿が遅れたり公開"
+        "されなかったりすることがあります。運営者は、サービスが使えること・誤りがないこと・特定の目的に合うことを"
+        "保証しません。</p>")
+
+    add("<h2>やめ方</h2>")
+    add("<p>やめるときは運営者に連絡してください（連絡先を参照）。運営者は <code>thth account leave</code> で"
+        "アカウントの利用を終えます。アカウントを止め、運営者のサーバのデータを"
+        '<a href="/privacy/#ja">プライバシーポリシー</a>のとおり削除します。Mastodon と X は THTH が媒体に token の'
+        "失効を求めます。Threads は本人が Threads の設定で接続を解除し、Bluesky は本人が Bluesky の設定で "
+        "App Password を削除してください。</p>")
+
+    add("<h2>連絡先</h2>")
+    add(contact_html("ja"))
+    add("<h2>変更</h2>")
+    add("<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。</p>")
+    add("<h2>ソフトウェアのライセンス</h2>")
+    add("<p>THTH のソフトウェアは MIT License のオープンソースです。このライセンスはソフトウェアについてのもので、"
+        "運営者のサービスについてはこの規約が定めます。</p>")
+    add('<footer><a href="/">THTH</a> · Free and open source · MIT License<br>© 2026 gotoq</footer>')
+    add("</main></body></html>")
+    return "\n".join(parts) + "\n"
+
+
 ROBOTS = """\
 # thth.me は製品の入口（設計 v2 §3）。紹介ページは索引してよい。
 # 認可の受け口と Meta 用の口は索引しない（認可コードがクエリに乗る）。
@@ -666,6 +827,7 @@ def outputs() -> dict[str, str]:
         "llms.txt": LLMS_TXT.read_text(encoding="utf-8"),
         "robots.txt": ROBOTS,
         "privacy/index.html": build_privacy(),
+        "terms/index.html": build_terms(),
     }
 
 

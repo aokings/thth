@@ -323,3 +323,80 @@ def test_privacy_date_is_explicit_not_invented(monkeypatch, effective):
     else:
         assert "Effective " + effective in page and effective + " 施行" in page
         assert "Unpublished update" not in page and "未公開の更新案" not in page
+
+
+# --------------------------------------------------------------------------
+# 利用規約（/terms/・2026-09-25・計画_Meta申請 #3）
+# --------------------------------------------------------------------------
+
+TERMS_EN_HEADINGS = ("What THTH is", "What you do", "What the operator does and does not do",
+                     "How the service is provided", "Leaving", "Contact", "Changes", "Software license")
+TERMS_JA_HEADINGS = ("THTH とは", "利用者がすること", "運営者がすること・しないこと", "提供の形",
+                     "やめ方", "連絡先", "変更", "ソフトウェアのライセンス")
+
+
+def test_利用規約は正本から生成され_英日の見出しがあり_外へ出る口が無い():
+    page = (PUBLIC / "terms" / "index.html").read_text(encoding="utf-8")
+    assert page == build_site.build_terms()
+    assert "<script" not in page
+    assert not re.search(r'<(script|link|img|iframe)\b[^>]*(src|href)\s*=\s*["\']https?:', page, re.I)
+    assert not re.search(r'\b(?:src|srcset|action|data-src)\s*=', page, re.I)
+    # 英語が先（審査担当が読む）・日本語も同じ節
+    assert page.index("Terms of Service") < page.index("利用規約")
+    for heading in TERMS_EN_HEADINGS + TERMS_JA_HEADINGS:
+        assert f"<h2>{heading}</h2>" in page, heading
+    en, ja = page.split('id="ja"', 1)
+    assert all(f"<h2>{h}</h2>" in en for h in TERMS_EN_HEADINGS)
+    assert all(f"<h2>{h}</h2>" in ja for h in TERMS_JA_HEADINGS)
+    # 事実だけ（承認・退出・連絡先・MIT とサービスの区別・データは privacy へ）
+    for must in ("does not publish a post that has not been approved", "承認されていない投稿を公開しません",
+                 "thth account leave", 'href="/privacy/"', "https://github.com/aokings/thth/issues",
+                 "MIT License", "these terms cover the operator's service",
+                 "free of charge and provided as is", "無償で、現状のまま提供します"):
+        assert must in page, must
+    # 運営者が決めていないこと（準拠法・管轄）は入れない。「未確認」とも書かない。
+    for absent in ("governing law", "jurisdiction", "準拠法", "管轄", "未確認"):
+        assert absent not in page, absent
+
+
+def test_利用規約と_privacy_は同じ連絡先を出す():
+    terms = (PUBLIC / "terms" / "index.html").read_text(encoding="utf-8")
+    for lang in ("en", "ja"):
+        assert build_site.contact_html(lang) in terms
+    # メールアドレスは repo に無いので書かない（正は GitHub の issues）
+    assert "mailto:" not in terms
+
+
+def test_紹介ページから利用規約へ辿れ_robots_は索引を許す():
+    index = (PUBLIC / "index.html").read_text(encoding="utf-8")
+    assert 'href="/terms/"' in index
+    robots = (PUBLIC / "robots.txt").read_text(encoding="utf-8")
+    assert "Disallow: /terms" not in robots
+
+
+def test_privacy_と_terms_は_Worker_より先に静的アセットで配られる():
+    """`callback/wrangler.jsonc` の `run_worker_first` に掛からない path は `assets` が配る。
+    privacy と同じ置き方（`public/<名前>/index.html`）なので追加の設定は要らない。"""
+    import fnmatch
+    config = (REPO_ROOT / "callback" / "wrangler.jsonc").read_text(encoding="utf-8")
+    config = "\n".join(line for line in config.splitlines() if not line.lstrip().startswith("//"))
+    first = json.loads(config)["assets"]["run_worker_first"]
+    for path in ("/terms/", "/privacy/"):
+        assert not any(fnmatch.fnmatchcase(path, pattern) for pattern in first), path
+        assert (PUBLIC / path.strip("/") / "index.html").exists(), path
+
+
+@pytest.mark.parametrize("effective", [None, "2030-01-02"])
+def test_terms_date_is_explicit_not_invented(monkeypatch, effective):
+    # 施行日は deploy のとき入れる。checked-in の既定は None（未公開の案）。
+    assert build_site.TERMS_EFFECTIVE is None
+    monkeypatch.setattr(build_site, "TERMS_EFFECTIVE", effective)
+    page = build_site.build_terms()
+    if effective is None:
+        assert "Unpublished draft — effective date not set" in page
+        assert "未公開の案 — 施行日未設定" in page
+        # 「施行日未設定」の中の「施行」は数えない。日付つきの施行の行が無いことを見る。
+        assert "Effective " not in page and not re.search(r"\d{4}-\d{2}-\d{2} 施行", page)
+    else:
+        assert "Effective " + effective in page and effective + " 施行" in page
+        assert "Unpublished draft" not in page and "未公開の案" not in page
