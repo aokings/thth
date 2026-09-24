@@ -146,3 +146,20 @@ def test_privacyは一覧と24時間と認可の始まり方を英日で書く()
         assert must in page, must
     for obsolete in ('The operator starts authorization', '運営者が認可を開始し'):
         assert obsolete not in page, obsolete
+
+
+def test_文書_リリースノートと運用と導入に一覧の段落():
+    import re
+    from pathlib import Path
+    docs = Path(__file__).resolve().parent.parent / 'docs'
+    note = (docs / 'リリースノート_3.11.0_2026-09-25.md').read_text(encoding='utf-8')
+    # 題の「— 下書き」の有無は固定しない（版を上げる commit で外れる）。
+    assert note.startswith('# リリースノート 3.11.0（承認待ちの一覧ページ）')
+    assert 'Worker（`callback/`）の deploy が要る' in note and 'Worker を先に deploy' in note
+    section = note.split('## 本人向け: 承認待ちの見方', 1)[1].split('\n## ', 1)[0]
+    assert len(re.findall(r'^\d\. ', section, re.M)) == 3 and 'https://thth.me/pending' in section
+    operator = (docs / '運用_招待する側.md').read_text(encoding='utf-8')
+    assert '### 承認待ちの一覧（3.11.0）' in operator and '`--no-list`' in operator
+    invited = (docs / '導入_招待されたら.md').read_text(encoding='utf-8')
+    assert '**承認待ちの一覧（3.11.0）。**' in invited and 'https://thth.me/pending' in invited
+    assert '承認ページの URL は masaru から届きます' not in invited
