@@ -209,10 +209,13 @@ def _local_path_candidates(path: str) -> tuple:
 def _stale_clone_line(root: str, account_name: str) -> str | None:
     """VM 側の clone が upstream より遅れていれば 1 行（設計 3.7.0 §B4）。"""
     info = writeback_mod.behind_remote(root)
+    # ロック中で fetch しなかったとき（3.8.2 の裁定 1）は、そう言う（数は前回の fetch の結果）。
+    unchecked = ("（VM 側の古さは" + writeback_mod.BEHIND_UNCHECKED + "）"
+                 if info.get("reason") == writeback_mod.BEHIND_UNCHECKED else "")
     if info.get("behind"):
         return (f"VM 側は古い（upstream より {info['behind']} commit 遅れています・"
-                f"thth pull {account_name} で取り込めます）")
-    return None
+                f"thth pull {account_name} で取り込めます）{unchecked}")
+    return unchecked or None
 
 
 def _translate_local_path(path: str, purpose: str | None = None) -> str | None:
@@ -631,9 +634,10 @@ def cmd_approve(args) -> int:
     if not pushed:
         print("承認を commit・push できませんでした。このままでは投稿されません"
               f"（board に unverified_content として出ます）: {push_err}", file=sys.stderr)
+        # 次の一手は thth の命令で（3.8.2 の裁定 2・VM で生の git を打たせない）。
         print("  ※ commit だけ済んで push を断られた場合は、その commit がローカルに"
-              "残っています。手で push するか、取り消してから承認し直してください。",
-              file=sys.stderr)
+              "残っています。押し直すには: "
+              + _push_pending_command(prepared[0]["account"], approved_by), file=sys.stderr)
         return 1
     return 0
 
@@ -689,6 +693,12 @@ def _confirm_file_entries(source: str):
 def _confirm_command(path: str, digest: str, by: str) -> str:
     import shlex
     return f"thth approve {shlex.quote(path)} --confirm {digest} --by {shlex.quote(by)}"
+
+
+def _push_pending_command(account: str, by: str) -> str:
+    """手元に残った承認の commit を押し直す、そのまま打てる 1 行（3.8.2 の裁定 2）。"""
+    import shlex
+    return f"thth pull {shlex.quote(account)} --push-pending --by {shlex.quote(by)}"
 
 
 def _approve_confirm_file(args) -> int:
@@ -824,11 +834,11 @@ def _approve_confirm_file(args) -> int:
 def _report_confirm_file(args, approved_by, approved_at, repo_dir, approved, refused,
                          remaining, stopped, pushed, push_err) -> int:
     """`--confirm-file` の結果: 通った本・断った本・止まった所と残りの命令。"""
-    import shlex
     refused = sorted(refused, key=lambda row: row["line"])
     commands = [_confirm_command(t["path"], t["digest"], approved_by) for t in remaining]
-    push_command = (f"git -C {shlex.quote(repo_dir)} push"
-                    if approved and not pushed and repo_dir else None)
+    # 押し直しは thth の命令で（3.8.2 の裁定 2・VM で生の git を打たせない）。
+    push_command = (_push_pending_command(approved[0][1]["account"], approved_by)
+                    if approved and not pushed else None)
     ok = bool(approved) and not refused and not stopped and pushed
     if args.json:
         _print_json({"approved": ok, "count": len(approved), "approved_by": approved_by,
@@ -2675,6 +2685,10 @@ def _behind_notices(account_names: list) -> tuple:
         info = writeback_mod.behind_remote(repo_dir)
         for name in names_here:
             repo_by_account[name] = info
+        if info.get("reason") == writeback_mod.BEHIND_UNCHECKED:
+            # repo のロック中で fetch しなかった（3.8.2 の裁定 1）。数は前回の fetch の結果。
+            lines.append(f"remote の遅れは{writeback_mod.BEHIND_UNCHECKED}"
+                         f"（repo: {os.path.basename(os.path.normpath(repo_dir))}）")
         if info.get("behind"):
             example = sorted(names_here)[0]
             lines.append(
@@ -2996,6 +3010,9 @@ def cmd_pull(args) -> int:
         # 複数含まれても、`sync_repo()` は 1 回だけ呼ぶ。
         repos.setdefault(repo_dir, name)
 
+    if getattr(args, "push_pending", False):
+        return _pull_push_pending(args, repos)
+
     rows, any_error = [], False
     for repo_dir, name in repos.items():
         if not os.path.isdir(repo_dir):
@@ -3049,6 +3066,57 @@ def cmd_pull(args) -> int:
                 print(f"{name}: 取り込みました: {old7} → {new7}{suffix}")
         rows.append({"account": name, "repo_dir": repo_dir, "ok": True, "repo": info})
 
+    if args.json:
+        _print_json(rows)
+    return 1 if any_error else 0
+
+
+def _pull_push_pending(args, repos: dict) -> int:
+    """`thth pull <account> --push-pending --by <名前>`（依頼 3.8.2 の裁定 2）。
+
+    承認の commit が手元に残ったまま push を断られると、次の `thth approve` は同期
+    （`HEAD == @{u}` の確かめ）で断るので、thth の命令だけでは先へ進めなかった
+    （VM で生の `git push` を打つしかなかった）。ここは **repo のロックの中で fetch し、
+    手元が upstream より先にいて遅れが 0 のときだけ** push する口。遅れがあれば押さずに
+    理由を言う（rebase はしない）。押した commit の件数と題を出す。
+    """
+    by = args.by or os.environ.get("THTH_ACTOR")
+    if not by:
+        print("--by を付けてください（誰が押したかを出します）。例: --by <あなたの名前>。"
+              "環境変数 THTH_ACTOR でも指定できます。", file=sys.stderr)
+        return 1
+    if writeback_mod.has_control_chars(by):
+        print("--by に改行・制御文字は使えません。", file=sys.stderr)
+        return 2
+    rows, any_error = [], False
+    for repo_dir, name in repos.items():
+        row = {"account": name, "repo_dir": repo_dir, "by": by, "pushed": False, "count": 0,
+               "subjects": [], "ahead": None, "behind": None, "error": None}
+        if not os.path.isdir(repo_dir):
+            row["error"] = "repo が見当たりません"
+        else:
+            repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
+            try:
+                repo_lock.acquire()
+            except lock_mod.LockBusy:
+                row["error"] = "いまこの repo を別の実行が使っています。少し待ってからもう一度打ってください"
+            else:
+                try:
+                    row.update(writeback_mod.push_pending(repo_dir))
+                finally:
+                    repo_lock.release()
+        rows.append(row)
+        if row["error"]:
+            any_error = True
+            if not args.json:
+                print(f"{name}: 押しませんでした: {row['error']}", file=sys.stderr)
+        elif not args.json:
+            if row["pushed"]:
+                print(f"{name}: 押しました: {row['count']} commit（{by}）")
+                for subject in row["subjects"]:
+                    print(f"  {subject}")
+            else:
+                print(f"{name}: 押すものはありません（手元は upstream と同じです）")
     if args.json:
         _print_json(rows)
     return 1 if any_error else 0
@@ -3822,6 +3890,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="account の代わりに project で指定する（同じ repo は"
                              "重複なく 1 回だけ取り込みます）")
     p_pull.add_argument("--json", action="store_true")
+    p_pull.add_argument("--push-pending", dest="push_pending", action="store_true",
+                        help="取り込まずに、手元に残った承認の commit を押し直す（upstream に"
+                             "遅れていないときだけ・rebase はしない）")
+    p_pull.add_argument("--by", default=None, help="--push-pending で誰が押したか")
     p_pull.set_defaults(func=cmd_pull)
 
     p_auth = sub.add_parser(

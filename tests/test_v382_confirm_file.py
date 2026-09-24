@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import subprocess
 
 import pytest
 
@@ -144,13 +143,16 @@ def test_pushに失敗したら_commitまで済んだ本とそのまま打てる
     assert "承認を commit しましたが push できませんでした" in err
     push_line = [line for line in err.splitlines() if "push が通れば出ます: " in line][0]
     command = push_line.split("push が通れば出ます: ", 1)[1]
-    assert command == f"git -C {shlex.quote(os.path.realpath(drafts['work']))} push"
+    # 次の一手は thth の命令（3.8.2 の裁定 2・VM で生の git を打たせない）。
+    assert command == "thth pull nigamilab-threads --push-pending --by masaru"
     # 3 本とも commit はローカルに残り、origin にはまだ無い。
     assert len(_approval_commits(drafts["work"])) == 3
     assert _approval_commits(drafts["bare"], "main") == []
     # 出した命令をそのまま打てば届く（hook を外してから）。
     os.unlink(hook)
-    assert subprocess.run(shlex.split(command), capture_output=True, text=True).returncode == 0
+    pushed = run_thth(shlex.split(command)[1:])
+    assert pushed.returncode == 0, pushed.stderr
+    assert pushed.stdout.splitlines()[0] == "nigamilab-threads: 押しました: 3 commit（masaru）"
     for name in NAMES:
         assert _origin_status(drafts, name) == "approved"
 

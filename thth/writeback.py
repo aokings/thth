@@ -290,6 +290,10 @@ def behind_remote(repo_dir: str) -> dict:
     整数。**読めなければ `None`**（`0` と混ぜない——`0` は「確かめて遅れて
     いない」の意味なので、「確かめられなかった」と絶対に同じ値にしない）。
     そのときは `reason` に理由が入る。
+
+    **例外が 1 つ**（3.8.2）: repo のロックを取れず fetch しなかったときは、
+    `reason` が `BEHIND_UNCHECKED`・`fetched_at` が None で、`behind`/`ahead` は
+    前回取り込んだ remote の姿で数えた整数（数えられなければ None）。
     """
     fetched_at = jst_mod.iso()
     if not repo_dir or not os.path.isdir(repo_dir):
@@ -307,7 +311,25 @@ def behind_remote(repo_dir: str) -> dict:
         return {"behind": None, "ahead": None, "head": head7,
                 "fetched_at": fetched_at, "reason": "origin という remote が見つかりません"}
 
-    fetch = _run_git(repo_dir, ["fetch", "origin"])
+    # **repo のロックを待たずに取りに行き、取れたときだけ fetch する**（依頼 3.8.2 の
+    # 裁定 1）。読むだけの口（`queue`・`schedule`・`board`・手元パスの読み替え）の
+    # fetch がロックの中の同期と同時に走ると、`refs/remotes/origin/*` の書き込みが
+    # ぶつかって同期の側の fetch が失敗し、承認が「git fetch に失敗しました」で
+    # 断られうる。取れなければ fetch せず、**前回取り込んだ remote の姿で数えて**、
+    # 「いま確かめられない」と `reason` に言う（`fetched_at` は None——確かめていない
+    # 時刻を書かない）。ロックの置き場に触れないとき（OSError）も同じ扱い。
+    from . import accounts as accounts_mod
+    from . import lock as lock_mod
+    repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
+    try:
+        repo_lock.acquire()
+    except (lock_mod.LockBusy, OSError):
+        return _behind_unchecked(repo_dir, head7)
+    try:
+        # FETCH_HEAD は書かない（読み手が書く理由が無い・同期は読まないが、書き手を減らす）。
+        fetch = _run_git(repo_dir, ["fetch", "--no-write-fetch-head", "origin"])
+    finally:
+        repo_lock.release()
     # **fetch した直後の時刻に取り直す**（呼んだ時刻ではなく、実際に確かめた時刻）。
     fetched_at = jst_mod.iso()
     if fetch.returncode != 0:
@@ -328,6 +350,65 @@ def behind_remote(repo_dir: str) -> dict:
     ahead_str, behind_str = parts
     return {"behind": int(behind_str), "ahead": int(ahead_str), "head": head7,
             "fetched_at": fetched_at, "reason": None}
+
+
+# `behind_remote()` が repo のロックを取れず fetch しなかったときの `reason`（静的）。
+# 呼び出し側はこの文字列と照らして「いま確かめられない」の 1 行を足す。
+BEHIND_UNCHECKED = ("いま確かめられません（他の実行が repo を使用中）。"
+                    "前回取り込んだ remote の姿で数えています")
+
+
+def _behind_unchecked(repo_dir: str, head7) -> dict:
+    """fetch せずに、前回取り込んだ remote の姿（`@{u}`）と HEAD の差を数える。
+
+    `behind`・`ahead` は数えられれば整数（前回の fetch の結果）、数えられなければ None。
+    どちらでも `reason` は `BEHIND_UNCHECKED`、`fetched_at` は None。
+    """
+    counts = _run_git(repo_dir, ["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+    parts = counts.stdout.split() if counts.returncode == 0 else []
+    if len(parts) == 2 and all(part.isdigit() for part in parts):
+        ahead, behind = int(parts[0]), int(parts[1])
+    else:
+        ahead = behind = None
+    return {"behind": behind, "ahead": ahead, "head": head7,
+            "fetched_at": None, "reason": BEHIND_UNCHECKED}
+
+
+def push_pending(repo_dir: str) -> dict:
+    """手元の承認の commit を push し直す（`thth pull --push-pending`・依頼 3.8.2 の裁定 2）。
+
+    **呼び出し側が repo のロックを握っている前提。** `fetch origin` のあと HEAD と
+    `@{u}` を数え、**ahead があって behind が 0（早送りで押せる）ときだけ** push する。
+    behind があれば押さない——rebase もしない（手元の commit の並びを道具が黙って
+    書き換えない）。戻り値 `{"pushed", "count", "subjects", "ahead", "behind", "error"}`。
+    """
+    out = {"pushed": False, "count": 0, "subjects": [], "ahead": None, "behind": None,
+           "error": None}
+    fetch = _run_git(repo_dir, ["fetch", "origin"])
+    if fetch.returncode != 0:
+        out["error"] = "git fetch に失敗しました: " + redact_mod.redact(fetch.stderr)
+        return out
+    counts = _run_git(repo_dir, ["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+    parts = counts.stdout.split() if counts.returncode == 0 else []
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        out["error"] = "HEAD と upstream の差分を確認できませんでした（upstream が無い？）"
+        return out
+    out["ahead"], out["behind"] = int(parts[0]), int(parts[1])
+    if out["behind"]:
+        out["error"] = (f"upstream に {out['behind']} commit 遅れているので押しません"
+                        "（rebase はしません。手元の commit と upstream のどちらを残すかは人が決めます）")
+        return out
+    if not out["ahead"]:
+        return out
+    log = _run_git(repo_dir, ["log", "--format=%s", "@{u}..HEAD"])
+    out["subjects"] = [line for line in log.stdout.splitlines() if line.strip()]
+    out["count"] = out["ahead"]
+    push = _run_git(repo_dir, ["push"])
+    if push.returncode != 0:
+        out["error"] = "push に失敗しました（commit は残っています）: " + redact_mod.redact(push.stderr)
+        return out
+    out["pushed"] = True
+    return out
 
 
 def repo_toplevel(path: str) -> str | None:
