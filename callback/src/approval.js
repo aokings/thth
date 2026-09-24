@@ -8,6 +8,7 @@ export const TTL = 600_000;
 export const LIST_TTL = 86_400_000;
 export const HEAD = 60;          // 一覧に出す本文は先頭 60 字まで
 export const LIST_MAX = 50;      // 1 人の一覧に並べる承認待ちの上限
+export const LIST_LOCK_MS = 900_000; // 一覧に入る secret を 5 回間違えたら 15 分閉じる（時間で戻る）
 export const VIEW_MAX = 8;       // 1 人の一覧の session（ブラウザ）の上限
 export const ITERATIONS = 100_000; // Workers WebCrypto caps PBKDF2 at 100,000 iterations (production NotSupportedError above it).
 const encoder = new TextEncoder();
@@ -229,7 +230,7 @@ export async function pendingRequest(request,env,url){
         return new Response(null,{status:303,headers:{location:'/pending','cache-control':'no-store','referrer-policy':'no-referrer','set-cookie':setCookie('',0)}});
       }
       if(keys!=='person,secret')return reply(400,{error:'invalid_request'});
-      const person=form.get('person'),refused=()=>signIn(403,`<p><strong>入れませんでした。</strong>ユーザ名と承認 secret を確かめてください。繰り返し失敗すると管理者による解除が必要です。${en('Sign-in failed. Check the username and the approval secret. Repeated failures lock the list until the operator unlocks it.')}</p>`);
+      const person=form.get('person'),refused=()=>signIn(403,`<p><strong>入れませんでした。</strong>ユーザ名と承認 secret を確かめてください。5 回続けて間違えると一覧は 15 分閉じます。${en('Sign-in failed. Check the username and the approval secret. After five failures in a row the list is closed for 15 minutes.')}</p>`);
       if(!PERSON.test(person))return refused();
       const token=opaque(),opened=await (await personStub(env,person)).openList(form.get('secret'),await digest(token));
       if(opened.status!==200)return refused();

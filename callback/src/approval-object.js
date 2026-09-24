@@ -1,5 +1,5 @@
 import {DurableObject} from 'cloudflare:workers';
-import {TTL,LIST_TTL,HEAD,LIST_MAX,VIEW_MAX,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64,personStub,accountStub} from './approval.js';
+import {TTL,LIST_TTL,HEAD,LIST_MAX,VIEW_MAX,LIST_LOCK_MS,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64,personStub,accountStub} from './approval.js';
 import {HASH_PATTERN,STATE_PATTERN,digest} from './relay.js';
 import {mediaStub} from './media.js';
 
@@ -27,7 +27,7 @@ export class ApprovalPerson extends AtomicObject {
     if(operation==='set')this.put('person',{...body,active:true,generation:opaque(),failures:0});
     else if(!old)return fail(404,'not_found');
     else if(operation==='revoke')this.put('person',{active:false,generation:opaque(),failures:0});
-    else this.put('person',{...old,failures:0,list_failures:0});
+    else this.put('person',{...old,failures:0,list_failures:0,list_locked_until:null});
     return {status:200,body:{status:operation==='set'?'configured':operation==='revoke'?'revoked':'unlocked'}};
   });}
   // 招待（3.10.0）の完了ページが本人の承認 secret を 1 回だけ作る。既存の承認者は
@@ -96,8 +96,9 @@ export class ApprovalPerson extends AtomicObject {
     return result;
   }
   // 一覧に入る。照合は承認ページと同じ（PBKDF2 100,000）。失敗は一覧だけの回数で数え、5 回で
-  // 一覧を閉じる（管理者の unlock で戻る）。名前を知るだけの人が承認そのものを止められないよう、
-  // 承認ページの失敗回数とは分ける。名前の無い人にも同じだけ計算する（有無を時間で見せない）。
+  // 一覧を 15 分閉じる。15 分たてば回数ごと自然に戻り、管理者の unlock でもすぐ戻る。名前を知るだけの
+  // 人が承認そのものを止められないよう、承認ページの失敗回数とは分ける。名前の無い人にも同じだけ
+  // 計算する（有無を時間で見せない）。
   async openList(secret,tokenHash){
     if(typeof tokenHash!=='string'||!/^[a-f0-9]{64}$/.test(tokenHash))return fail();
     const before=this.ctx.storage.kv.get('person');
@@ -105,11 +106,15 @@ export class ApprovalPerson extends AtomicObject {
     const computed=valid?await verifier(secret,typeof before?.salt==='string'?before.salt:'A'.repeat(43)):null;
     const result=this.atomic(()=>{
       const row=this.ctx.storage.kv.get('person');
-      if(!before?.verifier||!row?.verifier||row.generation!==before.generation||!this.current(row.generation)||(row.list_failures??0)>=5)return null;
+      const now=this.now(),counted=row?.list_failures??0;
+      // 閉じてから 15 分たてば、失敗の数も 0 に戻る。
+      const failures=counted>=5&&now>=(row.list_locked_until??0)?0:counted;
+      if(!before?.verifier||!row?.verifier||row.generation!==before.generation||!this.current(row.generation)||failures>=5)return null;
       const ok=valid&&equal(unb64(computed),unb64(row.verifier));
-      this.put('person',{...row,list_failures:ok?0:(row.list_failures??0)+1});
+      const next=ok?0:failures+1;
+      this.put('person',{...row,list_failures:next,list_locked_until:next>=5?now+LIST_LOCK_MS:null});
       if(!ok)return null;
-      const now=this.now();this.prune(now);
+      this.prune(now);
       const views=[...this.ctx.storage.kv.list({prefix:'view:'})].sort(([,a],[,b])=>a.expires_at-b.expires_at);
       for(const [key] of views.slice(0,Math.max(0,views.length-VIEW_MAX+1)))this.ctx.storage.kv.delete(key);
       const expires_at=now+TTL;

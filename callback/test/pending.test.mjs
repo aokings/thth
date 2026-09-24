@@ -72,7 +72,7 @@ test('sign-in: only the right secret opens the list; the cookie is short, strict
   assert.ok(forged.headers.get('set-cookie').includes('Max-Age=0'));
 });
 
-test('five wrong sign-ins close the list only: approvals still work, the operator unlock reopens it',async()=>{
+test('five wrong sign-ins close the list only: approvals still work, the operator unlock reopens it at once',async()=>{
   const p={...await person(),account:account()},s=await session(p);
   for(let n=0;n<5;n++)assert.equal((await signIn(p,'wrong-'+opaque())).status,403);
   assert.equal((await signIn(p)).status,403);
@@ -184,4 +184,23 @@ test('without a list session nothing opens; sign-out and a reissued secret close
   const u=await session({...p,account:account()});assert.ok((await(await get('/pending',cookie)).text()).includes(u.body.text));
   assert.equal((await signed('person',p.id,'set',p.data)).status,200);
   const reissued=await(await get('/pending',cookie)).text();assert.ok(!reissued.includes(u.body.text)&&reissued.includes('autocomplete="username"'));
+});
+
+// 裁定（2026-09-25）: 一覧のロックは時間で戻る。5 回で 15 分閉じ、15 分たてば失敗の数ごと戻る。
+test('the list lock lifts by itself after 15 minutes, and the failure count starts over',async()=>{
+  const p={...await person(),account:account()},s=await session(p),start=Date.now();
+  for(let n=0;n<5;n++)assert.equal((await signIn(p,'wrong-'+opaque())).status,403);
+  const locked=new Map(await control('person',p.id)).get('person');
+  assert.equal(locked.list_failures,5);assert.ok(locked.list_locked_until>=start+15*60_000&&locked.list_locked_until<=Date.now()+15*60_000);
+  await control('person',p.id,{clock:locked.list_locked_until-1});
+  assert.equal((await signIn(p)).status,403,'still closed just before 15 minutes');
+  await control('person',p.id,{clock:locked.list_locked_until});
+  const ok=await signIn(p);assert.equal(ok.status,303);
+  const reopened=new Map(await control('person',p.id)).get('person');assert.equal(reopened.list_failures,0);assert.equal(reopened.list_locked_until,null);
+  const cookie=ok.headers.get('set-cookie').split(';')[0];sensitive.push(cookie);
+  assert.ok((await(await get('/pending',cookie)).text()).includes(s.body.text));
+  // After the lock lifted, one more mistake counts from 1, not from 5.
+  assert.equal((await signIn(p,'wrong-'+opaque())).status,403);
+  assert.equal(new Map(await control('person',p.id)).get('person').list_failures,1);assert.equal((await signIn(p)).status,303);
+  await control('person',p.id,{});
 });
