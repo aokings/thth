@@ -613,6 +613,9 @@ def cmd_mentions(args) -> int:
 
 # ---------------------------------------------------------------- profile
 
+# API が断ったとき（権限は乗っているのに範囲外）の断りにだけ添える 1 文。
+# 引けたときの出力には付けない: threads_profile_discovery は 2026-09-23 の審査で承認済み
+# （設計 3.11.0 §3。承認前に書いた注意書きを、成功の出力に出し続けていた）。
 STANDARD_ACCESS_NOTE = ("標準アクセスでは Meta 公式の 4 つ（@meta・@threads・@instagram・"
                         "@facebook）しか引けません（公開かつフォロワー 100 以上のみ）。")
 
@@ -627,8 +630,7 @@ def cmd_profile(args) -> int:
 
     def render(profile):
         if as_json:
-            print(json.dumps({"account": account, "profile": profile,
-                              "standard_access_note": STANDARD_ACCESS_NOTE},
+            print(json.dumps({"account": account, "profile": profile},
                              ensure_ascii=False, indent=2))
             return 0
         print(f"{account}  プロフィール @{profile.get('username')}")
@@ -642,7 +644,6 @@ def cmd_profile(args) -> int:
                 if key == "biography":
                     value = _one_line(value, 200)
                 print(f"  {_pad(label, 14)}: {value}")
-        print(f"  {STANDARD_ACCESS_NOTE}")
         return 0
 
     return _run(account, capability="profile_lookup", call=call, as_json=as_json,

@@ -206,8 +206,8 @@ def test_場所も共有も無ければparamsに入らない(isolated_account_fa
     assert "crossreshare_to_ig" not in params[0]
 
 
-def test_location_searchは5件までと標準アクセスの注記(isolated_account_factory, tmp_path,
-                                                     point_at, capsys):
+def test_location_searchは5件まで_承認前の注記は出さない(isolated_account_factory, tmp_path,
+                                                        point_at, capsys):
     _account_with_token(isolated_account_factory, tmp_path)
     with fake_threads_writes_server() as base_url:
         point_at(base_url)
@@ -219,7 +219,8 @@ def test_location_searchは5件までと標準アクセスの注記(isolated_acc
     assert out.count("  id ") == 5, out
     assert "6 件目" not in out
     assert "id 101" in out and "渋谷駅" in out
-    assert "Menlo Park" in out.splitlines()[-1]
+    # 3.11.0: threads_location_tagging は審査で承認済み。承認前の注記は出さない。
+    assert "Menlo Park" not in out and "標準アクセス" not in out
 
 
 def test_location_searchのjson(isolated_account_factory, tmp_path, point_at, capsys):
@@ -232,7 +233,7 @@ def test_location_searchのjson(isolated_account_factory, tmp_path, point_at, ca
     assert rc == 0 and len(payload["locations"]) == 5
     assert payload["locations"][0] == {"id": "101", "name": "渋谷駅", "address": None,
                                        "city": "渋谷区", "country": "JP"}
-    assert "Menlo Park" in payload["note"]
+    assert "note" not in payload
 
 
 # ==========================================================================

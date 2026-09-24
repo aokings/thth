@@ -44,12 +44,8 @@ from . import sent as sent_mod
 from . import writeback as writeback_mod
 from .adapters import base as adapter_base
 
-# **標準アクセス（App Review 前）の制限**（**L2** create-posts/location-tagging:
-# "If your app has not been approved for the threads_location_tagging permission,
-# the search will be performed only on the query 'Menlo Park'"）。
-LOCATION_STANDARD_ACCESS_NOTE = (
-    "※ 標準アクセス（App Review 前）では \"Menlo Park\" しか検索できません"
-    "（他の語は 0 件になります・L2）")
+# threads_location_tagging は 2026-09-23 の審査で承認済み。承認前に出していた
+# 「標準アクセスでは "Menlo Park" しか検索できません」の注意書きは外した（設計 3.11.0 §3）。
 LOCATION_LIMIT = 5
 
 
@@ -126,7 +122,7 @@ def cmd_location(args) -> int:
 
     if args.json:
         _print_json({"ok": True, "account": args.account, "query": args.query,
-                     "locations": rows, "note": LOCATION_STANDARD_ACCESS_NOTE})
+                     "locations": rows})
         return 0
     if not rows:
         print(f"「{args.query}」に一致する場所はありませんでした（0 件）")
@@ -138,7 +134,6 @@ def cmd_location(args) -> int:
             print(f"  {row.get('name') or '（名前なし）'}  id {row.get('id')}"
                   + (f"  （{where}）" if where else ""))
         print("front-matter に `location: <名前>` と `location_id: <id>` を書いてください")
-    print(LOCATION_STANDARD_ACCESS_NOTE)
     return 0
 
 

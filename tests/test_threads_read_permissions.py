@@ -458,7 +458,8 @@ def test_profileコマンド(account):
     assert r.returncode == 0, r.stdout + r.stderr
     assert "@threads" in r.stdout and "Threads" in r.stdout
     assert "12345678" in r.stdout
-    assert "標準アクセスでは Meta 公式の 4 つ" in r.stdout
+    # 3.11.0: 審査で承認済み。承認前の「標準アクセスでは」の注意書きは引けたときには出さない。
+    assert "標準アクセス" not in r.stdout
 
 
 def test_profileコマンドjson(account):
@@ -468,7 +469,7 @@ def test_profileコマンドjson(account):
     data = json.loads(r.stdout)
     assert data["profile"]["username"] == "threads"
     assert data["profile"]["follower_count"] == 12345678
-    assert "標準アクセス" in data["standard_access_note"]
+    assert "standard_access_note" not in data
 
 
 def test_profileコマンドは権限不足をrc2で断る(account):
