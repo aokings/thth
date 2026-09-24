@@ -492,7 +492,19 @@ def cmd_approve(args) -> int:
     **repo の同期も承認の一部**（同指摘 3-b）。ロックを取ったあとに
     `writeback.sync_repo()` を通す。以前は「承認の前に VM で git pull が要る」ことが
     どこにも書いていなかった。手順を文書に足すのではなく、道具の側でやる。
+
+    **`--confirm-file`**（依頼 3.8.2 件 2）は確定をまとめて打つ口。`_approve_confirm_file()`。
     """
+    if getattr(args, "confirm_file", None):
+        if args.file or args.confirm:
+            print("--confirm-file と、ファイルの名指し・--confirm は一緒に使えません"
+                  "（--confirm-file の中に「<原稿のパス> <digest>」を並べてください）。", file=sys.stderr)
+            return 2
+        return _approve_confirm_file(args)
+    if not args.file:
+        print("承認するファイル（またはディレクトリ）を渡してください。確定をまとめて打つなら"
+              " --confirm-file <file>（1 行に「<原稿のパス> <digest>」）。", file=sys.stderr)
+        return 2
     paths, note = _expand_targets(args.file, only_draft=True, account=getattr(args, "account", None),
                                   purpose="approve")
     if paths is None:
@@ -621,6 +633,233 @@ def cmd_approve(args) -> int:
               file=sys.stderr)
         return 1
     return 0
+
+
+# `--confirm-file` の 1 行の形（依頼 3.8.2 件 2）。1 段目の案内と断りの文に同じ文字列を使う。
+CONFIRM_FILE_FORMAT = "<原稿のパス> <digest>"
+# 1 回で確定できる行の上限（読み違えた巨大なファイルを 1 回のロックで抱え込まない）。
+CONFIRM_FILE_MAX_LINES = 500
+
+
+def _confirm_file_entries(source: str):
+    """`--confirm-file` を読む。`(行の一覧, 読めない理由)`。`-` なら標準入力。
+
+    行は `{"line", "raw", "digest", "problem"}`。空行と `#` で始まる行は飛ばす。
+    パスに空白が入ってもよいように、digest は行の**最後の語**。形の合わない行は
+    `problem` を付けて返す——**その 1 行だけを断り、他の行は進める**（件 2 の約束は
+    「合わない本だけ断る」。形の違いも同じ扱いにして、例外を増やさない）。
+    """
+    if source == "-":
+        text = sys.stdin.read()
+    else:
+        missing = _require_vm_path(source, what="--confirm-file")
+        if missing:
+            return None, missing
+        try:
+            with open(source, encoding="utf-8") as stream:
+                text = stream.read()
+        except (OSError, UnicodeDecodeError) as exc:
+            return None, f"--confirm-file を読めません（{exc.__class__.__name__}）: {source}"
+    digest_len = approval_mod.APPROVE_DIGEST_LENGTH
+    rows = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.rsplit(None, 1)
+        digest = parts[1] if len(parts) == 2 else ""
+        ok = len(digest) == digest_len and all(ch in "0123456789abcdef" for ch in digest)
+        rows.append({"line": number, "raw": parts[0].strip() if ok else stripped,
+                     "digest": digest if ok else None,
+                     "problem": None if ok else
+                     f"行の形が違います（1 行に「{CONFIRM_FILE_FORMAT}」・digest は一段目が出した"
+                     f" {digest_len} 桁）"})
+    if not rows:
+        return None, (f"--confirm-file に確定する行がありません（1 行に「{CONFIRM_FILE_FORMAT}」）。"
+                      "1 本も確定していません。")
+    if len(rows) > CONFIRM_FILE_MAX_LINES:
+        return None, (f"--confirm-file の行が多すぎます（{len(rows)} 行・1 回に {CONFIRM_FILE_MAX_LINES} 行まで）。"
+                      "分けて打ってください。1 本も確定していません。")
+    return rows, None
+
+
+def _confirm_command(path: str, digest: str, by: str) -> str:
+    import shlex
+    return f"thth approve {shlex.quote(path)} --confirm {digest} --by {shlex.quote(by)}"
+
+
+def _approve_confirm_file(args) -> int:
+    """`thth approve --confirm-file <file> --by <名前>`（依頼 3.8.2 件 2）。
+
+    masaru は digest を並べてから確定の命令を 10 行続けて打った。1 本ずつ同期・
+    ロック・push を繰り返すのは遅いうえ、並んだ命令の途中で止まると、どこまで
+    通ったかを人が数え直すことになる。ここでは:
+
+    - **1 回の同期と 1 回のロックの中で**、ファイルの行の順に確定する。
+    - digest が合わない本（と、行の形・パス・lint が合わない本）は**その 1 本だけ**
+      断って他は進める。断った本と理由は最後に並べる。
+    - commit は**従前どおり 1 本ずつ**（`承認: <名前>（account・名乗り）`）。push は
+      最後に 1 回。
+    - 同期・書き換え・commit・push のどこかで止まったら、どこまで通ったかと、
+      **残りをそのまま打てる命令**を出す。
+
+    見せたもの＝承認したもの、の保証は 1 本ずつの digest で従前どおり
+    （束の digest は使わない——1 本ずつ見せて 1 本ずつ確かめた形をそのまま持ち込む）。
+    """
+    approved_by = args.by or os.environ.get("THTH_ACTOR")
+    if not approved_by:
+        print("--by を付けてください（誰が承認したかを記録します）。"
+              "例: --by <あなたの名前>。環境変数 THTH_ACTOR でも指定できます。", file=sys.stderr)
+        return 1
+    try:
+        writeback_mod.check_front_matter_field("approved_by", approved_by)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    rows, error = _confirm_file_entries(args.confirm_file)
+    if error:
+        print(error, file=sys.stderr)
+        return 2
+
+    refused = []  # {"line", "file", "reason"}
+    targets = []
+    seen = set()
+    for row in rows:
+        if row["problem"]:
+            refused.append({"line": row["line"], "file": row["raw"], "reason": row["problem"]})
+            continue
+        try:
+            path = _resolve_repo_path(row["raw"], "approve")
+        except ValueError as exc:
+            refused.append({"line": row["line"], "file": row["raw"], "reason": str(exc)})
+            continue
+        if os.path.isdir(path):
+            refused.append({"line": row["line"], "file": path,
+                            "reason": "ディレクトリは書けません（1 行に 1 本の原稿）"})
+            continue
+        real = os.path.realpath(path)
+        if real in seen:
+            refused.append({"line": row["line"], "file": path,
+                            "reason": "同じ原稿が前の行にもあります（1 回だけ確定します）"})
+            continue
+        seen.add(real)
+        repo = writeback_mod.repo_toplevel(path)
+        if repo is None:
+            refused.append({"line": row["line"], "file": path,
+                            "reason": "git repo の中のファイルではないので承認できません"})
+            continue
+        targets.append({"line": row["line"], "path": path, "digest": row["digest"],
+                        "repo": os.path.realpath(repo)})
+    repos = sorted({t["repo"] for t in targets})
+    if len(repos) > 1:
+        print("別々の repo の原稿を一度に確定できません（clone ごとに --confirm-file を分けてください）: "
+              + " / ".join(repos) + "。1 本も確定していません。", file=sys.stderr)
+        return 1
+
+    approved, remaining, stopped = [], [], None
+    pushed, push_err, approved_at, repo_dir = True, "", None, (repos[0] if repos else None)
+    if repo_dir is not None:
+        repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
+        try:
+            lock_mod.acquire(repo_lock, getattr(args, "wait", 0))
+        except lock_mod.LockBusy:
+            print(f"いまこの repo を別の実行が使っています（{repo_dir}）。"
+                  "--wait <秒> で空くのを待てます。1 本も確定していません。", file=sys.stderr)
+            return 1
+        try:
+            synced, sync_err, _sha = writeback_mod.sync_repo(repo_dir)
+            if not synced:
+                stopped = (f"repo を同期できないので承認しません: {sync_err}"
+                           "（1 本も書き換えていません。直ったら同じ --confirm-file をもう一度打てます）")
+                remaining = list(targets)
+            else:
+                checked = []
+                for t in targets:
+                    one, problem = _prepare_one(t["path"])
+                    if not problem and getattr(args, "account", None) and one["account"] != args.account:
+                        problem = f"{t['path']}: 指定 account と一致しないので承認しません"
+                    if problem:
+                        refused.append({"line": t["line"], "file": t["path"], "reason": problem})
+                        continue
+                    if one["digest"] != t["digest"]:
+                        refused.append({"line": t["line"], "file": t["path"],
+                                        "reason": f"digest が一致しません（表示した本文と中身が違います）。"
+                                                  f"いまの digest は {one['digest']} です。"
+                                                  f"thth approve {t['path']} で本文を見直してください"})
+                        continue
+                    checked.append((t, one))
+                # 断った本があっても、合った本は進める（1 本の違いで全部を止めない）。
+                proceed = checked
+                approved_at = jst.iso()
+                for index, (t, one) in enumerate(proceed):
+                    rel = os.path.relpath(os.path.realpath(one["path"]), repo_dir)
+                    try:
+                        writeback_mod.set_front_matter_fields(
+                            one["path"], approval_mod.approved_fields(one, approved_by, approved_at))
+                        ok, err = writeback_mod.commit_local(
+                            repo_dir, rel_path=rel,
+                            message=f"承認: {os.path.basename(one['path'])}（{one['account']}・{approved_by}）")
+                    except (OSError, ValueError) as exc:
+                        ok, err = False, str(exc)
+                    if not ok:
+                        stopped = (f"{t['path']} の承認を書けなかったので、ここで止めました: {err}"
+                                   "（この 1 本は書き換えただけで commit していないことがあります。"
+                                   "git -C <repo> status で確かめてください）")
+                        remaining = [rest for rest, _ in proceed[index:]]
+                        break
+                    approved.append((t, one))
+                if approved:
+                    pushed, push_err = writeback_mod.push_committed(repo_dir)
+                    _clear_pending([one for _, one in approved], repo_dir)
+        finally:
+            repo_lock.release()
+
+    return _report_confirm_file(args, approved_by, approved_at, repo_dir, approved, refused,
+                                remaining, stopped, pushed, push_err)
+
+
+def _report_confirm_file(args, approved_by, approved_at, repo_dir, approved, refused,
+                         remaining, stopped, pushed, push_err) -> int:
+    """`--confirm-file` の結果: 通った本・断った本・止まった所と残りの命令。"""
+    import shlex
+    refused = sorted(refused, key=lambda row: row["line"])
+    commands = [_confirm_command(t["path"], t["digest"], approved_by) for t in remaining]
+    push_command = (f"git -C {shlex.quote(repo_dir)} push"
+                    if approved and not pushed and repo_dir else None)
+    ok = bool(approved) and not refused and not stopped and pushed
+    if args.json:
+        _print_json({"approved": ok, "count": len(approved), "approved_by": approved_by,
+                     "approved_at": approved_at,
+                     "files": [{"line": t["line"], "file": one["path"], "digest": one["digest"],
+                                "approved_sha": one["approved_sha"]} for t, one in approved],
+                     "refused": refused, "pushed": pushed if approved else None,
+                     "push_error": push_err or None, "stopped": stopped,
+                     "remaining_commands": commands + ([push_command] if push_command else [])})
+    else:
+        if approved:
+            print(f"承認しました: {len(approved)} 本（{approved_by}）"
+                  + ("" if pushed else "——**まだ push できていません**"))
+            for _t, one in approved:
+                print(f"  {os.path.basename(one['path'])} — {one['publish_at']}")
+        if stopped:
+            print(stopped, file=sys.stderr)
+            print(f"通ったもの: {len(approved)} 本。残り {len(remaining)} 本はそのまま打てます:",
+                  file=sys.stderr)
+            for command in commands:
+                print(f"  {command}", file=sys.stderr)
+        if approved and not pushed:
+            print("承認を commit しましたが push できませんでした。このままでは投稿されません"
+                  f"（board に unverified_content として出ます）: {push_err}", file=sys.stderr)
+            print(f"  commit まで済んだもの: {len(approved)} 本。push が通れば出ます: {push_command}",
+                  file=sys.stderr)
+        if refused:
+            print(f"断った原稿: {len(refused)} 本"
+                  + ("（ほかは進めました）" if approved else ""), file=sys.stderr)
+            for row in refused:
+                print(f"  {row['line']} 行目 {row['file']}: {row['reason']}", file=sys.stderr)
+        if not approved and not stopped and not refused:
+            print("確定するものがありませんでした。", file=sys.stderr)
+    return 0 if ok else 1
 
 
 def _record_pending(prepared: list, repo_dir: str, bundle: str) -> bool:
@@ -902,6 +1141,9 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
     print(f"束の digest: {bundle}")
     print(f"この {len(prepared)} 本でよければ、同じファイルを並べて "
           f"--confirm {bundle} を付けてもう一度実行してください。")
+    # 1 本ずつの digest で確定をまとめて打つ形（依頼 3.8.2 件 2）。中身の形だけを 1 行。
+    print(f"1 本ずつの digest で確定するなら: thth approve --confirm-file <file> --by <名前>"
+          f"（<file> は 1 行に「{CONFIRM_FILE_FORMAT}」）")
 
 def cmd_account(args) -> int:
     """`thth account [<name>]`: 1 アカウント（省略時は全部）の状態を一枚で述べる。
@@ -3327,12 +3569,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_approve = sub.add_parser(
         "approve",
         help="本文を見せて（一段目）、digest を渡すと承認する（二段目）")
-    p_approve.add_argument("file", nargs="+",
+    p_approve.add_argument("file", nargs="*",
                            help="ファイルでもディレクトリでも可（ディレクトリなら draft の .md をまとめて）")
     p_approve.add_argument("--json", action="store_true")
     p_approve.add_argument("--account", default=None, help="ディレクトリからこの account の draft だけを拾う")
     p_approve.add_argument("--confirm", default=None,
                            help="一段目が表示した digest。これが無いと承認しない")
+    p_approve.add_argument("--confirm-file", dest="confirm_file", default=None,
+                           help="複数の確定を 1 回で: 1 行に「<原稿のパス> <digest>」を並べたファイル"
+                                "（1 回の同期と 1 回のロックの中で順に確定し、digest が合わない本だけ断る）")
     p_approve.add_argument("--by", default=None,
                            help="誰が承認したか（front-matter と commit に残す）")
     p_approve.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")

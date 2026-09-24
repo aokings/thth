@@ -448,6 +448,19 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
     `validate` が False を返したら `PushValidationFailed` を送出する。push は
     行わず、commit はローカルに残したまま（手で直せる状態）。
     """
+    committed, err = commit_local(repo_dir, rel_path=rel_path, message=message)
+    if not committed:
+        return False, err
+    return push_committed(repo_dir, validate=validate)
+
+
+def commit_local(repo_dir: str, *, rel_path, message: str) -> tuple:
+    """`git add -- <rel_path>` → `commit --only`（push しない）。`(ok, error)` を返す。
+
+    `thth approve --confirm-file`（依頼 3.8.2 件 2）は 1 本ずつ commit して最後に
+    1 回だけ push する。`commit_and_push()` はこれと `push_committed()` を続けて
+    呼ぶだけ——commit の仕方（`--only`）を 2 通りに持たない。
+    """
     # `rel_path` は 1 本でもリストでもよい（複数本まとめて承認する経路・
     # asmon 関東セッション指摘 2026-09-10）。**commit に入るのはここに並べた
     # パスだけ**（`--only`）。
@@ -465,7 +478,14 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
     commit = _run_git(repo_dir, ["commit", "--only", "-m", message, "--", *rel_paths])
     if commit.returncode != 0:
         return False, redact_mod.redact(commit.stderr)
+    return True, ""
 
+
+def push_committed(repo_dir: str, *, validate=None) -> tuple:
+    """ローカルの commit を upstream に取り込んで push する（`commit_and_push()` の後半）。
+
+    `(ok, error)` を返す。失敗しても commit はローカルに残す（手で push できる状態）。
+    """
     # **無関係な stage 状態を、rebase の前後で保存する**（外部レビュー第 6 巡 P2-5）。
     #
     # `commit --only` は実 index の他のエントリを残す（第 5 巡の対応）。ところが
