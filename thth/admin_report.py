@@ -371,6 +371,9 @@ def register(sub):
     # 観測の地図（設計 3.5.0）。点と線は人が足す——口の中身は `thth/map_cli.py` に閉じる。
     from . import map_cli
     map_cli.register_admin(commands)
+    # 招待リンク（設計 3.10.0）。口の中身は `thth/invites.py` に閉じる。
+    from . import invites
+    invites.register_admin(commands)
     for name in OPERATIONS:
         p = commands.add_parser(name)
         p.add_argument('--json', action='store_true')

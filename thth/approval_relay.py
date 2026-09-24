@@ -17,6 +17,7 @@ from . import __version__, accounts, admin_log, authclients, redact, httpsafe
 
 PERSON = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z')
 OPAQUE = re.compile(r'[A-Za-z0-9_-]{43}\Z')
+INVITE = re.compile(r'[0-9a-f]{64}\Z')
 # Cloudflare Workers の WebCrypto は PBKDF2 の反復を 100,000 までしか受け付けない
 # （本番で実測: NotSupportedError "iteration counts above 100000 are not supported"）。
 # 承認 secret は 32 byte の乱数なので、伸長はこの回数で十分。Worker 側と一致させること。
@@ -113,6 +114,9 @@ def signed_request(kind, subject, operation, body):
         role = 'operator'
     elif kind == 'session' and OPAQUE.fullmatch(subject) and operation in ('create','consume','status','cancel'):
         role = 'job'
+    elif kind == 'invite' and INVITE.fullmatch(subject) and operation in ('create','status','authorize','reset','complete','revoke'):
+        # 招待（設計 3.10.0）。subject は code の SHA-256——code そのものは VM に無い。
+        role = 'operator'
     else: raise RelayError('invalid_approval_operation')
     path = f'/approval/{kind}/{subject}/{operation}'
     raw = json.dumps(body, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode()
