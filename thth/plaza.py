@@ -918,7 +918,7 @@ def evidence_level_of(record):
 
 def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, how=None,
          evidence_level="stated", declarations=(), hypothesis=None, change=None,
-         until=None, min_n=5, visibility="project", via="cli", project=None, medium=None,
+         until=None, min_n=5, visibility=None, via="cli", project=None, medium=None,
          now=None, trusted_accounts=None, confirm=None, goal=None, from_source=None,
          trial_due=None):
     """広場に 1 件置く。`plaza_id` を返す。
@@ -932,6 +932,11 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
     1 回目（`confirm` 無し）は、他人の情報を落とした後の「他の持ち主に見える本文と
     観測」と digest を返すだけで何も置かない。同じ中身で `confirm=<digest>` の 2 回目に
     初めて置く。中身が変わっていたら `open_digest_mismatch`。
+
+    **visibility の既定**（設計 3.8.1）: 明示が無ければ（`None`）、project が持ち主の組に
+    入っていれば owner・入っていなければ従前どおり project。open を既定にすることは無い
+    （open は常に明示と二段確認）。返す辞書の `visibility_default` に、既定で owner に
+    決めたときだけ組の名前を入れる（明示や project の既定では `None`）。
 
     `trusted_accounts` はサーバの口（credential が account と project を決めた）。
     CLI は台帳から project と媒体を読む。**秘密が混ざっていたら置かない。**
@@ -957,7 +962,7 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
             declarations = [found["declaration"]] + list(declarations or [])
     if kind not in KINDS:
         raise PlazaError("invalid_kind")
-    if visibility not in SCOPES:
+    if visibility is not None and visibility not in SCOPES:
         raise PlazaError("invalid_visibility")
     if type(min_n) is not int or min_n < 1:
         raise PlazaError("invalid_min_n")
@@ -983,6 +988,12 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
             raise PlazaError("account_unavailable") from None
         project, medium = cfg.get("project"), cfg.get("media")
         admin_log.register_account_secrets(cfg, via="cli")
+    # 明示が無ければ、組に入っている project は owner を既定に（設計 3.8.1）。open は
+    # 決して既定にしない（open は常に明示の `--open`／二段確認）。
+    default_owner = None
+    if visibility is None:
+        default_owner = owner_of(project)
+        visibility = "owner" if default_owner else "project"
     declarations = list(declarations or [])
     if kind != "measure" and declarations:
         raise PlazaError("not_a_measure")
@@ -1066,7 +1077,9 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
             "at": record["at"], "account": account, "project": project,
             "n_targets": len(targets), "observed": bool(observations) or bool(tool_numbers),
             "evidence_level": record["evidence_level"],
-            "from": (source or {}).get("kind"), "tool_version": __version__}
+            "from": (source or {}).get("kind"), "tool_version": __version__,
+            # 明示せずに組の既定で owner にしたときだけ組の名前（設計 3.8.1）。
+            "visibility_default": default_owner}
 
 
 # ------------------------------------------------------------------ 読む

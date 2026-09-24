@@ -553,7 +553,9 @@ def execute_user_plaza(context: ReportContext, request: dict) -> dict:
                     hypothesis=request.get('hypothesis'), change=request.get('change'),
                     until=request.get('until'), goal=request.get('goal'),
                     min_n=request['min_n'] if request.get('min_n') is not None else 5,
-                    visibility=request.get('visibility') or 'project', via='mcp',
+                    # 省略時（None）は plaza.post が project の持ち主の組から既定を決める
+                    # （組に入っていれば owner・設計 3.8.1）。project 明示ならそれに従う。
+                    visibility=request.get('visibility'), via='mcp',
                     project=context.allowed_accounts[account], medium=cfg.get('media'),
                     trusted_accounts=active)
             if operation == 'plaza_reply':

@@ -63,8 +63,9 @@ def test_組に登録したprojectだけにownerの書き込みが見える(grou
     assert plaza.list_posts(viewer("third-threads"))["n"] == 0
     third_text = json.dumps(plaza.list_posts(viewer("third-threads")), ensure_ascii=False)
     assert "OWNER-TITLE" not in third_text
-    # project の範囲の書き込みは組の相手にも見せない（従前どおり）。
-    inside = post(title="PROJECT-ONLY-2")
+    # project の範囲の書き込みは組の相手にも見せない（従前どおり）。組があるので既定は
+    # owner に変わった（設計 3.8.1）ため、ここは project を明示して確かめる。
+    inside = post(title="PROJECT-ONLY-2", visibility="project")
     with pytest.raises(plaza.PlazaError, match="^plaza_not_found$"):
         plaza.show(inside["plaza_id"], viewer("other-threads"))
 
@@ -181,7 +182,8 @@ def test_observeの0段に組の新着(grouped, monkeypatch):
     now = jst.now_jst()
     plaza.set_owner("masaru", ["kopicha", "other"], by="operator")
     post(title="組の気づき", visibility="owner", now=now - datetime.timedelta(hours=1))
-    post(title="PROJECT-INSIDE", now=now - datetime.timedelta(hours=1))
+    # 組があるので既定は owner に変わった（設計 3.8.1）ため、project 側の 1 件は明示する。
+    post(title="PROJECT-INSIDE", visibility="project", now=now - datetime.timedelta(hours=1))
     cell = next(s for s in morning.build("other-threads", now=now, mark=False)["sections"]
                 if s["section"] == "tool")["value"]["plaza"]
     assert cell["owner_new"] == 1 and cell["owner_denominator"] == 1

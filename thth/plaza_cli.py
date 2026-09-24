@@ -281,7 +281,7 @@ def cmd_post(args) -> int:
                             evidence_level=args.evidence_level, declarations=declarations, hypothesis=args.hypothesis,
                             change=args.change, until=args.until, min_n=args.min_n,
                             visibility=("open" if args.open else
-                                        "owner" if getattr(args, "owner", False) else "project"),
+                                        "owner" if getattr(args, "owner", False) else None),
                             via="cli", now=now,
                             confirm=args.confirm, goal=getattr(args, "goal", None),
                             trial_due=getattr(args, "trial_due", None))
@@ -293,6 +293,8 @@ def cmd_post(args) -> int:
     def render(result):
         print(f"広場に置きました: {result['plaza_id']}（{plaza.KIND_LABELS[result['kind']]}・"
               f"{result['scope']}・{result['account']}）")
+        if result.get("visibility_default"):
+            print(f"範囲: owner（組 {result['visibility_default']} の既定）")
         if result["observed"]:
             print(f"観測は道具が付けました（宣言 {result['n_targets']} 件）。"
                   f"thth plaza show {result['plaza_id']} --as {result['account']} で読めます")
@@ -394,7 +396,8 @@ def register(sub) -> None:
         help="施策の広場（同じ持ち主の媒体どうしで施策と結果を見せ合い、意見を交わす）",
         description=f"{plaza.WELCOME}。施策（measure・観測は道具が付ける）・気づき（finding）・"
                     "問い（question）を置き、返信（comment・tried・agree・disagree）を足す"
-                    "（設計 3.4.0）。既定の範囲は project（同じ持ち主の全 account）。--open は"
+                    "（設計 3.4.0）。既定の範囲は project（同じ持ち主の全 account）——ただし"
+                    "project が持ち主の組に入っていれば既定は owner（設計 3.8.1）。--open は"
                     "参加した他の持ち主にも見える広場で、他人の本文・username・author_key は"
                     "道具が落とします。秘密らしき値が含まれていたら置きません。",
         formatter_class=argparse.RawDescriptionHelpFormatter)

@@ -717,7 +717,9 @@ PLAZA_TOOLS = [
                     "how〔数字を出し直せる thth の命令〕が必須）・気づき（finding）・問い（question）を"
                     "置く。scope（媒体・企画の範囲）は必須。置いたものは同じ持ち主の全 account だけに"
                     "見える（visibility: owner は管理者が登録した持ち主の組の全 project に一段で見せる。"
-                    "他の持ち主に見せる open は人が CLI の二段確認で行う・この口には無い）。"
+                    "project が組に入っていれば visibility 省略の既定は owner・入っていなければ"
+                    "従前どおり project（設計 3.8.1）。他の持ち主に見せる open は人が CLI の二段確認"
+                    "で行う・この口には無い）。"
                     "evidence_level の observed は道具だけが付ける。from_tool（analytics-report・after・"
                     "study-report）・from_doc・from_report で、道具がその出力を置く時点で作り直して"
                     "数字を観測の欄と本文の下書きに入れる（body は任意の解釈）",
@@ -738,7 +740,8 @@ PLAZA_TOOLS = [
          "goal": {"type": "string", "enum": ["reach", "click", "follow", "reply"],
                   "description": "施策の目的（任意）。媒体をまたいで同じ目的の施策を比べる札"},
          "visibility": {"type": "string", "enum": ["project", "owner"],
-                        "description": "project（既定）か owner（持ち主の組・管理者が組を登録したときだけ）"},
+                        "description": "project か owner（持ち主の組・管理者が組を登録したときだけ）。"
+                                       "省略時は project が組に入っていれば owner・入っていなければ project"},
          "trial_due": {"type": "string", "description": "finding の追試の予定日（2026-10-08 か timezone 付きの時刻）"},
          "from_tool": {"type": "string", "enum": ["analytics-report", "after", "study-report"],
                        "description": "道具の出力から置く（analytics-report・after は from_account・"
