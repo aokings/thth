@@ -105,6 +105,10 @@ REASONS = frozenset((
     "third_party_handle",
     # 施策の目的（設計 3.6.0 §A2）。4 語の固定。
     "invalid_goal",
+    # 置く手間を減らす --from（設計 3.8.0 §C）。
+    "invalid_from", "from_unavailable", "from_out_of_scope", "from_is_finding",
+    "invalid_from_doc", "from_doc_outside_repo", "from_doc_not_committed",
+    "from_report_not_found", "from_report_open", "from_report_no_reply",
     # open にする二段確認（masaru 裁定 09-23）。
     "open_digest_mismatch", "open_requires_cli",
     # 持ち主の組（設計 3.8.0 §A）。
@@ -157,6 +161,18 @@ NEXT = {
     "invalid_min_n": "--min-n は 1 以上の整数です",
     "invalid_goal": "--goal は reach（表示）・click（サイト誘導）・follow（フォロー）・reply（会話）の"
                     "どれかです（無ければ付けない）",
+    "invalid_from": "--from は analytics-report・after・study-report のどれかと引数（account か宣言の"
+                    "ファイル）です。--from-doc・--from-report とは一緒に使えません",
+    "from_unavailable": "--from の出力を道具が作れませんでした（その命令を単独で打って確かめてください）",
+    "from_out_of_scope": "--from の account が、置く account と同じ持ち主（project）ではありません",
+    "from_is_finding": "--from-doc と --from-report は気づき（finding）として置きます（--kind は付けないか finding）",
+    "invalid_from_doc": "--from-doc は repo の中の md（通常のファイル・1 MiB まで・UTF-8）です",
+    "from_doc_outside_repo": "--from-doc の文書が、置く account の repo の外です",
+    "from_doc_not_committed": "--from-doc の文書に commit していない変更があります（どの版か言えないので"
+                              "置きません）。commit してから置いてください",
+    "from_report_not_found": "report_id を確かめてください（自分の project の報告だけ写せます）",
+    "from_report_open": "まだ閉じていない報告です。閉じて返事が付いてから写せます",
+    "from_report_no_reply": "実装側の返事が無い報告です（写すものがありません）",
     "invalid_kind_detail": "--kind-detail は finding にだけ付けられ、pattern（型）・rule（規則）・"
                            "pitfall（罠）・tool_tip（道具のコツ）のどれかです",
     "scope_required": f"--scope に媒体・企画の範囲を 1 行（{SCOPE_NOTE_MAX} 字まで）で書いてください"
@@ -235,6 +251,10 @@ def _valid(record) -> bool:
     # 施策の目的（設計 3.6.0 §A2）。3.5.0 までの書き込みは持たない（None）。
     if record.get("goal") is not None and record["goal"] not in _goals.GOALS:
         return False
+    # 3.8.0 §C: 道具の数字と出所（3.7.0 までの書き込みは持たない）。
+    for key in ("tool_numbers", "source"):
+        if record.get(key) is not None and not isinstance(record[key], dict):
+            return False
     hidden = record.get("hidden")
     return hidden is None or isinstance(hidden, dict)
 
@@ -721,6 +741,62 @@ def _declared_level(value):
     return value
 
 
+def _resolve_from(from_source, *, account, kind, title, body, kind_detail, how, project,
+                  trusted_accounts, now):
+    """`--from …` を道具の出力に置き換える（設計 3.8.0 §C）。人の本文は下書きの下に足す。"""
+    from . import plaza_from
+    if not isinstance(from_source, (tuple, list)) or not from_source:
+        raise PlazaError("invalid_from")
+    name = from_source[0]
+    if trusted_accounts is None:
+        try:
+            project = accounts.load_account(account).get("project")
+        except accounts.AccountError:
+            raise PlazaError("account_unavailable") from None
+    found = {"kind": kind, "title": title, "body": body, "kind_detail": kind_detail, "how": how,
+             "source": None, "tool_numbers": None, "study_command": None, "declaration": None}
+    if name in ("analytics-report", "after") and len(from_source) == 3:
+        numbers = plaza_from.tool_numbers(name, from_source[1], account=account, project=project,
+                                          now=now, window_days=from_source[2],
+                                          trusted_accounts=trusted_accounts)
+        found.update(body=plaza_from.compose(plaza_from.numbers_draft(numbers), body),
+                     how=how or numbers["command"], tool_numbers=numbers,
+                     source={"kind": name, "command": numbers["command"]})
+    elif name == "study-report" and len(from_source) == 3:
+        if kind is not None and kind != "measure":
+            raise PlazaError("not_a_measure")
+        command = from_source[2] if isinstance(from_source[2], str) else None
+        if command is None or _how_or_none(command) is None:
+            command = "thth study-report <宣言のファイル>"
+        found.update(kind="measure", how=how or _how_or_none(command), study_command=command,
+                     declaration=from_source[1],
+                     source={"kind": name, "command": command})
+    elif name == "doc" and len(from_source) == 2:
+        if kind is not None and kind != "finding":
+            raise PlazaError("from_is_finding")
+        doc = plaza_from.from_doc(from_source[1], account=account)
+        found.update(kind="finding", title=title or doc["title"],
+                     body=plaza_from.compose(doc["body"], body), source=doc["source"])
+    elif name == "report" and len(from_source) == 2:
+        if kind is not None and kind != "finding":
+            raise PlazaError("from_is_finding")
+        if kind_detail is not None and kind_detail != "tool_tip":
+            raise PlazaError("invalid_kind_detail")
+        got = plaza_from.from_report(from_source[1], account=account, project=project)
+        found.update(kind="finding", kind_detail="tool_tip", title=title or got["title"],
+                     body=plaza_from.compose(got["body"], body), source=got["source"])
+    else:
+        raise PlazaError("invalid_from")
+    return found
+
+
+def _how_or_none(value):
+    try:
+        return _how(value, required=False)
+    except PlazaError:
+        return None
+
+
 def _require_owner(project):
     """owner の範囲に置く・切り替える前に、project が組に入っていることを確かめる。"""
     if not project:
@@ -742,7 +818,9 @@ def open_view(record):
                                               "scope_note", "how", "verdict_reason")},
             "verdict": (record.get("verdict") or {}).get("verdict"),
             "observation": plaza_observe._columns(history[-1], "open") if history else None,
-            "masked": copy.get("masked", 0)}
+            "masked": copy.get("masked", 0),
+            # 3.8.0 §C の道具の数字（持つ書き込みだけ・持たなければ鍵を足さない＝digest は従前のまま）。
+            **({"tool_numbers": copy.get("tool_numbers")} if record.get("tool_numbers") else {})}
 
 
 def open_digest(record):
@@ -802,6 +880,9 @@ def evidence_level_of(record):
     history = record.get("observations") or []
     if history and any(column.get("observed") for column in history[-1].get("columns") or []):
         return "observed"
+    # --from analytics-report|after（3.8.0 §C）: 道具が置く時点で計算した数字が取れていれば。
+    if (record.get("tool_numbers") or {}).get("observed") is True:
+        return "observed"
     declared = record.get("declared_level")
     return declared if declared in DECLARABLE_LEVELS else "stated"
 
@@ -811,8 +892,13 @@ def evidence_level_of(record):
 def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, how=None,
          evidence_level="stated", declarations=(), hypothesis=None, change=None,
          until=None, min_n=5, visibility="project", via="cli", project=None, medium=None,
-         now=None, trusted_accounts=None, confirm=None, goal=None):
+         now=None, trusted_accounts=None, confirm=None, goal=None, from_source=None):
     """広場に 1 件置く。`plaza_id` を返す。
+
+    `from_source`（設計 3.8.0 §C・`thth/plaza_from.py`）: `("analytics-report"|"after", account,
+    window_days)`・`("study-report", 宣言, 出し直しの命令)`・`("doc", path)`・`("report", id)`。
+    道具がその出力を置く時点で作り直し、数字は `tool_numbers`（観測の欄）へ・下書きは本文の
+    先頭へ入れる。**人や LLM の本文（`body`）の数字は observed にしない。**
 
     **open は二段確認**（masaru 裁定 09-23・approve と同じ線）: `visibility="open"` の
     1 回目（`confirm` 無し）は、他人の情報を落とした後の「他の持ち主に見える本文と
@@ -823,12 +909,24 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
     CLI は台帳から project と媒体を読む。**秘密が混ざっていたら置かない。**
     measure なら、宣言（study-report の形）ごとに道具が観測を付ける。
     """
-    from . import plaza_observe, plaza_redact
+    from . import plaza_from, plaza_observe, plaza_redact
     by = poster(by)
     if via not in VIAS:
         raise PlazaError("invalid_post")
     if not accounts.name_is_safe(account):
         raise PlazaError("invalid_account")
+    source = tool_numbers = study_command = None
+    if from_source is not None:
+        now = now or jst.now_jst()
+        found = _resolve_from(from_source, account=account, kind=kind, title=title, body=body,
+                              kind_detail=kind_detail, how=how, project=project,
+                              trusted_accounts=trusted_accounts, now=now)
+        kind, title, body, kind_detail, how = (found[key] for key in (
+            "kind", "title", "body", "kind_detail", "how"))
+        source, tool_numbers, study_command = (found["source"], found["tool_numbers"],
+                                               found["study_command"])
+        if found["declaration"] is not None:
+            declarations = [found["declaration"]] + list(declarations or [])
     if kind not in KINDS:
         raise PlazaError("invalid_kind")
     if visibility not in SCOPES:
@@ -836,7 +934,8 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
     if type(min_n) is not int or min_n < 1:
         raise PlazaError("invalid_min_n")
     title = _text(title, TITLE_MAX, one_line=True)
-    body = _text(body, BODY_MAX)
+    # study-report の下書きは観測を付けたあとで本文の先頭に入れる（人の本文は任意）。
+    body = _text(body, BODY_MAX, required=study_command is None)
     scope_note = _scope_note(scope_note)
     kind_detail = _kind_detail(kind, kind_detail)
     # 施策の目的（設計 3.6.0 §A2・任意）。媒体をまたいで「reach の型は…」を比べる札。
@@ -891,6 +990,14 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
     if targets:
         observations.append(plaza_observe.observe(targets, now=now, min_n=min_n, by=by,
                                                   trigger="posted", allowed_names=allowed))
+    if study_command is not None:
+        # 道具の下書き（観測の列と同じ数字）を先頭に・人や LLM の本文はその下に。
+        body = _text(plaza_from.compose(plaza_from.study_draft(observations[0], study_command),
+                                        body), BODY_MAX)
+        _no_secret(body)
+        body = private_store.fold_paths(body)
+    if tool_numbers is not None:
+        _no_secret(json.dumps(tool_numbers, ensure_ascii=False))
     record = {"schema_version": SCHEMA_VERSION, "plaza_id": None, "at": jst.iso(now),
               "updated_at": jst.iso(now), "kind": kind, "scope": visibility,
               "title": title, "body": body, "hypothesis": hypothesis, "change": change,
@@ -899,7 +1006,9 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
               "project": project, "account": account, "medium": medium, "by": by, "via": via,
               "tool_version": __version__, "targets": targets, "until": until, "min_n": min_n,
               "observations": observations, "verdict": None, "replies": [], "hidden": None,
-              "open_copy": None, "goal": goal}
+              "open_copy": None, "goal": goal,
+              # 3.8.0 §C: 道具が付けた数字（--from analytics-report|after）と元の出所。
+              "tool_numbers": tool_numbers, "source": source}
     record["evidence_level"] = evidence_level_of(record)
     if visibility == "open":
         # 他人の情報を落とした写しを**置く時点で**作る（読む側は写しだけを見る）。
@@ -924,8 +1033,9 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
     return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_posted",
             "plaza_id": record["plaza_id"], "kind": kind, "scope": visibility,
             "at": record["at"], "account": account, "project": project,
-            "n_targets": len(targets), "observed": bool(observations),
-            "evidence_level": record["evidence_level"], "tool_version": __version__}
+            "n_targets": len(targets), "observed": bool(observations) or bool(tool_numbers),
+            "evidence_level": record["evidence_level"],
+            "from": (source or {}).get("kind"), "tool_version": __version__}
 
 
 # ------------------------------------------------------------------ 読む
@@ -1090,14 +1200,18 @@ def show(plaza_id, viewer):
                    "owner": owner_label(record.get("project"), record.get("account")),
                    "medium": record.get("medium"), "until": record.get("until"),
                    "verdict": plaza_observe.verdict_view(record.get("verdict"), level, record),
-                   "goal": record.get("goal"), "masked": copy.get("masked", 0)}
+                   "goal": record.get("goal"), "masked": copy.get("masked", 0),
+                   # 道具の数字は写し（他人の情報を落としたもの）・出所は種類だけ（3.8.0 §C）。
+                   "tool_numbers": copy.get("tool_numbers"),
+                   "source": ({"kind": record["source"].get("kind")} if record.get("source")
+                              else None)}
     else:
         payload = {"report_type": "plaza_post", "view": level, **{
             key: record.get(key) for key in (
                 "plaza_id", "at", "updated_at", "kind", "scope", "title", "body", "hypothesis",
                 "change", "project", "account", "medium", "by", "via", "tool_version", "until",
                 "min_n", "hidden", "kind_detail", "scope_note", "how", "declared_level",
-                "goal")},
+                "goal", "tool_numbers", "source")},
             "evidence_level": evidence_level_of(record),
             "owner": owner_label(record.get("project"), record.get("account")),
             "verdict": plaza_observe.verdict_view(record.get("verdict"), level, record),
@@ -1111,8 +1225,10 @@ def show(plaza_id, viewer):
     payload["observation"] = plaza_observe.observation_view(record, level)
     payload["observation_reason"] = plaza_observe.observation_reason(record)
     payload["comparison"] = plaza_observe.comparison_table(record, level, linked)
+    # 道具の下書き（3.8.0 §C）の数字は観測の欄が正なので、本文の数字には数えない。
+    from . import plaza_from
     payload["text_numbers"] = {"source": "text", "verified": False,
-                               "values": text_numbers(payload["body"])}
+                               "values": text_numbers(plaza_from.human_part(payload["body"]))}
     return payload
 
 

@@ -217,6 +217,15 @@ def attach_open_copy(record, *, trusted_accounts=None):
                                        for entry in observation.get("columns") or []]
     for row in own_replies:
         row["open_text"] = clean(row["text"])
+    numbers = record.get("tool_numbers")
+    if numbers:
+        # 道具の数字（3.8.0 §C）: 集計の数字と期間はそのまま・言えないことの文は落とした写し。
+        # account 名（target）と出し直しの命令は他の持ち主に見せない（how は写しで見える）。
+        copy["tool_numbers"] = {"source": numbers.get("source"), "medium": numbers.get("medium"),
+                                "at": numbers.get("at"), "period": numbers.get("period"),
+                                "numbers": numbers.get("numbers"),
+                                "cannot_say": [clean(line) for line in numbers.get("cannot_say") or []],
+                                "observed": numbers.get("observed")}
     copy["masked"] = total
     record["open_copy"] = copy
     return record

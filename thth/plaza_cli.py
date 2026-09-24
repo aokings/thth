@@ -137,6 +137,19 @@ def render_post(payload, out=print):
             base, changed = column["denominators"]["baseline"], column["denominators"]["changed"]
             out(f"  {column.get('medium') or '—'}: 前 {base['eligible']}/{base['requested']} 件"
                 f"・後 {changed['eligible']}/{changed['requested']} 件（時間適合/指定）")
+    numbers = payload.get("tool_numbers")
+    if numbers:
+        out(f"[{plaza_observe.LABEL}] {numbers.get('source')}（{numbers.get('at')}）")
+        from . import plaza_from
+        for line in plaza_from.numbers_draft({**numbers,
+                                              "command": numbers.get("command") or "—"}).splitlines()[2:]:
+            out(f"  {line}")
+    source = payload.get("source")
+    if source and source.get("kind") == "doc":
+        out(f"[元の文書] {source.get('path')}@{(source.get('commit') or '')[:7]}"
+            + ("（先頭 4,000 字）" if source.get("truncated") else ""))
+    elif source and source.get("kind") == "report":
+        out(f"[元の報告] {source.get('report_id')}（閉じた版 {source.get('closed_version')}）")
     if payload.get("comparison"):
         render_comparison(payload["comparison"], out)
     verdict = payload.get("verdict")
@@ -228,15 +241,41 @@ def _emit_preview(args, result, again):
 
 # ------------------------------------------------------------------ 利用者
 
+def _from_source(args, now):
+    """`--from KIND ARG`・`--from-doc`・`--from-report` を `plaza.post(from_source=)` の形に。"""
+    chosen = [value for value in (args.from_tool, args.from_doc, args.from_report) if value]
+    if len(chosen) > 1:
+        raise plaza.PlazaError("invalid_from")
+    if args.from_doc:
+        return ("doc", args.from_doc)
+    if args.from_report:
+        return ("report", args.from_report)
+    if not args.from_tool:
+        if args.from_window_days is not None:
+            raise plaza.PlazaError("invalid_from")
+        return None
+    kind, value = args.from_tool
+    if kind == "study-report":
+        if args.from_window_days is not None:
+            raise plaza.PlazaError("invalid_from")
+        declaration = plaza.load_declaration_file(value, now)
+        return ("study-report", declaration, private_store.fold_paths(f"thth study-report {value}"))
+    if kind in ("analytics-report", "after"):
+        return (kind, value, args.from_window_days)
+    raise plaza.PlazaError("invalid_from")
+
+
 def cmd_post(args) -> int:
     if args.open and getattr(args, "owner", False):
         return _print_refusal(args, plaza.PlazaError("invalid_visibility"))
     try:
         plaza.poster(args.by)
         now = jst.now_jst()
+        from_source = _from_source(args, now)
         declarations = [plaza.load_declaration_file(path, now) for path in args.declaration or []]
+        body = _read(args.body_file, plaza.BODY_MAX) if args.body_file else None
         result = plaza.post(args.account, kind=args.kind, title=args.title,
-                            body=_read(args.body_file, plaza.BODY_MAX), by=args.by,
+                            body=body, by=args.by, from_source=from_source,
                             scope_note=args.scope, kind_detail=args.kind_detail, how=args.how,
                             evidence_level=args.evidence_level, declarations=declarations, hypothesis=args.hypothesis,
                             change=args.change, until=args.until, min_n=args.min_n,
@@ -333,10 +372,25 @@ def register(sub) -> None:
                     "--declaration（study-report の宣言 JSON・媒体ごとに 1 つ）を並べると、"
                     "道具が同じ計算で観測を付けます。")
     poster.add_argument("account")
-    poster.add_argument("--kind", required=True, choices=plaza.KINDS)
-    poster.add_argument("--title", required=True)
-    poster.add_argument("--body-file", required=True, dest="body_file",
-                        help="本文のファイル（VM 側のパス。`-` は標準入力）")
+    poster.add_argument("--kind", default=None, choices=plaza.KINDS,
+                        help="measure・finding・question（必須。--from-doc・--from-report は finding・"
+                             "--from study-report は measure になる）")
+    poster.add_argument("--title", default=None,
+                        help="題（必須。--from-doc は文書の見出し・--from-report は報告の題が既定）")
+    poster.add_argument("--body-file", default=None, dest="body_file",
+                        help="本文のファイル（VM 側のパス。`-` は標準入力。--from… のときは任意で、"
+                             "道具の下書きの下に足す解釈）")
+    poster.add_argument("--from", nargs=2, default=None, dest="from_tool", metavar=("KIND", "ARG"),
+                        help="analytics-report <account>・after <account>・study-report <宣言のファイル>。"
+                             "置く時点で道具がその出力を作り直し、数字（分母・期間・言えないこと）を"
+                             "観測の欄と本文の下書きに入れる（observed は道具の数字だけ・設計 3.8.0）")
+    poster.add_argument("--from-window-days", type=int, default=None, dest="from_window_days",
+                        help="--from analytics-report|after の期間（既定はその命令と同じ）")
+    poster.add_argument("--from-doc", default=None, dest="from_doc",
+                        help="repo の中の md を気づきとして置く（元のパスと commit を持つ・本文は先頭 "
+                             "4,000 字・commit していない変更がある文書は置かない）")
+    poster.add_argument("--from-report", default=None, dest="from_report",
+                        help="自分の project の閉じた報告の返事を道具のコツとして写す（report_id）")
     poster.add_argument("--scope", default=None,
                         help=f"媒体・企画の範囲（必須・1 行 {plaza.SCOPE_NOTE_MAX} 字まで。"
                              "読み手が読者層の違いを知るため。例: Threads の朝の投稿・茶の話題）")
