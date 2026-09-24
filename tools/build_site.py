@@ -271,7 +271,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-09-23"  # 3.4.0 の実態どおりの書き直し（masaru「プライバシーデプロイして下さい」2026-09-23）
+PRIVACY_EFFECTIVE = "2026-09-25"  # 観測の地図の集計・広場・連絡先を追記（masaru「OK、deploy して」2026-09-25）
 
 
 def build_privacy() -> str:
@@ -707,7 +707,7 @@ def build_privacy() -> str:
 
 
 # 施行日は deploy のとき主セッションが入れる（privacy と同じ・生成で日付を作らない）。
-TERMS_EFFECTIVE = None
+TERMS_EFFECTIVE = "2026-09-25"  # 利用規約の初版（masaru「OK、deploy して」2026-09-25）
 
 
 def contact_html(lang: str) -> str:
