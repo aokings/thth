@@ -186,6 +186,16 @@ def test_同期で止まったら_残りをそのまま打てる確定の命令�
     assert result.returncode == 0, result.stderr
 
 
+def test_confirm_fileにハイフンを渡すと標準入力から読む(drafts):
+    """手元（Mac）のファイルは VM に無いので、`--confirm-file -` で標準入力から渡せる。"""
+    lines = "".join(f"{path} {digest}\n" for path, digest in zip(drafts["paths"], drafts["digests"]))
+    result = run_thth(["approve", "--confirm-file", "-", "--by", "masaru"], stdin=lines)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "承認しました: 3 本（masaru）"
+    missing = run_thth(["approve", "--confirm-file", "/Users/someone/confirm.txt", "--by", "masaru"])
+    assert missing.returncode == 2 and "手元のパス" in missing.stderr
+
+
 def test_1段目が複数のときconfirm_fileの形を1行添える(drafts):
     first = run_thth(["approve", drafts["paths"][0], drafts["paths"][1]])
     assert first.returncode == 1
