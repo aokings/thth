@@ -211,10 +211,14 @@ def test_listが自分の書き込みだけなら管理者に頼む命令の形�
     post(account="kopicha-bsky", title="自分の持ち主の")
     payload = plaza.list_posts(viewer("kopicha-threads"))
     assert payload["hint"]["reason"] == "only_own_posts"
-    # 組と参加がそろえば、頼むことが無いので何も言わない。
+    # 組と参加がそろっても、組の他の project がまだ owner 範囲に何も置いていなければ、
+    # 頼むことは無いのでその旨だけ言う（「組の登録を頼んで」ではない・設計 3.8.1）。
     plaza.set_owner("masaru", ["kopicha", "other"], by="operator")
     plaza.set_membership("kopicha", joined=True, by="operator")
-    assert plaza.list_posts(viewer("kopicha-threads"))["hint"] is None
+    hint = plaza.list_posts(viewer("kopicha-threads"))["hint"]
+    assert hint == {"reason": "only_own_posts", "commands": [],
+                    "line": "広場: 組（masaru）の他の project の書き込みは owner 範囲にした"
+                            "ものだけ見えます。まだ 0 件です"}
     # 組の相手の書き込みが読めるなら案内は出さない。
     plaza.set_membership("kopicha", joined=False, by="operator")
     post(account="other-threads", title="組", by="o", visibility="owner")

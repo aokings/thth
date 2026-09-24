@@ -1180,7 +1180,9 @@ def _list_hint(viewer, rows, joined):
     """読めるのが 0 件か自分の書き込みだけなら、組と open への参加の案内（命令の形）。
 
     足りないものだけを言う（組に入っていれば組の命令は出さない・参加していれば join は
-    出さない）。両方そろっていれば何も言わない（管理者に頼めることが無い）。
+    出さない）。組も参加もそろっているのに 0 件（＝組の他の project がまだ owner 範囲に
+    何も置いていないだけ）なら、管理者に頼めることは無いのでその旨だけ言う（設計 3.8.1・
+    「組の登録を頼んで」と読める案内は組が無いときだけに絞る）。
     """
     if any(not viewer.owns(row.get("project"), row.get("account")) for row in rows):
         return None
@@ -1189,17 +1191,22 @@ def _list_hint(viewer, rows, joined):
         return None
     commands = []
     groups = owner_groups()
+    owner_names = {owner_of(project, groups) for project in projects} - {None}
     if any(owner_of(project, groups) is None for project in projects):
         commands.append(f"thth admin plaza owner set <組の名前> {' '.join(projects)} "
                         "<同じ持ち主の他の project> --by <名前>")
     if not (viewer.projects & joined):
         commands.append(f"thth admin plaza join {projects[0]} --by <名前>")
-    if not commands:
+    if commands:
+        return {"reason": "no_posts" if not rows else "only_own_posts", "commands": commands,
+                "line": ("広場: 読めるのは" + ("まだ 0 件" if not rows else "自分の書き込みだけ")
+                         + "です。同じ持ち主の他の project や他の持ち主の書き込みを読むには、管理者に"
+                         "次を頼んでください: " + " ／ ".join(commands))}
+    if not owner_names:
         return None
-    return {"reason": "no_posts" if not rows else "only_own_posts", "commands": commands,
-            "line": ("広場: 読めるのは" + ("まだ 0 件" if not rows else "自分の書き込みだけ")
-                     + "です。同じ持ち主の他の project や他の持ち主の書き込みを読むには、管理者に"
-                     "次を頼んでください: " + " ／ ".join(commands))}
+    return {"reason": "no_posts" if not rows else "only_own_posts", "commands": [],
+            "line": ("広場: 組（" + "・".join(sorted(owner_names)) + "）の他の project の書き込みは"
+                     " owner 範囲にしたものだけ見えます。まだ 0 件です")}
 
 
 def text_numbers(text):
