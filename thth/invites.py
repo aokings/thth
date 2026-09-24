@@ -866,10 +866,173 @@ def forget_credential(account, *, by):
             _save(directory, latest, credential_removed=True)
 
 
+# ------------------------------------------------ 運営者の口（資格情報の bearer を使わない）
+#
+# 招待の口座の下書きを置き、その口座の承認者（口座名）あての承認 URL を出す（裁定 2026-09-25）。
+# 審査の間、運営者が審査員の口座に下書きを置いて承認 URL を渡すための口。bearer は使わない:
+# job は招待で足したその口座だけの資格情報の 1 件（hash だけ）に結び、常駐の既存の再確認
+# （その 1 件がまだあり、取り消されていないか・口座の範囲か）をそのまま通す。
+# 招待で用意していない口座（運営者自身の repo 型の口座など）には出さない。
+
+ADMIN_REASONS = frozenset(("admin_approval_invite_account_only", "admin_approval_credential_missing",
+                           "admin_approval_invalid_draft"))
+NEXT.update({
+    "admin_approval_invite_account_only": "この口は招待で用意した口座（inv-…）だけです。運営者自身の口座は"
+                                          "従来どおり thth approve か MCP の承認の道で",
+    "admin_approval_credential_missing": "その口座の資格情報の 1 件がありません。thth approval-worker を "
+                                         "--credentials 付きで動かすと、次の巡で足します（thth admin invite list）",
+    "admin_approval_invalid_draft": "--draft は draft_id（64 桁）か、その口座の queue の原稿のパスです",
+})
+
+
+def invite_context(account):
+    """招待で用意した口座の、その口座だけの資格情報の文脈（bearer は使わない）。"""
+    from . import report_http
+    try:
+        cfg = accounts.load_account(account)
+    except accounts.AccountError:
+        raise error("admin_approval_invite_account_only") from None
+    records, _ = STORE.load()
+    record = next((row for row in records if row.get("account") == account and row["status"] == "used"
+                   and row["invite_id"] == cfg.get("invite_id")), None)
+    if record is None:
+        raise error("admin_approval_invite_account_only")
+    if not record.get("credential_sha256") or not record.get("credentials_path"):
+        raise error("admin_approval_credential_missing")
+    import datetime
+    try:
+        _, loaded = report_http.load_credentials(Path(record["credentials_path"]))
+    except Exception:
+        raise error("admin_approval_credential_missing") from None
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for digest, expires, revoked, context in loaded:
+        if (digest == record["credential_sha256"] and not revoked and now < expires
+                and context.actor == account and dict(context.allowed_accounts) == {account: record["project"]}):
+            return context
+    raise error("admin_approval_credential_missing")
+
+
+def _draft_id(context, account, value):
+    from . import server_writes
+    if isinstance(value, str) and server_writes.DRAFT_ID.fullmatch(value):
+        return value
+    cfg = accounts.load_account(account)
+    try:
+        _, queue = server_writes._queue(cfg)
+        path = Path(value).absolute()
+    except Exception:
+        raise error("admin_approval_invalid_draft") from None
+    if path.parent != queue.absolute() or not path.name.endswith(".md"):
+        raise error("admin_approval_invalid_draft")
+    return server_writes._id(path.name)
+
+
+def admin_draft_put(account, *, body, publish_at=None, topic=None, reply_to=None, by):
+    admin_log.actor(by)
+    from . import server_writes
+    context = invite_context(account)
+    request = {"operation": "draft_put", "account": account, "body": body, "publish_at": publish_at or jst.iso()}
+    for key, value in (("topic", topic), ("reply_to", reply_to)):
+        if value:
+            request[key] = value
+    return server_writes.execute(context, request, via="cli", by=by)
+
+
+def admin_approval_request(account, *, draft=None, send=False, retract=None, reason=None, by):
+    """承認 URL を出す。既定は原稿の承認、--send は承認の直後に公開、--retract は削除。"""
+    admin_log.actor(by)
+    from . import queuefile, server_writes
+    context = invite_context(account)
+    if retract is not None:
+        request = {"operation": "retract_request", "account": account, "post_id": retract, "reason": reason or ""}
+    else:
+        draft_id = _draft_id(context, account, draft)
+        if not send:
+            request = {"operation": "approval_request", "account": account, "draft_id": draft_id}
+        else:
+            # 原稿の本文・話題・返信先で send_request（承認の直後に公開・返信）。
+            cfg = accounts.load_account(account)
+            name, raw, q = server_writes._draft(cfg, account, draft_id)
+            if q.front_matter.get("status") != "draft":
+                raise error("admin_approval_invalid_draft")
+            body = queuefile.extract_section(q.body, cfg["media"]).strip()
+            request = {"operation": "send_request", "account": account, "body": body}
+            for key in ("topic", "reply_to"):
+                if q.front_matter.get(key):
+                    request[key] = str(q.front_matter[key])
+    return server_writes.execute(context, request, via="cli", by=by)
+
+
+def _admin_fail(exc):
+    from .report_service import ReportServiceError
+    if isinstance(exc, InviteError):
+        return _fail(str(exc))
+    if isinstance(exc, ReportServiceError):
+        detail = getattr(exc, "reason", None)
+        print(str(exc) + (": " + detail if isinstance(detail, str) else ""), file=sys.stderr)
+        return 2
+    if isinstance(exc, ValueError) and str(exc).startswith("admin_by_required"):
+        print(str(exc), file=sys.stderr)
+        return 2
+    return _fail("invite_store_unavailable")
+
+
+def cmd_admin_draft_put(args):
+    from .report_service import ReportServiceError
+    try:
+        body = private_store.read_input(args.body_file, 48000, error=error, invalid="admin_approval_invalid_draft")
+        row = admin_draft_put(args.account, body=body or "", publish_at=args.publish_at, topic=args.topic,
+                              reply_to=args.reply_to, by=args.by)
+    except (InviteError, ReportServiceError, ValueError, OSError) as exc:
+        return _admin_fail(exc)
+    print(f"draft_put: account={row['account']} draft_id={row['draft_id']} status={row['status']}")
+    return 0
+
+
+def cmd_admin_approval_request(args):
+    from .report_service import ReportServiceError
+    if (args.draft is None) == (args.retract is None) or (args.retract is not None and (args.send or not args.reason)):
+        print("--draft か --retract（と --reason）のどちらか 1 つを渡してください", file=sys.stderr)
+        return 2
+    try:
+        row = admin_approval_request(args.account, draft=args.draft, send=args.send, retract=args.retract,
+                                     reason=args.reason, by=args.by)
+    except (InviteError, ReportServiceError, ValueError, OSError) as exc:
+        return _admin_fail(exc)
+    # 承認 URL はこの口の出力（運営者が本人に渡す）。押すには本人の承認 secret が要る。
+    print(f"approval_requested: account={row['account']} kind={row['kind']} job_id={row['job_id']}")
+    print("承認 URL（10 分）: " + row["approval_url"])
+    return 0
+
+
+def register_admin_writes(commands):
+    parser = commands.add_parser("approval", help="招待の口座の承認 URL を出す（運営者の口・bearer を使わない）")
+    operations = parser.add_subparsers(dest="approval_operation", required=True)
+    p = operations.add_parser("request", help="その口座の承認者あての承認 URL（10 分）")
+    p.add_argument("account")
+    p.add_argument("--draft", default=None, help="draft_id か、その口座の queue の原稿のパス")
+    p.add_argument("--send", action="store_true", help="承認の直後に公開する（原稿の本文・返信先で）")
+    p.add_argument("--retract", default=None, metavar="POST_ID", help="この投稿の削除の承認")
+    p.add_argument("--reason", default=None, help="--retract の理由")
+    p.add_argument("--by", required=True)
+    p.set_defaults(func=cmd_admin_approval_request)
+    parser = commands.add_parser("draft", help="招待の口座に下書きを置く（運営者の口）")
+    operations = parser.add_subparsers(dest="draft_operation", required=True)
+    p = operations.add_parser("put", help="下書きを 1 本置く")
+    p.add_argument("account")
+    p.add_argument("--body-file", required=True, help="本文のファイル（- は標準入力）")
+    p.add_argument("--publish-at", default=None, help="ISO 8601（省略時は今）")
+    p.add_argument("--topic", default=None)
+    p.add_argument("--reply-to", default=None)
+    p.add_argument("--by", required=True)
+    p.set_defaults(func=cmd_admin_draft_put)
+
+
 # ------------------------------------------------------------------- CLI
 
 def _fail(reason):
-    reason = reason if reason in REASONS or reason == "invalid_request" else "invite_store_unavailable"
+    known = REASONS | ADMIN_REASONS | {"invalid_request"}
+    reason = reason if reason in known else "invite_store_unavailable"
     print(reason + (": " + NEXT[reason] if reason in NEXT else ""), file=sys.stderr)
     return 2
 
@@ -951,3 +1114,4 @@ def register_admin(commands):
     p = operations.add_parser("list", help="招待の一覧（code は出さない）")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_list)
+    register_admin_writes(commands)

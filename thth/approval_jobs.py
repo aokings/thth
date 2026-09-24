@@ -48,7 +48,7 @@ def _valid_job(value, job_id):
             or not all(matches(sha,value[k]) for k in ('credential_digest','digest'))
             or not isinstance(value['status'],str) or value['status'] not in STATES
             or not isinstance(value['kind'],str) or value['kind'] not in ('approve','send','retract')
-            or not isinstance(value['via'],str) or value['via'] not in ('http','mcp')
+            or not isinstance(value['via'],str) or value['via'] not in ('http','mcp','cli')
             or type(value['expires_at']) is not int or value['expires_at'] <= 0):
         return False
     if 'reason' in value and (not isinstance(value['reason'],str) or value['reason'] not in REASONS): return False
@@ -163,7 +163,7 @@ def _attachments(account, actor, media, subjects, payload):
     return rows,typed
 
 
-def create(context, request, binding, via, media=None):
+def create(context, request, binding, via, media=None, by=None):
     job_id,token,read_key=(secrets.token_urlsafe(32) for _ in range(3))
     now=int(time.time()*1000)
     digest=hashlib.sha256(server_files.encode(binding)).hexdigest()
@@ -177,7 +177,7 @@ def create(context, request, binding, via, media=None):
             with admin_log.transaction():
                 server_files.replace_at(fd,job_id+'.json',server_files.encode(job),new=True)
                 admin_log.append({'approve':'approval_requested','send':'send_requested','retract':'retract_requested'}[job['kind']],
-                                 job['account'],{},by=context.actor,via=via,diff={'request_present':[False,True]},run_id=job_id)
+                                 job['account'],{},by=by or context.actor,via=via,diff={'request_present':[False,True]},run_id=job_id)
             def payload(rows,typed):
                 extra={} if rows is None else {'attachments':rows}
                 if typed is not None:extra['typed']=typed

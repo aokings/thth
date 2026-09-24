@@ -236,14 +236,14 @@ def prepare(context, request, *, media_out=None):
     return binding
 
 
-def request_approval(context, request, via):
+def request_approval(context, request, via, by=None):
     media={}
     binding=prepare(context,request,media_out=media)
     from . import approval_jobs
-    return approval_jobs.create(context,request,binding,via,media=media or None)
+    return approval_jobs.create(context,request,binding,via,media=media or None,by=by)
 
 
-def execute(context, request, *, via='http'):
+def execute(context, request, *, via='http', by=None):
     if type(request) is not dict or request.get('operation') not in WRITE_OPERATIONS: error('unsupported_operation')
     if not isinstance(request.get('account'),str): error('invalid_scope')
     try:
@@ -251,7 +251,7 @@ def execute(context, request, *, via='http'):
         if request['operation'] in ('media_upload_url','media_complete'):
             from . import media_uploads
             return media_uploads.execute(context,request,via)
-        return draft_put(context,request,via) if request['operation']=='draft_put' else request_approval(context,request,via)
+        return draft_put(context,request,via) if request['operation']=='draft_put' else request_approval(context,request,via,by)
     except ReportServiceError: raise
     except (OSError,ValueError,TypeError,KeyError,accounts.AccountError,approval_relay.RelayError,admin_log.AdminLogError) as exc:
         if str(exc) in REPO_REASONS: error(str(exc))
