@@ -1210,11 +1210,67 @@ def _list_hint(viewer, rows, joined):
 
 
 def text_numbers(text):
-    """本文に人や LLM が書いた数字（**観測ではない**・道具は確かめていない）。"""
-    return _NUMBER.findall(text or "")[:20]
+    """本文に人や LLM が書いた数字（**観測ではない**・道具は確かめていない）。
+
+    抜き出す前に、日付・時刻・THTH の id（`r`/`p` 始まり）・URL・`--` 引数とその値・
+    コードの囲み（バッククォート内）を本文から除く（3.9.1・報告 r20260924-d8bac63a）。
+    拾うのは単位や記号が付いた数（`153 件`・`97%`・`r=0.92`・`n=27`・`¥1,151`・
+    `713 中 692`）と、表のセルの数値だけ。符号は数に付いているときだけ数える。重複は 1 回に。
+    """
+    text = text or ""
+    values = []
+    seen = set()
+
+    def add(value):
+        value = value.strip()
+        if value and value not in seen:
+            seen.add(value)
+            values.append(value)
+
+    for value in _table_cell_numbers(text):
+        add(value)
+    cleaned = _NUMBER_NOISE.sub(" ", text)
+    for match in _NUMBER.finditer(cleaned):
+        add(match.group(0))
+    return values[:20]
 
 
-_NUMBER = re.compile(r"[+\-−]?\d+(?:[.,]\d+)*\s*(?:%|％|倍|件|回|人|pt|ポイント)?")
+def _table_cell_numbers(text):
+    """表（`|` 区切り）のセルが数値だけ（単位つきも可）なら、その値を拾う。"""
+    values = []
+    for line in text.splitlines():
+        if line.count("|") < 2:
+            continue
+        for cell in line.split("|"):
+            cell = cell.strip()
+            if cell and _TABLE_CELL_NUMBER.fullmatch(cell):
+                values.append(cell)
+    return values
+
+
+# 抜き出す前に本文から除くもの（3.9.1）: コードの囲み・URL・THTH の id・日時・`--` 引数。
+_NUMBER_NOISE = re.compile("|".join([
+    r"`[^`]*`",                                                    # コードの囲み
+    r"https?://\S+",                                               # URL
+    r"(?<![0-9A-Za-z])[rp]\d{8}-[0-9a-f]{8}(?![0-9a-fA-F])",       # THTH の id（r.../p...）
+    r"--[A-Za-z][A-Za-z0-9-]*(?:[=\s]+[A-Za-z0-9_.:/+-]+)?",       # --引数 とその値
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?",  # ISO 8601
+    r"\d{4}[-/]\d{1,2}[-/]\d{1,2}",                                # YYYY-MM-DD・YYYY/MM/DD
+    r"\d{1,2}[-/]\d{1,2}\s*[〜~～]\s*\d{1,2}[-/]\d{1,2}",           # 9/23〜9/24 のような範囲
+    r"\d{1,2}/\d{1,2}",                                            # MM/DD
+    r"\d{1,2}:\d{2}(?::\d{2})?",                                   # HH:MM[:SS]
+]))
+
+# 拾う数（3.9.1）: 単位や記号が付いた数だけ（裸の数字は表のセル以外では拾わない）。
+_NUMBER = re.compile("|".join([
+    r"¥\d+(?:,\d{3})*(?:\.\d+)?",                                          # ¥1,151
+    r"[A-Za-z]+=[+\-−]?\d+(?:[.,]\d+)*",                                   # r=0.92・n=27
+    r"[+\-−]?\d+(?:[.,]\d+)*\s*中\s*[+\-−]?\d+(?:[.,]\d+)*",               # 713 中 692
+    r"[+\-−]?\d+(?:[.,]\d+)*\s*(?:%|％|倍|件|回|人|pt|ポイント)",          # 153 件・97%
+]))
+
+_TABLE_CELL_NUMBER = re.compile(
+    r"[+\-−]?\d+(?:[.,]\d+)*(?:\s*(?:%|％|倍|件|回|人|pt|ポイント))?")
 
 
 def show(plaza_id, viewer):

@@ -22,7 +22,9 @@ from tests.conftest import commit_and_push_path
 from tests.test_v340_plaza_store import SCOPE, owners, post  # noqa: F401  (fixture)
 from tests.test_v380_plaza_owner import viewer
 
-HUMAN = "人の解釈: 朝のほうが伸びた気がする。views 999 と書いておく"
+# 3.9.1: text_numbers は単位や記号が付いた数だけを拾う（裸の数字は表のセル以外は拾わない）
+# ようになったので、人の本文の数字は "999" 単体でなく "n=999" にしてある（意味は変えていない）。
+HUMAN = "人の解釈: 朝のほうが伸びた気がする。n=999 と書いておく"
 
 
 def _fake_node(views_median=340, n=12):
