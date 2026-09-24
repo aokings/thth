@@ -46,7 +46,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 3.5.0 §2・照合 §6-4・§6-6: 保持と削除の依頼（管理者の口）。
      'admin map retention', 'admin map purge',
      # 3.6.0 §B: つまずきの年表（読むだけ・--json）。
-     'report timeline']
+     'report timeline',
+     # 3.8.0 §A・§E: 持ち主の組（管理者の口）と生きたコツ集（読むだけ）。
+     'admin plaza owner set', 'admin plaza owner unset', 'admin plaza owner list', 'plaza digest']
 
 
 def test_json_table_covers_every_parser():
