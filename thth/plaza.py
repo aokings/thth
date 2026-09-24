@@ -1616,7 +1616,35 @@ def _anonymize(record):
 
 # ---------------------------------------------------------- observe に載せる
 
-def observe_summary(viewer, *, since, now, exclude_account=None):
+def received_summary(records, authors, *, since, now):
+    """置いた側に届いた知らせ（設計 3.8.0 §D3）: `authors` が置いた書き込みに、`since` より後
+    （`now` 以前）に他の account が付けた追試（結果ごと）と賛否の数。本文は数えるだけで出さない。
+
+    分母は `authors` が置いた書き込みの数（非表示を除く）。
+    """
+    trials = {result: 0 for result in TRIAL_RESULTS}
+    agree = disagree = n_posts = touched = 0
+    for record in records:
+        if record.get("account") not in authors or record.get("hidden"):
+            continue
+        n_posts += 1
+        fresh = [row for row in record["replies"] if row.get("account") not in authors
+                 and since < jst.parse(row["at"]) <= now]
+        if any(row.get("kind") in ("trial", "agree", "disagree") for row in fresh):
+            touched += 1
+        for row in fresh:
+            if row.get("kind") == "trial" and row.get("result") in trials:
+                trials[row["result"]] += 1
+            elif row.get("kind") == "agree":
+                agree += 1
+            elif row.get("kind") == "disagree":
+                disagree += 1
+    return {"trials": {**trials, "n": sum(trials.values())}, "agree": agree, "disagree": disagree,
+            "votes": agree + disagree, "n_posts_touched": touched, "denominator": n_posts,
+            "since": jst.iso(since)}
+
+
+def observe_summary(viewer, *, since, now, exclude_account=None, authors=None):
     """`thth observe` の 0 段「広場: 新着 n（project）・open の新着 m」。
 
     - 新着 = `since` より後（`now` 以前）に置かれた書き込みと返信の数。
@@ -1663,6 +1691,9 @@ def observe_summary(viewer, *, since, now, exclude_account=None):
             "owner_new": owner_new if siblings else None,
             "owner_denominator": owner_total if siblings else None,
             "owner_reason": None if siblings else "plaza_owner_unregistered",
+            # 置いた側に届いた知らせ（設計 3.8.0 §D3・前回の観測から）。
+            "received": (received_summary(records, set(authors), since=since, now=now)
+                         if authors else None),
             "since": jst.iso(since), "cannot_say": None}
 
 

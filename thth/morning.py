@@ -247,7 +247,7 @@ def _plaza_cell(configs, since, now, exclude_account=None, record_pick=False):
     viewer = plaza.Viewer({name: cfg.get("project") for name, cfg in configs.items()})
     try:
         summary = plaza.observe_summary(viewer, since=since, now=now,
-                                        exclude_account=exclude_account)
+                                        exclude_account=exclude_account, authors=set(configs))
         summary["recent_trial"] = plaza.recent_trial(viewer)
         summary["pick"] = plaza_moments.observe_pick(configs, list(configs), now=now,
                                                      record=record_pick)
@@ -1183,6 +1183,13 @@ def _render_plaza(node, out) -> None:
              if node.get("owner_new") is not None else "")
     out(f"  広場: 新着 {node['project_new']}（project {node['project_denominator']} 件のうち）"
         f"{owner}・{opened}（{node['since']} から）")
+    received = node.get("received")
+    if received and (received["trials"]["n"] or received["votes"]):
+        trials = received["trials"]
+        out(f"  広場: あなたの書き込みに 追試 {trials['n']}（再現 {trials['reproduced']}・再現せず "
+            f"{trials['not_reproduced']}・試していない {trials['not_tried']}）・賛否 {received['votes']}"
+            f"（賛成 {received['agree']}・反対 {received['disagree']}）（前回の観測から・"
+            f"書き込み {received['denominator']} 件のうち {received['n_posts_touched']} 件）")
     from . import plaza_moments
     line = plaza_moments.pick_line(node.get("pick"))
     if line:
