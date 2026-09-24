@@ -138,7 +138,10 @@ def test_MCPにはopenにする口が無い_読むのは参加した持ち主ど
     root, server = _tenant(tmp_path, monkeypatch)
     names = {tool["name"]: tool for tool in server.server_tools(server.authenticated_context())}
     assert "open" not in names["thth_plaza_post"]["inputSchema"]["properties"]
-    assert names["thth_plaza_update"]["inputSchema"]["properties"]["visibility"]["enum"] == ["project"]
+    # 3.8.0 で owner（持ち主の組・一段）が足された。open は従前どおり MCP に無い。
+    assert names["thth_plaza_update"]["inputSchema"]["properties"]["visibility"]["enum"] == [
+        "project", "owner"]
+    assert "open" not in names["thth_plaza_post"]["inputSchema"]["properties"]["visibility"]["enum"]
     plaza.set_membership("kopicha", joined=True, by="operator")
     plaza.set_membership("other", joined=True, by="operator")
     denied = _post(server, open=True)

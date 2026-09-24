@@ -412,19 +412,21 @@ def execute_admin_reports(context: ReportContext, request: dict) -> dict:
 
 
 PLAZA_OPERATIONS = frozenset(('plaza_post', 'plaza_list', 'plaza_show', 'plaza_reply',
-                              'plaza_update'))
+                              'plaza_update', 'plaza_digest'))
 # 広場の口の要求の形（`許す鍵`・`要る鍵`）。型は MCP の inputSchema と下の検査で見る。
 _PLAZA_SHAPES = {
     'plaza_post': ({'account', 'kind', 'title', 'body', 'scope', 'kind_detail', 'how',
                     'evidence_level', 'declarations', 'hypothesis', 'change', 'until', 'min_n',
-                    'goal'},
-                   {'account', 'kind', 'title', 'body'}),
+                    'goal', 'visibility', 'trial_due', 'from_tool', 'from_account',
+                    'from_window_days', 'from_doc', 'from_report'},
+                   {'account'}),
     'plaza_list': ({'project', 'open'}, set()),
     'plaza_show': ({'plaza_id'}, {'plaza_id'}),
     'plaza_reply': ({'plaza_id', 'account', 'kind', 'text', 'measure_id', 'result'},
                     {'plaza_id', 'account', 'kind'}),
     'plaza_update': ({'plaza_id', 'account', 'refresh', 'verdict', 'reason', 'visibility'},
                      {'plaza_id', 'account'}),
+    'plaza_digest': ({'target'}, set()),
 }
 # `open` は MCP の口に無い（open にするのは人の CLI の二段確認だけ・masaru 裁定 09-23）。
 _PLAZA_BOOLS = {'open', 'refresh'}
@@ -447,7 +449,11 @@ def _plaza_request(request, operation):
         if key in _PLAZA_BOOLS:
             if type(value) is not bool:
                 raise ReportServiceError("invalid_request")
-        elif key == 'min_n':
+        elif key == 'visibility':
+            # enum の外は要求の形の誤り（open は下で open_requires_cli と言う）。
+            if value not in ('project', 'owner', 'open'):
+                raise ReportServiceError("invalid_request")
+        elif key in ('min_n', 'from_window_days'):
             if type(value) is not int:
                 raise ReportServiceError("invalid_request")
         elif key == 'declarations':
@@ -455,6 +461,30 @@ def _plaza_request(request, operation):
                 raise ReportServiceError("invalid_request")
         elif not isinstance(value, str):
             raise ReportServiceError("invalid_request")
+
+
+def _plaza_from(request):
+    """MCP の from_* を `plaza.post(from_source=)` の形に（設計 3.8.0 §C）。1 つだけ。"""
+    chosen = [key for key in ('from_tool', 'from_doc', 'from_report') if request.get(key)]
+    if len(chosen) > 1:
+        raise ReportServiceError("invalid_from")
+    if request.get('from_doc'):
+        return ('doc', request['from_doc'])
+    if request.get('from_report'):
+        return ('report', request['from_report'])
+    tool = request.get('from_tool')
+    if tool is None:
+        if request.get('from_account') is not None or request.get('from_window_days') is not None:
+            raise ReportServiceError("invalid_from")
+        return None
+    if tool == 'study-report':
+        declarations = request.get('declarations') or []
+        if not declarations or request.get('from_account') is not None:
+            raise ReportServiceError("invalid_from")
+        return ('study-report', declarations[0], "thth study-report <宣言のファイル>")
+    if tool in ('analytics-report', 'after') and request.get('from_account'):
+        return (tool, request['from_account'], request.get('from_window_days'))
+    raise ReportServiceError("invalid_from")
 
 
 def execute_user_plaza(context: ReportContext, request: dict) -> dict:
@@ -486,6 +516,15 @@ def execute_user_plaza(context: ReportContext, request: dict) -> dict:
                 viewer = plaza.Viewer({name: value for name, value in context.allowed_accounts.items()
                                        if value == project})
             return plaza.list_posts(viewer, open_only=bool(request.get('open')))
+        if operation == 'plaza_digest':
+            # 生きたコツ集（設計 3.8.0 §E）。credential の project か、それを含む持ち主の組だけ。
+            target = request.get('target')
+            if target is not None and target not in viewer.projects and target not in {
+                    plaza.owner_of(project) for project in viewer.projects}:
+                raise ReportServiceError("scope_unavailable")
+            basis = 'project' if target is None or target in viewer.projects else 'owner'
+            return plaza.digest(viewer, target=target or ",".join(sorted(viewer.projects)),
+                                basis=basis)
         if operation == 'plaza_show':
             payload = plaza.show(request['plaza_id'], viewer)
             # 読んだことを控える（id と時刻だけ・設計 3.8.0 §B）。credential の全 account。
@@ -503,15 +542,18 @@ def execute_user_plaza(context: ReportContext, request: dict) -> dict:
         with leave_gate.read_leases(set(active)):
             if operation == 'plaza_post':
                 return plaza.post(
-                    account, kind=request['kind'], title=request['title'], body=request['body'],
+                    account, kind=request.get('kind'), title=request.get('title'),
+                    body=request.get('body'), from_source=_plaza_from(request),
+                    trial_due=request.get('trial_due'),
                     by=context.actor, scope_note=request.get('scope'),
                     kind_detail=request.get('kind_detail'), how=request.get('how'),
                     evidence_level=request.get('evidence_level') or 'stated',
-                    declarations=request.get('declarations') or [],
+                    declarations=(request.get('declarations') or [])[
+                        1 if request.get('from_tool') == 'study-report' else 0:],
                     hypothesis=request.get('hypothesis'), change=request.get('change'),
                     until=request.get('until'), goal=request.get('goal'),
                     min_n=request['min_n'] if request.get('min_n') is not None else 5,
-                    visibility='project', via='mcp',
+                    visibility=request.get('visibility') or 'project', via='mcp',
                     project=context.allowed_accounts[account], medium=cfg.get('media'),
                     trusted_accounts=active)
             if operation == 'plaza_reply':
@@ -533,7 +575,8 @@ def execute_user_plaza(context: ReportContext, request: dict) -> dict:
 
 
 ADMIN_PLAZA_OPERATIONS = frozenset(('admin_plaza_list', 'admin_plaza_show', 'admin_plaza_join',
-                                    'admin_plaza_leave', 'admin_plaza_hide'))
+                                    'admin_plaza_leave', 'admin_plaza_hide',
+                                    'admin_plaza_owner_set', 'admin_plaza_owner_unset'))
 
 
 def execute_admin_plaza(context: ReportContext, request: dict) -> dict:
@@ -552,20 +595,32 @@ def execute_admin_plaza(context: ReportContext, request: dict) -> dict:
               'admin_plaza_show': ({'plaza_id'}, {'plaza_id'}),
               'admin_plaza_join': ({'project', 'by'}, {'project', 'by'}),
               'admin_plaza_leave': ({'project', 'by'}, {'project', 'by'}),
-              'admin_plaza_hide': ({'plaza_id', 'reason', 'by'}, {'plaza_id', 'reason', 'by'})}
+              'admin_plaza_hide': ({'plaza_id', 'reason', 'by'}, {'plaza_id', 'reason', 'by'}),
+              # 持ち主の組（設計 3.8.0 §A）。
+              'admin_plaza_owner_set': ({'owner', 'projects', 'by'}, {'owner', 'projects', 'by'}),
+              'admin_plaza_owner_unset': ({'owner', 'by'}, {'owner', 'by'})}
     if operation not in shapes:
         raise ReportServiceError("unsupported_operation")
     allowed, required = shapes[operation]
     if set(request) - allowed - {'operation'} or not required <= set(request):
         raise ReportServiceError("invalid_request")
-    if any(not isinstance(request[key], str) for key in allowed & set(request)):
-        raise ReportServiceError("invalid_request")
+    for key in allowed & set(request):
+        value = request[key]
+        if key == 'projects':
+            if type(value) is not list or any(not isinstance(row, str) for row in value):
+                raise ReportServiceError("invalid_request")
+        elif not isinstance(value, str):
+            raise ReportServiceError("invalid_request")
     try:
         if operation == 'admin_plaza_list':
             return plaza.admin_list()
         if operation == 'admin_plaza_show':
             return plaza.show(request['plaza_id'], plaza.Viewer(admin=True))
         _credential_unchanged(context)
+        if operation == 'admin_plaza_owner_set':
+            return plaza.set_owner(request['owner'], request['projects'], by=request['by'], via='mcp')
+        if operation == 'admin_plaza_owner_unset':
+            return plaza.unset_owner(request['owner'], by=request['by'], via='mcp')
         if operation == 'admin_plaza_hide':
             return plaza.hide(request['plaza_id'], by=request['by'], reason=request['reason'],
                               via='mcp')

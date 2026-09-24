@@ -611,6 +611,13 @@ ADMIN_TOOLS += [
     {'name':'thth_admin_plaza_hide','description':'Hide one plaza post with a reason (the owner still sees it with the reason); administrator only, by required',
      'inputSchema':{'type':'object','properties':{'plaza_id':{'type':'string'},'reason':{'type':'string'},'by':{'type':'string'}},
                     'required':['plaza_id','reason','by'],'additionalProperties':False}},
+    # 持ち主の組（設計 3.8.0 §A）。管理者が登録する（道具は推測しない）・既定は組なし。
+    {'name':'thth_admin_plaza_owner_set','description':'Register one owner group (projects of the same owner read each other\'s owner-scope plaza posts); replaces the group\'s projects; one project belongs to one group; administrator only, by required',
+     'inputSchema':{'type':'object','properties':{'owner':{'type':'string'},'projects':{'type':'array','items':{'type':'string'}},'by':{'type':'string'}},
+                    'required':['owner','projects','by'],'additionalProperties':False}},
+    {'name':'thth_admin_plaza_owner_unset','description':'Dissolve one owner group; its owner-scope posts stop being visible to the other projects; administrator only, by required',
+     'inputSchema':{'type':'object','properties':{'owner':{'type':'string'},'by':{'type':'string'}},
+                    'required':['owner','by'],'additionalProperties':False}},
 ]
 
 SERVER_TOOLS = [
@@ -709,8 +716,11 @@ PLAZA_TOOLS = [
      "description": PLAZA_WELCOME + "。施策（measure: 観測は道具が study-report と同じ計算で付ける・"
                     "how〔数字を出し直せる thth の命令〕が必須）・気づき（finding）・問い（question）を"
                     "置く。scope（媒体・企画の範囲）は必須。置いたものは同じ持ち主の全 account だけに"
-                    "見える（他の持ち主に見せる open は人が CLI の二段確認で行う・この口には無い）。"
-                    "evidence_level の observed は道具だけが付ける",
+                    "見える（visibility: owner は管理者が登録した持ち主の組の全 project に一段で見せる。"
+                    "他の持ち主に見せる open は人が CLI の二段確認で行う・この口には無い）。"
+                    "evidence_level の observed は道具だけが付ける。from_tool（analytics-report・after・"
+                    "study-report）・from_doc・from_report で、道具がその出力を置く時点で作り直して"
+                    "数字を観測の欄と本文の下書きに入れる（body は任意の解釈）",
      "inputSchema": {"type": "object", "properties": {
          "account": {"type": "string"},
          "kind": {"type": "string", "enum": ["measure", "finding", "question"]},
@@ -726,8 +736,18 @@ PLAZA_TOOLS = [
          "until": {"type": "string", "description": "期間の終わり（timezone 付きの時刻）"},
          "min_n": {"type": "integer"},
          "goal": {"type": "string", "enum": ["reach", "click", "follow", "reply"],
-                  "description": "施策の目的（任意）。媒体をまたいで同じ目的の施策を比べる札"}},
-         "required": ["account", "kind", "title", "body", "scope"], "additionalProperties": False}},
+                  "description": "施策の目的（任意）。媒体をまたいで同じ目的の施策を比べる札"},
+         "visibility": {"type": "string", "enum": ["project", "owner"],
+                        "description": "project（既定）か owner（持ち主の組・管理者が組を登録したときだけ）"},
+         "trial_due": {"type": "string", "description": "finding の追試の予定日（2026-10-08 か timezone 付きの時刻）"},
+         "from_tool": {"type": "string", "enum": ["analytics-report", "after", "study-report"],
+                       "description": "道具の出力から置く（analytics-report・after は from_account・"
+                                      "study-report は declarations の 1 つ目）"},
+         "from_account": {"type": "string", "description": "from_tool の account（同じ持ち主）"},
+         "from_window_days": {"type": "integer"},
+         "from_doc": {"type": "string", "description": "repo の中の md の相対パス（finding として・commit 済みのもの）"},
+         "from_report": {"type": "string", "description": "自分の project の閉じた報告の report_id（tool_tip として）"}},
+         "required": ["account", "scope"], "additionalProperties": False}},
     {"name": "thth_plaza_list",
      "description": "広場の一覧（既定は自分の持ち主の書き込み・open: true は open の広場）。次を決める前に"
                     "他の媒体の施策を読む（読むだけ）",
@@ -760,8 +780,13 @@ PLAZA_TOOLS = [
          "refresh": {"type": "boolean"},
          "verdict": {"type": "string", "enum": ["adopted", "dropped", "inconclusive"]},
          "reason": {"type": "string"},
-         "visibility": {"type": "string", "enum": ["project"]}},
+         "visibility": {"type": "string", "enum": ["project", "owner"]}},
          "required": ["plaza_id", "account"], "additionalProperties": False}},
+    {"name": "thth_plaza_digest",
+     "description": "生きたコツ集: 2 媒体以上で再現した施策・気づき（再現しなかった媒体も並べる・分母つき）。"
+                    "新しいセッションが最初に読むもの（読むだけ）。target は自分の project か持ち主の組の名前",
+     "inputSchema": {"type": "object", "properties": {"target": {"type": "string"}},
+                     "additionalProperties": False}},
 ]
 
 

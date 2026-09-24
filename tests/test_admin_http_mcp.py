@@ -44,7 +44,9 @@ def test_admin_all_registry_and_mcp_auth_rechecked(credentials,monkeypatch):
         'thth_admin_reports_list','thth_admin_reports_show','thth_admin_reports_reply','thth_admin_reports_close',
         # 施策の広場の管理者側（設計 3.4.0 §4）。
         'thth_admin_plaza_list','thth_admin_plaza_show','thth_admin_plaza_join','thth_admin_plaza_leave',
-        'thth_admin_plaza_hide'}
+        'thth_admin_plaza_hide',
+        # 持ち主の組（設計 3.8.0 §A）。
+        'thth_admin_plaza_owner_set','thth_admin_plaza_owner_unset'}
     result=server.call_tool('thth_admin_inventory',{})
     assert set(json.loads(result['content'][0]['text'])['by_account'])=={'first','second'}
     assert server.call_tool('thth_admin_diff',{'mark_read':True})['isError']
