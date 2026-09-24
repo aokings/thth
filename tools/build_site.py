@@ -2,7 +2,7 @@
 """`thth.me` の紹介ページ（`callback/public/`）を **repo の正本から生成する**。
 
 設計 v2 §3「ドメイン」: `thth.me` ＝製品の入口（README 相当・導入・`llms.txt`・
-認可ページは残す）。その入口に置く 4 つのファイルをここで作る:
+認可ページは残す）。その入口に置く 5 つのファイルをここで作る:
 
 | 出力 | 正本 |
 |---|---|
@@ -10,6 +10,7 @@
 | `callback/public/llms.txt` | repo の `llms.txt`（**1 バイトも変えずに写す**） |
 | `callback/public/robots.txt` | このスクリプト（認可の受け口だけを索引から外す） |
 | `callback/public/privacy/index.html` | このスクリプト（`build_privacy()`。Meta の App Review が要求するプライバシーポリシー。2026-09-15） |
+| `callback/public/terms/index.html` | このスクリプト（`build_terms()`。外の利用者向けの利用規約。2026-09-25） |
 
 生成物を手で直さない。紹介文を直したら `build_index()` を直して、このスクリプトを
 走らせ直す。
@@ -262,7 +263,8 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
     add(f'<p><a href="{GITHUB}">GitHub</a> ／ <a href="{PYPI}">PyPI</a> ／ '
         f'<a href="{esc(REGISTRY_SEARCH)}">MCP Registry</a> ／ <a href="/llms.txt">llms.txt</a></p>')
 
-    add('<footer>Free and open source · MIT License<br>© 2026 gotoq · <a href="/privacy/">プライバシーポリシー / Privacy Policy</a></footer>')
+    add('<footer>Free and open source · MIT License<br>© 2026 gotoq · <a href="/privacy/">プライバシーポリシー / Privacy Policy</a>'
+        ' · <a href="/terms/">利用規約 / Terms of Service</a></footer>')
     add("</main></body></html>")
     return "\n".join(parts) + "\n"
 
@@ -292,7 +294,8 @@ def build_privacy() -> str:
     add("</head><body><main>")
     add("<h1>THTH — Privacy Policy</h1>")
     date_en = "Effective " + esc(PRIVACY_EFFECTIVE) if PRIVACY_EFFECTIVE else "Unpublished update — deployment date not set"
-    add(f'<p class="note">{date_en} · <a href="#ja">日本語はこの下</a></p>')
+    add(f'<p class="note">{date_en} · <a href="#ja">日本語はこの下</a> · '
+        '<a href="/terms/">Terms of Service</a></p>')
 
     add("<h2>Who runs THTH</h2>")
     add("<p>THTH is open-source software for drafting, approving and publishing social media posts. "
@@ -394,6 +397,33 @@ def build_privacy() -> str:
         "rather than stored. The change log records that a report was filed, answered or closed, without its "
         "text.</p>")
 
+    add('<h2 id="plaza">Plaza</h2>')
+    add("<p>The plaza (<code>thth plaza</code>, and the same tools over MCP) lets a user's sessions post "
+        "measures they tried, findings and questions, with numbers, and reply to each other. Posts and replies "
+        "are stored in a private location on the operator's server (owner-only files), not in the account's "
+        "Git repository. A post that looks like it contains a secret is refused. Numbers shown as observations "
+        "are computed by THTH from the account's own posts and metrics.</p>")
+    add("<p>Who can read a post is chosen per post: <strong>project</strong> (the accounts of the same "
+        "project), <strong>owner</strong> (the projects of an owner group that the operator registers; they "
+        "read the original) or <strong>open</strong> (other owners who have joined the plaza). The default is "
+        "project, or owner when the operator has registered the project in an owner group; open is never the "
+        "default. Joining the open plaza is per project and off by default, and an open post is visible only "
+        "when both the posting and the reading project have joined. The operator can read every post.</p>")
+    add("<p>Making a post open is a two-step confirmation from the command line only: the first step shows "
+        "exactly what other owners will see, and the post is placed only when the same content is confirmed. "
+        "Other owners read a copy from which THTH has removed other people's information: text of other "
+        "people's replies found in the account's records, their usernames, @handles other than the author's "
+        "own, one-way author keys, and links to other people's social media posts. For the author's own posts "
+        "the copy shows the first 60 characters and the link. Other owners see the project name, not the "
+        "account name or the person who posted. If THTH cannot read the account's records, it does not make "
+        "the copy.</p>")
+    add("<p>The operator can hide a post with a reason (its author still sees it) and can remove a project "
+        "from the open plaza. THTH also records which plaza posts a session has read (the post ID and time "
+        "only). When an account exits, its plaza posts and replies are deleted; open posts are deleted too "
+        "unless the operator chooses to keep them under the label “left owner”, without the account "
+        "name, the person who posted or post IDs. The change log records that a post was placed, replied to, "
+        "updated or hidden, without its text.</p>")
+
     add("<h2>What the operator's server keeps</h2>")
     add("<ul>")
     add("  <li>Long-lived credentials (platform tokens, Bluesky App Passwords) in owner-only files, used to "
@@ -403,6 +433,7 @@ def build_privacy() -> str:
     add("  <li>The metrics, replies and mentions described above, and checked attachments.</li>")
     add("  <li>The observation map: its keywords, the links between keywords that a person drew, and, when "
         "turned on, its daily aggregate figures described above.</li>")
+    add("  <li>Plaza posts and replies, and which plaza posts were read (post ID and time).</li>")
     add("  <li>Run logs (action, draft file, post ID, counts, status), reports, and a change log of "
         "administrative events.</li>")
     add("</ul>")
@@ -431,7 +462,7 @@ def build_privacy() -> str:
     add("<p>THTH itself does not send data to an AI model provider. Users work with THTH through their own "
         "LLM session (for example over MCP). What a tool returns to that session is passed to that session's "
         "LLM provider under the user's own arrangement with it. Depending on the tool, this includes the "
-        "user's drafts, post history, metrics and reports, the observation map's keywords and daily figures, and the text or short previews (up to 60 "
+        "user's drafts, post history, metrics and reports, plaza posts and replies the session can read, the observation map's keywords and daily figures, and the text or short previews (up to 60 "
         "characters) of public replies, mentions and search results, with links and author names or one-way "
         "author keys.</p>")
 
@@ -443,8 +474,8 @@ def build_privacy() -> str:
     add("<p>It then deletes the account's own credential files, its settings entry, its server state (run logs, "
         "post history, and the metrics, replies and mentions kept there) and its server-side repository, and "
         "records the exit (time, operator, deleted categories and counts) in the change log. Files shared "
-        "with another account and external repositories are kept. Reports and the change log are not removed "
-        "by this step.</p>")
+        "with another account and external repositories are kept. Its plaza posts and replies are deleted as "
+        'described under <a href="#plaza">Plaza</a>. Reports and the change log are not removed by this step.</p>')
     add("<p>Meta data deletion requests: <code>https://thth.me/data-deletion</code> accepts a signed request "
         "and returns a confirmation code with a status URL "
         "(<code>https://thth.me/data-deletion-status?code=…</code>). Receipt is automatic. The operator then "
@@ -464,6 +495,8 @@ def build_privacy() -> str:
         "time; also deleted on exit or on request.</li>")
     add("  <li>Credentials, settings, drafts, post history, metrics, replies, mentions, attachments and run "
         "logs on the operator's server: until the account exits.</li>")
+    add("  <li>Plaza posts and replies: until the account exits (open posts may be kept without the account "
+        "name, as described under Plaza).</li>")
     add("  <li>Reports and the change log: no set period.</li>")
     add("</ul>")
     add("<p>Cloudflare SQLite Durable Object point-in-time recovery (PITR) retains recovery history for 30 days: "
@@ -471,19 +504,20 @@ def build_privacy() -> str:
         "records does not establish physical erasure from the hosting provider's infrastructure or backups.</p>")
 
     add("<h2>Contact</h2>")
-    add(f'<p>Questions about this policy: open an issue at <a href="{GITHUB}/issues">{esc(GITHUB)}/issues</a>. '
-        "Operator: gotoq.</p>")
+    add(contact_html("en"))
+    add('<p>The <a href="/terms/">Terms of Service</a> give the same contact.</p>')
     add("<h2>Changes</h2>")
     add("<p>This page is generated from the THTH source repository; its history is public there. This revision "
         "describes the operator-run service, the data used per platform, replies and mentions, keyword "
         "search, attachments, reports, LLM sessions, exit and deletion requests, and retention, and corrects "
         "the PBKDF2 iteration count to 100,000. Revision: adds the saved daily aggregates of the observation "
-        "map (keyword search).</p>")
+        "map (keyword search). Revision: adds the plaza and the support contact, and links to the Terms of "
+        "Service.</p>")
 
     # ---------------------------------------------------------------- 日本語
     add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
     date_ja = esc(PRIVACY_EFFECTIVE) + " 施行" if PRIVACY_EFFECTIVE else "未公開の更新案 — 配布日未設定"
-    add(f'<p class="note">{date_ja}</p>')
+    add(f'<p class="note">{date_ja} · <a href="/terms/#ja">利用規約</a></p>')
 
     add("<h2>運営者と対象</h2>")
     add("<p>THTH は、SNS の投稿を下書き・承認・公開するためのオープンソースのソフトウェアです。運営者 gotoq が、"
@@ -569,6 +603,29 @@ def build_privacy() -> str:
         "含む報告は、保存せずに断ります。変更ログには、報告が置かれた・返事した・閉じたことだけを、本文なしで"
         "残します。</p>")
 
+    add("<h2>広場</h2>")
+    add("<p>広場（<code>thth plaza</code>、MCP の同じ道具）では、利用者のセッションが、試した施策・気づき・問いを"
+        "数字つきで置き、互いに返信できます。書き込みと返信は運営者のサーバの私有の置き場（所有者だけが読める"
+        "ファイル）に保存し、アカウントの Git のリポジトリには書きません。秘密らしき文字列を含む書き込みは断ります。"
+        "観測として出す数字は、THTH がそのアカウント自身の投稿と実測から計算します。</p>")
+    add("<p>見える範囲は 1 件ごとに選びます。<strong>project</strong>（同じプロジェクトのアカウント）、"
+        "<strong>owner</strong>（運営者が登録した持ち主の組のプロジェクト。原本を読みます）、<strong>open</strong>"
+        "（広場に参加した他の持ち主）です。既定は project で、運営者がプロジェクトを持ち主の組に登録していれば "
+        "owner です。open が既定になることはありません。open への参加はプロジェクトごとで、既定は不参加です。open の"
+        "書き込みは、置いたプロジェクトと読むプロジェクトの両方が参加しているときだけ見えます。運営者はすべての"
+        "書き込みを読めます。</p>")
+    add("<p>open にするのはコマンドラインからの二段確認だけです。一段目で他の持ち主に見える姿をそのまま示し、"
+        "同じ中身を確かめたときに初めて置きます。他の持ち主が読むのは、THTH が他人の情報を落とした写しです。"
+        "落とすのは、アカウントの記録にある他人の返信の本文、その人たちのユーザー名、書いた本人以外の @名前、"
+        "戻せない投稿者の鍵、他人の SNS の投稿へのリンクです。本人の投稿は先頭 60 字とリンクまでです。他の持ち主に"
+        "見えるのはプロジェクト名で、アカウント名や書いた人は見えません。アカウントの記録が読めなければ写しを"
+        "作りません。</p>")
+    add("<p>運営者は理由を付けて書き込みを非表示にでき（書いた本人には見えます）、プロジェクトを open の広場から"
+        "外せます。THTH は、セッションがどの書き込みを読んだか（書き込みの ID と時刻だけ）も記録します。"
+        "アカウントが退出すると、その書き込みと返信を削除します。open の書き込みも削除しますが、運営者が"
+        "「退出した持ち主」の名義で残すと選んだときは、アカウント名・書いた人・投稿 ID を落として残します。"
+        "変更ログには、書き込みを置いた・返信した・更新した・非表示にしたことだけを、本文なしで残します。</p>")
+
     add("<h2>運営者のサーバに保存するもの</h2>")
     add("<ul>")
     add("  <li>長期の認証情報（媒体の token、Bluesky の App Password）。所有者だけが読めるファイルに置き、媒体の "
@@ -577,6 +634,7 @@ def build_privacy() -> str:
     add("  <li>下書き、承認の記録、公開した本文そのもの、投稿の履歴。</li>")
     add("  <li>上に書いた実測・返信・言及、検査を通った添付。</li>")
     add("  <li>観測の地図: 語、人が引いた語どうしの線、有効なときは上に書いた日々の集計。</li>")
+    add("  <li>広場の書き込みと返信、どの書き込みを読んだか（書き込みの ID と時刻）。</li>")
     add("  <li>実行記録（操作・原稿のファイル・投稿 ID・件数・状態）、報告、管理の変更ログ。</li>")
     add("</ul>")
     add("<p>キーワード検索の結果の本文と投稿者、参照した公開プロフィール、承認 secret は保存しません。</p>")
@@ -601,7 +659,7 @@ def build_privacy() -> str:
     add("<h2>AI（LLM）のセッション</h2>")
     add("<p>THTH 自身は AI モデルの提供者へデータを送りません。利用者は自分の LLM のセッション（例: MCP）から "
         "THTH を使います。道具がそのセッションに返したものは、利用者とその提供者との取り決めのもとで、そのセッションの "
-        "LLM 提供者に渡ります。道具によって、本人の下書き・投稿の履歴・実測・報告、観測の地図の語と日々の集計と、公開の返信・言及・検索結果の"
+        "LLM 提供者に渡ります。道具によって、本人の下書き・投稿の履歴・実測・報告、そのセッションが読める広場の書き込みと返信、観測の地図の語と日々の集計と、公開の返信・言及・検索結果の"
         "本文または短い抜粋（先頭 60 字まで）、リンク、投稿者の名前または戻せない鍵を含みます。</p>")
 
     add("<h2>停止とデータの削除</h2>")
@@ -610,8 +668,8 @@ def build_privacy() -> str:
         "本人が Threads の設定で接続を解除し、Bluesky は本人が Bluesky の設定で App Password を削除してください。</p>")
     add("<p>続けて、そのアカウント専用の認証情報のファイル、設定の項目、サーバの state（実行記録・投稿の履歴と、"
         "そこに置いた実測・返信・言及）、サーバ側のリポジトリを削除し、退出（時刻・実行者・削除した種類と件数）を"
-        "変更ログに残します。他のアカウントと共有しているファイルと、外部のリポジトリは残します。報告と変更ログは"
-        "この手順では消えません。</p>")
+        "変更ログに残します。他のアカウントと共有しているファイルと、外部のリポジトリは残します。広場の書き込みと"
+        "返信は上の「広場」のとおり削除します。報告と変更ログはこの手順では消えません。</p>")
     add("<p>Meta からのデータ削除の依頼: <code>https://thth.me/data-deletion</code> が署名付きの依頼を受け付け、"
         "確認コードと状況の URL（<code>https://thth.me/data-deletion-status?code=…</code>）を返します。受付は自動です。"
         "その後、運営者がサーバで署名を検証して Threads のアカウントと照合し、上の退出を実行します。状況の URL は"
@@ -627,6 +685,7 @@ def build_privacy() -> str:
     add("  <li>送った運用通知（サーバの通知の記録）: 30日（最大50件）。</li>")
     add("  <li>運営者のサーバの観測の地図の日々の集計: 最大180日（日単位で削除）。退出と依頼でも削除。</li>")
     add("  <li>運営者のサーバの認証情報・設定・下書き・投稿の履歴・実測・返信・言及・添付・実行記録: 退出まで。</li>")
+    add("  <li>広場の書き込みと返信: 退出まで（open の書き込みは「広場」のとおりアカウント名を落として残すことがあります）。</li>")
     add("  <li>報告と変更ログ: 期限を定めていません。</li>")
     add("</ul>")
     add("<p>Cloudflare SQLite Durable Object の PITR は30日間の復元履歴を持つため、論理削除をバックアップからの"
@@ -634,11 +693,173 @@ def build_privacy() -> str:
         "保証する説明ではありません。</p>")
 
     add("<h2>連絡先</h2>")
-    add(f'<p>このポリシーについての質問は <a href="{GITHUB}/issues">{esc(GITHUB)}/issues</a> へ。運営者: gotoq。</p>')
+    add(contact_html("ja"))
+    add('<p><a href="/terms/#ja">利用規約</a>にも同じ連絡先を書いています。</p>')
     add("<h2>変更</h2>")
     add("<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。今回の改訂では、"
         "運営者が動かすサービスの形、媒体ごとに使うデータ、返信と言及、キーワード検索、添付、報告、LLM のセッション、"
-        "退出と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。改訂: 観測の地図の集計の保存（キーワード検索・世間の層）を追記しました。</p>")
+        "退出と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。改訂: 観測の地図の集計の保存（キーワード検索・世間の層）を追記しました。"
+        "改訂: 広場とサポートの連絡先を書き、利用規約へのリンクを足しました。</p>")
+    add('<footer><a href="/">THTH</a> · <a href="/terms/">利用規約 / Terms of Service</a> · Free and open source · '
+        "MIT License<br>© 2026 gotoq</footer>")
+    add("</main></body></html>")
+    return "\n".join(parts) + "\n"
+
+
+# 施行日は deploy のとき主セッションが入れる（privacy と同じ・生成で日付を作らない）。
+TERMS_EFFECTIVE = None
+
+
+def contact_html(lang: str) -> str:
+    """サポートの連絡先。privacy と利用規約の**両方に同じ文**を出す（片方だけ直さない）。
+
+    メールアドレスは repo に無いので書かない。正は GitHub の issues。招待された利用者は
+    自分のセッションから報告の口（`thth report file`・`thth/report_inbox.py`）も使える。
+    """
+    esc = lambda s: html_mod.escape(s, quote=True)  # noqa: E731
+    issues = f'<a href="{GITHUB}/issues">{esc(GITHUB)}/issues</a>'
+    if lang == "en":
+        return (f"<p>Open an issue at {issues}. Issues are public: do not include tokens, App Passwords "
+                "or personal information. Invited users can also file a report from their THTH session "
+                "(<code>thth report file</code>); reports are kept in a private location on the "
+                "operator's server. Operator: gotoq.</p>")
+    return (f"<p>{issues} に issue を立ててください。issue は公開されます。token・App Password・"
+            "個人情報は書かないでください。招待された利用者は、自分の THTH のセッションから報告"
+            "（<code>thth report file</code>）もできます。報告は運営者のサーバの私有の置き場に保存します。"
+            "運営者: gotoq。</p>")
+
+
+def build_terms() -> str:
+    """利用規約（2026-09-25・Meta の申請の段取り #3）。
+
+    書くのは事実と、運営者がしていること・しないことだけ。法的な保証を約束しない。
+    準拠法・管轄など運営者が決めていないことは入れない。英語が先（審査担当が読む）、
+    日本語も同じ内容。データの扱いは privacy に任せ、ここでは繰り返さない。
+    """
+    esc = lambda s: html_mod.escape(s, quote=True)  # noqa: E731
+    parts: list[str] = []
+    add = parts.append
+    add("<!doctype html>")
+    add('<html lang="en"><head>')
+    add('<meta charset="utf-8">')
+    add('<meta name="viewport" content="width=device-width, initial-scale=1">')
+    add('<meta name="referrer" content="no-referrer">')
+    add("<title>THTH — Terms of Service / 利用規約</title>")
+    add(f"<style>\n{STYLE}</style>")
+    add("</head><body><main>")
+    add("<h1>THTH — Terms of Service</h1>")
+    date_en = "Effective " + esc(TERMS_EFFECTIVE) if TERMS_EFFECTIVE else "Unpublished draft — effective date not set"
+    add(f'<p class="note">{date_en} · <a href="#ja">日本語はこの下</a> · '
+        '<a href="/privacy/">Privacy Policy</a></p>')
+
+    add("<h2>What THTH is</h2>")
+    add("<p>THTH is a tool for drafting, approving and publishing social media posts on your own accounts. "
+        "The operator, gotoq, runs it on an operator-managed server for people the operator has invited or "
+        "otherwise verified. Invited users connect their own accounts and do not run their own server or "
+        "register their own app. These terms cover that service.</p>")
+
+    add("<h2>What you do</h2>")
+    add("<ul>")
+    add("  <li>Authorize THTH only for accounts you control, on the platform's own screen, after checking the "
+        "account and the permissions it asks for.</li>")
+    add("  <li>Approve each post yourself. Drafts may be written with an AI model; read each one before you "
+        "approve it.</li>")
+    add("  <li>Follow the terms and rules of each platform you post to.</li>")
+    add("  <li>Approve only content that does not infringe other people's rights, such as copyright, privacy "
+        "or portrait rights.</li>")
+    add("  <li>Keep your approval secret and your platform credentials to yourself. Do not paste them into "
+        "chats, drafts or issues.</li>")
+    add("</ul>")
+
+    add("<h2>What the operator does and does not do</h2>")
+    add("<ul>")
+    add("  <li>THTH does not publish a post that has not been approved. Changing the text, account, topic, "
+        "reply target or scheduled time after approval requires approval again.</li>")
+    add("  <li>Credentials (platform tokens and Bluesky App Passwords) are received through the authorization "
+        "flow or from standard input, kept in owner-only files on the operator's server, and redacted from "
+        "logs and printed output. They are not passed through chats or command arguments, and THTH's tools "
+        "do not return them to LLM sessions.</li>")
+    add("  <li>THTH does not read direct messages.</li>")
+    add("  <li>The operator can stop an account's use of the service at any time and can hide a post on the "
+        "plaza. The operator stops an account when you ask, and may stop it when these terms or a platform's "
+        "terms are not followed, when a platform requires it, or when the service ends. Stopping may happen "
+        "without advance notice.</li>")
+    add('  <li>How data is used, kept and deleted is described in the <a href="/privacy/">Privacy Policy</a>.</li>')
+    add("</ul>")
+
+    add("<h2>How the service is provided</h2>")
+    add("<p>The service is free of charge and provided as is. It may stop, change or be unavailable at times, "
+        "and a post may be delayed or not published. The operator does not guarantee that the service is "
+        "available, free of errors or suitable for any purpose.</p>")
+
+    add("<h2>Leaving</h2>")
+    add("<p>To leave, contact the operator (see Contact). The operator ends the account with "
+        "<code>thth account leave</code>, which stops the account and deletes its data on the operator's "
+        'server as described in the <a href="/privacy/#delete">Privacy Policy</a>. THTH asks Mastodon and X '
+        "to revoke the token. For Threads, remove the connection in your Threads settings; for Bluesky, "
+        "delete the App Password in your Bluesky settings.</p>")
+
+    add("<h2>Contact</h2>")
+    add(contact_html("en"))
+    add("<h2>Changes</h2>")
+    add("<p>This page is generated from the THTH source repository; its history is public there.</p>")
+    add("<h2>Software license</h2>")
+    add("<p>The THTH software is open source under the MIT License. That license covers the software; these "
+        "terms cover the operator's service.</p>")
+
+    # ---------------------------------------------------------------- 日本語
+    add('<h1 id="ja" style="margin-top:56px">THTH — 利用規約</h1>')
+    date_ja = esc(TERMS_EFFECTIVE) + " 施行" if TERMS_EFFECTIVE else "未公開の案 — 施行日未設定"
+    add(f'<p class="note">{date_ja} · <a href="/privacy/">プライバシーポリシー</a></p>')
+
+    add("<h2>THTH とは</h2>")
+    add("<p>THTH は、自分の SNS のアカウントで投稿を下書き・承認・公開するための道具です。運営者 gotoq が、"
+        "運営者の管理するサーバで、運営者が招待した人または確かめた人のために動かしています。招待された利用者は"
+        "自分のアカウントを接続し、自分のサーバを動かしたり自分のアプリを登録したりしません。この規約はその"
+        "サービスについてのものです。</p>")
+
+    add("<h2>利用者がすること</h2>")
+    add("<ul>")
+    add("  <li>自分が管理するアカウントだけを、媒体の画面でアカウントと求められる権限を確かめてから認可する。</li>")
+    add("  <li>投稿は一つずつ自分で承認する。下書きは AI モデルで書かれていることがあるので、承認の前に読む。</li>")
+    add("  <li>投稿する各媒体の規約と決まりを守る。</li>")
+    add("  <li>著作権・プライバシー・肖像権など、他人の権利を侵さない内容だけを承認する。</li>")
+    add("  <li>承認の secret と媒体の認証情報は自分だけで持つ。チャット・原稿・issue に貼らない。</li>")
+    add("</ul>")
+
+    add("<h2>運営者がすること・しないこと</h2>")
+    add("<ul>")
+    add("  <li>THTH は承認されていない投稿を公開しません。承認のあとで本文・アカウント・トピック・返信先・"
+        "予約時刻を変えたら、あらためて承認が要ります。</li>")
+    add("  <li>認証情報（媒体の token と Bluesky の App Password）は、認可の流れか標準入力で受け取り、運営者の"
+        "サーバの所有者だけが読めるファイルに置き、ログと画面の出力では伏せます。チャットやコマンドの引数を"
+        "通さず、THTH の道具が LLM のセッションに返すこともありません。</li>")
+    add("  <li>THTH はダイレクトメッセージを読みません。</li>")
+    add("  <li>運営者は、いつでもアカウントの利用を止められ、広場の書き込みを非表示にできます。利用者が求めたときは"
+        "止めます。この規約や媒体の規約が守られないとき、媒体が求めたとき、サービスを終えるときにも止めることが"
+        "あります。止めるときに前もって知らせないことがあります。</li>")
+    add('  <li>データの使い方・保存・削除は<a href="/privacy/#ja">プライバシーポリシー</a>に書いています。</li>')
+    add("</ul>")
+
+    add("<h2>提供の形</h2>")
+    add("<p>サービスは無償で、現状のまま提供します。止まる・変わる・使えない時間があり、投稿が遅れたり公開"
+        "されなかったりすることがあります。運営者は、サービスが使えること・誤りがないこと・特定の目的に合うことを"
+        "保証しません。</p>")
+
+    add("<h2>やめ方</h2>")
+    add("<p>やめるときは運営者に連絡してください（連絡先を参照）。運営者は <code>thth account leave</code> で"
+        "アカウントの利用を終えます。アカウントを止め、運営者のサーバのデータを"
+        '<a href="/privacy/#ja">プライバシーポリシー</a>のとおり削除します。Mastodon と X は THTH が媒体に token の'
+        "失効を求めます。Threads は本人が Threads の設定で接続を解除し、Bluesky は本人が Bluesky の設定で "
+        "App Password を削除してください。</p>")
+
+    add("<h2>連絡先</h2>")
+    add(contact_html("ja"))
+    add("<h2>変更</h2>")
+    add("<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。</p>")
+    add("<h2>ソフトウェアのライセンス</h2>")
+    add("<p>THTH のソフトウェアは MIT License のオープンソースです。このライセンスはソフトウェアについてのもので、"
+        "運営者のサービスについてはこの規約が定めます。</p>")
     add('<footer><a href="/">THTH</a> · Free and open source · MIT License<br>© 2026 gotoq</footer>')
     add("</main></body></html>")
     return "\n".join(parts) + "\n"
@@ -666,6 +887,7 @@ def outputs() -> dict[str, str]:
         "llms.txt": LLMS_TXT.read_text(encoding="utf-8"),
         "robots.txt": ROBOTS,
         "privacy/index.html": build_privacy(),
+        "terms/index.html": build_terms(),
     }
 
 
