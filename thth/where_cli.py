@@ -231,7 +231,7 @@ def _also_filter(rows: list, also: list) -> tuple[list, dict]:
 def _account_node(account_name: str, words: list, *, search_type: str,
                   limit: int, now, since=None, exclude_engaged=False, max_per_author=None,
                   also=None, aggregate_mode=False,
-                  lexicon=None) -> tuple[dict | None, Exception | str | None]:
+                  lexicon=None, suggest=False) -> tuple[dict | None, Exception | str | None]:
     """1 account 分の節。戻りは `(node, 理由)`——どちらか一方だけが非 `None`。
     台帳が読めない・token が無い・媒体に `keyword_search` が無いときは
     `node` が `None`（`by_account` に**入れない**・規約 (d)）。
@@ -284,6 +284,10 @@ def _account_node(account_name: str, words: list, *, search_type: str,
     by_word: dict = {}
     by_tag: list = []
     author_keys: set = set()
+    # 当たり率（設計 3.9.0 §B1）と語の候補（§B2）の材料。**外へは出さない**（語と数だけ返す）。
+    hit_entries: list = []
+    period_days: dict = {}
+    matched_rows: dict = {}
     for word in words:
         if media in ("bluesky", "mastodon") and not aggregate_mode:
             tag = word.lstrip("#")
@@ -348,7 +352,12 @@ def _account_node(account_name: str, words: list, *, search_type: str,
         also_counts = None
         if also:
             # 同じ検索結果を絞るだけ（設計 3.7.0 §C1）。語ごとに 1 回の検索のまま。
+            period_days[word] = _period_days(rows, floor, now)
             rows, also_counts = _also_filter(rows, also)
+            hit_entries.append((word, also_counts["n_before"], also_counts["n_matched"]))
+            for index, row in enumerate(rows):
+                key = row.get("message_id") or row.get("post_id") or f"{word}#{index}"
+                matched_rows.setdefault(str(key), row)
         if aggregate_mode:
             # 集計だけ（設計 3.7.0 §C3）。本文・username・author_key・post_id を返さない。
             by_word[word] = {"aggregate": aggregate(rows, words, lexicon), "dropped": dropped,
@@ -381,10 +390,22 @@ def _account_node(account_name: str, words: list, *, search_type: str,
         if raw_n == 0:
             by_word[word][ZERO_OR_FILTERED] = zero_or_filtered(media)
 
+    extra = {}
+    if also:
+        # 語ごとの当たり率（設計 3.9.0 §B1）。その場で数えるだけ・保存しない。
+        from . import where_suggest
+        extra["also_hits"] = where_suggest.also_hits(hit_entries, period_days=period_days)
+    if suggest:
+        # 語の候補（設計 3.9.0 §B2・B3）。本文・username・post_id・author_key は返さない。
+        from . import where_suggest
+        extra["suggest"] = where_suggest.build(account_name, account_cfg,
+                                               list(matched_rows.values()),
+                                               words=words, also=also or [], now=now)
+
     if aggregate_mode:
         # 相手の仮名（author_key）も返さない——you_and_them は作らない。
         return {"medium": media, "mode": "aggregate", "by_word": by_word, "by_tag": [],
-                "cannot_say": node_cannot_say}, None
+                "cannot_say": node_cannot_say, **extra}, None
 
     # `last_reaction`（T3-2・設計 §2.3「要約」= met・last・last_reaction の
     # 3 つ）。計算は `after_cli.reaction_lookup()` の 1 か所だけ。
@@ -396,8 +417,20 @@ def _account_node(account_name: str, words: list, *, search_type: str,
 
     node = {"medium": media, "by_word": by_word, "by_tag": by_tag,
             "you_and_them": you_and_them,
-            "cannot_say": node_cannot_say}
+            "cannot_say": node_cannot_say, **extra}
     return node, None
+
+
+def _period_days(rows: list, floor, now) -> int | None:
+    """「直近 n 日」の n。`--since` があればその幅、無ければ取れた最古の投稿から今まで。"""
+    import math
+    start = floor
+    if start is None:
+        stamps = [at for at in (jst.parse(row.get("timestamp")) for row in rows) if at is not None]
+        if not stamps:
+            return None
+        start = min(stamps)
+    return max(1, math.ceil((now - start).total_seconds() / 86400))
 
 
 def _resolve_names(*, account_name: str | None, project: str | None) -> tuple[list, list]:
@@ -445,7 +478,7 @@ def _clean_also(also) -> list:
 def answer(*, account_name: str | None = None, project: str | None = None,
           words: list, recent: bool = False, limit: int = DEFAULT_LIMIT,
           now=None, since=None, exclude_engaged=False, max_per_author=None,
-          also=None, aggregate_mode=False, lexicon=None) -> dict:
+          also=None, aggregate_mode=False, lexicon=None, suggest=False) -> dict:
     """`where_to_appear` の答え（設計「自分の泉」§2.3・§2.6）。**読むだけ。**
 
     `aggregate_mode`（設計 3.7.0 §C3）は語ごとの集計だけを返す——本文・username・
@@ -453,6 +486,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
     """
     if lexicon is not None and not aggregate_mode:
         _reject("lexicon は --aggregate と一緒に使います")
+    if type(suggest) is not bool:
+        _reject("suggest は boolean です")
     if account_name and project:
         _reject("account と --project は同時に指定できません")
     if not account_name and not project:
@@ -488,7 +523,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
         node, reason = _account_node(name, words, search_type=search_type,
                                      limit=limit, now=now, since=since,
                                      exclude_engaged=exclude_engaged, max_per_author=max_per_author,
-                                     also=also, aggregate_mode=aggregate_mode, lexicon=lexicon)
+                                     also=also, aggregate_mode=aggregate_mode, lexicon=lexicon,
+                                     suggest=suggest)
         if node is None:
             if isinstance(reason, accounts_mod.AccountError) and project is None:
                 # **単一 account: そのまま投げ直す**（T5-2・`who_cli.answer()`
@@ -517,6 +553,10 @@ def answer(*, account_name: str | None = None, project: str | None = None,
                 notes.append(MASTODON_RECENT_IGNORED_NOTE)
 
     extra = {"also": also} if also else {}
+    if suggest:
+        from . import where_suggest
+        extra.update({"suggest": True, "suggest_storage": "display_only",
+                      "suggest_storage_note": where_suggest.STORAGE_NOTE})
     if aggregate_mode:
         extra.update({"mode": "aggregate", "storage": "display_only",
                       "storage_note": AGGREGATE_STORAGE_NOTE,
@@ -569,6 +609,7 @@ def _render_human(result: dict) -> None:
                 if post["permalink"]:
                     print(f"      {post['permalink']}")
                 print(f"      post_id: {post['post_id']}")
+        _render_hits_and_suggest(node)
         for tagged in node["by_tag"]:
             print(f"  タグ #{tagged['tag']}: n={tagged['n']}  "
                   f"異なり={tagged['distinct_authors']}  "
@@ -616,12 +657,55 @@ def _render_aggregate(result: dict) -> None:
             if entry.get("also"):
                 also = entry["also"]
                 print(f"    also: {also['n_before']} 件中 also に合ったもの {also['n_matched']} 件")
+        _render_hits_and_suggest(node)
         for line in node["cannot_say"]:
             print(f"  言えない: {line}")
     for line in result["cannot_say"]:
         print(f"言えない: {line}")
     print("")
     print(f"注記: 表示だけで、道具は保存しません。{result['storage_note']}")
+
+
+def _render_hits_and_suggest(node: dict) -> None:
+    """当たり率（高い順）と語の候補（自分のデータが先）。語と数だけ——本文も名前も出さない。"""
+    if node.get("also_hits"):
+        print("  also の当たり率（高い順）:")
+        for row in node["also_hits"]:
+            rate = f"{row['hit_rate']:.0%}" if row["hit_rate"] is not None else "—"
+            line = (f"    語「{row['word']}」 取れた {row['n_fetched']} 件・also に合った"
+                    f" {row['n_matched']} 件・当たり率 {rate}")
+            if row.get("zero_note"):
+                line += f"  {row['zero_note']}"
+            print(line)
+    suggest = node.get("suggest")
+    if not suggest:
+        return
+    mine = suggest["from_self"]
+    print(f"  語の候補（{mine['label']}）:")
+    if not mine["candidates"]:
+        print("    なし")
+    for row in mine["candidates"]:
+        detail = []
+        if "draft" in row:
+            goals = "・".join(f"{k} {v}" for k, v in row["draft"]["goals"].items())
+            detail.append(f"原稿 {row['draft']['n']} 本（goal: {goals}）")
+        if "reacted" in row:
+            r = row["reacted"]
+            detail.append(f"24h の likes＋replies 中央値 {r['median_likes_plus_replies_24h']}"
+                          f"（値あり {r['n_observed']}/{r['n_posts']} 本）")
+        print(f"    {row['word']}  [{'・'.join(row['sources'])}]"
+              + (f"  {' / '.join(detail)}" if detail else ""))
+    for line in mine["cannot_say"]:
+        print(f"    言えない: {line}")
+    search = suggest["from_search"]
+    print(f"  語の候補（{search['label']}）:")
+    if search.get("message"):
+        print(f"    {search['message']}")
+    elif not search["candidates"]:
+        print(f"    なし（also に合った投稿 {search['n_posts']} 件・2 投稿以上に出た語がありません）")
+    for row in search["candidates"]:
+        print(f"    {row['word']}  {row['n_posts']}/{row['denominator']} 投稿")
+    print(f"  注記: {suggest['storage_note']}")
 
 
 def register(sub) -> None:
@@ -658,6 +742,9 @@ def register(sub) -> None:
                         "（本文・username・post_id を返さない・保存しない）")
     p.add_argument("--lexicon", default=None, metavar="FILE",
                    help="--aggregate の分類（JSON {分類: [語…]}）")
+    p.add_argument("--suggest", action="store_true",
+                   help="検索の語の候補（自分のデータ・also に合った投稿の本文で 2 投稿以上に出た語）。"
+                        "語と数だけ・保存しない")
     p.set_defaults(func=cmd_where)
 
 
@@ -690,7 +777,8 @@ def cmd_where(args) -> int:
                         exclude_engaged=getattr(args, "exclude_engaged", False),
                         max_per_author=getattr(args, "max_per_author", None),
                         also=getattr(args, "also", None),
-                        aggregate_mode=bool(getattr(args, "aggregate", False)), lexicon=lexicon)
+                        aggregate_mode=bool(getattr(args, "aggregate", False)), lexicon=lexicon,
+                        suggest=bool(getattr(args, "suggest", False)))
     except accounts_mod.AccountError as e:
         # **単一 account が読めなければ loud reject**（T5-2・`who` と揃える）。
         # `--json` は人向けの文言でなく `{"error", "account"}` を出す——
