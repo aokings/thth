@@ -129,3 +129,20 @@ def test_pendingはassetsより先にWorkerが受ける():
     first = json.loads(config)['assets']['run_worker_first']
     for path in ('/pending', '/pending/' + 'a' * 43):
         assert any(fnmatch.fnmatchcase(path, pattern) for pattern in first), path
+
+
+def test_privacyは一覧と24時間と認可の始まり方を英日で書く():
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(root / 'tools'))
+    import build_site
+    page = build_site.build_privacy()
+    assert page == (root / 'callback' / 'public' / 'privacy' / 'index.html').read_text(encoding='utf-8')
+    for must in ('https://thth.me/pending', 'at most 24 hours', 'first 60 characters',
+                 'expires 10 minutes after it is opened', 'limited to <code>/pending</code>',
+                 'does not record who views the list', 'opens the invitation link', '<code>thth auth</code>',
+                 '最大24時間', '先頭60字', '開いてから10分で失効', '誰が一覧を見たかを記録しません', '招待リンクを開いて'):
+        assert must in page, must
+    for obsolete in ('The operator starts authorization', '運営者が認可を開始し'):
+        assert obsolete not in page, obsolete

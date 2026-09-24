@@ -47,6 +47,7 @@ credential の user scope / writes がある場合だけ `thth_draft_put`、`tht
 `thth_send_request`、`thth_retract_request` を使える。account は本人の許可範囲だけ。
 actor/by/person/confirm/digest/ファイルパスを引数に加えない。本文は body、下書き更新は draft_id と expected_revision。
 返った approval_url は本人に私的に渡し、承認 secret を聞かない・入力しない・会話へ貼らせない。
+既定で本人の承認待ちの一覧にも出る（pending_url・https://thth.me/pending に本人がユーザ名と承認 secret で入る・最大 24 時間）。URL を届けられなくても本人は一覧から開ける。
 URL を返しただけでは承認/公開/削除の完了ではない。`thth_request_status` の job_id で結果を確認する。
 unknown は自動再依頼・再公開で解消せず、管理者が媒体と記録を照合する。
 詳しい管理設定と入力は `docs/運用_サーバ書込_2.12.md`。無 credential のローカル MCP とは別の入口。

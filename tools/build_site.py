@@ -302,10 +302,12 @@ def build_privacy() -> str:
         "The operator, gotoq, runs it on an operator-managed server (a virtual machine) for invited users "
         "and for the operator's own accounts. On that server THTH handles authorization, drafts, human "
         "approval, publishing and records.</p>")
-    add("<p>Invited users do not run their own server or register their own Meta app. The operator starts "
-        "authorization; the user reviews the account and permissions on the platform and approves, and later "
-        "approves each post on a thth.me approval page. People who install the THTH software and run it "
-        "themselves operate their own copy; this policy describes the operator's service.</p>")
+    add("<p>Invited users do not run their own server or register their own Meta app. Authorization starts "
+        "in one of two ways: an invited user opens the invitation link the operator sent and presses the button "
+        "on that page, or the operator starts it from the server with <code>thth auth</code>. Either way, the "
+        "user reviews the account and permissions on the platform and approves, and later approves each post on "
+        "a thth.me approval page. People who install the THTH software and run it themselves operate their own "
+        "copy; this policy describes the operator's service.</p>")
 
     add("<h2>Platforms and the data THTH uses</h2>")
     add("<p>THTH works with Threads, Bluesky, Mastodon and X. For each connected account it uses:</p>")
@@ -376,12 +378,20 @@ def build_privacy() -> str:
 
     add("<h2>Human approval pages</h2>")
     add("<p>An approval page temporarily holds the exact proposed text and display context for a logical "
-        "session lifetime of at most 600 seconds. Approval or expiry removes that text and display context "
+        "session lifetime of at most 600 seconds, or at most 24 hours for an approval shown in the person's "
+        "list of pending approvals. Approval or expiry removes that text and display context "
         "from the active record; minimal receipt bindings remain until expiry. A separate person record "
         "holds a salted PBKDF2-SHA256 verifier with 100,000 iterations, generation and failure count, "
         "not the approval secret itself. The secret is transmitted only when the person submits the form "
         "and is not retained. The URL holder can read the proposed text but cannot approve without the "
         "secret.</p>")
+    add("<p>The list of pending approvals (<code>https://thth.me/pending</code>) is opened with the person's "
+        "username and approval secret, checked in the same way. It shows only the approvals addressed to that "
+        "person, with the first 60 characters of each text, and each entry leads to its approval page; an "
+        "approval page opened from the list expires 10 minutes after it is opened. The list's person record "
+        "holds only the identifiers and expiry of those approvals, not their text. Signing in sets a cookie "
+        "limited to <code>/pending</code> that lasts 10 minutes. THTH does not record who views the list; "
+        "the Worker only applies a rate limit.</p>")
 
     add("<h2>Authorization relay</h2>")
     add("<p>The relay uses a Cloudflare Worker and Durable Object. It temporarily holds a registered "
@@ -487,7 +497,9 @@ def build_privacy() -> str:
     add("<h2>Retention</h2>")
     add("<ul>")
     add("  <li>Authorization codes on the relay: at most 300 seconds after receipt.</li>")
-    add("  <li>Approval pages and their image previews: at most 600 seconds.</li>")
+    add("  <li>Approval pages: at most 600 seconds, or at most 24 hours when shown in the list of pending "
+        "approvals. Their image previews: at most 600 seconds.</li>")
+    add("  <li>Sign-in to the list of pending approvals: 10 minutes.</li>")
     add("  <li>Attachment objects on R2: deleted 24 hours after creation (image previews when they expire).</li>")
     add("  <li>Data deletion requests on thth.me: 30 days.</li>")
     add("  <li>Sent operational notices in the server's notice record: 30 days (at most 50).</li>")
@@ -523,10 +535,11 @@ def build_privacy() -> str:
     add("<p>THTH は、SNS の投稿を下書き・承認・公開するためのオープンソースのソフトウェアです。運営者 gotoq が、"
         "運営者の管理するサーバ（仮想マシン）で、招待した利用者と運営者自身のアカウントのために動かしています。"
         "このサーバで、認可・下書き・人の承認・公開・記録を扱います。</p>")
-    add("<p>招待された利用者は、自分のサーバを動かしたり自分の Meta アプリを登録したりしません。運営者が認可を"
-        "開始し、利用者は媒体の画面でアカウントと権限を確かめて承認し、その後は投稿ごとに thth.me の承認ページで"
-        "承認します。THTH を自分で導入して動かす人は、その複製を自分で運用しています。このポリシーは運営者の"
-        "サービスについての説明です。</p>")
+    add("<p>招待された利用者は、自分のサーバを動かしたり自分の Meta アプリを登録したりしません。認可の始まり方は"
+        "2 つです。招待された利用者が運営者から届いた招待リンクを開いてそのページのボタンを押すか、運営者がサーバで"
+        "<code>thth auth</code> から始めます。どちらでも、利用者は媒体の画面でアカウントと権限を確かめて承認し、"
+        "その後は投稿ごとに thth.me の承認ページで承認します。THTH を自分で導入して動かす人は、その複製を自分で"
+        "運用しています。このポリシーは運営者のサービスについての説明です。</p>")
 
     add("<h2>媒体と使うデータ</h2>")
     add("<p>THTH は Threads・Bluesky・Mastodon・X に対応しています。接続したアカウントごとに次を使います。</p>")
@@ -585,11 +598,17 @@ def build_privacy() -> str:
         "も 24 時間で削除する設定です。</p>")
 
     add("<h2>本人が押す承認ページ</h2>")
-    add("<p>承認ページは公開予定の本文そのものと表示情報を、最大600秒の論理的な session 期限内で一時的に保持します。"
+    add("<p>承認ページは公開予定の本文そのものと表示情報を、最大600秒（本人の承認待ちの一覧に出したものは最大24時間）"
+        "の論理的な session 期限内で一時的に保持します。"
         "承認または失効で稼働中 record から本文と表示情報を削除し、最小の受領照合情報だけを期限まで残します。"
         "本人の別 record には salt 付き PBKDF2-SHA256（100,000回）の verifier、世代、失敗回数を保存し、"
         "承認 secret 本体は保存しません。secret は本人のフォーム送信時だけ照合に使います。URL の所持者は本文を"
         "読めますが、secret 無しで承認はできません。</p>")
+    add("<p>承認待ちの一覧（<code>https://thth.me/pending</code>）には、本人がユーザ名と承認 secret で入ります"
+        "（照合は承認ページと同じ）。一覧にはその人あての承認だけが、本文の先頭60字とともに並び、そこから承認ページに"
+        "進みます。一覧から開いた承認ページは開いてから10分で失効します。一覧のために本人の record に置くのは承認の"
+        "識別子と期限だけで、本文は置きません。入ると <code>/pending</code> に限った10分の cookie を置きます。"
+        "THTH は誰が一覧を見たかを記録しません（Worker は流量の上限だけを見ます）。</p>")
 
     add("<h2>認可の預かり所</h2>")
     add("<p>認可の預かり所は Cloudflare Worker と Durable Object を使います。登録済みの認可コードを、受付から"
@@ -679,7 +698,8 @@ def build_privacy() -> str:
     add("<h2>保持</h2>")
     add("<ul>")
     add("  <li>預かり所の認可コード: 受付から最大300秒。</li>")
-    add("  <li>承認ページとその画像の表示: 最大600秒。</li>")
+    add("  <li>承認ページ: 最大600秒（承認待ちの一覧に出したものは最大24時間）。その画像の表示: 最大600秒。</li>")
+    add("  <li>承認待ちの一覧に入った状態: 10分。</li>")
     add("  <li>R2 の添付: 置いてから24時間で削除（画像の表示は期限が来たとき）。</li>")
     add("  <li>thth.me のデータ削除の依頼: 30日。</li>")
     add("  <li>送った運用通知（サーバの通知の記録）: 30日（最大50件）。</li>")
