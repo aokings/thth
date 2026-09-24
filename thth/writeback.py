@@ -1,4 +1,4 @@
-"""front-matter の書き戻し ＋ git add/commit/pull --rebase/push（設計 §4.3）。
+"""front-matter の書き戻し ＋ git add/commit/fetch・rebase/push（設計 §4.3）。
 
 `rewrite_front_matter()` が書き換えるのは `status`・`post_id`・`posted_at` の
 3 行だけ。本文には触らない。push 失敗は commit を残して非ゼロ（手で push できる
@@ -11,7 +11,7 @@
 
 `sync_repo()`（外部レビュー再レビュー A・2026-09-09）は利用者 repo を select より前に
 同期する。`commit_and_push()` の `validate` 引数（外部レビュー再レビュー B）は
-push の直前・pull --rebase の後にもう一度「送った本文といまの内容が一致するか」を
+push の直前・取り込み（rebase）の後にもう一度「送った本文といまの内容が一致するか」を
 確かめる口。どちらも `thth/core.py` から呼ばれる。
 """
 from __future__ import annotations
@@ -78,7 +78,7 @@ def has_control_chars(text) -> bool:
 class PushValidationFailed(Exception):
     """`commit_and_push()` の `validate` コールバックが不一致を返した。
 
-    pull --rebase の後・push の前に検知したので、push はしていない
+    取り込み（rebase）の後・push の前に検知したので、push はしていない
     （commit はローカルに残ったまま。人が手で確認・修正できる状態）。
     呼び出し側（`thth/core.py`）はこれを捕まえて inflight を残したまま exit 1 で
     止める（外部レビュー再レビュー B・受け入れ）。
@@ -290,6 +290,10 @@ def behind_remote(repo_dir: str) -> dict:
     整数。**読めなければ `None`**（`0` と混ぜない——`0` は「確かめて遅れて
     いない」の意味なので、「確かめられなかった」と絶対に同じ値にしない）。
     そのときは `reason` に理由が入る。
+
+    **例外が 1 つ**（3.8.2）: repo のロックを取れず fetch しなかったときは、
+    `reason` が `BEHIND_UNCHECKED`・`fetched_at` が None で、`behind`/`ahead` は
+    前回取り込んだ remote の姿で数えた整数（数えられなければ None）。
     """
     fetched_at = jst_mod.iso()
     if not repo_dir or not os.path.isdir(repo_dir):
@@ -307,7 +311,25 @@ def behind_remote(repo_dir: str) -> dict:
         return {"behind": None, "ahead": None, "head": head7,
                 "fetched_at": fetched_at, "reason": "origin という remote が見つかりません"}
 
-    fetch = _run_git(repo_dir, ["fetch", "origin"])
+    # **repo のロックを待たずに取りに行き、取れたときだけ fetch する**（依頼 3.8.2 の
+    # 裁定 1）。読むだけの口（`queue`・`schedule`・`board`・手元パスの読み替え）の
+    # fetch がロックの中の同期と同時に走ると、`refs/remotes/origin/*` の書き込みが
+    # ぶつかって同期の側の fetch が失敗し、承認が「git fetch に失敗しました」で
+    # 断られうる。取れなければ fetch せず、**前回取り込んだ remote の姿で数えて**、
+    # 「いま確かめられない」と `reason` に言う（`fetched_at` は None——確かめていない
+    # 時刻を書かない）。ロックの置き場に触れないとき（OSError）も同じ扱い。
+    from . import accounts as accounts_mod
+    from . import lock as lock_mod
+    repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
+    try:
+        repo_lock.acquire()
+    except (lock_mod.LockBusy, OSError):
+        return _behind_unchecked(repo_dir, head7)
+    try:
+        # FETCH_HEAD は書かない（読み手が書く理由が無い・同期は読まないが、書き手を減らす）。
+        fetch = _run_git(repo_dir, ["fetch", "--no-write-fetch-head", "origin"])
+    finally:
+        repo_lock.release()
     # **fetch した直後の時刻に取り直す**（呼んだ時刻ではなく、実際に確かめた時刻）。
     fetched_at = jst_mod.iso()
     if fetch.returncode != 0:
@@ -328,6 +350,65 @@ def behind_remote(repo_dir: str) -> dict:
     ahead_str, behind_str = parts
     return {"behind": int(behind_str), "ahead": int(ahead_str), "head": head7,
             "fetched_at": fetched_at, "reason": None}
+
+
+# `behind_remote()` が repo のロックを取れず fetch しなかったときの `reason`（静的）。
+# 呼び出し側はこの文字列と照らして「いま確かめられない」の 1 行を足す。
+BEHIND_UNCHECKED = ("いま確かめられません（他の実行が repo を使用中）。"
+                    "前回取り込んだ remote の姿で数えています")
+
+
+def _behind_unchecked(repo_dir: str, head7) -> dict:
+    """fetch せずに、前回取り込んだ remote の姿（`@{u}`）と HEAD の差を数える。
+
+    `behind`・`ahead` は数えられれば整数（前回の fetch の結果）、数えられなければ None。
+    どちらでも `reason` は `BEHIND_UNCHECKED`、`fetched_at` は None。
+    """
+    counts = _run_git(repo_dir, ["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+    parts = counts.stdout.split() if counts.returncode == 0 else []
+    if len(parts) == 2 and all(part.isdigit() for part in parts):
+        ahead, behind = int(parts[0]), int(parts[1])
+    else:
+        ahead = behind = None
+    return {"behind": behind, "ahead": ahead, "head": head7,
+            "fetched_at": None, "reason": BEHIND_UNCHECKED}
+
+
+def push_pending(repo_dir: str) -> dict:
+    """手元の承認の commit を push し直す（`thth pull --push-pending`・依頼 3.8.2 の裁定 2）。
+
+    **呼び出し側が repo のロックを握っている前提。** `fetch origin` のあと HEAD と
+    `@{u}` を数え、**ahead があって behind が 0（早送りで押せる）ときだけ** push する。
+    behind があれば押さない——rebase もしない（手元の commit の並びを道具が黙って
+    書き換えない）。戻り値 `{"pushed", "count", "subjects", "ahead", "behind", "error"}`。
+    """
+    out = {"pushed": False, "count": 0, "subjects": [], "ahead": None, "behind": None,
+           "error": None}
+    fetch = _run_git(repo_dir, ["fetch", "origin"])
+    if fetch.returncode != 0:
+        out["error"] = "git fetch に失敗しました: " + redact_mod.redact(fetch.stderr)
+        return out
+    counts = _run_git(repo_dir, ["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+    parts = counts.stdout.split() if counts.returncode == 0 else []
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        out["error"] = "HEAD と upstream の差分を確認できませんでした（upstream が無い？）"
+        return out
+    out["ahead"], out["behind"] = int(parts[0]), int(parts[1])
+    if out["behind"]:
+        out["error"] = (f"upstream に {out['behind']} commit 遅れているので押しません"
+                        "（rebase はしません。手元の commit と upstream のどちらを残すかは人が決めます）")
+        return out
+    if not out["ahead"]:
+        return out
+    log = _run_git(repo_dir, ["log", "--format=%s", "@{u}..HEAD"])
+    out["subjects"] = [line for line in log.stdout.splitlines() if line.strip()]
+    out["count"] = out["ahead"]
+    push = _run_git(repo_dir, ["push"])
+    if push.returncode != 0:
+        out["error"] = "push に失敗しました（commit は残っています）: " + redact_mod.redact(push.stderr)
+        return out
+    out["pushed"] = True
+    return out
 
 
 def repo_toplevel(path: str) -> str | None:
@@ -423,7 +504,7 @@ def matches_synced_commit(repo_dir: str, path: str, *, tree_sha: str | None, dis
 
 
 def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None) -> tuple:
-    """`git add -- <rel_path>` → commit → `pull --rebase --autostash` → push。
+    """`git add -- <rel_path>` → commit → `fetch origin`・`rebase --autostash @{u}` → push（3.8.2 までは `pull --rebase --autostash`）。
 
     衝突したら 1 回だけ pull し直して再 push、それでも駄目なら commit を残して
     `(False, error)` を返す（観測.sh・watchtower と同じ流儀）。
@@ -448,6 +529,19 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
     `validate` が False を返したら `PushValidationFailed` を送出する。push は
     行わず、commit はローカルに残したまま（手で直せる状態）。
     """
+    committed, err = commit_local(repo_dir, rel_path=rel_path, message=message)
+    if not committed:
+        return False, err
+    return push_committed(repo_dir, validate=validate)
+
+
+def commit_local(repo_dir: str, *, rel_path, message: str) -> tuple:
+    """`git add -- <rel_path>` → `commit --only`（push しない）。`(ok, error)` を返す。
+
+    `thth approve --confirm-file`（依頼 3.8.2 件 2）は 1 本ずつ commit して最後に
+    1 回だけ push する。`commit_and_push()` はこれと `push_committed()` を続けて
+    呼ぶだけ——commit の仕方（`--only`）を 2 通りに持たない。
+    """
     # `rel_path` は 1 本でもリストでもよい（複数本まとめて承認する経路・
     # asmon 関東セッション指摘 2026-09-10）。**commit に入るのはここに並べた
     # パスだけ**（`--only`）。
@@ -465,7 +559,14 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
     commit = _run_git(repo_dir, ["commit", "--only", "-m", message, "--", *rel_paths])
     if commit.returncode != 0:
         return False, redact_mod.redact(commit.stderr)
+    return True, ""
 
+
+def push_committed(repo_dir: str, *, validate=None) -> tuple:
+    """ローカルの commit を upstream に取り込んで push する（`commit_and_push()` の後半）。
+
+    `(ok, error)` を返す。失敗しても commit はローカルに残す（手で push できる状態）。
+    """
     # **無関係な stage 状態を、rebase の前後で保存する**（外部レビュー第 6 巡 P2-5）。
     #
     # `commit --only` は実 index の他のエントリを残す（第 5 巡の対応）。ところが
@@ -482,13 +583,24 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
     last_err = ""
     try:
         for _attempt in range(2):
-            pull = _run_git(repo_dir, ["pull", "--rebase", "--autostash"])
-            if pull.returncode != 0:
-                last_err = pull.stderr
+            # **`pull --rebase` をやめ、`fetch origin` → `rebase --autostash @{u}` に
+            # 分ける**（依頼 3.8.2 件 1・報告 r20260924-9f07f36b）。`git pull` は自分で
+            # fetch したあと **FETCH_HEAD を読み直して**取り込む相手を決める。その間に
+            # 別のプロセスの fetch が FETCH_HEAD に行を足すと（`fetch --append`・枝を
+            # 名指しした fetch）、for-merge の行が 2 つになり「Cannot rebase onto
+            # multiple branches」で断られる（本物の git で再現）。upstream の ref
+            # （`@{u}`）を名指しすれば、FETCH_HEAD を誰が書いても読まない。
+            fetch = _run_git(repo_dir, ["fetch", "origin"])
+            if fetch.returncode != 0:
+                last_err = fetch.stderr
+                continue
+            rebase = _run_git(repo_dir, ["rebase", "--autostash", "@{u}"])
+            if rebase.returncode != 0:
+                last_err = rebase.stderr
                 continue
             if validate is not None and not validate():
                 raise PushValidationFailed(
-                    "pull --rebase のあと、本文が送った内容と食い違うため push しません"
+                    "取り込み（rebase）のあと、本文が送った内容と食い違うため push しません"
                     "（commit はローカルに残っています。手で確認してください）")
             push = _run_git(repo_dir, ["push"])
             if push.returncode == 0:
@@ -570,7 +682,7 @@ def sync_repo(repo_dir: str) -> tuple:
     何も公開されない（安全）。`repo_dir` が存在する場合は、以降の一切を
     `_confirm_synced()` に渡し、**「成功したと確認できたときだけ」** `(True, "")`
     を返させる。ディレクトリはあるが `.git` が無い／`origin` が無い／
-    `git remote` が失敗／fetch 失敗／`pull --ff-only` 失敗／pull 後に HEAD が
+    `git remote` が失敗／fetch 失敗／`merge --ff-only @{u}` 失敗／取り込み後に HEAD が
     upstream に追いついたと確認できない、など「確認できない」場合はすべて
     `(False, ...)` になる——分岐を列挙して素通りさせるのではなく、確認できな
     かったものはすべて同じ扱いで落ちる形にしてあるので、ここに載っていない
@@ -609,18 +721,29 @@ def _confirm_synced(repo_dir: str) -> tuple:
     if fetch.returncode != 0:
         return False, "git fetch に失敗しました: " + redact_mod.redact(fetch.stderr), None
 
-    pull = _run_git(repo_dir, ["pull", "--ff-only"])
-    if pull.returncode != 0:
-        return False, "git pull --ff-only に失敗しました: " + redact_mod.redact(pull.stderr), None
+    # **`pull --ff-only` ではなく `merge --ff-only @{u}`**（依頼 3.8.2 件 1・報告
+    # r20260924-9f07f36b）。`git pull` は自分の fetch のあと **FETCH_HEAD を読み直して**
+    # 取り込む相手を決める。確定を続けて打つと、1 本目の commit・push と前後して
+    # 別のプロセスの fetch（`fetch --append`・枝を名指しした fetch）が FETCH_HEAD に
+    # 行を足し、for-merge の行が 2 つになって「Cannot fast-forward to multiple
+    # branches」で 2 本目以降の承認が止まった（本物の git で再現）。直前の
+    # `fetch origin` が進めた upstream の ref（`@{u}`）を名指しすれば、FETCH_HEAD を
+    # 誰が書いても読まない。ff できないとき（枝分かれ・作業ツリーの衝突）は従前
+    # どおりここで断る。
+    merge = _run_git(repo_dir, ["merge", "--ff-only", "@{u}"])
+    if merge.returncode != 0:
+        return False, ("git merge --ff-only @{u} に失敗しました（upstream に早送りで"
+                        "追いつけません）: " + redact_mod.redact(merge.stderr)), None
 
-    # 最終確認: pull --ff-only が exit 0 を返しただけでなく、HEAD が実際に
+    # 最終確認: merge --ff-only が exit 0 を返しただけでなく、HEAD が実際に
     # upstream に追いついたことを直接見る（「エラーが出なかった」ではなく
-    # 「成功したと確認できた」で通すため）。
+    # 「成功したと確認できた」で通すため。HEAD が upstream より先にいると、
+    # merge は何もせずに 0 を返す）。
     head = _run_git(repo_dir, ["rev-parse", "HEAD"])
     upstream = _run_git(repo_dir, ["rev-parse", "@{u}"])
     if (head.returncode != 0 or upstream.returncode != 0
             or head.stdout.strip() != upstream.stdout.strip()):
-        return False, "pull --ff-only の後、HEAD が upstream に追いついたことを確認できませんでした", None
+        return False, "取り込みの後、HEAD が upstream に追いついたことを確認できませんでした", None
 
     # **確かめた OID をそのまま返す**（外部レビュー第 5 巡 P1）。呼び出し側は
     # これを持ち回り、queue の照合先に使う。HEAD を引き直させない。

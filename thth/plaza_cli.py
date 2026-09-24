@@ -230,13 +230,19 @@ def render_reply_preview(result, out=print):
 
 
 def _emit_preview(args, result, again):
-    """一段目は何も書かずに終わる（approve の一段目と同じく rc 1）。"""
+    """一段目は何も書かずに終わる（approve の一段目と同じく rc 1）。
+
+    **断りには数えない**（依頼 3.8.2 件 3）——report_channel の行も直前の断りの控えも
+    出さない（`refusals.mark_first_stage()`）。rc は呼び出し側を壊さないよう 1 のまま。
+    """
     if args.json:
         print(json.dumps(result, ensure_ascii=False))
     elif result["report_type"] == "plaza_reply_open_preview":
         render_reply_preview(result)
     else:
         render_preview(result, again)
+    from . import refusals
+    refusals.mark_first_stage()
     return 1
 
 

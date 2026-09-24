@@ -41,6 +41,29 @@ MAX_CODE = 64
 SKIP_COMMANDS = ("report",)
 
 
+# **二段確認の 1 段目は断りではない**（依頼 3.8.2 件 3・報告 r20260924-9f07f36b）。
+# `thth approve` の 1 段目（本文と digest を見せるだけ）と広場の open の 1 段目は、
+# 呼び出し側を壊さないよう rc 1 のまま終わる。rc だけを見て「断った」と数えると、
+# 確定を打つたびに `report_channel: … "exit_1 で断られた"` が付き、直前の断りの控えが
+# 1 段目で埋まって、本当の断りを押し出していた。1 段目を出し終えた口が
+# `mark_first_stage()` を呼び、`cli.main()` はその回の rc 1 を断りに数えない。
+# 1 回の `cli.main()` の中だけで効く（入口で `clear_first_stage()`）。
+_FIRST_STAGE = {"shown": False}
+
+
+def mark_first_stage() -> None:
+    """この回の rc 1 は二段確認の 1 段目（断りではない）と印を付ける。"""
+    _FIRST_STAGE["shown"] = True
+
+
+def clear_first_stage() -> None:
+    _FIRST_STAGE["shown"] = False
+
+
+def is_first_stage() -> bool:
+    return _FIRST_STAGE["shown"]
+
+
 def command_path(parser, argv) -> str:
     """argv の先頭から、argparse の子命令として知っている語だけをつないだ名前。"""
     path, current = [], parser
