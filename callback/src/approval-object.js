@@ -1,5 +1,5 @@
 import {DurableObject} from 'cloudflare:workers';
-import {TTL,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64,personStub,accountStub} from './approval.js';
+import {TTL,LIST_TTL,HEAD,LIST_MAX,VIEW_MAX,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64,personStub,accountStub} from './approval.js';
 import {HASH_PATTERN,STATE_PATTERN,digest} from './relay.js';
 import {mediaStub} from './media.js';
 
@@ -27,7 +27,7 @@ export class ApprovalPerson extends AtomicObject {
     if(operation==='set')this.put('person',{...body,active:true,generation:opaque(),failures:0});
     else if(!old)return fail(404,'not_found');
     else if(operation==='revoke')this.put('person',{active:false,generation:opaque(),failures:0});
-    else this.put('person',{...old,failures:0});
+    else this.put('person',{...old,failures:0,list_failures:0});
     return {status:200,body:{status:operation==='set'?'configured':operation==='revoke'?'revoked':'unlocked'}};
   });}
   // 招待（3.10.0）の完了ページが本人の承認 secret を 1 回だけ作る。既存の承認者は
@@ -73,11 +73,76 @@ export class ApprovalPerson extends AtomicObject {
   });}
   async alarm(){
     const now=this.now();let next=null;
-    this.ctx.storage.transactionSync(()=>{for(const [key,row] of this.ctx.storage.kv.list({prefix:'grant:'})){
+    this.ctx.storage.transactionSync(()=>{for(const prefix of ['grant:','listed:','view:'])for(const [key,row] of this.ctx.storage.kv.list({prefix})){
       if(row.expires_at<=now)this.ctx.storage.kv.delete(key);else next=Math.min(next??Infinity,row.expires_at);
     }});
     if(next!==null)await this.ctx.storage.setAlarm(next);
   }
+  async wake(at){const alarm=await this.ctx.storage.getAlarm();if(alarm===null||at<alarm)await this.ctx.storage.setAlarm(at);}
+  prune(now){for(const prefix of ['listed:','view:'])for(const [key,row] of this.ctx.storage.kv.list({prefix}))if(row.expires_at<=now)this.ctx.storage.kv.delete(key);}
+  // ---- 承認待ちの一覧（設計 3.11.0）。索引 `listed:<job_id>` は承認ページの session の id と期限だけ
+  // （本文は置かない）。一覧の session `view:<token の SHA-256>` は 10 分。どちらもこの人の object にだけある。
+  async listJob(binding,generation){
+    const result=this.atomic(()=>{
+      if(!binding||typeof binding.job_id!=='string'||!STATE_PATTERN.test(binding.job_id)||typeof binding.session!=='string'||
+         !/^[a-f0-9]{64}$/.test(binding.session)||!Number.isSafeInteger(binding.expires_at))return fail();
+      if(!this.current(generation))return fail(409,'approver_unavailable');
+      const now=this.now();this.prune(now);
+      if([...this.ctx.storage.kv.list({prefix:'listed:'})].length>=LIST_MAX)return fail(409,'list_full');
+      this.put('listed:'+binding.job_id,{session:binding.session,expires_at:binding.expires_at,generation});
+      return {status:200};
+    });
+    if(result.status===200)await this.wake(binding.expires_at);
+    return result;
+  }
+  // 一覧に入る。照合は承認ページと同じ（PBKDF2 100,000）。失敗は一覧だけの回数で数え、5 回で
+  // 一覧を閉じる（管理者の unlock で戻る）。名前を知るだけの人が承認そのものを止められないよう、
+  // 承認ページの失敗回数とは分ける。名前の無い人にも同じだけ計算する（有無を時間で見せない）。
+  async openList(secret,tokenHash){
+    if(typeof tokenHash!=='string'||!/^[a-f0-9]{64}$/.test(tokenHash))return fail();
+    const before=this.ctx.storage.kv.get('person');
+    const valid=typeof secret==='string'&&secret.length>=16&&secret.length<=128;
+    const computed=valid?await verifier(secret,typeof before?.salt==='string'?before.salt:'A'.repeat(43)):null;
+    const result=this.atomic(()=>{
+      const row=this.ctx.storage.kv.get('person');
+      if(!before?.verifier||!row?.verifier||row.generation!==before.generation||!this.current(row.generation)||(row.list_failures??0)>=5)return null;
+      const ok=valid&&equal(unb64(computed),unb64(row.verifier));
+      this.put('person',{...row,list_failures:ok?0:(row.list_failures??0)+1});
+      if(!ok)return null;
+      const now=this.now();this.prune(now);
+      const views=[...this.ctx.storage.kv.list({prefix:'view:'})].sort(([,a],[,b])=>a.expires_at-b.expires_at);
+      for(const [key] of views.slice(0,Math.max(0,views.length-VIEW_MAX+1)))this.ctx.storage.kv.delete(key);
+      const expires_at=now+TTL;
+      this.put('view:'+tokenHash,{generation:row.generation,expires_at});
+      return expires_at;
+    });
+    if(typeof result!=='number')return fail(403,'approval_failed');
+    await this.wake(result);
+    return {status:200,body:{expires_at:result}};
+  }
+  opened(tokenHash){
+    const view=typeof tokenHash==='string'&&/^[a-f0-9]{64}$/.test(tokenHash)?this.ctx.storage.kv.get('view:'+tokenHash):null;
+    return view&&this.now()<view.expires_at&&this.current(view.generation)?view:null;
+  }
+  listView(tokenHash){
+    const view=this.opened(tokenHash);if(!view)return fail(401,'unauthorized');
+    const now=this.now();
+    const rows=[...this.ctx.storage.kv.list({prefix:'listed:'})]
+      .filter(([,row])=>row.expires_at>now&&row.generation===view.generation)
+      .sort(([,a],[,b])=>a.expires_at-b.expires_at)
+      .map(([key,row])=>({job_id:key.slice('listed:'.length),session:row.session}));
+    return {status:200,body:{rows,expires_at:view.expires_at}};
+  }
+  listedSession(tokenHash,job_id){
+    const view=this.opened(tokenHash);if(!view)return fail(401,'unauthorized');
+    const row=typeof job_id==='string'&&STATE_PATTERN.test(job_id)?this.ctx.storage.kv.get('listed:'+job_id):null;
+    if(!row||row.expires_at<=this.now()||row.generation!==view.generation)return fail(404,'not_found');
+    return {status:200,body:{session:row.session}};
+  }
+  closeList(tokenHash){return this.atomic(()=>{
+    if(typeof tokenHash==='string'&&/^[a-f0-9]{64}$/.test(tokenHash))this.ctx.storage.kv.delete('view:'+tokenHash);
+    return {status:200};
+  });}
 }
 export class ApprovalAccount extends AtomicObject {
   active(){return this.ctx.storage.kv.get('revoked')!==true;}
@@ -229,19 +294,23 @@ export class ApprovalSession extends AtomicObject {
       const required=['person','job_id','digest','account','kind','text','context','read_key_hash'];
       if(!body||typeof body!=='object'||Array.isArray(body))return fail();
       const present=Object.keys(body);
-      if(required.some(k=>!present.includes(k))||present.some(k=>!required.includes(k)&&!['attachments','typed'].includes(k)))return fail();
-      if(('attachments' in body&&!validAttachments(body.attachments))||('typed' in body&&!validTyped(body.typed)))return fail();
+      if(required.some(k=>!present.includes(k))||present.some(k=>!required.includes(k)&&!['attachments','typed','listed'].includes(k)))return fail();
+      if(('attachments' in body&&!validAttachments(body.attachments))||('typed' in body&&!validTyped(body.typed))||('listed' in body&&typeof body.listed!=='boolean'))return fail();
       if(['person','account','job_id','digest','read_key_hash'].some(k=>typeof body[k]!=='string')||!PERSON.test(body.person)||!PERSON.test(body.account)||!STATE_PATTERN.test(body.job_id)||!HASH_PATTERN.test(body.digest)||!HASH_PATTERN.test(body.read_key_hash)||!['approve','send','retract'].includes(body.kind)||typeof body.text!=='string'||!body.text||new TextEncoder().encode(body.text).length>48_000||!fields(body.context,['media','reply_to','publish_at','target','reason','topic','options'])||!['threads','mastodon','bluesky','x'].includes(body.context.media)||Object.values(body.context).some(v=>v!==null&&(typeof v!=='string'||v.length>4096)))return fail();
       const authority=await accountStub(this.env,body.account);
       if(!await authority.active())return fail(410,'account_revoked');
       const generation=await (await personStub(this.env,body.person)).current();
       if(!generation)return fail(409,'approver_unavailable');
-      const deadline=this.now()+TTL;
+      // 一覧に出す承認（3.11.0）は最大 24 時間まで待てる。画像の表示（capability）は 10 分より
+      // 延ばせないので、画像を見せる承認は延ばさない（一覧には出すが期限は 10 分のまま）。
+      const listed=body.listed===true;
+      const extended=listed&&!(body.attachments??[]).some(a=>typeof a.preview==='string');
+      const deadline=this.now()+(extended?LIST_TTL:TTL);
       try{const created=await this.ctx.storage.transaction(async()=>{
         const result=this.atomic(()=>{
           if(!this.replay(ticket))return fail(409,'replayed_request');
           if(this.ctx.storage.kv.get('session'))return fail(409,'session_exists');
-          this.put('session',{...body,generation,status:'pending',csrf:opaque(),failures:0,expires_at:deadline});
+          this.put('session',{...body,listed,generation,status:'pending',csrf:opaque(),failures:0,expires_at:deadline,page_until:0});
           return {status:201,body:{status:'pending',expires_at:deadline}};
         });
         if(result.status===201)await this.ctx.storage.setAlarm(deadline);return result;
@@ -255,6 +324,10 @@ export class ApprovalSession extends AtomicObject {
             try{await (await mediaStub(this.env,a.preview)).boundExpiry(deadline);}catch{}}
         const registered=await authority.register(this.binding(this.row()),generation,this.ctx.id.toString());
         if(registered.status!==200){await this.invalidate();return registered;}
+        if(listed){
+          const indexed=await (await personStub(this.env,body.person)).listJob({job_id:body.job_id,session:this.ctx.id.toString(),expires_at:deadline},generation);
+          if(indexed.status!==200){await this.invalidate();return indexed;}
+        }
         return created;
       }catch{return fail(503,'approval_unavailable');}
     }
@@ -294,16 +367,39 @@ export class ApprovalSession extends AtomicObject {
   }
   binding(row){const {job_id,digest,account,kind,expires_at}=row;return {job_id,digest,account,kind,expires_at};}
 
-  async view(){try{return await this.render();}finally{await this.settle();}}
-  async render(){
+  // `person` は一覧（/pending/<job_id>）から開いたときだけ渡る: その人あての承認でなければ見せない。
+  async view(person=null){try{return await this.render(person);}finally{await this.settle();}}
+  async render(person){
     const before=this.row();if(!before||before.status!=='pending')return fail(410,'expired');
+    if(person!==null&&before.person!==person)return fail(404,'not_found');
     if(!await (await accountStub(this.env,before.account)).active()||!await (await personStub(this.env,before.person)).current(before.generation)){
       this.clear(before,'expired');return fail(410,'approver_unavailable');}
     const row=this.row();if(!row||row.status!=='pending')return fail(410,'expired');
     const {text,account,kind,digest,csrf,context,attachments,typed}=row;
+    const live=await this.livePreviews(attachments);
+    let page_minutes=null;
+    if(row.listed===true){
+      // 一覧に出した承認: 承認ページの 10 分は開いた時点から数え直す。job の期限（最大 24 時間）は越えない。
+      const now=this.now(),until=Math.min(now+TTL,row.expires_at);
+      const saved=this.atomic(()=>{const current=this.row();if(!current||current.status!=='pending')return false;
+        this.put('session',{...current,page_until:until});return true;});
+      if(saved!==true)return fail(410,'expired');
+      page_minutes=Math.max(0,Math.ceil((until-now)/60_000));
+    }
     // Only the page sees attachments. `clear()` drops them before any receipt.
     return {status:200,body:{text,account,kind,digest,csrf,context,attachments:attachments??[],typed:typed??null,
-      live:await this.livePreviews(attachments)}};
+      live,listed:row.listed===true,page_minutes}};
+  }
+  // 一覧の 1 行（3.11.0）。その人あての・一覧に出した・まだ待っている承認だけ。本文は先頭 60 字まで。
+  async summary(person){
+    const before=this.row();
+    if(!before||before.status!=='pending'||before.listed!==true||before.person!==person)return fail(404,'not_found');
+    if(!await (await accountStub(this.env,before.account)).active()||!await (await personStub(this.env,before.person)).current(before.generation))return fail(404,'not_found');
+    const row=this.row();if(!row||row.status!=='pending')return fail(404,'not_found');
+    const chars=Array.from(row.text);
+    return {status:200,body:{job_id:row.job_id,kind:row.kind,account:row.account,head:chars.slice(0,HEAD).join(''),more:chars.length>HEAD,
+      attachments:(Array.isArray(row.attachments)&&row.attachments.length>0)||(typeof row.typed==='string'&&row.typed!==''),
+      remaining:Math.max(0,Math.ceil((row.expires_at-this.now())/60_000))}};
   }
   // A page that cannot show one of its images must not offer the approve form:
   // ask each image's media object whether it would still serve those bytes.
@@ -317,15 +413,19 @@ export class ApprovalSession extends AtomicObject {
     }
     return true;
   }
-  async approve(secret,csrf){try{return await this.attempt(secret,csrf);}finally{await this.settle();}}
-  async attempt(secret,csrf){
+  async approve(secret,csrf,person=null){try{return await this.attempt(secret,csrf,person);}finally{await this.settle();}}
+  async attempt(secret,csrf,person){
     const row=this.row();if(!row||row.status!=='pending')return fail(410,'expired');
+    if(person!==null&&row.person!==person)return fail(404,'not_found');
     if(typeof csrf!=='string'||!STATE_PATTERN.test(csrf)||!equal(unb64(csrf),unb64(row.csrf)))return fail(403,'forbidden');
     // Reserve an attempt synchronously before the KDF so concurrent POSTs cannot exceed five.
     const allowed=this.atomic(()=>{
       const current=this.row();if(!current||current.status!=='pending'||current.failures>=5)return false;
+      // 一覧に出した承認は、開いてから 10 分を過ぎたページでは押せない（開き直す）。
+      if(current.listed===true&&this.now()>=(current.page_until??0))return 'page_expired';
       this.put('session',{...current,failures:current.failures+1});return true;
     });
+    if(allowed==='page_expired')return fail(410,'page_expired');
     if(allowed!==true)return fail(410,'expired');
     const approved_at=await (await personStub(this.env,row.person)).check(secret,row.generation,this.binding(row));
     if(approved_at!==null){

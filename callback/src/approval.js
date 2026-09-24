@@ -3,6 +3,12 @@ import {digest, STATE_PATTERN, HASH_PATTERN, reply} from './relay.js';
 import {deletionStub} from './deletion.js';
 export const PERSON = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
 export const TTL = 600_000;
+// 3.11.0 承認待ちの一覧: 一覧に出す承認 job は最大 24 時間まで待てる（既定の 10 分は変えない）。
+// 承認ページの 10 分は、開いた時点から数え直す（ただし job の期限は越えない）。
+export const LIST_TTL = 86_400_000;
+export const HEAD = 60;          // 一覧に出す本文は先頭 60 字まで
+export const LIST_MAX = 50;      // 1 人の一覧に並べる承認待ちの上限
+export const VIEW_MAX = 8;       // 1 人の一覧の session（ブラウザ）の上限
 export const ITERATIONS = 100_000; // Workers WebCrypto caps PBKDF2 at 100,000 iterations (production NotSupportedError above it).
 const encoder = new TextEncoder();
 export const fail = (status=400, error='invalid_request') => ({status, body:{error}});
@@ -85,11 +91,45 @@ function attachments(rows,typed){
   const structured=typeof typed==='string'&&typed?'<p>型付き添付／公開設定</p><pre>'+escape(typed)+'</pre>':'';
   return list+structured;
 }
-function page(status,body) {
-  return new Response('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>THTH 承認</title><style>body{overflow-wrap:anywhere;max-width:44rem;margin:2rem auto;padding:0 1rem;font:1rem/1.7 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;border:1px solid;padding:1rem}figure{margin:1rem 0}img{max-width:100%;height:auto;border:1px solid}figcaption{font-size:.9rem}.en{display:block;font-size:.88rem;opacity:.75}input{max-width:100%;font:inherit}button{display:block;margin:1rem 0;padding:.6rem 1.4rem;font:inherit}</style><body>'+body+'</body></html>',{status,headers:{
+function page(status,body,title='THTH 承認') {
+  return new Response('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>'+title+'</title><style>body{overflow-wrap:anywhere;max-width:44rem;margin:2rem auto;padding:0 1rem;font:1rem/1.7 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;border:1px solid;padding:1rem}figure{margin:1rem 0}img{max-width:100%;height:auto;border:1px solid}figcaption{font-size:.9rem}.en{display:block;font-size:.88rem;opacity:.75}input{max-width:100%;font:inherit}label{display:block;margin:.6rem 0}button{display:block;margin:1rem 0;padding:.6rem 1.4rem;font:inherit}li{margin:1.4rem 0}a.go{display:inline-block;padding:.4rem 1.2rem;border:1px solid;text-decoration:none}</style><body>'+body+'</body></html>',{status,headers:{
     'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer',
     'content-security-policy':"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     'x-content-type-options':'nosniff','x-frame-options':'DENY'}});
+}
+async function publicQuota(request,env){
+  return !!env.APPROVAL_PUBLIC_LIMIT&&(await env.APPROVAL_PUBLIC_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success;
+}
+// Referrer-Policy: no-referrer makes browsers send `Origin: null` (or omit it) even on a
+// same-origin form POST (Fetch spec §4.9). Same-origin is then proven by Sec-Fetch-Site;
+// the per-session csrf field and CSP form-action 'self' remain the CSRF gate.
+// 承認ページ・承認待ちの一覧（3.11.0）の form POST はどれもここを通る。
+export function fromSameOrigin(request,url){
+  const originHeader=request.headers.get('origin'),site=request.headers.get('sec-fetch-site');
+  const sameOrigin=originHeader===url.origin||((originHeader===null||originHeader==='null')&&(site===null||site==='same-origin'));
+  return sameOrigin&&/^application\/x-www-form-urlencoded(?:\s*;|$)/i.test(request.headers.get('content-type')||'');
+}
+const toList=`<p><a href="/pending">承認待ちの一覧 / Pending approvals</a></p>`;
+// 承認ページ（/approve/<token> と、一覧から開いた /pending/<job_id> の両方）。
+function approvalPage(result,fromList=false){
+  if(result.status!==200)return page(result.status,`<h1>承認ページは無効です${en('This approval page is no longer valid')}</h1><p>サーバから新しく承認を求めてください。${en('Please request a new approval from the server.')}</p>${toList}`);
+  const d=result.body;
+  // 一覧に出した承認は、開いた時点から 10 分（job の期限を越えない）。
+  const expiry=d.listed===true
+    ?`<p>このページは開いてから 10 分で失効します（残り ${escape(d.page_minutes)} 分）。${en('This page expires 10 minutes after it was opened ('+escape(d.page_minutes)+' min left).')}</p>`
+    :`<p>10 分で失効します。${en('This page expires in 10 minutes.')}</p>`;
+  // No form when the page cannot show every image it lists: a human must
+  // never be asked to approve attachments they could not look at.
+  const act=d.live===true
+    ?`${expiry}<form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><label>承認 secret / Approval secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label><button type="submit">承認 / Approve</button></form>`
+    :`<p>添付を表示できないため、この承認ページは使えません。サーバから新しく承認を求めてください。${en('Attachments cannot be shown, so this page cannot be used. Please request a new approval from the server.')}</p>`;
+  return page(200,`<h1>${kindLabel[d.kind]}${en(kindEnglish[d.kind])}</h1><p>アカウント / Account: ${escape(d.account)}</p><pre>${escape(d.text)}</pre>${attachments(d.attachments,d.typed)}${Object.entries(d.context).filter(([,v])=>v!==null).map(([k,v])=>`<p>${labels[k]}: ${escape(v)}</p>`).join('')}<p>digest: ${escape(d.digest)}</p>${act}${fromList?toList:''}`);
+}
+function approvalOutcome(result,fromList=false){
+  const back=fromList?toList:'';
+  if(result.status===200)return page(200,`<h1>${accepted[result.body.kind]}${en(acceptedEnglish[result.body.kind])}</h1><p>サーバが内容を再確認します。操作の完了は元のセッションで確認してください。${en('The server re-checks the content. Confirm completion in the original session.')}</p>${back}`);
+  if(result.body?.error==='page_expired')return page(410,`<h1>このページの期限が過ぎました${en('This page has expired')}</h1><p>開いてから 10 分が過ぎました。一覧から開き直してください。${en('More than 10 minutes have passed since it was opened. Open it again from the list.')}</p>${toList}`);
+  return page(result.status,`<h1>承認できませんでした${en('Approval failed')}</h1><p>承認 secret または有効期限を確認してください。繰り返し失敗すると管理者による解除が必要です。${en('Check the approval secret and the expiry. Repeated failures lock you out until the operator unlocks you.')}</p>${back}`);
 }
 export async function approvalRequest(request,env,url) {
   try {
@@ -97,29 +137,14 @@ export async function approvalRequest(request,env,url) {
     if(!env.APPROVAL_PERSON||!env.APPROVAL_SESSION||!env.APPROVAL_ACCOUNT)return reply(503);
     const browser=/^\/approve\/([A-Za-z0-9_-]{43})$/.exec(url.pathname);
     if(browser){
-      if(!env.APPROVAL_PUBLIC_LIMIT || !(await env.APPROVAL_PUBLIC_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
+      if(!await publicQuota(request,env))return reply(429,{error:'rate_limited'});
       if(!['GET','POST'].includes(request.method))return reply(405,{error:'method_not_allowed'});
       const stub=await sessionStub(env,browser[1]);
-      if(request.method==='GET'){
-        const result=await stub.view();if(result.status!==200)return page(result.status,`<h1>承認ページは無効です${en('This approval page is no longer valid')}</h1><p>サーバから新しく承認を求めてください。${en('Please request a new approval from the server.')}</p>`);
-        const d=result.body;
-        // No form when the page cannot show every image it lists: a human must
-        // never be asked to approve attachments they could not look at.
-        const act=d.live===true
-          ?`<p>10 分で失効します。${en('This page expires in 10 minutes.')}</p><form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><label>承認 secret / Approval secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label><button type="submit">承認 / Approve</button></form>`
-          :`<p>添付を表示できないため、この承認ページは使えません。サーバから新しく承認を求めてください。${en('Attachments cannot be shown, so this page cannot be used. Please request a new approval from the server.')}</p>`;
-        return page(200,`<h1>${kindLabel[d.kind]}${en(kindEnglish[d.kind])}</h1><p>アカウント / Account: ${escape(d.account)}</p><pre>${escape(d.text)}</pre>${attachments(d.attachments,d.typed)}${Object.entries(d.context).filter(([,v])=>v!==null).map(([k,v])=>`<p>${labels[k]}: ${escape(v)}</p>`).join('')}<p>digest: ${escape(d.digest)}</p>${act}`);
-      }
-      // Referrer-Policy: no-referrer makes browsers send `Origin: null` (or omit it) even on a
-      // same-origin form POST (Fetch spec §4.9). Same-origin is then proven by Sec-Fetch-Site;
-      // the per-session csrf field and CSP form-action 'self' remain the CSRF gate.
-      const originHeader=request.headers.get('origin'),site=request.headers.get('sec-fetch-site');
-      const sameOrigin=originHeader===url.origin||((originHeader===null||originHeader==='null')&&(site===null||site==='same-origin'));
-      if(!sameOrigin||!/^application\/x-www-form-urlencoded(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(403,{error:'forbidden'});
+      if(request.method==='GET')return approvalPage(await stub.view());
+      if(!fromSameOrigin(request,url))return reply(403,{error:'forbidden'});
       const form=new URLSearchParams(await boundedBody(request,2048));
       if([...form.keys()].sort().join(',')!=='csrf,secret')return reply(400,{error:'invalid_request'});
-      const result=await stub.approve(form.get('secret'),form.get('csrf'));
-      return page(result.status,result.status===200?`<h1>${accepted[result.body.kind]}${en(acceptedEnglish[result.body.kind])}</h1><p>サーバが内容を再確認します。操作の完了は元のセッションで確認してください。${en('The server re-checks the content. Confirm completion in the original session.')}</p>`:`<h1>承認できませんでした${en('Approval failed')}</h1><p>承認 secret または有効期限を確認してください。繰り返し失敗すると管理者による解除が必要です。${en('Check the approval secret and the expiry. Repeated failures lock you out until the operator unlocks you.')}</p>`);
+      return approvalOutcome(await stub.approve(form.get('secret'),form.get('csrf')));
     }
     const route=/^\/approval\/(person|session|account|deletion|invite)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|consume|cancel|list|read|verify|complete|discard|cleanup-retry|authorize|reset)$/.exec(url.pathname);
     if(!route||request.method!=='POST')return reply(404,{error:'not_found'});
@@ -137,5 +162,87 @@ export async function approvalRequest(request,env,url) {
     const stub=type==='invite'?inviteStub(env,subject):type==='deletion'?deletionStub(env):type==='account'?await accountStub(env,subject):type==='person'?await personStub(env,subject):await sessionStub(env,subject);
     const result=await stub.manage(operation,body,ticket,subject);
     return reply(result.status,result.body);
+  }catch{return reply(503,{error:'approval_unavailable'});}
+}
+
+// ---------------------------------------------------------------- 承認待ちの一覧（設計 3.11.0）
+// 本人がユーザ名（承認者の名前・招待の口座では口座名と同じ）と承認 secret で入り、自分あての
+// 承認待ちを一覧で見て、そこから承認ページを開く。作法は承認ページと同じ（script なし・CSP・
+// no-store・no-referrer・同一 origin の POST は Sec-Fetch-Site で確かめる）。
+// 一覧の索引と session はその人の person object にだけ置き、本文は承認ページの session にだけある
+// （一覧は先頭 60 字だけを見せる）。Worker は閲覧を記録しない（流量の上限だけ）。
+const COOKIE='thth_pending';
+const COOKIE_VALUE=/^([A-Za-z0-9_-]{43})([a-zA-Z0-9][a-zA-Z0-9_.-]{0,63})$/;
+function pendingCookie(request){
+  for(const part of (request.headers.get('cookie')||'').split(';')){
+    const [name,...rest]=part.trim().split('=');
+    if(name!==COOKIE)continue;
+    const m=COOKIE_VALUE.exec(rest.join('='));
+    return m?{token:m[1],person:m[2]}:null;
+  }
+  return null;
+}
+const setCookie=(value,age)=>`${COOKIE}=${value}; Max-Age=${age}; Path=/pending; Secure; HttpOnly; SameSite=Strict`;
+const listTitle='THTH 承認待ち';
+function signIn(status=200,note=''){
+  return page(status,`<h1>承認待ちの一覧${en('Pending approvals')}</h1>${note}
+<p>ユーザ名と承認 secret で入ると、あなたが承認する投稿・返信・削除の承認待ちが並びます。招待で用意した口座では、ユーザ名は口座名（完了のページに出た名前）です。${en('Sign in with your username and approval secret to see the posts, replies and deletions waiting for your approval. For an account prepared by an invitation, the username is the account name shown on the completion page.')}</p>
+<form method="post"><label>ユーザ名 / Username <input name="person" autocomplete="username" required maxlength="64"></label><label>承認 secret / Approval secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label><button type="submit">一覧を見る / Show the list</button></form>
+<p>一覧は 10 分で閉じます。secret は LLM や原稿に書かないでください。${en('The list closes after 10 minutes. Never paste the secret into an LLM or a draft.')}</p>`,listTitle);
+}
+function listing(person,rows){
+  const items=rows.map(r=>`<li><p><strong>${kindLabel[r.kind]}</strong>${en(kindEnglish[r.kind])}</p><p>アカウント / Account: ${escape(r.account)} · 添付 / Attachments: ${r.attachments?'あり / yes':'なし / none'} · 期限まで / Expires in: ${escape(r.remaining)} 分 / min</p><pre>${escape(r.head)}${r.more?'…':''}</pre><a class="go" href="/pending/${escape(r.job_id)}">開く / Open</a></li>`).join('');
+  const body=rows.length?`<ul>${items}</ul>`:`<p>いま承認待ちはありません。${en('Nothing is waiting for your approval.')}</p>`;
+  return page(200,`<h1>承認待ちの一覧${en('Pending approvals')}</h1><p>ユーザ名 / Username: ${escape(person)}</p>${body}
+<p>「開く」で承認ページに進みます。承認ページは開いてから 10 分で失効し、承認すると一覧から消えます。${en('“Open” takes you to the approval page. It expires 10 minutes after it is opened; approved items leave the list.')}</p>
+<form method="post"><input type="hidden" name="leave" value="1"><button type="submit">閉じる / Sign out</button></form>`,listTitle);
+}
+const sessionById=(env,id)=>env.APPROVAL_SESSION.get(env.APPROVAL_SESSION.idFromString(id));
+export async function pendingRequest(request,env,url){
+  try{
+    if(url.search||url.hash||url.pathname.includes('%'))return reply(400,{error:'invalid_request'});
+    if(!env.APPROVAL_PERSON||!env.APPROVAL_SESSION||!env.APPROVAL_ACCOUNT)return reply(503);
+    const match=/^\/pending(?:\/([A-Za-z0-9_-]{43}))?$/.exec(url.pathname);
+    if(!match)return reply(404,{error:'not_found'});
+    if(!await publicQuota(request,env))return reply(429,{error:'rate_limited'});
+    if(!['GET','POST'].includes(request.method))return reply(405,{error:'method_not_allowed'});
+    if(request.method==='POST'&&!fromSameOrigin(request,url))return reply(403,{error:'forbidden'});
+    const cookie=pendingCookie(request);
+    const who=cookie?{stub:await personStub(env,cookie.person),hash:await digest(cookie.token)}:null;
+    const expired=response=>{if(cookie)response.headers.append('set-cookie',setCookie('',0));return response;};
+    if(!match[1]){
+      if(request.method==='GET'){
+        if(!who)return signIn();
+        const listed=await who.stub.listView(who.hash);
+        if(listed.status!==200)return expired(signIn());
+        const rows=[];
+        for(const row of listed.body.rows){
+          try{const summary=await sessionById(env,row.session).summary(cookie.person);if(summary.status===200)rows.push(summary.body);}catch{}
+        }
+        return listing(cookie.person,rows);
+      }
+      const form=new URLSearchParams(await boundedBody(request,1024));
+      const keys=[...form.keys()].sort().join(',');
+      if(keys==='leave'){
+        if(who)await who.stub.closeList(who.hash);
+        return new Response(null,{status:303,headers:{location:'/pending','cache-control':'no-store','referrer-policy':'no-referrer','set-cookie':setCookie('',0)}});
+      }
+      if(keys!=='person,secret')return reply(400,{error:'invalid_request'});
+      const person=form.get('person'),refused=()=>signIn(403,`<p><strong>入れませんでした。</strong>ユーザ名と承認 secret を確かめてください。繰り返し失敗すると管理者による解除が必要です。${en('Sign-in failed. Check the username and the approval secret. Repeated failures lock the list until the operator unlocks it.')}</p>`);
+      if(!PERSON.test(person))return refused();
+      const token=opaque(),opened=await (await personStub(env,person)).openList(form.get('secret'),await digest(token));
+      if(opened.status!==200)return refused();
+      return new Response(null,{status:303,headers:{location:'/pending','cache-control':'no-store','referrer-policy':'no-referrer','set-cookie':setCookie(token+person,Math.floor(TTL/1000))}});
+    }
+    // 一覧から開く承認ページ。一覧に入っていて、その人の索引にある job だけ。
+    if(!who)return signIn(401);
+    const found=await who.stub.listedSession(who.hash,match[1]);
+    if(found.status===401)return expired(signIn(401));
+    if(found.status!==200)return approvalPage(found,true);
+    const stub=sessionById(env,found.body.session);
+    if(request.method==='GET')return approvalPage(await stub.view(cookie.person),true);
+    const form=new URLSearchParams(await boundedBody(request,2048));
+    if([...form.keys()].sort().join(',')!=='csrf,secret')return reply(400,{error:'invalid_request'});
+    return approvalOutcome(await stub.approve(form.get('secret'),form.get('csrf'),cookie.person),true);
   }catch{return reply(503,{error:'approval_unavailable'});}
 }

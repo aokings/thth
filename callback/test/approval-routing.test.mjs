@@ -21,7 +21,7 @@ test('real approval routing bypasses assets, two DOs survive restart and consume
   const home=join(dir,'home'),assets=join(dir,'assets'),key=join(dir,'key'),token=opaque(),readKey=opaque(),secret=opaque(),salt=opaque(),bodyText=opaque();
   const hidden=[token,readKey,secret,bodyText],logs=[];await mkdir(home);await mkdir(join(assets,'approve'),{recursive:true});
   await writeFile(join(assets,'approve',token),'shadow approval');
-  await writeFile(join(assets,'data-deletion'),'shadow deletion');await writeFile(join(assets,'data-deletion-status'),'shadow status');
+  await writeFile(join(assets,'data-deletion'),'shadow deletion');await writeFile(join(assets,'pending'),'shadow pending');await writeFile(join(assets,'data-deletion-status'),'shadow status');
   const pem=crypto(['genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072']);hidden.push(pem.toString());await writeFile(key,pem,{mode:0o600});
   const pub=crypto(['pkey','-in',key,'-pubout','-outform','DER']).toString('base64url');
   await writeFile(join(dir,'local.env'),'');
@@ -41,6 +41,7 @@ test('real approval routing bypasses assets, two DOs survive restart and consume
   };
   try{
     await start();const unknown=await fetch(origin+'/approve/'+token);assert.equal(unknown.status,410);assert.ok(!(await unknown.text()).includes('shadow'));
+    const list=await fetch(origin+'/pending');assert.equal(list.status,200);assert.ok((await list.text()).includes('Pending approvals'),'3.11.0: /pending is answered by the Worker, not assets');
     const verifier=pbkdf2Sync(secret,Buffer.from(salt,'base64url'),100000,32,'sha256').toString('base64url');hidden.push(verifier);
     assert.equal((await signed('person','person','set',{salt,verifier,iterations:100000})).status,200);
     assert.equal((await signed('session',token,'create',{person:'person',job_id:opaque(),digest:hash(bodyText),account:'alpha',kind:'retract',text:bodyText,read_key_hash:hash(readKey),context:{media:'threads',reply_to:null,publish_at:null,target:'123',reason:'requested',topic:null,options:null}})).status,201);
