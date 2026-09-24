@@ -938,8 +938,11 @@ def admin_draft_put(account, *, body, publish_at=None, topic=None, reply_to=None
     return server_writes.execute(context, request, via="cli", by=by)
 
 
-def admin_approval_request(account, *, draft=None, send=False, retract=None, reason=None, by):
-    """承認 URL を出す。既定は原稿の承認、--send は承認の直後に公開、--retract は削除。"""
+def admin_approval_request(account, *, draft=None, send=False, retract=None, reason=None, by, listed=True):
+    """承認 URL を出す。既定は原稿の承認、--send は承認の直後に公開、--retract は削除。
+
+    既定で本人の承認待ちの一覧（https://thth.me/pending）にも出す（設計 3.11.0）。
+    """
     admin_log.actor(by)
     from . import queuefile, server_writes
     context = invite_context(account)
@@ -960,7 +963,7 @@ def admin_approval_request(account, *, draft=None, send=False, retract=None, rea
             for key in ("topic", "reply_to"):
                 if q.front_matter.get(key):
                     request[key] = str(q.front_matter[key])
-    return server_writes.execute(context, request, via="cli", by=by)
+    return server_writes.execute(context, request, via="cli", by=by, listed=listed)
 
 
 def _admin_fail(exc):
@@ -996,24 +999,33 @@ def cmd_admin_approval_request(args):
         return 2
     try:
         row = admin_approval_request(args.account, draft=args.draft, send=args.send, retract=args.retract,
-                                     reason=args.reason, by=args.by)
+                                     reason=args.reason, by=args.by, listed=not args.no_list)
     except (InviteError, ReportServiceError, ValueError, OSError) as exc:
         return _admin_fail(exc)
     # 承認 URL はこの口の出力（運営者が本人に渡す）。押すには本人の承認 secret が要る。
+    # 一覧に出したもの（既定）は、本人が https://thth.me/pending から自分で開ける（URL を届けなくてよい）。
     print(f"approval_requested: account={row['account']} kind={row['kind']} job_id={row['job_id']}")
-    print("承認 URL（10 分）: " + row["approval_url"])
+    if row.get("pending_url"):
+        import time as time_mod
+        minutes = max(0, (row["expires_at"] - int(time_mod.time() * 1000)) // 60000)
+        print(f"承認待ちの一覧: {row['pending_url']}（本人がユーザ名 {row['account']} と承認 secret で入る・期限まで {minutes} 分）")
+        print("承認 URL（開いてから 10 分）: " + row["approval_url"])
+    else:
+        print("承認 URL（10 分）: " + row["approval_url"])
     return 0
 
 
 def register_admin_writes(commands):
     parser = commands.add_parser("approval", help="招待の口座の承認 URL を出す（運営者の口・bearer を使わない）")
     operations = parser.add_subparsers(dest="approval_operation", required=True)
-    p = operations.add_parser("request", help="その口座の承認者あての承認 URL（10 分）")
+    p = operations.add_parser("request", help="その口座の承認者あての承認 URL（既定で本人の承認待ちの一覧にも出す・最大 24 時間）")
     p.add_argument("account")
     p.add_argument("--draft", default=None, help="draft_id か、その口座の queue の原稿のパス")
     p.add_argument("--send", action="store_true", help="承認の直後に公開する（原稿の本文・返信先で）")
     p.add_argument("--retract", default=None, metavar="POST_ID", help="この投稿の削除の承認")
     p.add_argument("--reason", default=None, help="--retract の理由")
+    p.add_argument("--no-list", action="store_true",
+                   help="承認待ちの一覧（https://thth.me/pending）に出さない（承認 URL だけ・10 分）")
     p.add_argument("--by", required=True)
     p.set_defaults(func=cmd_admin_approval_request)
     parser = commands.add_parser("draft", help="招待の口座に下書きを置く（運営者の口）")

@@ -45,7 +45,9 @@ def test_運営者の口で下書きを置き_その口座の承認者あての�
     draft_id = re.search(r"draft_id=([0-9a-f]{64})", capsys.readouterr().out).group(1)
     assert cli.main(["admin", "approval", "request", name, "--draft", draft_id, "--send", "--by", "masaru"]) == 0
     out = capsys.readouterr().out
-    assert re.search(r"承認 URL（10 分）: https://thth\.me/approve/[A-Za-z0-9_-]{43}\n", out)
+    # 3.11.0: 既定で本人の承認待ちの一覧にも出すので、一覧の行が先に出て、承認 URL は「開いてから 10 分」。
+    assert re.search(r"承認 URL（開いてから 10 分）: https://thth\.me/approve/[A-Za-z0-9_-]{43}\n", out)
+    assert f"承認待ちの一覧: https://thth.me/pending（本人がユーザ名 {name} と承認 secret で入る" in out
     (session,) = created
     assert session["person"] == name and session["account"] == name and session["kind"] == "send"
     assert session["text"].startswith("審査用の下書きです。")
@@ -92,3 +94,16 @@ def test_常駐はcliで作ったjobも読める(world, sessions, tmp_path):
     with approval_jobs.server_files.directory(approval_jobs.directory(name), private=True) as fd:
         job = approval_jobs._load(fd, result["job_id"])
     assert job["status"] == "pending" and job["via"] == "cli"
+
+
+def test_no_listは一覧に出さず承認URLは10分(world, sessions, capsys):
+    # 3.11.0: 既定は本人の承認待ちの一覧にも出す。--no-list は従来どおり URL だけ（10 分）。
+    record, created = sessions
+    name = record["account"]
+    row = invites.admin_draft_put(name, body="本文", by="masaru")
+    assert cli.main(["admin", "approval", "request", name, "--draft", row["draft_id"], "--no-list", "--by", "masaru"]) == 0
+    out = capsys.readouterr().out
+    assert re.search(r"承認 URL（10 分）: https://thth\.me/approve/[A-Za-z0-9_-]{43}\n", out)
+    assert "承認待ちの一覧" not in out and "listed" not in created[-1]
+    assert cli.main(["admin", "approval", "request", name, "--draft", row["draft_id"], "--by", "masaru"]) == 0
+    assert created[-1]["listed"] is True

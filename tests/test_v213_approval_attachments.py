@@ -149,6 +149,8 @@ def test_text_only_request_body_is_unchanged(env, remote, relay_client):
     writes.execute(env['context'], dict(REQUEST, draft_id=one['draft_id']))
     body = dict(body_of(remote))
     for key in ('status', 'expires_at'): body.pop(key)
+    # 3.11.0: 承認待ちの一覧に出す印（listed）が既定で 1 つ足る。ほかの鍵は変わらない。
+    assert body.pop('listed') is True
     assert set(body) == {'person', 'job_id', 'digest', 'account', 'kind', 'text', 'context', 'read_key_hash'}
     assert body['person'] == 'person' and body['account'] == 'alpha' and body['kind'] == 'approve'
     assert body['text'].strip() == '投稿本文'

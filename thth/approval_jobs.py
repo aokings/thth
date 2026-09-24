@@ -23,6 +23,14 @@ MAX_CREATE_BODY = 90 * 1024
 # A preview capability is 43 url-safe characters, so the preflight body is the
 # byte-exact size of the body that will be sent once the grants exist.
 PREVIEW_PLACEHOLDER = 'p' * 43
+# 承認待ちの一覧（設計 3.11.0）。一覧に出す job は Worker が最大 24 時間まで待たせる
+# （既定の 10 分は変えない・画像を見せる承認は Worker が 10 分のままにする）。
+APPROVAL_TTL = 600_000
+LIST_TTL = 86_400_000
+# 一覧に出した job は長く待つので、10 分より先の残りがある間は Worker への問い合わせを
+# 間引く（承認 relay の流量の上限を、待っている job の数で食い潰さない）。
+SLOW_POLL_SECONDS = 10
+_last_poll = {}
 
 
 class BoundsRefused(ReportServiceError):
@@ -39,7 +47,7 @@ def _valid_job(value, job_id):
     required = {'schema_version','job_id','token','read_key','account','kind','actor','credential_digest',
                 'request','binding','digest','status','expires_at','via'}
     if (type(value) is not dict or not required <= value.keys()
-            or value.keys()-required-{'receipt','reason','post_id','media_subjects'}
+            or value.keys()-required-{'receipt','reason','post_id','media_subjects','listed'}
             or type(value['schema_version']) is not int or value['schema_version'] != 1
             or value['job_id'] != job_id or not matches(relay.OPAQUE,job_id)
             or not all(matches(relay.OPAQUE,value[k]) for k in ('token','read_key'))
@@ -52,6 +60,7 @@ def _valid_job(value, job_id):
             or type(value['expires_at']) is not int or value['expires_at'] <= 0):
         return False
     if 'reason' in value and (not isinstance(value['reason'],str) or value['reason'] not in REASONS): return False
+    if 'listed' in value and value['listed'] is not True: return False
     if 'post_id' in value and (not string(value['post_id'],4096) or not value['post_id'] or writeback.has_control_chars(value['post_id'])): return False
     if 'media_subjects' in value:
         subjects=value['media_subjects']
@@ -163,24 +172,38 @@ def _attachments(account, actor, media, subjects, payload):
     return rows,typed
 
 
-def create(context, request, binding, via, media=None, by=None):
+def _window(job):
+    return LIST_TTL if job.get('listed') is True else APPROVAL_TTL
+
+
+def create(context, request, binding, via, media=None, by=None, listed=True):
+    """承認 job を作り、Worker に承認ページを登録する。
+
+    `listed`（既定 True・設計 3.11.0）: 本人が https://thth.me/pending で自分の承認待ちとして
+    見られるようにする。その job は最大 24 時間待つ。False は従来どおり URL だけ（10 分）。
+    """
     job_id,token,read_key=(secrets.token_urlsafe(32) for _ in range(3))
     now=int(time.time()*1000)
     digest=hashlib.sha256(server_files.encode(binding)).hexdigest()
     job=dict(schema_version=1,job_id=job_id,token=token,read_key=read_key,account=binding['account'],
              kind=binding['kind'],actor=context.actor,credential_digest=context.credential_digest,
-             request=request,binding=binding,digest=digest,status='registering',expires_at=now+600000,via=via)
+             request=request,binding=binding,digest=digest,status='registering',expires_at=now+APPROVAL_TTL,via=via)
+    if listed:
+        job.update(listed=True,expires_at=now+LIST_TTL)
     # Preflight and durable intent precede any remote registration. Never put
     # body, token, URL, credential hash or read key into the administration log.
     with server_files.directory(directory(job['account']),create=True,private=True) as fd:
         with server_files.lock_at(fd,job_id+'.lock'):
             with admin_log.transaction():
                 server_files.replace_at(fd,job_id+'.json',server_files.encode(job),new=True)
+                # 一覧に出したことも変更ログに残す（設計 3.11.0 §2）。本人の閲覧は Worker も記録しない。
+                diff={'request_present':[False,True],**({'listed':[False,True]} if listed else {})}
                 admin_log.append({'approve':'approval_requested','send':'send_requested','retract':'retract_requested'}[job['kind']],
-                                 job['account'],{},by=by or context.actor,via=via,diff={'request_present':[False,True]},run_id=job_id)
+                                 job['account'],{},by=by or context.actor,via=via,diff=diff,run_id=job_id)
             def payload(rows,typed):
                 extra={} if rows is None else {'attachments':rows}
                 if typed is not None:extra['typed']=typed
+                if listed:extra['listed']=True
                 return dict(person=context.actor,job_id=job_id,digest=digest,account=job['account'],
                             kind=job['kind'],text=binding['text'],context=binding['context'],
                             read_key_hash=hashlib.sha256(read_key.encode()).hexdigest(),**extra)
@@ -202,7 +225,7 @@ def create(context, request, binding, via, media=None, by=None):
             try:
                 value=relay.signed_request('session',token,'create',payload(rows,typed))
                 if (value.get('status')!='pending' or type(value.get('expires_at')) is not int
-                        or not now < value['expires_at'] <= int(time.time()*1000)+600000):
+                        or not now < value['expires_at'] <= int(time.time()*1000)+_window(job)):
                     raise ValueError('invalid_registration')
                 job['expires_at']=min(job['expires_at'],value['expires_at']);job['status']='pending';_save(fd,job)
             except Exception as exc:
@@ -214,8 +237,9 @@ def create(context, request, binding, via, media=None, by=None):
                            reason='approval_registration_rejected' if rejected else 'approval_registration_unknown')
                 _save(fd,job)
                 raise ReportServiceError(job['reason']) from None
+    base=os.environ.get('THTH_APPROVAL_BASE_URL','https://thth.me').rstrip('/')
     return {**_public(job),'text':binding['text'],'digest':digest,'context':binding['context'],
-            'approval_url':os.environ.get('THTH_APPROVAL_BASE_URL','https://thth.me').rstrip('/')+'/approve/'+token}
+            'approval_url':base+'/approve/'+token,**({'pending_url':base+'/pending'} if listed else {})}
 
 
 def _receipt_matches(job, receipt):
@@ -224,7 +248,7 @@ def _receipt_matches(job, receipt):
             or any(receipt.get(k)!=v for k,v in expected.items())
             or not isinstance(receipt.get('generation'),str) or not relay.OPAQUE.fullmatch(receipt['generation'])
             or type(receipt.get('approved_at')) is not int or type(receipt.get('expires_at')) is not int
-            or not job['expires_at']-600000 <= receipt['approved_at'] < job['expires_at']
+            or not job['expires_at']-_window(job) <= receipt['approved_at'] < job['expires_at']
             or receipt['expires_at'] < job['expires_at'])
 
 
@@ -297,6 +321,18 @@ def _perform(fd, job, context):
     job['status']='completed';_save(fd,job)
 
 
+def _due(job):
+    """一覧に出した job で、残りが 10 分より長い間は SLOW_POLL_SECONDS ごとにだけ問い合わせる。"""
+    if job.get('listed') is not True or job['expires_at']-int(time.time()*1000) <= APPROVAL_TTL:
+        return True
+    now=time.monotonic();last=_last_poll.get(job['job_id'])
+    if last is not None and now-last < SLOW_POLL_SECONDS:
+        return False
+    if len(_last_poll) > 4096: _last_poll.clear()
+    _last_poll[job['job_id']]=now
+    return True
+
+
 def process(account, job_id, contexts):
     try:
         with server_files.directory(directory(account),private=True) as fd, server_files.lock_at(fd,job_id+'.lock'):
@@ -313,6 +349,7 @@ def process(account, job_id, contexts):
                 if int(time.time()*1000)>=job['expires_at']:
                     job.update(status='expired',reason='approval_timeout');_save(fd,job);return
                 if job['status']=='pending':
+                    if not _due(job): return
                     try:
                         result=relay.signed_request('session',job['token'],'status',{'read_key':job['read_key']})
                     except relay.RelayError as exc:
