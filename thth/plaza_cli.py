@@ -106,7 +106,8 @@ def render_post(payload, out=print):
               if payload.get("kind_detail") else "")
     out(f"印: {plaza.EVIDENCE_LABELS[payload['evidence_level']]}{detail}"
         f"  範囲: {payload.get('scope_note') or '—'}"
-        + (f"  目的: {payload['goal']}" if payload.get("goal") else ""))
+        + (f"  目的: {payload['goal']}" if payload.get("goal") else "")
+        + (f"  追試の予定日: {payload['trial_due']}" if payload.get("trial_due") else ""))
     if payload.get("how"):
         out(f"出し直し: {payload['how']}（道具は実行していません）")
     if payload.get("hypothesis"):
@@ -282,7 +283,8 @@ def cmd_post(args) -> int:
                             visibility=("open" if args.open else
                                         "owner" if getattr(args, "owner", False) else "project"),
                             via="cli", now=now,
-                            confirm=args.confirm, goal=getattr(args, "goal", None))
+                            confirm=args.confirm, goal=getattr(args, "goal", None),
+                            trial_due=getattr(args, "trial_due", None))
     except plaza.PlazaError as error:
         return _print_refusal(args, error)
     if result["report_type"] == "plaza_open_preview":
@@ -412,6 +414,9 @@ def register(sub) -> None:
     poster.add_argument("--hypothesis", default=None, help="仮説（省略すると最初の宣言の仮説）")
     poster.add_argument("--change", default=None, help="変えたこと（省略すると最初の宣言の変更）")
     poster.add_argument("--until", default=None, help="期間の終わり（timezone 付きの時刻・任意）")
+    poster.add_argument("--trial-due", default=None, dest="trial_due",
+                        help="追試の予定日（finding だけ・2026-10-08 か timezone 付きの時刻）。"
+                             "期日で observe の次の一手に「追試の結果を足す」が出る（設計 3.8.0）")
     poster.add_argument("--min-n", type=int, default=5, dest="min_n",
                         help="比べるのに要る各群の最小件数（study-report と同じ・既定 5）")
     poster.add_argument("--open", action="store_true",

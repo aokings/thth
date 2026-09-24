@@ -276,10 +276,12 @@ def _map_cell(configs, now):
 
 
 def _plaza_steps(configs, since, now):
-    from . import plaza
+    from . import plaza, plaza_moments
     viewer = plaza.Viewer({name: cfg.get("project") for name, cfg in configs.items()})
-    return plaza.observe_steps(viewer, {name: cfg.get("media") for name, cfg in configs.items()},
-                               since=since, now=now)
+    steps = plaza.observe_steps(viewer, {name: cfg.get("media") for name, cfg in configs.items()},
+                                since=since, now=now)
+    # 置くきっかけ（設計 3.8.0 §D1・§D2）: 期間が終わった施策・追試の予定日・配分を変えた週。
+    return steps + plaza_moments.trigger_steps(configs, since=since, now=now)
 
 
 # --------------------------------------------------------------- 第 1 段
@@ -1130,9 +1132,15 @@ def _render_section(section, out) -> None:
                 verb = {"read_replies": f"広場の返信を読む（新しい返信 {step.get('n_new_replies')} 件）",
                         "verdict": "広場の施策を判定する",
                         "try_on_medium": f"広場の施策を {step.get('medium') or '—'} で試す"
-                                         f"（まだ試していない媒体・判定 {step.get('verdict')}）"}
-                out(f"  {verb[step['candidate']]}  {step['account']}  {step['plaza_id']}"
-                    f"  {step['title']}")
+                                         f"（まだ試していない媒体・判定 {step.get('verdict')}）",
+                        # 3.8.0 §D1・§D2: 置くきっかけ（下書きの命令つき）。
+                        "post_result": f"広場に置く: 期間が終わった施策の結果（期間 {step.get('until')}）",
+                        "add_trial": f"追試の結果を足す（予定日 {step.get('trial_due')}）",
+                        "post_week": f"広場に置く: 配分を変えた週が閉じた（{step.get('week_start')} の週）"}
+                label = f"  {step['plaza_id']}  {step['title']}" if step.get("plaza_id") else ""
+                out(f"  {verb[step['candidate']]}  {step['account']}{label}")
+                if step.get("command"):
+                    out(f"    {step['command']}")
             else:
                 out(f"  出す  {step['account']}（今日の予定がありません）")
         return

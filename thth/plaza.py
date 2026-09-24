@@ -109,6 +109,8 @@ REASONS = frozenset((
     "invalid_from", "from_unavailable", "from_out_of_scope", "from_is_finding",
     "invalid_from_doc", "from_doc_outside_repo", "from_doc_not_committed",
     "from_report_not_found", "from_report_open", "from_report_no_reply",
+    # 追試の予定日（設計 3.8.0 §D2）。
+    "invalid_trial_due",
     # open にする二段確認（masaru 裁定 09-23）。
     "open_digest_mismatch", "open_requires_cli",
     # 持ち主の組（設計 3.8.0 §A）。
@@ -155,6 +157,8 @@ NEXT = {
     "redaction_unavailable": "他の人の情報を落とすための台帳が読めないので open に出していません"
                              "（project の範囲なら置けます）",
     "invalid_until": "--until は 2026-09-30T00:00:00+09:00 のような timezone 付きの時刻です",
+    "invalid_trial_due": "--trial-due は気づき（finding）にだけ付けられ、2026-10-08 か "
+                         "2026-10-08T09:00:00+09:00 のような日付・時刻です",
     "nothing_to_update": "--refresh・--verdict・--visibility のどれかを付けてください",
     "plaza_hidden": "管理者が非表示にした書き込みです。返信・更新はできません",
     "already_hidden": "既に非表示です",
@@ -255,6 +259,8 @@ def _valid(record) -> bool:
     for key in ("tool_numbers", "source"):
         if record.get(key) is not None and not isinstance(record[key], dict):
             return False
+    if record.get("trial_due") is not None and jst.parse(record["trial_due"]) is None:
+        return False
     hidden = record.get("hidden")
     return hidden is None or isinstance(hidden, dict)
 
@@ -657,6 +663,27 @@ def _until(value):
     return jst.iso(at)
 
 
+def _trial_due(kind, value):
+    """追試の予定日（finding だけ・日付なら JST のその日の 0 時）。observe の次の一手が使う。"""
+    if value is None:
+        return None
+    if kind != "finding" or not isinstance(value, str):
+        raise PlazaError("invalid_trial_due")
+    text = value.strip()
+    at = None
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        try:
+            day = datetime.date.fromisoformat(text)
+        except ValueError:
+            raise PlazaError("invalid_trial_due") from None
+        at = datetime.datetime(day.year, day.month, day.day, tzinfo=jst.JST)
+    else:
+        at = jst.parse(text)
+    if at is None:
+        raise PlazaError("invalid_trial_due")
+    return jst.iso(at)
+
+
 def _check_declaration(value, now):
     from . import study_report
     try:
@@ -892,7 +919,8 @@ def evidence_level_of(record):
 def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, how=None,
          evidence_level="stated", declarations=(), hypothesis=None, change=None,
          until=None, min_n=5, visibility="project", via="cli", project=None, medium=None,
-         now=None, trusted_accounts=None, confirm=None, goal=None, from_source=None):
+         now=None, trusted_accounts=None, confirm=None, goal=None, from_source=None,
+         trial_due=None):
     """広場に 1 件置く。`plaza_id` を返す。
 
     `from_source`（設計 3.8.0 §C・`thth/plaza_from.py`）: `("analytics-report"|"after", account,
@@ -946,6 +974,7 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
     hypothesis = _text(hypothesis, TEXT_MAX, required=False)
     change = _text(change, TEXT_MAX, required=False)
     until = _until(until)
+    trial_due = _trial_due(kind, trial_due)
     now = now or jst.now_jst()
     if trusted_accounts is None:
         try:
@@ -1008,7 +1037,9 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
               "observations": observations, "verdict": None, "replies": [], "hidden": None,
               "open_copy": None, "goal": goal,
               # 3.8.0 §C: 道具が付けた数字（--from analytics-report|after）と元の出所。
-              "tool_numbers": tool_numbers, "source": source}
+              "tool_numbers": tool_numbers, "source": source,
+              # 追試の予定日（3.8.0 §D2・finding だけ）。期日で observe の次の一手に出る。
+              "trial_due": trial_due}
     record["evidence_level"] = evidence_level_of(record)
     if visibility == "open":
         # 他人の情報を落とした写しを**置く時点で**作る（読む側は写しだけを見る）。
@@ -1095,7 +1126,7 @@ def summary_row(record, level, viewer=None) -> dict:
             "verdict": (record.get("verdict") or {}).get("verdict"),
             "kind_detail": record.get("kind_detail"), "evidence_level": evidence_level_of(record),
             "scope_note": record.get("scope_note"), "trials": trial_counts(record),
-            "goal": record.get("goal"),
+            "goal": record.get("goal"), "trial_due": record.get("trial_due"),
             "hidden": bool(record.get("hidden")), "view": level}
 
 
@@ -1200,7 +1231,8 @@ def show(plaza_id, viewer):
                    "owner": owner_label(record.get("project"), record.get("account")),
                    "medium": record.get("medium"), "until": record.get("until"),
                    "verdict": plaza_observe.verdict_view(record.get("verdict"), level, record),
-                   "goal": record.get("goal"), "masked": copy.get("masked", 0),
+                   "goal": record.get("goal"), "trial_due": record.get("trial_due"),
+                   "masked": copy.get("masked", 0),
                    # 道具の数字は写し（他人の情報を落としたもの）・出所は種類だけ（3.8.0 §C）。
                    "tool_numbers": copy.get("tool_numbers"),
                    "source": ({"kind": record["source"].get("kind")} if record.get("source")
@@ -1211,7 +1243,7 @@ def show(plaza_id, viewer):
                 "plaza_id", "at", "updated_at", "kind", "scope", "title", "body", "hypothesis",
                 "change", "project", "account", "medium", "by", "via", "tool_version", "until",
                 "min_n", "hidden", "kind_detail", "scope_note", "how", "declared_level",
-                "goal", "tool_numbers", "source")},
+                "goal", "tool_numbers", "source", "trial_due")},
             "evidence_level": evidence_level_of(record),
             "owner": owner_label(record.get("project"), record.get("account")),
             "verdict": plaza_observe.verdict_view(record.get("verdict"), level, record),

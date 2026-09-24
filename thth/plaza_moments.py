@@ -298,3 +298,111 @@ def _numbers(record, level):
                 out.append(f"{metric} {sign}{diff}（n={value['baseline_n_eligible']}/"
                            f"{value['changed_n_eligible']}）")
     return out[:3]
+
+
+# ------------------------------------------------------------ 置くきっかけ（§D1・§D2）
+
+# 配分を変えたと言う目安: 目的ごとの本数の割合のどれかが、前の週から 20 ポイント以上動いた。
+ALLOCATION_SHIFT = 0.2
+TRIGGER_BASIS = {
+    "post_result": "own_measure_until_passed_since_last_observe",
+    "add_trial": "own_finding_trial_due_passed_without_own_trial_after_it",
+    "post_week": "closed_week_since_last_observe_goal_share_shift_ge_0.2",
+}
+
+
+def _share(posts):
+    from . import goals
+    labels = goals.GOALS + (goals.NONE,)
+    total = sum(posts.get(label, 0) for label in labels)
+    if not total:
+        return None, 0
+    return {label: posts.get(label, 0) / total for label in labels}, total
+
+
+def _week_step(name, *, since, now):
+    """配分を変えた週が閉じた（週の表 3.7.0 A3 がある週）。前回の観測より後に閉じた週だけ。"""
+    from . import analytics_weekly
+    table = analytics_weekly.answer(name, weeks=3, now=now)
+    closed = [row for row in table["weeks"] if not row["partial"]]
+    if len(closed) < 2:
+        return None
+    last, before = closed[-1], closed[-2]
+    closed_at = datetime.datetime.combine(datetime.date.fromisoformat(last["week_end"]),
+                                          datetime.time(), tzinfo=jst.JST) + datetime.timedelta(days=1)
+    if not (since < closed_at <= now):
+        return None
+    after_share, after_n = _share(last["posts"])
+    before_share, before_n = _share(before["posts"])
+    if after_share is None or before_share is None:
+        return None
+    if max(abs(after_share[k] - before_share[k]) for k in after_share) < ALLOCATION_SHIFT:
+        return None
+    from . import goals
+    labels = goals.GOALS + (goals.NONE,)
+    return {"kind": "plaza", "candidate": "post_week", "account": name, "plaza_id": None,
+            "title": None, "week_start": last["week_start"], "week_end": last["week_end"],
+            "allocation": {"before": {k: before["posts"].get(k, 0) for k in labels},
+                           "after": {k: last["posts"].get(k, 0) for k in labels},
+                           "denominators": [before_n, after_n]},
+            "basis": TRIGGER_BASIS["post_week"],
+            "command": (f"thth plaza post {name} --kind finding --from analytics-report {name} "
+                        f"--from-window-days 7 --title \"<週の配分を変えた結果>\" "
+                        f"--scope \"<媒体・企画の範囲>\" --by <名前>")}
+
+
+def trigger_steps(configs, *, since, now):
+    """observe の次の一手の「広場に置く」（下書きの命令つき・候補の列挙だけ・本文は作らない）。
+
+    - `post_result`: 自分の account の施策の期間（until）が前回の観測より後に終わった。
+      宣言があれば観測の取り直し、無ければ `--from after` で道具の数字を付けて置く命令。
+    - `add_trial`: 自分の account の気づきの追試の予定日（trial_due）が来て、その後に
+      同じ持ち主の追試がまだ無い（追試の結果を足す）。
+    - `post_week`: 配分を変えた週が前回の観測より後に閉じた（週の表・3.7.0 A3）。
+    """
+    from . import plaza
+    names = set(configs)
+    viewer = plaza.Viewer({name: cfg.get("project") for name, cfg in configs.items()})
+    steps = []
+    try:
+        records, _broken = plaza.load_all()
+        joined = plaza.members()
+    except plaza.PlazaError:
+        records, joined = [], frozenset()
+    for record in records:
+        if record.get("hidden") or record.get("account") not in names:
+            continue
+        if plaza.access(record, viewer, joined) != "own":
+            continue
+        account = record["account"]
+        title = plaza._preview(record["title"])
+        until = jst.parse(record.get("until")) if record.get("until") else None
+        if record["kind"] == "measure" and until is not None and since < until <= now:
+            command = (f"thth plaza update {record['plaza_id']} --as {account} --refresh --by <名前>"
+                       if record.get("targets") else
+                       f"thth plaza post {account} --kind finding --from after {account} "
+                       f"--title \"<結果の題>\" --scope \"<媒体・企画の範囲>\" --by <名前>")
+            steps.append({"kind": "plaza", "candidate": "post_result", "account": account,
+                          "plaza_id": record["plaza_id"], "title": title,
+                          "until": record.get("until"), "basis": TRIGGER_BASIS["post_result"],
+                          "command": command})
+        due = jst.parse(record.get("trial_due")) if record.get("trial_due") else None
+        if record["kind"] == "finding" and due is not None and due <= now:
+            done = any(row.get("kind") == "trial" and viewer.owns(row.get("project"), row.get("account"))
+                       and jst.parse(row["at"]) >= due for row in record["replies"])
+            if not done:
+                steps.append({"kind": "plaza", "candidate": "add_trial", "account": account,
+                              "plaza_id": record["plaza_id"], "title": title,
+                              "trial_due": record.get("trial_due"),
+                              "basis": TRIGGER_BASIS["add_trial"],
+                              "command": (f"thth plaza reply {record['plaza_id']} --as {account} "
+                                          "--kind trial --result <reproduced|not_reproduced|not_tried> "
+                                          "--by <名前>")})
+    for name in sorted(names):
+        try:
+            step = _week_step(name, since=since, now=now)
+        except Exception:  # noqa: BLE001 — 週の表が読めなくても他の候補は出す
+            step = None
+        if step is not None:
+            steps.append(step)
+    return steps
