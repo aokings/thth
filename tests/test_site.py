@@ -400,3 +400,53 @@ def test_terms_date_is_explicit_not_invented(monkeypatch, effective):
     else:
         assert "Effective " + effective in page and effective + " 施行" in page
         assert "Unpublished draft" not in page and "未公開の案" not in page
+
+
+def test_privacy_は利用規約へリンクし_同じ連絡先を出す():
+    page = (PUBLIC / "privacy" / "index.html").read_text(encoding="utf-8")
+    assert 'href="/terms/"' in page and 'href="/terms/#ja"' in page
+    for lang in ("en", "ja"):
+        assert build_site.contact_html(lang) in page
+    assert "mailto:" not in page
+
+
+def test_privacy_は広場を英日で書く():
+    """2026-09-25（計画_Meta申請 #3）: 広場（`thth plaza`）の保存と見える範囲を書き足した。
+
+    裏: 置き場は VM の私有（`plaza.STORE`・`private_store`・0600）・SNS の台帳に書かない・
+    秘密は断る（`redact.looks_like_secret`）・観測は道具が付ける（`plaza_observe`）・範囲は
+    project／owner／open（`plaza.SCOPES`・`access`）・既定は project か組があれば owner・参加は
+    既定で不参加（`admin plaza join`）・open は CLI の二段確認（`open_requires_cli`・`open_digest`）・
+    写しで他人の情報を落とす（`plaza_redact`・台帳が読めなければ `redaction_unavailable`）・
+    他の持ち主には project 名（`owner_label`）・非表示（`hide`）・読んだ控えは id と時刻
+    （`plaza_reads`）・退出で消す／keep で「退出した持ち主」（`purge_account`・`leave.run`）・
+    変更ログは presence-only。
+    """
+    page = (PUBLIC / "privacy" / "index.html").read_text(encoding="utf-8")
+    for must in ('<h2 id="plaza">Plaza</h2>', "thth plaza",
+                 "not in the account's Git repository",
+                 "A post that looks like it contains a secret is refused",
+                 "computed by THTH from the account's own posts and metrics",
+                 "open is never the default", "off by default",
+                 "two-step confirmation from the command line only",
+                 "removed other people's information",
+                 "Other owners see the project name, not the account name",
+                 "the post ID and time only",
+                 "its plaza posts and replies are deleted",
+                 "Plaza posts and replies: until the account exits",
+                 "plaza posts and replies the session can read",
+                 "Revision: adds the plaza and the support contact",
+                 # 日本語
+                 "<h2>広場</h2>", "アカウントの Git のリポジトリには書きません",
+                 "秘密らしき文字列を含む書き込みは断ります",
+                 "open が既定になることはありません", "既定は不参加です",
+                 "コマンドラインからの二段確認だけです",
+                 "THTH が他人の情報を落とした写しです",
+                 "アカウント名や書いた人は見えません",
+                 "書き込みの ID と時刻だけ", "「退出した持ち主」の名義で残す",
+                 "広場の書き込みと返信: 退出まで",
+                 "そのセッションが読める広場の書き込みと返信",
+                 "改訂: 広場とサポートの連絡先"):
+        assert must in page, must
+    # 観測の地図の数は広場に出さない（従前の文を残す）
+    assert "on the shared plaza" in page and "ほかの持ち主、広場" in page
