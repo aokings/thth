@@ -1,7 +1,7 @@
 """施策の広場の CLI（設計 3.4.0 §4）。口の中身は `thth/plaza.py` に閉じる。
 
 利用者: `thth plaza post|list|show|reply|update`。管理者: `thth admin plaza
-join|leave|hide|list|show`。
+join|leave|hide|list|show|owner`。
 
 **CLI でも読む側を名指しする**（`show`・`reply`・`update` の `--as`）。VM の CLI は
 複数の持ち主の台帳を持つので、「誰として読むか」を言わないと他の持ち主の project
@@ -47,6 +47,8 @@ def _emit(args, payload, render):
 
 def render_list(payload, out=print):
     label = {"own": "自分の持ち主の書き込み", "open": "open の広場", "all": "全部（管理者）"}
+    if payload.get("owner_projects"):
+        label["own"] = "自分の持ち主の書き込み（組の他の project: " + "・".join(payload["owner_projects"]) + "）"
     out(f"広場 {payload['n']} 件（{label.get(payload['filter'], payload['filter'])}）")
     for row in payload["posts"]:
         verdict = f"  判定: {plaza.VERDICT_LABELS[row['verdict']]}" if row.get("verdict") else ""
@@ -224,6 +226,8 @@ def _emit_preview(args, result, again):
 # ------------------------------------------------------------------ 利用者
 
 def cmd_post(args) -> int:
+    if args.open and getattr(args, "owner", False):
+        return _print_refusal(args, plaza.PlazaError("invalid_visibility"))
     try:
         plaza.poster(args.by)
         now = jst.now_jst()
@@ -233,7 +237,9 @@ def cmd_post(args) -> int:
                             scope_note=args.scope, kind_detail=args.kind_detail, how=args.how,
                             evidence_level=args.evidence_level, declarations=declarations, hypothesis=args.hypothesis,
                             change=args.change, until=args.until, min_n=args.min_n,
-                            visibility="open" if args.open else "project", via="cli", now=now,
+                            visibility=("open" if args.open else
+                                        "owner" if getattr(args, "owner", False) else "project"),
+                            via="cli", now=now,
                             confirm=args.confirm, goal=getattr(args, "goal", None))
     except plaza.PlazaError as error:
         return _print_refusal(args, error)
@@ -348,6 +354,9 @@ def register(sub) -> None:
     poster.add_argument("--open", action="store_true",
                         help="参加した他の持ち主にも見せる（二段確認: 1 回目は見える中身と digest を"
                              "出すだけ。--confirm <digest> を足した 2 回目で置く・後から戻せる）")
+    poster.add_argument("--owner", action="store_true",
+                        help="同じ持ち主の組の全 project に見せる（管理者が組を登録したときだけ・一段。"
+                             "設計 3.8.0）")
     poster.add_argument("--confirm", default=None,
                         help="--open の二段目: 一段目が出した digest")
     poster.add_argument("--by", default=None, help="誰が置いたか（必須）")
@@ -396,7 +405,7 @@ def register(sub) -> None:
     updater.add_argument("--verdict", default=None, choices=plaza.VERDICTS)
     updater.add_argument("--reason", default=None, help="判定の理由（--verdict のとき必須）")
     updater.add_argument("--visibility", default=None, choices=plaza.SCOPES,
-                         help="open にする（二段確認）・project に戻す")
+                         help="open にする（二段確認）・owner（持ち主の組・一段）・project に戻す")
     updater.add_argument("--confirm", default=None,
                          help="--visibility open の二段目、または open の 1 件の写しが変わる更新"
                               "（判定の理由・観測の取り直し）の二段目: 一段目が出した digest")
@@ -435,6 +444,8 @@ def cmd_admin_list(args) -> int:
     def render(payload):
         render_list(payload)
         print("参加している持ち主: " + ("・".join(payload["joined_projects"]) or "なし"))
+        print("持ち主の組: " + ("・".join(f"{name}（{'・'.join(projects)}）"
+                                         for name, projects in payload["owners"].items()) or "なし"))
     return _emit(args, payload, render)
 
 
@@ -444,6 +455,34 @@ def cmd_admin_show(args) -> int:
     except plaza.PlazaError as error:
         return _print_refusal(args, error)
     return _emit(args, payload, render_post)
+
+
+def cmd_admin_owner(args) -> int:
+    """`thth admin plaza owner set|unset|list`（設計 3.8.0 §A・管理者が組を登録する）。"""
+    try:
+        if args.owner_command == "set":
+            result = plaza.set_owner(args.owner, args.projects, by=args.by, via="cli")
+        elif args.owner_command == "unset":
+            result = plaza.unset_owner(args.owner, by=args.by, via="cli")
+        else:
+            groups = plaza.owner_groups()
+            result = {"schema_version": plaza.SCHEMA_VERSION, "report_type": "plaza_owner_list",
+                      "owners": {name: list(row["projects"]) for name, row in sorted(groups.items())}}
+    except plaza.PlazaError as error:
+        return _print_refusal(args, error)
+
+    def render(r):
+        if r["report_type"] == "plaza_owner_set":
+            print(f"持ち主の組 {r['owner']}: " + "・".join(r["projects"])
+                  + ("" if r["changed"] else "（既にその状態です）"))
+        elif r["report_type"] == "plaza_owner_unset":
+            print(f"持ち主の組を解きました: {r['owner']}（" + "・".join(r["projects"])
+                  + "）。owner の範囲の書き込みは組の他の project から見えなくなりました")
+        else:
+            print(f"持ち主の組 {len(r['owners'])} 組")
+            for name, projects in r["owners"].items():
+                print(f"  {name}: " + "・".join(projects))
+    return _emit(args, result, render)
 
 
 def register_admin(commands) -> None:
@@ -474,3 +513,22 @@ def register_admin(commands) -> None:
     viewer.add_argument("plaza_id")
     viewer.add_argument("--json", action="store_true")
     viewer.set_defaults(func=cmd_admin_show)
+    owner = operations.add_parser(
+        "owner", help="持ち主の組（同じ持ち主の project をまとめる・owner の範囲）",
+        description="同じ持ち主の project を 1 つの組にまとめる（設計 3.8.0 §A）。組の project は"
+                    "互いの owner の範囲の書き込みを読める。既定は組なし。道具は推測しない。")
+    owner_ops = owner.add_subparsers(dest="owner_command", required=True)
+    setter = owner_ops.add_parser("set", help="組を登録する（組の project を置き換える・変更ログ）")
+    setter.add_argument("owner", help="組の名前（英数字と - _）")
+    setter.add_argument("projects", nargs="+", help="組に入れる project（account 名ならその project）")
+    setter.add_argument("--by", default=None, help="誰が変えたか（必須）")
+    setter.add_argument("--json", action="store_true")
+    setter.set_defaults(func=cmd_admin_owner)
+    unsetter = owner_ops.add_parser("unset", help="組を解く（owner の範囲の書き込みは相手から見えなくなる）")
+    unsetter.add_argument("owner")
+    unsetter.add_argument("--by", default=None, help="誰が変えたか（必須）")
+    unsetter.add_argument("--json", action="store_true")
+    unsetter.set_defaults(func=cmd_admin_owner)
+    owner_lister = owner_ops.add_parser("list", help="組の一覧")
+    owner_lister.add_argument("--json", action="store_true")
+    owner_lister.set_defaults(func=cmd_admin_owner)

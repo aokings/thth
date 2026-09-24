@@ -185,9 +185,11 @@ def _plaza_counts():
 
 
 def plaza_layer(viewer, words, *, since=None, now=None):
-    """点ごとの広場の層 `{word: {"own": 升目, "open": 升目}}`（読むだけ）。
+    """点ごとの広場の層 `{word: {"own": 升目, "owner": 升目, "open": 升目}}`（読むだけ）。
 
-    `own` は自分の持ち主（viewer の project）の書き込み、`open` は参加した他の持ち主の
+    `own` は自分の持ち主（viewer の project）の書き込み、`owner` は同じ持ち主の組の
+    他の project の書き込み（組が無ければ null・理由 `plaza_owner_unregistered`・3.8.0）、
+    `open` は参加した他の持ち主の
     open の写し（不参加なら null・理由 `plaza_not_joined`）。分母 `denominator` は
     その範囲で読める書き込みの数（語を問わない）。非表示の書き込みは数えない。
     `since` があれば置かれた時刻がそれより後のものだけ。
@@ -196,14 +198,21 @@ def plaza_layer(viewer, words, *, since=None, now=None):
         records, _broken = plaza_mod.load_all()
         joined = plaza_mod.members()
     except plaza_mod.PlazaError:
-        return {word: {"own": None, "open": None, "link_basis": PLAZA_LINK_BASIS,
+        return {word: {"own": None, "owner": None, "open": None, "link_basis": PLAZA_LINK_BASIS,
                        "cannot_say": "plaza_store_unavailable"} for word in words}
     participating = viewer.admin or bool(viewer.projects & joined)
+    try:
+        grouped = not viewer.admin and bool(viewer.siblings())
+    except plaza_mod.PlazaError:
+        return {word: {"own": None, "owner": None, "open": None, "link_basis": PLAZA_LINK_BASIS,
+                       "cannot_say": "plaza_store_unavailable"} for word in words}
     keys = {word: map_store.node_key(word) for word in words}
     layer = {word: {"own": _plaza_counts(), "open": _plaza_counts() if participating else None,
                     "open_reason": None if participating else "plaza_not_joined",
+                    "owner": _plaza_counts() if grouped else None,
+                    "owner_reason": None if grouped else "plaza_owner_unregistered",
                     "link_basis": PLAZA_LINK_BASIS, "cannot_say": None} for word in words}
-    totals = {"own": 0, "open": 0}
+    totals = {"own": 0, "owner": 0, "open": 0}
     readable = []
     for record in records:
         if record.get("hidden"):
@@ -214,8 +223,8 @@ def plaza_layer(viewer, words, *, since=None, now=None):
         level = plaza_mod.access(record, viewer, joined)
         if level is None:
             continue
-        if level == "own":
-            scope, title, note = "own", record.get("title"), record.get("scope_note")
+        if level in ("own", "owner"):
+            scope, title, note = level, record.get("title"), record.get("scope_note")
         else:
             copy = record.get("open_copy") or {}
             scope, title, note = "open", copy.get("title"), copy.get("scope_note")
@@ -223,7 +232,7 @@ def plaza_layer(viewer, words, *, since=None, now=None):
         readable.append((record, scope, map_store.node_key(f"{title or ''}\n{note or ''}")))
     readable.sort(key=lambda item: (item[0]["at"], item[0]["plaza_id"]), reverse=True)
     for word in words:
-        for scope in ("own", "open"):
+        for scope in ("own", "owner", "open"):
             if layer[word][scope] is not None:
                 layer[word][scope]["denominator"] = totals[scope]
         for record, scope, text in readable:
@@ -398,10 +407,12 @@ def render(payload, out=print) -> None:
         if plaza_cell.get("cannot_say"):
             out(f"  広場: 言えない: {plaza_cell['cannot_say']}")
         else:
-            for scope, label in (("own", "広場（自分の持ち主）"), ("open", "広場（open）")):
-                cell = plaza_cell[scope]
+            for scope, label in (("own", "広場（自分の持ち主）"),
+                                 ("owner", "広場（同じ持ち主の組の他の project）"),
+                                 ("open", "広場（open）")):
+                cell = plaza_cell.get(scope)
                 if cell is None:
-                    if scope == "open":
+                    if scope in ("owner", "open"):
                         continue
                     out(f"  {label}: —")
                     continue

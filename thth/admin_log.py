@@ -36,6 +36,8 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    # 施策の広場（設計 3.4.0 §6）。presence-only——本文・返信は入れない。
                    'plaza_posted', 'plaza_replied', 'plaza_updated', 'plaza_hidden',
                    'plaza_joined', 'plaza_left',
+                   # 持ち主の組（設計 3.8.0 §A）。presence-only——組の名前と project の数だけ。
+                   'plaza_owner_set', 'plaza_owner_unset',
                    # 観測の地図（設計 3.5.0 §1・§2）。presence-only——点の語・行の中身は入れない。
                    'map_node_added', 'map_node_removed', 'map_edge_added', 'map_edge_removed',
                    'map_retention_set', 'map_purged'))
@@ -239,6 +241,7 @@ def transaction(*, rollback=None):
                 if event['event'] in ('app_set', 'relay_key_initialized', 'approver_set', 'approver_revoked', 'approver_unlocked', 'account_removed', 'deletion_requested', 'budget_set', 'report_filed', 'report_replied', 'report_closed', 'report_added',
                                       'plaza_posted', 'plaza_replied', 'plaza_updated', 'plaza_hidden',
                                       'plaza_joined', 'plaza_left',
+                                      'plaza_owner_set', 'plaza_owner_unset',
                                       'map_node_added', 'map_node_removed', 'map_edge_added',
                                       'map_edge_removed', 'map_retention_set', 'map_purged'):
                     continue

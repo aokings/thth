@@ -247,7 +247,8 @@ def _plaza_cell(configs, since, now, exclude_account=None):
         summary["recent_trial"] = plaza.recent_trial(viewer)
     except Exception:  # noqa: BLE001 — 広場の読みで 0 段を落とさない
         return {"project_new": None, "project_denominator": None, "open_new": None,
-                "open_denominator": None, "open_reason": None, "since": jst.iso(since),
+                "open_denominator": None, "open_reason": None, "owner_new": None,
+                "owner_denominator": None, "owner_reason": None, "since": jst.iso(since),
                 "recent_trial": None, "cannot_say": "plaza_store_unavailable"}
     return summary
 
@@ -1161,8 +1162,10 @@ def _render_plaza(node, out) -> None:
         return
     opened = (f"open の新着 {node['open_new']}（open {node['open_denominator']} 件のうち）"
               if node["open_new"] is not None else "open: 参加していません")
+    owner = (f"・同じ持ち主の組の新着 {node['owner_new']}（組 {node['owner_denominator']} 件のうち）"
+             if node.get("owner_new") is not None else "")
     out(f"  広場: 新着 {node['project_new']}（project {node['project_denominator']} 件のうち）"
-        f"・{opened}（{node['since']} から）")
+        f"{owner}・{opened}（{node['since']} から）")
     trial = node.get("recent_trial")
     if trial:
         counts = trial["trials"]

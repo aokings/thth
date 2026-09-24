@@ -12,6 +12,7 @@
       **SNS の台帳には書かない。**
   (b) **見える範囲は既定で project**（同じ持ち主の全 account）。open（参加した
       他の持ち主にも見える）は 1 件ごとの明示の選択で、後から project に戻せる。
+      その間に owner（管理者が登録した「持ち主の組」の全 project・設計 3.8.0 §A）。
       存在しない id と読めない id は同じ `plaza_not_found`（在ることを漏らさない）。
   (c) **open に出すとき、他人の情報を道具が落とす**（`thth/plaza_redact.py`）。
       他の持ち主が読むのは落としたあとの写しだけ。自分の投稿は先頭 60 字と
@@ -40,7 +41,8 @@ from . import __version__
 SCHEMA_VERSION = 1
 KINDS = ("measure", "finding", "question")
 KIND_LABELS = {"measure": "施策", "finding": "気づき", "question": "問い"}
-SCOPES = ("project", "open")
+# 見える範囲は狭い順に project → owner（持ち主の組・3.8.0）→ open。
+SCOPES = ("project", "owner", "open")
 REPLY_KINDS = ("comment", "tried", "agree", "disagree", "trial")
 REPLY_LABELS = {"comment": "意見", "tried": "うちでも試した", "agree": "賛成", "disagree": "反対",
                 "trial": "追試"}
@@ -84,6 +86,9 @@ LEFT_LABEL = "退出した持ち主"
 PLAZA_ID = re.compile(r"p\d{8}-[0-9a-f]{8}\Z")
 DIRECTORY = "_plaza"
 MEMBERS_FILE = "members.json"
+# 持ち主の組（設計 3.8.0 §A）。**管理者が登録する**——道具は project 名から推測しない。
+OWNERS_FILE = "owners.json"
+OWNER_PROJECTS_MAX = 20
 
 REASONS = frozenset((
     "by_required", "invalid_account", "account_unavailable", "invalid_kind",
@@ -102,6 +107,8 @@ REASONS = frozenset((
     "invalid_goal",
     # open にする二段確認（masaru 裁定 09-23）。
     "open_digest_mismatch", "open_requires_cli",
+    # 持ち主の組（設計 3.8.0 §A）。
+    "invalid_owner", "plaza_owner_conflict", "plaza_owner_unregistered", "plaza_owner_not_found",
 ))
 
 NEXT = {
@@ -132,7 +139,15 @@ NEXT = {
     "invalid_declaration": "施策の宣言を読めません（thth study-report <file> で形を確かめてください）",
     "declaration_out_of_scope": "宣言の account が、置く account と同じ持ち主（project）ではありません",
     "plaza_project_required": "project を持たない account は広場の参加・open に使えません",
-    "invalid_visibility": "--visibility は open か project です",
+    "invalid_visibility": "--visibility は project・owner・open のどれかです",
+    "invalid_owner": "組の名前（英数字と - _）と、組に入れる project を 1 つ以上並べてください"
+                     f"（{OWNER_PROJECTS_MAX} まで）",
+    "plaza_owner_conflict": "その project は別の組に入っています。先に thth admin plaza owner unset "
+                            "<組の名前> で外してください（1 つの project は 1 つの組だけ）",
+    "plaza_owner_unregistered": "この project は持ち主の組に入っていません。owner の範囲は管理者が組を"
+                                "登録してから使えます（thth admin plaza owner set <組の名前> <project> "
+                                "<他の project> --by <名前>）。project の範囲なら今のまま置けます",
+    "plaza_owner_not_found": "その名前の組はありません（thth admin plaza owner list）",
     "redaction_unavailable": "他の人の情報を落とすための台帳が読めないので open に出していません"
                              "（project の範囲なら置けます）",
     "invalid_until": "--until は 2026-09-30T00:00:00+09:00 のような timezone 付きの時刻です",
@@ -330,6 +345,143 @@ def set_membership(target, *, joined, by, via="cli", now=None):
             "project": project, "joined": joined, "changed": changed, "at": at}
 
 
+# ------------------------------------------------------------ 持ち主の組
+
+def _read_owners(directory):
+    """持ち主の組（組の名前 → {projects, at, by}）。無ければ空。壊れていれば置き場が読めない。
+
+    **既定は組なし**（従前どおり project の範囲だけ）。組は管理者が
+    `thth admin plaza owner set` で登録する——道具は project 名や台帳の handle から
+    「同じ持ち主らしい」と推測しない（設計 3.8.0 §A・G）。
+    """
+    if directory is None:
+        return {}
+    data = STORE.read_raw(directory, OWNERS_FILE)
+    if data is None:
+        return {}
+    try:
+        value = json.loads(data)
+    except (ValueError, RecursionError) as exc:
+        raise PlazaError("plaza_store_unavailable") from exc
+    groups = value.get("owners") if isinstance(value, dict) else None
+    if not isinstance(groups, dict):
+        raise PlazaError("plaza_store_unavailable")
+    seen = set()
+    for name, row in groups.items():
+        projects = row.get("projects") if isinstance(row, dict) else None
+        if (not accounts.name_is_safe(name) or not isinstance(projects, list)
+                or any(not isinstance(p, str) or not p or p in seen for p in projects)):
+            raise PlazaError("plaza_store_unavailable")
+        seen.update(projects)
+    return groups
+
+
+def owner_groups():
+    """持ち主の組の全部（読むだけ・管理者の一覧と CLI の案内が使う）。"""
+    directory = STORE.open()
+    try:
+        return _read_owners(directory)
+    finally:
+        if directory is not None:
+            os.close(directory)
+
+
+def owner_of(project, groups=None):
+    """project が入っている組の名前（無ければ None）。"""
+    if not project:
+        return None
+    groups = owner_groups() if groups is None else groups
+    return next((name for name, row in groups.items() if project in row["projects"]), None)
+
+
+def sibling_projects(projects, groups=None):
+    """同じ組に入っている**他の** project（projects 自身は含めない）。組が無ければ空。"""
+    projects = frozenset(p for p in projects if isinstance(p, str) and p)
+    if not projects:
+        return frozenset()
+    groups = owner_groups() if groups is None else groups
+    found = set()
+    for row in groups.values():
+        members_of = set(row["projects"])
+        if members_of & projects:
+            found |= members_of
+    return frozenset(found - projects)
+
+
+def set_owner(owner, targets, *, by, via="cli", now=None):
+    """持ち主の組を登録する（管理者だけ・組の project を**置き換える**）。
+
+    変更ログは `plaza_owner_set`（presence-only・組の名前と project の数だけ）。
+    1 つの project は 1 つの組だけ（別の組に入っていれば `plaza_owner_conflict`）。
+    """
+    by = poster(by)
+    if via not in VIAS:
+        raise PlazaError("invalid_post")
+    if not accounts.name_is_safe(owner):
+        raise PlazaError("invalid_owner")
+    targets = list(targets or [])
+    if not targets or len(targets) > OWNER_PROJECTS_MAX:
+        raise PlazaError("invalid_owner")
+    projects = []
+    for target in targets:
+        project = _project_of(target)
+        if project not in projects:
+            projects.append(project)
+    at = jst.iso(now or jst.now_jst())
+    with STORE.locked() as directory:
+        groups = _read_owners(directory)
+        before = json.loads(json.dumps(groups))
+        for name, row in groups.items():
+            if name != owner and set(row["projects"]) & set(projects):
+                raise PlazaError("plaza_owner_conflict")
+        previous = (groups.get(owner) or {}).get("projects")
+        changed = previous != projects
+        if changed:
+            groups[owner] = {"projects": projects, "at": at, "by": admin_log.clean(by)}
+            STORE.write(directory, {"schema_version": SCHEMA_VERSION, "owners": groups},
+                        name=OWNERS_FILE)
+            try:
+                admin_log.append("plaza_owner_set", owner, {}, by=by, via=via,
+                                 diff={"owner": ["absent" if previous is None else "present",
+                                                 "present"],
+                                       "n_projects": [len(previous or []), len(projects)]})
+            except private_store.LOG_ERRORS:
+                STORE.write(directory, {"schema_version": SCHEMA_VERSION, "owners": before},
+                            name=OWNERS_FILE)
+                raise PlazaError("plaza_log_unavailable") from None
+    return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_owner_set", "owner": owner,
+            "projects": projects, "changed": changed, "at": at}
+
+
+def unset_owner(owner, *, by, via="cli", now=None):
+    """持ち主の組を解く（管理者だけ）。**解いたら owner の範囲の書き込みは相手から見えない**
+    （範囲は読むたびに組から決める・写しを配っていない）。変更ログは `plaza_owner_unset`。"""
+    by = poster(by)
+    if via not in VIAS:
+        raise PlazaError("invalid_post")
+    if not accounts.name_is_safe(owner):
+        raise PlazaError("invalid_owner")
+    at = jst.iso(now or jst.now_jst())
+    with STORE.locked() as directory:
+        groups = _read_owners(directory)
+        if owner not in groups:
+            raise PlazaError("plaza_owner_not_found")
+        before = json.loads(json.dumps(groups))
+        removed = groups.pop(owner)
+        STORE.write(directory, {"schema_version": SCHEMA_VERSION, "owners": groups},
+                    name=OWNERS_FILE)
+        try:
+            admin_log.append("plaza_owner_unset", owner, {}, by=by, via=via,
+                             diff={"owner": ["present", "absent"],
+                                   "n_projects": [len(removed["projects"]), 0]})
+        except private_store.LOG_ERRORS:
+            STORE.write(directory, {"schema_version": SCHEMA_VERSION, "owners": before},
+                        name=OWNERS_FILE)
+            raise PlazaError("plaza_log_unavailable") from None
+    return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_owner_unset", "owner": owner,
+            "projects": removed["projects"], "at": at}
+
+
 # --------------------------------------------------------------- 見る人
 
 class Viewer:
@@ -345,6 +497,7 @@ class Viewer:
         self.projects = frozenset(p for p in allowed.values() if isinstance(p, str) and p)
         self.by_account = allowed
         self.admin = admin
+        self._siblings = None
 
     def owns(self, project, account) -> bool:
         if self.admin:
@@ -353,6 +506,19 @@ class Viewer:
             return project in self.projects
         return account is not None and account in self.accounts
 
+    def siblings(self):
+        """同じ持ち主の組に入っている**他の** project（設計 3.8.0 §A）。組が無ければ空。
+
+        読む側 1 つにつき 1 回だけ組を読む（読む側は 1 回の問いごとに作る）。
+        """
+        if self._siblings is None:
+            self._siblings = sibling_projects(self.projects) if self.projects else frozenset()
+        return self._siblings
+
+    def same_owner(self, project, account) -> bool:
+        """同じ持ち主（自分の project か、同じ組の他の project）。"""
+        return self.owns(project, account) or (project is not None and project in self.siblings())
+
 
 def owner_label(project, account):
     """他の持ち主に見せる名義（project 名。account 名・by は見せない）。"""
@@ -360,14 +526,22 @@ def owner_label(project, account):
 
 
 def access(record, viewer, joined_projects) -> str | None:
-    """`own`（同じ持ち主・管理者）・`open`（参加した他の持ち主が読む写し）・`None`（読めない）。
+    """`own`（同じ project・管理者）・`owner`（同じ持ち主の組の他の project が読む原本）・
+    `open`（参加した他の持ち主が読む写し）・`None`（読めない）。
 
+    **owner は、管理者が登録した組に、置いた project と読む project の両方が入っている
+    ときだけ**（組は読むたびに見る——組を解けば、その時点から見えない）。owner と open の
+    書き込みは同じ組の project に原本で見える（open は owner より広い範囲）。
     **open は、置いた持ち主と読む持ち主の両方が参加しているときだけ**。非表示は
     置いた持ち主（と管理者）にだけ見える。
     """
     if viewer.admin or viewer.owns(record.get("project"), record.get("account")):
         return "own"
-    if record.get("scope") != "open" or record.get("hidden"):
+    if record.get("hidden") or record.get("scope") not in ("owner", "open"):
+        return None
+    if record.get("project") is not None and record.get("project") in viewer.siblings():
+        return "owner"
+    if record.get("scope") != "open":
         return None
     if record.get("project") not in joined_projects:
         return None
@@ -547,6 +721,14 @@ def _declared_level(value):
     return value
 
 
+def _require_owner(project):
+    """owner の範囲に置く・切り替える前に、project が組に入っていることを確かめる。"""
+    if not project:
+        raise PlazaError("plaza_project_required")
+    if owner_of(project) is None:
+        raise PlazaError("plaza_owner_unregistered")
+
+
 def open_view(record):
     """他の持ち主に見える 1 件（写しだけ）。二段確認の一段目に出し、digest の元にする。"""
     from . import plaza_observe
@@ -700,6 +882,10 @@ def post(account, *, kind, title, body, by, scope_note=None, kind_detail=None, h
             raise PlazaError("plaza_project_required")
         if project not in members():
             raise PlazaError("plaza_not_joined")
+    if visibility == "owner":
+        # owner は一段（同じ持ち主なので他人の情報を落とす二段確認の対象外・設計 3.8.0 §A）。
+        # 他人の返信・username の扱いは project の範囲と同じ（道具は本文に写さない）。
+        _require_owner(project)
     allowed = tuple(trusted_accounts) if trusted_accounts is not None else None
     observations = []
     if targets:
@@ -751,7 +937,8 @@ def _preview(text):
 
 def _reply_view(reply_row, viewer, joined, records_by_id):
     """返信 1 件の見せ方。**他の持ち主が書いた返信は写し（open_text）だけ・名義は project。**"""
-    mine = viewer.admin or viewer.owns(reply_row.get("project"), reply_row.get("account"))
+    # 同じ持ち主（自分の project と、同じ組の他の project）の返信は原本で読む。
+    mine = viewer.admin or viewer.same_owner(reply_row.get("project"), reply_row.get("account"))
     link = reply_row.get("measure_id")
     if link is not None:
         linked = records_by_id.get(link)
@@ -762,7 +949,8 @@ def _reply_view(reply_row, viewer, joined, records_by_id):
                 "by": reply_row.get("by"), "account": reply_row.get("account"),
                 "medium": reply_row.get("medium"), "owner": owner_label(reply_row.get("project"),
                                                                          reply_row.get("account")),
-                "measure_id": link, "result": reply_row.get("result"), "own": True}
+                "measure_id": link, "result": reply_row.get("result"),
+                "own": viewer.admin or viewer.owns(reply_row.get("project"), reply_row.get("account"))}
     return {"at": reply_row["at"], "kind": reply_row["kind"],
             "text": reply_row.get("open_text") or "",
             "owner": owner_label(reply_row.get("project"), reply_row.get("account")),
@@ -771,7 +959,9 @@ def _reply_view(reply_row, viewer, joined, records_by_id):
 
 
 def summary_row(record, level, viewer=None) -> dict:
-    """一覧の 1 行（本文・返信の本文は出さない）。`level` は `own` か `open`。"""
+    """一覧の 1 行（本文・返信の本文は出さない）。`level` は `own`・`owner`・`open`。
+
+    `owner`（同じ持ち主の組の他の project）は原本の題と名義で見る（同じ持ち主）。"""
     replies = record["replies"]
     if level == "open":
         copy = record.get("open_copy") or {}
@@ -796,7 +986,7 @@ def summary_row(record, level, viewer=None) -> dict:
             "kind_detail": record.get("kind_detail"), "evidence_level": evidence_level_of(record),
             "scope_note": record.get("scope_note"), "trials": trial_counts(record),
             "goal": record.get("goal"),
-            "hidden": bool(record.get("hidden")), "view": "own"}
+            "hidden": bool(record.get("hidden")), "view": level}
 
 
 def list_posts(viewer, *, open_only=False):
@@ -816,13 +1006,15 @@ def list_posts(viewer, *, open_only=False):
             continue
         if open_only and record["scope"] != "open":
             continue
-        if not open_only and level != "own":
+        if not open_only and level not in ("own", "owner"):
             continue
         rows.append(summary_row(record, level))
     rows.sort(key=lambda row: (row["at"], row["plaza_id"]), reverse=True)
     return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_list",
             "filter": "open" if open_only else "own", "n": len(rows), "posts": rows,
             "joined": bool(viewer.projects & joined) if not viewer.admin else None,
+            # 持ち主の組（設計 3.8.0 §A）。組が無ければ空（従前どおり project の範囲だけ）。
+            "owner_projects": sorted(viewer.siblings()) if not viewer.admin else None,
             # 壊れた件数は管理者にだけ（他の持ち主の件数の手掛かりを渡さない）。
             "unreadable": broken if viewer.admin else None}
 
@@ -871,7 +1063,7 @@ def show(plaza_id, viewer):
                    "verdict": plaza_observe.verdict_view(record.get("verdict"), level, record),
                    "goal": record.get("goal"), "masked": copy.get("masked", 0)}
     else:
-        payload = {"report_type": "plaza_post", "view": "own", **{
+        payload = {"report_type": "plaza_post", "view": level, **{
             key: record.get(key) for key in (
                 "plaza_id", "at", "updated_at", "kind", "scope", "title", "body", "hypothesis",
                 "change", "project", "account", "medium", "by", "via", "tool_version", "until",
@@ -1043,6 +1235,8 @@ def update(plaza_id, *, account, by, viewer, refresh=False, verdict=None, reason
             raise PlazaError("plaza_project_required")
         if current["project"] not in joined:
             raise PlazaError("plaza_not_joined")
+    if visibility == "owner" and current["scope"] != "owner":
+        _require_owner(current.get("project"))
     fresh = None
     if refresh and current["targets"]:
         allowed = tuple(trusted_accounts) if trusted_accounts is not None else None
@@ -1073,7 +1267,7 @@ def update(plaza_id, *, account, by, viewer, refresh=False, verdict=None, reason
         if record["scope"] == "open":
             plaza_redact.attach_open_copy(record, trusted_accounts=trusted_accounts)
         else:
-            # project に戻したら写しを捨てる（他の持ち主からは見えない）。
+            # project（か owner）に戻したら写しを捨てる（他の持ち主からは見えない）。
             record["open_copy"] = None
             for obs in record["observations"]:
                 obs.pop("open_columns", None)
@@ -1083,7 +1277,7 @@ def update(plaza_id, *, account, by, viewer, refresh=False, verdict=None, reason
     # 既に open の 1 件を open のまま変える（判定の理由・観測の取り直し）と、他の持ち主に
     # 見える写しが作り直される（3.5.1 件 3 (a)・3.4.0 検収で残した穴）。写しが変わるなら
     # 切り替えと同じ二段確認にする。変わらない（判定のコードだけ・同じ数字の取り直し）なら一段。
-    staying = current["scope"] == "open" and visibility != "project"
+    staying = current["scope"] == "open" and visibility in (None, "open")
     if opening or staying:
         preview_record = json.loads(json.dumps(current))
         change(preview_record)
@@ -1151,8 +1345,10 @@ def admin_list():
     rows = [summary_row(record, "own") for record in records]
     rows.sort(key=lambda row: (row["at"], row["plaza_id"]), reverse=True)
     joined = sorted(members())
+    owners = {name: list(row["projects"]) for name, row in sorted(owner_groups().items())}
     return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_list", "filter": "all",
-            "n": len(rows), "posts": rows, "joined_projects": joined, "unreadable": broken}
+            "n": len(rows), "posts": rows, "joined_projects": joined, "owners": owners,
+            "unreadable": broken}
 
 
 # ---------------------------------------------------------------- 退出
@@ -1246,11 +1442,13 @@ def observe_summary(viewer, *, since, now, exclude_account=None):
     try:
         records, _broken = load_all()
         joined = members()
+        siblings = viewer.siblings()
     except PlazaError as error:
         return {"project_new": None, "project_denominator": None, "open_new": None,
-                "open_denominator": None, "open_reason": None, "since": jst.iso(since),
+                "open_denominator": None, "open_reason": None, "owner_new": None,
+                "owner_denominator": None, "owner_reason": None, "since": jst.iso(since),
                 "cannot_say": str(error)}
-    project_new = project_total = open_new = open_total = 0
+    project_new = project_total = open_new = open_total = owner_new = owner_total = 0
     for record in records:
         level = access(record, viewer, joined)
         if level is None:
@@ -1263,6 +1461,9 @@ def observe_summary(viewer, *, since, now, exclude_account=None):
         if mine:
             project_total += 1
             project_new += n
+        elif level == "owner":
+            owner_total += 1
+            owner_new += n
         elif level == "open":
             open_total += 1
             open_new += n
@@ -1271,6 +1472,10 @@ def observe_summary(viewer, *, since, now, exclude_account=None):
             "open_new": open_new if participating else None,
             "open_denominator": open_total if participating else None,
             "open_reason": None if participating else "plaza_not_joined",
+            # 同じ持ち主の組の他の project（設計 3.8.0 §A）。組が無ければ null と理由。
+            "owner_new": owner_new if siblings else None,
+            "owner_denominator": owner_total if siblings else None,
+            "owner_reason": None if siblings else "plaza_owner_unregistered",
             "since": jst.iso(since), "cannot_say": None}
 
 
@@ -1367,6 +1572,6 @@ def recent_trial(viewer):
     if best is None:
         return None
     record, latest, level = best
-    title = record["title"] if level == "own" else (record.get("open_copy") or {}).get("title") or ""
+    title = record["title"] if level != "open" else (record.get("open_copy") or {}).get("title") or ""
     return {"plaza_id": record["plaza_id"], "title": _preview(title), "at": latest["at"],
             "result": latest["result"], "trials": trial_counts(record), "view": level}

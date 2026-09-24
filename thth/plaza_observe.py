@@ -120,7 +120,8 @@ def open_column(entry, sanitize):
 def _columns(observation, level):
     if observation is None:
         return []
-    return list(observation.get("columns") or []) if level == "own" \
+    # 同じ project（own）と同じ持ち主の組（owner・3.8.0）は原本の列、他の持ち主は写しの列。
+    return list(observation.get("columns") or []) if level in ("own", "owner") \
         else list(observation.get("open_columns") or [])
 
 
@@ -164,7 +165,8 @@ def comparison_table(record, level, linked=()):
         for entry in _columns(latest, source_level):
             columns.append({"plaza_id": source["plaza_id"], "source": kind,
                             "medium": entry.get("medium"),
-                            "account": entry.get("account") if source_level == "own" else None,
+                            "account": (entry.get("account") if source_level in ("own", "owner")
+                                        else None),
                             "observed_at": latest["at"], "observed": entry.get("observed"),
                             "reason": entry.get("reason")})
             for metric in rows:
@@ -189,7 +191,7 @@ def verdict_view(verdict, level, record=None):
     if not verdict:
         return None
     reason = verdict.get("reason")
-    if level != "own":
+    if level not in ("own", "owner"):
         reason = ((record or {}).get("open_copy") or {}).get("verdict_reason")
     return {"verdict": verdict["verdict"], "at": verdict.get("at"), "reason": reason,
-            "by": verdict.get("by") if level == "own" else None}
+            "by": verdict.get("by") if level in ("own", "owner") else None}
