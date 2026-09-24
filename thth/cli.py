@@ -572,6 +572,9 @@ def cmd_approve(args) -> int:
                                   pending_saved=pending_saved)
             except topics_mod.ShelfBroken as e:
                 return _台帳が壊れている(e, as_json=args.json)
+            # 1 段目は断りではない（依頼 3.8.2 件 3）。rc は従前どおり 1 のまま。
+            from . import refusals
+            refusals.mark_first_stage()
             return 1
         if args.confirm != bundle:
             print(f"digest が一致しないので承認しません（表示した本文と中身が違います）。"
@@ -4017,8 +4020,10 @@ _PARSED: dict = {}
 
 
 def main(argv=None) -> int:
+    from . import refusals
     real_argv = list(sys.argv[1:] if argv is None else argv)
     _PARSED.clear()
+    refusals.clear_first_stage()
     tee = _FirstLine(sys.stderr)
     sys.stderr = tee
     try:
@@ -4028,8 +4033,10 @@ def main(argv=None) -> int:
             sys.stderr = tee.inner
     # **断ったら受け口の案内を 1 行**（設計 3.1.2 §3.5）。理由行の後ろに、静的な
     # 1 行だけ（account 名も本文も入れない）。成功には載せない。`lint` の 1 は
-    # 検査結果であって断りではないので外す。
-    if rc and not (real_argv[:1] == ["lint"] and rc == 1):
+    # 検査結果であって断りではないので外す。二段確認の 1 段目の 1 も断りではない
+    # （依頼 3.8.2 件 3・`refusals.mark_first_stage()`）——案内も控えも出さない。
+    first_stage = rc == 1 and refusals.is_first_stage()
+    if rc and not (real_argv[:1] == ["lint"] and rc == 1) and not first_stage:
         account, code = _remember_refusal(real_argv, rc, tee.first_line())
         # **そのまま打てる報告の 1 行**（設計 3.3.0 B3）。account と理由の符丁を
         # 埋める（分からなければ `<account>`・`<reason_code>` のまま）。
