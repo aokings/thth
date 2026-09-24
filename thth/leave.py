@@ -376,6 +376,10 @@ def run(account,*,by,plaza_open='delete'):
             from . import plaza
             try:plaza.purge_account(account,keep_open=plaza_open=='keep',by=by)
             except plaza.PlazaError:raise ValueError('plaza_cleanup_incomplete') from None
+            # 招待リンク（3.10.0）で足したその口座だけの資格情報を消す。何度呼んでも同じ結果。
+            if (read(account) or {}).get('phase')=='completed':
+                from . import invites
+                invites.forget_credential(account,by=by)
             return result
 
 

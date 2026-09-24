@@ -21,12 +21,18 @@ Meta の審査員や外の人が、運営者の VM に触らずに自分の Thre
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import fcntl
 import hashlib
 import os
+from pathlib import Path
 import re
 import secrets
+import stat
 import sys
 import time
+import uuid
 
 from . import accounts, admin_log, approval_relay as relay, jst, private_store, redact
 
@@ -302,8 +308,20 @@ THREADS_HANDLE = re.compile(r"[A-Za-z0-9_.]{1,64}\Z")
 _next_poll = {}
 
 
-def run_once():
-    """`thth approval-worker` が 1 巡ごとに呼ぶ。1 本の失敗で他の招待と承認 job を止めない。"""
+def run_once(credentials_path=None):
+    """`thth approval-worker` が 1 巡ごとに呼ぶ。1 本の失敗で他の招待と承認 job を止めない。
+
+    `credentials_path` は常駐が読んでいる資格情報のファイル（`--credentials`）。渡されたときは、
+    招待で用意した口座に、その口座だけの書き込みの資格情報を 1 件足す（裁定 2026-09-25）。
+    """
+    token = _credentials.set(credentials_path)
+    try:
+        _run_once()
+    finally:
+        _credentials.reset(token)
+
+
+def _run_once():
     try:
         records, _ = STORE.load()
     except InviteError:
@@ -324,7 +342,8 @@ def _active(record):
         return True
     # 使われた招待は、Worker への「用意ができた」と承認 secret の表示を見届けるまで。
     return (record["status"] == "used" and now_ms() < record["expires_at"]
-            and not (record.get("remote_ready") and record.get("approver_set")))
+            and not (record.get("remote_ready") and record.get("approver_set")
+                     and (record.get("credential_sha256") or not _credentials.get())))
 
 
 def process(invite_id):
@@ -612,6 +631,7 @@ def _complete(directory, record, session, code):
         return _back_to_open(directory, record, "unavailable")
     _forget_session(directory, record["invite_id"])
     _save(directory, record, status="used", reason=None, handle=username, remote_ready=False, approver_set=False)
+    _try_credential(directory, record)
     try:
         from . import doctor
         doctor.record_auth(record["account"], _expanded(data), token, log=lambda _: None)
@@ -678,6 +698,7 @@ def _announce(directory, record):
 
 
 def _used(directory, record):
+    _try_credential(directory, record)
     if not record.get("remote_ready"):
         return _announce(directory, record)
     if _throttled(record):
@@ -693,6 +714,156 @@ def _used(directory, record):
     admin_log.append("approver_set", record["account"], {"media": "threads"}, by=record["by"], via="http",
                      diff={"credential_present": [None, True], "via_invite": [None, record["invite_id"]]})
     _save(directory, record, approver_set=True)
+
+
+# ------------------------------------------------------------ 口座だけの資格情報
+#
+# 招待の口座の承認 job は、actor がその口座（承認ページの人）の資格情報からしか作れない。
+# 審査員が認可した直後に運営者の手を挟まないように、口座を用意したら常駐の資格情報の
+# ファイルに 1 件足す（裁定 2026-09-25）。accounts はその口座 1 つ・scope user・writes
+# true・actor は口座名。bearer は乱数で作って hash だけ残し、値は誰にも出さない
+# （MCP で使うときは運営者が既存の手順で入れ直す）。退出で消す（`forget_credential`）。
+
+CREDENTIAL_DAYS = 365
+_credentials = contextvars.ContextVar("thth_invite_credentials", default=None)
+
+
+def _new_bearer():
+    # テストはここを差し替えて、値がどこにも出ないことを確かめる。
+    return secrets.token_urlsafe(32)
+
+
+def _try_credential(directory, record):
+    path = _credentials.get()
+    if not path or record.get("credential_sha256"):
+        return
+    try:
+        digest = add_credential(path, record)
+    except Exception:
+        # 次の巡でもう一度（口座は用意済み・資格情報だけが無い）。
+        return
+    _save(directory, record, credential_sha256=digest, credentials_path=str(Path(path).absolute()))
+
+
+@contextlib.contextmanager
+def _locked_credentials(path):
+    """資格情報のファイルの排他（同じ置き場の `.<名前>.lock`・0600）。"""
+    lock = os.open(str(path.with_name("." + path.name + ".lock")),
+                   os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(lock)
+
+
+def _read_credentials(path):
+    fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077
+                or info.st_nlink != 1):
+            raise ValueError("credentials_file_unsafe")
+        return stream.read()
+
+
+def _replace_credentials(path, data):
+    """一時ファイル（0600・O_EXCL）→ fsync → rename → 親の fsync。"""
+    temporary = path.with_name("." + path.name + "." + uuid.uuid4().hex + ".tmp")
+    fd = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        parent = os.open(str(path.parent), os.O_RDONLY)
+        try:
+            os.fsync(parent)
+        finally:
+            os.close(parent)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def add_credential(credentials_path, record):
+    """資格情報を 1 件足し、その hash を返す（bearer の値は返さない・どこにも書かない）。"""
+    import datetime
+    import json
+    from . import report_http
+    path = Path(credentials_path).absolute()
+    name = record["account"]
+    with _locked_credentials(path):
+        before = _read_credentials(path)
+        report_http.load_credentials(path)  # 壊れたファイルには足さない（作りもしない）
+        config = json.loads(before)
+        rows = config["credentials"]
+        # 同じ口座の招待の 1 件が既にあれば、それを使う（前の巡で書けたが記録が追いつかなかった）。
+        for row in rows:
+            if row.get("accounts") == {name: record["project"]} and row.get("actor") == name:
+                return row["sha256"]
+        if len(rows) >= 100:
+            raise ValueError("credentials_full")
+        digest = hashlib.sha256(_new_bearer().encode()).hexdigest()
+        expires = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=CREDENTIAL_DAYS)
+        rows.append({"sha256": digest, "expires_at": jst.iso(expires), "revoked": False,
+                     "accounts": {name: record["project"]}, "scope": "user", "writes": True, "actor": name})
+        data = (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode()
+
+        def rollback():
+            _replace_credentials(path, before)
+
+        with admin_log.transaction(rollback=rollback):
+            _replace_credentials(path, data)
+            report_http.load_credentials(path)
+            admin_log.append("credential_added", name, {"media": "threads"}, by=record["by"], via="http",
+                             diff={"credential": ["absent", "present"], "writes": [None, True],
+                                   "via_invite": [None, record["invite_id"]]})
+    return digest
+
+
+def forget_credential(account, *, by):
+    """退出（`thth account leave`）の最後に、招待で足したその口座の資格情報を消す。何度呼んでも同じ。"""
+    import json
+    from . import report_http
+    try:
+        records, _ = STORE.load()
+    except InviteError:
+        raise ValueError("credential_cleanup_incomplete") from None
+    for record in records:
+        if record.get("account") != account or not record.get("credential_sha256") or record.get("credential_removed"):
+            continue
+        path = Path(record["credentials_path"])
+        try:
+            with _locked_credentials(path):
+                before = _read_credentials(path)
+                config = json.loads(before)
+                kept = [row for row in config["credentials"]
+                        if not (row.get("sha256") == record["credential_sha256"] and row.get("accounts") == {account: record["project"]})]
+                if len(kept) != len(config["credentials"]):
+                    if not kept:
+                        # 資格情報が 1 件も無いファイルは読めない形になる。その 1 件は取り消し済みで残す。
+                        kept = [dict(row, revoked=True) for row in config["credentials"]]
+                    config["credentials"] = kept
+
+                    def rollback():
+                        _replace_credentials(path, before)
+
+                    with admin_log.transaction(rollback=rollback):
+                        _replace_credentials(path, (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode())
+                        report_http.load_credentials(path)
+                        admin_log.append("credential_removed", account, {"media": "threads"}, by=by,
+                                         diff={"credential": ["present", "absent"], "via_invite": [None, record["invite_id"]]})
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, admin_log.AdminLogError):
+            raise ValueError("credential_cleanup_incomplete") from None
+        with STORE.locked() as directory:
+            latest = STORE.find(directory, record["invite_id"])
+            _save(directory, latest, credential_removed=True)
 
 
 # ------------------------------------------------------------------- CLI

@@ -42,7 +42,9 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    'map_node_added', 'map_node_removed', 'map_edge_added', 'map_edge_removed',
                    'map_retention_set', 'map_purged',
                    # 招待リンク（設計 3.10.0 §2）。subject は `invite-<id>`・presence-only——code は入れない。
-                   'invite_created', 'invite_used', 'invite_revoked'))
+                   'invite_created', 'invite_used', 'invite_revoked',
+                   # 招待で用意した口座だけの資格情報（3.10.0・裁定）。bearer も hash も入れない。
+                   'credential_added', 'credential_removed'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 
@@ -246,7 +248,8 @@ def transaction(*, rollback=None):
                                       'plaza_owner_set', 'plaza_owner_unset',
                                       'map_node_added', 'map_node_removed', 'map_edge_added',
                                       'map_edge_removed', 'map_retention_set', 'map_purged',
-                                      'invite_created', 'invite_used', 'invite_revoked'):
+                                      'invite_created', 'invite_used', 'invite_revoked',
+                                      'credential_added', 'credential_removed'):
                     continue
                 cfg = accounts.load_account(event['account'])
                 admin_notifications.notify(event, cfg)
