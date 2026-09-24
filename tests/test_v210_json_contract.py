@@ -48,7 +48,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 3.6.0 §B: つまずきの年表（読むだけ・--json）。
      'report timeline',
      # 3.8.0 §A・§E: 持ち主の組（管理者の口）と生きたコツ集（読むだけ）。
-     'admin plaza owner set', 'admin plaza owner unset', 'admin plaza owner list', 'plaza digest']
+     'admin plaza owner set', 'admin plaza owner unset', 'admin plaza owner list', 'plaza digest',
+     # 3.10.0 §2: 招待の一覧（管理者の口・code も hash も出さない）。
+     'admin invite list']
 
 
 def test_json_table_covers_every_parser():

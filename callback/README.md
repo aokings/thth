@@ -90,3 +90,14 @@ stable組Wrangler4.116.0/Miniflare4.20260730.0はworkerd最大日付2026-08-06�
 `DeletionInbox` は `/data-deletion` の signed request を未照合で受け付け、receipt を返します。VM の署名付き照合→永続化した退出→完了通知だけが完了に進めます。未照合は最大 30 日、照合時に blob を除去します。VM が HMAC 不一致を確認したものだけは署名管理口で回収し、元の期限まで retry 用 SHA と期限だけを残します。1000 件の受付上限と定期 sync 不在時の枯渇は残ります。論理期限・稼働中 storage からの削除と PITR の物理保持は別です。管理者の手順は [サーバ退出](../docs/運用_サーバ退出_2.12.md) を参照してください。
 
 ローカル試験は secret/code/receipt/本文を実行時生成し、実 Wrangler の assets 優先経路、SQLite 保存、再起動、stdout/stderr 非出力を確認します。実サービスの callback や revoke の動作確認、migration の本番適用は別途必要です。
+
+## 3.10.0 の招待リンク（未 deploy）
+
+`InviteObject`（binding `INVITE_OBJECT`・migration `v5-invite`）が招待 1 本ごとの状態を持ちます。object の名前は招待の code の SHA-256 で、VM も同じ hash しか持ちません。置くのは状態・期限・求める権限の一覧・VM が返した Threads の認可 URL（10 分で消す）・口座名と handle だけです。code・token・承認 secret は置きません。
+
+- `GET /invite/<code>` は説明のページ、`POST` は同一 origin（Sec-Fetch-Site）と csrf のときだけ `start`（押された）と `reveal`（承認 secret を 1 回だけ）。script は無く、準備中は meta refresh で再読込します。作法は承認ページと同じ（CSP・no-store・no-referrer）。
+- VM の署名つきの道は `/approval/invite/<hash>/{create,status,authorize,reset,complete,revoke}`（role は operator）。
+- `reveal` は Worker の中で secret を作り、PBKDF2（100,000）の verifier だけを `ApprovalPerson` に置きます。既存の承認者は上書きしません（同じ招待のやり直しだけ通す）。
+- 期限・取り消し・使用済みは 410。`/invite/*` は `run_worker_first` に入れてあります。
+
+試験は `test/invite.test.mjs`（Miniflare）と `test/invite-vm.test.mjs`（本物の VM の Python と本物の Worker の通し）です。本番への migration の適用と deploy は masaru の一言で主セッションが行います。
