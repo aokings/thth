@@ -142,6 +142,10 @@ export default {
       if (received === "consumed") return html(
         `<h1>すでに受け取り済みです</h1><p>完了しなかった場合は、ターミナルで認可をやり直してください。</p>
          <script>try { history.replaceState(null, "", location.pathname); } catch (e) {}</script>`);
+      if (received === "ready-invite") return html(
+        `<h1>承認を受け付けました</h1><p>招待のページ（最初に開いたタブ）に戻ってください。数十秒で用意ができます。</p>
+         <p class="note">Authorization received. Please return to the invitation tab; your account will be ready in a few seconds.</p>
+         <script>try { history.replaceState(null, "", location.pathname); } catch (e) {}</script>`);
       if (received === "ready") return html(
         `<h1>承認を受け付けました</h1><p>ターミナル（VM）が受け取ります。貼り付けは要りません。</p>
          <script>try { history.replaceState(null, "", location.pathname); } catch (e) {}</script>`);

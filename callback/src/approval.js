@@ -31,6 +31,9 @@ export async function boundedBody(request,max=65_536) {
 export async function personStub(env,person) {return env.APPROVAL_PERSON.getByName(await digest(person));}
 export async function accountStub(env,account) {return env.APPROVAL_ACCOUNT.getByName(await digest(account));}
 export async function sessionStub(env,token) {return env.APPROVAL_SESSION.getByName(await digest(token));}
+// 招待（3.10.0）の object は code の SHA-256 で引く。VM は hash しか持たないので、署名の
+// subject も同じ hash。ブラウザの道（/invite/<code>）はここで code を hash にしてから引く。
+export function inviteStub(env,hash) {return env.INVITE_OBJECT.getByName(hash);}
 // Canonical wire binding: role/subject/operation are signed, not caller-selected authority.
 export function canonical(method,path,role,subject,operation,time,nonce,bodyHash) {
   return ['thth-approval-v1',method,path,role,subject,operation,time,nonce,bodyHash].join('\n');
@@ -113,10 +116,10 @@ export async function approvalRequest(request,env,url) {
       const result=await stub.approve(form.get('secret'),form.get('csrf'));
       return page(result.status,result.status===200?`<h1>${accepted[result.body.kind]}</h1><p>サーバが内容を再確認します。操作の完了は元のセッションで確認してください。</p>`:'<h1>承認できませんでした</h1><p>承認 secret または有効期限を確認してください。繰り返し失敗すると管理者による解除が必要です。</p>');
     }
-    const route=/^\/approval\/(person|session|account|deletion)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|consume|cancel|list|read|verify|complete|discard|cleanup-retry)$/.exec(url.pathname);
+    const route=/^\/approval\/(person|session|account|deletion|invite)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|consume|cancel|list|read|verify|complete|discard|cleanup-retry|authorize|reset)$/.exec(url.pathname);
     if(!route||request.method!=='POST')return reply(404,{error:'not_found'});
     const [,type,subject,operation]=route;
-    if(type==='deletion'?!(subject==='inbox'&&operation==='list'||STATE_PATTERN.test(subject)&&['read','verify','complete','discard'].includes(operation)):type==='account'?!PERSON.test(subject)||!['revoke','status','cleanup-retry'].includes(operation):type==='person'?!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation):!STATE_PATTERN.test(subject)||!['create','consume','status','cancel'].includes(operation))return reply(400,{error:'invalid_request'});
+    if(type==='invite'?!HASH_PATTERN.test(subject)||!['create','status','authorize','reset','complete','revoke'].includes(operation):type==='deletion'?!(subject==='inbox'&&operation==='list'||STATE_PATTERN.test(subject)&&['read','verify','complete','discard'].includes(operation)):type==='account'?!PERSON.test(subject)||!['revoke','status','cleanup-retry'].includes(operation):type==='person'?!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation):!STATE_PATTERN.test(subject)||!['create','consume','status','cancel'].includes(operation))return reply(400,{error:'invalid_request'});
     if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(400,{error:'invalid_request'});
     if(!env.APPROVAL_VERIFY_LIMIT || !(await env.APPROVAL_VERIFY_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
     // Only the session `create` body carries attachments (第 8 段), so only it
@@ -126,7 +129,7 @@ export async function approvalRequest(request,env,url) {
     if(!ticket)return reply(401,{error:'unauthorized'});
     if(!env.APPROVAL_JOB_LIMIT || !(await env.APPROVAL_JOB_LIMIT.limit({key:await digest(type+'/'+subject)})).success)return reply(429,{error:'rate_limited'});
     const body=JSON.parse(raw);
-    const stub=type==='deletion'?deletionStub(env):type==='account'?await accountStub(env,subject):type==='person'?await personStub(env,subject):await sessionStub(env,subject);
+    const stub=type==='invite'?inviteStub(env,subject):type==='deletion'?deletionStub(env):type==='account'?await accountStub(env,subject):type==='person'?await personStub(env,subject):await sessionStub(env,subject);
     const result=await stub.manage(operation,body,ticket,subject);
     return reply(result.status,result.body);
   }catch{return reply(503,{error:'approval_unavailable'});}

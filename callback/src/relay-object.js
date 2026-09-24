@@ -51,11 +51,20 @@ export class AuthRelay extends DurableObject {
         if (row.status !== "pending") return {status: 409, body: {status: row.status}};
         expiry = Math.min(row.expires_at, now + CODE_MS);
         this.put({...row, status: "ready", code, received_at: now, code_expires_at: expiry});
-        return {status: 200};
+        return {status: 200, body: {invite: row.invite === true}};
       });
       if (result.status === 200) await this.scheduleAlarm(expiry);
       return result;
     }); } catch { return {status: 503}; }
+  }
+  // 招待（3.10.0）の認可だと Worker が印を付ける。戻りのページの言葉だけが変わる。
+  markInvite() {
+    return this.transaction(() => {
+      const row = this.ctx.storage.kv.get("session");
+      if (!row || row.status !== "pending" || this.expired(row, this.now())) return missing();
+      this.put({...row, invite: true});
+      return {status: 200};
+    });
   }
   consume(readHash) {
     return this.transaction(() => {

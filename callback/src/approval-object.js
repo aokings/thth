@@ -3,7 +3,7 @@ import {TTL,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64,personStub
 import {HASH_PATTERN,STATE_PATTERN,digest} from './relay.js';
 import {mediaStub} from './media.js';
 
-class AtomicObject extends DurableObject {
+export class AtomicObject extends DurableObject {
   now(){return Date.now();}
   put(key,value){this.ctx.storage.kv.put(key,value);}
   atomic(fn){try{return this.ctx.storage.transactionSync(fn);}catch{return fail(503,'approval_unavailable');}}
@@ -29,6 +29,16 @@ export class ApprovalPerson extends AtomicObject {
     else if(operation==='revoke')this.put('person',{active:false,generation:opaque(),failures:0});
     else this.put('person',{...old,failures:0});
     return {status:200,body:{status:operation==='set'?'configured':operation==='revoke'?'revoked':'unlocked'}};
+  });}
+  // 招待（3.10.0）の完了ページが本人の承認 secret を 1 回だけ作る。既存の承認者は
+  // 上書きしない（運営者の approver set・失効・別の招待の人）。同じ招待のやり直しだけ通す。
+  provision(salt,verifier,origin){return this.atomic(()=>{
+    if(typeof salt!=='string'||!STATE_PATTERN.test(salt)||typeof verifier!=='string'||!STATE_PATTERN.test(verifier)||
+       typeof origin!=='string'||!HASH_PATTERN.test(origin))return fail();
+    const old=this.ctx.storage.kv.get('person');
+    if(old&&old.invite!==origin)return fail(409,'approver_exists');
+    this.put('person',{salt,verifier,iterations:ITERATIONS,active:true,generation:opaque(),failures:0,invite:origin});
+    return {status:200,body:{status:'configured'}};
   });}
   current(generation=null){
     const row=this.ctx.storage.kv.get('person');

@@ -79,6 +79,7 @@ export async function receiveCallback(request, env, url) {
     if (!STATE_PATTERN.test(state) || !code || url.searchParams.has("error")) return null;
     if (!await rateAllowed(request, env)) return reply(429, {error: "rate_limited"});
     const result = await (await relayStub(env, state)).receive(code);
-    return result.status === 200 ? "ready" : result.status === 409 ? result.body?.status : null;
+    if (result.status === 200) return result.body?.invite === true ? "ready-invite" : "ready";
+    return result.status === 409 ? result.body?.status : null;
   } catch { return null; } // Storage outage preserves the manual URL path, never logs it.
 }

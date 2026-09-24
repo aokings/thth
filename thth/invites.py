@@ -42,6 +42,13 @@ PROJECT_MAX = accounts.NAME_MAX - len("inv--") - 6
 # 招待の状態。`registering`/`unknown`/`failed` は Worker への登録の途中・不明・拒否。
 STATUSES = ("registering", "open", "authorizing", "used", "revoked", "expired", "failed", "unknown")
 OPEN = ("registering", "unknown", "open", "authorizing")
+# 招待の認可で求める権限。申請の範囲（`docs/計画_Meta申請_2026-09-25.md`）に合わせて
+# `threads_share_to_instagram` は外す——申請しない権限を外の人に求めると、審査前は
+# 認可そのものが通らないことがある。招待のページはこの一覧をそのまま見せる。
+def invite_scopes():
+    from . import scopes
+    return [name for name in scopes.DEFAULT_SCOPES if name != "threads_share_to_instagram"]
+
 
 REASONS = frozenset((
     "invite_media_unsupported", "invalid_project", "invalid_label", "invalid_expires",
@@ -202,7 +209,8 @@ def create(*, media, project, label=None, expires=None, production=False, by):
             STORE.write(directory, record)
         try:
             value = relay.signed_request("invite", code_hash, "create",
-                                         {"media": media, "production": production, "expires_at": expires_at})
+                                         {"media": media, "production": production, "expires_at": expires_at,
+                                          "scopes": invite_scopes()})
             if value != {"status": "open"}:
                 raise relay.RelayError("approval_relay_invalid")
         except relay.RelayError as exc:

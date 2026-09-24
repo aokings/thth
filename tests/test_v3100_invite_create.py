@@ -97,7 +97,10 @@ def test_codeはttyに1回だけ_VMにはhashだけ_Workerにはlabelを送ら�
     digest = hashlib.sha256(code.encode()).hexdigest()
     # Worker への登録: subject は hash・本文は media/production/expires_at だけ。
     assert worker.calls == [(digest, "create", {"media": "threads", "production": True,
-                                                "expires_at": worker.invites[digest]["expires_at"]})]
+                                                "expires_at": worker.invites[digest]["expires_at"],
+                                                "scopes": invites.invite_scopes()})]
+    assert "threads_share_to_instagram" not in invites.invite_scopes()
+    assert {"threads_basic", "threads_content_publish", "threads_delete"} <= set(invites.invite_scopes())
     # 手元の記録は hash だけ。どのファイルにも code は無い。
     record = invites.STORE.get(row["invite_id"])
     assert record["code_hash"] == digest and record["status"] == "open"

@@ -4,8 +4,8 @@
   "main": "src/worker.js",
   "compatibility_date": "2026-09-01",
   "r2_buckets": [{"binding":"MEDIA_BUCKET","bucket_name":"thth-media"}],
-  "durable_objects": {"bindings": [{"name":"MEDIA_OBJECT","class_name":"MediaObject"}, {"name": "AUTH_RELAY", "class_name": "AuthRelay"}, {"name":"APPROVAL_PERSON","class_name":"ApprovalPerson"}, {"name":"APPROVAL_SESSION","class_name":"ApprovalSession"}, {"name":"APPROVAL_ACCOUNT","class_name":"ApprovalAccount"}, {"name":"DELETION_INBOX","class_name":"DeletionInbox"}]},
-  "migrations": [{"tag": "v1-relay", "new_sqlite_classes": ["AuthRelay"]}, {"tag":"v2-approval","new_sqlite_classes":["ApprovalPerson","ApprovalSession"]}, {"tag":"v3-leave","new_sqlite_classes":["ApprovalAccount","DeletionInbox"]}, {"tag":"v4-media","new_sqlite_classes":["MediaObject"]}],
+  "durable_objects": {"bindings": [{"name":"MEDIA_OBJECT","class_name":"MediaObject"}, {"name": "AUTH_RELAY", "class_name": "AuthRelay"}, {"name":"APPROVAL_PERSON","class_name":"ApprovalPerson"}, {"name":"APPROVAL_SESSION","class_name":"ApprovalSession"}, {"name":"APPROVAL_ACCOUNT","class_name":"ApprovalAccount"}, {"name":"DELETION_INBOX","class_name":"DeletionInbox"}, {"name":"INVITE_OBJECT","class_name":"InviteObject"}]},
+  "migrations": [{"tag": "v1-relay", "new_sqlite_classes": ["AuthRelay"]}, {"tag":"v2-approval","new_sqlite_classes":["ApprovalPerson","ApprovalSession"]}, {"tag":"v3-leave","new_sqlite_classes":["ApprovalAccount","DeletionInbox"]}, {"tag":"v4-media","new_sqlite_classes":["MediaObject"]}, {"tag":"v5-invite","new_sqlite_classes":["InviteObject"]}],
   "ratelimits": [{"name":"MEDIA_PUBLIC_LIMIT","namespace_id":"21301","simple":{"limit":120,"period":60}},
     {"name":"MEDIA_CONTROL_LIMIT","namespace_id":"21302","simple":{"limit":600,"period":60}},
     {"name":"MEDIA_UPLOAD_IP_LIMIT","namespace_id":"21304","simple":{"limit":120,"period":60}},
@@ -25,7 +25,7 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "run_worker_first": ["/media/*", "/media-upload/*", "/m/*", "/data-deletion", "/data-deletion-status", "/approve/*", "/approval/*", "/relay/*", "/callback", "/callback/*", "/oauth/client-metadata.json"]
+    "run_worker_first": ["/media/*", "/media-upload/*", "/m/*", "/data-deletion", "/data-deletion-status", "/approve/*", "/approval/*", "/invite/*", "/relay/*", "/callback", "/callback/*", "/oauth/client-metadata.json"]
   },
   // observability は有効にしない。認可コードはクエリに乗るので、
   // ログに残す動機を最初から作らない（設計 §3.6 の礼儀と同じ趣旨）。
