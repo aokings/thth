@@ -1,4 +1,4 @@
-"""front-matter の書き戻し ＋ git add/commit/pull --rebase/push（設計 §4.3）。
+"""front-matter の書き戻し ＋ git add/commit/fetch・rebase/push（設計 §4.3）。
 
 `rewrite_front_matter()` が書き換えるのは `status`・`post_id`・`posted_at` の
 3 行だけ。本文には触らない。push 失敗は commit を残して非ゼロ（手で push できる
@@ -11,7 +11,7 @@
 
 `sync_repo()`（外部レビュー再レビュー A・2026-09-09）は利用者 repo を select より前に
 同期する。`commit_and_push()` の `validate` 引数（外部レビュー再レビュー B）は
-push の直前・pull --rebase の後にもう一度「送った本文といまの内容が一致するか」を
+push の直前・取り込み（rebase）の後にもう一度「送った本文といまの内容が一致するか」を
 確かめる口。どちらも `thth/core.py` から呼ばれる。
 """
 from __future__ import annotations
@@ -78,7 +78,7 @@ def has_control_chars(text) -> bool:
 class PushValidationFailed(Exception):
     """`commit_and_push()` の `validate` コールバックが不一致を返した。
 
-    pull --rebase の後・push の前に検知したので、push はしていない
+    取り込み（rebase）の後・push の前に検知したので、push はしていない
     （commit はローカルに残ったまま。人が手で確認・修正できる状態）。
     呼び出し側（`thth/core.py`）はこれを捕まえて inflight を残したまま exit 1 で
     止める（外部レビュー再レビュー B・受け入れ）。
@@ -423,7 +423,7 @@ def matches_synced_commit(repo_dir: str, path: str, *, tree_sha: str | None, dis
 
 
 def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None) -> tuple:
-    """`git add -- <rel_path>` → commit → `pull --rebase --autostash` → push。
+    """`git add -- <rel_path>` → commit → `fetch origin`・`rebase --autostash @{u}` → push（3.8.2 までは `pull --rebase --autostash`）。
 
     衝突したら 1 回だけ pull し直して再 push、それでも駄目なら commit を残して
     `(False, error)` を返す（観測.sh・watchtower と同じ流儀）。
@@ -482,13 +482,24 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
     last_err = ""
     try:
         for _attempt in range(2):
-            pull = _run_git(repo_dir, ["pull", "--rebase", "--autostash"])
-            if pull.returncode != 0:
-                last_err = pull.stderr
+            # **`pull --rebase` をやめ、`fetch origin` → `rebase --autostash @{u}` に
+            # 分ける**（依頼 3.8.2 件 1・報告 r20260924-9f07f36b）。`git pull` は自分で
+            # fetch したあと **FETCH_HEAD を読み直して**取り込む相手を決める。その間に
+            # 別のプロセスの fetch が FETCH_HEAD に行を足すと（`fetch --append`・枝を
+            # 名指しした fetch）、for-merge の行が 2 つになり「Cannot rebase onto
+            # multiple branches」で断られる（本物の git で再現）。upstream の ref
+            # （`@{u}`）を名指しすれば、FETCH_HEAD を誰が書いても読まない。
+            fetch = _run_git(repo_dir, ["fetch", "origin"])
+            if fetch.returncode != 0:
+                last_err = fetch.stderr
+                continue
+            rebase = _run_git(repo_dir, ["rebase", "--autostash", "@{u}"])
+            if rebase.returncode != 0:
+                last_err = rebase.stderr
                 continue
             if validate is not None and not validate():
                 raise PushValidationFailed(
-                    "pull --rebase のあと、本文が送った内容と食い違うため push しません"
+                    "取り込み（rebase）のあと、本文が送った内容と食い違うため push しません"
                     "（commit はローカルに残っています。手で確認してください）")
             push = _run_git(repo_dir, ["push"])
             if push.returncode == 0:
@@ -570,7 +581,7 @@ def sync_repo(repo_dir: str) -> tuple:
     何も公開されない（安全）。`repo_dir` が存在する場合は、以降の一切を
     `_confirm_synced()` に渡し、**「成功したと確認できたときだけ」** `(True, "")`
     を返させる。ディレクトリはあるが `.git` が無い／`origin` が無い／
-    `git remote` が失敗／fetch 失敗／`pull --ff-only` 失敗／pull 後に HEAD が
+    `git remote` が失敗／fetch 失敗／`merge --ff-only @{u}` 失敗／取り込み後に HEAD が
     upstream に追いついたと確認できない、など「確認できない」場合はすべて
     `(False, ...)` になる——分岐を列挙して素通りさせるのではなく、確認できな
     かったものはすべて同じ扱いで落ちる形にしてあるので、ここに載っていない
@@ -609,18 +620,29 @@ def _confirm_synced(repo_dir: str) -> tuple:
     if fetch.returncode != 0:
         return False, "git fetch に失敗しました: " + redact_mod.redact(fetch.stderr), None
 
-    pull = _run_git(repo_dir, ["pull", "--ff-only"])
-    if pull.returncode != 0:
-        return False, "git pull --ff-only に失敗しました: " + redact_mod.redact(pull.stderr), None
+    # **`pull --ff-only` ではなく `merge --ff-only @{u}`**（依頼 3.8.2 件 1・報告
+    # r20260924-9f07f36b）。`git pull` は自分の fetch のあと **FETCH_HEAD を読み直して**
+    # 取り込む相手を決める。確定を続けて打つと、1 本目の commit・push と前後して
+    # 別のプロセスの fetch（`fetch --append`・枝を名指しした fetch）が FETCH_HEAD に
+    # 行を足し、for-merge の行が 2 つになって「Cannot fast-forward to multiple
+    # branches」で 2 本目以降の承認が止まった（本物の git で再現）。直前の
+    # `fetch origin` が進めた upstream の ref（`@{u}`）を名指しすれば、FETCH_HEAD を
+    # 誰が書いても読まない。ff できないとき（枝分かれ・作業ツリーの衝突）は従前
+    # どおりここで断る。
+    merge = _run_git(repo_dir, ["merge", "--ff-only", "@{u}"])
+    if merge.returncode != 0:
+        return False, ("git merge --ff-only @{u} に失敗しました（upstream に早送りで"
+                        "追いつけません）: " + redact_mod.redact(merge.stderr)), None
 
-    # 最終確認: pull --ff-only が exit 0 を返しただけでなく、HEAD が実際に
+    # 最終確認: merge --ff-only が exit 0 を返しただけでなく、HEAD が実際に
     # upstream に追いついたことを直接見る（「エラーが出なかった」ではなく
-    # 「成功したと確認できた」で通すため）。
+    # 「成功したと確認できた」で通すため。HEAD が upstream より先にいると、
+    # merge は何もせずに 0 を返す）。
     head = _run_git(repo_dir, ["rev-parse", "HEAD"])
     upstream = _run_git(repo_dir, ["rev-parse", "@{u}"])
     if (head.returncode != 0 or upstream.returncode != 0
             or head.stdout.strip() != upstream.stdout.strip()):
-        return False, "pull --ff-only の後、HEAD が upstream に追いついたことを確認できませんでした", None
+        return False, "取り込みの後、HEAD が upstream に追いついたことを確認できませんでした", None
 
     # **確かめた OID をそのまま返す**（外部レビュー第 5 巡 P1）。呼び出し側は
     # これを持ち回り、queue の照合先に使う。HEAD を引き直させない。
