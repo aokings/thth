@@ -43,6 +43,13 @@ WINDOW_NOTE = ("日次の粒度なので、72 時間は投稿日（JST）を含�
                "（投稿の時刻によって 72 時間より短くも長くもなる）")
 NEIGHBOR_HOURS = 72
 RATE_BASIS = "clicks_72h / views_24h"
+# 窓の前と後（設計 3.9.0 §A）。どちらも**窓の和には足さない**（参考の数）。
+BEFORE_DAYS = 3
+BEFORE_BASIS = ("投稿日より前の 3 暦日の、そのリンク先の日次クリック（同じリンク先を使う"
+                "ほかの投稿の窓の日は数えない）")
+AFTER_DAYS = 7
+AFTER_BASIS = ("3 暦日の窓のあとの 7 暦日の、そのリンク先の日次クリック（参考・同じリンク先を"
+               "使うほかの投稿の窓の日は数えない）")
 
 # 投稿単位のクリックを言えない理由（静的な符丁・この 5 語だけ）。
 URL_SHARED = "url_shared_72h"
@@ -309,6 +316,69 @@ class Index:
         else:
             out["rate_missing"] = VIEWS_MISSING
         return out
+
+
+    # ------------------------------------------------ 窓の前と後（設計 3.9.0 §A）
+
+    def _other_windows(self, post_id, urls) -> set:
+        """同じリンク先を使う**ほかの**投稿の 3 暦日の窓に入る日（その日は数えない）。
+
+        72 時間より離れて同じリンク先を使った投稿があると、その投稿の窓のクリックが
+        こちらの「前」や「後」に入って見える。その日は外して、外した日数を出す。
+        """
+        out = set()
+        for other_id, other_at in self.posts:
+            if other_id == str(post_id):
+                continue
+            theirs = self._urls(other_id)
+            if not theirs or not set(theirs) & set(urls):
+                continue
+            first = _day(other_at)
+            out.update((first + datetime.timedelta(days=i)).isoformat() for i in range(WINDOW_DAYS))
+        return out
+
+    def _sum_days(self, post_id, urls, days) -> dict:
+        """日の並びの、そのリンク先のクリックの和。欠けた日・ほかの投稿の窓の日は数えない。"""
+        today = jst.to_jst(self.now).date().isoformat()
+        excluded = self._other_windows(post_id, urls)
+        total, counted, skipped, missing, not_closed = 0, [], [], 0, 0
+        for day in days:
+            if day >= today:
+                # 採取は閉じた日だけ記録する——まだ閉じていない日は数えない。
+                not_closed += 1
+                continue
+            if day in excluded:
+                skipped.append(day)
+                continue
+            value, _reason = _day_clicks(self.daily.get(day), urls)
+            if value is None:
+                missing += 1
+                continue
+            total += value
+            counted.append(day)
+        return {"clicks": total if counted else None, "days": list(days),
+                "days_counted": len(counted), "days_missing": missing,
+                "days_not_closed": not_closed,
+                "days_excluded_other_post_window": len(skipped),
+                "reason": None if counted else ("no_closed_day" if not_closed == len(days)
+                                                else "no_countable_day")}
+
+    def before_post(self, post_id, posted, urls) -> dict:
+        """投稿日より前の 3 暦日に付いた、そのリンク先のクリック（`clicks_before_post`）。
+
+        **窓の和（clicks_72h）には足さない**。1 以上なら、THTH を通していない投稿か
+        Threads の外のクリックが混ざっている可能性がある（原因は言わない）。
+        """
+        start = _day(posted)
+        days = [(start - datetime.timedelta(days=i)).isoformat()
+                for i in range(BEFORE_DAYS, 0, -1)]
+        return {**self._sum_days(post_id, urls, days), "basis": BEFORE_BASIS}
+
+    def after_window(self, post_id, posted, urls) -> dict:
+        """3 暦日の窓のあとの 7 暦日の、そのリンク先のクリック（参考・窓には足さない）。"""
+        start = _day(posted) + datetime.timedelta(days=WINDOW_DAYS)
+        days = [(start + datetime.timedelta(days=i)).isoformat() for i in range(AFTER_DAYS)]
+        return {**self._sum_days(post_id, urls, days), "basis": AFTER_BASIS}
 
 
 def summarize(rows, min_n) -> dict:

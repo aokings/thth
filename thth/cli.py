@@ -3410,6 +3410,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--weekly-goals", action="store_true",
                           help="週ごとの目的ごとの本数と followers の増分（観察の表・1 account）")
     p_report.add_argument("--weeks", type=int, default=6, help="--weekly-goals の週の数（既定 6）")
+    # 投稿ごとのクリック（設計 3.9.0 §A）。goal を問わない別の表。
+    p_report.add_argument("--per-post-clicks", action="store_true",
+                          help="goal を問わず、一意のリンク先の投稿の 72h のクリック・窓の前と後（1 account）")
+    p_report.add_argument("--since", default=None,
+                          help="--per-post-clicks の期間（30d・12w・ISO 時刻。既定は --window-days）")
     p_report.add_argument("--json", action="store_true")
     p_report.set_defaults(func=analytics_report_mod.cmd_analytics_report)
 

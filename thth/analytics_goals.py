@@ -134,14 +134,26 @@ def _click(members, goal_days, daily, start, end, *, click_index=None, now=None,
     """
     window = _in_window(members, start, end)
     posts, per_post, cannot_say = [], None, [goals.PER_POST_CANNOT_SAY["click"]]
+    before = None
     if click_index is not None:
         for post_id, posted, post in window:
             observation, _rejected = comparison._observation(post, posted, now, 24)
             views = ((observation or {}).get("metrics") or {}).get("views")
-            posts.append(click_index.attribute(post_id, posted, views))
+            row = click_index.attribute(post_id, posted, views)
+            # 窓の前のクリック（設計 3.9.0 §A）。**窓の和（clicks_72h）には足さない**。
+            row["clicks_before_post"] = (click_index.before_post(post_id, posted, row["urls"])["clicks"]
+                                         if row["basis"] is not None else None)
+            posts.append(row)
         from . import click_attribution
         per_post = click_attribution.summarize(posts, min_n)
         cannot_say = sorted({row["cannot_say"] for row in posts if row["cannot_say"]})
+        counted = [row["clicks_before_post"] for row in posts if row["clicks_before_post"] is not None]
+        before = {"sum": sum(counted), "n": len(counted), "denominator": len(posts),
+                  "basis": click_attribution.BEFORE_BASIS, "note": "窓の和には足さない"}
+        if before["sum"] >= 1:
+            from . import analytics_clicks
+            before.update({"code": analytics_clicks.BEFORE_PRESENT,
+                           "message": analytics_clicks.BEFORE_PRESENT_NOTE})
     days, multiple, without = [], 0, 0
     for date in sorted({_day(posted) for _pid, posted, _post in _in_window(members, start, end)}):
         post_ids = goal_days.get(date, [])
@@ -157,6 +169,7 @@ def _click(members, goal_days, daily, start, end, *, click_index=None, now=None,
     return {"goal": "click",
             "basis": "unique_url_72h" if click_index is not None else "account_daily",
             "per_post": per_post, "posts": posts, "cannot_say": cannot_say,
+            "clicks_before_post": before,
             "daily": {"basis": "single_click_post_day", **OBSERVATIONAL, "days": days,
                       "n_days": len(days), "excluded_days_multiple_click_posts": multiple,
                       "days_without_daily_clicks": without,
@@ -310,6 +323,9 @@ def markdown_lines(stratified) -> list:
                          f"（有効 n={c['n_eligible']}/{c['n_total']}）・クリック率"
                          f"（{r['rate_basis']}）中央値 {_fmt(r['median'])}（有効 n={r['n_eligible']}）。"
                          f"言えない・値なし: {reasons}。")
+                before = yard.get("clicks_before_post")
+                if before and before["sum"] >= 1:
+                    first += f"窓の前のクリック {before['sum']}（窓には足さない）: {before['message']}。"
             lines.append(head + "。" + first +
                          f"click の投稿が 1 本だけの日の日次 clicks: {daily['n_days']} 日"
                          f"（2 本以上の日 {daily['excluded_days_multiple_click_posts']} 日は並べない・"

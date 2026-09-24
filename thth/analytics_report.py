@@ -159,6 +159,14 @@ def render_markdown(payload):
 
 
 def cmd_analytics_report(args):
+    if getattr(args, "per_post_clicks", False):
+        # 投稿ごとのクリック（設計 3.9.0 §A）。goal を問わない別の表（goal の層と混ぜない）。
+        from . import analytics_clicks
+        return analytics_clicks.cmd(args)
+    if getattr(args, "since", None):
+        print("--since は --per-post-clicks と一緒に使います（ほかの表は --window-days）",
+              file=sys.stderr)
+        return 2
     if getattr(args, "weekly_goals", False):
         # 週の表（設計 3.7.0 §A3）。比較（--compare-previous）とは別の表。
         from . import analytics_weekly
