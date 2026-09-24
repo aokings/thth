@@ -1619,8 +1619,19 @@ def _anonymize(record):
 
 # ---------------------------------------------------------- 生きたコツ集
 
-# 生きたコツ集に載せる条件: 再現した追試がそろった媒体の数（設計 3.8.0 §E「2 媒体以上」）。
+# 生きたコツ集に載せる条件: 再現した媒体の数（設計 3.8.0 §E「2 媒体以上」）。
 DIGEST_MIN_MEDIA = 2
+# 数え方（主セッション裁定 09-24）: 置いた媒体を 1 と数えてよいのは、元の書き込みが
+# observed（道具が付けた観測がある）のときだけ。stated・hypothesis は再現した追試の媒体だけ。
+DIGEST_COUNT_OBSERVED = "observed_origin_plus_trials"
+DIGEST_COUNT_TRIALS = "trials_only"
+
+
+def _digest_media(record, reproduced):
+    """digest で数える媒体の集合と数え方。observed の元なら置いた媒体も入れる（和集合）。"""
+    if evidence_level_of(record) == "observed" and record.get("medium"):
+        return set(reproduced) | {record["medium"]}, DIGEST_COUNT_OBSERVED
+    return set(reproduced), DIGEST_COUNT_TRIALS
 
 
 def viewer_for_digest(target):
@@ -1650,7 +1661,11 @@ def viewer_for_digest(target):
 
 
 def digest(viewer, *, target=None, basis="project"):
-    """生きたコツ集（設計 3.8.0 §E）: 2 媒体以上で reproduced の追試がそろった finding・measure。
+    """生きたコツ集（設計 3.8.0 §E）: 2 媒体以上で再現した finding・measure。
+
+    数え方（裁定 09-24）: 元の書き込みが observed（道具が付けた観測がある）なら置いた媒体を
+    1 と数え「置いた媒体＋再現した追試 1 媒体」で 2 媒体。stated・hypothesis は再現した追試の
+    媒体が 2 つ以上のときだけ。各行に数え方（`count_basis`）と追試の媒体の数を出す。
 
     **再現しなかった媒体も同じ重さで並べる**（試していない媒体も）。分母は読める施策・
     気づきの数と、追試の付いた数。読める範囲は自分の project と同じ持ち主の組（open の
@@ -1672,7 +1687,8 @@ def digest(viewer, *, target=None, basis="project"):
                 media[row["result"]].add(row.get("medium") or "unknown")
         if any(media.values()):
             with_trials += 1
-        if len(media["reproduced"]) < DIGEST_MIN_MEDIA:
+        counted, count_basis = _digest_media(record, media["reproduced"])
+        if len(counted) < DIGEST_MIN_MEDIA:
             continue
         items.append({"plaza_id": record["plaza_id"], "at": record["at"], "kind": record["kind"],
                       "kind_detail": record.get("kind_detail"), "title": record["title"],
@@ -1681,13 +1697,16 @@ def digest(viewer, *, target=None, basis="project"):
                       "scope_note": record.get("scope_note"), "how": record.get("how"),
                       "evidence_level": evidence_level_of(record), "view": level,
                       "trials": trial_counts(record),
-                      "media": {result: sorted(values) for result, values in media.items()}})
-    items.sort(key=lambda item: (len(item["media"]["reproduced"]), item["at"], item["plaza_id"]),
+                      "media": {result: sorted(values) for result, values in media.items()},
+                      "count_basis": count_basis, "n_media_counted": len(counted),
+                      "n_trial_media": len(media["reproduced"])})
+    items.sort(key=lambda item: (item["n_media_counted"], item["at"], item["plaza_id"]),
                reverse=True)
     return {"schema_version": SCHEMA_VERSION, "report_type": "plaza_digest", "target": target,
             "basis": basis, "min_media": DIGEST_MIN_MEDIA, "n": len(items), "items": items,
             "denominator": candidates, "n_with_trials": with_trials,
-            "rule": "reproduced_trials_from_at_least_2_media_not_reproduced_listed_alongside"}
+            "rule": "at_least_2_reproduced_media_origin_counts_only_if_observed_"
+                    "not_reproduced_listed_alongside"}
 
 
 # ---------------------------------------------------------- observe に載せる

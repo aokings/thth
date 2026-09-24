@@ -323,6 +323,10 @@ def render_digest(payload, out=print):
             f"{'・'.join(media['not_reproduced']) or '—'} ／ 試していない: "
             f"{'・'.join(media['not_tried']) or '—'}（追試 {trials['denominator']} 件: 再現 "
             f"{trials['reproduced']}・再現せず {trials['not_reproduced']}・試していない {trials['not_tried']}）")
+        basis = (f"observed の元＋追試 {item['n_trial_media']}"
+                 if item.get("count_basis") == plaza.DIGEST_COUNT_OBSERVED
+                 else f"追試 {item['n_trial_media']}")
+        out(f"  数え方: {basis}（{item['n_media_counted']} 媒体）")
         out(f"  範囲: {item.get('scope_note') or '—'}"
             + (f"  出し直し: {item['how']}" if item.get("how") else ""))
 
