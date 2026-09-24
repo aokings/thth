@@ -291,6 +291,356 @@ def _forget_session(directory, invite_id):
     STORE.remove_name(directory, _session_name(invite_id))
 
 
+# ------------------------------------------------------------ 常駐の 1 巡
+
+# 押された（clicked）招待を拾う間隔。押してから数十秒で進めば足り、30 日ぶんの
+# 招待を 2 秒ごとに署名つきで問い合わせない。認可中は 1 巡ごとに預かり所を見る。
+OPEN_POLL_SECONDS = 10
+# 招待の認可の戻り先（Meta に登録してある受け口・`callback/src/index.js`）。
+INVITE_REDIRECT_URI = "https://thth.me/callback/"
+THREADS_HANDLE = re.compile(r"[A-Za-z0-9_.]{1,64}\Z")
+_next_poll = {}
+
+
+def run_once():
+    """`thth approval-worker` が 1 巡ごとに呼ぶ。1 本の失敗で他の招待と承認 job を止めない。"""
+    try:
+        records, _ = STORE.load()
+    except InviteError:
+        print("invite_store_unavailable", file=sys.stderr)
+        return
+    for record in records:
+        if not _active(record):
+            continue
+        try:
+            process(record["invite_id"])
+        except Exception:
+            # 理由は静的に 1 語だけ（URL・code・token を journald に流さない）。
+            print("invite_process_failed: " + record["invite_id"], file=sys.stderr)
+
+
+def _active(record):
+    if record["status"] in ("open", "authorizing"):
+        return True
+    # 使われた招待は、Worker への「用意ができた」と承認 secret の表示を見届けるまで。
+    return (record["status"] == "used" and now_ms() < record["expires_at"]
+            and not (record.get("remote_ready") and record.get("approver_set")))
+
+
+def process(invite_id):
+    with STORE.locked() as directory:
+        record = STORE.find(directory, invite_id)
+        if record["status"] in ("open", "authorizing") and now_ms() >= record["expires_at"]:
+            # 期限は手元でも見る（Worker が 410 を返す前に口座を作らない）。
+            _forget_session(directory, invite_id)
+            _save(directory, record, status="expired")
+        elif record["status"] == "open":
+            _open(directory, record)
+        elif record["status"] == "authorizing":
+            _authorizing(directory, record)
+        elif record["status"] == "used":
+            _used(directory, record)
+        return public(record)
+
+
+def _save(directory, record, **changes):
+    record.update(changes, updated_at=jst.iso())
+    STORE.write(directory, record)
+
+
+def _throttled(record):
+    key = record["invite_id"]
+    if time.monotonic() < _next_poll.get(key, 0):
+        return True
+    _next_poll[key] = time.monotonic() + OPEN_POLL_SECONDS
+    return False
+
+
+def _reset(record, reason):
+    """Worker の招待を open に戻す（本人がもう一度押せる・理由はページに出る）。届かなくてもよい
+    ——次の巡で Worker が認可中のままなら、もう一度送る。"""
+    try:
+        relay.signed_request("invite", record["code_hash"], "reset", {"reason": reason})
+    except relay.RelayError:
+        pass
+
+
+def _back_to_open(directory, record, reason):
+    _forget_session(directory, record["invite_id"])
+    _reset(record, reason)
+    _save(directory, record, status="open", reason=reason)
+
+
+def _open(directory, record):
+    if _throttled(record):
+        return
+    try:
+        remote = relay.signed_request("invite", record["code_hash"], "status", {})
+    except relay.RelayError as exc:
+        if exc.status in (404, 410):
+            # Worker では期限の alarm で消えた。
+            _save(directory, record, status="expired")
+        return
+    state = remote.get("status")
+    if state in ("revoked", "expired"):
+        _save(directory, record, status=state)
+    elif state == "authorizing":
+        # 手元は open なのに Worker は認可中: 前の巡の reset が届かなかった。
+        _reset(record, "auth_failed")
+    elif state == "clicked":
+        _start(directory, record)
+
+
+def _profile():
+    from . import appenv
+    from .adapters.auth_threads import ThreadsInviteAuthProfile
+    app_id, app_secret = appenv.load_app_env(log=lambda _: None)
+    redact.register_secret(app_secret)
+    profile = ThreadsInviteAuthProfile(app_id, app_secret, INVITE_REDIRECT_URI, invite_scopes())
+    profile.validate()
+    return profile
+
+
+def _start(directory, record):
+    """押された招待に、認可の session（state・read key は VM で作る）と認可 URL を用意する。"""
+    from . import appenv, authflow, oauth
+    try:
+        check_project(record["project"])
+        if not _account_free(record["account"]):
+            raise error("invite_account_exists")
+        profile = _profile()
+    except (InviteError, appenv.AppEnvError, OSError, ValueError):
+        return _reset(record, "unavailable")
+    session = {"state": authflow.secret(oauth._new_state()),
+               "read_key": authflow.secret(secrets.token_urlsafe(32)), "created_at": now_ms()}
+    try:
+        status, _ = authflow.relay_request(session, register=True)
+    except authflow.FlowError:
+        status = None
+    if status != 201:
+        return _reset(record, "unavailable")
+    _write_session(directory, record["invite_id"], session)
+    try:
+        value = relay.signed_request("invite", record["code_hash"], "authorize",
+                                     {"authorize_url": profile.authorize(session),
+                                      "expires_at": session["created_at"] + authflow.TTL * 1000})
+        if value != {"status": "authorizing"}:
+            raise relay.RelayError("approval_relay_invalid")
+    except relay.RelayError:
+        _forget_session(directory, record["invite_id"])
+        return _reset(record, "unavailable")
+    _save(directory, record, status="authorizing", reason=None)
+
+
+def _write_session(directory, invite_id, session):
+    import json
+    STORE.write_raw(directory, _session_name(invite_id), json.dumps(session).encode())
+
+
+def _read_session(directory, invite_id):
+    import json
+    from . import authflow
+    raw = STORE.read_raw(directory, _session_name(invite_id))
+    if raw is None:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    if (not isinstance(value, dict) or set(value) != {"state", "read_key", "created_at"}
+            or not all(isinstance(value[k], str) and relay.OPAQUE.fullmatch(value[k]) for k in ("state", "read_key"))
+            or type(value["created_at"]) is not int):
+        return None
+    for key in ("state", "read_key"):
+        authflow.secret(value[key])
+    return value
+
+
+def _code(value):
+    """預かり所が返した code の検査（`authflow.poll` と同じ形・受け取って 5 分以内）。"""
+    from . import authflow
+    code, received = value.get("code"), jst.parse(value.get("received_at"))
+    if isinstance(code, str):
+        authflow.secret(code)
+    age = (jst.now_jst() - received).total_seconds() if received else -1
+    if (not isinstance(code, str) or not code or len(code.encode()) > 4096
+            or any(ord(c) < 32 or ord(c) == 127 for c in code) or age < 0 or age >= 300):
+        return None
+    return code
+
+
+def _authorizing(directory, record):
+    from . import authflow
+    session = _read_session(directory, record["invite_id"])
+    if session is None:
+        return _back_to_open(directory, record, "auth_failed")
+    if now_ms() >= session["created_at"] + authflow.TTL * 1000:
+        return _back_to_open(directory, record, "auth_expired")
+    try:
+        status, value = authflow.relay_request(session, timeout=5)
+    except authflow.FlowError:
+        return  # 預かり所が一時的に答えない。次の巡で見る。
+    if status in (404, 429):
+        return
+    code = _code(value) if status == 200 else None
+    if code is None:
+        return _back_to_open(directory, record, "auth_failed")
+    _complete(directory, record, session, code)
+
+
+def _ledger(record, *, handle="", user_id=""):
+    """招待の口座の台帳（`account add` と同じ雛形・置き場は `docs/運用_招待する側.md` のとおり）。"""
+    from . import account_cli
+    name = record["account"]
+    data = account_cli.build_ledger(name, media="threads", project=record["project"],
+                                    repo_dir=f"$THTH_ROOT/repos/_server/{name}",
+                                    redirect_uri=INVITE_REDIRECT_URI)
+    data.update(handle=handle, user_id=user_id, env=f"$THTH_ROOT/secrets/{name}.env",
+                token=f"$THTH_ROOT/secrets/{name}.token", production=record["production"],
+                scheduled=False, invite_id=record["invite_id"],
+                provenance=admin_log.provenance(record["by"], via="invite"))
+    return data
+
+
+def _expanded(data):
+    value = accounts.AccountConfig(data)
+    value._thth_account_name = data["account"]
+    for key in ("repo_dir", "env", "token"):
+        value[key] = accounts._expand(value[key])
+    return value
+
+
+def _threads_account_exists(user_id, username):
+    """同じ Threads 口座が既に台帳にあるか（handle・user_id・token の user_id で見る）。"""
+    from . import oauth
+    for name in accounts.list_account_names():
+        try:
+            cfg = accounts.load_account(name)
+        except accounts.AccountError:
+            continue
+        if cfg.get("media") != "threads":
+            continue
+        if oauth.handle_matches(cfg.get("handle") or "", username) or str(cfg.get("user_id") or "") == user_id:
+            return True
+        try:
+            token = accounts.load_token(cfg)
+        except (OSError, ValueError, accounts.AccountError):
+            continue
+        if isinstance(token, dict) and token.get("user_id") == user_id:
+            return True
+    return False
+
+
+def _complete(directory, record, session, code):
+    """認可の code を VM で token に換え、口座を用意して Worker に知らせる。"""
+    from . import appenv, oauth
+    try:
+        profile = _profile()
+        exchange_cfg = _expanded(_ledger(record))
+        token = profile.exchange(code, session, exchange_cfg, log=lambda _: None)
+    except (oauth.OAuthError, appenv.AppEnvError, accounts.AccountError, OSError, ValueError):
+        return _back_to_open(directory, record, "auth_failed")
+    user_id, username = token.get("user_id"), token.get("username")
+    if not isinstance(username, str) or not THREADS_HANDLE.fullmatch(username) or not isinstance(user_id, str):
+        return _back_to_open(directory, record, "auth_failed")
+    # 招待 1 本で口座は 1 つ・同じ Threads 口座に 2 つ目は作らない（設計 §2）。
+    if _threads_account_exists(user_id, username):
+        return _back_to_open(directory, record, "account_exists")
+    try:
+        check_project(record["project"])
+    except InviteError:
+        return _back_to_open(directory, record, "unavailable")
+    token["auth_via"] = "relay"
+    data = _ledger(record, handle=username, user_id=user_id)
+    try:
+        _create_account(record, data, token)
+    except (InviteError, OSError, ValueError, accounts.AccountError, admin_log.AdminLogError):
+        return _back_to_open(directory, record, "unavailable")
+    _forget_session(directory, record["invite_id"])
+    _save(directory, record, status="used", reason=None, handle=username, remote_ready=False, approver_set=False)
+    try:
+        from . import doctor
+        doctor.record_auth(record["account"], _expanded(data), token, log=lambda _: None)
+    except Exception:
+        pass
+    _announce(directory, record)
+
+
+def _create_account(record, data, token):
+    """token（0600）と台帳（0600・O_EXCL）を書き、変更ログに残す。ログに書けなければ両方戻す。"""
+    import json
+    from . import account_cli, leave_gate, secrets_fs
+    name = record["account"]
+    expanded = _expanded(data)
+    ledger_path = os.path.join(account_cli.target_accounts_dir(), name + ".json")
+    token_path = expanded["token"]
+    created = []
+
+    def rollback():
+        for path in reversed(created):
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+
+    with leave_gate.scope(name), leave_gate.lease(name), leave_gate.credentials(), \
+            admin_log.transaction(rollback=rollback):
+        if not _account_free(name) or os.path.lexists(token_path):
+            raise error("invite_account_exists")
+        token_dir = os.path.dirname(token_path)
+        if not os.path.isdir(token_dir):
+            os.makedirs(token_dir, mode=0o700, exist_ok=True)
+            os.chmod(token_dir, 0o700)
+        secrets_fs.atomic_write_json(token_path, token, mode=0o600)
+        created.append(token_path)
+        os.makedirs(account_cli.target_accounts_dir(), exist_ok=True)
+        fd = os.open(ledger_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        created.append(ledger_path)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(data, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+        by = record["by"]
+        admin_log.append("account_added", name, data, by=by,
+                         diff={**admin_log.difference({}, data), "via_invite": [None, record["invite_id"]]})
+        if data["production"]:
+            admin_log.append("production_enabled", name, data, by=by, diff={"production": [False, True]})
+        admin_log.append("token_set", name, data, by=by,
+                         diff={"token": ["absent", "present"], "auth_via": [None, "relay"],
+                               "via_invite": [None, record["invite_id"]]})
+        admin_log.append("invite_used", subject(record["invite_id"]), {"media": "threads"}, by=by,
+                         diff={"account": [None, name]})
+
+
+def _announce(directory, record):
+    """Worker に「用意ができた」と知らせる（届くまで次の巡でも送る・同じ内容なら何度でも 200）。"""
+    try:
+        value = relay.signed_request("invite", record["code_hash"], "complete",
+                                     {"person": record["account"], "account": record["account"],
+                                      "handle": record["handle"]})
+    except relay.RelayError:
+        return
+    if value == {"status": "ready"}:
+        _save(directory, record, remote_ready=True)
+
+
+def _used(directory, record):
+    if not record.get("remote_ready"):
+        return _announce(directory, record)
+    if _throttled(record):
+        return
+    try:
+        remote = relay.signed_request("invite", record["code_hash"], "status", {})
+    except relay.RelayError:
+        return
+    if remote.get("status") != "done":
+        return
+    # 承認 secret は Worker の完了ページが本人に 1 回だけ見せた。VM に secret は無い。
+    # 記録に残すのは「承認者が設定された」ことだけ（approver set と同じ event）。
+    admin_log.append("approver_set", record["account"], {"media": "threads"}, by=record["by"], via="http",
+                     diff={"credential_present": [None, True], "via_invite": [None, record["invite_id"]]})
+    _save(directory, record, approver_set=True)
+
+
 # ------------------------------------------------------------------- CLI
 
 def _fail(reason):

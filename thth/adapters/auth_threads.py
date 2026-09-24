@@ -7,6 +7,9 @@ from .. import jst
 class ThreadsAuthProfile(AuthProfile):
     media = "threads"
     pkce = False
+    # 招待（3.10.0）は台帳の handle を先に持たない。認可した人から取る（下の照合を飛ばし、
+    # 呼ぶ側が /me の username を台帳に書く）。既定の `thth auth` は従前どおり照合する。
+    identity_from_token = False
 
     def validate(self):
         from .. import oauth
@@ -79,15 +82,16 @@ class ThreadsAuthProfile(AuthProfile):
         # 片方にしか無い**。台帳の handle と、トークンが実際に指しているアカウントが
         # 食い違ったら保存しない。通してしまうと、そのアカウントの queue の本文が
         # 別のアカウントから出る（取り消せない公開行為）。
-        handle = account_cfg.get("handle")
-        if not isinstance(handle, str) or not handle.strip():
-            raise oauth.OAuthError("auth_account_handle_required")
-        handle = handle.strip()
-        if oauth.handle_matches(handle, username) is False:
-            oauth._out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
-                 f"このトークンは {username} のものです。", log=log)
-            oauth._out("正しいアカウントで認可し直すか、台帳の handle を直してください。", log=log)
-            raise oauth.OAuthError("auth_exchange_failed")
+        if not self.identity_from_token:
+            handle = account_cfg.get("handle")
+            if not isinstance(handle, str) or not handle.strip():
+                raise oauth.OAuthError("auth_account_handle_required")
+            handle = handle.strip()
+            if oauth.handle_matches(handle, username) is False:
+                oauth._out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
+                     f"このトークンは {username} のものです。", log=log)
+                oauth._out("正しいアカウントで認可し直すか、台帳の handle を直してください。", log=log)
+                raise oauth.OAuthError("auth_exchange_failed")
 
         # **認可の範囲を記録する**（2026-09-14・`fetch_token_scopes` の説明）。
         # `/debug_token` が言った一覧なら `"response"`、訊けなければ要求した一覧を
@@ -108,3 +112,8 @@ class ThreadsAuthProfile(AuthProfile):
             "scopes_source": scopes_source,
         }
         return token_data
+
+
+class ThreadsInviteAuthProfile(ThreadsAuthProfile):
+    """招待リンク（3.10.0）の認可。台帳の handle は認可した人の username から作る。"""
+    identity_from_token = True

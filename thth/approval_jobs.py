@@ -356,6 +356,10 @@ def run_once(credentials_path):
             for name in names:
                 if name.endswith('.json') and relay.OPAQUE.fullmatch(name[:-5]): process(account,name[:-5],contexts)
         except (OSError,ValueError): continue
+    # 招待リンク（設計 3.10.0）: 押された招待を拾い、認可の完了で口座を用意する。
+    # 同じ常駐に載せる（Worker を定期に見ている process は 1 つにする）。
+    from . import invites
+    invites.run_once()
 
 
 def command(args):
