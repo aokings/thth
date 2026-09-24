@@ -155,7 +155,8 @@ def test_文書_リリースノートと運用と導入に一覧の段落():
     note = (docs / 'リリースノート_3.11.0_2026-09-25.md').read_text(encoding='utf-8')
     # 題の「— 下書き」の有無は固定しない（版を上げる commit で外れる）。
     assert note.startswith('# リリースノート 3.11.0（承認待ちの一覧ページ）')
-    assert 'Worker（`callback/`）の deploy が要る' in note and 'Worker を先に deploy' in note
+    # 版を上げる commit で「要る」は「要った」になる。見るのは Worker の deploy と順番が書かれていること。
+    assert 'Worker（`callback/`）の deploy が要' in note and 'Worker を先に deploy' in note
     section = note.split('## 本人向け: 承認待ちの見方', 1)[1].split('\n## ', 1)[0]
     assert len(re.findall(r'^\d\. ', section, re.M)) == 3 and 'https://thth.me/pending' in section
     operator = (docs / '運用_招待する側.md').read_text(encoding='utf-8')

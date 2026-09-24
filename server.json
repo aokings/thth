@@ -2,13 +2,13 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.aokings/thth",
   "description": "Call before you post: ships a draft to Threads/Bluesky/Mastodon only after a person approved it.",
-  "version": "3.10.0",
+  "version": "3.11.0",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "thth",
-      "version": "3.10.0",
+      "version": "3.11.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
