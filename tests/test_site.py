@@ -388,8 +388,8 @@ def test_privacy_と_terms_は_Worker_より先に静的アセットで配られ
 
 @pytest.mark.parametrize("effective", [None, "2030-01-02"])
 def test_terms_date_is_explicit_not_invented(monkeypatch, effective):
-    # 施行日は deploy のとき入れる。checked-in の既定は None（未公開の案）。
-    assert build_site.TERMS_EFFECTIVE is None
+    # 施行日は deploy のとき入れる（2026-09-25 に初版を施行）。値が無ければ「未公開の案」と出し、
+    # 日付を作り出さないことを見る（privacy の試験と同じく、checked-in の値は固定しない）。
     monkeypatch.setattr(build_site, "TERMS_EFFECTIVE", effective)
     page = build_site.build_terms()
     if effective is None:

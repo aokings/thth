@@ -34,8 +34,10 @@ def test_招待された人の道_secretは1度だけ_口座名と_thth_me():
 
 def test_リリースノートはWorkerのdeployが要ると言い_手順は5行():
     text = read("リリースノート_3.10.0_2026-09-25.md")
-    assert text.startswith("# リリースノート 3.10.0（招待リンク）")
-    assert "**Worker（`callback/`）の deploy が要る**" in text and "`v5-invite`" in text
+    # 版を上げる commit で題（「— 下書き」）と deploy の書き方（要る→要った）は変わる。見るのは
+    # 3.10.0 の題と、Worker の deploy と migration の名が書かれていること。
+    assert text.startswith("# リリースノート 3.10.0（招待リンク")
+    assert "Worker（`callback/`）の deploy が要" in text and "`v5-invite`" in text
     steps = text.split("## 招待を作って渡す手順（運営者）", 1)[1].split("\n## ", 1)[0]
     numbered = [line for line in steps.splitlines() if line[:2] in {f"{n}." for n in range(1, 10)}]
     assert len(numbered) == 5
