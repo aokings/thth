@@ -65,7 +65,7 @@ VM の各 project の repo（`/srv/thth/repos/<project>/`）に commit・push �
 ## 6. 新しいメディアを載せるとき（sometoka.com・jiangshi-lab.com）
 
 用意するもの:
-1. **SNS のアカウント**（Threads なら Instagram 経由の Threads アカウント、Bluesky・Mastodon も可）。THTH の Meta アプリは公開済みなので、Threads のアカウントは誰のでも認可できる。
+1. **SNS のアカウント**（Threads なら Instagram 経由の Threads アカウント、Bluesky・Mastodon も可）。**Threads は、そのアカウントを THTH の Meta アプリの tester に入れる**（masaru の持ち物なので入れてよい）。**訂正（09-24 夜）**: 最初の回答で「Meta アプリは公開済みなので Threads のアカウントは誰のでも認可できる」と書いたのは誤り。審査を通ったのは世間を読む 4 つの権限だけで、投稿・返信・実測など残りは tester の口座でしか動かない。さらに、アプリが公開（Live）になったあと tester が認可し直したときに、投稿の権限が降りるかは Meta の文書が食い違っていて未確認（新しいメディアの口座を認可するときに確かめる）。外の人の口座で使えるようにするには、次の審査（見通し: `docs/見通し_Meta審査_2026-09-24.md`）が要る。
 2. **project の repo**（`docs/sns/queue/` に原稿を置ける Git repo）。既存の kopicha・nigamilab と同じ形。VM に clone を置く。
 3. **Claude のセッション**（その project で原稿を書く係）。skill と `docs/使い方_プロジェクトのセッション向け_2026-09-09.md` が開始手順。
 
