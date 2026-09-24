@@ -119,7 +119,7 @@ test('完了と承認 secret: 1 回だけ表示・verifier は PBKDF2 100,000・
   const nonce=await csrfOf(inv),first=await press(inv,'reveal',{csrf:nonce}),html=await first.text();
   assert.equal(first.status,200);assert.equal(first.headers.get('cache-control'),'no-store');
   const secret=/class="secret">([A-Za-z0-9_-]{43})</.exec(html)?.[1];assert.ok(secret,'secret shown');sensitive.push(secret);
-  assert.ok(html.includes('一度だけ')&&html.includes('<code>'+person+'</code>')&&html.includes('運営者から届きます'));
+  assert.ok(html.includes('一度だけ')&&html.includes('<code>'+person+'</code>')&&html.includes('<a href="/pending">https://thth.me/pending</a>')&&html.includes('sign in with this username and secret'));
   const stored=new Map(await inspect('person',person)).get('person');
   assert.equal(stored.iterations,100_000);assert.equal(stored.active,true);
   assert.equal(pbkdf2Sync(secret,Buffer.from(stored.salt,'base64url'),100_000,32,'sha256').toString('base64url'),stored.verifier);

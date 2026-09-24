@@ -70,7 +70,7 @@ export function secretPage(result){
 <p><strong>この表示は一度だけです。</strong>いまパスワード管理に保存してください。${en('<strong>This is shown only once.</strong> Save it in a password manager now.')}</p>
 <code class="secret">${escape(result.secret)}</code>
 <ul><li>ユーザ名 / username: <code>${escape(result.person)}</code></li><li>Web サイト / website: <code>thth.me</code></li></ul>
-<p>承認ページの URL は運営者から届きます。承認ページでこの secret を入れて押したときだけ、投稿・返信・削除が行われます。secret は LLM や原稿に書かないでください。${en('The operator will send you approval page URLs. Posts, replies and deletions happen only when you enter this secret there. Never paste it into an LLM or a draft.')}</p>`);
+<p>承認待ちは <a href="/pending">https://thth.me/pending</a> で、このユーザ名と secret を入れると一覧で見られます。承認ページでこの secret を入れて押したときだけ、投稿・返信・削除が行われます。secret は LLM や原稿に書かないでください。${en('To see what is waiting for your approval, open <a href="/pending">https://thth.me/pending</a> and sign in with this username and secret. Posts, replies and deletions happen only when you enter this secret on an approval page. Never paste it into an LLM or a draft.')}</p>`);
 }
 
 export async function inviteRequest(request,env,url){

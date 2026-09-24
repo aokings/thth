@@ -62,7 +62,8 @@ const kindLabel={approve:'原稿を承認',send:'この内容を公開',retract:
 const kindEnglish={approve:'Approve this draft',send:'Publish this content',retract:'Delete this post'};
 const accepted={approve:'原稿の承認を受け付けました',send:'公開の承認を受け付けました',retract:'削除の承認を受け付けました'};
 const acceptedEnglish={approve:'Draft approval received',send:'Publication approval received',retract:'Deletion approval received'};
-const labels={media:'媒体',reply_to:'返信先',publish_at:'公開予定',target:'削除する投稿',reason:'削除理由',topic:'話題',options:'公開オプション'};
+// 補足の見出しも「日本語 / English」（3.11.0・アカウントの行と同じ形）。
+const labels={media:'媒体 / Platform',reply_to:'返信先 / Reply to',publish_at:'公開予定 / Scheduled for',target:'削除する投稿 / Post to delete',reason:'削除理由 / Reason',topic:'話題 / Topic',options:'公開オプション / Post options'};
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const kindWord={image:'画像',video:'動画',audio:'音声',caption:'字幕'};
 const roleWord={media:'添付',thumbnail:'代表画像',caption:'字幕'};
@@ -80,7 +81,7 @@ function attachment(row){
     const missing=row.preview===null||row.preview===undefined;
     const image=missing?'':'<img src="/m/'+escape(row.preview)+'" alt="'+escape(row.alt)+'" loading="lazy">';
     // The human is the last check: an image that did not load is not an approval.
-    const warn=missing?'':' · 画像が表示されない場合は承認しないでください';
+    const warn=missing?'':' · 画像が表示されない場合は承認しないでください / Do not approve if an image does not appear';
     return '<figure>'+image+'<figcaption>'+head+': '+escape(row.format.toUpperCase())+' '+shape+' · '+sha+alt+warn+'</figcaption></figure>';
   }
   const length=row.duration===null||row.duration===undefined?'長さ: 未取得':clock(row.duration);
@@ -88,7 +89,7 @@ function attachment(row){
 }
 function attachments(rows,typed){
   const list=Array.isArray(rows)?rows.map(attachment).join(''):'';
-  const structured=typeof typed==='string'&&typed?'<p>型付き添付／公開設定</p><pre>'+escape(typed)+'</pre>':'';
+  const structured=typeof typed==='string'&&typed?'<p>型付き添付／公開設定 / Typed attachments and post settings</p><pre>'+escape(typed)+'</pre>':'';
   return list+structured;
 }
 function page(status,body,title='THTH 承認') {

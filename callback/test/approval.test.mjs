@@ -160,7 +160,7 @@ test('approval page carries English headings, button and refusals under the Japa
   for(const [kind,heading,received]of [['approve','Approve this draft','Draft approval received'],['send','Publish this content','Publication approval received'],['retract','Delete this post','Deletion approval received']]){
     const s=await session(p,{kind}),html=await(await page(s)).text();
     assert.ok(html.includes('<span class="en">'+heading+'</span></h1>'),kind);assert.ok(html.includes('承認 / Approve</button>'));
-    assert.ok(html.includes('Approval secret')&&html.includes('Account: alpha')&&html.includes('<p>媒体: threads</p>')&&html.includes('expires in 10 minutes'));
+    assert.ok(html.includes('Approval secret')&&html.includes('Account: alpha')&&html.includes('<p>媒体 / Platform: threads</p>')&&html.includes('expires in 10 minutes'));
     assert.ok(html.includes('<pre>'+s.body.text+'</pre>'));
     const result=await(await approve(s,p)).text();assert.ok(result.includes(received)&&result.includes('re-checks the content'));
   }
@@ -192,7 +192,7 @@ test('long digest and URL metadata inherit wrapping without changing visible val
   assert.equal(response.status,200);
   assert.match(html, /body\{[^}]*overflow-wrap:anywhere/);
   assert.ok(html.includes('<p>digest: '+s.body.digest+'</p>'));
-  assert.ok(html.includes('<p>返信先: '+url+'</p>'));
+  assert.ok(html.includes('<p>返信先 / Reply to: '+url+'</p>'));
   assert.ok(response.headers.get('content-security-policy').includes("default-src 'none'"));
 });
 
@@ -306,12 +306,12 @@ test('approval page renders images, video/audio/caption lines and typed attachme
   assert.ok(response.headers.get('content-security-policy').includes("default-src 'none'"));
   assert.ok(html.includes('<img src="/m/'+first.preview+'" alt="湯呑みに注いだ玉露" loading="lazy">'),'first preview img');
   assert.ok(html.includes('<img src="/m/'+second.preview+'" alt="茶葉の拡大" loading="lazy">'),'second preview img');
-  assert.ok(html.includes('<figcaption>添付 1: JPEG 1200×800 · sha abababababab · alt: 湯呑みに注いだ玉露 · 画像が表示されない場合は承認しないでください</figcaption>'),html);
-  assert.ok(html.includes('<figcaption>添付 2: PNG 640×640 · sha cdcdcdcdcdcd · alt: 茶葉の拡大 · 画像が表示されない場合は承認しないでください</figcaption>'),html);
+  assert.ok(html.includes('<figcaption>添付 1: JPEG 1200×800 · sha abababababab · alt: 湯呑みに注いだ玉露 · 画像が表示されない場合は承認しないでください / Do not approve if an image does not appear</figcaption>'),html);
+  assert.ok(html.includes('<figcaption>添付 2: PNG 640×640 · sha cdcdcdcdcdcd · alt: 茶葉の拡大 · 画像が表示されない場合は承認しないでください / Do not approve if an image does not appear</figcaption>'),html);
   assert.ok(html.includes('<p>添付 3: 動画 01:12 · sha efefefefefef · alt: 湯を注ぐ</p>'),html);
   assert.ok(html.includes('<p>添付 4: 音声 00:05 · sha 121212121212 · alt: 注ぐ音</p>'),html);
   assert.ok(html.includes('<p>字幕 (ja) sha 343434343434</p>'),html);
-  assert.ok(html.includes('<p>型付き添付／公開設定</p><pre>'+typed.replaceAll('"','&quot;')+'</pre>'),html);
+  assert.ok(html.includes('<p>型付き添付／公開設定 / Typed attachments and post settings</p><pre>'+typed.replaceAll('"','&quot;')+'</pre>'),html);
   assert.ok(html.indexOf('</pre>')<html.indexOf('<figure>'),'attachments follow the body');
   assert.ok(html.includes('<p>digest: '+s.body.digest+'</p>'));
   // The capability is page-only: never in status, receipt or the stored row after resolution.
@@ -359,7 +359,7 @@ test('attachment alt and typed JSON are escaped like the body',async()=>{
   const html=await(await page(s)).text();
   assert.equal(html.includes('<script>alert(1)</script>'),false);
   assert.ok(html.includes('<img src="/m/'+capability+'" alt="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;" loading="lazy">'),html);
-  assert.ok(html.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt; · 画像が表示されない場合は承認しないでください</figcaption>'),html);
+  assert.ok(html.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt; · 画像が表示されない場合は承認しないでください / Do not approve if an image does not appear</figcaption>'),html);
 });
 // F2: the page is honest about what it can show.
 const UNAVAILABLE='<p>添付を表示できないため、この承認ページは使えません。サーバから新しく承認を求めてください。<span class="en">Attachments cannot be shown, so this page cannot be used. Please request a new approval from the server.</span></p>';
@@ -457,4 +457,15 @@ test('session create accepts a 70 KiB body and still refuses 100 KiB',async()=>{
   assert.equal((await mf.dispatchFetch('https://approval.test/approve/'+refused,{headers:{'cf-connecting-ip':opaque()}})).status,410);
   // Every other JSON route keeps the 64 KiB default.
   assert.equal((await signed('person',p.id,'status',{note:'x'.repeat(70_000)})).status,503);
+});
+
+// 3.11.0: 補足の見出し（媒体・返信先・削除理由など）にも英語を添える（アカウントの行と同じ「日本語 / English」）。
+test('approval page context headings carry English after the Japanese',async()=>{
+  const p=await person();
+  const send=await session(p,{context:{media:'threads',topic:'お茶',options:'{}',reply_to:'reply-9',publish_at:'2026-09-26T09:00:00+09:00',target:null,reason:null}});
+  const html=await(await page(send)).text();
+  for(const line of ['<p>媒体 / Platform: threads</p>','<p>返信先 / Reply to: reply-9</p>','<p>公開予定 / Scheduled for: 2026-09-26T09:00:00+09:00</p>','<p>話題 / Topic: お茶</p>','<p>公開オプション / Post options: {}</p>'])assert.ok(html.includes(line),line);
+  const retract=await session(p,{kind:'retract',context:{media:'threads',topic:null,options:null,reply_to:null,publish_at:null,target:'1790',reason:'requested'}});
+  const gone=await(await page(retract)).text();
+  assert.ok(gone.includes('<p>削除する投稿 / Post to delete: 1790</p>')&&gone.includes('<p>削除理由 / Reason: requested</p>'));
 });
