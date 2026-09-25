@@ -25,6 +25,7 @@ import urllib.request
 
 from . import accounts as accounts_mod
 from . import adapters as adapters_mod
+from . import bundle as bundle_mod
 from . import postid as postid_mod
 from . import core
 from . import inflight as inflight_mod
@@ -619,12 +620,17 @@ def account_detail(account_name: str, *, now=None, remote: bool = True) -> dict:
     files = core.list_queue_files(account_cfg, tree_sha=tree_sha)
     counts = {"draft": 0, "approved": 0, "posted": 0, "型外": 0}
     for qf in files:
+        fm = qf.front_matter
         if qf.malformed:
-            counts["型外"] += 1
+            # 読める連投（`thth: 2`）は型外に数えない（報告 2026-09-25）。
+            b = bundle_mod.readable_from_queuefile(qf)
+            if b is None:
+                counts["型外"] += 1
+                continue
+            fm = b.front_matter
+        if fm.get("account") != account_name:
             continue
-        if qf.front_matter.get("account") != account_name:
-            continue
-        status = qf.front_matter.get("status")
+        status = fm.get("status")
         if status in counts:
             counts[status] += 1
 

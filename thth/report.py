@@ -6,6 +6,7 @@ import os
 
 from . import accounts as accounts_mod
 from . import approve_pending as approve_pending_mod
+from . import bundle as bundle_mod
 from . import collect as collect_mod
 from . import core
 from . import inflight as inflight_mod
@@ -104,13 +105,22 @@ def queue_summary(account_name: str | None, now=None) -> dict:
             if has_queue_repo else [])
         counts = {k: 0 for k in STATUS_KEYS}
         type_mismatch = 0
+        bundles = 0
         for qf in files:
-            if qf.front_matter.get("account") != name and not qf.malformed:
-                continue
+            fm = qf.front_matter
             if qf.malformed:
-                type_mismatch += 1
+                # 読める連投（`thth: 2`）は型外に数えない（報告 2026-09-25）。
+                b = bundle_mod.readable_from_queuefile(qf)
+                if b is None:
+                    type_mismatch += 1
+                    continue
+                fm = b.front_matter
+                if fm.get("account") != name:
+                    continue
+                bundles += 1
+            elif fm.get("account") != name:
                 continue
-            status = qf.front_matter.get("status")
+            status = fm.get("status")
             if status in counts:
                 counts[status] += 1
         now_val = now if now is not None else jst.now_jst()
@@ -127,6 +137,7 @@ def queue_summary(account_name: str | None, now=None) -> dict:
                 account_cfg["repo_dir"], account_cfg["queue_dir"])) if has_queue_repo else None),
             "counts": counts,
             "type_mismatch": type_mismatch,
+            "bundles": bundles,
             "next_file": next_file,
             "next_publish_at": next_at,
             "next_topic": next_topic,
@@ -356,7 +367,8 @@ def board_summary(now=None) -> dict:
             and qf.front_matter.get("status") == "approved"
             and not qf.front_matter.get("post_id")
         )
-        type_mismatch = sum(1 for qf in files if qf.malformed)
+        type_mismatch = sum(1 for qf in files if qf.malformed
+                            and bundle_mod.readable_from_queuefile(qf) is None)
         state_dir = accounts_mod.state_dir_for(name)
         inflight = inflight_mod.read(state_dir)
         notification_status = healthcheck_mod.read_status(state_dir)

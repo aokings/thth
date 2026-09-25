@@ -244,6 +244,27 @@ def parse(path: str) -> Bundle:
         return parse_text(f.read(), path)
 
 
+def readable_from_queuefile(qf) -> Bundle | None:
+    """v1 の parse が malformed にした原稿が、**読める連投**ならその Bundle を返す。
+
+    board・queue の数え方（報告 2026-09-25 BrownBeaver）: `queuefile.parse` は
+    `thth: 2` を fail-closed で malformed にするので、そのまま数えると連投が
+    「型外」に混ざり、本当に壊れた原稿と見分けが付かない。表示の数え方だけに
+    使う（公開の経路は従前どおり bundle 側で読む）。読めない連投は None＝型外。
+    """
+    if not qf.malformed:
+        return None
+    try:
+        with open(qf.path, encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not is_bundle_text(text):
+        return None
+    b = parse_text(text, qf.path)
+    return None if b.malformed else b
+
+
 def load_segments(bundle: Bundle, media: str) -> tuple:
     """媒体の節を段に割って `bundle.segments` に入れる。`(段, 問題)`。"""
     section = queuefile.extract_section(bundle.body, media, allow_empty=any(p.get("media") or p.get("attachments") for p in bundle.posts))
