@@ -26,7 +26,8 @@ def test_運営者の手順に招待リンクの節_作る_取り消す_資格�
 
 def test_招待された人の道_secretは1度だけ_口座名と_thth_me():
     text = read("導入_招待されたら.md")
-    section = text.split("## 6. 招待リンクを受け取ったら", 1)[1]
+    # 3.12.0 で招待の道は 2 節（始めるまで）に移った。
+    section = text.split("## 2. 始めるまで", 1)[1].split("\n## ", 1)[0]
     for phrase in ("Threads で認可する", "最初のタブに戻ります", "**表示は 1 度だけです。**",
                    "`inv-…`", "`thth.me`", "この招待リンクは使えません", "準備が進んでいません"):
         assert phrase in section, phrase
