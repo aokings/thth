@@ -204,3 +204,38 @@ test('the list lock lifts by itself after 15 minutes, and the failure count star
   assert.equal(new Map(await control('person',p.id)).get('person').list_failures,1);assert.equal((await signIn(p)).status,303);
   await control('person',p.id,{});
 });
+
+// 3.12.0 §6-2: 末尾の / は 308 で落とす（/activity/ も同じ）。
+test('trailing slash: /pending/ and /activity/ redirect with 308 to the bare path',async()=>{
+  for(const [path,to] of [['/pending/','/pending'],['/activity/','/activity']]){
+    const response=await get(path);assert.equal(response.status,308,path);assert.equal(response.headers.get('location'),to);
+  }
+  const posted=await mf.dispatchFetch(ORIGIN+'/pending/',form({person:'x',secret:'y'}));
+  assert.equal(posted.status,308);assert.equal(posted.headers.get('location'),'/pending');
+});
+
+// 3.12.0 §6-3: /pending/<job> で一覧の cookie が切れていたら、入り直しは /pending へ POST し、入ったあと元の job へ戻る。
+test('re-sign-in from a job page posts to /pending and comes back to that job only',async()=>{
+  const p={...await person(),account:account()},s=await session(p);
+  for(const cookie of [null,'thth_pending='+opaque()+p.id]){
+    const bare=await get('/pending/'+s.body.job_id,cookie);assert.equal(bare.status,401);
+    const html=await bare.text();
+    assert.ok(html.includes('<form method="post" action="/pending"><input type="hidden" name="next" value="'+s.body.job_id+'">'),html);
+    assert.ok(!html.includes(s.body.text));
+  }
+  // The list page's own form also posts to /pending, with no next.
+  const plain=await(await get('/pending')).text();assert.ok(plain.includes('action="/pending"')&&!plain.includes('name="next"'));
+  // A wrong secret keeps the job in the retry form.
+  const wrong=await mf.dispatchFetch(ORIGIN+'/pending',form({person:p.id,secret:'wrong-'+opaque(),next:s.body.job_id}));
+  assert.equal(wrong.status,403);assert.ok((await wrong.text()).includes('name="next" value="'+s.body.job_id+'"'));
+  const ok=await mf.dispatchFetch(ORIGIN+'/pending',form({person:p.id,secret:p.secret,next:s.body.job_id}));
+  assert.equal(ok.status,303);assert.equal(ok.headers.get('location'),'/pending/'+s.body.job_id);
+  const cookie=ok.headers.get('set-cookie').split(';')[0];sensitive.push(cookie);
+  const page=await(await get('/pending/'+s.body.job_id,cookie)).text();assert.ok(page.includes('<pre>'+s.body.text+'</pre>'));
+  // next is only ever a job id: anything else is refused, and no cookie is issued.
+  for(const next of ['https://evil.test/x','//evil.test','/pending/'+s.body.job_id,'a'.repeat(42),'a'.repeat(44),'']){
+    const refused=await mf.dispatchFetch(ORIGIN+'/pending',form({person:p.id,secret:p.secret,next}));
+    assert.equal(refused.status,400,next);assert.equal(refused.headers.get('set-cookie'),null);assert.equal(refused.headers.get('location'),null);
+  }
+  await control('person',p.id,{});
+});
