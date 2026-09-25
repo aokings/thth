@@ -935,7 +935,23 @@ def admin_draft_put(account, *, body, publish_at=None, topic=None, reply_to=None
     for key, value in (("topic", topic), ("reply_to", reply_to)):
         if value:
             request[key] = value
-    return server_writes.execute(context, request, via="cli", by=by)
+    return _admin_execute(context, request, by=by)
+
+
+def _admin_execute(context, request, *, by, listed=True):
+    """運営者の CLI だけ: `write_unavailable` を理由 1 語と次の一手に直す（設計 3.12.0 §6-5）。
+
+    MCP やサーバの口は `server_writes.execute` の静的な名前のまま（ここを通らない）。
+    """
+    from . import admin_diagnose, server_writes
+    from .report_service import ReportServiceError
+    try:
+        return server_writes.execute(context, request, via="cli", by=by, listed=listed)
+    except ReportServiceError as exc:
+        better = admin_diagnose.explain(exc, context, request.get("account"))
+        if better is exc:
+            raise
+        raise better from None
 
 
 def admin_approval_request(account, *, draft=None, send=False, retract=None, reason=None, by, listed=True):
@@ -963,7 +979,7 @@ def admin_approval_request(account, *, draft=None, send=False, retract=None, rea
             for key in ("topic", "reply_to"):
                 if q.front_matter.get(key):
                     request[key] = str(q.front_matter[key])
-    return server_writes.execute(context, request, via="cli", by=by, listed=listed)
+    return _admin_execute(context, request, by=by, listed=listed)
 
 
 def _admin_fail(exc):
