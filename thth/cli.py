@@ -3409,6 +3409,10 @@ def cmd_board(args) -> int:
               "署名: 確認" if app.get("signature_checked") else "署名: 未確認")
         print(f"道具: {_pkg_version}（{head or '(版が読めません)'}）  "
               f"配布の枝: `{ref}`  {署名}")
+        # **承認の常駐の版**（設計 3.12.0 §6-1）。ディスクの版と違えば知らせる。
+        from . import worker_version as _worker_version
+        for _line in _worker_version.board_lines(app.get("approval_worker")):
+            print(_line)
         # **台帳の置き場を 1 行**（設計 v2 §3・v2-2a）。下に並ぶ顔ぶれが
         # どこから来たのかを、並べる前に言う。
         print(account_cli_mod.where_line())

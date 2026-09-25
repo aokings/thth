@@ -401,10 +401,22 @@ def run_once(credentials_path):
 
 def command(args):
     import sys
+    # 3.12.0 §6-6: ssh で手で打っても（umask 0002）state に 775/664 を作らない。unit の UMask=0077 に頼らない。
+    os.umask(0o077)
+    # 3.12.0 §6-1: 読み込んだ版を残し、ディスクの版が動いたら終わる（systemd が新しい版で起こし直す）。
+    from . import worker_version
+    start=worker_version.loaded()
+    if not args.once: worker_version.record_start(start)
+    checked=time.monotonic()
     try:
         while True:
             run_once(args.credentials)
             if args.once: return 0
+            if time.monotonic()-checked>=worker_version.CHECK_SECONDS:
+                checked=time.monotonic();disk=worker_version.on_disk()
+                if worker_version.moved(start,disk):
+                    print('approval_worker_restart: '+worker_version.describe(start)+' -> '+worker_version.describe(disk),file=sys.stderr)
+                    return worker_version.EXIT_MOVED
             time.sleep(2)
     except KeyboardInterrupt: return 0
     except (OSError,ValueError):

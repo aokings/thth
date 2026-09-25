@@ -70,6 +70,10 @@ export function secretPage(result){
 <p><strong>この表示は一度だけです。</strong>いまパスワード管理に保存してください。${en('<strong>This is shown only once.</strong> Save it in a password manager now.')}</p>
 <code class="secret">${escape(result.secret)}</code>
 <ul><li>ユーザ名 / username: <code>${escape(result.person)}</code></li><li>Web サイト / website: <code>thth.me</code></li></ul>
+<!-- 3.12.0 §6-4: 口座名と secret を同じ form に置き、パスワード管理が thth.me の正しい組として覚えるようにする。
+     欄の名前は一覧の入口（/pending）と同じなので、押すとそのまま一覧に入る。 -->
+<form method="post" action="/pending"><label>ユーザ名 / Username <input name="person" autocomplete="username" value="${escape(result.person)}" readonly></label><label>承認 secret / Approval secret <input type="password" name="secret" autocomplete="new-password" value="${escape(result.secret)}" readonly></label><button type="submit">保存して承認待ちの一覧を開く / Save and open pending approvals</button></form>
+<p>ボタンを押すとブラウザやパスワード管理が「保存しますか」と尋ねます。ユーザ名が上の口座名になっているのを確かめて保存してください。${en('When you press the button, your browser or password manager offers to save. Check that the username is the account name above, then save.')}</p>
 <p>承認待ちは <a href="/pending">https://thth.me/pending</a> で、このユーザ名と secret を入れると一覧で見られます。承認ページでこの secret を入れて押したときだけ、投稿・返信・削除が行われます。secret は LLM や原稿に書かないでください。${en('To see what is waiting for your approval, open <a href="/pending">https://thth.me/pending</a> and sign in with this username and secret. Posts, replies and deletions happen only when you enter this secret on an approval page. Never paste it into an LLM or a draft.')}</p>`);
 }
 

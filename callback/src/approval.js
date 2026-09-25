@@ -186,10 +186,15 @@ function pendingCookie(request){
 }
 const setCookie=(value,age)=>`${COOKIE}=${value}; Max-Age=${age}; Path=/pending; Secure; HttpOnly; SameSite=Strict`;
 const listTitle='THTH 承認待ち';
-function signIn(status=200,note=''){
+// 3.12.0 §6-3: 入り直しの form はいつも /pending へ POST する（/pending/<job> へ POST すると
+// 承認の form と見なされて戻り続けた）。元の job は hidden の next で運び、入ったあと 303 で戻す。
+// next は job_id の形（43 字の base64url）だけ。場所は Worker が組み立てるので外へは飛ばない。
+const JOB_ID=/^[A-Za-z0-9_-]{43}$/;
+function signIn(status=200,note='',next=null){
+  const back=next&&JOB_ID.test(next)?`<input type="hidden" name="next" value="${escape(next)}">`:'';
   return page(status,`<h1>承認待ちの一覧${en('Pending approvals')}</h1>${note}
 <p>ユーザ名と承認 secret で入ると、あなたが承認する投稿・返信・削除の承認待ちが並びます。招待で用意した口座では、ユーザ名は口座名（完了のページに出た名前）です。${en('Sign in with your username and approval secret to see the posts, replies and deletions waiting for your approval. For an account prepared by an invitation, the username is the account name shown on the completion page.')}</p>
-<form method="post"><label>ユーザ名 / Username <input name="person" autocomplete="username" required maxlength="64"></label><label>承認 secret / Approval secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label><button type="submit">一覧を見る / Show the list</button></form>
+<form method="post" action="/pending">${back}<label>ユーザ名 / Username <input name="person" autocomplete="username" required maxlength="64"></label><label>承認 secret / Approval secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label><button type="submit">一覧を見る / Show the list</button></form>
 <p>一覧は 10 分で閉じます。secret は LLM や原稿に書かないでください。${en('The list closes after 10 minutes. Never paste the secret into an LLM or a draft.')}</p>`,listTitle);
 }
 function listing(person,rows){
@@ -204,6 +209,8 @@ export async function pendingRequest(request,env,url){
   try{
     if(url.search||url.hash||url.pathname.includes('%'))return reply(400,{error:'invalid_request'});
     if(!env.APPROVAL_PERSON||!env.APPROVAL_SESSION||!env.APPROVAL_ACCOUNT)return reply(503);
+    // 3.12.0 §6-2: 末尾の / は落として 308（方法と本文を保ったまま /pending へ）。
+    if(url.pathname==='/pending/')return new Response(null,{status:308,headers:{location:'/pending','cache-control':'no-store','referrer-policy':'no-referrer'}});
     const match=/^\/pending(?:\/([A-Za-z0-9_-]{43}))?$/.exec(url.pathname);
     if(!match)return reply(404,{error:'not_found'});
     if(!await publicQuota(request,env))return reply(429,{error:'rate_limited'});
@@ -229,17 +236,19 @@ export async function pendingRequest(request,env,url){
         if(who)await who.stub.closeList(who.hash);
         return new Response(null,{status:303,headers:{location:'/pending','cache-control':'no-store','referrer-policy':'no-referrer','set-cookie':setCookie('',0)}});
       }
-      if(keys!=='person,secret')return reply(400,{error:'invalid_request'});
-      const person=form.get('person'),refused=()=>signIn(403,`<p><strong>入れませんでした。</strong>ユーザ名と承認 secret を確かめてください。5 回続けて間違えると一覧は 15 分閉じます。${en('Sign-in failed. Check the username and the approval secret. After five failures in a row the list is closed for 15 minutes.')}</p>`);
+      if(keys!=='person,secret'&&keys!=='next,person,secret')return reply(400,{error:'invalid_request'});
+      const next=form.has('next')?form.get('next'):null;
+      if(next!==null&&!JOB_ID.test(next))return reply(400,{error:'invalid_request'});
+      const person=form.get('person'),refused=()=>signIn(403,`<p><strong>入れませんでした。</strong>ユーザ名と承認 secret を確かめてください。5 回続けて間違えると一覧は 15 分閉じます。${en('Sign-in failed. Check the username and the approval secret. After five failures in a row the list is closed for 15 minutes.')}</p>`,next);
       if(!PERSON.test(person))return refused();
       const token=opaque(),opened=await (await personStub(env,person)).openList(form.get('secret'),await digest(token));
       if(opened.status!==200)return refused();
-      return new Response(null,{status:303,headers:{location:'/pending','cache-control':'no-store','referrer-policy':'no-referrer','set-cookie':setCookie(token+person,Math.floor(TTL/1000))}});
+      return new Response(null,{status:303,headers:{location:next?'/pending/'+next:'/pending','cache-control':'no-store','referrer-policy':'no-referrer','set-cookie':setCookie(token+person,Math.floor(TTL/1000))}});
     }
     // 一覧から開く承認ページ。一覧に入っていて、その人の索引にある job だけ。
-    if(!who)return signIn(401);
+    if(!who)return signIn(401,'',match[1]);
     const found=await who.stub.listedSession(who.hash,match[1]);
-    if(found.status===401)return expired(signIn(401));
+    if(found.status===401)return expired(signIn(401,'',match[1]));
     if(found.status!==200)return approvalPage(found,true);
     const stub=sessionById(env,found.body.session);
     if(request.method==='GET')return approvalPage(await stub.view(cookie.person),true);

@@ -120,6 +120,13 @@ test('完了と承認 secret: 1 回だけ表示・verifier は PBKDF2 100,000・
   assert.equal(first.status,200);assert.equal(first.headers.get('cache-control'),'no-store');
   const secret=/class="secret">([A-Za-z0-9_-]{43})</.exec(html)?.[1];assert.ok(secret,'secret shown');sensitive.push(secret);
   assert.ok(html.includes('一度だけ')&&html.includes('<code>'+person+'</code>')&&html.includes('<a href="/pending">https://thth.me/pending</a>')&&html.includes('sign in with this username and secret'));
+  // 3.12.0 §6-4: 口座名（username）と secret が同じ form にあり、欄の名前は一覧の入口と同じ。押すとそのまま一覧に入る。
+  const saved=/<form method="post" action="\/pending">(.*?)<\/form>/s.exec(html)?.[1];assert.ok(saved,'save form');
+  assert.ok(saved.includes('<input name="person" autocomplete="username" value="'+person+'" readonly>'),saved);
+  assert.ok(/<input type="password" name="secret" autocomplete="new-password" value="[A-Za-z0-9_-]{43}" readonly>/.test(saved));
+  assert.equal(/name="secret"[^>]*value="([^"]+)"/.exec(saved)[1]===secret,true);
+  const listed=await mf.dispatchFetch(ORIGIN+'/pending',{method:'POST',redirect:'manual',headers:{'content-type':'application/x-www-form-urlencoded','cf-connecting-ip':opaque(),origin:ORIGIN},body:new URLSearchParams({person,secret})});
+  assert.equal(listed.status,303);assert.equal(listed.headers.get('location'),'/pending');sensitive.push(listed.headers.get('set-cookie'));
   const stored=new Map(await inspect('person',person)).get('person');
   assert.equal(stored.iterations,100_000);assert.equal(stored.active,true);
   assert.equal(pbkdf2Sync(secret,Buffer.from(stored.salt,'base64url'),100_000,32,'sha256').toString('base64url'),stored.verifier);

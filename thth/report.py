@@ -566,6 +566,13 @@ def board_summary(now=None) -> dict:
     # 記録と `HEAD` を**ここで 1 度だけ読み**、以後この 2 値だけを使う。数える側で
     # 読み直すと、**その間に自己更新が終わったとき、表示と計数が別の SHA を指す。**
     app = release_summary()
+    # **承認の常駐の版**（設計 3.12.0 §6-1）。release で timer の process は新しくなるが、
+    # 常駐は起動したときの版のまま動く。記録した版とディスクの版を並べる（記録が無ければ None）。
+    try:
+        from . import worker_version
+        app["approval_worker"] = worker_version.status()
+    except Exception:
+        app["approval_worker"] = None
     # **走っているものの一覧**（`--json` の読み手用）。アカウントの実行ロックを
     # 握っているものの名前と、自己更新（`_app.lock`）が走っていれば `"_app"`。
     running = [row["account"] for row in accounts_out if row.get("running")]
