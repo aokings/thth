@@ -330,6 +330,9 @@ TOOLS = [
                 "no_world": {"type": "boolean",
                               "description": "第 3 段（世間・監視語の検索）を呼ばない"
                                              "（cannot_say: world_skipped・既定 false・3.11.1）"},
+                "counts_only": {"type": "boolean",
+                                 "description": "他人の情報と本文を落とし、数と状態だけを"
+                                                "返す（既定 false・3.11.1）"},
             },
             "required": ["target"],
         },
@@ -350,6 +353,9 @@ TOOLS = [
                 "no_world": {"type": "boolean",
                               "description": "第 3 段（世間・監視語の検索）を呼ばない"
                                              "（cannot_say: world_skipped・既定 false・3.11.1）"},
+                "counts_only": {"type": "boolean",
+                                 "description": "他人の情報と本文を落とし、数と状態だけを"
+                                                "返す（既定 false・3.11.1）"},
             },
             "required": ["target"],
         },
@@ -1133,12 +1139,14 @@ def call_tool(name: str, arguments: dict | None) -> dict:
     elif name in ("thth_morning", "thth_observe"):
         # **`where_to_appear` と同じ型**: CLI（`thth morning`）を `--json` で
         # 呼ぶだけ（設計 3.1.0 §1・§5）。栞を進めないとき・第 3 段を呼ばない
-        # とき（3.11.1）だけ旗を足す。
+        # とき・数と状態だけにするとき（3.11.1）だけ旗を足す。
         args = [name[len("thth_"):], arguments["target"]]
         if arguments.get("mark") is False:
             args.append("--no-mark")
         if arguments.get("no_world"):
             args.append("--no-world")
+        if arguments.get("counts_only"):
+            args.append("--counts-only")
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout

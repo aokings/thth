@@ -872,6 +872,152 @@ def next_steps(unanswered_entries, world_entries, today_entries, reports=None,
     return steps
 
 
+# ------------------------------------------------------- counts-only（3.11.1）
+
+def _median(numbers) -> float | int | None:
+    """中央値（数値だけ・空なら `None`）。`bool` は `int` の部分型なので除く。"""
+    import statistics
+    values = [n for n in numbers if isinstance(n, (int, float)) and not isinstance(n, bool)]
+    return statistics.median(values) if values else None
+
+
+def _reduce_unanswered(value):
+    """返信・言及の行（`post_id`・`reply_id`・`author_key`・`permalink`・`preview`）を
+    落とし、件数と分母だけ残す。"""
+    out = dict(value)
+    for key in ("replies", "mentions"):
+        entry = value.get(key) or {}
+        if entry.get("cannot_say") is not None or entry.get("value") is None:
+            continue
+        reduced = {k: v for k, v in entry["value"].items() if k != "items"}
+        out[key] = {**entry, "value": reduced}
+    return out
+
+
+def _reduce_yesterday(value):
+    """投稿ごとの行（`post_id`・`preview` を含む）を落とし、主な指標
+    （`lead_metrics`）の中央値と n だけ残す（`metrics_median`）。"""
+    posts = value.get("posts") or []
+    keys = []
+    for entry in posts:
+        for metric_key in entry.get("lead_metrics") or []:
+            if metric_key not in keys:
+                keys.append(metric_key)
+    if not keys:
+        for entry in posts:
+            for metric_key in sorted((entry.get("metrics") or {})):
+                if metric_key not in keys:
+                    keys.append(metric_key)
+    metrics_median = {}
+    for metric_key in keys:
+        numbers = [entry["metrics"][metric_key] for entry in posts
+                   if entry.get("metrics") and metric_key in entry["metrics"]]
+        metrics_median[metric_key] = {"median": _median(numbers), "n": len(numbers)}
+    out = {k: v for k, v in value.items() if k != "posts"}
+    out["metrics_median"] = metrics_median
+    return out
+
+
+def _reduce_world(value):
+    """語ごとの「絡みに行く先」（`targets`・`post_id`・`permalink`・`author_key`・
+    `preview` を含む語の候補）を落とす。件数・分母・上位占有などの状態は残す。"""
+    by_word = {}
+    for word, word_cell in (value.get("by_word") or {}).items():
+        if word_cell.get("cannot_say") is not None or word_cell.get("value") is None:
+            by_word[word] = word_cell
+            continue
+        reduced = {k: v for k, v in word_cell["value"].items() if k != "targets"}
+        by_word[word] = {**word_cell, "value": reduced}
+    return {**value, "by_word": by_word}
+
+
+def _reduce_rows_by_reason(node, *reason_keys):
+    """`items`（file・head など）を落とし、指定した理由の鍵ごとの件数
+    （`by_<key>`）に畳む。確定待ち・保留の「数と理由コード」はここから作る。"""
+    if node.get("cannot_say") is not None or node.get("value") is None:
+        return node
+    items = node["value"].get("items") or []
+    reduced = {k: v for k, v in node["value"].items() if k != "items"}
+    for key in reason_keys:
+        counts: dict = {}
+        for row in items:
+            code = row.get(key)
+            counts[code] = counts.get(code, 0) + 1
+        reduced[f"by_{key}"] = counts
+    return {**node, "value": reduced}
+
+
+def _reduce_today(value):
+    """予定・時刻超過・返信待ち・保留・確定待ちの行（`file`・`head` を含む）を
+    落とし、本数と（保留・確定待ちは）理由コードごとの件数だけ残す。"""
+    out = dict(value)
+    today = value.get("today") or {}
+    if today.get("cannot_say") is None and today.get("value") is not None:
+        reduced = {k: v for k, v in today["value"].items() if k != "items"}
+        out["today"] = {**today, "value": reduced}
+    out["overdue_items"] = _reduce_rows_by_reason(value.get("overdue_items") or {})
+    out["waiting_items"] = _reduce_rows_by_reason(value.get("waiting_items") or {}, "reason")
+    out["held_items"] = _reduce_rows_by_reason(value.get("held_items") or {}, "reason", "category")
+    confirm = value.get("confirm_items") or {}
+    if confirm.get("cannot_say") is None and confirm.get("value") is not None:
+        reduced = {k: v for k, v in confirm["value"].items() if k != "items"}
+        out["confirm_items"] = {**confirm, "value": reduced}
+    return out
+
+
+def _reduce_tool(value):
+    """0 段の「あなたの project の報告」「広場」から題（本文）を落とす。
+    件数（開いている・閉じた・新着）は残す。"""
+    out = dict(value)
+    mine = value.get("project_reports")
+    if isinstance(mine, dict) and isinstance(mine.get("closed_this_version"), list):
+        out["project_reports"] = {**mine, "closed_this_version": [
+            {k: v for k, v in row.items() if k != "title"} for row in mine["closed_this_version"]]}
+    plaza = value.get("plaza")
+    if isinstance(plaza, dict):
+        reduced_plaza = dict(plaza)
+        pick = plaza.get("pick")
+        if isinstance(pick, dict):
+            reduced_plaza["pick"] = {k: v for k, v in pick.items() if k != "pick"}
+        recent_trial = plaza.get("recent_trial")
+        if isinstance(recent_trial, dict):
+            reduced_plaza["recent_trial"] = {k: v for k, v in recent_trial.items() if k != "title"}
+        out["plaza"] = reduced_plaza
+    return out
+
+
+_COUNTS_ONLY_REDUCERS = {"unanswered": _reduce_unanswered, "yesterday": _reduce_yesterday,
+                         "world": _reduce_world, "today": _reduce_today}
+
+
+def _apply_counts_only(sections) -> None:
+    """`--counts-only`（3.11.1・media-hub 向け）。仕上がった 6 段から他人の情報と
+    本文を、**その場で**（`sections` を書き換えて）落とす。
+
+    落とすもの: 本文の先頭（preview・head・title の本文部分）・permalink・
+    author_key・reply_id・post_id（数えるのには使うが出さない）・世間の段の
+    「絡みに行く先」・語の候補。残すもの: 各段の件数・分母・主な指標の中央値と
+    n・予定の本数・確定待ち／保留／inflight の数と理由コード・報告と広場の
+    新着の数・`cannot_say`・`calls`（`calls` は 0 段の外・呼び出し側でそのまま
+    残る）。次の一手（`next_steps`）は候補そのものが post_id・permalink・file を
+    運ぶので、件数 `n` だけ残し候補は空にする。
+    """
+    for section in sections:
+        name = section["section"]
+        if name == "tool" and section.get("value") is not None:
+            section["value"] = _reduce_tool(section["value"])
+        elif name == "next_steps" and section.get("value") is not None:
+            section["value"] = {"steps": [], "n": section["value"]["n"]}
+        elif name in _COUNTS_ONLY_REDUCERS:
+            by_account = (section.get("value") or {}).get("by_account")
+            if not by_account:
+                continue
+            reducer = _COUNTS_ONLY_REDUCERS[name]
+            for entry in by_account.values():
+                if entry.get("cannot_say") is None and entry.get("value") is not None:
+                    entry["value"] = reducer(entry["value"])
+
+
 # ------------------------------------------------------------------ 組み立て
 
 def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observe",
@@ -1033,9 +1179,13 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
             except (accounts_mod.AccountError, OSError, ValueError, TypeError):
                 top_cannot_say.append("cursor_not_advanced")
 
+    if counts_only:
+        _apply_counts_only(sections)
+
     return {"schema_version": 1, "report_type": "observe", "invoked_as": invoked_as,
             "generated_at": jst.iso(now), "target": target, "target_kind": kind,
             "accounts": names, "sections": sections, "calls": calls,
+            "counts_only": bool(counts_only),
             "marked": sorted(marked), "marked_by": invoked_as if marked else None,
             "cannot_say": sorted(set(top_cannot_say)),
             "limitations": [
@@ -1097,7 +1247,10 @@ def _render_section(section, out) -> None:
             if mine["cannot_say"] is not None:
                 out(f"  あなたの project の報告: 言えない: {mine['cannot_say']}")
             else:
-                titles = "・".join(row["title"] for row in mine["closed_this_version"])
+                # `--counts-only` は行の `title` を落とす（`closed_this_version`
+                # の各行に `title` が残っていないことがある）。
+                titles = "・".join(row["title"] for row in mine.get("closed_this_version") or []
+                                  if "title" in row)
                 out(f"  あなたの project の報告: 開いている {mine['open']}"
                     f"・この版（{mine['version']}）で閉じた {mine['m']}"
                     + (f"（{titles}）" if titles else ""))
@@ -1214,7 +1367,9 @@ def _render_plaza(node, out) -> None:
     trial = node.get("recent_trial")
     if trial:
         counts = trial["trials"]
-        out(f"  広場の最近の追試: {trial['plaza_id']}  {trial['title']}"
+        # `--counts-only` は `title`（本文）を落とす——無ければタイトルの場所を空ける。
+        title = f"  {trial['title']}" if "title" in trial else ""
+        out(f"  広場の最近の追試: {trial['plaza_id']}{title}"
             f"（再現した {counts['reproduced']}・再現しなかった {counts['not_reproduced']}・"
             f"試していない {counts['not_tried']}／{counts['denominator']} 件）")
 
@@ -1262,7 +1417,8 @@ def _render_unanswered(account, node, out) -> None:
         rows = replies["value"]
         out(f"  {account}（{node['medium']}）: 未回答の返信 {rows['n']} 件"
             f"（窓 {rows['window'].get('days') or '—'} 日・{rows['window']['since'] or '—'} 以降）")
-        for row in rows["items"]:
+        # `--counts-only` は `items`（post_id・reply_id・permalink・preview）を落とす。
+        for row in rows.get("items", []):
             warn = (f"  ⚠ 窓まで {row['hours_to_window_edge']}h"
                     if row.get("window_edge") else "")
             out(f"    {_hours(row['age_hours'])}  {row['post_id']} ← {row['reply_id']}"
@@ -1275,7 +1431,7 @@ def _render_unanswered(account, node, out) -> None:
         return
     rows = mentions["value"]
     out(f"  {account}: まだ返していない言及 {rows['n']}/{rows['denominator']} 件")
-    for row in rows["items"]:
+    for row in rows.get("items", []):
         out(f"    {_hours(row['age_hours'])}  {row['post_id']}"
             f"  {row.get('permalink') or '—'}  {row['preview']}")
 
@@ -1285,6 +1441,14 @@ def _render_yesterday(account, node, out) -> None:
              else "昨日の投稿")
     out(f"  {account}（{node['medium']}）: {label} {node['n']}/{node['denominator']} 本"
         f"（{node['window']['since']}〜{node['window']['until']}）")
+    if "posts" not in node:
+        # `--counts-only`: 投稿ごとの行の代わりに、主な指標の中央値と n だけ。
+        medians = node.get("metrics_median") or {}
+        if medians:
+            line = "・".join(f"{key} 中央値={info['median']}（n={info['n']}）"
+                             for key, info in medians.items())
+            out(f"    主な指標の中央値: {line}")
+        return
     for post in node["posts"]:
         metrics = post["metrics"] or {}
         # 目的の主な物差しを先頭に（設計 3.6.0 §A2）。目的が無ければ従前の並び。
@@ -1331,10 +1495,22 @@ def _render_world(account, node, out) -> None:
             f"  上位{value['top_k']}占有 {_ratio(value['top_share'])}"
             f"  直近 {value['latest_timestamp'] or '—'}"
             f"  自分を除外 {value['own_excluded']}")
-        for row in value["targets"]:
+        # `--counts-only` は `targets`（絡みに行く先・permalink・author_key・preview）を落とす。
+        for row in value.get("targets", []):
             out(f"      {row.get('permalink') or row['post_id']}"
                 f"  返信 {_count(row['replies'], row['has_replies'])}"
                 f"  自分の履歴 {_yes(row['my_history_present'])}  {row['preview']}")
+
+
+def _by_reason_line(label, value, *keys) -> str | None:
+    """`--counts-only` が畳んだ `by_<key>` の理由コードごとの件数を 1 行に。"""
+    parts = []
+    for key in keys:
+        counts = value.get(f"by_{key}")
+        if counts:
+            parts.append("・".join(f"{code or '—'}={n}" for code, n in sorted(
+                counts.items(), key=lambda kv: (kv[0] or ""))))
+    return f"    {label} 理由別: " + "・".join(parts) if parts else None
 
 
 def _render_today(account, node, out) -> None:
@@ -1343,7 +1519,8 @@ def _render_today(account, node, out) -> None:
         out(f"  {account}: 今日の予定: 言えない: {today['cannot_say']}")
     else:
         out(f"  {account}（{node['medium']}）: 今日出る予定 {today['value']['n']} 本")
-        for row in today["value"]["items"]:
+        # `--counts-only` は `items`（file・head を含む予定の行）を落とす。
+        for row in today["value"].get("items", []):
             out(f"    {row['publish_at'][:16]}  {row['status']}  {row['file']}  {row['head']}")
     queue = node["queue"]
     if queue["cannot_say"] is not None:
@@ -1359,35 +1536,44 @@ def _render_today(account, node, out) -> None:
         out(f"    時刻超過の名前: 言えない: {overdue['cannot_say']}")
     elif overdue.get("value"):
         value = overdue["value"]
-        for row in value["items"]:
+        items = value.get("items", [])
+        for row in items:
             out(f"    時刻超過: {row['file']} {row['publish_at']}（{row['elapsed_hours']}h）")
-        if value["n"] > len(value["items"]):
-            out(f"    時刻超過: ほか {value['n'] - len(value['items'])} 本（全 {value['n']} 本）")
+        if value["n"] > len(items):
+            out(f"    時刻超過: ほか {value['n'] - len(items)} 本（全 {value['n']} 本）")
     waiting = node.get("waiting_items") or {}
     if waiting.get("cannot_say") is not None:
         out(f"    返信待ちの名前: 言えない: {waiting['cannot_say']}")
     elif waiting.get("value"):
         value = waiting["value"]
-        for row in value["items"]:
+        items = value.get("items", [])
+        for row in items:
             if row["waiting_for"]:
                 out(f"    返信待ち: {row['file']} → {row['waiting_for']} が出たら返信します"
                     f"（予定 {row['publish_at']}）")
             else:
                 out(f"    返信先を解決できません: {row['file']}（{row['reason']}）")
-        if value["n"] > len(value["items"]):
-            out(f"    返信待ち: ほか {value['n'] - len(value['items'])} 本（全 {value['n']} 本）")
+        if value["n"] > len(items):
+            out(f"    返信待ち: ほか {value['n'] - len(items)} 本（全 {value['n']} 本）")
+        line = _by_reason_line("返信待ち", value, "reason")
+        if line:
+            out(line)
     held = node.get("held_items") or {}
     if held.get("cannot_say") is not None:
         out(f"    出られない原稿の名前: 言えない: {held['cannot_say']}")
     elif held.get("value"):
         value = held["value"]
-        for row in value["items"]:
+        items = value.get("items", [])
+        for row in items:
             when = (f"{row['elapsed_hours']}h 超過" if row["elapsed_hours"] is not None
                     else "時刻前" if not row["due"] else "時刻不明")
             out(f"    出られない: {row['file']}（{row['reason']}・予定 {row['publish_at'] or '—'}"
                 f"・{when}）")
-        if value["n"] > len(value["items"]):
-            out(f"    出られない: ほか {value['n'] - len(value['items'])} 本（全 {value['n']} 本）")
+        if value["n"] > len(items):
+            out(f"    出られない: ほか {value['n'] - len(items)} 本（全 {value['n']} 本）")
+        line = _by_reason_line("出られない", value, "reason", "category")
+        if line:
+            out(line)
     confirm = node.get("confirm_items") or {}
     if confirm.get("cannot_say") is not None:
         out(f"    確定待ち: 言えない: {confirm['cannot_say']}")
@@ -1396,7 +1582,7 @@ def _render_today(account, node, out) -> None:
         out(f"    確定待ち {value['n_awaiting_confirm']} 本（最短の publish_at "
             f"{value['earliest_publish_at'] or '—'}・1 段目がまだの下書き {value['n_not_requested']} 本）"
             "——確定するまで出ません")
-        for row in value["items"]:
+        for row in value.get("items", []):
             mark = "  ⚠ 3 時間を切りました" if row["due"] else ""
             out(f"    確定待ち: {row['file']}（予定 {row['publish_at'] or '—'}）{mark}")
     inflight = node["inflight"]
@@ -1447,6 +1633,9 @@ def register(sub) -> None:
         parser.add_argument("--no-world", action="store_true", dest="no_world",
                             help="第 3 段（世間・監視語の検索）を呼ばない"
                                  "（cannot_say: world_skipped・3.11.1）")
+        parser.add_argument("--counts-only", action="store_true", dest="counts_only",
+                            help="他人の情報と本文を落とし、数と状態だけを返す"
+                                 "（3.11.1）")
         parser.set_defaults(func=cmd_morning, invoked_as=name)
 
 
@@ -1454,7 +1643,8 @@ def cmd_morning(args) -> int:
     try:
         payload = build(args.target, mark=not getattr(args, "no_mark", False),
                         invoked_as=getattr(args, "invoked_as", "morning"),
-                        no_world=getattr(args, "no_world", False))
+                        no_world=getattr(args, "no_world", False),
+                        counts_only=getattr(args, "counts_only", False))
     except MorningError as exc:
         reason = str(exc)
         print(reason, file=sys.stderr)
