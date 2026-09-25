@@ -117,6 +117,9 @@ def signed_request(kind, subject, operation, body):
     elif kind == 'invite' and INVITE.fullmatch(subject) and operation in ('create','status','authorize','reset','complete','revoke'):
         # 招待（設計 3.10.0）。subject は code の SHA-256——code そのものは VM に無い。
         role = 'operator'
+    elif kind == 'activity' and PERSON.fullmatch(subject) and operation == 'sync':
+        # 動きの一覧（設計 3.12.0 §3.4）。VM が持ち主の要約を押し上げ、持ち主の操作を受け取る。
+        role = 'operator'
     else: raise RelayError('invalid_approval_operation')
     path = f'/approval/{kind}/{subject}/{operation}'
     raw = json.dumps(body, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode()
@@ -142,7 +145,7 @@ def signed_request(kind, subject, operation, body):
         def redirect_request(self, *args, **kwargs): return None
     try:
         with httpsafe.build_opener(NoRedirect()).open(request, timeout=10) as response:
-            limit=16384 if kind=='deletion' else 4096
+            limit=16384 if kind in ('deletion','activity') else 4096
             data = response.read(limit+1)
             if len(data)>limit or response.status not in (200,201): raise RelayError('approval_relay_unavailable')
             value=json.loads(data)

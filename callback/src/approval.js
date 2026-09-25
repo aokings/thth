@@ -58,14 +58,14 @@ async function authenticate(request,env,url,raw,role,subject,operation) {
 }
 // 審査員（Meta）も押すので、日本語の下に英語を 1 行ずつ添える（招待のページと同じ作り・3.10.0）。
 // 投稿の原稿そのものは訳さない。
-const en=text=>`<span class="en">${text}</span>`;
+export const en=text=>`<span class="en">${text}</span>`;
 const kindLabel={approve:'原稿を承認',send:'この内容を公開',retract:'この投稿を削除'};
 const kindEnglish={approve:'Approve this draft',send:'Publish this content',retract:'Delete this post'};
 const accepted={approve:'原稿の承認を受け付けました',send:'公開の承認を受け付けました',retract:'削除の承認を受け付けました'};
 const acceptedEnglish={approve:'Draft approval received',send:'Publication approval received',retract:'Deletion approval received'};
 // 補足の見出しも「日本語 / English」（3.11.0・アカウントの行と同じ形）。
 const labels={media:'媒体 / Platform',reply_to:'返信先 / Reply to',publish_at:'公開予定 / Scheduled for',target:'削除する投稿 / Post to delete',reason:'削除理由 / Reason',topic:'話題 / Topic',options:'公開オプション / Post options'};
-const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+export const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const kindWord={image:'画像',video:'動画',audio:'音声',caption:'字幕'};
 const roleWord={media:'添付',thumbnail:'代表画像',caption:'字幕'};
 const clock=value=>{const total=Math.max(0,Math.round(Number(value)));return String(Math.floor(total/60)).padStart(2,'0')+':'+String(total%60).padStart(2,'0');};
@@ -93,13 +93,13 @@ function attachments(rows,typed){
   const structured=typeof typed==='string'&&typed?'<p>型付き添付／公開設定 / Typed attachments and post settings</p><pre>'+escape(typed)+'</pre>':'';
   return list+structured;
 }
-function page(status,body,title='THTH 承認') {
+export function page(status,body,title='THTH 承認') {
   return new Response('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>'+title+'</title><style>body{overflow-wrap:anywhere;max-width:44rem;margin:2rem auto;padding:0 1rem;font:1rem/1.7 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;border:1px solid;padding:1rem}figure{margin:1rem 0}img{max-width:100%;height:auto;border:1px solid}figcaption{font-size:.9rem}.en{display:block;font-size:.88rem;opacity:.75}input{max-width:100%;font:inherit}label{display:block;margin:.6rem 0}button{display:block;margin:1rem 0;padding:.6rem 1.4rem;font:inherit}li{margin:1.4rem 0}a.go{display:inline-block;padding:.4rem 1.2rem;border:1px solid;text-decoration:none}</style><body>'+body+'</body></html>',{status,headers:{
     'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer',
     'content-security-policy':"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     'x-content-type-options':'nosniff','x-frame-options':'DENY'}});
 }
-async function publicQuota(request,env){
+export async function publicQuota(request,env){
   return !!env.APPROVAL_PUBLIC_LIMIT&&(await env.APPROVAL_PUBLIC_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success;
 }
 // Referrer-Policy: no-referrer makes browsers send `Origin: null` (or omit it) even on a
@@ -148,19 +148,23 @@ export async function approvalRequest(request,env,url) {
       if([...form.keys()].sort().join(',')!=='csrf,secret')return reply(400,{error:'invalid_request'});
       return approvalOutcome(await stub.approve(form.get('secret'),form.get('csrf')));
     }
-    const route=/^\/approval\/(person|session|account|deletion|invite)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|consume|cancel|list|read|verify|complete|discard|cleanup-retry|authorize|reset)$/.exec(url.pathname);
+    const route=/^\/approval\/(person|session|account|deletion|invite|activity)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|consume|cancel|list|read|verify|complete|discard|cleanup-retry|authorize|reset|sync)$/.exec(url.pathname);
     if(!route||request.method!=='POST')return reply(404,{error:'not_found'});
     const [,type,subject,operation]=route;
-    if(type==='invite'?!HASH_PATTERN.test(subject)||!['create','status','authorize','reset','complete','revoke'].includes(operation):type==='deletion'?!(subject==='inbox'&&operation==='list'||STATE_PATTERN.test(subject)&&['read','verify','complete','discard'].includes(operation)):type==='account'?!PERSON.test(subject)||!['revoke','status','cleanup-retry'].includes(operation):type==='person'?!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation):!STATE_PATTERN.test(subject)||!['create','consume','status','cancel'].includes(operation))return reply(400,{error:'invalid_request'});
+    // 3.12.0 §3.4 動きの一覧: VM が持ち主（person）ごとの要約を押し上げ、持ち主の操作を受け取る。
+    if(type==='activity'?!PERSON.test(subject)||operation!=='sync':
+       type==='invite'?!HASH_PATTERN.test(subject)||!['create','status','authorize','reset','complete','revoke'].includes(operation):type==='deletion'?!(subject==='inbox'&&operation==='list'||STATE_PATTERN.test(subject)&&['read','verify','complete','discard'].includes(operation)):type==='account'?!PERSON.test(subject)||!['revoke','status','cleanup-retry'].includes(operation):type==='person'?!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation):!STATE_PATTERN.test(subject)||!['create','consume','status','cancel'].includes(operation))return reply(400,{error:'invalid_request'});
     if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(400,{error:'invalid_request'});
     if(!env.APPROVAL_VERIFY_LIMIT || !(await env.APPROVAL_VERIFY_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
     // Only the session `create` body carries attachments (第 8 段), so only it
     // gets the larger cap; every other JSON route keeps the 64 KiB default.
-    const cap=type==='session'&&operation==='create'?98_304:65_536;
+    // 動きの一覧の sync は口座 8 つ×30 行の要約を運ぶ（本文は先頭 60 字だけ）。
+    const cap=type==='session'&&operation==='create'?98_304:type==='activity'?131_072:65_536;
     const raw=await boundedBody(request,cap), ticket=await authenticate(request,env,url,raw,type==='session'?'job':'operator',subject,operation);
     if(!ticket)return reply(401,{error:'unauthorized'});
     if(!env.APPROVAL_JOB_LIMIT || !(await env.APPROVAL_JOB_LIMIT.limit({key:await digest(type+'/'+subject)})).success)return reply(429,{error:'rate_limited'});
     const body=JSON.parse(raw);
+    if(type==='activity'){const result=await (await personStub(env,subject)).activitySync(body,ticket);return reply(result.status,result.body);}
     const stub=type==='invite'?inviteStub(env,subject):type==='deletion'?deletionStub(env):type==='account'?await accountStub(env,subject):type==='person'?await personStub(env,subject):await sessionStub(env,subject);
     const result=await stub.manage(operation,body,ticket,subject);
     return reply(result.status,result.body);

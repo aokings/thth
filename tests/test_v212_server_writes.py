@@ -47,6 +47,8 @@ def draft(env,**values):
 class FakeRelay:
     def __init__(self):self.rows={};self.generation=secrets.token_urlsafe(32);self.consumes=0
     def __call__(self,kind,subject,operation,body):
+        # 3.12.0 段 3: 常駐の 1 巡は動きの一覧の要約も押し上げる（操作は無い）。
+        if kind=='activity':return {'status':'synced','actions':[]}
         if kind=='person':return {'active':True,'locked':False,'generation':self.generation}
         if operation=='create':
             self.rows[subject]=dict(body,status='pending',expires_at=int(time.time()*1000)+600000)

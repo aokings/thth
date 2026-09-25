@@ -400,6 +400,9 @@ def run_once(credentials_path):
     # 同じ常駐に載せる（Worker を定期に見ている process は 1 つにする）。
     from . import invites
     invites.run_once(credentials_path)
+    # 動きの一覧（設計 3.12.0 §3.4）: 持ち主ごとの要約を Worker へ押し上げ、/activity で頼まれた操作を行う。
+    from . import activity
+    activity.run_once(credentials_path)
 
 
 def command(args):

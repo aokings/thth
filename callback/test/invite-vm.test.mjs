@@ -20,7 +20,7 @@ before(async()=>{
   directory=await realpath(await mkdtemp(join(tmpdir(),'thth-invite-vm-')));key=join(directory,'signer.key');
   await writeFile(key,crypto(['genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072']),{mode:0o600});
   const publicKey=crypto(['pkey','-in',key,'-pubout','-outform','DER']).toString('base64url');
-  const files=['src/worker.js','src/invite.js','src/invite-object.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/approval.js','src/approval-object.js','src/deletion.js','src/deletion-object.js'];
+  const files=['src/worker.js','src/invite.js','src/invite-object.js','src/activity.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/approval.js','src/approval-object.js','src/deletion.js','src/deletion-object.js'];
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,log:new SilentLog(),
     bindings:{APPROVAL_PUBLIC_KEY:publicKey},

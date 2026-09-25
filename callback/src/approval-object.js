@@ -3,6 +3,51 @@ import {TTL,LIST_TTL,HEAD,LIST_MAX,VIEW_MAX,LIST_LOCK_MS,ITERATIONS,PERSON,fail,
 import {HASH_PATTERN,STATE_PATTERN,digest} from './relay.js';
 import {mediaStub} from './media.js';
 
+// ---- 動きの一覧（設計 3.12.0 §3.4）の形。VM から来る要約も、ページから来る操作も、閉じた形だけ受ける。
+export const ACTIVITY_TTL=3_600_000, ACTION_TTL=3_600_000, ACTION_PENDING_MAX=16;
+const ACTIVITY_ACCOUNTS=8, ACTIVITY_ROWS=30, ACTIVITY_HEAD=60;
+export const ACTION_KINDS=['stop','resume','cancel','settings','revoke','rotate'];
+const ACTION_EXTRA={stop:[],resume:[],revoke:[],rotate:['sha256'],cancel:['draft_id'],settings:['key','value']};
+export const SETTING_KEYS=['approval','daily_max_posts','daily_max_retracts','burst_count','burst_minutes','hold_minutes','min_interval_hours'];
+const SETTING_VALUE=/^(?:none|publish|all|[0-9]{1,6}(?:\.[0-9]{1,2})?)$/;
+const ROW_KINDS=['published','retracted','scheduled','held','stopped'];
+const STOP_REASONS=['burst','owner','guard_state_unreadable'];
+const ISO=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:[+-]\d{2}:\d{2}|Z)$/;
+const LIMIT_KEYS=['daily_max_posts','daily_max_retracts','burst_count','burst_minutes','hold_minutes','min_interval_hours'];
+const same=(value,keys)=>value!==null&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===[...keys].sort().join(',');
+const plain=(v,max=300)=>typeof v==='string'&&v.length<=max&&!/[\u0000-\u001f\u007f]/.test(v);
+const count=v=>Number.isSafeInteger(v)&&v>=0&&v<=1_000_000;
+function validRow(r){
+  return same(r,['kind','at','head','post_id','draft_id','reason','reply'])&&ROW_KINDS.includes(r.kind)&&typeof r.at==='string'&&ISO.test(r.at)&&
+    plain(r.head,ACTIVITY_HEAD*2)&&Array.from(r.head).length<=ACTIVITY_HEAD&&(r.post_id===null||plain(r.post_id)&&r.post_id.length>0)&&
+    (r.draft_id===null||typeof r.draft_id==='string'&&HASH_PATTERN.test(r.draft_id))&&(r.reason===null||STOP_REASONS.includes(r.reason))&&typeof r.reply==='boolean';
+}
+export function validSummary(s){
+  return same(s,['account','generated_at','approval','scheduled','limits','stopped','today','credential','rows'])&&
+    typeof s.account==='string'&&PERSON.test(s.account)&&typeof s.generated_at==='string'&&ISO.test(s.generated_at)&&
+    ['none','publish','all'].includes(s.approval)&&typeof s.scheduled==='boolean'&&
+    same(s.limits,LIMIT_KEYS)&&LIMIT_KEYS.every(k=>typeof s.limits[k]==='number'&&Number.isFinite(s.limits[k])&&s.limits[k]>=0&&s.limits[k]<=1_000_000)&&
+    (s.stopped===null||same(s.stopped,['reason','at'])&&STOP_REASONS.includes(s.stopped.reason)&&(s.stopped.at===null||typeof s.stopped.at==='string'&&ISO.test(s.stopped.at)))&&
+    same(s.today,['posts','retracts'])&&count(s.today.posts)&&count(s.today.retracts)&&
+    (s.credential===null||same(s.credential,['id','expires_at','revoked'])&&typeof s.credential.id==='string'&&/^[0-9a-f]{12}$/.test(s.credential.id)&&
+      plain(s.credential.expires_at,40)&&typeof s.credential.revoked==='boolean')&&
+    Array.isArray(s.rows)&&s.rows.length<=ACTIVITY_ROWS&&s.rows.every(validRow);
+}
+function validSync(body){
+  if(!same(body,['accounts','completed'])||!Array.isArray(body.accounts)||body.accounts.length>ACTIVITY_ACCOUNTS||
+     !Array.isArray(body.completed)||body.completed.length>ACTION_PENDING_MAX)return false;
+  if(!body.accounts.every(validSummary)||new Set(body.accounts.map(s=>s.account)).size!==body.accounts.length)return false;
+  return body.completed.every(c=>same(c,['id','outcome','reason'])&&typeof c.id==='string'&&STATE_PATTERN.test(c.id)&&
+    ['done','failed'].includes(c.outcome)&&(c.reason===null||typeof c.reason==='string'&&/^[a-z_]{1,64}$/.test(c.reason)));
+}
+export function validRequest(a){
+  if(a===null||typeof a!=='object'||!ACTION_KINDS.includes(a.kind)||a.kind==='rotate'&&'sha256' in a)return false;
+  const extra=a.kind==='rotate'?[]:ACTION_EXTRA[a.kind];
+  if(!same(a,['kind','account',...extra])||typeof a.account!=='string'||!PERSON.test(a.account))return false;
+  if(a.kind==='cancel')return typeof a.draft_id==='string'&&HASH_PATTERN.test(a.draft_id);
+  if(a.kind==='settings')return typeof a.key==='string'&&SETTING_KEYS.includes(a.key)&&typeof a.value==='string'&&SETTING_VALUE.test(a.value);
+  return true;
+}
 export class AtomicObject extends DurableObject {
   now(){return Date.now();}
   put(key,value){this.ctx.storage.kv.put(key,value);}
@@ -73,13 +118,83 @@ export class ApprovalPerson extends AtomicObject {
   });}
   async alarm(){
     const now=this.now();let next=null;
-    this.ctx.storage.transactionSync(()=>{for(const prefix of ['grant:','listed:','view:'])for(const [key,row] of this.ctx.storage.kv.list({prefix})){
+    this.ctx.storage.transactionSync(()=>{for(const prefix of ['grant:','listed:','view:','activity:','action:'])for(const [key,row] of this.ctx.storage.kv.list({prefix})){
       if(row.expires_at<=now)this.ctx.storage.kv.delete(key);else next=Math.min(next??Infinity,row.expires_at);
     }});
     if(next!==null)await this.ctx.storage.setAlarm(next);
   }
   async wake(at){const alarm=await this.ctx.storage.getAlarm();if(alarm===null||at<alarm)await this.ctx.storage.setAlarm(at);}
-  prune(now){for(const prefix of ['listed:','view:'])for(const [key,row] of this.ctx.storage.kv.list({prefix}))if(row.expires_at<=now)this.ctx.storage.kv.delete(key);}
+  prune(now){for(const prefix of ['listed:','view:','activity:','action:'])for(const [key,row] of this.ctx.storage.kv.list({prefix}))if(row.expires_at<=now)this.ctx.storage.kv.delete(key);}
+  // ---- 動きの一覧（設計 3.12.0 §3.4）。`activity:<口座>` は VM が押し上げた要約（本文は先頭 60 字・
+  // 1 時間で忘れる）。`action:<id>` は持ち主が secret で確かめて頼んだ操作（VM が拾って結果を返す・
+  // 1 時間）。どちらもこの人の object にだけある。鍵の発行し直しの bearer は**置かない**（hash だけ）。
+  async activitySync(body,ticket){
+    const result=this.atomic(()=>{
+      if(!validSync(body))return fail();
+      if(!this.replay(ticket))return fail(409,'replayed_request');
+      const row=this.ctx.storage.kv.get('person');
+      if(!row||!this.current(row.generation))return fail(409,'approver_unavailable');
+      const now=this.now();this.prune(now);
+      for(const [key] of this.ctx.storage.kv.list({prefix:'activity:'}))this.ctx.storage.kv.delete(key);
+      for(const summary of body.accounts)this.put('activity:'+summary.account,{...summary,expires_at:now+ACTIVITY_TTL});
+      for(const done of body.completed){
+        const key='action:'+done.id,old=this.ctx.storage.kv.get(key);
+        if(!old||old.status!=='pending')continue;
+        const {sha256,...kept}=old;
+        this.put(key,{...kept,status:done.outcome,reason:done.reason,finished_at:now,expires_at:now+ACTION_TTL});
+      }
+      const actions=[...this.ctx.storage.kv.list({prefix:'action:'})].map(([,a])=>a)
+        .filter(a=>a.status==='pending'&&a.expires_at>now).sort((a,b)=>a.created_at-b.created_at)
+        .map(a=>{const out={id:a.id,account:a.account,kind:a.kind};for(const k of ACTION_EXTRA[a.kind])out[k]=a[k];return out;});
+      return {status:200,body:{status:'synced',actions}};
+    });
+    if(result.status===200)await this.wake(this.now()+Math.min(ACTIVITY_TTL,ACTION_TTL));
+    return result;
+  }
+  activityView(tokenHash){
+    const view=this.opened(tokenHash);if(!view)return fail(401,'unauthorized');
+    const now=this.now();
+    const accounts=[...this.ctx.storage.kv.list({prefix:'activity:'})].map(([,s])=>s).filter(s=>s.expires_at>now)
+      .sort((a,b)=>a.account<b.account?-1:1).map(({expires_at,...s})=>s);
+    const actions=[...this.ctx.storage.kv.list({prefix:'action:'})].map(([,a])=>a).filter(a=>a.expires_at>now)
+      .sort((a,b)=>b.created_at-a.created_at).map(({sha256,expires_at,...a})=>a);
+    return {status:200,body:{accounts,actions}};
+  }
+  // 操作は secret をもう一度入れて確かめる（一覧に入るのと同じ照合・同じ失敗の数え方: 5 回で 15 分閉じる）。
+  async activityAct(tokenHash,secret,action){
+    const view=this.opened(tokenHash);if(!view)return fail(401,'unauthorized');
+    if(!validRequest(action))return fail(400,'invalid_request');
+    const before=this.ctx.storage.kv.get('person');
+    const valid=typeof secret==='string'&&secret.length>=16&&secret.length<=128;
+    const computed=valid?await verifier(secret,typeof before?.salt==='string'?before.salt:'A'.repeat(43)):null;
+    // 鍵の発行し直し: bearer はここで作り、hash だけを置く。値は呼んだページに 1 度だけ返す。
+    const bearer=action.kind==='rotate'?opaque():null,sha256=bearer?await digest(bearer):null;
+    const result=this.atomic(()=>{
+      const row=this.ctx.storage.kv.get('person');
+      const now=this.now(),counted=row?.list_failures??0;
+      const failures=counted>=5&&now>=(row.list_locked_until??0)?0:counted;
+      if(!before?.verifier||!row?.verifier||row.generation!==before.generation||row.generation!==view.generation||
+         !this.current(row.generation)||failures>=5)return fail(403,'approval_failed');
+      const ok=valid&&equal(unb64(computed),unb64(row.verifier));
+      const next=ok?0:failures+1;
+      this.put('person',{...row,list_failures:next,list_locked_until:next>=5?now+LIST_LOCK_MS:null});
+      if(!ok)return fail(403,'approval_failed');
+      this.prune(now);
+      // 他人の口座は触れない: VM がこの人に押し上げた口座だけ。
+      const summary=this.ctx.storage.kv.get('activity:'+action.account);
+      if(!summary||summary.expires_at<=now)return fail(404,'not_found');
+      if(action.kind==='cancel'&&!summary.rows.some(r=>(r.kind==='held'||r.kind==='scheduled')&&r.draft_id===action.draft_id))return fail(404,'not_found');
+      const pending=[...this.ctx.storage.kv.list({prefix:'action:'})].filter(([,a])=>a.status==='pending').length;
+      if(pending>=ACTION_PENDING_MAX)return fail(409,'too_many_actions');
+      const id=opaque(),stored={id,...action,status:'pending',reason:null,created_at:now,expires_at:now+ACTION_TTL};
+      if(sha256)stored.sha256=sha256;
+      this.put('action:'+id,stored);
+      return {status:200,body:{id,kind:action.kind,account:action.account}};
+    });
+    if(result.status!==200)return result;
+    await this.wake(this.now()+ACTION_TTL);
+    return bearer?{status:200,body:{...result.body,bearer}}:result;
+  }
   // ---- 承認待ちの一覧（設計 3.11.0）。索引 `listed:<job_id>` は承認ページの session の id と期限だけ
   // （本文は置かない）。一覧の session `view:<token の SHA-256>` は 10 分。どちらもこの人の object にだけある。
   async listJob(binding,generation){

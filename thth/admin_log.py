@@ -46,7 +46,10 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    # 招待で用意した口座だけの資格情報（3.10.0・裁定）。bearer も hash も入れない。
                    'credential_added', 'credential_removed',
                    # 安全装置（設計 3.12.0 §3.3）。急な連投で止めた・持ち主が戻した。理由の語だけ。
-                   'guard_stopped', 'guard_resumed'))
+                   'guard_stopped', 'guard_resumed',
+                   # 段 3: 設定（approval・安全装置の数値）の変更、持ち主の /activity からの予約の取り消し、
+                   # MCP の鍵の発行し直し・取り消し。値の前後と語だけ（bearer も hash も入れない）。
+                   'settings_set', 'schedule_cancelled', 'credential_rotated', 'credential_revoked'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 
@@ -251,7 +254,9 @@ def transaction(*, rollback=None):
                                       'map_node_added', 'map_node_removed', 'map_edge_added',
                                       'map_edge_removed', 'map_retention_set', 'map_purged',
                                       'invite_created', 'invite_used', 'invite_revoked',
-                                      'credential_added', 'credential_removed'):
+                                      'credential_added', 'credential_removed',
+                                      'credential_rotated', 'credential_revoked', 'settings_set',
+                                      'schedule_cancelled', 'guard_stopped', 'guard_resumed'):
                     continue
                 cfg = accounts.load_account(event['account'])
                 admin_notifications.notify(event, cfg)

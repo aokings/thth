@@ -32,7 +32,8 @@ from . import accounts, jst, sent as sent_mod, server_files
 from .report_service import ReportServiceError
 
 REFUSALS = frozenset(("too_soon", "quiet_hours", "daily_limit", "retract_limit"))
-STOP_REASONS = frozenset(("burst",))
+# burst: 急な連投で道具が止めた。owner: 持ち主が /activity から止めた（段 3）。
+STOP_REASONS = frozenset(("burst", "owner"))
 STOP_FILE = "stopped.json"
 CREDENTIAL_ID_LENGTH = 12
 KINDS = ("publish", "retract", "schedule")
@@ -73,6 +74,12 @@ def stopped(account) -> dict | None:
             raw = server_files.read_at(fd, STOP_FILE, private=True)
     except FileNotFoundError:
         return None
+    except server_files.UnsafeFile as exc:
+        if str(exc) in ("unsafe_server_directory", "unsafe_server_owner"):
+            # 置き場のモード・持ち主が緩い: 断ることは同じだが、運営者が直せる理由のまま上げる
+            # （呼び手は write_unavailable にし、運営者の CLI は 1 語と次の一手で言う・§6-5）。
+            raise
+        return {"reason": "guard_state_unreadable"}
     except (OSError, ValueError):
         return {"reason": "guard_state_unreadable"}
     try:
@@ -110,8 +117,12 @@ def stop(account, reason, *, now=None, actor=None, via=None, credential=None) ->
     return value
 
 
-def resume(account, *, by) -> bool:
-    """止めたのを戻す（持ち主の口から呼ぶ）。止まっていなければ False。"""
+def resume(account, *, by, via="cli") -> bool:
+    """止めたのを戻す（持ち主の口から呼ぶ）。止まっていなければ False。
+
+    口は運営者の CLI（`thth account resume`）と持ち主の `/activity`（via http）だけ。
+    **MCP には出さない**——暴走して止まった LLM が自分で戻せないように（段 3）。
+    """
     from . import admin_log
     admin_log.actor(by)
     try:
@@ -125,7 +136,7 @@ def resume(account, *, by) -> bool:
         return False
     try:
         admin_log.append("guard_resumed", account, accounts.load_account(account), by=by,
-                         diff={"stopped": [True, False]})
+                         via=via if via in ("cli", "http") else "cli", diff={"stopped": [True, False]})
     except Exception:
         pass
     return True
@@ -178,12 +189,15 @@ def summary(account, cfg, *, now=None) -> dict:
 
 
 def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None,
-          publish_at=None, scheduled_same_day=0) -> None:
+          publish_at=None, scheduled_same_day=0, reply=False) -> None:
     """依頼が安全装置に掛かれば `GuardRefused` を上げる。掛からなければ何もしない。
 
     `kind`: `publish`（今すぐ出す）・`retract`（消す）・`schedule`（queue に「出してよい」と
     刻む。`publish_at` の日の公開数に、その日にすでに刻んだ件数 `scheduled_same_day` を足して見る）。
     burst を超える依頼は**口座を止めてから**断る。
+
+    `reply`（返信）には最短間隔 `min_interval_hours` を掛けない——返信は会話なので
+    （段 1〜2 の裁定 (a)）。1 日の上限と burst には数える。
     """
     if kind not in KINDS:
         raise ValueError("invalid_guard_kind")
@@ -200,7 +214,8 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
             raise GuardRefused("quiet_hours", next_at=jst.iso(_quiet_end(now, quiet)))
         hours = cfg.get("min_interval_hours")
         last = counts["last_post_at"]
-        if isinstance(hours, (int, float)) and not isinstance(hours, bool) and hours > 0 and last is not None:
+        if (not reply and isinstance(hours, (int, float)) and not isinstance(hours, bool)
+                and hours > 0 and last is not None):
             ready = last + datetime.timedelta(hours=hours)
             if now < ready:
                 raise GuardRefused("too_soon", next_at=jst.iso(ready))
