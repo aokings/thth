@@ -10,8 +10,10 @@ from datetime import datetime, timezone
 from . import accounts, admin_log, approval, approval_relay, core, doctor, jst, managed_repo, queuefile, server_files, tags, writeback
 from .report_service import ReportContext, ReportServiceError
 
-WRITE_OPERATIONS = frozenset(('draft_put','approval_request','send_request','retract_request',
+WRITE_OPERATIONS = frozenset(('draft_put','approval_request','send_request','retract_request','schedule_request',
                               'media_upload_url','media_complete'))
+# 公開・削除・予約に至る依頼（設計 3.12.0 §3）。口座の `approval` で承認 job か直接かが決まる。
+PUBLISHING_OPERATIONS = frozenset(('approval_request','send_request','retract_request','schedule_request'))
 READ_OPERATIONS = frozenset(('draft_list','queue','request_status'))
 DRAFT_ID = re.compile(r'[0-9a-f]{64}\Z')
 JOB_ID = approval_relay.OPAQUE
@@ -28,7 +30,13 @@ from .media_uploads import REASONS as MEDIA_REASONS
 # managed repo をモードで断ったときだけは `write_unavailable` で終わらせない——
 # 運用者が chmod で直せる唯一の理由なので、静的な名前のまま上げる。
 REPO_REASONS = frozenset(('managed_git_store_unsafe_mode',))
-SAFE_ERRORS = SAFE_ERRORS | MEDIA_REASONS | REPO_REASONS
+# 承認なしの道と安全装置（設計 3.12.0 §3.2・§3.3）。静的な名前だけ。
+from .guard import REFUSALS as GUARD_REFUSALS, STOP_REASONS as GUARD_STOP_REASONS
+DIRECT_REASONS = frozenset(('account_busy','publication_failed','publication_unconfirmed','deletion_failed',
+                            'permission_unavailable','schedule_commit_unconfirmed'))
+SAFE_ERRORS = SAFE_ERRORS | MEDIA_REASONS | REPO_REASONS | GUARD_REFUSALS | DIRECT_REASONS
+# 断りに添えてよい詳細（止まった理由）。
+GUARD_DETAILS = GUARD_STOP_REASONS | frozenset(('guard_state_unreadable',))
 
 
 def error(reason, detail=None):
@@ -243,15 +251,197 @@ def request_approval(context, request, via, by=None, listed=True):
     return approval_jobs.create(context,request,binding,via,media=media or None,by=by,listed=listed)
 
 
+# --------------------------------------------------------------------------
+# 承認なしの道（設計 3.12.0 §3.2）。口座の `approval` が許すときだけ通る。
+# どの道も安全装置（`thth/guard.py`）を**ロックの中で**もう一度通してから出す・消す・刻む。
+# --------------------------------------------------------------------------
+
+def route(cfg, operation):
+    """`job`（承認ページを通す）か `direct`（その場で）か。"""
+    mode=accounts.approval_mode(cfg)
+    if operation=='retract_request':
+        return 'job' if mode=='all' else 'direct'
+    return 'direct' if mode=='none' else 'job'
+
+
+def _origin(context, via):
+    from . import guard
+    return {'via':via,'credential':guard.credential_id(context)}
+
+
+def _guarded(context, account, kind, origin, **extra):
+    from . import guard
+    def check(cfg):
+        guard.check(account,cfg,kind,actor=context.actor,via=origin['via'],credential=origin['credential'],**extra)
+    return check
+
+
+def _refuse_if_stopped(account):
+    from .guard import stopped, GuardRefused
+    halted=stopped(account)
+    if halted is not None: raise GuardRefused('account_stopped',reason=halted.get('reason'))
+
+
+def direct_send(context, request, via):
+    """その場で公開する。点検は `core.send_once` と同じ（rehearsal で digest を出し、同じ digest で出す）。"""
+    _schema(request,('body','topic','reply_to'),('body',))
+    if len(request['body'].encode())>48000: error('invalid_draft')
+    for key in ('topic','reply_to'):
+        if request.get(key) is not None and not isinstance(request[key],str): error('invalid_request')
+    account=request['account'];cfg=current(context,account,write=True)
+    if cfg.get('production') is not True: error('production_disabled')
+    origin=_origin(context,via);check=_guarded(context,account,'publish',origin)
+    check(cfg)
+    from . import postid
+    reply=postid.for_account(cfg,request.get('reply_to'));topic=request.get('topic')
+    dry=core.send_once(account,text=request['body'],topic=topic,reply_to=reply,log=lambda _:None)
+    if dry.exit_code or not dry.digest: error('invalid_draft')
+    def before(locked_cfg):
+        if current(context,account,write=True)!=locked_cfg: error('credential_changed')
+        check(locked_cfg)
+        return accounts.load_token(locked_cfg)
+    result=core.send_once(account,text=request['body'],topic=topic,reply_to=reply,production_flag=True,
+                          confirm=dry.digest,log=lambda _:None,before_execute=before,
+                          lock_context=server_files.account_locks(account,cfg),origin=origin)
+    if result.action=='locked': error('account_busy')
+    if result.action=='inflight': error('publication_unconfirmed')
+    if result.exit_code or result.mode!='production' or not result.post_id: error('publication_failed')
+    try:
+        with admin_log.transaction():
+            admin_log.append('sent',account,cfg,by=context.actor,via=via,diff={'published':[False,True]})
+    except Exception:
+        # 出たことの正本は sent/ と runs。変更ログに残せなくても「出ていない」とは答えない。
+        pass
+    permalink=result.url
+    if not permalink:
+        try:
+            from . import retract_cli
+            permalink=retract_cli._lookup_url(cfg,accounts.load_token(cfg),result.post_id)
+        except Exception:
+            permalink=None
+    return {'account':account,'status':'published','post_id':result.post_id,'permalink':permalink,'via':via}
+
+
+def direct_retract(context, request, via):
+    """その場で削除する（DELETE は `retract_cli._do_retract` の 1 回だけ）。"""
+    _schema(request,('post_id','reason'),('post_id','reason'))
+    account=request['account'];cfg=current(context,account,write=True)
+    from types import SimpleNamespace
+    from . import adapters, postid, retract_cli
+    if not postid.is_usable(request['post_id']) or writeback.has_control_chars(request['reason']): error('invalid_request')
+    cls=adapters.adapter_class(cfg['media'])
+    if not getattr(cls,'DELETE_PERMISSION',None): error('unsupported_operation')
+    record=retract_cli._find_record(cfg,account,request['post_id'])
+    if not record or record.get('front_matter',{}).get('retracted_at'): error('scope_unavailable')
+    if record['source']=='queue':
+        owned=[item for item in _rows(cfg,account) if str(_queue(cfg)[1]/item[0])==record['path']]
+        if len(owned)!=1 or not owned[0][3]: error('draft_not_verified')
+    if cfg.get('production') is not True: error('production_disabled')
+    token=accounts.load_token(cfg)
+    if not cls.has_token(token) or cls.missing_permissions(token,[cls.DELETE_PERMISSION]): error('permission_unavailable')
+    origin=_origin(context,via);check=_guarded(context,account,'retract',origin)
+    check(cfg)
+    def before(locked_cfg):
+        if current(context,account,write=True)!=locked_cfg: error('credential_changed')
+        check(locked_cfg)
+        return accounts.load_token(locked_cfg)
+    outcome={}
+    retract_cli._do_retract(SimpleNamespace(account=account,wait=0,json=False,result_sink=outcome.update),
+            cfg,cls,token,record,request['post_id'],reason=request['reason'],by=context.actor,url=record.get('url'),
+            before_execute=before,lock_context=server_files.account_locks(account,cfg),origin=origin)
+    if outcome.get('retracted') is not True: error('deletion_failed')
+    return {'account':account,'status':'retracted','post_id':request['post_id'],'retracted_at':outcome.get('retracted_at'),
+            'push_pending':bool(outcome.get('push_error')),'via':via}
+
+
+def _publish_time(value):
+    try: return queuefile.parse_publish_at(value)
+    except (ValueError,TypeError): return None
+
+
+def schedule(context, request, via):
+    """下書きを queue に「出してよい」として刻む（timer が `publish_at` 以降に拾う）。
+
+    刻む front matter は承認の job（`approval_jobs._perform`）と同じ `approval.approved_fields`。
+    `approved_by` は資格の actor、足すのは `approved_via`（mcp・cli・http）と `approved_credential`。
+    """
+    _schema(request,('draft_id',),('draft_id',))
+    account=request['account'];cfg=current(context,account,write=True)
+    if cfg.get('production') is not True: error('production_disabled')
+    origin=_origin(context,via)
+    _refuse_if_stopped(account)
+    with server_files.account_locks(account,cfg):
+        locked=current(context,account,write=True)
+        _sync(locked)
+        name,raw,q=_draft(locked,account,request['draft_id'])
+        if q.front_matter.get('status')!='draft' or q.front_matter.get('post_id'): error('draft_not_editable')
+        from .cli import _prepare_one
+        path=_queue(locked)[1]/name
+        value,problem=_prepare_one(str(path))
+        if problem or not value or value.get('bundle'): error('invalid_draft')
+        publish_at=_publish_time(value.get('publish_at')) or jst.now_jst()
+        day=jst.to_jst(publish_at).date()
+        same_day=0
+        for _name,_raw,other,_verified in _rows(locked,account):
+            fm=other.front_matter;when=_publish_time(fm.get('publish_at'))
+            if fm.get('status')=='approved' and not fm.get('post_id') and when is not None and jst.to_jst(when).date()==day:
+                same_day+=1
+        _guarded(context,account,'schedule',origin,publish_at=publish_at,scheduled_same_day=same_day)(locked)
+        fields=approval.approved_fields(value,context.actor,jst.iso())
+        fields['approved_via']=via
+        if origin['credential']: fields['approved_credential']=origin['credential']
+        updated=writeback.front_matter_text(raw.decode(),fields)
+        with server_files.directory(_queue(locked)[1]) as fd:
+            server_files.replace_at(fd,name,updated.encode(),expected=raw)
+        def unchanged():
+            with server_files.directory(_queue(locked)[1]) as fd:
+                return server_files.read_at(fd,name)==updated.encode()
+        ok,_=writeback.commit_and_push(locked['repo_dir'],rel_path=os.path.relpath(path,locked['repo_dir']),
+                                      message=f'schedule by={context.actor} via={via}',validate=unchanged)
+        if not ok: error('schedule_commit_unconfirmed')
+    return {'account':account,'draft_id':request['draft_id'],'status':'approved','publish_at':value.get('publish_at'),'via':via}
+
+
+def held_send(context, request, via, minutes):
+    """`hold_minutes` が 1 以上の口座の「今すぐ」: その分だけ先の予約にする（その間は持ち主が取り消せる）。"""
+    import datetime as _dt
+    _schema(request,('body','topic','reply_to'),('body',))
+    publish_at=jst.iso(jst.now_jst()+_dt.timedelta(minutes=minutes))
+    put={'operation':'draft_put','account':request['account'],'body':request['body'],'publish_at':publish_at}
+    for key in ('topic','reply_to'):
+        if request.get(key): put[key]=request[key]
+    made=draft_put(context,put,via)
+    done=schedule(context,{'operation':'schedule_request','account':request['account'],'draft_id':made['draft_id']},via)
+    return {**done,'status':'held','hold_minutes':minutes}
+
+
+def direct(context, request, via, cfg):
+    op=request['operation']
+    if op in ('approval_request','schedule_request'):
+        return schedule(context,{**request,'operation':'schedule_request'},via)
+    if op=='retract_request':
+        return direct_retract(context,request,via)
+    minutes=accounts.guard_limits(cfg)['hold_minutes']
+    return held_send(context,request,via,minutes) if minutes else direct_send(context,request,via)
+
+
 def execute(context, request, *, via='http', by=None, listed=True):
     if type(request) is not dict or request.get('operation') not in WRITE_OPERATIONS: error('unsupported_operation')
     if not isinstance(request.get('account'),str): error('invalid_scope')
     try:
-        current(context,request['account'],write=True)
+        cfg=current(context,request['account'],write=True)
         if request['operation'] in ('media_upload_url','media_complete'):
             from . import media_uploads
             return media_uploads.execute(context,request,via)
-        return draft_put(context,request,via) if request['operation']=='draft_put' else request_approval(context,request,via,by,listed)
+        if request['operation']=='draft_put':
+            return draft_put(context,request,via)
+        # 止まった口座（安全装置）は、承認の道でも公開・削除・予約を受けない。
+        _refuse_if_stopped(request['account'])
+        if route(cfg,request['operation'])=='direct':
+            return direct(context,request,via,cfg)
+        if request['operation']=='schedule_request':
+            request={**request,'operation':'approval_request'}
+        return request_approval(context,request,via,by,listed)
     except ReportServiceError: raise
     except (OSError,ValueError,TypeError,KeyError,accounts.AccountError,approval_relay.RelayError,admin_log.AdminLogError) as exc:
         if str(exc) in REPO_REASONS: error(str(exc))

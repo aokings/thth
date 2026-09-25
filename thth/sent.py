@@ -42,7 +42,7 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
           approved_fingerprint: str | None = None, reply_to: str | None = None, media: list | None = None,
           attachment_kinds: list | None = None, resolved_from: dict | None = None,
           goal: str | None = None, goal_change: dict | None = None,
-          link_urls: list | None = None) -> str:
+          link_urls: list | None = None, origin: dict | None = None) -> str:
     """送った本文そのものを動かせない記録として保存する。返り値は書いたパス。
 
     `approved_fingerprint`（外部レビュー再々レビュー P1・1）は公開直前に固定した
@@ -109,6 +109,10 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
                 or any(type(x) is not str or not x or len(x) > 2048 for x in link_urls)):
             raise ValueError('invalid_link_urls')
         data['link_urls'] = list(link_urls)
+    if origin is not None:
+        # **誰の依頼で直接出したか**（設計 3.12.0 §3.2）。`via`（mcp・cli・http）と
+        # 資格の id（credential_digest の先頭 12 文字）。承認ページを通らない公開だけに付く。
+        data.update(_origin_fields(origin, prefix=""))
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
         f.write("\n")
@@ -116,11 +120,28 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
     return p
 
 
+ORIGIN_VIAS = ("mcp", "cli", "http")
+
+
+def _origin_fields(origin, *, prefix: str) -> dict:
+    import re
+    if (type(origin) is not dict or set(origin) - {"via", "credential"}
+            or origin.get("via") not in ORIGIN_VIAS
+            or origin.get("credential") is not None
+            and (not isinstance(origin["credential"], str)
+                 or not re.fullmatch(r"[0-9a-f]{12}", origin["credential"]))):
+        raise ValueError("invalid_origin")
+    out = {prefix + "via": origin["via"]}
+    if origin.get("credential"):
+        out[prefix + "credential"] = origin["credential"]
+    return out
+
+
 RETRACT_KEYS = ("retracted_at", "retracted_by", "retract_reason")
 
 
 def mark_retracted(state_dir: str, post_id: str, *, retracted_at: str,
-                   retracted_by: str, retract_reason: str) -> str:
+                   retracted_by: str, retract_reason: str, origin: dict | None = None) -> str:
     """取り下げの 3 項目を `sent/<post_id>.json` に**足す**（設計 v2 §4.3・v2.1-B）。
 
     **消さない**——送った本文・hash・時刻はそのまま残り、`retracted_at` 等が
@@ -134,6 +155,8 @@ def mark_retracted(state_dir: str, post_id: str, *, retracted_at: str,
     data["retracted_at"] = retracted_at
     data["retracted_by"] = retracted_by
     data["retract_reason"] = retract_reason
+    if origin is not None:
+        data.update(_origin_fields(origin, prefix="retracted_"))
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)

@@ -1082,7 +1082,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
                production_flag: bool = False,
                confirm: str | None = None, adapter_factory=None, log=None,
                now=None, wait=0, before_execute=None, lock_context=None, media_rows=None,
-               goal: str | None = None) -> ThrowResult:
+               goal: str | None = None, origin: dict | None = None) -> ThrowResult:
     """`thth send`（**同席の様態**・設計 §3.7）。queue を通さずその場で 1 本出す。
 
     対話の中で masaru が本文を読んで「出して」と言ったときの経路。承認は既に
@@ -1128,7 +1128,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
             production_flag=production_flag, confirm=confirm,
             adapter_factory=adapter_factory, log=log, now=now, wait=wait,
             before_execute=before_execute, lock_context=lock_context, media_rows=media_rows,
-            goal=goal,
+            goal=goal, origin=origin,
         )
     except lock_mod.LockBusy:
         msg = f"{account_name} は既に実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます"
@@ -1139,7 +1139,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
 def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, reply_to,
                   reply_to_root=None, reply_to_author_key=None, found_by=None,
                   production_flag, confirm, adapter_factory, log, now, wait=0, before_execute=None, lock_context=None, media_rows=None,
-                  goal=None) -> ThrowResult:
+                  goal=None, origin=None) -> ThrowResult:
     locks = ((lock_context or _account_locks(account_name, account_cfg, state_dir, wait=wait))
              if production_flag else contextlib.nullcontext())
     with locks:
@@ -1371,7 +1371,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                             attachment_kinds=media_mod.attachment_kinds(manifest),
                             goal=goal_value,
                             **_link_urls_kwargs(manifest),
-                            **({"media":result.media} if result.media else {}))
+                            **({"media":result.media} if result.media else {}),
+                            **({"origin": origin} if origin is not None else {}))
         except (OSError,ValueError):
             if not manifest:raise
             return ThrowResult(exit_code=1,mode=mode,action="inflight",message="公開後の記録を確定できません。再送せず inflight を保持します",post_id=result.post_id,error="media_record_unconfirmed")
@@ -1392,7 +1393,10 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                     status="ok", error=None,
                     engagement_write_failed=engagement_write_failed,
                     engagement_author_lookup_failed=engagement_author_lookup_failed,
-                    extra={**_remote_extra(result), "goal": goal_value})
+                    extra={**_remote_extra(result), "goal": goal_value,
+                           # 直接の公開（設計 3.12.0 §3.2）: 誰の依頼か（via と資格の id）。
+                           **({"via": origin.get("via"), "credential": origin.get("credential")}
+                              if origin is not None else {})})
         log(f"投稿しました: post_id={result.post_id}")
         # **出たものを見に行ける形で言う**（運用の報告 2026-09-13: 出したあと、
         # 実物を確かめるのに `post_id` から URL を組み立て直していた）。URL を

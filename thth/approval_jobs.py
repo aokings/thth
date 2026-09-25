@@ -273,6 +273,9 @@ def _perform(fd, job, context):
         if person!={'active':True,'locked':False,'generation':job['receipt']['generation']}:
             raise ReportServiceError('approver_changed')
         if int(time.time()*1000)>=job['expires_at']: raise ReportServiceError('approval_timeout')
+        # 安全装置で止まった口座（設計 3.12.0 §3.3）は、承認済みでも出さない・消さない。
+        from . import guard
+        if guard.stopped(job['account']) is not None: raise ReportServiceError('account_stopped')
         # Durable before any approved write / publish / DELETE. Any later error,
         # including fsync or provider uncertainty, may have acted and is unknown.
         with admin_log.transaction():

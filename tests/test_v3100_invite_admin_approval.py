@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +25,11 @@ from tests.test_v3100_invite_credential import credentials, run_flow  # noqa: F4
 def sessions(world, credentials, monkeypatch):
     path, _ = credentials
     record, _ = run_flow(world, path)
+    # 3.12.0 より前に用意した招待の口座（台帳に approval が無い）は all として承認 job の道を通る。
+    ledger = Path(accounts.accounts_dir()) / f"{record['account']}.json"
+    data = json.loads(ledger.read_text())
+    assert data.pop("approval") == "none"
+    ledger.write_text(json.dumps(data))
     created = []
     invite_worker = approval_relay.signed_request
 
