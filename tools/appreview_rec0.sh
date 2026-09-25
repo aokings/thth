@@ -174,7 +174,7 @@ if [ -n "$RESUME" ]; then
 else
 wait_return '  [Return で招待を作る（URL はこの画面にだけ 1 回出ます・まだ録画しません）] '
 printf '\n'
-ssh -tt "$VM" "PATH=\$HOME/.local/bin:\$PATH; export THTH_ROOT=/srv/thth; thth admin invite create --media threads --project $(printf '%q' "$PROJECT") --label rec-0 --expires 1d --production --by $(printf '%q' "$BY")" || exit 2
+ssh -tt "$VM" "PATH=\$HOME/.local/bin:\$PATH; export THTH_ROOT=/srv/thth; thth admin invite create --media threads --project $(printf '%q' "$PROJECT") --label rec-0 --expires 1d --production --approval all --by $(printf '%q' "$BY")" || exit 2
 ACCOUNT="$(vm admin invite list --json 2>/dev/null | python3 -c '
 import json, sys
 rows = [r for r in json.load(sys.stdin)["invites"] if r.get("label") == "rec-0" and r.get("status") in ("open", "registering", "unknown")]
