@@ -44,7 +44,9 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    # 招待リンク（設計 3.10.0 §2）。subject は `invite-<id>`・presence-only——code は入れない。
                    'invite_created', 'invite_used', 'invite_revoked',
                    # 招待で用意した口座だけの資格情報（3.10.0・裁定）。bearer も hash も入れない。
-                   'credential_added', 'credential_removed'))
+                   'credential_added', 'credential_removed',
+                   # 安全装置（設計 3.12.0 §3.3）。急な連投で止めた・持ち主が戻した。理由の語だけ。
+                   'guard_stopped', 'guard_resumed'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 

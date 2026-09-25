@@ -339,6 +339,12 @@ class ReportHandler(BaseHTTPRequestHandler):
                 # The refusal carries its static reason; never the lint text or a path.
                 if getattr(error, "reason", None) in DRAFT_REASONS:
                     detail = {"reason": error.reason}
+                # 安全装置の断り（設計 3.12.0 §3.3）: 止まった理由と次に出せる時刻。
+                from .server_writes import GUARD_DETAILS
+                if getattr(error, "reason", None) in GUARD_DETAILS:
+                    detail = {"reason": error.reason}
+                if isinstance(getattr(error, "next_at", None), str):
+                    detail["next_at"] = error.next_at
             return self._reply(400 if reason in public else 503,
                                {"error": reason if reason in public else fallback, **detail})
         except Exception:

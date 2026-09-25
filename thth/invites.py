@@ -571,6 +571,9 @@ def _ledger(record, *, handle="", user_id=""):
     data.update(handle=handle, user_id=user_id, env=f"$THTH_ROOT/secrets/{name}.env",
                 token=f"$THTH_ROOT/secrets/{name}.token", production=record["production"],
                 scheduled=False, invite_id=record["invite_id"],
+                # 設計 3.12.0 §3.1: 新しく用意する口座は既定の none を明記する（項目の無い
+                # 既存の招待の口座は all として扱うので、ここで書かないと all になる）。
+                approval=accounts.APPROVAL_DEFAULT,
                 provenance=admin_log.provenance(record["by"], via="invite"))
     return data
 
@@ -1002,6 +1005,13 @@ def cmd_admin_approval_request(args):
                                      reason=args.reason, by=args.by, listed=not args.no_list)
     except (InviteError, ReportServiceError, ValueError, OSError) as exc:
         return _admin_fail(exc)
+    if "job_id" not in row:
+        # 口座の approval が承認を求めない（設計 3.12.0 §3.1）: その場で出した・消した・刻んだ。
+        shown = {key: row[key] for key in ("status", "post_id", "permalink", "draft_id", "publish_at", "retracted_at")
+                 if row.get(key)}
+        print(f"done_without_approval: account={row['account']} "
+              + " ".join(f"{key}={value}" for key, value in shown.items()))
+        return 0
     # 承認 URL はこの口の出力（運営者が本人に渡す）。押すには本人の承認 secret が要る。
     # 一覧に出したもの（既定）は、本人が https://thth.me/pending から自分で開ける（URL を届けなくてよい）。
     print(f"approval_requested: account={row['account']} kind={row['kind']} job_id={row['job_id']}")

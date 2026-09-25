@@ -276,7 +276,7 @@ def _cmd_retract(args) -> int:
 
 
 def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
-                reason, by, url, before_execute=None, lock_context=None) -> int:
+                reason, by, url, before_execute=None, lock_context=None, origin=None) -> int:
     """**DELETE を 1 回**。成功したら記録に 3 項目を足す（消さない）。"""
     account_name = args.account
     # 公開の経路と同じロック（repo → account）。取り下げの最中に同じ clone を
@@ -316,6 +316,9 @@ def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
             retracted_at = jst.iso()
             fields = {"retracted_at": retracted_at, "retracted_by": by,
                       "retract_reason": reason}
+            if origin is not None:
+                # 直接の削除（設計 3.12.0 §3.2）: 誰の依頼か（via と資格の id）。
+                fields.update(sent_mod._origin_fields(origin, prefix="retracted_"))
             wrote = []
             push_err = None
             if record["source"] == "queue":
@@ -329,7 +332,7 @@ def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
             # `sent/` の記録があれば、こちらにも同じ 3 項目を足す（消さない）。
             if sent_mod.read(state_dir, post_id) is not None:
                 sent_mod.mark_retracted(state_dir, post_id, retracted_at=retracted_at,
-                                        retracted_by=by, retract_reason=reason)
+                                        retracted_by=by, retract_reason=reason, origin=origin)
                 wrote.append(sent_mod.path_for(state_dir, post_id))
     except lock_mod.LockBusy:
         return _fail(args, 1, f"{account_name} は既に実行中です（ロック取得失敗）。"

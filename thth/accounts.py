@@ -86,6 +86,77 @@ def watch_words(account_cfg: dict) -> list:
     return [word.strip() for word in value] if isinstance(value, list) else []
 
 
+# **承認を選ぶ**（設計 3.12.0 §3.1）。台帳の任意項目 `approval`——
+#   none    : 承認ページを使わない（LLM の依頼がそのまま公開・削除・予約になる）
+#   publish : 公開（今すぐ・予約）だけ承認ページを通す。削除はそのまま
+#   all     : 公開も削除も承認ページを通す（3.11 と同じ動き）
+# 既定は `none`。ただし**招待で用意した既存の口座**（`provenance.created_via ==
+# "invite"`）で項目が無いものは `all` として扱う——勝手に緩めない（§3.1・§8）。
+APPROVAL_VALUES = ("none", "publish", "all")
+APPROVAL_DEFAULT = "none"
+
+# **安全装置の数値**（設計 3.12.0 §3.3）。口座ごと・持ち主が値を決める（上げる方向も）。
+# 運営者は上限を押し付けないが、既定値は置く。
+GUARD_DEFAULTS = {
+    "daily_max_posts": 8,      # JST の 1 日の公開の上限
+    "daily_max_retracts": 5,   # JST の 1 日の削除の上限
+    "burst": {"count": 3, "minutes": 10},  # 公開と削除の合計がこれを超えたら口座を止める
+    "hold_minutes": 0,         # 今すぐの公開を待たせる分（0 は待たない）
+}
+GUARD_INT_MAX = {"daily_max_posts": 1000, "daily_max_retracts": 1000, "hold_minutes": 1440}
+BURST_COUNT_MAX = 1000
+BURST_MINUTES_MAX = 1440
+
+
+def _plain_int(value) -> bool:
+    return type(value) is int
+
+
+def valid_approval(value) -> bool:
+    return isinstance(value, str) and value in APPROVAL_VALUES
+
+
+def valid_guard_value(key: str, value) -> bool:
+    """安全装置の 1 項目として受け取れる形か（loader と設定の口が同じものを見る）。"""
+    if key == "burst":
+        return (type(value) is dict and set(value) == {"count", "minutes"}
+                and _plain_int(value["count"]) and 1 <= value["count"] <= BURST_COUNT_MAX
+                and _plain_int(value["minutes"]) and 1 <= value["minutes"] <= BURST_MINUTES_MAX)
+    if key == "hold_minutes":
+        return _plain_int(value) and 0 <= value <= GUARD_INT_MAX[key]
+    if key in ("daily_max_posts", "daily_max_retracts"):
+        return _plain_int(value) and 0 <= value <= GUARD_INT_MAX[key]
+    return False
+
+
+def is_invite_account(account_cfg: dict) -> bool:
+    provenance = (account_cfg or {}).get("provenance")
+    return isinstance(provenance, dict) and provenance.get("created_via") == "invite"
+
+
+def approval_mode(account_cfg: dict) -> str:
+    """その口座の `approval`（無ければ既定。招待の既存の口座は `all`）。"""
+    value = (account_cfg or {}).get("approval")
+    if value is None:
+        return "all" if is_invite_account(account_cfg) else APPROVAL_DEFAULT
+    if not valid_approval(value):
+        # loader が断っているので通常ここへは来ない。来たら**締める側**に倒す。
+        return "all"
+    return value
+
+
+def guard_limits(account_cfg: dict) -> dict:
+    """安全装置の数値（台帳に無い項目は既定）。`min_interval_hours` と `quiet_hours` は既存の項目。"""
+    cfg = account_cfg or {}
+    out = {}
+    for key, default in GUARD_DEFAULTS.items():
+        value = cfg.get(key)
+        if value is None or not valid_guard_value(key, value):
+            value = default
+        out[key] = dict(value) if isinstance(value, dict) else value
+    return out
+
+
 class AccountError(Exception):
     """台帳が無い・壊れている・必須項目が足りない。"""
 
@@ -409,6 +480,16 @@ def load_account(name: str) -> dict:
         raise AccountError(
             f"{name}: 台帳の profile_links が受け取れません（invalid_profile_links・"
             f"http(s) の URL を最大 {PROFILE_LINKS_MAX} つ）")
+    # 承認の選び方と安全装置（設計 3.12.0）。知らない値は黙って既定に倒さず断る。
+    if "approval" in data and not valid_approval(data["approval"]):
+        raise AccountError(
+            f"{name}: 台帳の approval が受け取れません（invalid_approval・"
+            f"{'・'.join(APPROVAL_VALUES)} のどれか）")
+    for key in GUARD_DEFAULTS:
+        if key in data and not valid_guard_value(key, data[key]):
+            raise AccountError(
+                f"{name}: 台帳の {key} が受け取れません（invalid_guard_limits・"
+                f"0 以上の整数。burst は {{\"count\": 1〜, \"minutes\": 1〜1440}}）")
     out = AccountConfig(data)
     out._thth_account_name=name
     for key in ("repo_dir", "env", "token"):

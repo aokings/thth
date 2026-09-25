@@ -641,7 +641,23 @@ SERVER_TOOLS = [
         ('approval_request',('draft_id',),('draft_id',)),
         ('send_request',('body','topic','reply_to'),('body',)),
         ('retract_request',('post_id','reason'),('post_id','reason')),
+        ('schedule_request',('draft_id',),('draft_id',)),
         ('draft_list',(),()),('queue',(),()),('request_status',('job_id',),('job_id',))) ]
+
+# 公開・削除・予約の 4 本は、口座の `approval`（設計 3.12.0 §3.1）で動きが変わることを言う。
+_PUBLISHING_DESCRIPTIONS = {
+    'thth_send_request': "今すぐ公開する。口座の approval が none ならその場で出して post_id・permalink を返す"
+                         "（hold_minutes があればその分先の予約になる）。publish・all なら承認ページの job を作る",
+    'thth_retract_request': "公開済みの投稿を削除する。approval が none・publish ならその場で消す。all なら承認ページの job を作る",
+    'thth_schedule_request': "下書きを予約として queue に刻む（publish_at 以降に timer が出す）。approval が none ならその場で刻む。"
+                             "publish・all なら承認ページの job を作る",
+    'thth_approval_request': "下書きの承認を依頼する。approval が none の口座では thth_schedule_request と同じくその場で予約に刻む",
+}
+for _tool in SERVER_TOOLS:
+    if _tool["name"] in _PUBLISHING_DESCRIPTIONS:
+        _tool["description"] = (_PUBLISHING_DESCRIPTIONS[_tool["name"]] +
+                                "。安全装置（最短間隔・1 日の上限・急な連投で停止）に掛かれば理由と次に出せる時刻で断る")
+del _tool
 
 # 添付の 2 本だけは型が文字列でないので、表に足さず個別に書く（日本語 1 行）。
 SERVER_TOOLS += [
@@ -906,6 +922,16 @@ def server_call(name, arguments):
             result=execute_report(context,request)
         return {'content':[{'type':'text','text':json.dumps(result,ensure_ascii=False,allow_nan=False)}]}
     except ReportServiceError as exc:
+        from thth.server_writes import GUARD_DETAILS
+        from thth.guard import REFUSALS as GUARD_REFUSALS
+        if str(exc) in GUARD_REFUSALS or (str(exc)=='account_stopped' and getattr(exc,'reason',None) in GUARD_DETAILS):
+            # 安全装置の断り（設計 3.12.0 §3.3）: 静的な理由に次の一手を添える。
+            text=str(exc)
+            if str(exc)=='account_stopped':
+                text+=': '+exc.reason+': 持ち主が戻すまで公開・削除・予約はできません'
+            elif isinstance(getattr(exc,'next_at',None),str):
+                text+=': next_at='+exc.next_at
+            return failure(text)
         if str(exc)=='invalid_draft':
             # 理由は静的な符丁の表にあるものだけ。lint の自由文は通さない。
             detail=getattr(exc,'reason',None)

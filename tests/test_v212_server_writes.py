@@ -25,7 +25,9 @@ def env(tmp_path,monkeypatch):
     for name in ('alpha','beta'):
         token=root/'secrets'/(name+'.json');token.write_text(json.dumps({'access_token':secrets.token_urlsafe(32),'scopes':['threads_basic','threads_content_publish','threads_delete']}));token.chmod(0o600)
         cfg={key:None for key in accounts.REQUIRED_FIELDS}
-        cfg.update(account=name,project=name,media='threads',handle='demo',repo_dir=str(root/'repos/_server'/name),queue_dir='queue',replies_dir='replies',token=str(token),production=True,hashtags=True,char_limit=500)
+        cfg.update(account=name,project=name,media='threads',handle='demo',repo_dir=str(root/'repos/_server'/name),queue_dir='queue',replies_dir='replies',token=str(token),production=True,hashtags=True,char_limit=500,
+                   # 承認 job の道を確かめる試験（設計 3.12.0 で既定は none になった）。
+                   approval='all')
         (root/'accounts'/(name+'.json')).write_text(json.dumps(cfg))
     bearer=secrets.token_urlsafe(32);config=tmp_path/'credentials.json'
     value=dict(schema_version=1,root=str(root),credentials=[dict(sha256=hashlib.sha256(bearer.encode()).hexdigest(),expires_at=(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat(),revoked=False,accounts={'alpha':'alpha'},writes=True,actor='person')])

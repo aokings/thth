@@ -72,7 +72,9 @@ OPTIONAL_FIELDS = ["topic", "mismatch_fields", "trigger",
 # `remote_state`: 公開の結果が分からなかったあとに媒体へ訊いた答え（静的な語）。
 # `inflight_resolution`: inflight をどう解いたか（道具が訊いて／人が決めて）。
 # `goal`（設計 3.6.0 §A）: 公開の時点の投稿の目的（`thth/goals.py` の語）。
-SPARSE_FIELDS = ["remote_state", "inflight_resolution", "goal"]
+SPARSE_FIELDS = ["remote_state", "inflight_resolution", "goal",
+                 # 直接の公開（設計 3.12.0 §3.2）: `via`（mcp・cli・http）と資格の id（先頭 12 文字）。
+                 "via", "credential"]
 # **値があるときだけ出す dict の項目**（設計 3.6.0 §A1）。`goal_change`: 承認の時点の
 # 目的と公開の時点の目的が違った（`{"from", "to"}`）。目的は承認の指紋に入らないので
 # 公開は止めず、ここと sent に残す。形が合わなければ書かない。
