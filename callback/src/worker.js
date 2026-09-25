@@ -7,6 +7,7 @@ export {AuthRelay} from './relay-object.js';
 export {ApprovalPerson,ApprovalSession,ApprovalAccount} from './approval-object.js';
 export {InviteObject} from './invite-object.js';
 import {inviteRequest} from './invite.js';
+import {activityRequest} from './activity.js';
 export default {fetch(request,env){
   const url=new URL(request.url);
   // 3.12.0 §6-2: /activity/ は末尾の / を落として 308（/pending/ は pendingRequest が同じことをする）。
@@ -15,5 +16,6 @@ export default {fetch(request,env){
   if(url.pathname.startsWith('/approve/')||url.pathname.startsWith('/approval/'))return approvalRequest(request,env,url);
   if(url.pathname.startsWith('/invite/'))return inviteRequest(request,env,url);
   if(url.pathname==='/pending'||url.pathname.startsWith('/pending/'))return pendingRequest(request,env,url);
+  if(url.pathname==='/activity'||url.pathname.startsWith('/activity/'))return activityRequest(request,env,url);
   return base.fetch(request,env);
 }};

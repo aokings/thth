@@ -33,8 +33,11 @@ REPO_REASONS = frozenset(('managed_git_store_unsafe_mode',))
 # 承認なしの道と安全装置（設計 3.12.0 §3.2・§3.3）。静的な名前だけ。
 from .guard import REFUSALS as GUARD_REFUSALS, STOP_REASONS as GUARD_STOP_REASONS
 DIRECT_REASONS = frozenset(('account_busy','publication_failed','publication_unconfirmed','deletion_failed',
-                            'permission_unavailable','schedule_commit_unconfirmed'))
-SAFE_ERRORS = SAFE_ERRORS | MEDIA_REASONS | REPO_REASONS | GUARD_REFUSALS | DIRECT_REASONS
+                            'permission_unavailable','schedule_commit_unconfirmed',
+                            # `scheduled: false` の口座（timer に載っていない）で予約・猶予を求めた（段 3・裁定 (b)）。
+                            'schedule_unavailable'))
+from .account_settings import REASONS as SETTINGS_REASONS
+SAFE_ERRORS = SAFE_ERRORS | MEDIA_REASONS | REPO_REASONS | GUARD_REFUSALS | DIRECT_REASONS | SETTINGS_REASONS
 # 断りに添えてよい詳細（止まった理由）。
 GUARD_DETAILS = GUARD_STOP_REASONS | frozenset(('guard_state_unreadable',))
 
@@ -269,6 +272,11 @@ def _origin(context, via):
     return {'via':via,'credential':guard.credential_id(context)}
 
 
+def _require_scheduled(cfg):
+    """timer に載っていない口座（`scheduled: false`）では予約も猶予も「刻んでも出ない」。黙らず断る。"""
+    if cfg.get('scheduled',True) is False: error('schedule_unavailable')
+
+
 def _guarded(context, account, kind, origin, **extra):
     from . import guard
     def check(cfg):
@@ -290,10 +298,11 @@ def direct_send(context, request, via):
         if request.get(key) is not None and not isinstance(request[key],str): error('invalid_request')
     account=request['account'];cfg=current(context,account,write=True)
     if cfg.get('production') is not True: error('production_disabled')
-    origin=_origin(context,via);check=_guarded(context,account,'publish',origin)
-    check(cfg)
     from . import postid
     reply=postid.for_account(cfg,request.get('reply_to'));topic=request.get('topic')
+    # 返信には最短間隔を掛けない（裁定 (a)）。上限と burst には数える。
+    origin=_origin(context,via);check=_guarded(context,account,'publish',origin,reply=bool(reply))
+    check(cfg)
     dry=core.send_once(account,text=request['body'],topic=topic,reply_to=reply,log=lambda _:None)
     if dry.exit_code or not dry.digest: error('invalid_draft')
     def before(locked_cfg):
@@ -359,7 +368,7 @@ def _publish_time(value):
     except (ValueError,TypeError): return None
 
 
-def schedule(context, request, via):
+def schedule(context, request, via, extra_fields=None):
     """下書きを queue に「出してよい」として刻む（timer が `publish_at` 以降に拾う）。
 
     刻む front matter は承認の job（`approval_jobs._perform`）と同じ `approval.approved_fields`。
@@ -368,6 +377,7 @@ def schedule(context, request, via):
     _schema(request,('draft_id',),('draft_id',))
     account=request['account'];cfg=current(context,account,write=True)
     if cfg.get('production') is not True: error('production_disabled')
+    _require_scheduled(cfg)
     origin=_origin(context,via)
     _refuse_if_stopped(account)
     with server_files.account_locks(account,cfg):
@@ -390,6 +400,7 @@ def schedule(context, request, via):
         fields=approval.approved_fields(value,context.actor,jst.iso())
         fields['approved_via']=via
         if origin['credential']: fields['approved_credential']=origin['credential']
+        fields.update(extra_fields or {})
         updated=writeback.front_matter_text(raw.decode(),fields)
         with server_files.directory(_queue(locked)[1]) as fd:
             server_files.replace_at(fd,name,updated.encode(),expected=raw)
@@ -406,12 +417,15 @@ def held_send(context, request, via, minutes):
     """`hold_minutes` が 1 以上の口座の「今すぐ」: その分だけ先の予約にする（その間は持ち主が取り消せる）。"""
     import datetime as _dt
     _schema(request,('body','topic','reply_to'),('body',))
+    _require_scheduled(current(context,request['account'],write=True))
     publish_at=jst.iso(jst.now_jst()+_dt.timedelta(minutes=minutes))
     put={'operation':'draft_put','account':request['account'],'body':request['body'],'publish_at':publish_at}
     for key in ('topic','reply_to'):
         if request.get(key): put[key]=request[key]
     made=draft_put(context,put,via)
-    done=schedule(context,{'operation':'schedule_request','account':request['account'],'draft_id':made['draft_id']},via)
+    # `held_minutes` は /activity が「猶予中」と「予約」を見分ける印（出す時刻には効かない）。
+    done=schedule(context,{'operation':'schedule_request','account':request['account'],'draft_id':made['draft_id']},via,
+                  extra_fields={'held_minutes':str(minutes)})
     return {**done,'status':'held','hold_minutes':minutes}
 
 
@@ -423,6 +437,37 @@ def direct(context, request, via, cfg):
         return direct_retract(context,request,via)
     minutes=accounts.guard_limits(cfg)['hold_minutes']
     return held_send(context,request,via,minutes) if minutes else direct_send(context,request,via)
+
+
+def cancel_schedule(account, draft_id, *, by, via='http'):
+    """予約（猶予中を含む）を取り消して draft に戻す（持ち主の /activity から・段 3）。
+
+    `thth revoke` と同じ書き戻し（status: draft・承認の 3 項目を空・revoked_* を残す）。本文には
+    触らない。既に出たもの（post_id あり）・承認済みでないものは断る。何度呼んでも同じ結果。
+    戻り値は `cancelled`（取り消した）か `already_draft`（既に draft）。
+    """
+    admin_log.actor(by)
+    cfg=accounts.load_account(account)
+    with server_files.account_locks(account,cfg):
+        cfg=accounts.load_account(account)
+        _sync(cfg)
+        name,raw,q=_draft(cfg,account,draft_id)
+        fm=q.front_matter
+        if fm.get('post_id'): error('draft_not_editable')
+        if fm.get('status')=='draft': return 'already_draft'
+        if fm.get('status')!='approved': error('draft_not_editable')
+        path=_queue(cfg)[1]/name
+        updated=writeback.front_matter_text(raw.decode(),{'status':'draft','approved_sha':None,'approved_at':None,
+            'approved_by':None,'revoked_at':jst.iso(),'revoked_by':by,'revoked_reason':'owner_cancel_via_'+via})
+        with server_files.directory(_queue(cfg)[1]) as fd:
+            server_files.replace_at(fd,name,updated.encode(),expected=raw)
+        def unchanged():
+            with server_files.directory(_queue(cfg)[1]) as fd:
+                return server_files.read_at(fd,name)==updated.encode()
+        ok,_=writeback.commit_and_push(cfg['repo_dir'],rel_path=os.path.relpath(path,cfg['repo_dir']),
+                                      message=f'cancel by={by} via={via}',validate=unchanged)
+        if not ok: error('schedule_commit_unconfirmed')
+    return 'cancelled'
 
 
 def execute(context, request, *, via='http', by=None, listed=True):
@@ -437,6 +482,8 @@ def execute(context, request, *, via='http', by=None, listed=True):
             return draft_put(context,request,via)
         # 止まった口座（安全装置）は、承認の道でも公開・削除・予約を受けない。
         _refuse_if_stopped(request['account'])
+        # timer に載っていない口座では予約を刻んでも出ない（裁定 (b)）。承認の道でも断る。
+        if request['operation']=='schedule_request': _require_scheduled(cfg)
         if route(cfg,request['operation'])=='direct':
             return direct(context,request,via,cfg)
         if request['operation']=='schedule_request':

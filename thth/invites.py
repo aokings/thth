@@ -63,6 +63,7 @@ REASONS = frozenset((
     "invite_not_open", "invite_tty_required", "invite_registration_rejected",
     "invite_registration_unknown", "invite_revoke_unknown",
     "invite_remote_created_audit_unconfirmed", "invite_remote_created_delivery_failed",
+    "invalid_approval",
 ))
 # 断るときは理由と次の一手（静的な文だけ・値は混ぜない）。
 NEXT = {
@@ -71,6 +72,7 @@ NEXT = {
     "invalid_project": f"--project は英数字と - _ . だけ・{PROJECT_MAX} 字までです",
     "invalid_label": f"--label は 1 行・{LABEL_MAX} 字までです（控えのメモ・Worker には送りません）",
     "invalid_expires": f"--expires は 1d〜{MAX_DAYS}d の日数です（例: 30d）",
+    "invalid_approval": "--approval は none・publish・all のどれかです（審査員向けは all）",
     "invite_project_in_owner_group": "その project は持ち主の組に入っています。招待は外の人のためなので、"
                                      "組の外の project で作ってください（thth admin plaza owner list）",
     "invite_account_exists": "招待の口座名が既にあります。もう一度 create してください",
@@ -112,6 +114,9 @@ def _valid(record):
     if jst.parse(record.get("at")) is None or not isinstance(record.get("by"), str):
         return False
     if type(record.get("expires_at")) is not int or type(record.get("production")) is not bool:
+        return False
+    # 3.12.0 段 3: 招待で作る口座の approval（項目の無い古い招待は none を書く）。
+    if "approval" in record and not accounts.valid_approval(record["approval"]):
         return False
     label = record.get("label")
     return label is None or isinstance(label, str) and len(label) <= LABEL_MAX
@@ -173,12 +178,21 @@ def public(record):
     """一覧に出す形（code_hash も出さない）。"""
     keys = ("invite_id", "status", "media", "project", "account", "label", "production",
             "expires_at", "at", "by", "reason", "approver_set")
-    return {key: record.get(key) for key in keys}
+    row = {key: record.get(key) for key in keys}
+    row["approval"] = record.get("approval") or accounts.APPROVAL_DEFAULT
+    return row
 
 
-def create(*, media, project, label=None, expires=None, production=False, by):
-    """招待を 1 本作り、URL を tty に 1 回だけ出す。戻り値に code は入れない。"""
+def create(*, media, project, label=None, expires=None, production=False, by, approval=None):
+    """招待を 1 本作り、URL を tty に 1 回だけ出す。戻り値に code は入れない。
+
+    `approval`（3.12.0 段 3）はその招待で作る口座の台帳に書く値（既定 none）。審査員のように
+    自分の LLM を持たない人の招待は all にし、運営者が下書きを置いて本人が承認ページで押す。
+    """
     admin_log.actor(by)
+    approval = accounts.APPROVAL_DEFAULT if approval is None else approval
+    if not accounts.valid_approval(approval):
+        raise error("invalid_approval")
     if media not in MEDIA:
         raise error("invite_media_unsupported")
     check_project(project)
@@ -207,7 +221,7 @@ def create(*, media, project, label=None, expires=None, production=False, by):
         expires_at = now_ms() + days * 86_400_000
         record = dict(schema_version=1, invite_id=invite_id, at=jst.iso(), by=admin_log.clean(by),
                       code_hash=code_hash, media=media, project=project, label=label,
-                      production=production, expires_at=expires_at, status="registering",
+                      production=production, approval=approval, expires_at=expires_at, status="registering",
                       account=account, reason=None, approver_set=False, updated_at=jst.iso())
         # 先に手元へ「作ろうとしている」を残す（Worker に届いたか分からなくても
         # revoke で後始末できるように）。
@@ -239,6 +253,7 @@ def create(*, media, project, label=None, expires=None, production=False, by):
             with admin_log.transaction():
                 admin_log.append("invite_created", subject(invite_id), {"media": media}, by=by,
                                  diff={"invite": ["absent", "present"], "production": [None, production],
+                                       "approval": [None, approval],
                                        "expires_days": [None, days]})
         except private_store.LOG_ERRORS:
             raise error("invite_remote_created_audit_unconfirmed") from None
@@ -573,7 +588,7 @@ def _ledger(record, *, handle="", user_id=""):
                 scheduled=False, invite_id=record["invite_id"],
                 # 設計 3.12.0 §3.1: 新しく用意する口座は既定の none を明記する（項目の無い
                 # 既存の招待の口座は all として扱うので、ここで書かないと all になる）。
-                approval=accounts.APPROVAL_DEFAULT,
+                approval=record.get("approval") or accounts.APPROVAL_DEFAULT,
                 provenance=admin_log.provenance(record["by"], via="invite"))
     return data
 
@@ -1078,7 +1093,7 @@ def _fail(reason):
 def cmd_create(args):
     try:
         row = create(media=args.media, project=args.project, label=args.label, expires=args.expires,
-                     production=bool(args.production), by=args.by)
+                     production=bool(args.production), by=args.by, approval=getattr(args, "approval", None))
     except InviteError as exc:
         return _fail(str(exc))
     except ValueError as exc:
@@ -1089,7 +1104,8 @@ def cmd_create(args):
     except (OSError, admin_log.AdminLogError):
         return _fail("invite_log_unavailable")
     print(f"invite_created: id={row['invite_id']} account={row['account']} media={row['media']} "
-          f"production={str(row['production']).lower()} expires_at={_when(row['expires_at'])}")
+          f"production={str(row['production']).lower()} approval={row['approval']} "
+          f"expires_at={_when(row['expires_at'])}")
     return 0
 
 
@@ -1128,6 +1144,7 @@ def cmd_list(args):
     for row in rows:
         print(f"{row['invite_id']}  {row['status']:<11} {row['media']}  {row['account']}  "
               f"期限 {_when(row['expires_at'])}  production={str(row['production']).lower()}"
+              f"  approval={row['approval']}"
               + (f"  {row['label']}" if row.get("label") else ""))
     if broken:
         print(f"読めない招待の記録: {broken} 件", file=sys.stderr)
@@ -1143,6 +1160,8 @@ def register_admin(commands):
     p.add_argument("--label", default=None, help="控えのメモ（1 行・Worker には送らない）")
     p.add_argument("--expires", default=f"{DEFAULT_DAYS}d", help=f"1d〜{MAX_DAYS}d（既定 {DEFAULT_DAYS}d）")
     p.add_argument("--production", action="store_true", help="作る口座を production: true に（審査員向け）")
+    p.add_argument("--approval", default="none", choices=accounts.APPROVAL_VALUES,
+                   help="作る口座の approval（既定 none。自分の LLM を持たない審査員向けは all）")
     p.add_argument("--by", required=True)
     p.set_defaults(func=cmd_create)
     p = operations.add_parser("revoke", help="招待を取り消す")

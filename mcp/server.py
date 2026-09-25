@@ -656,7 +656,8 @@ _PUBLISHING_DESCRIPTIONS = {
 for _tool in SERVER_TOOLS:
     if _tool["name"] in _PUBLISHING_DESCRIPTIONS:
         _tool["description"] = (_PUBLISHING_DESCRIPTIONS[_tool["name"]] +
-                                "。安全装置（最短間隔・1 日の上限・急な連投で停止）に掛かれば理由と次に出せる時刻で断る")
+                                "。安全装置（最短間隔〔返信には掛けない〕・1 日の上限・急な連投で停止）に掛かれば理由と次に出せる時刻で断る。"
+                                "予約の timer に載っていない口座（scheduled: false）では予約と猶予を schedule_unavailable で断る")
 del _tool
 
 # 添付の 2 本だけは型が文字列でないので、表に足さず個別に書く（日本語 1 行）。
@@ -670,6 +671,21 @@ SERVER_TOOLS += [
      "description":"置き終えた添付を確定する（サーバが読み戻して sha256 を照合し、位置情報などを落としてから repo に置く。公開 sha を返す）",
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"media_id":{"type":"string"}},
                     "required":["account","media_id"],"additionalProperties":False}},
+]
+# 設定と状態（設計 3.12.0 段 3）。変えられるのは approval と安全装置の数値だけで、LLM からは
+# **締める向きだけ**（緩めるのは持ち主の https://thth.me/activity か運営者の CLI）。
+# 止まった口座を戻す道具は**置かない**——暴走して止まった LLM が自分で戻せないように。
+SERVER_TOOLS += [
+    {"name":"thth_settings",
+     "description":"口座の設定を読む（key を省く）か、1 項目を締める向きにだけ変える。key は approval（none→publish→all）・"
+                   "daily_max_posts・daily_max_retracts・burst_count（下げる）・burst_minutes・hold_minutes・min_interval_hours（上げる）。"
+                   "緩める変更は settings_loosen_requires_owner で断る（持ち主が https://thth.me/activity で変える）",
+     "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"key":{"type":"string"},"value":{"type":"string"}},
+                    "required":["account"],"additionalProperties":False}},
+    {"name":"thth_account_status",
+     "description":"口座の approval・安全装置の数値・止まっているか（理由）・今日の公開数と削除数を読む（読むだけ）",
+     "inputSchema":{"type":"object","properties":{"account":{"type":"string"}},
+                    "required":["account"],"additionalProperties":False}},
 ]
 # `media` だけは配列（`[{media_id, alt}]`・alt は必須）。
 for _tool in SERVER_TOOLS:
@@ -895,6 +911,9 @@ def server_call(name, arguments):
         if operation in ('admin_budget_set','admin_watch_set'):
             from thth.report_service import execute_admin_write
             result=execute_admin_write(context,request)
+        elif operation in ('settings','account_status'):
+            from thth import account_settings
+            result=(account_settings.mcp_settings if operation=='settings' else account_settings.mcp_status)(context,request)
         elif operation in WRITE_OPERATIONS:
             result=execute(context,request,via='mcp')
         elif operation.startswith('admin_reports_'):
@@ -920,7 +939,10 @@ def server_call(name, arguments):
             result=execute_mcp_report(context,request)
         else:
             result=execute_report(context,request)
-        return {'content':[{'type':'text','text':json.dumps(result,ensure_ascii=False,allow_nan=False)}]}
+        content=[{'type':'text','text':json.dumps(result,ensure_ascii=False,allow_nan=False)}]
+        note=_stopped_note(context,arguments)
+        if note: content.append({'type':'text','text':note})
+        return {'content':content}
     except ReportServiceError as exc:
         from thth.server_writes import GUARD_DETAILS
         from thth.guard import REFUSALS as GUARD_REFUSALS
@@ -952,6 +974,25 @@ def server_call(name, arguments):
         return failure(str(exc) if str(exc) in SAFE_ERRORS or str(exc) in REPORT_REASONS or str(exc) in ('budget_change_durability_unconfirmed','budget_change_partially_recorded','budget_change_refused','watch_change_refused') else 'request_unavailable')
     except Exception:
         return failure('request_unavailable')
+
+
+def _stopped_note(context, arguments):
+    """止まった口座（安全装置）なら、成功した答えにも理由を 1 行添える（設計 3.12.0 §3.4・裁定 (c)）。
+
+    断りの答え（`account_stopped: burst: …`）と同じ形。戻すのは持ち主（/activity か運営者の CLI）。
+    """
+    try:
+        account = arguments.get('account') if isinstance(arguments, dict) else None
+        if not isinstance(account, str) or account not in (context.allowed_accounts or {}):
+            return None
+        from thth import guard
+        halted = guard.stopped(account)
+        if halted is None:
+            return None
+        return ('account_stopped: ' + str(halted.get('reason')) + ': 持ち主が戻すまで公開・削除・予約はできません'
+                '（持ち主が https://thth.me/activity で戻す）')
+    except Exception:
+        return None
 
 
 def _remember_refusal(context, name, arguments, value):
