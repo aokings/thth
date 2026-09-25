@@ -2,6 +2,8 @@
 # App Review の録画 0「審査員の流れ」（2026-09-25）。台本は docs/手順_Meta申請_世間の層_2026-09-24.md §5 の録画 0。
 #
 #   bash tools/appreview_rec0.sh [project]      # 既定 jiangshi-lab
+#   REC_RESUME=<前回の保存先> REC_ACCOUNT=<口座> bash tools/appreview_rec0.sh
+#       … 区間 1（招待→認可）と secret を済ませた続きの区間 2 から撮る
 #
 # 招待リンク → Threads の認可 → 下書きと承認の依頼 → 承認ページで承認 → アプリに投稿
 # → 削除の依頼 → 承認 → アプリから消える、を 1 本に撮る。人の手（ブラウザとスマホ）は
@@ -24,7 +26,8 @@ BY="${REC_BY:-masaru}"
 VM="${REC_VM:-wt}"
 FFMPEG="${FFMPEG_BIN:-/opt/homebrew/bin/ffmpeg}"
 FFPROBE="${FFPROBE_BIN:-/opt/homebrew/bin/ffprobe}"
-OUT="${REC_OUT:-$HOME/Movies/thth-appreview-rec0-$(date +%Y%m%d-%H%M%S)}"
+RESUME="${REC_RESUME:-}"
+OUT="${RESUME:-${REC_OUT:-$HOME/Movies/thth-appreview-rec0-$(date +%Y%m%d-%H%M%S)}}"
 TOP=25; RW=2560; RH=1080          # 録る範囲（point）: x 0〜2560・y 25〜1105
 CHROME_W=1200; TERM_X=1600        # Chrome 0〜1200・iPhone ミラーリング 1200〜1600・Terminal 1600〜2560
 BODY='THTH test post: approved on a thth.me approval page before publishing. / 承認してから出す投稿の試しです。'
@@ -34,7 +37,7 @@ mkdir -p "$OUT" || exit 2
 vm() {                           # VM の thth を打つ（引数は 1 つずつ quote して渡す）
   local q=''
   for a in "$@"; do q="$q $(printf '%q' "$a")"; done
-  ssh "$VM" "PATH=\$HOME/.local/bin:\$PATH; thth$q"
+  ssh "$VM" "PATH=\$HOME/.local/bin:\$PATH; export THTH_ROOT=/srv/thth; thth$q"
 }
 
 mask() {                         # 承認 URL を伏せる（一覧の URL は伏せない）
@@ -161,9 +164,17 @@ tell application id "com.apple.Terminal"
 end tell
 APPLE
 
+if [ -n "$RESUME" ]; then
+  ACCOUNT="${REC_ACCOUNT:?REC_ACCOUNT に口座名を}"
+  # 区間 1 だけ残して続きから（失敗した区間 2 以降は捨てる）
+  head -1 "$OUT/segments.txt" > "$OUT/segments.keep" && mv "$OUT/segments.keep" "$OUT/segments.txt"
+  SEG=1
+  printf '\n続きから撮ります（口座 %s・区間 1 は %s）。\n' "$ACCOUNT" "$(head -1 "$OUT/segments.txt")"
+  printf 'Chrome の左の窓は "Your account is ready" の画面のままにしておいてください。\n'
+else
 wait_return '  [Return で招待を作る（URL はこの画面にだけ 1 回出ます・まだ録画しません）] '
 printf '\n'
-ssh -tt "$VM" "PATH=\$HOME/.local/bin:\$PATH; thth admin invite create --media threads --project $(printf '%q' "$PROJECT") --label rec-0 --expires 1d --production --by $(printf '%q' "$BY")" || exit 2
+ssh -tt "$VM" "PATH=\$HOME/.local/bin:\$PATH; export THTH_ROOT=/srv/thth; thth admin invite create --media threads --project $(printf '%q' "$PROJECT") --label rec-0 --expires 1d --production --by $(printf '%q' "$BY")" || exit 2
 ACCOUNT="$(vm admin invite list --json 2>/dev/null | python3 -c '
 import json, sys
 rows = [r for r in json.load(sys.stdin)["invites"] if r.get("label") == "rec-0" and r.get("status") in ("open", "registering", "unknown")]
@@ -206,6 +217,8 @@ cat <<EOF
 控えたら、ブラウザの secret のページを閉じるか、"Your account is ready" の画面に戻してください。
 EOF
 wait_return '  [控えて secret が画面から消えたら Return で録画を再開] '
+
+fi
 
 # ---------------------------------------------------------------- 区間 2: 下書き → 承認 ----
 rec_start || exit 2
