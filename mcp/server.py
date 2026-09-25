@@ -327,6 +327,9 @@ TOOLS = [
                 "target": {"type": "string", "description": "project 名か account 名"},
                 "mark": {"type": "boolean",
                           "description": "栞（前回読んだ時点）を進める（既定 true）"},
+                "no_world": {"type": "boolean",
+                              "description": "第 3 段（世間・監視語の検索）を呼ばない"
+                                             "（cannot_say: world_skipped・既定 false・3.11.1）"},
             },
             "required": ["target"],
         },
@@ -344,6 +347,9 @@ TOOLS = [
                 "target": {"type": "string", "description": "project 名か account 名"},
                 "mark": {"type": "boolean",
                           "description": "栞（前回読んだ時点）を進める（既定 true）"},
+                "no_world": {"type": "boolean",
+                              "description": "第 3 段（世間・監視語の検索）を呼ばない"
+                                             "（cannot_say: world_skipped・既定 false・3.11.1）"},
             },
             "required": ["target"],
         },
@@ -1126,10 +1132,13 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         text = proc.stdout
     elif name in ("thth_morning", "thth_observe"):
         # **`where_to_appear` と同じ型**: CLI（`thth morning`）を `--json` で
-        # 呼ぶだけ（設計 3.1.0 §1・§5）。栞を進めないときだけ旗を足す。
+        # 呼ぶだけ（設計 3.1.0 §1・§5）。栞を進めないとき・第 3 段を呼ばない
+        # とき（3.11.1）だけ旗を足す。
         args = [name[len("thth_"):], arguments["target"]]
         if arguments.get("mark") is False:
             args.append("--no-mark")
+        if arguments.get("no_world"):
+            args.append("--no-world")
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout

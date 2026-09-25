@@ -6,6 +6,12 @@
 `invoked_as`。第 2 段は「前回の観測から」（栞の時刻から今まで・栞が無い・7 日より
 古いときは前日 JST）。
 
+3.11.1（media-hub 向け・回答 `docs/回答_media-hub_observeを毎朝読む件_2026-09-25.md`
+の 5）: `--no-world` は第 3 段（世間・監視語の検索）を呼ばず `cannot_say:
+"world_skipped"` にする（API を叩くのは言及などだけになる・`calls` に検索が出ない・
+`where` の実行記録も書かない）。`--counts-only` は出力から他人の情報と本文を落とし、
+数と状態だけを返す（`_apply_counts_only()`）。
+
 芯（設計 3.1.0 §0）: **「昨日から何があって、今日なにをすればよいか」を、道具が
 事実だけで 1 枚にする。** 空欄を推測で埋めない。本文は作らない——作るのは人と
 LLM の会話の側で、ここは材料を並べて終わる。
@@ -13,7 +19,7 @@ LLM の会話の側で、ここは材料を並べて終わる。
 規律（同 §2・§7）:
 
   (a) **段ごとに `try` で囲む。** 1 段が落ちても他の 5 段は出る。落ちた段は
-      `{"value": null, "cannot_say": "<静的な符丁>"}`（`REASONS` の 6 語だけ）。
+      `{"value": null, "cannot_say": "<静的な符丁>"}`（`REASONS` の 7 語だけ）。
       provider の文面・traceback は**この口から外へ出さない**。
   (b) **読むだけ。** SNS 台帳に 1 バイトも書かない（2.10 §1.4）。進むのは栞
       （`handoff_cursor`）だけで、それも `mark=False` なら進めない。
@@ -36,9 +42,10 @@ from . import adapters as adapters_mod
 from . import jst
 from . import threads_read_cli as threads_read_cli_mod
 
-# 段が言える「取れなかった」理由（**この 6 語だけ**・設計 3.1.0 §2）。
+# 段が言える「取れなかった」理由（**この 7 語だけ**・設計 3.1.0 §2）。`world_skipped`
+# は失敗ではなく `--no-world`（3.11.1）による意図した見送り。
 REASONS = ("provider_timeout", "budget_exhausted", "scope_missing",
-           "no_watch_words", "not_supported", "unavailable")
+           "no_watch_words", "not_supported", "unavailable", "world_skipped")
 
 # 本文の見せ方は `where` と同じ（先頭 60 字・保存しない）。
 PREVIEW_CHARS = threads_read_cli_mod.TEXT_PREVIEW_CHARS
@@ -867,13 +874,19 @@ def next_steps(unanswered_entries, world_entries, today_entries, reports=None,
 
 # ------------------------------------------------------------------ 組み立て
 
-def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observe"):
+def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observe",
+          no_world=False, counts_only=False):
     """観測の 1 枚（設計 3.1.0 §2 の 6 段・3.3.0 §F）。**読むだけ・栞だけ進める。**
 
     `invoked_as` は呼んだ名前（`observe` か別名の `morning`）。中身は同じ。
 
     `allowed_names` はサーバ型の credential が許した account（招待された側の
     MCP）。**渡されたら、その外の account は 1 本も読まない。**
+
+    `no_world`（3.11.1）は第 3 段（世間）を呼ばない——`_world()` を 1 回も
+    呼ばず `cannot_say: "world_skipped"` にする（API は言及などだけになる）。
+    `counts_only`（3.11.1）は仕上がった 6 段から他人の情報と本文を落とし、
+    数と状態だけにする（`_apply_counts_only()`）。
     """
     from . import handoff_cursor, operations_handoff
     now = now if now is not None else jst.now_jst()
@@ -938,10 +951,14 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
         yesterday_entries[name] = _guard(lambda name=name, cfg=cfg: {
             "medium": cfg.get("media"), **_yesterday_posts(name, now, read_ats[name])})
 
-    # 第 3 段: 世間。
+    # 第 3 段: 世間。`--no-world`（3.11.1）なら `_world()` を 1 回も呼ばない
+    # ——API を叩くのは言及などだけになる（`calls` に検索が出ない・実行記録も書かない）。
     world_entries = {}
     for name in names:
         cfg = configs[name]
+        if no_world:
+            world_entries[name] = cell(cannot_say="world_skipped")
+            continue
         if refusals[name]:
             world_entries[name] = cell(cannot_say=refusals[name])
             continue
@@ -1427,13 +1444,17 @@ def register(sub) -> None:
         parser.add_argument("--json", action="store_true")
         parser.add_argument("--no-mark", action="store_true", dest="no_mark",
                             help="栞（handoff cursor）を進めない")
+        parser.add_argument("--no-world", action="store_true", dest="no_world",
+                            help="第 3 段（世間・監視語の検索）を呼ばない"
+                                 "（cannot_say: world_skipped・3.11.1）")
         parser.set_defaults(func=cmd_morning, invoked_as=name)
 
 
 def cmd_morning(args) -> int:
     try:
         payload = build(args.target, mark=not getattr(args, "no_mark", False),
-                        invoked_as=getattr(args, "invoked_as", "morning"))
+                        invoked_as=getattr(args, "invoked_as", "morning"),
+                        no_world=getattr(args, "no_world", False))
     except MorningError as exc:
         reason = str(exc)
         print(reason, file=sys.stderr)
