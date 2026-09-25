@@ -25,6 +25,8 @@ VM="${REC_VM:-wt}"
 FFMPEG="${FFMPEG_BIN:-/opt/homebrew/bin/ffmpeg}"
 FFPROBE="${FFPROBE_BIN:-/opt/homebrew/bin/ffprobe}"
 OUT="${REC_OUT:-$HOME/Movies/thth-appreview-rec0-$(date +%Y%m%d-%H%M%S)}"
+TOP=25; RW=2560; RH=1080          # 録る範囲（point）: x 0〜2560・y 25〜1105
+CHROME_W=1200; TERM_X=1600        # Chrome 0〜1200・iPhone ミラーリング 1200〜1600・Terminal 1600〜2560
 BODY='THTH test post: approved on a thth.me approval page before publishing. / 承認してから出す投稿の試しです。'
 mkdir -p "$OUT" || exit 2
 
@@ -61,10 +63,11 @@ screen_device() {
     | sed -E 's/.*\[([0-9]+)\] Capture screen.*/\1/'
 }
 
-ffmpeg_run() {                   # 主画面全体を 1920 幅に縮めて撮る（Retina でも 1080 以上）
+ffmpeg_run() {                   # 左上の 2560×1080（point）を等倍で撮る。Retina なら REC_SCALE=2
   out="$1"; shift
+  s="${REC_SCALE:-1}"
   exec "$FFMPEG" -hide_banner -y -f avfoundation -framerate 30 -capture_cursor 1 \
-    -i "$SCREEN:none" -vf "scale=1920:-2" -c:v h264_videotoolbox -b:v 8M \
+    -i "$SCREEN:none" -vf "crop=$((RW * s)):$((RH * s)):0:$((TOP * s)),scale=$RW:$RH" -c:v h264_videotoolbox -b:v 8M \
     -pix_fmt yuv420p -an "$@" "$out"
 }
 
@@ -133,6 +136,9 @@ project: $PROJECT   保存先: $OUT
 録画の前に:
   - 通知を切り（集中モード）、関係ない窓を閉じる
   - スマホの Threads を Mac に映す（iPhone ミラーリング）。撮る口座（jiangshi_lab）を開いておく
+  - 録る範囲は画面の左上 2560×1080。Chrome は左（0〜1200）、Terminal は右（1600〜2560）に
+    このスクリプトが置く。iPhone ミラーリングの窓はその間（左端から 1200〜1600・上寄り）に置く
+  - それ以外の窓（ふだんの Chrome など）は、範囲の外（画面の右端 2560 より右）へ寄せるか隠す
   - ブラウザ（Google Chrome）で、撮る口座で Threads にログインしておく
 EOF
 
@@ -147,14 +153,11 @@ fi
 printf '%s\n' "$BODY" | ssh "$VM" 'mkdir -p ~/rec && cat > ~/rec/post0.txt' || exit 2
 printf 'worker active・本文を ~/rec/post0.txt に置いた\n'
 
-# Terminal を右、ブラウザを左に並べる（主画面の point で）
-DESK="$(/usr/bin/osascript -e 'tell application "Finder" to get bounds of window of desktop' 2>/dev/null | tr -d ' ')"
-IFS=, read -r _ _ DW DH <<<"${DESK:-0,0,1920,1080}"
-TW=$((DW * 40 / 100))
+# 録る範囲は画面の左上 2560×1080（menu bar の下から）。左から Chrome・iPhone ミラーリング・Terminal。
 /usr/bin/osascript >/dev/null 2>&1 <<APPLE || true
 tell application id "com.apple.Terminal"
   set font size of selected tab of front window to 16
-  set bounds of front window to {$((DW - TW)), 25, $DW, $DH}
+  set bounds of front window to {$TERM_X, $TOP, $RW, $((TOP + RH))}
 end tell
 APPLE
 
@@ -179,7 +182,7 @@ case "$INVITE_URL" in
   https://thth.me/invite/*) ;;
   *) printf 'クリップボードが招待 URL ではありません。やり直してください。\n'; exit 2 ;;
 esac
-open -na "Google Chrome" --args --app="$INVITE_URL" --window-position=0,25 --window-size=$((DW - TW)),$((DH - 25))
+open -na "Google Chrome" --args --app="$INVITE_URL" --window-position=0,$TOP --window-size=$CHROME_W,$RH
 INVITE_URL=''; printf '' | pbcopy
 clear_all
 wait_return '  [招待のページが左に出たら Return で録画を始める] '
