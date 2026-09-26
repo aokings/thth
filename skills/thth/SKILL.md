@@ -41,16 +41,16 @@ description: 投稿する前・返信を書く前・出したあと・絡みに�
   `null` であって `0` ではない。
 - **黙って間違えない。** 拒むときは理由と次の一手を言って非ゼロで終わる（loud reject）。
 
-## 招待されたサーバ MCP の書く口
+## 遠くの道（招待された口座・3.14.0）
 
-credential の user scope / writes がある場合だけ `thth_draft_put`、`thth_send_request`、
-`thth_schedule_request`、`thth_retract_request` を使える。account は本人の許可範囲だけ。
-actor/by/person/confirm/digest/ファイルパスを引数に加えない。本文は body、下書き更新は draft_id と expected_revision。
-`thth_send_request` はその場で出て post_id とリンクが返る。断りは符丁（`too_soon`・`daily_limit`・`retract_limit`・`quiet_hours`・`account_stopped`）で、添えられた時刻まで待つか本人に伝える。
-本人の口座の secret とアシスタントの鍵を聞かない・入力しない・会話へ貼らせない。止まった口座を戻す・安全装置を緩めるのは本人が https://thth.me/activity で行う（LLM からはできない）。
-出す前に本文を見たいと本人が言えば、`thth_draft_put` の結果を見せてから `thth_send_request` を呼ぶ。
-unknown は自動再依頼・再公開で解消せず、管理者が媒体と記録を照合する。
-詳しい管理設定と入力は `docs/運用_サーバ書込_2.12.md`。無 credential のローカル MCP とは別の入口。
+THTH は CLI ツール。あなた（エージェント）が使う MCP の道具は `thth` 命令の写しで、中身は `thth <命令> … --json` を呼ぶだけ。手元に口座の台帳が無く、本人が `thth login` を済ませていれば、同じ命令が thth.me 経由で本人の口座を動かす（**遠くの道**）。違いは「最初に本人が `thth login` をする」だけで、命令の名前・引数・`--json` の形は同じ。
+
+- 道具: `thth_send_request`（`thth send`・その場で出て post_id とリンクが返る）、`thth_schedule_request`（`thth schedule --at`）、`thth_retract_request`（`thth retract`）、`thth_posts`・`thth_replies`・`thth_measured`・`thth_collect`・`thth_mentions`・`thth_topics_search`・`thth_profile`・`thth_location_search`（読む）、`thth_account_status`・`thth_settings`（状態・安全装置は締める向きだけ）、`thth_draft_list`。account は本人の口座だけ。actor/by/person/confirm/digest/ファイルパスを引数に加えない。
+- **鍵と secret を聞かない・入力しない・会話へ貼らせない。** 鍵は `thth login` が手元に置き、`thth` 命令だけが使う。あなたは鍵を知らなくてよい。
+- 断りは 1 語の符丁＋次の一手: `too_soon`（`next_at` まで待つ・返信は掛からない）・`daily_limit`・`retract_limit`・`quiet_hours`・`account_stopped`（本人が https://thth.me/activity で戻す。あなたからは戻せない）・`key_expired`／`invalid_key`（本人が /activity で発行し直して `thth login`）・`remote_unsupported`（その命令は遠くの道に無い: `throw`・`run`・`auth`・添付など）・`remote_unavailable`（thth.me に届かない・少し待つ）・`remote_pending`（90 秒待っても返らない・`thth account status` で確かめる）。自動で再依頼・再公開しない。
+- 出す前に本文を見たいと本人が言えば、`thth send --dry-run`（lint だけ・下書きが 1 本残る）か本文をそのまま見せてから `thth_send_request` を呼ぶ。THTH の側に承認の関所は無い。
+- 添付（画像）は遠くの道ではまだ使えない（`remote_unsupported`）。
+- 運営者向けの管理設定は `docs/運用_招待する側.md`。無 credential の手元の MCP（自分の repo の queue）とは別の入口。
 
 ## 何を拒むか
 
