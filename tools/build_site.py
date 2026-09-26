@@ -271,7 +271,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-09-26"  # 3.13.0（承認ページを消す・動きの一覧と鍵）。前: 2026-09-25
+PRIVACY_EFFECTIVE = None  # 3.14.0（命令の道 /api/v1）の施行日は deploy のとき主セッションが入れる。前: 2026-09-26（3.13.0）
 
 
 def build_privacy() -> str:
@@ -399,6 +399,13 @@ def build_privacy() -> str:
         "only its SHA-256 hash, its scope (that account) and its expiry (365 days). Issuing a new key revokes "
         "the previous one. Every post, deletion and schedule made with a key is recorded with the key's "
         "identifier.</p>")
+    add("<p><strong>The command path (thth.me/api/v1).</strong> The <code>thth</code> command on the owner's own "
+        "computer, and an AI assistant that runs it, act on the account through <code>https://thth.me/api/v1</code> "
+        "with the assistant key. thth.me checks the key's hash and rate limits (60 requests per minute per key, 120 "
+        "per minute per address), holds the request for the operator's server, which fetches it and carries it out, "
+        "and returns the result. thth.me keeps a request for at most 120 seconds and its result for at most 10 "
+        "minutes, does not log request or result contents, and holds only the hash, account and expiry of each "
+        "key. The operator's server verifies the key again before acting.</p>")
 
     add("<h2>Authorization relay</h2>")
     add("<p>The relay uses a Cloudflare Worker and Durable Object. It temporarily holds a registered "
@@ -505,6 +512,7 @@ def build_privacy() -> str:
     add("<ul>")
     add("  <li>Authorization codes on the relay: at most 300 seconds after receipt.</li>")
     add("  <li>Activity summaries and requested actions on thth.me: at most one hour.</li>")
+    add("  <li>Command requests on thth.me/api/v1: at most 120 seconds; their results: at most 10 minutes.</li>")
     add("  <li>Sign-in to the activity page: 10 minutes.</li>")
     add("  <li>Attachment objects on R2: deleted 24 hours after creation.</li>")
     add("  <li>Data deletion requests on thth.me: 30 days.</li>")
@@ -531,7 +539,7 @@ def build_privacy() -> str:
         "the PBKDF2 iteration count to 100,000. Revision: adds the saved daily aggregates of the observation "
         "map (keyword search). Revision: adds the plaza and the support contact, and links to the Terms of "
         "Service. Revision: removes the approval pages; describes the safety limits, the owner's activity page and "
-        "the assistant key.</p>")
+        "the assistant key. Revision: adds the command path (thth.me/api/v1).</p>")
 
     # ---------------------------------------------------------------- 日本語
     add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
@@ -624,6 +632,11 @@ def build_privacy() -> str:
         "1 度だけ表示し、平文では保存しません。thth.me と運営者のサーバが持つのは SHA-256 のハッシュ、範囲（その"
         "アカウント）、期限（365 日）だけです。新しい鍵を発行すると前の鍵は使えなくなります。鍵で行った投稿・削除・"
         "予約には、鍵の識別子を記録します。</p>")
+    add("<p><strong>命令の道（thth.me/api/v1）。</strong>持ち主の機械の <code>thth</code> 命令と、それを打つ AI アシスタント"
+        "は、アシスタントの鍵を使って <code>https://thth.me/api/v1</code> からアカウントを動かします。thth.me は鍵のハッシュと"
+        "回数（鍵ごとに 1 分 60 回・接続元ごとに 1 分 120 回）を確かめ、依頼を運営者のサーバのために預かり、サーバが取りに来て"
+        "行い、結果を返します。thth.me が依頼を持つのは最長 120 秒、結果は最長 10 分で、依頼と結果の中身を記録せず、鍵については"
+        "ハッシュ・アカウント・期限だけを持ちます。運営者のサーバは行う前に鍵をもう一度確かめます。</p>")
 
     add("<h2>認可の預かり所</h2>")
     add("<p>認可の預かり所は Cloudflare Worker と Durable Object を使います。登録済みの認可コードを、受付から"
@@ -715,6 +728,7 @@ def build_privacy() -> str:
     add("<ul>")
     add("  <li>預かり所の認可コード: 受付から最大300秒。</li>")
     add("  <li>thth.me の動きの一覧の要約と頼んだ操作: 最大 1 時間。</li>")
+    add("  <li>thth.me/api/v1 の依頼: 最長 120 秒。その結果: 最長 10 分。</li>")
     add("  <li>動きの一覧に入った状態: 10 分。</li>")
     add("  <li>R2 の添付: 置いてから 24 時間で削除。</li>")
     add("  <li>thth.me のデータ削除の依頼: 30日。</li>")
@@ -736,7 +750,7 @@ def build_privacy() -> str:
         "運営者が動かすサービスの形、媒体ごとに使うデータ、返信と言及、キーワード検索、添付、報告、LLM のセッション、"
         "退出と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。改訂: 観測の地図の集計の保存（キーワード検索・世間の層）を追記しました。"
         "改訂: 広場とサポートの連絡先を書き、利用規約へのリンクを足しました。改訂: 承認ページを無くし、安全装置・"
-        "持ち主の動きの一覧・アシスタントの鍵を書きました。</p>")
+        "持ち主の動きの一覧・アシスタントの鍵を書きました。改訂: 命令の道（thth.me/api/v1）を足しました。</p>")
     add('<footer><a href="/">THTH</a> · <a href="/terms/">利用規約 / Terms of Service</a> · Free and open source · '
         "MIT License<br>© 2026 gotoq</footer>")
     add("</main></body></html>")
