@@ -109,7 +109,7 @@ def stop(account, reason, *, now=None, actor=None, via=None, credential=None) ->
         from . import admin_log
         admin_log.append("guard_stopped", account, accounts.load_account(account),
                          by=actor if isinstance(actor, str) and actor else "thth-guard",
-                         via=via if via in ("cli", "mcp", "http") else "cli",
+                         via=via if via in ("cli", "mcp", "http", "api") else "cli",
                          diff={"stopped": [False, True], "reason": [None, reason]})
     except Exception:
         # 変更ログに残せなくても止めることは止める（止めた印が正本）。

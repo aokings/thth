@@ -110,7 +110,7 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
             raise ValueError('invalid_link_urls')
         data['link_urls'] = list(link_urls)
     if origin is not None:
-        # **誰の依頼で直接出したか**（設計 3.12.0 §3.2）。`via`（mcp・cli・http）と
+        # **誰の依頼で直接出したか**（設計 3.12.0 §3.2）。`via`（mcp・cli・http・api＝遠くの道）と
         # 資格の id（credential_digest の先頭 12 文字）。承認ページを通らない公開だけに付く。
         data.update(_origin_fields(origin, prefix=""))
     with open(tmp, "w", encoding="utf-8") as f:
@@ -120,7 +120,7 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
     return p
 
 
-ORIGIN_VIAS = ("mcp", "cli", "http")
+ORIGIN_VIAS = ("mcp", "cli", "http", "api")
 
 
 def _origin_fields(origin, *, prefix: str) -> dict:

@@ -182,7 +182,8 @@ def signed_request(kind, subject, operation, body):
         def redirect_request(self, *args, **kwargs): return None
     try:
         with httpsafe.build_opener(NoRedirect()).open(request, timeout=10) as response:
-            limit=16384 if kind in ('deletion','activity') else 4096
+            # 3.14.0: 動きの一覧の sync の応答は /api/v1 の依頼（1 件 48 KB・16 件まで）を運ぶ。
+            limit=1048576 if kind=='activity' else 16384 if kind=='deletion' else 4096
             data = response.read(limit+1)
             if len(data)>limit or response.status not in (200,201): raise RelayError('relay_unavailable')
             value=json.loads(data)

@@ -418,6 +418,18 @@ def execute(context, request, *, via='http'):
         error('write_unavailable')
 
 
+def serve(context, request, *, via):
+    """遠くの道（設計 3.14.0 §3.1）の受け付け: operation で書く口か読む口へ渡す。名前の表はここ（呼び手は持たない）。
+
+    書く口は `execute`、読む口は `READ_OPERATIONS`（`read`）。知らない名前は `unsupported_operation`。
+    読む口を足すとき（§3.2）はここに足す。
+    """
+    operation=request.get('operation') if type(request) is dict else None
+    if operation in WRITE_OPERATIONS: return execute(context,request,via=via)
+    if operation in READ_OPERATIONS: return read(context,request)
+    error('unsupported_operation')
+
+
 def read(context, request):
     _schema(request,(),())
     cfg=current(context,request['account'])

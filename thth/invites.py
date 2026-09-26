@@ -342,9 +342,10 @@ def _active(record):
     if record["status"] in ("open", "authorizing"):
         return True
     # 使われた招待は、Worker への「用意ができた」と口座の secret の表示を見届けるまで。
+    # 3.14.0 §3.3: 完了ページで出したアシスタントの鍵の hash を受け取るまで（`key_synced`）。
     return (record["status"] == "used" and now_ms() < record["expires_at"]
             and not (record.get("remote_ready") and record.get("approver_set")
-                     and (record.get("credential_sha256") or not _credentials.get())))
+                     and (record.get("credential_sha256") and record.get("key_synced") or not _credentials.get())))
 
 
 def process(invite_id):
@@ -711,12 +712,37 @@ def _used(directory, record):
         return
     if remote.get("status") != "done":
         return
-    # 口座の secret は Worker の完了ページが本人に 1 回だけ見せた。VM に secret は無い。
-    # 記録に残すのは「secret が設定された」ことだけ（admin secret set と同じ event。
-    # event 名 `approver_set`・記録の欄 `approver_set` は過去の記録と揃えて変えない）。
-    admin_log.append("approver_set", record["account"], {"media": "threads"}, by=record["by"], via="http",
-                     diff={"credential_present": [None, True], "via_invite": [None, record["invite_id"]]})
-    _save(directory, record, approver_set=True)
+    if not record.get("approver_set"):
+        # 口座の secret は Worker の完了ページが本人に 1 回だけ見せた。VM に secret は無い。
+        # 記録に残すのは「secret が設定された」ことだけ（admin secret set と同じ event。
+        # event 名 `approver_set`・記録の欄 `approver_set` は過去の記録と揃えて変えない）。
+        admin_log.append("approver_set", record["account"], {"media": "threads"}, by=record["by"], via="http",
+                         diff={"credential_present": [None, True], "via_invite": [None, record["invite_id"]]})
+        _save(directory, record, approver_set=True)
+    _take_key(directory, record, remote.get("key_sha256"))
+
+
+def _take_key(directory, record, key_sha256):
+    """完了ページで出したアシスタントの鍵（設計 3.14.0 §3.3）の hash に、その口座だけの資格を差し替える。
+
+    bearer は Worker が完了ページを出すその要求の中で作り、本人に 1 度だけ見せた（/activity の発行し直しと
+    同じ作法）。VM が受け取るのは hash だけ。3.13.0 の Worker（hash を返さない）なら何もしない。
+    何度呼んでも同じ結果。
+    """
+    path = _credentials.get()
+    if not path or record.get("key_synced") or not record.get("credential_sha256"):
+        return
+    if not isinstance(key_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", key_sha256):
+        return _save(directory, record, key_synced=True)
+    try:
+        replaced = _replace_credential(Path(path).absolute(), record, key_sha256)
+    except Exception:
+        # 次の巡でもう一度（鍵は Worker の status に残っている）。
+        print("invite_key_unsynced: " + record["invite_id"], file=sys.stderr)
+        return
+    if replaced:
+        return _save(directory, record, credential_sha256=key_sha256, key_synced=True)
+    _save(directory, record, key_synced=True)
 
 
 # ------------------------------------------------------------ 口座だけの資格情報
@@ -826,6 +852,40 @@ def add_credential(credentials_path, record):
                              diff={"credential": ["absent", "present"], "writes": [None, True],
                                    "via_invite": [None, record["invite_id"]]})
     return digest
+
+
+def _replace_credential(path, record, key_sha256):
+    import datetime
+    import json
+    from . import report_http
+    name = record["account"]
+    with _locked_credentials(path):
+        before = _read_credentials(path)
+        report_http.load_credentials(path)
+        config = json.loads(before)
+        rows = [row for row in config["credentials"] if row.get("accounts") == {name: record["project"]}
+                and row.get("actor") == name]
+        if any(row.get("sha256") == key_sha256 for row in rows):
+            return True  # 前の巡で差し替え済み（招待の記録が追いつかなかった）
+        mine = [row for row in rows if row.get("sha256") == record["credential_sha256"]]
+        if not mine:
+            return False  # 退出で消えた・/activity で発行し直した: 触らない
+        if any(row.get("sha256") == key_sha256 for row in config["credentials"]):
+            raise ValueError("credential_conflict")
+        expires = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=CREDENTIAL_DAYS)
+        mine[0].update(sha256=key_sha256, revoked=False, expires_at=jst.iso(expires))
+        data = (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode()
+
+        def rollback():
+            _replace_credentials(path, before)
+
+        with admin_log.transaction(rollback=rollback):
+            _replace_credentials(path, data)
+            report_http.load_credentials(path)
+            admin_log.append("credential_rotated", name, {"media": "threads"}, by=record["by"], via="http",
+                             diff={"credential": ["present", "present"], "generation": ["previous", "new"],
+                                   "via_invite": [None, record["invite_id"]]})
+    return True
 
 
 def forget_credential(account, *, by):

@@ -122,7 +122,7 @@ def provenance(by, via='cli'):
 
 def append(event, account, cfg, *, by, via='cli', diff=None, run_id=None):
     actor(by)
-    if event not in EVENTS or not subject_is_safe(account) or via not in ('cli', 'mcp', 'http'):
+    if event not in EVENTS or not subject_is_safe(account) or via not in ('cli', 'mcp', 'http', 'api'):
         raise ValueError('invalid_admin_event')
     row = dict(at=jst.iso(), by=clean(by), via=via, host=socket.gethostname(), event=event,
                account=account, medium=cfg.get('media'), diff=diff or {}, run_id=run_id)

@@ -4,7 +4,8 @@
 無い。この常駐に残っているのは:
 
   - 招待の完了を拾う（`invites.run_once`）
-  - 持ち主ごとの要約を Worker へ押し上げ、/activity で頼まれた操作を行う（`activity.run_once`）
+  - 持ち主ごとの要約を Worker へ押し上げ、/activity で頼まれた操作を行う（`activity.run_once`）。
+    3.14.0: 同じ sync で鍵の表を押し上げ、thth.me/api/v1 の依頼を行う（`api_requests`・待ちがあれば 2 秒ごと）
   - ディスクの版が動いたら自分で終わる（`worker_version`・systemd が新しい版で起こし直す）
 
 3.13.0 で `approval_jobs`・`thth approval-worker`・`thth-approval-worker.service` から改名した。

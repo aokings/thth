@@ -69,4 +69,13 @@ test('VM pushes the summary through the real signer; the owner stops, tightens a
   assert.ok(html.includes('済み / Done')&&!html.includes(bearer));
   assert.equal((await post({act:'resume',account,secret},cookie)).status,200);
   assert.equal(vm('run').stopped,null);
+  // 3.14.0 遠くの道: VM が押し上げた鍵の表で Worker が照合し、依頼は次の sync で VM が行い、結果が保留中の応答に返る。
+  const call=(operation,key)=>fetch(origin+'/api/v1/'+operation,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+key},body:JSON.stringify({account})});
+  assert.equal((await call('draft_list',opaque())).status,401);
+  const listed=call('draft_list',bearer),posts=call('posts',bearer);
+  await new Promise(resolve=>setTimeout(resolve,500));
+  vm('run');
+  const [a,b]=await Promise.all([listed,posts]);
+  assert.equal(a.status,200);assert.deepEqual(await a.json(),{account,drafts:[]});
+  assert.equal(b.status,200);assert.deepEqual(await b.json(),{error:'unsupported_operation'});
 });
