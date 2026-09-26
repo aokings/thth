@@ -348,8 +348,9 @@ def test_利用規約は正本から生成され_英日の見出しがあり_外
     en, ja = page.split('id="ja"', 1)
     assert all(f"<h2>{h}</h2>" in en for h in TERMS_EN_HEADINGS)
     assert all(f"<h2>{h}</h2>" in ja for h in TERMS_JA_HEADINGS)
-    # 事実だけ（承認・退出・連絡先・MIT とサービスの区別・データは privacy へ）
-    for must in ("does not publish a post that has not been approved", "承認されていない投稿を公開しません",
+    # 事実だけ（頼んだときだけ動く・安全装置・退出・連絡先・MIT とサービスの区別・データは privacy へ）
+    for must in ("it does not post, reply or delete on its own", "自分から投稿・返信・削除をしません",
+                 "https://thth.me/activity",
                  "thth account leave", 'href="/privacy/"', "https://github.com/aokings/thth/issues",
                  "MIT License", "these terms cover the operator's service",
                  "free of charge and provided as is", "無償で、現状のまま提供します"):

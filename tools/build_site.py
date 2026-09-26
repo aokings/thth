@@ -271,7 +271,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-09-25"  # 承認待ちの一覧（24 時間）・認可の始まり方を追記（masaru「deploy して」2026-09-25）
+PRIVACY_EFFECTIVE = None  # 3.13.0（承認ページを消す・動きの一覧と鍵）の施行日は deploy のとき主セッションが入れる。前: 2026-09-25
 
 
 def build_privacy() -> str:
@@ -298,15 +298,16 @@ def build_privacy() -> str:
         '<a href="/terms/">Terms of Service</a></p>')
 
     add("<h2>Who runs THTH</h2>")
-    add("<p>THTH is open-source software for drafting, approving and publishing social media posts. "
-        "The operator, gotoq, runs it on an operator-managed server (a virtual machine) for invited users "
-        "and for the operator's own accounts. On that server THTH handles authorization, drafts, human "
-        "approval, publishing and records.</p>")
+    add("<p>THTH is an open-source command-line tool for publishing and managing posts on your own social "
+        "media accounts; people usually drive it through their own AI assistant. The operator, gotoq, runs it "
+        "on an operator-managed server (a virtual machine) for invited users and for the operator's own "
+        "accounts. On that server THTH handles authorization, drafts, publishing, safety limits and records.</p>")
     add("<p>Invited users do not run their own server or register their own Meta app. Authorization starts "
         "in one of two ways: an invited user opens the invitation link the operator sent and presses the button "
         "on that page, or the operator starts it from the server with <code>thth auth</code>. Either way, the "
-        "user reviews the account and permissions on the platform and approves, and later approves each post on "
-        "a thth.me approval page. People who install the THTH software and run it themselves operate their own "
+        "user reviews the account and permissions on the platform and approves. Afterwards, posts, replies and "
+        "deletions happen only when the user asks for them, through their own CLI or AI assistant; THTH does "
+        "nothing on its own. People who install the THTH software and run it themselves operate their own "
         "copy; this policy describes the operator's service.</p>")
 
     add("<h2>Platforms and the data THTH uses</h2>")
@@ -324,8 +325,8 @@ def build_privacy() -> str:
     add("<p><strong>Replies and mentions.</strong> Replies to the user's posts on Threads, Bluesky and Mastodon, "
         "and mentions of the user's Threads account, are saved to that account's records, including the other "
         "person's username, the text, the time and the link. THTH keeps them to manage the conversation: to "
-        "show which replies have been answered and to prepare the user's replies, which go through the same "
-        "human approval as posts. Mentions on Bluesky and Mastodon are shown on request and not saved.</p>")
+        "show which replies have been answered and to prepare the user's replies, which are sent the same way "
+        "as posts. Mentions on Bluesky and Mastodon are shown on request and not saved.</p>")
     add("<p><strong>Keyword search.</strong> Search (Threads <code>threads_keyword_search</code>, and search on "
         "Bluesky and Mastodon) runs on request: when the user's session asks for a search, or for the "
         "observation summary, which uses search terms the operator sets for the account. The only other search "
@@ -360,7 +361,7 @@ def build_privacy() -> str:
     add("<p><strong>Profiles and places.</strong> Public profile lookup (Threads "
         "<code>threads_profile_discovery</code>) shows another account's public profile fields on request; "
         "the result is not saved. Location search (<code>threads_location_tagging</code>) shows candidate "
-        "places; a place the user chooses is written in the draft and attached only to an approved post.</p>")
+        "places; a place the user chooses is written in the draft and attached only to that post.</p>")
     add("<p>To count how often the same person appears without keeping names in those records, some records "
         "use a one-way key derived from the platform and the username.</p>")
 
@@ -369,29 +370,35 @@ def build_privacy() -> str:
         "location data and other embedded metadata (XMP, IPTC, MakerNote, thumbnails, comments) without "
         "re-encoding. Video and audio are not altered; a file that carries location metadata, or metadata "
         "THTH cannot inspect, is refused. The checked file is stored in the account's records.</p>")
-    add("<p>Files uploaded by invited users, image previews on approval pages, and files handed to a platform "
-        "pass through Cloudflare R2 on thth.me. Each is reachable only through an unguessable, short-lived "
-        "capability URL: 10 minutes for uploads and for images handed to a platform, up to the approval page's lifetime for previews, "
-        "30 minutes for video handed to a platform, and one hour after publication is confirmed. The Worker "
-        "deletes each stored object 24 hours after it was created (image previews when they expire), retrying "
-        "up to 10 times; the storage bucket is also set to delete these objects after 24 hours.</p>")
+    add("<p>Files uploaded by invited users and files handed to a platform pass through Cloudflare R2 on "
+        "thth.me. Each is reachable only through an unguessable, short-lived capability URL: 10 minutes for "
+        "uploads and for images handed to a platform, 30 minutes for video handed to a platform, and one hour "
+        "after publication is confirmed. The Worker deletes each stored object 24 hours after it was created, "
+        "retrying up to 10 times; the storage bucket is also set to delete these objects after 24 hours.</p>")
 
-    add("<h2>Human approval pages</h2>")
-    add("<p>An approval page temporarily holds the exact proposed text and display context for a logical "
-        "session lifetime of at most 600 seconds, or at most 24 hours for an approval shown in the person's "
-        "list of pending approvals. Approval or expiry removes that text and display context "
-        "from the active record; minimal receipt bindings remain until expiry. A separate person record "
-        "holds a salted PBKDF2-SHA256 verifier with 100,000 iterations, generation and failure count, "
-        "not the approval secret itself. The secret is transmitted only when the person submits the form "
-        "and is not retained. The URL holder can read the proposed text but cannot approve without the "
-        "secret.</p>")
-    add("<p>The list of pending approvals (<code>https://thth.me/pending</code>) is opened with the person's "
-        "username and approval secret, checked in the same way. It shows only the approvals addressed to that "
-        "person, with the first 60 characters of each text, and each entry leads to its approval page; an "
-        "approval page opened from the list expires 10 minutes after it is opened. The list's person record "
-        "holds only the identifiers and expiry of those approvals, not their text. Signing in sets a cookie "
-        "limited to <code>/pending</code> that lasts 10 minutes. THTH does not record who views the list; "
-        "the Worker only applies a rate limit.</p>")
+    add("<h2>Safety limits and the owner's activity page</h2>")
+    add("<p>Every account has safety limits that its owner controls: a minimum interval between posts, daily "
+        "caps on posts and on deletions, quiet hours, an optional hold before an immediate post goes out, and an "
+        "automatic stop when too many posts and deletions happen within a few minutes. The server enforces them "
+        "from the account's own records and keeps a stop record (reason and time) on the operator's server. An "
+        "AI assistant can only tighten these limits.</p>")
+    add("<p>The owner's activity page (<code>https://thth.me/activity</code>) is opened with the account's "
+        "username and account secret. A person record on thth.me holds a salted PBKDF2-SHA256 verifier with "
+        "100,000 iterations, generation and failure count, not the secret itself; the secret is transmitted only "
+        "when the person submits a form and is not retained. Signing in sets a cookie limited to "
+        "<code>/activity</code> that lasts 10 minutes. The page shows a summary that the server pushes every 10 "
+        "seconds: what was published, deleted, scheduled or held (the first 60 characters of each text and the "
+        "time), whether the account is stopped and why, today's counts against the limits, and the identifier "
+        "and expiry of the assistant key. thth.me forgets the summary one hour after the last push. From the "
+        "page the owner can stop the account, resume it, cancel a scheduled post, change the safety limits, and "
+        "issue or revoke the assistant key; each of these actions is confirmed with the secret, carried out by "
+        "the server within seconds, and kept on thth.me for at most one hour. THTH does not record who views "
+        "the page; the Worker only applies a rate limit.</p>")
+    add("<p><strong>Assistant key.</strong> The key an owner gives to their own CLI or AI assistant is generated "
+        "on thth.me, shown once to the owner, and never stored in clear: thth.me and the operator's server keep "
+        "only its SHA-256 hash, its scope (that account) and its expiry (365 days). Issuing a new key revokes "
+        "the previous one. Every post, deletion and schedule made with a key is recorded with the key's "
+        "identifier.</p>")
 
     add("<h2>Authorization relay</h2>")
     add("<p>The relay uses a Cloudflare Worker and Durable Object. It temporarily holds a registered "
@@ -439,7 +446,7 @@ def build_privacy() -> str:
     add("  <li>Long-lived credentials (platform tokens, Bluesky App Passwords) in owner-only files, used to "
         "authenticate platform API requests.</li>")
     add("  <li>Account settings, including an optional email address for operational notices.</li>")
-    add("  <li>Drafts, approval records, the exact text of published posts, and post history.</li>")
+    add("  <li>Drafts, the exact text of published posts, post history, and stop records of the safety limits.</li>")
     add("  <li>The metrics, replies and mentions described above, and checked attachments.</li>")
     add("  <li>The observation map: its keywords, the links between keywords that a person drew, and, when "
         "turned on, its daily aggregate figures described above.</li>")
@@ -447,14 +454,14 @@ def build_privacy() -> str:
     add("  <li>Run logs (action, draft file, post ID, counts, status), reports, and a change log of "
         "administrative events.</li>")
     add("</ul>")
-    add("<p>It does not keep the text or authors of keyword search results, looked-up public profiles, or "
-        "the approval secret.</p>")
+    add("<p>It does not keep the text or authors of keyword search results, looked-up public profiles, the "
+        "account secret, or the assistant key in clear.</p>")
 
     add("<h2>Where data goes</h2>")
     add("<ul>")
     add("  <li>The platform API of each connected account.</li>")
-    add("  <li>thth.me on Cloudflare (Workers, Durable Objects, R2): the authorization relay, approval pages, "
-        "attachment transfer and data deletion requests.</li>")
+    add("  <li>thth.me on Cloudflare (Workers, Durable Objects, R2): the authorization relay, the owner's "
+        "activity page, attachment transfer and data deletion requests.</li>")
     add("  <li>Operational notices by email through the operator's mail server, when configured: account "
         "name, draft file name, state, time and a reason. No post text.</li>")
     add("  <li>A liveness monitor, when configured: account name, run state, draft file name and a reason. "
@@ -497,10 +504,9 @@ def build_privacy() -> str:
     add("<h2>Retention</h2>")
     add("<ul>")
     add("  <li>Authorization codes on the relay: at most 300 seconds after receipt.</li>")
-    add("  <li>Approval pages: at most 600 seconds, or at most 24 hours when shown in the list of pending "
-        "approvals. Their image previews: at most 600 seconds.</li>")
-    add("  <li>Sign-in to the list of pending approvals: 10 minutes.</li>")
-    add("  <li>Attachment objects on R2: deleted 24 hours after creation (image previews when they expire).</li>")
+    add("  <li>Activity summaries and requested actions on thth.me: at most one hour.</li>")
+    add("  <li>Sign-in to the activity page: 10 minutes.</li>")
+    add("  <li>Attachment objects on R2: deleted 24 hours after creation.</li>")
     add("  <li>Data deletion requests on thth.me: 30 days.</li>")
     add("  <li>Sent operational notices in the server's notice record: 30 days (at most 50).</li>")
     add("  <li>Observation map daily figures on the operator's server: at most 180 days, deleted one day at a "
@@ -524,7 +530,8 @@ def build_privacy() -> str:
         "search, attachments, reports, LLM sessions, exit and deletion requests, and retention, and corrects "
         "the PBKDF2 iteration count to 100,000. Revision: adds the saved daily aggregates of the observation "
         "map (keyword search). Revision: adds the plaza and the support contact, and links to the Terms of "
-        "Service.</p>")
+        "Service. Revision: removes the approval pages; describes the safety limits, the owner's activity page and "
+        "the assistant key.</p>")
 
     # ---------------------------------------------------------------- 日本語
     add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
@@ -532,13 +539,15 @@ def build_privacy() -> str:
     add(f'<p class="note">{date_ja} · <a href="/terms/#ja">利用規約</a></p>')
 
     add("<h2>運営者と対象</h2>")
-    add("<p>THTH は、SNS の投稿を下書き・承認・公開するためのオープンソースのソフトウェアです。運営者 gotoq が、"
-        "運営者の管理するサーバ（仮想マシン）で、招待した利用者と運営者自身のアカウントのために動かしています。"
-        "このサーバで、認可・下書き・人の承認・公開・記録を扱います。</p>")
+    add("<p>THTH は、自分の SNS のアカウントの投稿を公開・管理するためのオープンソースのコマンドラインツールです。"
+        "多くの人は自分の AI アシスタントを通して使います。運営者 gotoq が、運営者の管理するサーバ（仮想マシン）で、"
+        "招待した利用者と運営者自身のアカウントのために動かしています。このサーバで、認可・下書き・公開・安全装置・"
+        "記録を扱います。</p>")
     add("<p>招待された利用者は、自分のサーバを動かしたり自分の Meta アプリを登録したりしません。認可の始まり方は"
         "2 つです。招待された利用者が運営者から届いた招待リンクを開いてそのページのボタンを押すか、運営者がサーバで"
-        "<code>thth auth</code> から始めます。どちらでも、利用者は媒体の画面でアカウントと権限を確かめて承認し、"
-        "その後は投稿ごとに thth.me の承認ページで承認します。THTH を自分で導入して動かす人は、その複製を自分で"
+        "<code>thth auth</code> から始めます。どちらでも、利用者は媒体の画面でアカウントと権限を確かめて承認します。"
+        "その後の投稿・返信・削除は、利用者が自分の CLI か AI アシスタントで頼んだときだけ行われ、THTH が自分から"
+        "動くことはありません。THTH を自分で導入して動かす人は、その複製を自分で"
         "運用しています。このポリシーは運営者のサービスについての説明です。</p>")
 
     add("<h2>媒体と使うデータ</h2>")
@@ -555,7 +564,7 @@ def build_privacy() -> str:
     add("<p><strong>返信と言及。</strong>Threads・Bluesky・Mastodon での本人の投稿への返信と、本人の Threads "
         "アカウントへの言及は、そのアカウントの記録に保存します。相手のユーザー名・本文・時刻・リンクを含みます。"
         "会話を管理するため（どの返信に答えたかを示し、本人の返信を用意するため）に保存し、本人の返信は投稿と"
-        "同じ人の承認を通ります。Bluesky と Mastodon の言及は求められたときに表示するだけで、保存しません。</p>")
+        "同じ道で出します。Bluesky と Mastodon の言及は求められたときに表示するだけで、保存しません。</p>")
     add("<p><strong>キーワード検索。</strong>検索（Threads の <code>threads_keyword_search</code>、Bluesky と "
         "Mastodon の検索）は求められたときに動きます。本人のセッションが検索を求めたとき、または観測の一枚を"
         "求めたとき（運営者がアカウントに設定した語を使います）です。これ以外の検索は、運営者が有効にしたときの"
@@ -582,7 +591,7 @@ def build_privacy() -> str:
     add("<p><strong>プロフィールと場所。</strong>公開プロフィールの参照（Threads の "
         "<code>threads_profile_discovery</code>）は、求められたときに相手の公開プロフィールの項目を表示し、"
         "結果は保存しません。場所の検索（<code>threads_location_tagging</code>）は候補を表示し、本人が選んだ場所を"
-        "下書きに書き、承認された投稿にだけ付けます。</p>")
+        "下書きに書き、その投稿にだけ付けます。</p>")
     add("<p>同じ人が何度現れたかを名前を残さずに数えるため、一部の記録では媒体とユーザー名から作った戻せない鍵を"
         "使います。</p>")
 
@@ -591,24 +600,30 @@ def build_privacy() -> str:
         "（XMP・IPTC・MakerNote・サムネイル・コメント）を、再圧縮せずに取り除きます。動画と音声は変えません。"
         "位置情報のメタデータを含むもの、THTH が検査できないメタデータを含むものは断ります。検査を通ったファイルは"
         "アカウントの記録に保存します。</p>")
-    add("<p>招待された利用者がアップロードするファイル、承認ページの画像の表示、媒体へ渡すファイルは、thth.me の "
-        "Cloudflare R2 を通ります。どれも推測できない短命の capability URL でしか読めません。アップロードと媒体へ渡す画像は"
-        "10 分、表示は承認ページの期限まで、媒体へ渡す動画は 30 分、公開の確認後は 1 時間です。Worker は置いた"
-        "ものを置いてから 24 時間で削除し（画像の表示は期限が来たとき）、最大 10 回まで試み直します。保管用の bucket "
-        "も 24 時間で削除する設定です。</p>")
+    add("<p>招待された利用者がアップロードするファイルと媒体へ渡すファイルは、thth.me の Cloudflare R2 を通ります。"
+        "どれも推測できない短命の capability URL でしか読めません。アップロードと媒体へ渡す画像は 10 分、媒体へ渡す"
+        "動画は 30 分、公開の確認後は 1 時間です。Worker は置いたものを置いてから 24 時間で削除し、最大 10 回まで"
+        "試み直します。保管用の bucket も 24 時間で削除する設定です。</p>")
 
-    add("<h2>本人が押す承認ページ</h2>")
-    add("<p>承認ページは公開予定の本文そのものと表示情報を、最大600秒（本人の承認待ちの一覧に出したものは最大24時間）"
-        "の論理的な session 期限内で一時的に保持します。"
-        "承認または失効で稼働中 record から本文と表示情報を削除し、最小の受領照合情報だけを期限まで残します。"
-        "本人の別 record には salt 付き PBKDF2-SHA256（100,000回）の verifier、世代、失敗回数を保存し、"
-        "承認 secret 本体は保存しません。secret は本人のフォーム送信時だけ照合に使います。URL の所持者は本文を"
-        "読めますが、secret 無しで承認はできません。</p>")
-    add("<p>承認待ちの一覧（<code>https://thth.me/pending</code>）には、本人がユーザ名と承認 secret で入ります"
-        "（照合は承認ページと同じ）。一覧にはその人あての承認だけが、本文の先頭60字とともに並び、そこから承認ページに"
-        "進みます。一覧から開いた承認ページは開いてから10分で失効します。一覧のために本人の record に置くのは承認の"
-        "識別子と期限だけで、本文は置きません。入ると <code>/pending</code> に限った10分の cookie を置きます。"
-        "THTH は誰が一覧を見たかを記録しません（Worker は流量の上限だけを見ます）。</p>")
+    add("<h2>安全装置と持ち主の動きの一覧</h2>")
+    add("<p>どのアカウントにも、持ち主が決める安全装置があります。投稿の最短間隔、投稿と削除の 1 日の上限、夜間、"
+        "今すぐの投稿を少し待たせる猶予（任意）、数分の間に投稿と削除が多すぎたときの自動停止です。サーバがアカウント"
+        "自身の記録から数えて守り、止めたときはその印（理由と時刻）を運営者のサーバに置きます。AI アシスタントは"
+        "この数値を締める向きにしか変えられません。</p>")
+    add("<p>持ち主の動きの一覧（<code>https://thth.me/activity</code>）には、アカウントのユーザ名と口座の secret で"
+        "入ります。thth.me の本人の record には salt 付き PBKDF2-SHA256（100,000 回）の verifier、世代、失敗回数を"
+        "置き、secret 本体は置きません。secret は本人のフォーム送信時だけ照合に使い、保持しません。入ると "
+        "<code>/activity</code> に限った 10 分の cookie を置きます。一覧に出るのは、サーバが 10 秒ごとに押し上げる"
+        "要約です。出したもの・消したもの・予約・猶予中のもの（本文の先頭 60 字と時刻）、止まっているかとその理由、"
+        "今日の上限に対する数、アシスタントの鍵の識別子と期限です。thth.me は最後の押し上げから 1 時間で要約を"
+        "忘れます。この画面から、持ち主はアカウントを止める・戻す・予約を取り消す・安全装置の数値を変える・"
+        "アシスタントの鍵を発行し直す・取り消すことができます。どの操作も secret で確かめ、サーバが数十秒で行い、"
+        "thth.me には最大 1 時間だけ残ります。THTH は誰が一覧を見たかを記録しません（Worker は流量の上限だけを"
+        "見ます）。</p>")
+    add("<p><strong>アシスタントの鍵。</strong>持ち主が自分の CLI や AI アシスタントに渡す鍵は thth.me が作り、持ち主に"
+        "1 度だけ表示し、平文では保存しません。thth.me と運営者のサーバが持つのは SHA-256 のハッシュ、範囲（その"
+        "アカウント）、期限（365 日）だけです。新しい鍵を発行すると前の鍵は使えなくなります。鍵で行った投稿・削除・"
+        "予約には、鍵の識別子を記録します。</p>")
 
     add("<h2>認可の預かり所</h2>")
     add("<p>認可の預かり所は Cloudflare Worker と Durable Object を使います。登録済みの認可コードを、受付から"
@@ -650,19 +665,20 @@ def build_privacy() -> str:
     add("  <li>長期の認証情報（媒体の token、Bluesky の App Password）。所有者だけが読めるファイルに置き、媒体の "
         "API への認証に使います。</li>")
     add("  <li>アカウントの設定。運用通知を受け取るメールアドレス（任意）を含みます。</li>")
-    add("  <li>下書き、承認の記録、公開した本文そのもの、投稿の履歴。</li>")
+    add("  <li>下書き、公開した本文そのもの、投稿の履歴、安全装置で止めた印。</li>")
     add("  <li>上に書いた実測・返信・言及、検査を通った添付。</li>")
     add("  <li>観測の地図: 語、人が引いた語どうしの線、有効なときは上に書いた日々の集計。</li>")
     add("  <li>広場の書き込みと返信、どの書き込みを読んだか（書き込みの ID と時刻）。</li>")
     add("  <li>実行記録（操作・原稿のファイル・投稿 ID・件数・状態）、報告、管理の変更ログ。</li>")
     add("</ul>")
-    add("<p>キーワード検索の結果の本文と投稿者、参照した公開プロフィール、承認 secret は保存しません。</p>")
+    add("<p>キーワード検索の結果の本文と投稿者、参照した公開プロフィール、口座の secret、アシスタントの鍵の平文は"
+        "保存しません。</p>")
 
     add("<h2>データの行き先</h2>")
     add("<ul>")
     add("  <li>接続したアカウントの媒体の API。</li>")
-    add("  <li>Cloudflare 上の thth.me（Workers・Durable Objects・R2）: 認可の預かり所、承認ページ、添付の受け渡し、"
-        "データ削除の依頼。</li>")
+    add("  <li>Cloudflare 上の thth.me（Workers・Durable Objects・R2）: 認可の預かり所、持ち主の動きの一覧、添付の"
+        "受け渡し、データ削除の依頼。</li>")
     add("  <li>運用通知のメール（設定したときだけ）。運営者のメールサーバから、アカウント名・原稿のファイル名・"
         "状態・時刻・理由を送ります。本文は含みません。</li>")
     add("  <li>死活監視（設定したときだけ）。アカウント名・実行の状態・原稿のファイル名・理由を送ります。本文は"
@@ -698,9 +714,9 @@ def build_privacy() -> str:
     add("<h2>保持</h2>")
     add("<ul>")
     add("  <li>預かり所の認可コード: 受付から最大300秒。</li>")
-    add("  <li>承認ページ: 最大600秒（承認待ちの一覧に出したものは最大24時間）。その画像の表示: 最大600秒。</li>")
-    add("  <li>承認待ちの一覧に入った状態: 10分。</li>")
-    add("  <li>R2 の添付: 置いてから24時間で削除（画像の表示は期限が来たとき）。</li>")
+    add("  <li>thth.me の動きの一覧の要約と頼んだ操作: 最大 1 時間。</li>")
+    add("  <li>動きの一覧に入った状態: 10 分。</li>")
+    add("  <li>R2 の添付: 置いてから 24 時間で削除。</li>")
     add("  <li>thth.me のデータ削除の依頼: 30日。</li>")
     add("  <li>送った運用通知（サーバの通知の記録）: 30日（最大50件）。</li>")
     add("  <li>運営者のサーバの観測の地図の日々の集計: 最大180日（日単位で削除）。退出と依頼でも削除。</li>")
@@ -719,7 +735,8 @@ def build_privacy() -> str:
     add("<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。今回の改訂では、"
         "運営者が動かすサービスの形、媒体ごとに使うデータ、返信と言及、キーワード検索、添付、報告、LLM のセッション、"
         "退出と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。改訂: 観測の地図の集計の保存（キーワード検索・世間の層）を追記しました。"
-        "改訂: 広場とサポートの連絡先を書き、利用規約へのリンクを足しました。</p>")
+        "改訂: 広場とサポートの連絡先を書き、利用規約へのリンクを足しました。改訂: 承認ページを無くし、安全装置・"
+        "持ち主の動きの一覧・アシスタントの鍵を書きました。</p>")
     add('<footer><a href="/">THTH</a> · <a href="/terms/">利用規約 / Terms of Service</a> · Free and open source · '
         "MIT License<br>© 2026 gotoq</footer>")
     add("</main></body></html>")
@@ -727,7 +744,7 @@ def build_privacy() -> str:
 
 
 # 施行日は deploy のとき主セッションが入れる（privacy と同じ・生成で日付を作らない）。
-TERMS_EFFECTIVE = "2026-09-25"  # 利用規約の初版（masaru「OK、deploy して」2026-09-25）
+TERMS_EFFECTIVE = None  # 3.13.0 の改訂の施行日は deploy のとき主セッションが入れる。初版: 2026-09-25
 
 
 def contact_html(lang: str) -> str:
@@ -773,8 +790,8 @@ def build_terms() -> str:
         '<a href="/privacy/">Privacy Policy</a></p>')
 
     add("<h2>What THTH is</h2>")
-    add("<p>THTH is a tool for drafting, approving and publishing social media posts on your own accounts. "
-        "The operator, gotoq, runs it on an operator-managed server for people the operator has invited or "
+    add("<p>THTH is a command-line tool for publishing and managing posts on your own social media accounts, "
+        "usually through your own AI assistant. The operator, gotoq, runs it on an operator-managed server for people the operator has invited or "
         "otherwise verified. Invited users connect their own accounts and do not run their own server or "
         "register their own app. These terms cover that service.</p>")
 
@@ -782,19 +799,23 @@ def build_terms() -> str:
     add("<ul>")
     add("  <li>Authorize THTH only for accounts you control, on the platform's own screen, after checking the "
         "account and the permissions it asks for.</li>")
-    add("  <li>Approve each post yourself. Drafts may be written with an AI model; read each one before you "
-        "approve it.</li>")
+    add("  <li>You are responsible for what is published, replied to and deleted on your accounts, whether you "
+        "ask for it yourself or through an AI assistant you connect. THTH does not judge content for you.</li>")
     add("  <li>Follow the terms and rules of each platform you post to.</li>")
-    add("  <li>Approve only content that does not infringe other people's rights, such as copyright, privacy "
+    add("  <li>Publish only content that does not infringe other people's rights, such as copyright, privacy "
         "or portrait rights.</li>")
-    add("  <li>Keep your approval secret and your platform credentials to yourself. Do not paste them into "
-        "chats, drafts or issues.</li>")
+    add("  <li>Keep your account secret, your assistant key and your platform credentials to yourself. Do not "
+        "paste them into chats, drafts or issues. If you think a key has leaked, issue a new one on "
+        "https://thth.me/activity; the previous key stops working.</li>")
     add("</ul>")
 
     add("<h2>What the operator does and does not do</h2>")
     add("<ul>")
-    add("  <li>THTH does not publish a post that has not been approved. Changing the text, account, topic, "
-        "reply target or scheduled time after approval requires approval again.</li>")
+    add("  <li>THTH acts only when you ask for it, through your CLI or your assistant; it does not post, reply "
+        "or delete on its own. Every account has safety limits you control: a minimum interval between posts, "
+        "daily caps on posts and deletions, and an automatic stop on bursts of actions. An assistant can only "
+        "tighten them; loosening them, resuming a stopped account and issuing or revoking an assistant key "
+        "are done by you on https://thth.me/activity with your account secret.</li>")
     add("  <li>Credentials (platform tokens and Bluesky App Passwords) are received through the authorization "
         "flow or from standard input, kept in owner-only files on the operator's server, and redacted from "
         "logs and printed output. They are not passed through chats or command arguments, and THTH's tools "
@@ -833,7 +854,8 @@ def build_terms() -> str:
     add(f'<p class="note">{date_ja} · <a href="/privacy/">プライバシーポリシー</a></p>')
 
     add("<h2>THTH とは</h2>")
-    add("<p>THTH は、自分の SNS のアカウントで投稿を下書き・承認・公開するための道具です。運営者 gotoq が、"
+    add("<p>THTH は、自分の SNS のアカウントの投稿を公開・管理するためのコマンドラインツールで、多くの人は自分の "
+        "AI アシスタントを通して使います。運営者 gotoq が、"
         "運営者の管理するサーバで、運営者が招待した人または確かめた人のために動かしています。招待された利用者は"
         "自分のアカウントを接続し、自分のサーバを動かしたり自分のアプリを登録したりしません。この規約はその"
         "サービスについてのものです。</p>")
@@ -841,16 +863,21 @@ def build_terms() -> str:
     add("<h2>利用者がすること</h2>")
     add("<ul>")
     add("  <li>自分が管理するアカウントだけを、媒体の画面でアカウントと求められる権限を確かめてから認可する。</li>")
-    add("  <li>投稿は一つずつ自分で承認する。下書きは AI モデルで書かれていることがあるので、承認の前に読む。</li>")
+    add("  <li>自分のアカウントで公開・返信・削除されるものには、自分で頼んだときも、接続した AI アシスタントを通して"
+        "頼んだときも、利用者が責任を持つ。THTH は内容の善し悪しを判断しない。</li>")
     add("  <li>投稿する各媒体の規約と決まりを守る。</li>")
-    add("  <li>著作権・プライバシー・肖像権など、他人の権利を侵さない内容だけを承認する。</li>")
-    add("  <li>承認の secret と媒体の認証情報は自分だけで持つ。チャット・原稿・issue に貼らない。</li>")
+    add("  <li>著作権・プライバシー・肖像権など、他人の権利を侵さない内容だけを公開する。</li>")
+    add("  <li>口座の secret・アシスタントの鍵・媒体の認証情報は自分だけで持つ。チャット・原稿・issue に貼らない。"
+        "鍵が漏れたと思ったら https://thth.me/activity で発行し直す（前の鍵は使えなくなる）。</li>")
     add("</ul>")
 
     add("<h2>運営者がすること・しないこと</h2>")
     add("<ul>")
-    add("  <li>THTH は承認されていない投稿を公開しません。承認のあとで本文・アカウント・トピック・返信先・"
-        "予約時刻を変えたら、あらためて承認が要ります。</li>")
+    add("  <li>THTH は、利用者が自分の CLI か AI アシスタントで頼んだときだけ動き、自分から投稿・返信・削除を"
+        "しません。どのアカウントにも利用者が決める安全装置があります。投稿の最短間隔、投稿と削除の 1 日の上限、"
+        "短時間に操作が多すぎたときの自動停止です。アシスタントはこれを締める向きにしか変えられません。緩める・"
+        "止まったアカウントを戻す・アシスタントの鍵を発行する／取り消すのは、利用者が https://thth.me/activity で"
+        "口座の secret を使って行います。</li>")
     add("  <li>認証情報（媒体の token と Bluesky の App Password）は、認可の流れか標準入力で受け取り、運営者の"
         "サーバの所有者だけが読めるファイルに置き、ログと画面の出力では伏せます。チャットやコマンドの引数を"
         "通さず、THTH の道具が LLM のセッションに返すこともありません。</li>")

@@ -33,20 +33,20 @@
 </style>
 </head><body><main>
 <h1>THTH — Terms of Service</h1>
-<p class="note">Effective 2026-09-25 · <a href="#ja">日本語はこの下</a> · <a href="/privacy/">Privacy Policy</a></p>
+<p class="note">Unpublished draft — effective date not set · <a href="#ja">日本語はこの下</a> · <a href="/privacy/">Privacy Policy</a></p>
 <h2>What THTH is</h2>
-<p>THTH is a tool for drafting, approving and publishing social media posts on your own accounts. The operator, gotoq, runs it on an operator-managed server for people the operator has invited or otherwise verified. Invited users connect their own accounts and do not run their own server or register their own app. These terms cover that service.</p>
+<p>THTH is a command-line tool for publishing and managing posts on your own social media accounts, usually through your own AI assistant. The operator, gotoq, runs it on an operator-managed server for people the operator has invited or otherwise verified. Invited users connect their own accounts and do not run their own server or register their own app. These terms cover that service.</p>
 <h2>What you do</h2>
 <ul>
   <li>Authorize THTH only for accounts you control, on the platform's own screen, after checking the account and the permissions it asks for.</li>
-  <li>Approve each post yourself. Drafts may be written with an AI model; read each one before you approve it.</li>
+  <li>You are responsible for what is published, replied to and deleted on your accounts, whether you ask for it yourself or through an AI assistant you connect. THTH does not judge content for you.</li>
   <li>Follow the terms and rules of each platform you post to.</li>
-  <li>Approve only content that does not infringe other people's rights, such as copyright, privacy or portrait rights.</li>
-  <li>Keep your approval secret and your platform credentials to yourself. Do not paste them into chats, drafts or issues.</li>
+  <li>Publish only content that does not infringe other people's rights, such as copyright, privacy or portrait rights.</li>
+  <li>Keep your account secret, your assistant key and your platform credentials to yourself. Do not paste them into chats, drafts or issues. If you think a key has leaked, issue a new one on https://thth.me/activity; the previous key stops working.</li>
 </ul>
 <h2>What the operator does and does not do</h2>
 <ul>
-  <li>THTH does not publish a post that has not been approved. Changing the text, account, topic, reply target or scheduled time after approval requires approval again.</li>
+  <li>THTH acts only when you ask for it, through your CLI or your assistant; it does not post, reply or delete on its own. Every account has safety limits you control: a minimum interval between posts, daily caps on posts and deletions, and an automatic stop on bursts of actions. An assistant can only tighten them; loosening them, resuming a stopped account and issuing or revoking an assistant key are done by you on https://thth.me/activity with your account secret.</li>
   <li>Credentials (platform tokens and Bluesky App Passwords) are received through the authorization flow or from standard input, kept in owner-only files on the operator's server, and redacted from logs and printed output. They are not passed through chats or command arguments, and THTH's tools do not return them to LLM sessions.</li>
   <li>THTH does not read direct messages.</li>
   <li>The operator can stop an account's use of the service at any time and can hide a post on the plaza. The operator stops an account when you ask, and may stop it when these terms or a platform's terms are not followed, when a platform requires it, or when the service ends. Stopping may happen without advance notice.</li>
@@ -63,20 +63,20 @@
 <h2>Software license</h2>
 <p>The THTH software is open source under the MIT License. That license covers the software; these terms cover the operator's service.</p>
 <h1 id="ja" style="margin-top:56px">THTH — 利用規約</h1>
-<p class="note">2026-09-25 施行 · <a href="/privacy/">プライバシーポリシー</a></p>
+<p class="note">未公開の案 — 施行日未設定 · <a href="/privacy/">プライバシーポリシー</a></p>
 <h2>THTH とは</h2>
-<p>THTH は、自分の SNS のアカウントで投稿を下書き・承認・公開するための道具です。運営者 gotoq が、運営者の管理するサーバで、運営者が招待した人または確かめた人のために動かしています。招待された利用者は自分のアカウントを接続し、自分のサーバを動かしたり自分のアプリを登録したりしません。この規約はそのサービスについてのものです。</p>
+<p>THTH は、自分の SNS のアカウントの投稿を公開・管理するためのコマンドラインツールで、多くの人は自分の AI アシスタントを通して使います。運営者 gotoq が、運営者の管理するサーバで、運営者が招待した人または確かめた人のために動かしています。招待された利用者は自分のアカウントを接続し、自分のサーバを動かしたり自分のアプリを登録したりしません。この規約はそのサービスについてのものです。</p>
 <h2>利用者がすること</h2>
 <ul>
   <li>自分が管理するアカウントだけを、媒体の画面でアカウントと求められる権限を確かめてから認可する。</li>
-  <li>投稿は一つずつ自分で承認する。下書きは AI モデルで書かれていることがあるので、承認の前に読む。</li>
+  <li>自分のアカウントで公開・返信・削除されるものには、自分で頼んだときも、接続した AI アシスタントを通して頼んだときも、利用者が責任を持つ。THTH は内容の善し悪しを判断しない。</li>
   <li>投稿する各媒体の規約と決まりを守る。</li>
-  <li>著作権・プライバシー・肖像権など、他人の権利を侵さない内容だけを承認する。</li>
-  <li>承認の secret と媒体の認証情報は自分だけで持つ。チャット・原稿・issue に貼らない。</li>
+  <li>著作権・プライバシー・肖像権など、他人の権利を侵さない内容だけを公開する。</li>
+  <li>口座の secret・アシスタントの鍵・媒体の認証情報は自分だけで持つ。チャット・原稿・issue に貼らない。鍵が漏れたと思ったら https://thth.me/activity で発行し直す（前の鍵は使えなくなる）。</li>
 </ul>
 <h2>運営者がすること・しないこと</h2>
 <ul>
-  <li>THTH は承認されていない投稿を公開しません。承認のあとで本文・アカウント・トピック・返信先・予約時刻を変えたら、あらためて承認が要ります。</li>
+  <li>THTH は、利用者が自分の CLI か AI アシスタントで頼んだときだけ動き、自分から投稿・返信・削除をしません。どのアカウントにも利用者が決める安全装置があります。投稿の最短間隔、投稿と削除の 1 日の上限、短時間に操作が多すぎたときの自動停止です。アシスタントはこれを締める向きにしか変えられません。緩める・止まったアカウントを戻す・アシスタントの鍵を発行する／取り消すのは、利用者が https://thth.me/activity で口座の secret を使って行います。</li>
   <li>認証情報（媒体の token と Bluesky の App Password）は、認可の流れか標準入力で受け取り、運営者のサーバの所有者だけが読めるファイルに置き、ログと画面の出力では伏せます。チャットやコマンドの引数を通さず、THTH の道具が LLM のセッションに返すこともありません。</li>
   <li>THTH はダイレクトメッセージを読みません。</li>
   <li>運営者は、いつでもアカウントの利用を止められ、広場の書き込みを非表示にできます。利用者が求めたときは止めます。この規約や媒体の規約が守られないとき、媒体が求めたとき、サービスを終えるときにも止めることがあります。止めるときに前もって知らせないことがあります。</li>

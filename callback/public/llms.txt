@@ -1,9 +1,10 @@
 # THTH
 
-> THTH is a human-approval gate for LLM-drafted public posts (Threads,
-> Bluesky, Mastodon). The agent drafts, a human approves, the tool posts and
-> records everything in your git. Nothing leaves your machine unless you
-> opt in.
+> THTH is a command-line tool for researching, posting to, scheduling on and
+> managing your own social media accounts (Threads, Bluesky, Mastodon, X).
+> Because it is a CLI, an LLM can drive it; the bundled MCP server and skills
+> only make that easier. Everything it does is recorded in your git. Nothing
+> leaves your machine unless you opt in.
 
 ## Where to start (the same three lines `thth --help` opens with)
 

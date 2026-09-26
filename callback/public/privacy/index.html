@@ -33,10 +33,10 @@
 </style>
 </head><body><main>
 <h1>THTH — Privacy Policy</h1>
-<p class="note">Effective 2026-09-25 · <a href="#ja">日本語はこの下</a> · <a href="/terms/">Terms of Service</a></p>
+<p class="note">Unpublished update — deployment date not set · <a href="#ja">日本語はこの下</a> · <a href="/terms/">Terms of Service</a></p>
 <h2>Who runs THTH</h2>
-<p>THTH is open-source software for drafting, approving and publishing social media posts. The operator, gotoq, runs it on an operator-managed server (a virtual machine) for invited users and for the operator's own accounts. On that server THTH handles authorization, drafts, human approval, publishing and records.</p>
-<p>Invited users do not run their own server or register their own Meta app. Authorization starts in one of two ways: an invited user opens the invitation link the operator sent and presses the button on that page, or the operator starts it from the server with <code>thth auth</code>. Either way, the user reviews the account and permissions on the platform and approves, and later approves each post on a thth.me approval page. People who install the THTH software and run it themselves operate their own copy; this policy describes the operator's service.</p>
+<p>THTH is an open-source command-line tool for publishing and managing posts on your own social media accounts; people usually drive it through their own AI assistant. The operator, gotoq, runs it on an operator-managed server (a virtual machine) for invited users and for the operator's own accounts. On that server THTH handles authorization, drafts, publishing, safety limits and records.</p>
+<p>Invited users do not run their own server or register their own Meta app. Authorization starts in one of two ways: an invited user opens the invitation link the operator sent and presses the button on that page, or the operator starts it from the server with <code>thth auth</code>. Either way, the user reviews the account and permissions on the platform and approves. Afterwards, posts, replies and deletions happen only when the user asks for them, through their own CLI or AI assistant; THTH does nothing on its own. People who install the THTH software and run it themselves operate their own copy; this policy describes the operator's service.</p>
 <h2>Platforms and the data THTH uses</h2>
 <p>THTH works with Threads, Bluesky, Mastodon and X. For each connected account it uses:</p>
 <ul>
@@ -45,18 +45,19 @@
   <li>Mastodon: its posts and their metrics (likes, replies, reposts), and replies to its posts.</li>
   <li>X: publishing approved posts, deleting a post on request, and reading the account's own recent posts. Replies and metrics are not collected.</li>
 </ul>
-<p><strong>Replies and mentions.</strong> Replies to the user's posts on Threads, Bluesky and Mastodon, and mentions of the user's Threads account, are saved to that account's records, including the other person's username, the text, the time and the link. THTH keeps them to manage the conversation: to show which replies have been answered and to prepare the user's replies, which go through the same human approval as posts. Mentions on Bluesky and Mastodon are shown on request and not saved.</p>
+<p><strong>Replies and mentions.</strong> Replies to the user's posts on Threads, Bluesky and Mastodon, and mentions of the user's Threads account, are saved to that account's records, including the other person's username, the text, the time and the link. THTH keeps them to manage the conversation: to show which replies have been answered and to prepare the user's replies, which are sent the same way as posts. Mentions on Bluesky and Mastodon are shown on request and not saved.</p>
 <p><strong>Keyword search.</strong> Search (Threads <code>threads_keyword_search</code>, and search on Bluesky and Mastodon) runs on request: when the user's session asks for a search, or for the observation summary, which uses search terms the operator sets for the account. The only other search is the observation map below, when the operator turns it on. Results of a search on request are shown for that request only: counts, the number of distinct authors, the share of the most frequent authors, the latest time, and for individual posts the author, a link and the first 60 characters. The text and authors of search results are not saved. Run logs record at most the search terms and the number of results.</p>
 <p><strong>Observation map (daily keyword aggregates).</strong> It is off unless the operator turns it on. Its keywords are topic words that a person registers for a project: the operator registers them, at most 20 per project. THTH never adds keywords taken from other people's posts, and refuses @handles, URLs and words that look like personal names. When it is on, THTH searches each keyword at most once a day on Threads, Bluesky and Mastodon, using the project's own connected account on that platform (the 25 most recent results, of which posts from the last 24 hours are counted). It counts the results in memory and saves only daily figures per keyword and platform: the number of posts, the number of distinct authors, the share of the three most frequent authors, the number of results with an author name, the time since the latest post rounded to one of four ranges (under 1 hour, 1–6 hours, 6–24 hours, 24 hours or more), and, for each pair of keywords, how many of one keyword's results also contain the other. A number below 5 (posts, distinct authors or a pair count) is saved as missing instead of its value. Post text, post IDs, usernames, author keys, links and exact times are not saved.</p>
 <p>These figures are kept in a private location on the operator's server, outside Git, for at most 180 days: each collection run deletes older days one day at a time, and days past 180 days are not shown even before they are deleted. When the project's last account exits, its whole map is deleted; when other accounts in the project remain, the figures for the leaving account's platform are deleted. On request, the operator deletes the figures for the whole project or for a date range. The figures are shown only within that project: through <code>thth map show</code>, the map line of the observation summary, and the same tools over MCP, to sessions whose credential covers that project. They are not shown to other owners, on the shared plaza, or in totals across projects. When the user's LLM session calls these tools, the keywords and figures are passed to that session's LLM provider.</p>
-<p><strong>Profiles and places.</strong> Public profile lookup (Threads <code>threads_profile_discovery</code>) shows another account's public profile fields on request; the result is not saved. Location search (<code>threads_location_tagging</code>) shows candidate places; a place the user chooses is written in the draft and attached only to an approved post.</p>
+<p><strong>Profiles and places.</strong> Public profile lookup (Threads <code>threads_profile_discovery</code>) shows another account's public profile fields on request; the result is not saved. Location search (<code>threads_location_tagging</code>) shows candidate places; a place the user chooses is written in the draft and attached only to that post.</p>
 <p>To count how often the same person appears without keeping names in those records, some records use a one-way key derived from the platform and the username.</p>
 <h2>Attachments</h2>
 <p>Images, video and audio attached to a draft are checked before use. For images, THTH removes location data and other embedded metadata (XMP, IPTC, MakerNote, thumbnails, comments) without re-encoding. Video and audio are not altered; a file that carries location metadata, or metadata THTH cannot inspect, is refused. The checked file is stored in the account's records.</p>
-<p>Files uploaded by invited users, image previews on approval pages, and files handed to a platform pass through Cloudflare R2 on thth.me. Each is reachable only through an unguessable, short-lived capability URL: 10 minutes for uploads and for images handed to a platform, up to the approval page's lifetime for previews, 30 minutes for video handed to a platform, and one hour after publication is confirmed. The Worker deletes each stored object 24 hours after it was created (image previews when they expire), retrying up to 10 times; the storage bucket is also set to delete these objects after 24 hours.</p>
-<h2>Human approval pages</h2>
-<p>An approval page temporarily holds the exact proposed text and display context for a logical session lifetime of at most 600 seconds, or at most 24 hours for an approval shown in the person's list of pending approvals. Approval or expiry removes that text and display context from the active record; minimal receipt bindings remain until expiry. A separate person record holds a salted PBKDF2-SHA256 verifier with 100,000 iterations, generation and failure count, not the approval secret itself. The secret is transmitted only when the person submits the form and is not retained. The URL holder can read the proposed text but cannot approve without the secret.</p>
-<p>The list of pending approvals (<code>https://thth.me/pending</code>) is opened with the person's username and approval secret, checked in the same way. It shows only the approvals addressed to that person, with the first 60 characters of each text, and each entry leads to its approval page; an approval page opened from the list expires 10 minutes after it is opened. The list's person record holds only the identifiers and expiry of those approvals, not their text. Signing in sets a cookie limited to <code>/pending</code> that lasts 10 minutes. THTH does not record who views the list; the Worker only applies a rate limit.</p>
+<p>Files uploaded by invited users and files handed to a platform pass through Cloudflare R2 on thth.me. Each is reachable only through an unguessable, short-lived capability URL: 10 minutes for uploads and for images handed to a platform, 30 minutes for video handed to a platform, and one hour after publication is confirmed. The Worker deletes each stored object 24 hours after it was created, retrying up to 10 times; the storage bucket is also set to delete these objects after 24 hours.</p>
+<h2>Safety limits and the owner's activity page</h2>
+<p>Every account has safety limits that its owner controls: a minimum interval between posts, daily caps on posts and on deletions, quiet hours, an optional hold before an immediate post goes out, and an automatic stop when too many posts and deletions happen within a few minutes. The server enforces them from the account's own records and keeps a stop record (reason and time) on the operator's server. An AI assistant can only tighten these limits.</p>
+<p>The owner's activity page (<code>https://thth.me/activity</code>) is opened with the account's username and account secret. A person record on thth.me holds a salted PBKDF2-SHA256 verifier with 100,000 iterations, generation and failure count, not the secret itself; the secret is transmitted only when the person submits a form and is not retained. Signing in sets a cookie limited to <code>/activity</code> that lasts 10 minutes. The page shows a summary that the server pushes every 10 seconds: what was published, deleted, scheduled or held (the first 60 characters of each text and the time), whether the account is stopped and why, today's counts against the limits, and the identifier and expiry of the assistant key. thth.me forgets the summary one hour after the last push. From the page the owner can stop the account, resume it, cancel a scheduled post, change the safety limits, and issue or revoke the assistant key; each of these actions is confirmed with the secret, carried out by the server within seconds, and kept on thth.me for at most one hour. THTH does not record who views the page; the Worker only applies a rate limit.</p>
+<p><strong>Assistant key.</strong> The key an owner gives to their own CLI or AI assistant is generated on thth.me, shown once to the owner, and never stored in clear: thth.me and the operator's server keep only its SHA-256 hash, its scope (that account) and its expiry (365 days). Issuing a new key revokes the previous one. Every post, deletion and schedule made with a key is recorded with the key's identifier.</p>
 <h2>Authorization relay</h2>
 <p>The relay uses a Cloudflare Worker and Durable Object. It temporarily holds a registered authorization code for at most 300 seconds after receipt and within the 600-second session lifetime, and releases it once to the initiating server. Long-lived tokens, client secrets and PKCE verifiers are not sent to the relay. The application deletes the code when consumed or expired. Unregistered flows can use the existing return-URL paste fallback.</p>
 <h2>Reports</h2>
@@ -70,17 +71,17 @@
 <ul>
   <li>Long-lived credentials (platform tokens, Bluesky App Passwords) in owner-only files, used to authenticate platform API requests.</li>
   <li>Account settings, including an optional email address for operational notices.</li>
-  <li>Drafts, approval records, the exact text of published posts, and post history.</li>
+  <li>Drafts, the exact text of published posts, post history, and stop records of the safety limits.</li>
   <li>The metrics, replies and mentions described above, and checked attachments.</li>
   <li>The observation map: its keywords, the links between keywords that a person drew, and, when turned on, its daily aggregate figures described above.</li>
   <li>Plaza posts and replies, and which plaza posts were read (post ID and time).</li>
   <li>Run logs (action, draft file, post ID, counts, status), reports, and a change log of administrative events.</li>
 </ul>
-<p>It does not keep the text or authors of keyword search results, looked-up public profiles, or the approval secret.</p>
+<p>It does not keep the text or authors of keyword search results, looked-up public profiles, the account secret, or the assistant key in clear.</p>
 <h2>Where data goes</h2>
 <ul>
   <li>The platform API of each connected account.</li>
-  <li>thth.me on Cloudflare (Workers, Durable Objects, R2): the authorization relay, approval pages, attachment transfer and data deletion requests.</li>
+  <li>thth.me on Cloudflare (Workers, Durable Objects, R2): the authorization relay, the owner's activity page, attachment transfer and data deletion requests.</li>
   <li>Operational notices by email through the operator's mail server, when configured: account name, draft file name, state, time and a reason. No post text.</li>
   <li>A liveness monitor, when configured: account name, run state, draft file name and a reason. No post text.</li>
   <li>Git: each account's records are kept in a Git repository. For invited users the server creates that repository and its remote on the server itself. The operator's own accounts may use a repository with an external remote, to which records are pushed.</li>
@@ -95,9 +96,9 @@
 <h2>Retention</h2>
 <ul>
   <li>Authorization codes on the relay: at most 300 seconds after receipt.</li>
-  <li>Approval pages: at most 600 seconds, or at most 24 hours when shown in the list of pending approvals. Their image previews: at most 600 seconds.</li>
-  <li>Sign-in to the list of pending approvals: 10 minutes.</li>
-  <li>Attachment objects on R2: deleted 24 hours after creation (image previews when they expire).</li>
+  <li>Activity summaries and requested actions on thth.me: at most one hour.</li>
+  <li>Sign-in to the activity page: 10 minutes.</li>
+  <li>Attachment objects on R2: deleted 24 hours after creation.</li>
   <li>Data deletion requests on thth.me: 30 days.</li>
   <li>Sent operational notices in the server's notice record: 30 days (at most 50).</li>
   <li>Observation map daily figures on the operator's server: at most 180 days, deleted one day at a time; also deleted on exit or on request.</li>
@@ -110,12 +111,12 @@
 <p>Open an issue at <a href="https://github.com/aokings/thth/issues">https://github.com/aokings/thth/issues</a>. Issues are public: do not include tokens, App Passwords or personal information. Invited users can also file a report from their THTH session (<code>thth report file</code>); reports are kept in a private location on the operator's server. Operator: gotoq.</p>
 <p>The <a href="/terms/">Terms of Service</a> give the same contact.</p>
 <h2>Changes</h2>
-<p>This page is generated from the THTH source repository; its history is public there. This revision describes the operator-run service, the data used per platform, replies and mentions, keyword search, attachments, reports, LLM sessions, exit and deletion requests, and retention, and corrects the PBKDF2 iteration count to 100,000. Revision: adds the saved daily aggregates of the observation map (keyword search). Revision: adds the plaza and the support contact, and links to the Terms of Service.</p>
+<p>This page is generated from the THTH source repository; its history is public there. This revision describes the operator-run service, the data used per platform, replies and mentions, keyword search, attachments, reports, LLM sessions, exit and deletion requests, and retention, and corrects the PBKDF2 iteration count to 100,000. Revision: adds the saved daily aggregates of the observation map (keyword search). Revision: adds the plaza and the support contact, and links to the Terms of Service. Revision: removes the approval pages; describes the safety limits, the owner's activity page and the assistant key.</p>
 <h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>
-<p class="note">2026-09-25 施行 · <a href="/terms/#ja">利用規約</a></p>
+<p class="note">未公開の更新案 — 配布日未設定 · <a href="/terms/#ja">利用規約</a></p>
 <h2>運営者と対象</h2>
-<p>THTH は、SNS の投稿を下書き・承認・公開するためのオープンソースのソフトウェアです。運営者 gotoq が、運営者の管理するサーバ（仮想マシン）で、招待した利用者と運営者自身のアカウントのために動かしています。このサーバで、認可・下書き・人の承認・公開・記録を扱います。</p>
-<p>招待された利用者は、自分のサーバを動かしたり自分の Meta アプリを登録したりしません。認可の始まり方は2 つです。招待された利用者が運営者から届いた招待リンクを開いてそのページのボタンを押すか、運営者がサーバで<code>thth auth</code> から始めます。どちらでも、利用者は媒体の画面でアカウントと権限を確かめて承認し、その後は投稿ごとに thth.me の承認ページで承認します。THTH を自分で導入して動かす人は、その複製を自分で運用しています。このポリシーは運営者のサービスについての説明です。</p>
+<p>THTH は、自分の SNS のアカウントの投稿を公開・管理するためのオープンソースのコマンドラインツールです。多くの人は自分の AI アシスタントを通して使います。運営者 gotoq が、運営者の管理するサーバ（仮想マシン）で、招待した利用者と運営者自身のアカウントのために動かしています。このサーバで、認可・下書き・公開・安全装置・記録を扱います。</p>
+<p>招待された利用者は、自分のサーバを動かしたり自分の Meta アプリを登録したりしません。認可の始まり方は2 つです。招待された利用者が運営者から届いた招待リンクを開いてそのページのボタンを押すか、運営者がサーバで<code>thth auth</code> から始めます。どちらでも、利用者は媒体の画面でアカウントと権限を確かめて承認します。その後の投稿・返信・削除は、利用者が自分の CLI か AI アシスタントで頼んだときだけ行われ、THTH が自分から動くことはありません。THTH を自分で導入して動かす人は、その複製を自分で運用しています。このポリシーは運営者のサービスについての説明です。</p>
 <h2>媒体と使うデータ</h2>
 <p>THTH は Threads・Bluesky・Mastodon・X に対応しています。接続したアカウントごとに次を使います。</p>
 <ul>
@@ -124,18 +125,19 @@
   <li>Mastodon: 投稿とその実測（いいね・返信・再投稿）、投稿への返信。</li>
   <li>X: 承認された投稿の公開、依頼による投稿の削除、アカウント自身の最近の投稿の読み取り。返信と実測は集めません。</li>
 </ul>
-<p><strong>返信と言及。</strong>Threads・Bluesky・Mastodon での本人の投稿への返信と、本人の Threads アカウントへの言及は、そのアカウントの記録に保存します。相手のユーザー名・本文・時刻・リンクを含みます。会話を管理するため（どの返信に答えたかを示し、本人の返信を用意するため）に保存し、本人の返信は投稿と同じ人の承認を通ります。Bluesky と Mastodon の言及は求められたときに表示するだけで、保存しません。</p>
+<p><strong>返信と言及。</strong>Threads・Bluesky・Mastodon での本人の投稿への返信と、本人の Threads アカウントへの言及は、そのアカウントの記録に保存します。相手のユーザー名・本文・時刻・リンクを含みます。会話を管理するため（どの返信に答えたかを示し、本人の返信を用意するため）に保存し、本人の返信は投稿と同じ道で出します。Bluesky と Mastodon の言及は求められたときに表示するだけで、保存しません。</p>
 <p><strong>キーワード検索。</strong>検索（Threads の <code>threads_keyword_search</code>、Bluesky と Mastodon の検索）は求められたときに動きます。本人のセッションが検索を求めたとき、または観測の一枚を求めたとき（運営者がアカウントに設定した語を使います）です。これ以外の検索は、運営者が有効にしたときの下の観測の地図だけです。求めに応じた検索の結果は、その求めに対してだけ表示します。件数、投稿者の異なり数、多く投稿している人の占める割合、最新の時刻、個々の投稿については投稿者・リンク・先頭 60 字です。検索結果の本文と投稿者は保存しません。実行記録に残すのは、検索した語と件数までです。</p>
 <p><strong>観測の地図（語ごとの日々の集計）。</strong>運営者が有効にしない限り動きません。語は、人がプロジェクトごとに登録する話題の語です。登録するのは運営者で、プロジェクトごとに最大 20 語です。THTH が他人の投稿から語を拾って足すことはなく、@名前・URL・個人名らしき語は登録できません。有効なとき、THTH は Threads・Bluesky・Mastodon で、そのプロジェクトがその媒体に接続したアカウントを使い、語ごとに 1 日 1 回まで検索します（新しい順の先頭 25 件のうち、直近 24 時間の投稿を数えます）。結果はメモリの中で数え、語と媒体ごとに日々の数だけを保存します。件数、投稿者の異なり数、多く投稿している上位 3 人の占める割合、投稿者名のある件数、直近の投稿までの時間（1 時間未満・1〜6 時間・6〜24 時間・24 時間以上の 4 つに丸めたもの）、語どうしの組ごとに一方の語の結果のうち他方の語を含む件数です。5 未満の数（件数・投稿者の異なり数・組の件数）は値を保存せず、欠測として記録します。本文・投稿 ID・ユーザー名・投稿者の鍵・リンク・正確な時刻は保存しません。</p>
 <p>この数は運営者のサーバの私有の置き場（Git の外）に最大 180 日保存します。集計が走るたびに古い日を日単位で削り、180 日を過ぎた日は削る前でも表示しません。プロジェクトの最後のアカウントが退出すると地図を丸ごと削除し、ほかのアカウントが残るときは、退出するアカウントの媒体の数を削除します。依頼があれば、運営者がプロジェクト全体か期間を指定して削除します。数を見られるのはそのプロジェクトの中だけです（<code>thth map show</code>、観測の一枚の地図の行、MCP の同じ道具。そのプロジェクトを許された credential のセッションだけ）。ほかの持ち主、広場、プロジェクトをまたぐ集計には出しません。本人の LLM セッションがこれらの道具を呼ぶと、語と数はそのセッションの LLM 提供者に渡ります。</p>
-<p><strong>プロフィールと場所。</strong>公開プロフィールの参照（Threads の <code>threads_profile_discovery</code>）は、求められたときに相手の公開プロフィールの項目を表示し、結果は保存しません。場所の検索（<code>threads_location_tagging</code>）は候補を表示し、本人が選んだ場所を下書きに書き、承認された投稿にだけ付けます。</p>
+<p><strong>プロフィールと場所。</strong>公開プロフィールの参照（Threads の <code>threads_profile_discovery</code>）は、求められたときに相手の公開プロフィールの項目を表示し、結果は保存しません。場所の検索（<code>threads_location_tagging</code>）は候補を表示し、本人が選んだ場所を下書きに書き、その投稿にだけ付けます。</p>
 <p>同じ人が何度現れたかを名前を残さずに数えるため、一部の記録では媒体とユーザー名から作った戻せない鍵を使います。</p>
 <h2>添付</h2>
 <p>下書きに付けた画像・動画・音声は、使う前に検査します。画像は、位置情報などの埋め込みメタデータ（XMP・IPTC・MakerNote・サムネイル・コメント）を、再圧縮せずに取り除きます。動画と音声は変えません。位置情報のメタデータを含むもの、THTH が検査できないメタデータを含むものは断ります。検査を通ったファイルはアカウントの記録に保存します。</p>
-<p>招待された利用者がアップロードするファイル、承認ページの画像の表示、媒体へ渡すファイルは、thth.me の Cloudflare R2 を通ります。どれも推測できない短命の capability URL でしか読めません。アップロードと媒体へ渡す画像は10 分、表示は承認ページの期限まで、媒体へ渡す動画は 30 分、公開の確認後は 1 時間です。Worker は置いたものを置いてから 24 時間で削除し（画像の表示は期限が来たとき）、最大 10 回まで試み直します。保管用の bucket も 24 時間で削除する設定です。</p>
-<h2>本人が押す承認ページ</h2>
-<p>承認ページは公開予定の本文そのものと表示情報を、最大600秒（本人の承認待ちの一覧に出したものは最大24時間）の論理的な session 期限内で一時的に保持します。承認または失効で稼働中 record から本文と表示情報を削除し、最小の受領照合情報だけを期限まで残します。本人の別 record には salt 付き PBKDF2-SHA256（100,000回）の verifier、世代、失敗回数を保存し、承認 secret 本体は保存しません。secret は本人のフォーム送信時だけ照合に使います。URL の所持者は本文を読めますが、secret 無しで承認はできません。</p>
-<p>承認待ちの一覧（<code>https://thth.me/pending</code>）には、本人がユーザ名と承認 secret で入ります（照合は承認ページと同じ）。一覧にはその人あての承認だけが、本文の先頭60字とともに並び、そこから承認ページに進みます。一覧から開いた承認ページは開いてから10分で失効します。一覧のために本人の record に置くのは承認の識別子と期限だけで、本文は置きません。入ると <code>/pending</code> に限った10分の cookie を置きます。THTH は誰が一覧を見たかを記録しません（Worker は流量の上限だけを見ます）。</p>
+<p>招待された利用者がアップロードするファイルと媒体へ渡すファイルは、thth.me の Cloudflare R2 を通ります。どれも推測できない短命の capability URL でしか読めません。アップロードと媒体へ渡す画像は 10 分、媒体へ渡す動画は 30 分、公開の確認後は 1 時間です。Worker は置いたものを置いてから 24 時間で削除し、最大 10 回まで試み直します。保管用の bucket も 24 時間で削除する設定です。</p>
+<h2>安全装置と持ち主の動きの一覧</h2>
+<p>どのアカウントにも、持ち主が決める安全装置があります。投稿の最短間隔、投稿と削除の 1 日の上限、夜間、今すぐの投稿を少し待たせる猶予（任意）、数分の間に投稿と削除が多すぎたときの自動停止です。サーバがアカウント自身の記録から数えて守り、止めたときはその印（理由と時刻）を運営者のサーバに置きます。AI アシスタントはこの数値を締める向きにしか変えられません。</p>
+<p>持ち主の動きの一覧（<code>https://thth.me/activity</code>）には、アカウントのユーザ名と口座の secret で入ります。thth.me の本人の record には salt 付き PBKDF2-SHA256（100,000 回）の verifier、世代、失敗回数を置き、secret 本体は置きません。secret は本人のフォーム送信時だけ照合に使い、保持しません。入ると <code>/activity</code> に限った 10 分の cookie を置きます。一覧に出るのは、サーバが 10 秒ごとに押し上げる要約です。出したもの・消したもの・予約・猶予中のもの（本文の先頭 60 字と時刻）、止まっているかとその理由、今日の上限に対する数、アシスタントの鍵の識別子と期限です。thth.me は最後の押し上げから 1 時間で要約を忘れます。この画面から、持ち主はアカウントを止める・戻す・予約を取り消す・安全装置の数値を変える・アシスタントの鍵を発行し直す・取り消すことができます。どの操作も secret で確かめ、サーバが数十秒で行い、thth.me には最大 1 時間だけ残ります。THTH は誰が一覧を見たかを記録しません（Worker は流量の上限だけを見ます）。</p>
+<p><strong>アシスタントの鍵。</strong>持ち主が自分の CLI や AI アシスタントに渡す鍵は thth.me が作り、持ち主に1 度だけ表示し、平文では保存しません。thth.me と運営者のサーバが持つのは SHA-256 のハッシュ、範囲（そのアカウント）、期限（365 日）だけです。新しい鍵を発行すると前の鍵は使えなくなります。鍵で行った投稿・削除・予約には、鍵の識別子を記録します。</p>
 <h2>認可の預かり所</h2>
 <p>認可の預かり所は Cloudflare Worker と Durable Object を使います。登録済みの認可コードを、受付から最大300秒、かつ開始から最大600秒の範囲で一時的に保持し、認可を開始したサーバへ一度だけ渡します。長期トークン、client secret、PKCE verifier は預かり所へ送りません。消費または失効時にアプリケーション上のコードを削除します。未登録などの場合は従来の戻り URL を貼る経路になります。</p>
 <h2>報告</h2>
@@ -149,17 +151,17 @@
 <ul>
   <li>長期の認証情報（媒体の token、Bluesky の App Password）。所有者だけが読めるファイルに置き、媒体の API への認証に使います。</li>
   <li>アカウントの設定。運用通知を受け取るメールアドレス（任意）を含みます。</li>
-  <li>下書き、承認の記録、公開した本文そのもの、投稿の履歴。</li>
+  <li>下書き、公開した本文そのもの、投稿の履歴、安全装置で止めた印。</li>
   <li>上に書いた実測・返信・言及、検査を通った添付。</li>
   <li>観測の地図: 語、人が引いた語どうしの線、有効なときは上に書いた日々の集計。</li>
   <li>広場の書き込みと返信、どの書き込みを読んだか（書き込みの ID と時刻）。</li>
   <li>実行記録（操作・原稿のファイル・投稿 ID・件数・状態）、報告、管理の変更ログ。</li>
 </ul>
-<p>キーワード検索の結果の本文と投稿者、参照した公開プロフィール、承認 secret は保存しません。</p>
+<p>キーワード検索の結果の本文と投稿者、参照した公開プロフィール、口座の secret、アシスタントの鍵の平文は保存しません。</p>
 <h2>データの行き先</h2>
 <ul>
   <li>接続したアカウントの媒体の API。</li>
-  <li>Cloudflare 上の thth.me（Workers・Durable Objects・R2）: 認可の預かり所、承認ページ、添付の受け渡し、データ削除の依頼。</li>
+  <li>Cloudflare 上の thth.me（Workers・Durable Objects・R2）: 認可の預かり所、持ち主の動きの一覧、添付の受け渡し、データ削除の依頼。</li>
   <li>運用通知のメール（設定したときだけ）。運営者のメールサーバから、アカウント名・原稿のファイル名・状態・時刻・理由を送ります。本文は含みません。</li>
   <li>死活監視（設定したときだけ）。アカウント名・実行の状態・原稿のファイル名・理由を送ります。本文は含みません。</li>
   <li>Git: アカウントの記録は Git のリポジトリに置きます。招待された利用者の分は、サーバがリポジトリとその送り先をサーバの中に作ります。運営者自身のアカウントは、外部に送り先を持つリポジトリを使うことがあり、記録はそこへ送られます。</li>
@@ -174,9 +176,9 @@
 <h2>保持</h2>
 <ul>
   <li>預かり所の認可コード: 受付から最大300秒。</li>
-  <li>承認ページ: 最大600秒（承認待ちの一覧に出したものは最大24時間）。その画像の表示: 最大600秒。</li>
-  <li>承認待ちの一覧に入った状態: 10分。</li>
-  <li>R2 の添付: 置いてから24時間で削除（画像の表示は期限が来たとき）。</li>
+  <li>thth.me の動きの一覧の要約と頼んだ操作: 最大 1 時間。</li>
+  <li>動きの一覧に入った状態: 10 分。</li>
+  <li>R2 の添付: 置いてから 24 時間で削除。</li>
   <li>thth.me のデータ削除の依頼: 30日。</li>
   <li>送った運用通知（サーバの通知の記録）: 30日（最大50件）。</li>
   <li>運営者のサーバの観測の地図の日々の集計: 最大180日（日単位で削除）。退出と依頼でも削除。</li>
@@ -189,6 +191,6 @@
 <p><a href="https://github.com/aokings/thth/issues">https://github.com/aokings/thth/issues</a> に issue を立ててください。issue は公開されます。token・App Password・個人情報は書かないでください。招待された利用者は、自分の THTH のセッションから報告（<code>thth report file</code>）もできます。報告は運営者のサーバの私有の置き場に保存します。運営者: gotoq。</p>
 <p><a href="/terms/#ja">利用規約</a>にも同じ連絡先を書いています。</p>
 <h2>変更</h2>
-<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。今回の改訂では、運営者が動かすサービスの形、媒体ごとに使うデータ、返信と言及、キーワード検索、添付、報告、LLM のセッション、退出と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。改訂: 観測の地図の集計の保存（キーワード検索・世間の層）を追記しました。改訂: 広場とサポートの連絡先を書き、利用規約へのリンクを足しました。</p>
+<p>このページは THTH のソースリポジトリから生成されており、変更の履歴はそこで公開されています。今回の改訂では、運営者が動かすサービスの形、媒体ごとに使うデータ、返信と言及、キーワード検索、添付、報告、LLM のセッション、退出と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。改訂: 観測の地図の集計の保存（キーワード検索・世間の層）を追記しました。改訂: 広場とサポートの連絡先を書き、利用規約へのリンクを足しました。改訂: 承認ページを無くし、安全装置・持ち主の動きの一覧・アシスタントの鍵を書きました。</p>
 <footer><a href="/">THTH</a> · <a href="/terms/">利用規約 / Terms of Service</a> · Free and open source · MIT License<br>© 2026 gotoq</footer>
 </main></body></html>
