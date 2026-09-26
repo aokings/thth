@@ -333,6 +333,15 @@ class ReportHandler(BaseHTTPRequestHandler):
             public = {"invalid_request", "unsupported_operation", "invalid_scope", "invalid_options", "scope_unavailable", "writes_not_allowed", "invalid_draft", "draft_changed", "draft_not_editable", "managed_repo_required", "production_disabled"}
             fallback = "report_unavailable"
             detail = {}
+            from .server_reads import OPERATIONS as READ_OPERATIONS
+            if self.path != '/write' and request.get('operation') in READ_OPERATIONS:
+                # 読む口（設計 3.14.0 §3.2）: 静的な符丁と、次に採れる時刻・媒体の短い理由。
+                from .server_writes import SAFE_ERRORS
+                fallback = reason if reason in SAFE_ERRORS else 'read_unavailable'
+                if isinstance(getattr(error, "reason", None), str):
+                    detail = {"reason": error.reason}
+                if isinstance(getattr(error, "next_at", None), str):
+                    detail["next_at"] = error.next_at
             if self.path == '/write':
                 from .server_writes import SAFE_ERRORS, DRAFT_REASONS
                 fallback = reason if reason in SAFE_ERRORS else 'write_unavailable'

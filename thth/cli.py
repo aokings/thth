@@ -1502,6 +1502,24 @@ def _print_refresh(取り直し) -> None:
     print("")
 
 
+def replies_json(account: str, *, post=None, refresh=False, wait=0, log=None):
+    """`thth replies --json` の中身（CLI とサーバの読む口が共有）。
+
+    戻り値は `(result, 取り直し)`。`取り直し` は `refresh` のときだけ（無ければ None）。
+    台帳が読めなければ `AccountError`。`post` は正規化済みの post_id。
+    """
+    取り直し = None
+    if refresh:
+        取り直し = collect_mod.refresh_replies(
+            account, post_id=post, wait=wait,
+            log=log if log is not None else (lambda line: print(line, file=sys.stderr)))
+    # この account の投稿の返信だけ（同じ repo の他 account と置き場を共有・3.1.1）。
+    result = replies_mod.load(account, post_id=post, owned_only=True)
+    if 取り直し is not None:
+        result = {**result, "refresh": 取り直し}
+    return result, 取り直し
+
+
 def cmd_replies(args) -> int:
     """`thth replies <account> [--post <post_id>] [--json]`: 返信の台帳を読む（読むだけ）。
 
@@ -1523,22 +1541,13 @@ def cmd_replies(args) -> int:
         except (accounts_mod.AccountError, postid.PostIdError) as exc:
             print(str(exc), file=sys.stderr)
             return 2
-    取り直し = None
-    if getattr(args, "refresh", False):
-        取り直し = collect_mod.refresh_replies(
-            args.account, post_id=args.post, wait=getattr(args, "wait", 0),
-            log=lambda line: print(line, file=sys.stderr))
-
     try:
-        # この account の投稿の返信だけ（同じ repo の他 account と置き場を共有・3.1.1）。
-        result = replies_mod.load(args.account, post_id=args.post, owned_only=True)
+        result, 取り直し = replies_json(
+            args.account, post=args.post, refresh=getattr(args, "refresh", False),
+            wait=getattr(args, "wait", 0), log=lambda line: print(line, file=sys.stderr))
     except accounts_mod.AccountError as e:
         print(str(e), file=sys.stderr)
         return 1
-
-    if 取り直し is not None:
-        result = {**result, "refresh": 取り直し}
-
 
     if args.json:
         _print_json(result)
@@ -1583,6 +1592,15 @@ def cmd_replies(args) -> int:
     return 失敗
 
 
+def measured_json(account: str, *, post=None) -> dict:
+    """`thth measured --json` の中身（CLI とサーバの読む口が共有）。台帳が読めなければ `AccountError`。"""
+    result = measured_mod.load(account)
+    if post:
+        result = {**result, "posts": [p for p in result["posts"]
+                                       if p["post_id"] == post]}
+    return result
+
+
 def cmd_measured(args) -> int:
     """`thth measured <account> [--post <post_id>] [--json]`: 実測を台帳から
     機械的に並べる（読むだけ）。
@@ -1593,14 +1611,10 @@ def cmd_measured(args) -> int:
     並べる口をここに置く（`thth/measured.py` 参照）。
     """
     try:
-        result = measured_mod.load(args.account)
+        result = measured_json(args.account, post=args.post)
     except accounts_mod.AccountError as e:
         print(str(e), file=sys.stderr)
         return 1
-
-    if args.post:
-        result = {**result, "posts": [p for p in result["posts"]
-                                       if p["post_id"] == args.post]}
 
     if args.json:
         _print_json(result)

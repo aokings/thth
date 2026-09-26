@@ -36,7 +36,9 @@ DIRECT_REASONS = frozenset(('account_busy','publication_failed','publication_unc
                             # `scheduled: false` の口座（timer に載っていない）で予約・猶予を求めた（段 3・裁定 (b)）。
                             'schedule_unavailable'))
 from .account_settings import REASONS as SETTINGS_REASONS
-SAFE_ERRORS = SAFE_ERRORS | MEDIA_REASONS | REPO_REASONS | GUARD_REFUSALS | DIRECT_REASONS | SETTINGS_REASONS
+# 利用者 scope の読む口（設計 3.14.0 §3.2・`thth/server_reads.py`）。
+from .server_reads import REASONS as READ_REASONS
+SAFE_ERRORS = SAFE_ERRORS | MEDIA_REASONS | REPO_REASONS | GUARD_REFUSALS | DIRECT_REASONS | SETTINGS_REASONS | READ_REASONS
 # 断りに添えてよい詳細（止まった理由）。
 GUARD_DETAILS = GUARD_STOP_REASONS | frozenset(('guard_state_unreadable',))
 
