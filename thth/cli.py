@@ -4083,6 +4083,11 @@ def build_parser() -> argparse.ArgumentParser:
     from . import map_cli
     map_cli.register(sub)
 
+    # `thth login` / `thth logout` と遠くの道の旗（設計 3.14.0 §2・§3.4）。口の中身は
+    # `thth/remote.py` に閉じる——ここに足すのはこの 2 行だけ。
+    from . import remote
+    remote.register(sub)
+
     return p
 
 
