@@ -175,36 +175,64 @@ export class Person extends AtomicObject {
   async activityAct(tokenHash,secret,action){
     const view=this.opened(tokenHash);if(!view)return fail(401,'unauthorized');
     if(!validRequest(action))return fail(400,'invalid_request');
+    // 鍵の発行し直し: bearer はここで作り、hash だけを置く。値は呼んだページに 1 度だけ返す。
+    const bearer=action.kind==='rotate'?opaque():null,sha256=bearer?await digest(bearer):null;
+    const result=await this.confirmed(secret,view.generation,now=>{
+      // 他人の口座は触れない: VM がこの人に押し上げた口座だけ。
+      const summary=this.ctx.storage.kv.get('activity:'+action.account);
+      if(!summary||summary.expires_at<=now)return fail(404,'not_found');
+      if(action.kind==='cancel'&&!summary.rows.some(r=>(r.kind==='held'||r.kind==='scheduled')&&r.draft_id===action.draft_id))return fail(404,'not_found');
+      return this.place(action,sha256,now);
+    });
+    if(result.status!==200)return result;
+    await this.wake(this.now()+ACTION_TTL);
+    return bearer?{status:200,body:{...result.body,bearer}}:result;
+  }
+  // ブラウザ式の `thth login`（設計 3.14.2 §2）: 口座名と口座の secret で、/activity の「LLM の鍵を発行する」と
+  // 同じ rotate を置く（前の鍵は無効・VM が次の sync で鍵の表に載せる）。bearer は呼んだ Worker に 1 度だけ返し、
+  // ここには hash だけを置く。照合と失敗の数え方は /activity と同じ（5 回で 15 分閉じる）。
+  // 口座は入れた名前の口座（招待の口座はユーザ名＝口座名）。無ければ、この人の口座が 1 つだけならそれ。
+  async loginIssue(secret,name){
+    if(typeof name!=='string'||!PERSON.test(name))return fail();
+    const bearer=opaque(),sha256=await digest(bearer);
+    const result=await this.confirmed(secret,null,now=>{
+      const live=[...this.ctx.storage.kv.list({prefix:'activity:'})].map(([,s])=>s).filter(s=>s.expires_at>now);
+      const own=live.find(s=>s.account===name)??(live.length===1?live[0]:null);
+      if(!own)return fail(404,'not_found');
+      return this.place({kind:'rotate',account:own.account},sha256,now);
+    });
+    if(result.status!==200)return result;
+    await this.wake(this.now()+ACTION_TTL);
+    return {status:200,body:{account:result.body.account,bearer}};
+  }
+  // secret を確かめ、通れば then(now) を同じ transaction で行う。失敗は /activity の入口と同じ数え方
+  // （5 回で 15 分閉じる・時間で戻る）。generation を渡せば、その session の持ち主のままかも確かめる。
+  async confirmed(secret,generation,then){
     const before=this.ctx.storage.kv.get('person');
     const valid=typeof secret==='string'&&secret.length>=16&&secret.length<=128;
     const computed=valid?await verifier(secret,typeof before?.salt==='string'?before.salt:'A'.repeat(43)):null;
-    // 鍵の発行し直し: bearer はここで作り、hash だけを置く。値は呼んだページに 1 度だけ返す。
-    const bearer=action.kind==='rotate'?opaque():null,sha256=bearer?await digest(bearer):null;
-    const result=this.atomic(()=>{
+    return this.atomic(()=>{
       const row=this.ctx.storage.kv.get('person');
       const now=this.now(),counted=row?.list_failures??0;
       const failures=counted>=5&&now>=(row.list_locked_until??0)?0:counted;
-      if(!before?.verifier||!row?.verifier||row.generation!==before.generation||row.generation!==view.generation||
+      if(!before?.verifier||!row?.verifier||row.generation!==before.generation||generation!==null&&row.generation!==generation||
          !this.current(row.generation)||failures>=5)return fail(403,'secret_failed');
       const ok=valid&&equal(unb64(computed),unb64(row.verifier));
       const next=ok?0:failures+1;
       this.put('person',{...row,list_failures:next,list_locked_until:next>=5?now+LIST_LOCK_MS:null});
       if(!ok)return fail(403,'secret_failed');
       this.prune(now);
-      // 他人の口座は触れない: VM がこの人に押し上げた口座だけ。
-      const summary=this.ctx.storage.kv.get('activity:'+action.account);
-      if(!summary||summary.expires_at<=now)return fail(404,'not_found');
-      if(action.kind==='cancel'&&!summary.rows.some(r=>(r.kind==='held'||r.kind==='scheduled')&&r.draft_id===action.draft_id))return fail(404,'not_found');
-      const pending=[...this.ctx.storage.kv.list({prefix:'action:'})].filter(([,a])=>a.status==='pending').length;
-      if(pending>=ACTION_PENDING_MAX)return fail(409,'too_many_actions');
-      const id=opaque(),stored={id,...action,status:'pending',reason:null,created_at:now,expires_at:now+ACTION_TTL};
-      if(sha256)stored.sha256=sha256;
-      this.put('action:'+id,stored);
-      return {status:200,body:{id,kind:action.kind,account:action.account}};
+      return then(now);
     });
-    if(result.status!==200)return result;
-    await this.wake(this.now()+ACTION_TTL);
-    return bearer?{status:200,body:{...result.body,bearer}}:result;
+  }
+  // 操作を 1 つ置く（VM が次の sync で拾う・1 時間）。rotate は bearer の hash だけ。
+  place(action,sha256,now){
+    const pending=[...this.ctx.storage.kv.list({prefix:'action:'})].filter(([,a])=>a.status==='pending').length;
+    if(pending>=ACTION_PENDING_MAX)return fail(409,'too_many_actions');
+    const id=opaque(),stored={id,...action,status:'pending',reason:null,created_at:now,expires_at:now+ACTION_TTL};
+    if(sha256)stored.sha256=sha256;
+    this.put('action:'+id,stored);
+    return {status:200,body:{id,kind:action.kind,account:action.account}};
   }
   // ---- /activity の入口（設計 3.11.0 の一覧の入口を 3.12.0 §3.4 が使い続けている）。
   // session `view:<token の SHA-256>` は 10 分。この人の object にだけある。

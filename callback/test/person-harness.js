@@ -16,9 +16,16 @@ export class TestPerson extends Person {
   put(key,value){super.put(key,value);if(this.fault)throw new Error('synthetic_storage_failure');}
   inspect(){return [...this.ctx.storage.kv.list()];}
 }
+import {Login} from '../src/login-object.js';
+// ブラウザ式の login（3.14.2）: 時計だけ差し替える。/__person/login/<code_hash> で引く。
+export class TestLogin extends Login {
+  now(){return this.clock??Date.now();}
+  async configure(body){this.clock=body.clock;if(body.alarm)await this.alarm();}
+  inspect(){return [...this.ctx.storage.kv.list()];}
+}
 export default {async fetch(request,env){
-  const match=/^\/__person\/(person|account|deletion|media)\/(.+)$/.exec(new URL(request.url).pathname);
-  if(match){const stub=await(match[1]==='deletion'?env.DELETION_INBOX.getByName('pending-receipts-v1'):match[1]==='account'?accountStub(env,match[2]):match[1]==='media'?mediaStub(env,match[2]):personStub(env,match[2]));
+  const match=/^\/__person\/(person|account|deletion|media|login)\/(.+)$/.exec(new URL(request.url).pathname);
+  if(match){const stub=await(match[1]==='login'?env.LOGIN.getByName(match[2]):match[1]==='deletion'?env.DELETION_INBOX.getByName('pending-receipts-v1'):match[1]==='account'?accountStub(env,match[2]):match[1]==='media'?mediaStub(env,match[2]):personStub(env,match[2]));
     if(request.method==='POST')await stub.configure(await request.json());return Response.json(await stub.inspect());}
   return worker.fetch(request,env);
 }};
