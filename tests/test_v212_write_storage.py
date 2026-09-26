@@ -44,80 +44,35 @@ def test_git_store_redirects_refused_before_any_write(env,tmp_path,store,entry,a
     assert len(list((clone/'queue').glob('*.md')))==1
 
 
-def created(env):
-    response=writes.execute(env['context'],dict(operation='send_request',account='alpha',body='synthetic body'))
-    path=jobs.directory('alpha')/(response['job_id']+'.json')
-    return path,json.loads(path.read_text())
+# 3.13.0: 承認 job は作らない。3.12.0 までに残った job は常駐の起動時に expired にして残す（消さない）。
+def leftover(env,job_id,status,**extra):
+    directory=jobs.directory('alpha');directory.mkdir(parents=True,exist_ok=True,mode=0o700);directory.chmod(0o700)
+    path=directory/(job_id+'.json')
+    path.write_text(json.dumps(dict(schema_version=1,job_id=job_id,account='alpha',kind='send',status=status,**extra)));path.chmod(0o600)
+    return path
 
 
-CORRUPT=[('status',[]),('status',{}),('status',None),('status',3),('status','invented'),
- ('schema_version',True),('expires_at',True),('expires_at','future'),('token',{}),('read_key',[]),
- ('account','beta'),('kind','retract'),('actor','other'),('via',[]),('credential_digest',False),
- ('request',[]),('binding',None),('digest','0'*64),('reason',{'secret':'opaque'}),('post_id',{}),
- ('request.account','beta'),('request.operation','retract_request'),('request.body',{}),
- ('binding.actor','other'),('binding.kind','approve'),('binding.account','beta'),
- ('binding.text',[]),('binding.context',[]),('binding.context.media',{}),
- ('binding.context.options',{}),('binding.source',{}),('binding.ledger',[]),('binding.credential_generation',None)]
+def test_leftover_approval_jobs_are_expired_and_kept(env,remote,publisher):
+    pending=leftover(env,'p'*43,'pending',token='t'*43,read_key='r'*43)
+    ready=leftover(env,'r'*43,'ready')
+    done=leftover(env,'c'*43,'completed',post_id='1')
+    broken=jobs.directory('alpha')/('b'*43+'.json');broken.write_bytes(b'{');broken.chmod(0o600)
+    before={p:p.read_bytes() for p in (done,broken)}
+    assert jobs.expire_leftover_jobs()==2
+    for path in (pending,ready):
+        value=json.loads(path.read_text());assert value['status']=='expired' and value['reason']=='approval_page_removed'
+        assert stat.S_IMODE(path.stat().st_mode)==0o600
+    assert json.loads(pending.read_text())['token']=='t'*43, 'kept as a record'
+    assert {p:p.read_bytes() for p in (done,broken)}==before
+    assert jobs.expire_leftover_jobs()==0
+    assert publisher==[] and all(kind!='session' for kind,_ in remote.calls)
 
 
-@pytest.mark.parametrize('field,value',CORRUPT)
-def test_corrupt_job_refused_and_worker_continues(env,remote,publisher,capsys,field,value):
-    path,bad=created(env);good_path,good=created(env)
-    node=bad;parts=field.split('.')
-    for part in parts[:-1]:node=node[part]
-    node[parts[-1]]=value
-    path.write_text(json.dumps(bad));before=path.read_bytes()
-    remote.approve()
-    # Actual command dispatch must continue after the bad file, with no traceback.
-    assert jobs.command(SimpleNamespace(credentials=str(env['path']),once=True))==0
-    assert path.read_bytes()==before
-    assert json.loads(good_path.read_text())['status']=='completed'
-    assert publisher==[('publish','synthetic body')] and remote.consumes==1
-    with pytest.raises(ReportServiceError):jobs.status(env['context'],'alpha',bad['job_id'])
-    assert capsys.readouterr()==('','')
-
-
-@pytest.mark.parametrize('field',['job_id','digest','account','kind','approver','generation','approved_at','expires_at'])
-def test_corrupt_ready_receipt_cannot_publish(env,remote,publisher,field):
-    path,job=created(env);remote.approve()
-    receipt=remote('session',job['token'],'consume',{'read_key':job['read_key']})
-    job.update(status='ready',receipt=receipt);job['receipt'][field]=False
-    path.write_text(json.dumps(job));before=path.read_bytes()
-    jobs.run_once(env['path'])
-    assert publisher==[] and path.read_bytes()==before
-
-
-def test_expired_ready_receipt_never_publishes(env,remote,publisher,monkeypatch):
-    path,job=created(env);remote.approve()
-    job.update(status='ready',receipt=remote('session',job['token'],'consume',{}))
-    path.write_text(json.dumps(job));monkeypatch.setattr(jobs.time,'time',lambda:job['expires_at']/1000)
-    jobs.run_once(env['path']);assert publisher==[]
-    assert json.loads(path.read_text())['status']=='expired'
-
-
-@pytest.mark.parametrize('raw',[b'null',b'[]',b'3',b'{',b'['*1500+b'0'+b']'*1500])
-def test_unreadable_job_kept_and_next_valid_job_runs(env,remote,publisher,capsys,raw):
-    path,bad=created(env);good_path,_=created(env);path.write_bytes(raw);remote.approve()
-    assert jobs.command(SimpleNamespace(credentials=str(env['path']),once=True))==0
-    assert path.read_bytes()==raw and json.loads(good_path.read_text())['status']=='completed'
-    assert publisher==[('publish','synthetic body')] and capsys.readouterr()==('','')
-
-
-@pytest.mark.parametrize('field',['schema_version','job_id','token','read_key','account','kind','actor','credential_digest',
-                                 'request','binding','digest','status','expires_at','via'])
-def test_missing_required_job_field_no_remote_or_effect(env,remote,publisher,field):
-    path,job=created(env);del job[field];path.write_text(json.dumps(job));before=path.read_bytes();remote.approve()
-    jobs.run_once(env['path'])
-    assert path.read_bytes()==before and publisher==[] and remote.consumes==0
-
-
-def test_future_ready_receipt_no_effect(env,remote,publisher):
-    path,job=created(env);remote.approve()
-    job.update(status='ready',receipt=remote('session',job['token'],'consume',{}))
-    job['receipt']['approved_at']=job['expires_at']-1
-    path.write_text(json.dumps(job));jobs.run_once(env['path'])
-    assert publisher==[]
-    assert json.loads(path.read_text())['status']=='failed'
+def test_worker_start_expires_leftover_jobs_without_any_session_call(env,remote,publisher):
+    pending=leftover(env,'q'*43,'pending')
+    assert jobs.command(SimpleNamespace(once=True,credentials=str(env['path'])))==0
+    assert json.loads(pending.read_text())['status']=='expired'
+    assert publisher==[] and all(kind!='session' for kind,_ in remote.calls)
 
 
 def test_storage_walk_ignores_entries_that_vanish(env,monkeypatch):
