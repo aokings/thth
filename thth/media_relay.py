@@ -10,7 +10,7 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from . import __version__,accounts,approval_relay,leave_gate,redact,httpsafe
+from . import __version__,accounts,relay,leave_gate,redact,httpsafe
 
 MIME={'jpeg':'image/jpeg','png':'image/png','webp':'image/webp','gif':'image/gif','mp4':'video/mp4','mov':'video/quicktime'}
 OPS=frozenset(('create','complete','read','ack','preview','provider','published','invalidate','status'))
@@ -36,15 +36,15 @@ def canonical(method,path,subject,operation,timestamp,nonce,raw):
 
 
 def request_for(subject,operation,body):
-    if not isinstance(subject,str) or not approval_relay.OPAQUE.fullmatch(subject) or operation not in OPS:
+    if not isinstance(subject,str) or not relay.OPAQUE.fullmatch(subject) or operation not in OPS:
         raise MediaRelayError('invalid_media_operation')
     path=f'/media/{subject}/{operation}'
     raw=json.dumps(body,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode()
     timestamp=int(time.time()*1000);nonce=secrets.token_urlsafe(32)
-    with approval_relay.private_key() as fd:
-        signature=approval_relay._openssl(['dgst','-sha256','-sign',f'/dev/fd/{fd}','-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],canonical('POST',path,subject,operation,timestamp,nonce,raw),fd=fd)
+    with relay.private_key() as fd:
+        signature=relay._openssl(['dgst','-sha256','-sign',f'/dev/fd/{fd}','-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],canonical('POST',path,subject,operation,timestamp,nonce,raw),fd=fd)
     url=origin()+path;redact.register_secret(subject);redact.register_secret(url)
-    return urllib.request.Request(url,data=raw,method='POST',headers={'Content-Type':'application/json','User-Agent':f'thth/{__version__} (+https://thth.me)','X-Thth-Time':str(timestamp),'X-Thth-Nonce':nonce,'X-Thth-Signature':approval_relay.b64(signature)})
+    return urllib.request.Request(url,data=raw,method='POST',headers={'Content-Type':'application/json','User-Agent':f'thth/{__version__} (+https://thth.me)','X-Thth-Time':str(timestamp),'X-Thth-Nonce':nonce,'X-Thth-Signature':relay.b64(signature)})
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -115,7 +115,7 @@ class MediaRelay:
         body={**self.binding(row['public_sha256']),'media_id':row['source_sha256'],'source':source,'expires_at':expires_at if expires_at is not None else int(time.time()*1000)+600_000}
         value=self.control(subject,purpose,body)
         generation=value.get('generation')
-        if value.get('status')!='ready' or not isinstance(generation,str) or not approval_relay.OPAQUE.fullmatch(generation) or type(value.get('expires_at')) is not int:
+        if value.get('status')!='ready' or not isinstance(generation,str) or not relay.OPAQUE.fullmatch(generation) or type(value.get('expires_at')) is not int:
             raise MediaRelayError('media_relay_response_invalid')
         url=origin()+'/m/'+subject;redact.register_secret(url);redact.register_secret(subject);redact.register_secret(generation)
         return {'subject':subject,'url':url,'generation':generation,'purpose':purpose,'media_id':row['source_sha256'],'sha256':row['public_sha256'],'expires_at':value['expires_at']}

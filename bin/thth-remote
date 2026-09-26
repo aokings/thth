@@ -8,7 +8,7 @@
 #
 # 引数はそのまま VM の `thth` に渡す。手元のシェルに展開させない
 # （VM 側のパスは手元に存在しないので、glob は使わずディレクトリを渡すこと）。
-# 秘密を対話で入れるもの（`token set`・`auth`・`approver set`）と、招待 URL を tty に 1 回だけ出す
+# 秘密を対話で入れるもの（`token set`・`auth`・`admin secret set`（旧名 `admin approver set`））と、招待 URL を tty に 1 回だけ出す
 # `admin invite`（3.10.0）だけ tty を割り当てる——tty が
 # 無いと getpass がエコーを止められず、**手元の画面にトークンが出る**。
 set -euo pipefail
@@ -23,7 +23,7 @@ done
 # 文字列で持つ（引数は 1 つだけなので分割の心配が無い）。
 TTY_FLAG=""
 case "${1:-} ${2:-} ${3:-}" in
-  "token set "*|"auth "*|"admin invite create"|"approver set "*) TTY_FLAG="-t" ;;
+  "token set "*|"auth "*|"admin invite create"|"admin secret set"|"admin approver set"|"approver set "*) TTY_FLAG="-t" ;;
 esac
 
 if [ -n "$TTY_FLAG" ]; then

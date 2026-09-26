@@ -7,7 +7,7 @@ import socket
 import threading
 import urllib.parse
 import pytest
-from thth import accounts,authclients,leave,leave_gate,admin_log,approval_relay
+from thth import accounts,authclients,leave,leave_gate,admin_log,relay
 from thth.adapters import auth_mastodon as masto,auth_x
 from tests.test_v212_server_writes import env
 
@@ -28,7 +28,7 @@ def provider(env,monkeypatch):
             self.send_response(status);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(b'{}')
     server=ThreadingHTTPServer(('127.0.0.1',0),Handler);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     data['base']='http://127.0.0.1:'+str(server.server_port)
-    monkeypatch.setattr(approval_relay,'signed_request',lambda *a:{'status':'revoked'})
+    monkeypatch.setattr(relay,'signed_request',lambda *a:{'status':'revoked'})
     try:yield data
     finally:server.shutdown();server.server_close();thread.join()
 
@@ -101,7 +101,7 @@ def test_b_credential_commit_before_revoke_is_rechecked_after_inventory(env,prov
         # Worker revoke occurs after initial inventory but before provider revoke.
         authflow.commit_manual('beta',cfg_b,token_a,snapshot=snapshot,session=None,by='operator')
         return {'status':'revoked'}
-    monkeypatch.setattr(approval_relay,'signed_request',worker)
+    monkeypatch.setattr(relay,'signed_request',worker)
     # 3.1.2 件 6: 共有の接続は遠隔で失効させず（calls==[]）、止まらずに退出を終える。
     # 裁定 09-23: 値だけの共有（別ファイル）なら自分の token file は消す。相手の file は残る。
     result=leave.run('alpha',by='operator')
@@ -158,7 +158,7 @@ def test_b_exchange_to_commit_holds_registry_lease_and_late_shared_grant_vetoes_
         return original(account,*args,**kwargs)
     monkeypatch.setattr(authflow,'commit',commit)
     def worker(*args):worker_done.set();return {'status':'revoked'}
-    monkeypatch.setattr(approval_relay,'signed_request',worker)
+    monkeypatch.setattr(relay,'signed_request',worker)
     def input_url():
         # Browser/human wait does not hold the global credential lock.
         with leave_gate.credentials(exclusive=True):pass

@@ -1,6 +1,6 @@
-// Media signatures deliberately cannot authorize approval/operator operations.
+// Media signatures deliberately cannot authorize relay/operator operations.
 import {digest,STATE_PATTERN,HASH_PATTERN,reply} from './relay.js';
-import {boundedBody,unb64} from './approval.js';
+import {boundedBody,unb64,relayPublicKey} from './person.js';
 export const MEDIA_TTL=600_000, RAW_RETENTION=86_400_000;
 export const MEDIA_NAME=/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
 // Transport allowlist for uploaded source bytes. Audio joined in stage 10 so
@@ -23,8 +23,8 @@ export function canonical(method,path,subject,operation,time,nonce,bodyHash){
 }
 async function authenticate(request,env,url,raw,id,op){
   const time=request.headers.get('x-thth-time')||'',nonce=request.headers.get('x-thth-nonce')||'',sig=request.headers.get('x-thth-signature')||'';
-  if(!/^\d{13}$/.test(time)||Math.abs(Date.now()-Number(time))>60_000||!validOpaque(nonce)||sig.length!==512||!env.APPROVAL_PUBLIC_KEY)return null;
-  const key=await crypto.subtle.importKey('spki',unb64(env.APPROVAL_PUBLIC_KEY),{name:'RSA-PSS',hash:'SHA-256'},false,['verify']);
+  if(!/^\d{13}$/.test(time)||Math.abs(Date.now()-Number(time))>60_000||!validOpaque(nonce)||sig.length!==512||!relayPublicKey(env))return null;
+  const key=await crypto.subtle.importKey('spki',unb64(relayPublicKey(env)),{name:'RSA-PSS',hash:'SHA-256'},false,['verify']);
   if(key.algorithm.modulusLength!==3072)return null;
   const ok=await crypto.subtle.verify({name:'RSA-PSS',saltLength:32},key,unb64(sig),new TextEncoder().encode(canonical(request.method,url.pathname,id,op,time,nonce,await digest(raw))));
   return ok?{nonce,time:Number(time)}:null;

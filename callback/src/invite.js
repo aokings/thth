@@ -1,8 +1,8 @@
-// 招待のページ（設計 3.10.0）。作法は承認ページと同じ: script なし・CSP・no-store・
+// 招待のページ（設計 3.10.0）。作法は 3.12.0 までの承認ページと同じ: script なし・CSP・no-store・
 // no-referrer・同一 origin の POST は Sec-Fetch-Site で確かめる。
 // 審査員が読むので、日本語の下に英語を 1 行ずつ添える。
 import {digest,reply} from './relay.js';
-import {boundedBody,inviteStub} from './approval.js';
+import {boundedBody,inviteStub} from './person.js';
 
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const en=text=>`<span class="en">${text}</span>`;
@@ -34,7 +34,7 @@ function openPage(d){
 <h2>何が起きるか${en('What happens')}</h2><ol>
 <li>下のボタンを押すと、運営者のサーバが Threads の認可ページを用意します（数十秒）。${en('After you press the button, the operator’s server prepares the Threads authorization page (a few seconds).')}</li>
 <li>あなたの Threads アカウントで認可すると、そのアカウントの口座が運営者のサーバに用意されます。トークンはこのページを通りません。${en('When you authorize with your Threads account, an account is prepared on the operator’s server. The token never passes through this page.')}</li>
-<li>完了のページで承認 secret が一度だけ表示されます。パスワード管理に保存してください。${en('The completion page shows your approval secret once. Save it in a password manager.')}</li>
+<li>完了のページで口座の secret が一度だけ表示されます。パスワード管理に保存してください。${en('The completion page shows your account secret once. Save it in a password manager.')}</li>
 <li>投稿・返信・削除はあなたの CLI か AI アシスタントが頼んだときに行われます（安全装置は /activity で）。${en('Posts, replies and deletions happen when your CLI or AI assistant asks for them (safety limits are on /activity).')}</li></ol>
 <h2>求める権限${en('Permissions requested')}</h2><ul>${d.scopes.map(s=>`<li><code>${escape(s)}</code></li>`).join('')}</ul>
 ${mode}<p>期限: ${escape(day(d.expires_at))}（UTC）まで。1 回だけ使えます。${en('Valid until '+escape(day(d.expires_at))+' (UTC). Can be used once.')}</p>
@@ -58,21 +58,21 @@ function renderView(d){
   if(d.status==='ready'){
     return invitePage(200,`<h1>用意ができました${en('Your account is ready')}</h1>
 <p>Threads: @${escape(d.handle)} ／ 口座 / account: <code>${escape(d.account)}</code></p>
-<p>次のボタンで承認 secret を表示します。<strong>表示は一度だけです。</strong>その場でパスワード管理に保存してください。${en('The next button shows your approval secret. <strong>It is shown only once.</strong> Save it in a password manager right away.')}</p>
-<form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><input type="hidden" name="action" value="reveal"><button type="submit">承認 secret を表示する / Show approval secret</button></form>`);
+<p>次のボタンで口座の secret を表示します。<strong>表示は一度だけです。</strong>その場でパスワード管理に保存してください。${en('The next button shows your account secret. <strong>It is shown only once.</strong> Save it in a password manager right away.')}</p>
+<form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><input type="hidden" name="action" value="reveal"><button type="submit">口座の secret を表示する / Show account secret</button></form>`);
   }
-  if(d.status==='done')return invitePage(410,`<h1>この招待は使用済みです${en('This invitation has been used')}</h1><p>承認 secret はすでに表示しました（表示は一度だけです）。失くした場合は運営者に再発行を頼んでください。${en('The approval secret was already shown (only once). If you lost it, ask the operator to issue a new one.')}</p>`);
+  if(d.status==='done')return invitePage(410,`<h1>この招待は使用済みです${en('This invitation has been used')}</h1><p>口座の secret はすでに表示しました（表示は一度だけです）。失くした場合は運営者に再発行を頼んでください。${en('The account secret was already shown (only once). If you lost it, ask the operator to issue a new one.')}</p>`);
   return unusable();
 }
 
 export function secretPage(result){
-  return invitePage(200,`<h1>承認 secret${en('Approval secret')}</h1>
+  return invitePage(200,`<h1>口座の secret${en('Account secret')}</h1>
 <p><strong>この表示は一度だけです。</strong>いまパスワード管理に保存してください。${en('<strong>This is shown only once.</strong> Save it in a password manager now.')}</p>
 <code class="secret">${escape(result.secret)}</code>
 <ul><li>ユーザ名 / username: <code>${escape(result.person)}</code></li><li>Web サイト / website: <code>thth.me</code></li></ul>
 <!-- 3.12.0 §6-4: 口座名と secret を同じ form に置き、パスワード管理が thth.me の正しい組として覚えるようにする。
      欄の名前は動きの一覧の入口（/activity）と同じなので、押すとそのまま動きの一覧に入る（3.13.0）。 -->
-<form method="post" action="/activity"><label>ユーザ名 / Username <input name="person" autocomplete="username" value="${escape(result.person)}" readonly></label><label>承認 secret / Approval secret <input type="password" name="secret" autocomplete="new-password" value="${escape(result.secret)}" readonly></label><button type="submit">保存して動きの一覧を開く / Save and open your activity</button></form>
+<form method="post" action="/activity"><label>ユーザ名 / Username <input name="person" autocomplete="username" value="${escape(result.person)}" readonly></label><label>口座の secret / Account secret <input type="password" name="secret" autocomplete="new-password" value="${escape(result.secret)}" readonly></label><button type="submit">保存して動きの一覧を開く / Save and open your activity</button></form>
 <p>ボタンを押すとブラウザやパスワード管理が「保存しますか」と尋ねます。ユーザ名が上の口座名になっているのを確かめて保存してください。${en('When you press the button, your browser or password manager offers to save. Check that the username is the account name above, then save.')}</p>
 <p>動きの一覧は <a href="/activity">https://thth.me/activity</a> で、このユーザ名と secret を入れると見られます（口座を止める・戻す・予約の取り消し・安全装置の数値・LLM の鍵）。secret は LLM や原稿に書かないでください。${en('Open <a href="/activity">https://thth.me/activity</a> and sign in with this username and secret to see your activity (stop or resume the account, cancel scheduled posts, change safety limits, manage the key for your LLM). Never paste it into an LLM or a draft.')}</p>`);
 }
@@ -83,11 +83,11 @@ export async function inviteRequest(request,env,url){
     const match=/^\/invite\/([A-Za-z0-9_-]{43})$/.exec(url.pathname);
     if(!match)return reply(404,{error:'not_found'});
     if(!env.INVITE_OBJECT)return reply(503,{error:'invite_unavailable'});
-    if(!env.APPROVAL_PUBLIC_LIMIT||!(await env.APPROVAL_PUBLIC_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
+    if(!env.RELAY_PUBLIC_LIMIT||!(await env.RELAY_PUBLIC_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
     if(!['GET','POST'].includes(request.method))return reply(405,{error:'method_not_allowed'});
     const stub=inviteStub(env,await digest(match[1]));
     if(request.method==='GET')return renderView(await stub.view());
-    // 承認ページと同じ: no-referrer では同一 origin の form POST でも Origin が null か無し。
+    // 3.12.0 までの承認ページと同じ: no-referrer では同一 origin の form POST でも Origin が null か無し。
     // そのときは Sec-Fetch-Site で同一 origin を確かめる。csrf と form-action 'self' も効く。
     const originHeader=request.headers.get('origin'),site=request.headers.get('sec-fetch-site');
     const sameOrigin=originHeader===url.origin||((originHeader===null||originHeader==='null')&&(site===null||site==='same-origin'));

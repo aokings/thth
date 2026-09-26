@@ -6,7 +6,7 @@ import secrets
 import time
 from types import SimpleNamespace
 import pytest
-from thth import accounts,admin_log,deletion,leave,approval_relay
+from thth import accounts,admin_log,deletion,leave,relay
 from tests.test_v212_server_writes import env
 
 
@@ -46,7 +46,7 @@ class Relay:
 
 
 def test_verified_deletion_event_precedes_receipt_ack_then_leave_completion(env,monkeypatch):
-    raw=blob(env,monkeypatch);remote=Relay(raw);remote.root=env['root'];monkeypatch.setattr(approval_relay,'signed_request',remote)
+    raw=blob(env,monkeypatch);remote=Relay(raw);remote.root=env['root'];monkeypatch.setattr(relay,'signed_request',remote)
     assert deletion.sync(by='operator')=={'verified':1,'unmatched':0,'discarded_invalid_signature':0,'observed':1}
     assert remote.state=='verified' and (env['root']/'accounts/alpha.json').exists()
     event=admin_log.read(event='deletion_requested')[0][0]
@@ -61,7 +61,7 @@ def test_unverified_request_never_links_account_or_stops_it(env,monkeypatch,vari
     if variant=='signature':raw=('A' if raw[0]!='A' else 'B')+raw[1:]
     if variant=='ambiguous':
         source=json.loads((env['root']/'secrets/alpha.json').read_text());dest=env['root']/'secrets/beta.json';other=json.loads(dest.read_text());other['user_id']=source['user_id'];dest.write_text(json.dumps(other))
-    remote=Relay(raw);monkeypatch.setattr(approval_relay,'signed_request',remote)
+    remote=Relay(raw);monkeypatch.setattr(relay,'signed_request',remote)
     result=deletion.sync(by='operator')
     assert result['unmatched']==(0 if variant=='signature' else 1)
     assert result['discarded_invalid_signature']==(1 if variant=='signature' else 0)
@@ -71,7 +71,7 @@ def test_unverified_request_never_links_account_or_stops_it(env,monkeypatch,vari
 
 
 def test_log_failure_cannot_ack_verification(env,monkeypatch):
-    remote=Relay(blob(env,monkeypatch));monkeypatch.setattr(approval_relay,'signed_request',remote)
+    remote=Relay(blob(env,monkeypatch));monkeypatch.setattr(relay,'signed_request',remote)
     monkeypatch.setattr(admin_log,'_emit',lambda *a:(_ for _ in ()).throw(admin_log.AdminLogError('synthetic')))
     with pytest.raises(admin_log.AdminLogError):deletion.sync(by='operator')
     assert remote.state=='unverified' and not any(x[2]=='verify' for x in remote.calls)
@@ -92,7 +92,7 @@ def test_unknown_key_never_discards_even_a_bad_signature(env,monkeypatch,variant
     if variant=='missing_key':path.unlink()
     elif variant=='unsafe_key':path.chmod(0o644)
     else:path.write_text('THREADS_APP_ID=synthetic\n')
-    remote=Relay(raw);monkeypatch.setattr(approval_relay,'signed_request',remote)
+    remote=Relay(raw);monkeypatch.setattr(relay,'signed_request',remote)
     result=deletion.sync(by='operator')
     assert result['unmatched']==1 and result['discarded_invalid_signature']==0
     assert remote.state=='unverified' and not any(c[2]=='discard' for c in remote.calls)
@@ -101,6 +101,6 @@ def test_unknown_key_never_discards_even_a_bad_signature(env,monkeypatch,variant
 def test_bad_signature_is_discardable_before_payload_interpretation(env,monkeypatch):
     blob(env,monkeypatch)
     raw=secrets.token_urlsafe(32)+'.'+base64.urlsafe_b64encode(b'not-json').decode().rstrip('=')
-    remote=Relay(raw);monkeypatch.setattr(approval_relay,'signed_request',remote)
+    remote=Relay(raw);monkeypatch.setattr(relay,'signed_request',remote)
     assert deletion.sync(by='operator')['discarded_invalid_signature']==1
     assert remote.state=='discarded' and not deletion._records()

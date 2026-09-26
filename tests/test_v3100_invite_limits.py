@@ -120,7 +120,7 @@ def test_常駐が止まっていて2分以上経って拾ったら運用通知�
     ((recipient, event, account),) = mailbox
     assert recipient == "ops@example.test" and account == "invite-" + row["invite_id"]
     assert event["state"] == "admin_change" and event["admin_event"]["event"] == "invite_stalled"
-    assert event["admin_event"]["waited_seconds"] >= 180 and "thth-approval-worker" in event["admin_event"]["next"]
+    assert event["admin_event"]["waited_seconds"] >= 180 and "thth-worker" in event["admin_event"]["next"]
     code = tty.codes()[-1]
     assert code not in json.dumps(event) and digest not in json.dumps(event)
     # もう一度遅れて押されても、同じ招待で 2 通目は送らない。

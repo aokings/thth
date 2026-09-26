@@ -29,7 +29,7 @@ if sys.argv[1] == 'create':
     app.write_text('THREADS_APP_ID=' + secrets.token_hex(8) + '\nTHREADS_APP_SECRET=' + secrets.token_urlsafe(32) + '\n')
     app.chmod(0o600)
 os.environ['THTH_APP_ENV_PATH'] = str(root / 'secrets/app.env')
-origin = os.environ['THTH_APPROVAL_BASE_URL']
+origin = os.environ['THTH_RELAY_BASE_URL']
 port = urllib.parse.urlsplit(origin).port
 connect = socket.socket.connect
 socket.socket.connect = lambda self, address: connect(self, address) if address[:2] == ('127.0.0.1', port) else (_ for _ in ()).throw(RuntimeError('external_connect_denied'))

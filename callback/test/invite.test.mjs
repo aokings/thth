@@ -8,7 +8,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
-import {canonical} from '../src/approval.js';
+import {canonical} from '../src/person.js';
 const opaque=()=>randomBytes(32).toString('base64url'),hash=s=>createHash('sha256').update(s).digest('hex');
 const logs=[],sensitive=[];
 class SilentLog extends Log {constructor(){super(LogLevel.NONE);}log(value){logs.push(String(value));}}
@@ -21,16 +21,16 @@ before(async()=>{
   directory=await realpath(await mkdtemp(join(tmpdir(),'thth-invite-')));key=join(directory,'ephemeral.key');
   const pem=run(['genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072']);sensitive.push(pem.toString());await writeFile(key,pem,{mode:0o600});
   const publicKey=run(['pkey','-in',key,'-pubout','-outform','DER']).toString('base64url');
-  const files=['test/invite-harness.js','src/worker.js','src/invite.js','src/invite-object.js','src/activity.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/approval.js','src/approval-object.js','src/deletion.js','src/deletion-object.js'];
+  const files=['test/invite-harness.js','src/worker.js','src/invite.js','src/invite-object.js','src/activity.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/person.js','src/person-object.js','src/deletion.js','src/deletion-object.js'];
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,
-    log:new SilentLog(),handleStructuredLogs:item=>logs.push(JSON.stringify(item)),bindings:{APPROVAL_PUBLIC_KEY:publicKey},
-    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'TestPerson',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},MEDIA_OBJECT:{className:'MediaObject',useSQLite:true},INVITE_OBJECT:{className:'TestInvite',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
-    ratelimits:{AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:1000,period:60}},APPROVAL_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:1000,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:1000,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:1000,period:60}}}}));await mf.ready;
+    log:new SilentLog(),handleStructuredLogs:item=>logs.push(JSON.stringify(item)),bindings:{RELAY_PUBLIC_KEY:publicKey},
+    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},PERSON:{className:'TestPerson',useSQLite:true},ACCOUNT:{className:'Account',useSQLite:true},MEDIA_OBJECT:{className:'MediaObject',useSQLite:true},INVITE_OBJECT:{className:'TestInvite',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
+    ratelimits:{AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:1000,period:60}},RELAY_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:1000,period:60}},RELAY_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:1000,period:60}},RELAY_JOB_LIMIT:{namespace_id:'21203',simple:{limit:1000,period:60}}}}));await mf.ready;
 });
 after(async()=>{await mf?.dispose();await rm(directory,{recursive:true,force:true});const hits=logs.filter(line=>sensitive.some(value=>line.includes(value))).length;assert.equal(hits,0,'secret in runtime logs');});
 async function signed(type,subject,op,body={}){
-  const path=`/approval/${type}/${subject}/${op}`,raw=JSON.stringify(body),time=Date.now(),nonce=opaque();
+  const path=`/relay/v/${type}/${subject}/${op}`,raw=JSON.stringify(body),time=Date.now(),nonce=opaque();
   const signature=run(['dgst','-sha256','-sign',key,'-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],Buffer.from(canonical('POST',path,'operator',subject,op,time,nonce,hash(raw)))).toString('base64url');
   return mf.dispatchFetch(ORIGIN+path,{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':opaque(),'x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw});
 }
@@ -112,7 +112,7 @@ test('やり直し（reset）: 理由を見せて open に戻る・同じ招待�
   assert.equal((await press(inv,'start')).status,303);assert.equal((await status(inv)).status,'clicked');
 });
 
-test('完了と承認 secret: 1 回だけ表示・verifier は PBKDF2 100,000・2 回目は 410 で secret なし',async()=>{
+test('完了と口座の secret: 1 回だけ表示・verifier は PBKDF2 100,000・2 回目は 410 で secret なし',async()=>{
   const inv=await invite(),person=await toReady(inv);
   const ready=await(await view(inv)).text();assert.ok(ready.includes('@reviewer.test')&&ready.includes(person)&&ready.includes('value="reveal"'));
   assert.equal((await press(inv,'reveal',{headers:{origin:'https://evil.test'}})).status,403);
@@ -147,7 +147,7 @@ test('同時に押しても secret は 1 つだけ',async()=>{
   assert.equal(shown.length,1);
 });
 
-test('招待は既存の承認者を上書きしない',async()=>{
+test('招待は既存の持ち主を上書きしない',async()=>{
   const secret=opaque(),salt=opaque();sensitive.push(secret);
   const verifier=pbkdf2Sync(secret,Buffer.from(salt,'base64url'),100000,32,'sha256').toString('base64url');
   assert.equal((await signed('person','masaru','set',{salt,verifier,iterations:100000})).status,200);
@@ -187,7 +187,7 @@ test('期限: 過ぎたら 410・状態は expired・alarm で消える',async()
 test('作り直しは断る・署名なしは 401・subject は 64 桁の hash だけ',async()=>{
   const inv=await invite();
   assert.equal((await signed('invite',inv.id,'create',{media:'threads',production:false,expires_at:Date.now()+86_400_000,scopes:SCOPES})).status,409);
-  const unsigned=await mf.dispatchFetch(ORIGIN+'/approval/invite/'+inv.id+'/status',{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':opaque()},body:'{}'});
+  const unsigned=await mf.dispatchFetch(ORIGIN+'/relay/v/invite/'+inv.id+'/status',{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':opaque()},body:'{}'});
   assert.equal(unsigned.status,401);
   assert.equal((await signed('invite',inv.code,'status',{})).status,400);
 });
@@ -217,7 +217,25 @@ test('wrangler.jsonc: no APPROVAL_SESSION binding and a deleted_classes migratio
   const config=JSON.parse(text);
   assert.ok(!config.durable_objects.bindings.some(b=>b.name==='APPROVAL_SESSION'||b.class_name==='ApprovalSession'));
   const tags=config.migrations.map(m=>m.tag);assert.equal(new Set(tags).size,tags.length);
-  assert.equal(tags.indexOf('v5-invite')+1,tags.length-1);
-  assert.deepEqual(config.migrations.at(-1),{tag:'v6-no-approval-session',deleted_classes:['ApprovalSession']});
+  assert.equal(tags.indexOf('v5-invite')+1,tags.indexOf('v6-no-approval-session'));
+  assert.deepEqual(config.migrations[tags.indexOf('v6-no-approval-session')],{tag:'v6-no-approval-session',deleted_classes:['ApprovalSession']});
   assert.ok(config.migrations.some(m=>(m.new_sqlite_classes??[]).includes('ApprovalSession')),'the class was created by an earlier migration');
+});
+
+// 3.13.0: DO の class と binding の名前を改めた（ApprovalPerson → Person・ApprovalAccount → Account）。
+// 中身を失わないよう renamed_classes の migration を v6 の続きに置く。回数制限は名前だけ改め namespace_id は変えない。
+test('wrangler.jsonc: Person/Account are renamed with a renamed_classes migration after v6, limits keep their namespaces',async()=>{
+  const text=(await readFile(fileURLToPath(new URL('../wrangler.jsonc',import.meta.url)),'utf8')).split('\n').filter(line=>!line.trim().startsWith('//')).join('\n');
+  const config=JSON.parse(text);
+  const tags=config.migrations.map(m=>m.tag);
+  assert.equal(tags.indexOf('v6-no-approval-session')+1,tags.indexOf('v7-rename-person'));
+  assert.deepEqual(config.migrations[tags.indexOf('v7-rename-person')],{tag:'v7-rename-person',renamed_classes:[{from:'ApprovalPerson',to:'Person'},{from:'ApprovalAccount',to:'Account'}]});
+  const bindings=Object.fromEntries(config.durable_objects.bindings.map(b=>[b.name,b.class_name]));
+  assert.equal(bindings.PERSON,'Person');assert.equal(bindings.ACCOUNT,'Account');
+  assert.ok(!('APPROVAL_PERSON' in bindings)&&!('APPROVAL_ACCOUNT' in bindings));
+  const limits=Object.fromEntries(config.ratelimits.map(r=>[r.name,r.namespace_id]));
+  assert.deepEqual([limits.RELAY_PUBLIC_LIMIT,limits.RELAY_VERIFY_LIMIT,limits.RELAY_JOB_LIMIT],['21201','21202','21203']);
+  assert.ok(!Object.keys(limits).some(name=>name.startsWith('APPROVAL_')));
+  // 旧 path は 1 版の間だけ Worker を先に通す。新 path は /relay/* に含まれる。
+  assert.ok(config.assets.run_worker_first.includes('/approval/*')&&config.assets.run_worker_first.includes('/relay/*'));
 });

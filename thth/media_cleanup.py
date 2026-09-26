@@ -1,15 +1,16 @@
 """Signed cleanup observation/recovery. No capability or object IDs leave Worker."""
 import json
 import os
-from . import accounts, admin_log, approval_relay
+from . import accounts, admin_log, relay
 
 
 def configured():
     """Read-only presence, never create signer directories or fetch a URL."""
-    if os.environ.get('THTH_APPROVAL_BASE_URL') or os.environ.get('THTH_MEDIA_BASE_URL'):return True
-    try:approval_relay.key_path().lstat()
+    if (os.environ.get('THTH_RELAY_BASE_URL') or os.environ.get('THTH_APPROVAL_BASE_URL')
+            or os.environ.get('THTH_MEDIA_BASE_URL')):return True
+    try:relay.key_path().lstat()
     except FileNotFoundError:return False
-    except (OSError, ValueError, approval_relay.RelayError):return True
+    except (OSError, ValueError, relay.RelayError):return True
     return True
 
 
@@ -28,14 +29,14 @@ def observe(account):
     unavailable = dict(UNAVAILABLE)
     try:
         if not accounts.name_is_safe(account):return unavailable
-        result = approval_relay.signed_request('account', account, 'status', {})
+        result = relay.signed_request('account', account, 'status', {})
         value = result.get('cleanup')
         if not _counts(value, ('pending_count', 'failed_count', 'reason')):return unavailable
         pending, failed = value['pending_count'], value['failed_count']
         expected = 'cleanup_failed' if failed else 'cleanup_unconfirmed' if pending else None
         if failed > pending or value['reason'] != expected:return unavailable
         return dict(value)
-    except (OSError, ValueError, TypeError, approval_relay.RelayError):
+    except (OSError, ValueError, TypeError, relay.RelayError):
         return unavailable
 
 
@@ -43,7 +44,7 @@ def retry(account, *, by):
     if not accounts.name_is_safe(account):raise ValueError('invalid_account')
     admin_log.actor(by)
     # No active-account requirement: recovery must remain possible after leave.
-    result = approval_relay.signed_request('account', account, 'cleanup-retry', {})
+    result = relay.signed_request('account', account, 'cleanup-retry', {})
     if not _counts(result, ('scheduled_count', 'unavailable_count', 'remaining_count', 'reason')):
         raise ValueError('cleanup_retry_unavailable')
     expected = 'cleanup_retry_unavailable' if result['unavailable_count'] else None
@@ -54,7 +55,7 @@ def retry(account, *, by):
 def command(args):
     try:
         result = retry(args.account, by=args.by)
-    except (OSError, ValueError, TypeError, admin_log.AdminLogError, approval_relay.RelayError):
+    except (OSError, ValueError, TypeError, admin_log.AdminLogError, relay.RelayError):
         result = {'reason': 'cleanup_retry_unavailable'}
     print(json.dumps(result, ensure_ascii=False) if args.json else
           'cleanup: ' + str(result.get('reason') or 'scheduled') +

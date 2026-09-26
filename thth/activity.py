@@ -1,6 +1,6 @@
 """動きの一覧 `https://thth.me/activity` の VM 側（設計 3.12.0 §3.4・§3.5・段 3）。
 
-向きは招待・退出の relay と同じ: **VM が Worker へ署名つきで押し上げる**（`/approval/activity/<person>/sync`）。
+向きは招待・退出の relay と同じ: **VM が Worker へ署名つきで押し上げる**（`/relay/v/activity/<person>/sync`）。
 
 - 押し上げるもの: 持ち主（person）ごとに、その人の口座の要約——安全装置の数値・
   止まっているか（理由）・今日の公開数と削除数・MCP の鍵の id（hash の先頭 12 字）と期限・
@@ -28,7 +28,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import accounts, admin_log, approval_relay as relay, guard, jst, sent as sent_mod
+from . import accounts, admin_log, relay, guard, jst, sent as sent_mod
 
 HEAD = 60
 ROWS_MAX = 30
@@ -340,7 +340,7 @@ def sync_person(person, names, credentials_path):
                                  {"accounts": _summaries(person, names, credentials_path), "completed": []})
     actions = value.get("actions") if isinstance(value, dict) else None
     if not isinstance(actions, list):
-        raise relay.RelayError("approval_relay_invalid")
+        raise relay.RelayError("relay_invalid")
     completed = [row for row in (apply(person, action, credentials_path) for action in actions[:ACTIONS_MAX]) if row]
     if completed:
         relay.signed_request("activity", person, "sync",
@@ -349,7 +349,7 @@ def sync_person(person, names, credentials_path):
 
 
 def run_once(credentials_path):
-    """`thth approval-worker` の 1 巡から呼ぶ。人ごとに 10 秒に 1 回（Worker に人が無ければ 5 分待つ）。"""
+    """`thth worker` の 1 巡から呼ぶ。人ごとに 10 秒に 1 回（Worker に人が無ければ 5 分待つ）。"""
     if time.monotonic() < _next_sync.get("", 0):
         return
     _next_sync[""] = time.monotonic() + SYNC_SECONDS

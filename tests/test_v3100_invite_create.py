@@ -5,7 +5,7 @@
   - Worker への登録は code の hash を subject にし、控えのメモ（label）は送らない。
   - 持ち主の組に入っている project では作らない（外の人を組に入れない）。
   - 取り消しは Worker が先。使用済みは取り消さない。
-Worker は偽物（`approval_relay.signed_request` を差し替える）。外への通信はしない。
+Worker は偽物（`relay.signed_request` を差し替える）。外への通信はしない。
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import socket
 
 import pytest
 
-from thth import admin_log, approval_relay, cli, invites, plaza
+from thth import admin_log, relay, cli, invites, plaza
 
 
 class FakeTTY:
@@ -31,7 +31,7 @@ class FakeTTY:
         @contextlib.contextmanager
         def opened():
             if self.fail:
-                raise approval_relay.RelayError("approver_tty_required")
+                raise relay.RelayError("secret_tty_required")
             yield self.stream
         return opened()
 
@@ -51,19 +51,19 @@ class FakeWorker:
         assert kind == "invite"
         self.calls.append((subject, operation, json.loads(json.dumps(body))))
         if operation in self.fail:
-            raise approval_relay.RelayError("approval_relay_outcome_unknown", status=self.fail[operation])
+            raise relay.RelayError("relay_outcome_unknown", status=self.fail[operation])
         if operation == "create":
             self.invites[subject] = {"status": "open", **body}
             return {"status": "open"}
         if operation == "revoke":
             if subject not in self.invites:
-                raise approval_relay.RelayError("approval_relay_outcome_unknown", status=404)
+                raise relay.RelayError("relay_outcome_unknown", status=404)
             self.invites[subject]["status"] = "revoked"
             return {"status": "revoked"}
         if operation == "status":
             row = self.invites.get(subject)
             if row is None:
-                raise approval_relay.RelayError("approval_relay_outcome_unknown", status=404)
+                raise relay.RelayError("relay_outcome_unknown", status=404)
             return {"status": row["status"], "expires_at": row["expires_at"], "clicked_at": row.get("clicked_at")}
         raise AssertionError(operation)
 
@@ -78,7 +78,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", lambda *a: pytest.fail("external network"))
     tty, worker = FakeTTY(), FakeWorker()
     monkeypatch.setattr(invites, "terminal", tty)
-    monkeypatch.setattr(approval_relay, "signed_request", worker)
+    monkeypatch.setattr(relay, "signed_request", worker)
     return root, tty, worker
 
 

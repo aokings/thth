@@ -1,4 +1,4 @@
-import {boundedBody,fields,opaque,fail} from './approval.js';
+import {boundedBody,fields,opaque,fail} from './person.js';
 import {STATE_PATTERN,digest,reply} from './relay.js';
 export const RETENTION=30*24*60*60*1000;
 export const deletionStub=env=>env.DELETION_INBOX.getByName('pending-receipts-v1');

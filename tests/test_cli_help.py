@@ -19,10 +19,12 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def _subcommand_choices() -> set:
+    """`thth --help` の選択肢。3.13.0 で改名した旧名（deprecated の alias）は文書に並べないので除く。"""
+    from thth import worker as worker_mod
     parser = cli_mod.build_parser()
     for action in parser._subparsers._group_actions:
         if isinstance(action, argparse._SubParsersAction):
-            return set(action.choices)
+            return set(action.choices) - {worker_mod.DEPRECATED_NAME}
     raise AssertionError("subparsers action が見つかりません")
 
 

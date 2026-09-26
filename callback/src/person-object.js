@@ -1,5 +1,5 @@
 import {DurableObject} from 'cloudflare:workers';
-import {TTL,VIEW_MAX,LIST_LOCK_MS,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64} from './approval.js';
+import {TTL,VIEW_MAX,LIST_LOCK_MS,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64} from './person.js';
 import {HASH_PATTERN,STATE_PATTERN,digest} from './relay.js';
 // 3.13.0: 承認ページの session（ApprovalSession）と承認待ちの一覧は無い。残るのは持ち主（person）の
 // secret の照合・/activity・口座ごとの束（退出・添付の後始末）。名前は段 2 で改める。
@@ -55,7 +55,7 @@ export function validRequest(a){
 export class AtomicObject extends DurableObject {
   now(){return Date.now();}
   put(key,value){this.ctx.storage.kv.put(key,value);}
-  atomic(fn){try{return this.ctx.storage.transactionSync(fn);}catch{return fail(503,'approval_unavailable');}}
+  atomic(fn){try{return this.ctx.storage.transactionSync(fn);}catch{return fail(503,'storage_unavailable');}}
   // Signature validated at the sole public HTTP entry; RPC bindings are private.
   replay(ticket){
     const now=this.now();
@@ -66,7 +66,7 @@ export class AtomicObject extends DurableObject {
     seen[ticket.nonce]=ticket.time+60_001;this.put('nonces',seen);return true;
   }
 }
-export class ApprovalPerson extends AtomicObject {
+export class Person extends AtomicObject {
   manage(operation,body,ticket){return this.atomic(()=>{
     if(!['set','revoke','unlock','status'].includes(operation))return fail();
     if(operation==='set'?!fields(body,['salt','verifier','iterations'])||typeof body.salt!=='string'||typeof body.verifier!=='string'||!STATE_PATTERN.test(body.salt)||!STATE_PATTERN.test(body.verifier)||body.iterations!==ITERATIONS:!fields(body,[]))return fail();
@@ -79,13 +79,13 @@ export class ApprovalPerson extends AtomicObject {
     else this.put('person',{...old,failures:0,list_failures:0,list_locked_until:null});
     return {status:200,body:{status:operation==='set'?'configured':operation==='revoke'?'revoked':'unlocked'}};
   });}
-  // 招待（3.10.0）の完了ページが本人の承認 secret を 1 回だけ作る。既存の承認者は
-  // 上書きしない（運営者の approver set・失効・別の招待の人）。同じ招待のやり直しだけ通す。
+  // 招待（3.10.0）の完了ページが本人の口座の secret を 1 回だけ作る。既存の持ち主は
+  // 上書きしない（運営者の admin secret set・失効・別の招待の人）。同じ招待のやり直しだけ通す。
   provision(salt,verifier,origin){return this.atomic(()=>{
     if(typeof salt!=='string'||!STATE_PATTERN.test(salt)||typeof verifier!=='string'||!STATE_PATTERN.test(verifier)||
        typeof origin!=='string'||!HASH_PATTERN.test(origin))return fail();
     const old=this.ctx.storage.kv.get('person');
-    if(old&&old.invite!==origin)return fail(409,'approver_exists');
+    if(old&&old.invite!==origin)return fail(409,'person_exists');
     this.put('person',{salt,verifier,iterations:ITERATIONS,active:true,generation:opaque(),failures:0,invite:origin});
     return {status:200,body:{status:'configured'}};
   });}
@@ -111,7 +111,7 @@ export class ApprovalPerson extends AtomicObject {
       if(!validSync(body))return fail();
       if(!this.replay(ticket))return fail(409,'replayed_request');
       const row=this.ctx.storage.kv.get('person');
-      if(!row||!this.current(row.generation))return fail(409,'approver_unavailable');
+      if(!row||!this.current(row.generation))return fail(409,'person_unavailable');
       const now=this.now();this.prune(now);
       for(const [key] of this.ctx.storage.kv.list({prefix:'activity:'}))this.ctx.storage.kv.delete(key);
       for(const {approval,...summary} of body.accounts)this.put('activity:'+summary.account,{...summary,expires_at:now+ACTIVITY_TTL});
@@ -152,11 +152,11 @@ export class ApprovalPerson extends AtomicObject {
       const now=this.now(),counted=row?.list_failures??0;
       const failures=counted>=5&&now>=(row.list_locked_until??0)?0:counted;
       if(!before?.verifier||!row?.verifier||row.generation!==before.generation||row.generation!==view.generation||
-         !this.current(row.generation)||failures>=5)return fail(403,'approval_failed');
+         !this.current(row.generation)||failures>=5)return fail(403,'secret_failed');
       const ok=valid&&equal(unb64(computed),unb64(row.verifier));
       const next=ok?0:failures+1;
       this.put('person',{...row,list_failures:next,list_locked_until:next>=5?now+LIST_LOCK_MS:null});
-      if(!ok)return fail(403,'approval_failed');
+      if(!ok)return fail(403,'secret_failed');
       this.prune(now);
       // 他人の口座は触れない: VM がこの人に押し上げた口座だけ。
       const summary=this.ctx.storage.kv.get('activity:'+action.account);
@@ -200,7 +200,7 @@ export class ApprovalPerson extends AtomicObject {
       this.put('view:'+tokenHash,{generation:row.generation,expires_at});
       return expires_at;
     });
-    if(typeof result!=='number')return fail(403,'approval_failed');
+    if(typeof result!=='number')return fail(403,'secret_failed');
     await this.wake(result);
     return {status:200,body:{expires_at:result}};
   }
@@ -213,7 +213,7 @@ export class ApprovalPerson extends AtomicObject {
     return {status:200};
   });}
 }
-export class ApprovalAccount extends AtomicObject {
+export class Account extends AtomicObject {
   active(){return this.ctx.storage.kv.get('revoked')!==true;}
   cleanupRegister(subject,account,due_at){return this.atomic(()=>{
     if(typeof subject!=='string'||! /^[a-f0-9]{64}$/.test(subject)||!PERSON.test(account)||!Number.isSafeInteger(due_at))return fail();

@@ -1,5 +1,5 @@
 import {DurableObject} from 'cloudflare:workers';
-import {opaque,accountStub} from './approval.js';
+import {opaque,accountStub} from './person.js';
 import {reply} from './relay.js';
 import {MEDIA_TTL,RAW_RETENTION,MEDIA_NAME,MIME,MULTIPART_THRESHOLD,MIN_PART,fail,keys,validHash,validOpaque,mediaStub} from './media.js';
 
@@ -11,7 +11,7 @@ export class MediaObject extends DurableObject {
   put(row){this.ctx.storage.kv.put('media',row);}
   atomic(fn){return this.ctx.storage.transactionSync(fn);}
   current(row){return row&&this.now()<row.expires_at&&!['retired','failed'].includes(row.status);}
-  async active(account){return !!this.env.APPROVAL_ACCOUNT&&await(await accountStub(this.env,account)).active();}
+  async active(account){return !!this.env.ACCOUNT&&await(await accountStub(this.env,account)).active();}
   async cleanupAuthority(row){return accountStub(this.env,row.account);}
   async enroll(row){
     const result=await(await this.cleanupAuthority(row)).cleanupRegister(this.ctx.id.toString(),row.account,row.cleanup_at);
@@ -200,7 +200,7 @@ export class MediaObject extends DurableObject {
     });if(changed.status===200)await this.schedule(this.row());return changed;});
     return result;
   }
-  // Private RPC for the approval session that shows this preview. `boundExpiry`
+  // Private RPC (3.12.0 and earlier: for the approval session that showed this preview). `boundExpiry`
   // only shortens a preview to the session's deadline (never extends it) and
   // `invalidate` retires it now. Neither creates, extends or reads a capability,
   // and neither touches a provider grant, which keeps its own ack protocol.
@@ -213,7 +213,7 @@ export class MediaObject extends DurableObject {
     if(changed)await this.schedule(this.row());
     return {status:200,body:{expires_at:this.row()?.expires_at??expires_at}};
   }
-  // Private RPC: `view`'s gate without the bytes, so the approval page can tell
+  // Private RPC: `view`'s gate without the bytes, so a caller can tell
   // whether this capability would still show an image.
   async live(){
     const row=this.row();

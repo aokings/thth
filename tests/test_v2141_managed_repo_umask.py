@@ -72,9 +72,9 @@ def test_draft_put_says_the_mode_instead_of_write_unavailable(env):
     assert 'managed_git_store_unsafe_mode' in SAFE_ERRORS
 
 
-def test_approval_worker_unit_sets_umask_0077(capsys):
+def test_worker_unit_sets_umask_0077(capsys):
     credentials = '/srv/thth/private/report-credentials.json'
-    unit = systemd_gen.render_approval_worker_service(credentials)
+    unit = systemd_gen.render_worker_service(credentials)
     assert 'UMask=0077\n' in unit
-    assert cli.main(['systemd', '--approval-worker', '--credentials', credentials]) == 0
+    assert cli.main(['systemd', '--worker', '--credentials', credentials]) == 0
     assert 'UMask=0077\n' in capsys.readouterr().out

@@ -248,7 +248,7 @@ class MastodonAdapter(base.Adapter):
     TOKEN_NO_EXPIRY = True
     # 取り下げ（`delete_post()`）に要る scope（**L2**: `DELETE /api/v1/statuses/:id`
     # は `write:statuses`）。`thth/scopes.py` の `MASTODON_SCOPES` に入っているので
-    # 再認可は要らない。`retract_cli`・`server_writes`・`approval_jobs` はこの値の
+    # 再認可は要らない。`retract_cli`・`server_writes`・`worker` はこの値の
     # 有無で「取り下げできる媒体か」を分けている（3.1.1）。
     DELETE_PERMISSION = "write:statuses"
 

@@ -1,5 +1,11 @@
 # 承認 relay の管理（masaru 向け）
 
+> **3.13.0 で名前が変わった**（動きは同じ・この文書は 2.12 の記録として題も中身も残す）:
+> `thth approval-worker` → `thth worker`・unit `thth-approval-worker.service` → `thth-worker.service`・`thth admin approver` → `thth admin secret`（旧名は alias）・
+> `thth/approval_relay.py` → `thth/relay.py`・VM→Worker の path `/approval/…` → `/relay/v/…`（Worker は 1 版の間だけ旧 path も受ける）・
+> Worker の変数 `APPROVAL_PUBLIC_KEY` → `RELAY_PUBLIC_KEY`（置き替えるまでは旧名で動く）・`APPROVAL_*_LIMIT` → `RELAY_*_LIMIT`・`THTH_APPROVAL_BASE_URL` → `THTH_RELAY_BASE_URL`・
+> DO `ApprovalPerson`／`ApprovalAccount` → `Person`／`Account`・「承認 secret」→「口座の secret」。承認ページ（`/approve`・`/pending`）は無い。
+
 これは招待する側のサーバ設定です。利用者自身の VM やアプリは要りません。
 2.12 の承認ページと利用者の書く口は組み合わせて導入します。
 この文書の追加は、本番への配布や接続試験が完了したという意味ではありません。

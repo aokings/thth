@@ -53,18 +53,18 @@ def test_doctor_does_not_follow_stop_directory_symlink(tmp_path,monkeypatch):
                                 'http://127.0.0.2','http://127.1','http://outside.invalid',
                                 'https://user:secret@thth.me','https://thth.me:bad','file:///tmp/key','data:text/plain,a'])
 def test_relay_rejected_endpoint_before_signing_or_connect(monkeypatch,url):
-    from thth import approval_relay as relay,httpsafe
+    from thth import relay,httpsafe
     monkeypatch.delenv('THTH_TEST_ALLOW_HTTP',raising=False)
     monkeypatch.setenv('THTH_APPROVAL_BASE_URL',url)
     monkeypatch.setattr(relay,'private_key',lambda:pytest.fail('key access'))
     monkeypatch.setattr(httpsafe,'build_opener',lambda *a:pytest.fail('transport creation'))
-    with pytest.raises(relay.RelayError,match='^approval_origin_invalid$'):
+    with pytest.raises(relay.RelayError,match='^relay_origin_invalid$'):
         relay.signed_request('person','tester','status',{})
 
 
 def fake_signer(monkeypatch):
     import contextlib
-    from thth import approval_relay as relay
+    from thth import relay
     @contextlib.contextmanager
     def key():yield -1
     monkeypatch.setattr(relay,'private_key',key)
@@ -73,7 +73,7 @@ def fake_signer(monkeypatch):
 
 def test_relay_explicit_loopback_uses_common_gate_and_actual_http(monkeypatch):
     import http.server,threading
-    from thth import approval_relay as relay
+    from thth import relay
     calls=[]
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self,*a):pass
@@ -83,16 +83,16 @@ def test_relay_explicit_loopback_uses_common_gate_and_actual_http(monkeypatch):
     server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     try:
-        monkeypatch.setenv('THTH_TEST_ALLOW_HTTP','1');monkeypatch.setenv('THTH_APPROVAL_BASE_URL',f'http://127.0.0.1:{server.server_port}')
+        monkeypatch.setenv('THTH_TEST_ALLOW_HTTP','1');monkeypatch.setenv('THTH_RELAY_BASE_URL',f'http://127.0.0.1:{server.server_port}')
         fake_signer(monkeypatch)
         assert relay.signed_request('person','tester','status',{})=={'status':'active'}
-        assert calls==[('/approval/person/tester/status',{})]
+        assert calls==[('/relay/v/person/tester/status',{})]
     finally:server.shutdown();server.server_close();thread.join(3)
 
 
 @pytest.mark.parametrize('phase',['preconnect','after_send'])
 def test_relay_preconnect_rejected_but_post_send_failure_unknown(monkeypatch,phase):
-    from thth import approval_relay as relay,httpsafe
+    from thth import relay,httpsafe
     fake_signer(monkeypatch);monkeypatch.setenv('THTH_APPROVAL_BASE_URL','https://thth.me')
     calls=[]
     class Transport:
@@ -101,7 +101,7 @@ def test_relay_preconnect_rejected_but_post_send_failure_unknown(monkeypatch,pha
             if phase=='preconnect':raise httpsafe.EndpointRejected('static')
             raise TimeoutError('synthetic response loss')
     monkeypatch.setattr(httpsafe,'build_opener',lambda *a:Transport())
-    reason='approval_relay_endpoint_rejected' if phase=='preconnect' else 'approval_relay_outcome_unknown'
+    reason='relay_endpoint_rejected' if phase=='preconnect' else 'relay_outcome_unknown'
     with pytest.raises(relay.RelayError,match='^'+reason+'$'):relay.signed_request('person','tester','status',{})
     assert calls==[phase]
 

@@ -10,7 +10,7 @@ import stat
 import subprocess
 from types import SimpleNamespace
 import pytest
-from thth import admin_log, approval_relay as relay, cli
+from thth import admin_log, relay, cli
 
 
 @pytest.fixture
@@ -30,7 +30,7 @@ def key(isolated):
 def test_init_current_cli_public_only_private600_event(isolated,capsys):
     assert cli.main(['admin','relay-key','init','--by','operator'])==0
     output=capsys.readouterr();path=relay.key_path()
-    assert output.out.startswith('APPROVAL_PUBLIC_KEY=') and output.err==''
+    assert output.out.startswith('RELAY_PUBLIC_KEY=') and output.err==''
     assert stat.S_IMODE(path.stat().st_mode)==0o600
     assert path.read_text().startswith('-----BEGIN PRIVATE KEY-----')
     rows,broken=admin_log.read();assert not broken and rows[0]['event']=='relay_key_initialized'
@@ -84,7 +84,7 @@ def test_no_tty_refuses_before_secret_generation_or_provision(isolated,monkeypat
     monkeypatch.setattr(relay,'terminal',missing)
     monkeypatch.setattr(relay.secrets,'token_urlsafe',lambda *a:pytest.fail('generated before tty'))
     monkeypatch.setattr(relay,'signed_request',lambda *a:pytest.fail('provision before tty'))
-    assert cli.main(['admin','approver','set','person','--by','operator'])==2
+    assert cli.main(['admin','secret','set','person','--by','operator'])==2
     assert not list(isolated[0].rglob('*'))
 
 
@@ -101,7 +101,7 @@ def test_set_secret_only_tty_and_presence_event(isolated,monkeypatch,capsys):
     def request(*args):received.append(args);return {'status':'configured'}
     monkeypatch.setattr(relay,'signed_request',request)
     monkeypatch.setattr('thth.accounts.load_account',lambda *a:pytest.fail('person is not account'))
-    assert cli.main(['admin','approver','set','person','--by','operator'])==0
+    assert cli.main(['admin','secret','set','person','--by','operator'])==0
     secret=tty.getvalue().strip().split(': ')[1];assert len(secret)>=16 and tty.getvalue().count(secret)==1
     data=received[0][3]
     assert data['iterations']==100000
@@ -118,7 +118,7 @@ def test_provision_partial_failure_is_explicit(isolated,monkeypatch,capsys,mode)
     tty=tty_fixture(monkeypatch);calls=[]
     def request(*args):
         calls.append(1)
-        if mode=='remote':raise relay.RelayError('approval_relay_outcome_unknown')
+        if mode=='remote':raise relay.RelayError('relay_outcome_unknown')
         return {'status':'configured'}
     monkeypatch.setattr(relay,'signed_request',request)
     if mode=='badlog':
@@ -130,7 +130,7 @@ def test_provision_partial_failure_is_explicit(isolated,monkeypatch,capsys,mode)
             raise admin_log.AdminLogError('fault',appended=mode!='zero',complete=mode=='fsync')
         monkeypatch.setattr(admin_log,'_emit',emit)
     if mode=='delivery':monkeypatch.setattr(tty,'write',lambda *a:(_ for _ in ()).throw(OSError('tty disappeared')))
-    assert cli.main(['admin','approver','set','person','--by','operator'])==2
+    assert cli.main(['admin','secret','set','person','--by','operator'])==2
     assert len(calls)==(mode!='badlog')
     output=capsys.readouterr();assert 'secret' not in output.out
     if mode in ('zero','partial','fsync'):assert 'remote_changed_audit_unconfirmed' in output.err and tty.getvalue()
@@ -152,7 +152,7 @@ def test_signer_actual_rsa_signature_and_canonical_wire(key,monkeypatch,tmp_path
     import base64
     sig=tmp_path/'sig';sig.write_bytes(base64.urlsafe_b64decode(headers['x-thth-signature']))
     pub=tmp_path/'public.der';pub.write_bytes(base64.urlsafe_b64decode(key+'='*((-len(key))%4)))
-    message=relay.canonical('POST','/approval/person/person/unlock','operator','person','unlock',headers['x-thth-time'],headers['x-thth-nonce'],b'{}')
+    message=relay.canonical('POST','/relay/v/person/person/unlock','operator','person','unlock',headers['x-thth-time'],headers['x-thth-nonce'],b'{}')
     result=subprocess.run([relay.openssl(),'dgst','-sha256','-verify',str(pub),'-keyform','DER','-signature',str(sig),'-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],input=message,capture_output=True)
     assert result.returncode==0
     assert headers['user-agent'].startswith('thth/')
@@ -160,8 +160,8 @@ def test_signer_actual_rsa_signature_and_canonical_wire(key,monkeypatch,tmp_path
 
 @pytest.mark.parametrize('url',['http://outside.test','https://outside.test','https://thth.me@evil.test','https://thth.me/a','https://thth.me?x=1','https://thth.me\n'])
 def test_only_official_origin_or_explicit_loopback(key,monkeypatch,url):
-    monkeypatch.setenv('THTH_APPROVAL_BASE_URL',url)
-    with pytest.raises(relay.RelayError,match='approval_origin_invalid'):relay.signed_request('person','person','unlock',{})
+    monkeypatch.setenv('THTH_RELAY_BASE_URL',url)
+    with pytest.raises(relay.RelayError,match='relay_origin_invalid'):relay.signed_request('person','person','unlock',{})
 
 
 def test_openssl_missing_bounded(isolated,monkeypatch):
@@ -185,8 +185,8 @@ def test_provision_network_does_not_hold_global_admin_flock(isolated,monkeypatch
 def test_privacy_logical_ttl_and_no_physical_erase_claim():
     from tests.test_site import build_site
     page=build_site.build_privacy()
-    # 100,000: the Worker's WebCrypto caps PBKDF2 at 100,000 (callback/src/approval.js ITERATIONS,
-    # thth/approval_relay.py ITERATIONS). The page said 600,000 until the 2026-09-23 rewrite.
+    # 100,000: the Worker's WebCrypto caps PBKDF2 at 100,000 (callback/src/person.js ITERATIONS,
+    # thth/relay.py ITERATIONS). The page said 600,000 until the 2026-09-23 rewrite.
     # 3.13.0: 承認ページ（600 秒）は無い。論理的な期限は預かり所の 300 秒と /activity の 1 時間。
     for phrase in ('300 seconds','300秒','one hour','1 時間','100,000','PITR','30 days','30日','not a promise of immediate physical erasure','即時物理消去とは約束しません'):
         assert phrase in page
@@ -212,7 +212,7 @@ def test_show_recovers_committed_key_after_export_failure(isolated,monkeypatch,c
     monkeypatch.setattr(relay,'init_key',lambda *a:pytest.fail('show must never initialize'))
     for _ in range(2):
         assert cli.main(['admin','relay-key','show','--by','operator'])==0
-        output=capsys.readouterr();assert output.out=='APPROVAL_PUBLIC_KEY='+expected+'\n' and output.err==''
+        output=capsys.readouterr();assert output.out=='RELAY_PUBLIC_KEY='+expected+'\n' and output.err==''
         assert 'PRIVATE KEY' not in output.out
     after={str(p):(p.read_bytes(),stat.S_IMODE(p.stat().st_mode)) for parent in isolated for p in parent.rglob('*') if p.is_file()}
     assert before==after
@@ -246,5 +246,41 @@ def test_pbkdf2_iterations_within_workers_cap():
     # 本番の workerd は PBKDF2 を 100,000 回までしか受け付けない（2.12.0 配布時に実測）。Worker 側の定数と一致すること。
     import re
     assert 0 < relay.ITERATIONS <= 100_000
-    js=(Path(__file__).resolve().parents[1]/'callback'/'src'/'approval.js').read_text()
+    js=(Path(__file__).resolve().parents[1]/'callback'/'src'/'person.js').read_text()
     assert int(re.search(r'export const ITERATIONS = ([0-9_]+);',js).group(1).replace('_',''))==relay.ITERATIONS
+
+
+# --- 3.13.0: 名前を改めた。旧名は互換として受ける ---------------------------------------------
+
+
+def test_旧名の理由コードで作ったRelayErrorも新名で言う():
+    assert str(relay.RelayError('approval_relay_outcome_unknown')) == 'relay_outcome_unknown'
+    assert str(relay.RelayError('approval_origin_invalid')) == 'relay_origin_invalid'
+    assert str(relay.RelayError('approver_tty_required')) == 'secret_tty_required'
+    assert relay.RelayError('approval_relay_outcome_unknown', status=404).status == 404
+    assert relay.reason('relay_invalid') == 'relay_invalid' and relay.reason('other') == 'other'
+
+
+def test_旧名の環境変数THTH_APPROVAL_BASE_URLも読み_新名が先(monkeypatch):
+    monkeypatch.delenv('THTH_RELAY_BASE_URL', raising=False)
+    monkeypatch.delenv('THTH_APPROVAL_BASE_URL', raising=False)
+    assert relay.base_url() == 'https://thth.me'
+    monkeypatch.setenv('THTH_APPROVAL_BASE_URL', 'http://127.0.0.1:1')
+    assert relay.base_url() == 'http://127.0.0.1:1'
+    monkeypatch.setenv('THTH_RELAY_BASE_URL', 'http://127.0.0.1:2')
+    assert relay.base_url() == 'http://127.0.0.1:2'
+
+
+def test_旧名のadmin_approverも同じ口(isolated,monkeypatch,capsys):
+    tty=tty_fixture(monkeypatch);received=[]
+    monkeypatch.setattr(relay,'signed_request',lambda *args:received.append(args) or {'status':'unlocked'})
+    assert cli.main(['admin','approver','unlock','person','--by','operator'])==0
+    assert received and received[0][:3]==('person','person','unlock')
+    assert capsys.readouterr().out=='secret_unlock_completed\n'
+
+
+def test_署名の文字列は変えない_pathは新しい置き場():
+    """thth-approval-v1 は VM と Worker の版ずれで署名が合わなくならないよう 3.13.0 でも変えない。"""
+    message=relay.canonical('POST','/relay/v/person/p/status','operator','p','status',1,'n',b'{}')
+    assert message.split(b'\n')[0]==b'thth-approval-v1'
+    assert relay.PATH_PREFIX=='/relay/v'

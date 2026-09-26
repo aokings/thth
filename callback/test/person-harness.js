@@ -1,6 +1,6 @@
 import worker from '../src/worker.js';
-import {ApprovalPerson,ApprovalAccount} from '../src/approval-object.js';
-import {personStub,accountStub} from '../src/approval.js';
+import {Person,Account} from '../src/person-object.js';
+import {personStub,accountStub} from '../src/person.js';
 import {MediaObject} from '../src/media-object.js';
 import {mediaStub} from '../src/media.js';
 export {AuthRelay} from '../src/relay-object.js';
@@ -10,20 +10,20 @@ export class TestMedia extends MediaObject {
   configure(body){this.clock=body.clock;}
   inspect(){return [...this.ctx.storage.kv.list()];}
 }
-export class TestPerson extends ApprovalPerson {
+export class TestPerson extends Person {
   now(){return this.clock??Date.now();}
   async configure(body){this.clock=body.clock;this.fault=body.fault;}
   put(key,value){super.put(key,value);if(this.fault)throw new Error('synthetic_storage_failure');}
   inspect(){return [...this.ctx.storage.kv.list()];}
 }
 export default {async fetch(request,env){
-  const match=/^\/__approval\/(person|account|deletion|media)\/(.+)$/.exec(new URL(request.url).pathname);
+  const match=/^\/__person\/(person|account|deletion|media)\/(.+)$/.exec(new URL(request.url).pathname);
   if(match){const stub=await(match[1]==='deletion'?env.DELETION_INBOX.getByName('pending-receipts-v1'):match[1]==='account'?accountStub(env,match[2]):match[1]==='media'?mediaStub(env,match[2]):personStub(env,match[2]));
     if(request.method==='POST')await stub.configure(await request.json());return Response.json(await stub.inspect());}
   return worker.fetch(request,env);
 }};
 
-export class TestAccount extends ApprovalAccount {
+export class TestAccount extends Account {
   configure(body){this.fault=body.fault;}
   put(key,value){super.put(key,value);if(this.fault)throw new Error('synthetic_storage_failure');}
   inspect(){return [...this.ctx.storage.kv.list()];}

@@ -1,4 +1,4 @@
-"""VM の常駐（`thth approval-worker`）: 招待の完了と /activity を回す。
+"""VM の常駐（`thth worker`）: 招待の完了と /activity を回す。
 
 設計 3.13.0 で承認ページは無くなった。承認 job を作る道も、Worker に承認を問い合わせる道も
 無い。この常駐に残っているのは:
@@ -7,7 +7,8 @@
   - 持ち主ごとの要約を Worker へ押し上げ、/activity で頼まれた操作を行う（`activity.run_once`）
   - ディスクの版が動いたら自分で終わる（`worker_version`・systemd が新しい版で起こし直す）
 
-名前（`approval_jobs`・`approval-worker`）は段 2 で改める。
+3.13.0 で `approval_jobs`・`thth approval-worker`・`thth-approval-worker.service` から改名した。
+旧名の `thth approval-worker` は alias として残す（deprecated・3.12.0 以前の unit がそれで起こす）。
 
 3.12.0 までに作られた承認 job（`state/<口座>/approval-jobs/*.json`）は、起動時に
 `status: expired` に書き換えて残す（消さない・記録として）。
@@ -16,7 +17,7 @@ import json
 import os
 import time
 from pathlib import Path
-from . import accounts, approval_relay as relay, server_files
+from . import accounts, relay, server_files
 
 TERMINAL = frozenset(('completed','failed','unknown','expired'))
 # 3.13.0 で承認ページを外したので期限切れにした、の印。
@@ -91,16 +92,22 @@ def command(args):
             if time.monotonic()-checked>=worker_version.CHECK_SECONDS:
                 checked=time.monotonic();disk=worker_version.on_disk()
                 if worker_version.moved(start,disk):
-                    print('approval_worker_restart: '+worker_version.describe(start)+' -> '+worker_version.describe(disk),file=sys.stderr)
+                    print('worker_restart: '+worker_version.describe(start)+' -> '+worker_version.describe(disk),file=sys.stderr)
                     return worker_version.EXIT_MOVED
             time.sleep(2)
     except KeyboardInterrupt: return 0
     except (OSError,ValueError):
-        print('approval_worker_unavailable',file=sys.stderr);return 2
+        print('worker_unavailable',file=sys.stderr);return 2
+
+
+# 旧名（deprecated）。3.12.0 以前の unit（thth-approval-worker.service）はこれで起こす。
+DEPRECATED_NAME = 'approval-worker'
 
 
 def register(sub):
-    parser=sub.add_parser('approval-worker',help='招待の完了と /activity を回す常駐（管理者の常駐 process・名前は段 2 で改める）')
-    parser.add_argument('--credentials',required=True)
-    parser.add_argument('--once',action='store_true',help='1 巡だけ検査する')
-    parser.set_defaults(func=command)
+    for name,text in (('worker','招待の完了・/activity の要約と操作・安全装置を回す常駐（管理者の常駐 process）'),
+                      (DEPRECATED_NAME,'旧名（deprecated）: thth worker と同じ')):
+        parser=sub.add_parser(name,help=text)
+        parser.add_argument('--credentials',required=True)
+        parser.add_argument('--once',action='store_true',help='1 巡だけ検査する')
+        parser.set_defaults(func=command)

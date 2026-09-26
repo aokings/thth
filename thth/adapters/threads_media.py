@@ -13,7 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from . import base
-from .. import accounts,api_diagnostic,approval_relay,httpsafe,jst,leave_gate,media,media_relay,mediaformats
+from .. import accounts,api_diagnostic,relay as signed_relay,httpsafe,jst,leave_gate,media,media_relay,mediaformats
 
 # Accepted locally in lower case; sent capitalised exactly as Meta's Threads
 # documentation lists them ("Bold, Italic, Highlight, Underline, Strikethrough",
@@ -346,7 +346,7 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         acknowledged=True
         for grant in grants:
             try:require(relay.result(grant,published=True).get('status')=='acknowledged','media_ack_unconfirmed')
-            except (OSError,ValueError,approval_relay.RelayError,accounts.AccountStopped):acknowledged=False
+            except (OSError,ValueError,signed_relay.RelayError,accounts.AccountStopped):acknowledged=False
         # Provider ID and pending acknowledgement are already durable. A failure
         # to enrich that record must not erase publication or retry either API.
         try:record('published',post_id=result,publication_ack='acknowledged' if acknowledged else 'unconfirmed')
@@ -354,7 +354,7 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         return base.PublishResult(result,None,ts,media=[{'sha256':item.manifest['public_sha256'],'kind':item.manifest['kind'],'alt_present':base.alt_present(item.manifest),'remote_id':remote} for item,remote in zip(post.media_files,ids)])
     except accounts.AccountStopped:
         return base.PublishResult(None,None,ts,error='account_stopped',failure='media_held' if ids and phase not in ('publishing','published') else 'media_ambiguous' if phase!='preflight' else 'publish_vetoed')
-    except (OSError,ValueError,RuntimeError,urllib.error.URLError,approval_relay.RelayError) as exc:
+    except (OSError,ValueError,RuntimeError,urllib.error.URLError,signed_relay.RelayError) as exc:
         http=isinstance(exc,urllib.error.HTTPError)
         endpoint=isinstance(exc,httpsafe.EndpointRejected)
         definite=endpoint or http and 400<=exc.code<500
@@ -366,7 +366,7 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         # 理由だけを `media_creating_timeout` と名指す——generic な `_failed` は
         # 「出ていない・作り直してよい」と読まれ、container が二重に残る。
         timed_out=phase in ('creating','creating_carousel') and socket_timed_out(exc)
-        reason='media_relay_endpoint_rejected' if endpoint else str(exc) if isinstance(exc,media.MediaError) else 'media_relay_failed' if isinstance(exc,(media_relay.MediaRelayError,approval_relay.RelayError)) else 'media_'+phase+('_http_'+str(exc.code) if http else '_timeout' if timed_out else '_failed')
+        reason='media_relay_endpoint_rejected' if endpoint else str(exc) if isinstance(exc,media.MediaError) else 'media_relay_failed' if isinstance(exc,(media_relay.MediaRelayError,signed_relay.RelayError)) else 'media_'+phase+('_http_'+str(exc.code) if http else '_timeout' if timed_out else '_failed')
         # 4xx の本文には Graph の番号が入っている。**番号だけ**を理由の尾に足す
         # ——「まだ出せない」と「その要求が不正」を運用が見分けられない限り、
         # 同じ `media_publishing_http_400` を見て打つ手が決まらない。provider の
@@ -376,7 +376,7 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         if held:
             for grant in grants:
                 try:relay.result(grant,published=False)
-                except (OSError,ValueError,approval_relay.RelayError,accounts.AccountStopped):pass
+                except (OSError,ValueError,signed_relay.RelayError,accounts.AccountStopped):pass
         try:
             if callable(progress):record('held' if held else 'unknown' if uncertain else 'failed',reason=reason)
         except (OSError,ValueError,accounts.AccountStopped):pass

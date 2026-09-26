@@ -350,8 +350,8 @@ def command(args):
 def register(sub):
     parser = sub.add_parser('admin', help='管理者用レポートと管理者 CLI 操作')
     commands = parser.add_subparsers(dest='admin_operation', required=True)
-    from . import approval_relay
-    approval_relay.register(commands)
+    from . import relay
+    relay.register(commands)
     from . import deletion
     deletion.register(commands)
     from . import media_cleanup

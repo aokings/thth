@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import re
 import sys
-from . import accounts,admin_log,appenv,approval_relay as relay,jst,leave,leave_gate,server_files
+from . import accounts,admin_log,appenv,relay,jst,leave,leave_gate,server_files
 
 
 def _decode(value):

@@ -10,7 +10,7 @@ import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
 import {pythonForTests} from './python-runtime.js';
 import {canonical,mediaRequest} from '../src/media.js';
 import {reply} from '../src/relay.js';
-import {canonical as approvalCanonical} from '../src/approval.js';
+import {canonical as approvalCanonical} from '../src/person.js';
 const opaque=()=>randomBytes(32).toString('base64url'),sha=b=>createHash('sha256').update(b).digest('hex');
 const logs=[],secrets=[];let mf,privateKey,runtimeDirectory,options;
 class Silent extends Log{constructor(){super(LogLevel.NONE);}log(v){logs.push(String(v));}}
@@ -26,9 +26,9 @@ function dispatch(url,init={}){
 
 before(async()=>{
   const pair=generateKeyPairSync('rsa',{modulusLength:3072});privateKey=pair.privateKey;
-  const files=['test/media-harness.js','src/media-object.js','src/media.js','src/worker.js','src/index.js','src/relay.js','src/relay-object.js','src/approval.js','src/approval-object.js','src/deletion.js','src/deletion-object.js','src/invite.js','src/invite-object.js','src/activity.js'];
+  const files=['test/media-harness.js','src/media-object.js','src/media.js','src/worker.js','src/index.js','src/relay.js','src/relay-object.js','src/person.js','src/person-object.js','src/deletion.js','src/deletion-object.js','src/invite.js','src/invite-object.js','src/activity.js'];
   runtimeDirectory=await realpath(await mkdtemp(join(tmpdir(),'media-runtime-')));
-  options=convertV4MiniflareOptions({modules:await Promise.all(files.map(async name=>({type:'ESModule',path:fileURLToPath(new URL('../'+name,import.meta.url)),contents:await readFile(new URL('../'+name,import.meta.url),'utf8')}))),compatibilityDate:'2026-09-01',cf:false,outboundService:()=>new Response('external_denied',{status:503}),log:new Silent(),bindings:{APPROVAL_PUBLIC_KEY:pair.publicKey.export({type:'spki',format:'der'}).toString('base64url')},durableObjects:{MEDIA_OBJECT:{className:'TestMedia',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},APPROVAL_PERSON:{className:'ApprovalPerson',useSQLite:true}},ratelimits:{MEDIA_UPLOAD_IP_LIMIT:{namespace_id:'21304',simple:{limit:120,period:60}},MEDIA_PUBLIC_LIMIT:{namespace_id:'21301',simple:{limit:120,period:60}},MEDIA_CONTROL_LIMIT:{namespace_id:'21302',simple:{limit:600,period:60}},MEDIA_UPLOAD_LIMIT:{namespace_id:'21303',simple:{limit:240,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}}},r2Buckets:['MEDIA_BUCKET']});options.resourcePersistencePath=join(runtimeDirectory,'storage');
+  options=convertV4MiniflareOptions({modules:await Promise.all(files.map(async name=>({type:'ESModule',path:fileURLToPath(new URL('../'+name,import.meta.url)),contents:await readFile(new URL('../'+name,import.meta.url),'utf8')}))),compatibilityDate:'2026-09-01',cf:false,outboundService:()=>new Response('external_denied',{status:503}),log:new Silent(),bindings:{RELAY_PUBLIC_KEY:pair.publicKey.export({type:'spki',format:'der'}).toString('base64url')},durableObjects:{MEDIA_OBJECT:{className:'TestMedia',useSQLite:true},ACCOUNT:{className:'Account',useSQLite:true},PERSON:{className:'Person',useSQLite:true}},ratelimits:{MEDIA_UPLOAD_IP_LIMIT:{namespace_id:'21304',simple:{limit:120,period:60}},MEDIA_PUBLIC_LIMIT:{namespace_id:'21301',simple:{limit:120,period:60}},MEDIA_CONTROL_LIMIT:{namespace_id:'21302',simple:{limit:600,period:60}},MEDIA_UPLOAD_LIMIT:{namespace_id:'21303',simple:{limit:240,period:60}},RELAY_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},RELAY_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}}},r2Buckets:['MEDIA_BUCKET']});options.resourcePersistencePath=join(runtimeDirectory,'storage');
   mf=new Miniflare(options);await mf.ready;
 });
 after(async()=>{await mf?.dispose();await rm(runtimeDirectory,{recursive:true,force:true});assert.equal(logs.filter(s=>secrets.some(x=>s.includes(x))).length,0,'secret in runtime logs');});
@@ -522,7 +522,7 @@ test('Worker caps distinguish raw transport from sanitized publication bytes',as
 
 const cleanupControl=async(account,body={})=>(await dispatch('https://media.test/__cleanup/'+account,{method:'POST',body:JSON.stringify(body)})).json();
 async function accountCall(account,operation,role='operator'){
- const path='/approval/account/'+account+'/'+operation,raw='{}',time=Date.now(),nonce=opaque();
+ const path='/relay/v/account/'+account+'/'+operation,raw='{}',time=Date.now(),nonce=opaque();
  const signature=sign('sha256',Buffer.from(approvalCanonical('POST',path,role,account,operation,time,nonce,sha(raw))),{key:privateKey,padding:constants.RSA_PKCS1_PSS_PADDING,saltLength:32}).toString('base64url');
  secrets.push(signature,nonce);
  return dispatch('https://media.test'+path,{method:'POST',headers:{'content-type':'application/json','x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw});

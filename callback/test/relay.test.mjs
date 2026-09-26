@@ -15,7 +15,7 @@ class CaptureLog extends Log {
 }
 let mf;
 before(async () => {
-  const modules = await Promise.all(["test/harness.js", "src/index.js", "src/relay.js", "src/relay-object.js", "src/approval.js", "src/deletion.js"].map(async name => {
+  const modules = await Promise.all(["test/harness.js", "src/index.js", "src/relay.js", "src/relay-object.js", "src/person.js", "src/deletion.js"].map(async name => {
     const path=fileURLToPath(new URL("../"+name,import.meta.url));
     return {type:"ESModule",path,contents:await readFile(path,"utf8")};
   }));

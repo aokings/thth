@@ -6,7 +6,7 @@
 """
 import json
 import pytest
-from thth import accounts,leave,leave_gate,approval_relay
+from thth import accounts,leave,leave_gate,relay
 from tests.test_v212_server_writes import env
 from tests.test_v212_leave_providers import provider,configure
 
@@ -58,7 +58,7 @@ def test_same_token_bytes_do_not_revoke_remotely(env,provider,monkeypatch):
 
 
 def test_threads_same_user_is_still_token_shared_and_preserved(env,monkeypatch):
-    monkeypatch.setattr(approval_relay,'signed_request',lambda *a:{'status':'revoked'})
+    monkeypatch.setattr(relay,'signed_request',lambda *a:{'status':'revoked'})
     paths=[env['root']/'secrets'/(n+'.json') for n in ('alpha','beta')]
     for p in paths:
         t=json.loads(p.read_text());t['user_id']='synthetic-threads-user';p.write_text(json.dumps(t))

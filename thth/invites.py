@@ -2,14 +2,14 @@
 
 Meta の審査員や外の人が、運営者の VM に触らずに自分の Threads 口座で入る道。
 運営者が `thth admin invite create` で招待を作り、URL（`https://thth.me/invite/<code>`）
-を 1 回だけ tty に出す。本人がそれを開いて押すと、VM の常駐（`thth approval-worker`）
+を 1 回だけ tty に出す。本人がそれを開いて押すと、VM の常駐（`thth worker`）
 が拾って認可の session を作り、認可が済むと口座を用意する。
 
 規律（設計 §2）:
 
   (a) **code は VM に残さない**。残すのは SHA-256 だけ（Worker も同じ hash で招待を引く）。
       code は生成したその場で tty に 1 回だけ出す——stdout にもログにも出さない
-      （`approver set` の secret と同じ作法。LLM が打つ命令の出力に載せない）。
+      （`admin secret set` の secret と同じ作法。LLM が打つ命令の出力に載せない）。
   (b) 招待 1 本で作れる口座は 1 つ。1 回使えば終わり・期限（既定 30 日・最長 90 日）・
       運営者がいつでも取り消せる。使われた・切れた・取り消された招待は Worker が 410。
   (c) 招待の project は**持ち主の組に入っていないもの**だけ（外の人を持ち主の
@@ -34,7 +34,7 @@ import sys
 import time
 import uuid
 
-from . import accounts, admin_log, approval_relay as relay, jst, private_store, redact
+from . import accounts, admin_log, relay, jst, private_store, redact
 
 DIRECTORY = "_invites"
 INVITE_ID = re.compile(r"[0-9a-f]{12}\Z")
@@ -79,7 +79,7 @@ NEXT = {
     "invite_not_open": "その招待はもう使えない状態です（取り消し済み・期限切れ・登録失敗）",
     "invite_tty_required": "招待 URL は tty に 1 回だけ出します。ssh なら ssh -t で入ってください",
     "invite_registration_rejected": "Worker が招待の登録を断りました。Worker の deploy と署名鍵"
-                                    "（APPROVAL_PUBLIC_KEY）を確かめてください。招待は作られていません",
+                                    "（RELAY_PUBLIC_KEY・置き替える前は旧名の APPROVAL_PUBLIC_KEY）を確かめてください。招待は作られていません",
     "invite_registration_unknown": "Worker に届いたか分かりません。thth admin invite revoke <id> で"
                                    "取り消してから作り直してください",
     "invite_revoke_unknown": "Worker で取り消せたか分かりません。同じ命令をもう一度打ってください",
@@ -130,7 +130,7 @@ def subject(invite_id):
 
 
 def base_url():
-    return os.environ.get("THTH_APPROVAL_BASE_URL", "https://thth.me").rstrip("/")
+    return relay.base_url().rstrip("/")
 
 
 def now_ms():
@@ -195,7 +195,7 @@ def create(*, media, project, label=None, expires=None, production=False, by):
     except (OSError, relay.RelayError):
         raise error("invite_tty_required") from None
     try:
-        # 書けない変更ログは、Worker に何か作る前に断る（approver set と同じ）。
+        # 書けない変更ログは、Worker に何か作る前に断る（admin secret set と同じ）。
         with admin_log.transaction():
             pass
         code = secrets.token_urlsafe(32)
@@ -219,7 +219,7 @@ def create(*, media, project, label=None, expires=None, production=False, by):
                                          {"media": media, "production": production, "expires_at": expires_at,
                                           "scopes": invite_scopes()})
             if value != {"status": "open"}:
-                raise relay.RelayError("approval_relay_invalid")
+                raise relay.RelayError("relay_invalid")
         except relay.RelayError as exc:
             rejected = isinstance(exc.status, int) and 400 <= exc.status < 500
             reason = "invite_registration_rejected" if rejected else "invite_registration_unknown"
@@ -262,7 +262,7 @@ def revoke(invite_id, *, by):
         try:
             value = relay.signed_request("invite", record["code_hash"], "revoke", {})
             if value != {"status": "revoked"}:
-                raise relay.RelayError("approval_relay_invalid")
+                raise relay.RelayError("relay_invalid")
         except relay.RelayError as exc:
             if exc.status == 409:
                 # Worker では口座の用意が済んでいる（手元の記録が追いついていない）。
@@ -310,7 +310,7 @@ _next_poll = {}
 
 
 def run_once(credentials_path=None):
-    """`thth approval-worker` が 1 巡ごとに呼ぶ。1 本の失敗で他の招待を止めない。
+    """`thth worker` が 1 巡ごとに呼ぶ。1 本の失敗で他の招待を止めない。
 
     `credentials_path` は常駐が読んでいる資格情報のファイル（`--credentials`）。渡されたときは、
     招待で用意した口座に、その口座だけの書き込みの資格情報を 1 件足す（裁定 2026-09-25）。
@@ -341,7 +341,7 @@ def _run_once():
 def _active(record):
     if record["status"] in ("open", "authorizing"):
         return True
-    # 使われた招待は、Worker への「用意ができた」と承認 secret の表示を見届けるまで。
+    # 使われた招待は、Worker への「用意ができた」と口座の secret の表示を見届けるまで。
     return (record["status"] == "used" and now_ms() < record["expires_at"]
             and not (record.get("remote_ready") and record.get("approver_set")
                      and (record.get("credential_sha256") or not _credentials.get())))
@@ -436,8 +436,9 @@ def _notice_stall(directory, record, clicked_at):
             settings = incident.settings({})
             event = {"event": "invite_stalled", "invite": record["invite_id"], "waited_seconds": waited,
                      "at": jst.iso(),
-                     "next": "招待が押されてから常駐（thth approval-worker）が拾うまで時間が掛かりました。"
-                             "常駐の状態を確かめてください（systemctl status thth-approval-worker）"}
+                     "next": "招待が押されてから常駐（thth worker）が拾うまで時間が掛かりました。"
+                             "常駐の状態を確かめてください（systemctl status thth-worker。"
+                             "3.12.0 以前の unit のままなら thth-approval-worker）"}
             notice = dict(id=hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest(),
                           state="admin_change", at=event["at"], reason="healthy", repo="no_source",
                           admin_event=event)
@@ -482,7 +483,7 @@ def _start(directory, record):
                                      {"authorize_url": profile.authorize(session),
                                       "expires_at": session["created_at"] + authflow.TTL * 1000})
         if value != {"status": "authorizing"}:
-            raise relay.RelayError("approval_relay_invalid")
+            raise relay.RelayError("relay_invalid")
     except relay.RelayError:
         _forget_session(directory, record["invite_id"])
         return _reset(record, "unavailable")
@@ -710,8 +711,9 @@ def _used(directory, record):
         return
     if remote.get("status") != "done":
         return
-    # 承認 secret は Worker の完了ページが本人に 1 回だけ見せた。VM に secret は無い。
-    # 記録に残すのは「承認者が設定された」ことだけ（approver set と同じ event）。
+    # 口座の secret は Worker の完了ページが本人に 1 回だけ見せた。VM に secret は無い。
+    # 記録に残すのは「secret が設定された」ことだけ（admin secret set と同じ event。
+    # event 名 `approver_set`・記録の欄 `approver_set` は過去の記録と揃えて変えない）。
     admin_log.append("approver_set", record["account"], {"media": "threads"}, by=record["by"], via="http",
                      diff={"credential_present": [None, True], "via_invite": [None, record["invite_id"]]})
     _save(directory, record, approver_set=True)
@@ -719,7 +721,7 @@ def _used(directory, record):
 
 # ------------------------------------------------------------ 口座だけの資格情報
 #
-# 招待の口座の承認 job は、actor がその口座（承認ページの人）の資格情報からしか作れない。
+# 招待の口座への書き込みは、actor がその口座（/activity の人）の資格情報から行う。
 # 審査員が認可した直後に運営者の手を挟まないように、口座を用意したら常駐の資格情報の
 # ファイルに 1 件足す（裁定 2026-09-25）。accounts はその口座 1 つ・scope user・writes
 # true・actor は口座名。bearer は乱数で作って hash だけ残し、値は誰にも出さない
@@ -873,14 +875,16 @@ def forget_credential(account, *, by):
 # 資格情報の 1 件（hash だけ）で書き込みの口を通す。招待で用意していない口座（運営者自身の
 # repo 型の口座など）には使わない。3.13.0 で承認 URL を出す口（`admin approval request`）は外した。
 
-ADMIN_REASONS = frozenset(("admin_approval_invite_account_only", "admin_approval_credential_missing",
-                           "admin_approval_invalid_draft"))
+ADMIN_REASONS = frozenset(("admin_draft_invite_account_only", "admin_draft_credential_missing",
+                           "admin_draft_invalid_draft"))
+# 3.13.0 で `admin_approval_*` から改めた。旧名で来ても新名で言う（互換）。
+LEGACY_ADMIN_REASONS = {"admin_approval_" + name[len("admin_draft_"):]: name for name in ADMIN_REASONS}
 NEXT.update({
-    "admin_approval_invite_account_only": "この口は招待で用意した口座（inv-…）だけです。運営者自身の口座は"
+    "admin_draft_invite_account_only": "この口は招待で用意した口座（inv-…）だけです。運営者自身の口座は"
                                           "従来どおり thth approve か MCP の道で",
-    "admin_approval_credential_missing": "その口座の資格情報の 1 件がありません。thth approval-worker を "
+    "admin_draft_credential_missing": "その口座の資格情報の 1 件がありません。thth worker を "
                                          "--credentials 付きで動かすと、次の巡で足します（thth admin invite list）",
-    "admin_approval_invalid_draft": "--draft は draft_id（64 桁）か、その口座の queue の原稿のパスです",
+    "admin_draft_invalid_draft": "--draft は draft_id（64 桁）か、その口座の queue の原稿のパスです",
 })
 
 
@@ -890,25 +894,25 @@ def invite_context(account):
     try:
         cfg = accounts.load_account(account)
     except accounts.AccountError:
-        raise error("admin_approval_invite_account_only") from None
+        raise error("admin_draft_invite_account_only") from None
     records, _ = STORE.load()
     record = next((row for row in records if row.get("account") == account and row["status"] == "used"
                    and row["invite_id"] == cfg.get("invite_id")), None)
     if record is None:
-        raise error("admin_approval_invite_account_only")
+        raise error("admin_draft_invite_account_only")
     if not record.get("credential_sha256") or not record.get("credentials_path"):
-        raise error("admin_approval_credential_missing")
+        raise error("admin_draft_credential_missing")
     import datetime
     try:
         _, loaded = report_http.load_credentials(Path(record["credentials_path"]))
     except Exception:
-        raise error("admin_approval_credential_missing") from None
+        raise error("admin_draft_credential_missing") from None
     now = datetime.datetime.now(datetime.timezone.utc)
     for digest, expires, revoked, context in loaded:
         if (digest == record["credential_sha256"] and not revoked and now < expires
                 and context.actor == account and dict(context.allowed_accounts) == {account: record["project"]}):
             return context
-    raise error("admin_approval_credential_missing")
+    raise error("admin_draft_credential_missing")
 
 
 def admin_draft_put(account, *, body, publish_at=None, topic=None, reply_to=None, by):
@@ -955,7 +959,7 @@ def _admin_fail(exc):
 def cmd_admin_draft_put(args):
     from .report_service import ReportServiceError
     try:
-        body = private_store.read_input(args.body_file, 48000, error=error, invalid="admin_approval_invalid_draft")
+        body = private_store.read_input(args.body_file, 48000, error=error, invalid="admin_draft_invalid_draft")
         row = admin_draft_put(args.account, body=body or "", publish_at=args.publish_at, topic=args.topic,
                               reply_to=args.reply_to, by=args.by)
     except (InviteError, ReportServiceError, ValueError, OSError) as exc:
@@ -980,6 +984,7 @@ def register_admin_writes(commands):
 # ------------------------------------------------------------------- CLI
 
 def _fail(reason):
+    reason = LEGACY_ADMIN_REASONS.get(reason, reason)
     known = REASONS | ADMIN_REASONS | {"invalid_request"}
     reason = reason if reason in known else "invite_store_unavailable"
     print(reason + (": " + NEXT[reason] if reason in NEXT else ""), file=sys.stderr)

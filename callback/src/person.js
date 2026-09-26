@@ -1,6 +1,7 @@
-// 3.13.0: 承認ページ（/approve/<token>）と承認待ちの一覧（/pending）は無い。ここに残るのは
-// VM→Worker の署名つき relay（/approval/{person,account,deletion,invite,activity}/…）と、
-// 招待・退出・添付・削除・/activity が使う共通の部品。名前（approval.js）は段 2 で改める。
+// VM→Worker の署名つき relay（/relay/v/{person,account,deletion,invite,activity}/…）の受け口と、
+// 招待・退出・添付・削除・/activity が使う共通の部品。3.13.0 で approval.js から改名した
+// （承認ページ /approve/<token> と承認待ちの一覧 /pending は無い）。旧 path の /approval/… は
+// 3.12.0 の VM が deploy の間に叩くので 1 版の間だけ受ける。
 import {digest, STATE_PATTERN, HASH_PATTERN, reply} from './relay.js';
 import {deletionStub} from './deletion.js';
 export const PERSON = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
@@ -32,12 +33,17 @@ export async function boundedBody(request,max=65_536) {
     return new TextDecoder('utf-8',{fatal:true}).decode(all);
   } finally {reader.releaseLock();}
 }
-export async function personStub(env,person) {return env.APPROVAL_PERSON.getByName(await digest(person));}
-export async function accountStub(env,account) {return env.APPROVAL_ACCOUNT.getByName(await digest(account));}
+// VM の署名を確かめる公開鍵。3.13.0 で RELAY_PUBLIC_KEY に改めた。運営者が置き替えるまでは
+// 旧名の APPROVAL_PUBLIC_KEY（Dashboard／wrangler secret）で動く。
+export const relayPublicKey=env=>env.RELAY_PUBLIC_KEY??env.APPROVAL_PUBLIC_KEY;
+export async function personStub(env,person) {return env.PERSON.getByName(await digest(person));}
+export async function accountStub(env,account) {return env.ACCOUNT.getByName(await digest(account));}
 // 招待（3.10.0）の object は code の SHA-256 で引く。VM は hash しか持たないので、署名の
 // subject も同じ hash。ブラウザの道（/invite/<code>）はここで code を hash にしてから引く。
 export function inviteStub(env,hash) {return env.INVITE_OBJECT.getByName(hash);}
 // Canonical wire binding: role/subject/operation are signed, not caller-selected authority.
+// 'thth-approval-v1' は署名の文字列の版名（2.12 の名残）。VM と Worker の版ずれで署名が合わなく
+// ならないよう、3.13.0 の改名でも変えない。
 export function canonical(method,path,role,subject,operation,time,nonce,bodyHash) {
   return ['thth-approval-v1',method,path,role,subject,operation,time,nonce,bodyHash].join('\n');
 }
@@ -45,8 +51,9 @@ async function authenticate(request,env,url,raw,role,subject,operation) {
   const time=request.headers.get('x-thth-time')||'', nonce=request.headers.get('x-thth-nonce')||'';
   if(!/^\d{13}$/.test(time)||Math.abs(Date.now()-Number(time))>60_000||!STATE_PATTERN.test(nonce))return null;
   const signature=request.headers.get('x-thth-signature')||'';
-  if(signature.length!==512||!env.APPROVAL_PUBLIC_KEY)return null; // RSA-3072 raw signature, unpadded base64url.
-  const key=await crypto.subtle.importKey('spki',unb64(env.APPROVAL_PUBLIC_KEY),{name:'RSA-PSS',hash:'SHA-256'},false,['verify']);
+  const publicKey=relayPublicKey(env);
+  if(signature.length!==512||!publicKey)return null; // RSA-3072 raw signature, unpadded base64url.
+  const key=await crypto.subtle.importKey('spki',unb64(publicKey),{name:'RSA-PSS',hash:'SHA-256'},false,['verify']);
   if(key.algorithm.modulusLength!==3072)return null;
   const ok=await crypto.subtle.verify({name:'RSA-PSS',saltLength:32},key,unb64(signature),encoder.encode(
     canonical(request.method,url.pathname,role,subject,operation,time,nonce,await digest(raw))));
@@ -55,14 +62,14 @@ async function authenticate(request,env,url,raw,role,subject,operation) {
 // 日本語の下に英語を 1 行ずつ添える（招待のページ・/activity と同じ作り・3.10.0）。
 export const en=text=>`<span class="en">${text}</span>`;
 export const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-export function page(status,body,title='THTH 承認') {
+export function page(status,body,title='THTH') {
   return new Response('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>'+title+'</title><style>body{overflow-wrap:anywhere;max-width:44rem;margin:2rem auto;padding:0 1rem;font:1rem/1.7 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;border:1px solid;padding:1rem}figure{margin:1rem 0}img{max-width:100%;height:auto;border:1px solid}figcaption{font-size:.9rem}.en{display:block;font-size:.88rem;opacity:.75}input{max-width:100%;font:inherit}label{display:block;margin:.6rem 0}button{display:block;margin:1rem 0;padding:.6rem 1.4rem;font:inherit}li{margin:1.4rem 0}a.go{display:inline-block;padding:.4rem 1.2rem;border:1px solid;text-decoration:none}</style><body>'+body+'</body></html>',{status,headers:{
     'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer',
     'content-security-policy':"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     'x-content-type-options':'nosniff','x-frame-options':'DENY'}});
 }
 export async function publicQuota(request,env){
-  return !!env.APPROVAL_PUBLIC_LIMIT&&(await env.APPROVAL_PUBLIC_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success;
+  return !!env.RELAY_PUBLIC_LIMIT&&(await env.RELAY_PUBLIC_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success;
 }
 // Referrer-Policy: no-referrer makes browsers send `Origin: null` (or omit it) even on a
 // same-origin form POST (Fetch spec §4.9). Same-origin is then proven by Sec-Fetch-Site;
@@ -73,28 +80,30 @@ export function fromSameOrigin(request,url){
   const sameOrigin=originHeader===url.origin||((originHeader===null||originHeader==='null')&&(site===null||site==='same-origin'));
   return sameOrigin&&/^application\/x-www-form-urlencoded(?:\s*;|$)/i.test(request.headers.get('content-type')||'');
 }
-export async function approvalRequest(request,env,url) {
+export async function relayRequest(request,env,url) {
   try {
     if(url.search||url.hash||url.pathname.includes('%'))return reply(400,{error:'invalid_request'});
-    if(!env.APPROVAL_PERSON||!env.APPROVAL_ACCOUNT)return reply(503);
-    // 3.13.0: 承認ページの session（/approval/session/…）は無い。
-    const route=/^\/approval\/(person|account|deletion|invite|activity)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|list|read|verify|complete|discard|cleanup-retry|authorize|reset|sync)$/.exec(url.pathname);
+    if(!env.PERSON||!env.ACCOUNT)return reply(503);
+    // 3.13.0: /relay/v/… に改めた。旧 path /approval/… も 1 版の間だけ受ける（署名は叩かれた path で
+    // 確かめるので、どちらの path でも VM が署名した path と一致しなければ通らない）。
+    // 承認ページの session（…/session/…）は無い。
+    const route=/^\/(?:relay\/v|approval)\/(person|account|deletion|invite|activity)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|list|read|verify|complete|discard|cleanup-retry|authorize|reset|sync)$/.exec(url.pathname);
     if(!route||request.method!=='POST')return reply(404,{error:'not_found'});
     const [,type,subject,operation]=route;
     // 3.12.0 §3.4 動きの一覧: VM が持ち主（person）ごとの要約を押し上げ、持ち主の操作を受け取る。
     if(type==='activity'?!PERSON.test(subject)||operation!=='sync':
        type==='invite'?!HASH_PATTERN.test(subject)||!['create','status','authorize','reset','complete','revoke'].includes(operation):type==='deletion'?!(subject==='inbox'&&operation==='list'||STATE_PATTERN.test(subject)&&['read','verify','complete','discard'].includes(operation)):type==='account'?!PERSON.test(subject)||!['revoke','status','cleanup-retry'].includes(operation):!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation))return reply(400,{error:'invalid_request'});
     if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(400,{error:'invalid_request'});
-    if(!env.APPROVAL_VERIFY_LIMIT || !(await env.APPROVAL_VERIFY_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
+    if(!env.RELAY_VERIFY_LIMIT || !(await env.RELAY_VERIFY_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
     // 動きの一覧の sync は口座 8 つ×30 行の要約を運ぶ（本文は先頭 60 字だけ）。他は 64 KiB。
     const cap=type==='activity'?131_072:65_536;
     const raw=await boundedBody(request,cap), ticket=await authenticate(request,env,url,raw,'operator',subject,operation);
     if(!ticket)return reply(401,{error:'unauthorized'});
-    if(!env.APPROVAL_JOB_LIMIT || !(await env.APPROVAL_JOB_LIMIT.limit({key:await digest(type+'/'+subject)})).success)return reply(429,{error:'rate_limited'});
+    if(!env.RELAY_JOB_LIMIT || !(await env.RELAY_JOB_LIMIT.limit({key:await digest(type+'/'+subject)})).success)return reply(429,{error:'rate_limited'});
     const body=JSON.parse(raw);
     if(type==='activity'){const result=await (await personStub(env,subject)).activitySync(body,ticket);return reply(result.status,result.body);}
     const stub=type==='invite'?inviteStub(env,subject):type==='deletion'?deletionStub(env):type==='account'?await accountStub(env,subject):await personStub(env,subject);
     const result=await stub.manage(operation,body,ticket,subject);
     return reply(result.status,result.body);
-  }catch{return reply(503,{error:'approval_unavailable'});}
+  }catch{return reply(503,{error:'relay_unavailable'});}
 }

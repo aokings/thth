@@ -85,7 +85,7 @@ stable組Wrangler4.116.0/Miniflare4.20260730.0はworkerd最大日付2026-08-06�
 
 ## 2.12 の承認と退出（未 deploy）
 
-`ApprovalAccount` は account ごとの最後の consume 許可点を持ちます。Person の承認後でも account revoke が先に確定していれば receipt を渡しません。すでに consume が確定した receipt も、VM の停止 journal と job 最終確認で実行を止めます。別 account の Person verifier は失効させません。
+`Account`（3.13.0 まで `ApprovalAccount`）は account ごとの最後の consume 許可点を持ちます。Person の承認後でも account revoke が先に確定していれば receipt を渡しません。すでに consume が確定した receipt も、VM の停止 journal と job 最終確認で実行を止めます。別 account の Person verifier は失効させません。
 
 `DeletionInbox` は `/data-deletion` の signed request を未照合で受け付け、receipt を返します。VM の署名付き照合→永続化した退出→完了通知だけが完了に進めます。未照合は最大 30 日、照合時に blob を除去します。VM が HMAC 不一致を確認したものだけは署名管理口で回収し、元の期限まで retry 用 SHA と期限だけを残します。1000 件の受付上限と定期 sync 不在時の枯渇は残ります。論理期限・稼働中 storage からの削除と PITR の物理保持は別です。管理者の手順は [サーバ退出](../docs/運用_サーバ退出_2.12.md) を参照してください。
 
@@ -93,11 +93,11 @@ stable組Wrangler4.116.0/Miniflare4.20260730.0はworkerd最大日付2026-08-06�
 
 ## 3.10.0 の招待リンク（未 deploy）
 
-`InviteObject`（binding `INVITE_OBJECT`・migration `v5-invite`）が招待 1 本ごとの状態を持ちます。object の名前は招待の code の SHA-256 で、VM も同じ hash しか持ちません。置くのは状態・期限・求める権限の一覧・VM が返した Threads の認可 URL（10 分で消す）・口座名と handle だけです。code・token・承認 secret は置きません。
+`InviteObject`（binding `INVITE_OBJECT`・migration `v5-invite`）が招待 1 本ごとの状態を持ちます。object の名前は招待の code の SHA-256 で、VM も同じ hash しか持ちません。置くのは状態・期限・求める権限の一覧・VM が返した Threads の認可 URL（10 分で消す）・口座名と handle だけです。code・token・口座の secret は置きません。
 
-- `GET /invite/<code>` は説明のページ、`POST` は同一 origin（Sec-Fetch-Site）と csrf のときだけ `start`（押された）と `reveal`（承認 secret を 1 回だけ）。script は無く、準備中は meta refresh で再読込します。作法は承認ページと同じ（CSP・no-store・no-referrer）。
-- VM の署名つきの道は `/approval/invite/<hash>/{create,status,authorize,reset,complete,revoke}`（role は operator）。
-- `reveal` は Worker の中で secret を作り、PBKDF2（100,000）の verifier だけを `ApprovalPerson` に置きます。既存の承認者は上書きしません（同じ招待のやり直しだけ通す）。
+- `GET /invite/<code>` は説明のページ、`POST` は同一 origin（Sec-Fetch-Site）と csrf のときだけ `start`（押された）と `reveal`（口座の secret を 1 回だけ）。script は無く、準備中は meta refresh で再読込します。作法は承認ページと同じ（CSP・no-store・no-referrer）。
+- VM の署名つきの道は `/relay/v/invite/<hash>/{create,status,authorize,reset,complete,revoke}`（role は operator。3.12.0 までは `/approval/invite/…`・Worker は 1 版の間だけ旧 path も受ける）。
+- `reveal` は Worker の中で secret を作り、PBKDF2（100,000）の verifier だけを `Person`（3.13.0 まで `ApprovalPerson`）に置きます。既存の持ち主は上書きしません（同じ招待のやり直しだけ通す）。
 - 期限・取り消し・使用済みは 410。`/invite/*` は `run_worker_first` に入れてあります。
 
 試験は `test/invite.test.mjs`（Miniflare）と `test/invite-vm.test.mjs`（本物の VM の Python と本物の Worker の通し）です。本番への migration の適用と deploy は masaru の一言で主セッションが行います。

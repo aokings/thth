@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from thth import accounts, admin_log, approval_relay, cli, invites
+from thth import accounts, admin_log, relay, cli, invites
 from tests.test_v3100_invite_create import env as _env  # noqa: F401
 from tests.test_v3100_invite_worker import world, authorize_params, make  # noqa: F401
 from tests.test_v3100_invite_credential import credentials, run_flow  # noqa: F401
@@ -29,14 +29,14 @@ def sessions(world, credentials, monkeypatch):
     ledger = Path(accounts.accounts_dir()) / f"{record['account']}.json"
     assert "approval" not in json.loads(ledger.read_text())
     created = []
-    invite_worker = approval_relay.signed_request
+    invite_worker = relay.signed_request
 
     def worker(kind, subject, operation, body):
         if kind == "session":
             created.append((operation, json.loads(json.dumps(body))))
             raise AssertionError("3.13.0: no approval session")
         return invite_worker(kind, subject, operation, body)
-    monkeypatch.setattr(approval_relay, "signed_request", worker)
+    monkeypatch.setattr(relay, "signed_request", worker)
     return record, created
 
 
@@ -70,7 +70,7 @@ def test_招待で用意していない口座には使えない(world, sessions,
     body.write_text("本文")
     for name in ("masaru-threads", "no-such-account"):
         assert cli.main(["admin", "draft", "put", name, "--body-file", str(body), "--by", "masaru"]) == 2
-        assert "admin_approval_invite_account_only: " in capsys.readouterr().err
+        assert "admin_draft_invite_account_only: " in capsys.readouterr().err
     assert created == []
 
 
@@ -84,5 +84,13 @@ def test_その口座の資格情報が無ければ断る(world, sessions, capsy
     body = tmp_path / "body.txt"
     body.write_text("本文")
     assert cli.main(["admin", "draft", "put", record["account"], "--body-file", str(body), "--by", "masaru"]) == 2
-    assert "admin_approval_credential_missing: " in capsys.readouterr().err
+    assert "admin_draft_credential_missing: " in capsys.readouterr().err
     assert created == []
+
+
+def test_旧名のadmin_approval_の理由コードも新名で言う(capsys):
+    """3.13.0 で admin_approval_* を admin_draft_* に改めた。旧名で来ても新名と次の一手で言う。"""
+    for name in ("invite_account_only", "credential_missing", "invalid_draft"):
+        assert invites._fail("admin_approval_" + name) == 2
+        err = capsys.readouterr().err
+        assert err.startswith("admin_draft_" + name + ": ") and "admin_approval_" not in err

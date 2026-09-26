@@ -1,7 +1,7 @@
 import json
 from types import SimpleNamespace
 import pytest
-from thth import admin_log, approval_relay, cli, doctor, media_cleanup
+from thth import admin_log, relay, cli, doctor, media_cleanup
 
 
 def test_status_strict_counts_and_no_private_values(monkeypatch):
@@ -9,7 +9,7 @@ def test_status_strict_counts_and_no_private_values(monkeypatch):
     def request(*args):
         calls.append(args)
         return {'active':True,'cleanup':{'pending_count':3,'failed_count':2,'reason':'cleanup_failed'}}
-    monkeypatch.setattr(approval_relay,'signed_request',request)
+    monkeypatch.setattr(relay,'signed_request',request)
     assert media_cleanup.observe('alpha')=={'pending_count':3,'failed_count':2,'reason':'cleanup_failed'}
     assert calls==[('account','alpha','status',{})]
 
@@ -21,13 +21,13 @@ def test_status_strict_counts_and_no_private_values(monkeypatch):
     {'pending_count':0,'failed_count':0,'reason':None,'subjects':['private']},
 ])
 def test_invalid_observation_is_unknown_not_healthy(monkeypatch,value):
-    monkeypatch.setattr(approval_relay,'signed_request',lambda *a:{'cleanup':value})
+    monkeypatch.setattr(relay,'signed_request',lambda *a:{'cleanup':value})
     assert media_cleanup.observe('alpha')==dict(pending_count=None,failed_count=None,reason='cleanup_observation_unavailable')
 
 
 def test_transport_failure_is_unknown_and_diagnostic_keeps_counts(monkeypatch):
     from thth import stop_observation
-    monkeypatch.setattr(approval_relay,'signed_request',lambda *a:(_ for _ in ()).throw(approval_relay.RelayError('opaque-private-value')))
+    monkeypatch.setattr(relay,'signed_request',lambda *a:(_ for _ in ()).throw(relay.RelayError('opaque-private-value')))
     monkeypatch.setattr(stop_observation,'diagnostic',lambda a:{'error':None,'directory_checks':[]})
     monkeypatch.setattr(doctor,'_diagnose',lambda a:{'account':a,'probes':[]})
     monkeypatch.setattr(media_cleanup,'configured',lambda:True)
@@ -41,7 +41,7 @@ def test_transport_failure_is_unknown_and_diagnostic_keeps_counts(monkeypatch):
 def test_doctor_observes_only_configured_relay(tmp_path,monkeypatch,setting):
     from thth import stop_observation
     monkeypatch.delenv('THTH_APPROVAL_BASE_URL',raising=False);monkeypatch.delenv('THTH_MEDIA_BASE_URL',raising=False)
-    path=tmp_path/'apps'/'relay-signer.key';monkeypatch.setattr(approval_relay,'key_path',lambda:path)
+    path=tmp_path/'apps'/'relay-signer.key';monkeypatch.setattr(relay,'key_path',lambda:path)
     if setting=='url':monkeypatch.setenv('THTH_MEDIA_BASE_URL','https://thth.me')
     if setting in ('signer','unsafe_signer'):
         path.parent.mkdir();path.write_text('synthetic presence only');path.chmod(0o600 if setting=='signer' else 0o644)
@@ -62,7 +62,7 @@ def test_cli_requires_actor_and_recovery_has_no_post_operation(monkeypatch,capsy
     parser=cli.build_parser()
     with pytest.raises(SystemExit):parser.parse_args(['admin','media','cleanup-retry','alpha'])
     calls=[]
-    monkeypatch.setattr(approval_relay,'signed_request',lambda *a:calls.append(a) or dict(scheduled_count=1,unavailable_count=0,remaining_count=0,reason=None))
+    monkeypatch.setattr(relay,'signed_request',lambda *a:calls.append(a) or dict(scheduled_count=1,unavailable_count=0,remaining_count=0,reason=None))
     args=parser.parse_args(['admin','media','cleanup-retry','alpha','--by','operator','--json'])
     assert args.func(args)==0
     assert calls==[('account','alpha','cleanup-retry',{})]
@@ -73,7 +73,7 @@ def test_cli_requires_actor_and_recovery_has_no_post_operation(monkeypatch,capsy
 
 
 def test_incomplete_recovery_has_nonzero_exit_and_static_reason(monkeypatch,capsys):
-    monkeypatch.setattr(approval_relay,'signed_request',lambda *a:dict(scheduled_count=0,unavailable_count=1,remaining_count=0,reason='cleanup_retry_unavailable'))
+    monkeypatch.setattr(relay,'signed_request',lambda *a:dict(scheduled_count=0,unavailable_count=1,remaining_count=0,reason='cleanup_retry_unavailable'))
     assert media_cleanup.command(SimpleNamespace(account='alpha',by='operator',json=True))==2
     assert json.loads(capsys.readouterr().out)['reason']=='cleanup_retry_unavailable'
 
@@ -91,7 +91,7 @@ def test_cleanup_help_discloses_unknown_write_recovery_limit(capsys):
 @pytest.mark.parametrize('account',['../alpha','a/b',''])
 def test_invalid_account_precedes_actor_and_request(monkeypatch,account):
     monkeypatch.setattr(admin_log,'actor',lambda *a:pytest.fail('actor before name'))
-    monkeypatch.setattr(approval_relay,'signed_request',lambda *a:pytest.fail('request before name'))
+    monkeypatch.setattr(relay,'signed_request',lambda *a:pytest.fail('request before name'))
     with pytest.raises(ValueError,match='invalid_account'):media_cleanup.retry(account,by='operator')
 
 
@@ -99,7 +99,7 @@ def test_unconfigured_relay_still_prints_the_static_cleanup_line(tmp_path,monkey
     """第 5・6 段 P3: relay 未設定でも行は出す。socket は一切開かない。"""
     import socket
     monkeypatch.delenv('THTH_APPROVAL_BASE_URL',raising=False);monkeypatch.delenv('THTH_MEDIA_BASE_URL',raising=False)
-    monkeypatch.setattr(approval_relay,'key_path',lambda:tmp_path/'apps'/'relay-signer.key')
+    monkeypatch.setattr(relay,'key_path',lambda:tmp_path/'apps'/'relay-signer.key')
     monkeypatch.setattr(socket.socket,'connect',lambda *a,**k:(_ for _ in ()).throw(AssertionError('network reached')))
     monkeypatch.setattr(media_cleanup,'observe',lambda a:(_ for _ in ()).throw(AssertionError('observed without a relay')))
     assert media_cleanup.configured() is False

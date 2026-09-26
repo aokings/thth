@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 import secrets
 import stat
-from . import accounts, admin_log, approval_relay, authclients, authflow, jst, leave_gate as gate, managed_repo, server_files, timer_cleanup
+from . import accounts, admin_log, relay, authclients, authflow, jst, leave_gate as gate, managed_repo, server_files, timer_cleanup
 
 PHASES={'stopped','worker_revoked','remote_pending','remote_confirmed','manual_unconfirmed','deleting','deleted_pending_log','completed'}
 
@@ -41,7 +41,7 @@ def _valid(row,account):
     if not required<=set(row) or set(row)-required-optional:return False
     if (type(row['schema_version']) is not int or row['schema_version']!=1 or row['account']!=account
         or not isinstance(row['phase'],str) or row['phase'] not in PHASES
-        or not isinstance(row['operation_id'],str) or not approval_relay.OPAQUE.fullmatch(row['operation_id'])
+        or not isinstance(row['operation_id'],str) or not relay.OPAQUE.fullmatch(row['operation_id'])
         or not jst.parse(row['stopped_at']) or not isinstance(row['stopped_by'],str) or not row['stopped_by'] or row['remote'] not in ('pending','confirmed','unconfirmed_manual','unconfirmed_shared')):return False
     categories={'token','env','state','ledger','managed_repo'}
     if type(row['deleted']) is not dict or set(row['deleted'])-categories or any(type(n) is not int or n<0 for n in row['deleted'].values()):return False
@@ -189,8 +189,8 @@ def _credential_owned(path,account):
 def _shared_globals():
     from . import appenv
     apps=Path(os.environ.get('THTH_APPS_DIR') or Path.home()/'.config/thth/apps').resolve()
-    try:signer=_path(str(approval_relay.key_path()))
-    except approval_relay.RelayError:raise ValueError('global_signer_location_unsafe') from None
+    try:signer=_path(str(relay.key_path()))
+    except relay.RelayError:raise ValueError('global_signer_location_unsafe') from None
     return [_path(appenv.default_path()),apps,signer]
 
 
@@ -426,7 +426,7 @@ def _run_locked(account,*,by):
                 targets,preserved,shared=inventory(account,cfg)
                 row.update(targets=targets,inventory_sha256=_hash(targets),preserved=preserved,token_shared=shared);_save(row)
                 with admin_log.transaction():pass  # fail before remote effects on known-bad audit destination
-                result=approval_relay.signed_request('account',account,'revoke',{})
+                result=relay.signed_request('account',account,'revoke',{})
                 if result!={'status':'revoked'}:raise ValueError('worker_revoke_unconfirmed')
                 row['phase']='worker_revoked';_save(row)
             if row['phase'] in ('worker_revoked','remote_pending'):
@@ -514,7 +514,7 @@ def command(args):
             elif timers.get('reason')=='unit_listing_failed':
                 print('timer_cleanup_unknown: systemctl list-unit-files '+' '.join(timer_cleanup.account_units(args.name))+' で残りを確かめ、あれば sudo systemctl disable --now <unit> で止めてください')
         return 0
-    except (OSError,ValueError,accounts.AccountError,approval_relay.RelayError,admin_log.AdminLogError,LockBusy):
+    except (OSError,ValueError,accounts.AccountError,relay.RelayError,admin_log.AdminLogError,LockBusy):
         print('leave_incomplete: 停止状態と再試行用の認証情報を確認し、同じ leave を再実行してください',file=sys.stderr)
         if args.json:print(json.dumps({'account':args.name,'completed':False,'reason':'leave_incomplete'},ensure_ascii=False))
         return 2
