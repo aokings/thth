@@ -38,8 +38,6 @@ def test_THTH_ROOTなしはroot_mismatchと次の一手(world, sessions, capsys,
     err = capsys.readouterr().err
     assert err.startswith(f"root_mismatch: THTH_ROOT={root} を付けて打ってください"), err
     assert "write_unavailable" not in err
-    assert cli.main(["admin", "approval", "request", name, "--draft", "0" * 64, "--by", "masaru"]) == 2
-    assert capsys.readouterr().err.startswith("root_mismatch: THTH_ROOT=")
     assert created == []
 
 
@@ -69,7 +67,7 @@ def test_stateの親のモードが緩いとunsafe_server_directoryと相対の�
         assert err.startswith(f"unsafe_server_directory: state/{name} のモードを 700 にしてください（THTH_ROOT の下・chmod 700）\n"), err
         assert str(root) not in err
         with pytest.raises(ReportServiceError) as caught:
-            invites.admin_approval_request(name, draft="0" * 64, by="masaru")
+            invites.admin_draft_put(name, body="本文", by="masaru")
         assert str(caught.value) == "unsafe_server_directory"
         assert created == []
         # サーバの口は同じ置き場でも静的な名前だけ。

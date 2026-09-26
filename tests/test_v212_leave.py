@@ -155,8 +155,8 @@ def test_shared_manual_grant_does_not_tell_person_to_revoke_other_account(env,wo
     assert '切り分け' in out and '本人が解除' not in out
 
 
-def test_a_stop_does_not_invalidate_b_old_context_or_pending_job(env,monkeypatch):
-    from thth import report_http,server_writes as writes,approval_jobs as jobs
+def test_a_stop_does_not_invalidate_b_old_context_or_scheduling(env,monkeypatch):
+    from thth import report_http,server_writes as writes
     from tests.test_v212_server_writes import FakeRelay
     env['value']['credentials'][0]['accounts']['beta']='beta';env['path'].write_text(json.dumps(env['value']))
     context=report_http.load_credentials(env['path'])[1][0][3];remote=FakeRelay()
@@ -165,9 +165,9 @@ def test_a_stop_does_not_invalidate_b_old_context_or_pending_job(env,monkeypatch
         return remote(kind,subject,operation,body)
     monkeypatch.setattr(approval_relay,'signed_request',request)
     draft_result=writes.execute(context,dict(operation='draft_put',account='beta',body='別 account の本文',publish_at='2030-01-01T12:00:00+09:00'))
-    job=writes.execute(context,dict(operation='approval_request',account='beta',draft_id=draft_result['draft_id']))
-    leave.run('alpha',by='operator');remote.approve();jobs.run_once(env['path'])
-    assert jobs.status(context,'beta',job['job_id'])['status']=='completed'
+    leave.run('alpha',by='operator')
+    # 3.13.0: 予約はその場で刻む（承認 job を待たない）。alpha の退出は beta の予約を止めない。
+    assert writes.execute(context,dict(operation='schedule_request',account='beta',draft_id=draft_result['draft_id']))['status']=='approved'
     second=writes.execute(context,dict(operation='draft_put',account='beta',body='退出後の原稿',publish_at='2030-01-02T12:00:00+09:00'))
     assert second['draft_id']
 

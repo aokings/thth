@@ -23,7 +23,7 @@ before(async()=>{
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,log:new SilentLog(),
     bindings:{APPROVAL_PUBLIC_KEY:publicKey},
-    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'ApprovalPerson',useSQLite:true},APPROVAL_SESSION:{className:'ApprovalSession',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},MEDIA_OBJECT:{className:'MediaObject',useSQLite:true},INVITE_OBJECT:{className:'InviteObject',useSQLite:true},DELETION_INBOX:{className:'DeletionInbox',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
+    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'ApprovalPerson',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},MEDIA_OBJECT:{className:'MediaObject',useSQLite:true},INVITE_OBJECT:{className:'InviteObject',useSQLite:true},DELETION_INBOX:{className:'DeletionInbox',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
     ratelimits:{AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:1000,period:60}},APPROVAL_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:1000,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:1000,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:1000,period:60}}}}));
   origin=String(await mf.ready).replace(/\/$/,'');
 });

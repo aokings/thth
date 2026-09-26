@@ -638,20 +638,17 @@ SERVER_TOOLS = [
                     "required":["account",*required],"additionalProperties":False}}
     for name,keys,required in (
         ('draft_put',('body','publish_at','topic','reply_to','draft_id','expected_revision'),('body','publish_at')),
-        ('approval_request',('draft_id',),('draft_id',)),
         ('send_request',('body','topic','reply_to'),('body',)),
         ('retract_request',('post_id','reason'),('post_id','reason')),
         ('schedule_request',('draft_id',),('draft_id',)),
-        ('draft_list',(),()),('queue',(),()),('request_status',('job_id',),('job_id',))) ]
+        ('draft_list',(),()),('queue',(),())) ]
 
-# 公開・削除・予約の 4 本は、口座の `approval`（設計 3.12.0 §3.1）で動きが変わることを言う。
+# 公開・削除・予約の 3 本は、頼まれたらその場で行う（承認ページは無い・設計 3.13.0）。安全装置は効く。
 _PUBLISHING_DESCRIPTIONS = {
-    'thth_send_request': "今すぐ公開する。口座の approval が none ならその場で出して post_id・permalink を返す"
-                         "（hold_minutes があればその分先の予約になる）。publish・all なら承認ページの job を作る",
-    'thth_retract_request': "公開済みの投稿を削除する。approval が none・publish ならその場で消す。all なら承認ページの job を作る",
-    'thth_schedule_request': "下書きを予約として queue に刻む（publish_at 以降に timer が出す）。approval が none ならその場で刻む。"
-                             "publish・all なら承認ページの job を作る",
-    'thth_approval_request': "下書きの承認を依頼する。approval が none の口座では thth_schedule_request と同じくその場で予約に刻む",
+    'thth_send_request': "今すぐ公開する。その場で出して post_id・permalink を返す"
+                         "（口座の hold_minutes が 1 以上なら、その分先の予約になり、その間は持ち主が /activity で取り消せる）",
+    'thth_retract_request': "公開済みの投稿をその場で削除する",
+    'thth_schedule_request': "下書きを予約として queue に刻む（publish_at 以降に timer が出す）",
 }
 for _tool in SERVER_TOOLS:
     if _tool["name"] in _PUBLISHING_DESCRIPTIONS:
@@ -672,18 +669,18 @@ SERVER_TOOLS += [
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"media_id":{"type":"string"}},
                     "required":["account","media_id"],"additionalProperties":False}},
 ]
-# 設定と状態（設計 3.12.0 段 3）。変えられるのは approval と安全装置の数値だけで、LLM からは
+# 設定と状態（設計 3.12.0 段 3）。変えられるのは安全装置の数値だけで、LLM からは
 # **締める向きだけ**（緩めるのは持ち主の https://thth.me/activity か運営者の CLI）。
 # 止まった口座を戻す道具は**置かない**——暴走して止まった LLM が自分で戻せないように。
 SERVER_TOOLS += [
     {"name":"thth_settings",
-     "description":"口座の設定を読む（key を省く）か、1 項目を締める向きにだけ変える。key は approval（none→publish→all）・"
+     "description":"口座の設定を読む（key を省く）か、1 項目を締める向きにだけ変える。key は "
                    "daily_max_posts・daily_max_retracts・burst_count（下げる）・burst_minutes・hold_minutes・min_interval_hours（上げる）。"
                    "緩める変更は settings_loosen_requires_owner で断る（持ち主が https://thth.me/activity で変える）",
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"key":{"type":"string"},"value":{"type":"string"}},
                     "required":["account"],"additionalProperties":False}},
     {"name":"thth_account_status",
-     "description":"口座の approval・安全装置の数値・止まっているか（理由）・今日の公開数と削除数を読む（読むだけ）",
+     "description":"口座の安全装置の数値・止まっているか（理由）・今日の公開数と削除数を読む（読むだけ）",
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"}},
                     "required":["account"],"additionalProperties":False}},
 ]

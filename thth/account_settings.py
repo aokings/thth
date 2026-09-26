@@ -1,10 +1,9 @@
 """口座の設定を読む・変える（設計 3.12.0 段 3）。
 
-変えられるのは **承認の選び方 `approval` と安全装置の数値だけ**:
+変えられるのは **安全装置の数値だけ**（3.12.0 の `approval` は 3.13.0 で無くなった）:
 
 | 名前 | 台帳の項目 | 締める向き |
 |---|---|---|
-| `approval` | `approval` | none → publish → all |
 | `daily_max_posts` | 同じ | 下げる |
 | `daily_max_retracts` | 同じ | 下げる |
 | `burst_count` | `burst.count` | 下げる |
@@ -15,7 +14,7 @@
 口は 3 つ。**どこから変えたかで許す向きが違う**（主セッションの裁定 2026-09-26）:
 
 - 運営者の CLI `thth account set <口座> <名前> <値> --by <名前>`: どちらの向きも。
-- `https://thth.me/activity`（持ち主が承認 secret で確かめる）: どちらの向きも。
+- `https://thth.me/activity`（持ち主が口座の secret で確かめる）: どちらの向きも。
 - MCP の `thth_settings`（LLM）: **締める向きだけ**。緩める変更は
   `settings_loosen_requires_owner` で断る——暴走した LLM が自分で安全装置を外せないように。
 
@@ -32,9 +31,8 @@ from pathlib import Path
 
 from . import accounts, admin_log, secrets_fs
 
-KEYS = ("approval", "daily_max_posts", "daily_max_retracts", "burst_count", "burst_minutes",
+KEYS = ("daily_max_posts", "daily_max_retracts", "burst_count", "burst_minutes",
         "hold_minutes", "min_interval_hours")
-APPROVAL_ORDER = {"none": 0, "publish": 1, "all": 2}
 # 数値が大きいほど締まる項目（それ以外の数値は小さいほど締まる）。
 TIGHTER_WHEN_LARGER = frozenset(("burst_minutes", "hold_minutes", "min_interval_hours"))
 MIN_INTERVAL_MAX = 168
@@ -56,7 +54,6 @@ def current(cfg) -> dict:
     limits = accounts.guard_limits(cfg)
     hours = cfg.get("min_interval_hours")
     return {
-        "approval": accounts.approval_mode(cfg),
         "daily_max_posts": limits["daily_max_posts"],
         "daily_max_retracts": limits["daily_max_retracts"],
         "burst_count": limits["burst"]["count"],
@@ -70,10 +67,6 @@ def parse(key, value):
     """文字列（CLI・MCP・/activity の form）か数を、その項目の値にする。受け取れなければ断る。"""
     if key not in KEYS:
         raise SettingsError("invalid_setting")
-    if key == "approval":
-        if not accounts.valid_approval(value):
-            raise SettingsError("invalid_setting")
-        return value
     if isinstance(value, bool):
         raise SettingsError("invalid_setting")
     if isinstance(value, str):
@@ -112,8 +105,6 @@ def parse(key, value):
 
 def tightens(key, before, after) -> bool:
     """`before` → `after` が締める向き（か同じ）か。"""
-    if key == "approval":
-        return APPROVAL_ORDER[after] >= APPROVAL_ORDER[before]
     if key in TIGHTER_WHEN_LARGER:
         return after >= before
     return after <= before
@@ -136,7 +127,7 @@ def change(account, key, value, *, by, via="cli", tighten_only=False) -> dict:
         raise SettingsError("schedule_unavailable")
     if tighten_only and not tightens(key, before, after):
         raise SettingsError("settings_loosen_requires_owner")
-    if before == after and (key != "approval" or cfg.get("approval") == after):
+    if before == after:
         return {"account": account, "key": key, "before": before, "after": after, "changed": False}
     path = _ledger_path(account)
     try:
@@ -164,7 +155,10 @@ def change(account, key, value, *, by, via="cli", tighten_only=False) -> dict:
 
 
 def status(account, *, now=None) -> dict:
-    """approval・安全装置の数値・止まっているか・今日の公開数/削除数（読むだけ）。"""
+    """安全装置の数値・止まっているか・今日の公開数/削除数（読むだけ）。
+
+    `ignored` は台帳に残っているが読まない古い項目（3.12.0 の `approval` など）の名前。
+    """
     from . import guard, jst
     if not accounts.name_is_safe(account):
         raise SettingsError("invalid_setting")
@@ -181,6 +175,7 @@ def status(account, *, now=None) -> dict:
         "scheduled": scheduled(cfg),
         "quiet_hours": cfg.get("quiet_hours"),
         "stopped": stopped,
+        "ignored": [key for key in accounts.IGNORED_FIELDS if key in cfg],
         "today": {"date": now.date().isoformat(), "posts": counts["posts_today"],
                   "retracts": counts["retracts_today"]},
     }
@@ -281,7 +276,6 @@ def cmd_status(args) -> int:
         return 0
     s = row["settings"]
     print(f"{row['account']}")
-    print(f"  承認（approval）: {s['approval']}")
     print(f"  1 日の公開の上限（daily_max_posts）: {s['daily_max_posts']}")
     print(f"  1 日の削除の上限（daily_max_retracts）: {s['daily_max_retracts']}")
     print(f"  急な連投で止める（burst）: {s['burst_minutes']} 分に {s['burst_count']} 件を超えたら")
@@ -289,6 +283,8 @@ def cmd_status(args) -> int:
     print(f"  最短間隔（min_interval_hours）: {s['min_interval_hours']} 時間（返信には掛けない）")
     print(f"  予約の timer（scheduled）: {'載っている' if row['scheduled'] else '載っていない（予約と猶予は使えない）'}")
     print(f"  今日（{row['today']['date']}）: 公開 {row['today']['posts']} 件・削除 {row['today']['retracts']} 件")
+    for key in row["ignored"]:
+        print(f"  古い項目 {key}（無視）")
     if row["stopped"]:
         reason = row["stopped"]["reason"]
         print(f"  → **止まっています**: {REASON_WORDS.get(reason, reason)}"

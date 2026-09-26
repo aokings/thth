@@ -25,7 +25,7 @@ before(async()=>{
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,
     log:new SilentLog(),handleStructuredLogs:item=>logs.push(JSON.stringify(item)),bindings:{APPROVAL_PUBLIC_KEY:publicKey},
-    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'TestPerson',useSQLite:true},APPROVAL_SESSION:{className:'ApprovalSession',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},MEDIA_OBJECT:{className:'MediaObject',useSQLite:true},INVITE_OBJECT:{className:'TestInvite',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
+    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'TestPerson',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},MEDIA_OBJECT:{className:'MediaObject',useSQLite:true},INVITE_OBJECT:{className:'TestInvite',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
     ratelimits:{AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:1000,period:60}},APPROVAL_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:1000,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:1000,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:1000,period:60}}}}));await mf.ready;
 });
 after(async()=>{await mf?.dispose();await rm(directory,{recursive:true,force:true});const hits=logs.filter(line=>sensitive.some(value=>line.includes(value))).length;assert.equal(hits,0,'secret in runtime logs');});
@@ -119,14 +119,17 @@ test('完了と承認 secret: 1 回だけ表示・verifier は PBKDF2 100,000・
   const nonce=await csrfOf(inv),first=await press(inv,'reveal',{csrf:nonce}),html=await first.text();
   assert.equal(first.status,200);assert.equal(first.headers.get('cache-control'),'no-store');
   const secret=/class="secret">([A-Za-z0-9_-]{43})</.exec(html)?.[1];assert.ok(secret,'secret shown');sensitive.push(secret);
-  assert.ok(html.includes('一度だけ')&&html.includes('<code>'+person+'</code>')&&html.includes('<a href="/pending">https://thth.me/pending</a>')&&html.includes('sign in with this username and secret'));
-  // 3.12.0 §6-4: 口座名（username）と secret が同じ form にあり、欄の名前は一覧の入口と同じ。押すとそのまま一覧に入る。
-  const saved=/<form method="post" action="\/pending">(.*?)<\/form>/s.exec(html)?.[1];assert.ok(saved,'save form');
+  assert.ok(html.includes('一度だけ')&&html.includes('<code>'+person+'</code>')&&html.includes('<a href="/activity">https://thth.me/activity</a>')&&html.includes('sign in with this username and secret'));
+  // 3.13.0: 承認待ちの一覧（/pending）は無い。完了ページのリンクと form は /activity だけ。
+  assert.ok(!html.includes('/pending')&&!html.includes('approval page'),html);
+  assert.ok(html.includes('保存して動きの一覧を開く / Save and open your activity</button>'));
+  // 3.12.0 §6-4: 口座名（username）と secret が同じ form にあり、欄の名前は動きの一覧の入口と同じ。押すとそのまま入る。
+  const saved=/<form method="post" action="\/activity">(.*?)<\/form>/s.exec(html)?.[1];assert.ok(saved,'save form');
   assert.ok(saved.includes('<input name="person" autocomplete="username" value="'+person+'" readonly>'),saved);
   assert.ok(/<input type="password" name="secret" autocomplete="new-password" value="[A-Za-z0-9_-]{43}" readonly>/.test(saved));
   assert.equal(/name="secret"[^>]*value="([^"]+)"/.exec(saved)[1]===secret,true);
-  const listed=await mf.dispatchFetch(ORIGIN+'/pending',{method:'POST',redirect:'manual',headers:{'content-type':'application/x-www-form-urlencoded','cf-connecting-ip':opaque(),origin:ORIGIN},body:new URLSearchParams({person,secret})});
-  assert.equal(listed.status,303);assert.equal(listed.headers.get('location'),'/pending');sensitive.push(listed.headers.get('set-cookie'));
+  const listed=await mf.dispatchFetch(ORIGIN+'/activity',{method:'POST',redirect:'manual',headers:{'content-type':'application/x-www-form-urlencoded','cf-connecting-ip':opaque(),origin:ORIGIN},body:new URLSearchParams({person,secret})});
+  assert.equal(listed.status,303);assert.equal(listed.headers.get('location'),'/activity');sensitive.push(listed.headers.get('set-cookie'));
   const stored=new Map(await inspect('person',person)).get('person');
   assert.equal(stored.iterations,100_000);assert.equal(stored.active,true);
   assert.equal(pbkdf2Sync(secret,Buffer.from(stored.salt,'base64url'),100_000,32,'sha256').toString('base64url'),stored.verifier);
@@ -204,6 +207,17 @@ test('wrangler.jsonc: INVITE_OBJECT の binding・v5-invite の migration・/inv
   const text=(await readFile(fileURLToPath(new URL('../wrangler.jsonc',import.meta.url)),'utf8')).split('\n').filter(line=>!line.trim().startsWith('//')).join('\n');
   const config=JSON.parse(text);
   assert.ok(config.durable_objects.bindings.some(b=>b.name==='INVITE_OBJECT'&&b.class_name==='InviteObject'));
-  assert.deepEqual(config.migrations.at(-1),{tag:'v5-invite',new_sqlite_classes:['InviteObject']});
+  assert.ok(config.migrations.some(m=>JSON.stringify(m)===JSON.stringify({tag:'v5-invite',new_sqlite_classes:['InviteObject']})));
   assert.ok(config.assets.run_worker_first.includes('/invite/*'));
+});
+
+// 3.13.0: ApprovalSession（承認ページの本文の預かり）は消した。binding を外し、既存の tag の続きに deleted_classes。
+test('wrangler.jsonc: no APPROVAL_SESSION binding and a deleted_classes migration after v5-invite',async()=>{
+  const text=(await readFile(fileURLToPath(new URL('../wrangler.jsonc',import.meta.url)),'utf8')).split('\n').filter(line=>!line.trim().startsWith('//')).join('\n');
+  const config=JSON.parse(text);
+  assert.ok(!config.durable_objects.bindings.some(b=>b.name==='APPROVAL_SESSION'||b.class_name==='ApprovalSession'));
+  const tags=config.migrations.map(m=>m.tag);assert.equal(new Set(tags).size,tags.length);
+  assert.equal(tags.indexOf('v5-invite')+1,tags.length-1);
+  assert.deepEqual(config.migrations.at(-1),{tag:'v6-no-approval-session',deleted_classes:['ApprovalSession']});
+  assert.ok(config.migrations.some(m=>(m.new_sqlite_classes??[]).includes('ApprovalSession')),'the class was created by an earlier migration');
 });

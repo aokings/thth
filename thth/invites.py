@@ -63,7 +63,6 @@ REASONS = frozenset((
     "invite_not_open", "invite_tty_required", "invite_registration_rejected",
     "invite_registration_unknown", "invite_revoke_unknown",
     "invite_remote_created_audit_unconfirmed", "invite_remote_created_delivery_failed",
-    "invalid_approval",
 ))
 # 断るときは理由と次の一手（静的な文だけ・値は混ぜない）。
 NEXT = {
@@ -72,7 +71,6 @@ NEXT = {
     "invalid_project": f"--project は英数字と - _ . だけ・{PROJECT_MAX} 字までです",
     "invalid_label": f"--label は 1 行・{LABEL_MAX} 字までです（控えのメモ・Worker には送りません）",
     "invalid_expires": f"--expires は 1d〜{MAX_DAYS}d の日数です（例: 30d）",
-    "invalid_approval": "--approval は none・publish・all のどれかです（審査員向けは all）",
     "invite_project_in_owner_group": "その project は持ち主の組に入っています。招待は外の人のためなので、"
                                      "組の外の project で作ってください（thth admin plaza owner list）",
     "invite_account_exists": "招待の口座名が既にあります。もう一度 create してください",
@@ -115,9 +113,7 @@ def _valid(record):
         return False
     if type(record.get("expires_at")) is not int or type(record.get("production")) is not bool:
         return False
-    # 3.12.0 段 3: 招待で作る口座の approval（項目の無い古い招待は none を書く）。
-    if "approval" in record and not accounts.valid_approval(record["approval"]):
-        return False
+    # 3.12.0 の招待の記録に残っている `approval` は読まない（3.13.0 で承認ページを外した）。
     label = record.get("label")
     return label is None or isinstance(label, str) and len(label) <= LABEL_MAX
 
@@ -178,21 +174,12 @@ def public(record):
     """一覧に出す形（code_hash も出さない）。"""
     keys = ("invite_id", "status", "media", "project", "account", "label", "production",
             "expires_at", "at", "by", "reason", "approver_set")
-    row = {key: record.get(key) for key in keys}
-    row["approval"] = record.get("approval") or accounts.APPROVAL_DEFAULT
-    return row
+    return {key: record.get(key) for key in keys}
 
 
-def create(*, media, project, label=None, expires=None, production=False, by, approval=None):
-    """招待を 1 本作り、URL を tty に 1 回だけ出す。戻り値に code は入れない。
-
-    `approval`（3.12.0 段 3）はその招待で作る口座の台帳に書く値（既定 none）。審査員のように
-    自分の LLM を持たない人の招待は all にし、運営者が下書きを置いて本人が承認ページで押す。
-    """
+def create(*, media, project, label=None, expires=None, production=False, by):
+    """招待を 1 本作り、URL を tty に 1 回だけ出す。戻り値に code は入れない。"""
     admin_log.actor(by)
-    approval = accounts.APPROVAL_DEFAULT if approval is None else approval
-    if not accounts.valid_approval(approval):
-        raise error("invalid_approval")
     if media not in MEDIA:
         raise error("invite_media_unsupported")
     check_project(project)
@@ -221,7 +208,7 @@ def create(*, media, project, label=None, expires=None, production=False, by, ap
         expires_at = now_ms() + days * 86_400_000
         record = dict(schema_version=1, invite_id=invite_id, at=jst.iso(), by=admin_log.clean(by),
                       code_hash=code_hash, media=media, project=project, label=label,
-                      production=production, approval=approval, expires_at=expires_at, status="registering",
+                      production=production, expires_at=expires_at, status="registering",
                       account=account, reason=None, approver_set=False, updated_at=jst.iso())
         # 先に手元へ「作ろうとしている」を残す（Worker に届いたか分からなくても
         # revoke で後始末できるように）。
@@ -253,7 +240,6 @@ def create(*, media, project, label=None, expires=None, production=False, by, ap
             with admin_log.transaction():
                 admin_log.append("invite_created", subject(invite_id), {"media": media}, by=by,
                                  diff={"invite": ["absent", "present"], "production": [None, production],
-                                       "approval": [None, approval],
                                        "expires_days": [None, days]})
         except private_store.LOG_ERRORS:
             raise error("invite_remote_created_audit_unconfirmed") from None
@@ -324,7 +310,7 @@ _next_poll = {}
 
 
 def run_once(credentials_path=None):
-    """`thth approval-worker` が 1 巡ごとに呼ぶ。1 本の失敗で他の招待と承認 job を止めない。
+    """`thth approval-worker` が 1 巡ごとに呼ぶ。1 本の失敗で他の招待を止めない。
 
     `credentials_path` は常駐が読んでいる資格情報のファイル（`--credentials`）。渡されたときは、
     招待で用意した口座に、その口座だけの書き込みの資格情報を 1 件足す（裁定 2026-09-25）。
@@ -586,9 +572,6 @@ def _ledger(record, *, handle="", user_id=""):
     data.update(handle=handle, user_id=user_id, env=f"$THTH_ROOT/secrets/{name}.env",
                 token=f"$THTH_ROOT/secrets/{name}.token", production=record["production"],
                 scheduled=False, invite_id=record["invite_id"],
-                # 設計 3.12.0 §3.1: 新しく用意する口座は既定の none を明記する（項目の無い
-                # 既存の招待の口座は all として扱うので、ここで書かないと all になる）。
-                approval=record.get("approval") or accounts.APPROVAL_DEFAULT,
                 provenance=admin_log.provenance(record["by"], via="invite"))
     return data
 
@@ -886,17 +869,15 @@ def forget_credential(account, *, by):
 
 # ------------------------------------------------ 運営者の口（資格情報の bearer を使わない）
 #
-# 招待の口座の下書きを置き、その口座の承認者（口座名）あての承認 URL を出す（裁定 2026-09-25）。
-# 審査の間、運営者が審査員の口座に下書きを置いて承認 URL を渡すための口。bearer は使わない:
-# job は招待で足したその口座だけの資格情報の 1 件（hash だけ）に結び、常駐の既存の再確認
-# （その 1 件がまだあり、取り消されていないか・口座の範囲か）をそのまま通す。
-# 招待で用意していない口座（運営者自身の repo 型の口座など）には出さない。
+# 招待の口座に下書きを置く（裁定 2026-09-25）。bearer は使わない: 招待で足したその口座だけの
+# 資格情報の 1 件（hash だけ）で書き込みの口を通す。招待で用意していない口座（運営者自身の
+# repo 型の口座など）には使わない。3.13.0 で承認 URL を出す口（`admin approval request`）は外した。
 
 ADMIN_REASONS = frozenset(("admin_approval_invite_account_only", "admin_approval_credential_missing",
                            "admin_approval_invalid_draft"))
 NEXT.update({
     "admin_approval_invite_account_only": "この口は招待で用意した口座（inv-…）だけです。運営者自身の口座は"
-                                          "従来どおり thth approve か MCP の承認の道で",
+                                          "従来どおり thth approve か MCP の道で",
     "admin_approval_credential_missing": "その口座の資格情報の 1 件がありません。thth approval-worker を "
                                          "--credentials 付きで動かすと、次の巡で足します（thth admin invite list）",
     "admin_approval_invalid_draft": "--draft は draft_id（64 桁）か、その口座の queue の原稿のパスです",
@@ -930,21 +911,6 @@ def invite_context(account):
     raise error("admin_approval_credential_missing")
 
 
-def _draft_id(context, account, value):
-    from . import server_writes
-    if isinstance(value, str) and server_writes.DRAFT_ID.fullmatch(value):
-        return value
-    cfg = accounts.load_account(account)
-    try:
-        _, queue = server_writes._queue(cfg)
-        path = Path(value).absolute()
-    except Exception:
-        raise error("admin_approval_invalid_draft") from None
-    if path.parent != queue.absolute() or not path.name.endswith(".md"):
-        raise error("admin_approval_invalid_draft")
-    return server_writes._id(path.name)
-
-
 def admin_draft_put(account, *, body, publish_at=None, topic=None, reply_to=None, by):
     admin_log.actor(by)
     from . import server_writes
@@ -953,10 +919,10 @@ def admin_draft_put(account, *, body, publish_at=None, topic=None, reply_to=None
     for key, value in (("topic", topic), ("reply_to", reply_to)):
         if value:
             request[key] = value
-    return _admin_execute(context, request, by=by)
+    return _admin_execute(context, request)
 
 
-def _admin_execute(context, request, *, by, listed=True):
+def _admin_execute(context, request):
     """運営者の CLI だけ: `write_unavailable` を理由 1 語と次の一手に直す（設計 3.12.0 §6-5）。
 
     MCP やサーバの口は `server_writes.execute` の静的な名前のまま（ここを通らない）。
@@ -964,40 +930,12 @@ def _admin_execute(context, request, *, by, listed=True):
     from . import admin_diagnose, server_writes
     from .report_service import ReportServiceError
     try:
-        return server_writes.execute(context, request, via="cli", by=by, listed=listed)
+        return server_writes.execute(context, request, via="cli")
     except ReportServiceError as exc:
         better = admin_diagnose.explain(exc, context, request.get("account"))
         if better is exc:
             raise
         raise better from None
-
-
-def admin_approval_request(account, *, draft=None, send=False, retract=None, reason=None, by, listed=True):
-    """承認 URL を出す。既定は原稿の承認、--send は承認の直後に公開、--retract は削除。
-
-    既定で本人の承認待ちの一覧（https://thth.me/pending）にも出す（設計 3.11.0）。
-    """
-    admin_log.actor(by)
-    from . import queuefile, server_writes
-    context = invite_context(account)
-    if retract is not None:
-        request = {"operation": "retract_request", "account": account, "post_id": retract, "reason": reason or ""}
-    else:
-        draft_id = _draft_id(context, account, draft)
-        if not send:
-            request = {"operation": "approval_request", "account": account, "draft_id": draft_id}
-        else:
-            # 原稿の本文・話題・返信先で send_request（承認の直後に公開・返信）。
-            cfg = accounts.load_account(account)
-            name, raw, q = server_writes._draft(cfg, account, draft_id)
-            if q.front_matter.get("status") != "draft":
-                raise error("admin_approval_invalid_draft")
-            body = queuefile.extract_section(q.body, cfg["media"]).strip()
-            request = {"operation": "send_request", "account": account, "body": body}
-            for key in ("topic", "reply_to"):
-                if q.front_matter.get(key):
-                    request[key] = str(q.front_matter[key])
-    return _admin_execute(context, request, by=by, listed=listed)
 
 
 def _admin_fail(exc):
@@ -1026,49 +964,7 @@ def cmd_admin_draft_put(args):
     return 0
 
 
-def cmd_admin_approval_request(args):
-    from .report_service import ReportServiceError
-    if (args.draft is None) == (args.retract is None) or (args.retract is not None and (args.send or not args.reason)):
-        print("--draft か --retract（と --reason）のどちらか 1 つを渡してください", file=sys.stderr)
-        return 2
-    try:
-        row = admin_approval_request(args.account, draft=args.draft, send=args.send, retract=args.retract,
-                                     reason=args.reason, by=args.by, listed=not args.no_list)
-    except (InviteError, ReportServiceError, ValueError, OSError) as exc:
-        return _admin_fail(exc)
-    if "job_id" not in row:
-        # 口座の approval が承認を求めない（設計 3.12.0 §3.1）: その場で出した・消した・刻んだ。
-        shown = {key: row[key] for key in ("status", "post_id", "permalink", "draft_id", "publish_at", "retracted_at")
-                 if row.get(key)}
-        print(f"done_without_approval: account={row['account']} "
-              + " ".join(f"{key}={value}" for key, value in shown.items()))
-        return 0
-    # 承認 URL はこの口の出力（運営者が本人に渡す）。押すには本人の承認 secret が要る。
-    # 一覧に出したもの（既定）は、本人が https://thth.me/pending から自分で開ける（URL を届けなくてよい）。
-    print(f"approval_requested: account={row['account']} kind={row['kind']} job_id={row['job_id']}")
-    if row.get("pending_url"):
-        import time as time_mod
-        minutes = max(0, (row["expires_at"] - int(time_mod.time() * 1000)) // 60000)
-        print(f"承認待ちの一覧: {row['pending_url']}（本人がユーザ名 {row['account']} と承認 secret で入る・期限まで {minutes} 分）")
-        print("承認 URL（開いてから 10 分）: " + row["approval_url"])
-    else:
-        print("承認 URL（10 分）: " + row["approval_url"])
-    return 0
-
-
 def register_admin_writes(commands):
-    parser = commands.add_parser("approval", help="招待の口座の承認 URL を出す（運営者の口・bearer を使わない）")
-    operations = parser.add_subparsers(dest="approval_operation", required=True)
-    p = operations.add_parser("request", help="その口座の承認者あての承認 URL（既定で本人の承認待ちの一覧にも出す・最大 24 時間）")
-    p.add_argument("account")
-    p.add_argument("--draft", default=None, help="draft_id か、その口座の queue の原稿のパス")
-    p.add_argument("--send", action="store_true", help="承認の直後に公開する（原稿の本文・返信先で）")
-    p.add_argument("--retract", default=None, metavar="POST_ID", help="この投稿の削除の承認")
-    p.add_argument("--reason", default=None, help="--retract の理由")
-    p.add_argument("--no-list", action="store_true",
-                   help="承認待ちの一覧（https://thth.me/pending）に出さない（承認 URL だけ・10 分）")
-    p.add_argument("--by", required=True)
-    p.set_defaults(func=cmd_admin_approval_request)
     parser = commands.add_parser("draft", help="招待の口座に下書きを置く（運営者の口）")
     operations = parser.add_subparsers(dest="draft_operation", required=True)
     p = operations.add_parser("put", help="下書きを 1 本置く")
@@ -1093,7 +989,7 @@ def _fail(reason):
 def cmd_create(args):
     try:
         row = create(media=args.media, project=args.project, label=args.label, expires=args.expires,
-                     production=bool(args.production), by=args.by, approval=getattr(args, "approval", None))
+                     production=bool(args.production), by=args.by)
     except InviteError as exc:
         return _fail(str(exc))
     except ValueError as exc:
@@ -1104,7 +1000,7 @@ def cmd_create(args):
     except (OSError, admin_log.AdminLogError):
         return _fail("invite_log_unavailable")
     print(f"invite_created: id={row['invite_id']} account={row['account']} media={row['media']} "
-          f"production={str(row['production']).lower()} approval={row['approval']} "
+          f"production={str(row['production']).lower()} "
           f"expires_at={_when(row['expires_at'])}")
     return 0
 
@@ -1144,7 +1040,6 @@ def cmd_list(args):
     for row in rows:
         print(f"{row['invite_id']}  {row['status']:<11} {row['media']}  {row['account']}  "
               f"期限 {_when(row['expires_at'])}  production={str(row['production']).lower()}"
-              f"  approval={row['approval']}"
               + (f"  {row['label']}" if row.get("label") else ""))
     if broken:
         print(f"読めない招待の記録: {broken} 件", file=sys.stderr)
@@ -1160,8 +1055,6 @@ def register_admin(commands):
     p.add_argument("--label", default=None, help="控えのメモ（1 行・Worker には送らない）")
     p.add_argument("--expires", default=f"{DEFAULT_DAYS}d", help=f"1d〜{MAX_DAYS}d（既定 {DEFAULT_DAYS}d）")
     p.add_argument("--production", action="store_true", help="作る口座を production: true に（審査員向け）")
-    p.add_argument("--approval", default="none", choices=accounts.APPROVAL_VALUES,
-                   help="作る口座の approval（既定 none。自分の LLM を持たない審査員向けは all）")
     p.add_argument("--by", required=True)
     p.set_defaults(func=cmd_create)
     p = operations.add_parser("revoke", help="招待を取り消す")

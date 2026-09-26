@@ -17,7 +17,8 @@ import socket
 import threading
 import pytest
 from thth import accounts, approval, retract_cli, scopes, sent as sent_mod
-from thth import approval_jobs as jobs, server_writes as writes
+from thth import server_writes as writes
+from thth.report_service import ReportServiceError
 from thth.adapters import base as adapter_base, mastodon as mastodon_mod
 from tests.test_v212_server_writes import env, remote
 
@@ -200,19 +201,16 @@ def test_token_without_write_statuses_is_refused_before_any_delete(env, fake, mo
     assert cls.missing_permissions(accounts.load_token(cfg), [cls.DELETE_PERMISSION]) == ['write:statuses']
     assert retract_cli.cmd_retract(ns(confirm=digest())) == 2
     assert '`write:statuses` がトークンに乗っていません' in capsys.readouterr().err
-    # 承認の口でも、人が承認したあとで permission_unavailable として断り DELETE しない。
-    job = writes.execute(env['context'], dict(operation='retract_request', account='alpha', post_id=POST_ID, reason='訂正'))
-    remote.approve(); jobs.run_once(env['path']); jobs.run_once(env['path'])
-    assert jobs.status(env['context'], 'alpha', job['job_id'])['status'] == 'failed'
+    # サーバの口（3.13.0 はその場で消す）でも permission_unavailable として断り DELETE しない。
+    with pytest.raises(ReportServiceError) as caught:
+        writes.execute(env['context'], dict(operation='retract_request', account='alpha', post_id=POST_ID, reason='訂正'))
+    assert str(caught.value) == 'permission_unavailable'
     assert deletes(fake) == [] and not retracted_at()
 
 
-def test_retract_request_then_human_approval_then_worker_deletes_on_mastodon(env, fake, monkeypatch, remote):
+def test_retract_request_deletes_on_mastodon_directly(env, fake, monkeypatch, remote):
     as_mastodon(env, fake, monkeypatch)
-    job = writes.execute(env['context'], dict(operation='retract_request', account='alpha', post_id=POST_ID, reason='訂正'))
-    jobs.run_once(env['path'])
-    assert deletes(fake) == [], '人の承認より前に DELETE が飛んだ'
-    remote.approve(); jobs.run_once(env['path']); jobs.run_once(env['path'])
-    assert jobs.status(env['context'], 'alpha', job['job_id'])['status'] == 'completed'
+    result = writes.execute(env['context'], dict(operation='retract_request', account='alpha', post_id=POST_ID, reason='訂正'))
+    assert result['status'] == 'retracted' and 'job_id' not in result
     assert [c[1] for c in deletes(fake)] == ['/api/v1/statuses/' + POST_ID]
     assert retracted_at()

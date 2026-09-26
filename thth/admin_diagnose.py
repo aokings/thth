@@ -1,4 +1,4 @@
-"""運営者の CLI（`thth admin draft put` / `thth admin approval request`）だけの診断（設計 3.12.0 §6-5）。
+"""運営者の CLI（`thth admin draft put`）だけの診断（設計 3.12.0 §6-5）。
 
 書き込みの口（`server_writes.execute`）は、置き場の検査で断ったときも外へは
 `write_unavailable` とだけ言う。MCP やサーバの口ではそれが正しい（パスや置き場の
@@ -50,8 +50,8 @@ def _isolation(context):
 
 def _candidates(account):
     """書き込みの口が `server_files.directory` で開く置き場（private か）。"""
-    from . import approval_jobs, server_writes
-    rows = [(Path(approval_jobs.directory(account)), True)]
+    from . import server_writes
+    rows = []
     try:
         cfg = accounts.load_account(account)
     except Exception:
