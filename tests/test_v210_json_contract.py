@@ -50,7 +50,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 3.8.0 §A・§E: 持ち主の組（管理者の口）と生きたコツ集（読むだけ）。
      'admin plaza owner set', 'admin plaza owner unset', 'admin plaza owner list', 'plaza digest',
      # 3.10.0 §2: 招待の一覧（管理者の口・code も hash も出さない）。
-     'admin invite list']
+     'admin invite list',
+     # 3.14.0 段 3: 遠くの道と同じ形の --json（send は結果 1 つ・collect は measured の形）。
+     'send', 'collect']
 
 
 def test_json_table_covers_every_parser():
