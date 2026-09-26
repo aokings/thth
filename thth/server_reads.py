@@ -3,7 +3,7 @@
 書く口（`server_writes.execute`）と同じ資格・同じ口座の範囲で、今の CLI の読む命令を
 呼ぶだけ。**判断・整形を足さない**——返すのは CLI の `--json` と同じ形。足すのは次だけ:
 
-- 資格の範囲（範囲外は `invalid_scope`・退出中は `account_leaving`）。止まった口座
+- 資格の範囲（範囲外は `scope_unavailable`〔書く口と同じ〕・退出中は `account_leaving`）。止まった口座
   （安全装置）でも読むのは許す。
 - `limit`（省略 20・1〜100）で一覧を先頭から切る。
 - `collect` は口座ごとに 10 分に 1 回まで（`collect_too_soon` と `next_at`）。
@@ -82,7 +82,7 @@ def _validate(request):
     if set(request) - set(keys) - {'operation', 'account'}:
         error('invalid_request')
     if not isinstance(request.get('account'), str):
-        error('invalid_scope')
+        error('scope_unavailable')
     for name in required:
         if not isinstance(request.get(name), str) or not request[name].strip():
             error('invalid_request')
@@ -98,13 +98,13 @@ def _validate(request):
 
 
 def _scope(context, account):
-    """範囲外は `invalid_scope`。退出中は `account_leaving`（`current` が言う）。"""
+    """範囲外は `scope_unavailable`。退出中は `account_leaving`（`current` が言う）。"""
     if type(context) is not ReportContext or context.scope != 'user':
         error('scope_unavailable')
     from .report_service import check_excluded
     check_excluded(context, account)
     if account not in context.allowed_accounts:
-        error('invalid_scope')
+        error('scope_unavailable')
     from .server_writes import current
     return current(context, account)
 
