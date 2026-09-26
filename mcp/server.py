@@ -904,6 +904,118 @@ def server_mode():
     return 'THTH_REPORT_CREDENTIALS' in os.environ or 'THTH_REPORT_TOKEN' in os.environ
 
 
+# --------------------------------------------------------------------------
+# 遠くの道（設計 3.14.0 §1・§3.4）: `thth login` 済みなら、SERVER_TOOLS と同じ名前の道具を出し、
+# 中身は `thth <命令> … --json` を呼ぶだけ。**判断も HTTP も鍵もここに書かない**（鍵は CLI だけが持つ）。
+# 手元の道か遠くの道かは CLI が決める（台帳が手元にあれば手元・無ければ鍵）。
+# --------------------------------------------------------------------------
+
+def _opt(flag, value):
+    return [flag + "=" + str(value)] if value is not None else []
+
+
+def _flag(flag, value):
+    return [flag] if value else []
+
+
+# 道具の名前 → (argv を組む関数, 標準入力に渡す欄)。道具の名前と引数は SERVER_TOOLS の写し。
+REMOTE_CLI = {
+    "thth_send_request": (lambda a: ["send", a["account"], "--json", *_opt("--topic", a.get("topic")),
+                                     *_opt("--reply-to", a.get("reply_to"))], "body"),
+    "thth_retract_request": (lambda a: ["retract", a["account"], a["post_id"], "--reason=" + a["reason"], "--json"], None),
+    "thth_schedule_request": (lambda a: ["schedule", a["account"], "--draft=" + a["draft_id"], "--json"], None),
+    "thth_draft_list": (lambda a: ["queue", a["account"], "--json"], None),
+    "thth_queue": (lambda a: ["queue", a["account"], "--json"], None),
+    "thth_settings": (lambda a: ["account", "set", a["account"], a["key"], a["value"], "--json"]
+                      if a.get("key") is not None or a.get("value") is not None
+                      else ["account", "status", a["account"], "--json"], None),
+    "thth_account_status": (lambda a: ["account", "status", a["account"], "--json"], None),
+    "thth_posts": (lambda a: ["posts", a["account"], "--json", *_opt("--limit", a.get("limit")),
+                              *_flag("--refresh", a.get("refresh"))], None),
+    "thth_replies": (lambda a: ["replies", a["account"], "--json", *_opt("--limit", a.get("limit")),
+                                *_flag("--refresh", a.get("refresh")), *_opt("--post", a.get("post_id"))], None),
+    "thth_measured": (lambda a: ["measured", a["account"], "--json", *_opt("--limit", a.get("limit")),
+                                 *_opt("--post", a.get("post_id"))], None),
+    "thth_collect": (lambda a: ["collect", a["account"], "--json"], None),
+    "thth_mentions": (lambda a: ["mentions", a["account"], "--json", *_opt("--limit", a.get("limit")),
+                                 *_flag("--refresh", a.get("refresh"))], None),
+    "thth_topics_search": (lambda a: ["topics", a["account"], "--search=" + a["query"], "--json",
+                                      *_opt("--limit", a.get("limit"))], None),
+    "thth_profile": (lambda a: ["profile", a["account"], a["username"], "--json"], None),
+    "thth_location_search": (lambda a: ["location", "search", a["account"], a["query"], "--json"], None),
+}
+REMOTE_TOOLS = [tool for tool in SERVER_TOOLS if tool["name"] in REMOTE_CLI]
+# 位置引数に置く欄（`-` で始まる値は CLI の旗と区別できないので断る）。
+_POSITIONAL = ("account", "post_id", "username", "query", "key", "value")
+
+
+def is_remote_tool(name) -> bool:
+    """遠くの道だけの道具か（手元の TOOLS と同じ名前〔thth_queue〕は手元の道具のまま・CLI が道を決める）。"""
+    return name in REMOTE_CLI and _schema_for(name) is None
+
+
+def remote_mode() -> bool:
+    """`thth login` 済み（`remote.json` がある）か。中身（鍵）は読まない。"""
+    if server_mode():
+        return False
+    if APP_DIR not in sys.path:
+        sys.path.insert(0, APP_DIR)
+    try:
+        from thth import remote
+        return remote.configured()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _has_ledgers() -> bool:
+    if APP_DIR not in sys.path:
+        sys.path.insert(0, APP_DIR)
+    try:
+        from thth import accounts as accounts_mod
+        return bool(accounts_mod.list_account_names())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def local_tools() -> list:
+    """stdio の道具の一覧。`thth login` 済みなら遠くの道の道具を足す（台帳が無ければそれだけ）。"""
+    local = TOOLS + (ADMIN_TOOLS if admin_context() is not None else [])
+    if not remote_mode():
+        return local
+    if not _has_ledgers():
+        return REMOTE_TOOLS
+    names = {tool["name"] for tool in local}
+    return local + [tool for tool in REMOTE_TOOLS if tool["name"] not in names]
+
+
+def remote_call(name, arguments) -> dict:
+    """遠くの道の道具: 引数の形だけ見て `thth … --json` を呼ぶ（断りは CLI の 1 語と次の一手）。"""
+    def refused(text):
+        return {"content": [{"type": "text", "text": text}], "isError": True}
+    tool = next(tool for tool in REMOTE_TOOLS if tool["name"] == name)
+    schema = tool["inputSchema"]
+    if arguments is None:
+        arguments = {}
+    if (type(arguments) is not dict or set(arguments) - set(schema["properties"])
+            or not set(schema.get("required", [])) <= set(arguments)):
+        return refused("invalid_request")
+    for key, value in arguments.items():
+        kind = schema["properties"][key].get("type")
+        if value is not None and (kind == "string" and not isinstance(value, str)
+                                  or kind == "integer" and type(value) is not int
+                                  or kind == "boolean" and type(value) is not bool):
+            return refused("invalid_request")
+        if key in _POSITIONAL and isinstance(value, str) and value.startswith("-"):
+            return refused("invalid_request")
+    build, stdin_key = REMOTE_CLI[name]
+    proc = run_cli(build(arguments), stdin_text=arguments.get(stdin_key) if stdin_key else None)
+    text = proc.stdout.strip() or proc.stderr.strip()
+    if proc.returncode != 0 and proc.stderr.strip() and proc.stderr.strip() not in text:
+        # 断りの 1 語と次の一手（stderr）を JSON の後ろに添える。
+        text = (text + "\n" + proc.stderr.strip()).strip()
+    return {"content": [{"type": "text", "text": text}], "isError": proc.returncode != 0}
+
+
 def server_tools(context):
     if context is None: return []
     reports = [tool for tool in TOOLS if tool['name'] in
@@ -1105,6 +1217,8 @@ def call_tool(name: str, arguments: dict | None) -> dict:
     """CLI を呼んで結果を返すだけ。判断（条件分岐・整形）をここに書かない。"""
     if server_mode():
         return server_call(name, arguments)
+    if is_remote_tool(name):
+        return remote_call(name, arguments)
     arguments = arguments or {}
     if isinstance(name, str) and name.startswith("thth_admin_"):
         context = admin_context()
@@ -1359,7 +1473,7 @@ def _handle_request(req: dict):
     if method == "notifications/initialized":
         return None
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": server_tools(authenticated_context()) if server_mode() else TOOLS + (ADMIN_TOOLS if admin_context() is not None else [])}}
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": server_tools(authenticated_context()) if server_mode() else local_tools()}}
     if method == "tools/call":
         params = req.get("params") or {}
         if not isinstance(params, dict):
@@ -1368,7 +1482,8 @@ def _handle_request(req: dict):
         name = params.get("name")
         if not isinstance(name, str) or not name:
             raise ToolInputError("params.name（道具の名前）が要ります")
-        arguments = params.get("arguments") if server_mode() else validate_arguments(name, params.get("arguments"))
+        arguments = (params.get("arguments") if server_mode() or is_remote_tool(name)
+                     else validate_arguments(name, params.get("arguments")))
         result = call_tool(name, arguments)
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
     if req_id is not None:
