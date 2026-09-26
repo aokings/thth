@@ -74,7 +74,11 @@ export function secretPage(result){
      欄の名前は動きの一覧の入口（/activity）と同じなので、押すとそのまま動きの一覧に入る（3.13.0）。 -->
 <form method="post" action="/activity"><label>ユーザ名 / Username <input name="person" autocomplete="username" value="${escape(result.person)}" readonly></label><label>口座の secret / Account secret <input type="password" name="secret" autocomplete="new-password" value="${escape(result.secret)}" readonly></label><button type="submit">保存して動きの一覧を開く / Save and open your activity</button></form>
 <p>ボタンを押すとブラウザやパスワード管理が「保存しますか」と尋ねます。ユーザ名が上の口座名になっているのを確かめて保存してください。${en('When you press the button, your browser or password manager offers to save. Check that the username is the account name above, then save.')}</p>
-<p>動きの一覧は <a href="/activity">https://thth.me/activity</a> で、このユーザ名と secret を入れると見られます（口座を止める・戻す・予約の取り消し・安全装置の数値・LLM の鍵）。secret は LLM や原稿に書かないでください。${en('Open <a href="/activity">https://thth.me/activity</a> and sign in with this username and secret to see your activity (stop or resume the account, cancel scheduled posts, change safety limits, manage the key for your LLM). Never paste it into an LLM or a draft.')}</p>`);
+<p>動きの一覧は <a href="/activity">https://thth.me/activity</a> で、このユーザ名と secret を入れると見られます（口座を止める・戻す・予約の取り消し・安全装置の数値・LLM の鍵）。secret は LLM や原稿に書かないでください。${en('Open <a href="/activity">https://thth.me/activity</a> and sign in with this username and secret to see your activity (stop or resume the account, cancel scheduled posts, change safety limits, manage the key for your LLM). Never paste it into an LLM or a draft.')}</p>
+${result.key?`<h2>アシスタントの鍵${en('Assistant key')}</h2>
+<p><strong>表示は一度だけです。</strong><code>thth login</code> で 1 度だけ入れます。パスワード管理には口座の secret と別の項目で保存してください。${en('<strong>It is shown only once.</strong> Enter it once with <code>thth login</code>. Save it in your password manager as a separate item from the account secret.')}</p>
+<code class="secret key">${escape(result.key)}</code>
+<p>サーバが受け取った時点（数十秒後）から使えます。鍵は LLM・原稿・公開の場に貼らないでください。発行し直し・取り消しは動きの一覧でできます。${en('It works within a few tens of seconds, once the server has taken it. Never paste the key into an LLM, a draft or anywhere public. You can re-issue or revoke it on your activity page.')}</p>`:''}`);
 }
 
 export async function inviteRequest(request,env,url){

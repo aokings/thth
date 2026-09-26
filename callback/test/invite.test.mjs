@@ -21,7 +21,7 @@ before(async()=>{
   directory=await realpath(await mkdtemp(join(tmpdir(),'thth-invite-')));key=join(directory,'ephemeral.key');
   const pem=run(['genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072']);sensitive.push(pem.toString());await writeFile(key,pem,{mode:0o600});
   const publicKey=run(['pkey','-in',key,'-pubout','-outform','DER']).toString('base64url');
-  const files=['test/invite-harness.js','src/worker.js','src/invite.js','src/invite-object.js','src/activity.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/person.js','src/person-object.js','src/deletion.js','src/deletion-object.js'];
+  const files=['test/invite-harness.js','src/worker.js','src/invite.js','src/invite-object.js','src/activity.js','src/api.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/person.js','src/person-object.js','src/deletion.js','src/deletion-object.js'];
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,
     log:new SilentLog(),handleStructuredLogs:item=>logs.push(JSON.stringify(item)),bindings:{RELAY_PUBLIC_KEY:publicKey},
@@ -134,6 +134,12 @@ test('完了と口座の secret: 1 回だけ表示・verifier は PBKDF2 100,000
   assert.equal(stored.iterations,100_000);assert.equal(stored.active,true);
   assert.equal(pbkdf2Sync(secret,Buffer.from(stored.salt,'base64url'),100_000,32,'sha256').toString('base64url'),stored.verifier);
   assert.ok(!JSON.stringify(await inspect('invite',inv.id)).includes(secret));assert.ok(!JSON.stringify(await inspect('person',person)).includes(secret));
+  // 3.14.0 §3.3: アシスタントの鍵も同じページに 1 度だけ。Worker に残るのは hash だけ（VM は status で受け取る）。
+  const assistant=/class="secret key">([A-Za-z0-9_-]{43})</.exec(html)?.[1];assert.ok(assistant,'assistant key shown');sensitive.push(assistant);
+  assert.notEqual(assistant,secret);
+  assert.ok(html.includes('アシスタントの鍵')&&html.includes('Assistant key')&&html.includes('<code>thth login</code> で 1 度だけ入れます')&&html.includes('表示は一度だけです'),html);
+  assert.ok(!JSON.stringify(await inspect('invite',inv.id)).includes(assistant)&&!JSON.stringify(await inspect('person',person)).includes(assistant));
+  const done=await status(inv);assert.equal(done.status,'done');assert.equal(done.key_sha256,hash(assistant));
   const second=await press(inv,'reveal',{csrf:nonce}),again=await second.text();
   assert.equal(second.status,410);assert.ok(!/class="secret"/.test(again));assert.ok(again.includes('使用済み'));
   assert.equal((await view(inv)).status,410);assert.equal((await press(inv,'start',{csrf:nonce})).status,410);

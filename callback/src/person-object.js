@@ -1,5 +1,5 @@
 import {DurableObject} from 'cloudflare:workers';
-import {TTL,VIEW_MAX,LIST_LOCK_MS,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64} from './person.js';
+import {TTL,VIEW_MAX,LIST_LOCK_MS,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64,API_HANDOFF_MAX,API_HANDOFF_BYTES} from './person.js';
 import {HASH_PATTERN,STATE_PATTERN,digest} from './relay.js';
 // 3.13.0: 承認ページの session（ApprovalSession）と承認待ちの一覧は無い。残るのは持ち主（person）の
 // secret の照合・/activity・口座ごとの束（退出・添付の後始末）。名前は段 2 で改める。
@@ -37,12 +37,38 @@ export function validSummary(s){
       plain(s.credential.expires_at,40)&&typeof s.credential.revoked==='boolean')&&
     Array.isArray(s.rows)&&s.rows.length<=ACTIVITY_ROWS&&s.rows.every(validRow);
 }
+// ---- 遠くの道（設計 3.14.0 §3.1）。VM が sync に載せる鍵の表と、/api/v1 の request の結果の形。
+// 3.13.0 の VM は `keys`・`results` を載せない（そのときは鍵の表に触らず、request も渡さない）。
+export const API_KEYS_MAX=64, API_RESULTS_MAX=64, API_RESULT_MAX=131_072;
+export const API_PENDING_MAX=8, API_REQUEST_MS=120_000, API_GRACE_MS=60_000, API_RESULT_MS=600_000;
+const REQUEST_ID=/^([A-Za-z0-9_-]{43})\.([a-zA-Z0-9][a-zA-Z0-9_.-]{0,63})$/;
+function validKey(k){
+  return same(k,['sha256','account','expires_at'])&&typeof k.sha256==='string'&&HASH_PATTERN.test(k.sha256)&&
+    typeof k.account==='string'&&PERSON.test(k.account)&&typeof k.expires_at==='string'&&ISO.test(k.expires_at)&&
+    Number.isFinite(Date.parse(k.expires_at));
+}
+function validResult(r){
+  if(!same(r,['request_id','account','status','result'])||typeof r.request_id!=='string'||typeof r.account!=='string')return false;
+  const id=REQUEST_ID.exec(r.request_id);
+  return !!id&&id[2]===r.account&&r.status==='done'&&r.result!==null&&typeof r.result==='object'&&!Array.isArray(r.result)&&
+    JSON.stringify(r.result).length<=API_RESULT_MAX;
+}
 function validSync(body){
-  if(!same(body,['accounts','completed'])||!Array.isArray(body.accounts)||body.accounts.length>ACTIVITY_ACCOUNTS||
+  const extended=same(body,['accounts','completed','keys','results']);
+  if(!(extended||same(body,['accounts','completed']))||!Array.isArray(body.accounts)||body.accounts.length>ACTIVITY_ACCOUNTS||
      !Array.isArray(body.completed)||body.completed.length>ACTION_PENDING_MAX)return false;
   if(!body.accounts.every(validSummary)||new Set(body.accounts.map(s=>s.account)).size!==body.accounts.length)return false;
+  if(extended&&(!Array.isArray(body.keys)||body.keys.length>API_KEYS_MAX||!body.keys.every(validKey)||
+     new Set(body.keys.map(k=>k.account+' '+k.sha256)).size!==body.keys.length||
+     !Array.isArray(body.results)||body.results.length>API_RESULTS_MAX||!body.results.every(validResult)))return false;
   return body.completed.every(c=>same(c,['id','outcome','reason'])&&typeof c.id==='string'&&STATE_PATTERN.test(c.id)&&
     ['done','failed'].includes(c.outcome)&&(c.reason===null||typeof c.reason==='string'&&/^[a-z_]{1,64}$/.test(c.reason)));
+}
+// {口座: {sha256: 期限(ms)}}
+function keyTable(keys){
+  const table={};
+  for(const k of keys)(table[k.account]??={})[k.sha256]=Date.parse(k.expires_at);
+  return table;
 }
 export function validRequest(a){
   if(a===null||typeof a!=='object'||!ACTION_KINDS.includes(a.kind)||a.kind==='rotate'&&'sha256' in a)return false;
@@ -124,7 +150,14 @@ export class Person extends AtomicObject {
       const actions=[...this.ctx.storage.kv.list({prefix:'action:'})].map(([,a])=>a)
         .filter(a=>a.status==='pending'&&a.expires_at>now).sort((a,b)=>a.created_at-b.created_at)
         .map(a=>{const out={id:a.id,account:a.account,kind:a.kind};for(const k of ACTION_EXTRA[a.kind])out[k]=a[k];return out;});
-      return {status:200,body:{status:'synced',actions}};
+      if(!('keys' in body))return {status:200,body:{status:'synced',actions}};
+      // 鍵の表を置き替える。表から外れた口座も 1 時間は空の表を配り直す（口座の束に古い鍵を残さない）。
+      const table=keyTable(body.keys),old=this.ctx.storage.kv.get('keys')?.table??{};
+      const gone=Object.fromEntries(Object.entries(this.ctx.storage.kv.get('keys')?.gone??{}).filter(([a,until])=>until>now&&!table[a]));
+      for(const account of Object.keys(old))if(!table[account])gone[account]=now+ACTIVITY_TTL;
+      this.put('keys',{table,gone});
+      const exchange={...Object.fromEntries(Object.keys(gone).map(a=>[a,{}])),...table};
+      return {status:200,body:{status:'synced',actions},exchange};
     });
     if(result.status===200)await this.wake(this.now()+Math.min(ACTIVITY_TTL,ACTION_TTL));
     return result;
@@ -274,12 +307,91 @@ export class Account extends AtomicObject {
     if(operation==='cleanup-retry')return this.cleanupRetry(account);
     return {status:200,body:{status:'revoked'}};
   }
+  // ---- 遠くの道（設計 3.14.0 §3.1）。`keys` は {持ち主: {sha256: 期限(ms)}}（VM の sync が Person DO を
+  // 通して配る・hash だけ）。`request:<id>` は /api/v1 の依頼: 本文は最長 120 秒（VM に渡すまで）、
+  // 結果は入ってから 10 分。どちらも観測ログには出さない。
+  keyFor(sha256){
+    if(typeof sha256!=='string'||!HASH_PATTERN.test(sha256))return null;
+    for(const [person,keys] of Object.entries(this.ctx.storage.kv.get('keys')||{}))
+      if(Object.hasOwn(keys,sha256))return {person,expires_at:keys[sha256]};
+    return null;
+  }
+  checkKey(sha256){
+    const key=this.keyFor(sha256);
+    if(!key)return fail(401,'invalid_key');
+    if(key.expires_at<=this.now())return fail(401,'key_expired');
+    return {status:200,body:key};
+  }
+  apiKey(sha256){const found=this.checkKey(sha256);return found.status===200?{status:200,body:{}}:found;}
+  async apiSubmit(sha256,operation,body){
+    const result=this.atomic(()=>{
+      const key=this.checkKey(sha256);if(key.status!==200)return key;
+      if(typeof operation!=='string'||!/^[a-z][a-z0-9_]{0,47}$/.test(operation)||!body||typeof body.account!=='string'||!PERSON.test(body.account))return fail();
+      const now=this.now();this.sweep(now);
+      const pending=[...this.ctx.storage.kv.list({prefix:'request:'})].filter(([,r])=>r.status==='pending'&&r.expires_at>now).length;
+      if(pending>=API_PENDING_MAX)return fail(429,'too_many_requests');
+      const id=opaque();
+      this.put('request:'+id,{id,operation,account:body.account,body,key_sha256:sha256,person:key.body.person,
+        created_at:now,expires_at:now+API_REQUEST_MS,purge_at:now+API_REQUEST_MS+API_GRACE_MS,status:'pending',result:null});
+      return {status:200,body:{id}};
+    });
+    if(result.status===200)await this.wake(this.now()+API_REQUEST_MS);
+    return result;
+  }
+  // 結果を見る（書かない）。知らない・期限切れ・鍵が違えば 404。
+  apiResult(id,sha256){
+    const row=typeof id==='string'&&STATE_PATTERN.test(id)?this.ctx.storage.kv.get('request:'+id):null;
+    const now=this.now();
+    if(!row||row.key_sha256!==sha256||row.purge_at<=now)return fail(404,'not_found');
+    if(row.status==='done')return {status:200,body:row.result};
+    return {status:202,body:{status:'pending'}};
+  }
+  // VM の sync（Person DO を通して）: その持ち主の鍵の表を置き替え、結果を受け取り、待っている依頼を渡す。
+  async apiExchange(person,keys,results){
+    const result=this.atomic(()=>{
+      if(typeof person!=='string'||!PERSON.test(person)||!keys||typeof keys!=='object'||Array.isArray(keys)||
+         !Object.entries(keys).every(([sha,at])=>HASH_PATTERN.test(sha)&&Number.isSafeInteger(at))||!Array.isArray(results))return fail();
+      const now=this.now();this.sweep(now);
+      const table={...(this.ctx.storage.kv.get('keys')||{})};
+      const before=JSON.stringify(table[person]??{});
+      if(Object.keys(keys).length)table[person]=keys;else delete table[person];
+      if(JSON.stringify(table[person]??{})!==before)this.put('keys',table);
+      for(const done of results){
+        const id=REQUEST_ID.exec(done?.request_id??'')?.[1],key='request:'+id,row=id?this.ctx.storage.kv.get(key):null;
+        // 他の持ち主の依頼・もう結果のある依頼・期限を過ぎた依頼には書かない（1 回きり）。
+        if(!row||row.person!==person||row.status!=='pending'||row.purge_at<=now)continue;
+        this.put(key,{...row,body:null,status:'done',result:done.result,purge_at:now+API_RESULT_MS});
+      }
+      const requests=[];let size=0;
+      for(const row of [...this.ctx.storage.kv.list({prefix:'request:'})].map(([,r])=>r)
+          .filter(r=>r.status==='pending'&&r.person===person&&r.expires_at>now&&r.body).sort((a,b)=>a.created_at-b.created_at)){
+        const item={request_id:row.id+'.'+row.account,account:row.account,operation:row.operation,key_sha256:row.key_sha256,body:row.body};
+        size+=JSON.stringify(item).length;
+        if(requests.length>=API_HANDOFF_MAX||size>API_HANDOFF_BYTES)break;
+        requests.push(item);
+      }
+      return {status:200,body:{requests}};
+    });
+    if(result.status===200&&results.length)await this.wake(this.now()+API_RESULT_MS);
+    return result;
+  }
+  // 本文は依頼の期限（120 秒）で落とし、行は purge_at で消す。
+  sweep(now){
+    for(const [key,row] of this.ctx.storage.kv.list({prefix:'request:'})){
+      if(row.purge_at<=now)this.ctx.storage.kv.delete(key);
+      else if(row.body&&row.expires_at<=now)this.put(key,{...row,body:null});
+    }
+  }
+  async wake(at){const alarm=await this.ctx.storage.getAlarm();if(alarm===null||at<alarm)await this.ctx.storage.setAlarm(at);}
   // `session:` は 3.12.0 までの承認ページの束（新しくは作らない・期限で消える）。
   async alarm(){
     let next=null;const now=this.now();
     this.ctx.storage.transactionSync(()=>{for(const [key,row] of this.ctx.storage.kv.list({prefix:'session:'})){
       if(row.expires_at<=now)this.ctx.storage.kv.delete(key);else next=Math.min(next??Infinity,row.expires_at);
-    }});
+    }
+    this.sweep(now);
+    for(const [,row] of this.ctx.storage.kv.list({prefix:'request:'}))next=Math.min(next??Infinity,row.body?row.expires_at:row.purge_at);
+    });
     if(next!==null)await this.ctx.storage.setAlarm(next);
   }
 }

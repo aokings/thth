@@ -1,6 +1,6 @@
 import {AtomicObject} from './person-object.js';
 import {fail,fields,opaque,equal,unb64,verifier,personStub,PERSON} from './person.js';
-import {STATE_PATTERN,relayStub} from './relay.js';
+import {STATE_PATTERN,relayStub,digest} from './relay.js';
 
 // 招待（設計 3.10.0）。1 本の招待に 1 つの object（名前は code の SHA-256）。
 // ここに置くのは hash で引ける状態・期限・VM から返った認可 URL（10 分で消す）だけ。
@@ -62,8 +62,10 @@ export class InviteObject extends AtomicObject {
       if(!row)return fail(404,'not_found');
       if(operation==='status'){
         if(!fields(body,[]))return fail();
+        // 3.14.0 §3.3: 完了ページで出したアシスタントの鍵の hash（値は置かない）。VM がこれで資格を差し替える。
         return {status:200,body:{status:row.status,expires_at:row.expires_at,clicked_at:row.clicked_at,
-          authorize_expires_at:row.status==='authorizing'?row.authorize_expires_at:null}};
+          authorize_expires_at:row.status==='authorizing'?row.authorize_expires_at:null,
+          ...(row.status==='done'&&row.key_sha256?{key_sha256:row.key_sha256}:{})}};
       }
       if(operation==='revoke'){
         if(!fields(body,[]))return fail();
@@ -131,13 +133,16 @@ export class InviteObject extends AtomicObject {
     });
     if(claim.status!==200)return claim;
     const secret=opaque(),salt=opaque();let ok=false;
+    // アシスタントの鍵（設計 3.14.0 §3.3）: /activity の発行し直しと同じ作法。bearer はこの要求の中にだけあり、
+    // 置くのは hash だけ。VM は status でこの hash を受け取り、招待の口座の資格をこれに差し替える。
+    const bearer=opaque(),key_sha256=await digest(bearer);
     try{ok=(await (await personStub(this.env,claim.body.person)).provision(salt,await verifier(secret,salt),claim.body.key)).status===200;}catch{}
     return this.atomic(()=>{
       const latest=this.ctx.storage.kv.get('invite');
       if(!latest)return fail(410,'invite_unavailable');
       if(!ok){this.put('invite',{...latest,revealing_at:null});return fail(503,'reveal_unavailable');}
-      this.put('invite',{...latest,status:'done',revealing_at:null,revealed_at:this.now()});
-      return {status:200,body:{secret,person:claim.body.person}};
+      this.put('invite',{...latest,status:'done',revealing_at:null,revealed_at:this.now(),key_sha256});
+      return {status:200,body:{secret,person:claim.body.person,key:bearer}};
     });
   }
 }
