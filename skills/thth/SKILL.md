@@ -30,8 +30,8 @@ description: 投稿する前・返信を書く前・出したあと・絡みに�
 
 ## 何を保証するか
 
-- **人が承認していない本文は 1 文字も出ない。** ローカル CLI の承認は 2 段（見せる → digest を渡す）。サーバ MCP は本人の承認ページだけで承認する。
-  digest が違えば拒否する。**「見せた本文」と「出す本文」が同じであることを機械が確かめる。**
+- **手元の CLI では、人が承認していない本文は 1 文字も出ない。** 承認は 2 段（見せる → digest を渡す）。digest が違えば拒否する。**「見せた本文」と「出す本文」が同じであることを機械が確かめる。**
+  サーバ MCP（招待の口座）には承認の関所が無い（3.13.0）。持ち主が頼んだらそのまま出し、安全装置（最短間隔・1 日の上限・連投で停止）が機械的に守る。
 - **`--production` を付けるまで出ない。** 付けない実行は、投げるはずの本文と digest を
   表示して終わる。
 - **記録は利用者の git に残る。** post_id・承認者・承認時刻・返信・実測は、あなたの repo の
@@ -43,12 +43,12 @@ description: 投稿する前・返信を書く前・出したあと・絡みに�
 
 ## 招待されたサーバ MCP の書く口
 
-credential の user scope / writes がある場合だけ `thth_draft_put`、`thth_approval_request`、
-`thth_send_request`、`thth_retract_request` を使える。account は本人の許可範囲だけ。
+credential の user scope / writes がある場合だけ `thth_draft_put`、`thth_send_request`、
+`thth_schedule_request`、`thth_retract_request` を使える。account は本人の許可範囲だけ。
 actor/by/person/confirm/digest/ファイルパスを引数に加えない。本文は body、下書き更新は draft_id と expected_revision。
-返った approval_url は本人に私的に渡し、承認 secret を聞かない・入力しない・会話へ貼らせない。
-既定で本人の承認待ちの一覧にも出る（pending_url・https://thth.me/pending に本人がユーザ名と承認 secret で入る・最大 24 時間）。URL を届けられなくても本人は一覧から開ける。
-URL を返しただけでは承認/公開/削除の完了ではない。`thth_request_status` の job_id で結果を確認する。
+`thth_send_request` はその場で出て post_id とリンクが返る。断りは符丁（`too_soon`・`daily_limit`・`retract_limit`・`quiet_hours`・`account_stopped`）で、添えられた時刻まで待つか本人に伝える。
+本人の口座の secret とアシスタントの鍵を聞かない・入力しない・会話へ貼らせない。止まった口座を戻す・安全装置を緩めるのは本人が https://thth.me/activity で行う（LLM からはできない）。
+出す前に本文を見たいと本人が言えば、`thth_draft_put` の結果を見せてから `thth_send_request` を呼ぶ。
 unknown は自動再依頼・再公開で解消せず、管理者が媒体と記録を照合する。
 詳しい管理設定と入力は `docs/運用_サーバ書込_2.12.md`。無 credential のローカル MCP とは別の入口。
 
