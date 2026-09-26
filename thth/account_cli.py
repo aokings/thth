@@ -488,7 +488,7 @@ def dispatch(args) -> int:
         return cmd_migrate(args)
     if verb == "add":
         return cmd_add(args)
-    # 設計 3.12.0 段 3: 承認の選び方と安全装置の数値・止めたのを戻す・状態を見る。
+    # 設計 3.12.0 段 3: 安全装置の数値・止めたのを戻す・状態を見る。
     if verb in ("set", "resume", "status"):
         from . import account_settings
         return {"set": account_settings.cmd_set, "resume": account_settings.cmd_resume,
@@ -520,7 +520,7 @@ def register(sub) -> None:
     p.add_argument("name", nargs="?",
                    help="`add` のときのアカウント名（`<project>-<media>`）")
     p.add_argument("rest", nargs="*",
-                   help="`set` のとき: <名前> <値>（approval none|publish|all・daily_max_posts N など）")
+                   help="`set` のとき: <名前> <値>（daily_max_posts N など）")
     p.add_argument("--by", help="作成・変更した人（add / leave / set / resume では必須）")
     p.add_argument("--media", default=None, choices=MEDIA_CHOICES,
                    help="`add` のとき: 媒体")
@@ -546,11 +546,11 @@ def register(sub) -> None:
     p.epilog = ("thth account                     全アカウントの状態を一枚で\n"
                 "thth account leave <name> --by <actor> [--plaza-open delete|keep] 停止・失効・所有物の削除（CLIのみ）\n"
                 "thth account <name>              1 本の状態を一枚で\n"
-                "thth account set <name> <名前> <値> --by <actor>  承認の選び方と安全装置の数値を変える\n"
-                "  名前: approval（none|publish|all）・daily_max_posts・daily_max_retracts・\n"
+                "thth account set <name> <名前> <値> --by <actor>  安全装置の数値を変える\n"
+                "  名前: daily_max_posts・daily_max_retracts・\n"
                 "        burst_count・burst_minutes（burst <件数> <分> でも）・hold_minutes・min_interval_hours\n"
                 "thth account resume <name> --by <actor>  安全装置が止めた口座を戻す（MCP からはできない）\n"
-                "thth account status <name> [--json]      approval・数値・止まっているか・今日の公開数/削除数\n"
+                "thth account status <name> [--json]      数値・止まっているか・今日の公開数/削除数\n"
                 "thth account migrate [--dry-run] repo の中の台帳を "
                 "$THTH_ROOT/accounts/ へ写す（copy・repo は触らない）\n"
                 "thth account add <name> --media threads|bluesky|mastodon "

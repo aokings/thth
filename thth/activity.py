@@ -1,8 +1,8 @@
 """動きの一覧 `https://thth.me/activity` の VM 側（設計 3.12.0 §3.4・§3.5・段 3）。
 
-向きは承認の relay と同じ: **VM が Worker へ署名つきで押し上げる**（`/approval/activity/<person>/sync`）。
+向きは招待・退出の relay と同じ: **VM が Worker へ署名つきで押し上げる**（`/approval/activity/<person>/sync`）。
 
-- 押し上げるもの: 持ち主（person）ごとに、その人の口座の要約——approval と安全装置の数値・
+- 押し上げるもの: 持ち主（person）ごとに、その人の口座の要約——安全装置の数値・
   止まっているか（理由）・今日の公開数と削除数・MCP の鍵の id（hash の先頭 12 字）と期限・
   出たもの／消したもの／予約／猶予中を新しい順に 30 行まで。**本文は先頭 60 字まで**。秘密は無い。
   Worker は 1 時間で忘れる（VM が 10 秒ごとに押し直す）。
@@ -11,7 +11,7 @@
   行い、結果を次の sync で返す。どの操作も何度行っても同じ結果になる（sync が落ちても二重にならない）。
 
 持ち主（person）の決め方:
-- 招待で用意した口座は、その口座名（承認ページの人は口座名で登録される）。
+- 招待で用意した口座は、その口座名（口座の secret の持ち主は口座名で登録される）。
 - それ以外は、その口座を含む有効な書き込みの資格情報の `actor`（1 口座だけの鍵は、取り消し・
   期限切れのあとも持ち主のまま——そこから発行し直せるように）。
 
@@ -153,7 +153,6 @@ def summary(person, account, credentials_path, *, now=None) -> dict:
     return {
         "account": account,
         "generated_at": jst.iso(),
-        "approval": s["approval"],
         "scheduled": row["scheduled"],
         "limits": {key: s[key] for key in ("daily_max_posts", "daily_max_retracts", "burst_count",
                                            "burst_minutes", "hold_minutes", "min_interval_hours")},
