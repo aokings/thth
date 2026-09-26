@@ -187,7 +187,8 @@ def test_privacy_logical_ttl_and_no_physical_erase_claim():
     page=build_site.build_privacy()
     # 100,000: the Worker's WebCrypto caps PBKDF2 at 100,000 (callback/src/approval.js ITERATIONS,
     # thth/approval_relay.py ITERATIONS). The page said 600,000 until the 2026-09-23 rewrite.
-    for phrase in ('600 seconds','600秒','100,000','PITR','30 days','30日','not a promise of immediate physical erasure','即時物理消去とは約束しません'):
+    # 3.13.0: 承認ページ（600 秒）は無い。論理的な期限は預かり所の 300 秒と /activity の 1 時間。
+    for phrase in ('300 seconds','300秒','one hour','1 時間','100,000','PITR','30 days','30日','not a promise of immediate physical erasure','即時物理消去とは約束しません'):
         assert phrase in page
     assert '600,000' not in page
 
