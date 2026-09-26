@@ -1,7 +1,7 @@
 """利用者 scope の読む口（設計 3.14.0 §3.2・`thth/server_reads.py`）。
 
 - 8 つの operation が CLI の `--json` と同じ形を返す（CLI の関数を呼ぶだけ）。
-- 資格の範囲の外は `invalid_scope`・止まった口座（安全装置）でも読める。
+- 資格の範囲の外は `scope_unavailable`・止まった口座（安全装置）でも読める。
 - 断りは静的な符丁。媒体の失敗は `upstream_unavailable` と短い理由（token・URL を含めない）。
 - `collect` は口座ごとに 10 分に 1 回まで。
 - MCP の道具に同じ名前で写り、`writes: false` の資格でも出る。
@@ -166,12 +166,12 @@ def test_profileとlocation_search(env, media, capsys):
 # --------------------------------------------------------------------------
 
 @pytest.mark.parametrize('operation', OPS)
-def test_範囲外の口座はinvalid_scope(env, media, operation):
+def test_範囲外の口座はscope_unavailable(env, media, operation):
     fields = {'query': '語'} if operation in ('topics_search', 'location_search') else \
         {'username': 'x'} if operation == 'profile' else {}
     with pytest.raises(ReportServiceError) as caught:
         execute_report(env['context'], dict(operation=operation, account='beta', **fields))
-    assert str(caught.value) == 'invalid_scope'
+    assert str(caught.value) == 'scope_unavailable'
 
 
 def test_知らない欄と型はinvalid_request(env, media):
@@ -180,7 +180,7 @@ def test_知らない欄と型はinvalid_request(env, media):
     assert str(refused(env, 'collect', limit=5)) == 'invalid_request'
     with pytest.raises(ReportServiceError) as caught:
         execute_report(env['context'], dict(operation='posts', account=3))
-    assert str(caught.value) == 'invalid_scope'
+    assert str(caught.value) == 'scope_unavailable'
 
 
 def test_止まった口座でも読める(env, media):
@@ -220,7 +220,7 @@ def test_媒体に口が無ければunsupported_operation(env, media, monkeypatc
 def test_符丁はSAFE_ERRORSに載る():
     from thth.server_writes import SAFE_ERRORS
     assert server_reads.REASONS <= SAFE_ERRORS
-    assert {'invalid_scope', 'permission_unavailable', 'unsupported_operation', 'account_busy'} <= SAFE_ERRORS
+    assert {'scope_unavailable', 'permission_unavailable', 'unsupported_operation', 'account_busy'} <= SAFE_ERRORS
 
 
 # --------------------------------------------------------------------------
@@ -316,7 +316,7 @@ def test_mcpから呼べて断りは符丁(env, media, collector, monkeypatch):
     server = _mcp(env, monkeypatch)
     ok = server.call_tool('thth_posts', {'account': 'alpha', 'limit': 2})
     assert not ok.get('isError') and len(json.loads(ok['content'][0]['text'])['posts']) == 2
-    assert server.call_tool('thth_posts', {'account': 'beta'})['content'][0]['text'] == 'invalid_scope'
+    assert server.call_tool('thth_posts', {'account': 'beta'})['content'][0]['text'] == 'scope_unavailable'
     assert server.call_tool('thth_posts', {'account': 'alpha', 'limit': '2'})['content'][0]['text'] == 'invalid_request'
     assert not server.call_tool('thth_collect', {'account': 'alpha'}).get('isError')
     again = server.call_tool('thth_collect', {'account': 'alpha'})
