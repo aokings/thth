@@ -77,5 +77,6 @@ test('VM pushes the summary through the real signer; the owner stops, tightens a
   vm('run');
   const [a,b]=await Promise.all([listed,posts]);
   assert.equal(a.status,200);assert.deepEqual(await a.json(),{account,drafts:[]});
-  assert.equal(b.status,200);assert.deepEqual(await b.json(),{error:'unsupported_operation'});
+  // posts は段 1 の読む口（server_reads）に届く。この試験の口座は token を持たないので媒体で断られる（届いた証拠）。
+  assert.equal(b.status,200);assert.equal((await b.json()).error,'upstream_unavailable');
 });
