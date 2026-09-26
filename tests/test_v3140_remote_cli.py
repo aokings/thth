@@ -1,6 +1,6 @@
 """CLI の遠くの道と MCP（設計 3.14.0 §1・§2・§3.4・段 3）。
 
-- `thth login`（tty・--stdin・引数は断る・0600）／`thth logout`。
+- `thth login`（--paste の tty・--stdin・引数は断る・0600。ブラウザ式は test_v3142_browser_login）／`thth logout`。
 - 切り替え: 台帳があれば手元・無くて鍵があれば遠く・両方なら手元（`--remote` で遠く）・どちらも無ければ手元の断り。
 - 各命令が `POST /api/v1/<operation>` に同じ形で届き、`--json` は VM の JSON をそのまま出す。
 - 200・202→result・401・429・網の断・`remote_unsupported`。鍵は出力に出ない。
@@ -130,7 +130,8 @@ def test_login_は_tty_で読む(home, capsys, monkeypatch):
     import getpass
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
     monkeypatch.setattr(getpass, "getpass", lambda prompt="": KEY)
-    rc, out, err = run(capsys, "login", "--url", "https://thth.example")
+    # 3.14.2: 既定はブラウザ式。tty で貼る道は `--paste`。
+    rc, out, err = run(capsys, "login", "--paste", "--url", "https://thth.example")
     assert rc == 0
     assert json.loads(home["config"].read_text()) == {"url": "https://thth.example", "key": KEY}
 
@@ -138,7 +139,7 @@ def test_login_は_tty_で読む(home, capsys, monkeypatch):
 def test_login_は_tty_でなければ_stdin_を案内する(home, capsys, monkeypatch):
     import io
     monkeypatch.setattr(sys, "stdin", io.StringIO(KEY))
-    rc, out, err = run(capsys, "login")
+    rc, out, err = run(capsys, "login", "--paste")
     assert rc == 2 and err.startswith("tty_required")
     assert not home["config"].exists()
 
