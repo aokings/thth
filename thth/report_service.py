@@ -66,7 +66,7 @@ def execute_report(context: ReportContext, request: dict) -> dict:
     if type(context) is not ReportContext or type(request) is not dict:
         raise ReportServiceError("invalid_request")
     operation = request.get("operation")
-    if operation in ('draft_list', 'queue', 'request_status'):
+    if operation in ('draft_list', 'queue'):
         from .server_writes import read
         return read(context, request)
     if isinstance(operation, str) and operation.startswith("admin_"):

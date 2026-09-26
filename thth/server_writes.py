@@ -1,4 +1,4 @@
-"""Scoped server requests. Human approval is consumed only by the durable worker."""
+"""Scoped server requests. Publishing, deletion and scheduling happen directly (design 3.13.0)."""
 import hashlib
 import json
 import os
@@ -7,21 +7,20 @@ import re
 import secrets
 import time
 from datetime import datetime, timezone
-from . import accounts, admin_log, approval, approval_relay, core, doctor, jst, managed_repo, queuefile, server_files, tags, writeback
+from . import accounts, admin_log, approval, approval_relay, core, jst, managed_repo, queuefile, server_files, writeback
 from .report_service import ReportContext, ReportServiceError
 
-WRITE_OPERATIONS = frozenset(('draft_put','approval_request','send_request','retract_request','schedule_request',
+WRITE_OPERATIONS = frozenset(('draft_put','send_request','retract_request','schedule_request',
                               'media_upload_url','media_complete'))
-# 公開・削除・予約に至る依頼（設計 3.12.0 §3）。口座の `approval` で承認 job か直接かが決まる。
-PUBLISHING_OPERATIONS = frozenset(('approval_request','send_request','retract_request','schedule_request'))
-READ_OPERATIONS = frozenset(('draft_list','queue','request_status'))
+# 公開・削除・予約に至る依頼。承認ページは無い（設計 3.13.0）: どれもその場で行う（安全装置は効く）。
+# 3.12.0 までの `approval_request` は受け付けない（`unsupported_operation`）。
+PUBLISHING_OPERATIONS = frozenset(('send_request','retract_request','schedule_request'))
+READ_OPERATIONS = frozenset(('draft_list','queue'))
 DRAFT_ID = re.compile(r'[0-9a-f]{64}\Z')
-JOB_ID = approval_relay.OPAQUE
 SAFE_ERRORS = frozenset(('invalid_request','unsupported_operation','invalid_scope','invalid_options','scope_unavailable',
     'writes_not_allowed','invalid_draft','draft_changed','draft_not_editable','managed_repo_required','production_disabled',
-    'credential_changed','draft_commit_unconfirmed','draft_not_verified','account_stopped','account_leaving','approval_registration_unknown',
-    'credential_unavailable','write_unavailable','media_preview_unavailable','approval_registration_rejected',
-    'approval_request_too_large','approval_attachments_too_many'))
+    'credential_changed','draft_commit_unconfirmed','draft_not_verified','account_stopped','account_leaving',
+    'credential_unavailable','write_unavailable'))
 from .lint import REASONS as LINT_REASONS
 # `invalid_draft` に添える理由。**静的な符丁だけ**——lint の日本語 1 行や
 # path をそのままサーバの口から出さない（2.14.1）。
@@ -190,82 +189,10 @@ def draft_put(context, request, via):
         return {'draft_id':_id(name),'account':account,'status':'draft','revision':hashlib.sha256(text.encode()).hexdigest()}
 
 
-def prepare(context, request, *, media_out=None):
-    """Return exact public text plus a full private execution binding.
-
-    `media_out` is filled only for display: the binding and its digest are
-    unchanged by attachments, so a repeated prepare() still compares equal.
-    """
-    account=request['account'];cfg=current(context,account,write=True)
-    kind={'approval_request':'approve','send_request':'send','retract_request':'retract'}[request['operation']]
-    display=dict(media=cfg['media'],reply_to=None,publish_at=None,target=None,reason=None,topic=None,options=None)
-    if kind=='approve':
-        _schema(request,('draft_id',),('draft_id',))
-        name,raw,q=_draft(cfg,account,request['draft_id'])
-        if q.front_matter.get('status')!='draft': error('draft_not_editable')
-        from .cli import _prepare_one
-        value,problem=_prepare_one(str(_queue(cfg)[1]/name))
-        if problem or not value or value.get('bundle'): error('invalid_draft')
-        if media_out is not None and value.get('media_manifest'):
-            media_out.update(manifest=value['media_manifest'],repo_dir=cfg['repo_dir'],
-                             front_matter=q.front_matter,medium=cfg['media'])
-        text=value['text'];source=hashlib.sha256(raw).hexdigest()
-        for key in ('reply_to','publish_at','topic'): display[key]=value.get(key)
-        display['options']=json.dumps({k:value[k] for k in ('location','location_id','share_to_instagram')},ensure_ascii=False,sort_keys=True)
-    elif kind=='send':
-        _schema(request,('body','topic','reply_to'),('body',))
-        if len(request['body'].encode())>48000: error('invalid_draft')
-        for key in ('topic','reply_to'):
-            if request.get(key) is not None and not isinstance(request[key],str): error('invalid_request')
-        from . import postid
-        reply=postid.for_account(cfg,request.get('reply_to'))
-        result=core.send_once(account,text=request['body'],topic=request.get('topic'),reply_to=reply,log=lambda _:None)
-        if result.exit_code or not result.digest: error('invalid_draft')
-        text=tags.prepared(cfg['media'],request['body'].strip(),queuefile.normalize_topic(request.get('topic')),hashtags=bool(cfg.get('hashtags',True)))
-        display.update(reply_to=reply or None,topic=queuefile.normalize_topic(request.get('topic')))
-        source=None
-    else:
-        _schema(request,('post_id','reason'),('post_id','reason'))
-        from . import adapters, postid, retract_cli
-        if not postid.is_usable(request['post_id']) or writeback.has_control_chars(request['reason']): error('invalid_request')
-        cls=adapters.adapter_class(cfg['media'])
-        if not getattr(cls,'DELETE_PERMISSION',None): error('unsupported_operation')
-        record=retract_cli._find_record(cfg,account,request['post_id'])
-        if not record or record.get('front_matter',{}).get('retracted_at'): error('scope_unavailable')
-        if record['source']=='queue':
-            owned=[item for item in _rows(cfg,account) if str(_queue(cfg)[1]/item[0])==record['path']]
-            if len(owned)!=1 or not owned[0][3]: error('draft_not_verified')
-        with server_files.directory(Path(record['path']).parent) as fd:
-            record_bytes=server_files.read_at(fd,Path(record['path']).name)
-        text=record.get('text') or '';source=hashlib.sha256(record_bytes).hexdigest()
-        display.update(target=request['post_id'],reason=request['reason'])
-    if cfg.get('production') is not True: error('production_disabled')
-    generation=doctor._credential_generation(cfg)
-    if not generation: error('credential_unavailable')
-    binding=dict(kind=kind,account=account,actor=context.actor,text=text,context=display,
-                 ledger=hashlib.sha256(server_files.encode(cfg)).hexdigest(),credential_generation=generation,source=source)
-    return binding
-
-
-def request_approval(context, request, via, by=None, listed=True):
-    media={}
-    binding=prepare(context,request,media_out=media)
-    from . import approval_jobs
-    return approval_jobs.create(context,request,binding,via,media=media or None,by=by,listed=listed)
-
-
 # --------------------------------------------------------------------------
-# 承認なしの道（設計 3.12.0 §3.2）。口座の `approval` が許すときだけ通る。
+# 公開・削除・予約はその場で行う（設計 3.13.0・3.12.0 §3.2 の道が唯一の道）。
 # どの道も安全装置（`thth/guard.py`）を**ロックの中で**もう一度通してから出す・消す・刻む。
 # --------------------------------------------------------------------------
-
-def route(cfg, operation):
-    """`job`（承認ページを通す）か `direct`（その場で）か。"""
-    mode=accounts.approval_mode(cfg)
-    if operation=='retract_request':
-        return 'job' if mode=='all' else 'direct'
-    return 'direct' if mode=='none' else 'job'
-
 
 def _origin(context, via):
     from . import guard
@@ -371,7 +298,7 @@ def _publish_time(value):
 def schedule(context, request, via, extra_fields=None):
     """下書きを queue に「出してよい」として刻む（timer が `publish_at` 以降に拾う）。
 
-    刻む front matter は承認の job（`approval_jobs._perform`）と同じ `approval.approved_fields`。
+    刻む front matter は `thth approve` と同じ `approval.approved_fields`（timer が指紋を照合する）。
     `approved_by` は資格の actor、足すのは `approved_via`（mcp・cli・http）と `approved_credential`。
     """
     _schema(request,('draft_id',),('draft_id',))
@@ -431,8 +358,8 @@ def held_send(context, request, via, minutes):
 
 def direct(context, request, via, cfg):
     op=request['operation']
-    if op in ('approval_request','schedule_request'):
-        return schedule(context,{**request,'operation':'schedule_request'},via)
+    if op=='schedule_request':
+        return schedule(context,request,via)
     if op=='retract_request':
         return direct_retract(context,request,via)
     minutes=accounts.guard_limits(cfg)['hold_minutes']
@@ -470,7 +397,7 @@ def cancel_schedule(account, draft_id, *, by, via='http'):
     return 'cancelled'
 
 
-def execute(context, request, *, via='http', by=None, listed=True):
+def execute(context, request, *, via='http'):
     if type(request) is not dict or request.get('operation') not in WRITE_OPERATIONS: error('unsupported_operation')
     if not isinstance(request.get('account'),str): error('invalid_scope')
     try:
@@ -480,15 +407,11 @@ def execute(context, request, *, via='http', by=None, listed=True):
             return media_uploads.execute(context,request,via)
         if request['operation']=='draft_put':
             return draft_put(context,request,via)
-        # 止まった口座（安全装置）は、承認の道でも公開・削除・予約を受けない。
+        # 止まった口座（安全装置）は公開・削除・予約を受けない。
         _refuse_if_stopped(request['account'])
-        # timer に載っていない口座では予約を刻んでも出ない（裁定 (b)）。承認の道でも断る。
+        # timer に載っていない口座では予約を刻んでも出ない（裁定 (b)）。
         if request['operation']=='schedule_request': _require_scheduled(cfg)
-        if route(cfg,request['operation'])=='direct':
-            return direct(context,request,via,cfg)
-        if request['operation']=='schedule_request':
-            request={**request,'operation':'approval_request'}
-        return request_approval(context,request,via,by,listed)
+        return direct(context,request,via,cfg)
     except ReportServiceError: raise
     except (OSError,ValueError,TypeError,KeyError,accounts.AccountError,approval_relay.RelayError,admin_log.AdminLogError) as exc:
         if str(exc) in REPO_REASONS: error(str(exc))
@@ -496,15 +419,11 @@ def execute(context, request, *, via='http', by=None, listed=True):
 
 
 def read(context, request):
-    op=request.get('operation')
-    _schema(request,('job_id',) if op=='request_status' else (),('job_id',) if op=='request_status' else ())
+    _schema(request,(),())
     cfg=current(context,request['account'])
     from . import leave_gate
     try:
         with leave_gate.lease(request['account']):
-            if op=='request_status':
-                from .approval_jobs import status
-                return status(context,request['account'],request['job_id'])
             rows=[]
             try:
                 for name,raw,q,verified in _rows(cfg,request['account']):
