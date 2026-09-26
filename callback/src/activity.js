@@ -1,13 +1,13 @@
 // ---------------------------------------------------------------- 動きの一覧（設計 3.12.0 §3.4・§3.5）
-// 持ち主がユーザ名と承認 secret で入り（照合は PBKDF2・5 回失敗で 15 分閉じる）、
+// 持ち主がユーザ名と口座の secret で入り（照合は PBKDF2・5 回失敗で 15 分閉じる）、
 // 自分の口座で出たもの・消したもの・予約・猶予中・止まった理由を新しい順に見る。
 // ここでできるのは: 口座を止める・止めたのを戻す・予約（猶予中を含む）を取り消す・設定を変える・
 // LLM の鍵を発行し直す・鍵を取り消す。どれも secret をもう一度入れて確かめ、VM が数十秒で行う。
 // 一覧の中身は VM が押し上げた要約（本文は先頭 60 字まで・1 時間で忘れる）。Worker は閲覧を記録しない。
-// 作法は承認ページと同じ（script なし・CSP・no-store・no-referrer・同一 origin の POST）。
-import {PERSON,TTL,opaque,boundedBody,personStub,fromSameOrigin,page,en,escape,publicQuota} from './approval.js';
+// 作法は 3.12.0 までの承認ページと同じ（script なし・CSP・no-store・no-referrer・同一 origin の POST）。
+import {PERSON,TTL,opaque,boundedBody,personStub,fromSameOrigin,page,en,escape,publicQuota} from './person.js';
 import {digest,reply} from './relay.js';
-import {SETTING_KEYS} from './approval-object.js';
+import {SETTING_KEYS} from './person-object.js';
 
 const COOKIE='thth_activity';
 const COOKIE_VALUE=/^([A-Za-z0-9_-]{43})([a-zA-Z0-9][a-zA-Z0-9_.-]{0,63})$/;
@@ -24,7 +24,7 @@ function readCookie(request){
 const setCookie=(value,age)=>`${COOKIE}=${value}; Max-Age=${age}; Path=/activity; Secure; HttpOnly; SameSite=Strict`;
 const see=(location,cookie)=>new Response(null,{status:303,headers:{location,'cache-control':'no-store','referrer-policy':'no-referrer',...(cookie?{'set-cookie':cookie}:{})}});
 const back=`<p><a href="/activity">動きの一覧に戻る / Back to activity</a></p>`;
-const secretField=`<label>承認 secret / Approval secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label>`;
+const secretField=`<label>口座の secret / Account secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label>`;
 
 export const KIND_WORDS={published:['出た','Published'],retracted:['消した','Deleted'],scheduled:['予約','Scheduled'],
   held:['猶予中','On hold'],stopped:['止めた','Stopped']};
@@ -41,7 +41,7 @@ export const SETTING_WORDS={daily_max_posts:'1 日の公開の上限 / Daily pos
 
 function signIn(status=200,note=''){
   return page(status,`<h1>動きの一覧${en('Activity')}</h1>${note}
-<p>ユーザ名と承認 secret で入ると、あなたの口座で出たもの・消したもの・予約・猶予中のもの・止まった理由が新しい順に並びます。招待で用意した口座では、ユーザ名は口座名です。${en('Sign in with your username and approval secret to see what was published, deleted, scheduled or held on your accounts, newest first, and why an account was stopped. For an account prepared by an invitation, the username is the account name.')}</p>
+<p>ユーザ名と口座の secret で入ると、あなたの口座で出たもの・消したもの・予約・猶予中のもの・止まった理由が新しい順に並びます。招待で用意した口座では、ユーザ名は口座名です。${en('Sign in with your username and account secret to see what was published, deleted, scheduled or held on your accounts, newest first, and why an account was stopped. For an account prepared by an invitation, the username is the account name.')}</p>
 <form method="post" action="/activity"><label>ユーザ名 / Username <input name="person" autocomplete="username" required maxlength="64"></label>${secretField}<button type="submit">一覧を見る / Show activity</button></form>
 <p>一覧は 10 分で閉じます。secret は LLM や原稿に書かないでください。${en('The page closes after 10 minutes. Never paste the secret into an LLM or a draft.')}</p>`,TITLE);
 }
@@ -83,7 +83,7 @@ function activityPage(person,data){
     return `<li>${escape(a.account)}: ${ja} / ${english} — ${sj} / ${se}${a.reason?' ('+escape(a.reason)+')':''}</li>`;}).join('')}</ul>`:'';
   const body=data.accounts.length?data.accounts.map(section).join(''):`<p>サーバからの様子がまだ届いていません。数十秒後に開き直してください。${en('Nothing has arrived from the server yet. Reload in a few tens of seconds.')}</p>`;
   return page(200,`<h1>動きの一覧${en('Activity')}</h1><p>ユーザ名 / Username: ${escape(person)}</p>${banner}${actions}${body}
-<p>操作は承認 secret をもう一度入れて確かめ、サーバが数十秒で行います。結果はこの一覧に出ます。${en('Each operation asks for the approval secret again; the server carries it out within a few tens of seconds and the result appears here.')}</p>
+<p>操作は口座の secret をもう一度入れて確かめ、サーバが数十秒で行います。結果はこの一覧に出ます。${en('Each operation asks for the account secret again; the server carries it out within a few tens of seconds and the result appears here.')}</p>
 <form method="post" action="/activity"><input type="hidden" name="leave" value="1"><button type="submit">閉じる / Sign out</button></form>`,TITLE);
 }
 // MCP の登録の形（Claude Code）。mcp/server.py は THTH_REPORT_TOKEN（と運営者が置く THTH_REPORT_CREDENTIALS）
@@ -101,14 +101,14 @@ function accepted(kind){
   const [ja,english]=ACTION_WORDS[kind];
   return page(200,`<h1>受け付けました${en('Received')}</h1><p>${ja} / ${english}</p><p>サーバが数十秒で行い、結果を動きの一覧に出します。${en('The server carries it out within a few tens of seconds and shows the result in the activity list.')}</p>${back}`,TITLE);
 }
-const refusedSecret=()=>page(403,`<h1>確かめられませんでした${en('Could not confirm')}</h1><p>承認 secret を確かめてください。5 回続けて間違えると 15 分閉じます。${en('Check the approval secret. After five failures in a row the page is closed for 15 minutes.')}</p>${back}`,TITLE);
+const refusedSecret=()=>page(403,`<h1>確かめられませんでした${en('Could not confirm')}</h1><p>口座の secret を確かめてください。5 回続けて間違えると 15 分閉じます。${en('Check the account secret. After five failures in a row the page is closed for 15 minutes.')}</p>${back}`,TITLE);
 const ACT_KEYS={stop:'account,act,secret',resume:'account,act,secret',revoke:'account,act,secret',rotate:'account,act,secret',
   cancel:'account,act,draft_id,secret',settings:'account,act,key,secret,value'};
 
 export async function activityRequest(request,env,url){
   try{
     if(url.search||url.hash||url.pathname.includes('%'))return reply(400,{error:'invalid_request'});
-    if(!env.APPROVAL_PERSON)return reply(503);
+    if(!env.PERSON)return reply(503);
     if(url.pathname!=='/activity')return reply(404,{error:'not_found'});
     if(!await publicQuota(request,env))return reply(429,{error:'rate_limited'});
     if(!['GET','POST'].includes(request.method))return reply(405,{error:'method_not_allowed'});
@@ -129,7 +129,7 @@ export async function activityRequest(request,env,url){
       return see('/activity',setCookie('',0));
     }
     if(keys==='person,secret'){
-      const person=form.get('person'),refused=()=>signIn(403,`<p><strong>入れませんでした。</strong>ユーザ名と承認 secret を確かめてください。5 回続けて間違えると 15 分閉じます。${en('Sign-in failed. Check the username and the approval secret. After five failures in a row it is closed for 15 minutes.')}</p>`);
+      const person=form.get('person'),refused=()=>signIn(403,`<p><strong>入れませんでした。</strong>ユーザ名と口座の secret を確かめてください。5 回続けて間違えると 15 分閉じます。${en('Sign-in failed. Check the username and the account secret. After five failures in a row it is closed for 15 minutes.')}</p>`);
       if(!PERSON.test(person))return refused();
       const token=opaque(),opened=await (await personStub(env,person)).openList(form.get('secret'),await digest(token));
       if(opened.status!==200)return refused();
@@ -146,5 +146,5 @@ export async function activityRequest(request,env,url){
     if(done.status===403)return refusedSecret();
     if(done.status!==200)return page(done.status===409?409:400,`<h1>受け付けられませんでした${en('Not accepted')}</h1><p>一覧を開き直してからもう一度試してください。${en('Reload the activity list and try again.')}</p>${back}`,TITLE);
     return act==='rotate'?keyPage(env,done.body.account,done.body.bearer):accepted(act);
-  }catch{return reply(503,{error:'approval_unavailable'});}
+  }catch{return reply(503,{error:'activity_unavailable'});}
 }

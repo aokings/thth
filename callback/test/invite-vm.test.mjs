@@ -10,7 +10,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
-import {canonical} from '../src/approval.js';
+import {canonical} from '../src/person.js';
 const opaque=()=>randomBytes(32).toString('base64url'),hash=s=>createHash('sha256').update(s).digest('hex');
 class SilentLog extends Log {constructor(){super(LogLevel.NONE);}log(){}}
 const openssl=process.platform==='darwin'?'/opt/homebrew/bin/openssl':'/usr/bin/openssl';
@@ -20,12 +20,12 @@ before(async()=>{
   directory=await realpath(await mkdtemp(join(tmpdir(),'thth-invite-vm-')));key=join(directory,'signer.key');
   await writeFile(key,crypto(['genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072']),{mode:0o600});
   const publicKey=crypto(['pkey','-in',key,'-pubout','-outform','DER']).toString('base64url');
-  const files=['src/worker.js','src/invite.js','src/invite-object.js','src/activity.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/approval.js','src/approval-object.js','src/deletion.js','src/deletion-object.js'];
+  const files=['src/worker.js','src/invite.js','src/invite-object.js','src/activity.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/person.js','src/person-object.js','src/deletion.js','src/deletion-object.js'];
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,log:new SilentLog(),
-    bindings:{APPROVAL_PUBLIC_KEY:publicKey},
-    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'ApprovalPerson',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},MEDIA_OBJECT:{className:'MediaObject',useSQLite:true},INVITE_OBJECT:{className:'InviteObject',useSQLite:true},DELETION_INBOX:{className:'DeletionInbox',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
-    ratelimits:{AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:1000,period:60}},APPROVAL_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:1000,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:1000,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:1000,period:60}}}}));
+    bindings:{RELAY_PUBLIC_KEY:publicKey},
+    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},PERSON:{className:'Person',useSQLite:true},ACCOUNT:{className:'Account',useSQLite:true},MEDIA_OBJECT:{className:'MediaObject',useSQLite:true},INVITE_OBJECT:{className:'InviteObject',useSQLite:true},DELETION_INBOX:{className:'DeletionInbox',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
+    ratelimits:{AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:1000,period:60}},RELAY_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:1000,period:60}},RELAY_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:1000,period:60}},RELAY_JOB_LIMIT:{namespace_id:'21203',simple:{limit:1000,period:60}}}}));
   origin=String(await mf.ready).replace(/\/$/,'');
 });
 after(async()=>{await mf?.dispose();await rm(directory,{recursive:true,force:true});});
@@ -33,7 +33,7 @@ function vm(...args){
   const cwd=fileURLToPath(new URL('..',import.meta.url));
   const result=spawnSync(pythonForTests(),['test/invite-vm.py',...args],{cwd,encoding:'utf8',timeout:30000,env:{PATH:process.env.PATH,HOME:join(directory,'home'),
     PYTHONPATH:join(cwd,'..'),PYTHONDONTWRITEBYTECODE:'1',THTH_ROOT:join(directory,'vm'),THTH_ACCOUNTS_DIR:join(directory,'vm/accounts'),THTH_APPS_DIR:join(directory,'apps'),
-    THTH_TEST_ALLOW_HTTP:'1',THTH_APPROVAL_BASE_URL:origin,THTH_AUTH_RELAY_BASE_URL:origin}});
+    THTH_TEST_ALLOW_HTTP:'1',THTH_RELAY_BASE_URL:origin,THTH_AUTH_RELAY_BASE_URL:origin}});
   assert.equal(result.status,0,'VM step failed: '+(result.stderr||'').trim().split('\n').at(-1));assert.equal(result.stderr,'');
   return JSON.parse(result.stdout);
 }
@@ -67,7 +67,7 @@ test('招待の通し: create → 開く → 押す → 常駐が認可 URL → 
   assert.equal(signedIn.status,303);assert.equal(signedIn.headers.get('location'),'/activity');
 });
 async function signed(type,subject,operation,body,role){
-  const path=`/approval/${type}/${subject}/${operation}`,raw=JSON.stringify(body),time=Date.now(),nonce=opaque();
+  const path=`/relay/v/${type}/${subject}/${operation}`,raw=JSON.stringify(body),time=Date.now(),nonce=opaque();
   const signature=crypto(['dgst','-sha256','-sign',key,'-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],Buffer.from(canonical('POST',path,role,subject,operation,time,nonce,hash(raw)))).toString('base64url');
   return fetch(origin+path,{method:'POST',headers:{'content-type':'application/json','x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw});
 }

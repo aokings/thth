@@ -1,5 +1,5 @@
 import {DurableObject} from 'cloudflare:workers';
-import {fields,opaque,fail} from './approval.js';
+import {fields,opaque,fail} from './person.js';
 import {STATE_PATTERN,digest} from './relay.js';
 import {RETENTION} from './deletion.js';
 export class DeletionInbox extends DurableObject {

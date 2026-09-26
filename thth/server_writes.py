@@ -7,7 +7,7 @@ import re
 import secrets
 import time
 from datetime import datetime, timezone
-from . import accounts, admin_log, approval, approval_relay, core, jst, managed_repo, queuefile, server_files, writeback
+from . import accounts, admin_log, approval, relay, core, jst, managed_repo, queuefile, server_files, writeback
 from .report_service import ReportContext, ReportServiceError
 
 WRITE_OPERATIONS = frozenset(('draft_put','send_request','retract_request','schedule_request',
@@ -413,7 +413,7 @@ def execute(context, request, *, via='http'):
         if request['operation']=='schedule_request': _require_scheduled(cfg)
         return direct(context,request,via,cfg)
     except ReportServiceError: raise
-    except (OSError,ValueError,TypeError,KeyError,accounts.AccountError,approval_relay.RelayError,admin_log.AdminLogError) as exc:
+    except (OSError,ValueError,TypeError,KeyError,accounts.AccountError,relay.RelayError,admin_log.AdminLogError) as exc:
         if str(exc) in REPO_REASONS: error(str(exc))
         error('write_unavailable')
 

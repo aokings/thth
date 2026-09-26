@@ -1,9 +1,12 @@
-"""承認の常駐（`thth approval-worker`）の版: 動いている版を残し、ディスクが動いたら自分で終わる。
+"""常駐（`thth worker`）の版: 動いている版を残し、ディスクが動いたら自分で終わる。
 
 設計 3.12.0 §6-1。release を VM が拾う仕組み（`thth run` の自己更新・`selfupdate`）は、
 timer で走る短い process を exec しなおして新しい版にする。**常駐はその外にいた。**
 09-25 06:05 に起動した worker は 3.11.1 の配布のあとも古い版のまま承認を拾わず、
 手で restart するまで気づけなかった。
+
+3.13.0 で常駐の名前を改めた（`thth approval-worker` → `thth worker`・記録
+`approval-worker.json` → `worker.json`）。旧い記録のファイルは、新しい記録が無いときだけ読む。
 
 ここでは:
   - 常駐が起動したときに、読み込んだ版（`VERSION` と commit）を state に 1 件残す
@@ -25,7 +28,10 @@ from . import __version__, _read_version, accounts, jst, selfupdate
 CHECK_SECONDS = 30
 # 読み込んだ版とディスクの版が違うので終わる（EX_TEMPFAIL）。0 以外なので Restart=on-failure で起こし直る。
 EXIT_MOVED = 75
-RECORD_NAME = "approval-worker.json"
+RECORD_NAME = "worker.json"
+# 3.12.0 までの記録の名前（新しい記録が無いときだけ読む・書かない）。
+LEGACY_RECORD_NAME = "approval-worker.json"
+
 
 
 def loaded() -> dict:
@@ -52,8 +58,8 @@ def describe(row: dict) -> str:
     return f"{(row or {}).get('version') or '版不明'}（{rev[:7] if isinstance(rev, str) else 'commit 不明'}）"
 
 
-def record_path() -> str:
-    return os.path.join(accounts.thth_root(), "state", RECORD_NAME)
+def record_path(name: str = RECORD_NAME) -> str:
+    return os.path.join(accounts.thth_root(), "state", name)
 
 
 def record_start(start: dict, *, pid: int | None = None) -> bool:
@@ -78,12 +84,17 @@ def record_start(start: dict, *, pid: int | None = None) -> bool:
 
 
 def read_record() -> dict | None:
-    try:
-        with open(record_path(), encoding="utf-8") as stream:
-            row = json.load(stream)
-    except (OSError, ValueError):
-        return None
-    return row if isinstance(row, dict) else None
+    """新しい記録（`worker.json`）、無ければ 3.12.0 までの記録（`approval-worker.json`）。"""
+    for name in (RECORD_NAME, LEGACY_RECORD_NAME):
+        try:
+            with open(record_path(name), encoding="utf-8") as stream:
+                row = json.load(stream)
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError):
+            return None
+        return row if isinstance(row, dict) else None
+    return None
 
 
 def _alive(pid) -> bool | None:
@@ -115,9 +126,9 @@ def board_lines(state: dict | None) -> list:
         return []
     row, disk = state.get("running") or {}, state.get("disk") or {}
     if state.get("alive") is False:
-        return [f"承認の常駐: 記録の pid {row.get('pid')} は動いていません"
+        return [f"常駐（worker）: 記録の pid {row.get('pid')} は動いていません"
                 f"（最後に起動した版 {describe(row)}・{row.get('started_at')}）"]
-    lines = [f"承認の常駐: {describe(row)}  pid {row.get('pid')}・起動 {row.get('started_at')}"]
+    lines = [f"常駐（worker）: {describe(row)}  pid {row.get('pid')}・起動 {row.get('started_at')}"]
     if state.get("differs"):
         lines.append(f"  **ディスクの版は {describe(disk)} です——常駐は古い版で動いています**"
                      f"（{CHECK_SECONDS} 秒ごとに見て自分で終わり、systemd が起こし直します。"

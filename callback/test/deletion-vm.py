@@ -16,10 +16,10 @@ root=Path(os.environ['THTH_ROOT']);root.mkdir(mode=0o700)
 (root/'accounts').mkdir();(root/'secrets').mkdir(mode=0o700)
 apps=Path(os.environ['THTH_APPS_DIR']);apps.mkdir(parents=True,mode=0o700)
 shutil.copyfile(sys.argv[1],apps/'relay-signer.key');(apps/'relay-signer.key').chmod(0o600)
-origin=os.environ['THTH_APPROVAL_BASE_URL'];port=urllib.parse.urlsplit(origin).port
+origin=os.environ['THTH_RELAY_BASE_URL'];port=urllib.parse.urlsplit(origin).port
 connect=socket.socket.connect
 socket.socket.connect=lambda self,address: connect(self,address) if address==('127.0.0.1',port) else (_ for _ in ()).throw(RuntimeError('external_connect_denied'))
-from thth import accounts,deletion,leave,admin_log,approval_relay
+from thth import accounts,deletion,leave,admin_log,relay
 secret=secrets.token_urlsafe(32);uid=secrets.token_hex(16)
 app=root/'secrets/app.env';app.write_text('THREADS_APP_ID='+secrets.token_hex(12)+'\nTHREADS_APP_SECRET='+secret+'\n');app.chmod(0o600)
 os.environ['THTH_APP_ENV_PATH']=str(app)
@@ -38,7 +38,7 @@ bad,_=submit(uid,False);unknown,_=submit(secrets.token_hex(16));code,blob=submit
 result=deletion.sync(by='operator')
 assert result['verified']==1 and result['unmatched']==1 and result['discarded_invalid_signature']==1
 assert (root/'accounts/delta.json').exists()
-assert approval_relay.signed_request('deletion',code,'read',{})['status']=='verified'
+assert relay.signed_request('deletion',code,'read',{})['status']=='verified'
 local=leave.run('delta',by='operator');assert local['phase']=='completed' and local['remote']=='unconfirmed_manual'
 with urllib.request.urlopen(origin+'/data-deletion-status?code='+code) as response:remote=json.load(response)
 assert remote['status']=='completed' and not token.exists() and not (root/'accounts/delta.json').exists()

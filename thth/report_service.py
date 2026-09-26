@@ -37,7 +37,7 @@ class ReportContext:
     def __post_init__(self):
         if self.scope not in ("user", "admin") or not isinstance(self.allowed_accounts, Mapping):
             raise ReportServiceError("invalid_context")
-        from .approval_relay import PERSON
+        from .relay import PERSON
         if (type(self.writes) is not bool or self.writes and (self.scope != 'user'
                 or not isinstance(self.actor, str) or not PERSON.fullmatch(self.actor))
                 or self.actor is not None and (not isinstance(self.actor, str) or not PERSON.fullmatch(self.actor))):

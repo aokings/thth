@@ -19,10 +19,10 @@ def test_unsafe_token_in_own_or_shared_registry_refuses_without_network(env,tmp_
     elif kind=='hardlink':os.link(outside,p)
     elif kind=='directory':p.mkdir(mode=0o700)
     else:p.write_bytes(outside.read_bytes());p.chmod(0o644)
-    code="""from thth import leave,approval_relay
+    code="""from thth import leave,relay
 import socket
 socket.socket.connect=lambda *a: (_ for _ in ()).throw(AssertionError('network reached'))
-approval_relay.signed_request=lambda *a: (_ for _ in ()).throw(AssertionError('worker reached'))
+relay.signed_request=lambda *a: (_ for _ in ()).throw(AssertionError('worker reached'))
 try: leave.run('alpha',by='operator')
 except (OSError,ValueError): print('refused')
 else: raise AssertionError('unsafe token accepted')

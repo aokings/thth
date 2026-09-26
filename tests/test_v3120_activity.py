@@ -237,9 +237,9 @@ class ActivityWorker:
 
 @pytest.fixture
 def worker(monkeypatch):
-    from thth import approval_relay
+    from thth import relay
     fake = ActivityWorker()
-    monkeypatch.setattr(approval_relay, "signed_request", fake)
+    monkeypatch.setattr(relay, "signed_request", fake)
     activity._next_sync.clear()
     return fake
 
@@ -354,9 +354,9 @@ def test_招待にapprovalは無い_古い記録のapprovalは読まずに通す
     monkeypatch.setenv("THTH_ACCOUNTS_DIR", str(root / "accounts"))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setattr(socket.socket, "connect", lambda *a: pytest.fail("external network"))
-    from thth import approval_relay
+    from thth import relay
     monkeypatch.setattr(invites, "terminal", FakeTTY())
-    monkeypatch.setattr(approval_relay, "signed_request", FakeWorker())
+    monkeypatch.setattr(relay, "signed_request", FakeWorker())
     with pytest.raises(TypeError):
         invites.create(media="threads", project="x", by="masaru", approval="all")
     row = invites.create(media="threads", project="meta-review", production=True, by="masaru")

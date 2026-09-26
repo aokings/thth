@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from thth import admin_log, approval_relay, invites, leave, report_http, server_writes
+from thth import admin_log, relay as vm_relay, invites, leave, report_http, server_writes
 from tests.test_v3100_invite_create import env as _env  # noqa: F401
 from tests.test_v3100_invite_worker import world, make, authorize_params  # noqa: F401
 
@@ -102,8 +102,8 @@ def test_退出でその口座の資格情報が消える(world, credentials, mo
     path, operator = credentials
     record, _ = run_flow(world, path)
     name = record["account"]
-    invite_worker = approval_relay.signed_request
-    monkeypatch.setattr(approval_relay, "signed_request",
+    invite_worker = vm_relay.signed_request
+    monkeypatch.setattr(vm_relay, "signed_request",
                         lambda kind, subject, operation, body: {"status": "revoked"} if kind == "account"
                         else invite_worker(kind, subject, operation, body))
     result = leave.run(name, by="masaru")

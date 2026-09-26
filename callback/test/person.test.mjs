@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
-import {canonical,ITERATIONS} from '../src/approval.js';
+import {canonical,ITERATIONS,relayPublicKey} from '../src/person.js';
 const opaque=()=>randomBytes(32).toString('base64url'),hash=s=>createHash('sha256').update(s).digest('hex');
 const logs=[],sensitive=[];
 
@@ -21,22 +21,22 @@ before(async()=>{
   directory=await realpath(await mkdtemp(join(tmpdir(),'thth-approval-')));key=join(directory,'ephemeral.key');
   const pem=run(['genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072']);sensitive.push(pem.toString());await writeFile(key,pem,{mode:0o600});
   const publicKey=run(['pkey','-in',key,'-pubout','-outform','DER']).toString('base64url');
-  const files=['test/approval-harness.js','src/worker.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/approval.js','src/approval-object.js','src/deletion.js','src/deletion-object.js','src/invite.js','src/invite-object.js','src/activity.js'];
+  const files=['test/person-harness.js','src/worker.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/person.js','src/person-object.js','src/deletion.js','src/deletion-object.js','src/invite.js','src/invite-object.js','src/activity.js'];
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,
-    log:new SilentLog(),handleStructuredLogs:item=>logs.push(JSON.stringify(item)),bindings:{APPROVAL_PUBLIC_KEY:publicKey},
-    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'TestPerson',useSQLite:true},APPROVAL_ACCOUNT:{className:'TestAccount',useSQLite:true},DELETION_INBOX:{className:'TestDeletion',useSQLite:true},MEDIA_OBJECT:{className:'TestMedia',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
-    ratelimits:{DELETION_PUBLIC_LIMIT:{namespace_id:'21204',simple:{limit:120,period:60}},AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:120,period:60}},APPROVAL_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:120,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}},MEDIA_CONTROL_LIMIT:{namespace_id:'21302',simple:{limit:600,period:60}},MEDIA_UPLOAD_LIMIT:{namespace_id:'21303',simple:{limit:240,period:60}},MEDIA_UPLOAD_IP_LIMIT:{namespace_id:'21304',simple:{limit:120,period:60}},MEDIA_PUBLIC_LIMIT:{namespace_id:'21301',simple:{limit:120,period:60}}}}));await mf.ready;
+    log:new SilentLog(),handleStructuredLogs:item=>logs.push(JSON.stringify(item)),bindings:{RELAY_PUBLIC_KEY:publicKey},
+    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},PERSON:{className:'TestPerson',useSQLite:true},ACCOUNT:{className:'TestAccount',useSQLite:true},DELETION_INBOX:{className:'TestDeletion',useSQLite:true},MEDIA_OBJECT:{className:'TestMedia',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
+    ratelimits:{DELETION_PUBLIC_LIMIT:{namespace_id:'21204',simple:{limit:120,period:60}},AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:120,period:60}},RELAY_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:120,period:60}},RELAY_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},RELAY_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}},MEDIA_CONTROL_LIMIT:{namespace_id:'21302',simple:{limit:600,period:60}},MEDIA_UPLOAD_LIMIT:{namespace_id:'21303',simple:{limit:240,period:60}},MEDIA_UPLOAD_IP_LIMIT:{namespace_id:'21304',simple:{limit:120,period:60}},MEDIA_PUBLIC_LIMIT:{namespace_id:'21301',simple:{limit:120,period:60}}}}));await mf.ready;
 });
 after(async()=>{await mf?.dispose();await rm(directory,{recursive:true,force:true});const hits=logs.filter(line=>sensitive.some(value=>line.includes(value))).length;assert.equal(hits,0,'secret in runtime logs');console.log('approval runtime log scan: '+logs.length+' chunks, '+hits+' hits');});
 function wire(type,subject,op,body={},options={}){
-  const path=`/approval/${type}/${subject}/${op}`,raw=JSON.stringify(body),time=Date.now(),nonce=opaque();
+  const path=`${options.prefix??'/relay/v'}/${type}/${subject}/${op}`,raw=JSON.stringify(body),time=Date.now(),nonce=opaque();
   const signature=run(['dgst','-sha256','-sign',key,'-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],Buffer.from(canonical('POST',path,options.role??'operator',subject,op,time,nonce,hash(raw)))).toString('base64url');
   sensitive.push(signature,nonce);
   return{url:'https://approval.test'+path,init:{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':options.ip??opaque(),'x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw}};
 }
 async function signed(type,id,op,body={},options={}){const w=wire(type,id,op,body,options);return mf.dispatchFetch(w.url,w.init);}
-async function control(type,id,settings){return(await mf.dispatchFetch(`https://approval.test/__approval/${type}/${id}`,settings?{method:'POST',body:JSON.stringify(settings)}:{})).json();}
+async function control(type,id,settings){return(await mf.dispatchFetch(`https://approval.test/__person/${type}/${id}`,settings?{method:'POST',body:JSON.stringify(settings)}:{})).json();}
 async function person(){const id='p'+randomBytes(8).toString('hex'),secret=opaque(),salt=opaque();sensitive.push(secret);
   const data={salt,verifier:pbkdf2Sync(secret,Buffer.from(salt,'base64url'),100000,32,'sha256').toString('base64url'),iterations:100000};sensitive.push(data.verifier);
   assert.equal((await signed('person',id,'set',data)).status,200);return{id,secret,data};}
@@ -77,7 +77,7 @@ test('product Python canonical signer is accepted by the real Worker',async()=>{
   const p=await person();await writeFile(join(directory,'relay-signer.key'),await readFile(key),{mode:0o600});
   const root=fileURLToPath(new URL('../..',import.meta.url));
   const script=`import json,sys
-from thth import approval_relay as r
+from thth import relay as r
 class Response:
  status=200
  def __enter__(self):return self
@@ -168,4 +168,24 @@ test('invalid-signature discard is operator-only, hash-bound, retry-safe and fre
   await control('deletion','inbox',{clock:Date.now()+31*86400000,alarm:true});
   assert.equal((await control('deletion','inbox')).filter(([k])=>k.startsWith('discarded:')||k.startsWith('receipt:')).length,0);
   await control('deletion','inbox',{});
+});
+
+// 3.13.0: /approval/… を /relay/v/… に改めた。3.12.0 の VM が deploy の間に叩くので旧 path も 1 版の間だけ受ける。
+// 署名は叩かれた path に縛られる（旧 path の署名を新 path に付け替えても通らない）。
+test('relay: new /relay/v/ path, old /approval/ path still accepted for one release, signatures stay path-bound',async()=>{
+  const p=await person();
+  assert.equal((await signed('person',p.id,'status',{})).status,200);
+  assert.equal((await signed('person',p.id,'status',{},{prefix:'/approval'})).status,200);
+  const old=wire('person',p.id,'status',{},{prefix:'/approval'});
+  assert.equal((await mf.dispatchFetch(old.url.replace('/approval/','/relay/v/'),old.init)).status,401);
+  const moved=wire('person',p.id,'status');
+  assert.equal((await mf.dispatchFetch(moved.url.replace('/relay/v/','/approval/'),moved.init)).status,401);
+  // 署名の文字列は変えない（VM と Worker の版ずれで合わなくならないように）。
+  assert.ok(canonical('POST','/relay/v/person/x/status','operator','x','status',1,'n','h').startsWith('thth-approval-v1\n'));
+});
+// 運営者が Worker の変数を RELAY_PUBLIC_KEY に置き替えるまでは、旧名の APPROVAL_PUBLIC_KEY で動く。
+test('relay public key: RELAY_PUBLIC_KEY first, falls back to the old APPROVAL_PUBLIC_KEY',()=>{
+  assert.equal(relayPublicKey({APPROVAL_PUBLIC_KEY:'old'}),'old');
+  assert.equal(relayPublicKey({RELAY_PUBLIC_KEY:'new',APPROVAL_PUBLIC_KEY:'old'}),'new');
+  assert.equal(relayPublicKey({}),undefined);
 });

@@ -13,7 +13,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 import pytest
-from thth import accounts, approval_jobs as jobs, approval_relay as relay, core, report_http, server_writes as writes
+from thth import accounts, relay, worker as jobs, core, report_http, server_writes as writes
 from thth.report_service import ReportServiceError, execute_report
 
 

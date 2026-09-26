@@ -1,8 +1,8 @@
 import worker from '../src/worker.js';
 import {MediaObject} from '../src/media-object.js';
 import {mediaStub} from '../src/media.js';
-import {ApprovalAccount as BaseAccount,ApprovalPerson} from '../src/approval-object.js';
-import {accountStub} from '../src/approval.js';
+import {Account as BaseAccount,Person} from '../src/person-object.js';
+import {accountStub} from '../src/person.js';
 export class TestMedia extends MediaObject {
   constructor(ctx,env){
     let target;
@@ -73,7 +73,7 @@ export class TestMedia extends MediaObject {
   }
   async control(data){this.clock=data.clock;this.afterPut=data.afterPut;this.afterR2=data.afterR2;this.beforeR2=data.beforeR2;this.lateR2=data.lateR2;this.failSave=data.failSave;this.failAlarm=data.failAlarm;this.failR2=data.failR2;this.cleanupFault=data.cleanupFault;this.cleanupLoss=data.cleanupLoss;if(data.finishLateR2&&this.lateWrite){await this.lateWrite();this.lateWrite=null;}if(data.unresolvedIO)this.atomic(()=>this.put({...this.row(),io_ticket:'synthetic-unresolved'}));if(data.alarm)await this.alarm();if(data.retryInspect)return {calls:this.retryCalls||0,row:this.row()||null,subject:this.ctx.id.toString()};if(data.ioInspect)return this.duringIO;return data.inspect?{rows:[...this.ctx.storage.kv.list()],alarm:await this.ctx.storage.getAlarm()}:[...this.ctx.storage.kv.list()];}
 }
-export class ApprovalAccount extends BaseAccount {
+export class Account extends BaseAccount {
   replay(ticket){const clock=this.clock;this.clock=undefined;try{return super.replay(ticket);}finally{this.clock=clock;}}
   now(){return this.clock??Date.now();}
   async control(data){
@@ -83,7 +83,7 @@ export class ApprovalAccount extends BaseAccount {
     if(data.cursor)result.cursor=this.ctx.storage.kv.get('media_cleanup_cursor')||null;return result;
   }
 }
-export {ApprovalPerson};
+export {Person};
 export default {async fetch(request,env){
   const url=new URL(request.url);if(url.pathname==='/__media-egress-canary')return fetch('https://egress-canary.invalid/blocked');
   const account=/^\/__cleanup\/([A-Za-z0-9_.-]+)$/.exec(url.pathname);

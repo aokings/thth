@@ -7,7 +7,7 @@ import shutil
 import stat
 from types import SimpleNamespace
 import pytest
-from thth import approval_jobs as jobs, managed_repo, server_files
+from thth import worker as jobs, managed_repo, server_files
 from thth.report_service import ReportServiceError
 from tests.test_v212_server_writes import env, remote, publisher, draft, writes
 

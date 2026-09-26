@@ -8,11 +8,11 @@ from thth import cli, systemd_gen
 def test_worker_unit_cli_and_actual_worker_parser_agree(monkeypatch, capsys):
     monkeypatch.setattr(subprocess, 'run', lambda *a, **k: pytest.fail('no process execution'))
     credentials = '/srv/thth/private/report-credentials.json'
-    rc = cli.main(['systemd', '--approval-worker', '--credentials', credentials])
+    rc = cli.main(['systemd', '--worker', '--credentials', credentials])
     capture = capsys.readouterr()
     assert rc == 0 and not capture.err
     unit = capture.out
-    assert unit == systemd_gen.render_approval_worker_service(credentials)
+    assert unit == systemd_gen.render_worker_service(credentials)
     assert 'Type=simple\n' in unit and 'Restart=on-failure\nRestartSec=5\n' in unit
     assert '[Timer]' not in unit and '--once' not in unit and 'Type=oneshot' not in unit
     assert 'User=wt\nEnvironment=THTH_ROOT=/srv/thth\n' in unit
@@ -25,16 +25,16 @@ def test_worker_unit_cli_and_actual_worker_parser_agree(monkeypatch, capsys):
 
 @pytest.mark.parametrize('path', ['', 'relative.json', '/', '/a//b', '/a/../b', '/a/./b', '/a/', '/a b', '/a\nb', '/a\rb', '/a\tb', '/a\x00b', '/a"b', "/a'b", '/a\\b', '/a%ib', '/a${HOME}', '/a$b', '/a%b', '/a;b', '/日本語.json'])
 def test_worker_unsafe_path_loud_reject(path, capsys):
-    rc = cli.main(['systemd', '--approval-worker', '--credentials', path])
+    rc = cli.main(['systemd', '--worker', '--credentials', path])
     captured = capsys.readouterr()
     assert rc == 2 and not captured.out and 'credentials:' in captured.err
 
 
 @pytest.mark.parametrize('arguments', [
-    ['--approval-worker'],
-    ['alpha', '--approval-worker', '--credentials', '/private/config.json'],
-    ['--approval-worker', '--maintain', '--credentials', '/private/config.json'],
-    ['--approval-worker', '--collect-only', '--credentials', '/private/config.json'],
+    ['--worker'],
+    ['alpha', '--worker', '--credentials', '/private/config.json'],
+    ['--worker', '--maintain', '--credentials', '/private/config.json'],
+    ['--worker', '--collect-only', '--credentials', '/private/config.json'],
     ['--maintain', '--credentials', '/private/config.json'],
 ])
 def test_worker_missing_or_conflicting_arguments(arguments, capsys):
@@ -48,7 +48,7 @@ def test_worker_never_reads_credential_contents(tmp_path, monkeypatch):
     path.write_text('synthetic-private-value')
     import builtins
     monkeypatch.setattr(builtins, 'open', lambda *a, **k: pytest.fail('must not read credential'))
-    assert 'synthetic-private-value' not in systemd_gen.render_approval_worker_service(str(path))
+    assert 'synthetic-private-value' not in systemd_gen.render_worker_service(str(path))
 
 
 def test_existing_unit_bytes_match_c812_baseline():

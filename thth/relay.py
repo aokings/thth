@@ -1,4 +1,7 @@
-"""Signed approval relay management. Private material stays outside project/state logs."""
+"""VM→Worker の署名つき relay（招待・退出・添付・削除・/activity の受け口が使う）と、その鍵・口座の secret の管理。
+
+秘密は project/state のログに出さない。3.13.0 で `approval_relay` から改名した（承認ページは無い）。
+"""
 import base64
 import contextlib
 import hashlib
@@ -18,15 +21,46 @@ from . import __version__, accounts, admin_log, authclients, redact, httpsafe
 PERSON = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z')
 OPAQUE = re.compile(r'[A-Za-z0-9_-]{43}\Z')
 INVITE = re.compile(r'[0-9a-f]{64}\Z')
+# VM→Worker の署名つき relay の path（3.13.0 で /approval/ から改めた）。認可の relay（/relay/<state>）と
+# 重ならないよう /relay/v/ の下に置く。
+PATH_PREFIX = '/relay/v'
+
+
+def base_url():
+    """Worker の origin。`THTH_RELAY_BASE_URL`（3.13.0）、無ければ旧名の `THTH_APPROVAL_BASE_URL`。"""
+    for name in ('THTH_RELAY_BASE_URL', 'THTH_APPROVAL_BASE_URL'):
+        if name in os.environ:
+            return os.environ[name]
+    return 'https://thth.me'
 # Cloudflare Workers の WebCrypto は PBKDF2 の反復を 100,000 までしか受け付けない
 # （本番で実測: NotSupportedError "iteration counts above 100000 are not supported"）。
-# 承認 secret は 32 byte の乱数なので、伸長はこの回数で十分。Worker 側と一致させること。
+# 口座の secret は 32 byte の乱数なので、伸長はこの回数で十分。Worker 側と一致させること。
 ITERATIONS = 100_000
+
+# 3.13.0 で改めた理由コードの旧名 → 新名。旧名で作られた RelayError も新名で扱う（互換）。
+LEGACY_REASONS = {
+    'approval_relay_unavailable': 'relay_unavailable',
+    'approval_relay_invalid': 'relay_invalid',
+    'approval_relay_endpoint_rejected': 'relay_endpoint_rejected',
+    'approval_relay_outcome_unknown': 'relay_outcome_unknown',
+    'approval_origin_invalid': 'relay_origin_invalid',
+    'invalid_approval_operation': 'invalid_relay_operation',
+    'approver_tty_required': 'secret_tty_required',
+    'invalid_approver': 'invalid_person',
+    'approver_remote_changed_delivery_failed': 'secret_remote_changed_delivery_failed',
+    'approver_remote_changed_audit_unconfirmed': 'secret_remote_changed_audit_unconfirmed',
+}
+
+
+def reason(code):
+    """理由コードを今の名前にする（旧名は新名に・それ以外はそのまま）。"""
+    return LEGACY_REASONS.get(code, code) if isinstance(code, str) else code
+
 
 class RelayError(Exception):
     """Only static, non-secret reason codes cross the CLI boundary."""
     def __init__(self, message, *, status=None):
-        super().__init__(message)
+        super().__init__(reason(message))
         self.status = status
 
 
@@ -101,6 +135,8 @@ def show_key(by):
 
 
 def canonical(method, path, role, subject, operation, timestamp, nonce, body):
+    # 'thth-approval-v1' は署名の文字列の版名（2.12 の名残）。VM と Worker の版ずれで署名が
+    # 合わなくならないよう、3.13.0 の改名でも変えない。
     return '\n'.join(('thth-approval-v1', method, path, role, subject, operation,
                       str(timestamp), nonce, hashlib.sha256(body).hexdigest())).encode()
 
@@ -120,19 +156,20 @@ def signed_request(kind, subject, operation, body):
     elif kind == 'activity' and PERSON.fullmatch(subject) and operation == 'sync':
         # 動きの一覧（設計 3.12.0 §3.4）。VM が持ち主の要約を押し上げ、持ち主の操作を受け取る。
         role = 'operator'
-    else: raise RelayError('invalid_approval_operation')
-    path = f'/approval/{kind}/{subject}/{operation}'
+    else: raise RelayError('invalid_relay_operation')
+    # 3.13.0: /approval/… から改めた。Worker は 1 版の間だけ旧 path も受ける（VM は新 path だけ）。
+    path = f'{PATH_PREFIX}/{kind}/{subject}/{operation}'
     raw = json.dumps(body, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode()
     timestamp, nonce = int(time.time()*1000), secrets.token_urlsafe(32)
-    base = os.environ.get('THTH_APPROVAL_BASE_URL', 'https://thth.me')
+    base = base_url()
     try:base=httpsafe.validated_url(base,base=True)
     except httpsafe.EndpointRejected:
-        raise RelayError('approval_origin_invalid') from None
+        raise RelayError('relay_origin_invalid') from None
     url = urllib.parse.urlsplit(base)
     # Test HTTP allowance (flag and exact hosts) belongs only to httpsafe.
     # Real signed control requests remain pinned to the thth.me origin.
     if url.path not in ('','/') or not (base == 'https://thth.me' or url.scheme == 'http'):
-        raise RelayError('approval_origin_invalid')
+        raise RelayError('relay_origin_invalid')
     with private_key() as fd:
         signature = _openssl(['dgst','-sha256','-sign',f'/dev/fd/{fd}',
             '-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],
@@ -147,16 +184,16 @@ def signed_request(kind, subject, operation, body):
         with httpsafe.build_opener(NoRedirect()).open(request, timeout=10) as response:
             limit=16384 if kind in ('deletion','activity') else 4096
             data = response.read(limit+1)
-            if len(data)>limit or response.status not in (200,201): raise RelayError('approval_relay_unavailable')
+            if len(data)>limit or response.status not in (200,201): raise RelayError('relay_unavailable')
             value=json.loads(data)
-            if not isinstance(value,dict):raise RelayError('approval_relay_invalid')
+            if not isinstance(value,dict):raise RelayError('relay_invalid')
             return value
     except httpsafe.EndpointRejected:
-        raise RelayError('approval_relay_endpoint_rejected') from None
+        raise RelayError('relay_endpoint_rejected') from None
     except urllib.error.HTTPError as exc:
-        raise RelayError('approval_relay_outcome_unknown', status=exc.code) from None
+        raise RelayError('relay_outcome_unknown', status=exc.code) from None
     except (OSError, ValueError, urllib.error.URLError) as exc:
-        raise RelayError('approval_relay_outcome_unknown') from exc
+        raise RelayError('relay_outcome_unknown') from exc
 
 
 def _event(event, subject, by, diff):
@@ -191,14 +228,14 @@ def terminal():
     # Open and verify before random secret generation or remote provisioning.
     fd=os.open('/dev/tty',os.O_WRONLY|os.O_NOCTTY)
     try:
-        if not os.isatty(fd): raise RelayError('approver_tty_required')
+        if not os.isatty(fd): raise RelayError('secret_tty_required')
         with os.fdopen(os.dup(fd),'w') as stream: yield stream
     finally: os.close(fd)
 
 
 def manage_person(operation, person, by):
     admin_log.actor(by)
-    if not isinstance(person,str) or not PERSON.fullmatch(person):raise RelayError('invalid_approver')
+    if not isinstance(person,str) or not PERSON.fullmatch(person):raise RelayError('invalid_person')
     with terminal() if operation=='set' else contextlib.nullcontext() as tty:
         # Known bad audit destination must refuse before any remote change.
         with admin_log.transaction(): pass
@@ -210,20 +247,20 @@ def manage_person(operation, person, by):
             redact.register_secret(secret);redact.register_secret(data['verifier'])
         result=signed_request('person',person,operation,data)
         expected={'set':'configured','revoke':'revoked','unlock':'unlocked'}[operation]
-        if result!={'status':expected}:raise RelayError('approval_relay_outcome_unknown')
+        if result!={'status':expected}:raise RelayError('relay_outcome_unknown')
         # The remote generation is already committed. Always deliver the new
         # secret once on the verified tty, even if the subsequent audit append fails.
         if tty is not None:
             try:
-                tty.write('承認 secret（この表示は一度だけです）: '+secret+'\n');tty.flush()
+                tty.write('口座の secret（この表示は一度だけです）: '+secret+'\n');tty.flush()
             except OSError as exc:
-                raise RelayError('approver_remote_changed_delivery_failed') from exc
+                raise RelayError('secret_remote_changed_delivery_failed') from exc
         try:
             with admin_log.transaction():
                 _event({'set':'approver_set','revoke':'approver_revoked','unlock':'approver_unlocked'}[operation],
                        person,by,{'credential_present':[None,operation!='revoke']})
         except (OSError,ValueError,admin_log.AdminLogError) as exc:
-            raise RelayError('approver_remote_changed_audit_unconfirmed') from exc
+            raise RelayError('secret_remote_changed_audit_unconfirmed') from exc
 
 
 def command(args):
@@ -231,27 +268,28 @@ def command(args):
     try:
         if args.relay_command in ('init','show'):
             value=init_key(args.by) if args.relay_command=='init' else show_key(args.by)
-            print('APPROVAL_PUBLIC_KEY='+value)
+            print('RELAY_PUBLIC_KEY='+value)
         else:
             manage_person(args.relay_command,args.person,args.by)
-            print('approver_'+args.relay_command+'_completed')
+            print('secret_'+args.relay_command+'_completed')
         return 0
     except RelayError as exc:
         print(str(exc)+': operation may be incomplete; retry provisioning if remote state is uncertain',file=sys.stderr)
         return 2
     except (OSError,ValueError,admin_log.AdminLogError,subprocess.SubprocessError):
         # Static messages avoid leaking key paths, signatures or remote exception bodies.
-        print('approval_admin_failed: operation may be incomplete; inspect admin log and retry provisioning if needed',file=sys.stderr)
+        print('relay_admin_failed: operation may be incomplete; inspect admin log and retry provisioning if needed',file=sys.stderr)
         return 2
 
 
 def register(commands):
-    key=commands.add_parser('relay-key',help='承認 relay の署名鍵（管理者 CLI のみ）')
+    key=commands.add_parser('relay-key',help='VM→Worker の relay の署名鍵（管理者 CLI のみ）')
     key_operations=key.add_subparsers(required=True)
     for name in ('init','show'):
         p=key_operations.add_parser(name)
         p.add_argument('--by',required=True);p.set_defaults(func=command,relay_command=name)
-    person=commands.add_parser('approver',help='承認 secret の登録・失効・解除（生成値は tty に一度だけ）')
+    person=commands.add_parser('secret',aliases=['approver'],
+        help='口座の secret（/activity に入る本人確認）の登録・失効・解除（生成値は tty に一度だけ・approver は旧名で deprecated）')
     operations=person.add_subparsers(required=True)
     for name in ('set','revoke','unlock'):
         p=operations.add_parser(name);p.add_argument('person');p.add_argument('--by',required=True)

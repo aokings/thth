@@ -2,7 +2,7 @@ import json
 import secrets
 from types import SimpleNamespace
 import pytest
-from thth import accounts,admin_log,leave,leave_gate as gate,approval_relay
+from thth import accounts,admin_log,leave,leave_gate as gate,relay
 from tests.test_v212_server_writes import env,draft
 
 
@@ -12,7 +12,7 @@ def worker(monkeypatch):
     def request(kind,account,operation,body):
         assert (kind,account,operation,body)==('account','alpha','revoke',{})
         calls.append(account);return {'status':'revoked'}
-    monkeypatch.setattr(approval_relay,'signed_request',request)
+    monkeypatch.setattr(relay,'signed_request',request)
     return calls
 
 
@@ -35,7 +35,7 @@ def test_manual_medium_complete_owned_only_with_durable_stop(env,worker):
 
 def test_worker_failure_stays_stopped_with_retry_token(env,worker,monkeypatch):
     cfg=accounts.load_account('alpha');token=(env['root']/'secrets/alpha.json').read_bytes()
-    monkeypatch.setattr(approval_relay,'signed_request',lambda *a:(_ for _ in ()).throw(approval_relay.RelayError('synthetic')))
+    monkeypatch.setattr(relay,'signed_request',lambda *a:(_ for _ in ()).throw(relay.RelayError('synthetic')))
     assert leave.command(SimpleNamespace(name='alpha',by='operator',json=True))==2
     assert gate.stopped('alpha') and (env['root']/'secrets/alpha.json').read_bytes()==token
     assert leave.read('alpha')['phase']=='stopped' and admin_log.read(event='account_removed')[0]==[]
@@ -163,7 +163,7 @@ def test_a_stop_does_not_invalidate_b_old_context_or_scheduling(env,monkeypatch)
     def request(kind,subject,operation,body):
         if kind=='account':return {'status':'revoked'}
         return remote(kind,subject,operation,body)
-    monkeypatch.setattr(approval_relay,'signed_request',request)
+    monkeypatch.setattr(relay,'signed_request',request)
     draft_result=writes.execute(context,dict(operation='draft_put',account='beta',body='別 account の本文',publish_at='2030-01-01T12:00:00+09:00'))
     leave.run('alpha',by='operator')
     # 3.13.0: 予約はその場で刻む（承認 job を待たない）。alpha の退出は beta の予約を止めない。

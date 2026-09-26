@@ -194,7 +194,7 @@ def render_maintain_service() -> str:
     )
 
 
-def render_approval_worker_service(credentials: str) -> str:
+def render_worker_service(credentials: str) -> str:
     """Render a long-running worker; never read credentials or operate systemd.
 
     ExecStart is systemd syntax, not shell syntax. Limit this operator-supplied

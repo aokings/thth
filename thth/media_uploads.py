@@ -22,7 +22,7 @@ from pathlib import Path
 
 from . import accounts, managed_repo, redact, server_files, writeback
 from .media import MAX_ALT_BYTES
-from .approval_relay import OPAQUE
+from .relay import OPAQUE
 from .report_service import ReportServiceError
 
 SHA256 = re.compile(r'[0-9a-f]{64}\Z')

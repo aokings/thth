@@ -18,7 +18,7 @@ import urllib.parse
 root = Path(os.environ['THTH_ROOT'])
 apps = Path(os.environ['THTH_APPS_DIR'])
 NAME = 'inv-local-00a1b2'
-origin = os.environ['THTH_APPROVAL_BASE_URL']
+origin = os.environ['THTH_RELAY_BASE_URL']
 port = urllib.parse.urlsplit(origin).port
 connect = socket.socket.connect
 socket.socket.connect = lambda self, address: connect(self, address) if address[:2] == ('127.0.0.1', port) else (_ for _ in ()).throw(RuntimeError('external_connect_denied'))

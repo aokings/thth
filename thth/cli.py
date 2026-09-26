@@ -3294,19 +3294,19 @@ def cmd_systemd(args) -> int:
     食い違っていた）ので、生成に一本化する。MCP には出さない（運用コマンド・§3.7
     の auth／refresh と同じ扱い）。"""
     from . import systemd_gen
-    if getattr(args, "approval_worker", False):
+    if getattr(args, "worker", False):
         if args.account or getattr(args, "maintain", False) or getattr(args, "collect_only", False):
-            print("--approval-worker は account／--maintain／--collect-only と併用できません", file=sys.stderr)
+            print("--worker は account／--maintain／--collect-only と併用できません", file=sys.stderr)
             return 2
         try:
-            unit = systemd_gen.render_approval_worker_service(getattr(args, "credentials", None))
+            unit = systemd_gen.render_worker_service(getattr(args, "credentials", None))
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 2
         sys.stdout.write(unit)
         return 0
     if getattr(args, "credentials", None) is not None:
-        print("--credentials は --approval-worker と併用してください", file=sys.stderr)
+        print("--credentials は --worker と併用してください", file=sys.stderr)
         return 2
     if getattr(args, "maintain", False):
         # `thth maintain` の timer/service は 1 日 1 回・アカウント別ではない。
@@ -3409,9 +3409,9 @@ def cmd_board(args) -> int:
               "署名: 確認" if app.get("signature_checked") else "署名: 未確認")
         print(f"道具: {_pkg_version}（{head or '(版が読めません)'}）  "
               f"配布の枝: `{ref}`  {署名}")
-        # **承認の常駐の版**（設計 3.12.0 §6-1）。ディスクの版と違えば知らせる。
+        # **常駐（worker）の版**（設計 3.12.0 §6-1）。ディスクの版と違えば・古い unit 名なら知らせる。
         from . import worker_version as _worker_version
-        for _line in _worker_version.board_lines(app.get("approval_worker")):
+        for _line in _worker_version.board_lines(app.get("worker")):
             print(_line)
         # **台帳の置き場を 1 行**（設計 v2 §3・v2-2a）。下に並ぶ顔ぶれが
         # どこから来たのかを、並べる前に言う。
@@ -3857,10 +3857,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_systemd.add_argument("--collect-only", action="store_true",
                            help="採集だけの unit を出す（同席専用＝scheduled: false の"
                                 "アカウント用。thth-collect@<account>）")
-    p_systemd.add_argument("--approval-worker", action="store_true",
-                           help="承認jobの常駐serviceを出す（account/timer指定と排他）")
+    p_systemd.add_argument("--worker", "--approval-worker", dest="worker", action="store_true",
+                           help="常駐（thth worker）の service を出す（account/timer指定と排他。"
+                                "--approval-worker は旧名で deprecated）")
     p_systemd.add_argument("--credentials",
-                           help="approval-workerとserve-reportsが共用する私有設定の絶対パス（ASCII、空白/$/%%不可。内容は読みません）")
+                           help="workerとserve-reportsが共用する私有設定の絶対パス（ASCII、空白/$/%%不可。内容は読みません）")
     p_systemd.set_defaults(func=cmd_systemd)
 
     p_http = sub.add_parser("serve-reports", help="専用環境の非公開レポートHTTP（Unix socket推奨）")
@@ -3870,8 +3871,8 @@ def build_parser() -> argparse.ArgumentParser:
     transport.add_argument("--tcp-port", type=int, help="明示的にloopback TCPを使うport")
     p_http.set_defaults(func=report_http.cmd_serve_reports)
 
-    from . import approval_jobs
-    approval_jobs.register(sub)
+    from . import worker as worker_mod
+    worker_mod.register(sub)
 
     p_handoff = sub.add_parser("handoff-report", help="ローカル運用記録を引き継ぐ（読むだけ）")
     p_handoff.add_argument("account", nargs="?")

@@ -19,7 +19,7 @@ import urllib.parse
 
 import pytest
 
-from thth import accounts, admin_log, appenv, approval_jobs, approval_relay, authflow, invites, oauth, plaza
+from thth import accounts, admin_log, appenv, worker as worker_mod, relay as vm_relay, authflow, invites, oauth, plaza
 from tests.test_v3100_invite_create import FakeTTY, FakeWorker, env as _env  # noqa: F401
 
 
@@ -32,7 +32,7 @@ class Worker(FakeWorker):
         self.calls.append((subject, operation, json.loads(json.dumps(body))))
         row = self.invites.get(subject)
         if row is None:
-            raise approval_relay.RelayError("approval_relay_outcome_unknown", status=404)
+            raise vm_relay.RelayError("relay_outcome_unknown", status=404)
         if operation == "status":
             return {"status": row["status"], "expires_at": row["expires_at"], "clicked_at": row.get("clicked_at")}
         if operation == "authorize":
@@ -98,7 +98,7 @@ class Threads:
 def world(_env, monkeypatch):
     root, tty, _ = _env
     worker, relay = Worker(), Relay()
-    monkeypatch.setattr(approval_relay, "signed_request", worker)
+    monkeypatch.setattr(vm_relay, "signed_request", worker)
     monkeypatch.setattr(authflow, "relay_request", relay)
     monkeypatch.setattr(appenv, "load_app_env", lambda *a, **k: ("1234567890", "app-secret-" + "z" * 20))
     monkeypatch.setattr(invites, "OPEN_POLL_SECONDS", 0)
@@ -314,5 +314,5 @@ def test_常駐のapproval_workerが招待も回す(world, monkeypatch):
     monkeypatch.setattr(report_http, "load_credentials", lambda path: (str(root), []))
     row, digest = make(tty)
     worker.click(digest)
-    approval_jobs.run_once(str(root / "credentials.json"))
+    worker_mod.run_once(str(root / "credentials.json"))
     assert invites.STORE.get(row["invite_id"])["status"] == "authorizing"

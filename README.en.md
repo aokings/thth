@@ -147,7 +147,7 @@ All subcommands `thth --help` lists in this development checkout, one line each:
 - `measured` — read the collected-metrics ledger
 - `threads` — thread shape: branches, depth, participants, time to first reply
 - `serve-reports` — development-grade (since 2.5.0): private read-only HTTP reports over a Unix socket (or explicitly selected loopback TCP) for a dedicated Unix environment; see the [setup and limitations](docs/非公開レポートHTTP_v1.md).
-- `approval-worker` — operator-run durable approval jobs for explicit user `writes: true` credentials; see the [server write setup](docs/運用_サーバ書込_2.12.md). Existing read-only credentials stay read-only. Requests return a human approval URL, never accept a digest confirmation.
+- `worker` — operator-run daemon: finishes invitations, pushes `/activity` summaries and carries out the operations requested there (safety controls, keys); see the [server write setup](docs/運用_サーバ書込_2.12.md). Existing read-only credentials stay read-only. `approval-worker` is the deprecated old name (renamed in 3.13.0).
 - `handoff-report` — since 2.5.0: local operations evidence, pending notifications and explicit freshness limits.
 - `observe` — since 3.3.0: the same page as `morning`, meant for the start of a session and every checkpoint; section 2 covers the time since your last observation (or yesterday in JST when there is none or it is older than 7 days). `morning` stays as an alias.
 - `morning` — since 3.1.0: one morning page for a project or account — tool version, unanswered replies and mentions, yesterday's own posts, the world around your admin-set watch words, today's plan and budget, and candidate next steps. Read-only; it never drafts text.

@@ -1,10 +1,10 @@
-import {AtomicObject} from './approval-object.js';
-import {fail,fields,opaque,equal,unb64,verifier,personStub,PERSON} from './approval.js';
+import {AtomicObject} from './person-object.js';
+import {fail,fields,opaque,equal,unb64,verifier,personStub,PERSON} from './person.js';
 import {STATE_PATTERN,relayStub} from './relay.js';
 
 // 招待（設計 3.10.0）。1 本の招待に 1 つの object（名前は code の SHA-256）。
 // ここに置くのは hash で引ける状態・期限・VM から返った認可 URL（10 分で消す）だけ。
-// code そのもの・token・承認 secret は置かない。
+// code そのもの・token・口座の secret は置かない。
 export const STALL_MS=120_000;        // 押してから 2 分進まなければ「運営者に連絡を」
 export const AUTH_MS=600_000;         // 認可 URL の寿命（VM の session と同じ 10 分）
 export const MAX_MS=90*86_400_000;    // 招待の期限は最長 90 日
@@ -86,7 +86,7 @@ export class InviteObject extends AtomicObject {
         this.put('invite',{...row,status:'open',clicked_at:null,authorize_url:null,authorize_expires_at:null,reason:body.reason});
         return {status:200,body:{status:'open'}};
       }
-      // complete: VM が口座を用意した。承認 secret はまだ作らない（本人が押したときに 1 回だけ）。
+      // complete: VM が口座を用意した。口座の secret はまだ作らない（本人が押したときに 1 回だけ）。
       if(!fields(body,['person','account','handle'])||typeof body.person!=='string'||typeof body.account!=='string'||
          !PERSON.test(body.person)||!PERSON.test(body.account)||typeof body.handle!=='string'||!HANDLE.test(body.handle))return fail();
       if(row.status==='ready'&&row.person===body.person&&row.account===body.account&&row.handle===body.handle)
@@ -118,8 +118,8 @@ export class InviteObject extends AtomicObject {
     if(row.status!=='open')return fail(410,'invite_unavailable');
     this.put('invite',{...row,status:'clicked',clicked_at:this.now(),reason:null});return {status:200};
   });}
-  // 承認 secret を 1 回だけ作って見せる。secret はこの要求の中にしか無い（保存するのは
-  // ApprovalPerson の verifier だけ）。ready → done は 1 回きり。done の招待は二度と secret を出さない。
+  // 口座の secret を 1 回だけ作って見せる。secret はこの要求の中にしか無い（保存するのは
+  // Person の verifier だけ）。ready → done は 1 回きり。done の招待は二度と secret を出さない。
   async reveal(csrf){
     const claim=this.atomic(()=>{
       const row=this.row();if(!row)return fail(410,'invite_unavailable');
