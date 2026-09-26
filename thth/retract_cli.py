@@ -153,10 +153,15 @@ def cmd_location(args) -> int:
     if args.json:
         _print_json(location_json(args.account, args.query, rows))
         return 0
+    return show_locations(args.query, rows)
+
+
+def show_locations(query: str, rows: list) -> int:
+    """`thth location search` の人向けの表示（手元の道と遠くの道が共有・`--json` の `locations` を受ける）。"""
     if not rows:
-        print(f"「{args.query}」に一致する場所はありませんでした（0 件）")
+        print(f"「{query}」に一致する場所はありませんでした（0 件）")
     else:
-        print(f"「{args.query}」の候補（{len(rows)} 件・最大 {LOCATION_LIMIT} 件）:")
+        print(f"「{query}」の候補（{len(rows)} 件・最大 {LOCATION_LIMIT} 件）:")
         for row in rows:
             where = "・".join(x for x in (row.get("address"), row.get("city"),
                                        row.get("country")) if x)

@@ -80,6 +80,17 @@ def no_threads_status_poll_wait(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_remote_login(tmp_path_factory, monkeypatch):
+    """遠くの道（設計 3.14.0 §3.4）の `remote.json` を試験ごとの無い場所に向ける。
+
+    手元の機械で `thth login` 済みでも、台帳の無い口座の試験が thth.me へ出て行かない。
+    subprocess の `bin/thth` にも env で届く。遠くの道の試験は自分で置き直す。
+    """
+    monkeypatch.setenv('THTH_REMOTE_CONFIG',
+                       str(tmp_path_factory.mktemp('remote') / 'remote.json'))
+
+
+@pytest.fixture(autouse=True)
 def frozen_now_jst(monkeypatch):
     """`thth.jst.now_jst()` を既定で静かな時間帯の外（2026-09-09 10:00 JST）に固定する。
 

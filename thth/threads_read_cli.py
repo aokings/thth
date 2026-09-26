@@ -512,75 +512,89 @@ def cmd_topics_search(args) -> int:
         return search_call(adapter, account, q, search_type=search_type, limit=limit)
 
     def render(result):
-        rows, provider_note, tag_material, tag_reason = result
+        rows = result[0]
         material = search_json(result, account, q, search_type=search_type, limit=limit)
-        posts = material["posts"]
-        lookup = material["replied_lookup"]
-        index_available, why = lookup["available"], lookup["reason"]
         if as_json:
             # **本文は出さない**（材料と、指す先だけ）。
             print(json.dumps(material, ensure_ascii=False, indent=2))
             return 0
-        a = material["authors"]
-        t = material["tagged"]
-        print(f"{account}  検索 {q!r}（{search_type}・{material['note']}）")
-        print(f"  件数            : {material['n']}")
-        if provider_note:
-            print(f"  検索の制約      : {provider_note}")
-        print(f"  投稿者の異なり数: {a['distinct']}"
-              f"（username の判る {a['with_username']} 件のうち）")
-        if tag_material:
-            print(f"  タグ #{tag_material.get('tag') or q}: n={tag_material['n']}  "
-                  f"異なり={tag_material['distinct_authors']}  "
-                  f"観測元={tag_material['observed_from']}")
-        elif tag_reason:
-            print(f"  タグの観測はできません: {tag_reason}")
-        print(f"  上位 {a['top_k']} 投稿者の占有率: {_pct(a['top_share'])}"
-              f"（分母 {a['with_username']}）")
-        print(f"  直近の投稿時刻  : {material['latest_timestamp'] or '—'}"
-              f"　最古: {material['oldest_timestamp'] or '—'}")
-        if t["known"]:
-            print(f"  タグ付きの割合  : {_pct(t['ratio'])}（{t['count']}/{t['denominator']}）")
-        else:
-            print("  タグ付きの割合  : —（応答に topic_tag が無いので判りません）")
-        # **下の「絡みに行く先」の `返信` 欄とは別のこと**（設計 v2 §4.4）。ここは
-        # 「検索結果のうち、それ自体が返信である投稿の数」で、投稿ごとの返信の数
-        # ではない（`--json` も同じ——`replies` は集計、`posts[].replies` が投稿ごと）。
-        print(f"  返信だった投稿  : {material['replies']['count']}"
-              f"/{material['replies']['denominator']}"
-              f"（その投稿への返信の数ではありません。それは下の一覧の `返信` 欄）")
-        if rows:
-            print("")
-            print("  絡みに行く先（post_id・permalink・返信・印。"
-                  f"本文は先頭 {TEXT_PREVIEW_CHARS} 字・**表示するだけで保存しません**）:")
-            for r, post in zip(rows, posts):
-                stamp = post["timestamp"] or "—"
-                who = post["author"] or "—"
-                print(f"    {stamp}  @{_pad(who, 16)} {_pad(post['post_id'] or '—', 20)}"
-                      f" 返信 {_pad(_replies_cell(post), 4)} {_replied_cell(post['replied'])}")
-                print(f"      {post['permalink'] or '（permalink 無し）'}"
-                      f"  {_one_line(r.get('text'))}")
-            print("")
-            print("  返信: 数が返る媒体は数、Threads の検索は `有`／`無` だけ"
-                  "（数は返りません）。`—` は判らない（0 ではありません）。")
-            if not index_available:
-                # **印が無いことを「返していない」にしない**（設計 v2 §4.4）。
-                print(f"  印: 出せません——{why}")
-            else:
-                print(f"  印: [返信済]=posted ／ [承認済]=approved ／ [下書き]=draft"
-                      f"（同じ account の queue に `reply_to: <post_id>` を持つ原稿"
-                      f"・{lookup['n']} 件）。印の無い行は、この queue に原稿が"
-                      f"見当たらないという意味です。")
-            print("  絡む道: 下書きに `reply_to: <post_id>` → `thth lint` → "
-                  "`thth approve`（二段）→ `thth throw` → `thth collect`。")
-        print("")
-        print("  この材料で `thth topics <account> --note <語> --status ok "
-              "--audience \"…\" --verdict … --by …` を記録するのは人です"
-              "（道具は材料を並べるだけ・観測は人の目）。")
-        return 0
+        return show_search(account, material, texts=[r.get("text") for r in rows])
 
     return _run(account, capability="keyword_search", call=call, as_json=as_json,
                 render=render, narrowed_note=SEARCH_NARROWED_NOTE)
+
+
+def show_search(account: str, material: dict, *, texts=None) -> int:
+    """`thth topics --search` の人向けの表示（手元の道と遠くの道が共有・`--json` の形を受ける）。
+
+    `texts` は本文の先頭を画面に出すためだけ（`--json` には本文が無いので、遠くの道では出ない）。
+    """
+    q, search_type = material.get("q"), material.get("search_type")
+    provider_note = material.get("provider_note")
+    by_tag = material.get("by_tag") or []
+    tag_material = by_tag[0] if by_tag else None
+    tag_reason = material.get("tag_cannot_say")
+    posts = material["posts"]
+    lookup = material["replied_lookup"]
+    index_available, why = lookup["available"], lookup["reason"]
+    rows = [{"text": text} for text in (texts or [None] * len(posts))]
+    a = material["authors"]
+    t = material["tagged"]
+    print(f"{account}  検索 {q!r}（{search_type}・{material['note']}）")
+    print(f"  件数            : {material['n']}")
+    if provider_note:
+        print(f"  検索の制約      : {provider_note}")
+    print(f"  投稿者の異なり数: {a['distinct']}"
+          f"（username の判る {a['with_username']} 件のうち）")
+    if tag_material:
+        print(f"  タグ #{tag_material.get('tag') or q}: n={tag_material['n']}  "
+              f"異なり={tag_material['distinct_authors']}  "
+              f"観測元={tag_material['observed_from']}")
+    elif tag_reason:
+        print(f"  タグの観測はできません: {tag_reason}")
+    print(f"  上位 {a['top_k']} 投稿者の占有率: {_pct(a['top_share'])}"
+          f"（分母 {a['with_username']}）")
+    print(f"  直近の投稿時刻  : {material['latest_timestamp'] or '—'}"
+          f"　最古: {material['oldest_timestamp'] or '—'}")
+    if t["known"]:
+        print(f"  タグ付きの割合  : {_pct(t['ratio'])}（{t['count']}/{t['denominator']}）")
+    else:
+        print("  タグ付きの割合  : —（応答に topic_tag が無いので判りません）")
+    # **下の「絡みに行く先」の `返信` 欄とは別のこと**（設計 v2 §4.4）。ここは
+    # 「検索結果のうち、それ自体が返信である投稿の数」で、投稿ごとの返信の数
+    # ではない（`--json` も同じ——`replies` は集計、`posts[].replies` が投稿ごと）。
+    print(f"  返信だった投稿  : {material['replies']['count']}"
+          f"/{material['replies']['denominator']}"
+          f"（その投稿への返信の数ではありません。それは下の一覧の `返信` 欄）")
+    if rows:
+        print("")
+        print("  絡みに行く先（post_id・permalink・返信・印。"
+              f"本文は先頭 {TEXT_PREVIEW_CHARS} 字・**表示するだけで保存しません**）:")
+        for r, post in zip(rows, posts):
+            stamp = post["timestamp"] or "—"
+            who = post["author"] or "—"
+            print(f"    {stamp}  @{_pad(who, 16)} {_pad(post['post_id'] or '—', 20)}"
+                  f" 返信 {_pad(_replies_cell(post), 4)} {_replied_cell(post['replied'])}")
+            print(f"      {post['permalink'] or '（permalink 無し）'}"
+                  f"  {_one_line(r.get('text'))}")
+        print("")
+        print("  返信: 数が返る媒体は数、Threads の検索は `有`／`無` だけ"
+              "（数は返りません）。`—` は判らない（0 ではありません）。")
+        if not index_available:
+            # **印が無いことを「返していない」にしない**（設計 v2 §4.4）。
+            print(f"  印: 出せません——{why}")
+        else:
+            print(f"  印: [返信済]=posted ／ [承認済]=approved ／ [下書き]=draft"
+                  f"（同じ account の queue に `reply_to: <post_id>` を持つ原稿"
+                  f"・{lookup['n']} 件）。印の無い行は、この queue に原稿が"
+                  f"見当たらないという意味です。")
+        print("  絡む道: 下書きに `reply_to: <post_id>` → `thth lint` → "
+              "`thth approve`（二段）→ `thth throw` → `thth collect`。")
+    print("")
+    print("  この材料で `thth topics <account> --note <語> --status ok "
+          "--audience \"…\" --verdict … --by …` を記録するのは人です"
+          "（道具は材料を並べるだけ・観測は人の目）。")
+    return 0
 
 
 # ---------------------------------------------------------------- mentions
@@ -628,35 +642,42 @@ def cmd_mentions(args) -> int:
     observed = None
     as_json = bool(args.json)
 
+    limit = getattr(args, "limit", None)
+
     def call(adapter):
         nonlocal observed
         result = mentions_call(adapter, account, since=args.since)
         observed = len(result)
-        return result
+        return result[:limit] if limit else result
 
     def render(rows):
         if as_json:
             print(json.dumps(mentions_json(account, rows), ensure_ascii=False, indent=2))
             return 0
-        print(f"{account}  言及 {len(rows)} 件（全頁・読むだけ。"
-              f"SNS 台帳には追記しません）")
-        for r in rows:
-            stamp = r.get("timestamp") or "—"
-            who = r.get("username") or "—"
-            mid = r.get("message_id") or "—"
-            print(f"  {stamp}  @{_pad(who, 16)} {mid}  {_one_line(r.get('text'))}")
-            if r.get("permalink"):
-                print(f"      {r['permalink']}")
-        if not rows:
-            print("  （取得できた言及は 0 件です）")
-        else:
-            print("  返信は既存の門（queue の `reply_to: <message_id>`）を通します。")
-        return 0
+        return show_mentions(account, rows)
 
     rc = _run(account, capability="mentions", call=call, as_json=as_json,
               render=render, narrowed_note=MENTIONS_NARROWED_NOTE)
     record_mentions_run(account, observed, rc)
     return rc
+
+
+def show_mentions(account: str, rows: list) -> int:
+    """`thth mentions` の人向けの表示（手元の道と遠くの道が共有・`--json` の `mentions` を受ける）。"""
+    print(f"{account}  言及 {len(rows)} 件（全頁・読むだけ。"
+          f"SNS 台帳には追記しません）")
+    for r in rows:
+        stamp = r.get("timestamp") or "—"
+        who = r.get("username") or "—"
+        mid = r.get("message_id") or "—"
+        print(f"  {stamp}  @{_pad(who, 16)} {mid}  {_one_line(r.get('text'))}")
+        if r.get("permalink"):
+            print(f"      {r['permalink']}")
+    if not rows:
+        print("  （取得できた言及は 0 件です）")
+    else:
+        print("  返信は既存の門（queue の `reply_to: <message_id>`）を通します。")
+    return 0
 
 
 # ---------------------------------------------------------------- profile
@@ -685,18 +706,23 @@ def cmd_profile(args) -> int:
         if as_json:
             print(json.dumps(profile_json(account, profile), ensure_ascii=False, indent=2))
             return 0
-        print(f"{account}  プロフィール @{profile.get('username')}")
-        for key, label in (("name", "名前"), ("biography", "自己紹介"),
-                           ("follower_count", "フォロワー"), ("is_verified", "認証"),
-                           ("likes_count", "いいね（累計）"), ("views_count", "表示（累計）"),
-                           ("reposts_count", "再投稿（累計）"), ("quotes_count", "引用（累計）"),
-                           ("profile_picture_url", "画像")):
-            if key in profile:
-                value = profile[key]
-                if key == "biography":
-                    value = _one_line(value, 200)
-                print(f"  {_pad(label, 14)}: {value}")
-        return 0
+        return show_profile(account, profile)
 
     return _run(account, capability="profile_lookup", call=call, as_json=as_json,
                 render=render, narrowed_note=STANDARD_ACCESS_NOTE)
+
+
+def show_profile(account: str, profile: dict) -> int:
+    """`thth profile` の人向けの表示（手元の道と遠くの道が共有・`--json` の `profile` を受ける）。"""
+    print(f"{account}  プロフィール @{profile.get('username')}")
+    for key, label in (("name", "名前"), ("biography", "自己紹介"),
+                       ("follower_count", "フォロワー"), ("is_verified", "認証"),
+                       ("likes_count", "いいね（累計）"), ("views_count", "表示（累計）"),
+                       ("reposts_count", "再投稿（累計）"), ("quotes_count", "引用（累計）"),
+                       ("profile_picture_url", "画像")):
+        if key in profile:
+            value = profile[key]
+            if key == "biography":
+                value = _one_line(value, 200)
+            print(f"  {_pad(label, 14)}: {value}")
+    return 0
