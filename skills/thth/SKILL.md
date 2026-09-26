@@ -47,7 +47,8 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 
 - 道具: `thth_send_request`（`thth send`・その場で出て post_id とリンクが返る）、`thth_schedule_request`（`thth schedule --at`）、`thth_retract_request`（`thth retract`）、`thth_posts`・`thth_replies`・`thth_measured`・`thth_collect`・`thth_mentions`・`thth_topics_search`・`thth_profile`・`thth_location_search`（読む）、`thth_account_status`・`thth_settings`（状態・安全装置は締める向きだけ）、`thth_draft_list`。account は本人の口座だけ。actor/by/person/confirm/digest/ファイルパスを引数に加えない。
 - **鍵と secret を聞かない・入力しない・会話へ貼らせない。** 鍵は `thth login` が手元に置き、`thth` 命令だけが使う。あなたは鍵を知らなくてよい。
-- 断りは 1 語の符丁＋次の一手: `too_soon`（`next_at` まで待つ・返信は掛からない）・`daily_limit`・`retract_limit`・`quiet_hours`・`account_stopped`（本人が https://thth.me/activity で戻す。あなたからは戻せない）・`key_expired`／`invalid_key`（本人が /activity で発行し直して `thth login`）・`remote_unsupported`（その命令は遠くの道に無い: `throw`・`run`・`auth`・添付など）・`remote_unavailable`（thth.me に届かない・少し待つ）・`remote_pending`（90 秒待っても返らない・`thth account status` で確かめる）。自動で再依頼・再公開しない。
+- `thth login` は本人がブラウザで許可する形（3.14.2）: ターミナルに出た `https://thth.me/login/XXXX-XXXX` を本人が開き、口座名と口座の secret を入れて「この機械に鍵を渡す」を押す。鍵を貼る作業は無い。あなたが代わりに許可したり、secret を聞いたりしない。
+- 断りは 1 語の符丁＋次の一手: `too_soon`（`next_at` まで待つ・返信は掛からない）・`daily_limit`・`retract_limit`・`quiet_hours`・`account_stopped`（本人が https://thth.me/activity で戻す。あなたからは戻せない）・`key_expired`／`invalid_key`（本人が `thth login` をやり直す・ブラウザで許可すると発行し直す）・`remote_unsupported`（その命令は遠くの道に無い: `throw`・`run`・`auth`・添付など）・`remote_unavailable`（thth.me に届かない・少し待つ）・`remote_pending`（90 秒待っても返らない・`thth account status` で確かめる）。自動で再依頼・再公開しない。
 - 出す前に本文を見たいと本人が言えば、`thth send --dry-run`（lint だけ・下書きが 1 本残る）か本文をそのまま見せてから `thth_send_request` を呼ぶ。THTH の側に承認の関所は無い。
 - 添付（画像）は遠くの道ではまだ使えない（`remote_unsupported`）。
 - 運営者向けの管理設定は `docs/運用_招待する側.md`。無 credential の手元の MCP（自分の repo の queue）とは別の入口。
