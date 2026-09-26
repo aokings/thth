@@ -19,12 +19,12 @@ before(async()=>{
   directory=await realpath(await mkdtemp(join(tmpdir(),'thth-activity-vm-')));key=join(directory,'signer.key');
   await writeFile(key,crypto(['genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072']),{mode:0o600});
   const publicKey=crypto(['pkey','-in',key,'-pubout','-outform','DER']).toString('base64url');
-  const files=['src/worker.js','src/invite.js','src/invite-object.js','src/activity.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/person.js','src/person-object.js','src/deletion.js','src/deletion-object.js'];
+  const files=['src/worker.js','src/invite.js','src/invite-object.js','src/activity.js','src/api.js','src/media.js','src/media-object.js','src/index.js','src/relay.js','src/relay-object.js','src/person.js','src/person-object.js','src/deletion.js','src/deletion-object.js'];
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,log:new SilentLog(),
     bindings:{RELAY_PUBLIC_KEY:publicKey},
     durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},PERSON:{className:'Person',useSQLite:true},ACCOUNT:{className:'Account',useSQLite:true},MEDIA_OBJECT:{className:'MediaObject',useSQLite:true},INVITE_OBJECT:{className:'InviteObject',useSQLite:true},DELETION_INBOX:{className:'DeletionInbox',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
-    ratelimits:{AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:1000,period:60}},RELAY_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:1000,period:60}},RELAY_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:1000,period:60}},RELAY_JOB_LIMIT:{namespace_id:'21203',simple:{limit:1000,period:60}}}}));
+    ratelimits:{AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:1000,period:60}},RELAY_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:1000,period:60}},RELAY_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:1000,period:60}},RELAY_JOB_LIMIT:{namespace_id:'21203',simple:{limit:1000,period:60}},API_KEY_LIMIT:{namespace_id:'21401',simple:{limit:60,period:60}}}}));
   origin=String(await mf.ready).replace(/\/$/,'');
 });
 after(async()=>{await mf?.dispose();await rm(directory,{recursive:true,force:true});});
@@ -69,4 +69,13 @@ test('VM pushes the summary through the real signer; the owner stops, tightens a
   assert.ok(html.includes('済み / Done')&&!html.includes(bearer));
   assert.equal((await post({act:'resume',account,secret},cookie)).status,200);
   assert.equal(vm('run').stopped,null);
+  // 3.14.0 遠くの道: VM が押し上げた鍵の表で Worker が照合し、依頼は次の sync で VM が行い、結果が保留中の応答に返る。
+  const call=(operation,key)=>fetch(origin+'/api/v1/'+operation,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+key},body:JSON.stringify({account})});
+  assert.equal((await call('draft_list',opaque())).status,401);
+  const listed=call('draft_list',bearer),posts=call('posts',bearer);
+  await new Promise(resolve=>setTimeout(resolve,500));
+  vm('run');
+  const [a,b]=await Promise.all([listed,posts]);
+  assert.equal(a.status,200);assert.deepEqual(await a.json(),{account,drafts:[]});
+  assert.equal(b.status,200);assert.deepEqual(await b.json(),{error:'unsupported_operation'});
 });

@@ -24,7 +24,8 @@ export default {async fetch(request,env){
 }};
 
 export class TestAccount extends Account {
-  configure(body){this.fault=body.fault;}
+  now(){return this.clock??Date.now();}
+  async configure(body){this.fault=body.fault;this.clock=body.clock;if(body.alarm)await this.alarm();}
   put(key,value){super.put(key,value);if(this.fault)throw new Error('synthetic_storage_failure');}
   inspect(){return [...this.ctx.storage.kv.list()];}
 }

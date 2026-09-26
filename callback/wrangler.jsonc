@@ -13,7 +13,9 @@
                   "simple": {"limit": 120, "period": 60}},
     {"name":"RELAY_PUBLIC_LIMIT","namespace_id":"21201","simple":{"limit":120,"period":60}},
     {"name":"RELAY_VERIFY_LIMIT","namespace_id":"21202","simple":{"limit":600,"period":60}},
-    {"name":"RELAY_JOB_LIMIT","namespace_id":"21203","simple":{"limit":180,"period":60}}],
+    {"name":"RELAY_JOB_LIMIT","namespace_id":"21203","simple":{"limit":180,"period":60}},
+    // 3.14.0 遠くの道（/api/v1/*）: 鍵（bearer の sha256）ごとに 60 回／分。IP は RELAY_PUBLIC_LIMIT（120 回／分）。
+    {"name":"API_KEY_LIMIT","namespace_id":"21401","simple":{"limit":60,"period":60}}],
   // thth.me を Worker の custom domain にする（DNS レコードは wrangler が作る）。
   "routes": [
     { "pattern": "thth.me", "custom_domain": true }
@@ -24,12 +26,13 @@
   // 通常は assets 優先。認可・relay・延期中metadata は Worker を先に通す。
   // VM→Worker の署名つき relay は 3.13.0 で /approval/* から /relay/v/*（/relay/* に含まれる）へ。
   // /approval/* は 3.12.0 の VM が deploy の間に叩くので 1 版の間だけ残す。
+  // 3.14.0: 遠くの道の /api/*（CLI が鍵で叩く）も Worker を先に通す。
   // 3.13.0: DO の class と binding の名前を改めた（ApprovalPerson → Person・ApprovalAccount → Account。
   // migration v7-rename-person の renamed_classes で中身はそのまま）。回数制限は名前だけ改め、namespace_id は変えない。
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "run_worker_first": ["/media/*", "/media-upload/*", "/m/*", "/data-deletion", "/data-deletion-status", "/approve/*", "/approval/*", "/pending", "/pending/*", "/activity", "/activity/*", "/invite/*", "/relay/*", "/callback", "/callback/*", "/oauth/client-metadata.json"]
+    "run_worker_first": ["/media/*", "/media-upload/*", "/m/*", "/data-deletion", "/data-deletion-status", "/approve/*", "/approval/*", "/pending", "/pending/*", "/activity", "/activity/*", "/invite/*", "/relay/*", "/api/*", "/callback", "/callback/*", "/oauth/client-metadata.json"]
   },
   // observability は有効にしない。認可コードはクエリに乗るので、
   // ログに残す動機を最初から作らない（設計 §3.6 の礼儀と同じ趣旨）。

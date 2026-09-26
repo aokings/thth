@@ -9,6 +9,8 @@ export const TTL = 600_000;       // /activity に入った session（cookie）�
 export const LIST_LOCK_MS = 900_000; // /activity に入る secret を 5 回間違えたら 15 分閉じる（時間で戻る）
 export const VIEW_MAX = 8;       // 1 人の /activity の session（ブラウザ）の上限
 export const ITERATIONS = 100_000; // Workers WebCrypto caps PBKDF2 at 100,000 iterations (production NotSupportedError above it).
+// 遠くの道（3.14.0）: 1 回の sync で VM に渡す依頼の数と大きさの上限。
+export const API_HANDOFF_MAX = 16, API_HANDOFF_BYTES = 786_432;
 const encoder = new TextEncoder();
 export const fail = (status=400, error='invalid_request') => ({status, body:{error}});
 export const opaque = () => b64(crypto.getRandomValues(new Uint8Array(32)));
@@ -95,15 +97,35 @@ export async function relayRequest(request,env,url) {
        type==='invite'?!HASH_PATTERN.test(subject)||!['create','status','authorize','reset','complete','revoke'].includes(operation):type==='deletion'?!(subject==='inbox'&&operation==='list'||STATE_PATTERN.test(subject)&&['read','verify','complete','discard'].includes(operation)):type==='account'?!PERSON.test(subject)||!['revoke','status','cleanup-retry'].includes(operation):!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation))return reply(400,{error:'invalid_request'});
     if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(400,{error:'invalid_request'});
     if(!env.RELAY_VERIFY_LIMIT || !(await env.RELAY_VERIFY_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
-    // 動きの一覧の sync は口座 8 つ×30 行の要約を運ぶ（本文は先頭 60 字だけ）。他は 64 KiB。
-    const cap=type==='activity'?131_072:65_536;
+    // 動きの一覧の sync は口座 8 つ×30 行の要約（本文は先頭 60 字だけ）と、3.14.0 からは /api/v1 の
+    // 結果（1 件 128 KiB まで）を運ぶ。他は 64 KiB。
+    const cap=type==='activity'?1_048_576:65_536;
     const raw=await boundedBody(request,cap), ticket=await authenticate(request,env,url,raw,'operator',subject,operation);
     if(!ticket)return reply(401,{error:'unauthorized'});
     if(!env.RELAY_JOB_LIMIT || !(await env.RELAY_JOB_LIMIT.limit({key:await digest(type+'/'+subject)})).success)return reply(429,{error:'rate_limited'});
     const body=JSON.parse(raw);
-    if(type==='activity'){const result=await (await personStub(env,subject)).activitySync(body,ticket);return reply(result.status,result.body);}
+    if(type==='activity')return activityRelay(env,subject,body,ticket);
     const stub=type==='invite'?inviteStub(env,subject):type==='deletion'?deletionStub(env):type==='account'?await accountStub(env,subject):await personStub(env,subject);
     const result=await stub.manage(operation,body,ticket,subject);
     return reply(result.status,result.body);
   }catch{return reply(503,{error:'relay_unavailable'});}
+}
+
+// 動きの一覧の sync（3.12.0 §3.4）と遠くの道の受け渡し（3.14.0 §3.1）。Person DO が鍵の表を置き替え、
+// 表に載る口座の束ごとに「その持ち主の鍵の表・結果」を渡して、待っている依頼を受け取る。
+// 3.13.0 の VM（`keys` を載せない）には依頼を渡さない（応答の形も今のまま）。
+async function activityRelay(env,person,body,ticket){
+  const result=await (await personStub(env,person)).activitySync(body,ticket);
+  if(result.status!==200||!result.exchange)return reply(result.status,result.body);
+  const requests=[];
+  for(const [account,keys] of Object.entries(result.exchange)){
+    const results=body.results.filter(r=>r.account===account);
+    try{
+      const got=await (await accountStub(env,account)).apiExchange(person,keys,results);
+      if(got.status===200)requests.push(...got.body.requests);
+    }catch{/* 口座の束が今は使えない: その口座の依頼は次の sync で渡す（結果も VM がもう一度送る）。 */}
+  }
+  let size=0;
+  const handed=requests.filter(item=>(size+=JSON.stringify(item).length)<=API_HANDOFF_BYTES).slice(0,API_HANDOFF_MAX);
+  return reply(200,{...result.body,requests:handed});
 }

@@ -17,6 +17,9 @@
 
 鍵の発行し直し（rotate）は、Worker が bearer を作って持ち主の画面に 1 度だけ出し、**hash だけ**を
 ここへ渡す。VM も hash だけを資格情報のファイルに書く（期限は 365 日・変更ログ `credential_rotated`）。
+
+3.14.0（遠くの道・§3.1）: 同じ sync に、その人の**有効な鍵の表**（hash・口座・期限）と /api/v1 の依頼の
+結果を載せ、応答で待っている依頼を受け取る（`api_requests`）。依頼があれば次の sync を 2 秒後にする。
 """
 from __future__ import annotations
 
@@ -35,6 +38,7 @@ ROWS_MAX = 30
 ACCOUNTS_MAX = 8
 ACTIONS_MAX = 16
 SYNC_SECONDS = 10
+BUSY_SECONDS = 2   # /api/v1 の依頼が待っているあいだの刻み（設計 3.14.0 §3.1）
 BACKOFF_SECONDS = 300
 CREDENTIAL_DAYS = 365
 KINDS = ("stop", "resume", "cancel", "settings", "revoke", "rotate")
@@ -46,6 +50,7 @@ ACTION_REASONS = frozenset((
     "draft_not_verified", "schedule_commit_unconfirmed", "ledger_unavailable",
 ))
 _next_sync = {}
+_legacy = {}   # 3.14.0 の sync の形を断った Worker（3.13.0）と話している人 → 古い形で話す期限
 
 
 # --------------------------------------------------------------------------
@@ -333,23 +338,61 @@ def _summaries(person, names, credentials_path):
     return out
 
 
-def sync_person(person, names, credentials_path):
+def _push(person, names, credentials_path, completed, keys, results):
+    """1 回の sync。`keys` が None なら 3.13.0 の形（鍵の表・結果を載せない）。
+
+    3.14.0 の形を古い Worker（3.13.0）が 400 で断ったら、今の形で送り直し、しばらく古い形で話す
+    （deploy は Worker が先だが、逆でも /activity を止めない）。戻り値は (応答, 3.14.0 の形で届いたか)。
+    """
+    body = {"accounts": _summaries(person, names, credentials_path), "completed": completed}
+    if keys is None:
+        return relay.signed_request("activity", person, "sync", body), False
+    try:
+        return relay.signed_request("activity", person, "sync", {**body, "keys": keys, "results": results}), True
+    except relay.RelayError as exc:
+        if exc.status != 400:
+            raise
+    _legacy[person] = time.monotonic() + BACKOFF_SECONDS
+    return relay.signed_request("activity", person, "sync", body), False
+
+
+def _sync(person, names, credentials_path):
+    """要約を押し上げ、/activity の操作と /api/v1 の依頼を行い、結果を押し上げる。
+
+    戻り値は (操作の結果, 依頼が待っていたか)。依頼があれば常駐は次の巡を 2 秒後にする。
+    """
+    from . import api_requests
     # Worker の口座名の形（PERSON）に合わない名前は押し上げない（1 つで sync 全体が断られないように）。
     names = sorted(name for name in names if relay.PERSON.fullmatch(name))[:ACCOUNTS_MAX]
-    value = relay.signed_request("activity", person, "sync",
-                                 {"accounts": _summaries(person, names, credentials_path), "completed": []})
+    keys = api_requests.key_table(person, credentials_path) if time.monotonic() >= _legacy.get(person, 0) else None
+    keyed = sorted({row["account"] for row in keys or []})
+    leftovers = api_requests.batch(api_requests.undelivered(keyed)) if keys is not None else []
+    value, extended = _push(person, names, credentials_path, [], keys, leftovers)
+    if extended:
+        api_requests.delivered(leftovers)
     actions = value.get("actions") if isinstance(value, dict) else None
     if not isinstance(actions, list):
         raise relay.RelayError("relay_invalid")
+    # 古い Worker の応答には requests が無い（何もしない）。
+    requests = value.get("requests") if extended else None
+    requests = requests[:api_requests.REQUESTS_MAX] if isinstance(requests, list) else []
     completed = [row for row in (apply(person, action, credentials_path) for action in actions[:ACTIONS_MAX]) if row]
-    if completed:
-        relay.signed_request("activity", person, "sync",
-                             {"accounts": _summaries(person, names, credentials_path), "completed": completed})
-    return completed
+    results = [row for row in (api_requests.handle(person, item, credentials_path) for item in requests) if row]
+    sent = api_requests.batch(results)
+    if completed or sent:
+        _, extended = _push(person, names, credentials_path, completed, keys if extended else None, sent)
+        if extended:
+            api_requests.delivered(sent)
+    return completed, bool(requests) or len(sent) < len(results)
+
+
+def sync_person(person, names, credentials_path):
+    return _sync(person, names, credentials_path)[0]
 
 
 def run_once(credentials_path):
-    """`thth worker` の 1 巡から呼ぶ。人ごとに 10 秒に 1 回（Worker に人が無ければ 5 分待つ）。"""
+    """`thth worker` の 1 巡から呼ぶ。人ごとに 10 秒に 1 回、/api/v1 の依頼が待っていれば 2 秒に 1 回
+    （Worker に人が無ければ 5 分待つ）。"""
     if time.monotonic() < _next_sync.get("", 0):
         return
     _next_sync[""] = time.monotonic() + SYNC_SECONDS
@@ -358,15 +401,19 @@ def run_once(credentials_path):
     except Exception:
         print("activity_owners_unavailable", file=sys.stderr)
         return
+    busy = False
     for person in sorted(people):
         if time.monotonic() < _next_sync.get(person, 0):
             continue
         try:
-            sync_person(person, people[person], credentials_path)
-            _next_sync[person] = time.monotonic() + SYNC_SECONDS
+            _, pending = _sync(person, people[person], credentials_path)
+            _next_sync[person] = time.monotonic() + (BUSY_SECONDS if pending else SYNC_SECONDS)
+            busy = busy or pending
         except relay.RelayError as exc:
             _next_sync[person] = time.monotonic() + (BACKOFF_SECONDS if exc.status in (400, 404, 409, 410)
                                                      else SYNC_SECONDS * 3)
         except Exception:
             print("activity_sync_failed", file=sys.stderr)
             _next_sync[person] = time.monotonic() + SYNC_SECONDS * 3
+    if busy:
+        _next_sync[""] = time.monotonic() + BUSY_SECONDS
