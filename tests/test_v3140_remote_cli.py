@@ -476,3 +476,13 @@ def test_mcp_から_cli_を通って偽の_worker_に届く(worker):
     result = server.call_tool("thth_posts", {"account": ACCOUNT})
     assert result["isError"] is True and "key_expired" in result["content"][0]["text"]
     assert KEY not in json.dumps(result)
+
+
+def test_200の答えの_error_がnullなら断りではない():
+    """`posts` は正常でも `"error": null` の欄を持つ（`thth posts --json` の形）。符丁の文字列のときだけ断り。"""
+    from thth import remote
+    value = {"account": "a", "error": None, "posts": [], "retracted": []}
+    assert remote._answer(200, value) is value
+    with pytest.raises(remote.RemoteError) as caught:
+        remote._answer(200, {"error": "too_soon", "next_at": "2026-09-27T09:00:00+09:00"})
+    assert str(caught.value) == "too_soon"

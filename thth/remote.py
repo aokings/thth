@@ -193,7 +193,9 @@ def _text(value, limit=200):
 def _answer(status, value):
     """200 の答え（断りなら `RemoteError`）。"""
     if status == 200:
-        if "error" in value:
+        # 断りは `error` が符丁の文字列のとき。`posts` のように `"error": null` の欄を持つ正常な答えは通す
+        # （3.14.0 で `posts` だけ request_failed になっていた・09-26 masaru の通し確認）。
+        if isinstance(value.get("error"), str) and value["error"]:
             raise RemoteError(_code(value.get("error"), "request_failed"), reason=_text(value.get("reason")),
                               next_at=value.get("next_at") if isinstance(value.get("next_at"), str) else None)
         return value
