@@ -167,7 +167,7 @@ def test_AdapterErrorの枝は素のRuntimeErrorに食われない():
 
     for mod, func_name in (
         (thread_read_mod, "cmd_thread"),
-        (threads_read_cli_mod, "_run"),
+        (threads_read_cli_mod, "_fetch"),  # `_run` の中身は `_fetch`（3.14.0 で読む口と共有）
         (where_cli_mod, "_account_node"),
         (who_cli_mod, "_profile_for"),
     ):

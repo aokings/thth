@@ -69,6 +69,11 @@ def execute_report(context: ReportContext, request: dict) -> dict:
     if operation in ('draft_list', 'queue'):
         from .server_writes import read
         return read(context, request)
+    from .server_reads import OPERATIONS as READ_OPERATIONS
+    if operation in READ_OPERATIONS:
+        # 利用者 scope の読む口（設計 3.14.0 §3.2）。CLI の `--json` と同じ形。
+        from .server_reads import execute as execute_read
+        return execute_read(context, request)
     if isinstance(operation, str) and operation.startswith("admin_"):
         if context.scope != "admin":
             raise ReportServiceError("unsupported_operation")

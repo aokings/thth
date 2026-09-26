@@ -684,6 +684,49 @@ SERVER_TOOLS += [
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"}},
                     "required":["account"],"additionalProperties":False}},
 ]
+# 読む口（設計 3.14.0 §3.2）。CLI の読む命令の写し（`--json` と同じ形を返す）。
+# `WRITE_OPERATIONS` ではないので `writes: false` の資格でも出る。
+_READ_LIMIT = {"type":"integer","description":"先頭から何件（省略 20・1〜100）"}
+SERVER_TOOLS += [
+    {"name":"thth_posts",
+     "description":"自分の投稿の一覧（thth posts --json と同じ形）",
+     "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"limit":_READ_LIMIT,
+                    "refresh":{"type":"boolean"}},
+                    "required":["account"],"additionalProperties":False}},
+    {"name":"thth_replies",
+     "description":"自分の投稿への返信（thth replies --json と同じ形・refresh で媒体から取り直してから）",
+     "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"limit":_READ_LIMIT,
+                    "refresh":{"type":"boolean"},"post_id":{"type":"string"}},
+                    "required":["account"],"additionalProperties":False}},
+    {"name":"thth_measured",
+     "description":"数字を記録から読む（thth measured --json と同じ形）",
+     "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"limit":_READ_LIMIT,
+                    "post_id":{"type":"string"}},
+                    "required":["account"],"additionalProperties":False}},
+    {"name":"thth_collect",
+     "description":"媒体から数字と返信を採ってから thth_measured と同じ形を返す（口座ごとに 10 分に 1 回まで・超えたら collect_too_soon と next_at）",
+     "inputSchema":{"type":"object","properties":{"account":{"type":"string"}},
+                    "required":["account"],"additionalProperties":False}},
+    {"name":"thth_mentions",
+     "description":"自分への言及（thth mentions --json と同じ形）",
+     "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"limit":_READ_LIMIT,
+                    "refresh":{"type":"boolean"}},
+                    "required":["account"],"additionalProperties":False}},
+    {"name":"thth_topics_search",
+     "description":"語で公開投稿を検索する（thth topics --search --json と同じ形・集計と指す先だけで本文は返さない・保存しない）",
+     "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"query":{"type":"string"},
+                    "limit":_READ_LIMIT},
+                    "required":["account","query"],"additionalProperties":False}},
+    {"name":"thth_profile",
+     "description":"公開プロフィール（thth profile --json と同じ形・保存しない）",
+     "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"username":{"type":"string"}},
+                    "required":["account","username"],"additionalProperties":False}},
+    {"name":"thth_location_search",
+     "description":"場所の候補（thth location search --json と同じ形）",
+     "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"query":{"type":"string"}},
+                    "required":["account","query"],"additionalProperties":False}},
+]
+del _READ_LIMIT
 # `media` だけは配列（`[{media_id, alt}]`・alt は必須）。
 for _tool in SERVER_TOOLS:
     if _tool["name"] == "thth_draft_put":
@@ -951,6 +994,13 @@ def server_call(name, arguments):
             elif isinstance(getattr(exc,'next_at',None),str):
                 text+=': next_at='+exc.next_at
             return failure(text)
+        if str(exc)=='collect_too_soon' and isinstance(getattr(exc,'next_at',None),str):
+            # 読む口の採取の間隔（設計 3.14.0 §3.2）: 次に採れる時刻を添える。
+            return failure('collect_too_soon: next_at='+exc.next_at)
+        if str(exc)=='upstream_unavailable':
+            # 媒体の返した短い理由（秘密・URL・path は落としてある）か静的な理由。
+            detail=getattr(exc,'reason',None)
+            return failure('upstream_unavailable'+(': '+detail if isinstance(detail,str) and detail else ''))
         if str(exc)=='invalid_draft':
             # 理由は静的な符丁の表にあるものだけ。lint の自由文は通さない。
             detail=getattr(exc,'reason',None)

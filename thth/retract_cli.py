@@ -95,34 +95,63 @@ def _not_granted(account_name: str, e: adapter_base.PermissionMissing) -> str:
 # thth location search
 # --------------------------------------------------------------------------
 
-def cmd_location(args) -> int:
-    """`thth location search <account> <語>`: 候補を 5 件まで名前と id で。読むだけ。"""
+class LocationFailed(Exception):
+    """場所の検索を断った（`location_rows()` が投げる）。`rc` は CLI の終了コード。
+
+    `kind` はサーバの読む口が静的な符丁に写すための種類（`account`・`unsupported`・
+    `no_token`・`not_granted`・`upstream`）。
+    """
+
+    def __init__(self, rc: int, message: str, kind: str):
+        super().__init__(message)
+        self.rc = rc
+        self.message = message
+        self.kind = kind
+
+
+def location_rows(account_name: str, query: str) -> list:
+    """場所の候補を引く（CLI とサーバの読む口が共有）。断りは `LocationFailed`。"""
     try:
-        account_cfg = accounts_mod.load_account(args.account)
+        account_cfg = accounts_mod.load_account(account_name)
     except accounts_mod.AccountError as e:
-        return _fail(args, 2, str(e))
+        raise LocationFailed(2, str(e), "account") from None
     adapter_cls = adapters_mod.adapter_class(account_cfg.get("media"))
     permission = getattr(adapter_cls, "LOCATION_PERMISSION", None)
     if not permission:
-        return _fail(args, 2, f"{account_cfg.get('media')}: この媒体に場所の検索はありません")
+        raise LocationFailed(2, f"{account_cfg.get('media')}: この媒体に場所の検索はありません",
+                             "unsupported")
     token = accounts_mod.load_token(account_cfg)
     if not adapter_cls.has_token(token):
-        return _fail(args, 2, f"{args.account}: token がありません（{adapter_cls.TOKEN_SETUP_HINT}）")
+        raise LocationFailed(2, f"{account_name}: token がありません（{adapter_cls.TOKEN_SETUP_HINT}）",
+                             "no_token")
     missing = adapter_cls.missing_permissions(token, [permission])
     if missing:
-        return _fail(args, 2, adapter_base.not_granted_message(missing[0]).replace(
-            "<account>", args.account))
+        raise LocationFailed(2, adapter_base.not_granted_message(missing[0]).replace(
+            "<account>", account_name), "not_granted")
     try:
         adapter = adapters_mod.make_adapter(account_cfg, token)
-        rows = adapter.location_search(args.query, limit=LOCATION_LIMIT)
+        return adapter.location_search(query, limit=LOCATION_LIMIT)
     except adapter_base.PermissionMissing as e:
-        return _fail(args, 2, _not_granted(args.account, e))
+        raise LocationFailed(2, _not_granted(account_name, e), "not_granted") from None
     except Exception as e:
-        return _fail(args, 1, "場所の検索に失敗しました: " + redact_mod.redact(str(e)))
+        raise LocationFailed(1, "場所の検索に失敗しました: " + redact_mod.redact(str(e)),
+                             "upstream") from None
+
+
+def location_json(account_name: str, query: str, rows: list) -> dict:
+    """`thth location search --json` の形。"""
+    return {"ok": True, "account": account_name, "query": query, "locations": rows}
+
+
+def cmd_location(args) -> int:
+    """`thth location search <account> <語>`: 候補を 5 件まで名前と id で。読むだけ。"""
+    try:
+        rows = location_rows(args.account, args.query)
+    except LocationFailed as failed:
+        return _fail(args, failed.rc, failed.message)
 
     if args.json:
-        _print_json({"ok": True, "account": args.account, "query": args.query,
-                     "locations": rows})
+        _print_json(location_json(args.account, args.query, rows))
         return 0
     if not rows:
         print(f"「{args.query}」に一致する場所はありませんでした（0 件）")

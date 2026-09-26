@@ -199,9 +199,26 @@ def _narrowed_by_standard_access(account: str, e: adapter_base.PermissionMissing
             + (f"（{e.detail}）" if e.detail else ""))
 
 
-def _run(account: str, *, capability: str, call, as_json: bool, render,
-          narrowed_note: str | None = None) -> int:
-    """口を 1 つ叩いて出す。失敗の種類ごとに rc を分ける（module docstring）。
+class ReadFailed(Exception):
+    """口を叩けなかった（`_fetch()` が投げる）。CLI とサーバの読む口が同じ分け方で断る。
+
+    - `rc` … CLI の終了コード（module docstring）。
+    - `message` … CLI が出す 1 行（人向け）。
+    - `payload` … `--json` のときに出す dict。None なら `--json` でも stderr に 1 行。
+    - `kind` … 断りの種類（`account`・`unsupported`・`no_token`・`not_granted`・
+      `narrowed`・`upstream`）。サーバの読む口が静的な符丁に写すのに使う。
+    """
+
+    def __init__(self, rc: int, message: str, payload: dict | None, kind: str):
+        super().__init__(message)
+        self.rc = rc
+        self.message = message
+        self.payload = payload
+        self.kind = kind
+
+
+def _fetch(account: str, *, capability: str, call, narrowed_note: str | None = None):
+    """口を 1 つ叩いて結果を返す。失敗は `ReadFailed`（種類ごとに rc を分ける）。
 
     `narrowed_note` は「標準アクセスではこう絞られる」の 1 文（口ごとに違う）。
     **権限は乗っていると分かっている**ときの断りにだけ添える。
@@ -209,13 +226,16 @@ def _run(account: str, *, capability: str, call, as_json: bool, render,
     try:
         adapter, why = _adapter_for(account, capability=capability)
     except accounts_mod.AccountError as e:
-        print(str(e), file=sys.stderr)
-        return 1
+        raise ReadFailed(1, str(e), None, "account") from None
     if adapter is None:
-        print(why, file=sys.stderr)
-        return 1
+        try:
+            media = accounts_mod.load_account(account).get("media")
+        except accounts_mod.AccountError:
+            media = None
+        kind = "no_token" if capability in adapters_mod.capabilities_for(media) else "unsupported"
+        raise ReadFailed(1, why, None, kind)
     try:
-        result = call(adapter)
+        return call(adapter)
     except adapter_base.PermissionMissing as e:
         # **loud に断る**（受け入れ (c)）。500 を黙って返さない・0 件にしない。
         #
@@ -224,28 +244,18 @@ def _run(account: str, *, capability: str, call, as_json: bool, render,
         # 標準アクセスの話に切り替えて rc も 1（API が断った）にする。
         source = _granted_source(adapter, e.permission)
         if source is None:
-            message, rc = _not_granted(account, e), 2
+            message, rc, kind = _not_granted(account, e), 2, "not_granted"
         else:
             message = _narrowed_by_standard_access(account, e, source, narrowed_note)
-            rc = 1
-        if as_json:
-            print(json.dumps({"error": message, "permission": e.permission,
-                              "account": account,
-                              "granted": source is not None,
-                              "scopes_source": source,
-                              "standard_access": source is not None},
-                             ensure_ascii=False, indent=2))
-        else:
-            print(message, file=sys.stderr)
-        return rc
+            rc, kind = 1, "narrowed"
+        raise ReadFailed(rc, message, {"error": message, "permission": e.permission,
+                                       "account": account,
+                                       "granted": source is not None,
+                                       "scopes_source": source,
+                                       "standard_access": source is not None}, kind) from None
     except adapter_base.AdapterError as e:
         message = f"{account}: {redact_mod.redact(str(e))}"
-        if as_json:
-            print(json.dumps({"error": message, "account": account},
-                             ensure_ascii=False, indent=2))
-        else:
-            print(message, file=sys.stderr)
-        return 1
+        raise ReadFailed(1, message, {"error": message, "account": account}, "upstream") from None
     except RuntimeError as e:
         # **`AdapterError` ではない素の `RuntimeError`**（Bluesky の `_request`
         # 周りなど）を、`AdapterError` と同じ出し方で受ける（T9-2）。
@@ -253,12 +263,20 @@ def _run(account: str, *, capability: str, call, as_json: bool, render,
         # `except AdapterError` をすり抜けたものだけがここに来る。**adapter が
         # 投げる例外の型は変えない**——ここは受け口を増やすだけ。
         message = f"{account}: {redact_mod.redact(str(e))}"
-        if as_json:
-            print(json.dumps({"error": message, "account": account},
-                             ensure_ascii=False, indent=2))
+        raise ReadFailed(1, message, {"error": message, "account": account}, "upstream") from None
+
+
+def _run(account: str, *, capability: str, call, as_json: bool, render,
+          narrowed_note: str | None = None) -> int:
+    """口を 1 つ叩いて出す。失敗の種類ごとに rc を分ける（module docstring）。"""
+    try:
+        result = _fetch(account, capability=capability, call=call, narrowed_note=narrowed_note)
+    except ReadFailed as failed:
+        if as_json and failed.payload is not None:
+            print(json.dumps(failed.payload, ensure_ascii=False, indent=2))
         else:
-            print(message, file=sys.stderr)
-        return 1
+            print(failed.message, file=sys.stderr)
+        return failed.rc
     return render(result)
 
 
@@ -433,6 +451,48 @@ def _pct(ratio) -> str:
     return "—" if ratio is None else f"{ratio * 100:.0f}%"
 
 
+def search_call(adapter, account: str, q: str, *, search_type: str, limit: int):
+    """`--search` の API 呼び出し（CLI とサーバの読む口が共有）。本文は戻り値にだけ持つ。"""
+    rows = adapter.keyword_search(q, search_type=search_type, limit=limit)
+    tag_material = None
+    tag_reason = None
+    cfg = accounts_mod.load_account(account)
+    tag = q.lstrip("#")
+    try:
+        if cfg.get("media") == "bluesky":
+            tag_material = adapter.tag_search(
+                tag, tags=[tag], sort="latest" if search_type == "RECENT" else "top",
+                pages=cfg.get("search_pages", 4), limit=min(limit, 100))
+        elif cfg.get("media") == "mastodon":
+            tag_material = adapter.tag_observation(tag, limit=min(limit, 40))
+    except (adapter_base.AdapterError, RuntimeError, ValueError) as e:
+        tag_reason = str(e)
+    return rows, getattr(adapter, "KEYWORD_SEARCH_NOTE", None), tag_material, tag_reason
+
+
+def search_json(result, account: str, q: str, *, search_type: str, limit: int) -> dict:
+    """`thth topics --search --json` の形（CLI とサーバの読む口が共有）。**本文は入らない。**"""
+    rows, provider_note, tag_material, tag_reason = result
+    material = search_material(rows, q=q, search_type=search_type, limit=limit)
+    material["provider_note"] = provider_note
+    material["by_tag"] = [tag_material] if tag_material else []
+    material["tag_cannot_say"] = tag_reason
+    # **絡みに行く先**（設計 v2 §4.4）。台帳（queue）は**読むだけ**で、棚には
+    # 何も書かない——`post_id` は `topics.json` にも泉にも落ちない。
+    try:
+        index, why = replied_index(accounts_mod.load_account(account), account)
+    except accounts_mod.AccountError as e:
+        index, why = None, str(e)
+    material["posts"] = post_rows(rows, replied=index)
+    material["replied_lookup"] = {
+        "available": index is not None,
+        "reason": why,
+        "n": len(index) if index is not None else None,
+        "statuses": list(REPLIED_STATUSES),
+    }
+    return material
+
+
 def cmd_topics_search(args) -> int:
     """`thth topics <account> --search <語> [--recent] [--json]`。"""
     q = (args.search or "").strip()
@@ -449,42 +509,14 @@ def cmd_topics_search(args) -> int:
     as_json = bool(getattr(args, "json", False))
 
     def call(adapter):
-        rows = adapter.keyword_search(q, search_type=search_type, limit=limit)
-        tag_material = None
-        tag_reason = None
-        cfg = accounts_mod.load_account(account)
-        tag = q.lstrip("#")
-        try:
-            if cfg.get("media") == "bluesky":
-                tag_material = adapter.tag_search(
-                    tag, tags=[tag], sort="latest" if search_type == "RECENT" else "top",
-                    pages=cfg.get("search_pages", 4), limit=min(limit, 100))
-            elif cfg.get("media") == "mastodon":
-                tag_material = adapter.tag_observation(tag, limit=min(limit, 40))
-        except (adapter_base.AdapterError, RuntimeError, ValueError) as e:
-            tag_reason = str(e)
-        return rows, getattr(adapter, "KEYWORD_SEARCH_NOTE", None), tag_material, tag_reason
+        return search_call(adapter, account, q, search_type=search_type, limit=limit)
 
     def render(result):
         rows, provider_note, tag_material, tag_reason = result
-        material = search_material(rows, q=q, search_type=search_type, limit=limit)
-        material["provider_note"] = provider_note
-        material["by_tag"] = [tag_material] if tag_material else []
-        material["tag_cannot_say"] = tag_reason
-        # **絡みに行く先**（設計 v2 §4.4）。台帳（queue）は**読むだけ**で、棚には
-        # 何も書かない——`post_id` は `topics.json` にも泉にも落ちない。
-        try:
-            index, why = replied_index(accounts_mod.load_account(account), account)
-        except accounts_mod.AccountError as e:
-            index, why = None, str(e)
-        posts = post_rows(rows, replied=index)
-        material["posts"] = posts
-        material["replied_lookup"] = {
-            "available": index is not None,
-            "reason": why,
-            "n": len(index) if index is not None else None,
-            "statuses": list(REPLIED_STATUSES),
-        }
+        material = search_json(result, account, q, search_type=search_type, limit=limit)
+        posts = material["posts"]
+        lookup = material["replied_lookup"]
+        index_available, why = lookup["available"], lookup["reason"]
         if as_json:
             # **本文は出さない**（材料と、指す先だけ）。
             print(json.dumps(material, ensure_ascii=False, indent=2))
@@ -531,13 +563,13 @@ def cmd_topics_search(args) -> int:
             print("")
             print("  返信: 数が返る媒体は数、Threads の検索は `有`／`無` だけ"
                   "（数は返りません）。`—` は判らない（0 ではありません）。")
-            if index is None:
+            if not index_available:
                 # **印が無いことを「返していない」にしない**（設計 v2 §4.4）。
                 print(f"  印: 出せません——{why}")
             else:
                 print(f"  印: [返信済]=posted ／ [承認済]=approved ／ [下書き]=draft"
                       f"（同じ account の queue に `reply_to: <post_id>` を持つ原稿"
-                      f"・{len(index)} 件）。印の無い行は、この queue に原稿が"
+                      f"・{lookup['n']} 件）。印の無い行は、この queue に原稿が"
                       f"見当たらないという意味です。")
             print("  絡む道: 下書きに `reply_to: <post_id>` → `thth lint` → "
                   "`thth approve`（二段）→ `thth throw` → `thth collect`。")
@@ -553,36 +585,58 @@ def cmd_topics_search(args) -> int:
 
 # ---------------------------------------------------------------- mentions
 
+def mentions_call(adapter, account: str, *, since=None) -> list:
+    """言及を引いて「もう返した」印を付ける（CLI とサーバの読む口が共有）。**台帳には書かない。**"""
+    from . import thread_read
+    rows = adapter.mentions(since=since)
+    cfg = accounts_mod.load_account(account)
+    ledger, queue, unreadable = thread_read._already_replied_index(cfg, account)
+    result = []
+    for row in rows:
+        item = dict(row)
+        pid = row.get('message_id')
+        item.update(kind=row.get('kind') or 'mention', post_id=pid,
+                    author_key=row.get('author_key'), username=row.get('username'),
+                    timestamp=row.get('timestamp'), preview=_one_line(row.get('text')),
+                    replied=thread_read._already_replied_for(pid, ledger_by_reply_to=ledger,
+                        queue_index=queue, self_reply_by_parent={}, ledgers_unreadable=bool(unreadable)))
+        result.append(item)
+    return result
+
+
+def mentions_json(account: str, rows: list) -> dict:
+    """`thth mentions --json` の形。"""
+    return {"account": account, "n": len(rows), "mentions": rows}
+
+
+def record_mentions_run(account: str, observed, rc: int) -> None:
+    """`runs` に 1 行（`action: mentions`）。記録の失敗で答えを変えない。"""
+    from . import runs
+    try:
+        cfg = accounts_mod.load_account(account)
+        runs.record_minimal(account, dict(account=account, action='mentions', medium=cfg['media'],
+                            n=observed, status='ok' if rc == 0 else 'error',
+                            error=None if rc == 0 else 'mentions_failed'))
+    except (accounts_mod.AccountError, OSError, ValueError):
+        pass
+
+
 def cmd_mentions(args) -> int:
     """`thth mentions <account> [--since …] [--json]`。**台帳には書かない**
     （書くのは `collect` の `inbox` 経路）。"""
-    from . import thread_read, runs
     account = args.account
     observed = None
     as_json = bool(args.json)
 
     def call(adapter):
         nonlocal observed
-        rows = adapter.mentions(since=args.since)
-        cfg = accounts_mod.load_account(account)
-        ledger, queue, unreadable = thread_read._already_replied_index(cfg, account)
-        result = []
-        for row in rows:
-            item = dict(row)
-            pid = row.get('message_id')
-            item.update(kind=row.get('kind') or 'mention', post_id=pid,
-                        author_key=row.get('author_key'), username=row.get('username'),
-                        timestamp=row.get('timestamp'), preview=_one_line(row.get('text')),
-                        replied=thread_read._already_replied_for(pid, ledger_by_reply_to=ledger,
-                            queue_index=queue, self_reply_by_parent={}, ledgers_unreadable=bool(unreadable)))
-            result.append(item)
+        result = mentions_call(adapter, account, since=args.since)
         observed = len(result)
         return result
 
     def render(rows):
         if as_json:
-            print(json.dumps({"account": account, "n": len(rows), "mentions": rows},
-                             ensure_ascii=False, indent=2))
+            print(json.dumps(mentions_json(account, rows), ensure_ascii=False, indent=2))
             return 0
         print(f"{account}  言及 {len(rows)} 件（全頁・読むだけ。"
               f"SNS 台帳には追記しません）")
@@ -601,13 +655,7 @@ def cmd_mentions(args) -> int:
 
     rc = _run(account, capability="mentions", call=call, as_json=as_json,
               render=render, narrowed_note=MENTIONS_NARROWED_NOTE)
-    try:
-        cfg = accounts_mod.load_account(account)
-        runs.record_minimal(account, dict(account=account, action='mentions', medium=cfg['media'],
-                            n=observed, status='ok' if rc == 0 else 'error',
-                            error=None if rc == 0 else 'mentions_failed'))
-    except (accounts_mod.AccountError, OSError, ValueError):
-        pass
+    record_mentions_run(account, observed, rc)
     return rc
 
 
@@ -620,6 +668,11 @@ STANDARD_ACCESS_NOTE = ("標準アクセスでは Meta 公式の 4 つ（@meta�
                         "@facebook）しか引けません（公開かつフォロワー 100 以上のみ）。")
 
 
+def profile_json(account: str, profile) -> dict:
+    """`thth profile --json` の形。"""
+    return {"account": account, "profile": profile}
+
+
 def cmd_profile(args) -> int:
     """`thth profile <account> <username> [--json]`。"""
     account = args.account
@@ -630,8 +683,7 @@ def cmd_profile(args) -> int:
 
     def render(profile):
         if as_json:
-            print(json.dumps({"account": account, "profile": profile},
-                             ensure_ascii=False, indent=2))
+            print(json.dumps(profile_json(account, profile), ensure_ascii=False, indent=2))
             return 0
         print(f"{account}  プロフィール @{profile.get('username')}")
         for key, label in (("name", "名前"), ("biography", "自己紹介"),
