@@ -423,12 +423,18 @@ def execute(context, request, *, via='http'):
 def serve(context, request, *, via):
     """遠くの道（設計 3.14.0 §3.1）の受け付け: operation で書く口か読む口へ渡す。名前の表はここ（呼び手は持たない）。
 
-    書く口は `execute`、読む口は `READ_OPERATIONS`（`read`）。知らない名前は `unsupported_operation`。
-    読む口を足すとき（§3.2）はここに足す。
+    書く口は `execute`、下書きの読む口は `READ_OPERATIONS`（`read`）、§3.2 の読む口は `server_reads`、
+    状態と設定は `account_settings`（MCP と同じ関数）。知らない名前は `unsupported_operation`。
     """
     operation=request.get('operation') if type(request) is dict else None
     if operation in WRITE_OPERATIONS: return execute(context,request,via=via)
     if operation in READ_OPERATIONS: return read(context,request)
+    # 段 1 の読む口（設計 §3.2・`thth/server_reads.py`）と、状態・設定（MCP と同じ関数）。
+    from . import server_reads
+    if operation in server_reads.OPERATIONS: return server_reads.execute(context,request)
+    if operation in ('settings','account_status'):
+        from . import account_settings
+        return (account_settings.mcp_settings if operation=='settings' else account_settings.mcp_status)(context,request)
     error('unsupported_operation')
 
 

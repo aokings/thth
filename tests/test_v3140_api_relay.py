@@ -146,8 +146,8 @@ def test_読む口と知らないoperation(env, worker):
     worker.pending[shaped]["body"]["operation"] = "send_request"
     sync(env)
     assert worker.result(listed) == {"account": "alpha", "drafts": []}
-    # 班 A の読む口が入るまでは server_writes の受け付けが断る。
-    assert worker.result(posts) == {"error": "unsupported_operation"}
+    # 班 A の読む口（server_reads）に届く。この env は token を持たないので媒体で断られる（届いた証拠）。
+    assert worker.result(posts)["error"] == "upstream_unavailable"
     assert worker.result(shaped) == {"error": "invalid_request"}
 
 
@@ -288,3 +288,15 @@ def test_serveは書く口と読む口を分け_知らない名前は断る(env)
     with pytest.raises(ReportServiceError) as caught:
         writes.serve(env["context"], {"operation": "throw", "account": "alpha"}, via="api")
     assert str(caught.value) == "unsupported_operation"
+
+
+def test_serveは段1の読む口と状態設定にも渡す(env):
+    """合流点（設計 3.14.0 §3.1〜3.2）: `posts` 等は `server_reads`、`account_status`・`settings` は MCP と同じ関数。"""
+    from thth import server_reads
+    from thth.report_service import ReportServiceError
+    assert "posts" in server_reads.OPERATIONS
+    with pytest.raises(ReportServiceError) as caught:  # token の無い env: 媒体で断られる＝読む口に届いた
+        writes.serve(env["context"], {"operation": "posts", "account": "alpha"}, via="api")
+    assert str(caught.value) == "upstream_unavailable"
+    status = writes.serve(env["context"], {"operation": "account_status", "account": "alpha"}, via="api")
+    assert status["account"] == "alpha"
