@@ -26,13 +26,13 @@ before(async()=>{
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,
     log:new SilentLog(),handleStructuredLogs:item=>logs.push(JSON.stringify(item)),bindings:{APPROVAL_PUBLIC_KEY:publicKey,THTH_MCP_COMMAND:MCP_COMMAND},
-    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'TestPerson',useSQLite:true},APPROVAL_SESSION:{className:'TestSession',useSQLite:true},APPROVAL_ACCOUNT:{className:'TestAccount',useSQLite:true},DELETION_INBOX:{className:'TestDeletion',useSQLite:true},MEDIA_OBJECT:{className:'TestMedia',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
+    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'TestPerson',useSQLite:true},APPROVAL_ACCOUNT:{className:'TestAccount',useSQLite:true},DELETION_INBOX:{className:'TestDeletion',useSQLite:true},MEDIA_OBJECT:{className:'TestMedia',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
     ratelimits:{DELETION_PUBLIC_LIMIT:{namespace_id:'21204',simple:{limit:120,period:60}},AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:120,period:60}},APPROVAL_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:120,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:600,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:180,period:60}},MEDIA_CONTROL_LIMIT:{namespace_id:'21302',simple:{limit:600,period:60}},MEDIA_UPLOAD_LIMIT:{namespace_id:'21303',simple:{limit:240,period:60}},MEDIA_UPLOAD_IP_LIMIT:{namespace_id:'21304',simple:{limit:120,period:60}},MEDIA_PUBLIC_LIMIT:{namespace_id:'21301',simple:{limit:120,period:60}}}}));await mf.ready;
 });
 after(async()=>{await mf?.dispose();await rm(directory,{recursive:true,force:true});const hits=logs.filter(line=>sensitive.some(value=>line.includes(value))).length;assert.equal(hits,0,'secret in runtime logs');console.log('activity runtime log scan: '+logs.length+' chunks, '+hits+' hits');});
 async function signed(type,subject,op,body={}){
   const path=`/approval/${type}/${subject}/${op}`,raw=JSON.stringify(body),time=Date.now(),nonce=opaque();
-  const signature=run(['dgst','-sha256','-sign',key,'-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],Buffer.from(canonical('POST',path,type==='session'?'job':'operator',subject,op,time,nonce,hash(raw)))).toString('base64url');
+  const signature=run(['dgst','-sha256','-sign',key,'-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],Buffer.from(canonical('POST',path,'operator',subject,op,time,nonce,hash(raw)))).toString('base64url');
   sensitive.push(signature,nonce);
   return mf.dispatchFetch(ORIGIN+path,{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':opaque(),'x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw});
 }
@@ -43,7 +43,7 @@ async function person(){const id='p'+randomBytes(8).toString('hex'),secret=opaqu
 const account=()=>'inv-a'+randomBytes(4).toString('hex');
 const now=()=>new Date().toISOString().replace(/\.\d+Z$/,'+00:00');
 function summary(name,extra={}){
-  return {account:name,generated_at:now(),approval:'none',scheduled:true,
+  return {account:name,generated_at:now(),scheduled:true,
     limits:{daily_max_posts:8,daily_max_retracts:5,burst_count:3,burst_minutes:10,hold_minutes:0,min_interval_hours:6},
     stopped:null,today:{posts:1,retracts:0},credential:{id:'0123456789ab',expires_at:'2027-09-26T00:00:00+09:00',revoked:false},
     rows:[{kind:'published',at:now(),head:'出た投稿の先頭',post_id:'1789',draft_id:null,reason:null,reply:false},
@@ -67,7 +67,17 @@ test('sync is signed, closed-form and only for an existing approver',async()=>{
   const ok=await sync(p,[summary(name)]);assert.equal(ok.status,200);assert.deepEqual(await ok.json(),{status:'synced',actions:[]});
 });
 
-test('sign-in with the same entrance as /pending; the page shows only the pushed summary and links to /pending',async()=>{
+// 3.13.0: deploy は Worker が先・VM があと。その間 3.12.0 の VM が要約に付けてくる approval は受けるが、置かない・見せない。
+test('a 3.12.0 VM summary with approval is still accepted, but approval is neither kept nor shown',async()=>{
+  const p=await person(),name=account();
+  assert.equal((await sync(p,[summary(name,{approval:'all'})])).status,200);
+  assert.equal((await sync(p,[summary(name,{approval:{mode:'all'}})])).status,400);
+  const stored=JSON.stringify(await control('person',p.id));assert.ok(stored.includes(name)&&!stored.includes('"approval"'));
+  const html=await(await get('/activity',await cookieOf(p))).text();
+  assert.ok(html.includes(name)&&!html.includes('Approval:')&&!html.includes('承認 / Approval'),html);
+});
+
+test('sign-in shows only the pushed summary; no link to the removed /pending',async()=>{
   const p=await person(),name=account();await sync(p,[summary(name)]);
   const blank=await(await get('/activity')).text();assert.ok(blank.includes('autocomplete="username"')&&blank.includes('Activity')&&!blank.includes(name));
   assert.equal((await post({person:p.id,secret:'wrong-'+opaque()})).status,403);
@@ -75,7 +85,8 @@ test('sign-in with the same entrance as /pending; the page shows only the pushed
   const raw=ok.headers.get('set-cookie');sensitive.push(raw);
   for(const part of ['Max-Age='+TTL/1000,'Path=/activity','Secure','HttpOnly','SameSite=Strict'])assert.ok(raw.split('; ').includes(part),part);
   const html=await(await get('/activity',raw.split(';')[0])).text();
-  assert.ok(html.includes(name)&&html.includes('出た投稿の先頭')&&html.includes('猶予中の投稿')&&html.includes('href="/pending"'),html);
+  assert.ok(html.includes(name)&&html.includes('出た投稿の先頭')&&html.includes('猶予中の投稿')&&!html.includes('/pending'),html);
+  assert.ok(!blank.includes('/pending'));
   assert.ok(html.includes('LLM の鍵を発行する / Issue a key for your LLM')&&html.includes('この口座を止める / Stop this account'));
   assert.equal((await get('/activity/')).status,308);
 });
@@ -114,7 +125,10 @@ test('only your own accounts: B cannot see or act on A, and a cancel must name a
   assert.ok(![...(await actions(a)).keys(),...(await actions(b)).keys()].some(k=>k.startsWith('action:')));
   assert.equal((await post({act:'cancel',account:na,draft_id:hash('held'),secret:a.secret},ca)).status,200);
   assert.equal((await post({act:'settings',account:na,key:'owner',value:'1',secret:a.secret},ca)).status,400);
-  assert.equal((await post({act:'settings',account:na,key:'approval',value:'none',secret:a.secret},ca)).status,200);
+  // 3.13.0: approval の設定は無い。
+  assert.equal((await post({act:'settings',account:na,key:'approval',value:'none',secret:a.secret},ca)).status,400);
+  assert.equal((await post({act:'settings',account:na,key:'daily_max_posts',value:'none',secret:a.secret},ca)).status,400);
+  assert.equal((await post({act:'settings',account:na,key:'daily_max_posts',value:'4',secret:a.secret},ca)).status,200);
 });
 
 test('requested operations reach the VM on sync and show their outcome; a finished one is not handed out again',async()=>{

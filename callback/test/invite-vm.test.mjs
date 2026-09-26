@@ -24,7 +24,7 @@ before(async()=>{
   const modules=await Promise.all(files.map(async name=>{const path=fileURLToPath(new URL('../'+name,import.meta.url));return{type:'ESModule',path,contents:await readFile(path,'utf8')};}));
   mf=new Miniflare(convertV4MiniflareOptions({modules,modulesRoot:fileURLToPath(new URL('..',import.meta.url)),compatibilityDate:'2026-09-01',cf:false,log:new SilentLog(),
     bindings:{APPROVAL_PUBLIC_KEY:publicKey},
-    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'ApprovalPerson',useSQLite:true},APPROVAL_SESSION:{className:'ApprovalSession',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},MEDIA_OBJECT:{className:'MediaObject',useSQLite:true},INVITE_OBJECT:{className:'InviteObject',useSQLite:true},DELETION_INBOX:{className:'DeletionInbox',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
+    durableObjects:{AUTH_RELAY:{className:'AuthRelay',useSQLite:true},APPROVAL_PERSON:{className:'ApprovalPerson',useSQLite:true},APPROVAL_ACCOUNT:{className:'ApprovalAccount',useSQLite:true},MEDIA_OBJECT:{className:'MediaObject',useSQLite:true},INVITE_OBJECT:{className:'InviteObject',useSQLite:true},DELETION_INBOX:{className:'DeletionInbox',useSQLite:true}},r2Buckets:['MEDIA_BUCKET'],
     ratelimits:{AUTH_RATE_LIMIT:{namespace_id:'21101',simple:{limit:1000,period:60}},APPROVAL_PUBLIC_LIMIT:{namespace_id:'21201',simple:{limit:1000,period:60}},APPROVAL_VERIFY_LIMIT:{namespace_id:'21202',simple:{limit:1000,period:60}},APPROVAL_JOB_LIMIT:{namespace_id:'21203',simple:{limit:1000,period:60}}}}));
   origin=String(await mf.ready).replace(/\/$/,'');
 });
@@ -57,18 +57,14 @@ test('招待の通し: create → 開く → 押す → 常駐が認可 URL → 
   const shown=await(await press(path,'reveal',csrf)).text();const secret=/class="secret">([A-Za-z0-9_-]{43})</.exec(shown)[1];
   assert.equal((await page(path)).status,410);
   const done=vm('run');assert.equal(done.approver_set,true);assert.equal(done.events.at(-1),'approver_set');
-  // 承認ページの人（person＝口座名）が Worker で有効になっている。
+  // 口座の secret の持ち主（person＝口座名）が Worker で有効になっている。
   const status=await(await signed('person',created.account,'status',{},'operator')).json();
   assert.equal(status.active,true);assert.equal(status.locked,false);
   assert.ok(secret.length===43&&!JSON.stringify(done).includes(secret));
-  // 既存の道: その口座の承認ページで、完了ページの secret を入れて押せる。
-  const token=opaque(),readKey=opaque(),text='審査用の下書き '+opaque();
-  const session={person:created.account,job_id:opaque(),digest:hash(text),account:created.account,kind:'send',text,read_key_hash:hash(readKey),
-    context:{media:'threads',reply_to:null,publish_at:null,target:null,reason:null,topic:null,options:null}};
-  assert.equal((await signed('session',token,'create',session,'job')).status,201);
-  const approval=await page('/approve/'+token);const approvalCsrf=/name="csrf" value="([^"]+)"/.exec(approval.html)[1];
-  const approved=await fetch(origin+'/approve/'+token,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({secret,csrf:approvalCsrf})});
-  assert.equal(approved.status,200);assert.ok((await approved.text()).includes('公開の承認を受け付けました'));
+  // 3.13.0: 承認ページは無い。完了ページの secret で動きの一覧（/activity）に入れる。
+  assert.equal((await page('/approve/'+opaque())).status,404);
+  const signedIn=await fetch(origin+'/activity',{method:'POST',redirect:'manual',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({person:created.account,secret})});
+  assert.equal(signedIn.status,303);assert.equal(signedIn.headers.get('location'),'/activity');
 });
 async function signed(type,subject,operation,body,role){
   const path=`/approval/${type}/${subject}/${operation}`,raw=JSON.stringify(body),time=Date.now(),nonce=opaque();

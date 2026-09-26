@@ -1,7 +1,7 @@
 import worker from '../src/worker.js';
 import {MediaObject} from '../src/media-object.js';
 import {mediaStub} from '../src/media.js';
-import {ApprovalAccount as BaseAccount,ApprovalPerson,ApprovalSession} from '../src/approval-object.js';
+import {ApprovalAccount as BaseAccount,ApprovalPerson} from '../src/approval-object.js';
 import {accountStub} from '../src/approval.js';
 export class TestMedia extends MediaObject {
   constructor(ctx,env){
@@ -83,7 +83,7 @@ export class ApprovalAccount extends BaseAccount {
     if(data.cursor)result.cursor=this.ctx.storage.kv.get('media_cleanup_cursor')||null;return result;
   }
 }
-export {ApprovalPerson,ApprovalSession};
+export {ApprovalPerson};
 export default {async fetch(request,env){
   const url=new URL(request.url);if(url.pathname==='/__media-egress-canary')return fetch('https://egress-canary.invalid/blocked');
   const account=/^\/__cleanup\/([A-Za-z0-9_.-]+)$/.exec(url.pathname);

@@ -27,15 +27,15 @@ const day=ms=>new Date(ms).toISOString().slice(0,10);
 function openPage(d){
   const reason=REASON[d.reason]?`<p><strong>${REASON[d.reason][0]}</strong>${en(REASON[d.reason][1])}</p>`:'';
   const mode=d.production
-    ?`<p>この招待で用意する口座は、承認したときに本当に Threads へ投稿します。${en('The account prepared by this invitation publishes to Threads for real, only when you approve.')}</p>`
-    :`<p>この招待で用意する口座は試し撃ちです（承認しても Threads には出しません）。${en('The account prepared by this invitation is a dry run (nothing is published to Threads).')}</p>`;
+    ?`<p>この招待で用意する口座は、頼まれたときに本当に Threads へ投稿します。${en('The account prepared by this invitation publishes to Threads for real when asked.')}</p>`
+    :`<p>この招待で用意する口座は試し撃ちです（頼まれても Threads には出しません）。${en('The account prepared by this invitation is a dry run (nothing is published to Threads).')}</p>`;
   return invitePage(200,`<h1>THTH への招待${en('Invitation to THTH')}</h1>
-<p>THTH は、LLM が下書きした SNS の投稿を、人が承認したときだけ公開する道具です。${en('THTH publishes social posts drafted by an LLM only when a person approves them.')}</p>${reason}
+<p>THTH は、SNS を調べ・投稿し・予約する CLI ツールです。あなたの CLI か AI アシスタントが代わりに打ちます。${en('THTH is a CLI tool to research, post and schedule on social media. Your CLI or AI assistant runs it for you.')}</p>${reason}
 <h2>何が起きるか${en('What happens')}</h2><ol>
 <li>下のボタンを押すと、運営者のサーバが Threads の認可ページを用意します（数十秒）。${en('After you press the button, the operator’s server prepares the Threads authorization page (a few seconds).')}</li>
 <li>あなたの Threads アカウントで認可すると、そのアカウントの口座が運営者のサーバに用意されます。トークンはこのページを通りません。${en('When you authorize with your Threads account, an account is prepared on the operator’s server. The token never passes through this page.')}</li>
 <li>完了のページで承認 secret が一度だけ表示されます。パスワード管理に保存してください。${en('The completion page shows your approval secret once. Save it in a password manager.')}</li>
-<li>投稿・返信・削除は、承認ページであなたが secret を入れて押したときだけ行われます。${en('Posts, replies and deletions happen only when you enter the secret and approve on an approval page.')}</li></ol>
+<li>投稿・返信・削除はあなたの CLI か AI アシスタントが頼んだときに行われます（安全装置は /activity で）。${en('Posts, replies and deletions happen when your CLI or AI assistant asks for them (safety limits are on /activity).')}</li></ol>
 <h2>求める権限${en('Permissions requested')}</h2><ul>${d.scopes.map(s=>`<li><code>${escape(s)}</code></li>`).join('')}</ul>
 ${mode}<p>期限: ${escape(day(d.expires_at))}（UTC）まで。1 回だけ使えます。${en('Valid until '+escape(day(d.expires_at))+' (UTC). Can be used once.')}</p>
 <p><a href="/privacy/">プライバシー / Privacy</a> · <a href="/terms/">利用規約 / Terms</a></p>
@@ -71,10 +71,10 @@ export function secretPage(result){
 <code class="secret">${escape(result.secret)}</code>
 <ul><li>ユーザ名 / username: <code>${escape(result.person)}</code></li><li>Web サイト / website: <code>thth.me</code></li></ul>
 <!-- 3.12.0 §6-4: 口座名と secret を同じ form に置き、パスワード管理が thth.me の正しい組として覚えるようにする。
-     欄の名前は一覧の入口（/pending）と同じなので、押すとそのまま一覧に入る。 -->
-<form method="post" action="/pending"><label>ユーザ名 / Username <input name="person" autocomplete="username" value="${escape(result.person)}" readonly></label><label>承認 secret / Approval secret <input type="password" name="secret" autocomplete="new-password" value="${escape(result.secret)}" readonly></label><button type="submit">保存して承認待ちの一覧を開く / Save and open pending approvals</button></form>
+     欄の名前は動きの一覧の入口（/activity）と同じなので、押すとそのまま動きの一覧に入る（3.13.0）。 -->
+<form method="post" action="/activity"><label>ユーザ名 / Username <input name="person" autocomplete="username" value="${escape(result.person)}" readonly></label><label>承認 secret / Approval secret <input type="password" name="secret" autocomplete="new-password" value="${escape(result.secret)}" readonly></label><button type="submit">保存して動きの一覧を開く / Save and open your activity</button></form>
 <p>ボタンを押すとブラウザやパスワード管理が「保存しますか」と尋ねます。ユーザ名が上の口座名になっているのを確かめて保存してください。${en('When you press the button, your browser or password manager offers to save. Check that the username is the account name above, then save.')}</p>
-<p>承認待ちは <a href="/pending">https://thth.me/pending</a> で、このユーザ名と secret を入れると一覧で見られます。承認ページでこの secret を入れて押したときだけ、投稿・返信・削除が行われます。secret は LLM や原稿に書かないでください。${en('To see what is waiting for your approval, open <a href="/pending">https://thth.me/pending</a> and sign in with this username and secret. Posts, replies and deletions happen only when you enter this secret on an approval page. Never paste it into an LLM or a draft.')}</p>`);
+<p>動きの一覧は <a href="/activity">https://thth.me/activity</a> で、このユーザ名と secret を入れると見られます（口座を止める・戻す・予約の取り消し・安全装置の数値・LLM の鍵）。secret は LLM や原稿に書かないでください。${en('Open <a href="/activity">https://thth.me/activity</a> and sign in with this username and secret to see your activity (stop or resume the account, cancel scheduled posts, change safety limits, manage the key for your LLM). Never paste it into an LLM or a draft.')}</p>`);
 }
 
 export async function inviteRequest(request,env,url){

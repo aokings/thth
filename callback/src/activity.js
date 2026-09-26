@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------- 動きの一覧（設計 3.12.0 §3.4・§3.5）
-// 持ち主がユーザ名と承認 secret で入り（/pending と同じ入口・同じ照合・5 回失敗で 15 分閉じる）、
+// 持ち主がユーザ名と承認 secret で入り（照合は PBKDF2・5 回失敗で 15 分閉じる）、
 // 自分の口座で出たもの・消したもの・予約・猶予中・止まった理由を新しい順に見る。
 // ここでできるのは: 口座を止める・止めたのを戻す・予約（猶予中を含む）を取り消す・設定を変える・
 // LLM の鍵を発行し直す・鍵を取り消す。どれも secret をもう一度入れて確かめ、VM が数十秒で行う。
@@ -23,7 +23,6 @@ function readCookie(request){
 }
 const setCookie=(value,age)=>`${COOKIE}=${value}; Max-Age=${age}; Path=/activity; Secure; HttpOnly; SameSite=Strict`;
 const see=(location,cookie)=>new Response(null,{status:303,headers:{location,'cache-control':'no-store','referrer-policy':'no-referrer',...(cookie?{'set-cookie':cookie}:{})}});
-const toPending=`<p><a href="/pending">承認待ちの一覧へ / Pending approvals</a></p>`;
 const back=`<p><a href="/activity">動きの一覧に戻る / Back to activity</a></p>`;
 const secretField=`<label>承認 secret / Approval secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label>`;
 
@@ -35,7 +34,7 @@ export const ACTION_WORDS={stop:['口座を止める','Stop the account'],resume
   cancel:['予約を取り消す','Cancel the scheduled post'],settings:['設定を変える','Change a setting'],
   revoke:['LLM の鍵を取り消す','Revoke the key for your LLM'],rotate:['LLM の鍵を発行する','Issue a key for your LLM']};
 const STATUS_WORDS={pending:['反映待ち','Waiting for the server'],done:['済み','Done'],failed:['できませんでした','Failed']};
-export const SETTING_WORDS={approval:'承認（none・publish・all）/ Approval',daily_max_posts:'1 日の公開の上限 / Daily post limit',
+export const SETTING_WORDS={daily_max_posts:'1 日の公開の上限 / Daily post limit',
   daily_max_retracts:'1 日の削除の上限 / Daily delete limit',burst_count:'急な連投: 件数 / Burst: posts',
   burst_minutes:'急な連投: 分 / Burst: minutes',hold_minutes:'取り消しの猶予（分）/ Hold (minutes)',
   min_interval_hours:'最短間隔（時間・返信には掛けない）/ Minimum interval (hours, not for replies)'};
@@ -44,7 +43,7 @@ function signIn(status=200,note=''){
   return page(status,`<h1>動きの一覧${en('Activity')}</h1>${note}
 <p>ユーザ名と承認 secret で入ると、あなたの口座で出たもの・消したもの・予約・猶予中のもの・止まった理由が新しい順に並びます。招待で用意した口座では、ユーザ名は口座名です。${en('Sign in with your username and approval secret to see what was published, deleted, scheduled or held on your accounts, newest first, and why an account was stopped. For an account prepared by an invitation, the username is the account name.')}</p>
 <form method="post" action="/activity"><label>ユーザ名 / Username <input name="person" autocomplete="username" required maxlength="64"></label>${secretField}<button type="submit">一覧を見る / Show activity</button></form>
-${toPending}<p>一覧は 10 分で閉じます。secret は LLM や原稿に書かないでください。${en('The page closes after 10 minutes. Never paste the secret into an LLM or a draft.')}</p>`,TITLE);
+<p>一覧は 10 分で閉じます。secret は LLM や原稿に書かないでください。${en('The page closes after 10 minutes. Never paste the secret into an LLM or a draft.')}</p>`,TITLE);
 }
 function form(act,account,fields,label,extra=''){
   return `<form method="post" action="/activity"><input type="hidden" name="act" value="${escape(act)}"><input type="hidden" name="account" value="${escape(account)}">${fields}${extra}${secretField}<button type="submit">${label}</button></form>`;
@@ -72,7 +71,7 @@ function section(s){
     (s.credential&&!s.credential.revoked?form('revoke',s.account,'','LLM の鍵を取り消す / Revoke the key'):'');
   const rows=s.rows.length?`<ul>${s.rows.map(r=>row(s.account,r)).join('')}</ul>`:`<p>まだ何もありません。${en('Nothing yet.')}</p>`;
   return `<section><h2>${escape(s.account)}</h2>
-<p>承認 / Approval: ${escape(s.approval)} · 今日の公開 / Posts today: ${escape(s.today.posts)} / ${escape(l.daily_max_posts)} · 今日の削除 / Deletions today: ${escape(s.today.retracts)} / ${escape(l.daily_max_retracts)}</p>
+<p>今日の公開 / Posts today: ${escape(s.today.posts)} / ${escape(l.daily_max_posts)} · 今日の削除 / Deletions today: ${escape(s.today.retracts)} / ${escape(l.daily_max_retracts)}</p>
 <p>急な連投で止める / Burst stop: ${escape(l.burst_minutes)} 分に ${escape(l.burst_count)} 件 · 猶予 / Hold: ${escape(l.hold_minutes)} 分 · 最短間隔 / Interval: ${escape(l.min_interval_hours)} 時間${s.scheduled?'':' · 予約の timer なし（予約と猶予は使えません）/ No scheduler (no scheduled or held posts)'}</p>
 <p>最終更新 / Updated: ${escape(s.generated_at)}</p>${key}${rows}${stop}${settings}${keys}</section>`;
 }
@@ -83,7 +82,7 @@ function activityPage(person,data){
   const actions=data.actions.length?`<h2>頼んだ操作${en('Requested operations')}</h2><ul>${data.actions.map(a=>{const [ja,english]=ACTION_WORDS[a.kind],[sj,se]=STATUS_WORDS[a.status]??[a.status,a.status];
     return `<li>${escape(a.account)}: ${ja} / ${english} — ${sj} / ${se}${a.reason?' ('+escape(a.reason)+')':''}</li>`;}).join('')}</ul>`:'';
   const body=data.accounts.length?data.accounts.map(section).join(''):`<p>サーバからの様子がまだ届いていません。数十秒後に開き直してください。${en('Nothing has arrived from the server yet. Reload in a few tens of seconds.')}</p>`;
-  return page(200,`<h1>動きの一覧${en('Activity')}</h1><p>ユーザ名 / Username: ${escape(person)}</p>${banner}${toPending}${actions}${body}
+  return page(200,`<h1>動きの一覧${en('Activity')}</h1><p>ユーザ名 / Username: ${escape(person)}</p>${banner}${actions}${body}
 <p>操作は承認 secret をもう一度入れて確かめ、サーバが数十秒で行います。結果はこの一覧に出ます。${en('Each operation asks for the approval secret again; the server carries it out within a few tens of seconds and the result appears here.')}</p>
 <form method="post" action="/activity"><input type="hidden" name="leave" value="1"><button type="submit">閉じる / Sign out</button></form>`,TITLE);
 }

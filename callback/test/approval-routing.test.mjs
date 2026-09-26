@@ -15,11 +15,11 @@ const hash=s=>createHash('sha256').update(s).digest('hex');
 const openssl=process.platform==='darwin'?'/opt/homebrew/bin/openssl':'/usr/bin/openssl';
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function crypto(args,input){const result=spawnSync(openssl,args,{input,env:{PATH:'/usr/bin:/bin',OPENSSL_CONF:'/dev/null'}});assert.equal(result.status,0);return result.stdout;}
-test('real approval routing bypasses assets, two DOs survive restart and consumed receipt stays consumed',{timeout:60000},async()=>{
+test('real relay routing bypasses assets, removed approval paths are 404 and state survives restart',{timeout:60000},async()=>{
   const base=join(cwd,'.test-tmp');await mkdir(base,{recursive:true});const dir=await realpath(await mkdtemp(join(base,'approval-routing-')));
   const vmHome=await realpath(await mkdtemp(join(tmpdir(),'thth-leave-vm-')));
-  const home=join(dir,'home'),assets=join(dir,'assets'),key=join(dir,'key'),token=opaque(),readKey=opaque(),secret=opaque(),salt=opaque(),bodyText=opaque();
-  const hidden=[token,readKey,secret,bodyText],logs=[];await mkdir(home);await mkdir(join(assets,'approve'),{recursive:true});
+  const home=join(dir,'home'),assets=join(dir,'assets'),key=join(dir,'key'),token=opaque(),secret=opaque(),salt=opaque();
+  const hidden=[token,secret],logs=[];await mkdir(home);await mkdir(join(assets,'approve'),{recursive:true});
   await writeFile(join(assets,'approve',token),'shadow approval');
   await writeFile(join(assets,'data-deletion'),'shadow deletion');await writeFile(join(assets,'pending'),'shadow pending');await writeFile(join(assets,'data-deletion-status'),'shadow status');
   const pem=crypto(['genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072']);hidden.push(pem.toString());await writeFile(key,pem,{mode:0o600});
@@ -36,21 +36,18 @@ test('real approval routing bypasses assets, two DOs survive restart and consume
   const stop=async()=>{if(child&&child.exitCode===null){child.kill('SIGTERM');await once(child,'exit');}};
   const signed=async(type,id,operation,body)=>{
     const path=`/approval/${type}/${id}/${operation}`,raw=JSON.stringify(body),time=Date.now(),nonce=opaque();
-    const signature=crypto(['dgst','-sha256','-sign',key,'-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],Buffer.from(canonical('POST',path,type==='session'?'job':'operator',id,operation,time,nonce,hash(raw)))).toString('base64url');hidden.push(signature);
+    const signature=crypto(['dgst','-sha256','-sign',key,'-sigopt','rsa_padding_mode:pss','-sigopt','rsa_pss_saltlen:32'],Buffer.from(canonical('POST',path,'operator',id,operation,time,nonce,hash(raw)))).toString('base64url');hidden.push(signature);
     return fetch(origin+path,{method:'POST',headers:{'content-type':'application/json','x-thth-time':String(time),'x-thth-nonce':nonce,'x-thth-signature':signature},body:raw});
   };
   try{
-    await start();const unknown=await fetch(origin+'/approve/'+token);assert.equal(unknown.status,410);assert.ok(!(await unknown.text()).includes('shadow'));
-    const list=await fetch(origin+'/pending');assert.equal(list.status,200);assert.ok((await list.text()).includes('Pending approvals'),'3.11.0: /pending is answered by the Worker, not assets');
+    // 3.13.0: 承認ページと承認待ちの一覧は無い。Worker が 404 を返し、assets の影も出さない。
+    await start();
+    for(const path of ['/approve/'+token,'/pending']){const gone=await fetch(origin+path);assert.equal(gone.status,404,path);assert.ok(!(await gone.text()).includes('shadow'),path);}
     const verifier=pbkdf2Sync(secret,Buffer.from(salt,'base64url'),100000,32,'sha256').toString('base64url');hidden.push(verifier);
     assert.equal((await signed('person','person','set',{salt,verifier,iterations:100000})).status,200);
-    assert.equal((await signed('session',token,'create',{person:'person',job_id:opaque(),digest:hash(bodyText),account:'alpha',kind:'retract',text:bodyText,read_key_hash:hash(readKey),context:{media:'threads',reply_to:null,publish_at:null,target:'123',reason:'requested',topic:null,options:null}})).status,201);
-    await stop();await start();const page=await(await fetch(origin+'/approve/'+token)).text();assert.ok(page.includes(bodyText)&&page.includes('この投稿を削除'));
-    const csrf=/name="csrf" value="([^"]+)"/.exec(page)[1];hidden.push(csrf);
-    const approved=await fetch(origin+'/approve/'+token,{method:'POST',headers:{origin,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({secret,csrf})});assert.equal(approved.status,200);
-    assert.ok((await approved.text()).includes('削除の承認を受け付けました'));
-    await stop();await start();assert.equal((await signed('session',token,'consume',{read_key:readKey})).status,200);
-    await stop();await start();assert.equal((await signed('session',token,'consume',{read_key:readKey})).status,404);
+    assert.equal((await signed('session',token,'create',{})).status,404);
+    await stop();await start();
+    assert.equal((await(await signed('person','person','status',{})).json()).active,true,'person survives restart');
     assert.equal((await signed('account','alpha','revoke',{})).status,200);
     const blob=opaque()+'.'+opaque();hidden.push(blob);
     const reception=await fetch(origin+'/data-deletion',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({signed_request:blob})});
@@ -70,5 +67,5 @@ test('real approval routing bypasses assets, two DOs survive restart and consume
     const vm=spawnSync(python,['test/deletion-vm.py',key],{cwd,env:{PATH:process.env.PATH,HOME:home,PYTHONPATH:join(cwd,'..'),THTH_ROOT:join(dir,'vm'),THTH_ACCOUNTS_DIR:join(dir,'vm/accounts'),THTH_TEST_ALLOW_HTTP:'1',THTH_APPS_DIR:join(vmHome,'apps'),THTH_APPROVAL_BASE_URL:origin},encoding:'utf8',timeout:20000});
     assert.equal(vm.status,0,'local Python deletion/leave integration failed: '+[...vm.stderr.matchAll(/line (\d+), in ([^\n]+)/g)].map(m=>m[1]+':'+m[2]).join(',')+' '+vm.stderr.trim().split('\n').at(-1)?.split(':')[0]);assert.equal(vm.stderr,'');
     assert.deepEqual(JSON.parse(vm.stdout),{verified:1,unmatched:1,discarded_invalid_signature:1,local_completed:true,remote_completed:true,events:2});
-  }finally{await stop();await rm(dir,{recursive:true,force:true});await rm(vmHome,{recursive:true,force:true});const hits=logs.filter(line=>hidden.some(secret=>line.includes(secret))).length;assert.equal(hits,0,'HTTP runtime logs contain private data');console.log('approval routing log scan: '+logs.length+' chunks, '+hits+' hits; 7 local starts');}
+  }finally{await stop();await rm(dir,{recursive:true,force:true});await rm(vmHome,{recursive:true,force:true});const hits=logs.filter(line=>hidden.some(secret=>line.includes(secret))).length;assert.equal(hits,0,'HTTP runtime logs contain private data');console.log('approval routing log scan: '+logs.length+' chunks, '+hits+' hits; 6 local starts');}
 });
