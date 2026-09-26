@@ -437,7 +437,8 @@ def _notice_stall(directory, record, clicked_at):
             event = {"event": "invite_stalled", "invite": record["invite_id"], "waited_seconds": waited,
                      "at": jst.iso(),
                      "next": "招待が押されてから常駐（thth worker）が拾うまで時間が掛かりました。"
-                             "常駐の状態を確かめてください（systemctl status thth-approval-worker）"}
+                             "常駐の状態を確かめてください（systemctl status thth-worker。"
+                             "3.12.0 以前の unit のままなら thth-approval-worker）"}
             notice = dict(id=hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest(),
                           state="admin_change", at=event["at"], reason="healthy", repo="no_source",
                           admin_event=event)

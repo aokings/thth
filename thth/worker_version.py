@@ -5,8 +5,11 @@ timer で走る短い process を exec しなおして新しい版にする。**
 09-25 06:05 に起動した worker は 3.11.1 の配布のあとも古い版のまま承認を拾わず、
 手で restart するまで気づけなかった。
 
-3.13.0 で常駐の名前を改めた（`thth approval-worker` → `thth worker`・記録
-`approval-worker.json` → `worker.json`）。旧い記録のファイルは、新しい記録が無いときだけ読む。
+3.13.0 で常駐の名前を改めた（`thth approval-worker` → `thth worker`・unit
+`thth-approval-worker.service` → `thth-worker.service`・記録 `approval-worker.json` →
+`worker.json`）。unit の入れ替えは root の仕事なので自動ではしない。記録にどの unit で
+動いているか（`unit`）を残し、古い unit のままなら `thth board` が入れ替えを促す。
+旧い記録のファイルは、新しい記録が無いときだけ読む。
 
 ここでは:
   - 常駐が起動したときに、読み込んだ版（`VERSION` と commit）を state に 1 件残す
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 
 from . import __version__, _read_version, accounts, jst, selfupdate
@@ -31,7 +35,10 @@ EXIT_MOVED = 75
 RECORD_NAME = "worker.json"
 # 3.12.0 までの記録の名前（新しい記録が無いときだけ読む・書かない）。
 LEGACY_RECORD_NAME = "approval-worker.json"
-
+UNIT = "thth-worker.service"
+# 3.12.0 までの unit の名前。これで動いていれば board が入れ替えを促す。
+LEGACY_UNIT = "thth-approval-worker.service"
+_UNIT_PATTERN = re.compile(r"/(thth-[A-Za-z0-9@._-]*\.service)$")
 
 
 def loaded() -> dict:
@@ -62,11 +69,25 @@ def record_path(name: str = RECORD_NAME) -> str:
     return os.path.join(accounts.thth_root(), "state", name)
 
 
+def current_unit(path: str = "/proc/self/cgroup") -> str | None:
+    """この process が systemd のどの unit で動いているか（Linux の cgroup から）。分からなければ None。"""
+    try:
+        with open(path, encoding="utf-8") as stream:
+            lines = stream.read(65536).splitlines()
+    except (OSError, ValueError):
+        return None
+    for line in lines:
+        match = _UNIT_PATTERN.search(line.strip())
+        if match:
+            return match.group(1)
+    return None
+
+
 def record_start(start: dict, *, pid: int | None = None) -> bool:
     """起動した版を残す。書けなくても常駐は止めない（board が「記録なし」と言うだけ）。"""
     path = record_path()
     row = {"version": start.get("version"), "rev": start.get("rev"),
-           "pid": os.getpid() if pid is None else pid, "started_at": jst.iso()}
+           "pid": os.getpid() if pid is None else pid, "started_at": jst.iso(), "unit": current_unit()}
     temp = f"{path}.{secrets.token_hex(8)}.tmp"
     try:
         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
@@ -125,12 +146,17 @@ def board_lines(state: dict | None) -> list:
     if not state:
         return []
     row, disk = state.get("running") or {}, state.get("disk") or {}
+    unit = row.get("unit") if isinstance(row.get("unit"), str) else None
     if state.get("alive") is False:
         return [f"常駐（worker）: 記録の pid {row.get('pid')} は動いていません"
                 f"（最後に起動した版 {describe(row)}・{row.get('started_at')}）"]
-    lines = [f"常駐（worker）: {describe(row)}  pid {row.get('pid')}・起動 {row.get('started_at')}"]
+    lines = [f"常駐（worker）: {describe(row)}  pid {row.get('pid')}・起動 {row.get('started_at')}"
+             + (f"・unit {unit}" if unit else "")]
     if state.get("differs"):
         lines.append(f"  **ディスクの版は {describe(disk)} です——常駐は古い版で動いています**"
                      f"（{CHECK_SECONDS} 秒ごとに見て自分で終わり、systemd が起こし直します。"
-                     f"戻らなければ sudo systemctl restart thth-approval-worker）")
+                     f"戻らなければ sudo systemctl restart {(unit or UNIT).removesuffix('.service')}）")
+    if unit == LEGACY_UNIT:
+        lines.append(f"  **古い unit 名（{LEGACY_UNIT}）で動いています**——"
+                     f"{UNIT} への入れ替えは docs/運用_招待する側.md §6 の手順で（自動ではしません）")
     return lines

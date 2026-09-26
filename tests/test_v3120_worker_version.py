@@ -49,7 +49,7 @@ def test_ディスクの版が動いたら常駐は終わり_起動した版を�
     path = root / "state" / worker_version.RECORD_NAME
     row = json.loads(path.read_text())
     assert row["version"] == "3.11.1" and row["rev"] == "a" * 40 and row["pid"] == os.getpid()
-    assert set(row) == {"version", "rev", "pid", "started_at"}
+    assert set(row) == {"version", "rev", "pid", "started_at", "unit"}
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE((root / "state").stat().st_mode) == 0o700
 
@@ -98,7 +98,7 @@ def test_boardの行(monkeypatch):
     old = dict(same, disk={"version": "3.12.0", "rev": "b" * 40}, differs=True)
     lines = worker_version.board_lines(old)
     assert len(lines) == 2 and "ディスクの版は 3.12.0（bbbbbbb） です——常駐は古い版で動いています" in lines[1]
-    assert "systemctl restart thth-approval-worker" in lines[1]
+    assert "systemctl restart thth-worker" in lines[1]
     dead = dict(same, alive=False)
     (line,) = worker_version.board_lines(dead)
     assert "pid 4242 は動いていません" in line
@@ -122,7 +122,7 @@ def test_記録が無ければboardは常駐について何も言わない(isola
     assert "常駐（worker）" not in capsys.readouterr().out
 
 
-# --- 3.13.0: 名前を改めた（記録 worker.json）----------------------
+# --- 3.13.0: 名前を改めた（記録 worker.json・unit thth-worker.service）----------------------
 
 
 def test_旧い記録approval_worker_jsonは新しい記録が無いときだけ読む(isolated_account):
@@ -138,3 +138,27 @@ def test_旧い記録approval_worker_jsonは新しい記録が無いときだけ
     with open(os.path.join(state, worker_version.LEGACY_RECORD_NAME), encoding="utf-8") as stream:
         assert json.load(stream) == legacy
 
+
+def test_どのunitで動いているかをcgroupから読む(tmp_path):
+    cgroup = tmp_path / "cgroup"
+    cgroup.write_text("0::/system.slice/thth-approval-worker.service\n")
+    assert worker_version.current_unit(str(cgroup)) == worker_version.LEGACY_UNIT
+    cgroup.write_text("12:pids:/system.slice/thth-worker.service\n0::/system.slice/thth-worker.service\n")
+    assert worker_version.current_unit(str(cgroup)) == worker_version.UNIT
+    cgroup.write_text("0::/user.slice/user-1000.slice/session-3.scope\n")
+    assert worker_version.current_unit(str(cgroup)) is None
+    assert worker_version.current_unit(str(tmp_path / "missing")) is None
+
+
+def test_古いunitで動いていればboardが入れ替えを促す():
+    running = {"version": "3.13.0", "rev": "a" * 40, "pid": 4242, "started_at": "2026-09-26T06:05:00+09:00"}
+    base = {"disk": {"version": "3.13.0", "rev": "a" * 40}, "differs": False, "alive": True}
+    old = worker_version.board_lines(dict(base, running=dict(running, unit=worker_version.LEGACY_UNIT)))
+    assert len(old) == 2 and worker_version.LEGACY_UNIT in old[0] and worker_version.LEGACY_UNIT in old[1]
+    assert "docs/運用_招待する側.md §6" in old[1]
+    new = worker_version.board_lines(dict(base, running=dict(running, unit=worker_version.UNIT)))
+    assert len(new) == 1 and worker_version.UNIT in new[0]
+    # 古い unit で版がずれていれば、restart の案内はその unit の名前で出す。
+    moved = worker_version.board_lines(dict(base, running=dict(running, unit=worker_version.LEGACY_UNIT),
+                                            disk={"version": "3.13.1", "rev": "b" * 40}, differs=True))
+    assert "systemctl restart thth-approval-worker" in moved[1]

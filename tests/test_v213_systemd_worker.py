@@ -18,7 +18,7 @@ def test_worker_unit_cli_and_actual_worker_parser_agree(monkeypatch, capsys):
     assert 'User=wt\nEnvironment=THTH_ROOT=/srv/thth\n' in unit
     assert 'WantedBy=multi-user.target\n' in unit
     command = next(line.removeprefix('ExecStart=') for line in unit.splitlines() if line.startswith('ExecStart='))
-    assert command.split() == ['/srv/thth/app/bin/thth', 'approval-worker', '--credentials', credentials]
+    assert command.split() == ['/srv/thth/app/bin/thth', 'worker', '--credentials', credentials]
     parsed = cli.build_parser().parse_args(command.split()[1:])
     assert parsed.credentials == credentials and not parsed.once
 
