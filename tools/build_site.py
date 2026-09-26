@@ -271,7 +271,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
 
 # The operator sets the effective date when the relay and policy are deployed
 # together. Generating a candidate must not invent a publication date.
-PRIVACY_EFFECTIVE = "2026-09-26"  # 3.14.0（命令の道 /api/v1）。3.13.0 も同日
+PRIVACY_EFFECTIVE = "2026-09-27"  # 3.14.2（ブラウザでのサインイン）。Worker の deploy が別の日になったら直す。前: 2026-09-26（3.13.0・3.14.0）
 
 
 def build_privacy() -> str:
@@ -398,7 +398,9 @@ def build_privacy() -> str:
         "on thth.me, shown once to the owner, and never stored in clear: thth.me and the operator's server keep "
         "only its SHA-256 hash, its scope (that account) and its expiry (365 days). Issuing a new key revokes "
         "the previous one. Every post, deletion and schedule made with a key is recorded with the key's "
-        "identifier.</p>")
+        "identifier. When the key is issued through the browser sign-in for the <code>thth</code> command "
+        "(<code>https://thth.me/login/…</code>), thth.me holds the new key for the command to collect, for at most "
+        "10 minutes, and deletes it as soon as it is collected.</p>")
     add("<p><strong>The command path (thth.me/api/v1).</strong> The <code>thth</code> command on the owner's own "
         "computer, and an AI assistant that runs it, act on the account through <code>https://thth.me/api/v1</code> "
         "with the assistant key. thth.me checks the key's hash and rate limits (60 requests per minute per key, 120 "
@@ -539,7 +541,8 @@ def build_privacy() -> str:
         "the PBKDF2 iteration count to 100,000. Revision: adds the saved daily aggregates of the observation "
         "map (keyword search). Revision: adds the plaza and the support contact, and links to the Terms of "
         "Service. Revision: removes the approval pages; describes the safety limits, the owner's activity page and "
-        "the assistant key. Revision: adds the command path (thth.me/api/v1).</p>")
+        "the assistant key. Revision: adds the command path (thth.me/api/v1). Revision: adds the browser sign-in "
+        "for the command.</p>")
 
     # ---------------------------------------------------------------- 日本語
     add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
@@ -631,7 +634,8 @@ def build_privacy() -> str:
     add("<p><strong>アシスタントの鍵。</strong>持ち主が自分の CLI や AI アシスタントに渡す鍵は thth.me が作り、持ち主に"
         "1 度だけ表示し、平文では保存しません。thth.me と運営者のサーバが持つのは SHA-256 のハッシュ、範囲（その"
         "アカウント）、期限（365 日）だけです。新しい鍵を発行すると前の鍵は使えなくなります。鍵で行った投稿・削除・"
-        "予約には、鍵の識別子を記録します。</p>")
+        "予約には、鍵の識別子を記録します。<code>thth</code> 命令のブラウザでのサインイン（<code>https://thth.me/login/…</code>）で"
+        "鍵を発行したときは、命令が受け取るまで最長 10 分だけ thth.me が新しい鍵を預かり、受け取った時点で消します。</p>")
     add("<p><strong>命令の道（thth.me/api/v1）。</strong>持ち主の機械の <code>thth</code> 命令と、それを打つ AI アシスタント"
         "は、アシスタントの鍵を使って <code>https://thth.me/api/v1</code> からアカウントを動かします。thth.me は鍵のハッシュと"
         "回数（鍵ごとに 1 分 60 回・接続元ごとに 1 分 120 回）を確かめ、依頼を運営者のサーバのために預かり、サーバが取りに来て"
@@ -750,7 +754,8 @@ def build_privacy() -> str:
         "運営者が動かすサービスの形、媒体ごとに使うデータ、返信と言及、キーワード検索、添付、報告、LLM のセッション、"
         "退出と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。改訂: 観測の地図の集計の保存（キーワード検索・世間の層）を追記しました。"
         "改訂: 広場とサポートの連絡先を書き、利用規約へのリンクを足しました。改訂: 承認ページを無くし、安全装置・"
-        "持ち主の動きの一覧・アシスタントの鍵を書きました。改訂: 命令の道（thth.me/api/v1）を足しました。</p>")
+        "持ち主の動きの一覧・アシスタントの鍵を書きました。改訂: 命令の道（thth.me/api/v1）を足しました。改訂: 命令のブラウザでの"
+        "サインインを足しました。</p>")
     add('<footer><a href="/">THTH</a> · <a href="/terms/">利用規約 / Terms of Service</a> · Free and open source · '
         "MIT License<br>© 2026 gotoq</footer>")
     add("</main></body></html>")
