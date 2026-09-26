@@ -4174,6 +4174,11 @@ def _main(argv, real_argv) -> int:
     if topic_cli.is_new_style(real_argv):
         return topic_cli.dispatch(real_argv)
 
+    # 遠くの道（設計 3.14.0 §3.4）: 手元の道か遠くの道かの判定は `thth/remote.py` の 1 か所。
+    from . import remote
+    refused = remote.refuse_flag(real_argv)
+    if refused is not None:
+        return refused
     parser = build_parser()
     if real_argv and real_argv[0] == 'where':
         commands = next(action for action in parser._actions
@@ -4182,5 +4187,8 @@ def _main(argv, real_argv) -> int:
     else:
         args = parser.parse_args(argv)
     _PARSED["args"] = args
+    routed = remote.route(args, real_argv[0] if real_argv else '')
+    if routed is not None:
+        return routed
     from . import read_coordination
     return read_coordination.invoke(args,real_argv[0] if real_argv else '')

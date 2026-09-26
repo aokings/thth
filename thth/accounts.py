@@ -438,7 +438,8 @@ def load_account(name: str) -> dict:
             raise AccountError(
                 f"台帳の置き場が読めません（権限）: {d}"
                 f"——**無いのではありません。** 権限を直してください") from e
-        raise AccountError(f"台帳が無い: {name}（{path}）") from e
+        # 遠くの道（設計 3.14.0 §3.4）: 台帳が無くても `thth login` の鍵で動かせる。
+        raise AccountError(f"台帳が無い: {name}（{path}）。thth.me の鍵で動かすなら thth login") from e
     except PermissionError as e:
         raise AccountError(
             f"台帳が読めません（権限）: {path}"
