@@ -376,13 +376,245 @@ def refuse_flag(argv):
     return None
 
 
+# --------------------------------------------------------------------------
+# 命令（手元の道と同じ名前・引数・`--json` の形。人向けの表示は手元の道の関数をそのまま使う）
+# --------------------------------------------------------------------------
+
+def _print_json(value) -> None:
+    print(json.dumps(value, ensure_ascii=False, indent=2))
+
+
+def _shown(args, value, show) -> int:
+    if getattr(args, "json", False):
+        _print_json(value)
+        return 0
+    return show(value)
+
+
+def _body(args) -> str:
+    """本文: `--text`（1 行）・`--text-file`・標準入力のどれか 1 つ。"""
+    text = getattr(args, "text", None)
+    path = getattr(args, "text_file", None)
+    if text is not None and path:
+        raise RemoteError("invalid_request", reason="--text と --text-file はどちらか 1 つ", rc=2)
+    if text is not None:
+        body = text
+    elif path:
+        try:
+            with open(path, encoding="utf-8") as f:
+                body = f.read()
+        except (OSError, UnicodeDecodeError):
+            raise RemoteError("invalid_request", reason="本文のファイルを読めません", rc=2) from None
+    else:
+        body = sys.stdin.read()
+    if not body.strip():
+        raise RemoteError("invalid_request", reason="本文が空です", rc=2)
+    return body
+
+
+def _no_media(args):
+    # 添付（media_upload_url → PUT → media_complete）は遠くの道ではまだ踏まない。
+    if getattr(args, "media_files", None):
+        raise RemoteError("remote_unsupported", reason="添付", rc=2)
+
+
+def _send(args, account):
+    _no_media(args)
+    # 遠くの道は rehearsal を挟まない（設計 §6）: 頼んだらその場で出す（サーバが lint と安全装置で断る）。
+    # `--production`・`--confirm` は要らない（付いていても読まない・口座の台帳はサーバにある）。
+    body = _body(args)
+    fields = {"body": body, "topic": args.topic, "reply_to": args.reply_to}
+    if getattr(args, "dry_run", False):
+        # lint だけ通す: 下書きを置いて結果を返す（出さない・予約しない）。
+        from . import jst
+        value = call("draft_put", account, publish_at=jst.iso(), **fields)
+        return _shown(args, value, lambda v: _say(f"{account}: 通りました（出していません・下書き "
+                                                  f"{str(v.get('draft_id'))[:12]}…）"))
+    value = call("send_request", account, **fields)
+    return _shown(args, value, _show_sent)
+
+
+def _say(line) -> int:
+    print(line)
+    return 0
+
+
+def _show_sent(value) -> int:
+    if value.get("status") == "held":
+        print(f"{value.get('account')}: {value.get('hold_minutes')} 分の猶予つきで予約しました"
+              f"（{jst_text(value.get('publish_at'))} に出ます・取り消しは https://thth.me/activity）")
+        return 0
+    print(f"{value.get('account')}: 出しました post_id {value.get('post_id')}")
+    if value.get("permalink"):
+        print(f"  {value['permalink']}")
+    return 0
+
+
+def _schedule(args, account):
+    _no_media(args)
+    draft = getattr(args, "draft", None)
+    if draft is None:
+        if getattr(args, "text", None) is None and not getattr(args, "text_file", None):
+            # 「いつ何が出るか」の一覧は遠くの道では下書きの一覧（thth queue）で見る。
+            raise RemoteError("remote_unsupported", reason="一覧は thth queue <口座>", rc=2)
+        if not getattr(args, "at", None):
+            raise RemoteError("invalid_request", reason="--at <ISO 時刻> を付けてください", rc=2)
+        put = call("draft_put", account, body=_body(args), publish_at=args.at,
+                   topic=args.topic, reply_to=args.reply_to)
+        draft = put.get("draft_id")
+        if not isinstance(draft, str):
+            raise RemoteError("remote_unavailable", rc=2)
+    value = call("schedule_request", account, draft_id=draft)
+    return _shown(args, value, lambda v: _say(
+        f"{account}: 予約しました（{jst_text(v.get('publish_at'))}・下書き {str(v.get('draft_id'))[:12]}…）"))
+
+
+def _retract(args, account):
+    reason = (args.reason or "").strip()
+    if not reason:
+        raise RemoteError("invalid_request", reason="--reason を付けてください（なぜ取り下げるかを記録します）", rc=1)
+    value = call("retract_request", account, post_id=args.post_id, reason=reason)
+    return _shown(args, value, lambda v: _say(f"{account}: 取り下げました post_id {v.get('post_id')}"
+                                              + ("（記録の送信は保留）" if v.get("push_pending") else "")))
+
+
+def _limit(args):
+    value = getattr(args, "limit", None)
+    return value if isinstance(value, int) and value > 0 else None
+
+
+def _posts(args, account):
+    from . import cli
+    value = call("posts", account, limit=_limit(args), refresh=True if getattr(args, "refresh", False) else None)
+    return _shown(args, value, lambda v: cli.show_posts(account, v))
+
+
+def _replies(args, account):
+    from . import cli
+    value = call("replies", account, limit=_limit(args), post_id=getattr(args, "post", None),
+                 refresh=True if getattr(args, "refresh", False) else None)
+    return _shown(args, value, lambda v: cli.show_replies(v, v.get("refresh")))
+
+
+def _measured(args, account):
+    from . import cli
+    value = call("measured", account, limit=_limit(args), post_id=getattr(args, "post", None))
+    return _shown(args, value, cli.show_measured)
+
+
+def _collect(args, account):
+    from . import cli
+    return _shown(args, call("collect", account), cli.show_measured)
+
+
+def _mentions(args, account):
+    from . import threads_read_cli
+    if getattr(args, "since", None):
+        raise RemoteError("remote_unsupported", reason="--since", rc=2)
+    value = call("mentions", account, limit=_limit(args),
+                 refresh=True if getattr(args, "refresh", False) else None)
+    return _shown(args, value, lambda v: threads_read_cli.show_mentions(account, v.get("mentions") or []))
+
+
+def _topics_search(args, account):
+    from . import threads_read_cli
+    if getattr(args, "recent", False):
+        raise RemoteError("remote_unsupported", reason="--recent", rc=2)
+    query = (args.search or "").strip()
+    if not query:
+        raise RemoteError("invalid_request", reason="--search に語を書いてください", rc=2)
+    value = call("topics_search", account, query=query, limit=_limit(args))
+    return _shown(args, value, lambda v: threads_read_cli.show_search(account, v))
+
+
+def _profile(args, account):
+    from . import threads_read_cli
+    value = call("profile", account, username=args.username)
+    return _shown(args, value, lambda v: threads_read_cli.show_profile(account, v.get("profile") or {}))
+
+
+def _location(args, account):
+    from . import retract_cli
+    value = call("location_search", account, query=args.query)
+    return _shown(args, value, lambda v: retract_cli.show_locations(args.query, v.get("locations") or []))
+
+
+def _account_status(args, account):
+    from . import account_settings
+    if getattr(args, "rest", None):
+        raise RemoteError("invalid_request", reason="thth account status <口座>", rc=2)
+    return _shown(args, call("account_status", account), account_settings.show_status)
+
+
+def _account_set(args, account):
+    """締める向きだけ通る（緩める向きは `settings_loosen_requires_owner` のまま）。"""
+    from . import account_settings
+    try:
+        pairs = account_settings._pairs(list(getattr(args, "rest", None) or []))
+    except account_settings.SettingsError:
+        raise RemoteError("invalid_setting", reason="thth account set <口座> <名前> <値>", rc=2) from None
+    results = [call("settings", account, key=key, value=value) for key, value in pairs]
+    if getattr(args, "json", False):
+        _print_json(results if len(results) > 1 else results[0])
+        return 0
+    return account_settings.show_changes(results)
+
+
+def _queue(args, account):
+    return _shown(args, call("draft_list", account), _show_drafts)
+
+
+def _show_drafts(value) -> int:
+    drafts = value.get("drafts") or []
+    for row in drafts:
+        head = " ".join(str(row.get("body") or "").split())[:40]
+        topic = f" [{row['topic']}]" if row.get("topic") else ""
+        print(f"{str(row.get('publish_at') or '')[:16]}  {row.get('status')}  "
+              f"{str(row.get('draft_id'))[:12]}…{topic} {head}")
+    print(f"—— {value.get('account')}: {len(drafts)} 本")
+    return 0
+
+
+COMMANDS.update({
+    "send": _send, "schedule": _schedule, "retract": _retract,
+    "posts": _posts, "replies": _replies, "measured": _measured, "collect": _collect,
+    "mentions": _mentions, "topics search": _topics_search, "profile": _profile,
+    "location search": _location, "account status": _account_status, "account set": _account_set,
+    "queue": _queue,
+})
+
+
 def register(sub) -> None:
-    """`thth login` / `thth logout` と、遠くの道の命令の `--remote`（`build_parser()` から 1 行で）。"""
+    """`thth login` / `thth logout` と遠くの道の旗（`build_parser()` から 1 行で）。
+
+    旗は手元の道でも同じ意味で受ける（`--limit` は先頭から切る・`--json` は同じ形）。
+    """
     for name in REMOTE_PARSERS:
         parser = sub.choices.get(name)
         if parser is not None:
             parser.add_argument("--remote", action="store_true",
                                 help="台帳が手元にあっても thth.me の鍵で動かす（遠くの道・thth login のあと）")
+    choices = sub.choices
+    send = choices["send"]
+    send.add_argument("--text", default=None, help="本文（1 行の文。長い本文は --text-file か標準入力）")
+    send.add_argument("--dry-run", dest="dry_run", action="store_true",
+                      help="出さずに lint の結果だけ（手元の道では既定の dry-run と同じ）")
+    send.add_argument("--json", action="store_true", help="結果を JSON 1 つで（経過の行は stderr）")
+    schedule = choices["schedule"]
+    schedule.add_argument("--text", default=None, help="遠くの道: 予約する本文（1 行）")
+    schedule.add_argument("--text-file", dest="text_file", default=None, help="遠くの道: 予約する本文のファイル")
+    schedule.add_argument("--at", default=None, help="遠くの道: 出す時刻（ISO・例 2026-09-27T09:00+09:00）")
+    schedule.add_argument("--draft", default=None, help="遠くの道: 置いた下書き（draft_id）を予約する")
+    schedule.add_argument("--topic", default=None)
+    schedule.add_argument("--reply-to", dest="reply_to", default=None)
+    choices["posts"].add_argument("--refresh", action="store_true",
+                                  help="媒体から引き直す（thth posts は元から毎回引く・同じ動き）")
+    for name in ("replies", "measured", "mentions"):
+        choices[name].add_argument("--limit", type=int, default=None, help="先頭から何件")
+    choices["mentions"].add_argument("--refresh", action="store_true",
+                                     help="媒体から引き直す（thth mentions は元から毎回引く・同じ動き）")
+    choices["collect"].add_argument("--json", action="store_true",
+                                    help="採ったあとの数字を thth measured --json と同じ形で（口座を 1 つ指定）")
     p = sub.add_parser("login", help="thth.me の鍵を保存する（遠くの道・鍵は tty か --stdin で入れる）")
     p.add_argument("--url", default=None, help=f"既定 {DEFAULT_URL}")
     p.add_argument("--stdin", action="store_true", help="鍵を標準入力の 1 行から読む")

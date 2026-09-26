@@ -1405,8 +1405,13 @@ def cmd_posts(args) -> int:
     if args.json:
         _print_json(result)
         return 0 if not result.get("error") else 1
+    return show_posts(args.account, result)
+
+
+def show_posts(account: str, result: dict) -> int:
+    """`thth posts` の人向けの表示（手元の道と遠くの道が共有・`--json` の形を受ける）。"""
     if result.get("error"):
-        print(f"{args.account}: {result['error']}", file=sys.stderr)
+        print(f"{account}: {result['error']}", file=sys.stderr)
         _print_retracted(result.get("retracted") or [])
         return 1
     posts = result["posts"]
@@ -1548,11 +1553,17 @@ def cmd_replies(args) -> int:
     except accounts_mod.AccountError as e:
         print(str(e), file=sys.stderr)
         return 1
+    if getattr(args, "limit", None):
+        result = {**result, "replies": result["replies"][:args.limit]}
 
     if args.json:
         _print_json(result)
         return _refresh_rc(取り直し)
+    return show_replies(result, 取り直し)
 
+
+def show_replies(result: dict, 取り直し=None) -> int:
+    """`thth replies` の人向けの表示（手元の道と遠くの道が共有・`--json` の形を受ける）。"""
     if 取り直し is not None:
         _print_refresh(取り直し)
         # **人向けでも終了コードを返す**（独立検収 B・2026-09-12）。
@@ -1586,7 +1597,7 @@ def cmd_replies(args) -> int:
     print(f"—— 返信 {counts['replies']} 件（身内 {counts['own']}・その他 {counts['other']}・"
           f"不明 {counts['unknown']}）／取得記録 {counts['fetches']} 件"
           + (f"（出所 {出所}）" if 出所 else ""))
-    if result["broken"]:
+    if result.get("broken"):
         print(f"**読めなかったファイル**（壊れています）: {', '.join(result['broken'])}",
               file=sys.stderr)
     return 失敗
@@ -1615,11 +1626,17 @@ def cmd_measured(args) -> int:
     except accounts_mod.AccountError as e:
         print(str(e), file=sys.stderr)
         return 1
+    if getattr(args, "limit", None):
+        result = {**result, "posts": result["posts"][:args.limit]}
 
     if args.json:
         _print_json(result)
         return 0
+    return show_measured(result)
 
+
+def show_measured(result: dict) -> int:
+    """`thth measured` の人向けの表示（手元の道と遠くの道が共有・`--json` の形を受ける）。"""
     posts = result["posts"]
     if not posts:
         print("実測がありません")
@@ -2762,7 +2779,14 @@ def cmd_schedule(args) -> int:
 
     読むだけ（asmon 関東セッション指摘 2026-09-10）。承認済みと下書きの両方を出す
     ——連載を組むときに見たいのは全体だから。
+
+    `--text`・`--text-file`・`--at`・`--draft`（予約を刻む）は遠くの道だけ（設計 3.14.0 §2）。
+    手元の道の予約は queue に原稿を置いて `thth approve`。
     """
+    if any(getattr(args, name, None) is not None for name in ("text", "text_file", "at", "draft")):
+        print("remote_only: 予約を刻む形（--text・--at・--draft）は thth.me の鍵の道だけです。"
+              "手元の台帳では queue に原稿を置いて thth approve", file=sys.stderr)
+        return 2
     account_names = [args.account] if args.account else accounts_mod.list_account_names()
     notice_lines, repo_by_account = _behind_notices(account_names)
     rows = report_mod.schedule(args.account, days=args.days)
@@ -3143,12 +3167,23 @@ def cmd_collect(args) -> int:
     ふつうありません。
     """
     names = [args.account] if args.account else accounts_mod.list_account_names()
+    as_json = bool(getattr(args, "json", False))
+    if as_json and not args.account:
+        print("--json は口座を 1 つ指定したときだけです（thth collect <口座> --json）", file=sys.stderr)
+        return 2
     worst = 0
     for name in names:
         # **手で打った採取も runs に残す**（引継ぎ 2026-09-15 §3-D）。
-        rc = collect_mod.run_collect(name, log=print,
+        rc = collect_mod.run_collect(name, log=(lambda line: print(line, file=sys.stderr)) if as_json else print,
                                       trigger=collect_mod.TRIGGER_MANUAL)
         worst = max(worst, rc)
+    if as_json and worst == 0:
+        # 採ったあとの数字（`thth measured --json` と同じ形・遠くの道の `collect` と同じ）。
+        try:
+            _print_json(measured_json(args.account))
+        except accounts_mod.AccountError as e:
+            print(str(e), file=sys.stderr)
+            return 1
     return worst
 
 
@@ -3194,7 +3229,16 @@ def cmd_send(args) -> int:
     import sys as _sys
     from . import core as core_mod
     from . import inflight as inflight_mod
-    if args.text_file:
+    if getattr(args, "text", None) is not None and args.text_file:
+        print("--text と --text-file はどちらか 1 つにしてください", file=sys.stderr)
+        return 2
+    if getattr(args, "dry_run", False) and args.production:
+        print("--dry-run と --production は同時に付けられません", file=sys.stderr)
+        return 2
+    if getattr(args, "text", None) is not None:
+        # 1 行の文（設計 3.14.0 §2）。複数行・長い本文は --text-file か標準入力で。
+        text = args.text
+    elif args.text_file:
         vm_msg = _require_vm_path(args.text_file, what="送る本文のファイル")
         if vm_msg:
             # **VM に無いパスは素の traceback でなく案内で断る**（T8-1）。
@@ -3226,21 +3270,28 @@ def cmd_send(args) -> int:
         # には理由が入っているのに、`exit_code` しか見ていなかった。
         # core が既に log した行は二度言わない（出したのは同じ 1 行）。
         printed = []
+        as_json = bool(getattr(args, "json", False))
         def log(line):
             printed.append(str(line))
-            print(line)
+            # `--json` のときは標準出力を JSON 1 つにする（経過の行は stderr へ）。
+            print(line, file=sys.stderr if as_json else sys.stdout)
         outcome = {}
         def send():
             result = core_mod.send_once(
                 args.account, text=text, topic=args.topic, reply_to=args.reply_to,
                 reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
                 found_by=args.found_by, goal=getattr(args, "goal", None),
-                production_flag=args.production, confirm=args.confirm, log=log, wait=getattr(args, "wait", 0),
+                production_flag=args.production and not getattr(args, "dry_run", False),
+                confirm=args.confirm, log=log, wait=getattr(args, "wait", 0),
                 **({'media_rows': declarations} if declarations else {}))
             outcome['result'] = result
             return result.exit_code
         code = read_coordination.invoke(args,'send',send)
         result = outcome.get('result')
+        if as_json and result is not None:
+            _print_json({"account": args.account, "mode": result.mode, "action": result.action,
+                         "post_id": result.post_id, "permalink": result.url, "digest": result.digest,
+                         "error": result.error})
         if code and result is not None:
             lines = media_delivery_mod.refusal_lines(result)
             # inflight で止まったなら「確かめてから消す」を必ず 1 行足す。

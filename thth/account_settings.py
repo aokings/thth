@@ -224,6 +224,11 @@ def cmd_set(args) -> int:
     if getattr(args, "json", False):
         print(json.dumps(results if len(results) > 1 else results[0], ensure_ascii=False))
         return 0
+    return show_changes(results)
+
+
+def show_changes(results) -> int:
+    """`thth account set` の人向けの表示（手元の道と遠くの道が共有・`--json` の行を受ける）。"""
     for row in results:
         if row["changed"]:
             print(f"{row['account']}: {row['key']} {row['before']} → {row['after']}")
@@ -274,6 +279,11 @@ def cmd_status(args) -> int:
     if getattr(args, "json", False):
         print(json.dumps(row, ensure_ascii=False))
         return 0
+    return show_status(row)
+
+
+def show_status(row) -> int:
+    """`thth account status` の人向けの表示（手元の道と遠くの道が共有・`--json` の形を受ける）。"""
     s = row["settings"]
     print(f"{row['account']}")
     print(f"  1 日の公開の上限（daily_max_posts）: {s['daily_max_posts']}")
