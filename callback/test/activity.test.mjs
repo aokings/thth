@@ -169,3 +169,18 @@ test('cross-site posts are refused',async()=>{
   const init=form({act:'stop',account:name,secret:p.secret},{cookie,origin:'https://evil.test'});
   assert.equal((await mf.dispatchFetch(ORIGIN+'/activity',init)).status,403);
 });
+
+// 3.14.2: パスワード管理が「設定を変える」の値の欄にユーザ名を入れていた。secret の欄を値の欄より先に置き、
+// 値の欄は autocomplete="off" と「入れない」印。secret の欄は current-password のまま。
+test('the settings form puts the secret before the value, so a password manager has no username field to fill',async()=>{
+  const p=await person(),name=account();
+  assert.equal((await sync(p,[summary(name)])).status,200);
+  const html=await(await get('/activity',await cookieOf(p))).text();
+  const settings=/<form[^>]*>(?:(?!<\/form>).)*name="act" value="settings"(?:(?!<\/form>).)*<\/form>/s.exec(html)?.[0];
+  assert.ok(settings,html);
+  const secretAt=settings.indexOf('type="password"'),valueAt=settings.indexOf('name="value"');
+  assert.ok(secretAt>0&&valueAt>secretAt,'the secret comes first');
+  assert.ok(settings.includes('autocomplete="current-password"'));
+  assert.match(settings,/<input name="value"[^>]*autocomplete="off"[^>]*data-1p-ignore[^>]*data-lpignore="true"/);
+  assert.ok(!/<input(?![^>]*type="(?:hidden|password)")[^>]*>/.test(settings.slice(0,secretAt)),'no text field before the password field');
+});

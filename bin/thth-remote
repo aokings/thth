@@ -13,6 +13,31 @@
 # 無いと getpass がエコーを止められず、**手元の画面にトークンが出る**。
 set -euo pipefail
 
+# thth-remote-wrapper（この印で、PATH 上の `thth` がこのラッパ自身か pip の `thth` かを見分ける）
+#
+# 3.14.2: `login`・`logout` だけは手元の `thth`（pip）に渡す。ブラウザ式の `thth login` は
+# 手元の `~/.config/thth/remote.json` に鍵を置く命令で、VM で打つと VM に置かれてしまう。
+# それ以外は今までどおり VM。遠くの道（remote.json）を手元で確かめるときは `python3 -m thth …` か
+# pip の `thth` の絶対パスで打つ（このラッパは VM 行き）。
+case "${1:-}" in
+  login|logout)
+    if [ -n "${THTH_LOCAL:-}" ]; then
+      exec "$THTH_LOCAL" "$@"
+    fi
+    # 配列を使わない（macOS 既定の bash 3.2 は `set -u` の下で空配列の展開に落ちる）。
+    set -f; OLD_IFS="$IFS"; IFS=:
+    for dir in ${PATH:-}; do
+      candidate="${dir:-.}/thth"
+      if [ -f "$candidate" ] && [ -x "$candidate" ] && ! grep -q 'thth-remote-wrapper' "$candidate" 2>/dev/null; then
+        IFS="$OLD_IFS"; set +f
+        exec "$candidate" "$@"
+      fi
+    done
+    IFS="$OLD_IFS"; set +f
+    exec python3 -m thth "$@"
+    ;;
+esac
+
 HOST="${THTH_SSH_HOST:-wt}"
 REMOTE='PATH="$HOME/.local/bin:$PATH"; exec thth'
 for arg in "$@"; do

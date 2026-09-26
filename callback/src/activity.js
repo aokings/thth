@@ -45,8 +45,9 @@ function signIn(status=200,note=''){
 <form method="post" action="/activity"><label>ユーザ名 / Username <input name="person" autocomplete="username" required maxlength="64"></label>${secretField}<button type="submit">一覧を見る / Show activity</button></form>
 <p>一覧は 10 分で閉じます。secret は LLM や原稿に書かないでください。${en('The page closes after 10 minutes. Never paste the secret into an LLM or a draft.')}</p>`,TITLE);
 }
-function form(act,account,fields,label,extra=''){
-  return `<form method="post" action="/activity"><input type="hidden" name="act" value="${escape(act)}"><input type="hidden" name="account" value="${escape(account)}">${fields}${extra}${secretField}<button type="submit">${label}</button></form>`;
+function form(act,account,fields,label,extra='',secretFirst=false){
+  const body=secretFirst?`${secretField}${fields}${extra}`:`${fields}${extra}${secretField}`;
+  return `<form method="post" action="/activity"><input type="hidden" name="act" value="${escape(act)}"><input type="hidden" name="account" value="${escape(account)}">${body}<button type="submit">${label}</button></form>`;
 }
 function row(account,r){
   const [ja,enWord]=KIND_WORDS[r.kind];
@@ -63,7 +64,10 @@ function section(s){
     ?form('resume',s.account,'','止めたのを戻す / Resume')
     :form('stop',s.account,'','この口座を止める / Stop this account',`<p>止めると、戻すまで公開・削除・予約をすべて断ります。${en('While stopped, every publish, delete and schedule is refused until you resume.')}</p>`);
   const options=SETTING_KEYS.map(k=>`<option value="${k}">${escape(SETTING_WORDS[k])}</option>`).join('');
-  const settings=form('settings',s.account,`<label>項目 / Setting <select name="key">${options}</select></label><label>値 / Value <input name="value" required maxlength="9" autocomplete="off"></label>`,'設定を変える / Change');
+  // 3.14.2: パスワード管理は password の欄の手前の文字の欄をユーザ名と見なし、値の欄にユーザ名を入れていた
+  // （09-26 のスマホの画面・autocomplete="off" は 3.12.0 からあったが効かない）。secret の欄を先に置き、
+  // 値の欄には主なパスワード管理の「入れない」印を添える。
+  const settings=form('settings',s.account,`<label>項目 / Setting <select name="key">${options}</select></label><label>値 / Value <input name="value" required maxlength="9" autocomplete="off" inputmode="decimal" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other"></label>`,'設定を変える / Change','',true);
   const key=s.credential
     ?`<p>LLM の鍵 / Key for your LLM: ${escape(s.credential.id)}… · 期限 / Expires ${escape(s.credential.expires_at)}${s.credential.revoked?' · 取り消し済み / Revoked':''}</p>`
     :`<p>LLM の鍵 / Key for your LLM: なし / None</p>`;
