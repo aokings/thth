@@ -3249,7 +3249,11 @@ def cmd_send(args) -> int:
     elif getattr(args, 'media_files', None):
         text = ''
     else:
-        text = _sys.stdin.read()
+        try:
+            text = _sys.stdin.read()
+        except OSError:
+            print("標準入力を読めません（--text か --text-file で本文を渡してください）", file=sys.stderr)
+            return 2
     from . import media as media_mod
     files, alts = getattr(args, 'media_files', None) or [], getattr(args, 'alts', None) or []
     if len(files) != len(alts):

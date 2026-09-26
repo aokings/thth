@@ -129,6 +129,8 @@ Full walkthrough: [docs/usage.en.md](docs/usage.en.md).
 ## Commands
 
 - `admin` — authenticated read-only inventory, account, log, tokens, timers, release and diff reports.
+- `login` — save your thth.me key (read from the terminal or `--stdin`, never as an argument) to use your account without a local ledger.
+- `logout` — remove the saved thth.me key.
 
 All subcommands `thth --help` lists in this development checkout, one line each:
 

@@ -406,7 +406,10 @@ def _body(args) -> str:
         except (OSError, UnicodeDecodeError):
             raise RemoteError("invalid_request", reason="本文のファイルを読めません", rc=2) from None
     else:
-        body = sys.stdin.read()
+        try:
+            body = sys.stdin.read()
+        except OSError:
+            raise RemoteError("invalid_request", reason="標準入力を読めません（--text か --text-file）", rc=2) from None
     if not body.strip():
         raise RemoteError("invalid_request", reason="本文が空です", rc=2)
     return body
