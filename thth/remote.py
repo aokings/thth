@@ -1,9 +1,12 @@
 """遠くの道（設計 3.14.0 §2・§3.4）: 鍵で thth.me 経由で自分の口座を動かす。
 
-`thth login` が鍵を `~/.config/thth/remote.json`（0600・親 0700・`{"url", "key"}`）に置き、
+`thth login` が鍵を `~/.config/thth/remote.json`（0600・親 0700・`{"url", "key"[, "account"]}`）に置き、
 以後は手元の道と**同じ命令・同じ引数・同じ `--json` の形**で動く。
 
-- 鍵は tty（`getpass`）か `--stdin` の 1 行でだけ受ける。**引数では受けない**（shell の履歴に残る）。
+- 3.14.2 から `thth login` の既定はブラウザ式（`gh auth login` と同じ形・設計 3.14.2 §2）: 手元で code と
+  poll_token を作り、ブラウザで口座名と口座の secret を入れて許可すると、thth.me が発行した鍵を 1 度だけ受け取る。
+  入力が要らないので tty が無くても動く。
+- 貼る道も残す: `--stdin`（標準入力の 1 行）・`--paste`（tty で `getpass`）。**引数では受けない**（shell の履歴に残る）。
 - 鍵は出力・ログ・例外の文に出さない（読んだらすぐ `redact.register_secret`）。
 - 置き場は `THTH_REMOTE_CONFIG` で差し替えられる（試験用）。
 """
@@ -11,10 +14,12 @@ from __future__ import annotations
 
 import datetime
 import getpass
+import hashlib
 import http.client
 import json
 import os
 import re
+import secrets
 import sys
 import time
 import urllib.error
@@ -73,7 +78,12 @@ def load():
 # thth login / thth logout
 # --------------------------------------------------------------------------
 
-LOGIN_NEXT = "鍵は https://thth.me/activity で発行します"
+LOGIN_NEXT = "鍵は https://thth.me/activity で発行します（`thth login` だけならブラウザで許可すれば貼らずに済みます）"
+# ブラウザ式（設計 3.14.2 §2）。code は大文字と数字から紛らわしい字（0 O 1 I L）を除いた 8 字（表示は XXXX-XXXX）。
+LOGIN_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+LOGIN_POLL_SECONDS = 2
+LOGIN_MAX_SECONDS = 600
+ACCOUNT_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}\Z")
 
 
 def _fail(code, message=None) -> int:
@@ -85,17 +95,20 @@ def cmd_login(args) -> int:
     if getattr(args, "key", None):
         # 値は読まずに捨てる（控えない・表示しない）。
         return _fail("key_in_argument", "鍵を引数で渡すと shell の履歴に残ります。"
-                     "`thth login` で tty から、または `thth login --stdin` で入れてください")
+                     "`thth login`（ブラウザで許可）か、`thth login --stdin` で入れてください")
     from . import httpsafe
     try:
         url = httpsafe.validated_url(args.url or DEFAULT_URL, base=True)
     except httpsafe.EndpointRejected:
         return _fail("invalid_url", "https:// で始まる URL を指定してください")
+    if not args.stdin and not getattr(args, "paste", False):
+        return _browser_login(url, open_browser=not getattr(args, "no_browser", False))
     if args.stdin:
         key = sys.stdin.readline().strip()
     else:
         if not sys.stdin.isatty():
-            return _fail("tty_required", "端末から実行するか、`thth login --stdin` で標準入力から入れてください")
+            return _fail("tty_required", "端末から実行するか、`thth login`（ブラウザで許可）か "
+                         "`thth login --stdin` で入れてください")
         try:
             key = getpass.getpass("thth.me の鍵（表示しません）: ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -111,6 +124,95 @@ def cmd_login(args) -> int:
         return _fail("remote_config_unwritable", f"{path}（{exc.strerror or type(exc).__name__}）")
     print(f"保存しました: {path}（{url}）")
     print("確かめるには: thth account status <口座>")
+    return 0
+
+
+def _open_browser(page) -> bool:
+    """既定のブラウザで開く。開けなくても（ssh の先・ブラウザが無い）断らない。"""
+    try:
+        import webbrowser
+        return bool(webbrowser.open(page))
+    except Exception:  # noqa: BLE001 — 開けなければ URL を出すだけ
+        return False
+
+
+def _login_exchange(method, target, headers, payload=None):
+    """ブラウザ式の login の 1 回の HTTP。`(status, dict | None)`。網の失敗は `(None, None)`。"""
+    from . import __version__, httpsafe
+    headers = {"Accept": "application/json", "User-Agent": "thth/" + __version__, **headers}
+    body = None
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    try:
+        status, _headers, raw = _transport(method, target, headers, body, TIMEOUT)
+    except (urllib.error.URLError, OSError, http.client.HTTPException, httpsafe.EndpointRejected, ValueError):
+        return None, None
+    try:
+        value = json.loads(raw) if len(raw) <= RESPONSE_MAX else None
+    except ValueError:
+        value = None
+    return status, value if type(value) is dict else None
+
+
+def _sha256(text) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _browser_login(url, *, open_browser=True) -> int:
+    """ブラウザ式の `thth login`（設計 3.14.2 §2）。鍵は受け取ったらすぐ伏せる対象に入れ、画面には出さない。"""
+    raw = "".join(secrets.choice(LOGIN_ALPHABET) for _ in range(8))
+    code = raw[:4] + "-" + raw[4:]
+    poll_token = secrets.token_urlsafe(32)  # 43 字（URL を見た人が鍵を取れないように poll は別の token で守る）
+    redact.register_secret(poll_token)
+    status, value = _login_exchange("POST", url + "/api/v1/login/start", {},
+                                    {"code_hash": _sha256(code), "poll_token_hash": _sha256(poll_token)})
+    if status is None:
+        return _fail("remote_unavailable", "thth.me に届きませんでした。網を確かめてもう一度"
+                     "（鍵が手元にあれば `thth login --stdin` でも入れられます）")
+    if status == 429:
+        return _fail("rate_limited", "少し待ってもう一度")
+    if status != 202 or value is None or not isinstance(value.get("url"), str):
+        return _fail("login_unavailable", "thth.me がブラウザ式の login を受けませんでした"
+                     "（鍵が手元にあれば `thth login --stdin` で入れられます）")
+    page = url + "/login/" + code
+    print(f"ブラウザで許可してください: {page}（10 分有効）", flush=True)
+    if not open_browser or not _open_browser(page):
+        print("（上の URL をブラウザで開いてください）", flush=True)
+    else:
+        print("（ブラウザが開かなければ上の URL を開いてください）", flush=True)
+    print("待っています…（口座名と口座の secret を入れて「この機械に鍵を渡す」を押す）", flush=True)
+    deadline = _clock() + LOGIN_MAX_SECONDS
+    target = url + "/api/v1/login/poll/" + code
+    try:
+        while True:
+            if _clock() >= deadline:
+                return _fail("login_expired", "10 分で切れました。`thth login` をやり直してください")
+            _sleep(LOGIN_POLL_SECONDS)
+            status, value = _login_exchange("GET", target, {"Authorization": "Bearer " + poll_token})
+            if status is None or status in (202, 429, 503):
+                continue  # 待つ・網が一時的に切れた・回数制限: 期限まで見続ける
+            if status == 200 and value is not None:
+                break
+            if status in (404, 410):
+                return _fail("login_expired", "期限が切れたか、もう使われました。`thth login` をやり直してください")
+            return _fail("login_failed", "thth.me が鍵を渡しませんでした。`thth login` をやり直してください")
+    except KeyboardInterrupt:
+        print("", file=sys.stderr)
+        return _fail("login_cancelled")
+    key, account = value.get("key"), value.get("account")
+    if isinstance(key, str):
+        redact.register_secret(key)
+    if not isinstance(key, str) or not KEY.fullmatch(key) or not isinstance(account, str) \
+            or not ACCOUNT_NAME.fullmatch(account):
+        return _fail("login_failed", "thth.me の答えが鍵の形ではありません。`thth login` をやり直してください")
+    path = config_path()
+    try:
+        secrets_fs.atomic_write_json(path, {"url": url, "key": key, "account": account}, mode=0o600, dir_mode=0o700)
+    except OSError as exc:
+        return _fail("remote_config_unwritable", f"{path}（{exc.strerror or type(exc).__name__}）")
+    print(f"保存しました: {path}（{account}）")
+    print(f"鍵はサーバが切り替えた時点（数十秒後）から使えます。確かめるには: thth account status {account}")
     return 0
 
 
@@ -253,9 +355,9 @@ def _wait(cfg, request_id):
 # --------------------------------------------------------------------------
 
 NEXT = {
-    "not_logged_in": "thth login（鍵は https://thth.me/activity で発行）か、口座の台帳を手元に置く",
-    "invalid_key": "https://thth.me/activity で鍵を発行し直して thth login",
-    "key_expired": "https://thth.me/activity で鍵を発行し直して thth login",
+    "not_logged_in": "thth login（ブラウザで許可）か、口座の台帳を手元に置く",
+    "invalid_key": "thth login をやり直す（ブラウザで許可すると鍵を発行し直す・https://thth.me/activity でも発行できる）",
+    "key_expired": "thth login をやり直す（ブラウザで許可すると鍵を発行し直す・https://thth.me/activity でも発行できる）",
     "remote_config_invalid": "thth logout のあと thth login でもう一度",
     "remote_unavailable": "網を確かめてもう一度（thth.me に届きませんでした）",
     "remote_pending": "まだ結果が返っていません。出たかどうかは thth posts で確かめてから打ち直す",
@@ -620,9 +722,12 @@ def register(sub) -> None:
                                      help="媒体から引き直す（thth mentions は元から毎回引く・同じ動き）")
     choices["collect"].add_argument("--json", action="store_true",
                                     help="採ったあとの数字を thth measured --json と同じ形で（口座を 1 つ指定）")
-    p = sub.add_parser("login", help="thth.me の鍵を保存する（遠くの道・鍵は tty か --stdin で入れる）")
+    p = sub.add_parser("login", help="thth.me の鍵を受け取って保存する（遠くの道・既定はブラウザで許可）")
     p.add_argument("--url", default=None, help=f"既定 {DEFAULT_URL}")
-    p.add_argument("--stdin", action="store_true", help="鍵を標準入力の 1 行から読む")
+    p.add_argument("--no-browser", dest="no_browser", action="store_true",
+                   help="ブラウザを開かず URL だけ出す（別の機械のブラウザで開くとき）")
+    p.add_argument("--stdin", action="store_true", help="貼る道: 発行済みの鍵を標準入力の 1 行から読む")
+    p.add_argument("--paste", action="store_true", help="貼る道: 発行済みの鍵を端末で入れる（表示しない）")
     # 受けるのは断るためだけ（`key_in_argument`）。help には出さない。
     p.add_argument("key", nargs="?", default=None, help=argparse_suppress())
     p.set_defaults(func=cmd_login)
