@@ -352,6 +352,10 @@ class ReportHandler(BaseHTTPRequestHandler):
                 from .server_writes import GUARD_DETAILS
                 if getattr(error, "reason", None) in GUARD_DETAILS:
                     detail = {"reason": error.reason}
+                # 前の公開の結果が分かっていない（inflight・3.14.3 穴 3）。
+                from .server_writes import UNCONFIRMED_REASONS
+                if reason == 'publication_unconfirmed' and getattr(error, "reason", None) in UNCONFIRMED_REASONS:
+                    detail = {"reason": error.reason}
                 if isinstance(getattr(error, "next_at", None), str):
                     detail["next_at"] = error.next_at
             return self._reply(400 if reason in public else 503,

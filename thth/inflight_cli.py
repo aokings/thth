@@ -151,7 +151,12 @@ def _show(args, record) -> int:
     if args.json:
         _print_json({"ok": True, "account": args.account, "inflight": info, "next": step})
         return 0
-    print(f"{args.account}: inflight があります（公開の結果が分かっていません）")
+    return show_info(args.account, info, step)
+
+
+def show_info(account: str, info: dict, step: str) -> int:
+    """inflight の中身を人向けに（手元の道と遠くの道で同じ・3.14.3 穴 3）。"""
+    print(f"{account}: inflight があります（公開の結果が分かっていません）")
     print(f"  原稿: {info['file'] or '（不明）'}")
     print(f"  始まり: {info['started'] or '（不明）'}"
           + (f"（{info['age_hours']} 時間前）" if info["age_hours"] is not None else ""))
@@ -180,24 +185,11 @@ def _resolve(args, account_cfg, state_dir, record) -> int:
                      "--not-published（出ていない）か --published <post_id>（出ていた）の"
                      "どちらかを付けてください。先に thth inflight "
                      f"{args.account} show で中身を見られます")
-    if record is None:
-        return _fail(args, 1, "no_inflight", f"{args.account} に inflight はありません（解くものが無い）")
-    if record.get("media"):
-        return _fail(args, 2, "media_inflight_unsupported",
-                     "添付の inflight はこの口では解きません。docs/原稿_添付_2.13.md の手順で確かめてください")
     post_id = (args.published or "").strip() or None
-    if post_id is not None and not postid_mod.is_usable(post_id):
-        return _fail(args, 1, "post_id_invalid", "post_id の形が台帳に書けません。媒体の画面の数字（id）を確かめてください")
-    if args.not_published and (record.get("post_id") or record.get("remote_post_id")):
-        return _fail(args, 1, "published_known",
-                     "この inflight は出たことが分かっています（post_id が記録にあります）。"
-                     f"thth inflight {args.account} resolve --published <post_id> で解いてください")
-    known = record.get("post_id") or record.get("remote_post_id")
-    if post_id is not None and known and known != post_id:
-        return _fail(args, 1, "post_id_differs",
-                     "inflight に記録された post_id と違います。媒体の画面で確かめ、"
-                     f"thth inflight {args.account} show の内容と合わせてください")
     decision = "not_published" if args.not_published else "published"
+    refused = refusal(args.account, record, decision, post_id)
+    if refused:
+        return _fail(args, *refused)
     expected = digest(args.account, record, decision, post_id)
     if not args.confirm:
         return _stage_one(args, record, decision, post_id, by, expected)
@@ -206,6 +198,27 @@ def _resolve(args, account_cfg, state_dir, record) -> int:
                      f"digest が一致しないので解きません（表示したものと中身が違います）。"
                      f"いまの digest は {expected} です。もう一度 thth inflight {args.account} resolve から")
     return _execute(args, account_cfg, state_dir, decision, post_id, by)
+
+
+def refusal(account: str, record, decision: str, post_id):
+    """解けない理由 `(rc, 符丁, 次の一手)`。解けるなら None（手元の道と遠くの道で同じ・3.14.3 穴 3）。"""
+    if record is None:
+        return 1, "no_inflight", f"{account} に inflight はありません（解くものが無い）"
+    if record.get("media"):
+        return (2, "media_inflight_unsupported",
+                "添付の inflight はこの口では解きません。docs/原稿_添付_2.13.md の手順で確かめてください")
+    if post_id is not None and not postid_mod.is_usable(post_id):
+        return 1, "post_id_invalid", "post_id の形が台帳に書けません。媒体の画面の数字（id）を確かめてください"
+    if decision == "not_published" and (record.get("post_id") or record.get("remote_post_id")):
+        return (1, "published_known",
+                "この inflight は出たことが分かっています（post_id が記録にあります）。"
+                f"thth inflight {account} resolve --published <post_id> で解いてください")
+    known = record.get("post_id") or record.get("remote_post_id")
+    if post_id is not None and known and known != post_id:
+        return (1, "post_id_differs",
+                "inflight に記録された post_id と違います。媒体の画面で確かめ、"
+                f"thth inflight {account} show の内容と合わせてください")
+    return None
 
 
 def _stage_one(args, record, decision, post_id, by, expected) -> int:
@@ -230,51 +243,72 @@ def _stage_one(args, record, decision, post_id, by, expected) -> int:
     return 1
 
 
-def _execute(args, account_cfg, state_dir, decision, post_id, by) -> int:
+class Refused(Exception):
+    """`apply` の断り（静的な符丁と次の一手）。"""
+
+    def __init__(self, code, message):
+        super().__init__(code)
+        self.code, self.message = code, message
+
+
+def apply(account, account_cfg, state_dir, decision, post_id, by, confirm, *, wait=0, via="cli"):
+    """ロックの中で読み直し、digest が同じなら解く。戻り値は (resolution, 控えの path, 変更ログに書けたか)。
+
+    手元の道（`thth inflight … resolve --confirm`）と遠くの道（`inflight_resolve`）の 1 か所。
+    断りは `Refused`（`account_locked` はロックが取れなかった）。
+    """
     from . import admin_log, core
     run_id = uuid.uuid4().hex[:12]
     now = jst.now_jst()
     try:
-        with core._account_locks(args.account, account_cfg, state_dir, wait=args.wait):
+        with core._account_locks(account, account_cfg, state_dir, wait=wait):
             # ロックの中でもう一度読む（別の run が解いた・別の inflight に替わった）。
             record = inflight_mod.read(state_dir)
             if record is None:
-                return _fail(args, 1, "no_inflight", "もう inflight はありません（別の run が解きました）")
-            if args.confirm != digest(args.account, record, decision, post_id):
-                return _fail(args, 1, "inflight_changed",
-                             "表示したあとに inflight が替わりました。もう一度 show から")
+                raise Refused("no_inflight", "もう inflight はありません（別の run が解きました）")
+            if confirm != digest(account, record, decision, post_id):
+                raise Refused("inflight_changed", "表示したあとに inflight が替わりました。もう一度 show から")
             if decision == "not_published":
                 path = inflight_mod.archive(state_dir, record, resolved_at=jst.iso(),
                                             resolved_by=by, resolution=HUMAN_NOT_PUBLISHED)
                 inflight_mod.clear(state_dir)
-                inflight_resolve._run(args.account, state_dir, run_id, now, record,
+                inflight_resolve._run(account, state_dir, run_id, now, record,
                                       post_id=None, status="error",
                                       error="inflight_resolved_not_published",
                                       resolution=HUMAN_NOT_PUBLISHED)
                 resolution = HUMAN_NOT_PUBLISHED
             else:
                 ok, error = inflight_resolve.record_published(
-                    args.account, account_cfg, state_dir, record, post_id,
+                    account, account_cfg, state_dir, record, post_id,
                     posted_at=record.get("started") or jst.iso(), resolution=HUMAN_PUBLISHED,
                     resolved_by=by, run_id=run_id, now=now, log=lambda line: None)
                 if not ok:
-                    return _fail(args, 1, error or "writeback_failed", _WRITEBACK_NEXT.get(
+                    raise Refused(error or "writeback_failed", _WRITEBACK_NEXT.get(
                         error, "記録を書き戻せませんでした（inflight は残っています）。"
                                "thth board と repo の状態を確かめてください"))
                 archived = inflight_mod.archives(state_dir)
                 path = archived[-1] if archived else None
                 resolution = HUMAN_PUBLISHED
     except lock_mod.LockBusy:
-        return _fail(args, 1, "account_locked",
-                     f"{args.account} は実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます")
+        raise Refused("account_locked",
+                      f"{account} は実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます") from None
     try:
-        admin_log.append("inflight_resolved", args.account, account_cfg, by=by,
+        admin_log.append("inflight_resolved", account, account_cfg, by=by, via=via,
                          diff={"inflight": ["present", "absent"],
                                "resolution": [None, resolution],
                                "post_id": [None, post_id]}, run_id=run_id)
         logged = True
     except Exception:  # noqa: BLE001 — 解いたことは取り消さない。書けなかったことだけ言う
         logged = False
+    return resolution, path, logged
+
+
+def _execute(args, account_cfg, state_dir, decision, post_id, by) -> int:
+    try:
+        resolution, path, logged = apply(args.account, account_cfg, state_dir, decision, post_id, by,
+                                         args.confirm, wait=args.wait)
+    except Refused as refused:
+        return _fail(args, 1, refused.code, refused.message)
     payload = {"ok": True, "resolved": True, "account": args.account, "resolution": resolution,
                "post_id": post_id, "by": by, "archive": path, "admin_log": logged}
     if args.json:

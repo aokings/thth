@@ -40,22 +40,29 @@ TIMEOUT_ENV = "THTH_THREADS_TIMEOUT_SECONDS"
 MEDIUM = "threads"
 
 # **公開が 5xx・timeout・接続断で終わったあとの container の問い合わせ**
-# （設計 3.3.1 §2）。一次資料（troubleshooting）は「1 分に 1 回・5 分まで」を
-# 推奨している。公開 1 本につき最大 3 回・20 秒おき（1 分）に留める。**最初の
-# 問い合わせも 20 秒待ってから**——5xx の直後は媒体の側で公開の処理が動いて
-# いる最中かもしれず、その間の FINISHED を「まだ出ていない」と読んで再試行する
-# と 2 度出しうるため。試験は `THTH_THREADS_STATUS_POLL_SECONDS=0` か
+# （設計 3.3.1 §2・3.14.3 穴 3）。**最初の問い合わせは 20 秒待ってから**——5xx・
+# timeout の直後は媒体の側で公開の処理が動いている最中かもしれず、その間の
+# FINISHED を「まだ出ていない」と読んで再試行すると 2 度出しうるため。
+# そのあとは 5 秒おきに、合わせて 60 秒まで（3.14.2 までは 20 秒おき 3 回）。
+# 録画 0（09-27）で `threads_publish` の読み取りが時間切れになり、1 分の間に
+# 決まらず inflight に落ちた。PUBLISHED でも一覧に載るのが遅れることがあるので、
+# 一覧に無ければ窓の中で訊き直す。試験は `THTH_THREADS_STATUS_POLL_SECONDS=0` か
 # コンストラクタの `status_poll_seconds`・`sleep` で待たない。
-STATUS_POLL_SECONDS = 20.0
-STATUS_POLL_ATTEMPTS = 3
+STATUS_POLL_SECONDS = 5.0
+STATUS_POLL_FIRST_SECONDS = 20.0
+STATUS_POLL_ATTEMPTS = 9           # 20 秒 + 5 秒 × 8 = 60 秒
 STATUS_POLL_ENV = "THTH_THREADS_STATUS_POLL_SECONDS"
+# `threads_publish` の読み取りの締切。媒体が公開の処理を終えるまで応答を返さない
+# ことがあり、10 秒では先に切っていた（3.14.3 穴 3）。`THTH_THREADS_TIMEOUT_SECONDS`
+# は従前どおりこれも上書きする。
+PUBLISH_TIMEOUT_SECONDS = 30.0
 # 上書きの上限（「1 分に 1 回」より長く待つ意味は無い）。
 STATUS_POLL_MAX = 60.0
 
 
 def status_poll_seconds_default() -> float:
     """`THTH_THREADS_STATUS_POLL_SECONDS`（0 以上の有限の数・60 で頭打ち）。
-    読めなければ既定の 20 秒（上書きは待ちを変える口で、問い合わせを止める口ではない）。"""
+    読めなければ既定の 5 秒（上書きは待ちを変える口で、問い合わせを止める口ではない）。"""
     raw = os.environ.get(STATUS_POLL_ENV)
     if raw is None:
         return STATUS_POLL_SECONDS
@@ -293,6 +300,9 @@ class ThreadsAdapter(base.Adapter):
         override = timeout_override()
         self.timeout = override if override is not None else timeout
         self.search_timeout = override if override is not None else search_timeout
+        # 既定の締切のときだけ公開を 30 秒に延ばす（呼び手が締切を渡したらそれに従う）。
+        self.publish_timeout = (override if override is not None else
+                                PUBLISH_TIMEOUT_SECONDS if timeout == DEFAULT_TIMEOUT_SECONDS else timeout)
         # **`.token` の `scopes`**（一覧なら「乗っている権限」・それ以外は不明）。
         # `granted_scopes()` が読む。**書かない**（`.token` は読むだけ）。
         #
@@ -344,7 +354,8 @@ class ThreadsAdapter(base.Adapter):
         url = f"{self.base_url}{path}"
         data = urllib.parse.urlencode(params).encode("utf-8")
         req = urllib.request.Request(url, data=data, method="POST")
-        with httpsafe.urlopen(req, timeout=self.timeout) as resp:
+        timeout = self.publish_timeout if path.endswith("/threads_publish") else self.timeout
+        with httpsafe.urlopen(req, timeout=timeout) as resp:
             body = resp.read()
             return json.loads(body) if body else {}
 
@@ -493,19 +504,27 @@ class ThreadsAdapter(base.Adapter):
         待ってから訊いているので、次の run で改めて待つ理由が無い。
         """
         last = "query_failed"
-        for _ in range(max(1, int(attempts))):
-            if wait and self.status_poll_seconds:
-                self._sleep(self.status_poll_seconds)
-            try:
-                status = self.container_status(container_id)
-            except (urllib.error.URLError, OSError, ValueError, RuntimeError):
-                last = "query_failed"
-                continue
-            if status == "IN_PROGRESS":
-                last = "in_progress"
-                continue
-            return status
+        for attempt in range(max(1, int(attempts))):
+            if wait:
+                self._poll_wait(attempt)
+            last = self._status_once(container_id)
+            if last not in ("in_progress", "query_failed"):
+                return last
         return last
+
+    def _poll_wait(self, attempt: int) -> None:
+        """問い合わせの前の待ち。最初は 20 秒（間隔が 0 なら待たない）、以後は間隔。"""
+        if not self.status_poll_seconds:
+            return
+        self._sleep(max(self.status_poll_seconds, STATUS_POLL_FIRST_SECONDS) if attempt == 0
+                    else self.status_poll_seconds)
+
+    def _status_once(self, container_id: str) -> str:
+        try:
+            status = self.container_status(container_id)
+        except (urllib.error.URLError, OSError, ValueError, RuntimeError):
+            return "query_failed"
+        return "in_progress" if status == "IN_PROGRESS" else status
 
     def publish_container(self, creation_id: str) -> base.PublishResult:
         """作ってある container を `threads_publish` で **1 回だけ**公開する。
@@ -549,7 +568,9 @@ class ThreadsAdapter(base.Adapter):
         | FINISHED | `threads_publish` を **1 回だけ**再試行。それも失敗なら inflight |
         | PUBLISHED | 自分の最近の投稿から本文の指紋が一致する 1 件を探す。無ければ inflight（`published_unlocated`） |
         | ERROR・EXPIRED | 出ていない（`publish_failed_remote_error`）。inflight を解き、原稿は approved のまま |
-        | 問い合わせ失敗・IN_PROGRESS | 分からない。inflight を残す（従前どおり） |
+        | 問い合わせ失敗・IN_PROGRESS | 窓（60 秒）の中で訊き直す。決まらなければ inflight を残す |
+
+        PUBLISHED でも一覧に無ければ、窓の中で訊き直す（一覧に載るのが遅れる・3.14.3 穴 3）。
 
         **2 度出す経路を作らない**: 再試行は FINISHED を確かめた直後の 1 回だけ。
         再試行が 4xx でも「出ていない」とは言わない（1 度目が実は通っていて、
@@ -558,7 +579,21 @@ class ThreadsAdapter(base.Adapter):
         振る舞いは文書に無い（未確認）。
         """
         from .. import inflight_resolve
-        status = self.poll_container(creation_id)
+        status = "query_failed"
+        for attempt in range(STATUS_POLL_ATTEMPTS):
+            self._poll_wait(attempt)
+            status = self._status_once(creation_id)
+            if status == "PUBLISHED":
+                found = inflight_resolve.locate(
+                    self, inflight_resolve.text_fingerprint(post.text), jst.parse(ts))
+                if found.state == "listing_located":
+                    return base.PublishResult(post_id=found.post_id, url=None, ts=ts,
+                                               error=None, failure="none",
+                                               remote_state="published_located")
+                status = "published_unlocated"
+                continue
+            if status not in ("in_progress", "query_failed"):
+                break
         if status == "FINISHED":
             try:
                 again = self._post(f"/{self.user_id}/threads_publish", {
@@ -572,14 +607,6 @@ class ThreadsAdapter(base.Adapter):
                 return dataclasses.replace(failed, remote_state="retry_failed")
             return base.PublishResult(post_id=post_id, url=None, ts=ts, error=None,
                                        failure="none", remote_state="retried")
-        if status == "PUBLISHED":
-            found = inflight_resolve.locate(
-                self, inflight_resolve.text_fingerprint(post.text), jst.parse(ts))
-            if found.state == "listing_located":
-                return base.PublishResult(post_id=found.post_id, url=None, ts=ts,
-                                           error=None, failure="none",
-                                           remote_state="published_located")
-            return dataclasses.replace(failed, remote_state="published_unlocated")
         if status in ("ERROR", "EXPIRED"):
             # 出ていない。この container ではもう出せないので、inflight を解いて
             # 次の run が新しい container から出す（select の検査を通り直す）。

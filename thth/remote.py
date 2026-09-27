@@ -372,6 +372,12 @@ NEXT = {
     "scope_unavailable": "この鍵の口座か確かめる（thth account status <口座>）",
     "writes_not_allowed": "読むだけの鍵です。https://thth.me/activity で書ける鍵を発行し直す",
     "invalid_draft": "本文を直してもう一度（--dry-run で lint だけ確かめられます）",
+    # 前の公開の結果が分かっていない（inflight・3.14.3 穴 3）。解くまで次の公開は出ない。
+    "publication_unconfirmed": ("thth inflight <口座> で見て、媒体の画面で出たかを確かめてから "
+                                "thth inflight <口座> resolve --not-published か --published <post_id>"),
+    "confirm_mismatch": "もう一度 thth inflight <口座> resolve から（表示した digest と中身が違います）",
+    "inflight_changed": "もう一度 thth inflight <口座> から（表示したあとに inflight が替わりました）",
+    "decision_required": "--not-published（出ていない）か --published <post_id>（出ていた）を付ける",
 }
 
 
@@ -410,11 +416,11 @@ def refuse(exc, *, as_json=False) -> int:
 COMMANDS: dict = {}
 # 台帳が無く鍵があるときに `remote_unsupported` と言う命令（運営の命令・手元の台帳の命令）。
 # ここに無い命令は、台帳が無ければ今までどおり手元の道が断る（口座でない名前を取る命令を巻き込まない）。
-UNSUPPORTED = frozenset(("throw", "run", "auth", "refresh", "doctor", "inflight", "thread",
+UNSUPPORTED = frozenset(("throw", "run", "auth", "refresh", "doctor", "thread",
                          "account", "account resume", "account leave"))
 # `--remote` を旗として持つ命令（それ以外に `--remote` が付けば parse の前に断る）。
 REMOTE_PARSERS = ("send", "schedule", "retract", "posts", "replies", "measured", "collect",
-                  "mentions", "topics", "profile", "location", "account", "queue")
+                  "mentions", "topics", "profile", "location", "account", "queue", "inflight")
 
 
 def command_key(command, args) -> str:
@@ -682,7 +688,47 @@ def _show_drafts(value) -> int:
     return 0
 
 
+def _inflight(args, account):
+    """`thth inflight <口座>`（見る）と `… resolve --not-published|--published <id>`（解く・二段確認）。
+
+    手元の道と同じ見せ方と digest。解いた人は鍵の持ち主（`--by` は読まない）。
+    """
+    from . import inflight_cli
+    if getattr(args, "action", "show") != "resolve":
+        value = call("inflight_status", account)
+        if getattr(args, "json", False):
+            _print_json(value)
+            return 0
+        if value.get("inflight") is None:
+            return _say(f"{account}: inflight はありません")
+        return inflight_cli.show_info(account, value["inflight"], str(value.get("next") or ""))
+    if not getattr(args, "not_published", False) and not getattr(args, "published", None):
+        raise RemoteError("decision_required", rc=1)
+    decision = "not_published" if args.not_published else "published"
+    value = call("inflight_resolve", account, decision=decision,
+                 post_id=(args.published or None) if decision == "published" else None,
+                 confirm=getattr(args, "confirm", None))
+    if value.get("resolved") is not True:
+        flag = "--not-published" if decision == "not_published" else f"--published {value.get('post_id')}"
+        command = f"thth inflight {account} resolve {flag} --confirm {value.get('digest')}"
+        if getattr(args, "json", False):
+            _print_json({**value, "command": command})
+            return 1
+        info = value.get("inflight") or {}
+        print(f"解きません（確認の一段目です）: {account} の inflight（{info.get('file')}・{info.get('started')}）")
+        if decision == "not_published":
+            print("  決めること: 媒体に**出ていない**。次の公開から出せるようになります")
+            print("  ⚠ 出ていたのに解くと 2 度出ます。媒体の画面（自分の投稿の一覧）で確かめてから")
+        else:
+            print(f"  決めること: 媒体に出ていた（post_id {value.get('post_id')}）。記録して解きます")
+        print(f"digest: {value.get('digest')}")
+        print(f"解くなら: {command}")
+        return 1
+    return _shown(args, value, lambda v: _say(f"inflight を解きました: {account}（{v.get('resolution')}）"))
+
+
 COMMANDS.update({
+    "inflight": _inflight,
     "send": _send, "schedule": _schedule, "retract": _retract,
     "posts": _posts, "replies": _replies, "measured": _measured, "collect": _collect,
     "mentions": _mentions, "topics search": _topics_search, "profile": _profile,

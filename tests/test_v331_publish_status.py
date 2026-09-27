@@ -106,18 +106,19 @@ def test_ERRORとEXPIREDは出ていないとして解く():
         assert script.publish_calls == 1
 
 
-def test_問い合わせ失敗なら従前どおりinflight_3回で諦める():
+def test_問い合わせ失敗なら窓の中で訊き直し_決まらなければinflight():
+    # 3.14.3 穴 3: 20 秒待ってから 5 秒おきに合わせて 60 秒（9 回）。
     script = fake.Script(publish=[(500, None)], status=[500])
     result = _publish(script)
     assert result.failure == "publish_ambiguous" and result.remote_state == "query_failed"
-    assert script.publish_calls == 1 and script.status_calls == 3
+    assert script.publish_calls == 1 and script.status_calls == 9
 
 
 def test_IN_PROGRESSのままなら再試行しない():
     script = fake.Script(publish=[(500, None)], status=["IN_PROGRESS"])
     result = _publish(script)
     assert result.failure == "publish_ambiguous" and result.remote_state == "in_progress"
-    assert script.publish_calls == 1 and script.status_calls == 3
+    assert script.publish_calls == 1 and script.status_calls == 9
 
 
 def test_知らないstatusは分からないとして扱う():
@@ -125,6 +126,44 @@ def test_知らないstatusは分からないとして扱う():
     result = _publish(script)
     assert result.failure == "publish_ambiguous" and result.remote_state == "query_failed"
     assert script.publish_calls == 1
+
+
+def test_最初は20秒_以後は5秒おき_合わせて60秒で諦める(monkeypatch):
+    monkeypatch.delenv("THTH_THREADS_STATUS_POLL_SECONDS", raising=False)
+    slept = []
+    script = fake.Script(publish=[(500, None)], status=["IN_PROGRESS"])
+    result = _publish(script, status_poll_seconds=None, sleep=slept.append)
+    assert result.remote_state == "in_progress" and script.publish_calls == 1
+    assert slept == [20.0] + [5.0] * 8 and sum(slept) == 60.0
+
+
+def test_timeoutのあとPUBLISHEDで一覧に遅れて載れば成功にする():
+    # 一覧に載るのが遅れても、窓の中で訊き直して post_id を取る。
+    script = fake.Script(publish=[("drop", None)], status=["IN_PROGRESS", "PUBLISHED"],
+                         posts=[fake.post_row("557", TEXT, FAR)])
+    calls = {"n": 0}
+    with fake.serve(script) as base_url:
+        adapter = fake.adapter(base_url)
+        original = adapter.recent_posts
+
+        def later(**kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                script.posts.insert(0, fake.post_row("555", TEXT, NEAR))
+            return original(**kwargs)
+        adapter.recent_posts = later
+        result = adapter.publish(adapter_base.Post(text=TEXT), dry_run=False)
+    assert result.post_id == "555" and result.failure == "none"
+    assert result.remote_state == "published_located" and script.publish_calls == 1
+
+
+def test_publishの読み取りの締切は30秒_envの上書きは従前どおり(monkeypatch):
+    from thth.adapters import threads as threads_mod
+    monkeypatch.delenv("THTH_THREADS_TIMEOUT_SECONDS", raising=False)
+    adapter = threads_mod.ThreadsAdapter(access_token="x", user_id="1")
+    assert adapter.publish_timeout == 30.0 and adapter.timeout == 10.0
+    monkeypatch.setenv("THTH_THREADS_TIMEOUT_SECONDS", "12")
+    assert threads_mod.ThreadsAdapter(access_token="x", user_id="1").publish_timeout == 12.0
 
 
 def test_4xxでは問い合わせない():
@@ -144,14 +183,14 @@ def test_問い合わせの前に毎回20秒待つ_試験は注入したsleepで
     assert slept == [20.0, 20.0, 20.0]
 
 
-def test_既定の間隔は20秒で_envで上書きできる(monkeypatch):
+def test_既定の間隔は5秒で_envで上書きできる(monkeypatch):
     from thth.adapters import threads as threads_mod
     monkeypatch.delenv("THTH_THREADS_STATUS_POLL_SECONDS", raising=False)
-    assert threads_mod.ThreadsAdapter(access_token="x", user_id="1").status_poll_seconds == 20.0
-    monkeypatch.setenv("THTH_THREADS_STATUS_POLL_SECONDS", "5")
     assert threads_mod.ThreadsAdapter(access_token="x", user_id="1").status_poll_seconds == 5.0
+    monkeypatch.setenv("THTH_THREADS_STATUS_POLL_SECONDS", "7")
+    assert threads_mod.ThreadsAdapter(access_token="x", user_id="1").status_poll_seconds == 7.0
     monkeypatch.setenv("THTH_THREADS_STATUS_POLL_SECONDS", "abc")
-    assert threads_mod.ThreadsAdapter(access_token="x", user_id="1").status_poll_seconds == 20.0
+    assert threads_mod.ThreadsAdapter(access_token="x", user_id="1").status_poll_seconds == 5.0
     monkeypatch.setenv("THTH_THREADS_STATUS_POLL_SECONDS", "999")
     assert threads_mod.ThreadsAdapter(access_token="x", user_id="1").status_poll_seconds == 60.0
 

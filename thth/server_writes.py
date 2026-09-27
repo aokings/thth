@@ -36,9 +36,16 @@ DIRECT_REASONS = frozenset(('account_busy','publication_failed','publication_unc
                             # `scheduled: false` の口座（timer に載っていない）で予約・猶予を求めた（段 3・裁定 (b)）。
                             'schedule_unavailable'))
 from .account_settings import REASONS as SETTINGS_REASONS
+# 遠くの道の inflight（見る・解く・3.14.3 穴 3）の断り。手元の `thth inflight` と同じ符丁。
+INFLIGHT_REASONS = frozenset(('no_inflight','inflight_unreadable','media_inflight_unsupported','post_id_invalid',
+                              'published_known','post_id_differs','decision_required','confirm_mismatch',
+                              'inflight_changed','inflight_writeback_failed'))
+# `publication_unconfirmed` に添える理由（前の公開の結果が分かっていない＝inflight が残っている）。
+UNCONFIRMED_REASONS = frozenset(('inflight',))
 # 利用者 scope の読む口（設計 3.14.0 §3.2・`thth/server_reads.py`）。
 from .server_reads import REASONS as READ_REASONS
-SAFE_ERRORS = SAFE_ERRORS | MEDIA_REASONS | REPO_REASONS | GUARD_REFUSALS | DIRECT_REASONS | SETTINGS_REASONS | READ_REASONS
+SAFE_ERRORS = (SAFE_ERRORS | MEDIA_REASONS | REPO_REASONS | GUARD_REFUSALS | DIRECT_REASONS | SETTINGS_REASONS
+               | READ_REASONS | INFLIGHT_REASONS)
 # 断りに添えてよい詳細（止まった理由）。
 GUARD_DETAILS = GUARD_STOP_REASONS | frozenset(('guard_state_unreadable',))
 
@@ -233,6 +240,10 @@ def direct_send(context, request, via):
     origin=_origin(context,via);check=_guarded(context,account,'publish',origin,reply=bool(reply))
     check(cfg)
     dry=core.send_once(account,text=request['body'],topic=topic,reply_to=reply,log=lambda _:None)
+    # 前の公開の結果が分かっていない（inflight）なら、本文の断りに丸めない（3.14.3 穴 3）。
+    # 次の一手は `thth inflight <口座>`（見る）と `… resolve`（解く）。
+    if dry.action=='inflight': error('publication_unconfirmed','inflight')
+    if dry.action=='locked': error('account_busy')
     if dry.exit_code or not dry.digest: error('invalid_draft')
     def before(locked_cfg):
         if current(context,account,write=True)!=locked_cfg: error('credential_changed')
@@ -449,10 +460,55 @@ def serve(context, request, *, via):
     # 段 1 の読む口（設計 §3.2・`thth/server_reads.py`）と、状態・設定（MCP と同じ関数）。
     from . import server_reads
     if operation in server_reads.OPERATIONS: return server_reads.execute(context,request)
+    if operation in INFLIGHT_OPERATIONS: return inflight(context,request,via)
     if operation in ('settings','account_status'):
         from . import account_settings
         return (account_settings.mcp_settings if operation=='settings' else account_settings.mcp_status)(context,request)
     error('unsupported_operation')
+
+
+# --------------------------------------------------------------------------
+# 遠くの道の inflight（3.14.3 穴 3）。手元の `thth inflight <口座> [resolve]` と同じ見せ方・同じ二段確認。
+# 解いた人は資格の actor（依頼の欄から名乗らせない）。
+# --------------------------------------------------------------------------
+
+INFLIGHT_OPERATIONS = frozenset(('inflight_status','inflight_resolve'))
+
+
+def inflight(context, request, via):
+    from . import inflight as inflight_mod, inflight_cli
+    op=request.get('operation')
+    if op=='inflight_status': _schema(request,(),())
+    else:
+        _schema(request,('decision','post_id','confirm'),('decision',))
+        if request['decision'] not in ('published','not_published'): error('decision_required')
+        for key in ('post_id','confirm'):
+            if request.get(key) is not None and not isinstance(request[key],str): error('invalid_request')
+    account=request['account'];cfg=current(context,account,write=op=='inflight_resolve')
+    state_dir=accounts.state_dir_for(account)
+    try: record=inflight_mod.read(state_dir)
+    except (OSError,ValueError): error('inflight_unreadable')
+    if op=='inflight_status':
+        if record is None: return {'account':account,'inflight':None}
+        info=inflight_cli.summary(record)
+        return {'account':account,'inflight':info,'next':inflight_cli._next_step(account,info)}
+    decision=request['decision'];post_id=(request.get('post_id') or '').strip() or None
+    if decision=='published' and post_id is None: error('post_id_invalid')
+    refused=inflight_cli.refusal(account,record,decision,post_id)
+    if refused: error(refused[1])
+    expected=inflight_cli.digest(account,record,decision,post_id)
+    if not request.get('confirm'):
+        return {'account':account,'resolved':False,'stage':1,'inflight':inflight_cli.summary(record),
+                'decision':decision,'post_id':post_id,'digest':expected}
+    if request['confirm']!=expected: error('confirm_mismatch')
+    try:
+        resolution,_path,logged=inflight_cli.apply(account,cfg,state_dir,decision,post_id,context.actor,
+                                                   request['confirm'],via=via if via in ('mcp','http','api') else 'api')
+    except inflight_cli.Refused as exc:
+        if exc.code=='account_locked': error('account_busy')
+        if exc.code in INFLIGHT_REASONS: error(exc.code)
+        error('inflight_writeback_failed')
+    return {'account':account,'resolved':True,'resolution':resolution,'post_id':post_id,'admin_log':logged}
 
 
 def read(context, request):

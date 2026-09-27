@@ -126,6 +126,8 @@ def _failure(exc) -> dict:
         out["reason"] = detail if detail in server_writes.DRAFT_REASONS else "validation_failed"
     elif code == "account_stopped" and detail in server_writes.GUARD_DETAILS:
         out["reason"] = detail
+    elif code == "publication_unconfirmed" and detail in server_writes.UNCONFIRMED_REASONS:
+        out["reason"] = detail
     next_at = getattr(exc, "next_at", None)
     if isinstance(next_at, str):
         out["next_at"] = next_at
