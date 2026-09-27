@@ -37,8 +37,9 @@ RESUME="${REC_RESUME:-}"
 OUT="${RESUME:-${REC_OUT:-$HOME/Movies/thth-appreview-rec-$(date +%Y%m%d-%H%M%S)}}"
 TOP=25; RW=2560; RH=1080          # 録る範囲（point）: x 0〜2560・y 25〜1105
 CHROME_W=1200; TERM_X=1600        # Chrome 0〜1200・iPhone ミラーリング 1200〜1600・Terminal 1600〜2560
-BODY='Testing THTH for Meta App Review: published from the command line by the account owner.'
-REPLY='A reply, sent the same way.'
+STAMP="$(date +%H:%M)"   # 同じ本文の再投稿は道具が断るので、撮り直しのたびに変える
+BODY="Testing THTH for Meta App Review ($STAMP): published from the command line by the account owner."
+REPLY="A reply ($STAMP), sent the same way."
 mkdir -p "$OUT" || exit 2
 
 # ---------------------------------------------------------------- VM（運営者・録画の外だけ） ----
