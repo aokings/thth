@@ -51,3 +51,18 @@ thth.me の HTML は `tools/build_site.py` が生成する。**生成物（`call
 ## 4. 触らないもの
 
 `callback/src/*.js` の HTML/CSS/文言以外（処理・DO・署名・URL）・`thth/*`・`docs/*`（正本のまま）・版・release 枝。秘密や招待 URL を会話に出さない。THTH 側の受け入れは DustyCave が diff を見て main に入れ、Worker の deploy は masaru の 1 行。
+
+## 5. 2 回目: 見た目を「白地の端末」に（2026-09-27・masaru「白背景のターミナルっぽい・CUI な感じ」）
+
+1 回目（`site-proofread`・main に merge 済み）の上に、`callback/src/person.js` の共有 CSS と、各ページの構造を次の方向へ。文言と固定の語（§2）は変えない。
+
+- **白地・黒字・等幅**: 背景は常に白（dark モードでも白のまま。`prefers-color-scheme` で反転しない）。文字は `ui-monospace, "SF Mono", Menlo, Consolas, monospace`、本文 15〜16px・行間 1.6。色は黒（#111）・薄い灰（罫線 #ccc・補足 #666）・強調は太字か下線のみ（色を足さない。1 度だけの表示の強調は太字＋`※` の 1 文字）。
+- **端末の出力に見える構造**: 見出しは `# ` を頭に付けた 1 行（h1）、`## ` （h2）。手順は `1.` の番号か `$ ` の頭。段落の幅は 80 桁前後（`max-width: 80ch`）。左端に 2 桁ぶんの余白。
+- **入力欄とボタン**: 入力欄は下線だけ（枠なし・背景白・等幅）。ボタンは `[ 口座の secret を表示する / Show account secret ]` のように角括弧で囲んだ等幅の文字（`border: 1px solid #111; background: #fff; padding: .3em .8em`）。押せることは括弧と hover の反転（黒地に白）で示す。
+- **状態の表示**: 「待っています」「渡しました」「使用済み」などは、行頭に `>` を付けた 1 行で。エラー（404・410・429）は `error: <符丁>` の 1 行と次の一手。
+- **英語の置き方**: 日本語の段落の直下に英語（今のまま）。ただし薄い灰で小さく（13〜14px）し、主役は日本語。
+- **消すもの**: 角丸・影・グラデーション・アイコン・アニメーション・色つきのボタン。`<meta viewport>`・no-store・no-referrer・CSP・form の name/action・script なし、はそのまま。
+- **スマホ**: 80ch が入らない幅では折り返す（横スクロールを出さない）。ボタンは行いっぱいでよい。
+- **確かめ方**: 1 回目と同じ fixture で before/after を撮り直し、全画面で横のはみ出し 0・固定の語 12 個が残っていること。`npm test`・`wrangler deploy --dry-run` の rc。
+
+枝は `site-proofread`（main に merge 済み）の続きで `site-terminal-look`（main から）。報告は DustyCave 宛て（`docs/報告_thth.me_校正_<日付>.md` に追記でよい）。
