@@ -36,6 +36,7 @@ from . import goals as goals_mod
 from . import healthcheck as healthcheck_mod
 from . import incident as incident_mod
 from . import jst
+from . import pulse as pulse_mod
 from . import lint as lint_mod
 from . import lock as lock_mod
 from . import maintain as maintain_mod
@@ -2871,6 +2872,14 @@ def cmd_run(args) -> int:
     state_dir = (accounts_mod.state_dir_for(args.account)
                  if accounts_mod.name_is_safe(args.account) else None)
 
+    def _pulse_note(diag) -> str | None:
+        """理由の区分と本数だけ（原稿名・本文は入れない・media-hub 依頼 §4）。"""
+        if diag.state == "success":
+            return None
+        if diag.state == "held" and healthcheck_mod.is_held_code(diag.reason_code):
+            return f"held {diag.reason_code.split(': ', 1)[1]}"
+        return diag.reason_code
+
     def _notify(state: str, *, result=None, reason=None, exception=None,
                 reapproval=None, confirm_due=None) -> None:
         """通知の失敗で、投稿の rc や元の例外を上書きしない。"""
@@ -2896,6 +2905,16 @@ def cmd_run(args) -> int:
             # custom 例外のクラス名も外部入力になり得るので固定語だけを出す。
             print("死活通知に失敗しました: notification_internal_error", file=sys.stderr)
             return
+        # hub への脈（Healthchecks の ping と同じ分岐・media-hub 依頼 §2・§4）。
+        # 上の死活通知と独立に試す——失敗しても run の rc・元の例外・他の通知を上書きしない。
+        try:
+            pulse_status = pulse_mod.send(
+                args.account, fail=(state != "success"), note=_pulse_note(diagnostic))
+            if pulse_status == "pulse_unavailable":
+                print(f"脈: hub が見つからないので打っていません（{pulse_mod.ENV_KEY}）",
+                      file=sys.stderr)
+        except Exception:
+            print("脈を打てませんでした: pulse_internal_error", file=sys.stderr)
         if attempt.delivery == "not_configured":
             print("死活通知: 未設定（HEALTHCHECK_URL）。通知は送っていません",
                   file=sys.stderr)
