@@ -197,6 +197,8 @@ export class Person extends AtomicObject {
     const bearer=opaque(),sha256=await digest(bearer);
     const result=await this.confirmed(secret,null,now=>{
       const live=[...this.ctx.storage.kv.list({prefix:'activity:'})].map(([,s])=>s).filter(s=>s.expires_at>now);
+      // VM がまだ 1 つも押し上げていない（招待の完了の直後・3.14.3 穴 2）と、決められないを分ける。
+      if(!live.length)return fail(404,'not_reported');
       const own=live.find(s=>s.account===name)??(live.length===1?live[0]:null);
       if(!own)return fail(404,'not_found');
       return this.place({kind:'rotate',account:own.account},sha256,now);
@@ -204,6 +206,14 @@ export class Person extends AtomicObject {
     if(result.status!==200)return result;
     await this.wake(this.now()+ACTION_TTL);
     return {status:200,body:{account:result.body.account,bearer}};
+  }
+  // `/login/<code>` の待つページ（3.14.3 穴 2）: VM がこの人の口座の様子を押し上げたか（secret は見ない・
+  // 中身は返さない）。持ち主がまだいなければ 404。
+  loginReported(){
+    const row=this.ctx.storage.kv.get('person');
+    if(!row?.active)return fail(404,'not_found');
+    const now=this.now();
+    return {status:200,body:{reported:[...this.ctx.storage.kv.list({prefix:'activity:'})].some(([,s])=>s.expires_at>now)}};
   }
   // secret を確かめ、通れば then(now) を同じ transaction で行う。失敗は /activity の入口と同じ数え方
   // （5 回で 15 分閉じる・時間で戻る）。generation を渡せば、その session の持ち主のままかも確かめる。

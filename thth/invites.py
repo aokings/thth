@@ -642,6 +642,13 @@ def _complete(directory, record, session, code):
     except Exception:
         pass
     _announce(directory, record)
+    _push_activity(record)
+
+
+def _push_activity(record):
+    """その人の要約を今すぐ Worker へ（`/login`・/activity が数分待たない・3.14.3 穴 2）。"""
+    from . import activity
+    activity.push_now(record["account"], _credentials.get())
 
 
 def _initialize_repo(record, data):
@@ -742,6 +749,8 @@ def _used(directory, record):
         admin_log.append("approver_set", record["account"], {"media": "threads"}, by=record["by"], via="http",
                          diff={"credential_present": [None, True], "via_invite": [None, record["invite_id"]]})
         _save(directory, record, approver_set=True)
+        # 口座の secret ができた＝Worker がその人を知った。要約をすぐ押し上げる（3.14.3 穴 2）。
+        _push_activity(record)
     _take_key(directory, record, remote.get("key_sha256"))
 
 

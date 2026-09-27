@@ -36,9 +36,17 @@ export class Login extends DurableObject {
   state(){
     const now=this.now(),row=this.live(now);
     if(!row)return this.gone(now);
-    if(row.status==='waiting'||row.status==='issuing')return {status:200,body:{status:'waiting'}};
+    if(row.status==='waiting'||row.status==='issuing')return {status:200,body:{status:'waiting',pending:row.pending??null}};
     return fail(410,'used');
   }
+  // 許可を押したが、VM がその人の口座の様子をまだ押し上げていなかった（3.14.3 穴 2）。口座名だけを覚え、
+  // GET のページがそれが届くまで自分で読み直す（secret は覚えない）。
+  expect(account){return this.atomic(()=>{
+    if(typeof account!=='string'||!/^[A-Za-z0-9_.-]{1,64}$/.test(account))return fail();
+    const row=this.live(this.now());
+    if(row?.status==='waiting')this.put('login',{...row,pending:account});
+    return {status:200,body:{}};
+  });}
   // 許可を押した: 1 度に 1 つだけ照合に進める（同じ code に 2 つ鍵を発行しない）。
   claim(){return this.atomic(()=>{
     const now=this.now(),row=this.live(now);
@@ -58,7 +66,7 @@ export class Login extends DurableObject {
     const now=this.now(),row=this.live(now);
     if(!row)return this.gone(now);
     if(row.status!=='issuing')return fail(410,'used');
-    this.put('login',{...row,status:'ready',claimed_until:null,key,account});
+    this.put('login',{...row,status:'ready',claimed_until:null,key,account,pending:null});
     return {status:200,body:{}};
   });}
   // CLI の poll。鍵は 1 度だけ返し、返したら消す。

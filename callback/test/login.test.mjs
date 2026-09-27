@@ -196,3 +196,38 @@ test('wrangler.jsonc: the LOGIN binding, a v8-login migration after v7 and /logi
   const worker=await readFile(fileURLToPath(new URL('../src/worker.js',import.meta.url)),'utf8');
   assert.match(worker,/export \{Login\} from '\.\/login-object\.js'/);
 });
+
+// 3.14.3 穴 2: 招待の完了の直後は VM が口座の様子をまだ押し上げていないことがある。POST の 409 は今のまま
+// （5 秒後に GET へ移る refresh だけ足す）、GET は届くまで 5 秒ごとに自分で読み直すページ（script なし）。
+test('before the VM reports the account, the page waits and reloads itself every 5 seconds, then shows the form',async()=>{
+  const id='inv-w'+randomBytes(6).toString('hex'),secret=opaque(),salt=opaque();sensitive.push(secret);
+  const data={salt,verifier:pbkdf2Sync(secret,Buffer.from(salt,'base64url'),100000,32,'sha256').toString('base64url'),iterations:100000};sensitive.push(data.verifier);
+  assert.equal((await signed('person',id,'set',data)).status,200);
+  const {code,token}=await begin();
+  const first=await page(code);assert.equal(first.status,200);assert.ok(!(await first.text()).includes('http-equiv="refresh"'),'no wait before anyone pressed');
+  const r=await allow(code,{account:id,secret});
+  assert.equal(r.status,409);pageHeaders(r);
+  const html=await r.text();
+  assert.ok(html.includes('口座の様子がまだサーバから届いていない')&&html.includes('Allow this device'),'the 409 page is the same form');
+  assert.ok(html.includes(`<meta http-equiv="refresh" content="5;url=/login/${code}">`),html);
+  assert.ok(!/<script/i.test(html));
+  const stored=JSON.stringify(await control('login',hash(code)));assert.ok(!stored.includes(secret),'the secret is not kept');
+  const wait=await page(code);assert.equal(wait.status,200);pageHeaders(wait);
+  const waitHtml=await wait.text();
+  assert.ok(waitHtml.includes('<meta http-equiv="refresh" content="5">')&&waitHtml.includes('届くまで待っています（数十秒）'),waitHtml);
+  assert.ok(!waitHtml.includes('<form')&&!/<script/i.test(waitHtml));
+  assert.equal((await poll(code,token)).status,202);
+  // VM が押し上げたら、同じ URL が form に戻り、許可できる。
+  assert.equal((await signed('activity',id,'sync',{accounts:[summary(id)],completed:[]})).status,200);
+  const back=await page(code);assert.equal(back.status,200);
+  const backHtml=await back.text();assert.ok(backHtml.includes('<form')&&!backHtml.includes('http-equiv="refresh"'));
+  assert.equal((await allow(code,{account:id,secret})).status,200);
+  const got=await poll(code,token);assert.equal(got.status,200);sensitive.push((await got.json()).key);
+});
+
+test('an account that cannot be determined keeps the plain 409 without waiting',async()=>{
+  const two=await owner(['inv-c'+randomBytes(3).toString('hex'),'inv-d'+randomBytes(3).toString('hex')]),{code}=await begin();
+  const r=await allow(code,{account:two.id,secret:two.secret});assert.equal(r.status,409);
+  assert.ok(!(await r.text()).includes('http-equiv="refresh"'));
+  const again=await page(code);assert.equal(again.status,200);assert.ok((await again.text()).includes('<form'));
+});

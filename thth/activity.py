@@ -390,6 +390,28 @@ def sync_person(person, names, credentials_path):
     return _sync(person, names, credentials_path)[0]
 
 
+def push_now(person, credentials_path) -> bool:
+    """その人の要約を今すぐ 1 回押し上げる（招待の完了の直後・3.14.3 穴 2）。
+
+    常駐の巡は人ごとに 10 秒おきだが、Worker がまだその人を知らない間（完了ページで口座の
+    secret が作られる前）の 409 で 5 分待ちに入り、`/login` が「口座の様子がまだ届いていない」を
+    数分出し続けた。ここは待ちを見ずに押し、届いたら次を 10 秒後に、届かなくても 5 分待ちには
+    入れない（次の巡が 10 秒後にもう一度）。例外は外へ出さない。
+    """
+    if not credentials_path or not relay.PERSON.fullmatch(str(person or "")):
+        return False
+    try:
+        names = owners(credentials_path).get(person)
+        if not names:
+            return False
+        _sync(person, names, credentials_path)
+        return True
+    except Exception:
+        return False
+    finally:
+        _next_sync[person] = time.monotonic() + SYNC_SECONDS
+
+
 def run_once(credentials_path):
     """`thth worker` の 1 巡から呼ぶ。人ごとに 10 秒に 1 回、/api/v1 の依頼が待っていれば 2 秒に 1 回
     （Worker に人が無ければ 5 分待つ）。"""
