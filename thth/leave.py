@@ -154,7 +154,9 @@ def _tree(path):
                 child=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd)
                 try:
                     opened=os.fstat(child)
-                    if (opened.st_dev,opened.st_ino)!=(info.st_dev,info.st_ino) or opened.st_uid!=os.getuid() or opened.st_mode&0o022:raise ValueError('unsafe_owned_directory')
+                    if (opened.st_dev,opened.st_ino)!=(info.st_dev,info.st_ino) or opened.st_uid!=os.getuid() or opened.st_mode&0o022:
+                        # どのディレクトリかを添える（運用者が chmod go-w で直せるように・3.14.3 穴 7）。
+                        unsafe=ValueError('unsafe_owned_directory');unsafe.path=str(path/rel);raise unsafe
                     rows[rel]={'dev':info.st_dev,'ino':info.st_ino,'directory':True};visit(child,rel)
                 finally:os.close(child)
             else:
@@ -514,7 +516,17 @@ def command(args):
             elif timers.get('reason')=='unit_listing_failed':
                 print('timer_cleanup_unknown: systemctl list-unit-files '+' '.join(timer_cleanup.account_units(args.name))+' で残りを確かめ、あれば sudo systemctl disable --now <unit> で止めてください')
         return 0
-    except (OSError,ValueError,accounts.AccountError,relay.RelayError,admin_log.AdminLogError,LockBusy):
-        print('leave_incomplete: 停止状態と再試行用の認証情報を確認し、同じ leave を再実行してください',file=sys.stderr)
-        if args.json:print(json.dumps({'account':args.name,'completed':False,'reason':'leave_incomplete'},ensure_ascii=False))
+    except (OSError,ValueError,accounts.AccountError,relay.RelayError,admin_log.AdminLogError,LockBusy) as exc:
+        detail=_incomplete_detail(exc)
+        print('leave_incomplete: '+detail+'。停止状態と再試行用の認証情報を確認し、同じ leave を再実行してください',file=sys.stderr)
+        if args.json:print(json.dumps({'account':args.name,'completed':False,'reason':'leave_incomplete','detail':detail},ensure_ascii=False))
         return 2
+
+
+def _incomplete_detail(exc):
+    """`leave_incomplete` に添える理由の 1 行（3.14.3 穴 7）。3.14.2 までは理由を丸めて出さなかった。"""
+    text=' '.join(str(exc).split())[:200] or type(exc).__name__
+    where=getattr(exc,'path',None)
+    if str(exc)=='unsafe_owned_directory' and isinstance(where,str):
+        return f'unsafe_owned_directory {where}（group/other が書けます。chmod -R go-w {where} で直してから）'
+    return text

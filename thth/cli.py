@@ -10,6 +10,7 @@ import dataclasses
 import datetime
 import json
 import os
+import re
 import sys
 import unicodedata
 
@@ -4176,6 +4177,40 @@ _PARSED: dict = {}
 
 
 def main(argv=None) -> int:
+    # **所有者だけのファイルを作る**（3.14.3 穴 7）。3.12.0 §6-6 で常駐（`thth worker`）だけに掛けていた
+    # umask を入口に上げる。運用者が ssh（umask 0002/0022）で手で打った `collect` が `data/sns/insights/`
+    # を 0755 で作り、あとの `leave` が `unsafe_owned_directory` で止まった。返るときに戻す
+    # （同じ process の試験を巻き込まない・命令の間は 077）。
+    previous_umask = os.umask(0o077)
+    try:
+        return _entry(argv)
+    finally:
+        os.umask(previous_umask)
+
+
+# 入口で受ける静的な符丁の断り（3.14.3 穴 4）と次の一歩。載っていない符丁は既定の 1 行。
+VALUE_ERROR_NEXT = {
+    "managed_git_store_unsafe_mode": ("記録置き場に group/other の書き込みがあります。"
+                                      "chmod -R go-w $THTH_ROOT/repos/_server/<口座> "
+                                      "$THTH_ROOT/state/<口座>/git-origin.git で直してからもう一度"),
+}
+_VALUE_ERROR_CODE = re.compile(r"[a-z][a-z0-9_]{2,63}\Z")
+
+
+def _value_error_refusal(exc) -> int | None:
+    """符丁だけの ValueError を traceback でなく `符丁: 次の一歩: …` の 1 行・rc 2 にする。
+
+    符丁でない ValueError（文を持つもの）は今までどおり上げる（None）。
+    """
+    code = str(exc)
+    if not _VALUE_ERROR_CODE.fullmatch(code):
+        return None
+    step = VALUE_ERROR_NEXT.get(code, "符丁を控えて、運用の手順（docs/運用_招待する側.md）で確かめてからもう一度")
+    print(f"{code}: 次の一歩: {step}", file=sys.stderr)
+    return 2
+
+
+def _entry(argv=None) -> int:
     from . import refusals
     real_argv = list(sys.argv[1:] if argv is None else argv)
     _PARSED.clear()
@@ -4183,7 +4218,12 @@ def main(argv=None) -> int:
     tee = _FirstLine(sys.stderr)
     sys.stderr = tee
     try:
-        rc = _main(argv, real_argv)
+        try:
+            rc = _main(argv, real_argv)
+        except ValueError as exc:
+            rc = _value_error_refusal(exc)
+            if rc is None:
+                raise
     finally:
         if sys.stderr is tee:
             sys.stderr = tee.inner
