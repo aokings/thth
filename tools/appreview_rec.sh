@@ -259,8 +259,9 @@ show posts "$ACCOUNT" --limit 3
 sleep 3
 banner "4. threads_content_publish — publish a post from the command line."
 BEFORE="$(latest_post "$ACCOUNT")"
-SEND_OUT="$(show send "$ACCOUNT" --text "$BODY")"
-printf '%s\n' "$SEND_OUT"
+# 画面にはその場で出しつつ（tee）、post_id を拾うために取っておく（3.14.3 穴 5: 変数に取るだけだと
+# 出力が終わるまで命令の行も画面に出なかった）。
+SEND_OUT="$(show send "$ACCOUNT" --text "$BODY" | tee /dev/tty)"
 POST="$(printf '%s\n' "$SEND_OUT" | grep -oE 'post_id[^0-9]*[0-9]{10,}' | grep -oE '[0-9]{10,}' | head -1)"
 if [ -z "$POST" ]; then
   for _ in $(seq 1 12); do POST="$(latest_post "$ACCOUNT")"; [ -n "$POST" ] && [ "$POST" != "$BEFORE" ] && break; POST=''; sleep 5; done
