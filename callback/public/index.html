@@ -8,8 +8,7 @@
 <meta property="og:title" content="THTH">
 <meta property="og:description" content="AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツール。Threads、Bluesky、Mastodon に対応。原稿も投稿後の記録も、自分の Git リポジトリで管理できます。">
 <style>
-  /* 見た目は認可の受け口（src/index.js）に揃える（masaru 2026-09-14「あのシンプルなテイスト」）:
-     小さめの見出し・罫線なし・淡い角丸の背景・余白で区切る。装飾を足さない。 */
+  /* 読む順が分かるよう、控えめな見出しと余白だけを使う。 */
   :root { color-scheme: light dark; --bg:#faf9f7; --fg:#1a1a1a; --soft:rgba(127,127,127,.12); }
   @media (prefers-color-scheme: dark) { :root { --bg:#16161a; --fg:#eee; } }
   * { box-sizing: border-box; }
@@ -37,28 +36,31 @@
 </head><body><main>
 <h1>THTH</h1>
 <p>THTH は、AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツールです。Threads、Bluesky、Mastodon に対応しています。</p>
-<p>いつものエディタや AI エージェントで下書きを作り、内容を確認して承認すると、予約した時刻に投稿されます。原稿も投稿後の記録も、自分の Git リポジトリで管理できます。</p>
+<p>自分の Git リポジトリで運用する場合は、いつものエディタや AI エージェントで下書きを作ります。内容を確認して承認すると、予約した時刻に投稿されます。原稿も投稿後の記録も、そのリポジトリで管理できます。</p>
 <pre><code>pip install thth</code></pre>
-<h2>使い方</h2>
+<h2>自分のリポジトリから投稿する</h2>
 <p>下書きは Markdown ファイルに保存します。本文のほか、投稿先のアカウントや予約時刻、トピックなどを指定できます。</p>
 <p>まず、投稿する内容を確認します。</p>
 <pre><code>thth approve docs/sns/queue/2026-09-14-oolong.md</code></pre>
 <p>本文と投稿先などが表示されます。この段階では、まだ承認されません。</p>
 <p>内容がよければ、表示された確認コードと承認者の名前を付けて、もう一度実行します。</p>
-<pre><code>thth approve docs/sns/queue/2026-09-14-oolong.md --confirm &lt;確認コード&gt; --by masaru</code></pre>
+<pre><code>thth approve docs/sns/queue/2026-09-14-oolong.md --confirm &lt;確認コード&gt; --by gotoq</code></pre>
 <p>承認した下書きは、タイマーを設定しておけば自動で投稿されます。承認後に本文や投稿先、予約時刻などを変更した場合は、あらためて承認が必要です。</p>
 <h2>投稿したあとの管理も</h2>
 <p>投稿が完了すると、原稿に投稿 ID が記録されます。返信や閲覧数も取得して、同じリポジトリに保存できます。投稿の履歴をたどったり、次の原稿を考えるときの資料として使えます。</p>
-<p>招待した利用者は認可 URL を開いて承認し、masaru がアプリ・サーバ・台帳を管理します。利用者が VM や Meta アプリを用意する必要はありません。接続ページは今後の実装です。</p>
+<h2>招待された方へ</h2>
+<p>招待された利用者は、招待リンクを開いて Threads を認可します。続けて <code>pip install thth</code>、<code>thth login</code> を実行し、ブラウザでこの機械を許可します。利用者が VM や Meta アプリを用意する必要はありません。</p>
+<p>以後は <code>thth send</code>、<code>thth posts</code>、<code>thth replies</code>、<code>thth measured</code>、<code>thth retract</code> で自分の口座を動かします。最短間隔、1 日の上限、急な連投で止める安全装置は持ち主が決めます。AI アシスタントが変えられるのは、締める向きだけです。<a href="/activity">動きの一覧</a>で、持ち主が確認・停止・鍵の発行を行えます。</p>
 <h2>AI エージェントから使う</h2>
 <p>MCP サーバと Claude Code 用のスキルを同梱しています。コマンドラインから直接使うほか、AI エージェントとやり取りしながら下書きや投稿の記録を扱えます。</p>
-<h2>認可と運営者の設定</h2>
+<h2>運営者の使い方</h2>
 <p>Mastodon の auth は expires_in または refresh_token を返す非標準実装に未対応です。手動 token set も期限・更新情報を受け取らず期限なしとして保存するため、その回避策にはなりません。</p>
-<p>masaru がサーバ側で <code>thth auth &lt;account&gt; --by masaru</code> を開始し、利用者が URL を開いて承認します。Threads・対応 Mastodon・X の共通入口です。X は認可だけ対応し、投稿・採集は未対応。Bluesky は App Password の stdin 入力です。</p>
-<p><a href="https://github.com/aokings/thth/blob/main/docs/導入_承認を押すだけ.md">導入: 承認を押すだけ（利用者と masaru の手順）</a></p>
+<p>運営者（gotoq）がサーバ側で <code>thth auth &lt;account&gt; --by gotoq</code> を開始し、利用者が URL を開いて承認します。Threads・対応 Mastodon・X の共通入口です。X は投稿・削除・自分の最近の投稿の読み取りに対応し、利用は運営者設定の範囲内です。返信と実測の採集には対応していません。Bluesky は App Password の stdin 入力です。</p>
+<p><a href="https://github.com/aokings/thth/blob/main/docs/導入_招待されたら.md">導入: 招待されたら</a></p>
 <h2>English</h2>
 <p class="en">THTH is a command-line tool for drafting and publishing social media posts with AI. It supports Threads, Bluesky, and Mastodon.</p>
-<p class="en">Review and approve a draft, then let THTH publish it at the scheduled time. Drafts, published post IDs, replies, and view counts are stored in your own Git repository. Masaru operates the server and apps; invited users approve an authorization URL. X is authorization-only. A connection page is not implemented yet.</p>
+<p class="en">For an operator-managed queue, review and approve a draft, then let the timer publish it. Drafts, published post IDs, replies, and view counts are stored in that repository.</p>
+<p class="en">An invited person opens an invitation link, authorizes Threads, installs <code>thth</code>, and runs <code>thth login</code> to allow their device in the browser. They then use <code>thth send</code>, <code>posts</code>, <code>replies</code>, <code>measured</code>, and <code>retract</code> for their own account. The owner sets safety limits; an AI assistant can only tighten them. The owner uses <a href="/activity">Activity</a> to review, stop, and issue keys. The operator (gotoq) runs the server. X can publish, delete, and read the account's recent posts within the operator's configured scope; it does not collect replies or metrics.</p>
 <p><a href="https://github.com/aokings/thth">GitHub</a> ／ <a href="https://pypi.org/project/thth/">PyPI</a> ／ <a href="https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.aokings/thth">MCP Registry</a> ／ <a href="/llms.txt">llms.txt</a></p>
 <footer>Free and open source · MIT License<br>© 2026 gotoq · <a href="/privacy/">プライバシーポリシー / Privacy Policy</a> · <a href="/terms/">利用規約 / Terms of Service</a></footer>
 </main></body></html>

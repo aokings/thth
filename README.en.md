@@ -10,26 +10,35 @@ what to write.
 - Ask before you post → `thth ask before-you-post`
 
 **What it guarantees**
-- Approval is a human act: a post only ships once a person runs `thth approve`
-  a second time with the digest the first run showed them, and `status: approved`
-  plus that digest land in git.
-- Fail-closed, at least three ways: an unfinished previous post (`inflight`) halts
-  the account instead of retrying; a queue file whose committed content doesn't
-  match the working tree (`unverified_content`) is refused, not posted; a file
-  edited after approval (`approval_stale`) is refused until re-approved.
-- One post per account per run (`max_per_run`, default 1); a timer tick just
-  runs that loop again.
-- Every public act is recorded in your git history: the queue file, the approval
-  commit, the `post_id` written back, the collected replies and metrics.
+- For an operator-managed queue, approval is a human act: a post only ships once
+  a person runs `thth approve` a second time with the digest the first run showed
+  them, and `status: approved` plus that digest land in git.
+- For an operator-managed queue, it fails closed in at least three ways: an
+  unfinished previous post (`inflight`) halts the account instead of retrying; a
+  queue file whose committed content doesn't match the working tree
+  (`unverified_content`) is refused, not posted; a file edited after approval
+  (`approval_stale`) is refused until re-approved.
+- For an operator-managed queue, one post per account per run (`max_per_run`,
+  default 1); a timer tick just runs that loop again.
+- For an operator-managed queue, every public act is recorded in git history:
+  the queue file, the approval commit, the `post_id` written back, the collected
+  replies and metrics.
+- For an invited account, the owner connects Threads through an invitation, runs
+  `thth login` in a terminal, and authorizes the device in the browser. They then
+  use the same command names for that account. The owner sets its safety limits;
+  an assistant can only tighten them.
 
 **What it refuses**
-- No post without `status: approved` and a matching digest — editing the body,
-  account, topic, reply target, or scheduled time after approval invalidates it.
-- No post inside an account's configured quiet hours (`quiet_hours`), when set.
-- No duplicate posts — an in-flight marker blocks the next run until a human
-  confirms what actually happened.
+- For an operator-managed queue, no post without `status: approved` and a matching
+  digest — editing the body, account, topic, reply target, or scheduled time after
+  approval invalidates it.
+- For an operator-managed queue, no post inside an account's configured quiet hours
+  (`quiet_hours`), when set, and no duplicate posts: an in-flight marker blocks the
+  next run until a human confirms what actually happened.
 - No tokens or secrets in logs — access tokens, client secrets, auth codes, and
   Authorization headers are redacted before anything is written or printed.
+- No assistant can loosen an invited account's limits, resume it, or issue or
+  revoke its key. The owner does those things on https://thth.me/activity.
 
 **What it never does**
 - Read-only lookups (`thth where`, `thth thread`, `thth who`) do not persist
@@ -37,8 +46,11 @@ what to write.
   keeps your own acts and reactions. Configured monitoring
   services and email recipients receive operational status, not post bodies.
 - Never reads direct messages. It only ever touches public posts and public replies.
-- Never auto-replies with canned text. Reply drafts go through the same
-  human-approval path as any other post.
+- Never auto-replies with canned text. For an operator-managed queue, reply
+  drafts go through the same human-approval path as any other post.
+- Never acts on an invited account unless its owner or the owner's assistant runs
+  a command. The owner can review activity and stop the account at
+  https://thth.me/activity.
 
 ---
 
