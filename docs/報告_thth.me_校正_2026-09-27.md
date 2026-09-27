@@ -81,3 +81,36 @@ callback の単独 `invite.test.mjs` は 15 pass、1 fail だった。失敗の�
 - `deletion.js` は data-deletion の JSON 応答だけで、HTML の状況ページは実装されていない。画面を新設していない。
 - callback の script を使わないという新規画面方針と、既存のコピー・履歴消去 script は衝突する。既存処理を変えない制約を優先し、script は保持した。
 - branch baseline では依頼正本の連記・例示を docs link 試験が誤検出する。main の `d0bb29b` では正本が修正され、docs link 試験は 3 pass と親が確認している。受入時に統合後の revision で再確認する。
+
+## §5 二回目: 白地の端末UI（2026-09-27）
+
+対象は `site-terminal-look`、baseline は `c02763784d78187a1dfe51c5c078a8d32d23b086`。source commit は `5278f02f9223e9a6bab15acd3b7a633a87a85d9b`（`Style browser pages as a terminal`）である。commit前に凍結したsource差分の SHA-256 は `5f09bd995d6df94f325cf99f61a1b660bd58383d81b95caa30de2758f9a1dd36`。これは main への受入・deploy ではない。
+
+### 変更
+
+- `callback/src/person.js` の共有CSSを、常に白い背景（`#fff`）、本文 `#111`、`ui-monospace, "SF Mono", Menlo, Consolas, monospace`、本文16px・行間1.6に置換した。dark schemeでも同じ白地を使う。body は左右各2chを含む84ch、本文部分は80chで、`overflow-wrap` と `word-break` で狭い幅にも収める。横overflowを隠す指定は加えていない。
+- `h1` と `h2` はCSS疑似要素で `# ` と `## ` を表示する。入力とselectは下線のみ、ボタンとThreads認可リンクは角括弧をCSSで表示し、hover/focusで白黒を反転する。角丸、影、グラデーション、色付きボタンは使わない。
+- 英語の `.en` は日本語の直下で14px・`#666`にし、1回だけ表示する注意は太字・下線・`※`で表示する。
+- 既存の待機・準備・完了・受理を説明する段落へ `class="status"` を付け、本文を変えずに行頭の `> ` を表示する。invite/loginの410画面は既存本文へ `data-error` を付け、`error: 410` を別行に表示する。既存`/callback`の原因コード表示は既存の`.err`を使い、原因文字列の前にinlineの`error: `を表示する。
+- 実変更は `callback/src/person.js`、`index.js`、`invite.js`、`login.js`、`activity.js`の5ファイルだけである。`deletion.js`、`callback/public/`、試験、golden、公開ページは変更していない。既存`/callback`のscript 4個はbyte一致で保持した。404/429/503等のJSON応答は既存protocolのままである。
+
+固定ラベルの本文は変更していない。依頼の列挙は日本語/英語の11組であり、§5の「12個」は数え方が異なるため、出現回数と混同せず列挙された全組を検査対象にした。
+
+### 画面と保護契約の検証
+
+画面証拠と検証ログの正本は [terminal-look evidence](/Users/masaru/Documents/asmon_private/thth-terminal-look/2026-09-27/) にある。[after manifest](/Users/masaru/Documents/asmon_private/thth-terminal-look/2026-09-27/after-manifest.json)、[image inventory](/Users/masaru/Documents/asmon_private/thth-terminal-look/2026-09-27/image-inventory.json)、[evidence summary](/Users/masaru/Documents/asmon_private/thth-terminal-look/2026-09-27/evidence-summary.json)、[independent audit report](/Users/masaru/Documents/asmon_private/thth-terminal-look/2026-09-27/audit/audit-report.md) を併読する。fake backend fixtureを使うため、実際のThreads認可、招待URL、secretを使うend-to-end試験ではない。
+
+- before/after 87組と320px dark代表3件、計177 PNGを比較した。保護属性差分0、横overflow 0、clip 0。対象HTML 66件（dark 22件）は全てhtml/bodyが白、本文が`rgb(17,17,17)`で等幅だった。320px代表3件も収まり、hover/focusは黒地・白字、角括弧を確認した。親は代表after 5画面を直接視認し、白地・等幅・下線入力・角括弧ボタン・`※`・`> `・独立した`error: 410`を確認した。
+- 独立監査は、固定文言、form属性、CSRF、headers、meta refresh、URL、request handler、既存script、公開側のbyte一致を検査してPASSした。DOM全文・status・headers・form・refresh・scriptは87画面で差分0である。
+- 現行golden 11ケースを直接worker probeで比較し、6 HTMLケースは`<style>`要素だけが変化、残る5ケースはbody全体が一致した。11/11でURL、status、headers、style外bodyは一致した。結果は [parent golden check](/Users/masaru/Documents/asmon_private/thth-terminal-look/2026-09-27/parent-golden-check.json) にある。
+
+| 検証（凍結source） | 結果 | 内容 |
+| --- | --- | --- |
+| `callback npm test` | rc 0 | 132 pass。 |
+| `npx --no-install wrangler deploy --dry-run` | rc 0 | 既存assetsとbindingを読んでdry-runで終了。 |
+| `python -m pytest tests/test_site.py tests/test_docs_links.py tests/test_cli_help.py -q -p no:cacheprovider` | rc 1 | 30 pass、`tests/test_site.py:156`のcallback完全byte一致goldenだけが1 fail。 |
+| JavaScript syntax / `git diff --check` | rc 0 | 最終の`data-error`属性と共有CSSを含む凍結sourceで確認。 |
+
+Pythonの1件は、callback HTMLの共有CSSをbyte単位で固定する既存goldenと本UI変更の衝突である。依頼の手順に従ってgoldenは更新せず、開発側へCSS差分を報告する。上記の直接probeで、11ケース全件のstyle外HTML、URL、status、headersの一致を確認した。
+
+visualの最終probeと独立DOM全文比較はPASSした。sourceは `5278f02f9223e9a6bab15acd3b7a633a87a85d9b` に凍結済みで、push、release、deployは行っていない。
