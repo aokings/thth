@@ -3,8 +3,12 @@
 > THTH is a command-line tool for researching, posting to, scheduling on and
 > managing your own social media accounts (Threads, Bluesky, Mastodon, X).
 > Because it is a CLI, an LLM can drive it; the bundled MCP server and skills
-> only make that easier. Everything it does is recorded in your git. Nothing
-> leaves your machine unless you opt in.
+> only make that easier. Local queue work is recorded in git. An invited person
+> authorizes Threads, runs `thth login` in a terminal, and authorizes the device
+> in a browser before using the command for their own account through the
+> operator (gotoq)'s server. The owner sets
+> safety limits, reviews activity, stops the account, and manages keys at
+> https://thth.me/activity; an LLM can only tighten the limits.
 
 ## Where to start (the same three lines `thth --help` opens with)
 
@@ -32,7 +36,7 @@ Looking for a post to reply to: `thth topics <account> --search <word> [--json]`
 - The read-only lookups (`thth where`, `thth thread`, `thth who`) save
   nothing; all that persists is the engagement ledger (your own acts and
   reactions).
-- Operator only: `thth account add <name> --media threads|bluesky|mastodon|x --project <p> --by masaru` —
+- Operator only: `thth account add <name> --media threads|bluesky|mastodon|x --project <p> --by gotoq` —
   writes one ledger from the bundled template to `$THTH_ROOT/accounts/`,
   **outside the repo**, always `production: false`. `thth account migrate`
   copies ledgers out of an older in-repo `accounts/` directory (copy, not

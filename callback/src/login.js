@@ -57,10 +57,10 @@ export async function loginApiRequest(request,env,url){
 
 function allowForm(code,status=200,note='',head=''){
   return page(status,`<h1>この機械に鍵を渡す${en('Allow this device')}</h1>${note}
-<p>ターミナルで <code>thth login</code> を打ったのがあなた自身なら、口座名と口座の secret を入れて許可してください。許可すると、その機械に LLM の鍵が渡ります（前の鍵は使えなくなります）。自分で打っていないなら、このページを閉じてください。${en('If you ran <code>thth login</code> in your own terminal, enter your account name and account secret to allow it. The device receives a key for your LLM (the previous key stops working). If you did not run it yourself, close this page.')}</p>
-<p>コード / Code: <strong>${escape(code)}</strong>（ターミナルに出たものと同じか確かめてください${en('Check that it matches the code in your terminal.')}）</p>
+<p>ターミナルで <code>thth login</code> を打ったのがあなた自身なら、口座名と口座の secret を入れて許可してください。許可すると、その機械にアシスタントの鍵が渡ります。前の鍵は使えなくなります。自分で打っていないなら、このページを閉じてください。${en('If you ran <code>thth login</code> in your own terminal, enter your account name and account secret to allow it. The device receives an assistant key, and the previous key stops working. If you did not run it yourself, close this page.')}</p>
+<p>コード / Code: <strong>${escape(code)}</strong>。ターミナルに出たものと同じか確かめてください。${en('Check that it matches the code in your terminal.')}</p>
 <form method="post" action="/login/${escape(code)}"><label>口座名 / Account name <input name="account" autocomplete="username" required maxlength="64"></label><label>口座の secret / Account secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label><button type="submit">この機械に鍵を渡す / Allow this device</button></form>
-<p>このページは 10 分で使えなくなります。鍵はこの画面には出ません。${en('This page stops working after 10 minutes. The key is never shown on this screen.')}</p>`,TITLE,head);
+<p>このページは 10 分で使えなくなります。アシスタントの鍵はこの画面には出ません。${en('This page stops working after 10 minutes. The assistant key is never shown on this screen.')}</p>`,TITLE,head);
 }
 const unusable=(status=410)=>page(status,`<h1>このページは使えません${en('This page cannot be used')}</h1><p>期限（10 分）が切れたか、もう使われました。ターミナルで <code>thth login</code> をやり直してください。${en('It has expired (10 minutes) or has already been used. Run <code>thth login</code> again in your terminal.')}</p>`,TITLE);
 const busy=()=>page(409,`<h1>確かめている途中です${en('Still checking')}</h1><p>少し待ってから、このページを開き直してください。${en('Wait a moment and reload this page.')}</p>`,TITLE);
@@ -74,7 +74,7 @@ const waiting=code=>page(200,`<h1>届くまで待っています（数十秒）$
 <p>コード / Code: <strong>${escape(code)}</strong>。10 分を過ぎたらターミナルで <code>thth login</code> をやり直してください。${en('After 10 minutes, run <code>thth login</code> again in your terminal.')}</p>`,TITLE,REFRESH);
 // POST の 409 は今のまま。まだ届いていないときだけ、5 秒後に同じ URL の GET（上の待つページ）へ移る。
 const notReported=code=>notReady(code,`<meta http-equiv="refresh" content="5;url=/login/${escape(code)}">`);
-const done=()=>page(200,`<h1>渡しました。ターミナルに戻ってください${en('Done. Go back to your terminal')}</h1><p>鍵はターミナルが受け取り、この画面には出ません。鍵はサーバが切り替えた時点（数十秒後）から使え、前の鍵は使えなくなります。このページは閉じて構いません。${en('The terminal receives the key; it is never shown here. It works once the server switches to it (in a few tens of seconds), and the previous key stops working. You can close this page.')}</p>`,TITLE);
+const done=()=>page(200,`<h1>渡しました。ターミナルに戻ってください${en('Done. Go back to your terminal')}</h1><p>アシスタントの鍵はターミナルが受け取り、この画面には出ません。サーバが切り替えた時点（数十秒後）から使え、前の鍵は使えなくなります。このページは閉じて構いません。${en('The terminal receives the assistant key; it is never shown here. It works once the server switches to it, in a few tens of seconds, and the previous key stops working. You can close this page.')}</p>`,TITLE);
 
 export async function loginRequest(request,env,url){
   try{

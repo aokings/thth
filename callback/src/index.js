@@ -1,5 +1,6 @@
 import {deletionRequest} from './deletion.js';
 import {relayRequest, receiveCallback} from "./relay.js";
+import {PAGE_STYLE,en} from './person.js';
 
 /**
  * THTH の認可の受け口（thth.me）と、製品の紹介ページの配り手。
@@ -26,24 +27,7 @@ const PAGE_HEAD = `<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow,noarchive">
 <title>THTH 認可の受け口</title>
-<style>
-  :root { color-scheme: light dark; }
-  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
-         font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
-         background:#faf9f7; color:#1a1a1a; padding:24px; }
-  @media (prefers-color-scheme: dark) { body { background:#16161a; color:#eee; } }
-  main { max-width: 640px; width:100%; }
-  h1 { font-size:1.15rem; font-weight:600; margin:0 0 4px; letter-spacing:.02em; }
-  .sub { font-size:.85rem; opacity:.65; margin:0 0 24px; }
-  .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.95rem;
-          word-break:break-all; background:rgba(127,127,127,.12); border-radius:10px;
-          padding:16px; margin:0 0 12px; user-select:all; }
-  button { font:inherit; font-size:.9rem; padding:9px 18px; border-radius:8px; cursor:pointer;
-           border:1px solid rgba(127,127,127,.4); background:transparent; color:inherit; }
-  button:hover { background:rgba(127,127,127,.12); }
-  .note { font-size:.85rem; opacity:.7; margin-top:20px; }
-  .err { color:#b3261e; } @media (prefers-color-scheme: dark) { .err { color:#f2b8b5; } }
-</style></head><body><main>`;
+<style>${PAGE_STYLE}.sub,.note{font-size:.88rem;opacity:.75}.code{font-family:ui-monospace,SFMono-Regular,monospace;word-break:break-all;background:rgba(127,127,127,.12);border-radius:.25rem;padding:1rem;user-select:all}.err{color:#b3261e}@media (prefers-color-scheme:dark){.err{color:#f2b8b5}}</style></head><body><main>`;
 const PAGE_FOOT = `</main></body></html>`;
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
@@ -69,10 +53,10 @@ function callbackPage(url) {
 
   if (error) {
     return html(
-      `<h1>認可されませんでした</h1>
-       <p class="sub">Threads 側から次の理由が返りました。</p>
+      `<h1>認可されませんでした${en('Authorization was not completed')}</h1>
+       <p class="sub">Threads 側から次の理由が返りました。${en('Threads returned the following reason.')}</p>
        <p class="code err">${esc(error)}${desc ? " — " + esc(desc) : ""}</p>
-       <p class="note">ターミナルに戻って <code>thth auth</code> をやり直してください。</p>`);
+       <p class="note">ターミナルに戻って <code>thth auth</code> をやり直してください。${en('Return to your terminal and run <code>thth auth</code> again.')}</p>`);
   }
 
   if (code) {
@@ -93,16 +77,16 @@ function callbackPage(url) {
     const missing = state
       ? ""
       : `<p class="note err">state が付いていません。この戻りは <code>thth auth</code> に
-         受け付けられません（もう一度 <code>thth auth</code> から始めてください）。</p>`;
+         受け付けられません。もう一度 <code>thth auth</code> から始めてください。${en('This return has no state, so <code>thth auth</code> cannot accept it. Start again with <code>thth auth</code>.')}</p>`;
 
     return html(
-      `<h1>認可コードを受け取りました</h1>
+      `<h1>認可コードを受け取りました${en('Authorization code received')}</h1>
        <p class="sub">下の <strong>URL 全体</strong>をターミナルに貼ってください
-       （<code>code</code> だけでは足りません）。1 時間で切れる使い捨てです。</p>
+       （<code>code</code> だけでは足りません）。1 時間で切れる使い捨てです。${en('Paste the complete URL below into your terminal. The <code>code</code> alone is not enough. It can be used once and expires in one hour.')}</p>
        <p class="code" id="c">${esc(paste)}</p>
        <button id="b">コピー</button>
        ${missing}
-       <p class="note">この画面は撮らないでください。貼り終えたら閉じて構いません。</p>
+       <p class="note">この画面は撮らないでください。貼り終えたら閉じて構いません。${en('Do not record this page. Close it after pasting the URL.')}</p>
        <script>
          // アドレスバーからコードを消す（撮影・肩越しの覗き見への備え）。
          try { history.replaceState(null, "", location.pathname); } catch (e) {}
@@ -117,10 +101,10 @@ function callbackPage(url) {
 
   return html(
     `<h1>THTH</h1>
-     <p class="sub">Threads の認可の受け口です。ここを直接開いても何もありません。</p>
+     <p class="sub">Threads の認可の受け口です。ここを直接開いても何もありません。${en('This is the Threads authorization return page. Opening it directly does nothing.')}</p>
      <p class="note">ターミナルで <code>thth auth &lt;account&gt;</code> を実行すると、
      認可 URL が表示されます。承認するとこのページに戻ってくるので、
-     表示された <strong>URL 全体</strong>をターミナルに貼ります。</p>`);
+     表示された <strong>URL 全体</strong>をターミナルに貼ります。${en('Run <code>thth auth &lt;account&gt;</code> in a terminal to show an authorization URL. After approval, return here and paste the complete displayed URL into the terminal.')}</p>`);
 }
 
 export default {
@@ -140,14 +124,13 @@ export default {
         ? await receiveCallback(request, env, url) : null;
       if (received instanceof Response) return received;
       if (received === "consumed") return html(
-        `<h1>すでに受け取り済みです</h1><p>完了しなかった場合は、ターミナルで認可をやり直してください。</p>
+        `<h1>すでに受け取り済みです${en('Already received')}</h1><p>完了しなかった場合は、ターミナルで認可をやり直してください。${en('If it did not finish, run authorization again in your terminal.')}</p>
          <script>try { history.replaceState(null, "", location.pathname); } catch (e) {}</script>`);
       if (received === "ready-invite") return html(
-        `<h1>承認を受け付けました</h1><p>招待のページ（最初に開いたタブ）に戻ってください。数十秒で用意ができます。</p>
-         <p class="note">Authorization received. Please return to the invitation tab; your account will be ready in a few seconds.</p>
+        `<h1>承認を受け付けました${en('Authorization received')}</h1><p>招待のページ（最初に開いたタブ）に戻ってください。数十秒で用意ができます。${en('Return to the invitation page in the first tab. Your account will be ready in a few tens of seconds.')}</p>
          <script>try { history.replaceState(null, "", location.pathname); } catch (e) {}</script>`);
       if (received === "ready") return html(
-        `<h1>承認を受け付けました</h1><p>ターミナル（VM）が受け取ります。貼り付けは要りません。</p>
+        `<h1>承認を受け付けました${en('Authorization received')}</h1><p>ターミナル（VM）が受け取ります。貼り付けは要りません。${en('The terminal receives it. You do not need to paste anything.')}</p>
          <script>try { history.replaceState(null, "", location.pathname); } catch (e) {}</script>`);
       return callbackPage(url);
     }

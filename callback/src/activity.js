@@ -41,7 +41,7 @@ export const SETTING_WORDS={daily_max_posts:'1 日の公開の上限 / Daily pos
 
 function signIn(status=200,note=''){
   return page(status,`<h1>動きの一覧${en('Activity')}</h1>${note}
-<p>ユーザ名と口座の secret で入ると、あなたの口座で出たもの・消したもの・予約・猶予中のもの・止まった理由が新しい順に並びます。招待で用意した口座では、ユーザ名は口座名です。${en('Sign in with your username and account secret to see what was published, deleted, scheduled or held on your accounts, newest first, and why an account was stopped. For an account prepared by an invitation, the username is the account name.')}</p>
+<p>ユーザ名と口座の secret で入ると、あなたの口座で出たもの・消したもの・予約・猶予中のもの・止まった理由が新しい順に並びます。招待で用意した口座では、ユーザ名は口座名です。${en('Sign in with your username and account secret. The list shows what happened on your accounts, newest first: published, deleted, scheduled, or held items, and why an account was stopped. For an account prepared by an invitation, the username is the account name.')}</p>
 <form method="post" action="/activity"><label>ユーザ名 / Username <input name="person" autocomplete="username" required maxlength="64"></label>${secretField}<button type="submit">一覧を見る / Show activity</button></form>
 <p>一覧は 10 分で閉じます。secret は LLM や原稿に書かないでください。${en('The page closes after 10 minutes. Never paste the secret into an LLM or a draft.')}</p>`,TITLE);
 }
@@ -69,8 +69,8 @@ function section(s){
   // 値の欄には主なパスワード管理の「入れない」印を添える。
   const settings=form('settings',s.account,`<label>項目 / Setting <select name="key">${options}</select></label><label>値 / Value <input name="value" required maxlength="9" autocomplete="off" inputmode="decimal" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other"></label>`,'設定を変える / Change','',true);
   const key=s.credential
-    ?`<p>LLM の鍵 / Key for your LLM: ${escape(s.credential.id)}… · 期限 / Expires ${escape(s.credential.expires_at)}${s.credential.revoked?' · 取り消し済み / Revoked':''}</p>`
-    :`<p>LLM の鍵 / Key for your LLM: なし / None</p>`;
+    ?`<p>アシスタントの鍵 / Assistant key: ${escape(s.credential.id)}… · 期限 / Expires ${escape(s.credential.expires_at)}${s.credential.revoked?' · 取り消し済み / Revoked':''}</p>`
+    :`<p>アシスタントの鍵 / Assistant key: なし / None</p>`;
   const keys=form('rotate',s.account,'','LLM の鍵を発行する / Issue a key for your LLM',`<p>新しい鍵をこの画面に 1 度だけ出します。前の鍵は使えなくなります。${en('The new key is shown once on this screen. The previous key stops working.')}</p>`)+
     (s.credential&&!s.credential.revoked?form('revoke',s.account,'','LLM の鍵を取り消す / Revoke the key'):'');
   const rows=s.rows.length?`<ul>${s.rows.map(r=>row(s.account,r)).join('')}</ul>`:`<p>まだ何もありません。${en('Nothing yet.')}</p>`;
@@ -86,7 +86,7 @@ function activityPage(person,data){
   const actions=data.actions.length?`<h2>頼んだ操作${en('Requested operations')}</h2><ul>${data.actions.map(a=>{const [ja,english]=ACTION_WORDS[a.kind],[sj,se]=STATUS_WORDS[a.status]??[a.status,a.status];
     return `<li>${escape(a.account)}: ${ja} / ${english} — ${sj} / ${se}${a.reason?' ('+escape(a.reason)+')':''}</li>`;}).join('')}</ul>`:'';
   const body=data.accounts.length?data.accounts.map(section).join(''):`<p>サーバからの様子がまだ届いていません。数十秒後に開き直してください。${en('Nothing has arrived from the server yet. Reload in a few tens of seconds.')}</p>`;
-  return page(200,`<h1>動きの一覧${en('Activity')}</h1><p>ユーザ名 / Username: ${escape(person)}</p>${banner}${actions}${body}
+  return page(200,`<h1>動きの一覧${en('Activity')}</h1><p>持ち主 / Owner: ${escape(person)}</p>${banner}${actions}${body}
 <p>操作は口座の secret をもう一度入れて確かめ、サーバが数十秒で行います。結果はこの一覧に出ます。${en('Each operation asks for the account secret again; the server carries it out within a few tens of seconds and the result appears here.')}</p>
 <form method="post" action="/activity"><input type="hidden" name="leave" value="1"><button type="submit">閉じる / Sign out</button></form>`,TITLE);
 }
@@ -95,10 +95,10 @@ function activityPage(person,data){
 function keyPage(env,account,bearer){
   const command=typeof env.THTH_MCP_COMMAND==='string'&&env.THTH_MCP_COMMAND.trim()?env.THTH_MCP_COMMAND.trim():null;
   const line=command?`claude mcp add thth -e THTH_REPORT_TOKEN=${bearer} -- ${command}`:`THTH_REPORT_TOKEN=${bearer}`;
-  return page(200,`<h1>LLM の鍵${en('Key for your LLM')}</h1><p>アカウント / Account: ${escape(account)}</p>
-<p><strong>この表示は 1 度だけです。</strong>パスワード管理に入れてから閉じてください。${en('This is shown only once. Store it in your password manager before closing.')}</p>
+  return page(200,`<h1>アシスタントの鍵${en('Assistant key')}</h1><p>口座 / Account: ${escape(account)}</p>
+<p><strong class="once">この表示は 1 度だけです。</strong>パスワード管理に入れてから閉じてください。${en('<strong class="once">This is shown only once.</strong> Store it in your password manager before closing.')}</p>
 <p>鍵 / Key</p><pre>${escape(bearer)}</pre>
-<p>${command?'Claude Code に登録する 1 行 / One line to register it in Claude Code':'MCP の起動に渡す環境変数（起動の命令は運営者に聞いてください）/ Environment variable for the MCP server (ask the operator for the launch command)'}</p><pre>${escape(line)}</pre>
+<p>${command?`Claude Code に登録する 1 行${en('One line to register it in Claude Code')}`:`MCP の起動に渡す環境変数です。起動の命令は<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に確認してください。${en('Environment variable for the MCP server. Ask the operator for the launch command through <a href="/privacy/">Contact in the Privacy Policy</a>.')}`}</p><pre>${escape(line)}</pre>
 <p>サーバが切り替えた時点（数十秒後）から、この鍵が使え、前の鍵は使えなくなります。鍵は原稿や公開の場に貼らないでください。${en('Within a few tens of seconds the server switches to this key and the previous key stops working. Never paste the key into a draft or anywhere public.')}</p>${back}`,TITLE);
 }
 function accepted(kind){

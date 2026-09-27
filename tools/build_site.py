@@ -164,8 +164,7 @@ def _ul(items: list[str]) -> str:
 # --------------------------------------------------------------------------
 
 STYLE = """\
-  /* 見た目は認可の受け口（src/index.js）に揃える（masaru 2026-09-14「あのシンプルなテイスト」）:
-     小さめの見出し・罫線なし・淡い角丸の背景・余白で区切る。装飾を足さない。 */
+  /* 読む順が分かるよう、控えめな見出しと余白だけを使う。 */
   :root { color-scheme: light dark; --bg:#faf9f7; --fg:#1a1a1a; --soft:rgba(127,127,127,.12); }
   @media (prefers-color-scheme: dark) { :root { --bg:#16161a; --fg:#eee; } }
   * { box-sizing: border-box; }
@@ -195,8 +194,8 @@ STYLE = """\
 def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
     """紹介ページ。**読む人に向けた製品紹介**で、開発側の申し送りを混ぜない。
 
-    文案は masaru が Codex に書かせたもの（2026-09-14）。参考にした調子: サクラエディタの
-    用途の端的な説明・CotEditor の機能を利用場面につなげる書き方・jq の気取らない案内。
+    参考にした調子: サクラエディタの用途の端的な説明・CotEditor の機能を利用場面につなげる書き方・
+    jq の気取らない案内。
     実行ログは載せない（現行の出力には投稿先や予約時刻の行も出るので、抜粋を「本物の出力」と
     しない）。使用例はコマンドだけ。
     """
@@ -221,44 +220,56 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
     add("<h1>THTH</h1>")
     add("<p>THTH は、AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツールです。"
         "Threads、Bluesky、Mastodon に対応しています。</p>")
-    add("<p>いつものエディタや AI エージェントで下書きを作り、内容を確認して承認すると、"
-        "予約した時刻に投稿されます。原稿も投稿後の記録も、自分の Git リポジトリで管理できます。</p>")
+    add("<p>自分の Git リポジトリで運用する場合は、いつものエディタや AI エージェントで下書きを作ります。"
+        "内容を確認して承認すると、予約した時刻に投稿されます。原稿も投稿後の記録も、そのリポジトリで管理できます。</p>")
     add("<pre><code>pip install thth</code></pre>")
 
-    add("<h2>使い方</h2>")
+    add("<h2>自分のリポジトリから投稿する</h2>")
     add("<p>下書きは Markdown ファイルに保存します。本文のほか、投稿先のアカウントや予約時刻、"
         "トピックなどを指定できます。</p>")
     add("<p>まず、投稿する内容を確認します。</p>")
     add("<pre><code>thth approve docs/sns/queue/2026-09-14-oolong.md</code></pre>")
     add("<p>本文と投稿先などが表示されます。この段階では、まだ承認されません。</p>")
     add("<p>内容がよければ、表示された確認コードと承認者の名前を付けて、もう一度実行します。</p>")
-    add("<pre><code>thth approve docs/sns/queue/2026-09-14-oolong.md --confirm &lt;確認コード&gt; --by masaru</code></pre>")
+    add("<pre><code>thth approve docs/sns/queue/2026-09-14-oolong.md --confirm &lt;確認コード&gt; --by gotoq</code></pre>")
     add("<p>承認した下書きは、タイマーを設定しておけば自動で投稿されます。承認後に本文や投稿先、"
         "予約時刻などを変更した場合は、あらためて承認が必要です。</p>")
 
     add("<h2>投稿したあとの管理も</h2>")
     add("<p>投稿が完了すると、原稿に投稿 ID が記録されます。返信や閲覧数も取得して、同じリポジトリに"
         "保存できます。投稿の履歴をたどったり、次の原稿を考えるときの資料として使えます。</p>")
-    add("<p>招待した利用者は認可 URL を開いて承認し、masaru がアプリ・サーバ・台帳を管理します。"
-        "利用者が VM や Meta アプリを用意する必要はありません。接続ページは今後の実装です。</p>")
+    add("<h2>招待された方へ</h2>")
+    add("<p>招待された利用者は、招待リンクを開いて Threads を認可します。続けて "
+        "<code>pip install thth</code>、<code>thth login</code> を実行し、ブラウザでこの機械を許可します。"
+        "利用者が VM や Meta アプリを用意する必要はありません。</p>")
+    add("<p>以後は <code>thth send</code>、<code>thth posts</code>、<code>thth replies</code>、"
+        "<code>thth measured</code>、<code>thth retract</code> で自分の口座を動かします。最短間隔、1 日の上限、"
+        "急な連投で止める安全装置は持ち主が決めます。AI アシスタントが変えられるのは、締める向きだけです。"
+        "<a href=\"/activity\">動きの一覧</a>で、持ち主が確認・停止・鍵の発行を行えます。</p>")
 
     add("<h2>AI エージェントから使う</h2>")
     add("<p>MCP サーバと Claude Code 用のスキルを同梱しています。コマンドラインから直接使うほか、"
         "AI エージェントとやり取りしながら下書きや投稿の記録を扱えます。</p>")
 
-    add("<h2>認可と運営者の設定</h2>")
+    add("<h2>運営者の使い方</h2>")
     add("<p>Mastodon の auth は expires_in または refresh_token を返す非標準実装に未対応です。手動 token set も期限・更新情報を受け取らず期限なしとして保存するため、その回避策にはなりません。</p>")
-    add("<p>masaru がサーバ側で <code>thth auth &lt;account&gt; --by masaru</code> を開始し、"
+    add("<p>運営者（gotoq）がサーバ側で <code>thth auth &lt;account&gt; --by gotoq</code> を開始し、"
         "利用者が URL を開いて承認します。Threads・対応 Mastodon・X の共通入口です。"
-        "X は認可だけ対応し、投稿・採集は未対応。Bluesky は App Password の stdin 入力です。</p>")
-    add(f'<p><a href="{guide("導入_承認を押すだけ.md")}">導入: 承認を押すだけ（利用者と masaru の手順）</a></p>')
+        "X は投稿・削除・自分の最近の投稿の読み取りに対応し、利用は運営者設定の範囲内です。返信と実測の採集には対応していません。"
+        "Bluesky は App Password の stdin 入力です。</p>")
+    add(f'<p><a href="{guide("導入_招待されたら.md")}">導入: 招待されたら</a></p>')
 
     add("<h2>English</h2>")
     add('<p class="en">THTH is a command-line tool for drafting and publishing social media posts with AI. '
         "It supports Threads, Bluesky, and Mastodon.</p>")
-    add('<p class="en">Review and approve a draft, then let THTH publish it at the scheduled time. '
-        "Drafts, published post IDs, replies, and view counts are stored in your own Git repository. "
-        "Masaru operates the server and apps; invited users approve an authorization URL. X is authorization-only. A connection page is not implemented yet.</p>")
+    add('<p class="en">For an operator-managed queue, review and approve a draft, then let the timer publish it. '
+        "Drafts, published post IDs, replies, and view counts are stored in that repository.</p>")
+    add('<p class="en">An invited person opens an invitation link, authorizes Threads, installs <code>thth</code>, '
+        "and runs <code>thth login</code> to allow their device in the browser. They then use <code>thth send</code>, "
+        "<code>posts</code>, <code>replies</code>, <code>measured</code>, and <code>retract</code> for their own account. "
+        "The owner sets safety limits; an AI assistant can only tighten them. The owner uses <a href=\"/activity\">Activity</a> "
+        "to review, stop, and issue keys. The operator (gotoq) runs the server. X can publish, delete, and read "
+        "the account's recent posts within the operator's configured scope; it does not collect replies or metrics.</p>")
 
     add(f'<p><a href="{GITHUB}">GitHub</a> ／ <a href="{PYPI}">PyPI</a> ／ '
         f'<a href="{esc(REGISTRY_SEARCH)}">MCP Registry</a> ／ <a href="/llms.txt">llms.txt</a></p>')
@@ -551,7 +562,7 @@ def build_privacy() -> str:
 
     add("<h2>運営者と対象</h2>")
     add("<p>THTH は、自分の SNS のアカウントの投稿を公開・管理するためのオープンソースのコマンドラインツールです。"
-        "多くの人は自分の AI アシスタントを通して使います。運営者 gotoq が、運営者の管理するサーバ（仮想マシン）で、"
+        "多くの人は自分の AI アシスタントを通して使います。運営者（gotoq）が、運営者の管理するサーバ（仮想マシン）で、"
         "招待した利用者と運営者自身のアカウントのために動かしています。このサーバで、認可・下書き・公開・安全装置・"
         "記録を扱います。</p>")
     add("<p>招待された利用者は、自分のサーバを動かしたり自分の Meta アプリを登録したりしません。認可の始まり方は"
@@ -874,7 +885,7 @@ def build_terms() -> str:
 
     add("<h2>THTH とは</h2>")
     add("<p>THTH は、自分の SNS のアカウントの投稿を公開・管理するためのコマンドラインツールで、多くの人は自分の "
-        "AI アシスタントを通して使います。運営者 gotoq が、"
+        "AI アシスタントを通して使います。運営者（gotoq）が、"
         "運営者の管理するサーバで、運営者が招待した人または確かめた人のために動かしています。招待された利用者は"
         "自分のアカウントを接続し、自分のサーバを動かしたり自分のアプリを登録したりしません。この規約はその"
         "サービスについてのものです。</p>")
@@ -904,7 +915,7 @@ def build_terms() -> str:
     add("  <li>運営者は、いつでもアカウントの利用を止められ、広場の書き込みを非表示にできます。利用者が求めたときは"
         "止めます。この規約や媒体の規約が守られないとき、媒体が求めたとき、サービスを終えるときにも止めることが"
         "あります。止めるときに前もって知らせないことがあります。</li>")
-    add('  <li>データの使い方・保存・削除は<a href="/privacy/#ja">プライバシーポリシー</a>に書いています。</li>')
+    add('  <li>データの使い方・保存・削除は、<a href="/privacy/#ja">プライバシーポリシー</a>に書いています。</li>')
     add("</ul>")
 
     add("<h2>提供の形</h2>")
