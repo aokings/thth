@@ -225,9 +225,10 @@ def test_紹介ページは訪問者向けの言葉で書く():
                  "What it guarantees", "送り先はまだ", "何も変えません", "投稿しました: post_id"):
         assert word not in page, f"訪問者向けのページに開発側の語が出ている: {word}"
     assert "AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツール" in page
-    assert "masaru がアプリ・サーバ・台帳を管理します" in page
-    assert "利用者が VM や Meta アプリを用意する必要はありません" in page
-    assert "X は認可だけ対応" in page
+    # 2026-09-27 の校正: 個人名は出さない（運営者は gotoq）。招待の流れは今の実装のとおり。
+    assert "masaru" not in page
+    assert "招待リンクを開いて Threads を認可します" in page
+    assert "X は投稿・削除・自分の最近の投稿の読み取りに対応し" in page
     assert page.count("<h2>English</h2>") == 1
 
 
