@@ -27,7 +27,7 @@ const PAGE_HEAD = `<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow,noarchive">
 <title>THTH 認可の受け口</title>
-<style>${PAGE_STYLE}.sub,.note{font-size:.88rem;opacity:.75}.code{font-family:ui-monospace,SFMono-Regular,monospace;word-break:break-all;background:rgba(127,127,127,.12);border-radius:.25rem;padding:1rem;user-select:all}.err{color:#b3261e}@media (prefers-color-scheme:dark){.err{color:#f2b8b5}}</style></head><body><main>`;
+<style>${PAGE_STYLE}</style></head><body><main>`;
 const PAGE_FOOT = `</main></body></html>`;
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>

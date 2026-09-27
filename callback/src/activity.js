@@ -103,7 +103,7 @@ function keyPage(env,account,bearer){
 }
 function accepted(kind){
   const [ja,english]=ACTION_WORDS[kind];
-  return page(200,`<h1>受け付けました${en('Received')}</h1><p>${ja} / ${english}</p><p>サーバが数十秒で行い、結果を動きの一覧に出します。${en('The server carries it out within a few tens of seconds and shows the result in the activity list.')}</p>${back}`,TITLE);
+  return page(200,`<h1>受け付けました${en('Received')}</h1><p class="status">${ja} / ${english}</p><p>サーバが数十秒で行い、結果を動きの一覧に出します。${en('The server carries it out within a few tens of seconds and shows the result in the activity list.')}</p>${back}`,TITLE);
 }
 const refusedSecret=()=>page(403,`<h1>確かめられませんでした${en('Could not confirm')}</h1><p>口座の secret を確かめてください。5 回続けて間違えると 15 分閉じます。${en('Check the account secret. After five failures in a row the page is closed for 15 minutes.')}</p>${back}`,TITLE);
 const ACT_KEYS={stop:'account,act,secret',resume:'account,act,secret',revoke:'account,act,secret',rotate:'account,act,secret',

@@ -21,7 +21,7 @@ const REASON={
   account_exists:['その Threads アカウントは既に THTH にあります。別のアカウントで認可するか、<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に連絡してください。','That Threads account is already registered. Use another account or contact the operator through <a href="/privacy/">Contact in the Privacy Policy</a>.'],
   unavailable:['運営者のサーバが今は口座を用意できません。<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に連絡してください。','The operator’s server cannot prepare the account right now. Contact the operator through <a href="/privacy/">Contact in the Privacy Policy</a>.'],
 };
-const unusable=()=>invitePage(410,`<h1>この招待リンクは使えません</h1><p>使用済み・期限切れ・取り消しのいずれかです。<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に新しい招待を頼んでください。${en('This invitation link is no longer valid (used, expired or revoked). Ask the operator for a new one through <a href="/privacy/">Contact in the Privacy Policy</a>.')}</p>`);
+const unusable=()=>invitePage(410,`<h1>この招待リンクは使えません</h1><p class="err" data-error="410">使用済み・期限切れ・取り消しのいずれかです。<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に新しい招待を頼んでください。${en('This invitation link is no longer valid (used, expired or revoked). Ask the operator for a new one through <a href="/privacy/">Contact in the Privacy Policy</a>.')}</p>`);
 const day=ms=>new Date(ms).toISOString().slice(0,10);
 
 function openPage(d){
@@ -46,22 +46,22 @@ function renderView(d){
   if(d.status==='open')return openPage(d);
   if(d.status==='clicked'){
     // 常駐が 2 分拾わなければ、待たせ続けずに運営者へ連絡を頼む（常駐が戻れば進む）。
-    if(d.stalled)return invitePage(200,`<h1>準備が進んでいません${en('Preparation has not started')}</h1><p>運営者のサーバが止まっている可能性があります。<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に連絡してください。このページは開いたままで構いません。戻れば自動で進みます。${en('The operator’s server may be down. Contact the operator through <a href="/privacy/">Contact in the Privacy Policy</a>. You may keep this page open; it continues automatically once it returns.')}</p>`,15);
-    return invitePage(200,`<h1>認可の準備中です${en('Preparing authorization')}</h1><p>数十秒で次へ進みます。${en('This page continues in a few tens of seconds.')}</p>`,3);
+    if(d.stalled)return invitePage(200,`<h1>準備が進んでいません${en('Preparation has not started')}</h1><p class="status">運営者のサーバが止まっている可能性があります。<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に連絡してください。このページは開いたままで構いません。戻れば自動で進みます。${en('The operator’s server may be down. Contact the operator through <a href="/privacy/">Contact in the Privacy Policy</a>. You may keep this page open; it continues automatically once it returns.')}</p>`,15);
+    return invitePage(200,`<h1>認可の準備中です${en('Preparing authorization')}</h1><p class="status">数十秒で次へ進みます。${en('This page continues in a few tens of seconds.')}</p>`,3);
   }
   if(d.status==='authorizing'){
     if(!d.authorize_url)return invitePage(200,`<h1>認可の時間が過ぎました${en('Authorization window closed')}</h1><p>10 分の期限を過ぎました。まもなくもう一度押せるようになります。${en('The 10-minute window passed. You can start again shortly.')}</p>`,5);
     return invitePage(200,`<h1>Threads で認可してください${en('Authorize with Threads')}</h1>
 <p><a class="go" href="${escape(d.authorize_url)}" target="_blank" rel="noopener noreferrer">Threads の認可ページを開く / Open Threads authorization</a></p>
-<p>新しいタブで開きます。認可が済んだら、このタブに戻ってください。自動で進みます（10 分以内）。${en('It opens in a new tab. After authorizing, come back to this tab; it continues automatically (within 10 minutes).')}</p>`,5);
+<p class="status">新しいタブで開きます。認可が済んだら、このタブに戻ってください。自動で進みます（10 分以内）。${en('It opens in a new tab. After authorizing, come back to this tab; it continues automatically (within 10 minutes).')}</p>`,5);
   }
   if(d.status==='ready'){
     return invitePage(200,`<h1>用意ができました${en('Your account is ready')}</h1>
-<p>Threads: @${escape(d.handle)} ／ 口座 / account: <code>${escape(d.account)}</code></p>
+<p class="status">Threads: @${escape(d.handle)} ／ 口座 / account: <code>${escape(d.account)}</code></p>
 <p>次のボタンで口座の secret とアシスタントの鍵を表示します。<strong class="once">表示は一度だけです。</strong>その場でパスワード管理に別々に保存してください。${en('The next button shows your account secret and assistant key. <strong class="once">They are shown only once.</strong> Save them separately in a password manager right away.')}</p>
 <form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><input type="hidden" name="action" value="reveal"><button type="submit">口座の secret を表示する / Show account secret</button></form>`);
   }
-  if(d.status==='done')return invitePage(410,`<h1>この招待は使用済みです${en('This invitation has been used')}</h1><p>口座の secret はすでに表示しました。<strong class="once">表示は一度だけです。</strong>失くした場合は<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に再発行を頼んでください。${en('The account secret was already shown. <strong class="once">It is shown only once.</strong> If you lost it, ask the operator to issue a new one through <a href="/privacy/">Contact in the Privacy Policy</a>.')}</p>`);
+  if(d.status==='done')return invitePage(410,`<h1>この招待は使用済みです${en('This invitation has been used')}</h1><p class="err" data-error="410">口座の secret はすでに表示しました。<strong class="once">表示は一度だけです。</strong>失くした場合は<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に再発行を頼んでください。${en('The account secret was already shown. <strong class="once">It is shown only once.</strong> If you lost it, ask the operator to issue a new one through <a href="/privacy/">Contact in the Privacy Policy</a>.')}</p>`);
   return unusable();
 }
 

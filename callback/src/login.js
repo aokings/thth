@@ -62,7 +62,7 @@ function allowForm(code,status=200,note='',head=''){
 <form method="post" action="/login/${escape(code)}"><label>口座名 / Account name <input name="account" autocomplete="username" required maxlength="64"></label><label>口座の secret / Account secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label><button type="submit">この機械に鍵を渡す / Allow this device</button></form>
 <p>このページは 10 分で使えなくなります。アシスタントの鍵はこの画面には出ません。${en('This page stops working after 10 minutes. The assistant key is never shown on this screen.')}</p>`,TITLE,head);
 }
-const unusable=(status=410)=>page(status,`<h1>このページは使えません${en('This page cannot be used')}</h1><p>期限（10 分）が切れたか、もう使われました。ターミナルで <code>thth login</code> をやり直してください。${en('It has expired (10 minutes) or has already been used. Run <code>thth login</code> again in your terminal.')}</p>`,TITLE);
+const unusable=(status=410)=>page(status,`<h1>このページは使えません${en('This page cannot be used')}</h1><p class="err" data-error="${status}">期限（10 分）が切れたか、もう使われました。ターミナルで <code>thth login</code> をやり直してください。${en('It has expired (10 minutes) or has already been used. Run <code>thth login</code> again in your terminal.')}</p>`,TITLE);
 const busy=()=>page(409,`<h1>確かめている途中です${en('Still checking')}</h1><p>少し待ってから、このページを開き直してください。${en('Wait a moment and reload this page.')}</p>`,TITLE);
 const refused=code=>allowForm(code,403,`<p><strong>確かめられませんでした。</strong>口座名と口座の secret を確かめてください。5 回続けて間違えると 15 分閉じます。${en('Could not confirm. Check the account name and the account secret. After five failures in a row it is closed for 15 minutes.')}</p>`);
 const notReady=(code,head='')=>allowForm(code,409,`<p><strong>口座の様子がまだサーバから届いていないか、口座が 1 つに決められません。</strong>口座名を確かめ、数十秒後にもう一度押してください。${en('The server has not reported this account yet, or the account could not be determined. Check the account name and try again in a few tens of seconds.')}</p>`,head);
@@ -70,11 +70,11 @@ const notReady=(code,head='')=>allowForm(code,409,`<p><strong>口座の様子が
 // 届けば同じ URL が口座名と secret の form に戻る。
 const REFRESH='<meta http-equiv="refresh" content="5">';
 const waiting=code=>page(200,`<h1>届くまで待っています（数十秒）${en('Waiting for the server (a few tens of seconds)')}</h1>
-<p>口座の様子がまだサーバから届いていません。このページは 5 秒ごとに自分で読み直し、届いたら口座名と口座の secret を入れる画面に戻ります。閉じずにお待ちください。${en('The server has not reported your account yet. This page reloads itself every 5 seconds and shows the form again once it arrives. Keep it open.')}</p>
+<p class="status">口座の様子がまだサーバから届いていません。このページは 5 秒ごとに自分で読み直し、届いたら口座名と口座の secret を入れる画面に戻ります。閉じずにお待ちください。${en('The server has not reported your account yet. This page reloads itself every 5 seconds and shows the form again once it arrives. Keep it open.')}</p>
 <p>コード / Code: <strong>${escape(code)}</strong>。10 分を過ぎたらターミナルで <code>thth login</code> をやり直してください。${en('After 10 minutes, run <code>thth login</code> again in your terminal.')}</p>`,TITLE,REFRESH);
 // POST の 409 は今のまま。まだ届いていないときだけ、5 秒後に同じ URL の GET（上の待つページ）へ移る。
 const notReported=code=>notReady(code,`<meta http-equiv="refresh" content="5;url=/login/${escape(code)}">`);
-const done=()=>page(200,`<h1>渡しました。ターミナルに戻ってください${en('Done. Go back to your terminal')}</h1><p>アシスタントの鍵はターミナルが受け取り、この画面には出ません。サーバが切り替えた時点（数十秒後）から使え、前の鍵は使えなくなります。このページは閉じて構いません。${en('The terminal receives the assistant key; it is never shown here. It works once the server switches to it, in a few tens of seconds, and the previous key stops working. You can close this page.')}</p>`,TITLE);
+const done=()=>page(200,`<h1>渡しました。ターミナルに戻ってください${en('Done. Go back to your terminal')}</h1><p class="status">アシスタントの鍵はターミナルが受け取り、この画面には出ません。サーバが切り替えた時点（数十秒後）から使え、前の鍵は使えなくなります。このページは閉じて構いません。${en('The terminal receives the assistant key; it is never shown here. It works once the server switches to it, in a few tens of seconds, and the previous key stops working. You can close this page.')}</p>`,TITLE);
 
 export async function loginRequest(request,env,url){
   try{
