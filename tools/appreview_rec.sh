@@ -5,6 +5,8 @@
 #   bash tools/appreview_rec.sh [project]      # 既定 jiangshi-lab
 #   REC_RESUME=<前回の保存先> REC_ACCOUNT=<口座> bash tools/appreview_rec.sh
 #       … 区間 1（招待→認可）と secret・鍵の控えを済ませた続き（区間 2）から撮る
+#   REC_RESUME=<保存先> REC_ACCOUNT=<口座> REC_KEEP=2 bash tools/appreview_rec.sh
+#       … 区間 1・2（login まで）を残し、区間 3（命令）から撮り直す（REC_KEEP=3 なら区間 4 だけ）
 #
 # 招待リンク → Threads の認可 → 完了ページ →（録画の外で secret と鍵を控える）→ pip install
 # → thth login（ブラウザで許可）→ posts → send → アプリで確認 → send --reply-to → replies
@@ -165,11 +167,12 @@ tell application id "com.apple.Terminal"
 end tell
 APPLE
 
+KEEP="${REC_KEEP:-1}"
 if [ -n "$RESUME" ]; then
   ACCOUNT="${REC_ACCOUNT:?REC_ACCOUNT に口座名を}"
-  head -1 "$OUT/segments.txt" > "$OUT/segments.keep" && mv "$OUT/segments.keep" "$OUT/segments.txt"
-  SEG=1
-  printf '\n続きから撮ります（口座 %s・区間 1 は %s）。\n' "$ACCOUNT" "$(head -1 "$OUT/segments.txt")"
+  head -n "$KEEP" "$OUT/segments.txt" > "$OUT/segments.keep" && mv "$OUT/segments.keep" "$OUT/segments.txt"
+  SEG="$KEEP"
+  printf '\n続きから撮ります（口座 %s・区間 1〜%s は残す）。\n' "$ACCOUNT" "$KEEP"
 else
 $LOCAL_THTH logout >/dev/null 2>&1 || true
 wait_return '  [Return で招待を作る（URL はこの画面にだけ 1 回出ます・まだ録画しません）] '
@@ -223,6 +226,7 @@ wait_return '  [Return で録画を再開（区間 2: pip install と thth login
 fi
 
 # ---------------------------------------------------------------- 区間 2: pip install → thth login ----
+if [ "$KEEP" -lt 2 ]; then
 rec_start || exit 2
 banner "2. On their own computer, the person installs the command-line tool and signs in."
 printf '$ pip install -U thth\n\n'; sleep 1
@@ -244,8 +248,10 @@ done
 $LOCAL_THTH account status "$ACCOUNT" >/dev/null 2>&1 || { printf '鍵がまだ通りません。thth account status %s を手で確かめてください。\n' "$ACCOUNT"; exit 2; }
 printf '通りました。スマホの Threads を、投稿が見える画面（プロフィール）にしてください。\n'
 wait_return '  [Return で録画を再開（区間 3: 命令を打つ）] '
+fi
 
 # ---------------------------------------------------------------- 区間 3: posts → send → reply → replies → measured → retract ----
+if [ "$KEEP" -lt 3 ]; then
 rec_start || exit 2
 banner "3. threads_basic — the account's own posts."
 show posts "$ACCOUNT" --limit 3
@@ -276,6 +282,7 @@ wait_return '  [スマホで投稿が消えたのを見せたら Return] '
 show posts "$ACCOUNT" --limit 3
 sleep 3
 rec_stop
+fi
 
 # ---------------------------------------------------------------- 区間 4: /activity ----
 clear_all
