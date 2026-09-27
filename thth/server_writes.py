@@ -399,11 +399,28 @@ def cancel_schedule(account, draft_id, *, by, via='http'):
     return 'cancelled'
 
 
+def recover_repo(account, cfg):
+    """記録置き場の無いまま `data/` だけが書かれた招待の口座を、口座のロックの中で初期化する（3.14.3 穴 1）。
+
+    `.git` があれば何もしない（毎回の依頼で Git の置き場を歩かない）。直せない途中の状態には触らず、
+    そのあとの `initialize`／`validate` が今までどおり断る。ロックが取れなければ次の依頼に回す。
+    """
+    from .lock import LockBusy
+    clone,_=managed_repo.locations(account)
+    if cfg.get('repo_dir')!=str(clone) or os.path.isdir(clone/'.git'): return
+    try:
+        with server_files.account_locks(account,cfg):
+            managed_repo.recover(account,cfg)
+    except LockBusy:
+        return
+
+
 def execute(context, request, *, via='http'):
     if type(request) is not dict or request.get('operation') not in WRITE_OPERATIONS: error('unsupported_operation')
     if not isinstance(request.get('account'),str): error('invalid_scope')
     try:
         cfg=current(context,request['account'],write=True)
+        recover_repo(request['account'],cfg)
         if request['operation'] in ('media_upload_url','media_complete'):
             from . import media_uploads
             return media_uploads.execute(context,request,via)

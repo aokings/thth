@@ -634,6 +634,7 @@ def _complete(directory, record, session, code):
         return _back_to_open(directory, record, "unavailable")
     _forget_session(directory, record["invite_id"])
     _save(directory, record, status="used", reason=None, handle=username, remote_ready=False, approver_set=False)
+    _initialize_repo(record, data)
     _try_credential(directory, record)
     try:
         from . import doctor
@@ -641,6 +642,28 @@ def _complete(directory, record, session, code):
     except Exception:
         pass
     _announce(directory, record)
+
+
+def _initialize_repo(record, data):
+    """口座の記録置き場（managed repo）をすぐ作る（設計 3.14.3 穴 1）。
+
+    3.14.2 までは最初の `draft_put` でしか作らず、`send --text` だけの口座は `data/` だけが
+    repo_dir に書かれて `collect` が `repo_broken` になった。失敗しても口座は作ったまま
+    （最初の依頼の入口がもう一度直す）で、変更ログに `managed_repo_init_failed` と理由の符丁を残す。
+    """
+    from . import managed_repo, server_files
+    name = record["account"]
+    try:
+        cfg = accounts.load_account(name)
+        with server_files.account_locks(name, cfg):
+            managed_repo.initialize(name, cfg)
+    except Exception as exc:
+        reason = str(exc) if re.fullmatch(r"[a-z_]{1,64}", str(exc)) else type(exc).__name__
+        try:
+            admin_log.append("managed_repo_init_failed", name, data, by=record["by"], via="http",
+                             diff={"managed_repo": [None, reason], "via_invite": [None, record["invite_id"]]})
+        except Exception:
+            print("managed_repo_init_failed: " + name, file=sys.stderr)
 
 
 def _create_account(record, data, token):

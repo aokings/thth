@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import stat
+import tempfile
 from . import accounts, server_files
 
 
@@ -156,3 +157,51 @@ def initialize(account, cfg):
     with server_files.directory(clone/queue, create=True): pass
     validate(clone)
     return str(clone)
+
+
+def recover(account, cfg):
+    """記録置き場の無いまま `data/` だけが書かれた口座を初期化する（設計 3.14.3 穴 1）。
+
+    `send --text`（direct_send）や `collect` は repo 無しでも `repo_dir/data/` に書くので、
+    あとから `initialize` を呼ぶと「途中の状態」として断られていた。ここで直すのは、
+    clone が無い・または `.git` が無く中身が空か `data/` だけ、かつ bare の origin も無いときだけ。
+    `data/` は同じ親の一時ディレクトリ（0700）へ退避 → `initialize` → 戻す → commit と push。
+    それ以外の途中の状態には触らない（呼び手の `initialize`／`validate` が今までどおり断る）。
+    戻り値は直したか。呼び手は口座のロックの中で呼ぶ。
+    """
+    clone, origin = locations(account)
+    if cfg.get('repo_dir') != str(clone): return False
+    if os.path.lexists(origin): return False
+    try:
+        info = os.lstat(clone)
+    except FileNotFoundError:
+        initialize(account, cfg); return True
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid(): return False
+    names = os.listdir(clone)
+    if set(names) - {'data'}: return False
+    data = clone/'data'
+    if names:
+        found = os.lstat(data)
+        if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid(): return False
+    with private_umask():
+        stash = Path(tempfile.mkdtemp(prefix='.'+account+'.recover-', dir=str(clone.parent)))
+    try:
+        if names: os.rename(data, stash/'data')
+        os.rmdir(clone)
+        try:
+            initialize(account, cfg)
+        finally:
+            if names:
+                if not os.path.lexists(clone):
+                    with server_files.directory(clone, create=True): pass
+                os.rename(stash/'data', data)
+    finally:
+        try: os.rmdir(stash)
+        except OSError: pass
+    if names:
+        for command in (['add','--','data'],
+                        ['commit','-m','Keep data written before the account repository existed'],
+                        ['push','origin','main']):
+            if run(clone, command).returncode: raise ValueError('managed_initialization_failed')
+    validate(clone)
+    return True

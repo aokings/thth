@@ -292,6 +292,9 @@ def execute(context, request):
     from . import leave_gate
     try:
         with leave_gate.lease(account):
+            # 記録置き場の無いまま `data/` だけが書かれた口座は、ここで初期化してから読む（3.14.3 穴 1）。
+            from .server_writes import recover_repo
+            recover_repo(account, cfg)
             # CLI の関数は人向けに print しうる。stdio の MCP では stdout が道なので、
             # 読む口の間は stderr へ逃がす（答えは戻り値だけ）。
             with contextlib.redirect_stdout(sys.stderr):
