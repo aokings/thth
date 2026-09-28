@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------- アクティビティ（設計 3.12.0 §3.4・§3.5）
-// 所有者がユーザ名とアカウントのシークレットで入り（照合は PBKDF2・5 回失敗で 15 分閉じる）、
-// 自分のアカウントで出たもの・消したもの・予約・猶予中・止まった理由を新しい順に見る。
-// ここでできるのは: アカウントを止める・止めたのを戻す・予約（猶予中を含む）を取り消す・設定を変える・
-// LLM の鍵を発行し直す・鍵を取り消す。どれも secret をもう一度入れて確かめ、VM が数十秒で行う。
+// オーナーがユーザー名とアカウントのシークレットで入り（照合は PBKDF2・5 回失敗で 15 分閉じる）、
+// 自分のアカウントで出たもの・消したもの・予約・待機中・止まった理由を新しい順に見る。
+// ここでできるのは: アカウントを止める・止めたのを戻す・予約（待機中を含む）を取り消す・設定を変える・
+// LLM のキーを発行し直す・キーを取り消す。どれも secret をもう一度入れて確かめ、VM が数十秒で行う。
 // 一覧の中身は VM が押し上げた要約（本文は先頭 60 字まで・1 時間で忘れる）。Worker は閲覧を記録しない。
 // 作法は 3.12.0 までの承認ページと同じ（script なし・CSP・no-store・no-referrer・同一 origin の POST）。
 import {PERSON,TTL,opaque,boundedBody,personStub,fromSameOrigin,page,en,escape,publicQuota} from './person.js';
@@ -27,12 +27,12 @@ const back=`<p><a href="/activity">アクティビティに戻る / Back to acti
 const secretField=`<label>アカウントのシークレット / Account secret <input type="password" name="secret" autocomplete="current-password" required maxlength="128"></label>`;
 
 export const KIND_WORDS={published:['出た','Published'],retracted:['消した','Deleted'],scheduled:['予約','Scheduled'],
-  held:['猶予中','On hold'],stopped:['止めた','Stopped']};
-export const STOP_WORDS={burst:['急な連投で安全装置が止めました','Stopped by the safety limit (burst of posts)'],
+  held:['待機中','On hold'],stopped:['止めた','Stopped']};
+export const STOP_WORDS={burst:['急な連投でガードが止めました','Stopped by the safety limit (burst of posts)'],
   owner:['あなたが止めました','You stopped it'],guard_state_unreadable:['止めた印が読めないため止まっています','Stopped (the stop record cannot be read)']};
 export const ACTION_WORDS={stop:['アカウントを止める','Stop the account'],resume:['止めたのを戻す','Resume the account'],
   cancel:['予約を取り消す','Cancel the scheduled post'],settings:['設定を変える','Change a setting'],
-  revoke:['LLM の鍵を取り消す','Revoke the key for your LLM'],rotate:['LLM の鍵を発行する','Issue a key for your LLM']};
+  revoke:['LLM のキーを取り消す','Revoke the key for your LLM'],rotate:['LLM のキーを発行する','Issue a key for your LLM']};
 const STATUS_WORDS={pending:['反映待ち','Waiting for the server'],done:['済み','Done'],failed:['できませんでした','Failed']};
 export const SETTING_WORDS={daily_max_posts:'1 日の公開の上限 / Daily post limit',
   daily_max_retracts:'1 日の削除の上限 / Daily delete limit',burst_count:'急な連投: 件数 / Burst: posts',
@@ -41,8 +41,8 @@ export const SETTING_WORDS={daily_max_posts:'1 日の公開の上限 / Daily pos
 
 function signIn(status=200,note=''){
   return page(status,`<h1>アクティビティ${en('Activity')}</h1>${note}
-<p>ユーザ名とアカウントのシークレットで入ると、あなたのアカウントで出たもの・消したもの・予約・猶予中のもの・止まった理由が新しい順に並びます。招待で用意したアカウントでは、ユーザ名はアカウント名です。${en('Sign in with your username and account secret. The list shows what happened on your accounts, newest first: published, deleted, scheduled, or held items, and why an account was stopped. For an account prepared by an invitation, the username is the account name.')}</p>
-<form method="post" action="/activity"><label>ユーザ名 / Username <input name="person" autocomplete="username" required maxlength="64"></label>${secretField}<button type="submit">一覧を見る / Show activity</button></form>
+<p>ユーザー名とアカウントのシークレットで入ると、あなたのアカウントで出たもの・消したもの・予約・待機中のもの・止まった理由が新しい順に並びます。招待で用意したアカウントでは、ユーザー名はアカウント名です。${en('Sign in with your username and account secret. The list shows what happened on your accounts, newest first: published, deleted, scheduled, or held items, and why an account was stopped. For an account prepared by an invitation, the username is the account name.')}</p>
+<form method="post" action="/activity"><label>ユーザー名 / Username <input name="person" autocomplete="username" required maxlength="64"></label>${secretField}<button type="submit">一覧を見る / Show activity</button></form>
 <p>一覧は 10 分で閉じます。secret は LLM や原稿に書かないでください。${en('The page closes after 10 minutes. Never paste the secret into an LLM or a draft.')}</p>`,TITLE);
 }
 function form(act,account,fields,label,extra='',secretFirst=false){
@@ -64,15 +64,15 @@ function section(s){
     ?form('resume',s.account,'','止めたのを戻す / Resume')
     :form('stop',s.account,'','このアカウントを止める / Stop this account',`<p>止めると、戻すまで公開・削除・予約をすべて受け付けません。${en('While stopped, every publish, delete and schedule is refused until you resume.')}</p>`);
   const options=SETTING_KEYS.map(k=>`<option value="${k}">${escape(SETTING_WORDS[k])}</option>`).join('');
-  // 3.14.2: パスワード管理は password の欄の手前の文字の欄をユーザ名と見なし、値の欄にユーザ名を入れていた
+  // 3.14.2: パスワード管理は password の欄の手前の文字の欄をユーザー名と見なし、値の欄にユーザー名を入れていた
   // （09-26 のスマホの画面・autocomplete="off" は 3.12.0 からあったが効かない）。secret の欄を先に置き、
   // 値の欄には主なパスワード管理の「入れない」印を添える。
   const settings=form('settings',s.account,`<label>項目 / Setting <select name="key">${options}</select></label><label>値 / Value <input name="value" required maxlength="9" autocomplete="off" inputmode="decimal" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other"></label>`,'設定を変える / Change','',true);
   const key=s.credential
     ?`<p>API キー / Assistant key: ${escape(s.credential.id)}… · 期限 / Expires ${escape(s.credential.expires_at)}${s.credential.revoked?' · 取り消し済み / Revoked':''}</p>`
     :`<p>API キー / Assistant key: なし / None</p>`;
-  const keys=form('rotate',s.account,'','LLM の鍵を発行する / Issue a key for your LLM',`<p>新しい鍵をこの画面に 1 度だけ出します。前の鍵は使えなくなります。${en('The new key is shown once on this screen. The previous key stops working.')}</p>`)+
-    (s.credential&&!s.credential.revoked?form('revoke',s.account,'','LLM の鍵を取り消す / Revoke the key'):'');
+  const keys=form('rotate',s.account,'','LLM のキーを発行する / Issue a key for your LLM',`<p>新しいキーをこの画面に 1 度だけ出します。前のキーは使えなくなります。${en('The new key is shown once on this screen. The previous key stops working.')}</p>`)+
+    (s.credential&&!s.credential.revoked?form('revoke',s.account,'','LLM のキーを取り消す / Revoke the key'):'');
   const rows=s.rows.length?`<ul>${s.rows.map(r=>row(s.account,r)).join('')}</ul>`:`<p>まだ何もありません。${en('Nothing yet.')}</p>`;
   return `<section><h2>${escape(s.account)}</h2>
 <p>今日の公開 / Posts today: ${escape(s.today.posts)} / ${escape(l.daily_max_posts)} · 今日の削除 / Deletions today: ${escape(s.today.retracts)} / ${escape(l.daily_max_retracts)}</p>
@@ -85,9 +85,9 @@ function activityPage(person,data){
     return `<p><strong>${escape(s.account)} は止まっています。${escape(ja)}（${escape(s.stopped.at??'')}）</strong>${en(escape(s.account)+' is stopped. '+escape(english)+'.')}</p>`;}).join('');
   const actions=data.actions.length?`<h2>頼んだ操作${en('Requested operations')}</h2><ul>${data.actions.map(a=>{const [ja,english]=ACTION_WORDS[a.kind],[sj,se]=STATUS_WORDS[a.status]??[a.status,a.status];
     return `<li>${escape(a.account)}: ${ja} / ${english} — ${sj} / ${se}${a.reason?' ('+escape(a.reason)+')':''}</li>`;}).join('')}</ul>`:'';
-  const body=data.accounts.length?data.accounts.map(section).join(''):`<p>サーバからの様子がまだ届いていません。数十秒後に開き直してください。${en('Nothing has arrived from the server yet. Reload in a few tens of seconds.')}</p>`;
-  return page(200,`<h1>アクティビティ${en('Activity')}</h1><p>所有者 / Owner: ${escape(person)}</p>${banner}${actions}${body}
-<p>操作はアカウントのシークレットをもう一度入れて確かめ、サーバが数十秒で行います。結果はこの一覧に出ます。${en('Each operation asks for the account secret again; the server carries it out within a few tens of seconds and the result appears here.')}</p>
+  const body=data.accounts.length?data.accounts.map(section).join(''):`<p>サーバーからの様子がまだ届いていません。数十秒後に開き直してください。${en('Nothing has arrived from the server yet. Reload in a few tens of seconds.')}</p>`;
+  return page(200,`<h1>アクティビティ${en('Activity')}</h1><p>オーナー / Owner: ${escape(person)}</p>${banner}${actions}${body}
+<p>操作はアカウントのシークレットをもう一度入れて確かめ、サーバーが数十秒で行います。結果はこの一覧に出ます。${en('Each operation asks for the account secret again; the server carries it out within a few tens of seconds and the result appears here.')}</p>
 <form method="post" action="/activity"><input type="hidden" name="leave" value="1"><button type="submit">閉じる / Sign out</button></form>`,TITLE);
 }
 // MCP の登録の形（Claude Code）。mcp/server.py は THTH_REPORT_TOKEN（と運営者が置く THTH_REPORT_CREDENTIALS）
@@ -97,13 +97,13 @@ function keyPage(env,account,bearer){
   const line=command?`claude mcp add thth -e THTH_REPORT_TOKEN=${bearer} -- ${command}`:`THTH_REPORT_TOKEN=${bearer}`;
   return page(200,`<h1>API キー${en('Assistant key')}</h1><p>アカウント / Account: ${escape(account)}</p>
 <p><strong class="once">この表示は 1 度だけです。</strong>パスワード管理に入れてから閉じてください。${en('<strong class="once">This is shown only once.</strong> Store it in your password manager before closing.')}</p>
-<p>鍵 / Key</p><pre>${escape(bearer)}</pre>
+<p>キー / Key</p><pre>${escape(bearer)}</pre>
 <p>${command?`Claude Code に登録する 1 行${en('One line to register it in Claude Code')}`:`MCP の起動に渡す環境変数です。起動のコマンドは<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に確認してください。${en('Environment variable for the MCP server. Ask the operator for the launch command through <a href="/privacy/">Contact in the Privacy Policy</a>.')}`}</p><pre>${escape(line)}</pre>
-<p>サーバが切り替えた時点（数十秒後）から、この鍵が使え、前の鍵は使えなくなります。鍵は原稿や公開の場に貼らないでください。${en('Within a few tens of seconds the server switches to this key and the previous key stops working. Never paste the key into a draft or anywhere public.')}</p>${back}`,TITLE);
+<p>サーバーが切り替えた時点（数十秒後）から、このキーが使え、前のキーは使えなくなります。キーは原稿や公開の場に貼らないでください。${en('Within a few tens of seconds the server switches to this key and the previous key stops working. Never paste the key into a draft or anywhere public.')}</p>${back}`,TITLE);
 }
 function accepted(kind){
   const [ja,english]=ACTION_WORDS[kind];
-  return page(200,`<h1>受け付けました${en('Received')}</h1><p class="status">${ja} / ${english}</p><p>サーバが数十秒で行い、結果をアクティビティに出します。${en('The server carries it out within a few tens of seconds and shows the result in the activity list.')}</p>${back}`,TITLE);
+  return page(200,`<h1>受け付けました${en('Received')}</h1><p class="status">${ja} / ${english}</p><p>サーバーが数十秒で行い、結果をアクティビティに出します。${en('The server carries it out within a few tens of seconds and shows the result in the activity list.')}</p>${back}`,TITLE);
 }
 const refusedSecret=()=>page(403,`<h1>確かめられませんでした${en('Could not confirm')}</h1><p>アカウントのシークレットを確かめてください。5 回続けて間違えると 15 分閉じます。${en('Check the account secret. After five failures in a row the page is closed for 15 minutes.')}</p>${back}`,TITLE);
 const ACT_KEYS={stop:'account,act,secret',resume:'account,act,secret',revoke:'account,act,secret',rotate:'account,act,secret',
@@ -133,7 +133,7 @@ export async function activityRequest(request,env,url){
       return see('/activity',setCookie('',0));
     }
     if(keys==='person,secret'){
-      const person=form.get('person'),refused=()=>signIn(403,`<p><strong>入れませんでした。</strong>ユーザ名とアカウントのシークレットを確かめてください。5 回続けて間違えると 15 分閉じます。${en('Sign-in failed. Check the username and the account secret. After five failures in a row it is closed for 15 minutes.')}</p>`);
+      const person=form.get('person'),refused=()=>signIn(403,`<p><strong>入れませんでした。</strong>ユーザー名とアカウントのシークレットを確かめてください。5 回続けて間違えると 15 分閉じます。${en('Sign-in failed. Check the username and the account secret. After five failures in a row it is closed for 15 minutes.')}</p>`);
       if(!PERSON.test(person))return refused();
       const token=opaque(),opened=await (await personStub(env,person)).openList(form.get('secret'),await digest(token));
       if(opened.status!==200)return refused();

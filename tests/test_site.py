@@ -276,7 +276,7 @@ def test_プライバシーポリシーは正本から生成され_外へ出る�
     assert "Disallow: /privacy" not in robots
 
 
-def test_privacy_は観測の地図の集計の保存を英日で書く():
+def test_privacy_はトピックマップの集計の保存を英日で書く():
     """2026-09-24: 世間の層（`thth/map_world.py`）を有効にする前に、保存する集計を書き足した。
 
     裏: 既定で無効（`map_view.world_enabled()`）・点は管理者だけ・20 まで・@名前/URL/個人名を
@@ -302,11 +302,11 @@ def test_privacy_は観測の地図の集計の保存を英日で書く():
                  "運営者が有効にしない限り動きません", "プロジェクトごとに最大 20 語",
                  "語ごとに 1 日 1 回まで", "新しい順の先頭 25 件",
                  "5 未満の数（件数・投稿者の異なり数・組の件数）は値を保存せず",
-                 "本文・投稿 ID・ユーザー名・投稿者の鍵・リンク・正確な時刻は保存しません",
+                 "本文・投稿 ID・ユーザー名・投稿者のキー・リンク・正確な時刻は保存しません",
                  "最大 180 日保存します", "日単位で削り", "プロジェクト全体か期間を指定して削除",
                  "数を見られるのはそのプロジェクトの中だけです",
-                 "観測の地図の日々の集計: 最大180日",
-                 "改訂: 観測の地図の集計の保存"):
+                 "トピックマップの日々の集計: 最大180日",
+                 "改訂: トピックマップの集計の保存"):
         assert must in page, must
     # 「検索は求められたときだけ」は世間の層と両立しない（有効なら毎日動く）。
     assert "runs only on request" not in page and "求められたときだけ動きます" not in page
@@ -349,7 +349,7 @@ def test_利用規約は正本から生成され_英日の見出しがあり_外
     en, ja = page.split('id="ja"', 1)
     assert all(f"<h2>{h}</h2>" in en for h in TERMS_EN_HEADINGS)
     assert all(f"<h2>{h}</h2>" in ja for h in TERMS_JA_HEADINGS)
-    # 事実だけ（頼んだときだけ動く・安全装置・退出・連絡先・MIT とサービスの区別・データは privacy へ）
+    # 事実だけ（頼んだときだけ動く・ガード・退出・連絡先・MIT とサービスの区別・データは privacy へ）
     for must in ("it does not post, reply or delete on its own", "自分から投稿・返信・削除をしません",
                  "https://thth.me/activity",
                  "thth account leave", 'href="/privacy/"', "https://github.com/aokings/thth/issues",
@@ -412,8 +412,8 @@ def test_privacy_は利用規約へリンクし_同じ連絡先を出す():
     assert "mailto:" not in page
 
 
-def test_privacy_は広場を英日で書く():
-    """2026-09-25（計画_Meta申請 #3）: 広場（`thth plaza`）の保存と見える範囲を書き足した。
+def test_privacy_はプラザを英日で書く():
+    """2026-09-25（計画_Meta申請 #3）: プラザ（`thth plaza`）の保存と見える範囲を書き足した。
 
     裏: 置き場は VM の私有（`plaza.STORE`・`private_store`・0600）・SNS の台帳に書かない・
     秘密は断る（`redact.looks_like_secret`）・観測は道具が付ける（`plaza_observe`）・範囲は
@@ -439,16 +439,16 @@ def test_privacy_は広場を英日で書く():
                  "plaza posts and replies the session can read",
                  "Revision: adds the plaza and the support contact",
                  # 日本語
-                 "<h2>広場</h2>", "アカウントの Git のリポジトリには書きません",
+                 "<h2>プラザ</h2>", "アカウントの Git のリポジトリには書きません",
                  "秘密らしき文字列を含む書き込みは受け付けません",
                  "open が既定になることはありません", "既定は不参加です",
                  "コマンドラインからの二段確認だけです",
                  "THTH が他人の情報を落とした写しです",
                  "アカウント名や書いた人は見えません",
-                 "書き込みの ID と時刻だけ", "「退会した所有者」の名義で残す",
-                 "広場の書き込みと返信: 退会まで",
-                 "そのセッションが読める広場の書き込みと返信",
-                 "改訂: 広場とサポートの連絡先"):
+                 "書き込みの ID と時刻だけ", "「退会したオーナー」の名義で残す",
+                 "プラザの書き込みと返信: 退会まで",
+                 "そのセッションが読めるプラザの書き込みと返信",
+                 "改訂: プラザとサポートの連絡先"):
         assert must in page, must
-    # 観測の地図の数は広場に出さない（従前の文を残す）
-    assert "on the shared plaza" in page and "ほかの所有者、広場" in page
+    # トピックマップの数はプラザに出さない（従前の文を残す）
+    assert "on the shared plaza" in page and "ほかのオーナー、プラザ" in page

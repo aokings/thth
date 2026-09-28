@@ -1,5 +1,5 @@
-// 3.14.2 ブラウザ式の thth login（/api/v1/login/* と /login/<code>）。start・poll・form・POST・鍵は 1 度だけ・
-// 期限・poll_token が違えば 401・回数制限・鍵が本文にもログにも出ない・rotate と同じ発行（VM の sync に hash だけ）。
+// 3.14.2 ブラウザ式の thth login（/api/v1/login/* と /login/<code>）。start・poll・form・POST・キーは 1 度だけ・
+// 期限・poll_token が違えば 401・回数制限・キーが本文にもログにも出ない・rotate と同じ発行（VM の sync に hash だけ）。
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomBytes,createHash,pbkdf2Sync,randomInt} from 'node:crypto';
@@ -43,7 +43,7 @@ function summary(name){
     limits:{daily_max_posts:8,daily_max_retracts:5,burst_count:3,burst_minutes:10,hold_minutes:0,min_interval_hours:6},
     stopped:null,today:{posts:0,retracts:0},credential:null,rows:[]};
 }
-// 招待の口座と同じ形: ユーザ名＝口座名。VM が要約を押し上げてある。
+// 招待の口座と同じ形: ユーザー名＝口座名。VM が要約を押し上げてある。
 async function owner(accounts){
   const id='inv-p'+randomBytes(6).toString('hex'),secret=opaque(),salt=opaque();sensitive.push(secret);
   const data={salt,verifier:pbkdf2Sync(secret,Buffer.from(salt,'base64url'),100000,32,'sha256').toString('base64url'),iterations:100000};sensitive.push(data.verifier);
@@ -89,7 +89,7 @@ test('the form: no script, CSP, no-store; the button says "Allow this device"; u
   const {code}=await begin();
   const r=await page(code);assert.equal(r.status,200);pageHeaders(r);
   const html=await r.text();
-  assert.ok(html.includes('この端末に鍵を渡す / Allow this device'),html);
+  assert.ok(html.includes('このデバイスにキーを渡す / Allow this device'),html);
   assert.ok(html.includes(code)&&html.includes(`action="/login/${code}"`));
   assert.ok(html.includes('autocomplete="current-password"')&&!/<script/i.test(html));
   // 手で小文字で打っても同じ code。
@@ -208,7 +208,7 @@ test('before the VM reports the account, the page waits and reloads itself every
   const r=await allow(code,{account:id,secret});
   assert.equal(r.status,409);pageHeaders(r);
   const html=await r.text();
-  assert.ok(html.includes('アカウントの状態がまだサーバから届いていない')&&html.includes('Allow this device'),'the 409 page is the same form');
+  assert.ok(html.includes('アカウントの状態がまだサーバーから届いていない')&&html.includes('Allow this device'),'the 409 page is the same form');
   assert.ok(html.includes(`<meta http-equiv="refresh" content="5;url=/login/${code}">`),html);
   assert.ok(!/<script/i.test(html));
   const stored=JSON.stringify(await control('login',hash(code)));assert.ok(!stored.includes(secret),'the secret is not kept');

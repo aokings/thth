@@ -21,8 +21,8 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_skillに広場の1段落():
     skill = (ROOT / "skills" / "thth" / "SKILL.md").read_text(encoding="utf-8")
     head = skill.split("---", 2)[1]
-    assert "施策を試したら広場に置き、他の媒体の施策を読んでから次を決める" in head
-    assert "**施策を試したら広場に置き、次を決める前に他の媒体の施策を読む**" in skill
+    assert "施策を試したらプラザに置き、他のSNSの施策を読んでから次を決める" in head
+    assert "**施策を試したらプラザに置き、次を決める前に他のSNSの施策を読む**" in skill
     assert "どちらも利用者の作業の一部です" in skill
     for name in ("thth_plaza_post", "thth_plaza_list", "thth_plaza_show", "thth_plaza_reply",
                  "thth_plaza_update", "--scope", "--how", "observed"):

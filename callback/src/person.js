@@ -96,7 +96,7 @@ export async function relayRequest(request,env,url) {
     const route=/^\/(?:relay\/v|approval)\/(person|account|deletion|invite|activity)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|list|read|verify|complete|discard|cleanup-retry|authorize|reset|sync)$/.exec(url.pathname);
     if(!route||request.method!=='POST')return reply(404,{error:'not_found'});
     const [,type,subject,operation]=route;
-    // 3.12.0 §3.4 アクティビティ: VM が所有者（person）ごとの要約を押し上げ、所有者の操作を受け取る。
+    // 3.12.0 §3.4 アクティビティ: VM がオーナー（person）ごとの要約を押し上げ、オーナーの操作を受け取る。
     if(type==='activity'?!PERSON.test(subject)||operation!=='sync':
        type==='invite'?!HASH_PATTERN.test(subject)||!['create','status','authorize','reset','complete','revoke'].includes(operation):type==='deletion'?!(subject==='inbox'&&operation==='list'||STATE_PATTERN.test(subject)&&['read','verify','complete','discard'].includes(operation)):type==='account'?!PERSON.test(subject)||!['revoke','status','cleanup-retry'].includes(operation):!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation))return reply(400,{error:'invalid_request'});
     if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(400,{error:'invalid_request'});
@@ -116,7 +116,7 @@ export async function relayRequest(request,env,url) {
 }
 
 // アクティビティの sync（3.12.0 §3.4）と遠くの道の受け渡し（3.14.0 §3.1）。Person DO が鍵の表を置き替え、
-// 表に載るアカウントの束ごとに「その所有者の鍵の表・結果」を渡して、待っている依頼を受け取る。
+// 表に載るアカウントの束ごとに「そのオーナーの鍵の表・結果」を渡して、待っている依頼を受け取る。
 // 3.13.0 の VM（`keys` を載せない）には依頼を渡さない（応答の形も今のまま）。
 async function activityRelay(env,person,body,ticket){
   const result=await (await personStub(env,person)).activitySync(body,ticket);

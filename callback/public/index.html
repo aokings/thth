@@ -49,13 +49,13 @@
 <h2>投稿したあとの管理も</h2>
 <p>投稿が完了すると、原稿に投稿 ID が記録されます。返信や閲覧数も取得して、同じリポジトリに保存できます。投稿の履歴をたどったり、次の原稿を考えるときの資料として使えます。</p>
 <h2>招待された方へ</h2>
-<p>招待された利用者は、招待リンクを開いて Threads を認可します。続けて <code>pip install thth</code>、<code>thth login</code> を実行し、ブラウザでこの端末を許可します。利用者が VM や Meta アプリを用意する必要はありません。</p>
-<p>以後は <code>thth send</code>、<code>thth posts</code>、<code>thth replies</code>、<code>thth measured</code>、<code>thth retract</code> で自分のアカウントを動かします。最短間隔、1 日の上限、急な連投で止める安全装置は所有者が決めます。AI アシスタントが変えられるのは、厳しくする向きだけです。<a href="/activity">アクティビティ</a>で、所有者が確認・停止・鍵の発行を行えます。</p>
+<p>招待された利用者は、招待リンクを開いて Threads を認可します。続けて <code>pip install thth</code>、<code>thth login</code> を実行し、ブラウザでこのデバイスを許可します。利用者が VM や Meta アプリを用意する必要はありません。</p>
+<p>以後は <code>thth send</code>、<code>thth posts</code>、<code>thth replies</code>、<code>thth measured</code>、<code>thth retract</code> で自分のアカウントを動かします。最短間隔、1 日の上限、急な連投で止めるガードはオーナーが決めます。AI アシスタントが変えられるのは、厳しくする向きだけです。<a href="/activity">アクティビティ</a>で、オーナーが確認・停止・キーの発行を行えます。</p>
 <h2>AI エージェントから使う</h2>
-<p>MCP サーバと Claude Code 用のスキルを同梱しています。コマンドラインから直接使うほか、AI エージェントとやり取りしながら下書きや投稿の記録を扱えます。</p>
+<p>MCP サーバーと Claude Code 用のスキルを同梱しています。コマンドラインから直接使うほか、AI エージェントとやり取りしながら下書きや投稿の記録を扱えます。</p>
 <h2>運営者の使い方</h2>
 <p>Mastodon の auth は expires_in または refresh_token を返す非標準実装に未対応です。手動 token set も期限・更新情報を受け取らず期限なしとして保存するため、その回避策にはなりません。</p>
-<p>運営者（gotoq）がサーバ側で <code>thth auth &lt;account&gt; --by gotoq</code> を開始し、利用者が URL を開いて承認します。Threads・対応 Mastodon・X の共通入口です。X は投稿・削除・自分の最近の投稿の読み取りに対応し、利用は運営者設定の範囲内です。返信と指標の取得には対応していません。Bluesky は App Password の stdin 入力です。</p>
+<p>運営者（gotoq）がサーバー側で <code>thth auth &lt;account&gt; --by gotoq</code> を開始し、利用者が URL を開いて承認します。Threads・対応 Mastodon・X の共通入口です。X は投稿・削除・自分の最近の投稿の読み取りに対応し、利用は運営者設定の範囲内です。返信とインサイトの取得には対応していません。Bluesky は App Password の stdin 入力です。</p>
 <p><a href="https://github.com/aokings/thth/blob/main/docs/導入_招待されたら.md">導入: 招待されたら</a></p>
 <h2>English</h2>
 <p class="en">THTH is a command-line tool for drafting and publishing social media posts with AI. It supports Threads, Bluesky, and Mastodon.</p>

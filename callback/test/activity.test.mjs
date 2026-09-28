@@ -1,5 +1,5 @@
-// 3.12.0 段 3 動きの一覧（thth.me/activity）。持ち主がユーザ名と承認 secret で入り、VM が押し上げた自分の
-// 口座の要約を見て、secret をもう一度入れて止める・戻す・予約の取り消し・設定・鍵の発行し直し/取り消しを頼む。
+// 3.12.0 段 3 動きの一覧（thth.me/activity）。持ち主がユーザー名と承認 secret で入り、VM が押し上げた自分の
+// 口座の要約を見て、secret をもう一度入れて止める・戻す・予約の取り消し・設定・キーの発行し直し/取り消しを頼む。
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomBytes,createHash,pbkdf2Sync} from 'node:crypto';
@@ -47,7 +47,7 @@ function summary(name,extra={}){
     limits:{daily_max_posts:8,daily_max_retracts:5,burst_count:3,burst_minutes:10,hold_minutes:0,min_interval_hours:6},
     stopped:null,today:{posts:1,retracts:0},credential:{id:'0123456789ab',expires_at:'2027-09-26T00:00:00+09:00',revoked:false},
     rows:[{kind:'published',at:now(),head:'出た投稿の先頭',post_id:'1789',draft_id:null,reason:null,reply:false},
-          {kind:'held',at:now(),head:'猶予中の投稿',post_id:null,draft_id:hash('held'),reason:null,reply:false}],...extra};
+          {kind:'held',at:now(),head:'待機中の投稿',post_id:null,draft_id:hash('held'),reason:null,reply:false}],...extra};
 }
 async function sync(p,accounts,completed=[]){return signed('activity',p.id,'sync',{accounts,completed});}
 const form=(fields,headers={})=>({method:'POST',headers:{'content-type':'application/x-www-form-urlencoded',origin:ORIGIN,'cf-connecting-ip':opaque(),...headers},body:new URLSearchParams(fields),redirect:'manual'});
@@ -85,9 +85,9 @@ test('sign-in shows only the pushed summary; no link to the removed /pending',as
   const raw=ok.headers.get('set-cookie');sensitive.push(raw);
   for(const part of ['Max-Age='+TTL/1000,'Path=/activity','Secure','HttpOnly','SameSite=Strict'])assert.ok(raw.split('; ').includes(part),part);
   const html=await(await get('/activity',raw.split(';')[0])).text();
-  assert.ok(html.includes(name)&&html.includes('出た投稿の先頭')&&html.includes('猶予中の投稿')&&!html.includes('/pending'),html);
+  assert.ok(html.includes(name)&&html.includes('出た投稿の先頭')&&html.includes('待機中の投稿')&&!html.includes('/pending'),html);
   assert.ok(!blank.includes('/pending'));
-  assert.ok(html.includes('LLM の鍵を発行する / Issue a key for your LLM')&&html.includes('このアカウントを止める / Stop this account'));
+  assert.ok(html.includes('LLM のキーを発行する / Issue a key for your LLM')&&html.includes('このアカウントを止める / Stop this account'));
   assert.equal((await get('/activity/')).status,308);
 });
 
@@ -96,7 +96,7 @@ test('a stopped account shows its reason at the top of the page',async()=>{
   await sync(p,[summary(name,{stopped:{reason:'burst',at:now()},rows:[{kind:'stopped',at:now(),head:'',post_id:null,draft_id:null,reason:'burst',reply:false}]})]);
   const html=await(await get('/activity',await cookieOf(p))).text();
   const banner=html.indexOf('は止まっています'),first=html.indexOf('<section>');
-  assert.ok(banner>0&&banner<first,html);assert.ok(html.includes('急な連投で安全装置が止めました')&&html.includes('止めたのを戻す / Resume'));
+  assert.ok(banner>0&&banner<first,html);assert.ok(html.includes('急な連投でガードが止めました')&&html.includes('止めたのを戻す / Resume'));
 });
 
 test('operations need the secret again; nothing is queued without it, and the lock is the same five-in-a-row',async()=>{
@@ -170,7 +170,7 @@ test('cross-site posts are refused',async()=>{
   assert.equal((await mf.dispatchFetch(ORIGIN+'/activity',init)).status,403);
 });
 
-// 3.14.2: パスワード管理が「設定を変える」の値の欄にユーザ名を入れていた。secret の欄を値の欄より先に置き、
+// 3.14.2: パスワード管理が「設定を変える」の値の欄にユーザー名を入れていた。secret の欄を値の欄より先に置き、
 // 値の欄は autocomplete="off" と「入れない」印。secret の欄は current-password のまま。
 test('the settings form puts the secret before the value, so a password manager has no username field to fill',async()=>{
   const p=await person(),name=account();

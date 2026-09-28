@@ -28,14 +28,14 @@ def test_skillの開始手順に生きたコツ集の1行():
 
 def test_skillに3_8_0の段():
     skill = (ROOT / "skills" / "thth" / "SKILL.md").read_text(encoding="utf-8")
-    marker = "**広場は道具が読ませ、置く手間は道具が減らす**（3.8.0・知見共有を回す）"
+    marker = "**プラザは道具が読ませ、置く手間は道具が減らす**（3.8.0・知見共有を回す）"
     assert marker in skill
     section = skill.split(marker)[1].split("\n\n")[0]
     for text in ("1 日 1 件・読んだものは出さない", "**題と id だけ**", "--goal",
                  "thth admin plaza owner set", "あなたが組を作らない", "visibility: owner", "--owner",
                  "--from analytics-report|after", "**observed は道具が付けた数字だけ**",
                  "--from study-report", "--from-doc", "--from-report", "--trial-due",
-                 "追試の結果を足す", "広場に置く", "あなたの書き込みに"):
+                 "追試の結果を足す", "プラザに置く", "あなたの書き込みに"):
         assert text in section, text
     # open と join は案内しない（3.4.0 §7 の約束・tests/test_v340_plaza_docs.py と同じ）。
     assert "--open" not in skill and "admin plaza join" not in skill

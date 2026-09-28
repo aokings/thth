@@ -134,7 +134,7 @@ test('完了と口座の secret: 1 回だけ表示・verifier は PBKDF2 100,000
   assert.equal(stored.iterations,100_000);assert.equal(stored.active,true);
   assert.equal(pbkdf2Sync(secret,Buffer.from(stored.salt,'base64url'),100_000,32,'sha256').toString('base64url'),stored.verifier);
   assert.ok(!JSON.stringify(await inspect('invite',inv.id)).includes(secret));assert.ok(!JSON.stringify(await inspect('person',person)).includes(secret));
-  // 3.14.0 §3.3: アシスタントの鍵も同じページに 1 度だけ。Worker に残るのは hash だけ（VM は status で受け取る）。
+  // 3.14.0 §3.3: アシスタントのキーも同じページに 1 度だけ。Worker に残るのは hash だけ（VM は status で受け取る）。
   const assistant=/class="secret key">([A-Za-z0-9_-]{43})</.exec(html)?.[1];assert.ok(assistant,'assistant key shown');sensitive.push(assistant);
   assert.notEqual(assistant,secret);
   assert.ok(html.includes('API キー')&&html.includes('Assistant key')&&html.includes('通常はターミナルで <code>thth login</code> を実行し')&&html.includes('表示は一度だけです'),html);

@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def test_skillに地図の1段落():
     skill = (ROOT / "skills" / "thth" / "SKILL.md").read_text(encoding="utf-8")
-    assert "**話題を選ぶ前に観測の地図を読む**（3.5.0）" in skill
-    section = skill.split("**話題を選ぶ前に観測の地図を読む**")[1].split("\n\n")[0]
+    assert "**話題を選ぶ前にトピックマップを読む**（3.5.0）" in skill
+    section = skill.split("**話題を選ぶ前にトピックマップを読む**")[1].split("\n\n")[0]
     for text in ("thth_map_show", "thth map show", "thth admin map node add", "**既定で無効**",
                  "world_layer_disabled", "**あなたが点を足さない**"):
         assert text in section, text
