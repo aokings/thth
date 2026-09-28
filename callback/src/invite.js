@@ -19,7 +19,7 @@ const REASON={
   auth_expired:['前回の認可は 10 分の期限を過ぎました。もう一度押してください。','The previous authorization expired after 10 minutes. Please try again.'],
   auth_failed:['前回の認可を完了できませんでした。もう一度押してください。続くときは<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に連絡してください。','The previous authorization could not be completed. Please try again. If it continues, contact the operator through <a href="/privacy/">Contact in the Privacy Policy</a>.'],
   account_exists:['その Threads アカウントは既に THTH にあります。別のアカウントで認可するか、<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に連絡してください。','That Threads account is already registered. Use another account or contact the operator through <a href="/privacy/">Contact in the Privacy Policy</a>.'],
-  unavailable:['運営者のサーバが今は口座を用意できません。<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に連絡してください。','The operator’s server cannot prepare the account right now. Contact the operator through <a href="/privacy/">Contact in the Privacy Policy</a>.'],
+  unavailable:['運営者のサーバが今はアカウントを用意できません。<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に連絡してください。','The operator’s server cannot prepare the account right now. Contact the operator through <a href="/privacy/">Contact in the Privacy Policy</a>.'],
 };
 const unusable=()=>invitePage(410,`<h1>この招待リンクは使えません</h1><p class="err" data-error="410">使用済み・期限切れ・取り消しのいずれかです。<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に新しい招待を頼んでください。${en('This invitation link is no longer valid (used, expired or revoked). Ask the operator for a new one through <a href="/privacy/">Contact in the Privacy Policy</a>.')}</p>`);
 const day=ms=>new Date(ms).toISOString().slice(0,10);
@@ -27,14 +27,14 @@ const day=ms=>new Date(ms).toISOString().slice(0,10);
 function openPage(d){
   const reason=REASON[d.reason]?`<p><strong>${REASON[d.reason][0]}</strong>${en(REASON[d.reason][1])}</p>`:'';
   const mode=d.production
-    ?`<p>この招待で用意する口座は、頼まれたときに本当に Threads へ投稿します。${en('The account prepared by this invitation publishes to Threads for real when asked.')}</p>`
-    :`<p>この招待で用意する口座は試し撃ちです（頼まれても Threads には出しません）。${en('The account prepared by this invitation is a dry run (nothing is published to Threads).')}</p>`;
+    ?`<p>この招待で用意するアカウントは、頼まれたときに本当に Threads へ投稿します。${en('The account prepared by this invitation publishes to Threads for real when asked.')}</p>`
+    :`<p>この招待で用意するアカウントはテスト用です（頼まれても Threads には出しません）。${en('The account prepared by this invitation is a dry run (nothing is published to Threads).')}</p>`;
   return invitePage(200,`<h1>THTH への招待${en('Invitation to THTH')}</h1>
 <p>THTH は、SNS を調べ・投稿し・予約する CLI ツールです。あなたの CLI か AI アシスタントが代わりに打ちます。${en('THTH is a CLI tool to research, post and schedule on social media. Your CLI or AI assistant runs it for you.')}</p>${reason}
 <h2>何が起きるか${en('What happens')}</h2><ol>
 <li>下のボタンを押すと、運営者のサーバが Threads の認可ページを用意します（数十秒）。${en('After you press the button, the operator’s server prepares the Threads authorization page (a few tens of seconds).')}</li>
-<li>あなたの Threads アカウントで認可すると、そのアカウントの口座が運営者のサーバに用意されます。トークンはこのページを通りません。${en('When you authorize with your Threads account, an account is prepared on the operator’s server. The token never passes through this page.')}</li>
-<li>完了のページで口座の secret とアシスタントの鍵が一度だけ表示されます。パスワード管理に別々に保存してください。${en('The completion page shows your account secret and assistant key once. Save them separately in a password manager.')}</li>
+<li>あなたの Threads アカウントで認可すると、そのアカウントのアカウントが運営者のサーバに用意されます。トークンはこのページを通りません。${en('When you authorize with your Threads account, an account is prepared on the operator’s server. The token never passes through this page.')}</li>
+<li>完了のページでアカウントのシークレット とAPI キーが一度だけ表示されます。パスワード管理に別々に保存してください。${en('The completion page shows your account secret and assistant key once. Save them separately in a password manager.')}</li>
 <li>投稿・返信・削除はあなたの CLI か AI アシスタントが頼んだときに行われます（安全装置は /activity で）。${en('Posts, replies and deletions happen when your CLI or AI assistant asks for them (safety limits are on /activity).')}</li></ol>
 <h2>求める権限${en('Permissions requested')}</h2><ul>${d.scopes.map(s=>`<li><code>${escape(s)}</code></li>`).join('')}</ul>
 ${mode}<p>期限: ${escape(day(d.expires_at))}（UTC）まで。1 回だけ使えます。${en('Valid until '+escape(day(d.expires_at))+' (UTC). Can be used once.')}</p>
@@ -57,28 +57,28 @@ function renderView(d){
   }
   if(d.status==='ready'){
     return invitePage(200,`<h1>用意ができました${en('Your account is ready')}</h1>
-<p class="status">Threads: @${escape(d.handle)} ／ 口座 / account: <code>${escape(d.account)}</code></p>
-<p>次のボタンで口座の secret とアシスタントの鍵を表示します。<strong class="once">表示は一度だけです。</strong>その場でパスワード管理に別々に保存してください。${en('The next button shows your account secret and assistant key. <strong class="once">They are shown only once.</strong> Save them separately in a password manager right away.')}</p>
-<form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><input type="hidden" name="action" value="reveal"><button type="submit">口座の secret を表示する / Show account secret</button></form>`);
+<p class="status">Threads: @${escape(d.handle)} ／ アカウント / account: <code>${escape(d.account)}</code></p>
+<p>次のボタンでアカウントのシークレット とAPI キーを表示します。<strong class="once">表示は一度だけです。</strong>その場でパスワード管理に別々に保存してください。${en('The next button shows your account secret and assistant key. <strong class="once">They are shown only once.</strong> Save them separately in a password manager right away.')}</p>
+<form method="post"><input type="hidden" name="csrf" value="${escape(d.csrf)}"><input type="hidden" name="action" value="reveal"><button type="submit">アカウントのシークレットを表示する / Show account secret</button></form>`);
   }
-  if(d.status==='done')return invitePage(410,`<h1>この招待は使用済みです${en('This invitation has been used')}</h1><p class="err" data-error="410">口座の secret はすでに表示しました。<strong class="once">表示は一度だけです。</strong>失くした場合は<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に再発行を頼んでください。${en('The account secret was already shown. <strong class="once">It is shown only once.</strong> If you lost it, ask the operator to issue a new one through <a href="/privacy/">Contact in the Privacy Policy</a>.')}</p>`);
+  if(d.status==='done')return invitePage(410,`<h1>この招待は使用済みです${en('This invitation has been used')}</h1><p class="err" data-error="410">アカウントのシークレット はすでに表示しました。<strong class="once">表示は一度だけです。</strong>失くした場合は<a href="/privacy/">プライバシーポリシーの Contact</a>から運営者に再発行を頼んでください。${en('The account secret was already shown. <strong class="once">It is shown only once.</strong> If you lost it, ask the operator to issue a new one through <a href="/privacy/">Contact in the Privacy Policy</a>.')}</p>`);
   return unusable();
 }
 
 export function secretPage(result){
-  return invitePage(200,`<h1>口座の secret${en('Account secret')}</h1>
+  return invitePage(200,`<h1>アカウントのシークレット${en('Account secret')}</h1>
 <p><strong class="once">この表示は一度だけです。</strong>いまパスワード管理に保存してください。${en('<strong class="once">This is shown only once.</strong> Save it in a password manager now.')}</p>
 <code class="secret">${escape(result.secret)}</code>
 <ul><li>ユーザ名 / username: <code>${escape(result.person)}</code></li><li>Web サイト / website: <code>thth.me</code></li></ul>
-<!-- 3.12.0 §6-4: 口座名と secret を同じ form に置き、パスワード管理が thth.me の正しい組として覚えるようにする。
-     欄の名前は動きの一覧の入口（/activity）と同じなので、押すとそのまま動きの一覧に入る（3.13.0）。 -->
-<form method="post" action="/activity"><label>ユーザ名 / Username <input name="person" autocomplete="username" value="${escape(result.person)}" readonly></label><label>口座の secret / Account secret <input type="password" name="secret" autocomplete="new-password" value="${escape(result.secret)}" readonly></label><button type="submit">保存して動きの一覧を開く / Save and open your activity</button></form>
-<p>ボタンを押すとブラウザやパスワード管理が「保存しますか」と尋ねます。ユーザ名が上の口座名になっているのを確かめて保存してください。${en('When you press the button, your browser or password manager offers to save. Check that the username is the account name above, then save.')}</p>
-<p>動きの一覧は <a href="/activity">https://thth.me/activity</a> で、このユーザ名と secret を入れると見られます。ここで口座を止める・戻す、予約を取り消す、安全装置の数値を変える、LLM の鍵を発行・取り消しできます。secret は LLM や原稿に書かないでください。${en('Open <a href="/activity">https://thth.me/activity</a> and sign in with this username and secret. There you can stop or resume the account, cancel scheduled posts, change safety limits, and issue or revoke the key for your LLM. Never paste the secret into an LLM or a draft.')}</p>
-${result.key?`<h2>アシスタントの鍵${en('Assistant key')}</h2>
-<p><strong class="once">表示は一度だけです。</strong>通常はターミナルで <code>thth login</code> を実行し、ブラウザで口座名と口座の secret を入力してこの機械を許可します。ブラウザを使えない場合は、ここに表示した鍵を <code>thth login --stdin</code> で入力できます。パスワード管理には口座の secret と別の項目で保存してください。${en('<strong class="once">It is shown only once.</strong> Normally, run <code>thth login</code> in a terminal and enter the account name and account secret in the browser to allow this device. If a browser is not available, enter this key with <code>thth login --stdin</code>. Save it in your password manager as a separate item from the account secret.')}</p>
+<!-- 3.12.0 §6-4: アカウント名と secret を同じ form に置き、パスワード管理が thth.me の正しい組として覚えるようにする。
+     欄の名前はアクティビティの入口（/activity）と同じなので、押すとそのままアクティビティに入る（3.13.0）。 -->
+<form method="post" action="/activity"><label>ユーザ名 / Username <input name="person" autocomplete="username" value="${escape(result.person)}" readonly></label><label>アカウントのシークレット / Account secret <input type="password" name="secret" autocomplete="new-password" value="${escape(result.secret)}" readonly></label><button type="submit">保存してアクティビティを開く / Save and open your activity</button></form>
+<p>ボタンを押すとブラウザやパスワード管理が「保存しますか」と尋ねます。ユーザ名が上のアカウント名になっているのを確かめて保存してください。${en('When you press the button, your browser or password manager offers to save. Check that the username is the account name above, then save.')}</p>
+<p>アクティビティは <a href="/activity">https://thth.me/activity</a> で、このユーザ名と secret を入れると見られます。ここでアカウントを止める・戻す、予約を取り消す、安全装置の数値を変える、LLM の鍵を発行・取り消しできます。secret は LLM や原稿に書かないでください。${en('Open <a href="/activity">https://thth.me/activity</a> and sign in with this username and secret. There you can stop or resume the account, cancel scheduled posts, change safety limits, and issue or revoke the key for your LLM. Never paste the secret into an LLM or a draft.')}</p>
+${result.key?`<h2>API キー${en('Assistant key')}</h2>
+<p><strong class="once">表示は一度だけです。</strong>通常はターミナルで <code>thth login</code> を実行し、ブラウザでアカウント名とアカウントのシークレットを入力してこの端末を許可します。ブラウザを使えない場合は、ここに表示した鍵を <code>thth login --stdin</code> で入力できます。パスワード管理にはアカウントのシークレット と別の項目で保存してください。${en('<strong class="once">It is shown only once.</strong> Normally, run <code>thth login</code> in a terminal and enter the account name and account secret in the browser to allow this device. If a browser is not available, enter this key with <code>thth login --stdin</code>. Save it in your password manager as a separate item from the account secret.')}</p>
 <code class="secret key">${escape(result.key)}</code>
-<p>サーバが受け取った時点（数十秒後）から使えます。鍵は LLM・原稿・公開の場に貼らないでください。発行し直し・取り消しは動きの一覧でできます。${en('It works within a few tens of seconds, once the server has taken it. Never paste the key into an LLM, a draft or anywhere public. You can re-issue or revoke it on your activity page.')}</p>`:''}`);
+<p>サーバが受け取った時点（数十秒後）から使えます。鍵は LLM・原稿・公開の場に貼らないでください。発行し直し・取り消しはアクティビティでできます。${en('It works within a few tens of seconds, once the server has taken it. Never paste the key into an LLM, a draft or anywhere public. You can re-issue or revoke it on your activity page.')}</p>`:''}`);
 }
 
 export async function inviteRequest(request,env,url){

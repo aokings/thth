@@ -1,5 +1,5 @@
 // VM→Worker の署名つき relay（/relay/v/{person,account,deletion,invite,activity}/…）の受け口と、
-// 招待・退出・添付・削除・/activity が使う共通の部品。3.13.0 で approval.js から改名した
+// 招待・退会・添付・削除・/activity が使う共通の部品。3.13.0 で approval.js から改名した
 // （承認ページ /approve/<token> と承認待ちの一覧 /pending は無い）。旧 path の /approval/… は
 // 3.12.0 の VM が deploy の間に叩くので 1 版の間だけ受ける。
 import {digest, STATE_PATTERN, HASH_PATTERN, reply} from './relay.js';
@@ -96,12 +96,12 @@ export async function relayRequest(request,env,url) {
     const route=/^\/(?:relay\/v|approval)\/(person|account|deletion|invite|activity)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|list|read|verify|complete|discard|cleanup-retry|authorize|reset|sync)$/.exec(url.pathname);
     if(!route||request.method!=='POST')return reply(404,{error:'not_found'});
     const [,type,subject,operation]=route;
-    // 3.12.0 §3.4 動きの一覧: VM が持ち主（person）ごとの要約を押し上げ、持ち主の操作を受け取る。
+    // 3.12.0 §3.4 アクティビティ: VM が所有者（person）ごとの要約を押し上げ、所有者の操作を受け取る。
     if(type==='activity'?!PERSON.test(subject)||operation!=='sync':
        type==='invite'?!HASH_PATTERN.test(subject)||!['create','status','authorize','reset','complete','revoke'].includes(operation):type==='deletion'?!(subject==='inbox'&&operation==='list'||STATE_PATTERN.test(subject)&&['read','verify','complete','discard'].includes(operation)):type==='account'?!PERSON.test(subject)||!['revoke','status','cleanup-retry'].includes(operation):!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation))return reply(400,{error:'invalid_request'});
     if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(400,{error:'invalid_request'});
     if(!env.RELAY_VERIFY_LIMIT || !(await env.RELAY_VERIFY_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
-    // 動きの一覧の sync は口座 8 つ×30 行の要約（本文は先頭 60 字だけ）と、3.14.0 からは /api/v1 の
+    // アクティビティの sync はアカウント 8 つ×30 行の要約（本文は先頭 60 字だけ）と、3.14.0 からは /api/v1 の
     // 結果（1 件 128 KiB まで）を運ぶ。他は 64 KiB。
     const cap=type==='activity'?1_048_576:65_536;
     const raw=await boundedBody(request,cap), ticket=await authenticate(request,env,url,raw,'operator',subject,operation);
@@ -115,8 +115,8 @@ export async function relayRequest(request,env,url) {
   }catch{return reply(503,{error:'relay_unavailable'});}
 }
 
-// 動きの一覧の sync（3.12.0 §3.4）と遠くの道の受け渡し（3.14.0 §3.1）。Person DO が鍵の表を置き替え、
-// 表に載る口座の束ごとに「その持ち主の鍵の表・結果」を渡して、待っている依頼を受け取る。
+// アクティビティの sync（3.12.0 §3.4）と遠くの道の受け渡し（3.14.0 §3.1）。Person DO が鍵の表を置き替え、
+// 表に載るアカウントの束ごとに「その所有者の鍵の表・結果」を渡して、待っている依頼を受け取る。
 // 3.13.0 の VM（`keys` を載せない）には依頼を渡さない（応答の形も今のまま）。
 async function activityRelay(env,person,body,ticket){
   const result=await (await personStub(env,person)).activitySync(body,ticket);
@@ -127,7 +127,7 @@ async function activityRelay(env,person,body,ticket){
     try{
       const got=await (await accountStub(env,account)).apiExchange(person,keys,results);
       if(got.status===200)requests.push(...got.body.requests);
-    }catch{/* 口座の束が今は使えない: その口座の依頼は次の sync で渡す（結果も VM がもう一度送る）。 */}
+    }catch{/* アカウントの束が今は使えない: そのアカウントの依頼は次の sync で渡す（結果も VM がもう一度送る）。 */}
   }
   let size=0;
   const handed=requests.filter(item=>(size+=JSON.stringify(item).length)<=API_HANDOFF_BYTES).slice(0,API_HANDOFF_MAX);

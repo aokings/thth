@@ -1,10 +1,10 @@
 import {DurableObject} from 'cloudflare:workers';
 import {TTL,VIEW_MAX,LIST_LOCK_MS,ITERATIONS,PERSON,fail,fields,opaque,verifier,equal,unb64,API_HANDOFF_MAX,API_HANDOFF_BYTES} from './person.js';
 import {HASH_PATTERN,STATE_PATTERN,digest} from './relay.js';
-// 3.13.0: 承認ページの session（ApprovalSession）と承認待ちの一覧は無い。残るのは持ち主（person）の
-// secret の照合・/activity・口座ごとの束（退出・添付の後始末）。名前は段 2 で改める。
+// 3.13.0: 承認ページの session（ApprovalSession）と承認待ちの一覧は無い。残るのは所有者（person）の
+// secret の照合・/activity・アカウントごとの束（退会・添付の後始末）。名前は段 2 で改める。
 
-// ---- 動きの一覧（設計 3.12.0 §3.4）の形。VM から来る要約も、ページから来る操作も、閉じた形だけ受ける。
+// ---- アクティビティ（設計 3.12.0 §3.4）の形。VM から来る要約も、ページから来る操作も、閉じた形だけ受ける。
 export const ACTIVITY_TTL=3_600_000, ACTION_TTL=3_600_000, ACTION_PENDING_MAX=16;
 const ACTIVITY_ACCOUNTS=8, ACTIVITY_ROWS=30, ACTIVITY_HEAD=60;
 export const ACTION_KINDS=['stop','resume','cancel','settings','revoke','rotate'];
@@ -64,7 +64,7 @@ function validSync(body){
   return body.completed.every(c=>same(c,['id','outcome','reason'])&&typeof c.id==='string'&&STATE_PATTERN.test(c.id)&&
     ['done','failed'].includes(c.outcome)&&(c.reason===null||typeof c.reason==='string'&&/^[a-z_]{1,64}$/.test(c.reason)));
 }
-// {口座: {sha256: 期限(ms)}}
+// {アカウント: {sha256: 期限(ms)}}
 function keyTable(keys){
   const table={};
   for(const k of keys)(table[k.account]??={})[k.sha256]=Date.parse(k.expires_at);
@@ -105,7 +105,7 @@ export class Person extends AtomicObject {
     else this.put('person',{...old,failures:0,list_failures:0,list_locked_until:null});
     return {status:200,body:{status:operation==='set'?'configured':operation==='revoke'?'revoked':'unlocked'}};
   });}
-  // 招待（3.10.0）の完了ページが本人の口座の secret を 1 回だけ作る。既存の持ち主は
+  // 招待（3.10.0）の完了ページが本人のアカウントのシークレット を 1 回だけ作る。既存の所有者は
   // 上書きしない（運営者の admin secret set・失効・別の招待の人）。同じ招待のやり直しだけ通す。
   provision(salt,verifier,origin){return this.atomic(()=>{
     if(typeof salt!=='string'||!STATE_PATTERN.test(salt)||typeof verifier!=='string'||!STATE_PATTERN.test(verifier)||
@@ -129,8 +129,8 @@ export class Person extends AtomicObject {
   }
   async wake(at){const alarm=await this.ctx.storage.getAlarm();if(alarm===null||at<alarm)await this.ctx.storage.setAlarm(at);}
   prune(now){for(const prefix of ['listed:','view:','activity:','action:'])for(const [key,row] of this.ctx.storage.kv.list({prefix}))if(row.expires_at<=now)this.ctx.storage.kv.delete(key);}
-  // ---- 動きの一覧（設計 3.12.0 §3.4）。`activity:<口座>` は VM が押し上げた要約（本文は先頭 60 字・
-  // 1 時間で忘れる）。`action:<id>` は持ち主が secret で確かめて頼んだ操作（VM が拾って結果を返す・
+  // ---- アクティビティ（設計 3.12.0 §3.4）。`activity:<アカウント>` は VM が押し上げた要約（本文は先頭 60 字・
+  // 1 時間で忘れる）。`action:<id>` は所有者が secret で確かめて頼んだ操作（VM が拾って結果を返す・
   // 1 時間）。どちらもこの人の object にだけある。鍵の発行し直しの bearer は**置かない**（hash だけ）。
   async activitySync(body,ticket){
     const result=this.atomic(()=>{
@@ -151,7 +151,7 @@ export class Person extends AtomicObject {
         .filter(a=>a.status==='pending'&&a.expires_at>now).sort((a,b)=>a.created_at-b.created_at)
         .map(a=>{const out={id:a.id,account:a.account,kind:a.kind};for(const k of ACTION_EXTRA[a.kind])out[k]=a[k];return out;});
       if(!('keys' in body))return {status:200,body:{status:'synced',actions}};
-      // 鍵の表を置き替える。表から外れた口座も 1 時間は空の表を配り直す（口座の束に古い鍵を残さない）。
+      // 鍵の表を置き替える。表から外れたアカウントも 1 時間は空の表を配り直す（アカウントの束に古い鍵を残さない）。
       const table=keyTable(body.keys),old=this.ctx.storage.kv.get('keys')?.table??{};
       const gone=Object.fromEntries(Object.entries(this.ctx.storage.kv.get('keys')?.gone??{}).filter(([a,until])=>until>now&&!table[a]));
       for(const account of Object.keys(old))if(!table[account])gone[account]=now+ACTIVITY_TTL;
@@ -178,7 +178,7 @@ export class Person extends AtomicObject {
     // 鍵の発行し直し: bearer はここで作り、hash だけを置く。値は呼んだページに 1 度だけ返す。
     const bearer=action.kind==='rotate'?opaque():null,sha256=bearer?await digest(bearer):null;
     const result=await this.confirmed(secret,view.generation,now=>{
-      // 他人の口座は触れない: VM がこの人に押し上げた口座だけ。
+      // 他人のアカウントは触れない: VM がこの人に押し上げたアカウントだけ。
       const summary=this.ctx.storage.kv.get('activity:'+action.account);
       if(!summary||summary.expires_at<=now)return fail(404,'not_found');
       if(action.kind==='cancel'&&!summary.rows.some(r=>(r.kind==='held'||r.kind==='scheduled')&&r.draft_id===action.draft_id))return fail(404,'not_found');
@@ -188,10 +188,10 @@ export class Person extends AtomicObject {
     await this.wake(this.now()+ACTION_TTL);
     return bearer?{status:200,body:{...result.body,bearer}}:result;
   }
-  // ブラウザ式の `thth login`（設計 3.14.2 §2）: 口座名と口座の secret で、/activity の「LLM の鍵を発行する」と
+  // ブラウザ式の `thth login`（設計 3.14.2 §2）: アカウント名とアカウントのシークレットで、/activity の「LLM の鍵を発行する」と
   // 同じ rotate を置く（前の鍵は無効・VM が次の sync で鍵の表に載せる）。bearer は呼んだ Worker に 1 度だけ返し、
   // ここには hash だけを置く。照合と失敗の数え方は /activity と同じ（5 回で 15 分閉じる）。
-  // 口座は入れた名前の口座（招待の口座はユーザ名＝口座名）。無ければ、この人の口座が 1 つだけならそれ。
+  // アカウントは入れた名前のアカウント（招待のアカウントはユーザ名＝アカウント名）。無ければ、この人のアカウントが 1 つだけならそれ。
   async loginIssue(secret,name){
     if(typeof name!=='string'||!PERSON.test(name))return fail();
     const bearer=opaque(),sha256=await digest(bearer);
@@ -207,8 +207,8 @@ export class Person extends AtomicObject {
     await this.wake(this.now()+ACTION_TTL);
     return {status:200,body:{account:result.body.account,bearer}};
   }
-  // `/login/<code>` の待つページ（3.14.3 穴 2）: VM がこの人の口座の様子を押し上げたか（secret は見ない・
-  // 中身は返さない）。持ち主がまだいなければ 404。
+  // `/login/<code>` の待つページ（3.14.3 穴 2）: VM がこの人のアカウントの状態を押し上げたか（secret は見ない・
+  // 中身は返さない）。所有者がまだいなければ 404。
   loginReported(){
     const row=this.ctx.storage.kv.get('person');
     if(!row?.active)return fail(404,'not_found');
@@ -216,7 +216,7 @@ export class Person extends AtomicObject {
     return {status:200,body:{reported:[...this.ctx.storage.kv.list({prefix:'activity:'})].some(([,s])=>s.expires_at>now)}};
   }
   // secret を確かめ、通れば then(now) を同じ transaction で行う。失敗は /activity の入口と同じ数え方
-  // （5 回で 15 分閉じる・時間で戻る）。generation を渡せば、その session の持ち主のままかも確かめる。
+  // （5 回で 15 分閉じる・時間で戻る）。generation を渡せば、その session の所有者のままかも確かめる。
   async confirmed(secret,generation,then){
     const before=this.ctx.storage.kv.get('person');
     const valid=typeof secret==='string'&&secret.length>=16&&secret.length<=128;
@@ -345,7 +345,7 @@ export class Account extends AtomicObject {
     if(operation==='cleanup-retry')return this.cleanupRetry(account);
     return {status:200,body:{status:'revoked'}};
   }
-  // ---- 遠くの道（設計 3.14.0 §3.1）。`keys` は {持ち主: {sha256: 期限(ms)}}（VM の sync が Person DO を
+  // ---- 遠くの道（設計 3.14.0 §3.1）。`keys` は {所有者: {sha256: 期限(ms)}}（VM の sync が Person DO を
   // 通して配る・hash だけ）。`request:<id>` は /api/v1 の依頼: 本文は最長 120 秒（VM に渡すまで）、
   // 結果は入ってから 10 分。どちらも観測ログには出さない。
   keyFor(sha256){
@@ -384,7 +384,7 @@ export class Account extends AtomicObject {
     if(row.status==='done')return {status:200,body:row.result};
     return {status:202,body:{status:'pending'}};
   }
-  // VM の sync（Person DO を通して）: その持ち主の鍵の表を置き替え、結果を受け取り、待っている依頼を渡す。
+  // VM の sync（Person DO を通して）: その所有者の鍵の表を置き替え、結果を受け取り、待っている依頼を渡す。
   async apiExchange(person,keys,results){
     const result=this.atomic(()=>{
       if(typeof person!=='string'||!PERSON.test(person)||!keys||typeof keys!=='object'||Array.isArray(keys)||
@@ -396,7 +396,7 @@ export class Account extends AtomicObject {
       if(JSON.stringify(table[person]??{})!==before)this.put('keys',table);
       for(const done of results){
         const id=REQUEST_ID.exec(done?.request_id??'')?.[1],key='request:'+id,row=id?this.ctx.storage.kv.get(key):null;
-        // 他の持ち主の依頼・もう結果のある依頼・期限を過ぎた依頼には書かない（1 回きり）。
+        // 他の所有者の依頼・もう結果のある依頼・期限を過ぎた依頼には書かない（1 回きり）。
         if(!row||row.person!==person||row.status!=='pending'||row.purge_at<=now)continue;
         this.put(key,{...row,body:null,status:'done',result:done.result,purge_at:now+API_RESULT_MS});
       }

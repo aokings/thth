@@ -89,7 +89,7 @@ test('the form: no script, CSP, no-store; the button says "Allow this device"; u
   const {code}=await begin();
   const r=await page(code);assert.equal(r.status,200);pageHeaders(r);
   const html=await r.text();
-  assert.ok(html.includes('この機械に鍵を渡す / Allow this device'),html);
+  assert.ok(html.includes('この端末に鍵を渡す / Allow this device'),html);
   assert.ok(html.includes(code)&&html.includes(`action="/login/${code}"`));
   assert.ok(html.includes('autocomplete="current-password"')&&!/<script/i.test(html));
   // 手で小文字で打っても同じ code。
@@ -208,7 +208,7 @@ test('before the VM reports the account, the page waits and reloads itself every
   const r=await allow(code,{account:id,secret});
   assert.equal(r.status,409);pageHeaders(r);
   const html=await r.text();
-  assert.ok(html.includes('口座の様子がまだサーバから届いていない')&&html.includes('Allow this device'),'the 409 page is the same form');
+  assert.ok(html.includes('アカウントの状態がまだサーバから届いていない')&&html.includes('Allow this device'),'the 409 page is the same form');
   assert.ok(html.includes(`<meta http-equiv="refresh" content="5;url=/login/${code}">`),html);
   assert.ok(!/<script/i.test(html));
   const stored=JSON.stringify(await control('login',hash(code)));assert.ok(!stored.includes(secret),'the secret is not kept');

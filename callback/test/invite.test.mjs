@@ -64,7 +64,7 @@ test('開く: 説明と権限とリンク・作法（CSP・no-store・no-referre
   assert.ok(!html.includes('<script'));for(const scope of SCOPES)assert.ok(html.includes(scope),scope);
   assert.ok(html.includes('href="/privacy/"')&&html.includes('href="/terms/"'));assert.ok(html.includes('本当に Threads へ投稿'));assert.ok(html.includes('Authorize with Threads'));
   const stored=JSON.stringify(await inspect('invite',inv.id));assert.ok(!stored.includes(inv.code));
-  const dry=await invite({production:false});assert.ok((await(await view(dry)).text()).includes('試し撃ち'));
+  const dry=await invite({production:false});assert.ok((await(await view(dry)).text()).includes('テスト用です'));
   const unknown={code:opaque()};assert.equal((await view(unknown)).status,410);assert.deepEqual(await inspect('invite',hash(unknown.code)),[]);
   assert.equal((await mf.dispatchFetch(ORIGIN+'/invite/'+inv.code+'?x=1')).status,400);assert.equal((await mf.dispatchFetch(ORIGIN+'/invite/short')).status,404);
 });
@@ -122,7 +122,7 @@ test('完了と口座の secret: 1 回だけ表示・verifier は PBKDF2 100,000
   assert.ok(html.includes('一度だけ')&&html.includes('<code>'+person+'</code>')&&html.includes('<a href="/activity">https://thth.me/activity</a>')&&html.includes('sign in with this username and secret'));
   // 3.13.0: 承認待ちの一覧（/pending）は無い。完了ページのリンクと form は /activity だけ。
   assert.ok(!html.includes('/pending')&&!html.includes('approval page'),html);
-  assert.ok(html.includes('保存して動きの一覧を開く / Save and open your activity</button>'));
+  assert.ok(html.includes('保存してアクティビティを開く / Save and open your activity</button>'));
   // 3.12.0 §6-4: 口座名（username）と secret が同じ form にあり、欄の名前は動きの一覧の入口と同じ。押すとそのまま入る。
   const saved=/<form method="post" action="\/activity">(.*?)<\/form>/s.exec(html)?.[1];assert.ok(saved,'save form');
   assert.ok(saved.includes('<input name="person" autocomplete="username" value="'+person+'" readonly>'),saved);
@@ -137,7 +137,7 @@ test('完了と口座の secret: 1 回だけ表示・verifier は PBKDF2 100,000
   // 3.14.0 §3.3: アシスタントの鍵も同じページに 1 度だけ。Worker に残るのは hash だけ（VM は status で受け取る）。
   const assistant=/class="secret key">([A-Za-z0-9_-]{43})</.exec(html)?.[1];assert.ok(assistant,'assistant key shown');sensitive.push(assistant);
   assert.notEqual(assistant,secret);
-  assert.ok(html.includes('アシスタントの鍵')&&html.includes('Assistant key')&&html.includes('通常はターミナルで <code>thth login</code> を実行し')&&html.includes('表示は一度だけです'),html);
+  assert.ok(html.includes('API キー')&&html.includes('Assistant key')&&html.includes('通常はターミナルで <code>thth login</code> を実行し')&&html.includes('表示は一度だけです'),html);
   assert.ok(!JSON.stringify(await inspect('invite',inv.id)).includes(assistant)&&!JSON.stringify(await inspect('person',person)).includes(assistant));
   const done=await status(inv);assert.equal(done.status,'done');assert.equal(done.key_sha256,hash(assistant));
   const second=await press(inv,'reveal',{csrf:nonce}),again=await second.text();

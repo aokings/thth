@@ -21,11 +21,11 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 
 ## 2.12 のローカル実装候補
 
-管理者用の [サーバ書込](docs/運用_サーバ書込_2.12.md)、[停止・退出](docs/運用_サーバ退出_2.12.md)、[X 読取予算](docs/運用_X読取予算_2.12.md) を追加しています。配布・本番検収とは別です。X の認可・refresh の本人読取も予算対象で、既定 USD 0 のままでは token 交換前に停止します。X 投稿・採集 adapter はまだありません。
+管理者用の [サーバ書込](docs/運用_サーバ書込_2.12.md)、[停止・退会](docs/運用_サーバ退出_2.12.md)、[X 読取予算](docs/運用_X読取予算_2.12.md) を追加しています。配布・本番検収とは別です。X の認可・refresh の本人読取も予算対象で、既定 USD 0 のままでは token 交換前に停止します。X 投稿・取得 adapter はまだありません。
 
 ## 認可（2.11.0）
 
-招待した利用者は、masaru がサーバ側で始めた認可 URL を開いて承認します。利用者に VM や Meta アプリの準備を求めません。Threads/Mastodon/X は `thth auth <account> --by masaru`、Bluesky は秘密管理ツールから App Password を `thth token set <account> --stdin --by masaru` へ渡します。X は認可だけ対応し、投稿・採集は未対応です。「接続」ページはこの版にはありません。
+招待した利用者は、masaru がサーバ側で始めた認可 URL を開いて承認します。利用者に VM や Meta アプリの準備を求めません。Threads/Mastodon/X は `thth auth <account> --by masaru`、Bluesky は秘密管理ツールから App Password を `thth token set <account> --stdin --by masaru` へ渡します。X は認可だけ対応し、投稿・取得は未対応です。「接続」ページはこの版にはありません。
 
 運営者の client 設定、貼付の逃げ道、scope と doctor 観測、X の更新間隔の限界は [統一ガイド](docs/導入_承認を押すだけ.md) にまとめています。認可の成功で承認・digest・production の条件は変わりません。
 
@@ -36,7 +36,7 @@ watchtower（`~/Developer/watchtower`）の隣に同じ流儀で並べる。watc
 **媒体**: Threads（稼働）・Bluesky・Mastodon（同席用の台帳あり・未稼働）。
 
 **定期実行中**: Threads の 3 アカウント（nigamilab・asmon 関東・kopicha）。masaru の Threads は同席用です。
-timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿間隔と静かな時間帯を尊重します。返信の採集（`thth replies`）と数の採集
+timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿間隔と静かな時間帯を尊重します。返信の取得（`thth replies`）と数の取得
 （`thth measured`）は稼働、トークン更新は `thth maintain` が毎日。
 
 **入口は 4 つ**: 厚い CLI（`bin/thth`・`python -m thth`）、薄い MCP（`mcp/server.py`・読み取りと
@@ -53,15 +53,15 @@ timer（systemd・`thth systemd` で生成）は10分ごとに実行し、投稿
 
 ### v2.7.0 の変更
 
-- 指標採集に720時間（30日）を追加し、対象窓を刻みから38日と計算。正常時は指標6回、返信は従来の5回です。返信の採集窓は独立して維持します。
+- 指標取得に720時間（30日）を追加し、対象窓を刻みから38日と計算。正常時は指標6回、返信は従来の5回です。返信の取得窓は独立して維持します。
 - 新しい観測に、採取時刻以前48時間以内で最も新しい日次フォロワー数を文脈として添えます。`followers_count_at` と `staleness_hours` を含み、追加APIや過去行の後補完はありません。該当しない場合は `context_reason` に理由を残します。
-- Threads・Bluesky・Mastodonの刻みを揃え、媒体にないviewsはnullのまま維持。[合成検証と限界](docs/検証_v31_C実装_2026-09-18.md)。実SNS APIでの30日後採集は未確認です。
+- Threads・Bluesky・Mastodonの刻みを揃え、媒体にないviewsはnullのまま維持。[合成検証と限界](docs/検証_v31_C実装_2026-09-18.md)。実SNS APIでの30日後取得は未確認です。
 - C3・C4は実装保留。[独立規約照合報告](docs/照合_MetaPlatformTerms_枝と語の観測_2026-09-18_Codex.md)の未確認事項とApp Reviewの結果を踏まえて別途判断します。
 
 ### v2.6.0 の変更
 
-- 既存台帳から刻み別の値、中央値の IQR・min・max、枝別の帰結、採集成否と鮮度、層別比較、採集時刻を上限とした枝の形を追加。既存キーは維持し `schema_version=1` のままです。
-- `cannot_say_details` にコードと既存の説明文を併記。施策レポートには未成熟投稿が24時間に達する予定を添え、採集保証とは分けます。
+- 既存台帳から刻み別の値、中央値の IQR・min・max、枝別の帰結、取得成否と鮮度、層別比較、取得時刻を上限とした枝の形を追加。既存キーは維持し `schema_version=1` のままです。
+- `cannot_say_details` にコードと既存の説明文を併記。施策レポートには未成熟投稿が24時間に達する予定を添え、取得保証とは分けます。
 - `handoff-report --since-last-read` で保存済みsnapshotとの差分。cursor保存は CLI の `--mark-read --by 名前` を明示したときだけ。MCP・HTTPは読むだけです。
 - API呼出を増やさない分析の改良です。VM5accountの読取検証と限界は [検証記録](docs/検証_v31_A実装_2026-09-18.md) に記載。Bluesky/Mastodon の非空実台帳と実採用施策の検証は未確認です。
 

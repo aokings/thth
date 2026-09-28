@@ -87,7 +87,7 @@ test('sign-in shows only the pushed summary; no link to the removed /pending',as
   const html=await(await get('/activity',raw.split(';')[0])).text();
   assert.ok(html.includes(name)&&html.includes('出た投稿の先頭')&&html.includes('猶予中の投稿')&&!html.includes('/pending'),html);
   assert.ok(!blank.includes('/pending'));
-  assert.ok(html.includes('LLM の鍵を発行する / Issue a key for your LLM')&&html.includes('この口座を止める / Stop this account'));
+  assert.ok(html.includes('LLM の鍵を発行する / Issue a key for your LLM')&&html.includes('このアカウントを止める / Stop this account'));
   assert.equal((await get('/activity/')).status,308);
 });
 

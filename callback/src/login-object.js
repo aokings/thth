@@ -2,7 +2,7 @@
 //
 //   waiting（CLI が始めた）→ issuing（ブラウザで許可を押した・secret の照合中）→ ready（鍵を置いた）→ taken（CLI が受け取った）
 //
-// - 置くのは poll_token の hash・状態・期限と、ready の間だけ鍵と口座名。鍵は CLI が受け取った時点で消す。
+// - 置くのは poll_token の hash・状態・期限と、ready の間だけ鍵とアカウント名。鍵は CLI が受け取った時点で消す。
 // - 観測ログには何も出さない（鍵も code も）。
 import {DurableObject} from 'cloudflare:workers';
 import {HASH_PATTERN} from './relay.js';
@@ -32,14 +32,14 @@ export class Login extends DurableObject {
     if(result.status===200)await this.ctx.storage.setAlarm(result.body.expires_at);
     return result;
   }
-  // ブラウザの form を出してよいか（鍵も口座名も返さない）。
+  // ブラウザの form を出してよいか（鍵もアカウント名も返さない）。
   state(){
     const now=this.now(),row=this.live(now);
     if(!row)return this.gone(now);
     if(row.status==='waiting'||row.status==='issuing')return {status:200,body:{status:'waiting',pending:row.pending??null}};
     return fail(410,'used');
   }
-  // 許可を押したが、VM がその人の口座の様子をまだ押し上げていなかった（3.14.3 穴 2）。口座名だけを覚え、
+  // 許可を押したが、VM がその人のアカウントの状態をまだ押し上げていなかった（3.14.3 穴 2）。アカウント名だけを覚え、
   // GET のページがそれが届くまで自分で読み直す（secret は覚えない）。
   expect(account){return this.atomic(()=>{
     if(typeof account!=='string'||!/^[A-Za-z0-9_.-]{1,64}$/.test(account))return fail();

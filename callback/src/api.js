@@ -1,23 +1,23 @@
-// 遠くの道（設計 3.14.0 §3.1）: CLI → thth.me/api/v1/<operation> → 口座の束（Account DO）→ VM が sync で拾う。
+// 遠くの道（設計 3.14.0 §3.1）: CLI → thth.me/api/v1/<operation> → アカウントの束（Account DO）→ VM が sync で拾う。
 //
 //   POST /api/v1/<operation>        Authorization: Bearer <鍵>・JSON（48 KB まで）・{account, ...引数}
 //   GET  /api/v1/result/<request_id> 同じ鍵
 //
-// - 鍵は sha256 だけを見る。照合の表は VM が sync で押し上げる（Person DO が持ち、口座の束に配る）。
+// - 鍵は sha256 だけを見る。照合の表は VM が sync で押し上げる（Person DO が持ち、アカウントの束に配る）。
 //   **Worker で先に断り、権威は VM**（VM が資格情報のファイルでもう一度確かめる）。
-// - 応答は最長 20 秒待つ（口座の束を 0.5 秒ごとに見る）。結果が入れば 200 で VM の JSON をそのまま。
+// - 応答は最長 20 秒待つ（アカウントの束を 0.5 秒ごとに見る）。結果が入れば 200 で VM の JSON をそのまま。
 //   20 秒を超えたら 202 {status: pending, request_id}。CLI は /api/v1/result/<request_id> を見に行く。
 // - Worker が自分で断るときは {error: <符丁>} だけ。
 // - **request の中身も結果も記録しない**（/activity と同じ作法: no-store・no-referrer・観測ログ無し）。
-//   本文は口座の束に最長 120 秒・結果は入ってから 10 分だけ。
+//   本文はアカウントの束に最長 120 秒・結果は入ってから 10 分だけ。
 import {PERSON,boundedBody,accountStub,publicQuota} from './person.js';
 import {digest,reply} from './relay.js';
 
 export const API_BODY_MAX=49_152;   // 48 KB（server_writes の本文の上限と同じ桁）
 export const API_HOLD_MS=20_000;    // 応答を待つ最長
-export const API_POLL_MS=500;       // 口座の束を見る間隔
+export const API_POLL_MS=500;       // アカウントの束を見る間隔
 const OPERATION=/^[a-z][a-z0-9_]{0,47}$/;
-// request_id は `<43 字の乱数>.<口座>`（結果を引くときに口座の束が分かるように）。
+// request_id は `<43 字の乱数>.<アカウント>`（結果を引くときにアカウントの束が分かるように）。
 export const REQUEST_ID=/^([A-Za-z0-9_-]{43})\.([a-zA-Z0-9][a-zA-Z0-9_.-]{0,63})$/;
 const BEARER=/^Bearer ([\x21-\x7e]{16,512})$/;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));

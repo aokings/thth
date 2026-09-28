@@ -27,7 +27,7 @@ export default {fetch(request,env){
   // ブラウザ式の thth login（設計 3.14.2 §2）: CLI が始めて待ち、人がブラウザで許可する。
   if(url.pathname.startsWith('/login/'))return loginRequest(request,env,url);
   if(url.pathname.startsWith('/api/v1/login/'))return loginApiRequest(request,env,url);
-  // 遠くの道（設計 3.14.0 §3.1）: 鍵で自分の口座を動かす。VM へは sync で渡す。
+  // 遠くの道（設計 3.14.0 §3.1）: 鍵で自分のアカウントを動かす。VM へは sync で渡す。
   if(url.pathname==='/api'||url.pathname.startsWith('/api/'))return apiRequest(request,env,url);
   return base.fetch(request,env);
 }};
