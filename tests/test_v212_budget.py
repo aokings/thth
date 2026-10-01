@@ -19,6 +19,12 @@ def env(tmp_path,monkeypatch):
     return root
 
 
+# 子プロセスは conftest の時刻の固定（2026-09-09 10:00 JST）を受けない。固定しないと、本物の月が
+# 9 月を過ぎた日から、親の 9 月の予約が子の「今月」に入らず落ちる（2026-10-01 に発見）。
+FROZEN_CHILD = ("import datetime\nfrom thth import jst\n"
+                "jst.now_jst=lambda: datetime.datetime(2026, 9, 9, 10, 0, 0, tzinfo=jst.JST)\n")
+
+
 def snapshot(root):return {str(p.relative_to(root)):p.read_bytes() for p in root.rglob('*') if p.is_file()}
 def setcap(value='0.020',**kw):return b.configure(value,by='operator',**kw)
 def one():
@@ -97,7 +103,7 @@ def test_timeout_remains_held_and_restart_does_not_refund(env):
     assert b.report()['held_usd']=='0.010' and b.report()['spent_estimate_usd']=='0'
     with pytest.raises(b.BudgetError,match='budget_exhausted'):
         with b.user_read('beta'):pytest.fail('unresolved read was refunded')
-    result=subprocess.run([os.sys.executable,'-c','from thth.budget_x import report; import json; print(json.dumps(report()))'],capture_output=True,text=True,check=True)
+    result=subprocess.run([os.sys.executable,'-c',FROZEN_CHILD+'from thth.budget_x import report; import json; print(json.dumps(report()))'],capture_output=True,text=True,check=True)
     assert json.loads(result.stdout)['held_usd']=='0.010'
     assert setcap('0.005')['over_cap_usd']=='0.005'
 
@@ -142,7 +148,7 @@ try:
  print('accepted')
 except (OSError,ValueError): print('refused')
 """
-    procs=[subprocess.Popen([os.sys.executable,'-c',code],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) for _ in range(2)]
+    procs=[subprocess.Popen([os.sys.executable,'-c',FROZEN_CHILD+code],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) for _ in range(2)]
     results=[p.communicate(timeout=5) for p in procs]
     assert sorted(o.strip() for o,e in results)==['accepted','refused'] and all(not e for o,e in results)
     assert b.report()['spent_estimate_usd']=='0.010' and b.report()['held_usd']=='0'

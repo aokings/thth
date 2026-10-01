@@ -9,7 +9,7 @@ import sys
 import threading
 import pytest
 from thth import budget_x as b,server_files
-from tests.test_v212_budget import env,setcap
+from tests.test_v212_budget import FROZEN_CHILD,env,setcap
 
 
 def test_contender_after_reservation_does_not_abort_owner(env,monkeypatch):
@@ -29,7 +29,7 @@ try:
 except b.BudgetError as exc:print(str(exc),flush=True)
 """
     with b.user_read('alpha'):
-        child=subprocess.Popen([sys.executable,'-B','-c',code],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        child=subprocess.Popen([sys.executable,'-B','-c',FROZEN_CHILD+code],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         assert child.stdout.readline().strip()=='held'
         def release():
             assert busy.wait(2);child.stdin.write('release\n');child.stdin.flush();released.append(True)
@@ -92,7 +92,7 @@ def test_waiting_budget_keeps_account_lease_and_stop_afterward(env,monkeypatch):
 import sys
 with b.locked():print('held',flush=True);assert sys.stdin.readline().strip()=='release'
 """
-    holder=subprocess.Popen([sys.executable,'-B','-c',code],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    holder=subprocess.Popen([sys.executable,'-B','-c',FROZEN_CHILD+code],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     assert holder.stdout.readline().strip()=='held'
     stop_probe="""import os,fcntl
 from thth import leave_gate as g
