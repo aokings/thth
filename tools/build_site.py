@@ -34,7 +34,6 @@ import re
 import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-README_EN = REPO_ROOT / "README.en.md"
 SKILL = REPO_ROOT / "skills" / "thth" / "SKILL.md"
 LLMS_TXT = REPO_ROOT / "llms.txt"
 PUBLIC = REPO_ROOT / "callback" / "public"
@@ -47,14 +46,12 @@ REGISTRY_SEARCH = (
     "?search=io.github.aokings/thth"
 )
 
-# README.en.md 側（英語）。**順番も README のまま。**
-EN_SECTIONS = ["What it guarantees", "What it refuses", "What it never does"]
-# skills/thth/SKILL.md 側（日本語）。同じ 3 つ。
+# skills/thth/SKILL.md 側（日本語）の 3 つの節。
 JA_SECTIONS = ["何を保証するか", "何を拒むか", "何を絶対にしないか"]
 
 DESCRIPTION = (
-    "AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツール。"
-    "Threads、Bluesky、Mastodon に対応。原稿も投稿後の記録も、自分の Git リポジトリで管理できます。"
+    "自分の SNS アカウントで調べる・投稿する・予約する・振り返るためのコマンドラインツール。"
+    "Threads、Bluesky、Mastodon、X に対応。AI アシスタントがそのまま操作できます。"
 )
 
 
@@ -218,58 +215,72 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
     add("</head><body><main>")
 
     add("<h1>THTH</h1>")
-    add("<p>THTH は、AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツールです。"
-        "Threads、Bluesky、Mastodon に対応しています。</p>")
-    add("<p>自分の Git リポジトリで運用する場合は、いつものエディタや AI エージェントで下書きを作ります。"
-        "内容を確認して承認すると、予約した時刻に投稿されます。原稿も投稿後の記録も、そのリポジトリで管理できます。</p>")
+    add("<p>THTH は、自分の SNS アカウントで調べる・投稿する・予約する・振り返るためのコマンドラインツールです。"
+        "Threads、Bluesky、Mastodon、X に対応しています。</p>")
+    add("<p>コマンドラインなので、Claude Code などの AI アシスタントがそのまま操作できます。同梱の MCP サーバーと"
+        "スキルは、その操作を楽にするための補助です。THTH は何を書くかを決めず、頼まれたときだけ動きます。</p>")
     add("<pre><code>pip install thth</code></pre>")
 
+    add("<h2>できること</h2>")
+    add("<ul>")
+    add("  <li>調べる: <code>thth topics --search</code> で語の件数・投稿者の数・最新の投稿を見ます。"
+        "<code>thth where</code> は次に話す場所を、自分がすでに絡んだ相手を重ねて探します。検索結果の本文と投稿者は保存しません。</li>")
+    add("  <li>出す: <code>thth send</code> で今すぐ、<code>thth schedule</code> で予約、<code>--reply-to</code> で返信します。</li>")
+    add("  <li>振り返る: 投稿後 1 時間から 30 日までの決まった時点で、返信とインサイト（表示・いいね・返信などの数）を取得します。"
+        "<code>thth replies</code>・<code>thth measured</code> で読みます。</li>")
+    add("  <li>止める: アカウントごとのガード（最短間隔・1 日の上限・急な連投で止まる）が、AI アシスタントの誤動作を止めます。</li>")
+    add("</ul>")
+    add("<p>X は投稿・削除・自分の最近の投稿の読み取りに対応し、利用は運営者設定の範囲内です。"
+        "返信とインサイトの取得、検索には対応していません。Bluesky は削除に対応していません。再投稿といいねは、まだどの SNS でもできません。</p>")
+
+    add("<h2>招待された方へ</h2>")
+    add("<p>招待された利用者は、招待リンクを開いて Threads を認可します。続けて "
+        "<code>pip install thth</code>、<code>thth login</code> を実行し、ブラウザでこのデバイスを許可します。"
+        "利用者が VM や Meta アプリを用意する必要はありません。</p>")
+    add("<p>以後は、調べる（<code>thth topics --search</code>・<code>thth mentions</code>・<code>thth profile</code>・"
+        "<code>thth location search</code>）、出す（<code>thth send</code>・<code>thth schedule</code>・<code>thth retract</code>）、"
+        "振り返る（<code>thth posts</code>・<code>thth replies</code>・<code>thth collect</code>・<code>thth measured</code>）の"
+        "コマンドで自分のアカウントを動かします。ガードの数値はオーナーが決め、AI アシスタントが変えられるのは厳しくする向きだけです。"
+        "<a href=\"/activity\">アクティビティ</a>で、オーナーが確認・停止・キーの発行を行えます。</p>")
+    add(f'<p><a href="{guide("導入_招待されたら.md")}">導入: 招待されたら</a></p>')
+
+    add("<h2>AI アシスタントから使う</h2>")
+    add("<pre><code>claude mcp add thth -- thth-mcp</code></pre>")
+    add("<p>MCP の道具はコマンドの写しで、同じ <code>thth</code> コマンドを呼ぶだけです。スキルは、投稿する前に何を見るか、"
+        "返信をどう扱うかをアシスタントに教えます。キーはアシスタントに渡しません。</p>")
+
     add("<h2>自分のリポジトリから投稿する</h2>")
-    add("<p>下書きは Markdown ファイルに保存します。本文のほか、投稿先のアカウントや予約時刻、"
-        "トピックなどを指定できます。</p>")
+    add("<p>アカウントの台帳を自分の機械に置き、下書きを承認してからタイマーで出す運用もできます。"
+        "下書きは Markdown ファイルに保存し、本文のほか投稿先のアカウントや予約時刻、トピックを指定できます。</p>")
     add("<p>まず、投稿する内容を確認します。</p>")
     add("<pre><code>thth approve docs/sns/queue/2026-09-14-oolong.md</code></pre>")
     add("<p>本文と投稿先などが表示されます。この段階では、まだ承認されません。</p>")
     add("<p>内容がよければ、表示された確認コードと承認者の名前を付けて、もう一度実行します。</p>")
     add("<pre><code>thth approve docs/sns/queue/2026-09-14-oolong.md --confirm &lt;確認コード&gt; --by gotoq</code></pre>")
     add("<p>承認した下書きは、タイマーを設定しておけば自動で投稿されます。承認後に本文や投稿先、"
-        "予約時刻などを変更した場合は、あらためて承認が必要です。</p>")
-
-    add("<h2>投稿したあとの管理も</h2>")
-    add("<p>投稿が完了すると、原稿に投稿 ID が記録されます。返信や閲覧数も取得して、同じリポジトリに"
-        "保存できます。投稿の履歴をたどったり、次の原稿を考えるときの資料として使えます。</p>")
-    add("<h2>招待された方へ</h2>")
-    add("<p>招待された利用者は、招待リンクを開いて Threads を認可します。続けて "
-        "<code>pip install thth</code>、<code>thth login</code> を実行し、ブラウザでこのデバイスを許可します。"
-        "利用者が VM や Meta アプリを用意する必要はありません。</p>")
-    add("<p>以後は <code>thth send</code>、<code>thth posts</code>、<code>thth replies</code>、"
-        "<code>thth measured</code>、<code>thth retract</code> で自分のアカウントを動かします。最短間隔、1 日の上限、"
-        "急な連投で止めるガードはオーナーが決めます。AI アシスタントが変えられるのは、厳しくする向きだけです。"
-        "<a href=\"/activity\">アクティビティ</a>で、オーナーが確認・停止・キーの発行を行えます。</p>")
-
-    add("<h2>AI エージェントから使う</h2>")
-    add("<p>MCP サーバーと Claude Code 用のスキルを同梱しています。コマンドラインから直接使うほか、"
-        "AI エージェントとやり取りしながら下書きや投稿の記録を扱えます。</p>")
+        "予約時刻などを変更した場合は、あらためて承認が必要です。投稿 ID と、取得した返信やインサイトも同じリポジトリに残ります。</p>")
 
     add("<h2>運営者の使い方</h2>")
-    add("<p>Mastodon の auth は expires_in または refresh_token を返す非標準実装に未対応です。手動 token set も期限・更新情報を受け取らず期限なしとして保存するため、その回避策にはなりません。</p>")
     add("<p>運営者（gotoq）がサーバー側で <code>thth auth &lt;account&gt; --by gotoq</code> を開始し、"
         "利用者が URL を開いて承認します。Threads・対応 Mastodon・X の共通入口です。"
-        "X は投稿・削除・自分の最近の投稿の読み取りに対応し、利用は運営者設定の範囲内です。返信とインサイトの取得には対応していません。"
         "Bluesky は App Password の stdin 入力です。</p>")
-    add(f'<p><a href="{guide("導入_招待されたら.md")}">導入: 招待されたら</a></p>')
+    add("<p>Mastodon の auth は expires_in または refresh_token を返す非標準実装に未対応です。手動 token set も期限・更新情報を受け取らず期限なしとして保存するため、その回避策にはなりません。</p>")
 
     add("<h2>English</h2>")
-    add('<p class="en">THTH is a command-line tool for drafting and publishing social media posts with AI. '
-        "It supports Threads, Bluesky, and Mastodon.</p>")
-    add('<p class="en">For an operator-managed queue, review and approve a draft, then let the timer publish it. '
-        "Drafts, published post IDs, replies, and view counts are stored in that repository.</p>")
+    add('<p class="en">THTH is a command-line tool for researching, posting to, scheduling on and reviewing '
+        "your own social media accounts. It supports Threads, Bluesky, Mastodon and X. Because it is a CLI, an AI "
+        "assistant can drive it directly; the bundled MCP server and skills only make that easier.</p>")
     add('<p class="en">An invited person opens an invitation link, authorizes Threads, installs <code>thth</code>, '
-        "and runs <code>thth login</code> to allow their device in the browser. They then use <code>thth send</code>, "
-        "<code>posts</code>, <code>replies</code>, <code>measured</code>, and <code>retract</code> for their own account. "
+        "and runs <code>thth login</code> to allow their device in the browser. They then research "
+        "(<code>topics --search</code>, <code>mentions</code>, <code>profile</code>, <code>location search</code>), "
+        "post (<code>send</code>, <code>schedule</code>, <code>retract</code>) and review (<code>posts</code>, "
+        "<code>replies</code>, <code>collect</code>, <code>measured</code>) for their own account. "
         "The owner sets safety limits; an AI assistant can only tighten them. The owner uses <a href=\"/activity\">Activity</a> "
-        "to review, stop, and issue keys. The operator (gotoq) runs the server. X can publish, delete, and read "
-        "the account's recent posts within the operator's configured scope; it does not collect replies or metrics.</p>")
+        "to review, stop, and issue keys. The operator (gotoq) runs the server.</p>")
+    add('<p class="en">For an operator-managed queue, review and approve a draft, then let the timer publish it. '
+        "Drafts, published post IDs, replies, and view counts are stored in that repository. X can publish, delete, and read "
+        "the account's recent posts within the operator's configured scope; it does not collect replies or metrics. "
+        "Reposts and likes are not supported yet.</p>")
 
     add(f'<p><a href="{GITHUB}">GitHub</a> ／ <a href="{PYPI}">PyPI</a> ／ '
         f'<a href="{esc(REGISTRY_SEARCH)}">MCP Registry</a> ／ <a href="/llms.txt">llms.txt</a></p>')
@@ -956,7 +967,7 @@ Disallow: /data-deletion-status
 
 def outputs() -> dict[str, str]:
     """出力パス（`callback/public/` 相対）→ 中身。"""
-    en = sections_from(README_EN.read_text(encoding="utf-8"), EN_SECTIONS)
+    en: dict[str, list[str]] = {}  # README.en は 2026-10-01 に書き直し、紹介ページはこの節を使わない
     ja = sections_from(SKILL.read_text(encoding="utf-8"), JA_SECTIONS)
     return {
         "index.html": build_index(en, ja),

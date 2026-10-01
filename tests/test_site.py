@@ -224,7 +224,7 @@ def test_紹介ページは訪問者向けの言葉で書く():
     for word in ("approval_stale", "loud reject", "正本から生成", "泉", "5/5", "cannot_say",
                  "What it guarantees", "送り先はまだ", "何も変えません", "投稿しました: post_id"):
         assert word not in page, f"訪問者向けのページに開発側の語が出ている: {word}"
-    assert "AI と一緒に SNS の投稿を作成・管理するためのコマンドラインツール" in page
+    assert "自分の SNS アカウントで調べる・投稿する・予約する・振り返るためのコマンドラインツール" in page
     # 2026-09-27 の校正: 個人名は出さない（運営者は gotoq）。招待の流れは今の実装のとおり。
     assert "masaru" not in page
     assert "招待リンクを開いて Threads を認可します" in page
