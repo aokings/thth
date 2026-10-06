@@ -131,3 +131,26 @@ def test_new_sent_records_store_parent_but_default_is_explicit_null(isolated_acc
     own_sent('one','ROOT');own_sent('one','CHILD','ROOT')
     assert sent.read(accounts.state_dir_for('one'),'ROOT')['reply_to'] is None
     assert sent.read(accounts.state_dir_for('one'),'CHILD')['reply_to']=='ROOT'
+
+
+def test_human_zero_line_says_what_the_ledger_has_seen(isolated_account_factory,monkeypatch,capsys):
+    # つまずき r20261007-0ca85418: 刻みの間に付いた返信は台帳に無い。0 件の後に、台帳が
+    # 見ている時刻と今採る口を必ず書く（--refresh を付けたら口の案内は出さない）。
+    cfg=isolated_account_factory('one',handle='owner');own_sent('one','ROOT')
+    save(cfg,extra=[{'id':'A'+rid,'username':'owner','timestamp':AT,'post_id':'ROOT','replied_to':{'id':rid}} for rid in ('R1','R2')])
+    monkeypatch.setattr(jst,'now_jst',lambda:NOW)
+    assert cli.main(['unanswered','one'])==0
+    out=capsys.readouterr().out
+    assert '台帳で未回答 0 件' in out
+    assert '台帳が見ているのは 2026-09-09T09:00:00+09:00（1.0 時間前） まで' in out
+    assert '今採るなら --refresh' in out
+    monkeypatch.setattr(collect,'refresh_replies',lambda *a,**k:{'skipped':None,'failed':[],'errors':[]})
+    assert cli.main(['unanswered','one','--refresh'])==0
+    out=capsys.readouterr().out
+    assert '台帳が見ているのは' in out and '今採るなら' not in out
+
+
+def test_human_line_without_any_fetch_points_to_refresh(isolated_account_factory,capsys):
+    isolated_account_factory('one',handle='owner')
+    assert cli.main(['unanswered','one'])==0
+    assert '台帳に取得の記録がありません。今採るなら --refresh' in capsys.readouterr().out

@@ -237,7 +237,24 @@ def cmd(args):
             print(f"  {row['age_hours']:.1f} 時間前 @{row['username'] or '—'} {row['reply_id']} {row['preview']}")
             print(f"    根: {row['post_id']}（ledger_only）")
         if result['cannot_say']:print('確認できないこと: '+', '.join(result['cannot_say']))
+        print(_seen_until_line(result, refreshed=refresh is not None))
     return rc
+
+
+def _seen_until_line(result, *, refreshed):
+    """台帳がいつまでを見ているかを、件数の直後に必ず書く（つまずき r20261007-0ca85418）。
+
+    刻み（1h・6h…）の間に付いた返信は台帳に無いので、「0 件」は「最後に採った時刻までに
+    0 件」でしかない。`collect` は刻みが来ていなければ何も採らないので、今採る口
+    （`--refresh`）を同じ行で示す。"""
+    since = result.get('collection_stale_since')
+    if since is None:
+        return '台帳に取得の記録がありません。今採るなら --refresh を付けてください。'
+    hours = result.get('collection_stale_hours')
+    ago = f'（{hours:.1f} 時間前）' if isinstance(hours, (int, float)) else ''
+    line = f'台帳が見ているのは {since}{ago} まで。それより後の返信は数えていません。'
+    if refreshed:return line
+    return line+'今採るなら --refresh（collect は刻みが来るまで採りません）。'
 
 
 def register(sub):
