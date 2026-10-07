@@ -1,6 +1,7 @@
 """accounts/<account>.json の読みと形式検査（設計 §4.2）。"""
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import os
@@ -668,7 +669,44 @@ def load_token(account_cfg: dict) -> dict | None:
     if not path or not os.path.exists(path):
         return None
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        token = json.load(f)
+    if account_cfg.get("media") == "x" and _refresh_x_if_due(account_cfg, token):
+        with open(path, encoding="utf-8") as f:
+            token = json.load(f)
+    return token
+
+
+_X_REFRESHING = contextvars.ContextVar("thth_x_refreshing", default=False)
+
+
+def _refresh_x_if_due(account_cfg: dict, token) -> bool:
+    """X のトークンが期限の 5 分前を切っていたら、読む前に更新する（不具合 r20261008-51544896）。
+
+    X の access token は約 2 時間で切れる。以前は 1 日 1 回の maintain と手の `thth refresh`
+    だけが更新していたので、send・予約の throw・where・thread が 401 で落ちていた。
+    更新できなければ（入れ子の管理の処理の中・予算切れ・失効など）古いトークンのまま返し、
+    呼び手が今までどおり 401 を受ける。更新したら True。"""
+    if _X_REFRESHING.get() or not isinstance(token, dict) or not token.get("refresh_token"):
+        return False
+    from . import jst
+    from .leave_gate import name_for
+    from .adapters import auth_x
+    name = name_for(account_cfg)
+    if not name:
+        return False
+    try:
+        seconds = auth_x.remaining(token, jst.now_jst())
+    except (ValueError, TypeError):
+        return False
+    if seconds > auth_x.REFRESH_BEFORE_SECONDS:
+        return False
+    reset = _X_REFRESHING.set(True)
+    try:
+        return auth_x.run_refresh(name, log=lambda _line: None) == 0
+    except Exception:  # 更新の失敗で読む口を止めない（呼び手が 401 を受ける）
+        return False
+    finally:
+        _X_REFRESHING.reset(reset)
 
 
 def token_exists(account_cfg: dict) -> bool:
