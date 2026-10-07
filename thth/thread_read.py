@@ -379,7 +379,7 @@ def _render_human(result: dict) -> None:
     root = result["root"]
     who = "自分" if root["is_own"] is True else ("他者" if root["is_own"] is False else "不明")
     root_text = (root.get("text") or "")[:TEXT_PREVIEW_CHARS]
-    print(f"根 @{root.get('username') or '?'}（{who}）: {root_text}")
+    print(f"根 @{root.get('username') or '?'}（{who}）id={root.get('post_id') or '?'}: {root_text}")
     for m in result["messages"]:
         depth = m.get("depth")
         indent = "  " * depth if isinstance(depth, int) and depth > 0 else "  "
@@ -388,8 +388,9 @@ def _render_human(result: dict) -> None:
         hhmm = ts[11:16] if isinstance(ts, str) and len(ts) >= 16 else (ts or "?")
         text = (m.get("text") or "")[:TEXT_PREVIEW_CHARS]
         prefix = _replied_prefix(m.get("already_replied"))
+        # 返すのに要る id を行に出す（つまずき r20261007-87365549: --json を掘っていた）。
         print(f"{indent}{prefix}{hhmm} @{m.get('username') or '?'}"
-              f"（{m.get('author_key') or '?'}・{who}）: {text}")
+              f"（{m.get('author_key') or '?'}・{who}）id={m.get('message_id') or '?'}: {text}")
     counts = result["counts"]
     print(f"  n={counts['messages']}  参加者={counts['participants']}  "
          f"自分={counts['own']}  truncated={counts['truncated']}")

@@ -286,7 +286,9 @@ def answer(*, account_name: str | None = None, project: str | None = None,
     if not author_key and not username:
         _reject("author_key か username のどちらかが要ります")
     if author_key is not None and not engagements_mod.AUTHOR_KEY_RE.match(author_key):
-        _reject(f"author_key は 16 進 16 桁です: {author_key!r}")
+        _reject(f"author_key は 16 進 16 桁です: {author_key!r}。名前で引くなら @ を付けて、"
+                f"プロフィールの正式なユーザー名を渡してください（画面で切れた名前では一致しません。"
+                f"例: thth who <account> @{author_key.lstrip('@')}）")
     if username is not None and not username.strip():
         _reject(f"username が空です: {username!r}")
     if username is not None:

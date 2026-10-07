@@ -130,3 +130,23 @@ def test_threads_url_refusals_are_named(tmp_path, isolated_account_factory, url,
     a = account(tmp_path, isolated_account_factory)
     with pytest.raises(postid.PostIdError, match=code):
         postid.for_account(accounts_mod.load_account(a["name"]), url, a["name"])
+
+
+# ---- つまずき r20261007-87365549: thread の人向けの表示に返すのに要る id を出す
+
+def test_thread_human_lines_show_ids(capsys):
+    from thth import thread_read
+    thread_read._render_human({
+        "root": {"post_id": "ROOT1", "username": "a", "is_own": False, "text": "根"},
+        "messages": [{"message_id": "M9", "depth": 1, "is_own": False, "username": "b",
+                      "author_key": "0" * 16, "timestamp": AT, "text": "質問", "already_replied": False}],
+        "counts": {"messages": 1, "participants": 1, "own": 0, "truncated": False}})
+    out = capsys.readouterr().out
+    assert "id=ROOT1" in out and "id=M9" in out
+
+
+def test_who_hint_for_bare_name(isolated_account_factory, capsys):
+    from thth import cli
+    isolated_account_factory("one")
+    assert cli.main(["who", "one", "onomichi_ne"]) != 0
+    assert "@ を付けて" in capsys.readouterr().err
