@@ -235,7 +235,7 @@ def direct_send(context, request, via):
     account=request['account'];cfg=current(context,account,write=True)
     if cfg.get('production') is not True: error('production_disabled')
     from . import postid
-    reply=postid.for_account(cfg,request.get('reply_to'));topic=request.get('topic')
+    reply=postid.for_account(cfg,request.get('reply_to'),account);topic=request.get('topic')
     # 返信には最短間隔を掛けない（裁定 (a)）。上限と burst には数える。
     origin=_origin(context,via);check=_guarded(context,account,'publish',origin,reply=bool(reply))
     check(cfg)

@@ -213,7 +213,7 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
     account_cfg = accounts_mod.load_account(account_name)
     from . import postid
     try:
-        post_id = postid.for_account(account_cfg, post_id).strip()
+        post_id = postid.for_account(account_cfg, post_id, account_name).strip()
     except postid.PostIdError as exc:
         _reject(str(exc))
     media = account_cfg.get("media")

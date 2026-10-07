@@ -309,7 +309,7 @@ def _account_answer(account_name: str, *, topic: str | None, kind: str | None,
     account_cfg = accounts_mod.load_account(account_name)
     from . import postid
     try:
-        reply_to = postid.for_account(account_cfg, reply_to)
+        reply_to = postid.for_account(account_cfg, reply_to, account_name)
     except postid.PostIdError as exc:
         _reject(str(exc))
     since = now - datetime.timedelta(days=window_days)

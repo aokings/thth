@@ -1544,7 +1544,7 @@ def cmd_replies(args) -> int:
     if args.post:
         from . import postid
         try:
-            args.post = postid.for_account(accounts_mod.load_account(args.account), args.post)
+            args.post = postid.for_account(accounts_mod.load_account(args.account), args.post, args.account)
         except (accounts_mod.AccountError, postid.PostIdError) as exc:
             print(str(exc), file=sys.stderr)
             return 2

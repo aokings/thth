@@ -190,7 +190,7 @@ MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜ�
 
 プロジェクトの作業開始・再開時は `git fetch` 後にリモート `docs/sns/queue/` の `thth_run_state`・`thth_run_detail`・`thth_run_next` を確認する。dirty worktree へ無条件に pull しない。リモートの確認は `git show origin/main:docs/sns/queue/FILE.md` 等で行える。停止・成否不明なら inflight を手で消して再投稿しない（3.3.1 から道具が毎 run の最初にSNSへ 1 回だけ問い合わせ、決まれば自分で解く）。止まり続けるなら `thth inflight <account> show` で中身を見て、SNSで確かめた人が `thth inflight <account> resolve --not-published|--published <post_id> --by <名前>` で解く（二段確認・MCP には無い）。復旧状態は投稿成功の保証ではなく、公開結果は status/post_id/posted_at を見る。
 
-`mentions <account> --json` は 3 SNSの言及を同じ項目で読む。返信前に `replied` の object／false／null を区別する。`unanswered <account> --since 7d --json` は自分の根投稿の未回答候補を台帳で読む。台帳は刻み（1h・6h…）ごとにしか採らないので、0 件は「最後に採った時刻までに 0 件」の意味。返信の通知が来た・人が通知に気づいた・最後の取得より後の返信を確かめたいときは `--refresh` を付けて今採る（`collect` は刻みが来ていなければ何も採らない）。`cannot_say` と取得の古さも確認する。件数は account ごとに扱い、送信は既存の承認・digest・production の門を通す。
+`mentions <account> --json` は 3 SNSの言及を同じ項目で読む。返信前に `replied` の object／false／null を区別する。`unanswered <account> --since 7d --json` は自分の根投稿の未回答候補を台帳で読む。台帳は刻み（1h・6h…）ごとにしか採らないので、0 件は「最後に採った時刻までに 0 件」の意味。返信の通知が来た・人が通知に気づいた・最後の取得より後の返信を確かめたいときは `--refresh` を付けて今採る（`collect` は刻みが来ていなければ何も採らない）。`cannot_say` と取得の古さも確認する。他人の投稿に付けた自分の返信に直接付いた返事も数える。Threads の投稿リンク（`https://www.threads.com/@<user>/post/<符号>`）は、返信の台帳にあれば id の代わりに `thread`・`replies --post`・`send --reply-to` へ渡せる（無ければ `replies <account> --refresh` で採ってから）。件数は account ごとに扱い、送信は既存の承認・digest・production の門を通す。
 
 ## 2.10.0 の入口
 

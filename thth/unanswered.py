@@ -83,7 +83,11 @@ def _relations(name, cfg, now):
     roots = {pid for pid, parents in relations.items() if parents == {None}}
     answered = {next(iter(parents)) for parents in relations.values()
                 if len(parents)==1 and None not in parents}
-    return roots, answered, reasons, owned
+    # 自分の返信（絡みに行った返信を含む）。その台帳の行のうち、この返信に**直接**
+    # 付いたものだけを数える（要望 r20261007-4b57e1ee）。
+    branches = {pid for pid, parents in relations.items()
+                if len(parents)==1 and None not in parents}
+    return roots | branches, answered, reasons, owned, branches
 
 
 # `collection_stale_hours` の数え始め（設計 3.7.0 §B2）: 根投稿ごとの最後の取得の成功
@@ -99,7 +103,7 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
     now = now or jst.now_jst()
     floor = read_window.cutoff(since, now=now)
     cfg = accounts.load_account(account_name)
-    roots, answered, reasons, _ = _relations(account_name, cfg, now)
+    roots, answered, reasons, _, branches = _relations(account_name, cfg, now)
     try:
         data = replies.load(account_name, allowed_names=allowed_names)
     except (OSError, ValueError, TypeError, AttributeError):
@@ -130,7 +134,7 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
             # 退出の途中の台帳も持ち主の見分けには読む（3.1.2 件 7・replies と同じ）。
             other_cfg = replies.load_for_ownership(other)
             if Path(accounts.data_dirs(other_cfg, other)['replies']).resolve() != directory:continue
-            _, _, _, other_owned = _relations(other, other_cfg, now)
+            _, _, _, other_owned, _ = _relations(other, other_cfg, now)
             for pid in roots & other_owned:owners[pid].add((other, other_cfg['media']))
         except (accounts.AccountError, OSError, ValueError, TypeError, KeyError):
             reasons.add('reply_ownership_unknown')
@@ -175,7 +179,10 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
         rid = _id(message.get('message_id'))
         if not rid:
             reasons.add('reply_id_unknown');continue
-        key = (row['post_id'], rid)
+        if row['post_id'] in branches and _id(message.get('replied_to')) != row['post_id']:
+            continue
+        # 同じ返信が根の台帳と枝の台帳の両方に入っていても 1 件と数える。
+        key = rid
         if rid in answered or key in seen:continue
         seen.add(key)
         at = jst.parse(message.get('timestamp'))

@@ -23,6 +23,8 @@
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 import urllib.parse
 
@@ -92,15 +94,73 @@ class PostIdError(ValueError):
     """A user URL cannot be converted to a stable platform id."""
 
 
-def for_account(account_cfg, value):
-    """Only Bluesky web URLs need conversion; no credentials are loaded."""
-    if account_cfg.get('media') != 'bluesky' or not isinstance(value, str):
+_THREADS_HOSTS = ('www.threads.com', 'threads.com', 'www.threads.net', 'threads.net')
+
+
+def threads_shortcode(value):
+    """`https://www.threads.com/@<user>/post/<符号>`（threads.net も）の符号。違う形は None。"""
+    try:
+        parsed = urllib.parse.urlsplit(value.strip())
+    except (ValueError, AttributeError):
+        return None
+    parts = parsed.path.rstrip('/').split('/')
+    if (parsed.scheme not in ('https', 'http') or parsed.netloc.lower() not in _THREADS_HOSTS
+            or len(parts) != 4 or not parts[1].startswith('@') or parts[2] != 'post'
+            or not re.fullmatch(r'[A-Za-z0-9_-]{5,64}', parts[3])):
+        return None
+    return parts[3]
+
+
+def _threads_url_to_id(account_cfg, account_name, text):
+    """Threads の投稿リンクを、台帳に残ったリンク（permalink）と突き合わせて id にする。
+
+    Threads にはリンクの符号から id を引く API が無い。返信の台帳の行は permalink を
+    持つので、採った返信ならリンクから id が分かる（要望 r20261007-4b57e1ee・3）。
+    媒体には問い合わせない。"""
+    if urllib.parse.urlsplit(text).path.startswith('/share/'):
+        raise PostIdError('share_url_unsupported: 共有リンク（/share/…）は、開いたあとのアドレス'
+                          '（https://www.threads.com/@<user>/post/<符号>）を渡してください')
+    code = threads_shortcode(text)
+    if code is None:
+        raise PostIdError('invalid_post_url: https://www.threads.com/@<user>/post/<符号> を指定してください')
+    from . import accounts
+    directory = accounts.data_dirs(account_cfg, account_name)['replies']
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        names = []
+    for name in names:
+        if not name.endswith('.ndjson'):
+            continue
+        try:
+            lines = open(os.path.join(directory, name), encoding='utf-8').read().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if code not in line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if (isinstance(row, dict) and isinstance(row.get('permalink'), str)
+                    and threads_shortcode(row['permalink']) == code and is_usable(row.get('id'))):
+                return row['id']
+    raise PostIdError('post_url_not_in_ledger: このリンクの投稿は返信の台帳にありません。'
+                      '`thth replies <account> --refresh` で採ってから渡すか、id を渡してください')
+
+
+def for_account(account_cfg, value, account_name=None):
+    """Bluesky と Threads の web URL を id にする。資格情報は読まない。"""
+    if account_cfg.get('media') not in ('bluesky', 'threads') or not isinstance(value, str):
         return value
     text=value.strip()
     if not text.startswith(('https://', 'http://')):
         return value
     if any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in value):
         raise PostIdError('invalid_post_url: URL に制御文字は使えません')
+    if account_cfg.get('media') == 'threads':
+        return _threads_url_to_id(account_cfg, account_name, text)
     from .adapters import bluesky
     from . import leave_gate
     with leave_gate.scope(account_cfg), leave_gate.lease():

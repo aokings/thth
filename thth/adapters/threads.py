@@ -888,6 +888,22 @@ class ThreadsAdapter(base.Adapter):
             row["author_key"] = base.author_key(MEDIUM, row.get("username"))
         return rows
 
+    def branch_replies(self, post_id):
+        """**自分の返信に直接付いた返信**（`/{post_id}/replies`・`threads_read_replies`）。
+
+        `/conversation` は根の投稿でしか枝を返さない。他人の根に付けた自分の返信
+        （絡みに行った返信）に向けると 0 件で、こちらへの返事が台帳に入らなかった
+        （要望 r20261007-4b57e1ee・10/7 に実測: `/conversation` 0 件・`/replies` 1 件）。
+        行の形は `conversation()` と同じ。
+        """
+        params = {"fields": "id,text,username,timestamp,permalink,is_reply,"
+                             "replied_to,root_post,has_replies"}
+        rows = self._all_pages(f"/v1.0/{post_id}/replies", params, "返信")
+        for row in rows:
+            row["medium"] = MEDIUM
+            row["author_key"] = base.author_key(MEDIUM, row.get("username"))
+        return rows
+
     def whoami(self) -> dict:
         """`{"user_id", "username"}`（Threads の `me` を包む・設計 v2 §4.2）。
 

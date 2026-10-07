@@ -457,6 +457,48 @@ def _with_sent_posts(files: list, account_name: str, account_cfg: dict, *,
     return out
 
 
+def _sent_parents(account_name: str) -> dict:
+    """`sent/` の記録が持つ返信先（`post_id` → `reply_to`）。疑似 queue ファイルの
+    front-matter には写さない（実測の行の `reply_to` の意味を変えない）ので、枝の
+    取り方を決めるためだけに別に読む。"""
+    from . import sent as sent_mod
+    return {str(row['post_id']): row['reply_to']
+            for row in sent_mod.records(accounts_mod.state_dir_for(account_name))
+            if row.get('post_id') and row.get('reply_to')}
+
+
+def _root_of(row) -> str | None:
+    value = row.get("root_post")
+    if isinstance(value, dict):
+        value = value.get("id")
+    return str(value) if value else None
+
+
+def _fetch_replies(adapter, account_cfg: dict, post_id: str, reply_to, owned) -> list:
+    """1 本の投稿の返信を取る。根の投稿は会話全体（`conversation()`）。
+
+    **Threads で自分の返信を採るときだけ** `branch_replies()`（直接付いた返信）を使う。
+    `/conversation` は根でないと 0 件しか返さないため、絡みに行った先でこちらに付いた
+    返事が台帳に入らなかった（要望 r20261007-4b57e1ee）。自分の根のスレッドの中の返信は、
+    その根の会話で採れているので落とす（同じ返信を 2 つの台帳に入れない）。
+    `owned` は自分の投稿の id の集合を返す関数（要るときだけ読む）。"""
+    branch = getattr(adapter, "branch_replies", None)
+    if not reply_to or account_cfg.get("media") != "threads" or branch is None:
+        return adapter.conversation(post_id)
+    mine = owned()
+    return [row for row in branch(post_id) if _root_of(row) not in mine]
+
+
+def _owned_once(account_name: str, account_cfg: dict):
+    cache = []
+
+    def owned() -> set:
+        if not cache:
+            cache.append(owned_post_ids(account_name, account_cfg, errors=[]))
+        return cache[0]
+    return owned
+
+
 def _save_replies(reply_path: str, post_id: str, replies: list, *, now,
                    age_hours, marks: list, trigger: str,
                    source: str = QUEUE_SOURCE) -> list:
@@ -546,6 +588,8 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 'attachment_kinds': list(row['attachment_kinds']),
                 'media': row['media'] if isinstance(row.get('media'), list) else [],
             }
+    parents = _sent_parents(account_name)
+    owned = _owned_once(account_name, account_cfg)
     # **スレッド連投の段も拾う**（独立検収 2026-09-11・P2-7）。
     # v1 の `qf.malformed` 判定が `thth: 2` を落とすので、3 段公開しても
     # **収集対象は 0 件だった。** 出したものを測れないなら、出す意味が薄い。
@@ -688,7 +732,8 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 # **会話全体を取る**（設計 §5・2026-09-12 に実装の逸脱が発覚）。
                 # `/replies` は**上位 1 階層だけ**なので、**返信への返信——
                 # つまりうちの側の発言——が台帳に残らなかった。**
-                replies = adapter.conversation(post_id)
+                replies = _fetch_replies(adapter, account_cfg, post_id,
+                                         fm.get("reply_to") or parents.get(str(post_id)), owned)
             except Exception as e:
                 errors.append(f"{post_id}: conversation: {redact_mod.redact(str(e))}")
                 replies = None
@@ -1170,6 +1215,21 @@ def owned_post_ids(account_name: str, account_cfg: dict, *, errors: list) -> set
             out.add(str(pid))
     return out
 
+def _queue_parents(account_name: str, account_cfg: dict, *, errors: list) -> dict:
+    """queue（束の段を含む）の原稿が持つ返信先（`post_id` → `reply_to`）。"""
+    files = []
+    if account_cfg.get("repo_dir") and account_cfg.get("queue_dir"):
+        files = core.list_queue_files(account_cfg, tree_sha=None)
+    out = {}
+    for qf in _with_bundle_posts(files, account_name, account_cfg, errors=errors):
+        fm = qf.front_matter
+        if qf.malformed or fm.get("account") != account_name:
+            continue
+        if fm.get("post_id") and fm.get("reply_to"):
+            out[str(fm["post_id"])] = fm["reply_to"]
+    return out
+
+
 # --- 臨時の取り直し（masaru 指示 2026-09-12・外部レビュー B）------------------
 
 def _refresh_targets(account_name: str, account_cfg: dict, *, now, errors: list,
@@ -1317,6 +1377,9 @@ def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
             # （独立検収 B・2026-09-12）。
             out["remote"] = "nothing_to_send"
 
+        parents = _sent_parents(account_name)
+        parents.update(_queue_parents(account_name, account_cfg, errors=[]))
+        owned = _owned_once(account_name, account_cfg)
         for pid, age, 出所 in 対象:
             reply_path = os.path.join(replies_dir,
                                        f"{postid_mod.to_filename(pid)}.ndjson")
@@ -1326,7 +1389,7 @@ def refresh_replies(account_name: str, *, adapter=None, now=None, log=print,
                 out["failed"].append({"post_id": pid, "reason": "台帳が壊れています"})
                 continue
             try:
-                replies = adapter.conversation(pid)
+                replies = _fetch_replies(adapter, account_cfg, pid, parents.get(str(pid)), owned)
             except Exception as e:
                 out["failed"].append({"post_id": pid,
                                        "reason": redact_mod.redact(str(e))})

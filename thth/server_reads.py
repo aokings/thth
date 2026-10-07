@@ -157,7 +157,7 @@ def _replies(account, request, cfg):
     post = request.get('post_id')
     if post:
         try:
-            post = postid.for_account(cfg, post)
+            post = postid.for_account(cfg, post, account)
         except postid.PostIdError:
             error('invalid_request')
     result, refresh = cli.replies_json(account, post=post, refresh=request.get('refresh', False),
