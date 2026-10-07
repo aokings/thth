@@ -1,4 +1,5 @@
 """Unanswered replies grounded in owned local roots; answer() is pure."""
+import datetime
 import json
 import sys
 from pathlib import Path
@@ -208,6 +209,12 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
     last_reply = max((at for at in (jst.parse(row.get('collected_at')) for row in selected)
                       if at is not None and at <= now), default=None)
     stale_since = min(observed.values()) if observed else None
+    # 人向けの「台帳が見ている時刻」は、**今も採っている根**（最後の取得が採集の日数の
+    # 内にあるもの）だけで数える。採集の日数を過ぎた古い根は二度と採らないので、
+    # その時刻を出すと「古いから採り直せ」と読まれる（10/7 に 422 時間前と出た）。
+    window = datetime.timedelta(days=int(cfg.get('collect_days', 14) or 14))
+    live = [at for at in observed.values() if now-at <= window]
+    seen_until = min(live) if live else None
     rows.sort(key=lambda row: (-row['age_hours'], row['reply_id']))
     return dict(account=account_name, n_total=len(rows), replies=rows,
                 window=dict(since=jst.iso(floor) if floor else None, until=jst.iso(now), basis='reply_timestamp'),
@@ -215,6 +222,8 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
                 collection_stale_basis=STALE_BASIS,
                 collection_stale_since=jst.iso(stale_since) if stale_since else None,
                 last_fetch_at=jst.iso(max(observed.values())) if observed else None,
+                seen_until=jst.iso(seen_until) if seen_until else None,
+                seen_until_hours=round((now-seen_until).total_seconds()/3600, 3) if seen_until else None,
                 last_reply_collected_at=jst.iso(last_reply) if last_reply else None,
                 cannot_say=sorted(reasons),
                 summary=dict(n=len(rows), oldest_age_hours=max((r['age_hours'] for r in rows), default=None)))
@@ -254,10 +263,10 @@ def _seen_until_line(result, *, refreshed):
     刻み（1h・6h…）の間に付いた返信は台帳に無いので、「0 件」は「最後に採った時刻までに
     0 件」でしかない。`collect` は刻みが来ていなければ何も採らないので、今採る口
     （`--refresh`）を同じ行で示す。"""
-    since = result.get('collection_stale_since')
+    since = result.get('seen_until')
     if since is None:
-        return '台帳に取得の記録がありません。今採るなら --refresh を付けてください。'
-    hours = result.get('collection_stale_hours')
+        return '今も採っている投稿の取得の記録がありません。今採るなら --refresh を付けてください。'
+    hours = result.get('seen_until_hours')
     ago = f'（{hours:.1f} 時間前）' if isinstance(hours, (int, float)) else ''
     line = f'台帳が見ているのは {since}{ago} まで。それより後の返信は数えていません。'
     if refreshed:return line

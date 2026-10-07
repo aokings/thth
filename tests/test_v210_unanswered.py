@@ -153,4 +153,15 @@ def test_human_zero_line_says_what_the_ledger_has_seen(isolated_account_factory,
 def test_human_line_without_any_fetch_points_to_refresh(isolated_account_factory,capsys):
     isolated_account_factory('one',handle='owner')
     assert cli.main(['unanswered','one'])==0
-    assert '台帳に取得の記録がありません。今採るなら --refresh' in capsys.readouterr().out
+    assert '今も採っている投稿の取得の記録がありません。今採るなら --refresh' in capsys.readouterr().out
+
+
+def test_seen_until_ignores_roots_past_the_collect_window(isolated_account_factory,capsys,monkeypatch):
+    # 採集の日数（既定 14 日）を過ぎた根の古い取得時刻は「台帳が見ている時刻」にしない。
+    cfg=isolated_account_factory('one',handle='owner');own_sent('one','ROOT');own_sent('one','OLD')
+    save(cfg);save(cfg,'OLD')
+    path=Path(accounts.data_dirs(accounts.load_account('one'),'one')['replies'])/'OLD.ndjson'
+    path.write_text(path.read_text().replace(AT,'2026-08-01T10:00:00+09:00'))
+    result=unanswered.answer('one',now=NOW)
+    assert result['seen_until']==AT and result['seen_until_hours']==1.0
+    assert result['collection_stale_since']=='2026-08-01T10:00:00+09:00'
