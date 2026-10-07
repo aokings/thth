@@ -112,7 +112,7 @@ def inspect(account_name: str, *, now) -> dict:
 
     if account_cfg.get('media') == 'x':
         from .adapters.auth_x import remaining, REFRESH_BEFORE_SECONDS
-        token = accounts_mod.load_token(account_cfg)
+        token = accounts_mod.load_token(account_cfg, refresh_x=False)
         if token is None:
             return _finish(row, NO_TOKEN, hint='thth auth <account> --by <actor>')
         if not isinstance(token,dict):
@@ -144,7 +144,7 @@ def inspect(account_name: str, *, now) -> dict:
         return _finish(row, CONFIG_ERROR, detail=str(e))
     hint = adapter_cls.TOKEN_SETUP_HINT
 
-    token = accounts_mod.load_token(account_cfg)
+    token = accounts_mod.load_token(account_cfg, refresh_x=False)
     if token is None:
         return _finish(row, NO_TOKEN, hint=hint)
     # **在るかどうかの判定は媒体が持っている**（`TOKEN_KEYS`・`has_token()`）。

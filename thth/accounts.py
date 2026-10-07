@@ -661,8 +661,10 @@ def app_lock_path() -> str:
     return os.path.join(thth_root(), "state", "_app.lock")
 
 
-def load_token(account_cfg: dict) -> dict | None:
-    """`<account>.token` を読む。無ければ None（T1 はここに触れない・秘密を扱わない）。"""
+def load_token(account_cfg: dict, *, refresh_x: bool = True) -> dict | None:
+    """`<account>.token` を読む。無ければ None（T1 はここに触れない・秘密を扱わない）。
+
+    `refresh_x=False` は、期限そのものを調べて自分で更新を決める口（maintain）用。"""
     from .leave_gate import check_config
     check_config(account_cfg)
     path = account_cfg.get("token")
@@ -670,7 +672,7 @@ def load_token(account_cfg: dict) -> dict | None:
         return None
     with open(path, encoding="utf-8") as f:
         token = json.load(f)
-    if account_cfg.get("media") == "x" and _refresh_x_if_due(account_cfg, token):
+    if refresh_x and account_cfg.get("media") == "x" and _refresh_x_if_due(account_cfg, token):
         with open(path, encoding="utf-8") as f:
             token = json.load(f)
     return token
