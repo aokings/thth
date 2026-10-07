@@ -1391,22 +1391,26 @@ def _ago(stamp, now):
 
 
 def fetch_line(rows) -> str | None:
-    """返信の取得の 1 行（設計 3.7.0 §B2）。数え始めの時刻を言う（無ければ None）。
+    """返信の取得の 1 行。いちばん新しい取得と、刻みでしか採らないことを言う（無ければ None）。
 
-    `collection_stale_hours` は根投稿ごとの最後の取得の成功（0 件の成功を含む）の
-    うち最も古いものから。返信が 1 件以上取れた時刻は別に言う。失敗した試行は台帳に
-    残らないので「試した」時刻は言えない。
+    3.14.7 までは「いちばん古い根投稿の最後の取得」（`collection_stale_since`）を先頭に
+    出していた。返信は投稿ごとの刻み（`collect.REPLY_MARKS_HOURS`）で採り、最後の刻みを
+    済ませた根は二度と採らないので、その時刻は数百時間前になり「取りこぼしている」と
+    読まれる（`unanswered` の 1 行と同じ直し・3.14.6）。JSON の欄は変えない。
+    失敗した試行は台帳に残らないので「試した」時刻は言えない。
     """
-    if rows.get("collection_stale_since") is None:
+    if rows.get("last_fetch_at") is None and rows.get("collection_stale_since") is None:
         return None
-    stale = rows.get("collection_stale_hours")
+    from . import collect as collect_mod
+    marks = "・".join(str(h) for h in collect_mod.REPLY_MARKS_HOURS)
     newest, reply = rows.get("last_fetch_hours"), rows.get("last_reply_hours")
-    return (f"返信の取得: 最後に取得できた（0 件を含む）のは、いちばん古い根投稿で "
-            f"{_hours(stale)}（{rows['collection_stale_since']}）"
-            + (f"・いちばん新しい取得は {newest}h 前" if newest is not None else "")
+    return ("返信の取得: "
+            + (f"いちばん新しい取得は {newest}h 前" if newest is not None else "取得の時刻が読めません")
             + (f"・返信が 1 件以上取れたのは {reply}h 前" if reply is not None
                else "・返信が取れた記録はありません")
-            + "（失敗した試行は台帳に残らないので数えていません）")
+            + f"。返信は投稿ごとに {marks} 時間後に採るので、その間に付いた返信と "
+              f"{collect_mod.REPLY_MARKS_HOURS[-1]} 時間を過ぎた投稿への返信は数えていません"
+              "（今採るなら thth unanswered <account> --refresh・失敗した試行は台帳に残らないので数えていません）")
 
 
 def _render_unanswered(account, node, out) -> None:

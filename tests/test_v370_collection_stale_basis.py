@@ -53,8 +53,10 @@ def test_observeの返信の段に数え始めと1行(isolated_account_factory):
     assert node["collection_stale_since"] == "2026-09-08T10:00:00+09:00"
     assert node["last_fetch_hours"] == 1.0 and node["last_reply_hours"] == 24.0
     line = morning.fetch_line(node)
-    assert line.startswith("返信の取得: 最後に取得できた（0 件を含む）のは、いちばん古い根投稿で 24.0h前")
-    assert "いちばん新しい取得は 1.0h 前" in line
+    # 3.14.8: いちばん古い根の時刻は出さない（最後の刻みを済ませた根の時刻で、取りこぼしの目安にならない）。
+    assert line.startswith("返信の取得: いちばん新しい取得は 1.0h 前")
+    assert "24.0h前" not in line
+    assert "1・6・24・72・168 時間後に採る" in line and "--refresh" in line
     assert "返信が 1 件以上取れたのは 24.0h 前" in line
     assert "失敗した試行は台帳に残らない" in line
     lines = []
@@ -70,4 +72,4 @@ def test_取得の記録が無ければ数え始めはnull(isolated_account_fact
     own_sent("one", "ROOT1")
     result = unanswered.answer("one", now=NOW)
     assert result["collection_stale_since"] is None and result["last_fetch_at"] is None
-    assert morning.fetch_line({"collection_stale_since": None}) is None
+    assert morning.fetch_line({"collection_stale_since": None, "last_fetch_at": None}) is None
