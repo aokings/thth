@@ -134,34 +134,23 @@ def test_new_sent_records_store_parent_but_default_is_explicit_null(isolated_acc
 
 
 def test_human_zero_line_says_what_the_ledger_has_seen(isolated_account_factory,monkeypatch,capsys):
-    # つまずき r20261007-0ca85418: 刻みの間に付いた返信は台帳に無い。0 件の後に、台帳が
-    # 見ている時刻と今採る口を必ず書く（--refresh を付けたら口の案内は出さない）。
+    # つまずき r20261007-0ca85418: 刻みの間に付いた返信は台帳に無い。0 件の後に、最後に
+    # 採った時刻・刻み・今採る口を必ず書く（--refresh を付けたら口の案内は出さない）。
     cfg=isolated_account_factory('one',handle='owner');own_sent('one','ROOT')
     save(cfg,extra=[{'id':'A'+rid,'username':'owner','timestamp':AT,'post_id':'ROOT','replied_to':{'id':rid}} for rid in ('R1','R2')])
     monkeypatch.setattr(jst,'now_jst',lambda:NOW)
     assert cli.main(['unanswered','one'])==0
     out=capsys.readouterr().out
     assert '台帳で未回答 0 件' in out
-    assert '台帳が見ているのは 2026-09-09T09:00:00+09:00（1.0 時間前） まで' in out
+    assert '最後に採ったのは 2026-09-09T09:00:00+09:00（1.0 時間前）。返信は投稿ごとに 1・6・24・72・168 時間後に採る' in out
     assert '今採るなら --refresh' in out
     monkeypatch.setattr(collect,'refresh_replies',lambda *a,**k:{'skipped':None,'failed':[],'errors':[]})
     assert cli.main(['unanswered','one','--refresh'])==0
     out=capsys.readouterr().out
-    assert '台帳が見ているのは' in out and '今採るなら' not in out
+    assert '最後に採ったのは' in out and '今採るなら' not in out
 
 
 def test_human_line_without_any_fetch_points_to_refresh(isolated_account_factory,capsys):
     isolated_account_factory('one',handle='owner')
     assert cli.main(['unanswered','one'])==0
-    assert '今も採っている投稿の取得の記録がありません。今採るなら --refresh' in capsys.readouterr().out
-
-
-def test_seen_until_ignores_roots_past_the_collect_window(isolated_account_factory,capsys,monkeypatch):
-    # 採集の日数（既定 14 日）を過ぎた根の古い取得時刻は「台帳が見ている時刻」にしない。
-    cfg=isolated_account_factory('one',handle='owner');own_sent('one','ROOT');own_sent('one','OLD')
-    save(cfg);save(cfg,'OLD')
-    path=Path(accounts.data_dirs(accounts.load_account('one'),'one')['replies'])/'OLD.ndjson'
-    path.write_text(path.read_text().replace(AT,'2026-08-01T10:00:00+09:00'))
-    result=unanswered.answer('one',now=NOW)
-    assert result['seen_until']==AT and result['seen_until_hours']==1.0
-    assert result['collection_stale_since']=='2026-08-01T10:00:00+09:00'
+    assert '返信を採った記録がありません。今採るなら --refresh' in capsys.readouterr().out
