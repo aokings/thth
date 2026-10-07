@@ -560,6 +560,10 @@ def _world(name, cfg, now, counter, allowed_names=None):
         return cell(cannot_say="no_watch_words")
     if "keyword_search" not in adapters_mod.capabilities_for(media):
         return cell(cannot_say="not_supported")
+    if getattr(adapters_mod.REGISTRY.get(media), "PAID_READS", False):
+        # 有償の読み取り（X）は人が選んで 1 本ずつ返す出向きのためだけ——毎朝の一枚が
+        # 自動で検索しない（設計 2026-10-08「X の検索と枝の読み取りと使用ルール」運用 1）。
+        return cell(cannot_say="not_supported")
     words = words[:where_cli_mod.MAX_WORDS]
 
     def call():

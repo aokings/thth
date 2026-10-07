@@ -90,7 +90,7 @@ def test_success_pkce_basic_observed_expiry_and_auth_only(env,capsys):
     assert token['scopes']==x.SCOPES and token['scopes_source']=='response' and token['auth_via']=='paste'
     assert stat.S_IMODE(Path(env['cfg']['token']).stat().st_mode)==0o600
     # 2.14: X は投稿 adapter を持つ（2.11 の auth-only ではなくなった）。
-    assert adapters.capabilities_for('x')=={'recent_posts'}
+    assert adapters.capabilities_for('x')=={'recent_posts','keyword_search','thread_read'}
     assert adapters.make_adapter(env['cfg'],token).user_id=='123'
     output='\n'.join(env['lines'])+json.dumps(admin_log.read())+capsys.readouterr().out
     for value in [env['token'],env['refresh'],env['client_secret'],env['code'],session['state'],session['read_key'],session['code_verifier']]:assert value not in output
@@ -214,7 +214,7 @@ def test_cli_account_add_then_auth_reaches_x_profile(env,monkeypatch):
     monkeypatch.setattr('builtins.input',lambda:x.CALLBACK+'?'+urllib.parse.urlencode({'code':env['code'],'state':authflow._read_session('newx')['state']}))
     assert cli.main(['auth','newx','--by','operator','--paste'])==0
     cfg=accounts.load_account('newx');assert cfg['production'] is False and cfg['scheduled'] is False
-    assert accounts.load_token(cfg)['user_id']=='123' and adapters.capabilities_for('x')=={'recent_posts'}
+    assert accounts.load_token(cfg)['user_id']=='123' and adapters.capabilities_for('x')=={'recent_posts','keyword_search','thread_read'}
 
 
 @pytest.mark.parametrize('fault',['zero','partial','fsync','rollback'])

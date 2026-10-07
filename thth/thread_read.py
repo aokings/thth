@@ -47,6 +47,7 @@ SOURCE_BY_MEDIUM = {
     "bluesky": "bluesky:getPostThread",
     "mastodon": "mastodon:/context",
     "threads": "threads:/conversation",
+    "x": "x:/2/tweets/search/recent(conversation_id)",
 }
 # `provenance.permission`（Threads だけ・他は None）。
 PERMISSION_BY_MEDIUM = {
@@ -268,6 +269,11 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
     # を見る（自分の返信が `max_messages` の外に出ていても拾うため）。
     self_reply_by_parent = _self_reply_index(ordered, is_own=_is_own)
     truncated = len(ordered) > max_messages
+    # 有償の読み取り（X）は adapter の側で枝を 50 本までしか読まない（設計 2026-10-08）。
+    cost_of = getattr(adapter, "read_cost", None)
+    read_cost = cost_of() if getattr(adapter_cls, "PAID_READS", False) and callable(cost_of) else None
+    if read_cost is not None and read_cost.get("truncated"):
+        truncated = True
     continue_from = None
     if truncated:
         kept = ordered[:max_messages]
@@ -308,7 +314,9 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
 
     eng_rows = engagements_mod.records(account_cfg, account_name)
 
+    extra = {"x_read_cost": read_cost} if read_cost is not None else {}
     return {
+        **extra,
         "root": {
             "post_id": root_row.get("message_id"),
             "author_key": root_author_key,
@@ -394,6 +402,9 @@ def _render_human(result: dict) -> None:
     counts = result["counts"]
     print(f"  n={counts['messages']}  参加者={counts['participants']}  "
          f"自分={counts['own']}  truncated={counts['truncated']}")
+    if result.get("x_read_cost"):
+        from .where_cli import read_cost_line
+        print("  " + read_cost_line(result["x_read_cost"]))
 
 
 def register(sub) -> None:

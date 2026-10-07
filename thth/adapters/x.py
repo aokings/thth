@@ -6,9 +6,17 @@
 表には `unsupported: provider_tier_enterprise_only` と理由を付けて載せる
 （`thth/media_capabilities.py`）。**この module は `quote_tweet_id` を組み立てない。**
 
-**読む口**: `whoami`（`GET /2/users/me`）と `posts`（`GET /2/users/:id/tweets`）だけ。
+**読む口**: `whoami`（`GET /2/users/me`）と `posts`（`GET /2/users/:id/tweets`）。
 どちらも従量の読み取りなので **2.12 の読取予算（USD）の中でしか動かない**
-（既定 0＝動かない）。`where`／`mentions`／`insights` は次版（設計 §3）。
+（既定 0＝動かない）。
+
+**他人の投稿を読む口**（設計 2026-10-08「X の検索と枝の読み取りと使用ルール」）:
+`keyword_search`（`GET /2/tweets/search/recent`）・`fetch_post`（`GET /2/tweets/:id`）・
+`conversation`（`fetch_post` で `conversation_id` を取り、`conversation_id:<id>` で検索）。
+**返ってきた投稿 1 本ごとに 0.005 USD**（Posts: Read）なので、`budget_x.posts_read()` の
+予約の中でだけ動く（月の上限は本人確認と合わせて・account ごとの JST の 1 日の本数）。
+**人が選んで 1 本ずつ返す出向きのためだけ**——timer・見張り・自動の返信には使わない
+（`PAID_READS`。`collect`・`morning` はこの印を見て叩かない）。`mentions`／`insights` は無い。
 
 **書く口の上限**: `thth admin budget x-posts --monthly <本数>`（`thth/budget_x_posts.py`）。
 既定 0＝**投稿しない**。予約は要求の前・確定は応答の後で、**結果不明は自動で
@@ -173,7 +181,18 @@ class XAdapter(base.Adapter):
     の refresh は `thth refresh`／`thth maintain` が回す——`adapters.auth_x`）。
     """
 
-    CAPABILITIES: frozenset = frozenset({'recent_posts'})
+    CAPABILITIES: frozenset = frozenset({'recent_posts', 'keyword_search', 'thread_read'})
+    # 他人の投稿の読み取りが従量（設計 2026-10-08）。**自動の経路はこの印で叩かない。**
+    PAID_READS = True
+    KEYWORD_SEARCH_DEFAULT_LIMIT = 10
+    KEYWORD_SEARCH_MAX_LIMIT = 25
+    CONVERSATION_MAX = 50
+    # `max_results` の下限（一次資料: recent search は 10〜100）。
+    SEARCH_MIN_RESULTS = 10
+    SEARCH_WINDOW_DAYS = 7
+    SEARCH_TYPES = ('TOP', 'RECENT')
+    READ_FIELDS = {'tweet.fields': 'created_at,author_id,conversation_id,referenced_tweets',
+                   'expansions': 'author_id', 'user.fields': 'username'}
     TOKEN_KEYS = ('access_token',)
     TOKEN_SETUP_HINT = 'thth auth'
     POST_ID_FORM_HINT = 'X の post_id は 19 桁までの数字です。'
@@ -190,6 +209,9 @@ class XAdapter(base.Adapter):
         self.timeout = timeout
         self.auth_account = '<account>'
         self.granted_scopes = None
+        # この実体（＝1 回のコマンド）で読んだ他人の投稿（本数・推定 USD・打ち切り）。
+        self._reads = {'posts': 0, 'usd': '0', 'calls': 0, 'truncated': False}
+        self._post_cache = {}
 
     @classmethod
     def from_account(cls, account_cfg: dict, token: dict):
@@ -353,6 +375,196 @@ class XAdapter(base.Adapter):
                         'url': post_url(self.username, row['id']),
                         'text': row.get('text') or '', 'topic': None})
         return out
+
+    # ----- 他人の投稿を読む口（**Posts: Read の予約の中でだけ動く**） ------------
+
+    def _paid_get(self, path, query, *, limit, what):
+        """1 回の GET を `budget_x.posts_read(account, limit)` の中で投げる。
+
+        戻りは `(value, n_returned)`。**課金の数は応答に入っていた投稿の本数**（呼び手が
+        画面に出す本数で切り詰めても、返ってきた本数は返ってきた本数）。予算の断りは
+        `AdapterError`（`budget_exhausted`・`x_daily_read_cap` で始まる 1 行）に写す。
+        """
+        from .. import budget_x
+        try:
+            with budget_x.posts_read(self.auth_account, limit) as slot:
+                slot.dispatch()
+                self._reads['calls'] += 1
+                try:
+                    status, value = request(self, 'GET', path, query=query)
+                except urllib.error.HTTPError as exc:
+                    # 断りの応答（4xx・5xx）は投稿を返していない——0 本で確定する。
+                    # 応答そのものが無い（下の except）は押さえた上限のまま uncertain。
+                    slot.settle(0)
+                    charged = 0
+                    if exc.code == 403:
+                        raise base.PermissionMissing('tweet.read', 'x_read_http_403') from None
+                    if exc.code == 429:
+                        detail = rate_limit(exc)
+                        raise AdapterError('provider_rate_limited'
+                                           + (f' {json.dumps(detail, sort_keys=True)}' if detail else ''),
+                                           http_status=429) from None
+                    hint = '（thth auth <account> --by <名前> をやり直してください）' if exc.code == 401 else ''
+                    raise AdapterError('x_read_http_' + str(exc.code) + hint,
+                                       http_status=exc.code) from None
+                except (httpsafe.EndpointRejected, urllib.error.URLError, TimeoutError, OSError, ValueError,
+                        base.AdapterError) as exc:
+                    # 応答が読めなかった: 台帳は押さえた上限のまま uncertain（多めに数える側）。
+                    self._count(limit)
+                    raise AdapterError(what + ': x_read_failed: ' + self._scrub(exc)) from None
+                data = value.get('data')
+                if status != 200 or not (isinstance(data, (list, dict)) or isinstance(value.get('meta'), dict)):
+                    self._count(limit)
+                    raise AdapterError(what + ': x_read_response_invalid')
+                n = len(data) if isinstance(data, list) else (1 if isinstance(data, dict) else 0)
+                slot.settle(n)
+                charged = slot.count if slot.count is not None else limit
+        except budget_x.BudgetError as exc:
+            code = str(exc)
+            message = {
+                'budget_exhausted': '今月の X の読み取り予算（本人確認と合わせて）が足りません。thth admin budget x で確かめてください',
+                'x_daily_read_cap': '今日（JST）の X の他人の投稿の読み取りがこの account の上限に達します。'
+                                    'thth account set <名前> x_daily_reads <本数> --by <名前> で変えられます',
+            }.get(code, 'X の読み取りの予約ができません')
+            raise AdapterError(f'{code}: {message}') from None
+        self._count(charged)
+        return value, n
+
+    def _count(self, n):
+        from decimal import Decimal
+        from .. import budget_x
+        self._reads['posts'] += n
+        self._reads['usd'] = str(Decimal(self._reads['usd']) + budget_x.POSTS_PRICE * n)
+
+    @staticmethod
+    def _users(value):
+        users = (value.get('includes') or {}).get('users') if isinstance(value.get('includes'), dict) else None
+        out = {}
+        for user in users or []:
+            if isinstance(user, dict) and isinstance(user.get('id'), str):
+                out[user['id']] = user.get('username') if isinstance(user.get('username'), str) else None
+        return out
+
+    def _message_row(self, row, users):
+        """X の 1 本を `Message` の形に写す（`threads._message_row` と同じ鍵）。"""
+        identifier = row.get('id')
+        username = users.get(row.get('author_id'))
+        # 応答の名前は `referenced_tweets`（10/7 に実機で通った `tweet.fields` の系）。資料は
+        # `referenced_posts` と書くようになったので、どちらでも読む。
+        refs = row.get('referenced_tweets') or row.get('referenced_posts') or []
+        replied = next((ref.get('id') for ref in refs
+                        if isinstance(ref, dict) and ref.get('type') == 'replied_to'
+                        and isinstance(ref.get('id'), str)), None)
+        conversation = row.get('conversation_id') if isinstance(row.get('conversation_id'), str) else None
+        return {
+            'message_id': identifier,
+            'username': username,
+            'text': row.get('text'),
+            'timestamp': row.get('created_at'),
+            'replied_to': {'id': replied} if replied else None,
+            'root_post': {'id': conversation} if conversation else None,
+            'medium': MEDIUM,
+            'author_key': base.author_key(MEDIUM, username),
+            'reply_deadline': None,
+            'permalink': post_url(username, identifier),
+        }
+
+    def _rows(self, value, users=None):
+        data = value.get('data')
+        if data is None:
+            data = []
+        if not isinstance(data, list):
+            raise AdapterError('x_read_response_invalid')
+        users = self._users(value) if users is None else users
+        return [self._message_row(row, users) for row in data
+                if isinstance(row, dict) and isinstance(row.get('id'), str) and POST_ID.fullmatch(row['id'])]
+
+    @staticmethod
+    def _start_time(since):
+        """`since`（ISO）を `start_time` に。recent search の 7 日より古ければ渡さない。"""
+        import datetime
+        at = jst.parse(since) if isinstance(since, str) else None
+        if at is None:
+            return None
+        utc = at.astimezone(datetime.timezone.utc)
+        floor = jst.now_jst().astimezone(datetime.timezone.utc) - datetime.timedelta(days=7) + datetime.timedelta(minutes=1)
+        if utc <= floor:
+            return None
+        return utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    def keyword_search(self, q: str, *, search_type: str = 'RECENT', limit: int = 10,
+                       since: str | None = None) -> list:
+        """`GET /2/tweets/search/recent`（直近 7 日）。**1 回・最大 25 本。**
+
+        `max_results` は一次資料の下限 10 に合わせる（`max(10, limit)`）。画面には `limit`
+        本まで返すが、**課金は応答に入っていた本数**で数える。
+        """
+        if not isinstance(q, str) or not q.strip():
+            raise AdapterError('検索の語が空です')
+        if search_type not in self.SEARCH_TYPES:
+            raise AdapterError(f"search_type は {' / '.join(self.SEARCH_TYPES)} のどちらかです（{search_type!r}）")
+        if type(limit) is not int or not 1 <= limit <= self.KEYWORD_SEARCH_MAX_LIMIT:
+            raise AdapterError(f'X の検索は 1 回 1〜{self.KEYWORD_SEARCH_MAX_LIMIT} 本です（{limit!r}）'
+                               '——有償の読み取りなので上限を超える指定は断ります')
+        query = {'query': q.strip(), 'max_results': max(self.SEARCH_MIN_RESULTS, limit),
+                 'sort_order': 'recency' if search_type == 'RECENT' else 'relevancy', **self.READ_FIELDS}
+        start = self._start_time(since)
+        if start:
+            query['start_time'] = start
+        value, _ = self._paid_get('/2/tweets/search/recent', query,
+                                  limit=query['max_results'], what='投稿の検索')
+        return self._rows(value)[:limit]
+
+    def fetch_post(self, post_id: str) -> dict:
+        """`GET /2/tweets/:id`（1 本・`conversation_id` も取る）。同じ実体の中では 1 回だけ叩く。"""
+        value = str(post_id or '').strip()
+        if not POST_ID.fullmatch(value):
+            raise AdapterError('x_post_id_invalid: ' + self.POST_ID_FORM_HINT)
+        if value in self._post_cache:
+            return dict(self._post_cache[value])
+        body, _ = self._paid_get('/2/tweets/' + value, dict(self.READ_FIELDS), limit=1, what='投稿の取得')
+        data = body.get('data')
+        if not isinstance(data, dict) or data.get('id') != value:
+            raise AdapterError('投稿の取得: x_read_response_invalid')
+        row = self._message_row(data, self._users(body))
+        self._post_cache[value] = row
+        return dict(row)
+
+    def conversation(self, post_id: str, *, since: str | None = None) -> list:
+        """枝（`conversation_id:<id>` の recent search・**最大 50 本**・直近 7 日）。
+
+        根（`post_id` 自身）は行に入れない（`thread_read` は根を `fetch_post` で別に引く）。
+        50 本を超えた分は読まない（`read_cost()['truncated']`）。
+        """
+        root = self.fetch_post(post_id)
+        conversation = (root.get('root_post') or {}).get('id') or root['message_id']
+        query = {'query': 'conversation_id:' + conversation, 'max_results': self.CONVERSATION_MAX,
+                 'sort_order': 'recency', **self.READ_FIELDS}
+        start = self._start_time(since)
+        if start:
+            query['start_time'] = start
+        value, n = self._paid_get('/2/tweets/search/recent', query,
+                                  limit=self.CONVERSATION_MAX, what='枝の取得')
+        rows = [row for row in self._rows(value) if row['message_id'] != root['message_id']]
+        meta = value.get('meta') if isinstance(value.get('meta'), dict) else {}
+        if meta.get('next_token') or n > self.CONVERSATION_MAX:
+            self._reads['truncated'] = True
+        return rows[:self.CONVERSATION_MAX]
+
+    def read_cost(self) -> dict:
+        """この実体で読んだ他人の投稿の本数と推定 USD・今日と今月の数字（画面と `--json`）。"""
+        from .. import budget_x
+        try:
+            status = budget_x.posts_status(self.auth_account)
+        except (budget_x.BudgetError, OSError, ValueError, TypeError):
+            status = {'today': None, 'daily_cap': None, 'day_jst': None, 'month_utc': None,
+                      'month_used_usd': None, 'cap_usd': None}
+        return {'posts': self._reads['posts'], 'usd_estimate': self._reads['usd'],
+                'requests': self._reads['calls'], 'truncated': self._reads['truncated'],
+                'price_usd_per_post': str(budget_x.POSTS_PRICE),
+                'price_version': budget_x.POSTS_PRICE_VERSION,
+                'search_window_days': self.SEARCH_WINDOW_DAYS,
+                'basis': 'estimate_not_actual_charge', **status}
 
     def refresh_token(self, token):
         raise NotImplementedError(

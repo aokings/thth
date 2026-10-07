@@ -319,6 +319,14 @@ def _account_node(account_name: str, words: list, *, search_type: str,
     if not adapter_cls.has_token(token):
         return None, f"{account_name}: token が無いので検索できません"
     adapter = adapters_mod.make_adapter(account_cfg, token)
+    # 有償の読み取り（X・設計 2026-10-08）: 既定 10・最大 25。**超える指定は断る**。
+    # 無償の媒体はこれまでどおり（既定 25・上限 100）。
+    paid = bool(getattr(adapter_cls, "PAID_READS", False))
+    if limit is None:
+        limit = (getattr(adapter_cls, "KEYWORD_SEARCH_DEFAULT_LIMIT", None) or DEFAULT_LIMIT) if paid else DEFAULT_LIMIT
+    if paid and limit > adapter_cls.KEYWORD_SEARCH_MAX_LIMIT:
+        _reject(f"{account_name}: {media} の検索は有償の読み取りなので 1 語 {adapter_cls.KEYWORD_SEARCH_MAX_LIMIT} 本まで"
+                f"です（--limit {limit} は断りました）")
 
     try:
         replied_idx, replied_why = threads_read_cli_mod.replied_index(
@@ -364,7 +372,7 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                 node_cannot_say.append(f"{word}: タグの観測: {redact_mod.redact(str(e))}")
         try:
             kwargs = {'search_type': search_type, 'limit': limit}
-            if floor is not None and media == 'bluesky':kwargs['since'] = jst.iso(floor)
+            if floor is not None and (media == 'bluesky' or paid):kwargs['since'] = jst.iso(floor)
             rows = adapter.keyword_search(word, **kwargs)
         except adapter_base.PermissionMissing as e:
             node_cannot_say.append(f"{word}: {_permission_message(account_name, adapter, e)}")
@@ -462,6 +470,11 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                                                list(matched_rows.values()),
                                                words=words, also=also or [], now=now)
 
+    cost = getattr(adapter, "read_cost", None)
+    if paid and callable(cost):
+        # 今回の本数・推定 USD・今日と今月の数字（設計 2026-10-08「毎回の表示」）。
+        extra["x_read_cost"] = cost()
+
     if aggregate_mode:
         # 相手の仮名（author_key）も返さない——you_and_them は作らない。
         return {"medium": media, "mode": "aggregate", "by_word": by_word, "by_tag": [],
@@ -536,7 +549,7 @@ def _clean_also(also) -> list:
 
 
 def answer(*, account_name: str | None = None, project: str | None = None,
-          words: list, recent: bool = False, limit: int = DEFAULT_LIMIT,
+          words: list, recent: bool = False, limit: int | None = None,
           now=None, since=None, exclude_engaged=False, max_per_author=None,
           also=None, aggregate_mode=False, lexicon=None, suggest=False) -> dict:
     """`where_to_appear` の答え（設計「自分の泉」§2.3・§2.6）。**読むだけ。**
@@ -562,7 +575,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
     if not (MIN_WORDS <= len(cleaned) <= MAX_WORDS):
         _reject(f"語は {MIN_WORDS}〜{MAX_WORDS} 個です（受け取ったのは {len(cleaned)} 個）")
     words = cleaned
-    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= MAX_LIMIT):
+    # `None` は媒体ごとの既定（無償の媒体は 25・X は 10）。
+    if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= MAX_LIMIT)):
         _reject(f"limit は 1〜{MAX_LIMIT} です: {limit!r}")
 
     now = now if now is not None else jst.now_jst()
@@ -685,6 +699,7 @@ def _render_human(result: dict) -> None:
         if node["cannot_say"]:
             for line in node["cannot_say"]:
                 print(f"  言えない: {line}")
+        _render_read_cost(node)
     if result["cannot_say"]:
         print("")
         for line in result["cannot_say"]:
@@ -727,10 +742,28 @@ def _render_aggregate(result: dict) -> None:
         _render_hits_and_suggest(node)
         for line in node["cannot_say"]:
             print(f"  言えない: {line}")
+        _render_read_cost(node)
     for line in result["cannot_say"]:
         print(f"言えない: {line}")
     print("")
     print(f"注記: 表示だけで、道具は保存しません。{result['storage_note']}")
+
+
+def read_cost_line(cost: dict) -> str:
+    """有償の読み取りの 1 行（`where`・`thread` が共有）。推定であって請求額ではない。"""
+    def dash(value):
+        return "—" if value is None else value
+    line = (f"X の読み取り: 今回 {cost['posts']} 本・約 ${cost['usd_estimate']}"
+            f"・今日 {dash(cost.get('today'))}/{dash(cost.get('daily_cap'))} 本"
+            f"・今月 ${dash(cost.get('month_used_usd'))}/${dash(cost.get('cap_usd'))}")
+    if cost.get("truncated"):
+        line += "（枝は 50 本で打ち切り）"
+    return line
+
+
+def _render_read_cost(node: dict) -> None:
+    if node.get("x_read_cost"):
+        print("  " + read_cost_line(node["x_read_cost"]))
 
 
 def _render_hits_and_suggest(node: dict) -> None:
@@ -794,8 +827,8 @@ def register(sub) -> None:
                    help="account の代わりに、この project の account 全部を対象にする")
     p.add_argument("--recent", action="store_true",
                    help="TOP でなく RECENT（新しい順）で検索する")
-    p.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
-                   help=f"1 account・1 語あたりの上限（既定 {DEFAULT_LIMIT}）")
+    p.add_argument("--limit", type=int, default=None,
+                   help=f"1 account・1 語あたりの上限（既定 {DEFAULT_LIMIT}・X は既定 10 で最大 25）")
     p.add_argument("--json", action="store_true")
     p.add_argument("--word", action="append", default=[], help="検索語（繰り返し指定できます）")
     p.add_argument('--since', default=None, help='検索期間（7d/1h/ISO）')

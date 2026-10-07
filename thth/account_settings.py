@@ -10,6 +10,7 @@
 | `burst_minutes` | `burst.minutes` | 上げる（数える窓が広いほど止まりやすい） |
 | `hold_minutes` | 同じ | 上げる |
 | `min_interval_hours` | 同じ | 上げる |
+| `x_daily_reads` | 同じ（X の口座だけ・既定 60） | 下げる（JST の 1 日に読む他人の投稿の本数・有償） |
 
 口は 3 つ。**どこから変えたかで許す向きが違う**（主セッションの裁定 2026-09-26）:
 
@@ -32,7 +33,9 @@ from pathlib import Path
 from . import accounts, admin_log, secrets_fs
 
 KEYS = ("daily_max_posts", "daily_max_retracts", "burst_count", "burst_minutes",
-        "hold_minutes", "min_interval_hours")
+        "hold_minutes", "min_interval_hours", "x_daily_reads")
+# X の口座だけが持つ項目（有償の読み取りの 1 日の本数・設計 2026-10-08）。
+X_ONLY_KEYS = frozenset(("x_daily_reads",))
 # 数値が大きいほど締まる項目（それ以外の数値は小さいほど締まる）。
 TIGHTER_WHEN_LARGER = frozenset(("burst_minutes", "hold_minutes", "min_interval_hours"))
 MIN_INTERVAL_MAX = 168
@@ -53,6 +56,12 @@ def current(cfg) -> dict:
     """いま効いている値（台帳に無い項目は既定）。"""
     limits = accounts.guard_limits(cfg)
     hours = cfg.get("min_interval_hours")
+    extra = {}
+    if (cfg or {}).get("media") == "x":
+        from . import budget_x
+        reads = cfg.get(budget_x.DAILY_READS_KEY)
+        extra["x_daily_reads"] = (reads if type(reads) is int and 0 <= reads <= budget_x.MAX_DAILY_READS
+                                  else budget_x.DEFAULT_DAILY_READS)
     return {
         "daily_max_posts": limits["daily_max_posts"],
         "daily_max_retracts": limits["daily_max_retracts"],
@@ -60,6 +69,7 @@ def current(cfg) -> dict:
         "burst_minutes": limits["burst"]["minutes"],
         "hold_minutes": limits["hold_minutes"],
         "min_interval_hours": hours if isinstance(hours, (int, float)) and not isinstance(hours, bool) else 0,
+        **extra,
     }
 
 
@@ -96,6 +106,9 @@ def parse(key, value):
         ok = 1 <= number <= accounts.BURST_COUNT_MAX
     elif key == "burst_minutes":
         ok = 1 <= number <= accounts.BURST_MINUTES_MAX
+    elif key == "x_daily_reads":
+        from . import budget_x
+        ok = 0 <= number <= budget_x.MAX_DAILY_READS
     else:
         ok = accounts.valid_guard_value(key, number)
     if not ok:
@@ -121,6 +134,9 @@ def change(account, key, value, *, by, via="cli", tighten_only=False) -> dict:
         raise SettingsError("invalid_setting")
     after = parse(key, value)
     cfg = accounts.load_account(account)
+    if key in X_ONLY_KEYS and cfg.get("media") != "x":
+        # X の口座でなければ意味の無い項目（黙って台帳に置かない）。
+        raise SettingsError("invalid_setting")
     before = current(cfg)[key]
     if key == "hold_minutes" and after > 0 and not scheduled(cfg):
         # 刻んでも timer が拾わない（黙って出ない）。裁定 (b)。
@@ -291,6 +307,8 @@ def show_status(row) -> int:
     print(f"  急な連投で止める（burst）: {s['burst_minutes']} 分に {s['burst_count']} 件を超えたら")
     print(f"  取り消しの猶予（hold_minutes）: {s['hold_minutes']} 分")
     print(f"  最短間隔（min_interval_hours）: {s['min_interval_hours']} 時間（返信には掛けない）")
+    if "x_daily_reads" in s:
+        print(f"  1 日（JST）に読む他人の X の投稿の上限（x_daily_reads）: {s['x_daily_reads']} 本（有償・1 本 約 0.005 USD）")
     print(f"  予約の timer（scheduled）: {'載っている' if row['scheduled'] else '載っていない（予約と猶予は使えない）'}")
     print(f"  今日（{row['today']['date']}）: 公開 {row['today']['posts']} 件・削除 {row['today']['retracts']} 件")
     for key in row["ignored"]:

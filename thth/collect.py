@@ -482,6 +482,10 @@ def _fetch_replies(adapter, account_cfg: dict, post_id: str, reply_to, owned) ->
     返事が台帳に入らなかった（要望 r20261007-4b57e1ee）。自分の根のスレッドの中の返信は、
     その根の会話で採れているので落とす（同じ返信を 2 つの台帳に入れない）。
     `owned` は自分の投稿の id の集合を返す関数（要るときだけ読む）。"""
+    if getattr(adapter, "PAID_READS", False):
+        # 他人の投稿の読み取りが有償の媒体（X）は採取（timer）から枝を読まない。読んだ
+        # 中身を台帳に写すことにもなる（設計 2026-10-08 運用 1・3）。
+        raise NotImplementedError("paid_read_not_automatic")
     branch = getattr(adapter, "branch_replies", None)
     if not reply_to or account_cfg.get("media") != "threads" or branch is None:
         return adapter.conversation(post_id)
@@ -628,6 +632,11 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
         if age_hours < 0 or age_hours > max(collect_days, metric_window_days()) * 24:
             continue
         posts_seen += 1
+        if getattr(adapter, "PAID_READS", False):
+            # 他人の投稿の読み取りが有償の媒体（X）は、timer の採取で数も返信も読まない
+            # （設計 2026-10-08 運用 1・3）。読めないのは決まりなので誤りとして積まない
+            # ——積むと 10 分ごとに運用の知らせが鳴る。
+            continue
 
         section = queuefile.extract_section(qf.body, account_cfg["media"])
         名 = postid_mod.to_filename(post_id)

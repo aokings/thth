@@ -549,6 +549,7 @@ def register(sub) -> None:
                 "thth account set <name> <名前> <値> --by <actor>  安全装置の数値を変える\n"
                 "  名前: daily_max_posts・daily_max_retracts・\n"
                 "        burst_count・burst_minutes（burst <件数> <分> でも）・hold_minutes・min_interval_hours\n"
+                "        x_daily_reads（X の口座だけ・JST の 1 日に読む他人の投稿の本数・既定 60）\n"
                 "thth account resume <name> --by <actor>  安全装置が止めた口座を戻す（MCP からはできない）\n"
                 "thth account status <name> [--json]      数値・止まっているか・今日の公開数/削除数\n"
                 "thth account migrate [--dry-run] repo の中の台帳を "
