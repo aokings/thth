@@ -136,3 +136,13 @@ def test_CLIのper_post_clicksとsinceの組み合わせ(isolated_account_factor
                      "--by", "goal"]) == 2
     assert cli.main(["analytics-report", "--project", "p", "--per-post-clicks"]) == 2
     assert cli.main(["analytics-report", name, "--per-post-clicks", "--since", "abc"]) == 2
+
+
+def test_行に原稿のファイル名_表にも出る(isolated_account_factory):
+    # 要望 r20260925-37d19850: 系列の比較に measured と突き合わせずに済むよう file を足す。
+    account = isolated_account_factory()
+    _fixture(account)
+    payload = analytics_clicks.answer(account["name"], since="30d", now=NOW)
+    assert all("file" in row for row in payload["posts"])
+    table = analytics_clicks.render_markdown(payload)
+    assert "| 投稿 | 原稿 | 投稿日時 |" in table

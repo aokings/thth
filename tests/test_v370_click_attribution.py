@@ -302,3 +302,11 @@ def test_連投の段のリンク先を実行記録に残し_別のリンク先�
     assert other["basis"] == "unique_url_72h" and other["clicks_72h"] == 6, other
     same = index.attribute("SAME", _at("17T09:00:00"), 100)
     assert same["cannot_say"] == "url_shared_72h", "連投の 3 段目と同じリンク先"
+
+
+def test_clicks_by_urlの欄が無い日は採り始める前と分ける():
+    # 要望 r20260925-37d19850: 欄そのものが無い日（採り始める前）と、欄はあるのに読めない日を分ける。
+    from thth import click_attribution as ca
+    assert ca._day_clicks({"clicks": 5}, ["a.example/x"]) == (None, ca.BY_URL_NOT_COLLECTED)
+    assert ca._day_clicks({"clicks": 5, "clicks_by_url": "壊れた"}, ["a.example/x"]) == (None, ca.BY_URL_UNAVAILABLE)
+    assert ca._day_clicks({"clicks": 0}, ["a.example/x"]) == (0, None)

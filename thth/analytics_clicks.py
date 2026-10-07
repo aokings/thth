@@ -53,7 +53,8 @@ def _row(index, post_id, posted, post, now):
                  "numerator": clicks, "denominator": denominator,
                  "basis": "clicks_72h / (clicks_before_post + clicks_72h + clicks_after_window)",
                  "reason": None if denominator else "no_clicks"}
-    return {"post_id": post_id, "posted_at": jst.iso(posted), "urls": urls,
+    # 原稿のファイル名（あれば）。系列ごとに比べるとき measured と突き合わせずに済む（要望 r20260925-37d19850）。
+    return {"post_id": post_id, "file": post.get("file"), "posted_at": jst.iso(posted), "urls": urls,
             "window": attributed["window"], "window_days": attributed["window_days"],
             # **窓の和だけ**。窓の前（before）と後（after）はここに足さない。
             "clicks_72h": clicks,
@@ -145,6 +146,8 @@ def answer(account_name, *, since=None, window_days=DEFAULT_WINDOW_DAYS, now=Non
                             "共有のリンク先・リンク無し・プロフィールのリンク・記録に無いリンク先は"
                             "並べない（not_attributable に理由ごとの本数）",
                             "窓の前と後は参考。窓の和には足さない",
+                            "日次に clicks_by_url を採り始める前の日の投稿は、クリックが null"
+                            "（clicks_by_url_not_collected_yet）。欄はあるのに読めない日は clicks_by_url_unavailable",
                             "本数は実測の台帳にある投稿（根と返信を含む）。SNS 上の全投稿ではない"]}
 
 
@@ -169,14 +172,15 @@ def render_markdown(payload) -> str:
              f"最小 {_fmt(s['window_share']['per_post_min'])}）。"
              f"窓の後 {s['clicks_after_window']['sum']}（参考）・"
              f"窓の前 {s['clicks_before_post']['sum']}（窓には足さない）。", ""]
-    lines.append("| 投稿 | 投稿日時 | 72h クリック | クリック率 | 窓の後（参考） | 窓の前 |")
-    lines.append("|---|---|---|---|---|---|")
+    lines.append("| 投稿 | 原稿 | 投稿日時 | 72h クリック | クリック率 | 窓の後（参考） | 窓の前 |")
+    lines.append("|---|---|---|---|---|---|---|")
     for row in payload["posts"]:
         clicks = row["clicks_72h"] if row["clicks_72h"] is not None else f"null（{row['clicks_missing']}）"
         rate = row["click_rate"] if row["click_rate"] is not None else f"null（{row['rate_missing'] or row['clicks_missing']}）"
         after = _fmt(row["clicks_after_window"])
         before = _fmt(row["clicks_before_post"])
-        lines.append(f"| {_markdown_text(row['post_id'])} | {row['posted_at']} | {clicks} | {rate}"
+        source = _markdown_text(row["file"]) if row.get("file") else "—"
+        lines.append(f"| {_markdown_text(row['post_id'])} | {source} | {row['posted_at']} | {clicks} | {rate}"
                      f" | {after} | {before} |")
     if payload["not_attributable"]:
         lines += ["", "並べない投稿: " + "・".join(f"{k} {v}" for k, v in payload["not_attributable"].items())]

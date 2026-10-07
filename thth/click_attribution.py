@@ -62,6 +62,9 @@ CANNOT_SAY = (URL_SHARED, NO_LINK, PROFILE_LINK, LINK_UNRECORDED, NEARBY_LINK_UN
 WINDOW_OPEN = "window_open"
 DAILY_MISSING = "daily_missing"
 BY_URL_UNAVAILABLE = "clicks_by_url_unavailable"
+# その日の日次に `clicks_by_url` の欄そのものが無い（採り始める前の日・要望 r20260925-37d19850）。
+# 欄はあるのに読めない（`BY_URL_UNAVAILABLE`）と分ける。
+BY_URL_NOT_COLLECTED = "clicks_by_url_not_collected_yet"
 # クリック率の分母が無い理由。
 VIEWS_MISSING = "views_24h_missing"
 
@@ -231,6 +234,8 @@ def _day_clicks(metrics, urls):
     if isinstance(clicks, (int, float)) and not isinstance(clicks, bool) and clicks == 0:
         # その日は account 全体で 0——どのリンク先も 0。
         return 0, None
+    if "clicks_by_url" not in metrics:
+        return None, BY_URL_NOT_COLLECTED
     return None, BY_URL_UNAVAILABLE
 
 
