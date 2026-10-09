@@ -21,7 +21,7 @@ masaru が作ってきた 4 つのヘッドレスな道具（THTH・h2d・monban
 | **monban** | 口を開けないサーバ（ハウス）を、外の人・機械・LLM から使えるようにする門番。キーで人を確かめ、依頼を預かり、ハウスが取りに来る | Cloudflare Worker（monban.me）＋ VM のハウス＋ 利用者の CLI | 0.4.0a3（private・未公開・外の参加者 0 人）。遠くの MCP（OAuth）は claude.ai で受入済み |
 | **hub** | 多くのセッションをつなぐ管制塔。伝言・返事待ち・申し送り・代行・約束・朝の報告。自分では作業せず、masaru に「今どこへ行くべきか」を教える | Mac（伝言の SQLite）＋ VM（毎朝の集計） | 運用中（伝言は 10/4 に自前へ移行）。実案件の登録はまだ |
 
-出典: thth `docs/リリースノート_3.14.11_2026-10-09.md`・h2d `README.md`・`docs/自己紹介_h2d.md`・monban `README.md`・`CLAUDE.md`・media-hub `README.md`・`CLAUDE.md`・`docs/設計_プロジェクトハブ_2026-09-25.md`。
+出典: thth `docs/リリースノート_3.14.11_2026-10-09.md` ・ `h2d/README.md` ・ `h2d/docs/自己紹介_h2d.md` ・ `monban/README.md` ・ `monban/CLAUDE.md` ・ `media-hub/README.md` ・ `media-hub/CLAUDE.md` ・ `media-hub/docs/設計_プロジェクトハブ_2026-09-25.md`（`<repo>/…` は /Volumes/NexDev/Developer/ の下の別の repo）。
 
 hub の決まり事には、もう分担が書いてある: **時刻の実行は h2d、遠くへの配送は monban、SNS への公開は THTH が正本**（media-hub `CLAUDE.md` 冒頭）。
 
@@ -40,19 +40,19 @@ hub の決まり事には、もう分担が書いてある: **時刻の実行は
 
 | 種類 | 持っている道具 | 10/7〜10/9 に起きたこと |
 |---|---|---|
-| 時刻に動かす | THTH（queue＋timer）・h2d（cron・待ち・起こす）・hub（期日） | X の定時の投稿を「h2d に起こしてもらって手で出す」と決め、同じ日に「THTH の予約で出す」に取り下げた。h2d 側には「THTH に頼んで出す動作」が相談待ちで残っている（h2d `docs/台帳_取りこぼした用事.md`） |
+| 時刻に動かす | THTH（queue＋timer）・h2d（cron・待ち・起こす）・hub（期日） | X の定時の投稿を「h2d に起こしてもらって手で出す」と決め、同じ日に「THTH の予約で出す」に取り下げた。h2d 側には「THTH に頼んで出す動作」が相談待ちで残っている（`h2d/docs/台帳_取りこぼした用事.md`） |
 | 人を確かめる・鍵・承認 | THTH（招待・login・鍵の預かり・承認のページ）・monban（THTH 3.14.3 から写した）・h2d（鍵の登録表） | monban は THTH から写して作られたが、THTH はまだ monban を使っていない（差し替えは「判定のあと」＝今） |
 | 安全装置 | THTH の guard・monban の guard（写し） | 2 つに分かれている |
 | 連絡・報告 | THTH の報告の口・hub の伝言 | THTH の報告の口は開発側に知らせが来ない。9/25 の報告が 2 週間返事なしだった |
 | 記録 | THTH の admin_log・runs・各台帳／h2d の runlog／monban の ledger（写し）／hub の run | 形も置き場もばらばら |
-| 見張り | THTH の毎朝の一枚・h2d の感知・monban のパルス・hub の朝の集計 | **h2d も hub も THTH の毎朝の一枚の JSON を「何番目の節か」で読んでいる**（h2d `config/sensors/thth-kanto-*.json`・media-hub `hub/snsobs.py`）。THTH が表示の並びを変えると、両方の見張りが黙って止まる |
+| 見張り | THTH の毎朝の一枚・h2d の感知・monban のパルス・hub の朝の集計 | **h2d も hub も THTH の毎朝の一枚の JSON を「何番目の節か」で読んでいる**（`h2d/config/sensors/thth-kanto-*.json` ・ `media-hub/hub/snsobs.py`）。THTH が表示の並びを変えると、両方の見張りが黙って止まる |
 
 そして、どれも最後は「人が決める」で止まる。その場所がばらばらで、多くはチャットの中だった。
 
 - THTH: 投稿の承認（確認番号の 2 段）。
 - h2d: 結果が不確かな書き込みを、人が `rules resolve` で決める。
 - monban: 持ち主が止める・失効させる・鍵を回す。
-- hub: masaru に決めてもらうこと（`waiting_on_masaru`・`decide`）。
+- hub: masaru に決めてもらうこと（`waiting_on_masaru` ・ `decide`）。
 
 10/9 の例: 投稿の承認はセッションの会話で、Meta の審査結果はスマホのブラウザで、GitHub のログインは Mac でないとできなかった（スマホからは進められず、公開が数時間止まった）。
 
@@ -66,7 +66,7 @@ hub の決まり事には、もう分担が書いてある: **時刻の実行は
 2. **試すことが道具に入る**: 「この型を試す → いつ・どこで出す → 何で測る → いつ判断する」を先に宣言し、道具が出し分け・数え方・判断の日の知らせまで持つ。因果を言い切らないための証拠の段（L1〜L5）を出力に付ける。
 3. **外の人が自分の LLM で使うのが本線になる**: Meta の承認で、テスターでない人も入れる。利用者の LLM が CLI と MCP だけで最後まで回せることを中心にする（masaru の方針「THTH は道具の提供者。利用者とその LLM を疑わない」）。
 
-4.0 で互換を崩す候補: JSON の欄の名前の統一（`id`・`message_id`・`post_id` の混在）、台帳の様態の分け方（「同席専用」と「予約あり」が人を迷わせた）、有償の読み取りを媒体の例外でなく芯に入れる。
+4.0 で互換を崩す候補: JSON の欄の名前の統一（`id` ・ `message_id` ・ `post_id` の混在）、台帳の様態の分け方（「同席専用」と「予約あり」が人を迷わせた）、有償の読み取りを媒体の例外でなく芯に入れる。
 
 ---
 
@@ -103,7 +103,7 @@ THTH の「Web は見る・止める・鍵だけ」を、ヘッドレス群全�
 
 | 道具 | 頼んでくること | 決めたことの返し先 |
 |---|---|---|
-| THTH | 承認待ちの投稿（本文・宛先・時刻・確認番号）、取り下げ | `approve --confirm <digest>`・`retract --confirm` |
+| THTH | 承認待ちの投稿（本文・宛先・時刻・確認番号）、取り下げ | `approve --confirm <digest>` ・ `retract --confirm` |
 | h2d | 結果が不確かな書き込み、レシピの承認 | `rules resolve` |
 | monban | この機械に鍵を渡すか、停止・失効 | 持ち主の操作 |
 | hub | どちらにするか・進めてよいか | `hub answer` |
@@ -170,7 +170,9 @@ THTH の承認待ちの投稿が 1 本、スマホのヘッドに届く → 押�
 
 ## 9. 出典（読んだもの）
 
-- THTH: `docs/地図_THTH・h2d・monban・hub の重なりと suite の層_2026-10-09.md`・`docs/設計_3.15.0_再投稿といいね_2026-09-30.md`（段 0 の結果）・`docs/設計_Xの検索と枝の読み取りと使用ルール_2026-10-08.md`・`docs/リリースノート_3.14.4〜3.14.11`・`docs/申し送り_THTH開発_代行_2026-10-07.md`
-- h2d: `README.md`・`docs/自己紹介_h2d.md`・`docs/申し送り_H2D代行_2026-10-07.md`・`docs/実行計画_h2d_1.0継続_2026-10-03.md`・`docs/台帳_取りこぼした用事.md`・`config/probes.json`・`config/sensors/thth-kanto-*.json`
-- monban: `README.md`・`CLAUDE.md`・`docs/設計_monban_共有の骨_2026-09-27.md`・`docs/申し送り_monban_遠隔MCP最初の接続のあと_2026-10-05.md`・`docs/検収_monban_外部導入の実測票_2026-10-04.md`
-- hub（media-hub）: `README.md`・`CLAUDE.md`・`docs/設計_プロジェクトハブ_2026-09-25.md`・`docs/設計_hub_mail_2026-10-03.md`・`hub/snsobs.py`
+`<repo>/…` は /Volumes/NexDev/Developer/ の下の別の repo。
+
+- THTH（この repo）: `docs/地図_THTH・h2d・monban・hub の重なりと suite の層_2026-10-09.md` ・ `docs/設計_3.15.0_再投稿といいね_2026-09-30.md`（段 0 の結果）・`docs/設計_Xの検索と枝の読み取りと使用ルール_2026-10-08.md`・リリースノート 3.14.4〜3.14.11・`docs/申し送り_THTH開発_代行_2026-10-07.md`
+- h2d: `h2d/README.md` ・ `h2d/docs/自己紹介_h2d.md` ・ `h2d/docs/申し送り_H2D代行_2026-10-07.md` ・ `h2d/docs/実行計画_h2d_1.0継続_2026-10-03.md` ・ `h2d/docs/台帳_取りこぼした用事.md` ・ `h2d/config/probes.json` ・ `h2d/config/sensors/thth-kanto-*.json`
+- monban: `monban/README.md` ・ `monban/CLAUDE.md` ・ `monban/docs/設計_monban_共有の骨_2026-09-27.md` ・ `monban/docs/申し送り_monban_遠隔MCP最初の接続のあと_2026-10-05.md` ・ `monban/docs/検収_monban_外部導入の実測票_2026-10-04.md`
+- hub: `media-hub/README.md` ・ `media-hub/CLAUDE.md` ・ `media-hub/docs/設計_プロジェクトハブ_2026-09-25.md` ・ `media-hub/docs/設計_hub_mail_2026-10-03.md` ・ `media-hub/hub/snsobs.py`
