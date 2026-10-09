@@ -236,6 +236,12 @@ class MastodonAdapter(base.Adapter):
     # で語による投稿の検索ができる（審査の壁が無い媒体。全文検索の可否は
     # インスタンス次第——`keyword_search()` の docstring・呼ぶ側の provenance 参照）。
     CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "keyword_search", "mentions"})
+    # 反応（設計 3.15.0・**L1** docs.joinmastodon.org statuses）: 再投稿（boost）は
+    # `POST /api/v1/statuses/:id/reblog`・取り消しは `…/unreblog`（`write:statuses`・
+    # いまのトークンにある）。いいねは `…/favourite`・`…/unfavourite`（`write:favourites`・
+    # 3.15.0 で `MASTODON_SCOPES` に足した。**それより前のトークンには無い**）。
+    CAPABILITIES = CAPABILITIES | frozenset({"repost", "like"})
+    REACTION_PERMISSIONS = {"repost": "write:statuses", "like": "write:favourites"}
 
     # `.token` の鍵（`thth token set <account>` が書く形・設計 v2 §4.2）。
     TOKEN_KEYS = ("access_token",)
@@ -546,6 +552,73 @@ class MastodonAdapter(base.Adapter):
             raise AdapterError("mastodon_retract_unconfirmed: 応答の id が要求した "
                                "post_id と一致しません（消えたとは言えません）")
         return {"deleted": True, "post_id": value}
+
+    # ----- 反応（設計 3.15.0） ----------------------------------------------
+
+    @classmethod
+    def reaction_scope_missing(cls, token, kind: str, *, undo: bool = False) -> str | None:
+        """`.token` の `scopes_source: response` の一覧に要る scope が無ければその名前。
+
+        `write`（上位の scope）があれば足りる。一覧が無い・`requested` は不明なので
+        止めない（叩いて 401／403 なら `PermissionMissing`）——添付の `write:media` と同じ物差し。
+        """
+        permission = cls.reaction_permission(kind, undo=undo)
+        token = token or {}
+        granted = token.get("scopes")
+        if (not permission or token.get("scopes_source") != "response"
+                or type(granted) is not list):
+            return None
+        return None if {"write", permission} & set(granted) else permission
+
+    def _react(self, kind: str, post_id: str, action: str) -> dict:
+        value = post_id.strip() if isinstance(post_id, str) else ""
+        if not POST_ID.fullmatch(value):
+            raise AdapterError("mastodon_post_id_invalid: " + self.POST_ID_FORM_HINT
+                               + "反応しません")
+        permission = self.REACTION_PERMISSIONS[kind]
+        granted = self.granted_scopes
+        if granted is not None and not ({"write", permission} & set(granted)):
+            raise base.ScopeMissing(permission, self.auth_account)
+        try:
+            body = self._request("POST", f"/api/v1/statuses/{value}/{action}", data={},
+                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise base.PermissionMissing(permission, f"HTTP {e.code}") from None
+            if e.code == 404:
+                raise AdapterError(
+                    "post_missing: 媒体にその投稿がありません（消えている・この token から見えない・"
+                    "非公開や DM は再投稿できません）", http_status=404) from None
+            raise AdapterError(f"mastodon_{action}_http_{e.code}: 反応したとは言えません",
+                               http_status=e.code) from None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            raise AdapterError(f"mastodon_{action}_failed: 結果不明（"
+                               + self._scrub(e) + "）") from None
+        if not isinstance(body, dict) or not body.get("id"):
+            raise AdapterError(f"mastodon_{action}_unconfirmed: 応答に Status がありません")
+        return body
+
+    def repost(self, post_id: str) -> dict:
+        """`POST /api/v1/statuses/:id/reblog` を 1 回。応答の最上位の `id` が boost の id。"""
+        body = self._react("repost", post_id, "reblog")
+        inner = body.get("reblog")
+        if isinstance(inner, dict) and str(inner.get("id") or "") != post_id.strip():
+            raise AdapterError("mastodon_reblog_unconfirmed: 応答の reblog が要求した投稿ではありません")
+        return {"reaction_id": str(body["id"])}
+
+    def unrepost(self, reaction_id: str, *, post_id: str | None = None) -> dict:
+        """`POST /api/v1/statuses/:id/unreblog`（**元の投稿の id** に対して）。"""
+        self._react("repost", post_id or "", "unreblog")
+        return {"undone": True}
+
+    def like(self, post_id: str) -> dict:
+        """`POST /api/v1/statuses/:id/favourite`。Mastodon のいいねに別の id は無い（元の id）。"""
+        body = self._react("like", post_id, "favourite")
+        return {"reaction_id": str(body["id"])}
+
+    def unlike(self, reaction_id: str, *, post_id: str | None = None) -> dict:
+        self._react("like", post_id or "", "unfavourite")
+        return {"undone": True}
 
     # ----- 会話 ------------------------------------------------------------
 

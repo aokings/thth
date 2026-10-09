@@ -36,7 +36,8 @@ def test_scopes_include_media_write_and_the_file_name_carries_the_generation(env
 
 def test_the_new_generation_asks_for_media_write_and_records_it(env):
     assert run(env) == 0
-    assert env['queries'][0]['scope'] == [' '.join(x.SCOPES)]
+    # 3.15.0: 認可の URL には任意の like.write も足す（世代は SCOPES のまま）。
+    assert env['queries'][0]['scope'] == [' '.join(x.SCOPES + x.OPTIONAL_SCOPES)]
     token = saved(env)
     assert 'media.write' in token['scopes']
     assert token['client_scope_generation'] == authclients.scope_generation(x.SCOPES)
@@ -49,7 +50,7 @@ def test_the_old_unsuffixed_client_still_posts_text_and_is_never_written(env):
     assert profile.scopes == x.LEGACY_SCOPES and profile.client_path == old
     query = urllib.parse.parse_qs(urllib.parse.urlsplit(
         profile.authorize({'state': 'st', 'code_verifier': 'cv'})).query)
-    assert query['scope'] == [' '.join(x.LEGACY_SCOPES)]
+    assert query['scope'] == [' '.join(x.LEGACY_SCOPES + x.OPTIONAL_SCOPES)]
     assert 'media.write' not in query['scope'][0]
     env['behavior']['token'] = {'scope': ' '.join(x.LEGACY_SCOPES)}
     assert run(env) == 0

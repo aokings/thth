@@ -645,7 +645,11 @@ def test_DELETEが飛ぶ経路はretract_cliのdelete_postだけ():
         assert 'method="DELETE"' not in src
     src = inspect.getsource(retract_cli)
     assert src.count(".delete_post(") == 1          # 呼び出しは 1 か所（docstring の言及は除く）
-    assert inspect.getsource(threads_mod).count('method="DELETE"') == 1
+    # Threads の DELETE は投稿の取り下げ（`delete_post`）と、再投稿の取り消し
+    # （`unrepost`・**再投稿の id** にだけ・設計 3.15.0 段 0）の 2 か所だけ。
+    assert inspect.getsource(threads_mod).count('method="DELETE"') == 2
+    assert 'method="DELETE"' in inspect.getsource(threads_mod.ThreadsAdapter.delete_post)
+    assert 'method="DELETE"' in inspect.getsource(threads_mod.ThreadsAdapter.unrepost)
     # Mastodon の DELETE（3.1.1）も `delete_post` の中の 1 か所だけ。
     assert inspect.getsource(mastodon).count('"DELETE"') == 1
     assert '"DELETE"' in inspect.getsource(mastodon.MastodonAdapter.delete_post)

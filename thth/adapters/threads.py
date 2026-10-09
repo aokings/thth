@@ -250,6 +250,13 @@ class ThreadsAdapter(base.Adapter):
     # `thread_read`（T1-1）: `fetch_post()` が `GET /{id}`（`threads_basic`）で
     # 根を 1 件引ける。
     CAPABILITIES = CAPABILITIES | frozenset({"thread_read"})
+    # 再投稿（設計 3.15.0 段 0・L2 2026-10-09）: `POST /v1.0/{threads_id}/repost` →
+    # `{"id": 再投稿の id}`（いまの権限で通った・他人の投稿も）。取り消しは
+    # `DELETE /v1.0/{再投稿の id}`（`threads_delete`）。**いいねは API に無い。**
+    CAPABILITIES = CAPABILITIES | frozenset({"repost"})
+    REACTION_PERMISSIONS = {"repost": "threads_content_publish"}
+    REACTION_UNDO_PERMISSIONS = {"repost": "threads_delete"}
+    UNSUPPORTED_REACTIONS = {"like": "Threads の API にいいねがありません"}
 
     # `thth auth`（OAuth の往復）に Meta の app.env が要る **唯一の媒体**。
     AUTH_NEEDS_APP_ENV = True
@@ -701,6 +708,72 @@ class ThreadsAdapter(base.Adapter):
                 + redact_mod.redact(json.dumps(body, ensure_ascii=False)[:200]))
         return {"success": True,
                 "deleted_id": str(body.get("deleted_id") or post_id)}
+
+    # --- 反応（設計 3.15.0・段 0 の結果 L2 2026-10-09） -------------------------
+
+    def repost(self, post_id: str) -> dict:
+        """`POST /v1.0/{threads_id}/repost` を 1 回（再試行しない）。`{"reaction_id"}`。
+
+        応答の `id` は**再投稿そのものの id**（`media_type: REPOST_FACADE`）。取り消しは
+        この id に DELETE するので、呼び手が記録に残す。
+        """
+        post_id = (post_id or "").strip()
+        if not post_id.isdigit():
+            raise base.AdapterError(
+                f"Threads の post_id は数字だけです（{post_id!r}）。再投稿しません")
+        permission = self.REACTION_PERMISSIONS["repost"]
+        try:
+            body = self._post(f"/v1.0/{post_id}/repost", {"access_token": self.access_token})
+        except urllib.error.HTTPError as e:
+            _raise_if_permission(e, permission)
+            raise base.AdapterError(redact_mod.redact(
+                f"再投稿に失敗: HTTP {e.code} {e.reason}")) from e
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            raise base.AdapterError(redact_mod.redact(f"再投稿に失敗（結果不明）: {e}")) from e
+        reaction_id = str((body or {}).get("id") or "") if isinstance(body, dict) else ""
+        if not reaction_id.isdigit():
+            raise base.AdapterError(
+                "再投稿の応答に id がありません（出たとは言えません・媒体の画面で確かめてください）")
+        return {"reaction_id": reaction_id}
+
+    def unrepost(self, reaction_id: str, *, post_id: str | None = None) -> dict:
+        """再投稿を取り消す: **再投稿の id** に `DELETE /v1.0/{id}` を 1 回（`threads_delete`）。
+
+        元の投稿の id ではない（それに DELETE すると、自分の投稿なら投稿そのものが消える）。
+        `success: true` 以外は取り消したと言わない。
+        """
+        reaction_id = (reaction_id or "").strip()
+        if not reaction_id.isdigit() or reaction_id == (post_id or "").strip():
+            raise base.AdapterError(
+                f"Threads の再投稿の id が不正です（{reaction_id!r}）。取り消しません")
+        permission = self.REACTION_UNDO_PERMISSIONS["repost"]
+        url = (f"{self.base_url}/v1.0/{reaction_id}?"
+               + urllib.parse.urlencode({"access_token": self.access_token}))
+        req = urllib.request.Request(url, method="DELETE")
+        try:
+            with httpsafe.urlopen(req, timeout=self.timeout) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as e:
+            _raise_if_permission(e, permission)
+            raise base.AdapterError(redact_mod.redact(
+                f"再投稿の取り消しに失敗: HTTP {e.code} {e.reason}")) from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise base.AdapterError(redact_mod.redact(
+                f"再投稿の取り消しに失敗（結果不明）: {e}")) from e
+        try:
+            body = json.loads(raw) if raw else {}
+        except ValueError as e:
+            raise base.AdapterError("再投稿の取り消しの応答が JSON ではありません") from e
+        if not isinstance(body, dict) or body.get("success") is not True:
+            raise base.AdapterError(
+                "再投稿の取り消しの応答に success: true がありません（取り消したとは言えません）")
+        return {"undone": True, "deleted_id": str(body.get("deleted_id") or reaction_id)}
+
+    def like(self, post_id: str) -> dict:
+        raise base.UnsupportedOnPlatform(self.UNSUPPORTED_REACTIONS["like"])
+
+    def unlike(self, reaction_id: str, *, post_id: str | None = None) -> dict:
+        raise base.UnsupportedOnPlatform(self.UNSUPPORTED_REACTIONS["like"])
 
     def _get(self, path: str, params: dict, *, absolute_url: str | None = None,
              timeout: float | None = None) -> dict:

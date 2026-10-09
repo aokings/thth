@@ -84,7 +84,8 @@ def test_approvalの設定は無い_安全装置の既定():
     assert not hasattr(accounts, 'approval_mode') and not hasattr(accounts, 'APPROVAL_VALUES')
     assert accounts.IGNORED_FIELDS == ('approval',)
     assert accounts.guard_limits({}) == {'daily_max_posts': 8, 'daily_max_retracts': 5,
-                                         'burst': {'count': 3, 'minutes': 10}, 'hold_minutes': 0}
+                                         'burst': {'count': 3, 'minutes': 10}, 'hold_minutes': 0,
+                                         'daily_max_reactions': 50}
     assert accounts.guard_limits({'daily_max_posts': 20})['daily_max_posts'] == 20
 
 

@@ -52,7 +52,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 3.10.0 §2: 招待の一覧（管理者の口・code も hash も出さない）。
      'admin invite list',
      # 3.14.0 段 3: 遠くの道と同じ形の --json（send は結果 1 つ・collect は measured の形）。
-     'send', 'collect']
+     'send', 'collect',
+     # 3.15.0: 反応（再投稿・いいね・その取り消し）。
+     'repost', 'unrepost', 'like', 'unlike']
 
 
 def test_json_table_covers_every_parser():

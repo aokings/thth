@@ -100,6 +100,10 @@ All subcommands `thth --help` lists, one line each:
 - `schedule` — schedule a post, or list what is due in date order
 - `posts` — list your own recent posts
 - `retract` — delete a published post (two-step confirmation on a local ledger; the record is kept)
+- `repost` — repost a post (Threads, Bluesky, Mastodon, X; only when the owner asks)
+- `unrepost` — undo a repost made through THTH
+- `like` — like a post (Bluesky, Mastodon, X; the Threads API has no likes)
+- `unlike` — undo a like made through THTH
 - `replies` — read collected replies (`--refresh` fetches first)
 - `measured` — read collected insights
 - `collect` — fetch replies and insights on the elapsed-time schedule

@@ -14,7 +14,11 @@ from .. import authclients, httpsafe, jst, handoff_cursor
 from ..authflow import AuthProfile, FlowError, secret
 from ..scopes import MASTODON_SCOPES as SCOPES
 
-LEGACY_SCOPES = [value for value in SCOPES if value != 'write:media']
+# 1 つ前の世代（2.13〜3.14: `write:favourites` が無い）。この世代の client で出した
+# トークンは取り消し（`client_for_token`）と、新しい世代を登録するまでの再認可の
+# 予行（rehearse）で読む。**ここへは二度と書かない**（新しい登録は SCOPES の世代）。
+PREVIOUS_SCOPES = [value for value in SCOPES if value != 'write:favourites']
+LEGACY_SCOPES = [value for value in PREVIOUS_SCOPES if value != 'write:media']
 CALLBACK = 'https://thth.me/callback/'
 ENDPOINTS = {'authorization_endpoint':'/oauth/authorize','token_endpoint':'/oauth/token',
              'app_registration_endpoint':'/api/v1/apps'}
@@ -120,6 +124,16 @@ class MastodonAuthProfile(AuthProfile):
                 if resume:
                     from .. import authflow
                     if authflow._read_session(cfg['account']):raise FlowError('auth_restart_required')
+                previous_path=authclients.path_for('mastodon',base,cfg,required_scopes=PREVIOUS_SCOPES)
+                previous=authclients.read(previous_path)
+                if previous is not None:
+                    if resume:raise FlowError('auth_restart_required')
+                    try:client=valid_client(previous,base,PREVIOUS_SCOPES)
+                    except (OSError,ValueError):raise FlowError('auth_client_invalid') from None
+                    path=previous_path;selected_scopes=list(PREVIOUS_SCOPES)
+                    profile=cls(client['client_id'],client['client_secret'],CALLBACK,selected_scopes)
+                    profile.instance=base;profile.client_path=path
+                    return profile
                 legacy_path=authclients.path_for('mastodon',base,cfg)
                 legacy=authclients.read(legacy_path)
                 if legacy is None:raise FlowError('mastodon_client_not_registered: 通常のauthで先に登録してください')
@@ -199,5 +213,7 @@ def client_for_token(cfg,token):
         path=authclients.path_for('mastodon',base,cfg);required=LEGACY_SCOPES
     elif generation==authclients.scope_generation(SCOPES):
         path=authclients.path_for('mastodon',base,cfg,required_scopes=SCOPES);required=SCOPES
+    elif generation==authclients.scope_generation(PREVIOUS_SCOPES):
+        path=authclients.path_for('mastodon',base,cfg,required_scopes=PREVIOUS_SCOPES);required=PREVIOUS_SCOPES
     else:raise FlowError('mastodon_client_generation_unknown')
     return base,valid_client(authclients.read(path),base,required)

@@ -20,6 +20,10 @@
 - `retract_limit`: その日の削除が `daily_max_retracts` に達した（翌日 0 時を添える）
 - `account_stopped`（詳細 `burst`）: 直近 `burst.minutes` 分の公開と削除の合計が
   `burst.count` を超える依頼だった → 口座を止めて断る
+- `reaction_limit`: その日の反応（再投稿・いいね・その取り消し）が `daily_max_reactions`
+  に達した（翌日 0 時を添える・設計 3.15.0 §2.5）。材料は `state/<account>/reactions/`。
+  **反応は公開の枠（`daily_max_posts`・burst）に数えない**。夜間は再投稿にだけ掛ける
+  （`check_reaction()`）。
 """
 from __future__ import annotations
 
@@ -31,7 +35,7 @@ from pathlib import Path
 from . import accounts, jst, sent as sent_mod, server_files
 from .report_service import ReportServiceError
 
-REFUSALS = frozenset(("too_soon", "quiet_hours", "daily_limit", "retract_limit"))
+REFUSALS = frozenset(("too_soon", "quiet_hours", "daily_limit", "retract_limit", "reaction_limit"))
 # burst: 急な連投で道具が止めた。owner: 持ち主が /activity から止めた（段 3）。
 STOP_REASONS = frozenset(("burst", "owner"))
 STOP_FILE = "stopped.json"
@@ -235,3 +239,34 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
     if counts["recent"] + 1 > limits["burst"]["count"]:
         stop(account, "burst", now=now, actor=actor, via=via, credential=credential)
         raise GuardRefused("account_stopped", reason="burst")
+
+
+def reactions_today(account, *, now=None) -> int:
+    """今日（JST）の反応と取り消しの数（`state/<account>/reactions/` から）。"""
+    from . import reactions as reactions_mod
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    today = now.date()
+    return sum(1 for at in reactions_mod.events(accounts.state_dir_for(account)) if at.date() == today)
+
+
+def check_reaction(account, cfg, kind, *, undo=False, now=None) -> None:
+    """反応の依頼が安全装置に掛かれば `GuardRefused`（設計 3.15.0 §2.5）。
+
+    - 止まった口座（`account_stopped`）は反応も断る。
+    - 夜間（`quiet_hours`）は**再投稿にだけ**（フォロワーのタイムラインに出るため）。
+      いいねと取り消しには掛けない。
+    - `daily_max_reactions`（既定 50）: 反応と取り消しの合計。超えたら `reaction_limit`。
+    - 公開の枠（`daily_max_posts`・`min_interval_hours`・burst）には数えない。
+    """
+    halted = stopped(account)
+    if halted is not None:
+        raise GuardRefused("account_stopped", reason=halted.get("reason"))
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    if kind == "repost" and not undo:
+        quiet = cfg.get("quiet_hours")
+        from .select import in_quiet_hours
+        if quiet and in_quiet_hours(now, quiet):
+            raise GuardRefused("quiet_hours", next_at=jst.iso(_quiet_end(now, quiet)))
+    limit = accounts.guard_limits(cfg)["daily_max_reactions"]
+    if reactions_today(account, now=now) >= limit:
+        raise GuardRefused("reaction_limit", next_at=jst.iso(_next_midnight(now)))

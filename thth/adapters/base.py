@@ -128,6 +128,30 @@ class PermissionMissing(AdapterError):
         super().__init__(not_granted_message(permission, detail))
 
 
+class UnsupportedOnPlatform(AdapterError):
+    """**その SNS の API に口が無い操作**（設計 3.15.0 §3・Threads のいいね）。
+
+    権限を足しても直らない（`PermissionMissing` と違う）。CLI は rc=2 で
+    `unsupported_on_platform` の 1 語と理由で断る。
+    """
+
+
+class ScopeMissing(AdapterError):
+    """**この操作に要る scope がトークンに無いと分かっている**（設計 3.15.0 §3・
+    Mastodon の `write:favourites`・X の `like.write`）。
+
+    `PermissionMissing` は「叩いたら権限系で断られた」も含むが、こちらは
+    **叩く前に** `.token` の記録（`scopes_source: response`）で分かったときだけ。
+    CLI は rc=2 で `scope_missing` と `thth auth <account> --by <名前>` を案内する。
+    """
+
+    def __init__(self, permission: str, account: str = "<account>"):
+        self.permission = permission
+        super().__init__(
+            f"scope_missing: `{permission}` がトークンにありません。"
+            f"thth auth {account} --by <名前> で認可し直してください")
+
+
 def not_granted_message(permission: str, detail: str = "") -> str:
     """「乗っていません」の 1 行（doctor の `NOT_GRANTED` と同じ意味・文言は口向け）。"""
     tail = f"（{detail}）" if detail else ""
@@ -166,7 +190,16 @@ KNOWN_CAPABILITIES = frozenset({
     # 根を 1 件だけ引ける（`fetch_post()`・設計「自分の泉」§2.1・T1-1）。
     # `thread_read` がこの口で根を取り、`conversation()` で枝を辿る。
     "thread_read",
+    # --- 反応（設計 3.15.0・`thth repost`／`thth like`）。取り消し（`unrepost`・
+    # `unlike`）も同じ語で表す——取り消しの口が無い媒体は語を持たせない。
+    # 再投稿して取り消せる（`Adapter.repost()`・`unrepost()`）。
+    "repost",
+    # いいねして取り消せる（`Adapter.like()`・`unlike()`）。Threads は API に無い。
+    "like",
 })
+
+# 反応の種類（記録の `kind`・CLI の 4 つの命令の元）。
+REACTION_KINDS = ("repost", "like")
 
 
 def author_key(medium: str, username: str | None) -> str | None:
@@ -426,6 +459,56 @@ class Adapter:
         """
         raise AdapterError(
             f"{type(self).__name__}: この媒体に場所の検索はありません")
+
+    # --- 反応（設計 3.15.0） ------------------------------------------------
+    # 反応の種類 → 要る権限（`thth repost` などが叩く前に `.token` の記録で見る）。
+    # 取り消しに別の権限が要る媒体は `REACTION_UNDO_PERMISSIONS` に書く。
+    REACTION_PERMISSIONS: dict = {}
+    REACTION_UNDO_PERMISSIONS: dict = {}
+    # 口を持たない反応 → 断りの理由（`unsupported_on_platform` に添える 1 行）。
+    UNSUPPORTED_REACTIONS: dict = {}
+
+    @classmethod
+    def reaction_supported(cls, kind: str) -> bool:
+        """`kind`（repost・like）を、この媒体で出せて取り消せるか。"""
+        return kind in cls.CAPABILITIES
+
+    @classmethod
+    def reaction_unsupported_message(cls, kind: str) -> str:
+        return cls.UNSUPPORTED_REACTIONS.get(
+            kind, f"この SNS の API には {kind} の口がありません")
+
+    @classmethod
+    def reaction_permission(cls, kind: str, *, undo: bool = False) -> str | None:
+        if undo and kind in cls.REACTION_UNDO_PERMISSIONS:
+            return cls.REACTION_UNDO_PERMISSIONS[kind]
+        return cls.REACTION_PERMISSIONS.get(kind)
+
+    @classmethod
+    def reaction_scope_missing(cls, token, kind: str, *, undo: bool = False) -> str | None:
+        """要る権限がトークンに**無いと分かっている**ならその名前、それ以外は None。
+
+        既定は `missing_permissions()`（doctor と同じ物差し・一覧が無ければ不明＝None）。
+        """
+        permission = cls.reaction_permission(kind, undo=undo)
+        if not permission:
+            return None
+        missing = cls.missing_permissions(token, [permission])
+        return missing[0] if missing else None
+
+    def repost(self, post_id: str) -> dict:
+        """再投稿を 1 回（**再試行しない**）。戻りは `{"reaction_id": …}`。"""
+        raise UnsupportedOnPlatform(self.reaction_unsupported_message("repost"))
+
+    def unrepost(self, reaction_id: str, *, post_id: str | None = None) -> dict:
+        """再投稿を取り消す（記録した `reaction_id` と元の `post_id` を渡す）。"""
+        raise UnsupportedOnPlatform(self.reaction_unsupported_message("repost"))
+
+    def like(self, post_id: str) -> dict:
+        raise UnsupportedOnPlatform(self.reaction_unsupported_message("like"))
+
+    def unlike(self, reaction_id: str, *, post_id: str | None = None) -> dict:
+        raise UnsupportedOnPlatform(self.reaction_unsupported_message("like"))
 
     def delete_post(self, post_id: str) -> dict:
         """公開済みの投稿 1 本を取り下げる（**承認の二段を通った後にだけ呼ばれる**）。

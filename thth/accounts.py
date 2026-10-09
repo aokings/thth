@@ -98,8 +98,13 @@ GUARD_DEFAULTS = {
     "daily_max_retracts": 5,   # JST の 1 日の削除の上限
     "burst": {"count": 3, "minutes": 10},  # 公開と削除の合計がこれを超えたら口座を止める
     "hold_minutes": 0,         # 今すぐの公開を待たせる分（0 は待たない）
+    # 反応（再投稿・いいね・その取り消し）の JST の 1 日の上限（設計 3.15.0 §2.5）。
+    # **公開の枠（daily_max_posts・burst）とは別に数える**——返信 4 件にいいねした
+    # だけで公開が止まらないように。
+    "daily_max_reactions": 50,
 }
-GUARD_INT_MAX = {"daily_max_posts": 1000, "daily_max_retracts": 1000, "hold_minutes": 1440}
+GUARD_INT_MAX = {"daily_max_posts": 1000, "daily_max_retracts": 1000, "hold_minutes": 1440,
+                 "daily_max_reactions": 1000}
 BURST_COUNT_MAX = 1000
 BURST_MINUTES_MAX = 1440
 
@@ -116,7 +121,7 @@ def valid_guard_value(key: str, value) -> bool:
                 and _plain_int(value["minutes"]) and 1 <= value["minutes"] <= BURST_MINUTES_MAX)
     if key == "hold_minutes":
         return _plain_int(value) and 0 <= value <= GUARD_INT_MAX[key]
-    if key in ("daily_max_posts", "daily_max_retracts"):
+    if key in ("daily_max_posts", "daily_max_retracts", "daily_max_reactions"):
         return _plain_int(value) and 0 <= value <= GUARD_INT_MAX[key]
     return False
 

@@ -110,6 +110,7 @@ def test_doctor_and_admin_required_scope_observations_share_definition(env,monke
     monkeypatch.setattr(adapters,'make_adapter',lambda *a:Adapter())
     value=doctor.diagnose('alpha')
     assert value['required_scopes']==scopes.MASTODON_SCOPES
-    assert value['missing_scopes_recorded']==['write:media']
+    # 3.15.0 で write:favourites（いいね）も足した——旧世代の token には両方が無い。
+    assert value['missing_scopes_recorded']==['write:favourites','write:media']
     row=admin_report.answer('tokens',account='alpha',via='http')['tokens'][0]
-    assert row['default_scopes']==scopes.MASTODON_SCOPES and row['missing_scopes']==['write:media']
+    assert row['default_scopes']==scopes.MASTODON_SCOPES and row['missing_scopes']==['write:favourites','write:media']

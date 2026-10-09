@@ -21,6 +21,12 @@ SCOPES = ['tweet.read', 'tweet.write', 'users.read', 'offline.access', 'media.wr
 # 同じ規則）。新しい世代が無いあいだは旧ファイルを**読むだけ**で使い、本文の
 # 投稿は続けられる。旧世代の pending は `auth_restart_required`。
 LEGACY_SCOPES = [value for value in SCOPES if value != 'media.write']
+# **認可のときに求めるが、必須にはしない scope**（3.15.0・`thth like` の `like.write`）。
+# `SCOPES` に足すと client の世代（ファイル名の sha）と binding が変わり、いまの
+# トークンの更新（`run_refresh` は `SCOPES` が応答の scope に揃っていることを求める）と
+# 取り消しが止まる。だから世代は `SCOPES` のまま、認可の URL にだけ足す——付与されれば
+# `.token` の `scopes` に載り、無ければ `thth like` が `scope_missing` で断る。
+OPTIONAL_SCOPES = ['like.write']
 CALLBACK = 'https://thth.me/callback/'
 API = 'https://api.x.com'
 REFRESH_BEFORE_SECONDS = 300
@@ -164,8 +170,9 @@ class XAuthProfile(AuthProfile):
 
     def authorize(self,session):
         challenge=base64.urlsafe_b64encode(hashlib.sha256(session['code_verifier'].encode()).digest()).rstrip(b'=').decode()
+        requested=list(self.scopes)+[value for value in OPTIONAL_SCOPES if value not in self.scopes]
         return 'https://x.com/i/oauth2/authorize?'+urllib.parse.urlencode(dict(response_type='code',client_id=self.client_id,
-            redirect_uri=CALLBACK,scope=' '.join(self.scopes),state=session['state'],code_challenge=challenge,code_challenge_method='S256'))
+            redirect_uri=CALLBACK,scope=' '.join(requested),state=session['state'],code_challenge=challenge,code_challenge_method='S256'))
 
     @leave_gate.configured("account_cfg")
     def exchange(self,code_value,session,account_cfg,*,log):

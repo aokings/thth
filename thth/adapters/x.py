@@ -198,6 +198,15 @@ class XAdapter(base.Adapter):
     POST_ID_FORM_HINT = 'X の post_id は 19 桁までの数字です。'
     DELETE_PERMISSION = 'tweet.write'
     prepared_media_supported = True
+    # 反応（設計 3.15.0・**L1** docs.x.com repost-post・like-post）: 再投稿は
+    # `POST /2/users/:id/retweets`（`tweet.write`・いまのトークンにある）、取り消しは
+    # `DELETE /2/users/:id/retweets/:source_tweet_id`。いいねは `POST /2/users/:id/likes`・
+    # `DELETE /2/users/:id/likes/:tweet_id`（`like.write`・3.15.0 から認可で求める。
+    # **それより前のトークンには無い**）。従量: 作る 0.015 USD・消す 0.010 USD（料金表・
+    # 推定として出すだけで、新しい予算の台帳は持たない）。
+    CAPABILITIES = CAPABILITIES | frozenset({'repost', 'like'})
+    REACTION_PERMISSIONS = {'repost': 'tweet.write', 'like': 'like.write'}
+    REACTION_PRICE_USD = {'create': '0.015', 'delete': '0.010'}
 
     def __init__(self, *, base_url: str = '', access_token: str = '', user_id: str = '',
                  username: str = '', timeout: float = DEFAULT_TIMEOUT_SECONDS):
@@ -320,6 +329,77 @@ class XAdapter(base.Adapter):
         if status != 200 or not isinstance(data, dict) or data.get('deleted') is not True:
             raise AdapterError('x_retract_unconfirmed')
         return {'deleted': True, 'post_id': value}
+
+    # ----- 反応（設計 3.15.0） ----------------------------------------------
+
+    @classmethod
+    def reaction_scope_missing(cls, token, kind, *, undo=False):
+        """`.token` の `scopes_source: response` の一覧に要る scope が無ければその名前（不明は None）。"""
+        permission = cls.reaction_permission(kind, undo=undo)
+        token = token or {}
+        granted = token.get('scopes')
+        if not permission or token.get('scopes_source') != 'response' or type(granted) is not list:
+            return None
+        return None if permission in granted else permission
+
+    def _react(self, kind, method, path, *, body=None, expect_key, expect_value):
+        permission = self.REACTION_PERMISSIONS[kind]
+        if self.granted_scopes is not None and permission not in self.granted_scopes:
+            raise base.ScopeMissing(permission, self.auth_account)
+        if not POST_ID.fullmatch(self.user_id or ''):
+            raise AdapterError('x_user_id_unavailable: thth auth <account> --by <名前> をやり直してください')
+        try:
+            status, value = request(self, method, path, json_body=body)
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                raise base.PermissionMissing(permission, 'x_reaction_http_' + str(exc.code)) from None
+            if exc.code == 429:
+                detail = rate_limit(exc)
+                raise AdapterError('provider_rate_limited'
+                                   + (f' {json.dumps(detail, sort_keys=True)}' if detail else ''),
+                                   http_status=429) from None
+            raise AdapterError('x_reaction_http_' + str(exc.code) + ': 反応したとは言えません',
+                               http_status=exc.code) from None
+        except (httpsafe.EndpointRejected, urllib.error.URLError, TimeoutError, OSError, ValueError,
+                base.AdapterError) as exc:
+            raise AdapterError('x_reaction_failed: 結果不明（' + self._scrub(exc) + '）') from None
+        data = value.get('data')
+        if status not in (200, 201) or not isinstance(data, dict) or data.get(expect_key) is not expect_value:
+            raise AdapterError('x_reaction_unconfirmed: 応答に ' + expect_key + ': '
+                               + str(expect_value).lower() + ' がありません')
+        return data
+
+    def _tweet_id(self, post_id):
+        value = str(post_id or '').strip()
+        if not POST_ID.fullmatch(value):
+            raise AdapterError('x_post_id_invalid: ' + self.POST_ID_FORM_HINT)
+        return value
+
+    def repost(self, post_id: str) -> dict:
+        """`POST /2/users/:id/retweets` {"tweet_id"} を 1 回。X の再投稿に別の id は返らない（元の id を残す）。"""
+        value = self._tweet_id(post_id)
+        data = self._react('repost', 'POST', '/2/users/' + self.user_id + '/retweets',
+                           body={'tweet_id': value}, expect_key='retweeted', expect_value=True)
+        rest = data.get('rest_id') or data.get('id')
+        return {'reaction_id': rest if isinstance(rest, str) and POST_ID.fullmatch(rest) else value}
+
+    def unrepost(self, reaction_id: str, *, post_id: str | None = None) -> dict:
+        value = self._tweet_id(post_id)
+        self._react('repost', 'DELETE', '/2/users/' + self.user_id + '/retweets/' + value,
+                    expect_key='retweeted', expect_value=False)
+        return {'undone': True}
+
+    def like(self, post_id: str) -> dict:
+        value = self._tweet_id(post_id)
+        self._react('like', 'POST', '/2/users/' + self.user_id + '/likes',
+                    body={'tweet_id': value}, expect_key='liked', expect_value=True)
+        return {'reaction_id': value}
+
+    def unlike(self, reaction_id: str, *, post_id: str | None = None) -> dict:
+        value = self._tweet_id(post_id)
+        self._react('like', 'DELETE', '/2/users/' + self.user_id + '/likes/' + value,
+                    expect_key='liked', expect_value=False)
+        return {'undone': True}
 
     # ----- 読む口（**読取予算の中でだけ動く**） ------------------------------
 

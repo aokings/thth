@@ -56,6 +56,9 @@ DEFAULT_THREAD_DEPTH = 100
 # 本文の上限（**L2**: `app.bsky.feed.post.text` は maxGraphemes 300）。
 CHAR_LIMIT = 300
 POST_COLLECTION = "app.bsky.feed.post"
+# 反応の記録（設計 3.15.0・**L1** lexicon `app/bsky/feed/repost.json`・`like.json`:
+# record は `subject`（`com.atproto.repo.strongRef`＝uri＋cid）と `createdAt`）。
+REACTION_COLLECTIONS = {"repost": "app.bsky.feed.repost", "like": "app.bsky.feed.like"}
 # この媒体が**持ちうる**指標（`insights()` の `available`）。**views は無い**（**L2**）。
 AVAILABLE_METRICS = ("likes", "replies", "reposts", "quotes")
 _METRIC_FIELDS = (("likes", "likeCount"), ("replies", "replyCount"),
@@ -350,6 +353,9 @@ class BlueskyAdapter(base.Adapter):
     # 語による公開投稿の検索ができる（審査の壁が無い媒体）。
     CAPABILITIES: frozenset = frozenset({"link_preview", "recent_posts", "thread_read",
                                          "keyword_search", "mentions"})
+    # 反応（設計 3.15.0）: 再投稿もいいねも自分の repo への `createRecord`、取り消しは
+    # その記録の `deleteRecord`。App Password で足りる（scope の概念が無い）。
+    CAPABILITIES = CAPABILITIES | frozenset({"repost", "like"})
 
     # `.token` の鍵（`thth auth <account>` が書く形・設計 v2 §4.2「認可とトークン」）。
     # **`access_token` ではない**——doctor が `access_token` だけを見ていたので、
@@ -610,6 +616,78 @@ class BlueskyAdapter(base.Adapter):
         if not isinstance(view, dict) or not view.get("uri") or not view.get("cid"):
             raise RuntimeError(f"getPosts: 応答に uri か cid がありません（{uri}）")
         return view
+
+    # --- 反応（設計 3.15.0） ---------------------------------------------------
+    def _react(self, kind: str, post_id: str) -> dict:
+        """`getPosts` で cid を引き、`createRecord` を 1 回（再試行しない）。"""
+        if not self.is_post_id(post_id):
+            raise base.AdapterError(self.POST_ID_FORM_HINT + "反応しません")
+        words = {"repost": "再投稿", "like": "いいね"}[kind]
+        try:
+            session = self.session()
+            view = self._post_view(post_id)
+        except urllib.error.HTTPError as e:
+            raise base.AdapterError(self._scrub(
+                f"{words}の準備に失敗（送っていません）: HTTP {e.code} {e.reason}")) from None
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, ValueError) as e:
+            raise base.AdapterError(self._scrub(f"{words}の準備に失敗（送っていません）: {e}")) from None
+        collection = REACTION_COLLECTIONS[kind]
+        record = {"$type": collection,
+                  "subject": {"uri": view["uri"], "cid": view["cid"]},
+                  "createdAt": created_at()}
+        try:
+            body = self._request("POST", "com.atproto.repo.createRecord", payload={
+                "repo": session["did"], "collection": collection, "record": record})
+        except urllib.error.HTTPError as e:
+            raise base.AdapterError(self._scrub(
+                f"{words}に失敗: HTTP {e.code} {e.reason}")) from None
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, ValueError) as e:
+            raise base.AdapterError(self._scrub(
+                f"{words}に失敗（結果不明・媒体の画面で確かめてください）: {e}")) from None
+        uri = body.get("uri") if isinstance(body, dict) else None
+        if (not isinstance(uri, str) or not uri.startswith(f"at://{session['did']}/{collection}/")
+                or not rkey_of(uri)):
+            raise base.AdapterError(
+                f"{words}の応答に記録の uri がありません（出たとは言えません・媒体の画面で確かめてください）")
+        return {"reaction_id": uri}
+
+    def _unreact(self, kind: str, reaction_id: str) -> dict:
+        """記録した反応の uri から rkey を取り、`deleteRecord` を 1 回。"""
+        words = {"repost": "再投稿", "like": "いいね"}[kind]
+        collection = REACTION_COLLECTIONS[kind]
+        try:
+            session = self.session()
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, ValueError) as e:
+            raise base.AdapterError(self._scrub(f"{words}の取り消しの準備に失敗（送っていません）: {e}")) from None
+        prefix = f"at://{session['did']}/{collection}/"
+        rkey = rkey_of(reaction_id) if isinstance(reaction_id, str) else None
+        if (not isinstance(reaction_id, str) or not reaction_id.startswith(prefix) or not rkey
+                or reaction_id != prefix + rkey
+                or not re.fullmatch(r"[A-Za-z0-9._:~-]{1,512}", rkey) or rkey in (".", "..")):
+            raise base.AdapterError(
+                f"{words}の記録の uri が自分の {collection} ではありません。取り消しません")
+        try:
+            self._request("POST", "com.atproto.repo.deleteRecord", payload={
+                "repo": session["did"], "collection": collection, "rkey": rkey})
+        except urllib.error.HTTPError as e:
+            raise base.AdapterError(self._scrub(
+                f"{words}の取り消しに失敗: HTTP {e.code} {e.reason}")) from None
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, ValueError) as e:
+            raise base.AdapterError(self._scrub(
+                f"{words}の取り消しに失敗（結果不明）: {e}")) from None
+        return {"undone": True}
+
+    def repost(self, post_id: str) -> dict:
+        return self._react("repost", post_id)
+
+    def unrepost(self, reaction_id: str, *, post_id: str | None = None) -> dict:
+        return self._unreact("repost", reaction_id)
+
+    def like(self, post_id: str) -> dict:
+        return self._react("like", post_id)
+
+    def unlike(self, reaction_id: str, *, post_id: str | None = None) -> dict:
+        return self._unreact("like", reaction_id)
 
     # --- 会話 ---------------------------------------------------------------
     def conversation(self, post_id: str, *, since: str | None = None) -> list:

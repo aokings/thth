@@ -11,6 +11,7 @@
 | `hold_minutes` | 同じ | 上げる |
 | `min_interval_hours` | 同じ | 上げる |
 | `x_daily_reads` | 同じ（X の口座だけ・既定 60） | 下げる（JST の 1 日に読む他人の投稿の本数・有償） |
+| `daily_max_reactions` | 同じ（既定 50・3.15.0） | 下げる（再投稿・いいね・取り消しの合計。公開の枠とは別） |
 
 口は 3 つ。**どこから変えたかで許す向きが違う**（主セッションの裁定 2026-09-26）:
 
@@ -33,7 +34,7 @@ from pathlib import Path
 from . import accounts, admin_log, secrets_fs
 
 KEYS = ("daily_max_posts", "daily_max_retracts", "burst_count", "burst_minutes",
-        "hold_minutes", "min_interval_hours", "x_daily_reads")
+        "hold_minutes", "min_interval_hours", "x_daily_reads", "daily_max_reactions")
 # X の口座だけが持つ項目（有償の読み取りの 1 日の本数・設計 2026-10-08）。
 X_ONLY_KEYS = frozenset(("x_daily_reads",))
 # 数値が大きいほど締まる項目（それ以外の数値は小さいほど締まる）。
@@ -69,6 +70,7 @@ def current(cfg) -> dict:
         "burst_minutes": limits["burst"]["minutes"],
         "hold_minutes": limits["hold_minutes"],
         "min_interval_hours": hours if isinstance(hours, (int, float)) and not isinstance(hours, bool) else 0,
+        "daily_max_reactions": limits["daily_max_reactions"],
         **extra,
     }
 
@@ -193,7 +195,8 @@ def status(account, *, now=None) -> dict:
         "stopped": stopped,
         "ignored": [key for key in accounts.IGNORED_FIELDS if key in cfg],
         "today": {"date": now.date().isoformat(), "posts": counts["posts_today"],
-                  "retracts": counts["retracts_today"]},
+                  "retracts": counts["retracts_today"],
+                  "reactions": guard.reactions_today(account, now=now)},
     }
 
 
@@ -307,10 +310,14 @@ def show_status(row) -> int:
     print(f"  急な連投で止める（burst）: {s['burst_minutes']} 分に {s['burst_count']} 件を超えたら")
     print(f"  取り消しの猶予（hold_minutes）: {s['hold_minutes']} 分")
     print(f"  最短間隔（min_interval_hours）: {s['min_interval_hours']} 時間（返信には掛けない）")
+    if "daily_max_reactions" in s:
+        print(f"  1 日の反応の上限（daily_max_reactions）: {s['daily_max_reactions']}（再投稿・いいね・取り消し。公開の枠とは別）")
     if "x_daily_reads" in s:
         print(f"  1 日（JST）に読む他人の X の投稿の上限（x_daily_reads）: {s['x_daily_reads']} 本（有償・1 本 約 0.005 USD）")
     print(f"  予約の timer（scheduled）: {'載っている' if row['scheduled'] else '載っていない（予約と猶予は使えない）'}")
-    print(f"  今日（{row['today']['date']}）: 公開 {row['today']['posts']} 件・削除 {row['today']['retracts']} 件")
+    reacted = row['today'].get('reactions')
+    print(f"  今日（{row['today']['date']}）: 公開 {row['today']['posts']} 件・削除 {row['today']['retracts']} 件"
+          + (f"・反応 {reacted} 件" if reacted is not None else ""))
     for key in row["ignored"]:
         print(f"  古い項目 {key}（無視）")
     if row["stopped"]:

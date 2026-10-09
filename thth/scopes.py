@@ -22,8 +22,13 @@ DEFAULT_SCOPES = [
 ]
 
 
+# `write:favourites` は 3.15.0 で足した（いいね・`thth like`）。それより前に認可した
+# トークンには無いので、いいねは `scope_missing` で断り `thth auth` を案内する
+# （再投稿は `write:statuses` で足りる）。client の世代は scope 集合ごとに別ファイル
+# （`auth_mastodon.PREVIOUS_SCOPES` が 1 つ前の世代を読む）。
 MASTODON_SCOPES = ['read:accounts', 'read:statuses', 'read:search',
-                   'read:notifications', 'write:statuses', 'write:media']
+                   'read:notifications', 'write:statuses', 'write:media',
+                   'write:favourites']
 
 
 def mastodon_guidance(account):

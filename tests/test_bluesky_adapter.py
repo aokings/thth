@@ -642,8 +642,9 @@ def test_capabilitiesにviewsもtopicも入らない():
     # T1-1（`fetch_post()`・2026-09-16）で足した。`keyword_search` は
     # T2-1（`searchPosts`・2026-09-16）で足した。views・topic・quota・inbox・
     # refresh は無いまま。
+    # repost・like は 3.15.0（createRecord／deleteRecord）。
     assert adapter.capabilities() == {"link_preview", "recent_posts", "thread_read",
-                                      "keyword_search", "mentions"}
+                                      "keyword_search", "mentions", "repost", "like"}
     assert adapter.quota() is None
 
 

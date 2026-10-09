@@ -368,6 +368,34 @@ TOOLS = [
     },
 ]
 
+# 反応（設計 3.15.0 §2.3）。**手元の台帳の CLI（`thth repost|unrepost|like|unlike`）を
+# 呼ぶだけ**——判断（production の門・scope・ガード・冪等）は CLI が持つ。読むだけの
+# 道具の中で、この 2 本だけが SNS に書く（本文は作らず、取り消せる）。
+_REACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "account": {"type": "string", "description": "account 名"},
+        "post": {"type": "string", "description": "投稿の id か URL"},
+        "by": {"type": "string", "description": "頼んだ人（記録に残す）"},
+        "undo": {"type": "boolean", "description": "true なら取り消す（THTH で付けたものだけ）"},
+    },
+    "required": ["account", "post", "by"],
+    "additionalProperties": False,
+}
+REACTION_TOOLS = {"thth_repost": "repost", "thth_like": "like"}
+TOOLS += [
+    {"name": "thth_repost",
+     "description": ("投稿を再投稿する（undo: true で取り消す）。所有者が頼んだとき・所有者が決めた方針の"
+                     "範囲でだけ使う。thth repost --json と同じ形。production: true の口座だけ・1 日の反応の上限"
+                     "（daily_max_reactions）と夜間（quiet_hours）に掛かれば断る"),
+     "inputSchema": _REACTION_SCHEMA},
+    {"name": "thth_like",
+     "description": ("投稿にいいねする（undo: true で取り消す）。所有者が頼んだとき・方針の範囲でだけ使い、"
+                     "返事の代わりにしない。Threads は API にいいねが無いので unsupported_on_platform。"
+                     "scope が無ければ scope_missing（thth auth のやり直し）"),
+     "inputSchema": _REACTION_SCHEMA},
+]
+
 
 class ToolInputError(Exception):
     """要求が受け取れない（JSON-RPC `-32602`・セキュリティ監査 2026-09-14・P2-1）。
@@ -1406,10 +1434,18 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
+    elif name in REACTION_TOOLS:
+        kind = REACTION_TOOLS[name]
+        args = [("un" + kind) if arguments.get("undo") else kind, arguments["account"],
+                arguments["post"], "--by=" + arguments["by"], "--via=mcp", "--json"]
+        proc = run_cli(args)
+        text = proc.stdout
     else:
         return {"content": [{"type": "text", "text": f"unknown tool: {name}"}, _channel_note()], "isError": True}
 
-    if name.startswith("thth_topic_") or name in (
+    if name in REACTION_TOOLS:
+        is_error = proc.returncode != 0
+    elif name.startswith("thth_topic_") or name in (
             "before_you_post", "after_you_posted", "analytics_report", "operations_handoff", "study_report", "thread_read", "where_to_appear",
             "who_is_this", "thth_morning", "thth_observe", "thth_map_show"):
         # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）

@@ -54,6 +54,10 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 - 添付（画像）は遠くの道ではまだ使えない（`remote_unsupported`）。
 - 運営者向けの管理設定は `docs/運用_招待する側.md`。無 credential の手元の MCP（自分の repo の queue）とは別の入口。
 
+## 反応（再投稿・いいね・3.15.0）
+
+`thth repost|unrepost|like|unlike <account> <投稿の id か URL> --by <名前>`（MCP `thth_repost`・`thth_like`、取り消しは `undo: true`）。反応は会話への参加なので、**所有者に頼まれたとき、または所有者が決めた方針の範囲でだけ使う**。いいねで返事の代わりにしない（返すべき相手には返信を書く）。Threads の API にはいいねが無い（`unsupported_on_platform`・再投稿と取り消しはできる）。断りは `scope_missing`（`thth auth <account> --by <名前>` で認可し直す）・`reaction_limit`（1 日の反応の上限）・`quiet_hours`（夜間は再投稿だけ断る）。同じ投稿への 2 回目は SNS に送らず `already_done`。
+
 ## 何を拒むか
 
 - **手元の台帳を使う実行の、`--confirm` の無い本番。** digest の食い違う本番。承認後に本文が変わった下書き
