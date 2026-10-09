@@ -1,6 +1,6 @@
 import {deletionRequest} from './deletion.js';
 import {relayRequest, receiveCallback} from "./relay.js";
-import {PAGE_STYLE,en} from './person.js';
+import {frame,t} from './person.js';
 
 /**
  * THTH の認可の受け口（thth.me）と、製品の紹介ページの配り手。
@@ -21,20 +21,11 @@ import {PAGE_STYLE,en} from './person.js';
  * 外部リソースも読み込まない（フォントも解析も無し）。
  */
 
-const PAGE_HEAD = `<!doctype html>
-<html lang="ja"><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow,noarchive">
-<title>THTH 認可の受け口</title>
-<style>${PAGE_STYLE}</style></head><body><main>`;
-const PAGE_FOOT = `</main></body></html>`;
-
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function html(body, status = 200) {
-  return new Response(PAGE_HEAD + body + PAGE_FOOT, {
+  return new Response(frame(body, "THTH 認可の受け口"), {
     status,
     headers: {
       "content-type": "text/html; charset=utf-8",
@@ -53,10 +44,10 @@ function callbackPage(url) {
 
   if (error) {
     return html(
-      `<h1>認可されませんでした${en('Authorization was not completed')}</h1>
-       <p class="sub">Threads 側から次の理由が返りました。${en('Threads returned the following reason.')}</p>
+      `<h1>${t('認可されませんでした','Authorization was not completed')}</h1>
+       <p class="sub">${t('Threads 側から次の理由が返りました。','Threads returned the following reason.')}</p>
        <p class="code err">${esc(error)}${desc ? " — " + esc(desc) : ""}</p>
-       <p class="note">ターミナルに戻って <code>thth auth</code> をやり直してください。${en('Return to your terminal and run <code>thth auth</code> again.')}</p>`);
+       <p class="note">${t('ターミナルに戻って <code>thth auth</code> をやり直してください。','Return to your terminal and run <code>thth auth</code> again.')}</p>`);
   }
 
   if (code) {
@@ -76,17 +67,15 @@ function callbackPage(url) {
 
     const missing = state
       ? ""
-      : `<p class="note err">state が付いていません。この戻りは <code>thth auth</code> に
-         受け付けられません。もう一度 <code>thth auth</code> から始めてください。${en('This return has no state, so <code>thth auth</code> cannot accept it. Start again with <code>thth auth</code>.')}</p>`;
+      : `<p class="note err">${t('state が付いていません。この戻りは <code>thth auth</code> に受け付けられません。もう一度 <code>thth auth</code> から始めてください。','This return has no state, so <code>thth auth</code> cannot accept it. Start again with <code>thth auth</code>.')}</p>`;
 
     return html(
-      `<h1>認可コードを受け取りました${en('Authorization code received')}</h1>
-       <p class="sub">下の <strong>URL 全体</strong>をターミナルに貼ってください
-       （<code>code</code> だけでは足りません）。1 時間で切れる使い捨てです。${en('Paste the complete URL below into your terminal. The <code>code</code> alone is not enough. It can be used once and expires in one hour.')}</p>
+      `<h1>${t('認可コードを受け取りました','Authorization code received')}</h1>
+       <p class="sub">${t('下の <strong>URL 全体</strong>をターミナルに貼ってください（<code>code</code> だけでは足りません）。1 時間で切れる使い捨てです。','Paste the complete URL below into your terminal. The <code>code</code> alone is not enough. It can be used once and expires in one hour.')}</p>
        <p class="code" id="c">${esc(paste)}</p>
-       <button id="b">コピー</button>
+       <button id="b">${t('コピー','Copy')}</button>
        ${missing}
-       <p class="note">この画面は撮らないでください。貼り終えたら閉じて構いません。${en('Do not record this page. Close it after pasting the URL.')}</p>
+       <p class="note">${t('この画面は撮らないでください。貼り終えたら閉じて構いません。','Do not record this page. Close it after pasting the URL.')}</p>
        <script>
          // アドレスバーからコードを消す（撮影・肩越しの覗き見への備え）。
          try { history.replaceState(null, "", location.pathname); } catch (e) {}
@@ -101,10 +90,8 @@ function callbackPage(url) {
 
   return html(
     `<h1>THTH</h1>
-     <p class="sub">Threads の認可の受け口です。ここを直接開いても何もありません。${en('This is the Threads authorization return page. Opening it directly does nothing.')}</p>
-     <p class="note">ターミナルで <code>thth auth &lt;account&gt;</code> を実行すると、
-     認可 URL が表示されます。承認するとこのページに戻ってくるので、
-     表示された <strong>URL 全体</strong>をターミナルに貼ります。${en('Run <code>thth auth &lt;account&gt;</code> in a terminal to show an authorization URL. After approval, return here and paste the complete displayed URL into the terminal.')}</p>`);
+     <p class="sub">${t('Threads の認可の受け口です。ここを直接開いても何もありません。','This is the Threads authorization return page. Opening it directly does nothing.')}</p>
+     <p class="note">${t('ターミナルで <code>thth auth &lt;account&gt;</code> を実行すると認可 URL が表示されます。承認するとこのページに戻ってくるので、表示された <strong>URL 全体</strong>をターミナルに貼ります。','Run <code>thth auth &lt;account&gt;</code> in a terminal to show an authorization URL. After approval, return here and paste the complete displayed URL into the terminal.')}</p>`);
 }
 
 export default {
@@ -124,13 +111,13 @@ export default {
         ? await receiveCallback(request, env, url) : null;
       if (received instanceof Response) return received;
       if (received === "consumed") return html(
-        `<h1>すでに受け取り済みです${en('Already received')}</h1><p>完了しなかった場合は、ターミナルで認可をやり直してください。${en('If it did not finish, run authorization again in your terminal.')}</p>
+        `<h1>${t('すでに受け取り済みです','Already received')}</h1><p>${t('完了しなかった場合は、ターミナルで認可をやり直してください。','If it did not finish, run authorization again in your terminal.')}</p>
          <script>try { history.replaceState(null, "", location.pathname); } catch (e) {}</script>`);
       if (received === "ready-invite") return html(
-        `<h1>承認を受け付けました${en('Authorization received')}</h1><p>招待のページ（最初に開いたタブ）に戻ってください。数十秒で用意ができます。${en('Return to the invitation page in the first tab. Your account will be ready in a few tens of seconds.')}</p>
+        `<h1>${t('認可を受け付けました','Authorization received')}</h1><p class="status">${t('このタブを閉じて、<strong>最初に開いた招待のタブ</strong>に戻ってください。数十秒で用意ができます。','Close this tab and go back to <strong>the invitation tab you opened first</strong>. Your account will be ready in a few tens of seconds.')}</p>
          <script>try { history.replaceState(null, "", location.pathname); } catch (e) {}</script>`);
       if (received === "ready") return html(
-        `<h1>承認を受け付けました${en('Authorization received')}</h1><p>ターミナル（VM）が受け取ります。貼り付けは要りません。${en('The terminal receives it. You do not need to paste anything.')}</p>
+        `<h1>${t('認可を受け付けました','Authorization received')}</h1><p>${t('ターミナル（VM）が受け取ります。貼り付けは要りません。','The terminal receives it. You do not need to paste anything.')}</p>
          <script>try { history.replaceState(null, "", location.pathname); } catch (e) {}</script>`);
       return callbackPage(url);
     }

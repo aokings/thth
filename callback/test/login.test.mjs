@@ -89,7 +89,7 @@ test('the form: no script, CSP, no-store; the button says "Allow this device"; u
   const {code}=await begin();
   const r=await page(code);assert.equal(r.status,200);pageHeaders(r);
   const html=await r.text();
-  assert.ok(html.includes('このデバイスにキーを渡す / Allow this device'),html);
+  assert.ok(html.includes('このデバイスにキーを渡す')&&html.includes('Allow this device'),html);
   assert.ok(html.includes(code)&&html.includes(`action="/login/${code}"`));
   assert.ok(html.includes('autocomplete="current-password"')&&!/<script/i.test(html));
   // 手で小文字で打っても同じ code。
@@ -106,7 +106,7 @@ test('allow with the account secret: the terminal gets the key once, the page ne
   assert.equal(waiting.headers.get('cache-control'),'no-store');
   const r=await allow(code,{account:p.id,secret:p.secret});
   assert.equal(r.status,200);pageHeaders(r);
-  const html=await r.text();assert.ok(html.includes('渡しました。ターミナルに戻ってください')&&html.includes('Done. Go back to your terminal'),html);
+  const html=await r.text();assert.ok(html.includes('できました。ターミナルに戻ってください')&&html.includes('Done. Go back to your terminal'),html);
   const got=await poll(code,token);assert.equal(got.status,200);
   const {key:value,account}=await got.json();sensitive.push(value);
   assert.match(value,/^[A-Za-z0-9_-]{43}$/);assert.equal(account,p.id);

@@ -87,7 +87,7 @@ test('sign-in shows only the pushed summary; no link to the removed /pending',as
   const html=await(await get('/activity',raw.split(';')[0])).text();
   assert.ok(html.includes(name)&&html.includes('出た投稿の先頭')&&html.includes('待機中の投稿')&&!html.includes('/pending'),html);
   assert.ok(!blank.includes('/pending'));
-  assert.ok(html.includes('LLM のキーを発行する / Issue a key for your LLM')&&html.includes('このアカウントを止める / Stop this account'));
+  assert.ok(html.includes('API キーを発行する')&&html.includes('Issue an API key')&&html.includes('このアカウントを止める')&&html.includes('Stop this account'));
   assert.equal((await get('/activity/')).status,308);
 });
 
@@ -96,7 +96,7 @@ test('a stopped account shows its reason at the top of the page',async()=>{
   await sync(p,[summary(name,{stopped:{reason:'burst',at:now()},rows:[{kind:'stopped',at:now(),head:'',post_id:null,draft_id:null,reason:'burst',reply:false}]})]);
   const html=await(await get('/activity',await cookieOf(p))).text();
   const banner=html.indexOf('は止まっています'),first=html.indexOf('<section>');
-  assert.ok(banner>0&&banner<first,html);assert.ok(html.includes('急な連投でガードが止めました')&&html.includes('止めたのを戻す / Resume'));
+  assert.ok(banner>0&&banner<first,html);assert.ok(html.includes('急な連投でガードが止めました')&&html.includes('止めたのを戻す')&&html.includes('Resume'));
 });
 
 test('operations need the secret again; nothing is queued without it, and the lock is the same five-in-a-row',async()=>{
@@ -142,14 +142,14 @@ test('requested operations reach the VM on sync and show their outcome; a finish
   let html=await(await get('/activity',cookie)).text();assert.ok(html.includes('反映待ち'),html);
   const second=await(await sync(p,[summary(name)],first.actions.map(a=>({id:a.id,outcome:a.kind==='settings'?'done':'failed',reason:a.kind==='settings'?null:'not_owner'})))).json();
   assert.deepEqual(second.actions,[]);
-  html=await(await get('/activity',cookie)).text();assert.ok(html.includes('済み / Done')&&html.includes('(not_owner)'),html);
+  html=await(await get('/activity',cookie)).text();assert.ok(html.includes('済み')&&html.includes('Done')&&html.includes('(not_owner)'),html);
 });
 
 test('issuing a key shows it once with the MCP line; only its SHA-256 stays, and only until the VM takes it',async()=>{
   const p=await person(),name=account();await sync(p,[summary(name)]);const cookie=await cookieOf(p);
   const r=await post({act:'rotate',account:name,secret:p.secret},cookie);assert.equal(r.status,200);
   assert.equal(r.headers.get('cache-control'),'no-store');
-  const html=await r.text(),bearer=/<pre>([A-Za-z0-9_-]{43})<\/pre>/.exec(html)?.[1];sensitive.push(bearer);
+  const html=await r.text(),bearer=/<code class="secret">([A-Za-z0-9_-]{43})<\/code>/.exec(html)?.[1];sensitive.push(bearer);
   assert.ok(bearer,html);assert.ok(html.includes(`claude mcp add thth -e THTH_REPORT_TOKEN=${bearer} -- ${MCP_COMMAND}`),html);
   assert.ok(html.includes('1 度だけ'));
   const stored=[...(await actions(p)).entries()].filter(([k])=>k.startsWith('action:'));

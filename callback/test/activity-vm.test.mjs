@@ -54,11 +54,11 @@ test('VM pushes the summary through the real signer; the owner stops, tightens a
   let html=await(await fetch(origin+'/activity',{headers:{cookie}})).text();
   assert.ok(html.includes(account)&&html.includes('一本目の本文です🙂')&&html.includes('二本目'),html);
   assert.ok(!html.includes('ここは出ない'),'only the first 60 characters reach the Worker');
-  assert.ok(html.includes('予約の timer なし'),'scheduled: false is shown');
+  assert.ok(html.includes('timer なし（予約と猶予は使えません）'),'scheduled: false is shown');
   assert.equal((await post({act:'stop',account,secret},cookie)).status,200);
   assert.equal((await post({act:'settings',account,key:'daily_max_posts',value:'3',secret},cookie)).status,200);
   const keyPage=await(await post({act:'rotate',account,secret},cookie)).text();
-  const bearer=/<pre>([A-Za-z0-9_-]{43})<\/pre>/.exec(keyPage)[1];
+  const bearer=/<code class="secret">([A-Za-z0-9_-]{43})<\/code>/.exec(keyPage)[1];
   assert.ok(keyPage.includes('THTH_REPORT_TOKEN='+bearer),'without THTH_MCP_COMMAND the page gives the variable only');
   const done=vm('run');
   assert.equal(done.completed.length,3);assert.ok(done.completed.every(row=>row.outcome==='done'),JSON.stringify(done.completed));
@@ -66,7 +66,7 @@ test('VM pushes the summary through the real signer; the owner stops, tightens a
   vm('run');
   html=await(await fetch(origin+'/activity',{headers:{cookie}})).text();
   assert.ok(html.indexOf('は止まっています')<html.indexOf('<section>')&&html.includes('あなたが止めました'),html);
-  assert.ok(html.includes('済み / Done')&&!html.includes(bearer));
+  assert.ok(html.includes('済み')&&html.includes('Done')&&!html.includes(bearer));
   assert.equal((await post({act:'resume',account,secret},cookie)).status,200);
   assert.equal(vm('run').stopped,null);
   // 3.14.0 遠くの道: VM が押し上げた鍵の表で Worker が照合し、依頼は次の sync で VM が行い、結果が保留中の応答に返る。

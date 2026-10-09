@@ -11,8 +11,28 @@ import {activityRequest} from './activity.js';
 import {apiRequest} from './api.js';
 export {Login} from './login-object.js';
 import {loginRequest,loginApiRequest} from './login.js';
+// 2026-10-10: 画面の言葉の切り替え（person.js の frame）。ブラウザの第一言語が日本語でなければ、
+// 最初から English を選んでおく。人が見る画面（招待・ログイン・アクティビティ・認可の戻り）だけ。
+export function prefersEnglish(request){
+  const first=(request.headers.get('accept-language')||'').split(',')[0].split(';')[0].trim().toLowerCase();
+  return first!==''&&first!=='*'&&!first.startsWith('ja');
+}
+async function language(request,response){
+  response=await response;
+  if(!prefersEnglish(request)||!(response.headers.get('content-type')||'').startsWith('text/html'))return response;
+  return new HTMLRewriter()
+    .on('#lang-ja',{element(e){e.removeAttribute('checked');}})
+    .on('#lang-en',{element(e){e.setAttribute('checked','');}})
+    .on('html',{element(e){e.setAttribute('lang','en');}})
+    .transform(response);
+}
+const PAGES=/^\/(?:invite\/|login\/|activity$|callback(?:\/|$))/;
 export default {fetch(request,env){
   const url=new URL(request.url);
+  const routed=route(request,env,url);
+  return PAGES.test(url.pathname)?language(request,routed):routed;
+}};
+function route(request,env,url){
   // 3.12.0 §6-2: /activity/ は末尾の / を落として 308。
   if(url.pathname==='/activity/')return new Response(null,{status:308,headers:{location:'/activity','cache-control':'no-store','referrer-policy':'no-referrer'}});
   if(url.pathname.startsWith('/media/')||url.pathname.startsWith('/media-upload/')||url.pathname.startsWith('/m/'))return mediaRequest(request,env,url);
@@ -30,4 +50,4 @@ export default {fetch(request,env){
   // 遠くの道（設計 3.14.0 §3.1）: 鍵で自分のアカウントを動かす。VM へは sync で渡す。
   if(url.pathname==='/api'||url.pathname.startsWith('/api/'))return apiRequest(request,env,url);
   return base.fetch(request,env);
-}};
+}

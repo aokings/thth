@@ -50,7 +50,7 @@ test('招待の通し: create → 開く → 押す → 常駐が認可 URL → 
   const url=new URL(link);assert.equal(url.origin+url.pathname,'https://threads.net/oauth/authorize');
   assert.equal(url.searchParams.get('redirect_uri'),'https://thth.me/callback/');assert.ok(!url.searchParams.get('scope').includes('share_to_instagram'));
   // Threads で承認した戻り（/callback/）。預かり所が code を VM のために預かる。
-  const back=await page('/callback/?state='+url.searchParams.get('state')+'&code='+opaque());assert.ok(back.html.includes('招待のページ'));
+  const back=await page('/callback/?state='+url.searchParams.get('state')+'&code='+opaque());assert.ok(back.html.includes('最初に開いた招待のタブ'));
   const used=vm('run');assert.equal(used.status,'used');
   assert.deepEqual(used.events,['invite_created','account_added','production_enabled','token_set','invite_used']);
   view=await page(path);assert.ok(view.html.includes('@reviewer.local')&&view.html.includes(created.account));
