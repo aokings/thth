@@ -62,6 +62,8 @@ def register(sub) -> None:
                    help="一段目が表示した digest。これが無いと何もしない")
     p.add_argument("--json", action="store_true")
     p.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
+    p.add_argument("--already-gone", dest="already_gone", action="store_true",
+                   help="媒体の画面で既に消した投稿に、記録だけ足す（DELETE は呼ばない・二段確認は同じ）")
     p.set_defaults(func=cmd_retract)
 
     p_loc = sub.add_parser(
@@ -256,8 +258,12 @@ def _cmd_retract(args) -> int:
         return _fail(args, 1, f"post_id {post_id} は既に取り下げ済みです"
                               f"（{fm.get('retracted_at')}・{fm.get('retracted_by')}）")
 
+    already_gone = bool(getattr(args, "already_gone", False))
+    # 媒体の画面で既に消した投稿（要望 #1560・関東 10/8）。記録だけ足し、DELETE は呼ばない。
+    # 消す取り下げの digest を流用できないよう、digest の材料に印を足す。
     digest = approval_mod.compute_retract_digest(
-        post_id=post_id, account=args.account, reason=reason)
+        post_id=post_id, account=args.account,
+        reason=reason + ("\x1falready_gone" if already_gone else ""))
 
     token = accounts_mod.load_token(account_cfg)
     url = record.get("url") or _lookup_url(account_cfg, token, post_id)
@@ -272,6 +278,8 @@ def _cmd_retract(args) -> int:
                          "digest": digest})
             return 1
         print(f"取り下げません（確認の一段目です）: {args.account} post_id {post_id}")
+        if already_gone:
+            print("  媒体の画面で既に消えている投稿として、記録だけ足します（DELETE は呼びません）")
         print(f"  記録: {record['source']}（{record['path']}）")
         print(f"  URL : {url or '（記録に無く、引けませんでした。thth posts で確かめられます）'}")
         print(f"  理由: {reason}")
@@ -280,12 +288,13 @@ def _cmd_retract(args) -> int:
         text = record["text"]
         sys.stdout.write(text if text.endswith("\n") else text + "\n")
         print("--- ここまで ---")
-        if not approval_mod.is_true(account_cfg.get("production")):
+        if not already_gone and not approval_mod.is_true(account_cfg.get("production")):
             print("  ⚠ 台帳に production: true が無いので、二段目でも DELETE は呼びません")
         print(f"digest: {digest}")
         print(f"この投稿を取り下げるなら: thth retract {args.account} {post_id} "
               f"--reason {json.dumps(reason, ensure_ascii=False)} --by "
-              f"{json.dumps(by, ensure_ascii=False)} --confirm {digest}")
+              f"{json.dumps(by, ensure_ascii=False)}"
+              f"{' --already-gone' if already_gone else ''} --confirm {digest}")
         return 1
 
     # ---- 二段目 ----
@@ -293,6 +302,10 @@ def _cmd_retract(args) -> int:
         return _fail(args, 1, f"digest が一致しないので取り下げません（表示したものと"
                               f"中身が違います）。いまの digest は {digest} です。"
                               "もう一度 thth retract からやり直してください")
+    if already_gone:
+        return _do_retract(args, account_cfg, adapter_cls, token, record, post_id,
+                           reason=reason + "（媒体の画面で既に消えていた・DELETE は呼んでいない）",
+                           by=by, url=url, delete=False)
     # **production: true が無ければ DELETE を呼ばない**（dry-run と同じ fail-closed）。
     if not approval_mod.is_true(account_cfg.get("production")):
         return _fail(args, 1, f"{args.account}: 台帳に production: true が無いので取り下げ"
@@ -310,7 +323,8 @@ def _cmd_retract(args) -> int:
 
 
 def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
-                reason, by, url, before_execute=None, lock_context=None, origin=None) -> int:
+                reason, by, url, before_execute=None, lock_context=None, origin=None,
+                delete=True) -> int:
     """**DELETE を 1 回**。成功したら記録に 3 項目を足す（消さない）。"""
     account_name = args.account
     # 公開の経路と同じロック（repo → account）。取り下げの最中に同じ clone を
@@ -336,16 +350,19 @@ def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
                     return _fail(args, 1, f"post_id {post_id} は既に取り下げ済みです"
                                           f"（{fm_now.get('retracted_at')}）")
 
-            if before_execute is not None:
-                token = before_execute(account_cfg)
-            adapter = adapters_mod.make_adapter(account_cfg, token)
-            try:
-                result = adapter.delete_post(post_id)      # ← DELETE はここ 1 回だけ
-            except adapter_base.PermissionMissing as e:
-                return _fail(args, 2, _not_granted(account_name, e))
-            except Exception as e:
-                return _fail(args, 1, "取り下げできませんでした（記録は変えていません）: "
-                                      + redact_mod.redact(str(e)))
+            if not delete:
+                result = {"deleted_id": None}              # 媒体の画面で既に消えている
+            else:
+                if before_execute is not None:
+                    token = before_execute(account_cfg)
+                adapter = adapters_mod.make_adapter(account_cfg, token)
+                try:
+                    result = adapter.delete_post(post_id)      # ← DELETE はここ 1 回だけ
+                except adapter_base.PermissionMissing as e:
+                    return _fail(args, 2, _not_granted(account_name, e))
+                except Exception as e:
+                    return _fail(args, 1, "取り下げできませんでした（記録は変えていません）: "
+                                          + redact_mod.redact(str(e)))
 
             retracted_at = jst.iso()
             fields = {"retracted_at": retracted_at, "retracted_by": by,
@@ -381,7 +398,8 @@ def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
     elif args.json:
         _print_json(payload)
     else:
-        print(f"取り下げました: {account_name} post_id {post_id}（{retracted_at}・{by}）")
+        print(f"{'記録しました（媒体の画面で既に消えていた）' if not delete else '取り下げました'}: "
+              f"{account_name} post_id {post_id}（{retracted_at}・{by}）")
         for path in wrote:
             print(f"  記録に retracted_at / retracted_by / retract_reason を足しました: {path}")
         print("  sent/・runs・返信の台帳は消していません")
