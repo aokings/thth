@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import datetime
 import json
 import os
 
@@ -95,12 +96,16 @@ def test_2媒体をproject単位で並べる(two_media_project):
     # 絡みの台帳に 1 行（Threads・topic=コーヒー・alice への返信）。**where の
     # 呼び出しより前に置く**——ここは試験の下ごしらえで、`data/` 不変の検査は
     # 「`where` を呼ぶ前後で変わらないか」を見るためのもの。
+    # 時刻は**本物の今**で書く。`where` は子プロセス（bin/thth）で動き、conftest の時刻の
+    # 固定（2026-09-09）を受けない。固定した時刻で書くと、本物の日付が 30 日の窓を
+    # 越えた日（2026-10-09）から、子の after がこの行を数えなくなる。
+    real_now = datetime.datetime.now(jst.JST).replace(microsecond=0)
     engagements_mod.append(threads_cfg, threads_acc["name"], {
         "post_id": "MYREPLY1", "reply_to": "S1", "root_post": "S1",
         "author_key": ALICE_KEY, "account": threads_acc["name"],
         "medium": "threads", "topic": "コーヒー", "kind": None, "hour_band": "朝",
-        "posted_at": jst.iso(jst.now_jst()), "found_by": "manual",
-    })
+        "posted_at": jst.iso(real_now), "found_by": "manual",
+    }, now=real_now)
     # 24h の実測（T3-2: `you_and_them.last_reaction` が `null` に化けない
     # ことも見る）。
     insights_dir = accounts_mod.data_dirs(threads_cfg, threads_acc["name"])["insights_posts"]
@@ -108,7 +113,7 @@ def test_2媒体をproject単位で並べる(two_media_project):
     with open(os.path.join(insights_dir, "MYREPLY1.ndjson"), "w", encoding="utf-8") as f:
         f.write(json.dumps({
             "post_id": "MYREPLY1", "account": threads_acc["name"], "topic": "コーヒー",
-            "posted_at": jst.iso(jst.now_jst()), "collected_at": jst.iso(jst.now_jst()),
+            "posted_at": jst.iso(real_now), "collected_at": jst.iso(real_now),
             "age_hours": 24.1, "marks": [24],
             "metrics": {"views": 40, "likes": 3, "replies": 1}}, ensure_ascii=False) + "\n")
 
