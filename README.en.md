@@ -26,7 +26,7 @@ Japanese: [README.md](README.md) · Site: https://thth.me · Docs index: [docs/R
 - **Research**: `thth topics <account> --search <word>` shows counts, distinct authors and the latest posts for a word. `thth where` finds where to join a conversation next, with your own history layered on top.
 - **Post**: `thth send` publishes now, `thth schedule` schedules, and `--reply-to` replies.
 - **Review**: `thth collect` fetches replies and insights at fixed ages after posting (1 hour to 30 days); read them with `thth replies` and `thth measured`.
-- **Reposts and likes** are not supported yet ([design 3.15.0](docs/設計_3.15.0_再投稿といいね_2026-09-30.md)).
+- **Reposts and likes**: `thth repost`, `unrepost`, `like`, `unlike` (since 3.15.0). Threads supports reposts only (its API has no likes). Bluesky supports both. Likes on Mastodon and X need the account to be authorized again ([release notes 3.15.0](docs/リリースノート_3.15.0_2026-10-09.md)).
 
 ## Getting started
 
