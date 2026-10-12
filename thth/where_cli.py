@@ -121,6 +121,43 @@ MORE_MAY_EXIST_UNVERIFIED = "媒体が 1 回の検索で返す件数の上限の
 SHORT_SPAN_HOURS = 24
 MORE_MIN_N = 5
 
+# `where` の絞り込み（3.18.0・A5・申し送り 10/7 の残り 3）。**表示の絞り込みだけ**——保存の口には
+# 触らない（`--keep` の行には符丁だけが乗る）。X の日本語だけは query に `lang:ja` を足して
+# 読む本数（課金）を減らす（語に `lang:` が既にあれば重ねない）。他の媒体は返ってきた行を手元で絞る。
+FILTER_BASIS = {
+    "ja": ("日本語だけ: 本文にひらがなかカタカナがある（漢字だけの行は外れる。X は query に lang:ja を"
+           "足し、X の判定に任せる）"),
+    "question": "問いかけだけ: 検索語を外した本文に「？」か「?」がある",
+    "no_replies": "返信の付いていないものだけ: 返信の数が無いか 0（Threads は has_replies が真のものを外す）",
+}
+_KANA = re.compile(r"[ぁ-ゟ゠-ヿ]")
+_LANG_OPERATOR = re.compile(r"(?:^|\s)-?lang:", re.IGNORECASE)
+
+
+def x_query(word: str, ja: bool) -> str:
+    """X に送る語。日本語だけなら `lang:ja` を足す（語に `lang:` があれば重ねない）。"""
+    if ja and not _LANG_OPERATOR.search(word):
+        return f"{word} lang:ja"
+    return word
+
+
+def _is_japanese(text) -> bool:
+    return isinstance(text, str) and bool(_KANA.search(text))
+
+
+def _is_question(text, words) -> bool:
+    if not isinstance(text, str):
+        return False
+    stripped = _strip_words(text, words)
+    return any(mark in stripped for mark in QUESTION_MARKS)
+
+
+def _has_replies(row) -> bool:
+    count = threads_read_cli_mod.reply_count(row)
+    if isinstance(count, int) and count > 0:
+        return True
+    return row.get("has_replies") is True
+
 
 def _strip_words(text: str, words: list) -> str:
     """検索語を本文から外す（大文字小文字を畳む）。数える前に一度だけ。"""
@@ -292,7 +329,7 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                   limit: int, now, since=None, exclude_engaged=False, max_per_author=None,
                   also=None, aggregate_mode=False,
                   lexicon=None, suggest=False, tag_mode=False,
-                  author=None) -> tuple[dict | None, Exception | str | None]:
+                  author=None, filters=()) -> tuple[dict | None, Exception | str | None]:
     """1 account 分の節。戻りは `(node, 理由)`——どちらか一方だけが非 `None`。
     台帳が読めない・token が無い・媒体に `keyword_search` が無いときは
     `node` が `None`（`by_account` に**入れない**・規約 (d)）。
@@ -395,7 +432,8 @@ def _account_node(account_name: str, words: list, *, search_type: str,
             if floor is not None and (media == 'bluesky' or paid):kwargs['since'] = jst.iso(floor)
             if tag_mode:kwargs['search_mode'] = 'TAG'
             if author:kwargs['author_username'] = author
-            rows = adapter.keyword_search(word, **kwargs)
+            query = x_query(word, "ja" in filters) if media == "x" else word
+            rows = adapter.keyword_search(query, **kwargs)
         except adapter_base.PermissionMissing as e:
             node_cannot_say.append(f"{word}: {_permission_message(account_name, adapter, e)}")
             continue
@@ -418,6 +456,9 @@ def _account_node(account_name: str, words: list, *, search_type: str,
         raw_rows = rows
         dropped = {'since': None if floor and media == 'bluesky' else 0,
                    'exclude_engaged': 0, 'max_per_author': 0}
+        # 絞り込み（3.18.0）は付けたときだけ鍵を足す。X の日本語だけは query で絞ったので None。
+        for name in filters:
+            dropped[name] = None if (name == "ja" and media == "x") else 0
         filtered, per_author = [], {}
         for row in rows:
             if floor is not None and media != 'bluesky':
@@ -425,6 +466,15 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                 if stamp is None or stamp < floor:
                     dropped['since'] += 1
                     continue
+            if "ja" in filters and media != "x" and not _is_japanese(row.get("text")):
+                dropped["ja"] += 1
+                continue
+            if "question" in filters and not _is_question(row.get("text"), words):
+                dropped["question"] += 1
+                continue
+            if "no_replies" in filters and _has_replies(row):
+                dropped["no_replies"] += 1
+                continue
             key = row.get('author_key') or adapter_base.author_key(row.get('medium') or media, row.get('username'))
             if exclude_engaged and key and key in engaged:
                 dropped['exclude_engaged'] += 1
@@ -454,6 +504,8 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                              "window": {"since": jst.iso(floor) if floor else None,
                                         "basis": "server_sortAt" if media == 'bluesky' else 'timestamp'},
                              "requested_limit": limit}
+            if media == "x" and "ja" in filters:
+                by_word[word]["query_sent"] = x_query(word, True)
             if also_counts is not None:
                 by_word[word]["also"] = also_counts
             if raw_n == 0:
@@ -478,6 +530,8 @@ def _account_node(account_name: str, words: list, *, search_type: str,
         if tag_mode or author:
             by_word[word]["query"] = {"search_mode": "TAG" if tag_mode else "KEYWORD",
                                       "author_username": author}
+        if media == "x" and "ja" in filters:
+            by_word[word]["query_sent"] = x_query(word, True)
         if also_counts is not None:
             by_word[word]["also"] = also_counts
         if raw_n == 0:
@@ -531,7 +585,8 @@ def _period_days(rows: list, floor, now) -> int | None:
     return max(1, math.ceil((now - start).total_seconds() / 86400))
 
 
-def _keep_node(name: str, node: dict, *, now, search_type: str, also: list) -> None:
+def _keep_node(name: str, node: dict, *, now, search_type: str, also: list,
+               filters=()) -> None:
     """`--keep`（3.18.0）: この節の**出力の数**から行を作って残す。結果を節の `kept` に書く。
 
     project の無い account・置き場の失敗は `kept` に理由を書いて続ける（表示は止めない）。
@@ -542,7 +597,7 @@ def _keep_node(name: str, node: dict, *, now, search_type: str, also: list) -> N
         node["cannot_say"].append("残せません: account に project がありません（--keep は project の置き場に書きます）")
         return
     rows = where_keep_mod.rows_for_node(node, date=jst.to_jst(now).date().isoformat(),
-                                        search_type=search_type, filters=[], also=also)
+                                        search_type=search_type, filters=list(filters), also=also)
     try:
         node["kept"] = where_keep_mod.write(project, rows, now=now)
     except map_store_mod.MapError as e:
@@ -596,7 +651,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
           words: list, recent: bool = False, limit: int | None = None,
           now=None, since=None, exclude_engaged=False, max_per_author=None,
           also=None, aggregate_mode=False, lexicon=None, suggest=False,
-          tag=False, author=None, keep=False) -> dict:
+          tag=False, author=None, keep=False, ja=False, question=False,
+          no_replies=False) -> dict:
     """`where_to_appear` の答え（設計「自分の泉」§2.3・§2.6）。**読むだけ。**
 
     `tag`（Threads の `search_mode=TAG`）と `author`（`author_username`）は API の引数を
@@ -609,6 +665,11 @@ def answer(*, account_name: str | None = None, project: str | None = None,
         _reject("lexicon は --aggregate と一緒に使います")
     if type(keep) is not bool:
         _reject("keep は boolean です")
+    for flag_name, flag in (("ja", ja), ("question", question), ("no_replies", no_replies)):
+        if type(flag) is not bool:
+            _reject(f"{flag_name} は boolean です")
+    filters = [name for name, on in (("ja", ja), ("question", question),
+                                     ("no_replies", no_replies)) if on]
     if type(suggest) is not bool:
         _reject("suggest は boolean です")
     if account_name and project:
@@ -658,7 +719,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
                                      limit=limit, now=now, since=since,
                                      exclude_engaged=exclude_engaged, max_per_author=max_per_author,
                                      also=also, aggregate_mode=aggregate_mode, lexicon=lexicon,
-                                     suggest=suggest, tag_mode=tag, author=author)
+                                     suggest=suggest, tag_mode=tag, author=author,
+                                     filters=filters)
         if node is None:
             if isinstance(reason, accounts_mod.AccountError) and project is None:
                 # **単一 account: そのまま投げ直す**（T5-2・`who_cli.answer()`
@@ -674,7 +736,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
             continue
 
         if keep:
-            _keep_node(name, node, now=now, search_type=search_type, also=also)
+            _keep_node(name, node, now=now, search_type=search_type, also=also,
+                       filters=filters)
         by_account[name] = node
         n = sum(entry["aggregate"]["n"] if aggregate_mode else len(entry["posts"])
                 for entry in node["by_word"].values())
@@ -689,6 +752,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
                 notes.append(MASTODON_RECENT_IGNORED_NOTE)
 
     extra = {"also": also} if also else {}
+    if filters:
+        extra["filters"] = {name: FILTER_BASIS[name] for name in filters}
     if suggest:
         from . import where_suggest
         extra.update({"suggest": True, "suggest_storage": "display_only",
@@ -718,6 +783,8 @@ def _render_human(result: dict) -> None:
     """
     who = f"project {result['project']}" if result["project"] else result["account"]
     print(f"where  {who}  語: {'・'.join(result['words'])}")
+    for basis in (result.get("filters") or {}).values():
+        print(f"  絞り込み: {basis}")
     if result.get("mode") == "aggregate":
         _render_aggregate(result)
         return
@@ -923,6 +990,12 @@ def register(sub) -> None:
     p.add_argument("--suggest", action="store_true",
                    help="検索の語の候補（自分のデータ・also に合った投稿の本文で 2 投稿以上に出た語）。"
                         "語と数だけ・保存しない")
+    p.add_argument("--ja", action="store_true",
+                   help="日本語だけ（X は query に lang:ja を足して読む本数を減らす・他は手元で絞る）")
+    p.add_argument("--question", action="store_true",
+                   help="問いかけだけ（検索語を外した本文に「？」か「?」がある）")
+    p.add_argument("--no-replies", action="store_true", dest="no_replies",
+                   help="返信の付いていないものだけ（返信の数が無いか 0・Threads は has_replies が真のものを外す）")
     p.add_argument("--keep", action="store_true",
                    help="--aggregate・--also の語ごとの数を日付つきで project の私有の置き場に残す"
                         "（数だけ・5 未満は欠測・本文・post_id・username は残さない・thth where-log で読む）")
@@ -977,7 +1050,10 @@ def cmd_where(args) -> int:
                         suggest=bool(getattr(args, "suggest", False)),
                         tag=bool(getattr(args, "tag", False)),
                         author=getattr(args, "author", None),
-                        keep=bool(getattr(args, "keep", False)))
+                        keep=bool(getattr(args, "keep", False)),
+                        ja=bool(getattr(args, "ja", False)),
+                        question=bool(getattr(args, "question", False)),
+                        no_replies=bool(getattr(args, "no_replies", False)))
     except accounts_mod.AccountError as e:
         # **単一 account が読めなければ loud reject**（T5-2・`who` と揃える）。
         # `--json` は人向けの文言でなく `{"error", "account"}` を出す——

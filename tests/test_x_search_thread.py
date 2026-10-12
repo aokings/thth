@@ -176,7 +176,8 @@ def test_keyword_search_row_shape_and_charge(x_account, fake):
     method, path, query = fake["calls"][0]
     assert (method, path) == ("GET", "/2/tweets/search/recent")
     assert query["query"] == "コーヒー" and query["max_results"] == 10 and query["sort_order"] == "recency"
-    assert query["tweet.fields"] == "created_at,author_id,conversation_id,referenced_tweets"
+    # 3.18.0: 検索だけ public_metrics（返信の数・`where --no-replies`）を足す。
+    assert query["tweet.fields"] == "created_at,author_id,conversation_id,referenced_tweets,public_metrics"
     assert query["expansions"] == "author_id" and query["user.fields"] == "username,public_metrics"
     row = rows[1]
     assert row == {
@@ -185,7 +186,7 @@ def test_keyword_search_row_shape_and_charge(x_account, fake):
         "replied_to": {"id": "1800000000000000000"}, "root_post": {"id": "1800000000000000000"},
         "medium": "x", "author_key": base.author_key("x", "alice"), "reply_deadline": None,
         "permalink": "https://x.com/alice/status/1900000000000000001",
-        "author_followers": None, "author_posts": None}
+        "author_followers": None, "author_posts": None, "reply_count": None}
     # 課金は応答に入っていた本数（画面に出す 3 本ではない）。
     cost = adapter.read_cost()
     assert cost["posts"] == 10 and cost["usd_estimate"] == "0.050" and cost["today"] == 10

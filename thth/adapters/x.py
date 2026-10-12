@@ -749,7 +749,15 @@ class XAdapter(base.Adapter):
             # 同じ user）。無ければ None。**保存しない**（`_users()` の注記）。
             'author_followers': user.get('followers'),
             'author_posts': user.get('posts'),
+            # 返信の数（`public_metrics.reply_count`・検索で欄を頼んだときだけ）。無い・型違いは None。
+            'reply_count': self._reply_count(row),
         }
+
+    @staticmethod
+    def _reply_count(row):
+        metrics = row.get('public_metrics')
+        value = metrics.get('reply_count') if isinstance(metrics, dict) else None
+        return value if type(value) is int and value >= 0 else None
 
     def _rows(self, value, users=None):
         data = value.get('data')
@@ -790,6 +798,10 @@ class XAdapter(base.Adapter):
                                '——有償の読み取りなので上限を超える指定は断ります')
         query = {'query': q.strip(), 'max_results': max(self.SEARCH_MIN_RESULTS, limit),
                  'sort_order': 'recency' if search_type == 'RECENT' else 'relevancy', **self.READ_FIELDS}
+        # 返信の数（`where --no-replies`・3.18.0）。投稿の `public_metrics.reply_count`。欄を足すだけで
+        # 呼び出し数も返る本数も変わらない（課金は返った本数）。
+        query['tweet.fields'] += ',public_metrics'
+
         start = self._start_time(since)
         if start:
             query['start_time'] = start
