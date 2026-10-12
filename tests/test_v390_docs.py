@@ -33,8 +33,9 @@ def test_使い方の文書に3_9_0の段():
     section = doc.split(heading)[1].split("\n## ")[0]
     for text in ("--per-post-clicks", "unrecorded", "clicks_before_post", "**窓の前と後は窓の和に足しません**",
                  "原因は言えません", "--also", "also に合った投稿が 0 件（直近 n 日）", "--suggest",
+                 # 3.18.0: 当たり率の数は --keep のときだけ残る（候補は今までどおり残さない）。
                  "その場の人が書いた語", "**語と数だけで、本文・username・post_id・author_key は出ません。"
-                 "候補も当たり率も保存しません**", "rate_by_span", "rough: true", "more_may_exist",
+                 "候補は保存しません。当たり率の数は `--keep` を付けたときだけ残ります**", "rate_by_span", "rough: true", "more_may_exist",
                  "一次資料で未確認"):
         assert text in section, text
 

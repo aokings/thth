@@ -21,6 +21,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 - **出す**: `thth send` で今すぐ、`thth schedule` で予約、`--reply-to` で返信です。
 - **振り返る**: `thth collect` が投稿後 1 時間〜30 日の決まった時点で返信とインサイトを取得し、`thth replies`・`thth measured` で読みます。
 - **再投稿といいね**: `thth repost`・`unrepost`・`like`・`unlike`（3.15.0 から）。Threads は再投稿だけ（Threads の API にいいねが無い）。Bluesky は両方。Mastodon と X のいいねは、そのアカウントを認可し直してから（[リリースノート 3.15.0](docs/リリースノート_3.15.0_2026-10-09.md)）。
+- **検索の語ごとの数を残す・絞る**（3.18.0）: `thth where … --also|--aggregate --keep` で語ごとの数だけを日付つきで残し（5 未満は欠測・本文や名前は残さない）、`thth where-log <project> [--budget N --medium x]` で当たり率と翌日の配り直しを見ます。`--ja`・`--question`・`--no-replies` で表示を絞ります（X の `--ja` は検索に `lang:ja` を足して読む本数を減らす）（[リリースノート 3.18.0](docs/リリースノート_3.18.0_2026-10-12.md)）。
 - **X の非公開リスト**: `thth list create|add|remove|show`（3.17.0 から・X だけ）。公開のリストは作らない。足す・外すは人が選んだ少数だけ（1 回 10 人まで）。アカウントを認可し直してから（[リリースノート 3.17.0](docs/リリースノート_3.17.0_2026-10-12.md)）。
 
 ## はじめ方
