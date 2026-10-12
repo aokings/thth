@@ -327,6 +327,37 @@ def search_material(rows: list, *, q: str, search_type: str, limit: int) -> dict
     }
 
 
+def author_count(row: dict, key: str):
+    """投稿者の数（`author_followers`・`author_posts`）。**無い・型が違うは None**（0 にしない）。
+
+    今は X だけが返す（`user.fields=public_metrics`）。ほかの媒体の行は None。
+    **候補を選ぶその場でだけ使う**——台帳・runs・engagements・study には書かない
+    （報告 r20261012-4409f401）。
+    """
+    value = row.get(key)
+    return value if type(value) is int and value >= 0 else None
+
+
+def short_count(n) -> str:
+    """画面用の短い数（3,456・1.2 万・12 万・3.4 億）。None は「—」。"""
+    if type(n) is not int:
+        return "—"
+    if n < 10_000:
+        return f"{n:,}"
+    for unit, size in (("億", 100_000_000), ("万", 10_000)):
+        if n >= size:
+            value = n / size
+            text = f"{value:.1f}" if value < 10 else f"{int(value):,}"
+            return text.removesuffix(".0") + " " + unit
+    return f"{n:,}"
+
+
+def followers_cell(row: dict) -> str:
+    """画面の 1 語「フォロワー 1.2 万」。数が無い行（X 以外・取れなかった）は空。"""
+    n = author_count(row, "author_followers")
+    return "" if n is None else f"フォロワー {short_count(n)}"
+
+
 def reply_count(row: dict):
     """その投稿への**返信の数**（無ければ None）。**数を作らない**（設計 v2 §4.4）。
 
@@ -373,6 +404,9 @@ def post_rows(rows: list, *, replied: dict | None) -> list:
                 r.get("medium") or "threads", r.get("username")),
             # **数と真偽を別の鍵にする**（§4.4）。数が無いことを 0 と混ぜない。
             "replies": reply_count(r),
+            # 投稿者のフォロワー数・投稿数（今は X だけ・他は None）。**保存しない。**
+            "author_followers": author_count(r, "author_followers"),
+            "author_posts": author_count(r, "author_posts"),
             "has_replies": has_replies if isinstance(has_replies, bool) else None,
             "replied": (replied or {}).get(post_id) if replied is not None else None,
         })

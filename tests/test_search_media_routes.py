@@ -56,6 +56,8 @@ def test_Bluesky検索がCLIのJSONまで届く(
         "replies": 2,
         "has_replies": True,
         "replied": None,
+        "author_followers": None,
+        "author_posts": None,
     }
 
 

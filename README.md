@@ -17,7 +17,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 | 言及（`thth mentions`） | ○ | ○ | ○ | － |
 | プロフィールと場所の検索 | ○ | － | － | － |
 
-- **調べる**: `thth topics <アカウント> --search <語>` で、その語の件数・投稿者の数・最新の投稿を見ます。`thth where` は「次にどこで話すか」を、自分がすでに絡んだ相手を重ねて探します。
+- **調べる**: `thth topics <アカウント> --search <語>` で、その語の件数・投稿者の数・最新の投稿を見ます。`thth where` は「次にどこで話すか」を、自分がすでに絡んだ相手を重ねて探します。X の行には投稿者のフォロワー数（「フォロワー 1.2 万」）と投稿数も付きます（`--json` は `author_followers`・`author_posts`。保存しません）。
 - **出す**: `thth send` で今すぐ、`thth schedule` で予約、`--reply-to` で返信です。
 - **振り返る**: `thth collect` が投稿後 1 時間〜30 日の決まった時点で返信とインサイトを取得し、`thth replies`・`thth measured` で読みます。
 - **再投稿といいね**: `thth repost`・`unrepost`・`like`・`unlike`（3.15.0 から）。Threads は再投稿だけ（Threads の API にいいねが無い）。Bluesky は両方。Mastodon と X のいいねは、そのアカウントを認可し直してから（[リリースノート 3.15.0](docs/リリースノート_3.15.0_2026-10-09.md)）。

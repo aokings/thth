@@ -104,7 +104,9 @@ def test_a_jsonのpostsの形(capsys, account):
     assert first == {"post_id": "POST7QXA1", "permalink": "https://fake/POST7QXA1",
                      "timestamp": "2026-09-13T10:00:00+0000", "author": "alice",
                      "author_key": base.author_key(MEDIUM, "alice"),
-                     "replies": None, "has_replies": True, "replied": None}
+                     "replies": None, "has_replies": True, "replied": None,
+                     # X 以外は投稿者の数を返さない（鍵はそろえて None）。
+                     "author_followers": None, "author_posts": None}
     # **本文は `--json` に入らない**（指す先を渡すのが仕事）。
     for post in data["posts"]:
         assert "text" not in post

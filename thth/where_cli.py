@@ -712,8 +712,10 @@ def _render_human(result: dict) -> None:
             for post in entry["posts"]:
                 mark = threads_read_cli_mod._replied_cell(post["replied"])
                 stamp = post["timestamp"] or "—"
+                followers = threads_read_cli_mod.followers_cell(post)
                 print(f"    {mark}{stamp}  @{post['author'] or '—'}"
-                     f"（{post['author_key'] or '—'}）  {post['preview']}")
+                     f"（{post['author_key'] or '—'}）  "
+                     f"{followers + '  ' if followers else ''}{post['preview']}")
                 if post["permalink"]:
                     print(f"      {post['permalink']}")
                 print(f"      post_id: {post['post_id']}")

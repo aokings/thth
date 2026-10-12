@@ -317,6 +317,10 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
                     else None,
             "author_key": author_key,
             "username": m.get("username"),
+            # 投稿者のフォロワー数・投稿数（今は X だけ・他は None）。**保存しない**
+            # （`_record_run()` は件数だけ）。
+            "author_followers": threads_read_cli_mod.author_count(m, "author_followers"),
+            "author_posts": threads_read_cli_mod.author_count(m, "author_posts"),
             "is_own": is_own,
             "timestamp": m.get("timestamp"),
             "text": m.get("text"),
@@ -343,6 +347,8 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
             "timestamp": root_row.get("timestamp"),
             "text": root_row.get("text"),
             "username": root_row.get("username"),
+            "author_followers": threads_read_cli_mod.author_count(root_row, "author_followers"),
+            "author_posts": threads_read_cli_mod.author_count(root_row, "author_posts"),
         },
         "messages": messages,
         "counts": {
@@ -409,6 +415,8 @@ def _render_human(result: dict) -> None:
     root = result["root"]
     who = "自分" if root["is_own"] is True else ("他者" if root["is_own"] is False else "不明")
     root_text = (root.get("text") or "")[:TEXT_PREVIEW_CHARS]
+    followers = threads_read_cli_mod.followers_cell(root)
+    who = who + ("・" + followers if followers else "")
     print(f"根 @{root.get('username') or '?'}（{who}）id={root.get('post_id') or '?'}: {root_text}")
     for m in result["messages"]:
         depth = m.get("depth")
@@ -418,6 +426,8 @@ def _render_human(result: dict) -> None:
         hhmm = ts[11:16] if isinstance(ts, str) and len(ts) >= 16 else (ts or "?")
         text = (m.get("text") or "")[:TEXT_PREVIEW_CHARS]
         prefix = _replied_prefix(m.get("already_replied"))
+        followers = threads_read_cli_mod.followers_cell(m)
+        who = who + ("・" + followers if followers else "")
         # 返すのに要る id を行に出す（つまずき r20261007-87365549: --json を掘っていた）。
         print(f"{indent}{prefix}{hhmm} @{m.get('username') or '?'}"
               f"（{m.get('author_key') or '?'}・{who}）id={m.get('message_id') or '?'}: {text}")

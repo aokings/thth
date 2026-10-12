@@ -94,6 +94,7 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 ```bash
 thth where <account> <語…>          # 検索の一覧に自分の履歴を重ねて返す
 thth where --project <P> <語…>      # project 単位で全SNSを一度に
+#   X の行は投稿者のフォロワー数・投稿数つき（author_followers・author_posts・他の媒体は null・保存しない）
 ```
 
 MCP `where_to_appear`。**順位は無い**——材料を並べるだけで、選ぶのは LLM。

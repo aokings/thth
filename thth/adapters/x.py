@@ -206,7 +206,7 @@ class XAdapter(base.Adapter):
     SEARCH_WINDOW_DAYS = 7
     SEARCH_TYPES = ('TOP', 'RECENT')
     READ_FIELDS = {'tweet.fields': 'created_at,author_id,conversation_id,referenced_tweets',
-                   'expansions': 'author_id', 'user.fields': 'username'}
+                   'expansions': 'author_id', 'user.fields': 'username,public_metrics'}
     TOKEN_KEYS = ('access_token',)
     TOKEN_SETUP_HINT = 'thth auth'
     POST_ID_FORM_HINT = 'X の post_id は 19 桁までの数字です。'
@@ -697,18 +697,36 @@ class XAdapter(base.Adapter):
         self._reads['usd'] = str(Decimal(self._reads['usd']) + budget_x.POSTS_PRICE * n)
 
     @staticmethod
-    def _users(value):
+    def _metric(metrics, key):
+        """`public_metrics` の 1 つ。無い・型が違う（bool・負・数でない）は None（0 にしない）。"""
+        value = metrics.get(key) if isinstance(metrics, dict) else None
+        return value if type(value) is int and value >= 0 else None
+
+    @classmethod
+    def _users(cls, value):
+        """`includes.users` を id → `{username, followers, posts}` に。
+
+        フォロワー数・投稿数（`public_metrics`）は**候補を選ぶその場でだけ使う**——
+        行に載せて返すだけで、台帳・runs・engagements・study には書かない
+        （報告 r20261012-4409f401・本文と username と同じ扱い）。
+        """
         users = (value.get('includes') or {}).get('users') if isinstance(value.get('includes'), dict) else None
         out = {}
         for user in users or []:
             if isinstance(user, dict) and isinstance(user.get('id'), str):
-                out[user['id']] = user.get('username') if isinstance(user.get('username'), str) else None
+                metrics = user.get('public_metrics')
+                out[user['id']] = {
+                    'username': user.get('username') if isinstance(user.get('username'), str) else None,
+                    'followers': cls._metric(metrics, 'followers_count'),
+                    'posts': cls._metric(metrics, 'tweet_count'),
+                }
         return out
 
     def _message_row(self, row, users):
         """X の 1 本を `Message` の形に写す（`threads._message_row` と同じ鍵）。"""
         identifier = row.get('id')
-        username = users.get(row.get('author_id'))
+        user = users.get(row.get('author_id')) or {}
+        username = user.get('username')
         # 応答の名前は `referenced_tweets`（10/7 に実機で通った `tweet.fields` の系）。資料は
         # `referenced_posts` と書くようになったので、どちらでも読む。
         refs = row.get('referenced_tweets') or row.get('referenced_posts') or []
@@ -727,6 +745,10 @@ class XAdapter(base.Adapter):
             'author_key': base.author_key(MEDIUM, username),
             'reply_deadline': None,
             'permalink': post_url(username, identifier),
+            # 投稿者のフォロワー数・投稿数（`user.fields=public_metrics`・同じ呼び出しの
+            # 同じ user）。無ければ None。**保存しない**（`_users()` の注記）。
+            'author_followers': user.get('followers'),
+            'author_posts': user.get('posts'),
         }
 
     def _rows(self, value, users=None):

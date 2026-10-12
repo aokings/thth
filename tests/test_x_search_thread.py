@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 from decimal import Decimal
 
@@ -176,14 +177,15 @@ def test_keyword_search_row_shape_and_charge(x_account, fake):
     assert (method, path) == ("GET", "/2/tweets/search/recent")
     assert query["query"] == "コーヒー" and query["max_results"] == 10 and query["sort_order"] == "recency"
     assert query["tweet.fields"] == "created_at,author_id,conversation_id,referenced_tweets"
-    assert query["expansions"] == "author_id" and query["user.fields"] == "username"
+    assert query["expansions"] == "author_id" and query["user.fields"] == "username,public_metrics"
     row = rows[1]
     assert row == {
         "message_id": "1900000000000000001", "username": "alice", "text": "本文",
         "timestamp": "2026-09-09T00:30:00.000Z",
         "replied_to": {"id": "1800000000000000000"}, "root_post": {"id": "1800000000000000000"},
         "medium": "x", "author_key": base.author_key("x", "alice"), "reply_deadline": None,
-        "permalink": "https://x.com/alice/status/1900000000000000001"}
+        "permalink": "https://x.com/alice/status/1900000000000000001",
+        "author_followers": None, "author_posts": None}
     # 課金は応答に入っていた本数（画面に出す 3 本ではない）。
     cost = adapter.read_cost()
     assert cost["posts"] == 10 and cost["usd_estimate"] == "0.050" and cost["today"] == 10
@@ -337,3 +339,108 @@ def test_timer_collect_skips_x_posts_quietly(tmp_path, isolated_account_factory)
     now = datetime.datetime(2026, 10, 8, 12, 0, tzinfo=jst.JST)
     result = collect_mod.collect_once(a["name"], adapter=Paid(), now=now, log=lambda _l: None)
     assert result["errors"] == [] and result["posts"] == 1
+
+
+# ----- 投稿者のフォロワー数・投稿数（報告 r20261012-4409f401） -----------------
+
+METRIC_USERS = {"users": [
+    {"id": "u1", "username": "alice",
+     "public_metrics": {"followers_count": 12345, "tweet_count": 3456,
+                        "following_count": 10, "listed_count": 2}},
+    # 型違い（文字列・真偽）は None。0 にしない。
+    {"id": "u2", "username": "bob",
+     "public_metrics": {"followers_count": "12345", "tweet_count": True}},
+    # public_metrics が無い。
+    {"id": "u3", "username": "carol"},
+    # public_metrics が dict でない・負の数。
+    {"id": "u4", "username": "dave", "public_metrics": [1, 2]},
+    {"id": "u5", "username": "erin", "public_metrics": {"followers_count": -1, "tweet_count": 0}},
+]}
+
+
+def _metric_search(fake, includes=METRIC_USERS):
+    data = [tweet(str(1900000000000000000 + i), author=f"u{i + 1}") for i in range(5)]
+    data += [tweet(str(1900000000000000000 + i), author="u1") for i in range(5, 10)]
+    body = {"data": data}
+    if includes is not None:
+        body["includes"] = includes
+    fake["routes"]["/2/tweets/search/recent"] = body
+
+
+def test_author_metrics_present_missing_and_wrong_type(x_account, fake):
+    _metric_search(fake)
+    rows = adapter_for().keyword_search("コーヒー", limit=5)
+    got = {row["username"]: (row["author_followers"], row["author_posts"]) for row in rows}
+    assert got == {"alice": (12345, 3456), "bob": (None, None), "carol": (None, None),
+                   "dave": (None, None), "erin": (None, 0)}
+    # 呼び出しは 1 回のまま（fields を足しただけ）。
+    assert len(fake["calls"]) == 1
+    assert fake["calls"][0][2]["user.fields"] == "username,public_metrics"
+
+
+def test_author_metrics_without_includes_are_none(x_account, fake):
+    _metric_search(fake, includes=None)
+    rows = adapter_for().keyword_search("コーヒー", limit=3)
+    assert all(row["username"] is None and row["author_followers"] is None
+               and row["author_posts"] is None for row in rows)
+
+
+def test_where_shows_followers_and_json_carries_the_numbers(x_account, fake, capsys):
+    _metric_search(fake)
+    assert cli.main(["where", ACCOUNT, "コーヒー"]) == 0
+    out = capsys.readouterr().out
+    line = next(l for l in out.splitlines() if "@alice" in l)
+    assert "フォロワー 1.2 万" in line
+    assert "フォロワー" not in next(l for l in out.splitlines() if "@carol" in l)
+    assert cli.main(["where", ACCOUNT, "コーヒー", "--json"]) == 0
+    posts = json.loads(capsys.readouterr().out)["by_account"][ACCOUNT]["by_word"]["コーヒー"]["posts"]
+    by = {p["author"]: (p["author_followers"], p["author_posts"]) for p in posts}
+    assert by["alice"] == (12345, 3456) and by["bob"] == (None, None) and by["carol"] == (None, None)
+
+
+def test_author_metrics_are_not_saved(x_account, fake, tmp_path, capsys):
+    _metric_search(fake)
+
+    def snapshot():
+        return {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    before = snapshot()
+    assert cli.main(["where", ACCOUNT, "コーヒー", "--json"]) == 0
+    capsys.readouterr()
+    after = snapshot()
+    changed = [p for p, body in after.items() if before.get(p) != body]
+    assert changed  # runs と読み取りの予算の台帳は書かれる
+    for path in changed:
+        text = after[path].decode("utf-8", errors="replace")
+        assert "author_followers" not in text and "author_posts" not in text, path
+        assert not re.search(r"(?<![0-9])(12345|3456)(?![0-9])", text), path
+    # data/ の下には何も足さない。
+    assert not any("/data/" in str(p) for p in changed), changed
+
+
+def test_thread_shows_followers_for_root_and_messages(x_account, fake, capsys):
+    conversation_routes(fake, 3, next_token=False)
+    fake["routes"]["/2/tweets/" + ROOT]["includes"] = METRIC_USERS
+    fake["routes"]["/2/tweets/search/recent"]["includes"] = METRIC_USERS
+    assert cli.main(["thread", ACCOUNT, ROOT]) == 0
+    out = capsys.readouterr().out
+    root_line = next(l for l in out.splitlines() if l.startswith("根 "))
+    assert "@bob" in root_line and "フォロワー" not in root_line
+    assert any("@alice" in l and "・フォロワー 1.2 万）" in l for l in out.splitlines())
+    conversation_routes(fake, 3, next_token=False)
+    fake["routes"]["/2/tweets/search/recent"]["includes"] = METRIC_USERS
+    assert cli.main(["thread", ACCOUNT, ROOT, "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["root"]["author_followers"] is None
+    assert {(m["author_followers"], m["author_posts"]) for m in result["messages"]} == {(12345, 3456)}
+
+
+def test_other_media_rows_carry_none_and_short_count():
+    from thth import threads_read_cli as t
+    rows = t.post_rows([{"message_id": "1", "username": "a", "medium": "threads",
+                         "author_followers": 5}], replied=None)
+    # Threads の行にも鍵はある（値は行にあれば通す・無ければ None）。
+    assert rows[0]["author_followers"] == 5 and rows[0]["author_posts"] is None
+    assert [t.short_count(n) for n in (None, 0, 3456, 10_000, 12_345, 123_456, 1_234_567,
+                                       340_000_000)] == \
+        ["—", "0", "3,456", "1 万", "1.2 万", "12 万", "123 万", "3.4 億"]
+    assert t.followers_cell({"author_followers": True}) == ""
