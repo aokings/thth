@@ -299,7 +299,10 @@ def prune(project, *, now=None):
     now = now or jst.now_jst()
     days = map_store.load_config(project)["retention_days"]
     oldest = (jst.to_jst(now).date() - datetime.timedelta(days=days)).isoformat()
-    return rewrite(project, lambda row: row["date"] >= oldest)
+    removed = rewrite(project, lambda row: row["date"] >= oldest)
+    # `where … --keep` の行（3.18.0・同じ置き場・同じ保持）も同じ日で削る。
+    from . import where_keep
+    return removed + where_keep.rewrite(project, lambda row: row["date"] >= oldest)
 
 
 def retention_floor(project, now):
@@ -338,6 +341,9 @@ def purge_for_leave(account, project, medium, *, by="leave"):
         scope = "whole_map"
     else:
         removed = rewrite(project, lambda row: row["medium"] != medium)
+        # `where … --keep` の行（3.18.0・同じ置き場）もその媒体の分を消す。
+        from . import where_keep
+        removed += where_keep.rewrite(project, lambda row: row["medium"] != medium)
         scope = "medium_rows"
     try:
         admin_log.append("map_purged", project, {}, by=by, via="cli",

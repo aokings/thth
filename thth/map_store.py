@@ -21,6 +21,8 @@
   (f) **保持は日単位**（既定 180 日・`thth admin map retention`・1〜180）。削除の依頼は
       `thth admin map purge`（project 全体か、期間の行だけ）。退出でも消す
       （`map_world.purge_for_leave()`・`thth/leave.py`）。
+  (g) 同じ置き場に `where … --keep` の数（`where-<YYYY-MM>.ndjson`・3.18.0・`thth/where_keep.py`）
+      も置く。保持・削除の依頼・退出は地図の行と同じに扱う。
 """
 from __future__ import annotations
 
@@ -484,9 +486,13 @@ def purge(target, *, by, date_from=None, date_to=None, world_only=False, via="cl
         removed = destroy(project)
         diff = {"map": ["present" if removed else "absent", "absent"], "files_removed": [removed, 0]}
     else:
-        removed = map_world.rewrite(project, lambda row: not (
-            (date_from is None or row["date"] >= date_from)
-            and (date_to is None or row["date"] <= date_to)))
+        def outside(row):
+            return not ((date_from is None or row["date"] >= date_from)
+                        and (date_to is None or row["date"] <= date_to))
+        removed = map_world.rewrite(project, outside)
+        # `where … --keep` の行（3.18.0・同じ置き場）も同じ期間で消す。
+        from . import where_keep
+        removed += where_keep.rewrite(project, outside)
         diff = {"map_rows": ["present" if removed else "absent", "absent"],
                 "rows_removed": [removed, 0]}
     try:

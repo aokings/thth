@@ -358,7 +358,16 @@ def build_privacy() -> str:
         "authors of search results are not saved. Run logs record at most the search terms and the number "
         "of results. To improve how it finds conversations, the owner's session may also keep, in the "
         "project's own notes, per search term only numbers: how many results it judged worth answering and how "
-        "many it answered (never post text, post IDs or usernames; numbers below 5 are not kept).</p>")
+        "many it answered (never post text, post IDs or usernames; numbers below 5 are not kept). When the "
+        "user's session asks for it with <code>thth where … --keep</code>, THTH itself also saves, per day, "
+        "platform and search term (with the narrowing words the user gave), only numbers computed from that "
+        "search: how many results it returned, how many end with or contain a question mark, how many match "
+        "each category of a word list the user supplies, and how many contain the narrowing words. Numbers "
+        "below 5, including zero, are saved as missing. Post text, post IDs, usernames, author keys, links "
+        "and exact times are not saved. These numbers are kept with the observation map figures below and "
+        "follow the same rules (private location outside Git, the same retention, deletion on exit and on "
+        "request, readable only within that project, through <code>thth where-log</code>). Without "
+        "<code>--keep</code> nothing from the search is saved.</p>")
     add("<p><strong>Observation map (daily keyword aggregates).</strong> It is off unless the operator turns it "
         "on. Its keywords are topic words that a person registers for a project: the operator registers them, "
         "at most 20 per project. THTH never adds keywords taken from other people's posts, and refuses @handles, "
@@ -370,7 +379,7 @@ def build_privacy() -> str:
         "name, the time since the latest post rounded to one of four ranges (under 1 hour, 1–6 hours, 6–24 "
         "hours, 24 hours or more), and, for each pair of keywords, how many of one keyword's results also "
         "contain the other. A number below 5 (posts, distinct authors or a pair count) is saved as missing "
-        "instead of its value. Post text, post IDs, usernames, author keys, links and exact times are not "
+        "instead of its value (a search that returned no posts is recorded as zero). Post text, post IDs, usernames, author keys, links and exact times are not "
         "saved.</p>")
     add("<p>These figures are kept in a private location on the operator's server, outside Git, for at most "
         "180 days: each collection run deletes older days one day at a time, and days past 180 days are not "
@@ -482,7 +491,8 @@ def build_privacy() -> str:
     add("  <li>Drafts, the exact text of published posts, post history, and stop records of the safety limits.</li>")
     add("  <li>The metrics, replies and mentions described above, and checked attachments.</li>")
     add("  <li>The observation map: its keywords, the links between keywords that a person drew, and, when "
-        "turned on, its daily aggregate figures described above.</li>")
+        "turned on, its daily aggregate figures described above; per-search-term figures kept on request "
+        "(described under Keyword search).</li>")
     add("  <li>Plaza posts and replies, and which plaza posts were read (post ID and time).</li>")
     add("  <li>Run logs (action, draft file, post ID, counts, status), reports, and a change log of "
         "administrative events.</li>")
@@ -512,7 +522,7 @@ def build_privacy() -> str:
     add("<p>THTH itself does not send data to an AI model provider. Users work with THTH through their own "
         "LLM session (for example over MCP). What a tool returns to that session is passed to that session's "
         "LLM provider under the user's own arrangement with it. Depending on the tool, this includes the "
-        "user's drafts, post history, metrics and reports, plaza posts and replies the session can read, the observation map's keywords and daily figures, and the text or short previews (up to 60 "
+        "user's drafts, post history, metrics and reports, plaza posts and replies the session can read, the observation map's keywords and daily figures, per-search-term figures kept on request, and the text or short previews (up to 60 "
         "characters) of public replies, mentions and search results, with links and author names or one-way "
         "author keys.</p>")
 
@@ -545,6 +555,8 @@ def build_privacy() -> str:
     add("  <li>Sent operational notices in the server's notice record: 30 days (at most 50).</li>")
     add("  <li>Observation map daily figures on the operator's server: at most 180 days, deleted one day at a "
         "time; also deleted on exit or on request.</li>")
+    add("  <li>Per-search-term figures kept on request (<code>thth where … --keep</code>): the same as the "
+        "observation map daily figures.</li>")
     add("  <li>Credentials, settings, drafts, post history, metrics, replies, mentions, attachments and run "
         "logs on the operator's server: until the account exits.</li>")
     add("  <li>Plaza posts and replies: until the account exits (open posts may be kept without the account "
@@ -566,7 +578,8 @@ def build_privacy() -> str:
         "map (keyword search). Revision: adds the plaza and the support contact, and links to the Terms of "
         "Service. Revision: removes the approval pages; describes the safety limits, the owner's activity page and "
         "the assistant key. Revision: adds the command path (thth.me/api/v1). Revision: adds the browser sign-in "
-        "for the command.</p>")
+        "for the command. Revision: adds the per-search-term figures kept on request (<code>thth where … "
+        "--keep</code>).</p>")
 
     # ---------------------------------------------------------------- 日本語
     add('<h1 id="ja" style="margin-top:56px">THTH — プライバシーポリシー</h1>')
@@ -605,7 +618,15 @@ def build_privacy() -> str:
         "求めたとき（運営者がアカウントに設定した語を使います）です。これ以外の検索は、運営者が有効にしたときの"
         "下のトピックマップだけです。求めに応じた検索の結果は、その求めに対してだけ表示します。件数、"
         "投稿者の異なり数、多く投稿している人の占める割合、最新の時刻、個々の投稿については投稿者・リンク・先頭 60 字です。"
-        "検索結果の本文と投稿者は保存しません。ログに残すのは、検索した語と件数までです。</p>")
+        "検索結果の本文と投稿者は保存しません。ログに残すのは、検索した語と件数までです。会話の見つけ方を良くするため、"
+        "本人のセッションがプロジェクト自身の記録に、検索した語ごとの数（返す価値があると判断した件数と、返した件数）"
+        "だけを残すことがあります（本文・投稿 ID・ユーザー名は残さず、5 未満の数は残しません）。本人のセッションが "
+        "<code>thth where … --keep</code> で求めたときは、THTH 自身も、日・SNS・検索した語（本人が渡した絞り込みの語を"
+        "含む）ごとに、その検索から数えた数だけを保存します。返った件数、「？」で終わる・含む件数、本人が渡した語の"
+        "一覧の分類ごとの件数、絞り込みの語を含む件数です。5 未満の数（0 を含む）は値を保存せず、欠測として記録します。"
+        "本文・投稿 ID・ユーザー名・投稿者のキー・リンク・正確な時刻は保存しません。この数は下のトピックマップの集計と"
+        "同じ置き場に、同じ決まり（Git の外の私有の置き場・同じ保持・退会と依頼での削除・そのプロジェクトの中だけ、"
+        "<code>thth where-log</code> で読む）で置きます。<code>--keep</code> を付けなければ、検索から何も保存しません。</p>")
     add("<p><strong>トピックマップ（語ごとの日々の集計）。</strong>運営者が有効にしない限り動きません。語は、人が"
         "プロジェクトごとに登録する話題の語です。登録するのは運営者で、プロジェクトごとに最大 20 語です。THTH が"
         "他人の投稿から語を拾って足すことはなく、@名前・URL・個人名らしき語は登録できません。有効なとき、THTH は "
@@ -614,7 +635,7 @@ def build_privacy() -> str:
         "ごとに日々の数だけを保存します。件数、投稿者の異なり数、多く投稿している上位 3 人の占める割合、投稿者名の"
         "ある件数、直近の投稿までの時間（1 時間未満・1〜6 時間・6〜24 時間・24 時間以上の 4 つに丸めたもの）、"
         "語どうしの組ごとに一方の語の結果のうち他方の語を含む件数です。5 未満の数（件数・投稿者の異なり数・組の"
-        "件数）は値を保存せず、欠測として記録します。本文・投稿 ID・ユーザー名・投稿者のキー・リンク・正確な時刻は"
+        "件数）は値を保存せず、欠測として記録します（何も返らなかった検索は 0 と記録します）。本文・投稿 ID・ユーザー名・投稿者のキー・リンク・正確な時刻は"
         "保存しません。</p>")
     add("<p>この数は運営者のサーバーの私有の置き場（Git の外）に最大 180 日保存します。集計が走るたびに古い日を"
         "日単位で削り、180 日を過ぎた日は削る前でも表示しません。プロジェクトの最後のアカウントが退会すると地図を"
@@ -708,7 +729,8 @@ def build_privacy() -> str:
     add("  <li>アカウントの設定。運用通知を受け取るメールアドレス（任意）を含みます。</li>")
     add("  <li>下書き、公開した本文そのもの、投稿の履歴、ガードで止めた印。</li>")
     add("  <li>上に書いたインサイト・返信・言及、検査を通った添付。</li>")
-    add("  <li>トピックマップ: 語、人が引いた語どうしの線、有効なときは上に書いた日々の集計。</li>")
+    add("  <li>トピックマップ: 語、人が引いた語どうしの線、有効なときは上に書いた日々の集計。求めに応じて残した検索の語ごとの数"
+        "（キーワード検索の段）。</li>")
     add("  <li>プラザの書き込みと返信、どの書き込みを読んだか（書き込みの ID と時刻）。</li>")
     add("  <li>ログ（操作・原稿のファイル・投稿 ID・件数・状態）、報告、管理の変更ログ。</li>")
     add("</ul>")
@@ -735,7 +757,7 @@ def build_privacy() -> str:
     add("<h2>AI（LLM）のセッション</h2>")
     add("<p>THTH 自身は AI モデルの提供者へデータを送りません。利用者は自分の LLM のセッション（例: MCP）から "
         "THTH を使います。道具がそのセッションに返したものは、利用者とその提供者との取り決めのもとで、そのセッションの "
-        "LLM 提供者に渡ります。道具によって、本人の下書き・投稿の履歴・インサイト・報告、そのセッションが読めるプラザの書き込みと返信、トピックマップの語と日々の集計と、公開の返信・言及・検索結果の"
+        "LLM 提供者に渡ります。道具によって、本人の下書き・投稿の履歴・インサイト・報告、そのセッションが読めるプラザの書き込みと返信、トピックマップの語と日々の集計、求めに応じて残した検索の語ごとの数と、公開の返信・言及・検索結果の"
         "本文または短い抜粋（先頭 60 字まで）、リンク、投稿者の名前または戻せないキーを含みます。</p>")
 
     add("<h2>停止とデータの削除</h2>")
@@ -762,6 +784,7 @@ def build_privacy() -> str:
     add("  <li>thth.me のデータ削除の依頼: 30日。</li>")
     add("  <li>送った運用通知（サーバーの通知の記録）: 30日（最大50件）。</li>")
     add("  <li>運営者のサーバーのトピックマップの日々の集計: 最大180日（日単位で削除）。退会と依頼でも削除。</li>")
+    add("  <li>求めに応じて残した検索の語ごとの数（<code>thth where … --keep</code>）: トピックマップの日々の集計と同じ。</li>")
     add("  <li>運営者のサーバーの認証情報・設定・下書き・投稿の履歴・インサイト・返信・言及・添付・ログ: 退会まで。</li>")
     add("  <li>プラザの書き込みと返信: 退会まで（open の書き込みは「プラザ」のとおりアカウント名を落として残すことがあります）。</li>")
     add("  <li>報告と変更ログ: 期限を定めていません。</li>")
@@ -779,7 +802,7 @@ def build_privacy() -> str:
         "退会と削除の依頼、保持を書き、PBKDF2 の回数を 100,000 に直しました。改訂: トピックマップの集計の保存（キーワード検索・世間の層）を追記しました。"
         "改訂: プラザとサポートの連絡先を書き、利用規約へのリンクを足しました。改訂: 承認ページを無くし、ガード・"
         "オーナーのアクティビティ・API キーを書きました。改訂: コマンドの経路（thth.me/api/v1）を足しました。改訂: コマンドのブラウザでの"
-        "サインインを足しました。</p>")
+        "サインインを足しました。改訂: 求めに応じて残す検索の語ごとの数（<code>thth where … --keep</code>）を足しました。</p>")
     add('<footer><a href="/">THTH</a> · <a href="/terms/">利用規約 / Terms of Service</a> · Free and open source · '
         "MIT License<br>© 2026 gotoq</footer>")
     add("</main></body></html>")

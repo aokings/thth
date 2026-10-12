@@ -77,7 +77,7 @@ An assistant can only tighten these limits. Loosening them, resuming a stopped a
 
 ## What it does not keep
 
-- Search results (`topics --search`, `where`, `thread`, `who`): text and authors are shown, not saved.
+- Search results (`topics --search`, `where`, `thread`, `who`): text and authors are shown, not saved. `where … --keep` saves only per-search-term numbers (numbers below 5 are missing; read with `where-log`).
 - It never reads direct messages.
 - Tokens and secrets are redacted from logs and output.
 
@@ -112,6 +112,7 @@ All subcommands `thth --help` lists, one line each:
 - `mentions` — mentions of your account
 - `topics` — keyword search (`--search`), and how much each topic was seen
 - `where` — where to engage next: search results with your own history layered on top
+- `where-log` — per-search-term numbers kept with `where … --keep` (hit rates, aggregates; numbers below 5 are missing)
 - `thread` — read a post's branch on the spot; nothing is saved
 - `who` — pseudonymous history of how often you crossed paths with someone; never what was said
 - `profile` — look up a public profile (Threads)

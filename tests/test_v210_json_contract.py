@@ -56,7 +56,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 3.15.0: 反応（再投稿・いいね・その取り消し）。
      'repost', 'unrepost', 'like', 'unlike',
      # 3.17.0: X の非公開リスト。
-     'list create', 'list add', 'list remove', 'list show']
+     'list create', 'list add', 'list remove', 'list show',
+     # 3.18.0: where … --keep で残した数を読む口。
+     'where-log']
 
 
 def test_json_table_covers_every_parser():

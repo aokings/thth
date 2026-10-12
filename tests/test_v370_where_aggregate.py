@@ -2,8 +2,8 @@
 
 語ごとの件数・期間・1 日あたり・問いの形・lexicon の分類ごとの件数だけを返す。
 **本文・username・author_key・post_id は返さない**。検索語は数える前に本文から外す。
-**表示だけで、道具は保存しない**。出力に「保存するなら Meta への説明の申請のあとで
-（世間の層と同じ条件）」を固定で添える。
+**既定は表示だけで、道具は保存しない**。出力に「残すなら --keep（…）」を固定で添える
+（3.18.0 で文言を差し替え。残す口は tests/test_v3180_where_keep.py）。
 """
 from __future__ import annotations
 
@@ -65,7 +65,8 @@ def test_aggregateは数と時刻だけ返し本文もusernameもpost_idも返�
         assert secret not in raw, secret
     result = json.loads(raw)
     assert result["mode"] == "aggregate" and result["storage"] == "display_only"
-    assert result["storage_note"] == "保存するなら Meta への説明の申請のあとで（世間の層と同じ条件）"
+    assert result["storage_note"] == where_cli.AGGREGATE_STORAGE_NOTE
+    assert result["storage_note"].startswith("残すなら --keep")
     node = result["by_account"]["one"]
     assert set(node) == {"medium", "mode", "by_word", "by_tag", "cannot_say"}
     agg = node["by_word"]["珈琲"]["aggregate"]
@@ -85,7 +86,7 @@ def test_aggregateの画面も本文を出さず保存の注意を添える(acco
     for secret in SECRETS:
         assert secret not in out, secret
     assert "件数=3" in out
-    assert "表示だけで、道具は保存しません。保存するなら Meta への説明の申請のあとで（世間の層と同じ条件）" in out
+    assert "表示だけで、道具は保存しません。残すなら --keep" in out
 
 
 def test_aggregateは保存しない_runsは語と件数の1行だけ(account, tmp_path, capsys):

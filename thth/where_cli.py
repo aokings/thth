@@ -40,7 +40,9 @@ from . import engagements as engagements_mod
 from . import jst, read_window
 from . import redact as redact_mod
 from . import runs as runs_mod
+from . import map_store as map_store_mod
 from . import threads_read_cli as threads_read_cli_mod
+from . import where_keep as where_keep_mod
 from .adapters import base as adapter_base
 
 CAPABILITY = "keyword_search"
@@ -92,11 +94,12 @@ def zero_or_filtered(medium) -> dict:
 
 # `--aggregate`（設計 3.7.0 §C3）: 語ごとの件数・期間・1 日あたり・問いの形・lexicon の
 # 分類ごとの件数だけを返す。**本文・username・author_key・post_id は返さない**。検索語は
-# 数える前に本文から外す。**表示だけで、道具は保存しない**——集計を毎日保存するのは
-# 観測の地図の世間の層と同じ Platform Data の保持にあたる（照合
-# `docs/照合_観測の地図_集計の定点観測_2026-09-23.md`）。広場へ observed として貼る口も
-# 作らない（世間の層を project の外に出さない条件）。
-AGGREGATE_STORAGE_NOTE = "保存するなら Meta への説明の申請のあとで（世間の層と同じ条件）"
+# 数える前に本文から外す。**既定は表示だけで、道具は保存しない**。3.18.0 から `--keep` を
+# 付けたときだけ、語ごとの数を日付つきで project の私有の置き場に残す（`thth/where_keep.py`・
+# 5 未満は欠測・本文も名前も id も残さない）——Meta の許可された用途「集計され、非特定化
+# された情報でアプリを改善する」の中（`docs/整理_Meta承認で…_2026-10-12.md` 決めたこと 3）。
+# 広場へ observed として貼る口は作らない（世間の層を project の外に出さない条件）。
+AGGREGATE_STORAGE_NOTE = "残すなら --keep（語ごとの数だけ・5 未満は欠測・project の私有の置き場）"
 # 問いの形の静的な判定（本文を外へ出さずに数えるだけ）。
 QUESTION_MARKS = ("？", "?")
 QUESTION_RULES = ("ends_with_question_mark: 検索語を外した本文が「？」か「?」で終わる",
@@ -528,6 +531,25 @@ def _period_days(rows: list, floor, now) -> int | None:
     return max(1, math.ceil((now - start).total_seconds() / 86400))
 
 
+def _keep_node(name: str, node: dict, *, now, search_type: str, also: list) -> None:
+    """`--keep`（3.18.0）: この節の**出力の数**から行を作って残す。結果を節の `kept` に書く。
+
+    project の無い account・置き場の失敗は `kept` に理由を書いて続ける（表示は止めない）。
+    """
+    project = where_keep_mod.project_of(name)
+    if project is None:
+        node["kept"] = {"rows": 0, "cannot_say": "no_project"}
+        node["cannot_say"].append("残せません: account に project がありません（--keep は project の置き場に書きます）")
+        return
+    rows = where_keep_mod.rows_for_node(node, date=jst.to_jst(now).date().isoformat(),
+                                        search_type=search_type, filters=[], also=also)
+    try:
+        node["kept"] = where_keep_mod.write(project, rows, now=now)
+    except map_store_mod.MapError as e:
+        node["kept"] = {"rows": 0, "cannot_say": str(e)}
+        node["cannot_say"].append(f"残せません: {e}")
+
+
 def _resolve_names(*, account_name: str | None, project: str | None) -> tuple[list, list]:
     """対象の account 名の一覧と、そこに至るまでの top-level `cannot_say`。
 
@@ -574,7 +596,7 @@ def answer(*, account_name: str | None = None, project: str | None = None,
           words: list, recent: bool = False, limit: int | None = None,
           now=None, since=None, exclude_engaged=False, max_per_author=None,
           also=None, aggregate_mode=False, lexicon=None, suggest=False,
-          tag=False, author=None) -> dict:
+          tag=False, author=None, keep=False) -> dict:
     """`where_to_appear` の答え（設計「自分の泉」§2.3・§2.6）。**読むだけ。**
 
     `tag`（Threads の `search_mode=TAG`）と `author`（`author_username`）は API の引数を
@@ -585,6 +607,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
     """
     if lexicon is not None and not aggregate_mode:
         _reject("lexicon は --aggregate と一緒に使います")
+    if type(keep) is not bool:
+        _reject("keep は boolean です")
     if type(suggest) is not bool:
         _reject("suggest は boolean です")
     if account_name and project:
@@ -613,6 +637,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
     if max_per_author is not None and (type(max_per_author) is not int or max_per_author < 1):
         _reject('max_per_author は 1 以上の整数です')
     also = _clean_also(also)
+    if keep and not (aggregate_mode or also):
+        _reject("--keep は --aggregate か --also と一緒に使います（残すのは語ごとの数だけ）")
     search_type = "RECENT" if recent else "TOP"
     if type(tag) is not bool:
         _reject("tag は boolean です")
@@ -647,6 +673,8 @@ def answer(*, account_name: str | None = None, project: str | None = None,
                 "n": None, "status": "error", "error": reason_text}, now=now)
             continue
 
+        if keep:
+            _keep_node(name, node, now=now, search_type=search_type, also=also)
         by_account[name] = node
         n = sum(entry["aggregate"]["n"] if aggregate_mode else len(entry["posts"])
                 for entry in node["by_word"].values())
@@ -666,9 +694,12 @@ def answer(*, account_name: str | None = None, project: str | None = None,
         extra.update({"suggest": True, "suggest_storage": "display_only",
                       "suggest_storage_note": where_suggest.STORAGE_NOTE})
     if aggregate_mode:
-        extra.update({"mode": "aggregate", "storage": "display_only",
-                      "storage_note": AGGREGATE_STORAGE_NOTE,
+        extra.update({"mode": "aggregate", "storage": "kept" if keep else "display_only",
+                      "storage_note": (where_keep_mod.STORAGE_NOTE_KEPT if keep
+                                       else AGGREGATE_STORAGE_NOTE),
                       "lexicon_categories": sorted(lexicon) if lexicon else None})
+    elif keep:
+        extra.update({"storage": "kept", "storage_note": where_keep_mod.STORAGE_NOTE_KEPT})
     return {
         "account": account_name, "project": project, "words": words, **extra,
         "by_tag": [{"account": name, **entry} for name, node in by_account.items()
@@ -736,6 +767,7 @@ def _render_human(result: dict) -> None:
             for line in node["cannot_say"]:
                 print(f"  言えない: {line}")
         _render_read_cost(node)
+        _render_kept(node)
     if result["cannot_say"]:
         print("")
         for line in result["cannot_say"]:
@@ -779,10 +811,14 @@ def _render_aggregate(result: dict) -> None:
         for line in node["cannot_say"]:
             print(f"  言えない: {line}")
         _render_read_cost(node)
+        _render_kept(node)
     for line in result["cannot_say"]:
         print(f"言えない: {line}")
     print("")
-    print(f"注記: 表示だけで、道具は保存しません。{result['storage_note']}")
+    if result.get("storage") == "kept":
+        print(f"注記: {result['storage_note']}")
+    else:
+        print(f"注記: 表示だけで、道具は保存しません。{result['storage_note']}")
 
 
 def read_cost_line(cost: dict) -> str:
@@ -795,6 +831,12 @@ def read_cost_line(cost: dict) -> str:
     if cost.get("truncated"):
         line += "（枝は 50 本で打ち切り）"
     return line
+
+
+def _render_kept(node: dict) -> None:
+    kept = node.get("kept")
+    if kept and not kept.get("cannot_say"):
+        print(f"  残した: {kept['rows']} 行（project {kept['project']}・保持 {kept['retention_days']} 日）")
 
 
 def _render_read_cost(node: dict) -> None:
@@ -881,11 +923,25 @@ def register(sub) -> None:
     p.add_argument("--suggest", action="store_true",
                    help="検索の語の候補（自分のデータ・also に合った投稿の本文で 2 投稿以上に出た語）。"
                         "語と数だけ・保存しない")
+    p.add_argument("--keep", action="store_true",
+                   help="--aggregate・--also の語ごとの数を日付つきで project の私有の置き場に残す"
+                        "（数だけ・5 未満は欠測・本文・post_id・username は残さない・thth where-log で読む）")
     p.add_argument("--tag", action="store_true",
                    help="Threads: 語をトピックタグとして検索する（search_mode=TAG）。保存しない")
     p.add_argument("--author", default=None, metavar="USERNAME",
                    help="Threads: この人の投稿だけを検索する（author_username）。保存しない")
     p.set_defaults(func=cmd_where)
+
+    log = sub.add_parser(
+        "where-log",
+        help="where … --keep で残した語ごとの数（当たり率・集計）を project ごとに読む（読むだけ）")
+    log.add_argument("project", metavar="PROJECT_OR_ACCOUNT")
+    log.add_argument("--since", default="14d", help="期間（14d・2w・ISO。既定 14d）")
+    log.add_argument("--medium", default=None, choices=where_keep_mod.MEDIA)
+    log.add_argument("--budget", type=int, default=None, metavar="N",
+                     help="翌日の N 本を当たり率に比例して語に割った数を添える（--medium と一緒に・計算だけ）")
+    log.add_argument("--json", action="store_true")
+    log.set_defaults(func=cmd_where_log)
 
 
 def cmd_where(args) -> int:
@@ -920,7 +976,8 @@ def cmd_where(args) -> int:
                         aggregate_mode=bool(getattr(args, "aggregate", False)), lexicon=lexicon,
                         suggest=bool(getattr(args, "suggest", False)),
                         tag=bool(getattr(args, "tag", False)),
-                        author=getattr(args, "author", None))
+                        author=getattr(args, "author", None),
+                        keep=bool(getattr(args, "keep", False)))
     except accounts_mod.AccountError as e:
         # **単一 account が読めなければ loud reject**（T5-2・`who` と揃える）。
         # `--json` は人向けの文言でなく `{"error", "account"}` を出す——
@@ -939,4 +996,25 @@ def cmd_where(args) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     _render_human(result)
+    return 0
+
+
+def cmd_where_log(args) -> int:
+    """`thth where-log <project> [--since 14d] [--medium M] [--budget N] [--json]`。"""
+    try:
+        result = where_keep_mod.summary(args.project, since=args.since, medium=args.medium,
+                                        budget=args.budget)
+    except map_store_mod.MapError as e:
+        reason = str(e)
+        print(f"{reason}: {map_store_mod.NEXT.get(reason, '')}".rstrip(": "), file=sys.stderr)
+        if args.json:
+            print(json.dumps({"cannot_say": [reason]}, ensure_ascii=False))
+        return 2
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        where_keep_mod.render(result)
     return 0
