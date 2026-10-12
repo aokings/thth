@@ -236,7 +236,7 @@ def bind(adapter,cfg):
     methods={'publish','publish_container','conversation','fetch_post','inbox','recent_posts','insights','whoami','probe',
              'quota','refresh_token','location_search','delete_post','session','keyword_search','mentions',
              'tag_search','tag_observation','observed_tags','profile_lookup','account_insights','granted_scopes',
-             'char_limit','_post','_get','_request','repost','unrepost','like','unlike'}
+             'char_limit','_post','_get','_request','repost','unrepost','like','unlike','owned_metrics'}
     for name in methods:
         original=getattr(adapter,name,None)
         if not callable(original):continue

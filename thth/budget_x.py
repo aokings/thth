@@ -166,23 +166,26 @@ def _can_reserve(p,liability):
 def report(value=None,*,at=None):
     value=read() if value is None else value;p=value['policy'];at=at or now();period=month(at);spent,held=totals(value,period)
     posts=read_posts();posts_spent,posts_held=posts_totals(posts,period)
-    # 本人確認（user read）と他人の投稿の読み取り（posts read）は**同じ月の上限**を分け合う。
-    spent+=posts_spent;held+=posts_held
+    owned=read_posts(OWNED);owned_spent,owned_held=posts_totals(owned,period)
+    # 本人確認（user read）・他人の投稿の読み取り（posts read）・自分の投稿の数字
+    # （owned read）は**同じ月の上限**を分け合う（台帳は別々）。
+    spent+=posts_spent+owned_spent;held+=posts_held+owned_held
     with localcontext() as ctx:
         ctx.prec=80
         cap=Decimal(p['amount'])/(Decimal(p['rate']) if p['currency']=='JPY' and _fx(p) else Decimal(1)) if _fx(p) else None
         available=max(Decimal(0),cap-spent-held) if cap is not None else None
         over=max(Decimal(0),spent+held-cap) if cap is not None else None
     reason='missing_rate' if cap is None else 'budget_exhausted' if not _can_reserve(p,spent+held+PRICE) else None
-    periods=sorted({r['reservation_month'] for r in value['reservations'].values()}|{r['reservation_month'] for r in posts['reservations'].values()}|{period})
+    periods=sorted({r['reservation_month'] for r in value['reservations'].values()}|{r['reservation_month'] for r in posts['reservations'].values()}
+                   |{r['reservation_month'] for r in owned['reservations'].values()}|{period})
     def month_row(m):
-        a,b=totals(value,m);c,d=posts_totals(posts,m)
-        return dict(spent_estimate_usd=decimal_text(a+c),held_usd=decimal_text(b+d))
+        a,b=totals(value,m);c,d=posts_totals(posts,m);e,f=posts_totals(owned,m)
+        return dict(spent_estimate_usd=decimal_text(a+c+e),held_usd=decimal_text(b+d+f))
     return dict(media='x',month_utc=period,policy=admin_log.clean(p),cap_usd=decimal_text(cap) if cap is not None else None,
         spent_estimate_usd=decimal_text(spent),held_usd=decimal_text(held),remaining_usd=decimal_text(available) if available is not None else None,
         over_cap_usd=decimal_text(over) if over is not None else None,read_refusal=reason,cannot_say=[x for x in (reason,'usage_not_observed','estimate_not_actual_charge') if x],
         price=dict(version=PRICE_VERSION,user_read_usd=decimal_text(PRICE),source=PRICE_SOURCE),usage=None,
-        months={m:month_row(m) for m in periods},posts_read=_posts_report(posts,at))
+        months={m:month_row(m) for m in periods},posts_read=_posts_report(posts,at),owned_read=_owned_report(owned,at))
 
 
 def configure(monthly,*,currency='USD',rate=None,rate_source=None,by,via='cli',before_save=None):
@@ -304,6 +307,22 @@ DAILY_READS_KEY = 'x_daily_reads'
 DEFAULT_DAILY_READS = 60
 MAX_DAILY_READS = 10000
 _posts_current = contextvars.ContextVar('thth_x_posts_read_reservation', default=None)
+
+# ----- 自分の投稿の数字（Owned Reads・masaru 10/12 決定 1）
+#
+# `GET /2/tweets?ids=…`（自分が THTH から出した投稿だけ・最大 100 本を 1 回で）。料金表の
+# Owned Reads は**返ってきた 1 本ごとに 0.001 USD**で、他人の投稿（0.005）とは別の段。
+# 台帳も**別のファイル**（`budget_x_owned_reads.json`）にし、形は他人の投稿の台帳と同じ
+# （予約→発射→応答の本数で確定・発射して読めなければ押さえた上限のまま uncertain）。
+# 月の上限（`thth admin budget x`）は 3 つの台帳で分け合う。1 日の本数の上限
+# （`x_daily_reads`）は他人の投稿の読み取りの決まりなので、こちらには掛けない。
+POSTS = 'posts'
+OWNED = 'owned'
+OWNED_PRICE = Decimal('0.001')
+OWNED_PRICE_VERSION = '2026-10-12-owned-read'
+OWNED_FILE = 'budget_x_owned_reads.json'
+_LEDGERS = {POSTS: (POSTS_FILE, POSTS_PRICE, POSTS_PRICE_VERSION),
+            OWNED: (OWNED_FILE, OWNED_PRICE, OWNED_PRICE_VERSION)}
 _MONTH = r'\d{4}-(?:0[1-9]|1[0-2])'
 
 
@@ -313,7 +332,8 @@ def posts_empty():return {'schema_version':1,'reservations':{}}
 def jst_day(at):return jst.to_jst(at).date().isoformat()
 
 
-def _validate_posts(value):
+def _validate_posts(value,kind=POSTS):
+    _file,price,version=_LEDGERS[kind]
     if (type(value) is not dict or set(value)!={'schema_version','reservations'}
             or type(value['schema_version']) is not int or value['schema_version']!=1
             or type(value['reservations']) is not dict or len(value['reservations'])>100000):raise BudgetError('budget_unreadable')
@@ -322,7 +342,7 @@ def _validate_posts(value):
                 or set(row)!={'account','state','limit','count','usd','price_version','reservation_month','day_jst','at','get_at'}
                 or not accounts.name_is_safe(row['account']) or not isinstance(row['state'],str) or row['state'] not in POSTS_STATES
                 or type(row['limit']) is not int or not 1<=row['limit']<=POSTS_MAX_LIMIT
-                or row['price_version']!=POSTS_PRICE_VERSION
+                or row['price_version']!=version
                 or not isinstance(row['reservation_month'],str) or not re.fullmatch(_MONTH,row['reservation_month'])
                 or not isinstance(row['day_jst'],str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}',row['day_jst'])
                 or not isinstance(row['at'],str) or not jst.parse(row['at'])):raise BudgetError('budget_unreadable')
@@ -330,10 +350,10 @@ def _validate_posts(value):
         if month(at)!=row['reservation_month'] or jst_day(at)!=row['day_jst']:raise BudgetError('budget_unreadable')
         if row['state']=='settled':
             if type(row['count']) is not int or not 0<=row['count']<=row['limit']:raise BudgetError('budget_unreadable')
-            expected=POSTS_PRICE*row['count']
+            expected=price*row['count']
         else:
             if row['count'] is not None:raise BudgetError('budget_unreadable')
-            expected=POSTS_PRICE*row['limit']
+            expected=price*row['limit']
         if number(row['usd'])!=expected:raise BudgetError('budget_unreadable')
         if row['state'] in ('reserved','released'):
             if row['get_at'] is not None:raise BudgetError('budget_unreadable')
@@ -343,23 +363,23 @@ def _validate_posts(value):
     return value
 
 
-def _read_posts(fd):
+def _read_posts(fd,kind=POSTS):
     try:
         from .handoff_cursor import _pairs
-        return _validate_posts(json.loads(server_files.read_at(fd,POSTS_FILE,private=True,maximum=16777216),object_pairs_hook=_pairs))
+        return _validate_posts(json.loads(server_files.read_at(fd,_LEDGERS[kind][0],private=True,maximum=16777216),object_pairs_hook=_pairs),kind)
     except FileNotFoundError:return posts_empty()
     except (TypeError,KeyError,json.JSONDecodeError):raise BudgetError('budget_unreadable') from None
 
 
-def _save_posts(fd,value):
-    raw=server_files.encode(_validate_posts(value))
+def _save_posts(fd,value,kind=POSTS):
+    raw=server_files.encode(_validate_posts(value,kind))
     if len(raw)>16777216:raise BudgetError('budget_storage_full')
-    server_files.replace_at(fd,POSTS_FILE,raw,private=True)
+    server_files.replace_at(fd,_LEDGERS[kind][0],raw,private=True)
 
 
-def read_posts():
+def read_posts(kind=POSTS):
     try:
-        with server_files.directory(folder(),private=True) as fd:return _read_posts(fd)
+        with server_files.directory(folder(),private=True) as fd:return _read_posts(fd,kind)
     except FileNotFoundError:return posts_empty()
 
 
@@ -383,7 +403,11 @@ def posts_today(value,account,day):
 
 
 def _posts_liability(fd,at):
-    spent,held=posts_totals(_read_posts(fd),month(at));return spent+held
+    """本人確認の台帳の外にある、その月の確定と押さえ（他人の投稿＋自分の投稿の数字）。"""
+    total=Decimal(0)
+    for kind in (POSTS,OWNED):
+        spent,held=posts_totals(_read_posts(fd,kind),month(at));total+=spent+held
+    return total
 
 
 def daily_cap(account):
@@ -399,14 +423,14 @@ def daily_cap(account):
 class PostsRead:
     """`posts_read()` の中で渡す手。`dispatch()` を GET の直前に・`settle(n)` を応答の後に。"""
 
-    def __init__(self,identifier,account,limit):
-        self.id=identifier;self.account=account;self.limit=limit;self.count=None;self.state='reserved'
+    def __init__(self,identifier,account,limit,kind=POSTS):
+        self.id=identifier;self.account=account;self.limit=limit;self.count=None;self.state='reserved';self.kind=kind
 
     def _move(self,expected,change):
         with locked() as fd:
-            value=_read_posts(fd);row=value['reservations'][self.id]
+            value=_read_posts(fd,self.kind);row=value['reservations'][self.id]
             if row['state']!=expected:raise BudgetError('budget_reservation_used')
-            change(row);_save_posts(fd,value);self.state=row['state']
+            change(row);_save_posts(fd,value,self.kind);self.state=row['state']
 
     def dispatch(self):
         def change(row):row['state']='get_started';row['get_at']=timestamp(now())
@@ -415,7 +439,8 @@ class PostsRead:
     def settle(self,count):
         """応答に入っていた投稿の本数で確定する。上限を超える数は確定しない（退出時に uncertain）。"""
         if type(count) is not int or not 0<=count<=self.limit:return
-        def change(row):row['state']='settled';row['count']=count;row['usd']=decimal_text(POSTS_PRICE*count)
+        price=_LEDGERS[self.kind][1]
+        def change(row):row['state']='settled';row['count']=count;row['usd']=decimal_text(price*count)
         self._move('get_started',change);self.count=count
 
 
@@ -423,31 +448,47 @@ class PostsRead:
 def posts_read(account,limit):
     """他人の投稿を最大 `limit` 本読む 1 回の要求の予約（読む前に押さえ・応答の本数で確定）。
 
-    断り: `budget_exhausted`（月の上限・本人確認と合わせて）・`x_daily_read_cap`（その
-    account の JST の 1 日の本数）。どちらも**要求の前**に断る。
+    断り: `budget_exhausted`（月の上限・本人確認と自分の投稿の数字と合わせて）・
+    `x_daily_read_cap`（その account の JST の 1 日の本数）。どちらも**要求の前**に断る。
     """
+    with _ledger_read(POSTS,account,limit) as handle:yield handle
+
+
+@contextlib.contextmanager
+def owned_read(account,limit):
+    """自分の投稿の数字（Owned Reads）を最大 `limit` 本読む 1 回の要求の予約。
+
+    作法は `posts_read` と同じ（押さえ→発射→応答の本数で確定・読めなければ uncertain）。
+    断りは `budget_exhausted` だけ（1 日の本数の上限は他人の投稿の決まりなので掛けない）。
+    """
+    with _ledger_read(OWNED,account,limit) as handle:yield handle
+
+
+@contextlib.contextmanager
+def _ledger_read(kind,account,limit):
     if type(limit) is not int or not 1<=limit<=POSTS_MAX_LIMIT:raise BudgetError('invalid_posts_read_limit')
     if not accounts.name_is_safe(account):raise BudgetError('invalid_budget_account')
     if _posts_current.get() is not None:raise BudgetError('budget_nested_reservation')
-    cap=daily_cap(account)
+    price=_LEDGERS[kind][1];version=_LEDGERS[kind][2]
+    cap=daily_cap(account) if kind==POSTS else None
     with locked() as fd:
-        value=_read(fd);posts=_read_posts(fd);at=now();period=month(at);day=jst_day(at)
-        spent,held=totals(value,period);posts_spent,posts_held=posts_totals(posts,period)
-        if not _can_reserve(value['policy'],spent+held+posts_spent+posts_held+POSTS_PRICE*limit):raise BudgetError('budget_exhausted')
-        if posts_today(posts,account,day)+limit>cap:raise BudgetError('x_daily_read_cap')
+        value=_read(fd);mine=_read_posts(fd,kind);at=now();period=month(at);day=jst_day(at)
+        spent,held=totals(value,period)
+        if not _can_reserve(value['policy'],spent+held+_posts_liability(fd,at)+price*limit):raise BudgetError('budget_exhausted')
+        if cap is not None and posts_today(mine,account,day)+limit>cap:raise BudgetError('x_daily_read_cap')
         identifier=secrets.token_hex(16)
-        posts['reservations'][identifier]=dict(account=account,state='reserved',limit=limit,count=None,
-            usd=decimal_text(POSTS_PRICE*limit),price_version=POSTS_PRICE_VERSION,reservation_month=period,
+        mine['reservations'][identifier]=dict(account=account,state='reserved',limit=limit,count=None,
+            usd=decimal_text(price*limit),price_version=version,reservation_month=period,
             day_jst=day,at=timestamp(at),get_at=None)
-        _save_posts(fd,posts)
-    handle=PostsRead(identifier,account,limit);reset=_posts_current.set(handle)
+        _save_posts(fd,mine,kind)
+    handle=PostsRead(identifier,account,limit,kind);reset=_posts_current.set(handle)
     try:yield handle
     finally:
         _posts_current.reset(reset)
         with locked() as fd:
-            posts=_read_posts(fd);row=posts['reservations'][identifier]
-            if row['state']=='reserved':row['state']='released';_save_posts(fd,posts)  # 投げていない
-            elif row['state']=='get_started':row['state']='uncertain';_save_posts(fd,posts)  # 投げて読めなかった
+            mine=_read_posts(fd,kind);row=mine['reservations'][identifier]
+            if row['state']=='reserved':row['state']='released';_save_posts(fd,mine,kind)  # 投げていない
+            elif row['state']=='get_started':row['state']='uncertain';_save_posts(fd,mine,kind)  # 投げて読めなかった
 
 
 def posts_status(account,*,at=None):
@@ -474,6 +515,30 @@ def _posts_report(posts,at):
                 month=dict(month_utc=period,spent_estimate_usd=decimal_text(spent),held_usd=decimal_text(held),uncertain=uncertain))
 
 
+def _owned_report(owned,at):
+    period=month(at);spent,held=posts_totals(owned,period)
+    uncertain=sum(1 for row in owned['reservations'].values() if row['reservation_month']==period and row['state']=='uncertain')
+    posts=sum(row['count'] if row['state']=='settled' else row['limit'] for row in owned['reservations'].values()
+              if row['reservation_month']==period and row['state']!='released')
+    return dict(price=dict(version=OWNED_PRICE_VERSION,owned_read_usd=decimal_text(OWNED_PRICE),source=PRICE_SOURCE),
+                what='own_posts_public_metrics',
+                month=dict(month_utc=period,posts=posts,spent_estimate_usd=decimal_text(spent),held_usd=decimal_text(held),uncertain=uncertain))
+
+
+def cost_lines(whole):
+    """`report()` の内訳を人の画面の行に（doctor・admin）。推定であって請求の実費ではない。"""
+    out=[f"X の読み取り（{whole['month_utc']}・推定・請求の実費ではない）: 合計 ${whole['spent_estimate_usd']}"
+         f"（押さえ ${whole['held_usd']}）/ 上限 ${whole['cap_usd'] if whole['cap_usd'] is not None else '不明'}"]
+    posts=whole.get('posts_read') or {};owned=whole.get('owned_read') or {}
+    if posts:
+        m=posts['month']
+        out.append(f"  他人の投稿（Posts: Read・1 本 ${posts['price']['post_read_usd']}）: ${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
+    if owned:
+        m=owned['month']
+        out.append(f"  自分の投稿の数字（Owned Reads・1 本 ${owned['price']['owned_read_usd']}）: {m['posts']} 本・${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
+    return out
+
+
 def command(args):
     if args.media=='x-posts':
         # 本数の口（`thth/budget_x_posts.py`）。金額の選択肢はここでは受けない
@@ -487,7 +552,7 @@ def command(args):
     try:
         result=configure(args.monthly,currency=args.currency,rate=args.rate,rate_source=args.rate_source,by=args.by) if args.monthly is not None else report()
         if args.monthly is None and (args.rate is not None or args.rate_source is not None or args.by is not None):raise BudgetError('invalid_budget_options')
-        print(json.dumps(result,ensure_ascii=False) if args.json else 'X 読取予算: 推定計上（請求実費ではない）\n'+json.dumps(result,ensure_ascii=False,indent=2));return 0
+        print(json.dumps(result,ensure_ascii=False) if args.json else 'X 読取予算: 推定計上（請求実費ではない）\n'+'\n'.join(cost_lines(result))+'\n'+json.dumps(result,ensure_ascii=False,indent=2));return 0
     except admin_log.AdminLogError as exc:
         reason='budget_change_durability_unconfirmed' if exc.complete else 'budget_change_partially_recorded' if exc.appended else 'budget_change_refused'
     except (OSError,ValueError,TypeError):reason='budget_unavailable_or_invalid_options'

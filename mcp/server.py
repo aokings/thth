@@ -247,6 +247,9 @@ TOOLS = [
                 "since": {"type": "string", "description": "この時刻以降だけ"},
                 "max_messages": {"type": "integer",
                                    "description": "読む上限（既定 200・上限 1000）"},
+                "limit": {"type": "integer",
+                           "description": "X で読む枝の本数（10〜50・既定 50・1 本 0.005 USD）。"
+                                          "読み取りが無料の媒体では効かない"},
             },
             "required": ["account", "post_id"],
         },
@@ -1371,6 +1374,8 @@ def call_tool(name: str, arguments: dict | None) -> dict:
             args += ["--since", arguments["since"]]
         if arguments.get("max_messages") is not None:
             args += ["--max-messages", str(arguments["max_messages"])]
+        if arguments.get("limit") is not None:
+            args += ["--limit", str(arguments["limit"])]
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout

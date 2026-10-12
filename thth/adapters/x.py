@@ -18,6 +18,14 @@
 **人が選んで 1 本ずつ返す出向きのためだけ**——timer・見張り・自動の返信には使わない
 （`PAID_READS`。`collect`・`morning` はこの印を見て叩かない）。`mentions`／`insights` は無い。
 
+**自分の投稿の数字の口**（masaru 10/12 決定 1）: `owned_metrics`（`GET /2/tweets?ids=…` に
+`public_metrics,created_at,author_id`・最大 100 本を 1 回で）。**呼ぶ側が渡すのは自分が THTH
+から出した投稿の id だけ**（`collect` が `sent/` から拾う）。応答の `author_id` が接続中の
+user_id と一致しない行は `x_metrics.normalize_owned_metrics` が落とす。料金表の Owned Reads
+（1 本 0.001 USD）で、`budget_x.owned_read()` の予約の中でだけ動く——他人の投稿の読み取り
+（`PAID_READS`）とは別の段なので、collect の timer から叩いてよいのはこの口だけ。
+本文・username は取らない（`tweet.fields` に text を入れず、`expansions` も付けない）。
+
 **書く口の上限**: `thth admin budget x-posts --monthly <本数>`（`thth/budget_x_posts.py`）。
 既定 0＝**投稿しない**。予約は要求の前・確定は応答の後で、**結果不明は自動で
 投げ直さない**（数え上げでは「不明」として別に残る）。
@@ -187,6 +195,12 @@ class XAdapter(base.Adapter):
     KEYWORD_SEARCH_DEFAULT_LIMIT = 10
     KEYWORD_SEARCH_MAX_LIMIT = 25
     CONVERSATION_MAX = 50
+    # `thth thread --limit N` の下限（recent search の `max_results` の下限と同じ）。
+    CONVERSATION_MIN = 10
+    # 自分の投稿の数字（Owned Reads）。`GET /2/tweets` の `ids` は 1 回 100 本まで。
+    OWNED_BATCH = 100
+    OWNED_FIELDS = 'public_metrics,created_at,author_id'
+    OWNED_METRICS = ('views', 'likes', 'replies', 'reposts', 'quotes', 'bookmarks')
     # `max_results` の下限（一次資料: recent search は 10〜100）。
     SEARCH_MIN_RESULTS = 10
     SEARCH_WINDOW_DAYS = 7
@@ -221,6 +235,8 @@ class XAdapter(base.Adapter):
         # この実体（＝1 回のコマンド）で読んだ他人の投稿（本数・推定 USD・打ち切り）。
         self._reads = {'posts': 0, 'usd': '0', 'calls': 0, 'truncated': False}
         self._post_cache = {}
+        # 自分の投稿の数字（Owned Reads）は別に数える（料金も台帳も別の段）。
+        self._owned = {'posts': 0, 'usd': '0', 'calls': 0}
 
     @classmethod
     def from_account(cls, account_cfg: dict, token: dict):
@@ -610,26 +626,148 @@ class XAdapter(base.Adapter):
         self._post_cache[value] = row
         return dict(row)
 
-    def conversation(self, post_id: str, *, since: str | None = None) -> list:
-        """枝（`conversation_id:<id>` の recent search・**最大 50 本**・直近 7 日）。
+    @classmethod
+    def check_conversation_limit(cls, limit):
+        """`thth thread --limit N` の N（10〜50）。範囲外は**要求も予約もせずに**断る。"""
+        if type(limit) is not int or not cls.CONVERSATION_MIN <= limit <= cls.CONVERSATION_MAX:
+            raise AdapterError(f'X の枝は 1 回 {cls.CONVERSATION_MIN}〜{cls.CONVERSATION_MAX} 本です'
+                               f'（{limit!r}）——有償の読み取りなので範囲外の指定は断ります')
+        return limit
+
+    def conversation(self, post_id: str, *, since: str | None = None,
+                     limit: int | None = None) -> list:
+        """枝（`conversation_id:<id>` の recent search・**既定 50 本・`limit` で 10〜50**・直近 7 日）。
 
         根（`post_id` 自身）は行に入れない（`thread_read` は根を `fetch_post` で別に引く）。
-        50 本を超えた分は読まない（`read_cost()['truncated']`）。
+        上限を超えた分は読まない（`read_cost()['truncated']`）。`limit` は 1 日 60 本の中で
+        配分するため（masaru 10/12 決定 5）。課金は返ってきた本数（予約は `limit` 本）。
         """
+        cap = self.CONVERSATION_MAX if limit is None else self.check_conversation_limit(limit)
         root = self.fetch_post(post_id)
         conversation = (root.get('root_post') or {}).get('id') or root['message_id']
-        query = {'query': 'conversation_id:' + conversation, 'max_results': self.CONVERSATION_MAX,
+        query = {'query': 'conversation_id:' + conversation, 'max_results': cap,
                  'sort_order': 'recency', **self.READ_FIELDS}
         start = self._start_time(since)
         if start:
             query['start_time'] = start
         value, n = self._paid_get('/2/tweets/search/recent', query,
-                                  limit=self.CONVERSATION_MAX, what='枝の取得')
+                                  limit=cap, what='枝の取得')
         rows = [row for row in self._rows(value) if row['message_id'] != root['message_id']]
         meta = value.get('meta') if isinstance(value.get('meta'), dict) else {}
-        if meta.get('next_token') or n > self.CONVERSATION_MAX:
+        if meta.get('next_token') or n > cap:
             self._reads['truncated'] = True
-        return rows[:self.CONVERSATION_MAX]
+        return rows[:cap]
+
+    # ----- 自分の投稿の数字（Owned Reads・**owned_read の予約の中でだけ動く**） ----
+
+    def owned_metrics(self, post_ids, *, now=None) -> dict:
+        """自分の投稿の公開の数字を `GET /2/tweets?ids=…` で読む（100 本ずつ 1 回）。
+
+        戻り: `{'by_post': {post_id: {'metrics': {...}, 'available': [...]}}, 'rejected': n,
+        'api_errors': n, 'not_returned': [post_id...], 'posts': n, 'requests': n, 'usd_estimate': str}`。
+        `by_post` の値は `insights()` と同じ形（`adapter_base.metrics_of` で開ける）。取れなかった
+        指標は入れない（0 と混ぜない）。**`author_id` が自分でない行は `x_metrics` が落とす**——
+        渡された id が他人の投稿でも、数字は台帳に入らない（課金は返ってきた本数のまま）。
+        """
+        import datetime
+        from .. import x_metrics
+        ids = []
+        for value in post_ids:
+            value = str(value or '').strip()
+            if not POST_ID.fullmatch(value):
+                raise AdapterError('x_post_id_invalid: ' + self.POST_ID_FORM_HINT)
+            if value not in ids:
+                ids.append(value)
+        out = {'by_post': {}, 'rejected': 0, 'api_errors': 0, 'not_returned': [],
+               'posts': 0, 'requests': 0, 'usd_estimate': '0'}
+        if not ids:
+            return out
+        if not re.fullmatch(r'[1-9][0-9]{0,19}', self.user_id or ''):
+            raise AdapterError('x_user_id_unavailable: thth auth <account> --by <名前> をやり直してください')
+        at = now if now is not None else jst.now_jst()
+        stamp = at.astimezone(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        for start in range(0, len(ids), self.OWNED_BATCH):
+            chunk = ids[start:start + self.OWNED_BATCH]
+            value = self._owned_get(chunk)
+            if value.get('data') is not None:
+                try:
+                    report = x_metrics.normalize_owned_metrics(
+                        value, connected_user_id=self.user_id, observed_at=stamp, now=stamp)
+                except x_metrics.XMetricsError as exc:
+                    raise AdapterError('自分の投稿の数字: x_owned_response_invalid: ' + str(exc)) from None
+                out['rejected'] += report['coverage']['rejected_records']
+                out['api_errors'] += report['coverage']['api_error_count']
+                for record in report['records']:
+                    if record['post_id'] not in chunk:
+                        continue
+                    metrics = {name: item['value'] for name, item in record['metrics'].items()
+                               if item['value'] is not None}
+                    out['by_post'][record['post_id']] = {'metrics': metrics,
+                                                         'available': list(self.OWNED_METRICS)}
+            else:
+                errors = value.get('errors')
+                out['api_errors'] += len(errors) if isinstance(errors, list) else 0
+            out['not_returned'] += [pid for pid in chunk if pid not in out['by_post']]
+        out['posts'] = self._owned['posts']
+        out['requests'] = self._owned['calls']
+        out['usd_estimate'] = self._owned['usd']
+        return out
+
+    def _owned_get(self, chunk):
+        """1 回の `GET /2/tweets?ids=…` を `budget_x.owned_read(account, len(chunk))` の中で。
+
+        作法は `_paid_get` と同じ: 断りの応答（4xx・5xx）は 0 本で確定、応答が読めなければ
+        押さえた上限のまま uncertain。全部が見つからない応答（`data` 無し・`errors` だけ）は
+        0 本で確定する（投稿は返っていない）。
+        """
+        from decimal import Decimal
+        from .. import budget_x
+        limit = len(chunk)
+        query = {'ids': ','.join(chunk), 'tweet.fields': self.OWNED_FIELDS}
+        charged = limit
+        try:
+            with budget_x.owned_read(self.auth_account, limit) as slot:
+                slot.dispatch()
+                self._owned['calls'] += 1
+                try:
+                    status, value = request(self, 'GET', '/2/tweets', query=query)
+                except urllib.error.HTTPError as exc:
+                    slot.settle(0)
+                    charged = 0
+                    if exc.code == 403:
+                        raise base.PermissionMissing('tweet.read', 'x_owned_read_http_403') from None
+                    if exc.code == 429:
+                        detail = rate_limit(exc)
+                        raise AdapterError('provider_rate_limited'
+                                           + (f' {json.dumps(detail, sort_keys=True)}' if detail else ''),
+                                           http_status=429) from None
+                    hint = '（thth auth <account> --by <名前> をやり直してください）' if exc.code == 401 else ''
+                    raise AdapterError('自分の投稿の数字: x_owned_read_http_' + str(exc.code) + hint,
+                                       http_status=exc.code) from None
+                except (httpsafe.EndpointRejected, urllib.error.URLError, TimeoutError, OSError, ValueError,
+                        base.AdapterError) as exc:
+                    raise AdapterError('自分の投稿の数字: x_read_failed: ' + self._scrub(exc)) from None
+                data = value.get('data')
+                if status == 200 and isinstance(data, list):
+                    n = len(data)
+                elif status == 200 and isinstance(data, dict):
+                    n = 1
+                elif status == 200 and data is None and isinstance(value.get('errors'), list):
+                    n = 0
+                else:
+                    raise AdapterError('自分の投稿の数字: x_read_response_invalid')
+                slot.settle(n)
+                if slot.count is None:
+                    raise AdapterError('自分の投稿の数字: x_read_response_invalid（頼んだより多い）')
+                charged = n
+        except budget_x.BudgetError as exc:
+            code = str(exc)
+            message = ('今月の X の読み取り予算（本人確認・他人の投稿と合わせて）が足りません。'
+                       'thth admin budget x で確かめてください') if code == 'budget_exhausted' else 'X の読み取りの予約ができません'
+            raise AdapterError(f'{code}: {message}') from None
+        self._owned['posts'] += charged
+        self._owned['usd'] = str(Decimal(self._owned['usd']) + budget_x.OWNED_PRICE * charged)
+        return value
 
     def read_cost(self) -> dict:
         """この実体で読んだ他人の投稿の本数と推定 USD・今日と今月の数字（画面と `--json`）。"""

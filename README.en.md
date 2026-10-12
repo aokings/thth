@@ -18,7 +18,7 @@ Japanese: [README.md](README.md) · Site: https://thth.me · Docs index: [docs/R
 |---|---|---|---|---|
 | Post and schedule | yes | yes | yes | yes |
 | Delete | yes | no | yes | yes |
-| Collect replies and insights (views, likes, replies and more) | yes | yes | yes | no |
+| Collect replies and insights (views, likes, replies and more) | yes | yes | yes | insights only (3.16.0, posts sent through THTH) |
 | Keyword search (`thth topics --search`, `thth where`) | yes | yes | yes | no |
 | Mentions (`thth mentions`) | yes | yes | yes | no |
 | Profile and place lookup | yes | no | no | no |

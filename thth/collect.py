@@ -586,7 +586,12 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     # attachment_kind` の `unknown` 層）。「無かった」と「判らない」を混ぜない。
     from . import sent as sent_mod
     sent_index = {}
+    # **X の自分の投稿の数字（Owned Reads）を読んでよい id**: THTH が出して `sent/` に
+    # 記録があり、取り下げていないものだけ（masaru 10/12 決定 1・他人の投稿は読まない）。
+    owned_sent_ids = set()
     for row in sent_mod.records(accounts_mod.state_dir_for(account_name)):
+        if row.get('post_id') and not row.get('retracted_at'):
+            owned_sent_ids.add(str(row['post_id']))
         if isinstance(row.get('attachment_kinds'), list):
             sent_index[str(row['post_id'])] = {
                 'attachment_kinds': list(row['attachment_kinds']),
@@ -594,6 +599,72 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
             }
     parents = _sent_parents(account_name)
     owned = _owned_once(account_name, account_cfg)
+    paid_reads = bool(getattr(adapter, "PAID_READS", False))
+    # X の自分の投稿で刻みを跨いだもの（ループの後で 1 回にまとめて読む）。
+    owned_due: list = []
+
+    def write_insight(*, qf, fm, source, post_id, posted_at_raw, age_hours, marks,
+                      insight_path, section, metrics):
+        context = followers_context(account_name, dirs["insights_account"], now)
+        # The API observation, not the planned front-matter topic, determines
+        # actual tags. A failed read is unknown, never an empty tag list.
+        observed_tags = None
+        if account_cfg.get("media") in ("bluesky", "mastodon"):
+            read_tags = getattr(adapter, "observed_tags", None)
+            if callable(read_tags):
+                try:
+                    observed_tags = read_tags(post_id)
+                except Exception as e:
+                    errors.append(f"{post_id}: tags: {redact_mod.redact(str(e))}")
+        _append_ndjson(insight_path, [{
+            "post_id": post_id,
+            # **同席の様態には原稿が無い**（設計 v2.0.1 §3）。`file` に
+            # 偽の名前を置くと、`thth/measured.py` がそれを queue_dir の
+            # 原稿として開こうとして「読めません」と言う——**無いものを
+            # 「読めなかった」に化けさせない。**
+            "file": None if source == SENT_SOURCE else os.path.basename(qf.path),
+            # **どの記録から採ったか**（設計 v2.0.1 §3・設計 v1 §3.2.2）。
+            # 無印の古い行は読み手が `queue` として扱う。
+            "source": source,
+            # **採取時点の所有 account を根拠として残す**（外部レビュー
+            # 再判定 R3・2026-09-12）。以前は台帳の行に `account` が無く、
+            # `thth/measured.py` が `file` から**現在の**原稿を開いて
+            # その account を過去の所有として使っていた。原稿の account を
+            # 書き換えると、過去の台帳が黙って新しい account の実測へ
+            # 移し替えられてしまっていた。**採取した「いま」判っている
+            # account をこの行自身に刻む**ことで、あとから原稿の account が
+            # 変わっても、この行の所有は変わらない。過去に書いた行は
+            # 追記専用の台帳なので書き換えない——`account` が無い行は
+            # `thth/measured.py` 側で「不明」として扱う。
+            "account": account_name,
+            # **どの媒体で測った数か**（設計 v2 §2.1「媒体をまたいで比較
+            # しない」）。台帳の `media` を書き換えても過去の行は動かない
+            # ——`account` を行に刻んだのと同じ理由（R3・2026-09-12）。
+            "medium": account_cfg.get("media"),
+            # **トピックを一緒に残す**（masaru 指摘 2026-09-10）。asmon は
+            # フォロワー 0 で `中学受験` を付けた投稿が 200〜574 views、
+            # nigamilab のトピック無しは 1 view。
+            # **訂正 2026-09-12**: この「1 view」は**経過が数時間の疎通確認投稿**で、同じ投稿が 9/12 時点で **112 views**。**400 倍の大半は経過時間だった。**トピックが効かないという意味ではなく、**この数字では判定できない。**
+            # **届ける経路はフォロワー
+            # ではなくトピック**なので、数と一緒に記録しないと後から
+            # 突き合わせられない。front-matter から取るので API は増やさない。
+            "topic": queuefile.normalize_topic(fm.get("topic")),
+            **({"tags": observed_tags} if account_cfg.get("media") in
+               ("bluesky", "mastodon") else {}),
+            "reply_to": fm.get("reply_to") or None,
+            "text_length": len(section) if section is not None else None,
+            "has_link": ("http://" in (section or "")) or ("https://" in (section or "")),
+            **sent_index.get(str(post_id), {}),
+            "collected_at": jst.iso(now),
+            "posted_at": posted_at_raw,
+            "age_hours": round(age_hours, 2),
+            "marks": marks,
+            "metrics": metrics,
+            "context": context,
+            "context_reason": None if context is not None else "no_recent_daily_record",
+        }])
+        touched.append(insight_path)
+
     # **スレッド連投の段も拾う**（独立検収 2026-09-11・P2-7）。
     # v1 の `qf.malformed` 判定が `thth: 2` を落とすので、3 段公開しても
     # **収集対象は 0 件だった。** 出したものを測れないなら、出す意味が薄い。
@@ -632,16 +703,28 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
         if age_hours < 0 or age_hours > max(collect_days, metric_window_days()) * 24:
             continue
         posts_seen += 1
-        if getattr(adapter, "PAID_READS", False):
-            # 他人の投稿の読み取りが有償の媒体（X）は、timer の採取で数も返信も読まない
-            # （設計 2026-10-08 運用 1・3）。読めないのは決まりなので誤りとして積まない
-            # ——積むと 10 分ごとに運用の知らせが鳴る。
-            continue
 
         section = queuefile.extract_section(qf.body, account_cfg["media"])
         名 = postid_mod.to_filename(post_id)
         insight_path = os.path.join(insights_dir, f"{名}.ndjson")
         reply_path = os.path.join(replies_dir, f"{名}.ndjson")
+
+        if paid_reads:
+            # 他人の投稿の読み取りが有償の媒体（X）は、timer の採取で**返信を読まない**
+            # （設計 2026-10-08 運用 1・3。読めないのは決まりなので誤りとして積まない
+            # ——積むと 10 分ごとに運用の知らせが鳴る）。
+            # **数は自分の投稿だけ読む**（masaru 10/12 決定 1）。自分の投稿の数字
+            # （Owned Reads・1 本 0.001 USD）は他人の投稿の読み取りとは**別の段**で、
+            # 「自動の経路は有償の他人の読み取りを叩かない」（設計 10/8）には当たらない。
+            # 読むのは `sent/` に記録がある（THTH が出した・取り下げていない）id だけ。
+            if str(post_id) not in owned_sent_ids:
+                continue
+            marks = due_marks(age_hours, _read_ndjson(insight_path)) if age_hours <= metric_window_days() * 24 else []
+            if marks:
+                owned_due.append(dict(qf=qf, fm=fm, source=source, post_id=str(post_id),
+                                      posted_at_raw=posted_at_raw, age_hours=age_hours,
+                                      marks=marks, insight_path=insight_path, section=section))
+            continue
 
         # **数と返信で、済んだ刻みを別々に持つ**（外部レビュー第 6 巡 P2-3）。
         # 以前は insights の記録だけから刻みを計算していたので、**数が取れて返信が
@@ -675,65 +758,9 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 errors.append(f"{post_id}: insights: {redact_mod.redact(str(e))}")
                 metrics = None
         if metrics is not None:
-            context = followers_context(account_name, dirs["insights_account"], now)
-            # The API observation, not the planned front-matter topic, determines
-            # actual tags. A failed read is unknown, never an empty tag list.
-            observed_tags = None
-            if account_cfg.get("media") in ("bluesky", "mastodon"):
-                read_tags = getattr(adapter, "observed_tags", None)
-                if callable(read_tags):
-                    try:
-                        observed_tags = read_tags(post_id)
-                    except Exception as e:
-                        errors.append(f"{post_id}: tags: {redact_mod.redact(str(e))}")
-            _append_ndjson(insight_path, [{
-                "post_id": post_id,
-                # **同席の様態には原稿が無い**（設計 v2.0.1 §3）。`file` に
-                # 偽の名前を置くと、`thth/measured.py` がそれを queue_dir の
-                # 原稿として開こうとして「読めません」と言う——**無いものを
-                # 「読めなかった」に化けさせない。**
-                "file": None if source == SENT_SOURCE else os.path.basename(qf.path),
-                # **どの記録から採ったか**（設計 v2.0.1 §3・設計 v1 §3.2.2）。
-                # 無印の古い行は読み手が `queue` として扱う。
-                "source": source,
-                # **採取時点の所有 account を根拠として残す**（外部レビュー
-                # 再判定 R3・2026-09-12）。以前は台帳の行に `account` が無く、
-                # `thth/measured.py` が `file` から**現在の**原稿を開いて
-                # その account を過去の所有として使っていた。原稿の account を
-                # 書き換えると、過去の台帳が黙って新しい account の実測へ
-                # 移し替えられてしまっていた。**採取した「いま」判っている
-                # account をこの行自身に刻む**ことで、あとから原稿の account が
-                # 変わっても、この行の所有は変わらない。過去に書いた行は
-                # 追記専用の台帳なので書き換えない——`account` が無い行は
-                # `thth/measured.py` 側で「不明」として扱う。
-                "account": account_name,
-                # **どの媒体で測った数か**（設計 v2 §2.1「媒体をまたいで比較
-                # しない」）。台帳の `media` を書き換えても過去の行は動かない
-                # ——`account` を行に刻んだのと同じ理由（R3・2026-09-12）。
-                "medium": account_cfg.get("media"),
-                # **トピックを一緒に残す**（masaru 指摘 2026-09-10）。asmon は
-                # フォロワー 0 で `中学受験` を付けた投稿が 200〜574 views、
-                # nigamilab のトピック無しは 1 view。
-                # **訂正 2026-09-12**: この「1 view」は**経過が数時間の疎通確認投稿**で、同じ投稿が 9/12 時点で **112 views**。**400 倍の大半は経過時間だった。**トピックが効かないという意味ではなく、**この数字では判定できない。**
-                # **届ける経路はフォロワー
-                # ではなくトピック**なので、数と一緒に記録しないと後から
-                # 突き合わせられない。front-matter から取るので API は増やさない。
-                "topic": queuefile.normalize_topic(fm.get("topic")),
-                **({"tags": observed_tags} if account_cfg.get("media") in
-                   ("bluesky", "mastodon") else {}),
-                "reply_to": fm.get("reply_to") or None,
-                "text_length": len(section) if section is not None else None,
-                "has_link": ("http://" in (section or "")) or ("https://" in (section or "")),
-                **sent_index.get(str(post_id), {}),
-                "collected_at": jst.iso(now),
-                "posted_at": posted_at_raw,
-                "age_hours": round(age_hours, 2),
-                "marks": marks,
-                "metrics": metrics,
-                "context": context,
-                "context_reason": None if context is not None else "no_recent_daily_record",
-            }])
-            touched.append(insight_path)
+            write_insight(qf=qf, fm=fm, source=source, post_id=post_id,
+                          posted_at_raw=posted_at_raw, age_hours=age_hours, marks=marks,
+                          insight_path=insight_path, section=section, metrics=metrics)
 
         # --- 返信（`id` で重複除去して追記）
         if reply_marks:
@@ -754,6 +781,10 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 if 新しい:
                     log(f"返信 {len(新しい)} 件: {post_id}")
 
+    # --- X の自分の投稿の数字（Owned Reads）: 刻みを跨いだものを 100 本ずつ 1 回で
+    if owned_due:
+        _collect_owned(adapter, owned_due, now=now, errors=errors, write=write_insight)
+
     # --- 利用者から始まった会話（**WhatsApp の芽**・設計 v2 §4.2）
     inbox_touched, inbox_state = _collect_inbox(
         account_cfg, adapter, now=now, errors=errors, log=log, inbox_dir=dirs["inbox"])
@@ -771,6 +802,42 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
 
     return {"touched": sorted(set(touched)), "posts": posts_seen, "errors": errors,
             "inbox": inbox_state}
+
+
+def _collect_owned(adapter, due: list, *, now, errors: list, write) -> None:
+    """X の自分の投稿の数字を 1 回（100 本ずつ）読み、Threads と同じ刻みの行を足す。
+
+    読めなかったら行を書かない（刻みは進まず、次の実行で読み直す）。応答に無かった
+    投稿（X で消した等）は理由を 1 行にまとめて残す。本文・username は応答に無い
+    （`tweet.fields` に text を入れていない）。
+    """
+    read = getattr(adapter, "owned_metrics", None)
+    if not callable(read):
+        return  # 自分の投稿の数字の口を持たない有償の媒体（今は無い）。誤りとして積まない
+    try:
+        result = read([entry["post_id"] for entry in due], now=now)
+    except Exception as e:  # 採取の失敗で投稿を止めない（予算の断りも含む）
+        errors.append(f"X の自分の投稿の数字: {redact_mod.redact(str(e))}")
+        return
+    by_post = result.get("by_post") or {}
+    for entry in due:
+        found = by_post.get(entry["post_id"])
+        if found is None:
+            continue
+        try:
+            metrics, available = adapter_base.metrics_of(found)
+        except Exception as e:
+            errors.append(f"{entry['post_id']}: owned_metrics: {redact_mod.redact(str(e))}")
+            continue
+        for name in measured_mod.POST_METRIC_NAMES:
+            if name not in available:
+                metrics.setdefault(name, None)
+        write(metrics=metrics, **entry)
+    missing = [entry["post_id"] for entry in due if entry["post_id"] not in by_post]
+    if missing:
+        errors.append(f"X の自分の投稿の数字: 応答に無かった {len(missing)} 本"
+                      f"（X で消した・自分の投稿でない等。rejected={result.get('rejected', 0)}"
+                      f"・api_errors={result.get('api_errors', 0)}）: {', '.join(missing[:5])}")
 
 
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}")

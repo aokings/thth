@@ -137,7 +137,13 @@ def _diagnose(account_name: str) -> dict:
 
     if account_cfg.get('media') == 'x':
         observation = read_observation(account_name) or {}
-        return dict(account=account_name, error='X は投稿と取り下げに対応しています（2.14）。読み取りは従量なので、probe はこの版では叩きません（thth admin budget x で読取予算、thth admin budget x-posts で月間投稿数）。認可の修復は thth auth <account> --by <actor>。',
+        # 費用の内訳（本人確認・他人の投稿・自分の投稿の数字＝Owned Reads）。台帳を読むだけ。
+        try:
+            from . import budget_x
+            x_costs = budget_x.report()
+        except (OSError, ValueError, TypeError, KeyError):
+            x_costs = None
+        return dict(account=account_name, x_costs=x_costs, error='X は投稿と取り下げに対応しています（2.14）。読み取りは従量なので、probe はこの版では叩きません（thth admin budget x で読取予算、thth admin budget x-posts で月間投稿数）。認可の修復は thth auth <account> --by <actor>。',
                     probes=[], auth_only=True, auth_via=(token.get('auth_via') if isinstance(token,dict) and token.get('auth_via') in ('relay','paste','token_set') else None),
                     auth_observed_at=observation.get('auth_observed_at'), scopes_recorded=recorded_scopes(token))
 
@@ -534,6 +540,10 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         log(n)
     log("")
 
+    if report.get("x_costs"):
+        from . import budget_x
+        for line in budget_x.cost_lines(report["x_costs"]):
+            log(line)
     if report.get("error"):
         log(report["error"])
         return 2

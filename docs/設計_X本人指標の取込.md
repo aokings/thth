@@ -47,3 +47,7 @@
 `coverage.metrics_missing_records`は採用行のうち6公開指標のいずれかがnullである行数（欠落・型不正・alias不一致等を含む）。`complete=true`でもこの値が正なら指標は揃っていない。行の採用完了と指標の完備を分けて読む。
 
 `data`欠落＋`errors`のみは現在も`XMetricsError("invalid_data")`で拒否する。全件失敗時の実API応答形は一次資料で確認できておらず、これをXの仕様とは主張しない。このオフライン変換器の現行入力契約として固定し、実接続前に一次資料・実応答fixtureで再確認する。`data=[]`＋有効な`errors`配列は採用0件・APIエラー件数・`complete=false`を返す。生errorの文言はどちらも返さない。
+
+## 追記 2026-10-12（3.16.0 で collect に接続）
+
+masaru 10/12 の決定 1 で、`thth collect`（timer）が `XAdapter.owned_metrics()` からこの関数を呼ぶようになった。渡す id は `sent/` の記録（THTH から出した・取り下げていない）だけ。`connected_user_id` は `.token` の `user_id`、`observed_at`・`now` は採取の時刻（UTC・秒）。採用行の `value` が null の指標は台帳に入れない（「取れなかった」と「0」を混ぜない）。費用は Owned Reads（1 本 0.001 USD・`budget_x.owned_read()`）。実 API の応答形（全件が見つからないときの `data` 欠落と `errors`）は実機で未確認のまま。

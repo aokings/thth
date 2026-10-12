@@ -398,8 +398,11 @@ them sends anything anywhere (design "自分の泉"):
   and the rest continue. A single, unreadable `<account>` is a loud failure
   (exit 1, or `{"error", "account"}` with `--json`) rather than a silent empty
   answer.
-- **`thth thread <account> <post_id> [--since ISO] [--max-messages N] [--json]`**
-  — read a thread's branches on the spot. Nothing is saved.
+- **`thth thread <account> <post_id> [--since ISO] [--max-messages N] [--limit N] [--json]`**
+  — read a thread's branches on the spot. Nothing is saved. On X, `--limit N`
+  (10–50, default 50; since 3.16.0) is how many paid branch posts to read, so
+  you can split the 60-a-day allowance. It has no effect on media whose reads
+  are free (`provenance.read_limit.applied` is `false`).
 - **`thth who (<account>|--project P) (<author_key>|@<username>) [--profile] [--json]`**
   — a pseudonym's history with you: how many times you've crossed paths, when,
   and how they reacted — never what anyone wrote. `--profile` fetches a live

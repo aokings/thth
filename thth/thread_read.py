@@ -202,14 +202,24 @@ def _sort_key(message: dict) -> tuple:
 
 
 def answer(account_name: str, post_id: str, *, since: str | None = None,
-           max_messages: int = DEFAULT_MAX_MESSAGES, now=None) -> dict:
-    """`thread_read` の答え（設計「自分の泉」§2.1）。**読むだけ・何も書かない。**"""
+           max_messages: int = DEFAULT_MAX_MESSAGES, limit: int | None = None, now=None) -> dict:
+    """`thread_read` の答え（設計「自分の泉」§2.1）。**読むだけ・何も書かない。**
+
+    `limit`（`thth thread --limit N`・masaru 10/12 決定 5）は**有償の読み取りの媒体（X）で
+    読む枝の本数**（10〜50・既定 50）。1 日 60 本の中で配分するためのもの。読み取りが
+    無料の媒体（Threads・Bluesky・Mastodon）では**受けて効かせない**——そこでは読む量が
+    費用にならず、見せる量は既存の `max_messages` が決める。adapter の枝の読み方
+    （Threads の頁送り等）を変えると既存の振る舞いが変わるので触らない。効いたか
+    どうかは `provenance.read_limit` に出す。
+    """
     if not isinstance(post_id, str) or not post_id.strip():
         _reject("post_id が空です")
     if not isinstance(max_messages, int) or isinstance(max_messages, bool):
         _reject(f"max_messages は整数です: {max_messages!r}")
     if max_messages < 1 or max_messages > MAX_MESSAGES_LIMIT:
         _reject(f"max_messages は 1〜{MAX_MESSAGES_LIMIT} です: {max_messages!r}")
+    if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool)):
+        _reject(f"limit は整数です: {limit!r}")
     now = now if now is not None else jst.now_jst()
     account_cfg = accounts_mod.load_account(account_name)
     from . import postid
@@ -230,6 +240,15 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
         hint = adapter_cls.POST_ID_FORM_HINT
         _reject(f"{hint}`thth where {account_name} --json` の `post_id` を"
                 "そのまま渡してください")
+    paid = bool(getattr(adapter_cls, "PAID_READS", False))
+    conversation_kwargs = {}
+    if limit is not None and paid:
+        # **範囲外は要求も予約もせずに断る**（根の取得も有償なので、その前に）。
+        try:
+            adapter_cls.check_conversation_limit(limit)
+        except adapter_base.AdapterError as exc:
+            _reject(str(exc))
+        conversation_kwargs["limit"] = limit
     token = accounts_mod.load_token(account_cfg)
     if not adapter_cls.has_token(token):
         raise adapter_base.AdapterError(f"{account_name}: token が無いので読めません")
@@ -243,7 +262,7 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
     # （`normalize_message()`は冪等）。
     root_row = adapter_base.normalize_message(adapter.fetch_post(post_id), medium=media)
     raw_messages = [adapter_base.normalize_message(m, medium=media)
-                    for m in adapter.conversation(post_id, since=since)]
+                    for m in adapter.conversation(post_id, since=since, **conversation_kwargs)]
 
     own_handles, unreadable_accounts = replies_mod._own_handles()
     incomplete = bool(unreadable_accounts)
@@ -343,6 +362,9 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
             "permission": PERMISSION_BY_MEDIUM.get(media),
             "continue_from": continue_from,
             "ledgers_unreadable": ledgers_unreadable,
+            **({"read_limit": {"requested": limit, "applied": paid,
+                               "reason": None if paid else "free_read_medium"}}
+               if limit is not None else {}),
         },
     }
 
@@ -430,12 +452,15 @@ def register(sub) -> None:
     p.add_argument("--max-messages", dest="max_messages", type=int,
                    default=DEFAULT_MAX_MESSAGES,
                    help=f"読む上限（既定 {DEFAULT_MAX_MESSAGES}・上限 {MAX_MESSAGES_LIMIT}）")
+    p.add_argument("--limit", type=int, default=None,
+                   help="X で読む枝の本数（10〜50・既定 50）。有償の読み取りを 1 日の本数の中で"
+                        "配分するため。読み取りが無料の媒体では効かない（見せる量は --max-messages）")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_thread)
 
 
 def cmd_thread(args) -> int:
-    """`thth thread <account> <post_id> [--since ISO] [--max-messages N] [--json]`。"""
+    """`thth thread <account> <post_id> [--since ISO] [--max-messages N] [--limit N] [--json]`。"""
     as_json = bool(getattr(args, "json", False))
     account_cfg = None
     media = None
@@ -448,7 +473,7 @@ def cmd_thread(args) -> int:
 
     try:
         result = answer(args.account, args.post_id, since=args.since,
-                        max_messages=args.max_messages)
+                        max_messages=args.max_messages, limit=getattr(args, "limit", None))
     except accounts_mod.AccountError as e:
         print(str(e), file=sys.stderr)
         return 1
