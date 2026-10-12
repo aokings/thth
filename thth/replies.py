@@ -174,6 +174,12 @@ def _fetch_sources(fetches: list) -> dict:
     return dict(sorted(out.items()))
 
 
+def _reply_id(row):
+    """返信 1 行の id（`collect.reply_row_id()` と同じ判定: `message_id` を先に・無ければ `id`）。"""
+    value = row.get("message_id") or row.get("id")
+    return str(value) if value is not None else None
+
+
 def load(account_name: str, *, post_id: str | None = None, allowed_names=None,
          owned_only: bool = False) -> dict:
     """返信の台帳を読む。
@@ -248,7 +254,10 @@ def load(account_name: str, *, post_id: str | None = None, allowed_names=None,
                 # 正とする）。`--post` で他 account の投稿を名指ししたときは補わない。
                 row = {**row, "account": row.get("account") or account_name,
                        "medium": row.get("medium") or account_cfg.get("media")}
-            all_replies.append({**row, "own": own})
+            # 3.18.0（JSON の欄の名前の統一）: 返信自身の id を `reply_id` に揃えて載せる
+            # （Threads の行は `id`・Bluesky と Mastodon は `message_id`。`unanswered` と同じ名前）。
+            # この台帳の `post_id` は「返信の付いた自分の投稿」なので、返信の id には使えない。
+            all_replies.append({**row, "reply_id": _reply_id(row), "own": own})
         all_fetches.extend(fetch_rows)
 
     counts = {

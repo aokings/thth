@@ -195,6 +195,8 @@ def _account_node(account_name: str, *, author_key: str | None, username: str | 
         threads.append({
             "root": row.get("post_id"), "role": "they_replied_to_me",
             "at": row.get("timestamp"), "message_id": message_id,
+            # 3.18.0: i_replied_to_them と同じ `post_id`（その返信自身の id）。`message_id` は非推奨で残す。
+            "post_id": message_id,
             "reaction": None,
         })
 

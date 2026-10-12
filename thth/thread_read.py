@@ -312,6 +312,8 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
             own_count += 1
         messages.append({
             "message_id": m.get("message_id"),
+            # 3.18.0（JSON の欄の名前の統一）: 同じ値を `post_id` にも。`message_id` は非推奨で残す。
+            "post_id": m.get("message_id"),
             "replied_to": m.get("replied_to"),
             "depth": depths.get(str(m.get("message_id"))) if m.get("message_id") is not None
                     else None,

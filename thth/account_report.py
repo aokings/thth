@@ -202,7 +202,7 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
             by_post_id[post_id] = os.path.basename(qf.path)
             if qf.front_matter.get("retracted_at"):
                 retracted[post_id] = {
-                    "id": post_id, "file": os.path.basename(qf.path),
+                    "id": post_id, "post_id": post_id, "file": os.path.basename(qf.path),
                     "retracted_at": qf.front_matter.get("retracted_at"),
                     "retracted_by": qf.front_matter.get("retracted_by"),
                     "retract_reason": qf.front_matter.get("retract_reason")}
@@ -212,7 +212,7 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
     sent_ids = sent_mod.post_ids(state_dir)
     for row in sent_mod.retracted_records(state_dir):
         retracted.setdefault(row["post_id"], {
-            "id": row["post_id"], "file": None,
+            "id": row["post_id"], "post_id": row["post_id"], "file": None,
             "retracted_at": row.get("retracted_at"),
             "retracted_by": row.get("retracted_by"),
             "retract_reason": row.get("retract_reason")})
@@ -226,11 +226,13 @@ def recent_posts(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
 
     # **外に出す鍵の綴りは変えない**（`thth posts --json` は masaru のセッションが
     # 読んでいる）。境界の `post_id`・`url` をここで `id`・`permalink` に写す。
+    # 3.18.0（JSON の欄の名前の統一）: 同じ値を `post_id` にも載せる。`id` は非推奨で残す（4.0 で外す候補）。
     posts = []
     for row in rows:
         post_id = row.get("post_id")
         posts.append({
             "id": post_id,
+            "post_id": post_id,
             "timestamp": row.get("timestamp"),
             "permalink": row.get("url"),
             "text": row.get("text"),
@@ -538,7 +540,7 @@ def topic_performance(account_name: str, *, limit: int = REMOTE_LIMIT) -> dict:
         views = metrics.get("views")
         topic = row.get("topic") or "(トピック無し)"
         by_topic.setdefault(topic, []).append({
-            "id": post_id, "timestamp": row.get("timestamp"),
+            "id": post_id, "post_id": post_id, "timestamp": row.get("timestamp"),
             # **この数は「打った瞬間の値」**（設計 §3.2.2）。台帳の刻みの値では
             # ない。**時点を書かないと、受け取る側が台帳の数字と混ぜる**
             # （2026-09-12 に kopicha セッションが実際に混ぜた）。
@@ -594,8 +596,8 @@ def _remote_posts(account_cfg: dict, token: dict | None, known_post_ids: set) ->
         out["latest"] = rows[0].get("timestamp")
     # **THTH の queue に post_id が無いもの＝THTH を通していない投稿。**
     out["outside"] = [
-        {"id": row.get("post_id"), "timestamp": row.get("timestamp"),
-         "permalink": row.get("url")}
+        {"id": row.get("post_id"), "post_id": row.get("post_id"),
+         "timestamp": row.get("timestamp"), "permalink": row.get("url")}
         for row in rows
         if row.get("post_id") and row["post_id"] not in known_post_ids
     ]
