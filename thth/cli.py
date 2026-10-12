@@ -3378,6 +3378,15 @@ def cmd_app_show(args) -> int:
     return appenv_mod.run_app_show(as_json=args.as_json)
 
 
+def _map_project_name(value: str) -> str:
+    """`--map` の project 名（unit 名に入るので account 名と同じ字だけ）。"""
+    try:
+        accounts_mod.validate_name(value)
+    except accounts_mod.AccountError:
+        raise argparse.ArgumentTypeError("project 名は英数字と _・.・- だけです") from None
+    return value
+
+
 def cmd_systemd(args) -> int:
     """`thth systemd <account>`: 台帳から `.timer` unit を機械的に生成して標準出力に
     出す（設計 §3.2・masaru 指摘 2026-09-09）。手で書くと刻みがずれる（実際に
@@ -3399,6 +3408,14 @@ def cmd_systemd(args) -> int:
     if getattr(args, "credentials", None) is not None:
         print("--credentials は --worker と併用してください", file=sys.stderr)
         return 2
+    if getattr(args, "map", None):
+        # 世間の層の timer/service は project ごと・1 日 1 回（3.18.0）。
+        if args.account or getattr(args, "maintain", False) or getattr(args, "collect_only", False):
+            print("--map は account／--maintain／--collect-only と併用できません", file=sys.stderr)
+            return 2
+        sys.stdout.write(systemd_gen.render_map_service() if args.service
+                         else systemd_gen.render_map_timer(args.map))
+        return 0
     if getattr(args, "maintain", False):
         # `thth maintain` の timer/service は 1 日 1 回・アカウント別ではない。
         sys.stdout.write(systemd_gen.render_maintain_service() if args.service
@@ -3953,6 +3970,8 @@ def build_parser() -> argparse.ArgumentParser:
                                 "--approval-worker は旧名で deprecated）")
     p_systemd.add_argument("--credentials",
                            help="workerとserve-reportsが共用する私有設定の絶対パス（ASCII、空白/$/%%不可。内容は読みません）")
+    p_systemd.add_argument("--map", metavar="PROJECT", type=_map_project_name,
+                           help="世間の層（thth map collect <project>）の 1 日 1 回の timer（--service で雛形）")
     p_systemd.set_defaults(func=cmd_systemd)
 
     p_http = sub.add_parser("serve-reports", help="専用環境の非公開レポートHTTP（Unix socket推奨）")

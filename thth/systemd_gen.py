@@ -194,6 +194,55 @@ def render_maintain_service() -> str:
     )
 
 
+# 世間の層（`thth map collect <project>`・設計 3.5.0）の timer は **project ごと・1 日 1 回**。
+# 明け方（05 時台）に置き、分は project 名のハッシュでずらす（同じ分に複数の project が
+# 検索を叩かない）。**世間の層を有効にする `THTH_MAP_WORLD=1` は service にだけ置く**
+# （masaru 10/12「全部やって良い」・Meta の許可された用途の原文で確認・
+# `docs/整理_Meta承認で解放されたものとされていないもの_2026-10-12.md`）。手で
+# `thth map show` を打つ人のシェルには置かないので、見るときは 1 行の頭に付ける。
+MAP_UNIT_PREFIX = "thth-map@"
+
+
+def render_map_timer(project: str) -> str:
+    """`thth-map@<project>.timer` の中身（`thth systemd --map <project>`）。"""
+    minute = offset_minutes(f"{project}-map", 60)
+    return (
+        f"# 生成: `thth systemd --map {project}`（手で編集しない）。\n"
+        "[Unit]\n"
+        f"Description=THTH map collect for {project}（世間の層・1 日 1 回）\n"
+        "\n"
+        "[Timer]\n"
+        f"OnCalendar=*-*-* 05:{minute:02d}:00\n"
+        "# VM が落ちていた日も起動後に 1 回走らせる（同じ日の 2 回目は叩かない・規律 (e)）。\n"
+        "Persistent=true\n"
+        "RandomizedDelaySec=0\n"
+        f"Unit={MAP_UNIT_PREFIX}{project}.service\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n"
+    )
+
+
+def render_map_service() -> str:
+    """`thth-map@.service`（雛形・`thth systemd --map <project> --service`）。"""
+    return (
+        "# 生成: `thth systemd --map <project> --service`（手で編集しない）。\n"
+        "# 雛形 unit（`%i` に project 名が入る）。1 つ置けば全 project で使える。\n"
+        "[Unit]\n"
+        "Description=THTH map collect for %i（世間の層）\n"
+        "After=network-online.target\n"
+        "Wants=network-online.target\n"
+        "\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        "User=wt\n"
+        "Environment=THTH_ROOT=/srv/thth\n"
+        "Environment=THTH_MAP_WORLD=1\n"
+        "ExecStart=/srv/thth/app/bin/thth map collect %i\n"
+        "TimeoutStartSec=600\n"
+    )
+
+
 def render_worker_service(credentials: str) -> str:
     """Render a long-running worker; never read credentials or operate systemd.
 
