@@ -13,6 +13,7 @@ import dataclasses
 import json
 import math
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -1495,12 +1496,22 @@ class ThreadsAdapter(base.Adapter):
                 out[key] = row[key]
         return out
 
+    SEARCH_MODES = ("KEYWORD", "TAG")
+    # Threads の username（英数・`.`・`_`・30 字まで）。`@` は呼ぶ側で外す。
+    AUTHOR_USERNAME = re.compile(r"[A-Za-z0-9._]{1,30}")
+
     def keyword_search(self, q: str, *, search_type: str = "TOP",
-                       limit: int = 25) -> list:
+                       limit: int = 25, search_mode: str = "KEYWORD",
+                       author_username: str | None = None) -> list:
         """`GET /keyword_search`（`threads_keyword_search`・**L2**）。**1 頁だけ。**
 
         返るのは `Message` の形の行（`_message_row()`）。**本文はここで返すだけ**
         ——どこにも書かない（保存しないのは呼ぶ側の規律でもある・§4.3「入れないもの」）。
+
+        `search_mode`（`KEYWORD`／`TAG`）と `author_username` は API の引数をそのまま渡す
+        だけ（Keyword and Topic Tag Search・L2・10/12 読んだ。`thth where --tag`・`--author`・
+        調査「Threads で伸ばす」§7 決定 1）。`TAG` の `q` は先頭の `#` を外したトピック。
+        既定（`KEYWORD`・作者なし）では要求の引数は今までと同じ。
         """
         if not isinstance(q, str) or not q.strip():
             raise base.AdapterError("検索の語が空です")
@@ -1511,8 +1522,21 @@ class ThreadsAdapter(base.Adapter):
         if not isinstance(limit, int) or limit < 1 or limit > self.KEYWORD_SEARCH_MAX_LIMIT:
             raise base.AdapterError(
                 f"limit は 1〜{self.KEYWORD_SEARCH_MAX_LIMIT} です（{limit!r}）")
-        params = {"q": q.strip(), "search_type": search_type,
+        if search_mode not in self.SEARCH_MODES:
+            raise base.AdapterError(
+                f"search_mode は {' / '.join(self.SEARCH_MODES)} のどちらかです（{search_mode!r}）")
+        if author_username is not None and (not isinstance(author_username, str)
+                                            or not self.AUTHOR_USERNAME.fullmatch(author_username)):
+            raise base.AdapterError(f"author_username は Threads の username です（{author_username!r}）")
+        term = q.strip().lstrip("#").strip() if search_mode == "TAG" else q.strip()
+        if not term:
+            raise base.AdapterError("検索の語が空です")
+        params = {"q": term, "search_type": search_type,
                   "fields": self.KEYWORD_SEARCH_FIELDS, "limit": limit}
+        if search_mode != "KEYWORD":
+            params["search_mode"] = search_mode
+        if author_username is not None:
+            params["author_username"] = author_username
         rows = self._read(
             lambda: self._rows(self._get("/v1.0/keyword_search", params,
                                           timeout=self.search_timeout), "投稿の検索"),

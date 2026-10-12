@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 import sys
 
 from . import accounts as accounts_mod
@@ -287,7 +288,8 @@ def _also_filter(rows: list, also: list) -> tuple[list, dict]:
 def _account_node(account_name: str, words: list, *, search_type: str,
                   limit: int, now, since=None, exclude_engaged=False, max_per_author=None,
                   also=None, aggregate_mode=False,
-                  lexicon=None, suggest=False) -> tuple[dict | None, Exception | str | None]:
+                  lexicon=None, suggest=False, tag_mode=False,
+                  author=None) -> tuple[dict | None, Exception | str | None]:
     """1 account 分の節。戻りは `(node, 理由)`——どちらか一方だけが非 `None`。
     台帳が読めない・token が無い・媒体に `keyword_search` が無いときは
     `node` が `None`（`by_account` に**入れない**・規約 (d)）。
@@ -314,6 +316,21 @@ def _account_node(account_name: str, words: list, *, search_type: str,
     if CAPABILITY not in adapters_mod.capabilities_for(media):
         return None, (f"{account_name}: この媒体（{media}）では語による検索"
                       f"（{CAPABILITY}）は未対応です")
+    # `--tag`・`--author` は Threads の keyword_search の引数（`search_mode=TAG`・
+    # `author_username`）を渡すだけ（調査「Threads で伸ばす」§7 決定 1）。ほかの媒体では
+    # **黙って普通の検索に落とさず、この account では使えないと言う**（`--project` の
+    # 他の account は続ける）。理由は媒体ごと:
+    # - X: 語に `#タグ`・`from:<username>` を書ける（recent search の演算子）。旗で語を
+    #   書き換えると、有償の読み取りの語と `my_history` の語が食い違うので、語に書いてもらう。
+    # - Bluesky・Mastodon: `--tag` は要らない——語ごとにタグの観測（`by_tag`）を既に返す。
+    #   `--author` は今の adapter に口が無い（足すなら別の設計）。
+    if (tag_mode or author) and media != "threads":
+        hint = {
+            "x": "X では語に `#タグ` や `from:<username>` を書いてください（演算子）",
+            "bluesky": "--tag は要りません（語ごとのタグの観測 by_tag を既に返します）。--author は未対応",
+            "mastodon": "--tag は要りません（語ごとのタグの観測 by_tag を既に返します）。--author は未対応",
+        }.get(media, "未対応")
+        return None, f"{account_name}: --tag・--author は Threads の検索の引数です。{hint}"
     token = accounts_mod.load_token(account_cfg)
     adapter_cls = adapters_mod.adapter_class(media)
     if not adapter_cls.has_token(token):
@@ -373,6 +390,8 @@ def _account_node(account_name: str, words: list, *, search_type: str,
         try:
             kwargs = {'search_type': search_type, 'limit': limit}
             if floor is not None and (media == 'bluesky' or paid):kwargs['since'] = jst.iso(floor)
+            if tag_mode:kwargs['search_mode'] = 'TAG'
+            if author:kwargs['author_username'] = author
             rows = adapter.keyword_search(word, **kwargs)
         except adapter_base.PermissionMissing as e:
             node_cannot_say.append(f"{word}: {_permission_message(account_name, adapter, e)}")
@@ -453,6 +472,9 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                          "dropped": dropped,
                          "window": {"since": jst.iso(floor) if floor else None,
                                     "basis": "server_sortAt" if media == 'bluesky' else 'timestamp'}}
+        if tag_mode or author:
+            by_word[word]["query"] = {"search_mode": "TAG" if tag_mode else "KEYWORD",
+                                      "author_username": author}
         if also_counts is not None:
             by_word[word]["also"] = also_counts
         if raw_n == 0:
@@ -551,8 +573,12 @@ def _clean_also(also) -> list:
 def answer(*, account_name: str | None = None, project: str | None = None,
           words: list, recent: bool = False, limit: int | None = None,
           now=None, since=None, exclude_engaged=False, max_per_author=None,
-          also=None, aggregate_mode=False, lexicon=None, suggest=False) -> dict:
+          also=None, aggregate_mode=False, lexicon=None, suggest=False,
+          tag=False, author=None) -> dict:
     """`where_to_appear` の答え（設計「自分の泉」§2.3・§2.6）。**読むだけ。**
+
+    `tag`（Threads の `search_mode=TAG`）と `author`（`author_username`）は API の引数を
+    渡すだけ。何も保存しない。Threads 以外の account では `cannot_say` に理由を出す。
 
     `aggregate_mode`（設計 3.7.0 §C3）は語ごとの集計だけを返す——本文・username・
     author_key・post_id を返さず、何も保存しない（runs の 1 行は従前どおり語と件数だけ）。
@@ -588,6 +614,14 @@ def answer(*, account_name: str | None = None, project: str | None = None,
         _reject('max_per_author は 1 以上の整数です')
     also = _clean_also(also)
     search_type = "RECENT" if recent else "TOP"
+    if type(tag) is not bool:
+        _reject("tag は boolean です")
+    if author is not None:
+        if not isinstance(author, str):
+            _reject(f"author は username です: {author!r}")
+        author = author.strip().lstrip("@")
+        if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", author):
+            _reject(f"author は Threads の username（英数・. ・_・30 字まで）です: {author!r}")
 
     names, top_cannot_say = _resolve_names(account_name=account_name, project=project)
 
@@ -598,7 +632,7 @@ def answer(*, account_name: str | None = None, project: str | None = None,
                                      limit=limit, now=now, since=since,
                                      exclude_engaged=exclude_engaged, max_per_author=max_per_author,
                                      also=also, aggregate_mode=aggregate_mode, lexicon=lexicon,
-                                     suggest=suggest)
+                                     suggest=suggest, tag_mode=tag, author=author)
         if node is None:
             if isinstance(reason, accounts_mod.AccountError) and project is None:
                 # **単一 account: そのまま投げ直す**（T5-2・`who_cli.answer()`
@@ -845,6 +879,10 @@ def register(sub) -> None:
     p.add_argument("--suggest", action="store_true",
                    help="検索の語の候補（自分のデータ・also に合った投稿の本文で 2 投稿以上に出た語）。"
                         "語と数だけ・保存しない")
+    p.add_argument("--tag", action="store_true",
+                   help="Threads: 語をトピックタグとして検索する（search_mode=TAG）。保存しない")
+    p.add_argument("--author", default=None, metavar="USERNAME",
+                   help="Threads: この人の投稿だけを検索する（author_username）。保存しない")
     p.set_defaults(func=cmd_where)
 
 
@@ -878,7 +916,9 @@ def cmd_where(args) -> int:
                         max_per_author=getattr(args, "max_per_author", None),
                         also=getattr(args, "also", None),
                         aggregate_mode=bool(getattr(args, "aggregate", False)), lexicon=lexicon,
-                        suggest=bool(getattr(args, "suggest", False)))
+                        suggest=bool(getattr(args, "suggest", False)),
+                        tag=bool(getattr(args, "tag", False)),
+                        author=getattr(args, "author", None))
     except accounts_mod.AccountError as e:
         # **単一 account が読めなければ loud reject**（T5-2・`who` と揃える）。
         # `--json` は人向けの文言でなく `{"error", "account"}` を出す——

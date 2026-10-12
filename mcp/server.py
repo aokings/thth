@@ -277,6 +277,10 @@ TOOLS = [
                             "description": "TOP でなく RECENT（新しい順）で検索する"},
                 "limit": {"type": "integer",
                            "description": "1 account・1 語あたりの上限（既定 25）"},
+                "tag": {"type": "boolean",
+                         "description": "Threads: 語をトピックタグとして検索（search_mode=TAG）"},
+                "author": {"type": "string",
+                            "description": "Threads: この username の投稿だけ（author_username）"},
             },
             # **`account` か `project` のどちらか必須**（両方無ければ
             # `validate_arguments()` が `-32602`）。`required` は AND
@@ -1394,6 +1398,10 @@ def call_tool(name: str, arguments: dict | None) -> dict:
             args.append("--recent")
         if arguments.get("limit") is not None:
             args += ["--limit", str(arguments["limit"])]
+        if arguments.get("tag"):
+            args.append("--tag")
+        if arguments.get("author"):
+            args += ["--author", arguments["author"]]
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout

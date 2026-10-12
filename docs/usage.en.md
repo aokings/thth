@@ -390,7 +390,10 @@ The same thing is available over MCP as the `before_you_post` tool.
 These four commands only read — none of them writes to `data/`, and none of
 them sends anything anywhere (design "自分の泉"):
 
-- **`thth where (<account>|--project P) <word…> [--recent] [--limit N] [--json]`**
+- **`thth where (<account>|--project P) <word…> [--recent] [--limit N] [--tag] [--author USERNAME] [--json]`**
+  — `--tag` (Threads `search_mode=TAG`) and `--author` (Threads `author_username`)
+  are passed to the Threads search as-is and nothing is saved (since 3.16.0);
+  on other media the account is skipped with a reason in `cannot_say`.
   — where to go engage next: overlays your own history on top of a live
   keyword search (1–5 words), one section per account (no cross-account
   totals, no ranking). `--project` runs it across every account in that
