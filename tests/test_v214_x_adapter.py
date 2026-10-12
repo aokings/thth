@@ -218,3 +218,30 @@ def test_after_an_unknown_the_next_send_refuses_without_touching_the_provider(
     output = capsys.readouterr()
     assert 'inflight が残っています' in output.out + output.err
     assert wire['calls'] == [] and inflight.read(state) == before
+
+
+# ----- 403 の本文から静的な符丁（10/13 関東の返信の 403） --------------------
+
+@pytest.mark.parametrize('body,expected', [
+    (b'{"detail":"Reply to this conversation is not allowed because you have not been mentioned or otherwise engaged by the author of the post you are replying to.","title":"Forbidden","status":403}',
+     'x_publish_http_403: x_reply_not_engaged'),
+    (b'{"detail":"You are not permitted to perform this action.","title":"Forbidden","status":403}',
+     'x_publish_http_403: x_not_permitted'),
+    (b'{"errors":[{"message":"You are not allowed to create a Tweet with duplicate content."}]}',
+     'x_publish_http_403: x_duplicate_content'),
+    (b'{"detail":"something new"}', 'x_publish_http_403'),
+    (b'not json', 'x_publish_http_403'),
+    (b'{"detail":"' + b'x' * 5000 + b'"}', 'x_publish_http_403'),
+])
+def test_403_body_becomes_a_static_code_without_provider_text(env, wire, monkeypatch, body, expected):
+    original = x_adapter.request
+
+    def request(adapter, method, path, **kwargs):
+        if path == '/2/tweets':
+            raise urllib.error.HTTPError(adapter.base_url + path, 403, 'Forbidden', {},
+                                         io.BytesIO(body))
+        return original(adapter, method, path, **kwargs)
+    monkeypatch.setattr(x_adapter, 'request', request)
+    result = text_post(env)
+    assert result.failure == 'publish_definite' and result.error == expected
+    assert 'something new' not in result.error

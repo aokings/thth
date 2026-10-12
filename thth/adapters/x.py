@@ -112,6 +112,45 @@ def rate_limit(error):
     return out
 
 
+# 投稿の 4xx の本文から**静的な符丁だけ**を引く（provider の文面は理由に混ぜない・
+# `rate_limit()` と同じ流儀）。10/13 関東の返信が `x_publish_http_403` だけを残し、
+# 「返信先の投稿者から関わりが無い」制限か、アカウントの制限かを見分けられなかった。
+# 文面は X の開発者フォーラムで報告されている形（一次資料には無い・L3）。
+PUBLISH_REFUSALS = (
+    ('not been mentioned or otherwise engaged', 'x_reply_not_engaged'),
+    ('reply to this conversation is not allowed', 'x_reply_not_engaged'),
+    ('duplicate content', 'x_duplicate_content'),
+    ('not permitted to perform this action', 'x_not_permitted'),
+    ('not permitted to access this feature', 'x_not_permitted'),
+)
+MAX_ERROR_BYTES = 4096
+
+
+def publish_refusal(error) -> str | None:
+    """4xx の本文（`detail`・`title`・`errors[].message`）を 1 回だけ読み、知っている形なら符丁。"""
+    try:
+        raw = error.read(MAX_ERROR_BYTES + 1)
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not raw or len(raw) > MAX_ERROR_BYTES:
+        return None
+    try:
+        body = json.loads(raw)
+    except (ValueError, UnicodeError):
+        return None
+    texts = []
+    if isinstance(body, dict):
+        texts += [body.get('detail'), body.get('title')]
+        for item in body.get('errors') or []:
+            if isinstance(item, dict):
+                texts += [item.get('message'), item.get('detail')]
+    blob = ' '.join(t for t in texts if isinstance(t, str)).lower()
+    for needle, code in PUBLISH_REFUSALS:
+        if needle in blob:
+            return code
+    return None
+
+
 def request(adapter, method, path, *, json_body=None, data=None, query=None,
             headers=None, timeout=None, socket_timeout=None):
     """1 回だけ投げて `(status, value)`。**urllib の例外はそのまま上げる**
@@ -312,6 +351,10 @@ class XAdapter(base.Adapter):
         except urllib.error.HTTPError as exc:
             reason = ('provider_rate_limited' if exc.code == 429
                       else 'x_publish_http_' + str(exc.code))
+            if 400 <= exc.code < 500 and exc.code != 429:
+                known = publish_refusal(exc)
+                if known:
+                    reason += ': ' + known
             failure = 'publish_definite' if 400 <= exc.code < 500 else 'publish_ambiguous'
             detail = rate_limit(exc) if exc.code == 429 else {}
             return base.PublishResult(None, None, ts, error=reason, failure=failure,
