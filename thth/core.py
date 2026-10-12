@@ -221,9 +221,18 @@ def _account_locks(account_name: str, account_cfg: dict, state_dir: str, wait=0)
         repo_lock.release()
 
 
+# **timer の実行は repo のロックを少し待つ**（masaru 10/12「直す」）。同じ repo に
+# ぶら下がるアカウントは、名前のハッシュで決まる起点（`systemd_gen.offset_minutes`）が
+# 重なると同じ分に起動する。待たないと、片方の実行（kopicha-x と
+# kopicha-mastodon は 10/8 から 1 日 70〜85 回）が丸ごと見送られて exit 1 になっていた。
+# 60 秒は 10 分の刻みと service の timeout（300 秒）より十分短い。手で打つ
+# `thth throw` などは今までどおり待たない（`--wait` で選ぶ）。
+RUN_LOCK_WAIT_SECONDS = 60
+
+
 def throw_once(account_name: str, *, production_flag: bool = False,
                 bypass_pace: bool = False, adapter_factory=None, log=None,
-                now=None) -> ThrowResult:
+                now=None, wait=0) -> ThrowResult:
     """§3.3 の順序で 1 アカウント分を投げる（dry-run 既定）。
 
     台帳 `max_per_run`（既定 1）まで「select → throw」を繰り返す（1 本ごとに
@@ -233,6 +242,7 @@ def throw_once(account_name: str, *, production_flag: bool = False,
     `production_flag` は CLI の `--production`。台帳 `production: true` が commit
     されていない限り、これを付けても dry-run のまま（fail-closed。§0・受け入れ 6）。
     `now` はテスト用の時刻注入（省略時は `jst.now_jst()`）。CLI・timer は渡さない。
+    `wait` はロックを待つ秒数（既定 0＝待たない。timer は `RUN_LOCK_WAIT_SECONDS`）。
     """
     log = log or (lambda line: None)
     adapter_factory = adapter_factory or _default_adapter_factory
@@ -267,7 +277,7 @@ def throw_once(account_name: str, *, production_flag: bool = False,
             error=last.reason if detail_data else None, api_diagnostic=detail_data)
 
     try:
-        with _account_locks(account_name, account_cfg, state_dir):
+        with _account_locks(account_name, account_cfg, state_dir, wait=wait):
             return _throw_locked(
                 account_name, account_cfg, state_dir, run_id,
                 production_flag=production_flag, bypass_pace=bypass_pace,

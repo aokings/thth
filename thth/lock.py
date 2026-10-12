@@ -55,6 +55,8 @@ class AccountLock:
     `acquire()` は非ブロッキング（`flock(..., LOCK_NB)` 相当）で、取れなければ
     即座に `LockBusy` を投げる。設計 §3.3 の「timer 実行中に直に呼ぶと待たされる」は
     実装としては「即座に弾かれる」を採る（watchtower `wt-run` と同じ選択・§6.1）。
+    待つのは呼び出し側が `acquire(lock, seconds)` で選ぶ（手で打つ書き込みは `--wait`、
+    timer の `thth run` は `core.RUN_LOCK_WAIT_SECONDS`・masaru 10/12）。
     """
 
     def __init__(self, lock_path: str):

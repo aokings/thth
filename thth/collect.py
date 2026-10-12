@@ -1067,7 +1067,7 @@ TRIGGER_RUN = "run"         # `thth run`（timer が 10 分ごとに呼ぶ形）
 
 
 def run_collect(account_name: str, *, adapter=None, now=None, log=print,
-                 trigger: str | None = None) -> int:
+                 trigger: str | None = None, wait=0) -> int:
     """`thth collect <account>`／`thth run` から呼ぶ入口。**runs に 1 行残す。**
 
     中身は `_collect_entry()`。ここはその周りの薄い包みで、**採取を 1 度走らせた
@@ -1084,7 +1084,8 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print,
     """
     now = now if now is not None else jst.now_jst()
     info: dict = {}
-    rc = _collect_entry(account_name, adapter=adapter, now=now, log=log, info=info)
+    rc = _collect_entry(account_name, adapter=adapter, now=now, log=log, info=info,
+                        wait=wait)
     _record_collect_run(account_name, rc=rc, trigger=trigger, now=now, info=info)
     return rc
 
@@ -1135,7 +1136,7 @@ def _note(info: dict, result: dict) -> None:
     info["errors"] = list(result.get("errors") or [])
 
 
-def _collect_entry(account_name: str, *, adapter, now, log, info: dict) -> int:
+def _collect_entry(account_name: str, *, adapter, now, log, info: dict, wait=0) -> int:
     """採取の本体（ロック・同期・push まで）。`info` に結果の要点を書き残す。
 
     **投稿と同じ clone ロックを取る**（同じ作業ツリーに書くので）。同期できなければ
@@ -1184,9 +1185,9 @@ def _collect_entry(account_name: str, *, adapter, now, log, info: dict) -> int:
         account_lock = lock_mod.AccountLock(
             accounts_mod.account_lock_path_for(account_name))
         try:
-            account_lock.acquire()
+            lock_mod.acquire(account_lock, wait)
         except lock_mod.LockBusy:
-            # **待たない・見送る**（repo 付きと同じ作法。次の実行で採る）。
+            # **`wait` 秒まで待って、空かなければ見送る**（repo 付きと同じ作法。次の実行で採る）。
             log(f"別の実行が使っているので採取を見送ります: {account_name}")
             info["skipped"] = "locked"
             return 0
@@ -1205,7 +1206,7 @@ def _collect_entry(account_name: str, *, adapter, now, log, info: dict) -> int:
 
     repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
     try:
-        repo_lock.acquire()
+        lock_mod.acquire(repo_lock, wait)
     except lock_mod.LockBusy:
         log(f"repo を別の実行が使っているので採取を見送ります: {repo_dir}")
         info["skipped"] = "locked"

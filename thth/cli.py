@@ -2947,14 +2947,16 @@ def cmd_run(args) -> int:
             print(f"token が無いので実行しません: {args.account}", file=sys.stderr)
             notify("fail", reason="missing_token")
             return 2
-        result = core.throw_once(args.account, production_flag=True, log=print)
+        result = core.throw_once(args.account, production_flag=True, log=print,
+                                 wait=core.RUN_LOCK_WAIT_SECONDS)
 
         # **投稿のあとに必ず採る**（masaru 裁定 2026-09-10）。数は「読んだ時点の累計」
         # しか返らないので、逃した経過時間は永久に復元できない。採取の失敗で timer の
         # 終了コードを悪くしない（次の実行で埋まる）が、黙らせもしない。
         try:
             collect_rc = collect_mod.run_collect(
-                args.account, log=print, trigger=collect_mod.TRIGGER_RUN)
+                args.account, log=print, trigger=collect_mod.TRIGGER_RUN,
+                wait=core.RUN_LOCK_WAIT_SECONDS)
             if collect_rc:
                 print(f"（採取は完全ではありません: exit={collect_rc}。次の実行で埋めます）")
         except Exception as e:  # 採取の失敗で投稿の経路を壊さない
