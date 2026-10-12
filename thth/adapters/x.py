@@ -317,6 +317,8 @@ class XAdapter(base.Adapter):
         # コミュニティの検索（Community: Read・3.19.0）も別に数える（台帳も別）。
         self._communities = {'count': 0, 'usd': '0', 'calls': 0}
         self.community_more = False
+        # トレンド・語ごとの投稿数（3.19.0）: 台帳の種類 → 確定した要求の回数（断りの応答は数えない）。
+        self._requests = {}
 
     @classmethod
     def from_account(cls, account_cfg: dict, token: dict):
@@ -1188,6 +1190,122 @@ class XAdapter(base.Adapter):
                 'price_version': budget_x.COMMUNITY_PRICE_VERSION,
                 'daily_read_cap': 'not_counted',
                 'basis': 'estimate_not_actual_charge', **month}
+
+    # ----- トレンドと語ごとの投稿数（3.19.0・**request_read の予約の中でだけ動く**） ----
+    #
+    # 一次資料（**L1** docs.x.com）: `GET /2/trends/by/woeid/:woeid`（`max_trends` 1〜50・既定 20・
+    # `trend.fields` trend_name・tweet_count）、`GET /2/tweets/counts/recent`（`query` 1〜4096 字・
+    # rate limit の表では 512 字・`granularity` minute／hour／day・直近 7 日）。料金表: Trends
+    # 0.010 USD／request・Counts: Recent 0.005 USD／request。どちらも OAuth2UserToken か
+    # BearerToken（資料の security）。rate limit の表は app ごとの欄だけ（75／15 分・300／15 分）で
+    # 利用者ごとの欄は「—」——利用者のトークンで通るかは実機で未確認。
+    TRENDS_DEFAULT = 20
+    TRENDS_MAX = 50
+    COUNTS_QUERY_MAX = 512
+    COUNTS_GRANULARITIES = ('hour', 'day')
+
+    def _request_read(self, kind, path, query, *, what):
+        """要求 1 回 = 1 単位の GET を `budget_x.request_read(kind, account)` の中で。戻りは応答の dict。"""
+        from .. import budget_x
+        try:
+            with budget_x.request_read(kind, self.auth_account) as slot:
+                slot.dispatch()
+                self._requests[kind] = self._requests.get(kind, 0) + 1
+                try:
+                    status, value = request(self, 'GET', path, query=query)
+                except urllib.error.HTTPError as exc:
+                    slot.settle(0)
+                    self._requests[kind] -= 1
+                    if exc.code == 429:
+                        detail = rate_limit(exc)
+                        raise AdapterError('provider_rate_limited'
+                                           + (f' {json.dumps(detail, sort_keys=True)}' if detail else ''),
+                                           http_status=429) from None
+                    hint = '（thth auth <account> --by <名前> をやり直してください）' if exc.code == 401 else ''
+                    known = publish_refusal(exc) if 400 <= exc.code < 500 else None
+                    raise AdapterError('x_' + kind + '_http_' + str(exc.code) + hint
+                                       + (': ' + known if known else ''), http_status=exc.code) from None
+                except (httpsafe.EndpointRejected, urllib.error.URLError, TimeoutError, OSError, ValueError,
+                        base.AdapterError) as exc:
+                    raise AdapterError(what + ': x_read_failed: 結果不明（' + self._scrub(exc) + '）') from None
+                if status != 200 or not (isinstance(value.get('data'), list) or value.get('data') is None
+                                         and (isinstance(value.get('meta'), dict) or isinstance(value.get('errors'), list))):
+                    raise AdapterError(what + ': x_read_response_invalid')
+                slot.settle(1)
+        except budget_x.BudgetError as exc:
+            code = str(exc)
+            message = ('今月の X の予算（読み取りと合わせて）が足りません。thth admin budget x で確かめてください'
+                       if code == 'budget_exhausted' else 'X の読み取りの予約ができません')
+            raise AdapterError(f'{code}: {message}') from None
+        return value
+
+    def trends(self, woeid: int, *, max_trends: int | None = None) -> list:
+        """`GET /2/trends/by/woeid/:woeid` を 1 回（既定 20・最大 50）。行は名前と投稿数だけ。"""
+        if type(woeid) is not int or not 1 <= woeid <= 2 ** 31 - 1:
+            raise AdapterError('woeid は正の整数です')
+        cap = self.TRENDS_DEFAULT if max_trends is None else max_trends
+        if type(cap) is not int or not 1 <= cap <= self.TRENDS_MAX:
+            raise AdapterError(f'max_trends は 1〜{self.TRENDS_MAX} です（{max_trends!r}）')
+        from .. import budget_x
+        value = self._request_read(budget_x.TRENDS, '/2/trends/by/woeid/' + str(woeid),
+                                   {'max_trends': cap, 'trend.fields': 'trend_name,tweet_count'},
+                                   what='トレンド')
+        out = []
+        for row in value.get('data') or []:
+            if not isinstance(row, dict) or not isinstance(row.get('trend_name'), str):
+                continue
+            name = ' '.join(row['trend_name'].split())[:100]
+            if not name:
+                continue
+            count = row.get('tweet_count')
+            out.append({'trend_name': name,
+                        'tweet_count': count if type(count) is int and count >= 0 else None})
+        return out[:cap]
+
+    def post_counts(self, q: str, *, granularity: str = 'day') -> dict:
+        """`GET /2/tweets/counts/recent` を 1 回（直近 7 日・続きは読まない）。区間ごとの投稿数。"""
+        text = q.strip() if isinstance(q, str) else ''
+        if not text:
+            raise AdapterError('検索の語が空です')
+        if len(text) > self.COUNTS_QUERY_MAX:
+            raise AdapterError(f'語は {self.COUNTS_QUERY_MAX} 字までです（{len(text)} 字）')
+        if granularity not in self.COUNTS_GRANULARITIES:
+            raise AdapterError(f"granularity は {' / '.join(self.COUNTS_GRANULARITIES)} のどちらかです")
+        from .. import budget_x
+        value = self._request_read(budget_x.COUNTS, '/2/tweets/counts/recent',
+                                   {'query': text, 'granularity': granularity}, what='投稿数')
+        buckets = []
+        for row in value.get('data') or []:
+            if not isinstance(row, dict):
+                continue
+            count = row.get('post_count', row.get('tweet_count'))
+            start, end = row.get('start'), row.get('end')
+            if not isinstance(start, str) or not isinstance(end, str) or type(count) is not int or count < 0:
+                continue
+            buckets.append({'start': start[:40], 'end': end[:40], 'post_count': count})
+        meta = value.get('meta') if isinstance(value.get('meta'), dict) else {}
+        total = meta.get('total_post_count', meta.get('total_tweet_count'))
+        return {'buckets': buckets,
+                'total_post_count': total if type(total) is int and total >= 0 else None,
+                'more': bool(meta.get('next_token'))}
+
+    def request_read_cost(self, kind) -> dict:
+        """この実体で投げた要求の回数と推定 USD・今月の数字（`trends`・`counts` の画面と `--json`）。"""
+        from decimal import Decimal
+        from .. import budget_x
+        price = budget_x._LEDGERS[kind][1]
+        n = self._requests.get(kind, 0)
+        try:
+            whole = budget_x.report()
+            month = {'month_utc': whole['month_utc'],
+                     'month_used_usd': budget_x.decimal_text(
+                         Decimal(whole['spent_estimate_usd']) + Decimal(whole['held_usd'])),
+                     'cap_usd': whole['cap_usd']}
+        except (budget_x.BudgetError, OSError, ValueError, TypeError):
+            month = {'month_utc': None, 'month_used_usd': None, 'cap_usd': None}
+        return {'requests': n, 'usd_estimate': budget_x.decimal_text(price * n),
+                'price_usd_per_request': str(price), 'price_version': budget_x._LEDGERS[kind][2],
+                'daily_read_cap': 'not_counted', 'basis': 'estimate_not_actual_charge', **month}
 
     def read_cost(self) -> dict:
         """この実体で読んだ他人の投稿の本数と推定 USD・今日と今月の数字（画面と `--json`）。"""

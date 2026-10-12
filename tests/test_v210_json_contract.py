@@ -60,7 +60,7 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 3.18.0: where … --keep で残した数を読む口。
      'where-log',
      # 3.19.0: X のコミュニティを探す。
-     'community search']
+     'community search', 'trends', 'counts']
 
 
 def test_json_table_covers_every_parser():

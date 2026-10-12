@@ -66,6 +66,10 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 
 `thth community search <account> <語…> [--limit N] [--json]`（MCP には無い）で探し、`thth send <account> --community <id>` か queue の front-matter `community_id: <id>` で出す。X だけ・認可のやり直しは不要。探すのは有償の読み取り（1 件 0.005 USD・月の X 予算・1 日 60 本には数えない・既定 10 件・最大 25・保存しない）。`community_id` は digest／承認の指紋に入る。返信（reply_to・reply_to_file）と同時には使えない・連投には書けない。**参加は X の画面で先に**（API に参加の口も「参加しているか」の欄も無い）——参加していなければ X の断りが `x_unknown_refusal（…）` で残る。**各コミュニティの規則（宣伝の禁止など）は人が読んで守る**。所有者に頼まれたコミュニティへ、人が選んだ本文を 1 本ずつ出すだけ——検索の結果へ機械的に出さない・同じ本文を複数のコミュニティへ流さない（X の自動化の決まりで bulk・無差別は不可）。断り: `unsupported_on_platform`（X 以外）・`community_id_invalid`・lint の `invalid_publish_option`。
 
+## X のトレンドと語ごとの投稿数（3.19.0）
+
+`thth trends <account> [--woeid N] [--max N]`（既定は日本・20 件・1 回 0.010 USD）・`thth counts <account> <語> [--granularity hour|day]`（直近 7 日・1 回 0.005 USD）（MCP には無い）。X だけ・要求は 1 回・返すだけで保存しない・月の X 予算に入り 1 日 60 本には数えない。話題選びの材料に使う——トレンドの語へ機械的に投稿しない。いまのトークンで通るかは未確認（断りは X の文面が短く残る）。
+
 ## 何を拒むか
 
 - **手元の台帳を使う実行の、`--confirm` の無い本番。** digest の食い違う本番。承認後に本文が変わった下書き

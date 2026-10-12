@@ -169,6 +169,9 @@ def report(value=None,*,at=None):
     owned=read_posts(OWNED);owned_spent,owned_held=posts_totals(owned,period)
     lists=read_posts(LISTS);lists_spent,lists_held=posts_totals(lists,period)
     comms=read_posts(COMMUNITIES);comms_spent,comms_held=posts_totals(comms,period)
+    extra={kind:read_posts(kind) for kind,_key,_label in PER_REQUEST}
+    for ledger in extra.values():
+        a,b=posts_totals(ledger,period);comms_spent+=a;comms_held+=b
     # 本人確認（user read）・他人の投稿の読み取り（posts read）・自分の投稿の数字
     # （owned read）・非公開リストの書き込み（list write）は**同じ月の上限**を分け合う（台帳は別々）。
     spent+=posts_spent+owned_spent+lists_spent+comms_spent;held+=posts_held+owned_held+lists_held+comms_held
@@ -181,17 +184,21 @@ def report(value=None,*,at=None):
     periods=sorted({r['reservation_month'] for r in value['reservations'].values()}|{r['reservation_month'] for r in posts['reservations'].values()}
                    |{r['reservation_month'] for r in owned['reservations'].values()}
                    |{r['reservation_month'] for r in lists['reservations'].values()}
-                   |{r['reservation_month'] for r in comms['reservations'].values()}|{period})
+                   |{r['reservation_month'] for r in comms['reservations'].values()}
+                   |{r['reservation_month'] for ledger in extra.values() for r in ledger['reservations'].values()}|{period})
     def month_row(m):
         a,b=totals(value,m);c,d=posts_totals(posts,m);e,f=posts_totals(owned,m);g,h=posts_totals(lists,m)
         i,j=posts_totals(comms,m)
+        for ledger in extra.values():
+            k,l=posts_totals(ledger,m);i+=k;j+=l
         return dict(spent_estimate_usd=decimal_text(a+c+e+g+i),held_usd=decimal_text(b+d+f+h+j))
     return dict(media='x',month_utc=period,policy=admin_log.clean(p),cap_usd=decimal_text(cap) if cap is not None else None,
         spent_estimate_usd=decimal_text(spent),held_usd=decimal_text(held),remaining_usd=decimal_text(available) if available is not None else None,
         over_cap_usd=decimal_text(over) if over is not None else None,read_refusal=reason,cannot_say=[x for x in (reason,'usage_not_observed','estimate_not_actual_charge') if x],
         price=dict(version=PRICE_VERSION,user_read_usd=decimal_text(PRICE),source=PRICE_SOURCE),usage=None,
         months={m:month_row(m) for m in periods},posts_read=_posts_report(posts,at),owned_read=_owned_report(owned,at),
-        list_write=_lists_report(lists,at),community_read=_communities_report(comms,at))
+        list_write=_lists_report(lists,at),community_read=_communities_report(comms,at),
+        **{key:_requests_report(kind,extra[kind],at) for kind,key,_label in PER_REQUEST})
 
 
 def configure(monthly,*,currency='USD',rate=None,rate_source=None,by,via='cli',before_save=None):
@@ -355,10 +362,30 @@ COMMUNITIES = 'communities'
 COMMUNITY_PRICE = Decimal('0.005')
 COMMUNITY_PRICE_VERSION = '2026-10-13-community-read'
 COMMUNITY_FILE = 'budget_x_community_reads.json'
+# ----- トレンドと語ごとの投稿数（3.19.0・`thth trends`・`thth counts`）
+#
+# 料金表（**L1** docs.x.com pricing「Charged per request」）: Trends 0.010 USD／request・
+# Counts: Recent 0.005 USD／request。**要求 1 回が 1 単位**（返ってきた数によらない）。台帳は
+# それぞれ別のファイルで、形は他と同じ（押さえ→発射→確定。断りの応答は 0 で確定・応答が
+# 読めなければ押さえたまま uncertain）。月の上限は他の台帳と分け合い、1 日の本数には数えない。
+TRENDS = 'trends'
+TRENDS_PRICE = Decimal('0.010')
+TRENDS_PRICE_VERSION = '2026-10-13-trends'
+TRENDS_FILE = 'budget_x_trends.json'
+COUNTS = 'counts'
+COUNTS_PRICE = Decimal('0.005')
+COUNTS_PRICE_VERSION = '2026-10-13-counts-recent'
+COUNTS_FILE = 'budget_x_counts.json'
 _LEDGERS = {POSTS: (POSTS_FILE, POSTS_PRICE, POSTS_PRICE_VERSION),
             OWNED: (OWNED_FILE, OWNED_PRICE, OWNED_PRICE_VERSION),
             LISTS: (LIST_FILE, LIST_UNIT_PRICE, LIST_PRICE_VERSION),
-            COMMUNITIES: (COMMUNITY_FILE, COMMUNITY_PRICE, COMMUNITY_PRICE_VERSION)}
+            COMMUNITIES: (COMMUNITY_FILE, COMMUNITY_PRICE, COMMUNITY_PRICE_VERSION),
+            TRENDS: (TRENDS_FILE, TRENDS_PRICE, TRENDS_PRICE_VERSION),
+            COUNTS: (COUNTS_FILE, COUNTS_PRICE, COUNTS_PRICE_VERSION)}
+# 要求ごとに数える台帳（`report()` の内訳の行・`_posts_liability` で月の上限に入る）。
+PER_REQUEST = ((TRENDS, 'trends_read', 'トレンド'),
+               (COUNTS, 'counts_read', '語ごとの投稿数'))
+_PER_REQUEST_API = {TRENDS: 'Trends', COUNTS: 'Counts: Recent'}
 _MONTH = r'\d{4}-(?:0[1-9]|1[0-2])'
 
 
@@ -441,7 +468,7 @@ def posts_today(value,account,day):
 def _posts_liability(fd,at):
     """本人確認の台帳の外にある、その月の確定と押さえ（他人の投稿＋自分の投稿の数字）。"""
     total=Decimal(0)
-    for kind in (POSTS,OWNED,LISTS,COMMUNITIES):
+    for kind in (POSTS,OWNED,LISTS,COMMUNITIES,TRENDS,COUNTS):
         spent,held=posts_totals(_read_posts(fd,kind),month(at));total+=spent+held
     return total
 
@@ -518,6 +545,13 @@ def community_read(account,limit):
     応答が読めなければ押さえたまま uncertain）。断りは `budget_exhausted` だけ。
     """
     with _ledger_read(COMMUNITIES,account,limit) as handle:yield handle
+
+
+@contextlib.contextmanager
+def request_read(kind,account):
+    """要求 1 回 = 1 単位の読み取り（`TRENDS`・`COUNTS`・3.19.0）の予約。作法は `posts_read` と同じ。"""
+    if kind not in (TRENDS,COUNTS):raise BudgetError('invalid_budget_kind')
+    with _ledger_read(kind,account,1) as handle:yield handle
 
 
 @contextlib.contextmanager
@@ -604,6 +638,14 @@ def _communities_report(comms,at):
                            spent_estimate_usd=decimal_text(spent),held_usd=decimal_text(held),uncertain=uncertain))
 
 
+def _requests_report(kind,ledger,at):
+    period=month(at);spent,held=posts_totals(ledger,period);_file,price,version=_LEDGERS[kind]
+    rows=[row for row in ledger['reservations'].values() if row['reservation_month']==period and row['state']!='released']
+    return dict(price=dict(version=version,request_usd=decimal_text(price),source=PRICE_SOURCE),what=kind,
+                month=dict(month_utc=period,requests=len(rows),spent_estimate_usd=decimal_text(spent),
+                           held_usd=decimal_text(held),uncertain=sum(1 for row in rows if row['state']=='uncertain')))
+
+
 def cost_lines(whole):
     """`report()` の内訳を人の画面の行に（doctor・admin）。推定であって請求の実費ではない。"""
     out=[f"X の読み取り{'と書き込み' if whole.get('list_write') else ''}（{whole['month_utc']}・推定・請求の実費ではない）: 合計 ${whole['spent_estimate_usd']}"
@@ -622,6 +664,11 @@ def cost_lines(whole):
     if comms and comms['month']['requests']:
         m=comms['month']
         out.append(f"  コミュニティの検索（Community: Read・1 件 ${comms['price']['community_read_usd']}）: {m['requests']} 回・{m['communities']} 件・${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
+    for kind,key,label in PER_REQUEST:
+        row=whole.get(key) or {}
+        if row and row['month']['requests']:
+            m=row['month']
+            out.append(f"  {label}（{_PER_REQUEST_API[kind]}・1 回 ${row['price']['request_usd']}）: {m['requests']} 回・${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
     return out
 
 

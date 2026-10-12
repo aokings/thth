@@ -4180,6 +4180,10 @@ def build_parser() -> argparse.ArgumentParser:
     from . import community_cli
     community_cli.register(sub)
 
+    # `thth trends`・`thth counts`（3.19.0・X のトレンドと語ごとの投稿数）。口は `thth/trends_cli.py` に閉じる。
+    from . import trends_cli
+    trends_cli.register(sub)
+
     # `thth inflight <account> [show|resolve]`（設計 3.3.1 §4）。口は
     # `thth/inflight_cli.py` に閉じる——ここに足すのはこの 2 行だけ。
     from . import inflight_cli
