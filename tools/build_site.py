@@ -356,7 +356,9 @@ def build_privacy() -> str:
         "for that request only: counts, the number of distinct authors, the share of the most frequent "
         "authors, the latest time, and for individual posts the author, a link and the first 60 characters. The text and "
         "authors of search results are not saved. Run logs record at most the search terms and the number "
-        "of results.</p>")
+        "of results. To improve how it finds conversations, the owner's session may also keep, in the "
+        "project's own notes, per search term only numbers: how many results it judged worth answering and how "
+        "many it answered (never post text, post IDs or usernames; numbers below 5 are not kept).</p>")
     add("<p><strong>Observation map (daily keyword aggregates).</strong> It is off unless the operator turns it "
         "on. Its keywords are topic words that a person registers for a project: the operator registers them, "
         "at most 20 per project. THTH never adds keywords taken from other people's posts, and refuses @handles, "
