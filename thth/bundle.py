@@ -309,6 +309,10 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
     for key in ("account", "publish_at"):
         if not fm.get(key):
             errors.append(f"{key}: 必須です")
+    # 3.19.0: X のコミュニティは 1 本の原稿（`thth: 1`）だけ。連投の 2 段目以降は自分への
+    # 返信で、返信と community_id は同時に使えない（公開の経路でも断る・fail-closed）。
+    if str(fm.get("community_id") or "").strip():
+        errors.append("community_id: 連投（thth: 2）には使えません——1 本の原稿（thth: 1）に書いてください")
     status = fm.get("status")
     if status is not None and status not in queuefile.KNOWN_STATUSES:
         errors.append(f"status: 未知の値 ({status})")

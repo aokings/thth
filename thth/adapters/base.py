@@ -41,6 +41,12 @@ class Post:
     # create-posts/share-to-ig-stories）。front-matter `share_to_instagram: true`。
     # 台帳に `instagram_linked: true` が無ければ lint が断る。指紋に入る。
     share_to_instagram: bool = False
+    # X のコミュニティ（3.19.0・`POST /2/tweets` の `community_id`・**L1** docs.x.com
+    # create-post "Community to post the tweet to." `^[0-9]{1,19}$`）。queue の
+    # front-matter `community_id:` か `thth send --community`。**指紋に入る**（値が
+    # あるときだけ・`approval.publish_options()`）。返信（`reply_to`）とは同時に
+    # 使わない（lint・select・send が断る）。持たない媒体には lint が断る。
+    community_id: str | None = None
 
     media_manifest: dict | None = None
     media_files: tuple = dataclasses.field(default=(), repr=False)

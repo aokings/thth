@@ -58,7 +58,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 3.17.0: X の非公開リスト。
      'list create', 'list add', 'list remove', 'list show',
      # 3.18.0: where … --keep で残した数を読む口。
-     'where-log']
+     'where-log',
+     # 3.19.0: X のコミュニティを探す。
+     'community search']
 
 
 def test_json_table_covers_every_parser():

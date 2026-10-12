@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import re as _re
 import os
 
 from . import jst
@@ -42,7 +43,8 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
           approved_fingerprint: str | None = None, reply_to: str | None = None, media: list | None = None,
           attachment_kinds: list | None = None, resolved_from: dict | None = None,
           goal: str | None = None, goal_change: dict | None = None,
-          link_urls: list | None = None, origin: dict | None = None) -> str:
+          link_urls: list | None = None, origin: dict | None = None,
+          community_id: str | None = None) -> str:
     """送った本文そのものを動かせない記録として保存する。返り値は書いたパス。
 
     `approved_fingerprint`（外部レビュー再々レビュー P1・1）は公開直前に固定した
@@ -109,6 +111,12 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
                 or any(type(x) is not str or not x or len(x) > 2048 for x in link_urls)):
             raise ValueError('invalid_link_urls')
         data['link_urls'] = list(link_urls)
+    if community_id is not None:
+        # **X のコミュニティ**（3.19.0）。自分の投稿のメタデータ——あとで数字を
+        # コミュニティごとに見るため。数字 19 桁まで以外は書かない。
+        if not isinstance(community_id, str) or not _re.fullmatch(r"[0-9]{1,19}", community_id):
+            raise ValueError("invalid_community_id")
+        data["community_id"] = community_id
     if origin is not None:
         # **誰の依頼で直接出したか**（設計 3.12.0 §3.2）。`via`（mcp・cli・http・api＝遠くの道）と
         # 資格の id（credential_digest の先頭 12 文字）。承認ページを通らない公開だけに付く。

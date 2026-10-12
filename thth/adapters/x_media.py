@@ -307,6 +307,12 @@ def publish(adapter, post, *, before_publish=None, slot=None):
                   else 'media_' + phase + '_http_' + str(exc.code) if http
                   else str(exc) if isinstance(exc, media.MediaError)
                   else 'media_' + phase + '_failed')
+        if http and phase == 'publishing' and 400 <= exc.code < 500 and exc.code != 429:
+            # 3.19.0: 添付つきの投稿の断りも、添付なしと同じ流儀で文面を残す（コミュニティの
+            # 断りなど・`x.publish_refusal`）。
+            known = x_adapter.publish_refusal(exc)
+            if known:
+                reason += ': ' + known
         try:
             if callable(progress):
                 record('held' if held else 'unknown' if uncertain else 'failed',

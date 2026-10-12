@@ -832,6 +832,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     if mode == "rehearsal":
         if resolved_from:
             log(f"返信先: {resolved_from['file']} → {resolved_from['post_id']}")
+        if options.get("community_id"):
+            log(f"コミュニティ: {options['community_id']}")
         log("投げるはずの本文:")
         log(effective_section)
         inflight_mod.clear(state_dir)
@@ -850,7 +852,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                              reply_to=reply_to, topic=topic,
                              hashtags_allowed=bool(account_cfg.get("hashtags", True)),
                              location_id=options["location_id"],
-                             share_to_instagram=options["share_to_instagram"])
+                             share_to_instagram=options["share_to_instagram"],
+                             community_id=options["community_id"])
 
     # **公開要求の手前で、要る権限が乗っているかを見る**（設計 v2 §4.3 受け入れ (c)・
     # v2.1-B）。場所・Instagram 共有はそれぞれ別の権限を要る。`.token` の `scopes`
@@ -957,7 +960,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                         attachment_kinds=media_mod.attachment_kinds(manifest),
                         goal=goal_value, goal_change=goal_change,
                         **_link_urls_kwargs(manifest),
-                        **({"media":publish_result.media} if publish_result.media else {}))
+                        **({"media":publish_result.media} if publish_result.media else {}),
+                        **({"community_id": post.community_id} if post.community_id else {}))
     except (OSError,ValueError):
         if not manifest:raise
         return ThrowResult(exit_code=1,mode=mode,action="inflight",message="公開後の記録を確定できません。再送せず inflight を保持します",file=chosen.path,post_id=post_id,error="media_record_unconfirmed")
@@ -1092,7 +1096,8 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
                production_flag: bool = False,
                confirm: str | None = None, adapter_factory=None, log=None,
                now=None, wait=0, before_execute=None, lock_context=None, media_rows=None,
-               goal: str | None = None, origin: dict | None = None) -> ThrowResult:
+               goal: str | None = None, origin: dict | None = None,
+               community_id: str | None = None) -> ThrowResult:
     """`thth send`（**同席の様態**・設計 §3.7）。queue を通さずその場で 1 本出す。
 
     対話の中で masaru が本文を読んで「出して」と言ったときの経路。承認は既に
@@ -1138,7 +1143,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
             production_flag=production_flag, confirm=confirm,
             adapter_factory=adapter_factory, log=log, now=now, wait=wait,
             before_execute=before_execute, lock_context=lock_context, media_rows=media_rows,
-            goal=goal, origin=origin,
+            goal=goal, origin=origin, community_id=community_id,
         )
     except lock_mod.LockBusy:
         msg = f"{account_name} は既に実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます"
@@ -1149,7 +1154,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
 def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, reply_to,
                   reply_to_root=None, reply_to_author_key=None, found_by=None,
                   production_flag, confirm, adapter_factory, log, now, wait=0, before_execute=None, lock_context=None, media_rows=None,
-                  goal=None, origin=None) -> ThrowResult:
+                  goal=None, origin=None, community_id=None) -> ThrowResult:
     locks = ((lock_context or _account_locks(account_name, account_cfg, state_dir, wait=wait))
              if production_flag else contextlib.nullcontext())
     with locks:
@@ -1171,7 +1176,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
 
         # send の指紋もフィールド区切りに制御文字を使う。queue と同じく、
         # 正規化や digest 表示より前に拒否する（既存のハッシュ定義は変えない）。
-        for field, value in (("text", text), ("reply_to", reply_to), ("topic", topic)):
+        for field, value in (("text", text), ("reply_to", reply_to), ("topic", topic),
+                             ("community_id", community_id)):
             control = queuefile.find_control_char(value)
             if control is not None:
                 index, codepoint = control
@@ -1214,6 +1220,21 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                         status="error", error=f"too_long({n})")
             return ThrowResult(exit_code=1, mode=mode, action="skip", message=msg)
 
+        # X のコミュニティ（3.19.0・`--community <id>`）。queue の `community_id:` と同じ門
+        # （X だけ・数字の形・返信と同時に使わない）。**dry-run でも断る**（digest を出さない）。
+        community_value = (str(community_id).strip() or None) if community_id is not None else None
+        if community_value is not None:
+            from . import lint as lint_mod
+            problems = lint_mod.community_id_errors(
+                {"community_id": community_value, "reply_to": reply_to}, account_cfg)
+            if problems:
+                msg = problems[0]
+                log(msg)
+                _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                            status="error", error="community_id_invalid")
+                return ThrowResult(exit_code=2, mode=mode, action="skip", message=msg,
+                                   error="community_id_invalid")
+
         topic_value = queuefile.normalize_topic(topic)
         if topic_value is not None:
             topic_err = (queuefile.topic_error(topic_value) if media == "threads"
@@ -1246,7 +1267,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         # 確認用 digest（外部レビュー §1b・受け入れ 6）。`approved_sha` と同じ正規化
         # だが `publish_at` は含めない（send に予約時刻という概念が無いため）。
         digest = approval_mod.compute_send_digest(
-            text=effective, account=account_name, reply_to=reply_to, topic=topic_value, media_manifest=manifest)
+            text=effective, account=account_name, reply_to=reply_to, topic=topic_value, media_manifest=manifest,
+            community_id=community_value)
 
         if mode == "rehearsal":
             # **dry-run は publish が断るものを断る**（実機 2026-09-22: 8 MB を
@@ -1268,6 +1290,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             log(effective)
             if topic_value:
                 log(f"トピック: {topic_value}")
+            if community_value:
+                log(f"コミュニティ: {community_value}（参加していないコミュニティには X が断ります）")
             if goal_value != goals_mod.NONE:
                 log(f"目的: {goal_value}（{goals_mod.LABELS[goal_value]}・digest には入りません）")
             log(queuefile.length_line(media, effective, account_cfg))
@@ -1309,7 +1333,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         token = bound_token if before_execute is not None else accounts_mod.load_token(account_cfg)
         adapter = leave_gate.bind(adapter_factory(account_cfg, token), account_cfg)
         post = adapter_base.Post(text=effective, reply_to=reply_to or None, topic=topic_value,
-                                 hashtags_allowed=bool(account_cfg.get("hashtags", True)))
+                                 hashtags_allowed=bool(account_cfg.get("hashtags", True)),
+                                 community_id=community_value)
 
         def on_container_created(container_id):
             inflight_mod.update(state_dir, container_id=container_id)
@@ -1382,6 +1407,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                             goal=goal_value,
                             **_link_urls_kwargs(manifest),
                             **({"media":result.media} if result.media else {}),
+                            **({"community_id": community_value} if community_value else {}),
                             **({"origin": origin} if origin is not None else {}))
         except (OSError,ValueError):
             if not manifest:raise

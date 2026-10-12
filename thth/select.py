@@ -471,6 +471,14 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
             needs_review.append(path)
             continue
 
+        # 6e. X のコミュニティ（3.19.0）。lint と同じ門（X だけ・数字の形・返信と同時に
+        # 使わない）——承認のあとで台帳の媒体が変わった・lint を通さずに書いた原稿を出さない。
+        from . import lint as lint_mod
+        if lint_mod.community_id_errors(fm, account_cfg):
+            rejections.append(Rejection(path, "community_id_invalid"))
+            needs_review.append(path)
+            continue
+
         # 6c. 読んだ中身が、同期を確認した commit の中身と一致するか（外部レビュー
         # 第 4 巡 P1・`core.list_queue_files()` が `writeback.matches_synced_commit()`
         # で立てる）。`sync_repo()` が確かめるのは **commit の一致**であって、

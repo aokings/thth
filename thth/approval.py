@@ -92,7 +92,10 @@ _COMPONENT_ORDER = ("body", "account", "reply_to", "topic", "publish_at")
 # 無いときの入力バイト列は今までと 1 バイトも変わらない（`tests/test_approval.py`
 # の固定はそのまま）。鍵名付きで足すのは、`location_id` 無し＋共有ありと
 # `location_id="true"` を同じ列にしないため。
-_OPTION_ORDER = ("location_id", "share_to_instagram", "media_sources", "media_manifest")
+# 3.19.0: X のコミュニティ（`community_id`）も「公開の側を変える」ので同じ扱い——値がある
+# ときだけ末尾に `community_id=<id>` を足す（無ければ入力バイト列は今までと同じ）。
+_OPTION_ORDER = ("location_id", "share_to_instagram", "media_sources", "media_manifest",
+                 "community_id")
 
 
 def is_true(raw) -> bool:
@@ -108,7 +111,16 @@ def publish_options(fm: dict) -> dict:
     return {
         "location_id": (fm.get("location_id") or "").strip() or None,
         "share_to_instagram": is_true(fm.get("share_to_instagram")),
+        "community_id": community_id_of(fm),
     }
+
+
+def community_id_of(fm: dict) -> str | None:
+    """front-matter の `community_id:`（前後の空白だけ落とす・形は lint と select が見る）。"""
+    raw = (fm or {}).get("community_id")
+    if raw is None:
+        return None
+    return str(raw).strip() or None
 
 
 def reply_to_for_fingerprint(fm: dict) -> str | None:
@@ -134,11 +146,15 @@ def reply_to_for_fingerprint(fm: dict) -> str | None:
     return queuefile.REPLY_TO_FILE_MARK + name
 
 
-def _option_components(location_id, share_to_instagram) -> dict:
-    return {
+def _option_components(location_id, share_to_instagram, community_id=None) -> dict:
+    out = {
         "location_id": (location_id or "").strip() if isinstance(location_id, str) else "",
         "share_to_instagram": "true" if is_true(share_to_instagram) else "",
     }
+    community = (str(community_id).strip() if community_id is not None else "")
+    if community:
+        out["community_id"] = community
+    return out
 
 
 def _option_parts(components: dict) -> list:
@@ -154,7 +170,8 @@ def compute_approved_components(*, section: str, account: str, reply_to: str | N
                                  topic: str | None,
                                  publish_at: str | datetime.datetime,
                                  location_id: str | None = None,
-                                 share_to_instagram=False, media_sources=None, media_manifest=None) -> dict:
+                                 share_to_instagram=False, media_sources=None, media_manifest=None,
+                                 community_id: str | None = None) -> dict:
     """`compute_approved_sha()` が hash する前の、5 項目それぞれの正規化済みの値。
 
     外部レビュー第 3 巡・持ち越し項目 C: 指紋（`compute_approved_sha()` の
@@ -173,7 +190,7 @@ def compute_approved_components(*, section: str, account: str, reply_to: str | N
         "topic": queuefile.normalize_topic(topic) or "",
         "publish_at": _normalize_publish_at(publish_at),
     }
-    out.update(_option_components(location_id, share_to_instagram))
+    out.update(_option_components(location_id, share_to_instagram, community_id))
     from . import media as media_mod
     component = media_mod.fingerprint_component(media_sources)
     if component:
@@ -187,7 +204,8 @@ def compute_approved_components(*, section: str, account: str, reply_to: str | N
 def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
                           topic: str | None, publish_at: str | datetime.datetime,
                           location_id: str | None = None,
-                          share_to_instagram=False, media_sources=None, media_manifest=None) -> str:
+                          share_to_instagram=False, media_sources=None, media_manifest=None,
+                          community_id: str | None = None) -> str:
     """承認の対象を固定する sha256（外部レビュー §1・受け入れ 1〜4・11）。
 
     ハッシュの入力は、次の 5 つをこの順序で `\\x1f`（ASCII unit separator）区切りに
@@ -217,7 +235,8 @@ def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
     components = compute_approved_components(
         section=section, account=account, reply_to=reply_to, topic=topic,
         publish_at=publish_at, location_id=location_id,
-        share_to_instagram=share_to_instagram, media_sources=media_sources, media_manifest=media_manifest)
+        share_to_instagram=share_to_instagram, media_sources=media_sources, media_manifest=media_manifest,
+        community_id=community_id)
     parts = [components[key] for key in _COMPONENT_ORDER] + _option_parts(components)
     joined = _SEP.join(parts)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
@@ -253,7 +272,8 @@ def compute_bundle_digest(approved_shas: list, length: int = APPROVE_DIGEST_LENG
 
 
 def compute_send_digest(*, text: str, account: str, reply_to: str | None,
-                         topic: str | None, length: int = 12, media_sources=None, media_manifest=None) -> str:
+                         topic: str | None, length: int = 12, media_sources=None, media_manifest=None,
+                         community_id: str | None = None) -> str:
     """`thth send` の dry-run が出す短い digest（外部レビュー §1b・受け入れ 6）。
 
     `compute_approved_sha()` と同じ正規化（本文＋account＋reply_to＋topic）だが、
@@ -276,6 +296,9 @@ def compute_send_digest(*, text: str, account: str, reply_to: str | None,
     prepared = media_mod.prepared_component(media_manifest)
     if prepared:
         parts.append("media_manifest=" + prepared)
+    # 3.19.0: X のコミュニティ。値があるときだけ足す（無ければ digest は今までと同じ）。
+    if community_id is not None and str(community_id).strip():
+        parts.append("community_id=" + str(community_id).strip())
     joined = _SEP.join(parts)
     full = hashlib.sha256(joined.encode("utf-8")).hexdigest()
     return full[:length]

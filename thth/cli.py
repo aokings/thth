@@ -460,6 +460,7 @@ def _prepare_one(path: str):
         "location": (fm.get("location") or "").strip() or None,
         "location_id": options["location_id"],
         "share_to_instagram": options["share_to_instagram"],
+        "community_id": options["community_id"],
         "approved_sha": approved_sha,
         "digest": approved_sha[:approval_mod.APPROVE_DIGEST_LENGTH],
     }, None
@@ -1090,6 +1091,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
                                 "location": one.get("location"),
                                 "location_id": one.get("location_id"),
                                 "share_to_instagram": bool(one.get("share_to_instagram")),
+                                **({"community_id": one["community_id"]} if one.get("community_id") else {}),
                                 **({"media_manifest": one["media_manifest"]} if one.get("media_manifest") else {}),
                                 **({"media_manifests": one["media_manifests"]} if one.get("media_manifests") else {}),
                                 **({"plaza_related": one["plaza_related"]}
@@ -1139,6 +1141,8 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
             print(f"  場所: {one.get('location') or '（名前なし）'}（id {one['location_id']}）")
         if one.get("share_to_instagram"):
             print("  Instagram のストーリーズにも出ます（share_to_instagram: true）")
+        if one.get("community_id"):
+            print(f"  X のコミュニティ {one['community_id']} に出ます（community_id・参加していなければ X が断ります）")
         print(one['length_line'])
         print(f"digest: {one['digest']}")
     warned = [one for one in prepared if one.get("warning")]
@@ -3307,6 +3311,7 @@ def cmd_send(args) -> int:
                 args.account, text=text, topic=args.topic, reply_to=args.reply_to,
                 reply_to_root=args.reply_to_root, reply_to_author_key=args.reply_to_author_key,
                 found_by=args.found_by, goal=getattr(args, "goal", None),
+                community_id=getattr(args, "community_id", None),
                 production_flag=args.production and not getattr(args, "dry_run", False),
                 confirm=args.confirm, log=log, wait=getattr(args, "wait", 0),
                 **({'media_rows': declarations} if declarations else {}))
@@ -4074,6 +4079,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.add_argument("--goal", default=None, choices=goals_mod.GOALS,
                         help="投稿の目的: reach（表示）・click（サイト誘導）・follow（フォロー）・"
                              "reply（会話）。省略は none。digest には入らない（sent と runs に残る）")
+    # 3.19.0: X のコミュニティへ出す（`POST /2/tweets` の `community_id`）。digest に入る。
+    p_send.add_argument("--community", dest="community_id", default=None, metavar="ID",
+                        help="X のコミュニティの id（数字）。X だけ・--reply-to とは同時に使えない。"
+                             "参加は X の画面で先に（API に参加の口は無い）。id は thth community search で")
     p_send.add_argument("--production", action="store_true",
                         help="本番で出す（台帳 production: true が無ければ dry-run のまま）")
     p_send.add_argument("--confirm", default=None,
@@ -4166,6 +4175,10 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth list create|add|remove|show`（3.17.0・X の非公開リスト）。口は `thth/list_cli.py` に閉じる。
     from . import list_cli
     list_cli.register(sub)
+
+    # `thth community search`（3.19.0・X のコミュニティを探す）。口は `thth/community_cli.py` に閉じる。
+    from . import community_cli
+    community_cli.register(sub)
 
     # `thth inflight <account> [show|resolve]`（設計 3.3.1 §4）。口は
     # `thth/inflight_cli.py` に閉じる——ここに足すのはこの 2 行だけ。

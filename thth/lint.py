@@ -5,6 +5,8 @@ CLI と MCP（`thth_lint`・`thth_preview`）の両方から呼ばれる純粋�
 """
 from __future__ import annotations
 
+import re
+
 from . import accounts as accounts_mod
 from . import engagements as engagements_mod
 from . import postid as postid_mod
@@ -63,6 +65,7 @@ _REASON_TABLE = (
     ("location: ", "invalid_publish_option"),
     ("location_id: ", "invalid_publish_option"),
     ("share_to_instagram: ", "invalid_publish_option"),
+    ("community_id: ", "invalid_publish_option"),
     # reply_to_file（設計 3.2.0 §1）。lint の 1 行は符丁そのもので始まる。
     *((code + ": ", code) for code in queuefile.REPLY_TO_FILE_MESSAGES),
     # 投稿の目的（設計 3.6.0 §A1）。4 語の固定・承認の指紋には入らない。
@@ -373,6 +376,35 @@ def publish_option_errors(fm: dict, account_cfg: dict | None, *,
             # ものを「出せる」と言わない。
             if not (account_cfg and approval_mod.is_true(account_cfg.get("instagram_linked"))):
                 out.append(INSTAGRAM_NOT_LINKED)
+    out.extend(community_id_errors(fm, account_cfg))
+    return out
+
+
+# 3.19.0: X のコミュニティ（`community_id:`）。**L1** docs.x.com create-post:
+# "Community to post the tweet to." `^[0-9]{1,19}$`。
+COMMUNITY_ID_RE = re.compile(r"[0-9]{1,19}")
+COMMUNITY_NOT_X = ("community_id: コミュニティは X だけです（この原稿の account は {media}）"
+                   "——X 以外の媒体の原稿には書かないでください")
+COMMUNITY_FORM = "community_id: 19 桁までの数字で書いてください（{value!r}）"
+COMMUNITY_WITH_REPLY = ("community_id: 返信（reply_to・reply_to_file）とは同時に使えません"
+                        "——コミュニティへの投稿か返信か、どちらか 1 つにしてください")
+
+
+def community_id_errors(fm: dict, account_cfg: dict | None) -> list:
+    """`community_id:` の検査（fail-closed）。select も同じ関数で落とす。"""
+    from . import approval as approval_mod
+    value = approval_mod.community_id_of(fm)
+    if value is None:
+        return []
+    out = []
+    media = (account_cfg or {}).get("media")
+    if media != "x":
+        # 台帳が引けない（未知の account）ときも断る——X だと確かめられないものを通さない。
+        out.append(COMMUNITY_NOT_X.format(media=media or "不明"))
+    if not COMMUNITY_ID_RE.fullmatch(value):
+        out.append(COMMUNITY_FORM.format(value=value))
+    if (fm.get("reply_to") not in (None, "") or queuefile.reply_to_file_of(fm) is not None):
+        out.append(COMMUNITY_WITH_REPLY)
     return out
 
 

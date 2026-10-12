@@ -41,6 +41,10 @@ CASES = (
     {"name": "threads_options", "media": "threads", "section": "場所つき。",
      "account": "golden-threads", "publish_at": "2026-09-09T08:00:00+09:00",
      "front_matter": {"location_id": "123456", "share_to_instagram": "true"}},
+    # 3.19.0: X のコミュニティ（値があるときだけ末尾に足す任意項目・版は上げない）。
+    {"name": "x_community", "media": "x", "section": "コミュニティへ。",
+     "account": "golden-x", "publish_at": "2026-10-14T08:00:00+09:00", "hashtags": False,
+     "front_matter": {"community_id": "1493446837214187523"}},
     {"name": "bundle_bluesky", "media": "bluesky", "segments": ["一段目。", "二段目。"],
      "topic": "コーヒー", "account": "golden-bluesky",
      "publish_at": "2026-09-09T08:00:00+09:00",
@@ -61,6 +65,7 @@ GOLDEN = {
         "reply_to_post_id": "21f78f893623c5e0",
         "reply_to_file": "e4d307a73438a5f1",
         "threads_options": "2150188e6b2af272",
+        "x_community": "d305d1c3e5cab9cc",
         "bundle_bluesky": "e1e13b8e4197f403",
     },
 }

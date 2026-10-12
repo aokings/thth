@@ -26,6 +26,11 @@ user_id と一致しない行は `x_metrics.normalize_owned_metrics` が落と�
 （`PAID_READS`）とは別の段なので、collect の timer から叩いてよいのはこの口だけ。
 本文・username は取らない（`tweet.fields` に text を入れず、`expansions` も付けない）。
 
+**コミュニティ**（3.19.0）: 出すのは `tweet_body` の `community_id`（返信とは同時に使わない）。
+探すのは `community_search`（`GET /2/communities/search`・Community: Read 1 件 0.005 USD・
+`budget_x.community_read()` の予約の中でだけ動く・1 日の本数には数えない）。参加の API と
+「参加しているか」の欄は資料に無い——参加は X の画面で、断りは `publish_refusal` が残す。
+
 **書く口の上限**: `thth admin budget x-posts --monthly <本数>`（`thth/budget_x_posts.py`）。
 既定 0＝**投稿しない**。予約は要求の前・確定は応答の後で、**結果不明は自動で
 投げ直さない**（数え上げでは「不明」として別に残る）。
@@ -60,6 +65,8 @@ LENGTH_NOTE = 'warning: x_length_weighting_unverified'
 
 REPLY_SETTINGS = ('following', 'mentionedUsers', 'subscribers', 'verified')
 POST_ID = re.compile(r'[0-9]{1,19}')
+# コミュニティの id（**L1** docs.x.com create-post `community_id`: `^[0-9]{1,19}$`）。
+COMMUNITY_ID = re.compile(r'[0-9]{1,19}')
 
 
 class AdapterError(base.AdapterError):
@@ -233,6 +240,13 @@ def tweet_body(post, manifest=None, media_ids=()):
         body['text'] = text
     if post.reply_to:
         body['reply'] = {'in_reply_to_tweet_id': str(post.reply_to)}
+    community = getattr(post, 'community_id', None)
+    if community:
+        # 3.19.0: コミュニティへ出す。返信との同時指定は手前（lint・select・send）が断る。
+        # ここでも形だけは確かめる（数字 19 桁まで以外は組み立てない）。
+        if post.reply_to or not COMMUNITY_ID.fullmatch(str(community)):
+            raise AdapterError('x_community_id_invalid')
+        body['community_id'] = str(community)
     if media_ids:
         body['media'] = {'media_ids': list(media_ids)}
     poll = next((row for row in manifest['attachments'] if row['type'] == 'poll'), None)
@@ -300,6 +314,9 @@ class XAdapter(base.Adapter):
         self._post_cache = {}
         # 自分の投稿の数字（Owned Reads）は別に数える（料金も台帳も別の段）。
         self._owned = {'posts': 0, 'usd': '0', 'calls': 0}
+        # コミュニティの検索（Community: Read・3.19.0）も別に数える（台帳も別）。
+        self._communities = {'count': 0, 'usd': '0', 'calls': 0}
+        self.community_more = False
 
     @classmethod
     def from_account(cls, account_cfg: dict, token: dict):
@@ -347,6 +364,11 @@ class XAdapter(base.Adapter):
         ts = jst.iso()
         if dry_run:
             return base.PublishResult(None, None, ts, error=None, failure='none')
+        community = getattr(post, 'community_id', None)
+        if community and (post.reply_to or not COMMUNITY_ID.fullmatch(str(community))):
+            # 手前（lint・select・send）が断っているはず。予約も添付の upload もする前に止める。
+            return base.PublishResult(None, None, ts, error='x_community_id_invalid',
+                                      failure='publish_vetoed')
         from .. import budget_x_posts
         try:
             slot = budget_x_posts.reserve(self.auth_account)
@@ -1033,6 +1055,139 @@ class XAdapter(base.Adapter):
         self._owned['posts'] += charged
         self._owned['usd'] = str(Decimal(self._owned['usd']) + budget_x.OWNED_PRICE * charged)
         return value
+
+    # ----- コミュニティの検索（3.19.0・**community_read の予約の中でだけ動く**） ----
+    #
+    # 一次資料（**L1** docs.x.com search-communities）: `GET /2/communities/search`・`query`
+    # （1〜4096 字）・`max_results`（10〜100・既定 10）・`community.fields`（access・created_at・
+    # description・id・join_policy・member_count・name）。認可は tweet.read＋users.read（いまの
+    # トークンにある）。料金表 Community: Read 0.005 USD／resource。**参加しているかを示す欄は
+    # 無い**（is_member 等は資料に無い）。参加の API も資料に無い（10/13 確認）。
+    COMMUNITY_FIELDS = 'access,created_at,description,id,join_policy,member_count,name'
+    COMMUNITY_SEARCH_MIN = 10
+    COMMUNITY_SEARCH_DEFAULT_LIMIT = 10
+    COMMUNITY_SEARCH_MAX_LIMIT = 25
+    COMMUNITY_QUERY_MAX = 4096
+    COMMUNITY_DESCRIPTION_MAX = 280
+
+    def community_search(self, q: str, *, limit: int | None = None) -> list:
+        """`GET /2/communities/search` を 1 回（既定 10 件・最大 25 件）。続きは読まない。
+
+        `max_results` は資料の下限 10 に合わせる（`max(10, limit)`）。予約はその数で押さえ、
+        **課金は応答に入っていた件数**で確定する（画面に出すのは `limit` 件まで）。
+        行は公開の欄だけ（id・名前・説明・人数・join_policy・access・作成日）。保存しない。
+        """
+        from decimal import Decimal
+        from .. import budget_x
+        text = q.strip() if isinstance(q, str) else ''
+        if not text:
+            raise AdapterError('検索の語が空です')
+        if len(text) > self.COMMUNITY_QUERY_MAX:
+            raise AdapterError(f'検索の語は {self.COMMUNITY_QUERY_MAX} 字までです')
+        cap = self.COMMUNITY_SEARCH_DEFAULT_LIMIT if limit is None else limit
+        if type(cap) is not int or not 1 <= cap <= self.COMMUNITY_SEARCH_MAX_LIMIT:
+            raise AdapterError(f'X のコミュニティの検索は 1 回 1〜{self.COMMUNITY_SEARCH_MAX_LIMIT} 件です'
+                               f'（{limit!r}）——有償の読み取りなので範囲外の指定は断ります')
+        reserve = max(self.COMMUNITY_SEARCH_MIN, cap)
+        query = {'query': text, 'max_results': reserve, 'community.fields': self.COMMUNITY_FIELDS}
+        # 数える件数: 発射する前に断られたら 0・発射して応答が読めなければ押さえた数
+        # （台帳の uncertain と同じ・多めに数える側）・断りの応答は 0・読めたら応答の件数。
+        charged = 0
+        self.community_more = False
+        try:
+            with budget_x.community_read(self.auth_account, reserve) as slot:
+                slot.dispatch()
+                charged = reserve
+                self._communities['calls'] += 1
+                try:
+                    status, value = request(self, 'GET', '/2/communities/search', query=query)
+                except urllib.error.HTTPError as exc:
+                    slot.settle(0)
+                    charged = 0
+                    if exc.code == 429:
+                        detail = rate_limit(exc)
+                        raise AdapterError('provider_rate_limited'
+                                           + (f' {json.dumps(detail, sort_keys=True)}' if detail else ''),
+                                           http_status=429) from None
+                    hint = '（thth auth <account> --by <名前> をやり直してください）' if exc.code == 401 else ''
+                    known = publish_refusal(exc) if 400 <= exc.code < 500 else None
+                    raise AdapterError('x_community_search_http_' + str(exc.code) + hint
+                                       + (': ' + known if known else ''), http_status=exc.code) from None
+                except (httpsafe.EndpointRejected, urllib.error.URLError, TimeoutError, OSError, ValueError,
+                        base.AdapterError) as exc:
+                    raise AdapterError('コミュニティの検索: x_read_failed: 結果不明（' + self._scrub(exc) + '）') from None
+                data = value.get('data')
+                if status == 200 and isinstance(data, list):
+                    n = len(data)
+                elif status == 200 and data is None and (isinstance(value.get('meta'), dict)
+                                                         or isinstance(value.get('errors'), list)):
+                    n = 0
+                else:
+                    raise AdapterError('コミュニティの検索: x_read_response_invalid')
+                slot.settle(n)
+                if slot.count is None:
+                    raise AdapterError('コミュニティの検索: x_read_response_invalid（頼んだより多い）')
+                charged = n
+        except budget_x.BudgetError as exc:
+            code = str(exc)
+            message = ('今月の X の予算（読み取りと合わせて）が足りません。thth admin budget x で確かめてください'
+                       if code == 'budget_exhausted' else 'X の読み取りの予約ができません')
+            raise AdapterError(f'{code}: {message}') from None
+        finally:
+            self._communities['count'] += charged
+            self._communities['usd'] = str(Decimal(self._communities['usd'])
+                                           + budget_x.COMMUNITY_PRICE * charged)
+        meta = value.get('meta') if isinstance(value.get('meta'), dict) else {}
+        self.community_more = bool(meta.get('next_token')) or n > cap
+        rows = []
+        for row in data or []:
+            item = self._community_row(row)
+            if item is not None:
+                rows.append(item)
+        return rows[:cap]
+
+    @classmethod
+    def _community_row(cls, row):
+        """1 つのコミュニティを公開の欄だけの行に。id が数字でなければ落とす。型違いの欄は None。"""
+        if not isinstance(row, dict) or not isinstance(row.get('id'), str) or not COMMUNITY_ID.fullmatch(row['id']):
+            return None
+
+        def text(key, maximum):
+            value = row.get(key)
+            if not isinstance(value, str):
+                return None
+            value = ' '.join(value.split())
+            return value[:maximum] if value else None
+        members = row.get('member_count')
+        return {
+            'community_id': row['id'],
+            'name': text('name', 100),
+            'description': text('description', cls.COMMUNITY_DESCRIPTION_MAX),
+            'member_count': members if type(members) is int and members >= 0 else None,
+            'join_policy': text('join_policy', 40),
+            'access': text('access', 40),
+            'created_at': text('created_at', 40),
+            'url': 'https://x.com/i/communities/' + row['id'],
+        }
+
+    def community_read_cost(self) -> dict:
+        """この実体で読んだコミュニティの件数と推定 USD・今月の数字（画面と `--json`）。"""
+        from decimal import Decimal
+        from .. import budget_x
+        try:
+            whole = budget_x.report()
+            month = {'month_utc': whole['month_utc'],
+                     'month_used_usd': budget_x.decimal_text(
+                         Decimal(whole['spent_estimate_usd']) + Decimal(whole['held_usd'])),
+                     'cap_usd': whole['cap_usd']}
+        except (budget_x.BudgetError, OSError, ValueError, TypeError):
+            month = {'month_utc': None, 'month_used_usd': None, 'cap_usd': None}
+        return {'communities': self._communities['count'], 'usd_estimate': self._communities['usd'],
+                'requests': self._communities['calls'],
+                'price_usd_per_community': str(budget_x.COMMUNITY_PRICE),
+                'price_version': budget_x.COMMUNITY_PRICE_VERSION,
+                'daily_read_cap': 'not_counted',
+                'basis': 'estimate_not_actual_charge', **month}
 
     def read_cost(self) -> dict:
         """この実体で読んだ他人の投稿の本数と推定 USD・今日と今月の数字（画面と `--json`）。"""
