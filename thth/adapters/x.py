@@ -127,7 +127,13 @@ MAX_ERROR_BYTES = 4096
 
 
 def publish_refusal(error) -> str | None:
-    """4xx の本文（`detail`・`title`・`errors[].message`）を 1 回だけ読み、知っている形なら符丁。"""
+    """4xx の本文（`detail`・`title`・`type`・`errors[].message`）を 1 回だけ読む。
+
+    知っている形なら静的な符丁。知らない形は **X の文面を短く残す**（3.18.2・10/13
+    関東の返信の 403 が知らない形で、何が断られたのか読めなかった。SageSpring の依頼）。
+    X の problem の文面は自分の要求への断りで、他人の投稿の本文は入らない。それでも
+    `redact` を通し、200 字で切る。
+    """
     try:
         raw = error.read(MAX_ERROR_BYTES + 1)
     except (OSError, ValueError, AttributeError):
@@ -138,17 +144,31 @@ def publish_refusal(error) -> str | None:
         body = json.loads(raw)
     except (ValueError, UnicodeError):
         return None
-    texts = []
-    if isinstance(body, dict):
-        texts += [body.get('detail'), body.get('title')]
-        for item in body.get('errors') or []:
-            if isinstance(item, dict):
-                texts += [item.get('message'), item.get('detail')]
+    if not isinstance(body, dict):
+        return None
+    texts = [body.get('detail'), body.get('title')]
+    for item in body.get('errors') or []:
+        if isinstance(item, dict):
+            texts += [item.get('message'), item.get('detail')]
     blob = ' '.join(t for t in texts if isinstance(t, str)).lower()
     for needle, code in PUBLISH_REFUSALS:
         if needle in blob:
             return code
-    return None
+    parts = []
+    kind = body.get('type')
+    if isinstance(kind, str) and kind.strip():
+        parts.append('type=' + kind.strip().rstrip('/').rsplit('/', 1)[-1][:60])
+    for key in ('title', 'detail'):
+        if isinstance(body.get(key), str) and body[key].strip():
+            parts.append(key + '=' + body[key].strip())
+    for item in body.get('errors') or []:
+        if isinstance(item, dict) and isinstance(item.get('message'), str):
+            parts.append('message=' + item['message'].strip())
+            break
+    if not parts:
+        return None
+    text = redact_mod.redact(' / '.join(parts).replace('\n', ' ')) or ''
+    return ('x_unknown_refusal（' + text[:200] + '）') if text else None
 
 
 def request(adapter, method, path, *, json_body=None, data=None, query=None,

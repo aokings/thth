@@ -229,7 +229,8 @@ def test_after_an_unknown_the_next_send_refuses_without_touching_the_provider(
      'x_publish_http_403: x_not_permitted'),
     (b'{"errors":[{"message":"You are not allowed to create a Tweet with duplicate content."}]}',
      'x_publish_http_403: x_duplicate_content'),
-    (b'{"detail":"something new"}', 'x_publish_http_403'),
+    (b'{"detail":"something new","title":"Forbidden","type":"https://api.twitter.com/2/problems/not-authorized-for-resource"}',
+     'x_publish_http_403: x_unknown_refusal（type=not-authorized-for-resource / title=Forbidden / detail=something new）'),
     (b'not json', 'x_publish_http_403'),
     (b'{"detail":"' + b'x' * 5000 + b'"}', 'x_publish_http_403'),
 ])
@@ -244,4 +245,3 @@ def test_403_body_becomes_a_static_code_without_provider_text(env, wire, monkeyp
     monkeypatch.setattr(x_adapter, 'request', request)
     result = text_post(env)
     assert result.failure == 'publish_definite' and result.error == expected
-    assert 'something new' not in result.error
