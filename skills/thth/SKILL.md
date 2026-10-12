@@ -58,6 +58,10 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 
 `thth repost|unrepost|like|unlike <account> <投稿の id か URL> --by <名前>`（MCP `thth_repost`・`thth_like`、取り消しは `undo: true`）。反応は会話への参加なので、**所有者に頼まれたとき、または所有者が決めた方針の範囲でだけ使う**。いいねで返事の代わりにしない（返すべき相手には返信を書く）。Threads の API にはいいねが無い（`unsupported_on_platform`・再投稿と取り消しはできる）。断りは `scope_missing`（`thth auth <account> --by <名前>` で認可し直す）・`reaction_limit`（1 日の反応の上限）・`quiet_hours`（夜間は再投稿だけ断る）。同じ投稿への 2 回目は SNS に送らず `already_done`。
 
+## X の非公開リスト（3.17.0）
+
+`thth list create <account> <名前> [--description …] --by <名前>`・`thth list add|remove <account> <list_id> <id か @handle…> --by <名前>`・`thth list show <account> <list_id> [--limit N]`（MCP には無い）。X のアカウントならどれでも（今は asmon-kanto-x と kopicha-x）・**使う前に各アカウントで `thth auth <account> --by <名前>` を打ち直す**。**非公開リストだけ**（公開は作れない）。足すのは**人が選んだ少数だけ**——1 回 10 人まで、検索結果から機械的に足さない（X の決まりで bulk・無差別の追加は不可）。足された相手に X が通知するかは未確認。書き込みは production: true の口座だけ・費用は月の X 予算（作る 0.010・足す／外す 0.005 USD、@handle の id 引き 0.010）。`show` は `where` と同じ有償の読み取り（1 本 0.005・1 日 60 本に数える・既定 10 本・最大 25）で、本文は返すだけで保存しない。断り: `scope_missing`（`thth auth <account> --by <名前>` で認可し直す）・`too_many_members`・`unsupported_on_platform`（X 以外）。
+
 ## 何を拒むか
 
 - **手元の台帳を使う実行の、`--confirm` の無い本番。** digest の食い違う本番。承認後に本文が変わった下書き

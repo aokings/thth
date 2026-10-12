@@ -417,6 +417,170 @@ class XAdapter(base.Adapter):
                     expect_key='liked', expect_value=False)
         return {'undone': True}
 
+    # ----- 非公開リスト（3.17.0・`thth list`） -----------------------------------
+    #
+    # 一次資料（**L1** docs.x.com）: `POST /2/lists`（name 1〜25 字・description 100 字まで・
+    # private）・`POST /2/lists/:id/members` {user_id}・`DELETE /2/lists/:id/members/:user_id`・
+    # `GET /2/lists/:id/tweets`。scope は作る `list.write`＋`list.read`、足す／外す `list.write`、
+    # 読む `list.read`（`tweet.read`・`users.read` はいまのトークンにある）。料金: 作る 0.010 USD・
+    # 足す／外す 0.005 USD（`budget_x.list_write`）・読むは返ってきた 1 本 0.005 USD（Posts: Read と
+    # 同じ台帳・1 日の本数にも数える）。**公開のリストは作らない**（`private` は常に true）。
+    LIST_SCOPES = {'create': ('list.write', 'list.read'), 'add': ('list.write',),
+                   'remove': ('list.write',), 'show': ('list.read',)}
+    LIST_NAME_MAX = 25
+    LIST_DESCRIPTION_MAX = 100
+    LIST_TWEETS_DEFAULT_LIMIT = 10
+    LIST_TWEETS_MAX_LIMIT = 25
+    USERNAME = re.compile(r'[A-Za-z0-9_]{1,15}')
+
+    @classmethod
+    def list_scope_missing(cls, token, operation):
+        """`.token` の `scopes_source: response` の一覧に要る scope が無ければその名前（不明は None）。"""
+        token = token or {}
+        granted = token.get('scopes')
+        if token.get('scopes_source') != 'response' or type(granted) is not list:
+            return None
+        return next((name for name in cls.LIST_SCOPES[operation] if name not in granted), None)
+
+    def _list_check_scope(self, operation):
+        for name in self.LIST_SCOPES[operation]:
+            if self.granted_scopes is not None and name not in self.granted_scopes:
+                raise base.ScopeMissing(name, self.auth_account)
+
+    @staticmethod
+    def _list_id(list_id):
+        value = str(list_id or '').strip()
+        if not POST_ID.fullmatch(value):
+            raise AdapterError('x_list_id_invalid: リストの id は 19 桁までの数字です')
+        return value
+
+    def _list_write(self, method, path, *, body=None, units, expect_key, expect_value, what):
+        """リストの書き込み 1 回を `budget_x.list_write` の予約の中で。**再試行しない。**
+
+        断りの応答（4xx・5xx）は書いていない——0 単位で確定。応答が読めなかったら結果不明として
+        押さえたまま（uncertain）。2xx で期待の値が無いときは、書けたかもしれないので単位を確定して
+        `x_list_unconfirmed` で止める。
+        """
+        from .. import budget_x
+        try:
+            with budget_x.list_write(self.auth_account, units) as slot:
+                slot.dispatch()
+                try:
+                    status, value = request(self, method, path, json_body=body)
+                except urllib.error.HTTPError as exc:
+                    slot.settle(0)
+                    if exc.code in (401, 403):
+                        raise base.PermissionMissing('list.write', 'x_list_http_' + str(exc.code)) from None
+                    if exc.code == 429:
+                        detail = rate_limit(exc)
+                        raise AdapterError('provider_rate_limited'
+                                           + (f' {json.dumps(detail, sort_keys=True)}' if detail else ''),
+                                           http_status=429) from None
+                    raise AdapterError(what + ': x_list_http_' + str(exc.code), http_status=exc.code) from None
+                except (httpsafe.EndpointRejected, urllib.error.URLError, TimeoutError, OSError, ValueError,
+                        base.AdapterError) as exc:
+                    raise AdapterError(what + ': x_list_failed: 結果不明（' + self._scrub(exc) + '）') from None
+                slot.settle(units)
+        except budget_x.BudgetError as exc:
+            code = str(exc)
+            message = ('今月の X の予算（読み取りと合わせて）が足りません。thth admin budget x で確かめてください'
+                       if code == 'budget_exhausted' else 'X の予算の予約ができません')
+            raise AdapterError(f'{code}: {message}') from None
+        data = value.get('data')
+        if status not in (200, 201) or not isinstance(data, dict) or (
+                expect_key is not None and data.get(expect_key) is not expect_value):
+            raise AdapterError(what + ': x_list_unconfirmed: 応答で確かめられません（X の画面で確かめてください）')
+        return data
+
+    def list_create(self, name: str, *, description: str | None = None) -> dict:
+        """`POST /2/lists` を 1 回。**`private` は常に true**（公開のリストは作らない）。"""
+        self._list_check_scope('create')
+        body = {'name': name, 'private': True}
+        if description:
+            body['description'] = description
+        data = self._list_write('POST', '/2/lists', body=body, units=self._units('create'),
+                                expect_key=None, expect_value=None, what='リストを作る')
+        identifier = data.get('id')
+        if not isinstance(identifier, str) or not POST_ID.fullmatch(identifier):
+            raise AdapterError('リストを作る: x_list_unconfirmed: 応答に id がありません（X の画面で確かめてください）')
+        return {'list_id': identifier, 'name': data.get('name') if isinstance(data.get('name'), str) else name,
+                'private': True}
+
+    @staticmethod
+    def _user_id(user_id):
+        value = str(user_id or '').strip()
+        if not POST_ID.fullmatch(value):
+            raise AdapterError('x_user_id_invalid: 人の id は 19 桁までの数字です')
+        return value
+
+    @staticmethod
+    def _units(operation):
+        from .. import budget_x
+        return budget_x.LIST_CREATE_UNITS if operation == 'create' else budget_x.LIST_MANAGE_UNITS
+
+    def list_add_member(self, list_id: str, user_id: str) -> dict:
+        """`POST /2/lists/:id/members` {user_id} を 1 回。"""
+        self._list_check_scope('add')
+        value = self._list_id(list_id)
+        member = self._user_id(user_id)
+        self._list_write('POST', '/2/lists/' + value + '/members', body={'user_id': member},
+                         units=self._units('add'), expect_key='is_member', expect_value=True,
+                         what='リストに足す')
+        return {'list_id': value, 'user_id': member, 'is_member': True}
+
+    def list_remove_member(self, list_id: str, user_id: str) -> dict:
+        """`DELETE /2/lists/:id/members/:user_id` を 1 回。"""
+        self._list_check_scope('remove')
+        value = self._list_id(list_id)
+        member = self._user_id(user_id)
+        self._list_write('DELETE', '/2/lists/' + value + '/members/' + member,
+                         units=self._units('remove'), expect_key='is_member', expect_value=False,
+                         what='リストから外す')
+        return {'list_id': value, 'user_id': member, 'is_member': False}
+
+    def user_by_username(self, username: str) -> dict:
+        """`GET /2/users/by/username/:username`（handle → id）。本人確認と同じ予約（1 回 0.010 USD）。"""
+        from .. import budget_x
+        handle = str(username or '').strip().lstrip('@')
+        if not self.USERNAME.fullmatch(handle):
+            raise AdapterError('x_username_invalid: @ の後は英数と _ の 15 字までです')
+        path = '/2/users/by/username/' + handle
+        try:
+            with budget_x.user_read(self.auth_account):
+                budget_x.before_read(path)
+                try:
+                    status, value = request(self, 'GET', path)
+                except urllib.error.HTTPError as exc:
+                    raise AdapterError('x_user_lookup_http_' + str(exc.code), http_status=exc.code) from None
+                except (httpsafe.EndpointRejected, urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+                    raise AdapterError('x_user_lookup_failed: ' + self._scrub(exc)) from None
+                budget_x.observed(value)
+        except budget_x.BudgetError as exc:
+            code = str(exc)
+            message = ('今月の X の予算が足りません。thth admin budget x で確かめてください'
+                       if code == 'budget_exhausted' else 'X の読み取りの予約ができません')
+            raise AdapterError(f'{code}: {message}') from None
+        data = value.get('data')
+        if status != 200 or not isinstance(data, dict) or not isinstance(data.get('id'), str) \
+                or not POST_ID.fullmatch(data['id']):
+            raise AdapterError('x_user_not_found: @' + handle + ' が見つかりません')
+        return {'user_id': data['id'], 'username': data.get('username') if isinstance(data.get('username'), str) else handle}
+
+    def list_tweets(self, list_id: str, *, limit: int | None = None) -> list:
+        """`GET /2/lists/:id/tweets`（1 回・既定 10 本・最大 25 本）。他人の投稿の読み取りの予約の中で。"""
+        self._list_check_scope('show')
+        value = self._list_id(list_id)
+        cap = self.LIST_TWEETS_DEFAULT_LIMIT if limit is None else limit
+        if type(cap) is not int or not 1 <= cap <= self.LIST_TWEETS_MAX_LIMIT:
+            raise AdapterError(f'X のリストは 1 回 1〜{self.LIST_TWEETS_MAX_LIMIT} 本です（{limit!r}）'
+                               '——有償の読み取りなので範囲外の指定は断ります')
+        query = {'max_results': cap, **self.READ_FIELDS}
+        body, n = self._paid_get('/2/lists/' + value + '/tweets', query, limit=cap, what='リストの投稿')
+        meta = body.get('meta') if isinstance(body.get('meta'), dict) else {}
+        # 続きがある（`next_token`）ことだけ覚える。続きは読まない（1 回だけ）。
+        self.list_more = bool(meta.get('next_token')) or n > cap
+        return self._rows(body)[:cap]
+
     # ----- 読む口（**読取予算の中でだけ動く**） ------------------------------
 
     def whoami(self) -> dict:

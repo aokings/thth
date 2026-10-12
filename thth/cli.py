@@ -4144,6 +4144,10 @@ def build_parser() -> argparse.ArgumentParser:
     from . import reaction_cli
     reaction_cli.register(sub)
 
+    # `thth list create|add|remove|show`（3.17.0・X の非公開リスト）。口は `thth/list_cli.py` に閉じる。
+    from . import list_cli
+    list_cli.register(sub)
+
     # `thth inflight <account> [show|resolve]`（設計 3.3.1 §4）。口は
     # `thth/inflight_cli.py` に閉じる——ここに足すのはこの 2 行だけ。
     from . import inflight_cli

@@ -21,6 +21,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 - **出す**: `thth send` で今すぐ、`thth schedule` で予約、`--reply-to` で返信です。
 - **振り返る**: `thth collect` が投稿後 1 時間〜30 日の決まった時点で返信とインサイトを取得し、`thth replies`・`thth measured` で読みます。
 - **再投稿といいね**: `thth repost`・`unrepost`・`like`・`unlike`（3.15.0 から）。Threads は再投稿だけ（Threads の API にいいねが無い）。Bluesky は両方。Mastodon と X のいいねは、そのアカウントを認可し直してから（[リリースノート 3.15.0](docs/リリースノート_3.15.0_2026-10-09.md)）。
+- **X の非公開リスト**: `thth list create|add|remove|show`（3.17.0 から・X だけ）。公開のリストは作らない。足す・外すは人が選んだ少数だけ（1 回 10 人まで）。アカウントを認可し直してから（[リリースノート 3.17.0](docs/リリースノート_3.17.0_2026-10-12.md)）。
 
 ## はじめ方
 
@@ -81,7 +82,7 @@ MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけで
 
 `thth --help` で各コマンドの説明が出ます。
 
-動くもの（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`unanswered`・`handoff-report`・`observe`・`morning`・`serve-reports`・`worker`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`who`・`retract`・`repost`・`unrepost`・`like`・`unlike`・`inflight`・`location`・`notifications`・`report`・`plaza`・`map`・`admin`・`login`・`logout`。
+動くもの（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`unanswered`・`handoff-report`・`observe`・`morning`・`serve-reports`・`worker`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`who`・`retract`・`repost`・`unrepost`・`like`・`unlike`・`list`・`inflight`・`location`・`notifications`・`report`・`plaza`・`map`・`admin`・`login`・`logout`。
 
 ## 版と配布
 

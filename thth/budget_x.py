@@ -167,9 +167,10 @@ def report(value=None,*,at=None):
     value=read() if value is None else value;p=value['policy'];at=at or now();period=month(at);spent,held=totals(value,period)
     posts=read_posts();posts_spent,posts_held=posts_totals(posts,period)
     owned=read_posts(OWNED);owned_spent,owned_held=posts_totals(owned,period)
+    lists=read_posts(LISTS);lists_spent,lists_held=posts_totals(lists,period)
     # 本人確認（user read）・他人の投稿の読み取り（posts read）・自分の投稿の数字
-    # （owned read）は**同じ月の上限**を分け合う（台帳は別々）。
-    spent+=posts_spent+owned_spent;held+=posts_held+owned_held
+    # （owned read）・非公開リストの書き込み（list write）は**同じ月の上限**を分け合う（台帳は別々）。
+    spent+=posts_spent+owned_spent+lists_spent;held+=posts_held+owned_held+lists_held
     with localcontext() as ctx:
         ctx.prec=80
         cap=Decimal(p['amount'])/(Decimal(p['rate']) if p['currency']=='JPY' and _fx(p) else Decimal(1)) if _fx(p) else None
@@ -177,15 +178,17 @@ def report(value=None,*,at=None):
         over=max(Decimal(0),spent+held-cap) if cap is not None else None
     reason='missing_rate' if cap is None else 'budget_exhausted' if not _can_reserve(p,spent+held+PRICE) else None
     periods=sorted({r['reservation_month'] for r in value['reservations'].values()}|{r['reservation_month'] for r in posts['reservations'].values()}
-                   |{r['reservation_month'] for r in owned['reservations'].values()}|{period})
+                   |{r['reservation_month'] for r in owned['reservations'].values()}
+                   |{r['reservation_month'] for r in lists['reservations'].values()}|{period})
     def month_row(m):
-        a,b=totals(value,m);c,d=posts_totals(posts,m);e,f=posts_totals(owned,m)
-        return dict(spent_estimate_usd=decimal_text(a+c+e),held_usd=decimal_text(b+d+f))
+        a,b=totals(value,m);c,d=posts_totals(posts,m);e,f=posts_totals(owned,m);g,h=posts_totals(lists,m)
+        return dict(spent_estimate_usd=decimal_text(a+c+e+g),held_usd=decimal_text(b+d+f+h))
     return dict(media='x',month_utc=period,policy=admin_log.clean(p),cap_usd=decimal_text(cap) if cap is not None else None,
         spent_estimate_usd=decimal_text(spent),held_usd=decimal_text(held),remaining_usd=decimal_text(available) if available is not None else None,
         over_cap_usd=decimal_text(over) if over is not None else None,read_refusal=reason,cannot_say=[x for x in (reason,'usage_not_observed','estimate_not_actual_charge') if x],
         price=dict(version=PRICE_VERSION,user_read_usd=decimal_text(PRICE),source=PRICE_SOURCE),usage=None,
-        months={m:month_row(m) for m in periods},posts_read=_posts_report(posts,at),owned_read=_owned_report(owned,at))
+        months={m:month_row(m) for m in periods},posts_read=_posts_report(posts,at),owned_read=_owned_report(owned,at),
+        list_write=_lists_report(lists,at))
 
 
 def configure(monthly,*,currency='USD',rate=None,rate_source=None,by,via='cli',before_save=None):
@@ -250,7 +253,9 @@ def before_post():
 
 # 従量で計上される読み取りの口。**ここに無い path は予約を消費できない**
 # ——綴りを 1 か所に置いて、予算の外を通る読み取りを構造で作らせない。
-READ_PATH=re.compile(r'/2/users/(?:me|[0-9]{1,19}/tweets)')
+# 3.17.0: `thth list add|remove @handle` の handle → id（`GET /2/users/by/username/:username`）も
+# 本人確認と同じ 1 回 0.010 USD の予約で引く（Users: Read）。
+READ_PATH=re.compile(r'/2/users/(?:me|[0-9]{1,19}/tweets|by/username/[A-Za-z0-9_]{1,15})')
 
 
 def before_read(path):
@@ -321,8 +326,23 @@ OWNED = 'owned'
 OWNED_PRICE = Decimal('0.001')
 OWNED_PRICE_VERSION = '2026-10-12-owned-read'
 OWNED_FILE = 'budget_x_owned_reads.json'
+# ----- 非公開リストの書き込み（3.17.0・`thth list create|add|remove`）
+#
+# 料金表: List: Create 0.010 USD／要求・List: Manage（members の追加と外し）0.005 USD／要求。
+# 台帳は**別のファイル**（`budget_x_list_writes.json`）で、形は他人の投稿の台帳と同じ
+# （押さえ→発射→応答で確定・発射して応答が読めなければ押さえたまま uncertain）。
+# **単位は 0.005 USD**——作るは 2 単位・足す／外すは 1 単位として `limit`／`count` に数える
+# （1 つの台帳・1 つの単価のまま 2 つの値段を載せるため）。月の上限は他の 3 つと分け合う。
+# 1 日の本数（`x_daily_reads`）は他人の投稿の読み取りの決まりなので掛けない。
+LISTS = 'lists'
+LIST_UNIT_PRICE = Decimal('0.005')
+LIST_PRICE_VERSION = '2026-10-12-list-write'
+LIST_FILE = 'budget_x_list_writes.json'
+LIST_CREATE_UNITS = 2
+LIST_MANAGE_UNITS = 1
 _LEDGERS = {POSTS: (POSTS_FILE, POSTS_PRICE, POSTS_PRICE_VERSION),
-            OWNED: (OWNED_FILE, OWNED_PRICE, OWNED_PRICE_VERSION)}
+            OWNED: (OWNED_FILE, OWNED_PRICE, OWNED_PRICE_VERSION),
+            LISTS: (LIST_FILE, LIST_UNIT_PRICE, LIST_PRICE_VERSION)}
 _MONTH = r'\d{4}-(?:0[1-9]|1[0-2])'
 
 
@@ -405,7 +425,7 @@ def posts_today(value,account,day):
 def _posts_liability(fd,at):
     """本人確認の台帳の外にある、その月の確定と押さえ（他人の投稿＋自分の投稿の数字）。"""
     total=Decimal(0)
-    for kind in (POSTS,OWNED):
+    for kind in (POSTS,OWNED,LISTS):
         spent,held=posts_totals(_read_posts(fd,kind),month(at));total+=spent+held
     return total
 
@@ -462,6 +482,16 @@ def owned_read(account,limit):
     断りは `budget_exhausted` だけ（1 日の本数の上限は他人の投稿の決まりなので掛けない）。
     """
     with _ledger_read(OWNED,account,limit) as handle:yield handle
+
+
+@contextlib.contextmanager
+def list_write(account,units):
+    """非公開リストの書き込み 1 回の予約（作る 2 単位・足す／外す 1 単位・1 単位 0.005 USD）。
+
+    作法は `posts_read` と同じ（押さえ→`dispatch()`→`settle(units)`・断りの応答は `settle(0)`・
+    応答が読めなければ押さえたまま uncertain）。断りは `budget_exhausted` だけ。
+    """
+    with _ledger_read(LISTS,account,units) as handle:yield handle
 
 
 @contextlib.contextmanager
@@ -525,17 +555,32 @@ def _owned_report(owned,at):
                 month=dict(month_utc=period,posts=posts,spent_estimate_usd=decimal_text(spent),held_usd=decimal_text(held),uncertain=uncertain))
 
 
+def _lists_report(lists,at):
+    period=month(at);spent,held=posts_totals(lists,period)
+    rows=[row for row in lists['reservations'].values() if row['reservation_month']==period and row['state']!='released']
+    uncertain=sum(1 for row in rows if row['state']=='uncertain')
+    return dict(price=dict(version=LIST_PRICE_VERSION,unit_usd=decimal_text(LIST_UNIT_PRICE),
+                           create_usd=decimal_text(LIST_UNIT_PRICE*LIST_CREATE_UNITS),
+                           manage_usd=decimal_text(LIST_UNIT_PRICE*LIST_MANAGE_UNITS),source=PRICE_SOURCE),
+                what='private_list_writes',
+                month=dict(month_utc=period,requests=len(rows),spent_estimate_usd=decimal_text(spent),
+                           held_usd=decimal_text(held),uncertain=uncertain))
+
+
 def cost_lines(whole):
     """`report()` の内訳を人の画面の行に（doctor・admin）。推定であって請求の実費ではない。"""
-    out=[f"X の読み取り（{whole['month_utc']}・推定・請求の実費ではない）: 合計 ${whole['spent_estimate_usd']}"
+    out=[f"X の読み取り{'と書き込み' if whole.get('list_write') else ''}（{whole['month_utc']}・推定・請求の実費ではない）: 合計 ${whole['spent_estimate_usd']}"
          f"（押さえ ${whole['held_usd']}）/ 上限 ${whole['cap_usd'] if whole['cap_usd'] is not None else '不明'}"]
-    posts=whole.get('posts_read') or {};owned=whole.get('owned_read') or {}
+    posts=whole.get('posts_read') or {};owned=whole.get('owned_read') or {};lists=whole.get('list_write') or {}
     if posts:
         m=posts['month']
         out.append(f"  他人の投稿（Posts: Read・1 本 ${posts['price']['post_read_usd']}）: ${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
     if owned:
         m=owned['month']
         out.append(f"  自分の投稿の数字（Owned Reads・1 本 ${owned['price']['owned_read_usd']}）: {m['posts']} 本・${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
+    if lists:
+        m=lists['month']
+        out.append(f"  非公開リストの書き込み（作る ${lists['price']['create_usd']}・足す／外す ${lists['price']['manage_usd']}）: {m['requests']} 回・${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
     return out
 
 

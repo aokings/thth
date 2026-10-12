@@ -351,7 +351,8 @@ def test_x_like_write_is_requested_but_not_part_of_the_client_generation():
     profile = auth_x.XAuthProfile("cid", "csecret", auth_x.CALLBACK, list(auth_x.SCOPES))
     url = profile.authorize({"state": "s", "code_verifier": "v" * 43})
     scope = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["scope"][0].split()
-    assert scope == list(auth_x.SCOPES) + ["like.write"]
+    # 3.17.0 で list.read・list.write も同じ形で足した（世代は SCOPES のまま）。
+    assert scope == list(auth_x.SCOPES) + ["like.write", "list.read", "list.write"]
 
 
 # --------------------------------------------------------------------------

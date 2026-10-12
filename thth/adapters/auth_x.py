@@ -26,7 +26,9 @@ LEGACY_SCOPES = [value for value in SCOPES if value != 'media.write']
 # トークンの更新（`run_refresh` は `SCOPES` が応答の scope に揃っていることを求める）と
 # 取り消しが止まる。だから世代は `SCOPES` のまま、認可の URL にだけ足す——付与されれば
 # `.token` の `scopes` に載り、無ければ `thth like` が `scope_missing` で断る。
-OPTIONAL_SCOPES = ['like.write']
+# 3.17.0: `thth list`（非公開リスト）の `list.read`・`list.write` も同じ形で足す——世代は変えず、
+# 無いトークンでは `thth list` が API を叩く前に `scope_missing` で断る。
+OPTIONAL_SCOPES = ['like.write', 'list.read', 'list.write']
 CALLBACK = 'https://thth.me/callback/'
 API = 'https://api.x.com'
 REFRESH_BEFORE_SECONDS = 300

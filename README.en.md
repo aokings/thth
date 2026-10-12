@@ -104,6 +104,7 @@ All subcommands `thth --help` lists, one line each:
 - `unrepost` — undo a repost made through THTH
 - `like` — like a post (Bluesky, Mastodon, X; the Threads API has no likes)
 - `unlike` — undo a like made through THTH
+- `list` — X private lists: create, add or remove a few hand-picked people (10 at most per call), read a list's posts (X only; never public lists)
 - `replies` — read collected replies (`--refresh` fetches first)
 - `measured` — read collected insights
 - `collect` — fetch replies and insights on the elapsed-time schedule
