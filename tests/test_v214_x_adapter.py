@@ -223,6 +223,8 @@ def test_after_an_unknown_the_next_send_refuses_without_touching_the_provider(
 # ----- 403 の本文から静的な符丁（10/13 関東の返信の 403） --------------------
 
 @pytest.mark.parametrize('body,expected', [
+    (b'{"type":"https://api.twitter.com/2/problems/not-authorized-for-resource","title":"Authorization Error","detail":"You can only reply to or quote posts where you are mentioned or are the author."}',
+     'x_publish_http_403: x_reply_not_engaged'),
     (b'{"detail":"Reply to this conversation is not allowed because you have not been mentioned or otherwise engaged by the author of the post you are replying to.","title":"Forbidden","status":403}',
      'x_publish_http_403: x_reply_not_engaged'),
     (b'{"detail":"You are not permitted to perform this action.","title":"Forbidden","status":403}',

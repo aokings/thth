@@ -115,8 +115,12 @@ def rate_limit(error):
 # 投稿の 4xx の本文から**静的な符丁だけ**を引く（provider の文面は理由に混ぜない・
 # `rate_limit()` と同じ流儀）。10/13 関東の返信が `x_publish_http_403` だけを残し、
 # 「返信先の投稿者から関わりが無い」制限か、アカウントの制限かを見分けられなかった。
-# 文面は X の開発者フォーラムで報告されている形（一次資料には無い・L3）。
+# 先頭の 1 行は 10/13 に実機で取れた文面（L1）。残りはフォーラムで報告されている形（L3）。
 PUBLISH_REFUSALS = (
+    # 10/13 実機（関東・3.18.2 で取れた・L1）: "You can only reply to or quote posts where
+    # you are mentioned or are the author."（自己サーブでは、自分がメンションされた投稿か
+    # 自分の投稿にしか返信・引用できない）。
+    ('you can only reply to or quote posts where you are mentioned', 'x_reply_not_engaged'),
     ('not been mentioned or otherwise engaged', 'x_reply_not_engaged'),
     ('reply to this conversation is not allowed', 'x_reply_not_engaged'),
     ('duplicate content', 'x_duplicate_content'),
