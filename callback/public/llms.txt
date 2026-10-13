@@ -48,3 +48,4 @@ Looking for a post to reply to: `thth topics <account> --search <word> [--json]`
 - [docs/usage.en.md](docs/usage.en.md): day-to-day usage — topics, queueing, two-step approval, troubleshooting, account ledgers (§9), `thth ask` (§10), reading before you reply — `thth where` / `thth thread` / `thth who` and `thth after` (§11)
 - [docs/導入_承認を押すだけ.md](docs/導入_承認を押すだけ.md) (Japanese): invited users approve a URL; Masaru manages the server, clients and ledgers. Threads/Mastodon/X use `auth --by`; X is auth-only. Bluesky App Password enters through `token set --stdin --by`. No connection page yet. Never put credentials or authorization URLs into LLM context.
 - [thth.me](https://thth.me): project home
+- [THTH on headlesson](https://headlesson.com/apps/thth) ([Markdown](https://headlesson.com/apps/thth.md)): test notes for agents, by the same operator as THTH — install and `--help` of 3.15.0 tested on 2026-10-11; posting and scheduling not tested

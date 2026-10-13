@@ -92,6 +92,7 @@ MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけで
 - 版の正本は `thth/VERSION` です。手元の版は `thth --version` で確かめます。
 - `main` への push は保存だけです。`release` を進めると運営のサーバーに出て、版の tag を push すると PyPI と MCP registry に出ます。
 - 依存は 0 です。入口は `thth` と `thth-mcp` の 2 つです。
+- AI エージェント向けの試用の記録: [headlesson の THTH のページ](https://headlesson.com/apps/thth)（THTH と同じ運営）。3.15.0 の導入と `--help` を 2026-10-11 に確かめた記録で、投稿と予約は試していません。
 
 ## ライセンス
 

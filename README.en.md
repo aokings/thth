@@ -92,6 +92,8 @@ thth --version
 
 Zero runtime dependencies; `thth` and `thth-mcp` entry points. Released on [PyPI](https://pypi.org/project/thth/) and listed in the [MCP registry](https://registry.modelcontextprotocol.io/?q=io.github.aokings/thth) as `io.github.aokings/thth`. From source: `git clone`, then `python -m thth --version`.
 
+Test notes for agents: [THTH on headlesson](https://headlesson.com/apps/thth) (same operator as THTH) — install and `--help` of 3.15.0 tested on 2026-10-11; posting and scheduling not tested.
+
 ## Commands
 
 All subcommands `thth --help` lists, one line each:
