@@ -187,6 +187,35 @@ def test_search_refusal_keeps_a_short_reason_and_charges_nothing(x_account, fake
     assert ledger["state"] == "settled" and ledger["count"] == 0 and ledger["usd"] == "0.000"
 
 
+def _run_errors():
+    root = accounts_mod.state_dir_for(ACCOUNT)
+    out = []
+    for name in sorted(os.listdir(root)):
+        if name.startswith("runs-"):
+            with open(os.path.join(root, name), encoding="utf-8") as fh:
+                out += [json.loads(line).get("error") for line in fh if line.strip()]
+    return out
+
+
+def test_search_refusal_leaves_only_static_codes_in_runs(x_account, fake, capsys):
+    """10/13: 両レーンの失敗が `community_search_failed` だけで原因が追えなかった。"""
+    body = b'{"title":"Forbidden","detail":"You are not permitted to access this feature.","status":403}'
+    fake["routes"][("GET", "/2/communities/search")] = urllib.error.HTTPError(
+        "u", 403, "Forbidden", {}, io.BytesIO(body))
+    run(capsys, "coffee")
+    assert _run_errors() == ["community_search_failed: x_community_search_http_403 x_not_permitted"]
+
+
+def test_search_unreadable_response_names_the_exception_and_stays_uncertain(x_account, fake, capsys):
+    fake["routes"][("GET", "/2/communities/search")] = TimeoutError("read timed out コーヒー豆")
+    rc, payload, _ = run(capsys, "コーヒー豆")
+    assert rc == 1 and payload["error"] == "upstream_refused"
+    [error] = _run_errors()
+    assert error == "community_search_failed: x_read_failed TimeoutError"
+    [ledger] = community_rows()
+    assert ledger["state"] == "uncertain"
+
+
 def test_search_parser_is_registered():
     from thth import cli
     args = cli.build_parser().parse_args(["community", "search", ACCOUNT, "a", "b", "--limit", "3", "--json"])

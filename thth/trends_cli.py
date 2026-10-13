@@ -90,10 +90,11 @@ def _adapter(args, what):
 
 
 def _upstream(args, action, e, what) -> int:
-    _record(args.account, action, n=None, status="error", error=action + "_failed")
     if isinstance(e, accounts_mod.AccountStopped):
+        _record(args.account, action, n=None, status="error", error=action + "_failed")
         return _fail(args, 1, "account_stopped", str(e))
     text = redact_mod.redact(str(e))
+    _record(args.account, action, n=None, status="error", error=runs_mod.failure_error(action + "_failed", text))
     head = text.split(":", 1)[0].strip()
     code = head if head in ("budget_exhausted", "provider_rate_limited") else "upstream_refused"
     return _fail(args, 1, code, f"{what}を読めませんでした: {text}")

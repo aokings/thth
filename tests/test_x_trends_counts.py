@@ -168,3 +168,21 @@ def test_counts_parser_rejects_minute():
         cli.build_parser().parse_args(["counts", ACCOUNT, "x", "--granularity", "minute"])
     parsed = cli.build_parser().parse_args(["counts", ACCOUNT, "x"])
     assert parsed.granularity == "day" and parsed.func is trends_cli.cmd_counts
+
+
+def test_failures_leave_only_static_codes_in_runs(x_account, fake, capsys):
+    """10/13: 失敗の runs に原因の符丁だけを残す（語・detail の文は残さない）。"""
+    body = b'{"title":"Forbidden","detail":"something new","status":403}'
+    fake["routes"][("GET", "/2/trends/by/woeid/23424856")] = urllib.error.HTTPError(
+        "u", 403, "Forbidden", {}, io.BytesIO(body))
+    fake["routes"][("GET", "/2/tweets/counts/recent")] = TimeoutError("timed out 珈琲")
+    run_trends(capsys)
+    run_counts(capsys, "珈琲")
+    root = accounts_mod.state_dir_for(ACCOUNT)
+    errors = []
+    for name in sorted(os.listdir(root)):
+        if name.startswith("runs-"):
+            with open(os.path.join(root, name), encoding="utf-8") as fh:
+                errors += [json.loads(line).get("error") for line in fh if line.strip()]
+    assert sorted(errors) == ["counts_failed: x_read_failed TimeoutError",
+                              "trends_failed: x_trends_http_403 x_unknown_refusal"]

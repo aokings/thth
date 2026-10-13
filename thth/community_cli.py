@@ -104,8 +104,9 @@ def cmd_community_search(args) -> int:
         _record(args.account, n=None, status="error", error="community_search_failed")
         return _fail(args, 1, "account_stopped", str(e))
     except adapter_base.AdapterError as e:
-        _record(args.account, n=None, status="error", error="community_search_failed")
         text = redact_mod.redact(str(e))
+        _record(args.account, n=None, status="error",
+                error=runs_mod.failure_error("community_search_failed", text))
         head = text.split(":", 1)[0].strip()
         code = head if head in ("budget_exhausted", "provider_rate_limited") else "upstream_refused"
         return _fail(args, 1, code, f"コミュニティを探せませんでした: {text}")

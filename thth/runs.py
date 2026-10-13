@@ -27,11 +27,26 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 from . import api_diagnostic
 from . import accounts as accounts_mod
 from . import engagements as engagements_mod
 from . import jst as jst_mod
+
+# runs の error に足してよいのは**静的な符丁だけ**（自由な文・語・URL は残さない）。
+_FAILURE_CODE = re.compile(r'\b(?:x_[a-z0-9_]+|provider_rate_limited|budget_exhausted|budget_unreadable'
+                           r'|[A-Z][A-Za-z]*(?:Error|Rejected|Timeout))\b')
+
+
+def failure_error(base: str, text) -> str:
+    """`<base>: <符丁…>`。断りの文面から符丁だけを拾って足す（10/13: 両レーンの
+    コミュニティ検索の失敗が `community_search_failed` だけで、原因が追えなかった）。"""
+    codes = []
+    for code in _FAILURE_CODE.findall(str(text)):
+        if code not in codes:
+            codes.append(code)
+    return base + (': ' + ' '.join(codes[:4]) if codes else '')
 
 # **出力の行に必ず出る 11 個**（順序も含めて既存の形のまま・読む側の互換）。
 RUNS_FIELDS = [

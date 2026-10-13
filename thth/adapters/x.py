@@ -1117,7 +1117,7 @@ class XAdapter(base.Adapter):
                                        + (': ' + known if known else ''), http_status=exc.code) from None
                 except (httpsafe.EndpointRejected, urllib.error.URLError, TimeoutError, OSError, ValueError,
                         base.AdapterError) as exc:
-                    raise AdapterError('コミュニティの検索: x_read_failed: 結果不明（' + self._scrub(exc) + '）') from None
+                    raise AdapterError('コミュニティの検索: x_read_failed: 結果不明（' + type(exc).__name__ + ': ' + self._scrub(exc) + '）') from None
                 data = value.get('data')
                 if status == 200 and isinstance(data, list):
                     n = len(data)
@@ -1227,7 +1227,7 @@ class XAdapter(base.Adapter):
                                        + (': ' + known if known else ''), http_status=exc.code) from None
                 except (httpsafe.EndpointRejected, urllib.error.URLError, TimeoutError, OSError, ValueError,
                         base.AdapterError) as exc:
-                    raise AdapterError(what + ': x_read_failed: 結果不明（' + self._scrub(exc) + '）') from None
+                    raise AdapterError(what + ': x_read_failed: 結果不明（' + type(exc).__name__ + ': ' + self._scrub(exc) + '）') from None
                 if status != 200 or not (isinstance(value.get('data'), list) or value.get('data') is None
                                          and (isinstance(value.get('meta'), dict) or isinstance(value.get('errors'), list))):
                     raise AdapterError(what + ': x_read_response_invalid')
