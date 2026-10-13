@@ -102,12 +102,14 @@ def private_key():
 
 def openssl():
     # Fixed trusted locations, not PATH or a shell. No inherited OpenSSL config/modules.
+    # OpenSSL 3 or 4 (Homebrew made 4 the default on 2026-10-11); LibreSSL is refused.
+    # The error name stays openssl_3_required (a published refusal code).
     for binary in ('/opt/homebrew/bin/openssl', '/usr/bin/openssl', '/usr/local/bin/openssl'):
         if not os.path.isfile(binary): continue
         try:
             result = subprocess.run([binary, 'version'], capture_output=True, timeout=5,
                                     env={'PATH': '/usr/bin:/bin', 'OPENSSL_CONF': '/dev/null'})
-            if result.returncode == 0 and re.match(rb'OpenSSL 3\.', result.stdout): return binary
+            if result.returncode == 0 and re.match(rb'OpenSSL [34]\.', result.stdout): return binary
         except (OSError, subprocess.SubprocessError): pass
     raise RelayError('openssl_3_required')
 
