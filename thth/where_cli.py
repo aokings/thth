@@ -127,7 +127,8 @@ MORE_MIN_N = 5
 FILTER_BASIS = {
     "ja": ("日本語だけ: 本文にひらがなかカタカナがある（漢字だけの行は外れる。X は query に lang:ja を"
            "足し、X の判定に任せる）"),
-    "question": "問いかけだけ: 検索語を外した本文に「？」か「?」がある",
+    "question": ("「？」のあるものだけ: 検索語を外した本文に「？」か「?」がある（独り言・反語の「？」も入る。"
+                 "相手が返信を求めているかは見ていない——全文を読んで決める）"),
     "no_replies": "返信の付いていないものだけ: 返信の数が無いか 0（Threads は has_replies が真のものを外す）",
 }
 _KANA = re.compile(r"[ぁ-ゟ゠-ヿ]")
@@ -993,7 +994,8 @@ def register(sub) -> None:
     p.add_argument("--ja", action="store_true",
                    help="日本語だけ（X は query に lang:ja を足して読む本数を減らす・他は手元で絞る）")
     p.add_argument("--question", action="store_true",
-                   help="問いかけだけ（検索語を外した本文に「？」か「?」がある）")
+                   help="「？」のあるものだけ（検索語を外した本文に「？」か「?」がある。独り言・反語も入る。"
+                        "返信を求めているかは見ていない）")
     p.add_argument("--no-replies", action="store_true", dest="no_replies",
                    help="返信の付いていないものだけ（返信の数が無いか 0・Threads は has_replies が真のものを外す）")
     p.add_argument("--keep", action="store_true",

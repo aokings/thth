@@ -2,7 +2,7 @@
 
 - 日本語だけ: X は query に `lang:ja` を足す（語に `lang:` があれば重ねない・手元では絞らない）。
   他の媒体は本文にひらがなかカタカナがある行だけ。
-- 問いかけだけ: 検索語を外した本文に「？」か「?」。
+- 「？」のあるものだけ: 検索語を外した本文に「？」か「?」（返信を求めているかは見ない・10/15）。
 - 返信の付いていないものだけ: 返信の数が無いか 0。Threads は `has_replies` が真のものを外す。
 - 絞った数は `dropped` に（付けた絞り込みの鍵だけ）。
 """
@@ -90,7 +90,7 @@ def test_返信の付いていないものだけ_has_repliesも見る(threads_ac
 def test_組み合わせとCLIの旗(threads_account, capsys):
     assert cli.main(["where", "one", "珈琲", "--ja", "--question", "--no-replies"]) == 0
     out = capsys.readouterr().out
-    assert "絞り込み: 日本語だけ" in out and "絞り込み: 問いかけだけ" in out
+    assert "絞り込み: 日本語だけ" in out and "絞り込み: 「？」のあるものだけ" in out and "返信を求めているかは見ていない" in out
     assert "珈琲はどれがいい？" in out and "coffee" not in out and "珈琲の豆は" not in out
 
 
