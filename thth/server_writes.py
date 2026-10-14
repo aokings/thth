@@ -244,6 +244,9 @@ def direct_send(context, request, via):
     # 次の一手は `thth inflight <口座>`（見る）と `… resolve`（解く）。
     if dry.action=='inflight': error('publication_unconfirmed','inflight')
     if dry.action=='locked': error('account_busy')
+    # 媒体がアカウント側の断りを返して止めた口座（3.19.2・`publish_hold`）。詳細の語は添えない
+    # （Worker の知っている止めの語は burst・owner だけ）。戻すのは運営者の CLI。
+    if dry.action=='publish_held': error('account_stopped')
     if dry.exit_code or not dry.digest: error('invalid_draft')
     def before(locked_cfg):
         if current(context,account,write=True)!=locked_cfg: error('credential_changed')
@@ -253,6 +256,7 @@ def direct_send(context, request, via):
                           confirm=dry.digest,log=lambda _:None,before_execute=before,
                           lock_context=server_files.account_locks(account,cfg),origin=origin)
     if result.action=='locked': error('account_busy')
+    if result.action=='publish_held': error('account_stopped')
     if result.action=='inflight': error('publication_unconfirmed')
     if result.exit_code or result.mode!='production' or not result.post_id: error('publication_failed')
     try:

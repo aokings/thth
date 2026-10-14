@@ -341,6 +341,15 @@ def _signature_state(check) -> str:
     return "verified"
 
 
+def _publish_hold(name):
+    from . import publish_hold
+    row = publish_hold.held(name)
+    if row is None:
+        return None
+    return {"reason": row.get("reason"), "held_at": row.get("held_at"),
+            "message": publish_hold.message(name, row)}
+
+
 def board_summary(now=None) -> dict:
     """アカウント・最終投稿・approved 待ち・inflight・型外・要確認の骨（設計 §4.6・
     外部レビュー再レビュー C で `needs_review`／`approval_stale_count` を追加）。"""
@@ -457,6 +466,9 @@ def board_summary(now=None) -> dict:
             "type_mismatch": type_mismatch,
             "retracted_count": len(retracted_ids),
             "inflight": inflight.get("file") if inflight else None,
+            # 媒体がアカウント側の断りを返して止めた自動の投稿（3.19.2・`publish_hold`）。
+            # 理由の符丁と時刻だけ（無ければ None）。戻すのは `thth account resume`。
+            "publish_hold": _publish_hold(name),
             # endpoint は check の秘密なので board は env を読まない。最後の run が
             # 安全な状態ファイルへ残した「設定有無・配送結果」だけを表示する。
             "incident_notifications": incident_mod.summary(account_cfg, state_dir),

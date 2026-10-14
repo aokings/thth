@@ -257,7 +257,9 @@ def show_changes(results) -> int:
 
 
 def cmd_resume(args) -> int:
-    from . import guard
+    """安全装置の止め（`guard`）と、媒体の断りで止めた自動の投稿（`publish_hold`・3.19.2）を
+    戻す。どちらも人の口からだけ（MCP には出さない）。"""
+    from . import guard, publish_hold
     try:
         admin_log.actor(getattr(args, "by", None))
     except ValueError as exc:
@@ -271,11 +273,20 @@ def cmd_resume(args) -> int:
         return _fail("ledger_unavailable")
     except (OSError, ValueError):
         return _fail("guard_state_unavailable")
+    try:
+        publish_resumed = publish_hold.release(args.name, by=args.by, via="cli")
+    except (OSError, ValueError):
+        return _fail("publish_hold_unavailable")
     if getattr(args, "json", False):
-        print(json.dumps({"account": args.name, "resumed": resumed}, ensure_ascii=False))
-    elif resumed:
+        print(json.dumps({"account": args.name, "resumed": resumed,
+                          "publish_resumed": publish_resumed}, ensure_ascii=False))
+        return 0
+    if resumed:
         print(f"{args.name}: 止めた印を外しました。公開・削除・予約を再び受け付けます")
-    else:
+    if publish_resumed:
+        print(f"{args.name}: 媒体の断りで止めていた自動の投稿を再開します。次の run から投げます"
+              "（まだ断られたら 1 回でまた止まります）")
+    if not resumed and not publish_resumed:
         print(f"{args.name}: 止まっていません（何も変えていません）")
     return 0
 
@@ -298,10 +309,15 @@ def cmd_status(args) -> int:
     if getattr(args, "json", False):
         print(json.dumps(row, ensure_ascii=False))
         return 0
-    return show_status(row)
+    # 媒体の断りで止めた自動の投稿（3.19.2）。手元の道だけで言う（`status()` の形は
+    # 遠くの道・/activity と共有なので変えない）。
+    from . import publish_hold
+    hold_row = publish_hold.held(args.name)
+    return show_status(row, publish_hold_line=(publish_hold.message(args.name, hold_row)
+                                               if hold_row is not None else None))
 
 
-def show_status(row) -> int:
+def show_status(row, *, publish_hold_line=None) -> int:
     """`thth account status` の人向けの表示（手元の道と遠くの道が共有・`--json` の形を受ける）。"""
     s = row["settings"]
     print(f"{row['account']}")
@@ -325,7 +341,9 @@ def show_status(row) -> int:
         print(f"  → **止まっています**: {REASON_WORDS.get(reason, reason)}"
               f"（{row['stopped'].get('stopped_at') or '時刻不明'}）。"
               f"戻すのは持ち主: https://thth.me/activity か thth account resume {row['account']} --by <名前>")
-    else:
+    if publish_hold_line:
+        print(f"  → **{publish_hold_line}**")
+    if not row["stopped"] and not publish_hold_line:
         print("  → 動いています")
     return 0
 

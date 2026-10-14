@@ -3673,6 +3673,9 @@ def cmd_board(args) -> int:
             mismatch_fields = row.get("inflight_mismatch_fields")
             if inflight != "(なし)" and mismatch_fields:
                 print(f"  食い違った項目: {', '.join(mismatch_fields)}")
+            hold = row.get("publish_hold")
+            if hold:
+                print(f"  **{hold['message']}**")
             if inflight != "(なし)":
                 print("  停止診断: "
                       f"開始={row.get('inflight_started') or '不明'} "

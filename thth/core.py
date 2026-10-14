@@ -25,6 +25,7 @@ from . import media as media_mod
 from . import jst, leave_gate
 from . import lock as lock_mod
 from . import postid as postid_mod
+from . import publish_hold as publish_hold_mod
 from . import queuefile
 from . import tags as tags_mod
 from . import redact as redact_mod
@@ -250,6 +251,20 @@ def throw_once(account_name: str, *, production_flag: bool = False,
 
     account_cfg = accounts_mod.load_account(account_name)
     state_dir = accounts_mod.state_dir_for(account_name)
+
+    # **媒体がアカウント側の断りを返した口座は、自動では投げ直さない**（3.19.2・
+    # `publish_hold`）。10/14 に kopicha-x が X の 403（x_not_permitted）を 61 回
+    # 受けた。スレッド連投も同じ口座から出るので、その分岐より前で止める。
+    # runs には書かない（inflight で止まっている run と同じ・毎回同じ行が積もるだけ）。
+    # 止まっていることは死活通知・運用通知・board・morning が言う。
+    hold_row = publish_hold_mod.held(account_name)
+    if hold_row is not None:
+        msg = publish_hold_mod.message(account_name, hold_row)
+        log(msg)
+        if bool(account_cfg.get("production")) and production_flag:
+            return ThrowResult(exit_code=2, mode="production", action="publish_held", message=msg,
+                               file=hold_row.get("file"),
+                               error=hold_row.get("reason") or publish_hold_mod.UNREADABLE)
 
     # **スレッド連投を先に見る**（独立検収 2026-09-11・P1-1）。
     # v2 は**段ごとにロックを取り直す**ので、ここで account+repo ロックを
@@ -918,6 +933,9 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
                     status="error", error=err, api_diagnostic=detail_data,
                     extra=_remote_extra(publish_result))
+        # アカウント側の断り（X の x_not_permitted）なら、次の run から投げ直さない（3.19.2）。
+        publish_hold_mod.note_refusal(account_name, account_cfg, err, file=chosen.path,
+                                      via="timer", log=log)
         return ThrowResult(exit_code=1, mode=mode, action="post", message="公開に失敗しました",
                             file=chosen.path, error=err, api_diagnostic=detail_data)
 
@@ -1169,6 +1187,17 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             log(msg)
             return ThrowResult(exit_code=1, mode="rehearsal", action="inflight", message=msg,
                                 file=existing_inflight.get("file"))
+        # 媒体がアカウント側の断りを返して止めた口座（3.19.2）。手の `thth send` も断る
+        # ——同じ制限に同じ書き込みを重ねない。**dry-run でも断る**（上の inflight と同じ
+        # 理由: 次に `--production` を付けたら必ず断られる）。1 本だけ試す口は持たない。
+        # 人が X の画面で直したら `thth account resume` で戻し、まだ断られるなら 1 回で
+        # また止まる——それが「1 本だけ試す」に当たる。
+        hold_row = publish_hold_mod.held(account_name)
+        if hold_row is not None:
+            msg = publish_hold_mod.message(account_name, hold_row)
+            log(msg)
+            return ThrowResult(exit_code=2, mode="rehearsal", action="publish_held", message=msg,
+                               error=hold_row.get("reason") or publish_hold_mod.UNREADABLE)
 
         production = bool(account_cfg.get("production")) and production_flag
         mode = "production" if production else "rehearsal"
@@ -1361,6 +1390,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             _append_run(state_dir, account_name, run_id, mode, "post", None, None, now,
                         status="error", error=err, api_diagnostic=detail_data,
                         extra=_remote_extra(result))
+            publish_hold_mod.note_refusal(account_name, account_cfg, err, via="send", log=log)
             return ThrowResult(exit_code=1, mode=mode, action="post",
                                 message="公開に失敗しました", error=err, api_diagnostic=detail_data)
         if getattr(result, "remote_state", None):

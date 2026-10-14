@@ -28,6 +28,7 @@ from . import media_delivery
 from . import jst, leave_gate
 from . import lock as lock_mod
 from . import postid as postid_mod
+from . import publish_hold as publish_hold_mod
 from . import queuefile
 from . import forms as forms_mod
 from . import redact as redact_mod
@@ -229,6 +230,11 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
     if inflight_mod.read(state_dir):
         return StepResult("stopped", None,
                            "inflight が残っています（前の公開の結果が未確定）")
+    # 媒体がアカウント側の断りを返して止めた口座（3.19.2・`publish_hold`）。
+    if production:
+        hold_row = publish_hold_mod.held(account_name)
+        if hold_row is not None:
+            return StepResult("stopped", None, publish_hold_mod.message(account_name, hold_row))
 
     ok, err, tree_sha = writeback_mod.sync_repo(repo_dir)
     if not ok:
@@ -481,6 +487,9 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
                                file=os.path.join(account_cfg["repo_dir"], rel_path))
         inflight_mod.clear(state_dir)
         threadrun.mark(run, index, threadrun.PENDING, note=err, api_diagnostic=detail_data)
+        publish_hold_mod.note_refusal(account_name, account_cfg, err,
+                                      file=os.path.join(account_cfg["repo_dir"], rel_path),
+                                      via="timer", log=log)
         return StepResult("failed", index, f"公開に失敗しました: {err}",
                            run_id=run["run_id"], api_diagnostic=detail_data,
                                file=os.path.join(account_cfg["repo_dir"], rel_path))

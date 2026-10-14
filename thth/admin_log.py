@@ -47,6 +47,8 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    'credential_added', 'credential_removed',
                    # 安全装置（設計 3.12.0 §3.3）。急な連投で止めた・持ち主が戻した。理由の語だけ。
                    'guard_stopped', 'guard_resumed',
+                   # 媒体がアカウント側の断り（x_not_permitted）を返して自動の投稿を止めた・人が戻した（3.19.2）。
+                   'publish_held', 'publish_resumed',
                    # 段 3: 設定（approval・安全装置の数値）の変更、持ち主の /activity からの予約の取り消し、
                    # MCP の鍵の発行し直し・取り消し。値の前後と語だけ（bearer も hash も入れない）。
                    'settings_set', 'schedule_cancelled', 'credential_rotated', 'credential_revoked',
@@ -258,7 +260,8 @@ def transaction(*, rollback=None):
                                       'invite_created', 'invite_used', 'invite_revoked',
                                       'credential_added', 'credential_removed',
                                       'credential_rotated', 'credential_revoked', 'settings_set',
-                                      'schedule_cancelled', 'guard_stopped', 'guard_resumed'):
+                                      'schedule_cancelled', 'guard_stopped', 'guard_resumed',
+                                      'publish_held', 'publish_resumed'):
                     continue
                 cfg = accounts.load_account(event['account'])
                 admin_notifications.notify(event, cfg)

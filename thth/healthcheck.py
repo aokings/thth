@@ -37,6 +37,10 @@ _KNOWN_REASONS = {
     # 媒体に訊いても公開の結果が決まらなかった（設計 3.3.1 §3）。次の一手は人が
     # `thth inflight <account> resolve` で決めること。
     "inflight_unresolved",
+    # X がアカウント側の断り（書き込みの制限）を返し、自動の投稿を止めた（3.19.2・
+    # `publish_hold`）。止めた印が読めないときも止まっている側に倒す。次の一手は人が
+    # X の画面で直してから `thth account resume <account> --by <名前>`。
+    "x_not_permitted", "publish_hold_unreadable",
 }
 _KNOWN_EXCEPTIONS = {
     "TimeoutError": "exception_timeout",
@@ -124,6 +128,12 @@ def has_blocking_state(account: str, state_dir: str) -> bool:
         if inflight_mod.read(state_dir):
             return True
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return True
+    try:
+        from . import publish_hold
+        if publish_hold.held(account) is not None:
+            return True
+    except (OSError, ValueError):
         return True
     try:
         from . import threadrun
@@ -239,6 +249,11 @@ def sanitize_reason(raw, *, action: str | None = None,
     if raw in _KNOWN_REASONS:
         return raw
     lower = raw.lower()
+    # アカウント側の断り（3.19.2）は HTTP の番号より先に見る（`publish_http_403` では
+    # 原稿の問題と見分けられず、次の一手を言えない）。
+    for code in ("publish_hold_unreadable", "x_not_permitted"):
+        if code in lower:
+            return code
     for code in ("text_mismatch_before_writeback", "text_mismatch_after_rebase",
                  "unusable_post_id", "repo_sync_failed", "approval_stale"):
         if code in lower:
@@ -269,6 +284,8 @@ def next_action_for(reason: str) -> str:
         return "inspect_queue_and_inflight"
     if reason == "inflight_unresolved":
         return "resolve_inflight_by_hand"
+    if reason in {"x_not_permitted", "publish_hold_unreadable"}:
+        return "fix_account_then_resume"
     if reason in {"unusable_post_id", "publish_result_unknown", "publish_timeout"} \
             or reason.startswith("publish_http_5"):
         return "verify_remote_post_then_resolve_inflight"
@@ -303,6 +320,9 @@ def reason_text(reason: str) -> str:
         "text_mismatch_after_rebase": "同期後に送信内容と repo の内容が食い違いました",
         "unusable_post_id": "媒体が保存できない形式の post_id を返しました",
         "inflight_unresolved": "媒体に問い合わせても公開の結果が決まらず inflight で停止しています",
+        "x_not_permitted": ("X がこのアカウントの書き込みを断りました（アカウント側の制限）。"
+                            "自動の投稿を止めています"),
+        "publish_hold_unreadable": "自動の投稿を止めた印が読めないため、止まっている側に倒しています",
         "exception_process_error": "定期実行が予期しない例外で停止しました",
         "unknown": "停止理由を安全に特定できませんでした",
     }
@@ -348,6 +368,9 @@ def next_action_text(action: str) -> str:
             "媒体の画面で出たかどうかを確かめ、thth inflight <account> resolve"
             " --not-published か --published <post_id> で解いてください",
         "inspect_repo_sync": "repo の同期状態と push 失敗を確認してください",
+        "fix_account_then_resume": ("X の画面でアカウントの制限（ロック・確認の求め）を解いてから、"
+                                    "thth account resume <account> --by <名前> で自動の投稿を"
+                                    "再開してください（再開までは投げ直しません）"),
         "inspect_running_process": "実行中プロセスと timer の重複を確認してください",
         "inspect_timer_log": "timer のログで例外の発生箇所を確認してください",
         "inspect_board_and_timer_log": "thth board と timer のログを確認してください",

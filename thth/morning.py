@@ -752,6 +752,17 @@ def _inflight(node):
             "next_action_code": diagnostic.get("next_action_code")}
 
 
+def _publish_hold_row(name):
+    """止めていれば `{"reason", "held_at", "next_action_code"}`、動いていれば None。"""
+    from . import healthcheck, publish_hold
+    row = publish_hold.held(name)
+    if row is None:
+        return None
+    reason = row.get("reason") or publish_hold.UNREADABLE
+    return {"reason": reason, "held_at": row.get("held_at"),
+            "next_action_code": healthcheck.next_action_for(reason)}
+
+
 def _last_notification(name, cfg):
     """最後に SMTP が受領した運用通知（`incident.summary()` と同じ値）。宛先は出さない。"""
     from . import incident
@@ -1131,6 +1142,8 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
             "confirm_items": _guard(lambda name=name, cfg=cfg: _confirm_rows(name, cfg, now)),
             "queue": _queue_cell(node),
             "inflight": _inflight(node),
+            # 媒体がアカウント側の断りを返して止めた自動の投稿（3.19.2）。符丁と時刻だけ。
+            "publish_hold": _guard(lambda name=name: _publish_hold_row(name)),
             # 最後に送った運用通知（設計 3.3.1 §5）。届いたかを人が受信箱と照合する。
             "last_notification": _guard(lambda cfg=cfg, name=name: _last_notification(name, cfg)),
             "changes_since_last_read": ((node or {}).get("changes_since") or {}).get("changes"),
@@ -1597,6 +1610,14 @@ def _render_today(account, node, out) -> None:
     if inflight["present"]:
         out(f"    inflight: {inflight['reason_code']}（{inflight['since']}）"
             f" 次 {inflight['next_action_code']}")
+    hold = node.get("publish_hold") or {}
+    if hold.get("cannot_say") is not None:
+        out(f"    自動の投稿の止め: 言えない: {hold['cannot_say']}")
+    elif hold.get("value"):
+        value = hold["value"]
+        out(f"    自動の投稿を止めています: {value['reason']}（{value['held_at'] or '時刻不明'} から）"
+            f" 次 {value['next_action_code']}"
+            f"（X の画面で直してから thth account resume {account} --by <名前>）")
     sent = node.get("last_notification")
     if sent is not None:
         from . import incident
