@@ -5,6 +5,9 @@
 
 - 資格の範囲（範囲外は `scope_unavailable`〔書く口と同じ〕・退出中は `account_leaving`）。止まった口座
   （安全装置）でも読むのは許す。
+- 10/15（点検 B-17・B-18）から、枝（`thread_read`）・絡みに行く先（`where_to_appear`）・仮名の履歴
+  （`who_is_this`）・予定の一覧（`schedule_list`）も同じ作法で通す。本文は全文。答えが thth.me の
+  1 件の上限（`api_requests.RESULT_MAX`）に当たるときは、後ろから落として続きの印を付ける。
 - `limit`（省略 20・1〜100）で一覧を先頭から切る。
 - `collect` は口座ごとに 10 分に 1 回まで（`collect_too_soon` と `next_at`）。
 - 断りは静的な符丁。媒体の API の失敗は `upstream_unavailable` と短い理由
@@ -26,7 +29,8 @@ from . import accounts, jst
 from .report_service import ReportContext, ReportServiceError
 
 OPERATIONS = frozenset(('posts', 'replies', 'measured', 'collect', 'mentions',
-                        'topics_search', 'profile', 'location_search'))
+                        'topics_search', 'profile', 'location_search',
+                        'thread_read', 'where_to_appear', 'who_is_this', 'schedule_list'))
 # 断りの符丁（`server_writes.SAFE_ERRORS` に足す）。
 REASONS = frozenset(('collect_too_soon', 'upstream_unavailable', 'read_unavailable'))
 # `upstream_unavailable` に添える静的な理由（媒体の返した文を写せないとき）。
@@ -43,11 +47,29 @@ _FIELDS = {
     'replies': (('limit', 'refresh', 'post_id'), ()),
     'measured': (('limit', 'post_id'), ()),
     'collect': ((), ()),
-    'mentions': (('limit', 'refresh'), ()),
-    'topics_search': (('query', 'limit'), ('query',)),
+    'mentions': (('limit', 'refresh', 'since'), ()),
+    'topics_search': (('query', 'limit', 'recent'), ('query',)),
     'profile': (('username',), ('username',)),
     'location_search': (('query',), ('query',)),
+    'thread_read': (('post_id', 'since', 'max_messages', 'limit'), ('post_id',)),
+    'where_to_appear': (('words', 'recent', 'limit', 'since', 'exclude_engaged', 'max_per_author', 'also',
+                         'aggregate', 'lexicon', 'suggest', 'tag', 'author', 'keep', 'ja', 'question',
+                         'no_replies'), ()),
+    'who_is_this': (('author_key', 'username', 'profile'), ()),
+    'schedule_list': (('days',), ()),
 }
+# 欄の型（範囲と中身の検査は CLI の関数が言う。ここは型だけ）。
+_TYPES = {
+    'limit': int, 'refresh': bool, 'post_id': str, 'query': str, 'username': str, 'since': str,
+    'recent': bool, 'max_messages': int, 'words': list, 'exclude_engaged': bool, 'max_per_author': int,
+    'also': list, 'aggregate': bool, 'lexicon': dict, 'suggest': bool, 'tag': bool, 'author': str,
+    'keep': bool, 'ja': bool, 'question': bool, 'no_replies': bool, 'author_key': str, 'profile': bool,
+    'days': int,
+}
+# 答えの大きさの目安（JSON の UTF-16 の長さ）。thth.me の 1 件の上限（128 KB）より少し小さく取る。
+RESULT_BUDGET = 120_000
+TRIMMED_NOTE = ('答えの大きさの上限（thth.me の 1 件 128 KB）で {n} 件を後ろから落としました'
+                '（--limit を下げるか、語を分けて呼んでください）')
 
 _URL = re.compile(r'https?://\S+')
 _PATH = re.compile(r'(?<![\w.])(?:~|\.{1,2})?(?:/[\w.@+\-]+){2,}/?')
@@ -88,11 +110,12 @@ def _validate(request):
             error('invalid_request')
     if 'limit' in request and (type(request['limit']) is not int or not 1 <= request['limit'] <= MAX_LIMIT):
         error('invalid_options')
-    if 'refresh' in request and type(request['refresh']) is not bool:
+    for name, kind in _TYPES.items():
+        if name in request and type(request[name]) is not kind:
+            error('invalid_request')
+    if 'post_id' in request and not request['post_id'].strip():
         error('invalid_request')
-    if 'post_id' in request and (not isinstance(request['post_id'], str) or not request['post_id'].strip()):
-        error('invalid_request')
-    for name in ('query', 'username'):
+    for name in ('query', 'username', 'since', 'author', 'author_key', 'post_id'):
         if name in request and len(request[name]) > 200:
             error('invalid_request')
 
@@ -223,7 +246,8 @@ def _mentions(account, request, cfg):
     observed = None
     try:
         rows = reads._fetch(account, capability='mentions',
-                            call=lambda adapter: reads.mentions_call(adapter, account),
+                            call=lambda adapter: reads.mentions_call(adapter, account,
+                                                                     since=request.get('since')),
                             narrowed_note=reads.MENTIONS_NARROWED_NOTE)
         observed = len(rows)
     except reads.ReadFailed as failed:
@@ -238,14 +262,15 @@ def _topics_search(account, request, cfg):
     from . import threads_read_cli as reads
     query = request['query'].strip()
     limit = _limit(request)
+    search_type = 'RECENT' if request.get('recent') else 'TOP'
     try:
         result = reads._fetch(account, capability='keyword_search',
                               call=lambda adapter: reads.search_call(adapter, account, query,
-                                                                     search_type='TOP', limit=limit),
+                                                                     search_type=search_type, limit=limit),
                               narrowed_note=reads.SEARCH_NARROWED_NOTE)
     except reads.ReadFailed as failed:
         _refuse(failed.kind, failed.message)
-    material = reads.search_json(result, account, query, search_type='TOP', limit=limit)
+    material = reads.search_json(result, account, query, search_type=search_type, limit=limit)
     # 集計と指す先と本文の全文（保存しない）。自由文の理由は 1 行に落とす。
     material['tag_cannot_say'] = short(material.get('tag_cannot_say'))
     material['replied_lookup'] = dict(material['replied_lookup'],
@@ -275,10 +300,142 @@ def _location_search(account, request, cfg):
     return retract_cli.location_json(account, query, rows)
 
 
+# --------------------------------------------------------------------------
+# 枝・絡みに行く先・仮名の履歴・予定（10/15・点検 B-17・B-18）
+# --------------------------------------------------------------------------
+
+def _size(value) -> int:
+    from .api_requests import _size as size
+    return size(value)
+
+
+def _invalid(exc):
+    """問いが受け取れない（CLI の断りの 1 行）。理由は短くして添える。"""
+    error('invalid_request', short(str(exc)))
+
+
+def _scrub(lines):
+    """`cannot_say` の自由文（媒体の断り・path が混ざりうる）を 1 行に落とす。"""
+    return [short(line) for line in lines or []]
+
+
+def _fit_thread(result):
+    """大きすぎる枝は後ろから落とし、`provenance.continue_from`（続きを読む `since`）を付ける。"""
+    over = _size(result) - RESULT_BUDGET
+    messages = result['messages']
+    if over <= 0 or not messages:
+        return result
+    cut = len(messages)
+    while cut > 0 and over > 0:
+        cut -= 1
+        over -= _size(messages[cut]) + 1
+    kept = messages[:cut]
+    result = dict(result, messages=kept)
+    result['counts'] = dict(result['counts'], messages=len(kept), truncated=True)
+    result['provenance'] = dict(result['provenance'],
+                                continue_from=kept[-1].get('timestamp') if kept else None,
+                                size_trimmed=len(messages) - len(kept))
+    return result
+
+
+def _thread_read(account, request, cfg):
+    from . import adapters, thread_read
+    from .adapters import base
+    media = cfg.get('media')
+    if thread_read.CAPABILITY not in adapters.capabilities_for(media):
+        error('unsupported_operation')
+    if not adapters.adapter_class(media).has_token(accounts.load_token(cfg)):
+        error('permission_unavailable')
+    post_id = request['post_id']
+
+    def record(**fields):
+        # runs には件数だけ（`thth thread` と同じ 1 行・本文と username は書かない）。
+        thread_read._record_run(account, media=media, post_id=post_id, **fields)
+    try:
+        result = thread_read.answer(account, post_id, since=request.get('since'),
+                                    max_messages=request.get('max_messages', thread_read.DEFAULT_MAX_MESSAGES),
+                                    limit=request.get('limit'))
+    except thread_read.ThreadReadError as exc:
+        _invalid(exc)
+    except base.PermissionMissing:
+        record(messages=None, truncated=False, status='error', error='permission_unavailable')
+        error('permission_unavailable')
+    except RuntimeError as exc:  # AdapterError はこの子
+        record(messages=None, truncated=False, status='error', error='thread_read_failed')
+        error('upstream_unavailable', short(str(exc)))
+    record(messages=result['counts']['messages'], truncated=result['counts']['truncated'],
+           status='ok', error=None)
+    provenance = dict(result['provenance'], ledgers_unreadable=_scrub(result['provenance'].get('ledgers_unreadable')))
+    return _fit_thread(dict(result, provenance=provenance))
+
+
+def _fit_where(result):
+    """大きすぎる答えは、いちばん長い語の一覧の後ろから落とす（語ごとに `trimmed` と `cannot_say` に 1 行）。"""
+    over = _size(result) - RESULT_BUDGET
+    if over <= 0:
+        return result
+    entries = [(node, word, entry) for node in result['by_account'].values()
+               for word, entry in node['by_word'].items() if entry.get('posts')]
+    while over > 0 and entries:
+        node, word, entry = max(entries, key=lambda item: len(item[2]['posts']))
+        if not entry['posts']:
+            break
+        over -= _size(entry['posts'].pop()) + 1
+        entry['trimmed'] = entry.get('trimmed', 0) + 1
+    for node, word, entry in entries:
+        if entry.get('trimmed'):
+            node['cannot_say'].append(f'{word}: ' + TRIMMED_NOTE.format(n=entry['trimmed']))
+    return result
+
+
+def _where(account, request, cfg):
+    from . import where_cli
+    try:
+        lexicon = where_cli.check_lexicon(request['lexicon']) if 'lexicon' in request else None
+        result = where_cli.answer(
+            account_name=account, words=request.get('words') or [], recent=request.get('recent', False),
+            limit=request.get('limit'), since=request.get('since'),
+            exclude_engaged=request.get('exclude_engaged', False),
+            max_per_author=request.get('max_per_author'), also=request.get('also'),
+            aggregate_mode=request.get('aggregate', False), lexicon=lexicon,
+            suggest=request.get('suggest', False), tag=request.get('tag', False),
+            author=request.get('author'), keep=request.get('keep', False), ja=request.get('ja', False),
+            question=request.get('question', False), no_replies=request.get('no_replies', False))
+    except where_cli.WhereError as exc:
+        _invalid(exc)
+    # 自由文の理由（媒体の断り・path）は 1 行に落とす。本文と指す先はそのまま（保存しない）。
+    result['cannot_say'] = _scrub(result.get('cannot_say'))
+    for node in result['by_account'].values():
+        node['cannot_say'] = _scrub(node.get('cannot_say'))
+        if isinstance(node.get('kept'), dict) and node['kept'].get('cannot_say'):
+            node['kept'] = dict(node['kept'], cannot_say=short(node['kept']['cannot_say']))
+    return _fit_where(result)
+
+
+def _who(account, request, cfg):
+    from . import who_cli
+    try:
+        result = who_cli.answer(account_name=account, author_key=request.get('author_key'),
+                                username=request.get('username'), profile=request.get('profile', False))
+    except who_cli.WhoError as exc:
+        _invalid(exc)
+    return dict(result, cannot_say=_scrub(result.get('cannot_say')))
+
+
+def _schedule_list(account, request, cfg):
+    from . import report
+    days = request.get('days')
+    if days is not None and not 1 <= days <= 3650:
+        error('invalid_options')
+    # `thth schedule <口座> --json` と同じ行（承認済みと下書き・日付順）。
+    return {'account': account, 'schedule': report.schedule(account, days=days)}
+
+
 _HANDLERS = {
     'posts': _posts, 'replies': _replies, 'measured': _measured, 'collect': _collect,
     'mentions': _mentions, 'topics_search': _topics_search, 'profile': _profile,
-    'location_search': _location_search,
+    'location_search': _location_search, 'thread_read': _thread_read, 'where_to_appear': _where,
+    'who_is_this': _who, 'schedule_list': _schedule_list,
 }
 
 

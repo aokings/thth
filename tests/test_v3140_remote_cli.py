@@ -46,7 +46,8 @@ class FakeWorker:
                 worker.calls.append({"method": self.command, "path": self.path,
                                      "auth": self.headers.get("authorization"),
                                      "type": self.headers.get("content-type"),
-                                     "body": json.loads(raw) if raw else None})
+                                     "body": json.loads(raw) if raw and self.command != "PUT" else None,
+                                     "raw": raw})
                 status, body, headers = worker.queue.pop(0) if worker.queue else worker.default(worker.calls[-1])
                 data = json.dumps(body, ensure_ascii=False).encode()
                 self.send_response(status)
@@ -59,6 +60,7 @@ class FakeWorker:
 
             do_GET = _answer
             do_POST = _answer
+            do_PUT = _answer  # 添付の置き場（10/15 点検 B-18）
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = "http://127.0.0.1:%d" % self.server.server_address[1]
@@ -290,12 +292,14 @@ def test_schedule_は_draft_put_のあと_schedule_request(worker, capsys):
     assert worker.calls[1]["body"] == {"account": ACCOUNT, "draft_id": "d" * 64}
 
 
-def test_schedule_の一覧と添付は遠くの道では断る(worker, capsys):
+def test_schedule_の一覧と添付は遠くの道でも通る(worker, capsys):
+    """10/15（点検 B-18）から断らない。中身の試験は test_b17_remote_reads。"""
+    worker.push(200, {"account": ACCOUNT, "schedule": []})
     rc, out, err = run(capsys, "schedule", ACCOUNT)
-    assert rc == 2 and err.startswith("remote_unsupported")
+    assert rc == 0 and "これから出る予定はありません" in out
+    assert worker.calls[-1]["path"] == "/api/v1/schedule_list"
     rc, out, err = run(capsys, "send", ACCOUNT, "--media", "a.png", "--alt", "a")
-    assert rc == 2 and err.startswith("remote_unsupported: 添付")
-    assert worker.calls == []
+    assert rc == 2 and err.startswith("invalid_request: 添付のファイルを読めません")
 
 
 def test_schedule_の予約を刻む形は手元の道では断る(isolated_account, capsys):
@@ -434,7 +438,11 @@ def test_mcp_は_login_済みなら_SERVER_TOOLS_と同じ名前を出す(worker
     names = [tool["name"] for tool in server.local_tools()]
     assert {"thth_send_request", "thth_posts", "thth_replies", "thth_measured", "thth_retract_request",
             "thth_account_status", "thth_settings", "thth_topics_search"} <= set(names)
-    assert set(names) <= {tool["name"] for tool in server.SERVER_TOOLS}
+    # 枝・where・who は手元と同じ名前の道具（CLI が遠くの道を選ぶ・10/15 点検 B-17）。
+    assert {"thread_read", "where_to_appear", "who_is_this"} <= set(names)
+    assert set(names) <= {tool["name"] for tool in server.SERVER_TOOLS} | set(server.REMOTE_LOCAL_TOOLS)
+    assert "media" not in next(t for t in server.local_tools()
+                               if t["name"] == "thth_send_request")["inputSchema"]["properties"]
 
 
 def test_mcp_は_login_も台帳も無ければ今の一覧(home, monkeypatch):

@@ -1,7 +1,7 @@
 """`thth trends <account>`・`thth counts <account> <語>`——X のトレンドと語ごとの投稿数の推移
 （3.19.0・関東レーン・masaru 10/13「両方やって」）。
 
-**`build_parser()` には 1 行しか足さない**（`trends_cli.register(sub)`）。MCP には今回は足さない。
+**`build_parser()` には 1 行しか足さない**（`trends_cli.register(sub)`）。MCP は `thth_trends`・`thth_counts`（10/15・点検 B-22・CLI を呼ぶだけ）。
 
 一次資料（**L1** docs.x.com）:
   - `GET /2/trends/by/woeid/:woeid`（`max_trends` 1〜50・既定 20・`trend.fields` trend_name・tweet_count）。

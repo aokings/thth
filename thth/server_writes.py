@@ -228,18 +228,24 @@ def _refuse_if_stopped(account):
 
 def direct_send(context, request, via):
     """その場で公開する。点検は `core.send_once` と同じ（rehearsal で digest を出し、同じ digest で出す）。"""
-    _schema(request,('body','topic','reply_to'),('body',))
+    _schema(request,('body','topic','reply_to','media'),('body',) if 'media' not in request else ())
+    # 添付（確定済みの `[{media_id, alt}]`・10/15 点検 B-18）があれば本文は空でもよい（手元の `thth send --media` と同じ）。
+    if not isinstance(request.get('body'),str): error('invalid_request')
     if len(request['body'].encode())>48000: error('invalid_draft')
     for key in ('topic','reply_to'):
         if request.get(key) is not None and not isinstance(request[key],str): error('invalid_request')
     account=request['account'];cfg=current(context,account,write=True)
     if cfg.get('production') is not True: error('production_disabled')
+    rows={}
+    if 'media' in request:
+        from . import media_uploads
+        rows={'media_rows':media_uploads.draft_rows(account,context.actor,request['media'])}
     from . import postid
     reply=postid.for_account(cfg,request.get('reply_to'),account);topic=request.get('topic')
     # 返信には最短間隔を掛けない（裁定 (a)）。上限と burst には数える。
     origin=_origin(context,via);check=_guarded(context,account,'publish',origin,reply=bool(reply))
     check(cfg)
-    dry=core.send_once(account,text=request['body'],topic=topic,reply_to=reply,log=lambda _:None)
+    dry=core.send_once(account,text=request['body'],topic=topic,reply_to=reply,log=lambda _:None,**rows)
     # 前の公開の結果が分かっていない（inflight）なら、本文の断りに丸めない（3.14.3 穴 3）。
     # 次の一手は `thth inflight <口座>`（見る）と `… resolve`（解く）。
     if dry.action=='inflight': error('publication_unconfirmed','inflight')
@@ -254,7 +260,7 @@ def direct_send(context, request, via):
         return accounts.load_token(locked_cfg)
     result=core.send_once(account,text=request['body'],topic=topic,reply_to=reply,production_flag=True,
                           confirm=dry.digest,log=lambda _:None,before_execute=before,
-                          lock_context=server_files.account_locks(account,cfg),origin=origin)
+                          lock_context=server_files.account_locks(account,cfg),origin=origin,**rows)
     if result.action=='locked': error('account_busy')
     if result.action=='publish_held': error('account_stopped')
     if result.action=='inflight': error('publication_unconfirmed')
@@ -360,11 +366,11 @@ def schedule(context, request, via, extra_fields=None):
 def held_send(context, request, via, minutes):
     """`hold_minutes` が 1 以上の口座の「今すぐ」: その分だけ先の予約にする（その間は持ち主が取り消せる）。"""
     import datetime as _dt
-    _schema(request,('body','topic','reply_to'),('body',))
+    _schema(request,('body','topic','reply_to','media'),('body',) if 'media' not in request else ())
     _require_scheduled(current(context,request['account'],write=True))
     publish_at=jst.iso(jst.now_jst()+_dt.timedelta(minutes=minutes))
-    put={'operation':'draft_put','account':request['account'],'body':request['body'],'publish_at':publish_at}
-    for key in ('topic','reply_to'):
+    put={'operation':'draft_put','account':request['account'],'body':request.get('body'),'publish_at':publish_at}
+    for key in ('topic','reply_to','media'):
         if request.get(key): put[key]=request[key]
     made=draft_put(context,put,via)
     # `held_minutes` は /activity が「猶予中」と「予約」を見分ける印（出す時刻には効かない）。

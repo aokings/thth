@@ -1,7 +1,7 @@
 """`thth community search <account> <語…>`——X の**コミュニティを探す**（3.19.0・関東レーン依頼 #1933・
 masaru 10/13「X のコミュニティを試してみて」）。
 
-**`build_parser()` には 1 行しか足さない**（`community_cli.register(sub)`）。MCP には今回は足さない。
+**`build_parser()` には 1 行しか足さない**（`community_cli.register(sub)`）。MCP は `thth_community_search`（10/15・点検 B-22・CLI を呼ぶだけ）。
 
 一次資料（**L1** docs.x.com search-communities・pricing）: `GET /2/communities/search`（`query`・
 `max_results` 10〜100・`community.fields`）・tweet.read＋users.read・Community: Read 0.005 USD／resource。

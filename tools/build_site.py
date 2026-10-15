@@ -238,7 +238,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
         "<code>pip install thth</code>、<code>thth login</code> を実行し、ブラウザでこのデバイスを許可します。"
         "利用者が VM や Meta アプリを用意する必要はありません。</p>")
     add("<p>以後は、調べる（<code>thth topics --search</code>・<code>thth mentions</code>・<code>thth profile</code>・"
-        "<code>thth location search</code>）、出す（<code>thth send</code>・<code>thth schedule</code>・<code>thth retract</code>）、"
+        "<code>thth location search</code>・<code>thth where</code>・<code>thth thread</code>・<code>thth who</code>）、出す（<code>thth send</code>・<code>thth schedule</code>・<code>thth retract</code>）、"
         "振り返る（<code>thth posts</code>・<code>thth replies</code>・<code>thth collect</code>・<code>thth measured</code>）の"
         "コマンドで自分のアカウントを動かします。ガードの数値はオーナーが決め、AI アシスタントが変えられるのは厳しくする向きだけです。"
         "<a href=\"/activity\">アクティビティ</a>で、オーナーが確認・停止・キーの発行を行えます。</p>")
@@ -272,7 +272,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
         "assistant can drive it directly; the bundled MCP server and skills only make that easier.</p>")
     add('<p class="en">An invited person opens an invitation link, authorizes Threads, installs <code>thth</code>, '
         "and runs <code>thth login</code> to allow their device in the browser. They then research "
-        "(<code>topics --search</code>, <code>mentions</code>, <code>profile</code>, <code>location search</code>), "
+        "(<code>topics --search</code>, <code>mentions</code>, <code>profile</code>, <code>location search</code>, <code>where</code>, <code>thread</code>, <code>who</code>), "
         "post (<code>send</code>, <code>schedule</code>, <code>retract</code>) and review (<code>posts</code>, "
         "<code>replies</code>, <code>collect</code>, <code>measured</code>) for their own account. "
         "The owner sets safety limits; an AI assistant can only tighten them. The owner uses <a href=\"/activity\">Activity</a> "
@@ -523,7 +523,7 @@ def build_privacy() -> str:
         "LLM session (for example over MCP). What a tool returns to that session is passed to that session's "
         "LLM provider under the user's own arrangement with it. Depending on the tool, this includes the "
         "user's drafts, post history, metrics and reports, plaza posts and replies the session can read, the observation map's keywords and daily figures, per-search-term figures kept on request, and the text (in full, or a short preview of up to 60 "
-        "characters, depending on the tool) of public replies, mentions and search results, with links and author names or one-way "
+        "characters, depending on the tool) of public replies and reply threads, mentions and search results, with links and author names or one-way "
         "author keys.</p>")
 
     add('<h2 id="delete">Stopping access and deleting data</h2>')
