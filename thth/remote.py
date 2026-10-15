@@ -609,11 +609,28 @@ def _media(args, account):
     return rows
 
 
+def _refuse_unread(args, command: str, flags: dict) -> None:
+    """遠くの道が読まない旗が付いていたら、黙って捨てずに断る（10/15 道ごとの意味の差 §揃える案 1）。
+
+    それまでは捨てていたので、`retract --already-gone`（記録だけ）が本当の DELETE に、
+    `send --community` が普段のタイムラインへの公開になった。`flags` は `{dest: 旗の綴り}`。
+    """
+    used = [spelled for dest, spelled in flags.items()
+            if getattr(args, dest, None) not in (None, False, 0, "", [])]
+    if used:
+        raise RemoteError("remote_unsupported",
+                          reason=f"thth.me の鍵の道の {command} は {'・'.join(used)} を読みません"
+                                 "（付けたまま出すと意図と違う結果になるので断りました）", rc=2)
+
+
 def _send(args, account):
     # **`--production` が無ければ出さない**（lint だけ・手元の道と同じ意味・masaru 10/15）。それまでは
     # 3.14.0 の「頼んだらその場で出す」で `--production` を読まず、help の「既定は乾式」と食い違って
     # キョンシーラボの口座で試すつもりの本文が出た（#2477）。`--confirm` は要らない（digest はサーバが
     # その場で突き合わせる）。MCP の `thth_send_request` は今までどおり呼べば出す。
+    _refuse_unread(args, "send", {"community_id": "--community", "goal": "--goal", "found_by": "--found-by",
+                                  "reply_to_root": "--reply-to-root",
+                                  "reply_to_author_key": "--reply-to-author-key", "confirm": "--confirm"})
     has_media = bool(getattr(args, "media_files", None))
     no_text = getattr(args, "text", None) is None and not getattr(args, "text_file", None)
     # 添付だけの投稿は本文を空にできる（手元の `thth send --media` と同じ）。標準入力は待たない。
@@ -672,6 +689,7 @@ def _schedule(args, account):
 
 
 def _retract(args, account):
+    _refuse_unread(args, "retract", {"already_gone": "--already-gone", "confirm": "--confirm"})
     reason = (args.reason or "").strip()
     if not reason:
         raise RemoteError("invalid_request", reason="--reason を付けてください（なぜ取り下げるかを記録します）", rc=1)

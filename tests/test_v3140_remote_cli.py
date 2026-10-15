@@ -524,3 +524,17 @@ def test_send_は_production_が無ければ出さずにlintだけ(worker, capsy
     assert rc == 0 and "出していません" in out and "--production" in out
     assert [c["path"] for c in worker.calls] == ["/api/v1/draft_put"]
     assert not any(c["path"].endswith("send_request") for c in worker.calls)
+
+
+@pytest.mark.parametrize("argv", [
+    ["retract", ACCOUNT, "123", "--reason", "既に消した", "--already-gone"],
+    ["retract", ACCOUNT, "123", "--reason", "誤字", "--confirm", "abc123"],
+    ["send", ACCOUNT, "--production", "--text", "コミュニティへ", "--community", "1234567890"],
+    ["send", ACCOUNT, "--production", "--text", "目的つき", "--goal", "reach"],
+    ["send", ACCOUNT, "--production", "--text", "古い番号", "--confirm", "abc123"],
+])
+def test_遠くの道が読まない旗は黙って捨てずに断る(worker, capsys, argv):
+    """`retract --already-gone` が本当の DELETE に、`send --community` が普段の公開になっていた（10/15）。"""
+    rc, out, err = run(capsys, *argv)
+    assert rc == 2 and "読みません" in (out + err), out + err
+    assert worker.calls == []
