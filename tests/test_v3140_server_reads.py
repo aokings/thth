@@ -142,11 +142,14 @@ def test_topics_searchは集計と指す先だけで本文を返さない(env, m
     got = call(env, 'topics_search', query='レアアース')
     assert got['q'] == 'レアアース' and got['n'] == 1 and got['posts'][0]['post_id'] == '77'
     assert 'あ' * 61 not in json.dumps(got, ensure_ascii=False)
+    # 画面に出す本文の先頭（60 字＋…）は `texts` に（キョンシーラボ 10/15 #2410）。
+    assert got['texts'] == ['あ' * 60 + '…']
     rc, printed = _cli_json(capsys, threads_read_cli.cmd_topics_search, account='alpha', account_flag=None,
                             search='レアアース', recent=False, limit=20)
     assert rc == 0
     for key in ('q', 'n', 'authors', 'posts', 'tagged'):
         assert printed[key] == got[key]
+    assert 'texts' not in printed  # 手元の --json は本文を出さない（変えない）
     assert str(refused(env, 'topics_search')) == 'invalid_request'
     assert str(refused(env, 'topics_search', query='  ')) == 'invalid_request'
 

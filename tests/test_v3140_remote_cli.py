@@ -487,3 +487,22 @@ def test_200の答えの_error_がnullなら断りではない():
     with pytest.raises(remote.RemoteError) as caught:
         remote._answer(200, {"error": "too_soon", "next_at": "2026-09-27T09:00:00+09:00"})
     assert str(caught.value) == "too_soon"
+
+
+def test_topics_searchは遠くの道でも本文の先頭を画面に出し_jsonには出さない(worker, capsys):
+    """招待の口座で各行の本文が空だった（キョンシーラボ 10/15 #2410）。"""
+    from thth import threads_read_cli
+    rows = [{"message_id": "77", "text": "怪談の" + "あ" * 100, "username": "someone",
+             "timestamp": "2026-10-15T07:00:00+0000", "permalink": "https://www.threads.net/@someone/post/77"}]
+    material = threads_read_cli.search_material(rows, q="怪談", search_type="TOP", limit=25)
+    material.update(provider_note=None, by_tag=[], tag_cannot_say=None,
+                    posts=threads_read_cli.post_rows(rows, replied=None),
+                    replied_lookup={"available": False, "reason": "試験", "n": None, "statuses": []},
+                    texts=[threads_read_cli._one_line(rows[0]["text"])])
+    worker.push(200, dict(material))
+    rc, out, err = run(capsys, "topics", ACCOUNT, "--search", "怪談")
+    assert rc == 0, err
+    assert "怪談の" + "あ" * 57 + "…" in out
+    worker.push(200, dict(material))
+    rc, out, err = run(capsys, "topics", ACCOUNT, "--search", "怪談", "--json")
+    assert rc == 0 and "texts" not in json.loads(out) and "怪談の" not in out
