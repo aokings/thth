@@ -19,6 +19,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 
 - **調べる**: `thth topics <アカウント> --search <語>` で、その語の件数・投稿者の数・最新の投稿を見ます。`thth where` は「次にどこで話すか」を、自分がすでに絡んだ相手を重ねて探します。X の行には投稿者のフォロワー数（「フォロワー 1.2 万」）と投稿数も付きます（`--json` は `author_followers`・`author_posts`。保存しません）。
 - **出す**: `thth send` で今すぐ、`thth schedule` で予約、`--reply-to` で返信です。
+- **本文は全文で**（3.21.0）: 検索（`topics --search`・`where`）・`thread`・`mentions` は他人の投稿の本文を切らずに画面と `--json` に出します（保存はしません）。Threads の検索は `--since`・`--until`・`--media` で絞れます。thth.me の鍵でも `thread`・`where`・`who` が使えます。VM で打つ `thth send` にも安全装置（間隔・1 日の上限・連投）が掛かります（[リリースノート 3.21.0](docs/リリースノート_3.21.0_2026-10-15.md)）。
 - **振り返る**: `thth collect` が投稿後 1 時間〜30 日の決まった時点で返信とインサイトを取得し、`thth replies`・`thth measured` で読みます。
 - **再投稿といいね**: `thth repost`・`unrepost`・`like`・`unlike`（3.15.0 から）。Threads は再投稿だけ（Threads の API にいいねが無い）。Bluesky は両方。Mastodon と X のいいねは、そのアカウントを認可し直してから（[リリースノート 3.15.0](docs/リリースノート_3.15.0_2026-10-09.md)）。
 - **検索の語ごとの数を残す・絞る**（3.18.0）: `thth where … --also|--aggregate --keep` で語ごとの数だけを日付つきで残し（5 未満は欠測・本文や名前は残さない）、`thth where-log <project> [--budget N --medium x]` で当たり率と翌日の配り直しを見ます。`--ja`・`--question`・`--no-replies` で表示を絞ります（X の `--ja` は検索に `lang:ja` を足して読む本数を減らす）（[リリースノート 3.18.0](docs/リリースノート_3.18.0_2026-10-12.md)）。
