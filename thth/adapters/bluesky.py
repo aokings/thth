@@ -59,6 +59,10 @@ POST_COLLECTION = "app.bsky.feed.post"
 # 反応の記録（設計 3.15.0・**L1** lexicon `app/bsky/feed/repost.json`・`like.json`:
 # record は `subject`（`com.atproto.repo.strongRef`＝uri＋cid）と `createdAt`）。
 REACTION_COLLECTIONS = {"repost": "app.bsky.feed.repost", "like": "app.bsky.feed.like"}
+# 返信の制限（`app.bsky.feed.threadgate`・lexicon を 10/15 に bluesky-social/atproto の
+# packages/api/lexicons/app/bsky/feed/threadgate.json で読んだ）。rkey は根の投稿と同じで、
+# 同じ repo に置く。`allow` が空の配列なら誰も返信できない、無ければ誰でも返信できる。
+THREADGATE_COLLECTION = "app.bsky.feed.threadgate"
 # この媒体が**持ちうる**指標（`insights()` の `available`）。**views は無い**（**L2**）。
 AVAILABLE_METRICS = ("likes", "replies", "reposts", "quotes")
 _METRIC_FIELDS = (("likes", "likeCount"), ("replies", "replyCount"),
@@ -307,6 +311,89 @@ def create_session(service: str, identifier: str, app_password: str, *,
 
 
 
+# `reply_control`（Threads と同じ語）→ threadgate の `allow`。`everyone` は threadgate を
+# 作らない（`allow` が無い＝誰でも返信できる）。`parent_post_author_only` は空の配列
+# （自分のほかは誰も返信できない）。
+THREADGATE_ALLOW = {
+    "accounts_you_follow": [{"$type": THREADGATE_COLLECTION + "#followingRule"}],
+    "mentioned_only": [{"$type": THREADGATE_COLLECTION + "#mentionRule"}],
+    "followers_only": [{"$type": THREADGATE_COLLECTION + "#followerRule"}],
+    "parent_post_author_only": [],
+}
+_TID_CHARS = "234567abcdefghijklmnopqrstuvwxyz"
+_tid_last = 0
+
+
+def new_tid(now_us: int | None = None, clock_id: int | None = None) -> str:
+    """TID（atproto の仕様 specs/tid を 10/15 に読んだ）: 最上位 0・53 bit の UNIX 時刻（µs）・
+    10 bit の clock id を base32-sortable で 13 字。同じ実行の中で単調に増やす。"""
+    global _tid_last
+    import random
+    import time
+    micros = now_us if now_us is not None else time.time_ns() // 1000
+    if now_us is None:
+        micros = max(micros, _tid_last + 1)
+        _tid_last = micros
+    value = ((micros & ((1 << 53) - 1)) << 10) | (
+        clock_id if clock_id is not None else random.randrange(1024))
+    return "".join(_TID_CHARS[(value >> (5 * i)) & 31] for i in range(12, -1, -1))
+
+
+def create_post_request(did: str, record: dict, options: dict | None, *, is_reply: bool):
+    """投稿を作る要求（nsid と payload）。`reply_control` が要るときだけ applyWrites で
+    投稿と threadgate を 1 つの書き込みにまとめる（lexicon com.atproto.repo.applyWrites）。
+    別々に作ると「投稿は出たのに制限が付いていない」が起きうるので、まとめて成るか成らないか。
+    """
+    control = (options or {}).get("reply_control")
+    if control in (None, "everyone"):
+        return "com.atproto.repo.createRecord", {
+            "repo": did, "collection": POST_COLLECTION, "record": record}
+    if control not in THREADGATE_ALLOW:
+        raise base.AdapterError(f"post_options: invalid reply_control（{control!r}）")
+    if is_reply:
+        # threadgate は根の投稿にしか付かない（lexicon: rkey は根の投稿と同じ）。
+        raise base.AdapterError(
+            "unsupported_attachment: bluesky/reply_control_on_reply（Bluesky の返信の制限は"
+            "根の投稿にだけ付けられます）")
+    rkey = new_tid()
+    create = "com.atproto.repo.applyWrites#create"
+    return "com.atproto.repo.applyWrites", {"repo": did, "writes": [
+        {"$type": create, "collection": POST_COLLECTION, "rkey": rkey, "value": record},
+        {"$type": create, "collection": THREADGATE_COLLECTION, "rkey": rkey, "value": {
+            "$type": THREADGATE_COLLECTION,
+            "post": f"at://{did}/{POST_COLLECTION}/{rkey}",
+            "allow": list(THREADGATE_ALLOW[control]),
+            "createdAt": record.get("createdAt") or created_at()}},
+    ]}
+
+
+def created_post_uri(nsid: str, payload: dict, body) -> str | None:
+    """`create_post_request()` の応答から投稿の uri。applyWrites は要求した rkey と一致する
+    ときだけ（`results` の 1 番目が投稿・2 番目が threadgate）。"""
+    if not isinstance(body, dict):
+        return None
+    if nsid == "com.atproto.repo.createRecord":
+        uri = body.get("uri")
+        return uri if isinstance(uri, str) else None
+    results = body.get("results")
+    if not isinstance(results, list) or len(results) != 2:
+        return None
+    did, writes = payload["repo"], payload["writes"]
+    expected = [f"at://{did}/{w['collection']}/{w['rkey']}" for w in writes]
+    got = [r.get("uri") if isinstance(r, dict) else None for r in results]
+    return expected[0] if got == expected else None
+
+
+def _xrpc_error_name(error) -> str | None:
+    """XRPC の失敗の応答（`{"error": "<名前>", "message": …}`）から名前だけを読む。"""
+    try:
+        body = json.loads(error.read(65536) or b"{}")
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+    name = body.get("error") if isinstance(body, dict) else None
+    return name if isinstance(name, str) else None
+
+
 def normalize_post_url(value):
     """Convert only bsky.app/profile/.../post/... using public handle lookup."""
     from ..postid import PostIdError
@@ -346,7 +433,7 @@ class BlueskyAdapter(base.Adapter):
     # `select` はトークンを読まずに（実体を作らずに）ここを引く。語は
     # `base.KNOWN_CAPABILITIES` のものだけ。`topic` 無し（Threads の topic_tag に
     # 当たるものが無い）・`views` 無し（**L2**: `#postView` に views は無い）・
-    # `quota` 無し・`inbox` 無し・`refresh` 無し（App Password に期限が無いので
+    # `quota` 無し・`refresh` 無し（App Password に期限が無いので
     # 延長という概念が無い）・`account_insights` 無し（アカウント単位の日次は無い）。
     # `thread_read`（T1-1）: `fetch_post()` が `getPosts` で根を 1 件引ける。
     # `keyword_search`（T2-1・設計「自分の泉」§2.3・§3）: `searchPosts` で
@@ -356,6 +443,9 @@ class BlueskyAdapter(base.Adapter):
     # 反応（設計 3.15.0）: 再投稿もいいねも自分の repo への `createRecord`、取り消しは
     # その記録の `deleteRecord`。App Password で足りる（scope の概念が無い）。
     CAPABILITIES = CAPABILITIES | frozenset({"repost", "like"})
+    # 言及を `inbox` に保存する（10/15・点検 §B-15）。それまでは Threads だけで、
+    # Bluesky の言及は求められたときに表示するだけだった。原文に保存を禁じる条は無い。
+    CAPABILITIES = CAPABILITIES | frozenset({"inbox"})
 
     # `.token` の鍵（`thth auth <account>` が書く形・設計 v2 §4.2「認可とトークン」）。
     # **`access_token` ではない**——doctor が `access_token` だけを見ていたので、
@@ -363,6 +453,9 @@ class BlueskyAdapter(base.Adapter):
     TOKEN_KEYS = ("identifier", "app_password")
     # 次の一手は `thth token set` ではない（App Password は対話で受ける）。
     TOKEN_SETUP_HINT = "thth auth"
+    # 取り下げ（10/15・点検 §B-19）。App Password に scope の概念は無いので、この名前は
+    # 断りの文のためだけ（`.token` に `scopes` が無いので `missing_permissions()` は空）。
+    DELETE_PERMISSION = "app_password"
     POST_ID_FORM_HINT = (
         "Bluesky の post_id は `at://did:…/app.bsky.feed.post/…` の形です。")
     # App Password に期限は無い（`maintain` は `token_state: ok`・
@@ -677,6 +770,67 @@ class BlueskyAdapter(base.Adapter):
                 f"{words}の取り消しに失敗（結果不明）: {e}")) from None
         return {"undone": True}
 
+    # --- 取り下げ（10/15・点検 §B-19） -------------------------------------
+    def delete_post(self, post_id: str) -> dict:
+        """公開済みの投稿 1 本を取り下げる（`thth retract` の二段目からだけ呼ばれる）。
+
+        `com.atproto.repo.deleteRecord`（lexicon を 10/15 に bluesky-social/atproto の
+        lexicons/com/atproto/repo/deleteRecord.json で読んだ）は「消す、または無いことを
+        確かめる」口で、**無い記録を渡しても成功で返る**。それでは Mastodon の 404 のように
+        「既に無い」を言えないので、先に `com.atproto.repo.getRecord` で在るかを見る
+        （無ければ `RecordNotFound`）。骨は Mastodon と同じ:
+        - 自分の repo の `app.bsky.feed.post` の uri だけ（他人の投稿・別の collection は断る）
+        - 401／403 は `PermissionMissing`、無ければ `post_missing`、再試行しない
+        その投稿の threadgate（同じ rkey）も消す（消せなくても投稿の取り下げは成り立つ）。
+        """
+        try:
+            session = self.session()
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, ValueError) as e:
+            raise base.AdapterError(self._scrub(
+                f"bluesky_retract_failed: 取り下げの準備に失敗（送っていません）: {e}")) from None
+        value = post_id.strip() if isinstance(post_id, str) else ""
+        prefix = f"at://{session['did']}/{POST_COLLECTION}/"
+        rkey = rkey_of(value) if value.startswith(prefix) else None
+        if (not rkey or value != prefix + rkey
+                or not re.fullmatch(r"[A-Za-z0-9._:~-]{1,512}", rkey) or rkey in (".", "..")):
+            raise base.AdapterError(
+                "bluesky_post_id_invalid: 自分の投稿の uri（at://<自分の DID>/app.bsky.feed.post/<rkey>）"
+                "ではありません。取り下げません")
+        where = {"repo": session["did"], "collection": POST_COLLECTION, "rkey": rkey}
+        try:
+            found = self._request("GET", "com.atproto.repo.getRecord", params=where)
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise base.PermissionMissing(self.DELETE_PERMISSION, f"HTTP {e.code}") from None
+            if e.code in (400, 404) and _xrpc_error_name(e) == "RecordNotFound":
+                raise base.AdapterError(
+                    "post_missing: 媒体にその投稿がありません（既に消えています）。記録は変えて"
+                    "いません。媒体の画面で確かめてください") from None
+            raise base.AdapterError(
+                f"bluesky_retract_http_{e.code}: 投稿を確かめられないので取り下げません") from None
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, ValueError) as e:
+            raise base.AdapterError(self._scrub(
+                f"bluesky_retract_failed: 投稿を確かめられないので取り下げません（{e}）")) from None
+        if not isinstance(found, dict) or found.get("uri") != value:
+            raise base.AdapterError(
+                "bluesky_retract_unconfirmed: getRecord の uri が要求と一致しません。取り下げません")
+        try:
+            self._request("POST", "com.atproto.repo.deleteRecord", payload=where)
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise base.PermissionMissing(self.DELETE_PERMISSION, f"HTTP {e.code}") from None
+            raise base.AdapterError(
+                f"bluesky_retract_http_{e.code}: 取り下げたとは言えません") from None
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, ValueError) as e:
+            raise base.AdapterError(self._scrub(
+                f"bluesky_retract_failed: 取り下げたとは言えません（{e}）")) from None
+        try:
+            self._request("POST", "com.atproto.repo.deleteRecord", payload={
+                **where, "collection": THREADGATE_COLLECTION})
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, ValueError):
+            pass
+        return {"deleted": True, "post_id": value}
+
     def repost(self, post_id: str) -> dict:
         return self._react("repost", post_id)
 
@@ -849,8 +1003,32 @@ class BlueskyAdapter(base.Adapter):
             out["has_replies"] = reply_count > 0
         return out
 
+    # `inbox()` が見る窓。`collect` は 10 分ごとに呼ぶので、全頁ではなく直近だけを
+    # 引き、重複は `collect` が `message_id` で除く。
+    INBOX_WINDOW = "3d"
+    # 返信（reason `reply`）は自分の投稿への返信の台帳（`conversation()`）に入るので、
+    # `inbox` には言及と引用だけを置く（同じ投稿を 2 か所に書かない）。
+    INBOX_REASONS = ("mention", "quote")
+
+    def inbox(self, *, since=None) -> list:
+        """言及と引用を `inbox` に流す（10/15・点検 §B-15）。
+
+        `collect` が `data/sns/inbox/<YYYY-MM>.ndjson` に `message_id`（at:// の URI）で
+        冪等に追記する。返信は queue の `reply_to: <at://…>` の門を通す。
+        """
+        rows = self.mentions(since=since or self.INBOX_WINDOW)
+        out = []
+        for row in rows:
+            if row.get("kind") not in self.INBOX_REASONS:
+                continue
+            row = dict(row)
+            # `collect` は `kind` を `inbox` で上書きするので、通知の種類は別の鍵に残す。
+            row["mention_kind"] = row.pop("kind")
+            out.append(row)
+        return out
+
     def mentions(self, *, since=None) -> list:
-        """Read notification pages without adding them to collect's inbox."""
+        """Read notification pages; `inbox()` saves mentions and quotes from them."""
         from ..read_window import cutoff
         try:
             floor = cutoff(since)
@@ -883,10 +1061,16 @@ class BlueskyAdapter(base.Adapter):
                     continue
                 seen.add(uri)
                 handle = author.get('handle')
+                reply = record.get('reply') if isinstance(record.get('reply'), dict) else {}
+                parent = reply.get('parent') if isinstance(reply.get('parent'), dict) else {}
+                root = reply.get('root') if isinstance(reply.get('root'), dict) else {}
                 out.append(dict(message_id=uri, text=record.get('text') if isinstance(record.get('text'), str) else '',
                     kind=row['reason'], username=handle, timestamp=stamp,
                     author_key=author_key(author.get('did') or ''), medium=MEDIUM,
-                    permalink=post_url(handle, uri) if handle else None))
+                    permalink=post_url(handle, uri) if handle else None,
+                    replied_to=parent.get('uri') if isinstance(parent.get('uri'), str) else None,
+                    root_post=root.get('uri') if isinstance(root.get('uri'), str) else uri,
+                    reply_deadline=None))
             cursor = body.get('cursor')
             if not cursor:
                 return out

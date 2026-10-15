@@ -10,6 +10,9 @@ import re
 from . import graphemes,media
 
 FIELDS=frozenset(('languages','labels','facets','tags'))
+# 投稿の記録には入らず、threadgate の記録として同時に作る欄（10/15・点検 §B-28）。
+GATE_FIELDS=frozenset(('reply_control',))
+ALL_FIELDS=FIELDS|GATE_FIELDS
 _GRANDFATHERED=frozenset('en-gb-oed i-ami i-bnn i-default i-enochian i-hak i-klingon i-lux i-mingo i-navajo i-pwn i-tao i-tay i-tsu sgn-be-fr sgn-be-nl sgn-ch-de art-lojban cel-gaulish no-bok no-nyn zh-guoyu zh-hakka zh-min zh-min-nan zh-xiang'.split())
 
 

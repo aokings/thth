@@ -234,7 +234,7 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
         "返信とインサイトの取得、検索には対応していません。Bluesky は削除に対応していません。再投稿といいねは、まだどの SNS でもできません。</p>")
 
     add("<h2>招待された方へ</h2>")
-    add("<p>招待された利用者は、招待リンクを開いて Threads を認可します。続けて "
+    add("<p>招待された利用者は、招待リンクを開いて Threads（Mastodon の招待ならそのサーバー）を認可します。続けて "
         "<code>pip install thth</code>、<code>thth login</code> を実行し、ブラウザでこのデバイスを許可します。"
         "利用者が VM や Meta アプリを用意する必要はありません。</p>")
     add("<p>以後は、調べる（<code>thth topics --search</code>・<code>thth mentions</code>・<code>thth profile</code>・"
@@ -270,7 +270,8 @@ def build_index(en: dict[str, list[str]], ja: dict[str, list[str]]) -> str:
     add('<p class="en">THTH is a command-line tool for researching, posting to, scheduling on and reviewing '
         "your own social media accounts. It supports Threads, Bluesky, Mastodon and X. Because it is a CLI, an AI "
         "assistant can drive it directly; the bundled MCP server and skills only make that easier.</p>")
-    add('<p class="en">An invited person opens an invitation link, authorizes Threads, installs <code>thth</code>, '
+    add('<p class="en">An invited person opens an invitation link, authorizes Threads (or their Mastodon server, '
+        'for a Mastodon invitation), installs <code>thth</code>, '
         "and runs <code>thth login</code> to allow their device in the browser. They then research "
         "(<code>topics --search</code>, <code>mentions</code>, <code>profile</code>, <code>location search</code>, <code>where</code>, <code>thread</code>, <code>who</code>), "
         "post (<code>send</code>, <code>schedule</code>, <code>retract</code>) and review (<code>posts</code>, "
@@ -338,17 +339,18 @@ def build_privacy() -> str:
     add("  <li>Threads: the account's user ID and username; its posts and their metrics (views, likes, "
         "replies, reposts, quotes, shares); daily account metrics (views, likes, replies, reposts, quotes, "
         "followers, link clicks); replies to its posts; and mentions of the account.</li>")
-    add("  <li>Bluesky: its posts and their metrics (likes, replies, reposts, quotes), and replies to its "
-        "posts.</li>")
-    add("  <li>Mastodon: its posts and their metrics (likes, replies, reposts), and replies to its posts.</li>")
+    add("  <li>Bluesky: its posts and their metrics (likes, replies, reposts, quotes), replies to its "
+        "posts, and mentions and quotes of the account.</li>")
+    add("  <li>Mastodon: its posts and their metrics (likes, replies, reposts), replies to its posts, and public "
+        "mentions of the account.</li>")
     add("  <li>X: publishing approved posts, deleting a post on request, and reading the account's own recent "
         "posts. Replies and metrics are not collected.</li>")
     add("</ul>")
     add("<p><strong>Replies and mentions.</strong> Replies to the user's posts on Threads, Bluesky and Mastodon, "
-        "and mentions of the user's Threads account, are saved to that account's records, including the other "
+        "and mentions of the user's account on Threads, Bluesky (including quotes) and Mastodon, are saved to that account's records, including the other "
         "person's username, the text, the time and the link. THTH keeps them to manage the conversation: to "
         "show which replies have been answered and to prepare the user's replies, which are sent the same way "
-        "as posts. Mentions on Bluesky and Mastodon are shown on request and not saved.</p>")
+        "as posts.</p>")
     add("<p><strong>Keyword search.</strong> Search (Threads <code>threads_keyword_search</code>, and search on "
         "Bluesky and Mastodon) runs on request: when the user's session asks for a search, or for the "
         "observation summary, which uses search terms the operator sets for the account. The only other search "
@@ -604,15 +606,15 @@ def build_privacy() -> str:
     add("  <li>Threads: アカウントのユーザー ID とユーザー名、投稿とそのインサイト（表示・いいね・返信・再投稿・引用・"
         "シェア）、アカウントの日ごとのインサイト（表示・いいね・返信・再投稿・引用・フォロワー・リンクのクリック）、"
         "投稿への返信、アカウントへの言及。</li>")
-    add("  <li>Bluesky: 投稿とそのインサイト（いいね・返信・再投稿・引用）、投稿への返信。</li>")
-    add("  <li>Mastodon: 投稿とそのインサイト（いいね・返信・再投稿）、投稿への返信。</li>")
+    add("  <li>Bluesky: 投稿とそのインサイト（いいね・返信・再投稿・引用）、投稿への返信、アカウントへの言及と引用。</li>")
+    add("  <li>Mastodon: 投稿とそのインサイト（いいね・返信・再投稿）、投稿への返信、アカウントへの公開の言及。</li>")
     add("  <li>X: 承認された投稿の公開、依頼による投稿の削除、アカウント自身の最近の投稿の読み取り。返信と"
         "インサイトは集めません。</li>")
     add("</ul>")
-    add("<p><strong>返信と言及。</strong>Threads・Bluesky・Mastodon での本人の投稿への返信と、本人の Threads "
-        "アカウントへの言及は、そのアカウントの記録に保存します。相手のユーザー名・本文・時刻・リンクを含みます。"
+    add("<p><strong>返信と言及。</strong>Threads・Bluesky・Mastodon での本人の投稿への返信と、本人の "
+        "アカウントへの言及（Threads・Bluesky・Mastodon。Bluesky は引用も）は、そのアカウントの記録に保存します。相手のユーザー名・本文・時刻・リンクを含みます。"
         "会話を管理するため（どの返信に答えたかを示し、本人の返信を用意するため）に保存し、本人の返信は投稿と"
-        "同じ道で出します。Bluesky と Mastodon の言及は求められたときに表示するだけで、保存しません。</p>")
+        "同じ道で出します。</p>")
     add("<p><strong>キーワード検索。</strong>検索（Threads の <code>threads_keyword_search</code>、Bluesky と "
         "Mastodon の検索）は求められたときに動きます。本人のセッションが検索を求めたとき、または観測の一枚を"
         "求めたとき（運営者がアカウントに設定した語を使います）です。これ以外の検索は、運営者が有効にしたときの"

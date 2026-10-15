@@ -713,9 +713,8 @@ def test_capabilitiesはrecent_postsだけでquotaはNone():
     with fake_mastodon() as fake:
         adapter = _adapter(fake)
         assert adapter.capabilities() == {"recent_posts", "thread_read", "keyword_search", "mentions",
-                                          "repost", "like"}   # 反応は 3.15.0
+                                          "repost", "like", "inbox"}   # 反応は 3.15.0・inbox は 10/15
         assert adapter.quota() is None
-        assert adapter.inbox() == []
 
 
 def test_instanceはschemeを勝手に補わない():
@@ -760,9 +759,9 @@ def test_秘密は例外文に出ない(call):
 def test_capabilitiesは実体を作らずに引ける():
     """`select` がトークンを読まずにトピック検査の要否を決められる（T0・受け入れ 6）。"""
     assert mastodon_mod.MastodonAdapter.capabilities() == {
-        "recent_posts", "thread_read", "keyword_search", "mentions", "repost", "like"}
+        "recent_posts", "thread_read", "keyword_search", "mentions", "repost", "like", "inbox"}
     assert mastodon_mod.MastodonAdapter.CAPABILITIES == frozenset(
-        {"recent_posts", "thread_read", "keyword_search", "mentions", "repost", "like"})
+        {"recent_posts", "thread_read", "keyword_search", "mentions", "repost", "like", "inbox"})
 
 
 def test_from_accountは台帳とトークンから組み立てる():

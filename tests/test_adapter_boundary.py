@@ -369,6 +369,10 @@ def test_TB1_inboxを持たない媒体には聞かない(tmp_path, isolated_acc
     account = isolated_account_factory(media="bluesky")
 
     class _呼ばれたら失敗(bluesky_mod.BlueskyAdapter):
+        # 3.22.0 から Bluesky も言及を inbox に流す（点検 §B-15）。持たない媒体の形は
+        # 能力から外して作る。
+        CAPABILITIES = bluesky_mod.BlueskyAdapter.CAPABILITIES - {"inbox"}
+
         def __init__(self):
             pass
 

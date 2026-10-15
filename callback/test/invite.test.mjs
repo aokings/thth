@@ -104,6 +104,40 @@ test('認可 URL: Threads の authorize だけ・clicked のときだけ・10 �
   await inspect('invite',inv.id,{clock:expires,alarm:true});assert.equal((await row(inv.id)).authorize_url,null);
 });
 
+const MASTODON='https://mastodon.example';
+const MASTODON_SCOPES=['read:accounts','read:statuses','write:statuses'];
+const mastodonUrl=(state,origin=MASTODON,redirect='https%3A%2F%2Fthth.me%2Fcallback%2F')=>
+  origin+'/oauth/authorize?response_type=code&client_id=c&redirect_uri='+redirect+'&scope=read%3Aaccounts&state='+state;
+
+test('Mastodon の招待（3.22.0）: instance は https の origin・権限は read:/write:・認可 URL はその instance だけ',async()=>{
+  const expires_at=Date.now()+30*86_400_000;
+  for(const body of [{media:'mastodon',production:false,expires_at,scopes:MASTODON_SCOPES},
+    {media:'mastodon',production:false,expires_at,scopes:MASTODON_SCOPES,instance:'http://mastodon.example'},
+    {media:'mastodon',production:false,expires_at,scopes:MASTODON_SCOPES,instance:'https://mastodon.example/path'},
+    {media:'mastodon',production:false,expires_at,scopes:SCOPES,instance:MASTODON},
+    {media:'threads',production:false,expires_at,scopes:SCOPES,instance:MASTODON},
+    {media:'bluesky',production:false,expires_at,scopes:SCOPES}])
+    assert.equal((await signed('invite',hash(opaque()),'create',body)).status,400,JSON.stringify(body));
+  const inv=await invite({media:'mastodon',production:false,scopes:MASTODON_SCOPES,instance:MASTODON});
+  const page=await(await view(inv)).text();
+  assert.ok(page.includes('Mastodon で認可する')&&page.includes('mastodon.example')&&!page.includes('Threads で認可'));
+  assert.ok(page.includes('<code>write:statuses</code>'));
+  await press(inv,'start');
+  const state=opaque(),expires=Date.now()+600_000;
+  for(const bad of [authorizeUrl(state),mastodonUrl(state,'https://evil.example'),mastodonUrl(state,MASTODON,'https%3A%2F%2Fevil.example%2F'),
+    MASTODON+'/oauth/other?redirect_uri=https%3A%2F%2Fthth.me%2Fcallback%2F&state='+state,mastodonUrl('short')])
+    assert.equal((await signed('invite',inv.id,'authorize',{authorize_url:bad,expires_at:expires})).status,400,bad);
+  assert.equal((await signed('invite',inv.id,'authorize',{authorize_url:mastodonUrl(state),expires_at:expires})).status,200);
+  const html=await(await view(inv)).text();
+  assert.ok(html.includes('Mastodon の認可ページを開く')&&html.includes(mastodonUrl(state).replaceAll('&','&amp;')));
+  assert.equal((await signed('invite',inv.id,'complete',{person:'inv-m-a1b2c3',account:'inv-m-a1b2c3',handle:'someone'})).status,200);
+  const ready=await(await view(inv)).text();
+  assert.ok(ready.includes('<dt>Mastodon</dt><dd>@someone@mastodon.example</dd>'));
+  // Threads の招待には Mastodon の URL を通さない（逆も上で見た）。
+  const threads=await invite();await press(threads,'start');
+  assert.equal((await signed('invite',threads.id,'authorize',{authorize_url:mastodonUrl(opaque()),expires_at:expires})).status,400);
+});
+
 test('やり直し（reset）: 理由を見せて open に戻る・同じ招待をもう一度押せる',async()=>{
   const inv=await invite();await press(inv,'start');
   assert.equal((await signed('invite',inv.id,'reset',{reason:'nonsense'})).status,400);

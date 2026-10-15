@@ -241,6 +241,8 @@ class MastodonAdapter(base.Adapter):
     # いまのトークンにある）。いいねは `…/favourite`・`…/unfavourite`（`write:favourites`・
     # 3.15.0 で `MASTODON_SCOPES` に足した。**それより前のトークンには無い**）。
     CAPABILITIES = CAPABILITIES | frozenset({"repost", "like"})
+    # 言及を `inbox` に保存する（10/15・点検 §B-15）。それまでは Threads だけだった。
+    CAPABILITIES = CAPABILITIES | frozenset({"inbox"})
     REACTION_PERMISSIONS = {"repost": "write:statuses", "like": "write:favourites"}
 
     # `.token` の鍵（`thth token set <account>` が書く形・設計 v2 §4.2）。
@@ -989,13 +991,21 @@ class MastodonAdapter(base.Adapter):
             cursors.add(cursor)
         raise AdapterError('言及: 100 頁を超えたため全件を確認できません')
 
-    def inbox(self, *, since: str | None = None) -> list:
-        """利用者から始まった会話（**WhatsApp の芽**・設計 v2 §4.2）。
+    # `inbox()` が見る窓（`collect` は 10 分ごと。重複は `collect` が除く）。
+    INBOX_WINDOW = "3d"
 
-        Mastodon は push 型ではないので既定どおり空。`capabilities()` に "inbox" が
-        無いので `collect` はここを見ない。
+    def inbox(self, *, since: str | None = None) -> list:
+        """言及を `inbox` に流す（10/15・点検 §B-15。それまでは空で、表示するだけ）。
+
+        公開・未収載の言及だけ（`mentions()` の規律のまま・DM に近い可視性は読まない）。
+        `collect` が `message_id`（status の id）で冪等に追記する。
         """
-        return []
+        out = []
+        for row in self.mentions(since=since or self.INBOX_WINDOW):
+            row = dict(row)
+            row["mention_kind"] = row.pop("kind", "mention")
+            out.append(row)
+        return out
 
     # ----- 実測 ------------------------------------------------------------
 
@@ -1145,7 +1155,7 @@ class MastodonAdapter(base.Adapter):
 
     @classmethod
     def capabilities(cls) -> set:
-        """topic 無し・views 無し・inbox 無し・quota 無し・refresh 無し（設計 v2 §4.2）。
+        """topic 無し・views 無し・quota 無し・refresh 無し（設計 v2 §4.2）。inbox は 10/15 から（言及）。
 
         **実体を作らずに引ける**（classmethod・T0 の `base.Adapter` と同じ形）——
         `select` がトピック検査をするかどうかを、トークンを読まずに決められる。

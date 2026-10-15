@@ -47,7 +47,7 @@ def intent_error(manifest):
     attachments=[a for a in manifest['attachments'] if a['type']!='quote']
     if attachments:
         if len(attachments)!=1 or attachments[0]['type']!='link':return 'unsupported_attachment: bluesky/typed_attachment_pending'
-        if manifest['captions'] or set(manifest['post_options'])-bluesky_metadata.FIELDS:return 'unsupported_attachment: bluesky/external_post_options'
+        if manifest['captions'] or set(manifest['post_options'])-bluesky_metadata.ALL_FIELDS:return 'unsupported_attachment: bluesky/external_post_options'
         card=attachments[0];rows=manifest['files']
         if len(rows)!=(1 if 'thumbnail_file' in card else 0):return 'media_prepared_mismatch'
         for row in rows:
@@ -56,10 +56,10 @@ def intent_error(manifest):
             if any(type(row.get(k)) is not int or row[k]<=0 for k in ('width','height')):return 'media_dimensions_unavailable'
         return None
     if manifest['captions']:return 'unsupported_attachment: bluesky/image_captions'
-    if set(manifest['post_options'])-{'gallery'}-bluesky_metadata.FIELDS:return 'unsupported_attachment: bluesky/image_post_options'
+    if set(manifest['post_options'])-{'gallery'}-bluesky_metadata.ALL_FIELDS:return 'unsupported_attachment: bluesky/image_post_options'
     rows=manifest['files']
     if not rows:
-        if (manifest['attachments'] or bluesky_metadata.FIELDS.intersection(manifest['post_options'])) and not set(manifest['post_options'])-bluesky_metadata.FIELDS:return None
+        if (manifest['attachments'] or bluesky_metadata.ALL_FIELDS.intersection(manifest['post_options'])) and not set(manifest['post_options'])-bluesky_metadata.ALL_FIELDS:return None
         return 'unsupported_attachment: bluesky/no_images'
     for row in rows:
         if row['role']!='media' or row['kind']!='image' or row['format'] not in MIME:
@@ -109,7 +109,7 @@ def publish(adapter,post,*,before_publish=None):
     if any(row['role']=='media' and row['kind']=='video' for row in post.media_manifest['files']):
         from . import bluesky_video
         return bluesky_video.publish(adapter,post,before_publish=before_publish)
-    from .bluesky import POST_COLLECTION,post_url
+    from .bluesky import POST_COLLECTION,post_url,create_post_request,created_post_uri
     ts=jst.iso();phase='preflight';ids=[];progress=post.media_progress
     def record(value,**details):
         nonlocal phase
@@ -121,6 +121,7 @@ def publish(adapter,post,*,before_publish=None):
     try:
         require(callable(progress),'media_journal_required')
         why=intent_error(post.media_manifest);require(why is None,why or '')
+        require(not post.reply_to or post.media_manifest['post_options'].get('reply_control') in (None,'everyone'),'unsupported_attachment: bluesky/reply_control_on_reply')
         require(len(post.media_files)==len(post.media_manifest['files']) and all(item.manifest==row for item,row in zip(post.media_files,post.media_manifest['files'])),'media_prepared_mismatch')
         record_body=adapter._post_record(post)
         session=adapter.session()
@@ -147,10 +148,11 @@ def publish(adapter,post,*,before_publish=None):
         embed=with_quote(record_body.get('embed'),post.media_manifest)
         if embed is not None:record_body['embed']=embed
         veto()
-        payload=json.dumps({'repo':session['did'],'collection':POST_COLLECTION,'record':record_body},ensure_ascii=False).encode('utf-8')
+        nsid,request=create_post_request(session['did'],record_body,post.media_manifest['post_options'],is_reply=bool(post.reply_to))
+        payload=json.dumps(request,ensure_ascii=False).encode('utf-8')
         record('publishing')
-        value=_json(adapter,'com.atproto.repo.createRecord',data=payload,content_type='application/json',length=len(payload))
-        uri=value.get('uri');prefix='at://'+session['did']+'/'+POST_COLLECTION+'/'
+        value=_json(adapter,nsid,data=payload,content_type='application/json',length=len(payload))
+        uri=created_post_uri(nsid,request,value);prefix='at://'+session['did']+'/'+POST_COLLECTION+'/'
         require(type(uri) is str and uri.startswith(prefix) and bool(uri[len(prefix):]) and '/' not in uri[len(prefix):] and all(32<ord(c)<127 for c in uri),'media_response_invalid: post URI')
         record('published',post_id=uri)
         return base.PublishResult(uri,post_url(session.get('handle'),uri),ts,media=[{'sha256':item.manifest['public_sha256'],'kind':'image','alt_present':base.alt_present(item.manifest),'remote_id':identifier} for item,identifier in zip(post.media_files,ids)])

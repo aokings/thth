@@ -219,8 +219,11 @@ def test_CLI_作る_一覧_取り消す(env, capsys):
     assert code not in listed and "code_hash" not in listed
     assert json.loads(listed)["invites"][0]["invite_id"] == invite_id
     assert cli.main(["admin", "invite", "revoke", invite_id, "--by", "masaru"]) == 0
-    assert cli.main(["admin", "invite", "create", "--media", "mastodon", "--project", "p", "--by", "masaru"]) == 2
+    assert cli.main(["admin", "invite", "create", "--media", "bluesky", "--project", "p", "--by", "masaru"]) == 2
     err = capsys.readouterr().err
     assert "invite_media_unsupported: " in err and "thth auth" in err
+    # Mastodon は 3.22.0 から招待できる。--instance が要る。
+    assert cli.main(["admin", "invite", "create", "--media", "mastodon", "--project", "p", "--by", "masaru"]) == 2
+    assert "invalid_instance: " in capsys.readouterr().err
     with pytest.raises(SystemExit):
         cli.main(["admin", "invite", "create", "--media", "threads", "--project", "p"])

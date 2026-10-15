@@ -39,7 +39,10 @@ from . import accounts, admin_log, relay, jst, private_store, redact
 DIRECTORY = "_invites"
 INVITE_ID = re.compile(r"[0-9a-f]{12}\Z")
 HASH = re.compile(r"[0-9a-f]{64}\Z")
-MEDIA = ("threads",)
+# Mastodon は 3.22.0 から（点検 §B-20）。instance は運営者が招待を作るときに決める。
+# Bluesky は招待しない（App Password を thth.me のページで受けることになり、「トークンは
+# このページを通りません」が崩れる。atproto の OAuth で入れるまでは運営者が用意する）。
+MEDIA = ("threads", "mastodon")
 DEFAULT_DAYS = 30
 MAX_DAYS = 90
 LABEL_MAX = 80
@@ -51,13 +54,25 @@ OPEN = ("registering", "unknown", "open", "authorizing")
 # 招待の認可で求める権限。申請の範囲（`docs/計画_Meta申請_2026-09-25.md`）に合わせて
 # `threads_share_to_instagram` は外す——申請しない権限を外の人に求めると、審査前は
 # 認可そのものが通らないことがある。招待のページはこの一覧をそのまま見せる。
-def invite_scopes():
+def invite_scopes(media="threads"):
     from . import scopes
+    if media == "mastodon":
+        return list(scopes.MASTODON_SCOPES)
     return [name for name in scopes.DEFAULT_SCOPES if name != "threads_share_to_instagram"]
 
 
+def instance_of(value):
+    """Mastodon の instance を正規の origin に（`thth auth` と同じ検査）。"""
+    from .adapters.auth_mastodon import origin
+    from .authflow import FlowError
+    try:
+        return origin(value)
+    except FlowError:
+        raise error("invalid_instance") from None
+
+
 REASONS = frozenset((
-    "invite_media_unsupported", "invalid_project", "invalid_label", "invalid_expires",
+    "invite_media_unsupported", "invalid_instance", "invalid_project", "invalid_label", "invalid_expires",
     "invite_project_in_owner_group", "invite_account_exists", "invite_not_found",
     "invite_store_unavailable", "invite_log_unavailable", "invite_already_used",
     "invite_not_open", "invite_tty_required", "invite_registration_rejected",
@@ -66,8 +81,10 @@ REASONS = frozenset((
 ))
 # 断るときは理由と次の一手（静的な文だけ・値は混ぜない）。
 NEXT = {
-    "invite_media_unsupported": "3.10.0 の招待は --media threads だけです。Bluesky・Mastodon は従前どおり"
-                                "運営者が thth account add と thth auth で用意してください",
+    "invite_media_unsupported": "招待は --media threads か mastodon です（mastodon は --instance https://… も）。"
+                                "Bluesky は従前どおり運営者が thth account add と thth auth で用意してください",
+    "invalid_instance": "--instance は Mastodon の https の origin です（例: https://mastodon.social）。"
+                        "--media mastodon のときだけ付けます",
     "invalid_project": f"--project は英数字と - _ . だけ・{PROJECT_MAX} 字までです",
     "invalid_label": f"--label は 1 行・{LABEL_MAX} 字までです（控えのメモ・Worker には送りません）",
     "invalid_expires": f"--expires は 1d〜{MAX_DAYS}d の日数です（例: 30d）",
@@ -106,6 +123,14 @@ def _valid(record):
     if not isinstance(record.get("code_hash"), str) or not HASH.fullmatch(record["code_hash"]):
         return False
     if record.get("media") not in MEDIA or record.get("status") not in STATUSES:
+        return False
+    if record["media"] == "mastodon":
+        try:
+            if instance_of(record.get("instance")) != record.get("instance"):
+                return False
+        except InviteError:
+            return False
+    elif record.get("instance") is not None:
         return False
     if not accounts.name_is_safe(record.get("project")) or not accounts.name_is_safe(record.get("account")):
         return False
@@ -172,16 +197,20 @@ def terminal():
 
 def public(record):
     """一覧に出す形（code_hash も出さない）。"""
-    keys = ("invite_id", "status", "media", "project", "account", "label", "production",
+    keys = ("invite_id", "status", "media", "instance", "project", "account", "label", "production",
             "expires_at", "at", "by", "reason", "approver_set")
     return {key: record.get(key) for key in keys}
 
 
-def create(*, media, project, label=None, expires=None, production=False, by):
+def create(*, media, project, label=None, expires=None, production=False, by, instance=None):
     """招待を 1 本作り、URL を tty に 1 回だけ出す。戻り値に code は入れない。"""
     admin_log.actor(by)
     if media not in MEDIA:
         raise error("invite_media_unsupported")
+    if media == "mastodon":
+        instance = instance_of(instance)
+    elif instance is not None:
+        raise error("invalid_instance")
     check_project(project)
     label = private_store.check_text(label, LABEL_MAX, error=error, invalid="invalid_label",
                                      too_long="invalid_label", required=False, one_line=True)
@@ -207,7 +236,7 @@ def create(*, media, project, label=None, expires=None, production=False, by):
             raise error("invite_account_exists")
         expires_at = now_ms() + days * 86_400_000
         record = dict(schema_version=1, invite_id=invite_id, at=jst.iso(), by=admin_log.clean(by),
-                      code_hash=code_hash, media=media, project=project, label=label,
+                      code_hash=code_hash, media=media, instance=instance, project=project, label=label,
                       production=production, expires_at=expires_at, status="registering",
                       account=account, reason=None, approver_set=False, updated_at=jst.iso())
         # 先に手元へ「作ろうとしている」を残す（Worker に届いたか分からなくても
@@ -215,9 +244,11 @@ def create(*, media, project, label=None, expires=None, production=False, by):
         with STORE.locked() as directory:
             STORE.write(directory, record)
         try:
-            value = relay.signed_request("invite", code_hash, "create",
-                                         {"media": media, "production": production, "expires_at": expires_at,
-                                          "scopes": invite_scopes()})
+            remote = {"media": media, "production": production, "expires_at": expires_at,
+                      "scopes": invite_scopes(media)}
+            if instance is not None:
+                remote["instance"] = instance
+            value = relay.signed_request("invite", code_hash, "create", remote)
             if value != {"status": "open"}:
                 raise relay.RelayError("relay_invalid")
         except relay.RelayError as exc:
@@ -306,6 +337,9 @@ OPEN_POLL_SECONDS = 10
 # 招待の認可の戻り先（Meta に登録してある受け口・`callback/src/index.js`）。
 INVITE_REDIRECT_URI = "https://thth.me/callback/"
 THREADS_HANDLE = re.compile(r"[A-Za-z0-9_.]{1,64}\Z")
+# Mastodon の verify_credentials の `acct`（その instance の利用者なのでドメインは付かない）。
+MASTODON_HANDLE = re.compile(r"[A-Za-z0-9_]{1,64}\Z")
+HANDLES = {"threads": THREADS_HANDLE, "mastodon": MASTODON_HANDLE}
 _next_poll = {}
 
 
@@ -450,7 +484,13 @@ def _notice_stall(directory, record, clicked_at):
     _save(directory, record, stall_notified=True)
 
 
-def _profile():
+def _profile(record):
+    if record["media"] == "mastodon":
+        # instance ごとの client（無ければこの場で登録する・`thth auth` と同じ置き場）。
+        from .adapters.auth_mastodon import MastodonInviteAuthProfile
+        profile = MastodonInviteAuthProfile.prepare(_expanded(_ledger(record)), by=record["by"])
+        profile.validate()
+        return profile
     from . import appenv
     from .adapters.auth_threads import ThreadsInviteAuthProfile
     app_id, app_secret = appenv.load_app_env(log=lambda _: None)
@@ -467,11 +507,14 @@ def _start(directory, record):
         check_project(record["project"])
         if not _account_free(record["account"]):
             raise error("invite_account_exists")
-        profile = _profile()
-    except (InviteError, appenv.AppEnvError, OSError, ValueError):
+        profile = _profile(record)
+    except (InviteError, appenv.AppEnvError, accounts.AccountError, OSError, ValueError):
         return _reset(record, "unavailable")
     session = {"state": authflow.secret(oauth._new_state()),
                "read_key": authflow.secret(secrets.token_urlsafe(32)), "created_at": now_ms()}
+    if getattr(profile, "pkce", False):
+        # Mastodon は S256（`MastodonAuthProfile.authorize`）。verifier は VM の session にだけ。
+        session["code_verifier"] = authflow.secret(secrets.token_urlsafe(32))
     try:
         status, _ = authflow.relay_request(session, register=True)
     except authflow.FlowError:
@@ -506,11 +549,13 @@ def _read_session(directory, invite_id):
         value = json.loads(raw)
     except ValueError:
         return None
-    if (not isinstance(value, dict) or set(value) != {"state", "read_key", "created_at"}
-            or not all(isinstance(value[k], str) and relay.OPAQUE.fullmatch(value[k]) for k in ("state", "read_key"))
+    keys = ("state", "read_key", "code_verifier") if isinstance(value, dict) and "code_verifier" in value \
+        else ("state", "read_key")
+    if (not isinstance(value, dict) or set(value) != {*keys, "created_at"}
+            or not all(isinstance(value[k], str) and relay.OPAQUE.fullmatch(value[k]) for k in keys)
             or type(value["created_at"]) is not int):
         return None
-    for key in ("state", "read_key"):
+    for key in keys:
         authflow.secret(value[key])
     return value
 
@@ -535,7 +580,7 @@ def _recovered(directory, record):
     except accounts.AccountError:
         return False
     if cfg.get("invite_id") != record["invite_id"] or not isinstance(cfg.get("handle"), str) \
-            or not THREADS_HANDLE.fullmatch(cfg["handle"]):
+            or not HANDLES[record["media"]].fullmatch(cfg["handle"]):
         return False
     _forget_session(directory, record["invite_id"])
     _save(directory, record, status="used", reason=None, handle=cfg["handle"], remote_ready=False, approver_set=False)
@@ -568,9 +613,11 @@ def _ledger(record, *, handle="", user_id=""):
     """招待の口座の台帳（`account add` と同じ雛形・置き場は `docs/運用_招待する側.md` のとおり）。"""
     from . import account_cli
     name = record["account"]
-    data = account_cli.build_ledger(name, media="threads", project=record["project"],
+    media = record.get("media", "threads")
+    data = account_cli.build_ledger(name, media=media, project=record["project"],
                                     repo_dir=f"$THTH_ROOT/repos/_server/{name}",
-                                    redirect_uri=INVITE_REDIRECT_URI)
+                                    instance=record.get("instance"),
+                                    redirect_uri=INVITE_REDIRECT_URI if media == "threads" else None)
     data.update(handle=handle, user_id=user_id, env=f"$THTH_ROOT/secrets/{name}.env",
                 token=f"$THTH_ROOT/secrets/{name}.token", production=record["production"],
                 scheduled=False, invite_id=record["invite_id"],
@@ -586,16 +633,23 @@ def _expanded(data):
     return value
 
 
-def _threads_account_exists(user_id, username):
-    """同じ Threads 口座が既に台帳にあるか（handle・user_id・token の user_id で見る）。"""
+def _account_exists(record, user_id, username):
+    """同じ口座が既に台帳にあるか（handle・user_id・token の user_id で見る）。
+    Mastodon は同じ instance の中だけを比べる（別の instance の同名は別の人）。"""
     from . import oauth
     for name in accounts.list_account_names():
         try:
             cfg = accounts.load_account(name)
         except accounts.AccountError:
             continue
-        if cfg.get("media") != "threads":
+        if cfg.get("media") != record["media"]:
             continue
+        if record["media"] == "mastodon":
+            try:
+                if instance_of(cfg.get("instance")) != record["instance"]:
+                    continue
+            except InviteError:
+                continue
         if oauth.handle_matches(cfg.get("handle") or "", username) or str(cfg.get("user_id") or "") == user_id:
             return True
         try:
@@ -611,16 +665,17 @@ def _complete(directory, record, session, code):
     """認可の code を VM で token に換え、口座を用意して Worker に知らせる。"""
     from . import appenv, oauth
     try:
-        profile = _profile()
+        profile = _profile(record)
         exchange_cfg = _expanded(_ledger(record))
         token = profile.exchange(code, session, exchange_cfg, log=lambda _: None)
     except (oauth.OAuthError, appenv.AppEnvError, accounts.AccountError, OSError, ValueError):
         return _back_to_open(directory, record, "auth_failed")
     user_id, username = token.get("user_id"), token.get("username")
-    if not isinstance(username, str) or not THREADS_HANDLE.fullmatch(username) or not isinstance(user_id, str):
+    if (not isinstance(username, str) or not HANDLES[record["media"]].fullmatch(username)
+            or not isinstance(user_id, str)):
         return _back_to_open(directory, record, "auth_failed")
-    # 招待 1 本で口座は 1 つ・同じ Threads 口座に 2 つ目は作らない（設計 §2）。
-    if _threads_account_exists(user_id, username):
+    # 招待 1 本で口座は 1 つ・同じ口座に 2 つ目は作らない（設計 §2）。
+    if _account_exists(record, user_id, username):
         return _back_to_open(directory, record, "account_exists")
     try:
         check_project(record["project"])
@@ -714,7 +769,7 @@ def _create_account(record, data, token):
         admin_log.append("token_set", name, data, by=by,
                          diff={"token": ["absent", "present"], "auth_via": [None, "relay"],
                                "via_invite": [None, record["invite_id"]]})
-        admin_log.append("invite_used", subject(record["invite_id"]), {"media": "threads"}, by=by,
+        admin_log.append("invite_used", subject(record["invite_id"]), {"media": record["media"]}, by=by,
                          diff={"account": [None, name]})
 
 
@@ -746,7 +801,7 @@ def _used(directory, record):
         # 口座の secret は Worker の完了ページが本人に 1 回だけ見せた。VM に secret は無い。
         # 記録に残すのは「secret が設定された」ことだけ（admin secret set と同じ event。
         # event 名 `approver_set`・記録の欄 `approver_set` は過去の記録と揃えて変えない）。
-        admin_log.append("approver_set", record["account"], {"media": "threads"}, by=record["by"], via="http",
+        admin_log.append("approver_set", record["account"], {"media": record["media"]}, by=record["by"], via="http",
                          diff={"credential_present": [None, True], "via_invite": [None, record["invite_id"]]})
         _save(directory, record, approver_set=True)
         # 口座の secret ができた＝Worker がその人を知った。要約をすぐ押し上げる（3.14.3 穴 2）。
@@ -880,7 +935,7 @@ def add_credential(credentials_path, record):
         with admin_log.transaction(rollback=rollback):
             _replace_credentials(path, data)
             report_http.load_credentials(path)
-            admin_log.append("credential_added", name, {"media": "threads"}, by=record["by"], via="http",
+            admin_log.append("credential_added", name, {"media": record["media"]}, by=record["by"], via="http",
                              diff={"credential": ["absent", "present"], "writes": [None, True],
                                    "via_invite": [None, record["invite_id"]]})
     return digest
@@ -914,7 +969,7 @@ def _replace_credential(path, record, key_sha256):
         with admin_log.transaction(rollback=rollback):
             _replace_credentials(path, data)
             report_http.load_credentials(path)
-            admin_log.append("credential_rotated", name, {"media": "threads"}, by=record["by"], via="http",
+            admin_log.append("credential_rotated", name, {"media": record["media"]}, by=record["by"], via="http",
                              diff={"credential": ["present", "present"], "generation": ["previous", "new"],
                                    "via_invite": [None, record["invite_id"]]})
     return True
@@ -950,7 +1005,7 @@ def forget_credential(account, *, by):
                     with admin_log.transaction(rollback=rollback):
                         _replace_credentials(path, (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode())
                         report_http.load_credentials(path)
-                        admin_log.append("credential_removed", account, {"media": "threads"}, by=by,
+                        admin_log.append("credential_removed", account, {"media": record["media"]}, by=by,
                                          diff={"credential": ["present", "absent"], "via_invite": [None, record["invite_id"]]})
         except FileNotFoundError:
             pass
@@ -1086,7 +1141,7 @@ def _fail(reason):
 def cmd_create(args):
     try:
         row = create(media=args.media, project=args.project, label=args.label, expires=args.expires,
-                     production=bool(args.production), by=args.by)
+                     production=bool(args.production), by=args.by, instance=args.instance)
     except InviteError as exc:
         return _fail(str(exc))
     except ValueError as exc:
@@ -1097,6 +1152,7 @@ def cmd_create(args):
     except (OSError, admin_log.AdminLogError):
         return _fail("invite_log_unavailable")
     print(f"invite_created: id={row['invite_id']} account={row['account']} media={row['media']} "
+          + (f"instance={row['instance']} " if row.get("instance") else "") +
           f"production={str(row['production']).lower()} "
           f"expires_at={_when(row['expires_at'])}")
     return 0
@@ -1135,7 +1191,8 @@ def cmd_list(args):
     if not rows:
         print("招待はありません（thth admin invite create --media threads --project <p> --by <名前>）")
     for row in rows:
-        print(f"{row['invite_id']}  {row['status']:<11} {row['media']}  {row['account']}  "
+        print(f"{row['invite_id']}  {row['status']:<11} {row['media']}"
+              + (f" {row['instance']}" if row.get("instance") else "") + f"  {row['account']}  "
               f"期限 {_when(row['expires_at'])}  production={str(row['production']).lower()}"
               + (f"  {row['label']}" if row.get("label") else ""))
     if broken:
@@ -1147,7 +1204,8 @@ def register_admin(commands):
     parser = commands.add_parser("invite", help="招待リンク（期限つき・1 回きり・URL は tty に 1 回だけ）")
     operations = parser.add_subparsers(dest="invite_operation", required=True)
     p = operations.add_parser("create", help="招待を作る（URL は tty に 1 回だけ）")
-    p.add_argument("--media", required=True)
+    p.add_argument("--media", required=True, help="threads か mastodon")
+    p.add_argument("--instance", default=None, help="mastodon のとき: https://… の instance（3.22.0）")
     p.add_argument("--project", required=True)
     p.add_argument("--label", default=None, help="控えのメモ（1 行・Worker には送らない）")
     p.add_argument("--expires", default=f"{DEFAULT_DAYS}d", help=f"1d〜{MAX_DAYS}d（既定 {DEFAULT_DAYS}d）")

@@ -348,7 +348,11 @@ def test_retract_productionでなければ二段目でもDELETEを呼ばない(
     assert not _parse_fm(path).get("retracted_at")
 
 
-def test_retract_他媒体はrc2で未対応(isolated_account_factory, tmp_path, point_at):
+def test_retract_取り下げを持たない媒体はrc2で未対応(isolated_account_factory, tmp_path, point_at,
+                                                   monkeypatch):
+    # Bluesky は 3.22.0 から取り下げを持つ（点検 §B-19）。持たない媒体の線は印で確かめる。
+    from thth.adapters import bluesky
+    monkeypatch.setattr(bluesky.BlueskyAdapter, "DELETE_PERMISSION", None)
     token_path = str(tmp_path / "bsky.token")
     with open(token_path, "w", encoding="utf-8") as f:
         json.dump({"identifier": "x.bsky.social", "app_password": "fake"}, f)
@@ -661,6 +665,10 @@ def test_DELETEが飛ぶ経路はretract_cliのdelete_postだけ():
     # Mastodon の DELETE（3.1.1）も `delete_post` の中の 1 か所だけ。
     assert inspect.getsource(mastodon).count('"DELETE"') == 1
     assert '"DELETE"' in inspect.getsource(mastodon.MastodonAdapter.delete_post)
+    # Bluesky の deleteRecord（3.22.0）は取り下げ（投稿と threadgate）と反応の取り消しだけ。
+    assert inspect.getsource(bluesky).count('"com.atproto.repo.deleteRecord"') == 3
+    assert inspect.getsource(bluesky.BlueskyAdapter.delete_post).count(
+        '"com.atproto.repo.deleteRecord"') == 2
 
 
 def test_Threadsのdelete_postは数字以外のidを断る():

@@ -188,6 +188,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._respond_json(200, {"posts": list(self.search), "cursor": "c1"})
             return
 
+        if nsid == "app.bsky.notification.listNotifications":
+            # 言及を inbox に採る（3.22.0・点検 §B-15）。偽の口は通知 0 件。
+            self.__class__.seen.append("listNotifications")
+            self._respond_json(200, {"notifications": []})
+            return
+
         self._respond_json(404, {"error": "MethodNotImplemented", "message": nsid})
 
     def log_message(self, format, *args):  # noqa: A002 - テスト出力を汚さない
@@ -643,8 +649,9 @@ def test_capabilitiesにviewsもtopicも入らない():
     # T2-1（`searchPosts`・2026-09-16）で足した。views・topic・quota・inbox・
     # refresh は無いまま。
     # repost・like は 3.15.0（createRecord／deleteRecord）。
+    # inbox は 10/15（点検 §B-15・言及と引用を保存する）。
     assert adapter.capabilities() == {"link_preview", "recent_posts", "thread_read",
-                                      "keyword_search", "mentions", "repost", "like"}
+                                      "keyword_search", "mentions", "repost", "like", "inbox"}
     assert adapter.quota() is None
 
 

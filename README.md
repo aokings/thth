@@ -11,7 +11,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 | | Threads | Bluesky | Mastodon | X |
 |---|---|---|---|---|
 | 投稿・予約 | ○ | ○ | ○ | ○ |
-| 削除 | ○ | － | ○ | ○ |
+| 削除 | ○ | ○ | ○ | ○ |
 | 返信とインサイト（表示・いいね・返信などの数）の取得 | ○ | ○ | ○ | 数だけ（3.16.0・THTH から出した投稿） |
 | キーワード検索（`thth topics --search`・`thth where`） | ○ | ○ | ○ | － |
 | 言及（`thth mentions`） | ○ | ○ | ○ | － |

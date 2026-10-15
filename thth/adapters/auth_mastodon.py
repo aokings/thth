@@ -103,6 +103,8 @@ def valid_client(data, base, required_scopes=None):
 class MastodonAuthProfile(AuthProfile):
     media='mastodon'
     pkce=True
+    # 招待（3.22.0）は台帳の handle を先に持たない。認可した人の acct から取る。
+    identity_from_token=False
 
     @classmethod
     @leave_gate.configured("cfg")
@@ -200,10 +202,16 @@ class MastodonAuthProfile(AuthProfile):
             raise FlowError('mastodon_granted_scopes_or_token_invalid')
         me=request(self.instance,'/api/v1/accounts/verify_credentials',token=token)
         uid,acct=me.get('id'),me.get('acct')
-        if not isinstance(uid,str) or not uid or not isinstance(acct,str) or not acct or oauth.handle_matches(account_cfg.get('handle'),acct) is not True:
+        if (not isinstance(uid,str) or not uid or not isinstance(acct,str) or not acct
+                or not self.identity_from_token and oauth.handle_matches(account_cfg.get('handle'),acct) is not True):
             raise FlowError('mastodon_identity_mismatch')
         return dict(access_token=token,user_id=uid,username=acct,obtained_at=jst.iso(),no_expiry=True,
                     scopes=scope.split(),scopes_source='response',client_scope_generation=authclients.scope_generation(self.scopes))
+
+
+class MastodonInviteAuthProfile(MastodonAuthProfile):
+    """招待リンク（3.22.0・点検 §B-20）の認可。台帳の handle は認可した人の acct から作る。"""
+    identity_from_token=True
 
 
 def client_for_token(cfg,token):

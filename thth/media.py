@@ -434,7 +434,7 @@ def validate_declarations(fm,medium):
     if medium=='bluesky' and rows and 'link' in seen: raise MediaError('attachments: media/card mutually exclusive')
     option_fields={
         'mastodon':{'visibility','language','sensitive','spoiler_text','quote_approval_policy','focus'},
-        'bluesky':{'languages','labels','presentation','gallery','facets','tags'},
+        'bluesky':{'languages','labels','presentation','gallery','facets','tags','reply_control'},
         'threads':{'text_spoiler','media_spoiler','ghost','reply_control','reply_approvals'},
         'x':{'reply_settings'},
     }

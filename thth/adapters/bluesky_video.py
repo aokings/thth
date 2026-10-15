@@ -37,7 +37,7 @@ def intent_error(manifest):
     why=images.quote_error(manifest)
     if why:return why
     if any(a['type']!='quote' for a in manifest['attachments']):return 'unsupported_attachment: bluesky/typed_attachment_pending'
-    if set(manifest['post_options'])-{'presentation'}-bluesky_metadata.FIELDS:return 'unsupported_attachment: bluesky/video_post_options'
+    if set(manifest['post_options'])-{'presentation'}-bluesky_metadata.ALL_FIELDS:return 'unsupported_attachment: bluesky/video_post_options'
     rows=[r for r in manifest['files'] if r['role']=='media']
     if len(rows)!=1:return 'media_limit_exceeded: video_count'
     row=rows[0]
@@ -169,7 +169,7 @@ def _caption_blob(response,row):
 
 
 def publish(adapter,post,*,before_publish=None):
-    from .bluesky import POST_COLLECTION,post_url
+    from .bluesky import POST_COLLECTION,post_url,create_post_request,created_post_uri
     ts=jst.iso();phase='preflight';job_id=None;did=None;ids=[];progress=post.media_progress
     def record(value,**details):
         nonlocal phase
@@ -181,6 +181,7 @@ def publish(adapter,post,*,before_publish=None):
     try:
         require(callable(progress),'media_journal_required')
         why=intent_error(post.media_manifest);require(why is None,why or '')
+        require(not post.reply_to or post.media_manifest['post_options'].get('reply_control') in (None,'everyone'),'unsupported_attachment: bluesky/reply_control_on_reply')
         require(len(post.media_files)==len(post.media_manifest['files']) and all(item.manifest==row for item,row in zip(post.media_files,post.media_manifest['files'])),'media_prepared_mismatch')
         item=post.media_files[0];row=item.manifest;veto()
         body=adapter._post_record(post)
@@ -215,10 +216,11 @@ def publish(adapter,post,*,before_publish=None):
             captions.append({'lang':declaration['lang'],'file':caption_blob})
         if captions:embed['captions']=captions
         body['embed']=images.with_quote(embed,post.media_manifest);veto()
-        payload=json.dumps({'repo':did,'collection':POST_COLLECTION,'record':body},ensure_ascii=False).encode()
+        nsid,request=create_post_request(did,body,post.media_manifest['post_options'],is_reply=bool(post.reply_to))
+        payload=json.dumps(request,ensure_ascii=False).encode()
         record('publishing')
-        response=images._json(adapter,'com.atproto.repo.createRecord',data=payload,content_type='application/json',length=len(payload))
-        uri=response.get('uri');prefix='at://'+did+'/'+POST_COLLECTION+'/'
+        response=images._json(adapter,nsid,data=payload,content_type='application/json',length=len(payload))
+        uri=created_post_uri(nsid,request,response);prefix='at://'+did+'/'+POST_COLLECTION+'/'
         require(type(uri) is str and uri.startswith(prefix) and bool(uri[len(prefix):]) and '/' not in uri[len(prefix):] and all(32<ord(c)<127 for c in uri),'media_response_invalid: post URI')
         record('published',post_id=uri)
         return base.PublishResult(uri,post_url(session.get('handle'),uri),ts,media=[{'sha256':row['public_sha256'],'kind':'video','alt_present':base.alt_present(row),'remote_id':blob['ref']['$link']}])

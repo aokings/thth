@@ -85,7 +85,7 @@ CAPABILITIES = {
         'link': 'supported', 'gif': 'supported', 'text': NO_TEXT,
         'thumbnail': 'supported', 'captions': 'supported',
         'tags': 'supported', 'labels': 'supported', 'languages': 'supported',
-        'spoiler': NO_SPOILER, 'reply_control': 'unsupported: threadgate_not_implemented',
+        'spoiler': NO_SPOILER, 'reply_control': 'supported',
         'ghost': NO_GHOST, 'visibility_private': PRIVATE,
         'offset_styling': 'supported', 'carousel_quote': 'supported',
         'jpeg': 'supported', 'png': 'supported', 'webp': 'supported',
@@ -189,6 +189,7 @@ REFUSALS = {
         'image_post_options': 'post option outside the image set',
         'video_post_options': 'post option outside the video set',
         'no_images': 'image intent with no image',
+        'reply_control_on_reply': 'reply control on a reply (threadgate is for root posts)',
         'caption': 'caption must be vtt on the first video',
     },
     'x': {

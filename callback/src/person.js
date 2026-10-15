@@ -68,8 +68,8 @@ async function authenticate(request,env,url,raw,role,subject,operation) {
 export const t=(ja,english)=>`<span class="ja" lang="ja">${ja}</span><span class="en" lang="en">${english}</span>`;
 export const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // 招待の流れの段（今いる段を太く）。1 認可 2 シークレットの保存 3 thth login。
-export function steps(current){
-  const names=[['Threads で認可','Authorize'],['シークレットを保存','Save the secret'],['thth login','thth login']];
+export function steps(current,service='Threads'){
+  const names=[[`${service} で認可`,'Authorize'],['シークレットを保存','Save the secret'],['thth login','thth login']];
   return `<ol class="steps">${names.map(([ja,english],i)=>`<li${i+1===current?' aria-current="step"':i+1<current?' class="done"':''}>${t(ja,english)}</li>`).join('')}</ol>`;
 }
 // 静かな、読み物の画面。書体はシステムの和文ゴシック（読み込み 0・ずれ 0）。色は明暗の両方。

@@ -20,8 +20,10 @@
 - MCP の `thth_settings`（LLM）: **締める向きだけ**。緩める変更は
   `settings_loosen_requires_owner` で断る——暴走した LLM が自分で安全装置を外せないように。
 
-`scheduled: false` の口座（timer に載っていない・招待の口座は今これ）では、`hold_minutes`
+`scheduled: false` の口座（timer に載っていない・招待の口座は作ったときこれ）では、`hold_minutes`
 を 1 以上にすると「刻んでも出ない」ので `schedule_unavailable` で断る（裁定 (b)）。
+運営者の CLI だけが `thth account set <口座> scheduled true --by <名前>` で timer に載せる印を
+立てられる（10/15・点検 §B-21。unit は運営者が `thth systemd <口座>` で置く）。
 
 変更は台帳を原子的に書き換え、変更ログに `settings_set`（値の前後）で残す。秘密は無い。
 """
@@ -177,6 +179,50 @@ def change(account, key, value, *, by, via="cli", tighten_only=False) -> dict:
 HANDLE_RE = re.compile(r"[A-Za-z0-9._-]{1,253}")
 
 
+SCHEDULED_VALUES = {"true": True, "false": False}
+
+
+def change_scheduled(account, value, *, by) -> dict:
+    """台帳の `scheduled`（timer に載せるか）を変える（**運営者の CLI だけ**・10/15・点検 §B-21）。
+
+    招待の口座は `scheduled: false` で作られ、予約と猶予が `schedule_unavailable` で断られる。
+    それまでは ssh で JSON を手で書き換えるしかなかった。`true` にしても timer の unit は
+    置かれないので、置き方（`thth systemd <口座>`）を表示で言う。`false` に戻すときは、
+    猶予（`hold_minutes`）が 1 以上なら断る（刻んだ原稿が黙って出なくなる・裁定 (b)）。
+    MCP・遠くの道（`thth.me`）からは変えられない（`KEYS` に無いので `change()` が断る）。
+    """
+    admin_log.actor(by)
+    if not accounts.name_is_safe(account):
+        raise SettingsError("invalid_setting")
+    key = str(value or "").strip().lower()
+    if key not in SCHEDULED_VALUES:
+        raise SettingsError("invalid_setting")
+    after = SCHEDULED_VALUES[key]
+    cfg = accounts.load_account(account)
+    before = scheduled(cfg)
+    if before == after:
+        return {"account": account, "key": "scheduled", "before": before, "after": after, "changed": False}
+    if not after and current(cfg)["hold_minutes"] > 0:
+        raise SettingsError("schedule_unavailable")
+    path = _ledger_path(account)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SettingsError("ledger_unavailable") from exc
+    if not isinstance(raw, dict):
+        raise SettingsError("ledger_unavailable")
+    original = json.loads(json.dumps(raw))
+    raw["scheduled"] = after
+    secrets_fs.atomic_write_json(str(path), raw)
+    try:
+        accounts.load_account(account)
+    except accounts.AccountError:
+        secrets_fs.atomic_write_json(str(path), original)
+        raise SettingsError("ledger_unavailable") from None
+    admin_log.append("settings_set", account, cfg, by=by, via="cli", diff={"scheduled": [before, after]})
+    return {"account": account, "key": "scheduled", "before": before, "after": after, "changed": True}
+
+
 def change_handle(account, value, *, by) -> dict:
     """台帳の `handle` を直す（**運営者の CLI だけ・トークンが無いときだけ**・10/15）。
 
@@ -284,13 +330,18 @@ def cmd_set(args) -> int:
     try:
         pairs = _pairs(rest)
         results = [change_handle(args.name, value, by=args.by) if key == "handle"
+                   else change_scheduled(args.name, value, by=args.by) if key == "scheduled"
                    else change(args.name, key, value, by=args.by, via="cli") for key, value in pairs]
     except SettingsError as exc:
         reason = str(exc) if str(exc) in REASONS else "invalid_setting"
         if reason == "invalid_setting":
-            reason += f": 名前は {'・'.join(KEYS)}・handle（burst は `burst <件数> <分>` でも）"
+            reason += (f": 名前は {'・'.join(KEYS)}・handle・scheduled（true／false）"
+                       "（burst は `burst <件数> <分>` でも）")
         elif reason == "invalid_handle":
             reason += ": handle は英数字と `.`・`_`・`-` だけ（先頭の @ は外す）"
+        elif reason == "schedule_unavailable" and any(k == "scheduled" for k, _ in pairs):
+            reason += (f": {args.name} は猶予（hold_minutes）が 1 以上なので timer から外しません。"
+                       f"先に thth account set {args.name} hold_minutes 0 --by <名前>")
         elif reason == "handle_locked_by_token":
             reason += (f": {args.name} にはトークンがあるので handle を変えません（取り違え防止の"
                        "照合の片側のため）。変えるなら、トークンを外してから handle を直し、認可し直す")
@@ -312,6 +363,15 @@ def show_changes(results) -> int:
             print(f"{row['account']}: {row['key']} {row['before']} → {row['after']}")
         else:
             print(f"{row['account']}: {row['key']} は既に {row['after']} です（変えていません）")
+        if row["key"] == "scheduled" and row["after"] is True:
+            name = row["account"]
+            print(f"  timer を置くまで予約は出ません（VM・管理者）: thth systemd {name} | sudo tee "
+                  f"/etc/systemd/system/thth@{name}.timer && sudo systemctl daemon-reload && "
+                  f"sudo systemctl enable --now thth@{name}.timer")
+        elif row["key"] == "scheduled" and row["changed"]:
+            name = row["account"]
+            print(f"  timer を外す（VM・管理者）: sudo systemctl disable --now thth@{name}.timer。"
+                  f"採集は thth systemd {name} --collect-only の timer で")
     return 0
 
 
