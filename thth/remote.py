@@ -718,8 +718,11 @@ def _topics_search(args, account):
     query = (args.search or "").strip()
     if not query:
         raise RemoteError("invalid_request", reason="--search に語を書いてください", rc=2)
+    # `--since`／`--until`／`--media`（Threads の検索の絞り込み・点検 §B-5）も渡す。黙って落とさない。
     value = call("topics_search", account, query=query, limit=_limit(args),
-                 recent=True if getattr(args, "recent", False) else None)
+                 recent=True if getattr(args, "recent", False) else None,
+                 since=getattr(args, "since", None), until=getattr(args, "until", None),
+                 media=getattr(args, "media", None))
     return _shown(args, value, lambda v: threads_read_cli.show_search(account, v))
 
 
@@ -758,7 +761,9 @@ def _where(args, account):
              for name in ("recent", "exclude_engaged", "aggregate", "suggest", "tag", "keep", "ja",
                           "question", "no_replies")}
     value = call("where_to_appear", account, words=words, limit=getattr(args, "limit", None),
-                 since=getattr(args, "since", None), max_per_author=getattr(args, "max_per_author", None),
+                 since=getattr(args, "since", None), until=getattr(args, "until", None),
+                 media=getattr(args, "media", None),
+                 max_per_author=getattr(args, "max_per_author", None),
                  also=getattr(args, "also", None), lexicon=lexicon, author=getattr(args, "author", None),
                  **flags)
     if getattr(args, "json", False):

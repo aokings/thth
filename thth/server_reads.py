@@ -48,11 +48,11 @@ _FIELDS = {
     'measured': (('limit', 'post_id'), ()),
     'collect': ((), ()),
     'mentions': (('limit', 'refresh', 'since'), ()),
-    'topics_search': (('query', 'limit', 'recent'), ('query',)),
+    'topics_search': (('query', 'limit', 'recent', 'since', 'until', 'media'), ('query',)),
     'profile': (('username',), ('username',)),
     'location_search': (('query',), ('query',)),
     'thread_read': (('post_id', 'since', 'max_messages', 'limit'), ('post_id',)),
-    'where_to_appear': (('words', 'recent', 'limit', 'since', 'exclude_engaged', 'max_per_author', 'also',
+    'where_to_appear': (('words', 'recent', 'limit', 'since', 'until', 'media', 'exclude_engaged', 'max_per_author', 'also',
                          'aggregate', 'lexicon', 'suggest', 'tag', 'author', 'keep', 'ja', 'question',
                          'no_replies'), ()),
     'who_is_this': (('author_key', 'username', 'profile'), ()),
@@ -64,7 +64,7 @@ _TYPES = {
     'recent': bool, 'max_messages': int, 'words': list, 'exclude_engaged': bool, 'max_per_author': int,
     'also': list, 'aggregate': bool, 'lexicon': dict, 'suggest': bool, 'tag': bool, 'author': str,
     'keep': bool, 'ja': bool, 'question': bool, 'no_replies': bool, 'author_key': str, 'profile': bool,
-    'days': int,
+    'days': int, 'until': str, 'media': str,
 }
 # 答えの大きさの目安（JSON の UTF-16 の長さ）。thth.me の 1 件の上限（128 KB）より少し小さく取る。
 RESULT_BUDGET = 120_000
@@ -115,7 +115,12 @@ def _validate(request):
             error('invalid_request')
     if 'post_id' in request and not request['post_id'].strip():
         error('invalid_request')
-    for name in ('query', 'username', 'since', 'author', 'author_key', 'post_id'):
+    if 'media' in request:
+        # 媒体の種類は手元の旗と同じ選択肢だけ（任意の文字を API へ渡さない）。
+        from . import threads_read_cli
+        if request['media'] not in threads_read_cli._media_choices():
+            error('invalid_request')
+    for name in ('query', 'username', 'since', 'until', 'media', 'author', 'author_key', 'post_id'):
         if name in request and len(request[name]) > 200:
             error('invalid_request')
 
@@ -263,14 +268,27 @@ def _topics_search(account, request, cfg):
     query = request['query'].strip()
     limit = _limit(request)
     search_type = 'RECENT' if request.get('recent') else 'TOP'
+    narrow = None
+    if any(request.get(name) is not None for name in ('since', 'until', 'media')):
+        # 手元の `topics --search` と同じ: Threads 以外・読めない期間は断る（黙って普通の検索にしない）。
+        if cfg.get('media') != 'threads':
+            error('invalid_request')
+        try:
+            narrow = reads.search_narrowing(since=request.get('since'), until=request.get('until'),
+                                            media=request.get('media'))
+        except ValueError:
+            error('invalid_request')
     try:
         result = reads._fetch(account, capability='keyword_search',
                               call=lambda adapter: reads.search_call(adapter, account, query,
-                                                                     search_type=search_type, limit=limit),
+                                                                     search_type=search_type, limit=limit,
+                                                                     narrow=narrow),
                               narrowed_note=reads.SEARCH_NARROWED_NOTE)
     except reads.ReadFailed as failed:
         _refuse(failed.kind, failed.message)
     material = reads.search_json(result, account, query, search_type=search_type, limit=limit)
+    if narrow:
+        material['narrow'] = dict(narrow)
     # 集計と指す先と本文の全文（保存しない）。自由文の理由は 1 行に落とす。
     material['tag_cannot_say'] = short(material.get('tag_cannot_say'))
     material['replied_lookup'] = dict(material['replied_lookup'],
@@ -395,6 +413,7 @@ def _where(account, request, cfg):
         result = where_cli.answer(
             account_name=account, words=request.get('words') or [], recent=request.get('recent', False),
             limit=request.get('limit'), since=request.get('since'),
+            until=request.get('until'), media=request.get('media'),
             exclude_engaged=request.get('exclude_engaged', False),
             max_per_author=request.get('max_per_author'), also=request.get('also'),
             aggregate_mode=request.get('aggregate', False), lexicon=lexicon,

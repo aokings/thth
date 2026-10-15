@@ -45,8 +45,9 @@ class FakeAdapter:
         return [dict(post_id=str(1000 + i), timestamp='2026-09-26T10:00:00+0000', url=f'https://www.threads.net/@demo/post/{i}',
                      text=f'本文 {i}', topic=None) for i in range(limit)]
 
-    def keyword_search(self, q, search_type, limit):
+    def keyword_search(self, q, search_type, limit, **narrow):
         self._maybe_fail()
+        self.narrow = narrow
         return [dict(message_id='77', username='someone', timestamp='2026-09-26T10:00:00+0000',
                      text='あ' * 200, permalink='https://www.threads.net/@someone/post/77', has_replies=True)]
 
@@ -334,3 +335,12 @@ def test_mcpで止まった口座を読むと成功に理由が添う(env, media
     guard.stop('alpha', 'burst')
     got = server.call_tool('thth_profile', {'account': 'alpha', 'username': 'meta'})
     assert not got.get('isError') and got['content'][-1]['text'].startswith('account_stopped: burst')
+
+
+def test_topics_searchは期間と種類を絞って渡し_読めない値は断る(env, media, capsys):
+    """遠くの道でも `--since`／`--until`／`--media` を黙って落とさない（点検 §B-5・10/15）。"""
+    got = call(env, 'topics_search', query='怪談', since='24h', media='image')
+    assert got['narrow']['media_type'] == 'IMAGE' and isinstance(got['narrow']['since'], int)
+    assert media.narrow == got['narrow']  # API に渡ったこと（表示に載せただけでない）
+    for bad in ({'media': 'audio'}, {'since': '2020-01-01'}, {'since': 'あした'}):
+        assert str(refused(env, 'topics_search', query='怪談', **bad)) == 'invalid_request', bad

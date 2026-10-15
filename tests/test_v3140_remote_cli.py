@@ -238,6 +238,8 @@ def test_鍵があっても口座でない語を取る命令は巻き込まな�
     (["collect", ACCOUNT], "collect", {}),
     (["mentions", ACCOUNT, "--limit", "4"], "mentions", {"limit": 4}),
     (["topics", ACCOUNT, "--search", "お茶", "--limit", "7"], "topics_search", {"query": "お茶", "limit": 7}),
+    (["topics", ACCOUNT, "--search", "お茶", "--since", "24h", "--media", "image"], "topics_search",
+     {"query": "お茶", "limit": 25, "since": "24h", "media": "image"}),
     (["profile", ACCOUNT, "meta"], "profile", {"username": "meta"}),
     (["location", "search", ACCOUNT, "渋谷駅"], "location_search", {"query": "渋谷駅"}),
     (["account", "status", ACCOUNT], "account_status", {}),
