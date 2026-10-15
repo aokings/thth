@@ -246,12 +246,7 @@ def _topics_search(account, request, cfg):
     except reads.ReadFailed as failed:
         _refuse(failed.kind, failed.message)
     material = reads.search_json(result, account, query, search_type='TOP', limit=limit)
-    # 画面に出す本文の先頭（`posts` と同じ順・手元の表示と同じ 1 行・先頭 60 字＋「…」）。
-    # 設計 3.14.0 §表「集計・本文は先頭 60 字」のとおり。手元の道は `rows` の本文を
-    # `show_search(texts=…)` に渡していたが、遠くの道の答えには入っておらず、招待の口座
-    # では各行が空だった（キョンシーラボ 10/15 #2410）。`--json` には出さない（remote が外す）。
-    material['texts'] = [reads._one_line(r.get('text')) or None for r in result[0]]
-    # 集計と指す先だけ（本文は入らない・保存しない）。自由文の理由は 1 行に落とす。
+    # 集計と指す先と本文の全文（保存しない）。自由文の理由は 1 行に落とす。
     material['tag_cannot_say'] = short(material.get('tag_cannot_say'))
     material['replied_lookup'] = dict(material['replied_lookup'],
                                       reason=short(material['replied_lookup'].get('reason')))

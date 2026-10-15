@@ -16,9 +16,9 @@
       "account", "words", "n", "status", "error"}`。**本文・username を
       含めない**——`thread_read._record_run()` と同じ網（`runs.
       record_minimal()` に T2-2 で共通化）。
-  (c) 本文は 1 行プレビューだけ（鍵名は `preview`——`text` という鍵は使わない。
-      `preview` は保存しない・画面と `--json` の両方に出るが、`data/` にも
-      runs にも残らない）。
+  (c) 本文は全文を `text` に、1 行の抜粋を `preview` に（10/15 masaru「全文でいきます」。
+      それまでは 1 行の抜粋だけで、THTH 自身の判断だった）。どちらも保存しない
+      ——画面と `--json` に出るが、`data/` にも runs にも `--keep` にも残らない）。
   (d) 権限が無い（`PermissionMissing`）は、その account の `cannot_say` に
       `threads_read_cli._narrowed_by_standard_access()` / `_not_granted()`
       と同じ文言で出し、他の語・他の account は続ける。token が無い・媒体に
@@ -278,11 +278,10 @@ def _reject(message: str) -> None:
 
 
 def _posts_with_preview(rows: list, replied) -> list:
-    """`threads_read_cli.post_rows()` の一覧に `preview`（1 行の抜粋）を足す。
+    """`threads_read_cli.post_rows()` の一覧（全文は `text`）に `preview`（1 行の抜粋）を足す。
 
-    **本文そのもの（`text`）は鍵にしない**——`preview` は画面にも `--json` にも
-    出るが、`data/` にも runs にも残らない（規約 (c)）。`rows`（`keyword_search()`
-    の生の行）と `post_rows()` の戻りは同じ順序で対応するので `zip()` で足す。
+    どちらも画面と `--json` に出るが、`data/` にも runs にも残らない（規約 (c)）。
+    `rows`（`keyword_search()` の生の行）と `post_rows()` の戻りは同じ順序で対応する。
     """
     posts = threads_read_cli_mod.post_rows(rows, replied=replied)
     for row, post in zip(rows, posts):
@@ -813,8 +812,9 @@ def _render_human(result: dict) -> None:
                 stamp = post["timestamp"] or "—"
                 followers = threads_read_cli_mod.followers_cell(post)
                 print(f"    {mark}{stamp}  @{post['author'] or '—'}"
-                     f"（{post['author_key'] or '—'}）  "
-                     f"{followers + '  ' if followers else ''}{post['preview']}")
+                     f"（{post['author_key'] or '—'}）"
+                     f"{'  ' + followers if followers else ''}")
+                threads_read_cli_mod.print_full_text(post.get("text"), indent="      ")
                 if post["permalink"]:
                     print(f"      {post['permalink']}")
                 print(f"      post_id: {post['post_id']}")

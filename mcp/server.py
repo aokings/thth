@@ -748,7 +748,7 @@ SERVER_TOOLS += [
                     "refresh":{"type":"boolean"}},
                     "required":["account"],"additionalProperties":False}},
     {"name":"thth_topics_search",
-     "description":"語で公開投稿を検索する（thth topics --search --json と同じ形・集計と指す先だけで本文は返さない・保存しない）",
+     "description":"語で公開投稿を検索する（thth topics --search --json と同じ形・集計と指す先と本文の全文・保存しない）",
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"query":{"type":"string"},
                     "limit":_READ_LIMIT},
                     "required":["account","query"],"additionalProperties":False}},

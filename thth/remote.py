@@ -637,9 +637,7 @@ def _topics_search(args, account):
     if not query:
         raise RemoteError("invalid_request", reason="--search に語を書いてください", rc=2)
     value = call("topics_search", account, query=query, limit=_limit(args))
-    # 本文の先頭は画面に出すためだけ（手元の道と同じく `--json` には出さない）。
-    texts = value.pop("texts", None) if isinstance(value, dict) else None
-    return _shown(args, value, lambda v: threads_read_cli.show_search(account, v, texts=texts))
+    return _shown(args, value, lambda v: threads_read_cli.show_search(account, v))
 
 
 def _profile(args, account):

@@ -58,6 +58,7 @@ def test_Bluesky検索がCLIのJSONまで届く(
         "replied": None,
         "author_followers": None,
         "author_posts": None,
+        "text": "CLI から見えるコーヒー",
     }
 
 

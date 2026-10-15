@@ -380,7 +380,7 @@ def test_topics_searchは材料を出し本文をどこにも書かない(accoun
     assert params["search_type"] == "TOP"
 
 
-def test_topics_search_jsonは件数と分母つきで本文を持たない(account, thth_root):
+def test_topics_search_jsonは件数と分母と本文の全文を持ちディスクには残さない(account, thth_root):
     with _server() as (base_url, requests):
         r = _cli(["topics", account["name"], "--search", "お茶", "--recent", "--json"],
                  base_url)
@@ -392,7 +392,8 @@ def test_topics_search_jsonは件数と分母つきで本文を持たない(acco
     assert data["tagged"] == {"count": 2, "denominator": 3, "ratio": 2 / 3, "known": True}
     assert data["replies"] == {"count": 1, "denominator": 3}
     assert data["latest_timestamp"] == "2026-09-14T01:00:00+0000"
-    assert SEARCH_TEXT_A not in r.stdout and SEARCH_TEXT_B not in r.stdout
+    # 本文は全文で渡す（10/15）。保存はしない。
+    assert {p["text"] for p in data["posts"]} >= {SEARCH_TEXT_A, SEARCH_TEXT_B}
     assert _scan_for(thth_root, SEARCH_TEXT_A) == []
 
 

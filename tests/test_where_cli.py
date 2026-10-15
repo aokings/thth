@@ -156,8 +156,8 @@ def test_2媒体をproject単位で並べる(two_media_project):
     assert t_posts and all(p["author_key"] for p in t_posts)
     b_posts = bluesky_node["by_word"]["コーヒー"]["posts"]
     assert b_posts and all(p["author_key"] for p in b_posts)
-    # 本文は 1 行プレビューだけ（`preview` 鍵・`text` 鍵は無い）。
-    assert all("preview" in p and "text" not in p for p in t_posts)
+    # 本文は全文（`text`）と 1 行の抜粋（`preview`）（10/15）。
+    assert all(p["preview"] and p["text"] for p in t_posts)
 
     # 絡みの台帳の 1 行が my_history と you_and_them に出る。
     coffee = threads_node["by_word"]["コーヒー"]

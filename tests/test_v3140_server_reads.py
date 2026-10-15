@@ -137,19 +137,17 @@ def test_mentionsはthth_mentionsのjsonと同じ形でrunsに残す(env, media,
     assert sum(1 for row in runs if row.get('action') == 'mentions') == 3
 
 
-def test_topics_searchは集計と指す先だけで本文を返さない(env, media, capsys):
+def test_topics_searchは集計と指す先と本文の全文を返す(env, media, capsys):
     from thth import threads_read_cli
     got = call(env, 'topics_search', query='レアアース')
     assert got['q'] == 'レアアース' and got['n'] == 1 and got['posts'][0]['post_id'] == '77'
-    assert 'あ' * 61 not in json.dumps(got, ensure_ascii=False)
-    # 画面に出す本文の先頭（60 字＋…）は `texts` に（キョンシーラボ 10/15 #2410）。
-    assert got['texts'] == ['あ' * 60 + '…']
+    # 本文は全文（10/15・キョンシーラボ #2410 で招待の口座の本文が空だったのも含めて）。
+    assert got['posts'][0]['text'] == 'あ' * 200
     rc, printed = _cli_json(capsys, threads_read_cli.cmd_topics_search, account='alpha', account_flag=None,
                             search='レアアース', recent=False, limit=20)
     assert rc == 0
     for key in ('q', 'n', 'authors', 'posts', 'tagged'):
         assert printed[key] == got[key]
-    assert 'texts' not in printed  # 手元の --json は本文を出さない（変えない）
     assert str(refused(env, 'topics_search')) == 'invalid_request'
     assert str(refused(env, 'topics_search', query='  ')) == 'invalid_request'
 

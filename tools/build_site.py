@@ -354,7 +354,7 @@ def build_privacy() -> str:
         "observation summary, which uses search terms the operator sets for the account. The only other search "
         "is the observation map below, when the operator turns it on. Results of a search on request are shown "
         "for that request only: counts, the number of distinct authors, the share of the most frequent "
-        "authors, the latest time, and for individual posts the author, a link and the first 60 characters. The text and "
+        "authors, the latest time, and for individual posts the author, a link and the full text. The text and "
         "authors of search results are not saved. Run logs record at most the search terms and the number "
         "of results. To improve how it finds conversations, the owner's session may also keep, in the "
         "project's own notes, per search term only numbers: how many results it judged worth answering and how "
@@ -522,8 +522,8 @@ def build_privacy() -> str:
     add("<p>THTH itself does not send data to an AI model provider. Users work with THTH through their own "
         "LLM session (for example over MCP). What a tool returns to that session is passed to that session's "
         "LLM provider under the user's own arrangement with it. Depending on the tool, this includes the "
-        "user's drafts, post history, metrics and reports, plaza posts and replies the session can read, the observation map's keywords and daily figures, per-search-term figures kept on request, and the text or short previews (up to 60 "
-        "characters) of public replies, mentions and search results, with links and author names or one-way "
+        "user's drafts, post history, metrics and reports, plaza posts and replies the session can read, the observation map's keywords and daily figures, per-search-term figures kept on request, and the text (in full, or a short preview of up to 60 "
+        "characters, depending on the tool) of public replies, mentions and search results, with links and author names or one-way "
         "author keys.</p>")
 
     add('<h2 id="delete">Stopping access and deleting data</h2>')
@@ -617,7 +617,7 @@ def build_privacy() -> str:
         "Mastodon の検索）は求められたときに動きます。本人のセッションが検索を求めたとき、または観測の一枚を"
         "求めたとき（運営者がアカウントに設定した語を使います）です。これ以外の検索は、運営者が有効にしたときの"
         "下のトピックマップだけです。求めに応じた検索の結果は、その求めに対してだけ表示します。件数、"
-        "投稿者の異なり数、多く投稿している人の占める割合、最新の時刻、個々の投稿については投稿者・リンク・先頭 60 字です。"
+        "投稿者の異なり数、多く投稿している人の占める割合、最新の時刻、個々の投稿については投稿者・リンク・本文の全文です。"
         "検索結果の本文と投稿者は保存しません。ログに残すのは、検索した語と件数までです。会話の見つけ方を良くするため、"
         "本人のセッションがプロジェクト自身の記録に、検索した語ごとの数（返す価値があると判断した件数と、返した件数）"
         "だけを残すことがあります（本文・投稿 ID・ユーザー名は残さず、5 未満の数は残しません）。本人のセッションが "
@@ -758,7 +758,7 @@ def build_privacy() -> str:
     add("<p>THTH 自身は AI モデルの提供者へデータを送りません。利用者は自分の LLM のセッション（例: MCP）から "
         "THTH を使います。道具がそのセッションに返したものは、利用者とその提供者との取り決めのもとで、そのセッションの "
         "LLM 提供者に渡ります。道具によって、本人の下書き・投稿の履歴・インサイト・報告、そのセッションが読めるプラザの書き込みと返信、トピックマップの語と日々の集計、求めに応じて残した検索の語ごとの数と、公開の返信・言及・検索結果の"
-        "本文または短い抜粋（先頭 60 字まで）、リンク、投稿者の名前または戻せないキーを含みます。</p>")
+        "本文（全文か、道具によっては先頭 60 字までの抜粋）、リンク、投稿者の名前または戻せないキーを含みます。</p>")
 
     add("<h2>停止とデータの削除</h2>")
     add("<p>運営者は <code>thth account leave</code> でアカウントの利用を終えます。サーバーと thth.me でアカウントを"

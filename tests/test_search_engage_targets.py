@@ -106,11 +106,10 @@ def test_a_jsonのpostsの形(capsys, account):
                      "author_key": base.author_key(MEDIUM, "alice"),
                      "replies": None, "has_replies": True, "replied": None,
                      # X 以外は投稿者の数を返さない（鍵はそろえて None）。
-                     "author_followers": None, "author_posts": None}
-    # **本文は `--json` に入らない**（指す先を渡すのが仕事）。
-    for post in data["posts"]:
-        assert "text" not in post
-    assert fake.TEXT_A not in out and fake.TEXT_B not in out
+                     "author_followers": None, "author_posts": None,
+                     # 本文は全文（10/15 masaru「全文でいきます」・保存はしない）。
+                     "text": fake.TEXT_A}
+    assert data["posts"][1]["text"] == fake.TEXT_B
     assert data["replied_lookup"]["available"] is True
     assert data["replied_lookup"]["n"] == 0
 
@@ -235,12 +234,11 @@ def test_c_queueが読めなければ印を出さず読めなかったと言う(
 
 # ===================================================== (d) 本文と棚
 
-def test_d_本文は60字で切れ棚にもディスクにも落ちない(capsys, account, thth_root):
+def test_d_本文は全文で出て棚にもディスクにも落ちない(capsys, account, thth_root):
     rc, out, _err = _search(capsys, account)
     assert rc == 0
-    # 80 字の本文は 60 字＋`…` で切れる。
-    assert "長" * 60 + "…" in out, out
-    assert "長" * 61 not in out
+    # 80 字の本文も切らずに出す（10/15 まで 60 字＋`…` で切っていた）。
+    assert fake.TEXT_LONG in out, out
     # **本文も post_id も 1 バイトも書かれていない**（棚 `topics.json` も含む）。
     for root in (thth_root, account["repo_dir"], account["accounts_dir"]):
         for needle in (fake.TEXT_A, fake.TEXT_B, *POST_IDS):

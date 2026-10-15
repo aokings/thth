@@ -144,9 +144,9 @@ def test_whereはコーヒーで3件返す(engage_box):
     posts = node["by_word"]["コーヒー"]["posts"]
     assert len(posts) == 3, posts
     assert {p["post_id"] for p in posts} == {fbs.ROOT_URI, fbs.OTHER_URI_1, fbs.OTHER_URI_2}
-    # **本文は 1 行プレビューだけ**（設計「自分の泉」§2.3・where_cli.py 規約 (c)）。
+    # 本文は全文（`text`）と 1 行の抜粋（`preview`）（where_cli.py 規約 (c)・10/15）。
     for p in posts:
-        assert "text" not in p, p
+        assert p["text"] and p["preview"], p
 
 
 def test_threadは根の枝に返信4件返しうち1件がdemo自身(engage_box):

@@ -140,6 +140,15 @@ def _one_line(text, n: int = TEXT_PREVIEW_CHARS) -> str:
     return flat[:n] + ("…" if len(flat) > n else "")
 
 
+def print_full_text(text, *, indent: str) -> None:
+    """本文の全文を、改行を保って字下げして出す（**画面に出すだけ**・10/15）。"""
+    if not isinstance(text, str) or not text.strip():
+        print(f"{indent}（本文なし）")
+        return
+    for line in text.strip().splitlines():
+        print(f"{indent}{line}".rstrip())
+
+
 def _adapter_for(account: str, *, capability: str):
     """台帳とトークンから、その口を持つアダプタを 1 つ作る。
 
@@ -381,7 +390,11 @@ def reply_count(row: dict):
 
 
 def post_rows(rows: list, *, replied: dict | None) -> list:
-    """**絡みに行く先**の一覧（設計 v2 §4.4・純粋関数）。**本文は入らない。**
+    """**絡みに行く先**の一覧（設計 v2 §4.4・純粋関数）。
+
+    **本文は全文を `text` に入れる**（10/15 masaru「全文でいきます」）。それまでは画面に
+    先頭 60 字・`--json` には無しだった——THTH 自身の判断で、媒体の原文が禁じていたのでは
+    ない。**保存しないのは変えない**（この一覧は棚・泉・runs・`--keep` のどれにも書かれない）。
 
     `replied` は `post_id → {"status", "file"}`（`replied_index()`）。**None は
     「台帳を読めなかった」**で、各行の `replied` も None になる——**印が無いことを
@@ -396,6 +409,7 @@ def post_rows(rows: list, *, replied: dict | None) -> list:
             "permalink": r.get("permalink"),
             "timestamp": r.get("timestamp"),
             "author": r.get("username"),
+            "text": r.get("text") if isinstance(r.get("text"), str) else None,
             # **仮名（設計「自分の泉」§4・T0-3）。** LLM がこれを原稿の
             # `reply_to_author_key` に写せるように——画面の表示は変えない
             # （`--json` の一覧にだけ足す）。`search_material()` と同じ由来
@@ -505,7 +519,7 @@ def search_call(adapter, account: str, q: str, *, search_type: str, limit: int):
 
 
 def search_json(result, account: str, q: str, *, search_type: str, limit: int) -> dict:
-    """`thth topics --search --json` の形（CLI とサーバの読む口が共有）。**本文は入らない。**"""
+    """`thth topics --search --json` の形（CLI とサーバの読む口が共有）。本文は `posts[].text` に全文。"""
     rows, provider_note, tag_material, tag_reason = result
     material = search_material(rows, q=q, search_type=search_type, limit=limit)
     material["provider_note"] = provider_note
@@ -549,19 +563,18 @@ def cmd_topics_search(args) -> int:
         rows = result[0]
         material = search_json(result, account, q, search_type=search_type, limit=limit)
         if as_json:
-            # **本文は出さない**（材料と、指す先だけ）。
             print(json.dumps(material, ensure_ascii=False, indent=2))
             return 0
-        return show_search(account, material, texts=[r.get("text") for r in rows])
+        return show_search(account, material)
 
     return _run(account, capability="keyword_search", call=call, as_json=as_json,
                 render=render, narrowed_note=SEARCH_NARROWED_NOTE)
 
 
-def show_search(account: str, material: dict, *, texts=None) -> int:
+def show_search(account: str, material: dict) -> int:
     """`thth topics --search` の人向けの表示（手元の道と遠くの道が共有・`--json` の形を受ける）。
 
-    `texts` は本文の先頭を画面に出すためだけ（`--json` には本文が無いので、遠くの道では出ない）。
+    本文は `posts[].text` の全文を出す（10/15）。**表示するだけで保存しない。**
     """
     q, search_type = material.get("q"), material.get("search_type")
     provider_note = material.get("provider_note")
@@ -571,7 +584,6 @@ def show_search(account: str, material: dict, *, texts=None) -> int:
     posts = material["posts"]
     lookup = material["replied_lookup"]
     index_available, why = lookup["available"], lookup["reason"]
-    rows = [{"text": text} for text in (texts or [None] * len(posts))]
     a = material["authors"]
     t = material["tagged"]
     print(f"{account}  検索 {q!r}（{search_type}・{material['note']}）")
@@ -600,17 +612,17 @@ def show_search(account: str, material: dict, *, texts=None) -> int:
     print(f"  返信だった投稿  : {material['replies']['count']}"
           f"/{material['replies']['denominator']}"
           f"（その投稿への返信の数ではありません。それは下の一覧の `返信` 欄）")
-    if rows:
+    if posts:
         print("")
-        print("  絡みに行く先（post_id・permalink・返信・印。"
-              f"本文は先頭 {TEXT_PREVIEW_CHARS} 字・**表示するだけで保存しません**）:")
-        for r, post in zip(rows, posts):
+        print("  絡みに行く先（post_id・permalink・返信・印・本文の全文。"
+              "**表示するだけで保存しません**）:")
+        for post in posts:
             stamp = post["timestamp"] or "—"
             who = post["author"] or "—"
             print(f"    {stamp}  @{_pad(who, 16)} {_pad(post['post_id'] or '—', 20)}"
                   f" 返信 {_pad(_replies_cell(post), 4)} {_replied_cell(post['replied'])}")
-            print(f"      {post['permalink'] or '（permalink 無し）'}"
-                  f"  {_one_line(r.get('text'))}")
+            print(f"      {post['permalink'] or '（permalink 無し）'}")
+            print_full_text(post.get("text"), indent="      ")
         print("")
         print("  返信: 数が返る媒体は数、Threads の検索は `有`／`無` だけ"
               "（数は返りません）。`—` は判らない（0 ではありません）。")

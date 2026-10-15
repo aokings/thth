@@ -253,7 +253,7 @@ def test_show_reads_through_the_posts_ledger_and_returns_where_rows(x_account, f
     assert payload["n"] == 3 and payload["storage"] == "display_only"
     post = payload["posts"][0]
     assert {"post_id", "permalink", "timestamp", "author", "author_key", "preview", "replied"} <= set(post)
-    assert "text" not in post and post["author"] == "alice"
+    assert post["text"] and post["author"] == "alice"
     assert payload["x_read_cost"]["posts"] == 3 and payload["x_read_cost"]["today"] == 3
     assert any("続きがあります" in line for line in payload["cannot_say"])
     assert b.posts_status(ACCOUNT)["today"] == 3
