@@ -551,9 +551,16 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
 
         chosen = result.chosen
         excluded_paths.add(chosen.path)
-        one_result = _throw_chosen(
-            account_name, account_cfg, state_dir, run_id, mode, chosen, result.section,
-            now, log, adapter_factory, resolution=result.resolution)
+        if account_cfg.get("media") == "hatenablog":
+            # はてなブログの配信原稿（設計 4.0 S1 §6.5）。送信は S2 の adapter（無ければ出さない）。
+            from . import hatena_publish
+            one_result = hatena_publish.throw_chosen(
+                account_name, account_cfg, state_dir, run_id, mode, chosen, now, log,
+                adapter_factory=adapter_factory)
+        else:
+            one_result = _throw_chosen(
+                account_name, account_cfg, state_dir, run_id, mode, chosen, result.section,
+                now, log, adapter_factory, resolution=result.resolution)
         last_result = one_result
         if one_result.action == "post" and one_result.exit_code == 0:
             posted_count += 1

@@ -1,0 +1,495 @@
+"""はてなブログの配信原稿（queue の 1 本）を読む・検査する・承認の材料にする（設計 4.0 S1 §3.5・§5・§6）。
+
+配信原稿は今の queue と同じ `thth: 1` の front matter で、はてなの口座（`media: hatenablog`）の
+ときだけ次の欄が効く: `article`・`article_source`・`form`・`title`・`categories`・`op`・
+`delivery`。本文の出所は `article_source` だけ（`## hatenablog` の節は使わない）。
+
+ここに置くのは、lint・`thth approve`（1 段目・2 段目）・遠くの道の予約・timer の照合の
+**4 つの入口が同じ材料を作る 1 か所**（`material()`）。承認の指紋は
+`approval.compute_hatena_entry_sha()`、本文の変換は `hatena_convert.render()`（S1 は仮）。
+
+**blog_id は原稿から取らない**（§5.1）。口座の台帳の `blog_id` を指紋に入れ、原稿に
+`blog_id:` があれば lint が `blog_id_in_manuscript` で断る。
+"""
+from __future__ import annotations
+
+import difflib
+import hashlib
+import json
+import os
+import posixpath
+
+from . import accounts as accounts_mod
+from . import approval as approval_mod
+from . import deliveries as deliveries_mod
+from . import hatena_convert
+from . import jst
+from . import queuefile
+
+KIND = "hatena_entry"
+OPS = approval_mod.HATENA_ENTRY_OPS
+FORMS = approval_mod.HATENA_ENTRY_FORMS
+OP_LABELS = {"create": "新規", "update": "更新", "delete": "削除"}
+CATEGORIES_MAX = 10
+CATEGORY_CHARS_MAX = 40
+TITLE_CHARS_MAX = 200
+
+# lint の符丁（設計 §3.5 の 8 つ＋この実装で足した 3 つ）。1 行は `<符丁>: <人向けの文>`。
+LINT_CODES = ("article_required", "article_source_missing", "invalid_article_source", "title_required",
+              "invalid_op", "delivery_required", "blog_id_in_manuscript", "categories_invalid",
+              # 足した 3 つ（設計に名前が無かった）: form の値・delivery の指す台帳・画像。
+              "invalid_form", "delivery_unknown", "image_missing")
+_MESSAGES = {
+    "article_required": "article: が要ります（記事の名前・例 kopicha/2026-10-arabica）",
+    "article_source_missing": "article_source: が無いか、指すファイルが repo にありません",
+    "invalid_article_source": "article_source: は repo の中の相対パスだけです（`..`・絶対パス・`.` 始まりは不可）",
+    "title_required": "title: が要ります（はてなブログの記事の題）",
+    "invalid_op": "op: は create・update・delete のどれかです",
+    "delivery_required": "op: update・delete には delivery:（配信 id）が要ります",
+    "blog_id_in_manuscript": "blog_id: は原稿に書きません（口座の台帳から引きます）",
+    "categories_invalid": f"categories: は {CATEGORIES_MAX} 個まで・1 つ {CATEGORY_CHARS_MAX} 字までです",
+    "invalid_form": "form: は full・summary・entry のどれかです",
+    "delivery_unknown": "delivery: の配信がこの口座の台帳にありません（create で書けるのは取り消した予約の配信だけ）",
+    "image_missing": "本文の画像（![](<パス>)）が repo にありません",
+}
+
+
+class EntryError(ValueError):
+    """配信原稿を材料にできない（`code` は静的な符丁）。"""
+
+    def __init__(self, code: str, detail: str | None = None):
+        super().__init__(code)
+        self.code = code
+        self.detail = detail
+
+
+def is_hatena(account_cfg) -> bool:
+    from . import principals
+    return principals.uses_principal(account_cfg)
+
+
+def message(code: str) -> str:
+    return f"{code}: {_MESSAGES.get(code, code)}"
+
+
+# ------------------------------------------------------------------ 欄を読む
+
+def _text(fm, key) -> str:
+    value = fm.get(key)
+    return value.strip() if isinstance(value, str) else ""
+
+
+def op_of(fm) -> str:
+    return _text(fm, "op") or "create"
+
+
+def form_of(fm) -> str:
+    return _text(fm, "form") or "full"
+
+
+def parse_categories(raw) -> list:
+    """`categories: [コーヒー, 価格]` か `categories: コーヒー, 価格`。外れれば `categories_invalid`。"""
+    if raw is None:
+        return []
+    if not isinstance(raw, str):
+        raise EntryError("categories_invalid")
+    text = raw.strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    if not text.strip():
+        return []
+    out = []
+    for part in text.split(","):
+        item = part.strip().strip("'\"").strip()
+        if not item:
+            continue
+        if len(item) > CATEGORY_CHARS_MAX or queuefile.find_control_char(item) or any(
+                ch in item for ch in ("\x1e", "\x1f", "[", "]")):
+            raise EntryError("categories_invalid")
+        out.append(item)
+    if len(out) > CATEGORIES_MAX:
+        raise EntryError("categories_invalid")
+    return out
+
+
+def repo_file(repo_dir, rel) -> str:
+    """repo の中の相対パスを絶対パスに。外れれば `invalid_article_source`。"""
+    if not isinstance(rel, str) or not rel.strip() or not isinstance(repo_dir, str) or not repo_dir:
+        raise EntryError("invalid_article_source")
+    rel = rel.strip()
+    if rel.startswith("/") or "\\" in rel or os.path.isabs(rel):
+        raise EntryError("invalid_article_source")
+    parts = rel.split("/")
+    if any(p in ("", "..") or p.startswith(".") for p in parts):
+        raise EntryError("invalid_article_source")
+    path = os.path.join(repo_dir, *parts)
+    real_repo = os.path.realpath(repo_dir)
+    if os.path.commonpath([real_repo, os.path.realpath(path)]) != real_repo:
+        raise EntryError("invalid_article_source")
+    return path
+
+
+def article_rev(path: str, data: bytes) -> tuple:
+    """`(kind, rev)`。repo の中なら記事ファイルの blob の sha（`git hash-object` と同じ値）、
+    外なら本文の sha256（設計 §3.4・HEAD の commit にしない）。"""
+    from . import writeback
+    if writeback.repo_toplevel(path):
+        return "git", hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+    return "content", hashlib.sha256(data).hexdigest()
+
+
+# ------------------------------------------------------------------ lint
+
+def lint_errors(fm, account_cfg) -> list:
+    """配信原稿の lint（`<符丁>: <文>` の行）。台帳・記事・配信の台帳は読むが、何も書かない。"""
+    out = []
+    if "blog_id" in fm:
+        out.append(message("blog_id_in_manuscript"))
+    op = op_of(fm)
+    if op not in OPS:
+        out.append(message("invalid_op"))
+    if not _text(fm, "article"):
+        out.append(message("article_required"))
+    if form_of(fm) not in FORMS:
+        out.append(message("invalid_form"))
+    if op in ("create", "update") and not _text(fm, "title"):
+        out.append(message("title_required"))
+    try:
+        parse_categories(fm.get("categories"))
+    except EntryError as exc:
+        out.append(message(exc.code))
+    if op in ("create", "update"):
+        source = _text(fm, "article_source")
+        if not source:
+            out.append(message("article_source_missing"))
+        else:
+            try:
+                path = repo_file(account_cfg.get("repo_dir"), source)
+            except EntryError as exc:
+                out.append(message(exc.code))
+            else:
+                if not os.path.isfile(path):
+                    out.append(message("article_source_missing"))
+                else:
+                    try:
+                        _render(account_cfg, source, path)
+                    except EntryError as exc:
+                        out.append(message(exc.code if exc.code in LINT_CODES else "image_missing"))
+    delivery = _text(fm, "delivery")
+    if op in ("update", "delete") and not delivery:
+        out.append(message("delivery_required"))
+    if delivery:
+        try:
+            _ledger_for(fm.get("account"), op, delivery)
+        except EntryError:
+            out.append(message("delivery_unknown"))
+    return out
+
+
+def _ledger_for(account, op, delivery):
+    """原稿の `delivery:` が指す台帳（create は `wanted`・update／delete は `published` のものだけ）。"""
+    if not deliveries_mod.is_delivery_id(delivery) or not accounts_mod.name_is_safe(account):
+        raise EntryError("delivery_unknown")
+    try:
+        record = deliveries_mod.read(account, delivery)
+    except deliveries_mod.DeliveryError:
+        raise EntryError("delivery_unknown") from None
+    want = "wanted" if op == "create" else "published"
+    if record["state"] != want:
+        raise EntryError("delivery_state_" + record["state"])
+    return record
+
+
+# ------------------------------------------------------------------ 材料
+
+def _render(account_cfg, source, path) -> tuple:
+    repo = account_cfg.get("repo_dir")
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        text = data.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        raise EntryError("article_source_missing") from None
+
+    def image_sha(rel):
+        try:
+            return hatena_convert.file_sha256(repo_file(repo, rel))
+        except (OSError, EntryError):
+            raise EntryError("image_missing", rel) from None
+
+    try:
+        body, images = hatena_convert.render(text, article_source=source, image_sha=image_sha)
+    except hatena_convert.ConvertError as exc:
+        raise EntryError("image_missing" if str(exc) == "image_missing" else "invalid_article_source") from None
+    return data, body, images
+
+
+def material(fm, account_cfg, account_name: str, *, ledger: dict | None = None) -> dict:
+    """承認の指紋の材料と、見せるための値（何も書かない）。外れれば `EntryError`。
+
+    - blog_id は**口座の台帳から**（原稿には書かせない）。
+    - update／delete は配信の台帳から `entry_id`・`readback_sha`（変更前の版）を引く。
+    - 本文は `article_source` を `hatena_convert.render()` に通したもの（delete は空）。
+
+    `ledger` を渡すと配信の台帳を読まずにそれを使う（inflight を人が解くとき、送る前の台帳で
+    指紋を組み立て直すため・`hatena_publish.resolve`）。
+    """
+    given = ledger
+    op = op_of(fm)
+    if op not in OPS:
+        raise EntryError("invalid_op")
+    form = form_of(fm)
+    if form not in FORMS:
+        raise EntryError("invalid_form")
+    if "blog_id" in fm:
+        raise EntryError("blog_id_in_manuscript")
+    article = _text(fm, "article")
+    if not article:
+        raise EntryError("article_required")
+    title = _text(fm, "title")
+    if op != "delete" and not title:
+        raise EntryError("title_required")
+    categories = parse_categories(fm.get("categories"))
+    delivery = _text(fm, "delivery") or None
+    ledger = None
+    if op != "create" and not delivery:
+        raise EntryError("delivery_required")
+    if delivery and given is not None:
+        if given.get("delivery") != delivery or given.get("account") != account_name:
+            raise EntryError("delivery_unknown")
+        ledger = given
+    elif delivery:
+        ledger = _ledger_for(account_name, op, delivery)
+    if ledger is not None and (ledger.get("blog_id") != str(account_cfg.get("blog_id") or "").strip().lower()
+                               or ledger.get("principal") != account_cfg.get("principal")):
+        # 台帳を作ったあとに口座の blog_id・主体を付け替えた（配信の行き先は後から変えない）。
+        raise EntryError("delivery_unknown")
+    source = _text(fm, "article_source") or None
+    data, body, images, rev_kind, rev = b"", "", [], None, None
+    if op != "delete":
+        if not source:
+            raise EntryError("article_source_missing")
+        path = repo_file(account_cfg.get("repo_dir"), source)
+        data, body, images = _render(account_cfg, source, path)
+        rev_kind, rev = article_rev(path, data)
+    entry_id = ledger.get("entry_id") if (ledger and op != "create") else None
+    base = (ledger.get("readback_sha") or "") if (ledger and op != "create") else ""
+    if op != "create" and not entry_id:
+        raise EntryError("delivery_unknown")
+    blog_id = str(account_cfg.get("blog_id") or "").strip().lower()
+    kwargs = dict(account=account_name, blog_id=blog_id, op=op, entry_id=entry_id,
+                  base_readback_sha=base, title=title, categories=categories, body=body,
+                  images=[{"path": r["path"], "source_sha256": r["source_sha256"]} for r in images],
+                  article=article, form=form, publish_at=fm.get("publish_at"))
+    try:
+        sha = approval_mod.compute_hatena_entry_sha(**kwargs)
+    except ValueError as exc:
+        raise EntryError(str(exc)) from None
+    return {"op": op, "form": form, "article": article, "article_source": source, "title": title,
+            "categories": categories, "delivery": delivery, "ledger": ledger, "body": body,
+            "body_sha256": approval_mod.hatena_body_sha256(body), "images": images,
+            "article_rev_kind": rev_kind, "article_rev": rev, "article_bytes": len(data),
+            "entry_id": entry_id, "base_readback_sha": base, "blog_id": blog_id,
+            "principal": account_cfg.get("principal"), "project": account_cfg.get("project"),
+            "account": account_name, "publish_at": fm.get("publish_at"), "approved_sha": sha}
+
+
+# ------------------------------------------------------------------ 承認の 1 段目
+
+def _previous_text(account_name, delivery) -> str | None:
+    """この配信で最後に送った本文（`sent/` の記録から・update の差分の元）。"""
+    from . import sent as sent_mod
+    best_at, best = None, None
+    for row in sent_mod.records(accounts_mod.state_dir_for(account_name)):
+        if row.get("delivery") != delivery or row.get("kind") not in ("entry_create", "entry_update"):
+            continue
+        at = jst.parse(row.get("sent_at"))
+        if at is not None and (best_at is None or at > best_at):
+            best_at, best = at, row.get("text")
+    return best if isinstance(best, str) else None
+
+
+def display_lines(m: dict, *, path: str, digest: str) -> list:
+    """承認の 1 段目の表示（設計 §6.3）。本文は全文（update は差分・delete は題と URL）。"""
+    head = (f"配信原稿  {m['account']} → {m['blog_id']}（主体 {m['principal']}・レーン {m['project']}）")
+    when = f"{m['publish_at']}（timer が draft=no で送る）"
+    lines = [head, f"操作: {OP_LABELS[m['op']]}   公開: {when}"]
+    if m["op"] != "delete":
+        rev = (m["article_rev"] or "")[:12]
+        lines.append(f"記事: {m['article']}（{m['article_source']}・版 {rev}… {m['article_rev_kind']}）")
+        cats = "・".join(m["categories"]) if m["categories"] else "（なし）"
+        lines.append(f"題: {m['title']}   カテゴリ: {cats}")
+        if m["images"]:
+            lines.append(f"画像 {len(m['images'])} 件:")
+            for row in m["images"]:
+                lines.append(f"  {row['path']}（{row['bytes']:,} bytes・sha256 {row['source_sha256'][:12]}…）")
+        else:
+            lines.append("画像: なし")
+    ledger = m.get("ledger") or {}
+    if m["op"] == "update":
+        lines.append(f"変更前の版 readback_sha {(m['base_readback_sha'] or '（なし）')[:12]}…"
+                     f"（{ledger.get('checked_at') or '時刻不明'} に確かめた）")
+        before = _previous_text(m["account"], m["delivery"])
+        if before is None:
+            lines.append("---- 変換したあとの本文（全文・前の本文の控えが無いので差分は出せません） ----")
+            lines += m["body"].split("\n")
+        else:
+            lines.append("---- 本文の差分（前に送った本文 → 今回） ----")
+            lines += list(difflib.unified_diff(approval_mod.normalize_hatena_body(before).split("\n"),
+                                               m["body"].split("\n"), "前", "今回", lineterm=""))
+        lines.append("---- ここまで ----")
+    elif m["op"] == "delete":
+        lines.append(f"題: {m['title'] or '（原稿に無し）'}")
+        lines.append(f"公開 URL: {ledger.get('published_url') or '（台帳に無し）'}")
+        lines.append(f"entry_id: {m['entry_id']}")
+    else:
+        lines.append("---- 変換したあとの本文（全文） ----")
+        lines += m["body"].split("\n")
+        lines.append("---- ここまで ----")
+    lines.append(f"digest: {digest}")
+    lines.append(f"承認する: thth approve {path} --confirm {digest} --by <名前>")
+    return lines
+
+
+def prepare(path: str, qf, account_cfg, account_name: str, *, warning=None):
+    """`thth approve` の準備（`cli._prepare_one` のはてなの枝）。`(準備, 断る理由)`。"""
+    from . import goals as goals_mod
+    fm = qf.front_matter
+    try:
+        m = material(fm, account_cfg, account_name)
+    except EntryError as exc:
+        return None, f"{path}: {message(exc.code)}"
+    control = queuefile.find_control_char(m["body"]) or queuefile.find_control_char(m["title"])
+    if control is not None:
+        return None, f"{path}: {queuefile.control_char_message(*control)}"
+    digest = m["approved_sha"][:approval_mod.APPROVE_DIGEST_LENGTH]
+    one = {
+        "path": path, "kind": KIND, "warning": warning, "account": account_name,
+        "publish_at": fm.get("publish_at"), "topic": None, "reply_to": None, "reply_to_file": None,
+        "goal": goals_mod.goal_of(qf), "text": m["body"], "approved_sha": m["approved_sha"],
+        "digest": digest, "delivery": m["delivery"],
+        "hatena": {key: m[key] for key in ("op", "form", "article", "article_source", "title", "categories",
+                                           "blog_id", "principal", "project", "entry_id",
+                                           "base_readback_sha", "article_rev", "article_rev_kind",
+                                           "body_sha256")}
+        | {"images": [dict(row) for row in m["images"]]},
+        "_material": m,
+    }
+    one["hatena"]["delivery"] = m["delivery"]
+    one["display_lines"] = display_lines(m, path=path, digest=digest)
+    return one, None
+
+
+def _pending_dir(account_name: str, approved_sha: str) -> str:
+    return os.path.join(accounts_mod.state_dir_for(account_name), "approve_pending", "hatena", approved_sha[:24])
+
+
+def record_first_stage(one: dict) -> bool:
+    """1 段目で見せた本文と画像の一覧を `state/<account>/approve_pending/hatena/<指紋>/` に固定する。
+
+    設計 §3.5 は `approve_pending/<delivery>/` と書くが、delivery は 2 段目で振るので
+    1 段目には無い。指紋の先頭 24 桁で置く（同じ中身なら同じ置き場）。書けなくても止めない。
+    """
+    m = one.get("_material") or {}
+    try:
+        d = _pending_dir(one["account"], one["approved_sha"])
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        _write_private(os.path.join(d, "body.md"), (m.get("body") or "") + "\n")
+        _write_private(os.path.join(d, "images.json"),
+                       json.dumps(m.get("images") or [], ensure_ascii=False, indent=2) + "\n")
+        return True
+    except (OSError, KeyError, ValueError):
+        return False
+
+
+def _write_private(path: str, text: str) -> None:
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+# ------------------------------------------------------------------ 承認の 2 段目
+
+def assign_delivery(one: dict, *, by: str, at: str, origin: dict | None = None) -> str:
+    """2 段目: 配信の台帳を作る（create は `wanted`）。振った delivery を `one["delivery"]` に置いて返す。
+
+    - create で原稿に delivery が無い: 新しい台帳を `seq: 1`・`wanted` で作る。
+    - create で取り消した予約の delivery がある（台帳が `wanted`）: 同じ台帳に `wanted` の行を足す
+      （承認し直した中身を記録する。消さない・振り直さない）。
+    - update／delete: 台帳は `published` のまま（状態は公開の側でだけ変わる）。
+
+    承認した本文の控えは `deliveries/<delivery>.<指紋 12 桁>.body.md` に残し、1 段目の控えは消す。
+    """
+    m = one["_material"]
+    account = one["account"]
+    rel_queue = _queue_rel(one["path"], m)
+    row = {"op": m["op"], "approved_sha": one["approved_sha"], "approved_by": by,
+           "origin": dict(origin) if origin else None}
+    fields = {"article_source": m["article_source"], "form": m["form"], "queue_file": rel_queue}
+    if m["op"] != "delete":
+        fields.update({"wanted_rev": m["article_rev"], "article_rev_kind": m["article_rev_kind"],
+                       "images": [{"path": r["path"], "source_sha256": r["source_sha256"]} for r in m["images"]]})
+    if m["op"] == "create" and not m["delivery"]:
+        record = deliveries_mod.create(account, principal=m["principal"], blog_id=m["blog_id"],
+                                       article=m["article"], at=at, state="wanted", fields=fields, row=row)
+        delivery = record["delivery"]
+    elif m["op"] == "create":
+        delivery = m["delivery"]
+        deliveries_mod.advance(account, delivery, state="wanted", at=at, fields=fields, row=row)
+    else:
+        delivery = m["delivery"]
+    one["delivery"] = delivery
+    _keep_approved_body(account, delivery, one["approved_sha"], m["body"])
+    try:
+        import shutil
+        shutil.rmtree(_pending_dir(account, one["approved_sha"]), ignore_errors=True)
+    except OSError:
+        pass
+    return delivery
+
+
+def _queue_rel(path, m) -> str | None:
+    from . import writeback
+    top = writeback.repo_toplevel(path)
+    if not top:
+        return None
+    return posixpath.join(*os.path.relpath(os.path.realpath(path), os.path.realpath(top)).split(os.sep))
+
+
+def _keep_approved_body(account, delivery, approved_sha, body) -> None:
+    try:
+        d = deliveries_mod.dir_for(account)
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        _write_private(os.path.join(d, f"{delivery}.{approved_sha[:12]}.body.md"), body + "\n")
+    except OSError:
+        pass  # 控えは見せるためのもの。書けなくても承認は変えない（台帳の approved_sha が正本）
+
+
+# ------------------------------------------------------------------ timer の照合（select）
+
+def select_problem(qf, account_cfg, account_name):
+    """timer が出してよいか（`select_one` のはてなの枝・§6.5 の照合）。`(断る理由 | None, 材料)`。
+
+    - `approved_kind: hatena_entry` の原稿だけ（無ければ・違えば `approval_stale`）。
+    - `delivery:` が要る（2 段目で振る。無ければ `approval_stale`）。
+    - 記事から変換し直して指紋を計算し直し、`approved_sha` と違えば `approval_stale`。
+    - 配信の台帳の状態が合わなければ `delivery_state_<状態>`（conflict・unknown・inflight は人が見る）。
+    """
+    fm = qf.front_matter
+    if fm.get("approved_kind") != KIND or not deliveries_mod.is_delivery_id(_text(fm, "delivery")):
+        return "approval_stale", None
+    try:
+        m = material(fm, account_cfg, account_name)
+    except EntryError as exc:
+        if exc.code.startswith("delivery_state_"):
+            return exc.code, None
+        return "approval_stale", None
+    if not fm.get("approved_sha") or fm.get("approved_sha") != m["approved_sha"]:
+        return "approval_stale", m
+    control = queuefile.find_control_char(m["body"]) or queuefile.find_control_char(m["title"])
+    if control is not None:
+        pos, cp = control
+        return f"control_char(位置{pos}・U+{cp:04X})", m
+    return None, m

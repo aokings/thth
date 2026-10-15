@@ -94,6 +94,8 @@ def summary(record: dict, *, now=None) -> dict:
         "text_fingerprint_present": bool(record.get("text_fingerprint")),
         "media": bool(record.get("media")),
         "self_resolvable": inflight_resolve.is_self_resolvable(record),
+        # はてなの配信（設計 4.0 S1 §8.2）だけ: 配信 id と、結果の行が取る番号。
+        **({"delivery": record.get("delivery"), "seq": record.get("seq")} if record.get("delivery") else {}),
     }
 
 
@@ -275,7 +277,19 @@ def apply(account, account_cfg, state_dir, decision, post_id, by, confirm, *, wa
                 raise Refused("no_inflight", "もう inflight はありません（別の run が解きました）")
             if confirm != digest(account, record, decision, post_id):
                 raise Refused("inflight_changed", "表示したあとに inflight が替わりました。もう一度 show から")
-            if decision == "not_published":
+            if record.get("delivery"):
+                # はてなの配信（設計 4.0 S1 §8.2）: 配信の台帳に**inflight に書いた seq のまま**書く。
+                from . import hatena_publish
+                try:
+                    resolution = hatena_publish.resolve(account, account_cfg, state_dir, record, decision,
+                                                        post_id, by=by, run_id=run_id, now=now)
+                except hatena_publish.ResolveRefused as exc:
+                    raise Refused(exc.code, _WRITEBACK_NEXT.get(
+                        exc.code, "配信の台帳と inflight が合いません（inflight は残っています）。"
+                                  f"thth deliveries {account} と thth inflight {account} show で確かめてください"))
+                archived = inflight_mod.archives(state_dir)
+                path = archived[-1] if archived else None
+            elif decision == "not_published":
                 path = inflight_mod.archive(state_dir, record, resolved_at=jst.iso(),
                                             resolved_by=by, resolution=HUMAN_NOT_PUBLISHED)
                 inflight_mod.clear(state_dir)

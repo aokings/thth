@@ -11,7 +11,9 @@ from . import accounts, admin_log, approval, relay, core, jst, managed_repo, que
 from .report_service import ReportContext, ReportServiceError
 
 WRITE_OPERATIONS = frozenset(('draft_put','send_request','retract_request','schedule_request',
-                              'media_upload_url','media_complete'))
+                              'media_upload_url','media_complete',
+                              # 4.0 S1 §7.3: はてなブックマークの 2 段の承認（送信は S4）。
+                              'bookmark_request'))
 # 公開・削除・予約に至る依頼。承認ページは無い（設計 3.13.0）: どれもその場で行う（安全装置は効く）。
 # 3.12.0 までの `approval_request` は受け付けない（`unsupported_operation`）。
 PUBLISHING_OPERATIONS = frozenset(('send_request','retract_request','schedule_request'))
@@ -34,7 +36,10 @@ from .guard import REFUSALS as GUARD_REFUSALS, STOP_REASONS as GUARD_STOP_REASON
 DIRECT_REASONS = frozenset(('account_busy','publication_failed','publication_unconfirmed','deletion_failed',
                             'permission_unavailable','schedule_commit_unconfirmed',
                             # `scheduled: false` の口座（timer に載っていない）で予約・猶予を求めた（段 3・裁定 (b)）。
-                            'schedule_unavailable'))
+                            'schedule_unavailable',
+                            # 4.0 S1: はてなの口座の送信の口（adapter）がまだ無い・自分の記事でない・digest の食い違い。
+                            'unsupported_medium','bookmark_target_not_own','comment_too_long','comment_required',
+                            'too_many_tags'))
 from .account_settings import REASONS as SETTINGS_REASONS
 # 遠くの道の inflight（見る・解く・3.14.3 穴 3）の断り。手元の `thth inflight` と同じ符丁。
 INFLIGHT_REASONS = frozenset(('no_inflight','inflight_unreadable','media_inflight_unsupported','post_id_invalid',
@@ -323,13 +328,27 @@ def _publish_time(value):
     except (ValueError,TypeError): return None
 
 
+def _hatena(cfg):
+    from . import principals
+    return principals.uses_principal(cfg)
+
+
 def schedule(context, request, via, extra_fields=None):
     """下書きを queue に「出してよい」として刻む（timer が `publish_at` 以降に拾う）。
 
     刻む front matter は `thth approve` と同じ `approval.approved_fields`（timer が指紋を照合する）。
     `approved_by` は資格の actor、足すのは `approved_via`（mcp・cli・http）と `approved_credential`。
+
+    **はてなの口座は 2 段**（設計 4.0 S1 §6.4）: `confirm` が無ければ `{stage: 1, digest, preview}` を
+    返して何も書かない。同じ `confirm` で刻む（違えば `confirm_mismatch`）。刻むときに配信の台帳を
+    作り（`wanted`）、`approved_kind`・`delivery` を書き戻す。SNS の口座は今までどおり 1 段。
     """
-    _schema(request,('draft_id',),('draft_id',))
+    account=request.get('account') if type(request) is dict else None
+    if isinstance(account,str) and _hatena(current(context,account,write=True)):
+        _schema(request,('draft_id','confirm'),('draft_id',))
+        if request.get('confirm') is not None and not isinstance(request['confirm'],str): error('invalid_request')
+    else:
+        _schema(request,('draft_id',),('draft_id',))
     account=request['account'];cfg=current(context,account,write=True)
     if cfg.get('production') is not True: error('production_disabled')
     _require_scheduled(cfg)
@@ -353,6 +372,13 @@ def schedule(context, request, via, extra_fields=None):
         now=jst.now_jst()
         if jst.to_jst(publish_at)<now-timedelta(minutes=PAST_GRACE_MINUTES): error('invalid_draft','publish_at_past')
         if jst.to_jst(publish_at)<now: publish_at=now
+        hatena=value.get('kind')=='hatena_entry'
+        if hatena and not request.get('confirm'):
+            # 1 段目: 何も書かない（`inflight_resolve` と同じ 2 段の形）。見せるのは手元の 1 段目と同じ材料。
+            return {'account':account,'draft_id':request['draft_id'],'status':'draft','stage':1,
+                    'digest':value['digest'],'preview':'\n'.join(value['display_lines'][:-1]),'via':via}
+        # ↑ 最後の 1 行（手元の `thth approve <VM のパス> --confirm …`）は出さない（サーバのパスを口から出さない）。
+        if hatena and request['confirm']!=value['digest']: error('confirm_mismatch')
         day=jst.to_jst(publish_at).date()
         same_day=0
         for _name,_raw,other,_verified in _rows(locked,account):
@@ -360,7 +386,11 @@ def schedule(context, request, via, extra_fields=None):
             if fm.get('status')=='approved' and not fm.get('post_id') and when is not None and jst.to_jst(when).date()==day:
                 same_day+=1
         _guarded(context,account,'schedule',origin,publish_at=publish_at,scheduled_same_day=same_day)(locked)
-        fields=approval.approved_fields(value,context.actor,jst.iso())
+        at=jst.iso()
+        if hatena:
+            from . import hatena_entry
+            hatena_entry.assign_delivery(value,by=context.actor,at=at,origin=origin)
+        fields=approval.approved_fields(value,context.actor,at)
         fields['approved_via']=via
         if origin['credential']: fields['approved_credential']=origin['credential']
         fields.update(extra_fields or {})
@@ -396,10 +426,52 @@ def direct(context, request, via, cfg):
     op=request['operation']
     if op=='schedule_request':
         return schedule(context,request,via)
+    if _hatena(cfg):
+        # はてなの口座（設計 4.0 S1 §6.4）: 本文をその場で出す口・その場で消す口は無い。
+        # 出すのも消すのも配信原稿（op: create・update・delete）を予約で刻む道だけ。
+        error('unsupported_operation')
     if op=='retract_request':
         return direct_retract(context,request,via)
     minutes=accounts.guard_limits(cfg)['hold_minutes']
     return held_send(context,request,via,minutes) if minutes else direct_send(context,request,via)
+
+
+def bookmark(context, request, via):
+    """はてなブックマーク（設計 4.0 S1 §7.3）。2 段: `confirm` が無ければ `{stage: 1, digest, preview}`。
+
+    2 段目はロックの中で安全装置を通し、adapter（S4）が無ければ `unsupported_medium` で止まる。
+    """
+    _schema(request,('delivery','comment','tags','confirm','op'),('delivery','comment'))
+    for key in ('tags','confirm','op'):
+        if request.get(key) is not None and not isinstance(request[key],(str,list) if key=='tags' else str): error('invalid_request')
+    account=request['account'];cfg=current(context,account,write=True)
+    if not _hatena(cfg): error('unsupported_operation')
+    from . import hatena_bookmark
+    op=request.get('op') or 'add'
+    if op not in ('add','delete'): error('invalid_request')
+    def prepared(locked_cfg):
+        try:
+            return hatena_bookmark.prepare(account,locked_cfg,delivery=request['delivery'],comment=request['comment'],
+                                           tags=request.get('tags'),op=op)
+        except hatena_bookmark.BookmarkError as exc:
+            error(exc.code if exc.code in SAFE_ERRORS else 'invalid_request')
+    first=prepared(cfg)
+    if not request.get('confirm'):
+        return {'account':account,'status':'not_bookmarked','stage':1,'digest':first['digest'],
+                'preview':hatena_bookmark.preview(first),'via':via}
+    if request['confirm']!=first['digest']: error('confirm_mismatch')
+    if cfg.get('production') is not True: error('production_disabled')
+    origin=_origin(context,via)
+    with server_files.account_locks(account,cfg):
+        locked=current(context,account,write=True)
+        again=prepared(locked)
+        if again['digest']!=request['confirm']: error('confirm_mismatch')
+        try:
+            done=hatena_bookmark.execute_locked(account,locked,again,actor=context.actor,via=origin['via'],
+                                                credential=origin['credential'])
+        except hatena_bookmark.BookmarkError as exc:
+            error(exc.code if exc.code in SAFE_ERRORS else 'publication_failed')
+    return {**done,'via':via}
 
 
 def cancel_schedule(account, draft_id, *, by, via='http'):
@@ -460,6 +532,9 @@ def execute(context, request, *, via='http'):
             return media_uploads.execute(context,request,via)
         if request['operation']=='draft_put':
             return draft_put(context,request,via)
+        if request['operation']=='bookmark_request':
+            _refuse_if_stopped(request['account'])
+            return bookmark(context,request,via)
         # 止まった口座（安全装置）は公開・削除・予約を受けない。
         _refuse_if_stopped(request['account'])
         # timer に載っていない口座では予約を刻んでも出ない（裁定 (b)）。

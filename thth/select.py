@@ -320,9 +320,15 @@ def select_one(files, *, account_name: str, account_cfg: dict,
     余地ができてしまい、同じ穴がまた開く。時刻に関わる判定は必ず 2 段目
     （`_apply_timing_gate()`）に書く。
     """
-    validated, rejections, type_mismatch, needs_review = _validate_all(
-        files, account_name=account_name, account_cfg=account_cfg,
-        recent_texts=recent_texts, pool=pool)
+    from . import hatena_entry
+    if hatena_entry.is_hatena(account_cfg):
+        # はてなブログの配信原稿（設計 4.0 S1 §6.5）: `thth-hatena-entry-1` で照合する枝。
+        validated, rejections, type_mismatch, needs_review = _validate_hatena(
+            files, account_name=account_name, account_cfg=account_cfg)
+    else:
+        validated, rejections, type_mismatch, needs_review = _validate_all(
+            files, account_name=account_name, account_cfg=account_cfg,
+            recent_texts=recent_texts, pool=pool)
 
     if not validated:
         return SelectResult(None, rejections, type_mismatch, needs_review)
@@ -331,6 +337,57 @@ def select_one(files, *, account_name: str, account_cfg: dict,
         validated, rejections=rejections, type_mismatch=type_mismatch,
         needs_review=needs_review, account_cfg=account_cfg, now=now,
         last_post_at=last_post_at, bypass_pace=bypass_pace)
+
+
+def _validate_hatena(files, *, account_name: str, account_cfg: dict):
+    """はてなの口座の妥当性検査（設計 4.0 S1 §6.5 の照合まで）。時刻は見ない（`_validate_all` と同じ規律）。
+
+    `approved_kind: hatena_entry` の原稿だけを `compute_hatena_entry_sha` で照合する
+    （記事から変換し直した本文・口座の台帳の blog_id・配信の台帳の entry_id／readback_sha）。
+    承認のあとに記事・口座の blog_id・台帳を変えれば `approval_stale`。配信の台帳の状態が
+    合わない（conflict・unknown など）ものは `delivery_state_<状態>` で要確認に積む。
+    """
+    from . import hatena_entry
+    rejections: list[Rejection] = []
+    type_mismatch: list = []
+    needs_review: list = []
+    validated = []
+    for qf in files:
+        fm = qf.front_matter
+        path = qf.path
+        if fm.get("post_id"):
+            rejections.append(Rejection(path, "post_id_present"))
+            continue
+        if qf.malformed:
+            type_mismatch.append(path)
+            continue
+        if fm.get("account") != account_name:
+            rejections.append(Rejection(path, "account_mismatch"))
+            continue
+        if fm.get("status") != "approved":
+            rejections.append(Rejection(path, "not_approved"))
+            continue
+        publish_at_raw = fm.get("publish_at")
+        try:
+            if not publish_at_raw or "+09:00" not in publish_at_raw:
+                raise ValueError
+            publish_at = queuefile.parse_publish_at(publish_at_raw)
+        except ValueError:
+            type_mismatch.append(path)
+            needs_review.append(path)
+            rejections.append(Rejection(path, "publish_at_invalid"))
+            continue
+        reason, _material = hatena_entry.select_problem(qf, account_cfg, account_name)
+        if reason is not None:
+            rejections.append(Rejection(path, reason))
+            needs_review.append(path)
+            continue
+        if not qf.verified:
+            rejections.append(Rejection(path, "unverified_content"))
+            needs_review.append(path)
+            continue
+        validated.append((qf, publish_at, None, None))
+    return validated, rejections, type_mismatch, needs_review
 
 
 def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: set,
@@ -433,6 +490,12 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
             needs_review.append(path)
             continue
         approved_sha = fm.get("approved_sha")
+        # はてなの配信原稿の承認（`approved_kind`・設計 4.0 S1 §6.5）は SNS の指紋では照合しない。
+        # SNS の口座の原稿に書いてあれば承認が古い（別の種類の承認を流用させない）。
+        if fm.get("approved_kind"):
+            rejections.append(Rejection(path, "approval_stale"))
+            needs_review.append(path)
+            continue
         expected_sha = approval_mod.compute_approved_sha(
             section=approval_mod.effective_section(section, account_cfg, fm.get("topic")), account=account_name,
             reply_to=approval_mod.reply_to_for_fingerprint(fm),

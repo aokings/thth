@@ -30,6 +30,12 @@
 - `publish_held`: 媒体の断りで自動の公開を止めている（`publish_hold`）。
 - `inflight_open`: 公開の結果待ちが残っている（inflight）。
 - `budget_exhausted`: X の読み取り・投稿の予算で断っている（X の口座だけ・始まりの時刻は無い）。
+- `delivery_published`・`delivery_updated`・`delivery_deleted`・`delivery_unknown`・`delivery_conflict`・
+  `bookmarked`・`bookmark_deleted`（4.0 S1 §8）: はてなの配信の台帳の状態の変わり目。`ref` は配信 id、
+  `event_id` は `"ev_" + sha256("thth.delivery/1|<delivery>|<seq>")[:24]`（種類も時刻も入れない——
+  記録の前に落ちて人が同じ seq で解いても同じ id）。はてなの `sent/` の行は `published`／`retracted`
+  に出さない（同じ出来事を 2 つの名前で出さない）。
+- `principal_stopped`（4.0 S1 §4.1）: 主体（はてな ID）が止まっている。その主体を使う口座ごとに 1 件。
 
 読み方は 2 つ:
 
@@ -67,7 +73,14 @@ from . import jst
 
 EVENTS_SCHEMA = "thth.events/1"
 KINDS = ("published", "retracted", "reply_received", "mention_received",
-         "account_stopped", "publish_held", "inflight_open", "budget_exhausted")
+         "account_stopped", "publish_held", "inflight_open", "budget_exhausted",
+         # 4.0 S1 §8: はてなの配信の台帳から（id は配信 id ＋ 通し番号だけで決まる）と主体の止め。
+         "delivery_published", "delivery_updated", "delivery_deleted", "delivery_unknown",
+         "delivery_conflict", "bookmarked", "bookmark_deleted", "principal_stopped")
+# 配信の台帳の出来事の id の版の語（設計 4.0 S1 §8.1）。
+DELIVERY_EVENT_PREFIX = "thth.delivery/1"
+# はてなの `sent/` の行（`kind` あり）。配信の台帳の出来事と同じことを 2 つの名前で出さない。
+_HATENA_SENT_KINDS = ("entry_create", "entry_update", "entry_delete", "bookmark_add", "bookmark_delete")
 DEFAULT_SINCE = "24h"
 TITLE_CHARS = 60
 # カーソルが覚えておく幅（採取の 1 回の長さより長く）と、覚える event_id の上限。
@@ -93,13 +106,21 @@ def event_id(kind, account, ref, occurred) -> str:
     return "ev_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
-def _event(kind, account, occurred, recorded, ref, summary, **extra) -> dict:
+def delivery_event_id(delivery, seq) -> str:
+    """配信の台帳から出る出来事の id（設計 4.0 S1 §8.1）。**配信 id と通し番号だけ**で決まる
+    ——種類も時刻も入れない（時刻は記録のたびに揺れうる。delivery と seq は書いた瞬間に決まる）。
+    記録の前に落ちて人が解いても、同じ seq で書くので同じ id になる（§8.2）。"""
+    raw = f"{DELIVERY_EVENT_PREFIX}|{delivery}|{seq}"
+    return "ev_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def _event(kind, account, occurred, recorded, ref, summary, *, _id=None, **extra) -> dict:
     occurred_at = jst.iso(occurred) if occurred is not None else None
     recorded_at = jst.iso(recorded) if recorded is not None else None
     row = {"schema": EVENTS_SCHEMA, "kind": kind, "account": account,
            "occurred_at": occurred_at, "recorded_at": recorded_at,
            "at": occurred_at or recorded_at, "ref": ref, "summary": summary,
-           "event_id": event_id(kind, account, ref, occurred)}
+           "event_id": _id or event_id(kind, account, ref, occurred)}
     row.update({key: value for key, value in extra.items() if value is not None})
     return row
 
@@ -111,6 +132,8 @@ def _sent_events(name, titles):
     out = []
     for row in sent_mod.records(accounts_mod.state_dir_for(name)):
         post_id = row.get("post_id")
+        if row.get("kind") in _HATENA_SENT_KINDS:
+            continue  # はてなの行は配信の台帳の出来事として出す（同じ出来事を 2 つの名前で出さない）
         titles[post_id] = _title(row.get("text"))
         at = jst.parse(row.get("sent_at"))
         if at is not None:
@@ -170,6 +193,39 @@ def _mention_events(name, cfg):
     return out, broken
 
 
+def _delivery_kind(row):
+    """台帳の history の 1 行 → 出来事の種類（出さない行は None）。`inflight`・`wanted` は出さない。"""
+    bookmark = row.get("bookmark")
+    if bookmark == "added":
+        return "bookmarked"
+    if bookmark == "deleted":
+        return "bookmark_deleted"
+    state = row.get("state")
+    if state == "published":
+        return "delivery_updated" if row.get("op") == "update" else "delivery_published"
+    return {"deleted": "delivery_deleted", "unknown": "delivery_unknown",
+            "conflict": "delivery_conflict"}.get(state)
+
+
+def _delivery_events(name):
+    """配信の台帳の状態の変わり目（設計 4.0 S1 §8.1）。`(出来事, 読めない台帳があったか)`。"""
+    from . import deliveries as deliveries_mod
+    records, broken = deliveries_mod.list_for(name)
+    out = []
+    for record in records:
+        title = record.get("article") or record["delivery"]
+        for row in record["history"]:
+            kind = _delivery_kind(row)
+            if kind is None:
+                continue
+            at = jst.parse(row.get("at"))
+            summary = f"{kind}: {title}（{record.get('blog_id')}）"
+            out.append(_event(kind, record["account"], at, at, record["delivery"], summary,
+                              _id=delivery_event_id(record["delivery"], row["seq"]),
+                              seq=row["seq"], url=row.get("published_url")))
+    return out, bool(broken)
+
+
 def _state_events(name, cfg):
     """今も続いている止まりの状態。"""
     from . import guard, inflight as inflight_mod, publish_hold
@@ -198,8 +254,20 @@ def _state_events(name, cfg):
     if isinstance(row, dict):
         file_name = os.path.basename(row.get("file") or "") or None
         at = jst.parse(row.get("started"))
-        out.append(_event("inflight_open", name, at, at, row.get("post_id") or file_name,
+        # はてなの配信は ref に配信 id（設計 4.0 S1 §8.1）。SNS は今までどおり。
+        out.append(_event("inflight_open", name, at, at,
+                          row.get("delivery") or row.get("post_id") or file_name,
                           f"公開の結果待ち（{file_name or '原稿名なし'}）", ongoing=True))
+    if cfg.get("media") == "hatenablog" and cfg.get("principal"):
+        from . import principals
+        try:
+            row = principals.stopped(cfg["principal"])
+        except Exception:  # noqa: BLE001 — 読めない印は止まっている側
+            row = {"reason": "guard_state_unreadable"}
+        if row:
+            at = jst.parse(row.get("stopped_at"))
+            out.append(_event("principal_stopped", name, at, at, cfg["principal"],
+                              f"主体 {cfg['principal']} を止めています（{row.get('reason')}）", ongoing=True))
     if cfg.get("media") == "x":
         try:
             from . import budget_x, budget_x_posts
@@ -306,6 +374,14 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
                 cannot_say.add("inbox_unreadable")
         except Exception:  # noqa: BLE001
             cannot_say.add("inbox_unreadable")
+        if cfg.get("media") == "hatenablog":
+            try:
+                rows, broken = _delivery_events(name)
+                events += rows
+                if broken:
+                    cannot_say.add("deliveries_unreadable")
+            except Exception:  # noqa: BLE001
+                cannot_say.add("deliveries_unreadable")
         rows, cannot = _state_events(name, cfg)
         events += rows
         cannot_say.update(cannot)

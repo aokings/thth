@@ -424,7 +424,13 @@ REMOTE_PARSERS = ("send", "schedule", "retract", "posts", "replies", "measured",
                   "thread", "where", "who", "events", "summary")
 
 
+# `--remote` を子の命令（`bookmark add`）が持つ命令。`REMOTE_PARSERS` と違い、親には旗を足さない。
+REMOTE_CHILD_PARSERS = ("bookmark",)
+
+
 def command_key(command, args) -> str:
+    if command == "bookmark":
+        return "bookmark " + str(getattr(args, "verb", "") or "")
     if command == "account":
         verb = getattr(args, "account", None)
         return "account " + verb if verb in ("status", "set", "add", "leave", "resume", "migrate") else "account"
@@ -495,7 +501,7 @@ def route(args, command):
 
 def refuse_flag(argv):
     """`--remote` を持たない命令に `--remote` が付いていれば断る（parse の前・1 か所）。"""
-    if "--remote" in argv and argv and argv[0] not in REMOTE_PARSERS:
+    if "--remote" in argv and argv and argv[0] not in REMOTE_PARSERS + REMOTE_CHILD_PARSERS:
         return refuse(RemoteError("remote_unsupported", rc=2))
     return None
 
@@ -701,9 +707,38 @@ def _schedule(args, account):
     elif not getattr(args, "production", False):
         raise RemoteError("invalid_request", reason="予約するなら --production を付けてください（付けなければ何もしません）",
                           rc=2)
-    value = call("schedule_request", account, draft_id=draft)
+    value = call("schedule_request", account, draft_id=draft, confirm=getattr(args, "confirm", None))
+    if value.get("stage") == 1:
+        # はてなの口座（設計 4.0 S1 §6.4）: 1 段目は見せて digest を返すだけ（何も刻んでいない）。
+        from . import refusals
+        refusals.mark_first_stage()
+        if getattr(args, "json", False):
+            _print_json(value)
+            return 1
+        print(f"{account}: 予約しません（確認の一段目です）")
+        print(value.get("preview") or "")
+        print(f"刻むなら: thth schedule {account} --draft={draft} --production --confirm {value.get('digest')}")
+        return 1
     return _shown(args, value, lambda v: _say(
         f"{account}: 予約しました（{jst_text(v.get('publish_at'))}・下書き {str(v.get('draft_id'))[:12]}…）"))
+
+
+def _bookmark_add(args, account):
+    """`thth bookmark add`（遠くの道・`bookmark_request`）。手元の道と同じ 2 段。"""
+    value = call("bookmark_request", account, delivery=args.delivery, comment=args.comment,
+                 tags=args.tags, confirm=args.confirm)
+    if value.get("stage") == 1:
+        from . import refusals
+        refusals.mark_first_stage()
+        if getattr(args, "json", False):
+            _print_json(value)
+            return 1
+        print(f"{account}: ブックマークしません（確認の一段目です）")
+        for key, item in (value.get("preview") or {}).items():
+            print(f"  {key}: {item}")
+        print(f"digest: {value.get('digest')}")
+        return 1
+    return _shown(args, value, lambda v: _say(f"{account}: ブックマークしました（{v.get('url')}）"))
 
 
 PAST_GRACE_MINUTES = 5
@@ -998,7 +1033,7 @@ def _summary(args, account):
 COMMANDS.update({
     "events": _events, "summary": _summary,
     "inflight": _inflight,
-    "send": _send, "schedule": _schedule, "retract": _retract,
+    "send": _send, "schedule": _schedule, "retract": _retract, "bookmark add": _bookmark_add,
     "posts": _posts, "replies": _replies, "measured": _measured, "collect": _collect,
     "mentions": _mentions, "topics search": _topics_search, "profile": _profile,
     "location search": _location, "account status": _account_status, "account set": _account_set,
@@ -1046,6 +1081,8 @@ def register(sub) -> None:
     schedule.add_argument("--alt", dest="alts", action="append", help="遠くの道: 対応する添付の説明（各 --media に必須）")
     schedule.add_argument("--production", action="store_true",
                           help="遠くの道: 予約まで行う（無ければ下書きを置いて lint だけ・send と同じ）")
+    schedule.add_argument("--confirm", default=None,
+                          help="遠くの道: はてなの口座の予約の 2 段目（1 段目が出した digest・4.0 S1）")
     choices["posts"].add_argument("--refresh", action="store_true",
                                   help="媒体から引き直す（thth posts は元から毎回引く・同じ動き）")
     for name in ("replies", "measured", "mentions"):

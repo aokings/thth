@@ -70,6 +70,11 @@ _REASON_TABLE = (
     *((code + ": ", code) for code in queuefile.REPLY_TO_FILE_MESSAGES),
     # 投稿の目的（設計 3.6.0 §A1）。4 語の固定・承認の指紋には入らない。
     ("goal_invalid: ", "goal_invalid"),
+    # はてなブログの配信原稿（設計 4.0 S1 §3.5）。lint の 1 行は符丁そのもので始まる。
+    *((code + ": ", code) for code in (
+        "article_required", "article_source_missing", "invalid_article_source", "title_required",
+        "invalid_op", "delivery_required", "blog_id_in_manuscript", "categories_invalid",
+        "invalid_form", "delivery_unknown", "image_missing")),
 )
 
 REASONS = frozenset([code for _, code in _REASON_TABLE] + [FALLBACK_REASON])
@@ -223,6 +228,14 @@ def lint_file(path: str) -> list:
         errors.append(f"status: 未知の値 ({status})")
 
     account_cfg = _account_cfg_or_none(account_name)
+    from . import hatena_entry
+    if account_cfg is not None and hatena_entry.is_hatena(account_cfg):
+        # **はてなブログの配信原稿**（設計 4.0 S1 §3.5）。本文の出所は `article_source` だけで、
+        # `## hatenablog` の節・文字数・タグ・返信は見ない（SNS の原稿の検査は通さない）。
+        from . import goals as goals_mod
+        errors.extend(hatena_entry.lint_errors(fm, account_cfg))
+        errors.extend(goals_mod.lint_errors(fm))
+        return errors
     media = account_cfg["media"] if account_cfg else "threads"
     from . import media as media_mod
     try:
@@ -442,6 +455,14 @@ def preview_file(path: str) -> str:
     qf = queuefile.parse(path)
     account_name = qf.front_matter.get("account")
     account_cfg = _account_cfg_or_none(account_name)
+    from . import hatena_entry
+    if account_cfg is not None and hatena_entry.is_hatena(account_cfg):
+        # はてなの配信原稿は「変換したあとの本文」を見せる（設計 4.0 S1 §6.4・送るのはこれ）。
+        try:
+            m = hatena_entry.material(qf.front_matter, account_cfg, account_name)
+        except hatena_entry.EntryError as exc:
+            raise ValueError(hatena_entry.message(exc.code)) from None
+        return m["body"] + "\n"
     media = account_cfg["media"] if account_cfg else "threads"
     from . import media as media_mod
     fm = qf.front_matter

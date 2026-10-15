@@ -52,7 +52,8 @@ def _write(state_dir: str, data: dict) -> None:
 def write(state_dir: str, *, file: str, started: str,
           container_id: str | None = None, post_id: str | None = None,
           body_hash: str | None = None, approved_fingerprint: str | None = None,
-          text_fingerprint: str | None = None, reply_to: str | None = None) -> None:
+          text_fingerprint: str | None = None, reply_to: str | None = None,
+          delivery: str | None = None, seq: int | None = None) -> None:
     """`body_hash`（外部レビュー §3・受け入れ 9・10）は「送るはずの本文」の
     `approval.compute_body_hash()`。公開の**前**にここへ書いておくことで、書き戻し
     直前の「送った本文と repo の本文が同じか」の照合ができる（`thth.core` 参照）。
@@ -70,6 +71,10 @@ def write(state_dir: str, *, file: str, started: str,
     自分の最近の投稿と照合するときに使う。**本文そのものは書かない。**
     `reply_to` は公開に渡した返信先の post_id（解けたときの書き戻しに使う）。
     どちらも無ければ鍵ごと書かない（古い形の inflight と同じ顔のまま）。
+
+    `delivery`・`seq`（設計 4.0 S1 §8.2）ははてなの配信だけ。`seq` は配信の台帳に**結果の行**
+    （published・deleted・unknown …）が取る番号——人が解くときもこの番号で書くので、出来事の
+    id が「落ちずに書けていたとき」と同じになる。無ければ鍵ごと書かない（SNS の形は変えない）。
     """
     data = {
         "file": file,
@@ -83,6 +88,11 @@ def write(state_dir: str, *, file: str, started: str,
         data["text_fingerprint"] = text_fingerprint
     if reply_to is not None:
         data["reply_to"] = reply_to
+    if delivery is not None:
+        if type(seq) is not int or seq < 1:
+            raise ValueError("invalid_inflight_seq")
+        data["delivery"] = delivery
+        data["seq"] = seq
     _write(state_dir, data)
 
 

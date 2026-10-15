@@ -376,6 +376,30 @@ def _expand_targets(files, *, only_draft: bool, account=None, purpose=None) -> t
     return out, note
 
 
+def _late_warning(fm: dict, account_cfg: dict):
+    """**予定時刻を過ぎた原稿の扱いを、承認の前に言う**（nigamilab セッション指摘
+    2026-09-10）。起草する人と承認する人が別なので、承認までに時刻が過ぎるのは
+    普通に起きる。「承認したらいつ出るのか」を承認者が知らないまま押す形に
+    しない。"""
+    warning = None
+    now = jst.now_jst()
+    stale_days = account_cfg.get("stale_days", 7)
+    try:
+        publish_at = queuefile.parse_publish_at(fm.get("publish_at"))
+    except (ValueError, TypeError):
+        publish_at = None
+    if publish_at is not None and publish_at <= now:
+        late = now - publish_at
+        if late > datetime.timedelta(days=stale_days):
+            warning = (f"**承認しても出ません**: 予定時刻から {late.days} 日過ぎていて、"
+                       f"このアカウントの stale_days={stale_days} を超えています"
+                       "（board に要確認として出ます）。publish_at を直してください。")
+        else:
+            warning = (f"**承認するとすぐ出ます**: 予定時刻 {fm.get('publish_at')} は"
+                       f"既に過ぎています（{int(late.total_seconds() // 3600)} 時間前）。")
+    return warning
+
+
 def _prepare_one(path: str):
     """承認できるかを検査して `(準備, 断る理由)` を返す（何も書き換えない）。"""
     from . import bundle as bundle_mod
@@ -402,6 +426,12 @@ def _prepare_one(path: str):
     except accounts_mod.AccountError as e:
         return None, f"{path}: {e}"
 
+    from . import hatena_entry
+    if hatena_entry.is_hatena(account_cfg):
+        # はてなブログの配信原稿（設計 4.0 S1 §5.1・§6.1・§6.3）。指紋は `thth-hatena-entry-1`。
+        return hatena_entry.prepare(path, qf, account_cfg, account_name,
+                                    warning=_late_warning(fm, account_cfg))
+
     media = account_cfg["media"]
     from . import media as media_mod
     try:
@@ -421,26 +451,7 @@ def _prepare_one(path: str):
         reply_to=approval_mod.reply_to_for_fingerprint(fm),
         topic=fm.get("topic"), publish_at=fm.get("publish_at"), media_manifest=manifest, **options)
 
-    # **予定時刻を過ぎた原稿の扱いを、承認の前に言う**（nigamilab セッション指摘
-    # 2026-09-10）。起草する人と承認する人が別なので、承認までに時刻が過ぎるのは
-    # 普通に起きる。「承認したらいつ出るのか」を承認者が知らないまま押す形に
-    # しない。
-    warning = None
-    now = jst.now_jst()
-    stale_days = account_cfg.get("stale_days", 7)
-    try:
-        publish_at = queuefile.parse_publish_at(fm.get("publish_at"))
-    except (ValueError, TypeError):
-        publish_at = None
-    if publish_at is not None and publish_at <= now:
-        late = now - publish_at
-        if late > datetime.timedelta(days=stale_days):
-            warning = (f"**承認しても出ません**: 予定時刻から {late.days} 日過ぎていて、"
-                       f"このアカウントの stale_days={stale_days} を超えています"
-                       "（board に要確認として出ます）。publish_at を直してください。")
-        else:
-            warning = (f"**承認するとすぐ出ます**: 予定時刻 {fm.get('publish_at')} は"
-                       f"既に過ぎています（{int(late.total_seconds() // 3600)} 時間前）。")
+    warning = _late_warning(fm, account_cfg)
 
     return {
         "path": path,
@@ -609,6 +620,13 @@ def cmd_approve(args) -> int:
         except ValueError as e:
             print(str(e), file=sys.stderr)
             return 2
+        # はてなの配信原稿は、書き戻す前に配信の台帳を作る（設計 4.0 S1 §6.4・`wanted`）。
+        # 振った delivery を `approved_fields` が原稿に書き戻す。作れなければ 1 本も書かない。
+        hatena_problem = _assign_hatena_deliveries(prepared, approved_by, approved_at)
+        if hatena_problem:
+            print(hatena_problem, file=sys.stderr)
+            print("**1 本も承認しませんでした**（配信の台帳を作れなかったため）。", file=sys.stderr)
+            return 1
         for one in prepared:
             writeback_mod.set_front_matter_fields(one["path"], approval_mod.approved_fields(one, approved_by, approved_at))
 
@@ -810,6 +828,10 @@ def _approve_confirm_file(args) -> int:
                 for index, (t, one) in enumerate(proceed):
                     rel = os.path.relpath(os.path.realpath(one["path"]), repo_dir)
                     try:
+                        if one.get("kind") == "hatena_entry":
+                            problem = _assign_hatena_deliveries([one], approved_by, approved_at)
+                            if problem:
+                                raise ValueError(problem)
                         writeback_mod.set_front_matter_fields(
                             one["path"], approval_mod.approved_fields(one, approved_by, approved_at))
                         ok, err = writeback_mod.commit_local(
@@ -878,9 +900,27 @@ def _report_confirm_file(args, approved_by, approved_at, repo_dir, approved, ref
     return 0 if ok else 1
 
 
+def _assign_hatena_deliveries(prepared: list, by: str, at: str):
+    """はてなの配信原稿の 2 段目: 配信の台帳を作る（`hatena_entry.assign_delivery`）。断る理由か None。"""
+    from . import deliveries as deliveries_mod, hatena_entry
+    for one in prepared:
+        if one.get("kind") != hatena_entry.KIND:
+            continue
+        try:
+            hatena_entry.assign_delivery(one, by=by, at=at, origin={"via": "cli"})
+        except (deliveries_mod.DeliveryError, OSError, KeyError, ValueError) as exc:
+            return f"{one['path']}: 配信の台帳を作れません（{exc}）"
+    return None
+
+
 def _record_pending(prepared: list, repo_dir: str, bundle: str) -> bool:
     """1 段目の控えを account ごとに書く（設計 3.7.0 §B3）。書けなくても 1 段目は続ける。"""
     from . import approve_pending
+    for one in prepared:
+        if one.get("kind") == "hatena_entry":
+            # 見せた本文と画像の一覧を固定する（設計 4.0 S1 §3.5）。書けなくても 1 段目は続ける。
+            from . import hatena_entry
+            hatena_entry.record_first_stage(one)
     by_account = {}
     for one in prepared:
         by_account.setdefault(one["account"], []).append(one)
@@ -1096,6 +1136,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
                                 **({"media_manifests": one["media_manifests"]} if one.get("media_manifests") else {}),
                                 **({"plaza_related": one["plaza_related"]}
                                    if one.get("plaza_related") is not None else {}),
+                                **({"hatena": one["hatena"]} if one.get("hatena") else {}),
                                 "digest": one["digest"]} for one in prepared]})
         return
     print(f"承認しません（確認の一段目です）: {len(prepared)} 本——**{NOT_UNTIL_CONFIRMED}**")
@@ -1112,6 +1153,15 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
             if topic_line:
                 print(f"  ◆ {topic_line}")
             print(f"digest: {one['digest']}")
+            continue
+        if one.get("kind") == "hatena_entry":
+            # はてなブログの配信原稿（設計 4.0 S1 §6.3）: 行き先・操作・記事・題・画像・本文の全文。
+            print(f"=== {one['path']}")
+            if one.get("warning"):
+                print(f"  ⚠ {one['warning']}")
+            _print_goal_line(one)
+            for line in one["display_lines"]:
+                print(line)
             continue
         print(f"=== {one['path']}")
         print(f"  account   : {one['account']}")
@@ -4177,6 +4227,9 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth deliveries`（4.0 S1 §3.4・配信の台帳を読むだけ）。口は `thth/deliveries_cli.py` に閉じる。
     from . import deliveries_cli
     deliveries_cli.register(sub)
+    # `thth bookmark add`（4.0 S1 §7.3・はてなブックマークの 2 段の承認。送信は S4）。
+    from . import bookmark_cli
+    bookmark_cli.register(sub)
 
     # `thth retract` / `thth location search`（設計 v2 §4.3・v2.1-B）。口は
     # `thth/retract_cli.py` に閉じる——ここに足すのはこの 1 行だけ。

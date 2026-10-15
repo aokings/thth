@@ -747,7 +747,9 @@ SERVER_TOOLS = [
         ('draft_put',('body','publish_at','topic','reply_to','draft_id','expected_revision'),('body','publish_at')),
         ('send_request',('body','topic','reply_to'),('body',)),
         ('retract_request',('post_id','reason'),('post_id','reason')),
-        ('schedule_request',('draft_id',),('draft_id',)),
+        ('schedule_request',('draft_id','confirm'),('draft_id',)),
+        # 4.0 S1 §7.3: はてなブックマーク（2 段・送信は S4）。tags は a,b の 1 行。
+        ('bookmark_request',('delivery','comment','tags','confirm'),('delivery','comment')),
         ('draft_list',(),()),('queue',(),())) ]
 
 # 公開・削除・予約の 3 本は、頼まれたらその場で行う（承認ページは無い・設計 3.13.0）。安全装置は効く。
@@ -755,9 +757,15 @@ _PUBLISHING_DESCRIPTIONS = {
     'thth_send_request': "今すぐ公開する。その場で出して post_id・permalink を返す"
                          "（口座の hold_minutes が 1 以上なら、その分先の予約になり、その間は持ち主が /activity で取り消せる）",
     'thth_retract_request': "公開済みの投稿をその場で削除する",
-    'thth_schedule_request': "下書きを予約として queue に刻む（publish_at 以降に timer が出す）",
+    'thth_schedule_request': "下書きを予約として queue に刻む（publish_at 以降に timer が出す）。"
+                             "はてなブログの口座は 2 段: confirm が無ければ stage 1 と digest と表示を返し、同じ digest を confirm に付けると刻む",
 }
+_BOOKMARK_DESCRIPTION = ("自分のはてなブログの記事（配信の台帳で published の配信）にブックマークを付ける。2 段: "
+                         "confirm が無ければ stage 1 と digest と表示を返す。同じ digest を confirm に付けると打つ"
+                         "（送信の口が無い間は unsupported_medium）。主体の止め・1 日の上限・急な連投・1 URL に 1 回で断る")
 for _tool in SERVER_TOOLS:
+    if _tool["name"] == "thth_bookmark_request":
+        _tool["description"] = _BOOKMARK_DESCRIPTION
     if _tool["name"] in _PUBLISHING_DESCRIPTIONS:
         _tool["description"] = (_PUBLISHING_DESCRIPTIONS[_tool["name"]] +
                                 "。安全装置（最短間隔〔返信には掛けない〕・1 日の上限・急な連投で停止）に掛かれば理由と次に出せる時刻で断る。"
@@ -1049,8 +1057,12 @@ REMOTE_CLI = {
     "thth_retract_request": (lambda a: ["retract", a["account"], a["post_id"], "--reason=" + a["reason"],
                                         "--confirm=" + _retract_digest(a), "--json"], None),
     # 予約も同じ: MCP は呼べば刻む。CLI の遠くの道は --production が無ければ刻まない（10/16）。
-    "thth_schedule_request": (lambda a: ["schedule", a["account"], "--draft=" + a["draft_id"], "--production", "--json"],
+    "thth_schedule_request": (lambda a: ["schedule", a["account"], "--draft=" + a["draft_id"], "--production", "--json",
+                                         *_opt("--confirm", a.get("confirm"))],
                               None),
+    "thth_bookmark_request": (lambda a: ["bookmark", "add", a["account"], "--delivery=" + a["delivery"],
+                                         "--comment=" + a["comment"], *_opt("--tags", a.get("tags")),
+                                         *_opt("--confirm", a.get("confirm")), "--production", "--json"], None),
     "thth_draft_list": (lambda a: ["queue", a["account"], "--json"], None),
     "thth_queue": (lambda a: ["queue", a["account"], "--json"], None),
     "thth_settings": (lambda a: ["account", "set", a["account"], a["key"], a["value"], "--json"]

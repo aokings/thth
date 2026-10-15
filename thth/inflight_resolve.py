@@ -119,6 +119,8 @@ def is_self_resolvable(record) -> bool:
         return False
     if record.get("media") or record.get("post_id") or record.get("mismatch_fields"):
         return False
+    if record.get("delivery"):
+        return False  # はてなの配信（設計 4.0 S1 §8.2）: 人が確かめて解く（S5 で一覧と突き合わせる）
     return isinstance(record.get("file"), str) and bool(record.get("file"))
 
 

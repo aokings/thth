@@ -616,7 +616,15 @@ def approved_fields(prepared, by, at):
     ための比べる元（`goals.change()`）。
     """
     from . import goals
-    return {'status':'approved', 'approved_sha':prepared['approved_sha'],
-            'approved_at':at, 'approved_by':by, 'revoked_at':None,
-            'revoked_by':None, 'revoked_reason':None,
-            goals.APPROVED_KEY: goals.approved_value(prepared.get('goal'))}
+    fields = {'status':'approved', 'approved_sha':prepared['approved_sha'],
+              'approved_at':at, 'approved_by':by, 'revoked_at':None,
+              'revoked_by':None, 'revoked_reason':None,
+              goals.APPROVED_KEY: goals.approved_value(prepared.get('goal'))}
+    if prepared.get('kind') == 'hatena_entry':
+        # はてなの配信原稿だけ（設計 4.0 S1 §6.1）: 承認の種類と、2 段目で振った配信 id。
+        # SNS の原稿には書かない（既存の書き戻しは 1 バイトも変えない）。
+        if not prepared.get('delivery'):
+            raise ValueError('delivery_required')
+        fields['approved_kind'] = 'hatena_entry'
+        fields['delivery'] = prepared['delivery']
+    return fields

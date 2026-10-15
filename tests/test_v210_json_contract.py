@@ -66,7 +66,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 4.0 S1: 主体（はてな ID）の台帳。auth は S2 まで口だけ（--json を持たない）。
      'principal add', 'principal show', 'principal set', 'principal resume',
      # 4.0 S1 §3.4: 配信の台帳（読むだけ・版つき）。
-     'deliveries']
+     'deliveries',
+     # 4.0 S1 §7.3: はてなブックマークの 2 段の承認（送信は S4）。
+     'bookmark add']
 
 
 def test_json_table_covers_every_parser():
