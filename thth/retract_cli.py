@@ -167,8 +167,14 @@ def show_locations(query: str, rows: list) -> int:
         for row in rows:
             where = "・".join(x for x in (row.get("address"), row.get("city"),
                                        row.get("country")) if x)
+            # 郵便番号と緯度・経度（10/15 点検 §B-8）は付いていたときだけ。
+            extra = "・".join(str(x) for x in (
+                row.get("postal_code"),
+                (f"{row['latitude']},{row['longitude']}"
+                 if row.get("latitude") is not None and row.get("longitude") is not None else None))
+                if x)
             print(f"  {row.get('name') or '（名前なし）'}  id {row.get('id')}"
-                  + (f"  （{where}）" if where else ""))
+                  + (f"  （{where}）" if where else "") + (f"  {extra}" if extra else ""))
         print("front-matter に `location: <名前>` と `location_id: <id>` を書いてください")
     return 0
 

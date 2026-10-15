@@ -503,6 +503,11 @@ def _owned_once(account_name: str, account_cfg: dict):
     return owned
 
 
+# 返信の台帳に写さない欄（`threads.REPLY_EXTRA_FIELDS`・10/15 に要求へ足したもの）。
+from .adapters.threads import REPLY_EXTRA_FIELDS as _REPLY_EXTRA_FIELDS  # noqa: E402
+LEDGER_SKIP_FIELDS = frozenset(_REPLY_EXTRA_FIELDS)
+
+
 def _save_replies(reply_path: str, post_id: str, replies: list, *, now,
                    age_hours, marks: list, trigger: str,
                    source: str = QUEUE_SOURCE) -> list:
@@ -532,7 +537,10 @@ def _save_replies(reply_path: str, post_id: str, replies: list, *, now,
             continue
         known.add(rid)
         # **管理項目を後に置く**——API の行に同名の値があっても上書きさせない。
-        fresh.append({**row, "kind": "reply", "post_id": post_id,
+        # 10/15 に Threads の返信の要求に足した欄（種類・引用・隠れ・認証など）は台帳に写さない
+        # ——台帳の形は変えない（画面と `--json` で見せるだけ・点検 §B-4）。
+        kept = {key: value for key, value in row.items() if key not in LEDGER_SKIP_FIELDS}
+        fresh.append({**kept, "kind": "reply", "post_id": post_id,
                        "collected_at": jst.iso(now)})
     # **取れたことそのものを 1 行残す**（返信 0 件の成功と、取得の失敗を区別する
     # ため。これが無いと「0 件だった」を「まだ取っていない」と読んでしまい、

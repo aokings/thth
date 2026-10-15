@@ -25,7 +25,9 @@ LLM の会話の側で、ここは材料を並べて終わる。
       （`handoff_cursor`）だけで、それも `mark=False` なら進めない。
   (c) **数には分母。** 取れないものは `null`——`0` と混ぜない。
   (d) **`--json` に絶対パス・本文全文・新しい個人情報を入れない**（leak probe の
-      対象）。本文は `where` と同じ先頭 60 字の表示だけ。
+      対象）。本文は先頭 60 字の表示だけ——ここは何段もを 1 枚に束ねる見出しで、
+      各行の全文は `thread`・`mentions`・`unanswered`・`where` で読む（10/15 にそちらは
+      全文にした・点検 §B-2。この 1 枚は media-hub が毎朝読む形なので変えない）。
   (e) **「次の一手」は候補の列挙だけ**（masaru 裁定 3.1.0 §7-1）。本文を作らない
       ——`body` という鍵はこの口のどこにも出てこない。
   (f) **監視語は管理者が入れる**（同 §7-2）。語が無い account の第 3 段は
@@ -47,7 +49,7 @@ from . import threads_read_cli as threads_read_cli_mod
 REASONS = ("provider_timeout", "budget_exhausted", "scope_missing",
            "no_watch_words", "not_supported", "unavailable", "world_skipped")
 
-# 本文の見せ方は `where` と同じ（先頭 60 字・保存しない）。
+# 本文の見せ方は 1 行の題（先頭 60 字・保存しない）。全文は各口で読む（上の (d)）。
 PREVIEW_CHARS = threads_read_cli_mod.TEXT_PREVIEW_CHARS
 
 # 第 1 段で数える未回答の窓は台帳の `collect_days`（採集が返信を取りに行く日数・
@@ -87,7 +89,7 @@ def cell(value=None, cannot_say=None) -> dict:
 
 
 def _preview(text) -> str:
-    """本文を 1 行・先頭 60 字に（`where` と同じ・**保存しない・全文を出さない**）。"""
+    """本文を 1 行・先頭 60 字に（1 行の題・**保存しない・全文を出さない**）。"""
     return threads_read_cli_mod._one_line(text, PREVIEW_CHARS)
 
 

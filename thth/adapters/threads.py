@@ -95,7 +95,28 @@ def timeout_override():
 POST_METRICS = ("views", "likes", "replies", "reposts", "quotes", "shares")
 # `recent_posts()` で引く field（**L2**: `GET /{user_id}/threads` の `fields`）。
 # `topic_tag` は**付与の主体が未確認**（`account_report.API_TOPIC` の但し書き）。
-RECENT_POST_FIELDS = "id,permalink,timestamp,text,topic_tag"
+# 10/15（点検 §B-9）: 自分の投稿なので縛りは無い。Media の field 一覧（資料 threads-media・
+# 10/15 に読んだ）にある 5 つを足した——種類・引用か・引用先・再投稿先・リンクの添付。
+# 投稿の種類によって付かない欄がある（`quoted_post` は引用だけ・`reposted_post` は再投稿だけ）。
+RECENT_POST_EXTRA_FIELDS = ("media_type", "is_quote_post", "quoted_post",
+                            "reposted_post", "link_attachment_url")
+RECENT_POST_FIELDS = "id,permalink,timestamp,text,topic_tag," + ",".join(RECENT_POST_EXTRA_FIELDS)
+
+# `/conversation`・`/replies` で引く field（資料 replies-and-conversations・10/15 に読んだ・25 欄）。
+# 10/15（点検 §B-4）に 6 つ足した: 種類（画像だけの返信を見分ける）・引用か・引用先・自分の
+# 返信か・表示の状態（隠された等）・投稿者の認証。`profile_picture_url`・`media_url` 等の URL と
+# `reply_audience`（自分の投稿だけ）は取らない。
+REPLY_BASE_FIELDS = ("id,text,username,timestamp,permalink,is_reply,"
+                     "replied_to,root_post,has_replies")
+REPLY_EXTRA_FIELDS = ("media_type", "is_quote_post", "quoted_post",
+                      "is_reply_owned_by_me", "hide_status", "is_verified")
+REPLY_FIELDS = REPLY_BASE_FIELDS + "," + ",".join(REPLY_EXTRA_FIELDS)
+
+# アカウントの指標のうち、フォロワーの属性（資料 insights・10/15 に読んだ）。「100 フォロワー
+# 以上の口座だけ」「since/until は使えない」「breakdown は 1 回に 1 つ（country・city・age・
+# gender）」。応答の内訳の形は資料に例が無いので、`total_value` を**解釈せずそのまま**持つ。
+FOLLOWER_DEMOGRAPHICS_MIN_FOLLOWERS = 100
+FOLLOWER_DEMOGRAPHICS_BREAKDOWNS = ("country", "city", "age", "gender")
 
 # doctor の probe が本文から表示してよい鍵だけ（本文や個人情報を垂れ流さない）。
 PROBE_KEEP = ("name", "id", "username", "total_value", "quota_usage", "config",
@@ -636,10 +657,12 @@ class ThreadsAdapter(base.Adapter):
     # the query 'Menlo Park'」**。同じ口の reference（reference/location-search）は
     # 引数名を `query` と書いていて食い違う——例が載っている本文の `q` に合わせる
     # （doctor の probe と同じ判断）。
-    LOCATION_SEARCH_FIELDS = "id,name,address,city,country"
+    # 10/15（点検 §B-8）: 緯度・経度・郵便番号も取る（同じ資料の返る field）。
+    LOCATION_SEARCH_FIELDS = "id,name,address,city,country,latitude,longitude,postal_code"
 
     def location_search(self, query: str, *, limit: int = 5) -> list:
-        """場所を語で検索して `[{"id", "name", "address", "city", "country"}, …]`。
+        """場所を語で検索して `[{"id", "name", "address", "city", "country", "latitude",
+        "longitude", "postal_code"}, …]`。
 
         読み取りだけ。`limit` 件まで（既定 5）。権限が乗っていなければ
         `PermissionMissing`（rc=2 の断り）。
@@ -669,6 +692,9 @@ class ThreadsAdapter(base.Adapter):
                 "address": row.get("address"),
                 "city": row.get("city"),
                 "country": row.get("country"),
+                "latitude": row.get("latitude"),
+                "longitude": row.get("longitude"),
+                "postal_code": row.get("postal_code"),
             })
         return out
 
@@ -904,12 +930,19 @@ class ThreadsAdapter(base.Adapter):
             raise base.AdapterError("user_id が判らないので直近の投稿を引けません")
         body = self._get(f"/v1.0/{self.user_id}/threads",
                           {"fields": RECENT_POST_FIELDS, "limit": limit})
-        return [{"post_id": row.get("id"),
-                 "timestamp": row.get("timestamp"),
-                 "url": row.get("permalink"),
-                 "text": row.get("text"),
-                 "topic": row.get("topic_tag")}
-                for row in self._rows(body, "直近の投稿")]
+        out = []
+        for row in self._rows(body, "直近の投稿"):
+            item = {"post_id": row.get("id"),
+                    "timestamp": row.get("timestamp"),
+                    "url": row.get("permalink"),
+                    "text": row.get("text"),
+                    "topic": row.get("topic_tag")}
+            # 足した欄は付いていたものだけ写す（無いものを None で埋めない・10/15）。
+            for key in RECENT_POST_EXTRA_FIELDS:
+                if key in row:
+                    item[key] = row[key]
+            out.append(item)
+        return out
 
     def insights(self, post_id: str) -> dict:
         """投稿 1 本の数（`views`・`likes`・`replies`・`reposts`・`quotes`・`shares`）。
@@ -950,8 +983,7 @@ class ThreadsAdapter(base.Adapter):
 
         **`replied_to` と `root_post` を取る**ので、階層の形も残る。
         """
-        params = {"fields": "id,text,username,timestamp,permalink,is_reply,"
-                             "replied_to,root_post,has_replies"}
+        params = {"fields": REPLY_FIELDS}
         rows = self._all_pages(f"/v1.0/{post_id}/conversation", params, "会話")
         # **`medium` と `author_key` を足す**（設計 v2 §4.2）。**既存の鍵は
         # 変えない**——返信の台帳（ndjson）は追記専用で、過去の行と同じ鍵で
@@ -970,8 +1002,7 @@ class ThreadsAdapter(base.Adapter):
         （要望 r20261007-4b57e1ee・10/7 に実測: `/conversation` 0 件・`/replies` 1 件）。
         行の形は `conversation()` と同じ。
         """
-        params = {"fields": "id,text,username,timestamp,permalink,is_reply,"
-                             "replied_to,root_post,has_replies"}
+        params = {"fields": REPLY_FIELDS}
         rows = self._all_pages(f"/v1.0/{post_id}/replies", params, "返信")
         for row in rows:
             row["medium"] = MEDIUM
@@ -1294,7 +1325,32 @@ class ThreadsAdapter(base.Adapter):
             links = self._link_values(row)
             if name and links:
                 out[f"{name}_by_url"] = links
+        followers = out.get("followers_count")
+        if isinstance(followers, (int, float)) and followers >= FOLLOWER_DEMOGRAPHICS_MIN_FOLLOWERS:
+            out["follower_demographics"] = self.follower_demographics(user_id)
         return out
+
+    def follower_demographics(self, user_id: str):
+        """フォロワーの属性（`follower_demographics`・内訳ごとに 1 回ずつ・10/15 点検 §B-7）。
+
+        戻りは `{"country": <total_value>, "city": …, "age": …, "gender": …}`。内訳の形は資料に
+        例が無いので `total_value` をそのまま入れる（推測で開かない）。**取れなかった内訳は
+        None、1 つも取れなければ None**——指標の本体（日次）を止めない（黙って null）。
+        """
+        out = {}
+        for breakdown in FOLLOWER_DEMOGRAPHICS_BREAKDOWNS:
+            value = None
+            try:
+                body = self._get(f"/v1.0/{user_id}/threads_insights", {
+                    "metric": "follower_demographics", "breakdown": breakdown})
+                for row in self._rows(body, "フォロワーの属性"):
+                    if row.get("name") == "follower_demographics" and isinstance(row.get("total_value"), dict):
+                        value = row["total_value"]
+                        break
+            except Exception:   # noqa: BLE001 — 属性が取れないことで日次の記録を止めない
+                value = None
+            out[breakdown] = value
+        return out if any(v is not None for v in out.values()) else None
 
     def quota(self):
         return None
@@ -1497,12 +1553,17 @@ class ThreadsAdapter(base.Adapter):
         return out
 
     SEARCH_MODES = ("KEYWORD", "TAG")
+    # 検索の `media_type`（資料 keyword-search・10/15 に読んだ: TEXT・IMAGE・VIDEO）。
+    SEARCH_MEDIA_TYPES = ("TEXT", "IMAGE", "VIDEO")
+    # `since` の下限（同じ資料「greater than or equal to 1688540400」）。
+    SEARCH_SINCE_FLOOR = 1688540400
     # Threads の username（英数・`.`・`_`・30 字まで）。`@` は呼ぶ側で外す。
     AUTHOR_USERNAME = re.compile(r"[A-Za-z0-9._]{1,30}")
 
     def keyword_search(self, q: str, *, search_type: str = "TOP",
                        limit: int = 25, search_mode: str = "KEYWORD",
-                       author_username: str | None = None) -> list:
+                       author_username: str | None = None, since: int | None = None,
+                       until: int | None = None, media_type: str | None = None) -> list:
         """`GET /keyword_search`（`threads_keyword_search`・**L2**）。**1 頁だけ。**
 
         返るのは `Message` の形の行（`_message_row()`）。**本文はここで返すだけ**
@@ -1512,6 +1573,10 @@ class ThreadsAdapter(base.Adapter):
         だけ（Keyword and Topic Tag Search・L2・10/12 読んだ。`thth where --tag`・`--author`・
         調査「Threads で伸ばす」§7 決定 1）。`TAG` の `q` は先頭の `#` を外したトピック。
         既定（`KEYWORD`・作者なし）では要求の引数は今までと同じ。
+
+        `since`／`until`（Unix 秒）と `media_type`（`TEXT`／`IMAGE`／`VIDEO`）も API の引数を
+        そのまま渡す（10/15 点検 §B-5・資料 keyword-search）。資料の範囲（`since` は
+        1688540400 以上・`until` より前、`until` は今以前）の外は叩く前に断る。
         """
         if not isinstance(q, str) or not q.strip():
             raise base.AdapterError("検索の語が空です")
@@ -1528,6 +1593,14 @@ class ThreadsAdapter(base.Adapter):
         if author_username is not None and (not isinstance(author_username, str)
                                             or not self.AUTHOR_USERNAME.fullmatch(author_username)):
             raise base.AdapterError(f"author_username は Threads の username です（{author_username!r}）")
+        for name, value in (("since", since), ("until", until)):
+            if value is not None and (type(value) is not int or value < self.SEARCH_SINCE_FLOOR):
+                raise base.AdapterError(f"{name} は {self.SEARCH_SINCE_FLOOR} 以上の Unix 秒です（{value!r}）")
+        if since is not None and until is not None and since >= until:
+            raise base.AdapterError(f"since は until より前です（{since!r} ≥ {until!r}）")
+        if media_type is not None and media_type not in self.SEARCH_MEDIA_TYPES:
+            raise base.AdapterError(
+                f"media_type は {' / '.join(self.SEARCH_MEDIA_TYPES)} のどれかです（{media_type!r}）")
         term = q.strip().lstrip("#").strip() if search_mode == "TAG" else q.strip()
         if not term:
             raise base.AdapterError("検索の語が空です")
@@ -1537,6 +1610,12 @@ class ThreadsAdapter(base.Adapter):
             params["search_mode"] = search_mode
         if author_username is not None:
             params["author_username"] = author_username
+        if since is not None:
+            params["since"] = since
+        if until is not None:
+            params["until"] = until
+        if media_type is not None:
+            params["media_type"] = media_type
         rows = self._read(
             lambda: self._rows(self._get("/v1.0/keyword_search", params,
                                           timeout=self.search_timeout), "投稿の検索"),
@@ -1566,7 +1645,9 @@ class ThreadsAdapter(base.Adapter):
     # 「他人の投稿は `threads_basic` の advanced access 承認後に取得可能」
     # （**L2**）なので、未承認・404・その他の 4xx は `_read()` の読み分けで
     # `PermissionMissing` か `AdapterError` に化ける——**「無い」に化かさない**。
-    FETCH_POST_FIELDS = "id,username,text,timestamp,permalink"
+    # 10/15（点検 §B-4）: 根にも種類・引用か・引用先を足す（Media の field 一覧・threads-media）。
+    FETCH_POST_EXTRA_FIELDS = ("media_type", "is_quote_post", "quoted_post")
+    FETCH_POST_FIELDS = "id,username,text,timestamp,permalink," + ",".join(FETCH_POST_EXTRA_FIELDS)
 
     def fetch_post(self, post_id: str) -> dict:
         """根を 1 件だけ引く（T1-1・設計「自分の泉」§2.1）。`GET /{id}`（`threads_basic`）。
@@ -1597,6 +1678,9 @@ class ThreadsAdapter(base.Adapter):
         }
         if body.get("permalink"):
             out["permalink"] = body["permalink"]
+        for key in self.FETCH_POST_EXTRA_FIELDS:
+            if key in body:
+                out[key] = body[key]
         return out
 
     def inbox(self, *, since=None) -> list:

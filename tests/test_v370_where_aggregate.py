@@ -1,7 +1,8 @@
 """3.7.0 §C3 `thth where <account> <語…> --aggregate [--lexicon <file>]`。
 
 語ごとの件数・期間・1 日あたり・問いの形・lexicon の分類ごとの件数だけを返す。
-**本文・username・author_key・post_id は返さない**。検索語は数える前に本文から外す。
+**本文・username・post_id は返さない**。相手の仮名（author_key）は上位だけ件数と返す
+（10/15 点検 §B-6・保存しない——runs にも `--keep` の行にも入らない）。検索語は数える前に本文から外す。
 **既定は表示だけで、道具は保存しない**。出力に「残すなら --keep（…）」を固定で添える
 （3.18.0 で文言を差し替え。残す口は tests/test_v3180_where_keep.py）。
 """
@@ -22,8 +23,10 @@ ROWS = [
     {"message_id": "POSTID-333", "author_key": "c3c3c3c3c3c3c3c3", "username": "USERNAME-C",
      "timestamp": "2026-09-09T00:00:00Z", "text": "BODYTEXT-3 酸っぱい珈琲"},
 ]
-SECRETS = ("BODYTEXT", "USERNAME", "POSTID", "a1a1a1a1a1a1a1a1", "b2b2b2b2b2b2b2b2",
-           "c3c3c3c3c3c3c3c3", "淹れ方", "豆が")
+AUTHOR_KEYS = ("a1a1a1a1a1a1a1a1", "b2b2b2b2b2b2b2b2", "c3c3c3c3c3c3c3c3")
+# 画面と --json に出ないもの（本文・名前・id）。仮名は出る（AUTHOR_KEYS）が、runs には出ない。
+SHOWN_SECRETS = ("BODYTEXT", "USERNAME", "POSTID", "淹れ方", "豆が")
+SECRETS = SHOWN_SECRETS + AUTHOR_KEYS
 
 
 @pytest.fixture
@@ -61,14 +64,14 @@ def test_aggregateは数と時刻だけ返し本文もusernameもpost_idも返�
     assert cli.main(["where", "one", "珈琲", "--aggregate", "--lexicon", _lexicon(tmp_path),
                      "--json"]) == 0
     raw = capsys.readouterr().out
-    for secret in SECRETS:
+    for secret in SHOWN_SECRETS:
         assert secret not in raw, secret
     result = json.loads(raw)
     assert result["mode"] == "aggregate" and result["storage"] == "display_only"
     assert result["storage_note"] == where_cli.AGGREGATE_STORAGE_NOTE
     assert result["storage_note"].startswith("残すなら --keep")
     node = result["by_account"]["one"]
-    assert set(node) == {"medium", "mode", "by_word", "by_tag", "cannot_say"}
+    assert set(node) == {"medium", "mode", "by_word", "by_tag", "you_and_them", "cannot_say"}
     agg = node["by_word"]["珈琲"]["aggregate"]
     assert agg["n"] == 3
     assert agg["period"]["span_days"] == 8.0 and agg["per_day"] == 0.38
@@ -78,13 +81,19 @@ def test_aggregateは数と時刻だけ返し本文もusernameもpost_idも返�
     # 検索語「珈琲」は外してから数える——「問い」の分類に「珈琲」を入れても数えない。
     assert agg["lexicon"]["問い"] == {"n_posts": 1, "denominator": 3}
     assert agg["search_words_removed"] is True
+    # 上位の仮名と件数（10/15 点検 §B-6）。同数は仮名の順。「前に会ったか」も引ける。
+    assert agg["distinct_authors"] == 3
+    assert agg["author_keys"] == [{"author_key": key, "n": 1} for key in AUTHOR_KEYS]
+    assert set(node["you_and_them"]) == set(AUTHOR_KEYS)
+    assert all(v["met"] == 0 for v in node["you_and_them"].values())
 
 
 def test_aggregateの画面も本文を出さず保存の注意を添える(account, tmp_path, capsys):
     assert cli.main(["where", "one", "珈琲", "--aggregate"]) == 0
     out = capsys.readouterr().out
-    for secret in SECRETS:
+    for secret in SHOWN_SECRETS:
         assert secret not in out, secret
+    assert "相手の仮名（上位・異なり 3）: a1a1a1a1a1a1a1a1（1）" in out
     assert "件数=3" in out
     assert "表示だけで、道具は保存しません。残すなら --keep" in out
 
