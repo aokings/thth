@@ -109,3 +109,11 @@ def test_account_addはdry_runを付けると何も書かずに断る(isolated_a
     assert r.returncode == 2, r.stdout + r.stderr
     assert "migrate だけ" in r.stderr
     assert not os.path.exists(os.path.join(isolated_account["accounts_dir"], "tryit-threads.json"))
+
+
+def test_threadsのaddはhandleを省くと既定と直し方を言う(isolated_account):
+    r = run_thth(["account", "add", "tryit-threads", "--media", "threads", "--project", "tryit",
+                  "--by", "test"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "handle: tryit（--handle を省いたので project の値" in r.stdout
+    assert "thth account set tryit-threads handle <名前> --by" in r.stdout

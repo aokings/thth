@@ -90,7 +90,9 @@ class ThreadsAuthProfile(AuthProfile):
             if oauth.handle_matches(handle, username) is False:
                 oauth._out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
                      f"このトークンは {username} のものです。", log=log)
-                oauth._out("正しいアカウントで認可し直すか、台帳の handle を直してください。", log=log)
+                oauth._out("正しいアカウントで認可し直すか、台帳の handle を直してください"
+                           f"（thth account set {account_name} handle {username} --by <名前>"
+                           " のあと thth auth を打ち直す）。", log=log)
                 raise oauth.OAuthError("auth_exchange_failed")
 
         # **認可の範囲を記録する**（2026-09-14・`fetch_token_scopes` の説明）。

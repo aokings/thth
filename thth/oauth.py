@@ -831,7 +831,8 @@ def _run_token_set_legacy(account_name: str, *, force: bool = False, stdin: bool
         if handle_matches(handle, username) is False:
             _out(f"保存しませんでした: 台帳 {account_name} の handle は {handle} ですが、"
                  f"このトークンは {username} のものです。", log=log)
-            _out("正しいアカウントで発行し直すか、台帳の handle を直してください。", log=log)
+            _out("正しいアカウントで発行し直すか、台帳の handle を直してください"
+                 f"（thth account set {account_name} handle {username} --by <名前>）。", log=log)
             return 1
 
         token_data = {

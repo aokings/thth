@@ -152,3 +152,24 @@ def test_token_setはidとusernameが有れば従来どおり保存する(tmp_pa
     with open(str(token_path), encoding="utf-8") as f:
         token = json.load(f)
     assert token["user_id"] == "1" and token["username"] == "nigamilab"
+
+
+def test_handleが食い違えば断り_直す命令を名指しする(tmp_path, monkeypatch, isolated_account_factory):
+    """10/15 music-research-threads: 台帳は既定の project 名、本物は別の名前。
+    断るだけでなく、両方の名前と `thth account set … handle …` を出す。"""
+    _write_app_env(tmp_path, monkeypatch)
+    account = _account_with_existing_token(isolated_account_factory, tmp_path, handle="music-research")
+    monkeypatch.setattr(oauth_mod, "_new_state", lambda: FIXED_STATE)
+
+    with fake_oauth_server() as base_url:
+        monkeypatch.setenv("THTH_THREADS_BASE_URL", base_url)
+        monkeypatch.setattr(oauth_mod, "fetch_me", lambda *a, **k: {"id": "1", "username": "mymusicresearch"})
+        lines = []
+        rc = oauth_mod.run_auth(account["name"], code=_戻り(), log=lines.append, by="test-operator")
+
+    assert rc == 1
+    out = "\n".join(lines)
+    assert "music-research" in out and "mymusicresearch" in out
+    assert f"thth account set {account['name']} handle mymusicresearch --by" in out
+    with open(account["token_path"], encoding="utf-8") as f:
+        assert f.read() == EXISTING_TOKEN_CONTENT

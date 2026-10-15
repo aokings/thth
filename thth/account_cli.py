@@ -465,6 +465,11 @@ def cmd_add(args) -> int:
           f"本番にするときだけ手で true に）")
     print(f"  scheduled: false（timer に載せるときだけ手で true に）")
     print(f"  repo_dir: {data['repo_dir']}")
+    if args.media == "threads" and not args.handle:
+        # 10/15 music-research-threads: 既定の project 名が本物の名前（mymusicresearch）と
+        # 違い、`thth auth` が取り違え防止で断った。書いたその場で言う。
+        print(f"  handle: {data['handle']}（--handle を省いたので project の値。Threads の本物の"
+              f"名前と違えば、認可の前に thth account set {name} handle <名前> --by <名前>）")
     print("")
     # **雛形のダミーが残っているなら、書いたその場で名指しする**（監査 2・C10・
     # 2026-09-13）。前はここが何も言わず、`thth auth` を打った人が
@@ -565,7 +570,7 @@ def register(sub) -> None:
                 "thth account add <name> --media threads|bluesky|mastodon "
                 "--project <p> [--handle …] [--instance …] [--redirect-uri …] "
                 "[--repo-dir …]\n"
-                "  threads  : --handle は省略可（既定は --project の値）。"
+                "  threads  : --handle は省略可（既定は --project の値。認可の前なら account set <name> handle <名前> で直せる）。"
                 "--redirect-uri を省くと雛形のダミーのまま\n"
                 "  bluesky  : --handle name.bsky.social が必須\n"
                 "  mastodon : --handle user と --instance https://… が必須")

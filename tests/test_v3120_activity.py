@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import os
 import secrets
 import subprocess
 import sys
@@ -85,6 +86,27 @@ def test_scheduledでない口座にhold_minutesを書くのは断る(env):
     assert thth("account", "set", "alpha", "hold_minutes", "0", "--by", "masaru").returncode == 0
 
 
+def test_account_setでhandleを直せるのはトークンが無いときだけ(env):
+    """10/15: Threads の add は --handle を省くと project 名。認可の前に道具で直せる口。"""
+    before = read_ledger(env)
+    # トークンがある口座は変えない（取り違え防止の照合の片側）。
+    done = thth("account", "set", "alpha", "handle", "mymusicresearch", "--by", "masaru")
+    assert done.returncode == 2 and "handle_locked_by_token" in done.stderr
+    assert read_ledger(env) == before
+    os.remove(before["token"])
+    for bad in ("my music", "../x", "", "名前"):
+        done = thth("account", "set", "alpha", "handle", bad, "--by", "masaru")
+        assert done.returncode == 2 and "invalid_handle" in done.stderr, (bad, done.stderr)
+    assert thth("account", "set", "alpha", "handle", "x").returncode == 2  # --by 必須
+    assert read_ledger(env) == before
+    done = thth("account", "set", "alpha", "handle", "@mymusicresearch", "--by", "masaru", "--json")
+    assert json.loads(done.stdout) == {"account": "alpha", "key": "handle", "before": "demo",
+                                       "after": "mymusicresearch", "changed": True}
+    assert read_ledger(env)["handle"] == "mymusicresearch"
+    rows, _ = admin_log.read(event="settings_set")
+    assert rows[-1]["diff"] == {"handle": ["demo", "mymusicresearch"]} and rows[-1]["by"] == "masaru"
+
+
 def test_account_statusとresume(env):
     done = thth("account", "status", "alpha", "--json")
     row = json.loads(done.stdout)
@@ -139,7 +161,7 @@ def test_mcpのthth_settingsは締める向きだけ(env, monkeypatch):
     rows, _ = admin_log.read(event="settings_set")
     assert rows and all(row["via"] == "mcp" and row["by"] == "person" for row in rows)
     # 変えられるのは安全装置の数値だけ（3.13.0: approval も無い）。
-    for key in ("approval", "stopped", "production", "scheduled", "quiet_hours"):
+    for key in ("approval", "stopped", "production", "scheduled", "quiet_hours", "handle"):
         denied = server.call_tool("thth_settings", {"account": "alpha", "key": key, "value": "0"})
         assert denied["content"][0]["text"] == "invalid_setting"
     assert server.call_tool("thth_settings", {"account": "beta"})["isError"]

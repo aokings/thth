@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -41,7 +42,8 @@ X_ONLY_KEYS = frozenset(("x_daily_reads",))
 TIGHTER_WHEN_LARGER = frozenset(("burst_minutes", "hold_minutes", "min_interval_hours"))
 MIN_INTERVAL_MAX = 168
 REASONS = frozenset(("invalid_setting", "settings_loosen_requires_owner", "schedule_unavailable",
-                     "ledger_unavailable", "settings_unavailable"))
+                     "ledger_unavailable", "settings_unavailable", "invalid_handle",
+                     "handle_locked_by_token"))
 
 
 class SettingsError(ValueError):
@@ -172,6 +174,57 @@ def change(account, key, value, *, by, via="cli", tighten_only=False) -> dict:
     return {"account": account, "key": key, "before": before, "after": after, "changed": True}
 
 
+HANDLE_RE = re.compile(r"[A-Za-z0-9._-]{1,253}")
+
+
+def change_handle(account, value, *, by) -> dict:
+    """台帳の `handle` を直す（**運営者の CLI だけ・トークンが無いときだけ**・10/15）。
+
+    `thth account add` の Threads は `--handle` を省くと project 名が入る。外れていると
+    `thth auth` が取り違え防止で「保存しませんでした」と断り、直す口が無かった
+    （music-research-threads を ssh で JSON を手で書き換えて直した）。
+
+    **トークンがあれば断る**（`handle_locked_by_token`）。handle は取り違え防止の
+    照合の片側で、トークンのあとに書き換えられると、別のアカウントのトークンに
+    この口座の queue を出させる道になる。認可のあとに変えたいなら、トークンを
+    外してから認可し直す。MCP・遠くの道（`thth.me`）からは変えられない
+    （`KEYS` に無いので `change()` が断る）。
+    """
+    admin_log.actor(by)
+    if not accounts.name_is_safe(account):
+        raise SettingsError("invalid_setting")
+    after = str(value or "").strip().lstrip("@")
+    if not HANDLE_RE.fullmatch(after):
+        raise SettingsError("invalid_handle")
+    cfg = accounts.load_account(account)
+    before = cfg.get("handle")
+    if before == after:
+        return {"account": account, "key": "handle", "before": before, "after": after, "changed": False}
+    try:
+        token = accounts.load_token(cfg, refresh_x=False)
+    except (OSError, ValueError):
+        token = True  # 読めないトークンも「在る」として扱う（外して認可し直すまで変えない）
+    if token is not None:
+        raise SettingsError("handle_locked_by_token")
+    path = _ledger_path(account)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SettingsError("ledger_unavailable") from exc
+    if not isinstance(raw, dict):
+        raise SettingsError("ledger_unavailable")
+    original = json.loads(json.dumps(raw))
+    raw["handle"] = after
+    secrets_fs.atomic_write_json(str(path), raw)
+    try:
+        accounts.load_account(account)
+    except accounts.AccountError:
+        secrets_fs.atomic_write_json(str(path), original)
+        raise SettingsError("invalid_handle") from None
+    admin_log.append("settings_set", account, cfg, by=by, via="cli", diff={"handle": [before, after]})
+    return {"account": account, "key": "handle", "before": before, "after": after, "changed": True}
+
+
 def status(account, *, now=None) -> dict:
     """安全装置の数値・止まっているか・今日の公開数/削除数（読むだけ）。
 
@@ -230,11 +283,17 @@ def cmd_set(args) -> int:
         return _fail("invalid_setting: thth account set <口座> <名前> <値> --by <名前>")
     try:
         pairs = _pairs(rest)
-        results = [change(args.name, key, value, by=args.by, via="cli") for key, value in pairs]
+        results = [change_handle(args.name, value, by=args.by) if key == "handle"
+                   else change(args.name, key, value, by=args.by, via="cli") for key, value in pairs]
     except SettingsError as exc:
         reason = str(exc) if str(exc) in REASONS else "invalid_setting"
         if reason == "invalid_setting":
-            reason += f": 名前は {'・'.join(KEYS)}（burst は `burst <件数> <分>` でも）"
+            reason += f": 名前は {'・'.join(KEYS)}・handle（burst は `burst <件数> <分>` でも）"
+        elif reason == "invalid_handle":
+            reason += ": handle は英数字と `.`・`_`・`-` だけ（先頭の @ は外す）"
+        elif reason == "handle_locked_by_token":
+            reason += (f": {args.name} にはトークンがあるので handle を変えません（取り違え防止の"
+                       "照合の片側のため）。変えるなら、トークンを外してから handle を直し、認可し直す")
         return _fail(reason, json_output=getattr(args, "json", False))
     except accounts.AccountError:
         return _fail("ledger_unavailable", json_output=getattr(args, "json", False))
