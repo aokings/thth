@@ -4170,6 +4170,10 @@ def build_parser() -> argparse.ArgumentParser:
     # だけ——**口の中身は `thth/morning.py` に閉じる**（ここに足すのはこの 2 行）。
     from . import morning as morning_mod
     morning_mod.register(sub)
+    # `thth events`・`thth summary`（4.0 の柱 1）。読むだけ——口の中身は各 module に閉じる。
+    from . import events_cli, summary_cli
+    events_cli.register(sub)
+    summary_cli.register(sub)
 
     # `thth retract` / `thth location search`（設計 v2 §4.3・v2.1-B）。口は
     # `thth/retract_cli.py` に閉じる——ここに足すのはこの 1 行だけ。

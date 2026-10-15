@@ -350,6 +350,9 @@ def _publish_hold(name):
             "message": publish_hold.message(name, row)}
 
 
+BOARD_SCHEMA = "thth.board/1"
+
+
 def board_summary(now=None) -> dict:
     """アカウント・最終投稿・approved 待ち・inflight・型外・要確認の骨（設計 §4.6・
     外部レビュー再レビュー C で `needs_review`／`approval_stale_count` を追加）。"""
@@ -596,7 +599,11 @@ def board_summary(now=None) -> dict:
     # 同時に走っている」と読めてしまう。
     collecting = [row["account"] for row in accounts_out
                   if row.get("repo_running") and not row.get("running")]
-    return {"accounts": accounts_out, "generated_at": jst.iso(),
+    # `schema`（4.0 の柱 1）: 出力の約束の版。hub は `accounts[]` の鍵を名前で読んでいる
+    # （`account`・`project`・`last_post_at`・`approved_waiting`・`held_count` 等）。足すだけで、
+    # 既存の鍵は変えない（`tests/test_v40_contract_json.py` が縛る）。
+    return {"schema": BOARD_SCHEMA,
+            "accounts": accounts_out, "generated_at": jst.iso(),
             "running": running,
             "collecting": collecting,
             # **どこの台帳を読んで、この一覧を作ったか**（設計 v2 §3・v2-2a）。

@@ -421,7 +421,7 @@ UNSUPPORTED = frozenset(("throw", "run", "auth", "refresh", "doctor",
 # `--remote` を旗として持つ命令（それ以外に `--remote` が付けば parse の前に断る）。
 REMOTE_PARSERS = ("send", "schedule", "retract", "posts", "replies", "measured", "collect",
                   "mentions", "topics", "profile", "location", "account", "queue", "inflight",
-                  "thread", "where", "who")
+                  "thread", "where", "who", "events", "summary")
 
 
 def command_key(command, args) -> str:
@@ -440,6 +440,15 @@ def _account(key, args):
         return getattr(args, "name", None)
     if key == "topics search":
         return getattr(args, "account_flag", None) or getattr(args, "account", None)
+    if key in ("events", "summary"):
+        # 対象は口座名か project 名。手元の台帳で project として引ける名前は手元の道（遠くへ送らない）。
+        name = getattr(args, "account", None)
+        from . import morning
+        try:
+            local = bool(morning.targets(name))
+        except Exception:  # noqa: BLE001 — 台帳が読めなければ口座名として扱う
+            local = False
+        return None if local else name
     if key in ("where", "who"):
         # 口座は位置引数の先頭（`--project` は手元の台帳を束ねる形なので遠くの道には出さない）。
         targets = getattr(args, "targets", None) or []
@@ -941,7 +950,23 @@ def _inflight(args, account):
     return _shown(args, value, lambda v: _say(f"inflight を解きました: {account}（{v.get('resolution')}）"))
 
 
+def _events(args, account):
+    """`thth events <口座> --since …`（出来事の流れ・読むだけ・4.0 の柱 1）。手元と同じ形と見せ方。"""
+    from . import events_cli
+    value = call("events", account, since=getattr(args, "since", None), after=getattr(args, "after", None),
+                 limit=getattr(args, "limit", None))
+    return _shown(args, value, lambda v: events_cli.render(v) or 0)
+
+
+def _summary(args, account):
+    """`thth summary <口座>`（数の要約・読むだけ・4.0 の柱 1）。手元と同じ形と見せ方。"""
+    from . import summary_cli
+    value = call("summary", account)
+    return _shown(args, value, lambda v: summary_cli.render(v) or 0)
+
+
 COMMANDS.update({
+    "events": _events, "summary": _summary,
     "inflight": _inflight,
     "send": _send, "schedule": _schedule, "retract": _retract,
     "posts": _posts, "replies": _replies, "measured": _measured, "collect": _collect,
