@@ -47,6 +47,8 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    'credential_added', 'credential_removed',
                    # 安全装置（設計 3.12.0 §3.3）。急な連投で止めた・持ち主が戻した。理由の語だけ。
                    'guard_stopped', 'guard_resumed',
+                   # 主体（はてな ID・設計 4.0 S1 §4.1）を作った・止めた・戻した。subject は主体の名前。
+                   'principal_added', 'principal_stopped', 'principal_resumed',
                    # 媒体がアカウント側の断り（x_not_permitted）を返して自動の投稿を止めた・人が戻した（3.19.2）。
                    'publish_held', 'publish_resumed',
                    # 段 3: 設定（approval・安全装置の数値）の変更、持ち主の /activity からの予約の取り消し、

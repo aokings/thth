@@ -99,7 +99,11 @@ def account_locks(account, cfg):
     from .lock import LockBusy
     repo=cfg.get('repo_dir')
     if repo is not None and not isinstance(repo,str):raise ValueError('invalid_repo')
-    paths = ([Path(accounts.repo_lock_path_for(repo))] if repo else []) + [Path(accounts.account_lock_path_for(account))]
+    # はてなの口座は repo → principal → account（設計 4.0 S1 §4.3・`core._account_locks` と同じ順）。
+    from . import principals
+    middle = ([Path(principals.lock_path_for(cfg['principal']))] if principals.uses_principal(cfg) else [])
+    paths = (([Path(accounts.repo_lock_path_for(repo))] if repo else []) + middle
+             + [Path(accounts.account_lock_path_for(account))])
     try:
         with contextlib.ExitStack() as stack:
             for path in paths:

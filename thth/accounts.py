@@ -180,7 +180,10 @@ DUMMY_INSTANCE_HOST = "mastodon.example"
 # 媒体ごとの雛形の handle。**「`demo` を含む」では見ない**——`demo-band` のような
 # 実在の綴りを巻き込む。雛形の値と丸ごと一致したときだけダミーと呼ぶ。
 DUMMY_HANDLES = {"threads": ("demo",), "mastodon": ("demo",),
-                 "bluesky": ("demo.bsky.social",)}
+                 "bluesky": ("demo.bsky.social",), "hatenablog": ("demo",)}
+# はてなの雛形（設計 4.0 S1 §3.3）。口座の `blog_id` と主体の `blogs[].blog_id`・`hatena_id`。
+DUMMY_BLOG_ID = "demo.hatenablog.com"
+DUMMY_HATENA_ID = "demo"
 
 _DUMMY_NEXT = {
     "redirect_uri": ("Meta アプリに登録した URL を "
@@ -192,6 +195,11 @@ _DUMMY_NEXT = {
     "instance": ("自分のインスタンスの URL を "
                  "`thth account add <name> --instance https://<instance>` か、"
                  "台帳の `instance` に入れてください（導入文書 §4）。"),
+    "blog_id": ("本物のブログのドメイン（例 `name.hatenablog.com`）を主体の台帳の `blogs[]` と"
+                "口座の `blog_id` に入れてください（`thth account add <name> --media hatenablog "
+                "--principal <主体> --blog <blog_id>`）。"),
+    "hatena_id": ("本物のはてな ID を主体の台帳の `hatena_id` に入れてください"
+                  "（`thth principal add <主体> --hatena-id <id>`）。口座の `handle` も同じ値に。"),
 }
 
 
@@ -223,6 +231,16 @@ def dummy_fields(cfg: dict) -> list[dict]:
     instance = cfg.get("instance")
     if instance and DUMMY_INSTANCE_HOST in str(instance):
         足す("instance", instance)
+    # はてな（設計 4.0 S1 §3.3）: 口座の `blog_id`、主体の台帳の `hatena_id`・`blogs[]`。
+    if media == "hatenablog" and str(cfg.get("blog_id") or "").strip().lower() == DUMMY_BLOG_ID:
+        足す("blog_id", cfg.get("blog_id"))
+    if cfg.get("kind") == "hatena" and "principal" in cfg:
+        if cfg.get("hatena_id") == DUMMY_HATENA_ID:
+            足す("hatena_id", cfg.get("hatena_id"))
+        for blog in cfg.get("blogs") or []:
+            if isinstance(blog, dict) and blog.get("blog_id") == DUMMY_BLOG_ID:
+                足す("blog_id", blog.get("blog_id"))
+                break
     return out
 
 
@@ -478,6 +496,12 @@ def load_account(name: str) -> dict:
     out._thth_account_name=name
     for key in ("repo_dir", "env", "token"):
         out[key] = _expand(out[key])
+    # **はてなの口座は主体の台帳と突き合わせる**（設計 4.0 S1 §3.3 の 1〜5）。外れれば
+    # `AccountError`（`principals.PrincipalError`・符丁つき）。ほかの媒体は `principal` を
+    # 書いてあっても読まない（SNS の口座の読みは 1 バイトも変えない・T-1c）。
+    if out.get("media") == "hatenablog":
+        from . import principals
+        principals.check_account(out, name)
     return out
 
 

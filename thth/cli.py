@@ -4196,6 +4196,10 @@ def build_parser() -> argparse.ArgumentParser:
     from . import trends_cli
     trends_cli.register(sub)
 
+    # `thth principal add|show|set|resume|auth`（4.0 S1・主体＝はてな ID）。口は `thth/principal_cli.py` に閉じる。
+    from . import principal_cli
+    principal_cli.register(sub)
+
     # `thth inflight <account> [show|resolve]`（設計 3.3.1 §4）。口は
     # `thth/inflight_cli.py` に閉じる——ここに足すのはこの 2 行だけ。
     from . import inflight_cli

@@ -204,20 +204,37 @@ def _account_locks(account_name: str, account_cfg: dict, state_dir: str, wait=0)
     「入口が増えても守りの数は増えない」）。release は取得と逆順（account →
     repo）にする。どちらのロックも取れなければ `lock_mod.LockBusy` をそのまま
     投げる（呼び出し側の `throw_once`/`send_once` が `action="locked"` に変換する）。
+
+    **はてなの口座は主体のロックを挟む: repo → principal → account**（設計 4.0 S1 §4.3）。
+    同じはてな ID を使う別レーンの 2 process は repo が違うので repo では待たず、principal で
+    1 つが待つ。順は全順序（repo < principal < account）で、principal を持ったまま repo を
+    待つ経路は無い。SNS の口座は principal を取らない（今までどおり 2 段）。待つ締め切りは
+    3 つで共有する（timer の run は 60 秒）。
     """
+    from . import principals as principals_mod
     repo_lock_path = accounts_mod.repo_lock_path_for(account_cfg["repo_dir"])
     account_lock_path = accounts_mod.account_lock_path_for(account_name)
     repo_lock = lock_mod.AccountLock(repo_lock_path)
+    principal_lock = None
+    if principals_mod.uses_principal(account_cfg):
+        principals_mod.ensure_state_dir(account_cfg["principal"])
+        principal_lock = lock_mod.AccountLock(principals_mod.lock_path_for(account_cfg["principal"]))
     account_lock = lock_mod.AccountLock(account_lock_path)
 
     deadline = lock_mod.time.monotonic() + lock_mod.wait_seconds(wait)
     lock_mod.acquire(repo_lock, wait)
     try:
-        lock_mod.acquire(account_lock, max(0, deadline - lock_mod.time.monotonic()))
+        if principal_lock is not None:
+            lock_mod.acquire(principal_lock, max(0, deadline - lock_mod.time.monotonic()))
         try:
-            yield
+            lock_mod.acquire(account_lock, max(0, deadline - lock_mod.time.monotonic()))
+            try:
+                yield
+            finally:
+                account_lock.release()
         finally:
-            account_lock.release()
+            if principal_lock is not None:
+                principal_lock.release()
     finally:
         repo_lock.release()
 
@@ -1131,6 +1148,13 @@ def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") 
                f"thth account resume {account_name} --by <名前>")
     elif code == "account_stopped":
         why = f"口座が止まっています（{getattr(refused, 'reason', None) or '理由不明'}）。thth account resume {account_name} --by <名前>"
+    elif code == "principal_stopped":
+        # 主体（はてな ID・設計 4.0 S1 §4.1）の止め。その主体のすべてのブログとブックマークに効く。
+        why = (f"主体（はてな ID）が止まっています（{getattr(refused, 'reason', None) or '理由不明'}）。"
+               "戻すのは thth principal resume <主体> --by <名前>")
+    elif code in ("principal_daily_limit", "principal_retract_limit", "blog_daily_limit",
+                  "blog_retract_limit", "bookmark_limit"):
+        why = f"主体かブログの 1 日の上限（{code}）に達しました{when}。数は thth principal set で変えられます"
     else:
         why = code
     head = "取り下げません" if kind == "retract" else "送信しません"

@@ -55,7 +55,7 @@ def _find_example_dir() -> str:
 
 EXAMPLE_DIR = _find_example_dir()
 
-MEDIA_CHOICES = ("threads", "bluesky", "mastodon", "x")
+MEDIA_CHOICES = ("threads", "bluesky", "mastodon", "x", "hatenablog")
 
 # **アカウント名はファイル名になる**（`<accounts_dir>/<name>.json`）。区切りや
 # `..` を混ぜると置き場の外に書けてしまう——`thth account add ../pwned` が
@@ -221,7 +221,8 @@ def example_path(media: str) -> str:
 
 def build_ledger(name: str, *, media: str, project: str, handle: str | None = None,
                  instance: str | None = None, repo_dir: str | None = None,
-                 redirect_uri: str | None = None) -> dict:
+                 redirect_uri: str | None = None, principal: str | None = None,
+                 blog_id: str | None = None) -> dict:
     """`accounts.example/<media>.json` の雛形から 1 本ぶんを組み立てる。
 
     **`production` と `scheduled` は必ず false**（設計 §4.2「`production: true` を
@@ -257,6 +258,19 @@ def build_ledger(name: str, *, media: str, project: str, handle: str | None = No
     data["repo_dir"] = repo_dir or f"$THTH_ROOT/repos/{project}"
     data["env"] = f"~/.config/thth/{name}.env"
     data["token"] = f"~/.config/thth/{name}.token"
+    if media == "hatenablog":
+        # **はてなの口座は「主体 ＋ ブログ 1 つ」を指すだけ**（設計 4.0 S1 §3.3）。
+        # token と handle の正本は主体の台帳——同じパス・同じ名乗りを写す（loader が強制する）。
+        # token は展開する前の綴りのまま写す（`~/.config/thth/<主体>.token`）。
+        import json as _json
+        from . import principals
+        principal_cfg = principals.load_principal(principal)
+        with open(principals.path_for(principal), encoding="utf-8") as f:
+            raw_principal = _json.load(f)
+        data["principal"] = principal
+        data["blog_id"] = str(blog_id or "").strip().lower()
+        data["token"] = raw_principal["token"]
+        data["handle"] = principal_cfg["hatena_id"]
     data["production"] = False
     data["scheduled"] = False
     return data
@@ -354,6 +368,23 @@ def cmd_add(args) -> int:
               f"--project {args.project} --handle user "
               f"--instance https://mastodon.social", file=sys.stderr)
         return 2
+    # はてな（設計 4.0 S1 §3.3）: `--principal` と `--blog` が要る。ほかの媒体には付けさせない。
+    principal_arg = getattr(args, "principal", None)
+    blog_arg = getattr(args, "blog", None)
+    if args.media == "hatenablog":
+        if not principal_arg or not blog_arg:
+            print(f"--principal と --blog が要ります（はてなの口座は主体とブログ 1 つを指します）",
+                  file=sys.stderr)
+            print(f"  例: thth account add {name} --media hatenablog --project {args.project} "
+                  f"--principal <主体> --blog <blog_id> --by <名前>", file=sys.stderr)
+            return 2
+        if args.handle:
+            print("--handle は hatenablog では使いません（主体の hatena_id を写します）", file=sys.stderr)
+            return 2
+    elif principal_arg or blog_arg:
+        print(f"--principal・--blog は hatenablog のときだけ使えます（受け取った媒体: {args.media}）",
+              file=sys.stderr)
+        return 2
     if args.redirect_uri and args.media != "threads":
         # **黙って捨てない**（作法 5）。`redirect_uri` は Threads の OAuth 往復
         # （`thth auth`）だけが読む欄で、他媒体の雛形には無い。
@@ -389,9 +420,20 @@ def cmd_add(args) -> int:
     try:
         data = build_ledger(name, media=args.media, project=args.project,
                             handle=args.handle, instance=args.instance,
-                            repo_dir=args.repo_dir, redirect_uri=args.redirect_uri)
+                            repo_dir=args.repo_dir, redirect_uri=args.redirect_uri,
+                            principal=principal_arg, blog_id=blog_arg)
+        if args.media == "hatenablog":
+            # 書く前に loader と同じ突き合わせ（§3.3 の 1〜5）を通す。外れる台帳は書かない。
+            from . import principals
+            checked = dict(data)
+            for key in ("repo_dir", "env", "token"):
+                checked[key] = accounts_mod._expand(checked[key])
+            principals.check_account(checked, name)
     except FileNotFoundError as e:
         print(f"雛形がありません: {e}", file=sys.stderr)
+        return 2
+    except accounts_mod.AccountError as e:
+        print(str(e), file=sys.stderr)
         return 2
 
     email_file = getattr(args, "notification_email_file", None)
@@ -545,6 +587,11 @@ def register(sub) -> None:
     p.add_argument("--redirect-uri", default=None, dest="redirect_uri",
                    help="`add`（threads）のとき: Meta アプリに登録した認可の戻り先。"
                         "省略すると雛形のダミーのままで、`thth auth` が rc=2 で断ります")
+    p.add_argument("--principal", default=None,
+                   help="`add`（hatenablog）のとき: 主体の名前（`thth principal add` で作ったもの）")
+    p.add_argument("--blog", default=None,
+                   help="`add`（hatenablog）のとき: ブログの id（ドメイン）。主体の blogs[] にあり、"
+                        "--project がその lanes にあること")
     p.add_argument("--notification-email-file", help="利用者の通知先メール1件を記した private file")
     p.add_argument("--repo-dir", default=None, dest="repo_dir",
                    help="`add` のとき: 原稿 repo（既定 `$THTH_ROOT/repos/<project>`）")
@@ -573,5 +620,6 @@ def register(sub) -> None:
                 "  threads  : --handle は省略可（既定は --project の値。認可の前なら account set <name> handle <名前> で直せる）。"
                 "--redirect-uri を省くと雛形のダミーのまま\n"
                 "  bluesky  : --handle name.bsky.social が必須\n"
-                "  mastodon : --handle user と --instance https://… が必須")
+                "  mastodon : --handle user と --instance https://… が必須\n"
+                "  hatenablog: --principal <主体> --blog <blog_id> が必須（handle と token は主体から写す）")
     p.set_defaults(func=dispatch)

@@ -62,7 +62,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 3.19.0: X のコミュニティを探す。
      'community search', 'trends', 'counts',
      # 4.0 の柱 1: 出来事の流れと数の要約（読むだけ・版つき）。
-     'events', 'summary']
+     'events', 'summary',
+     # 4.0 S1: 主体（はてな ID）の台帳。auth は S2 まで口だけ（--json を持たない）。
+     'principal add', 'principal show', 'principal set', 'principal resume']
 
 
 def test_json_table_covers_every_parser():

@@ -44,7 +44,9 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
           attachment_kinds: list | None = None, resolved_from: dict | None = None,
           goal: str | None = None, goal_change: dict | None = None,
           link_urls: list | None = None, origin: dict | None = None,
-          community_id: str | None = None) -> str:
+          community_id: str | None = None, kind: str | None = None,
+          blog_id: str | None = None, delivery: str | None = None,
+          url: str | None = None) -> str:
     """送った本文そのものを動かせない記録として保存する。返り値は書いたパス。
 
     `approved_fingerprint`（外部レビュー再々レビュー P1・1）は公開直前に固定した
@@ -56,17 +58,28 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
     ——`post_id` はそのままファイル名になるので、長すぎれば `OSError`、制御文字が
     入れば読めない名前が残る。**書く場所に近いほうで断ると、新しい呼び出し口が
     増えても穴が空かない。**
+
+    `kind`・`blog_id`・`delivery`・`url` ははてなの記録だけ（設計 4.0 S1 §4.2・`HATENA_KINDS`）。
+    渡さなければ記録の形は今までと 1 バイトも変わらない。はてなの記録は上書きしない
+    （`sent_record_exists`）——安全装置が数える材料なので、書き直すと数が減る。
     """
     if not postid_mod.is_usable(post_id):
         raise ValueError(
             f"post_id を記録の鍵にできません（空・`.`／`..`・制御文字・長すぎる）:"
             f" {post_id!r}")
+    hatena = _hatena_fields(kind=kind, blog_id=blog_id, delivery=delivery, url=url)
     d = dir_for(state_dir)
     os.makedirs(d, exist_ok=True)
     p = path_for(state_dir, post_id)
+    if hatena and os.path.exists(p):
+        # **はてなの記録は上書きしない**（設計 4.0 S1 §4.2）。数（安全装置）の材料なので、
+        # 同じ post_id で書き直すと前の行が消えて数が減る（更新を entry_id のまま書くと
+        # 作成の行が消える）。更新・削除は別の post_id か `mark_retracted` で残す。
+        raise ValueError("sent_record_exists")
     tmp = p + ".tmp"
     data = {"post_id": post_id, "text": text, "body_hash": body_hash, "sent_at": sent_at,
             "approved_fingerprint": approved_fingerprint, "reply_to": reply_to}
+    data.update(hatena)
     if resolved_from is not None:
         # reply_to_file（設計 3.2.0 §3）。`reply_to` は解決した post_id（記録は事実）。
         # どの原稿から解決したかを足す——あとから「なぜこの投稿に返したか」を辿れる。
@@ -129,6 +142,52 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
 
 
 ORIGIN_VIAS = ("mcp", "cli", "http", "api")
+
+# はてなの記録の種類（設計 4.0 S1 §4.2）。`kind` の無い行は SNS の公開として今までどおり数える。
+# - `entry_create`・`entry_update`: 公開の枠（`daily_max_posts`）。`retracted_at` が足されたら削除の枠
+# - `entry_delete`: 削除の枠（`daily_max_retracts`）
+# - `bookmark_add`・`bookmark_delete`: ブックマークの枠（`daily_max_bookmarks`）。`retracted_at` も同じ枠
+HATENA_KINDS = ("entry_create", "entry_update", "entry_delete", "bookmark_add", "bookmark_delete")
+_BLOG_ID_RE = _re.compile(r"(?=.{1,253}\Z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+                          r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+")
+_DELIVERY_RE = _re.compile(r"dl_[0-9a-f]{12}")
+
+
+def bookmark_post_id(url: str) -> str:
+    """ブックマークの記録の鍵（`bm:` ＋ URL の sha256 の先頭 24 桁・設計 §4.2）。
+
+    1 URL に 1 つ——同じ URL の 2 回目（`bookmark_once`）は、この記録があるかで分かる。
+    """
+    import hashlib
+    return "bm:" + hashlib.sha256(url.strip().encode("utf-8")).hexdigest()[:24]
+
+
+def _hatena_fields(*, kind, blog_id, delivery, url) -> dict:
+    """はてなの欄を検査して記録に足す分を返す（どれも無ければ空＝SNS の行は 1 バイトも変えない）。"""
+    if kind is None:
+        if blog_id is not None or delivery is not None or url is not None:
+            raise ValueError("invalid_sent_kind")
+        return {}
+    if kind not in HATENA_KINDS:
+        raise ValueError("invalid_sent_kind")
+    out = {"kind": kind}
+    if blog_id is not None:
+        if not isinstance(blog_id, str) or not _BLOG_ID_RE.fullmatch(blog_id):
+            raise ValueError("invalid_blog_id")
+        out["blog_id"] = blog_id
+    if delivery is not None:
+        if not isinstance(delivery, str) or not _DELIVERY_RE.fullmatch(delivery):
+            raise ValueError("invalid_delivery")
+        out["delivery"] = delivery
+    if url is not None:
+        if (not isinstance(url, str) or not url.startswith(("https://", "http://")) or len(url) > 2048
+                or CONTROL_URL_RE.search(url)):
+            raise ValueError("invalid_url")
+        out["url"] = url
+    return out
+
+
+CONTROL_URL_RE = _re.compile(r"[\x00-\x20\x7f]")
 
 
 def _origin_fields(origin, *, prefix: str) -> dict:

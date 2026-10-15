@@ -1,0 +1,17 @@
+{
+  "principal": "demo-hatena",
+  "kind": "hatena",
+  "hatena_id": "demo",
+  "token": "~/.config/thth/demo-hatena.token",
+  "consumer": "~/.config/thth/demo-hatena.consumer",
+  "auth": "oauth",
+  "blogs": [
+    {"blog_id": "demo.hatenablog.com", "lanes": ["demo"], "syntax": "markdown"}
+  ],
+  "bookmark": {"lanes": []},
+  "daily_max_posts": 6,
+  "daily_max_retracts": 3,
+  "daily_max_bookmarks": 3,
+  "burst": {"count": 3, "minutes": 30},
+  "user_agent_contact": "https://thth.me/"
+}

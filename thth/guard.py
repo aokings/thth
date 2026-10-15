@@ -35,12 +35,23 @@ from pathlib import Path
 from . import accounts, jst, sent as sent_mod, server_files
 from .report_service import ReportServiceError
 
-REFUSALS = frozenset(("too_soon", "quiet_hours", "daily_limit", "retract_limit", "reaction_limit"))
+# 主体・ブログ・ブックマークの段（設計 4.0 S1 §4.1・§4.2）。はてなの口座だけに出る。
+PRINCIPAL_REFUSALS = frozenset((
+    "principal_stopped", "principal_daily_limit", "principal_retract_limit", "bookmark_limit",
+    "blog_daily_limit", "blog_retract_limit", "bookmark_once", "bookmark_not_allowed_for_lane",
+    # ロックの中で主体の台帳を読み直したときの突き合わせ（§3.3・§5.2 の 6）。
+    "blog_not_allowed_for_lane", "blog_unknown", "principal_missing", "principal_unavailable",
+    "principal_token_mismatch", "principal_handle_mismatch"))
+REFUSALS = (frozenset(("too_soon", "quiet_hours", "daily_limit", "retract_limit", "reaction_limit"))
+            | PRINCIPAL_REFUSALS)
 # burst: 急な連投で道具が止めた。owner: 持ち主が /activity から止めた（段 3）。
 STOP_REASONS = frozenset(("burst", "owner"))
 STOP_FILE = "stopped.json"
 CREDENTIAL_ID_LENGTH = 12
-KINDS = ("publish", "retract", "schedule")
+# `entry_*`・`bookmark*` ははてなの口座だけ（設計 4.0 S1 §4.2）。はてなの口座に `publish`・
+# `retract` が来たら `entry_create`・`entry_delete` として見る。
+HATENA_KINDS = ("entry_create", "entry_update", "entry_delete", "bookmark", "bookmark_delete")
+KINDS = ("publish", "retract", "schedule") + HATENA_KINDS
 
 
 class GuardRefused(ReportServiceError):
@@ -150,15 +161,43 @@ def resume(account, *, by, via="cli") -> bool:
 # 数える
 # --------------------------------------------------------------------------
 
-def _events(account):
-    """`sent/` の記録から (公開の時刻の list, 削除の時刻の list)。読めない時刻は数えない。"""
-    posts, retracts = [], []
+def _classified(account):
+    """`sent/` の記録を (種類, 時刻, blog_id) の list に。種類は `post`・`retract`・`bookmark`。
+
+    `kind` の無い行（SNS）は今までどおり `sent_at` を公開・`retracted_at` を削除に数える。
+    はてなの行（設計 4.0 S1 §4.2）: `entry_create`／`entry_update` は公開（足された
+    `retracted_at` は削除）・`entry_delete` は削除・`bookmark_*` はブックマーク（足された
+    `retracted_at` も）。知らない `kind` は公開として数える（数え漏らす側に倒さない）。
+    """
+    out = []
     for row in sent_mod.records(accounts.state_dir_for(account)):
-        at = jst.parse(row.get("sent_at"))
-        if at is not None:
+        kind = row.get("kind")
+        blog = row.get("blog_id")
+        sent_at = jst.parse(row.get("sent_at"))
+        retracted_at = jst.parse(row.get("retracted_at"))
+        if kind in ("bookmark_add", "bookmark_delete"):
+            first, second = "bookmark", "bookmark"
+        elif kind == "entry_delete":
+            first, second = "retract", "retract"
+        else:
+            first, second = "post", "retract"
+        if sent_at is not None:
+            out.append((first, sent_at, blog))
+        if retracted_at is not None:
+            out.append((second, retracted_at, blog))
+    return out
+
+
+def _events(account):
+    """`sent/` の記録から (公開の時刻の list, 削除の時刻の list)。読めない時刻は数えない。
+
+    ブックマーク（はてな）は公開の枠に入れない（`_classified`）。SNS の口座の数は変わらない。
+    """
+    posts, retracts = [], []
+    for what, at, _blog in _classified(account):
+        if what == "post":
             posts.append(at)
-        at = jst.parse(row.get("retracted_at"))
-        if at is not None:
+        elif what == "retract":
             retracts.append(at)
     return posts, retracts
 
@@ -210,17 +249,33 @@ def stop_place_usable(account) -> bool:
 
 
 def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None,
-          publish_at=None, scheduled_same_day=0, reply=False, cli=False) -> None:
+          publish_at=None, scheduled_same_day=0, reply=False, cli=False,
+          principal_scheduled_same_day=None, bookmark_url=None) -> None:
     """依頼が安全装置に掛かれば `GuardRefused` を上げる。掛からなければ何もしない。
 
     `kind`: `publish`（今すぐ出す）・`retract`（消す）・`schedule`（queue に「出してよい」と
     刻む。`publish_at` の日の公開数に、その日にすでに刻んだ件数 `scheduled_same_day` を足して見る）。
     burst を超える依頼は**口座を止めてから**断る。
 
+    はてなの口座（`media: hatenablog`）は `_check_hatena`（主体 → 口座 → 媒体の断りの順に止めを
+    見て、口座・ブログ・主体の 3 段で数える）。`kind` は `entry_create`・`entry_update`・
+    `entry_delete`・`bookmark`（`bookmark_url` が要る）・`bookmark_delete`・`schedule`
+    （`principal_scheduled_same_day` を省くと主体の全口座の queue から数える）。
+
     `reply`（返信）には最短間隔 `min_interval_hours` を掛けない——返信は会話なので
     （段 1〜2 の裁定 (a)）。1 日の上限と burst には数える。
     """
     if kind not in KINDS:
+        raise ValueError("invalid_guard_kind")
+    from . import principals
+    if principals.uses_principal(cfg):
+        # はてなの口座（設計 4.0 S1 §4.1・§4.2）。SNS の口座はこの先の今までの道を通る。
+        return _check_hatena(account, cfg, {"publish": "entry_create", "retract": "entry_delete"}.get(kind, kind),
+                             now=now, actor=actor, via=via, credential=credential, publish_at=publish_at,
+                             scheduled_same_day=scheduled_same_day,
+                             principal_scheduled_same_day=principal_scheduled_same_day,
+                             bookmark_url=bookmark_url, cli=cli)
+    if kind in HATENA_KINDS:
         raise ValueError("invalid_guard_kind")
     # `cli`（運営者の CLI・10/15）: 止めの印を置けない置き場なら、印は読まず・置かず、数だけ守らせる。
     can_stop = not cli or stop_place_usable(account)
@@ -261,6 +316,147 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
             raise GuardRefused("burst_limit", reason="burst")
         stop(account, "burst", now=now, actor=actor, via=via, credential=credential)
         raise GuardRefused("account_stopped", reason="burst")
+
+
+# --------------------------------------------------------------------------
+# はてなの口座: 主体・口座・ブログの 3 段（設計 4.0 S1 §4.1・§4.2）
+# --------------------------------------------------------------------------
+
+def principal_summary(principal_name, principal_cfg, *, now=None) -> dict:
+    """主体を使う全口座の `sent/` を横断して数えた結果（読むだけ）。
+
+    `posts`・`retracts`・`bookmarks` は (時刻, blog_id) の list。blog_id は記録に無ければ
+    その口座の台帳の値。主体には sent を置かない——数は口座の `sent/` から毎回数える。
+    """
+    from . import principals
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    out = {"posts": [], "retracts": [], "bookmarks": []}
+    for name, raw in principals.accounts_of(principal_name):
+        default_blog = str(raw.get("blog_id") or "").strip().lower()
+        for what, at, blog in _classified(name):
+            out[what + "s"].append((at, blog or default_blog))
+    limits = principals.limits(principal_cfg)
+    today = now.date()
+    window = now - datetime.timedelta(minutes=limits["burst"]["minutes"])
+    out.update({
+        "limits": limits,
+        "posts_today": sum(1 for at, _ in out["posts"] if at.date() == today),
+        "retracts_today": sum(1 for at, _ in out["retracts"] if at.date() == today),
+        "bookmarks_today": sum(1 for at, _ in out["bookmarks"] if at.date() == today),
+        # burst は entry（公開・削除）とブックマークの合計（§4.2）
+        "recent": sum(1 for at, _ in out["posts"] + out["retracts"] + out["bookmarks"] if window < at <= now),
+    })
+    return out
+
+
+def _principal_bookmarked(principal_name, url) -> bool:
+    """主体の全口座の `sent/` に、この URL のブックマークの記録があるか（削除済みでも）。"""
+    from . import principals
+    post_id = sent_mod.bookmark_post_id(url)
+    for name, _raw in principals.accounts_of(principal_name):
+        if sent_mod.read(accounts.state_dir_for(name), post_id) is not None:
+            return True
+    return False
+
+
+def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at,
+                  scheduled_same_day, principal_scheduled_same_day, bookmark_url, cli) -> None:
+    """はてなの口座の安全装置。止め: 主体 → 口座 → 媒体の断り。数え: 口座 → ブログ → 主体。
+
+    **主体の台帳はここで読み直す**（ロックの中で呼ばれる——承認のあとに主体の台帳から
+    ブログやレーンを外せば、ここで `blog_not_allowed_for_lane` で止まる・§5.2 の 6）。
+    **主体の数え直しもロックの中**（§4.3: 2 レーンの同時の公開で burst をすり抜けない）。
+    """
+    from . import principals, publish_hold
+    if kind == "bookmark" and not (isinstance(bookmark_url, str) and bookmark_url.strip()):
+        raise ValueError("bookmark_url_required")
+    name = cfg.get("principal")
+    try:
+        principal_cfg = principals.check_account(cfg, account)
+    except principals.PrincipalError as exc:
+        raise GuardRefused(exc.code if exc.code in PRINCIPAL_REFUSALS else "principal_unavailable") from None
+    can_stop = not cli or (stop_place_usable(account) and principals.stop_place_usable(name))
+    # 1. 主体の止め（すべてのブログの公開・更新・削除とブックマーク）
+    halted = principals.stopped(name) if can_stop else None
+    if halted is not None:
+        raise GuardRefused("principal_stopped", reason=halted.get("reason"))
+    # 2. 口座の止め
+    halted = stopped(account) if can_stop else None
+    if halted is not None:
+        raise GuardRefused("account_stopped", reason=halted.get("reason"))
+    # 3. 媒体の断りで止めた印（詳細の語は添えない・`server_writes.direct_send` と同じ）
+    if publish_hold.held(account) is not None:
+        raise GuardRefused("account_stopped")
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    counts = summary(account, cfg, now=now)
+    limits = counts["limits"]
+    whole = principal_summary(name, principal_cfg, now=now)
+    plimits = whole["limits"]
+    blog_id = str(cfg.get("blog_id") or "").strip().lower()
+    blog = principals.blog_entry(principal_cfg, blog_id) or {}
+    today = now.date()
+    midnight = jst.iso(_next_midnight(now))
+
+    def blog_today(rows):
+        return sum(1 for at, b in rows if b == blog_id and at.date() == today)
+
+    if kind in ("entry_create", "entry_update"):
+        quiet = cfg.get("quiet_hours")
+        from .select import in_quiet_hours
+        if quiet and in_quiet_hours(now, quiet):
+            raise GuardRefused("quiet_hours", next_at=jst.iso(_quiet_end(now, quiet)))
+        hours = cfg.get("min_interval_hours")
+        last = counts["last_post_at"]
+        if (isinstance(hours, (int, float)) and not isinstance(hours, bool)
+                and hours > 0 and last is not None):
+            ready = last + datetime.timedelta(hours=hours)
+            if now < ready:
+                raise GuardRefused("too_soon", next_at=jst.iso(ready))
+        if counts["posts_today"] >= limits["daily_max_posts"]:
+            raise GuardRefused("daily_limit", next_at=midnight)
+        if "daily_max_posts" in blog and blog_today(whole["posts"]) >= blog["daily_max_posts"]:
+            raise GuardRefused("blog_daily_limit", next_at=midnight)
+        if whole["posts_today"] >= plimits["daily_max_posts"]:
+            raise GuardRefused("principal_daily_limit", next_at=midnight)
+    elif kind == "entry_delete":
+        if counts["retracts_today"] >= limits["daily_max_retracts"]:
+            raise GuardRefused("retract_limit", next_at=midnight)
+        if "daily_max_retracts" in blog and blog_today(whole["retracts"]) >= blog["daily_max_retracts"]:
+            raise GuardRefused("blog_retract_limit", next_at=midnight)
+        if whole["retracts_today"] >= plimits["daily_max_retracts"]:
+            raise GuardRefused("principal_retract_limit", next_at=midnight)
+    elif kind == "schedule":
+        day = jst.to_jst(publish_at).date() if publish_at is not None else today
+        nxt = jst.iso(datetime.datetime.combine(day + datetime.timedelta(days=1), datetime.time(0, 0),
+                                                tzinfo=jst.JST))
+        published = sum(1 for at in counts["posts"] if at.date() == day)
+        if published + scheduled_same_day >= limits["daily_max_posts"]:
+            raise GuardRefused("daily_limit", next_at=nxt)
+        if principal_scheduled_same_day is None:
+            principal_scheduled_same_day = principals.scheduled_same_day(name, day)
+        principal_published = sum(1 for at, _ in whole["posts"] if at.date() == day)
+        if principal_published + principal_scheduled_same_day >= plimits["daily_max_posts"]:
+            raise GuardRefused("principal_daily_limit", next_at=nxt)
+        return
+    else:  # bookmark・bookmark_delete（quiet_hours・口座の枠には掛けない・§7.3）
+        if cfg.get("project") not in ((principal_cfg.get("bookmark") or {}).get("lanes") or []):
+            raise GuardRefused("bookmark_not_allowed_for_lane")
+        if whole["bookmarks_today"] >= plimits["daily_max_bookmarks"]:
+            raise GuardRefused("bookmark_limit", next_at=midnight)
+    # 急な連投。口座（entry だけ・今までの数え方）→ 主体（entry とブックマークの合計）。
+    if kind.startswith("entry_") and counts["recent"] + 1 > limits["burst"]["count"]:
+        if not can_stop:
+            raise GuardRefused("burst_limit", reason="burst")
+        stop(account, "burst", now=now, actor=actor, via=via, credential=credential)
+        raise GuardRefused("account_stopped", reason="burst")
+    if whole["recent"] + 1 > plimits["burst"]["count"]:
+        if not can_stop:
+            raise GuardRefused("burst_limit", reason="burst")
+        principals.stop(name, "burst", now=now, actor=actor, via=via, credential=credential)
+        raise GuardRefused("principal_stopped", reason="burst")
+    # 1 URL に 1 回だけ（削除したあとの 2 回目も断る・§4.2・§7.3 の順）
+    if kind == "bookmark" and _principal_bookmarked(name, bookmark_url):
+        raise GuardRefused("bookmark_once")
 
 
 def reactions_today(account, *, now=None) -> int:

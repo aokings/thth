@@ -109,6 +109,7 @@ All subcommands `thth --help` lists, one line each:
 - `list` — X private lists: create, add or remove a few hand-picked people (10 at most per call), read a list's posts (X only; never public lists)
 - `community` — search X Communities (`community search`; paid read, not stored). Post into one with `send --community <id>` or front-matter `community_id:` (X only; join in the X app first; not combined with replies)
 - `trends` — X trends for a place (WOEID, default Japan; one paid read, not stored; X only)
+- `principal` — the authenticating principal (one Hatena ID) behind Hatena Blog accounts: `add`, `show`, `set` limits, `resume` after a stop (CLI only); `auth` arrives in 4.0 S2
 - `counts` — how many X posts matched a query over the last 7 days, by hour or day (one paid read, not stored; X only)
 - `replies` — read collected replies (`--refresh` fetches first)
 - `measured` — read collected insights

@@ -485,6 +485,13 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
     # 無い」（2）でもなく、**診断はできたが×がある**ので、probe が落ちたときと
     # 同じ 1。台帳の値は人が直すもので、道具は測るだけ（設計 §4.2）。
     dummies = accounts_mod.dummy_fields(account_cfg)
+    if account_cfg.get("media") == "hatenablog":
+        # はてなの口座（設計 4.0 S1 §3.3）は主体の台帳の雛形の値も名指しする（`principal.<欄>`）。
+        # 主体の台帳は `load_account` が読めたので、ここで読めないことは無い。
+        from . import principals as principals_mod
+        principal_cfg = principals_mod.load_principal(account_cfg["principal"])
+        dummies = dummies + [{**d, "field": "principal." + d["field"]}
+                             for d in accounts_mod.dummy_fields(principal_cfg)]
     for d in dummies:
         notices.append(f"台帳の `{d['field']}` が{DUMMY_LABEL}: {d['value']}")
         notices.append(f"次の一手: {d['next']}")
