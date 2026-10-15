@@ -46,12 +46,14 @@ description: 投稿する前・返信を書く前・出したあと・絡みに�
 
 THTH は CLI ツール。あなた（エージェント）が使う MCP の道具は `thth` コマンドの写しで、中身は `thth <コマンド> … --json` を呼ぶだけ。手元にアカウントの台帳が無く、本人が `thth login` を済ませていれば、同じコマンドが thth.me 経由で本人のアカウントを動かす（**遠くの道**）。違いは「最初に本人が `thth login` をする」だけで、コマンドの名前・引数・`--json` の形は同じ。
 
-- 道具: `thth_send_request`（`thth send`・その場で出て post_id とリンクが返る）、`thth_schedule_request`（`thth schedule --at`）、`thth_retract_request`（`thth retract`）、`thth_posts`・`thth_replies`・`thth_measured`・`thth_collect`・`thth_mentions`・`thth_topics_search`・`thth_profile`・`thth_location_search`（読む）、`thth_account_status`・`thth_settings`（状態・ガードは厳しくする向きだけ）、`thth_draft_list`。account は本人のアカウントだけ。actor/by/person/confirm/digest/ファイルパスを引数に加えない。
+- 道具: `thth_send_request`（`thth send`・その場で出て post_id とリンクが返る）、`thth_schedule_request`（`thth schedule --at`）、`thth_retract_request`（`thth retract`・道具は呼べば消す。端末の `thth retract` は手元と同じ二段で、一段目の digest を `--confirm` に渡す）、`thth_posts`・`thth_replies`・`thth_measured`・`thth_collect`・`thth_mentions`・`thth_topics_search`・`thth_profile`・`thth_location_search`（読む）、`thth_account_status`・`thth_settings`（状態・ガードは厳しくする向きだけ）、`thth_draft_list`。account は本人のアカウントだけ。actor/by/person/confirm/digest/ファイルパスを引数に加えない。
 - **キーと secret を聞かない・入力しない・会話へ貼らせない。** キーは `thth login` が手元に置き、`thth` コマンドだけが使う。あなたはキーを知らなくてよい。
 - `thth login` は本人がブラウザで許可する形（3.14.2）: ターミナルに出た `https://thth.me/login/XXXX-XXXX` を本人が開き、アカウント名とアカウントのシークレット を入れて「このデバイスにキーを渡す」を押す。キーを貼る作業は無い。あなたが代わりに許可したり、secret を聞いたりしない。
-- 断りは 1 語の符丁＋次の一手: `too_soon`（`next_at` まで待つ・返信は掛からない）・`daily_limit`・`retract_limit`・`quiet_hours`・`account_stopped`（本人が https://thth.me/activity で戻す。あなたからは戻せない）・`key_expired`／`invalid_key`（本人が `thth login` をやり直す・ブラウザで許可すると発行し直す）・`remote_unsupported`（そのコマンドは遠くの道に無い: `throw`・`run`・`auth`・添付など）・`remote_unavailable`（thth.me に届かない・少し待つ）・`remote_pending`（90 秒待っても返らない・`thth account status` で確かめる）・`publication_unconfirmed`（前の公開の結果が分かっていない・解くまで次は出ない。`thth inflight <アカウント>` で見て、本人がSNSの画面で確かめてから `thth inflight <アカウント> resolve --not-published` か `--published <post_id>`。一段目が出す digest を本人が `--confirm` に渡す）。自動で再依頼・再公開しない。
+- 断りは 1 語の符丁＋次の一手: `too_soon`（`next_at` まで待つ・返信は掛からない）・`daily_limit`・`retract_limit`・`quiet_hours`・`account_stopped`（本人が https://thth.me/activity で戻す。あなたからは戻せない）・`key_expired`／`invalid_key`（本人が `thth login` をやり直す・ブラウザで許可すると発行し直す）・`remote_unsupported`（そのコマンドか旗は遠くの道に無い: `throw`・`run`・`auth`、`send --community`・`--goal`・`--confirm`、`retract --already-gone` など。旗は黙って捨てずに断る）・`remote_unavailable`（thth.me に届かない・少し待つ）・`remote_pending`（90 秒待っても返らない・`thth account status` で確かめる）・`publication_unconfirmed`（前の公開の結果が分かっていない・解くまで次は出ない。`thth inflight <アカウント>` で見て、本人がSNSの画面で確かめてから `thth inflight <アカウント> resolve --not-published` か `--published <post_id>`。一段目が出す digest を本人が `--confirm` に渡す）。自動で再依頼・再公開しない。
 - 出す前に本文を見たいと本人が言えば、`thth send --dry-run`（lint だけ・下書きが 1 本残る）か本文をそのまま見せてから `thth_send_request` を呼ぶ。THTH の側に承認の関所は無い。
-- 添付（画像）は遠くの道ではまだ使えない（`remote_unsupported`）。
+- 添付は端末の `thth send|schedule <アカウント> --media <手元の機械のファイル> --alt <説明>`（3.21.0）。MCP の `thth_send_request` には添付の欄が無い。
+- 端末の `thth send` は `--production` が無ければ出さない（lint だけ・下書きが 1 本残る）。`thth schedule --text … --at …` はその場で予約まで行う（承認の二段は無い）。過去の `--at` は断る。
+- `thth account status` は止まり（`stopped`）と、媒体の断りで止めた自動の投稿（`publish_hold`）を言う。どちらも戻すのは本人か運営者で、あなたからは戻せない。
 - 運営者向けの管理設定は `docs/運用_招待する側.md`。無 credential の手元の MCP（自分の repo の queue）とは別の入口。
 
 ## 反応（再投稿・いいね・3.15.0）
