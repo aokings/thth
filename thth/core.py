@@ -59,6 +59,8 @@ class ThrowResult:
     # None のまま。
     mismatch_fields: list | None = None
     api_diagnostic: dict | None = None
+    # burst の順番待ちに並べた返信の出す時刻（`action == "queued"`・3.25.0）。
+    publish_at: str | None = None
 
 
 def _link_urls_kwargs(manifest) -> dict:
@@ -1148,6 +1150,10 @@ def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") 
         why = f"今日の公開が上限（daily_max_posts）に達しました{when}"
     elif code == "quiet_hours":
         why = f"夜間（quiet_hours）です{when}"
+    elif code == "burst_limit" and getattr(refused, "next_at", None):
+        # 返信の burst（3.25.0）で、順番待ちに並べられなかった（timer に載っていない口座・添付つき）。
+        why = ("急な連投（burst）の数を超えます。返信なので口座は止めずに、この 1 件だけ断りました"
+               f"（timer に載っていない口座と添付つきの返信は順番待ちに並べられません）{when}")
     elif code == "burst_limit":
         why = "急な連投（burst）の数を超えます（この置き場には止めの印を置けないので、口座は止めずにこの 1 件だけ断りました）"
     elif code == "account_stopped" and getattr(refused, "reason", None) == "burst":
@@ -1167,6 +1173,46 @@ def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") 
     head = "取り下げません" if kind == "retract" else "送信しません"
     return (f"{head}（安全装置）: {why}。数は thth account set {account_name} <名前> <値> --by <名前>"
             " で変えられます")
+
+
+def _queue_burst_reply(account_name, account_cfg, state_dir, run_id, mode, *, now, log, digest, refused,
+                       text, topic, reply_to, goal, reply_to_root, reply_to_author_key, found_by) -> ThrowResult:
+    """`thth send --reply-to` が burst に当たった: 口座を止めず、窓が空く時刻の順番待ちに並べる（3.25.0）。"""
+    from . import burst_queue as burst_queue_mod, guard as guard_mod
+    publish_at = jst.parse(refused.next_at)
+    try:
+        placed = burst_queue_mod.queue_cli(
+            account_name, account_cfg, text=text, topic=topic, reply_to=reply_to, publish_at=publish_at,
+            goal=goal, reply_to_root=reply_to_root, reply_to_author_key=reply_to_author_key,
+            found_by=found_by, now=now)
+    except guard_mod.GuardRefused as daily:
+        msg = guard_refusal_message(account_name, daily)
+        log(msg)
+        _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                    status="error", error=str(daily))
+        return ThrowResult(exit_code=1, mode=mode, action="guard", message=msg, digest=digest, error=str(daily))
+    except (OSError, ValueError) as exc:
+        msg = guard_refusal_message(account_name, refused) + f"（順番待ちに並べられませんでした: {exc}）"
+        log(msg)
+        _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                    status="error", error="burst_limit")
+        return ThrowResult(exit_code=1, mode=mode, action="guard", message=msg, digest=digest,
+                           error="burst_limit")
+    msg = burst_queue_mod.message(account_name, publish_at)
+    log(msg)
+    log(f"  原稿: {placed['file']}")
+    _append_run(state_dir, account_name, run_id, mode, "queued", placed["file"], None, now,
+                status="ok" if placed["pushed"] else "error",
+                error=None if placed["pushed"] else "queue_commit_unconfirmed",
+                extra={"publish_at": placed["publish_at"], "reason": "burst"})
+    if not placed["pushed"]:
+        msg2 = ("順番待ちの原稿を commit・push できませんでした。このままでは出ません"
+                f"（board に unverified_content として出ます）: {placed['push_error']}")
+        log(msg2)
+        return ThrowResult(exit_code=1, mode=mode, action="queued", message=msg2, file=placed["file"],
+                           digest=digest, error="queue_commit_unconfirmed", publish_at=placed["publish_at"])
+    return ThrowResult(exit_code=0, mode=mode, action="queued", message=msg, file=placed["file"],
+                       digest=digest, publish_at=placed["publish_at"])
 
 
 def send_once(account_name: str, *, text: str, topic: str | None = None,
@@ -1423,11 +1469,21 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         # music-research-threads が 5 分で 7 件出た。thth.me の道は `before_execute` の中で
         # 見るので二重にしない。timer の予約（`throw_once`）は対象外のまま。
         if before_execute is None:
-            from . import guard as guard_mod
+            from . import burst_queue as burst_queue_mod, guard as guard_mod
             try:
                 guard_mod.check(account_name, account_cfg, "publish", now=now,
-                                via="cli", reply=bool(reply_to), cli=True)
+                                via="cli", reply=bool(reply_to), cli=True,
+                                pending_replies=burst_queue_mod.pending(account_name, account_cfg, now=now)
+                                if reply_to else None)
             except guard_mod.GuardRefused as refused:
+                # **返信の burst は口座を止めず、窓が空く時刻の順番待ちに並べる**（3.25.0・kopicha 10/16）。
+                # timer に載っていない口座・添付のある返信は並べない（止めずに burst_limit で断る）。
+                if (reply_to and str(refused) == "burst_limit" and refused.next_at
+                        and burst_queue_mod.can_queue(account_cfg) and not manifest):
+                    return _queue_burst_reply(
+                        account_name, account_cfg, state_dir, run_id, mode, now=now, log=log, digest=digest,
+                        refused=refused, text=body, topic=topic_value, reply_to=reply_to, goal=goal_value,
+                        reply_to_root=reply_to_root, reply_to_author_key=reply_to_author_key, found_by=found_by)
                 msg = guard_refusal_message(account_name, refused)
                 log(msg)
                 _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,

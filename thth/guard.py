@@ -20,6 +20,9 @@
 - `retract_limit`: その日の削除が `daily_max_retracts` に達した（翌日 0 時を添える）
 - `account_stopped`（詳細 `burst`）: 直近 `burst.minutes` 分の公開と削除の合計が
   `burst.count` を超える依頼だった → 口座を止めて断る
+- `burst_limit`（詳細 `burst`）: 口座を**止めずに**この 1 件だけ断る。**返信**が burst を超えたとき
+  （3.25.0・`next_at` は窓が空く時刻・呼び手は queue の順番待ちに並べる）と、止めの印を置けない
+  置き場の運営者の CLI（10/15）
 - `reaction_limit`: その日の反応（再投稿・いいね・その取り消し）が `daily_max_reactions`
   に達した（翌日 0 時を添える・設計 3.15.0 §2.5）。材料は `state/<account>/reactions/`。
   **反応は公開の枠（`daily_max_posts`・burst）に数えない**。夜間は再投稿にだけ掛ける
@@ -42,7 +45,9 @@ PRINCIPAL_REFUSALS = frozenset((
     # ロックの中で主体の台帳を読み直したときの突き合わせ（§3.3・§5.2 の 6）。
     "blog_not_allowed_for_lane", "blog_unknown", "principal_missing", "principal_unavailable",
     "principal_token_mismatch", "principal_handle_mismatch"))
-REFUSALS = (frozenset(("too_soon", "quiet_hours", "daily_limit", "retract_limit", "reaction_limit"))
+REFUSALS = (frozenset(("too_soon", "quiet_hours", "daily_limit", "retract_limit", "reaction_limit",
+                       # 止めずに 1 件だけ断る（返信の burst・3.25.0／止めの印を置けない置き場）。
+                       "burst_limit"))
             | PRINCIPAL_REFUSALS)
 # burst: 急な連投で道具が止めた。owner: 持ち主が /activity から止めた（段 3）。
 STOP_REASONS = frozenset(("burst", "owner"))
@@ -248,9 +253,37 @@ def stop_place_usable(account) -> bool:
         return False
 
 
+def burst_slot(account, cfg, *, now=None, pending=()) -> datetime.datetime:
+    """burst の窓が空く最初の時刻（3.25.0・返信の順番待ち）。
+
+    材料は `sent/` の公開・削除と、すでに順番待ちに並んでいる返信の `publish_at`（`pending`）。
+    候補は「今」と「各出来事 + `burst.minutes` 分 + 1 分」。並んでいるものより後ろで、その時刻の
+    窓（`summary` と同じ `(t - 分, t]`）に入る数 + 1 が `burst.count` 以下になる最初の時刻を返す。
+    1 件目は「窓の中で最も古い出来事 + 分 + 1 分」になり、続く返信はその後ろへずれる。
+    """
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    limits = accounts.guard_limits(cfg)
+    span = datetime.timedelta(minutes=limits["burst"]["minutes"])
+    gap = datetime.timedelta(minutes=1)
+    posts, retracts = _events(account)
+    pending = sorted(jst.to_jst(at) for at in pending)
+    events = posts + retracts + pending
+    after = pending[-1] if pending else None
+    candidates = {now} | {at + span + gap for at in events}
+    if after is not None:
+        candidates.add(after + gap)
+    for t in sorted(candidates):
+        if t < now or (after is not None and t <= after):
+            continue
+        if sum(1 for at in events if t - span < at <= t) + 1 <= limits["burst"]["count"]:
+            return t
+    # 届かない（候補の最後は窓が空なので来ない）。念のため最後の出来事の窓の外。
+    return max(events + [now]) + span + gap
+
+
 def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None,
           publish_at=None, scheduled_same_day=0, reply=False, cli=False,
-          principal_scheduled_same_day=None, bookmark_url=None) -> None:
+          principal_scheduled_same_day=None, bookmark_url=None, pending_replies=None) -> None:
     """依頼が安全装置に掛かれば `GuardRefused` を上げる。掛からなければ何もしない。
 
     `kind`: `publish`（今すぐ出す）・`retract`（消す）・`schedule`（queue に「出してよい」と
@@ -264,6 +297,12 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
 
     `reply`（返信）には最短間隔 `min_interval_hours` を掛けない——返信は会話なので
     （段 1〜2 の裁定 (a)）。1 日の上限と burst には数える。
+
+    **返信が burst を超えるときは口座を止めない**（3.25.0・kopicha 10/16）。`burst_limit`（詳細
+    `burst`・`next_at` は窓が空く時刻 `burst_slot`）で断り、呼び手がその 1 件を queue の順番待ちに
+    並べる（timer に載っていない口座ではそのまま断りになる）。`pending_replies`（すでに並んでいる
+    返信の `publish_at`）がまだ先にあれば、窓が空いていても後ろに並ばせる（順を守る）。
+    止めるのは投稿（返信でないもの）の連投だけ。
     """
     if kind not in KINDS:
         raise ValueError("invalid_guard_kind")
@@ -309,7 +348,14 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
             nxt = datetime.datetime.combine(day + datetime.timedelta(days=1), datetime.time(0, 0), tzinfo=jst.JST)
             raise GuardRefused("daily_limit", next_at=jst.iso(nxt))
         return
-    # 急な連投（公開と削除の合計）。この依頼を足すと超えるなら止める。
+    # 急な連投（公開と削除の合計）。返信は止めず、順番待ちの時刻を添えて断る（3.25.0）。
+    if kind == "publish" and reply:
+        ahead = [jst.to_jst(at) for at in (pending_replies or ()) if jst.to_jst(at) > now]
+        if ahead or counts["recent"] + 1 > limits["burst"]["count"]:
+            slot = burst_slot(account, cfg, now=now, pending=ahead)
+            raise GuardRefused("burst_limit", reason="burst", next_at=jst.iso(slot))
+        return
+    # 投稿（返信でないもの）。この依頼を足すと超えるなら止める。
     if counts["recent"] + 1 > limits["burst"]["count"]:
         if not can_stop:
             # 印を置けないので口座は止めず、この 1 件を断る（数え直せば次の窓で出せる）。

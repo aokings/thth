@@ -755,7 +755,9 @@ SERVER_TOOLS = [
 # 公開・削除・予約の 3 本は、頼まれたらその場で行う（承認ページは無い・設計 3.13.0）。安全装置は効く。
 _PUBLISHING_DESCRIPTIONS = {
     'thth_send_request': "今すぐ公開する。その場で出して post_id・permalink を返す"
-                         "（口座の hold_minutes が 1 以上なら、その分先の予約になり、その間は持ち主が /activity で取り消せる）",
+                         "（口座の hold_minutes が 1 以上なら、その分先の予約になり、その間は持ち主が /activity で取り消せる）。"
+                         "返信（reply_to）が急な連投（burst）を超えるときは口座を止めず、窓が空く時刻の順番待ちに並べて "
+                         "status: queued と publish_at を返す",
     'thth_retract_request': "公開済みの投稿をその場で削除する",
     'thth_schedule_request': "下書きを予約として queue に刻む（publish_at 以降に timer が出す）。"
                              "はてなブログの口座は 2 段: confirm が無ければ stage 1 と digest と表示を返し、同じ digest を confirm に付けると刻む",

@@ -28,7 +28,7 @@ const secretField=`<label>${t('アカウントのシークレット','Account se
 const pair=([ja,english])=>t(escape(ja),escape(english));
 
 export const KIND_WORDS={published:['出た','Published'],retracted:['消した','Deleted'],scheduled:['予約','Scheduled'],
-  held:['待機中','On hold'],stopped:['止めた','Stopped']};
+  held:['待機中','On hold'],queued:['順番待ち（急な連投の返信）','Queued (reply after a burst)'],stopped:['止めた','Stopped']};
 export const STOP_WORDS={burst:['急な連投でガードが止めました','Stopped by the safety limit (burst of posts)'],
   owner:['あなたが止めました','You stopped it'],guard_state_unreadable:['止めた印が読めないため止まっています','Stopped (the stop record cannot be read)']};
 // 2026-10-10: キーの呼び名を「API キー」に揃えた（前は「LLM のキー」「アシスタントキー」が混じっていた）。
@@ -55,7 +55,7 @@ function row(account,r){
   const what=r.kind==='stopped'?(STOP_WORDS[r.reason]?pair(STOP_WORDS[r.reason]):escape(r.reason)):escape(r.head);
   const reply=r.reply?' · '+t('返信','Reply'):'';
   const id=r.post_id?` · post_id ${escape(r.post_id)}`:'';
-  const cancel=(r.kind==='held'||r.kind==='scheduled')&&r.draft_id
+  const cancel=(r.kind==='held'||r.kind==='scheduled'||r.kind==='queued')&&r.draft_id
     ?form('cancel',account,`<input type="hidden" name="draft_id" value="${escape(r.draft_id)}">`,t('この予約を取り消す','Cancel this post'),'',false,true):'';
   return `<li><p><strong>${pair(KIND_WORDS[r.kind])}</strong> · ${escape(r.at)}${reply}${id}</p><pre>${what}</pre>${cancel}</li>`;
 }

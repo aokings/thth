@@ -676,9 +676,16 @@ def _apply_timing_gate(validated, *, rejections: list, type_mismatch: list,
     if not bypass_pace and last_post_at is not None:
         min_interval = datetime.timedelta(hours=account_cfg["min_interval_hours"])
         if now - last_post_at < min_interval:
+            # burst の順番待ちに並べた返信（`queued_for: burst`・3.25.0）には掛けない——返信には
+            # 最短間隔を掛けない裁定 (a) と同じ。ほかの原稿は今までどおり全部落とす。
+            from .burst_queue import is_queued
+            waiting = [item for item in survivors if is_queued(item[0].front_matter)]
             for qf, *_rest in survivors:
-                rejections.append(Rejection(qf.path, "min_interval"))
-            return SelectResult(None, rejections, type_mismatch, needs_review)
+                if not is_queued(qf.front_matter):
+                    rejections.append(Rejection(qf.path, "min_interval"))
+            if not waiting:
+                return SelectResult(None, rejections, type_mismatch, needs_review)
+            survivors = waiting
 
     survivors.sort(key=lambda t: (t[1], os.path.basename(t[0].path)))
     chosen_qf, _chosen_publish_at, chosen_section, chosen_resolution = survivors[0]

@@ -120,7 +120,7 @@ def _credential_summary(credentials_path, account, project, person):
 
 
 def summary(person, account, credentials_path, *, now=None) -> dict:
-    from . import account_settings, server_writes, queuefile
+    from . import account_settings, burst_queue, server_writes, queuefile
     cfg = accounts.load_account(account)
     row = account_settings.status(account, now=now)
     rows = []
@@ -141,7 +141,9 @@ def summary(person, account, credentials_path, *, now=None) -> dict:
             at = fm.get("publish_at")
             if jst.parse(at) is None:
                 continue
-            rows.append({"kind": "held" if fm.get("held_minutes") else "scheduled", "at": at,
+            # 猶予中（held_minutes）・burst の順番待ちの返信（queued_for: burst・3.25.0）・予約。
+            kind = "held" if fm.get("held_minutes") else "queued" if burst_queue.is_queued(fm) else "scheduled"
+            rows.append({"kind": kind, "at": at,
                          "head": _head(queuefile.extract_section(q.body, cfg["media"])), "post_id": None,
                          "draft_id": server_writes._id(name), "reason": None, "reply": bool(fm.get("reply_to"))})
     except Exception:

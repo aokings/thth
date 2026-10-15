@@ -2871,6 +2871,9 @@ def show_schedule(rows) -> int:
         if row.get("waiting_for"):
             # 待ちは時刻超過ではない（設計 3.2.0 §2）。
             overdue = f"  ← 返信待ち: {row['waiting_for']}"
+        elif row.get("queued_for") == "burst":
+            # 返信の burst の順番待ち（3.25.0）。時刻を過ぎていれば timer の次の run で出る。
+            overdue = "  ← burst の順番待ち（返信）" + ("・時刻を過ぎています" if row["past"] else "")
         topic = f" [{row['topic']}]" if row["topic"] else ""
         print(f"{str(row.get('publish_at') or '')[:16]}  {mark}  {row['account']:22} "
               f"{row['file']:28}{topic} {row['head']}{overdue}")
@@ -3377,7 +3380,10 @@ def cmd_send(args) -> int:
         if as_json and result is not None:
             _print_json({"account": args.account, "mode": result.mode, "action": result.action,
                          "post_id": result.post_id, "permalink": result.url, "digest": result.digest,
-                         "error": result.error})
+                         "error": result.error,
+                         # burst の順番待ちに並べた返信（3.25.0）: 出す時刻と原稿。
+                         **({"publish_at": result.publish_at, "file": result.file}
+                            if result.action == "queued" else {})})
         if code and result is not None:
             lines = media_delivery_mod.refusal_lines(result)
             # inflight で止まったなら「確かめてから消す」を必ず 1 行足す。
@@ -4122,7 +4128,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.add_argument("--text-file", dest="text_file", default=None,
                         help="本文のファイル。省略時は標準入力から読む")
     p_send.add_argument("--topic", default=None)
-    p_send.add_argument("--reply-to", dest="reply_to", default=None)
+    p_send.add_argument("--reply-to", dest="reply_to", default=None,
+                        help="返信先の post_id。返信は急な連投（burst）で口座を止めず、"
+                             "窓が空く時刻の順番待ちに並べて timer が出す（3.25.0）")
     # T7-2（設計「自分の泉」§4）: queue の front-matter と同じ意味の 3 つ。
     # `--reply-to` があるときだけ絡みの台帳に 1 行残る。
     p_send.add_argument("--reply-to-author-key", dest="reply_to_author_key", default=None,
