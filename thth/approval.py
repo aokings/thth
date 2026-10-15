@@ -438,6 +438,176 @@ def segment_sha(text: str) -> str:
     return hashlib.sha256((text or "").strip().encode("utf-8")).hexdigest()
 
 
+# --- はてなの承認の指紋（設計 4.0 S1 §6.1・§7.2） ---------------------------
+#
+# **v1（`compute_approved_sha()`）にも束（`thth-bundle-1`）にも触れない。** どちらも
+# 先頭に版の語を置いた別の入力列なので、同じ材料から v1・束・取り下げの digest と
+# 一致することは無い。`FINGERPRINT_VERSION` は SNS の v1 の版で、ここでは上げない
+# （v1 の入力は変わらないので、いま approved の原稿の再承認は起きない）。正規化や
+# 項目の並びを変えるときは版の語（`thth-hatena-entry-1` → `-2`）を上げ、
+# `fingerprint_golden.GOLDEN` の `hatena_entry`／`hatena_bookmark` に新しい版の行を足す。
+
+HATENA_ENTRY_VERSION = "thth-hatena-entry-1"
+HATENA_BOOKMARK_VERSION = "thth-hatena-bookmark-1"
+HATENA_ENTRY_OPS = ("create", "update", "delete")
+HATENA_ENTRY_FORMS = ("full", "summary", "entry")
+HATENA_BOOKMARK_OPS = ("add", "delete")
+HATENA_BOOKMARK_COMMENT_MAX = 100
+HATENA_BOOKMARK_TAGS_MAX = 10
+
+# 指紋に入る順（設計 §6.1 の表の順）。
+_HATENA_ENTRY_ORDER = ("version", "account", "blog_id", "op", "entry_id", "base_readback_sha",
+                       "title", "categories", "body_sha256", "images", "article", "form",
+                       "publish_at", "draft")
+# 設計 §7.2 の表の順。
+_HATENA_BOOKMARK_ORDER = ("version", "account", "principal", "op", "url", "delivery",
+                          "comment", "tags")
+
+
+def _plain(value, name: str) -> str:
+    """区切り（`\\x1f`・`\\x1e`）を含む値は断る——区切りが化けて別の承認と同じ指紋にならない。"""
+    text = "" if value is None else str(value)
+    if _SEP in text or _SEG in text:
+        raise ValueError(f"{name}_has_separator")
+    return text
+
+
+def _sorted_list(values, name: str) -> list:
+    if values is None:
+        return []
+    if isinstance(values, str) or not isinstance(values, (list, tuple)):
+        raise ValueError(f"invalid_{name}")
+    return sorted(s for s in (_plain(v, name).strip() for v in values) if s)
+
+
+def normalize_hatena_body(text: str) -> str:
+    """変換したあとの本文の正規化（設計 §6.2）。改行は `\\n`・各行の末尾の空白と末尾の空白行を落とす。"""
+    lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    lines = [line.rstrip() for line in lines]
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
+
+
+def hatena_body_sha256(text: str) -> str:
+    return hashlib.sha256(normalize_hatena_body(text).encode("utf-8")).hexdigest()
+
+
+def _hatena_images(images) -> str:
+    """`path=source_sha256` を path で並べ替えて `\\x1e` 区切り（設計 §6.1 の 10）。"""
+    if images is not None and (isinstance(images, (str, dict)) or not isinstance(images, (list, tuple))):
+        raise ValueError("invalid_images")
+    rows = []
+    seen = set()
+    for row in images or []:
+        if not isinstance(row, dict):
+            raise ValueError("invalid_images")
+        path = _plain(row.get("path"), "images").strip()
+        sha = _plain(row.get("source_sha256"), "images").strip().lower()
+        if not path or not sha or "=" in path or path in seen:
+            raise ValueError("invalid_images")
+        seen.add(path)
+        rows.append((path, sha))
+    return _SEG.join(f"{path}={sha}" for path, sha in sorted(rows))
+
+
+def compute_hatena_entry_components(*, account: str, blog_id: str, op: str,
+                                    entry_id: str | None, base_readback_sha: str | None,
+                                    title: str, categories, body: str, images,
+                                    article: str, form: str,
+                                    publish_at: str | datetime.datetime) -> dict:
+    """はてなブログの配信原稿（`thth-hatena-entry-1`）の 14 項目を正規化した値。
+
+    `blog_id` は**口座の台帳から**渡す（原稿からではない・設計 §5.1）。`body` は
+    変換したあとの本文で、指紋には `normalize_hatena_body()` のあとの sha256 だけが入る。
+    `images` は `[{"path", "source_sha256"}, …]`（配信の台帳の `images[]` と同じ形）。
+    `article_rev`・`delivery` は入れない（設計 §6.1 の末尾）。
+    """
+    op = _plain(op, "op").strip()
+    if op not in HATENA_ENTRY_OPS:
+        raise ValueError("invalid_op")
+    form = _plain(form, "form").strip()
+    if form not in HATENA_ENTRY_FORMS:
+        raise ValueError("invalid_form")
+    entry = _plain(entry_id, "entry_id").strip()
+    base = _plain(base_readback_sha, "base_readback_sha").strip()
+    if op == "create" and (entry or base):
+        raise ValueError("entry_id_for_create")
+    if op != "create" and not entry:
+        raise ValueError("entry_id_required")
+    blog = _plain(blog_id, "blog_id").strip().lower()
+    if not blog:
+        raise ValueError("blog_id_required")
+    return {
+        "version": HATENA_ENTRY_VERSION,
+        "account": _plain(account, "account").strip(),
+        "blog_id": blog,
+        "op": op,
+        "entry_id": entry,
+        "base_readback_sha": base,
+        "title": " ".join(_plain(title, "title").split()),
+        "categories": _SEG.join(_sorted_list(categories, "categories")),
+        "body_sha256": hatena_body_sha256(_plain(body, "body")),
+        "images": _hatena_images(images),
+        "article": _plain(article, "article").strip(),
+        "form": form,
+        "publish_at": _normalize_publish_at(publish_at),
+        "draft": "no",
+    }
+
+
+def compute_hatena_entry_sha(**kwargs) -> str:
+    """`compute_hatena_entry_components()` の 14 項目をこの順で `\\x1f` 区切りにした sha256。"""
+    components = compute_hatena_entry_components(**kwargs)
+    joined = _SEP.join(components[key] for key in _HATENA_ENTRY_ORDER)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+def compute_hatena_bookmark_components(*, account: str, principal: str, op: str, url: str,
+                                       delivery: str, comment: str, tags=None) -> dict:
+    """はてなブックマーク（`thth-hatena-bookmark-1`）の 8 項目を正規化した値（設計 §7.2）。
+
+    `url` は配信の台帳の `published_url` と**文字どおり**比べるので `.strip()` だけ。
+    コメントは改行を空白にして 100 字まで（超えたら断る——黙って切らない）。
+    """
+    from . import deliveries
+    op = _plain(op, "op").strip()
+    if op not in HATENA_BOOKMARK_OPS:
+        raise ValueError("invalid_op")
+    delivery = _plain(delivery, "delivery").strip()
+    if not deliveries.is_delivery_id(delivery):
+        raise ValueError("invalid_delivery")
+    url = _plain(url, "url").strip()
+    if not url:
+        raise ValueError("url_required")
+    text = _plain(comment, "comment")
+    text = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").strip()
+    if len(text) > HATENA_BOOKMARK_COMMENT_MAX:
+        raise ValueError("comment_too_long")
+    if op == "add" and not text:
+        raise ValueError("comment_required")
+    tag_list = _sorted_list(tags, "tags")
+    if len(tag_list) > HATENA_BOOKMARK_TAGS_MAX:
+        raise ValueError("too_many_tags")
+    return {
+        "version": HATENA_BOOKMARK_VERSION,
+        "account": _plain(account, "account").strip(),
+        "principal": _plain(principal, "principal").strip(),
+        "op": op,
+        "url": url,
+        "delivery": delivery,
+        "comment": text,
+        "tags": _SEG.join(tag_list),
+    }
+
+
+def compute_hatena_bookmark_sha(**kwargs) -> str:
+    """`compute_hatena_bookmark_components()` の 8 項目をこの順で `\\x1f` 区切りにした sha256。"""
+    components = compute_hatena_bookmark_components(**kwargs)
+    joined = _SEP.join(components[key] for key in _HATENA_BOOKMARK_ORDER)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
 def approved_fields(prepared, by, at):
     """Identical approval writeback for local two-stage and server human receipt.
 
