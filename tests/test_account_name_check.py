@@ -100,3 +100,12 @@ def test_admin_logのsubjectは口座名の長さ上限に縛られない():
     # 長い subject は形が合うものだけ。口座名として通る短い綴りは従来どおり。
     for bad in ('app-mastodon-' + 'z' * 64, 'app-Mastodon-' + 'a' * 64, 'a' * 65, '../x'):
         assert admin_log.subject_is_safe(bad) is False
+
+
+def test_account_addはdry_runを付けると何も書かずに断る(isolated_account):
+    """`--dry-run` は `migrate` だけの口。`add` は黙って無視して台帳を書いていた（10/15）。"""
+    r = run_thth(["account", "add", "tryit-threads", "--media", "threads", "--project", "tryit",
+                  "--by", "test", "--dry-run"])
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "migrate だけ" in r.stderr
+    assert not os.path.exists(os.path.join(isolated_account["accounts_dir"], "tryit-threads.json"))

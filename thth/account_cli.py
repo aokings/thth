@@ -286,6 +286,13 @@ def cmd_add(args) -> int:
     既にあれば**上書きしない**（loud reject・作法 5）。
     """
     from . import admin_log
+    if getattr(args, "dry_run", False):
+        # `--dry-run` は `migrate` だけの口。`add` は黙って無視して台帳を書いていた
+        # （10/15 music-research-threads・書いてから気づいた）。試すつもりで書かせない。
+        print("--dry-run は account migrate だけの口です。account add は台帳を書くので、"
+              "試すなら付けずに打つ前に引数を確かめてください（何も書いていません）",
+              file=sys.stderr)
+        return 2
     try:
         by = admin_log.actor(getattr(args, "by", None))
     except ValueError as exc:

@@ -1,6 +1,6 @@
 # 返事: マイミュージックリサーチの Threads を THTH に載せる（2026-10-15・THTH開発 第2）
 
-依頼: music-research `docs/依頼_thth_MMRのThreadsアカウント_2026-10-15.md`（#2396）
+依頼: music-research の repo の 依頼_thth_MMRのThreadsアカウント_2026-10-15.md（#2396）
 
 ## 1. 原稿の置き場 — 新しい repo は作らない（queue なし・その場で出す形）
 
