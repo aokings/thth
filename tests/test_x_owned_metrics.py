@@ -242,6 +242,20 @@ def test_collect_says_which_posts_were_not_returned(x_account, fake):
     result = collect_mod.collect_once(ACCOUNT, adapter=adapter_for(), now=NOW, log=lambda _l: None)
     assert len(_insight_rows("1900000000000000001")) == 1 and _insight_rows("1900000000000000002") == []
     assert len(result["errors"]) == 1 and "1900000000000000002" in result["errors"][0]
+    assert f"thth retract {ACCOUNT} <post_id> --already-gone" in result["errors"][0]
+
+
+def test_collect_stops_asking_once_marked_already_gone(x_account, fake):
+    """`retract --already-gone` の記録（`retracted_at`）が付いた投稿は読みに行かない。"""
+    _sent("1900000000000000001", "2026-09-09T08:30:00+09:00")
+    _sent("1900000000000000002", "2026-09-09T08:30:00+09:00")
+    from thth import accounts as accounts_mod, sent as sent_mod
+    sent_mod.mark_retracted(accounts_mod.state_dir_for(ACCOUNT), "1900000000000000002",
+                            retracted_at="2026-09-10T08:00:00+09:00", retracted_by="test",
+                            retract_reason="X の画面で消した")
+    fake["routes"]["/2/tweets"] = {"data": [owned_row("1900000000000000001")]}
+    result = collect_mod.collect_once(ACCOUNT, adapter=adapter_for(), now=NOW, log=lambda _l: None)
+    assert result["errors"] == [] and len(_insight_rows("1900000000000000001")) == 1
 
 
 # ----- doctor／admin の費用の表示 --------------------------------------------------

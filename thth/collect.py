@@ -783,7 +783,8 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
 
     # --- X の自分の投稿の数字（Owned Reads）: 刻みを跨いだものを 100 本ずつ 1 回で
     if owned_due:
-        _collect_owned(adapter, owned_due, now=now, errors=errors, write=write_insight)
+        _collect_owned(adapter, owned_due, now=now, errors=errors, write=write_insight,
+                       account_name=account_name)
 
     # --- 利用者から始まった会話（**WhatsApp の芽**・設計 v2 §4.2）
     inbox_touched, inbox_state = _collect_inbox(
@@ -804,12 +805,14 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
             "inbox": inbox_state}
 
 
-def _collect_owned(adapter, due: list, *, now, errors: list, write) -> None:
+def _collect_owned(adapter, due: list, *, now, errors: list, write, account_name: str) -> None:
     """X の自分の投稿の数字を 1 回（100 本ずつ）読み、Threads と同じ刻みの行を足す。
 
     読めなかったら行を書かない（刻みは進まず、次の実行で読み直す）。応答に無かった
     投稿（X で消した等）は理由を 1 行にまとめて残す。本文・username は応答に無い
-    （`tweet.fields` に text を入れていない）。
+    （`tweet.fields` に text を入れていない）。記録が付くまで刻みは進まないので、
+    窓（`metric_window_days()`）が切れるまで毎回この 1 行が出る——**記録の付け方を
+    同じ行に書く**（関東 10/12 に X の画面で消した 1 本が 3 日で 400 回出ていた）。
     """
     read = getattr(adapter, "owned_metrics", None)
     if not callable(read):
@@ -837,7 +840,9 @@ def _collect_owned(adapter, due: list, *, now, errors: list, write) -> None:
     if missing:
         errors.append(f"X の自分の投稿の数字: 応答に無かった {len(missing)} 本"
                       f"（X で消した・自分の投稿でない等。rejected={result.get('rejected', 0)}"
-                      f"・api_errors={result.get('api_errors', 0)}）: {', '.join(missing[:5])}")
+                      f"・api_errors={result.get('api_errors', 0)}）: {', '.join(missing[:5])}。"
+                      f"X の画面で消したなら thth retract {account_name} <post_id> --already-gone"
+                      f" --reason … --by … で記録すると、次から読みに行かない")
 
 
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}")
