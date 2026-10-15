@@ -254,6 +254,11 @@ def load_lexicon(path: str) -> dict:
         _reject(f"lexicon のファイルがありません: {path}（VM のパスで渡してください）")
     except (OSError, ValueError, UnicodeDecodeError):
         _reject(f"lexicon のファイルを JSON として読めません: {path}")
+    return check_lexicon(data)
+
+
+def check_lexicon(data) -> dict:
+    """lexicon（`{分類: [語…]}`）の形を検査する（遠くの道は読んだ中身をそのまま渡すので、ここを共有）。"""
     if not isinstance(data, dict) or not data or len(data) > LEXICON_MAX_CATEGORIES:
         _reject(f"lexicon は {{分類: [語…]}} の形で、分類は 1〜{LEXICON_MAX_CATEGORIES} 個です")
     for name, entries in data.items():

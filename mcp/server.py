@@ -403,6 +403,43 @@ TOOLS += [
      "inputSchema": _REACTION_SCHEMA},
 ]
 
+# X の読み取り（trends・counts・community search）と doctor（10/15・点検 B-22・B-23）。
+# どれも読むだけで保存しない。X の 3 つは有償の読み取りで、月の X 予算（budget_x）の中でだけ
+# 動く（超えれば budget_exhausted）。list の書き込み（足す・外す）は出さない。
+X_READ_TOOLS = {"thth_trends", "thth_counts", "thth_community_search"}
+TOOLS += [
+    {"name": "thth_trends",
+     "description": ("X のトレンドを地域ごとに読む（thth trends --json と同じ形・有償の読み取り 1 回・"
+                     "月の X 予算の中で・保存しない）。X の口座だけ"),
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string", "description": "account 名（X）"},
+         "woeid": {"type": "integer", "description": "地域の WOEID（既定 23424856＝日本）"},
+         "max": {"type": "integer", "description": "件数（1〜50・既定 20）"}},
+         "required": ["account"], "additionalProperties": False}},
+    {"name": "thth_counts",
+     "description": ("X で語を含む投稿の数の推移を読む（直近 7 日・thth counts --json と同じ形・"
+                     "有償の読み取り 1 回・月の X 予算の中で・保存しない）。X の口座だけ"),
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string", "description": "account 名（X）"},
+         "word": {"type": "string", "description": "語（X の検索の演算子も書ける・512 字まで）"},
+         "granularity": {"type": "string", "enum": ["hour", "day"], "description": "区間（既定 day）"}},
+         "required": ["account", "word"], "additionalProperties": False}},
+    {"name": "thth_community_search",
+     "description": ("語で X のコミュニティを探す（thth community search --json と同じ形・有償の読み取り 1 回・"
+                     "月の X 予算の中で・保存しない）。参加は X の画面で。各コミュニティの規則は人が読んで守る"),
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string", "description": "account 名（X）"},
+         "words": {"type": "array", "items": {"type": "string"}, "description": "探す語（1〜10 個）"},
+         "limit": {"type": "integer", "description": "件数（既定 10・最大 25）"}},
+         "required": ["account", "words"], "additionalProperties": False}},
+    {"name": "thth_doctor",
+     "description": ("そのトークンで実際に何ができるかを、読み取りだけで測る（thth doctor --json と同じ形・"
+                     "副作用なし・トークンの値は出さない）"),
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string", "description": "account 名"}},
+         "required": ["account"], "additionalProperties": False}},
+]
+
 
 class ToolInputError(Exception):
     """要求が受け取れない（JSON-RPC `-32602`・セキュリティ監査 2026-09-14・P2-1）。
@@ -743,14 +780,16 @@ SERVER_TOOLS += [
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"}},
                     "required":["account"],"additionalProperties":False}},
     {"name":"thth_mentions",
-     "description":"自分への言及（thth mentions --json と同じ形）",
+     "description":"自分への言及（thth mentions --json と同じ形・since でこの時刻以降だけ）",
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"limit":_READ_LIMIT,
-                    "refresh":{"type":"boolean"}},
+                    "refresh":{"type":"boolean"},
+                    "since":{"type":"string","description":"この時刻以降（Unix 時刻か ISO の日付・資料どおり API に渡す）"}},
                     "required":["account"],"additionalProperties":False}},
     {"name":"thth_topics_search",
      "description":"語で公開投稿を検索する（thth topics --search --json と同じ形・集計と指す先と本文の全文・保存しない）",
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"query":{"type":"string"},
-                    "limit":_READ_LIMIT},
+                    "limit":_READ_LIMIT,
+                    "recent":{"type":"boolean","description":"TOP でなく RECENT（新しい順）で検索する"}},
                     "required":["account","query"],"additionalProperties":False}},
     {"name":"thth_profile",
      "description":"公開プロフィール（thth profile --json と同じ形・保存しない）",
@@ -767,6 +806,11 @@ for _tool in SERVER_TOOLS:
     if _tool["name"] == "thth_draft_put":
         _tool["inputSchema"]["properties"]["media"] = {"type":"array"}
         _tool["description"] = "下書きを置く（media に確定済みの添付 [{media_id, alt}] を並べられる。alt は必須。添付を付ける前に tool.capabilities を読む）"
+    if _tool["name"] == "thth_send_request":
+        # 添付つきの「今すぐ」（10/15・点検 B-18）。添付があれば本文は空でもよい。
+        _tool["inputSchema"]["properties"]["media"] = {"type":"array"}
+        _tool["inputSchema"]["required"] = ["account"]
+        _tool["description"] += "。media に確定済みの添付 [{media_id, alt}] を並べられる（alt は必須・添付があれば body は空でもよい）"
 del _tool
 
 
@@ -973,13 +1017,25 @@ REMOTE_CLI = {
                                  *_opt("--post", a.get("post_id"))], None),
     "thth_collect": (lambda a: ["collect", a["account"], "--json"], None),
     "thth_mentions": (lambda a: ["mentions", a["account"], "--json", *_opt("--limit", a.get("limit")),
-                                 *_flag("--refresh", a.get("refresh"))], None),
+                                 *_flag("--refresh", a.get("refresh")), *_opt("--since", a.get("since"))], None),
     "thth_topics_search": (lambda a: ["topics", a["account"], "--search=" + a["query"], "--json",
-                                      *_opt("--limit", a.get("limit"))], None),
+                                      *_opt("--limit", a.get("limit")), *_flag("--recent", a.get("recent"))], None),
     "thth_profile": (lambda a: ["profile", a["account"], a["username"], "--json"], None),
     "thth_location_search": (lambda a: ["location", "search", a["account"], a["query"], "--json"], None),
 }
-REMOTE_TOOLS = [tool for tool in SERVER_TOOLS if tool["name"] in REMOTE_CLI]
+def _remote_tool(tool):
+    """遠くの道の道具は CLI の旗の写し。添付（media_id）は CLI では `--media <ファイル>` なので、
+    `thth_send_request` の media は出さず、本文を必須に戻す（黙って落とさない）。"""
+    if tool["name"] != "thth_send_request":
+        return tool
+    schema = dict(tool["inputSchema"], required=["account", "body"],
+                  properties={k: v for k, v in tool["inputSchema"]["properties"].items() if k != "media"})
+    return dict(tool, inputSchema=schema, description=tool["description"].split("。media に")[0])
+
+
+REMOTE_TOOLS = [_remote_tool(tool) for tool in SERVER_TOOLS if tool["name"] in REMOTE_CLI]
+# 遠くの道でも手元と同じ名前で動く TOOLS（CLI が道を決める・10/15 点検 B-17）。
+REMOTE_LOCAL_TOOLS = ("thread_read", "where_to_appear", "who_is_this")
 # 位置引数に置く欄（`-` で始まる値は CLI の旗と区別できないので断る）。
 _POSITIONAL = ("account", "post_id", "username", "query", "key", "value")
 
@@ -1018,7 +1074,7 @@ def local_tools() -> list:
     if not remote_mode():
         return local
     if not _has_ledgers():
-        return REMOTE_TOOLS
+        return REMOTE_TOOLS + [tool for tool in TOOLS if tool["name"] in REMOTE_LOCAL_TOOLS]
     names = {tool["name"] for tool in local}
     return local + [tool for tool in REMOTE_TOOLS if tool["name"] not in names]
 
@@ -1051,6 +1107,18 @@ def remote_call(name, arguments) -> dict:
     return {"content": [{"type": "text", "text": text}], "isError": proc.returncode != 0}
 
 
+def _server_read_tool(tool):
+    """手元と同じ名前・同じ説明の道具を、鍵の口座 1 つに絞った形で（`project` は手元の台帳を束ねる形なので出さない）。"""
+    properties = {k: v for k, v in tool["inputSchema"]["properties"].items() if k != "project"}
+    required = ["account"] + [k for k in tool["inputSchema"].get("required", []) if k != "account"]
+    return dict(tool, inputSchema=dict(tool["inputSchema"], properties=properties, required=required,
+                                       additionalProperties=False))
+
+
+# 枝・絡みに行く先・仮名の履歴（10/15・点検 B-17）。中身は `server_reads`（本文は全文・保存しない）。
+SERVER_READ_TOOLS = [_server_read_tool(tool) for tool in TOOLS if tool["name"] in REMOTE_LOCAL_TOOLS]
+
+
 def server_tools(context):
     if context is None: return []
     reports = [tool for tool in TOOLS if tool['name'] in
@@ -1059,7 +1127,7 @@ def server_tools(context):
     # 毎朝の一枚は**利用者の scope だけ**（設計 3.1.0 §1）。credential が許した
     # account／project しか対象にできない（`report_service.execute_morning()`）。
     reports = reports + [tool for tool in TOOLS if tool['name'] in ('thth_observe', 'thth_morning',
-                                                                     'thth_map_show')]
+                                                                     'thth_map_show')] + SERVER_READ_TOOLS
     from thth.server_writes import WRITE_OPERATIONS
     return _with_report_hint(reports + [tool for tool in SERVER_TOOLS
                       if context.writes or tool['name'][5:] not in WRITE_OPERATIONS]
@@ -1148,6 +1216,10 @@ def server_call(name, arguments):
             # 媒体の返した短い理由（秘密・URL・path は落としてある）か静的な理由。
             detail=getattr(exc,'reason',None)
             return failure('upstream_unavailable'+(': '+detail if isinstance(detail,str) and detail else ''))
+        if str(exc)=='invalid_request' and name in REMOTE_LOCAL_TOOLS:
+            # 枝・where・who の問いの断り（CLI の 1 行・秘密と path は落としてある）。
+            detail=getattr(exc,'reason',None)
+            return failure('invalid_request'+(': '+detail if isinstance(detail,str) and detail else ''))
         if str(exc)=='invalid_draft':
             # 理由は静的な符丁の表にあるものだけ。lint の自由文は通さない。
             detail=getattr(exc,'reason',None)
@@ -1447,6 +1519,31 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
+    elif name == "thth_trends":
+        args = ["trends", arguments["account"], "--json"]
+        if arguments.get("woeid") is not None:
+            args += ["--woeid", str(arguments["woeid"])]
+        if arguments.get("max") is not None:
+            args += ["--max", str(arguments["max"])]
+        proc = run_cli(args)
+        text = proc.stdout
+    elif name == "thth_counts":
+        if arguments.get("granularity") not in (None, "hour", "day"):
+            raise ToolInputError("thth_counts: granularity は hour か day です")
+        args = ["counts", arguments["account"], arguments["word"], "--json"]
+        if arguments.get("granularity"):
+            args += ["--granularity", arguments["granularity"]]
+        proc = run_cli(args)
+        text = proc.stdout
+    elif name == "thth_community_search":
+        args = ["community", "search", arguments["account"], *arguments["words"], "--json"]
+        if arguments.get("limit") is not None:
+            args += ["--limit", str(arguments["limit"])]
+        proc = run_cli(args)
+        text = proc.stdout
+    elif name == "thth_doctor":
+        proc = run_cli(["doctor", arguments["account"], "--json"])
+        text = proc.stdout
     elif name in REACTION_TOOLS:
         kind = REACTION_TOOLS[name]
         args = [("un" + kind) if arguments.get("undo") else kind, arguments["account"],
@@ -1456,7 +1553,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
     else:
         return {"content": [{"type": "text", "text": f"unknown tool: {name}"}, _channel_note()], "isError": True}
 
-    if name in REACTION_TOOLS:
+    if name in REACTION_TOOLS or name in X_READ_TOOLS or name == "thth_doctor":
         is_error = proc.returncode != 0
     elif name.startswith("thth_topic_") or name in (
             "before_you_post", "after_you_posted", "analytics_report", "operations_handoff", "study_report", "thread_read", "where_to_appear",

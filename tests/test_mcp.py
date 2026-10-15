@@ -111,7 +111,10 @@ def test_mcp_stdioでtools_listとtools_callが通る(isolated_account):
                           "thth_morning", "thth_observe", "thth_map_show",
                           # 2026-10-09 に反応の 2 本を足した（設計 3.15.0 §2.3）。本文を作らず
                           # 取り消せる書き込みで、production の門・scope・ガードは CLI が持つ。
-                          "thth_repost", "thth_like"}
+                          "thth_repost", "thth_like",
+                          # 2026-10-15 に X の読み取り 3 本と doctor を足した（点検 B-22・B-23・読むだけ・
+                          # X は月の予算の中・list の書き込みは出さない）。
+                          "thth_trends", "thth_counts", "thth_community_search", "thth_doctor"}
     # 承認・投稿・認可の副作用のあるものは出ていない。
     assert not (tool_names & {"thth_approve", "thth_throw", "thth_token",
                                "thth_auth", "thth_refresh", "thth_revoke",

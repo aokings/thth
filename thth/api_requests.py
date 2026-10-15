@@ -128,6 +128,10 @@ def _failure(exc) -> dict:
         out["reason"] = detail
     elif code == "publication_unconfirmed" and detail in server_writes.UNCONFIRMED_REASONS:
         out["reason"] = detail
+    elif code in ("invalid_request", "upstream_unavailable") and isinstance(detail, str) and detail:
+        # 読む口が添えた 1 行（秘密・URL・path は `server_reads.short` で落としてある）。
+        from .server_reads import short
+        out["reason"] = short(detail)
     next_at = getattr(exc, "next_at", None)
     if isinstance(next_at, str):
         out["next_at"] = next_at

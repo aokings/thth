@@ -2789,7 +2789,7 @@ def cmd_schedule(args) -> int:
     `--text`・`--text-file`・`--at`・`--draft`（予約を刻む）は遠くの道だけ（設計 3.14.0 §2）。
     手元の道の予約は queue に原稿を置いて `thth approve`。
     """
-    if any(getattr(args, name, None) is not None for name in ("text", "text_file", "at", "draft")):
+    if any(getattr(args, name, None) is not None for name in ("text", "text_file", "at", "draft", "media_files")):
         print("remote_only: 予約を刻む形（--text・--at・--draft）は thth.me の鍵の道だけです。"
               "手元の台帳では queue に原稿を置いて thth approve", file=sys.stderr)
         return 2
@@ -2807,6 +2807,11 @@ def cmd_schedule(args) -> int:
     # **先頭に 1 行**（T8-2）。遅れていなければ何も出さない（静かに）。
     for line in notice_lines:
         print(line)
+    return show_schedule(rows)
+
+
+def show_schedule(rows) -> int:
+    """`thth schedule` の人向けの表示（手元の道と遠くの道が共有・`--json` の行を受ける）。"""
     if not rows:
         print("これから出る予定はありません")
         return 0
@@ -2817,7 +2822,7 @@ def cmd_schedule(args) -> int:
             # 待ちは時刻超過ではない（設計 3.2.0 §2）。
             overdue = f"  ← 返信待ち: {row['waiting_for']}"
         topic = f" [{row['topic']}]" if row["topic"] else ""
-        print(f"{row['publish_at'][:16]}  {mark}  {row['account']:22} "
+        print(f"{str(row.get('publish_at') or '')[:16]}  {mark}  {row['account']:22} "
               f"{row['file']:28}{topic} {row['head']}{overdue}")
     print(f"—— {len(rows)} 本（承認済み {sum(1 for r in rows if r['status'] == 'approved')}）")
     return 0
@@ -3343,7 +3348,7 @@ def cmd_send(args) -> int:
 
 
 def cmd_doctor(args) -> int:
-    """`thth doctor`（読み取りだけで能力を測る。副作用を持たない・MCP には出さない）。"""
+    """`thth doctor`（読み取りだけで能力を測る。副作用を持たない・MCP は thth_doctor）。"""
     from . import accounts as accounts_mod
     from . import doctor as doctor_mod
     try:
@@ -4096,7 +4101,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.set_defaults(func=cmd_send)
 
     p_doctor = sub.add_parser(
-        "doctor", help="そのトークンで実際に何ができるかを読み取りだけで測る（MCPには出さない）")
+        "doctor", help="そのトークンで実際に何ができるかを読み取りだけで測る（MCP は thth_doctor）")
     p_doctor.add_argument("account")
     p_doctor.add_argument("--json", action="store_true", dest="as_json")
     p_doctor.set_defaults(func=cmd_doctor)

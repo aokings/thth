@@ -416,11 +416,12 @@ def refuse(exc, *, as_json=False) -> int:
 COMMANDS: dict = {}
 # 台帳が無く鍵があるときに `remote_unsupported` と言う命令（運営の命令・手元の台帳の命令）。
 # ここに無い命令は、台帳が無ければ今までどおり手元の道が断る（口座でない名前を取る命令を巻き込まない）。
-UNSUPPORTED = frozenset(("throw", "run", "auth", "refresh", "doctor", "thread",
+UNSUPPORTED = frozenset(("throw", "run", "auth", "refresh", "doctor",
                          "account", "account resume", "account leave"))
 # `--remote` を旗として持つ命令（それ以外に `--remote` が付けば parse の前に断る）。
 REMOTE_PARSERS = ("send", "schedule", "retract", "posts", "replies", "measured", "collect",
-                  "mentions", "topics", "profile", "location", "account", "queue", "inflight")
+                  "mentions", "topics", "profile", "location", "account", "queue", "inflight",
+                  "thread", "where", "who")
 
 
 def command_key(command, args) -> str:
@@ -439,6 +440,10 @@ def _account(key, args):
         return getattr(args, "name", None)
     if key == "topics search":
         return getattr(args, "account_flag", None) or getattr(args, "account", None)
+    if key in ("where", "who"):
+        # 口座は位置引数の先頭（`--project` は手元の台帳を束ねる形なので遠くの道には出さない）。
+        targets = getattr(args, "targets", None) or []
+        return None if getattr(args, "project", None) or not targets else targets[0]
     return getattr(args, "account", None)
 
 
@@ -525,18 +530,94 @@ def _body(args) -> str:
     return body
 
 
-def _no_media(args):
-    # 添付（media_upload_url → PUT → media_complete）は遠くの道ではまだ踏まない。
-    if getattr(args, "media_files", None):
-        raise RemoteError("remote_unsupported", reason="添付", rc=2)
+# 添付の拡張子 → (種類, MIME)。種類ごとの大きさの上限と中身の検査はサーバ（`media_uploads`）が言う。
+MEDIA_TYPES = {
+    "jpg": ("image", "image/jpeg"), "jpeg": ("image", "image/jpeg"), "png": ("image", "image/png"),
+    "webp": ("image", "image/webp"), "gif": ("image", "image/gif"),
+    "mp4": ("video", "video/mp4"), "mov": ("video", "video/quicktime"),
+    "mp3": ("audio", "audio/mpeg"), "flac": ("audio", "audio/flac"), "ogg": ("audio", "audio/ogg"),
+    "wav": ("audio", "audio/wav"), "webm": ("audio", "audio/webm"), "m4a": ("audio", "audio/mp4"),
+}
+UPLOAD_TIMEOUT = 300  # 添付の 1 回の PUT（大きな動画もある）
+
+
+def _put(cfg, url, data, mime):
+    """置き場（`<url>/media-upload/…`）へ 1 回 PUT する。鍵は付けない（URL そのものが一回限りの資格）。"""
+    from . import __version__, httpsafe
+    headers = {"Content-Type": mime, "Accept": "application/json", "User-Agent": "thth/" + __version__}
+    try:
+        status, _headers, raw = _transport("PUT", url, headers, data, UPLOAD_TIMEOUT)
+    except (urllib.error.URLError, OSError, http.client.HTTPException, httpsafe.EndpointRejected, ValueError):
+        raise RemoteError("media_upload_failed", rc=2) from None
+    if status != 200:
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            value = {}
+        raise RemoteError(_code(value.get("error") if type(value) is dict else None, "media_upload_failed"), rc=2)
+
+
+def _media(args, account):
+    """`--media <ファイル> --alt <説明>` を thth.me に置いて確定し、`[{media_id, alt}]` を返す（無ければ None）。
+
+    手順は MCP の道具と同じ（`media_upload_url` → PUT → `media_complete`・10/15 点検 B-18）。
+    ファイルは手元の機械のもの（VM のパスではない）。中身の検査・位置情報などを落とすのはサーバ。
+    """
+    files = getattr(args, "media_files", None) or []
+    alts = getattr(args, "alts", None) or []
+    if not files:
+        return None
+    if len(files) != len(alts) or any(not isinstance(a, str) or not a.strip() for a in alts):
+        raise RemoteError("invalid_request", reason="--media ごとに --alt（画像の説明）を 1 つ", rc=2)
+    cfg = load()
+    if cfg is None:
+        raise RemoteError("not_logged_in", rc=2)
+    rows = []
+    for path, alt in zip(files, alts):
+        kind_mime = MEDIA_TYPES.get(os.path.splitext(path)[1].lstrip(".").lower())
+        if kind_mime is None:
+            raise RemoteError("media_kind_unsupported", reason=os.path.basename(path), rc=2)
+        try:
+            size = os.path.getsize(path)
+            digest = hashlib.sha256()
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    digest.update(chunk)
+        except OSError:
+            raise RemoteError("invalid_request", reason=f"添付のファイルを読めません: {os.path.basename(path)}",
+                              rc=2) from None
+        kind, mime = kind_mime
+        made = call("media_upload_url", account, kind=kind, size=size, sha256=digest.hexdigest(), mime=mime)
+        url, media_id = made.get("upload_url"), made.get("media_id")
+        if isinstance(url, str):
+            redact.register_secret(url)  # 一回限りの資格（画面・ログに出さない）
+        # 置き場は鍵と同じ thth.me の上だけ（答えが別の所を指しても中身を送らない）。
+        if not isinstance(url, str) or not url.startswith(cfg["url"] + "/media-upload/") \
+                or not isinstance(media_id, str):
+            raise RemoteError("remote_unavailable", rc=2)
+        part = made.get("part_size")
+        with open(path, "rb") as f:
+            if isinstance(part, int) and part > 0:
+                number = 1
+                for chunk in iter(lambda: f.read(part), b""):
+                    _put(cfg, f"{url}/{number}", chunk, mime)
+                    number += 1
+            else:
+                _put(cfg, url, f.read(), mime)
+        call("media_complete", account, media_id=media_id)
+        rows.append({"media_id": media_id, "alt": alt})
+    return rows
 
 
 def _send(args, account):
-    _no_media(args)
     # 遠くの道は rehearsal を挟まない（設計 §6）: 頼んだらその場で出す（サーバが lint と安全装置で断る）。
     # `--production`・`--confirm` は要らない（付いていても読まない・口座の台帳はサーバにある）。
-    body = _body(args)
-    fields = {"body": body, "topic": args.topic, "reply_to": args.reply_to}
+    has_media = bool(getattr(args, "media_files", None))
+    no_text = getattr(args, "text", None) is None and not getattr(args, "text_file", None)
+    # 添付だけの投稿は本文を空にできる（手元の `thth send --media` と同じ）。標準入力は待たない。
+    body = "" if has_media and no_text else _body(args)
+    media = _media(args, account)
+    fields = {"body": body, "topic": args.topic, "reply_to": args.reply_to, "media": media}
     if getattr(args, "dry_run", False):
         # lint だけ通す: 下書きを置いて結果を返す（出さない・予約しない）。
         from . import jst
@@ -564,16 +645,21 @@ def _show_sent(value) -> int:
 
 
 def _schedule(args, account):
-    _no_media(args)
     draft = getattr(args, "draft", None)
     if draft is None:
         if getattr(args, "text", None) is None and not getattr(args, "text_file", None):
-            # 「いつ何が出るか」の一覧は遠くの道では下書きの一覧（thth queue）で見る。
-            raise RemoteError("remote_unsupported", reason="一覧は thth queue <口座>", rc=2)
+            # 「いつ何が出るか」の一覧（手元の `thth schedule <口座>` と同じ行・10/15 点検 B-18）。
+            from . import cli
+            value = call("schedule_list", account, days=getattr(args, "days", None))
+            rows = value.get("schedule") if isinstance(value.get("schedule"), list) else []
+            if getattr(args, "json", False):
+                _print_json(rows)
+                return 0
+            return cli.show_schedule(rows)
         if not getattr(args, "at", None):
             raise RemoteError("invalid_request", reason="--at <ISO 時刻> を付けてください", rc=2)
         put = call("draft_put", account, body=_body(args), publish_at=args.at,
-                   topic=args.topic, reply_to=args.reply_to)
+                   topic=args.topic, reply_to=args.reply_to, media=_media(args, account))
         draft = put.get("draft_id")
         if not isinstance(draft, str):
             raise RemoteError("remote_unavailable", rc=2)
@@ -622,22 +708,79 @@ def _collect(args, account):
 
 def _mentions(args, account):
     from . import threads_read_cli
-    if getattr(args, "since", None):
-        raise RemoteError("remote_unsupported", reason="--since", rc=2)
-    value = call("mentions", account, limit=_limit(args),
+    value = call("mentions", account, limit=_limit(args), since=getattr(args, "since", None) or None,
                  refresh=True if getattr(args, "refresh", False) else None)
     return _shown(args, value, lambda v: threads_read_cli.show_mentions(account, v.get("mentions") or []))
 
 
 def _topics_search(args, account):
     from . import threads_read_cli
-    if getattr(args, "recent", False):
-        raise RemoteError("remote_unsupported", reason="--recent", rc=2)
     query = (args.search or "").strip()
     if not query:
         raise RemoteError("invalid_request", reason="--search に語を書いてください", rc=2)
-    value = call("topics_search", account, query=query, limit=_limit(args))
+    value = call("topics_search", account, query=query, limit=_limit(args),
+                 recent=True if getattr(args, "recent", False) else None)
     return _shown(args, value, lambda v: threads_read_cli.show_search(account, v))
+
+
+def _thread(args, account):
+    """`thth thread <口座> <post_id>`（枝をその場で読む・保存しない・10/15 点検 B-17）。
+
+    長い枝は thth.me の 1 件の上限で後ろが落ちる（`counts.truncated`）。続きは
+    `--since <provenance.continue_from>` でもう一度読む。
+    """
+    from . import thread_read
+    max_messages = getattr(args, "max_messages", None)
+    value = call("thread_read", account, post_id=args.post_id, since=getattr(args, "since", None),
+                 max_messages=None if max_messages == thread_read.DEFAULT_MAX_MESSAGES else max_messages,
+                 limit=getattr(args, "limit", None))
+    if getattr(args, "json", False):
+        _print_json(value)
+        return 0
+    thread_read._render_human(value)
+    follow = (value.get("provenance") or {}).get("continue_from")
+    if (value.get("counts") or {}).get("truncated") and follow:
+        print(f"  続き: thth thread {account} {args.post_id} --since {follow}")
+    return 0
+
+
+def _where(args, account):
+    """`thth where <口座> <語…>`（検索の一覧に自分の履歴を重ねる・保存しない・10/15 点検 B-17）。"""
+    from . import where_cli
+    words = list(args.targets[1:]) + list(getattr(args, "word", None) or [])
+    lexicon = None
+    if getattr(args, "lexicon", None):
+        try:
+            lexicon = where_cli.load_lexicon(args.lexicon)  # 手元のファイルを読んで中身を送る
+        except where_cli.WhereError as exc:
+            raise RemoteError("invalid_request", reason=str(exc), rc=2) from None
+    flags = {name: True if getattr(args, name, False) else None
+             for name in ("recent", "exclude_engaged", "aggregate", "suggest", "tag", "keep", "ja",
+                          "question", "no_replies")}
+    value = call("where_to_appear", account, words=words, limit=getattr(args, "limit", None),
+                 since=getattr(args, "since", None), max_per_author=getattr(args, "max_per_author", None),
+                 also=getattr(args, "also", None), lexicon=lexicon, author=getattr(args, "author", None),
+                 **flags)
+    if getattr(args, "json", False):
+        _print_json(value)
+        return 0
+    where_cli._render_human(value)
+    return 0
+
+
+def _who(args, account):
+    """`thth who <口座> <author_key|@username>`（仮名の履歴・発言の内容は持たない・10/15 点検 B-17）。"""
+    from . import who_cli
+    if len(args.targets) != 2:
+        raise RemoteError("invalid_request", reason="thth who <口座> <author_key|@username>（1 人ずつ）", rc=2)
+    target = args.targets[1]
+    key = {"username": target[1:]} if target.startswith("@") else {"author_key": target}
+    value = call("who_is_this", account, profile=True if getattr(args, "profile", False) else None, **key)
+    if getattr(args, "json", False):
+        _print_json(value)
+        return 0
+    who_cli._render_human(value)
+    return 0
 
 
 def _profile(args, account):
@@ -733,7 +876,7 @@ COMMANDS.update({
     "posts": _posts, "replies": _replies, "measured": _measured, "collect": _collect,
     "mentions": _mentions, "topics search": _topics_search, "profile": _profile,
     "location search": _location, "account status": _account_status, "account set": _account_set,
-    "queue": _queue,
+    "queue": _queue, "thread": _thread, "where": _where, "who": _who,
 })
 
 
@@ -760,6 +903,9 @@ def register(sub) -> None:
     schedule.add_argument("--draft", default=None, help="遠くの道: 置いた下書き（draft_id）を予約する")
     schedule.add_argument("--topic", default=None)
     schedule.add_argument("--reply-to", dest="reply_to", default=None)
+    schedule.add_argument("--media", dest="media_files", action="append",
+                          help="遠くの道: 添付のファイル（手元の機械のもの・繰返し可）")
+    schedule.add_argument("--alt", dest="alts", action="append", help="遠くの道: 対応する添付の説明（各 --media に必須）")
     choices["posts"].add_argument("--refresh", action="store_true",
                                   help="媒体から引き直す（thth posts は元から毎回引く・同じ動き）")
     for name in ("replies", "measured", "mentions"):
