@@ -130,6 +130,7 @@ All subcommands `thth --help` lists, one line each:
 - `morning` — alias of `observe`
 - `events` — what happened, in time order (posts, retractions, replies and mentions received, stopped accounts, pending publishes, budget refusals); read-only, versioned JSON (`thth.events/1`)
 - `summary` — the numbers per account (posts and reactions in 24h/7d, unanswered replies, followers and day-over-day change, whether it is stopped); read-only (`thth.summary/1`)
+- `deliveries` — the delivery ledger (Hatena Blog articles: state, sequence number, history) for an account or project; read-only (`thth.deliveries/1`)
 - `after` — how the conversations you joined were received
 - `threads` — thread shape: branches, depth, participants, time to first reply
 - `ask` — `before-you-post`: what happened last time with this word, hour and shape (local ledgers only)

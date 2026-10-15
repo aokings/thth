@@ -68,6 +68,59 @@ GOLDEN = {
         "x_community": "d305d1c3e5cab9cc",
         "bundle_bluesky": "e1e13b8e4197f403",
     },
+    # 4.0 S1（設計 §6.1・§7.2）: はてなの承認の指紋。**SNS の v1 とは別の版の数え方**
+    # （`approval.HATENA_ENTRY_VERSION`／`HATENA_BOOKMARK_VERSION` の末尾の数）で、
+    # `FINGERPRINT_VERSION` は上げない。鍵は種類の名前 → 版 → 見本の名前 → 指紋の先頭。
+    "hatena_entry": {
+        1: {
+            "entry_create": "61a9f764b6c4f2f2",
+            "entry_update": "e09b5d896e8cb798",
+            "entry_delete": "35a354158d34f168",
+        },
+    },
+    "hatena_bookmark": {
+        1: {
+            "bookmark_add": "69be00ab5be98c16",
+            "bookmark_delete": "c5c9d175ac229bf3",
+        },
+    },
+}
+
+# はてなの見本（本文・口座・URL は架空）。`approval.compute_hatena_*_sha()` にそのまま渡す。
+HATENA_CASES = {
+    "hatena_entry": (
+        {"name": "entry_create", "args": {
+            "account": "golden-hatenablog", "blog_id": "Golden.hatenablog.com", "op": "create",
+            "entry_id": None, "base_readback_sha": None, "title": "  見本の  題  ",
+            "categories": ["価格", "コーヒー", " "], "body": "本文です。\r\n\n二段落目。  \n\n",
+            "images": [{"path": "images/b.jpg", "source_sha256": "b" * 64},
+                       {"path": "images/a.jpg", "source_sha256": "a" * 64}],
+            "article": "golden/2026-10-sample", "form": "full",
+            "publish_at": "2026-10-20T08:00:00+09:00"}},
+        {"name": "entry_update", "args": {
+            "account": "golden-hatenablog", "blog_id": "golden.hatenablog.com", "op": "update",
+            "entry_id": "tag:blog.hatena.ne.jp,2013:blog-golden-1-2", "base_readback_sha": "e" * 64,
+            "title": "見本の題（直し）", "categories": [], "body": "直した本文。",
+            "images": [], "article": "golden/2026-10-sample", "form": "full",
+            "publish_at": "2026-10-21T08:00:00+09:00"}},
+        {"name": "entry_delete", "args": {
+            "account": "golden-hatenablog", "blog_id": "golden.hatenablog.com", "op": "delete",
+            "entry_id": "tag:blog.hatena.ne.jp,2013:blog-golden-1-2", "base_readback_sha": "f" * 64,
+            "title": "見本の題", "categories": None, "body": "", "images": None,
+            "article": "golden/2026-10-sample", "form": "summary",
+            "publish_at": "2026-10-22T08:00:00+09:00"}},
+    ),
+    "hatena_bookmark": (
+        {"name": "bookmark_add", "args": {
+            "account": "golden-hatenablog", "principal": "golden-principal", "op": "add",
+            "url": " https://golden.hatenablog.com/entry/2026/10/20/080000 ",
+            "delivery": "dl_0123456789ab", "comment": "運営者の記事です。\n見本。",
+            "tags": ["コーヒー", "価格"]}},
+        {"name": "bookmark_delete", "args": {
+            "account": "golden-hatenablog", "principal": "golden-principal", "op": "delete",
+            "url": "https://golden.hatenablog.com/entry/2026/10/20/080000",
+            "delivery": "dl_0123456789ab", "comment": "", "tags": None}},
+    ),
 }
 
 
@@ -101,6 +154,39 @@ def drift() -> list:
     """
     golden = GOLDEN.get(approval.FINGERPRINT_VERSION)
     if golden is None:
-        return ["no_golden_for_version"]
+        return ["no_golden_for_version"] + hatena_drift()
     now = current()
-    return sorted(name for name in set(now) | set(golden) if now.get(name) != golden.get(name))
+    return sorted(name for name in set(now) | set(golden)
+                  if now.get(name) != golden.get(name)) + hatena_drift()
+
+
+# ------------------------------------------------------------------ はてな（4.0 S1）
+
+_HATENA_VERSION_WORD = {"hatena_entry": "HATENA_ENTRY_VERSION",
+                        "hatena_bookmark": "HATENA_BOOKMARK_VERSION"}
+_HATENA_COMPUTE = {"hatena_entry": "compute_hatena_entry_sha",
+                   "hatena_bookmark": "compute_hatena_bookmark_sha"}
+
+
+def hatena_version(kind: str) -> int:
+    """`thth-hatena-entry-1` の末尾の数（版の語が golden の鍵）。"""
+    return int(getattr(approval, _HATENA_VERSION_WORD[kind]).rsplit("-", 1)[1])
+
+
+def hatena_current(kind: str) -> dict:
+    compute_sha = getattr(approval, _HATENA_COMPUTE[kind])
+    return {case["name"]: compute_sha(**case["args"])[:PREFIX] for case in HATENA_CASES[kind]}
+
+
+def hatena_drift() -> list:
+    """はてなの見本の食い違い（`<種類>:<見本の名前>`。版の golden が無ければ `<種類>:no_golden_for_version`）。"""
+    out = []
+    for kind in sorted(HATENA_CASES):
+        golden = GOLDEN.get(kind, {}).get(hatena_version(kind))
+        if golden is None:
+            out.append(f"{kind}:no_golden_for_version")
+            continue
+        now = hatena_current(kind)
+        out += sorted(f"{kind}:{name}" for name in set(now) | set(golden)
+                      if now.get(name) != golden.get(name))
+    return out
