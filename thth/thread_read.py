@@ -38,10 +38,6 @@ CAPABILITY = "thread_read"
 DEFAULT_MAX_MESSAGES = 200
 MAX_MESSAGES_LIMIT = 1000
 
-# 人向け画面の本文プレビューの長さ（`threads_read_cli.TEXT_PREVIEW_CHARS` と
-# 同じ考え方だが、こちらは枝を読むための口なので少し長め・120 字）。
-TEXT_PREVIEW_CHARS = 120
-
 # `provenance.source`（媒体ごと・T1-2 発注書のとおり）。
 SOURCE_BY_MEDIUM = {
     "bluesky": "bluesky:getPostThread",
@@ -326,6 +322,7 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
             "is_own": is_own,
             "timestamp": m.get("timestamp"),
             "text": m.get("text"),
+            **_post_fields(m),
             "already_replied": _already_replied_for(
                 m.get("message_id"), ledger_by_reply_to=ledger_by_reply_to,
                 queue_index=queue_index, self_reply_by_parent=self_reply_by_parent,
@@ -351,6 +348,7 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
             "username": root_row.get("username"),
             "author_followers": threads_read_cli_mod.author_count(root_row, "author_followers"),
             "author_posts": threads_read_cli_mod.author_count(root_row, "author_posts"),
+            **_post_fields(root_row),
         },
         "messages": messages,
         "counts": {
@@ -375,6 +373,36 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
                if limit is not None else {}),
         },
     }
+
+
+# 媒体が返したときだけ写す投稿の欄（10/15 点検 §B-4・今は Threads の `/conversation`・
+# `/replies`・`GET /{id}`）。どれも本文ではない。**表示と `--json` に出すだけで保存しない**。
+from .adapters.threads import REPLY_EXTRA_FIELDS as POST_FIELDS  # noqa: E402
+# `hide_status` のうち「見えている」もの（資料 replies-and-conversations の値）。
+VISIBLE_HIDE_STATUS = ("NOT_HUSHED", "UNHUSHED")
+
+
+def _post_fields(row: dict) -> dict:
+    """`POST_FIELDS` のうち行に付いているものだけ（無い欄を None で埋めない）。"""
+    return {key: row[key] for key in POST_FIELDS if key in row}
+
+
+def _post_marks(row: dict) -> str:
+    """画面の見出しの後ろに付ける短い印（種類・引用・隠れ・認証）。無ければ空。"""
+    marks = []
+    kind = row.get("media_type")
+    if isinstance(kind, str) and kind and kind not in ("TEXT_POST", "TEXT"):
+        marks.append(kind)
+    if row.get("is_quote_post") is True:
+        quoted = row.get("quoted_post")
+        quoted = quoted.get("id") if isinstance(quoted, dict) else quoted
+        marks.append(f"引用 {quoted}" if quoted else "引用")
+    status = row.get("hide_status")
+    if isinstance(status, str) and status and status not in VISIBLE_HIDE_STATUS:
+        marks.append(status)
+    if row.get("is_verified") is True:
+        marks.append("認証")
+    return f" [{'・'.join(marks)}]" if marks else ""
 
 
 # ---------------------------------------------------------------- runs（規約 b）
@@ -410,29 +438,34 @@ def _replied_prefix(already_replied) -> str:
 
 
 def _render_human(result: dict) -> None:
-    """人向けの画面: 根 1 行 → 返信を `depth` の字下げ（設計「自分の泉」T1-2）。
+    """人向けの画面: 根 → 返信を `depth` の字下げ（設計「自分の泉」T1-2）。
 
-    **画面は要約しない**（LLM は `--json` を読む）。
+    **画面は要約しない**（LLM は `--json` を読む）。本文は全文を、改行を保って
+    見出しの行の下に出す（10/15 masaru「取れるものはとる」。それまでは 120 字で
+    切っていた——THTH 自身の判断で、媒体の原文が禁じていたのではない・点検 §B-2）。
+    **表示するだけで保存しない。**
     """
     root = result["root"]
     who = "自分" if root["is_own"] is True else ("他者" if root["is_own"] is False else "不明")
-    root_text = (root.get("text") or "")[:TEXT_PREVIEW_CHARS]
     followers = threads_read_cli_mod.followers_cell(root)
     who = who + ("・" + followers if followers else "")
-    print(f"根 @{root.get('username') or '?'}（{who}）id={root.get('post_id') or '?'}: {root_text}")
+    print(f"根 @{root.get('username') or '?'}（{who}）id={root.get('post_id') or '?'}"
+          f"{_post_marks(root)}:")
+    threads_read_cli_mod.print_full_text(root.get("text"), indent="    ")
     for m in result["messages"]:
         depth = m.get("depth")
         indent = "  " * depth if isinstance(depth, int) and depth > 0 else "  "
         who = "自分" if m["is_own"] is True else ("他者" if m["is_own"] is False else "不明")
         ts = m.get("timestamp") or ""
         hhmm = ts[11:16] if isinstance(ts, str) and len(ts) >= 16 else (ts or "?")
-        text = (m.get("text") or "")[:TEXT_PREVIEW_CHARS]
         prefix = _replied_prefix(m.get("already_replied"))
         followers = threads_read_cli_mod.followers_cell(m)
         who = who + ("・" + followers if followers else "")
         # 返すのに要る id を行に出す（つまずき r20261007-87365549: --json を掘っていた）。
         print(f"{indent}{prefix}{hhmm} @{m.get('username') or '?'}"
-              f"（{m.get('author_key') or '?'}・{who}）id={m.get('message_id') or '?'}: {text}")
+              f"（{m.get('author_key') or '?'}・{who}）id={m.get('message_id') or '?'}"
+              f"{_post_marks(m)}:")
+        threads_read_cli_mod.print_full_text(m.get("text"), indent=indent + "    ")
     counts = result["counts"]
     print(f"  n={counts['messages']}  参加者={counts['participants']}  "
          f"自分={counts['own']}  truncated={counts['truncated']}")

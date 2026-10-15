@@ -5,7 +5,7 @@ from pathlib import Path
 from . import accounts, bundle, collect, engagements, jst, queuefile, replies, runs, sent
 from . import read_window, lock
 from .adapters import base
-from .threads_read_cli import _one_line
+from .threads_read_cli import _one_line, print_full_text
 
 
 def _id(value):
@@ -192,6 +192,8 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
         rows.append(dict(post_id=row['post_id'], reply_id=rid,
                          author_key=_id(message.get('author_key')), username=message.get('username'),
                          preview=_one_line(message.get('text')),
+                         # 全文（10/15・点検 §B-2）。台帳に前からある本文を見せるだけで、新しく書かない。
+                         text=message.get('text') if isinstance(message.get('text'), str) else None,
                          age_hours=round((now-at).total_seconds()/3600, 3), verified='ledger_only'))
     observed = {}
     for row in data['fetches']:
@@ -241,7 +243,8 @@ def cmd(args):
     else:
         print(f"{args.account}: 台帳で未回答 {result['n_total']} 件")
         for row in result['replies']:
-            print(f"  {row['age_hours']:.1f} 時間前 @{row['username'] or '—'} {row['reply_id']} {row['preview']}")
+            print(f"  {row['age_hours']:.1f} 時間前 @{row['username'] or '—'} {row['reply_id']}")
+            print_full_text(row.get('text'), indent='    ')
             print(f"    根: {row['post_id']}（ledger_only）")
         if result['cannot_say']:print('確認できないこと: '+', '.join(result['cannot_say']))
         print(_seen_until_line(result, refreshed=refresh is not None))

@@ -93,12 +93,15 @@ def zero_or_filtered(medium) -> dict:
 
 
 # `--aggregate`（設計 3.7.0 §C3）: 語ごとの件数・期間・1 日あたり・問いの形・lexicon の
-# 分類ごとの件数だけを返す。**本文・username・author_key・post_id は返さない**。検索語は
+# 分類ごとの件数だけを返す。**本文・username・post_id は返さない**。相手の仮名（author_key）は
+# 上位 `AGGREGATE_TOP_AUTHORS` 人だけ件数と一緒に返す（10/15 点検 §B-6・`you_and_them` を
+# 引けるように・保存しない——`--keep` の行には入らない）。検索語は
 # 数える前に本文から外す。**既定は表示だけで、道具は保存しない**。3.18.0 から `--keep` を
 # 付けたときだけ、語ごとの数を日付つきで project の私有の置き場に残す（`thth/where_keep.py`・
 # 5 未満は欠測・本文も名前も id も残さない）——Meta の許可された用途「集計され、非特定化
 # された情報でアプリを改善する」の中（`docs/整理_Meta承認で…_2026-10-12.md` 決めたこと 3）。
 # 広場へ observed として貼る口は作らない（世間の層を project の外に出さない条件）。
+AGGREGATE_TOP_AUTHORS = 10
 AGGREGATE_STORAGE_NOTE = "残すなら --keep（語ごとの数だけ・5 未満は欠測・project の私有の置き場）"
 # 問いの形の静的な判定（本文を外へ出さずに数えるだけ）。
 QUESTION_MARKS = ("？", "?")
@@ -132,6 +135,8 @@ FILTER_BASIS = {
     "no_replies": "返信の付いていないものだけ: 返信の数が無いか 0（Threads は has_replies が真のものを外す）",
 }
 _KANA = re.compile(r"[ぁ-ゟ゠-ヿ]")
+# Threads の検索の `media_type`（`--media`・10/15 点検 §B-5・資料 keyword-search）。
+MEDIA_CHOICES = threads_read_cli_mod._media_choices()
 _LANG_OPERATOR = re.compile(r"(?:^|\s)-?lang:", re.IGNORECASE)
 
 
@@ -209,7 +214,11 @@ def rate_by_span(n: int, stamps: list) -> dict:
 
 
 def aggregate(rows: list, words: list, lexicon: dict | None, returned=None) -> dict:
-    """1 語ぶんの集計。**本文・username・author_key・post_id を持たない**（数と時刻だけ）。"""
+    """1 語ぶんの集計。**本文・username・post_id を持たない**（数と時刻と、上位の仮名だけ）。
+
+    `author_keys` は件数の多い順に上位 `AGGREGATE_TOP_AUTHORS` 人（同数は仮名の順）。
+    `distinct_authors` は仮名の判る行の異なり数。仮名の無い行は数えない（分母は `n`）。
+    """
     texts = [_strip_words(row.get("text") if isinstance(row.get("text"), str) else "", words)
              for row in rows]
     stamps = sorted(at for at in (jst.parse(row.get("timestamp")) for row in rows) if at is not None)
@@ -228,6 +237,12 @@ def aggregate(rows: list, words: list, lexicon: dict | None, returned=None) -> d
                                if any(needle in text.casefold() for needle in needles)),
                 "denominator": n}
     by_span = rate_by_span(n, stamps)
+    per_author: dict = {}
+    for row in rows:
+        key = row.get("author_key")
+        if isinstance(key, str) and key:
+            per_author[key] = per_author.get(key, 0) + 1
+    top = sorted(per_author.items(), key=lambda item: (-item[1], item[0]))[:AGGREGATE_TOP_AUTHORS]
     cannot_say = more_may_exist(*returned) if returned is not None else []
     return {"n": n,
             "period": {"oldest": jst.iso(stamps[0]) if stamps else None,
@@ -242,6 +257,8 @@ def aggregate(rows: list, words: list, lexicon: dict | None, returned=None) -> d
                                "contains_question_mark": contains,
                                "denominator": n, "rules": list(QUESTION_RULES)},
             "lexicon": categories,
+            "distinct_authors": len(per_author),
+            "author_keys": [{"author_key": key, "n": count} for key, count in top],
             "search_words_removed": True}
 
 
@@ -275,6 +292,15 @@ class WhereError(Exception):
 
 def _reject(message: str) -> None:
     raise WhereError(message)
+
+
+def _unix(at):
+    """日時を Threads の検索の `since`／`until`（Unix 秒）に。資料の下限より古ければ None。"""
+    if at is None:
+        return None
+    value = int(at.timestamp())
+    from .adapters.threads import ThreadsAdapter
+    return value if value >= ThreadsAdapter.SEARCH_SINCE_FLOOR else None
 
 
 def _posts_with_preview(rows: list, replied) -> list:
@@ -329,7 +355,8 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                   limit: int, now, since=None, exclude_engaged=False, max_per_author=None,
                   also=None, aggregate_mode=False,
                   lexicon=None, suggest=False, tag_mode=False,
-                  author=None, filters=()) -> tuple[dict | None, Exception | str | None]:
+                  author=None, filters=(), until=None,
+                  media_type=None) -> tuple[dict | None, Exception | str | None]:
     """1 account 分の節。戻りは `(node, 理由)`——どちらか一方だけが非 `None`。
     台帳が読めない・token が無い・媒体に `keyword_search` が無いときは
     `node` が `None`（`by_account` に**入れない**・規約 (d)）。
@@ -344,6 +371,7 @@ def _account_node(account_name: str, words: list, *, search_type: str,
     """
     try:
         floor = read_window.cutoff(since, now=now)
+        ceiling = read_window.cutoff(until, now=now)
     except ValueError as exc:
         _reject(str(exc))
     if max_per_author is not None and (isinstance(max_per_author, bool) or not isinstance(max_per_author, int) or max_per_author < 1):
@@ -371,6 +399,10 @@ def _account_node(account_name: str, words: list, *, search_type: str,
             "mastodon": "--tag は要りません（語ごとのタグの観測 by_tag を既に返します）。--author は未対応",
         }.get(media, "未対応")
         return None, f"{account_name}: --tag・--author は Threads の検索の引数です。{hint}"
+    # `--until`・`--media` も Threads の keyword_search の引数（10/15 点検 §B-5）。ほかの媒体では
+    # `--tag` と同じく、黙って普通の検索に落とさずこの account では使えないと言う。
+    if (until is not None or media_type) and media != "threads":
+        return None, f"{account_name}: --until・--media は Threads の検索の引数です（{media} では未対応）"
     token = accounts_mod.load_token(account_cfg)
     adapter_cls = adapters_mod.adapter_class(media)
     if not adapter_cls.has_token(token):
@@ -432,6 +464,14 @@ def _account_node(account_name: str, words: list, *, search_type: str,
             if floor is not None and (media == 'bluesky' or paid):kwargs['since'] = jst.iso(floor)
             if tag_mode:kwargs['search_mode'] = 'TAG'
             if author:kwargs['author_username'] = author
+            if media == 'threads':
+                # 期間と種類は API に渡す（10/15 点検 §B-5）。手元の `--since` の絞り込みも残す
+                # （資料の下限 1688540400 より古い `--since` は渡さず手元だけで絞る）。
+                floor_at = _unix(floor)
+                if floor_at is not None:kwargs['since'] = floor_at
+                ceiling_at = _unix(ceiling)
+                if ceiling_at is not None:kwargs['until'] = ceiling_at
+                if media_type:kwargs['media_type'] = media_type.upper()
             query = x_query(word, "ja" in filters) if media == "x" else word
             rows = adapter.keyword_search(query, **kwargs)
         except adapter_base.PermissionMissing as e:
@@ -496,7 +536,7 @@ def _account_node(account_name: str, words: list, *, search_type: str,
                 key = row.get("message_id") or row.get("post_id") or f"{word}#{index}"
                 matched_rows.setdefault(str(key), row)
         if aggregate_mode:
-            # 集計だけ（設計 3.7.0 §C3）。本文・username・author_key・post_id を返さない。
+            # 集計だけ（設計 3.7.0 §C3）。本文・username・post_id を返さない（仮名は上位だけ・§B-6）。
             # 上限の印は媒体が返した件数（手元の絞り込みの前）と要求数で見る（§C）。
             by_word[word] = {"aggregate": aggregate(rows, words, lexicon,
                                                     returned=(raw_rows, limit)),
@@ -555,8 +595,16 @@ def _account_node(account_name: str, words: list, *, search_type: str,
         extra["x_read_cost"] = cost()
 
     if aggregate_mode:
-        # 相手の仮名（author_key）も返さない——you_and_them は作らない。
+        # 上位の仮名（10/15 点検 §B-6）について「前に会ったか」も引く（保存しない）。
+        top_keys = {item["author_key"] for entry in by_word.values()
+                    for item in entry["aggregate"]["author_keys"]}
+        summary = engagements_mod.author_summary(
+            top_keys, eng_rows, reaction_for=after_cli_mod.reaction_lookup(account_name))
+        you_and_them = {row["author_key"]: {"met": row["met"], "last": row["last"],
+                                            "last_reaction": row["last_reaction"]}
+                        for row in summary}
         return {"medium": media, "mode": "aggregate", "by_word": by_word, "by_tag": [],
+                "you_and_them": you_and_them,
                 "cannot_say": node_cannot_say, **extra}, None
 
     # `last_reaction`（T3-2・設計 §2.3「要約」= met・last・last_reaction の
@@ -652,7 +700,7 @@ def answer(*, account_name: str | None = None, project: str | None = None,
           now=None, since=None, exclude_engaged=False, max_per_author=None,
           also=None, aggregate_mode=False, lexicon=None, suggest=False,
           tag=False, author=None, keep=False, ja=False, question=False,
-          no_replies=False) -> dict:
+          no_replies=False, until=None, media=None) -> dict:
     """`where_to_appear` の答え（設計「自分の泉」§2.3・§2.6）。**読むだけ。**
 
     `tag`（Threads の `search_mode=TAG`）と `author`（`author_username`）は API の引数を
@@ -692,9 +740,17 @@ def answer(*, account_name: str | None = None, project: str | None = None,
 
     now = now if now is not None else jst.now_jst()
     try:
-        read_window.cutoff(since, now=now)
+        floor = read_window.cutoff(since, now=now)
+        ceiling = read_window.cutoff(until, now=now)
     except ValueError as exc:
         _reject(str(exc))
+    if floor is not None and ceiling is not None and floor >= ceiling:
+        _reject("--since は --until より前です")
+    if media is not None and media not in MEDIA_CHOICES:
+        _reject(f"media は {' / '.join(MEDIA_CHOICES)} のどれかです: {media!r}")
+    if keep and (until is not None or media is not None):
+        # 残す数の意味（語ごとの件数）が変わるので、`--keep` とは一緒にしない。
+        _reject("--keep は --until・--media と一緒に使えません（残す数の意味が変わるため）")
     if max_per_author is not None and (type(max_per_author) is not int or max_per_author < 1):
         _reject('max_per_author は 1 以上の整数です')
     also = _clean_also(also)
@@ -720,7 +776,7 @@ def answer(*, account_name: str | None = None, project: str | None = None,
                                      exclude_engaged=exclude_engaged, max_per_author=max_per_author,
                                      also=also, aggregate_mode=aggregate_mode, lexicon=lexicon,
                                      suggest=suggest, tag_mode=tag, author=author,
-                                     filters=filters)
+                                     filters=filters, until=until, media_type=media)
         if node is None:
             if isinstance(reason, accounts_mod.AccountError) and project is None:
                 # **単一 account: そのまま投げ直す**（T5-2・`who_cli.answer()`
@@ -754,6 +810,9 @@ def answer(*, account_name: str | None = None, project: str | None = None,
     extra = {"also": also} if also else {}
     if filters:
         extra["filters"] = {name: FILTER_BASIS[name] for name in filters}
+    if until is not None or media is not None:
+        extra["threads_search"] = {"until": jst.iso(ceiling) if ceiling else None,
+                                   "media_type": media.upper() if media else None}
     if suggest:
         from . import where_suggest
         extra.update({"suggest": True, "suggest_storage": "display_only",
@@ -847,7 +906,7 @@ def _render_human(result: dict) -> None:
 
 
 def _render_aggregate(result: dict) -> None:
-    """`--aggregate` の画面（数と時刻だけ・本文も名前も出さない）。"""
+    """`--aggregate` の画面（数と時刻と上位の仮名だけ・本文も名前も出さない）。"""
     for name, node in result["by_account"].items():
         print(f"\n[{name}]（{node['medium']}）集計だけ")
         for word, entry in node["by_word"].items():
@@ -867,6 +926,13 @@ def _render_aggregate(result: dict) -> None:
             print(f"    問いの形: 「？」で終わる {q['ends_with_question_mark']}/{q['denominator']}"
                   f"・「？」を含む {q['contains_question_mark']}/{q['denominator']}"
                   "（検索語を外して数えた）")
+            if agg.get("author_keys"):
+                met = node.get("you_and_them") or {}
+                cells = []
+                for item in agg["author_keys"]:
+                    seen = "・会った" if (met.get(item["author_key"]) or {}).get("met") else ""
+                    cells.append(f"{item['author_key']}（{item['n']}{seen}）")
+                print(f"    相手の仮名（上位・異なり {agg.get('distinct_authors')}）: " + "・".join(cells))
             for category, row in (agg["lexicon"] or {}).items():
                 print(f"    分類「{category}」: {row['n_posts']}/{row['denominator']} 件")
             if entry.get(ZERO_OR_FILTERED):
@@ -977,7 +1043,11 @@ def register(sub) -> None:
                    help=f"1 account・1 語あたりの上限（既定 {DEFAULT_LIMIT}・X は既定 10 で最大 25）")
     p.add_argument("--json", action="store_true")
     p.add_argument("--word", action="append", default=[], help="検索語（繰り返し指定できます）")
-    p.add_argument('--since', default=None, help='検索期間（7d/1h/ISO）')
+    p.add_argument('--since', default=None, help='検索期間（7d/1h/ISO）。Threads は API にも渡す')
+    p.add_argument('--until', default=None,
+                   help='ここまで（7d/1h/ISO・Threads だけ・API の until に渡す）')
+    p.add_argument('--media', default=None, choices=MEDIA_CHOICES,
+                   help='投稿の種類で絞る（Threads だけ・API の media_type に渡す）')
     p.add_argument('--exclude-engaged', action='store_true')
     p.add_argument('--max-per-author', type=int, default=None)
     p.add_argument("--also", action="append", default=None, metavar="語",
@@ -1055,7 +1125,9 @@ def cmd_where(args) -> int:
                         keep=bool(getattr(args, "keep", False)),
                         ja=bool(getattr(args, "ja", False)),
                         question=bool(getattr(args, "question", False)),
-                        no_replies=bool(getattr(args, "no_replies", False)))
+                        no_replies=bool(getattr(args, "no_replies", False)),
+                        until=getattr(args, "until", None),
+                        media=getattr(args, "media", None))
     except accounts_mod.AccountError as e:
         # **単一 account が読めなければ loud reject**（T5-2・`who` と揃える）。
         # `--json` は人向けの文言でなく `{"error", "account"}` を出す——

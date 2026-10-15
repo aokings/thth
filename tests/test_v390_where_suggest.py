@@ -44,6 +44,9 @@ SECRETS = ([row["text"] for row in COFFEE + TEA] + [row["message_id"] for row in
            + [row["author_key"] for row in COFFEE + TEA]
            + [row["username"] for row in COFFEE + TEA] + ["USERNAMEB".casefold(), "POSTID",
                                                           "x.example"])
+# `--aggregate` は上位の仮名を返す（10/15 点検 §B-6）ので、集計の出力の確かめは仮名を除いて行う。
+# 語の候補（suggest）には仮名も入らない（下の 1 つめの試験はそのまま SECRETS で見る）。
+AGGREGATE_SECRETS = [s for s in SECRETS if s not in {row["author_key"] for row in COFFEE + TEA}]
 
 
 @pytest.fixture
@@ -108,14 +111,14 @@ def test_aggregateとsuggestの画面にも本文や名前を出さない(accoun
     assert cli.main(["where", "one", "珈琲", "紅茶", "--also", "豆", "--also", "ハンドドリップ",
                      "--aggregate", "--suggest", "--json"]) == 0
     raw = capsys.readouterr().out
-    for secret in SECRETS:
+    for secret in AGGREGATE_SECRETS:
         assert secret not in raw, secret
     result = json.loads(raw)
     assert result["suggest"] is True and result["suggest_storage"] == "display_only"
     assert cli.main(["where", "one", "珈琲", "紅茶", "--also", "豆", "--also", "ハンドドリップ",
                      "--aggregate", "--suggest"]) == 0
     out = capsys.readouterr().out
-    for secret in SECRETS:
+    for secret in AGGREGATE_SECRETS:
         assert secret not in out, secret
     assert "語の候補（その場の人が書いた語）" in out and "深煎  2/3 投稿" in out
     assert "also の当たり率（高い順）" in out and "also に合った投稿が 0 件" in out

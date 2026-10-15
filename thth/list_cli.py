@@ -17,8 +17,8 @@
 （`GET /2/users/by/username`・1 回 0.010 USD）。
 
 読み取り（show）は `thth where`・`thth thread` と同じ有償の読み取り（Posts: Read の台帳・
-1 日の本数 `x_daily_reads`・月の X 予算）。返す形は where の行と同じ（本文は 1 行の
-`preview` だけ・**返すだけで保存しない**）。runs には本文も名前も id も書かない（件数だけ）。
+1 日の本数 `x_daily_reads`・月の X 予算）。返す形は where の行と同じ（本文は全文の
+`text` と 1 行の `preview`・**返すだけで保存しない**・10/15 から全文）。runs には本文も名前も id も書かない（件数だけ）。
 """
 from __future__ import annotations
 
@@ -332,7 +332,8 @@ def _show(args) -> int:
     for post in posts:
         mark = threads_read_cli_mod._replied_cell(post["replied"])
         print(f"  {mark}{post['timestamp'] or '—'}  @{post['author'] or '—'}"
-              f"（{post['author_key'] or '—'}）  {post['preview']}")
+              f"（{post['author_key'] or '—'}）")
+        threads_read_cli_mod.print_full_text(post.get("text"), indent="    ")
         if post["permalink"]:
             print(f"    {post['permalink']}")
         print(f"    post_id: {post['post_id']}")

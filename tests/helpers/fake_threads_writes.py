@@ -95,7 +95,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 self._respond_json(200, {"data": []})
             else:
                 self._respond_json(200, {"data": [
-                    {"id": "101", "name": "渋谷駅", "city": "渋谷区", "country": "JP"},
+                    {"id": "101", "name": "渋谷駅", "city": "渋谷区", "country": "JP",
+                     "latitude": 35.658, "longitude": 139.7016, "postal_code": "150-0043"},
                     {"id": "102", "name": "渋谷駅前", "city": "渋谷区", "country": "JP"},
                     {"id": "103", "name": "渋谷ヒカリエ", "city": "渋谷区", "country": "JP"},
                     {"id": "104", "name": "渋谷スクランブル", "city": "渋谷区", "country": "JP"},

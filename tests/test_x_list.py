@@ -282,9 +282,13 @@ def test_show_limit_out_of_range(x_account, fake, capsys, limit):
 
 
 def test_show_human_output(x_account, fake, capsys):
-    fake["routes"][("GET", "/2/lists/99/tweets")] = _tweets(1)
+    body = _tweets(1)
+    # 10/15（点検 §B-2）: 画面も本文の全文（改行を保つ）。以前は 1 行・先頭 60 字だった。
+    body["data"][0]["text"] = "長" * 80 + "の末尾\n二行目"
+    fake["routes"][("GET", "/2/lists/99/tweets")] = body
     rc, _payload, out = run(capsys, "show", list_id="99", limit=None, json=False)
     assert rc == 0 and "@alice" in out.out and "X の読み取り" in out.out
+    assert "長" * 80 + "の末尾" in out.out and "\n    二行目" in out.out
     assert fake["calls"][0]["query"]["max_results"] == 10
 
 

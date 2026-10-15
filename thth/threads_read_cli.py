@@ -110,6 +110,12 @@ def register(sub) -> None:
         register_topics_flags(p_topics)
 
 
+def _media_choices() -> tuple:
+    """`--media` の選択肢（Threads の検索の `media_type` を小文字で・正本は adapter）。"""
+    from .adapters.threads import ThreadsAdapter
+    return tuple(kind.lower() for kind in ThreadsAdapter.SEARCH_MEDIA_TYPES)
+
+
 def register_topics_flags(p_topics) -> None:
     """`topics` の既存 parser に `--search`/`--recent` を足す（他の flag は触らない）。"""
     p_topics.add_argument(
@@ -121,6 +127,16 @@ def register_topics_flags(p_topics) -> None:
     p_topics.add_argument(
         "--recent", action="store_true",
         help="--search と併用: TOP でなく RECENT（新しい順）で検索する")
+    # 10/15（点検 §B-5）: Threads の keyword_search の `since`／`until`／`media_type` を渡す。
+    p_topics.add_argument(
+        "--since", default=None, metavar="期間",
+        help="--search と併用（Threads だけ）: ここから（7d・24h・ISO）。API の since に渡す")
+    p_topics.add_argument(
+        "--until", default=None, metavar="期間",
+        help="--search と併用（Threads だけ）: ここまで（7d・24h・ISO）。API の until に渡す")
+    p_topics.add_argument(
+        "--media", default=None, choices=_media_choices(),
+        help="--search と併用（Threads だけ）: 投稿の種類で絞る。API の media_type に渡す")
 
 
 # ---------------------------------------------------------------- 共通
@@ -499,9 +515,14 @@ def _pct(ratio) -> str:
     return "—" if ratio is None else f"{ratio * 100:.0f}%"
 
 
-def search_call(adapter, account: str, q: str, *, search_type: str, limit: int):
-    """`--search` の API 呼び出し（CLI とサーバの読む口が共有）。本文は戻り値にだけ持つ。"""
-    rows = adapter.keyword_search(q, search_type=search_type, limit=limit)
+def search_call(adapter, account: str, q: str, *, search_type: str, limit: int,
+                narrow: dict | None = None):
+    """`--search` の API 呼び出し（CLI とサーバの読む口が共有）。本文は戻り値にだけ持つ。
+
+    `narrow` は Threads の検索の `since`／`until`／`media_type`（`search_narrowing()` が作る・
+    10/15 点検 §B-5）。None なら要求は今までと同じ。
+    """
+    rows = adapter.keyword_search(q, search_type=search_type, limit=limit, **(narrow or {}))
     tag_material = None
     tag_reason = None
     cfg = accounts_mod.load_account(account)
@@ -541,6 +562,31 @@ def search_json(result, account: str, q: str, *, search_type: str, limit: int) -
     return material
 
 
+def search_narrowing(*, since=None, until=None, media=None, now=None) -> dict:
+    """`--since`／`--until`／`--media` を Threads の検索の引数に（Unix 秒・大文字）。
+
+    読めない期間・前後の逆転・資料の下限より古い `since` は `ValueError`（叩く前に断る）。
+    """
+    from . import jst, read_window
+    from .adapters.threads import ThreadsAdapter
+    out = {}
+    now = now if now is not None else jst.now_jst()
+    floor = read_window.cutoff(since, now=now)
+    ceiling = read_window.cutoff(until, now=now)
+    if floor is not None and ceiling is not None and floor >= ceiling:
+        raise ValueError("--since は --until より前です")
+    for name, at in (("since", floor), ("until", ceiling)):
+        if at is None:
+            continue
+        value = int(at.timestamp())
+        if value < ThreadsAdapter.SEARCH_SINCE_FLOOR:
+            raise ValueError(f"--{name} が古すぎます（Threads の検索は 2023-07-05 以降）")
+        out[name] = value
+    if media is not None:
+        out["media_type"] = str(media).upper()
+    return out
+
+
 def cmd_topics_search(args) -> int:
     """`thth topics <account> --search <語> [--recent] [--json]`。"""
     q = (args.search or "").strip()
@@ -555,13 +601,34 @@ def cmd_topics_search(args) -> int:
     search_type = "RECENT" if getattr(args, "recent", False) else "TOP"
     limit = getattr(args, "limit", 25) or 25
     as_json = bool(getattr(args, "json", False))
+    since, until, media = (getattr(args, "since", None), getattr(args, "until", None),
+                           getattr(args, "media", None))
+    narrow = None
+    if since is not None or until is not None or media is not None:
+        try:
+            cfg = accounts_mod.load_account(account)
+        except accounts_mod.AccountError as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        if cfg.get("media") != "threads":
+            # 黙って普通の検索に落とさない（`where --until`・`--media` と同じ）。
+            print(f"{account}: --since・--until・--media は Threads の検索の引数です"
+                  f"（{cfg.get('media')} では未対応）", file=sys.stderr)
+            return 2
+        try:
+            narrow = search_narrowing(since=since, until=until, media=media)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 2
 
     def call(adapter):
-        return search_call(adapter, account, q, search_type=search_type, limit=limit)
+        return search_call(adapter, account, q, search_type=search_type, limit=limit,
+                           narrow=narrow)
 
     def render(result):
-        rows = result[0]
         material = search_json(result, account, q, search_type=search_type, limit=limit)
+        if narrow:
+            material["narrow"] = dict(narrow)
         if as_json:
             print(json.dumps(material, ensure_ascii=False, indent=2))
             return 0
@@ -709,16 +776,21 @@ def cmd_mentions(args) -> int:
 
 
 def show_mentions(account: str, rows: list) -> int:
-    """`thth mentions` の人向けの表示（手元の道と遠くの道が共有・`--json` の `mentions` を受ける）。"""
+    """`thth mentions` の人向けの表示（手元の道と遠くの道が共有・`--json` の `mentions` を受ける）。
+
+    本文は全文を、改行を保って出す（10/15。それまでは先頭 60 字・点検 §B-2）。
+    **表示するだけで台帳には書かない。** `--json` の `text` は前から全文。
+    """
     print(f"{account}  言及 {len(rows)} 件（全頁・読むだけ。"
           f"SNS 台帳には追記しません）")
     for r in rows:
         stamp = r.get("timestamp") or "—"
         who = r.get("username") or "—"
         mid = r.get("message_id") or "—"
-        print(f"  {stamp}  @{_pad(who, 16)} {mid}  {_one_line(r.get('text'))}")
+        print(f"  {stamp}  @{_pad(who, 16)} {mid}")
         if r.get("permalink"):
             print(f"      {r['permalink']}")
+        print_full_text(r.get("text"), indent="      ")
     if not rows:
         print("  （取得できた言及は 0 件です）")
     else:

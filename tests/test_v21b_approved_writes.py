@@ -213,12 +213,15 @@ def test_location_searchは5件まで_承認前の注記は出さない(isolated
         point_at(base_url)
         rc = retract_cli.cmd_location(_ns(action="search", account=ACCOUNT, query="渋谷駅"))
         assert base_url.handler_cls.locations[0]["q"] == "渋谷駅"
+        assert base_url.handler_cls.locations[0]["fields"] == (
+            "id,name,address,city,country,latitude,longitude,postal_code")
         assert base_url.handler_cls.deletes == []
     out = capsys.readouterr().out
     assert rc == 0
     assert out.count("  id ") == 5, out
     assert "6 件目" not in out
     assert "id 101" in out and "渋谷駅" in out
+    assert "150-0043・35.658,139.7016" in out
     # 3.11.0: threads_location_tagging は審査で承認済み。承認前の注記は出さない。
     assert "Menlo Park" not in out and "標準アクセス" not in out
 
@@ -231,8 +234,13 @@ def test_location_searchのjson(isolated_account_factory, tmp_path, point_at, ca
                                           json=True))
     payload = json.loads(capsys.readouterr().out)
     assert rc == 0 and len(payload["locations"]) == 5
+    # 10/15（点検 §B-8）: 緯度・経度・郵便番号も取る。付いていない行は None。
     assert payload["locations"][0] == {"id": "101", "name": "渋谷駅", "address": None,
-                                       "city": "渋谷区", "country": "JP"}
+                                       "city": "渋谷区", "country": "JP",
+                                       "latitude": 35.658, "longitude": 139.7016,
+                                       "postal_code": "150-0043"}
+    assert payload["locations"][1]["latitude"] is None
+    assert payload["locations"][1]["postal_code"] is None
     assert "note" not in payload
 
 
