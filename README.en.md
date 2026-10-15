@@ -128,6 +128,8 @@ All subcommands `thth --help` lists, one line each:
 - `doctor` — read-only check of what a token can do
 - `observe` — one page for the start of a session: unanswered replies and mentions, yesterday's posts, the topics you watch, and next steps
 - `morning` — alias of `observe`
+- `events` — what happened, in time order (posts, retractions, replies and mentions received, stopped accounts, pending publishes, budget refusals); read-only, versioned JSON (`thth.events/1`)
+- `summary` — the numbers per account (posts and reactions in 24h/7d, unanswered replies, followers and day-over-day change, whether it is stopped); read-only (`thth.summary/1`)
 - `after` — how the conversations you joined were received
 - `threads` — thread shape: branches, depth, participants, time to first reply
 - `ask` — `before-you-post`: what happened last time with this word, hour and shape (local ledgers only)

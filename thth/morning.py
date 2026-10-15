@@ -12,6 +12,10 @@
 `where` の実行記録も書かない）。`--counts-only` は出力から他人の情報と本文を落とし、
 数と状態だけを返す（`_apply_counts_only()`）。
 
+4.0 の柱 1（計画 §3.3・10/15）: JSON に `schema: "thth.observe/1"` と、節を名前で引く
+`sections_by_name`（`tool`・`unanswered`・`yesterday`・`world`・`today`・`next_steps`）を
+足した。並びの配列 `sections` は 3.x の間そのまま残し、4.0 で外す（hub と h2d は名前の方へ）。
+
 芯（設計 3.1.0 §0）: **「昨日から何があって、今日なにをすればよいか」を、道具が
 事実だけで 1 枚にする。** 空欄を推測で埋めない。本文は作らない——作るのは人と
 LLM の会話の側で、ここは材料を並べて終わる。
@@ -68,6 +72,12 @@ MARK_BY = "morning"
 OBSERVE_MAX_DAYS = 7
 # 呼び名（`invoked_as`）。どちらも同じ 1 枚（設計 3.3.0 §F）。
 INVOKED_AS = ("observe", "morning")
+
+# 出力の約束の版（4.0 の柱 1・計画 §3.3）。h2d の `h2d.status/1` と同じ流儀。
+# 読み手（hub・h2d）は `sections_by_name.<名前>` で節を引く。名前は SECTION_NAMES の 6 つで、
+# 版を上げない限り増やしはしても消さない・意味を変えない。
+OBSERVE_SCHEMA = "thth.observe/1"
+SECTION_NAMES = ("tool", "unanswered", "yesterday", "world", "today", "next_steps")
 
 SECTION_TITLES = (("tool", "道具"), ("unanswered", "返していないもの"),
                   ("yesterday", "昨日の自分"), ("world", "世間"),
@@ -1201,9 +1211,17 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
     if counts_only:
         _apply_counts_only(sections)
 
-    return {"schema_version": 1, "report_type": "observe", "invoked_as": invoked_as,
+    # 節を名前で引く形（4.0 の柱 1）。中身は `sections` と同じもの（同じ dict を指す）。
+    # **`sections`（並びの配列）は 3.x の間は形も順もそのまま残す**——hub と h2d が
+    # `sections[1]`・`sections[4]` の位置で読んでいるため。4.0 で外す予定で、読み手には
+    # `sections_by_name.<名前>` へ移ってもらう（試験 `test_v40_contract_json.py` が両方を縛る）。
+    sections_by_name = {section["section"]: section for section in sections}
+
+    return {"schema": OBSERVE_SCHEMA,
+            "schema_version": 1, "report_type": "observe", "invoked_as": invoked_as,
             "generated_at": jst.iso(now), "target": target, "target_kind": kind,
-            "accounts": names, "sections": sections, "calls": calls,
+            "accounts": names, "sections": sections,
+            "sections_by_name": sections_by_name, "calls": calls,
             "counts_only": bool(counts_only),
             "marked": sorted(marked), "marked_by": invoked_as if marked else None,
             "cannot_say": sorted(set(top_cannot_say)),

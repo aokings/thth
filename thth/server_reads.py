@@ -30,7 +30,8 @@ from .report_service import ReportContext, ReportServiceError
 
 OPERATIONS = frozenset(('posts', 'replies', 'measured', 'collect', 'mentions',
                         'topics_search', 'profile', 'location_search',
-                        'thread_read', 'where_to_appear', 'who_is_this', 'schedule_list'))
+                        'thread_read', 'where_to_appear', 'who_is_this', 'schedule_list',
+                        'events', 'summary'))
 # 断りの符丁（`server_writes.SAFE_ERRORS` に足す）。
 REASONS = frozenset(('collect_too_soon', 'upstream_unavailable', 'read_unavailable'))
 # `upstream_unavailable` に添える静的な理由（媒体の返した文を写せないとき）。
@@ -57,6 +58,9 @@ _FIELDS = {
                          'no_replies'), ()),
     'who_is_this': (('author_key', 'username', 'profile'), ()),
     'schedule_list': (('days',), ()),
+    # 出来事の流れと数の要約（4.0 の柱 1・読むだけ・記録から並べるだけで媒体は呼ばない）。
+    'events': (('since', 'after', 'limit'), ()),
+    'summary': ((), ()),
 }
 # 欄の型（範囲と中身の検査は CLI の関数が言う。ここは型だけ）。
 _TYPES = {
@@ -64,7 +68,7 @@ _TYPES = {
     'recent': bool, 'max_messages': int, 'words': list, 'exclude_engaged': bool, 'max_per_author': int,
     'also': list, 'aggregate': bool, 'lexicon': dict, 'suggest': bool, 'tag': bool, 'author': str,
     'keep': bool, 'ja': bool, 'question': bool, 'no_replies': bool, 'author_key': str, 'profile': bool,
-    'days': int, 'until': str, 'media': str,
+    'days': int, 'until': str, 'media': str, 'after': str,
 }
 # 答えの大きさの目安（JSON の UTF-16 の長さ）。thth.me の 1 件の上限（128 KB）より少し小さく取る。
 RESULT_BUDGET = 120_000
@@ -125,6 +129,8 @@ def _validate(request):
     for name in ('query', 'username', 'since', 'until', 'media', 'author', 'author_key', 'post_id'):
         if name in request and len(request[name]) > 200:
             error('invalid_request')
+    if 'after' in request and len(request['after']) > 20_000:
+        error('invalid_request')   # カーソルは覚えた event_id の分だけ長い（上限 500 件）
 
 
 def _scope(context, account):
@@ -459,7 +465,26 @@ def _schedule_list(account, request, cfg):
     return {'account': account, 'schedule': report.schedule(account, days=days)}
 
 
+def _events(account, request, cfg):
+    from . import events_cli
+    try:
+        # 範囲は鍵の口座 1 つだけ（他の口座の記録は読まない）。
+        return events_cli.build(account, since=request.get('since'), after=request.get('after'),
+                                allowed_names=(account,), limit=_limit(request))
+    except events_cli.EventsError as exc:
+        error('scope_unavailable' if str(exc) == 'target_unknown' else 'invalid_options')
+
+
+def _summary(account, request, cfg):
+    from . import summary_cli
+    try:
+        return summary_cli.build(account, allowed_names=(account,))
+    except summary_cli.SummaryError:
+        error('scope_unavailable')
+
+
 _HANDLERS = {
+    'events': _events, 'summary': _summary,
     'posts': _posts, 'replies': _replies, 'measured': _measured, 'collect': _collect,
     'mentions': _mentions, 'topics_search': _topics_search, 'profile': _profile,
     'location_search': _location_search, 'thread_read': _thread_read, 'where_to_appear': _where,

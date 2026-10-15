@@ -114,7 +114,9 @@ def test_mcp_stdioでtools_listとtools_callが通る(isolated_account):
                           "thth_repost", "thth_like",
                           # 2026-10-15 に X の読み取り 3 本と doctor を足した（点検 B-22・B-23・読むだけ・
                           # X は月の予算の中・list の書き込みは出さない）。
-                          "thth_trends", "thth_counts", "thth_community_search", "thth_doctor"}
+                          "thth_trends", "thth_counts", "thth_community_search", "thth_doctor",
+                          # 2026-10-15 に出来事の流れと数の要約を足した（4.0 の柱 1・読むだけ）。
+                          "thth_events", "thth_summary"}
     # 承認・投稿・認可の副作用のあるものは出ていない。
     assert not (tool_names & {"thth_approve", "thth_throw", "thth_token",
                                "thth_auth", "thth_refresh", "thth_revoke",

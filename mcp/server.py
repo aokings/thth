@@ -373,6 +373,40 @@ TOOLS = [
         "description": MAP_SHOW_DESCRIPTION,
         "inputSchema": MAP_SHOW_SCHEMA,
     },
+    {
+        # 出来事の流れ（4.0 の柱 1）。**読むだけ**——THTH の記録から並べ、媒体は呼ばない。
+        "name": "thth_events",
+        "description": (
+            "前回から何が起きたかを時刻順に（公開・取り下げ・届いた返信と言及・止まった口座・"
+            "公開の結果待ち・予算切れ）。読むだけ。他人の本文は入れない（本文は thread_read で読む）"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "account": {"type": "string", "description": "account 名（project の代わり）"},
+                "project": {"type": "string", "description": "この project の account 全部（account の代わり）"},
+                "since": {"type": "string", "description": "窓の始まり（24h・7d・ISO 時刻・既定 24h）"},
+                "after": {"type": "string",
+                          "description": "前の答えの next_cursor（か event_id）から続きを読む（since とは一緒に使わない）"},
+                "limit": {"type": "integer", "description": "何件まで（since は新しい方・after は古い方から）"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        # 数の要約（4.0 の柱 1）。**読むだけ**。
+        "name": "thth_summary",
+        "description": (
+            "口座の数の要約（直近 24h・7d の公開数と反応の和・返していない返信の数・フォロワーの"
+            "最新と前日差・止まっているか）。読むだけ。口座をまたいで足さない"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "account": {"type": "string", "description": "account 名（project の代わり）"},
+                "project": {"type": "string", "description": "この project の account 全部（account の代わり）"},
+            },
+            "additionalProperties": False,
+        },
+    },
 ]
 
 # 反応（設計 3.15.0 §2.3）。**手元の台帳の CLI（`thth repost|unrepost|like|unlike`）を
@@ -591,7 +625,8 @@ def validate_arguments(name: str, arguments) -> dict:
                         f"CLI の旗と区別できないので受け取りません")
         if key == "file":
             check_file_argument(name, value)
-    if name in ("operations_handoff", "analytics_report", "after_you_posted", "where_to_appear", "who_is_this") \
+    if name in ("operations_handoff", "analytics_report", "after_you_posted", "where_to_appear", "who_is_this",
+                "thth_events", "thth_summary") \
             and not arguments.get("account") \
             and not arguments.get("project"):
         # **`account` か `project` のどちらか必須**（`required` は AND の意味しか
@@ -1046,7 +1081,7 @@ def _remote_tool(tool):
 
 REMOTE_TOOLS = [_remote_tool(tool) for tool in SERVER_TOOLS if tool["name"] in REMOTE_CLI]
 # 遠くの道でも手元と同じ名前で動く TOOLS（CLI が道を決める・10/15 点検 B-17）。
-REMOTE_LOCAL_TOOLS = ("thread_read", "where_to_appear", "who_is_this")
+REMOTE_LOCAL_TOOLS = ("thread_read", "where_to_appear", "who_is_this", "thth_events", "thth_summary")
 # 位置引数に置く欄（`-` で始まる値は CLI の旗と区別できないので断る）。
 _POSITIONAL = ("account", "post_id", "username", "query", "key", "value")
 
@@ -1505,6 +1540,18 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
+    elif name in ("thth_events", "thth_summary"):
+        # **`thth_observe` と同じ型**: CLI（`thth events`・`thth summary`）を `--json` で呼ぶだけ。
+        args = [name[len("thth_"):], arguments.get("project") or arguments["account"]]
+        if name == "thth_events":
+            for key in ("since", "after"):
+                if arguments.get(key) is not None:
+                    args += ["--" + key, arguments[key]]
+            if arguments.get("limit") is not None:
+                args += ["--limit", str(arguments["limit"])]
+        args.append("--json")
+        proc = run_cli(args)
+        text = proc.stdout
     elif name == "thth_map_show":
         # **`where_to_appear` と同じ型**: CLI（`thth map show`）を `--json` で呼ぶだけ。
         args = ["map", "show", arguments["project"]]
@@ -1571,7 +1618,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         is_error = proc.returncode != 0
     elif name.startswith("thth_topic_") or name in (
             "before_you_post", "after_you_posted", "analytics_report", "operations_handoff", "study_report", "thread_read", "where_to_appear",
-            "who_is_this", "thth_morning", "thth_observe", "thth_map_show"):
+            "who_is_this", "thth_morning", "thth_observe", "thth_map_show", "thth_events", "thth_summary"):
         # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）
         # とは意味が違う——こちらは stale_context・不正な候補比較で、
         # **そのまま使ってはいけない**応答。既存の扱いは変えない。
