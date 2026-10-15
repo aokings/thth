@@ -999,7 +999,8 @@ def _flag(flag, value):
 
 # 道具の名前 → (argv を組む関数, 標準入力に渡す欄)。道具の名前と引数は SERVER_TOOLS の写し。
 REMOTE_CLI = {
-    "thth_send_request": (lambda a: ["send", a["account"], "--json", *_opt("--topic", a.get("topic")),
+    # MCP の送信は呼べば出す（今までどおり）。CLI の遠くの道は --production が無ければ出さないので付ける（10/15）。
+    "thth_send_request": (lambda a: ["send", a["account"], "--production", "--json", *_opt("--topic", a.get("topic")),
                                      *_opt("--reply-to", a.get("reply_to"))], "body"),
     "thth_retract_request": (lambda a: ["retract", a["account"], a["post_id"], "--reason=" + a["reason"], "--json"], None),
     "thth_schedule_request": (lambda a: ["schedule", a["account"], "--draft=" + a["draft_id"], "--json"], None),

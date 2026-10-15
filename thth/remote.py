@@ -610,20 +610,23 @@ def _media(args, account):
 
 
 def _send(args, account):
-    # 遠くの道は rehearsal を挟まない（設計 §6）: 頼んだらその場で出す（サーバが lint と安全装置で断る）。
-    # `--production`・`--confirm` は要らない（付いていても読まない・口座の台帳はサーバにある）。
+    # **`--production` が無ければ出さない**（lint だけ・手元の道と同じ意味・masaru 10/15）。それまでは
+    # 3.14.0 の「頼んだらその場で出す」で `--production` を読まず、help の「既定は乾式」と食い違って
+    # キョンシーラボの口座で試すつもりの本文が出た（#2477）。`--confirm` は要らない（digest はサーバが
+    # その場で突き合わせる）。MCP の `thth_send_request` は今までどおり呼べば出す。
     has_media = bool(getattr(args, "media_files", None))
     no_text = getattr(args, "text", None) is None and not getattr(args, "text_file", None)
     # 添付だけの投稿は本文を空にできる（手元の `thth send --media` と同じ）。標準入力は待たない。
     body = "" if has_media and no_text else _body(args)
     media = _media(args, account)
     fields = {"body": body, "topic": args.topic, "reply_to": args.reply_to, "media": media}
-    if getattr(args, "dry_run", False):
+    if getattr(args, "dry_run", False) or not getattr(args, "production", False):
         # lint だけ通す: 下書きを置いて結果を返す（出さない・予約しない）。
         from . import jst
         value = call("draft_put", account, publish_at=jst.iso(), **fields)
+        hint = "" if getattr(args, "dry_run", False) else "。出すなら同じ命令に --production"
         return _shown(args, value, lambda v: _say(f"{account}: 通りました（出していません・下書き "
-                                                  f"{str(v.get('draft_id'))[:12]}…）"))
+                                                  f"{str(v.get('draft_id'))[:12]}…）{hint}"))
     value = call("send_request", account, **fields)
     return _shown(args, value, _show_sent)
 

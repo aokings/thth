@@ -394,7 +394,7 @@ def test_send_の添付は置いて確定して出す_一回限りのURLは画�
     picture = tmp_path / "cat.png"
     picture.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 100)
     _media_worker(worker)
-    rc, out, err = run(capsys, "send", ACCOUNT, "--text", "猫です", "--media", str(picture), "--alt", "猫の写真")
+    rc, out, err = run(capsys, "send", ACCOUNT, "--production", "--text", "猫です", "--media", str(picture), "--alt", "猫の写真")
     assert rc == 0, err
     assert [(c["method"], c["path"].split("/")[-1]) for c in worker.calls] == [
         ("POST", "media_upload_url"), ("PUT", "S" * 43), ("POST", "media_complete"), ("POST", "send_request")]
@@ -411,7 +411,7 @@ def test_send_の添付だけなら本文は空で_置き場が別の所なら�
     picture = tmp_path / "cat.jpg"
     picture.write_bytes(b"\xff\xd8\xff" + b"x" * 10)
     _media_worker(worker)
-    rc, out, err = run(capsys, "send", ACCOUNT, "--media", str(picture), "--alt", "猫")
+    rc, out, err = run(capsys, "send", ACCOUNT, "--production", "--media", str(picture), "--alt", "猫")
     assert rc == 0, err
     assert worker.calls[-1]["body"]["body"] == ""
     worker.calls.clear()

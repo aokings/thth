@@ -246,7 +246,7 @@ def test_鍵があっても口座でない語を取る命令は巻き込まな�
     (["account", "set", ACCOUNT, "daily_max_posts", "3"], "settings", {"key": "daily_max_posts", "value": "3"}),
     (["queue", ACCOUNT], "draft_list", {}),
     (["retract", ACCOUNT, "123", "--reason", "誤字"], "retract_request", {"post_id": "123", "reason": "誤字"}),
-    (["send", ACCOUNT, "--text", "こんにちは", "--topic", "お茶", "--reply-to", "55"], "send_request",
+    (["send", ACCOUNT, "--production", "--text", "こんにちは", "--topic", "お茶", "--reply-to", "55"], "send_request",
      {"body": "こんにちは", "topic": "お茶", "reply_to": "55"}),
 ])
 def test_命令は_operation_と引数で届き_json_はそのまま(worker, capsys, argv, operation, body):
@@ -278,7 +278,7 @@ def test_send_dry_run_は_draft_put_で_lint_だけ(worker, capsys):
 def test_send_は_rehearsal_を挟まず_1_回で出す(worker, capsys):
     worker.push(200, {"account": ACCOUNT, "status": "published", "post_id": "777",
                       "permalink": "https://www.threads.net/@demo/post/777", "via": "api"})
-    rc, out, err = run(capsys, "send", ACCOUNT, "--text", "出す")
+    rc, out, err = run(capsys, "send", ACCOUNT, "--production", "--text", "出す")
     assert rc == 0 and "777" in out and "https://www.threads.net/@demo/post/777" in out
     assert [c["path"] for c in worker.calls] == ["/api/v1/send_request"]
 
@@ -333,7 +333,7 @@ def test_202_なら_result_を見に行く(worker, capsys):
     worker.push(202, {"status": "pending", "request_id": REQ})
     worker.push(202, {"status": "pending"})
     worker.push(200, {"account": ACCOUNT, "status": "published", "post_id": "9", "permalink": None})
-    rc, out, err = run(capsys, "send", ACCOUNT, "--text", "遅い", "--json")
+    rc, out, err = run(capsys, "send", ACCOUNT, "--production", "--text", "遅い", "--json")
     assert rc == 0 and json.loads(out)["post_id"] == "9"
     assert [(c["method"], c["path"]) for c in worker.calls] == [
         ("POST", "/api/v1/send_request"), ("GET", "/api/v1/result/" + REQ), ("GET", "/api/v1/result/" + REQ)]
@@ -345,7 +345,7 @@ def test_result_を待ちきれなければ_remote_pending(worker, capsys, monke
     monkeypatch.setattr(remote, "_clock", lambda: next(ticks))
     worker.default = lambda call: (202, {"status": "pending"}, None) if "result" in call["path"] \
         else (202, {"status": "pending", "request_id": REQ}, None)
-    rc, out, err = run(capsys, "send", ACCOUNT, "--text", "遅い")
+    rc, out, err = run(capsys, "send", ACCOUNT, "--production", "--text", "遅い")
     assert rc == 1 and err.startswith("remote_pending")
     assert "thth posts" in err
 
@@ -398,12 +398,12 @@ def test_壊れた_remote_json_は_remote_config_invalid(home, capsys):
 
 def test_安全装置の断りは符丁と_JST_の時刻(worker, capsys):
     worker.push(200, {"error": "too_soon", "next_at": "2026-09-26T03:00:00+00:00"})
-    rc, out, err = run(capsys, "send", ACCOUNT, "--text", "早すぎ", "--json")
+    rc, out, err = run(capsys, "send", ACCOUNT, "--production", "--text", "早すぎ", "--json")
     assert rc == 1
     assert err.splitlines()[0] == "too_soon（次は 2026-09-26 12:00 JST から）"
     assert json.loads(out) == {"error": "too_soon", "next_at": "2026-09-26T03:00:00+00:00"}
     worker.push(200, {"error": "account_stopped", "reason": "burst"})
-    rc, out, err = run(capsys, "send", ACCOUNT, "--text", "止まった")
+    rc, out, err = run(capsys, "send", ACCOUNT, "--production", "--text", "止まった")
     assert rc == 1 and err.startswith("account_stopped: burst") and "/activity" in err
 
 
@@ -464,7 +464,7 @@ def test_mcp_の道具は_cli_を_json_で呼ぶだけ(worker, monkeypatch):
     monkeypatch.setattr(server, "run_cli", fake_run)
     result = server.call_tool("thth_send_request", {"account": ACCOUNT, "body": "本文\n2 行目", "topic": "お茶"})
     assert result == {"content": [{"type": "text", "text": '{"ok": true}'}], "isError": False}
-    assert seen[-1] == (["send", ACCOUNT, "--json", "--topic=お茶"], "本文\n2 行目")
+    assert seen[-1] == (["send", ACCOUNT, "--production", "--json", "--topic=お茶"], "本文\n2 行目")
     server.call_tool("thth_replies", {"account": ACCOUNT, "limit": 3, "refresh": True, "post_id": "9"})
     assert seen[-1][0] == ["replies", ACCOUNT, "--json", "--limit=3", "--refresh", "--post=9"]
     server.call_tool("thth_retract_request", {"account": ACCOUNT, "post_id": "9", "reason": "誤字"})
@@ -515,3 +515,12 @@ def test_topics_searchは遠くの道でも本文の全文を画面とjsonに出
     worker.push(200, dict(material))
     rc, out, err = run(capsys, "topics", ACCOUNT, "--search", "怪談", "--json")
     assert rc == 0 and json.loads(out)["posts"][0]["text"] == "怪談の" + "あ" * 100
+
+
+def test_send_は_production_が無ければ出さずにlintだけ(worker, capsys):
+    """help の「既定は乾式」どおりに（キョンシーラボ 10/15 #2477・masaru「揃えて」）。"""
+    worker.push(200, {"draft_id": "d" * 64, "account": ACCOUNT, "status": "draft", "revision": "r" * 64})
+    rc, out, err = run(capsys, "send", ACCOUNT, "--text", "試すつもり")
+    assert rc == 0 and "出していません" in out and "--production" in out
+    assert [c["path"] for c in worker.calls] == ["/api/v1/draft_put"]
+    assert not any(c["path"].endswith("send_request") for c in worker.calls)
