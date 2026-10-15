@@ -1048,7 +1048,9 @@ REMOTE_CLI = {
     # MCP の取り下げは呼べば消す（今までどおり）。CLI の遠くの道は二段なので digest を付けて呼ぶ（10/15）。
     "thth_retract_request": (lambda a: ["retract", a["account"], a["post_id"], "--reason=" + a["reason"],
                                         "--confirm=" + _retract_digest(a), "--json"], None),
-    "thth_schedule_request": (lambda a: ["schedule", a["account"], "--draft=" + a["draft_id"], "--json"], None),
+    # 予約も同じ: MCP は呼べば刻む。CLI の遠くの道は --production が無ければ刻まない（10/16）。
+    "thth_schedule_request": (lambda a: ["schedule", a["account"], "--draft=" + a["draft_id"], "--production", "--json"],
+                              None),
     "thth_draft_list": (lambda a: ["queue", a["account"], "--json"], None),
     "thth_queue": (lambda a: ["queue", a["account"], "--json"], None),
     "thth_settings": (lambda a: ["account", "set", a["account"], a["key"], a["value"], "--json"]

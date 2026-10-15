@@ -441,7 +441,7 @@ def test_schedule_の添付は下書きに載せて予約する(worker, capsys, 
         return answer(call_)
     worker.default = with_draft
     rc, out, err = run(capsys, "schedule", ACCOUNT, "--text", "朝", "--at", "2030-01-01T09:00+09:00",
-                       "--media", str(picture), "--alt", "猫")
+                       "--media", str(picture), "--alt", "猫", "--production")
     assert rc == 0, err
     put = next(c for c in worker.calls if c["path"].endswith("/draft_put"))
     assert put["body"]["media"] == [{"media_id": "m" * 64, "alt": "猫"}]

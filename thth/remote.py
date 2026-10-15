@@ -693,6 +693,14 @@ def _schedule(args, account):
         draft = put.get("draft_id")
         if not isinstance(draft, str):
             raise RemoteError("remote_unavailable", rc=2)
+        if not getattr(args, "production", False):
+            # **`--production` が無ければ予約しない**（send と同じ・10/16）。下書きは lint を通って残る。
+            return _shown(args, put, lambda v: _say(
+                f"{account}: 通りました（予約していません・下書き {str(v.get('draft_id'))[:12]}…）。"
+                f"予約するなら --draft={v.get('draft_id')} --production"))
+    elif not getattr(args, "production", False):
+        raise RemoteError("invalid_request", reason="予約するなら --production を付けてください（付けなければ何もしません）",
+                          rc=2)
     value = call("schedule_request", account, draft_id=draft)
     return _shown(args, value, lambda v: _say(
         f"{account}: 予約しました（{jst_text(v.get('publish_at'))}・下書き {str(v.get('draft_id'))[:12]}…）"))
@@ -1023,8 +1031,8 @@ def register(sub) -> None:
     _tell(sub, "retract", "confirm", "thth.me の道も同じ（口座・post_id・理由から作る digest）")
     _tell(sub, "retract", "already_gone", "thth.me の道では使えない（付けると断る）")
     _tell(sub, "retract", "by", "thth.me の道: 読まない（鍵の持ち主が記録される）")
-    _tell(sub, "schedule", None, "thth.me の道: --text と --at か --draft を付けると、本文を置いてその場で予約する"
-                                 "（承認の二段は無い）")
+    _tell(sub, "schedule", None, "thth.me の道: --text と --at か --draft に --production を付けると予約する"
+                                 "（無ければ下書きを置いて lint だけ・過去の時刻は断る）")
     send.add_argument("--json", action="store_true", help="結果を JSON 1 つで（経過の行は stderr）")
     schedule = choices["schedule"]
     schedule.add_argument("--text", default=None, help="遠くの道: 予約する本文（1 行）")
@@ -1036,6 +1044,8 @@ def register(sub) -> None:
     schedule.add_argument("--media", dest="media_files", action="append",
                           help="遠くの道: 添付のファイル（手元の機械のもの・繰返し可）")
     schedule.add_argument("--alt", dest="alts", action="append", help="遠くの道: 対応する添付の説明（各 --media に必須）")
+    schedule.add_argument("--production", action="store_true",
+                          help="遠くの道: 予約まで行う（無ければ下書きを置いて lint だけ・send と同じ）")
     choices["posts"].add_argument("--refresh", action="store_true",
                                   help="媒体から引き直す（thth posts は元から毎回引く・同じ動き）")
     for name in ("replies", "measured", "mentions"):

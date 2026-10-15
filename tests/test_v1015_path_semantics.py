@@ -159,7 +159,7 @@ def test_helpはthth_meの道の動きを言う():
     retract = " ".join(_help("retract").split())
     assert "thth.me の道では使えない" in retract and "鍵の持ち主が記録される" in retract
     top = " ".join(_help().split())
-    assert "thth.me の道: --text と --at か --draft を付けると、本文を置いてその場で予約する" in top
+    assert "thth.me の道: --text と --at か --draft に --production を付けると予約する" in top
     assert "thth.me の道も二段" in top
 
 
@@ -194,14 +194,14 @@ def test_thth_meの道のscheduleは過去のatを断る(tmp_path, monkeypatch, 
         fake.push(200, {"draft_id": "d" * 64, "account": "inv-demo-abc", "status": "draft"})
         fake.push(200, {"account": "inv-demo-abc", "draft_id": "d" * 64, "status": "approved",
                         "publish_at": future, "via": "api"})
-        assert cli.main(["schedule", "inv-demo-abc", "--text", "明日", "--at", future]) == 0
+        assert cli.main(["schedule", "inv-demo-abc", "--text", "明日", "--at", future, "--production"]) == 0
         assert [c["path"] for c in fake.calls] == ["/api/v1/draft_put", "/api/v1/schedule_request"]
     finally:
         fake.close()
 
 
-def test_サーバの予約は過去の時刻の1日の上限を今日で数える(monkeypatch):
-    """過去の publish_at は timer の次の run で出る。それまでは過去のその日の数で見ていた。"""
+def test_サーバの予約は猶予の内の過去の時刻を今日として数える(monkeypatch):
+    """猶予（数分）の内の過去の publish_at は timer の次の run で出る。1 日の上限は今日の分で数える。"""
     from thth import server_writes
     seen = {}
 
@@ -209,9 +209,21 @@ def test_サーバの予約は過去の時刻の1日の上限を今日で数え�
         seen.update(extra)
         raise RuntimeError("stop-here")
     monkeypatch.setattr(server_writes, "_guarded", fake_guarded)
-    past = jst.iso(jst.now_jst() - datetime.timedelta(days=30))
+    past = jst.iso(jst.now_jst() - datetime.timedelta(minutes=2))
     _drive_schedule(monkeypatch, server_writes, past)
     assert jst.to_jst(seen["publish_at"]).date() == jst.now_jst().date()
+
+
+def test_サーバの予約は猶予より古い過去の時刻を断る(monkeypatch):
+    """「後で出すつもりが今出る」を防ぐ（手元の CLI の --at と同じ線・MCP の --draft の道もここで止まる・10/16）。"""
+    from thth import server_writes
+    from thth.report_service import ReportServiceError
+    monkeypatch.setattr(server_writes, "_guarded", lambda *a, **k: pytest.fail("ここまで来ない"))
+    past = jst.iso(jst.now_jst() - datetime.timedelta(days=30))
+    with pytest.raises(ReportServiceError) as caught:
+        _drive_schedule(monkeypatch, server_writes, past)
+    assert str(caught.value) == "invalid_draft" and caught.value.reason == "publish_at_past"
+    assert "publish_at_past" in server_writes.DRAFT_REASONS
 
 
 def test_サーバの予約は読めない時刻を今に倒さない(monkeypatch):

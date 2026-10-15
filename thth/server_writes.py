@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import secrets
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from . import accounts, admin_log, approval, relay, core, jst, managed_repo, queuefile, server_files, writeback
 from .report_service import ReportContext, ReportServiceError
 
@@ -24,7 +24,7 @@ SAFE_ERRORS = frozenset(('invalid_request','unsupported_operation','invalid_scop
 from .lint import REASONS as LINT_REASONS
 # `invalid_draft` に添える理由。**静的な符丁だけ**——lint の日本語 1 行や
 # path をそのままサーバの口から出さない（2.14.1）。
-DRAFT_REASONS = frozenset(('body_not_representable','media_not_representable')) | LINT_REASONS
+DRAFT_REASONS = frozenset(('body_not_representable','media_not_representable','publish_at_past')) | LINT_REASONS
 from .media_uploads import REASONS as MEDIA_REASONS
 # managed repo をモードで断ったときだけは `write_unavailable` で終わらせない——
 # 運用者が chmod で直せる唯一の理由なので、静的な名前のまま上げる。
@@ -314,6 +314,10 @@ def direct_retract(context, request, via):
             'permalink':outcome.get('permalink'),'push_pending':bool(outcome.get('push_error')),'via':via}
 
 
+# 予約の時刻がこれより古ければ断る（時計のずれと打つ間の分だけ許す・`thth/remote.py` と同じ値）。
+PAST_GRACE_MINUTES = 5
+
+
 def _publish_time(value):
     try: return queuefile.parse_publish_at(value)
     except (ValueError,TypeError): return None
@@ -341,11 +345,13 @@ def schedule(context, request, via, extra_fields=None):
         value,problem=_prepare_one(str(path))
         if problem or not value or value.get('bundle'): error('invalid_draft')
         # 読めない時刻を「今」に倒さない（10/15 調べ_道ごとの意味の差 §1-3 の 12）。lint が先に断るが、
-        # ここでも fail-closed に。過去の時刻は timer の次の run で出る（stale_days の内なら今日出る）ので、1 日の上限は
-        # 今日の分として数える（それまでは過去のその日の分で数え、今日の上限を素通りした）。
+        # ここでも fail-closed に。過去の時刻は timer の次の run ですぐ出るので、`PAST_GRACE_MINUTES` より古ければ断る
+        # （「後で出すつもりが今出る」を防ぐ・手元の CLI の `--at` と同じ線・10/16）。猶予の内は「今」として、1 日の上限も
+        # 今日の分として数える。
         publish_at=_publish_time(value.get('publish_at'))
         if publish_at is None: error('invalid_draft','invalid_publish_at')
         now=jst.now_jst()
+        if jst.to_jst(publish_at)<now-timedelta(minutes=PAST_GRACE_MINUTES): error('invalid_draft','publish_at_past')
         if jst.to_jst(publish_at)<now: publish_at=now
         day=jst.to_jst(publish_at).date()
         same_day=0

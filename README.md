@@ -19,6 +19,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 
 - **調べる**: `thth topics <アカウント> --search <語>` で、その語の件数・投稿者の数・最新の投稿を見ます。`thth where` は「次にどこで話すか」を、自分がすでに絡んだ相手を重ねて探します。X の行には投稿者のフォロワー数（「フォロワー 1.2 万」）と投稿数も付きます（`--json` は `author_followers`・`author_posts`。保存しません）。
 - **出す**: `thth send` で今すぐ、`thth schedule` で予約、`--reply-to` で返信です。
+- **予約も `--production` で**（3.24.0）: thth.me の鍵の道の `thth schedule` は、`--production` が無ければ下書きを置いて lint だけにします（`send` と同じ）。過去の時刻の予約はサーバも断ります（[リリースノート 3.24.0](docs/リリースノート_3.24.0_2026-10-16.md)）。
 - **出来事と数の要約**（3.23.0）: `thth events <口座|project> --after <next_cursor> --json` で出来事（公開・返信・言及・止まり・予算）を取りこぼさず読み直し、`thth summary` で数を 1 つにまとめます。`observe --json` は `sections_by_name` で節を名前で引けます（[リリースノート 3.23.0](docs/リリースノート_3.23.0_2026-10-16.md)）。
 - **本文は全文で**（3.21.0）: 検索（`topics --search`・`where`）・`thread`・`mentions` は他人の投稿の本文を切らずに画面と `--json` に出します（保存はしません）。Threads の検索は `--since`・`--until`・`--media` で絞れます。thth.me の鍵でも `thread`・`where`・`who` が使えます。VM で打つ `thth send` にも安全装置（間隔・1 日の上限・連投）が掛かります（[リリースノート 3.21.0](docs/リリースノート_3.21.0_2026-10-15.md)）。
 - **振り返る**: `thth collect` が投稿後 1 時間〜30 日の決まった時点で返信とインサイトを取得し、`thth replies`・`thth measured` で読みます。

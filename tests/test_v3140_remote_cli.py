@@ -293,7 +293,8 @@ def test_schedule_は_draft_put_のあと_schedule_request(worker, capsys):
     worker.push(200, {"draft_id": "d" * 64, "account": ACCOUNT, "status": "draft", "revision": "r" * 64})
     worker.push(200, {"account": ACCOUNT, "draft_id": "d" * 64, "status": "approved",
                       "publish_at": "2026-09-27T09:00:00+09:00", "via": "api"})
-    rc, out, err = run(capsys, "schedule", ACCOUNT, "--text", "明日の朝", "--at", "2026-09-27T09:00+09:00")
+    rc, out, err = run(capsys, "schedule", ACCOUNT, "--text", "明日の朝", "--at", "2026-09-27T09:00+09:00",
+                       "--production")
     assert rc == 0 and "2026-09-27 09:00 JST" in out
     assert [c["path"] for c in worker.calls] == ["/api/v1/draft_put", "/api/v1/schedule_request"]
     assert worker.calls[0]["body"]["publish_at"] == "2026-09-27T09:00+09:00"
@@ -558,3 +559,26 @@ def test_retract_は違うdigestなら頼まない(worker, capsys):
     rc, out, err = run(capsys, "retract", ACCOUNT, "123", "--reason", "誤字", "--confirm", "0000000000")
     assert rc == 1 and "一致しない" in (out + err)
     assert worker.calls == []
+
+
+def test_schedule_は_production_が無ければ予約しない(worker, capsys):
+    """send と同じ（10/16）: 下書きを置いて lint だけ。--draft だけなら何もせず断る。"""
+    worker.push(200, {"draft_id": "d" * 64, "account": ACCOUNT, "status": "draft", "revision": "r" * 64})
+    rc, out, err = run(capsys, "schedule", ACCOUNT, "--text", "明日の朝", "--at", "2026-09-27T09:00+09:00")
+    assert rc == 0 and "予約していません" in out and "--production" in out
+    assert [c["path"] for c in worker.calls] == ["/api/v1/draft_put"]
+    rc, out, err = run(capsys, "schedule", ACCOUNT, "--draft", "d" * 64)
+    assert rc == 2 and "--production" in err
+    assert [c["path"] for c in worker.calls] == ["/api/v1/draft_put"]
+
+
+def test_mcp_の予約は_production_を付けて_cli_を呼ぶ(worker, monkeypatch):
+    server = _mcp()
+    seen = []
+
+    def fake_run(args, *, stdin_text=None):
+        seen.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout='{"ok": true}\n', stderr="")
+    monkeypatch.setattr(server, "run_cli", fake_run)
+    server.call_tool("thth_schedule_request", {"account": ACCOUNT, "draft_id": "d" * 64})
+    assert seen[-1] == ["schedule", ACCOUNT, "--draft=" + "d" * 64, "--production", "--json"]
