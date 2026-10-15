@@ -177,7 +177,9 @@ def test_keyword_search_row_shape_and_charge(x_account, fake):
     assert (method, path) == ("GET", "/2/tweets/search/recent")
     assert query["query"] == "コーヒー" and query["max_results"] == 10 and query["sort_order"] == "recency"
     # 3.18.0: 検索だけ public_metrics（返信の数・`where --no-replies`）を足す。
-    assert query["tweet.fields"] == "created_at,author_id,conversation_id,referenced_tweets,public_metrics"
+    # 10/15: 長文の全文（note_tweet）も頼む（点検 §B-3）。
+    assert query["tweet.fields"] == ("created_at,author_id,conversation_id,referenced_tweets,"
+                                     "note_tweet,public_metrics")
     assert query["expansions"] == "author_id" and query["user.fields"] == "username,public_metrics"
     row = rows[1]
     assert row == {

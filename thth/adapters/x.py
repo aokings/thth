@@ -219,6 +219,20 @@ def post_id_of(value):
     return identifier
 
 
+def full_text(row):
+    """1 本の本文。長文（280 字超）は `note_tweet.text` の全文を、無ければ `text` を返す。
+
+    応答の名前は資料の data dictionary が `note_tweet`、OpenAPI（2.171）の Post が `note_post`
+    （`referenced_tweets`／`referenced_posts` と同じ改名）。要求の欄の名前は `note_tweet` のまま
+    なので、応答はどちらでも読む。中の `text` が空・型違いなら `text` に戻る。
+    """
+    for key in ('note_tweet', 'note_post'):
+        note = row.get(key)
+        if isinstance(note, dict) and isinstance(note.get('text'), str) and note['text'].strip():
+            return note['text']
+    return row.get('text')
+
+
 def post_url(username, post_id):
     if not username or not post_id:
         return None
@@ -281,7 +295,10 @@ class XAdapter(base.Adapter):
     SEARCH_MIN_RESULTS = 10
     SEARCH_WINDOW_DAYS = 7
     SEARCH_TYPES = ('TOP', 'RECENT')
-    READ_FIELDS = {'tweet.fields': 'created_at,author_id,conversation_id,referenced_tweets',
+    # `note_tweet`（10/15・点検 §B-3）: 280 字を超える長文の全文。既定の欄ではないので頼まないと
+    # 来ない（一次資料 docs.x.com data dictionary「Contains the full text of a Post for long-form
+    # Posts (>280 characters)」）。課金は返った本数なので、欄を足しても費用は変わらない。
+    READ_FIELDS = {'tweet.fields': 'created_at,author_id,conversation_id,referenced_tweets,note_tweet',
                    'expansions': 'author_id', 'user.fields': 'username,public_metrics'}
     TOKEN_KEYS = ('access_token',)
     TOKEN_SETUP_HINT = 'thth auth'
@@ -705,7 +722,7 @@ class XAdapter(base.Adapter):
             raise AdapterError('x_user_id_unavailable: thth auth <account> --by <名前> をやり直してください')
         path = '/2/users/' + self.user_id + '/tweets'
         query = {'max_results': max(5, min(int(limit), 100)),
-                 'tweet.fields': 'created_at,text'}
+                 'tweet.fields': 'created_at,text,note_tweet'}
         with budget_x.user_read(self.auth_account):
             budget_x.before_read(path)
             try:
@@ -725,7 +742,7 @@ class XAdapter(base.Adapter):
                 continue
             out.append({'post_id': row['id'], 'timestamp': row.get('created_at'),
                         'url': post_url(self.username, row['id']),
-                        'text': row.get('text') or '', 'topic': None})
+                        'text': full_text(row) or '', 'topic': None})
         return out
 
     # ----- 他人の投稿を読む口（**Posts: Read の予約の中でだけ動く**） ------------
@@ -829,7 +846,7 @@ class XAdapter(base.Adapter):
         return {
             'message_id': identifier,
             'username': username,
-            'text': row.get('text'),
+            'text': full_text(row),
             'timestamp': row.get('created_at'),
             'replied_to': {'id': replied} if replied else None,
             'root_post': {'id': conversation} if conversation else None,
