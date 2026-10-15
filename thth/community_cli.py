@@ -120,7 +120,7 @@ def cmd_community_search(args) -> int:
     result = {"account": args.account, "medium": "x", "query": query, "n": len(rows),
               "communities": rows, "x_read_cost": adapter.community_read_cost(),
               "cannot_say": cannot_say, "storage": "display_only", "note": NOTE,
-              "provenance": {"fetched_at": jst.iso(now), "endpoint": "GET /2/communities/search"}}
+              "generated_at": jst.iso(now), "provenance": {"fetched_at": jst.iso(now), "endpoint": "GET /2/communities/search"}}
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0

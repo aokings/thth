@@ -147,7 +147,9 @@ def _x_cost(media: str, adapter_cls, undo: bool):
     prices = getattr(adapter_cls, "REACTION_PRICE_USD", None)
     if media != "x" or not prices:
         return None
-    return {"usd": prices["delete" if undo else "create"],
+    usd = prices["delete" if undo else "create"]
+    # usd_estimate は読む側（x_read_cost）と同じ名前の別名（10/15 調べ_JSONの欄 §5 1-12・usd は残す）。
+    return {"usd": usd, "usd_estimate": usd,
             "item": "User Interaction: Delete" if undo else "User Interaction: Create",
             "basis": "estimate_not_actual_charge"}
 

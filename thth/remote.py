@@ -678,6 +678,7 @@ def _schedule(args, account):
             return cli.show_schedule(rows)
         if not getattr(args, "at", None):
             raise RemoteError("invalid_request", reason="--at <ISO 時刻> を付けてください", rc=2)
+        _refuse_past(args.at)
         put = call("draft_put", account, body=_body(args), publish_at=args.at,
                    topic=args.topic, reply_to=args.reply_to, media=_media(args, account))
         draft = put.get("draft_id")
@@ -686,6 +687,27 @@ def _schedule(args, account):
     value = call("schedule_request", account, draft_id=draft)
     return _shown(args, value, lambda v: _say(
         f"{account}: 予約しました（{jst_text(v.get('publish_at'))}・下書き {str(v.get('draft_id'))[:12]}…）"))
+
+
+PAST_GRACE_MINUTES = 5
+
+
+def _refuse_past(at) -> None:
+    """`--at` が過去なら断る（10/15 調べ_道ごとの意味の差 §1-3 の 12）。
+
+    サーバは過去の時刻もそのまま予約し、timer の次の run がすぐ出す。年の打ち間違いなどで
+    「後で出すつもりが今出る」を防ぐ。読めない時刻はサーバの lint が断る（ここでは見ない）。
+    """
+    from . import jst
+    try:
+        when = datetime.datetime.fromisoformat(at)
+    except (TypeError, ValueError):
+        return
+    if when.tzinfo is None:
+        return
+    if when < jst.now_jst() - datetime.timedelta(minutes=PAST_GRACE_MINUTES):
+        raise RemoteError("invalid_request",
+                          reason=f"--at {at} は過去です（予約するとすぐ出ます）。出す時刻を未来にしてください", rc=2)
 
 
 def _retract(args, account):
@@ -965,7 +987,19 @@ def register(sub) -> None:
     send = choices["send"]
     send.add_argument("--text", default=None, help="本文（1 行の文。長い本文は --text-file か標準入力）")
     send.add_argument("--dry-run", dest="dry_run", action="store_true",
-                      help="出さずに lint の結果だけ（手元の道では既定の dry-run と同じ）")
+                      help="出さずに lint の結果だけ（手元の道では既定の dry-run と同じ。"
+                           "thth.me の道では下書きを 1 本置いて返す・下書きは残る）")
+    _tell(sub, "send", None, "thth.me の道: --production が無ければ下書きを置いて lint だけ")
+    _tell(sub, "send", "production", "thth.me の道: 台帳が production: true でなければ production_disabled で断る。"
+                                     "猶予（hold_minutes）が 1 以上ならその分先の予約になる")
+    _tell(sub, "send", "confirm", "thth.me の道: 使えない（digest はサーバがその場で突き合わせる・付けると断る）")
+    _tell(sub, "send", "media_files", "thth.me の道: 手元の機械のファイル（置いてから出す）")
+    _tell(sub, "retract", None, "thth.me の道も二段・--already-gone は使えない")
+    _tell(sub, "retract", "confirm", "thth.me の道も同じ（口座・post_id・理由から作る digest）")
+    _tell(sub, "retract", "already_gone", "thth.me の道では使えない（付けると断る）")
+    _tell(sub, "retract", "by", "thth.me の道: 読まない（鍵の持ち主が記録される）")
+    _tell(sub, "schedule", None, "thth.me の道: --text と --at か --draft を付けると、本文を置いてその場で予約する"
+                                 "（承認の二段は無い）")
     send.add_argument("--json", action="store_true", help="結果を JSON 1 つで（経過の行は stderr）")
     schedule = choices["schedule"]
     schedule.add_argument("--text", default=None, help="遠くの道: 予約する本文（1 行）")
@@ -996,6 +1030,24 @@ def register(sub) -> None:
     p.set_defaults(func=cmd_login)
     q = sub.add_parser("logout", help="保存した thth.me の鍵を消す")
     q.set_defaults(func=cmd_logout)
+
+
+def _tell(sub, command, dest, text) -> None:
+    """手元の道の help の後ろに thth.me の道での動きを 1 句足す（10/15 調べ_道ごとの意味の差 §5 の 4）。
+
+    `dest` が None なら命令そのものの help（`thth -h` の一覧に出る行）。旗や命令が無ければ何もしない。
+    """
+    parser = sub.choices.get(command)
+    if parser is None:
+        return
+    if dest is None:
+        for action in sub._choices_actions:
+            if action.dest == command and action.help and text not in action.help:
+                action.help = f"{action.help}。{text}"
+        return
+    for action in parser._actions:
+        if action.dest == dest and text not in (action.help or ""):
+            action.help = f"{action.help}。{text}" if action.help else text
 
 
 def argparse_suppress():

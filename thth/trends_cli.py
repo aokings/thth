@@ -127,7 +127,7 @@ def cmd_trends(args) -> int:
     result = {"account": args.account, "medium": "x", "woeid": woeid, "n": len(rows), "trends": rows,
               "x_read_cost": adapter.request_read_cost(budget_x.TRENDS), "cannot_say": cannot_say,
               "storage": "display_only", "note": NOTE,
-              "provenance": {"fetched_at": jst.iso(now), "endpoint": "GET /2/trends/by/woeid/:woeid"}}
+              "generated_at": jst.iso(now), "provenance": {"fetched_at": jst.iso(now), "endpoint": "GET /2/trends/by/woeid/:woeid"}}
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
@@ -172,7 +172,7 @@ def cmd_counts(args) -> int:
               "total_post_count": counted["total_post_count"],
               "x_read_cost": adapter.request_read_cost(budget_x.COUNTS), "cannot_say": cannot_say,
               "storage": "display_only", "note": NOTE,
-              "provenance": {"fetched_at": jst.iso(now), "endpoint": "GET /2/tweets/counts/recent"}}
+              "generated_at": jst.iso(now), "provenance": {"fetched_at": jst.iso(now), "endpoint": "GET /2/tweets/counts/recent"}}
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0

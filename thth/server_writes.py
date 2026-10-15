@@ -309,8 +309,9 @@ def direct_retract(context, request, via):
             cfg,cls,token,record,request['post_id'],reason=request['reason'],by=context.actor,url=record.get('url'),
             before_execute=before,lock_context=server_files.account_locks(account,cfg),origin=origin)
     if outcome.get('retracted') is not True: error('deletion_failed')
+    # permalink は手元の道の答えと同じ名前（10/15 調べ_JSONの欄 §5 1-3・足すだけ）。
     return {'account':account,'status':'retracted','post_id':request['post_id'],'retracted_at':outcome.get('retracted_at'),
-            'push_pending':bool(outcome.get('push_error')),'via':via}
+            'permalink':outcome.get('permalink'),'push_pending':bool(outcome.get('push_error')),'via':via}
 
 
 def _publish_time(value):
@@ -339,7 +340,13 @@ def schedule(context, request, via, extra_fields=None):
         path=_queue(locked)[1]/name
         value,problem=_prepare_one(str(path))
         if problem or not value or value.get('bundle'): error('invalid_draft')
-        publish_at=_publish_time(value.get('publish_at')) or jst.now_jst()
+        # 読めない時刻を「今」に倒さない（10/15 調べ_道ごとの意味の差 §1-3 の 12）。lint が先に断るが、
+        # ここでも fail-closed に。過去の時刻は timer の次の run で出る（stale_days の内なら今日出る）ので、1 日の上限は
+        # 今日の分として数える（それまでは過去のその日の分で数え、今日の上限を素通りした）。
+        publish_at=_publish_time(value.get('publish_at'))
+        if publish_at is None: error('invalid_draft','invalid_publish_at')
+        now=jst.now_jst()
+        if jst.to_jst(publish_at)<now: publish_at=now
         day=jst.to_jst(publish_at).date()
         same_day=0
         for _name,_raw,other,_verified in _rows(locked,account):

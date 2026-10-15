@@ -36,6 +36,14 @@ Looking for a post to reply to: `thth topics <account> --search <word> [--json]`
 - The read-only lookups (`thth where`, `thth thread`, `thth who`) save
   nothing; all that persists is the engagement ledger (your own acts and
   reactions).
+- Invited accounts (the thth.me key route after `thth login`) use the same
+  commands with a few differences: `thth send` without `--production` only
+  lints (and leaves a draft), `thth retract` is two-step (`--confirm <digest>`)
+  like the local route, `thth schedule --text … --at …` schedules on the spot
+  (a past `--at` is refused), and `--media <file> --alt <text>` uploads from
+  your machine. Flags the route does not read (`--community`, `--goal`,
+  `--already-gone`, …) are refused rather than dropped. `thth account status`
+  shows both the safety stop and `publish_hold`.
 - Operator only: `thth account add <name> --media threads|bluesky|mastodon|x --project <p> --by gotoq` —
   writes one ledger from the bundled template to `$THTH_ROOT/accounts/`,
   **outside the repo**, always `production: false`. `thth account migrate`

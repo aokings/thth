@@ -132,7 +132,7 @@ def test_2媒体をproject単位で並べる(two_media_project):
     # **トップレベルに数が無い**（設計「自分の泉」§2.6・T2-2 規約）。
     assert "n" not in result
     assert set(result.keys()) == {"account", "project", "words", "by_account",
-                                  "by_tag", "cannot_say", "provenance"}
+                                  "by_tag", "cannot_say", "provenance", "generated_at"}
 
     by_account = result["by_account"]
     assert set(by_account) == {threads_acc["name"], bluesky_acc["name"]}

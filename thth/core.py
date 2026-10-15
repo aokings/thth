@@ -1108,11 +1108,17 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                         file=chosen.path, post_id=post_id)
 
 
-def guard_refusal_message(account_name: str, refused) -> str:
-    """安全装置の断り（`guard.GuardRefused`）を人向けの 1 行に。数は `thth account set` で変えられる。"""
+def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") -> str:
+    """安全装置の断り（`guard.GuardRefused`）を人向けの 1 行に。数は `thth account set` で変えられる。
+
+    `kind` は `publish`（`thth send`）か `retract`（`thth retract`・10/15）。言い出しと「次に…できる」の語だけ変わる。
+    """
     code = str(refused)
-    when = f"（次に出せるのは {refused.next_at}）" if getattr(refused, "next_at", None) else ""
-    if code == "too_soon":
+    can = "消せる" if kind == "retract" else "出せる"
+    when = f"（次に{can}のは {refused.next_at}）" if getattr(refused, "next_at", None) else ""
+    if code == "retract_limit":
+        why = f"今日の削除が上限（daily_max_retracts）に達しました{when}"
+    elif code == "too_soon":
         why = f"前の公開から最短間隔（min_interval_hours）が経っていません{when}。返信には掛かりません"
     elif code == "daily_limit":
         why = f"今日の公開が上限（daily_max_posts）に達しました{when}"
@@ -1127,7 +1133,8 @@ def guard_refusal_message(account_name: str, refused) -> str:
         why = f"口座が止まっています（{getattr(refused, 'reason', None) or '理由不明'}）。thth account resume {account_name} --by <名前>"
     else:
         why = code
-    return (f"送信しません（安全装置）: {why}。数は thth account set {account_name} <名前> <値> --by <名前>"
+    head = "取り下げません" if kind == "retract" else "送信しません"
+    return (f"{head}（安全装置）: {why}。数は thth account set {account_name} <名前> <値> --by <名前>"
             " で変えられます")
 
 

@@ -752,7 +752,7 @@ SERVER_TOOLS += [
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"},"key":{"type":"string"},"value":{"type":"string"}},
                     "required":["account"],"additionalProperties":False}},
     {"name":"thth_account_status",
-     "description":"口座の安全装置の数値・止まっているか（理由）・今日の公開数と削除数を読む（読むだけ）",
+     "description":"口座の安全装置の数値・止まっているか（理由）・媒体の断りで止めた自動の投稿（publish_hold）・今日の公開数と削除数を読む（読むだけ）",
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"}},
                     "required":["account"],"additionalProperties":False}},
 ]
@@ -1109,6 +1109,9 @@ def remote_call(name, arguments) -> dict:
             return refused("invalid_request")
         if key in _POSITIONAL and isinstance(value, str) and value.startswith("-"):
             return refused("invalid_request")
+    if name == "thth_settings" and (arguments.get("key") is None) != (arguments.get("value") is None):
+        # key だけ・value だけは組めない（読むなら両方省く・変えるなら両方）。サーバ型と同じ断り（10/15 調べ §1-7）。
+        return refused("invalid_request")
     build, stdin_key = REMOTE_CLI[name]
     proc = run_cli(build(arguments), stdin_text=arguments.get(stdin_key) if stdin_key else None)
     text = proc.stdout.strip() or proc.stderr.strip()

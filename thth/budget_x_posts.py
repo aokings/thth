@@ -285,7 +285,8 @@ def report(account=None, *, at=None):
                           held=counted['reserved'] + counted['dispatched'],
                           used=used(value), remaining=max(0, cap - used(value)))
     reason = CANNOT_SAY if cap == 0 or all(row['remaining'] == 0 for row in rows.values()) and rows else None
-    return dict(media='x', kind='x_posts', month_utc=period, monthly=cap,
+    # medium は media の別名（10/15 調べ_JSONの欄 §5 1-7・media は残す）。
+    return dict(media='x', medium='x', kind='x_posts', month_utc=period, monthly=cap,
                 policy=admin_log.clean(read_policy()['policy']), accounts=rows,
                 post_refusal=CANNOT_SAY if cap == 0 else None,
                 cannot_say=[x for x in (reason, 'tier_limit_not_observed') if x])

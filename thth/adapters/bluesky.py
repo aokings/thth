@@ -82,6 +82,14 @@ _BLUESKY_KEY_RE = re.compile(
 _BEARER_RE = re.compile(r'(Bearer\s+)(\S+)')
 
 
+def _not_before(timestamp: str, since: str) -> bool:
+    """`timestamp` が `since` 以降か。時刻として比べる（綴りの違う `Z` と `+09:00` を取り違えない）。"""
+    at, floor = jst.parse(timestamp), jst.parse(since)
+    if at is None or floor is None:
+        return timestamp >= since
+    return at >= floor
+
+
 def scrub(text, *secrets) -> str | None:
     """秘密を伏せた文字列を返す。`secrets` に判っている値を渡すと値ごと置き換える。"""
     if text is None:
@@ -852,8 +860,9 @@ class BlueskyAdapter(base.Adapter):
         各返信の `record.reply.root.uri` に入っている（**L2**）ので、親を辿らなくても
         `root_post` が埋まる。
 
-        `since` を渡すと `timestamp` がそれ以降のものだけを返す（ISO 8601 の文字列
-        比較。同じ形・同じ tz の値どうしでしか正しく比べられない）。
+        `since` を渡すと `timestamp` がそれ以降のものだけを返す。時刻として比べる
+        （10/15 まで文字列の大小で比べていて、`since` に JST の `+09:00` を渡すと
+        `Z` の綴りの返信を取り違えた）。どちらかが読めなければ文字列で比べる（前と同じ）。
         """
         body = self._request("GET", "app.bsky.feed.getPostThread", params={
             "uri": post_id, "depth": self.thread_depth, "parentHeight": 0})
@@ -875,7 +884,7 @@ class BlueskyAdapter(base.Adapter):
         self._walk(thread, parent_uri=None, fallback_root=anchor["uri"], out=out,
                     include_self=False)
         if since:
-            out = [m for m in out if m.get("timestamp") and m["timestamp"] >= since]
+            out = [m for m in out if m.get("timestamp") and _not_before(m["timestamp"], since)]
         return out
 
     def _walk(self, node, *, parent_uri, fallback_root, out: list, include_self: bool):

@@ -834,7 +834,7 @@ def answer(*, account_name: str | None = None, project: str | None = None,
         "by_tag": [{"account": name, **entry} for name, node in by_account.items()
                    for entry in node["by_tag"]],
         "by_account": by_account, "cannot_say": top_cannot_say,
-        "provenance": {"fetched_at": jst.iso(now), "notes": notes},
+        "generated_at": jst.iso(now), "provenance": {"fetched_at": jst.iso(now), "notes": notes},
     }
 
 
