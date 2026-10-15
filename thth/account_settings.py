@@ -286,12 +286,21 @@ def status(account, *, now=None) -> dict:
     stopped = None
     if halted is not None:
         stopped = {"reason": halted.get("reason"), "stopped_at": halted.get("stopped_at")}
+    # 媒体の断りで止めた自動の投稿（3.19.2）。それまでは手元の道の人向けの表示だけが言い、
+    # thth.me の道と MCP では止まっていても「動いています」と出た（10/15 調べ 食い違い 13）。足すだけ。
+    from . import publish_hold
+    held = publish_hold.held(account)
+    hold = None
+    if held is not None:
+        hold = {"reason": held.get("reason"), "held_at": held.get("held_at"),
+                "message": publish_hold.message(account, held)}
     return {
         "account": account,
         "settings": current(cfg),
         "scheduled": scheduled(cfg),
         "quiet_hours": cfg.get("quiet_hours"),
         "stopped": stopped,
+        "publish_hold": hold,
         "ignored": [key for key in accounts.IGNORED_FIELDS if key in cfg],
         "today": {"date": now.date().isoformat(), "posts": counts["posts_today"],
                   "retracts": counts["retracts_today"],
@@ -428,21 +437,20 @@ def cmd_status(args) -> int:
     if getattr(args, "json", False):
         print(json.dumps(row, ensure_ascii=False))
         return 0
-    # 媒体の断りで止めた自動の投稿（3.19.2）。手元の道だけで言う（`status()` の形は
-    # 遠くの道・/activity と共有なので変えない）。
-    from . import publish_hold
-    hold_row = publish_hold.held(args.name)
-    return show_status(row, publish_hold_line=(publish_hold.message(args.name, hold_row)
-                                               if hold_row is not None else None))
+    # 媒体の断りで止めた自動の投稿（3.19.2）は `status()` の `publish_hold` に入っている（10/15 から
+    # thth.me の道・MCP も同じ）。
+    return show_status(row)
 
 
 def show_status(row, *, publish_hold_line=None) -> int:
     """`thth account status` の人向けの表示（手元の道と遠くの道が共有・`--json` の形を受ける）。"""
     s = row["settings"]
+    if publish_hold_line is None and isinstance(row.get("publish_hold"), dict):
+        publish_hold_line = row["publish_hold"].get("message") or "自動の投稿を止めています"
     print(f"{row['account']}")
     # どの道に掛かるかを言う（10/15: 掛かっていない道があるのに守られていると読まれた）。
-    print("  安全装置の掛かる所: thth send（VM の CLI・thth.me・MCP）と thth.me の予約・削除。"
-          "timer が出す予約の原稿には掛からない（数には入る）")
+    print("  安全装置の掛かる所: thth send と thth retract（VM の CLI・thth.me・MCP）と thth.me の予約。"
+          "timer が出す予約の原稿と retract --already-gone（DELETE を呼ばない）には掛からない（数には入る）")
     print(f"  1 日の公開の上限（daily_max_posts）: {s['daily_max_posts']}")
     print(f"  1 日の削除の上限（daily_max_retracts）: {s['daily_max_retracts']}")
     print(f"  急な連投で止める（burst）: {s['burst_minutes']} 分に {s['burst_count']} 件を超えたら")

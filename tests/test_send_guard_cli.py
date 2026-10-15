@@ -84,8 +84,8 @@ def test_account_statusは安全装置の掛かる所を言う(isolated_account_
     account = isolated_account_factory(production=True)
     account_settings.show_status(account_settings.status(account["name"], now=NOW))
     out = capsys.readouterr().out
-    assert "安全装置の掛かる所: thth send（VM の CLI・thth.me・MCP）" in out
-    assert "timer が出す予約の原稿には掛からない" in out
+    assert "安全装置の掛かる所: thth send と thth retract（VM の CLI・thth.me・MCP）" in out
+    assert "timer が出す予約の原稿と retract --already-gone（DELETE を呼ばない）には掛からない" in out
 
 
 def test_止めの印を置けない置き場でも数は守らせ_落ちない(isolated_account_factory):

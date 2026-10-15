@@ -280,6 +280,7 @@ def _cmd_retract(args) -> int:
         if args.json:
             _print_json({"ok": False, "retracted": False, "stage": 1,
                          "account": args.account, "post_id": post_id, "url": url,
+                         "permalink": url,  # 他の答えと同じ名前（10/15 調べ_JSONの欄 §5 1-3・url は残す）
                          "source": record["source"], "file": record["path"],
                          "text": record["text"], "reason": reason, "by": by,
                          "digest": digest})
@@ -329,6 +330,20 @@ def _cmd_retract(args) -> int:
                        reason=reason, by=by, url=url)
 
 
+def _guard_refusal(account_name, account_cfg):
+    """安全装置に掛かれば `(符丁, 人向けの 1 行)`、掛からなければ None。
+
+    止めの印を置けない置き場（THTH_ROOT の外・モードの緩い置き場）では止めずに 1 件断る
+    （`guard.check(cli=True)`・send と同じ）。
+    """
+    from . import guard as guard_mod
+    try:
+        guard_mod.check(account_name, account_cfg, "retract", via="cli", cli=True)
+    except guard_mod.GuardRefused as refused:
+        return str(refused), core.guard_refusal_message(account_name, refused, kind="retract")
+    return None
+
+
 def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
                 reason, by, url, before_execute=None, lock_context=None, origin=None,
                 delete=True) -> int:
@@ -360,6 +375,14 @@ def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
             if not delete:
                 result = {"deleted_id": None}              # 媒体の画面で既に消えている
             else:
+                if before_execute is None:
+                    # **運営者の CLI の取り下げにも安全装置を掛ける**（10/15・`thth send` と同じ作り）。
+                    # それまでは止まった口座でも、daily_max_retracts を超えても、急な連投でも消せた。
+                    # 確認の番号が一致したあと・DELETE の直前（ロックの中）で見る。thth.me の道は
+                    # `before_execute` の中で見るので二重にしない。--already-gone は DELETE を呼ばないので掛けない。
+                    refused = _guard_refusal(account_name, account_cfg)
+                    if refused is not None:
+                        return _fail(args, 1, refused[1], guard=refused[0])
                 if before_execute is not None:
                     token = before_execute(account_cfg)
                 adapter = adapters_mod.make_adapter(account_cfg, token)
@@ -397,7 +420,7 @@ def _do_retract(args, account_cfg, adapter_cls, token, record, post_id, *,
                               "--wait <秒> で空くのを待てます")
 
     payload = {"ok": True, "retracted": True, "account": account_name, "post_id": post_id,
-               "deleted_id": result.get("deleted_id"), "url": url,
+               "deleted_id": result.get("deleted_id"), "url": url, "permalink": url,
                "retracted_at": retracted_at, "retracted_by": by, "retract_reason": reason,
                "records": wrote, "push_error": push_err}
     if getattr(args, "result_sink", None) is not None:
