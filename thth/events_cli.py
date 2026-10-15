@@ -200,7 +200,11 @@ def _delivery_kind(row):
         return "bookmarked"
     if bookmark == "deleted":
         return "bookmark_deleted"
+    # 媒体が断った・人が「出ていない」と解いた更新・削除は、元の状態（`published`）に戻す行を足す
+    # （`hatena_publish.BEFORE`）。戻しは出来事ではない——「更新した」「出た」と読ませない（S1 監査 1）。
     state = row.get("state")
+    if state == "published" and (row.get("error") or row.get("resolution") == "human_not_published"):
+        return None
     if state == "published":
         return "delivery_updated" if row.get("op") == "update" else "delivery_published"
     return {"deleted": "delivery_deleted", "unknown": "delivery_unknown",

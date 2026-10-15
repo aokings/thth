@@ -187,3 +187,19 @@ def test_主体の止めはprincipal_stoppedとしてその主体の口座ごと
     assert all(e["ongoing"] and e["ref"] == "hatena-main" for e in rows)
     assert [e for e in events_cli.build("lane-c-hatenablog", since="7d", now=NOW)["events"]
             if e["kind"] == "principal_stopped"] == []
+
+
+@pytest.mark.parametrize("row", [
+    {"seq": 3, "state": "published", "op": "update", "error": "refused"},
+    {"seq": 3, "state": "published", "op": "delete", "error": "refused"},
+    {"seq": 3, "state": "published", "op": "update", "resolution": "human_not_published"},
+])
+def test_断られた更新削除の戻しの行は出来事にしない(row):
+    """S1 監査 1: 戻しの行（元の published に戻す）を「更新した」「出た」と読ませない。"""
+    assert events_cli._delivery_kind(row) is None
+
+
+def test_人がpublishedで解いた行と普通の公開は出来事になる():
+    assert events_cli._delivery_kind({"seq": 2, "state": "published", "op": "create"}) == "delivery_published"
+    assert events_cli._delivery_kind({"seq": 4, "state": "published", "op": "update",
+                                      "resolution": "human_published"}) == "delivery_updated"
