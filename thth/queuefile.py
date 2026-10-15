@@ -12,9 +12,8 @@ KNOWN_STATUSES = {"draft", "approved", "posted", "withdrawn"}
 # 上書きできる**（`limit_for()`・設計 v2 §4.2「台帳と登録」）——Mastodon は
 # インスタンスで上限が違う（既定 500 だが運用者が変えられる）。
 # Bluesky は 300（grapheme・**L2**: bsky-docs）、Mastodon は既定 500（**L2**）。
-# X は 2.14 で **暫定 280 コードポイント**（設計 2.14.0 §2）。公式ページに
-# 280 の明記は無く、重み付き計数も実測していない——2.11 まで置いていた 140 は
-# 2017 年より前の数字で、いまの本文を不当に断る。数え方は `XAdapter.count_text`。
+# X は 280（3.20.0 から X の重み付き＝twitter-text v3・CJK と全角は 2・URL は 23）。
+# 数え方は `XAdapter.count_text`（`adapters/x_text.py`）。
 MEDIA_LIMITS = {"threads": 500, "x": 280, "bluesky": 300, "mastodon": 500}
 DEFAULT_MEDIA_LIMIT = 500
 # threads の 450 字警告の閾値（食い違い 2 の裁定・2026-09-09）。絵文字カウントが
@@ -241,6 +240,19 @@ def count_for(media: str, text: str) -> int:
     """
     from . import adapters as adapters_mod
     return adapters_mod.count_text_for(media, text)
+
+
+def length_figure(media: str, n: int, limit: int) -> str | None:
+    """上限を超えたときに見せる「284/280（X の重み付き）」の形（3.20.0）。
+
+    「字」で言うと嘘になる数え方（X の重み付き＝CJK は 1 字で 2）の媒体だけが
+    `LENGTH_FIGURE` を立てる。立てていない媒体は `None`（呼び手は従来の「n 字」）。
+    """
+    from . import adapters
+    cls = adapters.adapter_class(media)
+    if not getattr(cls, "LENGTH_FIGURE", False):
+        return None
+    return f"{n}/{limit}（{cls.COUNT_UNIT}）"
 
 
 def length_line(media: str, text: str, account_cfg=None) -> str:

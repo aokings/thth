@@ -49,19 +49,18 @@ import urllib.request
 
 from .. import httpsafe, jst, leave_gate
 from .. import redact as redact_mod
-from . import base
+from . import base, x_text
 
 MEDIUM = 'x'
 DEFAULT_BASE_URL = 'https://api.x.com'
 BASE_URL_ENV = 'THTH_X_BASE_URL'
 DEFAULT_TIMEOUT_SECONDS = 10.0
 
-# **本文の数え方**（設計 2.14.0 §2）。公式ページに 280 の明記は無く（"Text Length
-# Rule: Not specified"）、X の重み付き計数（CJK を 2 と数える等）も実測していない。
-# **暫定でコードポイント 280** とし、lint は毎回その旨を 1 行添える——「確かめて
-# いない」を「確かめた」の顔で出さない。重み付けは実機の測定項目。
-MAX_TEXT_CODEPOINTS = 280
-LENGTH_NOTE = 'warning: x_length_weighting_unverified'
+# **本文の数え方**（3.20.0）: X の公式の数え方＝twitter-text v3 の weighted length
+# （`x_text.py`・CJK と全角は 2、URL は 23、絵文字の並びは 2）。上限は 280（config/v3.json
+# の maxWeightedTweetLength）。2.14〜3.19 はコードポイントで数えていて、X のアプリで
+# 284/280 になる原稿を 160/280 として通していた（kopicha-x・10/15）。
+MAX_WEIGHTED_LENGTH = x_text.MAX_WEIGHTED_LENGTH
 
 REPLY_SETTINGS = ('following', 'mentionedUsers', 'subscribers', 'verified')
 POST_ID = re.compile(r'[0-9]{1,19}')
@@ -338,14 +337,16 @@ class XAdapter(base.Adapter):
 
     @classmethod
     def count_text(cls, text: str) -> int:
-        """**暫定の数え方**: Unicode コードポイント（`MAX_TEXT_CODEPOINTS` の但し書き）。
+        """X の重み付きの長さ（twitter-text v3・`x_text.weighted_length`）。
 
-        X の重み付き計数を実測していないので、**重い側に倒さない代わりに、
-        数え方が未確認であることを lint が毎回言う**（`LENGTH_NOTE`）。
+        conformance（validate.yml の v3 の重み付き計数・extract.yml の URL）の全件と
+        合わせてある。合わせきれていない所は `x_text` の冒頭の但し書き。
         """
-        return len(text)
+        return x_text.weighted_length(text)
 
-    COUNT_UNIT = 'codepoint（暫定・重み付け未確認）'
+    COUNT_UNIT = 'X の重み付き'
+    # 超えたときの言い方を「284/280（X の重み付き）」にする（`queuefile.length_figure`）。
+    LENGTH_FIGURE = True
 
     def _scrub(self, text) -> str:
         out = str(text)

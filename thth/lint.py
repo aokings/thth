@@ -242,7 +242,9 @@ def lint_file(path: str) -> list:
         effective = tags_mod.prepared(media, section, topic, hashtags=bool(account_cfg.get("hashtags", True)) if account_cfg else False)
         n = queuefile.count_for(media, effective)
         if n > limit:
-            errors.append(f"length: {media} は {limit} 字以内（{n} 字）")
+            figure = queuefile.length_figure(media, n, limit)
+            errors.append(f"length: {media} は上限を超えています: {figure}" if figure
+                          else f"length: {media} は {limit} 字以内（{n} 字）")
         else:
             warn_limit = queuefile.WARN_LIMITS.get(media)
             if warn_limit is not None and n > warn_limit:

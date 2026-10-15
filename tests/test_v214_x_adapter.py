@@ -64,16 +64,19 @@ def test_an_empty_body_without_media_is_refused_before_the_request(env, wire):
 
 # ----- 数え方 ----------------------------------------------------------------
 
-def test_the_body_is_counted_in_code_points_with_a_provisional_limit():
+def test_the_body_is_counted_with_the_x_weighted_length():
+    # 3.20.0: コードポイントの暫定をやめ、twitter-text v3 の重み付き（CJK は 2）。
+    # 細かい試験は tests/test_v3200_x_weighted_length.py。
     from thth import adapters, queuefile
-    assert adapters.count_text_for('x', 'ab🌿') == 3
-    assert queuefile.limit_for('x') == x_adapter.MAX_TEXT_CODEPOINTS == 280
-    assert x_adapter.LENGTH_NOTE == 'warning: x_length_weighting_unverified'
+    assert adapters.count_text_for('x', 'ab🌿') == 4
+    assert adapters.count_text_for('x', 'あい') == 4
+    assert queuefile.limit_for('x') == x_adapter.MAX_WEIGHTED_LENGTH == 280
+    assert not hasattr(x_adapter, 'LENGTH_NOTE')
 
 
-def test_lint_says_the_counting_rule_is_unverified(env):
+def test_lint_no_longer_says_the_counting_rule_is_unverified(env):
     notes = media_delivery.lint_notes(env[0], {'media': [{'file': 'a.png', 'alt': '点'}]})
-    assert x_adapter.LENGTH_NOTE in notes
+    assert not [n for n in notes if 'x_length_weighting_unverified' in n]
 
 
 # ----- 削除 ------------------------------------------------------------------

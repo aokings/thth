@@ -353,7 +353,9 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
         for i, seg in enumerate(segments, start=1):
             n = queuefile.count_for(media, effective[i - 1])
             if n > limit:
-                errors.append(f"length: {i} 段目は {limit} 字以内（{n} 字）")
+                figure = queuefile.length_figure(media, n, limit)
+                errors.append(f"length: {i} 段目が上限を超えています: {figure}" if figure
+                              else f"length: {i} 段目は {limit} 字以内（{n} 字）")
             elif warn_limit is not None and n > warn_limit:
                 errors.append(
                     f"warning: length: {i} 段目が {warn_limit} 字を超えています"

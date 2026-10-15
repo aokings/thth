@@ -1242,8 +1242,10 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             # 道具は**切り詰めない**（規約）が、**分けるかどうかを考える口**は
             # ある——`thth forms` が媒体ごとの形と「分ける理由になるもの／
             # ならないもの」を述べる。
-            msg = (f"長すぎます（{n} 字・上限 {limit} 字）。切り詰めません。\n"
-                   f"分けるかどうかは `thth forms`")
+            figure = queuefile.length_figure(media, n, limit)
+            msg = ((f"長すぎます: {figure}。切り詰めません。\n" if figure
+                    else f"長すぎます（{n} 字・上限 {limit} 字）。切り詰めません。\n")
+                   + "分けるかどうかは `thth forms`")
             log(msg)
             _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
                         status="error", error=f"too_long({n})")

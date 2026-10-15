@@ -252,7 +252,7 @@ MCP `after_you_posted`。**24h の刻みが無ければ `null`**（0 と混ぜ�
 - `where <account> --recent 茶 --word コーヒー --since 7d --exclude-engaged --max-per-author 2 --json`。位置引数とオプションを混在できる。各語の `dropped` と `material.n` は絞り込み後の内訳。Bluesky の期間は API の sortAt、他SNSは投稿日時。タグ観測は独立した 24 時間。
 - Bluesky の `thread`・`send --reply-to`・`after --reply-to`・`replies --post` は `https://bsky.app/profile/<handle|did>/post/<rkey>` も受ける。公開 handle 解決後の AT URI を用い、解決不能は止める。
 - `approve <queue ディレクトリ> --account <name>` はその account の draft だけ。glob は手元で展開されるので使わず、VM のディレクトリを渡す。承認二段・digest・`--by` は同じ。
-- `send` dry-run はロックなし、最小運用 runs は 1 行。書く口の `--wait <秒>` はロック待機（既定 0）。`send` と `approve` の一段目はSNSの数え方と文字数上限を表示する。
+- `send` dry-run はロックなし、最小運用 runs は 1 行。書く口の `--wait <秒>` はロック待機（既定 0）。`send` と `approve` の一段目はSNSの数え方と文字数上限を表示する。X は X の重み付き（日本語・全角は 2・URL は 23・上限 280）で数え、超えたら lint・approve・send が止める（3.20.0）。
 - `study add <施策JSON> <post_id|queueのパス> --by <名前>` は `changed_post_ids` に追加。`--baseline` は `baseline_post_ids`。この口は利用者の JSON だけを保存し、採用判断・投稿承認・git commit は行わない。VM ラッパ経由なら JSON と queue のパスは VM 上のもの。
 - 比較の `by_mark` は views が無くても likes・replies・reposts を表示。3 SNSとも取得済みの値を使い、欠測は null。SNS・account を足さない。
 - `mentions` と `unanswered` の CLI も最小運用 runs を残す。本文・username・投稿 ID は運用記録へ保存しない。`unanswered` の計算共有先の handoff-report は純粋な読み取りのまま。

@@ -73,7 +73,8 @@ def intent_error(manifest):
             return 'unsupported_attachment: x/poll_option'
         if not 2 <= len(row['options']) <= 4:
             return 'media_limit_exceeded: poll_options'
-        # C20-B と同じ暫定: この欄だけコードポイントで数える（重み付けは未確認）。
+        # 投票の選択肢はコードポイントで数える暫定のまま（X がここをどう数えるかは未確認。
+        # 本文は 3.20.0 から X の重み付き・`x_text.py`）。
         if any(not 1 <= len(option) <= 25 for option in row['options']):
             return 'media_limit_exceeded: poll_option_characters'
         if not 5 <= row['duration_minutes'] <= 10080:
@@ -131,7 +132,7 @@ def intent_error(manifest):
 
 def notes(manifest, items=()):
     """lint が出す但し書き（**値は出さない・静的な語だけ**）。"""
-    out = [x_adapter.LENGTH_NOTE]
+    out = []
     if any(row['type'] == 'poll' for row in manifest['attachments']):
         out.append('warning: x poll option characters use provisional Unicode code points; '
                    'live-provider counting unverified')
