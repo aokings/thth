@@ -131,6 +131,17 @@ test('only your own accounts: B cannot see or act on A, and a cancel must name a
   assert.equal((await post({act:'settings',account:na,key:'daily_max_posts',value:'4',secret:a.secret},ca)).status,200);
 });
 
+test('3.25.0: a reply queued after a burst is shown as queued and can be cancelled',async()=>{
+  const p=await person(),name=account();
+  const queued={kind:'queued',at:now(),head:'順番待ちの返信',post_id:null,draft_id:hash('queued'),reason:null,reply:true};
+  assert.equal((await sync(p,[summary(name,{rows:[queued]})])).status,200);
+  const cookie=await cookieOf(p);
+  const page=await(await get('/activity',cookie)).text();
+  assert.ok(page.includes('順番待ちの返信')&&page.includes('順番待ち（急な連投の返信）'),'the queued row is listed with its own word');
+  assert.ok(page.includes(hash('queued')),'the queued row has a cancel form');
+  assert.equal((await post({act:'cancel',account:name,draft_id:hash('queued'),secret:p.secret},cookie)).status,200);
+});
+
 test('requested operations reach the VM on sync and show their outcome; a finished one is not handed out again',async()=>{
   const p=await person(),name=account();await sync(p,[summary(name)]);const cookie=await cookieOf(p);
   assert.equal((await post({act:'settings',account:name,key:'daily_max_posts',value:'20',secret:p.secret},cookie)).status,200);

@@ -11,7 +11,8 @@ export const ACTION_KINDS=['stop','resume','cancel','settings','revoke','rotate'
 const ACTION_EXTRA={stop:[],resume:[],revoke:[],rotate:['sha256'],cancel:['draft_id'],settings:['key','value']};
 export const SETTING_KEYS=['daily_max_posts','daily_max_retracts','burst_count','burst_minutes','hold_minutes','min_interval_hours'];
 const SETTING_VALUE=/^[0-9]{1,6}(?:\.[0-9]{1,2})?$/;
-const ROW_KINDS=['published','retracted','scheduled','held','stopped'];
+// queued: 返信の burst の順番待ち（3.25.0）。VM より先に Worker を出す（知らない kind は要約ごと断る）。
+const ROW_KINDS=['published','retracted','scheduled','held','queued','stopped'];
 const STOP_REASONS=['burst','owner','guard_state_unreadable'];
 const ISO=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:[+-]\d{2}:\d{2}|Z)$/;
 const LIMIT_KEYS=['daily_max_posts','daily_max_retracts','burst_count','burst_minutes','hold_minutes','min_interval_hours'];
@@ -181,7 +182,7 @@ export class Person extends AtomicObject {
       // 他人のアカウントは触れない: VM がこの人に押し上げたアカウントだけ。
       const summary=this.ctx.storage.kv.get('activity:'+action.account);
       if(!summary||summary.expires_at<=now)return fail(404,'not_found');
-      if(action.kind==='cancel'&&!summary.rows.some(r=>(r.kind==='held'||r.kind==='scheduled')&&r.draft_id===action.draft_id))return fail(404,'not_found');
+      if(action.kind==='cancel'&&!summary.rows.some(r=>(r.kind==='held'||r.kind==='scheduled'||r.kind==='queued')&&r.draft_id===action.draft_id))return fail(404,'not_found');
       return this.place(action,sha256,now);
     });
     if(result.status!==200)return result;

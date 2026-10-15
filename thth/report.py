@@ -291,6 +291,8 @@ def schedule(account_name: str | None = None, *, now=None, days: int | None = No
                 "waiting_for": select_mod.waiting_target(reply.reason) if reply is not None else None,
                 "past": publish_at <= now,
                 "head": head[:60],
+                # burst の順番待ちに並べた返信（3.25.0）。無ければ None。
+                "queued_for": fm.get("queued_for") or None,
             })
     rows.sort(key=lambda r: (r["publish_at"], r["account"], r["file"]))
     return rows

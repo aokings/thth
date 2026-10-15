@@ -669,6 +669,11 @@ def _say(line) -> int:
 
 
 def _show_sent(value) -> int:
+    if value.get("status") == "queued":
+        # 返信の burst（3.25.0）: 口座は止めず、窓が空く時刻の順番待ちに並べた。
+        print(f"{value.get('account')}: burst に当たったので {jst_text(value.get('publish_at'))} に出す順番待ちに"
+              "並べました。止めていません（取り消しは https://thth.me/activity）")
+        return 0
     if value.get("status") == "held":
         print(f"{value.get('account')}: {value.get('hold_minutes')} 分の猶予つきで予約しました"
               f"（{jst_text(value.get('publish_at'))} に出ます・取り消しは https://thth.me/activity）")
@@ -1059,7 +1064,8 @@ def register(sub) -> None:
                            "thth.me の道では下書きを 1 本置いて返す・下書きは残る）")
     _tell(sub, "send", None, "thth.me の道: --production が無ければ下書きを置いて lint だけ")
     _tell(sub, "send", "production", "thth.me の道: 台帳が production: true でなければ production_disabled で断る。"
-                                     "猶予（hold_minutes）が 1 以上ならその分先の予約になる")
+                                     "猶予（hold_minutes）が 1 以上ならその分先の予約になる。返信が急な連投（burst）を超えると"
+                                     "口座を止めず、窓が空く時刻の順番待ちに並べる")
     _tell(sub, "send", "confirm", "thth.me の道: 使えない（digest はサーバがその場で突き合わせる・付けると断る）")
     _tell(sub, "send", "media_files", "thth.me の道: 手元の機械のファイル（置いてから出す）")
     _tell(sub, "retract", None, "thth.me の道も二段・--already-gone は使えない")

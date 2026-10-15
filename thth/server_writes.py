@@ -32,7 +32,7 @@ from .media_uploads import REASONS as MEDIA_REASONS
 # 運用者が chmod で直せる唯一の理由なので、静的な名前のまま上げる。
 REPO_REASONS = frozenset(('managed_git_store_unsafe_mode',))
 # 承認なしの道と安全装置（設計 3.12.0 §3.2・§3.3）。静的な名前だけ。
-from .guard import REFUSALS as GUARD_REFUSALS, STOP_REASONS as GUARD_STOP_REASONS
+from .guard import REFUSALS as GUARD_REFUSALS, STOP_REASONS as GUARD_STOP_REASONS, GuardRefused
 DIRECT_REASONS = frozenset(('account_busy','publication_failed','publication_unconfirmed','deletion_failed',
                             'permission_unavailable','schedule_commit_unconfirmed',
                             # `scheduled: false` の口座（timer に載っていない）で予約・猶予を求めた（段 3・裁定 (b)）。
@@ -247,9 +247,17 @@ def direct_send(context, request, via):
         rows={'media_rows':media_uploads.draft_rows(account,context.actor,request['media'])}
     from . import postid
     reply=postid.for_account(cfg,request.get('reply_to'),account);topic=request.get('topic')
-    # 返信には最短間隔を掛けない（裁定 (a)）。上限と burst には数える。
-    origin=_origin(context,via);check=_guarded(context,account,'publish',origin,reply=bool(reply))
-    check(cfg)
+    # 返信には最短間隔を掛けない（裁定 (a)）。上限と burst には数える。返信の burst は口座を止めず、
+    # 窓が空く時刻の順番待ちに並べる（3.25.0・`burst_queued_send`）。
+    origin=_origin(context,via)
+    from . import burst_queue
+    def check(locked_cfg):
+        pending=burst_queue.pending(account,locked_cfg) if reply else None
+        _guarded(context,account,'publish',origin,reply=bool(reply),pending_replies=pending)(locked_cfg)
+    try:
+        check(cfg)
+    except GuardRefused as refused:
+        return _burst_or_raise(context,request,via,cfg,refused,reply)
     dry=core.send_once(account,text=request['body'],topic=topic,reply_to=reply,log=lambda _:None,**rows)
     # 前の公開の結果が分かっていない（inflight）なら、本文の断りに丸めない（3.14.3 穴 3）。
     # 次の一手は `thth inflight <口座>`（見る）と `… resolve`（解く）。
@@ -263,9 +271,13 @@ def direct_send(context, request, via):
         if current(context,account,write=True)!=locked_cfg: error('credential_changed')
         check(locked_cfg)
         return accounts.load_token(locked_cfg)
-    result=core.send_once(account,text=request['body'],topic=topic,reply_to=reply,production_flag=True,
-                          confirm=dry.digest,log=lambda _:None,before_execute=before,
-                          lock_context=server_files.account_locks(account,cfg),origin=origin,**rows)
+    try:
+        result=core.send_once(account,text=request['body'],topic=topic,reply_to=reply,production_flag=True,
+                              confirm=dry.digest,log=lambda _:None,before_execute=before,
+                              lock_context=server_files.account_locks(account,cfg),origin=origin,**rows)
+    except GuardRefused as refused:
+        # ロックの中で数え直したら burst に当たった（その間に別の公開が出た）。ロックの外で並べる。
+        return _burst_or_raise(context,request,via,cfg,refused,reply)
     if result.action=='locked': error('account_busy')
     if result.action=='publish_held': error('account_stopped')
     if result.action=='inflight': error('publication_unconfirmed')
@@ -420,6 +432,36 @@ def held_send(context, request, via, minutes):
     done=schedule(context,{'operation':'schedule_request','account':request['account'],'draft_id':made['draft_id']},via,
                   extra_fields={'held_minutes':str(minutes)})
     return {**done,'status':'held','hold_minutes':minutes}
+
+
+def _burst_or_raise(context, request, via, cfg, refused, reply):
+    """返信の burst（`burst_limit` に窓が空く時刻つき）なら順番待ちに並べる。並べられなければそのまま断る。
+
+    並べられないのは timer に載っていない口座（`scheduled: false`）と添付のある返信（3.25.0）。
+    どちらも口座は止めず、`burst_limit`（詳細 `burst`・`next_at`）で断る。
+    """
+    from . import burst_queue
+    if (reply and str(refused)=='burst_limit' and refused.next_at and burst_queue.can_queue(cfg)
+            and not request.get('media')):
+        return burst_queued_send(context,request,via,refused.next_at)
+    raise refused
+
+
+def burst_queued_send(context, request, via, publish_at):
+    """返信の burst（3.25.0）: その 1 件を `publish_at`（窓が空く時刻）の承認済みの予約にする。
+
+    `held_send` と同じ draft_put ＋ schedule。印 `queued_for: burst` は /activity と `thth schedule` が
+    「順番待ち」を見分けるため（指紋には入らない・出す時刻には効かない）。1 日の上限は schedule の
+    安全装置がその日の承認済みと合わせて数える（並べずに `daily_limit` で断る）。
+    """
+    from . import burst_queue
+    put={'operation':'draft_put','account':request['account'],'body':request.get('body'),'publish_at':publish_at}
+    for key in ('topic','reply_to'):
+        if request.get(key): put[key]=request[key]
+    made=draft_put(context,put,via)
+    done=schedule(context,{'operation':'schedule_request','account':request['account'],'draft_id':made['draft_id']},via,
+                  extra_fields={burst_queue.MARK_KEY:burst_queue.MARK_VALUE})
+    return {**done,'status':'queued','reason':'burst','publish_at':publish_at}
 
 
 def direct(context, request, via, cfg):
