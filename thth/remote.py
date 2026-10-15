@@ -689,13 +689,58 @@ def _schedule(args, account):
 
 
 def _retract(args, account):
-    _refuse_unread(args, "retract", {"already_gone": "--already-gone", "confirm": "--confirm"})
+    """`thth retract <口座> <post_id> --reason …`（二段・手元の道と同じ・masaru 10/15「揃える」）。
+
+    一段目（`--confirm` 無し）は対象と digest を見せて何もしない（rc=1）。二段目は同じ digest で
+    サーバに頼む。digest は口座・post_id・理由から手元で計算する（`approval.compute_retract_digest`
+    ・手元の道と同じ値）。それまでは一回で DELETE していた（調べ_道ごとの意味の差 §上位 1）。
+    MCP の `thth_retract_request` は今までどおり一回で消す（中で digest を付けて呼ぶ）。
+    """
+    from . import approval
+    _refuse_unread(args, "retract", {"already_gone": "--already-gone"})
     reason = (args.reason or "").strip()
     if not reason:
         raise RemoteError("invalid_request", reason="--reason を付けてください（なぜ取り下げるかを記録します）", rc=1)
+    digest = approval.compute_retract_digest(post_id=str(args.post_id), account=account, reason=reason)
+    confirm = getattr(args, "confirm", None)
+    if confirm is None:
+        row = _find_post(account, str(args.post_id))
+        if getattr(args, "json", False):
+            _print_json({"ok": False, "retracted": False, "stage": 1, "account": account,
+                         "post_id": str(args.post_id), "reason": reason, "digest": digest,
+                         "permalink": (row or {}).get("permalink"), "text": (row or {}).get("text")})
+            return 1
+        print(f"取り下げません（確認の一段目です）: {account} post_id {args.post_id}")
+        if row:
+            print(f"  URL : {row.get('permalink') or '—'}")
+            print("--- 取り下げる本文 ---")
+            print((row.get("text") or "").rstrip())
+            print("--- ここまで ---")
+        else:
+            print("  （直近の投稿の一覧に見当たらないので、本文は見せられません）")
+        print(f"  理由: {reason}")
+        print(f"digest: {digest}")
+        print(f"この投稿を取り下げるなら: thth retract {account} {args.post_id} --reason "
+              f"{json.dumps(reason, ensure_ascii=False)} --confirm {digest}")
+        return 1
+    if confirm != digest:
+        raise RemoteError("confirm_mismatch", reason=f"digest が一致しないので取り下げません（いまの digest は {digest}）",
+                          rc=1)
     value = call("retract_request", account, post_id=args.post_id, reason=reason)
     return _shown(args, value, lambda v: _say(f"{account}: 取り下げました post_id {v.get('post_id')}"
                                               + ("（記録の送信は保留）" if v.get("push_pending") else "")))
+
+
+def _find_post(account, post_id):
+    """一段目に本文を見せるため、直近の自分の投稿から探す（見つからなければ None・失敗しても止めない）。"""
+    try:
+        value = call("posts", account, limit=50)
+    except RemoteError:
+        return None
+    for row in (value.get("posts") if isinstance(value, dict) else None) or []:
+        if isinstance(row, dict) and str(row.get("post_id")) == post_id:
+            return row
+    return None
 
 
 def _limit(args):

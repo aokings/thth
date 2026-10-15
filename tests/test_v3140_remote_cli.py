@@ -27,6 +27,11 @@ REQ = "R" * 43 + ".inv-demo-abc"
 ACCOUNT = "inv-demo-abc"
 
 
+def _retract_digest(post_id, reason):
+    from thth import approval
+    return approval.compute_retract_digest(post_id=post_id, account=ACCOUNT, reason=reason)
+
+
 class FakeWorker:
     """`/api/v1/*` の偽物。`replies` に (status, body, headers) を順に積む。無ければ `default`。"""
 
@@ -245,7 +250,8 @@ def test_鍵があっても口座でない語を取る命令は巻き込まな�
     (["account", "status", ACCOUNT], "account_status", {}),
     (["account", "set", ACCOUNT, "daily_max_posts", "3"], "settings", {"key": "daily_max_posts", "value": "3"}),
     (["queue", ACCOUNT], "draft_list", {}),
-    (["retract", ACCOUNT, "123", "--reason", "誤字"], "retract_request", {"post_id": "123", "reason": "誤字"}),
+    (["retract", ACCOUNT, "123", "--reason", "誤字", "--confirm", _retract_digest("123", "誤字")], "retract_request",
+     {"post_id": "123", "reason": "誤字"}),
     (["send", ACCOUNT, "--production", "--text", "こんにちは", "--topic", "お茶", "--reply-to", "55"], "send_request",
      {"body": "こんにちは", "topic": "お茶", "reply_to": "55"}),
 ])
@@ -468,7 +474,7 @@ def test_mcp_の道具は_cli_を_json_で呼ぶだけ(worker, monkeypatch):
     server.call_tool("thth_replies", {"account": ACCOUNT, "limit": 3, "refresh": True, "post_id": "9"})
     assert seen[-1][0] == ["replies", ACCOUNT, "--json", "--limit=3", "--refresh", "--post=9"]
     server.call_tool("thth_retract_request", {"account": ACCOUNT, "post_id": "9", "reason": "誤字"})
-    assert seen[-1][0] == ["retract", ACCOUNT, "9", "--reason=誤字", "--json"]
+    assert seen[-1][0] == ["retract", ACCOUNT, "9", "--reason=誤字", "--confirm=" + _retract_digest("9", "誤字"), "--json"]
     server.call_tool("thth_settings", {"account": ACCOUNT})
     assert seen[-1][0] == ["account", "status", ACCOUNT, "--json"]
     assert server.call_tool("thth_profile", {"account": ACCOUNT, "username": "--help"})["isError"] is True
@@ -528,7 +534,6 @@ def test_send_は_production_が無ければ出さずにlintだけ(worker, capsy
 
 @pytest.mark.parametrize("argv", [
     ["retract", ACCOUNT, "123", "--reason", "既に消した", "--already-gone"],
-    ["retract", ACCOUNT, "123", "--reason", "誤字", "--confirm", "abc123"],
     ["send", ACCOUNT, "--production", "--text", "コミュニティへ", "--community", "1234567890"],
     ["send", ACCOUNT, "--production", "--text", "目的つき", "--goal", "reach"],
     ["send", ACCOUNT, "--production", "--text", "古い番号", "--confirm", "abc123"],
@@ -537,4 +542,19 @@ def test_遠くの道が読まない旗は黙って捨てずに断る(worker, ca
     """`retract --already-gone` が本当の DELETE に、`send --community` が普段の公開になっていた（10/15）。"""
     rc, out, err = run(capsys, *argv)
     assert rc == 2 and "読みません" in (out + err), out + err
+    assert worker.calls == []
+
+
+def test_retract_は二段_一段目は消さずにdigestを見せる(worker, capsys):
+    """thth.me の道でも手元と同じ二段（masaru 10/15「揃える」）。それまでは一回で DELETE していた。"""
+    worker.push(200, {"account": ACCOUNT, "posts": [{"post_id": "123", "text": "消す本文", "permalink": "https://x/123"}]})
+    rc, out, err = run(capsys, "retract", ACCOUNT, "123", "--reason", "誤字")
+    digest = _retract_digest("123", "誤字")
+    assert rc == 1 and "一段目" in out and "消す本文" in out and digest in out
+    assert not any(c["path"].endswith("retract_request") for c in worker.calls)
+
+
+def test_retract_は違うdigestなら頼まない(worker, capsys):
+    rc, out, err = run(capsys, "retract", ACCOUNT, "123", "--reason", "誤字", "--confirm", "0000000000")
+    assert rc == 1 and "一致しない" in (out + err)
     assert worker.calls == []

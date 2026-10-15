@@ -979,6 +979,14 @@ def _channel_note(account=None, reason=None):
     return {"type": "text", "text": mcp_refusal_line(account, reason)}
 
 
+def _retract_digest(a):
+    """`thth retract` の二段目の digest（口座・post_id・理由から・`approval.compute_retract_digest`）。"""
+    if APP_DIR not in sys.path:
+        sys.path.insert(0, APP_DIR)
+    from thth.approval import compute_retract_digest
+    return compute_retract_digest(post_id=str(a["post_id"]), account=a["account"], reason=a["reason"].strip())
+
+
 def server_mode():
     return 'THTH_REPORT_CREDENTIALS' in os.environ or 'THTH_REPORT_TOKEN' in os.environ
 
@@ -1002,7 +1010,9 @@ REMOTE_CLI = {
     # MCP の送信は呼べば出す（今までどおり）。CLI の遠くの道は --production が無ければ出さないので付ける（10/15）。
     "thth_send_request": (lambda a: ["send", a["account"], "--production", "--json", *_opt("--topic", a.get("topic")),
                                      *_opt("--reply-to", a.get("reply_to"))], "body"),
-    "thth_retract_request": (lambda a: ["retract", a["account"], a["post_id"], "--reason=" + a["reason"], "--json"], None),
+    # MCP の取り下げは呼べば消す（今までどおり）。CLI の遠くの道は二段なので digest を付けて呼ぶ（10/15）。
+    "thth_retract_request": (lambda a: ["retract", a["account"], a["post_id"], "--reason=" + a["reason"],
+                                        "--confirm=" + _retract_digest(a), "--json"], None),
     "thth_schedule_request": (lambda a: ["schedule", a["account"], "--draft=" + a["draft_id"], "--json"], None),
     "thth_draft_list": (lambda a: ["queue", a["account"], "--json"], None),
     "thth_queue": (lambda a: ["queue", a["account"], "--json"], None),
