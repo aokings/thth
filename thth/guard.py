@@ -192,8 +192,25 @@ def summary(account, cfg, *, now=None) -> dict:
     }
 
 
+def stop_place_usable(account) -> bool:
+    """止めの印（`guard/stopped.json`）を置ける置き場か。THTH_ROOT の外・モードの緩い置き場は False。
+
+    運営者の CLI（VM で打つ `thth send`・手元の Mac）はこういう置き場でも動いてきたので、
+    そこでは数だけ守らせ、止めの印は置かない（`check(cli=True)`）。
+    """
+    try:
+        state = Path(accounts.state_dir_for(account))
+        if not state.exists():
+            return True  # 初めての口座（置き場は作るときに 0700）
+        with server_files.directory(state):
+            pass
+        return True
+    except (server_files.UnsafeFile, OSError, ValueError):
+        return False
+
+
 def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None,
-          publish_at=None, scheduled_same_day=0, reply=False) -> None:
+          publish_at=None, scheduled_same_day=0, reply=False, cli=False) -> None:
     """依頼が安全装置に掛かれば `GuardRefused` を上げる。掛からなければ何もしない。
 
     `kind`: `publish`（今すぐ出す）・`retract`（消す）・`schedule`（queue に「出してよい」と
@@ -205,7 +222,9 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
     """
     if kind not in KINDS:
         raise ValueError("invalid_guard_kind")
-    halted = stopped(account)
+    # `cli`（運営者の CLI・10/15）: 止めの印を置けない置き場なら、印は読まず・置かず、数だけ守らせる。
+    can_stop = not cli or stop_place_usable(account)
+    halted = stopped(account) if can_stop else None
     if halted is not None:
         raise GuardRefused("account_stopped", reason=halted.get("reason"))
     now = jst.to_jst(now) if now is not None else jst.now_jst()
@@ -237,6 +256,9 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
         return
     # 急な連投（公開と削除の合計）。この依頼を足すと超えるなら止める。
     if counts["recent"] + 1 > limits["burst"]["count"]:
+        if not can_stop:
+            # 印を置けないので口座は止めず、この 1 件を断る（数え直せば次の窓で出せる）。
+            raise GuardRefused("burst_limit", reason="burst")
         stop(account, "burst", now=now, actor=actor, via=via, credential=credential)
         raise GuardRefused("account_stopped", reason="burst")
 

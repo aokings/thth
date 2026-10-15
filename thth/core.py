@@ -1108,6 +1108,29 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                         file=chosen.path, post_id=post_id)
 
 
+def guard_refusal_message(account_name: str, refused) -> str:
+    """安全装置の断り（`guard.GuardRefused`）を人向けの 1 行に。数は `thth account set` で変えられる。"""
+    code = str(refused)
+    when = f"（次に出せるのは {refused.next_at}）" if getattr(refused, "next_at", None) else ""
+    if code == "too_soon":
+        why = f"前の公開から最短間隔（min_interval_hours）が経っていません{when}。返信には掛かりません"
+    elif code == "daily_limit":
+        why = f"今日の公開が上限（daily_max_posts）に達しました{when}"
+    elif code == "quiet_hours":
+        why = f"夜間（quiet_hours）です{when}"
+    elif code == "burst_limit":
+        why = "急な連投（burst）の数を超えます（この置き場には止めの印を置けないので、口座は止めずにこの 1 件だけ断りました）"
+    elif code == "account_stopped" and getattr(refused, "reason", None) == "burst":
+        why = ("急な連投（burst）で口座を止めました。戻すのは "
+               f"thth account resume {account_name} --by <名前>")
+    elif code == "account_stopped":
+        why = f"口座が止まっています（{getattr(refused, 'reason', None) or '理由不明'}）。thth account resume {account_name} --by <名前>"
+    else:
+        why = code
+    return (f"送信しません（安全装置）: {why}。数は thth account set {account_name} <名前> <値> --by <名前>"
+            " で変えられます")
+
+
 def send_once(account_name: str, *, text: str, topic: str | None = None,
                reply_to: str | None = None, reply_to_root: str | None = None,
                reply_to_author_key: str | None = None, found_by: str | None = None,
@@ -1356,6 +1379,23 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
                         status="error", error=error)
             return ThrowResult(exit_code=1, mode=mode, action="skip", message=msg, digest=digest)
+
+        # **運営者の CLI（VM で打つ `thth send`）にも安全装置を掛ける**（10/15 masaru「推しで」）。
+        # それまでは thth.me を通る道（`server_writes` の `before_execute`）にだけ掛かり、
+        # music-research-threads が 5 分で 7 件出た。thth.me の道は `before_execute` の中で
+        # 見るので二重にしない。timer の予約（`throw_once`）は対象外のまま。
+        if before_execute is None:
+            from . import guard as guard_mod
+            try:
+                guard_mod.check(account_name, account_cfg, "publish", now=now,
+                                via="cli", reply=bool(reply_to), cli=True)
+            except guard_mod.GuardRefused as refused:
+                msg = guard_refusal_message(account_name, refused)
+                log(msg)
+                _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,
+                            status="error", error=str(refused))
+                return ThrowResult(exit_code=1, mode=mode, action="guard", message=msg,
+                                   digest=digest, error=str(refused))
 
         bound_token = before_execute(account_cfg) if before_execute is not None else None
         inflight_mod.write(state_dir, file="(send)", started=jst.iso(), container_id=None,

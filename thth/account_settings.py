@@ -380,6 +380,9 @@ def show_status(row, *, publish_hold_line=None) -> int:
     """`thth account status` の人向けの表示（手元の道と遠くの道が共有・`--json` の形を受ける）。"""
     s = row["settings"]
     print(f"{row['account']}")
+    # どの道に掛かるかを言う（10/15: 掛かっていない道があるのに守られていると読まれた）。
+    print("  安全装置の掛かる所: thth send（VM の CLI・thth.me・MCP）と thth.me の予約・削除。"
+          "timer が出す予約の原稿には掛からない（数には入る）")
     print(f"  1 日の公開の上限（daily_max_posts）: {s['daily_max_posts']}")
     print(f"  1 日の削除の上限（daily_max_retracts）: {s['daily_max_retracts']}")
     print(f"  急な連投で止める（burst）: {s['burst_minutes']} 分に {s['burst_count']} 件を超えたら")
