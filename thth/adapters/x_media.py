@@ -266,10 +266,12 @@ def publish(adapter, post, *, before_publish=None, slot=None):
             # 未確認なので**試して、断られたら警告として残す**（止めない）。
             veto()
             record('describing', index=index)
+            # 一次資料（L1 docs.x.com create-media-metadata）: alt は `metadata` の中。3.20.1 まで外に
+            # 置いていて 400（関東 10/14 09:05・media_describing_http_400）。
             try:
                 status, _ = x_adapter.request(
                     adapter, 'POST', '/2/media/metadata',
-                    json_body={'id': identifier, 'alt_text': {'text': row['alt']}})
+                    json_body={'id': identifier, 'metadata': {'alt_text': {'text': row['alt']}}})
                 require(200 <= status < 300, 'media_response_invalid: metadata')
             except (urllib.error.HTTPError, media.MediaError):
                 if kind != 'video':

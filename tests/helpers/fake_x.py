@@ -108,6 +108,12 @@ class _Handler(BaseHTTPRequestHandler):
                 data['processing_info'] = info
             return self.reply(200, {'data': data})
         if self.path == '/2/media/metadata':
+            # 本物と同じ形の検査（L1 docs.x.com create-media-metadata: id と metadata が必須・
+            # alt は metadata.alt_text.text）。外に置いた形は本物が 400 を返した（関東 10/14）。
+            meta = body.get('metadata') if isinstance(body, dict) else None
+            if (set(body or {}) != {'id', 'metadata'} or not isinstance(meta, dict)
+                    or not isinstance((meta.get('alt_text') or {}).get('text'), str)):
+                return self.reply(400, {'title': 'Invalid Request'})
             status = self.state['metadata_status'].get(body.get('id'), 200)
             return self.reply(status, {} if status == 200 else {'title': 'refused'})
         if self.path == '/2/tweets':

@@ -154,3 +154,33 @@ def test_mcpにはinflightの口が無い():
     server = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(server)
     assert not any("inflight" in tool["name"] for tool in server.TOOLS)
+
+
+def test_添付のheldはnot_publishedでだけ解ける():
+    """3.20.1: 関東 10/14 の media_describing_http_400 は公開の POST の前で止まった（held）。"""
+    held = {"file": "a.md", "media": {"phase": "held", "reason": "media_describing_http_400"}}
+    assert inflight_cli.refusal("kanto-x", held, "not_published", None) is None
+    assert inflight_cli.refusal("kanto-x", held, "published", "8001")[1] == "media_inflight_unsupported"
+    unknown = {"file": "a.md", "media": {"phase": "unknown"}}
+    assert inflight_cli.refusal("kanto-x", unknown, "not_published", None)[1] == "media_inflight_unsupported"
+    assert inflight_cli.refusal("kanto-x", {"file": "a.md", "media": {"account": "x"}},
+                                "not_published", None)[1] == "media_inflight_unsupported"
+
+
+def test_添付のheldを解くと控えが残り原稿は出し直し(isolated_account_factory, tmp_path, capsys):
+    account, state_dir = _stuck(isolated_account_factory, tmp_path, git=False)
+    path = os.path.join(state_dir, "inflight.json")
+    with open(path, encoding="utf-8") as fh:
+        record = json.load(fh)
+    record["media"] = {"phase": "held", "reason": "media_describing_http_400", "remote_ids": ["1"]}
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(record, fh)
+    rc, out, _ = _cli(capsys, account["name"], "resolve", "--not-published", "--by", "masaru")
+    assert rc == 1 and "--confirm" in out
+    code = out.split("--confirm ", 1)[1].split()[0]
+    rc, out, _ = _cli(capsys, account["name"], "resolve", "--not-published", "--by", "masaru",
+                      "--confirm", code)
+    assert rc == 0 and inflight_mod.read(state_dir) is None
+    [archived] = inflight_mod.archives(state_dir)
+    with open(archived, encoding="utf-8") as fh:
+        assert json.load(fh)["inflight"]["media"]["phase"] == "held"

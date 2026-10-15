@@ -101,7 +101,7 @@ def test_single_image_walks_initialize_append_finalize_metadata_then_tweet(env, 
     assert initialize == {'media_type': 'image/png', 'total_bytes': len(png()),
                           'media_category': 'tweet_image'}
     assert calls(wire, 'POST', '/2/media/metadata')[0][2] == {
-        'id': '101', 'alt_text': {'text': '赤い点 🌿'}}
+        'id': '101', 'metadata': {'alt_text': {'text': '赤い点 🌿'}}}
     assert wire['tweets'] == [{'text': '本文', 'media': {'media_ids': ['101']}}]
     assert wire['uploads']['101'] == png()
     assert result.media == [{'sha256': journal['media']['manifest']['files'][0]['public_sha256'],
@@ -173,7 +173,7 @@ def test_media_ids_follow_the_manuscript_order(env, wire):
     rows = [{'file': 'b.png', 'alt': '二'}, {'file': 'a.png', 'alt': '一'}]
     result, _, _ = invoke(env, {'media': rows})
     assert wire['tweets'][0]['media']['media_ids'] == ['101', '102']
-    assert [row[2]['alt_text']['text'] for row in calls(wire, 'POST', '/2/media/metadata')] == ['二', '一']
+    assert [row[2]['metadata']['alt_text']['text'] for row in calls(wire, 'POST', '/2/media/metadata')] == ['二', '一']
     assert [row['remote_id'] for row in result.media] == ['101', '102']
 
 

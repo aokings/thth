@@ -204,9 +204,16 @@ def refusal(account: str, record, decision: str, post_id):
     """解けない理由 `(rc, 符丁, 次の一手)`。解けるなら None（手元の道と遠くの道で同じ・3.14.3 穴 3）。"""
     if record is None:
         return 1, "no_inflight", f"{account} に inflight はありません（解くものが無い）"
-    if record.get("media"):
-        return (2, "media_inflight_unsupported",
-                "添付の inflight はこの口では解きません。docs/原稿_添付_2.13.md の手順で確かめてください")
+    media = record.get("media")
+    if media:
+        # 3.20.1: 添付の `held`（公開の POST より前で止めた・または公開が 4xx で確かに断られた）は
+        # 媒体に出ていないことが確定しているので、--not-published だけ解ける（関東 10/14 の
+        # media_describing_http_400 が 28 時間止まった）。それ以外（unknown 等）は今までどおり断る。
+        held = isinstance(media, dict) and media.get("phase") == "held"
+        if not (held and decision == "not_published"):
+            return (2, "media_inflight_unsupported",
+                    "添付の inflight はこの口では解きません（解けるのは held を --not-published で解くときだけ）。"
+                    "docs/原稿_添付_2.13.md の手順で確かめてください")
     if post_id is not None and not postid_mod.is_usable(post_id):
         return 1, "post_id_invalid", "post_id の形が台帳に書けません。媒体の画面の数字（id）を確かめてください"
     if decision == "not_published" and (record.get("post_id") or record.get("remote_post_id")):
