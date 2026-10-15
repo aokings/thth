@@ -68,6 +68,8 @@ _TYPES = {
 }
 # 答えの大きさの目安（JSON の UTF-16 の長さ）。thth.me の 1 件の上限（128 KB）より少し小さく取る。
 RESULT_BUDGET = 120_000
+# 枝を落としたあとに足す欄の分の余白（字数）。
+FIT_RESERVE = 200
 TRIMMED_NOTE = ('答えの大きさの上限（thth.me の 1 件 128 KB）で {n} 件を後ろから落としました'
                 '（--limit を下げるか、語を分けて呼んでください）')
 
@@ -343,6 +345,9 @@ def _fit_thread(result):
     messages = result['messages']
     if over <= 0 or not messages:
         return result
+    # 落としたあとに足す欄（continue_from・size_trimmed・truncated）の分も空ける（10/15: 足す欄が
+    # 上限を越えさせていた）。
+    over += FIT_RESERVE
     cut = len(messages)
     while cut > 0 and over > 0:
         cut -= 1
@@ -394,6 +399,10 @@ def _fit_where(result):
         return result
     entries = [(node, word, entry) for node in result['by_account'].values()
                for word, entry in node['by_word'].items() if entry.get('posts')]
+    # 落としたあとに足す欄（語ごとの trimmed と cannot_say の 1 行）の分も空ける（10/15: 足す行が
+    # 上限を越えさせていた）。
+    over += sum(_size(f'{word}: ' + TRIMMED_NOTE.format(n=99999)) + len('"trimmed":99999,') + 2
+                for _node, word, _entry in entries)
     while over > 0 and entries:
         node, word, entry = max(entries, key=lambda item: len(item[2]['posts']))
         if not entry['posts']:

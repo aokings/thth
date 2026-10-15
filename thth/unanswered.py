@@ -194,6 +194,8 @@ def answer(account_name, *, since='7d', now=None, allowed_names=None):
                          preview=_one_line(message.get('text')),
                          # 全文（10/15・点検 §B-2）。台帳に前からある本文を見せるだけで、新しく書かない。
                          text=message.get('text') if isinstance(message.get('text'), str) else None,
+                         # 返信そのものへのリンク（台帳の行にあれば）。morning が読むのに入れていなかった（10/15 調べ_JSONの欄 §7）。
+                         permalink=message.get('permalink') if isinstance(message.get('permalink'), str) else None,
                          age_hours=round((now-at).total_seconds()/3600, 3), verified='ledger_only'))
     observed = {}
     for row in data['fetches']:

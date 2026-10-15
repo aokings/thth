@@ -224,8 +224,9 @@ def cmd_list(args) -> int:
 def _cost(adapter_units):
     from . import budget_x
     usd = budget_x.LIST_UNIT_PRICE * adapter_units
-    return {"usd": budget_x.decimal_text(usd), "basis": "estimate_not_actual_charge",
-            "price_version": budget_x.LIST_PRICE_VERSION}
+    # usd_estimate は読む側（x_read_cost）と同じ名前の別名（10/15 調べ_JSONの欄 §5 1-12・usd は残す）。
+    return {"usd": budget_x.decimal_text(usd), "usd_estimate": budget_x.decimal_text(usd),
+            "basis": "estimate_not_actual_charge", "price_version": budget_x.LIST_PRICE_VERSION}
 
 
 def _create(args, adapter, name, description, by) -> int:
@@ -273,7 +274,8 @@ def _members(args, adapter, op, list_id, members, by) -> int:
     usd = budget_x.LIST_UNIT_PRICE * budget_x.LIST_MANAGE_UNITS * len(done) + budget_x.PRICE * lookups
     payload = {"ok": True, "account": args.account, "operation": op, "by": by, "list_id": list_id,
                "done": done,
-               "x_cost_estimate": {"usd": budget_x.decimal_text(usd), "basis": "estimate_not_actual_charge",
+               "x_cost_estimate": {"usd": budget_x.decimal_text(usd), "usd_estimate": budget_x.decimal_text(usd),
+                                   "basis": "estimate_not_actual_charge",
                                    "members": len(done), "handle_lookups": lookups},
                "note": NOTE}
     if args.json:
@@ -324,7 +326,7 @@ def _show(args) -> int:
     result = {"account": args.account, "list_id": list_id, "medium": "x", "n": len(posts),
               "posts": posts, "x_read_cost": adapter.read_cost(), "cannot_say": cannot_say,
               "storage": "display_only", "note": NOTE,
-              "provenance": {"fetched_at": jst.iso(now), "endpoint": "GET /2/lists/:id/tweets"}}
+              "generated_at": jst.iso(now), "provenance": {"fetched_at": jst.iso(now), "endpoint": "GET /2/lists/:id/tweets"}}
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0

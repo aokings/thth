@@ -362,6 +362,8 @@ def answer(account_name: str, post_id: str, *, since: str | None = None,
         # `where_cli` と同じ）。
         "you_and_them": engagements_mod.author_summary(
             author_keys, eng_rows, reaction_for=after_cli_mod.reaction_lookup(account_name)),
+        # 「いつの答えか」は最上位の generated_at にも（10/15 調べ_JSONの欄 §5 1-13・provenance は残す）。
+        "generated_at": jst.iso(now),
         "provenance": {
             "fetched_at": jst.iso(now),
             "source": SOURCE_BY_MEDIUM.get(media, media),

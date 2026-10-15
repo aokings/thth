@@ -554,6 +554,7 @@ def _account_answer(account_name: str, *, topic: str | None, kind: str | None,
                        "medium": account_cfg.get("media"), "account": account_name},
         "cannot_say": cannot_say,
         "one_thing_to_change": one_thing_to_change,
+        "generated_at": jst.iso(now),
         "provenance": {"source": SCHEMA_SOURCE,
                        "engagement_file_count": eng["file_count"],
                        "broken": eng["broken"],
@@ -597,6 +598,7 @@ def answer(account_name: str | None = None, *, project: str | None = None,
     return {
         "project": project, "by_account": by_account,
         "cannot_say": top_cannot_say,
+        "generated_at": jst.iso(now),
         "provenance": {"source": SCHEMA_SOURCE, "updated": jst.iso(now)},
     }
 

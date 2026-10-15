@@ -223,6 +223,7 @@ def _account_node(account_name: str, *, author_key: str | None, username: str | 
         "threads": threads,
         "profile": profile_out,
         "cannot_say": cannot_say,
+        "generated_at": jst.iso(now),
         "provenance": {
             "source": SCHEMA_SOURCE, "resolved_from": resolved_from,
             "engagements_broken": eng["broken"], "replies_broken": replies_broken,
@@ -317,7 +318,7 @@ def answer(*, account_name: str | None = None, project: str | None = None,
         return {
             "project": project, "by_account": by_account,
             "cannot_say": top_cannot_say,
-            "provenance": {"fetched_at": jst.iso(now)},
+            "generated_at": jst.iso(now), "provenance": {"fetched_at": jst.iso(now)},
         }
 
     return by_account[account_name]

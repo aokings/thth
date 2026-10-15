@@ -701,6 +701,8 @@ def account_detail(account_name: str, *, now=None, remote: bool = True) -> dict:
         "account": account_name,
         "project": account_cfg.get("project"),
         "media": account_cfg.get("media"),
+        # 他の答えと同じ名前（10/15 調べ_JSONの欄 §5 1-7）。media は残す。
+        "medium": account_cfg.get("media"),
         "handle": account_cfg.get("handle"),
         "production": bool(account_cfg.get("production")),
         "scheduled": bool(scheduled),

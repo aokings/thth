@@ -192,7 +192,8 @@ def report(value=None,*,at=None):
         for ledger in extra.values():
             k,l=posts_totals(ledger,m);i+=k;j+=l
         return dict(spent_estimate_usd=decimal_text(a+c+e+g+i),held_usd=decimal_text(b+d+f+h+j))
-    return dict(media='x',month_utc=period,policy=admin_log.clean(p),cap_usd=decimal_text(cap) if cap is not None else None,
+    # medium は media の別名（10/15 調べ_JSONの欄 §5 1-7・media は残す）。
+    return dict(media='x',medium='x',month_utc=period,policy=admin_log.clean(p),cap_usd=decimal_text(cap) if cap is not None else None,
         spent_estimate_usd=decimal_text(spent),held_usd=decimal_text(held),remaining_usd=decimal_text(available) if available is not None else None,
         over_cap_usd=decimal_text(over) if over is not None else None,read_refusal=reason,cannot_say=[x for x in (reason,'usage_not_observed','estimate_not_actual_charge') if x],
         price=dict(version=PRICE_VERSION,user_read_usd=decimal_text(PRICE),source=PRICE_SOURCE),usage=None,
