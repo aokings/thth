@@ -744,12 +744,14 @@ SERVER_TOOLS = [
      "inputSchema":{"type":"object","properties":{key:{"type":"string"} for key in ("account",*keys)},
                     "required":["account",*required],"additionalProperties":False}}
     for name,keys,required in (
-        ('draft_put',('body','publish_at','topic','reply_to','draft_id','expected_revision'),('body','publish_at')),
+        # 4.0 S4 §9.5: announces（告知が結ぶ配信 id）・article（記事の名）。本文の {article_url} は本文の一部。
+        ('draft_put',('body','publish_at','topic','reply_to','draft_id','expected_revision','announces','article'),('body','publish_at')),
         ('send_request',('body','topic','reply_to'),('body',)),
         ('retract_request',('post_id','reason'),('post_id','reason')),
         ('schedule_request',('draft_id','confirm'),('draft_id',)),
         # 4.0 S1 §7.3: はてなブックマーク（2 段・送信は S4）。tags は a,b の 1 行。
-        ('bookmark_request',('delivery','comment','tags','confirm'),('delivery','comment')),
+        # 4.0 S4 §11: delivery（自分の記事）か url（参照先）のどちらか 1 つ・op は add（既定）か delete。
+        ('bookmark_request',('delivery','url','comment','tags','confirm','op'),()),
         ('draft_list',(),()),('queue',(),())) ]
 
 # 公開・削除・予約の 3 本は、頼まれたらその場で行う（承認ページは無い・設計 3.13.0）。安全装置は効く。
@@ -762,9 +764,11 @@ _PUBLISHING_DESCRIPTIONS = {
     'thth_schedule_request': "下書きを予約として queue に刻む（publish_at 以降に timer が出す）。"
                              "はてなブログの口座は 2 段: confirm が無ければ stage 1 と digest と表示を返し、同じ digest を confirm に付けると刻む",
 }
-_BOOKMARK_DESCRIPTION = ("自分のはてなブログの記事（配信の台帳で published の配信）にブックマークを付ける。2 段: "
-                         "confirm が無ければ stage 1 と digest と表示を返す。同じ digest を confirm に付けると打つ"
-                         "（送信の口が無い間は unsupported_medium）。主体の止め・1 日の上限・急な連投・1 URL に 1 回で断る")
+_BOOKMARK_DESCRIPTION = ("自分の記事（配信の台帳で published の配信・delivery）か、レーンが参照している他人のページ（url）に、"
+                         "主体のはてな ID でブックマークを付ける（delivery と url はどちらか 1 つ）。同じ owner の別の主体が付けた"
+                         "ページは断る。2 段: confirm が無ければ stage 1 と digest と表示を返す。同じ digest を confirm に付けると打つ。"
+                         "op: delete で THTH が付けたものを消す。主体の止め・1 日の上限（全体・自分の記事・同じホスト）・"
+                         "急な連投・1 ページに 1 回で断る。結果が分からなければ status: unknown（打ち直さない）")
 for _tool in SERVER_TOOLS:
     if _tool["name"] == "thth_bookmark_request":
         _tool["description"] = _BOOKMARK_DESCRIPTION
@@ -1062,8 +1066,10 @@ REMOTE_CLI = {
     "thth_schedule_request": (lambda a: ["schedule", a["account"], "--draft=" + a["draft_id"], "--production", "--json",
                                          *_opt("--confirm", a.get("confirm"))],
                               None),
-    "thth_bookmark_request": (lambda a: ["bookmark", "add", a["account"], "--delivery=" + a["delivery"],
-                                         "--comment=" + a["comment"], *_opt("--tags", a.get("tags")),
+    "thth_bookmark_request": (lambda a: ["bookmark", "delete" if a.get("op") == "delete" else "add", a["account"],
+                                         *(["--url=" + a["url"]] if a.get("url") else ["--delivery=" + a.get("delivery", "")]),
+                                         *(["--comment=" + a.get("comment", "")] if a.get("op") != "delete" else []),
+                                         *_opt("--tags", a.get("tags")),
                                          *_opt("--confirm", a.get("confirm")), "--production", "--json"], None),
     "thth_draft_list": (lambda a: ["queue", a["account"], "--json"], None),
     "thth_queue": (lambda a: ["queue", a["account"], "--json"], None),

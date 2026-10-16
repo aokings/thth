@@ -95,7 +95,9 @@ _COMPONENT_ORDER = ("body", "account", "reply_to", "topic", "publish_at")
 # 3.19.0: X のコミュニティ（`community_id`）も「公開の側を変える」ので同じ扱い——値がある
 # ときだけ末尾に `community_id=<id>` を足す（無ければ入力バイト列は今までと同じ）。
 _OPTION_ORDER = ("location_id", "share_to_instagram", "media_sources", "media_manifest",
-                 "community_id")
+                 "community_id",
+                 # 4.0 S4 §9.3: SNS の告知が結ぶ配信 id（値があるときだけ末尾・版は上げない）。
+                 "announces")
 
 
 def is_true(raw) -> bool:
@@ -112,7 +114,16 @@ def publish_options(fm: dict) -> dict:
         "location_id": (fm.get("location_id") or "").strip() or None,
         "share_to_instagram": is_true(fm.get("share_to_instagram")),
         "community_id": community_id_of(fm),
+        "announces": announces_of(fm),
     }
+
+
+def announces_of(fm: dict) -> str | None:
+    """front-matter の `announces`（告知が結ぶ配信 id・設計 4.0 S4 §9.3）。無い・空なら None。"""
+    raw = (fm or {}).get("announces")
+    if raw is None:
+        return None
+    return str(raw).strip() or None
 
 
 def community_id_of(fm: dict) -> str | None:
@@ -146,7 +157,7 @@ def reply_to_for_fingerprint(fm: dict) -> str | None:
     return queuefile.REPLY_TO_FILE_MARK + name
 
 
-def _option_components(location_id, share_to_instagram, community_id=None) -> dict:
+def _option_components(location_id, share_to_instagram, community_id=None, announces=None) -> dict:
     out = {
         "location_id": (location_id or "").strip() if isinstance(location_id, str) else "",
         "share_to_instagram": "true" if is_true(share_to_instagram) else "",
@@ -154,6 +165,9 @@ def _option_components(location_id, share_to_instagram, community_id=None) -> di
     community = (str(community_id).strip() if community_id is not None else "")
     if community:
         out["community_id"] = community
+    announced = (str(announces).strip() if announces is not None else "")
+    if announced:
+        out["announces"] = announced
     return out
 
 
@@ -171,7 +185,7 @@ def compute_approved_components(*, section: str, account: str, reply_to: str | N
                                  publish_at: str | datetime.datetime,
                                  location_id: str | None = None,
                                  share_to_instagram=False, media_sources=None, media_manifest=None,
-                                 community_id: str | None = None) -> dict:
+                                 community_id: str | None = None, announces: str | None = None) -> dict:
     """`compute_approved_sha()` が hash する前の、5 項目それぞれの正規化済みの値。
 
     外部レビュー第 3 巡・持ち越し項目 C: 指紋（`compute_approved_sha()` の
@@ -190,7 +204,7 @@ def compute_approved_components(*, section: str, account: str, reply_to: str | N
         "topic": queuefile.normalize_topic(topic) or "",
         "publish_at": _normalize_publish_at(publish_at),
     }
-    out.update(_option_components(location_id, share_to_instagram, community_id))
+    out.update(_option_components(location_id, share_to_instagram, community_id, announces))
     from . import media as media_mod
     component = media_mod.fingerprint_component(media_sources)
     if component:
@@ -205,7 +219,7 @@ def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
                           topic: str | None, publish_at: str | datetime.datetime,
                           location_id: str | None = None,
                           share_to_instagram=False, media_sources=None, media_manifest=None,
-                          community_id: str | None = None) -> str:
+                          community_id: str | None = None, announces: str | None = None) -> str:
     """承認の対象を固定する sha256（外部レビュー §1・受け入れ 1〜4・11）。
 
     ハッシュの入力は、次の 5 つをこの順序で `\\x1f`（ASCII unit separator）区切りに
@@ -236,7 +250,7 @@ def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
         section=section, account=account, reply_to=reply_to, topic=topic,
         publish_at=publish_at, location_id=location_id,
         share_to_instagram=share_to_instagram, media_sources=media_sources, media_manifest=media_manifest,
-        community_id=community_id)
+        community_id=community_id, announces=announces)
     parts = [components[key] for key in _COMPONENT_ORDER] + _option_parts(components)
     joined = _SEP.join(parts)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
@@ -565,7 +579,7 @@ def compute_hatena_entry_sha(**kwargs) -> str:
 
 def compute_hatena_bookmark_components(*, account: str, principal: str, op: str, url: str,
                                        delivery: str, comment: str, tags=None) -> dict:
-    """はてなブックマーク（`thth-hatena-bookmark-1`）の 8 項目を正規化した値（設計 §7.2）。
+    """はてなブックマーク（`thth-hatena-bookmark-1`）の 8 項目を正規化した値（設計 §7.2・S4 §6.2）。
 
     `url` は配信の台帳の `published_url` と**文字どおり**比べるので `.strip()` だけ。
     コメントは改行を空白にして 100 字まで（超えたら断る——黙って切らない）。
@@ -574,12 +588,16 @@ def compute_hatena_bookmark_components(*, account: str, principal: str, op: str,
     op = _plain(op, "op").strip()
     if op not in HATENA_BOOKMARK_OPS:
         raise ValueError("invalid_op")
+    # 4.0 S4 §6.2: `delivery` は空を許す（参照先のブックマーク）。値があれば今までどおり配信 id。
     delivery = _plain(delivery, "delivery").strip()
-    if not deliveries.is_delivery_id(delivery):
+    if delivery and not deliveries.is_delivery_id(delivery):
         raise ValueError("invalid_delivery")
     url = _plain(url, "url").strip()
     if not url:
         raise ValueError("url_required")
+    # 照合に使う正規化を通ること（`invalid_url`）。指紋に入るのは `.strip()` した元の文字列。
+    from .hatena_bookmark import canonical_url
+    canonical_url(url)
     text = _plain(comment, "comment")
     text = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").strip()
     if len(text) > HATENA_BOOKMARK_COMMENT_MAX:

@@ -728,10 +728,16 @@ def _schedule(args, account):
         f"{account}: 予約しました（{jst_text(v.get('publish_at'))}・下書き {str(v.get('draft_id'))[:12]}…）"))
 
 
-def _bookmark_add(args, account):
-    """`thth bookmark add`（遠くの道・`bookmark_request`）。手元の道と同じ 2 段。"""
-    value = call("bookmark_request", account, delivery=args.delivery, comment=args.comment,
-                 tags=args.tags, confirm=args.confirm)
+def _bookmark_add(args, account, op="add"):
+    """`thth bookmark add|delete`（遠くの道・`bookmark_request`）。手元の道と同じ 2 段（4.0 S4: `--url`・`op`）。"""
+    fields = {"comment": args.comment, "tags": args.tags, "confirm": args.confirm}
+    if getattr(args, "url", None):
+        fields["url"] = args.url
+    else:
+        fields["delivery"] = args.delivery
+    if op != "add":
+        fields["op"] = op
+    value = call("bookmark_request", account, **fields)
     if value.get("stage") == 1:
         from . import refusals
         refusals.mark_first_stage()
@@ -743,7 +749,12 @@ def _bookmark_add(args, account):
             print(f"  {key}: {item}")
         print(f"digest: {value.get('digest')}")
         return 1
-    return _shown(args, value, lambda v: _say(f"{account}: ブックマークしました（{v.get('url')}）"))
+    done = "ブックマークを消しました" if op == "delete" else "ブックマークしました"
+    return _shown(args, value, lambda v: _say(f"{account}: {done}（{v.get('url')}）"))
+
+
+def _bookmark_delete(args, account):
+    return _bookmark_add(args, account, op="delete")
 
 
 PAST_GRACE_MINUTES = 5
@@ -1039,6 +1050,7 @@ COMMANDS.update({
     "events": _events, "summary": _summary,
     "inflight": _inflight,
     "send": _send, "schedule": _schedule, "retract": _retract, "bookmark add": _bookmark_add,
+    "bookmark delete": _bookmark_delete,
     "posts": _posts, "replies": _replies, "measured": _measured, "collect": _collect,
     "mentions": _mentions, "topics search": _topics_search, "profile": _profile,
     "location search": _location, "account status": _account_status, "account set": _account_set,

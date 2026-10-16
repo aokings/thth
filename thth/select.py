@@ -63,11 +63,16 @@ def unresolved(detail: str) -> str:
 
 
 def waiting_target(reason) -> str | None:
-    """理由が「指した原稿が出るのを待っている」なら、その原稿の名前。違えば None。"""
+    """理由が「指した原稿が出るのを待っている」なら、その原稿の名前。違えば None。
+
+    4.0 S4 §9.4: 告知が記事の公開を待っている（`announces_unresolved: waiting_for <配信 id>`）も待ちで、
+    配信 id を返す（held に数えない・board に「記事 dl_… の公開待ち」と名前が出る）。
+    """
     prefix = unresolved(WAITING_FOR) + " "
     if isinstance(reason, str) and reason.startswith(prefix):
         return reason[len(prefix):]
-    return None
+    from . import announce
+    return announce.waiting_target(reason)
 
 
 @dataclasses.dataclass
@@ -163,7 +168,8 @@ def resolve_reply_to_file(qf, *, account_name: str, pool=None,
 #   （**待ち（waiting_for）は入れない**——相手が出れば出る・3.2.0 の「待ち」）
 # - stale: publish_at から stale_days を過ぎた（もう出さない）
 # - invalid: それ以外の要確認（型外・文字数・重複本文・未照合の中身 等）
-HELD_CATEGORIES = ("approval_stale", "reply_to_unresolved", "stale", "invalid")
+# - announces_unresolved（4.0 S4 §9.4）: 告知の結ぶ記事が conflict・deleted・無い・読めない（待ちは入れない）
+HELD_CATEGORIES = ("approval_stale", "reply_to_unresolved", "stale", "invalid", "announces_unresolved")
 HELD_PREFIX = "approved_but_held"
 
 
@@ -177,6 +183,9 @@ def held_category(reason) -> str | None:
         return "approval_stale"
     if reason.startswith(UNRESOLVED):
         return "reply_to_unresolved"
+    from . import announce
+    if reason.startswith(announce.PREFIX):
+        return "announces_unresolved"
     if reason == "stale":
         return "stale"
     return "invalid"
@@ -569,7 +578,10 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
         # Bluesky の 300 は grapheme——Threads の数え方で測ると、絵文字の多い
         # 本文が「超えている」と落ちていた。
         topic = queuefile.normalize_topic(fm.get("topic"))
-        effective = tags_mod.prepared(media, section, topic, hashtags=hashtags_allowed)
+        # 4.0 S4 §9.2: `{article_url}` は公開した URL（まだなら仮の URL）に置き換えて数える。
+        from . import announce
+        effective = tags_mod.prepared(media, announce.counted_text(section, fm, account_cfg), topic,
+                                      hashtags=hashtags_allowed)
         n = queuefile.count_for(media, effective)
         if n > limit:
             rejections.append(Rejection(path, f"too_long({n})"))
@@ -627,6 +639,18 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
                 needs_review.append(path)
                 continue
             resolution = {"file": reply.name, "post_id": reply.post_id}
+
+        # 9b. 告知（4.0 S4 §9.4）。結ぶ記事が `published` になるまで待つ（`waiting_for`・held に数えない）。
+        # conflict・deleted・無い・読めないは held（`announces_unresolved`）。解決したら置き換える URL を持つ。
+        from . import announce
+        told = announce.resolve(fm, account_cfg)
+        if told is not None:
+            if told.reason is not None:
+                rejections.append(Rejection(path, told.reason))
+                needs_review.append(path)
+                continue
+            resolution = dict(resolution or {}, announces=told.delivery, article_url=told.url,
+                              article=told.article)
 
         validated.append((qf, publish_at, section, resolution))
 

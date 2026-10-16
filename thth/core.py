@@ -816,6 +816,24 @@ def _reply_to_for_post(chosen, resolution, account_name) -> tuple:
     return resolution["post_id"], None
 
 
+def _announce_for_post(chosen, resolution, account_cfg):
+    """告知（4.0 S4 §9.4）: `(announced | None, 断りの符丁 | None)`。
+
+    `announces` の無い原稿は `(None, None)`。select が解決した URL（`resolution["article_url"]`）が
+    無い・台帳を読み直したら違う URL か未解決になった → 出さない（`announces_unresolved`）。
+    """
+    from . import announce as announce_mod
+    fm = chosen.front_matter
+    if announce_mod.announces_of(fm) is None:
+        return None, None
+    url = (resolution or {}).get("article_url")
+    again = announce_mod.resolve(fm, account_cfg)
+    if (not url or again is None or again.reason is not None or again.url != url
+            or again.delivery != (resolution or {}).get("announces")):
+        return None, announce_mod.PREFIX
+    return {"announces": again.delivery, "article_url": url, "article": again.article}, None
+
+
 def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, section,
                    now, log, adapter_factory, resolution=None) -> ThrowResult:
     """select_one() が選んだ 1 件を投げる（dry-run ならログに出すだけ）。
@@ -836,6 +854,15 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                            file=chosen.path, error=reply_refusal)
     resolved_from = ({"file": resolution["file"], "post_id": reply_to}
                      if queuefile.reply_to_file_of(chosen.front_matter) is not None else None)
+    # 告知（4.0 S4 §9.4）: 結ぶ記事の URL を、select が解決した値ともう一度読んだ台帳で確かめる。
+    announced, announce_refusal = _announce_for_post(chosen, resolution, account_cfg)
+    if announce_refusal is not None:
+        msg = (f"告知の記事を解決できないので出しません: {os.path.basename(chosen.path)}（{announce_refusal}）")
+        log(msg)
+        _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
+                    status="error", error=announce_refusal)
+        return ThrowResult(exit_code=2, mode=mode, action="post", message=msg,
+                           file=chosen.path, error=announce_refusal)
     # 投稿の目的（設計 3.6.0 §A）。**指紋の外**——承認の時点の目的（`approved_goal`）と
     # 違っても止めず、runs と sent に「目的の変更」として残す。front-matter だけを読む。
     goal_value = goals_mod.goal_of(chosen)
@@ -877,15 +904,22 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     expected_components = approval_mod.compute_approved_components(
         section=effective_section, account=account_name, reply_to=fingerprint_reply_to,
         topic=chosen.get("topic"), publish_at=chosen.get("publish_at"), media_manifest=manifest, **options)
+    # 告知（4.0 S4 §9.4 の 2）: 指紋は置き換えの**前**の本文で固定した（上）。inflight に書く本文と
+    # adapter に渡す本文は `{article_url}` を台帳の `published_url` に置き換えたもの。
+    from . import announce as announce_mod
+    send_section = (announce_mod.fill(effective_section, announced["article_url"])
+                    if announced is not None else effective_section)
     # 送る本文の hash（後方互換・`tests/test_sent_integrity.py` が参照）も併せて
     # inflight に書く（外部レビュー §3・受け入れ 9・10）。実際の照合は上の指紋で行う。
-    body_hash = approval_mod.compute_body_hash(effective_section)
+    body_hash = approval_mod.compute_body_hash(send_section)
     # 本文の指紋（設計 3.3.1 §3）: 結果が分からなかったとき、次の run が自分の
     # 最近の投稿と照合する。本文そのものは inflight に書かない。
     inflight_mod.write(state_dir, file=chosen.path, started=started, container_id=None,
                         body_hash=body_hash, approved_fingerprint=expected_fingerprint,
-                        text_fingerprint=inflight_resolve_mod.text_fingerprint(effective_section),
+                        text_fingerprint=inflight_resolve_mod.text_fingerprint(send_section),
                         reply_to=reply_to)
+    if announced is not None:
+        log(f"告知: {announced['announces']} → {announced['article_url']}")
 
     if mode == "rehearsal":
         if resolved_from:
@@ -893,7 +927,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         if options.get("community_id"):
             log(f"コミュニティ: {options['community_id']}")
         log("投げるはずの本文:")
-        log(effective_section)
+        log(send_section)
         inflight_mod.clear(state_dir)
         _append_run(state_dir, account_name, run_id, mode, "skip", chosen.path, None, now,
                     status="ok", error=None, resolved_from=resolved_from)
@@ -906,7 +940,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     # topic は select_one() の条件 9b で既に検査済み（不正なら候補から落ちている）。
     # ここでは正規化だけ行う（前後の空白・先頭の `#` を落とす・設計 §4.1）。
     topic = queuefile.normalize_topic(chosen.get("topic"))
-    post = adapter_base.Post(text=effective_section,
+    post = adapter_base.Post(text=send_section,
                              reply_to=reply_to, topic=topic,
                              hashtags_allowed=bool(account_cfg.get("hashtags", True)),
                              location_id=options["location_id"],
@@ -1022,7 +1056,10 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                         goal=goal_value, goal_change=goal_change,
                         **_link_urls_kwargs(manifest),
                         **({"media":publish_result.media} if publish_result.media else {}),
-                        **({"community_id": post.community_id} if post.community_id else {}))
+                        **({"community_id": post.community_id} if post.community_id else {}),
+                        **({"announces": announced["announces"], "article_url": announced["article_url"],
+                            **({"article": announced["article"]} if announced.get("article") else {})}
+                           if announced is not None else {}))
     except (OSError,ValueError):
         if not manifest:raise
         return ThrowResult(exit_code=1,mode=mode,action="inflight",message="公開後の記録を確定できません。再送せず inflight を保持します",file=chosen.path,post_id=post_id,error="media_record_unconfirmed")
@@ -1185,6 +1222,17 @@ def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") 
     elif code in ("principal_daily_limit", "principal_retract_limit", "blog_daily_limit",
                   "blog_retract_limit", "bookmark_limit"):
         why = f"主体かブログの 1 日の上限（{code}）に達しました{when}。数は thth principal set で変えられます"
+    elif code in ("self_bookmark_limit", "bookmark_host_limit"):
+        # 4.0 S4 §5.3: 自分の記事は 1 日 1 件・同じホストへは 1 日 1 件（主体ごと）。
+        what = "自分の記事のブックマーク" if code == "self_bookmark_limit" else "同じホストへのブックマーク"
+        why = f"{what}の 1 日の上限（{code}）に達しました{when}。数は thth principal set で変えられます"
+    elif code == "bookmark_once":
+        why = ("このページは同じ owner のどれかの主体が既にブックマークしています（1 ページに 1 回だけ・"
+               "削除したあとも付け直しません）")
+    elif code == "bookmark_exists_remote":
+        why = "この主体ではてなに既にブックマークがあります（手で付けたものを THTH は上書きしません）"
+    elif code == "bookmark_busy":
+        why = "同じ owner の別のブックマークが打っている最中です。少し置いてもう一度"
     else:
         why = code
     head = "取り下げません" if kind == "retract" else "送信しません"

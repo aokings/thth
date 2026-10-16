@@ -46,7 +46,10 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
           link_urls: list | None = None, origin: dict | None = None,
           community_id: str | None = None, kind: str | None = None,
           blog_id: str | None = None, delivery: str | None = None,
-          url: str | None = None) -> str:
+          url: str | None = None, url_canonical: str | None = None, target: str | None = None,
+          article: str | None = None, tags: list | None = None, result: str | None = None,
+          remote: dict | None = None, announces: str | None = None,
+          article_url: str | None = None, retry_not_found: bool = False) -> str:
     """送った本文そのものを動かせない記録として保存する。返り値は書いたパス。
 
     `approved_fingerprint`（外部レビュー再々レビュー P1・1）は公開直前に固定した
@@ -60,7 +63,11 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
     増えても穴が空かない。**
 
     `kind`・`blog_id`・`delivery`・`url` ははてなの記録だけ（設計 4.0 S1 §4.2・`HATENA_KINDS`）。
-    渡さなければ記録の形は今までと 1 バイトも変わらない。はてなの記録は上書きしない
+    渡さなければ記録の形は今までと 1 バイトも変わらない。
+
+    ブックマークの行（`kind: bookmark_*`・設計 4.0 S4 §3.2）は `url_canonical`・`target`・`article`・
+    `tags`・`result`・`remote` を値があるときだけ足す。SNS の告知（設計 4.0 S4 §9.4 の 3）は `kind` の
+    無い行に `announces`・`article`・`article_url` を値があるときだけ足す（無ければ 1 バイトも変えない）。はてなの記録は上書きしない
     （`sent_record_exists`）——安全装置が数える材料なので、書き直すと数が減る。
     """
     if not postid_mod.is_usable(post_id):
@@ -68,18 +75,39 @@ def write(state_dir: str, *, post_id: str, text: str, body_hash: str, sent_at: s
             f"post_id を記録の鍵にできません（空・`.`／`..`・制御文字・長すぎる）:"
             f" {post_id!r}")
     hatena = _hatena_fields(kind=kind, blog_id=blog_id, delivery=delivery, url=url)
+    announce = {}
+    if announces is not None or article_url is not None or (kind is None and article is not None):
+        if kind is not None:
+            raise ValueError("invalid_sent_kind")
+        announce = _announce_fields(announces=announces, article=article, article_url=article_url)
+    else:
+        hatena.update(_bookmark_fields(kind=kind, url_canonical=url_canonical, target=target, article=article,
+                                       tags=tags, result=result, remote=remote))
     d = dir_for(state_dir)
     os.makedirs(d, exist_ok=True)
     p = path_for(state_dir, post_id)
+    attempts = None
     if hatena and os.path.exists(p):
         # **はてなの記録は上書きしない**（設計 4.0 S1 §4.2）。数（安全装置）の材料なので、
         # 同じ post_id で書き直すと前の行が消えて数が減る（更新を entry_id のまま書くと
         # 作成の行が消える）。更新・削除は別の post_id か `mark_retracted` で残す。
-        raise ValueError("sent_record_exists")
+        # 4.0 S4 §7: 照合で `not_found` になったブックマークの打ち直し（`retry_not_found`）だけは、
+        # 前の試みを `attempts[]` に移して同じ行に書く（前の試みも枠に数え続ける・`guard._classified`）。
+        previous = read(state_dir, post_id) if retry_not_found and kind == "bookmark_add" else None
+        if (not isinstance(previous, dict) or previous.get("kind") != "bookmark_add"
+                or previous.get("result") != "not_found" or previous.get("retracted_at")):
+            raise ValueError("sent_record_exists")
+        attempts = list(previous.get("attempts") or []) + [
+            {k: previous[k] for k in ("sent_at", "result", "reconciled_at", "approved_fingerprint", "body_hash")
+             if k in previous}]
     tmp = p + ".tmp"
     data = {"post_id": post_id, "text": text, "body_hash": body_hash, "sent_at": sent_at,
             "approved_fingerprint": approved_fingerprint, "reply_to": reply_to}
     data.update(hatena)
+    if attempts is not None:
+        data["attempts"] = attempts
+    # 告知（設計 4.0 S4 §9.4 の 3）: どの記事を告げたか。無ければ 1 バイトも変えない。
+    data.update(announce)
     if resolved_from is not None:
         # reply_to_file（設計 3.2.0 §3）。`reply_to` は解決した post_id（記録は事実）。
         # どの原稿から解決したかを足す——あとから「なぜこの投稿に返したか」を辿れる。
@@ -154,12 +182,81 @@ _DELIVERY_RE = _re.compile(r"dl_[0-9a-f]{12}")
 
 
 def bookmark_post_id(url: str) -> str:
-    """ブックマークの記録の鍵（`bm:` ＋ URL の sha256 の先頭 24 桁・設計 §4.2）。
+    """ブックマークの記録の鍵（`bm:` ＋ **正規化した URL** の sha256 の先頭 24 桁・設計 4.0 S4 §3.2）。
 
-    1 URL に 1 つ——同じ URL の 2 回目（`bookmark_once`）は、この記録があるかで分かる。
+    1 URL に 1 つ——同じ URL の 2 回目（`bookmark_once`）は、この記録があるかで分かる。正規化は
+    `hatena_bookmark.canonical_url`（`#a` と `#b` は同じ鍵）。読めない URL は `ValueError("invalid_url")`。
     """
     import hashlib
-    return "bm:" + hashlib.sha256(url.strip().encode("utf-8")).hexdigest()[:24]
+    from .hatena_bookmark import canonical_url
+    return "bm:" + hashlib.sha256(canonical_url(url).encode("utf-8")).hexdigest()[:24]
+
+
+BOOKMARK_KINDS = ("bookmark_add", "bookmark_delete")
+BOOKMARK_TARGETS = ("own", "external")
+BOOKMARK_RESULTS = ("confirmed", "unknown", "not_found")
+_REMOTE_KEYS = ("permalink", "created_epoch", "user")
+
+
+def _plain_text(value, limit) -> bool:
+    return isinstance(value, str) and bool(value.strip()) and len(value) <= limit and not CONTROL_TEXT_RE.search(value)
+
+
+def _good_url(value) -> bool:
+    return (isinstance(value, str) and value.startswith(("https://", "http://")) and len(value) <= 2048
+            and not CONTROL_URL_RE.search(value))
+
+
+def _bookmark_fields(*, kind, url_canonical, target, article, tags, result, remote) -> dict:
+    """ブックマークの行の欄（設計 4.0 S4 §3.2）。どれも無ければ空。ブックマークの行でなければ断る。"""
+    given = {k: v for k, v in (("url_canonical", url_canonical), ("target", target), ("article", article),
+                               ("tags", tags), ("result", result), ("remote", remote)) if v is not None}
+    if not given:
+        return {}
+    if kind not in BOOKMARK_KINDS:
+        raise ValueError("invalid_sent_kind")
+    out = {}
+    if url_canonical is not None:
+        if not _good_url(url_canonical):
+            raise ValueError("invalid_url")
+        out["url_canonical"] = url_canonical
+    if target is not None:
+        if target not in BOOKMARK_TARGETS:
+            raise ValueError("invalid_target")
+        out["target"] = target
+    if article is not None:
+        if not _plain_text(article, 512):
+            raise ValueError("invalid_article")
+        out["article"] = article
+    if tags is not None:
+        if type(tags) is not list or len(tags) > 10 or any(not _plain_text(t, 100) for t in tags):
+            raise ValueError("invalid_tags")
+        out["tags"] = sorted(tags)
+    if result is not None:
+        if result not in BOOKMARK_RESULTS:
+            raise ValueError("invalid_result")
+        out["result"] = result
+    if remote is not None:
+        if type(remote) is not dict or set(remote) - set(_REMOTE_KEYS):
+            raise ValueError("invalid_remote")
+        out["remote"] = {k: remote[k] for k in _REMOTE_KEYS if k in remote}
+    return out
+
+
+def _announce_fields(*, announces, article, article_url) -> dict:
+    """SNS の告知の欄（設計 4.0 S4 §9.4 の 3）。`announces` は配信 id・`article_url` は URL。"""
+    if not isinstance(announces, str) or not _DELIVERY_RE.fullmatch(announces):
+        raise ValueError("invalid_announces")
+    out = {"announces": announces}
+    if article is not None:
+        if not _plain_text(article, 512):
+            raise ValueError("invalid_article")
+        out["article"] = article
+    if article_url is not None:
+        if not _good_url(article_url):
+            raise ValueError("invalid_url")
+        out["article_url"] = article_url
+    return out
 
 
 def _hatena_fields(*, kind, blog_id, delivery, url) -> dict:
@@ -188,6 +285,7 @@ def _hatena_fields(*, kind, blog_id, delivery, url) -> dict:
 
 
 CONTROL_URL_RE = _re.compile(r"[\x00-\x20\x7f]")
+CONTROL_TEXT_RE = _re.compile(r"[\x00-\x1f\x7f]")
 
 
 def _origin_fields(origin, *, prefix: str) -> dict:
@@ -224,6 +322,35 @@ def mark_retracted(state_dir: str, post_id: str, *, retracted_at: str,
     data["retract_reason"] = retract_reason
     if origin is not None:
         data.update(_origin_fields(origin, prefix="retracted_"))
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.replace(tmp, p)
+    return p
+
+
+def mark_bookmark_result(state_dir: str, post_id: str, *, result: str, at: str, remote: dict | None = None) -> str:
+    """ブックマークの行の `result` を `unknown` から決まった値へ（設計 4.0 S4 §3.2・§7）。**足す**だけ。
+
+    `unknown` 以外の行は変えない（`ValueError("result_fixed")`）。`result` は `confirmed` か `not_found`。
+    `reconciled_at` に時刻を残す。`remote` は `confirmed` のときだけ（応答のブックマークの 3 欄）。
+    """
+    if result not in ("confirmed", "not_found"):
+        raise ValueError("invalid_result")
+    p = path_for(state_dir, post_id)
+    with open(p, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict) or data.get("kind") not in BOOKMARK_KINDS:
+        raise ValueError("invalid_sent_kind")
+    if data.get("result") != "unknown":
+        raise ValueError("result_fixed")
+    data["result"] = result
+    data["reconciled_at"] = at
+    if remote is not None:
+        if result != "confirmed" or type(remote) is not dict or set(remote) - set(_REMOTE_KEYS):
+            raise ValueError("invalid_remote")
+        data["remote"] = {k: remote[k] for k in _REMOTE_KEYS if k in remote}
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)

@@ -30,11 +30,14 @@
 - `publish_held`: 媒体の断りで自動の公開を止めている（`publish_hold`）。
 - `inflight_open`: 公開の結果待ちが残っている（inflight）。
 - `budget_exhausted`: X の読み取り・投稿の予算で断っている（X の口座だけ・始まりの時刻は無い）。
-- `delivery_published`・`delivery_updated`・`delivery_deleted`・`delivery_unknown`・`delivery_conflict`・
-  `bookmarked`・`bookmark_deleted`（4.0 S1 §8）: はてなの配信の台帳の状態の変わり目。`ref` は配信 id、
+- `delivery_published`・`delivery_updated`・`delivery_deleted`・`delivery_unknown`・`delivery_conflict`
+  （4.0 S1 §8）: はてなの配信の台帳の状態の変わり目。`ref` は配信 id、
   `event_id` は `"ev_" + sha256("thth.delivery/1|<delivery>|<seq>")[:24]`（種類も時刻も入れない——
   記録の前に落ちて人が同じ seq で解いても同じ id）。はてなの `sent/` の行は `published`／`retracted`
   に出さない（同じ出来事を 2 つの名前で出さない）。
+- `bookmarked`・`bookmark_deleted`（4.0 S4 §3.3）: 配信の台帳でなく口座の `sent/bm:` から出す。`ref` は
+  `post_id`（`bm:…`）、id は `"ev_" + sha256("thth.bookmark/1|<post_id>|add|delete")[:24]`（時刻なし）。
+  `bookmarked` は `result: confirmed` の行だけ。
 - `principal_stopped`（4.0 S1 §4.1）: 主体（はてな ID）が止まっている。その主体を使う口座ごとに 1 件。
 - `delivery_held`（4.0 S2 §8）: はてなの口座で、承認済みなのに timer が出さない配信原稿（`select_one` を
   読むだけで走らせた `held_items` の各行・`ongoing: true`）。`ref` は配信 id（front matter の
@@ -146,7 +149,10 @@ def _sent_events(name, titles):
         titles[post_id] = _title(row.get("text"))
         at = jst.parse(row.get("sent_at"))
         if at is not None:
-            out.append(_event("published", name, at, at, post_id, f"公開: {titles[post_id]}"))
+            # 4.0 S4 §11: 告知の行は結んだ記事を添える（欄を足すだけ・無ければ今までと同じ形）。
+            out.append(_event("published", name, at, at, post_id, f"公開: {titles[post_id]}",
+                              announces=row.get("announces"),
+                              article=row.get("article") if row.get("announces") else None))
         at = jst.parse(row.get("retracted_at"))
         if at is not None:
             out.append(_event("retracted", name, at, at, post_id, f"取り下げ: {titles[post_id]}"))
@@ -203,12 +209,10 @@ def _mention_events(name, cfg):
 
 
 def _delivery_kind(row):
-    """台帳の history の 1 行 → 出来事の種類（出さない行は None）。`inflight`・`wanted` は出さない。"""
-    bookmark = row.get("bookmark")
-    if bookmark == "added":
-        return "bookmarked"
-    if bookmark == "deleted":
-        return "bookmark_deleted"
+    """台帳の history の 1 行 → 出来事の種類（出さない行は None）。`inflight`・`wanted` は出さない。
+
+    ブックマークは台帳から出さない（4.0 S4 §3.3・正本は `sent/bm:`・`_bookmark_events`）。
+    """
     # 媒体が断った・人が「出ていない」と解いた更新・削除は、元の状態（`published`）に戻す行を足す
     # （`hatena_publish.BEFORE`）。戻しは出来事ではない——「更新した」「出た」と読ませない（S1 監査 1）。
     state = row.get("state")
@@ -237,6 +241,36 @@ def _delivery_events(name):
                               _id=delivery_event_id(record["delivery"], row["seq"]),
                               seq=row["seq"], url=row.get("published_url")))
     return out, bool(broken)
+
+
+def _bookmark_events(name):
+    """ブックマークの出来事（4.0 S4 §3.3）。口座の `sent/` の `kind: bookmark_add` の行から。
+
+    `bookmarked` は `result: confirmed` のときだけ（`unknown`・`not_found` は「付いた」と読ませない）。
+    `retracted_at` があれば `bookmark_deleted`。id は `thth.bookmark/1|<post_id>|add|delete`（時刻なし）。
+    """
+    from . import hatena_bookmark, sent as sent_mod
+    out = []
+    for row in sent_mod.records(accounts_mod.state_dir_for(name)):
+        if row.get("kind") != "bookmark_add":
+            continue
+        post_id = row["post_id"]
+        target = row.get("target") or "own"
+        label = f"{row.get('url')}（{'自分の記事' if target == 'own' else '参照先'}"
+        label += f"・{row['article']}）" if row.get("article") else "）"
+        if row.get("result") == "confirmed":
+            at = jst.parse(row.get("sent_at"))
+            if at is not None:
+                out.append(_event("bookmarked", name, at, jst.parse(row.get("reconciled_at")) or at, post_id,
+                                  f"ブックマーク: {label}", _id=hatena_bookmark.event_id(post_id, "add"),
+                                  url=row.get("url"), target=target, delivery=row.get("delivery"),
+                                  article=row.get("article")))
+        at = jst.parse(row.get("retracted_at"))
+        if at is not None:
+            out.append(_event("bookmark_deleted", name, at, at, post_id, f"ブックマークを消した: {label}",
+                              _id=hatena_bookmark.event_id(post_id, "delete"), url=row.get("url"),
+                              target=target, delivery=row.get("delivery"), article=row.get("article")))
+    return out
 
 
 def held_event_id(account, delivery, reason, approved_sha) -> str:
@@ -439,6 +473,10 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
                     cannot_say.add("deliveries_unreadable")
             except Exception:  # noqa: BLE001
                 cannot_say.add("deliveries_unreadable")
+            try:
+                events += _bookmark_events(name)
+            except Exception:  # noqa: BLE001 — 1 つの出所で全部を落とさない
+                cannot_say.add("sent_unreadable")
             try:
                 events += _held_events(name, cfg, now)
             except Exception:  # noqa: BLE001 — queue が読めなくても他の出所は出す

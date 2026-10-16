@@ -57,7 +57,9 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    # MCP の鍵の発行し直し・取り消し。値の前後と語だけ（bearer も hash も入れない）。
                    'settings_set', 'schedule_cancelled', 'credential_rotated', 'credential_revoked',
                    # 招待の完了で記録置き場を作れなかった（3.14.3 穴 1）。理由の符丁だけ。
-                   'managed_repo_init_failed'))
+                   'managed_repo_init_failed',
+                   # 4.0 S4 §7: 結果不明のブックマークを人が照合した（件数と結果の語だけ）。
+                   'bookmark_reconciled'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 

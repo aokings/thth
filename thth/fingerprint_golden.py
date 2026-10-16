@@ -45,6 +45,11 @@ CASES = (
     {"name": "x_community", "media": "x", "section": "コミュニティへ。",
      "account": "golden-x", "publish_at": "2026-10-14T08:00:00+09:00", "hashtags": False,
      "front_matter": {"community_id": "1493446837214187523"}},
+    # 4.0 S4 §9.3: 告知が結ぶ配信 id（値があるときだけ末尾に足す任意項目・版は上げない）。
+    # 指紋は置き換えの前の本文（`{article_url}` のまま）で取る。
+    {"name": "threads_announces", "media": "threads", "section": "記事を書きました。{article_url}",
+     "account": "golden-threads", "publish_at": "2026-10-20T08:30:00+09:00",
+     "front_matter": {"announces": "dl_3f9c2a7e1b4d"}},
     {"name": "bundle_bluesky", "media": "bluesky", "segments": ["一段目。", "二段目。"],
      "topic": "コーヒー", "account": "golden-bluesky",
      "publish_at": "2026-09-09T08:00:00+09:00",
@@ -66,6 +71,7 @@ GOLDEN = {
         "reply_to_file": "e4d307a73438a5f1",
         "threads_options": "2150188e6b2af272",
         "x_community": "d305d1c3e5cab9cc",
+        "threads_announces": "ecb7d08a9bf25a68",
         "bundle_bluesky": "e1e13b8e4197f403",
     },
     # 4.0 S1（設計 §6.1・§7.2）: はてなの承認の指紋。**SNS の v1 とは別の版の数え方**
@@ -82,6 +88,8 @@ GOLDEN = {
         1: {
             "bookmark_add": "69be00ab5be98c16",
             "bookmark_delete": "c5c9d175ac229bf3",
+            # 4.0 S4 §6.2: 参照先（`delivery: ""`）。今まで断っていた入力なので既存の指紋と衝突しない。
+            "bookmark_add_external": "df42d7898bcb25fe",
         },
     },
 }
@@ -120,6 +128,10 @@ HATENA_CASES = {
             "account": "golden-hatenablog", "principal": "golden-principal", "op": "delete",
             "url": "https://golden.hatenablog.com/entry/2026/10/20/080000",
             "delivery": "dl_0123456789ab", "comment": "", "tags": None}},
+        {"name": "bookmark_add_external", "args": {
+            "account": "golden-hatenablog", "principal": "golden-principal", "op": "add",
+            "url": " https://example.com/coffee/arabica-2026?page=2#top ", "delivery": "",
+            "comment": "参照した相場の頁。", "tags": ["相場", "コーヒー"]}},
     ),
 }
 

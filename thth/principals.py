@@ -46,6 +46,9 @@ LIMIT_DEFAULTS = {
     "daily_max_retracts": 3,    # 全ブログの entry_delete
     "daily_max_bookmarks": 3,   # bookmark_add＋bookmark_delete
     "burst": {"count": 3, "minutes": 30},  # entry と bookmark の合計
+    # 4.0 S4 §5.3: 自分の記事（target: own）のブックマークは 1 日 1 件・同じホストへは 1 日 1 件。
+    "daily_max_self_bookmarks": 1,
+    "bookmark_same_host_daily": 1,
 }
 # ブログごとの上限（任意・無ければ数えない＝口座の上限に任せる）。
 BLOG_LIMIT_KEYS = ("daily_max_posts", "daily_max_retracts")
@@ -120,7 +123,7 @@ def _validate_name(name) -> None:
 
 def valid_limit(key: str, value) -> bool:
     """主体・ブログの上限の 1 項目として受け取れる形か（口座と同じ検査・鍵名を共有）。"""
-    if key == "daily_max_bookmarks":
+    if key in ("daily_max_bookmarks", "daily_max_self_bookmarks", "bookmark_same_host_daily"):
         return accounts.valid_guard_value("daily_max_posts", value)
     if key in ("daily_max_posts", "daily_max_retracts", "burst"):
         return accounts.valid_guard_value(key, value)
@@ -210,6 +213,9 @@ def validate(name: str, data) -> None:
                                  f"burst は {{\"count\": 1〜, \"minutes\": 1〜1440}}）")
     if "fotolife" in data:
         _check_fotolife(name, data["fotolife"])
+    owner = data.get("owner")
+    if owner is not None and not (isinstance(owner, str) and accounts.name_is_safe(owner)):
+        raise PrincipalError("owner_invalid", f"{name}: owner は英数字と `_`・`.`・`-` の名前です")
     contact = data.get("user_agent_contact")
     if contact is not None and (not isinstance(contact, str)
                                 or not contact.startswith(("https://", "http://")) or len(contact) > 2048
@@ -331,6 +337,64 @@ def accounts_of(principal_name: str) -> list:
         if uses_principal(data) and data.get("principal") == principal_name:
             out.append((name, data))
     return out
+
+
+def owner_of(principal_name: str, principal_cfg: dict | None = None) -> str:
+    """主体の owner（設計 4.0 S4 §4.1）。台帳に無ければ主体の名（今までと同じ範囲）。"""
+    if principal_cfg is None:
+        principal_cfg = load_principal(principal_name)
+    owner = (principal_cfg or {}).get("owner")
+    return owner if isinstance(owner, str) and accounts.name_is_safe(owner) else principal_name
+
+
+def siblings(principal_name: str) -> list:
+    """同じ owner の主体（自分を含む）を `(名, 台帳)` で名前の順に（設計 4.0 S4 §4.1）。
+
+    `principals/` を歩く。読めない・形の違う台帳は飛ばす（その主体は `load_principal` で断られるので、
+    今から打つことはできない——`accounts_of` と同じ考え）。自分の台帳が読めなければ `load_principal` の
+    断りをそのまま上げる。
+    """
+    me = load_principal(principal_name)
+    owner = owner_of(principal_name, me)
+    out = []
+    try:
+        names = sorted(os.listdir(principals_dir()))
+    except OSError:
+        names = []
+    for entry in names:
+        if not entry.endswith(".json"):
+            continue
+        other = entry[:-5]
+        if not accounts.name_is_safe(other):
+            continue
+        if other == principal_name:
+            out.append((other, me))
+            continue
+        try:
+            data = load_principal(other)
+        except (PrincipalError, accounts.AccountError, OSError, ValueError):
+            continue
+        if owner_of(other, data) == owner:
+            out.append((other, data))
+    if not any(n == principal_name for n, _ in out):
+        out.append((principal_name, me))
+        out.sort(key=lambda row: row[0])
+    return out
+
+
+def owner_state_dir(owner: str) -> str:
+    """owner の状態の置き場 `$THTH_ROOT/owner_state/<owner>/`（`state/` の外・設計 4.0 S4 §4.4）。"""
+    if not accounts.name_is_safe(owner):
+        raise PrincipalError("owner_invalid", f"owner の名前に使えない字が入っています: {owner!r}")
+    return os.path.join(accounts.thth_root(), "owner_state", owner)
+
+
+def owner_bookmark_lock_path(owner: str) -> str:
+    """owner のブックマークのロック（repo → principal → account → owner の最後に取る）。"""
+    path = owner_state_dir(owner)
+    if not os.path.isdir(path):
+        os.makedirs(path, mode=0o700, exist_ok=True)
+    return os.path.join(path, "bookmark.lock")
 
 
 # --------------------------------------------------------------------------

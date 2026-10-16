@@ -44,7 +44,9 @@ PRINCIPAL_REFUSALS = frozenset((
     "blog_daily_limit", "blog_retract_limit", "bookmark_once", "bookmark_not_allowed_for_lane",
     # ロックの中で主体の台帳を読み直したときの突き合わせ（§3.3・§5.2 の 6）。
     "blog_not_allowed_for_lane", "blog_unknown", "principal_missing", "principal_unavailable",
-    "principal_token_mismatch", "principal_handle_mismatch"))
+    "principal_token_mismatch", "principal_handle_mismatch",
+    # 4.0 S4 §4・§5.3: 自分の記事・同じホストの 1 日の枠、owner のロック、自分の主体で既に付いている。
+    "self_bookmark_limit", "bookmark_host_limit", "bookmark_busy", "bookmark_exists_remote"))
 REFUSALS = (frozenset(("too_soon", "quiet_hours", "daily_limit", "retract_limit", "reaction_limit",
                        # 止めずに 1 件だけ断る（返信の burst・3.25.0／止めの印を置けない置き場）。
                        "burst_limit"))
@@ -190,6 +192,12 @@ def _classified(account):
             out.append((first, sent_at, blog))
         if retracted_at is not None:
             out.append((second, retracted_at, blog))
+        if first == "bookmark":
+            # 4.0 S4 §7: `not_found` のあと打ち直した行は、前の試みを `attempts[]` に持つ（数え続ける）。
+            for attempt in row.get("attempts") or []:
+                at = jst.parse(attempt.get("sent_at")) if isinstance(attempt, dict) else None
+                if at is not None:
+                    out.append(("bookmark", at, blog))
     return out
 
 
@@ -283,12 +291,18 @@ def burst_slot(account, cfg, *, now=None, pending=()) -> datetime.datetime:
 
 def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None,
           publish_at=None, scheduled_same_day=0, reply=False, cli=False,
-          principal_scheduled_same_day=None, bookmark_url=None, pending_replies=None) -> None:
+          principal_scheduled_same_day=None, bookmark_url=None, pending_replies=None,
+          bookmark_target=None, bookmark_once=True) -> None:
     """依頼が安全装置に掛かれば `GuardRefused` を上げる。掛からなければ何もしない。
 
     `kind`: `publish`（今すぐ出す）・`retract`（消す）・`schedule`（queue に「出してよい」と
     刻む。`publish_at` の日の公開数に、その日にすでに刻んだ件数 `scheduled_same_day` を足して見る）。
     burst を超える依頼は**口座を止めてから**断る。
+
+    ブックマーク（4.0 S4 §5.3・§6.5）: `bookmark_target`（`own`／`external`）があれば自分の記事の枠
+    （`daily_max_self_bookmarks`）を、`bookmark_url` のホストで同じホストの枠（`bookmark_same_host_daily`）を
+    見る。`bookmark_once=False` は「1 URL に 1 回」をここで見ない（`hatena_bookmark.execute_locked` が owner の
+    ロックの中で柵 1 として見る）。
 
     はてなの口座（`media: hatenablog`）は `_check_hatena`（主体 → 口座 → 媒体の断りの順に止めを
     見て、口座・ブログ・主体の 3 段で数える）。`kind` は `entry_create`・`entry_update`・
@@ -313,7 +327,8 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
                              now=now, actor=actor, via=via, credential=credential, publish_at=publish_at,
                              scheduled_same_day=scheduled_same_day,
                              principal_scheduled_same_day=principal_scheduled_same_day,
-                             bookmark_url=bookmark_url, cli=cli)
+                             bookmark_url=bookmark_url, cli=cli, bookmark_target=bookmark_target,
+                             bookmark_once=bookmark_once)
     if kind in HATENA_KINDS:
         raise ValueError("invalid_guard_kind")
     # `cli`（運営者の CLI・10/15）: 止めの印を置けない置き場なら、印は読まず・置かず、数だけ守らせる。
@@ -397,16 +412,68 @@ def principal_summary(principal_name, principal_cfg, *, now=None) -> dict:
 
 def _principal_bookmarked(principal_name, url) -> bool:
     """主体の全口座の `sent/` に、この URL のブックマークの記録があるか（削除済みでも）。"""
+    return owner_bookmarked(principal_name, url, owner_wide=False) is not None
+
+
+def owner_bookmarked(principal_name, url, *, owner_wide=True) -> str | None:
+    """柵 1（設計 4.0 S4 §4.2）: 同じ owner の全主体の全口座の `sent/` に、同じ正規化 URL の `bm:` の行が
+    あれば、その詳細（`same_principal`／`other_principal:<主体名>`）。無ければ None。
+
+    削除済み（`retracted_at`）・結果不明（`result: unknown`）の行も「付いている」に数える。照合して
+    `not_found` になった行だけは無視する（打ち直せる・§7）。`owner_wide=False` は主体の中だけ（S1 の形）。
+    """
     from . import principals
     post_id = sent_mod.bookmark_post_id(url)
+    group = principals.siblings(principal_name) if owner_wide else [(principal_name, None)]
+    for sibling, _cfg in group:
+        for name, _raw in principals.accounts_of(sibling):
+            row = sent_mod.read(accounts.state_dir_for(name), post_id)
+            if row is None or row.get("result") == "not_found":
+                continue
+            return "same_principal" if sibling == principal_name else f"other_principal:{sibling}"
+    return None
+
+
+def principal_bookmark_rows(principal_name) -> list:
+    """主体の全口座の `sent/` のうち `kind: bookmark_add` の行（自分の記事・同じホストの枠を数える材料）。"""
+    from . import principals
+    out = []
     for name, _raw in principals.accounts_of(principal_name):
-        if sent_mod.read(accounts.state_dir_for(name), post_id) is not None:
-            return True
-    return False
+        out += [row for row in sent_mod.records(accounts.state_dir_for(name)) if row.get("kind") == "bookmark_add"]
+    return out
+
+
+def _bookmark_host(row) -> str | None:
+    from .hatena_bookmark import canonical_url, host_of
+    try:
+        return host_of(row.get("url_canonical") or canonical_url(row.get("url") or ""))
+    except ValueError:
+        return None
+
+
+def bookmark_counts(principal_name, *, url=None, now=None) -> dict:
+    """今日（JST）の主体のブックマークのうち、自分の記事（`target: own`）の数と、`url` と同じホストの数。"""
+    from .hatena_bookmark import canonical_url, host_of
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    today = now.date()
+    host = None
+    if url:
+        host = host_of(canonical_url(url))
+    own = same = 0
+    for row in principal_bookmark_rows(principal_name):
+        at = jst.parse(row.get("sent_at"))
+        if at is None or jst.to_jst(at).date() != today:
+            continue
+        if row.get("target") == "own":
+            own += 1
+        if host is not None and _bookmark_host(row) == host:
+            same += 1
+    return {"own_today": own, "same_host_today": same, "host": host}
 
 
 def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at,
-                  scheduled_same_day, principal_scheduled_same_day, bookmark_url, cli) -> None:
+                  scheduled_same_day, principal_scheduled_same_day, bookmark_url, cli,
+                  bookmark_target=None, bookmark_once=True) -> None:
     """はてなの口座の安全装置。止め: 主体 → 口座 → 媒体の断り。数え: 口座 → ブログ → 主体。
 
     **主体の台帳はここで読み直す**（ロックの中で呼ばれる——承認のあとに主体の台帳から
@@ -489,6 +556,13 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
             raise GuardRefused("bookmark_not_allowed_for_lane")
         if whole["bookmarks_today"] >= plimits["daily_max_bookmarks"]:
             raise GuardRefused("bookmark_limit", next_at=midnight)
+        if kind == "bookmark":
+            # 4.0 S4 §5.3: 自分の記事は 1 日 `daily_max_self_bookmarks`・同じホストは 1 日 `bookmark_same_host_daily`。
+            marks = bookmark_counts(name, url=bookmark_url, now=now)
+            if bookmark_target == "own" and marks["own_today"] >= plimits["daily_max_self_bookmarks"]:
+                raise GuardRefused("self_bookmark_limit", next_at=midnight)
+            if marks["same_host_today"] >= plimits["bookmark_same_host_daily"]:
+                raise GuardRefused("bookmark_host_limit", next_at=midnight)
     # 急な連投。口座（entry だけ・今までの数え方）→ 主体（entry とブックマークの合計）。
     if kind.startswith("entry_") and counts["recent"] + 1 > limits["burst"]["count"]:
         if not can_stop:
@@ -500,9 +574,12 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
             raise GuardRefused("burst_limit", reason="burst")
         principals.stop(name, "burst", now=now, actor=actor, via=via, credential=credential)
         raise GuardRefused("principal_stopped", reason="burst")
-    # 1 URL に 1 回だけ（削除したあとの 2 回目も断る・§4.2・§7.3 の順）
-    if kind == "bookmark" and _principal_bookmarked(name, bookmark_url):
-        raise GuardRefused("bookmark_once")
+    # 1 URL に 1 回だけ（削除したあとの 2 回目も断る・§4.2・§7.3 の順）。4.0 S4 §4.2: 同じ owner の
+    # 全主体をまたぐ（柵 1）。`bookmark_once=False` なら呼び手が owner のロックの中で見る。
+    if kind == "bookmark" and bookmark_once:
+        detail = owner_bookmarked(name, bookmark_url)
+        if detail is not None:
+            raise GuardRefused("bookmark_once", reason=detail)
 
 
 def reactions_today(account, *, now=None) -> int:

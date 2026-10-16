@@ -133,7 +133,7 @@ All subcommands `thth --help` lists, one line each:
 - `events` — what happened, in time order (posts, retractions, replies and mentions received, stopped accounts, pending publishes, budget refusals); read-only, versioned JSON (`thth.events/1`)
 - `summary` — the numbers per account (posts and reactions in 24h/7d, unanswered replies, followers and day-over-day change, whether it is stopped); read-only (`thth.summary/1`)
 - `deliveries` — the delivery ledger (Hatena Blog articles: state, sequence number, history) for an account or project; read-only (`thth.deliveries/1`)
-- `bookmark` — `add`: a two-stage approval to bookmark your own published Hatena Blog article (the sending side arrives in 4.0 S4; until then the second stage stops with `unsupported_medium`)
+- `bookmark` — `add`/`delete`: a two-stage approval to bookmark your own published Hatena Blog article (`--delivery`) or a page your lane references (`--url`), at most once per page across the principals of one owner; `reconcile` checks bookmarks whose result was unknown; `list` shows them
 - `after` — how the conversations you joined were received
 - `threads` — thread shape: branches, depth, participants, time to first reply
 - `ask` — `before-you-post`: what happened last time with this word, hour and shape (local ledgers only)

@@ -35,7 +35,8 @@ IDENTITY_FIELDS = ("schema", "delivery", "account", "principal", "blog_id", "art
 # 状態の変わり目で上書きしてよい欄（設計 §3.4 の例の欄）。
 MUTABLE_FIELDS = ("article_source", "form", "queue_file", "entry_id", "edit_uri",
                   "published_url", "wanted_rev", "checked_rev", "checked_at",
-                  "article_rev_kind", "readback_sha", "images", "bookmark",
+                  # 4.0 S4 §3.3: `bookmark` は外した（ブックマークの正本は口座の `sent/bm:` 1 つ）。
+                  "article_rev_kind", "readback_sha", "images",
                   # 4.0 S2 §7: 承認したとき・出したときの HEAD の commit（指紋には入れない）。
                   "wanted_commit", "checked_commit")
 # history の行の固定の鍵（ほかの鍵は値があるときだけ足す）。

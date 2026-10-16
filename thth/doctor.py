@@ -227,7 +227,39 @@ def _diagnose_hatenablog(account_name: str, account_cfg: dict) -> dict:
             "username": principal_cfg["hatena_id"], "user_id": "",
             "scopes_recorded": recorded_scopes(accounts_mod.load_token(account_cfg)),
             "auth_via": None, "auth_observed_at": None, "probes": [probe],
-            "fotolife": _diagnose_fotolife(account_cfg, principal_cfg)}
+            "fotolife": _diagnose_fotolife(account_cfg, principal_cfg),
+            "bookmark": _diagnose_bookmark(account_name, account_cfg, principal_cfg)}
+
+
+def _diagnose_bookmark(account_name: str, account_cfg: dict, principal_cfg: dict) -> dict:
+    """はてなブックマーク（設計 4.0 S4 §7・§11）: `GET /rest/1/my` 1 回と、結果不明の行の数。
+
+    probes には入れない（終了コードを変えない・実機の §15 の 23 で OAuth が通るかを見る材料）。
+    """
+    from . import hatena_bookmark, hatena_publish
+    from .adapters import hatenabookmark
+    try:
+        unknown = hatena_bookmark.unknown_count(account_name)
+    except (OSError, ValueError):
+        unknown = None
+    try:
+        result = hatenabookmark.factory(account_cfg, principal_cfg).probe()
+    except hatena_publish.AdapterUnavailable as exc:
+        return {"ok": False, "status": None, "name": None, "unknown": unknown,
+                "detail": f"認証の材料が使えません（{exc.code}）"}
+    except Exception as exc:  # noqa: BLE001 — 診断は落とさない
+        return {"ok": False, "status": None, "name": None, "unknown": unknown,
+                "detail": f"読めません（{exc.__class__.__name__}）"}
+    if result["ok"]:
+        detail = f"ID が読めました（/rest/1/my・{result['name']}）"
+    elif result["status"] in (401, 403):
+        detail = f"認可が通りません（{result['status']}）"
+    elif result.get("error") == "hatena_user_mismatch":
+        detail = f"別の ID が返りました（{result['name']}）。token の主体を確かめる"
+    else:
+        detail = f"読めません（{result['status'] or '応答なし'}・{result['error']}）"
+    return {"ok": bool(result["ok"]), "status": result["status"], "name": result["name"],
+            "unknown": unknown, "detail": detail}
 
 
 def _diagnose_fotolife(account_cfg: dict, principal_cfg: dict) -> dict:
@@ -644,6 +676,11 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         log(f"  {'○' if photo.get('ok') else '×'} フォトライフ: {photo.get('detail')}")
         log(f"      画像の台帳: 上がっている {photo.get('uploaded')}・結果不明 {photo.get('unknown')}"
             + (f"・読めない {photo['unreadable']}" if photo.get("unreadable") else ""))
+    mark = report.get("bookmark")
+    if isinstance(mark, dict):
+        log(f"  {'○' if mark.get('ok') else '×'} ブックマーク: {mark.get('detail')}")
+        if mark.get("unknown"):
+            log(f"      結果不明 {mark['unknown']} 件（thth bookmark reconcile {report.get('account')}）")
     log("")
     log("読み取りだけを試しました。投稿・返信・削除は呼んでいません。")
     if any(p["ok"] is None for p in report["probes"]):

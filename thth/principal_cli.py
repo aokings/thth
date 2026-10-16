@@ -24,7 +24,9 @@ import sys
 from . import accounts, admin_log, principals, secrets_fs
 
 # `thth principal set` で変えられる名前（`thth account set` と同じ語）。
-KEYS = ("daily_max_posts", "daily_max_retracts", "daily_max_bookmarks", "burst_count", "burst_minutes")
+KEYS = ("daily_max_posts", "daily_max_retracts", "daily_max_bookmarks", "burst_count", "burst_minutes",
+        # 4.0 S4 §5.3: 自分の記事のブックマーク・同じホストへのブックマークの 1 日の上限。
+        "daily_max_self_bookmarks", "bookmark_same_host_daily")
 # 4.0 S3 §9: 主体の台帳の `fotolife` の上限（`fotolife.<欄>`・範囲は `hatena_fotolife.LIMIT_RANGES`）。
 FOTOLIFE_KEYS = ("fotolife.max_image_bytes", "fotolife.max_images_per_entry", "fotolife.max_total_bytes",
                  "fotolife.daily_max_uploads", "fotolife.feed_pages")
@@ -56,10 +58,17 @@ def _parse_blog(value: str) -> dict:
     return {"blog_id": blog_id, "lanes": lanes, "syntax": "markdown"}
 
 
-def build_ledger(name: str, *, hatena_id: str, blogs: list | None = None) -> dict:
-    """雛形 `accounts.example/principal-hatena.json` から 1 本ぶんを組み立てる。"""
+def build_ledger(name: str, *, hatena_id: str, blogs: list | None = None, owner: str | None = None) -> dict:
+    """雛形 `accounts.example/principal-hatena.json` から 1 本ぶんを組み立てる。
+
+    `owner`（4.0 S4 §4.1）は `--owner` で渡したときだけ書く。渡さなければ雛形の値も落とす
+    （owner 無し＝主体の名が owner＝今までと同じ範囲）——雛形の名を黙って写さない。
+    """
     with open(example_path(), encoding="utf-8") as f:
         data = json.load(f)
+    data.pop("owner", None)
+    if owner is not None:
+        data["owner"] = owner
     data["principal"] = name
     data["hatena_id"] = hatena_id
     data["token"] = f"~/.config/thth/{name}.token"
@@ -86,7 +95,7 @@ def cmd_add(args) -> int:
     except ValueError:
         return _fail("blogs_invalid: --blog は <blog_id>=<lane>[,<lane>…]（blog_id は小文字のホスト名）")
     try:
-        data = build_ledger(name, hatena_id=args.hatena_id, blogs=blogs)
+        data = build_ledger(name, hatena_id=args.hatena_id, blogs=blogs, owner=getattr(args, "owner", None))
         principals.validate(name, data)
     except FileNotFoundError as e:
         return _fail(f"雛形がありません: {e}")
@@ -136,6 +145,7 @@ def status(name) -> dict:
         "principal": name,
         "kind": p["kind"],
         "hatena_id": p["hatena_id"],
+        "owner": principals.owner_of(name, p),
         "auth": p.get("auth", "oauth"),
         "token": "present" if os.path.exists(p["token"]) else "absent",
         "consumer": ("present" if p.get("consumer") and os.path.exists(p["consumer"]) else "absent"),
@@ -161,7 +171,7 @@ def cmd_show(args) -> int:
         print(json.dumps(row, ensure_ascii=False))
         return 0
     lim = row["limits"]
-    print(f"{row['principal']}（{row['kind']}・はてな ID {row['hatena_id']}・auth {row['auth']}）")
+    print(f"{row['principal']}（{row['kind']}・はてな ID {row['hatena_id']}・owner {row['owner']}・auth {row['auth']}）")
     print(f"  token: {'ある' if row['token'] == 'present' else 'ない'}・consumer: "
           f"{'ある' if row['consumer'] == 'present' else 'ない'}")
     for blog in row["blogs"]:
@@ -171,6 +181,8 @@ def cmd_show(args) -> int:
     print(f"  上限: 公開 {lim['daily_max_posts']}・削除 {lim['daily_max_retracts']}・"
           f"ブックマーク {lim['daily_max_bookmarks']}・急な連投 {lim['burst']['minutes']} 分に "
           f"{lim['burst']['count']} 件を超えたら止める")
+    print(f"  ブックマークの枠: 自分の記事 1 日 {lim['daily_max_self_bookmarks']}・同じホスト 1 日 "
+          f"{lim['bookmark_same_host_daily']}")
     print(f"  口座: {'・'.join(row['accounts']) or 'なし'}")
     t = row["today"]
     print(f"  今日（{t['date']}）: 公開 {t['posts']} 件・削除 {t['retracts']} 件・ブックマーク {t['bookmarks']} 件")
@@ -202,7 +214,7 @@ def _parse_value(key, text):
         return value
     if key not in KEYS:
         raise ValueError("invalid_setting")
-    if key == "daily_max_bookmarks":
+    if key in ("daily_max_bookmarks", "daily_max_self_bookmarks", "bookmark_same_host_daily"):
         value = account_settings.parse("daily_max_posts", text)
     else:
         value = account_settings.parse(key, text)
@@ -569,6 +581,8 @@ def register(sub) -> None:
     p_add.add_argument("--hatena-id", dest="hatena_id", required=True)
     p_add.add_argument("--blog", action="append",
                        help="<blog_id>=<lane>[,<lane>…]（何度でも）。省くと雛形のダミー（demo.hatenablog.com）")
+    p_add.add_argument("--owner", default=None,
+                       help="主体を束ねる名（例 masaru・4.0 S4）。同じ owner の主体は同じページを 1 回だけブックマークする")
     p_add.add_argument("--by", required=True)
     p_add.add_argument("--json", action="store_true")
     p_add.set_defaults(func=cmd_add)

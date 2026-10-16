@@ -33,7 +33,77 @@ def _row(record: dict) -> dict:
             # S2 §6: はてなが返した本文が送った本文と違った（最後に出した行の印）。
             "readback_differs": _readback_differs(record),
             # S3 §7.1: 画像の数と、主体の画像の台帳での状態の内訳。
-            "images": image_summary(record)}
+            "images": image_summary(record),
+            # S4 §3.3: ブックマークは `sent/bm:` を配信 id で引いて読むときに添える（台帳には書かない）。
+            "bookmark": bookmark_of(record)}
+
+
+def bookmark_of(record: dict) -> dict | None:
+    """配信のブックマーク（口座の `sent/bm:` を配信 id で引く・読むだけ）。無ければ None。"""
+    from . import hatena_bookmark
+    try:
+        row = hatena_bookmark.by_delivery(record["account"]).get(record["delivery"])
+    except (OSError, ValueError, accounts_mod.AccountError):
+        return None
+    if row is None:
+        return None
+    return {"post_id": row["post_id"], "result": row.get("result"), "sent_at": row.get("sent_at"),
+            "retracted_at": row.get("retracted_at"), "permalink": row.get("permalink")}
+
+
+def bookmark_text(mark) -> str:
+    if not mark:
+        return "  ブクマ: 未"
+    when = jst.parse(mark.get("sent_at"))
+    day = f"{when.month}/{when.day}" if when else "?"
+    if mark.get("retracted_at"):
+        return f"  ブクマ: 消した（{day} に付けた）"
+    if mark.get("result") == "unknown":
+        return f"  ブクマ: 結果不明（{day}・thth bookmark reconcile）"
+    if mark.get("result") == "not_found":
+        return f"  ブクマ: 付いていなかった（{day}）"
+    return f"  ブクマ: 付けた（{day}）"
+
+
+def _project_of(target, names):
+    """対象の project（口座名なら台帳の project）。読めなければ None。"""
+    for name in names:
+        try:
+            return accounts_mod.load_account(name).get("project")
+        except (accounts_mod.AccountError, ValueError, TypeError):
+            continue
+    return None
+
+
+def announcements(project, delivery_ids, *, allowed_names=None):
+    """同じ project の SNS の口座の `sent/` から、`announces` が配信 id に一致する行（読むときに集める）。
+
+    `(行の list, 読めなかった口座の list)`。行は `{account, post_id, sent_at, announces, article, article_url}`。
+    """
+    from . import announce, sent as sent_mod
+    rows, broken = [], []
+    if not delivery_ids:
+        return rows, broken
+    for name, data in announce._raw_accounts():
+        if data.get("project") != project or data.get("media") == "hatenablog":
+            continue
+        if allowed_names is not None and name not in allowed_names:
+            continue
+        errors = []
+        try:
+            records = sent_mod.records(accounts_mod.state_dir_for(name), errors=errors)
+        except (OSError, ValueError):
+            broken.append(name)
+            continue
+        if errors:
+            broken.append(name)
+        for row in records:
+            if row.get("announces") in delivery_ids:
+                rows.append({"account": name, "post_id": row["post_id"], "sent_at": row.get("sent_at"),
+                             "announces": row["announces"], "article": row.get("article"),
+                             "article_url": row.get("article_url"), "retracted_at": row.get("retracted_at")})
+    rows.sort(key=lambda r: (r["sent_at"] or "", r["account"]))
+    return rows, broken
 
 
 def image_summary(record: dict) -> dict | None:
@@ -95,10 +165,24 @@ def build(target, *, article=None, now=None, allowed_names=None) -> dict:
             unreadable += broken
         rows += [r for r in records if article is None or r.get("article") == article]
     rows.sort(key=lambda r: (r["history"][-1].get("at") or "", r["account"], r["delivery"]))
+    # S4 §9.4 の 5・§3.3: 記事で絞ったときは告知（SNS の `sent/`）とブックマーク（`sent/bm:`）を添える。
+    told, marks = None, None
+    if article is not None:
+        told, broken_sns = announcements(_project_of(target, names), {r["delivery"] for r in rows},
+                                         allowed_names=allowed_names)
+        if broken_sns:
+            cannot_say.add("sent_unreadable")
+            unreadable += [{"account": name, "delivery": None, "reason": "sent_unreadable"} for name in broken_sns]
+        marks = []
+        for r in rows:
+            mark = bookmark_of(r)
+            if mark is not None:
+                marks.append(dict(mark, account=r["account"], delivery=r["delivery"]))
     return {"schema": DELIVERIES_SCHEMA, "report_type": "deliveries",
             "generated_at": jst.iso(now), "target": target, "target_kind": kind,
             "accounts": names, "article": article, "n": len(rows),
             "deliveries": rows, "unreadable": unreadable,
+            **({"announcements": told, "bookmarks": marks} if article is not None else {}),
             "cannot_say": sorted(cannot_say),
             "limitations": [
                 "読むだけ。媒体の API は呼ばず、THTH の配信の台帳だけを並べる",
@@ -113,7 +197,12 @@ def render(payload, out=print) -> None:
         url = f"  {row['published_url']}" if row.get("published_url") else ""
         differs = "  読み戻し差あり" if row.get("readback_differs") else ""
         out(f"  {row['delivery']}  {row['account']}  {row['state']}（{row['seq']}）"
-            f"  {row['article']}  {row['blog_id']}  {row['at']}{url}{differs}{image_text(row['images'])}")
+            f"  {row['article']}  {row['blog_id']}  {row['at']}{url}{differs}{image_text(row['images'])}"
+            f"{bookmark_text(row['bookmark']) if row['state'] in ('published', 'deleted') else ''}")
+    for told in payload.get("announcements") or []:
+        when = jst.parse(told.get("sent_at"))
+        stamp = f"{when.month}/{when.day} {when:%H:%M}" if when else "?"
+        out(f"  告知: {told['account']} {stamp}（{told['post_id']}）→ {told['announces']}")
     if payload["unreadable"]:
         out("読めなかったもの: " + "・".join(
             f"{u['account']}/{u['delivery'] or '*'}（{u['reason']}）" for u in payload["unreadable"]))

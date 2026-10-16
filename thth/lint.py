@@ -78,7 +78,10 @@ _REASON_TABLE = (
         # 4.0 S2（§4.2・§4.3・§7）。
         "relative_link_unresolvable", "article_not_committed",
         # 4.0 S3 §9（画像の形式・容量・枚数）。S2 の images_unsupported_until_s3 は外した。
-        "image_too_large", "image_type_unsupported", "too_many_images", "images_too_large")),
+        "image_too_large", "image_type_unsupported", "too_many_images", "images_too_large",
+        # 4.0 S4 §9.2（SNS の告知を記事に結ぶ）。
+        "invalid_announces", "announces_not_found", "announces_other_lane", "announces_not_allowed",
+        "article_mismatch", "article_url_placeholder_twice", "article_url_without_announces")),
 )
 
 REASONS = frozenset([code for _, code in _REASON_TABLE] + [FALLBACK_REASON])
@@ -239,6 +242,8 @@ def lint_file(path: str) -> list:
         from . import goals as goals_mod
         errors.extend(hatena_entry.lint_errors(fm, account_cfg))
         errors.extend(goals_mod.lint_errors(fm))
+        from . import announce
+        errors.extend(announce.lint_errors(fm, None, account_cfg, hatena=True))
         return errors
     media = account_cfg["media"] if account_cfg else "threads"
     from . import media as media_mod
@@ -256,7 +261,10 @@ def lint_file(path: str) -> list:
         limit = queuefile.limit_for(media, account_cfg)
         # **数え方も媒体ごと**（`limit_for()` と対・引継ぎ 2026-09-15 §3-D）。
         topic = queuefile.normalize_topic(fm.get("topic"))
-        effective = tags_mod.prepared(media, section, topic, hashtags=bool(account_cfg.get("hashtags", True)) if account_cfg else False)
+        # 4.0 S4 §9.2: `{article_url}` は仮の URL（`https://<blog_id>/entry/0000/00/00/000000`）に置き換えて数える。
+        from . import announce
+        effective = tags_mod.prepared(media, announce.counted_text(section, fm, account_cfg), topic,
+                                      hashtags=bool(account_cfg.get("hashtags", True)) if account_cfg else False)
         n = queuefile.count_for(media, effective)
         if n > limit:
             figure = queuefile.length_figure(media, n, limit)
@@ -305,6 +313,9 @@ def lint_file(path: str) -> list:
             f"（{found_by!r}）")
 
     errors.extend(reply_to_file_errors(path, fm, account_name))
+    # 4.0 S4 §9.2: SNS の告知（`announces`・`article`・本文の `{article_url}`）。
+    from . import announce
+    errors.extend(announce.lint_errors(fm, section, account_cfg, hatena=False))
     errors.extend(publish_option_errors(fm, account_cfg, account_name=account_name))
     # 投稿の目的（設計 3.6.0 §A1）。front-matter の `goal:` だけを見る——本文の
     # メモ（「目的: 誘導」）は読まない。承認の指紋には入れない（lint と承認の入口

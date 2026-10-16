@@ -12,7 +12,7 @@ from .report_service import ReportContext, ReportServiceError
 
 WRITE_OPERATIONS = frozenset(('draft_put','send_request','retract_request','schedule_request',
                               'media_upload_url','media_complete',
-                              # 4.0 S1 §7.3: はてなブックマークの 2 段の承認（送信は S4）。
+                              # 4.0 S1 §7.3・S4: はてなブックマークの 2 段の承認と送信（url・op: delete も）。
                               'bookmark_request'))
 # 公開・削除・予約に至る依頼。承認ページは無い（設計 3.13.0）: どれもその場で行う（安全装置は効く）。
 # 3.12.0 までの `approval_request` は受け付けない（`unsupported_operation`）。
@@ -40,6 +40,9 @@ DIRECT_REASONS = frozenset(('account_busy','publication_failed','publication_unc
                             # 4.0 S1: はてなの口座の送信の口（adapter）がまだ無い・自分の記事でない・digest の食い違い。
                             'unsupported_medium','bookmark_target_not_own','comment_too_long','comment_required',
                             'too_many_tags'))
+# 4.0 S4: ブックマークの対象・柵・送信の断り（`hatena_bookmark.REASONS`・静的な語だけ）。
+from .hatena_bookmark import REASONS as BOOKMARK_REASONS
+DIRECT_REASONS = DIRECT_REASONS | BOOKMARK_REASONS
 from .account_settings import REASONS as SETTINGS_REASONS
 # 遠くの道の inflight（見る・解く・3.14.3 穴 3）の断り。手元の `thth inflight` と同じ符丁。
 INFLIGHT_REASONS = frozenset(('no_inflight','inflight_unreadable','media_inflight_unsupported','post_id_invalid',
@@ -145,13 +148,15 @@ def _sync(cfg):
 
 
 def draft_put(context, request, via):
-    _schema(request, ('body','topic','publish_at','reply_to','draft_id','expected_revision','media'), ('body','publish_at'))
+    _schema(request, ('body','topic','publish_at','reply_to','draft_id','expected_revision','media',
+                      # 4.0 S4 §9.5: SNS の告知（結ぶ配信 id と記事の名）。本文の `{article_url}` は本文の一部。
+                      'announces','article'), ('body','publish_at'))
     account=request['account'];cfg=current(context,account,write=True)
     clone, _ = managed_repo.locations(account)
     _, queue = _queue(cfg)
     if cfg['repo_dir'] != str(clone): error('managed_repo_required')
     if ('draft_id' in request) != ('expected_revision' in request): error('invalid_request')
-    for key in ('topic','reply_to','publish_at'):
+    for key in ('topic','reply_to','publish_at','announces','article'):
         value=request.get(key)
         if value is not None and (not isinstance(value,str) or writeback.has_control_chars(value)): error('invalid_draft')
     if len(request['body'].encode())>48000: error('invalid_draft')
@@ -168,7 +173,7 @@ def draft_put(context, request, via):
             if q.front_matter.get('status')!='draft' or q.front_matter.get('post_id'): error('draft_not_editable')
             if request['expected_revision']!=hashlib.sha256(old).hexdigest(): error('draft_changed')
         text='---\nthth: 1\naccount: '+account+'\nstatus: draft\npublish_at: '+request['publish_at']+'\n'
-        for key in ('topic','reply_to'):
+        for key in ('topic','reply_to','announces','article'):
             if request.get(key): text+=key+': '+request[key]+'\n'
         if rows is not None:
             # Alt is quoted as JSON so any legal alt survives the round trip;
@@ -479,22 +484,26 @@ def direct(context, request, via, cfg):
 
 
 def bookmark(context, request, via):
-    """はてなブックマーク（設計 4.0 S1 §7.3）。2 段: `confirm` が無ければ `{stage: 1, digest, preview}`。
+    """はてなブックマーク（設計 4.0 S1 §7.3・S4 §6・§8・§11）。2 段: `confirm` が無ければ `{stage: 1, digest, preview}`。
 
-    2 段目はロックの中で安全装置を通し、adapter（S4）が無ければ `unsupported_medium` で止まる。
+    対象は `delivery`（自分の記事）か `url`（参照先）の**どちらか 1 つ**。`op` は `add`（既定）か `delete`。
+    2 段目はロックの中で安全装置と 3 つの柵を通して 1 回だけ打つ。`reconcile`・`list` はここに無い（CLI だけ）。
     """
-    _schema(request,('delivery','comment','tags','confirm','op'),('delivery','comment'))
-    for key in ('tags','confirm','op'):
-        if request.get(key) is not None and not isinstance(request[key],(str,list) if key=='tags' else str): error('invalid_request')
+    _schema(request,('delivery','url','comment','tags','confirm','op'),())
+    for key in ('delivery','url','comment','confirm','op'):
+        if request.get(key) is not None and not isinstance(request[key],str): error('invalid_request')
+    if request.get('tags') is not None and not isinstance(request['tags'],(str,list)): error('invalid_request')
+    if bool(request.get('delivery')) == bool(request.get('url')): error('invalid_request')
     account=request['account'];cfg=current(context,account,write=True)
     if not _hatena(cfg): error('unsupported_operation')
     from . import hatena_bookmark
     op=request.get('op') or 'add'
-    if op not in ('add','delete'): error('invalid_request')
-    def prepared(locked_cfg):
+    if op=='add' and not (request.get('comment') or '').strip(): error('invalid_request')
+    def prepared(locked_cfg,check_remote=True):
         try:
-            return hatena_bookmark.prepare(account,locked_cfg,delivery=request['delivery'],comment=request['comment'],
-                                           tags=request.get('tags'),op=op)
+            return hatena_bookmark.prepare(account,locked_cfg,delivery=request.get('delivery'),url=request.get('url'),
+                                           comment=request.get('comment') or '',tags=request.get('tags'),op=op,
+                                           check_remote=check_remote)
         except hatena_bookmark.BookmarkError as exc:
             error(exc.code if exc.code in SAFE_ERRORS else 'invalid_request')
     first=prepared(cfg)
@@ -506,13 +515,15 @@ def bookmark(context, request, via):
     origin=_origin(context,via)
     with server_files.account_locks(account,cfg):
         locked=current(context,account,write=True)
-        again=prepared(locked)
+        again=prepared(locked,check_remote=False)
         if again['digest']!=request['confirm']: error('confirm_mismatch')
         try:
             done=hatena_bookmark.execute_locked(account,locked,again,actor=context.actor,via=origin['via'],
                                                 credential=origin['credential'])
         except hatena_bookmark.BookmarkError as exc:
-            error(exc.code if exc.code in SAFE_ERRORS else 'publication_failed')
+            code=exc.code
+            # `hatena_http_<番号>` は数が開いているので `publication_failed` に畳む（静的な語だけを口から出す）。
+            error(code if code in SAFE_ERRORS else ('deletion_failed' if op=='delete' else 'publication_failed'))
     return {**done,'via':via}
 
 
