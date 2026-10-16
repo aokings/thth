@@ -49,11 +49,11 @@ def test_T_S2_7a_commitすれば通り台帳にwanted_commitと1段目にcommit(
     article_commit = run_git(s2lane.repo, ["log", "-1", "--format=%H", "--", "articles/a.md"]).stdout.strip()
     assert lint_codes(path) == []
     rc, out = stage1(path)
-    assert f"・commit {head(s2lane.repo)[:12]}…" in out
-    before = head(s2lane.repo)
+    # 記事ファイルを最後に変えた commit（HEAD ではない・承認の書き戻しで動かない・S2 の照合 10/16）
+    assert f"・commit {article_commit[:12]}…" in out
     approve(path)
     record = deliveries.read(ACCOUNT, fm_of(path)["delivery"])
-    assert record["wanted_commit"] == before
+    assert record["wanted_commit"] == article_commit
     # その commit の記事の blob が承認した版（wanted_rev）
     assert run_git(s2lane.repo, ["rev-parse", f"{record['wanted_commit']}:articles/a.md"]).stdout.strip() \
         == record["wanted_rev"]
@@ -77,14 +77,13 @@ def test_T_S2_7a_材料にarticle_commitと出たあとの欄(s2lane):
     path = s2lane.queue()
     from thth import queuefile
     m = hatena_entry.material(queuefile.parse(path).front_matter, accounts.load_account(ACCOUNT), ACCOUNT)
-    assert m["article_commit"] == head(s2lane.repo)
+    assert m["article_commit"] == run_git(s2lane.repo, ["log", "-1", "--format=%H", "--",
+                                                        "articles/a.md"]).stdout.strip()
     assert hatena_entry.outcome_fields(m) == {"checked_commit": m["article_commit"]}
     assert hatena_entry.outcome_fields({"article_commit": None}) == {}
     assert {"wanted_commit", "checked_commit"} <= set(deliveries.MUTABLE_FIELDS)
 
 
-@pytest.mark.xfail(strict=True, reason="継ぎ目: hatena_publish._record_outcome が hatena_entry.outcome_fields(m) "
-                                       "を fields に足すまで（adapter 側の書き手の範囲）")
 def test_T_S2_7a_出したあと台帳にchecked_commit(s2lane):
     path = s2lane.queue()
     approve(path)

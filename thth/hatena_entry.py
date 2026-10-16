@@ -233,7 +233,9 @@ def committed_rev(path: str) -> str | None:
 
 
 def committed_commit(path: str, data: bytes) -> str | None:
-    """記事ファイルが HEAD の blob と同じか確かめ、HEAD の commit を返す（設計 4.0 S2 §7）。
+    """記事ファイルが HEAD の blob と同じか確かめ、**その記事ファイルを最後に変えた commit** を返す
+    （設計 4.0 S2 §7）。HEAD の commit にしないのは、承認の書き戻しなど記事と関係の無い commit で
+    値が動かないように（`article_rev` を blob の sha にしたのと同じ考え・S2 の継ぎ目の照合 10/16）。
 
     repo の外（`article_rev_kind == content`）は確かめず None。作業ツリーの中身が HEAD の blob と
     違う（未 commit の変更）・HEAD に無い（untracked）・読めない → `article_not_committed`。
@@ -244,8 +246,10 @@ def committed_commit(path: str, data: bytes) -> str | None:
         return None
     if committed_rev(path) != rev:
         raise EntryError("article_not_committed")
+    top = writeback.repo_toplevel(path)
+    rel = posixpath.join(*os.path.relpath(os.path.realpath(path), os.path.realpath(top)).split(os.sep))
     try:
-        r = writeback._run_git(writeback.repo_toplevel(path), ["rev-parse", "--verify", "--quiet", "HEAD"])
+        r = writeback._run_git(top, ["log", "-1", "--format=%H", "HEAD", "--", rel])
     except (OSError, ValueError):
         raise EntryError("article_not_committed") from None
     head = (r.stdout or "").strip()

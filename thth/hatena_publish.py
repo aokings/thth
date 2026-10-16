@@ -193,7 +193,7 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
     # 0. 照合し直す（select と同じ関数・ロックの中）
     reason, m = hatena_entry.select_problem(chosen, account_cfg, account_name)
     if reason is not None:
-        log(f"承認が古いので出しません: {os.path.basename(path)}（{reason}）")
+        log(hatena_entry.refusal_log_line(path, reason))
         run("post", "error", reason)
         return _result(core, exit_code=2, mode=mode, action="approval_stale", message=reason,
                        file=path, error=reason)
@@ -392,6 +392,7 @@ def _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq
         fields = {"entry_id": entry_id, "checked_at": at}
         if m.get("article_rev"):
             fields["checked_rev"] = m["article_rev"]
+        fields.update(hatena_entry.outcome_fields(m))  # checked_commit（設計 4.0 S2 §7）
         if result.edit_uri:
             fields["edit_uri"] = result.edit_uri
         if url:
