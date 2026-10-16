@@ -70,6 +70,18 @@ def local_http_test_transport(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_public_bookmark_entry_info(monkeypatch):
+    """はてなブックマークの公開のエントリー情報（4.0 S4 の柵 2）を既定で「確かめられなかった」にする。
+
+    1 段目（`hatena_bookmark.prepare`）は認証なしの GET を `https://b.hatena.ne.jp` へ打つ。https は
+    上の柵（http だけを止める）に掛からないので、試験が本物のはてなへ出て行かないよう既定で差し替える。
+    本物の経路を見る試験は `hatena_bookmark.ENTRY_INFO = None` に戻して偽物の HTTP を置く。
+    """
+    from thth import hatena_bookmark
+    monkeypatch.setattr(hatena_bookmark, "ENTRY_INFO", lambda url: None)
+
+
+@pytest.fixture(autouse=True)
 def no_threads_status_poll_wait(monkeypatch):
     """公開の結果が分からないときの container の問い合わせ（設計 3.3.1 §2）を
     試験では待たない。本番の既定は 20 秒おき・最大 3 回。偽サーバは status の

@@ -155,7 +155,8 @@ def test_ブックマークは自分の公開済みの記事だけ(lane, key):
                    comment="運営者です") == "bookmark_target_not_own"
 
 
-def test_ブックマークは2段で_2段目はadapterが無ければunsupported_medium(lane, key):
+def test_ブックマークは2段で_2段目はadapterが作れなければ打たない(lane, key):
+    """4.0 S4: 送信の口は本物（`hatenabookmark.factory`）。token が無ければ `token_missing` で何も書かない。"""
     context = key({ACCOUNT: "lane-a"})
     delivery = _published_delivery(lane)
     first = request(context, operation="bookmark_request", delivery=delivery, comment="運営者です",
@@ -165,7 +166,7 @@ def test_ブックマークは2段で_2段目はadapterが無ければunsupporte
     assert refused(context, operation="bookmark_request", delivery=delivery, comment="運営者です",
                    tags="コーヒー,価格", confirm="0" * 12) == "confirm_mismatch"
     assert refused(context, operation="bookmark_request", delivery=delivery, comment="運営者です",
-                   tags="コーヒー,価格", confirm=first["digest"]) == "unsupported_medium"
+                   tags="コーヒー,価格", confirm=first["digest"]) == "token_missing"
     assert [r for r in sent.records(lane.state) if r.get("kind") == "bookmark_add"] == []
 
 
@@ -173,21 +174,30 @@ def test_ブックマークはadapterがあれば打ち_2回目はbookmark_once(
     context = key({ACCOUNT: "lane-a"})
     delivery = _published_delivery(lane)
 
+    from thth.adapters.hatenabookmark import BookmarkResult
+
     class Bookmarker:
         calls = []
 
+        def get_bookmark(self, *, url):
+            return None
+
         def add_bookmark(self, *, url, comment, tags):
             self.calls.append(url)
-            return EntryResult(ok=True)
+            return BookmarkResult(ok=True, status=200, bookmark={"user": "lane-owner", "permalink": "p"})
     monkeypatch.setattr(hatena_bookmark, "ADAPTER_FACTORY", lambda cfg, principal: Bookmarker())
+    # 4.0 S4 §5.3 の自分の記事の枠（1 日 1 件）はここで見るものではないので上げる（bookmark_once を見る）。
+    lane.world.edit_principal("hatena-main", daily_max_self_bookmarks=5, bookmark_same_host_daily=5)
     first = request(context, operation="bookmark_request", delivery=delivery, comment="運営者です")
     done = request(context, operation="bookmark_request", delivery=delivery, comment="運営者です",
                    confirm=first["digest"])
     assert done["status"] == "bookmarked" and len(Bookmarker.calls) == 1
     rows = [r for r in sent.records(lane.state) if r.get("kind") == "bookmark_add"]
     assert len(rows) == 1 and rows[0]["post_id"] == sent.bookmark_post_id(done["url"])
+    # 4.0 S4 §3.3: 配信の台帳には書かない（正本は sent/bm: 1 つ）。
     record = deliveries.read(ACCOUNT, delivery)
-    assert record["history"][-1]["bookmark"] == "added" and record["state"] == "published"
+    assert "bookmark" not in record["history"][-1] and record["state"] == "published"
+    assert rows[0]["result"] == "confirmed" and rows[0]["target"] == "own"
     assert refused(context, operation="bookmark_request", delivery=delivery, comment="運営者です",
                    confirm=first["digest"]) == "bookmark_once"
 
@@ -211,7 +221,7 @@ def test_ブックマークの手元の口_1段目と2段目(lane):
     digest = [line.split(": ", 1)[1] for line in out.splitlines() if line.startswith("digest: ")][0]
     rc, out, err = call(["bookmark", "add", ACCOUNT, "--delivery", delivery, "--comment", "運営者です",
                          "--confirm", digest, "--by", "tester", "--production", "--json"])
-    assert rc == 2 and json.loads(out)["error"] == "unsupported_medium"
+    assert rc == 2 and json.loads(out)["error"] == "token_missing"   # 4.0 S4: token が無ければ打たない
 
 
 def test_ブックマークはSNSの口座では受けない():

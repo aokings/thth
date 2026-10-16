@@ -32,7 +32,9 @@ def test_T1a_正しい主体の台帳は読める(world):
     assert p["hatena_id"] == "lane-owner"
     assert p["token"] == str(world.main_token)
     assert principals.limits(p) == {"daily_max_posts": 6, "daily_max_retracts": 3,
-                                    "daily_max_bookmarks": 3, "burst": {"count": 3, "minutes": 30}}
+                                    "daily_max_bookmarks": 3, "burst": {"count": 3, "minutes": 30},
+                                    # 4.0 S4 §5.3
+                                    "daily_max_self_bookmarks": 1, "bookmark_same_host_daily": 1}
 
 
 @pytest.mark.parametrize("field", ["principal", "kind", "hatena_id", "token", "blogs"])

@@ -69,6 +69,8 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      'deliveries',
      # 4.0 S1 §7.3: はてなブックマークの 2 段の承認（送信は S4）。
      'bookmark add',
+     # 4.0 S4 §8・§7・§11: 消す（2 段）・結果不明の照合（CLI だけ）・一覧（読むだけ）。
+     'bookmark delete', 'bookmark reconcile', 'bookmark list',
      # 4.0 S3 §12.4: 主体のフォトライフの画像の台帳（読むだけ）。
      'fotolife']
 

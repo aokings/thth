@@ -139,9 +139,12 @@ V1_GOLDEN = {
 def test_T4b_v1と束の指紋は1バイトも変わらない():
     assert approval.FINGERPRINT_VERSION == 2
     assert max(approval.FINGERPRINT_HISTORY) == 2
-    # golden の行そのものも 4.0 S1 の前と同じ（golden を書き換えて drift を黙らせない）。
-    assert fingerprint_golden.GOLDEN[2] == V1_GOLDEN
-    assert fingerprint_golden.current() == V1_GOLDEN
+    # golden の行そのものも 4.0 S1 の前と同じ（golden を書き換えて drift を黙らせない）。4.0 S4 §9.3 で
+    # 任意項目 `announces` の見本（`threads_announces`）を**足した**——既存の行は 1 つも変えていない。
+    added = {"threads_announces"}
+    assert {k: v for k, v in fingerprint_golden.GOLDEN[2].items() if k not in added} == V1_GOLDEN
+    assert {k: v for k, v in fingerprint_golden.current().items() if k not in added} == V1_GOLDEN
+    assert set(fingerprint_golden.GOLDEN[2]) - set(V1_GOLDEN) == added
     assert fingerprint_golden.drift() == []
 
 

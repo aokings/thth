@@ -234,6 +234,8 @@ def test_T2d_削除も枠に数える(world):
 
 def test_T2d_bookmark_onceは削除後の2回目も断る(world):
     url = "https://a.hatenablog.com/entry/1"
+    # 4.0 S4 §5.3: 同じホストの 1 日の枠（既定 1）はここで見るものではないので上げる。
+    world.edit_principal("hatena-main", bookmark_same_host_daily=10)
     record(world, "lane-a-hatenablog", minutes_ago=300, kind="bookmark_add", url=url,
            retracted_minutes_ago=280)
     e = refused("lane-a-hatenablog", "bookmark", bookmark_url=url)
@@ -241,6 +243,7 @@ def test_T2d_bookmark_onceは削除後の2回目も断る(world):
     # 別の口座（同じ主体）から同じ URL も断る
     world.edit_principal("hatena-main", bookmark={"lanes": ["lane-a", "lane-b"]})
     assert str(refused("lane-b-hatenablog", "bookmark", bookmark_url=url)) == "bookmark_once"
+    assert refused("lane-b-hatenablog", "bookmark", bookmark_url=url).reason == "same_principal"
     passes("lane-b-hatenablog", "bookmark", bookmark_url="https://a.hatenablog.com/entry/2")
 
 
