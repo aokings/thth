@@ -36,6 +36,11 @@
   記録の前に落ちて人が同じ seq で解いても同じ id）。はてなの `sent/` の行は `published`／`retracted`
   に出さない（同じ出来事を 2 つの名前で出さない）。
 - `principal_stopped`（4.0 S1 §4.1）: 主体（はてな ID）が止まっている。その主体を使う口座ごとに 1 件。
+- `delivery_held`（4.0 S2 §8）: はてなの口座で、承認済みなのに timer が出さない配信原稿（`select_one` を
+  読むだけで走らせた `held_items` の各行・`ongoing: true`）。`ref` は配信 id（front matter の
+  `delivery`・無ければ原稿名）、`reason` は断りの符丁（`approval_stale`・`delivery_state_conflict` など）。
+  `event_id` は `"ev_" + sha256("thth.held/1|<口座>|<delivery>|<reason>|<approved_sha>")[:24]`——同じ
+  止まり方のあいだは同じ id、再承認して指紋が変われば別の id。
 
 読み方は 2 つ:
 
@@ -76,7 +81,11 @@ KINDS = ("published", "retracted", "reply_received", "mention_received",
          "account_stopped", "publish_held", "inflight_open", "budget_exhausted",
          # 4.0 S1 §8: はてなの配信の台帳から（id は配信 id ＋ 通し番号だけで決まる）と主体の止め。
          "delivery_published", "delivery_updated", "delivery_deleted", "delivery_unknown",
-         "delivery_conflict", "bookmarked", "bookmark_deleted", "principal_stopped")
+         "delivery_conflict", "bookmarked", "bookmark_deleted", "principal_stopped",
+         # 4.0 S2 §8: 承認済みなのに出られないはてなの配信原稿（承認が古い・台帳が人待ち・S2 の断り）。
+         "delivery_held")
+# 止まっている配信原稿の出来事の id の版の語（設計 4.0 S2 §8 の 1）。
+HELD_EVENT_PREFIX = "thth.held/1"
 # 配信の台帳の出来事の id の版の語（設計 4.0 S1 §8.1）。
 DELIVERY_EVENT_PREFIX = "thth.delivery/1"
 # はてなの `sent/` の行（`kind` あり）。配信の台帳の出来事と同じことを 2 つの名前で出さない。
@@ -228,6 +237,50 @@ def _delivery_events(name):
                               _id=delivery_event_id(record["delivery"], row["seq"]),
                               seq=row["seq"], url=row.get("published_url")))
     return out, bool(broken)
+
+
+def held_event_id(account, delivery, reason, approved_sha) -> str:
+    """止まっている配信原稿の出来事の id（設計 4.0 S2 §8 の 1）。時刻は入れない。"""
+    raw = "|".join((HELD_EVENT_PREFIX, account, delivery or "", reason or "", approved_sha or ""))
+    return "ev_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def _held_summary(reason, file_name, command_path) -> str:
+    from . import hatena_entry
+    if reason == "approval_stale":
+        return f"承認が古い（記事を直した）: {file_name}・再承認は thth approve {command_path}"
+    if isinstance(reason, str) and reason.startswith("delivery_state_"):
+        return f"配信の台帳が {reason[len('delivery_state_'):]} のまま: {file_name}・人が確かめる（thth deliveries）"
+    if reason in hatena_entry.S2_REFUSALS:
+        return f"出せません: {file_name}（{hatena_entry.message(reason)}）"
+    return f"出せません（{reason}）: {file_name}"
+
+
+def _held_events(name, cfg, now):
+    """はてなの口座の、承認済みなのに出られない配信原稿（設計 4.0 S2 §8 の 1）。**読むだけ**。
+
+    `core.held_items_for_account` と同じ読み方（照合先は `writeback.upstream_sha()`・select を 1 回）。
+    """
+    from . import core, deliveries as deliveries_mod, hatena_entry, select as select_mod, writeback
+    if accounts_mod.repo_state(cfg) == accounts_mod.REPO_NONE:
+        return []
+    files = core.list_queue_files(cfg, tree_sha=writeback.upstream_sha(cfg.get("repo_dir")))
+    recent = select_mod.recent_posted_texts(files, account_name=name, media=cfg["media"], now=now)
+    result = select_mod.select_one(files, account_name=name, account_cfg=cfg, now=now,
+                                   last_post_at=core.last_post_at(files, name), recent_texts=recent)
+    by_name = {os.path.basename(qf.path): qf for qf in files}
+    out = []
+    for row in select_mod.held_items(result, files, now):
+        qf = by_name.get(row["file"])
+        fm = qf.front_matter if qf is not None else {}
+        delivery = fm.get("delivery") if deliveries_mod.is_delivery_id(fm.get("delivery")) else None
+        approved_sha = fm.get("approved_sha") if isinstance(fm.get("approved_sha"), str) else ""
+        command_path = hatena_entry.queue_command_path(qf.path) if qf is not None else row["file"]
+        out.append(_event("delivery_held", name, None, None, delivery or row["file"],
+                          _held_summary(row["reason"], row["file"], command_path),
+                          _id=held_event_id(name, delivery, row["reason"], approved_sha),
+                          ongoing=True, reason=row["reason"], file=row["file"], due=row["due"]))
+    return out
 
 
 def _state_events(name, cfg):
@@ -386,6 +439,10 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
                     cannot_say.add("deliveries_unreadable")
             except Exception:  # noqa: BLE001
                 cannot_say.add("deliveries_unreadable")
+            try:
+                events += _held_events(name, cfg, now)
+            except Exception:  # noqa: BLE001 — queue が読めなくても他の出所は出す
+                cannot_say.add("queue_unreadable")
         rows, cannot = _state_events(name, cfg)
         events += rows
         cannot_say.update(cannot)

@@ -5,6 +5,7 @@
   "principal": "demo-hatena",
   "blog_id": "demo.hatenablog.com",
   "handle": "demo",
+  "link_base": "https://example.invalid/",
   "repo_dir": "$THTH_ROOT/repos/demo",
   "queue_dir": "docs/sns/queue",
   "replies_dir": "data/sns/replies",

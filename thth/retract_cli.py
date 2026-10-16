@@ -250,6 +250,10 @@ def _cmd_retract(args) -> int:
     except accounts_mod.AccountError as e:
         return _fail(args, 2, str(e))
     media = account_cfg.get("media")
+    if media == "hatenablog":
+        # はてなブログの記事を消すのは配信原稿（op: delete）の承認と timer だけ（設計 4.0 S2 §9 の 7）。
+        return _fail(args, 2, "unsupported_operation: はてなブログの記事は thth retract で消せません。"
+                              "配信原稿を op: delete で書いて thth approve で承認し、timer が消します")
     adapter_cls = adapters_mod.adapter_class(media)
     if not getattr(adapter_cls, "DELETE_PERMISSION", None):
         return _fail(args, 2, f"{media}: この媒体の取り下げは未対応です"

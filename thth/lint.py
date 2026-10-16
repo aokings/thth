@@ -74,7 +74,9 @@ _REASON_TABLE = (
     *((code + ": ", code) for code in (
         "article_required", "article_source_missing", "invalid_article_source", "title_required",
         "invalid_op", "delivery_required", "blog_id_in_manuscript", "categories_invalid",
-        "invalid_form", "delivery_unknown", "image_missing")),
+        "invalid_form", "delivery_unknown", "image_missing",
+        # 4.0 S2（§4.2・§4.3・§7）。
+        "images_unsupported_until_s3", "relative_link_unresolvable", "article_not_committed")),
 )
 
 REASONS = frozenset([code for _, code in _REASON_TABLE] + [FALLBACK_REASON])

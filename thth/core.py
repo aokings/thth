@@ -164,6 +164,12 @@ def held_applies(account_cfg: dict | None) -> bool:
 _ERROR_RUN_REASONS = ("hashtag", "duplicate_text", "approval_stale", "unverified_content")
 
 
+def _hatena_refusal_noted(reason) -> bool:
+    """はてなの配信原稿の断りのうち、run のログに次の一手を出すもの（設計 4.0 S2 §8 の 2）。"""
+    from . import hatena_entry
+    return reason == "approval_stale" or reason in hatena_entry.S2_REFUSALS
+
+
 def _is_error_reason(reason: str) -> bool:
     # reply_to_file（設計 3.2.0 §2）: 指した原稿が取り下げ・読めない・消えた、と
     # 書き方の誤り（承認後に指した原稿の account が変わった等）は人が直すので
@@ -527,10 +533,17 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
             pool=files)
 
         for rej in result.rejections:
-            if _is_error_reason(rej.reason) and rej.file not in logged_error_paths:
+            # はてなの配信原稿は、承認が古い・S2 の断り（画像・相対リンク・未 commit）を run のログに
+            # 次の一手つきで 1 行出す（設計 4.0 S2 §8 の 2）。SNS の口座は今までどおり。
+            hatena_note = (account_cfg.get("media") == "hatenablog"
+                           and _hatena_refusal_noted(rej.reason))
+            if (_is_error_reason(rej.reason) or hatena_note) and rej.file not in logged_error_paths:
                 logged_error_paths.add(rej.file)
                 _append_run(state_dir, account_name, run_id, mode, "skip", rej.file, None, now,
                             status="error", error=rej.reason)
+                if hatena_note:
+                    from . import hatena_entry
+                    log(hatena_entry.refusal_log_line(rej.file, rej.reason))
 
         if result.chosen is None:
             msg = "出すものが無い"
@@ -1256,6 +1269,14 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
     run_id = uuid.uuid4().hex[:12]
 
     account_cfg = accounts_mod.load_account(account_name)
+    if account_cfg.get("media") == "hatenablog":
+        # はてなブログは配信原稿を承認して timer で出す道だけ（設計 4.0 S1 §5・S2 §9 の 7）。
+        # 同席の送信・返信は持たない（主体の 3 段の数え・配信の台帳を通らない書き込みを作らない）。
+        msg = ("unsupported_operation: はてなブログの口座には thth send（返信も）で出せません。"
+               "配信原稿を thth approve で承認し、timer が出します")
+        log(msg)
+        return ThrowResult(exit_code=2, mode="rehearsal", action="unsupported_operation", message=msg,
+                           error="unsupported_operation")
     reply_to = postid_mod.for_account(account_cfg, reply_to, account_name)
     state_dir = accounts_mod.state_dir_for(account_name)
     now = now if now is not None else jst.now_jst()

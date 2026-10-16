@@ -6,7 +6,7 @@
 
 ここに置くのは、lint・`thth approve`（1 段目・2 段目）・遠くの道の予約・timer の照合の
 **4 つの入口が同じ材料を作る 1 か所**（`material()`）。承認の指紋は
-`approval.compute_hatena_entry_sha()`、本文の変換は `hatena_convert.render()`（S1 は仮）。
+`approval.compute_hatena_entry_sha()`、本文の変換は `hatena_convert.render()`（S2 の規則の表）。
 
 **blog_id は原稿から取らない**（§5.1）。口座の台帳の `blog_id` を指紋に入れ、原稿に
 `blog_id:` があれば lint が `blog_id_in_manuscript` で断る。
@@ -38,7 +38,12 @@ TITLE_CHARS_MAX = 200
 LINT_CODES = ("article_required", "article_source_missing", "invalid_article_source", "title_required",
               "invalid_op", "delivery_required", "blog_id_in_manuscript", "categories_invalid",
               # 足した 3 つ（設計に名前が無かった）: form の値・delivery の指す台帳・画像。
-              "invalid_form", "delivery_unknown", "image_missing")
+              "invalid_form", "delivery_unknown", "image_missing",
+              # 4.0 S2: 画像（§4.3）・相対リンク（§4.2）・記事の commit（§7）。
+              "images_unsupported_until_s3", "relative_link_unresolvable", "article_not_committed")
+# S2 の断り（lint・承認の 1 段目・timer の 3 か所で同じ符丁）。timer の照合でも `approval_stale` に
+# 丸めずにこの符丁のまま返す（人が直す先が違う）。
+S2_REFUSALS = ("images_unsupported_until_s3", "relative_link_unresolvable", "article_not_committed")
 _MESSAGES = {
     "article_required": "article: が要ります（記事の名前・例 kopicha/2026-10-arabica）",
     "article_source_missing": "article_source: が無いか、指すファイルが repo にありません",
@@ -51,6 +56,11 @@ _MESSAGES = {
     "invalid_form": "form: は full・summary・entry のどれかです",
     "delivery_unknown": "delivery: の配信がこの口座の台帳にありません（create で書けるのは取り消した予約の配信だけ）",
     "image_missing": "本文の画像（![](<パス>)）が repo にありません",
+    "images_unsupported_until_s3": "画像つきの記事は 4.0 の S3（フォトライフ）で出せるようになります",
+    "relative_link_unresolvable": ("記事に相対リンクがありますが、口座の台帳に link_base（相対リンクの基準の"
+                                   " URL・https）がありません。link_base を書くか、リンクを絶対 URL に"),
+    "article_not_committed": ("記事ファイルが commit されていません（作業ツリーの記事が HEAD と違う・"
+                              "まだ追跡されていない）。記事を commit してから"),
 }
 
 
@@ -172,9 +182,14 @@ def lint_errors(fm, account_cfg) -> list:
                     out.append(message("article_source_missing"))
                 else:
                     try:
-                        _render(account_cfg, source, path)
+                        data, _body, _images = _render(account_cfg, source, path, title=_text(fm, "title"))
                     except EntryError as exc:
                         out.append(message(exc.code if exc.code in LINT_CODES else "image_missing"))
+                    else:
+                        try:
+                            committed_commit(path, data)
+                        except EntryError as exc:
+                            out.append(message(exc.code))
     delivery = _text(fm, "delivery")
     if op in ("update", "delete") and not delivery:
         out.append(message("delivery_required"))
@@ -202,7 +217,44 @@ def _ledger_for(account, op, delivery):
 
 # ------------------------------------------------------------------ 材料
 
-def _render(account_cfg, source, path) -> tuple:
+def committed_rev(path: str) -> str | None:
+    """HEAD にある記事ファイルの blob の sha（無い・repo でない・読めなければ None）。"""
+    from . import writeback
+    top = writeback.repo_toplevel(path)
+    if not top:
+        return None
+    rel = posixpath.join(*os.path.relpath(os.path.realpath(path), os.path.realpath(top)).split(os.sep))
+    try:
+        r = writeback._run_git(top, ["rev-parse", "--verify", "--quiet", f"HEAD:{rel}"])
+    except (OSError, ValueError):
+        return None
+    out = (r.stdout or "").strip()
+    return out if r.returncode == 0 and out else None
+
+
+def committed_commit(path: str, data: bytes) -> str | None:
+    """記事ファイルが HEAD の blob と同じか確かめ、HEAD の commit を返す（設計 4.0 S2 §7）。
+
+    repo の外（`article_rev_kind == content`）は確かめず None。作業ツリーの中身が HEAD の blob と
+    違う（未 commit の変更）・HEAD に無い（untracked）・読めない → `article_not_committed`。
+    """
+    from . import writeback
+    kind, rev = article_rev(path, data)
+    if kind != "git":
+        return None
+    if committed_rev(path) != rev:
+        raise EntryError("article_not_committed")
+    try:
+        r = writeback._run_git(writeback.repo_toplevel(path), ["rev-parse", "--verify", "--quiet", "HEAD"])
+    except (OSError, ValueError):
+        raise EntryError("article_not_committed") from None
+    head = (r.stdout or "").strip()
+    if r.returncode != 0 or not head:
+        raise EntryError("article_not_committed")
+    return head
+
+
+def _render(account_cfg, source, path, *, title=None) -> tuple:
     repo = account_cfg.get("repo_dir")
     try:
         with open(path, "rb") as f:
@@ -218,9 +270,13 @@ def _render(account_cfg, source, path) -> tuple:
             raise EntryError("image_missing", rel) from None
 
     try:
-        body, images = hatena_convert.render(text, article_source=source, image_sha=image_sha)
+        body, images = hatena_convert.render(text, article_source=source, image_sha=image_sha,
+                                             base_url=accounts_mod.link_base(account_cfg), title=title)
     except hatena_convert.ConvertError as exc:
-        raise EntryError("image_missing" if str(exc) == "image_missing" else "invalid_article_source") from None
+        code = str(exc)
+        raise EntryError(code if code in ("image_missing", "images_unsupported_until_s3",
+                                          "relative_link_unresolvable")
+                         else "invalid_article_source") from None
     return data, body, images
 
 
@@ -265,13 +321,14 @@ def material(fm, account_cfg, account_name: str, *, ledger: dict | None = None) 
         # 台帳を作ったあとに口座の blog_id・主体を付け替えた（配信の行き先は後から変えない）。
         raise EntryError("delivery_unknown")
     source = _text(fm, "article_source") or None
-    data, body, images, rev_kind, rev = b"", "", [], None, None
+    data, body, images, rev_kind, rev, commit = b"", "", [], None, None, None
     if op != "delete":
         if not source:
             raise EntryError("article_source_missing")
         path = repo_file(account_cfg.get("repo_dir"), source)
-        data, body, images = _render(account_cfg, source, path)
+        data, body, images = _render(account_cfg, source, path, title=title)
         rev_kind, rev = article_rev(path, data)
+        commit = committed_commit(path, data)
     entry_id = ledger.get("entry_id") if (ledger and op != "create") else None
     base = (ledger.get("readback_sha") or "") if (ledger and op != "create") else ""
     if op != "create" and not entry_id:
@@ -289,6 +346,7 @@ def material(fm, account_cfg, account_name: str, *, ledger: dict | None = None) 
             "categories": categories, "delivery": delivery, "ledger": ledger, "body": body,
             "body_sha256": approval_mod.hatena_body_sha256(body), "images": images,
             "article_rev_kind": rev_kind, "article_rev": rev, "article_bytes": len(data),
+            "article_commit": commit,
             "entry_id": entry_id, "base_readback_sha": base, "blog_id": blog_id,
             "principal": account_cfg.get("principal"), "project": account_cfg.get("project"),
             "account": account_name, "publish_at": fm.get("publish_at"), "approved_sha": sha}
@@ -316,7 +374,8 @@ def display_lines(m: dict, *, path: str, digest: str) -> list:
     lines = [head, f"操作: {OP_LABELS[m['op']]}   公開: {when}"]
     if m["op"] != "delete":
         rev = (m["article_rev"] or "")[:12]
-        lines.append(f"記事: {m['article']}（{m['article_source']}・版 {rev}… {m['article_rev_kind']}）")
+        commit = f"・commit {m['article_commit'][:12]}…" if m.get("article_commit") else ""
+        lines.append(f"記事: {m['article']}（{m['article_source']}・版 {rev}… {m['article_rev_kind']}）{commit}")
         cats = "・".join(m["categories"]) if m["categories"] else "（なし）"
         lines.append(f"題: {m['title']}   カテゴリ: {cats}")
         if m["images"]:
@@ -429,6 +488,8 @@ def assign_delivery(one: dict, *, by: str, at: str, origin: dict | None = None) 
            "origin": dict(origin) if origin else None}
     fields = {"article_source": m["article_source"], "form": m["form"], "queue_file": rel_queue}
     if m["op"] != "delete":
+        if m.get("article_commit"):
+            fields["wanted_commit"] = m["article_commit"]
         fields.update({"wanted_rev": m["article_rev"], "article_rev_kind": m["article_rev_kind"],
                        "images": [{"path": r["path"], "source_sha256": r["source_sha256"]} for r in m["images"]]})
     if m["op"] == "create" and not m["delivery"]:
@@ -483,7 +544,7 @@ def select_problem(qf, account_cfg, account_name):
     try:
         m = material(fm, account_cfg, account_name)
     except EntryError as exc:
-        if exc.code.startswith("delivery_state_"):
+        if exc.code.startswith("delivery_state_") or exc.code in S2_REFUSALS:
             return exc.code, None
         return "approval_stale", None
     if not fm.get("approved_sha") or fm.get("approved_sha") != m["approved_sha"]:
@@ -493,3 +554,41 @@ def select_problem(qf, account_cfg, account_name):
         pos, cp = control
         return f"control_char(位置{pos}・U+{cp:04X})", m
     return None, m
+
+
+# ------------------------------------------------------------------ timer の断りの文・出たあとの欄（S2）
+
+def queue_command_path(path: str) -> str:
+    """`thth approve` に渡す原稿のパス（repo の根からの相対・取れなければ渡されたまま）。"""
+    from . import writeback
+    try:
+        top = writeback.repo_toplevel(path)
+        if top:
+            return posixpath.join(*os.path.relpath(os.path.realpath(path), os.path.realpath(top)).split(os.sep))
+    except (OSError, ValueError):
+        pass
+    return path
+
+
+def refusal_log_line(path: str, reason: str) -> str:
+    """timer が照合で断ったときの run のログの 1 行（設計 4.0 S2 §8 の 2）。次の一手を添える。
+
+    `core._throw_locked`（select の断り）が出す。`hatena_publish.throw_chosen` の 0 段目
+    （ロックの中の照合し直し）も同じ文にする（継ぎ目・S2 の adapter 側で差し替える）。
+    """
+    name = os.path.basename(path)
+    if reason == "approval_stale":
+        return (f"承認が古いので出しません: {name}（approval_stale）。記事か原稿を直した場合は "
+                f"thth approve {queue_command_path(path)} --by <名前> で承認し直してください")
+    if reason in S2_REFUSALS:
+        return f"出しません: {name}（{message(reason)}）"
+    return f"承認が古いので出しません: {name}（{reason}）"
+
+
+def outcome_fields(m: dict) -> dict:
+    """出た（消えた）ときに配信の台帳へ足す欄（設計 4.0 S2 §7）。`checked_commit` は出したときの HEAD。
+
+    `hatena_publish._record_outcome` の `fields`（`checked_rev` の隣）に足す（継ぎ目）。repo の外の
+    記事・delete は空。
+    """
+    return {"checked_commit": m["article_commit"]} if m.get("article_commit") else {}
