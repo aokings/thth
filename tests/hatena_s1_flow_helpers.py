@@ -94,7 +94,12 @@ def approve(path, by="tester"):
 
 
 @pytest.fixture
-def lane(world, tmp_path):  # noqa: F811
+def lane(world, tmp_path, monkeypatch):  # noqa: F811
+    # S1 の試験の記事は手元の画像を 1 つ持つ（画像の一覧・指紋の材料を縛るため）。S2 は画像つきの
+    # 記事を断る（設計 4.0 S2 §4.3・S3 で外す）ので、S1 の試験の間だけ S3 のあとの形で通す。
+    # S2 の断りそのものは tests/test_v400_s2_convert.py が縛る。
+    from thth import hatena_convert
+    monkeypatch.setattr(hatena_convert, "REFUSE_LOCAL_IMAGES", False)
     # repo は $THTH_ROOT の下（遠くの道の `server_files` は根の外を読まない）。
     pair = init_git_pair(world.root / "repos" / "lane-a", seed_content="", seed_name=".gitkeep")
     data = world.account(ACCOUNT)

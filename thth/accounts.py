@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import urllib.parse
 
 # この thth アプリ repo 自身の場所（thth/ パッケージの 1 つ上）。
 # VM では $THTH_ROOT/app がここに一致する。
@@ -184,6 +185,8 @@ DUMMY_HANDLES = {"threads": ("demo",), "mastodon": ("demo",),
 # はてなの雛形（設計 4.0 S1 §3.3）。口座の `blog_id` と主体の `blogs[].blog_id`・`hatena_id`。
 DUMMY_BLOG_ID = "demo.hatenablog.com"
 DUMMY_HATENA_ID = "demo"
+# はてなの口座の `link_base`（設計 4.0 S2 §4.2・§16）の雛形。ホストで見る（`redirect_uri` と同じ）。
+DUMMY_LINK_BASE_HOST = "example.invalid"
 
 _DUMMY_NEXT = {
     "redirect_uri": ("Meta アプリに登録した URL を "
@@ -200,6 +203,9 @@ _DUMMY_NEXT = {
                 "--principal <主体> --blog <blog_id>`）。"),
     "hatena_id": ("本物のはてな ID を主体の台帳の `hatena_id` に入れてください"
                   "（`thth principal add <主体> --hatena-id <id>`）。口座の `handle` も同じ値に。"),
+    "link_base": ("記事の相対リンクの基準にする URL（レーンの記事が公開されているサイト・https）を"
+                  "口座の台帳の `link_base` に入れてください。無ければ欄ごと消してください"
+                  "（相対リンクのある記事は `relative_link_unresolvable` で断ります）。"),
 }
 
 
@@ -209,6 +215,36 @@ def redirect_uri_is_dummy(value) -> bool:
     **ホスト名で見る**（末尾の `/` の有無・`?` 付きの綴りで擦り抜けないように）。
     """
     return bool(value) and DUMMY_REDIRECT_URI_HOST in str(value)
+
+
+def link_base_is_dummy(value) -> bool:
+    """`link_base` が雛形のダミー（`https://example.invalid/`）か。ホスト名で見る。"""
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        return (urllib.parse.urlsplit(value).hostname or "") == DUMMY_LINK_BASE_HOST
+    except ValueError:
+        return False
+
+
+def valid_link_base(value) -> bool:
+    """はてなの口座の `link_base` として受け取れるか（https・ホストあり・query／fragment／利用者名なし）。"""
+    if not isinstance(value, str) or len(value) > 2048 or not value.startswith("https://"):
+        return False
+    from . import httpsafe
+    try:
+        httpsafe.validated_url(value, base=True)
+    except httpsafe.EndpointRejected:
+        return False
+    return True
+
+
+def link_base(cfg) -> str | None:
+    """変換が相対リンクの基準に使う URL（末尾は `/`）。無い・雛形のダミーなら None（断る側）。"""
+    value = (cfg or {}).get("link_base")
+    if not valid_link_base(value) or link_base_is_dummy(value):
+        return None
+    return value if value.endswith("/") else value + "/"
 
 
 def dummy_fields(cfg: dict) -> list[dict]:
@@ -234,6 +270,8 @@ def dummy_fields(cfg: dict) -> list[dict]:
     # はてな（設計 4.0 S1 §3.3）: 口座の `blog_id`、主体の台帳の `hatena_id`・`blogs[]`。
     if media == "hatenablog" and str(cfg.get("blog_id") or "").strip().lower() == DUMMY_BLOG_ID:
         足す("blog_id", cfg.get("blog_id"))
+    if media == "hatenablog" and link_base_is_dummy(cfg.get("link_base")):
+        足す("link_base", cfg.get("link_base"))
     if cfg.get("kind") == "hatena" and "principal" in cfg:
         if cfg.get("hatena_id") == DUMMY_HATENA_ID:
             足す("hatena_id", cfg.get("hatena_id"))
@@ -492,6 +530,10 @@ def load_account(name: str) -> dict:
             raise AccountError(
                 f"{name}: 台帳の {key} が受け取れません（invalid_guard_limits・"
                 f"0 以上の整数。burst は {{\"count\": 1〜, \"minutes\": 1〜1440}}）")
+    # はてなの口座の相対リンクの基準（設計 4.0 S2 §4.2）。任意・https だけ。
+    if "link_base" in data and data.get("media") == "hatenablog" and not valid_link_base(data["link_base"]):
+        raise AccountError(f"{name}: 台帳の link_base が受け取れません（invalid_link_base・https の URL・"
+                           f"query と # は付けない）")
     out = AccountConfig(data)
     out._thth_account_name=name
     for key in ("repo_dir", "env", "token"):
@@ -501,7 +543,14 @@ def load_account(name: str) -> dict:
     # 書いてあっても読まない（SNS の口座の読みは 1 バイトも変えない・T-1c）。
     if out.get("media") == "hatenablog":
         from . import principals
-        principals.check_account(out, name)
+        principal_cfg = principals.check_account(out, name)
+        # S2 が送れるのは Markdown のブログだけ（設計 4.0 S2 §5 の 1）。欄が無ければ markdown。
+        blog = principals.blog_entry(principal_cfg, out.get("blog_id")) or {}
+        if blog.get("syntax", "markdown") != "markdown":
+            raise principals.PrincipalError(
+                "blog_syntax_unsupported",
+                f"{name}: {blog.get('blog_id')} の syntax は {blog.get('syntax')}——送れるのは markdown の"
+                f"ブログだけです。はてなの編集モードを Markdown にし、主体の台帳の syntax を markdown に")
     return out
 
 
