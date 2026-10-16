@@ -275,14 +275,35 @@ def _render(account_cfg, source, path, *, title=None) -> tuple:
         raise EntryError("article_source_missing") from None
 
     kinds = {}
+    seen = {"n": 0, "total": 0, "limits": None}
 
     def image_sha(rel):
+        # 枚数・大きさ・形式は sha を取る前に見る（大きなファイルを丸ごと読まない・監査 低-1）。
+        if seen["limits"] is None:
+            seen["limits"] = _image_limits(account_cfg)
+        lim = seen["limits"]
+        seen["n"] += 1
+        if seen["n"] > lim["max_images_per_entry"]:
+            raise EntryError("too_many_images")
         try:
             full = repo_file(repo, rel)
+            size = os.stat(full).st_size
+        except (OSError, EntryError):
+            raise EntryError("image_missing", rel) from None
+        if size <= 0:
+            raise EntryError("image_missing", rel)
+        if size > lim["max_image_bytes"]:
+            raise EntryError("image_too_large", rel)
+        seen["total"] += size
+        if seen["total"] > lim["max_total_bytes"]:
+            raise EntryError("images_too_large")
+        try:
             with open(full, "rb") as f:
                 kinds[rel] = hatena_convert.image_content_type(f.read(16))
+            if kinds[rel] is None:
+                raise EntryError("image_type_unsupported", rel)
             return hatena_convert.file_sha256(full)
-        except (OSError, EntryError):
+        except OSError:
             raise EntryError("image_missing", rel) from None
 
     try:

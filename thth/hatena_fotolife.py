@@ -164,6 +164,8 @@ def _validate(record, sha256) -> dict:
     if (type(record) is not dict or record.get("schema") != SCHEMA or record.get("sha256") != sha256
             or record.get("state") not in STATES):
         raise LedgerUnreadable("fotolife_ledger_unreadable")
+    if record["state"] == "unknown" and (not isinstance(record.get("title"), str) or not record["title"]):
+        raise LedgerUnreadable("fotolife_ledger_unreadable")
     if record["state"] == "uploaded" and (
             not isinstance(record.get("fotolife_id"), str) or not FOTOLIFE_ID_RE.fullmatch(record["fotolife_id"])
             or not isinstance(record.get("syntax"), str) or not record["syntax"]):
@@ -252,11 +254,16 @@ def _day_of(value):
     return jst.to_jst(when).date() if when is not None else None
 
 
-def uploads_today(principal, now) -> int:
-    """今日（JST）上げた数: `uploaded_at` が今日の `uploaded`＋`sent_at` が今日の `unknown`（§9）。"""
+def uploads_today(principal, now, *, exclude=None) -> int:
+    """今日（JST）上げた数: `uploaded_at` が今日の `uploaded`＋`sent_at` が今日の `unknown`（§9）。
+
+    `exclude` はこれから上げ直す画像の sha256（その画像自身の古い `unknown` の行を 2 度数えない）。
+    """
     today = jst.to_jst(now).date()
     count = 0
     for record in list_records(principal)[0]:
+        if exclude is not None and record.get("sha256") == exclude:
+            continue
         stamp = record.get("uploaded_at") if record["state"] == "uploaded" else record.get("sent_at")
         if _day_of(stamp) == today:
             count += 1
@@ -335,6 +342,13 @@ def _read_image(account_cfg, row, max_bytes) -> tuple:
     return data, content_type
 
 
+def _check_stop(exc, path) -> "FotolifeStop":
+    """確かめの GET の失敗を止めの符丁に。401・403 は人が直すもの（exit 2・`principal auth --force` の案内）。"""
+    if str(exc) == "hatena_auth_rejected":
+        return FotolifeStop("hatena_auth_rejected", path=path)
+    return FotolifeStop("fotolife_check_failed", path=path, detail=str(exc))
+
+
 def _id_tail(value) -> str | None:
     if not isinstance(value, str) or not value:
         return None
@@ -380,7 +394,7 @@ def ensure_uploaded(principal_cfg, account_cfg, m, *, factory=None, log=None, no
                 log(f"フォトライフの画像が外で消されていたので上げ直します: {path}")
                 record, raw = None, None
             except fotolife.CheckFailed as exc:
-                raise FotolifeStop("fotolife_check_failed", path=path, detail=str(exc)) from None
+                raise _check_stop(exc, path) from None
             except Exception as exc:  # noqa: BLE001 — 確かめられなければ出さない（上げ直さない）
                 raise FotolifeStop("fotolife_check_failed", path=path, detail=exc.__class__.__name__) from None
             else:
@@ -397,7 +411,7 @@ def ensure_uploaded(principal_cfg, account_cfg, m, *, factory=None, log=None, no
             try:
                 photos = adapter.recent(pages=lim["feed_pages"])
             except fotolife.CheckFailed as exc:
-                raise FotolifeStop("fotolife_check_failed", path=path, detail=str(exc)) from None
+                raise _check_stop(exc, path) from None
             except Exception as exc:  # noqa: BLE001
                 raise FotolifeStop("fotolife_check_failed", path=path, detail=exc.__class__.__name__) from None
             match = next((p for p in photos if p.get("title") == record.get("title")
@@ -418,7 +432,7 @@ def ensure_uploaded(principal_cfg, account_cfg, m, *, factory=None, log=None, no
 
         # 上げる（§6）
         data, content_type = _read_image(account_cfg, row, lim["max_image_bytes"])
-        if uploads_today(principal, now) >= lim["daily_max_uploads"]:
+        if uploads_today(principal, now, exclude=sha256) >= lim["daily_max_uploads"]:
             raise FotolifeStop("fotolife_daily_limit", path=path, next_at=_next_day(now))
         title = title_for(path, sha256)
         pending = {"schema": SCHEMA, "sha256": sha256, "bytes": len(data), "content_type": content_type,
@@ -442,6 +456,11 @@ def ensure_uploaded(principal_cfg, account_cfg, m, *, factory=None, log=None, no
         if result.ambiguous:
             _write(principal, dict(pending, error=result.error or "ambiguous"), expected=raw)
             raise FotolifeStop("fotolife_ambiguous", path=path, detail=result.error)
-        _remove(principal, sha256)   # 確かに出ていない（4xx・送る前の断り）
+        if record is not None and record["state"] == "unknown":
+            # この run の送りは確かに断られたが、前の run の送りは上がっていたかもしれない。
+            # 元の unknown の行に戻して記憶を残す（次の run が feed でまた照合する）。
+            _write(principal, record, expected=raw)
+        else:
+            _remove(principal, sha256)   # 確かに出ていない（4xx・送る前の断り）
         raise FotolifeStop(result.error or "fotolife_rejected", path=path)
     return placements, stats

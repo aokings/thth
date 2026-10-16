@@ -236,8 +236,7 @@ def test_T_S3_4d_1日の上限のあとfotolife_daily_limit_次は翌日0時(pho
     logs = []
     result = throw(logs=logs)
     assert (result.action, result.error) == ("guard_refused", "fotolife_daily_limit")
-    # 時刻が来れば解ける（WAITING_REFUSALS・timer の失敗にしない＝exit 0）。設計 §3.2 の「exit 1」とは
-    # 食い違う（報告に書いた）。
+    # 時刻が来れば解ける（WAITING_REFUSALS・timer の失敗にしない＝exit 0・設計 §3.2）。
     assert result.exit_code == 0 and "fotolife_daily_limit" in hatena_publish.WAITING_REFUSALS
     assert "2026-09-10T00:00:00+09:00" in result.message
     assert any("2026-09-10T00:00:00+09:00" in line for line in logs)
@@ -571,3 +570,126 @@ def test_フォルダはブログのfotolife_folderで送る(photo_lane):
     assert throw().exit_code == 0
     ups = [c for c in photo_lane.http.calls if c["url"] == f"{FOTOLIFE}/atom/post"]
     assert {posted(c["body"])["subject"] for c in ups} == {"lane-a 写真"}
+
+
+# ---------------------------------------------------------------- S3 の監査の直し（10/16）
+
+@pytest.mark.parametrize("where", ["get", "feed"])
+def test_監査中1_確かめのGETやfeedが401ならhatena_auth_rejected_exit2で案内(photo_lane, where):
+    """token が切れたまま exit 1（次の run で解ける扱い）を繰り返さない。"""
+    if where == "get":
+        approved(photo_lane)
+        assert throw().exit_code == 0
+        photo_lane.photo.get = (401, b"")
+        photo_lane.write("articles/b.md", "# 別\n\n![豆](../images/bean.jpg)\n")
+        approved(photo_lane, "b.md", article_source="articles/b.md", title="別")
+    else:
+        photo_lane.photo.post = TimeoutError("timed out")
+        approved(photo_lane)
+        assert throw().error == "fotolife_ambiguous"
+        photo_lane.photo.post = None
+        photo_lane.photo.feed = (403, b"")
+    logs = []
+    result = throw(logs=logs)
+    assert (result.action, result.error, result.exit_code) == ("refused", "hatena_auth_rejected", 2)
+    assert any("principal auth" in line and "--force" in line for line in logs)
+
+
+def test_監査_feedのsyntaxのuserが違えばfotolife_user_mismatch(photo_lane):
+    state = {"title": None}
+
+    def timeout(body):
+        state["title"] = posted(body)["title"]
+        raise TimeoutError("timed out")
+    photo_lane.photo.post = timeout
+    path, delivery = approved(photo_lane)
+    assert throw().error == "fotolife_ambiguous"
+    photo_lane.photo.post = None
+    photo_lane.photo.feed = (200, photo_feed([photo_xml("55", title=state["title"], hatena_id="someone-else")]))
+    result = throw()
+    assert (result.error, result.exit_code) == ("fotolife_user_mismatch", 2)
+    assert [r["state"] for r in ledger(photo_lane.world)] == ["unknown"]
+    nothing_written(photo_lane, delivery)
+
+
+def test_監査_feedは2頁目のnextをたどる(photo_lane):
+    page2 = f"{FOTOLIFE}/atom/feed?page=2"
+
+    def timeout(body):
+        photo_lane.photo.create(posted(body)["title"])   # 上がったのに答えが返らない
+        raise TimeoutError("timed out")
+    photo_lane.photo.post = timeout
+    approved(photo_lane)
+    assert throw().error == "fotolife_ambiguous"
+    photo_lane.photo.post = None
+    (fid,) = photo_lane.photo.photos
+    first_page = photo_feed([]).replace(b"<title>fotolife</title>",
+                                        f'<title>fotolife</title><link rel="next" href="{page2}"/>'.encode())
+    base = route_default(photo_lane)
+
+    def handler(method, url, headers, body):
+        if url == f"{FOTOLIFE}/atom/feed":
+            return 200, {}, first_page
+        if url == page2:
+            return 200, {}, photo_feed([photo_lane.photo.photos[fid]])
+        return base(method, url, headers, body)
+    photo_lane.http.handler = handler
+    photo_lane.world.edit_principal("hatena-main", fotolife={"feed_pages": 2})
+    photo_lane.http.calls.clear()
+    assert throw().exit_code == 0
+    calls = photo_calls(photo_lane.http)
+    assert calls[:2] == [("GET", "/atom/feed"), ("GET", "/atom/feed?page=2")]
+    assert calls.count(("POST", "/atom/post")) == 1   # PNG だけ。JPEG は 2 頁目で見つかった
+    assert {r["sha256"]: r["fotolife_id"] for r in ledger(photo_lane.world)}[JPEG_SHA] == fid
+
+
+def test_監査低2_1日の数えにその画像自身の古いunknownを入れない(photo_lane):
+    photo_lane.world.edit_principal("hatena-main", fotolife={"daily_max_uploads": 1})
+    photo_lane.photo.post = TimeoutError("timed out")
+    approved(photo_lane)
+    assert throw().error == "fotolife_ambiguous"   # JPEG の unknown が 1 行（今日）
+    photo_lane.photo.post = None
+    # 上げ直す JPEG 自身の unknown を数えると、JPEG の番で 1 枚に当たって何も上がらない。
+    # 除けば JPEG は上がり、PNG の番で上限に当たる。
+    assert throw().error == "fotolife_daily_limit"
+    rows = {r["sha256"]: r["state"] for r in ledger(photo_lane.world)}
+    assert rows == {JPEG_SHA: "uploaded"}
+
+
+def test_監査低3_元がunknownの画像が4xxで断られたらunknownに戻す(photo_lane):
+    photo_lane.photo.post = TimeoutError("timed out")
+    approved(photo_lane)
+    assert throw().error == "fotolife_ambiguous"
+    photo_lane.photo.post = (400, b"bad")
+    assert throw().error == "fotolife_rejected_400"
+    (row,) = ledger(photo_lane.world)
+    assert row["state"] == "unknown" and row["sha256"] == JPEG_SHA and row["error"] == "fotolife_transport_failed"
+
+
+def test_監査低5_titleの無いunknownの行は読めない台帳(photo_lane):
+    directory = hatena_fotolife.dir_for("hatena-main")
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    target = os.path.join(directory, f"{JPEG_SHA}.json")
+    with open(target, "w", encoding="utf-8") as f:
+        json.dump({"schema": hatena_fotolife.SCHEMA, "sha256": JPEG_SHA, "state": "unknown"}, f)
+    os.chmod(target, 0o600)
+    with pytest.raises(hatena_fotolife.LedgerUnreadable):
+        hatena_fotolife.read("hatena-main", JPEG_SHA)
+
+
+def test_監査低1_容量と枚数はshaを取る前に断る(photo_lane, monkeypatch):
+    from tests.hatena_s2_helpers import lint_codes
+    from thth import hatena_convert
+
+    def no_hash(path):
+        raise AssertionError("sha を取った")
+    photo_lane.write("images/bean.jpg", JPEG + b"\x00" * (8 * 1024 * 1024))
+    path = photo_lane.queue()
+    monkeypatch.setattr(hatena_convert, "file_sha256", no_hash)
+    assert "image_too_large" in lint_codes(path)
+    photo_lane.world.edit_principal("hatena-main", fotolife={"max_images_per_entry": 1,
+                                                             "max_image_bytes": 16 * 1024 * 1024})
+    calls = []
+    monkeypatch.setattr(hatena_convert, "file_sha256", lambda p: calls.append(p) or ("0" * 64, 1))
+    assert "too_many_images" in lint_codes(path)
+    assert len(calls) == 1   # 2 枚目は sha を取る前に数えて断る
