@@ -258,7 +258,7 @@ RUN_LOCK_WAIT_SECONDS = 60
 
 def throw_once(account_name: str, *, production_flag: bool = False,
                 bypass_pace: bool = False, adapter_factory=None, log=None,
-                now=None, wait=0) -> ThrowResult:
+                now=None, wait=0, fotolife_factory=None) -> ThrowResult:
     """§3.3 の順序で 1 アカウント分を投げる（dry-run 既定）。
 
     台帳 `max_per_run`（既定 1）まで「select → throw」を繰り返す（1 本ごとに
@@ -269,6 +269,8 @@ def throw_once(account_name: str, *, production_flag: bool = False,
     されていない限り、これを付けても dry-run のまま（fail-closed。§0・受け入れ 6）。
     `now` はテスト用の時刻注入（省略時は `jst.now_jst()`）。CLI・timer は渡さない。
     `wait` はロックを待つ秒数（既定 0＝待たない。timer は `RUN_LOCK_WAIT_SECONDS`）。
+    `fotolife_factory` ははてなの口座の画像の段（フォトライフ・設計 4.0 S3 §6.1）の差し替え口
+    （None なら本物）。
     """
     log = log or (lambda line: None)
     adapter_factory = adapter_factory or _default_adapter_factory
@@ -322,6 +324,7 @@ def throw_once(account_name: str, *, production_flag: bool = False,
                 account_name, account_cfg, state_dir, run_id,
                 production_flag=production_flag, bypass_pace=bypass_pace,
                 adapter_factory=adapter_factory, log=log, now=now,
+                fotolife_factory=fotolife_factory,
             )
     except lock_mod.LockBusy:
         msg = f"{account_name} は既に実行中です（ロック取得失敗）"
@@ -414,7 +417,8 @@ def _note_remote_state(state_dir: str, publish_result, log) -> None:
 
 
 def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
-                   production_flag, bypass_pace, adapter_factory, log, now=None) -> ThrowResult:
+                   production_flag, bypass_pace, adapter_factory, log, now=None,
+                   fotolife_factory=None) -> ThrowResult:
     # inflight が残っていれば何もしない（§3.5）。ここは throw_once 1 回につき
     # 1 度だけ見る（下のループ中に新たに inflight が残るのは「曖昧な失敗」の
     # ときだけで、そのときはその場で打ち切って返すので読み直す必要が無い）。
@@ -571,7 +575,7 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
             from . import hatena_publish
             one_result = hatena_publish.throw_chosen(
                 account_name, account_cfg, state_dir, run_id, mode, chosen, now, log,
-                adapter_factory=adapter_factory)
+                adapter_factory=adapter_factory, fotolife_factory=fotolife_factory)
         else:
             one_result = _throw_chosen(
                 account_name, account_cfg, state_dir, run_id, mode, chosen, result.section,

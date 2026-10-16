@@ -31,7 +31,38 @@ def _row(record: dict) -> dict:
             "state": record["state"], "seq": record["seq"], "at": last.get("at"),
             "published_url": record.get("published_url"),
             # S2 §6: はてなが返した本文が送った本文と違った（最後に出した行の印）。
-            "readback_differs": _readback_differs(record)}
+            "readback_differs": _readback_differs(record),
+            # S3 §7.1: 画像の数と、主体の画像の台帳での状態の内訳。
+            "images": image_summary(record)}
+
+
+def image_summary(record: dict) -> dict | None:
+    """配信の `images[]` を主体の画像の台帳（`principal_state/<p>/fotolife/`）で引いて数える（読むだけ）。"""
+    from . import hatena_fotolife
+    images = record.get("images") or []
+    if not images:
+        return None
+    counts = {"total": len(images), "uploaded": 0, "unknown": 0, "none": 0, "unreadable": 0}
+    principal = record.get("principal")
+    for row in images:
+        sha = row.get("source_sha256") if isinstance(row, dict) else None
+        try:
+            state, _rec = hatena_fotolife.status_of(principal, sha)
+        except (ValueError, OSError, accounts_mod.AccountError):
+            state = "unreadable"
+        counts[state if state in counts else "unreadable"] += 1
+    return counts
+
+
+def image_text(summary) -> str:
+    if not summary:
+        return ""
+    parts = [f"上がっている {summary['uploaded']}"]
+    if summary["unknown"]:
+        parts.append(f"結果不明 {summary['unknown']}")
+    if summary["unreadable"]:
+        parts.append(f"台帳が読めない {summary['unreadable']}")
+    return f"  画像 {summary['total']} 件（{'・'.join(parts)}）"
 
 
 def _readback_differs(record: dict) -> bool:
@@ -82,7 +113,7 @@ def render(payload, out=print) -> None:
         url = f"  {row['published_url']}" if row.get("published_url") else ""
         differs = "  読み戻し差あり" if row.get("readback_differs") else ""
         out(f"  {row['delivery']}  {row['account']}  {row['state']}（{row['seq']}）"
-            f"  {row['article']}  {row['blog_id']}  {row['at']}{url}{differs}")
+            f"  {row['article']}  {row['blog_id']}  {row['at']}{url}{differs}{image_text(row['images'])}")
     if payload["unreadable"]:
         out("読めなかったもの: " + "・".join(
             f"{u['account']}/{u['delivery'] or '*'}（{u['reason']}）" for u in payload["unreadable"]))

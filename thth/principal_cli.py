@@ -25,6 +25,9 @@ from . import accounts, admin_log, principals, secrets_fs
 
 # `thth principal set` で変えられる名前（`thth account set` と同じ語）。
 KEYS = ("daily_max_posts", "daily_max_retracts", "daily_max_bookmarks", "burst_count", "burst_minutes")
+# 4.0 S3 §9: 主体の台帳の `fotolife` の上限（`fotolife.<欄>`・範囲は `hatena_fotolife.LIMIT_RANGES`）。
+FOTOLIFE_KEYS = ("fotolife.max_image_bytes", "fotolife.max_images_per_entry", "fotolife.max_total_bytes",
+                 "fotolife.daily_max_uploads", "fotolife.feed_pages")
 
 
 def _find_example_dir() -> str:
@@ -188,7 +191,15 @@ def _pairs(rest):
 
 
 def _parse_value(key, text):
-    from . import account_settings
+    from . import account_settings, hatena_fotolife
+    if key in FOTOLIFE_KEYS:
+        try:
+            value = int(str(text).strip())
+        except ValueError:
+            raise ValueError("invalid_setting") from None
+        if not hatena_fotolife.valid_limit(key.split(".", 1)[1], value):
+            raise ValueError("invalid_setting")
+        return value
     if key not in KEYS:
         raise ValueError("invalid_setting")
     if key == "daily_max_bookmarks":
@@ -204,15 +215,22 @@ def change(name, key, value, *, by) -> dict:
     after = _parse_value(key, value)
     p = principals.load_principal(name)
     before_limits = principals.limits(p)
-    before = (before_limits["burst"]["count"] if key == "burst_count"
-              else before_limits["burst"]["minutes"] if key == "burst_minutes" else before_limits[key])
+    if key in FOTOLIFE_KEYS:
+        from . import hatena_fotolife
+        before = hatena_fotolife.limits(p)[key.split(".", 1)[1]]
+    else:
+        before = (before_limits["burst"]["count"] if key == "burst_count"
+                  else before_limits["burst"]["minutes"] if key == "burst_minutes" else before_limits[key])
     if before == after:
         return {"principal": name, "key": key, "before": before, "after": after, "changed": False}
     path = principals.path_for(name)
     with open(path, encoding="utf-8") as f:
         raw = json.load(f)
     original = json.loads(json.dumps(raw))
-    if key in ("burst_count", "burst_minutes"):
+    if key in FOTOLIFE_KEYS:
+        block = raw.get("fotolife") if isinstance(raw.get("fotolife"), dict) else {}
+        raw["fotolife"] = dict(block, **{key.split(".", 1)[1]: after})
+    elif key in ("burst_count", "burst_minutes"):
         burst = dict(before_limits["burst"])
         burst["count" if key == "burst_count" else "minutes"] = after
         raw["burst"] = burst
@@ -240,7 +258,7 @@ def cmd_set(args) -> int:
     except principals.PrincipalError as e:
         return _fail(f"{e.code}: {e}", json_output=getattr(args, "json", False))
     except (ValueError, account_settings.SettingsError):
-        return _fail(f"invalid_setting: 名前は {'・'.join(KEYS)}（burst は `burst <件数> <分>` でも）",
+        return _fail(f"invalid_setting: 名前は {'・'.join(KEYS + FOTOLIFE_KEYS)}（burst は `burst <件数> <分>` でも）",
                      json_output=getattr(args, "json", False))
     except (OSError, admin_log.AdminLogError):
         return _fail("settings_unavailable", json_output=getattr(args, "json", False))
@@ -560,7 +578,7 @@ def register(sub) -> None:
     p_show.set_defaults(func=cmd_show)
     p_set = verbs.add_parser("set", help="主体の上限を変える")
     p_set.add_argument("name")
-    p_set.add_argument("rest", nargs="+", help="<名前> <値>（" + "・".join(KEYS) + "）")
+    p_set.add_argument("rest", nargs="+", help="<名前> <値>（" + "・".join(KEYS + FOTOLIFE_KEYS) + "）")
     p_set.add_argument("--by", required=True)
     p_set.add_argument("--json", action="store_true")
     p_set.set_defaults(func=cmd_set)

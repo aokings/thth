@@ -22,7 +22,7 @@ from thth.hatena_publish import EntryResult
 NOW = datetime.datetime(2026, 9, 9, 10, 0, 0, tzinfo=jst.JST)
 ACCOUNT = "lane-a-hatenablog"
 ARTICLE_TEXT = "# アラビカ\n\n値動きのまとめ。  \n\n![豆](../images/bean.png)\n\n終わり。\n\n\n"
-IMAGE_BYTES = b"\x89PNG fake image bytes"
+IMAGE_BYTES = b"\x89PNG\r\n\x1a\n fake image b"   # S3 §9: 先頭は本物の PNG の印（21 bytes のまま）
 
 
 def manuscript(*, op="create", title="アラビカの値動き", categories="[コーヒー, 価格]", delivery=None,
@@ -98,8 +98,11 @@ def lane(world, tmp_path, monkeypatch):  # noqa: F811
     # S1 の試験の記事は手元の画像を 1 つ持つ（画像の一覧・指紋の材料を縛るため）。S2 は画像つきの
     # 記事を断る（設計 4.0 S2 §4.3・S3 で外す）ので、S1 の試験の間だけ S3 のあとの形で通す。
     # S2 の断りそのものは tests/test_v400_s2_convert.py が縛る。
-    from thth import hatena_convert
+    from thth import hatena_convert, hatena_fotolife
     monkeypatch.setattr(hatena_convert, "REFUSE_LOCAL_IMAGES", False)
+    # S3: 画像は公開の直前にフォトライフへ上げる。S1 の試験では偽物のフォトライフ（何も送らない）。
+    fotolife_fake = FakeFotolife()
+    monkeypatch.setattr(hatena_fotolife, "ADAPTER_FACTORY", lambda account_cfg, principal_cfg: fotolife_fake)
     # repo は $THTH_ROOT の下（遠くの道の `server_files` は根の外を読まない）。
     pair = init_git_pair(world.root / "repos" / "lane-a", seed_content="", seed_name=".gitkeep")
     data = world.account(ACCOUNT)
@@ -148,6 +151,42 @@ class FakeAdapter:
     def delete_entry(self, *, entry_id, edit_uri):
         self.calls.append(("delete", entry_id))
         return self._ok(None)
+
+
+class FakeFotolife:
+    """フォトライフに何も送らない adapter（S3）。上げた画像を覚え、呼ばれた順を `calls` に残す。"""
+
+    def __init__(self, hatena_id="lane-owner"):
+        self.hatena_id = hatena_id
+        self.calls = []
+        self.photos = {}
+        self.next_id = 20260909100000
+
+    def edit_url(self, fotolife_id):
+        return f"https://f.hatena.ne.jp/atom/edit/{fotolife_id}"
+
+    def upload(self, *, data, content_type, title, folder):
+        from thth.adapters.fotolife import UploadResult
+        fid = str(self.next_id)
+        self.next_id += 1
+        self.calls.append(("upload", title))
+        syntax = f"f:id:{self.hatena_id}:{fid}p:image"
+        self.photos[fid] = {"id": f"tag:hatena.ne.jp,2005:fotolife-{self.hatena_id}-{fid}", "fotolife_id": fid,
+                            "syntax": syntax, "title": title, "image_url": f"https://cdn.example/{fid}.png",
+                            "edit_uri": self.edit_url(fid)}
+        return UploadResult(ok=True, fotolife_id=fid, syntax=syntax, image_url=f"https://cdn.example/{fid}.png",
+                            edit_uri=self.edit_url(fid), status=201)
+
+    def get_image(self, *, fotolife_id, edit_uri=None):
+        from thth.adapters.fotolife import ImageMissing
+        self.calls.append(("get", fotolife_id))
+        if fotolife_id not in self.photos:
+            raise ImageMissing("fotolife_image_missing")
+        return dict(self.photos[fotolife_id])
+
+    def recent(self, *, pages=1):
+        self.calls.append(("feed", pages))
+        return [dict(p) for p in self.photos.values()]
 
 
 def factory_for(adapter):

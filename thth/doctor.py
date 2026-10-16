@@ -226,7 +226,34 @@ def _diagnose_hatenablog(account_name: str, account_cfg: dict) -> dict:
     return {"account": account_name, "handle": account_cfg.get("handle"),
             "username": principal_cfg["hatena_id"], "user_id": "",
             "scopes_recorded": recorded_scopes(accounts_mod.load_token(account_cfg)),
-            "auth_via": None, "auth_observed_at": None, "probes": [probe]}
+            "auth_via": None, "auth_observed_at": None, "probes": [probe],
+            "fotolife": _diagnose_fotolife(account_cfg, principal_cfg)}
+
+
+def _diagnose_fotolife(account_cfg: dict, principal_cfg: dict) -> dict:
+    """フォトライフ（設計 4.0 S3 §12.1）: 一覧（`/atom/feed`）の GET 1 回と、主体の画像の台帳の数。
+
+    probes には入れない（終了コードを変えない・実機の §15 の 14 で OAuth が通るかを見る材料）。
+    """
+    from . import hatena_fotolife, hatena_publish
+    from .adapters import fotolife
+    rows, broken = hatena_fotolife.list_records(principal_cfg["principal"])
+    out = {"uploaded": sum(1 for r in rows if r["state"] == "uploaded"),
+           "unknown": sum(1 for r in rows if r["state"] == "unknown"), "unreadable": len(broken)}
+    try:
+        result = fotolife.factory(account_cfg, principal_cfg).probe()
+    except hatena_publish.AdapterUnavailable as exc:
+        return dict(out, ok=False, status=None, entries=None, detail=f"認証の材料が使えません（{exc.code}）")
+    if result["ok"]:
+        detail = f"一覧が読めました（{result['entries']} 件）"
+    elif result["status"] in (401, 403):
+        detail = (f"認可が通りません（{result['status']}）。ブログは通るのにフォトライフだけ断られるなら、"
+                  "OAuth が通っていない可能性があります（設計 S3 §11）")
+    elif result["status"] == 404:
+        detail = "見つかりません（404）"
+    else:
+        detail = f"読めません（{result['status'] or '応答なし'}・{result['error']}）"
+    return dict(out, ok=bool(result["ok"]), status=result["status"], entries=result["entries"], detail=detail)
 
 
 # **記録上の scope**（運用の観測 2026-09-14）。VM の `.token` は Threads 4 本・
@@ -612,6 +639,11 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
             failed += 1
         log(f"  {mark} {p['label']}（{p['permission']}）")
         log(f"      {p['detail']}")
+    photo = report.get("fotolife")
+    if isinstance(photo, dict):
+        log(f"  {'○' if photo.get('ok') else '×'} フォトライフ: {photo.get('detail')}")
+        log(f"      画像の台帳: 上がっている {photo.get('uploaded')}・結果不明 {photo.get('unknown')}"
+            + (f"・読めない {photo['unreadable']}" if photo.get("unreadable") else ""))
     log("")
     log("読み取りだけを試しました。投稿・返信・削除は呼んでいません。")
     if any(p["ok"] is None for p in report["probes"]):

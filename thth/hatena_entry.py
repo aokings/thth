@@ -39,11 +39,15 @@ LINT_CODES = ("article_required", "article_source_missing", "invalid_article_sou
               "invalid_op", "delivery_required", "blog_id_in_manuscript", "categories_invalid",
               # 足した 3 つ（設計に名前が無かった）: form の値・delivery の指す台帳・画像。
               "invalid_form", "delivery_unknown", "image_missing",
-              # 4.0 S2: 画像（§4.3）・相対リンク（§4.2）・記事の commit（§7）。
-              "images_unsupported_until_s3", "relative_link_unresolvable", "article_not_committed")
-# S2 の断り（lint・承認の 1 段目・timer の 3 か所で同じ符丁）。timer の照合でも `approval_stale` に
+              # 4.0 S2: 相対リンク（§4.2）・記事の commit（§7）。S2 の画像の断り
+              # （images_unsupported_until_s3）は S3 で外した。
+              "relative_link_unresolvable", "article_not_committed",
+              # 4.0 S3 §9: 画像の形式・容量・枚数（THTH の側の上限）。
+              "image_too_large", "image_type_unsupported", "too_many_images", "images_too_large")
+# S2・S3 の断り（lint・承認の 1 段目・timer の 3 か所で同じ符丁）。timer の照合でも `approval_stale` に
 # 丸めずにこの符丁のまま返す（人が直す先が違う）。
-S2_REFUSALS = ("images_unsupported_until_s3", "relative_link_unresolvable", "article_not_committed")
+S3_IMAGE_REFUSALS = ("image_too_large", "image_type_unsupported", "too_many_images", "images_too_large")
+S2_REFUSALS = ("relative_link_unresolvable", "article_not_committed") + S3_IMAGE_REFUSALS
 _MESSAGES = {
     "article_required": "article: が要ります（記事の名前・例 kopicha/2026-10-arabica）",
     "article_source_missing": "article_source: が無いか、指すファイルが repo にありません",
@@ -56,7 +60,10 @@ _MESSAGES = {
     "invalid_form": "form: は full・summary・entry のどれかです",
     "delivery_unknown": "delivery: の配信がこの口座の台帳にありません（create で書けるのは取り消した予約の配信だけ）",
     "image_missing": "本文の画像（![](<パス>)）が repo にありません",
-    "images_unsupported_until_s3": "画像つきの記事は 4.0 の S3（フォトライフ）で出せるようになります",
+    "image_too_large": "本文の画像が 1 枚の上限（既定 8 MiB・主体の台帳の fotolife.max_image_bytes）を超えています",
+    "image_type_unsupported": "本文の画像の形式が JPEG・PNG・GIF ではありません（中身の先頭で判定・拡張子は見ません）",
+    "too_many_images": "本文の画像が 1 記事の上限（既定 20 枚・fotolife.max_images_per_entry）を超えています",
+    "images_too_large": "本文の画像の合計が上限（既定 64 MiB・fotolife.max_total_bytes）を超えています",
     "relative_link_unresolvable": ("記事に相対リンクがありますが、口座の台帳に link_base（相対リンクの基準の"
                                    " URL・https）がありません。link_base を書くか、リンクを絶対 URL に"),
     "article_not_committed": ("記事ファイルが commit されていません（作業ツリーの記事が HEAD と違う・"
@@ -267,9 +274,14 @@ def _render(account_cfg, source, path, *, title=None) -> tuple:
     except (OSError, UnicodeDecodeError):
         raise EntryError("article_source_missing") from None
 
+    kinds = {}
+
     def image_sha(rel):
         try:
-            return hatena_convert.file_sha256(repo_file(repo, rel))
+            full = repo_file(repo, rel)
+            with open(full, "rb") as f:
+                kinds[rel] = hatena_convert.image_content_type(f.read(16))
+            return hatena_convert.file_sha256(full)
         except (OSError, EntryError):
             raise EntryError("image_missing", rel) from None
 
@@ -281,7 +293,36 @@ def _render(account_cfg, source, path, *, title=None) -> tuple:
         raise EntryError(code if code in ("image_missing", "images_unsupported_until_s3",
                                           "relative_link_unresolvable")
                          else "invalid_article_source") from None
+    _check_images(account_cfg, images, kinds)
     return data, body, images
+
+
+def _image_limits(account_cfg) -> dict:
+    """主体の台帳の `fotolife` の上限（読めなければ既定。主体の突き合わせは別の段が断る）。"""
+    from . import hatena_fotolife, principals
+    try:
+        principal_cfg = principals.load_principal(account_cfg.get("principal"))
+    except (accounts_mod.AccountError, TypeError, ValueError):
+        principal_cfg = None
+    return hatena_fotolife.limits(principal_cfg)
+
+
+def _check_images(account_cfg, images, kinds) -> None:
+    """形式と容量（設計 S3 §9）。lint・承認の 1 段目・timer の照合が同じ `_render` を通る。"""
+    if not images:
+        return
+    lim = _image_limits(account_cfg)
+    for row in images:
+        if row["bytes"] <= 0:
+            raise EntryError("image_missing", row["path"])
+        if kinds.get(row["path"]) is None:
+            raise EntryError("image_type_unsupported", row["path"])
+        if row["bytes"] > lim["max_image_bytes"]:
+            raise EntryError("image_too_large", row["path"])
+    if len(images) > lim["max_images_per_entry"]:
+        raise EntryError("too_many_images")
+    if sum(row["bytes"] for row in images) > lim["max_total_bytes"]:
+        raise EntryError("images_too_large")
 
 
 def material(fm, account_cfg, account_name: str, *, ledger: dict | None = None) -> dict:
@@ -358,8 +399,33 @@ def material(fm, account_cfg, account_name: str, *, ledger: dict | None = None) 
 
 # ------------------------------------------------------------------ 承認の 1 段目
 
+def _approved_body(account_name, ledger) -> str | None:
+    """この配信で最後に出した版の承認の控え（`deliveries/<delivery>.<指紋 12 桁>.body.md`・元の形）。
+
+    指紋は台帳の最後の `published` の行の `approved_sha`（設計 S3 §5.3）。無ければ None。
+    """
+    if not isinstance(ledger, dict):
+        return None
+    sha = next((row.get("approved_sha") for row in reversed(ledger.get("history") or [])
+                if row.get("state") == "published" and row.get("approved_sha")), None)
+    delivery = ledger.get("delivery")
+    if not isinstance(sha, str) or len(sha) < 12 or not deliveries_mod.is_delivery_id(delivery):
+        return None
+    try:
+        with open(os.path.join(deliveries_mod.dir_for(account_name), f"{delivery}.{sha[:12]}.body.md"),
+                  encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return text[:-1] if text.endswith("\n") else text
+
+
 def _previous_text(account_name, delivery) -> str | None:
-    """この配信で最後に送った本文（`sent/` の記録から・update の差分の元）。"""
+    """この配信で最後に送った本文（`sent/` の記録から・update の差分の元の倒し先）。
+
+    S3 からは送った本文は画像の参照を置き換えたあとの形なので、まず承認の控え（元の形）を
+    `_approved_body` で読み、無いときだけここに倒す（設計 S3 §5.3）。
+    """
     from . import sent as sent_mod
     best_at, best = None, None
     for row in sent_mod.records(accounts_mod.state_dir_for(account_name)):
@@ -369,6 +435,25 @@ def _previous_text(account_name, delivery) -> str | None:
         if at is not None and (best_at is None or at > best_at):
             best_at, best = at, row.get("text")
     return best if isinstance(best, str) else None
+
+
+def image_status_text(principal, sha256) -> str:
+    """1 段目の画像の行に添える台帳の状態（主体の画像の台帳を読むだけ・HTTP は打たない・S3 §12.1）。"""
+    from . import hatena_fotolife
+    if not isinstance(principal, str) or not accounts_mod.name_is_safe(principal):
+        return "未（公開の直前に上げる）"
+    try:
+        state, record = hatena_fotolife.status_of(principal, sha256)
+    except (OSError, ValueError, accounts_mod.AccountError):
+        state, record = "unreadable", None
+    if state == "uploaded":
+        day = (record.get("uploaded_at") or "")[:10] or "日付不明"
+        return f"上がっている（{record.get('syntax')}・{day} に上げた）"
+    if state == "unknown":
+        return "結果不明（次の run が照合する）"
+    if state == "unreadable":
+        return "台帳が読めない（thth fotolife で確かめる）"
+    return "未（公開の直前に上げる）"
 
 
 def display_lines(m: dict, *, path: str, digest: str) -> list:
@@ -385,19 +470,27 @@ def display_lines(m: dict, *, path: str, digest: str) -> list:
         if m["images"]:
             lines.append(f"画像 {len(m['images'])} 件:")
             for row in m["images"]:
-                lines.append(f"  {row['path']}（{row['bytes']:,} bytes・sha256 {row['source_sha256'][:12]}…）")
+                lines.append(f"  {row['path']}（{row['bytes']:,} bytes・sha256 {row['source_sha256'][:12]}…）"
+                             f"  {image_status_text(m.get('principal'), row['source_sha256'])}")
         else:
             lines.append("画像: なし")
     ledger = m.get("ledger") or {}
     if m["op"] == "update":
         lines.append(f"変更前の版 readback_sha {(m['base_readback_sha'] or '（なし）')[:12]}…"
                      f"（{ledger.get('checked_at') or '時刻不明'} に確かめた）")
-        before = _previous_text(m["account"], m["delivery"])
+        before = _approved_body(m["account"], ledger)
+        note = None
+        if before is None:
+            before = _previous_text(m["account"], m["delivery"])
+            if before is not None and m["images"]:
+                note = "（承認の控えが無いので送った本文と比べます。画像の行は置き換えのため差が出ます）"
         if before is None:
             lines.append("---- 変換したあとの本文（全文・前の本文の控えが無いので差分は出せません） ----")
             lines += m["body"].split("\n")
         else:
             lines.append("---- 本文の差分（前に送った本文 → 今回） ----")
+            if note:
+                lines.append(note)
             lines += list(difflib.unified_diff(approval_mod.normalize_hatena_body(before).split("\n"),
                                                m["body"].split("\n"), "前", "今回", lineterm=""))
         lines.append("---- ここまで ----")

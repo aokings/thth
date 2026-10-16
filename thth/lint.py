@@ -76,7 +76,9 @@ _REASON_TABLE = (
         "invalid_op", "delivery_required", "blog_id_in_manuscript", "categories_invalid",
         "invalid_form", "delivery_unknown", "image_missing",
         # 4.0 S2（§4.2・§4.3・§7）。
-        "images_unsupported_until_s3", "relative_link_unresolvable", "article_not_committed")),
+        "relative_link_unresolvable", "article_not_committed",
+        # 4.0 S3 §9（画像の形式・容量・枚数）。S2 の images_unsupported_until_s3 は外した。
+        "image_too_large", "image_type_unsupported", "too_many_images", "images_too_large")),
 )
 
 REASONS = frozenset([code for _, code in _REASON_TABLE] + [FALLBACK_REASON])

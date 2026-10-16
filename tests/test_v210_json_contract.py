@@ -68,7 +68,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 4.0 S1 §3.4: 配信の台帳（読むだけ・版つき）。
      'deliveries',
      # 4.0 S1 §7.3: はてなブックマークの 2 段の承認（送信は S4）。
-     'bookmark add']
+     'bookmark add',
+     # 4.0 S3 §12.4: 主体のフォトライフの画像の台帳（読むだけ）。
+     'fotolife']
 
 
 def test_json_table_covers_every_parser():

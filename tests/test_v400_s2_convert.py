@@ -5,7 +5,8 @@
   - 4b: 相対リンクは `link_base` で絶対に。`#`・scheme あり・`//` はそのまま。コードの中は触らない。
     `link_base` が無い（雛形のダミーも無いとみなす）のに相対リンク → `relative_link_unresolvable`
     （lint・承認の 1 段目・timer の 3 か所）。推測で `https://<blog_id>/` を貼らない。
-  - 4c: 手元の画像が 1 つでもあれば lint・1 段目・timer が `images_unsupported_until_s3`。https の画像は通る。
+  - 4c: （S3 で逆にした）手元の画像のある記事も lint・1 段目・timer を通る（画像は公開の直前に
+    フォトライフへ上げる・設計 4.0 S3）。https の画像は数えない。
   - 4d: front matter を落とす・題と同じ先頭の H1 だけ落とす・無ければ無傷。
   - 4e: 変換の規則（と版）を変えると承認済みの原稿は `approval_stale`（本文の sha が変わる）。
   - 口座の `link_base`: https だけ・query と # は不可・雛形はダミーで `dummy_fields` に出る。
@@ -39,7 +40,7 @@ def test_T_S2_4a_表の順と版の語と決定的():
         "strip_front_matter", "strip_leading_h1", "absolute_links", "images", "footnotes", "tables",
         "headings", "code_fences", "embeds", "normalize"]
     marks = {name: checked for name, _f, checked in hatena_convert.RULES}
-    assert marks["images"] == "s3"
+    assert marks["images"] == "n/a"   # S3: 画像は数えるだけ（本文は変えない）
     for name in ("footnotes", "tables", "headings", "code_fences", "embeds"):
         assert marks[name] == "unverified"
     text = ("---\ntitle: x\n---\n\n# 題\n\n本文 [a](../x.md)。[^1]\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n"
@@ -149,11 +150,11 @@ def test_T_S2_4b_承認のあとにlink_baseを外すとtimerはrelative_link_un
 # 4c 画像
 # --------------------------------------------------------------------------
 
-def test_T_S2_4c_手元の画像はrenderで断り_httpsの画像は通る():
-    """柵: images の段の断りを消すと赤。"""
-    with pytest.raises(ConvertError) as exc:
-        render("![豆](images/bean.png)\n", article_source="a.md", image_sha=lambda p: ("0" * 64, 1))
-    assert str(exc.value) == "images_unsupported_until_s3"
+def test_T_S2_4c_S3では手元の画像もrenderを通り_httpsの画像は数えない():
+    """S3 で逆にした（T-S2-4c）: 手元の画像は断らずに `images` に並ぶ。"""
+    assert hatena_convert.REFUSE_LOCAL_IMAGES is False
+    body, images = render("![豆](images/bean.png)\n", article_source="a.md", image_sha=lambda p: ("0" * 64, 1))
+    assert body == "![豆](images/bean.png)" and [r["path"] for r in images] == ["images/bean.png"]
     body, images = render("![外](https://i.example/a.png)\n", article_source="a.md")
     assert body == "![外](https://i.example/a.png)" and images == []
 
@@ -162,27 +163,25 @@ def _image_article(lane):
     lane.write("articles/a.md", "# アラビカ\n\n![豆](../images/bean.png)\n")
 
 
-def test_T_S2_4c_lintと1段目は画像つきの記事をimages_unsupported_until_s3で断る(s2lane):
+def test_T_S2_4c_S3ではlintと1段目は画像つきの記事を通す(s2lane):
     _image_article(s2lane)
     path = s2lane.queue()
-    assert "images_unsupported_until_s3" in lint_codes(path)
+    assert lint_codes(path) == []
     rc, out = stage1(path)
-    assert rc != 0 and "images_unsupported_until_s3" in out and "フォトライフ" in out
-    assert "digest: " not in out
+    assert "images_unsupported_until_s3" not in out and "digest: " in out
+    assert "画像 1 件:" in out and "未（公開の直前に上げる）" in out
 
 
-def test_T_S2_4c_S1で承認した画像つきの記事もtimerは断り何も書かない(s2lane, monkeypatch):
+def test_T_S2_4c_S3では画像つきの記事もtimerが出す(s2lane):
     _image_article(s2lane)
     path = s2lane.queue()
-    with monkeypatch.context() as patched:
-        patched.setattr(hatena_convert, "REFUSE_LOCAL_IMAGES", False)   # S1 のあいだに承認された
-        approve(path)
+    approve(path)
     delivery = fm_of(path)["delivery"]
     adapter = FakeAdapter()
     result = throw(adapter)
-    assert result.action == "none" and adapter.calls == []
-    assert {"file": "a.md", "reason": "images_unsupported_until_s3"} in result.rejections
-    assert states(delivery) == ["wanted"] and inflight.read(s2lane.state) is None
+    assert (result.action, result.exit_code) == ("post", 0), result
+    assert adapter.calls == [("create", "アラビカの値動き")]
+    assert states(delivery)[-1] == "published"
 
 
 def test_T_S2_4c_httpsの画像だけの記事は出る(s2lane):
@@ -287,8 +286,9 @@ def test_link_baseはSNSの口座では読まない(isolated_account_factory):
 
 def test_lintの符丁は畳める(s2lane):
     from thth import lint
+    s2lane.write("images/bean.png", b"RIFF\x00\x00\x00\x00WEBPVP8 ")   # S3 §9: WebP は断る
     _image_article(s2lane)
     path = s2lane.queue()
-    assert lint.reason_code(lint.lint_file(path)) == "images_unsupported_until_s3"
+    assert lint.reason_code(lint.lint_file(path)) == "image_type_unsupported"
     assert deliveries  # noqa: B018 — import の確かめ
     assert select  # noqa: B018

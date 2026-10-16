@@ -6,12 +6,14 @@
   "consumer": "~/.config/thth/demo-hatena.consumer",
   "auth": "oauth",
   "blogs": [
-    {"blog_id": "demo.hatenablog.com", "lanes": ["demo"], "syntax": "markdown"}
+    {"blog_id": "demo.hatenablog.com", "lanes": ["demo"], "syntax": "markdown", "fotolife_folder": "thth"}
   ],
   "bookmark": {"lanes": []},
   "daily_max_posts": 6,
   "daily_max_retracts": 3,
   "daily_max_bookmarks": 3,
   "burst": {"count": 3, "minutes": 30},
+  "fotolife": {"max_image_bytes": 8388608, "max_images_per_entry": 20, "max_total_bytes": 67108864,
+               "daily_max_uploads": 30, "feed_pages": 1},
   "user_agent_contact": "https://thth.me/"
 }

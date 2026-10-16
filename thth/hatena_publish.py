@@ -37,6 +37,7 @@ import urllib.parse
 
 from . import approval as approval_mod
 from . import deliveries as deliveries_mod
+from . import hatena_convert
 from . import hatena_entry
 from . import inflight as inflight_mod
 from . import jst
@@ -51,7 +52,9 @@ BEFORE = {"create": "wanted", "update": "published", "delete": "published"}
 # 時刻が来れば解ける断り（timer の失敗にしない）。
 WAITING_REFUSALS = frozenset(("too_soon", "quiet_hours", "daily_limit", "retract_limit",
                               "principal_daily_limit", "principal_retract_limit",
-                              "blog_daily_limit", "blog_retract_limit"))
+                              "blog_daily_limit", "blog_retract_limit",
+                              # 4.0 S3 §9: 主体の 1 日の画像の上げ（翌日の 0 時に解ける）。
+                              "fotolife_daily_limit"))
 
 
 @dataclasses.dataclass
@@ -130,6 +133,26 @@ def _sent_post_id(op, entry_id, seq) -> str:
     return f"{entry_id}#{'u' if op == 'update' else 'd'}{seq}"
 
 
+def sent_body(m) -> str:
+    """送った本文（S3 §5.3: 画像の参照を置き換えたあと）。置き換えが無い・組めなければ承認した本文。"""
+    body = m.get("body_sent")
+    return body if isinstance(body, str) else m["body"]
+
+
+def _images_fields(m) -> list:
+    """配信の台帳の `images[]`（S3 §4.2）。上がった画像は `fotolife_id`・`syntax`・`image_url`・`uploaded_at`
+    を写す（正本は主体の画像の台帳・これは記録）。配置の無い画像は path と sha256 だけ。"""
+    placements = m.get("placements") or {}
+    out = []
+    for row in m.get("images") or []:
+        item = {"path": row["path"], "source_sha256": row["source_sha256"]}
+        place = placements.get(row["path"])
+        if isinstance(place, dict):
+            item.update({k: v for k, v in place.items() if v is not None})
+        out.append(item)
+    return out
+
+
 def _record_sent(state_dir, m, op, entry_id, seq, *, url, at, approved_sha, delivery):
     """`sent/` に 1 行（数の材料）。delete は作成の行に `retracted_at` を足す（無ければ削除の行）。"""
     from . import postid as postid_mod
@@ -145,8 +168,9 @@ def _record_sent(state_dir, m, op, entry_id, seq, *, url, at, approved_sha, deli
         raise ValueError("unusable_post_id")
     if sent_mod.read(state_dir, post_id) is not None:
         return post_id  # 既に記録してある（解き直し）
-    sent_mod.write(state_dir, post_id=post_id, text=m["body"],
-                   body_hash=approval_mod.compute_body_hash(m["body"]), sent_at=at,
+    text = sent_body(m)
+    sent_mod.write(state_dir, post_id=post_id, text=text,
+                   body_hash=approval_mod.compute_body_hash(text), sent_at=at,
                    approved_fingerprint=approved_sha, kind=hatena_entry_kind(op),
                    blog_id=m["blog_id"], delivery=delivery, url=url)
     return post_id
@@ -181,9 +205,12 @@ def _writeback(account_cfg, path, fields, expected_sha, delivery, account_name):
 
 
 def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now, log,
-                 adapter_factory=None):
-    """`select_one` が選んだはてなの配信原稿を 1 本出す（dry-run なら見せるだけ）。"""
-    from . import core, guard, principals
+                 adapter_factory=None, fotolife_factory=None):
+    """`select_one` が選んだはてなの配信原稿を 1 本出す（dry-run なら見せるだけ）。
+
+    `fotolife_factory` は画像の段（3c）の adapter の差し替え口（None なら `hatena_fotolife` の既定）。
+    """
+    from . import core, guard, hatena_fotolife, principals
     path = chosen.path
 
     def run(action, status, error=None, post_id=None, extra=None):
@@ -212,6 +239,10 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
 
     if mode == "rehearsal":
         log(f"送るはずの配信: {account_name} → {m['blog_id']}（{hatena_entry.OP_LABELS[op]}・{delivery}）")
+        if op != "delete" and m["images"]:
+            # 画像は上げない（POST も GET も打たない・S3 §3.2）。台帳を読んで数だけ言う。
+            total, ready = hatena_fotolife.plan(principal_cfg["principal"], m["images"])
+            log(f"画像 {total} 件をフォトライフに上げるはず（うち {ready} 件は上がっている）")
         log("送るはずの本文:")
         log(m["body"])
         run("skip", "ok")
@@ -301,6 +332,41 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
             return _result(core, exit_code=2, mode=mode, action="refused",
                            message="blog_syntax_mismatch", file=path, error="blog_syntax_mismatch")
 
+    # 3c. 画像（S3 §3.2）: 主体のロックの中で、記事の POST の前に 1 枚ずつフォトライフへ上げる。
+    #     止まったときは inflight も配信の台帳も書かない（記事はまだ何も送っていない）。
+    m["body_sent"] = m["body"]
+    m["placements"] = {}
+    if op != "delete" and m["images"]:
+        try:
+            placements, stats = hatena_fotolife.ensure_uploaded(principal_cfg, account_cfg, m,
+                                                                factory=fotolife_factory, log=log, now=now)
+            m["body_sent"] = hatena_convert.embed_images(m["body"], placements,
+                                                         article_source=m["article_source"],
+                                                         hatena_id=principal_cfg.get("hatena_id"))
+            m["placements"] = placements
+        except hatena_fotolife.FotolifeStop as stop:
+            log(stop.log_line())
+            run("post", "error", stop.code)
+            exit_code = stop.exit_code
+            action = "refused" if exit_code == 2 else ("guard_refused" if exit_code == 0 else stop.code)
+            return _result(core, exit_code=exit_code, mode=mode, action=action,
+                           message=stop.code if not stop.next_at else f"{stop.code}（次は {stop.next_at}）",
+                           file=path, error=stop.code)
+        except hatena_convert.ConvertError as exc:
+            # 置き換えが組めない（台帳の syntax の形が違う等）。記事は送らない。
+            code = str(exc) if str(exc).startswith("image_") else "fotolife_placement_failed"
+            log(f"画像の参照を置き換えられないので出しません（{code}）")
+            run("post", "error", code)
+            return _result(core, exit_code=2, mode=mode, action="refused", message=code, file=path, error=code)
+        except (OSError, ValueError) as exc:
+            # 画像の台帳が書けない（置き場が危ない・ディスク）。上げた画像の記録を失うので出さない。
+            log(f"画像の台帳が書けないので出しません（{exc.__class__.__name__}）。thth fotolife で確かめてください")
+            run("post", "error", "fotolife_ledger_unwritable")
+            return _result(core, exit_code=2, mode=mode, action="refused", message="fotolife_ledger_unwritable",
+                           file=path, error="fotolife_ledger_unwritable")
+        made, reused = stats["uploaded"], stats["reused"]
+        log(f"画像 {made + reused} 件をそろえました（上げた {made} 件・使い回し {reused} 件）")
+
     # 4. inflight（結果の行の番号を書く）→ 台帳に inflight の行
     outcome_seq = ledger["seq"] + 2
     inflight_mod.write(state_dir, file=path, started=jst.iso(), container_id=None,
@@ -313,13 +379,14 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
 
     # 5. 1 回だけ送る
     try:
+        # 本文は画像の参照を置き換えたあと（S3 §5.2）。画像は 3c で上げ終えているので渡さない。
         if op == "create":
-            result = adapter.create_entry(title=m["title"], body=m["body"], categories=m["categories"],
-                                          images=m["images"])
+            result = adapter.create_entry(title=m["title"], body=m["body_sent"], categories=m["categories"],
+                                          images=[])
         elif op == "update":
             result = adapter.update_entry(entry_id=m["entry_id"], edit_uri=ledger.get("edit_uri"),
-                                          title=m["title"], body=m["body"], categories=m["categories"],
-                                          images=m["images"])
+                                          title=m["title"], body=m["body_sent"], categories=m["categories"],
+                                          images=[])
         else:
             result = adapter.delete_entry(entry_id=m["entry_id"], edit_uri=ledger.get("edit_uri"))
     except Exception as exc:  # noqa: BLE001 — 送ったあとの例外は「出たか分からない」
@@ -381,9 +448,12 @@ def _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq
     wrong_syntax = (not elsewhere and op != "delete" and result.content_type is not None
                     and result.content_type != MARKDOWN_TYPE)
     # S2 §6: 応答の content（読み戻し）が送った本文と違えば印を付ける（conflict にはしない）。
-    differs = (op != "delete" and result.readback_body is not None
+    # S3 §5.3: 比べるのは送った本文（画像の参照を置き換えたあと）。置き換えを組み立て直せなかった
+    # （`resolve` で台帳に無い画像があった＝`body_sent` が None）ときは比べない（印を付けない）。
+    compare = m.get("body_sent", m["body"])
+    differs = (op != "delete" and result.readback_body is not None and compare is not None
                and approval_mod.hatena_body_sha256(result.readback_body)
-               != approval_mod.hatena_body_sha256(m["body"]))
+               != approval_mod.hatena_body_sha256(compare))
     reason = "published_elsewhere" if elsewhere else ("syntax_mismatch" if wrong_syntax else None)
     ledger = deliveries_mod.read(account_name, delivery)
     written = ledger["seq"] == outcome_seq   # 前に書けていた（解き直し）
@@ -401,6 +471,8 @@ def _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq
             fields["published_url"] = url
         if result.readback_body is not None:
             fields["readback_sha"] = approval_mod.hatena_body_sha256(result.readback_body)
+        if op != "delete" and m.get("images"):
+            fields["images"] = _images_fields(m)   # S3 §4.2: 上がった画像の記録（写し）
         row = {"op": op, "entry_id": entry_id, "published_url": url, "checked_rev": m.get("article_rev"),
                "approved_sha": sha, "reason": reason, "content_type": result.content_type if wrong_syntax else None,
                "readback_differs": True if differs else None,
@@ -483,6 +555,39 @@ def _readback_for_resolve(account_name, account_cfg, m, entry_id, base, adapter_
                        readback_body=fields.get("content"), content_type=fields.get("content_type")), True
 
 
+# 人が「出ていた」で解いたのに、主体の画像の台帳から画像の配置を組み立て直せなかったときの 1 行（S3 §7.3）。
+NO_PLACEMENT_NOTE = ("画像の台帳に無い画像があるので、送った本文（画像の参照を置き換えたあと）を組み立て直せません。"
+                     "読み戻しの比べ（readback_differs）は飛ばし、台帳の images[] には fotolife_id 無しで写します。"
+                     "thth fotolife {principal} list で確かめてください")
+
+
+def _rebuild_body_sent(m, account_cfg, log) -> None:
+    """`resolve --published` で送った本文を組み立て直す（**HTTP を打たない**・S3 §7.3）。"""
+    from . import hatena_fotolife
+    m["placements"] = {}
+    if m["op"] == "delete" or not m.get("images"):
+        m["body_sent"] = m["body"]
+        return
+    principal = m.get("principal")
+    placements = hatena_fotolife.placements_from_ledger(principal, m["images"])
+    body_sent = None
+    if placements is not None:
+        try:
+            from . import principals
+            hatena_id = principals.load_principal(principal).get("hatena_id")
+        except Exception:  # noqa: BLE001 — 主体が読めなければ user の照合を飛ばす
+            hatena_id = None
+        try:
+            body_sent = hatena_convert.embed_images(m["body"], placements, article_source=m["article_source"],
+                                                    hatena_id=hatena_id)
+            m["placements"] = placements
+        except hatena_convert.ConvertError:
+            body_sent = None
+    m["body_sent"] = body_sent
+    if body_sent is None and log is not None:
+        log(NO_PLACEMENT_NOTE.format(principal=principal))
+
+
 def resolve(account_name, account_cfg, state_dir, record, decision, post_id, *, by, run_id, now,
             adapter_factory=None, log=None):
     """hatena の inflight を解く（ロックの中で呼ぶ）。戻り値は解き方の語。断りは `ResolveRefused`。
@@ -556,6 +661,7 @@ def resolve(account_name, account_cfg, state_dir, record, decision, post_id, *, 
         raise ResolveRefused("text_mismatch_before_writeback")
     if m["op"] != "create" and post_id and post_id != m["entry_id"]:
         raise ResolveRefused("post_id_differs")   # 更新・削除の対象は台帳の entry_id だけ
+    _rebuild_body_sent(m, account_cfg, log)
     result = EntryResult(ok=True, entry_id=post_id if m["op"] == "create" else m["entry_id"],
                          published_url=ledger.get("published_url") if done else None)
     if not done and m["op"] in ("create", "update") and postid_usable(result.entry_id):

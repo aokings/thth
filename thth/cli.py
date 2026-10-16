@@ -4263,6 +4263,9 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth principal add|show|set|resume|auth`（4.0 S1・主体＝はてな ID）。口は `thth/principal_cli.py` に閉じる。
     from . import principal_cli
     principal_cli.register(sub)
+    # `thth fotolife <主体> [list|show]`（4.0 S3 §12.4・主体の画像の台帳を読むだけ）。
+    from . import fotolife_cli
+    fotolife_cli.register(sub)
 
     # `thth inflight <account> [show|resolve]`（設計 3.3.1 §4）。口は
     # `thth/inflight_cli.py` に閉じる——ここに足すのはこの 2 行だけ。

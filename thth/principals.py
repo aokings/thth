@@ -156,6 +156,26 @@ def _check_blogs(name, blogs) -> None:
             if key in row and not valid_limit(key, row[key]):
                 raise PrincipalError("invalid_guard_limits",
                                      f"{name}: {blog_id} の {key} が受け取れません（0 以上の整数）")
+        if "fotolife_folder" in row:
+            from . import hatena_fotolife
+            if not hatena_fotolife.valid_folder(row["fotolife_folder"]):
+                raise PrincipalError("fotolife_folder_invalid",
+                                     f"{name}: {blog_id} の fotolife_folder は 1〜{hatena_fotolife.FOLDER_MAX} 字"
+                                     "（`/`・制御文字・前後の空白は不可）です")
+
+
+def _check_fotolife(name, value) -> None:
+    """主体の台帳の `fotolife`（任意・設計 4.0 S3 §9）。欄ごとの範囲は `hatena_fotolife.LIMIT_RANGES`。"""
+    from . import hatena_fotolife
+    if not isinstance(value, dict):
+        raise PrincipalError("fotolife_invalid", f"{name}: fotolife は object です")
+    unknown = set(value) - set(hatena_fotolife.LIMIT_RANGES)
+    if unknown:
+        raise PrincipalError("fotolife_invalid", f"{name}: fotolife に知らない欄があります: {sorted(unknown)}")
+    for key, item in value.items():
+        if not hatena_fotolife.valid_limit(key, item):
+            low, high = hatena_fotolife.LIMIT_RANGES[key]
+            raise PrincipalError("fotolife_invalid", f"{name}: fotolife.{key} は {low}〜{high} の整数です")
 
 
 def validate(name: str, data) -> None:
@@ -188,6 +208,8 @@ def validate(name: str, data) -> None:
             raise PrincipalError("invalid_guard_limits",
                                  f"{name}: 主体の {key} が受け取れません（0 以上の整数。"
                                  f"burst は {{\"count\": 1〜, \"minutes\": 1〜1440}}）")
+    if "fotolife" in data:
+        _check_fotolife(name, data["fotolife"])
     contact = data.get("user_agent_contact")
     if contact is not None and (not isinstance(contact, str)
                                 or not contact.startswith(("https://", "http://")) or len(contact) > 2048

@@ -16,15 +16,12 @@
 from __future__ import annotations
 
 import http.client
-import json
-import os
 import urllib.error
 import urllib.parse
-import urllib.request
 import xml.etree.ElementTree as ET
 
 from .. import httpsafe
-from .. import redact as redact_mod
+from . import hatena_common
 
 ATOM = "http://www.w3.org/2005/Atom"
 APP = "http://www.w3.org/2007/app"
@@ -32,25 +29,22 @@ HATENA = "http://www.hatena.ne.jp/info/xmlns#"
 HATENABLOG = "http://www.hatena.ne.jp/info/xmlns#hatenablog"
 BASE = "https://blog.hatena.ne.jp"
 
-TOKEN_SCHEMA = "thth.hatena-oauth/1"
-CONSUMER_SCHEMA = "thth.hatena-consumer/1"
+# 認証の材料と HTTP の 1 回は `hatena_common`（S3 §6.1 でフォトライフと共有するため切り出した）。
+TOKEN_SCHEMA = hatena_common.TOKEN_SCHEMA
+CONSUMER_SCHEMA = hatena_common.CONSUMER_SCHEMA
 MARKDOWN = "text/x-markdown"
-MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_RESPONSE_BYTES = hatena_common.MAX_RESPONSE_BYTES
 READ_TIMEOUT = 30
 WRITE_TIMEOUT = 60
-DEFAULT_CONTACT = "https://thth.me/"
+DEFAULT_CONTACT = hatena_common.DEFAULT_CONTACT
 
 # 送る XML は公式の例と同じく Atom を既定の名前空間・`app:` を接頭辞にする（ET の登録は process 全体）。
 ET.register_namespace("", ATOM)
 ET.register_namespace("app", APP)
 
 
-class ResponseTooLarge(Exception):
-    """応答が上限（4 MiB）を超えた。"""
-
-
-class ResponseInvalid(Exception):
-    """応答の XML が読めない・形が違う。"""
+ResponseTooLarge = hatena_common.ResponseTooLarge
+ResponseInvalid = hatena_common.ResponseInvalid
 
 
 def _q(tag, ns=ATOM):
@@ -133,53 +127,14 @@ def parse_feed(raw: bytes) -> dict:
 # 秘密のファイル（§2.3）
 # --------------------------------------------------------------------------
 
-def _unavailable(code):
-    from ..hatena_publish import AdapterUnavailable
-    return AdapterUnavailable(code)
-
-
-def _good(value) -> bool:
-    return isinstance(value, str) and bool(value.strip()) and not any(
-        ord(c) < 32 or ord(c) == 127 or c.isspace() for c in value)
-
-
-def read_consumer(path) -> dict:
-    """consumer のファイルを読む。無い → `consumer_missing`・形が違う → `consumer_invalid`。"""
-    if not isinstance(path, str) or not path or not os.path.exists(path):
-        raise _unavailable("consumer_missing")
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        raise _unavailable("consumer_invalid") from None
-    if (not isinstance(data, dict) or data.get("schema") != CONSUMER_SCHEMA
-            or not _good(data.get("consumer_key")) or not _good(data.get("consumer_secret"))):
-        raise _unavailable("consumer_invalid")
-    return data
-
-
-def check_token(token, hatena_id) -> dict:
-    if (not isinstance(token, dict) or token.get("schema") != TOKEN_SCHEMA
-            or not _good(token.get("oauth_token")) or not _good(token.get("oauth_token_secret"))
-            or token.get("hatena_id") != hatena_id):
-        raise _unavailable("token_invalid")
-    return token
+_unavailable = hatena_common.unavailable
+read_consumer = hatena_common.read_consumer
+check_token = hatena_common.check_token
 
 
 def factory(account_cfg, principal_cfg):
     """`hatena_publish.make_adapter` の既定。作れなければ `AdapterUnavailable(code)`（出ない側）。"""
-    from .. import accounts
-    if (principal_cfg or {}).get("auth", "oauth") != "oauth":
-        raise _unavailable("auth_unsupported")
-    try:
-        token = accounts.load_token(account_cfg)
-    except (ValueError, OSError):
-        # 読めない（権限・壊れたファイル・ディレクトリ）も「使えない」。timer の run を落とさない。
-        raise _unavailable("token_invalid") from None
-    if token is None:
-        raise _unavailable("token_missing")
-    check_token(token, principal_cfg.get("hatena_id"))
-    consumer = read_consumer(principal_cfg.get("consumer"))
+    token, consumer = hatena_common.load_credentials(account_cfg, principal_cfg)
     return HatenaBlogAdapter(account_cfg, principal_cfg, token=token, consumer=consumer)
 
 
@@ -187,9 +142,7 @@ def factory(account_cfg, principal_cfg):
 # adapter
 # --------------------------------------------------------------------------
 
-def _user_agent(contact) -> str:
-    from .. import __version__
-    return f"thth/{__version__} (+{contact or DEFAULT_CONTACT})"
+_user_agent = hatena_common.user_agent
 
 
 class HatenaBlogAdapter:
@@ -201,10 +154,13 @@ class HatenaBlogAdapter:
         self.contact = principal_cfg.get("user_agent_contact") or DEFAULT_CONTACT
         timeout = account_cfg.get("timeout")
         self.timeout = timeout if isinstance(timeout, (int, float)) and timeout > 0 else 300
+        self._consumer = consumer
+        self._token_data = token
         self._consumer_key = consumer["consumer_key"]
         self._consumer_secret = consumer["consumer_secret"]
         self._token = token["oauth_token"]
         self._token_secret = token["oauth_token_secret"]
+        from .. import redact as redact_mod
         for value in (self._consumer_key, self._consumer_secret, self._token, self._token_secret):
             redact_mod.register_secret(value)
 
@@ -232,33 +188,18 @@ class HatenaBlogAdapter:
     # ----- HTTP ---------------------------------------------------------------
 
     def _scrub(self, text) -> str:
-        out = str(text)
-        for value in (self._token_secret, self._consumer_secret, self._token, self._consumer_key):
-            if value:
-                out = out.replace(value, "***")
-        return redact_mod.redact(out) or ""
+        return hatena_common.scrub(text, self._token_secret, self._consumer_secret, self._token,
+                                   self._consumer_key)
 
     def _request(self, method, url, *, body=None):
         """1 回だけ投げて `(status, headers, bytes)`。urllib の例外はそのまま上げる。"""
-        from .. import oauth1
-        headers = {
-            "Authorization": oauth1.authorization_header(
-                consumer_key=self._consumer_key, consumer_secret=self._consumer_secret,
-                token=self._token, token_secret=self._token_secret, method=method, url=url),
-            "Accept": "application/atom+xml",
-            "User-Agent": _user_agent(self.contact),
-        }
+        headers = {"Accept": "application/atom+xml", "User-Agent": _user_agent(self.contact)}
         if body is not None:
             headers["Content-Type"] = "application/atom+xml; charset=utf-8"
-        req = urllib.request.Request(url, data=body, method=method, headers=headers)
         limit = READ_TIMEOUT if method == "GET" else WRITE_TIMEOUT
-        with httpsafe.urlopen(req, timeout=min(self.timeout, limit)) as response:
-            status = response.status
-            response_headers = dict(response.headers.items()) if response.headers is not None else {}
-            raw = response.read(MAX_RESPONSE_BYTES + 1)
-        if len(raw) > MAX_RESPONSE_BYTES:
-            raise ResponseTooLarge("response_too_large")
-        return status, response_headers, raw
+        return hatena_common.request_signed(method, url, headers=headers, body=body,
+                                            timeout=min(self.timeout, limit),
+                                            consumer=self._consumer, token=self._token_data)
 
     def _write(self, method, url, *, body=None, op):
         """書き込みを 1 回。`(status, raw)` か、失敗なら `EntryResult`（§3.5 の表）。"""
