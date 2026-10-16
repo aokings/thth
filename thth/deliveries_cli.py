@@ -29,7 +29,16 @@ def _row(record: dict) -> dict:
             "principal": record.get("principal"), "blog_id": record.get("blog_id"),
             "article": record.get("article"), "form": record.get("form"),
             "state": record["state"], "seq": record["seq"], "at": last.get("at"),
-            "published_url": record.get("published_url")}
+            "published_url": record.get("published_url"),
+            # S2 §6: はてなが返した本文が送った本文と違った（最後に出した行の印）。
+            "readback_differs": _readback_differs(record)}
+
+
+def _readback_differs(record: dict) -> bool:
+    for row in reversed(record["history"]):
+        if row.get("state") in ("published", "conflict", "deleted") and row.get("entry_id"):
+            return row.get("readback_differs") is True
+    return False
 
 
 def build(target, *, article=None, now=None, allowed_names=None) -> dict:
@@ -71,8 +80,9 @@ def render(payload, out=print) -> None:
     for record in payload["deliveries"]:
         row = _row(record)
         url = f"  {row['published_url']}" if row.get("published_url") else ""
+        differs = "  読み戻し差あり" if row.get("readback_differs") else ""
         out(f"  {row['delivery']}  {row['account']}  {row['state']}（{row['seq']}）"
-            f"  {row['article']}  {row['blog_id']}  {row['at']}{url}")
+            f"  {row['article']}  {row['blog_id']}  {row['at']}{url}{differs}")
     if payload["unreadable"]:
         out("読めなかったもの: " + "・".join(
             f"{u['account']}/{u['delivery'] or '*'}（{u['reason']}）" for u in payload["unreadable"]))

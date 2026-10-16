@@ -8,9 +8,11 @@
     thth principal show <name> [--json]
     thth principal set <name> <名前> <値> --by <名前>   （burst は `burst <件数> <分>` でも）
     thth principal resume <name> --by <名前>
-    thth principal auth <name>                          （S2 で中身を入れる。今は rc 2）
+    thth principal auth <name> --by <名前> [--force|--forget|--forget-consumer] [--consumer]
+                                                        （OAuth 1.0a・PIN（oob）。端末から・S2 §2.4）
 
-**秘密の値は扱わない**（token・consumer はパスだけ。`show` は「ある／ない」だけ言う）。
+**秘密の値は表示しない**（token・consumer はパスだけ。`show` は「ある／ない」だけ言う）。`auth` だけが
+`getpass` で受けて 0600 で書く（値は画面・ログ・admin_log に出さない）。
 """
 from __future__ import annotations
 
@@ -115,7 +117,7 @@ def cmd_add(args) -> int:
     print(f"書きました: {path}")
     for d in accounts.dummy_fields(data):
         print(f"**{d['field']} はダミーのままです**（{d['value']}）。{d['next']}")
-    print(f"次の一手: token と consumer を置く（thth principal auth {name}・S2）→ "
+    print(f"次の一手: token と consumer を置く（ssh -t で thth principal auth {name} --by <名前>）→ "
           f"thth account add <口座> --media hatenablog --project <lane> --principal {name} --blog <blog_id> --by <名前>")
     return 0
 
@@ -275,11 +277,253 @@ def cmd_resume(args) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# `thth principal auth`（設計 4.0 S2 §2.4）。運営者の CLI だけ（MCP・thth.me に出さない）。
+# --------------------------------------------------------------------------
+
+INITIATE_URL = "https://www.hatena.com/oauth/initiate"
+TOKEN_URL = "https://www.hatena.com/oauth/token"
+AUTHORIZE_URL = "https://www.hatena.ne.jp/oauth/authorize"
+# scope は 4 つ固定（手順 §3・設計 §2.4。S3・S4 で分かったら変える）。
+SCOPES = ("read_public", "write_public", "read_private", "write_private")
+NOT_A_TTY = ("not_a_tty: 標準入力が端末ではありません。consumer secret と確認の文字列が画面に出てしまうので"
+             "読みません。\n  ssh に -t を付けてください（例: ssh -t wt '...thth principal auth <主体> --by <名前>'）")
+
+
+def _getpass(label: str) -> str:
+    import getpass
+    return getpass.getpass(label)
+
+
+def _http(method, url, headers, body):
+    """`(status, headers, bytes)`。4xx・5xx も status で返す（本文は読み捨てる）。"""
+    import urllib.error
+    import urllib.request
+    from . import httpsafe
+    req = urllib.request.Request(url, data=body, method=method, headers=headers)
+    try:
+        with httpsafe.urlopen(req, timeout=30) as response:
+            return response.status, dict(response.headers.items()), response.read(65537)
+    except urllib.error.HTTPError as exc:
+        return exc.code, {}, b""
+
+
+def _form(raw) -> dict:
+    import urllib.parse
+    try:
+        text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else str(raw or "")
+    except UnicodeDecodeError:
+        return {}
+    return dict(urllib.parse.parse_qsl(text, keep_blank_values=True))
+
+
+def _secret_ok(value) -> bool:
+    return (isinstance(value, str) and bool(value) and len(value) <= 1024
+            and not any(ord(c) < 32 or ord(c) == 127 or c.isspace() for c in value))
+
+
+def _user_agent(principal_cfg) -> str:
+    from . import __version__
+    return f"thth/{__version__} (+{principal_cfg.get('user_agent_contact') or 'https://thth.me/'})"
+
+
+def _signed_post(http, url, *, consumer, principal_cfg, token=None, token_secret=None,
+                 extra_oauth=None, form=None):
+    import urllib.parse
+    from . import oauth1
+    headers = {"Authorization": oauth1.authorization_header(
+        consumer_key=consumer["consumer_key"], consumer_secret=consumer["consumer_secret"],
+        token=token, token_secret=token_secret, method="POST", url=url,
+        body_params=list((form or {}).items()), extra_oauth=extra_oauth),
+        "User-Agent": _user_agent(principal_cfg)}
+    body = None
+    if form:
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        body = urllib.parse.urlencode(form, quote_via=urllib.parse.quote, safe="").encode("ascii")
+    return http("POST", url, headers, body)
+
+
+def _read_json(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def probe_blogs(name, principal_cfg, *, out=print) -> bool:
+    """段 7: 主体の `blogs[]` を順に一覧の GET で読む。全部読めたら True。"""
+    from .adapters import hatenablog
+    from . import hatena_publish
+    ok = True
+    for row in principal_cfg["blogs"]:
+        blog_id = row["blog_id"]
+        try:
+            token = hatenablog.check_token(_read_json(principal_cfg["token"]), principal_cfg["hatena_id"])
+            consumer = hatenablog.read_consumer(principal_cfg.get("consumer"))
+            adapter = hatenablog.HatenaBlogAdapter({"blog_id": blog_id, "timeout": 30}, principal_cfg,
+                                                   token=token, consumer=consumer)
+            result = adapter.probe()
+        except (hatena_publish.AdapterUnavailable, OSError, ValueError) as exc:
+            result = {"ok": False, "status": None, "error": getattr(exc, "code", exc.__class__.__name__)}
+        if result["ok"]:
+            syntax = result["syntax"] or "不明（記事が無い）"
+            out(f"ブログ {blog_id}: 読めました（記事 {result['entries']} 件・記法 {syntax}）")
+        else:
+            ok = False
+            what = result.get("status") or "応答なし"
+            out(f"ブログ {blog_id}: 読めません（{what}・{result.get('error')}）。"
+                "blog_id の打ち違いか、まだブログが無いかを確かめてください（token は残しました）")
+    return ok
+
+
+def run_auth(name, *, by, force=False, forget=False, forget_consumer=False, consumer=False,
+             prompts=None, http=None, isatty=None, out=print, err=None) -> int:
+    """`thth principal auth` の本体（§2.4 の段 0〜7）。
+
+    `prompts(label) -> str`（本番は `getpass`）・`http(method, url, headers, body) -> (status, headers, bytes)`
+    （本番は `httpsafe.urlopen`）・`isatty() -> bool` を差し込める（試験用）。値はどこにも出さない。
+    """
+    import urllib.parse
+    from . import jst, redact
+    from .adapters import hatenablog
+    from .lock import LockBusy
+    err = err or (lambda line: print(line, file=sys.stderr))
+    prompts = prompts or _getpass
+    http = http or _http
+    isatty = isatty or sys.stdin.isatty
+    try:
+        admin_log.actor(by)
+    except ValueError as exc:
+        err(str(exc))
+        return 2
+    try:
+        p = principals.load_principal(name)
+    except principals.PrincipalError as e:
+        err(f"{e.code}: {e}")
+        return 2
+    if p.get("auth", "oauth") != "oauth":
+        err("auth_unsupported: この主体の auth は oauth ではありません（wsse は作っていません）")
+        return 2
+    token_path, consumer_path = p["token"], p.get("consumer")
+    subject = {"media": principals.MEDIA}
+
+    # --forget／--forget-consumer（端末は要らない・値は読まない）
+    if forget or forget_consumer:
+        try:
+            with principals.token_lock(name):
+                gone = principals.forget_token(name, consumer=forget_consumer, locked=True)
+        except LockBusy:
+            err("principal_token_busy: ほかの処理が token を書いています。少し待ってから")
+            return 2
+        diff = {"token": [gone["token"], False]}
+        if forget_consumer:
+            diff["consumer"] = [gone["consumer"], False]
+        admin_log.append("principal_auth_forgotten", name, subject, by=by, diff=diff)
+        out(f"消しました: token {'あり→なし' if gone['token'] else '（もともと無い）'}"
+            + (f"・consumer {'あり→なし' if gone['consumer'] else '（もともと無い）'}" if forget_consumer else "")
+            + f"。口座の道は token_missing で出ない側です。入れ直すのは thth principal auth {name} --by <名前>")
+        return 0
+
+    # 段 0: 端末でなければ読まない
+    if not isatty():
+        err(NOT_A_TTY)
+        return 2
+    if not isinstance(consumer_path, str) or not consumer_path:
+        err("consumer_missing: 主体の台帳に consumer のパスがありません")
+        return 2
+    token_present = os.path.exists(token_path)
+    # 段 2（先に見る）: token があって --force が無ければ、--consumer のときを除いて何も書かない
+    if token_present and not force and not consumer:
+        err(f"token_present: token が既にあります。入れ替えるなら --force、消すなら --forget"
+            f"（thth principal auth {name} --force --by <名前>）")
+        return 2
+    lock = principals.token_lock(name)
+    try:
+        lock.__enter__()
+    except LockBusy:
+        err("principal_token_busy: ほかの処理が token を書いています。少し待ってから")
+        return 2
+    try:
+        # 段 1: consumer
+        if consumer or not os.path.exists(consumer_path):
+            key = (prompts("consumer key（表示されません）: ") or "").strip()
+            secret = (prompts("consumer secret（表示されません）: ") or "").strip()
+            if not _secret_ok(key) or not _secret_ok(secret):
+                err("consumer_invalid: consumer key／secret が空か、空白・制御文字が入っています。何も書いていません")
+                return 2
+            redact.register_secret(key)
+            redact.register_secret(secret)
+            secrets_fs.atomic_write_json(consumer_path, {"schema": hatenablog.CONSUMER_SCHEMA,
+                                                         "consumer_key": key, "consumer_secret": secret})
+            out(f"consumer を書きました: {consumer_path}")
+            if consumer and token_present and not force:
+                admin_log.append("principal_auth", name, subject, by=by, diff={"consumer": [True, True]})
+                out("token は触っていません（入れ替えるなら --force）")
+                return 0
+        try:
+            consumer_data = hatenablog.read_consumer(consumer_path)
+        except Exception as exc:  # noqa: BLE001 — AdapterUnavailable（符丁だけ言う）
+            err(f"{getattr(exc, 'code', 'consumer_invalid')}: consumer のファイルが読めません。"
+                "--consumer で入れ直してください")
+            return 2
+        for value in (consumer_data["consumer_key"], consumer_data["consumer_secret"]):
+            redact.register_secret(value)
+
+        # 段 3: request token（oob・scope は form の body）
+        out("はてなに request token を頼みます…")
+        status, _h, raw = _signed_post(http, INITIATE_URL, consumer=consumer_data, principal_cfg=p,
+                                       extra_oauth={"oauth_callback": "oob"},
+                                       form={"scope": ",".join(SCOPES)})
+        temp = _form(raw) if status == 200 else {}
+        if (temp.get("oauth_callback_confirmed") != "true" or not _secret_ok(temp.get("oauth_token"))
+                or not _secret_ok(temp.get("oauth_token_secret"))):
+            err(f"initiate_failed: request token をもらえませんでした（HTTP {status}）。"
+                "consumer key／secret と、時計のずれを確かめてください")
+            return 1
+        redact.register_secret(temp["oauth_token_secret"])
+
+        # 段 4: 認可の URL（PC 用）
+        out(f"次の URL をブラウザで開き、はてな ID {p['hatena_id']} でログインして許可してください:")
+        out(f"{AUTHORIZE_URL}?oauth_token={urllib.parse.quote(temp['oauth_token'], safe='')}")
+
+        # 段 5: verifier → access token
+        verifier = (prompts("画面に出た確認の文字列（oauth_verifier・表示されません）: ") or "").strip()
+        if not _secret_ok(verifier):
+            err("verifier_invalid: 確認の文字列が空か、空白・制御文字が入っています。token は書いていません")
+            return 2
+        redact.register_secret(verifier)
+        status, _h, raw = _signed_post(http, TOKEN_URL, consumer=consumer_data, principal_cfg=p,
+                                       token=temp["oauth_token"], token_secret=temp["oauth_token_secret"],
+                                       extra_oauth={"oauth_verifier": verifier})
+        got = _form(raw) if status == 200 else {}
+        if not _secret_ok(got.get("oauth_token")) or not _secret_ok(got.get("oauth_token_secret")):
+            err(f"token_failed: access token をもらえませんでした（HTTP {status}）。もう一度最初から")
+            return 1
+        redact.register_secret(got["oauth_token"])
+        redact.register_secret(got["oauth_token_secret"])
+        if got.get("url_name") != p["hatena_id"]:
+            err(f"hatena_id_mismatch: 許可したはてな ID が主体の hatena_id（{p['hatena_id']}）と違います。"
+                "token は書いていません。正しい ID でログインし直してください")
+            return 1
+
+        # 段 6: 書く（token.lock の中・0600）
+        data = {"schema": hatenablog.TOKEN_SCHEMA, "hatena_id": p["hatena_id"],
+                "oauth_token": got["oauth_token"], "oauth_token_secret": got["oauth_token_secret"],
+                "scopes": list(SCOPES), "obtained_at": jst.iso()}
+        path = principals.write_token_locked(name, data)
+        admin_log.append("principal_auth", name, subject, by=by,
+                         diff={"token": [token_present, True], "scopes": [None, list(SCOPES)],
+                               "url_name_matches": [None, True]})
+        out(f"token を書きました: {path}")
+    finally:
+        lock.__exit__(None, None, None)
+
+    # 段 7: 各ブログが読めるか（read_private の確かめ）。1 つでも読めなければ rc 1（token は残す）。
+    return 0 if probe_blogs(name, principals.load_principal(name), out=out) else 1
+
+
 def cmd_auth(args) -> int:
-    """認可のやり直し（S2 で中身を入れる）。今は何もせず rc 2。"""
-    print(f"principal_auth_unimplemented: thth principal auth はまだありません（4.0 の S2 で入れます）。"
-          f"{args.name} の token は何も変えていません", file=sys.stderr)
-    return 2
+    """`thth principal auth <主体> --by <名前> [--force|--forget|--forget-consumer] [--consumer]`。"""
+    return run_auth(args.name, by=args.by, force=args.force, forget=args.forget,
+                    forget_consumer=args.forget_consumer, consumer=args.consumer)
 
 
 def register(sub) -> None:
@@ -310,6 +554,13 @@ def register(sub) -> None:
     p_resume.add_argument("--by", required=True)
     p_resume.add_argument("--json", action="store_true")
     p_resume.set_defaults(func=cmd_resume)
-    p_auth = verbs.add_parser("auth", help="認可のやり直し（4.0 の S2 で入れる。今は rc 2）")
+    p_auth = verbs.add_parser("auth", help="はてなの OAuth で token を取る（端末から・ssh -t。MCP からはできない）")
     p_auth.add_argument("name")
+    p_auth.add_argument("--by", required=True)
+    mode = p_auth.add_mutually_exclusive_group()
+    mode.add_argument("--force", action="store_true", help="token があっても取り直す")
+    mode.add_argument("--forget", action="store_true", help="token を消す")
+    mode.add_argument("--forget-consumer", dest="forget_consumer", action="store_true",
+                      help="token と consumer を消す")
+    p_auth.add_argument("--consumer", action="store_true", help="consumer key／secret を入れ直す（token は触らない）")
     p_auth.set_defaults(func=cmd_auth)

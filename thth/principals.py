@@ -445,6 +445,43 @@ def write_token(name, data: dict) -> str:
     return path
 
 
+def write_token_locked(name, data: dict) -> str:
+    """`write_token` の、**呼び手が既に `token_lock(name)` を持っているとき**の版
+    （`thth principal auth` が段 0 から段 6 まで token.lock を持ち続けるため・S2 §2.4）。"""
+    from . import secrets_fs
+    if not isinstance(data, dict):
+        raise ValueError("invalid_token")
+    path = load_principal(name)["token"]
+    secrets_fs.atomic_write_json(path, data)
+    return path
+
+
+def forget_token(name, *, consumer=False, locked=False) -> dict:
+    """token（`consumer=True` なら consumer も）を消す。消したかどうかを `{"token": bool, "consumer": bool}` で。
+
+    `locked=True` は呼び手が `token_lock(name)` を持っているとき。値は読まない。
+    """
+    principal_cfg = load_principal(name)
+
+    def unlink(path) -> bool:
+        if not isinstance(path, str) or not path:
+            return False
+        try:
+            os.unlink(path)
+            return True
+        except FileNotFoundError:
+            return False
+
+    def run():
+        return {"token": unlink(principal_cfg["token"]),
+                "consumer": unlink(principal_cfg.get("consumer")) if consumer else False}
+
+    if locked:
+        return run()
+    with token_lock(name):
+        return run()
+
+
 # --------------------------------------------------------------------------
 # 予約の数（`guard.check(kind="schedule")` が主体の段で使う）
 # --------------------------------------------------------------------------

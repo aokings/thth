@@ -2,7 +2,7 @@
 
 見るのは:
   - 承認 → timer: 台帳 wanted(1) → inflight(2) → published(3)・`sent/` に kind・blog_id・delivery・url。
-  - adapter が無ければ `unsupported_medium` で止まる（inflight も台帳も書かない）。dry-run は何も書かない。
+  - adapter が作れなければ（S2 から: token が無い＝`token_missing`）止まる（inflight も台帳も書かない）。dry-run は何も書かない。
   - T-5b: 承認のあとに主体の台帳から lanes を外す → select は通るが、ロックの中の確かめで止まる。
   - T-5c: 承認のあとに口座の blog_id を変える → `approval_stale`。
   - T-5d: 応答のホストが blog_id と違う → 台帳 conflict（published_elsewhere）・出し直さない。
@@ -59,10 +59,11 @@ def test_承認からtimerで出て台帳と記録と書き戻し(lane):
     assert throw(FakeAdapter()).action == "none"
 
 
-def test_adapterが無ければunsupported_mediumで止まり何も書かない(lane):
+def test_adapterが作れなければ止まり何も書かない(lane):
+    # S2: 差し込みが無ければ本物の adapter（thth/adapters/hatenablog.py）。token が無いので token_missing。
     path, delivery = approved(lane)
     result = throw(None)
-    assert result.action == "unsupported_medium" and result.error == "unsupported_medium"
+    assert result.action == "refused" and result.error == "token_missing"
     assert result.exit_code == 2
     assert inflight.read(lane.state) is None
     assert states(delivery) == ["wanted"]

@@ -135,6 +135,9 @@ def _diagnose(account_name: str) -> dict:
     account_cfg = accounts_mod.load_account(account_name)
     token = accounts_mod.load_token(account_cfg)
 
+    if account_cfg.get('media') == 'hatenablog':
+        return _diagnose_hatenablog(account_name, account_cfg)
+
     if account_cfg.get('media') == 'x':
         observation = read_observation(account_name) or {}
         # 費用の内訳（本人確認・他人の投稿・自分の投稿の数字＝Owned Reads）。台帳を読むだけ。
@@ -189,6 +192,41 @@ def _diagnose(account_name: str) -> dict:
             "auth_via": token.get("auth_via") if token.get("auth_via") in ("relay","paste","token_set") else None,
             "auth_observed_at": (read_observation(account_name) or {}).get("auth_observed_at"),
             "probes": results, **required_scope_info}
+
+
+def _diagnose_hatenablog(account_name: str, account_cfg: dict) -> dict:
+    """はてなブログの口座（設計 4.0 S2 §3.7）: adapter が作れるか（token・consumer の有無と形）と、
+    一覧の GET 1 回（200 か・記事の数・最新の記事の記法）。書き込みは呼ばない。"""
+    from . import hatena_publish, principals as principals_mod
+    from .adapters import hatenablog
+    principal_cfg = principals_mod.load_principal(account_cfg["principal"])
+    name = principal_cfg["principal"]
+    try:
+        adapter = hatenablog.factory(account_cfg, principal_cfg)
+    except hatena_publish.AdapterUnavailable as exc:
+        return {"account": account_name, "probes": [],
+                "error": f"はてなの認証の材料が使えません（{exc.code}）。"
+                         f"ssh -t で thth principal auth {name} --by <名前> を先に"}
+    result = adapter.probe()
+    if result["ok"]:
+        detail = (f"記事 {result['entries']} 件（1 頁目）・最新の記事の記法 "
+                  f"{result['syntax'] or '不明（記事が無い）'}")
+        if result["syntax"] not in (None, hatena_publish.MARKDOWN_TYPE):
+            detail += "。Markdown ではないので公開は blog_syntax_mismatch で止まります（ブログの編集モードを Markdown に）"
+    elif result["status"] in (401, 403):
+        detail = f"認可が通りません（{result['status']}）。thth principal auth {name} --force --by <名前> をやり直す"
+    elif result["status"] == 404:
+        detail = "ブログが見つかりません（404）。blog_id か hatena_id を確かめる"
+    else:
+        detail = f"読めません（{result['status'] or '応答なし'}・{result['error']}）"
+    ok = bool(result["ok"]) and result["syntax"] in (None, hatena_publish.MARKDOWN_TYPE)
+    probe = {"key": "atom_entries", "label": f"AtomPub の記事の一覧（{account_cfg.get('blog_id')}）",
+             "permission": "read_private", "ok": ok, "detail": detail,
+             "status": result["status"], "entries": result["entries"], "syntax": result["syntax"]}
+    return {"account": account_name, "handle": account_cfg.get("handle"),
+            "username": principal_cfg["hatena_id"], "user_id": "",
+            "scopes_recorded": recorded_scopes(accounts_mod.load_token(account_cfg)),
+            "auth_via": None, "auth_observed_at": None, "probes": [probe]}
 
 
 # **記録上の scope**（運用の観測 2026-09-14）。VM の `.token` は Threads 4 本・

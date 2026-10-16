@@ -1,13 +1,15 @@
 """timer がはてなブログの配信原稿を出す枝（設計 4.0 S1 §6.5）と、その inflight を人が解く口（§8.2）。
 
-**実際の送信（AtomPub の POST／PUT／DELETE と GET）は S2 の adapter。** S1 はその差し込み口
-（`ADAPTER_FACTORY`・`throw_once(adapter_factory=…)`）までを作る。差し込まれていなければ
-`unsupported_medium` で止まる（出ない側に倒す）。adapter の口（fake で試験できる形）:
+**実際の送信（AtomPub の POST／PUT／DELETE と GET）は S2 の adapter**（`thth/adapters/hatenablog.py`）。
+差し替え口は `ADAPTER_FACTORY`・`throw_once(adapter_factory=…)`。adapter を作れなければ
+（token・consumer が無い・形が違う・`auth: wsse`）`AdapterUnavailable` で何も書かずに止まる
+（出ない側に倒す）。adapter の口（fake で試験できる形）:
 
     adapter.get_entry(*, entry_id, edit_uri) -> str               # 今の本文（読み戻し）
     adapter.create_entry(*, title, body, categories, images) -> EntryResult
     adapter.update_entry(*, entry_id, edit_uri, title, body, categories, images) -> EntryResult
     adapter.delete_entry(*, entry_id, edit_uri) -> EntryResult
+    adapter.blog_syntax() -> str | None                           # 任意（S2 §5 の 2）。無ければ確かめない
 
 adapter は AtomPub の URL を主体の `hatena_id` と口座の `blog_id` **だけ**から組み立てる（§5.2 の 7）。
 原稿にも依頼にも URL を書く欄は無い。
@@ -39,7 +41,8 @@ from . import hatena_entry
 from . import inflight as inflight_mod
 from . import jst
 
-# S2 が差し込む（`callable(account_cfg, principal_cfg) -> adapter`）。None なら `unsupported_medium`。
+# 差し替え口（`callable(account_cfg, principal_cfg) -> adapter`）。None なら S2 の本物の adapter
+# （`thth.adapters.hatenablog.factory`）を使う。試験は `throw_once(adapter_factory=…)` かここで差し替える。
 ADAPTER_FACTORY = None
 
 KINDS = {"create": "entry_create", "update": "entry_update", "delete": "entry_delete"}
@@ -62,14 +65,47 @@ class EntryResult:
     published_url: str | None = None
     readback_body: str | None = None
     error: str | None = None
+    # 応答の `content` の `type`（S2 §5 の 3）。分からなければ None（確かめない）。
+    content_type: str | None = None
 
 
 class Unsupported(Exception):
-    """adapter が差し込まれていない（S1）。"""
+    """adapter が差し込まれていない（S1）。factory がこれを上げれば `unsupported_medium`。"""
+
+
+class AdapterUnavailable(Exception):
+    """adapter を作れない（S2 §3.1）: `token_missing`・`token_invalid`・`consumer_missing`・
+    `consumer_invalid`・`auth_unsupported`。何も書かずに出ない側へ倒す。"""
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+class EntryMissing(Exception):
+    """`get_entry` が 404（外で消された記事）。`conflict`（`entry_missing`）に写す（S2 §3.5）。"""
+
+
+class EntryRefused(Exception):
+    """`get_entry` を送る前に断った（`edit_uri_mismatch`・`entry_id_invalid`）。出ない側。"""
+
+
+# S2 §5: 送る直前と 201／200 の応答で確かめるブログの記法（Markdown だけ通す）。
+MARKDOWN_TYPE = "text/x-markdown"
+# 外で消された記事への PUT／DELETE の 404（adapter の符丁）。
+ENTRY_MISSING = "hatena_entry_missing"
+
+
+def _default_factory():
+    """差し込まれていなければ S2 の本物の adapter（`thth/adapters/hatenablog.py`）。"""
+    if ADAPTER_FACTORY is not None:
+        return ADAPTER_FACTORY
+    from .adapters import hatenablog
+    return hatenablog.factory
 
 
 def make_adapter(account_cfg, principal_cfg, adapter_factory=None):
-    factory = adapter_factory or ADAPTER_FACTORY
+    factory = adapter_factory or _default_factory()
     if factory is None:
         raise Unsupported("unsupported_medium")
     return factory(account_cfg, principal_cfg)
@@ -189,6 +225,13 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
         run("post", "error", "unsupported_medium")
         return _result(core, exit_code=2, mode=mode, action="unsupported_medium",
                        message="unsupported_medium", file=path, error="unsupported_medium")
+    except AdapterUnavailable as exc:
+        code = exc.code
+        hint = (f"。thth principal auth {principal_cfg['principal']} --by <名前> で入れてください"
+                if code in ("token_missing", "token_invalid", "consumer_missing", "consumer_invalid") else "")
+        log(f"はてなブログの認証の材料が使えないので出しません（{code}）{hint}")
+        run("post", "error", code)
+        return _result(core, exit_code=2, mode=mode, action="refused", message=code, file=path, error=code)
 
     # 2. 安全装置（主体 → 口座 → 媒体の断りの止め・口座／ブログ／主体の数）
     kind = KINDS[op]
@@ -209,6 +252,20 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
         try:
             current = adapter.get_entry(entry_id=m["entry_id"], edit_uri=ledger.get("edit_uri"))
             current_sha = approval_mod.hatena_body_sha256(current)
+        except EntryMissing:
+            # 外で消された記事（404）。PUT を打たず、人が見るまで止める（S2 §3.5・§15 の 5）。
+            deliveries_mod.advance(account_name, delivery, state="conflict", at=jst.iso(), base=loaded,
+                                   fields={"checked_at": jst.iso()},
+                                   row={"op": op, "reason": "entry_missing", "approved_sha": sha})
+            log("はてなブログの側に記事がありません（404・外で消された）。更新しません")
+            run("post", "error", "delivery_conflict")
+            return _result(core, exit_code=1, mode=mode, action="conflict",
+                           message="entry_missing", file=path, error="delivery_conflict")
+        except EntryRefused as exc:
+            log(f"台帳の記事の URL が組んだ URL と合わないので出しません（{exc}）")
+            run("post", "error", str(exc))
+            return _result(core, exit_code=2, mode=mode, action="refused", message=str(exc),
+                           file=path, error=str(exc))
         except Exception:  # noqa: BLE001 — 読めなければ比べられない＝出さない
             log("更新の前の読み戻しができないので出しません（次の run でもう一度）")
             run("post", "error", "readback_failed")
@@ -223,6 +280,24 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
             run("post", "error", "delivery_conflict")
             return _result(core, exit_code=1, mode=mode, action="conflict",
                            message="readback_changed", file=path, error="delivery_conflict")
+
+    # 3b. ブログの記法（S2 §5 の 2）: 一覧の最新の記事の `content@type` が Markdown でなければ断る。
+    #     記事が 0 件なら確かめられない（台帳の宣言を信じる）。削除は本文を送らないので見ない。
+    syntax_of = getattr(adapter, "blog_syntax", None)
+    if op != "delete" and syntax_of is not None:
+        try:
+            syntax = syntax_of()
+        except Exception:  # noqa: BLE001 — 確かめられなければ出さない（次の run）
+            log("ブログの記法を確かめられないので出しません（次の run でもう一度）")
+            run("post", "error", "syntax_check_failed")
+            return _result(core, exit_code=1, mode=mode, action="syntax_check_failed",
+                           message="syntax_check_failed", file=path, error="syntax_check_failed")
+        if syntax is not None and syntax != MARKDOWN_TYPE:
+            log(f"ブログの最新の記事が Markdown ではありません（{syntax}）。"
+                "ブログの編集モードを Markdown にしてから出し直してください。出しません")
+            run("post", "error", "blog_syntax_mismatch")
+            return _result(core, exit_code=2, mode=mode, action="refused",
+                           message="blog_syntax_mismatch", file=path, error="blog_syntax_mismatch")
 
     # 4. inflight（結果の行の番号を書く）→ 台帳に inflight の行
     outcome_seq = ledger["seq"] + 2
@@ -259,11 +334,23 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
             run("post", "error", result.error or "publish_ambiguous")
             return _result(core, exit_code=1, mode=mode, action="inflight",
                            message="publish_ambiguous", file=path, error="publish_ambiguous")
+        if result.error == ENTRY_MISSING and op in ("update", "delete"):
+            # 外で消された記事（404）: 元の状態（published）に戻すと次の run がまた打つので conflict。
+            deliveries_mod.advance(account_name, delivery, state="conflict", at=at, seq=outcome_seq,
+                                   row={"op": op, "reason": "entry_missing", "error": result.error})
+            inflight_mod.clear(state_dir)
+            log("はてなブログの側に記事がありません（404・外で消された）。台帳を conflict にして止めます")
+            run("post", "error", "delivery_conflict")
+            return _result(core, exit_code=1, mode=mode, action="conflict", message="entry_missing",
+                           file=path, error="delivery_conflict")
         # 確かに出ていない（媒体が断った）: 元の状態に戻して inflight を消す。
         deliveries_mod.advance(account_name, delivery, state=BEFORE[op], at=at, seq=outcome_seq,
                                row={"op": op, "error": result.error or "refused"})
         inflight_mod.clear(state_dir)
         log(f"はてなブログが断りました: {result.error}")
+        if result.error == "hatena_auth_rejected":
+            log(f"認可が通りません。thth principal auth {principal_cfg['principal']} --force --by <名前> "
+                "でやり直してください（時計のずれでも 401 になります）")
         run("post", "error", result.error or "publication_failed")
         return _result(core, exit_code=1, mode=mode, action="post", message="公開に失敗しました",
                        file=path, error=result.error or "publication_failed")
@@ -288,12 +375,20 @@ def _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq
                        file=path, error="unusable_post_id")
     url = result.published_url
     elsewhere = op != "delete" and url is not None and not _host_matches(url, m["blog_id"])
+    # S2 §5 の 3: 出たが、応答の記法が Markdown でない → conflict（syntax_mismatch）。出し直さない。
+    wrong_syntax = (not elsewhere and op != "delete" and result.content_type is not None
+                    and result.content_type != MARKDOWN_TYPE)
+    # S2 §6: 応答の content（読み戻し）が送った本文と違えば印を付ける（conflict にはしない）。
+    differs = (op != "delete" and result.readback_body is not None
+               and approval_mod.hatena_body_sha256(result.readback_body)
+               != approval_mod.hatena_body_sha256(m["body"]))
+    reason = "published_elsewhere" if elsewhere else ("syntax_mismatch" if wrong_syntax else None)
     ledger = deliveries_mod.read(account_name, delivery)
     written = ledger["seq"] == outcome_seq   # 前に書けていた（解き直し）
     _record_sent(state_dir, m, op, entry_id, outcome_seq, url=url if url and not elsewhere else None,
                  at=at, approved_sha=sha, delivery=delivery)
     if not written:
-        state = "deleted" if op == "delete" else ("conflict" if elsewhere else "published")
+        state = "deleted" if op == "delete" else ("conflict" if reason else "published")
         fields = {"entry_id": entry_id, "checked_at": at}
         if m.get("article_rev"):
             fields["checked_rev"] = m["article_rev"]
@@ -304,12 +399,18 @@ def _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq
         if result.readback_body is not None:
             fields["readback_sha"] = approval_mod.hatena_body_sha256(result.readback_body)
         row = {"op": op, "entry_id": entry_id, "published_url": url, "checked_rev": m.get("article_rev"),
-               "approved_sha": sha, "reason": "published_elsewhere" if elsewhere else None,
+               "approved_sha": sha, "reason": reason, "content_type": result.content_type if wrong_syntax else None,
+               "readback_differs": True if differs else None,
                "resolution": resolution, "resolved_by": resolved_by}
         deliveries_mod.advance(account_name, delivery, state=state, at=at, seq=outcome_seq,
                                fields=fields, row=row)
     if elsewhere:
         log(f"公開された URL のホストが {m['blog_id']} と違います（{url}）。台帳を conflict にして止めます")
+    if wrong_syntax:
+        log(f"記事は出ましたが、別の記法（{result.content_type}）で解釈されました。台帳を conflict にして"
+            "止めます。はてなの画面で確かめてください（出し直さない・消さない）")
+    if differs:
+        log("はてなが返した本文が送った本文と違います（読み戻し差あり・readback_differs）")
     fm_fields = {"status": "posted", "post_id": entry_id, "posted_at": at}
     if url:
         fm_fields["url"] = url
@@ -323,9 +424,9 @@ def _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq
     inflight_mod.clear(state_dir)
     run("post", "ok", None, post_id=entry_id,
         extra={"delivery": delivery, "inflight_resolution": resolution})
-    return _result(core, exit_code=0 if not elsewhere else 1, mode=mode, action="post",
-                   message="published_elsewhere" if elsewhere else "投稿しました", file=path,
-                   post_id=entry_id, url=url, error="published_elsewhere" if elsewhere else None)
+    return _result(core, exit_code=0 if not reason else 1, mode=mode, action="post",
+                   message=reason or "投稿しました", file=path,
+                   post_id=entry_id, url=url, error=reason)
 
 
 # --------------------------------------------------------------------------

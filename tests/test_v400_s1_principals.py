@@ -283,10 +283,10 @@ def test_principal_add_show_set_resume_auth(world, tmp_path):
     r = run_thth(["principal", "resume", "hatena-main", "--by", "tester"], env=env)
     assert r.returncode == 0, r.stderr
     assert principals.stopped("hatena-main") is None
-    # auth は S2 まで口だけ
-    r = run_thth(["principal", "auth", "hatena-main"], env=env)
+    # auth（S2 §2.4）: 端末でなければ読まない（subprocess の標準入力は端末ではない）
+    r = run_thth(["principal", "auth", "hatena-main", "--by", "tester"], env=env)
     assert r.returncode == 2
-    assert "principal_auth_unimplemented" in r.stderr
+    assert "not_a_tty" in r.stderr
 
 
 def test_account_add_hatenablog(world):
