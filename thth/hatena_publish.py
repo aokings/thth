@@ -195,8 +195,10 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
     if reason is not None:
         log(hatena_entry.refusal_log_line(path, reason))
         run("post", "error", reason)
-        return _result(core, exit_code=2, mode=mode, action="approval_stale", message=reason,
-                       file=path, error=reason)
+        # 承認が古いときだけ approval_stale。S2 の断り（画像・相対リンク・未 commit）や台帳の状態は refused。
+        return _result(core, exit_code=2, mode=mode,
+                       action="approval_stale" if reason == "approval_stale" else "refused",
+                       message=reason, file=path, error=reason)
     op, delivery, sha = m["op"], m["delivery"], m["approved_sha"]
 
     # 1. 主体の台帳を読み直す（承認のあとにブログ・レーンを外せばここで止まる・§5.2 の 6）
@@ -434,6 +436,11 @@ def _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq
 # 人が inflight を解く（`thth inflight <口座> resolve`・§8.2）。同じ seq で書く。
 # --------------------------------------------------------------------------
 
+def postid_usable(value) -> bool:
+    from . import postid as postid_mod
+    return postid_mod.is_usable(value)
+
+
 class ResolveRefused(Exception):
     def __init__(self, code):
         super().__init__(code)
@@ -447,8 +454,42 @@ def _op_of(ledger) -> str:
     raise ResolveRefused("delivery_unreadable")
 
 
-def resolve(account_name, account_cfg, state_dir, record, decision, post_id, *, by, run_id, now):
+# 人が「出ていた」で解いたのに読み戻せなかったときの 1 行（監査 中-2）。
+NO_READBACK_NOTE = ("はてなから記事を読み戻せなかったので、台帳に readback_sha・edit_uri が入っていません。"
+                    "次の更新は読み戻しが無いので止まります（conflict）。thth deliveries {account} で確かめてください")
+
+
+def _readback_for_resolve(account_name, account_cfg, m, entry_id, base, adapter_factory):
+    """`resolve --published` の create・update で記事を GET 1 回して欄を埋める。読めなければ `base` のまま。
+
+    戻り値は `(EntryResult, 読めたか)`。adapter を作れない・GET が失敗・応答の entry_id が違う、は
+    どれも「読めない」（今までどおり書く。呼び手が 1 行を出す）。
+    """
+    from . import principals
+    try:
+        principal_cfg = principals.check_account(account_cfg, account_name)
+        adapter = make_adapter(account_cfg, principal_cfg, adapter_factory)
+        read = getattr(adapter, "read_entry", None)
+        if read is None:
+            return base, False
+        ledger_edit = deliveries_mod.read(account_name, m["delivery"]).get("edit_uri") if m["op"] != "create" else None
+        fields = read(entry_id=entry_id, edit_uri=ledger_edit)
+    except Exception:  # noqa: BLE001 — 読めなければ今のまま（解くことは止めない）
+        return base, False
+    if not isinstance(fields, dict) or fields.get("entry_id") != entry_id or not fields.get("edit_uri"):
+        return base, False
+    return EntryResult(ok=True, entry_id=entry_id, edit_uri=fields["edit_uri"],
+                       published_url=fields.get("published_url") or base.published_url,
+                       readback_body=fields.get("content"), content_type=fields.get("content_type")), True
+
+
+def resolve(account_name, account_cfg, state_dir, record, decision, post_id, *, by, run_id, now,
+            adapter_factory=None, log=None):
     """hatena の inflight を解く（ロックの中で呼ぶ）。戻り値は解き方の語。断りは `ResolveRefused`。
+
+    - 「出ていた」で解く create・update は、記事を GET 1 回して `readback_sha`・`edit_uri`・
+      `published_url` を台帳に入れる（入れないと次の update が必ず `readback_changed` で止まる）。
+      読めなければ今までどおり書き、`log` に 1 行（`NO_READBACK_NOTE`）。
 
     - `seq` は inflight に書いてある番号のまま使う（振り直さない）。台帳の `seq ＋ 1` と違えば
       `seq_mismatch`。前に結果の行まで書けていた（台帳の seq が同じ）なら台帳は書かない。
@@ -517,6 +558,11 @@ def resolve(account_name, account_cfg, state_dir, record, decision, post_id, *, 
         raise ResolveRefused("post_id_differs")   # 更新・削除の対象は台帳の entry_id だけ
     result = EntryResult(ok=True, entry_id=post_id if m["op"] == "create" else m["entry_id"],
                          published_url=ledger.get("published_url") if done else None)
+    if not done and m["op"] in ("create", "update") and postid_usable(result.entry_id):
+        result, read_back = _readback_for_resolve(account_name, account_cfg, m, result.entry_id, result,
+                                                  adapter_factory)
+        if not read_back and log is not None:
+            log(NO_READBACK_NOTE.format(account=account_name))
     outcome = _record_outcome(account_name, account_cfg, state_dir, m, result, seq,
                               log=lambda _line: None, run=run, mode="production", path=path,
                               resolution=inflight_cli.HUMAN_PUBLISHED, resolved_by=by)

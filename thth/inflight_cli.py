@@ -260,8 +260,10 @@ class Refused(Exception):
         self.code, self.message = code, message
 
 
-def apply(account, account_cfg, state_dir, decision, post_id, by, confirm, *, wait=0, via="cli"):
+def apply(account, account_cfg, state_dir, decision, post_id, by, confirm, *, wait=0, via="cli", notes=None):
     """ロックの中で読み直し、digest が同じなら解く。戻り値は (resolution, 控えの path, 変更ログに書けたか)。
+
+    `notes`（list）を渡すと、解いたうえで知らせたい 1 行（はてなの読み戻しができなかった等）を足す。
 
     手元の道（`thth inflight … resolve --confirm`）と遠くの道（`inflight_resolve`）の 1 か所。
     断りは `Refused`（`account_locked` はロックが取れなかった）。
@@ -282,7 +284,8 @@ def apply(account, account_cfg, state_dir, decision, post_id, by, confirm, *, wa
                 from . import hatena_publish
                 try:
                     resolution = hatena_publish.resolve(account, account_cfg, state_dir, record, decision,
-                                                        post_id, by=by, run_id=run_id, now=now)
+                                                        post_id, by=by, run_id=run_id, now=now,
+                                                        log=notes.append if notes is not None else None)
                 except hatena_publish.ResolveRefused as exc:
                     raise Refused(exc.code, _WRITEBACK_NEXT.get(
                         exc.code, "配信の台帳と inflight が合いません（inflight は残っています）。"
@@ -325,11 +328,14 @@ def apply(account, account_cfg, state_dir, decision, post_id, by, confirm, *, wa
 
 
 def _execute(args, account_cfg, state_dir, decision, post_id, by) -> int:
+    notes = []
     try:
         resolution, path, logged = apply(args.account, account_cfg, state_dir, decision, post_id, by,
-                                         args.confirm, wait=args.wait)
+                                         args.confirm, wait=args.wait, notes=notes)
     except Refused as refused:
         return _fail(args, 1, refused.code, refused.message)
+    for line in notes:
+        print(f"⚠ {line}", file=sys.stderr)
     payload = {"ok": True, "resolved": True, "account": args.account, "resolution": resolution,
                "post_id": post_id, "by": by, "archive": path, "admin_log": logged}
     if args.json:

@@ -173,7 +173,8 @@ def factory(account_cfg, principal_cfg):
         raise _unavailable("auth_unsupported")
     try:
         token = accounts.load_token(account_cfg)
-    except ValueError:
+    except (ValueError, OSError):
+        # 読めない（権限・壊れたファイル・ディレクトリ）も「使えない」。timer の run を落とさない。
         raise _unavailable("token_invalid") from None
     if token is None:
         raise _unavailable("token_missing")
@@ -265,7 +266,9 @@ class HatenaBlogAdapter:
         try:
             status, _headers, raw = self._request(method, url, body=body)
         except httpsafe.RedirectBlocked:
-            return EntryResult(ok=False, ambiguous=False, error="endpoint_rejected")
+            # サーバが 3xx を返したあと＝要求は届いている。書き込みは「出たか分からない」
+            # （inflight を残す・出し直さない）。接続の前の断り（EndpointRejected）とは分ける。
+            return EntryResult(ok=False, ambiguous=True, error="redirect_blocked")
         except urllib.error.HTTPError as exc:
             return EntryResult(ok=False, ambiguous=exc.code >= 500, error=self._http_error(exc.code, op))
         except httpsafe.EndpointRejected:
@@ -290,6 +293,10 @@ class HatenaBlogAdapter:
 
     def get_entry(self, *, entry_id, edit_uri) -> str:
         """今の本文（`content` の文字列）。404 は `EntryMissing`、ほかの失敗は例外（`readback_failed`）。"""
+        return self.read_entry(entry_id=entry_id, edit_uri=edit_uri)["content"]
+
+    def read_entry(self, *, entry_id, edit_uri) -> dict:
+        """1 本の記事を GET で読む（`parse_entry` の欄）。失敗は `get_entry` と同じ例外。"""
         from ..hatena_publish import EntryMissing, EntryRefused
         try:
             url = self._member(entry_id, edit_uri)
@@ -305,7 +312,7 @@ class HatenaBlogAdapter:
             raise RuntimeError(self._http_error(exc.code, "get")) from None
         if status != 200:
             raise RuntimeError(f"hatena_http_{status}")
-        return parse_entry(raw)["content"]
+        return parse_entry(raw)
 
     def _accepted(self, status, raw, *, expect, op, entry_id=None):
         from ..hatena_publish import EntryResult

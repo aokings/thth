@@ -264,7 +264,8 @@ CASES = [
     (_boom(urllib.error.URLError("down")), "unknown", True, "hatena_transport_failed"),
     (_boom(ConnectionResetError("reset")), "unknown", True, "hatena_transport_failed"),
     (lambda _b: (201, b"<" * (hatenablog.MAX_RESPONSE_BYTES + 10)), "unknown", True, "response_too_large"),
-    (_boom(httpsafe.RedirectBlocked(COLLECTION, 302, "redirect", {}, None)), "wanted", False, "endpoint_rejected"),
+    # 3xx を返したあと（要求は届いている）＝出たか分からない（監査 中-1）。接続の前の断りとは分ける。
+    (_boom(httpsafe.RedirectBlocked(COLLECTION, 302, "redirect", {}, None)), "unknown", True, "redirect_blocked"),
     (_boom(httpsafe.EndpointRejected("endpoint_invalid")), "wanted", False, "endpoint_rejected"),
 ]
 

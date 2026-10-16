@@ -296,7 +296,12 @@ def _getpass(label: str) -> str:
 
 
 def _http(method, url, headers, body):
-    """`(status, headers, bytes)`。4xx・5xx も status で返す（本文は読み捨てる）。"""
+    """`(status, headers, bytes)`。4xx・5xx も status で返す（本文は読み捨てる）。
+
+    つながらない（DNS・接続拒否・時間切れ・接続の前の断り）は status `None`（traceback にしない。
+    例外の文は値を含みうるので出さない）。
+    """
+    import http.client
     import urllib.error
     import urllib.request
     from . import httpsafe
@@ -306,6 +311,16 @@ def _http(method, url, headers, body):
             return response.status, dict(response.headers.items()), response.read(65537)
     except urllib.error.HTTPError as exc:
         return exc.code, {}, b""
+    except (urllib.error.URLError, OSError, TimeoutError, httpsafe.EndpointRejected,
+            http.client.HTTPException):
+        return None, {}, b""
+
+
+def _status_text(status) -> str:
+    """失敗の文の括弧の中。つながらなければ「つながらない」と言う。"""
+    if status is None:
+        return "はてなにつながりません。ネットワーク・DNS・時間切れを確かめてください"
+    return f"HTTP {status}"
 
 
 def _form(raw) -> dict:
@@ -475,7 +490,7 @@ def run_auth(name, *, by, force=False, forget=False, forget_consumer=False, cons
         temp = _form(raw) if status == 200 else {}
         if (temp.get("oauth_callback_confirmed") != "true" or not _secret_ok(temp.get("oauth_token"))
                 or not _secret_ok(temp.get("oauth_token_secret"))):
-            err(f"initiate_failed: request token をもらえませんでした（HTTP {status}）。"
+            err(f"initiate_failed: request token をもらえませんでした（{_status_text(status)}）。"
                 "consumer key／secret と、時計のずれを確かめてください")
             return 1
         redact.register_secret(temp["oauth_token_secret"])
@@ -495,7 +510,7 @@ def run_auth(name, *, by, force=False, forget=False, forget_consumer=False, cons
                                        extra_oauth={"oauth_verifier": verifier})
         got = _form(raw) if status == 200 else {}
         if not _secret_ok(got.get("oauth_token")) or not _secret_ok(got.get("oauth_token_secret")):
-            err(f"token_failed: access token をもらえませんでした（HTTP {status}）。もう一度最初から")
+            err(f"token_failed: access token をもらえませんでした（{_status_text(status)}）。もう一度最初から")
             return 1
         redact.register_secret(got["oauth_token"])
         redact.register_secret(got["oauth_token_secret"])

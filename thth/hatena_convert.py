@@ -42,6 +42,11 @@ _FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 _CODE_SPAN_RE = re.compile(r"(`+)(?:.|\n)*?(?<!`)\1(?!`)")
 _SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*:")
 _ATX_H1_RE = re.compile(r"^#[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$")
+# S2 で変えずに断る形（監査 低-6）: インライン HTML の `<a href="…">` と、山括弧のリンク `<…>`。
+_A_HREF_RE = re.compile(r"<a\b[^>]*?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s\"'>]+))", re.IGNORECASE)
+_ANGLE_RE = re.compile(r"<([^<>\s]+)>")
+# 属性の無い HTML のタグ（`<br>`・`</p>`・`<hr/>`）は山括弧のリンクに数えない。
+_BARE_TAG_RE = re.compile(r"^/?[A-Za-z][A-Za-z0-9-]*/?$")
 
 
 class ConvertError(ValueError):
@@ -107,9 +112,33 @@ def _strip_leading_h1(text, ctx):
     return "\n".join(rest)
 
 
+def _is_relative(target) -> bool:
+    return bool(target) and not (target.startswith("#") or target.startswith("//") or _SCHEME_RE.match(target))
+
+
+def _refuse_unconverted_relatives(segment):
+    """`<a href="相対">` と `<相対>` は S2 では変えないので、`link_base` があっても断る（監査 低-6）。
+
+    `[text](<相対>)` は先に `_LINK_RE` が絶対にしているので、ここには絶対の形で来る。
+    メールの自動リンク（`<a@b.example>`）・属性の無いタグ（`<br>`・`</p>`）・`/` も `.` も無いもの
+    （`<注意>`）は相対に数えない。
+    """
+    for match in _A_HREF_RE.finditer(segment):
+        href = next((g for g in match.groups() if g is not None), "")
+        if _is_relative(href.strip()):
+            raise ConvertError("relative_link_unresolvable")
+    for match in _ANGLE_RE.finditer(segment):
+        inner = match.group(1)
+        if (inner.startswith(("!", "?")) or _BARE_TAG_RE.match(inner) or ("@" in inner and "/" not in inner)
+                or not ("/" in inner or "." in inner)):
+            continue   # 注記の山括弧（`<注意>`）などパスに見えないものは数えない
+        if _is_relative(inner):
+            raise ConvertError("relative_link_unresolvable")
+
+
 def _resolve_link(target, ctx):
     """1 つのリンク先を絶対にする（相対でなければそのまま）。`link_base` が無ければ断る。"""
-    if not target or target.startswith("#") or target.startswith("//") or _SCHEME_RE.match(target):
+    if not _is_relative(target):
         return target
     base = ctx.get("link_base")
     if not base:
@@ -131,7 +160,9 @@ def _links_in_segment(segment, ctx):
     def inline(match):
         target = _rewrite_target(match.group(3), ctx)
         return f"[{match.group(1)}]({match.group(2)}{target}{match.group(4)})"
-    return _LINK_RE.sub(inline, segment)
+    out = _LINK_RE.sub(inline, segment)
+    _refuse_unconverted_relatives(out)
+    return out
 
 
 def _absolute_links(text, ctx):
@@ -139,6 +170,8 @@ def _absolute_links(text, ctx):
 
     `#` だけのリンク・scheme のあるもの（`https:`・`mailto:` など）・`//` 始まりはそのまま。
     コードの囲み（``` と ~~~）とコードの span（`…`）の中は触らない。画像は触らない（§4.3）。
+    インライン HTML の `<a href="相対">` と `<相対>` は変えずに `relative_link_unresolvable` で断る
+    （S2・監査 低-6。断るだけなので通る本文の出力は変わらない＝`VERSION` は据え置き）。
     """
     out, fence = [], None
     for line in text.split("\n"):
