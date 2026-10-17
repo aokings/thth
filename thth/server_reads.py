@@ -35,7 +35,9 @@ OPERATIONS = frozenset(('posts', 'replies', 'measured', 'collect', 'mentions',
                         # 4.0 S5 §3.4: 正本の修正の検出（読むだけ・台帳と repo の HEAD・媒体は呼ばない）。
                         'article_diff',
                         # 4.0 S6 §6.2: 記事の反応を束ねる（読むだけ・台帳から・媒体は呼ばない・fetch は受けない）。
-                        'article_reactions'))
+                        'article_reactions',
+                        # 4.1（設計 S4 §20.9）: まとめて承認したブックマークの札の状態（読むだけ・媒体は呼ばない）。
+                        'bookmark_batch_status'))
 # 断りの符丁（`server_writes.SAFE_ERRORS` に足す）。
 REASONS = frozenset(('collect_too_soon', 'upstream_unavailable', 'read_unavailable'))
 # `upstream_unavailable` に添える静的な理由（媒体の返した文を写せないとき）。
@@ -67,6 +69,7 @@ _FIELDS = {
     'summary': ((), ()),
     'article_diff': (('article', 'delivery', 'draft'), ()),
     'article_reactions': (('article', 'delivery', 'comments'), ('article',)),
+    'bookmark_batch_status': (('batch',), ()),
 }
 # 欄の型（範囲と中身の検査は CLI の関数が言う。ここは型だけ）。
 _TYPES = {
@@ -75,7 +78,7 @@ _TYPES = {
     'also': list, 'aggregate': bool, 'lexicon': dict, 'suggest': bool, 'tag': bool, 'author': str,
     'keep': bool, 'ja': bool, 'question': bool, 'no_replies': bool, 'author_key': str, 'profile': bool,
     'days': int, 'until': str, 'media': str, 'after': str,
-    'article': str, 'delivery': str, 'draft': bool, 'comments': bool,
+    'article': str, 'delivery': str, 'draft': bool, 'comments': bool, 'batch': str,
 }
 # 答えの大きさの目安（JSON の UTF-16 の長さ）。thth.me の 1 件の上限（128 KB）より少し小さく取る。
 RESULT_BUDGET = 120_000
@@ -490,6 +493,17 @@ def _summary(account, request, cfg):
         error('scope_unavailable')
 
 
+def _bookmark_batch_status(account, request, cfg):
+    """4.1（設計 S4 §20.9）: 手元の `thth bookmark batch-status --json` と同じ形。"""
+    from . import bookmark_batch, principals
+    if not principals.uses_principal(cfg):
+        error('unsupported_operation')
+    try:
+        return bookmark_batch.status(account, batch=request.get('batch'))
+    except bookmark_batch.BatchError as exc:
+        error(exc.code if exc.code in bookmark_batch.REASONS else 'read_unavailable')
+
+
 def _fit_article_diff(result):
     """大きすぎる答えは各配信の `diff_lines` を後ろから落とす（`TRIMMED_NOTE`・4.0 S5 §3.4）。"""
     over = _size(result) - RESULT_BUDGET
@@ -563,7 +577,7 @@ def _article_reactions(account, request, cfg, context=None):
 
 _HANDLERS = {
     'events': _events, 'summary': _summary, 'article_diff': _article_diff,
-    'article_reactions': _article_reactions,
+    'article_reactions': _article_reactions, 'bookmark_batch_status': _bookmark_batch_status,
     'posts': _posts, 'replies': _replies, 'measured': _measured, 'collect': _collect,
     'mentions': _mentions, 'topics_search': _topics_search, 'profile': _profile,
     'location_search': _location_search, 'thread_read': _thread_read, 'where_to_appear': _where,

@@ -13,7 +13,9 @@ from .report_service import ReportContext, ReportServiceError
 WRITE_OPERATIONS = frozenset(('draft_put','send_request','retract_request','schedule_request',
                               'media_upload_url','media_complete',
                               # 4.0 S1 §7.3・S4: はてなブックマークの 2 段の承認と送信（url・op: delete も）。
-                              'bookmark_request'))
+                              'bookmark_request',
+                              # 4.1（設計 S4 §20.9）: ブックマークのまとめて承認（2 段）と待ちの札の取り消し（1 段）。
+                              'bookmark_batch_request','bookmark_batch_cancel'))
 # 公開・削除・予約に至る依頼。承認ページは無い（設計 3.13.0）: どれもその場で行う（安全装置は効く）。
 # 3.12.0 までの `approval_request` は受け付けない（`unsupported_operation`）。
 PUBLISHING_OPERATIONS = frozenset(('send_request','retract_request','schedule_request'))
@@ -43,6 +45,9 @@ DIRECT_REASONS = frozenset(('account_busy','publication_failed','publication_unc
 # 4.0 S4: ブックマークの対象・柵・送信の断り（`hatena_bookmark.REASONS`・静的な語だけ）。
 from .hatena_bookmark import REASONS as BOOKMARK_REASONS
 DIRECT_REASONS = DIRECT_REASONS | BOOKMARK_REASONS
+# 4.1: まとめて承認の断り（`bookmark_batch.REASONS`・静的な語だけ）。
+from .bookmark_batch import REASONS as BOOKMARK_BATCH_REASONS
+DIRECT_REASONS = DIRECT_REASONS | BOOKMARK_BATCH_REASONS
 from .account_settings import REASONS as SETTINGS_REASONS
 # 遠くの道の inflight（見る・解く・3.14.3 穴 3）の断り。手元の `thth inflight` と同じ符丁。
 INFLIGHT_REASONS = frozenset(('no_inflight','inflight_unreadable','media_inflight_unsupported','post_id_invalid',
@@ -532,6 +537,55 @@ def bookmark(context, request, via):
     return {**done,'via':via}
 
 
+def bookmark_batch_request(context, request, via):
+    """ブックマークのまとめて承認（設計 S4 §20・4.1）。`text` は札のファイルの中身そのまま（JSON Lines か配列）。
+
+    2 段: `confirm` が無ければ `{stage: 1, digest, preview}`（何も書かない）。同じ digest でロックの中で
+    作り直して照合し、口座の state に順番待ちとして置く。承認した人は資格の actor。付けるのは timer。
+    """
+    _schema(request,('text','confirm'),('text',))
+    if request.get('confirm') is not None and not isinstance(request['confirm'],str): error('invalid_request')
+    account=request['account'];cfg=current(context,account,write=True)
+    if not _hatena(cfg): error('unsupported_operation')
+    from . import bookmark_batch
+    def prepared(locked_cfg):
+        try:
+            return bookmark_batch.prepare(account,locked_cfg,request['text'])
+        except bookmark_batch.BatchError as exc:
+            error(exc.code if exc.code in SAFE_ERRORS else 'invalid_request')
+    first=prepared(cfg)
+    if not request.get('confirm'):
+        return {'account':account,'status':'not_queued','stage':1,'digest':first['digest'],'preview':first,'via':via}
+    if request['confirm']!=first['digest']: error('confirm_mismatch')
+    if cfg.get('production') is not True: error('production_disabled')
+    origin=_origin(context,via)
+    with server_files.account_locks(account,cfg):
+        locked=current(context,account,write=True)
+        again=prepared(locked)
+        if again['digest']!=request['confirm']: error('confirm_mismatch')
+        try:
+            done=bookmark_batch.approve_locked(account,locked,again,actor=context.actor,via=origin['via'],
+                                               credential=origin['credential'])
+        except bookmark_batch.BatchError as exc:
+            error(exc.code if exc.code in SAFE_ERRORS else 'write_unavailable')
+    return {**done,'via':via}
+
+
+def bookmark_batch_cancel(context, request, via):
+    """待ちの札の取り消し（1 段・止める向き）。取り消した人は資格の actor。"""
+    _schema(request,('batch','item'),('batch',))
+    if request.get('item') is not None and type(request['item']) is not int: error('invalid_request')
+    account=request['account'];cfg=current(context,account,write=True)
+    if not _hatena(cfg): error('unsupported_operation')
+    from . import bookmark_batch
+    with server_files.account_locks(account,cfg):
+        try:
+            done=bookmark_batch.cancel_locked(account,request['batch'],by=context.actor,item=request.get('item'))
+        except bookmark_batch.BatchError as exc:
+            error(exc.code if exc.code in SAFE_ERRORS else 'write_unavailable')
+    return {**done,'via':via}
+
+
 def cancel_schedule(account, draft_id, *, by, via='http'):
     """予約（猶予中を含む）を取り消して draft に戻す（持ち主の /activity から・段 3）。
 
@@ -593,6 +647,12 @@ def execute(context, request, *, via='http'):
         if request['operation']=='bookmark_request':
             _refuse_if_stopped(request['account'])
             return bookmark(context,request,via)
+        if request['operation']=='bookmark_batch_request':
+            _refuse_if_stopped(request['account'])
+            return bookmark_batch_request(context,request,via)
+        if request['operation']=='bookmark_batch_cancel':
+            # 取り消しは止める向きなので、止まった口座でも受ける。
+            return bookmark_batch_cancel(context,request,via)
         # 止まった口座（安全装置）は公開・削除・予約を受けない。
         _refuse_if_stopped(request['account'])
         # timer に載っていない口座では予約を刻んでも出ない（裁定 (b)）。

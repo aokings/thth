@@ -847,6 +847,29 @@ for _tool in SERVER_TOOLS:
                                 "予約の timer に載っていない口座（scheduled: false）では予約と猶予を schedule_unavailable で断る")
 del _tool
 
+# 4.1（設計 S4 §20.9）: ブックマークのまとめて承認。text は札のファイルの中身そのまま（1 行に 1 件の JSON）。
+SERVER_TOOLS += [
+    {"name": "thth_bookmark_batch_request",
+     "description": "1 日分のはてなブックマークの札をまとめて承認する。text は 1 行に 1 件の JSON"
+                    "（{\"url\" か \"delivery\", \"comment\", \"tags\"}・100 件まで）か JSON の配列。2 段: confirm が無ければ"
+                    " stage 1 と全件の一覧（付ける・翌日以降・除く理由・残り枠の見込み）と digest を返す。同じ digest を confirm に"
+                    "付けると順番待ちに置く。付けるのは timer（7〜23 時・上限と連投の窓の中で 1 件ずつ間を散らし、1 件ごとに"
+                    "1 件ずつの承認と同じ柵を通す）。結果が分からない札は打ち直さない",
+     "inputSchema": {"type": "object", "properties": {"account": {"type": "string"}, "text": {"type": "string"},
+                                                      "confirm": {"type": "string"}},
+                     "required": ["account", "text"], "additionalProperties": False}},
+    {"name": "thth_bookmark_batch_status",
+     "description": "まとめて承認したブックマークの札の状態（読むだけ）: まとめごとの数・待ち・付けた・結果不明・断った札と理由・"
+                    "次に付ける時刻・止まっている理由",
+     "inputSchema": {"type": "object", "properties": {"account": {"type": "string"}, "batch": {"type": "string"}},
+                     "required": ["account"], "additionalProperties": False}},
+    {"name": "thth_bookmark_batch_cancel",
+     "description": "まとめて承認した札のうち待ちのものを取り消す（item でその番号だけ）。付けたものは消さない",
+     "inputSchema": {"type": "object", "properties": {"account": {"type": "string"}, "batch": {"type": "string"},
+                                                      "item": {"type": "integer"}},
+                     "required": ["account", "batch"], "additionalProperties": False}},
+]
+
 # 添付の 2 本だけは型が文字列でないので、表に足さず個別に書く（日本語 1 行）。
 SERVER_TOOLS += [
     {"name":"thth_media_upload_url",
@@ -1162,6 +1185,13 @@ REMOTE_CLI = {
                                          *(["--comment=" + a.get("comment", "")] if a.get("op") != "delete" else []),
                                          *_opt("--tags", a.get("tags")),
                                          *_opt("--confirm", a.get("confirm")), "--production", "--json"], None),
+    # 4.1: 札のファイルの中身は標準入力で（`thth bookmark batch <口座> -`）。
+    "thth_bookmark_batch_request": (lambda a: ["bookmark", "batch", a["account"], "-",
+                                               *_opt("--confirm", a.get("confirm")), "--production", "--json"], "text"),
+    "thth_bookmark_batch_status": (lambda a: ["bookmark", "batch-status", a["account"], "--json",
+                                              *_opt("--batch", a.get("batch"))], None),
+    "thth_bookmark_batch_cancel": (lambda a: ["bookmark", "batch-cancel", a["account"], a["batch"], "--json",
+                                              *_opt("--item", a.get("item"))], None),
     "thth_draft_list": (lambda a: ["queue", a["account"], "--json"], None),
     "thth_queue": (lambda a: ["queue", a["account"], "--json"], None),
     "thth_settings": (lambda a: ["account", "set", a["account"], a["key"], a["value"], "--json"]
@@ -1196,7 +1226,7 @@ REMOTE_TOOLS = [_remote_tool(tool) for tool in SERVER_TOOLS if tool["name"] in R
 # 遠くの道でも手元と同じ名前で動く TOOLS（CLI が道を決める・10/15 点検 B-17）。
 REMOTE_LOCAL_TOOLS = ("thread_read", "where_to_appear", "who_is_this", "thth_events", "thth_summary")
 # 位置引数に置く欄（`-` で始まる値は CLI の旗と区別できないので断る）。
-_POSITIONAL = ("account", "post_id", "username", "query", "key", "value")
+_POSITIONAL = ("account", "post_id", "username", "query", "key", "value", "batch")
 
 
 def is_remote_tool(name) -> bool:
