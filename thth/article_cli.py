@@ -34,7 +34,7 @@ def draft_name(record, now) -> str:
     return f"docs/sns/queue/{jst.to_jst(now):%Y-%m-%d}-{tail}-update.md"
 
 
-def draft_fields(record) -> tuple:
+def draft_fields(record, cfg=None) -> tuple:
     """原稿に書ける題とカテゴリ（監査 低-4）。`(題, カテゴリ, 注記の list)`。
 
     queue の front matter は 1 行 1 項目で、値は最初の `:` より後ろをそのまま読む（引用符を外さない）。
@@ -44,6 +44,16 @@ def draft_fields(record) -> tuple:
     """
     from . import hatena_entry, queuefile
     notes = []
+    if cfg is None:
+        try:
+            cfg = accounts_mod.load_account(record.get("account"))
+        except (accounts_mod.AccountError, ValueError, TypeError):
+            cfg = {}
+    # 実機の確かめ 10/17 の 13: 台帳に題が無い（S5 より前の配信）なら前に送った原稿から引く。
+    sent_title, sent_categories = hatena_entry.sent_title_categories(cfg, record)
+    record = dict(record, title=sent_title, categories=sent_categories)
+    if not sent_title:
+        notes.append("題が台帳にも前に送った原稿にもありません。保存する前に title: に題を書いてください")
     title = record.get("title") if isinstance(record.get("title"), str) else ""
     if "\n" in title or "\r" in title or queuefile.find_control_char(title):
         title = " ".join("".join(ch if ch.isprintable() else " " for ch in title).split())
@@ -60,10 +70,10 @@ def draft_fields(record) -> tuple:
     return title, categories, notes
 
 
-def draft_text(record, now) -> str:
+def draft_text(record, now, cfg=None) -> str:
     """更新の原稿の文面（§3.5）。欄は台帳から写す（写し間違いを無くす）。`publish_at` は今＋10 分（分まで）。"""
     at = jst.to_jst(now).replace(second=0, microsecond=0) + datetime.timedelta(minutes=DRAFT_LEAD_MINUTES)
-    title, categories, _notes = draft_fields(record)
+    title, categories, _notes = draft_fields(record, cfg)
     lines = ["---", "thth: 1", f"account: {record['account']}", "status: draft", f"publish_at: {jst.iso(at)}",
              f"article: {record.get('article')}", f"article_source: {record.get('article_source')}",
              f"form: {record.get('form') or 'full'}", f"title: {title}",
@@ -76,10 +86,12 @@ def _current(record, cfg) -> tuple:
     """今の記事（作業ツリー）を 1 段目と同じ変換に通す。`(本文, 画像, 注記の list, 断りの符丁)`。"""
     from . import hatena_entry
     notes = []
+    # 実機の確かめ 10/17 の 12: 承認したときと同じ変換に通す（題が分からないと先頭の `# 題` が外れず、
+    # 毎回 `+# 題` の偽の差分が出た）。題は台帳か前に送った原稿から。
+    title, _categories = hatena_entry.sent_title_categories(cfg, record)
     try:
         path = hatena_entry.repo_file(cfg.get("repo_dir"), record.get("article_source"))
-        data, body, images = hatena_entry._render(cfg, record.get("article_source"), path,
-                                                  title=record.get("title") or None)
+        data, body, images = hatena_entry._render(cfg, record.get("article_source"), path, title=title or None)
     except hatena_entry.EntryError as exc:
         return None, None, notes, exc.code
     try:
@@ -87,6 +99,20 @@ def _current(record, cfg) -> tuple:
     except hatena_entry.EntryError as exc:
         notes.append(hatena_entry.message(exc.code))
     return body, images, notes, None
+
+
+def _embed_like_sent(record, cfg, body):
+    """今の本文の画像の参照を、主体の画像の台帳の配置で置き換える（HTTP を打たない）。組めなければ None。"""
+    from . import hatena_convert, hatena_fotolife, principals
+    try:
+        placements = hatena_fotolife.placements_from_ledger(record.get("principal"), record.get("images") or [])
+        if not placements:
+            return None
+        hatena_id = principals.load_principal(record.get("principal")).get("hatena_id")
+        return hatena_convert.embed_images(body, placements, article_source=record.get("article_source"),
+                                           hatena_id=hatena_id)
+    except Exception:  # noqa: BLE001 — 組めなければ今のまま（注記が残る）
+        return None
 
 
 def _one(record, cfg, *, draft, now, allowed_names) -> dict:
@@ -102,6 +128,11 @@ def _one(record, cfg, *, draft, now, allowed_names) -> dict:
     else:
         before, origin, note = hatena_entry.previous_body(record["account"], record, has_images=bool(images))
         row["diff_from"] = origin
+        if origin in ("sent", "adopted") and images:
+            # 前の本文は画像の参照を置き換えたあとの形。今の本文も同じ形に置き換えて比べる（12）。
+            embedded = _embed_like_sent(record, cfg, body)
+            if embedded is not None:
+                body, note = embedded, None
         if note:
             row["notes"].append(note)
         if before is None:
@@ -115,8 +146,8 @@ def _one(record, cfg, *, draft, now, allowed_names) -> dict:
                                                  allowed_names=allowed_names)
     row["announcements"] = told
     if draft:
-        row["draft_text"] = draft_text(record, now)
-        row["notes"] += draft_fields(record)[2]
+        row["draft_text"] = draft_text(record, now, cfg)
+        row["notes"] += draft_fields(record, cfg)[2]
         row["draft_name"] = draft_name(record, now)
     return row
 

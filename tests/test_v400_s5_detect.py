@@ -325,11 +325,17 @@ def test_T_S5_3b_カテゴリの並びだけ変えても同じとみなす(lane)
     assert _lint_lines(path) == [hatena_entry.message("update_no_change")]
 
 
-def test_T_S5_3b_承認の控えが無ければ比べずに通す(lane):
+def test_T_S5_3b_承認の控えが無ければ記事の版で比べ_版も無ければ通す(lane):
+    # 実機の確かめ 10/17 の 11: 控えが無くても本文（記事の版）・画像・題が同じなら断る。
     _path, delivery, _blog = published(lane)
     sha = _record(delivery)["history"][-1]["approved_sha"]
     os.remove(os.path.join(deliveries.dir_for(ACCOUNT), f"{delivery}.{sha[:12]}.body.md"))
     path = lane.queue("u.md", op="update", delivery=delivery)
+    assert _lint_lines(path) == [hatena_entry.message("update_no_change")]
+    record = json.loads(open(deliveries.path_for(ACCOUNT, delivery), encoding="utf-8").read())
+    record.pop("checked_rev")
+    with open(deliveries.path_for(ACCOUNT, delivery), "w", encoding="utf-8") as f:
+        json.dump(record, f)
     assert _lint_lines(path) == []
 
 
