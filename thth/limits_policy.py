@@ -73,6 +73,8 @@ _ENTRY_ALL = ("entry_create", "entry_update", "entry_delete")
 _BOOKMARK = ("bookmark_add", "bookmark_delete")
 # 共通の最低線（`write.floor`）が数える「すべての書き」。反応（いいね・再投稿）は入れない。
 _WRITES = ("post", "reply", "retract") + _ENTRY_ALL + _BOOKMARK
+# 最低線で**止める**動作。返信は数えるが止めない（3.25.0「返信は burst で止めない」と合わせる・監査 低-1）。
+_FLOOR_APPLIES = tuple(a for a in _WRITES if a != "reply")
 
 
 def _row(id, family, *, signal, actions, applies_to, scope, window, param, on_exceed, refusal,
@@ -184,7 +186,7 @@ THTH_DEFAULTS = (
     # 表に行の無い媒体・動作も受ける（`media: *`）。各道の**最後**に当てる（first-hit なので、記事・ブックマーク・
     # SNS の行が先に当たればここには届かない）。反応は数えない（3.15.0 の「反応は公開の枠に数えない」のまま）。
     _row("write.floor", ("sns", "hatenablog", "hatenabookmark"), media=(ANY_MEDIA,), signal="frequency",
-         actions=_WRITES, applies_to=_WRITES, scope="account", window={"minutes": 10}, param=("fixed", 20),
+         actions=_WRITES, applies_to=_FLOOR_APPLIES, scope="account", window={"minutes": 10}, param=("fixed", 20),
          on_exceed="stop", refusal="account_stopped", detail="burst", phase="safety", purpose="safety",
          source="THTH の線（目的 b・段 2・行を書き忘れた媒体・動作の暴走を止める）"),
 )

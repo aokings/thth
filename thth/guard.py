@@ -56,7 +56,9 @@ PRINCIPAL_REFUSALS = frozenset((
     "self_bookmark_limit", "bookmark_host_limit", "bookmark_busy", "bookmark_exists_remote"))
 REFUSALS = (frozenset(("too_soon", "quiet_hours", "daily_limit", "retract_limit", "reaction_limit",
                        # 止めずに 1 件だけ断る（返信の burst・3.25.0／止めの印を置けない置き場）。
-                       "burst_limit"))
+                       "burst_limit",
+                       # 媒体の台帳（thth/media_traits/）が検査を通らず、柵の表を作れない（断る・落ちない）。
+                       "invalid_media_traits"))
             | PRINCIPAL_REFUSALS)
 # burst: 急な連投で道具が止めた。owner: 持ち主が /activity から止めた（段 3）。
 STOP_REASONS = frozenset(("burst", "owner"))
@@ -81,6 +83,19 @@ class GuardRefused(ReportServiceError):
         self.reason = reason
         self.next_at = next_at
         self.assessment = assessment
+
+
+def _rules_for(*args, **kwargs) -> list:
+    """`limits_policy.rules_for`。表を作れなければ（台帳が壊れている）`invalid_media_traits` で断る。
+
+    例外で落とさず、ほかの断りと同じ形（`GuardRefused`・符丁は静的）にする。SNS の timer の予約投稿は
+    柵を通らないので、この断りでは止まらない。
+    """
+    try:
+        limits_policy.policy()
+    except ValueError:
+        raise GuardRefused("invalid_media_traits") from None
+    return limits_policy.rules_for(*args, **kwargs)
 
 
 def credential_id(context) -> str | None:
@@ -412,7 +427,7 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
         loaders={"counts": counts, "events": lambda: _events_of(account)},
         fns={"burst_slot": lambda ahead: burst_slot(account, cfg, now=now, pending=ahead)})
     # 2〜3. 行の表（安全装置と見立て）を表の順に当てる。
-    result = assess.evaluate(limits_policy.rules_for("sns", action, cfg=cfg), request, materials)
+    result = assess.evaluate(_rules_for("sns", action, cfg=cfg), request, materials)
     _enforce(result, account=account, principal=None, can_stop=can_stop, now=now, actor=actor, via=via,
              credential=credential)
 
@@ -597,7 +612,7 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
     family = "hatenabookmark" if action.startswith("bookmark") else "hatenablog"
     blog_id = str(cfg.get("blog_id") or "").strip().lower()
     blog = principals.blog_entry(principal_cfg, blog_id) or {}
-    rules = limits_policy.rules_for(family, action, cfg=cfg, principal_cfg=principal_cfg, blog=blog,
+    rules = _rules_for(family, action, cfg=cfg, principal_cfg=principal_cfg, blog=blog,
                                     media="hatenabookmark" if family == "hatenabookmark" else "hatenablog")
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     request = assess.Request(account=account, cfg=cfg, action=action, now=now, family=family,
@@ -656,6 +671,6 @@ def check_reaction(account, cfg, kind, *, undo=False, now=None) -> None:
     action = "undo" if undo else kind
     request = assess.Request(account=account, cfg=cfg, action=action, now=now, family="reaction")
     materials = assess.Materials(loaders={"reactions_today": lambda: reactions_today(account, now=now)})
-    result = assess.evaluate(limits_policy.rules_for("reaction", action, cfg=cfg), request, materials)
+    result = assess.evaluate(_rules_for("reaction", action, cfg=cfg), request, materials)
     _enforce(result, account=account, principal=None, can_stop=True, now=now, actor=None, via=None,
              credential=None)

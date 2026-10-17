@@ -1264,6 +1264,9 @@ def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") 
             principal, project = "<主体>", "<lane>"
         why = (f"このレーン（{project}）は主体のブックマークを許すレーン（主体の台帳の bookmark.lanes）にありません。"
                f"許すなら thth principal set {principal} bookmark.lanes <lane>[,<lane>…] --by <名前>")
+    elif code == "invalid_media_traits":
+        return (f"{GUARD_REFUSAL_HEADS.get(kind, '送信しません')}（安全装置）: 媒体の特性の台帳が検査を通らず、"
+                "柵の表を作れません（invalid_media_traits）。thth media check で理由を確かめてください")
     else:
         why = code
     head = GUARD_REFUSAL_HEADS.get(kind, "送信しません")

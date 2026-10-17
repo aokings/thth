@@ -770,6 +770,9 @@ def _bookmark_delete(args, account):
     return _bookmark_add(args, account, op="delete")
 
 
+BATCH_REMOTE_MAX_BYTES = 48000
+
+
 def _bookmark_batch(args, account):
     """`thth bookmark batch <口座> <ファイル>`（遠くの道・`bookmark_batch_request`・設計 S4 §20）。
 
@@ -780,6 +783,10 @@ def _bookmark_batch(args, account):
         text = bookmark_batch.read_source(args.file)
     except bookmark_batch.BatchError as exc:
         raise RemoteError(exc.code, rc=2) from None
+    if len(text.encode("utf-8")) > BATCH_REMOTE_MAX_BYTES:
+        # Worker が 413 で断る大きさ。送る前に手元で言う（手元の道の上限は 256 KB のまま）。
+        print("札のファイルが 48 KB を超えます。分けてください（遠くの道は 48 KB まで）", file=sys.stderr)
+        return 2
     value = call("bookmark_batch_request", account, text=text, confirm=args.confirm)
     if value.get("stage") == 1:
         from . import refusals

@@ -103,6 +103,8 @@ class FotolifeStop(Exception):
                     "可能性があります・設計 S3 §11）")
         if self.code == "fotolife_too_large":
             return f"フォトライフが画像を大きすぎると断りました{where}。画像を小さくするか fotolife.max_image_bytes を下げてください"
+        if self.code == "invalid_media_traits":
+            return f"媒体の特性の台帳が検査を通らないので出しません{where}。thth media check で確かめてください"
         return f"画像を上げられないので出しません（{self.code}）{where}"
 
 
@@ -442,7 +444,12 @@ def ensure_uploaded(principal_cfg, account_cfg, m, *, factory=None, log=None, no
 
         # 上げる（§6）
         data, content_type = _read_image(account_cfg, row, lim["max_image_bytes"])
-        if uploads_today(principal, now, exclude=sha256) >= daily_max_uploads(principal_cfg):
+        try:
+            max_uploads = daily_max_uploads(principal_cfg)
+        except ValueError:
+            # 媒体の台帳が検査を通らない（表を作れない）: 例外で落とさず、ほかの断りと同じ形で止める。
+            raise FotolifeStop("invalid_media_traits", path=path) from None
+        if uploads_today(principal, now, exclude=sha256) >= max_uploads:
             raise FotolifeStop("fotolife_daily_limit", path=path, next_at=_next_day(now))
         title = title_for(path, sha256)
         pending = {"schema": SCHEMA, "sha256": sha256, "bytes": len(data), "content_type": content_type,

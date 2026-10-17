@@ -59,7 +59,7 @@ def test_信号は7つ():
 @pytest.mark.parametrize("family,action,expected", [
     # 段 2: 各道の最後に共通の最低線 `write.floor`（予約と反応には当てない）。
     ("sns", "post", ["post.quiet", "post.interval", "post.daily", "post.burst", "write.floor"]),
-    ("sns", "reply", ["post.quiet", "post.daily", "reply.burst", "write.floor"]),
+    ("sns", "reply", ["post.quiet", "post.daily", "reply.burst"]),   # 夜の監査 低-1: 最低線は返信で止めない
     ("sns", "retract", ["retract.daily", "post.burst", "write.floor"]),
     ("sns", "schedule", ["post.daily"]),
     ("hatenablog", "entry_create", ["entry.platform_refusal", "entry.quiet", "entry.interval", "entry.daily",

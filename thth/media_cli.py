@@ -157,8 +157,30 @@ def cmd_traits(args) -> int:
     return 0
 
 
-def cmd_check(args) -> int:
+def full_check() -> dict:
+    """台帳の検査に加えて、柵の表を作れること（`build_policy(collect_defaults())`・`check_table`）も見る。
+
+    台帳の検査は通るのに柵の入口だけが断る（写像の食い違いなど）を無くす（段 2・監査 中-2）。
+    """
     report = mt.check()
+    if report["problems"]:
+        return report
+    from . import limits_policy
+    try:
+        table = limits_policy.build_policy(mt.collect_defaults())
+        found = limits_policy.check_table(table)
+    except ValueError as exc:
+        found = [str(exc)]
+    except Exception as exc:  # noqa: BLE001
+        found = [exc.__class__.__name__]
+    if found:
+        report = dict(report, ok=False, problems=[
+            {"code": "policy_build_failed", "media": "-", "trait": None, "detail": text} for text in found])
+    return report
+
+
+def cmd_check(args) -> int:
+    report = full_check()
     if args.json:
         _print_json(report)
     elif report["ok"]:

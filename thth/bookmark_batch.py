@@ -194,6 +194,9 @@ def load_batches(account) -> list:
             out.append({"batch": name[:-5], "unreadable": True, "items": []})
             continue
         if isinstance(data, dict) and isinstance(data.get("items"), list):
+            # まとめの id はファイル名が正（中の `batch` と違えば名前に揃える）。`_check_integrity` が
+            # ファイル名 `bb_<sha16>` と中の approved_sha を照らす。
+            data["batch"] = name[:-5]
             out.append(data)
     out.sort(key=lambda b: (b.get("approved_at") or "", b.get("batch") or ""))
     return out
@@ -436,7 +439,10 @@ def lines(p: dict) -> list:
         tags = "・".join(row.get("tags") or []) or "（なし）"
         out.append(f"  {row['n']:>3}. [{when}]{own}  {row.get('url') or '?'}")
         if row["include"]:
-            out.append(f"       コメント: {_short(row.get('comment'), 60)}  タグ: {tags}")
+            # コメントは**全文**で見せる（承認の指紋は全文から作る・上限は 100 字。切って見せない）。
+            out.append(f"       コメント: {row.get('comment') or ''}  タグ: {tags}")
+            if row.get("target") == "own":
+                out.append("       （自分の記事です。運営者であることが分かる文にしてください。例: 自分の記事。…）")
     if p["hosts"]:
         limit = rem["host_limit"] if rem else "?"
         out.append("ホストごと（付ける札・今日もう付けた数・日の枠 " + str(limit) + "）: "
@@ -667,6 +673,9 @@ def _expire(batches, now) -> list:
 
 
 def _check_integrity(batch) -> bool:
+    # ファイル名 `bb_<sha16>` と中の approved_sha を照らす（別の名前に置き換えられたまとめを付けない）。
+    if batch.get("batch") != batch_id_of(str(batch.get("approved_sha") or "")):
+        return False
     shas = [it.get("approved_sha") or "" for it in batch["items"]]
     return compute_sha(batch.get("account"), batch.get("principal"), shas) == batch.get("approved_sha")
 
@@ -791,6 +800,18 @@ def _defer(item, code, tomorrow, now):
     item["not_before"] = jst.iso(tomorrow)
 
 
+def _own_article_pending(account_name, item) -> bool:
+    """自分の記事の札で、配信の台帳が読めて、消えて（deleted）おらず、published でもない（更新中など）。"""
+    from . import deliveries as deliveries_mod
+    if not item.get("delivery"):
+        return False
+    try:
+        record = deliveries_mod.read(account_name, item["delivery"])
+    except deliveries_mod.DeliveryError:
+        return False
+    return record.get("state") not in ("deleted", "published")
+
+
 def _place(account_name, cfg, batch, item, *, now, log, adapter_factory):
     """1 件を付ける。`(種類, 符丁, 詳細|時刻)`。種類は placed・refused・defer・unknown・stop_today・wait・blocked。"""
     from . import guard, hatena_bookmark
@@ -809,6 +830,9 @@ def _place(account_name, cfg, batch, item, *, now, log, adapter_factory):
                                     comment=item.get("comment") or "", tags=list(item.get("tags") or []),
                                     op="add", check_remote=False)
     except hatena_bookmark.BookmarkError as exc:
+        if exc.code == "bookmark_target_not_own" and _own_article_pending(account_name, item):
+            # 自分の記事の配信が published でない（更新中など）: 最終の断りにせず翌日へ回す。
+            return ("defer", exc.code, None)
         return refuse(exc.code)
     if p["approved_sha"] != item.get("approved_sha"):
         return refuse("approval_stale")
@@ -831,6 +855,9 @@ def _place(account_name, cfg, batch, item, *, now, log, adapter_factory):
         return ("blocked", code, detail)
     except hatena_bookmark.BookmarkError as exc:
         code = exc.code
+        if code == "bookmark_target_not_own" and _own_article_pending(account_name, item):
+            # 自分の記事の配信が published でない（更新中など）: 最終の断りにせず翌日へ回す。
+            return ("defer", code, None)
         if code in _FINAL_BOOKMARK or (code.startswith("hatena_http_4")
                                        and code not in ("hatena_http_401", "hatena_http_403", "hatena_http_429")):
             return refuse(code)
@@ -839,7 +866,8 @@ def _place(account_name, cfg, batch, item, *, now, log, adapter_factory):
             for line in logs:
                 log(line)
             return ("unknown", code, None)
-        if code == "provider_rate_limited":
+        if code in ("provider_rate_limited", "hatena_http_429"):
+            # はてなの 429 も「止まる」でなく「待つ」（provider_rate_limited と同じ分だけ）。
             return ("wait", code, now + datetime.timedelta(minutes=RATE_LIMITED_MINUTES))
         return ("blocked", code, None)
     for line in logs:
