@@ -40,6 +40,8 @@ REASONS = frozenset((
     "bookmark_not_found", "invalid_op", "hatena_auth_rejected", "provider_rate_limited",
     "hatena_user_mismatch", "response_invalid", "hatena_transport_failed", "redirect_blocked",
     "response_too_large", "endpoint_rejected", "adapter_error",
+    # 打ったあとに `sent/bm:` を書けなかった（ディスク・置き場）。
+    "bookmark_record_failed",
     # adapter を作れない（`hatena_publish.AdapterUnavailable`）。
     "token_missing", "token_invalid", "consumer_missing", "consumer_invalid", "auth_unsupported"))
 
@@ -430,11 +432,13 @@ def execute_locked(account_name: str, cfg: dict, p: dict, *, adapter_factory=Non
                            delivery=p.get("delivery"), url=p["url"], url_canonical=p["url_canonical"],
                            target=p["target"], article=p.get("article") if p["target"] == "own" else None,
                            tags=list(p["tags"]), result=state, remote=remote, retry_not_found=True)
-        except Exception:
+        except (OSError, ValueError):
+            # はてなには打った（か分からない）のに記録を書けない（ディスク・置き場）。traceback にせず静的な
+            # 符丁で返す。打ち直しは柵 3（この主体の GET）が `bookmark_exists_remote` で止める。
             if log is not None:
                 log(f"ブックマークの記録を書けませんでした（はてなには打っています）: {p['url']}。"
-                    f"thth bookmark reconcile {account_name} で拾ってください")
-            raise
+                    "置き場を直してから、はてなの画面で付いているかを確かめてください")
+            raise BookmarkError("bookmark_record_failed") from None
     out = {"account": account_name, "status": "bookmarked" if state == "confirmed" else "unknown",
            "result": state, "url": p["url"], "delivery": p.get("delivery"), "target": p["target"],
            "post_id": post_id, "permalink": (remote or {}).get("permalink")}

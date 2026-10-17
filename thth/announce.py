@@ -83,6 +83,9 @@ def find_delivery(account_cfg: dict, delivery: str):
     if not deliveries_mod.is_delivery_id(delivery):
         raise AnnounceError("invalid_announces")
     project = (account_cfg or {}).get("project")
+    if not isinstance(project, str) or not project.strip():
+        # project の無い口座同士（None == None）を結ばない（監査の確かめ (a)）。
+        raise AnnounceError("announces_not_found")
     elsewhere = False
     unreadable = False
     for name, data in _raw_accounts():
@@ -94,7 +97,7 @@ def find_delivery(account_cfg: dict, delivery: str):
             if str(exc) != "delivery_missing":
                 unreadable = True
             continue
-        if data.get("project") == project:
+        if isinstance(data.get("project"), str) and data["project"] == project:
             return name, record
         elsewhere = True
     if elsewhere:
@@ -175,6 +178,8 @@ def resolve(fm: dict, account_cfg: dict) -> AnnounceResolution | None:
     - `published` で `published_url` あり → 解決
     - `wanted`・`inflight`・`unknown` → `announces_unresolved: waiting_for <配信 id>`（待つ・held に数えない）
     - `conflict`・`deleted`・`no_follow` → `announces_unresolved: target_<state>`（held）
+    - `published` なのに `published_url` が無い → `target_no_url`（held・待っても来ない）
+    - 置き換えた本文が上限を越える → `too_long_after_fill`（held・select と core が見る）
     - 無い → `target_missing`・別レーン → `target_other_lane`・読めない → `target_unreadable`（held）
     """
     announces = announces_of(fm)
@@ -193,6 +198,28 @@ def resolve(fm: dict, account_cfg: dict) -> AnnounceResolution | None:
     article = record.get("article")
     if state == "published" and isinstance(url, str) and url.startswith(("https://", "http://")):
         return AnnounceResolution(announces, url, article, None)
-    if state in ("wanted", "inflight", "unknown", "published"):
+    if state == "published":
+        # published なのに URL が無い（人が「出ていた」と解き、読み戻せなかった create など・監査の確かめ (b)）。
+        # 待っても URL は来ないので待ちにしない（held・人が見る）。
+        return AnnounceResolution(announces, None, article, unresolved("target_no_url"))
+    if state in ("wanted", "inflight", "unknown"):
         return AnnounceResolution(announces, None, article, unresolved(f"{WAITING_FOR} {announces}"))
     return AnnounceResolution(announces, None, article, unresolved(f"target_{state}"))
+
+
+TOO_LONG_AFTER_FILL = "too_long_after_fill"
+
+
+def too_long_after_fill(section: str, url: str, account_cfg: dict, topic=None) -> bool:
+    """`{article_url}` を本物の URL に置き換えた本文が媒体の上限を超えるか（4.0 S4 監査 低-4）。
+
+    lint と承認は仮の URL（§9.2）で数えるので、本物の URL が長ければ上限を越えうる。越えるなら出さない
+    （`announces_unresolved: too_long_after_fill`・held）。数え方は select の文字数の段と同じ。
+    """
+    from . import queuefile, tags as tags_mod
+    if not isinstance(section, str) or PLACEHOLDER not in section:
+        return False
+    media = (account_cfg or {}).get("media")
+    effective = tags_mod.prepared(media, fill(section, url), queuefile.normalize_topic(topic),
+                                  hashtags=bool((account_cfg or {}).get("hashtags", True)))
+    return queuefile.count_for(media, effective) > queuefile.limit_for(media, account_cfg)

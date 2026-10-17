@@ -100,6 +100,9 @@ def _crash_after_send(lane, monkeypatch):
 
 def test_T8b_落ちたあと人がpublishedで解くとinflightのseqで書き_event_idが同じ(lane, monkeypatch):
     """柵: resolve が seq を振り直すと赤。"""
+    # 本物の adapter の既定（token が無いので作れない＝外へは出ない）を通す試験（4.0 S4 監査 低-3）。
+    from tests.conftest import restore_real_hatena_adapters
+    restore_real_hatena_adapters(monkeypatch)
     path, delivery, adapter = _crash_after_send(lane, monkeypatch)
     held = inflight.read(lane.state)
     record = deliveries.read(ACCOUNT, delivery)
@@ -150,7 +153,10 @@ def test_T8b_台帳のseqと合わないinflightは解かない(lane, monkeypatc
     assert deliveries.read(ACCOUNT, delivery)["state"] == "inflight"
 
 
-def test_結果不明のunknownのあと人が解いても番号は1つずつ(lane):
+def test_結果不明のunknownのあと人が解いても番号は1つずつ(lane, monkeypatch):
+    # 本物の adapter の既定（token が無いので作れない＝外へは出ない）を通す試験（4.0 S4 監査 低-3）。
+    from tests.conftest import restore_real_hatena_adapters
+    restore_real_hatena_adapters(monkeypatch)
     class Boom(FakeAdapter):
         def create_entry(self, **kwargs):
             raise TimeoutError()

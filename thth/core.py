@@ -909,6 +909,14 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     from . import announce as announce_mod
     send_section = (announce_mod.fill(effective_section, announced["article_url"])
                     if announced is not None else effective_section)
+    if announced is not None and queuefile.count_for(media, send_section) > queuefile.limit_for(media, account_cfg):
+        # 置き換えたあとの本文が上限を越える（監査 低-4・select も同じ理由で落とす）。何も書かずに出さない。
+        refusal = announce_mod.unresolved(announce_mod.TOO_LONG_AFTER_FILL)
+        msg = f"告知の本文が URL を入れると上限を越えるので出しません: {os.path.basename(chosen.path)}（{refusal}）"
+        log(msg)
+        _append_run(state_dir, account_name, run_id, mode, "post", chosen.path, None, now,
+                    status="error", error=refusal)
+        return ThrowResult(exit_code=2, mode=mode, action="post", message=msg, file=chosen.path, error=refusal)
     # 送る本文の hash（後方互換・`tests/test_sent_integrity.py` が参照）も併せて
     # inflight に書く（外部レビュー §3・受け入れ 9・10）。実際の照合は上の指紋で行う。
     body_hash = approval_mod.compute_body_hash(send_section)

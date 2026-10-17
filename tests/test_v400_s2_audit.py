@@ -101,6 +101,9 @@ def test_T_S2_9b_手元のsend_返信_retractはunsupported_operation(s2lane, ar
 # --------------------------------------------------------------------------
 
 def test_T_S2_9c_sentのあと台帳が落ちてもresolveで二重に書かず同じseqでpublished(s2lane, monkeypatch):
+    # 本物の adapter の既定（token が無いので作れない＝外へは出ない）を通す試験（4.0 S4 監査 低-3）。
+    from tests.conftest import restore_real_hatena_adapters
+    restore_real_hatena_adapters(monkeypatch)
     path = s2lane.queue()
     approve(path)
     delivery = fm_of(path)["delivery"]

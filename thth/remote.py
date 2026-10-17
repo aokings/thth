@@ -749,6 +749,14 @@ def _bookmark_add(args, account, op="add"):
             print(f"  {key}: {item}")
         print(f"digest: {value.get('digest')}")
         return 1
+    if value.get("status") == "unknown":
+        # 4.0 S4 §7: 結果不明（サーバは sent/bm: に unknown の行を書いた）。手元の道と同じ 2 行・rc 1。
+        if getattr(args, "json", False):
+            _print_json(value)
+            return 1
+        print(f"結果が分かりません（{value.get('error')}）: {value.get('url')}", file=sys.stderr)
+        print(f"打ち直しません。thth bookmark reconcile {account} で確かめてください", file=sys.stderr)
+        return 1
     done = "ブックマークを消しました" if op == "delete" else "ブックマークしました"
     return _shown(args, value, lambda v: _say(f"{account}: {done}（{v.get('url')}）"))
 

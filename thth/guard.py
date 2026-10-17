@@ -461,13 +461,16 @@ def bookmark_counts(principal_name, *, url=None, now=None) -> dict:
         host = host_of(canonical_url(url))
     own = same = 0
     for row in principal_bookmark_rows(principal_name):
-        at = jst.parse(row.get("sent_at"))
-        if at is None or jst.to_jst(at).date() != today:
+        # `not_found` のあと打ち直した行は、前の試み（`attempts[]`）も同じ target・ホストで数える。
+        times = [row.get("sent_at")] + [a.get("sent_at") for a in (row.get("attempts") or [])
+                                         if isinstance(a, dict)]
+        n = sum(1 for raw in times if (at := jst.parse(raw)) is not None and jst.to_jst(at).date() == today)
+        if not n:
             continue
         if row.get("target") == "own":
-            own += 1
+            own += n
         if host is not None and _bookmark_host(row) == host:
-            same += 1
+            same += n
     return {"own_today": own, "same_host_today": same, "host": host}
 
 

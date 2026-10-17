@@ -59,7 +59,10 @@ def test_承認からtimerで出て台帳と記録と書き戻し(lane):
     assert throw(FakeAdapter()).action == "none"
 
 
-def test_adapterが作れなければ止まり何も書かない(lane):
+def test_adapterが作れなければ止まり何も書かない(lane, monkeypatch):
+    # 本物の adapter の既定（token が無いので作れない＝外へは出ない）を通す試験（4.0 S4 監査 低-3）。
+    from tests.conftest import restore_real_hatena_adapters
+    restore_real_hatena_adapters(monkeypatch)
     # S2: 差し込みが無ければ本物の adapter（thth/adapters/hatenablog.py）。token が無いので token_missing。
     path, delivery = approved(lane)
     result = throw(None)

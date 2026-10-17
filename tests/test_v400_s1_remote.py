@@ -155,8 +155,11 @@ def test_ブックマークは自分の公開済みの記事だけ(lane, key):
                    comment="運営者です") == "bookmark_target_not_own"
 
 
-def test_ブックマークは2段で_2段目はadapterが作れなければ打たない(lane, key):
+def test_ブックマークは2段で_2段目はadapterが作れなければ打たない(lane, key, monkeypatch):
     """4.0 S4: 送信の口は本物（`hatenabookmark.factory`）。token が無ければ `token_missing` で何も書かない。"""
+    # 本物の adapter の既定（token が無いので作れない＝外へは出ない）を通す試験（4.0 S4 監査 低-3）。
+    from tests.conftest import restore_real_hatena_adapters
+    restore_real_hatena_adapters(monkeypatch)
     context = key({ACCOUNT: "lane-a"})
     delivery = _published_delivery(lane)
     first = request(context, operation="bookmark_request", delivery=delivery, comment="運営者です",
@@ -214,7 +217,10 @@ def test_ブックマークはbookmarkのlanesに無いレーンでは断る(lan
                    confirm=first["digest"]) == "bookmark_not_allowed_for_lane"
 
 
-def test_ブックマークの手元の口_1段目と2段目(lane):
+def test_ブックマークの手元の口_1段目と2段目(lane, monkeypatch):
+    # 本物の adapter の既定（token が無いので作れない＝外へは出ない）を通す試験（4.0 S4 監査 低-3）。
+    from tests.conftest import restore_real_hatena_adapters
+    restore_real_hatena_adapters(monkeypatch)
     delivery = _published_delivery(lane)
     rc, out, err = call(["bookmark", "add", ACCOUNT, "--delivery", delivery, "--comment", "運営者です"])
     assert rc == 1 and "digest: " in out and "https://a.hatenablog.com/entry/2026/09/09/100000" in out

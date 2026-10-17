@@ -649,6 +649,11 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
                 rejections.append(Rejection(path, told.reason))
                 needs_review.append(path)
                 continue
+            if announce.too_long_after_fill(section, told.url, account_cfg, fm.get("topic")):
+                # 仮の URL で数えて通った本文が、本物の URL では上限を越える（監査 低-4）。held で人に見せる。
+                rejections.append(Rejection(path, announce.unresolved(announce.TOO_LONG_AFTER_FILL)))
+                needs_review.append(path)
+                continue
             resolution = dict(resolution or {}, announces=told.delivery, article_url=told.url,
                               article=told.article)
 

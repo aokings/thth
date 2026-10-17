@@ -84,6 +84,8 @@ _MESSAGES = {
     "bookmark_not_found": "THTH が付けたブックマークの記録がありません（手で付けたものは THTH から消しません）",
     "invalid_op": "op は add か delete です（コメント・タグの直しははてなの画面から）",
     "bookmark_precheck_failed": "打つ前の確かめ（この主体のブックマークの GET）が通りませんでした。何もしていません",
+    "bookmark_record_failed": "はてなには打ちましたが、記録（sent/bm:）を書けませんでした。置き場を直し、"
+                              "はてなの画面で付いているかを確かめてください（打ち直しは柵が止めます）",
     "hatena_auth_rejected": "はてなが認可を断りました。thth principal auth <主体> --force --by <名前> をやり直してください",
 }
 

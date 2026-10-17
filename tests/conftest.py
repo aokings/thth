@@ -81,6 +81,35 @@ def no_public_bookmark_entry_info(monkeypatch):
     monkeypatch.setattr(hatena_bookmark, "ENTRY_INFO", lambda url: None)
 
 
+def no_real_hatena_adapter(account_cfg, principal_cfg):
+    """はてなの本物の口（ブログ・フォトライフ・ブックマーク）の既定の柵（4.0 S4 監査 低-3）。
+
+    本物の adapter は https ではてなへ出る。上の柵（http だけを止める）では止まらないので、既定では
+    「呼ばれたら落ちる」にする。偽物の HTTP（`tests/hatena_s2_http.fake_http`）を置いた試験と、
+    明示して戻した試験（`restore_real_hatena_adapters`）だけが本物の口を作れる。
+    """
+    pytest.fail("はてなの本物の adapter を偽物の HTTP なしで作ろうとした")
+
+
+HATENA_ADAPTER_MODULES = ("hatena_publish", "hatena_fotolife", "hatena_bookmark")
+
+
+def restore_real_hatena_adapters(monkeypatch):
+    """既定の柵（`no_real_hatena_adapter`）のままの差し込み口を None（本物の factory）に戻す。"""
+    import importlib
+    for name in HATENA_ADAPTER_MODULES:
+        module = importlib.import_module("thth." + name)
+        if getattr(module, "ADAPTER_FACTORY", None) is no_real_hatena_adapter:
+            monkeypatch.setattr(module, "ADAPTER_FACTORY", None)
+
+
+@pytest.fixture(autouse=True)
+def no_real_hatena_adapters(monkeypatch):
+    import importlib
+    for name in HATENA_ADAPTER_MODULES:
+        monkeypatch.setattr(importlib.import_module("thth." + name), "ADAPTER_FACTORY", no_real_hatena_adapter)
+
+
 @pytest.fixture(autouse=True)
 def no_threads_status_poll_wait(monkeypatch):
     """公開の結果が分からないときの container の問い合わせ（設計 3.3.1 §2）を

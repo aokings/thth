@@ -122,10 +122,13 @@ class FakeHTTP:
 def fake_http(monkeypatch):
     """`install(handler) -> FakeHTTP`。差し替えるのは `httpsafe.urlopen` だけ。"""
     from thth import httpsafe
+    from tests.conftest import restore_real_hatena_adapters
 
     def install(handler):
         fake = FakeHTTP(handler)
         monkeypatch.setattr(httpsafe, "urlopen", fake)
+        # 偽物の HTTP を置いたので、本物の adapter を作ってよい（既定の柵を外す・4.0 S4 監査 低-3）。
+        restore_real_hatena_adapters(monkeypatch)
         return fake
     return install
 
