@@ -66,7 +66,10 @@ STOP_FILE = "stopped.json"
 CREDENTIAL_ID_LENGTH = 12
 # `entry_*`・`bookmark*` ははてなの口座だけ（設計 4.0 S1 §4.2）。はてなの口座に `publish`・
 # `retract` が来たら `entry_create`・`entry_delete` として見る。
-HATENA_KINDS = ("entry_create", "entry_update", "entry_delete", "bookmark", "bookmark_delete")
+HATENA_KINDS = ("entry_create", "entry_update", "entry_delete", "bookmark", "bookmark_delete", "bookmark_edit")
+# ブックマークの直し（設計 S4 §21.4）に当てる行。件数は増えないので日・ホスト・自分の記事・1 URL に 1 回は
+# 当てない。連投の窓と安全装置（主体の止め線・口座の最低線）だけ。
+EDIT_RULES = ("bookmark.stop", "bookmark.burst", "write.floor")
 KINDS = ("publish", "retract", "schedule") + HATENA_KINDS
 
 
@@ -200,7 +203,9 @@ def _classified(account):
     """`sent/` の記録を (種類, 時刻, blog_id, 鍵) の list に。種類は `post`・`retract`・`bookmark`。
 
     中身は `_action_rows`（動作つき）と同じ（段 2）。"""
-    return [(what, at, blog, key) for what, _action, at, blog, key in _action_rows(account)]
+    # ブックマークの直し（`bookmark_edit`・S4 §21.4）は日の数え・公開の枠に入れない（分の窓だけ）。
+    return [(what, at, blog, key) for what, _action, at, blog, key in _action_rows(account)
+            if what != "bookmark_edit"]
 
 
 def _action_rows(account):
@@ -256,6 +261,12 @@ def _action_rows(account):
         if first == "bookmark":
             # 4.0 S4 §7: `not_found` のあと打ち直した行は、前の試みを `attempts[]` に持つ（数え続ける）。
             for index, attempt in enumerate(row.get("attempts") or []):
+                if isinstance(attempt, dict) and attempt.get("op") == "edit":
+                    # S4 §21.4: 直しは連投の窓と安全装置にだけ数える（試みごとに 1 件・結果を問わない）。
+                    at = jst.parse(attempt.get("edited_at"))
+                    if at is not None:
+                        out.append(("bookmark_edit", "bookmark_edit", at, blog, ("bm", post_id, "edit", index)))
+                    continue
                 at = jst.parse(attempt.get("sent_at")) if isinstance(attempt, dict) else None
                 if at is not None:
                     out.append(("bookmark", "bookmark_add", at, blog, ("bm", post_id, "attempt", index)))
@@ -605,7 +616,7 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
     当てる行は `limits_policy` の `hatenablog`（記事・予約）／`hatenabookmark`（ブックマーク）の表の順。
     """
     from . import principals, publish_hold
-    if kind == "bookmark" and not (isinstance(bookmark_url, str) and bookmark_url.strip()):
+    if kind in ("bookmark", "bookmark_edit") and not (isinstance(bookmark_url, str) and bookmark_url.strip()):
         raise ValueError("bookmark_url_required")
     name = cfg.get("principal")
     try:
@@ -625,8 +636,13 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
     family = "hatenabookmark" if action.startswith("bookmark") else "hatenablog"
     blog_id = str(cfg.get("blog_id") or "").strip().lower()
     blog = principals.blog_entry(principal_cfg, blog_id) or {}
-    rules = _rules_for(family, action, cfg=cfg, principal_cfg=principal_cfg, blog=blog,
-                                    media="hatenabookmark" if family == "hatenabookmark" else "hatenablog")
+    if action == "bookmark_edit":
+        # S4 §21.4: 直しは追加の行のうち連投の窓と安全装置だけ（表と媒体の台帳の `applies_to` は変えない）。
+        rules = [r for r in _rules_for(family, "bookmark_add", cfg=cfg, principal_cfg=principal_cfg, blog=blog,
+                                       media="hatenabookmark") if r["id"] in EDIT_RULES]
+    else:
+        rules = _rules_for(family, action, cfg=cfg, principal_cfg=principal_cfg, blog=blog,
+                           media="hatenabookmark" if family == "hatenabookmark" else "hatenablog")
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     request = assess.Request(account=account, cfg=cfg, action=action, now=now, family=family,
                              publish_at=publish_at, scheduled_same_day=scheduled_same_day, principal=name,

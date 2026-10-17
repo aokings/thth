@@ -626,6 +626,58 @@ def compute_hatena_bookmark_sha(**kwargs) -> str:
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
+HATENA_BOOKMARK_EDIT_VERSION = "thth-hatena-bookmark-edit-1"
+# 設計 S4 §21.3 の順。`thth-hatena-bookmark-1`（追加・削除）の 8 項目と golden は変えない。
+_HATENA_BOOKMARK_EDIT_ORDER = ("version", "account", "principal", "url", "delivery", "base_comment", "base_tags",
+                               "comment", "tags")
+
+
+def _bookmark_comment(value, name="comment") -> str:
+    text = _plain(value, name)
+    return text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").strip()
+
+
+def compute_hatena_bookmark_edit_components(*, account: str, principal: str, url: str, delivery: str,
+                                            base_comment: str, base_tags, comment: str, tags) -> dict:
+    """ブックマークの直し（`thth-hatena-bookmark-edit-1`・設計 S4 §21.3）の 9 項目。
+
+    コメントとタグの正規化は追加（`compute_hatena_bookmark_components`）と同じ。直しはコメントを空にできる。
+    `base_*` は台帳（`sent/bm:`）の今の値。
+    """
+    from . import deliveries
+    delivery = _plain(delivery, "delivery").strip()
+    if delivery and not deliveries.is_delivery_id(delivery):
+        raise ValueError("invalid_delivery")
+    url = _plain(url, "url").strip()
+    if not url:
+        raise ValueError("url_required")
+    from .hatena_bookmark import canonical_url
+    canonical_url(url)
+    text = _bookmark_comment(comment)
+    if len(text) > HATENA_BOOKMARK_COMMENT_MAX:
+        raise ValueError("comment_too_long")
+    tag_list = _sorted_list(tags, "tags")
+    if len(tag_list) > HATENA_BOOKMARK_TAGS_MAX:
+        raise ValueError("too_many_tags")
+    return {
+        "version": HATENA_BOOKMARK_EDIT_VERSION,
+        "account": _plain(account, "account").strip(),
+        "principal": _plain(principal, "principal").strip(),
+        "url": url,
+        "delivery": delivery,
+        "base_comment": _bookmark_comment(base_comment, "base_comment"),
+        "base_tags": _SEG.join(_sorted_list(base_tags, "base_tags")),
+        "comment": text,
+        "tags": _SEG.join(tag_list),
+    }
+
+
+def compute_hatena_bookmark_edit_sha(**kwargs) -> str:
+    components = compute_hatena_bookmark_edit_components(**kwargs)
+    joined = _SEP.join(components[key] for key in _HATENA_BOOKMARK_EDIT_ORDER)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
 def approved_fields(prepared, by, at):
     """Identical approval writeback for local two-stage and server human receipt.
 

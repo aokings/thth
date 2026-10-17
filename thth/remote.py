@@ -770,6 +770,35 @@ def _bookmark_delete(args, account):
     return _bookmark_add(args, account, op="delete")
 
 
+def _bookmark_edit(args, account):
+    """`thth bookmark edit`（遠くの道・`bookmark_request` の `op: edit`・設計 S4 §21.7）。"""
+    fields = {"op": "edit", "comment": args.comment, "tags": args.tags, "confirm": args.confirm}
+    if getattr(args, "url", None):
+        fields["url"] = args.url
+    else:
+        fields["delivery"] = args.delivery
+    value = call("bookmark_request", account, **fields)
+    if value.get("stage") == 1:
+        from . import refusals
+        refusals.mark_first_stage()
+        if getattr(args, "json", False):
+            _print_json(value)
+            return 1
+        print(f"{account}: 直しません（確認の一段目です）")
+        for key, item in (value.get("preview") or {}).items():
+            print(f"  {key}: {item}")
+        print(f"digest: {value.get('digest')}")
+        return 1
+    if value.get("status") == "unknown":
+        if getattr(args, "json", False):
+            _print_json(value)
+            return 1
+        print(f"結果が分かりません（{value.get('error')}）: {value.get('url')}", file=sys.stderr)
+        print(f"打ち直しません。thth bookmark reconcile {account} で確かめてください", file=sys.stderr)
+        return 1
+    return _shown(args, value, lambda v: _say(f"{account}: ブックマークを直しました（{v.get('url')}）"))
+
+
 BATCH_REMOTE_MAX_BYTES = 48000
 
 
@@ -1117,7 +1146,7 @@ COMMANDS.update({
     "events": _events, "summary": _summary,
     "inflight": _inflight,
     "send": _send, "schedule": _schedule, "retract": _retract, "bookmark add": _bookmark_add,
-    "bookmark delete": _bookmark_delete,
+    "bookmark delete": _bookmark_delete, "bookmark edit": _bookmark_edit,
     "bookmark batch": _bookmark_batch, "bookmark batch-status": _bookmark_batch_status,
     "bookmark batch-cancel": _bookmark_batch_cancel,
     "posts": _posts, "replies": _replies, "measured": _measured, "collect": _collect,

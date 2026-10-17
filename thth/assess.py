@@ -35,7 +35,9 @@ ORDER = "table"
 # 記録の出来事の動作（`guard._action_rows`）と行の `actions` の対応。SNS の記録は投稿と返信を分けないので
 # `post` は投稿・返信の行に数え、`kind` の無い・知らない記録ははてなの記事の行にも数える（数え漏らさない・今のまま）。
 EVENT_ALIASES = {"post": ("post", "reply", "entry_create", "entry_update"),
-                 "retract": ("retract", "entry_delete")}
+                 "retract": ("retract", "entry_delete"),
+                 # ブックマークの直し（S4 §21.4）: 追加の行の分の窓（連投・止め線・最低線）に数える。
+                 "bookmark_edit": ("bookmark_add",)}
 _OUTCOME_OF = {"stop": "stopped", "refuse": "refuse", "wait": "wait", "advise": "advise", "hold": "wait",
                "halted": "stopped"}
 

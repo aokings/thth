@@ -3,6 +3,8 @@
     thth bookmark add <口座> (--delivery <id> | --url <URL>) --comment "…" [--tags a,b]
                       [--confirm <digest> --by <名前> --production]
     thth bookmark delete <口座> (--delivery <id> | --url <URL>) [--reason …] [--confirm <digest> --by <名前> --production]
+    thth bookmark edit <口座> (--delivery <id> | --url <URL>) [--comment "…"] [--tags a,b]
+                       [--confirm <digest> --by <名前> --production]   （THTH が付けたものの直し・設計 S4 §21・4.2）
     thth bookmark reconcile <口座> [--url <URL>] [--by <名前>]      （CLI だけ・結果不明の行を GET で確かめる）
     thth bookmark list <口座> [--json]                             （読むだけ・`sent/bm:` の一覧）
     thth bookmark batch <口座> <ファイル|-> [--confirm <digest> --by <名前> --production] [--json]
@@ -56,6 +58,12 @@ def register(sub) -> None:
     delete.add_argument("--reason", default=None, help="消す理由（記録に残す・省けば bookmark_delete）")
     _stage_args(delete)
     delete.set_defaults(func=cmd, comment="", tags=None)
+    edit = verbs.add_parser("edit", help="THTH が付けたブックマークのコメントとタグを直す（1 段目は今の中身と差分と digest だけ）")
+    _target_args(edit)
+    edit.add_argument("--comment", default=None, help="直したあとのコメント（省けば今のまま・\"\" で空に）")
+    edit.add_argument("--tags", default=None, help="直したあとのタグ（a,b・省けば今のまま・\"\" で外す）")
+    _stage_args(edit)
+    edit.set_defaults(func=cmd_edit)
     rec = verbs.add_parser("reconcile", help="結果不明（unknown）のブックマークをはてなに訊いて決める（CLI だけ）")
     rec.add_argument("account")
     rec.add_argument("--url", default=None, help="この URL の行だけ")
@@ -115,6 +123,11 @@ _MESSAGES = {
     "invalid_url": "URL は http／https で、host があり、空白・制御文字の無いものです",
     "bookmark_not_found": "THTH が付けたブックマークの記録がありません（手で付けたものは THTH から消しません）",
     "bookmark_already_deleted": "このブックマークはもう消しています",
+    "bookmark_edit_missing_remote": "はてなにこの主体のブックマークがありません。直しの口では新しく付けません"
+                                    "（付けるなら thth bookmark add）。何もしていません",
+    "bookmark_edit_no_change": "直したあとの中身が今と同じです（何もしていません）",
+    "bookmark_result_unknown": "付けた（か前の直しの）結果がまだ分かりません。thth bookmark reconcile <口座> のあとに直してください",
+    "approval_stale": "表示したあとに台帳が変わりました。もう一度 1 段目から",
     "invalid_op": "op は add か delete です（コメント・タグの直しははてなの画面から）",
     "bookmark_precheck_failed": "打つ前の確かめ（この主体のブックマークの GET）が通りませんでした。何もしていません",
     "bookmark_record_failed": "はてなには打ちましたが、記録（sent/bm:）を書けませんでした。置き場を直し、"
@@ -191,6 +204,64 @@ def cmd(args) -> int:
                 + ([f"  {done['permalink']}"] if done.get("permalink") else []))
 
 
+def cmd_edit(args) -> int:
+    """`thth bookmark edit`（設計 S4 §21）。新規の追加とは別の柵: 自分の主体の confirmed の行だけ・はてなに無ければ打たない。"""
+    from . import core, guard, hatena_bookmark, lock as lock_mod, refusals
+    try:
+        accounts_mod.validate_name(args.account)
+        cfg = accounts_mod.load_account(args.account)
+    except accounts_mod.AccountError as exc:
+        return _refuse(args, "account_unreadable", str(exc))
+    target = {"delivery": args.delivery, "url": args.url}
+    fallback = "直せる行を確かめてください（thth bookmark list <口座>・THTH が付けて confirmed の行だけ直せます）"
+    try:
+        p = hatena_bookmark.prepare_edit(args.account, cfg, comment=args.comment, tags=args.tags, **target)
+    except hatena_bookmark.BookmarkError as exc:
+        return _refuse(args, exc.code, _bookmark_message(exc, fallback))
+    flag = f"--delivery {args.delivery}" if args.delivery else f"--url {args.url}"
+    if not args.confirm:
+        refusals.mark_first_stage()
+        rest = "".join(f" --{key} {json.dumps(value, ensure_ascii=False)}"
+                       for key, value in (("comment", args.comment), ("tags", args.tags)) if value is not None)
+        return _out(args, {"ok": False, "edited": False, "stage": 1, "digest": p["digest"],
+                           "preview": hatena_bookmark.preview_edit(p)}, 1,
+                    ["直しません（確認の一段目です）"] + hatena_bookmark.edit_lines(p)
+                    + [f"直すなら: thth bookmark edit {args.account} {flag}{rest} --confirm {p['digest']}"
+                       " --by <名前> --production"])
+    if args.confirm != p["digest"]:
+        return _refuse(args, "confirm_mismatch", f"digest が一致しません（いまの digest は {p['digest']}）", rc=1)
+    by = (args.by or os.environ.get("THTH_ACTOR") or "").strip()
+    if not by:
+        return _refuse(args, "by_required", "--by <名前> を付けてください（誰が承認したかを記録します）", rc=1)
+    if not (cfg.get("production") is True and args.production):
+        return _refuse(args, "production_disabled",
+                       "台帳が production: true で --production を付けたときだけ打ちます（何もしていません）", rc=1)
+    logs = []
+    try:
+        with core._account_locks(args.account, cfg, accounts_mod.state_dir_for(args.account), wait=0):
+            again = hatena_bookmark.prepare_edit(args.account, cfg, comment=args.comment, tags=args.tags,
+                                                 check_remote=False, **target)
+            if again["digest"] != args.confirm:
+                return _refuse(args, "confirm_mismatch", "表示したあとに台帳が変わりました。もう一度 1 段目から", rc=1)
+            done = hatena_bookmark.edit_locked(args.account, cfg, again, actor=by, via="cli", log=logs.append)
+    except lock_mod.LockBusy:
+        return _refuse(args, "account_busy", "いま別の実行がロックを持っています", rc=1)
+    except guard.GuardRefused as exc:
+        detail = f"（{exc.reason}）" if getattr(exc, "reason", None) else ""
+        return _refuse(args, str(exc), core.guard_refusal_message(args.account, exc) + detail, rc=1)
+    except hatena_bookmark.BookmarkError as exc:
+        return _refuse(args, exc.code, _bookmark_message(exc, "直せませんでした（何も記録していません）"))
+    finally:
+        for line in logs:
+            print(line, file=sys.stderr)
+    if done.get("status") == "unknown":
+        return _out(args, {"ok": False, **done}, 1,
+                    [f"結果が分かりません（{done.get('error')}）: {done['url']}",
+                     f"打ち直しません。thth bookmark reconcile {args.account} で確かめてください"], err=True)
+    return _out(args, {"ok": True, **done}, 0, [f"ブックマークを直しました: {done['url']}"]
+                + ([f"  {done['permalink']}"] if done.get("permalink") else []))
+
+
 def cmd_reconcile(args) -> int:
     from . import core, hatena_bookmark, lock as lock_mod
     try:
@@ -209,6 +280,7 @@ def cmd_reconcile(args) -> int:
     lines = [f"{args.account}: 結果不明 {out['checked']} 件を確かめました（付いていた {out['confirmed']}・"
              f"無かった {out['not_found']}・分からないまま {out['unchanged']}）"]
     lines += [f"  {row['result']}  {row['url']}" for row in out["rows"]]
+    lines += [f"  直し: {row['result']}  {row['url']}" for row in out.get("edits") or []]
     return _out(args, {"ok": True, **out}, 0, lines)
 
 

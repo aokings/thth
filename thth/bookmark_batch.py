@@ -40,7 +40,9 @@ MAX_GAP_MINUTES = 120
 RATE_LIMITED_MINUTES = 60
 # 乱数（試験で差し替える）。0 以上 1 未満。
 RANDOM = random.random
-ITEM_KEYS = frozenset(("url", "delivery", "comment", "tags"))
+ITEM_KEYS = frozenset(("url", "delivery", "comment", "tags", "op"))
+# 札の `op`（4.2・設計 S4 §21.6）。無ければ追加。
+ITEM_OPS = ("add", "edit")
 BATCH_ID = re.compile(r"bb_[0-9a-f]{16}\Z")
 STATES = ("pending", "placed", "unknown", "refused", "cancelled", "expired")
 
@@ -56,7 +58,12 @@ _DEFER_TOMORROW = frozenset(("bookmark_host_limit", "self_bookmark_limit"))
 _STOP_TODAY = frozenset(("bookmark_limit",))
 _FINAL_BOOKMARK = frozenset(("invalid_url", "use_delivery", "bookmark_other_lane_article", "bookmark_target_not_own",
                              "comment_too_long", "comment_required", "too_many_tags", "invalid_request", "invalid_op",
-                             "unsupported_operation", "approval_stale"))
+                             "unsupported_operation", "approval_stale",
+                             # 直し（S4 §21.6）: はてなに無い・台帳に直せる行が無い・消した・中身が同じ。
+                             "bookmark_edit_missing_remote", "bookmark_not_found", "bookmark_already_deleted",
+                             "bookmark_edit_no_change"))
+# 直しの札が照合を待つ（付けた・前の直しの結果がまだ分からない）。打たずに止める（S4 §21.6）。
+_WAIT_RECONCILE = frozenset(("bookmark_result_unknown",))
 
 
 class BatchError(ValueError):
@@ -117,6 +124,10 @@ def _item_problem(value):
         return "invalid_item"
     if set(value) - ITEM_KEYS:
         return "unknown_key"
+    if value.get("op") is not None and value.get("op") not in ITEM_OPS:
+        return "invalid_item"
+    if value.get("op") == "edit" and value.get("comment") is None and value.get("tags") is None:
+        return "invalid_item"
     has_url = isinstance(value.get("url"), str) and value["url"].strip() != ""
     has_delivery = isinstance(value.get("delivery"), str) and value["delivery"].strip() != ""
     if has_url == has_delivery:
@@ -362,17 +373,28 @@ def prepare(account_name: str, cfg: dict, text: str, *, now=None) -> dict:
         row["url"] = raw.get("url")
         row["delivery"] = raw.get("delivery")
         row["comment"] = raw.get("comment")
+        edit = raw.get("op") == "edit"
         try:
-            p = hatena_bookmark.prepare(account_name, cfg, delivery=raw.get("delivery"), url=raw.get("url"),
-                                        comment=raw.get("comment") or "", tags=raw.get("tags"), op="add",
-                                        check_remote=False)
+            if edit:
+                # 直しの札（S4 §21.6）: GET は打たない（50 件の GET を続けない）。台帳の今の値と直したあとの値。
+                p = hatena_bookmark.prepare_edit(account_name, cfg, delivery=raw.get("delivery"), url=raw.get("url"),
+                                                 comment=raw.get("comment"), tags=raw.get("tags"),
+                                                 check_remote=False)
+            else:
+                p = hatena_bookmark.prepare(account_name, cfg, delivery=raw.get("delivery"), url=raw.get("url"),
+                                            comment=raw.get("comment") or "", tags=raw.get("tags"), op="add",
+                                            check_remote=False)
         except hatena_bookmark.BookmarkError as exc:
             row["reason"] = exc.code
+            if edit:
+                row["op"] = "edit"
             continue
         row.update({"url": p["url"], "delivery": p["delivery"], "target": p["target"], "article": p["article"],
                     "comment": p["comment"], "tags": p["tags"], "approved_sha": p["approved_sha"],
                     "url_canonical": p["url_canonical"], "host": hatena_bookmark.host_of(p["url_canonical"]),
                     "blog_id": p.get("blog_id")})
+        if edit:
+            row.update({"op": "edit", "base_comment": p["base_comment"], "base_tags": p["base_tags"]})
         if p.get("ledger"):
             row["reason"], row["detail"] = "bookmark_once", p["ledger"]
             continue
@@ -386,7 +408,11 @@ def prepare(account_name: str, cfg: dict, text: str, *, now=None) -> dict:
         row["include"] = True
     included = [row for row in rows if row["include"]]
     budget = _budget(principal, now=now)
-    forecast = _forecast(included, budget, now=now)
+    # 直しの札は日の枠を使わない（S4 §21.4）: 見込みは付ける札だけで数え、直しは「今日」。
+    forecast = _forecast([row for row in included if row.get("op") != "edit"], budget, now=now)
+    for row in included:
+        if row.get("op") == "edit":
+            row["day"] = 0
     sha = compute_sha(account_name, principal, [row["approved_sha"] for row in included])
     try:
         owner = principals.owner_of(principal)
@@ -407,7 +433,8 @@ def prepare(account_name: str, cfg: dict, text: str, *, now=None) -> dict:
         halted = None
     hosts = {}
     for row in included:
-        hosts[row["host"]] = hosts.get(row["host"], 0) + 1
+        if row.get("op") != "edit":
+            hosts[row["host"]] = hosts.get(row["host"], 0) + 1
     return {"account": account_name, "principal": principal, "owner": owner, "project": cfg.get("project"),
             "items": rows, "n": len(rows), "included": len(included), "excluded": len(rows) - len(included),
             "approved_sha": sha, "digest": sha[:_digest_length()], "batch": batch_id_of(sha),
@@ -432,9 +459,18 @@ def _short(text, width=40) -> str:
 def lines(p: dict) -> list:
     """1 段目の表示（手元・遠くの道で同じ）。"""
     rem = p.get("remaining_today")
+    edits = sum(1 for row in p["items"] if row["include"] and row.get("op") == "edit")
     out = [f"ブックマークのまとめて承認  {p['account']}（主体 {p['principal']}・owner {p.get('owner')}）",
-           f"札 {p['n']} 件: 付ける {p['included']}・除く {p['excluded']}"]
+           f"札 {p['n']} 件: 付ける {p['included'] - edits}・除く {p['excluded']}"
+           + (f"・直す {edits}" if edits else "")]
     for row in p["items"]:
+        if row["include"] and row.get("op") == "edit":
+            out.append(f"  {row['n']:>3}. [直す]  {row.get('url') or '?'}")
+            before = "・".join(row.get("base_tags") or []) or "（なし）"
+            after = "・".join(row.get("tags") or []) or "（なし）"
+            out.append(f"       コメント: {row.get('base_comment') or '（なし）'} → {row.get('comment') or '（なし）'}")
+            out.append(f"       タグ: {before} → {after}")
+            continue
         if row["include"]:
             when = "付ける" if row.get("day") == 0 else ("翌日以降" if row.get("day") is not None else "期限までに付かない見込み")
         else:
@@ -498,11 +534,15 @@ def approve_locked(account_name: str, cfg: dict, p: dict, *, actor, via, credent
     for row in p["items"]:
         if not row["include"]:
             continue
-        items.append({"n": row["n"], "line": row["line"], "url": row["url"], "url_canonical": row["url_canonical"],
-                      "delivery": row["delivery"], "target": row["target"], "article": row["article"],
-                      "comment": row["comment"], "tags": list(row["tags"]), "approved_sha": row["approved_sha"],
-                      "state": "pending", "not_before": None, "wait": None, "tries": 0, "last_tried_at": None,
-                      "reason": None, "detail": None, "done_at": None, "post_id": None, "permalink": None})
+        entry = {"n": row["n"], "line": row["line"], "url": row["url"], "url_canonical": row["url_canonical"],
+                 "delivery": row["delivery"], "target": row["target"], "article": row["article"],
+                 "comment": row["comment"], "tags": list(row["tags"]), "approved_sha": row["approved_sha"],
+                 "state": "pending", "not_before": None, "wait": None, "tries": 0, "last_tried_at": None,
+                 "reason": None, "detail": None, "done_at": None, "post_id": None, "permalink": None}
+        if row.get("op") == "edit":
+            # 直しの札（S4 §21.6）。追加の札の形は 1 バイトも変えない。
+            entry.update({"op": "edit", "base_comment": row["base_comment"], "base_tags": list(row["base_tags"])})
+        items.append(entry)
     batch = {"version": 1, "batch": p["batch"], "approved_sha": p["approved_sha"], "digest": p["digest"],
              "account": account_name, "principal": p["principal"], "owner": p.get("owner"),
              "approved_by": actor, "approved_at": jst.iso(now), "via": via, "credential": credential,
@@ -697,7 +737,8 @@ def status(account_name: str, *, batch=None, now=None) -> dict:
                           "delivery": it.get("delivery"), "state": state, "reason": it.get("reason"),
                           "detail": it.get("detail"), "wait": it.get("wait"), "not_before": it.get("not_before"),
                           "tries": it.get("tries"), "done_at": it.get("done_at"), "post_id": it.get("post_id"),
-                          "permalink": it.get("permalink"), "result": _sent_result(account_name, it.get("post_id"))})
+                          "permalink": it.get("permalink"), "result": _sent_result(account_name, it.get("post_id")),
+                          **({"op": "edit"} if it.get("op") == "edit" else {})})
         row = {"batch": b["batch"], "digest": b.get("digest"), "approved_by": b.get("approved_by"),
                "approved_at": b.get("approved_at"), "expires_at": b.get("expires_at"),
                "cancelled_at": b.get("cancelled_at"), "counts": counts, "items": items,
@@ -876,13 +917,15 @@ def _run_locked(account_name, cfg, *, log, now, adapter_factory):
         if placed >= per_run or attempts >= per_run + 2:
             break
         host = hatena_bookmark.host_of(item["url_canonical"]) if item.get("url_canonical") else None
-        # 日の枠で先に回す（最後に決めるのは guard.check）。
-        if budget is not None and host and hosts_today.get(host, 0) >= budget["host_limit"]:
+        edit = item.get("op") == "edit"
+        # 日の枠で先に回す（最後に決めるのは guard.check）。直しの札は日の枠を使わない（S4 §21.4）。
+        if not edit and budget is not None and host and hosts_today.get(host, 0) >= budget["host_limit"]:
             _defer(item, "bookmark_host_limit", tomorrow, now)
             dirty[batch["batch"]] = batch
             summary["deferred"] += 1
             continue
-        if budget is not None and item.get("target") == "own" and own_left is not None and own_left <= 0:
+        if (not edit and budget is not None and item.get("target") == "own" and own_left is not None
+                and own_left <= 0):
             _defer(item, "self_bookmark_limit", tomorrow, now)
             dirty[batch["batch"]] = batch
             summary["deferred"] += 1
@@ -896,6 +939,9 @@ def _run_locked(account_name, cfg, *, log, now, adapter_factory):
         if kind == "placed":
             placed += 1
             summary["placed"] += 1
+            if edit:
+                summary["edited"] = summary.get("edited", 0) + 1
+                continue
             if host:
                 hosts_today[host] = hosts_today.get(host, 0) + 1
             if item.get("target") == "own" and own_left is not None:
@@ -959,6 +1005,9 @@ def _place(account_name, cfg, batch, item, *, now, log, adapter_factory):
 
     if not _check_integrity(batch):
         return refuse("approval_stale", "batch")
+    if item.get("op") == "edit":
+        return _place_edit(account_name, cfg, batch, item, now=now, log=log, adapter_factory=adapter_factory,
+                           refuse=refuse)
     try:
         p = hatena_bookmark.prepare(account_name, cfg, delivery=item.get("delivery"),
                                     url=None if item.get("delivery") else item.get("url"),
@@ -1015,4 +1064,58 @@ def _place(account_name, cfg, batch, item, *, now, log, adapter_factory):
         return ("unknown", done.get("error"), None)
     item.update({"state": "placed", "reason": None, "detail": None, "done_at": at, "wait": None,
                  "post_id": done.get("post_id"), "permalink": done.get("permalink")})
+    return ("placed", None, None)
+
+
+def _place_edit(account_name, cfg, batch, item, *, now, log, adapter_factory, refuse):
+    """直しの札 1 件（S4 §21.6）。読み直し → 指紋の照合 → `edit_locked`。断りの分け方は付ける札と同じ表に直しの符丁。"""
+    from . import guard, hatena_bookmark
+    at = jst.iso(now)
+    try:
+        p = hatena_bookmark.prepare_edit(account_name, cfg, delivery=item.get("delivery"),
+                                         url=None if item.get("delivery") else item.get("url"),
+                                         comment=item.get("comment") or "", tags=list(item.get("tags") or []),
+                                         check_remote=False)
+    except hatena_bookmark.BookmarkError as exc:
+        if exc.code in _WAIT_RECONCILE:
+            return ("blocked", exc.code, None)
+        return refuse(exc.code)
+    if p["approved_sha"] != item.get("approved_sha"):
+        return refuse("approval_stale")
+    logs = []
+    try:
+        done = hatena_bookmark.edit_locked(account_name, cfg, p, actor=batch.get("approved_by") or "thth",
+                                           via="timer", adapter_factory=adapter_factory, log=logs.append)
+    except guard.GuardRefused as exc:
+        code = str(exc)
+        next_at = jst.parse(getattr(exc, "next_at", None)) if getattr(exc, "next_at", None) else None
+        if next_at is not None:
+            return ("wait", code, next_at)
+        return ("blocked", code, getattr(exc, "reason", None))
+    except hatena_bookmark.BookmarkError as exc:
+        code = exc.code
+        if code in _FINAL_BOOKMARK or (code.startswith("hatena_http_4")
+                                       and code not in ("hatena_http_401", "hatena_http_403", "hatena_http_429")):
+            return refuse(code)
+        if code in _WAIT_RECONCILE:
+            return ("blocked", code, None)
+        if code == "bookmark_record_failed":
+            item.update({"state": "unknown", "reason": code, "done_at": at})
+            for line in logs:
+                log(line)
+            return ("unknown", code, None)
+        if code in ("provider_rate_limited", "hatena_http_429"):
+            return ("wait", code, now + datetime.timedelta(minutes=RATE_LIMITED_MINUTES))
+        return ("blocked", code, None)
+    for line in logs:
+        log(line)
+    if done.get("status") == "unknown":
+        item.update({"state": "unknown", "reason": done.get("error") or "unknown", "done_at": at,
+                     "post_id": done.get("post_id"), "wait": None})
+        log(f"ブックマークのまとめ: 直しの結果が分かりません（{done.get('error')}）: {item.get('url')}。"
+            f"打ち直しません。thth bookmark reconcile {account_name} で確かめてください")
+        return ("unknown", done.get("error"), None)
+    item.update({"state": "placed", "reason": None, "detail": None, "done_at": at, "wait": None,
+                 "post_id": done.get("post_id"), "permalink": done.get("permalink")})
+    log(f"ブックマークのまとめ: 直しました: {item.get('url')}")
     return ("placed", None, None)

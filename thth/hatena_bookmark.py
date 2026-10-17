@@ -45,7 +45,9 @@ REASONS = frozenset((
     # 打ったあとに `sent/bm:` を書けなかった（ディスク・置き場）。
     "bookmark_record_failed",
     # adapter を作れない（`hatena_publish.AdapterUnavailable`）。
-    "token_missing", "token_invalid", "consumer_missing", "consumer_invalid", "auth_unsupported"))
+    "token_missing", "token_invalid", "consumer_missing", "consumer_invalid", "auth_unsupported",
+    # 直し（設計 S4 §21・4.2）: はてなに付いていない・中身が同じ・付けた（前の直しの）結果がまだ分からない。
+    "bookmark_edit_missing_remote", "bookmark_edit_no_change", "bookmark_result_unknown"))
 
 
 class BookmarkError(ValueError):
@@ -530,8 +532,12 @@ def reconcile(account_name: str, cfg: dict, *, url=None, by=None, adapter_factor
     rows = [row for row in sent_mod.records(state_dir)
             if row.get("kind") == "bookmark_add" and row.get("result") == "unknown"
             and (want is None or (row.get("url_canonical") or "") == want)]
-    out = {"account": account_name, "checked": 0, "confirmed": 0, "not_found": 0, "unchanged": 0, "rows": []}
-    if not rows:
+    out = {"account": account_name, "checked": 0, "confirmed": 0, "not_found": 0, "unchanged": 0, "rows": [],
+           "edits": []}
+    edits_waiting = any(sent_mod.pending_bookmark_edit(row) is not None
+                        and (want is None or (row.get("url_canonical") or "") == want)
+                        for row in sent_mod.records(state_dir) if row.get("kind") == "bookmark_add")
+    if not rows and not edits_waiting:
         return out
     adapter = _adapter(cfg, principal_cfg, adapter_factory)
     wait = sleep if sleep is not None else time.sleep
@@ -554,7 +560,10 @@ def reconcile(account_name: str, cfg: dict, *, url=None, by=None, adapter_factor
             verdict = "unchanged"
         out[verdict] += 1
         out["rows"].append({"post_id": row["post_id"], "url": row.get("url"), "result": verdict})
-    if out["confirmed"] or out["not_found"]:
+    if edits_waiting:
+        # 直しの結果不明（S4 §21.5）。追加の行の数（checked など）には足さず `edits` に分ける。
+        out["edits"] = _reconcile_edits(account_name, adapter, principal_cfg, wait=wait, first=not rows, want=want)
+    if out["confirmed"] or out["not_found"] or any(e["result"] != "unchanged" for e in out["edits"]):
         try:
             admin_log.append("bookmark_reconciled", account_name, cfg, by=by or "thth", via="cli",
                              diff={"confirmed": [0, out["confirmed"]], "not_found": [0, out["not_found"]]})
@@ -573,7 +582,8 @@ def list_rows(account_name: str) -> list:
         out.append({"post_id": row["post_id"], "url": row.get("url"), "target": row.get("target"),
                     "delivery": row.get("delivery"), "article": row.get("article"),
                     "result": row.get("result"), "sent_at": row.get("sent_at"),
-                    "retracted_at": row.get("retracted_at"), "permalink": (row.get("remote") or {}).get("permalink")})
+                    "retracted_at": row.get("retracted_at"), "permalink": (row.get("remote") or {}).get("permalink"),
+                    "edited_at": row.get("edited_at")})
     out.sort(key=lambda r: (r["sent_at"] or "", r["post_id"]))
     return out
 
@@ -596,3 +606,266 @@ def by_delivery(account_name: str) -> dict:
 def event_id(post_id: str, what: str) -> str:
     """ブックマークの出来事の id（§3.3）。時刻を入れない（照合で `confirmed` になっても同じ id）。"""
     return "ev_" + hashlib.sha256(f"thth.bookmark/1|{post_id}|{what}".encode("utf-8")).hexdigest()[:24]
+
+
+# --------------------------------------------------------------------------
+# 直し（設計 S4 §21・4.2）
+# --------------------------------------------------------------------------
+
+def _resolve_target(account_name, cfg, *, delivery, url):
+    """対象の URL（`(target, url, canonical, delivery_value, article, blog_id)`）。外れれば `BookmarkError`。"""
+    has_delivery = delivery is not None and str(delivery).strip() != ""
+    has_url = url is not None and str(url).strip() != ""
+    if has_delivery == has_url:
+        raise BookmarkError("invalid_request")
+    article = blog_id = None
+    if has_delivery:
+        if not deliveries_mod.is_delivery_id(delivery):
+            raise BookmarkError("bookmark_target_not_own")
+        try:
+            record = deliveries_mod.read(account_name, delivery)
+        except deliveries_mod.DeliveryError:
+            raise BookmarkError("bookmark_target_not_own") from None
+        target_url = record.get("published_url")
+        if not isinstance(target_url, str) or not target_url:
+            raise BookmarkError("bookmark_target_not_own")
+        target, delivery_value = "own", delivery
+        article, blog_id = record.get("article"), record.get("blog_id")
+    else:
+        target_url, target, delivery_value = str(url).strip(), "external", ""
+    try:
+        canonical = canonical_url(target_url)
+    except ValueError:
+        raise BookmarkError("invalid_url") from None
+    if target == "external":
+        found = _match_delivery(cfg["principal"], canonical)
+        if found is not None:
+            raise BookmarkError("use_delivery" if found[0] == cfg["principal"] else "bookmark_other_lane_article")
+    return target, target_url, canonical, delivery_value, article, blog_id
+
+
+def _check_editable(found) -> None:
+    """直せる行か（自分の主体の `confirmed`・消していない・前の直しの結果が分かっている）。"""
+    from . import sent as sent_mod
+    if found is not None and found[1].get("retracted_at"):
+        raise BookmarkError("bookmark_already_deleted", at=found[1].get("retracted_at"))
+    if found is not None and found[1].get("result") == "unknown":
+        raise BookmarkError("bookmark_result_unknown")
+    if found is None or found[1].get("result") != "confirmed" or found[1].get("kind") != "bookmark_add":
+        raise BookmarkError("bookmark_not_found")
+    if sent_mod.pending_bookmark_edit(found[1]) is not None:
+        raise BookmarkError("bookmark_result_unknown")
+
+
+def _remote_view(found) -> dict:
+    out = {"checked": True, "exists": found is not None}
+    if isinstance(found, dict):
+        out.update({"comment": found.get("comment") if isinstance(found.get("comment"), str) else "",
+                    "tags": sorted(t for t in (found.get("tags") or []) if isinstance(t, str)),
+                    "user": found.get("user")})
+    return out
+
+
+def prepare_edit(account_name: str, cfg: dict, *, delivery: str | None = None, url: str | None = None,
+                 comment: str | None = None, tags=None, check_remote: bool = True, adapter_factory=None) -> dict:
+    """直しの 1 段目の材料（何も書かない・§21.1）。外れれば `BookmarkError`。
+
+    `comment`・`tags` は省けば（None）台帳の今の値のまま。`check_remote` ははてなの自分の主体の GET を 1 回
+    （見せるためだけ・失敗しても断らない）。
+    """
+    from . import principals
+    if not principals.uses_principal(cfg):
+        raise BookmarkError("unsupported_operation")
+    if comment is None and tags is None:
+        raise BookmarkError("invalid_request")
+    principal = cfg["principal"]
+    target, target_url, canonical, delivery_value, article, blog_id = _resolve_target(
+        account_name, cfg, delivery=delivery, url=url)
+    found = _ledger_row(principal, canonical)
+    _check_editable(found)
+    holder, row = found
+    base_comment = row.get("text") or ""
+    base_tags = sorted(row.get("tags") or [])
+    new_comment = base_comment if comment is None else comment
+    new_tags = base_tags if tags is None else parse_tags(tags)
+    try:
+        components = approval_mod.compute_hatena_bookmark_edit_components(
+            account=account_name, principal=principal, url=target_url, delivery=delivery_value,
+            base_comment=base_comment, base_tags=base_tags, comment=new_comment, tags=new_tags)
+        sha = approval_mod.compute_hatena_bookmark_edit_sha(
+            account=account_name, principal=principal, url=target_url, delivery=delivery_value,
+            base_comment=base_comment, base_tags=base_tags, comment=new_comment, tags=new_tags)
+    except ValueError as exc:
+        code = str(exc)
+        raise BookmarkError(code if code in ("comment_too_long", "too_many_tags", "invalid_url")
+                            else "invalid_request") from None
+    after_tags = [t for t in components["tags"].split("\x1e") if t]
+    if components["comment"] == components["base_comment"] and after_tags == base_tags:
+        raise BookmarkError("bookmark_edit_no_change")
+    remote = None
+    if check_remote:
+        remote = {"checked": False, "exists": None}
+        try:
+            principal_cfg = principals.check_account(cfg, account_name)
+            adapter = _adapter(cfg, principal_cfg, adapter_factory)
+            remote = _remote_view(adapter.get_bookmark(url=row.get("url") or target_url))
+        except Exception as exc:  # noqa: BLE001 — 見せるためだけ（2 段目は GET が通らなければ打たない）
+            remote["error"] = getattr(exc, "code", None) or exc.__class__.__name__
+    try:
+        lane_allowed = cfg.get("project") in (
+            (principals.load_principal(principal).get("bookmark") or {}).get("lanes") or [])
+    except Exception:  # noqa: BLE001
+        lane_allowed = None
+    try:
+        owner = principals.owner_of(principal)
+    except Exception:  # noqa: BLE001
+        owner = principal
+    return {"account": account_name, "principal": principal, "owner": owner, "op": "edit",
+            "delivery": delivery_value or None, "url": target_url, "url_canonical": canonical,
+            "ledger_url": row.get("url") or target_url, "holder": holder, "post_id": row.get("post_id"),
+            "target": target, "article": article, "blog_id": blog_id,
+            "base_comment": components["base_comment"], "base_tags": base_tags,
+            "comment": components["comment"], "tags": after_tags, "approved_sha": sha,
+            "digest": sha[:approval_mod.APPROVE_DIGEST_LENGTH], "remote": remote,
+            "lane_allowed": lane_allowed, "project": cfg.get("project")}
+
+
+def preview_edit(p: dict) -> dict:
+    keys = ("account", "principal", "owner", "op", "target", "delivery", "url", "article", "base_comment",
+            "base_tags", "comment", "tags", "remote", "lane_allowed")
+    return {key: p.get(key) for key in keys}
+
+
+def _tags_text(tags) -> str:
+    return "・".join(tags) if tags else "（なし）"
+
+
+def edit_lines(p: dict) -> list:
+    out = [f"ブックマークを直す  {p['account']}（主体 {p['principal']}・owner {p.get('owner')}）",
+           f"URL: {p['url']}"]
+    if p["target"] == "own":
+        out.append(f"対象: 自分の記事: {p['article']}（{p['delivery']}）")
+    else:
+        out.append("対象: 参照先")
+    out.append(f"THTH の台帳の今: コメント: {p['base_comment'] or '（なし）'}  タグ: {_tags_text(p['base_tags'])}")
+    remote = p.get("remote")
+    if remote is None:
+        out.append("はてな側: 確かめていません")
+    elif not remote.get("checked"):
+        out.append(f"はてな側: 確かめられなかった（{remote.get('error')}・2 段目で GET が通らなければ打ちません）")
+    elif not remote.get("exists"):
+        out.append("はてな側: この主体のブックマークがありません → 2 段目で断ります（bookmark_edit_missing_remote・"
+                   "直しの口では新しく付けません）")
+    else:
+        out.append(f"はてな側の今: コメント: {remote.get('comment') or '（なし）'}  タグ: {_tags_text(remote.get('tags'))}")
+        if remote.get("comment") != p["base_comment"] or list(remote.get("tags") or []) != list(p["base_tags"]):
+            out.append("  （はてな側が台帳と違います——はてなが切った・はてなの画面で直した。直すと下の値で上書きします）")
+    if p["comment"] != p["base_comment"]:
+        out.append(f"コメント: {p['base_comment'] or '（なし）'} → {p['comment'] or '（なし）'}")
+    else:
+        out.append(f"コメント: 変えない（{p['comment'] or 'なし'}）")
+    if list(p["tags"]) != list(p["base_tags"]):
+        gone = [t for t in p["base_tags"] if t not in p["tags"]]
+        new = [t for t in p["tags"] if t not in p["base_tags"]]
+        out.append(f"タグ: {_tags_text(p['base_tags'])} → {_tags_text(p['tags'])}"
+                   f"（外す {_tags_text(gone)}・足す {_tags_text(new)}）")
+    else:
+        out.append(f"タグ: 変えない（{_tags_text(p['tags'])}）")
+    out.append("上限: 件数は増えません（1 日・同じホスト・自分の記事の枠は使わない）。連投の窓には数えます")
+    if p.get("lane_allowed") is False:
+        out.append(lane_refusal_line(p["principal"], p.get("project")))
+    out.append(f"digest: {p['digest']}")
+    return out
+
+
+def edit_locked(account_name: str, cfg: dict, p: dict, *, adapter_factory=None, actor=None, via=None,
+                credential=None, log=None) -> dict:
+    """直しの 2 段目（**repo → principal → account のロックの中で呼ぶ**・§21.2）。
+
+    順: 安全装置（連投の窓と安全装置だけ・`kind="bookmark_edit"`）→ 主体の突き合わせ → adapter →
+    **owner のロック**（台帳の読み直し → 自分の主体の GET（無ければ打たない）→ 1 回だけ POST → `sent/bm:` に足す）。
+    """
+    from . import guard, principals, redact as redact_mod, sent as sent_mod
+    from .adapters.hatenabookmark import BookmarkResult
+    guard.check(account_name, cfg, "bookmark_edit", actor=actor, via=via, credential=credential,
+                bookmark_url=p["url_canonical"], bookmark_target=p["target"], bookmark_once=False)
+    principal_cfg = principals.check_account(cfg, account_name)
+    adapter = _adapter(cfg, principal_cfg, adapter_factory)
+    principal = cfg["principal"]
+    with _OwnerLock(principals.owner_of(principal, principal_cfg)):
+        found = _ledger_row(principal, p["url_canonical"])
+        _check_editable(found)
+        holder, row = found
+        if (row.get("text") or "") != p["base_comment"] or sorted(row.get("tags") or []) != list(p["base_tags"]):
+            raise BookmarkError("approval_stale")
+        url = row.get("url") or p["url"]
+        try:
+            existing = adapter.get_bookmark(url=url)
+        except Exception:  # noqa: BLE001 — 確かめられないなら打たない（出ない側）
+            raise BookmarkError("bookmark_precheck_failed") from None
+        if existing is None:
+            # POST は「無ければ追加」。付いていないページに打てば、直しの口が新規の追加の口になる。
+            raise BookmarkError("bookmark_edit_missing_remote")
+        try:
+            result = adapter.add_bookmark(url=url, comment=p["comment"], tags=p["tags"])
+        except Exception as exc:  # noqa: BLE001 — adapter の例外は結果不明
+            result = BookmarkResult(ok=False, ambiguous=True,
+                                    error="adapter_error:" + (redact_mod.redact(exc.__class__.__name__) or ""))
+        if not getattr(result, "ok", False) and not getattr(result, "ambiguous", False):
+            raise BookmarkError(getattr(result, "error", None) or "publication_failed")
+        state = "confirmed" if result.ok else "unknown"
+        remote = _remote_fields(getattr(result, "bookmark", None)) if state == "confirmed" else None
+        try:
+            sent_mod.mark_bookmark_edit(accounts_mod.state_dir_for(holder), row["post_id"], result=state,
+                                        edited_at=jst.iso(), by=actor or "thth", via=via, comment=p["comment"],
+                                        tags=list(p["tags"]), approved_fingerprint=p["approved_sha"],
+                                        remote=remote)
+        except (OSError, ValueError):
+            if log is not None:
+                log(f"ブックマークの直しの記録を書けませんでした（はてなには打っています）: {url}。"
+                    "置き場を直してから、はてなの画面で中身を確かめてください")
+            raise BookmarkError("bookmark_record_failed") from None
+    out = {"account": account_name, "status": "bookmark_edited" if state == "confirmed" else "unknown",
+           "result": state, "op": "edit", "url": url, "delivery": p.get("delivery"), "target": p["target"],
+           "post_id": row["post_id"],
+           "permalink": (remote or {}).get("permalink") or (row.get("remote") or {}).get("permalink"),
+           "comment": p["comment"], "tags": list(p["tags"]),
+           "previous_comment": p["base_comment"], "previous_tags": list(p["base_tags"])}
+    if state == "unknown":
+        error = str(getattr(result, "error", "") or "")
+        out["error"] = error.split(":", 1)[0] if error.startswith("adapter_error") else error
+    return out
+
+
+def _reconcile_edits(account_name, adapter, principal_cfg, *, wait, first, want=None) -> list:
+    """結果不明の直し（`attempts[]` の `op: edit`・`unknown`）を GET で決める（§21.5）。行ごとの結果の list。"""
+    from . import sent as sent_mod
+    state_dir = accounts_mod.state_dir_for(account_name)
+    out = []
+    for row in sent_mod.records(state_dir):
+        if row.get("kind") != "bookmark_add":
+            continue
+        index = sent_mod.pending_bookmark_edit(row)
+        if index is None or (want is not None and (row.get("url_canonical") or "") != want):
+            continue
+        if not first:
+            wait(RECONCILE_INTERVAL_SECONDS)
+        first = False
+        attempt = row["attempts"][index]
+        try:
+            found = adapter.get_bookmark(url=row.get("url"))
+        except Exception:  # noqa: BLE001 — 次回
+            found = False
+        verdict = "unchanged"
+        if isinstance(found, dict) and found.get("user") == principal_cfg["hatena_id"]:
+            now_comment = (found.get("comment") if isinstance(found.get("comment"), str) else "").strip()
+            now_tags = sorted(t for t in (found.get("tags") or []) if isinstance(t, str))
+            if now_comment == attempt.get("comment") and now_tags == sorted(attempt.get("tags") or []):
+                verdict = "confirmed"
+            elif (now_comment == (attempt.get("previous_comment") or "")
+                  and now_tags == sorted(attempt.get("previous_tags") or [])):
+                verdict = "not_applied"
+        if verdict != "unchanged":
+            sent_mod.resolve_bookmark_edit(state_dir, row["post_id"], result=verdict, at=jst.iso())
+        out.append({"post_id": row["post_id"], "url": row.get("url"), "result": verdict, "op": "edit"})
+    return out

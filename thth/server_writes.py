@@ -509,8 +509,14 @@ def bookmark(context, request, via):
     from . import hatena_bookmark
     op=request.get('op') or 'add'
     if op=='add' and not (request.get('comment') or '').strip(): error('invalid_request')
+    edit=op=='edit'
     def prepared(locked_cfg,check_remote=True):
         try:
+            if edit:
+                # 4.2（S4 §21）: 直し。comment・tags は省けば台帳の今の値のまま（None のまま渡す）。
+                return hatena_bookmark.prepare_edit(account,locked_cfg,delivery=request.get('delivery'),
+                                                    url=request.get('url'),comment=request.get('comment'),
+                                                    tags=request.get('tags'),check_remote=check_remote)
             return hatena_bookmark.prepare(account,locked_cfg,delivery=request.get('delivery'),url=request.get('url'),
                                            comment=request.get('comment') or '',tags=request.get('tags'),op=op,
                                            check_remote=check_remote)
@@ -518,6 +524,9 @@ def bookmark(context, request, via):
             error(exc.code if exc.code in SAFE_ERRORS else 'invalid_request')
     first=prepared(cfg)
     if not request.get('confirm'):
+        if edit:
+            return {'account':account,'status':'not_edited','stage':1,'digest':first['digest'],
+                    'preview':hatena_bookmark.preview_edit(first),'via':via}
         return {'account':account,'status':'not_bookmarked','stage':1,'digest':first['digest'],
                 'preview':hatena_bookmark.preview(first),'via':via}
     if request['confirm']!=first['digest']: error('confirm_mismatch')
@@ -528,8 +537,8 @@ def bookmark(context, request, via):
         again=prepared(locked,check_remote=False)
         if again['digest']!=request['confirm']: error('confirm_mismatch')
         try:
-            done=hatena_bookmark.execute_locked(account,locked,again,actor=context.actor,via=origin['via'],
-                                                credential=origin['credential'])
+            run=hatena_bookmark.edit_locked if edit else hatena_bookmark.execute_locked
+            done=run(account,locked,again,actor=context.actor,via=origin['via'],credential=origin['credential'])
         except hatena_bookmark.BookmarkError as exc:
             code=exc.code
             # `hatena_http_<番号>` は数が開いているので `publication_failed` に畳む（静的な語だけを口から出す）。

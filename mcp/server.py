@@ -836,7 +836,8 @@ _PUBLISHING_DESCRIPTIONS = {
 _BOOKMARK_DESCRIPTION = ("自分の記事（配信の台帳で published の配信・delivery）か、レーンが参照している他人のページ（url）に、"
                          "主体のはてな ID でブックマークを付ける（delivery と url はどちらか 1 つ）。同じ owner の別の主体が付けた"
                          "ページは断る。2 段: confirm が無ければ stage 1 と digest と表示を返す。同じ digest を confirm に付けると打つ。"
-                         "op: delete で THTH が付けたものを消す。主体の止め・1 日の上限（全体・自分の記事・同じホスト）・"
+                         "op: delete で THTH が付けたものを消す。op: edit で THTH が付けたもの（confirmed）のコメントとタグを直す"
+                         "（comment・tags は省けば今のまま・はてなに無ければ直さない・件数の枠は使わず連投の窓だけ数える）。主体の止め・1 日の上限（全体・自分の記事・同じホスト）・"
                          "急な連投・1 ページに 1 回で断る。結果が分からなければ status: unknown（打ち直さない）")
 for _tool in SERVER_TOOLS:
     if _tool["name"] == "thth_bookmark_request":
@@ -1180,9 +1181,13 @@ REMOTE_CLI = {
     "thth_schedule_request": (lambda a: ["schedule", a["account"], "--draft=" + a["draft_id"], "--production", "--json",
                                          *_opt("--confirm", a.get("confirm"))],
                               None),
-    "thth_bookmark_request": (lambda a: ["bookmark", "delete" if a.get("op") == "delete" else "add", a["account"],
+    # 4.2（S4 §21.7）: op が edit なら `thth bookmark edit`（comment・tags は省けば今のまま）。
+    "thth_bookmark_request": (lambda a: ["bookmark", {"delete": "delete", "edit": "edit"}.get(a.get("op"), "add"),
+                                         a["account"],
                                          *(["--url=" + a["url"]] if a.get("url") else ["--delivery=" + a.get("delivery", "")]),
-                                         *(["--comment=" + a.get("comment", "")] if a.get("op") != "delete" else []),
+                                         *(["--comment=" + a.get("comment", "")]
+                                           if a.get("op") not in ("delete", "edit") or
+                                           (a.get("op") == "edit" and a.get("comment") is not None) else []),
                                          *_opt("--tags", a.get("tags")),
                                          *_opt("--confirm", a.get("confirm")), "--production", "--json"], None),
     # 4.1: 札のファイルの中身は標準入力で（`thth bookmark batch <口座> -`）。

@@ -359,6 +359,92 @@ def mark_bookmark_result(state_dir: str, post_id: str, *, result: str, at: str, 
     return p
 
 
+BOOKMARK_EDIT_RESULTS = ("confirmed", "unknown", "not_applied")
+
+
+def _check_edit_values(comment, tags) -> None:
+    if not isinstance(comment, str) or len(comment) > 100 or CONTROL_TEXT_RE.search(comment):
+        raise ValueError("invalid_comment")
+    if type(tags) is not list or len(tags) > 10 or any(not _plain_text(t, 100) for t in tags):
+        raise ValueError("invalid_tags")
+
+
+def _save(p, data) -> None:
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.replace(tmp, p)
+
+
+def pending_bookmark_edit(row) -> int | None:
+    """ブックマークの行の `attempts[]` のうち、結果不明の直し（`op: edit`・`result: unknown`）の番号。無ければ None。"""
+    for index, attempt in enumerate((row or {}).get("attempts") or []):
+        if isinstance(attempt, dict) and attempt.get("op") == "edit" and attempt.get("result") == "unknown":
+            return index
+    return None
+
+
+def mark_bookmark_edit(state_dir: str, post_id: str, *, result: str, edited_at: str, by: str, via: str | None,
+                       comment: str, tags: list, approved_fingerprint: str, remote: dict | None = None) -> str:
+    """ブックマークの直し（設計 S4 §21.5）を `sent/bm:` の行に**足す**。
+
+    `confirmed`: 行の `text`・`tags`・`body_hash` を直したあとの値にし、`edited_at` を足す。前の値は
+    `attempts[]` に `op: edit` の 1 行（`previous_comment`・`previous_tags`）。`unknown`: 行の中身は変えず、
+    `attempts[]` に `result: unknown` の行を足す（照合で決める）。`sent_at`・`result`・追加の指紋は変えない。
+    行が無い・ブックマークの行でない・`confirmed` でない・消した印がある → `ValueError`。
+    """
+    from . import approval
+    if result not in ("confirmed", "unknown"):
+        raise ValueError("invalid_result")
+    _check_edit_values(comment, tags)
+    p = path_for(state_dir, post_id)
+    with open(p, encoding="utf-8") as f:
+        data = json.load(f)
+    if (not isinstance(data, dict) or data.get("kind") != "bookmark_add" or data.get("result") != "confirmed"
+            or data.get("retracted_at") or pending_bookmark_edit(data) is not None):
+        raise ValueError("bookmark_not_editable")
+    attempt = {"op": "edit", "edited_at": edited_at, "by": by, "via": via,
+               "previous_comment": data.get("text") or "", "previous_tags": list(data.get("tags") or []),
+               "comment": comment, "tags": sorted(tags), "approved_fingerprint": approved_fingerprint,
+               "result": result}
+    if remote is not None:
+        if type(remote) is not dict or set(remote) - set(_REMOTE_KEYS):
+            raise ValueError("invalid_remote")
+        attempt["remote"] = {k: remote[k] for k in _REMOTE_KEYS if k in remote}
+    data["attempts"] = list(data.get("attempts") or []) + [attempt]
+    if result == "confirmed":
+        data["text"] = comment
+        data["tags"] = sorted(tags)
+        data["body_hash"] = approval.compute_body_hash(comment)
+        data["edited_at"] = edited_at
+    _save(p, data)
+    return p
+
+
+def resolve_bookmark_edit(state_dir: str, post_id: str, *, result: str, at: str) -> str:
+    """結果不明の直しを照合で決める（`confirmed` なら行の中身も直す・`not_applied` は前のまま）。"""
+    from . import approval
+    if result not in ("confirmed", "not_applied"):
+        raise ValueError("invalid_result")
+    p = path_for(state_dir, post_id)
+    with open(p, encoding="utf-8") as f:
+        data = json.load(f)
+    index = pending_bookmark_edit(data) if isinstance(data, dict) else None
+    if index is None:
+        raise ValueError("result_fixed")
+    attempt = data["attempts"][index]
+    attempt["result"] = result
+    attempt["reconciled_at"] = at
+    if result == "confirmed":
+        data["text"] = attempt["comment"]
+        data["tags"] = list(attempt["tags"])
+        data["body_hash"] = approval.compute_body_hash(attempt["comment"])
+        data["edited_at"] = attempt["edited_at"]
+    _save(p, data)
+    return p
+
+
 def retracted_records(state_dir: str) -> list:
     """`sent/` のうち取り下げ済み（`retracted_at` あり）の記録。"""
     return [row for row in records(state_dir) if row.get("retracted_at")]

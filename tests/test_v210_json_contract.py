@@ -81,6 +81,8 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      'article reactions',
      # 上限と連投の柵 段 0: 媒体の特性の台帳（読むだけ・版つき）。
      'media traits', 'media check']
+# 4.2（S4 §21）: ブックマークの直し（2 段）。表の行は足すだけ（上の行は変えない）。
+COMMANDS += ['bookmark edit']
 
 
 def test_json_table_covers_every_parser():
