@@ -4245,6 +4245,10 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth deliveries`（4.0 S1 §3.4・配信の台帳を読むだけ）。口は `thth/deliveries_cli.py` に閉じる。
     from . import deliveries_cli
     deliveries_cli.register(sub)
+    # `thth article diff`・`thth conflict`（4.0 S5 §3.3・§5.2）。口は article_cli・conflict_cli に閉じる。
+    from . import article_cli, conflict_cli
+    article_cli.register(sub)
+    conflict_cli.register(sub)
     # `thth bookmark add|delete|reconcile|list`（4.0 S1 §7.3・S4: はてなブックマークの 2 段の承認と送信）。
     from . import bookmark_cli
     bookmark_cli.register(sub)

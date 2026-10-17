@@ -72,7 +72,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 4.0 S4 §8・§7・§11: 消す（2 段）・結果不明の照合（CLI だけ）・一覧（読むだけ）。
      'bookmark delete', 'bookmark reconcile', 'bookmark list',
      # 4.0 S3 §12.4: 主体のフォトライフの画像の台帳（読むだけ）。
-     'fotolife']
+     'fotolife',
+     # 4.0 S5 §3.3・§5.2: 記事の修正の検出（読むだけ）と衝突を見る・確かめる・解く（2 段）。
+     'article diff', 'conflict']
 
 
 def test_json_table_covers_every_parser():

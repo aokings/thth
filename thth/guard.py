@@ -19,7 +19,8 @@
 - `daily_limit`  : その日の公開が `daily_max_posts` に達した（翌日 0 時を添える）
 - `retract_limit`: その日の削除が `daily_max_retracts` に達した（翌日 0 時を添える）
 - `account_stopped`（詳細 `burst`）: 直近 `burst.minutes` 分の公開と削除の合計が
-  `burst.count` を超える依頼だった → 口座を止めて断る
+  `burst.count` を超える依頼だった → 口座を止めて断る。**同じ配信（はてな）への操作は窓の中で 1 件**
+  （4.0 S5 §6・公開 → 直して更新 → 消す、で止まらない。別の記事の連投は今までどおり。日の数えは操作 1 回を 1 件）
 - `burst_limit`（詳細 `burst`）: 口座を**止めずに**この 1 件だけ断る。**返信**が burst を超えたとき
   （3.25.0・`next_at` は窓が空く時刻・呼び手は queue の順番待ちに並べる）と、止めの印を置けない
   置き場の運営者の CLI（10/15）
@@ -169,7 +170,12 @@ def resume(account, *, by, via="cli") -> bool:
 # --------------------------------------------------------------------------
 
 def _classified(account):
-    """`sent/` の記録を (種類, 時刻, blog_id) の list に。種類は `post`・`retract`・`bookmark`。
+    """`sent/` の記録を (種類, 時刻, blog_id, 鍵) の list に。種類は `post`・`retract`・`bookmark`。
+
+    鍵（4.0 S5 §6.2）は burst の窓で「1 件」と数える単位: はてなの `entry_*` の行は `("delivery", 配信 id)`
+    （`delivery` の無い古い行は `("post", post_id)`・`("retract", post_id)`）、SNS の行は
+    `("post", post_id)` と `("retract", post_id)`（公開と削除は別の件・今と同じ数）、ブックマークは
+    試みごとに別の鍵（S4 の数え方のまま）。日の数えは鍵を見ない（操作 1 回を 1 件）。
 
     `kind` の無い行（SNS）は今までどおり `sent_at` を公開・`retracted_at` を削除に数える。
     はてなの行（設計 4.0 S1 §4.2）: `entry_create`／`entry_update` は公開（足された
@@ -180,6 +186,7 @@ def _classified(account):
     for row in sent_mod.records(accounts.state_dir_for(account)):
         kind = row.get("kind")
         blog = row.get("blog_id")
+        post_id = row.get("post_id")
         sent_at = jst.parse(row.get("sent_at"))
         retracted_at = jst.parse(row.get("retracted_at"))
         if kind in ("bookmark_add", "bookmark_delete"):
@@ -188,17 +195,29 @@ def _classified(account):
             first, second = "retract", "retract"
         else:
             first, second = "post", "retract"
+        delivery = row.get("delivery") if isinstance(kind, str) and kind.startswith("entry_") else None
+        if isinstance(delivery, str) and delivery:
+            key_first = key_second = ("delivery", delivery)
+        elif first == "bookmark":
+            key_first, key_second = ("bm", post_id, "sent"), ("bm", post_id, "retracted")
+        else:
+            key_first, key_second = (first, post_id), (second, post_id)
         if sent_at is not None:
-            out.append((first, sent_at, blog))
+            out.append((first, sent_at, blog, key_first))
         if retracted_at is not None:
-            out.append((second, retracted_at, blog))
+            out.append((second, retracted_at, blog, key_second))
         if first == "bookmark":
             # 4.0 S4 §7: `not_found` のあと打ち直した行は、前の試みを `attempts[]` に持つ（数え続ける）。
-            for attempt in row.get("attempts") or []:
+            for index, attempt in enumerate(row.get("attempts") or []):
                 at = jst.parse(attempt.get("sent_at")) if isinstance(attempt, dict) else None
                 if at is not None:
-                    out.append(("bookmark", at, blog))
+                    out.append(("bookmark", at, blog, ("bm", post_id, "attempt", index)))
     return out
+
+
+def _recent_keys(rows, window, now) -> set:
+    """窓 `(window, now]` の中の鍵の集合（burst の数 = この集合の大きさ・4.0 S5 §6.2）。"""
+    return {key for _what, at, _blog, key in rows if window < at <= now}
 
 
 def _events(account):
@@ -207,7 +226,7 @@ def _events(account):
     ブックマーク（はてな）は公開の枠に入れない（`_classified`）。SNS の口座の数は変わらない。
     """
     posts, retracts = [], []
-    for what, at, _blog in _classified(account):
+    for what, at, _blog, _key in _classified(account):
         if what == "post":
             posts.append(at)
         elif what == "retract":
@@ -231,13 +250,18 @@ def summary(account, cfg, *, now=None) -> dict:
     """数えた結果（読むだけ・`/activity` や答えに添える用）。"""
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     limits = accounts.guard_limits(cfg)
-    posts, retracts = _events(account)
+    rows = [row for row in _classified(account) if row[0] in ("post", "retract")]
+    posts = [at for what, at, _b, _k in rows if what == "post"]
+    retracts = [at for what, at, _b, _k in rows if what == "retract"]
     today = now.date()
     window = now - datetime.timedelta(minutes=limits["burst"]["minutes"])
+    keys = _recent_keys(rows, window, now)
     return {
         "posts_today": sum(1 for at in posts if at.date() == today),
         "retracts_today": sum(1 for at in retracts if at.date() == today),
-        "recent": sum(1 for at in posts + retracts if window < at <= now),
+        # 4.0 S5 §6: 窓の中の鍵の数（SNS は今と同じ・はてなは同じ配信を 1 件）。
+        "recent": len(keys),
+        "recent_keys": keys,
         "last_post_at": max(posts) if posts else None,
         "limits": limits,
         "posts": posts,
@@ -292,8 +316,11 @@ def burst_slot(account, cfg, *, now=None, pending=()) -> datetime.datetime:
 def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None,
           publish_at=None, scheduled_same_day=0, reply=False, cli=False,
           principal_scheduled_same_day=None, bookmark_url=None, pending_replies=None,
-          bookmark_target=None, bookmark_once=True) -> None:
+          bookmark_target=None, bookmark_once=True, delivery=None) -> None:
     """依頼が安全装置に掛かれば `GuardRefused` を上げる。掛からなければ何もしない。
+
+    `delivery`（はてなの配信 id・4.0 S5 §6）: 同じ配信への操作が窓の中に既にあれば、この依頼は burst の
+    数を増やさない（同じ配信は窓の中で 1 件）。
 
     `kind`: `publish`（今すぐ出す）・`retract`（消す）・`schedule`（queue に「出してよい」と
     刻む。`publish_at` の日の公開数に、その日にすでに刻んだ件数 `scheduled_same_day` を足して見る）。
@@ -328,7 +355,7 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
                              scheduled_same_day=scheduled_same_day,
                              principal_scheduled_same_day=principal_scheduled_same_day,
                              bookmark_url=bookmark_url, cli=cli, bookmark_target=bookmark_target,
-                             bookmark_once=bookmark_once)
+                             bookmark_once=bookmark_once, delivery=delivery)
     if kind in HATENA_KINDS:
         raise ValueError("invalid_guard_kind")
     # `cli`（運営者の CLI・10/15）: 止めの印を置けない置き場なら、印は読まず・置かず、数だけ守らせる。
@@ -392,10 +419,12 @@ def principal_summary(principal_name, principal_cfg, *, now=None) -> dict:
     from . import principals
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     out = {"posts": [], "retracts": [], "bookmarks": []}
+    rows = []
     for name, raw in principals.accounts_of(principal_name):
         default_blog = str(raw.get("blog_id") or "").strip().lower()
-        for what, at, blog in _classified(name):
+        for what, at, blog, key in _classified(name):
             out[what + "s"].append((at, blog or default_blog))
+            rows.append((what, at, blog, (name,) + key if key[0] != "delivery" else key))
     limits = principals.limits(principal_cfg)
     today = now.date()
     window = now - datetime.timedelta(minutes=limits["burst"]["minutes"])
@@ -404,8 +433,9 @@ def principal_summary(principal_name, principal_cfg, *, now=None) -> dict:
         "posts_today": sum(1 for at, _ in out["posts"] if at.date() == today),
         "retracts_today": sum(1 for at, _ in out["retracts"] if at.date() == today),
         "bookmarks_today": sum(1 for at, _ in out["bookmarks"] if at.date() == today),
-        # burst は entry（公開・削除）とブックマークの合計（§4.2）
-        "recent": sum(1 for at, _ in out["posts"] + out["retracts"] + out["bookmarks"] if window < at <= now),
+        # burst は entry（公開・削除）とブックマークの合計（§4.2）。同じ配信は 1 件（4.0 S5 §6）。
+        "recent": len(_recent_keys(rows, window, now)),
+        "recent_keys": _recent_keys(rows, window, now),
     })
     return out
 
@@ -476,7 +506,7 @@ def bookmark_counts(principal_name, *, url=None, now=None) -> dict:
 
 def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at,
                   scheduled_same_day, principal_scheduled_same_day, bookmark_url, cli,
-                  bookmark_target=None, bookmark_once=True) -> None:
+                  bookmark_target=None, bookmark_once=True, delivery=None) -> None:
     """はてなの口座の安全装置。止め: 主体 → 口座 → 媒体の断り。数え: 口座 → ブログ → 主体。
 
     **主体の台帳はここで読み直す**（ロックの中で呼ばれる——承認のあとに主体の台帳から
@@ -566,13 +596,17 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
                 raise GuardRefused("self_bookmark_limit", next_at=midnight)
             if marks["same_host_today"] >= plimits["bookmark_same_host_daily"]:
                 raise GuardRefused("bookmark_host_limit", next_at=midnight)
-    # 急な連投。口座（entry だけ・今までの数え方）→ 主体（entry とブックマークの合計）。
-    if kind.startswith("entry_") and counts["recent"] + 1 > limits["burst"]["count"]:
+    # 急な連投。口座（entry だけ）→ 主体（entry とブックマークの合計）。同じ配信への操作が窓の中に
+    # 既にあれば、この依頼は数を増やさない（4.0 S5 §6・同じ配信は窓の中で 1 件）。
+    key = ("delivery", delivery) if kind.startswith("entry_") and isinstance(delivery, str) and delivery else None
+    adds = 0 if key is not None and key in counts["recent_keys"] else 1
+    padds = 0 if key is not None and key in whole["recent_keys"] else 1
+    if kind.startswith("entry_") and counts["recent"] + adds > limits["burst"]["count"]:
         if not can_stop:
             raise GuardRefused("burst_limit", reason="burst")
         stop(account, "burst", now=now, actor=actor, via=via, credential=credential)
         raise GuardRefused("account_stopped", reason="burst")
-    if whole["recent"] + 1 > plimits["burst"]["count"]:
+    if whole["recent"] + padds > plimits["burst"]["count"]:
         if not can_stop:
             raise GuardRefused("burst_limit", reason="burst")
         principals.stop(name, "burst", now=now, actor=actor, via=via, credential=credential)

@@ -85,7 +85,9 @@ _REASON_TABLE = (
         # 実機の確かめ 10/17 の 2: 配信の台帳の状態をそのまま言う（delivery_unknown に丸めない）。
         "delivery_state_wanted", "delivery_state_inflight", "delivery_state_unknown",
         "delivery_state_published", "delivery_state_conflict", "delivery_state_no_follow",
-        "delivery_state_deleted")),
+        "delivery_state_deleted",
+        # 4.0 S5 §4.4: 本文・題・カテゴリ・画像のどれも変わっていない更新。
+        "update_no_change")),
 )
 
 REASONS = frozenset([code for _, code in _REASON_TABLE] + [FALLBACK_REASON])

@@ -59,7 +59,9 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    # 招待の完了で記録置き場を作れなかった（3.14.3 穴 1）。理由の符丁だけ。
                    'managed_repo_init_failed',
                    # 4.0 S4 §7: 結果不明のブックマークを人が照合した（件数と結果の語だけ）。
-                   'bookmark_reconciled'))
+                   'bookmark_reconciled',
+                   # 4.0 S5 §5.3: 人が配信の衝突を解いた（配信 id と解き方の語だけ・本文は入れない）。
+                   'delivery_resolved'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 

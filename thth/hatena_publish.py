@@ -47,7 +47,8 @@ from . import jst
 ADAPTER_FACTORY = None
 
 KINDS = {"create": "entry_create", "update": "entry_update", "delete": "entry_delete"}
-# 送る前の状態（失敗・人の「出ていない」で戻す先）。
+# 送る前の状態の既定（4.0 S5 §5.4 から、戻し先は `deliveries.state_before_inflight`＝台帳の inflight の前の
+# 状態。この表は読み手の互換のために残す・戻し先には使わない）。
 BEFORE = {"create": "wanted", "update": "published", "delete": "published"}
 # 時刻が来れば解ける断り（timer の失敗にしない）。
 WAITING_REFUSALS = frozenset(("too_soon", "quiet_hours", "daily_limit", "retract_limit",
@@ -70,6 +71,9 @@ class EntryResult:
     error: str | None = None
     # 応答の `content` の `type`（S2 §5 の 3）。分からなければ None（確かめない）。
     content_type: str | None = None
+    # 4.0 S5 §5.6: 応答の題とカテゴリ（はてなが返した形）。分からなければ None（比べない）。
+    readback_title: str | None = None
+    readback_categories: list | None = None
 
 
 class Unsupported(Exception):
@@ -97,6 +101,47 @@ class EntryRefused(Exception):
 MARKDOWN_TYPE = "text/x-markdown"
 # 外で消された記事への PUT／DELETE の 404（adapter の符丁）。
 ENTRY_MISSING = "hatena_entry_missing"
+
+
+def read_remote(adapter, entry_id, edit_uri) -> dict:
+    """はてなの今の記事（`read_entry` の欄）。adapter に `read_entry` が無ければ本文だけ（`get_entry`）。
+
+    題・カテゴリが取れなかったときは鍵を置かない（比べない）。例外は `get_entry` と同じ。
+    """
+    read = getattr(adapter, "read_entry", None)
+    if read is None:
+        return {"content": adapter.get_entry(entry_id=entry_id, edit_uri=edit_uri)}
+    fields = read(entry_id=entry_id, edit_uri=edit_uri)
+    if not isinstance(fields, dict):
+        raise RuntimeError("readback_invalid")
+    out = {"content": fields.get("content") or ""}
+    for key in ("title", "categories", "edit_uri", "published_url", "content_type", "entry_id", "edited",
+                "published"):
+        if fields.get(key) is not None:
+            out[key] = fields[key]
+    return out
+
+
+def remote_differences(ledger, remote, *, base_sha) -> list:
+    """台帳（と変更前の版）とはてなの今の記事の違い（4.0 S5 §5.6）。`["body", "title", "categories"]` の部分。
+
+    本文は `base_sha`（承認した変更前の版・台帳の `readback_sha`）と比べる。題とカテゴリは台帳に
+    記録があり、はてなの答えにもあるときだけ比べる（正規化は指紋と同じ・カテゴリは集合）。比べ先は
+    はてなが前に返した形（`readback_title`・`readback_categories`）、無ければ出した値（`title`・`categories`）。
+    """
+    out = []
+    if approval_mod.hatena_body_sha256(remote.get("content") or "") != (base_sha or ""):
+        out.append("body")
+    title = ledger.get("readback_title") if isinstance(ledger.get("readback_title"), str) else ledger.get("title")
+    if isinstance(title, str) and isinstance(remote.get("title"), str):
+        if hatena_entry.norm_title(title) != hatena_entry.norm_title(remote["title"]):
+            out.append("title")
+    cats = (ledger.get("readback_categories") if isinstance(ledger.get("readback_categories"), list)
+            else ledger.get("categories"))
+    if isinstance(cats, list) and isinstance(remote.get("categories"), list):
+        if hatena_entry.norm_categories(cats) != hatena_entry.norm_categories(remote["categories"]):
+            out.append("categories")
+    return out
 
 
 def _default_factory():
@@ -269,7 +314,8 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
     # 2. 安全装置（主体 → 口座 → 媒体の断りの止め・口座／ブログ／主体の数）
     kind = KINDS[op]
     try:
-        guard.check(account_name, account_cfg, kind, now=now)
+        # 4.0 S5 §6: burst は同じ配信への操作を窓の中で 1 件と数える（配信 id を渡す）。
+        guard.check(account_name, account_cfg, kind, now=now, delivery=delivery)
     except guard.GuardRefused as exc:
         code = str(exc)
         log(core.guard_refusal_message(account_name, exc, kind=kind))
@@ -280,11 +326,12 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
     loaded = deliveries_mod.load(account_name, delivery)
     ledger = loaded.record
 
-    # 3. update は今の本文を読み戻して、承認した「変更前の版」と比べる（上書きしない）
+    # 3. update は今の本文を読み戻して、承認した「変更前の版」と比べる（上書きしない）。
+    #    4.0 S5 §5.6: 題とカテゴリも台帳の記録と比べる（台帳に無ければ比べない）。指紋は本文だけのまま。
     if op == "update":
         try:
-            current = adapter.get_entry(entry_id=m["entry_id"], edit_uri=ledger.get("edit_uri"))
-            current_sha = approval_mod.hatena_body_sha256(current)
+            remote = read_remote(adapter, m["entry_id"], ledger.get("edit_uri"))
+            current_sha = approval_mod.hatena_body_sha256(remote["content"])
         except EntryMissing:
             # 外で消された記事（404）。PUT を打たず、人が見るまで止める（S2 §3.5・§15 の 5）。
             deliveries_mod.advance(account_name, delivery, state="conflict", at=jst.iso(), base=loaded,
@@ -304,12 +351,15 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
             run("post", "error", "readback_failed")
             return _result(core, exit_code=1, mode=mode, action="readback_failed",
                            message="readback_failed", file=path, error="readback_failed")
-        if current_sha != m["base_readback_sha"]:
+        detail = remote_differences(ledger, remote, base_sha=m["base_readback_sha"])
+        if detail:
             deliveries_mod.advance(account_name, delivery, state="conflict", at=jst.iso(), base=loaded,
                                    fields={"checked_at": jst.iso()},
                                    row={"op": op, "reason": "readback_changed", "approved_sha": sha,
-                                        "readback_sha": current_sha})
-            log("はてなブログの側で本文が変わっています（承認した変更前の版と違う）。上書きしません")
+                                        "readback_sha": current_sha, "detail": detail})
+            what = "・".join(hatena_entry.DETAIL_LABELS.get(d, d) for d in detail)
+            log(f"はてなブログの側で{what}が変わっています（承認した変更前の版と違う）。上書きしません。"
+                f"thth conflict {account_name} {delivery} show で見て、resolve で解いてください")
             run("post", "error", "delivery_conflict")
             return _result(core, exit_code=1, mode=mode, action="conflict",
                            message="readback_changed", file=path, error="delivery_conflict")
@@ -413,8 +463,10 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
             return _result(core, exit_code=1, mode=mode, action="conflict", message="entry_missing",
                            file=path, error="delivery_conflict")
         # 確かに出ていない（媒体が断った）: 元の状態に戻して inflight を消す。
-        deliveries_mod.advance(account_name, delivery, state=BEFORE[op], at=at, seq=outcome_seq,
-                               row={"op": op, "error": result.error or "refused"})
+        # 4.0 S5 §5.4: 戻し先は台帳の inflight の前の状態（conflict からの削除が断られても published に化けない）。
+        deliveries_mod.advance(account_name, delivery, state=deliveries_mod.state_before_inflight(ledger), at=at,
+                               seq=outcome_seq,
+                               row={"op": op, "error": result.error or "refused", "restored": True})
         inflight_mod.clear(state_dir)
         log(f"はてなブログが断りました: {result.error}")
         if result.error == "hatena_auth_rejected":
@@ -426,6 +478,21 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
 
     return _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq,
                            log=log, run=run, mode=mode, path=path)
+
+
+def announcement_note(account_cfg, delivery) -> str | None:
+    """記事を更新しても SNS の告知は書き換えない（4.0 S5 §7）。告知があれば案内の 1 行。読むだけ。"""
+    from . import deliveries_cli
+    try:
+        rows, _broken = deliveries_cli.announcements(account_cfg.get("project"), {delivery})
+    except Exception:  # noqa: BLE001 — 案内の 1 行。読めなくても更新の記録は止めない
+        return None
+    rows = [r for r in rows if not r.get("retracted_at")]
+    if not rows:
+        return None
+    told = "・".join(f"{r['account']} {hatena_entry.short_at(r.get('sent_at'))}（{r['post_id']}）" for r in rows)
+    return (f"この記事の告知 {len(rows)} 件（{told}）は書き換えません。訂正や追記を出すなら、"
+            "その投稿への返信の原稿（reply_to）を書いてください")
 
 
 def _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq, *, log, run, mode, path,
@@ -471,8 +538,19 @@ def _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq
             fields["published_url"] = url
         if result.readback_body is not None:
             fields["readback_sha"] = approval_mod.hatena_body_sha256(result.readback_body)
+        if op != "delete":
+            # 4.0 S5 §5.6: はてなが返した題とカテゴリ（外での手直しの比べ先・本文の readback_sha と同じ考え）。
+            fields["readback_title"] = result.readback_title if isinstance(result.readback_title, str) else None
+            fields["readback_categories"] = (list(result.readback_categories)
+                                             if isinstance(result.readback_categories, list) else None)
         if op != "delete" and m.get("images"):
             fields["images"] = _images_fields(m)   # S3 §4.2: 上がった画像の記録（写し）
+        elif op == "update":
+            fields["images"] = []                  # S5: 画像を外した更新（前の記録を残さない）
+        if op != "delete":
+            # 4.0 S5 §4.2: 何を出したか（題・カテゴリ）。次の更新の 1 段目と読み戻しの比べ先。
+            fields["title"] = m["title"]
+            fields["categories"] = list(m.get("categories") or [])
         row = {"op": op, "entry_id": entry_id, "published_url": url, "checked_rev": m.get("article_rev"),
                "approved_sha": sha, "reason": reason, "content_type": result.content_type if wrong_syntax else None,
                "readback_differs": True if differs else None,
@@ -486,6 +564,10 @@ def _record_outcome(account_name, account_cfg, state_dir, m, result, outcome_seq
             "止めます。はてなの画面で確かめてください（出し直さない・消さない）")
     if differs:
         log("はてなが返した本文が送った本文と違います（読み戻し差あり・readback_differs）")
+    if op == "update" and not written:
+        line = announcement_note(account_cfg, delivery)
+        if line:
+            log(line)
     fm_fields = {"status": "posted", "post_id": entry_id, "posted_at": at}
     if url:
         fm_fields["url"] = url
@@ -552,7 +634,8 @@ def _readback_for_resolve(account_name, account_cfg, m, entry_id, base, adapter_
         return base, False
     return EntryResult(ok=True, entry_id=entry_id, edit_uri=fields["edit_uri"],
                        published_url=fields.get("published_url") or base.published_url,
-                       readback_body=fields.get("content"), content_type=fields.get("content_type")), True
+                       readback_body=fields.get("content"), content_type=fields.get("content_type"),
+                       readback_title=fields.get("title"), readback_categories=fields.get("categories")), True
 
 
 # 人が「出ていた」で解いたのに、主体の画像の台帳から画像の配置を組み立て直せなかったときの 1 行（S3 §7.3）。
@@ -624,9 +707,10 @@ def resolve(account_name, account_cfg, state_dir, record, decision, post_id, *, 
             pass  # inflight の行を書く前に止まった＝送っていない。台帳は書かない
         elif ledger["seq"] + 1 == seq and ledger["state"] in ("inflight", "unknown"):
             op = _op_of(ledger)
-            deliveries_mod.advance(account_name, delivery, state=BEFORE[op], at=at, base=loaded, seq=seq,
+            deliveries_mod.advance(account_name, delivery, state=deliveries_mod.state_before_inflight(ledger), at=at,
+                                   base=loaded, seq=seq,
                                    row={"op": op, "resolution": inflight_cli.HUMAN_NOT_PUBLISHED,
-                                        "resolved_by": by})
+                                        "resolved_by": by, "restored": True})
         else:
             raise ResolveRefused("seq_mismatch")
         inflight_mod.archive(state_dir, record, resolved_at=at, resolved_by=by,
@@ -651,7 +735,7 @@ def resolve(account_name, account_cfg, state_dir, record, decision, post_id, *, 
         raise ResolveRefused("text_mismatch_before_writeback")
     import copy
     before = copy.deepcopy(ledger)
-    before["state"] = BEFORE.get(hatena_entry.op_of(fm), "wanted")
+    before["state"] = deliveries_mod.state_before_inflight(ledger)
     try:
         m = hatena_entry.material(fm, account_cfg, account_name, ledger=before)
     except hatena_entry.EntryError:
@@ -677,3 +761,85 @@ def resolve(account_name, account_cfg, state_dir, record, decision, post_id, *, 
     inflight_mod.archive(state_dir, record, resolved_at=at, resolved_by=by,
                          resolution=inflight_cli.HUMAN_PUBLISHED, post_id=post_id)
     return inflight_cli.HUMAN_PUBLISHED
+
+
+# --------------------------------------------------------------------------
+# 結果不明の照合の候補（4.0 S5 §8.3）。**見せるだけ・自動では解かない**（台帳も inflight も書かない）。
+# --------------------------------------------------------------------------
+
+CANDIDATE_BEFORE_MINUTES = 2     # inflight の始まりの何分前から
+CANDIDATE_AFTER_MINUTES = 30     # 何分後まで
+
+
+def candidates(account_name, account_cfg, record, *, adapter_factory=None) -> dict:
+    """はてなの inflight（`delivery` あり）に合う記事の候補。GET 1 回（create は一覧・update／delete は記事）。
+
+    戻り値: `{"checked", "error", "op", "candidates": [{entry_id, title, published, edited, body_same}],
+    "gone"}`。`body_same` は送った本文（組み立て直し・HTTP を打たない）と同じか（組めなければ None）。
+    """
+    import copy
+    import datetime
+    from . import principals, queuefile
+    out = {"checked": False, "error": None, "op": None, "candidates": [], "gone": None}
+    try:
+        ledger = deliveries_mod.read(account_name, record.get("delivery"))
+        op = _op_of(ledger)
+    except (deliveries_mod.DeliveryError, ResolveRefused):
+        out["error"] = "delivery_unreadable"
+        return out
+    out["op"] = op
+    try:
+        qf = queuefile.parse(record.get("file"))
+        before = copy.deepcopy(ledger)
+        before["state"] = deliveries_mod.state_before_inflight(ledger)
+        m = hatena_entry.material(qf.front_matter, account_cfg, account_name, ledger=before)
+    except (OSError, TypeError, ValueError, hatena_entry.EntryError):
+        out["error"] = "manuscript_unreadable"
+        return out
+    _rebuild_body_sent(m, account_cfg, None)
+    sent_sha = approval_mod.hatena_body_sha256(m["body_sent"]) if isinstance(m.get("body_sent"), str) else None
+
+    def same(content):
+        if sent_sha is None or not isinstance(content, str):
+            return None
+        return approval_mod.hatena_body_sha256(content) == sent_sha
+
+    try:
+        principal_cfg = principals.check_account(account_cfg, account_name)
+        adapter = make_adapter(account_cfg, principal_cfg, adapter_factory)
+    except Exception as exc:  # noqa: BLE001 — 照合できなければ今の表示に倒す
+        out["error"] = getattr(exc, "code", None) or "adapter_unavailable"
+        return out
+    try:
+        if op == "create":
+            started = jst.parse(record.get("started"))
+            feed = adapter._list()
+            lo = started - datetime.timedelta(minutes=CANDIDATE_BEFORE_MINUTES) if started else None
+            hi = started + datetime.timedelta(minutes=CANDIDATE_AFTER_MINUTES) if started else None
+            for entry in (feed or {}).get("entries") or []:
+                if hatena_entry.norm_title(entry.get("title")) != hatena_entry.norm_title(m["title"]):
+                    continue
+                at = jst.parse(entry.get("published"))
+                if lo is None or at is None or not lo <= at <= hi:
+                    continue
+                out["candidates"].append({"entry_id": entry.get("entry_id"), "title": entry.get("title"),
+                                          "published": entry.get("published"), "edited": entry.get("edited"),
+                                          "body_same": same(entry.get("content"))})
+        else:
+            try:
+                fields = read_remote(adapter, m["entry_id"], ledger.get("edit_uri"))
+            except EntryMissing:
+                out["gone"] = True
+            else:
+                out["gone"] = False
+                if op == "update":
+                    out["candidates"].append({"entry_id": m["entry_id"], "title": fields.get("title"),
+                                              "published": fields.get("published"),
+                                              "edited": fields.get("edited"), "body_same": same(fields.get("content"))})
+    except Exception as exc:  # noqa: BLE001 — GET が失敗したら照合できない（今の表示に倒す）
+        text = str(exc)
+        out["error"] = text if text.startswith(("hatena_", "endpoint_")) else "readback_failed"
+        out["candidates"] = []
+        return out
+    out["checked"] = True
+    return out

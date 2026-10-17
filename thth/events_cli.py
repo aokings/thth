@@ -44,6 +44,11 @@
   `delivery`・無ければ原稿名）、`reason` は断りの符丁（`approval_stale`・`delivery_state_conflict` など）。
   `event_id` は `"ev_" + sha256("thth.held/1|<口座>|<delivery>|<reason>|<approved_sha>")[:24]`——同じ
   止まり方のあいだは同じ id、再承認して指紋が変われば別の id。
+- `delivery_behind`（4.0 S5 §3.4）: 正本（repo の HEAD の記事）を直したのに、まだ更新していない配信
+  （`ongoing: true`）。`ref` は配信 id、id は `"ev_" + sha256("thth.behind/1|<delivery>|<checked_rev>|
+  <current_rev>")[:24]`——同じ組の版のあいだは同じ id、更新して `checked_rev` が進めば消える。
+- `delivery_resolved`（4.0 S5 §5.3）: 人が衝突を解いた（台帳の `op: resolve` の行・状態に関わらず）。
+  id は配信の台帳の出来事と同じ（`thth.delivery/1|<delivery>|<seq>`）。
 
 読み方は 2 つ:
 
@@ -86,7 +91,11 @@ KINDS = ("published", "retracted", "reply_received", "mention_received",
          "delivery_published", "delivery_updated", "delivery_deleted", "delivery_unknown",
          "delivery_conflict", "bookmarked", "bookmark_deleted", "principal_stopped",
          # 4.0 S2 §8: 承認済みなのに出られないはてなの配信原稿（承認が古い・台帳が人待ち・S2 の断り）。
-         "delivery_held")
+         "delivery_held",
+         # 4.0 S5: 正本を直したのに更新していない（続いている状態）・人が衝突を解いた。
+         "delivery_behind", "delivery_resolved")
+# 正本を直した配信の出来事の id の版の語（設計 4.0 S5 §3.4）。
+BEHIND_EVENT_PREFIX = "thth.behind/1"
 # 止まっている配信原稿の出来事の id の版の語（設計 4.0 S2 §8 の 1）。
 HELD_EVENT_PREFIX = "thth.held/1"
 # 配信の台帳の出来事の id の版の語（設計 4.0 S1 §8.1）。
@@ -216,6 +225,15 @@ def _delivery_kind(row):
     # 媒体が断った・人が「出ていない」と解いた更新・削除は、元の状態（`published`）に戻す行を足す
     # （`hatena_publish.BEFORE`）。戻しは出来事ではない——「更新した」「出た」と読ませない（S1 監査 1）。
     state = row.get("state")
+    # 4.0 S5 §5.3: 人が衝突を解いた行は状態に関わらず `delivery_resolved`（published に戻る行を
+    # `delivery_published` と読ませない）。`check` で埋めた行（readback_filled）は出さない。
+    if row.get("op") == "resolve":
+        return "delivery_resolved"
+    if row.get("op") == "check":
+        return "delivery_conflict" if state == "conflict" else None
+    # 4.0 S5 §5.4: 送る前の状態へ戻した行（`restored`）は出来事ではない。
+    if row.get("restored"):
+        return None
     if state == "published" and (row.get("error") or row.get("resolution") == "human_not_published"):
         return None
     if state == "published":
@@ -273,6 +291,36 @@ def _bookmark_events(name):
     return out
 
 
+def behind_event_id(delivery, checked_rev, current_rev) -> str:
+    """正本を直した配信の出来事の id（設計 4.0 S5 §3.4）。時刻は入れない。"""
+    raw = "|".join((BEHIND_EVENT_PREFIX, delivery or "", checked_rev or "", current_rev or ""))
+    return "ev_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def _behind_events(name, cfg):
+    """正本を直したのに更新していない配信（4.0 S5 §3.4・**読むだけ**・媒体は呼ばない）。`(出来事, 言えないか)`。"""
+    from . import deliveries as deliveries_mod, hatena_entry
+    records, _broken = deliveries_mod.list_for(name)   # 読めない台帳は `_delivery_events` が言う
+    out, cannot = [], False
+    for record in records:
+        source = hatena_entry.source_status(record, cfg)
+        if source is None:
+            continue
+        if source.get("error"):
+            cannot = True
+            continue
+        if not source.get("behind"):
+            continue
+        why = "・".join({"body": "本文", "images": "画像"}.get(r, r) for r in source["reasons"])
+        summary = (f"正本を直した（{why}）: {record.get('article')}  出した {source['checked_rev'][:12]}… → "
+                   f"今の版 {source['current_rev'][:12]}…・更新するなら thth article diff {name}")
+        out.append(_event("delivery_behind", name, None, None, record["delivery"], summary,
+                          _id=behind_event_id(record["delivery"], source["checked_rev"], source["current_rev"]),
+                          ongoing=True, article=record.get("article"), checked_rev=source["checked_rev"],
+                          current_rev=source["current_rev"]))
+    return out, cannot
+
+
 def held_event_id(account, delivery, reason, approved_sha) -> str:
     """止まっている配信原稿の出来事の id（設計 4.0 S2 §8 の 1）。時刻は入れない。"""
     raw = "|".join((HELD_EVENT_PREFIX, account, delivery or "", reason or "", approved_sha or ""))
@@ -283,6 +331,9 @@ def _held_summary(reason, file_name, command_path) -> str:
     from . import hatena_entry
     if reason == "approval_stale":
         return f"承認が古い（記事を直した）: {file_name}・再承認は thth approve {command_path}"
+    if reason == "delivery_state_conflict":
+        return (f"配信の台帳が conflict のまま: {file_name}・thth conflict <口座> <dl> で見て解く"
+                "（resolve --adopt・--gone・--no-follow）")
     if isinstance(reason, str) and reason.startswith("delivery_state_"):
         return f"配信の台帳が {reason[len('delivery_state_'):]} のまま: {file_name}・人が確かめる（thth deliveries）"
     if reason in hatena_entry.S2_REFUSALS:
@@ -481,6 +532,13 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
                 events += _held_events(name, cfg, now)
             except Exception:  # noqa: BLE001 — queue が読めなくても他の出所は出す
                 cannot_say.add("queue_unreadable")
+            try:
+                rows, cannot = _behind_events(name, cfg)
+                events += rows
+                if cannot:
+                    cannot_say.add("source_unreadable")
+            except Exception:  # noqa: BLE001 — repo が読めなくても他の出所は出す
+                cannot_say.add("source_unreadable")
         rows, cannot = _state_events(name, cfg)
         events += rows
         cannot_say.update(cannot)
