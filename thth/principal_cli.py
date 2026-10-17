@@ -140,6 +140,19 @@ def cmd_add(args) -> int:
     return 0
 
 
+def _limits_table(name, p, now):
+    from . import limits_view
+    try:
+        return limits_view.principal_table(name, p, now=now)
+    except ValueError:
+        return None   # 媒体の台帳が検査を通らない（thth media check）
+
+
+def _legacy_keys(p) -> list:
+    from . import limits_config
+    return limits_config.legacy_keys("principal", p)
+
+
 def status(name) -> dict:
     """主体の台帳・止め・今日の数・使う口座（読むだけ・秘密は「ある／ない」だけ）。"""
     from . import guard, jst
@@ -158,6 +171,9 @@ def status(name) -> dict:
         "blogs": [{k: v for k, v in row.items()} for row in p["blogs"]],
         "bookmark_lanes": list((p.get("bookmark") or {}).get("lanes") or []),
         "limits": principals.limits(p),
+        # 段 3（設計 上限と連投の柵 §8.3）: 柵の表の行ごとの数・出所・確かさと、明示された今の鍵（別名）。
+        "limits_table": _limits_table(name, p, now),
+        "legacy_keys": _legacy_keys(p),
         "stopped": ({"reason": halted.get("reason"), "stopped_at": halted.get("stopped_at")}
                     if halted is not None else None),
         "accounts": [acct for acct, _cfg in principals.accounts_of(name)],
@@ -191,6 +207,13 @@ def cmd_show(args) -> int:
           "（超えた 1 件だけ断る・主体は止めない）")
     print(f"  ブックマークの枠: 自分の記事 1 日 {lim['daily_max_self_bookmarks']}・同じホスト 1 日 "
           f"{lim['bookmark_same_host_daily']}")
+    from . import limits_view
+    if row.get("limits_table") is None:
+        print("  上限と連投の柵: 媒体の台帳が検査を通らないので表を出せません（thth media check）")
+    else:
+        for line in limits_view.lines(row["limits_table"], legacy=row.get("legacy_keys") or (),
+                                      set_hint=f"thth principal set {row['principal']} <行の id> <値> --by <名前>"):
+            print(line)
     print(f"  口座: {'・'.join(row['accounts']) or 'なし'}")
     t = row["today"]
     print(f"  今日（{t['date']}）: 公開 {t['posts']} 件・削除 {t['retracts']} 件・ブックマーク {t['bookmarks']} 件")
@@ -311,6 +334,9 @@ def change(name, key, value, *, by) -> dict:
         raw[block] = burst
     else:
         raw[key] = after
+    # 段 3: 今の鍵（別名）で書いたら、その鍵が指す行の `limits` を外す（`limits` が勝つので、残すと変更が効かない）。
+    from . import limits_config
+    limits_config.drop_aliased(raw, "principal", _BURST_PARTS[key][0] if key in _BURST_PARTS else key)
     secrets_fs.atomic_write_json(path, raw)
     try:
         principals.load_principal(name)
@@ -322,19 +348,44 @@ def change(name, key, value, *, by) -> dict:
     return {"principal": name, "key": key, "before": before, "after": after, "changed": True}
 
 
+def _set_rule(args, rest) -> int:
+    """新しい名前（柵の表の行の id・段 3）: `thth principal set <主体> <行の id> <値…>|-`。"""
+    from . import account_settings, limits_config
+    json_output = getattr(args, "json", False)
+    try:
+        row = limits_config.change("principal", args.name, rest[0], rest[1:], by=args.by, via="cli",
+                                   reason=getattr(args, "reason", None))
+    except limits_config.LimitsError as exc:
+        return _fail(limits_config.message(exc.code, exc.key, "principal"), json_output=json_output)
+    except principals.PrincipalError as e:
+        return _fail(f"{e.code}: {e}", json_output=json_output)
+    except (OSError, ValueError, admin_log.AdminLogError):
+        return _fail("settings_unavailable", json_output=json_output)
+    if json_output:
+        print(json.dumps(row, ensure_ascii=False))
+        return 0
+    account_settings.show_rule_change(row, "principal")
+    return 0
+
+
 def cmd_set(args) -> int:
-    from . import account_settings
+    from . import account_settings, limits_config
     try:
         admin_log.actor(getattr(args, "by", None))
     except ValueError as exc:
         return _fail(str(exc))
+    rest = list(args.rest or [])
+    if rest and rest[0] not in FOTOLIFE_KEYS and rest[0] != LANES_KEY and (
+            limits_config.holder_of(rest[0]) is not None or "." in rest[0]):
+        return _set_rule(args, rest)
     try:
         results = [change(args.name, key, value, by=args.by) for key, value in _pairs(list(args.rest or []))]
     except principals.PrincipalError as e:
         return _fail(f"{e.code}: {e}", json_output=getattr(args, "json", False))
     except (ValueError, account_settings.SettingsError):
         return _fail(f"invalid_setting: 名前は {'・'.join(KEYS + FOTOLIFE_KEYS + (LANES_KEY,))}"
-                     "（burst は `burst <件数> <分>` でも・bookmark_burst も同じ形・bookmark.lanes は <lane>[,<lane>…] か -）",
+                     "（burst は `burst <件数> <分>` でも・bookmark_burst も同じ形・bookmark.lanes は <lane>[,<lane>…] か -）"
+                     "・柵の行の id（" + "・".join(limits_config.PRINCIPAL_ROWS) + "）",
                      json_output=getattr(args, "json", False))
     except (OSError, admin_log.AdminLogError):
         return _fail("settings_unavailable", json_output=getattr(args, "json", False))
@@ -658,8 +709,10 @@ def register(sub) -> None:
     p_show.set_defaults(func=cmd_show)
     p_set = verbs.add_parser("set", help="主体の上限・ブックマークを打てるレーンを変える")
     p_set.add_argument("name")
-    p_set.add_argument("rest", nargs="+", help="<名前> <値>（" + "・".join(KEYS + FOTOLIFE_KEYS + (LANES_KEY,)) + "）")
+    p_set.add_argument("rest", nargs="+", help="<名前> <値>（" + "・".join(KEYS + FOTOLIFE_KEYS + (LANES_KEY,))
+                       + "）か <行の id> <値…>|-（段 3・例 bookmark.burst 20 10）")
     p_set.add_argument("--by", required=True)
+    p_set.add_argument("--reason", default=None, help="変えた理由（任意・行の id で書くとき）")
     p_set.add_argument("--json", action="store_true")
     p_set.set_defaults(func=cmd_set)
     p_resume = verbs.add_parser("resume", help="止めた主体を戻す（MCP からはできない）")

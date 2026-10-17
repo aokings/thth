@@ -40,11 +40,12 @@ BLOG_ID_RE = re.compile(r"(?=.{1,253}\Z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
                         r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+")
 SYNTAXES = ("markdown", "hatena", "html")
 # **主体の上限の既定**（設計 §4.2）。はてなに公式の回数の上限は無い——THTH の側の
-# 安全装置で、持ち主が台帳で上げ下げする（`thth principal set`）。
-LIMIT_DEFAULTS = {
-    "daily_max_posts": 6,       # 全ブログの entry_create＋entry_update
-    "daily_max_retracts": 3,    # 全ブログの entry_delete
-    "daily_max_bookmarks": 30,  # bookmark_add＋bookmark_delete（4.0.1: 3 → 30）
+# 安全装置で、持ち主が台帳で上げ下げする（`thth principal set`）。**段 3 から値は柵の表から引く**
+# （`limits_config.TableDefaults`）。`_LIMIT_FALLBACK` は媒体の台帳が検査を通らないときだけの 4.1.0 の数。
+_LIMIT_FALLBACK = {
+    "daily_max_posts": 6,       # 全ブログの entry_create＋entry_update（表 `entry.principal_daily`）
+    "daily_max_retracts": 3,    # 全ブログの entry_delete（表 `entry_delete.principal_daily`）
+    "daily_max_bookmarks": 30,  # bookmark_add＋bookmark_delete（4.0.1: 3 → 30・表 `bookmark.daily`）
     "burst": {"count": 3, "minutes": 30},  # entry（公開・更新・削除）だけ。超えたら主体を止める
     # 4.0.1: ブックマークの連投の窓は記事と分ける。超えても主体は止めず、その 1 件だけ断る。
     "bookmark_burst": {"count": 10, "minutes": 10},
@@ -53,6 +54,18 @@ LIMIT_DEFAULTS = {
     "daily_max_self_bookmarks": 1,
     "bookmark_same_host_daily": 3,
 }
+_LIMIT_ROWS = {"daily_max_posts": "entry.principal_daily", "daily_max_retracts": "entry_delete.principal_daily",
+               "daily_max_bookmarks": "bookmark.daily", "burst": "entry.principal_burst",
+               "bookmark_burst": "bookmark.burst", "daily_max_self_bookmarks": "bookmark.self_daily",
+               "bookmark_same_host_daily": "bookmark.same_host_daily"}
+
+
+def _limit_defaults():
+    from .limits_config import TableDefaults
+    return TableDefaults(_LIMIT_ROWS, {}, _LIMIT_FALLBACK)
+
+
+LIMIT_DEFAULTS = _limit_defaults()
 # ブログごとの上限（任意・無ければ数えない＝口座の上限に任せる）。
 BLOG_LIMIT_KEYS = ("daily_max_posts", "daily_max_retracts")
 STOP_FILE = "stopped.json"
@@ -218,6 +231,15 @@ def validate(name: str, data) -> None:
                                  f"burst は {{\"count\": 1〜, \"minutes\": 1〜1440}}）")
     if "fotolife" in data:
         _check_fotolife(name, data["fotolife"])
+    # 段 3（設計 上限と連投の柵 §8.1）: `limits`（鍵は柵の行の id）。知らない id・口座の行・形の違う値は断る。
+    from . import limits_config
+    try:
+        limits_config.check("principal", data)
+    except limits_config.LimitsError as exc:
+        raise PrincipalError("invalid_guard_limits",
+                             f"{name}: 主体の limits の {exc.key} が受け取れません（鍵は柵の行の id（主体の行は "
+                             f"{'・'.join(limits_config.PRINCIPAL_ROWS)}）・値は日の行が 0 以上の整数・窓の行が "
+                             f"{{\"count\": 1〜, \"minutes\": 1〜1440}}）") from None
     owner = data.get("owner")
     if owner is not None and not (isinstance(owner, str) and accounts.name_is_safe(owner)):
         raise PrincipalError("owner_invalid", f"{name}: owner は英数字と `_`・`.`・`-` の名前です")
@@ -251,12 +273,17 @@ def load_principal(name: str) -> dict:
 
 
 def limits(principal_cfg: dict) -> dict:
-    """主体の上限（台帳に無い項目は既定）。"""
+    """主体の上限（今の鍵の形）。段 3: 台帳の `limits`（行の id）が今の鍵より勝つ。無い項目は既定（柵の表から）。"""
+    from . import limits_config
     out = {}
     for key, default in LIMIT_DEFAULTS.items():
-        value = (principal_cfg or {}).get(key)
-        if value is None or not valid_limit(key, value):
-            value = default
+        given = limits_config.explicit("principal", principal_cfg, _LIMIT_ROWS[key])
+        if given is not None and given[1] == "limits":
+            value = given[0]
+        else:
+            value = (principal_cfg or {}).get(key)
+            if value is None or not valid_limit(key, value):
+                value = default
         out[key] = dict(value) if isinstance(value, dict) else value
     return out
 

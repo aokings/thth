@@ -576,6 +576,8 @@ def register(sub) -> None:
     p.add_argument("rest", nargs="*",
                    help="`set` のとき: <名前> <値>（daily_max_posts N など）")
     p.add_argument("--by", help="作成・変更した人（add / leave / set / resume では必須）")
+    p.add_argument("--reason", default=None,
+                   help="`set write.floor` で最低線を既定より上げるときの理由（必須・変更ログと台帳に残る）")
     p.add_argument("--media", default=None, choices=MEDIA_CHOICES,
                    help="`add` のとき: 媒体")
     p.add_argument("--project", default=None,

@@ -165,6 +165,10 @@ def change(account, key, value, *, by, via="cli", tighten_only=False) -> dict:
         raw["burst"] = burst
     else:
         raw[key] = after
+    # 段 3: 今の鍵（別名）で書いたら、その鍵が指す行の `limits` を外す（`limits` が勝つので、残すと変更が効かない）。
+    from . import limits_config
+    limits_config.drop_aliased(raw, "account", "burst" if key in ("burst_count", "burst_minutes") else key,
+                               cfg.get("media"))
     secrets_fs.atomic_write_json(str(path), raw)
     try:
         accounts.load_account(account)
@@ -271,10 +275,12 @@ def change_handle(account, value, *, by) -> dict:
     return {"account": account, "key": "handle", "before": before, "after": after, "changed": True}
 
 
-def status(account, *, now=None) -> dict:
+def status(account, *, now=None, table=False) -> dict:
     """安全装置の数値・止まっているか・今日の公開数/削除数（読むだけ）。
 
     `ignored` は台帳に残っているが読まない古い項目（3.12.0 の `approval` など）の名前。
+    `table`（手元の CLI だけ・段 3）: 柵の表の行ごとの数・出所・確かさ（`limits_table`）と、台帳に明示された
+    今の鍵（`legacy_keys`・別名・非推奨の 1 行）を足す。MCP・遠くの道の答えは今の形のまま。
     """
     from . import guard, jst
     if not accounts.name_is_safe(account):
@@ -294,7 +300,16 @@ def status(account, *, now=None) -> dict:
     if held is not None:
         hold = {"reason": held.get("reason"), "held_at": held.get("held_at"),
                 "message": publish_hold.message(account, held)}
+    extra = {}
+    if table:
+        from . import limits_config, limits_view
+        try:
+            extra["limits_table"] = limits_view.account_table(account, cfg, now=now)
+        except ValueError:
+            extra["limits_table"] = None   # 媒体の台帳が検査を通らない（thth media check）
+        extra["legacy_keys"] = limits_config.legacy_keys("account", cfg)
     return {
+        **extra,
         "account": account,
         "settings": current(cfg),
         "scheduled": scheduled(cfg),
@@ -328,6 +343,43 @@ def _pairs(rest):
     raise SettingsError("invalid_setting")
 
 
+def _set_rule(args, rest) -> int:
+    """新しい名前（柵の表の行の id・段 3）: `thth account set <口座> <行の id> <値…>|- [--reason <理由>]`。"""
+    from . import limits_config
+    rule_id, words = rest[0], rest[1:]
+    json_output = getattr(args, "json", False)
+    try:
+        row = limits_config.change("account", args.name, rule_id, words, by=args.by, via="cli",
+                                   reason=getattr(args, "reason", None))
+    except limits_config.LimitsError as exc:
+        return _fail(limits_config.message(exc.code, exc.key, "account"), json_output=json_output)
+    except accounts.AccountError:
+        return _fail("ledger_unavailable", json_output=json_output)
+    except (OSError, TypeError, ValueError, admin_log.AdminLogError):
+        return _fail("settings_unavailable", json_output=json_output)
+    if json_output:
+        print(json.dumps(row, ensure_ascii=False))
+        return 0
+    show_rule_change(row, "account")
+    return 0
+
+
+def show_rule_change(row, holder) -> None:
+    """行の id で変えたときの人向けの表示（口座・主体で共有）。"""
+    def shown(value):
+        if isinstance(value, dict):
+            return f"{value['minutes']} 分に {value['count']}"
+        return "既定" if value is None else str(value)
+    name = row[holder]
+    if row["changed"]:
+        print(f"{name}: {row['key']} {shown(row['before'])} → {shown(row['after'])}"
+              f"（{'台帳の limits' if row.get('via') == 'limits' else '明示を外して既定／今の鍵'}）")
+    else:
+        print(f"{name}: {row['key']} は既に {shown(row['after'])} です（変えていません）")
+    if row.get("floor_raised"):
+        print(f"  最低線を持ち主が上げています（理由: {row.get('floor_reason')}）。変更ログに残しました")
+
+
 def cmd_set(args) -> int:
     rest = list(getattr(args, "rest", None) or [])
     try:
@@ -336,6 +388,9 @@ def cmd_set(args) -> int:
         return _fail(str(exc))
     if not args.name:
         return _fail("invalid_setting: thth account set <口座> <名前> <値> --by <名前>")
+    from . import limits_config
+    if rest and limits_config.holder_of(rest[0]) is not None or (rest and "." in rest[0]):
+        return _set_rule(args, rest)
     try:
         pairs = _pairs(rest)
         results = [change_handle(args.name, value, by=args.by) if key == "handle"
@@ -345,7 +400,8 @@ def cmd_set(args) -> int:
         reason = str(exc) if str(exc) in REASONS else "invalid_setting"
         if reason == "invalid_setting":
             reason += (f": 名前は {'・'.join(KEYS)}・handle・scheduled（true／false）"
-                       "（burst は `burst <件数> <分>` でも）")
+                       "（burst は `burst <件数> <分>` でも）・柵の行の id（"
+                       + "・".join(limits_config.ACCOUNT_ROWS) + "）")
         elif reason == "invalid_handle":
             reason += ": handle は英数字と `.`・`_`・`-` だけ（先頭の @ は外す）"
         elif reason == "schedule_unavailable" and any(k == "scheduled" for k, _ in pairs):
@@ -427,7 +483,7 @@ def cmd_status(args) -> int:
     if not args.name or getattr(args, "rest", None):
         return _fail("invalid_request: thth account status <口座>")
     try:
-        row = status(args.name)
+        row = status(args.name, table=True)
     except SettingsError as exc:
         return _fail(str(exc))
     except accounts.AccountError:
@@ -466,6 +522,17 @@ def show_status(row, *, publish_hold_line=None) -> int:
           + (f"・反応 {reacted} 件" if reacted is not None else ""))
     for key in row["ignored"]:
         print(f"  古い項目 {key}（無視）")
+    if row.get("limits_table") is not None or "legacy_keys" in row:
+        from . import limits_view
+        if row.get("limits_table") is None:
+            print("  上限と連投の柵: 媒体の台帳が検査を通らないので表を出せません（thth media check）")
+            table_lines = limits_view.lines([], legacy=row.get("legacy_keys") or (),
+                                            set_hint=f"thth account set {row['account']} <行の id> <値> --by <名前>")[1:]
+        else:
+            table_lines = limits_view.lines(row["limits_table"], legacy=row.get("legacy_keys") or (),
+                                            set_hint=f"thth account set {row['account']} <行の id> <値> --by <名前>")
+        for line in table_lines:
+            print(line)
     if row["stopped"]:
         reason = row["stopped"]["reason"]
         print(f"  → **止まっています**: {REASON_WORDS.get(reason, reason)}"

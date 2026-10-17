@@ -820,6 +820,12 @@ def _inflight(node):
             "next_action_code": diagnostic.get("next_action_code")}
 
 
+def _bookmark_batch_row(name, now):
+    """人の手が要るブックマークのまとめ（`bookmark_batch.attention`）。無ければ None。"""
+    from . import bookmark_batch
+    return bookmark_batch.attention(name, now=now)
+
+
 def _publish_hold_row(name):
     """止めていれば `{"reason", "held_at", "next_action_code"}`、動いていれば None。"""
     from . import healthcheck, publish_hold
@@ -1219,7 +1225,9 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
             "waiting_items": _guard(lambda name=name: _waiting_rows(name, now)),
             "held_items": _guard(lambda name=name, cfg=cfg: _held_rows(name, cfg, now)),
             # 4.0 S5 §3.4: 正本を直したのに更新していない配信（はてなの口座だけ・鍵は足すだけ）。
-            **({"behind_items": _guard(lambda name=name, cfg=cfg: _behind_rows(name, cfg))}
+            **({"behind_items": _guard(lambda name=name, cfg=cfg: _behind_rows(name, cfg)),
+                # 止まったブックマークのまとめ・照合を待つ結果不明（監査 低-6・鍵は足すだけ）。
+                "bookmark_batch": _guard(lambda name=name: _bookmark_batch_row(name, now))}
                if cfg.get("media") == "hatenablog" else {}),
             # 承認の確定待ち（設計 3.7.0 §B3）。
             "confirm_items": _guard(lambda name=name, cfg=cfg: _confirm_rows(name, cfg, now)),
@@ -1724,6 +1732,12 @@ def _render_today(account, node, out) -> None:
         out(f"    自動の投稿を止めています: {value['reason']}（{value['held_at'] or '時刻不明'} から）"
             f" 次 {value['next_action_code']}"
             f"（X の画面で直してから thth account resume {account} --by <名前>）")
+    batch = node.get("bookmark_batch") or {}
+    if batch.get("cannot_say") is not None:
+        out(f"    ブックマークのまとめ: 言えない: {batch['cannot_say']}")
+    elif batch.get("value"):
+        from . import bookmark_batch
+        out("    " + bookmark_batch.attention_line(account, batch["value"]))
     sent = node.get("last_notification")
     if sent is not None:
         from . import incident

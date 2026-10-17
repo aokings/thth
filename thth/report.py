@@ -359,10 +359,20 @@ def _deliveries_cells(name, account_cfg) -> dict:
                 behind.append({"delivery": record["delivery"], "article": record.get("article")})
         return {"deliveries_behind_count": len(behind), "deliveries_behind": behind,
                 "deliveries_conflict_count": sum(1 for r in records if r["state"] == "conflict"),
-                "deliveries_cannot_say": cannot, **_hatena_collect_cells(name)}
+                "deliveries_cannot_say": cannot, **_hatena_collect_cells(name), **_bookmark_batch_cell(name)}
     except Exception:  # noqa: BLE001 — 1 つの欄で板を落とさない
         return {"deliveries_behind_count": None, "deliveries_behind": [], "deliveries_conflict_count": None,
-                "deliveries_cannot_say": ["deliveries_unreadable"], **_hatena_collect_cells(name)}
+                "deliveries_cannot_say": ["deliveries_unreadable"], **_hatena_collect_cells(name),
+                **_bookmark_batch_cell(name)}
+
+
+def _bookmark_batch_cell(name) -> dict:
+    """止まったブックマークのまとめ・照合を待つ結果不明（監査 低-6）。無ければ None。読むだけ。"""
+    from . import bookmark_batch
+    try:
+        return {"bookmark_batch": bookmark_batch.attention(name)}
+    except Exception:  # noqa: BLE001 — 1 つの欄で板を落とさない
+        return {"bookmark_batch": None}
 
 
 def _hatena_collect_cells(name) -> dict:

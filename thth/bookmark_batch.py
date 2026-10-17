@@ -26,6 +26,10 @@ PACE_FILE = "pace.json"
 MAX_ITEMS = 100
 MAX_TEXT_BYTES = 256 * 1024
 TTL_DAYS = 7
+# 終わったまとめ（待ちも照合待ちの結果不明も無い）のファイルを、期限からこの日数のあとに消す（監査 中-3）。
+RETAIN_DAYS = 7
+# 終わったまとめの札で状態の口に残す欄（ほかの細かい欄は畳む・監査 中-3）。
+FOLDED_ITEM_KEYS = ("n", "url", "state", "reason", "detail", "done_at", "permalink", "result")
 # 付ける時間帯（JST の時・[始め, 終わり)）。夜中に機械的に並ぶ形を避ける（§20.6）。
 ACTIVE_HOURS = (7, 23)
 # 1 回の run で付ける上限（遅れていなければ 1 件）。
@@ -560,10 +564,116 @@ def _sent_result(account, post_id):
     return (row or {}).get("result")
 
 
+def finished(account_name, batch, *, now=None) -> bool:
+    """終わったまとめか: 読めて、待ち（期限前の pending）が無く、結果不明の札が照合を済ませている（`sent/` の
+    `result` が unknown でない）。終わったまとめは状態の口で畳み、期限から `RETAIN_DAYS` 日のあとに消す。"""
+    if batch.get("unreadable"):
+        return False
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    expires = jst.parse(batch.get("expires_at"))
+    for it in batch.get("items") or []:
+        state = it.get("state")
+        if state == "pending" and not (expires is not None and now > expires):
+            return False
+        if state == "unknown" and _sent_result(account_name, it.get("post_id")) in (None, "unknown"):
+            return False
+    return True
+
+
+def prunable(account_name, *, now=None) -> list:
+    """消してよいまとめの id（終わっていて、期限から `RETAIN_DAYS` 日を過ぎた）。読むだけ・ロックは要らない。"""
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    out = []
+    try:
+        batches = load_batches(account_name)
+    except BatchError:
+        return out
+    for b in batches:
+        expires = jst.parse(b.get("expires_at"))
+        if expires is None or now <= expires + datetime.timedelta(days=RETAIN_DAYS):
+            continue
+        if finished(account_name, b, now=now) and BATCH_ID.match(str(b.get("batch") or "")):
+            out.append(b["batch"])
+    return out
+
+
+def prune_locked(account_name, *, now=None, log=None) -> list:
+    """終わったまとめのファイルを消す（口座のロックの中・監査 中-3）。消した id の list。
+
+    消すのは THTH が書いた順番待ちの写しだけ（付けたブックマークの記録は `sent/bm:` が正本で、触らない）。
+    """
+    removed = []
+    for batch_id in prunable(account_name, now=now):
+        try:
+            os.unlink(os.path.join(_dir(account_name), batch_id + ".json"))
+        except FileNotFoundError:
+            continue
+        removed.append(batch_id)
+    if removed and log is not None:
+        log(f"ブックマークのまとめ: 終わったまとめ {len(removed)} 本のファイルを片づけました"
+            f"（期限から {RETAIN_DAYS} 日・付けた記録は sent/ に残っています）")
+    return removed
+
+
+def attention(account_name, *, now=None) -> dict | None:
+    """人の手が要るまとめ（`thth morning`・`thth board` の 1 行・監査 低-6）。無ければ None。
+
+    - `blocked`: 待ちの札があるのに timer が止まっている（`pace.json` の `blocked`・主体／口座の止め・
+      本番でない・はてなの断りなど）。
+    - `unknown`: 結果不明で照合していない札の数（`thth bookmark reconcile` を待つ）。
+    """
+    try:
+        batches = load_batches(account_name)
+    except BatchError:
+        return None
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    pending = unknown = unreadable = 0
+    for b in batches:
+        if b.get("unreadable"):
+            unreadable += 1
+            continue
+        expires = jst.parse(b.get("expires_at"))
+        for it in b.get("items") or []:
+            if it.get("state") == "pending" and not (expires is not None and now > expires):
+                pending += 1
+            elif it.get("state") == "unknown" and _sent_result(account_name, it.get("post_id")) in (None, "unknown"):
+                unknown += 1
+    blocked = _read_pace(account_name).get("blocked") if pending else None
+    if not (blocked or unknown or unreadable):
+        return None
+    return {"pending": pending, "blocked": blocked, "unknown": unknown, "unreadable": unreadable}
+
+
+def attention_line(account_name, value) -> str | None:
+    """`attention` の人向けの 1 行（無ければ None）。"""
+    if not value:
+        return None
+    parts = []
+    blocked = value.get("blocked")
+    if blocked:
+        parts.append(f"止まっています（{blocked.get('code')}"
+                     + (f"・{blocked.get('reason')}" if blocked.get("reason") else "")
+                     + f"・待ち {value['pending']} 件・{_hm(blocked.get('at'))} から）")
+    if value.get("unknown"):
+        parts.append(f"結果不明 {value['unknown']} 件 → thth bookmark reconcile {account_name} --by <名前>")
+    if value.get("unreadable"):
+        parts.append(f"読めないまとめ {value['unreadable']} 本")
+    return "ブックマークのまとめ: " + "・".join(parts) + f"（thth bookmark batch-status {account_name}）"
+
+
+def _fold(item) -> dict:
+    return {key: item.get(key) for key in FOLDED_ITEM_KEYS}
+
+
 def status(account_name: str, *, batch=None, now=None) -> dict:
-    """まとめごとの数・札の状態と理由・次に付ける時刻・止まっている理由（読むだけ）。"""
+    """まとめごとの数・札の状態と理由・次に付ける時刻・止まっている理由（読むだけ）。
+
+    終わったまとめ（`finished`）は、`--batch` で名指ししない限り、札を `FOLDED_ITEM_KEYS` だけに畳む
+    （`folded: true`・監査 中-3・遠くの道の答えを小さく）。除いた札（`excluded`）は今の形のまま。
+    """
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     batches = load_batches(account_name)
+    named = batch is not None
     if batch is not None:
         batches = [b for b in batches if b.get("batch") == batch]
         if not batches:
@@ -588,10 +698,14 @@ def status(account_name: str, *, batch=None, now=None) -> dict:
                           "detail": it.get("detail"), "wait": it.get("wait"), "not_before": it.get("not_before"),
                           "tries": it.get("tries"), "done_at": it.get("done_at"), "post_id": it.get("post_id"),
                           "permalink": it.get("permalink"), "result": _sent_result(account_name, it.get("post_id"))})
-        out.append({"batch": b["batch"], "digest": b.get("digest"), "approved_by": b.get("approved_by"),
-                    "approved_at": b.get("approved_at"), "expires_at": b.get("expires_at"),
-                    "cancelled_at": b.get("cancelled_at"), "counts": counts, "items": items,
-                    "excluded": b.get("excluded") or []})
+        row = {"batch": b["batch"], "digest": b.get("digest"), "approved_by": b.get("approved_by"),
+               "approved_at": b.get("approved_at"), "expires_at": b.get("expires_at"),
+               "cancelled_at": b.get("cancelled_at"), "counts": counts, "items": items,
+               "excluded": b.get("excluded") or []}
+        if not named and finished(account_name, b, now=now):
+            # 除いた札（`excluded`）は今の答えの形のまま残す（1 段目で見せた理由・数は 100 まで）。
+            row.update({"folded": True, "items": [_fold(it) for it in items]})
+        out.append(row)
     pace = _read_pace(account_name)
     return {"account": account_name, "pending": pending, "next_at": pace.get("next_at"),
             "blocked": pace.get("blocked"), "last_run_at": pace.get("last_run_at"), "batches": out}
@@ -609,6 +723,16 @@ def status_lines(s: dict) -> list:
             out.append(f"  {b['batch']}: 読めません")
             continue
         c = b["counts"]
+        if b.get("folded"):
+            out.append(f"  {b['batch']}（{_hm(b['approved_at'])} {b['approved_by']} 承認・終わり）: "
+                       f"付けた {c['placed']}・結果不明 {c['unknown']}・断った {c['refused']}・"
+                       f"取り消し {c['cancelled']}・期限切れ {c['expired']}"
+                       f"（畳んでいます。細目は --batch {b['batch']}）")
+            for it in b["items"]:
+                if it["state"] in ("refused", "unknown"):
+                    why = (it.get("reason") or "") + (f"（{it['detail']}）" if it.get("detail") else "")
+                    out.append(f"    {it['n']:>3}. {it['state']}  {why}  {it.get('url')}")
+            continue
         out.append(f"  {b['batch']}（{_hm(b['approved_at'])} {b['approved_by']} 承認・期限 {_hm(b['expires_at'])}）: "
                    f"付けた {c['placed']}・待ち {c['pending']}・結果不明 {c['unknown']}・断った {c['refused']}・"
                    f"取り消し {c['cancelled']}・期限切れ {c['expired']}")
@@ -683,7 +807,17 @@ def _check_integrity(batch) -> bool:
 def run_due(account_name: str, cfg: dict, *, log=print, now=None, wait=0, adapter_factory=None) -> dict | None:
     """timer の 1 回分（`thth run` の末尾）。待ちが無ければ None（ロックも取らない）。"""
     from . import core, lock as lock_mod, principals
-    if not principals.uses_principal(cfg) or not has_pending(account_name):
+    if not principals.uses_principal(cfg):
+        return None
+    if not has_pending(account_name):
+        # 待ちが無ければ付けない。終わったまとめの片づけだけ（消すものがあるときだけロックを取る・中-3）。
+        if prunable(account_name, now=now):
+            state_dir = accounts_mod.state_dir_for(account_name)
+            try:
+                with core._account_locks(account_name, cfg, state_dir, wait=wait):  # noqa: SLF001
+                    prune_locked(account_name, now=now, log=log)
+            except lock_mod.LockBusy:
+                pass
         return None
     state_dir = accounts_mod.state_dir_for(account_name)
     try:
@@ -698,6 +832,7 @@ def _run_locked(account_name, cfg, *, log, now, adapter_factory):
     from . import hatena_bookmark
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     cfg = accounts_mod.load_account(account_name)   # ロックの中で読み直す
+    prune_locked(account_name, now=now, log=log)    # 終わったまとめの片づけ（中-3）
     batches = [b for b in load_batches(account_name)]
     dirty = {b["batch"]: b for b in _expire(batches, now)}
     pace = _read_pace(account_name)

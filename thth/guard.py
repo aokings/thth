@@ -335,6 +335,19 @@ def stop_place_usable(account) -> bool:
         return False
 
 
+def _reply_burst(cfg) -> dict:
+    """返信の窓（表の `reply.burst`）: 台帳の `limits` → 今の鍵 `burst` → 既定（段 3）。"""
+    from . import limits_config
+    given = limits_config.explicit("account", cfg, "reply.burst")
+    if given is not None:
+        return dict(given[0])
+    try:
+        value = limits_policy.default_value("reply.burst", media=(cfg or {}).get("media"))
+    except (ValueError, KeyError):
+        value = None
+    return dict(value) if isinstance(value, dict) else dict(accounts.GUARD_DEFAULTS["burst"])
+
+
 def burst_slot(account, cfg, *, now=None, pending=()) -> datetime.datetime:
     """burst の窓が空く最初の時刻（3.25.0・返信の順番待ち）。
 
@@ -344,8 +357,8 @@ def burst_slot(account, cfg, *, now=None, pending=()) -> datetime.datetime:
     1 件目は「窓の中で最も古い出来事 + 分 + 1 分」になり、続く返信はその後ろへずれる。
     """
     now = jst.to_jst(now) if now is not None else jst.now_jst()
-    limits = accounts.guard_limits(cfg)
-    span = datetime.timedelta(minutes=limits["burst"]["minutes"])
+    burst = _reply_burst(cfg)
+    span = datetime.timedelta(minutes=burst["minutes"])
     gap = datetime.timedelta(minutes=1)
     posts, retracts = _events(account)
     pending = sorted(jst.to_jst(at) for at in pending)
@@ -357,7 +370,7 @@ def burst_slot(account, cfg, *, now=None, pending=()) -> datetime.datetime:
     for t in sorted(candidates):
         if t < now or (after is not None and t <= after):
             continue
-        if sum(1 for at in events if t - span < at <= t) + 1 <= limits["burst"]["count"]:
+        if sum(1 for at in events if t - span < at <= t) + 1 <= burst["count"]:
             return t
     # 届かない（候補の最後は窓が空なので来ない）。念のため最後の出来事の窓の外。
     return max(events + [now]) + span + gap

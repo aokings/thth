@@ -3822,6 +3822,12 @@ def cmd_board(args) -> int:
             hold = row.get("publish_hold")
             if hold:
                 print(f"  **{hold['message']}**")
+            # 止まったブックマークのまとめ・照合を待つ結果不明（はてなの口座だけ・監査 低-6）。
+            if row.get("bookmark_batch"):
+                from . import bookmark_batch
+                batch_line = bookmark_batch.attention_line(row["account"], row["bookmark_batch"])
+                if batch_line:
+                    print(f"  **{batch_line}**")
             if inflight != "(なし)":
                 print("  停止診断: "
                       f"開始={row.get('inflight_started') or '不明'} "

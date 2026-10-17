@@ -37,14 +37,25 @@ TITLE_BASENAME_MAX = 80
 FOLDER_MAX = 64
 MiB = 1024 * 1024
 
-# 主体の台帳 `fotolife` の欄（任意）。公式に数が無いので THTH の側の上限（§9）。
-LIMIT_DEFAULTS = {
+# 主体の台帳 `fotolife` の欄（任意）。公式に数が無いので THTH の側の上限（§9）。`daily_max_uploads` は段 3 から
+# 柵の表（`upload.daily`・媒体の台帳 `fotolife.json`）から引く。ほかの欄は表の行でない（大きさ・頁）。
+_LIMIT_FIXED = {
     "max_image_bytes": 8 * MiB,
     "max_images_per_entry": 20,
     "max_total_bytes": 64 * MiB,
-    "daily_max_uploads": 30,
     "feed_pages": 1,
 }
+_LIMIT_FALLBACK = dict(_LIMIT_FIXED, daily_max_uploads=30)
+_LIMIT_FALLBACK = {key: _LIMIT_FALLBACK[key] for key in ("max_image_bytes", "max_images_per_entry",
+                                                          "max_total_bytes", "daily_max_uploads", "feed_pages")}
+
+
+def _limit_defaults():
+    from .limits_config import TableDefaults
+    return TableDefaults({"daily_max_uploads": "upload.daily"}, _LIMIT_FIXED, _LIMIT_FALLBACK)
+
+
+LIMIT_DEFAULTS = _limit_defaults()
 LIMIT_RANGES = {
     "max_image_bytes": (1 * MiB, 64 * MiB),
     "max_images_per_entry": (1, 100),
@@ -125,6 +136,11 @@ def limits(principal_cfg) -> dict:
     for key, default in LIMIT_DEFAULTS.items():
         value = given.get(key)
         out[key] = value if key in LIMIT_RANGES and valid_limit(key, value) else default
+    # 段 3: 主体の台帳の `limits["upload.daily"]` が `fotolife.daily_max_uploads` より勝つ。
+    from . import limits_config
+    explicit = limits_config.explicit("principal", principal_cfg, "upload.daily")
+    if explicit is not None and explicit[1] == "limits":
+        out["daily_max_uploads"] = explicit[0]
     return out
 
 

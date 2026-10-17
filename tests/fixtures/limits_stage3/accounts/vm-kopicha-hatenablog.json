@@ -1,0 +1,29 @@
+{
+  "repo_dir": "$THTH_ROOT/repos/x",
+  "queue_dir": "docs/sns/queue",
+  "replies_dir": "data/sns/replies",
+  "quiet_hours": [
+    "23:00",
+    "06:00"
+  ],
+  "min_interval_hours": 0,
+  "collect_days": 14,
+  "hashtags": false,
+  "stale_days": 7,
+  "env": "~/.config/thth/x.env",
+  "token": "~/.config/thth/x.token",
+  "ping": "wrapper",
+  "timeout": 300,
+  "dry_run_env": "THTH_DRY_RUN",
+  "production": true,
+  "scheduled": true,
+  "account": "vm-kopicha-hatenablog",
+  "project": "vm-kopicha",
+  "media": "hatenablog",
+  "principal": "vm-kopicha",
+  "blog_id": "vm-kopicha.hatenablog.com",
+  "handle": "vm-kopicha-id",
+  "link_base": "https://example.invalid/",
+  "daily_max_posts": 3,
+  "daily_max_retracts": 2
+}
