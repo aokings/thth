@@ -339,7 +339,9 @@ def test_T_S5_9a_conflict_statusとconflict_resolveは2段(lane, key, monkeypatc
     use_blog(monkeypatch, blog)
     context = key({ACCOUNT: "lane-a"})
     blog.edit(body="はてなで直した")
-    checked = _serve(context, operation="conflict_status", check=True)
+    # 監査 低-3: 遠くの道の check は配信を 1 つ指す
+    assert _refused(context, operation="conflict_status", check=True) == "invalid_request"
+    checked = _serve(context, operation="conflict_status", check=True, delivery=delivery)
     assert checked["results"][0]["result"] == "readback_changed"
     listing = _serve(context, operation="conflict_status")
     assert [r["delivery"] for r in listing["conflicts"]] == [delivery]

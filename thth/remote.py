@@ -1018,7 +1018,15 @@ def _inflight(args, account):
             return 0
         if value.get("inflight") is None:
             return _say(f"{account}: inflight はありません")
-        return inflight_cli.show_info(account, value["inflight"], str(value.get("next") or ""))
+        info = value["inflight"]
+        if "candidates" in value:
+            # 4.0 S5 §8.3・監査 低-2: はてなの inflight の一覧の候補（手元の道と同じ文）。
+            info = dict(info, candidates_found={"checked": value.get("candidates_checked"),
+                                                "error": value.get("candidates_error"),
+                                                "op": value.get("candidates_op"),
+                                                "candidates": value.get("candidates") or [],
+                                                "gone": value.get("candidates_gone")})
+        return inflight_cli.show_info(account, info, str(value.get("next") or ""))
     if not getattr(args, "not_published", False) and not getattr(args, "published", None):
         raise RemoteError("decision_required", rc=1)
     decision = "not_published" if args.not_published else "published"

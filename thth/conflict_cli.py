@@ -29,7 +29,8 @@ def register(sub) -> None:
     choice.add_argument("--no-follow", action="store_true", help="この配信は記事の修正に追従しない")
     p.add_argument("--by", default=None, help="誰が決めたか（resolve で必須）")
     p.add_argument("--confirm", default=None, help="1 段目が表示した digest")
-    p.add_argument("--limit", type=int, default=20, help="check で確かめる配信の数（既定 20）")
+    p.add_argument("--limit", type=int, default=5,
+                   help="check で確かめる配信の数（既定 5・1 件ごとに 2 秒空けるあいだ口座のロックを持つ）")
     p.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd)
@@ -145,7 +146,9 @@ def _show(args, payload) -> int:
 
 RESULT_WORDS = {"same": "同じ", "readback_changed": "外で手直しされています（conflict にしました）",
                 "entry_missing": "はてなにありません（conflict・entry_missing にしました）",
-                "readback_filled": "台帳に無かった欄を埋めました"}
+                "readback_filled": "台帳に無かった欄（edit_uri・published_url）を埋めました"}
+UNCOMPARED_WORD = ("比べる先（readback_sha）が無かったので、はてなの今の本文を正にしました（比べていない・"
+                   "外で手直しされていても分かりません。thth conflict <口座> <dl> show で確かめてください）")
 
 
 def _check(args, payload) -> int:
@@ -155,7 +158,8 @@ def _check(args, payload) -> int:
     print(f"確かめた  {args.account}  {payload['checked']} 件")
     for row in payload["results"]:
         detail = "/".join(hatena_entry.DETAIL_LABELS.get(d, d) for d in row.get("detail") or [])
-        word = RESULT_WORDS.get(row["result"], row["result"])
+        word = (UNCOMPARED_WORD if row.get("compared") is False
+                else RESULT_WORDS.get(row["result"], row["result"]))
         print(f"  {row['delivery']}  {word}{'（' + detail + '）' if detail else ''}")
     return 0
 
@@ -185,12 +189,14 @@ def _resolve(args, cfg, delivery) -> int:
             r = payload["remote"]
             print(f"  決めること: はてなの今の本文を正にする（readback_sha {r['readback_sha'][:12]}…・"
                   f"送った本文から +{r['diff_added']} 行 −{r['diff_removed']} 行）。記事（repo）は変えません")
-            print("  承認済みの更新の原稿は approval_stale になります。承認し直すと 1 段目の差分が"
-                  "「はてなの今の本文 → 記事」になります（上書きの承認）")
+            print("  この配信の承認済みの更新・削除の原稿は approval_stale になり、timer は出しません"
+                  "（題だけ・カテゴリだけの手直しでも）。承認し直すと 1 段目の差分が「はてなの今の本文 → 記事」"
+                  "になります（上書きの承認）")
         elif resolution == "gone":
             print("  決めること: 外で消えていた。台帳を deleted にします（sent/ は触りません）")
         else:
-            print("  決めること: この配信は記事の修正に追従しない（no_follow）。更新は断り、削除はできます")
+            print("  決めること: この配信は記事の修正に追従しない（no_follow）。更新は断り、削除はできます"
+                  "（承認済みの削除の原稿は approval_stale になるので承認し直してください）")
         print(f"  by: {by}")
         print(f"digest: {payload['digest']}")
         print(f"解くなら: {command}")

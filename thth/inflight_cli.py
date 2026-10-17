@@ -201,6 +201,8 @@ def _show(args, record, account_cfg=None) -> int:
             payload["candidates"] = found["candidates"]
             payload["candidates_checked"] = found["checked"]
             payload["candidates_error"] = found["error"]
+            payload["candidates_op"] = found["op"]
+            payload["candidates_gone"] = found["gone"]
         _print_json(payload)
         return 0
     if found is not None:
