@@ -7,12 +7,18 @@
 - `kind`: `platform_refusal`（runs の `error` にある媒体の静的な符丁: `x_*`・`provider_rate_limited`・
   `hatena_http_*`）・`human_verification`（`publish_hold` の印）・`display_suppressed` など人が足すもの。
 - 材料は今の runs と `publish_hold` だけ。**新しい HTTP は打たない**。
-- 冪等: 鍵 `key`（口座・run_id・符丁、印なら口座・置いた時刻）が既にある行は足さない。
-- runs の行には時刻が無いので、`at` は集めた時刻、`month` は runs のファイルの月。
+- 冪等: 鍵 `key`（口座・run_id・符丁・月、印なら口座・置いた時刻）が既にある行は足さない。`run_id` の無い行は
+  ファイルの中の行の番号を鍵に使う（同じ月・同じ符丁をまとめない）。読み・重ね・追記は `observations.lock` の
+  排他ロックの中（2 つの集めが同時に走っても重複を入れない・監査 低-1）。
+- runs の行には時刻が無いので、`at` は runs のファイルの月の終わり（今月なら今）——「この時刻までに起きた」。
+  印は置いた時刻。`seen_at` に集めた時刻。
 """
 from __future__ import annotations
 
+import calendar
+import contextlib
 import datetime
+import fcntl
 import hashlib
 import json
 import os
@@ -90,6 +96,31 @@ def _append(media, rows) -> None:
         os.close(fd)
 
 
+@contextlib.contextmanager
+def _locked(media):
+    """媒体の観測の置き場の排他ロック（集めの読み → 重ね → 追記を 1 つに・監査 低-1）。"""
+    directory = _dir(media)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    fd = os.open(os.path.join(directory, "observations.lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def _month_end(month, now):
+    """runs のファイルの月（`YYYY-MM`）の終わり。今月（か読めない月）なら今。"""
+    try:
+        year, mon = (int(x) for x in str(month).split("-"))
+        last = calendar.monthrange(year, mon)[1]
+        end = datetime.datetime(year, mon, last, 23, 59, 59, tzinfo=jst.JST)
+    except (ValueError, TypeError):
+        return now
+    return min(end, now)
+
+
 def _key(*parts) -> str:
     return hashlib.sha256("|".join(str(p) for p in parts).encode("utf-8")).hexdigest()[:24]
 
@@ -124,7 +155,7 @@ def collect(media=None, *, now=None) -> dict:
                     lines = f.readlines()
             except OSError:
                 continue
-            for raw in lines:
+            for line_no, raw in enumerate(lines, start=1):
                 try:
                     row = json.loads(raw)
                 except ValueError:
@@ -132,19 +163,20 @@ def collect(media=None, *, now=None) -> dict:
                 error = row.get("error") if isinstance(row, dict) else None
                 if not isinstance(error, str):
                     continue
+                run_ref = row.get("run_id") or f"line:{line_no}"
                 for code in dict.fromkeys(CODE.findall(error)):
                     target = "hatenabookmark" if "bookmark" in str(row.get("action") or "") else account_media
                     found.setdefault(target, []).append(
-                        {"at": jst.iso(now), "media": target, "account": name, "kind": "platform_refusal",
-                         "code": code, "detail": None, "run_id": row.get("run_id"), "month": month,
-                         "key": _key(name, row.get("run_id"), code, month)})
+                        {"at": jst.iso(_month_end(month, now)), "seen_at": jst.iso(now), "media": target,
+                         "account": name, "kind": "platform_refusal", "code": code, "detail": None,
+                         "run_id": row.get("run_id"), "month": month, "key": _key(name, run_ref, code, month)})
         try:
             held = publish_hold.held(name)
         except Exception:  # noqa: BLE001
             held = None
         if isinstance(held, dict) and held.get("held_at"):
             found.setdefault(account_media, []).append(
-                {"at": jst.iso(now), "media": account_media, "account": name, "kind": "human_verification",
+                {"at": held.get("held_at"), "seen_at": jst.iso(now), "media": account_media, "account": name, "kind": "human_verification",
                  "code": held.get("reason"), "detail": None, "run_id": None, "month": None,
                  "key": _key(name, "publish_hold", held.get("held_at"))})
     out = {}
@@ -152,16 +184,17 @@ def collect(media=None, *, now=None) -> dict:
         if media is not None and target != media:
             continue
         try:
-            seen = {r.get("key") for r in read(target)}
+            with _locked(target):
+                seen = {r.get("key") for r in read(target)}
+                fresh, keys = [], set()
+                for r in rows:
+                    if r["key"] in seen or r["key"] in keys:
+                        continue
+                    keys.add(r["key"])
+                    fresh.append(r)
+                _append(target, fresh)
         except ObservationError:
             continue
-        fresh, keys = [], set()
-        for r in rows:
-            if r["key"] in seen or r["key"] in keys:
-                continue
-            keys.add(r["key"])
-            fresh.append(r)
-        _append(target, fresh)
         out[target] = len(fresh)
     return out
 
@@ -182,7 +215,8 @@ def observe(media, kind, *, note, record=None, by, now=None) -> dict:
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     row = {"at": jst.iso(now), "media": media, "account": None, "kind": kind, "code": None, "detail": note.strip(),
            "record": record, "by": by, "run_id": None, "month": None, "key": _key(media, kind, jst.iso(now), note)}
-    _append(media, [row])
+    with _locked(media):
+        _append(media, [row])
     try:
         admin_log.append("media_observed", "app-" + media, {"media": media}, by=by, via="cli",
                          diff={"kind": [None, kind]})

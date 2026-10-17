@@ -283,7 +283,8 @@ def cmd_edit(args) -> int:
     if done.get("status") == "unknown":
         return _out(args, {"ok": False, **done}, 1,
                     [f"結果が分かりません（{done.get('error')}）: {done['url']}",
-                     f"打ち直しません。thth bookmark reconcile {args.account} で確かめてください"], err=True)
+                     f"打ち直しません。thth bookmark reconcile {done.get('holder') or args.account} で確かめてください"],
+                    err=True)
     return _out(args, {"ok": True, **done}, 0, [f"ブックマークを直しました: {done['url']}"]
                 + ([f"  {done['permalink']}"] if done.get("permalink") else []))
 

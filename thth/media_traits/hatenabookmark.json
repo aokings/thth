@@ -365,7 +365,7 @@
       "statement": "タグは 31 バイト（UTF-8）は通り、34 バイトは黙って切られた（POST は通り、GET で短くなっている）。上限は 31〜33 バイトのどこか（確かめていない）",
       "evidence": {
         "type": "observed",
-        "record": "kopicha #2950（10/18・PMC5165123・PMC9914344・PMC8371688 の旧名のタグ）",
+        "record": "kopicha #2950（10/18・PMC5165123・PMC9914344・PMC8371688 の旧名のタグ）。観測のタグは日本語で、長さは UTF-8 のバイト数で数えた",
         "observed_at": "2026-10-18"
       },
       "confidence": "low",

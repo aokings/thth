@@ -604,7 +604,8 @@ def compute_hatena_bookmark_components(*, account: str, principal: str, op: str,
         raise ValueError("comment_too_long")
     if op == "add" and not text:
         raise ValueError("comment_required")
-    tag_list = _sorted_list(tags, "tags")
+    # ブックマークのタグは重複を除く（監査 低-2・台帳と照合の一致のため）。重複の無いタグの指紋は今までと同じ。
+    tag_list = sorted(set(_sorted_list(tags, "tags")))
     if len(tag_list) > HATENA_BOOKMARK_TAGS_MAX:
         raise ValueError("too_many_tags")
     return {
@@ -656,7 +657,8 @@ def compute_hatena_bookmark_edit_components(*, account: str, principal: str, url
     text = _bookmark_comment(comment)
     if len(text) > HATENA_BOOKMARK_COMMENT_MAX:
         raise ValueError("comment_too_long")
-    tag_list = _sorted_list(tags, "tags")
+    # ブックマークのタグは重複を除く（監査 低-2・台帳と照合の一致のため）。重複の無いタグの指紋は今までと同じ。
+    tag_list = sorted(set(_sorted_list(tags, "tags")))
     if len(tag_list) > HATENA_BOOKMARK_TAGS_MAX:
         raise ValueError("too_many_tags")
     return {
@@ -666,7 +668,7 @@ def compute_hatena_bookmark_edit_components(*, account: str, principal: str, url
         "url": url,
         "delivery": delivery,
         "base_comment": _bookmark_comment(base_comment, "base_comment"),
-        "base_tags": _SEG.join(_sorted_list(base_tags, "base_tags")),
+        "base_tags": _SEG.join(sorted(set(_sorted_list(base_tags, "base_tags")))),
         "comment": text,
         "tags": _SEG.join(tag_list),
     }

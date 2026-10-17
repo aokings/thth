@@ -632,6 +632,34 @@ def _sent_result(account, post_id):
     return (row or {}).get("result")
 
 
+def _edit_result(principal, item):
+    """直しの札の今の結果（監査 中-3）: 主体の全口座の `sent/bm:` の行を引き、結果不明の直しがあれば `unknown`。
+
+    直しは `sent/bm:` の `result`（付けたときの結果・`confirmed` のまま）に出ないので、`attempts[]` を見る。
+    行が無い・読めなければ None。消した行（`retracted_at`）は照合から外すので `retracted`。
+    """
+    from . import hatena_bookmark, sent as sent_mod
+    if not principal or not item.get("url_canonical"):
+        return None
+    try:
+        found = hatena_bookmark._ledger_row(principal, item["url_canonical"])  # noqa: SLF001
+    except Exception:  # noqa: BLE001
+        return None
+    if found is None:
+        return None
+    row = found[1]
+    if row.get("retracted_at"):
+        return "retracted"
+    return "unknown" if sent_mod.pending_bookmark_edit(row) is not None else row.get("result")
+
+
+def _item_result(account_name, batch, item):
+    """札の今の結果（付ける札は `sent/bm:` の `result`・直しの札は `_edit_result`）。"""
+    if item.get("op") == "edit":
+        return _edit_result(batch.get("principal"), item)
+    return _sent_result(account_name, item.get("post_id"))
+
+
 def finished(account_name, batch, *, now=None) -> bool:
     """終わったまとめか: 読めて、待ち（期限前の pending）が無く、結果不明の札が照合を済ませている（`sent/` の
     `result` が unknown でない）。終わったまとめは状態の口で畳み、期限から `RETAIN_DAYS` 日のあとに消す。"""
@@ -643,7 +671,7 @@ def finished(account_name, batch, *, now=None) -> bool:
         state = it.get("state")
         if state == "pending" and not (expires is not None and now > expires):
             return False
-        if state == "unknown" and _sent_result(account_name, it.get("post_id")) in (None, "unknown"):
+        if state == "unknown" and _item_result(account_name, batch, it) in (None, "unknown"):
             return False
     return True
 
@@ -704,7 +732,7 @@ def attention(account_name, *, now=None) -> dict | None:
         for it in b.get("items") or []:
             if it.get("state") == "pending" and not (expires is not None and now > expires):
                 pending += 1
-            elif it.get("state") == "unknown" and _sent_result(account_name, it.get("post_id")) in (None, "unknown"):
+            elif it.get("state") == "unknown" and _item_result(account_name, b, it) in (None, "unknown"):
                 unknown += 1
     blocked = _read_pace(account_name).get("blocked") if pending else None
     if not (blocked or unknown or unreadable):
@@ -765,7 +793,7 @@ def status(account_name: str, *, batch=None, now=None) -> dict:
                           "delivery": it.get("delivery"), "state": state, "reason": it.get("reason"),
                           "detail": it.get("detail"), "wait": it.get("wait"), "not_before": it.get("not_before"),
                           "tries": it.get("tries"), "done_at": it.get("done_at"), "post_id": it.get("post_id"),
-                          "permalink": it.get("permalink"), "result": _sent_result(account_name, it.get("post_id")),
+                          "permalink": it.get("permalink"), "result": _item_result(account_name, b, it),
                           **({"op": "edit"} if it.get("op") == "edit" else {})})
         row = {"batch": b["batch"], "digest": b.get("digest"), "approved_by": b.get("approved_by"),
                "approved_at": b.get("approved_at"), "expires_at": b.get("expires_at"),
@@ -1023,6 +1051,10 @@ def unresolved_unknown(account_name, batches) -> int:
         for it in b.get("items") or []:
             if it.get("state") != "unknown" or not it.get("post_id"):
                 continue
+            if it.get("op") == "edit":
+                # 直しの記録は行を持つ口座（holder）にある。主体の全口座から引く（監査 中-2）。
+                n += _edit_result(b.get("principal"), it) == "unknown"
+                continue
             try:
                 row = sent_mod.read(accounts_mod.state_dir_for(account_name), it["post_id"])
             except Exception:  # noqa: BLE001 — 読めなければ止める側
@@ -1030,10 +1062,7 @@ def unresolved_unknown(account_name, batches) -> int:
                 continue
             if row is None:
                 continue
-            if it.get("op") == "edit":
-                n += sent_mod.pending_bookmark_edit(row) is not None
-            else:
-                n += row.get("result") == "unknown"
+            n += row.get("result") == "unknown"
     return n
 
 
@@ -1174,7 +1203,7 @@ def _place_edit(account_name, cfg, batch, item, *, now, log, adapter_factory, re
         item.update({"state": "unknown", "reason": done.get("error") or "unknown", "done_at": at,
                      "post_id": done.get("post_id"), "wait": None})
         log(f"ブックマークのまとめ: 直しの結果が分かりません（{done.get('error')}）: {item.get('url')}。"
-            f"打ち直しません。thth bookmark reconcile {account_name} で確かめてください")
+            f"打ち直しません。thth bookmark reconcile {done.get('holder') or account_name} で確かめてください")
         return ("unknown", done.get("error"), None)
     item.update({"state": "placed", "reason": None, "detail": None, "done_at": at, "wait": None,
                  "post_id": done.get("post_id"), "permalink": done.get("permalink")})

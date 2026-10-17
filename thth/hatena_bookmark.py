@@ -134,9 +134,10 @@ def parse_tags(raw) -> list:
     if raw is None:
         return []
     if isinstance(raw, str):
-        return [part.strip() for part in raw.split(",") if part.strip()]
+        # 重複は除く（台帳と照合の一致のため・監査 低-2）。順は最初に出た順。
+        return list(dict.fromkeys(part.strip() for part in raw.split(",") if part.strip()))
     if isinstance(raw, list) and all(isinstance(x, str) for x in raw):
-        return list(raw)
+        return list(dict.fromkeys(raw))
     raise BookmarkError("invalid_request")
 
 
@@ -574,9 +575,8 @@ def reconcile(account_name: str, cfg: dict, *, url=None, by=None, adapter_factor
             and (want is None or (row.get("url_canonical") or "") == want)]
     out = {"account": account_name, "checked": 0, "confirmed": 0, "not_found": 0, "unchanged": 0, "rows": [],
            "edits": []}
-    edits_waiting = any(sent_mod.pending_bookmark_edit(row) is not None
-                        and (want is None or (row.get("url_canonical") or "") == want)
-                        for row in sent_mod.records(state_dir) if row.get("kind") == "bookmark_add")
+    # 直しの結果不明は主体の全口座から（直しの記録は行を持つ口座 holder に足す・監査 中-2）。
+    edits_waiting = bool(pending_edit_rows(cfg["principal"], want=want))
     if not rows and not edits_waiting:
         return out
     adapter = _adapter(cfg, principal_cfg, adapter_factory)
@@ -874,7 +874,7 @@ def edit_locked(account_name: str, cfg: dict, p: dict, *, adapter_factory=None, 
                     "置き場を直してから、はてなの画面で中身を確かめてください")
             raise BookmarkError("bookmark_record_failed") from None
     out = {"account": account_name, "status": "bookmark_edited" if state == "confirmed" else "unknown",
-           "result": state, "op": "edit", "url": url, "delivery": p.get("delivery"), "target": p["target"],
+           "result": state, "op": "edit", "url": url, "holder": holder, "delivery": p.get("delivery"), "target": p["target"],
            "post_id": row["post_id"],
            "permalink": (remote or {}).get("permalink") or (row.get("remote") or {}).get("permalink"),
            "comment": p["comment"], "tags": list(p["tags"]),
@@ -885,17 +885,35 @@ def edit_locked(account_name: str, cfg: dict, p: dict, *, adapter_factory=None, 
     return out
 
 
-def _reconcile_edits(account_name, adapter, principal_cfg, *, wait, first, want=None) -> list:
-    """結果不明の直し（`attempts[]` の `op: edit`・`unknown`）を GET で決める（§21.5）。行ごとの結果の list。"""
-    from . import sent as sent_mod
-    state_dir = accounts_mod.state_dir_for(account_name)
+def pending_edit_rows(principal, *, want=None) -> list:
+    """主体の全口座の `sent/bm:` のうち、結果不明の直しを持つ行（消した行は外す）。`[(holder, 行)]`。"""
+    from . import principals, sent as sent_mod
     out = []
-    for row in sent_mod.records(state_dir):
-        if row.get("kind") != "bookmark_add":
-            continue
+    for name, _raw in principals.accounts_of(principal):
+        for row in sent_mod.records(accounts_mod.state_dir_for(name)):
+            if row.get("kind") != "bookmark_add" or row.get("retracted_at"):
+                continue
+            if sent_mod.pending_bookmark_edit(row) is None:
+                continue
+            if want is not None and (row.get("url_canonical") or "") != want:
+                continue
+            out.append((name, row))
+    return out
+
+
+def _reconcile_edits(account_name, adapter, principal_cfg, *, wait, first, want=None) -> list:
+    """結果不明の直し（`attempts[]` の `op: edit`・`unknown`）を GET で決める（§21.5・監査 中-1／中-2）。
+
+    主体の全口座の行を見る（記録は行を持つ口座 holder）。はてなに付いていて中身が直したあとの値なら `confirmed`、
+    違えば `not_applied`（POST は丸ごと置き換えるので、見えていないなら効いていない——切られたタグのように
+    前の値とも違う形を含む）、GET が 404 なら `not_applied`、GET が通らなければそのまま（次回）。
+    """
+    from . import sent as sent_mod
+    principal = (accounts_mod.load_account(account_name) or {}).get("principal")
+    out = []
+    for holder, row in pending_edit_rows(principal, want=want):
+        state_dir = accounts_mod.state_dir_for(holder)
         index = sent_mod.pending_bookmark_edit(row)
-        if index is None or (want is not None and (row.get("url_canonical") or "") != want):
-            continue
         if not first:
             wait(RECONCILE_INTERVAL_SECONDS)
         first = False
@@ -905,15 +923,15 @@ def _reconcile_edits(account_name, adapter, principal_cfg, *, wait, first, want=
         except Exception:  # noqa: BLE001 — 次回
             found = False
         verdict = "unchanged"
-        if isinstance(found, dict) and found.get("user") == principal_cfg["hatena_id"]:
+        if found is None:
+            verdict = "not_applied"
+        elif isinstance(found, dict) and found.get("user") == principal_cfg["hatena_id"]:
             now_comment = (found.get("comment") if isinstance(found.get("comment"), str) else "").strip()
-            now_tags = sorted(t for t in (found.get("tags") or []) if isinstance(t, str))
-            if now_comment == attempt.get("comment") and now_tags == sorted(attempt.get("tags") or []):
-                verdict = "confirmed"
-            elif (now_comment == (attempt.get("previous_comment") or "")
-                  and now_tags == sorted(attempt.get("previous_tags") or [])):
-                verdict = "not_applied"
+            now_tags = sorted(set(t for t in (found.get("tags") or []) if isinstance(t, str)))
+            same = now_comment == attempt.get("comment") and now_tags == sorted(set(attempt.get("tags") or []))
+            verdict = "confirmed" if same else "not_applied"
         if verdict != "unchanged":
             sent_mod.resolve_bookmark_edit(state_dir, row["post_id"], result=verdict, at=jst.iso())
-        out.append({"post_id": row["post_id"], "url": row.get("url"), "result": verdict, "op": "edit"})
+        out.append({"post_id": row["post_id"], "url": row.get("url"), "result": verdict, "op": "edit",
+                    "holder": holder})
     return out
