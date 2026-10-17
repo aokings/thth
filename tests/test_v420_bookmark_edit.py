@@ -66,11 +66,11 @@ def test_1段目は台帳とはてなの今と差分とdigest_POSTを打たず�
 
 def test_1段目_はてな側が台帳と違えば両方を見せて断らない(bm):
     """きっかけの形: はてなが長いタグを切った（10/17 の 3 件）。直しの口の主な用途なので断らない。"""
-    _placed(bm, tags=("とても長いタグの名前です",))
-    bm.bookmarks.marks[("lane-owner", EXTERNAL)]["tags"] = ["とても長いタグの名"]
+    _placed(bm, tags=("長めのタグ",))
+    bm.bookmarks.marks[("lane-owner", EXTERNAL)]["tags"] = ["長めの"]
     rc, out, _ = edit_cli("--tags", "短いタグ")
     assert rc == 1
-    assert "はてな側が台帳と違います" in out and "タグ: とても長いタグの名" in out
+    assert "はてな側が台帳と違います" in out and "タグ: 長めの" in out
 
 
 # ---------------------------------------------------------------- 2 段目

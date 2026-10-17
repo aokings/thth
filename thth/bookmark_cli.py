@@ -108,13 +108,17 @@ def _out(args, payload, rc, text_lines=None, *, err=False) -> int:
 
 def _bookmark_message(exc, fallback) -> str:
     text = _MESSAGES.get(exc.code, fallback)
+    if exc.code == "bookmark_tag_too_long" and getattr(exc, "tags", None):
+        from .hatena_bookmark import tag_too_long_text
+        return tag_too_long_text(exc.tags)
     if exc.code == "bookmark_already_deleted" and getattr(exc, "at", None):
         text += f"（{exc.at} に削除）"
     return text
 
 
-def _refuse(args, code, message, rc=2) -> int:
-    return _out(args, {"ok": False, "error": code, "message": message}, rc, [f"{code}: {message}"], err=True)
+def _refuse(args, code, message, rc=2, **extra) -> int:
+    return _out(args, {"ok": False, "error": code, "message": message, **extra}, rc, [f"{code}: {message}"],
+                err=True)
 
 
 _MESSAGES = {

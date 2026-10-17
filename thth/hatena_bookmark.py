@@ -47,14 +47,43 @@ REASONS = frozenset((
     # adapter を作れない（`hatena_publish.AdapterUnavailable`）。
     "token_missing", "token_invalid", "consumer_missing", "consumer_invalid", "auth_unsupported",
     # 直し（設計 S4 §21・4.2）: はてなに付いていない・中身が同じ・付けた（前の直しの）結果がまだ分からない。
-    "bookmark_edit_missing_remote", "bookmark_edit_no_change", "bookmark_result_unknown"))
+    "bookmark_edit_missing_remote", "bookmark_edit_no_change", "bookmark_result_unknown",
+    # タグの長さ（設計 S4 §22・kopicha 10/18 の観測）: 31 バイトを超えるタグははてなが黙って切る。
+    "bookmark_tag_too_long"))
+# タグの長さの上限（UTF-8 のバイト数・S4 §22）。31 は通り 34 は切られた（kopicha 10/18・確かさ low）。
+TAG_MAX_BYTES = 31
 
 
 class BookmarkError(ValueError):
-    def __init__(self, code, *, at=None):
+    def __init__(self, code, *, at=None, tags=None):
         super().__init__(code)
         self.code = code
         self.at = at  # bookmark_already_deleted のときの消した日時（見せるためだけ）
+        self.tags = tags  # bookmark_tag_too_long のときの [(タグ, バイト数)]（見せるためだけ）
+
+
+def long_tags(tags) -> list:
+    """31 バイト（`TAG_MAX_BYTES`）を超えるタグの `[(タグ, バイト数)]`（S4 §22）。"""
+    out = []
+    for tag in tags or []:
+        size = len(str(tag).strip().encode("utf-8"))
+        if size > TAG_MAX_BYTES:
+            out.append((str(tag).strip(), size))
+    return out
+
+
+def check_tag_bytes(tags) -> None:
+    """長すぎるタグがあれば `bookmark_tag_too_long`（予告して断る・黙って切らない）。"""
+    found = long_tags(tags)
+    if found:
+        raise BookmarkError("bookmark_tag_too_long", tags=found)
+
+
+def tag_too_long_text(found) -> str:
+    """人向けの 1 行（どのタグが何バイトか・直し方）。"""
+    which = "・".join(f"「{tag}」{size} バイト" for tag, size in found)
+    return (f"タグが長すぎます: {which}。はてなは {TAG_MAX_BYTES} バイトを超えるタグを黙って切ります"
+            f"（34 バイトで切れた観測・10/18）。{TAG_MAX_BYTES} バイト（日本語はおおむね 10 字）以内に直してください")
 
 
 # --------------------------------------------------------------------------
@@ -232,6 +261,8 @@ def prepare(account_name: str, cfg: dict, *, delivery: str | None = None, url: s
                 raise BookmarkError("use_delivery")
             raise BookmarkError("bookmark_other_lane_article")
     tag_list = parse_tags(tags)
+    if op == "add":
+        check_tag_bytes(tag_list)
     try:
         components = approval_mod.compute_hatena_bookmark_components(
             account=account_name, principal=principal, op=op, url=target_url, delivery=delivery_value,
@@ -688,6 +719,7 @@ def prepare_edit(account_name: str, cfg: dict, *, delivery: str | None = None, u
     base_tags = sorted(row.get("tags") or [])
     new_comment = base_comment if comment is None else comment
     new_tags = base_tags if tags is None else parse_tags(tags)
+    check_tag_bytes(new_tags)   # 直したあとのタグだけ（今の台帳の長いタグを直すのがこの口の用途）
     try:
         components = approval_mod.compute_hatena_bookmark_edit_components(
             account=account_name, principal=principal, url=target_url, delivery=delivery_value,

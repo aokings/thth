@@ -142,6 +142,30 @@ def _item_problem(value):
     return None
 
 
+def lint_problems(path) -> list:
+    """`thth lint <札のファイル .jsonl>`（S4 §22）。札ごとの形とタグの長さを 1 行ずつ（error）。HTTP は打たない。"""
+    from . import hatena_bookmark
+    try:
+        entries = parse_text(read_source(path))
+    except BatchError as exc:
+        return [f"{exc.code}: 札のファイルを読めません"]
+    out = []
+    for entry in entries:
+        where = f"札 {entry['n']}（{entry['line']} 行目）"
+        if entry["problem"]:
+            out.append(f"{entry['problem']}: {where}")
+            continue
+        try:
+            tags = hatena_bookmark.parse_tags(entry["raw"].get("tags"))
+        except hatena_bookmark.BookmarkError:
+            out.append(f"invalid_item: {where}")
+            continue
+        found = hatena_bookmark.long_tags(tags)
+        if found:
+            out.append(f"bookmark_tag_too_long: {where}: {hatena_bookmark.tag_too_long_text(found)}")
+    return out
+
+
 def read_source(source, *, stdin=None) -> str:
     """ファイル（`-` なら標準入力）を読む。読めなければ `BatchError("batch_text_invalid")`。"""
     import sys
@@ -386,6 +410,10 @@ def prepare(account_name: str, cfg: dict, text: str, *, now=None) -> dict:
                                             check_remote=False)
         except hatena_bookmark.BookmarkError as exc:
             row["reason"] = exc.code
+            if exc.code == "bookmark_tag_too_long" and exc.tags:
+                # S4 §22: どのタグが何バイトか（予告して除く・黙って切らない）。
+                row["detail"] = "・".join(f"{tag} {size} バイト" for tag, size in exc.tags) + \
+                    f"（{hatena_bookmark.TAG_MAX_BYTES} バイト以内に）"
             if edit:
                 row["op"] = "edit"
             continue

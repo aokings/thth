@@ -70,6 +70,8 @@ _REASON_TABLE = (
     *((code + ": ", code) for code in queuefile.REPLY_TO_FILE_MESSAGES),
     # 投稿の目的（設計 3.6.0 §A1）。4 語の固定・承認の指紋には入らない。
     ("goal_invalid: ", "goal_invalid"),
+    # はてなブックマークの札のファイル（設計 S4 §22）。
+    ("bookmark_tag_too_long: ", "bookmark_tag_too_long"),
     # はてなブログの配信原稿（設計 4.0 S1 §3.5）。lint の 1 行は符丁そのもので始まる。
     *((code + ": ", code) for code in (
         "article_required", "article_source_missing", "invalid_article_source", "title_required",
@@ -172,6 +174,10 @@ def lint_file(path: str) -> list:
     混ぜて返す（`thth lint` の exit code は `error:`/その他の実エラーだけで決まる。
     `is_warning()` で区別できる）。
     """
+    # はてなブックマークの札のファイル（設計 S4 §22・4.2）: 札ごとの形とタグの長さ（31 バイト）。
+    if str(path).endswith(".jsonl"):
+        from . import bookmark_batch
+        return bookmark_batch.lint_problems(path)
     # **スレッド連投は束として検査する**（`thth: 1` が無いとだけ言わない）。
     b, _text = _bundle_or_none(path)
     if b is not None:

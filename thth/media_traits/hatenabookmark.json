@@ -360,6 +360,19 @@
       "notes": "数は推測。4.0.1 の数（bookmark_burst 10/10 分・daily_max_bookmarks 30）と同じ"
     },
     {
+      "id": "hatenabookmark.tag_length_observed",
+      "kind": "observation",
+      "statement": "タグは 31 バイト（UTF-8）は通り、34 バイトは黙って切られた（POST は通り、GET で短くなっている）。上限は 31〜33 バイトのどこか（確かめていない）",
+      "evidence": {
+        "type": "observed",
+        "record": "kopicha #2950（10/18・PMC5165123・PMC9914344・PMC8371688 の旧名のタグ）",
+        "observed_at": "2026-10-18"
+      },
+      "confidence": "low",
+      "signals": [],
+      "notes": "THTH は 31 バイトを超えるタグを 1 段目で予告して断る（hatena_bookmark.TAG_MAX_BYTES・設計 S4 §22）。柵の行（limits_policy）にはしない"
+    },
+    {
       "id": "hatenabookmark.cache_lag",
       "kind": "observation",
       "statement": "entry/jsonlite は付けた直後に反映されない",
