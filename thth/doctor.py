@@ -246,7 +246,12 @@ def _diagnose_reactions(account_name: str, account_cfg: dict, principal_cfg: dic
         base = hatena_reactions.ledger_dir(account_cfg, account_name)
         names = sorted(n for n in os.listdir(base) if n.endswith(".ndjson")) if os.path.isdir(base) else []
         for name in names:
-            rows, broken = hatena_reactions.read_rows(account_cfg, account_name, name[:-len(".ndjson")])
+            # 1 ファイルずつ捕まえる（名前の違うファイル 1 つで全部を「読めない」にしない・監査 低-3）。
+            try:
+                rows, broken = hatena_reactions.read_rows(account_cfg, account_name, name[:-len(".ndjson")])
+            except (OSError, ValueError):
+                out["unreadable"] += 1
+                continue
             if broken:
                 out["unreadable"] += 1
                 continue

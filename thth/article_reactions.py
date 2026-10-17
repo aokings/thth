@@ -290,7 +290,8 @@ def build(target, *, article=None, delivery=None, now=None, allowed_names=None, 
         if record["state"] != "deleted":
             reactions += hatena_reactions(obj, rows, origin=origin, now=now)
             if fetch and record.get("published_url") and record["state"] in ledger.TARGET_STATES:
-                got = ledger.observe([record], own=ledger.self_ids(cfg), contact=ledger.contact_of(cfg))
+                got = ledger.observe([record], own=ledger.self_ids(cfg), contact=ledger.contact_of(cfg),
+                                     registered=ledger.registered_ids(name, cfg))
                 row = ledger.make_row(record, name, got.get(record["delivery"]) or {"missing": []}, now=now, marks=[])
                 entry["now"] = _strip(row)
                 if comments:
@@ -385,7 +386,8 @@ def render(payload, out=print) -> None:
             out("    消えた記事です（反応は読みません）")
             continue
         slots = ledger.by_mark(entry["rows"])
-        row24 = (slots.get(MARK_24) or {}).get("_last")
+        slot24 = slots.get(MARK_24) or {}
+        row24 = slot24.get("_last") or slot24.get("_any")
         latest = ledger.latest_row(entry["rows"])
         if row24 is not None:
             out(_hatena_line(row24, "24h: "))

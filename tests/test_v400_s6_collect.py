@@ -103,11 +103,15 @@ def test_1c_スターが500なら行にstarが無く次のrunで同じ刻みを�
     assert len(s6.hatena.calls) == before   # 刻み 1 は済んだ
 
 
-def test_1c_何も取れなければ行を書かない(s6):
+def test_1c_何も取れなければ指標の鍵の無い欠けの行だけ(s6):
+    """監査 高-1 のあと: 取れなかった試みも欠けの行として残す（再試行の回数を数える材料）。指標の鍵は置かない。"""
     dl = put_delivery(URL1, hours_ago=1.5)
     s6.hatena.fail.update({"counts": 503, "stars": 503})
     assert collect() == 1
-    assert ledger_rows(dl) == []
+    (row,) = ledger_rows(dl)
+    assert "bookmark" not in row and "star" not in row and row["marks"] == [1]
+    assert {m["what"]: m["reason"] for m in row["missing"]} == {"bookmark": "not_fetched:hatena_http_503",
+                                                                "star": "not_fetched:hatena_http_503"}
     rows = [r for r in runs.read_runs(s6.state) if r.get("action") == "hatena_collect"]
     assert rows[-1]["status"] == "error" and "hatena_http_503" in rows[-1]["error"]
 
@@ -133,7 +137,7 @@ def test_2a_51件は2回に分ける(s6, monkeypatch):
     monkeypatch.setattr(hatena_reactions, "SLEEP", slept.append)
     urls = [f"https://a.hatenablog.com/entry/2026/09/01/{i:06d}" for i in range(51)]
     got, failed = hatena_reactions.fetch_counts(urls)
-    assert failed == {} and got == {u: 0 for u in urls}   # 答えに鍵の無い URL は 0（実装で決めた）
+    assert failed == {} and got == {u: None for u in urls}   # 答えに鍵の無い URL は None（0 と混ぜない・監査 中-6）
     sizes = [len(c[1]) for c in s6.hatena.calls]
     assert sizes == [50, 1] and slept == [2]
 
@@ -247,6 +251,8 @@ def test_2d_本物のurllibの経路で認証なしUAに連絡先(lane, monkeypa
     from tests.conftest import restore_real_hatena_adapters
     monkeypatch.setenv("THTH_TEST_ALLOW_HTTP", "1")
     restore_real_hatena_adapters(monkeypatch)
+    # 偽物の HTTP は置かず 127.0.0.1 の本物のサーバへ出るので、公開の読む口の柵を明示して外す（S6 監査 中-4）。
+    monkeypatch.setattr(hatena_reactions, "FETCH", None)
     lane.world.edit_principal("hatena-main", owner="owner-m", user_agent_contact="https://example.test/contact")
     put_secrets(lane.world)   # token があっても公開の読む口には付けない
     record = {"delivery": "dl_000000000001", "published_url": URL1}

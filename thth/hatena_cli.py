@@ -31,8 +31,9 @@ def cmd_collect(args) -> int:
         return 2
     now = jst.now_jst()
     info: dict = {}
-    rc = hatena_reactions._entry(args.account, now=now, log=print, info=info, delivery=args.delivery)
-    hatena_reactions._record_run(args.account, rc=rc, trigger=collect.TRIGGER_MANUAL, now=now, info=info)
+    rc = hatena_reactions.guarded_entry(args.account, now=now, log=print, info=info, delivery=args.delivery)
+    if info.get("skipped") != "account_leaving":
+        hatena_reactions._record_run(args.account, rc=rc, trigger=collect.TRIGGER_MANUAL, now=now, info=info)
     result = info.get("result") or {}
     for row in result.get("waiting") or []:
         nxt = row.get("next")

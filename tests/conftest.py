@@ -110,9 +110,6 @@ def restore_real_hatena_adapters(monkeypatch):
         module = importlib.import_module("thth." + name)
         if getattr(module, "ADAPTER_FACTORY", None) is no_real_hatena_adapter:
             monkeypatch.setattr(module, "ADAPTER_FACTORY", None)
-    from thth import hatena_reactions
-    if hatena_reactions.FETCH is no_real_hatena_fetch:
-        monkeypatch.setattr(hatena_reactions, "FETCH", None)
 
 
 @pytest.fixture(autouse=True)
@@ -440,6 +437,9 @@ def run_thth(args, env=None, cwd=None, stdin=None) -> subprocess.CompletedProces
     渡さなければ今までどおり継承する）。
     """
     full_env = dict(os.environ)
+    # サブプロセスの `thth` には monkeypatch（はてなの柵）が効かないので、loopback 以外へは出さない
+    # （`httpsafe.TEST_LOOPBACK_ONLY_ENV`・監査 S6 中-1）。試験が明示して外すことはできる。
+    full_env["THTH_TEST_LOOPBACK_ONLY"] = "1"
     if env:
         full_env.update(env)
     return subprocess.run(

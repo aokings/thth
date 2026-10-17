@@ -528,12 +528,17 @@ def _fit_article_reactions(result):
     if over <= 0:
         return result
     over += FIT_RESERVE
-    deliveries = [dict(row, rows=list(row['rows'])) for row in result['deliveries']]
+    deliveries = [dict(row, rows=list(row['rows']),
+                       **({'comments': list(row['comments'])} if 'comments' in row else {}))
+                  for row in result['deliveries']]
     announcements = [dict(row, rows=list(row['rows'])) for row in result['announcements']]
     dropped = 0
-    for holder in deliveries + announcements:
-        while holder['rows'] and over > 0:
-            over -= _size(holder['rows'].pop(0)) + 1
+    # 古い行から落とし、それでも大きければ第三者のコメント（`comments[]`・古い方から）も落とす（監査 低-4）。
+    holders = [(h, 'rows') for h in deliveries + announcements] + [(h, 'comments') for h in deliveries
+                                                                      if 'comments' in h]
+    for holder, key in holders:
+        while holder[key] and over > 0:
+            over -= _size(holder[key].pop(0)) + 1
             dropped += 1
         if over <= 0:
             break

@@ -46,7 +46,11 @@ def _star_rows(stars, color) -> list:
 
 
 def entry_stars(urls, *, contact=None, timeout=READ_TIMEOUT) -> dict:
-    """`{url: [{"name", "count", "color"}]}`（`quote` は落とす）。答えに無い URL は空（スターが無い）。"""
+    """`{url: [{"name", "count", "color"}]}`（`quote` は落とす）。答えに無い URL は空（スターが無い）。
+
+    ただし答えに `entries` があるのに、要求した URI が 1 つも一致しなければ `response_invalid`（URI の形が
+    違う答えを「スター 0」と読まない・監査 中-6）。
+    """
     urls = list(urls)
     if not urls or len(urls) > BATCH:
         raise ValueError("star_batch_invalid")
@@ -59,6 +63,8 @@ def entry_stars(urls, *, contact=None, timeout=READ_TIMEOUT) -> dict:
     if not isinstance(entries, list):
         raise hatena_common.PublicHTTPError("response_invalid")
     out = {u: [] for u in urls}
+    if entries and not any(isinstance(e, dict) and e.get("uri") in out for e in entries):
+        raise hatena_common.PublicHTTPError("response_invalid")
     for entry in entries:
         if not isinstance(entry, dict) or entry.get("uri") not in out:
             continue

@@ -475,7 +475,7 @@ def _yesterday_posts(name, now, read_at=None):
             "unknown_ownership": len(data.get("posts_unknown_ownership") or [])}
 
 
-def _article_rows(name, cfg, now, read_at=None):
+def _article_rows(name, cfg, now, read_at=None, allowed_names=None):
     """窓の中に反応を採った配信ごとの数（4.0 S6 §6.1）。**数だけ・本文なし**。読めなければ None。
 
     1 行: `article`・`delivery`・`bookmark_others`・`star_others`・`announcements_n`・いちばん新しい刻み
@@ -508,7 +508,8 @@ def _article_rows(name, cfg, now, read_at=None):
                          "age_hours": latest.get("age_hours"), "collected_at": latest.get("collected_at")})
     if ids:
         try:
-            told, _broken = deliveries_cli.announcements(cfg.get("project"), ids)
+            # 告知の口座は呼び手の範囲（遠くの道の鍵）の中だけ数える（監査 中-3）。
+            told, _broken = deliveries_cli.announcements(cfg.get("project"), ids, allowed_names=allowed_names)
         except Exception:  # noqa: BLE001
             told = []
         for row in rows_out:
@@ -1188,7 +1189,7 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
         yesterday_entries[name] = _guard(lambda name=name, cfg=cfg: {
             "medium": cfg.get("media"), **_yesterday_posts(name, now, read_ats[name]),
             # 4.0 S6 §6.1: はてなの口座だけ・窓の中に採った反応の数（本文なし・鍵は足すだけ）。
-            **({"articles": _article_rows(name, cfg, now, read_ats[name])}
+            **({"articles": _article_rows(name, cfg, now, read_ats[name], allowed_names)}
                if cfg.get("media") == "hatenablog" else {})})
 
     # 第 3 段: 世間。`--no-world`（3.11.1）なら `_world()` を 1 回も呼ばない

@@ -113,10 +113,25 @@ def origin_at(record):
     return None
 
 
+# 刻み・出所ごとの再試行の上限（監査 高-1）。これを使い切るか、1 回以上試して次の刻みに達したら諦め、
+# `not_fetched:gave_up` を書いて済んだに数える（同じ刻みを 10 分ごとに読み直し続けない）。
+MAX_ATTEMPTS = 3
+GAVE_UP = "not_fetched:gave_up"
+# 「済んだ」に数える欠けの理由（読みに行っても値が無いと分かっているもの）。
+FINAL_REASONS = ("not_supported", GAVE_UP)
+
+
 def _source_done(row, source) -> bool:
     if source in row:
         return True
-    return any(m.get("what") == source and m.get("reason") == "not_supported" for m in row.get("missing") or [])
+    return any(m.get("what") == source and m.get("reason") in FINAL_REASONS for m in row.get("missing") or [])
+
+
+def _attempts(rows, mark, source) -> int:
+    """刻み `mark` で出所 `source` を読みに行って取れなかった回数。"""
+    return sum(1 for row in rows if mark in (row.get("marks") or []) and any(
+        m.get("what") == source and str(m.get("reason") or "").startswith("not_fetched:")
+        and m.get("reason") != GAVE_UP for m in row.get("missing") or []))
 
 
 def complete_marks(rows) -> set:
@@ -133,14 +148,44 @@ def complete_marks(rows) -> set:
     return out or set()
 
 
-def due(record, rows, now) -> list:
-    """跨いだのにまだ済んでいない刻み（`collect.due_marks` を使い回す）。"""
-    from . import collect
+def _age(record, now):
     origin = origin_at(record)
-    if origin is None:
-        return []
-    age = (now - origin).total_seconds() / 3600
-    return collect.due_marks(age, [{"marks": sorted(complete_marks(rows))}])
+    return None if origin is None else (now - origin).total_seconds() / 3600
+
+
+def plan(record, rows, now) -> tuple:
+    """`(読む刻み, 諦める (刻み, 出所) の list)`。
+
+    跨いだ刻みのうち、まだ済んでいない出所がある刻みを読む。ただしその出所が上限まで取れなかったか、
+    1 回以上取れずに次の刻みに達していれば、読まずに諦める（`gave_up` の行を書く）。
+    """
+    from . import collect
+    age = _age(record, now)
+    if age is None:
+        return [], []
+    marks = collect.AGE_MARKS_HOURS
+    fetch, give_up = [], []
+    for i, mark in enumerate(marks):
+        if age < mark:
+            break
+        later = marks[i + 1] if i + 1 < len(marks) else None
+        pending = False
+        for source in SOURCES:
+            if any(mark in (r.get("marks") or []) and _source_done(r, source) for r in rows):
+                continue
+            tries = _attempts(rows, mark, source)
+            if tries >= MAX_ATTEMPTS or (tries >= 1 and later is not None and age >= later):
+                give_up.append((mark, source))
+            else:
+                pending = True
+        if pending:
+            fetch.append(mark)
+    return fetch, give_up
+
+
+def due(record, rows, now) -> list:
+    """跨いだのにまだ済んでいない（諦めてもいない）刻み。"""
+    return plan(record, rows, now)[0]
 
 
 def next_mark(record, rows, now):
@@ -239,7 +284,10 @@ def _chunks(values, size):
 
 
 def fetch_counts(urls, *, contact=None, pace=None) -> tuple:
-    """件数を 50 件ずつの束で読む。`({url: 件数}, {url: 失敗の符丁})`。"""
+    """件数を 50 件ずつの束で読む。`({url: 件数か None（答えに鍵が無い）}, {url: 失敗の符丁})`。
+
+    鍵の無い URL を 0 と読まない（監査 中-6）。0 かどうかはエントリー情報と合わせて `observe` が決める。
+    """
     from .adapters import hatenabookmark
     pace = pace or _Pace()
     got, failed = {}, {}
@@ -251,11 +299,16 @@ def fetch_counts(urls, *, contact=None, pace=None) -> tuple:
             continue
         for u in chunk:
             value = (answer or {}).get(u)
-            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            if value is None or (isinstance(value, int) and not isinstance(value, bool) and value >= 0):
                 got[u] = value
             else:
                 failed[u] = "response_invalid"
     return got, failed
+
+
+# スターの口で「https のこの入口では読めない」と分かる答え（監査 高-1 (b)）。`not_supported` と同じに扱い、
+# 読み直さない。
+STAR_UNSUPPORTED_CODES = ("hatena_http_404", "redirect_blocked", "endpoint_rejected")
 
 
 def fetch_stars(urls, *, contact=None, pace=None) -> tuple:
@@ -280,9 +333,17 @@ def fetch_stars(urls, *, contact=None, pace=None) -> tuple:
     return got, failed
 
 
-def _bookmark_part(total, entry, own) -> tuple:
-    """`(bookmark の欄, missing の行の list)`。"""
+def _bookmark_part(total, entry, own, *, registered_id=None) -> tuple:
+    """`(bookmark の欄, missing の行の list)`。
+
+    `own` が空（主体の台帳が読めない）なら自分の分を引けない——`others: null`・`own_unknown`
+    （`self_unknown`）にして第三者の一覧も書かない（監査 中-1）。`registered_id` は `sent/bm:` で
+    この配信に自分の登録が付いている主体の ID。キャッシュにその ID が無ければ引けない（中-2）。
+    """
     part = {"total": total, "cached": True}
+    if not own:
+        part["others"] = None
+        return part, [{"what": "bookmark_others", "reason": "own_unknown", "detail": "self_unknown"}]
     if not isinstance(entry, dict):
         part["others"] = None
         return part, [{"what": "bookmark_others", "reason": "own_unknown",
@@ -293,7 +354,11 @@ def _bookmark_part(total, entry, own) -> tuple:
               "tags": list(b.get("tags") or [])} for b in marks if b.get("user") not in own]
     others = total - len(selfs)
     missing = []
-    if others < 0:
+    if registered_id is not None and registered_id not in selfs:
+        # 自分の登録は付いている（sent/bm:）のにキャッシュに載っていない——件数には入っているかもしれない。
+        others = None
+        missing.append({"what": "bookmark_others", "reason": "own_unknown", "detail": "self_not_in_cache"})
+    elif others < 0:
         # 件数（キャッシュでない）より自分の分（キャッシュ）が多い——引けない。推して埋めない。
         others = None
         missing.append({"what": "bookmark_others", "reason": "own_unknown", "detail": "count_below_self"})
@@ -315,12 +380,25 @@ def _star_part(stars, own) -> dict:
     return {"others": others, "self": mine, "by_color": by_color}
 
 
-def observe(items, *, own, contact=None, pace=None) -> dict:
+def registered_ids(account, cfg) -> dict:
+    """配信 id → この口座の主体の ID（`sent/bm:` に自分の登録が confirmed で付いていて、消していない配信だけ）。"""
+    from . import hatena_bookmark, principals
+    try:
+        hatena_id = principals.load_principal(cfg["principal"])["hatena_id"]
+        rows = hatena_bookmark.by_delivery(account)
+    except Exception:  # noqa: BLE001 — 読めなければ照らし合わせない
+        return {}
+    return {dl: hatena_id for dl, row in rows.items()
+            if row.get("result") == "confirmed" and not row.get("retracted_at")}
+
+
+def observe(items, *, own, contact=None, pace=None, registered=None) -> dict:
     """配信ごとに今の値を読む。`items` は `(配信の台帳)` の list。`{delivery: {bookmark?, star?, missing}}`。
 
     HTTP: 件数 1 回（50 件ずつ）＋ スター 1 回（50 件ずつ）＋ エントリー情報を配信ごとに 1 回。
     """
     pace = pace or _Pace()
+    registered = registered or {}
     urls = [record["published_url"] for record in items]
     counts, count_failed = fetch_counts(urls, contact=contact, pace=pace)
     stars, star_failed = fetch_stars(urls, contact=contact, pace=pace)
@@ -333,16 +411,27 @@ def observe(items, *, own, contact=None, pace=None) -> dict:
                 entry = pace("entry", url, contact)
             except FetchError as exc:
                 entry = exc.code
-            parts["bookmark"], more = _bookmark_part(counts[url], entry, own)
-            missing += more
+            total = counts[url]
+            if total is None and isinstance(entry, dict) and (not entry.get("exists") or entry.get("count") == 0):
+                # 件数の答えに鍵が無く、エントリー情報も 0 件と言う——0 と読む（監査 中-6）。
+                total = 0
+            if total is None:
+                missing.append({"what": "bookmark", "reason": "not_fetched:response_invalid",
+                                "detail": "count_absent"})
+            else:
+                parts["bookmark"], more = _bookmark_part(total, entry, own,
+                                                         registered_id=registered.get(record["delivery"]))
+                missing += more
         else:
             missing.append({"what": "bookmark", "reason": f"not_fetched:{count_failed.get(url, 'unknown')}"})
+        code = star_failed.get(url)
         if url in stars:
             parts["star"] = _star_part(stars[url], own)
-        elif star_failed.get(url) == "not_supported":
-            missing.append({"what": "star", "reason": "not_supported"})
+        elif code == "not_supported" or code in STAR_UNSUPPORTED_CODES:
+            missing.append({"what": "star", "reason": "not_supported",
+                            **({"detail": code} if code != "not_supported" else {})})
         else:
-            missing.append({"what": "star", "reason": f"not_fetched:{star_failed.get(url, 'unknown')}"})
+            missing.append({"what": "star", "reason": f"not_fetched:{code or 'unknown'}"})
         out[record["delivery"]] = {**parts, "missing": missing}
     return out
 
@@ -362,17 +451,16 @@ def make_row(record, account, observed, *, now, marks) -> dict:
     return row
 
 
-# --------------------------------------------------------------------------
-# 採取（run の末尾・`thth hatena collect`）
-# --------------------------------------------------------------------------
-
 def collect_once(account, cfg, *, now, log=print, delivery=None) -> dict:
-    """跨いだ配信を読んで台帳に 1 行ずつ足す。`{"looked", "touched", "errors", "waiting", "broken"}`。
+    """跨いだ配信を読んで台帳に 1 行ずつ足す。`{"looked", "touched", "errors", "waiting", "broken", "gave_up"}`。
 
-    ロック・同期・commit は呼び手（`_entry`）。ここは HTTP と追記だけ。
+    ロック・同期・commit は呼び手（`_entry`）。ここは HTTP と追記だけ。取れなかった出所も、その試みを
+    欠けの行として書く（指標の鍵は置かない・再試行の回数を数える材料・監査 高-1）。上限を使い切った刻みは
+    読まずに `not_fetched:gave_up` の行を書いて済んだに数える。候補は「一度も試していない刻みを持つ配信」を
+    先に、読み直しは後ろに（古い配信の読み直しで 10 本の枠を埋めない・監査 高-2）。
     """
     from . import deliveries
-    result = {"looked": 0, "touched": [], "errors": [], "waiting": [], "broken": []}
+    result = {"looked": 0, "touched": [], "errors": [], "waiting": [], "broken": [], "gave_up": 0}
     records, broken = deliveries.list_for(account)
     if broken:
         result["errors"].append("delivery_unreadable")
@@ -387,33 +475,59 @@ def collect_once(account, cfg, *, now, log=print, delivery=None) -> dict:
             result["broken"].append(record["delivery"])
             result["errors"].append(f"reactions_unreadable:{record['delivery']}")
             continue
-        marks = due(record, rows, now)
+        marks, give_up = plan(record, rows, now)
+        if give_up:
+            path = ledger_path(cfg, account, record["delivery"])
+            for mark in sorted({m for m, _s in give_up}):
+                gone = [{"what": src, "reason": GAVE_UP} for m, src in give_up if m == mark]
+                _append(path, make_row(record, account, {"missing": gone}, now=now, marks=[mark]))
+                result["gave_up"] += len(gone)
+            if path not in result["touched"]:
+                result["touched"].append(path)
         if not marks:
-            nxt = next_mark(record, rows, now)
-            result["waiting"].append({"delivery": record["delivery"], "next": nxt})
+            result["waiting"].append({"delivery": record["delivery"], "next": next_mark(record, rows, now)})
             continue
-        candidates.append((origin_at(record), record, marks))
-    candidates.sort(key=lambda c: (c[0], c[1]["delivery"]))
+        seen = {m for r in rows for m in r.get("marks") or []}
+        fresh = any(m not in seen for m in marks)
+        candidates.append((0 if fresh else 1, origin_at(record), record, marks))
+    candidates.sort(key=lambda c: (c[0], c[1], c[2]["delivery"]))
     chosen = candidates[:MAX_DELIVERIES_PER_RUN]
     if not chosen:
         return result
-    observed = observe([c[1] for c in chosen], own=self_ids(cfg), contact=contact_of(cfg))
-    for _origin, record, marks in chosen:
+    observed = observe([c[2] for c in chosen], own=self_ids(cfg), contact=contact_of(cfg),
+                       registered=registered_ids(account, cfg))
+    for _fresh, _origin, record, marks in chosen:
         result["looked"] += 1
         got = observed.get(record["delivery"]) or {"missing": []}
         row = make_row(record, account, got, now=now, marks=marks)
-        if not any(source in row for source in SOURCES) and all(
-                m.get("reason") != "not_supported" for m in row["missing"]):
-            # 何も取れなかった——書かない（次の run が同じ刻みをもう一度試す）。
-            result["errors"].append(f"{record['delivery']}:" + "・".join(m["reason"] for m in row["missing"]))
-            continue
         path = ledger_path(cfg, account, record["delivery"])
         _append(path, row)
-        result["touched"].append(path)
+        if path not in result["touched"]:
+            result["touched"].append(path)
         for m in row["missing"]:
             if m["reason"].startswith("not_fetched:"):
                 result["errors"].append(f"{record['delivery']}:{m['what']}:{m['reason']}")
     return result
+
+
+def pending_paths(repo_dir, cfg, account) -> list:
+    """反応の台帳の置き場（`ledger_dir`）の下で、まだ commit していない（未追跡・変更の）ファイルの実パス。"""
+    import subprocess
+    base = os.path.realpath(ledger_dir(cfg, account))
+    root = os.path.realpath(repo_dir)
+    if not base.startswith(root + os.sep):
+        return []
+    rel = os.path.relpath(base, root)
+    r = subprocess.run(["git", "-C", repo_dir, "status", "--porcelain", "--untracked-files=all", "--", rel],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return []
+    out = []
+    for line in r.stdout.splitlines():
+        path = line[3:].strip()
+        if path.endswith(".ndjson"):
+            out.append(os.path.realpath(os.path.join(root, path)))
+    return out
 
 
 def _undo_and_log(repo_dir, log, err) -> None:
@@ -472,8 +586,11 @@ def _entry(account, *, now, log, info, wait=0, delivery=None) -> int:
             return 2
         result = collect_once(account, cfg, now=now, log=log, delivery=delivery)
         info["result"] = result
-        if result["touched"]:
-            rel = [os.path.relpath(os.path.realpath(p), os.path.realpath(repo_dir)) for p in result["touched"]]
+        # 前の run で push できずに取り消した行（作業ツリーに残っている台帳）も同じ commit に入れる（監査 低-1）。
+        pending = pending_paths(repo_dir, cfg, account)
+        touched = sorted(set(os.path.realpath(p) for p in result["touched"]) | set(pending))
+        if touched:
+            rel = [os.path.relpath(p, os.path.realpath(repo_dir)) for p in touched]
             pushed, push_err = writeback.commit_and_push(
                 repo_dir, rel_path=rel, message=f"反応の採取: {len(rel)} 配信（{account}）")
             if not pushed:
@@ -504,6 +621,8 @@ def _record_run(account, *, rc, trigger, now, info) -> None:
             "refreshed": False, "quota": None, "status": "ok" if rc == 0 else "error",
             "error": (redact_mod.redact("・".join(errors)[:220]) if errors
                       else (info.get("skipped") if rc else None)),
+            # 採れなかったものの項目の数（`error` は 220 字で切れるので、数はここで持つ・監査 低-2）。
+            "n": len(errors),
             "trigger": trigger}, jst.month_str(now))
     except (OSError, accounts_mod.AccountError):
         pass
@@ -513,10 +632,24 @@ def run_collect(account, *, now=None, log=print, trigger=None, wait=0, delivery=
     """`thth run`（はてなの口座）の末尾・`thth hatena collect` の入口。runs に 1 行残す。"""
     now = now if now is not None else jst.now_jst()
     info: dict = {}
-    rc = _entry(account, now=now, log=log, info=info, wait=wait, delivery=delivery)
-    _record_run(account, rc=rc, trigger=trigger, now=now, info=info)
+    rc = guarded_entry(account, now=now, log=log, info=info, wait=wait, delivery=delivery)
+    if info.get("skipped") != "account_leaving":
+        _record_run(account, rc=rc, trigger=trigger, now=now, info=info)
     info.pop("cfg", None)
     return rc
+
+
+def guarded_entry(account, *, now, log, info, wait=0, delivery=None) -> int:
+    """退出中・止めた口座では読まない・書かない（`leave_gate` の lease の中で走る・監査 中-5）。"""
+    from . import leave_gate
+    try:
+        with leave_gate.scope(account), leave_gate.lease(account):
+            return _entry(account, now=now, log=log, info=info, wait=wait, delivery=delivery)
+    except accounts_mod.AccountStopped as exc:
+        log(f"口座が退出中か止まっているので反応を採りません: {exc}")
+        info["skipped"] = "account_leaving"
+        info.pop("result", None)
+        return 2
 
 
 def last_run(account) -> dict | None:
@@ -554,14 +687,17 @@ def by_mark(rows) -> dict:
             for source in SOURCES:
                 if source in row:
                     slot[source] = row
-            slot.setdefault("_any", row)
-            slot["_last"] = row
+            slot["_any"] = row
+            if any(source in row for source in SOURCES):
+                slot["_last"] = row
     return out
 
 
 def latest_row(rows):
-    """いちばん新しい行（`collected_at`）。無ければ None。"""
+    """いちばん新しい行（`collected_at`）。値のある行（ブックマークかスター）を先に。無ければ None。"""
     rows = [r for r in rows if r.get("collected_at")]
+    valued = [r for r in rows if any(source in r for source in SOURCES)]
+    rows = valued or rows
     return max(rows, key=lambda r: r["collected_at"]) if rows else None
 
 

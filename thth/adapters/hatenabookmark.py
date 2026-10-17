@@ -120,11 +120,10 @@ def count_url(urls) -> str:
 
 
 def bookmark_counts(urls, *, contact=None, timeout=READ_TIMEOUT) -> dict:
-    """件数取得 API（`count/entries`）を 1 回。`{url: 件数}`。50 件を超える束は呼び手が分ける。
+    """件数取得 API（`count/entries`）を 1 回。`{url: 件数か None}`。50 件を超える束は呼び手が分ける。
 
-    返りは URL を鍵にした JSON（推測・実機の 45 で確かめる）。**鍵の無い URL は 0**（実装で決めた・
-    200 の答えが「その束の件数」なので、載っていない URL は付いていないと読む）。値が整数でなければ
-    `response_invalid`。
+    返りは URL を鍵にした JSON（推測・実機の 45 で確かめる）。**鍵の無い URL は None**（0 と混ぜない・
+    監査 中-6。0 かどうかは呼び手がエントリー情報と合わせて決める）。値が整数でなければ `response_invalid`。
     """
     urls = list(urls)
     if not urls or len(urls) > COUNT_BATCH:
@@ -136,7 +135,10 @@ def bookmark_counts(urls, *, contact=None, timeout=READ_TIMEOUT) -> dict:
         raise hatena_common.PublicHTTPError("response_invalid")
     out = {}
     for u in urls:
-        value = data.get(u, 0)
+        value = data.get(u)
+        if value is None:
+            out[u] = None
+            continue
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise hatena_common.PublicHTTPError("response_invalid")
         out[u] = value

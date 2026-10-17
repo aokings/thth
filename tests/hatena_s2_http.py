@@ -129,6 +129,9 @@ def fake_http(monkeypatch):
         monkeypatch.setattr(httpsafe, "urlopen", fake)
         # 偽物の HTTP を置いたので、本物の adapter を作ってよい（既定の柵を外す・4.0 S4 監査 低-3）。
         restore_real_hatena_adapters(monkeypatch)
+        # 公開の読む口（4.0 S6）の柵を外すのは偽物の HTTP を置いたときだけ（S6 監査 中-4）。
+        from thth import hatena_reactions
+        monkeypatch.setattr(hatena_reactions, "FETCH", None)
         return fake
     return install
 

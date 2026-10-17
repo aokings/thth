@@ -1656,7 +1656,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         text = proc.stdout
     elif name in CONFLICT_TOOL_NAMES:
         # 4.0 S5: CLI（`thth article diff`・`thth conflict`）を `--json` で呼ぶだけ。
-        for key in ("account", "delivery", "article"):
+        for key in ("account", "delivery"):
             if isinstance(arguments.get(key), str) and arguments[key].startswith("-"):
                 return {"content": [{"type": "text", "text": "invalid_request"}, _channel_note()], "isError": True}
         if name == "thth_article_reactions" and (set(arguments) - {"account", "article", "delivery", "comments"}

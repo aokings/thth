@@ -375,7 +375,12 @@ def _hatena_collect_cells(name) -> dict:
     if row is None:
         return {"hatena_collect_last_at": None, "hatena_collect_errors_n": None}
     error = row.get("error")
-    errors_n = 0 if row.get("status") == "ok" or not error else len(str(error).split("・"))
+    # 項目の数（runs の `n`・監査 低-2）。`n` の無い古い行だけ `error` の区切りで数える。
+    n = row.get("n")
+    if isinstance(n, int) and not isinstance(n, bool):
+        errors_n = n
+    else:
+        errors_n = 0 if row.get("status") == "ok" or not error else len(str(error).split("・"))
     at = str(row.get("run_id") or "")[len(hatena_reactions.ACTION) + 1:] or None
     return {"hatena_collect_last_at": at, "hatena_collect_errors_n": errors_n}
 
