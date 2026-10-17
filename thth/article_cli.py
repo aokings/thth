@@ -34,11 +34,36 @@ def draft_name(record, now) -> str:
     return f"docs/sns/queue/{jst.to_jst(now):%Y-%m-%d}-{tail}-update.md"
 
 
+def draft_fields(record) -> tuple:
+    """原稿に書ける題とカテゴリ（監査 低-4）。`(題, カテゴリ, 注記の list)`。
+
+    queue の front matter は 1 行 1 項目で、値は最初の `:` より後ろをそのまま読む（引用符を外さない）。
+    だから題は**引用しないで**そのまま書くのが往復できる形（`:`・`#` を含んでもよい）。改行は書けないので空白に。
+    カテゴリは `[a, b]` を `,` で分けて読み、両端の引用符を落とすので、`,`・`[`・`]`・両端の引用符・制御文字を
+    含むもの（はてなから取り込んだカテゴリにありうる）は書けない——文面から外して注記で言う。
+    """
+    from . import hatena_entry, queuefile
+    notes = []
+    title = record.get("title") if isinstance(record.get("title"), str) else ""
+    if "\n" in title or "\r" in title or queuefile.find_control_char(title):
+        title = " ".join("".join(ch if ch.isprintable() else " " for ch in title).split())
+        notes.append("題に改行か制御文字があったので空白にしました")
+    title = title.strip()
+    categories = []
+    for item in record.get("categories") if isinstance(record.get("categories"), list) else []:
+        text = str(item).strip()
+        if (not text or any(ch in text for ch in ",[]\x1e\x1f") or text[0] in "'\"" or text[-1] in "'\""
+                or queuefile.find_control_char(text) or len(text) > hatena_entry.CATEGORY_CHARS_MAX):
+            notes.append(f"カテゴリ「{text}」は原稿の書式で書けません（, や [ ] や引用符を含む）。文面から外しました")
+            continue
+        categories.append(text)
+    return title, categories, notes
+
+
 def draft_text(record, now) -> str:
     """更新の原稿の文面（§3.5）。欄は台帳から写す（写し間違いを無くす）。`publish_at` は今＋10 分（分まで）。"""
     at = jst.to_jst(now).replace(second=0, microsecond=0) + datetime.timedelta(minutes=DRAFT_LEAD_MINUTES)
-    title = record.get("title") if isinstance(record.get("title"), str) else ""
-    categories = record.get("categories") if isinstance(record.get("categories"), list) else []
+    title, categories, _notes = draft_fields(record)
     lines = ["---", "thth: 1", f"account: {record['account']}", "status: draft", f"publish_at: {jst.iso(at)}",
              f"article: {record.get('article')}", f"article_source: {record.get('article_source')}",
              f"form: {record.get('form') or 'full'}", f"title: {title}",
@@ -91,6 +116,7 @@ def _one(record, cfg, *, draft, now, allowed_names) -> dict:
     row["announcements"] = told
     if draft:
         row["draft_text"] = draft_text(record, now)
+        row["notes"] += draft_fields(record)[2]
         row["draft_name"] = draft_name(record, now)
     return row
 

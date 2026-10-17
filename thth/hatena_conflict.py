@@ -37,7 +37,7 @@ _SEP = "\x1f"
 RESOLUTIONS = ("adopt", "gone", "no_follow")
 RESOLUTION_WORDS = {"adopt": "adopt_remote", "gone": "remote_deleted", "no_follow": "no_follow"}
 CHECK_INTERVAL_SECONDS = 2
-CHECK_LIMIT = 20
+CHECK_LIMIT = 5      # 監査 低-3: 1 件ごとに 2 秒・その間口座のロックを持つので小さく
 # 断りの符丁（遠くの道の `SAFE_ERRORS` に足す）。
 REASONS = frozenset(("delivery_missing", "delivery_unreadable", "inflight_open", "resolution_not_applicable",
                      "entry_missing", "readback_failed", "confirm_mismatch", "resolution_required",
@@ -225,9 +225,11 @@ def _check_one(account, adapter, loaded, now_iso) -> dict:
             fields["readback_title"] = remote["title"]
         if isinstance(remote.get("categories"), list):
             fields["readback_categories"] = list(remote["categories"])
+        # 監査 低-1: 比べていないことを行にも答えにも残す（黙って正にしない）。
         deliveries_mod.advance(account, delivery, state="published", at=now_iso, base=loaded, fields=fields,
-                               row={"op": "check", "resolution": "readback_filled", "readback_sha": sha})
-        return {"delivery": delivery, "result": "readback_filled"}
+                               row={"op": "check", "resolution": "readback_filled", "readback_sha": sha,
+                                    "compared": False})
+        return {"delivery": delivery, "result": "readback_filled", "compared": False}
     detail = hatena_publish.remote_differences(record, remote, base_sha=record["readback_sha"])
     if detail:
         deliveries_mod.advance(account, delivery, state="conflict", at=now_iso, base=loaded,

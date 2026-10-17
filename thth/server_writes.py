@@ -393,7 +393,10 @@ def schedule(context, request, via, extra_fields=None):
         if jst.to_jst(publish_at)<now: publish_at=now
         hatena=value.get('kind')=='hatena_entry'
         if hatena and not request.get('confirm'):
-            # 1 段目: 何も書かない（`inflight_resolve` と同じ 2 段の形）。見せるのは手元の 1 段目と同じ材料。
+            # 1 段目: 原稿も台帳も書かない（`inflight_resolve` と同じ 2 段の形）。見せるのは手元の 1 段目と同じ材料。
+            # 監査 高-1: 見せた本文と配信の台帳の seq を控える（2 段目までに衝突を解いた・見つけたら断る）。
+            from . import hatena_entry
+            hatena_entry.record_first_stage(value)
             return {'account':account,'draft_id':request['draft_id'],'status':'draft','stage':1,
                     'digest':value['digest'],'preview':'\n'.join(value['display_lines'][:-1]),'via':via}
         # ↑ 最後の 1 行（手元の `thth approve <VM のパス> --confirm …`）は出さない（サーバのパスを口から出さない）。
@@ -650,7 +653,7 @@ def inflight(context, request, via):
         found=inflight_cli.hatena_candidates(account,cfg,record)
         if found is not None:
             out.update(candidates=found['candidates'],candidates_checked=found['checked'],
-                       candidates_error=found['error'])
+                       candidates_error=found['error'],candidates_op=found['op'],candidates_gone=found['gone'])
         return out
     decision=request['decision'];post_id=(request.get('post_id') or '').strip() or None
     if decision=='published' and post_id is None: error('post_id_invalid')
@@ -704,6 +707,8 @@ def conflict(context, request, via):
     if op=='conflict_status':
         _schema(request,('delivery','check'),())
         if request.get('check') is not None and type(request['check']) is not bool: error('invalid_request')
+        # 監査 低-3: 遠くの道の check は 1 件だけ（口座のロックを長く持たない）。
+        if request.get('check') and not request.get('delivery'): error('invalid_request')
     else:
         _schema(request,('delivery','resolution','confirm'),('delivery','resolution'))
         if request['resolution'] not in hatena_conflict.RESOLUTIONS: error('resolution_required')
@@ -715,7 +720,7 @@ def conflict(context, request, via):
     try:
         if op=='conflict_status':
             if request.get('check'):
-                return hatena_conflict.check(account,cfg,delivery,limit=1 if delivery else hatena_conflict.CHECK_LIMIT)
+                return hatena_conflict.check(account,cfg,delivery,limit=1)
             if delivery:
                 return hatena_conflict.show(account,cfg,delivery)
             return hatena_conflict.listing(account)

@@ -793,6 +793,11 @@ def display_lines(m: dict, *, path: str, digest: str) -> list:
             lines.append("画像: なし")
     if m["op"] == "update":
         before, source, note = previous_body(m["account"], ledger, has_images=bool(m["images"]))
+        if source != "adopted" and adopted_since_send(ledger):
+            # 監査 低-6: 取り込んだのに控えが読めない（「前」ははてなの今の本文ではない）。
+            note = ("（取り込みの控えが読めません。差分の「前」ははてなの今の本文ではなく、前に出した本文です。"
+                    f"thth conflict {m['account']} {m['delivery']} show で今の本文を確かめてください）"
+                    + (note or ""))
         base = (m['base_readback_sha'] or '（なし）')[:12]
         if source == "adopted":
             lines.append(f"変更前の版 readback_sha {base}…（はてなの今の本文を "
@@ -857,7 +862,57 @@ def prepare(path: str, qf, account_cfg, account_name: str, *, warning=None):
     }
     one["hatena"]["delivery"] = m["delivery"]
     one["display_lines"] = display_lines(m, path=path, digest=digest)
+    if (m["op"] != "create" and fm.get("status") == "approved"
+            and changed_since_approval(account_name, m.get("ledger"), fm.get("approved_sha"), fm.get("approved_at"))):
+        one["display_lines"].insert(2, STALE_NOTE)
     return one, None
+
+
+# ------------------------------------------------------------------ 承認のあとの台帳の変わり目（S5 監査 高-1・中-1）
+
+def _approval_seq_path(account_name, delivery, approved_sha) -> str:
+    """承認したときに人が見た配信の台帳の `seq`（`deliveries/<dl>.<指紋 12 桁>.approved.json`）。"""
+    return os.path.join(deliveries_mod.dir_for(account_name), f"{delivery}.{approved_sha[:12]}.approved.json")
+
+
+def _stale_row(row) -> bool:
+    """承認を古くする台帳の行: 人が衝突を解いた（`op: resolve`）か、check で衝突を見つけた（`op: check`）。"""
+    return row.get("op") == "resolve" or (row.get("op") == "check" and row.get("state") == "conflict")
+
+
+def stale_rows_after(ledger, seq) -> list:
+    return [row for row in (ledger or {}).get("history") or [] if row.get("seq", 0) > seq and _stale_row(row)]
+
+
+def _read_seq(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            value = json.load(f).get("seq")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if type(value) is int else None
+
+
+def changed_since_approval(account_name, ledger, approved_sha, approved_at) -> bool:
+    """承認したあとに、配信の台帳に衝突を解いた・見つけた行が足されたか（指紋は変えずに `approval_stale`）。
+
+    題だけ・カテゴリだけの衝突を `--adopt` しても本文の sha（指紋の変更前の版）は変わらないので、
+    指紋だけでは承認が古くならない（監査 高-1）。削除の承認のあとに check で衝突が見つかったときも
+    同じ（中-1）。承認したときの `seq` の控えがあればそれより後の行、無ければ `approved_at` より後の行。
+    """
+    if not isinstance(ledger, dict) or not isinstance(approved_sha, str) or len(approved_sha) < 12:
+        return False
+    seq = _read_seq(_approval_seq_path(account_name, ledger.get("delivery"), approved_sha))
+    if seq is not None:
+        return bool(stale_rows_after(ledger, seq))
+    at = jst.parse(approved_at)
+    if at is None:
+        return False
+    return any(_stale_row(row) and (jst.parse(row.get("at")) or at) > at for row in ledger.get("history") or [])
+
+
+STALE_NOTE = ("⚠ 前の承認のあとに衝突を見つけた・解いた（thth conflict）ので、前の承認は古くなっています"
+              "（approval_stale）。この表示を見て承認し直してください")
 
 
 def _pending_dir(account_name: str, approved_sha: str) -> str:
@@ -877,9 +932,17 @@ def record_first_stage(one: dict) -> bool:
         _write_private(os.path.join(d, "body.md"), (m.get("body") or "") + "\n")
         _write_private(os.path.join(d, "images.json"),
                        json.dumps(m.get("images") or [], ensure_ascii=False, indent=2) + "\n")
+        ledger = m.get("ledger")
+        if isinstance(ledger, dict) and type(ledger.get("seq")) is int:
+            # 監査 高-1: 1 段目で人が見た配信の台帳の seq（2 段目までに衝突を解いた・見つけたら断る）。
+            _write_private(os.path.join(d, "ledger_seq.json"), json.dumps({"seq": ledger["seq"]}) + "\n")
         return True
     except (OSError, KeyError, ValueError):
         return False
+
+
+def _write_private_dir(d: str) -> None:
+    os.makedirs(d, mode=0o700, exist_ok=True)
 
 
 def _write_private(path: str, text: str) -> None:
@@ -925,6 +988,14 @@ def assign_delivery(one: dict, *, by: str, at: str, origin: dict | None = None) 
         deliveries_mod.advance(account, delivery, state="wanted", at=at, fields=fields, row=row)
     else:
         delivery = m["delivery"]
+        # 監査 高-1・中-1: 1 段目で見せたあとに衝突を見つけた・解いた行があれば承認しない（見ていない差分）。
+        seen = _read_seq(os.path.join(_pending_dir(account, one["approved_sha"]), "ledger_seq.json"))
+        current = deliveries_mod.read(account, delivery)
+        if seen is not None and stale_rows_after(current, seen):
+            raise ValueError("approval_stale: 1 段目のあとに衝突を見つけた・解いたので、1 段目からやり直してください")
+        _write_private_dir(deliveries_mod.dir_for(account))
+        _write_private(_approval_seq_path(account, delivery, one["approved_sha"]),
+                       json.dumps({"seq": current["seq"]}) + "\n")
     one["delivery"] = delivery
     _keep_approved_body(account, delivery, one["approved_sha"], m["body"])
     try:
@@ -972,6 +1043,10 @@ def select_problem(qf, account_cfg, account_name):
             return exc.code, None
         return "approval_stale", None
     if not fm.get("approved_sha") or fm.get("approved_sha") != m["approved_sha"]:
+        return "approval_stale", m
+    if m["op"] != "create" and changed_since_approval(account_name, m.get("ledger"), fm.get("approved_sha"),
+                                                      fm.get("approved_at")):
+        # 監査 高-1・中-1: 承認のあとに衝突を解いた・見つけた（指紋は変わらないが、人はその差分を見ていない）。
         return "approval_stale", m
     control = queuefile.find_control_char(m["body"]) or queuefile.find_control_char(m["title"])
     if control is not None:

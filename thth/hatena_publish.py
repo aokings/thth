@@ -781,6 +781,13 @@ def candidates(account_name, account_cfg, record, *, adapter_factory=None) -> di
     import datetime
     from . import principals, queuefile
     out = {"checked": False, "error": None, "op": None, "candidates": [], "gone": None}
+    from . import hatena_conflict
+    try:
+        # 監査 中-2: 主体・口座が止まっていれば、はてなには読みにも行かない（conflict の口と同じ段）。
+        hatena_conflict._stops(account_name, account_cfg)
+    except hatena_conflict.ConflictRefused as exc:
+        out["error"] = exc.code
+        return out
     try:
         ledger = deliveries_mod.read(account_name, record.get("delivery"))
         op = _op_of(ledger)
