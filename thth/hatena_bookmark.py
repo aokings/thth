@@ -38,6 +38,8 @@ _CONTROL = re.compile(r"[\x00-\x20\x7f]")
 REASONS = frozenset((
     "invalid_url", "use_delivery", "bookmark_other_lane_article", "bookmark_precheck_failed",
     "bookmark_not_found", "invalid_op", "hatena_auth_rejected", "provider_rate_limited",
+    # 実機の確かめ 10/17 の 9: 消した印（retracted_at）のある行をもう一度消そうとした。
+    "bookmark_already_deleted",
     "hatena_user_mismatch", "response_invalid", "hatena_transport_failed", "redirect_blocked",
     "response_too_large", "endpoint_rejected", "adapter_error",
     # 打ったあとに `sent/bm:` を書けなかった（ディスク・置き場）。
@@ -47,9 +49,10 @@ REASONS = frozenset((
 
 
 class BookmarkError(ValueError):
-    def __init__(self, code):
+    def __init__(self, code, *, at=None):
         super().__init__(code)
         self.code = code
+        self.at = at  # bookmark_already_deleted のときの消した日時（見せるためだけ）
 
 
 # --------------------------------------------------------------------------
@@ -239,9 +242,13 @@ def prepare(account_name: str, cfg: dict, *, delivery: str | None = None, url: s
         raise BookmarkError(code if code in ("comment_too_long", "comment_required", "too_many_tags",
                                              "invalid_url") else "invalid_request") from None
     ledger = _ledger_row(principal, canonical)
-    if op == "delete" and (ledger is None or ledger[1].get("retracted_at")
-                           or ledger[1].get("result") not in ("confirmed", "unknown")):
-        raise BookmarkError("bookmark_not_found")
+    if op == "delete":
+        _check_deletable(ledger)
+    try:
+        lane_allowed = cfg.get("project") in (
+            (principals.load_principal(principal).get("bookmark") or {}).get("lanes") or [])
+    except Exception:  # noqa: BLE001 — 予告のためだけ（2 段目は安全装置が断る）
+        lane_allowed = None
     remaining = None
     try:
         principal_cfg = principals.load_principal(principal)
@@ -271,12 +278,12 @@ def prepare(account_name: str, cfg: dict, *, delivery: str | None = None, url: s
             "target": target, "article": article, "blog_id": blog_id,
             "comment": components["comment"], "tags": sorted(tag_list), "approved_sha": sha,
             "digest": sha[:approval_mod.APPROVE_DIGEST_LENGTH], "remaining_today": remaining,
-            "others": others, "ledger": once}
+            "others": others, "ledger": once, "lane_allowed": lane_allowed, "project": cfg.get("project")}
 
 
 def preview(p: dict) -> dict:
     keys = ("account", "principal", "owner", "op", "target", "delivery", "url", "article", "blog_id",
-            "comment", "tags", "remaining_today", "others", "ledger")
+            "comment", "tags", "remaining_today", "others", "ledger", "lane_allowed")
     out = {key: p.get(key) for key in keys}
     # 1 段目の残り枠（全体）は S1 から数で返していた（遠くの道の受け手の互換）。
     rem = p.get("remaining_today")
@@ -324,8 +331,31 @@ def lines(p: dict) -> list:
         if p["target"] == "own":
             out.append("  （自分の記事です。運営者であることが分かる文にしてください。例: 自分の記事。…）")
         out.append(f"タグ: {tags}")
+    if p.get("lane_allowed") is False:
+        out.append(lane_refusal_line(p["principal"], p.get("project")))
     out += [f"主体の今日の残り枠: {left}", f"digest: {p['digest']}"]
     return out
+
+
+def lane_refusal_line(principal, project) -> str:
+    """1 段目の予告（実機の確かめ 10/17 の 7）。2 段目は安全装置が `bookmark_not_allowed_for_lane` で断る。"""
+    from . import principals
+    try:
+        lanes = list((principals.load_principal(principal).get("bookmark") or {}).get("lanes") or [])
+    except Exception:  # noqa: BLE001
+        lanes = []
+    want = ",".join(lanes + ([project] if project and project not in lanes else [])) or "<lane>"
+    return (f"→ 2 段目で断ります（bookmark_not_allowed_for_lane）: このレーン（{project}）は主体 {principal} の"
+            f"ブックマークを許すレーン（主体の台帳の bookmark.lanes: {','.join(lanes) or 'なし'}）にありません。"
+            f"許すなら thth principal set {principal} bookmark.lanes {want} --by <名前>")
+
+
+def _check_deletable(found) -> None:
+    """消せる行か（無い・結果が付いていない → `bookmark_not_found`、消した印がある → `bookmark_already_deleted`）。"""
+    if found is not None and found[1].get("retracted_at"):
+        raise BookmarkError("bookmark_already_deleted", at=found[1].get("retracted_at"))
+    if found is None or found[1].get("result") not in ("confirmed", "unknown"):
+        raise BookmarkError("bookmark_not_found")
 
 
 # --------------------------------------------------------------------------
@@ -455,9 +485,7 @@ def delete_locked(account_name: str, cfg: dict, p: dict, *, adapter_factory=None
     guard.check(account_name, cfg, "bookmark_delete", actor=actor, via=via, credential=credential)
     principal_cfg = principals.check_account(cfg, account_name)
     found = _ledger_row(cfg["principal"], p["url_canonical"])
-    if (found is None or found[1].get("retracted_at")
-            or found[1].get("result") not in ("confirmed", "unknown")):
-        raise BookmarkError("bookmark_not_found")
+    _check_deletable(found)
     holder, row = found
     adapter = _adapter(cfg, principal_cfg, adapter_factory)
     try:

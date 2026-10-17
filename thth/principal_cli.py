@@ -7,6 +7,7 @@
     thth principal add <name> --hatena-id <id> [--blog <blog_id>=<lane>[,<lane>…]]… --by <名前>
     thth principal show <name> [--json]
     thth principal set <name> <名前> <値> --by <名前>   （burst は `burst <件数> <分>` でも）
+    thth principal set <name> bookmark.lanes <lane>[,<lane>…] --by <名前>   （`-` で空に）
     thth principal resume <name> --by <名前>
     thth principal auth <name> --by <名前> [--force|--forget|--forget-consumer] [--consumer]
                                                         （OAuth 1.0a・PIN（oob）。端末から・S2 §2.4）
@@ -30,6 +31,8 @@ KEYS = ("daily_max_posts", "daily_max_retracts", "daily_max_bookmarks", "burst_c
 # 4.0 S3 §9: 主体の台帳の `fotolife` の上限（`fotolife.<欄>`・範囲は `hatena_fotolife.LIMIT_RANGES`）。
 FOTOLIFE_KEYS = ("fotolife.max_image_bytes", "fotolife.max_images_per_entry", "fotolife.max_total_bytes",
                  "fotolife.daily_max_uploads", "fotolife.feed_pages")
+# ブックマークを打てるレーン（主体の台帳の `bookmark.lanes`・実機の確かめ 10/17 の 7）。値は `a,b`（`-` で空に）。
+LANES_KEY = "bookmark.lanes"
 
 
 def _find_example_dir() -> str:
@@ -221,9 +224,49 @@ def _parse_value(key, text):
     return value
 
 
+def _parse_lanes(text) -> list:
+    """`a,b` をレーンの一覧に（順はそのまま・重なりは 1 つに）。`-` か空で空の一覧。"""
+    text = str(text if text is not None else "").strip()
+    if text in ("", "-"):
+        return []
+    out = []
+    for part in text.split(","):
+        lane = part.strip()
+        if not lane or not accounts.name_is_safe(lane):
+            raise ValueError("invalid_setting")
+        if lane not in out:
+            out.append(lane)
+    return out
+
+
+def _change_lanes(name, value, *, by) -> dict:
+    after = _parse_lanes(value)
+    p = principals.load_principal(name)
+    before = list((p.get("bookmark") or {}).get("lanes") or [])
+    if before == after:
+        return {"principal": name, "key": LANES_KEY, "before": before, "after": after, "changed": False}
+    path = principals.path_for(name)
+    with open(path, encoding="utf-8") as f:
+        raw = json.load(f)
+    original = json.loads(json.dumps(raw))
+    block = raw.get("bookmark") if isinstance(raw.get("bookmark"), dict) else {}
+    raw["bookmark"] = dict(block, lanes=after)
+    secrets_fs.atomic_write_json(path, raw)
+    try:
+        principals.load_principal(name)
+    except accounts.AccountError:
+        secrets_fs.atomic_write_json(path, original)
+        raise ValueError("invalid_setting") from None
+    admin_log.append("settings_set", name, {"media": principals.MEDIA}, by=by, via="cli",
+                     diff={LANES_KEY: [before, after]})
+    return {"principal": name, "key": LANES_KEY, "before": before, "after": after, "changed": True}
+
+
 def change(name, key, value, *, by) -> dict:
-    """主体の上限を 1 つ変える（運営者の CLI だけ・どちらの向きも）。"""
+    """主体の上限を 1 つ変える（運営者の CLI だけ・どちらの向きも）。`bookmark.lanes` はレーンの一覧。"""
     admin_log.actor(by)
+    if key == LANES_KEY:
+        return _change_lanes(name, value, by=by)
     after = _parse_value(key, value)
     p = principals.load_principal(name)
     before_limits = principals.limits(p)
@@ -270,18 +313,21 @@ def cmd_set(args) -> int:
     except principals.PrincipalError as e:
         return _fail(f"{e.code}: {e}", json_output=getattr(args, "json", False))
     except (ValueError, account_settings.SettingsError):
-        return _fail(f"invalid_setting: 名前は {'・'.join(KEYS + FOTOLIFE_KEYS)}（burst は `burst <件数> <分>` でも）",
+        return _fail(f"invalid_setting: 名前は {'・'.join(KEYS + FOTOLIFE_KEYS + (LANES_KEY,))}"
+                     "（burst は `burst <件数> <分>` でも・bookmark.lanes は <lane>[,<lane>…] か -）",
                      json_output=getattr(args, "json", False))
     except (OSError, admin_log.AdminLogError):
         return _fail("settings_unavailable", json_output=getattr(args, "json", False))
     if getattr(args, "json", False):
         print(json.dumps(results if len(results) > 1 else results[0], ensure_ascii=False))
         return 0
+    def shown(value):
+        return (",".join(value) or "なし") if isinstance(value, list) else value
     for row in results:
         if row["changed"]:
-            print(f"{row['principal']}: {row['key']} {row['before']} → {row['after']}")
+            print(f"{row['principal']}: {row['key']} {shown(row['before'])} → {shown(row['after'])}")
         else:
-            print(f"{row['principal']}: {row['key']} は既に {row['after']} です（変えていません）")
+            print(f"{row['principal']}: {row['key']} は既に {shown(row['after'])} です（変えていません）")
     return 0
 
 
@@ -590,9 +636,9 @@ def register(sub) -> None:
     p_show.add_argument("name")
     p_show.add_argument("--json", action="store_true")
     p_show.set_defaults(func=cmd_show)
-    p_set = verbs.add_parser("set", help="主体の上限を変える")
+    p_set = verbs.add_parser("set", help="主体の上限・ブックマークを打てるレーンを変える")
     p_set.add_argument("name")
-    p_set.add_argument("rest", nargs="+", help="<名前> <値>（" + "・".join(KEYS + FOTOLIFE_KEYS) + "）")
+    p_set.add_argument("rest", nargs="+", help="<名前> <値>（" + "・".join(KEYS + FOTOLIFE_KEYS + (LANES_KEY,)) + "）")
     p_set.add_argument("--by", required=True)
     p_set.add_argument("--json", action="store_true")
     p_set.set_defaults(func=cmd_set)

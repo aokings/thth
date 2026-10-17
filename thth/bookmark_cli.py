@@ -73,6 +73,13 @@ def _out(args, payload, rc, text_lines=None, *, err=False) -> int:
     return rc
 
 
+def _bookmark_message(exc, fallback) -> str:
+    text = _MESSAGES.get(exc.code, fallback)
+    if exc.code == "bookmark_already_deleted" and getattr(exc, "at", None):
+        text += f"（{exc.at} に削除）"
+    return text
+
+
 def _refuse(args, code, message, rc=2) -> int:
     return _out(args, {"ok": False, "error": code, "message": message}, rc, [f"{code}: {message}"], err=True)
 
@@ -82,6 +89,7 @@ _MESSAGES = {
     "bookmark_other_lane_article": "この URL は同じ owner の別のレーン（別の主体）の記事です。付けません",
     "invalid_url": "URL は http／https で、host があり、空白・制御文字の無いものです",
     "bookmark_not_found": "THTH が付けたブックマークの記録がありません（手で付けたものは THTH から消しません）",
+    "bookmark_already_deleted": "このブックマークはもう消しています",
     "invalid_op": "op は add か delete です（コメント・タグの直しははてなの画面から）",
     "bookmark_precheck_failed": "打つ前の確かめ（この主体のブックマークの GET）が通りませんでした。何もしていません",
     "bookmark_record_failed": "はてなには打ちましたが、記録（sent/bm:）を書けませんでした。置き場を直し、"
@@ -102,8 +110,8 @@ def cmd(args) -> int:
     try:
         p = hatena_bookmark.prepare(args.account, cfg, comment=args.comment, tags=args.tags, op=op, **target)
     except hatena_bookmark.BookmarkError as exc:
-        return _refuse(args, exc.code, _MESSAGES.get(exc.code, "ブックマークの対象・コメント・タグを確かめてください"
-                                                    "（自分の記事は thth deliveries <口座> で published の配信）"))
+        return _refuse(args, exc.code, _bookmark_message(exc, "ブックマークの対象・コメント・タグを確かめてください"
+                                                         "（自分の記事は thth deliveries <口座> で published の配信）"))
     flag = f"--delivery {args.delivery}" if args.delivery else f"--url {args.url}"
     if not args.confirm:
         from . import refusals
@@ -143,7 +151,7 @@ def cmd(args) -> int:
         detail = f"（{exc.reason}）" if getattr(exc, "reason", None) else ""
         return _refuse(args, str(exc), core.guard_refusal_message(args.account, exc) + detail, rc=1)
     except hatena_bookmark.BookmarkError as exc:
-        return _refuse(args, exc.code, _MESSAGES.get(exc.code, "打てませんでした（何も記録していません）"))
+        return _refuse(args, exc.code, _bookmark_message(exc, "打てませんでした（何も記録していません）"))
     finally:
         for line in logs:
             print(line, file=sys.stderr)

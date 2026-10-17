@@ -1250,9 +1250,22 @@ def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") 
         why = "この主体ではてなに既にブックマークがあります（手で付けたものを THTH は上書きしません）"
     elif code == "bookmark_busy":
         why = "同じ owner の別のブックマークが打っている最中です。少し置いてもう一度"
+    elif code == "bookmark_not_allowed_for_lane":
+        # 実機の確かめ 10/17 の 7: 直す先は口座でなく主体の台帳（bookmark.lanes）。
+        try:
+            cfg = accounts_mod.load_account(account_name)
+            principal, project = cfg.get("principal") or "<主体>", cfg.get("project") or "<lane>"
+        except Exception:  # noqa: BLE001 — 文のためだけ
+            principal, project = "<主体>", "<lane>"
+        why = (f"このレーン（{project}）は主体のブックマークを許すレーン（主体の台帳の bookmark.lanes）にありません。"
+               f"許すなら thth principal set {principal} bookmark.lanes <lane>[,<lane>…] --by <名前>")
     else:
         why = code
     head = GUARD_REFUSAL_HEADS.get(kind, "送信しません")
+    from . import guard as guard_mod
+    if code in guard_mod.PRINCIPAL_REFUSALS:
+        # 主体・ブログ・ブックマークの段は主体の台帳が直す先（実機の確かめ 10/17 の 8・口座の set を重ねない）。
+        return f"{head}（安全装置）: {why}"
     return (f"{head}（安全装置）: {why}。数は thth account set {account_name} <名前> <値> --by <名前>"
             " で変えられます")
 

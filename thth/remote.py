@@ -747,6 +747,11 @@ def _bookmark_add(args, account, op="add"):
         print(f"{account}: ブックマークしません（確認の一段目です）")
         for key, item in (value.get("preview") or {}).items():
             print(f"  {key}: {item}")
+        if (value.get("preview") or {}).get("lane_allowed") is False:
+            # 実機の確かめ 10/17 の 7: 2 段目の断りを 1 段目で予告する（直す先は主体の台帳）。
+            print("  → 2 段目で断ります（bookmark_not_allowed_for_lane）: このレーンは主体のブックマークを許すレーン"
+                  "（主体の台帳の bookmark.lanes）にありません。運営者が thth principal set <主体> bookmark.lanes"
+                  " <lane>[,<lane>…] --by <名前> で許せます")
         print(f"digest: {value.get('digest')}")
         return 1
     if value.get("status") == "unknown":
