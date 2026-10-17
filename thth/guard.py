@@ -39,7 +39,7 @@ import json
 import os
 from pathlib import Path
 
-from . import accounts, jst, sent as sent_mod, server_files
+from . import accounts, assess, jst, limits_policy, sent as sent_mod, server_files
 from .report_service import ReportServiceError
 
 # 主体・ブログ・ブックマークの段（設計 4.0 S1 §4.1・§4.2）。はてなの口座だけに出る。
@@ -66,12 +66,18 @@ KINDS = ("publish", "retract", "schedule") + HATENA_KINDS
 
 
 class GuardRefused(ReportServiceError):
-    """安全装置の断り。`reason` は静的な詳細、`next_at` は次に出せる時刻（無ければ None）。"""
+    """安全装置の断り。`reason` は静的な詳細、`next_at` は次に出せる時刻（無ければ None）。
 
-    def __init__(self, code, *, reason=None, next_at=None):
+    `assessment`（設計 上限と連投の柵 §7.1・段 1）: どの行（`rule`）・信号・単位・数（`used`／`count`）・
+    根拠（`trait`）で断ったかの構造。`check`／`check_reaction` が上げる断りに付く（ほかの所で作る断りは None）。
+    符丁（`str(exc)`）・`reason`・`next_at` は今までどおり。
+    """
+
+    def __init__(self, code, *, reason=None, next_at=None, assessment=None):
         super().__init__(code)
         self.reason = reason
         self.next_at = next_at
+        self.assessment = assessment
 
 
 def credential_id(context) -> str | None:
@@ -237,18 +243,6 @@ def _events(account):
     return posts, retracts
 
 
-def _next_midnight(now):
-    day = jst.to_jst(now).date() + datetime.timedelta(days=1)
-    return datetime.datetime.combine(day, datetime.time(0, 0), tzinfo=jst.JST)
-
-
-def _quiet_end(now, quiet_hours):
-    hour, minute = (int(x) for x in quiet_hours[1].split(":"))
-    now = jst.to_jst(now)
-    end = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    return end if end > now else end + datetime.timedelta(days=1)
-
-
 def summary(account, cfg, *, now=None) -> dict:
     """数えた結果（読むだけ・`/activity` や答えに添える用）。"""
     now = jst.to_jst(now) if now is not None else jst.now_jst()
@@ -322,6 +316,10 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
           bookmark_target=None, bookmark_once=True, delivery=None) -> None:
     """依頼が安全装置に掛かれば `GuardRefused` を上げる。掛からなければ何もしない。
 
+    道（設計 上限と連投の柵 §5.1・段 1）: **止めの印 → 行の表（安全装置と見立て）→ 結論を当てる**。
+    行は `limits_policy.rules_for` が表の順に返し、`assess.evaluate` が最初に当たった行を結論にする
+    （表の順は 4.0.1 の `if` の順そのもの）。断りには `assessment`（§7.1）を添える。
+
     `delivery`（はてなの配信 id・4.0 S5 §6）: 同じ配信への操作が窓の中に既にあれば、この依頼は burst の
     数を増やさない（同じ配信は窓の中で 1 件）。
 
@@ -361,52 +359,24 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
                              bookmark_once=bookmark_once, delivery=delivery)
     if kind in HATENA_KINDS:
         raise ValueError("invalid_guard_kind")
-    # `cli`（運営者の CLI・10/15）: 止めの印を置けない置き場なら、印は読まず・置かず、数だけ守らせる。
+    # 1. 止めの印。`cli`（運営者の CLI・10/15）: 止めの印を置けない置き場なら、印は読まず・置かず、数だけ守らせる。
     can_stop = not cli or stop_place_usable(account)
     halted = stopped(account) if can_stop else None
     if halted is not None:
-        raise GuardRefused("account_stopped", reason=halted.get("reason"))
+        raise _stopped_refusal("account", halted.get("reason"))
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     counts = summary(account, cfg, now=now)
-    limits = counts["limits"]
-    if kind == "publish":
-        quiet = cfg.get("quiet_hours")
-        from .select import in_quiet_hours
-        if quiet and in_quiet_hours(now, quiet):
-            raise GuardRefused("quiet_hours", next_at=jst.iso(_quiet_end(now, quiet)))
-        hours = cfg.get("min_interval_hours")
-        last = counts["last_post_at"]
-        if (not reply and isinstance(hours, (int, float)) and not isinstance(hours, bool)
-                and hours > 0 and last is not None):
-            ready = last + datetime.timedelta(hours=hours)
-            if now < ready:
-                raise GuardRefused("too_soon", next_at=jst.iso(ready))
-        if counts["posts_today"] >= limits["daily_max_posts"]:
-            raise GuardRefused("daily_limit", next_at=jst.iso(_next_midnight(now)))
-    elif kind == "retract":
-        if counts["retracts_today"] >= limits["daily_max_retracts"]:
-            raise GuardRefused("retract_limit", next_at=jst.iso(_next_midnight(now)))
-    else:
-        day = jst.to_jst(publish_at).date() if publish_at is not None else now.date()
-        published = sum(1 for at in counts["posts"] if at.date() == day)
-        if published + scheduled_same_day >= limits["daily_max_posts"]:
-            nxt = datetime.datetime.combine(day + datetime.timedelta(days=1), datetime.time(0, 0), tzinfo=jst.JST)
-            raise GuardRefused("daily_limit", next_at=jst.iso(nxt))
-        return
-    # 急な連投（公開と削除の合計）。返信は止めず、順番待ちの時刻を添えて断る（3.25.0）。
-    if kind == "publish" and reply:
-        ahead = [jst.to_jst(at) for at in (pending_replies or ()) if jst.to_jst(at) > now]
-        if ahead or counts["recent"] + 1 > limits["burst"]["count"]:
-            slot = burst_slot(account, cfg, now=now, pending=ahead)
-            raise GuardRefused("burst_limit", reason="burst", next_at=jst.iso(slot))
-        return
-    # 投稿（返信でないもの）。この依頼を足すと超えるなら止める。
-    if counts["recent"] + 1 > limits["burst"]["count"]:
-        if not can_stop:
-            # 印を置けないので口座は止めず、この 1 件を断る（数え直せば次の窓で出せる）。
-            raise GuardRefused("burst_limit", reason="burst")
-        stop(account, "burst", now=now, actor=actor, via=via, credential=credential)
-        raise GuardRefused("account_stopped", reason="burst")
+    action = {"publish": "reply" if reply else "post", "retract": "retract", "schedule": "schedule"}[kind]
+    request = assess.Request(account=account, cfg=cfg, action=action, now=now, family="sns",
+                             publish_at=publish_at, scheduled_same_day=scheduled_same_day,
+                             pending_replies=tuple(pending_replies or ()))
+    materials = assess.Materials(
+        loaders={"counts": counts},
+        fns={"burst_slot": lambda ahead: burst_slot(account, cfg, now=now, pending=ahead)})
+    # 2〜3. 行の表（安全装置と見立て）を表の順に当てる。
+    result = assess.evaluate(limits_policy.rules_for("sns", action, cfg=cfg), request, materials)
+    _enforce(result, account=account, principal=None, can_stop=can_stop, now=now, actor=actor, via=via,
+             credential=credential)
 
 
 # --------------------------------------------------------------------------
@@ -528,6 +498,35 @@ def bookmark_counts(principal_name, *, url=None, now=None) -> dict:
     return {"own_today": own, "same_host_today": same, "host": host}
 
 
+def _stopped_refusal(scope, reason) -> "GuardRefused":
+    code = "principal_stopped" if scope == "principal" else "account_stopped"
+    return GuardRefused(code, reason=reason, assessment=assess.stopped_assessment(scope, reason))
+
+
+def _enforce(result, *, account, principal, can_stop, now, actor, via, credential) -> None:
+    """見立ての結論を当てる（印を置く・断る）。`pass` は何もしない。
+
+    - `stopped`（安全装置 `stop`）: 単位（口座／主体）を止めてから `account_stopped`／`principal_stopped`
+      （詳細 `burst`）。止めの印を置けない置き場の CLI は止めず `burst_limit`（詳細 `burst`・時刻なし・10/15）。
+    - `stopped`（`halted`・媒体の断りの印）: 印は置き済み。符丁だけ（詳細の語は添えない）。
+    - `refuse`・`wait`: 行の符丁・詳細・`next_at` で断る（`wait` は呼び手が順番待ちに並べる）。
+    """
+    if result["outcome"] in ("pass", "advise"):
+        return
+    rule = limits_policy.rule(result["rule"])
+    if rule["on_exceed"] == "stop":
+        if not can_stop:
+            downgraded = dict(result, outcome="refuse", code="burst_limit", detail="burst", next_at=None)
+            raise GuardRefused("burst_limit", reason="burst", assessment=downgraded)
+        if result["scope"] == "principal":
+            from . import principals
+            principals.stop(principal, "burst", now=now, actor=actor, via=via, credential=credential)
+        else:
+            stop(account, "burst", now=now, actor=actor, via=via, credential=credential)
+        raise GuardRefused(result["code"], reason="burst", assessment=result)
+    raise GuardRefused(result["code"], reason=result["detail"], next_at=result["next_at"], assessment=result)
+
+
 def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at,
                   scheduled_same_day, principal_scheduled_same_day, bookmark_url, cli,
                   bookmark_target=None, bookmark_once=True, delivery=None) -> None:
@@ -536,6 +535,8 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
     **主体の台帳はここで読み直す**（ロックの中で呼ばれる——承認のあとに主体の台帳から
     ブログやレーンを外せば、ここで `blog_not_allowed_for_lane` で止まる・§5.2 の 6）。
     **主体の数え直しもロックの中**（§4.3: 2 レーンの同時の公開で burst をすり抜けない）。
+
+    当てる行は `limits_policy` の `hatenablog`（記事・予約）／`hatenabookmark`（ブックマーク）の表の順。
     """
     from . import principals, publish_hold
     if kind == "bookmark" and not (isinstance(bookmark_url, str) and bookmark_url.strip()):
@@ -549,104 +550,43 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
     # 1. 主体の止め（すべてのブログの公開・更新・削除とブックマーク）
     halted = principals.stopped(name) if can_stop else None
     if halted is not None:
-        raise GuardRefused("principal_stopped", reason=halted.get("reason"))
+        raise _stopped_refusal("principal", halted.get("reason"))
     # 2. 口座の止め
     halted = stopped(account) if can_stop else None
     if halted is not None:
-        raise GuardRefused("account_stopped", reason=halted.get("reason"))
-    # 3. 媒体の断りで止めた印（詳細の語は添えない・`server_writes.direct_send` と同じ）
-    if publish_hold.held(account) is not None:
-        raise GuardRefused("account_stopped")
-    now = jst.to_jst(now) if now is not None else jst.now_jst()
-    counts = summary(account, cfg, now=now)
-    limits = counts["limits"]
-    whole = principal_summary(name, principal_cfg, now=now)
-    plimits = whole["limits"]
+        raise _stopped_refusal("account", halted.get("reason"))
+    action = {"bookmark": "bookmark_add"}.get(kind, kind)
+    family = "hatenabookmark" if action.startswith("bookmark") else "hatenablog"
     blog_id = str(cfg.get("blog_id") or "").strip().lower()
     blog = principals.blog_entry(principal_cfg, blog_id) or {}
-    today = now.date()
-    midnight = jst.iso(_next_midnight(now))
-
-    def blog_today(rows):
-        return sum(1 for at, b in rows if b == blog_id and at.date() == today)
-
-    if kind in ("entry_create", "entry_update"):
-        quiet = cfg.get("quiet_hours")
-        from .select import in_quiet_hours
-        if quiet and in_quiet_hours(now, quiet):
-            raise GuardRefused("quiet_hours", next_at=jst.iso(_quiet_end(now, quiet)))
-        hours = cfg.get("min_interval_hours")
-        last = counts["last_post_at"]
-        if (isinstance(hours, (int, float)) and not isinstance(hours, bool)
-                and hours > 0 and last is not None):
-            ready = last + datetime.timedelta(hours=hours)
-            if now < ready:
-                raise GuardRefused("too_soon", next_at=jst.iso(ready))
-        if counts["posts_today"] >= limits["daily_max_posts"]:
-            raise GuardRefused("daily_limit", next_at=midnight)
-        if "daily_max_posts" in blog and blog_today(whole["posts"]) >= blog["daily_max_posts"]:
-            raise GuardRefused("blog_daily_limit", next_at=midnight)
-        if whole["posts_today"] >= plimits["daily_max_posts"]:
-            raise GuardRefused("principal_daily_limit", next_at=midnight)
-    elif kind == "entry_delete":
-        if counts["retracts_today"] >= limits["daily_max_retracts"]:
-            raise GuardRefused("retract_limit", next_at=midnight)
-        if "daily_max_retracts" in blog and blog_today(whole["retracts"]) >= blog["daily_max_retracts"]:
-            raise GuardRefused("blog_retract_limit", next_at=midnight)
-        if whole["retracts_today"] >= plimits["daily_max_retracts"]:
-            raise GuardRefused("principal_retract_limit", next_at=midnight)
-    elif kind == "schedule":
-        day = jst.to_jst(publish_at).date() if publish_at is not None else today
-        nxt = jst.iso(datetime.datetime.combine(day + datetime.timedelta(days=1), datetime.time(0, 0),
-                                                tzinfo=jst.JST))
-        published = sum(1 for at in counts["posts"] if at.date() == day)
-        if published + scheduled_same_day >= limits["daily_max_posts"]:
-            raise GuardRefused("daily_limit", next_at=nxt)
-        if principal_scheduled_same_day is None:
-            principal_scheduled_same_day = principals.scheduled_same_day(name, day)
-        principal_published = sum(1 for at, _ in whole["posts"] if at.date() == day)
-        if principal_published + principal_scheduled_same_day >= plimits["daily_max_posts"]:
-            raise GuardRefused("principal_daily_limit", next_at=nxt)
-        return
-    else:  # bookmark・bookmark_delete（quiet_hours・口座の枠には掛けない・§7.3）
+    rules = limits_policy.rules_for(family, action, cfg=cfg, principal_cfg=principal_cfg, blog=blog)
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    request = assess.Request(account=account, cfg=cfg, action=action, now=now, family=family,
+                             publish_at=publish_at, scheduled_same_day=scheduled_same_day, principal=name,
+                             principal_scheduled_same_day=principal_scheduled_same_day, blog_id=blog_id,
+                             bookmark_url=bookmark_url, bookmark_target=bookmark_target,
+                             bookmark_once=bookmark_once, delivery=delivery)
+    # 3. 媒体の断りで止めた印（詳細の語は添えない・`server_writes.direct_send` と同じ）
+    halt = assess.Materials(loaders={"publish_hold": lambda: publish_hold.held(account)})
+    _enforce(assess.evaluate([r for r in rules if r["phase"] == "halt"], request, halt),
+             account=account, principal=name, can_stop=can_stop, now=now, actor=actor, via=via,
+             credential=credential)
+    counts = summary(account, cfg, now=now)
+    whole = principal_summary(name, principal_cfg, now=now)
+    if family == "hatenabookmark":
+        # レーンの許し（上限でなく持ち主の決め・quiet_hours・口座の枠には掛けない・§7.3）
         if cfg.get("project") not in ((principal_cfg.get("bookmark") or {}).get("lanes") or []):
             raise GuardRefused("bookmark_not_allowed_for_lane")
-        if whole["bookmarks_today"] >= plimits["daily_max_bookmarks"]:
-            raise GuardRefused("bookmark_limit", next_at=midnight)
-        if kind == "bookmark":
-            # 4.0 S4 §5.3: 自分の記事は 1 日 `daily_max_self_bookmarks`・同じホストは 1 日 `bookmark_same_host_daily`。
-            marks = bookmark_counts(name, url=bookmark_url, now=now)
-            if bookmark_target == "own" and marks["own_today"] >= plimits["daily_max_self_bookmarks"]:
-                raise GuardRefused("self_bookmark_limit", next_at=midnight)
-            if marks["same_host_today"] >= plimits["bookmark_same_host_daily"]:
-                raise GuardRefused("bookmark_host_limit", next_at=midnight)
-    # 急な連投。口座（entry だけ）→ 主体（entry だけ）。同じ配信への操作が窓の中に
-    # 既にあれば、この依頼は数を増やさない（4.0 S5 §6・同じ配信は窓の中で 1 件）。
-    # ブックマーク（付ける・消す）は主体の別の窓 `bookmark_burst`（4.0.1）で数え、超えても主体を止めず
-    # この 1 件だけ `burst_limit`（詳細 `bookmark_burst`・`next_at` は窓が空く時刻）で断る。
-    if kind in ("bookmark", "bookmark_delete"):
-        if whole["bookmark_recent"] + 1 > plimits["bookmark_burst"]["count"]:
-            raise GuardRefused("burst_limit", reason="bookmark_burst",
-                               next_at=jst.iso(bookmark_burst_slot(whole, now=now)))
-    key = ("delivery", delivery) if kind.startswith("entry_") and isinstance(delivery, str) and delivery else None
-    adds = 0 if key is not None and key in counts["recent_keys"] else 1
-    padds = 0 if key is not None and key in whole["recent_keys"] else 1
-    if kind.startswith("entry_") and counts["recent"] + adds > limits["burst"]["count"]:
-        if not can_stop:
-            raise GuardRefused("burst_limit", reason="burst")
-        stop(account, "burst", now=now, actor=actor, via=via, credential=credential)
-        raise GuardRefused("account_stopped", reason="burst")
-    if kind.startswith("entry_") and whole["recent"] + padds > plimits["burst"]["count"]:
-        if not can_stop:
-            raise GuardRefused("burst_limit", reason="burst")
-        principals.stop(name, "burst", now=now, actor=actor, via=via, credential=credential)
-        raise GuardRefused("principal_stopped", reason="burst")
-    # 1 URL に 1 回だけ（削除したあとの 2 回目も断る・§4.2・§7.3 の順）。4.0 S4 §4.2: 同じ owner の
-    # 全主体をまたぐ（柵 1）。`bookmark_once=False` なら呼び手が owner のロックの中で見る。
-    if kind == "bookmark" and bookmark_once:
-        detail = owner_bookmarked(name, bookmark_url)
-        if detail is not None:
-            raise GuardRefused("bookmark_once", reason=detail)
+    materials = assess.Materials(
+        loaders={"counts": counts, "whole": whole,
+                 "marks": lambda: bookmark_counts(name, url=bookmark_url, now=now),
+                 "owner_bookmarked": lambda: owner_bookmarked(name, bookmark_url)},
+        fns={"bookmark_burst_slot": lambda: bookmark_burst_slot(whole, now=now),
+             "principal_scheduled_same_day": lambda day: principals.scheduled_same_day(name, day)})
+    # 4〜5. 行の表（日の上限 → ブックマークの枠 → 記事の burst（口座 → 主体）→ 1 URL に 1 回）。
+    result = assess.evaluate([r for r in rules if r["phase"] != "halt"], request, materials)
+    _enforce(result, account=account, principal=name, can_stop=can_stop, now=now, actor=actor, via=via,
+             credential=credential)
 
 
 def reactions_today(account, *, now=None) -> int:
@@ -665,16 +605,16 @@ def check_reaction(account, cfg, kind, *, undo=False, now=None) -> None:
       いいねと取り消しには掛けない。
     - `daily_max_reactions`（既定 50）: 反応と取り消しの合計。超えたら `reaction_limit`。
     - 公開の枠（`daily_max_posts`・`min_interval_hours`・burst）には数えない。
+
+    行は `limits_policy` の `reaction`（`reaction.quiet` → `reaction.daily`）。
     """
     halted = stopped(account)
     if halted is not None:
-        raise GuardRefused("account_stopped", reason=halted.get("reason"))
+        raise _stopped_refusal("account", halted.get("reason"))
     now = jst.to_jst(now) if now is not None else jst.now_jst()
-    if kind == "repost" and not undo:
-        quiet = cfg.get("quiet_hours")
-        from .select import in_quiet_hours
-        if quiet and in_quiet_hours(now, quiet):
-            raise GuardRefused("quiet_hours", next_at=jst.iso(_quiet_end(now, quiet)))
-    limit = accounts.guard_limits(cfg)["daily_max_reactions"]
-    if reactions_today(account, now=now) >= limit:
-        raise GuardRefused("reaction_limit", next_at=jst.iso(_next_midnight(now)))
+    action = "undo" if undo else kind
+    request = assess.Request(account=account, cfg=cfg, action=action, now=now, family="reaction")
+    materials = assess.Materials(loaders={"reactions_today": lambda: reactions_today(account, now=now)})
+    result = assess.evaluate(limits_policy.rules_for("reaction", action, cfg=cfg), request, materials)
+    _enforce(result, account=account, principal=None, can_stop=True, now=now, actor=None, via=None,
+             credential=None)
