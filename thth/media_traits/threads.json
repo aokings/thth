@@ -1,0 +1,166 @@
+{
+  "schema": "thth.media-traits/1",
+  "media": "threads",
+  "supported": true,
+  "relates_to": [],
+  "traits": [
+    {
+      "id": "threads.api_posts_24h",
+      "kind": "api_limit",
+      "statement": "API 経由の投稿は 24 時間の移動窓で 250 件まで。threads_publishing_limit で使用量が読める",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://developers.facebook.com/docs/threads/overview/",
+        "checked_at": "2026-10-17",
+        "quote": "Threads profiles are limited to 250 API-published posts within a 24-hour moving period."
+      },
+      "confidence": "high",
+      "signals": [
+        "post.daily"
+      ],
+      "defaults": {
+        "post.daily": {
+          "signal": "frequency",
+          "actions": [
+            "post",
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 8,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "daily_limit"
+        }
+      },
+      "notes": "既定 8/日（THTH の運用の線）は媒体の上限 250 の内側。上限そのものは行にしない（設計 §6.4）"
+    },
+    {
+      "id": "threads.api_replies_24h",
+      "kind": "api_limit",
+      "statement": "返信は 24 時間の移動窓で 1,000 件まで",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://developers.facebook.com/docs/threads/overview/",
+        "checked_at": "2026-10-17"
+      },
+      "confidence": "high",
+      "signals": [
+        "post.daily"
+      ],
+      "notes": "THTH の post.daily は投稿と返信を合わせて数える。返信だけの行は持たない"
+    },
+    {
+      "id": "threads.api_deletes_24h",
+      "kind": "api_limit",
+      "statement": "削除は 1 日 100 件まで（adapter が引く文。今回の公式の頁には無い）",
+      "evidence": {
+        "type": "observed",
+        "record": "thth/adapters/threads.py 704 行の注記",
+        "observed_at": "2026-10-17"
+      },
+      "confidence": "medium",
+      "signals": [
+        "retract.daily"
+      ],
+      "defaults": {
+        "retract.daily": {
+          "signal": "frequency",
+          "actions": [
+            "retract"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 5,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "retract_limit"
+        }
+      },
+      "notes": "出所の公式の頁を確かめたら official_doc に直す"
+    },
+    {
+      "id": "threads.bait_not_recommended",
+      "kind": "spam_signal",
+      "statement": "クリックベイト・エンゲージメントベイト・景品・転載はおすすめに載らない",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://creators.instagram.com/threads",
+        "checked_at": "2026-10-12",
+        "via": "docs/調査_Threadsで伸ばす_Xの1枚から活かすもの_2026-10-12.md §3（L2）"
+      },
+      "confidence": "medium",
+      "signals": [
+        "post.engagement_bait"
+      ],
+      "penalty": [
+        "recommendation_excluded"
+      ],
+      "notes": "10/17 に頁を開き直していない（10/12 の調査で読んだ）ので medium"
+    },
+    {
+      "id": "threads.repeat_same_content",
+      "kind": "spam_signal",
+      "statement": "同じコンテンツの繰り返しはスパムのサイン。転載が主で付加価値のない内容はおすすめに載らない",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://transparency.meta.com/policies/community-standards/spam/",
+        "checked_at": "2026-10-12",
+        "via": "docs/調査_Threadsで伸ばす_Xの1枚から活かすもの_2026-10-12.md §5（L2）",
+        "also": [
+          {
+            "type": "official_doc",
+            "url": "https://www.facebook.com/help/1257205004624246",
+            "checked_at": "2026-10-12",
+            "via": "同上"
+          }
+        ]
+      },
+      "confidence": "medium",
+      "signals": [
+        "post.same_text"
+      ],
+      "penalty": [
+        "recommendation_excluded"
+      ]
+    },
+    {
+      "id": "threads.conversation_favoured",
+      "kind": "good_signal",
+      "statement": "返信が閲覧のほぼ半分。会話を起こす投稿がおすすめに載りやすい",
+      "evidence": {
+        "type": "official_statement",
+        "source": "Threads 創作者向け FAQ（docs/調査_Threadsで伸ばす_Xの1枚から活かすもの_2026-10-12.md §3・L2）",
+        "url": "https://creators.instagram.com/threads",
+        "checked_at": "2026-10-12"
+      },
+      "confidence": "medium",
+      "signals": []
+    },
+    {
+      "id": "threads.penalty_recommendation",
+      "kind": "penalty",
+      "statement": "罰の形は「おすすめに載らない」（表示の抑制）。ロック・凍結は Instagram のコミュニティ規定に従う",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://www.facebook.com/help/1257205004624246",
+        "checked_at": "2026-10-12",
+        "via": "docs/調査_Threadsで伸ばす_Xの1枚から活かすもの_2026-10-12.md（L2）"
+      },
+      "confidence": "medium",
+      "signals": [],
+      "penalty": [
+        "recommendation_excluded",
+        "account_suspension"
+      ]
+    }
+  ]
+}

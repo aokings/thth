@@ -1,0 +1,36 @@
+{
+  "schema": "thth.media-traits/1",
+  "media": "misskey",
+  "supported": false,
+  "relates_to": [
+    "mastodon"
+  ],
+  "traits": [
+    {
+      "id": "misskey.registration_closed",
+      "kind": "observation",
+      "statement": "misskey.io は「クラウド事業者への不正アクセスでサーバーを増設できないため新規登録を停止」「招待制（招待コードが要る）」「VPN や捨てメアドでの登録は不可」と表示していた",
+      "evidence": {
+        "type": "observed",
+        "record": "masaru が 2026-10-17 19:42 に画面で見た（docs/設計_上限と連投の柵_2026-10-17.md §4.2）",
+        "observed_at": "2026-10-17"
+      },
+      "confidence": "high",
+      "signals": [],
+      "notes": "その日の表示として high。登録の再開は確かめていない"
+    },
+    {
+      "id": "misskey.fediverse_reach",
+      "kind": "culture",
+      "statement": "Misskey は Mastodon と Fediverse でつながるので、THTH の Mastodon の投稿は Misskey の利用者からも読める。新しい媒体として足す優先は低い",
+      "evidence": {
+        "type": "inferred",
+        "by": "Fediverse の仕組みからの読み・masaru と開発（設計 §4.2）",
+        "at": "2026-10-17"
+      },
+      "confidence": "low",
+      "signals": [],
+      "notes": "設計 §4.2 は medium と書くが、inferred は low 固定（段 0 で決めたこと）"
+    }
+  ]
+}

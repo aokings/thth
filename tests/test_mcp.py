@@ -122,7 +122,9 @@ def test_mcp_stdioでtools_listとtools_callが通る(isolated_account):
                           "thth_article_diff", "thth_conflict_status", "thth_conflict_resolve",
                           # 2026-10-17 に記事の反応を束ねる口を足した（4.0 S6 §6.2・読むだけ・fetch は受けない）。
                           # thth_hatena_collect は出さない（採取は run と CLI だけ）。
-                          "thth_article_reactions"}
+                          "thth_article_reactions",
+                          # 2026-10-17 に媒体の特性の台帳を読む口を足した（設計「上限と連投の柵」§4.3・段 0・読むだけ）。
+                          "thth_media_traits"}
     # 承認・投稿・認可の副作用のあるものは出ていない。
     assert not (tool_names & {"thth_approve", "thth_throw", "thth_token",
                                "thth_auth", "thth_refresh", "thth_revoke",
