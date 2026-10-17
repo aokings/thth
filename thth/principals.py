@@ -44,11 +44,14 @@ SYNTAXES = ("markdown", "hatena", "html")
 LIMIT_DEFAULTS = {
     "daily_max_posts": 6,       # 全ブログの entry_create＋entry_update
     "daily_max_retracts": 3,    # 全ブログの entry_delete
-    "daily_max_bookmarks": 3,   # bookmark_add＋bookmark_delete
-    "burst": {"count": 3, "minutes": 30},  # entry と bookmark の合計
-    # 4.0 S4 §5.3: 自分の記事（target: own）のブックマークは 1 日 1 件・同じホストへは 1 日 1 件。
+    "daily_max_bookmarks": 30,  # bookmark_add＋bookmark_delete（4.0.1: 3 → 30）
+    "burst": {"count": 3, "minutes": 30},  # entry（公開・更新・削除）だけ。超えたら主体を止める
+    # 4.0.1: ブックマークの連投の窓は記事と分ける。超えても主体は止めず、その 1 件だけ断る。
+    "bookmark_burst": {"count": 10, "minutes": 10},
+    # 4.0 S4 §5.3: 自分の記事（target: own）のブックマークは 1 日 1 件（はてなのスパムの指針）。
+    # 同じホストへは 1 日 3 件（4.0.1: 1 → 3）。
     "daily_max_self_bookmarks": 1,
-    "bookmark_same_host_daily": 1,
+    "bookmark_same_host_daily": 3,
 }
 # ブログごとの上限（任意・無ければ数えない＝口座の上限に任せる）。
 BLOG_LIMIT_KEYS = ("daily_max_posts", "daily_max_retracts")
@@ -127,6 +130,8 @@ def valid_limit(key: str, value) -> bool:
         return accounts.valid_guard_value("daily_max_posts", value)
     if key in ("daily_max_posts", "daily_max_retracts", "burst"):
         return accounts.valid_guard_value(key, value)
+    if key == "bookmark_burst":
+        return accounts.valid_guard_value("burst", value)
     return False
 
 

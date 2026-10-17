@@ -1221,6 +1221,11 @@ def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") 
         why = f"今日の公開が上限（daily_max_posts）に達しました{when}"
     elif code == "quiet_hours":
         why = f"夜間（quiet_hours）です{when}"
+    elif code == "burst_limit" and getattr(refused, "reason", None) == "bookmark_burst":
+        # 4.0.1: ブックマークの連投の窓（主体の bookmark_burst）。主体は止めない。
+        when = f"（次に打てるのは {refused.next_at}）" if getattr(refused, "next_at", None) else ""
+        why = ("ブックマークの連投の数（bookmark_burst）を超えます。主体は止めずに、この 1 件だけ断りました"
+               f"{when}。数は thth principal set で変えられます")
     elif code == "burst_limit" and getattr(refused, "next_at", None):
         # 返信の burst（3.25.0）で、順番待ちに並べられなかった（timer に載っていない口座・添付つき）。
         why = ("急な連投（burst）の数を超えます。返信なので口座は止めずに、この 1 件だけ断りました"

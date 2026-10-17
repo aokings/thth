@@ -32,9 +32,11 @@ def test_T1a_正しい主体の台帳は読める(world):
     assert p["hatena_id"] == "lane-owner"
     assert p["token"] == str(world.main_token)
     assert principals.limits(p) == {"daily_max_posts": 6, "daily_max_retracts": 3,
-                                    "daily_max_bookmarks": 3, "burst": {"count": 3, "minutes": 30},
-                                    # 4.0 S4 §5.3
-                                    "daily_max_self_bookmarks": 1, "bookmark_same_host_daily": 1}
+                                    "daily_max_bookmarks": 30, "burst": {"count": 3, "minutes": 30},
+                                    # 4.0.1: ブックマークの窓は記事と別
+                                    "bookmark_burst": {"count": 10, "minutes": 10},
+                                    # 4.0 S4 §5.3（同じホストは 4.0.1 で 1 → 3）
+                                    "daily_max_self_bookmarks": 1, "bookmark_same_host_daily": 3}
 
 
 @pytest.mark.parametrize("field", ["principal", "kind", "hatena_id", "token", "blogs"])

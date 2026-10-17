@@ -110,6 +110,9 @@ def inspect(account_name: str, *, now) -> dict:
     except accounts_mod.AccountError as e:
         return _finish(row, CONFIG_ERROR, detail=str(e))
 
+    if account_cfg.get("media") == "hatenablog":
+        return _inspect_hatena(row, account_cfg)
+
     if account_cfg.get('media') == 'x':
         from .adapters.auth_x import remaining, REFRESH_BEFORE_SECONDS
         token = accounts_mod.load_token(account_cfg, refresh_x=False)
@@ -205,6 +208,36 @@ def inspect(account_name: str, *, now) -> dict:
     if remaining_days < WARN_REMAINING_DAYS:
         return _finish(row, EXPIRING)
     return _finish(row, OK)
+
+
+def _inspect_hatena(row: dict, account_cfg: dict) -> dict:
+    """はてなの口座（4.0.1・見つけたこと 17）: token は**主体**の台帳の `token` のパス（OAuth 1.0a・期限なし）。
+
+    在る・schema が合う → `ok`（期限なし）、無い → `no_token`、読めない・形が違う → `unreadable`、
+    主体の台帳が読めない → `config_error`。**値は出さない**（有無と schema・はてな ID の一致だけを見る）。
+    SNS の媒体の adapter を引かない（はてなは `adapter_class` に無いので、以前はここで `config_error` だった）。
+    """
+    import os
+    from . import principals
+    from .adapters import hatena_common
+    name = account_cfg.get("principal")
+    try:
+        principal_cfg = principals.load_principal(name)
+    except (accounts_mod.AccountError, TypeError, ValueError) as e:
+        return _finish(row, CONFIG_ERROR, detail=getattr(e, "code", None) or "principal_unavailable")
+    hint = f"thth principal auth {name} --by <名前>"
+    path = principal_cfg.get("token")
+    if not isinstance(path, str) or not path or not os.path.exists(path):
+        return _finish(row, NO_TOKEN, hint=hint)
+    try:
+        with open(path, encoding="utf-8") as f:
+            token = json.load(f)
+        hatena_common.check_token(token, principal_cfg.get("hatena_id"))
+    except Exception:  # noqa: BLE001 — 読めない・壊れている・形が違う（値は文に入れない）
+        return _finish(row, UNREADABLE, detail="token_invalid（主体の token の形が違います）")
+    row["obtained_at"] = token.get("obtained_at") if isinstance(token.get("obtained_at"), str) else None
+    row["no_expiry"] = True
+    return _finish(row, OK, detail="期限を持たないトークンです（はてなの OAuth・主体の token）")
 
 
 def _finish(row: dict, state: str, *, detail: str = "", hint: str | None = None) -> dict:

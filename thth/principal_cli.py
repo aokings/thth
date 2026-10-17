@@ -6,7 +6,8 @@
 
     thth principal add <name> --hatena-id <id> [--blog <blog_id>=<lane>[,<lane>…]]… --by <名前>
     thth principal show <name> [--json]
-    thth principal set <name> <名前> <値> --by <名前>   （burst は `burst <件数> <分>` でも）
+    thth principal set <name> <名前> <値> --by <名前>   （burst は `burst <件数> <分>` でも・
+                                                       ブックマークの窓は `bookmark_burst <件数> <分>` でも）
     thth principal set <name> bookmark.lanes <lane>[,<lane>…] --by <名前>   （`-` で空に）
     thth principal resume <name> --by <名前>
     thth principal auth <name> --by <名前> [--force|--forget|--forget-consumer] [--consumer]
@@ -26,6 +27,8 @@ from . import accounts, admin_log, principals, secrets_fs
 
 # `thth principal set` で変えられる名前（`thth account set` と同じ語）。
 KEYS = ("daily_max_posts", "daily_max_retracts", "daily_max_bookmarks", "burst_count", "burst_minutes",
+        # 4.0.1: ブックマークの連投の窓（記事の burst と別・超えても主体は止めない）。
+        "bookmark_burst_count", "bookmark_burst_minutes",
         # 4.0 S4 §5.3: 自分の記事のブックマーク・同じホストへのブックマークの 1 日の上限。
         "daily_max_self_bookmarks", "bookmark_same_host_daily")
 # 4.0 S3 §9: 主体の台帳の `fotolife` の上限（`fotolife.<欄>`・範囲は `hatena_fotolife.LIMIT_RANGES`）。
@@ -183,7 +186,9 @@ def cmd_show(args) -> int:
     print(f"  ブックマークを打てるレーン: {'・'.join(row['bookmark_lanes']) or 'なし'}")
     print(f"  上限: 公開 {lim['daily_max_posts']}・削除 {lim['daily_max_retracts']}・"
           f"ブックマーク {lim['daily_max_bookmarks']}・急な連投 {lim['burst']['minutes']} 分に "
-          f"{lim['burst']['count']} 件を超えたら止める")
+          f"{lim['burst']['count']} 件を超えたら止める（記事だけ）")
+    print(f"  ブックマークの連投: {lim['bookmark_burst']['minutes']} 分に {lim['bookmark_burst']['count']} 件まで"
+          "（超えた 1 件だけ断る・主体は止めない）")
     print(f"  ブックマークの枠: 自分の記事 1 日 {lim['daily_max_self_bookmarks']}・同じホスト 1 日 "
           f"{lim['bookmark_same_host_daily']}")
     print(f"  口座: {'・'.join(row['accounts']) or 'なし'}")
@@ -200,6 +205,8 @@ def cmd_show(args) -> int:
 def _pairs(rest):
     if len(rest) == 3 and rest[0] == "burst":
         return [("burst_count", rest[1]), ("burst_minutes", rest[2])]
+    if len(rest) == 3 and rest[0] == "bookmark_burst":
+        return [("bookmark_burst_count", rest[1]), ("bookmark_burst_minutes", rest[2])]
     if len(rest) == 2:
         return [(rest[0], rest[1])]
     raise ValueError("invalid_setting")
@@ -219,6 +226,8 @@ def _parse_value(key, text):
         raise ValueError("invalid_setting")
     if key in ("daily_max_bookmarks", "daily_max_self_bookmarks", "bookmark_same_host_daily"):
         value = account_settings.parse("daily_max_posts", text)
+    elif key in ("bookmark_burst_count", "bookmark_burst_minutes"):
+        value = account_settings.parse(key.replace("bookmark_", "", 1), text)
     else:
         value = account_settings.parse(key, text)
     return value
@@ -262,6 +271,17 @@ def _change_lanes(name, value, *, by) -> dict:
     return {"principal": name, "key": LANES_KEY, "before": before, "after": after, "changed": True}
 
 
+# `burst_count` などの名前 → 台帳の (塊, 欄)。
+_BURST_PARTS = {"burst_count": ("burst", "count"), "burst_minutes": ("burst", "minutes"),
+                "bookmark_burst_count": ("bookmark_burst", "count"),
+                "bookmark_burst_minutes": ("bookmark_burst", "minutes")}
+
+
+def _burst_part(limits, key):
+    block, part = _BURST_PARTS[key]
+    return limits[block][part]
+
+
 def change(name, key, value, *, by) -> dict:
     """主体の上限を 1 つ変える（運営者の CLI だけ・どちらの向きも）。`bookmark.lanes` はレーンの一覧。"""
     admin_log.actor(by)
@@ -274,8 +294,7 @@ def change(name, key, value, *, by) -> dict:
         from . import hatena_fotolife
         before = hatena_fotolife.limits(p)[key.split(".", 1)[1]]
     else:
-        before = (before_limits["burst"]["count"] if key == "burst_count"
-                  else before_limits["burst"]["minutes"] if key == "burst_minutes" else before_limits[key])
+        before = _burst_part(before_limits, key) if key in _BURST_PARTS else before_limits[key]
     if before == after:
         return {"principal": name, "key": key, "before": before, "after": after, "changed": False}
     path = principals.path_for(name)
@@ -285,10 +304,11 @@ def change(name, key, value, *, by) -> dict:
     if key in FOTOLIFE_KEYS:
         block = raw.get("fotolife") if isinstance(raw.get("fotolife"), dict) else {}
         raw["fotolife"] = dict(block, **{key.split(".", 1)[1]: after})
-    elif key in ("burst_count", "burst_minutes"):
-        burst = dict(before_limits["burst"])
-        burst["count" if key == "burst_count" else "minutes"] = after
-        raw["burst"] = burst
+    elif key in _BURST_PARTS:
+        block, part = _BURST_PARTS[key]
+        burst = dict(before_limits[block])
+        burst[part] = after
+        raw[block] = burst
     else:
         raw[key] = after
     secrets_fs.atomic_write_json(path, raw)
@@ -314,7 +334,7 @@ def cmd_set(args) -> int:
         return _fail(f"{e.code}: {e}", json_output=getattr(args, "json", False))
     except (ValueError, account_settings.SettingsError):
         return _fail(f"invalid_setting: 名前は {'・'.join(KEYS + FOTOLIFE_KEYS + (LANES_KEY,))}"
-                     "（burst は `burst <件数> <分>` でも・bookmark.lanes は <lane>[,<lane>…] か -）",
+                     "（burst は `burst <件数> <分>` でも・bookmark_burst も同じ形・bookmark.lanes は <lane>[,<lane>…] か -）",
                      json_output=getattr(args, "json", False))
     except (OSError, admin_log.AdminLogError):
         return _fail("settings_unavailable", json_output=getattr(args, "json", False))

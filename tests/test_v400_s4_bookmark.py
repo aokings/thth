@@ -220,17 +220,27 @@ def test_T_S4_6a_自分の記事は1日1件_参照先は通る(bm):
     assert bookmark(ACCOUNT, url=EXTERNAL, comment="c")["target"] == "external"
 
 
-def test_T_S4_6a_同じホストは1日1件(bm):
+def test_T_S4_6a_同じホストは1日3件(bm):
+    """4.0.1: 同じホストの既定は 1 → 3。"""
     bookmark(ACCOUNT, url=EXTERNAL, comment="c")
+    bookmark(ACCOUNT, url="https://example.com/second", comment="c")
+    bookmark(ACCOUNT, url="https://example.com/third", comment="c")
     assert str(refused(ACCOUNT, url="https://EXAMPLE.com/other-page", comment="c")) == "bookmark_host_limit"
     assert bookmark(ACCOUNT, url=EXTERNAL_2, comment="c")["result"] == "confirmed"
     # 上げれば通る（主体ごと）
-    bm.edit_principal("hatena-main", bookmark_same_host_daily=2)
+    bm.edit_principal("hatena-main", bookmark_same_host_daily=4)
     assert bookmark(ACCOUNT, url="https://example.com/other-page", comment="c")["result"] == "confirmed"
 
 
+def test_T_S4_6a_台帳に書いた同じホストの値が既定より勝つ(bm):
+    bm.edit_principal("hatena-main", bookmark_same_host_daily=1)
+    bookmark(ACCOUNT, url=EXTERNAL, comment="c")
+    assert str(refused(ACCOUNT, url="https://example.com/other-page", comment="c")) == "bookmark_host_limit"
+
+
 def test_T_S4_6a_全体の枠は今までどおり(bm):
-    bm.edit_principal("hatena-main", bookmark_same_host_daily=10)
+    # 4.0.1: 既定は 30。台帳に書いた値（3）が勝つ。
+    bm.edit_principal("hatena-main", bookmark_same_host_daily=10, daily_max_bookmarks=3)
     for i in range(3):
         bookmark(ACCOUNT, url=f"https://example.com/{i}", comment="c")
     assert str(refused(ACCOUNT, url="https://example.com/9", comment="c")) == "bookmark_limit"
@@ -245,7 +255,7 @@ def test_T_S4_6b_1段目の表示_参照先(bm):
     assert f"URL: {EXTERNAL}" in out
     assert "対象: 参照先（配信の台帳に無い）" in out
     assert "はてな側: ブックマーク 2 件・owner-m の ID は付けていない" in out
-    assert "主体の今日の残り枠: 全体 3・自分の記事 1・このホスト 1" in out
+    assert "主体の今日の残り枠: 全体 30・自分の記事 1・このホスト 3" in out
     assert "タグ: 相場・豆" in out
     assert any(line.startswith("digest: ") and len(line) == len("digest: ") + 12 for line in out.splitlines())
     assert posts(bm) == [] and rows(bm, ACCOUNT) == []
@@ -261,7 +271,7 @@ def test_T_S4_6b_1段目の表示_自分の記事(bm):
     rc, out, err = call(["bookmark", "add", ACCOUNT, "--delivery", delivery, "--comment", "自分の記事。", "--json"])
     preview = json.loads(out)["preview"]
     assert preview["target"] == "own" and preview["delivery"] == delivery
-    assert preview["remaining"] == {"total": 3, "own": 1, "host": 1} and preview["remaining_today"] == 3
+    assert preview["remaining"] == {"total": 30, "own": 1, "host": 3} and preview["remaining_today"] == 30
 
 
 # ---------------------------------------------------------------- T-S4-7a 結果の写し

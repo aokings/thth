@@ -138,12 +138,13 @@ def test_T2b_主体のburstは口座を横断する(world):
     assert str(e) == "principal_stopped"
 
 
-def test_T2b_主体のburstはブックマークも合算する(world):
+def test_T2b_主体のburstにブックマークは数えない(world):
+    """4.0.1: 記事の burst は記事だけ。ブックマークは別の窓（`bookmark_burst`）。"""
     record(world, "lane-a-hatenablog", minutes_ago=20)
     record(world, "lane-a-hatenablog", minutes_ago=19, kind="bookmark_add", url="https://a.hatenablog.com/entry/1")
     record(world, "lane-b-hatenablog", minutes_ago=18)
-    e = refused("lane-b-hatenablog", "entry_create")
-    assert str(e) == "principal_stopped" and e.reason == "burst"
+    passes("lane-b-hatenablog", "entry_create")
+    assert principals.stopped("hatena-main") is None
 
 
 def test_T2b_窓の外なら止めない(world):
@@ -210,6 +211,7 @@ def test_T2c_publishとretractの語ははてなの口座ではentryの語に読
 # --------------------------------------------------------------------------
 
 def test_T2d_ブックマークの上限と_entryの枠に数えない(world):
+    world.edit_principal("hatena-main", daily_max_bookmarks=3)  # 4.0.1: 既定は 30・台帳の値が勝つ
     for i, minutes in enumerate((300, 200, 100)):
         record(world, "lane-a-hatenablog", minutes_ago=minutes, kind="bookmark_add",
                url=f"https://a.hatenablog.com/entry/{i}")
@@ -222,6 +224,7 @@ def test_T2d_ブックマークの上限と_entryの枠に数えない(world):
 
 
 def test_T2d_削除も枠に数える(world):
+    world.edit_principal("hatena-main", daily_max_bookmarks=3)
     record(world, "lane-a-hatenablog", minutes_ago=300, kind="bookmark_add",
            url="https://a.hatenablog.com/entry/1", retracted_minutes_ago=250)
     record(world, "lane-a-hatenablog", minutes_ago=200, kind="bookmark_add",

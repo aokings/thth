@@ -24,6 +24,9 @@
 - `burst_limit`（詳細 `burst`）: 口座を**止めずに**この 1 件だけ断る。**返信**が burst を超えたとき
   （3.25.0・`next_at` は窓が空く時刻・呼び手は queue の順番待ちに並べる）と、止めの印を置けない
   置き場の運営者の CLI（10/15）
+- `burst_limit`（詳細 `bookmark_burst`）: はてなのブックマーク（付ける・消す）が主体の
+  `bookmark_burst`（既定 10 分に 10 件）を超えた → 主体を**止めずに**この 1 件だけ断る（4.0.1・
+  `next_at` は窓が空く時刻）。ブックマークは記事の burst に数えない
 - `reaction_limit`: その日の反応（再投稿・いいね・その取り消し）が `daily_max_reactions`
   に達した（翌日 0 時を添える・設計 3.15.0 §2.5）。材料は `state/<account>/reactions/`。
   **反応は公開の枠（`daily_max_posts`・burst）に数えない**。夜間は再投稿にだけ掛ける
@@ -428,16 +431,37 @@ def principal_summary(principal_name, principal_cfg, *, now=None) -> dict:
     limits = principals.limits(principal_cfg)
     today = now.date()
     window = now - datetime.timedelta(minutes=limits["burst"]["minutes"])
+    entry_rows = [row for row in rows if row[0] in ("post", "retract")]
+    bm_window = now - datetime.timedelta(minutes=limits["bookmark_burst"]["minutes"])
     out.update({
         "limits": limits,
         "posts_today": sum(1 for at, _ in out["posts"] if at.date() == today),
         "retracts_today": sum(1 for at, _ in out["retracts"] if at.date() == today),
         "bookmarks_today": sum(1 for at, _ in out["bookmarks"] if at.date() == today),
-        # burst は entry（公開・削除）とブックマークの合計（§4.2）。同じ配信は 1 件（4.0 S5 §6）。
-        "recent": len(_recent_keys(rows, window, now)),
-        "recent_keys": _recent_keys(rows, window, now),
+        # burst は entry（公開・更新・削除）だけ（4.0.1・ブックマークは別の窓）。同じ配信は 1 件（4.0 S5 §6）。
+        "recent": len(_recent_keys(entry_rows, window, now)),
+        "recent_keys": _recent_keys(entry_rows, window, now),
+        # 4.0.1: ブックマークの連投の窓（`bookmark_burst`・付ける・消すの合計・試みごとに 1 件）。
+        "bookmark_recent_times": sorted(at for at, _ in out["bookmarks"] if bm_window < at <= now),
     })
+    out["bookmark_recent"] = len(out["bookmark_recent_times"])
     return out
+
+
+def bookmark_burst_slot(whole, *, now) -> datetime.datetime:
+    """ブックマークの窓（`bookmark_burst`）に 1 件入る余地ができる最初の時刻（4.0.1）。
+
+    窓は `(t - 分, t]`。窓の中の古い順に、`件数 + 1 - count` 番目が窓を出る時刻（秒に切り上げ）。
+    """
+    limits = whole["limits"]["bookmark_burst"]
+    times = whole["bookmark_recent_times"]
+    leave = len(times) + 1 - limits["count"]
+    if leave <= 0:
+        return jst.to_jst(now)
+    at = jst.to_jst(times[leave - 1]) + datetime.timedelta(minutes=limits["minutes"])
+    if at.microsecond:
+        at = at.replace(microsecond=0) + datetime.timedelta(seconds=1)
+    return at
 
 
 def _principal_bookmarked(principal_name, url) -> bool:
@@ -596,8 +620,14 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
                 raise GuardRefused("self_bookmark_limit", next_at=midnight)
             if marks["same_host_today"] >= plimits["bookmark_same_host_daily"]:
                 raise GuardRefused("bookmark_host_limit", next_at=midnight)
-    # 急な連投。口座（entry だけ）→ 主体（entry とブックマークの合計）。同じ配信への操作が窓の中に
+    # 急な連投。口座（entry だけ）→ 主体（entry だけ）。同じ配信への操作が窓の中に
     # 既にあれば、この依頼は数を増やさない（4.0 S5 §6・同じ配信は窓の中で 1 件）。
+    # ブックマーク（付ける・消す）は主体の別の窓 `bookmark_burst`（4.0.1）で数え、超えても主体を止めず
+    # この 1 件だけ `burst_limit`（詳細 `bookmark_burst`・`next_at` は窓が空く時刻）で断る。
+    if kind in ("bookmark", "bookmark_delete"):
+        if whole["bookmark_recent"] + 1 > plimits["bookmark_burst"]["count"]:
+            raise GuardRefused("burst_limit", reason="bookmark_burst",
+                               next_at=jst.iso(bookmark_burst_slot(whole, now=now)))
     key = ("delivery", delivery) if kind.startswith("entry_") and isinstance(delivery, str) and delivery else None
     adds = 0 if key is not None and key in counts["recent_keys"] else 1
     padds = 0 if key is not None and key in whole["recent_keys"] else 1
@@ -606,7 +636,7 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
             raise GuardRefused("burst_limit", reason="burst")
         stop(account, "burst", now=now, actor=actor, via=via, credential=credential)
         raise GuardRefused("account_stopped", reason="burst")
-    if whole["recent"] + padds > plimits["burst"]["count"]:
+    if kind.startswith("entry_") and whole["recent"] + padds > plimits["burst"]["count"]:
         if not can_stop:
             raise GuardRefused("burst_limit", reason="burst")
         principals.stop(name, "burst", now=now, actor=actor, via=via, credential=credential)

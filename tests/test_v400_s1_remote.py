@@ -165,7 +165,7 @@ def test_ブックマークは2段で_2段目はadapterが作れなければ打�
     first = request(context, operation="bookmark_request", delivery=delivery, comment="運営者です",
                     tags="コーヒー,価格")
     assert first["stage"] == 1 and first["preview"]["url"] == "https://a.hatenablog.com/entry/2026/09/09/100000"
-    assert first["preview"]["tags"] == ["コーヒー", "価格"] and first["preview"]["remaining_today"] == 3
+    assert first["preview"]["tags"] == ["コーヒー", "価格"] and first["preview"]["remaining_today"] == 30
     assert refused(context, operation="bookmark_request", delivery=delivery, comment="運営者です",
                    tags="コーヒー,価格", confirm="0" * 12) == "confirm_mismatch"
     assert refused(context, operation="bookmark_request", delivery=delivery, comment="運営者です",
