@@ -376,11 +376,48 @@ def _expand_targets(files, *, only_draft: bool, account=None, purpose=None) -> t
     return out, note
 
 
-def _late_warning(fm: dict, account_cfg: dict):
+def _announce_note(fm: dict, account_cfg: dict):
+    """告知（`announces`）の原稿の 1 段目に見せる、結んだ記事の今の様子（4.0・見つけたこと 14・10/17）。
+
+    持たない原稿は None。`{"delivery", "state", "url", "waiting", "line"}`:
+    - 記事の配信が `published` → `url` に置き換え後の URL・`waiting` False
+    - `wanted`・`inflight`・`unknown` → 記事の公開を待って出る（`waiting` True）
+    - それ以外（`conflict`・`deleted` など・台帳が読めない）→ このままでは出ない（held）
+    見せるだけで、指紋（`approved_sha`）には入らない（告知の指紋は置き換え前の本文と `announces`）。
+    """
+    from . import announce
+    delivery = announce.announces_of(fm)
+    if delivery is None:
+        return None
+    resolution = announce.resolve(fm, account_cfg)
+    state = None
+    try:
+        _name, record = announce.find_delivery(account_cfg, delivery)
+        state = record.get("state")
+    except (announce.AnnounceError, accounts_mod.AccountError, OSError, ValueError):
+        pass
+    placeholder = announce.PLACEHOLDER
+    if resolution is not None and resolution.reason is None:
+        return {"delivery": delivery, "state": state, "url": resolution.url, "waiting": False,
+                "line": f"記事 {delivery} は公開済みです。`{placeholder}` は {resolution.url} に置き換わります"}
+    if resolution is not None and announce.waiting_target(resolution.reason) == delivery:
+        return {"delivery": delivery, "state": state, "url": None, "waiting": True,
+                "line": (f"記事 {delivery} の公開を待って出ます（いまは {state}）・"
+                         f"`{placeholder}` は公開した URL に置き換わります")}
+    reason = resolution.reason if resolution is not None else None
+    return {"delivery": delivery, "state": state, "url": None, "waiting": False,
+            "line": (f"記事 {delivery} は {state or '台帳が読めない'} です。"
+                     f"このままでは出ません（{reason}）")}
+
+
+def _late_warning(fm: dict, account_cfg: dict, announce_note: dict | None = None):
     """**予定時刻を過ぎた原稿の扱いを、承認の前に言う**（nigamilab セッション指摘
     2026-09-10）。起草する人と承認する人が別なので、承認までに時刻が過ぎるのは
     普通に起きる。「承認したらいつ出るのか」を承認者が知らないまま押す形に
-    しない。"""
+    しない。
+
+    告知（`announces`）の原稿は、結んだ記事が `published` になるまで出ない（4.0 S4 §9.4）。
+    記事がまだなら「すぐ出ます」と言わず「記事の公開を待って出ます」と言う（見つけたこと 14・10/17）。"""
     warning = None
     now = jst.now_jst()
     stale_days = account_cfg.get("stale_days", 7)
@@ -394,9 +431,15 @@ def _late_warning(fm: dict, account_cfg: dict):
             warning = (f"**承認しても出ません**: 予定時刻から {late.days} 日過ぎていて、"
                        f"このアカウントの stale_days={stale_days} を超えています"
                        "（board に要確認として出ます）。publish_at を直してください。")
+        elif announce_note is not None and announce_note.get("url") is None:
+            # 記事がまだ（待つ）か、出せない様子（held）。どちらも「すぐ」には出ない。
+            warning = (f"**承認してもすぐには出ません**: 予定時刻 {fm.get('publish_at')} は既に過ぎていますが、"
+                       f"{announce_note['line']}。")
         else:
             warning = (f"**承認するとすぐ出ます**: 予定時刻 {fm.get('publish_at')} は"
                        f"既に過ぎています（{int(late.total_seconds() // 3600)} 時間前）。")
+            if announce_note is not None:
+                warning += f"{announce_note['line']}。"
     return warning
 
 
@@ -451,10 +494,13 @@ def _prepare_one(path: str):
         reply_to=approval_mod.reply_to_for_fingerprint(fm),
         topic=fm.get("topic"), publish_at=fm.get("publish_at"), media_manifest=manifest, **options)
 
-    warning = _late_warning(fm, account_cfg)
+    announce_note = _announce_note(fm, account_cfg)
+    warning = _late_warning(fm, account_cfg, announce_note)
 
     return {
         "path": path,
+        # 告知の原稿だけ（見つけたこと 14）。指紋には入らない。
+        **({"announce": announce_note} if announce_note else {}),
         **({"media_manifest": manifest} if manifest else {}),
         "warning": warning,
         "account": account_name,
@@ -1137,6 +1183,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
                                 **({"plaza_related": one["plaza_related"]}
                                    if one.get("plaza_related") is not None else {}),
                                 **({"hatena": one["hatena"]} if one.get("hatena") else {}),
+                                **({"announce": one["announce"]} if one.get("announce") else {}),
                                 "digest": one["digest"]} for one in prepared]})
         return
     print(f"承認しません（確認の一段目です）: {len(prepared)} 本——**{NOT_UNTIL_CONFIRMED}**")
@@ -1172,6 +1219,8 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
             # 承認するのは「どの原稿への返信か」。post_id はその原稿が出てから決まる。
             print(f"  返信先    : {one['reply_to_file']}（その原稿が出てから返信します・"
                   "出るまで待ちます）")
+        if one.get("announce"):
+            print(f"  告知      : {one['announce']['line']}")
         if one.get("warning"):
             print(f"  ⚠ {one['warning']}")
         _print_goal_line(one)

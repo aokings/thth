@@ -19,6 +19,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 
 - **調べる**: `thth topics <アカウント> --search <語>` で、その語の件数・投稿者の数・最新の投稿を見ます。`thth where` は「次にどこで話すか」を、自分がすでに絡んだ相手を重ねて探します。X の行には投稿者のフォロワー数（「フォロワー 1.2 万」）と投稿数も付きます（`--json` は `author_followers`・`author_posts`。保存しません）。
 - **出す**: `thth send` で今すぐ、`thth schedule` で予約、`--reply-to` で返信です。
+- **記事をはてなへ届けて、直したら反映**（4.0.0）: repo の記事を承認してはてなブログへ公開・予約し（画像はフォトライフへ）、SNS の告知（`announces`・`{article_url}`）とはてなブックマークを記事に結びます。記事を直せば `thth article diff` で差分を見て、承認して更新します。はてなの画面で手直しされていれば上書きせず `thth conflict` で止まります。反応は `thth article reactions` で記事ごとに。SNS だけの口座の動きと承認の指紋は変わりません（[リリースノート 4.0.0](docs/リリースノート_4.0.0_2026-10-17.md)）。
 - **返信の連投は止めずに順番待ち**（3.25.0）: `thth send --reply-to`（thth.me の `send_request` も）が急な連投（burst）を超えるとき、口座を止めずにその 1 件を窓が空く時刻の順番待ちに並べ、timer が出します。止めるのは返信でない投稿の連投だけです（[リリースノート 3.25.0](docs/リリースノート_3.25.0_2026-10-16.md)）。
 - **予約も `--production` で**（3.24.0）: thth.me の鍵の道の `thth schedule` は、`--production` が無ければ下書きを置いて lint だけにします（`send` と同じ）。過去の時刻の予約はサーバも断ります（[リリースノート 3.24.0](docs/リリースノート_3.24.0_2026-10-16.md)）。
 - **出来事と数の要約**（3.23.0）: `thth events <口座|project> --after <next_cursor> --json` で出来事（公開・返信・言及・止まり・予算）を取りこぼさず読み直し、`thth summary` で数を 1 つにまとめます。`observe --json` は `sections_by_name` で節を名前で引けます（[リリースノート 3.23.0](docs/リリースノート_3.23.0_2026-10-16.md)）。

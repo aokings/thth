@@ -322,3 +322,70 @@ def test_T_S4_10a_deliveriesのarticleに告知とブクマの行(sns, world):  
     payload = deliveries_cli.build("lane-a", article="lane-a/arabica")
     assert "sent_unreadable" in payload["cannot_say"]
     assert payload["announcements"]                           # 読めた行は出す
+
+
+# ---------------------------------------------------------------- 見つけたこと 14（10/17 実機）
+
+def _first_stage(path, *, json_out=False):
+    from tests.hatena_s1_flow_helpers import first_stage_digest
+    if json_out:
+        rc, out, err = call(["approve", path, "--json"])
+        assert rc == 1, (out, err)
+        return json.loads(out)
+    return first_stage_digest(path)[1]
+
+
+@pytest.mark.parametrize("state", ["wanted", "inflight", "unknown"])
+def test_見つけたこと14_記事がまだなら承認の1段目はすぐ出ますと言わない(sns, world, monkeypatch, state):  # noqa: F811
+    """予定時刻を過ぎた告知の原稿でも、記事がまだなら「記事の公開を待って出ます（いまは <状態>）」と言う。
+
+    柵: `_late_warning` が告知を見ずに「承認するとすぐ出ます」と言うと赤。
+    """
+    monkeypatch.setattr(jst, "now_jst", lambda: NOW)   # 予定時刻 08:30 の 1.5 時間後（stale ではない）
+    if state != "wanted":
+        sns.advance(state)
+    path = sns.manuscript()
+    out = _first_stage(path)
+    assert "承認するとすぐ出ます" not in out
+    expected = (f"記事 {sns.delivery} の公開を待って出ます（いまは {state}）・"
+                "`{article_url}` は公開した URL に置き換わります")
+    assert f"告知      : {expected}" in out
+    assert "承認してもすぐには出ません" in out
+    data = _first_stage(path, json_out=True)
+    note = data["files"][0]["announce"]
+    assert note == {"delivery": sns.delivery, "state": state, "url": None, "waiting": True, "line": expected}
+    assert "承認するとすぐ出ます" not in data["files"][0]["warning"]
+
+
+def test_見つけたこと14_予定時刻が先でも告知の行は出る_公開済みなら置き換え後のURL(sns, world, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(jst, "now_jst", lambda: NOW - datetime.timedelta(hours=3))   # 予定時刻の前
+    path = sns.manuscript()
+    out = _first_stage(path)
+    assert f"記事 {sns.delivery} の公開を待って出ます（いまは wanted）" in out
+    assert "⚠" not in out   # 予定時刻の前なので警告は無い
+    # 記事が出たあと: 置き換え後の URL を見せる。予定時刻を過ぎていれば本当にすぐ出るので「すぐ出ます」のまま。
+    sns.advance("published", ARTICLE_URL)
+    monkeypatch.setattr(jst, "now_jst", lambda: NOW)
+    out = _first_stage(path)
+    assert f"`{{article_url}}` は {ARTICLE_URL} に置き換わります" in out
+    assert "承認するとすぐ出ます" in out
+
+
+def test_見つけたこと14_conflictの記事なら出ないと言う(sns, world, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(jst, "now_jst", lambda: NOW)
+    sns.advance("published", ARTICLE_URL)
+    sns.advance("conflict")
+    out = _first_stage(sns.manuscript())
+    assert "承認するとすぐ出ます" not in out
+    assert f"記事 {sns.delivery} は conflict です。このままでは出ません" in out
+
+
+def test_見つけたこと14_告知の行は指紋に入らない_告知の無い原稿は変わらない(sns, world, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(jst, "now_jst", lambda: NOW)
+    path = sns.manuscript()
+    before = _first_stage(path, json_out=True)["files"][0]["digest"]
+    sns.advance("published", ARTICLE_URL)
+    assert _first_stage(path, json_out=True)["files"][0]["digest"] == before
+    plain = sns.manuscript("plain.md", announces=False, article=None, body="告知でない投稿")
+    data = _first_stage(plain, json_out=True)["files"][0]
+    assert "announce" not in data and "承認するとすぐ出ます" in data["warning"]
