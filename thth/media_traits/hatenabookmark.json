@@ -1,0 +1,365 @@
+{
+  "schema": "thth.media-traits/1",
+  "media": "hatenabookmark",
+  "supported": true,
+  "relates_to": [
+    "hatenablog"
+  ],
+  "traits": [
+    {
+      "id": "hatenabookmark.api_no_number",
+      "kind": "api_limit",
+      "statement": "回数の上限に数は無い。過剰な連続アクセスや User-Agent を正しく指定しないアクセスは予告なしに制限することがある",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://developer.hatena.ne.jp/ja/documents/bookmark/apis/rest",
+        "checked_at": "2026-10-17",
+        "quote": "過剰な連続アクセス、`User-Agent` を正しく指定しないアクセスなどは予告なしに制限をかける場合があります。"
+      },
+      "confidence": "high",
+      "signals": [
+        "bookmark.burst"
+      ],
+      "penalty": [
+        "rate_limited"
+      ]
+    },
+    {
+      "id": "hatenabookmark.post_is_upsert",
+      "kind": "api_limit",
+      "statement": "既にブックマーク済みのページなら更新、そうでなければ追加。タグは最大 10",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://developer.hatena.ne.jp/ja/documents/bookmark/apis/rest/bookmark",
+        "checked_at": "2026-10-17",
+        "quote": "既にブックマーク済みのページであれば更新、そうでなければ新たに追加します。"
+      },
+      "confidence": "high",
+      "signals": [
+        "bookmark.once"
+      ]
+    },
+    {
+      "id": "hatenabookmark.count_api_interval",
+      "kind": "api_limit",
+      "statement": "件数取得を繰り返すときは、要求ごとに数秒の間隔をあける",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://developer.hatena.ne.jp/ja/documents/bookmark/apis/getcount",
+        "checked_at": "2026-10-17",
+        "quote": "繰り返しリクエストされる場合は、リクエスト毎に数秒の間隔をあけて"
+      },
+      "confidence": "high",
+      "signals": [
+        "read.interval"
+      ],
+      "notes": "間隔（2 秒）は adapter が持つ。柵の行にしない"
+    },
+    {
+      "id": "hatenabookmark.mechanical_high_frequency",
+      "kind": "spam_signal",
+      "statement": "機械的な高頻度のブックマークなど、通常の利用を逸脱していると判断できる場合は措置の対象",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://b.hatena.ne.jp/help/entry/spam",
+        "checked_at": "2026-10-17",
+        "quote": "機械的な高頻度のブックマークなど、通常の利用を逸脱していると判断できる場合"
+      },
+      "confidence": "high",
+      "signals": [
+        "bookmark.stop"
+      ],
+      "penalty": [
+        "display_suppression",
+        "account_suspension"
+      ],
+      "defaults": {
+        "bookmark.stop": {
+          "signal": "frequency",
+          "actions": [
+            "bookmark_add",
+            "bookmark_delete"
+          ],
+          "scope": "principal",
+          "window": {
+            "minutes": 10
+          },
+          "count": 30,
+          "key": "op",
+          "on_exceed": "stop",
+          "purpose": "safety",
+          "tighter": "lower",
+          "refusal": "principal_stopped",
+          "detail": "burst"
+        }
+      },
+      "notes": "項目そのものは high。止め線の数 30/10 分は公式に無い THTH の推測（normal_batch_use と同じ根拠）"
+    },
+    {
+      "id": "hatenabookmark.same_site_bulk",
+      "kind": "spam_signal",
+      "statement": "同一サイトのページを大量にブックマークする行為は禁止行為の例",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://b.hatena.ne.jp/help/entry/spam",
+        "checked_at": "2026-10-17",
+        "quote": "同一サイトのページを大量にブックマークする行為"
+      },
+      "confidence": "high",
+      "signals": [
+        "bookmark.same_host_daily"
+      ],
+      "penalty": [
+        "display_suppression",
+        "account_suspension"
+      ],
+      "defaults": {
+        "bookmark.same_host_daily": {
+          "signal": "frequency",
+          "actions": [
+            "bookmark_add"
+          ],
+          "scope": "principal",
+          "window": {
+            "day": "jst"
+          },
+          "count": 3,
+          "key": "host",
+          "on_exceed": "refuse",
+          "purpose": "platform",
+          "tighter": "lower",
+          "refusal": "bookmark_host_limit"
+        }
+      },
+      "notes": "「大量」の数は公式に無い。3 は THTH の線（推測）"
+    },
+    {
+      "id": "hatenabookmark.multi_account_same_page",
+      "kind": "spam_signal",
+      "statement": "メインとサブのアカウントで同じサイトに複数回ブックマークする・複数アカウントで共謀する行為は禁止",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://b.hatena.ne.jp/help/entry/spam",
+        "checked_at": "2026-10-17",
+        "also": [
+          {
+            "type": "official_doc",
+            "url": "https://b.hatena.ne.jp/help/entry/faq",
+            "checked_at": "2026-10-17"
+          }
+        ]
+      },
+      "confidence": "high",
+      "signals": [
+        "bookmark.once"
+      ],
+      "penalty": [
+        "display_suppression",
+        "account_suspension"
+      ],
+      "defaults": {
+        "bookmark.once": {
+          "signal": "same_target",
+          "actions": [
+            "bookmark_add"
+          ],
+          "scope": "owner",
+          "window": {
+            "forever": true
+          },
+          "count": 1,
+          "key": "url",
+          "on_exceed": "refuse",
+          "purpose": "platform",
+          "refusal": "bookmark_once"
+        }
+      }
+    },
+    {
+      "id": "hatenabookmark.promo_seo",
+      "kind": "spam_signal",
+      "statement": "広告・宣伝・SEO 目的のブックマーク、無関係なタグやコメントで誘導する行為は禁止",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://b.hatena.ne.jp/help/entry/spam",
+        "checked_at": "2026-10-17"
+      },
+      "confidence": "high",
+      "signals": [
+        "bookmark.self_daily",
+        "post.link_heavy"
+      ],
+      "penalty": [
+        "display_suppression",
+        "account_suspension"
+      ],
+      "defaults": {
+        "bookmark.self_daily": {
+          "signal": "frequency",
+          "actions": [
+            "bookmark_add"
+          ],
+          "scope": "principal",
+          "window": {
+            "day": "jst"
+          },
+          "count": 1,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "platform",
+          "tighter": "lower",
+          "refusal": "self_bookmark_limit"
+        }
+      },
+      "notes": "自分の記事のブックマークは 1 日 1 件（self_site_allowed が許す範囲を、宣伝目的に見えない数に絞る）"
+    },
+    {
+      "id": "hatenabookmark.automated_conditional",
+      "kind": "spam_signal",
+      "statement": "公正性に影響する自動のブックマーク（例: ブックマーク数に応じた自動投稿）は禁止",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://b.hatena.ne.jp/help/entry/spam",
+        "checked_at": "2026-10-17"
+      },
+      "confidence": "high",
+      "signals": [],
+      "penalty": [
+        "display_suppression",
+        "account_suspension"
+      ],
+      "notes": "THTH は承認なしにブックマークを付けない（予告のみ）"
+    },
+    {
+      "id": "hatenabookmark.missing_page_repeat",
+      "kind": "spam_signal",
+      "statement": "存在しないページを繰り返しブックマークする行為は禁止",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://b.hatena.ne.jp/help/entry/spam",
+        "checked_at": "2026-10-17"
+      },
+      "confidence": "high",
+      "signals": [
+        "bookmark.retry_once"
+      ],
+      "penalty": [
+        "display_suppression"
+      ],
+      "defaults": {
+        "bookmark.retry_once": {
+          "signal": "same_target",
+          "actions": [
+            "bookmark_add"
+          ],
+          "scope": "principal",
+          "window": {
+            "forever": true
+          },
+          "count": 1,
+          "key": "url",
+          "on_exceed": "refuse",
+          "purpose": "platform"
+        }
+      }
+    },
+    {
+      "id": "hatenabookmark.self_site_allowed",
+      "kind": "good_signal",
+      "statement": "自分が運営するウェブサイトを自分のアカウントでブックマークする行為は特に問題にしていない",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://b.hatena.ne.jp/help/entry/spam",
+        "checked_at": "2026-10-17",
+        "quote": "ご自身が運営するウェブサイトを自身のアカウントでブックマークする行為については、特に問題としておらず"
+      },
+      "confidence": "high",
+      "signals": [
+        "bookmark.self_daily"
+      ]
+    },
+    {
+      "id": "hatenabookmark.skew_correction",
+      "kind": "penalty",
+      "statement": "特定のサイトやコンテンツにだけ多くブックマークする偏りは、作為的でなくても補正する。組織的な順位操作やスパムは機械的に監視・措置",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://b.hatena.ne.jp/guide/guideline",
+        "checked_at": "2026-10-17"
+      },
+      "confidence": "high",
+      "signals": [
+        "bookmark.same_host_daily"
+      ],
+      "penalty": [
+        "display_suppression"
+      ]
+    },
+    {
+      "id": "hatenabookmark.normal_batch_use",
+      "kind": "culture",
+      "statement": "読んだ記事をまとめて数件付けるのは人の普通の使い方。10 分に 10 件まではその範囲、31 件は機械的",
+      "evidence": {
+        "type": "inferred",
+        "by": "Fable（設計 §4.2）・masaru「スレッズなどより緩く」",
+        "at": "2026-10-17"
+      },
+      "confidence": "low",
+      "signals": [
+        "bookmark.burst",
+        "bookmark.daily"
+      ],
+      "defaults": {
+        "bookmark.burst": {
+          "signal": "frequency",
+          "actions": [
+            "bookmark_add",
+            "bookmark_delete"
+          ],
+          "scope": "principal",
+          "window": {
+            "minutes": 10
+          },
+          "count": 10,
+          "key": "op",
+          "on_exceed": "wait",
+          "purpose": "preference",
+          "tighter": "lower",
+          "applies_to": "bookmark_add",
+          "refusal": "burst_limit",
+          "detail": "bookmark_burst"
+        },
+        "bookmark.daily": {
+          "signal": "frequency",
+          "actions": [
+            "bookmark_add",
+            "bookmark_delete"
+          ],
+          "scope": "principal",
+          "window": {
+            "day": "jst"
+          },
+          "count": 30,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "bookmark_limit"
+        }
+      },
+      "notes": "数は推測。4.0.1 の数（bookmark_burst 10/10 分・daily_max_bookmarks 30）と同じ"
+    },
+    {
+      "id": "hatenabookmark.cache_lag",
+      "kind": "observation",
+      "statement": "entry/jsonlite は付けた直後に反映されない",
+      "evidence": {
+        "type": "observed",
+        "record": "docs/記録_はてなの実機の確かめ_2026-10-17.md（S4）",
+        "observed_at": "2026-10-17"
+      },
+      "confidence": "high",
+      "signals": []
+    }
+  ]
+}

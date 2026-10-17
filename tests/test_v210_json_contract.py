@@ -76,7 +76,9 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
      # 4.0 S5 §3.3・§5.2: 記事の修正の検出（読むだけ）と衝突を見る・確かめる・解く（2 段）。
      'article diff', 'conflict',
      # 4.0 S6 §5: 記事の反応を束ねる（読むだけ）。
-     'article reactions']
+     'article reactions',
+     # 上限と連投の柵 段 0: 媒体の特性の台帳（読むだけ・版つき）。
+     'media traits', 'media check']
 
 
 def test_json_table_covers_every_parser():

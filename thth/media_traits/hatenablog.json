@@ -1,0 +1,80 @@
+{
+  "schema": "thth.media-traits/1",
+  "media": "hatenablog",
+  "supported": true,
+  "relates_to": [
+    "hatenabookmark",
+    "fotolife"
+  ],
+  "traits": [
+    {
+      "id": "hatenablog.no_api_limit",
+      "kind": "api_limit",
+      "statement": "AtomPub に回数の上限の記述は無い",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://developer.hatena.ne.jp/ja/documents/blog/apis/atom",
+        "checked_at": "2026-10-17"
+      },
+      "confidence": "high",
+      "signals": [
+        "entry.daily",
+        "entry_delete.daily"
+      ],
+      "defaults": {
+        "entry.daily": {
+          "signal": "frequency",
+          "actions": [
+            "entry_create",
+            "entry_update"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 8,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "daily_limit"
+        },
+        "entry_delete.daily": {
+          "signal": "frequency",
+          "actions": [
+            "entry_delete"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 5,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "retract_limit"
+        }
+      },
+      "notes": "数は THTH の線（媒体に数が無い）。雛形は 3・2 を明示する（段 3 で limits の形に）"
+    },
+    {
+      "id": "hatenablog.commercial_guideline",
+      "kind": "policy",
+      "statement": "個人の営利利用はブログに限る。禁止事項に「過剰なセルフブックマークやスターの無差別付与など、他サービスの不正利用」",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://help.hatenablog.com/entry/commercial-guidelines",
+        "checked_at": "2026-10-16",
+        "quote": "過剰なセルフブックマークやスターの無差別付与など、他サービスの不正利用"
+      },
+      "confidence": "high",
+      "signals": [
+        "bookmark.self_daily"
+      ],
+      "penalty": [
+        "account_suspension"
+      ]
+    }
+  ]
+}

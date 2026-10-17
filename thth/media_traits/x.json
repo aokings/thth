@@ -1,0 +1,246 @@
+{
+  "schema": "thth.media-traits/1",
+  "media": "x",
+  "supported": true,
+  "relates_to": [],
+  "traits": [
+    {
+      "id": "x.api_post_rate",
+      "kind": "api_limit",
+      "statement": "POST /2/tweets は利用者ごと 100/15 分・app 10,000/24h。削除 50/15 分。いいね 50/15 分・1,000/24h。再投稿 50/15 分",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://docs.x.com/x-api/fundamentals/rate-limits",
+        "checked_at": "2026-10-17"
+      },
+      "confidence": "high",
+      "signals": [
+        "post.daily",
+        "retract.daily",
+        "reaction.daily"
+      ],
+      "defaults": {
+        "retract.daily": {
+          "signal": "frequency",
+          "actions": [
+            "retract"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 5,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "retract_limit"
+        },
+        "reaction.daily": {
+          "signal": "frequency",
+          "actions": [
+            "reaction"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 50,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "reaction_limit"
+        }
+      },
+      "notes": "既定（削除 5/日・反応 50/日）は API の上限の内側"
+    },
+    {
+      "id": "x.account_post_limit",
+      "kind": "policy",
+      "statement": "英語の help では未認証の口座は 1 日 50 投稿・200 返信（2026-05-15 改定と二次の記事）。日本語の頁は 2,400 のまま",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://help.x.com/en/rules-and-policies/x-limits",
+        "checked_at": "2026-10-17",
+        "via": "頁は 403 で開けず、二次の記事（roboin.io・設計 §4.2）で読んだ"
+      },
+      "confidence": "medium",
+      "signals": [
+        "post.daily"
+      ],
+      "defaults": {
+        "post.daily": {
+          "signal": "frequency",
+          "actions": [
+            "post",
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 8,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "daily_limit"
+        }
+      },
+      "notes": "既定 8/日は 50 の内側。原文を開けたら確かさを直す"
+    },
+    {
+      "id": "x.pay_per_use",
+      "kind": "policy",
+      "statement": "API は従量（credits）",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://docs.x.com/x-api/getting-started/about-x-api",
+        "checked_at": "2026-10-17"
+      },
+      "confidence": "high",
+      "signals": [
+        "read.budget",
+        "post.monthly"
+      ],
+      "notes": "月の予算は今の予算の道（budget_x・budget_x_posts）のまま。行の既定にしない（段 0 で決めたこと）"
+    },
+    {
+      "id": "x.reply_requires_mention",
+      "kind": "spam_signal",
+      "statement": "元の投稿の作者が @ か引用で呼んだときしか返信できない（403 x_reply_not_engaged）",
+      "evidence": {
+        "type": "official_statement",
+        "source": "docs.x.com/updates/changelog 2026-02-23（docs/申し送り_THTH開発_2026-10-13.md）",
+        "url": "https://docs.x.com/updates/changelog",
+        "checked_at": "2026-10-13",
+        "also": [
+          {
+            "type": "observed",
+            "record": "関東の実機の 403（docs/申し送り_THTH開発_2026-10-15.md）",
+            "observed_at": "2026-10-15"
+          }
+        ]
+      },
+      "confidence": "high",
+      "signals": [
+        "reply.counterpart"
+      ],
+      "penalty": [
+        "request_refused"
+      ],
+      "defaults": {
+        "reply.counterpart": {
+          "signal": "counterpart",
+          "actions": [
+            "reply"
+          ],
+          "scope": "account",
+          "window": null,
+          "count": null,
+          "key": null,
+          "on_exceed": "advise",
+          "purpose": "platform"
+        }
+      },
+      "notes": "断るのは X 自身の 403（原稿ごとに記録・今のまま）。THTH は 1 段目で予告するだけ"
+    },
+    {
+      "id": "x.duplicate_content",
+      "kind": "spam_signal",
+      "statement": "同じ本文は 403 x_duplicate_content で断られる",
+      "evidence": {
+        "type": "observed",
+        "record": "docs/リリースノート_3.19.2（kopicha）",
+        "observed_at": "2026-10-14"
+      },
+      "confidence": "high",
+      "signals": [
+        "post.same_text"
+      ],
+      "penalty": [
+        "request_refused"
+      ]
+    },
+    {
+      "id": "x.human_verification",
+      "kind": "observation",
+      "statement": "API の投稿が 403 x_not_permitted・読みは通る・手の投稿は通り「人間が運用していることを確認する必要がある」の画面。確認まで検索・トレンドに出にくい。解くのは人の手の利用。resume 後も 1 回で再び止まる",
+      "evidence": {
+        "type": "observed",
+        "record": "docs/返事_kopicha_X403とMastodon保留_2026-10-14.md・申し送り 10/15",
+        "observed_at": "2026-10-14"
+      },
+      "confidence": "high",
+      "signals": [
+        "post.platform_refusal"
+      ],
+      "penalty": [
+        "human_verification",
+        "search_exclusion"
+      ],
+      "defaults": {
+        "post.platform_refusal": {
+          "signal": "recent_platform_refusal",
+          "actions": [
+            "post",
+            "reply"
+          ],
+          "scope": "account",
+          "window": null,
+          "count": null,
+          "key": null,
+          "on_exceed": "stop",
+          "purpose": "safety"
+        }
+      },
+      "notes": "振る舞いは今のまま（publish_hold → account_stopped・resume は人）"
+    },
+    {
+      "id": "x.automation_rules",
+      "kind": "policy",
+      "statement": "bulk・無差別の自動投稿・検索起点の無差別の返信は禁止",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://help.x.com/en/rules-and-policies/x-automation",
+        "checked_at": "2026-10-15"
+      },
+      "confidence": "high",
+      "signals": [
+        "reply.counterpart",
+        "post.same_text"
+      ],
+      "penalty": [
+        "account_lock",
+        "account_suspension"
+      ],
+      "notes": "docs/点検_絞りすぎ_2026-10-15.md §U で読んだ"
+    },
+    {
+      "id": "x.penalty_forms",
+      "kind": "penalty",
+      "statement": "罰の形: 403 で断る・検索とトレンドから外す・確認の画面・ロック",
+      "evidence": {
+        "type": "observed",
+        "record": "docs/返事_kopicha_X403とMastodon保留_2026-10-14.md",
+        "observed_at": "2026-10-14",
+        "also": [
+          {
+            "type": "official_doc",
+            "url": "https://help.x.com/en/rules-and-policies/x-automation",
+            "checked_at": "2026-10-15"
+          }
+        ]
+      },
+      "confidence": "high",
+      "signals": [],
+      "penalty": [
+        "request_refused",
+        "search_exclusion",
+        "human_verification",
+        "account_lock"
+      ]
+    }
+  ]
+}

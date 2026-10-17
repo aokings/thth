@@ -1,0 +1,92 @@
+{
+  "schema": "thth.media-traits/1",
+  "media": "mastodon",
+  "supported": true,
+  "relates_to": [],
+  "traits": [
+    {
+      "id": "mastodon.api_rate",
+      "kind": "api_limit",
+      "statement": "口座ごと 300 回/5 分・削除と unreblog 30/30 分・メディア 30/30 分",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://docs.joinmastodon.org/api/rate-limits/",
+        "checked_at": "2026-10-17"
+      },
+      "confidence": "high",
+      "signals": [
+        "post.daily",
+        "retract.daily",
+        "reaction.daily"
+      ],
+      "penalty": [
+        "rate_limited"
+      ],
+      "defaults": {
+        "post.daily": {
+          "signal": "frequency",
+          "actions": [
+            "post",
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 8,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "daily_limit"
+        },
+        "retract.daily": {
+          "signal": "frequency",
+          "actions": [
+            "retract"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 5,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "retract_limit"
+        },
+        "reaction.daily": {
+          "signal": "frequency",
+          "actions": [
+            "reaction"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 50,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "reaction_limit"
+        }
+      },
+      "notes": "既定はすべて API の上限の内側"
+    },
+    {
+      "id": "mastodon.server_rules",
+      "kind": "policy",
+      "statement": "スパムの判定はサーバごと。API guidelines に自動投稿の記述は無い",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://docs.joinmastodon.org/api/guidelines/",
+        "checked_at": "2026-10-17"
+      },
+      "confidence": "high",
+      "signals": [],
+      "notes": "無いことを確かめた。Misskey の利用者にも Fediverse で届く（misskey.fediverse_reach）"
+    }
+  ]
+}

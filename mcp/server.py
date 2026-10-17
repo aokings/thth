@@ -528,6 +528,21 @@ TOOLS += [
          "required": ["account"], "additionalProperties": False}},
 ]
 
+# 媒体の特性の台帳（設計「上限と連投の柵」§4.3・段 0）。**読むだけ**——道具に同梱の台帳を CLI
+# （`thth media traits --json`）で読む。媒体は呼ばない・口座の台帳も読まない。
+TOOLS += [
+    {"name": "thth_media_traits",
+     "description": ("媒体ごとの特性の台帳を読む（その媒体がスパムをどう見ていると想定できるか・良い振る舞い・"
+                     "罰の形・API の上限と、項目ごとの根拠の種類・確かさ・URL と日付・導く柵の既定）。"
+                     "thth media traits --json と同じ形・読むだけ。media を省けば媒体の一覧。"
+                     "確かさ low（推測）の項目は公式の数ではない"),
+     "inputSchema": {"type": "object", "properties": {
+         "media": {"type": "string", "description": "媒体名（threads・x・hatenabookmark など。未対応の misskey も"
+                                                     "読める。省けば一覧）"},
+         "signal": {"type": "string", "description": "この柵の行（例 bookmark.burst）に効く項目だけ（media が要る）"}},
+         "additionalProperties": False}},
+]
+
 
 class ToolInputError(Exception):
     """要求が受け取れない（JSON-RPC `-32602`・セキュリティ監査 2026-09-14・P2-1）。
@@ -1740,6 +1755,15 @@ def call_tool(name: str, arguments: dict | None) -> dict:
     elif name == "thth_doctor":
         proc = run_cli(["doctor", arguments["account"], "--json"])
         text = proc.stdout
+    elif name == "thth_media_traits":
+        if arguments.get("signal") is not None and not arguments.get("media"):
+            raise ToolInputError("thth_media_traits: signal を使うときは media が要ります")
+        args = ["media", "traits", *([arguments["media"]] if arguments.get("media") else [])]
+        if arguments.get("signal") is not None:
+            args += ["--signal", arguments["signal"]]
+        args.append("--json")
+        proc = run_cli(args)
+        text = proc.stdout
     elif name in REACTION_TOOLS:
         kind = REACTION_TOOLS[name]
         args = [("un" + kind) if arguments.get("undo") else kind, arguments["account"],
@@ -1749,7 +1773,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
     else:
         return {"content": [{"type": "text", "text": f"unknown tool: {name}"}, _channel_note()], "isError": True}
 
-    if name in REACTION_TOOLS or name in X_READ_TOOLS or name == "thth_doctor":
+    if name in REACTION_TOOLS or name in X_READ_TOOLS or name in ("thth_doctor", "thth_media_traits"):
         is_error = proc.returncode != 0
     elif name == "thth_conflict_resolve":
         # 1 段目（stage 1・digest）は exit 1 で返る。断りは JSON の ok: false。

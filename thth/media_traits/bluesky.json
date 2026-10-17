@@ -1,0 +1,98 @@
+{
+  "schema": "thth.media-traits/1",
+  "media": "bluesky",
+  "supported": true,
+  "relates_to": [],
+  "traits": [
+    {
+      "id": "bluesky.pds_points",
+      "kind": "api_limit",
+      "statement": "口座ごと 5,000 点/時・35,000 点/日（create 3・update 2・delete 1）。IP ごと 3,000 要求/5 分",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://docs.bsky.app/docs/advanced-guides/rate-limits",
+        "checked_at": "2026-10-17",
+        "via": "転送先の本文が空で開けず、検索の要約と二次の記事で一致を確かめた"
+      },
+      "confidence": "medium",
+      "signals": [
+        "post.daily",
+        "retract.daily",
+        "reaction.daily"
+      ],
+      "penalty": [
+        "rate_limited"
+      ],
+      "defaults": {
+        "post.daily": {
+          "signal": "frequency",
+          "actions": [
+            "post",
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 8,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "daily_limit"
+        },
+        "retract.daily": {
+          "signal": "frequency",
+          "actions": [
+            "retract"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 5,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "retract_limit"
+        },
+        "reaction.daily": {
+          "signal": "frequency",
+          "actions": [
+            "reaction"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 50,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "reaction_limit"
+        }
+      },
+      "notes": "既定（8・5・50/日）はすべて点数の上限の内側。反応（いいね・再投稿）も create の点で数えられる"
+    },
+    {
+      "id": "bluesky.community_guidelines",
+      "kind": "policy",
+      "statement": "Developer Guidelines は spam・自動の大量操作（通知が飛ぶ follow・like・reply）を禁止している",
+      "evidence": {
+        "type": "official_statement",
+        "source": "bsky-docs の Developer Guidelines（GitHub の原文・docs/点検_絞りすぎ_2026-10-15.md が 10/15 に読んだ）",
+        "checked_at": "2026-10-15"
+      },
+      "confidence": "medium",
+      "signals": [
+        "reaction.daily"
+      ],
+      "penalty": [
+        "account_suspension"
+      ],
+      "notes": "10/17 は開き直していない。URL は点検の文書に無いので書かない"
+    }
+  ]
+}

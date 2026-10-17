@@ -1,0 +1,58 @@
+{
+  "schema": "thth.media-traits/1",
+  "media": "fotolife",
+  "supported": true,
+  "relates_to": [
+    "hatenablog"
+  ],
+  "traits": [
+    {
+      "id": "fotolife.no_api_limit",
+      "kind": "api_limit",
+      "statement": "回数・容量の上限の記述は無い",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://developer.hatena.ne.jp/ja/documents/fotolife/apis/atom",
+        "checked_at": "2026-10-17"
+      },
+      "confidence": "high",
+      "signals": [
+        "upload.daily"
+      ],
+      "defaults": {
+        "upload.daily": {
+          "signal": "frequency",
+          "actions": [
+            "upload"
+          ],
+          "scope": "principal",
+          "window": {
+            "day": "jst"
+          },
+          "count": 30,
+          "key": "op",
+          "on_exceed": "hold",
+          "purpose": "preference",
+          "tighter": "lower"
+        }
+      },
+      "notes": "30/日は THTH の線（hatena_fotolife.LIMIT_DEFAULTS の daily_max_uploads と同じ数）"
+    },
+    {
+      "id": "fotolife.first_403",
+      "kind": "observation",
+      "statement": "新しいアカウントのフォトライフの最初の 1 回が 403 になりうる（関東）",
+      "evidence": {
+        "type": "observed",
+        "record": "docs/記録_はてなの実機の確かめ_2026-10-17.md 見つけたこと 16",
+        "observed_at": "2026-10-17"
+      },
+      "confidence": "medium",
+      "signals": [],
+      "penalty": [
+        "request_refused"
+      ],
+      "notes": "原因は確かめていない"
+    }
+  ]
+}

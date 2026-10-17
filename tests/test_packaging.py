@@ -206,6 +206,41 @@ def test_wheelにもsdistにも雛形が入っている(built):
             f"（sdist から建て直した wheel に雛形が入らない）")
 
 
+def test_wheelにもsdistにも媒体の特性の台帳が入っている(built):
+    """**媒体の特性の台帳**（`thth/media_traits/*.json`・設計「上限と連投の柵」§4.1 段 0）。
+
+    `.py` でないデータなので、wheel に入らなければ `pip install` した人の手元で
+    `thth media traits` が「台帳がありません」になる（段 1 からは柵の既定も読めない）。
+    repo から叩くぶんには当たるので、**wheel を開くまで分からない**（雛形の監査 2 と同じ型）。
+    """
+    from thth import media_traits
+    want = media_traits.list_media()
+    assert set(media_traits.SUPPORTED_MEDIA) <= set(want) and "misskey" in want
+    with zipfile.ZipFile(built["wheel"]) as z:
+        names = set(z.namelist())
+        for media in want:
+            assert f"thth/media_traits/{media}.json" in names, (
+                f"台帳 {media}.json が wheel に入っていません")
+    r = _run(["tar", "tzf", built["sdist"]])
+    assert r.returncode == 0, r.stderr
+    entries = [ln.split("/", 1)[1] for ln in r.stdout.splitlines() if "/" in ln]
+    for media in want:
+        assert f"thth/media_traits/{media}.json" in entries, f"台帳 {media}.json が sdist に入っていません"
+
+
+def test_別のvenvでthth_media_checkが同梱の台帳を読む(venv_thth, tmp_path):
+    """wheel だけで `thth media check`（検査）と `thth media traits hatenabookmark` が通る。"""
+    env = _isolated_env(venv_thth, tmp_path)
+    r = _run([venv_thth["thth"], "media", "check", "--json"], env=env, cwd=_elsewhere(tmp_path))
+    assert r.returncode == 0, f"{r.stdout}{r.stderr}"
+    report = json.loads(r.stdout)
+    assert report["ok"] is True and "hatenabookmark" in report["media"]
+    r = _run([venv_thth["thth"], "media", "traits", "hatenabookmark", "--json"], env=env,
+             cwd=_elsewhere(tmp_path))
+    assert r.returncode == 0, f"{r.stdout}{r.stderr}"
+    assert any(t["id"] == "hatenabookmark.same_site_bulk" for t in json.loads(r.stdout)["items"])
+
+
 def test_sdist_に台帳と運用の日誌が入っていない(built):
     """`accounts/` と `docs/記録/`（運用の日誌）は配らない（設計 v2 §3・§7-2）。
 
