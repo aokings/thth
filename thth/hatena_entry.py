@@ -449,7 +449,8 @@ def material(fm, account_cfg, account_name: str, *, ledger: dict | None = None) 
     except ValueError as exc:
         raise EntryError(str(exc)) from None
     if op == "update" and given is None and ledger is not None and _unchanged(account_name, ledger, body, title,
-                                                                              categories, images):
+                                                                              categories, images, rev=rev,
+                                                                              account_cfg=account_cfg):
         raise EntryError("update_no_change")
     return {"op": op, "form": form, "article": article, "article_source": source, "title": title,
             "categories": categories, "delivery": delivery, "ledger": ledger, "body": body,
@@ -513,22 +514,64 @@ def adopted_since_send(ledger) -> bool:
     return any(row.get("resolution") == "adopt_remote" for row in rows)
 
 
-def _unchanged(account_name, ledger, body, title, categories, images) -> bool:
-    """出した版と同じか（S5 §4.4）。承認の控え・台帳の題とカテゴリが無ければ比べない（False）。
+def previous_manuscript(account_cfg, ledger) -> dict | None:
+    """前に送った原稿（台帳の `queue_file` を repo から読む）の題とカテゴリ（実機の確かめ 10/17 の 11・13）。
 
-    取り込んだ（`--adopt`）あとは比べない——はてなの今の本文を記事で上書きする更新には意味がある。
+    S5 より前に出した配信は台帳に `title`・`categories` が無いので、比べ先・`--draft` の文面の出所にする。
+    読めなければ None（比べない）。カテゴリが読めなければ `categories` は None。
     """
-    if not isinstance(ledger.get("title"), str) or not isinstance(ledger.get("categories"), list):
-        return False
+    try:
+        path = repo_file((account_cfg or {}).get("repo_dir"), (ledger or {}).get("queue_file"))
+        fm = queuefile.parse(path).front_matter
+    except (EntryError, OSError, ValueError, TypeError, UnicodeDecodeError):
+        return None
+    if fm.get("delivery") not in (None, (ledger or {}).get("delivery")):
+        return None
+    try:
+        categories = parse_categories(fm.get("categories"))
+    except EntryError:
+        categories = None
+    title = _text(fm, "title") or None
+    return {"title": title, "categories": categories}
+
+
+def sent_title_categories(account_cfg, ledger) -> tuple:
+    """出した題とカテゴリ: 台帳にあれば台帳、無ければ前に送った原稿。分からなければ None。"""
+    title = ledger.get("title") if isinstance(ledger.get("title"), str) else None
+    categories = ledger.get("categories") if isinstance(ledger.get("categories"), list) else None
+    if title is None or categories is None:
+        prev = previous_manuscript(account_cfg, ledger) or {}
+        title = title if title is not None else prev.get("title")
+        categories = categories if categories is not None else prev.get("categories")
+    return title, categories
+
+
+def _unchanged(account_name, ledger, body, title, categories, images, *, rev=None, account_cfg=None) -> bool:
+    """出した版と同じか（S5 §4.4）。本文・画像が同じで、題とカテゴリも同じなら True。
+
+    - 本文: 承認の控えと比べる。控えが無ければ記事の版（`article_rev` と台帳の `checked_rev`）で比べる。
+      どちらも無ければ比べない（False）。
+    - 題とカテゴリ: 台帳にあれば台帳、無ければ前に送った原稿（実機の確かめ 10/17 の 11・S5 より前の配信）。
+      どちらからも分からなければ比べない（本文・版・画像だけで決める）。
+    - 取り込んだ（`--adopt`）あとは比べない——はてなの今の本文を記事で上書きする更新には意味がある。
+    """
     if adopted_since_send(ledger):
         return False
     before = _approved_body(account_name, ledger)
-    if before is None:
+    if before is not None:
+        same_body = approval_mod.hatena_body_sha256(before) == approval_mod.hatena_body_sha256(body)
+    elif rev and ledger.get("checked_rev"):
+        same_body = rev == ledger["checked_rev"]
+    else:
         return False
-    return (approval_mod.hatena_body_sha256(before) == approval_mod.hatena_body_sha256(body)
-            and norm_title(ledger["title"]) == norm_title(title)
-            and norm_categories(ledger["categories"]) == norm_categories(categories)
-            and image_pairs(ledger.get("images")) == image_pairs(images))
+    if not same_body or image_pairs(ledger.get("images")) != image_pairs(images):
+        return False
+    sent_title, sent_categories = sent_title_categories(account_cfg, ledger)
+    if sent_title is not None and norm_title(sent_title) != norm_title(title):
+        return False
+    if sent_categories is not None and norm_categories(sent_categories) != norm_categories(categories):
+        return False
+    return True
 
 
 def adopted_path(account_name, delivery, readback_sha) -> str:
