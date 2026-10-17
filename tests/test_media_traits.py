@@ -202,6 +202,12 @@ def test_良い振る舞いと罰の項目は既定を持てない(ledger_dir):
     ("on_exceed", "explode", "default_on_exceed_invalid"),
     ("purpose", "fun", "default_purpose_invalid"),
     ("applies_to", "post", "default_applies_to_invalid"),
+    # 段 2（中-1）: `applies_to` は配列。1 つの文字列・数える動作に無い動作・空・重複は断る。
+    ("applies_to", "bookmark_add", "default_applies_to_invalid"),
+    ("applies_to", ["post"], "default_applies_to_invalid"),
+    ("applies_to", [], "default_applies_to_invalid"),
+    ("applies_to", ["bookmark_add", "bookmark_add"], "default_applies_to_invalid"),
+    ("count_evidence", "vibes", "count_evidence_invalid"),
     ("extra", 1, "default_field_unknown"),
 ])
 def test_既定の行の形が違えば断る(ledger_dir, field, value, code):
@@ -326,7 +332,7 @@ def test_台帳の既定を消すとその行が消える(ledger_dir):
 
 def test_行の形は段1が読める_設計の欄だけ():
     for row in mt.collect_defaults():
-        assert set(row) - {"id", "media", "trait", "confidence", "evidence_type"} <= (
+        assert set(row) - {"id", "media", "trait", "confidence", "evidence_type", "count_confidence"} <= (
             mt.DEFAULT_FIELDS_REQUIRED | mt.DEFAULT_FIELDS_OPTIONAL)
         assert mt.DEFAULT_FIELDS_REQUIRED <= set(row)
 
@@ -415,3 +421,72 @@ def test_MCPのthth_media_traitsは本物のCLIで台帳を返す_未知はisErr
     assert json.loads(got["content"][0]["text"])["media"] == "x"
     bad = server.call_tool("thth_media_traits", {"media": "myspace"})
     assert bad["isError"] is True
+
+
+# ------------------------------------------------------------------ 段 2（監査 中-1・中-2）
+
+def test_ブックマークの窓は付ける消すの両方に当てる_4_0_1と同じ():
+    """中-1: 台帳の `bookmark.burst` の `applies_to` が付けるだけだと、消すの連投に窓が当たらない（4.0.1 と違う）。"""
+    burst = _row("hatenabookmark", "bookmark.burst")
+    assert burst["applies_to"] == ["bookmark_add", "bookmark_delete"]
+
+
+def test_語彙は1か所_段1の表の行のidと語がすべて台帳の語彙にある():
+    """中-1: 表（limits_policy）の語彙は media_traits を import する。行の id・単位・鍵・振る舞いが台帳の語彙の外なら赤。"""
+    from thth import assess, limits_policy
+    assert limits_policy.SCOPES is mt.SCOPES and limits_policy.KEYS is mt.KEYS
+    assert limits_policy.ON_EXCEED is mt.ON_EXCEED and limits_policy.PURPOSES is mt.PURPOSES
+    assert limits_policy.RULE_IDS is mt.RULE_IDS and assess.SIGNALS is mt.SIGNALS_V1
+    assert "own" in mt.KEYS and "halted" in mt.ON_EXCEED and "app" in mt.SCOPES
+    for row in limits_policy.POLICY:
+        assert row["id"] in mt.RULE_IDS and row["scope"] in mt.SCOPES and row["key"] in mt.KEYS
+        assert row["on_exceed"] in mt.ON_EXCEED and set(row["actions"]) <= set(mt.ACTIONS)
+
+
+def test_台帳の信号と鍵は表と同じ():
+    """中-1: 段 0 の台帳は `bookmark.self_daily` を frequency/op、`same_host_daily` を frequency で書いていた。"""
+    own = _row("hatenabookmark", "bookmark.self_daily")
+    host = _row("hatenabookmark", "bookmark.same_host_daily")
+    assert (own["signal"], own["key"]) == ("self_reference", "own")
+    assert (host["signal"], host["key"]) == ("same_host", "host")
+
+
+def test_数のある既定は数の根拠が要る(ledger_dir):
+    """中-2: 推測の数に項目の official_doc・high が付いて見えないように、数の根拠を必須にする。"""
+    _edit(ledger_dir, "hatenabookmark",
+          lambda d: _trait(d, "mechanical_high_frequency")["defaults"]["bookmark.stop"].pop("count_evidence"))
+    assert _codes(ledger_dir) == {"count_evidence_missing"}
+
+
+def test_数を公式と言うなら項目の根拠にその種類が要る(ledger_dir):
+    _edit(ledger_dir, "hatenabookmark",
+          lambda d: _trait(d, "mechanical_high_frequency")["defaults"]["bookmark.stop"].update(
+              count_evidence="observed"))
+    assert _codes(ledger_dir) == {"count_evidence_not_in_trait"}
+
+
+def test_数の無い既定に数の根拠は置けない(ledger_dir):
+    _edit(ledger_dir, "x", lambda d: _trait(d, "reply_requires_mention")["defaults"]["reply.counterpart"].update(
+        count_evidence="inferred"))
+    assert _codes(ledger_dir) == {"count_evidence_without_count"}
+
+
+@pytest.mark.parametrize("rule_id", ["bookmark.stop", "bookmark.same_host_daily", "bookmark.self_daily",
+                                     "bookmark.burst", "bookmark.daily"])
+def test_推測の数は確かさlowで出る(rule_id):
+    """中-2: 項目が official_doc・high でも、数が推測なら数の確かさは low。"""
+    row = _row("hatenabookmark", rule_id)
+    assert row["count_evidence"] == "inferred" and row["count_confidence"] == "low"
+
+
+def test_THTHの線の数は確かさを問わない_公式の数は項目の確かさ():
+    row = _row("threads", "post.daily")
+    assert (row["count_evidence"], row["count_confidence"]) == ("thth_line", None)
+    row = _row("hatenabookmark", "bookmark.once")
+    assert (row["count_evidence"], row["count_confidence"]) == ("official_doc", "high")
+
+
+def test_CLIは数の根拠を言う(capsys):
+    assert cli.main(["media", "traits", "hatenabookmark"]) == 0
+    out = capsys.readouterr().out
+    assert "既定 bookmark.stop: principal・10 分・30（数は推測・確かさ low）・stop（safety）" in out

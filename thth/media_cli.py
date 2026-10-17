@@ -132,10 +132,17 @@ def render(payload) -> None:
             print(f"    効く行: {'・'.join(t['signals'])}")
         for rule_id, row in (t.get("defaults") or {}).items():
             count = "—" if row["count"] is None else row["count"]
-            print(f"    既定 {rule_id}: {row['scope']}・{_window_text(row['window'])}・{count}・"
+            basis = COUNT_BASIS_LABEL.get(row.get("count_evidence"), "")
+            print(f"    既定 {rule_id}: {row['scope']}・{_window_text(row['window'])}・{count}{basis}・"
                   f"{row['on_exceed']}（{row['purpose']}）")
         if t.get("notes"):
             print(f"    注: {t['notes']}")
+
+
+# 既定の数の根拠（段 2・中-2）。推測の数は「推測・確かさ low」と言う（項目の high を数に付けない）。
+COUNT_BASIS_LABEL = {"inferred": "（数は推測・確かさ low）", "thth_line": "（数は THTH の線）",
+                     "official_doc": "（数は公式の文書）", "official_statement": "（数は公式の発言）",
+                     "observed": "（数は観測）"}
 
 
 def cmd_traits(args) -> int:

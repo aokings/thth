@@ -38,7 +38,8 @@
           "on_exceed": "refuse",
           "purpose": "preference",
           "tighter": "lower",
-          "refusal": "daily_limit"
+          "refusal": "daily_limit",
+          "count_evidence": "thth_line"
         },
         "retract.daily": {
           "signal": "frequency",
@@ -54,7 +55,8 @@
           "on_exceed": "refuse",
           "purpose": "preference",
           "tighter": "lower",
-          "refusal": "retract_limit"
+          "refusal": "retract_limit",
+          "count_evidence": "thth_line"
         },
         "reaction.daily": {
           "signal": "frequency",
@@ -70,7 +72,8 @@
           "on_exceed": "refuse",
           "purpose": "preference",
           "tighter": "lower",
-          "refusal": "reaction_limit"
+          "refusal": "reaction_limit",
+          "count_evidence": "thth_line"
         }
       },
       "notes": "既定はすべて API の上限の内側"

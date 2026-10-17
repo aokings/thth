@@ -190,12 +190,20 @@ COUNTED = ("post.daily", "retract.daily", "reply.burst", "post.burst", "reaction
            "bookmark.daily", "bookmark.self_daily", "bookmark.same_host_daily", "bookmark.burst")
 UNCOUNTED = ("post.quiet", "post.interval", "entry.quiet", "entry.interval", "entry.platform_refusal",
              "bookmark.once", "reaction.quiet")
+# 段 2 で足した行（数が媒体の台帳・固定なので `count` 2 に締められない）。試験は `tests/test_limits_stage2.py`。
+STAGE2 = ("bookmark.stop", "write.floor", "upload.daily")
 
 
 def test_表のすべての行に試験がある():
     """柵: 表に行を足して試験を書き忘れると赤。"""
-    assert set(COUNTED) | set(UNCOUNTED) == set(limits_policy.ids())
-    assert not set(COUNTED) & set(UNCOUNTED)
+    assert set(COUNTED) | set(UNCOUNTED) | set(STAGE2) == set(limits_policy.ids())
+    assert not set(COUNTED) & set(UNCOUNTED) and not set(STAGE2) & (set(COUNTED) | set(UNCOUNTED))
+
+
+def expected_trait(rule, rid):
+    """試し方の口座の媒体で解いた根拠の id（SNS は sns_cfg の threads・はてなは行の媒体）。"""
+    media = "threads" if "sns" in rule["family"] or "reaction" in rule["family"] else None
+    return limits_policy.resolve(rule, cfg={"media": media} if media else {}, principal_cfg={})["trait"]
 
 
 def is_stopped(target):
@@ -216,7 +224,7 @@ def test_T_P_1_countちょうどまで通り次で振る舞う(world, rid):
     e = caught.value
     a = e.assessment
     assert str(e) == rule["refusal"] if rule["on_exceed"] != "stop" else str(e) in ("account_stopped", "principal_stopped")
-    assert a["rule"] == rid and a["trait"] == {"id": rule["trait"]} and a["signal"] == rule["signal"]
+    assert a["rule"] == rid and a["trait"]["id"] == expected_trait(rule, rid) and a["signal"] == rule["signal"]
     assert a["scope"] == rule["scope"] and a["count"] == 2 and a["used"] == 2
     assert a["code"] == str(e)
     json.dumps(a)  # 構造は JSON にできる

@@ -27,6 +27,9 @@
 - `burst_limit`（詳細 `bookmark_burst`）: はてなのブックマーク（付ける・消す）が主体の
   `bookmark_burst`（既定 10 分に 10 件）を超えた → 主体を**止めずに**この 1 件だけ断る（4.0.1・
   `next_at` は窓が空く時刻）。ブックマークは記事の burst に数えない
+- `principal_stopped`（詳細 `burst`・段 2）: ブックマークが主体で 10 分に 30 件を超える（`bookmark.stop`・
+  媒体の台帳の止め線）→ 主体を止める。`account_stopped`（詳細 `burst`・段 2）: 口座の書きが 10 分に 20 件を
+  超える（`write.floor`・表に行の無い媒体・動作も受ける共通の最低線）→ 口座を止める
 - `reaction_limit`: その日の反応（再投稿・いいね・その取り消し）が `daily_max_reactions`
   に達した（翌日 0 時を添える・設計 3.15.0 §2.5）。材料は `state/<account>/reactions/`。
   **反応は公開の枠（`daily_max_posts`・burst）に数えない**。夜間は再投稿にだけ掛ける
@@ -181,6 +184,18 @@ def resume(account, *, by, via="cli") -> bool:
 def _classified(account):
     """`sent/` の記録を (種類, 時刻, blog_id, 鍵) の list に。種類は `post`・`retract`・`bookmark`。
 
+    中身は `_action_rows`（動作つき）と同じ（段 2）。"""
+    return [(what, at, blog, key) for what, _action, at, blog, key in _action_rows(account)]
+
+
+def _action_rows(account):
+    """`sent/` の記録を (種類, 動作, 時刻, blog_id, 鍵) の list に（段 2・分の窓は行の `actions` で数える）。
+
+    動作: SNS の記録（`kind` 無し）は `post`（投稿と返信を分けない）・`retract`。はてなは `entry_create`・
+    `entry_update`（足された `retracted_at` は `entry_delete`）・`entry_delete`・`bookmark_add`（足された
+    `retracted_at` は `bookmark_delete`・打ち直しの前の試みは `bookmark_add`）・`bookmark_delete`。知らない
+    `kind` は `post`／`retract`（`assess.EVENT_ALIASES` で記事の行にも数える・数え漏らさない）。
+
     鍵（4.0 S5 §6.2）は burst の窓で「1 件」と数える単位: はてなの `entry_*` の行は `("delivery", 配信 id)`
     （`delivery` の無い古い行は `("post", post_id)`・`("retract", post_id)`）、SNS の行は
     `("post", post_id)` と `("retract", post_id)`（公開と削除は別の件・今と同じ数）、ブックマークは
@@ -194,6 +209,14 @@ def _classified(account):
     out = []
     for row in sent_mod.records(accounts.state_dir_for(account)):
         kind = row.get("kind")
+        if kind == "bookmark_add":
+            act_first, act_second = "bookmark_add", "bookmark_delete"
+        elif kind in ("bookmark_delete", "entry_delete"):
+            act_first = act_second = kind
+        elif kind in ("entry_create", "entry_update"):
+            act_first, act_second = kind, "entry_delete"
+        else:
+            act_first, act_second = "post", "retract"
         blog = row.get("blog_id")
         post_id = row.get("post_id")
         sent_at = jst.parse(row.get("sent_at"))
@@ -212,15 +235,30 @@ def _classified(account):
         else:
             key_first, key_second = (first, post_id), (second, post_id)
         if sent_at is not None:
-            out.append((first, sent_at, blog, key_first))
+            out.append((first, act_first, sent_at, blog, key_first))
         if retracted_at is not None:
-            out.append((second, retracted_at, blog, key_second))
+            out.append((second, act_second, retracted_at, blog, key_second))
         if first == "bookmark":
             # 4.0 S4 §7: `not_found` のあと打ち直した行は、前の試みを `attempts[]` に持つ（数え続ける）。
             for index, attempt in enumerate(row.get("attempts") or []):
                 at = jst.parse(attempt.get("sent_at")) if isinstance(attempt, dict) else None
                 if at is not None:
-                    out.append(("bookmark", at, blog, ("bm", post_id, "attempt", index)))
+                    out.append(("bookmark", "bookmark_add", at, blog, ("bm", post_id, "attempt", index)))
+    return out
+
+
+def _events_of(account) -> list:
+    """分の窓の材料（口座）: (動作, 時刻, 鍵)。"""
+    return [(action, at, key) for _what, action, at, _blog, key in _action_rows(account)]
+
+
+def principal_events(principal_name) -> list:
+    """分の窓の材料（主体の全口座）: (動作, 時刻, 鍵)。鍵は口座名つき（同じ配信の鍵だけは口座をまたいで 1 件）。"""
+    from . import principals
+    out = []
+    for name, _raw in principals.accounts_of(principal_name):
+        for _what, action, at, _blog, key in _action_rows(name):
+            out.append((action, at, (name,) + key if key[0] != "delivery" else key))
     return out
 
 
@@ -371,7 +409,7 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
                              publish_at=publish_at, scheduled_same_day=scheduled_same_day,
                              pending_replies=tuple(pending_replies or ()))
     materials = assess.Materials(
-        loaders={"counts": counts},
+        loaders={"counts": counts, "events": lambda: _events_of(account)},
         fns={"burst_slot": lambda ahead: burst_slot(account, cfg, now=now, pending=ahead)})
     # 2〜3. 行の表（安全装置と見立て）を表の順に当てる。
     result = assess.evaluate(limits_policy.rules_for("sns", action, cfg=cfg), request, materials)
@@ -559,7 +597,8 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
     family = "hatenabookmark" if action.startswith("bookmark") else "hatenablog"
     blog_id = str(cfg.get("blog_id") or "").strip().lower()
     blog = principals.blog_entry(principal_cfg, blog_id) or {}
-    rules = limits_policy.rules_for(family, action, cfg=cfg, principal_cfg=principal_cfg, blog=blog)
+    rules = limits_policy.rules_for(family, action, cfg=cfg, principal_cfg=principal_cfg, blog=blog,
+                                    media="hatenabookmark" if family == "hatenabookmark" else "hatenablog")
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     request = assess.Request(account=account, cfg=cfg, action=action, now=now, family=family,
                              publish_at=publish_at, scheduled_same_day=scheduled_same_day, principal=name,
@@ -579,11 +618,13 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
             raise GuardRefused("bookmark_not_allowed_for_lane")
     materials = assess.Materials(
         loaders={"counts": counts, "whole": whole,
+                 "events": lambda: _events_of(account),
+                 "principal_events": lambda: principal_events(name),
                  "marks": lambda: bookmark_counts(name, url=bookmark_url, now=now),
                  "owner_bookmarked": lambda: owner_bookmarked(name, bookmark_url)},
-        fns={"bookmark_burst_slot": lambda: bookmark_burst_slot(whole, now=now),
-             "principal_scheduled_same_day": lambda day: principals.scheduled_same_day(name, day)})
-    # 4〜5. 行の表（日の上限 → ブックマークの枠 → 記事の burst（口座 → 主体）→ 1 URL に 1 回）。
+        fns={"principal_scheduled_same_day": lambda day: principals.scheduled_same_day(name, day)})
+    # 4〜5. 行の表（ブックマークの止め線 → 日の上限 → ブックマークの枠 → 記事の burst（口座 → 主体）→
+    # 1 URL に 1 回 → 共通の最低線）。
     result = assess.evaluate([r for r in rules if r["phase"] != "halt"], request, materials)
     _enforce(result, account=account, principal=name, can_stop=can_stop, now=now, actor=actor, via=via,
              credential=credential)

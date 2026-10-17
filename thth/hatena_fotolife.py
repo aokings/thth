@@ -126,6 +126,16 @@ def limits(principal_cfg) -> dict:
     return out
 
 
+def daily_max_uploads(principal_cfg) -> int:
+    """1 日の上げの上限（柵の表の行 `upload.daily`・段 2）。数えるのはここ（画像の台帳）で、数だけ表から引く。
+
+    主体の台帳 `fotolife.daily_max_uploads` に明示があればそれ、無ければ媒体の台帳（`fotolife.json`）の既定。
+    超えたら `fotolife_daily_limit`（`WAITING`・timer の run を失敗にせず次へ＝行の `on_exceed: hold`）。
+    """
+    from . import limits_policy
+    return limits_policy.resolved("upload.daily", principal_cfg=principal_cfg)["count"]
+
+
 def valid_folder(value) -> bool:
     return (isinstance(value, str) and 1 <= len(value) <= FOLDER_MAX and value == value.strip()
             and "/" not in value and not any(ord(c) < 32 or ord(c) == 127 for c in value))
@@ -432,7 +442,7 @@ def ensure_uploaded(principal_cfg, account_cfg, m, *, factory=None, log=None, no
 
         # 上げる（§6）
         data, content_type = _read_image(account_cfg, row, lim["max_image_bytes"])
-        if uploads_today(principal, now, exclude=sha256) >= lim["daily_max_uploads"]:
+        if uploads_today(principal, now, exclude=sha256) >= daily_max_uploads(principal_cfg):
             raise FotolifeStop("fotolife_daily_limit", path=path, next_at=_next_day(now))
         title = title_for(path, sha256)
         pending = {"schema": SCHEMA, "sha256": sha256, "bytes": len(data), "content_type": content_type,

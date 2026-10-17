@@ -33,7 +33,8 @@
           "key": "op",
           "on_exceed": "hold",
           "purpose": "preference",
-          "tighter": "lower"
+          "tighter": "lower",
+          "count_evidence": "thth_line"
         }
       },
       "notes": "30/日は THTH の線（hatena_fotolife.LIMIT_DEFAULTS の daily_max_uploads と同じ数）"

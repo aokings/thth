@@ -90,7 +90,8 @@
           "purpose": "safety",
           "tighter": "lower",
           "refusal": "principal_stopped",
-          "detail": "burst"
+          "detail": "burst",
+          "count_evidence": "inferred"
         }
       },
       "notes": "項目そのものは high。止め線の数 30/10 分は公式に無い THTH の推測（normal_batch_use と同じ根拠）"
@@ -115,7 +116,7 @@
       ],
       "defaults": {
         "bookmark.same_host_daily": {
-          "signal": "frequency",
+          "signal": "same_host",
           "actions": [
             "bookmark_add"
           ],
@@ -128,7 +129,8 @@
           "on_exceed": "refuse",
           "purpose": "platform",
           "tighter": "lower",
-          "refusal": "bookmark_host_limit"
+          "refusal": "bookmark_host_limit",
+          "count_evidence": "inferred"
         }
       },
       "notes": "「大量」の数は公式に無い。3 は THTH の線（推測）"
@@ -171,7 +173,8 @@
           "key": "url",
           "on_exceed": "refuse",
           "purpose": "platform",
-          "refusal": "bookmark_once"
+          "refusal": "bookmark_once",
+          "count_evidence": "official_doc"
         }
       }
     },
@@ -195,7 +198,7 @@
       ],
       "defaults": {
         "bookmark.self_daily": {
-          "signal": "frequency",
+          "signal": "self_reference",
           "actions": [
             "bookmark_add"
           ],
@@ -204,11 +207,12 @@
             "day": "jst"
           },
           "count": 1,
-          "key": "op",
+          "key": "own",
           "on_exceed": "refuse",
           "purpose": "platform",
           "tighter": "lower",
-          "refusal": "self_bookmark_limit"
+          "refusal": "self_bookmark_limit",
+          "count_evidence": "inferred"
         }
       },
       "notes": "自分の記事のブックマークは 1 日 1 件（self_site_allowed が許す範囲を、宣伝目的に見えない数に絞る）"
@@ -259,7 +263,8 @@
           "count": 1,
           "key": "url",
           "on_exceed": "refuse",
-          "purpose": "platform"
+          "purpose": "platform",
+          "count_evidence": "inferred"
         }
       }
     },
@@ -325,9 +330,13 @@
           "on_exceed": "wait",
           "purpose": "preference",
           "tighter": "lower",
-          "applies_to": "bookmark_add",
+          "applies_to": [
+            "bookmark_add",
+            "bookmark_delete"
+          ],
           "refusal": "burst_limit",
-          "detail": "bookmark_burst"
+          "detail": "bookmark_burst",
+          "count_evidence": "inferred"
         },
         "bookmark.daily": {
           "signal": "frequency",
@@ -344,7 +353,8 @@
           "on_exceed": "refuse",
           "purpose": "preference",
           "tighter": "lower",
-          "refusal": "bookmark_limit"
+          "refusal": "bookmark_limit",
+          "count_evidence": "inferred"
         }
       },
       "notes": "数は推測。4.0.1 の数（bookmark_burst 10/10 分・daily_max_bookmarks 30）と同じ"

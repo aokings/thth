@@ -4,8 +4,10 @@
 項目（`traits[]`）ごとに「その媒体がスパムをどう見ていると想定できるか・何を良い振る舞いとするか・
 罰の形・API の上限」と、**根拠の種類**（`evidence.type`）と**確かさ**（`confidence`）を持つ。
 
-**段 0 は読むだけ。** 柵（`guard`）はまだこの台帳を読まない——今の振る舞いは 1 つも変わらない。
-段 1 の `limits_policy` が `collect_defaults()` を読んで柵の行を組み立てる（§6.1）。
+段 2 から柵の表（`limits_policy`）が `collect_defaults()` を読む: 台帳の既定の行は `limits_policy.LEDGER_MAP`
+（写像の表）を通って表の行に結ばれ、根拠（媒体ごとの項目・確かさ・数の根拠）と、明示の値が無いときの数になる。
+`bookmark.stop`・`upload.daily` は台帳から行が生まれる。語彙（信号・行の id・動作・単位・鍵・振る舞い・目的）の
+正本はこの模組（`limits_policy`・`assess` が import する）。
 
 検査（`validate`／`check`・T-M-1）が断るもの:
 - 形の違い・知らない欄・知らない `kind`／`evidence.type`／`confidence`／信号（行の id）
@@ -13,6 +15,8 @@
 - **`inferred` なのに `low` でない**（推測は確かさ low 固定）
 - `official_doc` に `url` か `checked_at` が無い・二次で読んだ（`via`）のに `high`
 - `defaults` の鍵が `signals` に無い・同じ媒体で同じ行の既定を 2 つの項目が持つ
+- 既定の `applies_to` が配列でない・数える動作に無い（段 2）
+- 数のある既定に数の根拠（`count_evidence`）が無い・公式／観測と言うのに項目の根拠にその種類が無い（段 2・中-2）
 - **未対応の媒体（`supported: false`）に `defaults`**・既定を持てない種類（`good_signal`・`penalty`）に `defaults`
 - 対応する 7 媒体の台帳が欠けている・`supported: true` を名乗る知らない媒体
 
@@ -46,10 +50,11 @@ EVIDENCE_FIELDS = {
 PENALTIES = ("display_suppression", "recommendation_excluded", "search_exclusion", "request_refused",
              "rate_limited", "human_verification", "account_lock", "account_suspension")
 
-# 信号（§5.2）。最初の版の 7 つと、段 4 で足す 3 つ（advise だけ）。
-SIGNALS = ("frequency", "same_target", "same_host", "self_reference", "counterpart",
-           "recent_platform_refusal", "quiet_and_interval",
-           "same_text", "link_heavy", "engagement_bait")
+# 信号（§5.2）。最初の版の 7 つ（`assess.SIGNALS` はこれを読む）と、段 4 で足す 3 つ（advise だけ）。
+# **語彙の正本はこの模組**（段 2・監査 中-1）: `limits_policy`・`assess` はここから import し、2 か所に書かない。
+SIGNALS_V1 = ("frequency", "same_target", "same_host", "self_reference", "counterpart",
+              "recent_platform_refusal", "quiet_and_interval")
+SIGNALS = SIGNALS_V1 + ("same_text", "link_heavy", "engagement_bait")
 # 柵の行の id（§6.3・§6.4・`<動作>.<欄>`）。台帳の `signals` はこの名で「どの行に効く項目か」を言う。
 RULE_IDS = frozenset((
     # SNS
@@ -57,9 +62,11 @@ RULE_IDS = frozenset((
     "reaction.daily", "reply.counterpart", "post.platform_refusal", "post.monthly", "read.budget",
     "post.same_text", "post.link_heavy", "post.engagement_bait",
     # はてなブログ・フォトライフ
-    "entry.daily", "entry_delete.daily", "entry.blog_daily", "entry.principal_daily",
+    "entry.daily", "entry_delete.daily", "entry.blog_daily", "entry_delete.blog_daily", "entry.principal_daily",
     "entry_delete.principal_daily", "entry.interval", "entry.quiet", "entry.burst", "entry.principal_burst",
-    "upload.daily",
+    "entry.platform_refusal", "upload.daily",
+    # 反応（段 1 の表の行）
+    "reaction.quiet",
     # はてなブックマーク
     "bookmark.once", "bookmark.retry_once", "bookmark.self_daily", "bookmark.same_host_daily",
     "bookmark.burst", "bookmark.daily", "bookmark.stop", "read.interval",
@@ -68,15 +75,21 @@ RULE_IDS = frozenset((
 ))
 # 行の欄（§2・§6.2）。
 ACTIONS = ("post", "reply", "retract", "schedule", "entry_create", "entry_update", "entry_delete",
-           "upload", "bookmark_add", "bookmark_delete", "reaction", "read")
+           "upload", "bookmark_add", "bookmark_delete", "reaction", "repost", "read")
 SCOPES = ("account", "blog", "principal", "owner", "app")
-KEYS = ("op", "target", "url", "host")
-ON_EXCEED = ("stop", "refuse", "wait", "advise", "hold")
+# `own`: 自分の記事（`target: own`）のブックマークを 1 件と数える（`bookmark.self_daily`）。
+KEYS = ("op", "target", "url", "host", "own")
+# `halted`: 印がすでに置かれている（媒体の断りの印・`entry.platform_refusal`）＝止めとして断る。
+ON_EXCEED = ("stop", "refuse", "wait", "advise", "hold", "halted")
+# 既定の数の根拠（段 2・監査 中-2）。`official_doc`／`official_statement`／`observed` は項目の根拠に
+# 同じ種類があるときだけ（数そのものが公式・観測に書いてある）。`inferred` は推測（確かさ low で出す）。
+# `thth_line` は媒体の事実でなく THTH の運用の線（目的 c）——確かさは問わない（None で出す）。
+COUNT_EVIDENCE = ("official_doc", "official_statement", "observed", "inferred", "thth_line")
 # 目的（§2）: (a) 媒体の事実・(b) 安全装置・(c) 運用の好み。
 PURPOSES = ("platform", "safety", "preference")
 TIGHTER = ("lower", "higher")
 DEFAULT_FIELDS_REQUIRED = {"signal", "actions", "scope", "window", "count", "key", "on_exceed", "purpose"}
-DEFAULT_FIELDS_OPTIONAL = {"applies_to", "refusal", "detail", "tighter"}
+DEFAULT_FIELDS_OPTIONAL = {"applies_to", "refusal", "detail", "tighter", "count_evidence"}
 WINDOW_MINUTES_MAX = 1440
 COUNT_MAX = 1000
 
@@ -162,8 +175,11 @@ def _check_default(media, tid, rule_id, row) -> list:
     if not (isinstance(actions, list) and actions and all(a in ACTIONS for a in actions)
             and len(set(actions)) == len(actions)):
         out.append(_problem("default_actions_invalid", media, tid, f"{where}.actions={actions!r}"))
-    if "applies_to" in row and not (isinstance(actions, list) and row["applies_to"] in actions):
-        out.append(_problem("default_applies_to_invalid", media, tid, f"{where}.applies_to={row['applies_to']!r}"))
+    # `applies_to` は数える動作のうち「この行を当てる動作」の配列（段 2・監査 中-1）。
+    applies = row.get("applies_to")
+    if "applies_to" in row and not (isinstance(applies, list) and applies and isinstance(actions, list)
+                                    and all(a in actions for a in applies) and len(set(applies)) == len(applies)):
+        out.append(_problem("default_applies_to_invalid", media, tid, f"{where}.applies_to={applies!r}"))
     if row["scope"] not in SCOPES:
         out.append(_problem("default_scope_invalid", media, tid, f"{where}.scope={row['scope']!r}"))
     window = row["window"]
@@ -192,7 +208,35 @@ def _check_default(media, tid, rule_id, row) -> list:
     for name in ("refusal", "detail"):
         if name in row and not (isinstance(row[name], str) and re.fullmatch(r"[a-z][a-z0-9_]*", row[name])):
             out.append(_problem("default_code_invalid", media, tid, f"{where}.{name}={row[name]!r}"))
+    # 数のある行は数の根拠が要る（中-2: 推測の数に項目の `official_doc`・`high` が付いて見えないように）。
+    basis = row.get("count_evidence")
+    if count is not None and basis is None:
+        out.append(_problem("count_evidence_missing", media, tid, where))
+    elif basis is not None and basis not in COUNT_EVIDENCE:
+        out.append(_problem("count_evidence_invalid", media, tid, f"{where}.count_evidence={basis!r}"))
+    elif basis is not None and count is None:
+        out.append(_problem("count_evidence_without_count", media, tid, where))
     return out
+
+
+def _evidence_types(evidence) -> set:
+    if not isinstance(evidence, dict):
+        return set()
+    out = {evidence.get("type")}
+    for item in evidence.get("also") or [] if isinstance(evidence.get("also"), list) else []:
+        if isinstance(item, dict):
+            out.add(item.get("type"))
+    return out
+
+
+def count_confidence(trait, row):
+    """既定の数の確かさ: 推測は low・THTH の線は None（媒体の事実でない）・公式／観測は項目の確かさ。"""
+    basis = row.get("count_evidence")
+    if basis == "inferred":
+        return "low"
+    if basis in (None, "thth_line"):
+        return None
+    return trait.get("confidence")
 
 
 def _check_trait(media, supported, trait) -> list:
@@ -252,6 +296,11 @@ def _check_trait(media, supported, trait) -> list:
                 if rule_id not in signals:
                     out.append(_problem("default_not_in_signals", media, tid, rule_id))
                 out += _check_default(media, tid, rule_id, row)
+                # 数が公式・観測に書いてあると言うなら、項目の根拠にその種類が要る。
+                basis = row.get("count_evidence") if isinstance(row, dict) else None
+                if basis in ("official_doc", "official_statement", "observed") and \
+                        basis not in _evidence_types(evidence):
+                    out.append(_problem("count_evidence_not_in_trait", media, tid, f"{rule_id}={basis}"))
     return out
 
 
@@ -376,8 +425,10 @@ def load_all(directory=None) -> dict:
 def collect_defaults(directory=None) -> list:
     """台帳の `defaults` を柵の行の形（§6.2）に集める。段 1 の `limits_policy` が読む口（T-M-2）。
 
-    行は `{"id", "media", "trait", "confidence", "evidence_type", <§6.2 の欄>}`。対応する媒体だけ・
-    媒体と id の組で 1 行。`supported: false` の媒体は検査で `defaults` を断るので行を作らない。
+    行は `{"id", "media", "trait", "confidence", "evidence_type", "count_confidence", <§6.2 の欄>}`。
+    対応する媒体だけ・媒体と id の組で 1 行。`supported: false` の媒体は検査で `defaults` を断るので行を
+    作らない。`confidence` は項目の確かさ、`count_confidence` は**数**の確かさ（`count_evidence` が
+    `inferred` なら low・`thth_line` なら None・段 2・中-2）。
     """
     rows = []
     for media, doc in load_all(directory).items():
@@ -387,7 +438,7 @@ def collect_defaults(directory=None) -> list:
             for rule_id, row in (trait.get("defaults") or {}).items():
                 rows.append({"id": rule_id, "media": media, "trait": trait["id"],
                              "confidence": trait["confidence"], "evidence_type": trait["evidence"]["type"],
-                             **row})
+                             "count_confidence": count_confidence(trait, row), **row})
     return rows
 
 

@@ -34,7 +34,8 @@
           "on_exceed": "refuse",
           "purpose": "preference",
           "tighter": "lower",
-          "refusal": "daily_limit"
+          "refusal": "daily_limit",
+          "count_evidence": "thth_line"
         }
       },
       "notes": "既定 8/日（THTH の運用の線）は媒体の上限 250 の内側。上限そのものは行にしない（設計 §6.4）"
@@ -82,7 +83,8 @@
           "on_exceed": "refuse",
           "purpose": "preference",
           "tighter": "lower",
-          "refusal": "retract_limit"
+          "refusal": "retract_limit",
+          "count_evidence": "thth_line"
         }
       },
       "notes": "出所の公式の頁を確かめたら official_doc に直す"

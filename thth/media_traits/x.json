@@ -34,7 +34,8 @@
           "on_exceed": "refuse",
           "purpose": "preference",
           "tighter": "lower",
-          "refusal": "retract_limit"
+          "refusal": "retract_limit",
+          "count_evidence": "thth_line"
         },
         "reaction.daily": {
           "signal": "frequency",
@@ -50,7 +51,8 @@
           "on_exceed": "refuse",
           "purpose": "preference",
           "tighter": "lower",
-          "refusal": "reaction_limit"
+          "refusal": "reaction_limit",
+          "count_evidence": "thth_line"
         }
       },
       "notes": "既定（削除 5/日・反応 50/日）は API の上限の内側"
@@ -85,7 +87,8 @@
           "on_exceed": "refuse",
           "purpose": "preference",
           "tighter": "lower",
-          "refusal": "daily_limit"
+          "refusal": "daily_limit",
+          "count_evidence": "thth_line"
         }
       },
       "notes": "既定 8/日は 50 の内側。原文を開けたら確かさを直す"

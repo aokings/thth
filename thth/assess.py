@@ -23,12 +23,19 @@ import datetime
 from dataclasses import dataclass, field
 
 from . import jst
+from .media_traits import SIGNALS_V1 as SIGNALS  # 語彙の正本は media_traits（段 2・監査 中-1）
 
-SIGNALS = ("frequency", "same_target", "same_host", "self_reference", "counterpart",
-           "recent_platform_refusal", "quiet_and_interval")
 OUTCOMES = ("pass", "advise", "wait", "refuse", "stopped")
-# 強さ（§5.3）。段 1 の結論は表の順の first-hit で、強さは `strongest` で読めるだけ（設計の末尾）。
+# 強さ（§5.3）。結論は表の順の first-hit で、強さは `strongest` で読めるだけ（段 1・段 2 で決めたこと）。
 STRENGTH = {"pass": 0, "advise": 1, "wait": 2, "refuse": 3, "stopped": 4}
+# 当てる順（段 2 で決めたこと）: `table`（表の順の first-hit・今の振る舞い）。`safety_first` は設計 §6.6 の
+# 順（止めの印・安全装置が先・残りは強い方）で、変えたら何が変わるかを試験で見せるためだけに置く。
+ORDERS = ("table", "safety_first")
+ORDER = "table"
+# 記録の出来事の動作（`guard._action_rows`）と行の `actions` の対応。SNS の記録は投稿と返信を分けないので
+# `post` は投稿・返信の行に数え、`kind` の無い・知らない記録ははてなの記事の行にも数える（数え漏らさない・今のまま）。
+EVENT_ALIASES = {"post": ("post", "reply", "entry_create", "entry_update"),
+                 "retract": ("retract", "entry_delete")}
 _OUTCOME_OF = {"stop": "stopped", "refuse": "refuse", "wait": "wait", "advise": "advise", "hold": "wait",
                "halted": "stopped"}
 
@@ -84,6 +91,26 @@ def _quiet_end(now, quiet_hours):
     return end if end > now else end + datetime.timedelta(days=1)
 
 
+def counts_as(event_action, actions) -> bool:
+    """記録の出来事 1 つが、行の `actions`（数える動作）に入るか。"""
+    if event_action in actions:
+        return True
+    return any(a in actions for a in EVENT_ALIASES.get(event_action, ()))
+
+
+def window_slot(times, count, minutes, now) -> datetime.datetime:
+    """窓 `(t - 分, t]` に 1 件入る余地ができる最初の時刻（窓の中の古い順に `件数 + 1 - count` 番目が出る時刻・
+    秒に切り上げ）。4.0.1 の `guard.bookmark_burst_slot` と同じ計算を行の窓と数で。"""
+    times = sorted(jst.to_jst(at) for at in times)
+    leave = len(times) + 1 - count
+    if leave <= 0:
+        return jst.to_jst(now)
+    at = times[leave - 1] + datetime.timedelta(minutes=minutes)
+    if at.microsecond:
+        at = at.replace(microsecond=0) + datetime.timedelta(seconds=1)
+    return at
+
+
 def _hit(used, adds, count, next_at=None, **extra):
     out = {"hit": used + adds > count, "used": used, "count": count, "next_at": next_at}
     out.update(extra)
@@ -133,20 +160,28 @@ def _frequency(rule, req, m):
         else:
             raise ValueError(f"unknown_scope:{rid}")
         return _hit(used, 1, count, jst.iso(nxt))
-    # 分の窓（burst）
-    if rule["detail"] == "bookmark_burst":
-        whole = m.get("whole")
-        used = whole["bookmark_recent"]
-        result = _hit(used, 1, count)
-        if result["hit"]:
-            result["next_at"] = jst.iso(m.call("bookmark_burst_slot"))
-        return result
-    materials = m.get("counts") if scope == "account" else m.get("whole")
+    # 分の窓（burst・止め線・最低線）。**数える出来事は行の `actions` から作る**（段 2・T-P-2）: 材料は
+    # 記録の出来事（`events`＝この口座・`principal_events`＝主体の全口座）の (動作, 時刻, 鍵) で、行の
+    # `actions` に入るものだけを窓の中で数える。鍵 `target` は同じ鍵（同じ配信）を 1 件、`op` は出来事ごと。
+    events = m.get("events") if scope == "account" else m.get("principal_events")
+    minutes = window["minutes"]
+    start = req.now - datetime.timedelta(minutes=minutes)
+    inside = [(at, key) for action, at, key in events if counts_as(action, rule["actions"]) and start < at <= req.now]
     adds = 1
-    if rule["key"] == "target" and isinstance(req.delivery, str) and req.delivery:
-        # 同じ配信は窓の中で 1 件（4.0 S5 §6）。
-        adds = 0 if ("delivery", req.delivery) in materials["recent_keys"] else 1
-    used = materials["recent"]
+    if rule["key"] == "target":
+        keys = {key for _at, key in inside}
+        used = len(keys)
+        if isinstance(req.delivery, str) and req.delivery and ("delivery", req.delivery) in keys:
+            # 同じ配信は窓の中で 1 件（4.0 S5 §6）。
+            adds = 0
+    else:
+        used = len(inside)
+    if rule["on_exceed"] == "wait" and req.action != "reply":
+        # ブックマークの窓（4.0.1）: 主体は止めず、窓が空く時刻を添えて断る。
+        result = _hit(used, adds, count)
+        if result["hit"]:
+            result["next_at"] = jst.iso(window_slot([at for at, _k in inside], count, minutes, req.now))
+        return result
     if rule["on_exceed"] == "wait" and req.action == "reply":
         # 返信の順番待ち（3.25.0）: 並んでいる返信がまだ先にあれば、窓が空いていても後ろに並ぶ。
         ahead = [jst.to_jst(at) for at in (req.pending_replies or ()) if jst.to_jst(at) > req.now]
@@ -236,7 +271,9 @@ def finding(rule, value) -> dict:
         "count": value.get("count", rule.get("count")),
         "window": rule.get("window"),
         "next_at": value.get("next_at"),
-        "trait": {"id": rule["trait"]},
+        # 根拠（段 2・中-2）: 項目の確かさと、数の根拠・数の確かさ（推測の数は low・THTH の線は None）。
+        "trait": {"id": rule["trait"], "confidence": rule.get("confidence"),
+                  "count_evidence": rule.get("count_evidence"), "count_confidence": rule.get("count_confidence")},
         "origin": rule.get("origin", "default"),
         "how_to_pass": None,
         "code": None if outcome == "advise" else rule["refusal"],
@@ -252,9 +289,17 @@ def stopped_assessment(scope, reason) -> dict:
             "code": "principal_stopped" if scope == "principal" else "account_stopped", "detail": reason}
 
 
-def evaluate(rules, req, m) -> dict:
-    """行を表の順に当て、最初に当たった行の `assessment`（`advisories` つき）。どれも当たらなければ `pass`。"""
+def evaluate(rules, req, m, order=None) -> dict:
+    """行を表の順に当て、最初に当たった行の `assessment`（`advisories` つき）。どれも当たらなければ `pass`。
+
+    `order`（既定 `ORDER`）が `safety_first` なら、すべての行を当てたうえで、止めの印・安全装置の行の最初の
+    当たりを、無ければ最も強い当たり（同じ強さは表の順）を結論にする（設計 §6.6・段 2 では使わない）。
+    """
+    order = order or ORDER
+    if order not in ORDERS:
+        raise ValueError("invalid_order")
     advisories = []
+    hits = []
     for rule in rules:
         if rule["count"] is None and rule["signal"] not in ("counterpart", "recent_platform_refusal"):
             continue  # 数えない行（ブログの欄が無い・夜間や間隔が台帳に無い）
@@ -265,8 +310,14 @@ def evaluate(rules, req, m) -> dict:
         if result["outcome"] == "advise":
             advisories.append(result)
             continue
-        result["advisories"] = advisories
-        return result
+        if order == "table":
+            result["advisories"] = advisories
+            return result
+        hits.append(result)
+    if hits:
+        first = next((h for h in hits if h["phase"] in ("halt", "safety")), None) or strongest(hits)
+        first["advisories"] = advisories
+        return first
     return {"outcome": "pass", "rule": None, "code": None, "next_at": None, "advisories": advisories}
 
 

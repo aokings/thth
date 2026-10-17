@@ -37,7 +37,8 @@
           "on_exceed": "refuse",
           "purpose": "preference",
           "tighter": "lower",
-          "refusal": "daily_limit"
+          "refusal": "daily_limit",
+          "count_evidence": "thth_line"
         },
         "entry_delete.daily": {
           "signal": "frequency",
@@ -53,7 +54,8 @@
           "on_exceed": "refuse",
           "purpose": "preference",
           "tighter": "lower",
-          "refusal": "retract_limit"
+          "refusal": "retract_limit",
+          "count_evidence": "thth_line"
         }
       },
       "notes": "数は THTH の線（媒体に数が無い）。雛形は 3・2 を明示する（段 3 で limits の形に）"
