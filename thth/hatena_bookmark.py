@@ -306,7 +306,11 @@ def prepare(account_name: str, cfg: dict, *, delivery: str | None = None, url: s
         owner = principals.owner_of(principal)
     except Exception:  # noqa: BLE001
         owner = principal
-    return {"account": account_name, "principal": principal, "owner": owner, "op": op,
+    # 段 4（§7.3）: 1 段目の「見立て」。2 段目と同じ道を、印を置かず断らずに通す（2 段目では見ない）。
+    foresight = (guard.foresee(account_name, cfg, "bookmark_delete" if op == "delete" else "bookmark",
+                               bookmark_url=canonical, bookmark_target=target)
+                 if check_remote else None)
+    return {"foresight": foresight, "account": account_name, "principal": principal, "owner": owner, "op": op,
             "delivery": delivery_value or None, "url": target_url, "url_canonical": canonical,
             "target": target, "article": article, "blog_id": blog_id,
             "comment": components["comment"], "tags": sorted(tag_list), "approved_sha": sha,
@@ -366,7 +370,12 @@ def lines(p: dict) -> list:
         out.append(f"タグ: {tags}")
     if p.get("lane_allowed") is False:
         out.append(lane_refusal_line(p["principal"], p.get("project")))
-    out += [f"主体の今日の残り枠: {left}", f"digest: {p['digest']}"]
+    out.append(f"主体の今日の残り枠: {left}")
+    from . import assess
+    seen = assess.foresight_line(p.get("foresight"))
+    if seen:
+        out.append(seen)
+    out.append(f"digest: {p['digest']}")
     return out
 
 
@@ -752,7 +761,10 @@ def prepare_edit(account_name: str, cfg: dict, *, delivery: str | None = None, u
         owner = principals.owner_of(principal)
     except Exception:  # noqa: BLE001
         owner = principal
-    return {"account": account_name, "principal": principal, "owner": owner, "op": "edit",
+    from . import guard
+    foresight = (guard.foresee(account_name, cfg, "bookmark_edit", bookmark_url=canonical, bookmark_target=target,
+                               bookmark_once=False) if check_remote else None)
+    return {"foresight": foresight, "account": account_name, "principal": principal, "owner": owner, "op": "edit",
             "delivery": delivery_value or None, "url": target_url, "url_canonical": canonical,
             "ledger_url": row.get("url") or target_url, "holder": holder, "post_id": row.get("post_id"),
             "target": target, "article": article, "blog_id": blog_id,
@@ -806,6 +818,10 @@ def edit_lines(p: dict) -> list:
     out.append("上限: 件数は増えません（1 日・同じホスト・自分の記事の枠は使わない）。連投の窓には数えます")
     if p.get("lane_allowed") is False:
         out.append(lane_refusal_line(p["principal"], p.get("project")))
+    from . import assess
+    seen = assess.foresight_line(p.get("foresight"))
+    if seen:
+        out.append(seen)
     out.append(f"digest: {p['digest']}")
     return out
 

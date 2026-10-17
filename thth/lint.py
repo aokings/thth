@@ -339,6 +339,12 @@ def lint_file(path: str) -> list:
     if not qf.malformed and not goals_mod.lint_errors(fm):
         from . import click_attribution
         errors.extend(click_attribution.lint_notes(path, fm, qf.body, account_cfg))
+    # 見立ての予告（設計「上限と連投の柵」§7.3・段 4）: X の返信の相手（counterpart）・直近と同じ本文・
+    # リンクの多さ・反応を頼む型。**断らない**（`warning:`）。根拠は媒体の特性の台帳の項目と確かさ。
+    if section is not None and not qf.malformed:
+        from . import advise
+        errors.extend(advise.warning_line(item)
+                      for item in advise.advisories(media, section, fm=fm, account=account_name))
     return errors
 
 

@@ -446,8 +446,12 @@ def _state_events(name, cfg):
         row = {"reason": "guard_state_unreadable"}
     if row:
         at = jst.parse(row.get("stopped_at"))
+        # 段 4（§7.4）: どの行で止めたか（`rule`）と戻す命令。印に行が無い（古い印・持ち主の止め）なら今のまま。
+        rule = row.get("rule") if isinstance(row.get("rule"), str) else None
         out.append(_event("account_stopped", name, at, at, row.get("reason"),
-                          f"口座を止めています（{row.get('reason')}）", ongoing=True))
+                          f"口座を止めています（{row.get('reason')}{'・行 ' + rule if rule else ''}）"
+                          + (f"。戻すのは thth account resume {name} --by <名前>" if rule else ""),
+                          ongoing=True, rule=rule))
     try:
         row = publish_hold.held(name)
     except Exception:  # noqa: BLE001
@@ -476,8 +480,12 @@ def _state_events(name, cfg):
             row = {"reason": "guard_state_unreadable"}
         if row:
             at = jst.parse(row.get("stopped_at"))
+            rule = row.get("rule") if isinstance(row.get("rule"), str) else None
             out.append(_event("principal_stopped", name, at, at, cfg["principal"],
-                              f"主体 {cfg['principal']} を止めています（{row.get('reason')}）", ongoing=True))
+                              f"主体 {cfg['principal']} を止めています（{row.get('reason')}"
+                              f"{'・行 ' + rule if rule else ''}）"
+                              + (f"。戻すのは thth principal resume {cfg['principal']} --by <名前>" if rule else ""),
+                              ongoing=True, rule=rule))
     if cfg.get("media") == "x":
         try:
             from . import budget_x, budget_x_posts

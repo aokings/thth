@@ -358,6 +358,11 @@ class ReportHandler(BaseHTTPRequestHandler):
                     detail = {"reason": error.reason}
                 if isinstance(getattr(error, "next_at", None), str):
                     detail["next_at"] = error.next_at
+                # 段 4（設計「上限と連投の柵」§7.4）: 安全装置の断りに見立ての構造（行・結論・時刻・根拠の id・
+                # 通すには）。符丁は今のまま。静的な語と時刻と命令の文だけ（`core.public_assessment`）。
+                if isinstance(getattr(error, "assessment", None), dict) and reason in SAFE_ERRORS:
+                    from .core import public_assessment
+                    detail["assessment"] = public_assessment(error.assessment)
             return self._reply(400 if reason in public else 503,
                                {"error": reason if reason in public else fallback, **detail})
         except Exception:

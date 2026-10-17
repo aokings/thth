@@ -3822,6 +3822,13 @@ def cmd_board(args) -> int:
             hold = row.get("publish_hold")
             if hold:
                 print(f"  **{hold['message']}**")
+            # 安全装置の止め（段 4・§7.4）: 止めた行と戻す命令。
+            stop_cell = row.get("guard_stop")
+            if stop_cell:
+                who = "主体" if stop_cell.get("scope") == "principal" else "口座"
+                rule = f"・行 {stop_cell['rule']}" if stop_cell.get("rule") else ""
+                print(f"  **安全装置で{who} {stop_cell['name']} が止まっています（{stop_cell.get('reason')}{rule}）。"
+                      f"戻すのは {stop_cell['resume']}**")
             # 止まったブックマークのまとめ・照合を待つ結果不明（はてなの口座だけ・監査 低-6）。
             if row.get("bookmark_batch"):
                 from . import bookmark_batch

@@ -35,6 +35,21 @@ def register(sub) -> None:
     c = msub.add_parser("check", help="台帳の検査（根拠の欠け・確かさの縛り・未対応の媒体の既定など）")
     c.add_argument("--json", action="store_true")
     c.set_defaults(func=cmd_check)
+    # 段 4（設計 §9.2）: 観測を集めて数える・人が足す。台帳（数）は動かさない。
+    o = msub.add_parser("observations", help="媒体の断りの観測を runs と止めの印から集めて数える（冪等・HTTP は打たない）")
+    o.add_argument("media", help="媒体名")
+    o.add_argument("--since", default="30d", help="この日数（例 30d）")
+    o.add_argument("--no-collect", action="store_true", help="集めずに今のファイルだけを数える")
+    o.add_argument("--json", action="store_true")
+    o.set_defaults(func=cmd_observations)
+    w = msub.add_parser("observe", help="人が観測を足す（表示の抑制など機械では分からないもの・開発のセッション）")
+    w.add_argument("media", help="媒体名")
+    w.add_argument("--kind", required=True, help="display_suppressed・human_verification・no_reaction・note")
+    w.add_argument("--note", required=True, help="観たこと（500 字まで）")
+    w.add_argument("--record", default=None, help="記録の名前（docs/… など）")
+    w.add_argument("--by", default=None, help="誰が（必須）")
+    w.add_argument("--json", action="store_true")
+    w.set_defaults(func=cmd_observe)
 
 
 def _print_json(payload) -> None:
@@ -190,3 +205,65 @@ def cmd_check(args) -> int:
         for p in report["problems"]:
             print(_problem_line(p), file=sys.stderr)
     return 0 if report["ok"] else 1
+
+
+def _since_days(text) -> int | None:
+    value = str(text or "").strip().lower()
+    if value.endswith("d"):
+        value = value[:-1]
+    try:
+        days = int(value)
+    except ValueError:
+        return None
+    return days if 1 <= days <= 366 else None
+
+
+def cmd_observations(args) -> int:
+    """`thth media observations <媒体>`（段 4・§9.2）。集めて（冪等）から数える。"""
+    from . import media_observations as mo
+    days = _since_days(args.since)
+    if days is None:
+        return _observation_fail(args, "invalid_since", "--since は 1〜366 の日数（例 30d）です")
+    if args.media not in mt.list_media():
+        return _observation_fail(args, mt.UNKNOWN_MEDIA, f"知らない媒体です: {args.media}")
+    try:
+        added = {} if args.no_collect else mo.collect(args.media)
+        s = mo.summary(args.media, since_days=days)
+    except mo.ObservationError as exc:
+        return _observation_fail(args, exc.code, "観測を読めません")
+    s["collected"] = added.get(args.media, 0)
+    if args.json:
+        _print_json(s)
+    else:
+        for line in mo.summary_lines(s):
+            print(line)
+        print(f"  （今回足した観測 {s['collected']} 行・台帳を直すのは開発のセッション）")
+    return 0
+
+
+def cmd_observe(args) -> int:
+    """`thth media observe <媒体> --kind … --note … --by <名前>`（段 4・§9.2）。"""
+    import os
+    from . import media_observations as mo
+    by = (args.by or os.environ.get("THTH_ACTOR") or "").strip()
+    if not by:
+        return _observation_fail(args, "by_required", "--by <名前> を付けてください")
+    try:
+        row = mo.observe(args.media, args.kind, note=args.note, record=args.record, by=by)
+    except mo.ObservationError as exc:
+        return _observation_fail(args, exc.code, "観測を足せません（媒体・kind・note を確かめてください）")
+    except ValueError:
+        return _observation_fail(args, "by_required", "--by <名前> を付けてください")
+    if args.json:
+        _print_json({"ok": True, **row})
+    else:
+        print(f"{args.media}: 観測を足しました（{row['kind']}）")
+    return 0
+
+
+def _observation_fail(args, code, message) -> int:
+    if args.json:
+        _print_json({"ok": False, "error": code, "message": message})
+    else:
+        print(f"{code}: {message}", file=sys.stderr)
+    return 2

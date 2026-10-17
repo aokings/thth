@@ -820,6 +820,15 @@ def _inflight(node):
             "next_action_code": diagnostic.get("next_action_code")}
 
 
+def _media_observations_line(now):
+    """媒体の断りの観測の 1 行（`media_observations.morning_line`）。読めなければ None（朝を落とさない）。"""
+    try:
+        from . import media_observations
+        return media_observations.morning_line(now=now)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _bookmark_batch_row(name, now):
     """人の手が要るブックマークのまとめ（`bookmark_batch.attention`）。無ければ None。"""
     from . import bookmark_batch
@@ -1274,7 +1283,9 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
                                else "前回の観測から"), yesterday_entries),
         _section("world", "世間", world_entries),
         {"section": "today", "title": "予定",
-         **cell({"by_account": today_entries, "budget": budget_cell})},
+         **cell({"by_account": today_entries, "budget": budget_cell,
+                 # 段 4（§9.2）: 媒体の断りの観測（30 日・読むだけ）。無ければ鍵を足さない。
+                 **({"media_observations": seen} if (seen := _media_observations_line(now)) else {})})},
         {"section": "next_steps", "title": "次の一手", **_guard(_steps)},
     ]
 
@@ -1447,6 +1458,8 @@ def _render_section(section, out) -> None:
         else:
             _render_today(account, node, out)
     if name == "today":
+        if value.get("media_observations"):
+            out(f"  {value['media_observations']}（thth media observations <媒体>）")
         budget = value.get("budget") or {}
         if budget.get("cannot_say") is not None:
             out(f"  予算: 言えない: {budget['cannot_say']}")

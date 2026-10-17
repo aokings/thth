@@ -320,7 +320,7 @@ def test_結果不明はunknownで残し打ち直さない_runは止める(bb):
     assert any("thth bookmark reconcile" in line for line in logs)
     bb.bookmarks.post = None
     out, _ = run(bb, now=later(60))
-    assert states(bb) == ["unknown", "placed"]
+    assert states(bb) == ["unknown", "pending"]
     assert [u for m, u in calls(bb, "POST") if URL_A1 in urllib.parse.unquote(u)].__len__() == 1
     # 状態の口は照合のあとの result を引く
     bb.bookmarks.marks[("lane-owner", URL_A1)] = bookmark_object(URL_A1)

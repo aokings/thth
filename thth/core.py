@@ -1278,6 +1278,94 @@ def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") 
             " で変えられます")
 
 
+def refusal_parts(account_name: str, refused, *, kind: str = "publish") -> dict:
+    """安全装置の断りの文の型（設計「上限と連投の柵」§7.2・段 4）。
+
+    `{"line", "basis", "how_to_pass", "assessment"}`。`line` は今までの 1 行（`guard_refusal_message`）そのまま
+    （符丁と言い出しを変えない）。`basis` は根拠の 1 行（台帳の項目の文・種類・確かさ。推測は「THTH の推測」）、
+    `how_to_pass` は通すにはの 1 行（`assessment.how_to_pass`）。行の無い断りは `basis`・`how_to_pass` が None。
+    """
+    found = getattr(refused, "assessment", None)
+    out = {"line": guard_refusal_message(account_name, refused, kind=kind), "basis": None, "how_to_pass": None,
+           "assessment": public_assessment(found)}
+    if not isinstance(found, dict):
+        return out
+    if (found.get("trait") or {}).get("id"):
+        out["basis"] = _basis_line(found)
+    out["how_to_pass"] = found.get("how_to_pass")
+    return out
+
+
+def _trait_media(trait_id) -> str:
+    return str(trait_id).split(".", 1)[0]
+
+
+def _basis_line(found) -> str | None:
+    """根拠の 1 行（§7.2 の `根拠:`）。台帳の項目の文を引く（引けなければ id と確かさだけ）。"""
+    trait = found.get("trait") or {}
+    tid = trait.get("id")
+    if not tid:
+        return None
+    rule = found.get("rule")
+    window = found.get("window")
+    used, count = found.get("used"), found.get("count")
+    head = f"行 {rule}"
+    if isinstance(used, int) and isinstance(count, int):
+        span = f"{window['minutes']} 分" if isinstance(window, dict) and window.get("minutes") else (
+            "今日" if window == "day" else "")
+        head += f"（{SCOPE_LABEL.get(found.get('scope'), found.get('scope'))}・{span}{'・' if span else ''}"
+        head += f"{used}/{count}）"
+    if str(tid).startswith("thth:"):
+        return f"{head}・根拠: THTH の線（{tid}）"
+    from . import advise
+    statement, kind, conf, etype = None, None, trait.get("confidence"), None
+    try:
+        from . import media_traits
+        doc = media_traits.load(_trait_media(tid))
+        item = next((t for t in doc["traits"] if t["id"] == tid), None)
+        if item is not None:
+            statement, kind = item.get("statement"), item.get("kind")
+            conf = conf or item.get("confidence")
+            etype = (item.get("evidence") or {}).get("type")
+    except Exception:  # noqa: BLE001 — 文のためだけ
+        pass
+    basis = advise.basis_text({"id": tid, "statement": statement, "kind": kind, "confidence": conf,
+                               "evidence_type": etype})
+    if trait.get("count_evidence") == "inferred":
+        basis += "・数は THTH の推測（確かさ 低）"
+    elif trait.get("count_evidence") == "thth_line":
+        basis += "・数は THTH の線"
+    return f"{head}・根拠: {basis}"
+
+
+SCOPE_LABEL = {"account": "口座", "principal": "主体", "owner": "owner", "blog": "ブログ"}
+# 遠くの道・MCP の本文に出してよい `assessment` の欄（§7.4・静的な語と時刻と命令の文だけ）。
+PUBLIC_ASSESSMENT_KEYS = ("outcome", "rule", "scope", "used", "count", "next_at", "how_to_pass")
+
+
+def public_assessment(found) -> dict | None:
+    if not isinstance(found, dict):
+        return None
+    out = {key: found.get(key) for key in PUBLIC_ASSESSMENT_KEYS}
+    trait = found.get("trait") or {}
+    out["trait"] = {"id": trait.get("id"), "confidence": trait.get("confidence"),
+                    "count_evidence": trait.get("count_evidence")} if trait else None
+    if found.get("stopped_by_rule"):
+        out["stopped_by_rule"] = found["stopped_by_rule"]
+    return out
+
+
+def refusal_lines(account_name: str, refused, *, kind: str = "publish") -> list:
+    """§7.2 の型の 3 行（1 行目は今の文・根拠・通すには）。行の無い断りは 1 行。"""
+    parts = refusal_parts(account_name, refused, kind=kind)
+    out = [parts["line"]]
+    if parts["basis"]:
+        out.append(f"  {parts['basis']}")
+    if parts["how_to_pass"]:
+        out.append(f"  通すには: {parts['how_to_pass']}")
+    return out
+
+
 def _queue_burst_reply(account_name, account_cfg, state_dir, run_id, mode, *, now, log, digest, refused,
                        text, topic, reply_to, goal, reply_to_root, reply_to_author_key, found_by) -> ThrowResult:
     """`thth send --reply-to` が burst に当たった: 口座を止めず、窓が空く時刻の順番待ちに並べる（3.25.0）。"""

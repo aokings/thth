@@ -395,6 +395,27 @@ def _hatena_collect_cells(name) -> dict:
     return {"hatena_collect_last_at": at, "hatena_collect_errors_n": errors_n}
 
 
+def _guard_stop_cell(name, account_cfg) -> dict:
+    """安全装置の止め（段 4・§7.4）: 止めた行（`rule`）と戻す命令。止まっていなければ鍵を足さない（板の形を変えない）。"""
+    from . import guard
+    try:
+        row = guard.stopped(name)
+        scope, who = "account", name
+        if row is None and account_cfg.get("principal"):
+            from . import principals
+            row = principals.stopped(account_cfg["principal"])
+            scope, who = "principal", account_cfg["principal"]
+    except Exception:  # noqa: BLE001 — 1 つの欄で板を落とさない
+        return {}
+    if not isinstance(row, dict):
+        return {}
+    command = (f"thth principal resume {who} --by <名前>" if scope == "principal"
+               else f"thth account resume {who} --by <名前>")
+    return {"guard_stop": {"scope": scope, "name": who, "reason": row.get("reason"),
+                           "rule": row.get("rule") if isinstance(row.get("rule"), str) else None,
+                           "stopped_at": row.get("stopped_at"), "resume": command}}
+
+
 def _publish_hold(name):
     from . import publish_hold
     row = publish_hold.held(name)
@@ -573,6 +594,7 @@ def board_summary(now=None) -> dict:
             # 4.0 S5 §3.4・§5.5: 正本を直したのに更新していない配信と、衝突の配信の数（はてなの口座だけ・
             # 読むだけ・媒体は呼ばない）。読めなければ `deliveries_cannot_say`。足すだけ。
             **_deliveries_cells(name, account_cfg),
+            **_guard_stop_cell(name, account_cfg),
             # 承認の確定待ち（設計 3.7.0 §B3）。not_approved を 1 段目が済んだもの
             # （awaiting_confirm）と、まだのもの（not_requested）に分ける。
             "awaiting_confirm_count": approval["awaiting_confirm"],

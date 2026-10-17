@@ -926,6 +926,12 @@ def _run_locked(account_name, cfg, *, log, now, adapter_factory):
     nxt = jst.parse(pace.get("next_at")) if pace.get("next_at") else None
     if nxt is not None and now < nxt:
         return finish("waiting", blocked=pace.get("blocked"))
+    # 段 3 の監査 低-3（段 4 で入れた）: 結果不明の札が照合を待っている間は次の札へ進まない
+    # （はてなが 5xx を返している間に打ち続けない）。解くのは `thth bookmark reconcile`。
+    waiting = unresolved_unknown(account_name, batches)
+    if waiting:
+        return finish("blocked", blocked={"code": "bookmark_unknown", "reason": "reconcile", "at": jst.iso(now),
+                                          "n": waiting})
     if cfg.get("production") is not True:
         return finish("blocked", blocked={"code": "production_disabled", "reason": None, "at": jst.iso(now)})
     candidates = _candidates(batches, now)
@@ -984,7 +990,10 @@ def _run_locked(account_name, cfg, *, log, now, adapter_factory):
             continue
         if kind == "unknown":
             summary["unknown"] += 1
-            return finish("unknown", next_at=now + datetime.timedelta(minutes=MIN_GAP_MINUTES))
+            # 照合まで止める（低-3）。記録を書けなかった札（post_id 無し）は照合できないので止めない。
+            hold = ({"code": "bookmark_unknown", "reason": "reconcile", "at": jst.iso(now), "n": 1}
+                    if unresolved_unknown(account_name, [batch]) else None)
+            return finish("unknown", next_at=now + datetime.timedelta(minutes=MIN_GAP_MINUTES), blocked=hold)
         if kind == "stop_today":
             item["wait"] = outcome[1]
             return finish("limit", next_at=tomorrow)
@@ -1002,6 +1011,30 @@ def _run_locked(account_name, cfg, *, log, now, adapter_factory):
         log(f"ブックマークのまとめ: {placed} 件付けました（待ち {remaining} 件・次は {gap:.0f} 分あと以降）")
         return finish("placed", next_at=now + datetime.timedelta(minutes=gap))
     return finish("idle")
+
+
+def unresolved_unknown(account_name, batches) -> int:
+    """照合を待つ結果不明の札の数（付ける札は `sent/bm:` の `result: unknown`・直しの札は結果不明の直し）。"""
+    from . import sent as sent_mod
+    n = 0
+    for b in batches:
+        if b.get("unreadable"):
+            continue
+        for it in b.get("items") or []:
+            if it.get("state") != "unknown" or not it.get("post_id"):
+                continue
+            try:
+                row = sent_mod.read(accounts_mod.state_dir_for(account_name), it["post_id"])
+            except Exception:  # noqa: BLE001 — 読めなければ止める側
+                n += 1
+                continue
+            if row is None:
+                continue
+            if it.get("op") == "edit":
+                n += sent_mod.pending_bookmark_edit(row) is not None
+            else:
+                n += row.get("result") == "unknown"
+    return n
 
 
 def _defer(item, code, tomorrow, now):

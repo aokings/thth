@@ -283,6 +283,73 @@ def finding(rule, value) -> dict:
     }
 
 
+SCOPE_JA = {"account": "口座", "principal": "主体", "owner": "owner", "blog": "ブログ", "app": "アプリ"}
+
+
+def resume_hint(scope, name) -> str:
+    """止めを戻す命令（§7.2 の `stopped` の文）。"""
+    if scope == "principal":
+        return f"thth principal resume {name} --by <名前>"
+    return f"thth account resume {name} --by <名前>"
+
+
+def _set_hint(result, *, account, principal) -> str | None:
+    """数を変える命令（`scope` から 1 回だけ・§7.2 の「数は … で変えられます」）。変えられない行は None。"""
+    rule = result.get("rule") or ""
+    if result.get("scope") == "owner" or rule in ("bookmark.once",) or not rule:
+        return None
+    window = result.get("window")
+    value = "<件数> <分>" if isinstance(window, dict) and window.get("minutes") else "<値>"
+    if result.get("scope") in ("principal", "blog") and principal:
+        return f"thth principal set {principal} {rule} {value} --by <名前>"
+    if result.get("scope") == "account" and account:
+        return f"thth account set {account} {rule} {value} --by <名前>"
+    return None
+
+
+def pass_hint(result, *, account=None, principal=None) -> str | None:
+    """断り・待たせ・止めの `how_to_pass`（段 4・§7.1）。決まった文だけ（推測や採点はしない）。"""
+    outcome = result.get("outcome")
+    when = result.get("next_at")
+    stamp = None
+    if when:
+        parsed = jst.parse(when)
+        stamp = jst.to_jst(parsed).strftime("%m/%d %H:%M") if parsed else when
+    setter = _set_hint(result, account=account, principal=principal)
+    if outcome == "stopped":
+        scope = result.get("scope")
+        name = principal if scope == "principal" else account
+        return resume_hint(scope, name) if name else None
+    parts = []
+    if stamp:
+        parts.append(f"{stamp} 以降に打ち直す")
+    if setter:
+        parts.append(("急ぐなら " if stamp else "数を変えるなら ") + setter)
+    if not parts and result.get("rule") == "bookmark.once":
+        parts.append("同じページは 1 回だけです（変えられません）")
+    return "。".join(parts) or None
+
+
+def foresight_line(found) -> str | None:
+    """1 段目の「見立て」の 1 行（§7.3・段 4）。断らない・止めない（決めるのは 2 段目）。"""
+    if not isinstance(found, dict):
+        return None
+    if found.get("outcome") in ("pass", "advise"):
+        return "見立て: 今の数では 2 段目で当たる柵はありません（打つときに数え直します）"
+    code = found.get("code") or "?"
+    rule = found.get("rule")
+    where = ""
+    if rule:
+        where = f"（{rule}"
+        if isinstance(found.get("used"), int) and isinstance(found.get("count"), int):
+            where += f"・{found['used']}/{found['count']}"
+        where += "）"
+    out = f"見立て: このまま 2 段目を打つと {code}{where}になる見込みです"
+    if found.get("how_to_pass"):
+        out += f"。通すには: {found['how_to_pass']}"
+    return out
+
+
 def stopped_assessment(scope, reason) -> dict:
     """止めの印（口座・主体）で断るときの `assessment`（行は持たない）。"""
     return {"outcome": "stopped", "rule": f"{scope}.stopped", "signal": None, "phase": "halt",

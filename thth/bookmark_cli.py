@@ -116,6 +116,28 @@ def _bookmark_message(exc, fallback) -> str:
     return text
 
 
+def _foresight(p) -> dict:
+    """1 段目の `--json` に「見立て」（段 4・§7.4）: `assessment`（当たる見込みの行）と `advisories[]`。"""
+    from . import core
+    found = p.get("foresight")
+    if not isinstance(found, dict):
+        return {}
+    advisories = [core.public_assessment(a) for a in found.get("advisories") or []]
+    if found.get("outcome") in ("pass", "advise"):
+        return {"assessment": None, "advisories": advisories}
+    return {"assessment": core.public_assessment(found), "advisories": advisories}
+
+
+def _guard_refuse(args, exc, *, suffix="") -> int:
+    """安全装置の断り（段 4・§7.2 の型: 今の 1 行・根拠・通すには）。`--json` に `assessment`。"""
+    from . import core
+    parts = core.refusal_parts(args.account, exc)
+    message = parts["line"] + suffix
+    payload = {"ok": False, "error": str(exc), "message": message, "assessment": parts["assessment"]}
+    lines = [f"{exc}: {message}"] + core.refusal_lines(args.account, exc)[1:]
+    return _out(args, payload, 1, lines, err=True)
+
+
 def _refuse(args, code, message, rc=2, **extra) -> int:
     return _out(args, {"ok": False, "error": code, "message": message, **extra}, rc, [f"{code}: {message}"],
                 err=True)
@@ -161,7 +183,7 @@ def cmd(args) -> int:
         verb = "消しません" if op == "delete" else "ブックマークしません"
         rest = " --comment …" if op == "add" else ""
         return _out(args, {"ok": False, "bookmarked": False, "stage": 1, "digest": p["digest"],
-                           "preview": hatena_bookmark.preview(p)}, 1,
+                           "preview": hatena_bookmark.preview(p), **_foresight(p)}, 1,
                     [f"{verb}（確認の一段目です）"] + hatena_bookmark.lines(p)
                     + [f"{'消す' if op == 'delete' else '付ける'}なら: thth bookmark {args.verb} {args.account} {flag}"
                        f"{rest} --confirm {p['digest']} --by <名前> --production"])
@@ -191,7 +213,7 @@ def cmd(args) -> int:
         return _refuse(args, "account_busy", "いま別の実行がロックを持っています", rc=1)
     except guard.GuardRefused as exc:
         detail = f"（{exc.reason}）" if getattr(exc, "reason", None) else ""
-        return _refuse(args, str(exc), core.guard_refusal_message(args.account, exc) + detail, rc=1)
+        return _guard_refuse(args, exc, suffix=detail)
     except hatena_bookmark.BookmarkError as exc:
         return _refuse(args, exc.code, _bookmark_message(exc, "打てませんでした（何も記録していません）"))
     finally:
@@ -228,7 +250,7 @@ def cmd_edit(args) -> int:
         rest = "".join(f" --{key} {json.dumps(value, ensure_ascii=False)}"
                        for key, value in (("comment", args.comment), ("tags", args.tags)) if value is not None)
         return _out(args, {"ok": False, "edited": False, "stage": 1, "digest": p["digest"],
-                           "preview": hatena_bookmark.preview_edit(p)}, 1,
+                           "preview": hatena_bookmark.preview_edit(p), **_foresight(p)}, 1,
                     ["直しません（確認の一段目です）"] + hatena_bookmark.edit_lines(p)
                     + [f"直すなら: thth bookmark edit {args.account} {flag}{rest} --confirm {p['digest']}"
                        " --by <名前> --production"])
@@ -252,7 +274,7 @@ def cmd_edit(args) -> int:
         return _refuse(args, "account_busy", "いま別の実行がロックを持っています", rc=1)
     except guard.GuardRefused as exc:
         detail = f"（{exc.reason}）" if getattr(exc, "reason", None) else ""
-        return _refuse(args, str(exc), core.guard_refusal_message(args.account, exc) + detail, rc=1)
+        return _guard_refuse(args, exc, suffix=detail)
     except hatena_bookmark.BookmarkError as exc:
         return _refuse(args, exc.code, _bookmark_message(exc, "直せませんでした（何も記録していません）"))
     finally:
@@ -361,7 +383,7 @@ def cmd_batch(args) -> int:
     except lock_mod.LockBusy:
         return _refuse(args, "account_busy", "いま別の実行がロックを持っています", rc=1)
     except guard.GuardRefused as exc:
-        return _refuse(args, str(exc), core.guard_refusal_message(args.account, exc), rc=1)
+        return _guard_refuse(args, exc)
     except bookmark_batch.BatchError as exc:
         return _batch_refuse(args, exc)
     start, end = bookmark_batch.ACTIVE_HOURS

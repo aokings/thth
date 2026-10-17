@@ -37,6 +37,8 @@
 """
 from __future__ import annotations
 
+import contextvars
+
 import datetime
 import json
 import os
@@ -144,12 +146,12 @@ def stopped(account) -> dict | None:
     return value
 
 
-def stop(account, reason, *, now=None, actor=None, via=None, credential=None) -> dict:
-    """口座を止める（既に止まっていれば上書きしない）。"""
+def stop(account, reason, *, now=None, actor=None, via=None, credential=None, rule=None) -> dict:
+    """口座を止める（既に止まっていれば上書きしない）。`rule`（段 4）: 止めた行の id（`thth events`・板が読む）。"""
     if reason not in STOP_REASONS:
         raise ValueError("invalid_stop_reason")
     value = {"reason": reason, "stopped_at": jst.iso(now)}
-    for key, item in (("actor", actor), ("via", via), ("credential", credential)):
+    for key, item in (("actor", actor), ("via", via), ("credential", credential), ("rule", rule)):
         if isinstance(item, str) and item:
             value[key] = item
     with server_files.directory(_directory(account), create=True, private=True) as fd:
@@ -440,7 +442,7 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
     can_stop = not cli or stop_place_usable(account)
     halted = stopped(account) if can_stop else None
     if halted is not None:
-        raise _stopped_refusal("account", halted.get("reason"))
+        raise _stopped_refusal("account", halted.get("reason"), name=account, rule=halted.get("rule"))
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     counts = summary(account, cfg, now=now)
     action = {"publish": "reply" if reply else "post", "retract": "retract", "schedule": "schedule"}[kind]
@@ -575,9 +577,44 @@ def bookmark_counts(principal_name, *, url=None, now=None) -> dict:
     return {"own_today": own, "same_host_today": same, "host": host}
 
 
-def _stopped_refusal(scope, reason) -> "GuardRefused":
+_PREVIEW = contextvars.ContextVar("thth_guard_preview", default=None)
+
+
+class _Foreseen(Exception):
+    """1 段目の予告で当たった（`foresee` の中だけ・外へは出さない）。"""
+
+
+def foresee(account, cfg, kind, **kwargs) -> dict | None:
+    """1 段目の「見立て」（設計 §7.3・T-P-9）: `check` と同じ道・同じ材料で当て、**印を置かず断らず**結論を返す。
+
+    当たれば `assessment`（`how_to_pass` つき）、当たらなければ `{"outcome": "pass", "advisories": [...]}`。
+    止めの印・レーンの許しなど行の外の断りは `{"outcome": "refuse"|"stopped", "code"}`。読めなければ None。
+    """
+    holder = {}
+    token = _PREVIEW.set(holder)
+    try:
+        check(account, cfg, kind, **kwargs)
+    except _Foreseen:
+        pass
+    except GuardRefused as exc:
+        found = dict(exc.assessment) if isinstance(exc.assessment, dict) else {
+            "outcome": "refuse", "rule": None, "code": str(exc), "next_at": getattr(exc, "next_at", None)}
+        holder["result"] = found
+    except Exception:  # noqa: BLE001 — 予告のためだけ（決めるのは 2 段目）
+        return None
+    finally:
+        _PREVIEW.reset(token)
+    return holder.get("result") or {"outcome": "pass", "rule": None, "code": None, "advisories": []}
+
+
+def _stopped_refusal(scope, reason, *, name=None, rule=None) -> "GuardRefused":
     code = "principal_stopped" if scope == "principal" else "account_stopped"
-    return GuardRefused(code, reason=reason, assessment=assess.stopped_assessment(scope, reason))
+    found = assess.stopped_assessment(scope, reason)
+    if rule:
+        found["stopped_by_rule"] = rule
+    if name:
+        found["how_to_pass"] = assess.resume_hint(scope, name)
+    return GuardRefused(code, reason=reason, assessment=found)
 
 
 def _enforce(result, *, account, principal, can_stop, now, actor, via, credential) -> None:
@@ -588,8 +625,19 @@ def _enforce(result, *, account, principal, can_stop, now, actor, via, credentia
     - `stopped`（`halted`・媒体の断りの印）: 印は置き済み。符丁だけ（詳細の語は添えない）。
     - `refuse`・`wait`: 行の符丁・詳細・`next_at` で断る（`wait` は呼び手が順番待ちに並べる）。
     """
+    holder = _PREVIEW.get()
+    if holder is not None:
+        # 1 段目の予告（`foresee`・T-P-9）: 印を置かず断らず、2 段目と同じ材料で当たった行を返す。
+        if result["outcome"] not in ("pass", "advise"):
+            result["how_to_pass"] = assess.pass_hint(result, account=account, principal=principal)
+        holder["result"] = result
+        if result["outcome"] not in ("pass", "advise"):
+            raise _Foreseen()
+        return
     if result["outcome"] in ("pass", "advise"):
         return
+    # 段 4（§7.1・§7.2）: 通すにはどうするか（断り・待たせ・止めの文の最後の行）。
+    result["how_to_pass"] = assess.pass_hint(result, account=account, principal=principal)
     rule = limits_policy.rule(result["rule"])
     if rule["on_exceed"] == "stop":
         if not can_stop:
@@ -597,9 +645,10 @@ def _enforce(result, *, account, principal, can_stop, now, actor, via, credentia
             raise GuardRefused("burst_limit", reason="burst", assessment=downgraded)
         if result["scope"] == "principal":
             from . import principals
-            principals.stop(principal, "burst", now=now, actor=actor, via=via, credential=credential)
+            principals.stop(principal, "burst", now=now, actor=actor, via=via, credential=credential,
+                            rule=result["rule"])
         else:
-            stop(account, "burst", now=now, actor=actor, via=via, credential=credential)
+            stop(account, "burst", now=now, actor=actor, via=via, credential=credential, rule=result["rule"])
         raise GuardRefused(result["code"], reason="burst", assessment=result)
     raise GuardRefused(result["code"], reason=result["detail"], next_at=result["next_at"], assessment=result)
 
@@ -627,11 +676,11 @@ def _check_hatena(account, cfg, kind, *, now, actor, via, credential, publish_at
     # 1. 主体の止め（すべてのブログの公開・更新・削除とブックマーク）
     halted = principals.stopped(name) if can_stop else None
     if halted is not None:
-        raise _stopped_refusal("principal", halted.get("reason"))
+        raise _stopped_refusal("principal", halted.get("reason"), name=name, rule=halted.get("rule"))
     # 2. 口座の止め
     halted = stopped(account) if can_stop else None
     if halted is not None:
-        raise _stopped_refusal("account", halted.get("reason"))
+        raise _stopped_refusal("account", halted.get("reason"), name=account, rule=halted.get("rule"))
     action = {"bookmark": "bookmark_add"}.get(kind, kind)
     family = "hatenabookmark" if action.startswith("bookmark") else "hatenablog"
     blog_id = str(cfg.get("blog_id") or "").strip().lower()

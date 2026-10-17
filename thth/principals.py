@@ -476,13 +476,13 @@ def _log_subject_cfg() -> dict:
     return {"media": MEDIA}
 
 
-def stop(name, reason, *, now=None, actor=None, via=None, credential=None) -> dict:
+def stop(name, reason, *, now=None, actor=None, via=None, credential=None, rule=None) -> dict:
     """主体を止める（既に止まっていれば上書きしない）。その主体のすべてのブログと
     ブックマークの書き込みが止まる（設計 §4.1）。"""
     if reason not in STOP_REASONS:
         raise ValueError("invalid_stop_reason")
     value = {"reason": reason, "stopped_at": jst.iso(now)}
-    for key, item in (("actor", actor), ("via", via), ("credential", credential)):
+    for key, item in (("actor", actor), ("via", via), ("credential", credential), ("rule", rule)):
         if isinstance(item, str) and item:
             value[key] = item
     with server_files.directory(_guard_directory(name), create=True, private=True) as fd:
