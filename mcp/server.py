@@ -423,7 +423,14 @@ CONFLICT_RESOLVE_DESCRIPTION = (
     "はてなの配信の衝突を解く（2 段）。resolution は adopt（はてなの今の本文を取り込む・そのあと更新を承認し直すと"
     "記事で上書きできる）・gone（外で消えていた）・no_follow（記事の修正に追従しない）。confirm が無ければ stage 1 と"
     "digest を返して何もしない。同じ digest を confirm に付けると解く。媒体には書き込まない")
-CONFLICT_TOOL_NAMES = ("thth_article_diff", "thth_conflict_status", "thth_conflict_resolve")
+# 4.0 S6 §6.2: 記事の名で反応を束ねる（読むだけ・台帳から・fetch は受けない）。
+ARTICLE_REACTIONS_DESCRIPTION = (
+    "記事の名で、はてなブログの配信・SNS の告知・ブックマークの反応を出所（source）と帰属（attribution）と窓"
+    "（window）つきで並べる（thth article reactions --json と同じ形・読むだけ・足さない・順位は付けない）。"
+    "自分の主体のブックマークとスターは others に入れない。comments: true で第三者のブックマークのコメントの本文も"
+    "返す。サイトの訪問は hub")
+CONFLICT_TOOL_NAMES = ("thth_article_diff", "thth_conflict_status", "thth_conflict_resolve",
+                       "thth_article_reactions")
 TOOLS += [
     {"name": "thth_article_diff", "description": ARTICLE_DIFF_DESCRIPTION,
      "inputSchema": {"type": "object", "properties": {
@@ -447,6 +454,13 @@ TOOLS += [
          "by": {"type": "string", "description": "誰が決めたか（記録に残す）"},
          "confirm": {"type": "string", "description": "1 段目が返した digest"}},
          "required": ["account", "delivery", "resolution", "by"], "additionalProperties": False}},
+    {"name": "thth_article_reactions", "description": ARTICLE_REACTIONS_DESCRIPTION,
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string", "description": "はてなブログの account 名（か project 名）"},
+         "article": {"type": "string", "description": "記事の id（必須・例 kopicha/2026-10-arabica）"},
+         "delivery": {"type": "string", "description": "配信 id で絞る（dl_…）"},
+         "comments": {"type": "boolean", "description": "true なら第三者のブックマークのコメントの本文も返す"}},
+         "required": ["account", "article"], "additionalProperties": False}},
 ]
 
 # 反応（設計 3.15.0 §2.3）。**手元の台帳の CLI（`thth repost|unrepost|like|unlike`）を
@@ -862,6 +876,10 @@ SERVER_TOOLS += [
                                                                      "enum": ["adopt", "gone", "no_follow"]},
                                                       "confirm": {"type": "string"}},
                      "required": ["account", "delivery", "resolution"], "additionalProperties": False}},
+    {"name": "thth_article_reactions", "description": ARTICLE_REACTIONS_DESCRIPTION,
+     "inputSchema": {"type": "object", "properties": {"account": {"type": "string"}, "article": {"type": "string"},
+                                                      "delivery": {"type": "string"}, "comments": {"type": "boolean"}},
+                     "required": ["account", "article"], "additionalProperties": False}},
 ]
 # 読む口（設計 3.14.0 §3.2）。CLI の読む命令の写し（`--json` と同じ形を返す）。
 # `WRITE_OPERATIONS` ではないので `writes: false` の資格でも出る。
@@ -1638,10 +1656,18 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         text = proc.stdout
     elif name in CONFLICT_TOOL_NAMES:
         # 4.0 S5: CLI（`thth article diff`・`thth conflict`）を `--json` で呼ぶだけ。
-        for key in ("account", "delivery"):
+        for key in ("account", "delivery", "article"):
             if isinstance(arguments.get(key), str) and arguments[key].startswith("-"):
                 return {"content": [{"type": "text", "text": "invalid_request"}, _channel_note()], "isError": True}
-        if name == "thth_article_diff":
+        if name == "thth_article_reactions" and (set(arguments) - {"account", "article", "delivery", "comments"}
+                                                  or not isinstance(arguments.get("article"), str)):
+            # `fetch` などは受けない（読む口から媒体を呼ばない・§5.4）。
+            return {"content": [{"type": "text", "text": "invalid_request"}, _channel_note()], "isError": True}
+        if name == "thth_article_reactions":
+            # 読む口から媒体を呼ばない（--fetch は渡さない・§5.4）。
+            args = ["article", "reactions", arguments["account"], "--article=" + arguments["article"],
+                    *_opt("--delivery", arguments.get("delivery")), *_flag("--comments", arguments.get("comments"))]
+        elif name == "thth_article_diff":
             args = ["article", "diff", arguments["account"], *_opt("--article", arguments.get("article")),
                     *_opt("--delivery", arguments.get("delivery")), *_flag("--draft", arguments.get("draft"))]
         elif name == "thth_conflict_status":
@@ -1731,7 +1757,7 @@ def call_tool(name: str, arguments: dict | None) -> dict:
     elif name.startswith("thth_topic_") or name in (
             "before_you_post", "after_you_posted", "analytics_report", "operations_handoff", "study_report", "thread_read", "where_to_appear",
             "who_is_this", "thth_morning", "thth_observe", "thth_map_show", "thth_events", "thth_summary",
-            "thth_article_diff", "thth_conflict_status"):
+            "thth_article_diff", "thth_conflict_status", "thth_article_reactions"):
         # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）
         # とは意味が違う——こちらは stale_context・不正な候補比較で、
         # **そのまま使ってはいけない**応答。既存の扱いは変えない。

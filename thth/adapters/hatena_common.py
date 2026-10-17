@@ -13,8 +13,10 @@
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
+import urllib.error
 import urllib.request
 
 from .. import httpsafe
@@ -98,6 +100,61 @@ def scrub(text, *secrets) -> str:
         if value:
             out = out.replace(value, "***")
     return redact_mod.redact(out) or ""
+
+
+class PublicHTTPError(Exception):
+    """認証なしの公開の読む口（件数・エントリー情報・スター・4.0 S6）の失敗。`code` は静的な符丁。"""
+
+    def __init__(self, code, status=None):
+        super().__init__(code)
+        self.code = code
+        self.status = status
+
+
+PUBLIC_READ_TIMEOUT = 30
+PUBLIC_MAX_BYTES = 1024 * 1024
+
+
+def public_http_error(status) -> str:
+    if status == 429:
+        return "provider_rate_limited"
+    return f"hatena_http_{status}"
+
+
+def public_get(url, *, contact=None, timeout=PUBLIC_READ_TIMEOUT) -> bytes:
+    """認証なしの GET を 1 回だけ（設計 4.0 S6 §4.2）。**`Authorization` は付けない**（別ホストに token を
+    送らない）。`User-Agent` に連絡先。`httpsafe.urlopen`（平文不可・同一 origin のリダイレクトだけ）。
+    再試行しない・sleep しない。200 以外・つながらない・大きすぎる → `PublicHTTPError(符丁)`。"""
+    headers = {"Accept": "application/json", "User-Agent": user_agent(contact)}
+    req = urllib.request.Request(url, method="GET", headers=headers)
+    try:
+        with httpsafe.urlopen(req, timeout=min(timeout, PUBLIC_READ_TIMEOUT)) as response:
+            status = response.status
+            raw = response.read(PUBLIC_MAX_BYTES + 1)
+    except httpsafe.RedirectBlocked:
+        raise PublicHTTPError("redirect_blocked") from None
+    except urllib.error.HTTPError as exc:
+        raise PublicHTTPError(public_http_error(exc.code), exc.code) from None
+    except httpsafe.EndpointRejected:
+        raise PublicHTTPError("endpoint_rejected") from None
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError, http.client.HTTPException):
+        raise PublicHTTPError("hatena_transport_failed") from None
+    if len(raw) > PUBLIC_MAX_BYTES:
+        raise PublicHTTPError("response_too_large")
+    if status != 200:
+        raise PublicHTTPError(public_http_error(status), status)
+    return raw
+
+
+def public_json(url, *, contact=None, timeout=PUBLIC_READ_TIMEOUT):
+    """`public_get` の JSON。読めなければ `PublicHTTPError("response_invalid")`。空の body は None。"""
+    raw = public_get(url, contact=contact, timeout=timeout)
+    if not raw.strip():
+        return None
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise PublicHTTPError("response_invalid") from None
 
 
 def request_signed(method, url, *, headers, body, timeout, consumer, token):

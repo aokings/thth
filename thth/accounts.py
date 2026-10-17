@@ -698,6 +698,9 @@ def data_dirs(account_cfg: dict, account_name: str) -> dict:
         # 絡みの台帳（設計「自分の泉」§4・発注 T0-1）。`insights_posts` 等と
         # 同じ流儀——repo が無い account は state 側、あれば repo の中。
         "engagements": os.path.join(base, "data", "sns", "engagements"),
+        # はてなの反応の台帳（設計 4.0 S6 §4.3）。`state/<account>/reactions/`（THTH が付けたいいね・
+        # `guard.reactions_today`）とは別の木。repo があれば repo の中・無ければ state 側（上と同じ流儀）。
+        "hatena_reactions": os.path.join(base, "data", "hatena", "reactions"),
     }
 
 

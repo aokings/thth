@@ -172,7 +172,7 @@ def render(payload, out=print) -> None:
 
 
 def register(sub) -> None:
-    p = sub.add_parser("article", help="記事の正本（repo）の修正を検出する（読むだけ・4.0 S5）")
+    p = sub.add_parser("article", help="記事の正本（repo）の修正を検出する・反応を束ねる（読むだけ・4.0 S5・S6）")
     inner = p.add_subparsers(dest="article_action", required=True)
     d = inner.add_parser("diff", help="出した版と repo の HEAD の版を比べ、直した配信の差分を出す（読むだけ）")
     d.add_argument("account", metavar="target", help="account 名か project 名")
@@ -182,6 +182,9 @@ def register(sub) -> None:
                    help="更新の原稿の文面を標準出力に出す（ファイルは書かない）")
     d.add_argument("--json", action="store_true")
     d.set_defaults(func=cmd)
+    # 4.0 S6 §5: `thth article reactions`（反応を記事の名で束ねる・読むだけ）。
+    from . import article_reactions
+    article_reactions.register(inner)
 
 
 def cmd(args) -> int:

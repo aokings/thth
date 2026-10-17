@@ -94,6 +94,15 @@ def no_real_hatena_adapter(account_cfg, principal_cfg):
 HATENA_ADAPTER_MODULES = ("hatena_publish", "hatena_fotolife", "hatena_bookmark")
 
 
+def no_real_hatena_fetch(kind, arg):
+    """はてなの公開の読む口（件数・エントリー情報・スター・4.0 S6）の既定の柵。
+
+    認証なしの https ではてなへ出るので、上の柵（http だけを止める）では止まらない。偽物の HTTP
+    （`fake_http`）を置いた試験か、`hatena_reactions.FETCH` を差し替えた試験だけが読める。
+    """
+    pytest.fail(f"はてなの公開の読む口（{kind}）を偽物なしで呼ぼうとした")
+
+
 def restore_real_hatena_adapters(monkeypatch):
     """既定の柵（`no_real_hatena_adapter`）のままの差し込み口を None（本物の factory）に戻す。"""
     import importlib
@@ -101,6 +110,9 @@ def restore_real_hatena_adapters(monkeypatch):
         module = importlib.import_module("thth." + name)
         if getattr(module, "ADAPTER_FACTORY", None) is no_real_hatena_adapter:
             monkeypatch.setattr(module, "ADAPTER_FACTORY", None)
+    from thth import hatena_reactions
+    if hatena_reactions.FETCH is no_real_hatena_fetch:
+        monkeypatch.setattr(hatena_reactions, "FETCH", None)
 
 
 @pytest.fixture(autouse=True)
@@ -108,6 +120,10 @@ def no_real_hatena_adapters(monkeypatch):
     import importlib
     for name in HATENA_ADAPTER_MODULES:
         monkeypatch.setattr(importlib.import_module("thth." + name), "ADAPTER_FACTORY", no_real_hatena_adapter)
+    from thth import hatena_reactions
+    monkeypatch.setattr(hatena_reactions, "FETCH", no_real_hatena_fetch)
+    # 要求の間の 2 秒は試験では待たない（数は `hatena_reactions.SLEEP` を差し替えた試験が見る）。
+    monkeypatch.setattr(hatena_reactions, "SLEEP", lambda seconds: None)
 
 
 @pytest.fixture(autouse=True)

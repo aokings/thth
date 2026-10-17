@@ -475,6 +475,48 @@ def _yesterday_posts(name, now, read_at=None):
             "unknown_ownership": len(data.get("posts_unknown_ownership") or [])}
 
 
+def _article_rows(name, cfg, now, read_at=None):
+    """窓の中に反応を採った配信ごとの数（4.0 S6 §6.1）。**数だけ・本文なし**。読めなければ None。
+
+    1 行: `article`・`delivery`・`bookmark_others`・`star_others`・`announcements_n`・いちばん新しい刻み
+    （`mark`・`age_hours`・`collected_at`）。窓は `observe_window()`（第 2 段と同じ）。
+    """
+    from . import deliveries as deliveries_mod, deliveries_cli, hatena_reactions
+    start, end, _basis = observe_window(now, read_at)
+    try:
+        records, _broken = deliveries_mod.list_for(name)
+    except Exception:  # noqa: BLE001 — 段は落とさない
+        return None
+    rows_out, ids = [], set()
+    for record in records:
+        if record.get("state") not in hatena_reactions.TARGET_STATES:
+            continue
+        try:
+            rows, broken = hatena_reactions.read_rows(cfg, name, record["delivery"])
+        except ValueError:
+            continue
+        inside = [r for r in rows if not broken and (lambda at: at is not None and start <= at < end)(
+            jst.parse(r.get("collected_at")))]
+        if not inside:
+            continue
+        latest = hatena_reactions.latest_row(rows)
+        bookmark, star = latest.get("bookmark") or {}, latest.get("star") or {}
+        ids.add(record["delivery"])
+        rows_out.append({"article": record.get("article"), "delivery": record["delivery"],
+                         "bookmark_others": bookmark.get("others"), "star_others": star.get("others"),
+                         "announcements_n": 0, "mark": max(latest.get("marks") or [0]) or None,
+                         "age_hours": latest.get("age_hours"), "collected_at": latest.get("collected_at")})
+    if ids:
+        try:
+            told, _broken = deliveries_cli.announcements(cfg.get("project"), ids)
+        except Exception:  # noqa: BLE001
+            told = []
+        for row in rows_out:
+            row["announcements_n"] = sum(1 for t in told if t["announces"] == row["delivery"])
+    rows_out.sort(key=lambda r: (r["collected_at"] or "", r["delivery"]))
+    return rows_out
+
+
 def _click_index(name, data, now):
     """click の材料（`click_attribution.Index` と、24h の views を選ぶための台帳）。"""
     from . import analytics_comparison as comparison, click_attribution, measured as measured_mod
@@ -1144,7 +1186,10 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
             yesterday_entries[name] = cell(cannot_say=refusals[name])
             continue
         yesterday_entries[name] = _guard(lambda name=name, cfg=cfg: {
-            "medium": cfg.get("media"), **_yesterday_posts(name, now, read_ats[name])})
+            "medium": cfg.get("media"), **_yesterday_posts(name, now, read_ats[name]),
+            # 4.0 S6 §6.1: はてなの口座だけ・窓の中に採った反応の数（本文なし・鍵は足すだけ）。
+            **({"articles": _article_rows(name, cfg, now, read_ats[name])}
+               if cfg.get("media") == "hatenablog" else {})})
 
     # 第 3 段: 世間。`--no-world`（3.11.1）なら `_world()` を 1 回も呼ばない
     # ——API を叩くのは言及などだけになる（`calls` に検索が出ない・実行記録も書かない）。
@@ -1550,6 +1595,11 @@ def _render_yesterday(account, node, out) -> None:
             out(f"      24h 前との差: {delta or '—'}")
         for reason in post["cannot_say"]:
             out(f"      言えない: {reason}")
+    for row in node.get("articles") or []:
+        others = "?" if row["bookmark_others"] is None else row["bookmark_others"]
+        star = "?" if row["star_others"] is None else row["star_others"]
+        out(f"    記事 {row['article']}（{row['delivery']}）: ブクマ 他 {others}・スター {star}・告知 "
+            f"{row['announcements_n']} 本（{row['mark']}h の刻み）")
 
 
 def _render_world(account, node, out) -> None:

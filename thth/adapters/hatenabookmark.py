@@ -107,6 +107,71 @@ def entry_info(url: str, *, contact=None, timeout=READ_TIMEOUT) -> dict | None:
             "users": users}
 
 
+# ---------------------------------------------------------------------------
+# 反応を読む口（設計 4.0 S6 §3・§9 の 2）。どれも**認証なし**（公開の情報）・1 回だけ・再試行しない。
+# 失敗は `hatena_common.PublicHTTPError(符丁)`。
+# ---------------------------------------------------------------------------
+
+COUNT_BATCH = 50   # 件数取得 API `count/entries` は 1 回 50 URL まで（超えると 414）
+
+
+def count_url(urls) -> str:
+    return f"{BASE}/count/entries?" + urllib.parse.urlencode([("url", u) for u in urls])
+
+
+def bookmark_counts(urls, *, contact=None, timeout=READ_TIMEOUT) -> dict:
+    """件数取得 API（`count/entries`）を 1 回。`{url: 件数}`。50 件を超える束は呼び手が分ける。
+
+    返りは URL を鍵にした JSON（推測・実機の 45 で確かめる）。**鍵の無い URL は 0**（実装で決めた・
+    200 の答えが「その束の件数」なので、載っていない URL は付いていないと読む）。値が整数でなければ
+    `response_invalid`。
+    """
+    urls = list(urls)
+    if not urls or len(urls) > COUNT_BATCH:
+        raise ValueError("count_batch_invalid")
+    data = hatena_common.public_json(count_url(urls), contact=contact, timeout=timeout)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise hatena_common.PublicHTTPError("response_invalid")
+    out = {}
+    for u in urls:
+        value = data.get(u, 0)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise hatena_common.PublicHTTPError("response_invalid")
+        out[u] = value
+    return out
+
+
+def _clean_tags(raw) -> list:
+    return [t for t in raw if isinstance(t, str)] if isinstance(raw, list) else []
+
+
+def entry_info_full(url, *, contact=None, timeout=READ_TIMEOUT) -> dict:
+    """公開のエントリー情報（`entry/jsonlite/?url=`・キャッシュ）を 1 回。既存の `entry_info` の返りは変えない。
+
+    返り: `{"exists", "count", "eid", "bookmarks": [{"user", "timestamp", "comment", "tags"}]}`。エントリーが
+    無い（`null`）なら `exists: False`・`bookmarks: []`。`timestamp` は API の文字列のまま。
+    """
+    data = hatena_common.public_json(entry_url(url), contact=contact, timeout=timeout)
+    if data is None:
+        return {"exists": False, "count": 0, "eid": None, "bookmarks": []}
+    if not isinstance(data, dict):
+        raise hatena_common.PublicHTTPError("response_invalid")
+    marks = data.get("bookmarks")
+    rows = []
+    for row in marks if isinstance(marks, list) else []:
+        if not isinstance(row, dict) or not isinstance(row.get("user"), str) or not row["user"]:
+            continue
+        rows.append({"user": row["user"],
+                     "timestamp": row.get("timestamp") if isinstance(row.get("timestamp"), str) else None,
+                     "comment": row.get("comment") if isinstance(row.get("comment"), str) else "",
+                     "tags": _clean_tags(row.get("tags"))})
+    count = data.get("count")
+    return {"exists": True, "count": count if isinstance(count, int) and not isinstance(count, bool) else len(rows),
+            "eid": data.get("eid") if isinstance(data.get("eid"), (str, int)) else None, "bookmarks": rows}
+
+
 class HatenaBookmarkAdapter:
     """主体（はてな ID）のブックマークへの口。"""
 

@@ -359,10 +359,25 @@ def _deliveries_cells(name, account_cfg) -> dict:
                 behind.append({"delivery": record["delivery"], "article": record.get("article")})
         return {"deliveries_behind_count": len(behind), "deliveries_behind": behind,
                 "deliveries_conflict_count": sum(1 for r in records if r["state"] == "conflict"),
-                "deliveries_cannot_say": cannot}
+                "deliveries_cannot_say": cannot, **_hatena_collect_cells(name)}
     except Exception:  # noqa: BLE001 — 1 つの欄で板を落とさない
         return {"deliveries_behind_count": None, "deliveries_behind": [], "deliveries_conflict_count": None,
-                "deliveries_cannot_say": ["deliveries_unreadable"]}
+                "deliveries_cannot_say": ["deliveries_unreadable"], **_hatena_collect_cells(name)}
+
+
+def _hatena_collect_cells(name) -> dict:
+    """4.0 S6 §6.1: 最後の反応の採取（runs の `hatena_collect` の行）の時刻と、採れなかったものの数。"""
+    from . import hatena_reactions
+    try:
+        row = hatena_reactions.last_run(name)
+    except Exception:  # noqa: BLE001
+        row = None
+    if row is None:
+        return {"hatena_collect_last_at": None, "hatena_collect_errors_n": None}
+    error = row.get("error")
+    errors_n = 0 if row.get("status") == "ok" or not error else len(str(error).split("・"))
+    at = str(row.get("run_id") or "")[len(hatena_reactions.ACTION) + 1:] or None
+    return {"hatena_collect_last_at": at, "hatena_collect_errors_n": errors_n}
 
 
 def _publish_hold(name):

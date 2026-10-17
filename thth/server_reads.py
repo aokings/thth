@@ -33,7 +33,9 @@ OPERATIONS = frozenset(('posts', 'replies', 'measured', 'collect', 'mentions',
                         'thread_read', 'where_to_appear', 'who_is_this', 'schedule_list',
                         'events', 'summary',
                         # 4.0 S5 §3.4: 正本の修正の検出（読むだけ・台帳と repo の HEAD・媒体は呼ばない）。
-                        'article_diff'))
+                        'article_diff',
+                        # 4.0 S6 §6.2: 記事の反応を束ねる（読むだけ・台帳から・媒体は呼ばない・fetch は受けない）。
+                        'article_reactions'))
 # 断りの符丁（`server_writes.SAFE_ERRORS` に足す）。
 REASONS = frozenset(('collect_too_soon', 'upstream_unavailable', 'read_unavailable'))
 # `upstream_unavailable` に添える静的な理由（媒体の返した文を写せないとき）。
@@ -64,6 +66,7 @@ _FIELDS = {
     'events': (('since', 'after', 'limit'), ()),
     'summary': ((), ()),
     'article_diff': (('article', 'delivery', 'draft'), ()),
+    'article_reactions': (('article', 'delivery', 'comments'), ('article',)),
 }
 # 欄の型（範囲と中身の検査は CLI の関数が言う。ここは型だけ）。
 _TYPES = {
@@ -72,7 +75,7 @@ _TYPES = {
     'also': list, 'aggregate': bool, 'lexicon': dict, 'suggest': bool, 'tag': bool, 'author': str,
     'keep': bool, 'ja': bool, 'question': bool, 'no_replies': bool, 'author_key': str, 'profile': bool,
     'days': int, 'until': str, 'media': str, 'after': str,
-    'article': str, 'delivery': str, 'draft': bool,
+    'article': str, 'delivery': str, 'draft': bool, 'comments': bool,
 }
 # 答えの大きさの目安（JSON の UTF-16 の長さ）。thth.me の 1 件の上限（128 KB）より少し小さく取る。
 RESULT_BUDGET = 120_000
@@ -519,8 +522,43 @@ def _article_diff(account, request, cfg):
     return _fit_article_diff(result)
 
 
+def _fit_article_reactions(result):
+    """大きすぎる答えは各配信と告知の `rows[]` を古い方から落とす（`TRIMMED_NOTE`・4.0 S6 §6.2）。"""
+    over = _size(result) - RESULT_BUDGET
+    if over <= 0:
+        return result
+    over += FIT_RESERVE
+    deliveries = [dict(row, rows=list(row['rows'])) for row in result['deliveries']]
+    announcements = [dict(row, rows=list(row['rows'])) for row in result['announcements']]
+    dropped = 0
+    for holder in deliveries + announcements:
+        while holder['rows'] and over > 0:
+            over -= _size(holder['rows'].pop(0)) + 1
+            dropped += 1
+        if over <= 0:
+            break
+    result = dict(result, deliveries=deliveries, announcements=announcements)
+    if dropped:
+        result['cannot_say'] = list(result.get('cannot_say') or []) + [TRIMMED_NOTE.format(n=dropped)]
+        result['trimmed'] = dropped
+    return result
+
+
+def _article_reactions(account, request, cfg, context=None):
+    from . import article_reactions
+    # 鍵の範囲（口座 → project）の全部を渡す。告知の口座が鍵の範囲にあれば読み、無ければ scope_unavailable。
+    allowed = tuple(context.allowed_accounts) if context is not None else (account,)
+    try:
+        result = article_reactions.build(account, article=request.get('article'), delivery=request.get('delivery'),
+                                         comments=bool(request.get('comments')), allowed_names=allowed)
+    except article_reactions.ArticleReactionsError as exc:
+        error('invalid_request' if str(exc) == 'article_required' else 'scope_unavailable')
+    return _fit_article_reactions(result)
+
+
 _HANDLERS = {
     'events': _events, 'summary': _summary, 'article_diff': _article_diff,
+    'article_reactions': _article_reactions,
     'posts': _posts, 'replies': _replies, 'measured': _measured, 'collect': _collect,
     'mentions': _mentions, 'topics_search': _topics_search, 'profile': _profile,
     'location_search': _location_search, 'thread_read': _thread_read, 'where_to_appear': _where,
@@ -544,6 +582,8 @@ def execute(context, request):
             # CLI の関数は人向けに print しうる。stdio の MCP では stdout が道なので、
             # 読む口の間は stderr へ逃がす（答えは戻り値だけ）。
             with contextlib.redirect_stdout(sys.stderr):
+                if request['operation'] == 'article_reactions':
+                    return _article_reactions(account, request, cfg, context)
                 return _HANDLERS[request['operation']](account, request, cfg)
     except accounts.AccountLeaving:
         error('account_leaving')
