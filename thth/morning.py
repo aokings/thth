@@ -703,6 +703,19 @@ def _waiting_rows(name, now):
             "basis": "approved_reply_to_file_unresolved"}
 
 
+def _behind_rows(name, cfg):
+    """正本を直したのに更新していない配信（4.0 S5 §3.4・はてなの口座だけ・読むだけ）。本文は持たない。"""
+    from . import deliveries as deliveries_mod, hatena_entry
+    records, _broken = deliveries_mod.list_for(name)
+    items = []
+    for record in records:
+        source = hatena_entry.source_status(record, cfg)
+        if source is not None and source.get("behind"):
+            items.append({"delivery": record["delivery"], "article": record.get("article"),
+                          "reasons": list(source["reasons"])})
+    return {"n": len(items), "items": items[:OVERDUE_LIMIT], "command": f"thth article diff {name}"}
+
+
 def _held_rows(name, cfg, now):
     """承認済みなのに出られない原稿の**名前**（設計 3.3.0 A1・A2）。
 
@@ -882,6 +895,12 @@ def next_steps(unanswered_entries, world_entries, today_entries, reports=None,
                           "due": row["due"],
                           "candidate": ("reapprove" if row["category"] == "approval_stale"
                                         else "inspect")})
+        # 4.0 S5 §3.4: 正本を直した記事（はてな）。更新は人とレーンの LLM が原稿を書いて承認する。
+        behind = ((entry["value"] or {}).get("behind_items") or {}).get("value") or {}
+        if behind.get("n"):
+            steps.append({"kind": "article_behind", "account": name, "n": behind["n"],
+                          "articles": [row["article"] for row in behind.get("items") or []],
+                          "command": behind.get("command")})
         # 確定待ちの原稿の publish_at まで 3 時間を切った（設計 3.7.0 §B3）。確定の命令の
         # 1 行を添える（名乗りは人が入れる・本文は作らない）。
         from . import approve_pending
@@ -985,6 +1004,9 @@ def _reduce_today(value):
     out["overdue_items"] = _reduce_rows_by_reason(value.get("overdue_items") or {})
     out["waiting_items"] = _reduce_rows_by_reason(value.get("waiting_items") or {}, "reason")
     out["held_items"] = _reduce_rows_by_reason(value.get("held_items") or {}, "reason", "category")
+    behind = value.get("behind_items")
+    if behind and behind.get("cannot_say") is None and behind.get("value") is not None:
+        out["behind_items"] = {**behind, "value": {"n": behind["value"]["n"]}}
     confirm = value.get("confirm_items") or {}
     if confirm.get("cannot_say") is None and confirm.get("value") is not None:
         reduced = {k: v for k, v in confirm["value"].items() if k != "items"}
@@ -1150,6 +1172,9 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
             "overdue_items": _guard(lambda name=name: _overdue_rows(name, now)),
             "waiting_items": _guard(lambda name=name: _waiting_rows(name, now)),
             "held_items": _guard(lambda name=name, cfg=cfg: _held_rows(name, cfg, now)),
+            # 4.0 S5 §3.4: 正本を直したのに更新していない配信（はてなの口座だけ・鍵は足すだけ）。
+            **({"behind_items": _guard(lambda name=name, cfg=cfg: _behind_rows(name, cfg))}
+               if cfg.get("media") == "hatenablog" else {}),
             # 承認の確定待ち（設計 3.7.0 §B3）。
             "confirm_items": _guard(lambda name=name, cfg=cfg: _confirm_rows(name, cfg, now)),
             "queue": _queue_cell(node),
@@ -1330,6 +1355,9 @@ def _render_section(section, out) -> None:
                 verb = "再承認" if step["candidate"] == "reapprove" else "確かめる"
                 out(f"  {verb}  {step['account']}  {step['file']}  {step['reason']}"
                     f"（予定 {step['publish_at'] or '—'}）")
+            elif step["kind"] == "article_behind":
+                out(f"  更新  {step['account']}  正本を直した記事 {step['n']} 件（{'・'.join(step['articles'])}）"
+                    f"。更新するなら {step['command']}")
             elif step["kind"] == "confirm_due":
                 out(f"  確定  {step['account']}  {step['file']}（予定 {step['publish_at']}・"
                     f"あと {step['hours_to_publish']}h・確定するまで出ません）  {step['command']}")
@@ -1615,6 +1643,13 @@ def _render_today(account, node, out) -> None:
         line = _by_reason_line("出られない", value, "reason", "category")
         if line:
             out(line)
+    behind = node.get("behind_items") or {}
+    if behind.get("cannot_say") is not None:
+        out(f"    正本を直した記事: 言えない: {behind['cannot_say']}")
+    elif behind.get("value") and behind["value"]["n"]:
+        value = behind["value"]
+        names = "・".join(row["article"] for row in value.get("items") or [])
+        out(f"    正本を直した記事 {value['n']} 件（{names}）。更新するなら {value['command']}")
     confirm = node.get("confirm_items") or {}
     if confirm.get("cannot_say") is not None:
         out(f"    確定待ち: 言えない: {confirm['cannot_say']}")

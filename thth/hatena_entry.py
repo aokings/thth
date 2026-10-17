@@ -46,11 +46,15 @@ LINT_CODES = ("article_required", "article_source_missing", "invalid_article_sou
               "image_too_large", "image_type_unsupported", "too_many_images", "images_too_large",
               # 実機の確かめ 10/17 の 2: `delivery:` の配信の台帳が合わない状態のとき、状態をそのまま言う
               # （`_ledger_for` の `delivery_state_<状態>`。`delivery_unknown`＝台帳に無い、に丸めない）。
-              *("delivery_state_" + s for s in deliveries_mod.STATES))
+              *("delivery_state_" + s for s in deliveries_mod.STATES),
+              # 4.0 S5 §4.4: 本文・題・カテゴリ・画像のどれも変わっていない更新。
+              "update_no_change")
 # S2・S3 の断り（lint・承認の 1 段目・timer の 3 か所で同じ符丁）。timer の照合でも `approval_stale` に
 # 丸めずにこの符丁のまま返す（人が直す先が違う）。
 S3_IMAGE_REFUSALS = ("image_too_large", "image_type_unsupported", "too_many_images", "images_too_large")
-S2_REFUSALS = ("relative_link_unresolvable", "article_not_committed") + S3_IMAGE_REFUSALS
+S2_REFUSALS = ("relative_link_unresolvable", "article_not_committed") + S3_IMAGE_REFUSALS + ("update_no_change",)
+# 4.0 S5 §5.4: 衝突のままでも削除を承認できる理由（外で手直しされた・別の記法で出た）。
+DELETABLE_CONFLICTS = ("readback_changed", "syntax_mismatch")
 _MESSAGES = {
     "article_required": "article: が要ります（記事の名前・例 kopicha/2026-10-arabica）",
     "article_source_missing": "article_source: が無いか、指すファイルが repo にありません",
@@ -76,8 +80,12 @@ _MESSAGES = {
                                "はてなの画面と thth deliveries で確かめてから"),
     "delivery_state_published": ("delivery: の配信はもう出ています（published）。create で書けるのは"
                                  "取り消した予約の配信だけです。直すなら op: update"),
-    "delivery_state_conflict": "はてなの側で手直しされたので止めています（conflict）。解く道は 4.0 S5",
-    "delivery_state_no_follow": "delivery: の配信は THTH が追従しないことにしたものです（no_follow）",
+    "delivery_state_conflict": ("delivery: の配信は conflict です（はてなの側で手直しされた・別の記法で出た・"
+                                "外で消えた）。thth conflict <口座> で解いてから（外で消えていたなら "
+                                "thth conflict <口座> <dl> resolve --gone）"),
+    "delivery_state_no_follow": ("delivery: の配信は THTH が追従しないことにしたものです（no_follow）。更新はしません"
+                                 "（削除はできます・戻すなら thth conflict <口座> <dl> resolve --adopt）"),
+    "update_no_change": "出した版と同じです（本文・題・カテゴリ・画像のどれも変わっていない）。更新は送りません",
     "delivery_state_deleted": "もう削除した配信です（deleted）",
     "article_not_committed": ("記事ファイルが commit されていません（作業ツリーの記事が HEAD と違う・"
                               "まだ追跡されていない）。記事を commit してから"),
@@ -218,17 +226,36 @@ def lint_errors(fm, account_cfg) -> list:
             _ledger_for(fm.get("account"), op, delivery)
         except EntryError as exc:
             out.append(message(exc.code if exc.code in LINT_CODES else "delivery_unknown"))
+    if op == "update" and not out:
+        # 4.0 S5 §4.4: 何も変わっていない更新（lint・1 段目・timer の 3 か所で同じ符丁）。
+        try:
+            material(fm, account_cfg, fm.get("account"))
+        except EntryError as exc:
+            if exc.code == "update_no_change":
+                out.append(message(exc.code))
     return out
 
 
 def _ledger_for(account, op, delivery):
-    """原稿の `delivery:` が指す台帳（create は `wanted`・update／delete は `published` のものだけ）。"""
+    """原稿の `delivery:` が指す台帳（create は `wanted`・update は `published` のものだけ）。
+
+    delete は `published` に加えて、`no_follow` と、外で手直しされた・別の記法で出た `conflict`
+    （`DELETABLE_CONFLICTS`）も受ける（4.0 S5 §5.4・消す意思は衝突と独立）。外で消えた
+    （`entry_missing`）・別のブログに出た（`published_elsewhere`）は受けない。
+    """
     if not deliveries_mod.is_delivery_id(delivery) or not accounts_mod.name_is_safe(account):
         raise EntryError("delivery_unknown")
     try:
         record = deliveries_mod.read(account, delivery)
     except deliveries_mod.DeliveryError:
         raise EntryError("delivery_unknown") from None
+    if op == "delete":
+        state = record["state"]
+        if state in ("published", "no_follow"):
+            return record
+        if state == "conflict" and (deliveries_mod.conflict_of(record) or {}).get("reason") in DELETABLE_CONFLICTS:
+            return record
+        raise EntryError("delivery_state_" + state)
     want = "wanted" if op == "create" else "published"
     if record["state"] != want:
         raise EntryError("delivery_state_" + record["state"])
@@ -421,6 +448,9 @@ def material(fm, account_cfg, account_name: str, *, ledger: dict | None = None) 
         sha = approval_mod.compute_hatena_entry_sha(**kwargs)
     except ValueError as exc:
         raise EntryError(str(exc)) from None
+    if op == "update" and given is None and ledger is not None and _unchanged(account_name, ledger, body, title,
+                                                                              categories, images):
+        raise EntryError("update_no_change")
     return {"op": op, "form": form, "article": article, "article_source": source, "title": title,
             "categories": categories, "delivery": delivery, "ledger": ledger, "body": body,
             "body_sha256": approval_mod.hatena_body_sha256(body), "images": images,
@@ -429,6 +459,255 @@ def material(fm, account_cfg, account_name: str, *, ledger: dict | None = None) 
             "entry_id": entry_id, "base_readback_sha": base, "blog_id": blog_id,
             "principal": account_cfg.get("principal"), "project": account_cfg.get("project"),
             "account": account_name, "publish_at": fm.get("publish_at"), "approved_sha": sha}
+
+
+# ------------------------------------------------------------------ 何を出したか（4.0 S5）
+
+def norm_title(value) -> str:
+    """題の正規化（S5 §5.6）: 前後の空白を落とし、続く空白を 1 つに。"""
+    return " ".join(str(value or "").split())
+
+
+def norm_categories(values) -> frozenset:
+    """カテゴリの正規化（S5 §5.6）: 前後の空白を落とし、空を除き、集合で比べる。"""
+    return frozenset(str(v).strip() for v in (values or []) if isinstance(v, str) and v.strip())
+
+
+def image_pairs(images) -> dict:
+    """`{path: source_sha256}`（台帳の `images[]` か材料の `images`）。"""
+    return {row["path"]: row.get("source_sha256") for row in images or []
+            if isinstance(row, dict) and isinstance(row.get("path"), str)}
+
+
+def image_changes(before, after) -> dict:
+    """画像の変化（S5 §3.3・§4.3）: 変わらず・差し替え・追加・外した（path の list）。"""
+    old, new = image_pairs(before), image_pairs(after)
+    return {"same": sorted(p for p in new if p in old and old[p] == new[p]),
+            "changed": sorted(p for p in new if p in old and old[p] != new[p]),
+            "added": sorted(p for p in new if p not in old),
+            "removed": sorted(p for p in old if p not in new)}
+
+
+def image_changes_text(changes) -> str:
+    """`変わらず n・差し替え n（path）・追加 n（path）・外した n（path）`。"""
+    def part(label, paths):
+        return f"{label} {len(paths)}" + (f"（{'・'.join(paths)}）" if paths else "")
+    return "・".join((f"変わらず {len(changes['same'])}", part("差し替え", changes["changed"]),
+                      part("追加", changes["added"]), part("外した", changes["removed"])))
+
+
+def _last_send_index(ledger):
+    """最後に THTH が出した（承認の指紋のある `published`）行の位置。無ければ None。"""
+    history = ledger.get("history") or []
+    for index in range(len(history) - 1, -1, -1):
+        row = history[index]
+        if row.get("state") == "published" and row.get("approved_sha"):
+            return index
+    return None
+
+
+def adopted_since_send(ledger) -> bool:
+    """最後に出したあとに、はてなの今の本文を取り込んだ（`--adopt`）か。"""
+    index = _last_send_index(ledger)
+    rows = (ledger.get("history") or [])[(index + 1) if index is not None else 0:]
+    return any(row.get("resolution") == "adopt_remote" for row in rows)
+
+
+def _unchanged(account_name, ledger, body, title, categories, images) -> bool:
+    """出した版と同じか（S5 §4.4）。承認の控え・台帳の題とカテゴリが無ければ比べない（False）。
+
+    取り込んだ（`--adopt`）あとは比べない——はてなの今の本文を記事で上書きする更新には意味がある。
+    """
+    if not isinstance(ledger.get("title"), str) or not isinstance(ledger.get("categories"), list):
+        return False
+    if adopted_since_send(ledger):
+        return False
+    before = _approved_body(account_name, ledger)
+    if before is None:
+        return False
+    return (approval_mod.hatena_body_sha256(before) == approval_mod.hatena_body_sha256(body)
+            and norm_title(ledger["title"]) == norm_title(title)
+            and norm_categories(ledger["categories"]) == norm_categories(categories)
+            and image_pairs(ledger.get("images")) == image_pairs(images))
+
+
+def adopted_path(account_name, delivery, readback_sha) -> str:
+    """取り込みの控え `deliveries/<dl>.rb.<readback_sha 12 桁>.md`（S5 §5.3）。"""
+    return os.path.join(deliveries_mod.dir_for(account_name), f"{delivery}.rb.{readback_sha[:12]}.md")
+
+
+def _adopted_body(account_name, ledger) -> str | None:
+    """台帳の `readback_sha` と同じ名の取り込みの控え（はてなの今の本文・置き換えのあとの形）。"""
+    sha = ledger.get("readback_sha") if isinstance(ledger, dict) else None
+    delivery = ledger.get("delivery") if isinstance(ledger, dict) else None
+    if not isinstance(sha, str) or len(sha) < 12 or not deliveries_mod.is_delivery_id(delivery):
+        return None
+    try:
+        with open(adopted_path(account_name, delivery, sha), encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return text[:-1] if text.endswith("\n") else text
+
+
+def keep_adopted_body(account_name, delivery, readback_sha, body) -> str:
+    """取り込みの控えを書く（0600）。書いた path を返す。"""
+    d = deliveries_mod.dir_for(account_name)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    path = adopted_path(account_name, delivery, readback_sha)
+    _write_private(path, (body or "") + "\n")
+    return path
+
+
+def previous_body(account_name, ledger, *, has_images=False) -> tuple:
+    """1 段目・`article diff` の差分の「前」（S5 §4.3 の優先）。`(本文 | None, 出所, 注記 | None)`。
+
+    (1) 取り込みの控え（`adopted`）→ (2) 承認の控え（`approved`）→ (3) `sent/` の `text`（`sent`）→ (4) 無し。
+    """
+    adopted = _adopted_body(account_name, ledger)
+    if adopted is not None:
+        note = ("（取り込んだはてなの今の本文と比べます。画像の行は置き換えのため差が出ます）"
+                if has_images else None)
+        return adopted, "adopted", note
+    before = _approved_body(account_name, ledger)
+    if before is not None:
+        return before, "approved", None
+    before = _previous_text(account_name, (ledger or {}).get("delivery"))
+    if before is not None:
+        note = ("（承認の控えが無いので送った本文と比べます。画像の行は置き換えのため差が出ます）"
+                if has_images else None)
+        return before, "sent", note
+    return None, None, None
+
+
+# ------------------------------------------------------------------ 正本の修正の検出（4.0 S5 §3）
+
+SOURCE_STATES = ("published", "conflict", "no_follow")
+
+
+def _head_blob(top, rel) -> bytes | None:
+    """repo の HEAD にある `rel` の中身（無い・読めなければ None）。作業ツリーは読まない。"""
+    from . import writeback
+    try:
+        r = writeback._run_git_bytes(top, ["cat-file", "blob", f"HEAD:{rel}"])
+    except (OSError, ValueError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _last_commit(top, rel) -> str | None:
+    from . import writeback
+    try:
+        r = writeback._run_git(top, ["log", "-1", "--format=%H", "HEAD", "--", rel])
+    except (OSError, ValueError):
+        return None
+    out = (r.stdout or "").strip()
+    return out if r.returncode == 0 and out else None
+
+
+def source_status(record: dict, account_cfg: dict) -> dict | None:
+    """配信の台帳の「出した版」と repo の HEAD の「今の版」を比べる（S5 §3.2・読むだけ・媒体は呼ばない）。
+
+    対象は `published`・`conflict`（と `no_follow`＝`behind: None`）。それ以外の状態は None。
+    今の版は HEAD の blob の sha（作業ツリーの未 commit の変更は見ない）。画像は台帳の `images[]` の
+    各 path を HEAD の blob で読んで sha256 を `source_sha256` と比べる。
+    """
+    state = record.get("state")
+    if state not in SOURCE_STATES:
+        return None
+    checked = record.get("checked_rev")
+    out = {"checked_rev": checked, "current_rev": None, "kind": record.get("article_rev_kind"),
+           "head_commit": None, "behind": None, "reasons": [],
+           "images": {"same": 0, "changed": 0, "missing": 0}, "image_paths": {"changed": [], "missing": []},
+           "error": None}
+    if state == "no_follow":
+        out["reasons"] = ["no_follow"]
+        return out
+    from . import writeback
+    try:
+        path = repo_file(account_cfg.get("repo_dir"), record.get("article_source"))
+    except EntryError:
+        out["error"] = "article_source_missing"
+        return out
+    top = writeback.repo_toplevel(path) if os.path.isdir(os.path.dirname(path)) else None
+    if out["kind"] == "content" or (top is None and out["kind"] != "git"):
+        try:
+            with open(path, "rb") as f:
+                out["current_rev"] = hashlib.sha256(f.read()).hexdigest()
+        except OSError:
+            out["error"] = "article_source_missing"
+            return out
+        out["kind"] = "content"
+    else:
+        if top is None:
+            out["error"] = "repo_unreadable"
+            return out
+        rel = posixpath.join(*os.path.relpath(os.path.realpath(path), os.path.realpath(top)).split(os.sep))
+        current = committed_rev(path)
+        if current is None:
+            out["error"] = "article_source_missing" if _head_blob(top, rel) is None else "repo_unreadable"
+            return out
+        out["current_rev"], out["kind"] = current, "git"
+        out["head_commit"] = _last_commit(top, rel)
+        for row in record.get("images") or []:
+            if not isinstance(row, dict) or not isinstance(row.get("path"), str):
+                continue
+            blob = _head_blob(top, row["path"])
+            if blob is None:
+                out["images"]["missing"] += 1
+                out["image_paths"]["missing"].append(row["path"])
+            elif hashlib.sha256(blob).hexdigest() != row.get("source_sha256"):
+                out["images"]["changed"] += 1
+                out["image_paths"]["changed"].append(row["path"])
+            else:
+                out["images"]["same"] += 1
+    if not checked:
+        out["reasons"] = ["no_checked_rev"]
+        return out
+    if out["current_rev"] != checked:
+        out["reasons"].append("body")
+    if out["images"]["changed"] or out["images"]["missing"]:
+        out["reasons"].append("images")
+    out["behind"] = bool(out["reasons"])
+    return out
+
+
+def short_at(value) -> str:
+    at = jst.parse(value)
+    return f"{at.month}/{at.day} {at:%H:%M}" if at else "時刻不明"
+
+
+DETAIL_LABELS = {"body": "本文", "title": "題", "categories": "カテゴリ"}
+
+
+def _update_head_lines(m, ledger, cats) -> list:
+    """update の 1 段目の頭（S5 §4.3）: 正本の版・題・カテゴリ・画像の変化。"""
+    out = []
+    checked = (ledger.get("checked_rev") or "")[:12]
+    now_rev = (m["article_rev"] or "")[:12]
+    if checked:
+        out.append(f"正本の版: 出した {checked}…（{short_at(ledger.get('checked_at'))}）→ 今回 {now_rev}…")
+    else:
+        out.append(f"正本の版: 出した（台帳に記録なし）→ 今回 {now_rev}…")
+    if isinstance(ledger.get("title"), str):
+        if norm_title(ledger["title"]) != norm_title(m["title"]):
+            out.append(f"題: {ledger['title']} → {m['title']}")
+        else:
+            out.append(f"題: {m['title']}")
+    else:
+        out.append(f"題: {m['title']}（台帳に記録なし・比べません）")
+    if isinstance(ledger.get("categories"), list):
+        old, new = norm_categories(ledger["categories"]), norm_categories(m["categories"])
+        added = [c for c in m["categories"] if c.strip() in new - old]
+        removed = [c for c in ledger["categories"] if isinstance(c, str) and c.strip() in old - new]
+        if added or removed:
+            out.append(f"カテゴリ: {cats}（足した: {'・'.join(added) or 'なし'}／外した: {'・'.join(removed) or 'なし'}）")
+        else:
+            out.append(f"カテゴリ: {cats}")
+    else:
+        out.append(f"カテゴリ: {cats}（台帳に記録なし・比べません）")
+    out.append("画像の変化: " + image_changes_text(image_changes(ledger.get("images"), m["images"])))
+    return out
 
 
 # ------------------------------------------------------------------ 承認の 1 段目
@@ -495,12 +774,16 @@ def display_lines(m: dict, *, path: str, digest: str) -> list:
     head = (f"配信原稿  {m['account']} → {m['blog_id']}（主体 {m['principal']}・レーン {m['project']}）")
     when = f"{m['publish_at']}（timer が draft=no で送る）"
     lines = [head, f"操作: {OP_LABELS[m['op']]}   公開: {when}"]
+    ledger = m.get("ledger") or {}
     if m["op"] != "delete":
         rev = (m["article_rev"] or "")[:12]
         commit = f"・commit {m['article_commit'][:12]}…" if m.get("article_commit") else ""
         lines.append(f"記事: {m['article']}（{m['article_source']}・版 {rev}… {m['article_rev_kind']}）{commit}")
         cats = "・".join(m["categories"]) if m["categories"] else "（なし）"
-        lines.append(f"題: {m['title']}   カテゴリ: {cats}")
+        if m["op"] == "update":
+            lines += _update_head_lines(m, ledger, cats)
+        else:
+            lines.append(f"題: {m['title']}   カテゴリ: {cats}")
         if m["images"]:
             lines.append(f"画像 {len(m['images'])} 件:")
             for row in m["images"]:
@@ -508,16 +791,14 @@ def display_lines(m: dict, *, path: str, digest: str) -> list:
                              f"  {image_status_text(m.get('principal'), row['source_sha256'])}")
         else:
             lines.append("画像: なし")
-    ledger = m.get("ledger") or {}
     if m["op"] == "update":
-        lines.append(f"変更前の版 readback_sha {(m['base_readback_sha'] or '（なし）')[:12]}…"
-                     f"（{ledger.get('checked_at') or '時刻不明'} に確かめた）")
-        before = _approved_body(m["account"], ledger)
-        note = None
-        if before is None:
-            before = _previous_text(m["account"], m["delivery"])
-            if before is not None and m["images"]:
-                note = "（承認の控えが無いので送った本文と比べます。画像の行は置き換えのため差が出ます）"
+        before, source, note = previous_body(m["account"], ledger, has_images=bool(m["images"]))
+        base = (m['base_readback_sha'] or '（なし）')[:12]
+        if source == "adopted":
+            lines.append(f"変更前の版 readback_sha {base}…（はてなの今の本文を "
+                         f"{short_at(ledger.get('checked_at'))} に取り込んだ・それと比べます）")
+        else:
+            lines.append(f"変更前の版 readback_sha {base}…（{ledger.get('checked_at') or '時刻不明'} に確かめた）")
         if before is None:
             lines.append("---- 変換したあとの本文（全文・前の本文の控えが無いので差分は出せません） ----")
             lines += m["body"].split("\n")
@@ -529,6 +810,15 @@ def display_lines(m: dict, *, path: str, digest: str) -> list:
                                                m["body"].split("\n"), "前", "今回", lineterm=""))
         lines.append("---- ここまで ----")
     elif m["op"] == "delete":
+        conflict = deliveries_mod.conflict_of(ledger)
+        if conflict is not None:
+            detail = "・".join(DETAIL_LABELS.get(d, str(d)) for d in (conflict.get("detail") or [])) or "本文"
+            lines.append(f"⚠ この記事は外で手直しされています（{short_at(conflict.get('at'))}・{detail}"
+                         f"・{conflict.get('reason')}）。消すと手直しも消えます")
+            lines.append(f"  手直しを残すなら、先に thth conflict {m['account']} {m['delivery']} resolve --adopt "
+                         "で取り込み、記事に写してから")
+        elif ledger.get("state") == "no_follow":
+            lines.append("この配信は追従をやめています（no_follow）。消すとはてなの記事が消えます")
         lines.append(f"題: {m['title'] or '（原稿に無し）'}")
         lines.append(f"公開 URL: {ledger.get('published_url') or '（台帳に無し）'}")
         lines.append(f"entry_id: {m['entry_id']}")
@@ -623,6 +913,9 @@ def assign_delivery(one: dict, *, by: str, at: str, origin: dict | None = None) 
             fields["wanted_commit"] = m["article_commit"]
         fields.update({"wanted_rev": m["article_rev"], "article_rev_kind": m["article_rev_kind"],
                        "images": [{"path": r["path"], "source_sha256": r["source_sha256"]} for r in m["images"]]})
+    if m["op"] == "create":
+        # 4.0 S5 §4.2: 何を承認したか（題・カテゴリ）。update は公開のあと `_record_outcome` が書く。
+        fields.update({"title": m["title"], "categories": list(m["categories"])})
     if m["op"] == "create" and not m["delivery"]:
         record = deliveries_mod.create(account, principal=m["principal"], blog_id=m["blog_id"],
                                        article=m["article"], at=at, state="wanted", fields=fields, row=row)

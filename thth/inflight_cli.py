@@ -111,7 +111,40 @@ def digest(account: str, record: dict, decision: str, post_id: str | None) -> st
         :approval_mod.APPROVE_DIGEST_LENGTH]
 
 
+def candidate_lines(account: str, found: dict | None) -> list:
+    """はてなの inflight の一覧の候補（4.0 S5 §8.3）の人向けの行。解くのは人（命令をそのまま出す）。"""
+    if not found:
+        return []
+    if not found.get("checked"):
+        return [f"照合できませんでした（{found.get('error') or 'unknown'}）"]
+    if found.get("op") == "delete":
+        if found.get("gone"):
+            return ["はてなに記事がありません（削除は届いていた見込み）。画面で確かめて "
+                    f"thth inflight {account} resolve --published <entry_id> --by <名前>"]
+        return ["はてなに記事が残っています（削除は届いていない見込み）。画面で確かめて "
+                f"thth inflight {account} resolve --not-published --by <名前>"]
+    rows = found.get("candidates") or []
+    if not rows:
+        if found.get("op") == "update" and found.get("gone"):
+            return ["はてなに記事がありません（外で消えた）。画面で確かめてください"]
+        return ["一覧の 7 件に合う記事はありません（0 件なら --not-published・一覧より古ければ画面で確かめて "
+                "--published）"]
+    out = [f"候補 {len(rows)} 件:"]
+    for row in rows:
+        same = {True: "本文も同じ", False: "本文は違う", None: "本文は比べられない"}[row.get("body_same")]
+        when = row.get("published") if found.get("op") == "create" else row.get("edited")
+        label = "公開" if found.get("op") == "create" else "更新"
+        out.append(f"  entry_id {row.get('entry_id')}（題「{row.get('title')}」・{label} {when}・{same}）→ "
+                   f"thth inflight {account} resolve --published {row.get('entry_id')} --by <名前>")
+    return out
+
+
 def _next_step(account: str, info: dict) -> str:
+    if info.get("delivery"):
+        # はてなの配信（4.0 S5 §8.3）: SNS 向けの文（3.3.1 より前の inflight・一覧照合）は出さない。
+        return (f"はてなの配信 {info['delivery']}（結果の行 seq {info.get('seq')}）。はてなの画面か下の候補で"
+                f"確かめ、thth inflight {account} resolve --published <entry_id> か --not-published で "
+                "--by <名前> を付けて解いてください（自動では解きません）")
     if info["media"]:
         return ("添付の inflight です。docs/原稿_添付_2.13.md の手順で確かめてください"
                 "（この口では解きません）")
@@ -137,11 +170,22 @@ def cmd_inflight(args) -> int:
                      "inflight.json が読めません。壊れた inflight は道具では解きません"
                      "（中身を確かめてから手で直してください）")
     if args.action == "show":
-        return _show(args, record)
+        return _show(args, record, account_cfg)
     return _resolve(args, account_cfg, state_dir, record)
 
 
-def _show(args, record) -> int:
+def hatena_candidates(account, account_cfg, record) -> dict | None:
+    """はてなの inflight（`delivery` あり）なら一覧の候補（GET 1 回・自動では解かない）。それ以外は None。"""
+    if not record.get("delivery"):
+        return None
+    from . import hatena_publish
+    try:
+        return hatena_publish.candidates(account, account_cfg, record)
+    except Exception:  # noqa: BLE001 — 照合できなければ今の表示に倒す
+        return {"checked": False, "error": "candidates_failed", "op": None, "candidates": [], "gone": None}
+
+
+def _show(args, record, account_cfg=None) -> int:
     if record is None:
         if args.json:
             _print_json({"ok": True, "account": args.account, "inflight": None})
@@ -150,9 +194,17 @@ def _show(args, record) -> int:
         return 0
     info = summary(record)
     step = _next_step(args.account, info)
+    found = hatena_candidates(args.account, account_cfg or {}, record)
     if args.json:
-        _print_json({"ok": True, "account": args.account, "inflight": info, "next": step})
+        payload = {"ok": True, "account": args.account, "inflight": info, "next": step}
+        if found is not None:
+            payload["candidates"] = found["candidates"]
+            payload["candidates_checked"] = found["checked"]
+            payload["candidates_error"] = found["error"]
+        _print_json(payload)
         return 0
+    if found is not None:
+        info = dict(info, candidates_found=found)
     return show_info(args.account, info, step)
 
 
@@ -170,8 +222,10 @@ def show_info(account: str, info: dict, step: str) -> int:
         print("  最後の問い合わせ: まだありません")
     if info["mismatch_fields"]:
         print(f"  食い違った項目: {', '.join(map(str, info['mismatch_fields']))}")
-    if not info["text_fingerprint_present"]:
+    if not info["text_fingerprint_present"] and not info.get("delivery"):
         print("  本文の指紋: なし（3.3.1 より前の inflight。一覧照合はできません）")
+    for line in candidate_lines(account, info.get("candidates_found")):
+        print(f"  {line}")
     print(f"  次の一手: {step}")
     return 0
 

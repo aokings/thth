@@ -31,7 +31,9 @@ from .report_service import ReportContext, ReportServiceError
 OPERATIONS = frozenset(('posts', 'replies', 'measured', 'collect', 'mentions',
                         'topics_search', 'profile', 'location_search',
                         'thread_read', 'where_to_appear', 'who_is_this', 'schedule_list',
-                        'events', 'summary'))
+                        'events', 'summary',
+                        # 4.0 S5 §3.4: 正本の修正の検出（読むだけ・台帳と repo の HEAD・媒体は呼ばない）。
+                        'article_diff'))
 # 断りの符丁（`server_writes.SAFE_ERRORS` に足す）。
 REASONS = frozenset(('collect_too_soon', 'upstream_unavailable', 'read_unavailable'))
 # `upstream_unavailable` に添える静的な理由（媒体の返した文を写せないとき）。
@@ -61,6 +63,7 @@ _FIELDS = {
     # 出来事の流れと数の要約（4.0 の柱 1・読むだけ・記録から並べるだけで媒体は呼ばない）。
     'events': (('since', 'after', 'limit'), ()),
     'summary': ((), ()),
+    'article_diff': (('article', 'delivery', 'draft'), ()),
 }
 # 欄の型（範囲と中身の検査は CLI の関数が言う。ここは型だけ）。
 _TYPES = {
@@ -69,6 +72,7 @@ _TYPES = {
     'also': list, 'aggregate': bool, 'lexicon': dict, 'suggest': bool, 'tag': bool, 'author': str,
     'keep': bool, 'ja': bool, 'question': bool, 'no_replies': bool, 'author_key': str, 'profile': bool,
     'days': int, 'until': str, 'media': str, 'after': str,
+    'article': str, 'delivery': str, 'draft': bool,
 }
 # 答えの大きさの目安（JSON の UTF-16 の長さ）。thth.me の 1 件の上限（128 KB）より少し小さく取る。
 RESULT_BUDGET = 120_000
@@ -483,8 +487,40 @@ def _summary(account, request, cfg):
         error('scope_unavailable')
 
 
+def _fit_article_diff(result):
+    """大きすぎる答えは各配信の `diff_lines` を後ろから落とす（`TRIMMED_NOTE`・4.0 S5 §3.4）。"""
+    over = _size(result) - RESULT_BUDGET
+    if over <= 0:
+        return result
+    over += FIT_RESERVE
+    rows = [dict(row, diff_lines=list(row['diff_lines'])) for row in result['deliveries']]
+    dropped = 0
+    for row in reversed(rows):
+        while row['diff_lines'] and over > 0:
+            over -= _size(row['diff_lines'].pop()) + 1
+            dropped += 1
+        if over <= 0:
+            break
+    result = dict(result, deliveries=rows)
+    if dropped:
+        result['cannot_say'] = list(result.get('cannot_say') or []) + [TRIMMED_NOTE.format(n=dropped)]
+        result['trimmed'] = dropped
+    return result
+
+
+def _article_diff(account, request, cfg):
+    from . import article_cli
+    try:
+        # 範囲は鍵の口座 1 つだけ（他の口座の台帳と repo は読まない）。
+        result = article_cli.build(account, article=request.get('article'), delivery=request.get('delivery'),
+                                   draft=bool(request.get('draft')), allowed_names=(account,))
+    except article_cli.ArticleDiffError:
+        error('scope_unavailable')
+    return _fit_article_diff(result)
+
+
 _HANDLERS = {
-    'events': _events, 'summary': _summary,
+    'events': _events, 'summary': _summary, 'article_diff': _article_diff,
     'posts': _posts, 'replies': _replies, 'measured': _measured, 'collect': _collect,
     'mentions': _mentions, 'topics_search': _topics_search, 'profile': _profile,
     'location_search': _location_search, 'thread_read': _thread_read, 'where_to_appear': _where,

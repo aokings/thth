@@ -75,7 +75,9 @@ def test_1_採取を走らせる口座の判定はmediaがhatenablogのときだ
 # ---------------------------------------------------------------- 2: lint は状態を言う
 
 @pytest.mark.parametrize("state, needle", [
-    ("conflict", "はてなの側で手直しされたので止めています（conflict）。解く道は 4.0 S5"),
+    # 4.0 S5 §4.5: 解く道（thth conflict）を言う。
+    ("conflict", "delivery: の配信は conflict です（はてなの側で手直しされた・別の記法で出た・外で消えた）。"
+                 "thth conflict <口座> で解いてから（外で消えていたなら thth conflict <口座> <dl> resolve --gone）"),
     ("unknown", "送った結果が分かりません（unknown）"),
 ])
 def test_2_updateの配信が人待ちならlintは状態の符丁と文(plain, state, needle):

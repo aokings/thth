@@ -133,6 +133,8 @@ All subcommands `thth --help` lists, one line each:
 - `events` — what happened, in time order (posts, retractions, replies and mentions received, stopped accounts, pending publishes, budget refusals); read-only, versioned JSON (`thth.events/1`)
 - `summary` — the numbers per account (posts and reactions in 24h/7d, unanswered replies, followers and day-over-day change, whether it is stopped); read-only (`thth.summary/1`)
 - `deliveries` — the delivery ledger (Hatena Blog articles: state, sequence number, history) for an account or project; read-only (`thth.deliveries/1`)
+- `article` — `diff`: which published Hatena Blog articles you changed in the repo (HEAD) since they went out, with the body diff and, with `--draft`, the text of an update manuscript to save; read-only, writes no file (`thth.article_diff/1`)
+- `conflict` — Hatena Blog deliveries edited outside THTH: list them, `show` the current text against what was sent, `check` published ones against Hatena, and `resolve` (`--adopt`, `--gone`, `--no-follow`) with a two-stage confirmation
 - `bookmark` — `add`/`delete`: a two-stage approval to bookmark your own published Hatena Blog article (`--delivery`) or a page your lane references (`--url`), at most once per page across the principals of one owner; `reconcile` checks bookmarks whose result was unknown; `list` shows them
 - `after` — how the conversations you joined were received
 - `threads` — thread shape: branches, depth, participants, time to first reply

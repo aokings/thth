@@ -409,6 +409,46 @@ TOOLS = [
     },
 ]
 
+# 4.0 S5 §3.4・§5.3: 記事の修正の検出と、はてなの配信の衝突（外での手直し）を見る・解く。
+# `thth_inflight` は置かない（inflight の解きは人の目が要る・inflight_cli の docstring の線）。
+ARTICLE_DIFF_DESCRIPTION = (
+    "はてなブログの記事の正本（repo の HEAD）を直したのに、まだ更新していない配信を並べ、本文の差分・画像の変化・"
+    "告知の行を返す（thth article diff --json と同じ形・読むだけ・媒体は呼ばない）。draft: true で更新の原稿の文面"
+    "（draft_text）も返す。THTH はファイルを書かない——保存・commit・承認（thth approve）はレーンの LLM と人")
+CONFLICT_STATUS_DESCRIPTION = (
+    "はてなの配信の衝突（conflict・no_follow）の一覧。delivery を付けるとはてなの今の本文を GET 1 回で読み、"
+    "最後に送った本文との差分を返す（台帳は書かない）。check: true で published の配信を GET して台帳と比べ、"
+    "外で手直しされていれば conflict にする")
+CONFLICT_RESOLVE_DESCRIPTION = (
+    "はてなの配信の衝突を解く（2 段）。resolution は adopt（はてなの今の本文を取り込む・そのあと更新を承認し直すと"
+    "記事で上書きできる）・gone（外で消えていた）・no_follow（記事の修正に追従しない）。confirm が無ければ stage 1 と"
+    "digest を返して何もしない。同じ digest を confirm に付けると解く。媒体には書き込まない")
+CONFLICT_TOOL_NAMES = ("thth_article_diff", "thth_conflict_status", "thth_conflict_resolve")
+TOOLS += [
+    {"name": "thth_article_diff", "description": ARTICLE_DIFF_DESCRIPTION,
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string", "description": "はてなブログの account 名（か project 名）"},
+         "article": {"type": "string", "description": "記事の id で絞る（例 kopicha/2026-10-arabica）"},
+         "delivery": {"type": "string", "description": "配信 id で絞る（dl_…）"},
+         "draft": {"type": "boolean", "description": "true なら更新の原稿の文面も返す（ファイルは書かない）"}},
+         "required": ["account"], "additionalProperties": False}},
+    {"name": "thth_conflict_status", "description": CONFLICT_STATUS_DESCRIPTION,
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string", "description": "はてなブログの account 名"},
+         "delivery": {"type": "string", "description": "配信 id（dl_…）。付けるとその配信の今の本文との差分"},
+         "check": {"type": "boolean", "description": "true なら published の配信を GET して台帳と比べる"}},
+         "required": ["account"], "additionalProperties": False}},
+    {"name": "thth_conflict_resolve", "description": CONFLICT_RESOLVE_DESCRIPTION,
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string", "description": "はてなブログの account 名"},
+         "delivery": {"type": "string", "description": "配信 id（dl_…）"},
+         "resolution": {"type": "string", "enum": ["adopt", "gone", "no_follow"],
+                        "description": "adopt・gone・no_follow のどれか"},
+         "by": {"type": "string", "description": "誰が決めたか（記録に残す）"},
+         "confirm": {"type": "string", "description": "1 段目が返した digest"}},
+         "required": ["account", "delivery", "resolution", "by"], "additionalProperties": False}},
+]
+
 # 反応（設計 3.15.0 §2.3）。**手元の台帳の CLI（`thth repost|unrepost|like|unlike`）を
 # 呼ぶだけ**——判断（production の門・scope・ガード・冪等）は CLI が持つ。読むだけの
 # 道具の中で、この 2 本だけが SNS に書く（本文は作らず、取り消せる）。
@@ -804,6 +844,24 @@ SERVER_TOOLS += [
      "description":"口座の安全装置の数値・止まっているか（理由）・媒体の断りで止めた自動の投稿（publish_hold）・今日の公開数と削除数を読む（読むだけ）",
      "inputSchema":{"type":"object","properties":{"account":{"type":"string"}},
                     "required":["account"],"additionalProperties":False}},
+]
+# 4.0 S5: 記事の修正の検出（読む口 `article_diff`）と衝突（`conflict_status`・`conflict_resolve`・2 段）。
+# 解いた人は資格の actor（`by` は受けない）。
+SERVER_TOOLS += [
+    {"name": "thth_article_diff", "description": ARTICLE_DIFF_DESCRIPTION,
+     "inputSchema": {"type": "object", "properties": {"account": {"type": "string"}, "article": {"type": "string"},
+                                                      "delivery": {"type": "string"}, "draft": {"type": "boolean"}},
+                     "required": ["account"], "additionalProperties": False}},
+    {"name": "thth_conflict_status", "description": CONFLICT_STATUS_DESCRIPTION,
+     "inputSchema": {"type": "object", "properties": {"account": {"type": "string"}, "delivery": {"type": "string"},
+                                                      "check": {"type": "boolean"}},
+                     "required": ["account"], "additionalProperties": False}},
+    {"name": "thth_conflict_resolve", "description": CONFLICT_RESOLVE_DESCRIPTION,
+     "inputSchema": {"type": "object", "properties": {"account": {"type": "string"}, "delivery": {"type": "string"},
+                                                      "resolution": {"type": "string",
+                                                                     "enum": ["adopt", "gone", "no_follow"]},
+                                                      "confirm": {"type": "string"}},
+                     "required": ["account", "delivery", "resolution"], "additionalProperties": False}},
 ]
 # 読む口（設計 3.14.0 §3.2）。CLI の読む命令の写し（`--json` と同じ形を返す）。
 # `WRITE_OPERATIONS` ではないので `writes: false` の資格でも出る。
@@ -1257,6 +1315,10 @@ def server_call(name, arguments):
         elif operation == 'map_show':
             from thth.report_service import execute_map_show
             result=execute_map_show(context,request)
+        elif operation in ('conflict_status','conflict_resolve'):
+            # 4.0 S5 §5.3: 手元の `thth conflict` と同じ中身（遠くの道の `server_writes.conflict`）。
+            from thth.server_writes import conflict
+            result=conflict(context,request,'mcp')
         elif operation in ('morning', 'observe'):
             from thth.report_service import execute_morning
             request={**request,'operation':'morning'}
@@ -1574,6 +1636,31 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
+    elif name in CONFLICT_TOOL_NAMES:
+        # 4.0 S5: CLI（`thth article diff`・`thth conflict`）を `--json` で呼ぶだけ。
+        for key in ("account", "delivery"):
+            if isinstance(arguments.get(key), str) and arguments[key].startswith("-"):
+                return {"content": [{"type": "text", "text": "invalid_request"}, _channel_note()], "isError": True}
+        if name == "thth_article_diff":
+            args = ["article", "diff", arguments["account"], *_opt("--article", arguments.get("article")),
+                    *_opt("--delivery", arguments.get("delivery")), *_flag("--draft", arguments.get("draft"))]
+        elif name == "thth_conflict_status":
+            if arguments.get("check"):
+                args = ["conflict", arguments["account"], "check", *([arguments["delivery"]]
+                                                                      if arguments.get("delivery") else [])]
+            elif arguments.get("delivery"):
+                args = ["conflict", arguments["account"], arguments["delivery"], "show"]
+            else:
+                args = ["conflict", arguments["account"]]
+        else:
+            flag = {"adopt": "--adopt", "gone": "--gone", "no_follow": "--no-follow"}.get(arguments["resolution"])
+            if flag is None:
+                return {"content": [{"type": "text", "text": "resolution_required"}, _channel_note()], "isError": True}
+            args = ["conflict", arguments["account"], arguments["delivery"], "resolve", flag,
+                    "--by=" + arguments["by"], *_opt("--confirm", arguments.get("confirm"))]
+        args.append("--json")
+        proc = run_cli(args)
+        text = proc.stdout
     elif name == "thth_map_show":
         # **`where_to_appear` と同じ型**: CLI（`thth map show`）を `--json` で呼ぶだけ。
         args = ["map", "show", arguments["project"]]
@@ -1638,9 +1725,13 @@ def call_tool(name: str, arguments: dict | None) -> dict:
 
     if name in REACTION_TOOLS or name in X_READ_TOOLS or name == "thth_doctor":
         is_error = proc.returncode != 0
+    elif name == "thth_conflict_resolve":
+        # 1 段目（stage 1・digest）は exit 1 で返る。断りは JSON の ok: false。
+        is_error = proc.returncode not in (0, 1) or '"ok": false' in (proc.stdout or "")
     elif name.startswith("thth_topic_") or name in (
             "before_you_post", "after_you_posted", "analytics_report", "operations_handoff", "study_report", "thread_read", "where_to_appear",
-            "who_is_this", "thth_morning", "thth_observe", "thth_map_show", "thth_events", "thth_summary"):
+            "who_is_this", "thth_morning", "thth_observe", "thth_map_show", "thth_events", "thth_summary",
+            "thth_article_diff", "thth_conflict_status"):
         # **新しい道具は exit 1 も isError**（設計 §7）。lint の exit 1（検査結果）
         # とは意味が違う——こちらは stale_context・不正な候補比較で、
         # **そのまま使ってはいけない**応答。既存の扱いは変えない。

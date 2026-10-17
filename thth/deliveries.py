@@ -38,7 +38,11 @@ MUTABLE_FIELDS = ("article_source", "form", "queue_file", "entry_id", "edit_uri"
                   # 4.0 S4 §3.3: `bookmark` は外した（ブックマークの正本は口座の `sent/bm:` 1 つ）。
                   "article_rev_kind", "readback_sha", "images",
                   # 4.0 S2 §7: 承認したとき・出したときの HEAD の commit（指紋には入れない）。
-                  "wanted_commit", "checked_commit")
+                  "wanted_commit", "checked_commit",
+                  # 4.0 S5 §4.2: 最後に承認・公開した題とカテゴリ（何を出したかの記録・指紋の材料ではない）。
+                  "title", "categories",
+                  # 4.0 S5 §5.6（実装で決めたこと）: はてなが前に返した題とカテゴリ（外での手直しの比べ先）。
+                  "readback_title", "readback_categories")
 # history の行の固定の鍵（ほかの鍵は値があるときだけ足す）。
 _ROW_FIXED = ("seq", "state", "at")
 MAX_BYTES = 1048576
@@ -262,3 +266,29 @@ def advance(account: str, delivery: str, *, state: str, at: str, base: Loaded | 
     validate(record, account=account, delivery=delivery)
     _write(account, delivery, record, expected=current.raw, new=False)
     return record
+
+
+# ------------------------------------------------------------------ 読み方（4.0 S5）
+
+def state_before_inflight(record: dict) -> str:
+    """送る前の状態（4.0 S5 §5.4）: history を後ろから見て `inflight`・`unknown` でない最初の行の状態。
+
+    媒体が断った・人が「出ていない」と解いたときの戻し先。`conflict` の配信への削除が断られても
+    `published` に化けない。見つからなければ `wanted`（作った直後に送った・作りかけ）。
+    """
+    for row in reversed(record.get("history") or []):
+        state = row.get("state")
+        if state not in ("inflight", "unknown"):
+            return state
+    return "wanted"
+
+
+def conflict_of(record: dict) -> dict | None:
+    """`conflict` の配信の理由（最後の `conflict` の行の `reason`・`detail`・`at`・`via`）。それ以外は None。"""
+    if record.get("state") != "conflict":
+        return None
+    for row in reversed(record.get("history") or []):
+        if row.get("state") == "conflict":
+            return {"reason": row.get("reason"), "detail": row.get("detail"), "at": row.get("at"),
+                    "via": row.get("via")}
+    return None

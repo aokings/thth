@@ -343,6 +343,28 @@ def _signature_state(check) -> str:
     return "verified"
 
 
+def _deliveries_cells(name, account_cfg) -> dict:
+    """はてなの口座の配信の数（4.0 S5）: 正本を直した配信・衝突の配信。SNS の口座は空（鍵を足さない）。"""
+    from . import deliveries as deliveries_mod, hatena_entry
+    if not hatena_entry.is_hatena(account_cfg):
+        return {}
+    try:
+        records, broken = deliveries_mod.list_for(name)
+        behind, cannot = [], ["delivery_unreadable"] if broken else []
+        for record in records:
+            source = hatena_entry.source_status(record, account_cfg)
+            if source is not None and source.get("error") and "source_unreadable" not in cannot:
+                cannot.append("source_unreadable")
+            if source is not None and source.get("behind"):
+                behind.append({"delivery": record["delivery"], "article": record.get("article")})
+        return {"deliveries_behind_count": len(behind), "deliveries_behind": behind,
+                "deliveries_conflict_count": sum(1 for r in records if r["state"] == "conflict"),
+                "deliveries_cannot_say": cannot}
+    except Exception:  # noqa: BLE001 — 1 つの欄で板を落とさない
+        return {"deliveries_behind_count": None, "deliveries_behind": [], "deliveries_conflict_count": None,
+                "deliveries_cannot_say": ["deliveries_unreadable"]}
+
+
 def _publish_hold(name):
     from . import publish_hold
     row = publish_hold.held(name)
@@ -518,6 +540,9 @@ def board_summary(now=None) -> dict:
             "held_count": sum(1 for row in held if row["due"]),
             "held_upcoming_count": sum(1 for row in held if not row["due"]),
             "held_reason_code": select_mod.held_reason_code(held),
+            # 4.0 S5 §3.4・§5.5: 正本を直したのに更新していない配信と、衝突の配信の数（はてなの口座だけ・
+            # 読むだけ・媒体は呼ばない）。読めなければ `deliveries_cannot_say`。足すだけ。
+            **_deliveries_cells(name, account_cfg),
             # 承認の確定待ち（設計 3.7.0 §B3）。not_approved を 1 段目が済んだもの
             # （awaiting_confirm）と、まだのもの（not_requested）に分ける。
             "awaiting_confirm_count": approval["awaiting_confirm"],

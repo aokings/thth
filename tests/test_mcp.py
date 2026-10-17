@@ -116,7 +116,10 @@ def test_mcp_stdioでtools_listとtools_callが通る(isolated_account):
                           # X は月の予算の中・list の書き込みは出さない）。
                           "thth_trends", "thth_counts", "thth_community_search", "thth_doctor",
                           # 2026-10-15 に出来事の流れと数の要約を足した（4.0 の柱 1・読むだけ）。
-                          "thth_events", "thth_summary"}
+                          "thth_events", "thth_summary",
+                          # 2026-10-17 に記事の修正の検出と衝突の 3 本を足した（4.0 S5 §3.4・§5.3）。
+                          # thth_inflight は出さない（inflight の解きは人の目が要る）。
+                          "thth_article_diff", "thth_conflict_status", "thth_conflict_resolve"}
     # 承認・投稿・認可の副作用のあるものは出ていない。
     assert not (tool_names & {"thth_approve", "thth_throw", "thth_token",
                                "thth_auth", "thth_refresh", "thth_revoke",
