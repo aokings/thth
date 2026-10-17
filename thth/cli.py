@@ -3091,6 +3091,14 @@ def cmd_run(args) -> int:
                     print(f"（反応の採取は完全ではありません: exit={hatena_rc}。次の実行で埋めます）")
             except Exception as e:  # 採取の失敗で投稿の経路を壊さない
                 print(f"（反応の採取に失敗しました: {e.__class__.__name__}。次の実行で埋めます）", file=sys.stderr)
+            # 4.1（設計 S4 §20.7）: まとめて承認したブックマークを、上限の中で時刻を散らして付ける。
+            # 待ちが無ければロックも取らない。失敗で投稿の rc を悪くしない（採取と同じ規律）。
+            from . import bookmark_batch
+            try:
+                bookmark_batch.run_due(args.account, account_cfg, log=print, wait=core.RUN_LOCK_WAIT_SECONDS)
+            except Exception as e:
+                print(f"（ブックマークのまとめを付けられませんでした: {e.__class__.__name__}。次の実行で続けます）",
+                      file=sys.stderr)
         if collect_applies(account_cfg):
             try:
                 collect_rc = collect_mod.run_collect(

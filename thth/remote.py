@@ -770,6 +770,45 @@ def _bookmark_delete(args, account):
     return _bookmark_add(args, account, op="delete")
 
 
+def _bookmark_batch(args, account):
+    """`thth bookmark batch <口座> <ファイル>`（遠くの道・`bookmark_batch_request`・設計 S4 §20）。
+
+    ファイルの中身をそのまま `text` で送る（形の検査と 1 段目の材料はサーバが手元と同じ関数で作る）。
+    """
+    from . import bookmark_batch
+    try:
+        text = bookmark_batch.read_source(args.file)
+    except bookmark_batch.BatchError as exc:
+        raise RemoteError(exc.code, rc=2) from None
+    value = call("bookmark_batch_request", account, text=text, confirm=args.confirm)
+    if value.get("stage") == 1:
+        from . import refusals
+        refusals.mark_first_stage()
+        if getattr(args, "json", False):
+            _print_json(value)
+            return 1
+        print("ブックマークしません（まとめて承認の一段目です）")
+        for line in bookmark_batch.lines(value.get("preview") or {}):
+            print(line)
+        print(f"並べるなら: thth bookmark batch {account} {args.file} --confirm {value.get('digest')} --production")
+        return 1
+    return _shown(args, value, lambda v: _say(
+        f"{account}: {v.get('queued')} 件を順番待ちに置きました（{v.get('batch')}・除いた {v.get('excluded')} 件）。"
+        f"状態: thth bookmark batch-status {account}"))
+
+
+def _bookmark_batch_status(args, account):
+    from . import bookmark_batch
+    value = call("bookmark_batch_status", account, batch=getattr(args, "batch", None))
+    return _shown(args, value, lambda v: _say("\n".join(bookmark_batch.status_lines(v))))
+
+
+def _bookmark_batch_cancel(args, account):
+    value = call("bookmark_batch_cancel", account, batch=args.batch, item=getattr(args, "item", None))
+    return _shown(args, value, lambda v: _say(
+        f"{account}: {v.get('batch')} の待ちの札を {v.get('cancelled')} 件取り消しました"))
+
+
 PAST_GRACE_MINUTES = 5
 
 
@@ -1072,6 +1111,8 @@ COMMANDS.update({
     "inflight": _inflight,
     "send": _send, "schedule": _schedule, "retract": _retract, "bookmark add": _bookmark_add,
     "bookmark delete": _bookmark_delete,
+    "bookmark batch": _bookmark_batch, "bookmark batch-status": _bookmark_batch_status,
+    "bookmark batch-cancel": _bookmark_batch_cancel,
     "posts": _posts, "replies": _replies, "measured": _measured, "collect": _collect,
     "mentions": _mentions, "topics search": _topics_search, "profile": _profile,
     "location search": _location, "account status": _account_status, "account set": _account_set,

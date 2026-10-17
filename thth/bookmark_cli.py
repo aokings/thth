@@ -5,6 +5,10 @@
     thth bookmark delete <口座> (--delivery <id> | --url <URL>) [--reason …] [--confirm <digest> --by <名前> --production]
     thth bookmark reconcile <口座> [--url <URL>] [--by <名前>]      （CLI だけ・結果不明の行を GET で確かめる）
     thth bookmark list <口座> [--json]                             （読むだけ・`sent/bm:` の一覧）
+    thth bookmark batch <口座> <ファイル|-> [--confirm <digest> --by <名前> --production] [--json]
+                                                                 （まとめて承認・設計 S4 §20・4.1）
+    thth bookmark batch-status <口座> [--batch <id>] [--json]       （読むだけ・順番待ちの札と理由）
+    thth bookmark batch-cancel <口座> <id> [--item <番号>] --by <名前> （待ちの札を取り消す・1 段）
 
 自分のはてなブログの記事（配信の台帳に `published_url` がある配信）か、レーンが参照している他人の
 ページに、主体のはてな ID でブックマークを付ける 2 段の承認。1 段目（`--confirm` 無し）は URL・対象・
@@ -62,6 +66,27 @@ def register(sub) -> None:
     lst.add_argument("account")
     lst.add_argument("--json", action="store_true")
     lst.set_defaults(func=cmd_list)
+    batch = verbs.add_parser("batch", help="1 日分の札（JSON Lines）をまとめて承認する（1 段目は一覧と digest だけ）")
+    batch.add_argument("account")
+    batch.add_argument("file", help='札のファイル（1 行に {"url"|"delivery", "comment", "tags"}・- なら標準入力）')
+    _stage_args(batch)
+    batch.set_defaults(func=cmd_batch)
+    bstatus = verbs.add_parser("batch-status", help="まとめて承認した札の状態（読むだけ）")
+    bstatus.add_argument("account")
+    bstatus.add_argument("--batch", default=None, help="このまとめだけ（bb_…）")
+    bstatus.add_argument("--remote", action="store_true",
+                         help="台帳が手元にあっても thth.me の鍵で動かす（遠くの道・thth login のあと）")
+    bstatus.add_argument("--json", action="store_true")
+    bstatus.set_defaults(func=cmd_batch_status)
+    bcancel = verbs.add_parser("batch-cancel", help="まとめて承認した札のうち待ちのものを取り消す")
+    bcancel.add_argument("account")
+    bcancel.add_argument("batch", help="まとめの id（bb_…・batch-status で見る）")
+    bcancel.add_argument("--item", type=int, default=None, help="この番号の札だけ")
+    bcancel.add_argument("--by", default=None, help="誰が取り消したか（必須）")
+    bcancel.add_argument("--remote", action="store_true",
+                         help="台帳が手元にあっても thth.me の鍵で動かす（遠くの道・thth login のあと）")
+    bcancel.add_argument("--json", action="store_true")
+    bcancel.set_defaults(func=cmd_batch_cancel)
 
 
 def _out(args, payload, rc, text_lines=None, *, err=False) -> int:
@@ -200,3 +225,107 @@ def cmd_list(args) -> int:
         gone = f"  削除 {row['retracted_at']}" if row.get("retracted_at") else ""
         lines.append(f"  {row['sent_at']}  {row['target'] or '?'}  {row['result'] or '?'}  {row['url']}{gone}")
     return _out(args, {"account": args.account, "n": len(rows), "bookmarks": rows}, 0, lines)
+
+
+# --------------------------------------------------------------------------
+# まとめて承認（設計 S4 §20・4.1）
+# --------------------------------------------------------------------------
+
+_BATCH_MESSAGES = {
+    "batch_empty": "付けられる札が 1 件もありません（除いた理由は 1 段目の一覧に）",
+    "batch_too_large": "札が多すぎます（1 ファイル 100 件・256 KB まで）。分けてください",
+    "batch_exists": "同じ札の並びはもう承認しています（thth bookmark batch-status <口座>）",
+    "batch_not_found": "そのまとめ（か札の番号）がありません（thth bookmark batch-status <口座>）",
+    "batch_unreadable": "まとめのファイルが読めません",
+    "batch_text_invalid": "札のファイルを読めません（1 行に 1 件の JSON か、JSON の配列）",
+    "batch_not_cancellable": "その札は待ちではありません（付けた・断った・取り消した札は取り消せません）",
+    "schedule_unavailable": "timer に載っていない口座（scheduled: false）では、並べても付きません",
+    "unsupported_operation": "はてなの口座でだけ使えます",
+}
+
+
+def _batch_refuse(args, exc) -> int:
+    return _refuse(args, exc.code, _BATCH_MESSAGES.get(exc.code, "まとめて承認できませんでした"))
+
+
+def cmd_batch(args) -> int:
+    from . import bookmark_batch, core, guard, lock as lock_mod, refusals
+    try:
+        accounts_mod.validate_name(args.account)
+        cfg = accounts_mod.load_account(args.account)
+    except accounts_mod.AccountError as exc:
+        return _refuse(args, "account_unreadable", str(exc))
+    try:
+        text = bookmark_batch.read_source(args.file)
+        p = bookmark_batch.prepare(args.account, cfg, text)
+    except bookmark_batch.BatchError as exc:
+        return _batch_refuse(args, exc)
+    if not args.confirm:
+        refusals.mark_first_stage()  # 1 段目は断りではない（rc 1 は従前の二段確認と同じ）
+        return _out(args, {"ok": False, "stage": 1, "digest": p["digest"], "preview": p}, 1,
+                    ["ブックマークしません（まとめて承認の一段目です）"] + bookmark_batch.lines(p)
+                    + [f"並べるなら: thth bookmark batch {args.account} {args.file} --confirm {p['digest']}"
+                       " --by <名前> --production"])
+    if args.confirm != p["digest"]:
+        return _refuse(args, "confirm_mismatch", f"digest が一致しません（いまの digest は {p['digest']}）", rc=1)
+    by = (args.by or os.environ.get("THTH_ACTOR") or "").strip()
+    if not by:
+        return _refuse(args, "by_required", "--by <名前> を付けてください（誰が承認したかを記録します）", rc=1)
+    if not (cfg.get("production") is True and args.production):
+        return _refuse(args, "production_disabled",
+                       "台帳が production: true で --production を付けたときだけ並べます（何もしていません）", rc=1)
+    try:
+        with core._account_locks(args.account, cfg, accounts_mod.state_dir_for(args.account), wait=0):
+            locked = accounts_mod.load_account(args.account)
+            again = bookmark_batch.prepare(args.account, locked, text)
+            if again["digest"] != args.confirm:
+                return _refuse(args, "confirm_mismatch", "表示したあとに札か台帳が変わりました。もう一度 1 段目から",
+                               rc=1)
+            done = bookmark_batch.approve_locked(args.account, locked, again, actor=by, via="cli")
+    except lock_mod.LockBusy:
+        return _refuse(args, "account_busy", "いま別の実行がロックを持っています", rc=1)
+    except guard.GuardRefused as exc:
+        return _refuse(args, str(exc), core.guard_refusal_message(args.account, exc), rc=1)
+    except bookmark_batch.BatchError as exc:
+        return _batch_refuse(args, exc)
+    start, end = bookmark_batch.ACTIVE_HOURS
+    return _out(args, {"ok": True, **done}, 0,
+                [f"{args.account}: {done['queued']} 件を順番待ちに置きました（{done['batch']}・除いた {done['excluded']} 件）",
+                 f"  timer が {start}〜{end} 時に間を散らして付けます（期限 {bookmark_batch._hm(done['expires_at'])}）",
+                 f"  状態: thth bookmark batch-status {args.account}"])
+
+
+def cmd_batch_status(args) -> int:
+    from . import bookmark_batch
+    try:
+        accounts_mod.validate_name(args.account)
+        accounts_mod.load_account(args.account)
+    except accounts_mod.AccountError as exc:
+        return _refuse(args, "account_unreadable", str(exc))
+    try:
+        s = bookmark_batch.status(args.account, batch=args.batch)
+    except bookmark_batch.BatchError as exc:
+        return _batch_refuse(args, exc)
+    return _out(args, s, 0, bookmark_batch.status_lines(s))
+
+
+def cmd_batch_cancel(args) -> int:
+    from . import bookmark_batch, core, lock as lock_mod
+    try:
+        accounts_mod.validate_name(args.account)
+        cfg = accounts_mod.load_account(args.account)
+    except accounts_mod.AccountError as exc:
+        return _refuse(args, "account_unreadable", str(exc))
+    by = (args.by or os.environ.get("THTH_ACTOR") or "").strip()
+    if not by:
+        return _refuse(args, "by_required", "--by <名前> を付けてください（誰が取り消したかを記録します）", rc=1)
+    try:
+        with core._account_locks(args.account, cfg, accounts_mod.state_dir_for(args.account), wait=0):
+            done = bookmark_batch.cancel_locked(args.account, args.batch, by=by, item=args.item)
+    except lock_mod.LockBusy:
+        return _refuse(args, "account_busy", "いま別の実行がロックを持っています", rc=1)
+    except bookmark_batch.BatchError as exc:
+        return _batch_refuse(args, exc)
+    return _out(args, {"ok": True, **done}, 0,
+                [f"{args.account}: {done['batch']} の待ちの札を {done['cancelled']} 件取り消しました"
+                 "（付けたものは消していません。消すなら thth bookmark delete）"])
