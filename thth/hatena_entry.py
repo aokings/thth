@@ -43,7 +43,10 @@ LINT_CODES = ("article_required", "article_source_missing", "invalid_article_sou
               # （images_unsupported_until_s3）は S3 で外した。
               "relative_link_unresolvable", "article_not_committed",
               # 4.0 S3 §9: 画像の形式・容量・枚数（THTH の側の上限）。
-              "image_too_large", "image_type_unsupported", "too_many_images", "images_too_large")
+              "image_too_large", "image_type_unsupported", "too_many_images", "images_too_large",
+              # 実機の確かめ 10/17 の 2: `delivery:` の配信の台帳が合わない状態のとき、状態をそのまま言う
+              # （`_ledger_for` の `delivery_state_<状態>`。`delivery_unknown`＝台帳に無い、に丸めない）。
+              *("delivery_state_" + s for s in deliveries_mod.STATES))
 # S2・S3 の断り（lint・承認の 1 段目・timer の 3 か所で同じ符丁）。timer の照合でも `approval_stale` に
 # 丸めずにこの符丁のまま返す（人が直す先が違う）。
 S3_IMAGE_REFUSALS = ("image_too_large", "image_type_unsupported", "too_many_images", "images_too_large")
@@ -66,6 +69,16 @@ _MESSAGES = {
     "images_too_large": "本文の画像の合計が上限（既定 64 MiB・fotolife.max_total_bytes）を超えています",
     "relative_link_unresolvable": ("記事に相対リンクがありますが、口座の台帳に link_base（相対リンクの基準の"
                                    " URL・https）がありません。link_base を書くか、リンクを絶対 URL に"),
+    "delivery_state_wanted": "delivery: の配信はまだ出していません（wanted）。update・delete は出したあとの配信だけです",
+    "delivery_state_inflight": ("delivery: の配信は送っている途中か、送った結果を確かめていません（inflight）。"
+                                "thth deliveries で確かめてから"),
+    "delivery_state_unknown": ("delivery: の配信は送った結果が分かりません（unknown）。"
+                               "はてなの画面と thth deliveries で確かめてから"),
+    "delivery_state_published": ("delivery: の配信はもう出ています（published）。create で書けるのは"
+                                 "取り消した予約の配信だけです。直すなら op: update"),
+    "delivery_state_conflict": "はてなの側で手直しされたので止めています（conflict）。解く道は 4.0 S5",
+    "delivery_state_no_follow": "delivery: の配信は THTH が追従しないことにしたものです（no_follow）",
+    "delivery_state_deleted": "もう削除した配信です（deleted）",
     "article_not_committed": ("記事ファイルが commit されていません（作業ツリーの記事が HEAD と違う・"
                               "まだ追跡されていない）。記事を commit してから"),
 }
@@ -203,8 +216,8 @@ def lint_errors(fm, account_cfg) -> list:
     if delivery:
         try:
             _ledger_for(fm.get("account"), op, delivery)
-        except EntryError:
-            out.append(message("delivery_unknown"))
+        except EntryError as exc:
+            out.append(message(exc.code if exc.code in LINT_CODES else "delivery_unknown"))
     return out
 
 

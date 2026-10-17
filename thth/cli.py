@@ -2899,6 +2899,13 @@ def cmd_throw(args) -> int:
     return result.exit_code
 
 
+def collect_applies(account_cfg) -> bool:
+    """`thth run` の最後に採取（collect）を走らせる口座か。はてなの口座（media hatenablog）は採取の
+    口（adapter の数の読み取り）が無いので走らせない（実機の確かめ 10/17 の 1）。"""
+    from . import principals
+    return not principals.uses_principal(account_cfg)
+
+
 def cmd_run(args) -> int:
     """timer が呼ぶ形（throw ＋ T3 の collect。T1 は throw だけ）。
 
@@ -3015,14 +3022,17 @@ def cmd_run(args) -> int:
         # **投稿のあとに必ず採る**（masaru 裁定 2026-09-10）。数は「読んだ時点の累計」
         # しか返らないので、逃した経過時間は永久に復元できない。採取の失敗で timer の
         # 終了コードを悪くしない（次の実行で埋まる）が、黙らせもしない。
-        try:
-            collect_rc = collect_mod.run_collect(
-                args.account, log=print, trigger=collect_mod.TRIGGER_RUN,
-                wait=core.RUN_LOCK_WAIT_SECONDS)
-            if collect_rc:
-                print(f"（採取は完全ではありません: exit={collect_rc}。次の実行で埋めます）")
-        except Exception as e:  # 採取の失敗で投稿の経路を壊さない
-            print(f"（採取に失敗しました: {e}。次の実行で埋めます）", file=sys.stderr)
+        # はてなの口座（media hatenablog）は採取の口が無いので黙って飛ばす（失敗として残さない・
+        # 実機の確かめ 10/17 の 1。毎回「media='hatenablog' を知りません」と出ていた）。
+        if collect_applies(account_cfg):
+            try:
+                collect_rc = collect_mod.run_collect(
+                    args.account, log=print, trigger=collect_mod.TRIGGER_RUN,
+                    wait=core.RUN_LOCK_WAIT_SECONDS)
+                if collect_rc:
+                    print(f"（採取は完全ではありません: exit={collect_rc}。次の実行で埋めます）")
+            except Exception as e:  # 採取の失敗で投稿の経路を壊さない
+                print(f"（採取に失敗しました: {e}。次の実行で埋めます）", file=sys.stderr)
         try:
             blocked = healthcheck_mod.has_blocking_state(args.account, state_dir)
         except Exception:

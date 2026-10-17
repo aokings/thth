@@ -1196,13 +1196,22 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                         file=chosen.path, post_id=post_id)
 
 
+# 安全装置の断りの言い出し（`guard_refusal_message` の `kind` ごと）。はてなの記事は SNS の
+# 「取り下げ」「送信」でなく、記事の操作の語で言う。
+GUARD_REFUSAL_HEADS = {"publish": "送信しません", "retract": "取り下げません",
+                       "entry_create": "公開しません", "entry_update": "更新しません",
+                       "entry_delete": "削除しません"}
+
+
 def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") -> str:
     """安全装置の断り（`guard.GuardRefused`）を人向けの 1 行に。数は `thth account set` で変えられる。
 
-    `kind` は `publish`（`thth send`）か `retract`（`thth retract`・10/15）。言い出しと「次に…できる」の語だけ変わる。
+    `kind` は `publish`（`thth send`）か `retract`（`thth retract`・10/15）、はてなの記事の操作の
+    `entry_create`・`entry_update`・`entry_delete`（実機の確かめ 10/17 の 5）。言い出しと
+    「次に…できる」の語だけ変わる。
     """
     code = str(refused)
-    can = "消せる" if kind == "retract" else "出せる"
+    can = "消せる" if kind in ("retract", "entry_delete") else "出せる"
     when = f"（次に{can}のは {refused.next_at}）" if getattr(refused, "next_at", None) else ""
     if code == "retract_limit":
         why = f"今日の削除が上限（daily_max_retracts）に達しました{when}"
@@ -1243,7 +1252,7 @@ def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") 
         why = "同じ owner の別のブックマークが打っている最中です。少し置いてもう一度"
     else:
         why = code
-    head = "取り下げません" if kind == "retract" else "送信しません"
+    head = GUARD_REFUSAL_HEADS.get(kind, "送信しません")
     return (f"{head}（安全装置）: {why}。数は thth account set {account_name} <名前> <値> --by <名前>"
             " で変えられます")
 

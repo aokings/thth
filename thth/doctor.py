@@ -220,9 +220,13 @@ def _diagnose_hatenablog(account_name: str, account_cfg: dict) -> dict:
     else:
         detail = f"読めません（{result['status'] or '応答なし'}・{result['error']}）"
     ok = bool(result["ok"]) and result["syntax"] in (None, hatena_publish.MARKDOWN_TYPE)
+    status = result["status"]
     probe = {"key": "atom_entries", "label": f"AtomPub の記事の一覧（{account_cfg.get('blog_id')}）",
              "permission": "read_private", "ok": ok, "detail": detail,
-             "status": result["status"], "entries": result["entries"], "syntax": result["syntax"]}
+             # HTTP の数は `http_status`（観測の記録の欄の形・int）に置く。`status` は文字列の欄なので、
+             # ここに int を置くと doctor の観測が記録できなかった（実機の確かめ 10/17 の 6）。
+             "http_status": status if type(status) is int and 100 <= status <= 599 else None,
+             "entries": result["entries"], "syntax": result["syntax"]}
     return {"account": account_name, "handle": account_cfg.get("handle"),
             "username": principal_cfg["hatena_id"], "user_id": "",
             "scopes_recorded": recorded_scopes(accounts_mod.load_token(account_cfg)),

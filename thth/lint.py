@@ -81,7 +81,11 @@ _REASON_TABLE = (
         "image_too_large", "image_type_unsupported", "too_many_images", "images_too_large",
         # 4.0 S4 §9.2（SNS の告知を記事に結ぶ）。
         "invalid_announces", "announces_not_found", "announces_other_lane", "announces_not_allowed",
-        "article_mismatch", "article_url_placeholder_twice", "article_url_without_announces")),
+        "article_mismatch", "article_url_placeholder_twice", "article_url_without_announces",
+        # 実機の確かめ 10/17 の 2: 配信の台帳の状態をそのまま言う（delivery_unknown に丸めない）。
+        "delivery_state_wanted", "delivery_state_inflight", "delivery_state_unknown",
+        "delivery_state_published", "delivery_state_conflict", "delivery_state_no_follow",
+        "delivery_state_deleted")),
 )
 
 REASONS = frozenset([code for _, code in _REASON_TABLE] + [FALLBACK_REASON])

@@ -272,7 +272,7 @@ def throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, now
         guard.check(account_name, account_cfg, kind, now=now)
     except guard.GuardRefused as exc:
         code = str(exc)
-        log(core.guard_refusal_message(account_name, exc, kind="retract" if op == "delete" else "publish"))
+        log(core.guard_refusal_message(account_name, exc, kind=kind))
         run("post", "error", code)
         return _result(core, exit_code=0 if code in WAITING_REFUSALS else 2, mode=mode,
                        action="guard_refused", message=code, file=path, error=code)
