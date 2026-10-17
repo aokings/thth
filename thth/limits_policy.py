@@ -1,8 +1,8 @@
 """柵の行の表（設計 `docs/設計_上限と連投の柵_2026-10-17.md` §6・段 1〜2）。
 
 **段 1 は今の数と振る舞いをそのまま写す**（4.0.1 の時点: ブックマークの専用の窓・記事の burst・SNS の
-返信の順番待ち・はてなの同じ配信は 1 件、など）。行の数は今までどおり口座の台帳（`accounts.guard_limits`）・
-主体の台帳（`principals.limits`）・ブログの欄から引く。この表が持つのは「どの動作に・どの順で・どの信号で・
+返信の順番待ち・はてなの同じ配信は 1 件、など）。行の数は口座・主体の台帳（段 3 から `limits` の行の id と、
+今の鍵＝別名・`thth/limits_config.py`）・ブログの欄から引き、明示が無ければ媒体の台帳の既定か表の `default`。この表が持つのは「どの動作に・どの順で・どの信号で・
 どの単位と窓で・超えたらどう振る舞うか・断りの符丁」で、`thth/guard.py` はこの表を順に当てるだけになる。
 
 行の形（§6.2）:
@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import copy
 
-from . import accounts
 from . import media_traits as _mt
 
 SNS_MEDIA = ("threads", "x", "bluesky", "mastodon")
@@ -64,7 +63,7 @@ RULE_IDS = _mt.RULE_IDS
 PARAM_KINDS = ("account", "principal", "blog", "config", "fixed", "ledger", "fotolife")
 RULE_FIELDS = ("id", "family", "media", "phase", "purpose", "signal", "actions", "applies_to", "scope",
                "window", "key", "param", "on_exceed", "refusal", "detail", "trait", "source", "tighter",
-               "ledger")
+               "ledger", "default")
 # 全媒体の共通の行（`write.floor`）の `media`。
 ANY_MEDIA = "*"
 
@@ -78,12 +77,13 @@ _FLOOR_APPLIES = tuple(a for a in _WRITES if a != "reply")
 
 
 def _row(id, family, *, signal, actions, applies_to, scope, window, param, on_exceed, refusal,
-         phase="assess", purpose="preference", key="op", detail=None, media=None, source="", tighter="lower"):
+         phase="assess", purpose="preference", key="op", detail=None, media=None, source="", tighter="lower",
+         default=None):
     return {"id": id, "family": tuple(family), "media": tuple(media or ()), "phase": phase, "purpose": purpose,
             "signal": signal, "actions": tuple(actions), "applies_to": applies_to if applies_to == "*" else tuple(applies_to),
             "scope": scope, "window": window, "key": key, "param": param, "on_exceed": on_exceed,
             "refusal": refusal, "detail": detail, "trait": "thth:" + id, "source": source, "tighter": tighter,
-            "ledger": {}}
+            "ledger": {}, "default": copy.deepcopy(default)}
 
 
 _SNS = ("sns",)
@@ -111,11 +111,13 @@ THTH_DEFAULTS = (
     _row("reply.burst", _SNS, media=SNS_MEDIA, signal="frequency", actions=("post", "reply", "retract"),
          applies_to=("reply",), scope="account", window={"minutes": None}, param=("account", "burst"),
          on_exceed="wait", refusal="burst_limit", detail="burst",
-         source="THTH の線（会話は並べる・3.25.0）"),
+         source="THTH の線（会話は並べる・3.25.0）",
+         default={"count": 3, "minutes": 10}),
     _row("post.burst", _SNS, media=SNS_MEDIA, signal="frequency", actions=("post", "reply", "retract"),
          applies_to=("post", "retract"), scope="account", window={"minutes": None}, param=("account", "burst"),
          on_exceed="stop", refusal="account_stopped", detail="burst", phase="safety", purpose="safety",
-         source="THTH の線（目的 b・3.12.0）"),
+         source="THTH の線（目的 b・3.12.0）",
+         default={"count": 3, "minutes": 10}),
     # ---------------------------------------------------------------- はてな（ブログとブックマーク）
     _row("entry.platform_refusal", _HATENA, media=("hatenablog", "hatenabookmark"),
          signal="recent_platform_refusal", actions=(), applies_to="*", scope="account", window="forever",
@@ -137,7 +139,8 @@ THTH_DEFAULTS = (
     _row("entry.principal_daily", _BLOG, media=("hatenablog",), signal="frequency", actions=_ENTRY_WRITE,
          applies_to=_ENTRY_WRITE + ("schedule",), scope="principal", window="day",
          param=("principal", "daily_max_posts"), on_exceed="refuse", refusal="principal_daily_limit",
-         source="THTH の線（目的 c・S1）"),
+         source="THTH の線（目的 c・S1）",
+         default=6),
     _row("entry_delete.daily", _BLOG, media=("hatenablog",), signal="frequency", actions=("entry_delete",),
          applies_to=("entry_delete",), scope="account", window="day", param=("account", "daily_max_retracts"),
          on_exceed="refuse", refusal="retract_limit", source="THTH の線（目的 c・S1・雛形 2）"),
@@ -147,7 +150,8 @@ THTH_DEFAULTS = (
     _row("entry_delete.principal_daily", _BLOG, media=("hatenablog",), signal="frequency",
          actions=("entry_delete",), applies_to=("entry_delete",), scope="principal", window="day",
          param=("principal", "daily_max_retracts"), on_exceed="refuse", refusal="principal_retract_limit",
-         source="THTH の線（目的 c・S1）"),
+         source="THTH の線（目的 c・S1）",
+         default=3),
     _row("bookmark.daily", _BM, media=("hatenabookmark",), signal="frequency", actions=_BOOKMARK,
          applies_to=_BOOKMARK, scope="principal", window="day", param=("principal", "daily_max_bookmarks"),
          on_exceed="refuse", refusal="bookmark_limit", source="THTH の線（目的 c・S1・4.0.1 で 30）"),
@@ -166,11 +170,13 @@ THTH_DEFAULTS = (
     _row("entry.burst", _BLOG, media=("hatenablog",), signal="frequency", actions=_ENTRY_ALL,
          applies_to=_ENTRY_ALL, scope="account", window={"minutes": None}, key="target",
          param=("account", "burst"), on_exceed="stop", refusal="account_stopped", detail="burst",
-         phase="safety", purpose="safety", source="THTH の線（目的 b・S5 §6 同じ配信は 1 件）"),
+         phase="safety", purpose="safety", source="THTH の線（目的 b・S5 §6 同じ配信は 1 件）",
+         default={"count": 3, "minutes": 10}),
     _row("entry.principal_burst", _BLOG, media=("hatenablog",), signal="frequency", actions=_ENTRY_ALL,
          applies_to=_ENTRY_ALL, scope="principal", window={"minutes": None}, key="target",
          param=("principal", "burst"), on_exceed="stop", refusal="principal_stopped", detail="burst",
-         phase="safety", purpose="safety", source="THTH の線（目的 b・S1・4.0.1 で記事だけ）"),
+         phase="safety", purpose="safety", source="THTH の線（目的 b・S1・4.0.1 で記事だけ）",
+         default={"count": 3, "minutes": 30}),
     _row("bookmark.once", _BM, media=("hatenabookmark",), signal="same_target", actions=("bookmark_add",),
          applies_to=("bookmark_add",), scope="owner", window="forever", key="url", param=("fixed", 1),
          on_exceed="refuse", refusal="bookmark_once", purpose="platform",
@@ -181,14 +187,16 @@ THTH_DEFAULTS = (
          on_exceed="refuse", refusal="quiet_hours", source="THTH の線（目的 c・再投稿だけ・3.15.0）", tighter=None),
     _row("reaction.daily", ("reaction",), signal="frequency", actions=("reaction",), applies_to="*",
          scope="account", window="day", param=("account", "daily_max_reactions"), on_exceed="refuse",
-         refusal="reaction_limit", source="THTH の線（目的 b＋c・3.15.0）"),
+         refusal="reaction_limit", source="THTH の線（目的 b＋c・3.15.0）",
+         default=50),
     # ---------------------------------------------------------------- 共通の最低線（段 2・§6.3）
     # 表に行の無い媒体・動作も受ける（`media: *`）。各道の**最後**に当てる（first-hit なので、記事・ブックマーク・
     # SNS の行が先に当たればここには届かない）。反応は数えない（3.15.0 の「反応は公開の枠に数えない」のまま）。
     _row("write.floor", ("sns", "hatenablog", "hatenabookmark"), media=(ANY_MEDIA,), signal="frequency",
-         actions=_WRITES, applies_to=_FLOOR_APPLIES, scope="account", window={"minutes": 10}, param=("fixed", 20),
+         actions=_WRITES, applies_to=_FLOOR_APPLIES, scope="account", window={"minutes": 10}, param=("account", None),
          on_exceed="stop", refusal="account_stopped", detail="burst", phase="safety", purpose="safety",
-         source="THTH の線（目的 b・段 2・行を書き忘れた媒体・動作の暴走を止める）"),
+         source="THTH の線（目的 b・段 2・行を書き忘れた媒体・動作の暴走を止める）",
+         default={"count": 20, "minutes": 10}),
 )
 
 # ---------------------------------------------------------------------------
@@ -285,7 +293,8 @@ def _born(rule_id, item) -> dict:
             "scope": item["scope"], "window": _ledger_window(item["window"]), "key": item["key"],
             "param": spec["param"], "on_exceed": item["on_exceed"],
             "refusal": item.get("refusal") or spec.get("refusal"), "detail": item.get("detail"),
-            "trait": item["trait"], "source": spec["source"], "tighter": item.get("tighter"), "ledger": {}}
+            "trait": item["trait"], "source": spec["source"], "tighter": item.get("tighter"), "ledger": {},
+            "default": None}
 
 
 def _ledger_rows() -> list:
@@ -369,11 +378,6 @@ def ids(policy=None) -> tuple:
     return tuple(row["id"] for row in policy or globals()["policy"]())
 
 
-def _explicit(cfg, key, valid) -> bool:
-    value = (cfg or {}).get(key)
-    return value is not None and valid(key, value)
-
-
 def _media_of(row, media):
     """この依頼の媒体での台帳の結び（無ければ None）。SNS は口座の媒体・はてなは行の媒体。"""
     ledger = row.get("ledger") or {}
@@ -384,44 +388,69 @@ def _media_of(row, media):
     return None
 
 
+def _uniform_ledger(row):
+    """媒体の台帳の既定の数が媒体をまたいで同じなら、その結び（媒体を言わない口座の既定・段 3）。"""
+    infos = [info for info in (row.get("ledger") or {}).values() if info.get("count") is not None]
+    if infos and all((i["count"], i["window"]) == (infos[0]["count"], infos[0]["window"]) for i in infos):
+        return infos[0]
+    return None
+
+
+def _value_parts(value, window):
+    """台帳の値（数か `{"count","minutes"}`）を (数, 窓) に。"""
+    if isinstance(value, dict):
+        return value["count"], {"minutes": value["minutes"]}
+    return value, window
+
+
+def default_value(rule_id, *, media=None, policy=None):
+    """行の既定の値（数か `{"count","minutes"}`）: 媒体の台帳の既定 → 表の `default`（段 3・`GUARD_DEFAULTS`
+    などはここから引く）。どちらにも無ければ None。"""
+    row = rule(rule_id, policy)
+    info = _media_of(row, media) if media is not None else None
+    if info is None or info.get("count") is None:
+        info = _uniform_ledger(row)
+    if info is not None and info.get("count") is not None:
+        window = info.get("window")
+        if isinstance(window, dict) and "minutes" in window:
+            return {"count": info["count"], "minutes": window["minutes"]}
+        return info["count"]
+    return copy.deepcopy(row.get("default"))
+
+
 def resolve(row, *, cfg, principal_cfg=None, blog=None, media=None) -> dict:
-    """行に口座・主体・ブログの台帳の数を当てた写し（`count`・`window`・`origin`・根拠）。
+    """行に口座・主体・ブログの台帳の数を当てた写し（`count`・`window`・`origin`・`via`・根拠）。
 
     `count` が None の行は「数えない」（ブログの欄が無い・夜間や最短間隔が台帳に無い）。
-    口座・主体の台帳に明示の値が無い（`origin: default`）ときの数は、媒体の台帳の既定（段 2）。
+    数の出所（段 3・§8）: 口座・主体の台帳の `limits`（行の id）→ 今の鍵（別名・`limits_config`）→ 媒体の台帳の
+    既定 → 表の `default`。`origin` は `account`／`principal`（明示）か `default`、`via` は `limits`／
+    `alias:<鍵>`／None。最低線（`write.floor`）を持ち主が上げていれば `floor_raised` と `floor_reason`。
     根拠（`trait`・`confidence`・`count_evidence`・`count_confidence`）は媒体ごとの台帳の結びから。
     """
+    from . import limits_config
     out = copy.deepcopy(row)
     kind, name = row["param"]
     origin = "default"
+    via = None
     count = None
     window = copy.deepcopy(row["window"])
     if media is None:
         media = (cfg or {}).get("media")
     info = _media_of(row, media)
-    if kind == "account":
-        value = accounts.guard_limits(cfg)[name]
-        if _explicit(cfg, name, accounts.valid_guard_value):
-            origin = "account"
-        if isinstance(value, dict):
-            count, window = value["count"], {"minutes": value["minutes"]}
+    holder = limits_config.holder_of(row["id"])
+    if holder is not None:
+        given = limits_config.explicit(holder, cfg if holder == "account" else principal_cfg, row["id"])
+        if given is not None:
+            count, window = _value_parts(given[0], window)
+            origin, via = holder, given[1]
         else:
-            count = value
-    elif kind == "principal":
-        from . import principals
-        value = principals.limits(principal_cfg)[name]
-        if _explicit(principal_cfg, name, principals.valid_limit):
-            origin = "principal"
-        if isinstance(value, dict):
-            count, window = value["count"], {"minutes": value["minutes"]}
-        else:
-            count = value
-    elif kind == "fotolife":
-        from . import hatena_fotolife
-        count = hatena_fotolife.limits(principal_cfg)[name]
-        given = (principal_cfg or {}).get("fotolife")
-        if isinstance(given, dict) and hatena_fotolife.valid_limit(name, given.get(name)):
-            origin = "principal"
+            base = info if info is not None and info.get("count") is not None else _uniform_ledger(row)
+            if base is not None:
+                count = base["count"]
+                if isinstance(base["window"], dict) and "minutes" in base["window"]:
+                    window = dict(base["window"])
+            elif row.get("default") is not None:
+                count, window = _value_parts(row["default"], window)
     elif kind == "blog":
         blog = blog or {}
         if name in blog:
@@ -435,17 +464,14 @@ def resolve(row, *, cfg, principal_cfg=None, blog=None, media=None) -> dict:
             count, window, origin = 0, {"quiet_hours": list(value)}, "account"
     elif kind == "fixed":
         count = name
-    if info is not None and origin == "default" and kind in ("account", "principal", "fotolife", "ledger") \
-            and info["count"] is not None:
-        # 明示の値が無い: 媒体の台帳の既定（今の `GUARD_DEFAULTS`・`LIMIT_DEFAULTS` と同じ数・試験が縛る）。
-        count = info["count"]
-        if isinstance(info["window"], dict) and "minutes" in info["window"]:
-            window = dict(info["window"])
-    out.update({"count": count, "window": window, "origin": origin,
+    out.update({"count": count, "window": window, "origin": origin, "via": via,
                 "trait": info["trait"] if info else "thth:" + row["id"],
                 "confidence": info["confidence"] if info else None,
                 "count_evidence": info["count_evidence"] if info else "thth_line",
                 "count_confidence": info["count_confidence"] if info else None})
+    if row["id"] == limits_config.FLOOR_ID:
+        reason = limits_config.floor_reason(cfg) if via == "limits" else None
+        out.update({"floor_raised": reason is not None, "floor_reason": reason})
     return out
 
 

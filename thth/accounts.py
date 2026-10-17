@@ -93,17 +93,29 @@ def watch_words(account_cfg: dict) -> list:
 IGNORED_FIELDS = ("approval",)
 
 # **安全装置の数値**（設計 3.12.0 §3.3）。口座ごと・持ち主が値を決める（上げる方向も）。
-# 運営者は上限を押し付けないが、既定値は置く。
-GUARD_DEFAULTS = {
-    "daily_max_posts": 8,      # JST の 1 日の公開の上限
-    "daily_max_retracts": 5,   # JST の 1 日の削除の上限
-    "burst": {"count": 3, "minutes": 10},  # 公開と削除の合計がこれを超えたら口座を止める
-    "hold_minutes": 0,         # 今すぐの公開を待たせる分（0 は待たない）
-    # 反応（再投稿・いいね・その取り消し）の JST の 1 日の上限（設計 3.15.0 §2.5）。
+# 運営者は上限を押し付けないが、既定値は置く。**段 3（設計 上限と連投の柵 §8.4）から値は柵の表から引く**
+# （`limits_config.TableDefaults`・鍵は今の鍵のまま）。下の `_GUARD_FALLBACK` は媒体の台帳が検査を通らない
+# ときだけ返す 4.1.0 の数（柵は `invalid_media_traits` で断る）。
+_GUARD_FALLBACK = {
+    "daily_max_posts": 8,      # JST の 1 日の公開の上限（表 `post.daily`）
+    "daily_max_retracts": 5,   # JST の 1 日の削除の上限（表 `retract.daily`）
+    "burst": {"count": 3, "minutes": 10},  # 公開と削除の合計がこれを超えたら口座を止める（表 `post.burst`）
+    "hold_minutes": 0,         # 今すぐの公開を待たせる分（0 は待たない・表の行でない）
+    # 反応（再投稿・いいね・その取り消し）の JST の 1 日の上限（設計 3.15.0 §2.5・表 `reaction.daily`）。
     # **公開の枠（daily_max_posts・burst）とは別に数える**——返信 4 件にいいねした
     # だけで公開が止まらないように。
     "daily_max_reactions": 50,
 }
+
+
+def _guard_defaults():
+    from .limits_config import TableDefaults
+    return TableDefaults({"daily_max_posts": "post.daily", "daily_max_retracts": "retract.daily",
+                          "burst": "post.burst", "daily_max_reactions": "reaction.daily"},
+                         {"hold_minutes": 0}, _GUARD_FALLBACK)
+
+
+GUARD_DEFAULTS = _guard_defaults()
 GUARD_INT_MAX = {"daily_max_posts": 1000, "daily_max_retracts": 1000, "hold_minutes": 1440,
                  "daily_max_reactions": 1000}
 BURST_COUNT_MAX = 1000
@@ -132,14 +144,41 @@ def is_invite_account(account_cfg: dict) -> bool:
     return isinstance(provenance, dict) and provenance.get("created_via") == "invite"
 
 
+def _media_default(rows, media, default):
+    """口座の媒体の行の既定（はてなの口座は `entry.daily` など）。引けなければ表の代表の既定。"""
+    if not rows or not (isinstance(media, str) and media):
+        return default
+    try:
+        from . import limits_policy
+        value = limits_policy.default_value(sorted(rows, key=lambda r: r != "post.burst")[0], media=media)
+    except (ValueError, KeyError):
+        value = None
+    return default if value is None else value
+
+
 def guard_limits(account_cfg: dict) -> dict:
-    """安全装置の数値（台帳に無い項目は既定）。`min_interval_hours` と `quiet_hours` は既存の項目。"""
+    """安全装置の数値（今の鍵の形）。`min_interval_hours` と `quiet_hours` は既存の項目。
+
+    段 3: 台帳の `limits`（行の id）が今の鍵より勝つ（`burst` は SNS の口座が `post.burst`・はてなの口座が
+    `entry.burst`、`daily_max_posts` は `post.daily`／`entry.daily` など）。無い項目は既定（柵の表から）。
+    """
+    from . import limits_config
     cfg = account_cfg or {}
+    media = cfg.get("media")
     out = {}
     for key, default in GUARD_DEFAULTS.items():
-        value = cfg.get(key)
-        if value is None or not valid_guard_value(key, value):
-            value = default
+        value = None
+        rows = limits_config.rows_for_alias("account", key, media)
+        # SNS の `burst` は投稿の行（`post.burst`）を代表にする（返信の行は `limits_config.explicit` で別に引く）
+        for rule_id in sorted(rows, key=lambda r: r != "post.burst"):
+            given = limits_config.explicit("account", cfg, rule_id)
+            if given is not None and given[1] == "limits":
+                value = given[0]
+                break
+        if value is None:
+            value = cfg.get(key)
+            if value is None or not valid_guard_value(key, value):
+                value = _media_default(rows, media, default)
         out[key] = dict(value) if isinstance(value, dict) else value
     return out
 
@@ -530,6 +569,16 @@ def load_account(name: str) -> dict:
             raise AccountError(
                 f"{name}: 台帳の {key} が受け取れません（invalid_guard_limits・"
                 f"0 以上の整数。burst は {{\"count\": 1〜, \"minutes\": 1〜1440}}）")
+    # 段 3（設計 上限と連投の柵 §8.1）: `limits`（鍵は柵の行の id）。知らない id・口座の媒体に当たらない行・
+    # 形の違う値は既定に倒さず断る。値は文面に出さない（行の id だけ）。
+    from . import limits_config
+    try:
+        limits_config.check("account", data, media=data.get("media"))
+    except limits_config.LimitsError as exc:
+        raise AccountError(
+            f"{name}: 台帳の limits の {exc.key} が受け取れません（invalid_guard_limits・鍵は柵の行の id"
+            f"（口座の行は {'・'.join(limits_config.ACCOUNT_ROWS)}）・値は日の行が 0 以上の整数・窓の行が "
+            f"{{\"count\": 1〜, \"minutes\": 1〜1440}}・write.floor を上げるなら reason）") from None
     # はてなの口座の相対リンクの基準（設計 4.0 S2 §4.2）。任意・https だけ。
     if "link_base" in data and data.get("media") == "hatenablog" and not valid_link_base(data["link_base"]):
         raise AccountError(f"{name}: 台帳の link_base が受け取れません（invalid_link_base・https の URL・"

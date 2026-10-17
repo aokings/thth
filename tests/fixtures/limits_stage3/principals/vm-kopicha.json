@@ -1,0 +1,40 @@
+{
+  "principal": "vm-kopicha",
+  "kind": "hatena",
+  "hatena_id": "vm-kopicha-id",
+  "owner": "vm-owner",
+  "token": "~/.config/thth/vm-kopicha.token",
+  "consumer": "~/.config/thth/vm-kopicha.consumer",
+  "auth": "oauth",
+  "blogs": [
+    {
+      "blog_id": "vm-kopicha.hatenablog.com",
+      "lanes": [
+        "vm-kopicha"
+      ],
+      "syntax": "markdown"
+    }
+  ],
+  "bookmark": {
+    "lanes": [
+      "vm-kopicha"
+    ]
+  },
+  "daily_max_posts": 6,
+  "daily_max_retracts": 3,
+  "daily_max_bookmarks": 50,
+  "burst": {
+    "count": 3,
+    "minutes": 30
+  },
+  "daily_max_self_bookmarks": 1,
+  "bookmark_same_host_daily": 5,
+  "fotolife": {
+    "max_image_bytes": 8388608,
+    "max_images_per_entry": 20,
+    "max_total_bytes": 67108864,
+    "daily_max_uploads": 30,
+    "feed_pages": 1
+  },
+  "user_agent_contact": "https://thth.me/"
+}
