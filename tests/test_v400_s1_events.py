@@ -181,6 +181,10 @@ def test_inflight_openのrefは配信idで_showにdeliveryとseq(lane, monkeypat
     path, delivery, _adapter = _crash_after_send(lane, monkeypatch)
     (row,) = [e for e in events() if e["kind"] == "inflight_open"]
     assert row["ref"] == delivery and row["ongoing"] is True
+    # 4.0 S5 §8.3: はてなの inflight の show は一覧の候補を GET 1 回で読む（偽物の adapter を置く）。
+    from thth import hatena_publish
+    from tests.hatena_s1_flow_helpers import FakeAdapter, factory_for
+    monkeypatch.setattr(hatena_publish, "ADAPTER_FACTORY", factory_for(FakeAdapter()))
     rc, out, err = call(["inflight", ACCOUNT, "show", "--json"])
     info = json.loads(out)["inflight"]
     assert info["delivery"] == delivery and info["seq"] == 3

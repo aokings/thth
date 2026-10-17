@@ -418,6 +418,8 @@ def test_T_S3_6b_updateの差分は承認の控えと比べ画像の行は変わ
 def test_T_S3_7a_画像を差し替えると承認が古くなり_承認し直すと新しい画像だけ上がり古い台帳は残る(photo_lane):
     path, delivery = approved(photo_lane)
     assert throw().exit_code == 0
+    # 4.0 S5 §4.4: 何も変えない更新は update_no_change で断るので、本文を 1 行直してから承認する。
+    photo_lane.write("articles/a.md", ARTICLE + "\n追記。\n")
     upath, _ = approved(photo_lane, "u.md", op="update", delivery=delivery)
     photo_lane.write("images/bean.jpg", JPEG + b" v2")
     photo_lane.http.calls.clear()

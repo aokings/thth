@@ -52,8 +52,10 @@ INFLIGHT_REASONS = frozenset(('no_inflight','inflight_unreadable','media_infligh
 UNCONFIRMED_REASONS = frozenset(('inflight',))
 # 利用者 scope の読む口（設計 3.14.0 §3.2・`thth/server_reads.py`）。
 from .server_reads import REASONS as READ_REASONS
+# 4.0 S5 §5.3: 衝突を見る・解く（`hatena_conflict.REASONS`・手元の `thth conflict` と同じ符丁）。
+from .hatena_conflict import REASONS as CONFLICT_REASONS
 SAFE_ERRORS = (SAFE_ERRORS | MEDIA_REASONS | REPO_REASONS | GUARD_REFUSALS | DIRECT_REASONS | SETTINGS_REASONS
-               | READ_REASONS | INFLIGHT_REASONS)
+               | READ_REASONS | INFLIGHT_REASONS | CONFLICT_REASONS)
 # 断りに添えてよい詳細（止まった理由）。
 GUARD_DETAILS = GUARD_STOP_REASONS | frozenset(('guard_state_unreadable',))
 
@@ -612,6 +614,7 @@ def serve(context, request, *, via):
     from . import server_reads
     if operation in server_reads.OPERATIONS: return server_reads.execute(context,request)
     if operation in INFLIGHT_OPERATIONS: return inflight(context,request,via)
+    if operation in CONFLICT_OPERATIONS: return conflict(context,request,via)
     if operation in ('settings','account_status'):
         from . import account_settings
         return (account_settings.mcp_settings if operation=='settings' else account_settings.mcp_status)(context,request)
@@ -642,7 +645,13 @@ def inflight(context, request, via):
     if op=='inflight_status':
         if record is None: return {'account':account,'inflight':None}
         info=inflight_cli.summary(record)
-        return {'account':account,'inflight':info,'next':inflight_cli._next_step(account,info)}
+        out={'account':account,'inflight':info,'next':inflight_cli._next_step(account,info)}
+        # 4.0 S5 §8.3: はてなの inflight は一覧の候補（GET 1 回・自動では解かない）。
+        found=inflight_cli.hatena_candidates(account,cfg,record)
+        if found is not None:
+            out.update(candidates=found['candidates'],candidates_checked=found['checked'],
+                       candidates_error=found['error'])
+        return out
     decision=request['decision'];post_id=(request.get('post_id') or '').strip() or None
     if decision=='published' and post_id is None: error('post_id_invalid')
     refused=inflight_cli.refusal(account,record,decision,post_id)
@@ -679,3 +688,40 @@ def read(context, request):
             return {'account':request['account'],'drafts':rows}
     except accounts.AccountLeaving:
         error('account_leaving')
+
+
+# --------------------------------------------------------------------------
+# 遠くの道の衝突（4.0 S5 §5.3）。手元の `thth conflict <口座>` と同じ中身（`hatena_conflict`）・同じ 2 段。
+# 解いた人は資格の actor（依頼の欄から名乗らせない）。どれも媒体に書き込まない（`--adopt` は GET だけ）。
+# --------------------------------------------------------------------------
+
+CONFLICT_OPERATIONS = frozenset(('conflict_status','conflict_resolve'))
+
+
+def conflict(context, request, via):
+    from . import hatena_conflict, hatena_entry
+    op=request.get('operation')
+    if op=='conflict_status':
+        _schema(request,('delivery','check'),())
+        if request.get('check') is not None and type(request['check']) is not bool: error('invalid_request')
+    else:
+        _schema(request,('delivery','resolution','confirm'),('delivery','resolution'))
+        if request['resolution'] not in hatena_conflict.RESOLUTIONS: error('resolution_required')
+        if request.get('confirm') is not None and not isinstance(request['confirm'],str): error('invalid_request')
+    if request.get('delivery') is not None and not isinstance(request['delivery'],str): error('invalid_request')
+    account=request['account'];cfg=current(context,account,write=op=='conflict_resolve' or bool(request.get('check')))
+    if not hatena_entry.is_hatena(cfg): error('unsupported_operation')
+    delivery=request.get('delivery')
+    try:
+        if op=='conflict_status':
+            if request.get('check'):
+                return hatena_conflict.check(account,cfg,delivery,limit=1 if delivery else hatena_conflict.CHECK_LIMIT)
+            if delivery:
+                return hatena_conflict.show(account,cfg,delivery)
+            return hatena_conflict.listing(account)
+        return hatena_conflict.resolve(account,cfg,delivery,request['resolution'],by=context.actor,
+                                       confirm=request.get('confirm'),via=via if via in ('mcp','http','api') else 'api')
+    except hatena_conflict.ConflictRefused as exc:
+        if exc.code=='conflict_busy': error('account_busy')
+        if exc.code in hatena_conflict.REASONS: error(exc.code)
+        error('write_unavailable')

@@ -1,7 +1,8 @@
 """`thth deliveries <account|project> [--article …] [--json]`——配信の台帳を並べる（設計 4.0 S1 §3.4）。
 
 **読むだけ。** `state/<account>/deliveries/*.json` を口座ごとに読み、1 行ずつ（か JSON で）出す。
-媒体の API は呼ばない。主体の台帳も読まない。
+媒体の API は呼ばない。主体の台帳も読まない。4.0 S5 §3.4 から、各行に正本の版の比べ（`source`・
+repo の HEAD を手元の git で読む・`hatena_entry.source_status`）と、衝突の理由・原稿の無い `wanted` を添える。
 
 1 本が読めなくても他は出し、読めなかったものは `cannot_say` に `delivery_unreadable` と言い、
 `unreadable[]` にどの口座のどの配信か（と理由の符丁）を並べる（0 件と混ぜない）。
@@ -35,7 +36,71 @@ def _row(record: dict) -> dict:
             # S3 §7.1: 画像の数と、主体の画像の台帳での状態の内訳。
             "images": image_summary(record),
             # S4 §3.3: ブックマークは `sent/bm:` を配信 id で引いて読むときに添える（台帳には書かない）。
-            "bookmark": bookmark_of(record)}
+            "bookmark": bookmark_of(record),
+            # S5 §3.4・§5.5・§8.2: 正本の版の比べ・衝突の理由・原稿の無い wanted（build が添える）。
+            "source": record.get("source"), "conflict": deliveries_mod.conflict_of(record),
+            "orphan": record.get("orphan")}
+
+
+def source_text(source) -> str:
+    """`正本: 直した（a1b2… → c3d4…）`／`正本: 同じ`／`追従しない`／`正本: 言えない（符丁）`。"""
+    if not source:
+        return ""
+    if "no_follow" in (source.get("reasons") or []):
+        return "  追従しない"
+    if source.get("error"):
+        return f"  正本: 言えない（{source['error']}）"
+    if source.get("behind") is None:
+        return "  正本: 言えない（" + "・".join(source.get("reasons") or ["unknown"]) + "）"
+    if source["behind"]:
+        what = "画像も" if "images" in source["reasons"] and "body" in source["reasons"] else (
+            "画像" if "images" in source["reasons"] else "")
+        return (f"  正本: 直した（{(source.get('checked_rev') or '')[:12]}… → {(source.get('current_rev') or '')[:12]}…"
+                f"{'・' + what if what else ''}）")
+    return "  正本: 同じ"
+
+
+def conflict_text(conflict) -> str:
+    if not conflict:
+        return ""
+    from . import hatena_entry
+    detail = "/".join(hatena_entry.DETAIL_LABELS.get(d, str(d)) for d in (conflict.get("detail") or []))
+    parts = [str(conflict.get("reason") or "理由不明")] + ([detail] if detail else [])
+    parts.append(hatena_entry.short_at(conflict.get("at")))
+    return f"（{'・'.join(parts)}）"
+
+
+def _orphan(record, cfg) -> bool:
+    """原稿の無い `wanted`（S1 監査 5・S5 §8.2）: `queue_file` の原稿が無い・あっても delivery が違う。読むだけ。"""
+    from . import hatena_entry, queuefile
+    if record.get("state") != "wanted":
+        return False
+    rel = record.get("queue_file")
+    try:
+        path = hatena_entry.repo_file((cfg or {}).get("repo_dir"), rel)
+        fm = queuefile.parse(path).front_matter
+    except (hatena_entry.EntryError, OSError, ValueError, TypeError):
+        return True
+    return fm.get("delivery") != record["delivery"]
+
+
+def attach_source(records, cfg, cannot_say) -> list:
+    """各台帳に `source`（S5 §3.2）と `orphan` を添えた写し。repo が読めなければ `source_unreadable`。"""
+    from . import hatena_entry
+    out = []
+    for record in records:
+        row = dict(record)
+        try:
+            row["source"] = hatena_entry.source_status(record, cfg or {})
+        except Exception:  # noqa: BLE001 — 1 本で全部を落とさない
+            row["source"] = {"behind": None, "reasons": [], "error": "repo_unreadable"}
+        if row["source"] is not None and row["source"].get("error") == "repo_unreadable":
+            # repo が読めない（記事が無いだけ＝article_source_missing は行の「言えない」で言う）。
+            cannot_say.add("source_unreadable")
+        if record.get("state") == "wanted":
+            row["orphan"] = _orphan(record, cfg)
+        out.append(row)
+    return out
 
 
 def bookmark_of(record: dict) -> dict | None:
@@ -163,7 +228,12 @@ def build(target, *, article=None, now=None, allowed_names=None) -> dict:
         if broken:
             cannot_say.add("delivery_unreadable")
             unreadable += broken
-        rows += [r for r in records if article is None or r.get("article") == article]
+        try:
+            cfg = accounts_mod.load_account(name)
+        except (accounts_mod.AccountError, ValueError, TypeError):
+            cfg = None
+        chosen = [r for r in records if article is None or r.get("article") == article]
+        rows += attach_source(chosen, cfg, cannot_say)
     rows.sort(key=lambda r: (r["history"][-1].get("at") or "", r["account"], r["delivery"]))
     # S4 §9.4 の 5・§3.3: 記事で絞ったときは告知（SNS の `sent/`）とブックマーク（`sent/bm:`）を添える。
     told, marks = None, None
@@ -196,13 +266,17 @@ def render(payload, out=print) -> None:
         row = _row(record)
         url = f"  {row['published_url']}" if row.get("published_url") else ""
         differs = "  読み戻し差あり" if row.get("readback_differs") else ""
-        out(f"  {row['delivery']}  {row['account']}  {row['state']}（{row['seq']}）"
+        orphan = "  原稿なし（create で delivery: を書けば使える）" if row.get("orphan") else ""
+        out(f"  {row['delivery']}  {row['account']}  {row['state']}{conflict_text(row['conflict'])}（{row['seq']}）"
             f"  {row['article']}  {row['blog_id']}  {row['at']}{url}{differs}{image_text(row['images'])}"
-            f"{bookmark_text(row['bookmark']) if row['state'] in ('published', 'deleted') else ''}")
+            f"{bookmark_text(row['bookmark']) if row['state'] in ('published', 'deleted') else ''}"
+            f"{source_text(row['source'])}{orphan}")
     for told in payload.get("announcements") or []:
         when = jst.parse(told.get("sent_at"))
         stamp = f"{when.month}/{when.day} {when:%H:%M}" if when else "?"
-        out(f"  告知: {told['account']} {stamp}（{told['post_id']}）→ {told['announces']}")
+        gone = ("  → 記事は消えています" if any(r["delivery"] == told["announces"] and r["state"] == "deleted"
+                                               for r in payload["deliveries"]) else "")
+        out(f"  告知: {told['account']} {stamp}（{told['post_id']}）→ {told['announces']}{gone}")
     if payload["unreadable"]:
         out("読めなかったもの: " + "・".join(
             f"{u['account']}/{u['delivery'] or '*'}（{u['reason']}）" for u in payload["unreadable"]))

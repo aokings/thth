@@ -274,7 +274,8 @@ class HatenaBlogAdapter:
                                edit_uri=fields["edit_uri"], published_url=fields["published_url"])
         return EntryResult(ok=True, entry_id=got, edit_uri=fields["edit_uri"],
                            published_url=fields["published_url"], readback_body=fields["content"],
-                           content_type=fields["content_type"])
+                           content_type=fields["content_type"], readback_title=fields["title"],
+                           readback_categories=fields["categories"])
 
     def create_entry(self, *, title, body, categories, images):
         from ..hatena_publish import EntryResult
