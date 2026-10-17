@@ -77,10 +77,22 @@ def validated_url(value, *, base=False):
     return value.rstrip('/') if base else value
 
 
+# 試験だけが立てる「loopback 以外へは出ない」印（サブプロセスの `thth` には monkeypatch が効かないので、
+# `tests/conftest.run_thth` の既定の env で立てる・監査 S6 中-1）。本番のコードはこの名前を立てない。
+TEST_LOOPBACK_ONLY_ENV = 'THTH_TEST_LOOPBACK_ONLY'
+_LOOPBACK = ('localhost', '127.0.0.1', '::1')
+
+
+def _test_loopback_only(url):
+    if os.environ.get(TEST_LOOPBACK_ONLY_ENV) == '1' and urllib.parse.urlsplit(url).hostname not in _LOOPBACK:
+        raise EndpointRejected('endpoint_test_loopback_only')
+
+
 class _HTTPOnlyOpener(urllib.request.OpenerDirector):
     def open(self,fullurl,*args,**kwargs):
         request=fullurl if isinstance(fullurl,urllib.request.Request) else None
         validated_url(request.full_url if request else fullurl)
+        _test_loopback_only(request.full_url if request else fullurl)
         if request and (request.has_proxy() or getattr(request,'_tunnel_host',None)):
             raise EndpointRejected('endpoint_proxy_forbidden')
         return super().open(fullurl,*args,**kwargs)

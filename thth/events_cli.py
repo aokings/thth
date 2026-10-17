@@ -47,6 +47,10 @@
 - `delivery_behind`（4.0 S5 §3.4）: 正本（repo の HEAD の記事）を直したのに、まだ更新していない配信
   （`ongoing: true`）。`ref` は配信 id、id は `"ev_" + sha256("thth.behind/1|<delivery>|<checked_rev>|
   <current_rev>")[:24]`——同じ組の版のあいだは同じ id、更新して `checked_rev` が進めば消える。
+- `bookmark_received`（4.0 S6 §6.3）: 第三者がはてなブックマークを付けた（反応の台帳 `data/hatena/reactions/` の
+  `bookmark.bookmarks[]`・自分の主体の分は台帳の時点で外してある）。配信ごとに同じ `user` は 1 度だけ。`ref` は
+  配信 id、id は `"ev_" + sha256("thth.reaction/1|<delivery>|bm|<user>")[:24]`（時刻なし）。summary に本文と
+  `user` は入れない（本文は `thth article reactions --comments`）。
 - `delivery_resolved`（4.0 S5 §5.3）: 人が衝突を解いた（台帳の `op: resolve` の行・状態に関わらず）。
   id は配信の台帳の出来事と同じ（`thth.delivery/1|<delivery>|<seq>`）。
 
@@ -93,7 +97,11 @@ KINDS = ("published", "retracted", "reply_received", "mention_received",
          # 4.0 S2 §8: 承認済みなのに出られないはてなの配信原稿（承認が古い・台帳が人待ち・S2 の断り）。
          "delivery_held",
          # 4.0 S5: 正本を直したのに更新していない（続いている状態）・人が衝突を解いた。
-         "delivery_behind", "delivery_resolved")
+         "delivery_behind", "delivery_resolved",
+         # 4.0 S6 §6.3: 第三者がはてなブックマークを付けた（反応の台帳から・本文と user は入れない）。
+         "bookmark_received")
+# 反応の出来事の id の版の語（設計 4.0 S6 §6.3）。
+REACTION_EVENT_PREFIX = "thth.reaction/1"
 # 正本を直した配信の出来事の id の版の語（設計 4.0 S5 §3.4）。
 BEHIND_EVENT_PREFIX = "thth.behind/1"
 # 止まっている配信原稿の出来事の id の版の語（設計 4.0 S2 §8 の 1）。
@@ -289,6 +297,66 @@ def _bookmark_events(name):
                               _id=hatena_bookmark.event_id(post_id, "delete"), url=row.get("url"),
                               target=target, delivery=row.get("delivery"), article=row.get("article")))
     return out
+
+
+def reaction_event_id(delivery, user) -> str:
+    """第三者のブックマークの出来事の id（設計 4.0 S6 §6.3）。時刻を入れない（刻みを跨いでも同じ id）。"""
+    raw = f"{REACTION_EVENT_PREFIX}|{delivery}|bm|{user}"
+    return "ev_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+_BM_TIMESTAMP = re.compile(r"(\d{4})/(\d{2})/(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?")
+
+
+def _bookmark_timestamp(text):
+    """エントリー情報の `timestamp`（`2026/10/20 21:03`・JST）を時刻に。読めなければ None。"""
+    if not isinstance(text, str):
+        return None
+    m = _BM_TIMESTAMP.fullmatch(text.strip())
+    if not m:
+        return jst.parse(text)
+    try:
+        return datetime.datetime(int(m[1]), int(m[2]), int(m[3]), int(m[4]), int(m[5]), int(m[6] or 0),
+                                 tzinfo=jst.JST)
+    except ValueError:
+        return None
+
+
+def _reaction_events(name, cfg):
+    """第三者のブックマーク（4.0 S6 §6.3）。`data/hatena/reactions/<dl>.ndjson` の `bookmark.bookmarks[]` から、
+    配信ごとに同じ `user` は 1 度だけ。summary に本文と `user` は入れない。`(出来事, 読めなかったか)`。"""
+    from . import hatena_reactions
+    base = hatena_reactions.ledger_dir(cfg, name)
+    try:
+        files = sorted(n for n in os.listdir(base) if n.endswith(".ndjson"))
+    except OSError:
+        return [], False
+    out, broken = [], False
+    for file_name in files:
+        delivery = file_name[:-len(".ndjson")]
+        try:
+            rows, is_broken = hatena_reactions.read_rows(cfg, name, delivery)
+        except ValueError:
+            continue
+        if is_broken:
+            broken = True
+            continue
+        seen = set()
+        for row in sorted(rows, key=lambda r: r.get("collected_at") or ""):
+            collected = jst.parse(row.get("collected_at"))
+            for mark in ((row.get("bookmark") or {}).get("bookmarks") or []):
+                user = mark.get("user")
+                if not isinstance(user, str) or user in seen:
+                    continue
+                seen.add(user)
+                has_comment = bool((mark.get("comment") or "").strip())
+                occurred = _bookmark_timestamp(mark.get("timestamp")) or collected
+                summary = (f"ブックマークが付いた: {row.get('article') or delivery}"
+                           f"（コメント {'あり' if has_comment else 'なし'}）")
+                out.append(_event("bookmark_received", name, occurred, collected, delivery, summary,
+                                  _id=reaction_event_id(delivery, user), article=row.get("article"),
+                                  url=row.get("url"), has_comment=has_comment))
+    return out, broken
 
 
 def behind_event_id(delivery, checked_rev, current_rev) -> str:
@@ -528,6 +596,13 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
                 events += _bookmark_events(name)
             except Exception:  # noqa: BLE001 — 1 つの出所で全部を落とさない
                 cannot_say.add("sent_unreadable")
+            try:
+                rows, broken = _reaction_events(name, cfg)
+                events += rows
+                if broken:
+                    cannot_say.add("reactions_unreadable")
+            except Exception:  # noqa: BLE001 — 1 つの出所で全部を落とさない
+                cannot_say.add("reactions_unreadable")
             try:
                 events += _held_events(name, cfg, now)
             except Exception:  # noqa: BLE001 — queue が読めなくても他の出所は出す

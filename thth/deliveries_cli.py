@@ -39,7 +39,9 @@ def _row(record: dict) -> dict:
             "bookmark": bookmark_of(record),
             # S5 §3.4・§5.5・§8.2: 正本の版の比べ・衝突の理由・原稿の無い wanted（build が添える）。
             "source": record.get("source"), "conflict": deliveries_mod.conflict_of(record),
-            "orphan": record.get("orphan")}
+            "orphan": record.get("orphan"),
+            # S6 §6.1: 反応の台帳のいちばん新しい行（build が添える）。
+            "reactions_latest": record.get("reactions_latest")}
 
 
 def source_text(source) -> str:
@@ -114,6 +116,38 @@ def bookmark_of(record: dict) -> dict | None:
         return None
     return {"post_id": row["post_id"], "result": row.get("result"), "sent_at": row.get("sent_at"),
             "retracted_at": row.get("retracted_at"), "permalink": row.get("permalink")}
+
+
+def reactions_latest(record, cfg, name):
+    """反応の台帳（`data/hatena/reactions/`）のいちばん新しい行の要約。対象の状態でなければ None。"""
+    from . import hatena_reactions
+    if cfg is None or record.get("state") not in hatena_reactions.TARGET_STATES:
+        return None
+    try:
+        return hatena_reactions.summary_of(cfg, name, record["delivery"]) or {"collected_at": None}
+    except (OSError, ValueError, accounts_mod.AccountError):
+        return {"unreadable": True}
+
+
+def reactions_text(summary) -> str:
+    """`  反応: ブクマ 他 2・スター 2（24h・10/21）`／`  反応: 未採取`。"""
+    if summary is None:
+        return ""
+    if summary.get("unreadable"):
+        return "  反応: 台帳が読めない"
+    if not summary.get("collected_at"):
+        return "  反応: 未採取"
+    parts = []
+    if summary.get("bookmark_total") is not None:
+        others = summary.get("bookmark_others")
+        parts.append(f"ブクマ 他 {others if others is not None else '?'}")
+    if summary.get("star_others") is not None:
+        parts.append(f"スター {summary['star_others']}")
+    at = jst.parse(summary.get("collected_at"))
+    marks = summary.get("marks") or []
+    when = f"{max(marks)}h・" if marks else ""
+    day = f"{at.month}/{at.day}" if at else "?"
+    return f"  反応: {'・'.join(parts) or '取れていない'}（{when}{day}）"
 
 
 def bookmark_text(mark) -> str:
@@ -233,7 +267,11 @@ def build(target, *, article=None, now=None, allowed_names=None) -> dict:
         except (accounts_mod.AccountError, ValueError, TypeError):
             cfg = None
         chosen = [r for r in records if article is None or r.get("article") == article]
-        rows += attach_source(chosen, cfg, cannot_say)
+        attached = attach_source(chosen, cfg, cannot_say)
+        for row in attached:
+            # 4.0 S6 §6.1: 反応の台帳のいちばん新しい行の要約（読むだけ・媒体は呼ばない）。
+            row["reactions_latest"] = reactions_latest(row, cfg, name)
+        rows += attached
     rows.sort(key=lambda r: (r["history"][-1].get("at") or "", r["account"], r["delivery"]))
     # S4 §9.4 の 5・§3.3: 記事で絞ったときは告知（SNS の `sent/`）とブックマーク（`sent/bm:`）を添える。
     told, marks = None, None
@@ -270,7 +308,7 @@ def render(payload, out=print) -> None:
         out(f"  {row['delivery']}  {row['account']}  {row['state']}{conflict_text(row['conflict'])}（{row['seq']}）"
             f"  {row['article']}  {row['blog_id']}  {row['at']}{url}{differs}{image_text(row['images'])}"
             f"{bookmark_text(row['bookmark']) if row['state'] in ('published', 'deleted') else ''}"
-            f"{source_text(row['source'])}{orphan}")
+            f"{source_text(row['source'])}{orphan}{reactions_text(row['reactions_latest'])}")
     for told in payload.get("announcements") or []:
         when = jst.parse(told.get("sent_at"))
         stamp = f"{when.month}/{when.day} {when:%H:%M}" if when else "?"

@@ -2900,10 +2900,17 @@ def cmd_throw(args) -> int:
 
 
 def collect_applies(account_cfg) -> bool:
-    """`thth run` の最後に採取（collect）を走らせる口座か。はてなの口座（media hatenablog）は採取の
-    口（adapter の数の読み取り）が無いので走らせない（実機の確かめ 10/17 の 1）。"""
+    """`thth run` の最後に SNS の採取（collect）を走らせる口座か。はてなの口座（media hatenablog）は SNS の
+    採取の口（adapter の数の読み取り）が無いので走らせない（実機の確かめ 10/17 の 1）。はてなの口座は
+    代わりに反応の採取（`hatena_reactions.run_collect`・4.0 S6）を走らせる。"""
     from . import principals
     return not principals.uses_principal(account_cfg)
+
+
+def principals_mod_uses(account_cfg) -> bool:
+    """はてなの口座か（4.0 S6: run の末尾で反応を採る口座）。`collect_applies` の裏返し。"""
+    from . import principals
+    return principals.uses_principal(account_cfg)
 
 
 def cmd_run(args) -> int:
@@ -3024,6 +3031,17 @@ def cmd_run(args) -> int:
         # 終了コードを悪くしない（次の実行で埋まる）が、黙らせもしない。
         # はてなの口座（media hatenablog）は採取の口が無いので黙って飛ばす（失敗として残さない・
         # 実機の確かめ 10/17 の 1。毎回「media='hatenablog' を知りません」と出ていた）。
+        if principals_mod_uses(account_cfg):
+            # 4.0 S6 §4.2: はてなの口座は反応（ブックマークの件数・中身・スター）を同じ刻みで採る。
+            # 読むだけ・失敗で投稿の rc を悪くしない（SNS の採取と同じ）。跨いだ配信が無ければ何も言わない。
+            from . import hatena_reactions
+            try:
+                hatena_rc = hatena_reactions.run_collect(
+                    args.account, log=print, trigger=collect_mod.TRIGGER_RUN, wait=core.RUN_LOCK_WAIT_SECONDS)
+                if hatena_rc:
+                    print(f"（反応の採取は完全ではありません: exit={hatena_rc}。次の実行で埋めます）")
+            except Exception as e:  # 採取の失敗で投稿の経路を壊さない
+                print(f"（反応の採取に失敗しました: {e.__class__.__name__}。次の実行で埋めます）", file=sys.stderr)
         if collect_applies(account_cfg):
             try:
                 collect_rc = collect_mod.run_collect(
@@ -4249,6 +4267,9 @@ def build_parser() -> argparse.ArgumentParser:
     from . import article_cli, conflict_cli
     article_cli.register(sub)
     conflict_cli.register(sub)
+    # `thth hatena collect`（4.0 S6 §4.4・CLI だけ）。
+    from . import hatena_cli
+    hatena_cli.register(sub)
     # `thth bookmark add|delete|reconcile|list`（4.0 S1 §7.3・S4: はてなブックマークの 2 段の承認と送信）。
     from . import bookmark_cli
     bookmark_cli.register(sub)

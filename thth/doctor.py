@@ -232,7 +232,44 @@ def _diagnose_hatenablog(account_name: str, account_cfg: dict) -> dict:
             "scopes_recorded": recorded_scopes(accounts_mod.load_token(account_cfg)),
             "auth_via": None, "auth_observed_at": None, "probes": [probe],
             "fotolife": _diagnose_fotolife(account_cfg, principal_cfg),
-            "bookmark": _diagnose_bookmark(account_name, account_cfg, principal_cfg)}
+            "bookmark": _diagnose_bookmark(account_name, account_cfg, principal_cfg),
+            "reactions": _diagnose_reactions(account_name, account_cfg, principal_cfg)}
+
+
+def _diagnose_reactions(account_name: str, account_cfg: dict, principal_cfg: dict) -> dict:
+    """反応の台帳（設計 4.0 S6 §6.1）: 配信の数・最後の採取・読めない数と、件数取得 API への GET 1 回
+    （自分のブログのトップ・認証なし）。probes には入れない（終了コードを変えない）。"""
+    import os
+    from . import hatena_reactions
+    out = {"deliveries": 0, "last_collected_at": None, "unreadable": 0, "count_ok": None, "count_error": None}
+    try:
+        base = hatena_reactions.ledger_dir(account_cfg, account_name)
+        names = sorted(n for n in os.listdir(base) if n.endswith(".ndjson")) if os.path.isdir(base) else []
+        for name in names:
+            # 1 ファイルずつ捕まえる（名前の違うファイル 1 つで全部を「読めない」にしない・監査 低-3）。
+            try:
+                rows, broken = hatena_reactions.read_rows(account_cfg, account_name, name[:-len(".ndjson")])
+            except (OSError, ValueError):
+                out["unreadable"] += 1
+                continue
+            if broken:
+                out["unreadable"] += 1
+                continue
+            out["deliveries"] += 1
+            latest = hatena_reactions.latest_row(rows)
+            if latest is not None and (out["last_collected_at"] or "") < (latest.get("collected_at") or ""):
+                out["last_collected_at"] = latest.get("collected_at")
+    except (OSError, ValueError):
+        out["unreadable"] += 1
+    top = f"https://{account_cfg.get('blog_id')}/"
+    try:
+        hatena_reactions._call("count_one", [top], principal_cfg.get("user_agent_contact"))
+        out["count_ok"] = True
+    except hatena_reactions.FetchError as exc:
+        out["count_ok"], out["count_error"] = False, exc.code
+    except Exception as exc:  # noqa: BLE001 — 診断は落とさない
+        out["count_ok"], out["count_error"] = False, exc.__class__.__name__
+    return out
 
 
 def _diagnose_bookmark(account_name: str, account_cfg: dict, principal_cfg: dict) -> dict:
@@ -685,6 +722,12 @@ def run_doctor(account_name: str, *, as_json: bool = False, log=print) -> int:
         log(f"  {'○' if mark.get('ok') else '×'} ブックマーク: {mark.get('detail')}")
         if mark.get("unknown"):
             log(f"      結果不明 {mark['unknown']} 件（thth bookmark reconcile {report.get('account')}）")
+    react = report.get("reactions")
+    if isinstance(react, dict):
+        last = react.get("last_collected_at") or "まだ無い"
+        log(f"  {'○' if react.get('count_ok') else '×'} 反応の台帳: {react.get('deliveries')} 配信・最後の採取 {last}"
+            f"・読めない {react.get('unreadable')}"
+            + ("" if react.get("count_ok") else f"（件数の口が読めません: {react.get('count_error')}）"))
     log("")
     log("読み取りだけを試しました。投稿・返信・削除は呼んでいません。")
     if any(p["ok"] is None for p in report["probes"]):
