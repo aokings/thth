@@ -486,7 +486,7 @@ def test_主体の雛形の数は表の既定と同じ():
 def _install_fixture(world):
     for path in sorted((FIXTURES / "principals").glob("*.json")):
         shutil.copy(path, world.principals_dir / path.name)
-    for path in sorted((FIXTURES / "accounts").glob("*.json")):
+    for path in sorted((FIXTURES / "ledgers").glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
         data.update({"repo_dir": str(world.tmp / "repo"), "env": str(world.tmp / "x.env"),
                      "token": str(world.tmp / "x.token")})
