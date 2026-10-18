@@ -11,6 +11,7 @@
                                                                  （まとめて承認・設計 S4 §20・4.1）
     thth bookmark batch-status <口座> [--batch <id>] [--json]       （読むだけ・順番待ちの札と理由）
     thth bookmark batch-cancel <口座> <id> [--item <番号>] --by <名前> （待ちの札を取り消す・1 段）
+    thth bookmark batch-resume <口座> --by <名前>                    （止まったまとめを今すぐ見直させる・1 段・4.2.2）
 
 自分のはてなブログの記事（配信の台帳に `published_url` がある配信）か、レーンが参照している他人の
 ページに、主体のはてな ID でブックマークを付ける 2 段の承認。1 段目（`--confirm` 無し）は URL・対象・
@@ -95,6 +96,12 @@ def register(sub) -> None:
                          help="台帳が手元にあっても thth.me の鍵で動かす（遠くの道・thth login のあと）")
     bcancel.add_argument("--json", action="store_true")
     bcancel.set_defaults(func=cmd_batch_cancel)
+    bresume = verbs.add_parser("batch-resume", help="止まったまとめを今すぐ見直させる（はてなに打って止まったときの"
+                                                    " 60 分の待ちを外す・札は変えない）")
+    bresume.add_argument("account")
+    bresume.add_argument("--by", default=None, help="誰が解いたか（必須）")
+    bresume.add_argument("--json", action="store_true")
+    bresume.set_defaults(func=cmd_batch_resume)
 
 
 def _out(args, payload, rc, text_lines=None, *, err=False) -> int:
@@ -111,6 +118,12 @@ def _bookmark_message(exc, fallback) -> str:
     if exc.code == "bookmark_tag_too_long" and getattr(exc, "tags", None):
         from .hatena_bookmark import tag_too_long_text
         return tag_too_long_text(exc.tags)
+    if exc.code == "bookmark_percent_unsupported" and getattr(exc, "percent", None):
+        from .hatena_bookmark import percent_text
+        return percent_text(exc.percent)
+    if exc.code == "hatena_rejected_item":
+        from .hatena_bookmark import rejected_item_text
+        return rejected_item_text(getattr(exc, "status", None))
     if exc.code == "bookmark_already_deleted" and getattr(exc, "at", None):
         text += f"（{exc.at} に削除）"
     return text
@@ -159,6 +172,9 @@ _MESSAGES = {
     "bookmark_record_failed": "はてなには打ちましたが、記録（sent/bm:）を書けませんでした。置き場を直し、"
                               "はてなの画面で付いているかを確かめてください（打ち直しは柵が止めます）",
     "hatena_auth_rejected": "はてなが認可を断りました。thth principal auth <主体> --force --by <名前> をやり直してください",
+    # 4.2.2（S4 §24）: 文は `_bookmark_message` が HTTP の番号と札の直し方を入れて作る。
+    "hatena_rejected_item": "この札だけはてなに断られました（token は生きています）",
+    "bookmark_percent_unsupported": "コメントかタグに半角の % があります。全角の ％ に直してください",
 }
 
 
@@ -406,6 +422,31 @@ def cmd_batch_status(args) -> int:
     except bookmark_batch.BatchError as exc:
         return _batch_refuse(args, exc)
     return _out(args, s, 0, bookmark_batch.status_lines(s))
+
+
+def cmd_batch_resume(args) -> int:
+    """`thth bookmark batch-resume`（4.2.2・S4 §24）。止まりを外すだけ（札・指紋・sent/ は触らない・1 段）。"""
+    from . import bookmark_batch, core, lock as lock_mod
+    try:
+        accounts_mod.validate_name(args.account)
+        cfg = accounts_mod.load_account(args.account)
+    except accounts_mod.AccountError as exc:
+        return _refuse(args, "account_unreadable", str(exc))
+    by = (args.by or os.environ.get("THTH_ACTOR") or "").strip()
+    if not by:
+        return _refuse(args, "by_required", "--by <名前> を付けてください（誰が解いたかを記録します）", rc=1)
+    try:
+        with core._account_locks(args.account, cfg, accounts_mod.state_dir_for(args.account), wait=0):
+            done = bookmark_batch.resume_locked(args.account, by=by)
+    except lock_mod.LockBusy:
+        return _refuse(args, "account_busy", "いま別の実行がロックを持っています", rc=1)
+    except bookmark_batch.BatchError as exc:
+        return _batch_refuse(args, exc)
+    was = done.get("was_blocked")
+    head = (f"{args.account}: 止まり（{was.get('code')}）を外しました" if was
+            else f"{args.account}: 止まっていませんでした（待ちの時刻だけ外しました）")
+    return _out(args, {"ok": True, **done}, 0,
+                [head, f"  次の thth run が待ち {done['pending']} 件を今の柵で見直します（まだ直っていなければ、また止まります）"])
 
 
 def cmd_batch_cancel(args) -> int:

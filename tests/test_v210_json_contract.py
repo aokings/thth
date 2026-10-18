@@ -85,6 +85,8 @@ COMMANDS = '''lint|preview|approve|account|revoke|posts|replies|measured|threads
 COMMANDS += ['bookmark edit']
 # 上限と連投の柵 段 4（§9.2）: 媒体の観測を数える・人が足す。
 COMMANDS += ['media observations', 'media observe']
+# 4.2.2（S4 §24）: 止まったまとめを今すぐ見直させる（1 段）。
+COMMANDS += ['bookmark batch-resume']
 
 
 def test_json_table_covers_every_parser():

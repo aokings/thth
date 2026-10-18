@@ -49,17 +49,23 @@ REASONS = frozenset((
     # 直し（設計 S4 §21・4.2）: はてなに付いていない・中身が同じ・付けた（前の直しの）結果がまだ分からない。
     "bookmark_edit_missing_remote", "bookmark_edit_no_change", "bookmark_result_unknown",
     # タグの長さ（設計 S4 §22・kopicha 10/18 の観測）: 31 バイトを超えるタグははてなが黙って切る。
-    "bookmark_tag_too_long"))
+    "bookmark_tag_too_long",
+    # 4.2.2（S4 §24・kopicha 10/18 の観測）: 半角「%」を含む札ははてなが 401 で断る。
+    "bookmark_percent_unsupported",
+    # 4.2.2（S4 §24）: POST が 401/403 でも `/rest/1/my` の GET が通る＝token は生きていて、その札だけ断られた。
+    "hatena_rejected_item"))
 # タグの長さの上限（UTF-8 のバイト数・S4 §22）。31 は通り 34 は切られた（kopicha 10/18・確かさ low）。
 TAG_MAX_BYTES = 31
 
 
 class BookmarkError(ValueError):
-    def __init__(self, code, *, at=None, tags=None):
+    def __init__(self, code, *, at=None, tags=None, percent=None, status=None):
         super().__init__(code)
         self.code = code
         self.at = at  # bookmark_already_deleted のときの消した日時（見せるためだけ）
         self.tags = tags  # bookmark_tag_too_long のときの [(タグ, バイト数)]（見せるためだけ）
+        self.percent = percent  # bookmark_percent_unsupported のときの [(どこ, 個数)]（見せるためだけ）
+        self.status = status  # hatena_rejected_item・hatena_auth_rejected のときの HTTP の番号（見せるためだけ）
 
 
 def long_tags(tags) -> list:
@@ -84,6 +90,59 @@ def tag_too_long_text(found) -> str:
     which = "・".join(f"「{tag}」{size} バイト" for tag, size in found)
     return (f"タグが長すぎます: {which}。はてなは {TAG_MAX_BYTES} バイトを超えるタグを黙って切ります"
             f"（34 バイトで切れた観測・10/18）。{TAG_MAX_BYTES} バイト（日本語はおおむね 10 字）以内に直してください")
+
+
+def percent_places(comment, tags) -> list:
+    """半角「%」（U+0025）の在りかと個数 `[(どこ, 個数)]`（S4 §24）。全角の「％」は数えない。"""
+    out = []
+    n = str(comment or "").count("%")
+    if n:
+        out.append(("コメント", n))
+    for tag in tags or []:
+        n = str(tag).count("%")
+        if n:
+            out.append((f"タグ「{str(tag).strip()}」", n))
+    return out
+
+
+def check_percent(comment, tags) -> None:
+    """半角「%」を含めば `bookmark_percent_unsupported`（予告して断る・黙って直さない・S4 §24）。"""
+    found = percent_places(comment, tags)
+    if found:
+        raise BookmarkError("bookmark_percent_unsupported", percent=found)
+
+
+def percent_text(found) -> str:
+    """人向けの 1 行（どこに何個・直し方）。"""
+    which = "・".join(f"{where} {n} 個" for where, n in found)
+    return (f"半角の「%」があります: {which}。はてなはコメントかタグに半角の % を含むブックマークを 401 で断ります"
+            "（kopicha の本番 10/18 の観測）。全角の「％」に直してください")
+
+
+def rejected_item_text(status) -> str:
+    return (f"この札だけはてなに断られました（HTTP {status or '?'}・token は生きています。/rest/1/my の GET は通りました）。"
+            "コメントとタグの文字を見直してください。何も記録していません")
+
+
+def _rejection(adapter, result) -> "BookmarkError":
+    """POST が断られた（結果が分かる側）ときの符丁を決める（S4 §24）。
+
+    401/403 なら同じ run の中で `/rest/1/my` を GET して token を確かめる。GET が通れば**その札だけ**の断り
+    （`hatena_rejected_item`）、GET も通らなければ今どおり `hatena_auth_rejected`（認可の問題）。
+    それ以外の断りは adapter の符丁のまま。
+    """
+    code = getattr(result, "error", None) or "publication_failed"
+    status = getattr(result, "status", None)
+    if code != "hatena_auth_rejected" or status not in (401, 403):
+        return BookmarkError(code)
+    probe = getattr(adapter, "probe", None)
+    alive = False
+    if callable(probe):
+        try:
+            alive = bool((probe() or {}).get("ok"))
+        except Exception:  # noqa: BLE001 — 確かめられなければ認可の問題の側（止まる側）
+            alive = False
+    return BookmarkError("hatena_rejected_item" if alive else "hatena_auth_rejected", status=status)
 
 
 # --------------------------------------------------------------------------
@@ -264,6 +323,7 @@ def prepare(account_name: str, cfg: dict, *, delivery: str | None = None, url: s
     tag_list = parse_tags(tags)
     if op == "add":
         check_tag_bytes(tag_list)
+        check_percent(comment, tag_list)
     try:
         components = approval_mod.compute_hatena_bookmark_components(
             account=account_name, principal=principal, op=op, url=target_url, delivery=delivery_value,
@@ -493,7 +553,7 @@ def execute_locked(account_name: str, cfg: dict, p: dict, *, adapter_factory=Non
             result = BookmarkResult(ok=False, ambiguous=True,
                                     error="adapter_error:" + (redact_mod.redact(exc.__class__.__name__) or ""))
         if not getattr(result, "ok", False) and not getattr(result, "ambiguous", False):
-            raise BookmarkError(getattr(result, "error", None) or "publication_failed")
+            raise _rejection(adapter, result)
         state = "confirmed" if result.ok else "unknown"
         at = jst.iso()
         post_id = sent_mod.bookmark_post_id(p["url_canonical"])
@@ -729,6 +789,7 @@ def prepare_edit(account_name: str, cfg: dict, *, delivery: str | None = None, u
     new_comment = base_comment if comment is None else comment
     new_tags = base_tags if tags is None else parse_tags(tags)
     check_tag_bytes(new_tags)   # 直したあとのタグだけ（今の台帳の長いタグを直すのがこの口の用途）
+    check_percent(new_comment, new_tags)   # 直したあとの値だけ（S4 §24）
     try:
         components = approval_mod.compute_hatena_bookmark_edit_components(
             account=account_name, principal=principal, url=target_url, delivery=delivery_value,
@@ -860,7 +921,7 @@ def edit_locked(account_name: str, cfg: dict, p: dict, *, adapter_factory=None, 
             result = BookmarkResult(ok=False, ambiguous=True,
                                     error="adapter_error:" + (redact_mod.redact(exc.__class__.__name__) or ""))
         if not getattr(result, "ok", False) and not getattr(result, "ambiguous", False):
-            raise BookmarkError(getattr(result, "error", None) or "publication_failed")
+            raise _rejection(adapter, result)
         state = "confirmed" if result.ok else "unknown"
         remote = _remote_fields(getattr(result, "bookmark", None)) if state == "confirmed" else None
         try:

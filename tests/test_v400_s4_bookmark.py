@@ -317,6 +317,10 @@ def test_T_S4_7a_書くもの(bm, answer, result, error):
                                           (429, "provider_rate_limited"), (409, "hatena_http_409")])
 def test_T_S4_7a_書かないもの(bm, status, error):
     bm.bookmarks.post = _post((status, b"no"))
+    if status in (401, 403):
+        # 4.2.2（S4 §24）: 401/403 は `/rest/1/my` で token を確かめる。ここは token も断られる場合
+        # （GET が通る＝その札だけの断りは tests/test_v422_bookmark_rejections.py）。
+        bm.bookmarks.me = (status, b"no")
     assert failed(ACCOUNT, url=EXTERNAL, comment="c") == error
     assert rows(bm, ACCOUNT) == []
     assert principals.stopped("hatena-main") is None     # 429 でも主体は止めない

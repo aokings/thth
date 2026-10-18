@@ -530,6 +530,12 @@ def pending_paths(repo_dir, cfg, account) -> list:
     return out
 
 
+def sparse_outside(repo_dir, cfg, account) -> str | None:
+    """台帳の置き場が repo の sparse-checkout の定義の外なら、理由と直し方の 1 行（中なら None・4.2.2）。"""
+    from . import writeback
+    return writeback.sparse_outside_dirs(repo_dir, [ledger_dir(cfg, account)])
+
+
 def _undo_and_log(repo_dir, log, err) -> None:
     from . import collect
     undone = collect._undo_local_commit(repo_dir)
@@ -584,6 +590,13 @@ def _entry(account, *, now, log, info, wait=0, delivery=None) -> int:
             log(f"repo を同期できないので反応を採りません: {sync_err}")
             info["skipped"] = "not_synced"
             return 2
+        # sparse-checkout の定義の外（4.2.2・設計 S6 §17）: 読まない・書かない。載せられない台帳を書けば
+        # 「次で送り直す」が毎回失敗し、`--sparse` で載せれば次の同期で git が消して台帳を上書きする。
+        outside = sparse_outside(repo_dir, cfg, account)
+        if outside:
+            log(f"反応を採りません: {outside}")
+            info["skipped"] = "sparse_outside"
+            return 1
         result = collect_once(account, cfg, now=now, log=log, delivery=delivery)
         info["result"] = result
         # 前の run で push できずに取り消した行（作業ツリーに残っている台帳）も同じ commit に入れる（監査 低-1）。

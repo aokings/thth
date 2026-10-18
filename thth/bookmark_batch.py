@@ -38,6 +38,9 @@ TICK_MINUTES = 10
 MIN_GAP_MINUTES = 9
 MAX_GAP_MINUTES = 120
 RATE_LIMITED_MINUTES = 60
+# はてなに打って止まった（認可の断り・打つ前の確かめの GET が通らないなど）とき、次に試すまでの分（4.2.2・S4 §24）。
+# 10 分ごとに同じ札を打ち直し続けない（kopicha 10/18 に 57 回）。人が `batch-resume` で解けば待たない。
+BLOCKED_HOLD_MINUTES = 60
 # 乱数（試験で差し替える）。0 以上 1 未満。
 RANDOM = random.random
 ITEM_KEYS = frozenset(("url", "delivery", "comment", "tags", "op"))
@@ -61,7 +64,13 @@ _FINAL_BOOKMARK = frozenset(("invalid_url", "use_delivery", "bookmark_other_lane
                              "unsupported_operation", "approval_stale",
                              # 直し（S4 §21.6）: はてなに無い・台帳に直せる行が無い・消した・中身が同じ。
                              "bookmark_edit_missing_remote", "bookmark_not_found", "bookmark_already_deleted",
-                             "bookmark_edit_no_change"))
+                             "bookmark_edit_no_change",
+                             # 4.2.2（S4 §24）: 半角「%」の札・token は生きているのにその札だけ断られた。
+                             "bookmark_percent_unsupported", "hatena_rejected_item"))
+# はてなに打たずに止まる符丁（adapter を作れない・照合を待つ）。止まっても次の刻みで見直してよい（HTTP を打たない）。
+# これ以外の BookmarkError の止まりは、はてなに打って止まったので `BLOCKED_HOLD_MINUTES` 待つ（4.2.2・S4 §24）。
+_NO_HTTP_BLOCK = frozenset(("token_missing", "token_invalid", "consumer_missing", "consumer_invalid",
+                            "auth_unsupported", "bookmark_result_unknown"))
 # 直しの札が照合を待つ（付けた・前の直しの結果がまだ分からない）。打たずに止める（S4 §21.6）。
 _WAIT_RECONCILE = frozenset(("bookmark_result_unknown",))
 
@@ -163,6 +172,9 @@ def lint_problems(path) -> list:
         found = hatena_bookmark.long_tags(tags)
         if found:
             out.append(f"bookmark_tag_too_long: {where}: {hatena_bookmark.tag_too_long_text(found)}")
+        percent = hatena_bookmark.percent_places(entry["raw"].get("comment"), tags)
+        if percent:
+            out.append(f"bookmark_percent_unsupported: {where}: {hatena_bookmark.percent_text(percent)}")
     return out
 
 
@@ -414,6 +426,9 @@ def prepare(account_name: str, cfg: dict, text: str, *, now=None) -> dict:
                 # S4 §22: どのタグが何バイトか（予告して除く・黙って切らない）。
                 row["detail"] = "・".join(f"{tag} {size} バイト" for tag, size in exc.tags) + \
                     f"（{hatena_bookmark.TAG_MAX_BYTES} バイト以内に）"
+            if exc.code == "bookmark_percent_unsupported" and exc.percent:
+                # S4 §24: どこに何個（予告して除く・黙って直さない）。
+                row["detail"] = _percent_detail(exc.percent)
             if edit:
                 row["op"] = "edit"
             continue
@@ -472,6 +487,10 @@ def prepare(account_name: str, cfg: dict, text: str, *, now=None) -> dict:
             "forecast": forecast, "lane_allowed": lane_allowed, "stopped": halted,
             "scheduled": cfg.get("scheduled", True) is not False, "ttl_days": TTL_DAYS,
             "active_hours": list(ACTIVE_HOURS)}
+
+
+def _percent_detail(found) -> str:
+    return "半角の % " + "・".join(f"{where} {n} 個" for where, n in found) + "（全角の ％ に直して）"
 
 
 def _digest_length() -> int:
@@ -749,7 +768,8 @@ def attention_line(account_name, value) -> str | None:
     if blocked:
         parts.append(f"止まっています（{blocked.get('code')}"
                      + (f"・{blocked.get('reason')}" if blocked.get("reason") else "")
-                     + f"・待ち {value['pending']} 件・{_hm(blocked.get('at'))} から）")
+                     + f"・待ち {value['pending']} 件・{_hm(blocked.get('at'))} から"
+                     + (f"・{_hm(blocked['until'])} まで打ちません" if blocked.get("until") else "") + "）")
     if value.get("unknown"):
         parts.append(f"結果不明 {value['unknown']} 件 → thth bookmark reconcile {account_name} --by <名前>")
     if value.get("unreadable"):
@@ -815,6 +835,9 @@ def status_lines(s: dict) -> list:
     if blocked and s["pending"]:
         out.append(f"  止まっています: {blocked.get('code')}"
                    + (f"（{blocked.get('reason')}）" if blocked.get("reason") else "") + f"  {_hm(blocked.get('at'))}")
+        if blocked.get("until"):
+            out.append(f"  {_hm(blocked['until'])} まではてなに打ちません。直したら今すぐ: "
+                       f"thth bookmark batch-resume {s['account']} --by <名前>")
     for b in s["batches"]:
         if b.get("unreadable"):
             out.append(f"  {b['batch']}: 読めません")
@@ -1028,6 +1051,15 @@ def _run_locked(account_name, cfg, *, log, now, adapter_factory):
         if kind == "wait":
             item["wait"] = outcome[1]
             return finish("waiting", next_at=outcome[2])
+        if kind == "blocked_http":
+            # はてなに打って止まった（4.2.2・S4 §24）: `BLOCKED_HOLD_MINUTES` は次の run も打たない。
+            item["wait"] = outcome[1]
+            until = now + datetime.timedelta(minutes=BLOCKED_HOLD_MINUTES)
+            log(f"ブックマークのまとめ: 止まりました（{outcome[1]}）。{_hm(jst.iso(until))} まではてなに打ちません"
+                f"（直したら thth bookmark batch-resume {account_name} --by <名前>）")
+            return finish("blocked", next_at=until,
+                          blocked={"code": outcome[1], "reason": outcome[2], "at": jst.iso(now),
+                                   "until": jst.iso(until)})
         # blocked
         item["wait"] = outcome[1]
         return finish("blocked", blocked={"code": outcome[1], "reason": outcome[2], "at": jst.iso(now)})
@@ -1064,6 +1096,40 @@ def unresolved_unknown(account_name, batches) -> int:
                 continue
             n += row.get("result") == "unknown"
     return n
+
+
+def _item_detail(exc):
+    """札の断りの詳細（4.2.2 で足した符丁だけ・ほかの符丁の詳細は今どおり None）。"""
+    code = getattr(exc, "code", None)
+    if code == "bookmark_percent_unsupported" and getattr(exc, "percent", None):
+        return _percent_detail(exc.percent)
+    if code in ("hatena_rejected_item", "hatena_auth_rejected") and getattr(exc, "status", None):
+        return f"HTTP {exc.status}"
+    return None
+
+
+def resume_locked(account_name: str, *, by, now=None) -> dict:
+    """止まったまとめを今すぐ見直させる（口座のロックの中・1 段・4.2.2・S4 §24）。
+
+    `pace.json` の `blocked` と `next_at` を外すだけ。札・承認の指紋・`sent/` は触らない。次の `thth run` が
+    今どおりの柵（安全装置・柵 1〜3）を通して付ける（まだ直っていなければ、また止まる）。
+    """
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    pace = _read_pace(account_name)
+    blocked = pace.get("blocked")
+    pace["blocked"] = None
+    pace["next_at"] = None
+    pace["resumed_at"], pace["resumed_by"] = jst.iso(now), by
+    _save_pace(account_name, pace)
+    try:
+        from . import admin_log
+        admin_log.append("bookmark_batch_resumed", account_name, accounts_mod.load_account(account_name),
+                         by=by or "thth", via="cli", diff={"blocked": [(blocked or {}).get("code"), None]})
+    except Exception:  # noqa: BLE001 — 正本は pace.json。変更ログに残せなくても解いたことは変わらない
+        pass
+    return {"account": account_name, "status": "resumed", "was_blocked": blocked, "by": by,
+            "pending": sum(1 for b in load_batches(account_name) if not b.get("unreadable")
+                           for it in b.get("items") or [] if it.get("state") == "pending")}
 
 
 def _defer(item, code, tomorrow, now):
@@ -1107,7 +1173,7 @@ def _place(account_name, cfg, batch, item, *, now, log, adapter_factory):
         if exc.code == "bookmark_target_not_own" and _own_article_pending(account_name, item):
             # 自分の記事の配信が published でない（更新中など）: 最終の断りにせず翌日へ回す。
             return ("defer", exc.code, None)
-        return refuse(exc.code)
+        return refuse(exc.code, _item_detail(exc))
     if p["approved_sha"] != item.get("approved_sha"):
         return refuse("approval_stale")
     logs = []
@@ -1134,7 +1200,7 @@ def _place(account_name, cfg, batch, item, *, now, log, adapter_factory):
             return ("defer", code, None)
         if code in _FINAL_BOOKMARK or (code.startswith("hatena_http_4")
                                        and code not in ("hatena_http_401", "hatena_http_403", "hatena_http_429")):
-            return refuse(code)
+            return refuse(code, _item_detail(exc))
         if code == "bookmark_record_failed":
             item.update({"state": "unknown", "reason": code, "done_at": at})
             for line in logs:
@@ -1143,7 +1209,7 @@ def _place(account_name, cfg, batch, item, *, now, log, adapter_factory):
         if code in ("provider_rate_limited", "hatena_http_429"):
             # はてなの 429 も「止まる」でなく「待つ」（provider_rate_limited と同じ分だけ）。
             return ("wait", code, now + datetime.timedelta(minutes=RATE_LIMITED_MINUTES))
-        return ("blocked", code, None)
+        return ("blocked" if code in _NO_HTTP_BLOCK else "blocked_http", code, _item_detail(exc))
     for line in logs:
         log(line)
     if done.get("status") == "unknown":
@@ -1169,7 +1235,7 @@ def _place_edit(account_name, cfg, batch, item, *, now, log, adapter_factory, re
     except hatena_bookmark.BookmarkError as exc:
         if exc.code in _WAIT_RECONCILE:
             return ("blocked", exc.code, None)
-        return refuse(exc.code)
+        return refuse(exc.code, _item_detail(exc))
     if p["approved_sha"] != item.get("approved_sha"):
         return refuse("approval_stale")
     logs = []
@@ -1186,7 +1252,7 @@ def _place_edit(account_name, cfg, batch, item, *, now, log, adapter_factory, re
         code = exc.code
         if code in _FINAL_BOOKMARK or (code.startswith("hatena_http_4")
                                        and code not in ("hatena_http_401", "hatena_http_403", "hatena_http_429")):
-            return refuse(code)
+            return refuse(code, _item_detail(exc))
         if code in _WAIT_RECONCILE:
             return ("blocked", code, None)
         if code == "bookmark_record_failed":
@@ -1196,7 +1262,7 @@ def _place_edit(account_name, cfg, batch, item, *, now, log, adapter_factory, re
             return ("unknown", code, None)
         if code in ("provider_rate_limited", "hatena_http_429"):
             return ("wait", code, now + datetime.timedelta(minutes=RATE_LIMITED_MINUTES))
-        return ("blocked", code, None)
+        return ("blocked" if code in _NO_HTTP_BLOCK else "blocked_http", code, _item_detail(exc))
     for line in logs:
         log(line)
     if done.get("status") == "unknown":

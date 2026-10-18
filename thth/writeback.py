@@ -535,6 +535,72 @@ def commit_and_push(repo_dir: str, *, rel_path: str, message: str, validate=None
     return push_committed(repo_dir, validate=validate)
 
 
+SPARSE_PREFIX = "sparse_checkout_outside"
+
+
+def sparse_excluded(repo_dir: str, rel_paths) -> list:
+    """sparse-checkout の定義の外にあるパス（repo の根からの相対・`/` 区切り）の list（4.2.2・S6 §17）。
+
+    sparse-checkout が無効なら空。cone の形（`core.sparseCheckoutCone`）なら定義のディレクトリから決める
+    （根の直下のファイル・定義のディレクトリの下・定義のディレクトリの親の直下のファイルが中）。cone でない形
+    （gitignore の型）は、定義のファイルを除外の型として `git check-ignore --no-index` に照らす（型に当たる＝中）。
+    判定できなければ空を返し、`git add` の断りを `commit_local` が言い換える。ファイルが無くても判定できる。
+    """
+    enabled = _run_git(repo_dir, ["config", "--bool", "core.sparseCheckout"])
+    if enabled.returncode != 0 or enabled.stdout.strip() != "true":
+        return []
+    paths = [str(rel).replace(os.sep, "/").strip("/")
+             for rel in ([rel_paths] if isinstance(rel_paths, str) else list(rel_paths))]
+    cone = _run_git(repo_dir, ["config", "--bool", "core.sparseCheckoutCone"])
+    if cone.returncode != 0 or cone.stdout.strip() != "true":
+        where = _run_git(repo_dir, ["rev-parse", "--git-path", "info/sparse-checkout"])
+        if where.returncode != 0 or not where.stdout.strip():
+            return []
+        patterns = os.path.join(repo_dir, where.stdout.strip())
+        if not os.path.isfile(patterns):
+            return []
+        out = []
+        for path in paths:
+            hit = _run_git(repo_dir, ["-c", f"core.excludesFile={patterns}", "check-ignore", "--no-index", "-q",
+                                      "--", path])
+            if hit.returncode == 1:
+                out.append(path)
+        return out
+    listed = _run_git(repo_dir, ["sparse-checkout", "list"])
+    if listed.returncode != 0:
+        return []
+    dirs = [line.strip().strip("/") for line in listed.stdout.splitlines() if line.strip()]
+    out = []
+    for path in paths:
+        parent = path.rsplit("/", 1)[0] if "/" in path else ""
+        inside = (parent == ""
+                  or any(path.startswith(d + "/") for d in dirs)
+                  or any(d == parent or d.startswith(parent + "/") for d in dirs))
+        if not inside:
+            out.append(path)
+    return out
+
+
+def sparse_message(repo_dir: str, rel_paths) -> str:
+    """sparse-checkout の外を言う 1 行（符丁で始める・直し方つき）。"""
+    paths = sorted({os.path.dirname(p) or p for p in rel_paths})
+    return (f"{SPARSE_PREFIX}: sparse-checkout の定義の外なので repo に載せません: {'・'.join(paths)}"
+            f"（載せるなら git -C {repo_dir} sparse-checkout add {' '.join(paths)}）")
+
+
+def sparse_outside_dirs(repo_dir: str, dirs) -> str | None:
+    """書く前の確かめ（4.2.2・S6 §17）: 置き場（実パス）のどれかが sparse-checkout の定義の外なら、理由と
+    直し方の 1 行（`sparse_message`）。みな中か、repo の外の置き場だけなら None。"""
+    root = os.path.realpath(repo_dir)
+    probes = []
+    for directory in dirs:
+        base = os.path.realpath(directory)
+        if base.startswith(root + os.sep):
+            probes.append(os.path.relpath(os.path.join(base, "thth_probe.ndjson"), root))
+    outside = sparse_excluded(repo_dir, probes) if probes else []
+    return sparse_message(repo_dir, outside) if outside else None
+
+
 def commit_local(repo_dir: str, *, rel_path, message: str) -> tuple:
     """`git add -- <rel_path>` → `commit --only`（push しない）。`(ok, error)` を返す。
 
@@ -546,8 +612,17 @@ def commit_local(repo_dir: str, *, rel_path, message: str) -> tuple:
     # asmon 関東セッション指摘 2026-09-10）。**commit に入るのはここに並べた
     # パスだけ**（`--only`）。
     rel_paths = [rel_path] if isinstance(rel_path, str) else list(rel_path)
+    # **sparse-checkout の定義の外は載せない**（4.2.2・設計 S6 §17）。`git add --sparse` で載せると、次の
+    # 同期（rebase・merge）で git がそのファイルを作業ツリーから消し（skip-worktree）、追記の台帳を次の回が
+    # 空から書き直して履歴を上書きする（本物の git で確かめた）。理由と直し方を言って、git には触らない。
+    outside = sparse_excluded(repo_dir, rel_paths)
+    if outside:
+        return False, sparse_message(repo_dir, outside)
     add = _run_git(repo_dir, ["add", "--", *rel_paths])
     if add.returncode != 0:
+        if "sparse-checkout" in (add.stderr or ""):
+            # 判定できなかった定義で git が断った。同じ符丁で言い換える（--sparse では載せない）。
+            return False, sparse_message(repo_dir, rel_paths)
         return False, redact_mod.redact(add.stderr)
 
     # **`--only` を付ける**（外部レビュー第 5 巡 P1・2）。`git add -- <path>` は

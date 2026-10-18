@@ -373,6 +373,19 @@
       "notes": "THTH は 31 バイトを超えるタグを 1 段目で予告して断る（hatena_bookmark.TAG_MAX_BYTES・設計 S4 §22）。柵の行（limits_policy）にはしない"
     },
     {
+      "id": "hatenabookmark.percent_in_body_rejected_observed",
+      "kind": "observation",
+      "statement": "本文（form の comment か tags）に半角 % を含む POST /rest/1/my/bookmark が 401（WWW-Authenticate: OAuth）で断られた。同じ token で、ほかの札の POST・/rest/1/my の GET・URL のクエリに %25 を含む GET は通る。原因ははてな側の推測（form の本文の % の扱いで署名が合わない）",
+      "evidence": {
+        "type": "observed",
+        "record": "kopicha の本番（10/18・まとめ承認の 14 件目のコメント「約 85%」・THTH の署名は RFC 5849 どおり 85%25 を base string に入れる）",
+        "observed_at": "2026-10-18"
+      },
+      "confidence": "medium",
+      "signals": [],
+      "notes": "THTH はコメントかタグに半角 % を含む札を 1 段目と lint で予告して断る（bookmark_percent_unsupported・全角の ％ に直す・設計 S4 §24）。原因は確定していない。柵の行（limits_policy）にはしない"
+    },
+    {
       "id": "hatenabookmark.cache_lag",
       "kind": "observation",
       "statement": "entry/jsonlite は付けた直後に反映されない",
