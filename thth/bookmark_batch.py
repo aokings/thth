@@ -65,8 +65,8 @@ _FINAL_BOOKMARK = frozenset(("invalid_url", "use_delivery", "bookmark_other_lane
                              # 直し（S4 §21.6）: はてなに無い・台帳に直せる行が無い・消した・中身が同じ。
                              "bookmark_edit_missing_remote", "bookmark_not_found", "bookmark_already_deleted",
                              "bookmark_edit_no_change",
-                             # 4.2.2（S4 §24）: 半角「%」の札・token は生きているのにその札だけ断られた。
-                             "bookmark_percent_unsupported", "hatena_rejected_item"))
+                             # 4.2.2（S4 §24）: token は生きているのにその札だけ断られた。
+                             "hatena_rejected_item"))
 # はてなに打たずに止まる符丁（adapter を作れない・照合を待つ）。止まっても次の刻みで見直してよい（HTTP を打たない）。
 # これ以外の BookmarkError の止まりは、はてなに打って止まったので `BLOCKED_HOLD_MINUTES` 待つ（4.2.2・S4 §24）。
 _NO_HTTP_BLOCK = frozenset(("token_missing", "token_invalid", "consumer_missing", "consumer_invalid",
@@ -172,9 +172,10 @@ def lint_problems(path) -> list:
         found = hatena_bookmark.long_tags(tags)
         if found:
             out.append(f"bookmark_tag_too_long: {where}: {hatena_bookmark.tag_too_long_text(found)}")
-        percent = hatena_bookmark.percent_places(entry["raw"].get("comment"), tags)
-        if percent:
-            out.append(f"bookmark_percent_unsupported: {where}: {hatena_bookmark.percent_text(percent)}")
+        # 4.2.2（S4 §24.1）: 本文の予告（断らない・`warning:`）。追加の札だけ（直しの札は省いた値が台帳にある）。
+        if entry["raw"].get("op") != "edit":
+            for w in hatena_bookmark.body_warnings(entry["raw"].get("comment"), tags):
+                out.append(f"warning: {w['code']}: {where}: {w['text']}")
     return out
 
 
@@ -426,9 +427,6 @@ def prepare(account_name: str, cfg: dict, text: str, *, now=None) -> dict:
                 # S4 §22: どのタグが何バイトか（予告して除く・黙って切らない）。
                 row["detail"] = "・".join(f"{tag} {size} バイト" for tag, size in exc.tags) + \
                     f"（{hatena_bookmark.TAG_MAX_BYTES} バイト以内に）"
-            if exc.code == "bookmark_percent_unsupported" and exc.percent:
-                # S4 §24: どこに何個（予告して除く・黙って直さない）。
-                row["detail"] = _percent_detail(exc.percent)
             if edit:
                 row["op"] = "edit"
             continue
@@ -438,6 +436,9 @@ def prepare(account_name: str, cfg: dict, text: str, *, now=None) -> dict:
                     "blog_id": p.get("blog_id")})
         if edit:
             row.update({"op": "edit", "base_comment": p["base_comment"], "base_tags": p["base_tags"]})
+        if p.get("warnings"):
+            # 4.2.2（S4 §24.1）: 本文の予告（断らない・指紋に入れない）。符丁だけを札に添える。
+            row["warnings"] = [w["code"] for w in p["warnings"]]
         if p.get("ledger"):
             row["reason"], row["detail"] = "bookmark_once", p["ledger"]
             continue
@@ -489,10 +490,6 @@ def prepare(account_name: str, cfg: dict, text: str, *, now=None) -> dict:
             "active_hours": list(ACTIVE_HOURS)}
 
 
-def _percent_detail(found) -> str:
-    return "半角の % " + "・".join(f"{where} {n} 個" for where, n in found) + "（全角の ％ に直して）"
-
-
 def _digest_length() -> int:
     from . import approval
     return approval.APPROVE_DIGEST_LENGTH
@@ -530,6 +527,9 @@ def lines(p: dict) -> list:
             out.append(f"       コメント: {row.get('comment') or ''}  タグ: {tags}")
             if row.get("target") == "own":
                 out.append("       （自分の記事です。運営者であることが分かる文にしてください。例: 自分の記事。…）")
+            if row.get("warnings"):
+                out.append("       予告（断りません）: " + "・".join(row["warnings"])
+                           + "（はてなに 401 で断られた札と同じ形・断られたらその札だけ外して進めます）")
     if p["hosts"]:
         limit = rem["host_limit"] if rem else "?"
         out.append("ホストごと（付ける札・今日もう付けた数・日の枠 " + str(limit) + "）: "
@@ -1101,8 +1101,6 @@ def unresolved_unknown(account_name, batches) -> int:
 def _item_detail(exc):
     """札の断りの詳細（4.2.2 で足した符丁だけ・ほかの符丁の詳細は今どおり None）。"""
     code = getattr(exc, "code", None)
-    if code == "bookmark_percent_unsupported" and getattr(exc, "percent", None):
-        return _percent_detail(exc.percent)
     if code in ("hatena_rejected_item", "hatena_auth_rejected") and getattr(exc, "status", None):
         return f"HTTP {exc.status}"
     return None

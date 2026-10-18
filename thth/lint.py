@@ -72,8 +72,6 @@ _REASON_TABLE = (
     ("goal_invalid: ", "goal_invalid"),
     # はてなブックマークの札のファイル（設計 S4 §22）。
     ("bookmark_tag_too_long: ", "bookmark_tag_too_long"),
-    # 4.2.2（S4 §24）: 半角「%」の札。
-    ("bookmark_percent_unsupported: ", "bookmark_percent_unsupported"),
     # はてなブログの配信原稿（設計 4.0 S1 §3.5）。lint の 1 行は符丁そのもので始まる。
     *((code + ": ", code) for code in (
         "article_required", "article_source_missing", "invalid_article_source", "title_required",

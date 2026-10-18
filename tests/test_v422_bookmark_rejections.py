@@ -1,12 +1,13 @@
 """4.2.2（設計 S4 §24・kopicha の本番 10/18）: はてなブックマークの 1 件の断りでまとめ全体を止めない。
 
 見るもの:
-  A. 半角「%」の柵: `add`・`edit`・`batch` の 1 段目と `thth lint <札のファイル>` で予告して断る
-     （`bookmark_percent_unsupported`・どこに何個・全角の ％ へ）。全角は通す。台帳に観測の項目。
-     4.2.2 より前に並べた札も、付けるときの読み直しで断り、まとめは進む。
-  B. POST が 401/403 なら同じ run の中で `/rest/1/my` を GET して token を確かめる。通ればその札だけ
+  B（主）. POST が 401/403 なら同じ run の中で `/rest/1/my` を GET して token を確かめる。通ればその札だけ
      `hatena_rejected_item`（詳細に HTTP の番号）でまとめは進む。GET も断られたら `hatena_auth_rejected`。
-     1 件ずつの `add`・`edit` でも同じ見分けで、人向けの文を分ける。
+     1 件ずつの `add`・`edit` でも同じ見分けで、人向けの文を分ける。原因が何であれ、打ち直さない。
+  A. 本文の予告（**断らない**・原因が未確定）: 半角「%」（`bookmark_percent_maybe_rejected`）と、
+     `[tag]…comment` の形で 135 字か 343 バイトを超える長さ（`bookmark_length_maybe_rejected`）を、
+     `add`・`edit`・`batch` の 1 段目と `thth lint <札のファイル>` で予告する（lint は `warning:`）。
+     承認の指紋は変えない。台帳に観測の項目（確かさ low・数は台帳とコードで同じ）。
   C. はてなに打って止まった（blocked）ら `BLOCKED_HOLD_MINUTES`（60 分）は次の run も HTTP を打たない。
      `thth bookmark batch-resume <口座> --by` で今すぐ見直させる。打たずに止まる止め（主体の止めなど）は今どおり。
 
@@ -24,6 +25,9 @@ from tests.test_v410_bookmark_batch import (URL_A1, URL_B1, approve, batch_file,
 from thth import bookmark_batch, hatena_bookmark, lint, media_traits, sent
 
 ME = "https://bookmark.hatenaapis.com/rest/1/my"
+# `[tag]…comment` の形で 138 字・398 バイト（予告の長さを超える）。コメントは 100 字以内・タグは 31 バイト以内。
+LONG_TAGS = ["一次資料いろはにほへ", "二次資料いろはにほへ", "三次資料いろはにほへ", "四次資料いろはにほへ"]
+LONG_COMMENT = "あ" * 90
 
 
 def hatena_bookmark_api(target):
@@ -35,73 +39,114 @@ def me_calls(world):
     return [u for m, u in calls(world, "GET") if u == ME]
 
 
-# ================================================================ A. 半角「%」の柵
+def codes(warnings):
+    return [w["code"] for w in warnings]
 
-def test_A_addの1段目で半角パーセントを予告して断り_どこに何個かと全角への案内(bm):
-    """柵: `check_percent` を外すと赤（「約 85%」の札が 1 段目を通る）。"""
-    rc, out, _ = call(["bookmark", "add", ACCOUNT, "--url", EXTERNAL, "--comment", "約 85% が一次資料",
-                       "--tags", "割合%,統計", "--json"])
+
+# ================================================================ A. 本文の予告（断らない）
+
+def test_A_予告の境目は135字と343バイト_半角パーセントは全角なら出ない():
+    assert hatena_bookmark.body_form("c", ["a", "b"]) == "[a][b]c"
+    assert codes(hatena_bookmark.body_warnings("x" * 135, [])) == []
+    assert codes(hatena_bookmark.body_warnings("x" * 136, [])) == ["bookmark_length_maybe_rejected"]
+    assert codes(hatena_bookmark.body_warnings("あ" * 114 + "x", [])) == []                 # 115 字・343 バイト
+    assert codes(hatena_bookmark.body_warnings("あ" * 114 + "xy", [])) == ["bookmark_length_maybe_rejected"]  # 344 バイト
+    assert codes(hatena_bookmark.body_warnings("約 85％", [])) == []
+    got = hatena_bookmark.body_warnings("約 85%", ["割合%"])
+    assert codes(got) == ["bookmark_percent_maybe_rejected"]
+    assert "コメント 1 個" in got[0]["text"] and "タグ「割合%」 1 個" in got[0]["text"]
+    assert len(hatena_bookmark.body_form(LONG_COMMENT, LONG_TAGS)) == 138
+
+
+def test_A_addの1段目は予告して断らず_2段目も打つ_指紋は変わらない(bm):
+    """柵: `body_warnings` を 1 段目に出さないと赤。断る形に戻すと赤（rc 2）。"""
+    args = ["bookmark", "add", ACCOUNT, "--url", EXTERNAL, "--comment", "約 85% が一次資料", "--tags", "割合%,統計"]
+    rc, out, _ = call(args + ["--json"])
     body = json.loads(out)
-    assert rc == 2 and body["error"] == "bookmark_percent_unsupported"
-    assert "コメント 1 個" in body["message"] and "タグ「割合%」 1 個" in body["message"]
-    assert "全角の「％」" in body["message"] and "統計" not in body["message"]
-    rc, out, _ = call(["bookmark", "add", ACCOUNT, "--url", EXTERNAL, "--comment", "約 85％ が一次資料", "--json"])
-    assert rc == 1 and json.loads(out)["stage"] == 1
-    assert calls(bm, "POST") == []
+    assert rc == 1 and body["stage"] == 1
+    assert codes(body["preview"]["warnings"]) == ["bookmark_percent_maybe_rejected"]
+    rc, text, _ = call(args)
+    assert "予告（断りません）: bookmark_percent_maybe_rejected" in text and "原因は未確定" in text
+    p = hatena_bookmark.prepare(ACCOUNT, cfg(ACCOUNT), url=EXTERNAL, comment="約 85% が一次資料", tags="割合%,統計",
+                                check_remote=False)
+    from thth import approval
+    assert p["approved_sha"] == approval.compute_hatena_bookmark_sha(
+        account=ACCOUNT, principal="hatena-main", op="add", url=EXTERNAL, delivery="", comment="約 85% が一次資料",
+        tags=["割合%", "統計"])
+    rc, out, err = call(args + ["--confirm", body["digest"], "--by", "masaru", "--production", "--json"])
+    assert rc == 0, (out, err)
+    assert len(calls(bm, "POST")) == 1
 
 
-def test_A_editは直したあとの値だけを見る(bm):
-    bookmark(ACCOUNT, url=EXTERNAL, comment="旧", tags=["旧名"])
-    rc, out, _ = call(["bookmark", "edit", ACCOUNT, "--url", EXTERNAL, "--comment", "100%", "--json"])
-    assert rc == 2 and json.loads(out)["error"] == "bookmark_percent_unsupported"
-    rc, out, _ = call(["bookmark", "edit", ACCOUNT, "--url", EXTERNAL, "--comment", "100％", "--json"])
-    assert rc == 1 and json.loads(out)["stage"] == 1
+def test_A_長い札も予告する_editは直したあとの値(bm):
+    rc, out, _ = call(["bookmark", "add", ACCOUNT, "--url", EXTERNAL, "--comment", LONG_COMMENT, "--tags",
+                       ",".join(LONG_TAGS), "--json"])
+    body = json.loads(out)
+    assert rc == 1 and codes(body["preview"]["warnings"]) == ["bookmark_length_maybe_rejected"]
+    assert "138 字・398 バイト" in body["preview"]["warnings"][0]["text"]
+    assert "135 字・343 バイト" in body["preview"]["warnings"][0]["text"]
+    bookmark(ACCOUNT, url=EXTERNAL_2, comment="旧", tags=["旧名"])
+    rc, out, _ = call(["bookmark", "edit", ACCOUNT, "--url", EXTERNAL_2, "--comment", "100%", "--json"])
+    assert rc == 1 and codes(json.loads(out)["preview"]["warnings"]) == ["bookmark_percent_maybe_rejected"]
+    rc, out, _ = call(["bookmark", "edit", ACCOUNT, "--url", EXTERNAL_2, "--comment", "100％", "--json"])
+    assert rc == 1 and json.loads(out)["preview"]["warnings"] == []
 
 
-def test_A_batchはその札だけ除き理由と詳細を見せる(bb):
-    path = write(bb, [item(URL_A1, comment="約 85%"), item(URL_B1, comment="約 85％")])
-    rc, out, _ = call(["bookmark", "batch", ACCOUNT, path, "--json"])
-    items = json.loads(out)["preview"]["items"]
-    assert [r["reason"] for r in items] == ["bookmark_percent_unsupported", None]
-    assert "コメント 1 個" in items[0]["detail"] and "全角" in items[0]["detail"]
+def test_A_batchは札を除かず予告を添える_指紋は今と同じ(bb):
+    path = write(bb, [item(URL_A1, comment="約 85%"), {"url": URL_B1, "comment": LONG_COMMENT, "tags": LONG_TAGS},
+                      item("https://c.example.net/y", comment="約 85％")])
+    first = json.loads(call(["bookmark", "batch", ACCOUNT, path, "--json"])[1])
+    items = first["preview"]["items"]
+    assert [r["include"] for r in items] == [True, True, True]
+    assert [r.get("warnings") for r in items] == [["bookmark_percent_maybe_rejected"],
+                                                  ["bookmark_length_maybe_rejected"], None]
+    shas = [hatena_bookmark.prepare(ACCOUNT, cfg(ACCOUNT), url=r["url"], comment=r["comment"], tags=r["tags"],
+                                    check_remote=False)["approved_sha"] for r in items]
+    assert first["preview"]["approved_sha"] == bookmark_batch.compute_sha(ACCOUNT, "hatena-main", shas)
     rc, out, _ = call(["bookmark", "batch", ACCOUNT, path])
-    assert "除く: bookmark_percent_unsupported" in out
+    assert "予告（断りません）: bookmark_percent_maybe_rejected" in out
+    approve(path)
+    assert all("warnings" not in it for it in batch_file(bb)["items"])     # 札の形は変えない
 
 
-def test_A_lintは札のファイルの半角パーセントをerrorで言う(tmp_path):
+def test_A_lintは札のファイルの予告をwarningで言いrcは0(tmp_path):
     path = tmp_path / "day.jsonl"
-    path.write_text("\n".join([json.dumps({"url": EXTERNAL, "comment": "約 85%", "tags": "a%b"}, ensure_ascii=False),
-                               json.dumps({"url": EXTERNAL_2, "comment": "約 85％"}, ensure_ascii=False)]) + "\n",
-                    encoding="utf-8")
+    path.write_text("\n".join([
+        json.dumps({"url": EXTERNAL, "comment": "約 85%", "tags": "a%b"}, ensure_ascii=False),
+        json.dumps({"url": EXTERNAL_2, "comment": LONG_COMMENT, "tags": LONG_TAGS}, ensure_ascii=False),
+        json.dumps({"url": "https://c.example.net/y", "comment": "約 85％"}, ensure_ascii=False)]) + "\n",
+        encoding="utf-8")
     problems = lint.lint_file(str(path))
-    assert len(problems) == 1 and problems[0].startswith("bookmark_percent_unsupported: 札 1（1 行目）")
-    assert "コメント 1 個" in problems[0] and "タグ「a%b」 1 個" in problems[0]
-    assert lint.reason_code(problems) == "bookmark_percent_unsupported"
-    rc, out, _ = call(["lint", str(path)])
-    assert rc == 1 and "bookmark_percent_unsupported" in out
+    assert [p.split(": 札")[0] for p in problems] == ["warning: bookmark_percent_maybe_rejected",
+                                                    "warning: bookmark_length_maybe_rejected"]
+    assert "札 1（1 行目）" in problems[0] and "タグ「a%b」 1 個" in problems[0]
+    assert all(lint.is_warning(p) for p in problems)
+    rc, out, err = call(["lint", str(path)])
+    assert rc == 0 and "bookmark_length_maybe_rejected" in out + err
 
 
-def test_A_前に並べた札も付けるときに断り_まとめは進む(bb, monkeypatch):
-    """本番の形: 4.2.1 で並べた「約 85%」の札。付けるときの読み直しで断り、次の札へ進む（打たない）。"""
-    with monkeypatch.context() as m:
-        m.setattr(hatena_bookmark, "check_percent", lambda comment, tags: None)
-        approve(write(bb, [item(URL_A1, comment="約 85%"), item(URL_B1)]))
+def test_A_予告の札が断られてもその札だけ外してまとめは進む(bb):
+    """本番の形: 14 件目「約 85%」・26 件目（長い札）が 401。token は生きている → その札だけ refused。"""
+    bb.bookmarks.post = lambda target, form: ((401, b"no") if target in (URL_A1, URL_B1)
+                                              else _place_default(bb, target, form))
+    approve(write(bb, [item(URL_A1, comment="約 85%"), {"url": URL_B1, "comment": LONG_COMMENT, "tags": LONG_TAGS},
+                       item("https://c.example.net/y")]))
     out, _ = run(bb)
     b = batch_file(bb)
     assert [(i["state"], i["reason"]) for i in b["items"]] == [
-        ("refused", "bookmark_percent_unsupported"), ("placed", None)]
-    assert "コメント 1 個" in b["items"][0]["detail"]
-    assert [u for _m, u in calls(bb, "POST")] == [hatena_bookmark_api(URL_B1)]
+        ("refused", "hatena_rejected_item"), ("refused", "hatena_rejected_item"), ("placed", None)]
     assert out["status"] == "placed" and not out.get("blocked")
 
 
-def test_A_媒体の台帳に観測の項目がある():
+def test_A_媒体の台帳に観測の項目があり_数はコードと同じ():
     doc = media_traits.load("hatenabookmark")
-    found = next(t for t in doc["traits"] if t["id"] == "hatenabookmark.percent_in_body_rejected_observed")
-    assert found["kind"] == "observation" and found["confidence"] in ("medium", "low")
+    found = next(t for t in doc["traits"] if t["id"] == "hatenabookmark.body_rejected_observed")
+    assert found["kind"] == "observation" and found["confidence"] == "low" and found["signals"] == []
     assert found["evidence"]["type"] == "observed" and found["evidence"]["observed_at"] == "2026-10-18"
     assert "kopicha" in found["evidence"]["record"]
-    assert "401" in found["statement"] and "%25" in found["statement"] and "推測" in found["statement"]
+    assert "半角 %" in found["statement"] and "未確定" in found["statement"] and "401" in found["statement"]
+    assert f"{hatena_bookmark.BODY_OK_MAX_CHARS} 字・{hatena_bookmark.BODY_OK_MAX_BYTES} バイト" in found["statement"]
+    assert not any(t["id"] == "hatenabookmark.percent_in_body_rejected_observed" for t in doc["traits"])
 
 
 # ================================================================ B. 1 件だけの 401/403

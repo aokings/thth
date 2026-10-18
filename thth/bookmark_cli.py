@@ -118,9 +118,6 @@ def _bookmark_message(exc, fallback) -> str:
     if exc.code == "bookmark_tag_too_long" and getattr(exc, "tags", None):
         from .hatena_bookmark import tag_too_long_text
         return tag_too_long_text(exc.tags)
-    if exc.code == "bookmark_percent_unsupported" and getattr(exc, "percent", None):
-        from .hatena_bookmark import percent_text
-        return percent_text(exc.percent)
     if exc.code == "hatena_rejected_item":
         from .hatena_bookmark import rejected_item_text
         return rejected_item_text(getattr(exc, "status", None))
@@ -174,7 +171,6 @@ _MESSAGES = {
     "hatena_auth_rejected": "はてなが認可を断りました。thth principal auth <主体> --force --by <名前> をやり直してください",
     # 4.2.2（S4 §24）: 文は `_bookmark_message` が HTTP の番号と札の直し方を入れて作る。
     "hatena_rejected_item": "この札だけはてなに断られました（token は生きています）",
-    "bookmark_percent_unsupported": "コメントかタグに半角の % があります。全角の ％ に直してください",
 }
 
 
