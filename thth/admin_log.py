@@ -65,6 +65,8 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    # 4.1（S4 §20）: ブックマークの札をまとめて承認した（札の数だけ）。運用通知は送らない
                    # （`admin_notifications.SELECTED` に無い・下の transaction の通知の道でも飛ばす）。
                    'bookmark_batch_approved',
+                   # 4.2.2（S4 §24）: 止まったブックマークのまとめを人が解いた（止まっていた符丁だけ）。通知は送らない。
+                   'bookmark_batch_resumed',
                    # 上限と連投の柵 段 4（§9.2）: 人が媒体の観測を足した（媒体と kind の語だけ）。通知は送らない。
                    'media_observed'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
@@ -275,7 +277,7 @@ def transaction(*, rollback=None):
                                       'credential_rotated', 'credential_revoked', 'settings_set',
                                       'schedule_cancelled', 'guard_stopped', 'guard_resumed',
                                       'publish_held', 'publish_resumed',
-                                      'bookmark_batch_approved', 'media_observed'):
+                                      'bookmark_batch_approved', 'bookmark_batch_resumed', 'media_observed'):
                     continue
                 cfg = accounts.load_account(event['account'])
                 admin_notifications.notify(event, cfg)

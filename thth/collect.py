@@ -1232,6 +1232,17 @@ def _collect_entry(account_name: str, *, adapter, now, log, info: dict, wait=0) 
             info["skipped"] = "not_synced"
             return 2
 
+        # sparse-checkout の定義の外に置き場があれば採らない・書かない（4.2.2・設計 S6 §17・はてなの反応と同じ形）。
+        # 見るのは SNS の採取が書く置き場だけ（はてなの反応の置き場は `hatena_reactions` が見る）。
+        dirs = accounts_mod.data_dirs(account_cfg, account_name)
+        outside = writeback.sparse_outside_dirs(
+            repo_dir, [dirs[key] for key in ("insights_posts", "insights_account", "replies", "inbox",
+                                             "engagements")])
+        if outside:
+            log(f"採取しません: {outside}")
+            info["skipped"] = "sparse_outside"
+            return 1
+
         result = collect_once(account_name, adapter=adapter, now=now, log=log)
         _note(info, result)
 

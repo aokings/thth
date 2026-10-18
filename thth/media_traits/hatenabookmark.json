@@ -373,6 +373,19 @@
       "notes": "THTH は 31 バイトを超えるタグを 1 段目で予告して断る（hatena_bookmark.TAG_MAX_BYTES・設計 S4 §22）。柵の行（limits_policy）にはしない"
     },
     {
+      "id": "hatenabookmark.body_rejected_observed",
+      "kind": "observation",
+      "statement": "半角 % を含む札と、タグ＋コメントの長い札が、POST /rest/1/my/bookmark で 401（WWW-Authenticate: OAuth）を返された。同じ token の GET（/rest/1/my・URL のクエリに %25 を含む GET）は通る。どちらが原因かは未確定。付いた札の最大は [tag]…comment の形で 135 字・343 バイト（タグだけで 48 字）、断られた 2 件は 146 字・366 バイトと 149 字・377 バイト（1 件目は「約 85%」を含み、2 件目は半角 % を含まない）",
+      "evidence": {
+        "type": "observed",
+        "record": "kopicha の本番（10/18・まとめ承認の 14 件目と bb_7f8a2b29faa6c2ea の 26 件目 PMC4520228・THTH の署名は RFC 5849 どおり本文の % を %25 として base string に入れる）",
+        "observed_at": "2026-10-18"
+      },
+      "confidence": "low",
+      "signals": [],
+      "notes": "THTH は断らず、1 段目と lint で予告するだけ（bookmark_percent_maybe_rejected・bookmark_length_maybe_rejected・hatena_bookmark.BODY_OK_MAX_CHARS・BODY_OK_MAX_BYTES・設計 S4 §24）。断られたら token を GET で確かめ、その札だけ外してまとめを進める（hatena_rejected_item）。本物で試して原因が分かったら直す。柵の行（limits_policy）にはしない"
+    },
+    {
       "id": "hatenabookmark.cache_lag",
       "kind": "observation",
       "statement": "entry/jsonlite は付けた直後に反映されない",

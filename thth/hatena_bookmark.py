@@ -49,17 +49,20 @@ REASONS = frozenset((
     # 直し（設計 S4 §21・4.2）: はてなに付いていない・中身が同じ・付けた（前の直しの）結果がまだ分からない。
     "bookmark_edit_missing_remote", "bookmark_edit_no_change", "bookmark_result_unknown",
     # タグの長さ（設計 S4 §22・kopicha 10/18 の観測）: 31 バイトを超えるタグははてなが黙って切る。
-    "bookmark_tag_too_long"))
+    "bookmark_tag_too_long",
+    # 4.2.2（S4 §24）: POST が 401/403 でも `/rest/1/my` の GET が通る＝token は生きていて、その札だけ断られた。
+    "hatena_rejected_item"))
 # タグの長さの上限（UTF-8 のバイト数・S4 §22）。31 は通り 34 は切られた（kopicha 10/18・確かさ low）。
 TAG_MAX_BYTES = 31
 
 
 class BookmarkError(ValueError):
-    def __init__(self, code, *, at=None, tags=None):
+    def __init__(self, code, *, at=None, tags=None, status=None):
         super().__init__(code)
         self.code = code
         self.at = at  # bookmark_already_deleted のときの消した日時（見せるためだけ）
         self.tags = tags  # bookmark_tag_too_long のときの [(タグ, バイト数)]（見せるためだけ）
+        self.status = status  # hatena_rejected_item・hatena_auth_rejected のときの HTTP の番号（見せるためだけ）
 
 
 def long_tags(tags) -> list:
@@ -84,6 +87,81 @@ def tag_too_long_text(found) -> str:
     which = "・".join(f"「{tag}」{size} バイト" for tag, size in found)
     return (f"タグが長すぎます: {which}。はてなは {TAG_MAX_BYTES} バイトを超えるタグを黙って切ります"
             f"（34 バイトで切れた観測・10/18）。{TAG_MAX_BYTES} バイト（日本語はおおむね 10 字）以内に直してください")
+
+
+# 本文の予告（4.2.2・S4 §24.1）。**断らない**（原因が確定していない）。はてなが POST を 401 で断った札
+# （kopicha の本番 10/18・2 件）は、どちらも下の長さを超えていて、1 件は半角「%」を含んでいた。どちらが原因かは
+# 未確定。数は媒体の特性の台帳の観測（`hatenabookmark.body_rejected_observed`・確かさ low）と同じ。
+BODY_OK_MAX_CHARS = 135      # 付いた札の最大（`[tag]…comment` の形の字数）
+BODY_OK_MAX_BYTES = 343      # 同じ形の UTF-8 のバイト数
+WARNINGS = ("bookmark_percent_maybe_rejected", "bookmark_length_maybe_rejected")
+
+
+def body_form(comment, tags) -> str:
+    """はてなの画面の形（`[タグ][タグ]コメント`）。長さの予告はこの形で数える。"""
+    return "".join(f"[{str(t).strip()}]" for t in tags or []) + str(comment or "")
+
+
+def percent_places(comment, tags) -> list:
+    """半角「%」（U+0025）の在りかと個数 `[(どこ, 個数)]`。全角の「％」は数えない。"""
+    out = []
+    n = str(comment or "").count("%")
+    if n:
+        out.append(("コメント", n))
+    for tag in tags or []:
+        n = str(tag).count("%")
+        if n:
+            out.append((f"タグ「{str(tag).strip()}」", n))
+    return out
+
+
+def body_warnings(comment, tags) -> list:
+    """本文の予告 `[{"code", "text"}]`（断らない・承認の指紋に入れない・S4 §24.1）。"""
+    out = []
+    found = percent_places(comment, tags)
+    if found:
+        which = "・".join(f"{where} {n} 個" for where, n in found)
+        out.append({"code": "bookmark_percent_maybe_rejected",
+                    "text": f"半角の「%」があります（{which}）。半角の % を含む札がはてなに 401 で断られた"
+                            "（10/18 の観測・原因は未確定）。全角の「％」にすると避けられるかもしれません"})
+    body = body_form(comment, tags)
+    chars, size = len(body), len(body.encode("utf-8"))
+    if chars > BODY_OK_MAX_CHARS or size > BODY_OK_MAX_BYTES:
+        out.append({"code": "bookmark_length_maybe_rejected",
+                    "text": f"タグとコメントを合わせた長さ（[タグ]…コメント の形）が {chars} 字・{size} バイトです。"
+                            "はてなに 401 で断られた札は全部この長さを超えていた（10/18 の観測・2 件・付いた札の最大は "
+                            f"{BODY_OK_MAX_CHARS} 字・{BODY_OK_MAX_BYTES} バイト・原因は未確定）"})
+    return out
+
+
+def warning_lines(warnings) -> list:
+    return [f"予告（断りません）: {w['code']}: {w['text']}" for w in warnings or []]
+
+
+def rejected_item_text(status) -> str:
+    return (f"この札だけはてなに断られました（HTTP {status or '?'}・token は生きています。/rest/1/my の GET は通りました）。"
+            "コメントとタグの文字を見直してください。何も記録していません")
+
+
+def _rejection(adapter, result) -> "BookmarkError":
+    """POST が断られた（結果が分かる側）ときの符丁を決める（S4 §24）。
+
+    401/403 なら同じ run の中で `/rest/1/my` を GET して token を確かめる。GET が通れば**その札だけ**の断り
+    （`hatena_rejected_item`）、GET も通らなければ今どおり `hatena_auth_rejected`（認可の問題）。
+    それ以外の断りは adapter の符丁のまま。
+    """
+    code = getattr(result, "error", None) or "publication_failed"
+    status = getattr(result, "status", None)
+    if code != "hatena_auth_rejected" or status not in (401, 403):
+        return BookmarkError(code)
+    probe = getattr(adapter, "probe", None)
+    alive = False
+    if callable(probe):
+        try:
+            alive = bool((probe() or {}).get("ok"))
+        except Exception:  # noqa: BLE001 — 確かめられなければ認可の問題の側（止まる側）
+            alive = False
+    return BookmarkError("hatena_rejected_item" if alive else "hatena_auth_rejected", status=status)
 
 
 # --------------------------------------------------------------------------
@@ -316,12 +394,13 @@ def prepare(account_name: str, cfg: dict, *, delivery: str | None = None, url: s
             "target": target, "article": article, "blog_id": blog_id,
             "comment": components["comment"], "tags": sorted(tag_list), "approved_sha": sha,
             "digest": sha[:approval_mod.APPROVE_DIGEST_LENGTH], "remaining_today": remaining,
-            "others": others, "ledger": once, "lane_allowed": lane_allowed, "project": cfg.get("project")}
+            "others": others, "ledger": once, "lane_allowed": lane_allowed, "project": cfg.get("project"),
+            "warnings": body_warnings(components["comment"], tag_list) if op == "add" else []}
 
 
 def preview(p: dict) -> dict:
     keys = ("account", "principal", "owner", "op", "target", "delivery", "url", "article", "blog_id",
-            "comment", "tags", "remaining_today", "others", "ledger", "lane_allowed")
+            "comment", "tags", "remaining_today", "others", "ledger", "lane_allowed", "warnings")
     out = {key: p.get(key) for key in keys}
     # 1 段目の残り枠（全体）は S1 から数で返していた（遠くの道の受け手の互換）。
     rem = p.get("remaining_today")
@@ -369,6 +448,7 @@ def lines(p: dict) -> list:
         if p["target"] == "own":
             out.append("  （自分の記事です。運営者であることが分かる文にしてください。例: 自分の記事。…）")
         out.append(f"タグ: {tags}")
+        out.extend(warning_lines(p.get("warnings")))
     if p.get("lane_allowed") is False:
         out.append(lane_refusal_line(p["principal"], p.get("project")))
     out.append(f"主体の今日の残り枠: {left}")
@@ -493,7 +573,7 @@ def execute_locked(account_name: str, cfg: dict, p: dict, *, adapter_factory=Non
             result = BookmarkResult(ok=False, ambiguous=True,
                                     error="adapter_error:" + (redact_mod.redact(exc.__class__.__name__) or ""))
         if not getattr(result, "ok", False) and not getattr(result, "ambiguous", False):
-            raise BookmarkError(getattr(result, "error", None) or "publication_failed")
+            raise _rejection(adapter, result)
         state = "confirmed" if result.ok else "unknown"
         at = jst.iso()
         post_id = sent_mod.bookmark_post_id(p["url_canonical"])
@@ -771,12 +851,13 @@ def prepare_edit(account_name: str, cfg: dict, *, delivery: str | None = None, u
             "base_comment": components["base_comment"], "base_tags": base_tags,
             "comment": components["comment"], "tags": after_tags, "approved_sha": sha,
             "digest": sha[:approval_mod.APPROVE_DIGEST_LENGTH], "remote": remote,
-            "lane_allowed": lane_allowed, "project": cfg.get("project")}
+            "lane_allowed": lane_allowed, "project": cfg.get("project"),
+            "warnings": body_warnings(components["comment"], after_tags)}
 
 
 def preview_edit(p: dict) -> dict:
     keys = ("account", "principal", "owner", "op", "target", "delivery", "url", "article", "base_comment",
-            "base_tags", "comment", "tags", "remote", "lane_allowed")
+            "base_tags", "comment", "tags", "remote", "lane_allowed", "warnings")
     return {key: p.get(key) for key in keys}
 
 
@@ -815,6 +896,7 @@ def edit_lines(p: dict) -> list:
                    f"（外す {_tags_text(gone)}・足す {_tags_text(new)}）")
     else:
         out.append(f"タグ: 変えない（{_tags_text(p['tags'])}）")
+    out.extend(warning_lines(p.get("warnings")))
     out.append("上限: 件数は増えません（1 日・同じホスト・自分の記事の枠は使わない）。連投の窓には数えます")
     if p.get("lane_allowed") is False:
         out.append(lane_refusal_line(p["principal"], p.get("project")))
@@ -860,7 +942,7 @@ def edit_locked(account_name: str, cfg: dict, p: dict, *, adapter_factory=None, 
             result = BookmarkResult(ok=False, ambiguous=True,
                                     error="adapter_error:" + (redact_mod.redact(exc.__class__.__name__) or ""))
         if not getattr(result, "ok", False) and not getattr(result, "ambiguous", False):
-            raise BookmarkError(getattr(result, "error", None) or "publication_failed")
+            raise _rejection(adapter, result)
         state = "confirmed" if result.ok else "unknown"
         remote = _remote_fields(getattr(result, "bookmark", None)) if state == "confirmed" else None
         try:
