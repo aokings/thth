@@ -638,6 +638,18 @@ class _ReplyWindow:
         return assess.window_slot(self.times, self.count, self.minutes, self.now)
 
 
+def _replies_stopped(account_name) -> bool:
+    """timer が返信を出さない口座か（止めの印 `guard.stopped`・4.3.1）。印を置けない置き場では印は無いので読まない
+    （運営者の CLI と同じ・`guard.check(cli=True)`）。印が読めないときは止まっている側に倒す。"""
+    from . import guard as guard_mod, server_files
+    if not guard_mod.stop_place_usable(account_name):
+        return False
+    try:
+        return guard_mod.stopped(account_name) is not None
+    except server_files.UnsafeFile:
+        return True
+
+
 def _reply_window_for(account_name, account_cfg, now):
     """返信の窓。はてなの口座・表が作れないときは None（返信も `max_per_run` に数える 4.2 までの形）。"""
     if account_cfg.get("media") == "hatenablog":
@@ -660,7 +672,9 @@ def _when_phrase(at) -> str:
 
 
 def waiting_phrase(reason, waiting, stats) -> str:
-    """残した返信の 1 句（窓・日の上限・時間）。"""
+    """残した返信の 1 句（窓・日の上限・時間・止めた口座）。"""
+    if reason == "stopped":
+        return f"{waiting} 本は口座が止まっているので出していません（戻すのは thth account resume）"
     when = _when_phrase(stats.get("next_at") if not isinstance(stats.get("next_at"), str)
                         else jst.parse(stats["next_at"]))
     if reason == "window":
@@ -680,7 +694,8 @@ def reply_summary_line(account_name, stats) -> str | None:
     line = (f"{account_name}: 返信を {sent} 本出すはずです（dry-run）" if stats.get("mode") == "rehearsal"
             else f"{account_name}: 返信を {sent} 本出しました")
     if waiting:
-        line += "・" + waiting_phrase(stats.get("waiting_reason"), waiting, stats) + "（口座は止めていません）"
+        reason = stats.get("waiting_reason")
+        line += "・" + waiting_phrase(reason, waiting, stats) + ("" if reason == "stopped" else "（口座は止めていません）")
     return line
 
 
@@ -821,7 +836,14 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
 
     posts_left = 0 if replies_only else max_per_run
     skip_posts = replies_only
-    replies_closed = False
+    # 4.3.1（masaru 10/20）: 安全装置か持ち主が止めた口座（`guard.stopped`）では、timer も返信を出さない。
+    # 窓が無く返信を投稿と同じに数える口座も含めて返信だけを外す。投稿は今までどおり止めの印を見ない。
+    replies_stopped = _replies_stopped(account_name)
+    if replies_stopped:
+        stats["waiting_reason"] = "stopped"
+        stats["replies_waiting"] = _count_waiting(list_queue_files(account_cfg, tree_sha=synced_sha), account_name,
+                                                  set(), only_paths, now)
+    replies_closed = replies_stopped
     replies_done = 0
     started_at = _monotonic() if started_at is None else started_at
     estimate = reply_estimate_seconds(account_cfg.get("media"))
@@ -848,7 +870,8 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
         candidates = [qf for qf in files if qf.path not in excluded_paths
                       and (only_paths is None or os.path.realpath(qf.path) in only_paths)
                       and not (skip_posts and not _as_reply(qf.front_matter))
-                      and not (replies_closed and _as_reply(qf.front_matter))]
+                      and not (replies_closed and _as_reply(qf.front_matter))
+                      and not (replies_stopped and select_mod.is_reply(qf.front_matter))]
 
         # 指した原稿（reply_to_file）は候補から外したものも含めた全ファイルから探す
         # （dry-run で一度選んだ問いを外すと、答えの側で「無い」に化ける）。
