@@ -299,6 +299,17 @@ def throw_once(account_name: str, *, production_flag: bool = False,
                                file=hold_row.get("file"),
                                error=hold_row.get("reason") or publish_hold_mod.UNREADABLE)
 
+    # **止めた口座では timer は何も出さない**（4.3.1・masaru 10/20）: 安全装置か持ち主が止めた口座（止めの印
+    # `guard.stopped`）では、予約の投稿・返信・スレッド連投のどれも出さない（原稿は queue に残り、指紋も変えない）。
+    # 4.3.0 までは承認の場の送りと thth.me・CLI の道だけが印を見て、timer は止めた口座でも出していた。
+    # 採取（読むだけ）は止めない。runs には書かない（止まっている間、毎回同じ行が積もるだけ）。
+    if _account_stopped(account_name):
+        msg = (f"{account_name} は止まっているので出しません（予約の投稿・返信は queue に残ります。"
+               f"戻すのは thth account resume {account_name} --by <名前>）")
+        log(msg)
+        mode = "production" if (bool(account_cfg.get("production")) and production_flag) else "rehearsal"
+        return ThrowResult(exit_code=0, mode=mode, action="stopped", message=msg)
+
     # **スレッド連投を先に見る**（独立検収 2026-09-11・P1-1）。
     # v2 は**段ごとにロックを取り直す**ので、ここで account+repo ロックを
     # 握ったまま入ることはできない。**握る前に**分岐する。
@@ -414,7 +425,7 @@ def send_due_replies(account_name: str, paths, *, adapter_factory=None, log=None
     elif publish_hold_mod.held(account_name) is not None:
         out["skipped"] = "publish_held"
     elif guard_mod.stopped(account_name) is not None:
-        # 安全装置か持ち主が止めた口座（監査 中-3）。timer の道も止めの印は見ないが、承認の場では送らない。
+        # 安全装置か持ち主が止めた口座（監査 中-3）。timer の道も 4.3.1 から送らない（`throw_once`）。
         out["skipped"] = "guard_stopped"
     elif not accounts_mod.token_exists(account_cfg):
         out["skipped"] = "missing_token"
@@ -638,8 +649,8 @@ class _ReplyWindow:
         return assess.window_slot(self.times, self.count, self.minutes, self.now)
 
 
-def _replies_stopped(account_name) -> bool:
-    """timer が返信を出さない口座か（止めの印 `guard.stopped`・4.3.1）。印を置けない置き場では印は無いので読まない
+def _account_stopped(account_name) -> bool:
+    """timer が何も出さない口座か（止めの印 `guard.stopped`・4.3.1）。印を置けない置き場では印は無いので読まない
     （運営者の CLI と同じ・`guard.check(cli=True)`）。印が読めないときは止まっている側に倒す。"""
     from . import guard as guard_mod, server_files
     if not guard_mod.stop_place_usable(account_name):
@@ -672,9 +683,7 @@ def _when_phrase(at) -> str:
 
 
 def waiting_phrase(reason, waiting, stats) -> str:
-    """残した返信の 1 句（窓・日の上限・時間・止めた口座）。"""
-    if reason == "stopped":
-        return f"{waiting} 本は口座が止まっているので出していません（戻すのは thth account resume）"
+    """残した返信の 1 句（窓・日の上限・時間）。"""
     when = _when_phrase(stats.get("next_at") if not isinstance(stats.get("next_at"), str)
                         else jst.parse(stats["next_at"]))
     if reason == "window":
@@ -694,8 +703,7 @@ def reply_summary_line(account_name, stats) -> str | None:
     line = (f"{account_name}: 返信を {sent} 本出すはずです（dry-run）" if stats.get("mode") == "rehearsal"
             else f"{account_name}: 返信を {sent} 本出しました")
     if waiting:
-        reason = stats.get("waiting_reason")
-        line += "・" + waiting_phrase(reason, waiting, stats) + ("" if reason == "stopped" else "（口座は止めていません）")
+        line += "・" + waiting_phrase(stats.get("waiting_reason"), waiting, stats) + "（口座は止めていません）"
     return line
 
 
@@ -836,14 +844,7 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
 
     posts_left = 0 if replies_only else max_per_run
     skip_posts = replies_only
-    # 4.3.1（masaru 10/20）: 安全装置か持ち主が止めた口座（`guard.stopped`）では、timer も返信を出さない。
-    # 窓が無く返信を投稿と同じに数える口座も含めて返信だけを外す。投稿は今までどおり止めの印を見ない。
-    replies_stopped = _replies_stopped(account_name)
-    if replies_stopped:
-        stats["waiting_reason"] = "stopped"
-        stats["replies_waiting"] = _count_waiting(list_queue_files(account_cfg, tree_sha=synced_sha), account_name,
-                                                  set(), only_paths, now)
-    replies_closed = replies_stopped
+    replies_closed = False
     replies_done = 0
     started_at = _monotonic() if started_at is None else started_at
     estimate = reply_estimate_seconds(account_cfg.get("media"))
@@ -870,8 +871,7 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
         candidates = [qf for qf in files if qf.path not in excluded_paths
                       and (only_paths is None or os.path.realpath(qf.path) in only_paths)
                       and not (skip_posts and not _as_reply(qf.front_matter))
-                      and not (replies_closed and _as_reply(qf.front_matter))
-                      and not (replies_stopped and select_mod.is_reply(qf.front_matter))]
+                      and not (replies_closed and _as_reply(qf.front_matter))]
 
         # 指した原稿（reply_to_file）は候補から外したものも含めた全ファイルから探す
         # （dry-run で一度選んだ問いを外すと、答えの側で「無い」に化ける）。
@@ -2052,7 +2052,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         # **運営者の CLI（VM で打つ `thth send`）にも安全装置を掛ける**（10/15 masaru「推しで」）。
         # それまでは thth.me を通る道（`server_writes` の `before_execute`）にだけ掛かり、
         # music-research-threads が 5 分で 7 件出た。thth.me の道は `before_execute` の中で
-        # 見るので二重にしない。timer の予約（`throw_once`）は対象外のまま。
+        # 見るので二重にしない。timer の予約（`throw_once`）は数の柵の対象外のまま（止めの印は 4.3.1 から入口で見る）。
         if before_execute is None:
             from . import burst_queue as burst_queue_mod, guard as guard_mod
             try:
