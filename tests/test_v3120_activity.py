@@ -191,7 +191,7 @@ def test_止まった口座はmcpから戻せず_成功の答えにも理由が�
 # 裁定 (a)・(b)
 # --------------------------------------------------------------------------
 
-def test_返信には最短間隔を掛けない_上限には数える(env, publisher, monkeypatch):
+def test_返信には最短間隔を掛けない_返信の日の上限に数える(env, publisher, monkeypatch):
     from thth import adapters
     made = adapters.make_adapter
 
@@ -200,13 +200,16 @@ def test_返信には最短間隔を掛けない_上限には数える(env, publ
         type(adapter).fetch_post = lambda self, post_id: {"id": post_id}
         return adapter
     monkeypatch.setattr(adapters, "make_adapter", with_fetch)
-    ledger(env, min_interval_hours=6, daily_max_posts=2)
+    # 4.3.0（監査 中-1）: 返信は投稿の日の上限（`daily_max_posts`）でなく、返信だけの日の上限
+    # （`reply.daily`）に数える。投稿の上限を 1 にしても返信は通り、返信の上限 1 で 2 本目を断る。
+    ledger(env, min_interval_hours=6, daily_max_posts=1, limits={"reply.daily": 1})
     call(env, operation="send_request", body="一本目")
     assert str(refused(env, operation="send_request", body="二本目")) == "too_soon"
     replied = call(env, operation="send_request", body="返信の本文", reply_to="123456")
     assert replied["status"] == "published"
-    # 1 日の上限（2）には返信も数える。
-    assert str(refused(env, operation="send_request", body="三本目", reply_to="123456")) == "daily_limit"
+    gone = refused(env, operation="send_request", body="三本目", reply_to="123456")
+    assert str(gone) == "daily_limit"
+    assert "reply_daily" in json.dumps(gone.__dict__, ensure_ascii=False, default=str)
 
 
 @pytest.mark.parametrize("mode", [None, "publish", "all"])

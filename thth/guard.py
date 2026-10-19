@@ -213,7 +213,7 @@ def _classified(account):
 def _action_rows(account):
     """`sent/` の記録を (種類, 動作, 時刻, blog_id, 鍵) の list に（段 2・分の窓は行の `actions` で数える）。
 
-    動作: SNS の記録（`kind` 無し）は `post`（投稿と返信を分けない）・`retract`。はてなは `entry_create`・
+    動作: SNS の記録（`kind` 無し）は `post`（4.3 から `reply_to` のある記録は `reply`）・`retract`。はてなは `entry_create`・
     `entry_update`（足された `retracted_at` は `entry_delete`）・`entry_delete`・`bookmark_add`（足された
     `retracted_at` は `bookmark_delete`・打ち直しの前の試みは `bookmark_add`）・`bookmark_delete`。知らない
     `kind` は `post`／`retract`（`assess.EVENT_ALIASES` で記事の行にも数える・数え漏らさない）。
@@ -237,6 +237,10 @@ def _action_rows(account):
             act_first = act_second = kind
         elif kind in ("entry_create", "entry_update"):
             act_first, act_second = kind, "entry_delete"
+        elif kind is None and row.get("reply_to"):
+            # 4.3: SNS の返信（`reply_to` を持つ記録）は `reply` の出来事。返信の窓（`reply.burst`）だけが数え、
+            # 投稿の窓（`post.burst`）は数えない。日の数え（`what` が `post`）と最低線は今までどおり数える。
+            act_first, act_second = "reply", "retract"
         else:
             act_first, act_second = "post", "retract"
         blog = row.get("blog_id")
@@ -295,32 +299,24 @@ def _recent_keys(rows, window, now) -> set:
     return {key for _what, at, _blog, key in rows if window < at <= now}
 
 
-def _events(account):
-    """`sent/` の記録から (公開の時刻の list, 削除の時刻の list)。読めない時刻は数えない。
-
-    ブックマーク（はてな）は公開の枠に入れない（`_classified`）。SNS の口座の数は変わらない。
-    """
-    posts, retracts = [], []
-    for what, at, _blog, _key in _classified(account):
-        if what == "post":
-            posts.append(at)
-        elif what == "retract":
-            retracts.append(at)
-    return posts, retracts
-
-
 def summary(account, cfg, *, now=None) -> dict:
     """数えた結果（読むだけ・`/activity` や答えに添える用）。"""
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     limits = accounts.guard_limits(cfg)
-    rows = [row for row in _classified(account) if row[0] in ("post", "retract")]
-    posts = [at for what, at, _b, _k in rows if what == "post"]
+    acted = [row for row in _action_rows(account) if row[0] in ("post", "retract")]
+    rows = [(what, at, blog, key) for what, _action, at, blog, key in acted]
+    # 4.3（監査 中-1・中-2）: 投稿の日の数え（`post.daily`）と最短間隔の起点（`last_post_at`）は投稿だけ。
+    # 返信（`reply` の出来事）は `replies`・`replies_today`（`reply.daily`）で別に数える。
+    posts = [at for what, action, at, _b, _k in acted if what == "post" and action != "reply"]
+    replies = [at for what, action, at, _b, _k in acted if what == "post" and action == "reply"]
     retracts = [at for what, at, _b, _k in rows if what == "retract"]
     today = now.date()
     window = now - datetime.timedelta(minutes=limits["burst"]["minutes"])
     keys = _recent_keys(rows, window, now)
     return {
         "posts_today": sum(1 for at in posts if at.date() == today),
+        "replies_today": sum(1 for at in replies if at.date() == today),
+        "replies": replies,
         "retracts_today": sum(1 for at in retracts if at.date() == today),
         # 4.0 S5 §6: 窓の中の鍵の数（SNS は今と同じ・はてなは同じ配信を 1 件）。
         "recent": len(keys),
@@ -361,10 +357,57 @@ def _reply_burst(cfg) -> dict:
     return dict(value) if isinstance(value, dict) else dict(accounts.GUARD_DEFAULTS["burst"])
 
 
-def burst_slot(account, cfg, *, now=None, pending=()) -> datetime.datetime:
-    """burst の窓が空く最初の時刻（3.25.0・返信の順番待ち）。
+def reply_times(account) -> list:
+    """`sent/` の返信の時刻（4.3・返信の窓 `reply.burst` が数える出来事）。読めない時刻は数えない。"""
+    return [at for action, at, _key in _events_of(account) if assess.counts_as(action, ("reply",))]
 
-    材料は `sent/` の公開・削除と、すでに順番待ちに並んでいる返信の `publish_at`（`pending`）。
+
+def reply_window(account, cfg, *, now=None) -> dict | None:
+    """返信の窓（表の `reply.burst`・4.3）の数・分と、窓 `(now - 分, now]` の中の返信の時刻。返信の日の上限
+    （`reply.daily`・監査 中-1）の数と今日の返信の数も添える（`daily` が None なら日の上限は数えない）。
+
+    timer と承認の場の送り（`core._throw_locked`）が、返信を 1 本ずつ出すたびにこの窓で数える。表が作れない
+    （媒体の台帳が検査を通らない）・窓の行が数えない形なら None（呼び手は 4.2 までの振る舞いに倒す）。
+    """
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    try:
+        rows = {r["id"]: r for r in _rules_for("sns", "reply", cfg=cfg)}
+    except GuardRefused:
+        return None
+    burst = rows.get("reply.burst")
+    if burst is None or burst["count"] is None or not isinstance(burst["window"], dict) \
+            or "minutes" not in burst["window"]:
+        return None
+    count, minutes = burst["count"], burst["window"]["minutes"]
+    start = now - datetime.timedelta(minutes=minutes)
+    every = reply_times(account)
+    times = sorted(at for at in every if start < at <= now)
+    daily = rows.get("reply.daily")
+    return {"count": count, "minutes": minutes, "times": times, "rule": "reply.burst",
+            "daily": daily["count"] if daily is not None else None,
+            "daily_used": sum(1 for at in every if jst.to_jst(at).date() == now.date())}
+
+
+def check_reply_daily(account, cfg, *, day, queued=0, now=None) -> None:
+    """返信の日の上限（`reply.daily`・監査 中-1）に、その日の返信 + 並べた返信 `queued` + 1 本が収まるか。
+
+    収まらなければ `daily_limit`（詳細 `reply_daily`・翌日 0 時）で断る。口座は止めない。返信の順番待ちに並べる
+    道（`burst_queue.queue_cli`）が、投稿の日の上限（`post.daily`）の代わりに使う。
+    """
+    info = reply_window(account, cfg, now=now)
+    if info is None or info.get("daily") is None:
+        return
+    used = sum(1 for at in reply_times(account) if jst.to_jst(at).date() == day) + queued
+    if used + 1 > info["daily"]:
+        nxt = datetime.datetime.combine(day + datetime.timedelta(days=1), datetime.time(0, 0), tzinfo=jst.JST)
+        raise GuardRefused("daily_limit", reason="reply_daily", next_at=jst.iso(nxt))
+
+
+def burst_slot(account, cfg, *, now=None, pending=()) -> datetime.datetime:
+    """返信の窓が空く最初の時刻（3.25.0・返信の順番待ち）。
+
+    材料は `sent/` の返信（4.3 から投稿と削除は数えない・`reply_times`）と、すでに順番待ちに並んでいる返信の
+    `publish_at`（`pending`）。
     候補は「今」と「各出来事 + `burst.minutes` 分 + 1 分」。並んでいるものより後ろで、その時刻の
     窓（`summary` と同じ `(t - 分, t]`）に入る数 + 1 が `burst.count` 以下になる最初の時刻を返す。
     1 件目は「窓の中で最も古い出来事 + 分 + 1 分」になり、続く返信はその後ろへずれる。
@@ -373,9 +416,8 @@ def burst_slot(account, cfg, *, now=None, pending=()) -> datetime.datetime:
     burst = _reply_burst(cfg)
     span = datetime.timedelta(minutes=burst["minutes"])
     gap = datetime.timedelta(minutes=1)
-    posts, retracts = _events(account)
     pending = sorted(jst.to_jst(at) for at in pending)
-    events = posts + retracts + pending
+    events = reply_times(account) + pending
     after = pending[-1] if pending else None
     candidates = {now} | {at + span + gap for at in events}
     if after is not None:
@@ -417,7 +459,8 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
     （`principal_scheduled_same_day` を省くと主体の全口座の queue から数える）。
 
     `reply`（返信）には最短間隔 `min_interval_hours` を掛けない——返信は会話なので
-    （段 1〜2 の裁定 (a)）。1 日の上限と burst には数える。
+    （段 1〜2 の裁定 (a)）。1 日の上限は 4.3.0 から返信だけの `reply.daily`（`kind="schedule"` でも同じ）。4.3 から burst は返信だけの窓（`reply.burst`・既定は媒体の台帳の
+    10 分に 10）で数え、投稿の窓（`post.burst`）は投稿と削除だけを数える（返信で口座が止まらない）。
 
     **返信が burst を超えるときは口座を止めない**（3.25.0・kopicha 10/16）。`burst_limit`（詳細
     `burst`・`next_at` は窓が空く時刻 `burst_slot`）で断り、呼び手がその 1 件を queue の順番待ちに
@@ -444,6 +487,13 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
     if halted is not None:
         raise _stopped_refusal("account", halted.get("reason"), name=account, rule=halted.get("rule"))
     now = jst.to_jst(now) if now is not None else jst.now_jst()
+    if kind == "schedule" and reply:
+        # 4.3.0（監査 中-1）: 返信の予約（thth.me の猶予・返信の順番待ち・返信の原稿の予約）は投稿の日の上限
+        # （`post.daily`）でなく返信だけの日の上限（`reply.daily`）で数える。`scheduled_same_day` はその日に
+        # 刻んだ返信の数（呼び手が返信だけを数える）。窓（`reply.burst`）は出す時に timer が数える。
+        day = jst.to_jst(publish_at).date() if publish_at is not None else now.date()
+        check_reply_daily(account, cfg, day=day, queued=scheduled_same_day, now=now)
+        return
     counts = summary(account, cfg, now=now)
     action = {"publish": "reply" if reply else "post", "retract": "retract", "schedule": "schedule"}[kind]
     request = assess.Request(account=account, cfg=cfg, action=action, now=now, family="sns",

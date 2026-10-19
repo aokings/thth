@@ -687,16 +687,22 @@ def cmd_approve(args) -> int:
     finally:
         repo_lock.release()
 
+    # 4.3: 時刻の過ぎた返信は、承認したその場で送る（push まで通ったときだけ・timer と同じ道）。
+    sent_now = _send_due_replies(prepared) if pushed else []
     if args.json:
         _print_json({"approved": True, "count": len(prepared), "approved_by": approved_by,
                      "approved_at": approved_at, "bundle_digest": bundle,
                      "files": [{"file": one["path"], "approved_sha": one["approved_sha"],
                                 "digest": one["digest"]} for one in prepared],
-                     "pushed": pushed, "push_error": push_err or None})
+                     "pushed": pushed, "push_error": push_err or None,
+                     # 4.3: その場で送った返信（口座ごと・無ければ空の list・監査 低-6）。
+                     "sent_now": sent_now})
     else:
         print(f"承認しました: {len(prepared)} 本（{approved_by}）")
         for one in prepared:
             print(f"  {os.path.basename(one['path'])} — {one['publish_at']}")
+        for line in core.due_replies_lines(sent_now):
+            print(line)
 
     if not pushed:
         print("承認を commit・push できませんでした。このままでは投稿されません"
@@ -898,12 +904,40 @@ def _approve_confirm_file(args) -> int:
         finally:
             repo_lock.release()
 
+    # 4.3: 時刻の過ぎた返信は、承認したその場で送る（push まで通った本だけ・timer と同じ道）。
+    sent_now = _send_due_replies([one for _, one in approved]) if approved and pushed else []
     return _report_confirm_file(args, approved_by, approved_at, repo_dir, approved, refused,
-                                remaining, stopped, pushed, push_err)
+                                remaining, stopped, pushed, push_err, sent_now=sent_now)
+
+
+def _send_due_replies(prepared: list) -> list:
+    """承認した原稿のうち、返信で時刻の過ぎたものを口座ごとにその場で送る（4.3・`core.send_due_replies`）。
+
+    口座の順は承認の順。何も送らない口座（時刻の来た返信が無い・はてな）は結果に載せない。送れなかった分は
+    timer に残る。承認の rc は変えない（承認は済んでいる）。
+    """
+    by_account = {}
+    for one in prepared:
+        if one.get("kind") in ("hatena_entry", "bundle") or one.get("bundle"):
+            continue
+        by_account.setdefault(one["account"], []).append(one["path"])
+    out = []
+    for account_name, paths in by_account.items():
+        if not core.due_reply_paths(paths):
+            continue
+        try:
+            row = core.send_due_replies(account_name, paths)
+        except Exception as exc:  # noqa: BLE001 — 承認は済んでいる。送れなかった分は timer に残る
+            row = {"account": account_name, "sent": 0, "waiting": 0, "reason": None, "next_at": None,
+                   "skipped": None, "error": exc.__class__.__name__, "message": None}
+        if row.get("skipped") in ("nothing_due", "not_sns"):
+            continue
+        out.append(row)
+    return out
 
 
 def _report_confirm_file(args, approved_by, approved_at, repo_dir, approved, refused,
-                         remaining, stopped, pushed, push_err) -> int:
+                         remaining, stopped, pushed, push_err, sent_now=()) -> int:
     """`--confirm-file` の結果: 通った本・断った本・止まった所と残りの命令。"""
     refused = sorted(refused, key=lambda row: row["line"])
     commands = [_confirm_command(t["path"], t["digest"], approved_by) for t in remaining]
@@ -918,13 +952,16 @@ def _report_confirm_file(args, approved_by, approved_at, repo_dir, approved, ref
                                 "approved_sha": one["approved_sha"]} for t, one in approved],
                      "refused": refused, "pushed": pushed if approved else None,
                      "push_error": push_err or None, "stopped": stopped,
-                     "remaining_commands": commands + ([push_command] if push_command else [])})
+                     "remaining_commands": commands + ([push_command] if push_command else []),
+                     "sent_now": list(sent_now)})
     else:
         if approved:
             print(f"承認しました: {len(approved)} 本（{approved_by}）"
                   + ("" if pushed else "——**まだ push できていません**"))
             for _t, one in approved:
                 print(f"  {os.path.basename(one['path'])} — {one['publish_at']}")
+            for line in core.due_replies_lines(sent_now):
+                print(line)
         if stopped:
             print(stopped, file=sys.stderr)
             print(f"通ったもの: {len(approved)} 本。残り {len(remaining)} 本はそのまま打てます:",

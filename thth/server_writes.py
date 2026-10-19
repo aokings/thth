@@ -407,12 +407,17 @@ def schedule(context, request, via, extra_fields=None):
         # ↑ 最後の 1 行（手元の `thth approve <VM のパス> --confirm …`）は出さない（サーバのパスを口から出さない）。
         if hatena and request['confirm']!=value['digest']: error('confirm_mismatch')
         day=jst.to_jst(publish_at).date()
+        # 4.3.0（監査 中-1）: 返信の原稿は返信だけの日の上限（`reply.daily`）、投稿の原稿は投稿の日の上限
+        # （`post.daily`）で数える。その日に刻んだ数も同じ種類だけを足す（猶予・返信の順番待ちもこの道）。
+        from .select import is_reply
+        reply=is_reply(q.front_matter)
         same_day=0
         for _name,_raw,other,_verified in _rows(locked,account):
             fm=other.front_matter;when=_publish_time(fm.get('publish_at'))
-            if fm.get('status')=='approved' and not fm.get('post_id') and when is not None and jst.to_jst(when).date()==day:
+            if fm.get('status')=='approved' and not fm.get('post_id') and when is not None and jst.to_jst(when).date()==day \
+                    and is_reply(fm)==reply:
                 same_day+=1
-        _guarded(context,account,'schedule',origin,publish_at=publish_at,scheduled_same_day=same_day)(locked)
+        _guarded(context,account,'schedule',origin,publish_at=publish_at,scheduled_same_day=same_day,reply=reply)(locked)
         at=jst.iso()
         if hatena:
             from . import hatena_entry
@@ -467,7 +472,8 @@ def burst_queued_send(context, request, via, publish_at):
 
     `held_send` と同じ draft_put ＋ schedule。印 `queued_for: burst` は /activity と `thth schedule` が
     「順番待ち」を見分けるため（指紋には入らない・出す時刻には効かない）。1 日の上限は schedule の
-    安全装置がその日の承認済みと合わせて数える（並べずに `daily_limit` で断る）。
+    安全装置が返信だけの日の上限（`reply.daily`・4.3.0）で、その日の返信と刻んだ返信を合わせて数える
+    （並べずに `daily_limit`・詳細 `reply_daily` で断る）。
     """
     from . import burst_queue
     put={'operation':'draft_put','account':request['account'],'body':request.get('body'),'publish_at':publish_at}

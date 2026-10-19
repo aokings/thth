@@ -228,7 +228,8 @@ def test_返信の窓はreply_burstで別に締められる(world):
     cfg = {"account": SNS, "media": "threads", "daily_max_posts": 100, "daily_max_retracts": 100,
            "burst": {"count": 1, "minutes": 10}, "limits": {"reply.burst": {"count": 5, "minutes": 10}}}
     for i in range(3):
-        sns_post(world, SNS, minutes_before(5 - i))
+        # 4.3: 返信の窓は返信だけを数える → 返信の記録を置く。
+        sns_post(world, SNS, minutes_before(5 - i), reply_to="1799")
     guard.check(SNS, cfg, "publish", now=NOW, reply=True)          # 3 件のあとの返信は通る（5 まで）
     cfg["limits"] = {"reply.burst": {"count": 3, "minutes": 10}}
     e = refused(lambda: guard.check(SNS, cfg, "publish", now=NOW, reply=True))
@@ -364,6 +365,14 @@ def test_T_P_6_account_setの新しい名前と媒体(world):
     assert call(["account", "set", name, "burst", "4", "10", "--by", "masaru"])[0] == 0
     raw = world.account(name)
     assert raw["burst"] == {"count": 4, "minutes": 10} and raw["limits"] == {"post.daily": 12}
+
+
+def test_返信の日の上限はaccount_setで書ける(world):
+    """4.3.0（監査 中-1）: 断りの文が案内する `thth account set <口座> reply.daily <数>` が通る。"""
+    name = sns_account(world)
+    rc, out, err = call(["account", "set", name, "reply.daily", "20", "--by", "masaru", "--json"])
+    assert rc == 0, err
+    assert json.loads(out)["after"] == 20 and world.account(name)["limits"] == {"reply.daily": 20}
 
 
 def test_T_P_6_締める向きだけの口(world):
@@ -505,8 +514,9 @@ EXPECTED_4_1_0 = {
                                   "bookmark.burst": (10, 10), "bookmark.stop": (30, 10), "upload.daily": 30},
     ("account", "vm-kopicha-hatenablog"): {"entry.daily": 3, "entry_delete.daily": 2, "entry.burst": (3, 10),
                                            "write.floor": (20, 10)},
+    # 4.3: 返信の窓の既定は媒体の台帳の 10 分に 10（`burst` を書いていない口座）。
     ("account", "vm-music-threads"): {"post.daily": 8, "retract.daily": 5, "post.burst": (3, 10),
-                                      "reply.burst": (3, 10), "reaction.daily": 50, "write.floor": (20, 10)},
+                                      "reply.burst": (10, 10), "reaction.daily": 50, "write.floor": (20, 10)},
     ("account", "vm-kopicha-x"): {"post.daily": 4, "retract.daily": 5, "post.burst": (2, 30),
                                   "reply.burst": (2, 30), "reaction.daily": 20, "write.floor": (20, 10)},
 }

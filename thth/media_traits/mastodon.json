@@ -17,7 +17,9 @@
       "signals": [
         "post.daily",
         "retract.daily",
-        "reaction.daily"
+        "reaction.daily",
+        "reply.burst",
+        "reply.daily"
       ],
       "penalty": [
         "rate_limited"
@@ -26,8 +28,7 @@
         "post.daily": {
           "signal": "frequency",
           "actions": [
-            "post",
-            "reply"
+            "post"
           ],
           "scope": "account",
           "window": {
@@ -74,9 +75,51 @@
           "tighter": "lower",
           "refusal": "reaction_limit",
           "count_evidence": "thth_line"
+        },
+        "reply.burst": {
+          "signal": "frequency",
+          "actions": [
+            "reply"
+          ],
+          "applies_to": [
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "minutes": 10
+          },
+          "count": 10,
+          "key": "op",
+          "on_exceed": "wait",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "burst_limit",
+          "detail": "burst",
+          "count_evidence": "thth_line"
+        },
+        "reply.daily": {
+          "signal": "frequency",
+          "actions": [
+            "reply"
+          ],
+          "applies_to": [
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 50,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "daily_limit",
+          "detail": "reply_daily",
+          "count_evidence": "inferred"
         }
       },
-      "notes": "既定はすべて API の上限の内側"
+      "notes": "既定はすべて API の上限の内側。4.3: 返信の窓（reply.burst）の既定 10 分に 10 件は THTH の運用の線（推測）。300 回/5 分の内側（サーバごとの規則は別）。4.3（監査 中-1）: 返信の日の上限（reply.daily）の既定 50 は THTH の推測（確かさ low）。API の回数の上限の内側（サーバごとの規則は別）"
     },
     {
       "id": "mastodon.server_rules",

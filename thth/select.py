@@ -248,6 +248,21 @@ def held_reason_code(items) -> str | None:
     return f"{HELD_PREFIX}: " + ", ".join(parts)
 
 
+def is_reply(front_matter) -> bool:
+    """返信の原稿か（`reply_to` か `reply_to_file` を持つ・4.3）。
+
+    timer はこれを `max_per_run` の外で返信の窓（`reply.burst`）に入るだけ出し、最短間隔を掛けない。
+    3.25.0 の順番待ちの返信（`queued_for: burst`）も `reply_to` を持つのでここに入る。
+    """
+    from .burst_queue import is_queued
+    fm = front_matter or {}
+    if is_queued(fm):
+        return True
+    if fm.get("reply_to") is not None and str(fm["reply_to"]).strip():
+        return True
+    return queuefile.reply_to_file_of(fm) is not None
+
+
 def _parse_hhmm(value: str) -> datetime.time:
     h, m = value.split(":")
     return datetime.time(int(h), int(m))
@@ -705,12 +720,12 @@ def _apply_timing_gate(validated, *, rejections: list, type_mismatch: list,
     if not bypass_pace and last_post_at is not None:
         min_interval = datetime.timedelta(hours=account_cfg["min_interval_hours"])
         if now - last_post_at < min_interval:
-            # burst の順番待ちに並べた返信（`queued_for: burst`・3.25.0）には掛けない——返信には
-            # 最短間隔を掛けない裁定 (a) と同じ。ほかの原稿は今までどおり全部落とす。
-            from .burst_queue import is_queued
-            waiting = [item for item in survivors if is_queued(item[0].front_matter)]
+            # 返信（`reply_to`・`reply_to_file`・3.25.0 の順番待ち `queued_for: burst` を含む）には掛けない——
+            # 返信には最短間隔を掛けない裁定 (a) を timer にも（4.3・設計「返信の扱い（4.3）」の 2）。
+            # 投稿は今までどおり全部落とす。
+            waiting = [item for item in survivors if is_reply(item[0].front_matter)]
             for qf, *_rest in survivors:
-                if not is_queued(qf.front_matter):
+                if not is_reply(qf.front_matter):
                     rejections.append(Rejection(qf.path, "min_interval"))
             if not waiting:
                 return SelectResult(None, rejections, type_mismatch, needs_review)

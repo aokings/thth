@@ -101,19 +101,27 @@ THTH_DEFAULTS = (
          applies_to=("post",), scope="account", window={"hours": None}, param=("config", "min_interval_hours"),
          on_exceed="refuse", refusal="too_soon", source="THTH の線（目的 c・2.x・返信には掛けない）",
          tighter="higher"),
-    _row("post.daily", _SNS, media=SNS_MEDIA, signal="frequency", actions=("post", "reply"),
-         applies_to=("post", "reply", "schedule"), scope="account", window="day",
+    # 4.3（監査 中-1）: 投稿の日の上限は投稿だけ。返信は `reply.daily`（返信だけ・既定は媒体の台帳の 50）。
+    _row("post.daily", _SNS, media=SNS_MEDIA, signal="frequency", actions=("post",),
+         applies_to=("post", "schedule"), scope="account", window="day",
          param=("account", "daily_max_posts"), on_exceed="refuse", refusal="daily_limit",
-         source="THTH の線（目的 c・3.12.0）"),
+         source="THTH の線（目的 c・3.12.0・4.3 から投稿だけ）"),
+    _row("reply.daily", _SNS, media=SNS_MEDIA, signal="frequency", actions=("reply",),
+         applies_to=("reply",), scope="account", window="day",
+         param=("account", "daily_max_replies"), on_exceed="refuse", refusal="daily_limit", detail="reply_daily",
+         source="THTH の推測（目的 c・4.3・返信だけの日の上限）",
+         default=50),
     _row("retract.daily", _SNS, media=SNS_MEDIA, signal="frequency", actions=("retract",),
          applies_to=("retract",), scope="account", window="day", param=("account", "daily_max_retracts"),
          on_exceed="refuse", refusal="retract_limit", purpose="preference", source="THTH の線（目的 b＋c・3.12.0）"),
-    _row("reply.burst", _SNS, media=SNS_MEDIA, signal="frequency", actions=("post", "reply", "retract"),
+    # 4.3（設計「返信の扱い（4.3）」）: 返信の窓は**返信だけ**を数え（既定は媒体の台帳の 10 分に 10）、投稿の窓は
+    # 返信を数えない。timer の道（`core._throw_locked`）も返信をこの行の数と窓で出す。
+    _row("reply.burst", _SNS, media=SNS_MEDIA, signal="frequency", actions=("reply",),
          applies_to=("reply",), scope="account", window={"minutes": None}, param=("account", "burst"),
          on_exceed="wait", refusal="burst_limit", detail="burst",
-         source="THTH の線（会話は並べる・3.25.0）",
-         default={"count": 3, "minutes": 10}),
-    _row("post.burst", _SNS, media=SNS_MEDIA, signal="frequency", actions=("post", "reply", "retract"),
+         source="THTH の線（会話は並べる・3.25.0・返信だけを数える 4.3）",
+         default={"count": 10, "minutes": 10}),
+    _row("post.burst", _SNS, media=SNS_MEDIA, signal="frequency", actions=("post", "retract"),
          applies_to=("post", "retract"), scope="account", window={"minutes": None}, param=("account", "burst"),
          on_exceed="stop", refusal="account_stopped", detail="burst", phase="safety", purpose="safety",
          source="THTH の線（目的 b・3.12.0）",
@@ -207,6 +215,10 @@ THTH_DEFAULTS = (
 LEDGER_MAP = {
     **{(media, "post.daily"): "post.daily" for media in SNS_MEDIA},
     **{(media, "retract.daily"): "retract.daily" for media in SNS_MEDIA},
+    # 4.3: 返信の窓の既定（10 分に 10・数の根拠は THTH の線）。根拠の項目は媒体の API の上限。
+    **{(media, "reply.burst"): "reply.burst" for media in SNS_MEDIA},
+    # 4.3（監査 中-1）: 返信の日の上限の既定（50・数は推測）。
+    **{(media, "reply.daily"): "reply.daily" for media in SNS_MEDIA},
     # Threads の反応の行は台帳に根拠の項目が無い（段 0 の決め 8）→ その媒体は `thth:reaction.daily`。
     **{(media, "reaction.daily"): "reaction.daily" for media in ("x", "bluesky", "mastodon")},
     ("hatenablog", "entry.daily"): "entry.daily",

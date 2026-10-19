@@ -11,6 +11,7 @@ import contextlib
 import dataclasses
 import datetime
 import os
+import time
 import uuid
 
 from . import accounts as accounts_mod
@@ -118,6 +119,9 @@ def last_post_at(files, account_name: str):
             continue
         fm = qf.front_matter
         if fm.get("account") != account_name or fm.get("status") != "posted":
+            continue
+        if select_mod.is_reply(fm):
+            # 4.3（監査 中-2）: 最短間隔（`min_interval_hours`）は投稿の時刻だけから数える。返信で投稿を押さない。
             continue
         posted_at_raw = fm.get("posted_at")
         if not posted_at_raw:
@@ -275,6 +279,8 @@ def throw_once(account_name: str, *, production_flag: bool = False,
     log = log or (lambda line: None)
     adapter_factory = adapter_factory or _default_adapter_factory
     run_id = uuid.uuid4().hex[:12]
+    # 返信の時間（150 秒）は入口から数える（ロックを待った分も含める・監査 中-4）。
+    entered_at = _monotonic()
 
     account_cfg = accounts_mod.load_account(account_name)
     state_dir = accounts_mod.state_dir_for(account_name)
@@ -324,12 +330,179 @@ def throw_once(account_name: str, *, production_flag: bool = False,
                 account_name, account_cfg, state_dir, run_id,
                 production_flag=production_flag, bypass_pace=bypass_pace,
                 adapter_factory=adapter_factory, log=log, now=now,
-                fotolife_factory=fotolife_factory,
+                fotolife_factory=fotolife_factory, started_at=entered_at,
             )
     except lock_mod.LockBusy:
         msg = f"{account_name} は既に実行中です（ロック取得失敗）"
         log(msg)
         return ThrowResult(exit_code=1, mode="rehearsal", action="locked", message=msg)
+
+
+def due_reply_paths(paths, *, now=None) -> list:
+    """承認した原稿のうち、返信で `publish_at` が今か過去のもの（4.3・承認の場の送りの対象）。"""
+    now = jst.to_jst(now) if now is not None else jst.now_jst()
+    out = []
+    for path in paths:
+        try:
+            qf = queuefile.parse(path)
+        except (OSError, ValueError):
+            continue
+        fm = qf.front_matter
+        if qf.malformed or fm.get("status") != "approved" or fm.get("post_id") or not select_mod.is_reply(fm):
+            continue
+        try:
+            at = queuefile.parse_publish_at(fm.get("publish_at"))
+        except (TypeError, ValueError):
+            continue
+        if at <= now:
+            out.append(path)
+    return out
+
+
+def _mapped_paths(paths, account_cfg) -> tuple:
+    """承認した原稿のパスを、口座の repo（`repo_dir`）の中の同じ相対パスに置き換える（監査 低-3）。
+
+    承認は VM の口座の clone で打つのがふつうだが、別の clone の原稿でも repo の中の相対パスが同じなら同じ原稿
+    （push 済み・口座の同期で届く）。戻り値 `(口座の repo の実パスの集合, repo の外で突き合わせられなかった本数)`。
+    """
+    repo = os.path.realpath(account_cfg["repo_dir"])
+    mapped, outside = set(), 0
+    for path in paths:
+        top = writeback.repo_toplevel(path)
+        if top is None:
+            outside += 1
+            continue
+        rel = os.path.relpath(os.path.realpath(path), os.path.realpath(top))
+        mapped.add(os.path.realpath(os.path.join(repo, rel)))
+    return mapped, outside
+
+
+def send_due_replies(account_name: str, paths, *, adapter_factory=None, log=None, now=None,
+                     wait=0) -> dict:
+    """承認の場の送り（4.3・設計「返信の扱い（4.3）」の 7）: 承認した返信のうち時刻の来たものを、timer と
+    同じ道（口座と repo のロック・同期・select・返信の窓と日の上限・時間）でその場で出す。投稿は出さない。
+
+    戻り値 `{"sent", "waiting", "reason", "next_at", "skipped", "error", "message"}`。`skipped` は送らなかった
+    理由（`not_sns`・`not_production`・`not_scheduled`・`publish_held`・`guard_stopped`・`stopped`・`missing_token`・
+    `locked`・`nothing_due`・`account_unreadable`・`not_in_repo`）。ロックは待たない（`wait=0`・timer が動いて
+    いれば timer が出す・監査 低-1）。送れなかった分は queue に残り timer が出す。
+    """
+    entered_at = _monotonic()
+    log = log or (lambda line: None)
+    adapter_factory = adapter_factory or _default_adapter_factory
+    out = {"account": account_name, "sent": 0, "waiting": 0, "reason": None, "next_at": None,
+           "skipped": None, "error": None, "message": None}
+    due = due_reply_paths(paths, now=now)
+    if not due:
+        out["skipped"] = "nothing_due"
+        return out
+    try:
+        account_cfg = accounts_mod.load_account(account_name)
+    except accounts_mod.AccountStopped:
+        out["skipped"] = "stopped"
+        return out
+    except accounts_mod.AccountError:
+        out["skipped"] = "account_unreadable"
+        return out
+    from . import guard as guard_mod, principals
+    if account_cfg.get("media") == "hatenablog" or principals.uses_principal(account_cfg):
+        out["skipped"] = "not_sns"
+    elif not bool(account_cfg.get("production")):
+        out["skipped"] = "not_production"
+    elif account_cfg.get("scheduled", True) is False:
+        out["skipped"] = "not_scheduled"
+    elif publish_hold_mod.held(account_name) is not None:
+        out["skipped"] = "publish_held"
+    elif guard_mod.stopped(account_name) is not None:
+        # 安全装置か持ち主が止めた口座（監査 中-3）。timer の道も止めの印は見ないが、承認の場では送らない。
+        out["skipped"] = "guard_stopped"
+    elif not accounts_mod.token_exists(account_cfg):
+        out["skipped"] = "missing_token"
+    if out["skipped"]:
+        return out
+    only, outside = _mapped_paths(due, account_cfg)
+    if not only:
+        out["skipped"] = "not_in_repo"
+        return out
+    state_dir = accounts_mod.state_dir_for(account_name)
+    stats = {}
+    try:
+        with _account_locks(account_name, account_cfg, state_dir, wait=wait):
+            result = _throw_locked(
+                account_name, account_cfg, state_dir, uuid.uuid4().hex[:12],
+                production_flag=True, bypass_pace=False, adapter_factory=adapter_factory, log=log, now=now,
+                only_paths=only, replies_only=True, stats=stats, started_at=entered_at, via="approve")
+    except lock_mod.LockBusy:
+        out["skipped"] = "locked"
+        return out
+    except accounts_mod.AccountStopped:
+        out["skipped"] = "stopped"
+        return out
+    out.update({"sent": stats.get("replies_sent", 0), "waiting": stats.get("replies_waiting", 0),
+                "reason": stats.get("waiting_reason"),
+                "next_at": jst.iso(stats["next_at"]) if stats.get("next_at") is not None else None,
+                "message": result.message,
+                "window_count": stats.get("window_count"), "window_minutes": stats.get("window_minutes")})
+    missing = outside + sum(1 for path in only if not os.path.exists(path))
+    if result.exit_code != 0:
+        out["error"] = result.error or result.action
+    elif missing and not out["sent"] and not out["waiting"]:
+        out["skipped"] = "not_in_repo"
+    elif not out["sent"] and not out["waiting"] and result.rejections:
+        out["error"] = result.rejections[0]["reason"]
+    return out
+
+
+# 承認の場の送りで送らなかった理由（人向けの 1 句・`--json` は符丁のまま）。
+SKIP_PHRASES = {
+    "not_production": "本番の口座でないので（production: true でない）timer に任せます",
+    "not_scheduled": "timer に載っていない口座なので送りません（scheduled: false）",
+    "publish_held": "媒体の断りで自動の投稿を止めているので送りません（thth account status で確かめてください）",
+    "guard_stopped": "口座が止まっているので送りません（戻すのは thth account resume）",
+    "stopped": "口座が止まっているので送りません",
+    "missing_token": "token が無いので送りません",
+    "locked": "いま timer が動いているので、その場では送りません（timer が出します）",
+    "account_unreadable": "台帳を読めないので送りません",
+    "not_in_repo": "承認した原稿が口座の repo に見つからないので送りません（承認した clone と口座の repo_dir を確かめてください）",
+}
+# 送れなかった理由（select の断り・公開の失敗の符丁）の 1 句。
+ERROR_PHRASES = {
+    "quiet_hours": "夜間（quiet_hours）なので明けてから timer が出します",
+    "future": "時刻がまだ来ていないので timer が出します",
+    "approval_stale": "承認のあとに中身が変わったので出しません（承認し直してください）",
+    "unverified_content": "push した中身と口座の repo が一致しないので timer に任せます",
+    "inflight": "前の公開の結果がまだ決まっていないので timer に任せます",
+    "stale": "時刻から日が経ちすぎているので出しません",
+}
+
+
+def error_phrase(code) -> str:
+    text = str(code or "")
+    for key, phrase in ERROR_PHRASES.items():
+        if text == key or text.startswith(key + ":") or text.startswith(key + "("):
+            return phrase
+    if text.startswith("reply_to_unresolved"):
+        return "返信先がまだ決まらないので timer に任せます"
+    return "送れなかった分は timer に残ります"
+
+
+def due_replies_lines(results) -> list:
+    """承認の場の送りの人向けの文（口座ごと）。送らなかった口座は理由を 1 句で。"""
+    lines = []
+    for row in results:
+        name = row["account"]
+        if row["skipped"] in ("nothing_due", "not_sns"):
+            continue
+        if row["skipped"]:
+            lines.append(f"{name}: 時刻の過ぎた返信を、{SKIP_PHRASES.get(row['skipped'], '送りませんでした')}")
+            continue
+        line = f"{name}: 承認して {row['sent']} 本送りました"
+        if row["waiting"]:
+            line += "・" + waiting_phrase(row["reason"], row["waiting"], row)
+        if row["error"]:
+            line += f"（{error_phrase(row['error'])}）"
+        lines.append(line)
+    return lines
 
 
 def _append_run(state_dir: str, account_name: str, run_id: str, mode: str, action: str,
@@ -416,9 +589,132 @@ def _note_remote_state(state_dir: str, publish_result, log) -> None:
         log("inflight に問い合わせ結果を書けませんでした（inflight は残っています）")
 
 
+# 4.3（設計「上限と連投の柵」の「返信の扱い（4.3）」）: 返信どうしの間（本番の run・2 本目から）と、1 回の実行で
+# 返信に使う時間。timer の service は 300 秒で切られる（`TimeoutStartSec=300`）。時間は `throw_once` の入口（ロックを
+# 待つ前）から数え（監査 中-4）、1 本の見込み（Threads は container を作って 30 秒待つので 40 秒）を足して上限を
+# 超えるなら、その返信は始めない（投稿で時間を使った回は 1 本目の返信も止める）。残りは次の run が出す。
+REPLY_GAP_SECONDS = 3
+REPLY_RUN_BUDGET_SECONDS = 150
+REPLY_ESTIMATE_SECONDS = {"threads": 40}
+REPLY_ESTIMATE_DEFAULT_SECONDS = 5
+# 試験の差し替え口（時計と待ち）。
+_monotonic = time.monotonic
+_pause = time.sleep
+
+
+def reply_estimate_seconds(media) -> int:
+    """返信 1 本にかかる見込みの秒（媒体ごと）。"""
+    return REPLY_ESTIMATE_SECONDS.get(media, REPLY_ESTIMATE_DEFAULT_SECONDS)
+
+
+class _ReplyWindow:
+    """1 回の run の返信の窓と日の上限（`guard.reply_window` の写し + この run で出した返信）。"""
+
+    def __init__(self, info, now):
+        self.count = info["count"]
+        self.minutes = info["minutes"]
+        self.times = list(info["times"])
+        self.daily = info.get("daily")
+        self.daily_used = info.get("daily_used") or 0
+        self.now = now
+
+    def refusal(self) -> str | None:
+        """もう 1 本出せなければ理由（`daily`＝日の上限・`window`＝返信の窓）。出せれば None。"""
+        if self.daily is not None and self.daily_used + 1 > self.daily:
+            return "daily"
+        if len(self.times) + 1 > self.count:
+            return "window"
+        return None
+
+    def note(self) -> None:
+        self.times.append(self.now)
+        self.daily_used += 1
+
+    def next_at(self, reason):
+        if reason == "daily":
+            day = jst.to_jst(self.now).date() + datetime.timedelta(days=1)
+            return datetime.datetime.combine(day, datetime.time(0, 0), tzinfo=jst.JST)
+        from . import assess
+        return assess.window_slot(self.times, self.count, self.minutes, self.now)
+
+
+def _reply_window_for(account_name, account_cfg, now):
+    """返信の窓。はてなの口座・表が作れないときは None（返信も `max_per_run` に数える 4.2 までの形）。"""
+    if account_cfg.get("media") == "hatenablog":
+        return None
+    from . import guard as guard_mod
+    try:
+        info = guard_mod.reply_window(account_name, account_cfg, now=now)
+    except (OSError, ValueError):
+        info = None
+    return _ReplyWindow(info, now) if info is not None else None
+
+
+def _when_phrase(at) -> str:
+    if at is None:
+        return "次の timer で出ます"
+    at = jst.to_jst(at)
+    if at.time() == datetime.time(0, 0):
+        return f"{at.strftime('%m/%d')} 0 時以降の timer で出ます"
+    return f"{at.strftime('%H:%M')} ごろの timer で出ます"
+
+
+def waiting_phrase(reason, waiting, stats) -> str:
+    """残した返信の 1 句（窓・日の上限・時間）。"""
+    when = _when_phrase(stats.get("next_at") if not isinstance(stats.get("next_at"), str)
+                        else jst.parse(stats["next_at"]))
+    if reason == "window":
+        return (f"{waiting} 本は返信の窓（{stats.get('window_minutes')} 分に {stats.get('window_count')} 件）を"
+                f"超えたので {when}")
+    if reason == "daily":
+        return f"{waiting} 本は今日の返信の上限（reply.daily）に達したので {when}"
+    return f"{waiting} 本は 1 回の実行の時間（{REPLY_RUN_BUDGET_SECONDS} 秒）に収まらないので {when}"
+
+
+def reply_summary_line(account_name, stats) -> str | None:
+    """返信をまとめて出した run の人向けの 1 行（出した本数・窓や時間で残した本数と次の時刻）。"""
+    sent = stats.get("replies_sent", 0)
+    waiting = stats.get("replies_waiting", 0)
+    if not sent and not waiting:
+        return None
+    line = (f"{account_name}: 返信を {sent} 本出すはずです（dry-run）" if stats.get("mode") == "rehearsal"
+            else f"{account_name}: 返信を {sent} 本出しました")
+    if waiting:
+        line += "・" + waiting_phrase(stats.get("waiting_reason"), waiting, stats) + "（口座は止めていません）"
+    return line
+
+
+def _count_waiting(files, account_name, excluded, only_paths, now) -> int:
+    """窓・日の上限・時間で残した返信の本数（時刻の来た承認済みの返信のうち、この run で出していないもの・1 回で数える）。"""
+    count = 0
+    for qf in files:
+        fm = qf.front_matter
+        if (qf.malformed or qf.path in excluded or fm.get("account") != account_name
+                or fm.get("status") != "approved" or fm.get("post_id") or not select_mod.is_reply(fm)):
+            continue
+        if only_paths is not None and os.path.realpath(qf.path) not in only_paths:
+            continue
+        try:
+            at = queuefile.parse_publish_at(fm.get("publish_at"))
+        except (TypeError, ValueError):
+            continue
+        if at <= now:
+            count += 1
+    return count
+
+
 def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
                    production_flag, bypass_pace, adapter_factory, log, now=None,
-                   fotolife_factory=None) -> ThrowResult:
+                   fotolife_factory=None, only_paths=None, replies_only=False,
+                   stats=None, started_at=None, via="timer") -> ThrowResult:
+    """ロックの中の 1 回の実行。`only_paths`（実パスの集合）・`replies_only` は承認の場の送り（4.3）が使う:
+    指した原稿のうち返信だけを出す。`stats` には返信の内訳（出した本数・残した本数・理由・次の時刻）を書く。
+    `started_at`（`_monotonic()` の値）は返信の時間を数える起点（`throw_once` の入口・監査 中-4）。`via` は
+    媒体の断りの記録に残す道（`timer`・承認の場の送りは `approve`）。
+    """
+    stats = stats if stats is not None else {}
+    stats.update({"replies_sent": 0, "replies_waiting": 0, "posts_sent": 0, "waiting_reason": None,
+                  "next_at": None})
     # inflight が残っていれば何もしない（§3.5）。ここは throw_once 1 回につき
     # 1 度だけ見る（下のループ中に新たに inflight が残るのは「曖昧な失敗」の
     # ときだけで、そのときはその場で打ち切って返すので読み直す必要が無い）。
@@ -453,6 +749,8 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
     mode = "production" if production else "rehearsal"
     log(f"mode: {mode}")
 
+    # 試験の時計（`now` を渡した run）では返信どうしの間を待たない（4.3）。
+    now_injected = now is not None
     now = now if now is not None else jst.now_jst()
 
     # 利用者 repo を select より前に同期する（設計 §3.3・外部レビュー再レビュー A）。
@@ -508,7 +806,27 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
     # last_post_at はそのまま disk から読む）。
     run_last_post_at: datetime.datetime | None = None
 
-    for _ in range(max_per_run):
+    # **返信は `max_per_run` の外**（4.3）: 投稿（返信でないもの）は `max_per_run` 本まで、返信は返信の窓
+    # （`reply.burst`・既定 10 分に 10）と 1 回の時間（`REPLY_RUN_BUDGET_SECONDS`）に入るだけ出す。窓・時間を
+    # 超えた返信は queue に残り次の run が出す（`publish_at` は書き換えない＝指紋を変えない）。表が作れなければ
+    # 返信も `max_per_run` に数える（4.2 までの振る舞い）。
+    window = _reply_window_for(account_name, account_cfg, now)
+    stats["mode"] = mode
+    if window is not None:
+        stats.update({"window_count": window.count, "window_minutes": window.minutes})
+
+    def _as_reply(front_matter):
+        # 表が作れない（窓が無い）ときは返信も投稿と同じに数える（`max_per_run` の内）。
+        return window is not None and select_mod.is_reply(front_matter)
+
+    posts_left = 0 if replies_only else max_per_run
+    skip_posts = replies_only
+    replies_closed = False
+    replies_done = 0
+    started_at = _monotonic() if started_at is None else started_at
+    estimate = reply_estimate_seconds(account_cfg.get("media"))
+    # 1 回の run で回す上限（選ぶたびに 1 本出すか、投稿・返信のどちらかを打ち切るので、ふつうは届かない）。
+    for _ in range(max_per_run + 1000):
         # last_post_at・recent_texts は「全ファイル」から計算する（直前に投げた
         # ファイルもここに含まれて初めて、次の select の間隔判定に効く）。
         # excluded_paths は select の候補プールからだけ外す（dry-run が disk を
@@ -527,7 +845,10 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
             last_at = run_last_post_at
         recent_texts = select_mod.recent_posted_texts(
             files, account_name=account_name, media=account_cfg["media"], now=now)
-        candidates = [qf for qf in files if qf.path not in excluded_paths]
+        candidates = [qf for qf in files if qf.path not in excluded_paths
+                      and (only_paths is None or os.path.realpath(qf.path) in only_paths)
+                      and not (skip_posts and not _as_reply(qf.front_matter))
+                      and not (replies_closed and _as_reply(qf.front_matter))]
 
         # 指した原稿（reply_to_file）は候補から外したものも含めた全ファイルから探す
         # （dry-run で一度選んだ問いを外すと、答えの側で「無い」に化ける）。
@@ -551,8 +872,8 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
 
         if result.chosen is None:
             msg = "出すものが無い"
-            log(msg)
-            if last_result is None:
+            if last_result is None and not replies_closed:
+                log(msg)
                 _append_run(state_dir, account_name, run_id, mode, "none", None, None, now,
                             status="ok", error=None)
                 # `thth throw` を手で打ったときに理由を添える（外部レビュー再レビュー
@@ -569,6 +890,25 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
             break
 
         chosen = result.chosen
+        is_reply = _as_reply(chosen.front_matter)
+        if is_reply:
+            reason = window.refusal()
+            if reason is None and _monotonic() - started_at + estimate > REPLY_RUN_BUDGET_SECONDS:
+                reason = "time"
+            if reason is not None:
+                # 日の上限・窓・時間を超えた。この run ではもう返信を出さない（残りは queue のまま・口座は止めない）。
+                # 残りは 1 回で数える（監査 低-4・選び直しの空回りをしない）。
+                replies_closed = True
+                stats["waiting_reason"] = reason
+                stats["next_at"] = window.next_at(reason) if reason != "time" else None
+                stats["replies_waiting"] = _count_waiting(files, account_name, excluded_paths, only_paths, now)
+                continue
+            if replies_done and production and now_injected is False:
+                _pause(REPLY_GAP_SECONDS)
+        elif posts_left <= 0:
+            # 投稿は `max_per_run` 本まで。返信が残っていれば続けて選ぶ。
+            skip_posts = True
+            continue
         excluded_paths.add(chosen.path)
         if account_cfg.get("media") == "hatenablog":
             # はてなブログの配信原稿（設計 4.0 S1 §6.5）。送信は S2 の adapter（無ければ出さない）。
@@ -579,18 +919,37 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
         else:
             one_result = _throw_chosen(
                 account_name, account_cfg, state_dir, run_id, mode, chosen, result.section,
-                now, log, adapter_factory, resolution=result.resolution)
+                now, log, adapter_factory, resolution=result.resolution, via=via)
         last_result = one_result
+        if one_result.exit_code == 0:
+            # 出した（dry-run は出したつもり）分を数える。dry-run も窓と本数で「まとめて出したら何が出るか」を見せる。
+            if is_reply:
+                replies_done += 1
+                window.note()
+                stats["replies_sent"] = replies_done
+            else:
+                posts_left -= 1
+                stats["posts_sent"] = stats["posts_sent"] + 1
         if one_result.action == "post" and one_result.exit_code == 0:
             posted_count += 1
-            run_last_post_at = now
+            if not is_reply:
+                # 4.3（監査 中-2）: 最短間隔の起点は投稿だけ（返信で投稿を押さない）。
+                run_last_post_at = now
         if one_result.exit_code != 0:
             # 途中で失敗（曖昧な失敗で inflight を残す等）したらそこで打ち切る
             # （設計 §3.3）。
             break
 
     log(f"{account_name}: この実行で {posted_count} 本投げました"
-        f"（mode={mode}・上限 max_per_run={max_per_run}）")
+        f"（mode={mode}・上限 max_per_run={max_per_run}・返信は max_per_run の外）")
+    line = reply_summary_line(account_name, stats)
+    if line:
+        log(line)
+    if last_result is None:
+        # 返信が窓・時間で残っただけで、この run では 1 本も出していない。
+        msg = line or "出すものが無い"
+        _append_run(state_dir, account_name, run_id, mode, "none", None, None, now, status="ok", error=None)
+        return ThrowResult(exit_code=0, mode=mode, action="none", message=msg)
     return last_result
 
 
@@ -835,7 +1194,7 @@ def _announce_for_post(chosen, resolution, account_cfg):
 
 
 def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, section,
-                   now, log, adapter_factory, resolution=None) -> ThrowResult:
+                   now, log, adapter_factory, resolution=None, via="timer") -> ThrowResult:
     """select_one() が選んだ 1 件を投げる（dry-run ならログに出すだけ）。
 
     `_throw_locked()` の max_per_run ループから 1 本ごとに呼ばれる（§3.3）。
@@ -1020,7 +1379,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                     extra=_remote_extra(publish_result))
         # アカウント側の断り（X の x_not_permitted）なら、次の run から投げ直さない（3.19.2）。
         publish_hold_mod.note_refusal(account_name, account_cfg, err, file=chosen.path,
-                                      via="timer", log=log)
+                                      via=via, log=log)
         return ThrowResult(exit_code=1, mode=mode, action="post", message="公開に失敗しました",
                             file=chosen.path, error=err, api_diagnostic=detail_data)
 
@@ -1217,6 +1576,10 @@ def guard_refusal_message(account_name: str, refused, *, kind: str = "publish") 
         why = f"今日の削除が上限（daily_max_retracts）に達しました{when}"
     elif code == "too_soon":
         why = f"前の公開から最短間隔（min_interval_hours）が経っていません{when}。返信には掛かりません"
+    elif code == "daily_limit" and getattr(refused, "reason", None) == "reply_daily":
+        # 4.3（監査 中-1）: 返信だけの日の上限（`reply.daily`）。口座は止めない。
+        why = (f"今日の返信が上限（reply.daily）に達しました{when}。口座は止めていません。"
+               "数は thth account set <口座> reply.daily <数> --by <名前> で変えられます")
     elif code == "daily_limit":
         why = f"今日の公開が上限（daily_max_posts）に達しました{when}"
     elif code == "quiet_hours":
