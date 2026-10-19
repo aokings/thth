@@ -105,9 +105,10 @@ def scenario(rid, world):
     """行ごとの試し方（`count` 2 に締め、ほかの行は緩める）。"""
     hatena_loose(world)
     hcheck = lambda kind, **kw: guard.check(ACCOUNT, accounts.load_account(ACCOUNT), kind, now=NOW, **kw)
-    if rid in ("post.daily", "retract.daily", "reply.burst", "post.burst"):
+    if rid in ("post.daily", "retract.daily", "reply.burst", "post.burst", "reply.daily"):
         values = {"post.daily": {"daily_max_posts": 2}, "retract.daily": {"daily_max_retracts": 2},
                   "reply.burst": {"burst": {"count": 2, "minutes": 10}},
+                  "reply.daily": {"limits": {"reply.daily": 2}},
                   "post.burst": {"burst": {"count": 2, "minutes": 10}}}[rid]
         cfg = sns_cfg(**values)
         when = minutes_ago if rid.endswith("burst") else hours_ago
@@ -115,8 +116,8 @@ def scenario(rid, world):
         return Scenario(
             # 4.3: 返信の窓（reply.burst）は返信だけを数える → 返信の行は返信の記録を置く。
             place=lambda i, inside: sns_post(world, SNS if inside else SNS_OTHER, when(i), retract=rid == "retract.daily",
-                                             reply_to="1799" if rid == "reply.burst" else None),
-            ask=lambda: guard.check(SNS, cfg, kind, now=NOW, reply=rid == "reply.burst"),
+                                             reply_to="1799" if rid.startswith("reply.") else None),
+            ask=lambda: guard.check(SNS, cfg, kind, now=NOW, reply=rid.startswith("reply.")),
             next_at=(lambda: jst.iso(minutes_ago(0) + datetime.timedelta(minutes=11))) if rid == "reply.burst"
             else (None if rid == "post.burst" else lambda: MIDNIGHT),
             stop_target=("account", SNS) if rid == "post.burst" else None)
@@ -185,7 +186,8 @@ def scenario(rid, world):
 
 
 # 数のある行（`count` 2 に締めて試す）。数の無い行は下の個別の試験。
-COUNTED = ("post.daily", "retract.daily", "reply.burst", "post.burst", "reaction.daily",
+# 4.3（監査 中-1）: 返信だけの日の上限 `reply.daily` を足した。
+COUNTED = ("post.daily", "retract.daily", "reply.burst", "reply.daily", "post.burst", "reaction.daily",
            "entry.daily", "entry.blog_daily", "entry.principal_daily",
            "entry_delete.daily", "entry_delete.blog_daily", "entry_delete.principal_daily",
            "entry.burst", "entry.principal_burst",

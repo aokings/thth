@@ -58,7 +58,7 @@ SIGNALS = SIGNALS_V1 + ("same_text", "link_heavy", "engagement_bait")
 # 柵の行の id（§6.3・§6.4・`<動作>.<欄>`）。台帳の `signals` はこの名で「どの行に効く項目か」を言う。
 RULE_IDS = frozenset((
     # SNS
-    "post.daily", "post.burst", "post.interval", "post.quiet", "retract.daily", "reply.burst",
+    "post.daily", "post.burst", "post.interval", "post.quiet", "retract.daily", "reply.burst", "reply.daily",
     "reaction.daily", "reply.counterpart", "post.platform_refusal", "post.monthly", "read.budget",
     "post.same_text", "post.link_heavy", "post.engagement_bait",
     # はてなブログ・フォトライフ

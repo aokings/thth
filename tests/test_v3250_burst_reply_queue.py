@@ -103,7 +103,8 @@ def test_返信でない投稿は今までどおり口座を止める(isolated_a
 
 
 def test_1日の上限は返信でも並べずに断る(isolated_account_factory):
-    account = isolated_account_factory(production=True, min_interval_hours=0, daily_max_posts=3,
+    # 4.3（監査 中-1）: 返信の日の上限は投稿の `daily_max_posts` でなく返信だけの `reply.daily`。
+    account = isolated_account_factory(production=True, min_interval_hours=0, limits={"reply.daily": 3},
                                        burst={"count": 2, "minutes": 10})
     spy = _Spy()
     for i in range(2):

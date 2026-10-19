@@ -22,8 +22,7 @@
         "post.daily": {
           "signal": "frequency",
           "actions": [
-            "post",
-            "reply"
+            "post"
           ],
           "scope": "account",
           "window": {
@@ -52,9 +51,10 @@
       "confidence": "high",
       "signals": [
         "post.daily",
-        "reply.burst"
+        "reply.burst",
+        "reply.daily"
       ],
-      "notes": "THTH の post.daily は投稿と返信を合わせて数える。返信だけの行は持たない。4.3: 返信の窓（reply.burst）の既定 10 分に 10 件は THTH の運用の線（推測・媒体の文書に間隔の決まりは無い）。媒体の上限 1,000/24h の内側。post.daily は投稿と返信を合わせて数えたまま",
+      "notes": "THTH の post.daily は投稿と返信を合わせて数える。返信だけの行は持たない。4.3: 返信の窓（reply.burst）の既定 10 分に 10 件は THTH の運用の線（推測・媒体の文書に間隔の決まりは無い）。媒体の上限 1,000/24h の内側。post.daily は投稿と返信を合わせて数えたまま。4.3（監査 中-1）: 返信の日の上限（reply.daily）の既定 50 は THTH の推測（確かさ low）。媒体の上限 1,000/24h の内側。post.daily は投稿だけを数える",
       "defaults": {
         "reply.burst": {
           "signal": "frequency",
@@ -76,6 +76,27 @@
           "refusal": "burst_limit",
           "detail": "burst",
           "count_evidence": "thth_line"
+        },
+        "reply.daily": {
+          "signal": "frequency",
+          "actions": [
+            "reply"
+          ],
+          "applies_to": [
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 50,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "daily_limit",
+          "detail": "reply_daily",
+          "count_evidence": "inferred"
         }
       }
     },

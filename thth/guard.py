@@ -303,14 +303,20 @@ def summary(account, cfg, *, now=None) -> dict:
     """数えた結果（読むだけ・`/activity` や答えに添える用）。"""
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     limits = accounts.guard_limits(cfg)
-    rows = [row for row in _classified(account) if row[0] in ("post", "retract")]
-    posts = [at for what, at, _b, _k in rows if what == "post"]
+    acted = [row for row in _action_rows(account) if row[0] in ("post", "retract")]
+    rows = [(what, at, blog, key) for what, _action, at, blog, key in acted]
+    # 4.3（監査 中-1・中-2）: 投稿の日の数え（`post.daily`）と最短間隔の起点（`last_post_at`）は投稿だけ。
+    # 返信（`reply` の出来事）は `replies`・`replies_today`（`reply.daily`）で別に数える。
+    posts = [at for what, action, at, _b, _k in acted if what == "post" and action != "reply"]
+    replies = [at for what, action, at, _b, _k in acted if what == "post" and action == "reply"]
     retracts = [at for what, at, _b, _k in rows if what == "retract"]
     today = now.date()
     window = now - datetime.timedelta(minutes=limits["burst"]["minutes"])
     keys = _recent_keys(rows, window, now)
     return {
         "posts_today": sum(1 for at in posts if at.date() == today),
+        "replies_today": sum(1 for at in replies if at.date() == today),
+        "replies": replies,
         "retracts_today": sum(1 for at in retracts if at.date() == today),
         # 4.0 S5 §6: 窓の中の鍵の数（SNS は今と同じ・はてなは同じ配信を 1 件）。
         "recent": len(keys),
@@ -357,23 +363,44 @@ def reply_times(account) -> list:
 
 
 def reply_window(account, cfg, *, now=None) -> dict | None:
-    """返信の窓（表の `reply.burst`・4.3）の数・分と、窓 `(now - 分, now]` の中の返信の時刻。
+    """返信の窓（表の `reply.burst`・4.3）の数・分と、窓 `(now - 分, now]` の中の返信の時刻。返信の日の上限
+    （`reply.daily`・監査 中-1）の数と今日の返信の数も添える（`daily` が None なら日の上限は数えない）。
 
     timer と承認の場の送り（`core._throw_locked`）が、返信を 1 本ずつ出すたびにこの窓で数える。表が作れない
-    （媒体の台帳が検査を通らない）・行が数えない形なら None（呼び手は 4.2 までの振る舞いに倒す）。
+    （媒体の台帳が検査を通らない）・窓の行が数えない形なら None（呼び手は 4.2 までの振る舞いに倒す）。
     """
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     try:
-        rows = [r for r in _rules_for("sns", "reply", cfg=cfg) if r["id"] == "reply.burst"]
+        rows = {r["id"]: r for r in _rules_for("sns", "reply", cfg=cfg)}
     except GuardRefused:
         return None
-    if not rows or rows[0]["count"] is None or not isinstance(rows[0]["window"], dict) \
-            or "minutes" not in rows[0]["window"]:
+    burst = rows.get("reply.burst")
+    if burst is None or burst["count"] is None or not isinstance(burst["window"], dict) \
+            or "minutes" not in burst["window"]:
         return None
-    count, minutes = rows[0]["count"], rows[0]["window"]["minutes"]
+    count, minutes = burst["count"], burst["window"]["minutes"]
     start = now - datetime.timedelta(minutes=minutes)
-    times = sorted(at for at in reply_times(account) if start < at <= now)
-    return {"count": count, "minutes": minutes, "times": times, "rule": "reply.burst"}
+    every = reply_times(account)
+    times = sorted(at for at in every if start < at <= now)
+    daily = rows.get("reply.daily")
+    return {"count": count, "minutes": minutes, "times": times, "rule": "reply.burst",
+            "daily": daily["count"] if daily is not None else None,
+            "daily_used": sum(1 for at in every if jst.to_jst(at).date() == now.date())}
+
+
+def check_reply_daily(account, cfg, *, day, queued=0, now=None) -> None:
+    """返信の日の上限（`reply.daily`・監査 中-1）に、その日の返信 + 並べた返信 `queued` + 1 本が収まるか。
+
+    収まらなければ `daily_limit`（詳細 `reply_daily`・翌日 0 時）で断る。口座は止めない。返信の順番待ちに並べる
+    道（`burst_queue.queue_cli`）が、投稿の日の上限（`post.daily`）の代わりに使う。
+    """
+    info = reply_window(account, cfg, now=now)
+    if info is None or info.get("daily") is None:
+        return
+    used = sum(1 for at in reply_times(account) if jst.to_jst(at).date() == day) + queued
+    if used + 1 > info["daily"]:
+        nxt = datetime.datetime.combine(day + datetime.timedelta(days=1), datetime.time(0, 0), tzinfo=jst.JST)
+        raise GuardRefused("daily_limit", reason="reply_daily", next_at=jst.iso(nxt))
 
 
 def burst_slot(account, cfg, *, now=None, pending=()) -> datetime.datetime:

@@ -695,7 +695,8 @@ def cmd_approve(args) -> int:
                      "files": [{"file": one["path"], "approved_sha": one["approved_sha"],
                                 "digest": one["digest"]} for one in prepared],
                      "pushed": pushed, "push_error": push_err or None,
-                     **({"sent_now": sent_now} if sent_now else {})})
+                     # 4.3: その場で送った返信（口座ごと・無ければ空の list・監査 低-6）。
+                     "sent_now": sent_now})
     else:
         print(f"承認しました: {len(prepared)} 本（{approved_by}）")
         for one in prepared:
@@ -952,7 +953,7 @@ def _report_confirm_file(args, approved_by, approved_at, repo_dir, approved, ref
                      "refused": refused, "pushed": pushed if approved else None,
                      "push_error": push_err or None, "stopped": stopped,
                      "remaining_commands": commands + ([push_command] if push_command else []),
-                     **({"sent_now": list(sent_now)} if sent_now else {})})
+                     "sent_now": list(sent_now)})
     else:
         if approved:
             print(f"承認しました: {len(approved)} 本（{approved_by}）"

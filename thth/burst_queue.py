@@ -64,22 +64,6 @@ def message(account, publish_at) -> str:
             "（取り消しは https://thth.me/activity か thth revoke）")
 
 
-def _approved_same_day(account, cfg, day) -> int:
-    from . import core
-    count = 0
-    for qf in core.list_queue_files(cfg, tree_sha=None):
-        fm = qf.front_matter
-        if qf.malformed or fm.get("account") != account or fm.get("status") != "approved" or fm.get("post_id"):
-            continue
-        try:
-            at = queuefile.parse_publish_at(fm.get("publish_at"))
-        except (TypeError, ValueError):
-            continue
-        if jst.to_jst(at).date() == day:
-            count += 1
-    return count
-
-
 def queue_cli(account, cfg, *, text, topic, reply_to, publish_at, goal=None, reply_to_root=None,
               reply_to_author_key=None, found_by=None, now=None) -> dict:
     """運営者の CLI（手元・VM の `thth send`）の道: queue に承認済みで置いて commit・push する。
@@ -90,9 +74,10 @@ def queue_cli(account, cfg, *, text, topic, reply_to, publish_at, goal=None, rep
     from . import approval, guard, writeback
     from .cli import _prepare_one
     now = jst.to_jst(now) if now is not None else jst.now_jst()
-    # 1 日の上限は予約と同じ数え方（その日の公開 + 刻んだ承認済み）。並べずに断る。
-    guard.check(account, cfg, "schedule", now=now, via="cli", cli=True, publish_at=publish_at,
-                scheduled_same_day=_approved_same_day(account, cfg, jst.to_jst(publish_at).date()))
+    # 1 日の上限は返信だけの日の上限（`reply.daily`・4.3 監査 中-1）: その日の返信 + 並べた返信。並べずに断る。
+    guard.check_reply_daily(account, cfg, day=jst.to_jst(publish_at).date(), now=now,
+                            queued=sum(1 for at in pending(account, cfg, now=now)
+                                       if at.date() == jst.to_jst(publish_at).date()))
     repo_dir = cfg["repo_dir"]
     queue_dir = os.path.join(repo_dir, cfg["queue_dir"])
     os.makedirs(queue_dir, exist_ok=True)

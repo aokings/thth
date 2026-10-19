@@ -44,6 +44,8 @@ ACCOUNT_ROWS = {
     "post.daily": ("day", "daily_max_posts", SNS_MEDIA),
     "retract.daily": ("day", "daily_max_retracts", SNS_MEDIA),
     "reply.burst": ("minutes", "burst", SNS_MEDIA),
+    # 4.3（監査 中-1）: 返信だけの日の上限。今の鍵（別名）は無い（`limits` でだけ書ける）。
+    "reply.daily": ("day", None, SNS_MEDIA),
     "post.burst": ("minutes", "burst", SNS_MEDIA),
     "reaction.daily": ("day", "daily_max_reactions", SNS_MEDIA),
     "entry.daily": ("day", "daily_max_posts", ("hatenablog",)),

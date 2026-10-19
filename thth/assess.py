@@ -133,6 +133,9 @@ def _frequency(rule, req, m):
         nxt = _midnight_after(day)
         if scope == "account" and rule["param"][1] == "daily_max_reactions":
             used = m.get("reactions_today")
+        elif scope == "account" and rule["param"][1] == "daily_max_replies":
+            # 4.3（監査 中-1）: 返信だけの日の上限（`reply.daily`）。
+            used = m.get("counts")["replies_today"]
         elif scope == "account":
             counts = m.get("counts")
             source = counts["posts"] if rule["param"][1] == "daily_max_posts" else None

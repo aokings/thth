@@ -17,8 +17,7 @@
       "signals": [
         "post.daily",
         "retract.daily",
-        "reaction.daily",
-        "reply.burst"
+        "reaction.daily"
       ],
       "defaults": {
         "retract.daily": {
@@ -54,30 +53,9 @@
           "tighter": "lower",
           "refusal": "reaction_limit",
           "count_evidence": "thth_line"
-        },
-        "reply.burst": {
-          "signal": "frequency",
-          "actions": [
-            "reply"
-          ],
-          "applies_to": [
-            "reply"
-          ],
-          "scope": "account",
-          "window": {
-            "minutes": 10
-          },
-          "count": 10,
-          "key": "op",
-          "on_exceed": "wait",
-          "purpose": "preference",
-          "tighter": "lower",
-          "refusal": "burst_limit",
-          "detail": "burst",
-          "count_evidence": "thth_line"
         }
       },
-      "notes": "既定（削除 5/日・反応 50/日）は API の上限の内側。4.3: 返信の窓（reply.burst）の既定 10 分に 10 件は THTH の運用の線（推測）。POST /2/tweets の 100/15 分（返信を含む）の内側"
+      "notes": "既定（削除 5/日・反応 50/日）は API の上限の内側"
     },
     {
       "id": "x.account_post_limit",
@@ -91,14 +69,14 @@
       },
       "confidence": "medium",
       "signals": [
-        "post.daily"
+        "post.daily",
+        "reply.daily"
       ],
       "defaults": {
         "post.daily": {
           "signal": "frequency",
           "actions": [
-            "post",
-            "reply"
+            "post"
           ],
           "scope": "account",
           "window": {
@@ -111,9 +89,30 @@
           "tighter": "lower",
           "refusal": "daily_limit",
           "count_evidence": "thth_line"
+        },
+        "reply.daily": {
+          "signal": "frequency",
+          "actions": [
+            "reply"
+          ],
+          "applies_to": [
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 50,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "daily_limit",
+          "detail": "reply_daily",
+          "count_evidence": "inferred"
         }
       },
-      "notes": "既定 8/日は 50 の内側。原文を開けたら確かさを直す"
+      "notes": "既定 8/日は 50 の内側。原文を開けたら確かさを直す。4.3（監査 中-1）: 返信の日の上限（reply.daily）の既定 50 は THTH の推測（確かさ low）。未認証の口座の 200 返信/日の内側"
     },
     {
       "id": "x.pay_per_use",
@@ -266,6 +265,56 @@
         "human_verification",
         "account_lock"
       ]
+    },
+    {
+      "id": "x.reply_pace",
+      "kind": "spam_signal",
+      "statement": "自動の返信が続くと、自動化の規則（無差別の返信の禁止）と「人間が運用していることを確認する」の画面に触れやすい。返信は 10 分に 3 件までにする（推測）",
+      "evidence": {
+        "type": "inferred",
+        "by": "THTH開発（4.3 の監査・Opus 5.5）",
+        "at": "2026-10-19",
+        "also": [
+          {
+            "type": "official_doc",
+            "url": "https://help.x.com/en/rules-and-policies/x-automation",
+            "checked_at": "2026-10-15"
+          },
+          {
+            "type": "observed",
+            "record": "docs/返事_kopicha_X403とMastodon保留_2026-10-14.md（kopicha-x の人間か確認）",
+            "observed_at": "2026-10-14"
+          }
+        ]
+      },
+      "confidence": "low",
+      "signals": [
+        "reply.burst"
+      ],
+      "defaults": {
+        "reply.burst": {
+          "signal": "frequency",
+          "actions": [
+            "reply"
+          ],
+          "applies_to": [
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "minutes": 10
+          },
+          "count": 3,
+          "key": "op",
+          "on_exceed": "wait",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "burst_limit",
+          "detail": "burst",
+          "count_evidence": "inferred"
+        }
+      },
+      "notes": "4.3（監査 低-7）: ほかの SNS の 10 分に 10 より小さく。数は推測"
     }
   ]
 }
