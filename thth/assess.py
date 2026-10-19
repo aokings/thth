@@ -32,9 +32,10 @@ STRENGTH = {"pass": 0, "advise": 1, "wait": 2, "refuse": 3, "stopped": 4}
 # 順（止めの印・安全装置が先・残りは強い方）で、変えたら何が変わるかを試験で見せるためだけに置く。
 ORDERS = ("table", "safety_first")
 ORDER = "table"
-# 記録の出来事の動作（`guard._action_rows`）と行の `actions` の対応。SNS の記録は投稿と返信を分けないので
-# `post` は投稿・返信の行に数え、`kind` の無い・知らない記録ははてなの記事の行にも数える（数え漏らさない・今のまま）。
-EVENT_ALIASES = {"post": ("post", "reply", "entry_create", "entry_update"),
+# 記録の出来事の動作（`guard._action_rows`）と行の `actions` の対応。`kind` の無い・知らない記録ははてなの記事の
+# 行にも数える（数え漏らさない・今のまま）。4.3: SNS の記録は `reply_to` があれば `reply` の出来事になり、`post` の
+# 出来事は返信の行（`reply.burst`）に数えない（返信の窓は返信だけ・投稿の窓は返信を数えない）。
+EVENT_ALIASES = {"post": ("post", "entry_create", "entry_update"),
                  "retract": ("retract", "entry_delete"),
                  # ブックマークの直し（S4 §21.4）: 追加の行の分の窓（連投・止め線・最低線）に数える。
                  "bookmark_edit": ("bookmark_add",)}

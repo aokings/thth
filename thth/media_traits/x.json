@@ -17,7 +17,8 @@
       "signals": [
         "post.daily",
         "retract.daily",
-        "reaction.daily"
+        "reaction.daily",
+        "reply.burst"
       ],
       "defaults": {
         "retract.daily": {
@@ -53,9 +54,30 @@
           "tighter": "lower",
           "refusal": "reaction_limit",
           "count_evidence": "thth_line"
+        },
+        "reply.burst": {
+          "signal": "frequency",
+          "actions": [
+            "reply"
+          ],
+          "applies_to": [
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "minutes": 10
+          },
+          "count": 10,
+          "key": "op",
+          "on_exceed": "wait",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "burst_limit",
+          "detail": "burst",
+          "count_evidence": "thth_line"
         }
       },
-      "notes": "既定（削除 5/日・反応 50/日）は API の上限の内側"
+      "notes": "既定（削除 5/日・反応 50/日）は API の上限の内側。4.3: 返信の窓（reply.burst）の既定 10 分に 10 件は THTH の運用の線（推測）。POST /2/tweets の 100/15 分（返信を含む）の内側"
     },
     {
       "id": "x.account_post_limit",

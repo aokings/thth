@@ -59,10 +59,10 @@ def hatena_loose(world):
                          daily_max_self_bookmarks=100, bookmark_same_host_daily=100)
 
 
-def sns_post(world, account, at, *, retract=False):
+def sns_post(world, account, at, *, retract=False, reply_to=None):
     state = world.state(account)
     post_id = str(1000000 + seq())
-    sent.write(state, post_id=post_id, text="本文", body_hash="0" * 64, sent_at=jst.iso(at))
+    sent.write(state, post_id=post_id, text="本文", body_hash="0" * 64, sent_at=jst.iso(at), reply_to=reply_to)
     if retract:
         sent.mark_retracted(state, post_id, retracted_at=jst.iso(at), retracted_by="t", retract_reason="t")
 
@@ -113,7 +113,9 @@ def scenario(rid, world):
         when = minutes_ago if rid.endswith("burst") else hours_ago
         kind = "retract" if rid == "retract.daily" else "publish"
         return Scenario(
-            place=lambda i, inside: sns_post(world, SNS if inside else SNS_OTHER, when(i), retract=rid == "retract.daily"),
+            # 4.3: 返信の窓（reply.burst）は返信だけを数える → 返信の行は返信の記録を置く。
+            place=lambda i, inside: sns_post(world, SNS if inside else SNS_OTHER, when(i), retract=rid == "retract.daily",
+                                             reply_to="1799" if rid == "reply.burst" else None),
             ask=lambda: guard.check(SNS, cfg, kind, now=NOW, reply=rid == "reply.burst"),
             next_at=(lambda: jst.iso(minutes_ago(0) + datetime.timedelta(minutes=11))) if rid == "reply.burst"
             else (None if rid == "post.burst" else lambda: MIDNIGHT),

@@ -93,8 +93,9 @@ def test_続く5件目は4件目より後ろに並ぶ(isolated_account_factory):
 def test_返信でない投稿は今までどおり口座を止める(isolated_account_factory):
     account = isolated_account_factory(production=True, min_interval_hours=0, burst=BURST)
     spy = _Spy()
+    # 4.3: 投稿の窓は返信を数えない → 投稿 3 本のあとの投稿で止まる（返信 3 本のあとでは止まらない）。
     for i in range(3):
-        assert _send(account, spy, f"お返事{i}", minute=i, reply_to=f"1799{i}").exit_code == 0
+        assert _send(account, spy, f"ふつうの投稿{i}", minute=i).exit_code == 0
     r = _send(account, spy, "ふつうの投稿", minute=3)
     assert r.action == "guard" and r.error == "account_stopped"
     assert guard.stopped(account["name"])["reason"] == "burst"
@@ -166,13 +167,18 @@ def test_guardの柵_返信のburstは止めずに窓が空く時刻を添える
     cfg = accounts.load_account(account["name"])
     sdir = accounts.state_dir_for(account["name"])
     for i in range(3):
+        # 4.3: 返信の窓は返信だけを数える → 前の 3 件は返信の記録。
         sent.write(sdir, post_id=f"90{i}", text=f"前{i}", body_hash="x",
-                   sent_at=jst.iso(NOW + datetime.timedelta(minutes=i)))
+                   sent_at=jst.iso(NOW + datetime.timedelta(minutes=i)), reply_to=f"1799{i}")
     with pytest.raises(guard.GuardRefused) as caught:
         guard.check(account["name"], cfg, "publish", now=NOW + datetime.timedelta(minutes=3), reply=True)
     assert str(caught.value) == "burst_limit" and caught.value.reason == "burst"
     assert caught.value.next_at == "2026-10-15T17:41:00+09:00"
     assert guard.stopped(account["name"]) is None
+    # 4.3: 投稿の窓は返信を数えない → 投稿の記録 3 件を足してから、投稿で止まる。
+    for i in range(3):
+        sent.write(sdir, post_id=f"91{i}", text=f"投稿{i}", body_hash="x",
+                   sent_at=jst.iso(NOW + datetime.timedelta(minutes=i)))
     with pytest.raises(guard.GuardRefused) as stopped:
         guard.check(account["name"], cfg, "publish", now=NOW + datetime.timedelta(minutes=3))
     assert str(stopped.value) == "account_stopped" and guard.stopped(account["name"])["reason"] == "burst"
@@ -183,18 +189,19 @@ def test_burst_slotの計算():
     cfg = {"burst": {"count": 3, "minutes": 10}}
     at = lambda m: NOW + datetime.timedelta(minutes=m)  # noqa: E731
     import thth.guard as g
-    orig = g._events
+    # 4.3: 材料は返信の時刻だけ（`reply_times`）。
+    orig = g.reply_times
     try:
-        g._events = lambda account: ([at(0), at(1), at(2)], [])
+        g.reply_times = lambda account: [at(0), at(1), at(2)]
         assert g.burst_slot("x", cfg, now=at(3)) == at(11)
         assert g.burst_slot("x", cfg, now=at(3), pending=[at(11)]) == at(12)
         assert g.burst_slot("x", cfg, now=at(3), pending=[at(11), at(12)]) == at(13)
         # 3 件目で窓が詰まる（11・12・13）→ 次は 11 + 11 分。
         assert g.burst_slot("x", cfg, now=at(3), pending=[at(11), at(12), at(13)]) == at(22)
-        g._events = lambda account: ([], [])
+        g.reply_times = lambda account: []
         assert g.burst_slot("x", cfg, now=at(3)) == at(3)
     finally:
-        g._events = orig
+        g.reply_times = orig
 
 
 # --------------------------------------------------------------------------
@@ -223,10 +230,11 @@ def _call(env, **request):
     return writes.execute(env['context'], dict(account='alpha', **request), via='mcp')
 
 
-def _write_recent(env, n):
+def _write_recent(env, n, reply_to=None):
     state = env['root'] / 'state/alpha'
     for i in range(n):
-        sent.write(str(state), post_id=f'90{i}', text=f'前の返信{i}', body_hash='x', sent_at=jst.iso())
+        sent.write(str(state), post_id=f'90{i}', text=f'前の返信{i}', body_hash='x', sent_at=jst.iso(),
+                   reply_to=reply_to)
 
 
 def test_thth_meの道でも返信は順番待ちに並び_口座は止まらない(env, remote, publisher):
@@ -259,7 +267,7 @@ def test_thth_meの道でも返信でない投稿は止める(env, remote, publi
 
 def test_thth_meの道でscheduled_falseは止めずにburst_limit(env, remote, publisher):
     ledger(env, burst={'count': 2, 'minutes': 10}, scheduled=False)
-    _write_recent(env, 2)
+    _write_recent(env, 2, reply_to='17980')   # 4.3: 返信の窓は返信だけを数える
     with pytest.raises(ReportServiceError) as caught:
         _call(env, operation='send_request', body='お返事', reply_to='17990')
     assert str(caught.value) == 'burst_limit' and caught.value.reason == 'burst' and caught.value.next_at

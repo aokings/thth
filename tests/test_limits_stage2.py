@@ -364,8 +364,10 @@ def test_T_P_10_同じ配信の2回目はtargetの行で1件_opの行で2件():
 
 
 def test_分の窓は行の動作だけを数える():
-    """記録の出来事のうち行の `actions` に入るものだけ（SNS の記録の `post` は投稿・返信・記事の行に入る）。"""
-    assert assess.counts_as("post", ("reply",)) and assess.counts_as("post", ("entry_create",))
+    """記録の出来事のうち行の `actions` に入るものだけ（SNS の記録の `post` は投稿・記事の行に入る。4.3 から返信の
+    記録は `reply` の出来事で、`post` は返信の行に入らない）。"""
+    assert not assess.counts_as("post", ("reply",)) and assess.counts_as("post", ("entry_create",))
+    assert assess.counts_as("reply", ("reply",)) and not assess.counts_as("reply", ("post", "retract"))
     assert assess.counts_as("retract", ("entry_delete",))
     assert not assess.counts_as("bookmark_add", ("entry_create", "entry_update", "entry_delete"))
     assert not assess.counts_as("post", ("bookmark_add",))
