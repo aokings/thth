@@ -64,6 +64,25 @@ def message(account, publish_at) -> str:
             "（取り消しは https://thth.me/activity か thth revoke）")
 
 
+def _replies_on(account, cfg, day) -> int:
+    """その日に刻んだ（承認済みでまだ出ていない）返信の原稿の数（順番待ちに限らない・thth.me の schedule と同じ数え方）。"""
+    from . import core
+    from .select import is_reply
+    count = 0
+    for qf in core.list_queue_files(cfg, tree_sha=None):
+        fm = qf.front_matter
+        if (qf.malformed or fm.get("account") != account or fm.get("status") != "approved" or fm.get("post_id")
+                or not is_reply(fm)):
+            continue
+        try:
+            at = queuefile.parse_publish_at(fm.get("publish_at"))
+        except (TypeError, ValueError):
+            continue
+        if jst.to_jst(at).date() == day:
+            count += 1
+    return count
+
+
 def queue_cli(account, cfg, *, text, topic, reply_to, publish_at, goal=None, reply_to_root=None,
               reply_to_author_key=None, found_by=None, now=None) -> dict:
     """運営者の CLI（手元・VM の `thth send`）の道: queue に承認済みで置いて commit・push する。
@@ -75,9 +94,8 @@ def queue_cli(account, cfg, *, text, topic, reply_to, publish_at, goal=None, rep
     from .cli import _prepare_one
     now = jst.to_jst(now) if now is not None else jst.now_jst()
     # 1 日の上限は返信だけの日の上限（`reply.daily`・4.3 監査 中-1）: その日の返信 + 並べた返信。並べずに断る。
-    guard.check_reply_daily(account, cfg, day=jst.to_jst(publish_at).date(), now=now,
-                            queued=sum(1 for at in pending(account, cfg, now=now)
-                                       if at.date() == jst.to_jst(publish_at).date()))
+    day = jst.to_jst(publish_at).date()
+    guard.check_reply_daily(account, cfg, day=day, now=now, queued=_replies_on(account, cfg, day))
     repo_dir = cfg["repo_dir"]
     queue_dir = os.path.join(repo_dir, cfg["queue_dir"])
     os.makedirs(queue_dir, exist_ok=True)

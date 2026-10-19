@@ -367,6 +367,14 @@ def test_T_P_6_account_setの新しい名前と媒体(world):
     assert raw["burst"] == {"count": 4, "minutes": 10} and raw["limits"] == {"post.daily": 12}
 
 
+def test_返信の日の上限はaccount_setで書ける(world):
+    """4.3.0（監査 中-1）: 断りの文が案内する `thth account set <口座> reply.daily <数>` が通る。"""
+    name = sns_account(world)
+    rc, out, err = call(["account", "set", name, "reply.daily", "20", "--by", "masaru", "--json"])
+    assert rc == 0, err
+    assert json.loads(out)["after"] == 20 and world.account(name)["limits"] == {"reply.daily": 20}
+
+
 def test_T_P_6_締める向きだけの口(world):
     """柵: `tightens` の向きを逆にすると赤（LLM の口から緩められる）。"""
     world.edit_principal("hatena-main", limits={"bookmark.burst": {"count": 10, "minutes": 10}})

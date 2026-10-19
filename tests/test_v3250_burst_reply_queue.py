@@ -276,6 +276,21 @@ def test_thth_meの道でscheduled_falseは止めずにburst_limit(env, remote, 
     assert 'burst_limit' in writes.SAFE_ERRORS
 
 
+def test_thth_meの道で並べる返信は返信の日の上限で数え_投稿の上限は使わない(env, remote, publisher):
+    # 4.3.0（監査 中-1）: 窓に当たった返信を並べる道（`burst_queued_send` → `schedule`）も、投稿の日の上限
+    # （`daily_max_posts`）でなく返信だけの日の上限（`reply.daily`）で数える。投稿の上限は今日の投稿 1 本で
+    # 埋まっているが、返信は並ぶ。返信の上限 4 = 出した 2 + 並べた 2 で、5 本目は並べずに断る。
+    ledger(env, burst={'count': 2, 'minutes': 10}, min_interval_hours=0, daily_max_posts=1,
+           limits={'reply.daily': 4})
+    _write_recent(env, 1)
+    results = [_call(env, operation='send_request', body=f'お返事{i}', reply_to=f'1799{i}') for i in range(4)]
+    assert [r['status'] for r in results] == ['published'] * 2 + ['queued'] * 2
+    with pytest.raises(ReportServiceError) as caught:
+        _call(env, operation='send_request', body='お返事4', reply_to='17994')
+    assert str(caught.value) == 'daily_limit' and caught.value.reason == 'reply_daily'
+    assert guard.stopped('alpha') is None
+
+
 def test_順番待ちの印はqueued_forだけで指紋は変えない():
     assert burst_queue.is_queued({'queued_for': 'burst'})
     assert not burst_queue.is_queued({'held_minutes': '5'}) and not burst_queue.is_queued(None)

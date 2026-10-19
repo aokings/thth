@@ -459,7 +459,7 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
     （`principal_scheduled_same_day` を省くと主体の全口座の queue から数える）。
 
     `reply`（返信）には最短間隔 `min_interval_hours` を掛けない——返信は会話なので
-    （段 1〜2 の裁定 (a)）。1 日の上限には数える。4.3 から burst は返信だけの窓（`reply.burst`・既定は媒体の台帳の
+    （段 1〜2 の裁定 (a)）。1 日の上限は 4.3.0 から返信だけの `reply.daily`（`kind="schedule"` でも同じ）。4.3 から burst は返信だけの窓（`reply.burst`・既定は媒体の台帳の
     10 分に 10）で数え、投稿の窓（`post.burst`）は投稿と削除だけを数える（返信で口座が止まらない）。
 
     **返信が burst を超えるときは口座を止めない**（3.25.0・kopicha 10/16）。`burst_limit`（詳細
@@ -487,6 +487,13 @@ def check(account, cfg, kind, *, now=None, actor=None, via=None, credential=None
     if halted is not None:
         raise _stopped_refusal("account", halted.get("reason"), name=account, rule=halted.get("rule"))
     now = jst.to_jst(now) if now is not None else jst.now_jst()
+    if kind == "schedule" and reply:
+        # 4.3.0（監査 中-1）: 返信の予約（thth.me の猶予・返信の順番待ち・返信の原稿の予約）は投稿の日の上限
+        # （`post.daily`）でなく返信だけの日の上限（`reply.daily`）で数える。`scheduled_same_day` はその日に
+        # 刻んだ返信の数（呼び手が返信だけを数える）。窓（`reply.burst`）は出す時に timer が数える。
+        day = jst.to_jst(publish_at).date() if publish_at is not None else now.date()
+        check_reply_daily(account, cfg, day=day, queued=scheduled_same_day, now=now)
+        return
     counts = summary(account, cfg, now=now)
     action = {"publish": "reply" if reply else "post", "retract": "retract", "schedule": "schedule"}[kind]
     request = assess.Request(account=account, cfg=cfg, action=action, now=now, family="sns",
