@@ -299,6 +299,17 @@ def throw_once(account_name: str, *, production_flag: bool = False,
                                file=hold_row.get("file"),
                                error=hold_row.get("reason") or publish_hold_mod.UNREADABLE)
 
+    # **止めた口座では timer は何も出さない**（4.3.1・masaru 10/20）: 安全装置か持ち主が止めた口座（止めの印
+    # `guard.stopped`）では、予約の投稿・返信・スレッド連投のどれも出さない（原稿は queue に残り、指紋も変えない）。
+    # 4.3.0 までは承認の場の送りと thth.me・CLI の道だけが印を見て、timer は止めた口座でも出していた。
+    # 採取（読むだけ）は止めない。runs には書かない（止まっている間、毎回同じ行が積もるだけ）。
+    if _account_stopped(account_name):
+        msg = (f"{account_name} は止まっているので出しません（予約の投稿・返信は queue に残ります。"
+               f"戻すのは thth account resume {account_name} --by <名前>）")
+        log(msg)
+        mode = "production" if (bool(account_cfg.get("production")) and production_flag) else "rehearsal"
+        return ThrowResult(exit_code=0, mode=mode, action="stopped", message=msg)
+
     # **スレッド連投を先に見る**（独立検収 2026-09-11・P1-1）。
     # v2 は**段ごとにロックを取り直す**ので、ここで account+repo ロックを
     # 握ったまま入ることはできない。**握る前に**分岐する。
@@ -414,7 +425,7 @@ def send_due_replies(account_name: str, paths, *, adapter_factory=None, log=None
     elif publish_hold_mod.held(account_name) is not None:
         out["skipped"] = "publish_held"
     elif guard_mod.stopped(account_name) is not None:
-        # 安全装置か持ち主が止めた口座（監査 中-3）。timer の道も止めの印は見ないが、承認の場では送らない。
+        # 安全装置か持ち主が止めた口座（監査 中-3）。timer の道も 4.3.1 から送らない（`throw_once`）。
         out["skipped"] = "guard_stopped"
     elif not accounts_mod.token_exists(account_cfg):
         out["skipped"] = "missing_token"
@@ -636,6 +647,18 @@ class _ReplyWindow:
             return datetime.datetime.combine(day, datetime.time(0, 0), tzinfo=jst.JST)
         from . import assess
         return assess.window_slot(self.times, self.count, self.minutes, self.now)
+
+
+def _account_stopped(account_name) -> bool:
+    """timer が何も出さない口座か（止めの印 `guard.stopped`・4.3.1）。印を置けない置き場では印は無いので読まない
+    （運営者の CLI と同じ・`guard.check(cli=True)`）。印が読めないときは止まっている側に倒す。"""
+    from . import guard as guard_mod, server_files
+    if not guard_mod.stop_place_usable(account_name):
+        return False
+    try:
+        return guard_mod.stopped(account_name) is not None
+    except server_files.UnsafeFile:
+        return True
 
 
 def _reply_window_for(account_name, account_cfg, now):
@@ -2029,7 +2052,7 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
         # **運営者の CLI（VM で打つ `thth send`）にも安全装置を掛ける**（10/15 masaru「推しで」）。
         # それまでは thth.me を通る道（`server_writes` の `before_execute`）にだけ掛かり、
         # music-research-threads が 5 分で 7 件出た。thth.me の道は `before_execute` の中で
-        # 見るので二重にしない。timer の予約（`throw_once`）は対象外のまま。
+        # 見るので二重にしない。timer の予約（`throw_once`）は数の柵の対象外のまま（止めの印は 4.3.1 から入口で見る）。
         if before_execute is None:
             from . import burst_queue as burst_queue_mod, guard as guard_mod
             try:
