@@ -87,12 +87,56 @@ def test_zero_monthly_budget_never_counts(x_account, fake, capsys):
     assert fake["calls"] == [] and rows(b.COUNTS_ALL) == []
 
 
-def test_archive_daily_cap_defaults_to_zero(x_account, fake, capsys):
+def test_archive_daily_cap_defaults_to_zero(tmp_path, isolated_account_factory, fake, capsys, monkeypatch):
+    # 鍵（x_archive_daily_reads）を置かない口座: 月の予算があっても、全期間は読まない。
+    from thth import accounts as accounts_mod
+    _account(tmp_path, isolated_account_factory)
+    b.configure("15", by="operator")
+    assert b.ARCHIVE_DAILY_READS_KEY not in accounts_mod.load_account(ACCOUNT)
+    fake["answer"] = lambda *a: _posts(10)
+    rc, payload, _ = run(capsys)
+    assert rc == 1 and payload["error"] == "x_archive_daily_read_cap"
+    assert fake["calls"] == [] and rows(b.ARCHIVE) == []
+
+
+def test_archive_daily_cap_explicit_zero(x_account, fake, capsys):
     account_settings.change(ACCOUNT, "x_archive_daily_reads", 0, by="operator")
     fake["answer"] = lambda *a: _posts(10)
     rc, payload, _ = run(capsys)
     assert rc == 1 and payload["error"] == "x_archive_daily_read_cap"
     assert fake["calls"] == []
+
+
+# ----- 柵 1-b: 全期間と件数の台帳は月の上限に合算される -------------------------------
+
+def test_archive_spend_counts_toward_monthly_cap(x_account, fake, capsys):
+    b.configure("0.06", by="operator")
+    fake["answer"] = lambda *a: _posts(10)
+    rc, payload, _ = run(capsys, per_call=10, max_total=10)
+    assert rc == 0 and payload["x_read_cost"]["usd_estimate"] == "0.050"
+    report = b.report()
+    assert report["spent_estimate_usd"] == "0.050" and report["remaining_usd"] == "0.010"
+    # 残り 0.010 を超える予約は、どの台帳でも要求の前に断る。
+    with pytest.raises(b.BudgetError, match="budget_exhausted"):
+        with b.posts_read(ACCOUNT, 10):
+            pytest.fail("残りを超える予約が通った")
+    rc, payload, _ = run(capsys, per_call=10, max_total=10)
+    assert rc == 1 and payload["error"] == "budget_exhausted" and len(fake["calls"]) == 1
+
+
+def test_counts_all_spend_counts_toward_monthly_cap(x_account, fake, capsys):
+    b.configure("0.015", by="operator")
+    fake["answer"] = lambda *a: {"data": [], "meta": {"total_post_count": 0}}
+    rc, payload, _ = run(capsys, count_only=True, since="2026-08-20")
+    assert rc == 0 and b.report()["spent_estimate_usd"] == "0.010"
+    with pytest.raises(b.BudgetError, match="budget_exhausted"):
+        with b.posts_read(ACCOUNT, 2):
+            pytest.fail("残りを超える予約が通った")
+    with pytest.raises(b.BudgetError, match="budget_exhausted"):
+        with b.user_read(ACCOUNT):
+            pass
+    rc, payload, _ = run(capsys, count_only=True, since="2026-08-20")
+    assert rc == 1 and payload["error"] == "budget_exhausted" and len(fake["calls"]) == 1
 
 
 # ----- 柵 2: 上限を超える指定は要求の前に断る --------------------------------------
@@ -232,6 +276,16 @@ def test_counts_all_charges_per_request(x_account, fake, capsys):
     assert report["spent_estimate_usd"] == "0.020" and report["counts_all_read"]["month"]["requests"] == 2
     assert any("Counts: All・1 回 $0.010" in line for line in b.cost_lines(report))
     assert rows(b.ARCHIVE) == []
+
+
+def test_counts_stop_at_pages_needed(x_account, fake, capsys):
+    # 2026-08-01〜今（試験の時計は 2026-09-09）は 2 ページ。X が next_token を返し続けても 2 回で止まる。
+    def endless(path, query, index):
+        return {"data": [], "meta": {"total_post_count": 1, "next_token": f"c{index + 1}"}}
+    fake["answer"] = endless
+    rc, payload, _ = run(capsys, count_only=True, since="2026-08-01", max_pages=5)
+    assert rc == 0 and len(fake["calls"]) == 2 and payload["pages"] == 2
+    assert len(rows(b.COUNTS_ALL)) == 2
 
 
 # ----- 柵 6: timer の道から呼べない ------------------------------------------------

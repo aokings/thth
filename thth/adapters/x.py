@@ -1429,8 +1429,12 @@ class XAdapter(base.Adapter):
 
     def archive_counts(self, q: str, *, start_time: str, end_time: str | None = None,
                        granularity: str = 'day', max_pages: int = COUNTS_ALL_PAGES_DEFAULT,
-                       sleep=None) -> dict:
-        """`GET /2/tweets/counts/all`（1 回 0.010 USD・31 日ごとに 1 ページ）を `max_pages` まで。"""
+                       pages_needed: int | None = None, sleep=None) -> dict:
+        """`GET /2/tweets/counts/all`（1 回 0.010 USD・31 日ごとに 1 ページ）を `min(max_pages, pages_needed)` まで。
+
+        `pages_needed` は窓を数えきるのに要るページ数（`x_archive.counts_pages_needed`・CLI の見積もり）。
+        X が窓の外まで `next_token` を返し続けても、見積もりより多くは叩かない。
+        """
         import time
         from .. import budget_x
         self._refuse_unattended()
@@ -1445,8 +1449,11 @@ class XAdapter(base.Adapter):
         base_query = {'query': text, 'start_time': start_time, 'granularity': granularity}
         if end_time:
             base_query['end_time'] = end_time
+        if pages_needed is not None and (type(pages_needed) is not int or pages_needed < 1):
+            raise AdapterError(f'x_archive_limit: pages_needed は 1 以上です（{pages_needed!r}）')
+        stop_at = max_pages if pages_needed is None else min(max_pages, pages_needed)
         buckets, total, token, pages, stopped = [], 0, None, 0, None
-        while pages < max_pages:
+        while pages < stop_at:
             query = dict(base_query)
             if token:
                 query['next_token'] = token

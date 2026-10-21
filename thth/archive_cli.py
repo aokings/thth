@@ -132,7 +132,8 @@ def cmd_archive(args) -> int:
     if args.count_only:
         try:
             counted = adapter.archive_counts(query, start_time=window["start_time"], end_time=window["end_time"],
-                                             granularity=args.granularity, max_pages=pages)
+                                             granularity=args.granularity, max_pages=pages,
+                                             pages_needed=needed)
         except (adapter_base.AdapterError, accounts_mod.AccountStopped) as e:
             return _upstream(args, "archive_counts", e, "全期間の投稿数")
         _record(args.account, "archive_counts", n=counted["pages"], status="ok", error=None)
