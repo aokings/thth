@@ -562,6 +562,10 @@ def load_account(name: str) -> dict:
         raise AccountError(
             f"{name}: 台帳の profile_links が受け取れません（invalid_profile_links・"
             f"http(s) の URL を最大 {PROFILE_LINKS_MAX} つ）")
+    # 4.4.1 ⑦: hub の承認の番号の無い確定を断る口座（`require_gate: true`）。真偽以外は断る。
+    if "require_gate" in data and type(data["require_gate"]) is not bool:
+        raise AccountError(
+            f"{name}: 台帳の require_gate が受け取れません（invalid_require_gate・true か false）")
     # 安全装置（設計 3.12.0）。知らない値は黙って既定に倒さず断る。
     # `approval`（3.12.0）は読まない（IGNORED_FIELDS）。
     for key in GUARD_DEFAULTS:

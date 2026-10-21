@@ -212,6 +212,11 @@ def parse_text(text: str, path: str) -> Bundle:
         return Bundle(path=path, malformed=True, front_matter={}, posts=[],
                        body=body, segments=[])
     malformed = top.get("thth") != VERSION or bool(duplicate_keys)
+    if not malformed:
+        # 4.4.1: 承認の記録は VM の台帳（`approval_ledger`）。束は段がすべて出たら「出た」。
+        from . import approval_ledger
+        done = bool(posts) and all(isinstance(p, dict) and p.get("post_id") for p in posts)
+        top = approval_ledger.overlay(path, top, posted=bool(top.get("post_id")) or done)
     return Bundle(path=path, malformed=malformed, front_matter=top, posts=posts,
                    body=body, segments=[], duplicate_keys=duplicate_keys)
 

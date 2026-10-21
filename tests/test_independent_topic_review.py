@@ -114,6 +114,9 @@ def test_control_manual_roundtrip_and_approval(tmp_path,isolated_account):
     from thth import writeback
     q,ap,a,oid,c,p=setup(tmp_path,isolated_account)
     writeback.set_front_matter_fields(q,{'topic':'コーヒー'})
+    # 4.4.1: 確定は repo に commit を積まないので、変えた原稿は先に commit・push しておく。
+    from tests.conftest import commit_and_push_path
+    commit_and_push_path(q, message='test: topic')
     _,c=cli(tmp_path,['suggest',q,'--article',str(ap)])
     p['context_id']=c['context_id']
     rc,result=evaluate(tmp_path,q,ap,p)

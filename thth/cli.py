@@ -523,6 +523,89 @@ def _prepare_one(path: str):
     }, None
 
 
+def _requires_gate(account_name: str) -> bool:
+    """⑦（4.4.1）: 口座の台帳が `require_gate: true` か（読めなければ True に倒す）。"""
+    try:
+        return accounts_mod.load_account(account_name).get("require_gate") is True
+    except accounts_mod.AccountError:
+        return True
+
+
+def _gate_problem(accounts_names, gate) -> str | None:
+    """⑦: hub の承認の番号の検査。形が違えば断る。`require_gate: true` の口座で番号が無ければ断る。
+
+    番号の照合（`hub approve verify`）は THTH ではしない（4.4.3 で `--approval` から verify と close まで
+    つなぐ予定）。4.4.1 は「番号を必ず受け取り、台帳に残す」まで。
+    """
+    from . import approval_ledger
+    if gate is not None and not approval_ledger.valid_gate(gate):
+        return (f"--approval の形が違います（hub の承認の番号・例 A261021-25）: {gate!r}。"
+                "1 本も承認していません。")
+    if gate:
+        return None
+    need = sorted({name for name in accounts_names if _requires_gate(name)})
+    if need:
+        return (f"{'・'.join(need)} は hub の承認の番号が無い確定を断る口座です（台帳の require_gate: true）。"
+                "hub approve verify で照合してから、--approval <番号>（例 A261021-25）を付けて打ち直してください。"
+                "1 本も承認していません。")
+    return None
+
+
+def _ledger_problem(accounts_names) -> str | None:
+    """承認の台帳が読めない口座があれば、その理由（書き足すと壊れた中身を上書きするので断る）。"""
+    from . import approval_ledger
+    for name in sorted(set(accounts_names)):
+        trouble = approval_ledger.problem(name)
+        if trouble:
+            return (f"{trouble}。直すまで {name} の承認・取り消しは受け付けません"
+                    "（壊れている間、まだ出ていない承認済みは出しません）。")
+    return None
+
+
+def _unsynced_problem(path: str, repo_dir: str, synced_sha) -> str | None:
+    """承認する原稿が、同期を確かめた commit の中身と同じか（4.4.1）。
+
+    4.4.0 までは確定が原稿ごと commit していたので、VM で書き換えたままの原稿も承認の commit に
+    入った。4.4.1 から確定は repo に何も書かない。commit に無い中身は timer が `unverified_content`
+    で出さないので、承認の時点で断って言う。
+    """
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError as exc:
+        return f"{path}: 読めません（{exc}）"
+    if writeback_mod.matches_synced_commit(repo_dir, path, tree_sha=synced_sha, disk_bytes=raw):
+        return None
+    return (f"{path}: repo の commit と中身が違います（VM で書き換えたまま・まだ commit・push していない）。"
+            "4.4.1 から承認は repo に commit を積みません。原稿を利用者の repo に commit・push してから"
+            "打ち直してください")
+
+
+def _approval_changes(prepared: list, repo_dir: str, by: str, at: str, gate, *, via="cli") -> list:
+    """台帳に書く承認の並び（`approval_ledger.record`）。"""
+    from . import approval_ledger
+    changes = []
+    for one in prepared:
+        key = approval_ledger.rel_key(one["path"], repo_dir)
+        if key is None:
+            raise ValueError(f"{one['path']}: repo の中の原稿ではありません")
+        fields = approval_mod.approved_fields(one, by, at)
+        fields["approved_via"] = via
+        changes.append({"account": one["account"], "file": key, "state": approval_ledger.APPROVED,
+                        "fields": fields, "gate": gate, "via": via, "repo": repo_dir})
+    return changes
+
+
+def _record_approvals(prepared: list, repo_dir: str, by: str, at: str, gate) -> str | None:
+    """承認を VM の台帳に書く（利用者の repo には書かない・4.4.1）。書けなければ理由。"""
+    from . import approval_ledger
+    try:
+        approval_ledger.record(_approval_changes(prepared, repo_dir, by, at, gate))
+    except (approval_ledger.LedgerError, ValueError) as exc:
+        return str(exc)
+    return None
+
+
 def cmd_approve(args) -> int:
     """`thth approve <file...>`（**二段確認**・複数本まとめて可）。
 
@@ -599,7 +682,7 @@ def cmd_approve(args) -> int:
         return 1
 
     try:
-        synced, sync_err, _sha = writeback_mod.sync_repo(repo_dir)
+        synced, sync_err, synced_sha = writeback_mod.sync_repo(repo_dir)
         if not synced:
             print(f"repo を同期できないので承認しません: {sync_err}", file=sys.stderr)
             return 1
@@ -610,14 +693,20 @@ def cmd_approve(args) -> int:
             if not problem and getattr(args, "account", None) and one['account'] != args.account:
                 problem = f"{path}: 指定 account と一致しないので承認しません"
             (problems if problem else prepared).append(problem or one)
+        # 4.4.1: commit に無い中身は承認しない（確定が repo に何も書かなくなったため）。2 段目では
+        # digest の食い違いを先に言う（見せたものと違う、がいちばん大事な断り）。
+        unsynced = [] if problems else [u for u in (_unsynced_problem(one["path"], repo_dir, synced_sha)
+                                                     for one in prepared) if u]
+        bundle = (approval_mod.compute_bundle_digest([one["approved_sha"] for one in prepared])
+                  if not problems else None)
+        if unsynced and not (args.confirm and args.confirm != bundle):
+            problems = unsynced
         if problems:
             for problem in problems:
                 print(problem, file=sys.stderr)
             print(f"{len(problems)} 件に問題があるので、**1 本も承認しませんでした**"
                   "（半分だけ承認された状態を作らないため）。", file=sys.stderr)
             return 1
-
-        bundle = approval_mod.compute_bundle_digest([one["approved_sha"] for one in prepared])
 
         if not args.confirm:
             try:
@@ -629,6 +718,11 @@ def cmd_approve(args) -> int:
                 # 確定待ちの控え（設計 3.7.0 §B3）。本文は残さない（相対パス・digest・時刻・
                 # 中身の sha256）。見せる前に書く——JSON に書けたかを載せるため。
                 pending_saved = _record_pending(prepared, repo_dir, bundle)
+                gate_note = _gate_problem([one["account"] for one in prepared],
+                                          getattr(args, "approval", None))
+                if gate_note:
+                    # ⑦（4.4.1）: 1 段目は断らない。確定に何が要るかを先に言う。
+                    print("確定の前に: " + gate_note.replace("1 本も承認していません。", ""), file=sys.stderr)
                 # 同じ goal・topic の広場の書き込み（題と id だけ・設計 3.8.0 §B2）。
                 _attach_plaza_related(prepared)
                 _show_first_stage(prepared, bundle, as_json=args.json, note=note,
@@ -643,6 +737,12 @@ def cmd_approve(args) -> int:
             print(f"digest が一致しないので承認しません（表示した本文と中身が違います）。"
                   f"いまの digest は {bundle} です。もう一度 thth approve からやり直して"
                   "ください。", file=sys.stderr)
+            return 1
+        gate = getattr(args, "approval", None)
+        refusal = (_gate_problem([one["account"] for one in prepared], gate)
+                   or _ledger_problem([one["account"] for one in prepared]))
+        if refusal:
+            print(refusal, file=sys.stderr)
             return 1
 
         approved_by = args.by or os.environ.get("THTH_ACTOR")
@@ -673,45 +773,36 @@ def cmd_approve(args) -> int:
             print(hatena_problem, file=sys.stderr)
             print("**1 本も承認しませんでした**（配信の台帳を作れなかったため）。", file=sys.stderr)
             return 1
-        for one in prepared:
-            writeback_mod.set_front_matter_fields(one["path"], approval_mod.approved_fields(one, approved_by, approved_at))
-
-        rel_paths = [os.path.relpath(os.path.realpath(one["path"]), repo_dir) for one in prepared]
-        label = (os.path.basename(prepared[0]["path"]) if len(prepared) == 1
-                 else f"{len(prepared)} 本")
-        pushed, push_err = writeback_mod.commit_and_push(
-            repo_dir, rel_path=rel_paths,
-            message=f"承認: {label}（{prepared[0]['account']}・{approved_by}）")
+        # 4.4.1: 承認は VM の台帳に書く。**利用者の repo には commit を積まない**（配信の承認が
+        # repo の先頭の commit に付いているので、THTH の commit で先頭をずらさない）。
+        record_err = _record_approvals(prepared, repo_dir, approved_by, approved_at, gate)
+        if record_err:
+            print(f"承認を台帳に書けませんでした。**1 本も承認していません**: {record_err}", file=sys.stderr)
+            return 1
         # 確定したので確定待ちの控えを消す（設計 3.7.0 §B3）。
         _clear_pending(prepared, repo_dir)
     finally:
         repo_lock.release()
 
-    # 4.3: 時刻の過ぎた返信は、承認したその場で送る（push まで通ったときだけ・timer と同じ道）。
-    sent_now = _send_due_replies(prepared) if pushed else []
+    # 4.3: 時刻の過ぎた返信は、承認したその場で送る（timer と同じ道）。
+    sent_now = _send_due_replies(prepared)
     if args.json:
         _print_json({"approved": True, "count": len(prepared), "approved_by": approved_by,
                      "approved_at": approved_at, "bundle_digest": bundle,
                      "files": [{"file": one["path"], "approved_sha": one["approved_sha"],
                                 "digest": one["digest"]} for one in prepared],
-                     "pushed": pushed, "push_error": push_err or None,
+                     # 4.4.1: 承認の置き場は VM の台帳（repo に commit・push しない）。
+                     "recorded": "ledger", "approval": gate,
+                     "pushed": None, "push_error": None,
                      # 4.3: その場で送った返信（口座ごと・無ければ空の list・監査 低-6）。
                      "sent_now": sent_now})
     else:
-        print(f"承認しました: {len(prepared)} 本（{approved_by}）")
+        print(f"承認しました: {len(prepared)} 本（{approved_by}"
+              + (f"・{gate}" if gate else "") + "・VM の台帳に記録・repo には書いていません）")
         for one in prepared:
             print(f"  {os.path.basename(one['path'])} — {one['publish_at']}")
         for line in core.due_replies_lines(sent_now):
             print(line)
-
-    if not pushed:
-        print("承認を commit・push できませんでした。このままでは投稿されません"
-              f"（board に unverified_content として出ます）: {push_err}", file=sys.stderr)
-        # 次の一手は thth の命令で（3.8.2 の裁定 2・VM で生の git を打たせない）。
-        print("  ※ commit だけ済んで push を断られた場合は、その commit がローカルに"
-              "残っています。押し直すには: "
-              + _push_pending_command(prepared[0]["account"], approved_by), file=sys.stderr)
-        return 1
     return 0
 
 
@@ -802,6 +893,11 @@ def _approve_confirm_file(args) -> int:
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
+    gate = getattr(args, "approval", None)
+    gate_format = _gate_problem([], gate)
+    if gate_format:
+        print(gate_format, file=sys.stderr)
+        return 2
     rows, error = _confirm_file_entries(args.confirm_file)
     if error:
         print(error, file=sys.stderr)
@@ -853,7 +949,7 @@ def _approve_confirm_file(args) -> int:
                   "--wait <秒> で空くのを待てます。1 本も確定していません。", file=sys.stderr)
             return 1
         try:
-            synced, sync_err, _sha = writeback_mod.sync_repo(repo_dir)
+            synced, sync_err, synced_sha = writeback_mod.sync_repo(repo_dir)
             if not synced:
                 stopped = (f"repo を同期できないので承認しません: {sync_err}"
                            "（1 本も書き換えていません。直ったら同じ --confirm-file をもう一度打てます）")
@@ -864,6 +960,12 @@ def _approve_confirm_file(args) -> int:
                     one, problem = _prepare_one(t["path"])
                     if not problem and getattr(args, "account", None) and one["account"] != args.account:
                         problem = f"{t['path']}: 指定 account と一致しないので承認しません"
+                    if not problem:
+                        problem = _unsynced_problem(t["path"], repo_dir, synced_sha)
+                    if not problem:
+                        # ⑦（4.4.1）: hub の承認の番号が要る口座・台帳が読めない口座はその本だけ断る。
+                        problem = (_gate_problem([one["account"]], gate)
+                                   or _ledger_problem([one["account"]]))
                     if problem:
                         refused.append({"line": t["line"], "file": t["path"], "reason": problem})
                         continue
@@ -878,34 +980,29 @@ def _approve_confirm_file(args) -> int:
                 proceed = checked
                 approved_at = jst.iso()
                 for index, (t, one) in enumerate(proceed):
-                    rel = os.path.relpath(os.path.realpath(one["path"]), repo_dir)
                     try:
                         if one.get("kind") == "hatena_entry":
                             problem = _assign_hatena_deliveries([one], approved_by, approved_at)
                             if problem:
                                 raise ValueError(problem)
-                        writeback_mod.set_front_matter_fields(
-                            one["path"], approval_mod.approved_fields(one, approved_by, approved_at))
-                        ok, err = writeback_mod.commit_local(
-                            repo_dir, rel_path=rel,
-                            message=f"承認: {os.path.basename(one['path'])}（{one['account']}・{approved_by}）")
+                        # 4.4.1: 1 本ずつ VM の台帳に書く（利用者の repo には commit を積まない）。
+                        err = _record_approvals([one], repo_dir, approved_by, approved_at, gate)
+                        ok = err is None
                     except (OSError, ValueError) as exc:
                         ok, err = False, str(exc)
                     if not ok:
-                        stopped = (f"{t['path']} の承認を書けなかったので、ここで止めました: {err}"
-                                   "（この 1 本は書き換えただけで commit していないことがあります。"
-                                   "git -C <repo> status で確かめてください）")
+                        stopped = (f"{t['path']} の承認を台帳に書けなかったので、ここで止めました: {err}"
+                                   "（この 1 本は承認していません）")
                         remaining = [rest for rest, _ in proceed[index:]]
                         break
                     approved.append((t, one))
                 if approved:
-                    pushed, push_err = writeback_mod.push_committed(repo_dir)
                     _clear_pending([one for _, one in approved], repo_dir)
         finally:
             repo_lock.release()
 
-    # 4.3: 時刻の過ぎた返信は、承認したその場で送る（push まで通った本だけ・timer と同じ道）。
-    sent_now = _send_due_replies([one for _, one in approved]) if approved and pushed else []
+    # 4.3: 時刻の過ぎた返信は、承認したその場で送る（台帳に書けた本だけ・timer と同じ道）。
+    sent_now = _send_due_replies([one for _, one in approved]) if approved else []
     return _report_confirm_file(args, approved_by, approved_at, repo_dir, approved, refused,
                                 remaining, stopped, pushed, push_err, sent_now=sent_now)
 
@@ -950,7 +1047,10 @@ def _report_confirm_file(args, approved_by, approved_at, repo_dir, approved, ref
                      "approved_at": approved_at,
                      "files": [{"line": t["line"], "file": one["path"], "digest": one["digest"],
                                 "approved_sha": one["approved_sha"]} for t, one in approved],
-                     "refused": refused, "pushed": pushed if approved else None,
+                     "refused": refused,
+                     # 4.4.1: 承認の置き場は VM の台帳（repo に commit・push しない）。
+                     "recorded": "ledger" if approved else None, "approval": getattr(args, "approval", None),
+                     "pushed": None,
                      "push_error": push_err or None, "stopped": stopped,
                      "remaining_commands": commands + ([push_command] if push_command else []),
                      "sent_now": list(sent_now)})
@@ -1461,26 +1561,29 @@ def cmd_revoke(args) -> int:
                   f"{args.file}", file=sys.stderr)
             return 1
 
-        writeback_mod.set_front_matter_fields(args.file, {
-            "status": "draft",
-            "approved_sha": None,
-            "approved_at": None,
-            "approved_by": None,
-            "revoked_at": revoked_at,
-            "revoked_by": revoked_by,
-            "revoked_reason": args.reason or "",
-            # 承認の時点の目的の控えも消す（設計 3.6.0 §A1）。持たない原稿には足さない。
-            **({goals_mod.APPROVED_KEY: None} if goals_mod.APPROVED_KEY in fm else {}),
-        })
-        pushed, push_err = writeback_mod.commit_and_push(
-            repo_dir, rel_path=rel_path,
-            message=f"承認の取り消し: {os.path.basename(args.file)}（{revoked_by}）")
+        # 4.4.1: 取り消しも VM の承認の台帳に書く（利用者の repo には commit を積まない）。
+        # 4.4.0 までに repo に `status: approved` と書いた原稿も、台帳の取り消しが重なって draft に見える。
+        from . import approval_ledger
+        trouble = _ledger_problem([fm.get("account")])
+        if trouble:
+            print(trouble, file=sys.stderr)
+            return 1
+        try:
+            approval_ledger.record([{
+                "account": fm.get("account"), "file": approval_ledger.rel_key(args.file, repo_dir),
+                "state": approval_ledger.REVOKED, "via": "cli", "repo": repo_dir,
+                "fields": {"revoked_at": revoked_at, "revoked_by": revoked_by,
+                           "revoked_reason": args.reason or ""}}])
+        except (approval_ledger.LedgerError, ValueError) as exc:
+            print(f"取り消しを台帳に書けませんでした（まだ止まっていません）: {exc}", file=sys.stderr)
+            return 1
+        pushed, push_err = True, ""
         # 取り消しで確定待ちの控えも消す（設計 3.7.0 §B3）。
         if fm.get("account"):
             _clear_pending([{"account": fm.get("account"), "path": args.file}], repo_dir)
 
-        # push の直前に `pull --rebase` が走るので、**その間に別 clone から
-        # 公開されたもの**が入ってくることがある。書き終えたあとにもう一度見る。
+        # 書いている間に**別 clone から公開されたもの**が入ってくることがある。同期し直してもう一度見る。
+        writeback_mod.sync_repo(repo_dir)
         after_text = open(args.file, encoding="utf-8").read()
         after = (bundle_mod.parse_text(after_text, args.file).front_matter
                   if bundle_mod.is_bundle_text(after_text)
@@ -1530,6 +1633,44 @@ def cmd_revoke(args) -> int:
         print("取り消しを push できませんでした。**まだ出る可能性があります。**"
               f"手で push して、thth account で確かめてください: {push_err}", file=sys.stderr)
         return 1
+    return 0
+
+
+def cmd_approvals(args) -> int:
+    """`thth approvals <account> [--json]`（4.4.1）: VM の承認の台帳を書き出す（読むだけ）。
+
+    4.4.1 から承認・取り消しは利用者の repo に commit を積まない。repo から見えなくなった
+    「誰が・いつ・どの指紋で・どの hub の番号で承認したか」をここで見る。
+    """
+    from . import approval_ledger
+    try:
+        accounts_mod.validate_name(args.account)
+        rows = approval_ledger.export(args.account)
+    except accounts_mod.AccountError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except approval_ledger.LedgerError as exc:
+        if args.json:
+            _print_json({"account": args.account, "ok": False, "problem": str(exc), "items": []})
+        else:
+            print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        _print_json({"account": args.account, "ok": True, "ledger": approval_ledger.path_for(args.account),
+                     "items": rows})
+        return 0
+    if not rows:
+        print(f"{args.account}: 台帳に承認の記録はありません（4.4.0 までの承認は repo の front-matter にあります）")
+        return 0
+    print(f"{args.account}: 承認の台帳 {len(rows)} 件（{approval_ledger.path_for(args.account)}）")
+    for row in rows:
+        if row["state"] == approval_ledger.APPROVED:
+            print(f"  承認 {row['file']} — {row['at']} {row['by']}"
+                  + (f"・{row['gate']}" if row.get("gate") else "")
+                  + f"・指紋 {str(row.get('approved_sha') or '')[:12]}")
+        else:
+            print(f"  取り消し {row['file']} — {row['at']} {row['by']}"
+                  + (f"（{row['revoked_reason']}）" if row.get("revoked_reason") else ""))
     return 0
 
 
@@ -3966,9 +4107,17 @@ def build_parser() -> argparse.ArgumentParser:
                            help="複数の確定を 1 回で: 1 行に「<原稿のパス> <digest>」を並べたファイル"
                                 "（1 回の同期と 1 回のロックの中で順に確定し、digest が合わない本だけ断る）")
     p_approve.add_argument("--by", default=None,
-                           help="誰が承認したか（front-matter と commit に残す）")
+                           help="誰が承認したか（VM の承認の台帳に残す・4.4.1 から repo には書かない）")
+    p_approve.add_argument("--approval", default=None, metavar="A261021-25",
+                           help="hub の承認の番号（台帳に残す。口座の台帳が require_gate: true なら確定に必須）")
     p_approve.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
     p_approve.set_defaults(func=cmd_approve)
+
+    p_approvals = sub.add_parser(
+        "approvals", help="VM の承認の台帳を書き出す（4.4.1・承認は利用者の repo に積まない）")
+    p_approvals.add_argument("account")
+    p_approvals.add_argument("--json", action="store_true")
+    p_approvals.set_defaults(func=cmd_approvals)
 
     p_account = sub.add_parser(
         "account", help="1 アカウントの状態を一枚で述べる（投稿できる状態かどうか）")

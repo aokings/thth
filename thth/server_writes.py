@@ -37,6 +37,8 @@ REPO_REASONS = frozenset(('managed_git_store_unsafe_mode',))
 from .guard import REFUSALS as GUARD_REFUSALS, STOP_REASONS as GUARD_STOP_REASONS, GuardRefused
 DIRECT_REASONS = frozenset(('account_busy','publication_failed','publication_unconfirmed','deletion_failed',
                             'permission_unavailable','schedule_commit_unconfirmed',
+                            # 4.4.1 ⑦: 台帳が require_gate: true の口座で、hub の承認の番号（approval）が無い予約。
+                            'approval_gate_required',
                             # `scheduled: false` の口座（timer に載っていない）で予約・猶予を求めた（段 3・裁定 (b)）。
                             'schedule_unavailable',
                             # 4.0 S1: はてなの口座の送信の口（adapter）がまだ無い・自分の記事でない・digest の食い違い。
@@ -369,11 +371,16 @@ def schedule(context, request, via, extra_fields=None):
     """
     account=request.get('account') if type(request) is dict else None
     if isinstance(account,str) and _hatena(current(context,account,write=True)):
-        _schema(request,('draft_id','confirm'),('draft_id',))
+        _schema(request,('draft_id','confirm','approval'),('draft_id',))
         if request.get('confirm') is not None and not isinstance(request['confirm'],str): error('invalid_request')
     else:
-        _schema(request,('draft_id',),('draft_id',))
+        _schema(request,('draft_id','approval'),('draft_id',))
     account=request['account'];cfg=current(context,account,write=True)
+    # ⑦（4.4.1）: hub の承認の番号。形が違えば断る。台帳が `require_gate: true` の口座は番号が無ければ断る。
+    from . import approval_ledger
+    gate=request.get('approval')
+    if gate is not None and not approval_ledger.valid_gate(gate): error('invalid_request','approval_invalid')
+    if cfg.get('require_gate') is True and not gate: error('approval_gate_required')
     if cfg.get('production') is not True: error('production_disabled')
     _require_scheduled(cfg)
     origin=_origin(context,via)
@@ -426,15 +433,17 @@ def schedule(context, request, via, extra_fields=None):
         fields['approved_via']=via
         if origin['credential']: fields['approved_credential']=origin['credential']
         fields.update(extra_fields or {})
-        updated=writeback.front_matter_text(raw.decode(),fields)
+        # 4.4.1: 予約（承認）は VM の承認の台帳に書く。**原稿には書かず、repo に commit を積まない**。
+        for key,item in fields.items():
+            if item is not None: writeback.check_front_matter_field(key,item)
         with server_files.directory(_queue(locked)[1]) as fd:
-            server_files.replace_at(fd,name,updated.encode(),expected=raw)
-        def unchanged():
-            with server_files.directory(_queue(locked)[1]) as fd:
-                return server_files.read_at(fd,name)==updated.encode()
-        ok,_=writeback.commit_and_push(locked['repo_dir'],rel_path=os.path.relpath(path,locked['repo_dir']),
-                                      message=f'schedule by={context.actor} via={via}',validate=unchanged)
-        if not ok: error('schedule_commit_unconfirmed')
+            if server_files.read_at(fd,name)!=raw: error('schedule_commit_unconfirmed')
+        try:
+            approval_ledger.record([{'account':account,'file':approval_ledger.rel_key(str(path),locked['repo_dir']),
+                                     'state':approval_ledger.APPROVED,'fields':fields,'gate':gate,'via':via,
+                                     'repo':locked['repo_dir']}])
+        except (approval_ledger.LedgerError,ValueError):
+            error('schedule_commit_unconfirmed')
     return {'account':account,'draft_id':request['draft_id'],'status':'approved','publish_at':value.get('publish_at'),'via':via}
 
 
@@ -619,16 +628,15 @@ def cancel_schedule(account, draft_id, *, by, via='http'):
         if fm.get('status')=='draft': return 'already_draft'
         if fm.get('status')!='approved': error('draft_not_editable')
         path=_queue(cfg)[1]/name
-        updated=writeback.front_matter_text(raw.decode(),{'status':'draft','approved_sha':None,'approved_at':None,
-            'approved_by':None,'revoked_at':jst.iso(),'revoked_by':by,'revoked_reason':'owner_cancel_via_'+via})
-        with server_files.directory(_queue(cfg)[1]) as fd:
-            server_files.replace_at(fd,name,updated.encode(),expected=raw)
-        def unchanged():
-            with server_files.directory(_queue(cfg)[1]) as fd:
-                return server_files.read_at(fd,name)==updated.encode()
-        ok,_=writeback.commit_and_push(cfg['repo_dir'],rel_path=os.path.relpath(path,cfg['repo_dir']),
-                                      message=f'cancel by={by} via={via}',validate=unchanged)
-        if not ok: error('schedule_commit_unconfirmed')
+        # 4.4.1: 取り消しも VM の承認の台帳に書く（原稿には書かず、repo に commit を積まない）。
+        from . import approval_ledger
+        try:
+            approval_ledger.record([{'account':account,'file':approval_ledger.rel_key(str(path),cfg['repo_dir']),
+                                     'state':approval_ledger.REVOKED,'via':via,'repo':cfg['repo_dir'],
+                                     'fields':{'revoked_at':jst.iso(),'revoked_by':by,
+                                               'revoked_reason':'owner_cancel_via_'+via}}])
+        except (approval_ledger.LedgerError,ValueError):
+            error('schedule_commit_unconfirmed')
     return 'cancelled'
 
 

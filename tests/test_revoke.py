@@ -56,9 +56,13 @@ def test_取り消したものは出ない(isolated_account):
 def test_取り消しは記録として残る(isolated_account):
     path = _approved(isolated_account)
     run_thth(["revoke", path, "--by", "masaru"])
+    # 4.4.1: 取り消しの記録は VM の承認の台帳に残る（repo に commit を積まない）。
+    from thth import approval_ledger
+    rows = approval_ledger.export(isolated_account["name"])
+    assert rows[0]["state"] == "revoked" and rows[0]["by"] == "masaru", rows
     log = subprocess.run(["git", "-C", isolated_account["repo_dir"], "log", "--oneline", "-1"],
                           capture_output=True, text=True).stdout
-    assert "承認の取り消し" in log and "masaru" in log, log
+    assert "承認の取り消し" not in log, log
 
 
 def test_取り消したあと直して承認し直せる(isolated_account):
@@ -68,6 +72,9 @@ def test_取り消したあと直して承認し直せる(isolated_account):
         text = f.read()
     with open(path, "w", encoding="utf-8") as f:
         f.write(text.replace("本文です。", "直した本文です。"))
+    # 4.4.1: 確定は repo に commit を積まないので、直した原稿は利用者が commit・push してから承認する。
+    from tests.conftest import commit_and_push_path
+    commit_and_push_path(path, message="test: 直した")
 
     assert approve_via_cli(path).returncode == 0
     qf = queuefile.parse(path)

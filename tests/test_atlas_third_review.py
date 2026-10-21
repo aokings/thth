@@ -62,11 +62,11 @@ def test_metadata_without_merge_conflict(tmp_path, isolated_account_factory, fie
             editor = Path(pair['seed']) / REL
             editor.write_text('\n'.join(f'{field}: {value}' if l.startswith(field + ':') else l
                                        for l in editor.read_text().splitlines()) + '\n')
-            if reapprove:
-                assert approve_via_cli(str(editor)).returncode == 0
-            # `thth approve` が commit・push まで行う（外部レビュー第 4 巡 P1）ので、
-            # reapprove のときは既に載っている。載っていなければここで載せる。
             commit_and_push_if_changed(pair['seed'], REL, 'Change metadata during publication')
+            if reapprove:
+                # 4.4.1: 確定は repo に commit を積まない（VM の承認の台帳に書く）ので、変えた原稿を
+                # 先に commit・push してから承認し直す。
+                assert approve_via_cli(str(editor)).returncode == 0
             return PublishResult('THIRD_META', None, NOW.isoformat())
     result = core.throw_once(account['name'], production_flag=True, adapter_factory=lambda *_: Editor(), now=NOW)
     assert result.error == 'text_mismatch_after_rebase', dataclasses.asdict(result)
@@ -113,6 +113,7 @@ def test_board_before_scheduled_time_preserves_diagnostics(tmp_path, isolated_ac
     pair, account, path = setup_pair(tmp_path, isolated_account_factory)
     # Approve a future posting and then change only the body; compare before/after due.
     path.write_text(path.read_text().replace('2026-09-09T08:00:00+09:00', '2026-09-10T08:00:00+09:00'))
+    commit_and_push_if_changed(pair['work'], REL, 'Move publish_at')  # 4.4.1: 確定は repo に commit を積まないので、原稿は先に commit・push しておく
     assert approve_via_cli(str(path)).returncode == 0
     path.write_text(path.read_text().replace('BODY_A', 'BODY_B'))
     evidence = {}

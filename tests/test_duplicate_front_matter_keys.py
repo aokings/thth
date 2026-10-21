@@ -105,8 +105,11 @@ def test_writebackは重複が無ければ従来どおり書ける(tmp_path):
 
 def _重複させる(text: str) -> str:
     """承認済みファイルの `status:`・`approved_sha:` の行をそのまま複製する
-    （発注書 B-1 の再現と同じ形: 1 つ目が正しい値・2 つ目も同じ正しい値）。"""
-    m = re.search(r"status: approved\napproved_sha: \S+\n", text)
+    （発注書 B-1 の再現と同じ形: 1 つ目が正しい値・2 つ目も同じ正しい値）。
+
+    4.4.1: 承認は VM の台帳に持つので、repo の原稿の行は `status: draft`・`approved_sha:`（空）の
+    まま。行の値は問わず、同じ 2 行を複製する（重複した鍵が malformed になる、という点は同じ）。"""
+    m = re.search(r"status: \S+\napproved_sha:.*\n", text)
     assert m, text
     block = m.group(0)
     return text.replace(block, block + block, 1)
@@ -146,8 +149,10 @@ def test_revokeは重複鍵のfront_matterを取り消せず嘘をつかない(t
     # 重複したまま・どちらの行も書き換わっていない）。
     after = path.read_text(encoding="utf-8")
     assert after == corrupted
-    assert after.count("status: approved") == 2
-    assert "status: draft" not in after
+    assert after.count("\nstatus: ") == 2
+    # 4.4.1: 取り消しの記録（VM の承認の台帳）にも書いていない。
+    from thth import approval_ledger
+    assert all(row["state"] != "revoked" for row in approval_ledger.export(account["name"]))
 
 
 # ------------------------------------------------------------ select（公開側）
