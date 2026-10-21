@@ -35,6 +35,14 @@ user_id と一致しない行は `x_metrics.normalize_owned_metrics` が落と�
 既定 0＝**投稿しない**。予約は要求の前・確定は応答の後で、**結果不明は自動で
 投げ直さない**（数え上げでは「不明」として別に残る）。
 
+**全期間の検索**（4.5.0・設計 `docs/設計_4.5.0_Xの全期間の検索_2026-10-21.md`）:
+`archive_search`（`GET /2/tweets/search/all`・2006 年から・1 回 10〜100 本・`next_token` を
+辿るのは総本数の上限まで）と `archive_counts`（`GET /2/tweets/counts/all`・1 回 0.010 USD・
+31 日ごとに 1 ページ）。台帳は `budget_x.archive_read`／`request_read(COUNTS_ALL)`（材料集め・
+1 日の本数は `x_archive_daily_reads` で別に縛る）。**人の居ない道（`x_archive.unattended()`）では
+要求も予約もせずに断る。** どちらも `CAPABILITIES` には載せない（`where`・`map`・`morning` が
+拾わない）。
+
 **429**: `retry-after`／`x-rate-limit-reset` を静的理由 `provider_rate_limited` の
 傍らに数字だけ持つ（待たない・次の run で）。
 """
@@ -335,6 +343,8 @@ class XAdapter(base.Adapter):
         self.community_more = False
         # トレンド・語ごとの投稿数（3.19.0）: 台帳の種類 → 確定した要求の回数（断りの応答は数えない）。
         self._requests = {}
+        # 全期間の検索（4.5.0）: 別の台帳（`budget_x.ARCHIVE`）・別に数える。
+        self._archive = {'posts': 0, 'usd': '0', 'calls': 0, 'truncated': False}
 
     @classmethod
     def from_account(cls, account_cfg: dict, token: dict):
@@ -747,18 +757,23 @@ class XAdapter(base.Adapter):
 
     # ----- 他人の投稿を読む口（**Posts: Read の予約の中でだけ動く**） ------------
 
-    def _paid_get(self, path, query, *, limit, what):
+    def _paid_get(self, path, query, *, limit, what, kind='posts'):
         """1 回の GET を `budget_x.posts_read(account, limit)` の中で投げる。
+
+        `kind='archive'`（4.5.0）は全期間の検索の台帳（`budget_x.archive_read`）で数える。
 
         戻りは `(value, n_returned)`。**課金の数は応答に入っていた投稿の本数**（呼び手が
         画面に出す本数で切り詰めても、返ってきた本数は返ってきた本数）。予算の断りは
         `AdapterError`（`budget_exhausted`・`x_daily_read_cap` で始まる 1 行）に写す。
         """
         from .. import budget_x
+        archive = kind == budget_x.ARCHIVE
+        counter = self._archive if archive else self._reads
+        reserve = budget_x.archive_read if archive else budget_x.posts_read
         try:
-            with budget_x.posts_read(self.auth_account, limit) as slot:
+            with reserve(self.auth_account, limit) as slot:
                 slot.dispatch()
-                self._reads['calls'] += 1
+                counter['calls'] += 1
                 try:
                     status, value = request(self, 'GET', path, query=query)
                 except urllib.error.HTTPError as exc:
@@ -779,11 +794,11 @@ class XAdapter(base.Adapter):
                 except (httpsafe.EndpointRejected, urllib.error.URLError, TimeoutError, OSError, ValueError,
                         base.AdapterError) as exc:
                     # 応答が読めなかった: 台帳は押さえた上限のまま uncertain（多めに数える側）。
-                    self._count(limit)
+                    self._count(limit, counter)
                     raise AdapterError(what + ': x_read_failed: ' + self._scrub(exc)) from None
                 data = value.get('data')
                 if status != 200 or not (isinstance(data, (list, dict)) or isinstance(value.get('meta'), dict)):
-                    self._count(limit)
+                    self._count(limit, counter)
                     raise AdapterError(what + ': x_read_response_invalid')
                 n = len(data) if isinstance(data, list) else (1 if isinstance(data, dict) else 0)
                 slot.settle(n)
@@ -794,16 +809,21 @@ class XAdapter(base.Adapter):
                 'budget_exhausted': '今月の X の読み取り予算（本人確認と合わせて）が足りません。thth admin budget x で確かめてください',
                 'x_daily_read_cap': '今日（JST）の X の他人の投稿の読み取りがこの account の上限に達します。'
                                     'thth account set <名前> x_daily_reads <本数> --by <名前> で変えられます',
+                'x_archive_daily_read_cap': '今日（JST）の X の全期間の検索がこの account の上限に達します'
+                                            '（既定 0＝読まない）。thth account set <名前> x_archive_daily_reads '
+                                            '<本数> --by <名前> で変えられます',
+                'x_archive_daily_read_cap_unreadable': '台帳の x_archive_daily_reads が読めません',
             }.get(code, 'X の読み取りの予約ができません')
             raise AdapterError(f'{code}: {message}') from None
-        self._count(charged)
+        self._count(charged, counter)
         return value, n
 
-    def _count(self, n):
+    def _count(self, n, counter=None):
         from decimal import Decimal
         from .. import budget_x
-        self._reads['posts'] += n
-        self._reads['usd'] = str(Decimal(self._reads['usd']) + budget_x.POSTS_PRICE * n)
+        counter = self._reads if counter is None else counter
+        counter['posts'] += n
+        counter['usd'] = str(Decimal(counter['usd']) + budget_x.POSTS_PRICE * n)
 
     @staticmethod
     def _metric(metrics, key):
@@ -1306,6 +1326,182 @@ class XAdapter(base.Adapter):
         return {'buckets': buckets,
                 'total_post_count': total if type(total) is int and total >= 0 else None,
                 'more': bool(meta.get('next_token'))}
+
+    # ----- 全期間の検索と件数（4.5.0・**人の居る道でだけ・予算の中でだけ**） ----------
+
+    ARCHIVE_PER_CALL_MIN = 10      # 一次資料の `max_results` の下限
+    ARCHIVE_PER_CALL_MAX = 100     # 一次資料は 500 まで。台帳の 1 回の上限（100）に合わせて小さく
+    ARCHIVE_PER_CALL_DEFAULT = 10
+    ARCHIVE_TOTAL_MAX = 500        # 1 回の命令で辿る総本数の上限（曲 1 つに 20 本の想定）
+    ARCHIVE_TOTAL_DEFAULT = 20
+    ARCHIVE_SORTS = ('recency', 'relevancy')
+    # ページの数の上限（空のページに `next_token` が付いて続くことがある・空のページは 0 本で課金なし）。
+    ARCHIVE_PAGES_DEFAULT = 5
+    ARCHIVE_PAGES_MAX = 50
+    # 全期間の検索の rate limit は 1 秒に 1 回（app・利用者とも）。ページの間はこれだけ空ける。
+    ARCHIVE_PAGE_PAUSE_SECONDS = 1.1
+    COUNTS_ALL_PAGES_DEFAULT = 1
+    COUNTS_ALL_PAGES_MAX = 300     # 2006-03 からの全期間は約 245 ページ（31 日ごと）
+    COUNTS_ALL_GRANULARITIES = ('day', 'hour')
+
+    @staticmethod
+    def _refuse_unattended():
+        from .. import x_archive
+        if x_archive.is_unattended():
+            raise AdapterError('x_archive_unattended: 全期間の読み取りは人が打った命令でだけ動きます'
+                               '（timer・collect・morning・worker からは叩きません）')
+
+    @classmethod
+    def check_archive_limits(cls, per_call, max_total):
+        """1 回の本数（10〜100）と総本数（10〜500・1 回の本数以上）。範囲外は**要求も予約もせずに**断る。"""
+        if type(per_call) is not int or not cls.ARCHIVE_PER_CALL_MIN <= per_call <= cls.ARCHIVE_PER_CALL_MAX:
+            raise AdapterError(f'x_archive_limit: 1 回の本数は {cls.ARCHIVE_PER_CALL_MIN}〜'
+                               f'{cls.ARCHIVE_PER_CALL_MAX} です（{per_call!r}）——有償の読み取りなので範囲外は断ります')
+        if type(max_total) is not int or not cls.ARCHIVE_PER_CALL_MIN <= max_total <= cls.ARCHIVE_TOTAL_MAX:
+            raise AdapterError(f'x_archive_limit: 総本数は {cls.ARCHIVE_PER_CALL_MIN}〜'
+                               f'{cls.ARCHIVE_TOTAL_MAX} です（{max_total!r}）——有償の読み取りなので範囲外は断ります')
+        if per_call > max_total:
+            raise AdapterError(f'x_archive_limit: 1 回の本数（{per_call}）は総本数（{max_total}）以下にしてください')
+        return per_call, max_total
+
+    def _archive_row(self, row):
+        """出典に使う形（id・URL・作られた時刻・本文・author の handle）。"""
+        return {'post_id': row['message_id'], 'url': row['permalink'], 'created_at': row['timestamp'],
+                'text': row['text'], 'author_username': row['username'],
+                'conversation_id': (row.get('root_post') or {}).get('id')}
+
+    def archive_search(self, q: str, *, per_call: int = ARCHIVE_PER_CALL_DEFAULT,
+                       max_total: int = ARCHIVE_TOTAL_DEFAULT, start_time: str, end_time: str | None = None,
+                       sort_order: str = 'recency', max_pages: int = ARCHIVE_PAGES_DEFAULT,
+                       sleep=None) -> dict:
+        """`GET /2/tweets/search/all` を `next_token` で辿る。**総本数は `max_total` を超えない。**
+
+        1 ページの要求は `min(per_call, 残り)` 本（下限 10）。残りが 10 未満になったら辿らない
+        （X は 10 未満を頼めない＝頼めば上限を超えて課金されうる）。ページごとに予約→発射→
+        返った本数で確定。2 ページ目より後の断り・結果不明は**投げ直さずに止め**、それまでの行を
+        返す（`stopped`）。1 ページ目の断りは上げる。
+        """
+        import time
+        from .. import budget_x
+        self._refuse_unattended()
+        per_call, max_total = self.check_archive_limits(per_call, max_total)
+        if type(max_pages) is not int or not 1 <= max_pages <= self.ARCHIVE_PAGES_MAX:
+            raise AdapterError(f'x_archive_limit: ページは 1〜{self.ARCHIVE_PAGES_MAX} です（{max_pages!r}）')
+        if sort_order not in self.ARCHIVE_SORTS:
+            raise AdapterError(f"sort_order は {' / '.join(self.ARCHIVE_SORTS)} のどちらかです")
+        text = q.strip() if isinstance(q, str) else ''
+        if not text or len(text) > 1024:
+            raise AdapterError('x_archive_query: 語は 1〜1024 字です')
+        pause = time.sleep if sleep is None else sleep
+        base_query = {'query': text, 'start_time': start_time, 'sort_order': sort_order, **self.READ_FIELDS}
+        if end_time:
+            base_query['end_time'] = end_time
+        rows, seen, token, pages, stopped, charged = [], set(), None, 0, None, 0
+        while pages < max_pages:
+            want = min(per_call, max_total - charged)
+            if want < self.ARCHIVE_PER_CALL_MIN:
+                break
+            query = dict(base_query, max_results=want)
+            if token:
+                query['next_token'] = token
+                pause(self.ARCHIVE_PAGE_PAUSE_SECONDS)
+            try:
+                value, n = self._paid_get('/2/tweets/search/all', query, limit=want,
+                                          what='全期間の検索', kind=budget_x.ARCHIVE)
+            except (AdapterError, base.AdapterError) as exc:
+                if pages == 0:
+                    raise
+                stopped = str(exc).split(':', 1)[0].strip() or 'x_read_failed'
+                break
+            pages += 1
+            charged += n
+            for row in self._rows(value):
+                if row['message_id'] not in seen:
+                    seen.add(row['message_id'])
+                    rows.append(self._archive_row(row))
+            meta = value.get('meta') if isinstance(value.get('meta'), dict) else {}
+            token = meta.get('next_token') if isinstance(meta.get('next_token'), str) and meta.get('next_token') else None
+            if not token:
+                break
+        more = bool(token)
+        self._archive['truncated'] = more
+        return {'posts': rows[:max_total], 'pages': pages, 'more': more, 'stopped': stopped}
+
+    def archive_counts(self, q: str, *, start_time: str, end_time: str | None = None,
+                       granularity: str = 'day', max_pages: int = COUNTS_ALL_PAGES_DEFAULT,
+                       pages_needed: int | None = None, sleep=None) -> dict:
+        """`GET /2/tweets/counts/all`（1 回 0.010 USD・31 日ごとに 1 ページ）を `min(max_pages, pages_needed)` まで。
+
+        `pages_needed` は窓を数えきるのに要るページ数（`x_archive.counts_pages_needed`・CLI の見積もり）。
+        X が窓の外まで `next_token` を返し続けても、見積もりより多くは叩かない。
+        """
+        import time
+        from .. import budget_x
+        self._refuse_unattended()
+        if type(max_pages) is not int or not 1 <= max_pages <= self.COUNTS_ALL_PAGES_MAX:
+            raise AdapterError(f'x_archive_limit: ページは 1〜{self.COUNTS_ALL_PAGES_MAX} です（{max_pages!r}）')
+        if granularity not in self.COUNTS_ALL_GRANULARITIES:
+            raise AdapterError(f"granularity は {' / '.join(self.COUNTS_ALL_GRANULARITIES)} のどちらかです")
+        text = q.strip() if isinstance(q, str) else ''
+        if not text or len(text) > 1024:
+            raise AdapterError('x_archive_query: 語は 1〜1024 字です')
+        pause = time.sleep if sleep is None else sleep
+        base_query = {'query': text, 'start_time': start_time, 'granularity': granularity}
+        if end_time:
+            base_query['end_time'] = end_time
+        if pages_needed is not None and (type(pages_needed) is not int or pages_needed < 1):
+            raise AdapterError(f'x_archive_limit: pages_needed は 1 以上です（{pages_needed!r}）')
+        stop_at = max_pages if pages_needed is None else min(max_pages, pages_needed)
+        buckets, total, token, pages, stopped = [], 0, None, 0, None
+        while pages < stop_at:
+            query = dict(base_query)
+            if token:
+                query['next_token'] = token
+                pause(self.ARCHIVE_PAGE_PAUSE_SECONDS)
+            try:
+                value = self._request_read(budget_x.COUNTS_ALL, '/2/tweets/counts/all', query,
+                                           what='全期間の投稿数')
+            except AdapterError as exc:
+                if pages == 0:
+                    raise
+                stopped = str(exc).split(':', 1)[0].strip() or 'x_read_failed'
+                break
+            pages += 1
+            for row in value.get('data') or []:
+                if not isinstance(row, dict):
+                    continue
+                count = row.get('post_count', row.get('tweet_count'))
+                start, end = row.get('start'), row.get('end')
+                if isinstance(start, str) and isinstance(end, str) and type(count) is int and count >= 0:
+                    buckets.append({'start': start[:40], 'end': end[:40], 'post_count': count})
+            meta = value.get('meta') if isinstance(value.get('meta'), dict) else {}
+            page_total = meta.get('total_post_count', meta.get('total_tweet_count'))
+            total += page_total if type(page_total) is int and page_total >= 0 else 0
+            token = meta.get('next_token') if isinstance(meta.get('next_token'), str) and meta.get('next_token') else None
+            if not token:
+                break
+        buckets.sort(key=lambda row: row['start'])
+        return {'buckets': buckets, 'total_post_count': total if pages else None,
+                'pages': pages, 'more': bool(token), 'stopped': stopped}
+
+    def archive_read_cost(self) -> dict:
+        """この実体の全期間の検索の本数と推定 USD・今日（全期間の枠）と今月の数字。"""
+        from .. import budget_x
+        try:
+            status = budget_x.archive_status(self.auth_account)
+        except (budget_x.BudgetError, OSError, ValueError, TypeError):
+            status = {'today': None, 'daily_cap': None, 'day_jst': None, 'month_utc': None,
+                      'month_used_usd': None, 'cap_usd': None}
+        counts = self._requests.get(budget_x.COUNTS_ALL, 0)
+        return {'posts': self._archive['posts'], 'requests': self._archive['calls'],
+                'usd_estimate': self._archive['usd'], 'truncated': self._archive['truncated'],
+                'counts_requests': counts,
+                'counts_usd_estimate': budget_x.decimal_text(budget_x.COUNTS_ALL_PRICE * counts),
+                'price_usd_per_post': str(budget_x.ARCHIVE_PRICE),
+                'price_usd_per_counts_request': str(budget_x.COUNTS_ALL_PRICE),
+                'price_version': budget_x.ARCHIVE_PRICE_VERSION,
+                'daily_cap_key': budget_x.ARCHIVE_DAILY_READS_KEY,
+                'basis': 'estimate_not_actual_charge', **status}
 
     def request_read_cost(self, kind) -> dict:
         """この実体で投げた要求の回数と推定 USD・今月の数字（`trends`・`counts` の画面と `--json`）。"""

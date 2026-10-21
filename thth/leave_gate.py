@@ -238,7 +238,7 @@ def bind(adapter,cfg):
              'tag_search','tag_observation','observed_tags','profile_lookup','account_insights','granted_scopes',
              'char_limit','_post','_get','_request','repost','unrepost','like','unlike','owned_metrics',
              'list_create','list_add_member','list_remove_member','list_tweets','user_by_username',
-             'community_search','trends','post_counts'}
+             'community_search','trends','post_counts','archive_search','archive_counts'}
     for name in methods:
         original=getattr(adapter,name,None)
         if not callable(original):continue

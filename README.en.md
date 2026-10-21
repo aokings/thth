@@ -112,6 +112,7 @@ All subcommands `thth --help` lists, one line each:
 - `principal` — the authenticating principal (one Hatena ID) behind Hatena Blog accounts: `add`, `show`, `set` limits, `resume` after a stop (CLI only); `auth` arrives in 4.0 S2
 - `fotolife` — a principal's Hatena Fotolife image ledger (images THTH uploaded just before publishing an article; one per content sha256); read-only, CLI only (`thth.fotolife/1`)
 - `counts` — how many X posts matched a query over the last 7 days, by hour or day (one paid read, not stored; X only)
+- `archive` — other people's public X posts from the full archive (since 2006), e.g. `--from <handle> --title <song>`; per-call, total and page caps are always bounded, `--count-only` counts instead (paid reads in the monthly X budget, daily cap `x_archive_daily_reads` defaults to 0, never from timers, not stored; X only)
 - `replies` — read collected replies (`--refresh` fetches first)
 - `measured` — read collected insights
 - `collect` — fetch replies and insights on the elapsed-time schedule

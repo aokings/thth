@@ -169,6 +169,8 @@ def report(value=None,*,at=None):
     owned=read_posts(OWNED);owned_spent,owned_held=posts_totals(owned,period)
     lists=read_posts(LISTS);lists_spent,lists_held=posts_totals(lists,period)
     comms=read_posts(COMMUNITIES);comms_spent,comms_held=posts_totals(comms,period)
+    archive=read_posts(ARCHIVE);archive_spent,archive_held=posts_totals(archive,period)
+    comms_spent+=archive_spent;comms_held+=archive_held
     extra={kind:read_posts(kind) for kind,_key,_label in PER_REQUEST}
     for ledger in extra.values():
         a,b=posts_totals(ledger,period);comms_spent+=a;comms_held+=b
@@ -185,11 +187,12 @@ def report(value=None,*,at=None):
                    |{r['reservation_month'] for r in owned['reservations'].values()}
                    |{r['reservation_month'] for r in lists['reservations'].values()}
                    |{r['reservation_month'] for r in comms['reservations'].values()}
+                   |{r['reservation_month'] for r in archive['reservations'].values()}
                    |{r['reservation_month'] for ledger in extra.values() for r in ledger['reservations'].values()}|{period})
     def month_row(m):
         a,b=totals(value,m);c,d=posts_totals(posts,m);e,f=posts_totals(owned,m);g,h=posts_totals(lists,m)
         i,j=posts_totals(comms,m)
-        for ledger in extra.values():
+        for ledger in (archive,*extra.values()):
             k,l=posts_totals(ledger,m);i+=k;j+=l
         return dict(spent_estimate_usd=decimal_text(a+c+e+g+i),held_usd=decimal_text(b+d+f+h+j))
     # medium は media の別名（10/15 調べ_JSONの欄 §5 1-7・media は残す）。
@@ -199,6 +202,7 @@ def report(value=None,*,at=None):
         price=dict(version=PRICE_VERSION,user_read_usd=decimal_text(PRICE),source=PRICE_SOURCE),usage=None,
         months={m:month_row(m) for m in periods},posts_read=_posts_report(posts,at),owned_read=_owned_report(owned,at),
         list_write=_lists_report(lists,at),community_read=_communities_report(comms,at),
+        archive_read=_archive_report(archive,at),
         **{key:_requests_report(kind,extra[kind],at) for kind,key,_label in PER_REQUEST})
 
 
@@ -377,7 +381,27 @@ COUNTS = 'counts'
 COUNTS_PRICE = Decimal('0.005')
 COUNTS_PRICE_VERSION = '2026-10-13-counts-recent'
 COUNTS_FILE = 'budget_x_counts.json'
+# ----- 全期間の検索と件数（4.5.0・`thth archive`・設計 4.5.0「X の全期間の検索」）
+#
+# 料金表: 投稿は Posts: Read（返った 1 本 0.005 USD）・件数は Counts: All（1 回 0.010 USD）。
+# 全期間の投稿の読み取りは**材料集め**（人に返す出向きではない）なので、他人の投稿の台帳と
+# **別のファイル**（`budget_x_archive_reads.json`）に数え、1 日の本数も別の鍵
+# （`x_archive_daily_reads`・既定 0＝読まない）で縛る。**今の `x_daily_reads`（既定 60）は
+# 緩めないし、こちらの読みはそちらに数えない。** 月の上限は他の台帳と分け合う。
+ARCHIVE = 'archive'
+ARCHIVE_PRICE = POSTS_PRICE
+ARCHIVE_PRICE_VERSION = '2026-10-21-posts-read-archive'
+ARCHIVE_FILE = 'budget_x_archive_reads.json'
+ARCHIVE_DAILY_READS_KEY = 'x_archive_daily_reads'
+DEFAULT_ARCHIVE_DAILY_READS = 0
+MAX_ARCHIVE_DAILY_READS = 10000
+COUNTS_ALL = 'counts_all'
+COUNTS_ALL_PRICE = Decimal('0.010')
+COUNTS_ALL_PRICE_VERSION = '2026-10-21-counts-all'
+COUNTS_ALL_FILE = 'budget_x_counts_all.json'
 _LEDGERS = {POSTS: (POSTS_FILE, POSTS_PRICE, POSTS_PRICE_VERSION),
+            ARCHIVE: (ARCHIVE_FILE, ARCHIVE_PRICE, ARCHIVE_PRICE_VERSION),
+            COUNTS_ALL: (COUNTS_ALL_FILE, COUNTS_ALL_PRICE, COUNTS_ALL_PRICE_VERSION),
             OWNED: (OWNED_FILE, OWNED_PRICE, OWNED_PRICE_VERSION),
             LISTS: (LIST_FILE, LIST_UNIT_PRICE, LIST_PRICE_VERSION),
             COMMUNITIES: (COMMUNITY_FILE, COMMUNITY_PRICE, COMMUNITY_PRICE_VERSION),
@@ -385,8 +409,9 @@ _LEDGERS = {POSTS: (POSTS_FILE, POSTS_PRICE, POSTS_PRICE_VERSION),
             COUNTS: (COUNTS_FILE, COUNTS_PRICE, COUNTS_PRICE_VERSION)}
 # 要求ごとに数える台帳（`report()` の内訳の行・`_posts_liability` で月の上限に入る）。
 PER_REQUEST = ((TRENDS, 'trends_read', 'トレンド'),
-               (COUNTS, 'counts_read', '語ごとの投稿数'))
-_PER_REQUEST_API = {TRENDS: 'Trends', COUNTS: 'Counts: Recent'}
+               (COUNTS, 'counts_read', '語ごとの投稿数'),
+               (COUNTS_ALL, 'counts_all_read', '語ごとの投稿数（全期間）'))
+_PER_REQUEST_API = {TRENDS: 'Trends', COUNTS: 'Counts: Recent', COUNTS_ALL: 'Counts: All'}
 _MONTH = r'\d{4}-(?:0[1-9]|1[0-2])'
 
 
@@ -469,7 +494,7 @@ def posts_today(value,account,day):
 def _posts_liability(fd,at):
     """本人確認の台帳の外にある、その月の確定と押さえ（他人の投稿＋自分の投稿の数字）。"""
     total=Decimal(0)
-    for kind in (POSTS,OWNED,LISTS,COMMUNITIES,TRENDS,COUNTS):
+    for kind in (POSTS,OWNED,LISTS,COMMUNITIES,TRENDS,COUNTS,ARCHIVE,COUNTS_ALL):
         spent,held=posts_totals(_read_posts(fd,kind),month(at));total+=spent+held
     return total
 
@@ -481,6 +506,16 @@ def daily_cap(account):
     value=(cfg or {}).get(DAILY_READS_KEY)
     if value is None:return DEFAULT_DAILY_READS
     if type(value) is not int or not 0<=value<=MAX_DAILY_READS:raise BudgetError('x_daily_read_cap_unreadable')
+    return value
+
+
+def archive_daily_cap(account):
+    """台帳の `x_archive_daily_reads`（無ければ 0＝全期間は読まない）。読めない値は断る。"""
+    try:cfg=accounts.load_account(account)
+    except accounts.AccountError:raise BudgetError('invalid_budget_account') from None
+    value=(cfg or {}).get(ARCHIVE_DAILY_READS_KEY)
+    if value is None:return DEFAULT_ARCHIVE_DAILY_READS
+    if type(value) is not int or not 0<=value<=MAX_ARCHIVE_DAILY_READS:raise BudgetError('x_archive_daily_read_cap_unreadable')
     return value
 
 
@@ -551,8 +586,18 @@ def community_read(account,limit):
 @contextlib.contextmanager
 def request_read(kind,account):
     """要求 1 回 = 1 単位の読み取り（`TRENDS`・`COUNTS`・3.19.0）の予約。作法は `posts_read` と同じ。"""
-    if kind not in (TRENDS,COUNTS):raise BudgetError('invalid_budget_kind')
+    if kind not in (TRENDS,COUNTS,COUNTS_ALL):raise BudgetError('invalid_budget_kind')
     with _ledger_read(kind,account,1) as handle:yield handle
+
+
+@contextlib.contextmanager
+def archive_read(account,limit):
+    """全期間の検索の 1 ページ（最大 `limit` 本）の予約（4.5.0）。作法は `posts_read` と同じ。
+
+    断り: `budget_exhausted`（月の上限・他の台帳と合わせて）・`x_archive_daily_read_cap`
+    （その account の JST の 1 日の全期間の本数・`x_archive_daily_reads`・既定 0）。どちらも要求の前。
+    """
+    with _ledger_read(ARCHIVE,account,limit) as handle:yield handle
 
 
 @contextlib.contextmanager
@@ -561,12 +606,13 @@ def _ledger_read(kind,account,limit):
     if not accounts.name_is_safe(account):raise BudgetError('invalid_budget_account')
     if _posts_current.get() is not None:raise BudgetError('budget_nested_reservation')
     price=_LEDGERS[kind][1];version=_LEDGERS[kind][2]
-    cap=daily_cap(account) if kind==POSTS else None
+    cap=daily_cap(account) if kind==POSTS else archive_daily_cap(account) if kind==ARCHIVE else None
     with locked() as fd:
         value=_read(fd);mine=_read_posts(fd,kind);at=now();period=month(at);day=jst_day(at)
         spent,held=totals(value,period)
         if not _can_reserve(value['policy'],spent+held+_posts_liability(fd,at)+price*limit):raise BudgetError('budget_exhausted')
-        if cap is not None and posts_today(mine,account,day)+limit>cap:raise BudgetError('x_daily_read_cap')
+        if cap is not None and posts_today(mine,account,day)+limit>cap:
+            raise BudgetError('x_archive_daily_read_cap' if kind==ARCHIVE else 'x_daily_read_cap')
         identifier=secrets.token_hex(16)
         mine['reservations'][identifier]=dict(account=account,state='reserved',limit=limit,count=None,
             usd=decimal_text(price*limit),price_version=version,reservation_month=period,
@@ -590,6 +636,32 @@ def posts_status(account,*,at=None):
     return dict(today=posts_today(read_posts(),account,jst_day(at)),daily_cap=cap,day_jst=jst_day(at),
                 month_utc=whole['month_utc'],month_used_usd=decimal_text(Decimal(whole['spent_estimate_usd'])+Decimal(whole['held_usd'])),
                 cap_usd=whole['cap_usd'])
+
+
+def archive_status(account,*,at=None):
+    """全期間の読みの表示の数字（今日のその account の本数と上限・今月の合計と上限）。読むだけ。"""
+    at=at or now();whole=report(at=at)
+    try:cap=archive_daily_cap(account)
+    except BudgetError:cap=None
+    return dict(today=posts_today(read_posts(ARCHIVE),account,jst_day(at)),daily_cap=cap,day_jst=jst_day(at),
+                month_utc=whole['month_utc'],month_used_usd=decimal_text(Decimal(whole['spent_estimate_usd'])+Decimal(whole['held_usd'])),
+                cap_usd=whole['cap_usd'])
+
+
+def _archive_report(archive,at):
+    period=month(at);day=jst_day(at);spent,held=posts_totals(archive,period)
+    rows=[row for row in archive['reservations'].values() if row['reservation_month']==period and row['state']!='released']
+    names=sorted({row['account'] for row in archive['reservations'].values() if row['day_jst']==day})
+    today={}
+    for name in names:
+        try:cap=archive_daily_cap(name)
+        except BudgetError:cap=None
+        today[name]=dict(posts=posts_today(archive,name,day),daily_cap=cap)
+    posts=sum(row['count'] if row['state']=='settled' else row['limit'] for row in rows)
+    return dict(price=dict(version=ARCHIVE_PRICE_VERSION,post_read_usd=decimal_text(ARCHIVE_PRICE),source=PRICE_SOURCE),
+                what='full_archive_search',day_jst=day,default_daily_cap=DEFAULT_ARCHIVE_DAILY_READS,today_by_account=today,
+                month=dict(month_utc=period,requests=len(rows),posts=posts,spent_estimate_usd=decimal_text(spent),
+                           held_usd=decimal_text(held),uncertain=sum(1 for row in rows if row['state']=='uncertain')))
 
 
 def _posts_report(posts,at):
@@ -665,6 +737,10 @@ def cost_lines(whole):
     if comms and comms['month']['requests']:
         m=comms['month']
         out.append(f"  コミュニティの検索（Community: Read・1 件 ${comms['price']['community_read_usd']}）: {m['requests']} 回・{m['communities']} 件・${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
+    archive=whole.get('archive_read') or {}
+    if archive and archive['month']['requests']:
+        m=archive['month']
+        out.append(f"  全期間の検索（Posts: Read・1 本 ${archive['price']['post_read_usd']}）: {m['requests']} 回・{m['posts']} 本・${m['spent_estimate_usd']}（押さえ ${m['held_usd']}）")
     for kind,key,label in PER_REQUEST:
         row=whole.get(key) or {}
         if row and row['month']['requests']:

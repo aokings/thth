@@ -20,6 +20,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 - **調べる**: `thth topics <アカウント> --search <語>` で、その語の件数・投稿者の数・最新の投稿を見ます。`thth where` は「次にどこで話すか」を、自分がすでに絡んだ相手を重ねて探します。X の行には投稿者のフォロワー数（「フォロワー 1.2 万」）と投稿数も付きます（`--json` は `author_followers`・`author_posts`。保存しません）。
 - **出す**: `thth send` で今すぐ、`thth schedule` で予約、`--reply-to` で返信です。
 - **ブックマークの連投は記事と別に数える**（4.0.1）: はてなブックマークは主体の別の窓（既定 10 分に 10 件）で数え、超えても主体を止めずにその 1 件だけ断ります。1 日 30 件・同じホストへ 1 日 3 件（自分の記事は 1 日 1 件のまま）。記事の連投で止める作りは変わりません（[リリースノート 4.0.1](docs/リリースノート_4.0.1_2026-10-17.md)）。
+- **X の全期間の検索**（4.5.0）: `thth archive <口座> --from <handle> --title <曲名> [--max-total 20] [--json]` で 2006 年からの他人の公開投稿を読みます（id・URL・時刻・本文・handle・保存しない）。`--count-only` は件数だけ（1 回 0.010 USD）。返った本数で月の X 予算に数え、1 日の本数は `x_archive_daily_reads`（既定 0＝読まない）で別に縛ります。timer からは叩きません（[リリースノート 4.5.0](docs/リリースノート_4.5.0_2026-10-21.md)）。
 - **承認は利用者の repo に commit を積まない**（4.4.1）: `thth approve --confirm`・`thth revoke`・thth.me の予約と取り消しは、VM の承認の台帳（`state/<口座>/approvals.json`）に書き、repo の原稿は書き換えません（`thth approvals <口座>` で見られます）。口座の台帳を `require_gate: true` にすると、hub の承認の番号（`--approval A261021-25`）の無い確定を断ります（[リリースノート 4.4.1](docs/リリースノート_4.4.1_2026-10-21.md)）。
 - **会話の続く投稿は 20 分おきに返信を取り直す**（4.4.0）: 投稿から 48 時間以内か、直近 48 時間に返信が付いた投稿は、刻みとは別に timer が会話を取り直します（1 回 10 本まで・刻みと数の記録は変えない・X は既定で外す・台帳の `reply_follow` で変えられる）（[リリースノート 4.4.0](docs/リリースノート_4.4.0_2026-10-21.md)）。
 - **止めた口座では timer は何も出さない**（4.3.1）: 安全装置か持ち主が止めた口座では、予約の投稿・返信を queue に残し、`thth account resume` で戻せば次の timer で出ます（[リリースノート 4.3.1](docs/リリースノート_4.3.1_2026-10-20.md)）。
@@ -98,7 +99,7 @@ MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけで
 
 `thth --help` で各コマンドの説明が出ます。
 
-動くもの（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`approvals`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`unanswered`・`handoff-report`・`observe`・`morning`・`events`・`summary`・`deliveries`・`media`・`article`・`conflict`・`hatena`・`bookmark`・`serve-reports`・`worker`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`where-log`・`who`・`retract`・`repost`・`unrepost`・`like`・`unlike`・`list`・`community`・`trends`・`counts`・`principal`・`fotolife`・`inflight`・`location`・`notifications`・`report`・`plaza`・`map`・`admin`・`login`・`logout`。
+動くもの（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`approvals`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`unanswered`・`handoff-report`・`observe`・`morning`・`events`・`summary`・`deliveries`・`media`・`article`・`conflict`・`hatena`・`bookmark`・`serve-reports`・`worker`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`where-log`・`who`・`retract`・`repost`・`unrepost`・`like`・`unlike`・`list`・`community`・`trends`・`counts`・`archive`・`principal`・`fotolife`・`inflight`・`location`・`notifications`・`report`・`plaza`・`map`・`admin`・`login`・`logout`。
 
 ## 版と配布
 

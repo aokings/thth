@@ -12,6 +12,7 @@
 | `min_interval_hours` | 同じ | 上げる |
 | `x_daily_reads` | 同じ（X の口座だけ・既定 60） | 下げる（JST の 1 日に読む他人の投稿の本数・有償） |
 | `daily_max_reactions` | 同じ（既定 50・3.15.0） | 下げる（再投稿・いいね・取り消しの合計。公開の枠とは別） |
+| `x_archive_daily_reads` | 同じ（X の口座だけ・既定 0・4.5.0） | 下げる（JST の 1 日に全期間の検索で読む本数・材料集め・有償。`x_daily_reads` とは別に数える） |
 
 口は 3 つ。**どこから変えたかで許す向きが違う**（主セッションの裁定 2026-09-26）:
 
@@ -37,9 +38,10 @@ from pathlib import Path
 from . import accounts, admin_log, secrets_fs
 
 KEYS = ("daily_max_posts", "daily_max_retracts", "burst_count", "burst_minutes",
-        "hold_minutes", "min_interval_hours", "x_daily_reads", "daily_max_reactions")
-# X の口座だけが持つ項目（有償の読み取りの 1 日の本数・設計 2026-10-08）。
-X_ONLY_KEYS = frozenset(("x_daily_reads",))
+        "hold_minutes", "min_interval_hours", "x_daily_reads", "daily_max_reactions",
+        "x_archive_daily_reads")
+# X の口座だけが持つ項目（有償の読み取りの 1 日の本数・設計 2026-10-08・全期間は 4.5.0）。
+X_ONLY_KEYS = frozenset(("x_daily_reads", "x_archive_daily_reads"))
 # 数値が大きいほど締まる項目（それ以外の数値は小さいほど締まる）。
 TIGHTER_WHEN_LARGER = frozenset(("burst_minutes", "hold_minutes", "min_interval_hours"))
 MIN_INTERVAL_MAX = 168
@@ -67,6 +69,10 @@ def current(cfg) -> dict:
         reads = cfg.get(budget_x.DAILY_READS_KEY)
         extra["x_daily_reads"] = (reads if type(reads) is int and 0 <= reads <= budget_x.MAX_DAILY_READS
                                   else budget_x.DEFAULT_DAILY_READS)
+        archive = cfg.get(budget_x.ARCHIVE_DAILY_READS_KEY)
+        extra["x_archive_daily_reads"] = (archive if type(archive) is int
+                                          and 0 <= archive <= budget_x.MAX_ARCHIVE_DAILY_READS
+                                          else budget_x.DEFAULT_ARCHIVE_DAILY_READS)
     return {
         "daily_max_posts": limits["daily_max_posts"],
         "daily_max_retracts": limits["daily_max_retracts"],
@@ -115,6 +121,9 @@ def parse(key, value):
     elif key == "x_daily_reads":
         from . import budget_x
         ok = 0 <= number <= budget_x.MAX_DAILY_READS
+    elif key == "x_archive_daily_reads":
+        from . import budget_x
+        ok = 0 <= number <= budget_x.MAX_ARCHIVE_DAILY_READS
     else:
         ok = accounts.valid_guard_value(key, number)
     if not ok:
@@ -516,6 +525,9 @@ def show_status(row, *, publish_hold_line=None) -> int:
         print(f"  1 日の反応の上限（daily_max_reactions）: {s['daily_max_reactions']}（再投稿・いいね・取り消し。公開の枠とは別）")
     if "x_daily_reads" in s:
         print(f"  1 日（JST）に読む他人の X の投稿の上限（x_daily_reads）: {s['x_daily_reads']} 本（有償・1 本 約 0.005 USD）")
+    if "x_archive_daily_reads" in s:
+        print(f"  1 日（JST）に全期間の検索で読む本数の上限（x_archive_daily_reads）: {s['x_archive_daily_reads']} 本"
+              "（材料集め・有償・1 本 約 0.005 USD・0 は読まない）")
     print(f"  予約の timer（scheduled）: {'載っている' if row['scheduled'] else '載っていない（予約と猶予は使えない）'}")
     reacted = row['today'].get('reactions')
     print(f"  今日（{row['today']['date']}）: 公開 {row['today']['posts']} 件・削除 {row['today']['retracts']} 件"

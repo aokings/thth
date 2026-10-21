@@ -563,6 +563,13 @@ from . import leave_gate
 
 @leave_gate.leased
 def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
+    """1 アカウントぶんの採取（4.5.0: 間は X の全期間の読み取りを断る印を立てる）。"""
+    from . import x_archive
+    with x_archive.unattended():
+        return _collect_once(account_name, adapter=adapter, now=now, log=log)
+
+
+def _collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     """1 アカウントぶんの採取。**書き込みと push は呼び出し側（`run_collect`）。**
 
     戻り値は `{"insight_files": [...], "reply_files": [...], "posts": n, "errors": [...]}`。
