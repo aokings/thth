@@ -20,7 +20,8 @@ class Adapter:
         return []
 
 def setup_route(tmp_path,factory,monkeypatch,route,collect_days=14,medium='threads'):
-    a=factory(name='test-'+medium,media=medium,collect_days=collect_days)
+    # 刻みの時計だけを見る（4.4.0 の会話の続く投稿の取り直しは切る・tests/test_v440_reply_follow.py）。
+    a=factory(name='test-'+medium,media=medium,collect_days=collect_days,reply_follow={'enabled':False})
     monkeypatch.setattr(c.writeback,'upstream_sha',lambda repo:None)
     files=[]
     path=tmp_path/'queue.md'

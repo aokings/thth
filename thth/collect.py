@@ -52,6 +52,7 @@ from . import measured as measured_mod
 from . import postid as postid_mod
 from . import queuefile
 from . import redact as redact_mod
+from . import reply_follow as reply_follow_mod
 from . import runs as runs_mod
 from . import writeback
 from .adapters import base as adapter_base
@@ -597,7 +598,8 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     # **X の自分の投稿の数字（Owned Reads）を読んでよい id**: THTH が出して `sent/` に
     # 記録があり、取り下げていないものだけ（masaru 10/12 決定 1・他人の投稿は読まない）。
     owned_sent_ids = set()
-    for row in sent_mod.records(accounts_mod.state_dir_for(account_name)):
+    sent_rows = sent_mod.records(accounts_mod.state_dir_for(account_name))
+    for row in sent_rows:
         if row.get('post_id') and not row.get('retracted_at'):
             owned_sent_ids.add(str(row['post_id']))
         if isinstance(row.get('attachment_kinds'), list):
@@ -610,6 +612,25 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     paid_reads = bool(getattr(adapter, "PAID_READS", False))
     # X の自分の投稿で刻みを跨いだもの（ループの後で 1 回にまとめて読む）。
     owned_due: list = []
+    # **会話の続く投稿の取り直し**（4.4.0・`thth/reply_follow.py`）。刻みとは別に、候補を
+    # ループで集めて、ループの後で新しい動きの順に上限の本数だけ取り直す。
+    follow_cfg = reply_follow_mod.settings(account_cfg)
+    follow_due: list = []
+    own_reply_at = reply_follow_mod.own_reply_times(sent_rows) if follow_cfg["enabled"] else {}
+
+    def consider_follow(*, post_id, posted_at, age_hours, reply_path, source, reply_to):
+        if not follow_cfg["enabled"] or age_hours > collect_days * 24:
+            return
+        rows = _read_ndjson(reply_path)
+        key = reply_follow_mod.candidate(
+            now=now, posted_at=posted_at,
+            reply_rows=[r for r in rows if r.get("kind") != "fetch"],
+            fetch_rows=[r for r in rows if r.get("kind") == "fetch"],
+            own_reply_at=own_reply_at.get(str(post_id)), cfg=follow_cfg)
+        if key is not None:
+            follow_due.append((key, dict(post_id=post_id, age_hours=age_hours,
+                                         reply_path=reply_path, source=source,
+                                         reply_to=reply_to)))
 
     def write_insight(*, qf, fm, source, post_id, posted_at_raw, age_hours, marks,
                       insight_path, section, metrics):
@@ -727,6 +748,10 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
             # 読むのは `sent/` に記録がある（THTH が出した・取り下げていない）id だけ。
             if str(post_id) not in owned_sent_ids:
                 continue
+            # X の取り直しは台帳で `reply_follow.enabled: true` を明示したときだけ（既定は外す）。
+            consider_follow(post_id=post_id, posted_at=posted_at, age_hours=age_hours,
+                            reply_path=reply_path, source=source,
+                            reply_to=fm.get("reply_to") or parents.get(str(post_id)))
             marks = due_marks(age_hours, _read_ndjson(insight_path)) if age_hours <= metric_window_days() * 24 else []
             if marks:
                 owned_due.append(dict(qf=qf, fm=fm, source=source, post_id=str(post_id),
@@ -741,6 +766,11 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
         # 「部分的な成功は次の実行で埋まる」という約束に反していた。
         marks = due_marks(age_hours, _read_ndjson(insight_path)) if age_hours <= metric_window_days() * 24 else []
         reply_marks = due_marks(age_hours, _reply_fetches(reply_path), marks=REPLY_MARKS_HOURS) if age_hours <= collect_days * 24 else []
+        if not reply_marks:
+            # 刻みで取る回は取り直さない（同じ回に 2 度読まない）。
+            consider_follow(post_id=post_id, posted_at=posted_at, age_hours=age_hours,
+                            reply_path=reply_path, source=source,
+                            reply_to=fm.get("reply_to") or parents.get(str(post_id)))
         if not marks and not reply_marks:
             continue
 
@@ -789,6 +819,12 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
                 if 新しい:
                     log(f"返信 {len(新しい)} 件: {post_id}")
 
+    # --- 会話の続く投稿の取り直し（4.4.0）。**失敗は `errors` に積まない**——採取の
+    # 終了コードも投稿の道も悪くしない。理由は log に残す（次の回が取り直す）。
+    follow = _collect_follow(adapter, account_cfg, reply_follow_mod.pick(follow_due, follow_cfg),
+                             now=now, owned=owned, paid_reads=paid_reads, log=log)
+    touched.extend(follow["touched"])
+
     # --- X の自分の投稿の数字（Owned Reads）: 刻みを跨いだものを 100 本ずつ 1 回で
     if owned_due:
         _collect_owned(adapter, owned_due, now=now, errors=errors, write=write_insight,
@@ -810,7 +846,45 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
         touched.append(account_path)
 
     return {"touched": sorted(set(touched)), "posts": posts_seen, "errors": errors,
-            "inbox": inbox_state}
+            "inbox": inbox_state,
+            "follow": {k: follow[k] for k in ("requested", "fetched", "new_replies", "failed")}}
+
+
+def _collect_follow(adapter, account_cfg: dict, due: list, *, now, owned, paid_reads: bool,
+                    log) -> dict:
+    """会話の続く投稿を取り直す（4.4.0）。`--refresh` と同じ性質: `marks: []`・数は取らない。
+
+    戻り値の `failed` は `[{"post_id", "reason"}]`。**ここで起きた失敗は採取の `errors` に
+    入れない**（取り直しは刻みの補いで、取れなくても次の刻み・次の回で埋まる）。
+    """
+    out = {"requested": len(due), "fetched": 0, "new_replies": 0, "failed": [], "touched": []}
+    for entry in due:
+        pid, reply_path = str(entry["post_id"]), entry["reply_path"]
+        try:
+            _rows, broken = _read_ndjson_strict(reply_path)
+            if broken:
+                raise ValueError("台帳が壊れています")
+            if paid_reads:
+                # 台帳で明示したときだけここに来る（X）。1 回の本数を最小にして代金を抑える。
+                limit = getattr(adapter, "CONVERSATION_MIN", None)
+                replies = (adapter.conversation(pid, limit=limit) if limit
+                           else adapter.conversation(pid))
+            else:
+                replies = _fetch_replies(adapter, account_cfg, pid, entry["reply_to"], owned)
+            新しい = _save_replies(reply_path, pid, replies, now=now,
+                                   age_hours=entry["age_hours"], marks=[],
+                                   trigger=reply_follow_mod.TRIGGER, source=entry["source"])
+        except Exception as e:  # 取り直しの失敗で採取も投稿も止めない
+            reason = redact_mod.redact(str(e))
+            out["failed"].append({"post_id": pid, "reason": reason})
+            log(f"返信の取り直しができませんでした（次の回で取り直します）: {pid}: {reason}")
+            continue
+        out["fetched"] += 1
+        out["new_replies"] += len(新しい)
+        out["touched"].append(reply_path)
+        if 新しい:
+            log(f"返信 {len(新しい)} 件（取り直し）: {pid}")
+    return out
 
 
 def _collect_owned(adapter, due: list, *, now, errors: list, write, account_name: str) -> None:
