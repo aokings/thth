@@ -39,9 +39,9 @@ class _口:
         raise AssertionError("**refresh が account_insights を呼んでいる**")
 
 
-def _仕立て(tmp_path, isolated_account_factory, *, posted_at=POSTED):
+def _仕立て(tmp_path, isolated_account_factory, *, posted_at=POSTED, **overrides):
     pair = init_git_pair(tmp_path, seed_content="x\n", seed_name="seed.md")
-    account = isolated_account_factory(repo_dir=pair["work"])
+    account = isolated_account_factory(repo_dir=pair["work"], **overrides)
     write_queue_file(account["queue_dir"], "a.md", fm_overrides={
         "status": "posted", "post_id": "POST1", "posted_at": posted_at})
     return pair, account
@@ -57,7 +57,9 @@ def _台帳(pair, post_id="POST1"):
 
 def test_刻みに当たらなくても取り直せる(tmp_path, isolated_account_factory):
     """**これが `--refresh` の目的。** 定期取得は 0.5h では何も取らない。"""
-    pair, account = _仕立て(tmp_path, isolated_account_factory)
+    # 刻みの取得だけを見る（4.4.0 の会話の続く投稿の取り直しは切る・`tests/test_v440_reply_follow.py`）。
+    pair, account = _仕立て(tmp_path, isolated_account_factory,
+                            reply_follow={"enabled": False})
     口 = _口([{"id": "R1", "text": "返信"}])
 
     定期 = collect_mod.collect_once(account["name"], adapter=口, now=NOW,
