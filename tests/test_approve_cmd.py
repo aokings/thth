@@ -230,10 +230,14 @@ def test_誰が承認したかを残す(isolated_account):
     qf = queuefile.parse(path)
     assert qf.front_matter.get("approved_by") == "claude（nigamilab セッション）"
 
+    # 4.4.1: 記録の置き場は VM の承認の台帳（repo の commit ではない・確定は repo に commit を積まない）。
+    from thth import approval_ledger
+    rows = approval_ledger.export(isolated_account["name"])
+    assert [r["by"] for r in rows] == ["claude（nigamilab セッション）"]
     import subprocess
     log = subprocess.run(["git", "-C", isolated_account["repo_dir"], "log", "--oneline", "-1"],
                           capture_output=True, text=True).stdout
-    assert "claude（nigamilab セッション）" in log, log
+    assert "claude（nigamilab セッション）" not in log, log
 
 
 # --- 複数本まとめて（asmon 関東セッション指摘 2026-09-10）

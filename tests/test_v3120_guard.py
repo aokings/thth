@@ -146,12 +146,19 @@ def test_予約をその場でqueueに刻む_thth_approveと同じ形(env, remot
     result = call(env, operation='schedule_request', draft_id=one['draft_id'])
     assert result['status'] == 'approved' and result['publish_at'] == '2030-01-01T12:00:00+09:00'
     assert remote.rows == {}
-    text = next((env['root'] / 'repos/_server/alpha/queue').glob('*.md')).read_text()
-    assert 'status: approved' in text and 'approved_by: person' in text and 'approved_sha: ' in text
-    assert 'approved_via: mcp' in text and f'approved_credential: {credential_id(env)}' in text
+    # 4.4.1: 予約（承認）は VM の承認の台帳に刻む。repo の原稿は draft のまま・commit も積まない。
+    # 読み手（queuefile.parse）には台帳が重なって approved に見える。
+    from thth import approval_ledger, queuefile
+    path = next((env['root'] / 'repos/_server/alpha/queue').glob('*.md'))
+    assert 'status: draft' in path.read_text()
+    fm = queuefile.parse(str(path)).front_matter
+    assert fm['status'] == 'approved' and fm['approved_by'] == 'person' and fm['approved_sha']
+    assert fm['approved_via'] == 'mcp' and fm['approved_credential'] == credential_id(env)
+    (entry,) = approval_ledger.load('alpha').values()
+    assert entry['by'] == 'person' and entry['via'] == 'mcp'
     import subprocess
     log = subprocess.check_output(['git', '-C', str(env['root'] / 'repos/_server/alpha'), 'log', '-1', '--format=%B'])
-    assert b'schedule by=person via=mcp' in log
+    assert b'schedule by=' not in log
 
 
 @pytest.mark.parametrize('extra', [{'approval': 'publish'}, {'approval': 'all'},
@@ -183,8 +190,10 @@ def test_hold_minutesがあれば今すぐもその分先の予約になる(env,
     assert result['status'] == 'held' and result['hold_minutes'] == 15 and publisher == []
     at = jst.parse(result['publish_at'])
     assert before + datetime.timedelta(minutes=14) < at < before + datetime.timedelta(minutes=16)
-    text = next((env['root'] / 'repos/_server/alpha/queue').glob('*.md')).read_text()
-    assert 'status: approved' in text and '少し待つ本文' in text
+    # 4.4.1: 承認は台帳（repo の原稿は draft のまま）。読み手には approved に見える。
+    from thth import queuefile
+    path = next((env['root'] / 'repos/_server/alpha/queue').glob('*.md'))
+    assert queuefile.parse(str(path)).front_matter['status'] == 'approved' and '少し待つ本文' in path.read_text()
 
 
 # --------------------------------------------------------------------------

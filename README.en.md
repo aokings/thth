@@ -51,7 +51,7 @@ You do not need a server, a Meta app or git. The full guide (Japanese) is [招�
 
 ### If you run accounts on your own machine (operator)
 
-Keep account ledgers on your machine, approve draft files, and let a timer post them. Approval is two steps (show the text and a digest, then confirm with that digest), and the record lands in git. See the [unified guide](docs/導入_承認を押すだけ.md) and the [full walkthrough](docs/usage.en.md).
+Keep account ledgers on your machine, approve draft files, and let a timer post them. Approval is two steps (show the text and a digest, then confirm with that digest), and the record lands in the approval ledger on the VM (not in your repo, since 4.4.1). See the [unified guide](docs/導入_承認を押すだけ.md) and the [full walkthrough](docs/usage.en.md).
 
 ## Using it from an AI assistant
 
@@ -152,6 +152,7 @@ All subcommands `thth --help` lists, one line each:
 - `lint` — check a queue file's front matter and length
 - `preview` — show the exact text that would go out
 - `approve` — two-step approval of a queue file (show, then confirm with a digest)
+- `approvals` — list the approval ledger on the VM (approvals are not committed to your repo since 4.4.1)
 - `revoke` — undo an approval and return the file to draft
 - `queue` — draft, approved and posted counts and what is next
 - `throw` — post one approved file (dry run by default)

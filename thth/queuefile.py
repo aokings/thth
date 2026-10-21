@@ -173,6 +173,10 @@ def parse_text(text: str, path: str) -> QueueFile:
     except media_mod.MediaError as exc:
         return QueueFile(path=path, malformed=True, front_matter={}, body=body, parse_error=str(exc))
     malformed = fm.get("thth") != "1" or bool(duplicate_keys)
+    if not malformed:
+        # 4.4.1: 承認の記録は VM の台帳（`approval_ledger`）。repo の front-matter に重ねて見せる。
+        from . import approval_ledger
+        fm = approval_ledger.overlay(path, fm)
     return QueueFile(path=path, malformed=malformed, front_matter=fm, body=body,
                       duplicate_keys=duplicate_keys)
 

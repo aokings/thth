@@ -320,7 +320,7 @@ def test_cli_two_stage_video_empty_body_and_compact_sent(env,wire,monkeypatch,ca
 @pytest.mark.parametrize('drift',['none','body','revoke'])
 def test_git_approved_video_final_gate(tmp_path,isolated_account_factory,wire,monkeypatch,drift):
     from pathlib import Path
-    from tests.conftest import init_git_pair,make_queue_text,run_git,approve_via_cli
+    from tests.conftest import init_git_pair,make_queue_text,run_git,approve_via_cli,revoke_in_ledger
     from thth import queuefile
     raw=make_queue_text({'account':'alpha','status':'draft','approved_sha':'','topic':''},body='## bluesky\n\n本文。\n',media='bluesky')
     raw=raw.replace('\n---\n','\nmedia:\n  - file: v.mp4\n    alt: 動画\n---\n',1)
@@ -332,7 +332,9 @@ def test_git_approved_video_final_gate(tmp_path,isolated_account_factory,wire,mo
     adapter=bluesky.BlueskyAdapter(service=wire['pds_url'],identifier='demo.test',app_password=wire['password'])
     def mutate():
         if drift!='none':
-            text=path.read_text();text=text.replace('status: approved','status: draft') if drift=='revoke' else text.replace('本文。','変更本文。');path.write_text(text)
+            # 4.4.1: 承認は VM の台帳。取り消しは repo の書き換えでなく台帳の取り消しで作る（意味は同じ）。
+            if drift=='revoke':revoke_in_ledger(path,'alpha');return
+            text=path.read_text();text=text.replace('本文。','変更本文。');path.write_text(text)
     wire['after_upload']=mutate
     result=core.throw_once('alpha',production_flag=True,adapter_factory=lambda *a:adapter,log=lambda _:None,bypass_pace=True)
     if drift=='none':assert result.action=='post' and queuefile.parse(str(path)).get('status')=='posted'

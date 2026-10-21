@@ -22,6 +22,35 @@ from . import queuefile
 from . import tags as tags_mod
 
 
+def _not_approved_reason(qf, account_name) -> str:
+    """`not_approved` に手がかりを足す（4.4.1・承認の記録は VM の台帳）。
+
+    - 承認のあと人が repo の status を書き換えた（裁定 ①）: 台帳の承認を重ねていない。
+    - 原稿の account を書き換えた（裁定 ④）: 別の口座の台帳に承認がある。
+    どちらでもなければ今までどおり `not_approved`。
+    """
+    from . import approval_ledger
+    fm = qf.front_matter
+    if fm.get(approval_ledger.REPO_STATUS_MARK):
+        return ("not_approved: 承認のあと repo の status が書き換えられています"
+                "（人の止めとして扱い出しません。出すなら status を戻すか、もう一度 thth approve）")
+    if fm.get(approval_ledger.GATE_ABSENT_MARK):
+        return ("not_approved: require_gate の口座では gate の番号の無い承認は使いません。"
+                "番号をつけて承認し直してください（thth approve --approval <番号>）")
+    if fm.get(approval_ledger.GATE_LEGACY_MARK):
+        return ("not_approved: require_gate の口座では、台帳に記録の無い repo の承認は使いません"
+                "（hub の番号を付けて thth approve --approval <番号> し直してください）")
+    if fm.get("status") == "draft" and not fm.get("post_id"):
+        try:
+            other = approval_ledger.approved_under_other_account(qf.path, account_name)
+        except Exception:  # noqa: BLE001 — 手がかりを探せなくても理由は not_approved のまま
+            other = None
+        if other:
+            return (f"not_approved: account が承認のときと違います（承認は {other} の台帳にあります。"
+                    "この account で出すなら、もう一度 thth approve）")
+    return "not_approved"
+
+
 @dataclasses.dataclass
 class Rejection:
     file: str
@@ -389,7 +418,7 @@ def _validate_hatena(files, *, account_name: str, account_cfg: dict):
             rejections.append(Rejection(path, "account_mismatch"))
             continue
         if fm.get("status") != "approved":
-            rejections.append(Rejection(path, "not_approved"))
+            rejections.append(Rejection(path, _not_approved_reason(qf, account_name)))
             continue
         publish_at_raw = fm.get("publish_at")
         try:
@@ -468,7 +497,7 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
 
         # 4. status != approved
         if fm.get("status") != "approved":
-            rejections.append(Rejection(path, "not_approved"))
+            rejections.append(Rejection(path, _not_approved_reason(qf, account_name)))
             continue
 
         # 5. publish_at の型（+09:00 無し／壊れた文字列）。「未来かどうか」は

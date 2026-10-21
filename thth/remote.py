@@ -659,7 +659,8 @@ def _send(args, account):
         hint = "" if getattr(args, "dry_run", False) else "。出すなら同じ命令に --production"
         return _shown(args, value, lambda v: _say(f"{account}: 通りました（出していません・下書き "
                                                   f"{str(v.get('draft_id'))[:12]}…）{hint}"))
-    value = call("send_request", account, **fields)
+    # ⑦（4.4.1）: hub の承認の番号。口座の台帳が `require_gate: true` なら VM が番号の無い公開を断る。
+    value = call("send_request", account, approval=getattr(args, "approval", None), **fields)
     return _shown(args, value, _show_sent)
 
 
@@ -712,7 +713,9 @@ def _schedule(args, account):
     elif not getattr(args, "production", False):
         raise RemoteError("invalid_request", reason="予約するなら --production を付けてください（付けなければ何もしません）",
                           rc=2)
-    value = call("schedule_request", account, draft_id=draft, confirm=getattr(args, "confirm", None))
+    # ⑦（4.4.1）: hub の承認の番号。口座の台帳が `require_gate: true` なら VM が番号の無い予約を断る。
+    value = call("schedule_request", account, draft_id=draft, confirm=getattr(args, "confirm", None),
+                 approval=getattr(args, "approval", None))
     if value.get("stage") == 1:
         # はてなの口座（設計 4.0 S1 §6.4）: 1 段目は見せて digest を返すだけ（何も刻んでいない）。
         from . import refusals
@@ -722,7 +725,9 @@ def _schedule(args, account):
             return 1
         print(f"{account}: 予約しません（確認の一段目です）")
         print(value.get("preview") or "")
-        print(f"刻むなら: thth schedule {account} --draft={draft} --production --confirm {value.get('digest')}")
+        gate = getattr(args, "approval", None)
+        print(f"刻むなら: thth schedule {account} --draft={draft} --production --confirm {value.get('digest')}"
+              + (f" --approval {gate}" if gate else ""))
         return 1
     return _shown(args, value, lambda v: _say(
         f"{account}: 予約しました（{jst_text(v.get('publish_at'))}・下書き {str(v.get('draft_id'))[:12]}…）"))
@@ -1199,6 +1204,8 @@ def register(sub) -> None:
                           help="遠くの道: 予約まで行う（無ければ下書きを置いて lint だけ・send と同じ）")
     schedule.add_argument("--confirm", default=None,
                           help="遠くの道: はてなの口座の予約の 2 段目（1 段目が出した digest・4.0 S1）")
+    schedule.add_argument("--approval", default=None, metavar="A261021-25",
+                          help="遠くの道: hub の承認の番号（VM の承認の台帳に残す。口座が require_gate: true なら必須・4.4.1）")
     choices["posts"].add_argument("--refresh", action="store_true",
                                   help="媒体から引き直す（thth posts は元から毎回引く・同じ動き）")
     for name in ("replies", "measured", "mentions"):

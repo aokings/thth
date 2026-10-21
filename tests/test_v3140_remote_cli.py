@@ -301,6 +301,16 @@ def test_schedule_は_draft_put_のあと_schedule_request(worker, capsys):
     assert worker.calls[1]["body"] == {"account": ACCOUNT, "draft_id": "d" * 64}
 
 
+def test_schedule_の遠くの道は_approval_の番号を渡す(worker, capsys):
+    """4.4.1 ⑦: `--approval` を VM の `schedule_request` に渡す（require_gate の口座は無ければ断られる）。"""
+    worker.push(200, {"account": ACCOUNT, "draft_id": "d" * 64, "status": "approved",
+                      "publish_at": "2026-09-27T09:00:00+09:00", "via": "api"})
+    rc, out, err = run(capsys, "schedule", ACCOUNT, "--draft", "d" * 64, "--production",
+                       "--approval", "A261021-25")
+    assert rc == 0, err
+    assert worker.calls[-1]["body"] == {"account": ACCOUNT, "draft_id": "d" * 64, "approval": "A261021-25"}
+
+
 def test_schedule_の一覧と添付は遠くの道でも通る(worker, capsys):
     """10/15（点検 B-18）から断らない。中身の試験は test_b17_remote_reads。"""
     worker.push(200, {"account": ACCOUNT, "schedule": []})

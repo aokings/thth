@@ -141,21 +141,25 @@ def test_approveは無関係なstage済み変更を巻き込まない(tmp_path, 
     assert other.read_text() == "書きかけの別作業\n"
 
 
-def test_pushを断られた承認はboardで要確認になる(tmp_path, isolated_account_factory):
-    """P2-3。commit できたが remote に届いていない承認を「待っているだけ」に見せない。"""
+def test_pushを断るremoteでも承認は台帳に入りrepoは動かない(tmp_path, isolated_account_factory):
+    """P2-3 の 4.4.1 版。4.4.0 までは確定が commit・push したので、push を断られた承認を
+    「要確認」に出す必要があった。4.4.1 から確定は repo に何も書かない（VM の台帳に書く）ので、
+    remote が push を断っても承認は通り、remote の先頭は動かない。原稿は同期を確かめた commit と
+    同じなので、次に出るものとして見える。"""
     pair, account, path = _setup(tmp_path, isolated_account_factory)
     _reject_pushes(pair["bare"])
+    head_before = run_git(pair["bare"], ["rev-parse", "main"]).stdout
 
     approved = approve_via_cli(str(path))
-    assert approved.returncode == 1, "push を断られたのに成功で終わった"
+    assert approved.returncode == 0, approved.stderr
+    assert run_git(pair["bare"], ["rev-parse", "main"]).stdout == head_before
 
     row = next(r for r in report.board_summary()["accounts"]
                if r["account"] == account["name"])
-    assert row["needs_review"], f"push が届いていない承認が要確認に出ない: {row}"
-    assert row["needs_review"][0]["reason"] == "unverified_content", row["needs_review"]
+    assert all(item["reason"] != "unverified_content" for item in row["needs_review"]), row
 
     summary = report.queue_summary(account["name"], now=NOW)[account["name"]]
-    assert summary["next_file"] is None, f"次に出るものとして表示された: {summary}"
+    assert summary["next_file"], f"台帳の承認が次に出るものとして見えない: {summary}"
 
 
 def test_同期も承認も正常なら公開される(tmp_path, isolated_account_factory):

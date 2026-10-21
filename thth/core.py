@@ -1753,7 +1753,8 @@ def refusal_lines(account_name: str, refused, *, kind: str = "publish") -> list:
 
 
 def _queue_burst_reply(account_name, account_cfg, state_dir, run_id, mode, *, now, log, digest, refused,
-                       text, topic, reply_to, goal, reply_to_root, reply_to_author_key, found_by) -> ThrowResult:
+                       text, topic, reply_to, goal, reply_to_root, reply_to_author_key, found_by,
+                       approval=None) -> ThrowResult:
     """`thth send --reply-to` が burst に当たった: 口座を止めず、窓が空く時刻の順番待ちに並べる（3.25.0）。"""
     from . import burst_queue as burst_queue_mod, guard as guard_mod
     publish_at = jst.parse(refused.next_at)
@@ -1761,7 +1762,7 @@ def _queue_burst_reply(account_name, account_cfg, state_dir, run_id, mode, *, no
         placed = burst_queue_mod.queue_cli(
             account_name, account_cfg, text=text, topic=topic, reply_to=reply_to, publish_at=publish_at,
             goal=goal, reply_to_root=reply_to_root, reply_to_author_key=reply_to_author_key,
-            found_by=found_by, now=now)
+            found_by=found_by, now=now, gate=approval)
     except guard_mod.GuardRefused as daily:
         msg = guard_refusal_message(account_name, daily)
         log(msg)
@@ -1799,7 +1800,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
                confirm: str | None = None, adapter_factory=None, log=None,
                now=None, wait=0, before_execute=None, lock_context=None, media_rows=None,
                goal: str | None = None, origin: dict | None = None,
-               community_id: str | None = None) -> ThrowResult:
+               community_id: str | None = None, approval: str | None = None) -> ThrowResult:
     """`thth send`（**同席の様態**・設計 §3.7）。queue を通さずその場で 1 本出す。
 
     対話の中で masaru が本文を読んで「出して」と言ったときの経路。承認は既に
@@ -1841,6 +1842,19 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
         log(msg)
         return ThrowResult(exit_code=2, mode="rehearsal", action="unsupported_operation", message=msg,
                            error="unsupported_operation")
+    # ⑦（4.4.1・監査 4）: `require_gate: true` の口座は、hub の承認の番号が無い・形が違う公開を断る。
+    # ロック・inflight・送信・burst の順番待ち（repo への commit）より前に断る。下見（dry-run）は断らない。
+    from . import approval_ledger
+    gate_problem = approval_ledger.gate_refusal(account_cfg, approval)
+    if gate_problem and (production_flag or gate_problem == "approval_invalid"):
+        msg = (f"{gate_problem}: {account_name} は hub の承認の番号（--approval A261021-25 の形）の無い公開を断る口座です"
+               "（台帳の require_gate: true）。番号を付けて打ち直してください。何も出していません"
+               if gate_problem == "approval_gate_required" else
+               f"{gate_problem}: --approval の形が違います（例 A261021-25）: {approval!r}。何も出していません")
+        log(msg)
+        return ThrowResult(exit_code=1, mode="rehearsal", action="approval_gate_required"
+                           if gate_problem == "approval_gate_required" else "invalid_request",
+                           message=msg, error=gate_problem)
     reply_to = postid_mod.for_account(account_cfg, reply_to, account_name)
     state_dir = accounts_mod.state_dir_for(account_name)
     now = now if now is not None else jst.now_jst()
@@ -1853,7 +1867,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
             production_flag=production_flag, confirm=confirm,
             adapter_factory=adapter_factory, log=log, now=now, wait=wait,
             before_execute=before_execute, lock_context=lock_context, media_rows=media_rows,
-            goal=goal, origin=origin, community_id=community_id,
+            goal=goal, origin=origin, community_id=community_id, approval=approval,
         )
     except lock_mod.LockBusy:
         msg = f"{account_name} は既に実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます"
@@ -1864,7 +1878,7 @@ def send_once(account_name: str, *, text: str, topic: str | None = None,
 def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, reply_to,
                   reply_to_root=None, reply_to_author_key=None, found_by=None,
                   production_flag, confirm, adapter_factory, log, now, wait=0, before_execute=None, lock_context=None, media_rows=None,
-                  goal=None, origin=None, community_id=None) -> ThrowResult:
+                  goal=None, origin=None, community_id=None, approval=None) -> ThrowResult:
     locks = ((lock_context or _account_locks(account_name, account_cfg, state_dir, wait=wait))
              if production_flag else contextlib.nullcontext())
     with locks:
@@ -2068,7 +2082,8 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
                     return _queue_burst_reply(
                         account_name, account_cfg, state_dir, run_id, mode, now=now, log=log, digest=digest,
                         refused=refused, text=body, topic=topic_value, reply_to=reply_to, goal=goal_value,
-                        reply_to_root=reply_to_root, reply_to_author_key=reply_to_author_key, found_by=found_by)
+                        reply_to_root=reply_to_root, reply_to_author_key=reply_to_author_key, found_by=found_by,
+                        approval=approval)
                 msg = guard_refusal_message(account_name, refused)
                 log(msg)
                 _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,

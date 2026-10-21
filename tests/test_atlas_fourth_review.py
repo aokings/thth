@@ -67,10 +67,13 @@ def _setup(tmp_path, factory, *, ensure_committed=True):
 
 
 def _withdraw_on_remote(pair):
-    """別の clone（masaru の手元に相当）で承認を撤回して push する。"""
+    """別の clone（masaru の手元に相当）で承認を撤回して push する。
+
+    4.4.1: 承認は VM の台帳にあり、repo の原稿は `status: draft` のまま。人が repo で撤回する形は
+    「status を draft／approved 以外にする」（台帳の承認が重ならなくなる）。"""
     run_git(pair["seed"], ["pull", "--ff-only"])
     editor = Path(pair["seed"]) / REL
-    editor.write_text(editor.read_text().replace("status: approved", "status: draft"))
+    editor.write_text(editor.read_text().replace("status: draft", "status: withdrawn"))
     run_git(pair["seed"], ["add", REL])
     run_git(pair["seed"], ["commit", "-m", "承認を撤回"])
     run_git(pair["seed"], ["push"])
@@ -112,7 +115,12 @@ def test_復元された古い承認済みファイルは公開されない(tmp_
                               adapter_factory=lambda *_: spy2, now=NOW)
     assert not spy2.calls, f"撤回済みの本文を公開した: {dataclasses.asdict(result)}"
     reasons = {r["file"]: r["reason"] for r in (result.rejections or [])}
-    assert reasons.get(os.path.basename(str(target))) == "unverified_content", reasons
+    if variant in ("追跡外", "symlink"):
+        # 4.4.1: 台帳の承認は repo の中の相対パスに結ぶ。台帳に無い別名（追跡外の b.md）・repo の外を
+        # 指す symlink には承認が重ならないので「承認されていない」で落ちる（出ないことは同じ）。
+        assert reasons.get(os.path.basename(str(target))) in ("unverified_content", "not_approved"), reasons
+    else:
+        assert reasons.get(os.path.basename(str(target))) == "unverified_content", reasons
     # 作業中の変更は消さない（fail-closed だが破壊はしない）。
     assert target.exists() and target.read_text() == approved_text
 
@@ -127,17 +135,22 @@ def test_同期したcommitと一致する承認はこれまでどおり公開�
     assert result.post_id == "FOURTH"
 
 
-def test_approveは承認をcommitとしてpushする(tmp_path, isolated_account_factory):
-    """承認がファイルの中だけに存在する状態を作らない（P1 の裏返し）。
+def test_approveは承認をVMの台帳に書きrepoには積まない(tmp_path, isolated_account_factory):
+    """4.4.1（⑤）: 確定は利用者の repo に commit を積まない。承認は VM の台帳にあり、select は
+    台帳の承認を重ねて見る（原稿の中身は同期を確かめた commit と同じなので候補になる）。
 
-    select は「同期を確認した commit の中身と一致するファイル」しか候補にしない
-    ので、`thth approve` が commit・push しなければ承認は永久に出ない。
+    4.4.0 までは「承認がファイルの中だけに存在する状態を作らない」ために確定が commit・push して
+    いた。利用者は配信の承認を main の先頭の commit に付けるので、その commit で先頭がずれた
+    （10/21 に 4 回）。いまは承認を repo の外（台帳）に置くので、ファイルの中にも commit にも無い。
     """
     pair, account, path = _setup(tmp_path, isolated_account_factory, ensure_committed=False)
     in_origin = run_git(pair["bare"], ["show", "main:" + REL]).stdout
-    assert "status: approved" in in_origin
-    assert "approved_sha:" in in_origin
+    assert "status: approved" not in in_origin
+    assert "status: draft" in in_origin
+    assert "status: approved" not in path.read_text()
     assert run_git(pair["work"], ["status", "--porcelain"]).stdout.strip() == ""
+    from thth import approval_ledger
+    assert [r["state"] for r in approval_ledger.export(account["name"])] == ["approved"]
 
 
 def test_期限切れと重複が重なっても要確認が消えない(tmp_path, isolated_account_factory):

@@ -815,9 +815,10 @@ SERVER_TOOLS = [
     for name,keys,required in (
         # 4.0 S4 §9.5: announces（告知が結ぶ配信 id）・article（記事の名）。本文の {article_url} は本文の一部。
         ('draft_put',('body','publish_at','topic','reply_to','draft_id','expected_revision','announces','article'),('body','publish_at')),
-        ('send_request',('body','topic','reply_to'),('body',)),
+        # 4.4.1 ⑦: approval（hub の承認の番号）。口座の台帳が require_gate: true なら要る。
+        ('send_request',('body','topic','reply_to','approval'),('body',)),
         ('retract_request',('post_id','reason'),('post_id','reason')),
-        ('schedule_request',('draft_id','confirm'),('draft_id',)),
+        ('schedule_request',('draft_id','confirm','approval'),('draft_id',)),
         # 4.0 S1 §7.3: はてなブックマーク（2 段・送信は S4）。tags は a,b の 1 行。
         # 4.0 S4 §11: delivery（自分の記事）か url（参照先）のどちらか 1 つ・op は add（既定）か delete。
         ('bookmark_request',('delivery','url','comment','tags','confirm','op'),()),
@@ -1173,13 +1174,15 @@ def _flag(flag, value):
 REMOTE_CLI = {
     # MCP の送信は呼べば出す（今までどおり）。CLI の遠くの道は --production が無ければ出さないので付ける（10/15）。
     "thth_send_request": (lambda a: ["send", a["account"], "--production", "--json", *_opt("--topic", a.get("topic")),
-                                     *_opt("--reply-to", a.get("reply_to"))], "body"),
+                                     *_opt("--reply-to", a.get("reply_to")),
+                                     *_opt("--approval", a.get("approval"))], "body"),
     # MCP の取り下げは呼べば消す（今までどおり）。CLI の遠くの道は二段なので digest を付けて呼ぶ（10/15）。
     "thth_retract_request": (lambda a: ["retract", a["account"], a["post_id"], "--reason=" + a["reason"],
                                         "--confirm=" + _retract_digest(a), "--json"], None),
     # 予約も同じ: MCP は呼べば刻む。CLI の遠くの道は --production が無ければ刻まない（10/16）。
     "thth_schedule_request": (lambda a: ["schedule", a["account"], "--draft=" + a["draft_id"], "--production", "--json",
-                                         *_opt("--confirm", a.get("confirm"))],
+                                         *_opt("--confirm", a.get("confirm")),
+                                         *_opt("--approval", a.get("approval"))],
                               None),
     # 4.2（S4 §21.7）: op が edit なら `thth bookmark edit`（comment・tags は省けば今のまま）。
     "thth_bookmark_request": (lambda a: ["bookmark", {"delete": "delete", "edit": "edit"}.get(a.get("op"), "add"),

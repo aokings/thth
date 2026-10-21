@@ -7,7 +7,8 @@ burst（10 分に 3 件）で口座が止まり、予約まで止まった。**�
 
 - 承認: `thth send --production`（手元は digest の `--confirm` を通ったあと）・thth.me の
   `send_request` で頼まれた時点で承認されている（3.12.0「利用者とその LLM を疑わない」）。queue に
-  置くときは `approval.approved_fields` の形で刻み、印 `queued_for: burst` を足す（指紋には入らない・
+  置くときは `approval.approved_fields` の形で刻み（4.4.1 から VM の承認の台帳に）、印 `queued_for: burst` を
+  原稿に足す（指紋には入らない・
   `held_minutes` の前例と同じく /activity と `thth schedule` が見分けるための印）。
 - timer に載っていない口座（`scheduled: false`）・添付のある返信は並べない（口座を止めずに
   `burst_limit` で断る）。はてなの口座は対象外（返信が無い・`guard._check_hatena`）。
@@ -84,7 +85,7 @@ def _replies_on(account, cfg, day) -> int:
 
 
 def queue_cli(account, cfg, *, text, topic, reply_to, publish_at, goal=None, reply_to_root=None,
-              reply_to_author_key=None, found_by=None, now=None) -> dict:
+              reply_to_author_key=None, found_by=None, now=None, gate=None) -> dict:
     """運営者の CLI（手元・VM の `thth send`）の道: queue に承認済みで置いて commit・push する。
 
     呼び手は account と repo のロックを持っている（`core._send_locked` の中）。戻り値は
@@ -126,11 +127,17 @@ def queue_cli(account, cfg, *, text, topic, reply_to, publish_at, goal=None, rep
             by = "thth send"
         fields = approval.approved_fields(prepared, by, jst.iso(now))
         fields["approved_via"] = "cli"
-        fields[MARK_KEY] = MARK_VALUE
-        writeback.set_front_matter_fields(path, fields)
+        # 印（`queued_for: burst`）は原稿に書く（新しく置く原稿そのものなので commit は 1 本のまま）。
+        writeback.set_front_matter_fields(path, {MARK_KEY: MARK_VALUE})
+        # 承認は 4.4.1 から VM の台帳（repo に書かない）。書けなければ原稿も置かない。
+        from . import approval_ledger
+        approval_ledger.record([{"account": account, "file": approval_ledger.rel_key(path, repo_dir),
+                                 "state": approval_ledger.APPROVED, "fields": fields, "via": "cli",
+                                 "repo": repo_dir, "gate": gate}])
     except Exception:
         os.unlink(path)
         raise
+    # 置いた原稿（下書きの形）だけを commit・push する（新しい原稿なので commit は今までどおり 1 本）。
     pushed, err = writeback.commit_and_push(
         repo_dir, rel_path=os.path.relpath(path, repo_dir),
         message=f"burst の順番待ち: {name}（{account}）")

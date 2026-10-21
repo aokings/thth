@@ -87,6 +87,8 @@ COMMANDS += ['bookmark edit']
 COMMANDS += ['media observations', 'media observe']
 # 4.2.2（S4 §24）: 止まったまとめを今すぐ見直させる（1 段）。
 COMMANDS += ['bookmark batch-resume']
+# 4.4.1: VM の承認の台帳を書き出す口。
+COMMANDS += ['approvals']
 
 
 def test_json_table_covers_every_parser():

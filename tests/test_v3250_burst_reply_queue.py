@@ -249,9 +249,12 @@ def test_thth_meの道でも返信は順番待ちに並び_口座は止まらな
     assert jst.parse(fifth['publish_at']) > jst.parse(fourth['publish_at'])
     assert len([c for c in publisher if c[0] == 'publish']) == 3
     assert guard.stopped('alpha') is None
+    # 4.4.1: thth.me の道の承認（順番待ちの印を含む）は VM の承認の台帳にあり、読み手に重なって見える。
+    from thth import queuefile
     texts = sorted((env['root'] / 'repos/_server/alpha/queue').glob('*.md'))
-    queued = [p.read_text() for p in texts if 'queued_for: burst' in p.read_text()]
-    assert len(queued) == 2 and all('status: approved' in t and 'approved_via: mcp' in t for t in queued)
+    shown = [queuefile.parse(str(p)).front_matter for p in texts]
+    queued = [fm for fm in shown if fm.get('queued_for') == 'burst']
+    assert len(queued) == 2 and all(fm['status'] == 'approved' and fm['approved_via'] == 'mcp' for fm in queued)
     # /activity で「順番待ち」として見分けられる（返信の印も付く）。
     rows = activity.summary('person', 'alpha', env['path'])['rows']
     kinds = [r for r in rows if r['kind'] == 'queued']

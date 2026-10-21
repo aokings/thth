@@ -74,6 +74,11 @@ def test_local_mutation_after_cli_approval(tmp_path, isolated_account_factory, f
             return PublishResult('UNEXPECTED', None, NOW.isoformat())
     result = core.throw_once(name, production_flag=True, adapter_factory=lambda *_: Spy(), now=NOW)
     assert not calls, dataclasses.asdict(result)
+    if field == 'account':
+        # 4.4.1: 承認は VM の台帳に口座ごとに持つ。原稿の account を変えると、変えた先の口座の台帳には
+        # 承認が無いので「承認されていない下書き」に見える（出ないことは同じ・fail-closed）。
+        assert result.action == 'none', dataclasses.asdict(result)
+        return
     records = list(Path(accounts.state_dir_for(name)).glob('runs-*.ndjson'))
     assert any('approval_stale' in p.read_text() for p in records)
 
@@ -106,7 +111,9 @@ def test_remote_edit_during_publication_must_stop(tmp_path, isolated_account_fac
 def test_remote_revocation_before_run_must_not_publish(tmp_path, isolated_account_factory):
     pair, account, path = setup_pair(tmp_path, isolated_account_factory)
     remote_path = Path(pair['seed']) / REL
-    remote_path.write_text(remote_path.read_text().replace('status: approved', 'status: withdrawn'))
+    # 4.4.1: 承認は VM の台帳にあり、repo の原稿は `status: draft` のまま。人が repo で status を
+    # draft／approved 以外にすれば、台帳の承認は重ならない（出ない）。
+    remote_path.write_text(remote_path.read_text().replace('status: draft', 'status: withdrawn'))
     run_git(pair['seed'], ['add', REL])
     run_git(pair['seed'], ['commit', '-m', 'Human revokes before run'])
     run_git(pair['seed'], ['push'])
@@ -125,10 +132,9 @@ def test_two_real_processes_share_clone(tmp_path, isolated_account_factory):
     b = isolated_account_factory(name='other-threads', repo_dir=pair['work'], production=True, quiet_hours=None, min_interval_hours=0)
     bpath = Path(pair['queue_dir']) / 'b.md'
     bpath.write_text(make_queue_text({'status':'draft', 'account':b['name']}, body='## threads\n\nOTHER_BODY\n'))
+    # 4.4.1: 確定は repo に commit を積まないので、原稿を先に commit・push してから承認する。
+    commit_and_push_if_changed(pair['work'], 'docs/sns/queue/b.md', 'Add B')
     assert approve_via_cli(str(bpath)).returncode == 0
-    # `thth approve` が commit・push まで行う（外部レビュー第 4 巡 P1）ので、
-    # ここは「まだ載っていなければ載せる」に留める。
-    commit_and_push_if_changed(pair['work'], 'docs/sns/queue/b.md', 'Approve B')
     ctx = multiprocessing.get_context('fork')
     entered, release = ctx.Event(), ctx.Event()
     output = ctx.Queue()

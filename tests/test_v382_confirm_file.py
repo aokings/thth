@@ -2,7 +2,7 @@
 
 - 1 行に `<原稿のパス> <digest>`。1 回の同期と 1 回のロックの中で行の順に確定する。
 - digest が合わない本はその 1 本だけ断って他は進める（断った本と理由は最後に並べる）。
-- commit は 1 本ずつ・push は最後に 1 回。
+- commit は 1 本ずつ・push は最後に 1 回（4.4.1 から承認は VM の台帳に書き、commit・push しない）。
 - 同期・push で止まったら、どこまで通ったかと残りをそのまま打てる命令を出す。
 - 1 段目（複数のとき）に `--confirm-file` の中身の形を 1 行。
 """
@@ -62,6 +62,12 @@ def _origin_status(drafts, name: str) -> str:
     return [line.split(": ", 1)[1] for line in shown.splitlines() if line.startswith("status: ")][0]
 
 
+def _shown_status(drafts, name: str) -> str:
+    """読み手に見える status（4.4.1: repo の原稿に VM の承認の台帳を重ねたもの）。"""
+    from thth import queuefile
+    return queuefile.parse(os.path.join(drafts["work"], "docs/sns/queue", name)).front_matter["status"]
+
+
 def _approval_commits(repo: str, ref: str = "HEAD") -> list:
     log = run_git(repo, ["log", "--format=%s", ref]).stdout.splitlines()
     return [subject for subject in log if subject.startswith("承認: ")]
@@ -91,13 +97,13 @@ def test_3本の組が全部通る_同期とロックとpushは1回ずつ_commit
     out, err = capsys.readouterr()
 
     assert rc == 0, err
-    assert counts == {"sync": 1, "push": 1, "lock": 1}
+    # 4.4.1: 承認は VM の台帳に書き、利用者の repo に commit・push しない（push は 0 回・commit は 0 本）。
+    assert counts == {"sync": 1, "push": 0, "lock": 1}
     assert out.splitlines()[0] == "承認しました: 3 本（masaru）"
     for name in NAMES:
-        assert _origin_status(drafts, name) == "approved"
-    # commit は従前どおり 1 本ずつ（新しい順）。
-    assert _approval_commits(drafts["bare"], "main")[:3] == [
-        f"承認: {name}（nigamilab-threads・masaru）" for name in reversed(NAMES)]
+        assert _origin_status(drafts, name) == "draft"
+        assert _shown_status(drafts, name) == "approved"
+    assert _approval_commits(drafts["bare"], "main") == [] and _approval_commits(drafts["work"]) == []
     assert "report_channel" not in err
 
 
@@ -109,9 +115,10 @@ def test_1本だけdigestが違えばその1本だけ断り_他は進める(draf
 
     assert rc == 1
     assert out.splitlines()[0] == "承認しました: 2 本（masaru）"
-    assert _origin_status(drafts, "a.md") == "approved"
-    assert _origin_status(drafts, "b.md") == "draft"
-    assert _origin_status(drafts, "c.md") == "approved"
+    # 4.4.1: 承認は VM の台帳（読み手に重なって見える）。
+    assert _shown_status(drafts, "a.md") == "approved"
+    assert _shown_status(drafts, "b.md") == "draft"
+    assert _shown_status(drafts, "c.md") == "approved"
     assert "断った原稿: 1 本（ほかは進めました）" in err
     refused = [line for line in err.splitlines() if line.startswith("  4 行目 ")]
     assert len(refused) == 1 and drafts["paths"][1] in refused[0]
@@ -124,12 +131,15 @@ def test_形の違う行とパスの無い行もその1行だけ断る(drafts, c
     payload = json.loads(capsys.readouterr().out)
 
     assert rc == 1
-    assert payload["count"] == 3 and payload["pushed"] is True
+    # 4.4.1: push はしない（`pushed` は null・置き場は `recorded: ledger`）。
+    assert payload["count"] == 3 and payload["pushed"] is None and payload["recorded"] == "ledger"
     assert [row["line"] for row in payload["refused"]] == [6, 7]
     assert payload["refused"][0]["reason"].startswith("行の形が違います")
 
 
-def test_pushに失敗したら_commitまで済んだ本とそのまま打てるpushの命令を出す(drafts, capsys):
+def test_pushを断るremoteでも承認は通り_repoには何も積まない(drafts, capsys):
+    # 4.4.1: 前提が変わった（承認は repo に commit・push しない）。3.8.2 の「push に失敗したら
+    # 押し直しの命令を出す」は道ごと無くなったので、push を断る remote でも承認が通ることを見る。
     hook = os.path.join(drafts["bare"], "hooks", "pre-receive")
     with open(hook, "w", encoding="utf-8") as stream:
         stream.write("#!/bin/sh\necho 'rejected for test' >&2\nexit 1\n")
@@ -138,23 +148,12 @@ def test_pushに失敗したら_commitまで済んだ本とそのまま打てる
     rc = cli.main(["approve", "--confirm-file", _write_confirm_file(drafts), "--by", "masaru"])
     out, err = capsys.readouterr()
 
-    assert rc == 1
-    assert "まだ push できていません" in out.splitlines()[0]
-    assert "承認を commit しましたが push できませんでした" in err
-    push_line = [line for line in err.splitlines() if "push が通れば出ます: " in line][0]
-    command = push_line.split("push が通れば出ます: ", 1)[1]
-    # 次の一手は thth の命令（3.8.2 の裁定 2・VM で生の git を打たせない）。
-    assert command == "thth pull nigamilab-threads --push-pending --by masaru"
-    # 3 本とも commit はローカルに残り、origin にはまだ無い。
-    assert len(_approval_commits(drafts["work"])) == 3
-    assert _approval_commits(drafts["bare"], "main") == []
-    # 出した命令をそのまま打てば届く（hook を外してから）。
-    os.unlink(hook)
-    pushed = run_thth(shlex.split(command)[1:])
-    assert pushed.returncode == 0, pushed.stderr
-    assert pushed.stdout.splitlines()[0] == "nigamilab-threads: 押しました: 3 commit（masaru）"
+    assert rc == 0, err
+    assert out.splitlines()[0] == "承認しました: 3 本（masaru）"
+    assert "push" not in err
+    assert _approval_commits(drafts["work"]) == [] and _approval_commits(drafts["bare"], "main") == []
     for name in NAMES:
-        assert _origin_status(drafts, name) == "approved"
+        assert _shown_status(drafts, name) == "approved"
 
 
 def test_同期で止まったら_残りをそのまま打てる確定の命令で出す(drafts, capsys):
