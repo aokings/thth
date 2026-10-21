@@ -566,6 +566,12 @@ def load_account(name: str) -> dict:
     if "require_gate" in data and type(data["require_gate"]) is not bool:
         raise AccountError(
             f"{name}: 台帳の require_gate が受け取れません（invalid_require_gate・true か false）")
+    # 会話の続く投稿の取り直し（4.4.0・`thth/reply_follow.py`）。形が違えば既定に倒さず断る。
+    from . import reply_follow
+    if "reply_follow" in data and not reply_follow.valid(data["reply_follow"]):
+        raise AccountError(
+            f"{name}: 台帳の reply_follow が受け取れません（invalid_reply_follow・鍵は "
+            f"enabled（true/false）・every_minutes（5〜1440）・live_hours（1〜720）・max_posts（0〜50））")
     # 安全装置（設計 3.12.0）。知らない値は黙って既定に倒さず断る。
     # `approval`（3.12.0）は読まない（IGNORED_FIELDS）。
     for key in GUARD_DEFAULTS:
