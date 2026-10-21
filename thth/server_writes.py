@@ -39,6 +39,8 @@ DIRECT_REASONS = frozenset(('account_busy','publication_failed','publication_unc
                             'permission_unavailable','schedule_commit_unconfirmed',
                             # 4.4.1 ⑦: 台帳が require_gate: true の口座で、hub の承認の番号（approval）が無い予約。
                             'approval_gate_required',
+                            # 4.4.1: 承認の台帳が読めない（取り消しを受け付けない）。
+                            'ledger_unavailable',
                             # `scheduled: false` の口座（timer に載っていない）で予約・猶予を求めた（段 3・裁定 (b)）。
                             'schedule_unavailable',
                             # 4.0 S1: はてなの口座の送信の口（adapter）がまだ無い・自分の記事でない・digest の食い違い。
@@ -247,7 +249,7 @@ def _refuse_if_stopped(account):
 
 def direct_send(context, request, via):
     """その場で公開する。点検は `core.send_once` と同じ（rehearsal で digest を出し、同じ digest で出す）。"""
-    _schema(request,('body','topic','reply_to','media'),('body',) if 'media' not in request else ())
+    _schema(request,('body','topic','reply_to','media','approval'),('body',) if 'media' not in request else ())
     # 添付（確定済みの `[{media_id, alt}]`・10/15 点検 B-18）があれば本文は空でもよい（手元の `thth send --media` と同じ）。
     if not isinstance(request.get('body'),str): error('invalid_request')
     if len(request['body'].encode())>48000: error('invalid_draft')
@@ -288,7 +290,8 @@ def direct_send(context, request, via):
     try:
         result=core.send_once(account,text=request['body'],topic=topic,reply_to=reply,production_flag=True,
                               confirm=dry.digest,log=lambda _:None,before_execute=before,
-                              lock_context=server_files.account_locks(account,cfg),origin=origin,**rows)
+                              lock_context=server_files.account_locks(account,cfg),origin=origin,
+                              approval=request.get('approval'),**rows)
     except GuardRefused as refused:
         # ロックの中で数え直したら burst に当たった（その間に別の公開が出た）。ロックの外で並べる。
         return _burst_or_raise(context,request,via,cfg,refused,reply)
@@ -452,7 +455,7 @@ def schedule(context, request, via, extra_fields=None):
 def held_send(context, request, via, minutes):
     """`hold_minutes` が 1 以上の口座の「今すぐ」: その分だけ先の予約にする（その間は持ち主が取り消せる）。"""
     import datetime as _dt
-    _schema(request,('body','topic','reply_to','media'),('body',) if 'media' not in request else ())
+    _schema(request,('body','topic','reply_to','media','approval'),('body',) if 'media' not in request else ())
     _require_scheduled(current(context,request['account'],write=True))
     publish_at=jst.iso(jst.now_jst()+_dt.timedelta(minutes=minutes))
     put={'operation':'draft_put','account':request['account'],'body':request.get('body'),'publish_at':publish_at}
@@ -460,8 +463,9 @@ def held_send(context, request, via, minutes):
         if request.get(key): put[key]=request[key]
     made=draft_put(context,put,via)
     # `held_minutes` は /activity が「猶予中」と「予約」を見分ける印（出す時刻には効かない）。
-    done=schedule(context,{'operation':'schedule_request','account':request['account'],'draft_id':made['draft_id']},via,
-                  extra_fields={'held_minutes':str(minutes)})
+    sched={'operation':'schedule_request','account':request['account'],'draft_id':made['draft_id']}
+    if request.get('approval'): sched['approval']=request['approval']
+    done=schedule(context,sched,via,extra_fields={'held_minutes':str(minutes)})
     return {**done,'status':'held','hold_minutes':minutes}
 
 
@@ -491,8 +495,9 @@ def burst_queued_send(context, request, via, publish_at):
     for key in ('topic','reply_to'):
         if request.get(key): put[key]=request[key]
     made=draft_put(context,put,via)
-    done=schedule(context,{'operation':'schedule_request','account':request['account'],'draft_id':made['draft_id']},via,
-                  extra_fields={burst_queue.MARK_KEY:burst_queue.MARK_VALUE})
+    sched={'operation':'schedule_request','account':request['account'],'draft_id':made['draft_id']}
+    if request.get('approval'): sched['approval']=request['approval']
+    done=schedule(context,sched,via,extra_fields={burst_queue.MARK_KEY:burst_queue.MARK_VALUE})
     return {**done,'status':'queued','reason':'burst','publish_at':publish_at}
 
 
@@ -500,6 +505,13 @@ def direct(context, request, via, cfg):
     op=request['operation']
     if op=='schedule_request':
         return schedule(context,request,via)
+    if op=='send_request':
+        # ⑦（4.4.1・監査 4）: require_gate の口座は番号の無い・形の違う公開を断る。猶予・burst の順番待ちの
+        # draft_put（repo への commit）より前に断る。
+        from . import approval_ledger
+        problem=approval_ledger.gate_refusal(cfg,request.get('approval') if type(request) is dict else None)
+        if problem=='approval_invalid': error('invalid_request','approval_invalid')
+        if problem: error(problem)
     if _hatena(cfg):
         # はてなの口座（設計 4.0 S1 §6.4）: 本文をその場で出す口・その場で消す口は無い。
         # 出すのも消すのも配信原稿（op: create・update・delete）を予約で刻む道だけ。
@@ -626,6 +638,10 @@ def cancel_schedule(account, draft_id, *, by, via='http'):
         _sync(cfg)
         name,raw,q=_draft(cfg,account,draft_id)
         fm=q.front_matter
+        # 4.4.1（監査）: 台帳が読めないときは status を見る前に断る（読めない間は承認済みが draft に
+        # 見えるので already_draft と答えると、台帳を直したとき承認が生き返る）。
+        from . import approval_ledger
+        if fm.get(approval_ledger.UNREADABLE_MARK) or approval_ledger.problem(account): error('ledger_unavailable')
         if fm.get('post_id'): error('draft_not_editable')
         if fm.get('status')=='draft': return 'already_draft'
         if fm.get('status')!='approved': error('draft_not_editable')

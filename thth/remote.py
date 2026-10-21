@@ -659,7 +659,8 @@ def _send(args, account):
         hint = "" if getattr(args, "dry_run", False) else "。出すなら同じ命令に --production"
         return _shown(args, value, lambda v: _say(f"{account}: 通りました（出していません・下書き "
                                                   f"{str(v.get('draft_id'))[:12]}…）{hint}"))
-    value = call("send_request", account, **fields)
+    # ⑦（4.4.1）: hub の承認の番号。口座の台帳が `require_gate: true` なら VM が番号の無い公開を断る。
+    value = call("send_request", account, approval=getattr(args, "approval", None), **fields)
     return _shown(args, value, _show_sent)
 
 

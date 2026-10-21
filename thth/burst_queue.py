@@ -85,7 +85,7 @@ def _replies_on(account, cfg, day) -> int:
 
 
 def queue_cli(account, cfg, *, text, topic, reply_to, publish_at, goal=None, reply_to_root=None,
-              reply_to_author_key=None, found_by=None, now=None) -> dict:
+              reply_to_author_key=None, found_by=None, now=None, gate=None) -> dict:
     """運営者の CLI（手元・VM の `thth send`）の道: queue に承認済みで置いて commit・push する。
 
     呼び手は account と repo のロックを持っている（`core._send_locked` の中）。戻り値は
@@ -133,7 +133,7 @@ def queue_cli(account, cfg, *, text, topic, reply_to, publish_at, goal=None, rep
         from . import approval_ledger
         approval_ledger.record([{"account": account, "file": approval_ledger.rel_key(path, repo_dir),
                                  "state": approval_ledger.APPROVED, "fields": fields, "via": "cli",
-                                 "repo": repo_dir}])
+                                 "repo": repo_dir, "gate": gate}])
     except Exception:
         os.unlink(path)
         raise

@@ -222,6 +222,7 @@ def test_finished_bundle_uses_ledger_fingerprint_over_stale_repo_value(tmp_path,
 
 # (d) thth.me の道（`schedule_request`）も同じ: require_gate の口座は番号無し・形の違う番号を断る。
 from tests.test_v212_server_writes import env, remote  # noqa: E402,F401
+from tests.test_v3250_burst_reply_queue import publisher  # noqa: E402,F401
 
 
 def test_require_gate_refuses_server_schedule_without_number(env, remote):
@@ -236,3 +237,139 @@ def test_require_gate_refuses_server_schedule_without_number(env, remote):
     assert result['status'] == 'approved'
     (entry,) = approval_ledger.load('alpha').values()
     assert entry['gate'] == 'A261021-25'
+
+
+# ---- 監査（Fable 10/21）のあとに足した柵 ----------------------------------
+
+# 台帳が壊れたときの取り消し（CLI）: status を見る前に断る（「承認されていません」と言わない）。
+def test_broken_ledger_refuses_revoke_before_status(tmp_path, isolated_account_factory):
+    pair, acct, path = _setup(tmp_path, isolated_account_factory)
+    ledger_path = Path(approval_ledger.path_for(acct['name']))
+    good = ledger_path.read_text()
+    ledger_path.write_text('{"version": 1, "items": [')
+    revoked = run_thth(['revoke', str(path), '--by', 'テスト'])
+    assert revoked.returncode == 1 and '台帳が読めないので取り消しを受け付けられません' in revoked.stderr, revoked.stderr
+    ledger_path.write_text(good)
+    assert queuefile.parse(str(path)).front_matter['status'] == 'approved'  # 断っただけ・何も書いていない
+
+
+# 台帳が壊れたときの取り消し（thth.me の cancel）: already_draft と答えない。
+def test_broken_ledger_refuses_cancel_before_status(env, remote):
+    from tests.test_v3120_guard import call, draft
+    from thth import server_writes
+    from thth.report_service import ReportServiceError
+    import pytest
+    one = draft(env)
+    assert call(env, operation='schedule_request', draft_id=one['draft_id'])['status'] == 'approved'
+    ledger_path = Path(approval_ledger.path_for('alpha'))
+    ledger_path.write_text('{"version": 1, "items": [')
+    with pytest.raises(ReportServiceError) as caught:
+        server_writes.cancel_schedule('alpha', one['draft_id'], by='owner')
+    assert str(caught.value) == 'ledger_unavailable'
+
+
+# 別の repo の同じ相対パスには台帳の承認を重ねない。
+def test_same_relative_path_in_other_repo_is_not_approved(tmp_path, isolated_account_factory):
+    pair, acct, path = _setup(tmp_path / 'one', isolated_account_factory)
+    other = init_git_pair(tmp_path / 'two', seed_content=make_queue_text({'status': 'draft'}, body=BODY))
+    other_path = Path(other['work']) / REL
+    assert queuefile.parse(str(path)).front_matter['status'] == 'approved'
+    assert queuefile.parse(str(other_path)).front_matter['status'] == 'draft'
+
+
+# require_gate の口座では、台帳に記録の無い repo の古い承認を使わない。
+def test_require_gate_ignores_legacy_repo_approval(tmp_path, isolated_account_factory):
+    pair, acct, path = _setup(tmp_path, isolated_account_factory)
+    _legacy_approved(pair, path, acct)
+    isolated_account_factory(repo_dir=pair['work'], production=True, quiet_hours=None, min_interval_hours=0,
+                             require_gate=True)
+    fm = queuefile.parse(str(path)).front_matter
+    assert fm['status'] == 'draft' and fm.get(approval_ledger.GATE_LEGACY_MARK)
+    result, calls = _throw(acct['name'])
+    assert not calls, dataclasses.asdict(result)
+    assert any('require_gate の口座では' in r for r in _reasons(acct['name'])), _reasons(acct['name'])
+
+
+# require_gate の口座の `thth send --production`: 番号が無い・形が違えば断り、repo の HEAD も動かない。
+def test_require_gate_refuses_cli_send(tmp_path, isolated_account_factory):
+    pair, acct, path = _setup(tmp_path, isolated_account_factory, approve=False, require_gate=True)
+    before = (_head(pair['work']), _head(pair['bare'], 'main'))
+    for extra in ([], ['--approval', 'A26-1']):
+        sent_ = run_thth(['send', acct['name'], '--production', '--confirm', '0' * 12, '--text', '出す'] + extra)
+        assert sent_.returncode == 1 and 'approval_gate_required' in sent_.stdout + sent_.stderr, sent_
+    assert (_head(pair['work']), _head(pair['bare'], 'main')) == before
+
+
+# require_gate の口座の CLI の burst の順番待ち: 番号を台帳に残す。
+def test_require_gate_cli_burst_queue_records_gate(isolated_account_factory):
+    from tests.test_v3250_burst_reply_queue import BURST, _queued_files
+    from tests.test_send import _digest_for
+    from tests.test_send_guard_cli import NOW, _Spy
+    account = isolated_account_factory(production=True, min_interval_hours=1, burst=BURST, require_gate=True)
+    spy = _Spy()
+
+    def send(i, approval):
+        text, reply_to = f"お返事{i}", f"1799{i}"
+        return core.send_once(account['name'], text=text, reply_to=reply_to, production_flag=True,
+                              confirm=_digest_for(account['name'], text, reply_to=reply_to),
+                              adapter_factory=lambda *_: spy, now=NOW + datetime.timedelta(minutes=i),
+                              approval=approval)
+    assert send(0, None).error == 'approval_gate_required' and spy.n == 0
+    for i in range(3):
+        assert send(i, 'A261021-25').exit_code == 0
+    queued = send(3, 'A261021-25')
+    assert queued.action == 'queued', queued
+    (path,) = _queued_files(account)
+    entry = approval_ledger.load(account['name'])[approval_ledger.rel_key(path)]
+    assert entry['gate'] == 'A261021-25'
+
+
+# require_gate の口座の thth.me の send_request（その場・猶予・burst）: 番号が無ければ commit の前に断る。
+def test_require_gate_refuses_server_send_request(env, remote):
+    import subprocess
+    from tests.test_v3120_guard import call, ledger, refused
+    repo = env['root'] / 'repos/_server/alpha'
+
+    def head():
+        # 置き場は最初の下書きで作られる。まだ無ければ「何も積んでいない」（None）。
+        done = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True)
+        return done.stdout.strip() if done.returncode == 0 else None
+    ledger(env, require_gate=True)
+    assert str(refused(env, operation='send_request', body='その場')) == 'approval_gate_required'
+    # 最初の依頼で置き場が初期化される（「Initialize account-owned server drafts」の 1 本）。その先は動かない。
+    before = head()
+    assert str(refused(env, operation='send_request', body='その場', approval='A1')) == 'approval_gate_required'
+    ledger(env, require_gate=True, hold_minutes=15)
+    assert str(refused(env, operation='send_request', body='猶予')) == 'approval_gate_required'
+    assert head() == before and approval_ledger.load('alpha') == {}
+    assert not list((repo / 'queue').glob('*.md'))
+    held = call(env, operation='send_request', body='猶予', approval='A261021-25')
+    assert held['status'] == 'held'
+    (entry,) = approval_ledger.load('alpha').values()
+    assert entry['gate'] == 'A261021-25'
+
+
+def test_require_gate_server_burst_queue_records_gate(env, remote, publisher):
+    from tests.test_v3120_guard import ledger
+    from tests.test_v3250_burst_reply_queue import _call
+    ledger(env, burst={'count': 3, 'minutes': 10}, min_interval_hours=1, require_gate=True)
+    results = [_call(env, operation='send_request', body=f'お返事{i}', reply_to=f'1799{i}', approval='A261021-25')
+               for i in range(4)]
+    assert [r['status'] for r in results] == ['published'] * 3 + ['queued']
+    (entry,) = approval_ledger.load('alpha').values()
+    assert entry['gate'] == 'A261021-25'
+
+
+# --confirm-file と require_gate: 番号が無ければその口座の行を断る・あれば番号を残す。
+def test_require_gate_with_confirm_file(tmp_path, isolated_account_factory):
+    pair, acct, path = _setup(tmp_path, isolated_account_factory, approve=False, require_gate=True)
+    first = run_thth(['approve', str(path)])
+    digest = [l.split(': ', 1)[1].strip() for l in first.stdout.splitlines() if l.startswith('digest: ')][0]
+    listing = tmp_path / 'confirm.txt'
+    listing.write_text(f'{path} {digest}\n')
+    refused_ = run_thth(['approve', '--confirm-file', str(listing), '--by', 'テスト'])
+    assert refused_.returncode == 1 and 'require_gate' in refused_.stderr, refused_.stderr
+    assert approval_ledger.load(acct['name']) == {}
+    ok = run_thth(['approve', '--confirm-file', str(listing), '--by', 'テスト', '--approval', 'A261021-25'])
+    assert ok.returncode == 0, ok.stderr
+    assert approval_ledger.load(acct['name'])[REL]['gate'] == 'A261021-25'

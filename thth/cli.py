@@ -1534,6 +1534,15 @@ def cmd_revoke(args) -> int:
         if malformed:
             print(f"front-matter が読めないので取り消せません: {args.file}", file=sys.stderr)
             return 1
+        # 4.4.1（監査）: 台帳が読めないときは status を見る前に断る。読めない間は承認済みが draft に
+        # 見えるので、ここで「承認されていません」と言うと、台帳を直したとき承認が生き返る。
+        from . import approval_ledger
+        trouble = (approval_ledger.problem(fm["account"])
+                   if approval_ledger._safe_account(fm.get("account")) else None)
+        if trouble or fm.get(approval_ledger.UNREADABLE_MARK):
+            print(f"台帳が読めないので取り消しを受け付けられません（{trouble or '承認の台帳'}）。"
+                  f"台帳を直してから打ち直してください（まだ止まっていません）: {args.file}", file=sys.stderr)
+            return 1
         # **束は「途中まで出ている」が普通の状態。** 止めたいのは残りなので、
         # 1 段出ているだけで断ってはいけない（全段出ていれば止めるものが無い）。
         posted = _already_posted(fm, raw_text, args.file)
@@ -3613,6 +3622,7 @@ def cmd_send(args) -> int:
                 community_id=getattr(args, "community_id", None),
                 production_flag=args.production and not getattr(args, "dry_run", False),
                 confirm=args.confirm, log=log, wait=getattr(args, "wait", 0),
+                approval=getattr(args, "approval", None),
                 **({'media_rows': declarations} if declarations else {}))
             outcome['result'] = result
             return result.exit_code
@@ -4416,6 +4426,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.add_argument("--confirm", default=None,
                         help="dry-run が表示した digest。--production のときはこれが一致しないと送らない")
     p_send.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
+    p_send.add_argument("--approval", default=None, metavar="A261021-25",
+                        help="hub の承認の番号（口座の台帳が require_gate: true なら --production に必須・4.4.1）")
     p_send.add_argument('--media', dest='media_files', action='append', help='repo 相対の添付ファイル（繰返し可）')
     p_send.add_argument('--alt', dest='alts', action='append', help='対応する添付の説明（各 --media に必須）')
     p_send.set_defaults(func=cmd_send)

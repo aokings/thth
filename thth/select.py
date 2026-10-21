@@ -34,6 +34,9 @@ def _not_approved_reason(qf, account_name) -> str:
     if fm.get(approval_ledger.REPO_STATUS_MARK):
         return ("not_approved: 承認のあと repo の status が書き換えられています"
                 "（人の止めとして扱い出しません。出すなら status を戻すか、もう一度 thth approve）")
+    if fm.get(approval_ledger.GATE_LEGACY_MARK):
+        return ("not_approved: require_gate の口座では、台帳に記録の無い repo の承認は使いません"
+                "（hub の番号を付けて thth approve --approval <番号> し直してください）")
     if fm.get("status") == "draft" and not fm.get("post_id"):
         try:
             other = approval_ledger.approved_under_other_account(qf.path, account_name)

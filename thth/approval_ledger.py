@@ -72,6 +72,8 @@ _REVOKE_CARRY = ("approved_kind", "delivery")
 # hub の承認の番号（例 `A261021-25`）。
 GATE_PATTERN = re.compile(r"A\d{6}-\d{1,5}\Z")
 UNREADABLE_MARK = "approval_ledger_unreadable"
+# require_gate の口座で、台帳に記録の無い repo の承認を倒した、の印（監査 3）。
+GATE_LEGACY_MARK = "approval_gate_missing"
 # 承認のあと人が repo の status を書き換えたので重ねなかった、の印（親の裁定 ①）。
 REPO_STATUS_MARK = "approval_repo_status_changed"
 
@@ -82,6 +84,17 @@ class LedgerError(Exception):
 
 def valid_gate(value) -> bool:
     return isinstance(value, str) and bool(GATE_PATTERN.match(value))
+
+
+def gate_refusal(account_cfg, gate) -> str | None:
+    """⑦: 公開・予約の道の番号の検査。`require_gate: true` の口座で番号が無いか形が違えば
+    `approval_gate_required`。ほかの口座で形が違えば `approval_invalid`。通れば None。"""
+    required = isinstance(account_cfg, dict) and account_cfg.get("require_gate") is True
+    if gate is None or gate == "":
+        return "approval_gate_required" if required else None
+    if not valid_gate(gate):
+        return "approval_gate_required" if required else "approval_invalid"
+    return None
 
 
 def path_for(account_name: str) -> str:
@@ -202,6 +215,31 @@ def _safe_account(name) -> bool:
         return False
 
 
+def _requires_gate(account_name: str) -> bool:
+    """口座の台帳が `require_gate: true` か（読めなければ True・fail-closed）。"""
+    from . import accounts
+    try:
+        path = os.path.join(accounts.accounts_dir(), f"{account_name}.json")
+        st = os.stat(path)
+    except FileNotFoundError:
+        return False  # 口座の台帳が無い（その口座では出ない・gate の設定も無い）
+    except Exception:  # noqa: BLE001 — 置き場が読めないなら承認済みとして見せない
+        return True
+    stamp = (path, st.st_ino, st.st_mtime_ns, st.st_size)
+    if stamp in _GATE_CACHE:
+        return _GATE_CACHE[stamp]
+    try:
+        with open(path, encoding="utf-8") as f:
+            value = json.load(f).get("require_gate") is True
+    except Exception:  # noqa: BLE001 — 読めない台帳は fail-closed
+        return True
+    _GATE_CACHE[stamp] = value
+    return value
+
+
+_GATE_CACHE: dict = {}
+
+
 def overlay(path: str, front_matter: dict, *, posted: bool | None = None) -> dict:
     """台帳の承認を front-matter に重ねた写しを返す（重ねるものが無ければ同じ dict）。
 
@@ -228,7 +266,26 @@ def overlay(path: str, front_matter: dict, *, posted: bool | None = None) -> dic
             out[UNREADABLE_MARK] = "true"
             return out
         return fm
+    if entry is not None and entry.get("repo"):
+        # 4.4.1（監査）: 鍵は相対パスなので、別の clone の同じパスにも当たる。台帳に書いた repo と
+        # 原稿の repo の頂上が違えば重ねない（別の原稿として扱う）。
+        top = repo_root_of(path)
+        try:
+            same = top is not None and os.path.realpath(entry["repo"]) == top
+        except (OSError, ValueError, TypeError):
+            same = False
+        if not same:
+            entry = None
     if entry is None:
+        if is_open and fm.get("status") == "approved" and _requires_gate(account):
+            # 4.4.1（監査）: require_gate の口座では、台帳に記録の無い repo の承認（4.4.0 までの形）は
+            # 使わない（hub の番号を通っていない承認で出さない）。draft に倒して見せる。
+            out = dict(fm)
+            out["status"] = "draft"
+            for k in _REVOKE_DROP:
+                out.pop(k, None)
+            out[GATE_LEGACY_MARK] = "true"
+            return out
         return fm
     out = dict(fm)
     fields = entry["fields"]
