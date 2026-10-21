@@ -64,9 +64,10 @@ def test_metadata_without_merge_conflict(tmp_path, isolated_account_factory, fie
                                        for l in editor.read_text().splitlines()) + '\n')
             commit_and_push_if_changed(pair['seed'], REL, 'Change metadata during publication')
             if reapprove:
-                # 4.4.1: 確定は repo に commit を積まない（VM の承認の台帳に書く）ので、変えた原稿を
-                # 先に commit・push してから承認し直す。
-                assert approve_via_cli(str(editor)).returncode == 0
+                # 4.4.1（再監査 低-2）: 承認は口座の repo_dir の中の原稿だけ。別の clone（seed）からの
+                # 承認し直しは断られる（台帳の行は clone で見分けるため）。断られたうえで、安全は同じ。
+                again = approve_via_cli(str(editor))
+                assert again.returncode == 1 and 'repo の中の原稿ではありません' in again.stderr, again.stderr
             return PublishResult('THIRD_META', None, NOW.isoformat())
     result = core.throw_once(account['name'], production_flag=True, adapter_factory=lambda *_: Editor(), now=NOW)
     assert result.error == 'text_mismatch_after_rebase', dataclasses.asdict(result)

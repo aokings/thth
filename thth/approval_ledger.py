@@ -74,6 +74,8 @@ GATE_PATTERN = re.compile(r"A\d{6}-\d{1,5}\Z")
 UNREADABLE_MARK = "approval_ledger_unreadable"
 # require_gate の口座で、台帳に記録の無い repo の承認を倒した、の印（監査 3）。
 GATE_LEGACY_MARK = "approval_gate_missing"
+# require_gate の口座で、gate の番号の無い台帳の承認を倒した、の印（再監査 中-2）。
+GATE_ABSENT_MARK = "approval_gate_absent"
 # 承認のあと人が repo の status を書き換えたので重ねなかった、の印（親の裁定 ①）。
 REPO_STATUS_MARK = "approval_repo_status_changed"
 
@@ -133,8 +135,11 @@ def repo_root_of(path: str) -> str | None:
         if parent == directory:
             break
         directory = parent
-    for item in seen:
-        _TOP_CACHE[item] = found
+    if found is not None:
+        # 見つからなかった（None）は控えない。長く生きるプロセス（report_http）で `.git` が後から
+        # できたとき、ずっと「repo の外」に見えて台帳を重ねなくなるため（再監査 低-1）。
+        for item in seen:
+            _TOP_CACHE[item] = found
     return found
 
 
@@ -298,6 +303,14 @@ def overlay(path: str, front_matter: dict, *, posted: bool | None = None) -> dic
             for k in _REVOKE_DROP:
                 out.pop(k, None)
             out[REPO_STATUS_MARK] = "true"
+            return out
+        if is_open and not valid_gate(entry.get("gate")) and _requires_gate(account):
+            # require_gate の口座では、gate の番号の無い台帳の承認（false の間に積んだもの）は使わない
+            # （再監査 中-2）。draft に倒して見せる。
+            out["status"] = "draft"
+            for k in _REVOKE_DROP:
+                out.pop(k, None)
+            out[GATE_ABSENT_MARK] = "true"
             return out
         if is_open:
             for k in OVERLAY_KEYS:
@@ -486,6 +499,9 @@ def record(changes: list) -> None:
             raise ValueError("state は approved か revoked です")
         if not _safe_account(change.get("account")) or not isinstance(change.get("file"), str):
             raise ValueError("account と file が要ります")
+        if not isinstance(change.get("repo"), str) or not change["repo"]:
+            # 台帳の行がどの clone の原稿かを決める（overlay が repo の頂上と比べる・再監査 低-3）。
+            raise ValueError("repo が要ります（承認した原稿の repo の頂上）")
         if change["state"] == APPROVED and not change.get("repo_status") and change.get("repo"):
             change = {**change, "repo_status": raw_status(os.path.join(change["repo"], change["file"]))}
         by_account.setdefault(change["account"], []).append(change)

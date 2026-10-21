@@ -482,6 +482,7 @@ def revoke_in_ledger(path, account: str, *, reason: str = "テストの取り消
     from thth import approval_ledger, jst
     approval_ledger.record([{
         "account": account, "file": approval_ledger.rel_key(str(path)),
+        "repo": approval_ledger.repo_root_of(str(path)),
         "state": approval_ledger.REVOKED, "via": "test",
         "fields": {"revoked_at": jst.iso(), "revoked_by": "テスト", "revoked_reason": reason}}])
 

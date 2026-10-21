@@ -373,3 +373,65 @@ def test_require_gate_with_confirm_file(tmp_path, isolated_account_factory):
     ok = run_thth(['approve', '--confirm-file', str(listing), '--by', 'テスト', '--approval', 'A261021-25'])
     assert ok.returncode == 0, ok.stderr
     assert approval_ledger.load(acct['name'])[REL]['gate'] == 'A261021-25'
+
+
+# ---- 再監査（Fable 10/21 2 回目）のあとに足した柵 -------------------------
+
+# 中-1: MCP の send_request・schedule_request が approval を受け、遠くの CLI に --approval を組む。
+def test_mcp_tools_accept_and_forward_approval():
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'mcp'))
+    import server
+    tools = {t['name']: t for t in server.SERVER_TOOLS}
+    for name in ('thth_send_request', 'thth_schedule_request'):
+        assert 'approval' in tools[name]['inputSchema']['properties'], name
+    send_argv = server.REMOTE_CLI['thth_send_request'][0]({'account': 'alpha', 'body': 'x', 'approval': 'A261021-25'})
+    sched_argv = server.REMOTE_CLI['thth_schedule_request'][0]({'account': 'alpha', 'draft_id': 'd' * 64,
+                                                                'approval': 'A261021-25'})
+    assert '--approval=A261021-25' in send_argv and '--approval=A261021-25' in sched_argv
+
+
+# 中-2: require_gate を後から true にしたら、gate の番号の無い台帳の承認は出さない。
+def test_require_gate_ignores_ledger_approval_without_gate(tmp_path, isolated_account_factory):
+    pair, acct, path = _setup(tmp_path, isolated_account_factory)   # require_gate: false の間の承認
+    isolated_account_factory(repo_dir=pair['work'], production=True, quiet_hours=None, min_interval_hours=0,
+                             require_gate=True)
+    fm = queuefile.parse(str(path)).front_matter
+    assert fm['status'] == 'draft' and fm.get(approval_ledger.GATE_ABSENT_MARK)
+    result, calls = _throw(acct['name'])
+    assert not calls, dataclasses.asdict(result)
+    assert any('gate の番号の無い承認は使いません' in r for r in _reasons(acct['name'])), _reasons(acct['name'])
+
+
+# 低-1: repo の頂上が見つからなかったことを控えない（後から .git ができても重ねられる）。
+def test_repo_root_lookup_does_not_cache_missing(tmp_path):
+    folder = tmp_path / 'later' / 'docs'
+    folder.mkdir(parents=True)
+    page = folder / 'a.md'
+    page.write_text('x')
+    assert approval_ledger.repo_root_of(str(page)) is None
+    (tmp_path / 'later' / '.git').mkdir()
+    assert approval_ledger.repo_root_of(str(page)) == os.path.realpath(tmp_path / 'later')
+
+
+# 低-2: 口座の repo_dir の外の原稿は承認も取り消しも断り、口座の repo_dir を示す。
+def test_approve_and_revoke_refuse_file_outside_account_repo(tmp_path, isolated_account_factory):
+    pair, acct, path = _setup(tmp_path / 'mine', isolated_account_factory, approve=False)
+    other = init_git_pair(tmp_path / 'copy', seed_content=make_queue_text({'status': 'draft'}, body=BODY))
+    other_path = Path(other['work']) / REL
+    first = run_thth(['approve', str(other_path)])
+    assert first.returncode == 1 and 'repo の中の原稿ではありません' in first.stderr \
+        and pair['work'] in first.stderr, first.stderr
+    revoked = run_thth(['revoke', str(other_path), '--by', 'テスト'])
+    assert revoked.returncode == 1 and 'repo の中の原稿ではありません' in revoked.stderr, revoked.stderr
+    assert approval_ledger.load(acct['name']) == {}
+
+
+# 低-3: record は repo を必須にする。
+def test_record_requires_repo(tmp_path, isolated_account_factory):
+    import pytest
+    acct = isolated_account_factory()
+    with pytest.raises(ValueError, match='repo が要ります'):
+        approval_ledger.record([{'account': acct['name'], 'file': REL, 'state': approval_ledger.APPROVED,
+                                 'fields': {'approved_sha': 'L' * 64}}])
+    assert approval_ledger.load(acct['name']) == {}

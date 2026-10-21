@@ -523,6 +523,25 @@ def _prepare_one(path: str):
     }, None
 
 
+def _outside_account_repo(path: str, account_name) -> str | None:
+    """原稿が口座の `repo_dir` の中に無ければ断る理由（再監査 低-2）。
+
+    台帳の行は repo の頂上で原稿を見分けるので、口座の repo の外（別の clone・手元の写し）の
+    原稿を承認・取り消しすると、timer が見ない所に記録が積まれる。
+    """
+    try:
+        cfg = accounts_mod.load_account(account_name)
+    except accounts_mod.AccountError as exc:
+        return f"{path}: {exc}"
+    repo = accounts_mod.resolved_repo_dir(cfg)
+    real = os.path.realpath(path)
+    top = os.path.realpath(repo) if repo else ""
+    if not top or os.path.commonpath([real, top]) != top:
+        return (f"{path}: 口座 {account_name} の repo の中の原稿ではありません"
+                f"（口座の repo_dir は {repo or '（無し）'}）。その repo の中の原稿を名指ししてください")
+    return None
+
+
 def _requires_gate(account_name: str) -> bool:
     """⑦（4.4.1）: 口座の台帳が `require_gate: true` か（読めなければ True に倒す）。"""
     try:
@@ -692,6 +711,8 @@ def cmd_approve(args) -> int:
             one, problem = _prepare_one(path)
             if not problem and getattr(args, "account", None) and one['account'] != args.account:
                 problem = f"{path}: 指定 account と一致しないので承認しません"
+            if not problem:
+                problem = _outside_account_repo(path, one["account"])
             (problems if problem else prepared).append(problem or one)
         # 4.4.1: commit に無い中身は承認しない（確定が repo に何も書かなくなったため）。2 段目では
         # digest の食い違いを先に言う（見せたものと違う、がいちばん大事な断り）。
@@ -954,6 +975,8 @@ def _approve_confirm_file(args) -> int:
                     one, problem = _prepare_one(t["path"])
                     if not problem and getattr(args, "account", None) and one["account"] != args.account:
                         problem = f"{t['path']}: 指定 account と一致しないので承認しません"
+                    if not problem:
+                        problem = _outside_account_repo(t["path"], one["account"])
                     if not problem:
                         problem = _unsynced_problem(t["path"], repo_dir, synced_sha)
                     if not problem:
@@ -1533,6 +1556,11 @@ def cmd_revoke(args) -> int:
             malformed = qf.malformed
         if malformed:
             print(f"front-matter が読めないので取り消せません: {args.file}", file=sys.stderr)
+            return 1
+        outside = (_outside_account_repo(args.file, fm["account"])
+                   if isinstance(fm.get("account"), str) and fm.get("account") else None)
+        if outside:
+            print(outside + "（取り消していません）", file=sys.stderr)
             return 1
         # 4.4.1（監査）: 台帳が読めないときは status を見る前に断る。読めない間は承認済みが draft に
         # 見えるので、ここで「承認されていません」と言うと、台帳を直したとき承認が生き返る。
