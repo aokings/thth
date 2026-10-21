@@ -314,8 +314,11 @@ def test_持ち主の操作_止める戻す設定と取り消し(env, worker, pu
     activity.run_once(env["path"])
     assert worker.outcome(loosen)["outcome"] == "done" and read_ledger(env)["daily_max_posts"] == 50
     assert worker.outcome(cancel)["outcome"] == "done", worker.outcome(cancel)
-    text = next((env["root"] / "repos/_server/alpha/queue").glob("*.md")).read_text()
-    assert "status: draft" in text and "revoked_by: person" in text
+    # 4.4.1: 取り消しは VM の承認の台帳に書く（repo の原稿は draft のまま・revoked_by は台帳）。
+    from thth import queuefile
+    path = next((env["root"] / "repos/_server/alpha/queue").glob("*.md"))
+    fm = queuefile.parse(str(path)).front_matter
+    assert fm["status"] == "draft" and fm["revoked_by"] == "person" and "status: draft" in path.read_text()
     events = {row["event"]: row for row in admin_log.read()[0]}
     for name in ("guard_stopped", "guard_resumed", "settings_set", "schedule_cancelled"):
         assert events[name]["via"] == "http" and events[name]["by"] == "person", name

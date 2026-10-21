@@ -472,6 +472,20 @@ def approve_via_cli(path, *, by: str | None = None, extra: list | None = None):
     return run_thth(args + list(extra or []))
 
 
+def revoke_in_ledger(path, account: str, *, reason: str = "テストの取り消し"):
+    """VM の承認の台帳に取り消しを書く（テスト用・4.4.1）。
+
+    4.4.0 までは試験が repo の `status: approved` を draft に書き換えて「公開の最中の取り消し」を
+    作っていた。4.4.1 から承認は台帳にあり repo は元から draft なので、`thth revoke` と同じ台帳の
+    取り消しをここで直に書く（意味は同じ: 最後の関門が止めるか）。
+    """
+    from thth import approval_ledger, jst
+    approval_ledger.record([{
+        "account": account, "file": approval_ledger.rel_key(str(path)),
+        "state": approval_ledger.REVOKED, "via": "test",
+        "fields": {"revoked_at": jst.iso(), "revoked_by": "テスト", "revoked_reason": reason}}])
+
+
 def run_git(repo_dir: str, args: list) -> subprocess.CompletedProcess:
     result = subprocess.run(["git", "-C", repo_dir, *args], capture_output=True, text=True)
     assert result.returncode == 0, f"git {args} failed: {result.stderr}"

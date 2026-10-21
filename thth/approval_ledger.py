@@ -65,10 +65,15 @@ _POSTED_INFO_KEYS = ("approved_sha", "approved_at", "approved_by", "approved_goa
 # 取り消しで外す項目（`thth revoke` の 4.4.0 までの書き戻しと同じ）。
 _REVOKE_DROP = ("approved_sha", "approved_at", "approved_by", "approved_goal")
 _OPEN_STATUSES = ("draft", "approved")
+# 取り消しのあとも見せる控え。4.4.0 の `thth revoke` は repo の `approved_kind`・`delivery` を残した
+# （はてなの配信の台帳は wanted のまま・承認し直すと同じ配信 id を使う）。同じ形に見せる。
+_REVOKE_CARRY = ("approved_kind", "delivery")
 
 # hub の承認の番号（例 `A261021-25`）。
 GATE_PATTERN = re.compile(r"A\d{6}-\d{1,5}\Z")
 UNREADABLE_MARK = "approval_ledger_unreadable"
+# 承認のあと人が repo の status を書き換えたので重ねなかった、の印（親の裁定 ①）。
+REPO_STATUS_MARK = "approval_repo_status_changed"
 
 
 class LedgerError(Exception):
@@ -228,6 +233,15 @@ def overlay(path: str, front_matter: dict, *, posted: bool | None = None) -> dic
     out = dict(fm)
     fields = entry["fields"]
     if entry["state"] == APPROVED:
+        if is_open and fm.get("status") != (entry.get("repo_status") or "draft"):
+            # **人の手の止めを尊重する**（親の裁定 ① 10/21）。承認のときの repo の status
+            # （ふつうは draft）から人が書き換えていれば（4.4.0 までの `status: approved` を draft に
+            # 戻した、など）、台帳に承認があっても重ねない。draft に倒して見せる（fail-closed）。
+            out["status"] = "draft"
+            for k in _REVOKE_DROP:
+                out.pop(k, None)
+            out[REPO_STATUS_MARK] = "true"
+            return out
         if is_open:
             for k in OVERLAY_KEYS:
                 if k in fields:
@@ -240,8 +254,12 @@ def overlay(path: str, front_matter: dict, *, posted: bool | None = None) -> dic
                     out.pop(k, None)
             out["status"] = "approved"
         else:
+            # 出たあとは status を変えず、承認の控えだけ**台帳の値で**見せる。4.4.1 から承認は
+            # repo に書かないので、repo に残る `approved_sha` などは台帳より古い（4.4.0 までの承認・
+            # 手で戻した残り）。「無ければ足す」にすると、束の最後の段を書き戻した直後の照合が
+            # repo の古い指紋を読み、`approval_stale` で push を止めていた（4.4.1 の書き手が見つけた）。
             for k in _POSTED_INFO_KEYS:
-                if fields.get(k) is not None and not out.get(k):
+                if fields.get(k) is not None:
                     out[k] = fields[k]
         return out
     # 取り消し
@@ -255,10 +273,60 @@ def overlay(path: str, front_matter: dict, *, posted: bool | None = None) -> dic
         if k in fields:
             out.pop(k, None)
     out["status"] = "draft"
-    for k in ("revoked_at", "revoked_by", "revoked_reason"):
+    for k in ("revoked_at", "revoked_by", "revoked_reason") + _REVOKE_CARRY:
         if fields.get(k) is not None:
             out[k] = fields[k]
     return out
+
+
+def raw_status(path: str) -> str | None:
+    """repo の原稿の front-matter に**書いてある** `status`（台帳を重ねる前・読めなければ None）。"""
+    from . import queuefile
+    try:
+        with open(path, encoding="utf-8") as f:
+            split = queuefile._split_front_matter(f.read())
+    except (OSError, ValueError):
+        return None
+    if split is None:
+        return None
+    for line in split[0].splitlines():
+        if line.startswith("status:"):
+            return line.partition(":")[2].strip() or None
+    return None
+
+
+def approved_under_other_account(path: str, account_name) -> str | None:
+    """同じ repo の同じ原稿が、別の口座の台帳で承認されていればその口座の名前（裁定 ④）。
+
+    原稿の account を書き換えると、変えた先の口座の台帳には承認が無く「承認されていない」に見える。
+    そのときの手がかり（読むだけ・見つからなければ None）。
+    """
+    from . import accounts
+    key = rel_key(path)
+    top = repo_root_of(path)
+    if key is None or top is None:
+        return None
+    root = os.path.join(accounts.thth_root(), "state")
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return None
+    for name in names:
+        if name == account_name or not _safe_account(name):
+            continue
+        if not os.path.exists(os.path.join(root, name, FILE)):
+            continue
+        try:
+            entry = load(name).get(key)
+        except LedgerError:
+            continue
+        if not entry or entry["state"] != APPROVED:
+            continue
+        repo = entry.get("repo")
+        if repo and os.path.realpath(repo) != top:
+            continue
+        return name
+    return None
 
 
 # ---- 書く ------------------------------------------------------------------
@@ -324,6 +392,8 @@ def _apply(items: dict, change: dict) -> None:
             "by": fields.get("approved_by"), "gate": change.get("gate"),
             "via": fields.get("approved_via") or change.get("via") or "cli",
             "repo": change.get("repo"),
+            # 承認のときの repo の status（ふつうは draft）。人がこれを書き換えたら重ねない（裁定 ①）。
+            "repo_status": change.get("repo_status") or "draft",
             "history": _history(old, {"event": "approved", "at": fields.get("approved_at"),
                                       "by": fields.get("approved_by"), "approved_sha": fields.get("approved_sha"),
                                       "gate": change.get("gate"), "via": fields.get("approved_via") or change.get("via")}),
@@ -334,7 +404,8 @@ def _apply(items: dict, change: dict) -> None:
         kept = {k: prior[k] for k in ("approved_kind", "approved_via", "approved_credential", "approved_gate",
                                       "held_minutes", "queued_for") if prior.get(k) is not None}
         # 重ねていた項目の名前だけ残す（overlay が外すため）。値は使わない。
-        fields = {**{k: kept[k] for k in kept}, **fields, "status": "draft"}
+        carry = {k: prior[k] for k in _REVOKE_CARRY if prior.get(k) is not None}
+        fields = {**{k: kept[k] for k in kept}, **carry, **fields, "status": "draft"}
         items[key] = {
             "file": key, "state": REVOKED, "fields": fields,
             "approved_sha": None, "at": fields.get("revoked_at"), "by": fields.get("revoked_by"),
@@ -358,6 +429,8 @@ def record(changes: list) -> None:
             raise ValueError("state は approved か revoked です")
         if not _safe_account(change.get("account")) or not isinstance(change.get("file"), str):
             raise ValueError("account と file が要ります")
+        if change["state"] == APPROVED and not change.get("repo_status") and change.get("repo"):
+            change = {**change, "repo_status": raw_status(os.path.join(change["repo"], change["file"]))}
         by_account.setdefault(change["account"], []).append(change)
     done = []  # (account, 書く前の items か None＝ファイルが無かった)
     try:

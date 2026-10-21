@@ -380,7 +380,9 @@ def schedule(context, request, via, extra_fields=None):
     from . import approval_ledger
     gate=request.get('approval')
     if gate is not None and not approval_ledger.valid_gate(gate): error('invalid_request','approval_invalid')
-    if cfg.get('require_gate') is True and not gate: error('approval_gate_required')
+    # はてなの 1 段目（何も刻まない・見せるだけ）は断らない。手元の `thth approve` の 1 段目と同じ。
+    if cfg.get('require_gate') is True and not gate and not (_hatena(cfg) and not request.get('confirm')):
+        error('approval_gate_required')
     if cfg.get('production') is not True: error('production_disabled')
     _require_scheduled(cfg)
     origin=_origin(context,via)

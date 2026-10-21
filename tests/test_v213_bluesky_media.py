@@ -227,7 +227,7 @@ def test_orientation_aspect_and_sanitized_bytes(env,wire):
 
 @pytest.mark.parametrize('drift',['none','alt','body','revoke'])
 def test_v1_git_approval_and_final_veto(tmp_path,isolated_account_factory,wire,monkeypatch,drift):
-    from tests.conftest import init_git_pair,make_queue_text,run_git,approve_via_cli
+    from tests.conftest import init_git_pair,make_queue_text,run_git,approve_via_cli,revoke_in_ledger
     from thth import queuefile
     raw=make_queue_text({'account':'alpha','status':'draft','approved_sha':'','topic':''},body='## bluesky\n\n本文。\n',media='bluesky')
     raw=raw.replace('\n---\n','\nmedia:\n  - file: a.png\n    alt: 点A\n---\n',1)
@@ -239,7 +239,9 @@ def test_v1_git_approval_and_final_veto(tmp_path,isolated_account_factory,wire,m
     adapter=bluesky.BlueskyAdapter(service=wire['url'],identifier='demo.test',app_password=wire['password'])
     def mutate():
         if drift!='none':
-            text=path.read_text();text=text.replace('status: approved','status: draft') if drift=='revoke' else text.replace('点A','変更alt') if drift=='alt' else text.replace('本文。','変更本文。');path.write_text(text)
+            # 4.4.1: 承認は VM の台帳。取り消しは repo の書き換えでなく台帳の取り消しで作る（意味は同じ）。
+            if drift=='revoke':revoke_in_ledger(path,'alpha');return
+            text=path.read_text();text=text.replace('点A','変更alt') if drift=='alt' else text.replace('本文。','変更本文。');path.write_text(text)
     wire['after_upload']=mutate
     result=core.throw_once('alpha',production_flag=True,adapter_factory=lambda *a:adapter,log=lambda _:None,bypass_pace=True)
     if drift=='none':assert result.action=='post' and queuefile.parse(str(path)).get('status')=='posted'

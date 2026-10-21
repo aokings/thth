@@ -163,8 +163,9 @@ def test_承認のあとに目的を変えると出て_runsとsentに変更が�
                             fm_overrides={"status": "draft", "approved_sha": None, "goal": "reach"})
     assert approve_via_cli(path).returncode == 0
     approved_sha = queuefile.parse(path).front_matter["approved_sha"]
+    # 4.4.1: 承認の時点の目的の控え（approved_goal）は VM の承認の台帳にあり、読み手に重なって見える。
+    assert queuefile.parse(path).front_matter["approved_goal"] == "reach"
     text = Path(path).read_text(encoding="utf-8").replace("\ngoal: reach", "\ngoal: click")
-    assert "approved_goal: reach" in text
     Path(path).write_text(text, encoding="utf-8")
     assert commit_and_push_path(path, message="目的を click に")
 

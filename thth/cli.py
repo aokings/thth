@@ -577,7 +577,7 @@ def _unsynced_problem(path: str, repo_dir: str, synced_sha) -> str | None:
     if writeback_mod.matches_synced_commit(repo_dir, path, tree_sha=synced_sha, disk_bytes=raw):
         return None
     return (f"{path}: repo の commit と中身が違います（VM で書き換えたまま・まだ commit・push していない）。"
-            "4.4.1 から承認は repo に commit を積みません。原稿を利用者の repo に commit・push してから"
+            "4.4.1 から承認は repo に commit を積みません。手元で原稿を commit・push してから"
             "打ち直してください")
 
 
@@ -859,12 +859,6 @@ def _confirm_command(path: str, digest: str, by: str) -> str:
     return f"thth approve {shlex.quote(path)} --confirm {digest} --by {shlex.quote(by)}"
 
 
-def _push_pending_command(account: str, by: str) -> str:
-    """手元に残った承認の commit を押し直す、そのまま打てる 1 行（3.8.2 の裁定 2）。"""
-    import shlex
-    return f"thth pull {shlex.quote(account)} --push-pending --by {shlex.quote(by)}"
-
-
 def _approve_confirm_file(args) -> int:
     """`thth approve --confirm-file <file> --by <名前>`（依頼 3.8.2 件 2）。
 
@@ -1038,10 +1032,8 @@ def _report_confirm_file(args, approved_by, approved_at, repo_dir, approved, ref
     """`--confirm-file` の結果: 通った本・断った本・止まった所と残りの命令。"""
     refused = sorted(refused, key=lambda row: row["line"])
     commands = [_confirm_command(t["path"], t["digest"], approved_by) for t in remaining]
-    # 押し直しは thth の命令で（3.8.2 の裁定 2・VM で生の git を打たせない）。
-    push_command = (_push_pending_command(approved[0][1]["account"], approved_by)
-                    if approved and not pushed else None)
-    ok = bool(approved) and not refused and not stopped and pushed
+    # 4.4.1: 承認は VM の台帳に書き、repo に commit・push しない。押し直しの命令はもう要らない。
+    ok = bool(approved) and not refused and not stopped
     if args.json:
         _print_json({"approved": ok, "count": len(approved), "approved_by": approved_by,
                      "approved_at": approved_at,
@@ -1051,13 +1043,12 @@ def _report_confirm_file(args, approved_by, approved_at, repo_dir, approved, ref
                      # 4.4.1: 承認の置き場は VM の台帳（repo に commit・push しない）。
                      "recorded": "ledger" if approved else None, "approval": getattr(args, "approval", None),
                      "pushed": None,
-                     "push_error": push_err or None, "stopped": stopped,
-                     "remaining_commands": commands + ([push_command] if push_command else []),
+                     "push_error": None, "stopped": stopped,
+                     "remaining_commands": commands,
                      "sent_now": list(sent_now)})
     else:
         if approved:
-            print(f"承認しました: {len(approved)} 本（{approved_by}）"
-                  + ("" if pushed else "——**まだ push できていません**"))
+            print(f"承認しました: {len(approved)} 本（{approved_by}）")
             for _t, one in approved:
                 print(f"  {os.path.basename(one['path'])} — {one['publish_at']}")
             for line in core.due_replies_lines(sent_now):
@@ -1068,11 +1059,6 @@ def _report_confirm_file(args, approved_by, approved_at, repo_dir, approved, ref
                   file=sys.stderr)
             for command in commands:
                 print(f"  {command}", file=sys.stderr)
-        if approved and not pushed:
-            print("承認を commit しましたが push できませんでした。このままでは投稿されません"
-                  f"（board に unverified_content として出ます）: {push_err}", file=sys.stderr)
-            print(f"  commit まで済んだもの: {len(approved)} 本。push が通れば出ます: {push_command}",
-                  file=sys.stderr)
         if refused:
             print(f"断った原稿: {len(refused)} 本"
                   + ("（ほかは進めました）" if approved else ""), file=sys.stderr)
@@ -1577,7 +1563,6 @@ def cmd_revoke(args) -> int:
         except (approval_ledger.LedgerError, ValueError) as exc:
             print(f"取り消しを台帳に書けませんでした（まだ止まっていません）: {exc}", file=sys.stderr)
             return 1
-        pushed, push_err = True, ""
         # 取り消しで確定待ちの控えも消す（設計 3.7.0 §B3）。
         if fm.get("account"):
             _clear_pending([{"account": fm.get("account"), "path": args.file}], repo_dir)
@@ -1614,7 +1599,8 @@ def cmd_revoke(args) -> int:
     if args.json:
         _print_json({"file": args.file, "status": "draft", "revoked_at": revoked_at,
                      "revoked_by": revoked_by, "revoked_reason": args.reason or None,
-                     "pushed": pushed, "push_error": push_err or None,
+                     # 4.4.1: 取り消しの置き場は VM の承認の台帳（repo に commit・push しない）。
+                     "recorded": "ledger",
                      "thread": thread_report})
     elif thread_report is not None:
         print(f"停止を要求しました: {args.file}（{revoked_by}）")
@@ -1623,16 +1609,8 @@ def cmd_revoke(args) -> int:
         print("**すでに送信済みの要求は取り消せません。** 出てしまったものは"
               "Threads の画面から手で消してください。")
     else:
-        print(f"承認を取り消しました: {args.file}（{revoked_by}）")
+        print(f"承認を取り消しました: {args.file}（{revoked_by}・VM の承認の台帳に記録・repo には書いていません）")
         print("  本文はそのままです。直して thth approve し直せます。")
-
-    if not pushed:
-        # **ここが押さえどころ。** push できていなければ、VM の clone では
-        # 取り消しが commit として残っていても、次の同期で HEAD != upstream に
-        # なって投稿そのものが止まる（fail-closed）。ただし黙って安心させない。
-        print("取り消しを push できませんでした。**まだ出る可能性があります。**"
-              f"手で push して、thth account で確かめてください: {push_err}", file=sys.stderr)
-        return 1
     return 0
 
 

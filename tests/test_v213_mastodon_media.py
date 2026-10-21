@@ -298,7 +298,7 @@ def test_provider_cannot_silently_drop_prepared_files(env,wire):
 
 @pytest.mark.parametrize('drift',['none','alt','body','order','revoke'])
 def test_v1_git_approve_publish_and_final_drift_veto(tmp_path,isolated_account_factory,wire,monkeypatch,drift):
-    from tests.conftest import init_git_pair,make_queue_text,run_git,approve_via_cli
+    from tests.conftest import init_git_pair,make_queue_text,run_git,approve_via_cli,revoke_in_ledger
     from thth import queuefile
     name='alpha';raw=make_queue_text({'account':name,'status':'draft','approved_sha':'','topic':''},body='## mastodon\n\n本文。\n',media='mastodon')
     raw=raw.replace('\n---\n','\nmedia:\n  - file: a.png\n    alt: 点A\n  - file: b.png\n    alt: 点B\n---\n',1)
@@ -313,7 +313,9 @@ def test_v1_git_approve_publish_and_final_drift_veto(tmp_path,isolated_account_f
     wire['poll']=[(200,{'id':'1','type':'image','url':'https://example.invalid/1'})]
     def mutate():
         if drift!='none':
-            before=path.read_text();after=before.replace('status: approved','status: draft') if drift=='revoke' else before.replace('点A','別のalt') if drift=='alt' else before.replace('本文。','変更本文。') if drift=='body' else before.replace('file: a.png','file: temporary.png').replace('file: b.png','file: a.png').replace('file: temporary.png','file: b.png')
+            # 4.4.1: 承認は VM の台帳。取り消しは repo の書き換えでなく台帳の取り消しで作る（意味は同じ）。
+            if drift=='revoke':revoke_in_ledger(path,name);return
+            before=path.read_text();after=before.replace('点A','別のalt') if drift=='alt' else before.replace('本文。','変更本文。') if drift=='body' else before.replace('file: a.png','file: temporary.png').replace('file: b.png','file: a.png').replace('file: temporary.png','file: b.png')
             path.write_text(after)
     wire['on_poll']=mutate
     result=core.throw_once(name,production_flag=True,adapter_factory=lambda *a:adapter,log=lambda _:None,bypass_pace=True)
@@ -328,7 +330,7 @@ def test_v1_git_approve_publish_and_final_drift_veto(tmp_path,isolated_account_f
 @pytest.mark.parametrize('late',['none','second_upload_error','revoke','deadline'])
 def test_v2_media_per_segment_and_parent_survive_git_writeback(tmp_path,isolated_account_factory,wire,monkeypatch,late):
     import datetime
-    from tests.conftest import init_git_pair,run_git,approve_via_cli
+    from tests.conftest import init_git_pair,run_git,approve_via_cli,revoke_in_ledger
     from tests.test_thread_publish import bundle_text,REL
     from thth import threadthrow,threadrun,queuefile
     now=__import__('thth.jst',fromlist=['now_jst']).now_jst();at=now.isoformat();until=(now+datetime.timedelta(hours=1)).isoformat()
@@ -348,7 +350,8 @@ def test_v2_media_per_segment_and_parent_survive_git_writeback(tmp_path,isolated
         wire['upload'][0]=(202,{'id':'1','type':'image','url':None})
         wire['poll']=[(200,{'id':'1','type':'image','url':'https://example.invalid/1'})]
         def stop():
-            if late=='revoke':(repo/REL).write_text((repo/REL).read_text().replace('status: approved','status: draft'))
+            # 4.4.1: 取り消しは台帳に書く（repo の原稿は元から draft）。
+            if late=='revoke':revoke_in_ledger(repo/REL,'alpha')
             else:monkeypatch.setattr(__import__('thth.jst',fromlist=['now_jst']),'now_jst',lambda:now+datetime.timedelta(hours=2))
         wire['on_poll']=stop
     results=threadthrow.publish_bundle('alpha',REL,adapter_factory=lambda *a:adapter,now=now,log=lambda _:None)

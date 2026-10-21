@@ -20,6 +20,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 - **調べる**: `thth topics <アカウント> --search <語>` で、その語の件数・投稿者の数・最新の投稿を見ます。`thth where` は「次にどこで話すか」を、自分がすでに絡んだ相手を重ねて探します。X の行には投稿者のフォロワー数（「フォロワー 1.2 万」）と投稿数も付きます（`--json` は `author_followers`・`author_posts`。保存しません）。
 - **出す**: `thth send` で今すぐ、`thth schedule` で予約、`--reply-to` で返信です。
 - **ブックマークの連投は記事と別に数える**（4.0.1）: はてなブックマークは主体の別の窓（既定 10 分に 10 件）で数え、超えても主体を止めずにその 1 件だけ断ります。1 日 30 件・同じホストへ 1 日 3 件（自分の記事は 1 日 1 件のまま）。記事の連投で止める作りは変わりません（[リリースノート 4.0.1](docs/リリースノート_4.0.1_2026-10-17.md)）。
+- **承認は利用者の repo に commit を積まない**（4.4.1）: `thth approve --confirm`・`thth revoke`・thth.me の予約と取り消しは、VM の承認の台帳（`state/<口座>/approvals.json`）に書き、repo の原稿は書き換えません（`thth approvals <口座>` で見られます）。口座の台帳を `require_gate: true` にすると、hub の承認の番号（`--approval A261021-25`）の無い確定を断ります（[リリースノート 4.4.1](docs/リリースノート_4.4.1_2026-10-21.md)）。
 - **止めた口座では timer は何も出さない**（4.3.1）: 安全装置か持ち主が止めた口座では、予約の投稿・返信を queue に残し、`thth account resume` で戻せば次の timer で出ます（[リリースノート 4.3.1](docs/リリースノート_4.3.1_2026-10-20.md)）。
 - **返信はまとめて出す**（4.3.0）: 時刻の過ぎた返信は承認したその場で、timer では 1 回でまとめて出します（返信の窓は返信だけで 10 分に 10 件・投稿の窓に数えない・投稿の間隔を掛けない）。使い方は「`publish_at` を今か過去にしてまとめて承認する」だけです（[リリースノート 4.3.0](docs/リリースノート_4.3.0_2026-10-19.md)）。
 - **1 件の断りでまとめを止めない**（4.2.2）: はてなに 1 件だけ断られた札は token を確かめてその札だけ外し、まとめを進めます。断られそうな札（半角の「%」・タグとコメントの長いもの）は 1 段目と lint で予告します（断りません）。止まったまとめは 60 分ごとにしか打たず、`thth bookmark batch-resume` で今すぐ見直せます。sparse-checkout の定義の外には記録を書かず、直し方を言います（[リリースノート 4.2.2](docs/リリースノート_4.2.2_2026-10-18.md)）。
@@ -60,7 +61,7 @@ thth send <アカウント> --text "こんにちは"
 
 ### 自分の機械で運用する人（運営者）
 
-アカウントの台帳を自分の機械に置き、下書きのファイルを承認してから timer で出す運用もできます。承認は 2 段（本文と digest を見せる → その digest で確定）で、記録は git に残ります。準備は [統一ガイド](docs/導入_承認を押すだけ.md)、日々の使い方は [プロジェクトのセッション向け](docs/使い方_プロジェクトのセッション向け_2026-09-09.md) にあります。
+アカウントの台帳を自分の機械に置き、下書きのファイルを承認してから timer で出す運用もできます。承認は 2 段（本文と digest を見せる → その digest で確定）で、記録は VM の承認の台帳に残ります（4.4.1 から利用者の repo には書きません）。準備は [統一ガイド](docs/導入_承認を押すだけ.md)、日々の使い方は [プロジェクトのセッション向け](docs/使い方_プロジェクトのセッション向け_2026-09-09.md) にあります。
 
 ## AI アシスタントから使う
 
@@ -96,7 +97,7 @@ MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけで
 
 `thth --help` で各コマンドの説明が出ます。
 
-動くもの（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`unanswered`・`handoff-report`・`observe`・`morning`・`events`・`summary`・`deliveries`・`media`・`article`・`conflict`・`hatena`・`bookmark`・`serve-reports`・`worker`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`where-log`・`who`・`retract`・`repost`・`unrepost`・`like`・`unlike`・`list`・`community`・`trends`・`counts`・`principal`・`fotolife`・`inflight`・`location`・`notifications`・`report`・`plaza`・`map`・`admin`・`login`・`logout`。
+動くもの（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`approvals`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`unanswered`・`handoff-report`・`observe`・`morning`・`events`・`summary`・`deliveries`・`media`・`article`・`conflict`・`hatena`・`bookmark`・`serve-reports`・`worker`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`where-log`・`who`・`retract`・`repost`・`unrepost`・`like`・`unlike`・`list`・`community`・`trends`・`counts`・`principal`・`fotolife`・`inflight`・`location`・`notifications`・`report`・`plaza`・`map`・`admin`・`login`・`logout`。
 
 ## 版と配布
 

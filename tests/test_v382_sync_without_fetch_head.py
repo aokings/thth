@@ -186,6 +186,10 @@ def test_確定を3本続けて打つと_間に別のfetchを挟んでも3本と
         result = run_thth(["approve", path, "--confirm", digest, "--by", "masaru"])
         assert result.returncode == 0, f"{i + 1} 本目: {result.stderr}"
 
+    # 4.4.1: 承認は VM の承認の台帳に書く（origin の原稿は draft のまま・commit を積まない）。
+    from thth import queuefile
     for name in names:
         shown = run_git(bare, ["show", f"main:docs/sns/queue/{name}"]).stdout
-        assert "status: approved" in shown and "approved_by: masaru" in shown
+        assert "status: draft" in shown
+        fm = queuefile.parse(os.path.join(isolated_account["queue_dir"], name)).front_matter
+        assert fm["status"] == "approved" and fm["approved_by"] == "masaru"
