@@ -24,7 +24,15 @@
 """
 from __future__ import annotations
 
+import json
+import os
+
 from . import jst
+
+# 最後に取り直した時刻の置き場（VM の state・`state/<口座>/reply_follow.json`）。
+# **利用者の repo には書かない**（masaru 10/21「THTH の記録は VM の台帳に持ち、利用者の
+# repo には積まない」）。新しい返信が無い取り直しは repo の台帳に 1 行も足さない。
+STATE_FILE = "reply_follow.json"
 
 DEFAULTS = {"every_minutes": 20, "live_hours": 48, "max_posts": 10}
 # 受け取る範囲（形の違う値は loader が断る・黙って既定に倒さない）。
@@ -85,10 +93,13 @@ def latest_reply_at(reply_rows: list):
     return latest
 
 
-def candidate(*, now, posted_at, reply_rows: list, fetch_rows: list, own_reply_at, cfg: dict):
+def candidate(*, now, posted_at, reply_rows: list, fetch_rows: list, own_reply_at, cfg: dict,
+              followed_at=None):
     """取り直す候補なら並べ替えの鍵（いちばん新しい動きの時刻）を返す。違えば None。
 
     `own_reply_at` は `sent/` の記録から見た、この投稿へ自分が返した最後の時刻（無ければ None）。
+    `followed_at` は VM の state（`reply_follow.json`）に持つ、最後に取り直した時刻。間隔は
+    これと台帳の取得の行の新しいほうから数える。
     """
     import datetime
     live = datetime.timedelta(hours=cfg["live_hours"])
@@ -96,7 +107,7 @@ def candidate(*, now, posted_at, reply_rows: list, fetch_rows: list, own_reply_a
     latest = max(activity) if activity else None
     if now - posted_at > live and (latest is None or now - latest > live):
         return None
-    last = last_fetch_at(fetch_rows)
+    last = max([t for t in (last_fetch_at(fetch_rows), followed_at) if t is not None], default=None)
     if last is not None and now - last < datetime.timedelta(minutes=cfg["every_minutes"]):
         return None
     return max([posted_at, *activity])
@@ -122,3 +133,56 @@ def pick(candidates: list, cfg: dict) -> list:
     """候補 `(鍵の時刻, 中身)` を新しい動きの順に並べ、上限の本数だけ返す。"""
     ordered = sorted(candidates, key=lambda c: c[0], reverse=True)
     return [c[1] for c in ordered[:cfg["max_posts"]]]
+
+
+def state_path(state_dir: str) -> str:
+    return os.path.join(state_dir, STATE_FILE)
+
+
+def read_state(state_dir: str, *, log=None) -> dict:
+    """post_id → 最後に取り直した時刻（aware datetime）。無い・壊れている・読めないなら空。
+
+    壊れていても採取は止めない（読めなければ空として扱い、log に 1 行）。空なら台帳の
+    取得の行だけで間隔を数えるので、取りすぎるのは高々 1 回。
+    """
+    path = state_path(state_dir)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        if log:
+            log(f"返信の取り直しの記録を読めないので空として扱います: {path}（{e.__class__.__name__}）")
+        return {}
+    last = data.get("last") if isinstance(data, dict) else None
+    if not isinstance(last, dict):
+        if log:
+            log(f"返信の取り直しの記録の形が違うので空として扱います: {path}")
+        return {}
+    out = {}
+    for pid, raw in last.items():
+        at = jst.parse(raw) if isinstance(raw, str) else None
+        if at is not None:
+            out[str(pid)] = at
+    return out
+
+
+def write_state(state_dir: str, state: dict, *, now, live_hours: int, log=None) -> None:
+    """最後に取り直した時刻を書く（tmp に書いて置き換え）。窓の外の古い行は落とす。
+
+    書けなくても採取は止めない（log に 1 行・次の回は台帳の取得の行で数える）。
+    """
+    import datetime
+    keep = now - datetime.timedelta(hours=max(live_hours, 1) * 2)
+    body = {"last": {pid: jst.iso(at) for pid, at in sorted(state.items()) if at >= keep}}
+    path = state_path(state_dir)
+    tmp = path + ".tmp"
+    try:
+        os.makedirs(state_dir, exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(body, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, path)
+    except OSError as e:
+        if log:
+            log(f"返信の取り直しの記録を書けませんでした（採取は続けます）: {path}（{e.__class__.__name__}）")

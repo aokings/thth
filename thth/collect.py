@@ -617,6 +617,9 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     follow_cfg = reply_follow_mod.settings(account_cfg)
     follow_due: list = []
     own_reply_at = reply_follow_mod.own_reply_times(sent_rows) if follow_cfg["enabled"] else {}
+    follow_state_dir = accounts_mod.state_dir_for(account_name)
+    follow_state = (reply_follow_mod.read_state(follow_state_dir, log=log)
+                    if follow_cfg["enabled"] else {})
 
     def consider_follow(*, post_id, posted_at, age_hours, reply_path, source, reply_to):
         if not follow_cfg["enabled"] or age_hours > collect_days * 24:
@@ -626,7 +629,8 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
             now=now, posted_at=posted_at,
             reply_rows=[r for r in rows if r.get("kind") != "fetch"],
             fetch_rows=[r for r in rows if r.get("kind") == "fetch"],
-            own_reply_at=own_reply_at.get(str(post_id)), cfg=follow_cfg)
+            own_reply_at=own_reply_at.get(str(post_id)), cfg=follow_cfg,
+            followed_at=follow_state.get(str(post_id)))
         if key is not None:
             follow_due.append((key, dict(post_id=post_id, age_hours=age_hours,
                                          reply_path=reply_path, source=source,
@@ -824,6 +828,10 @@ def collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     follow = _collect_follow(adapter, account_cfg, reply_follow_mod.pick(follow_due, follow_cfg),
                              now=now, owned=owned, paid_reads=paid_reads, log=log)
     touched.extend(follow["touched"])
+    if follow["followed"]:
+        follow_state.update({pid: now for pid in follow["followed"]})
+        reply_follow_mod.write_state(follow_state_dir, follow_state, now=now,
+                                     live_hours=follow_cfg["live_hours"], log=log)
 
     # --- X の自分の投稿の数字（Owned Reads）: 刻みを跨いだものを 100 本ずつ 1 回で
     if owned_due:
@@ -857,7 +865,8 @@ def _collect_follow(adapter, account_cfg: dict, due: list, *, now, owned, paid_r
     戻り値の `failed` は `[{"post_id", "reason"}]`。**ここで起きた失敗は採取の `errors` に
     入れない**（取り直しは刻みの補いで、取れなくても次の刻み・次の回で埋まる）。
     """
-    out = {"requested": len(due), "fetched": 0, "new_replies": 0, "failed": [], "touched": []}
+    out = {"requested": len(due), "fetched": 0, "new_replies": 0, "failed": [], "touched": [],
+           "followed": []}
     for entry in due:
         pid, reply_path = str(entry["post_id"]), entry["reply_path"]
         try:
@@ -871,18 +880,26 @@ def _collect_follow(adapter, account_cfg: dict, due: list, *, now, owned, paid_r
                            else adapter.conversation(pid))
             else:
                 replies = _fetch_replies(adapter, account_cfg, pid, entry["reply_to"], owned)
-            新しい = _save_replies(reply_path, pid, replies, now=now,
-                                   age_hours=entry["age_hours"], marks=[],
-                                   trigger=reply_follow_mod.TRIGGER, source=entry["source"])
+            # **新しい返信が無ければ利用者の repo に何も書かない**（masaru 10/21）。書けば
+            # 20 分おきに利用者の main へ「収集」の commit が積まれ、承認の target がずれる。
+            # 取り直した時刻は VM の state（`reply_follow.json`）にだけ持つ。
+            known = {reply_row_id(row) for row in _reply_rows(reply_path)}
+            if any(reply_row_id(row) and reply_row_id(row) not in known for row in replies):
+                新しい = _save_replies(reply_path, pid, replies, now=now,
+                                       age_hours=entry["age_hours"], marks=[],
+                                       trigger=reply_follow_mod.TRIGGER, source=entry["source"])
+            else:
+                新しい = []
         except Exception as e:  # 取り直しの失敗で採取も投稿も止めない
             reason = redact_mod.redact(str(e))
             out["failed"].append({"post_id": pid, "reason": reason})
             log(f"返信の取り直しができませんでした（次の回で取り直します）: {pid}: {reason}")
             continue
         out["fetched"] += 1
+        out["followed"].append(pid)
         out["new_replies"] += len(新しい)
-        out["touched"].append(reply_path)
         if 新しい:
+            out["touched"].append(reply_path)
             log(f"返信 {len(新しい)} 件（取り直し）: {pid}")
     return out
 

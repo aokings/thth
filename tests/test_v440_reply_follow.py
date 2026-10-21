@@ -64,6 +64,23 @@ def _ledger(a, pid):
     return [json.loads(line) for line in open(path, encoding="utf-8") if line.strip()]
 
 
+def _state_dir(a):
+    return accounts.state_dir_for(a["name"])
+
+
+def _state(a):
+    path = os.path.join(_state_dir(a), "reply_follow.json")
+    if not os.path.exists(path):
+        return {}
+    return json.load(open(path, encoding="utf-8"))["last"]
+
+
+def _ledger_bytes(a, pid):
+    cfg = accounts.load_account(a["name"])
+    path = os.path.join(accounts.data_dirs(cfg, a["name"])["replies"], f"{pid}.ndjson")
+    return path, (open(path, "rb").read() if os.path.exists(path) else None)
+
+
 def _run(a, adapter, now):
     return c.collect_once(a["name"], adapter=adapter, now=now, log=lambda _l: None)
 
@@ -83,8 +100,7 @@ def test_会話の続く投稿だけ取り直す(tmp_path, isolated_account_fact
     adapter.reply_calls.clear()
     _run(a, adapter, now + 30 * M)   # 刻みに当たらない回
     assert _called(adapter) == ["NEW"]
-    follow = [r for r in _ledger(a, "NEW") if r["kind"] == "fetch"][-1]
-    assert follow["trigger"] == "follow" and follow["marks"] == []
+    assert set(_state(a)) == {"NEW"}
 
 
 def test_古い投稿でも直近48時間に返信が付けば取り直す(tmp_path, isolated_account_factory, monkeypatch):
@@ -159,16 +175,17 @@ def test_刻みと数の記録を進めない(tmp_path, isolated_account_factory
     """取り直しは insights を読まず、`marks: []` で記録する。6h の刻みはそのまま 6h に取る。"""
     a = _account(isolated_account_factory, monkeypatch)
     _post(a, "P", POSTED)
-    adapter = Adapter(rows={"P": [{"id": "R1", "timestamp": jst.iso(POSTED + 2 * H)}]})
+    adapter = Adapter(rows={"P": [{"id": "R1", "timestamp": jst.iso(POSTED + 30 * M)}]})
     _run(a, adapter, POSTED + 1 * H)              # 1h の刻み（数と返信）
     assert adapter.insight_calls == ["P"]
-    _run(a, adapter, POSTED + 3 * H)              # 取り直し
+    adapter.rows["P"].append({"id": "R2", "timestamp": jst.iso(POSTED + 2 * H)})
+    _run(a, adapter, POSTED + 3 * H)              # 取り直し（R2 が新しい）
     assert adapter.insight_calls == ["P"], "取り直しが数を読んでいる"
     fetches = [r for r in _ledger(a, "P") if r["kind"] == "fetch"]
     assert [r["marks"] for r in fetches] == [[1], []]
     assert [r["trigger"] for r in fetches] == ["marks", "follow"]
     assert c.due_marks(3.0, fetches, marks=c.REPLY_MARKS_HOURS) == []
-    assert [r["id"] for r in _ledger(a, "P") if r["kind"] == "reply"] == ["R1"]
+    assert [r["id"] for r in _ledger(a, "P") if r["kind"] == "reply"] == ["R1", "R2"]
     _run(a, adapter, POSTED + 6 * H)              # 6h の刻みは刻みとして取る
     assert adapter.insight_calls == ["P", "P"]
     fetches = [r for r in _ledger(a, "P") if r["kind"] == "fetch"]
@@ -225,3 +242,58 @@ def test_max_posts0は切る():
     assert c.reply_follow_mod.settings({"media": "bluesky"})["enabled"] is True
     assert c.reply_follow_mod.settings({"media": "mastodon"})["enabled"] is True
     assert c.reply_follow_mod.settings({"media": "x"})["enabled"] is False
+
+
+def test_新しい返信が無い取り直しでは利用者のrepoに書かない(tmp_path, isolated_account_factory, monkeypatch):
+    """masaru 10/21: THTH の記録は VM の state に持ち、利用者の repo には積まない。"""
+    a = _account(isolated_account_factory, monkeypatch)
+    _post(a, "P", POSTED)
+    adapter = Adapter(rows={"P": [{"id": "R1", "timestamp": jst.iso(POSTED + 30 * M)}]})
+    _run(a, adapter, POSTED + 1 * H)              # 1h の刻みで R1 が入る
+    path, before = _ledger_bytes(a, "P")
+    result = _run(a, adapter, POSTED + 2 * H)     # 取り直し・新しい返信なし
+    assert _called(adapter) == ["P", "P"]
+    assert result["follow"]["fetched"] == 1 and result["follow"]["new_replies"] == 0
+    assert _ledger_bytes(a, "P")[1] == before, "新しい返信が無いのに repo の台帳に書いた"
+    assert path not in result["touched"], "新しい返信が無いのに commit の対象にした"
+    assert set(_state(a)) == {"P"}
+    # 新しい返信が来た回だけ repo に書く。
+    adapter.rows["P"].append({"id": "R2", "timestamp": jst.iso(POSTED + 2 * H + 10 * M)})
+    result = _run(a, adapter, POSTED + 2 * H + 20 * M)
+    assert path in result["touched"]
+    assert [r["id"] for r in _ledger(a, "P") if r["kind"] == "reply"] == ["R1", "R2"]
+
+
+def test_20分の判定はstateの時刻で効く(tmp_path, isolated_account_factory, monkeypatch):
+    a = _account(isolated_account_factory, monkeypatch)
+    _post(a, "P", POSTED)
+    adapter = Adapter()
+    _run(a, adapter, POSTED + 1 * H)              # 1h の刻み（台帳の取得の行は 1h）
+    adapter.reply_calls.clear()
+    os.makedirs(_state_dir(a), exist_ok=True)
+    with open(os.path.join(_state_dir(a), "reply_follow.json"), "w", encoding="utf-8") as f:
+        json.dump({"last": {"P": jst.iso(POSTED + 3 * H - 10 * M)}}, f)
+    _run(a, adapter, POSTED + 3 * H)              # 台帳では 2 時間・state では 10 分
+    assert _called(adapter) == [], "state の時刻を見ずに取り直した"
+    _run(a, adapter, POSTED + 3 * H + 10 * M)     # state から 20 分
+    assert _called(adapter) == ["P"]
+    assert _state(a)["P"] == jst.iso(POSTED + 3 * H + 10 * M)
+    _run(a, adapter, POSTED + 3 * H + 20 * M)     # 取り直しから 10 分（記録は state だけ）
+    assert _called(adapter) == ["P"]
+
+
+@pytest.mark.parametrize("content", ["{壊れ", "[]", '{"last": 3}'])
+def test_stateが壊れても採取は止まらない(tmp_path, isolated_account_factory, monkeypatch, content):
+    a = _account(isolated_account_factory, monkeypatch)
+    _post(a, "P", POSTED)
+    _run(a, Adapter(), POSTED + 1 * H)
+    os.makedirs(_state_dir(a), exist_ok=True)
+    with open(os.path.join(_state_dir(a), "reply_follow.json"), "w", encoding="utf-8") as f:
+        f.write(content)
+    adapter = Adapter()
+    lines = []
+    result = c.collect_once(a["name"], adapter=adapter, now=POSTED + 2 * H, log=lines.append)
+    assert result["errors"] == []
+    assert _called(adapter) == ["P"]
+    assert any("空として扱います" in line for line in lines)
+    assert set(_state(a)) == {"P"}, "壊れた記録を書き直していない"
