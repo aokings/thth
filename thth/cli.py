@@ -4571,6 +4571,9 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth trends`・`thth counts`（3.19.0・X のトレンドと語ごとの投稿数）。口は `thth/trends_cli.py` に閉じる。
     from . import trends_cli
     trends_cli.register(sub)
+    # `thth archive`（4.5.0・X の全期間の検索と件数）。口は `thth/archive_cli.py` に閉じる。
+    from . import archive_cli
+    archive_cli.register(sub)
 
     # `thth principal add|show|set|resume|auth`（4.0 S1・主体＝はてな ID）。口は `thth/principal_cli.py` に閉じる。
     from . import principal_cli
@@ -4745,5 +4748,7 @@ def _main(argv, real_argv) -> int:
     routed = remote.route(args, real_argv[0] if real_argv else '')
     if routed is not None:
         return routed
-    from . import read_coordination
-    return read_coordination.invoke(args,real_argv[0] if real_argv else '')
+    from . import read_coordination, x_archive
+    # timer・自動の経路の命令の間は、X の全期間の読み取りを断る印を立てる（4.5.0）。
+    with x_archive.guard_for(real_argv[0] if real_argv else ''):
+        return read_coordination.invoke(args,real_argv[0] if real_argv else '')

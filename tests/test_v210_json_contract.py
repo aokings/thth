@@ -89,6 +89,8 @@ COMMANDS += ['media observations', 'media observe']
 COMMANDS += ['bookmark batch-resume']
 # 4.4.1: VM の承認の台帳を書き出す口。
 COMMANDS += ['approvals']
+# 4.5.0: X の全期間の検索と件数（読むだけ・保存しない）。
+COMMANDS += ['archive']
 
 
 def test_json_table_covers_every_parser():
