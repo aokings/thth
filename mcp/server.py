@@ -821,7 +821,8 @@ SERVER_TOOLS = [
         ('schedule_request',('draft_id','confirm','approval'),('draft_id',)),
         # 4.0 S1 §7.3: はてなブックマーク（2 段・送信は S4）。tags は a,b の 1 行。
         # 4.0 S4 §11: delivery（自分の記事）か url（参照先）のどちらか 1 つ・op は add（既定）か delete。
-        ('bookmark_request',('delivery','url','comment','tags','confirm','op'),()),
+        # 4.5.3: approval（hub の承認の番号）。口座の台帳が require_gate: true なら --production に要る。
+        ('bookmark_request',('delivery','url','comment','tags','confirm','op','approval'),()),
         ('draft_list',(),()),('queue',(),())) ]
 
 # 公開・削除・予約の 3 本は、頼まれたらその場で行う（承認ページは無い・設計 3.13.0）。安全装置は効く。
@@ -858,7 +859,7 @@ SERVER_TOOLS += [
                     "付けると順番待ちに置く。付けるのは timer（7〜23 時・上限と連投の窓の中で 1 件ずつ間を散らし、1 件ごとに"
                     "1 件ずつの承認と同じ柵を通す）。結果が分からない札は打ち直さない",
      "inputSchema": {"type": "object", "properties": {"account": {"type": "string"}, "text": {"type": "string"},
-                                                      "confirm": {"type": "string"}},
+                                                      "confirm": {"type": "string"}, "approval": {"type": "string"}},
                      "required": ["account", "text"], "additionalProperties": False}},
     {"name": "thth_bookmark_batch_status",
      "description": "まとめて承認したブックマークの札の状態（読むだけ）: まとめごとの数・待ち・付けた・結果不明・断った札と理由・"
@@ -1192,10 +1193,12 @@ REMOTE_CLI = {
                                            if a.get("op") not in ("delete", "edit") or
                                            (a.get("op") == "edit" and a.get("comment") is not None) else []),
                                          *_opt("--tags", a.get("tags")),
-                                         *_opt("--confirm", a.get("confirm")), "--production", "--json"], None),
+                                         *_opt("--confirm", a.get("confirm")),
+                                         *_opt("--approval", a.get("approval")), "--production", "--json"], None),
     # 4.1: 札のファイルの中身は標準入力で（`thth bookmark batch <口座> -`）。
     "thth_bookmark_batch_request": (lambda a: ["bookmark", "batch", a["account"], "-",
-                                               *_opt("--confirm", a.get("confirm")), "--production", "--json"], "text"),
+                                               *_opt("--confirm", a.get("confirm")),
+                                               *_opt("--approval", a.get("approval")), "--production", "--json"], "text"),
     "thth_bookmark_batch_status": (lambda a: ["bookmark", "batch-status", a["account"], "--json",
                                               *_opt("--batch", a.get("batch"))], None),
     "thth_bookmark_batch_cancel": (lambda a: ["bookmark", "batch-cancel", a["account"], a["batch"], "--json",

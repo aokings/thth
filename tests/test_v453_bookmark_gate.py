@@ -102,3 +102,22 @@ def test_batch_without_require_gate_needs_no_number(bb):  # noqa: F811
     assert rc == 0, (out, err)
     [batch] = bookmark_batch.load_batches(ACCOUNT)
     assert "approval" not in batch
+
+
+# 監査（Fable 10/23）: MCP の bookmark_request・bookmark_batch_request も approval を受け、
+# 遠くの CLI に --approval を組む（無いと require_gate: true の口座で MCP からは必ず断られる）。
+def test_mcp_bookmark_tools_accept_and_forward_approval():
+    import os
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mcp"))
+    import server
+    tools = {t["name"]: t for t in server.SERVER_TOOLS}
+    for name in ("thth_bookmark_request", "thth_bookmark_batch_request"):
+        assert "approval" in tools[name]["inputSchema"]["properties"], name
+    add_argv = server.REMOTE_CLI["thth_bookmark_request"][0]({"account": "alpha", "url": EXTERNAL,
+                                                               "approval": "A261021-25"})
+    batch_argv = server.REMOTE_CLI["thth_bookmark_batch_request"][0]({"account": "alpha", "text": "",
+                                                                      "approval": "A261021-25"})
+    assert "--approval=A261021-25" in add_argv and "--approval=A261021-25" in batch_argv
+    assert not any(a.startswith("--approval") for a in
+                   server.REMOTE_CLI["thth_bookmark_request"][0]({"account": "alpha", "url": EXTERNAL}))

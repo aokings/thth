@@ -533,7 +533,9 @@ def test_T_S4_10b_MCPに足すのは引数だけで道具は足さない(mcp_ser
     assert first_table == BEFORE_S4_SERVER_TOOLS
     assert not [n for n in names if "announce" in n]
     tool = next(t for t in mcp_server.SERVER_TOOLS if t["name"] == "thth_bookmark_request")
-    assert set(tool["inputSchema"]["properties"]) == {"account", "delivery", "url", "comment", "tags", "confirm", "op"}
+    # 4.5.3: approval（hub の承認の番号・require_gate: true の口座の --production に要る）も引数として足した。
+    assert set(tool["inputSchema"]["properties"]) == {"account", "delivery", "url", "comment", "tags", "confirm", "op",
+                                                      "approval"}
     build, _ = mcp_server.REMOTE_CLI["thth_bookmark_request"]
     assert build({"account": "a", "url": EXTERNAL, "comment": "c"}) == [
         "bookmark", "add", "a", "--url=" + EXTERNAL, "--comment=c", "--production", "--json"]
