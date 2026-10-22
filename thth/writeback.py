@@ -612,6 +612,9 @@ def commit_local(repo_dir: str, *, rel_path, message: str) -> tuple:
     # asmon 関東セッション指摘 2026-09-10）。**commit に入るのはここに並べた
     # パスだけ**（`--only`）。
     rel_paths = [rel_path] if isinstance(rel_path, str) else list(rel_path)
+    # 前から rebase の途中なら commit しない（detached HEAD に積み、あとの abort で消える・4.4.2 監査）。
+    if _rebase_in_progress(repo_dir):
+        return False, REBASE_IN_PROGRESS.format(repo=repo_dir)
     # **sparse-checkout の定義の外は載せない**（4.2.2・設計 S6 §17）。`git add --sparse` で載せると、次の
     # 同期（rebase・merge）で git がそのファイルを作業ツリーから消し（skip-worktree）、追記の台帳を次の回が
     # 空から書き直して履歴を上書きする（本物の git で確かめた）。理由と直し方を言って、git には触らない。
@@ -652,6 +655,9 @@ def push_committed(repo_dir: str, *, validate=None) -> tuple:
     #
     # そこで index を tree として控えておき、rebase のあとに**stage されていた
     # パスだけ**を控えから戻す。worktree の中身には触らない（autostash が戻す）。
+    # 人や前の実行が残した rebase は、こちらで abort しない（その途中の作業を消す）。
+    if _rebase_in_progress(repo_dir):
+        return False, REBASE_IN_PROGRESS.format(repo=repo_dir)
     saved_tree, staged_paths = save_index(repo_dir)
     before_pull = _run_git(repo_dir, ["rev-parse", "HEAD"]).stdout.strip()
 
@@ -672,6 +678,10 @@ def push_committed(repo_dir: str, *, validate=None) -> tuple:
             rebase = _run_git(repo_dir, ["rebase", "--autostash", "@{u}"])
             if rebase.returncode != 0:
                 last_err = rebase.stderr
+                # ぶつかった rebase を途中のまま残さない（残すと次の取り込みも push も
+                # 「rebase の途中」で断られ続ける・kopicha #4254 10/22）。abort で元の commit と
+                # autostash に戻る。
+                _abort_rebase_in_progress(repo_dir)
                 continue
             if validate is not None and not validate():
                 raise PushValidationFailed(
@@ -686,6 +696,25 @@ def push_committed(repo_dir: str, *, validate=None) -> tuple:
 
     msg = "push に失敗しました（commit は残っています。手で push してください）: " + redact_mod.redact(last_err)
     return False, msg
+
+
+def _rebase_in_progress(repo_dir: str) -> bool:
+    for name in ("rebase-merge", "rebase-apply"):
+        marker = _run_git(repo_dir, ["rev-parse", "--git-path", name])
+        path = marker.stdout.strip()
+        if marker.returncode == 0 and path and os.path.exists(os.path.join(repo_dir, path)):
+            return True
+    return False
+
+
+REBASE_IN_PROGRESS = ("repo が rebase の途中です（前の取り込みがぶつかったまま）。書き戻しません。"
+                      "git -C {repo} status で見て、rebase --abort か --continue で戻してください")
+
+
+def _abort_rebase_in_progress(repo_dir: str) -> None:
+    """自分が始めた rebase がぶつかったときだけ呼ぶ（途中でなければ何もしない）。"""
+    if _rebase_in_progress(repo_dir):
+        _run_git(repo_dir, ["rebase", "--abort"])
 
 
 def save_index(repo_dir: str) -> tuple:

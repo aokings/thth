@@ -220,6 +220,10 @@ def _stale_clone_line(root: str, account_name: str) -> str | None:
     return unchecked or None
 
 
+class AmbiguousPath(ValueError):
+    """同じパスが複数の repo にある（取り込んでも解けないので、探し直さない）。"""
+
+
 def _translate_local_path(path: str, purpose: str | None = None) -> str | None:
     """手元の絶対パスを VM のパスに読み替える。読み替えたら 1 行言う（無ければ None）。
 
@@ -229,7 +233,7 @@ def _translate_local_path(path: str, purpose: str | None = None) -> str | None:
     """
     found, missing = _local_path_candidates(path)
     if len(found) > 1:
-        raise ValueError('複数の repo に同じパスがあります。VM の絶対パスで指定してください: '
+        raise AmbiguousPath('複数の repo に同じパスがあります。VM の絶対パスで指定してください: '
                          + ' / '.join(sorted(found)))
     if not found:
         if missing:
@@ -237,7 +241,7 @@ def _translate_local_path(path: str, purpose: str | None = None) -> str | None:
             stale = _stale_clone_line(root, name)
             raise ValueError(f'手元のパスを VM の repo の {rel} に読み替えましたが、VM にありません'
                              f'（repo: {root}）。' + (stale + "。" if stale else "")
-                             + f'push してから thth pull {name} で取り込んでください')
+                             + f'手元で push は済んでいますか（済んでいれば thth pull {name} で取り込めます）')
         return None
     candidate, (root, name) = next(iter(found.items()))
     print(f'手元のパスを VM のパスに読み替えました: {path} → {candidate}（repo: {root}）',
@@ -282,9 +286,85 @@ def _resolve_repo_path(path: str, purpose: str | None = None) -> str:
         print(f'repo 相対パスを解決しました: {path} → {candidate}（repo: {root}）', file=sys.stderr)
         return candidate
     if candidates:
-        raise ValueError('複数の repo に同じパスがあります。絶対パスで指定してください: '
+        raise AmbiguousPath('複数の repo に同じパスがあります。絶対パスで指定してください: '
                          + ' / '.join(sorted(candidates)))
     raise ValueError(f'VM の repo に無いパスです: {path}。thth queue <account> で置き場を確認してください')
+
+
+def _repos_for_lookup(items, account=None) -> dict:
+    """見つからなかったパスを探す先の repo（`{realpath: account 名}`）。
+
+    `account` を渡されたらその口座の repo だけ。手元（Mac）の絶対パスは読み替えた先の
+    repo、VM の絶対パスはそれを含む repo。相対パスは、その親のフォルダが在るか、
+    台帳の queue_dir で始まる repo だけ（打ち間違いで全口座の repo を動かさない）。
+    """
+    repos = {}
+    for name in accounts_mod.list_account_names():
+        if account is not None and name != account:
+            continue
+        try:
+            cfg = accounts_mod.load_account(name)
+        except (accounts_mod.AccountError, OSError, ValueError, TypeError, KeyError):
+            continue
+        repo = cfg.get('repo_dir')
+        if isinstance(repo, str) and os.path.isdir(repo):
+            queue_dir = cfg.get('queue_dir') if isinstance(cfg.get('queue_dir'), str) else ''
+            repos.setdefault(os.path.realpath(repo), (name, queue_dir.strip('/')))
+    if account is not None:
+        return {root: name for root, (name, _q) in repos.items()}
+    wanted = {}
+    for item in items:
+        if os.path.exists(item):
+            continue
+        if os.path.isabs(item):
+            _found, missing = _local_path_candidates(item)
+            for _rel, root, name in missing:
+                wanted.setdefault(root, name)
+            for root, (name, _q) in repos.items():
+                if os.path.abspath(item).startswith(root + os.sep):
+                    wanted.setdefault(root, name)
+            continue
+        rel = os.path.normpath(item).replace(os.sep, '/')
+        for root, (name, queue_dir) in repos.items():
+            parent = os.path.dirname(os.path.join(root, rel))
+            if os.path.isdir(parent) or (queue_dir and rel.startswith(queue_dir + '/')):
+                wanted.setdefault(root, name)
+    return wanted
+
+
+def _sync_for_lookup(items, account=None, wait=0) -> tuple:
+    """4.4.2: lint・approve でパスが VM に無いとき、探す先の repo を取り込む。
+
+    push した直後に「VM の repo に無いパス」と断っていた（取り込みは approve の中でも
+    パスを探したあとだった・計画 4.4 ①）。取り込みは `thth pull` と同じ
+    （repo ロックの下で `sync_repo`・早送りだけ）。ロックは `--wait` の秒数まで待つ。
+    戻り値 `(1 つでも HEAD が進んだか, 探し直しても無いときに添える行の一覧)`。
+    """
+    moved, lines = False, []
+    for root, name in _repos_for_lookup(items, account).items():
+        before = writeback_mod._run_git(root, ["rev-parse", "--short", "HEAD"]).stdout.strip()
+        repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(root))
+        try:
+            lock_mod.acquire(repo_lock, wait)
+        except lock_mod.LockBusy:
+            lines.append(f"{name}: いまこの repo を別の実行が使っているので取り込めませんでした"
+                         "（--wait <秒> で空くのを待てます）")
+            continue
+        try:
+            synced, sync_err, _sha = writeback_mod.sync_repo(root)
+        finally:
+            repo_lock.release()
+        if not synced:
+            lines.append(f"{name}: 取り込めませんでした: {sync_err}")
+            continue
+        after = writeback_mod._run_git(root, ["rev-parse", "--short", "HEAD"]).stdout.strip()
+        if after and after != before:
+            moved = True
+            print(f"{name}: パスが VM に無かったので取り込みました: {before} → {after}", file=sys.stderr)
+        upstream = writeback_mod._run_git(root, ["rev-parse", "--short", "@{u}"]).stdout.strip()
+        lines.append(f"{name}: 取り込んでも VM にありません（VM は {after}・remote は {upstream or '不明'}）。"
+                     "手元で commit と push は済んでいますか")
+    return moved, lines
 
 
 def _require_vm_path(path: str, *, what: str = "") -> str | None:
@@ -316,7 +396,7 @@ def _require_vm_path(path: str, *, what: str = "") -> str | None:
     )
 
 
-def _expand_targets(files, *, only_draft: bool, account=None, purpose=None) -> tuple:
+def _expand_targets(files, *, only_draft: bool, account=None, purpose=None, wait=0) -> tuple:
     """ファイルとディレクトリの混在を受けて、対象のファイル一覧に展開する。
 
     **ディレクトリを受けられるようにした**（kopicha セッション指摘 2026-09-10）。
@@ -339,8 +419,21 @@ def _expand_targets(files, *, only_draft: bool, account=None, purpose=None) -> t
     try:
         items = [_resolve_repo_path(item, purpose) for item in items]
     except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return None, ''
+        # 4.4.2: lint・approve は、無いパスがあれば取り込んで 1 回だけ探し直す（計画 4.4 ①）。
+        moved, lines = (_sync_for_lookup(items, account, wait)
+                        if purpose in ("lint", "approve") and not isinstance(exc, AmbiguousPath) else (False, []))
+        retried = None
+        if moved:
+            try:
+                retried = [_resolve_repo_path(item, purpose) for item in items]
+            except ValueError as again:
+                exc = again
+        if retried is None:
+            print(str(exc), file=sys.stderr)
+            for line in lines:
+                print(line, file=sys.stderr)
+            return None, ''
+        items = retried
     missing_msgs = []
     for item in items:
         if os.path.isdir(item):
@@ -671,7 +764,7 @@ def cmd_approve(args) -> int:
               " --confirm-file <file>（1 行に「<原稿のパス> <digest>」）。", file=sys.stderr)
         return 2
     paths, note = _expand_targets(args.file, only_draft=True, account=getattr(args, "account", None),
-                                  purpose="approve")
+                                  purpose="approve", wait=getattr(args, "wait", 0))
     if paths is None:
         # **VM に無いパスは `_expand_targets` が案内済み**（T8-1）。
         return 2
@@ -3605,6 +3698,9 @@ def cmd_send(args) -> int:
         if vm_msg:
             # **VM に無いパスは素の traceback でなく案内で断る**（T8-1）。
             print(vm_msg, file=sys.stderr)
+            # 4.4.2: 手元のファイルの本文なら標準入力で通る（MMR 1）。
+            print(f"  - 手元のファイルの本文なら標準入力で渡せます: thth send {args.account} … < <ファイル>",
+                  file=sys.stderr)
             return 2
         with open(args.text_file, encoding="utf-8") as f:
             text = f.read()
