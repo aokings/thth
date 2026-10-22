@@ -118,7 +118,12 @@ def _validate(root, allowed, *, allow_unreadable=False, allow_empty=False):
         if path.is_dir():
             for directory, dirs, files in os.walk(path, followlinks=False, onerror=_walk_error):
                 for name in dirs + files:
-                    inspect(Path(directory) / name)
+                    # A child listed then removed (e.g. a ledger's temp file after os.replace)
+                    # cannot be read through this tree; skip it instead of failing the preflight.
+                    try:
+                        inspect(Path(directory) / name)
+                    except FileNotFoundError:
+                        continue
 
     scan(account_dir)  # Account definitions must be safe before load_account opens them.
     scan(resolved / "state" / "_leave")

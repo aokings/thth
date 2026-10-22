@@ -13,6 +13,11 @@ from tests.test_v212_server_writes import env,draft
 from tests.test_mcp import _load_server_module
 
 
+# 「待たない」の上限。待つなら保持者が手放すまで（ここでは無期限に）止まるので、1 秒と 5 秒の差は
+# 負荷の差でしかない（-n auto と他の試験が重なり 2.2 秒で揺れた・10/22）。
+NO_WAIT=5
+
+
 @contextlib.contextmanager
 def exclusive(name='alpha',stopped=False):
     code="""import sys
@@ -59,7 +64,7 @@ def test_cli_reads_do_not_wait_or_call_core_when_leave_holds_exclusive(env,conte
     command=[x.replace('{queue}',str(content[0])).replace('{study}',str(content[1])) for x in command]
     with exclusive():
         start=time.monotonic();rc=cli.main(command);elapsed=time.monotonic()-start
-    captured=capsys.readouterr();assert rc==2 and elapsed<1
+    captured=capsys.readouterr();assert rc==2 and elapsed<NO_WAIT
     assert json.loads(captured.out)=={'error':'account_leaving','cannot_say':['account_leaving']}
     assert __import__('tests.conftest').conftest.is_refusal(captured.err, 'account_leaving')  # 3.1.2 §3.5・3.3.0 B3: 断りの理由行の後ろに打てる報告の 1 行
 
@@ -68,7 +73,7 @@ def test_dry_send_input_then_nonwaiting_lease(env,tmp_path,capsys):
     text=tmp_path/'text';text.write_text('synthetic body')
     with exclusive():
         start=time.monotonic();rc=cli.main(['send','alpha','--text-file',str(text)])
-        assert time.monotonic()-start<1 and rc==2
+        assert time.monotonic()-start<NO_WAIT and rc==2
     assert __import__('tests.conftest').conftest.is_refusal(capsys.readouterr().err, 'account_leaving')  # 3.1.2 §3.5・3.3.0 B3: 断りの理由行の後ろに打てる報告の 1 行
     assert not (env['root']/'state/alpha/sent').exists()
 
@@ -108,7 +113,7 @@ def test_pure_reports_take_lease_and_preserve_nonempty_success(env,content,monke
             denied=call();assert denied.get('isError') and denied['content'][0]['text']=='account_leaving'
         else:
             with pytest.raises(service.ReportServiceError,match='^account_leaving$'):call()
-        assert time.monotonic()-start<1
+        assert time.monotonic()-start<NO_WAIT
 
 
 def test_real_http_returns_specific_503_without_wait(env,content,monkeypatch):
@@ -121,7 +126,7 @@ def test_real_http_returns_specific_503_without_wait(env,content,monkeypatch):
                 conn=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=2)
                 start=time.monotonic();conn.request('POST','/report',json.dumps({'operation':'analytics_report','account':'alpha'}),{'Authorization':'Bearer '+env['bearer'],'Content-Type':'application/json'})
                 response=conn.getresponse();payload=json.loads(response.read());conn.close()
-                assert time.monotonic()-start<1 and response.status==503
+                assert time.monotonic()-start<NO_WAIT and response.status==503
                 assert payload=={'error':'account_leaving','cannot_say':['account_leaving']}
         finally:server.shutdown();worker.join()
 
@@ -198,7 +203,7 @@ def test_read_lease_refuses_unsafe_coordination_file(env,kind,tmp_path,capsys):
 def test_all_stopped_project_busy_is_not_successful_zero(env,content,command,capsys):
     with exclusive(stopped=True):
         start=time.monotonic();rc=cli.main(command)
-        assert time.monotonic()-start<1 and rc==2
+        assert time.monotonic()-start<NO_WAIT and rc==2
     assert json.loads(capsys.readouterr().out)['cannot_say']==['account_leaving']
 
 

@@ -129,3 +129,21 @@ def test_root_parent_alias_preserves_in_root_symlink_detection(dedicated, tmp_pa
     (dedicated / "state").symlink_to(target)
     with pytest.raises(IsolationError, match="unsafe_report_tree"):
         validate_environment(str(root), {"demo": "project"})
+
+
+# 揺れ（4.5.0 の publish run 39662720366）: 木を歩く間に台帳の一時ファイルが os.replace で消えると、
+# lstat の FileNotFoundError が invalid_report_environment になっていた。消えた子は読めないので見逃す。
+def test_entry_vanishing_during_walk_is_tolerated(dedicated, monkeypatch):
+    data = dedicated / "state/demo"
+    data.mkdir(parents=True)
+    (data / "approvals.json").write_text("{}")
+    real_walk = os.walk
+
+    def racing_walk(path, *args, **kwargs):
+        for directory, dirs, files in real_walk(path, *args, **kwargs):
+            if Path(directory).resolve() == data.resolve():
+                files = [*files, "approvals.json.0f0f.tmp"]   # 並べた直後に入れ替えで消えた
+            yield directory, dirs, files
+
+    monkeypatch.setattr(os, "walk", racing_walk)
+    validate_environment(str(dedicated), {"demo": "project"})

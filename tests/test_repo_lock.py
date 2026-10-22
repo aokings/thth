@@ -64,7 +64,7 @@ def test_7_同じrepo_dirの2アカウント同時実行は後から来たほう
     isolated_account_factory(name="acct-b-threads", repo_dir=shared_repo)
 
     holder = subprocess.Popen(
-        [sys.executable, HOLD_REPO_LOCK, shared_repo, "3"],
+        [sys.executable, HOLD_REPO_LOCK, shared_repo, "60"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ),
     )
     try:
@@ -80,6 +80,7 @@ def test_7_同じrepo_dirの2アカウント同時実行は後から来たほう
         result_a = run_thth(["throw", acct_a["name"]])
         assert result_a.returncode == 1
     finally:
+        holder.terminate()   # 保持の秒数に頼らない（負荷で 3 秒を越えて揺れた・10/22）
         holder.wait(timeout=10)
 
 
@@ -88,7 +89,7 @@ def test_repoロックが解放されれば続けて投げられる(isolated_acc
     isolated_account_factory(name="acct-c-threads", repo_dir=shared_repo)
 
     holder = subprocess.Popen(
-        [sys.executable, HOLD_REPO_LOCK, shared_repo, "1"],
+        [sys.executable, HOLD_REPO_LOCK, shared_repo, "60"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ),
     )
     try:
@@ -97,10 +98,11 @@ def test_repoロックが解放されれば続けて投げられる(isolated_acc
         blocked = run_thth(["throw", "acct-c-threads"])
         assert blocked.returncode == 1
     finally:
+        # 保持の秒数に頼らず手で解く（-n auto の負荷で throw の起動が 1 秒を越え、揺れた・10/22）。
+        # flock は保持者が終われば OS が外す。
+        holder.terminate()
         holder.wait(timeout=10)
 
-    import time
-    time.sleep(0.2)
     result = run_thth(["throw", "acct-c-threads", "--json"])
     assert result.returncode == 0
 

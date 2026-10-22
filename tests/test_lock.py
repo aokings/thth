@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import time
 
 from tests.conftest import BIN_THTH, run_thth, write_queue_file
 
@@ -45,7 +44,7 @@ def test_9_ロック解放後は続けて投げられる(isolated_account):
     account_name = isolated_account["name"]
 
     holder = subprocess.Popen(
-        [sys.executable, HOLD_LOCK, account_name, "1"],
+        [sys.executable, HOLD_LOCK, account_name, "60"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ),
     )
     try:
@@ -54,9 +53,10 @@ def test_9_ロック解放後は続けて投げられる(isolated_account):
         blocked = run_thth(["throw", account_name])
         assert blocked.returncode == 1
     finally:
+        # 保持の秒数に頼らず手で解く（-n auto の負荷で throw の起動が 1 秒を越え、揺れた・10/22）。
+        holder.terminate()
         holder.wait(timeout=10)
 
     # holder が解放した後は、通常どおり dry-run で投げられる（exit 0・skip）。
-    time.sleep(0.2)
     result = run_thth(["throw", account_name, "--json"])
     assert result.returncode == 0
