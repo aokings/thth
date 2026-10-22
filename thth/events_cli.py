@@ -51,6 +51,11 @@
   `bookmark.bookmarks[]`・自分の主体の分は台帳の時点で外してある）。配信ごとに同じ `user` は 1 度だけ。`ref` は
   配信 id、id は `"ev_" + sha256("thth.reaction/1|<delivery>|bm|<user>")[:24]`（時刻なし）。summary に本文と
   `user` は入れない（本文は `thth article reactions --comments`）。
+- `schedule_low`（4.5.2・続いている状態）: 直近 7 日に公開している SNS の口座で、承認済みの予約の最後が
+  今から 48 時間より前（または 1 本も無い）。10/19〜22 にこぴちゃ・関東の予約が尽きて投稿が止まった
+  （人が気づいたのは止まったあと）ことの再発防止。`ref` は `stock`（在庫が戻れば消える・同じ口座では
+  同じ id）、`stock_hours`（最後の予約までの時間・無ければ 0）・`approved_future`（承認済みで未来の本数）・
+  `floor_hours`（48）・`last_publish_at` が付く。書かず、媒体の API も呼ばない。
 - `delivery_resolved`（4.0 S5 §5.3）: 人が衝突を解いた（台帳の `op: resolve` の行・状態に関わらず）。
   id は配信の台帳の出来事と同じ（`thth.delivery/1|<delivery>|<seq>`）。
 
@@ -99,7 +104,9 @@ KINDS = ("published", "retracted", "reply_received", "mention_received",
          # 4.0 S5: 正本を直したのに更新していない（続いている状態）・人が衝突を解いた。
          "delivery_behind", "delivery_resolved",
          # 4.0 S6 §6.3: 第三者がはてなブックマークを付けた（反応の台帳から・本文と user は入れない）。
-         "bookmark_received")
+         "bookmark_received",
+         # 4.5.2: 動いている口座の承認済みの予約が 48 時間分を切った（続いている状態・在庫切れの前の知らせ）。
+         "schedule_low")
 # 反応の出来事の id の版の語（設計 4.0 S6 §6.3）。
 REACTION_EVENT_PREFIX = "thth.reaction/1"
 # 正本を直した配信の出来事の id の版の語（設計 4.0 S5 §3.4）。
@@ -143,6 +150,11 @@ def delivery_event_id(delivery, seq) -> str:
     return "ev_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
+# 在庫（承認済みで未来の予約）がこの時間を切ったら知らせる／この日数のうちに公開していれば「動いている口座」。
+STOCK_FLOOR_HOURS = 48
+STOCK_ACTIVE_DAYS = 7
+
+
 def _event(kind, account, occurred, recorded, ref, summary, *, _id=None, **extra) -> dict:
     occurred_at = jst.iso(occurred) if occurred is not None else None
     recorded_at = jst.iso(recorded) if recorded is not None else None
@@ -174,6 +186,39 @@ def _sent_events(name, titles):
         if at is not None:
             out.append(_event("retracted", name, at, at, post_id, f"取り下げ: {titles[post_id]}"))
     return out
+
+
+def _stock_events(name, cfg, now, sent_rows):
+    """予約の在庫が薄い口座（続いている状態）。読むだけ。
+
+    「動いている口座」は直近 `STOCK_ACTIVE_DAYS` 日に THTH で公開した SNS の口座（手でしか出さない口座・
+    使っていない口座・はてなは対象にしない）。在庫は承認済みで時刻が未来の予約（待ちの行は除く）で、
+    最後の時刻が `STOCK_FLOOR_HOURS` 時間より先まで届いていれば足りている。
+    """
+    if cfg.get("media") == "hatenablog":
+        return []
+    since = now - datetime.timedelta(days=STOCK_ACTIVE_DAYS)
+    recent = [row for row in sent_rows if row["kind"] == "published"
+              and jst.parse(row["occurred_at"]) >= since]
+    if not recent:
+        return []
+    from . import report as report_mod
+    approved = [row for row in report_mod.schedule(name, now=now)
+                if row["status"] == "approved" and not row["past"] and not row.get("waiting_for")]
+    last = max((jst.parse(row["publish_at"]) for row in approved), default=None)
+    horizon = now + datetime.timedelta(hours=STOCK_FLOOR_HOURS)
+    if last is not None and last >= horizon:
+        return []
+    hours = max(0, int((last - now).total_seconds() // 3600)) if last is not None else 0
+    if last is None:
+        summary = (f"承認済みの予約がありません（直近 {STOCK_ACTIVE_DAYS} 日に {len(recent)} 本公開）。"
+                   f"{STOCK_FLOOR_HOURS} 時間分を切っています")
+    else:
+        summary = (f"予約の在庫が薄い: 承認済みの最後は {jst.iso(last)[:16].replace('T', ' ')}"
+                   f"（あと {hours} 時間分・{STOCK_FLOOR_HOURS} 時間を切っています）")
+    return [_event("schedule_low", name, None, None, "stock", summary, ongoing=True,
+                   stock_hours=hours, approved_future=len(approved), floor_hours=STOCK_FLOOR_HOURS,
+                   last_publish_at=jst.iso(last) if last is not None else None)]
 
 
 def _reply_events(name, titles, allowed_names):
@@ -574,8 +619,10 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
             continue
         read.append(name)
         titles: dict = {}
+        sent_rows = []
         try:
-            events += _sent_events(name, titles)
+            sent_rows = _sent_events(name, titles)
+            events += sent_rows
         except Exception:  # noqa: BLE001 — 1 つの出所で全部を落とさない
             cannot_say.add("sent_unreadable")
         try:
@@ -625,6 +672,10 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
         rows, cannot = _state_events(name, cfg)
         events += rows
         cannot_say.update(cannot)
+        try:
+            events += _stock_events(name, cfg, now, sent_rows)
+        except Exception:  # noqa: BLE001 — queue が読めなくても他の出所は出す
+            cannot_say.add("queue_unreadable")
     events.sort(key=_key)
 
     previous = None

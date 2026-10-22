@@ -162,7 +162,8 @@ def test_eventsは記録から並べ他人の本文を入れない(lived):
     assert payload["schema"] == "thth.events/1"
     kinds = [row["kind"] for row in payload["events"]]
     assert sorted(kinds) == sorted(["published", "retracted", "reply_received", "mention_received",
-                                    "account_stopped", "publish_held", "inflight_open"])
+                                    "account_stopped", "publish_held", "inflight_open",
+                                    "schedule_low"])   # 4.5.2: 直近に公開していて承認済みの予約が無い口座
     for row in payload["events"]:
         assert {"schema", "kind", "account", "at", "occurred_at", "recorded_at", "ref", "summary",
                 "event_id"} <= set(row)
@@ -206,7 +207,7 @@ def test_eventsのCLIとlimitと断り(lived, capsys, monkeypatch):
     monkeypatch.setattr(jst, "now_jst", lambda: NOW)
     assert cli.main(["events", ACCOUNT, "--since", "24h", "--limit", "2", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["n"] == 2 and payload["n_total"] == 7
+    assert payload["n"] == 2 and payload["n_total"] == 8   # 4.5.2: schedule_low が 1 件増える
     assert cli.main(["events", ACCOUNT, "--since", "きのう", "--json"]) == 2
     assert json.loads(capsys.readouterr().out)["cannot_say"] == ["invalid_since"]
     assert cli.main(["events", "no-such", "--json"]) == 2
@@ -318,26 +319,30 @@ def test_eventsのカーソルは遅れて記録されたものを取りこぼ�
     first = events_cli.build(ACCOUNT, since="7d", now=NOW)
     cursor = first["next_cursor"]
     assert cursor.startswith("c1.")
+    # 返信の流れを見る試験なので、始まりの時刻の無い続いている状態（schedule_low・毎回返る）は除いて数える。
+    def refs(payload):
+        return [r["ref"] for r in payload["events"] if r["kind"] != "schedule_low"]
+
     # 何も増えていなければ続きは空。
     empty = events_cli.build(ACCOUNT, after=cursor, now=NOW)
-    assert empty["events"] == [] and empty["next_cursor"] == cursor
+    assert refs(empty) == [] and empty["next_cursor"] == cursor
     # 採取の 1 回の中で付いた時刻が、前に読んだ最後の時刻より少し前（遅れて書かれた）。
     t_last = max(jst.parse(r["recorded_at"]) for r in first["events"] if r["recorded_at"])
     _reply("R-LATE", written=jst.iso(t_last - datetime.timedelta(minutes=20)),
            collected=jst.iso(t_last - datetime.timedelta(minutes=5)))
     _reply("R-NEXT", written=jst.iso(NOW), collected=jst.iso(NOW + datetime.timedelta(minutes=1)))
     got = events_cli.build(ACCOUNT, after=cursor, now=NOW + datetime.timedelta(minutes=2))
-    assert [r["ref"] for r in got["events"]] == ["R-LATE", "R-NEXT"]
+    assert refs(got) == ["R-LATE", "R-NEXT"]
     # 次のカーソルの続きには、もう出さない。
-    assert events_cli.build(ACCOUNT, after=got["next_cursor"], now=NOW)["events"] == []
+    assert refs(events_cli.build(ACCOUNT, after=got["next_cursor"], now=NOW)) == []
     # limit で古い方から刻んでも、つないで読めば同じ。
     page = events_cli.build(ACCOUNT, after=cursor, limit=1, now=NOW)
     rest = events_cli.build(ACCOUNT, after=page["next_cursor"], now=NOW)
-    assert [r["ref"] for r in page["events"] + rest["events"]] == ["R-LATE", "R-NEXT"]
+    assert [r["ref"] for r in page["events"] + rest["events"] if r["kind"] != "schedule_low"] == ["R-LATE", "R-NEXT"]
     # event_id からも続きを読める（今の流れの、記録した時刻の順でその後ろ。遅れて書かれた R-LATE の
     # 後ろには先に記録された R1 も並ぶ——取りこぼさない側。重なりは受け手が event_id で除く）。
-    late_id = got["events"][0]["event_id"]
-    assert [r["ref"] for r in events_cli.build(ACCOUNT, after=late_id, now=NOW)["events"]] == ["R1", "R-NEXT"]
+    late_id = [r for r in got["events"] if r["kind"] != "schedule_low"][0]["event_id"]
+    assert refs(events_cli.build(ACCOUNT, after=late_id, now=NOW)) == ["R1", "R-NEXT"]
 
 
 def test_eventsのカーソルの断り(lived):
