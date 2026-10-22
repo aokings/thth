@@ -54,4 +54,26 @@ esac
 if [ -n "$TTY_FLAG" ]; then
   exec ssh -t "$HOST" "$REMOTE"
 fi
-exec ssh "$HOST" "$REMOTE"
+
+# 4.5.3: 標準入力は、読むと分かっているときだけ VM へ渡す（こぴちゃ 第3 の 3）。
+# `while read f; do thth revoke "$f"; done < list` が 1 本で止まった——VM の thth は標準入力を
+# 読まないのに、**ssh が手元の標準入力を先に吸い上げて VM へ送っていた**（ループの残りの行が消える）。
+# 渡すのは: 引数に `-`（`--confirm-file -`・`bookmark batch <口座> -`・`revoke -` など）か `…=-` か
+# `--…stdin`（`--stdin`・`--json-stdin`・`--secret-stdin` など）があるとき、と、`send` で本文の引数
+# （`--text`・`--text-file`・`--media`）が無いとき（4.4.2 で案内した `thth send <口座> … < <ファイル>`
+# の互換）。それ以外は `ssh -n`（標準入力を /dev/null に）。
+STDIN_WANTED=""
+SEND_BODY_GIVEN=""
+for arg in "$@"; do
+  case "$arg" in
+    -|*=-|--*stdin) STDIN_WANTED=1 ;;
+    --text|--text=*|--text-file|--text-file=*|--media|--media=*) SEND_BODY_GIVEN=1 ;;
+  esac
+done
+if [ "${1:-}" = "send" ] && [ -z "$SEND_BODY_GIVEN" ]; then
+  STDIN_WANTED=1
+fi
+if [ -n "$STDIN_WANTED" ]; then
+  exec ssh "$HOST" "$REMOTE"
+fi
+exec ssh -n "$HOST" "$REMOTE"

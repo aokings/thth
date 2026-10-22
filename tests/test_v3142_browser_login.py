@@ -327,7 +327,8 @@ def test_ラッパは_login_logout_だけ手元の_thth_に渡す(shims, argv):
 def test_ラッパはそれ以外を今までどおり_VM_へ(shims, argv):
     rc, log = call_wrapper(shims, *argv)
     assert rc == 0
-    assert log.startswith("ssh wt ") and log.count("\n") == 1, "手元の thth は呼ばれない"
+    # 4.5.3: 標準入力を読まない命令は `ssh -n`（ループの標準入力を吸わない）。
+    assert log.startswith("ssh -n wt ") and log.count("\n") == 1, "手元の thth は呼ばれない"
     assert log.rstrip("\n").endswith("exec thth" + "".join(" " + a for a in argv))
 
 

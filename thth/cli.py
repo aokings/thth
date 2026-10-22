@@ -224,14 +224,83 @@ class AmbiguousPath(ValueError):
     """同じパスが複数の repo にある（取り込んでも解けないので、探し直さない）。"""
 
 
-def _translate_local_path(path: str, purpose: str | None = None) -> str | None:
+def _front_matter_of(path: str) -> dict | None:
+    """原稿の front-matter（台帳の承認を重ねたもの・読めなければ None）。束（`thth: 2`）も読む。"""
+    try:
+        if not os.path.isfile(path):
+            return None
+        from . import bundle as bundle_mod
+        with open(path, encoding="utf-8") as stream:
+            text = stream.read()
+        if bundle_mod.is_bundle_text(text):
+            return bundle_mod.parse_text(text, path).front_matter
+        return queuefile.parse(path).front_matter
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+
+
+def _front_matter_account(path: str):
+    """原稿の front-matter の account（読めなければ None）。"""
+    fm = _front_matter_of(path)
+    return fm.get("account") if isinstance(fm, dict) else None
+
+
+def _previous_approval(path: str, approved_sha: str) -> dict | None:
+    """4.5.3: いま承認済みの原稿を承認し直すとき、前の承認（台帳を重ねて見たもの）。無ければ None。
+
+    承認済みの原稿の本文を直したら、`thth revoke` を挟まずに `thth approve` の 2 段だけで承認し直せる
+    （確定が台帳の承認を新しい指紋で上書きする・4.4.1 から）。それが利用者に伝わっていなかったので
+    （こぴちゃ 第3 の 6「直すたびに revoke → push → approve 2 段 → gate」）、1 段目で「差し替わる」と言う。
+    """
+    fm = _front_matter_of(path)
+    if not isinstance(fm, dict) or fm.get("status") != "approved":
+        return None
+    old = fm.get("approved_sha")
+    old = old if isinstance(old, str) else ""
+    return {"approved_sha": old[:approval_mod.APPROVE_DIGEST_LENGTH] or None,
+            "approved_at": fm.get("approved_at"), "approved_by": fm.get("approved_by"),
+            "same": bool(old) and old == approved_sha}
+
+
+def _replaces_line(one: dict) -> str | None:
+    """1 段目に出す「前の承認に差し替わる」の 1 行（4.5.3）。"""
+    prev = one.get("replaces")
+    if not prev:
+        return None
+    who = "・".join(str(v) for v in (prev.get("approved_at"), prev.get("approved_by")) if v)
+    if prev.get("same"):
+        return (f"  ◇ 同じ中身で承認済みです（{who}）。確定すると承認の名乗りと時刻が新しくなります")
+    return (f"  ◇ 承認済みの原稿です（{who}・前の digest {prev.get('approved_sha') or '不明'}）。"
+            "確定すると今の本文の承認に差し替わります（thth revoke は要りません）")
+
+
+def _narrow_by_account(candidates: dict, account) -> dict:
+    """4.5.3: 同じ相対パスが複数の repo にあるとき、`--account` で 1 つに絞る（こぴちゃ 第3 の 2）。
+
+    `candidates` は `{VM のパス: (repo, {その repo を持つ口座の名前})}`。残すのは、その口座の repo の中の
+    パスか、原稿の front-matter の account が合うもの（ディレクトリは前者だけ）。asmon の repo と
+    kopicha の repo に同じ `docs/sns/queue/…` があると、相対パスでは「複数の repo に同じパス」で
+    断るしかなかった（10/20 に 10 本）。
+    """
+    if not account:
+        return candidates
+    return {path: value for path, value in candidates.items()
+            if account in value[1] or _front_matter_account(path) == account}
+
+
+def _translate_local_path(path: str, purpose: str | None = None, account=None) -> str | None:
     """手元の絶対パスを VM のパスに読み替える。読み替えたら 1 行言う（無ければ None）。
 
     `purpose` が `lint`・`preview` なら VM 側の clone の古さも言う（読み替えた先は VM の
     本文——手元で直したものがまだ届いていないかもしれない）。`approve` なら digest が
-    VM の本文（同期のあと）で出ることを言う。
+    VM の本文（同期のあと）で出ることを言う。`account`（4.5.3）があれば複数の repo に
+    当たったときにその口座で絞る。
     """
     found, missing = _local_path_candidates(path)
+    if len(found) > 1 and account:
+        narrowed = _narrow_by_account({cand: (root, {name}) for cand, (root, name) in found.items()}, account)
+        if narrowed:
+            found = {cand: (root, next(iter(names))) for cand, (root, names) in narrowed.items()}
     if len(found) > 1:
         raise AmbiguousPath('複数の repo に同じパスがあります。VM の絶対パスで指定してください: '
                          + ' / '.join(sorted(found)))
@@ -256,14 +325,18 @@ def _translate_local_path(path: str, purpose: str | None = None) -> str | None:
     return candidate
 
 
-def _resolve_repo_path(path: str, purpose: str | None = None) -> str:
-    """Existing cwd wins; otherwise require one matching registered repo."""
+def _resolve_repo_path(path: str, purpose: str | None = None, account=None) -> str:
+    """Existing cwd wins; otherwise require one matching registered repo.
+
+    `account`（4.5.3・`approve`・`revoke` の `--account`）: 相対パスが複数の repo に当たったら、
+    その口座の repo か front-matter の account が合う原稿だけに絞る（`_narrow_by_account`）。
+    """
     if os.path.exists(path):
         return path
     if os.path.isabs(path):
         # 手元（Mac）のパスを repo の中の相対パスに切り出せれば VM のパスに読み替える
         # （設計 3.7.0 §B4）。切り出せなければ従前どおり案内で断る。
-        translated = _translate_local_path(path, purpose)
+        translated = _translate_local_path(path, purpose, account)
         if translated is not None:
             return translated
         raise ValueError(_require_vm_path(path))
@@ -280,13 +353,15 @@ def _resolve_repo_path(path: str, purpose: str | None = None) -> str:
         root = os.path.realpath(repo)
         candidate = os.path.realpath(os.path.join(root, path))
         if os.path.commonpath([root, candidate]) == root and os.path.exists(candidate):
-            candidates[candidate] = root
+            candidates.setdefault(candidate, (root, set()))[1].add(name)
+    if len(candidates) > 1 and account:
+        candidates = _narrow_by_account(candidates, account) or candidates
     if len(candidates) == 1:
-        candidate, root = next(iter(candidates.items()))
+        candidate, (root, _names) = next(iter(candidates.items()))
         print(f'repo 相対パスを解決しました: {path} → {candidate}（repo: {root}）', file=sys.stderr)
         return candidate
     if candidates:
-        raise AmbiguousPath('複数の repo に同じパスがあります。絶対パスで指定してください: '
+        raise AmbiguousPath('複数の repo に同じパスがあります。絶対パスか --account <口座> で指定してください: '
                          + ' / '.join(sorted(candidates)))
     raise ValueError(f'VM の repo に無いパスです: {path}。thth queue <account> で置き場を確認してください')
 
@@ -396,7 +471,8 @@ def _require_vm_path(path: str, *, what: str = "") -> str | None:
     )
 
 
-def _expand_targets(files, *, only_draft: bool, account=None, purpose=None, wait=0) -> tuple:
+def _expand_targets(files, *, only_draft: bool, account=None, purpose=None, wait=0,
+                    only_status: str | None = None) -> tuple:
     """ファイルとディレクトリの混在を受けて、対象のファイル一覧に展開する。
 
     **ディレクトリを受けられるようにした**（kopicha セッション指摘 2026-09-10）。
@@ -414,10 +490,16 @@ def _expand_targets(files, *, only_draft: bool, account=None, purpose=None, wait
     ここでは確かめない（`os.listdir` が失敗すれば自然に落ちるし、「対象 0 件」の
     断り方は既にある）。**存在するものだけを黙って処理して進まない**——1 本でも
     無ければ全部断る（半分だけ処理しない、既存の規律と同じ形）。
+
+    `only_status`（4.5.3）: ディレクトリから拾う status を名指しする（`thth revoke` は
+    `approved`——台帳の承認を重ねて見た status）。`only_draft=True` は `only_status="draft"` と同じ。
+    `account` は相対パスが複数の repo に当たったときの絞り込みにも使う。
     """
+    if only_draft and only_status is None:
+        only_status = "draft"
     items = files if isinstance(files, list) else [files]
     try:
-        items = [_resolve_repo_path(item, purpose) for item in items]
+        items = [_resolve_repo_path(item, purpose, account) for item in items]
     except ValueError as exc:
         # 4.4.2: lint・approve は、無いパスがあれば取り込んで 1 回だけ探し直す（計画 4.4 ①）。
         moved, lines = (_sync_for_lookup(items, account, wait)
@@ -425,7 +507,7 @@ def _expand_targets(files, *, only_draft: bool, account=None, purpose=None, wait
         retried = None
         if moved:
             try:
-                retried = [_resolve_repo_path(item, purpose) for item in items]
+                retried = [_resolve_repo_path(item, purpose, account) for item in items]
             except ValueError as again:
                 exc = again
         if retried is None:
@@ -455,16 +537,16 @@ def _expand_targets(files, *, only_draft: bool, account=None, purpose=None, wait
             if not name.endswith(".md"):
                 continue
             path = os.path.join(item, name)
-            if only_draft:
+            if only_status:
                 try:
                     fm = queuefile.parse(path).front_matter
-                    if fm.get("status") != "draft" or account is not None and fm.get("account") != account:
+                    if fm.get("status") != only_status or account is not None and fm.get("account") != account:
                         skipped += 1
                         continue
                 except OSError:
                     continue
             out.append(path)
-    note = (f"（ディレクトリから {skipped} 本を対象外にしました: draft または account の条件外）"
+    note = (f"（ディレクトリから {skipped} 本を対象外にしました: {only_status} でないか account の条件外）"
             if skipped else "")
     return out, note
 
@@ -646,8 +728,11 @@ def _requires_gate(account_name: str) -> bool:
 def _gate_problem(accounts_names, gate) -> str | None:
     """⑦: hub の承認の番号の検査。形が違えば断る。`require_gate: true` の口座で番号が無ければ断る。
 
-    番号の照合（`hub approve verify`）は THTH ではしない（4.4.3 で `--approval` から verify と close まで
-    つなぐ予定）。4.4.1 は「番号を必ず受け取り、台帳に残す」まで。
+    番号の照合（`hub approve verify`）は THTH ではしない。4.4.1 は「番号を必ず受け取り、台帳に残す」まで。
+    4.5.3（計画 4.4.3 の伺い 1・本線と合意）: verify と close を一続きにするのは hub の側（hub が
+    `thth approve` を包む）。THTH は hub を呼ばない（VM に hub は無く、THTH は PyPI で外の人も使う）。
+    THTH が出すのは材料（`thth approve --digest-only`）だけ。はてなブックマークの `--production` も
+    この関数で断る（`bookmark_cli._gate_refusal`）。
     """
     from . import approval_ledger
     if gate is not None and not approval_ledger.valid_gate(gate):
@@ -753,6 +838,12 @@ def cmd_approve(args) -> int:
 
     **`--confirm-file`**（依頼 3.8.2 件 2）は確定をまとめて打つ口。`_approve_confirm_file()`。
     """
+    digest_only = getattr(args, "digest_only", False)
+    if digest_only and (args.confirm or getattr(args, "confirm_file", None)):
+        # 4.5.3: `--digest-only` は 1 段目だけの口（hub approve ask の --target に渡す digest を出す）。
+        print("--digest-only は 1 段目（digest を出すだけ）の口です。--confirm・--confirm-file とは"
+              "一緒に使えません。", file=sys.stderr)
+        return 2
     if getattr(args, "confirm_file", None):
         if args.file or args.confirm:
             print("--confirm-file と、ファイルの名指し・--confirm は一緒に使えません"
@@ -806,6 +897,11 @@ def cmd_approve(args) -> int:
                 problem = f"{path}: 指定 account と一致しないので承認しません"
             if not problem:
                 problem = _outside_account_repo(path, one["account"])
+            if not problem:
+                # 4.5.3: 承認済みの原稿を承認し直すなら、前の承認を 1 段目で見せる（revoke は要らない）。
+                previous = _previous_approval(path, one["approved_sha"])
+                if previous:
+                    one["replaces"] = previous
             (problems if problem else prepared).append(problem or one)
         # 4.4.1: commit に無い中身は承認しない（確定が repo に何も書かなくなったため）。2 段目では
         # digest の食い違いを先に言う（見せたものと違う、がいちばん大事な断り）。
@@ -816,12 +912,18 @@ def cmd_approve(args) -> int:
         if unsynced and not (args.confirm and args.confirm != bundle):
             problems = unsynced
         if problems:
+            if digest_only and args.json:
+                # 4.5.3: --digest-only --json は断りも JSON で返す（本文は無し・digest は出さない）。
+                _print_json({"approved": False, "digest_only": True, "ok": False, "bundle_digest": None,
+                             "count": len(paths), "problems": problems})
             for problem in problems:
                 print(problem, file=sys.stderr)
             print(f"{len(problems)} 件に問題があるので、**1 本も承認しませんでした**"
                   "（半分だけ承認された状態を作らないため）。", file=sys.stderr)
             return 1
 
+        if not args.confirm and digest_only:
+            return _show_digest_only(prepared, bundle, repo_dir, args, note)
         if not args.confirm:
             try:
                 # **見せる前に台帳を確かめる**（独立監査 1・P1-1）。一段目は
@@ -1198,6 +1300,58 @@ def _assign_hatena_deliveries(prepared: list, by: str, at: str):
     return None
 
 
+def _show_digest_only(prepared: list, bundle: str, repo_dir: str, args, note: str = "") -> int:
+    """`thth approve --digest-only`（4.5.3・計画 4.4.3）: 1 段目の digest だけを出す。
+
+    hub の `hub approve ask --target` に渡す束の digest を、本文を出さずに 1 行で標準出力へ出す
+    （複数のファイルでも束の digest が 1 つ）。本文を人に見せるのは呼び手（hub）の側——
+    **見せたもの＝承認したもの、の保証は digest が持つ**: 見せたあとに本文・account・publish_at の
+    どれかが変われば、`--confirm <digest>` は今までどおり通らない。
+
+    lint の誤り（と post_id あり・節が無い等）は呼び手が既に標準エラーに出して rc 1 で返している。
+    ここまで来たら rc 0。lint の警告・予定時刻の注意・確定に要る hub の番号は標準エラーに出す
+    （標準出力は digest の 1 行だけ・`--json` なら JSON だけ）。確定待ちの控えは 1 段目と同じく書く
+    （はてなの原稿は見せた本文を固定する控えが 2 段目に要る）。
+    """
+    pending_saved = _record_pending(prepared, repo_dir, bundle)
+    gate_note = _gate_problem([one["account"] for one in prepared], getattr(args, "approval", None))
+    lint_rows = []
+    for one in prepared:
+        try:
+            warnings = [m for m in lint_mod.lint_file(one["path"]) if lint_mod.is_warning(m)]
+        except (OSError, ValueError):
+            warnings = []
+        lint_rows.append({"file": one["path"], "warnings": warnings})
+    if args.json:
+        _print_json({"approved": False, "digest_only": True, "ok": True, "count": len(prepared),
+                     "bundle_digest": bundle, "not_until_confirmed": True,
+                     "pending_recorded": pending_saved,
+                     "gate_required": bool(gate_note),
+                     "files": [{"file": one["path"], "account": one["account"], "digest": one["digest"],
+                                "publish_at": one.get("publish_at"),
+                                "warning": one.get("warning"),
+                                "lint_warnings": row["warnings"],
+                                **({"replaces": one["replaces"]} if one.get("replaces") else {})}
+                               for one, row in zip(prepared, lint_rows)]})
+    else:
+        print(bundle)
+    if not args.json:
+        if note:
+            print(note, file=sys.stderr)
+        for one, row in zip(prepared, lint_rows):
+            for warning in row["warnings"]:
+                print(f"{one['path']}: {warning}", file=sys.stderr)
+            if one.get("warning"):
+                print(f"{one['path']}: ⚠ {one['warning']}", file=sys.stderr)
+            if one.get("replaces"):
+                print(f"{one['path']}:{_replaces_line(one)}", file=sys.stderr)
+        if gate_note:
+            print("確定の前に: " + gate_note.replace("1 本も承認していません。", ""), file=sys.stderr)
+        print(f"確定は: thth approve <同じファイル> --confirm {bundle} --by <名前>"
+              f"（{len(prepared)} 本・本文は表示していません）", file=sys.stderr)
+    return 0
+
+
 def _record_pending(prepared: list, repo_dir: str, bundle: str) -> bool:
     """1 段目の控えを account ごとに書く（設計 3.7.0 §B3）。書けなくても 1 段目は続ける。"""
     from . import approve_pending
@@ -1423,6 +1577,8 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
                                    if one.get("plaza_related") is not None else {}),
                                 **({"hatena": one["hatena"]} if one.get("hatena") else {}),
                                 **({"announce": one["announce"]} if one.get("announce") else {}),
+                                # 4.5.3: 承認済みを承認し直すときの前の承認（無ければ鍵ごと無し）。
+                                **({"replaces": one["replaces"]} if one.get("replaces") else {}),
                                 "digest": one["digest"]} for one in prepared]})
         return
     print(f"承認しません（確認の一段目です）: {len(prepared)} 本——**{NOT_UNTIL_CONFIRMED}**")
@@ -1430,6 +1586,9 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
         print(f"  {note}")
     for one in prepared:
         print("")
+        replaces = _replaces_line(one)
+        if replaces:
+            print(replaces)
         if one.get("kind") == "bundle":
             # **各段の全文と返信関係を出す**（Codex 最終条件 5）。
             _show_bundle_stage(one)
@@ -1558,8 +1717,103 @@ def _already_posted(fm: dict, text: str, path: str):
     return fm.get("post_id")
 
 
+def _revoke_paths_from_stdin() -> list:
+    """`thth revoke -`（4.5.3）: 標準入力の 1 行に 1 本のパス（空行と `#` で始まる行は飛ばす）。"""
+    return [line.strip() for line in sys.stdin.read().splitlines()
+            if line.strip() and not line.strip().startswith("#")]
+
+
+def _revoke_one(path: str, repo_dir: str, *, account, revoked_by: str, revoked_at: str, reason) -> str | None:
+    """1 本を取り消す（**repo のロックの中・同期のあとで呼ぶ**）。断るなら理由、取り消したら None。"""
+    # **スレッド連投も止められる**（設計 §4）。v1 の parse は `thth: 2` を
+    # malformed にするので、ここで分岐しないと**止める手段が無くなる。**
+    from . import approval_ledger
+    from . import bundle as bundle_mod
+    try:
+        raw_text = open(path, encoding="utf-8").read()
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"読めないので取り消せません（{exc.__class__.__name__}）: {path}"
+    if bundle_mod.is_bundle_text(raw_text):
+        b = bundle_mod.parse_text(raw_text, path)
+        fm = b.front_matter
+        malformed = b.malformed
+    else:
+        qf = queuefile.parse(path)
+        fm = qf.front_matter
+        malformed = qf.malformed
+    if malformed:
+        return f"front-matter が読めないので取り消せません: {path}"
+    if account and fm.get("account") != account:
+        return f"{path}: 指定 account（{account}）と一致しないので取り消しません（原稿の account は {fm.get('account')}）"
+    outside = (_outside_account_repo(path, fm["account"])
+               if isinstance(fm.get("account"), str) and fm.get("account") else None)
+    if outside:
+        return outside + "（取り消していません）"
+    # 4.4.1（監査）: 台帳が読めないときは status を見る前に断る。読めない間は承認済みが draft に
+    # 見えるので、ここで「承認されていません」と言うと、台帳を直したとき承認が生き返る。
+    trouble = (approval_ledger.problem(fm["account"])
+               if approval_ledger._safe_account(fm.get("account")) else None)
+    if trouble or fm.get(approval_ledger.UNREADABLE_MARK):
+        return (f"台帳が読めないので取り消しを受け付けられません（{trouble or '承認の台帳'}）。"
+                f"台帳を直してから打ち直してください（まだ止まっていません）: {path}")
+    # **束は「途中まで出ている」が普通の状態。** 止めたいのは残りなので、
+    # 1 段出ているだけで断ってはいけない（全段出ていれば止めるものが無い）。
+    posted = _already_posted(fm, raw_text, path)
+    if posted:
+        return (f"**もう出ています**（post_id: {posted}）。"
+                "THTH からは取り消せません。消すなら Threads の画面から手で消してください。")
+    if fm.get("status") != "approved":
+        return f"承認されていません（status: {fm.get('status')}）。取り消すものがありません: {path}"
+
+    # 4.4.1: 取り消しも VM の承認の台帳に書く（利用者の repo には commit を積まない）。
+    # 4.4.0 までに repo に `status: approved` と書いた原稿も、台帳の取り消しが重なって draft に見える。
+    trouble = _ledger_problem([fm.get("account")])
+    if trouble:
+        return trouble
+    try:
+        approval_ledger.record([{
+            "account": fm.get("account"), "file": approval_ledger.rel_key(path, repo_dir),
+            "state": approval_ledger.REVOKED, "via": "cli", "repo": repo_dir,
+            "fields": {"revoked_at": revoked_at, "revoked_by": revoked_by,
+                       "revoked_reason": reason or ""}}])
+    except (approval_ledger.LedgerError, ValueError) as exc:
+        return f"取り消しを台帳に書けませんでした（まだ止まっていません）: {exc}"
+    # 取り消しで確定待ちの控えも消す（設計 3.7.0 §B3）。
+    if fm.get("account"):
+        _clear_pending([{"account": fm.get("account"), "path": path}], repo_dir)
+    return None
+
+
+def _posted_after_revoke(path: str):
+    """書いている間に**別 clone から公開されたもの**か（同期し直したあとに呼ぶ）。post_id か None。"""
+    from . import bundle as bundle_mod
+    try:
+        after_text = open(path, encoding="utf-8").read()
+    except (OSError, UnicodeDecodeError):
+        return None
+    after = (bundle_mod.parse_text(after_text, path).front_matter
+             if bundle_mod.is_bundle_text(after_text)
+             else queuefile.parse(path).front_matter)
+    return _already_posted(after, after_text, path)
+
+
+def _revoke_thread_report(path: str, repo_dir: str):
+    """**スレッド連投なら、どこまで出たかを分けて出す**（設計 §4.2）。束でなければ None。"""
+    from . import bundle as bundle_mod
+    from . import threadrun as threadrun_mod
+    try:
+        if bundle_mod.is_bundle_text(open(path, encoding="utf-8").read()):
+            rel_path = os.path.relpath(os.path.realpath(path), os.path.realpath(repo_dir))
+            account_name = queuefile.parse(path).front_matter.get("account") \
+                or bundle_mod.parse(path).front_matter.get("account")
+            return threadrun_mod.stop_report(account_name, rel_path)
+    except (OSError, UnicodeDecodeError):
+        return None
+    return None
+
+
 def cmd_revoke(args) -> int:
-    """`thth revoke <file>`: 承認を取り消す（関東セッション指摘 2026-09-10・最優先）。
+    """`thth revoke <file|dir...>`: 承認を取り消す（関東セッション指摘 2026-09-10・最優先）。
 
     > revoke が無い。承認後に 1 本だけ止めたいとき、正しい操作が用意されていません。
     > いまできるのは本文を書き換えて approval_stale にすることだけで、**止める手段が
@@ -1576,23 +1830,48 @@ def cmd_revoke(args) -> int:
     **投稿と同じ clone ロックを取る**（`approve` と同じ理由）。公開の最中には
     割り込めない。既に出てしまったもの（`post_id` あり）は取り消せないので断る
     ——その場合は Threads の画面から手で消すしかない、とその場で言う。
+
+    **複数本・ディレクトリ・`--account`**（4.5.3・こぴちゃ 第3 の 2・計画 4.4.3）: 承認済みの
+    はてな記事 25 本を 1 本ずつ revoke し、相対パスが asmon の repo と同じ名前のものは
+    「複数の repo に同じパス」で 10 本断られた（10/20）。`approve` と同じく、ファイルを並べても
+    ディレクトリ（承認済みのものだけ拾う）でもよく、`--account` で相対パスの repo を決める。
+    同期とロックは repo ごとに 1 回。1 本ずつ結果を出し、取り消せない本（post_id あり・承認されて
+    いない等）は**その本だけ**断って他は進める（止める向きの操作なので、1 本の断りで全部を止めない）。
+    `-` を 1 つだけ渡すと標準入力の 1 行に 1 本のパスを読む（標準入力を読むのはこのときだけ）。
+    1 本だけのときの出力（`--json` の形も）は 4.5.2 までと同じ。
     """
-    try:
-        args.file = _resolve_repo_path(args.file)
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
+    files = args.file if isinstance(args.file, list) else [args.file]
+    account = getattr(args, "account", None)
+    if "-" in files:
+        if files != ["-"]:
+            print("- （標準入力からパスを読む）は単独で渡してください。", file=sys.stderr)
+            return 2
+        files = _revoke_paths_from_stdin()
+    if not files:
+        print("取り消すファイル（またはディレクトリ）を渡してください。", file=sys.stderr)
         return 2
-    vm_msg = _require_vm_path(args.file)
-    if vm_msg:
-        # **VM に無いパスは素の traceback でなく案内で断る**（T8-1）。
-        print(vm_msg, file=sys.stderr)
+    named_dir = any(os.path.isdir(f) for f in files)
+    paths, note = _expand_targets(files, only_draft=False, only_status="approved", account=account,
+                                  purpose="revoke", wait=getattr(args, "wait", 0))
+    if paths is None:
+        # **VM に無いパスは素の traceback でなく案内で断る**（T8-1・`_expand_targets` が案内済み）。
         return 2
-    repo_dir = writeback_mod.repo_toplevel(args.file)
-    if repo_dir is None:
-        print(f"git repo の中のファイルではないので取り消しを記録できません: {args.file}",
-              file=sys.stderr)
+    if not paths:
+        print(f"取り消せるもの（承認済み）がありません{note}", file=sys.stderr)
         return 1
-    rel_path = os.path.relpath(os.path.realpath(args.file), os.path.realpath(repo_dir))
+    single = len(files) == 1 and len(paths) == 1 and not named_dir
+
+    refused = []  # (path, 理由)
+    by_repo = {}
+    for path in paths:
+        repo_dir = writeback_mod.repo_toplevel(path)
+        if repo_dir is None:
+            refused.append((path, f"git repo の中のファイルではないので取り消しを記録できません: {path}"))
+            continue
+        by_repo.setdefault(os.path.realpath(repo_dir), []).append(path)
+    if single and refused:
+        print(refused[0][1], file=sys.stderr)
+        return 1
 
     revoked_by = args.by or os.environ.get("THTH_ACTOR")
     if not revoked_by:
@@ -1611,137 +1890,112 @@ def cmd_revoke(args) -> int:
         return 2
     revoked_at = jst.iso()
 
-    repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
-    try:
-        lock_mod.acquire(repo_lock, getattr(args, "wait", 0))
-    except lock_mod.LockBusy:
-        print(f"いまこの repo を別の実行が使っています（{repo_dir}）。"
-              "--wait <秒> で空くのを待てます。", file=sys.stderr)
-        return 1
-
-    try:
-        # **検査はロックの中で、同期して読み直してから行う**（外部レビュー第 6 巡 P1-2）。
-        #
-        # 以前はロックを取る**前**に post_id と status を読んでいた。ロックが守るのは
-        # 書き込みだけで、**読んだ事実はその間に古くなる**。検査した直後・ロックを取る
-        # 直前に公開が完了すると、`post_id` が付いているのに `draft` へ書き換え、
-        # **exit 0 で「取り消しました」と返していた**。止められなかった投稿を、
-        # 止められたと利用者に伝える——取り消しという機能で最も避けたい嘘。
-        #
-        # 別 clone から公開された場合も同じなので、**同期してから**読み直す。
-        synced, sync_err, _sha = writeback_mod.sync_repo(repo_dir)
-        if not synced:
-            print(f"repo を同期できないので取り消しません（いまの状態が判りません）: {sync_err}",
-                  file=sys.stderr)
-            return 1
-
-        # **スレッド連投も止められる**（設計 §4）。v1 の parse は `thth: 2` を
-        # malformed にするので、ここで分岐しないと**止める手段が無くなる。**
-        from . import bundle as bundle_mod
-        raw_text = open(args.file, encoding="utf-8").read()
-        if bundle_mod.is_bundle_text(raw_text):
-            b = bundle_mod.parse_text(raw_text, args.file)
-            fm = b.front_matter
-            malformed = b.malformed
-        else:
-            qf = queuefile.parse(args.file)
-            fm = qf.front_matter
-            malformed = qf.malformed
-        if malformed:
-            print(f"front-matter が読めないので取り消せません: {args.file}", file=sys.stderr)
-            return 1
-        outside = (_outside_account_repo(args.file, fm["account"])
-                   if isinstance(fm.get("account"), str) and fm.get("account") else None)
-        if outside:
-            print(outside + "（取り消していません）", file=sys.stderr)
-            return 1
-        # 4.4.1（監査）: 台帳が読めないときは status を見る前に断る。読めない間は承認済みが draft に
-        # 見えるので、ここで「承認されていません」と言うと、台帳を直したとき承認が生き返る。
-        from . import approval_ledger
-        trouble = (approval_ledger.problem(fm["account"])
-                   if approval_ledger._safe_account(fm.get("account")) else None)
-        if trouble or fm.get(approval_ledger.UNREADABLE_MARK):
-            print(f"台帳が読めないので取り消しを受け付けられません（{trouble or '承認の台帳'}）。"
-                  f"台帳を直してから打ち直してください（まだ止まっていません）: {args.file}", file=sys.stderr)
-            return 1
-        # **束は「途中まで出ている」が普通の状態。** 止めたいのは残りなので、
-        # 1 段出ているだけで断ってはいけない（全段出ていれば止めるものが無い）。
-        posted = _already_posted(fm, raw_text, args.file)
-        if posted:
-            print(f"**もう出ています**（post_id: {posted}）。"
-                  "THTH からは取り消せません。消すなら Threads の画面から手で消してください。",
-                  file=sys.stderr)
-            return 1
-        if fm.get("status") != "approved":
-            print(f"承認されていません（status: {fm.get('status')}）。取り消すものがありません: "
-                  f"{args.file}", file=sys.stderr)
-            return 1
-
-        # 4.4.1: 取り消しも VM の承認の台帳に書く（利用者の repo には commit を積まない）。
-        # 4.4.0 までに repo に `status: approved` と書いた原稿も、台帳の取り消しが重なって draft に見える。
-        from . import approval_ledger
-        trouble = _ledger_problem([fm.get("account")])
-        if trouble:
-            print(trouble, file=sys.stderr)
-            return 1
+    revoked = []  # (path, repo)
+    for repo_dir in sorted(by_repo):
+        repo_paths = by_repo[repo_dir]
+        repo_lock = lock_mod.AccountLock(accounts_mod.repo_lock_path_for(repo_dir))
         try:
-            approval_ledger.record([{
-                "account": fm.get("account"), "file": approval_ledger.rel_key(args.file, repo_dir),
-                "state": approval_ledger.REVOKED, "via": "cli", "repo": repo_dir,
-                "fields": {"revoked_at": revoked_at, "revoked_by": revoked_by,
-                           "revoked_reason": args.reason or ""}}])
-        except (approval_ledger.LedgerError, ValueError) as exc:
-            print(f"取り消しを台帳に書けませんでした（まだ止まっていません）: {exc}", file=sys.stderr)
-            return 1
-        # 取り消しで確定待ちの控えも消す（設計 3.7.0 §B3）。
-        if fm.get("account"):
-            _clear_pending([{"account": fm.get("account"), "path": args.file}], repo_dir)
-
-        # 書いている間に**別 clone から公開されたもの**が入ってくることがある。同期し直してもう一度見る。
-        writeback_mod.sync_repo(repo_dir)
-        after_text = open(args.file, encoding="utf-8").read()
-        after = (bundle_mod.parse_text(after_text, args.file).front_matter
-                  if bundle_mod.is_bundle_text(after_text)
-                  else queuefile.parse(args.file).front_matter)
-        posted_after = _already_posted(after, after_text, args.file)
-        if posted_after:
-            print(f"**取り消せませんでした。処理の途中で公開されました**"
-                  f"（post_id: {posted_after}）。消すなら Threads の画面から"
-                  "手で消してください。", file=sys.stderr)
-            return 1
-    finally:
-        repo_lock.release()
+            lock_mod.acquire(repo_lock, getattr(args, "wait", 0))
+        except lock_mod.LockBusy:
+            refused += [(p, f"いまこの repo を別の実行が使っています（{repo_dir}）。"
+                            "--wait <秒> で空くのを待てます。") for p in repo_paths]
+            continue
+        try:
+            # **検査はロックの中で、同期して読み直してから行う**（外部レビュー第 6 巡 P1-2）。
+            #
+            # 以前はロックを取る**前**に post_id と status を読んでいた。ロックが守るのは
+            # 書き込みだけで、**読んだ事実はその間に古くなる**。検査した直後・ロックを取る
+            # 直前に公開が完了すると、`post_id` が付いているのに `draft` へ書き換え、
+            # **exit 0 で「取り消しました」と返していた**。止められなかった投稿を、
+            # 止められたと利用者に伝える——取り消しという機能で最も避けたい嘘。
+            #
+            # 別 clone から公開された場合も同じなので、**同期してから**読み直す。
+            # 4.5.3: 同期とロックは repo ごとに 1 回（1 本ずつ取り直さない）。
+            synced, sync_err, _sha = writeback_mod.sync_repo(repo_dir)
+            if not synced:
+                refused += [(p, f"repo を同期できないので取り消しません（いまの状態が判りません）: {sync_err}")
+                            for p in repo_paths]
+                continue
+            done_here = []
+            for path in repo_paths:
+                problem = _revoke_one(path, repo_dir, account=account, revoked_by=revoked_by,
+                                      revoked_at=revoked_at, reason=args.reason)
+                if problem:
+                    refused.append((path, problem))
+                else:
+                    done_here.append(path)
+            if done_here:
+                # 書いている間に**別 clone から公開されたもの**が入ってくることがある。同期し直してもう一度見る
+                # （repo ごとに 1 回）。
+                writeback_mod.sync_repo(repo_dir)
+                for path in done_here:
+                    posted_after = _posted_after_revoke(path)
+                    if posted_after:
+                        refused.append((path, f"**取り消せませんでした。処理の途中で公開されました**"
+                                              f"（post_id: {posted_after}）。消すなら Threads の画面から"
+                                              "手で消してください。"))
+                    else:
+                        revoked.append((path, repo_dir))
+        finally:
+            repo_lock.release()
 
     # **スレッド連投なら、どこまで出たかを分けて出す**（設計 §4.2）。
     # **「N 段目以降は未公開」と断定しない。** 停止要求は出したが、
     # **実行側がそれを読むまでは止まったと言えない。**
-    from . import bundle as bundle_mod
     from . import threadrun as threadrun_mod
-    thread_report = None
-    try:
-        if bundle_mod.is_bundle_text(open(args.file, encoding="utf-8").read()):
-            account_name = queuefile.parse(args.file).front_matter.get("account") \
-                or bundle_mod.parse(args.file).front_matter.get("account")
-            thread_report = threadrun_mod.stop_report(account_name, rel_path)
-    except (OSError, UnicodeDecodeError):
-        thread_report = None
+    reports = {path: _revoke_thread_report(path, repo_dir) for path, repo_dir in revoked}
 
+    if single:
+        if refused:
+            print(refused[0][1], file=sys.stderr)
+            return 1
+        path = revoked[0][0]
+        thread_report = reports.get(path)
+        if args.json:
+            _print_json({"file": path, "status": "draft", "revoked_at": revoked_at,
+                         "revoked_by": revoked_by, "revoked_reason": args.reason or None,
+                         # 4.4.1: 取り消しの置き場は VM の承認の台帳（repo に commit・push しない）。
+                         "recorded": "ledger",
+                         "thread": thread_report})
+        elif thread_report is not None:
+            print(f"停止を要求しました: {path}（{revoked_by}）")
+            print(threadrun_mod.format_stop_report(thread_report))
+            print("実行側がこれを読んだ時点で、新しい公開要求を送らなくなります。")
+            print("**すでに送信済みの要求は取り消せません。** 出てしまったものは"
+                  "Threads の画面から手で消してください。")
+        else:
+            print(f"承認を取り消しました: {path}（{revoked_by}・VM の承認の台帳に記録・repo には書いていません）")
+            print("  本文はそのままです。直して thth approve し直せます"
+                  "（本文を直すだけなら、取り消さずに thth approve の 2 段で承認し直せます）。")
+        return 0
+
+    # 複数本（4.5.3）: 1 本ずつ結果を出す。
     if args.json:
-        _print_json({"file": args.file, "status": "draft", "revoked_at": revoked_at,
-                     "revoked_by": revoked_by, "revoked_reason": args.reason or None,
-                     # 4.4.1: 取り消しの置き場は VM の承認の台帳（repo に commit・push しない）。
-                     "recorded": "ledger",
-                     "thread": thread_report})
-    elif thread_report is not None:
-        print(f"停止を要求しました: {args.file}（{revoked_by}）")
-        print(threadrun_mod.format_stop_report(thread_report))
-        print("実行側がこれを読んだ時点で、新しい公開要求を送らなくなります。")
-        print("**すでに送信済みの要求は取り消せません。** 出てしまったものは"
-              "Threads の画面から手で消してください。")
+        _print_json({"count": len(revoked), "refused_count": len(refused),
+                     "revoked_at": revoked_at, "revoked_by": revoked_by,
+                     "revoked_reason": args.reason or None, "recorded": "ledger",
+                     "revoked": [{"file": path, "status": "draft", "thread": reports.get(path)}
+                                 for path, _repo in revoked],
+                     "refused": [{"file": path, "reason": reason} for path, reason in refused]})
     else:
-        print(f"承認を取り消しました: {args.file}（{revoked_by}・VM の承認の台帳に記録・repo には書いていません）")
-        print("  本文はそのままです。直して thth approve し直せます。")
-    return 0
+        if note:
+            print(note.strip("（）"), file=sys.stderr)
+        for path, _repo in revoked:
+            report = reports.get(path)
+            if report is not None:
+                print(f"停止を要求しました: {path}")
+                print(threadrun_mod.format_stop_report(report))
+            else:
+                print(f"取り消しました: {path}")
+        for path, reason in refused:
+            print(f"取り消していません: {reason}" if path in reason
+                  else f"取り消していません: {path} — {reason}", file=sys.stderr)
+        print(f"取り消し {len(revoked)} 本・断った {len(refused)} 本（{revoked_by}・VM の承認の台帳に記録・"
+              "repo には書いていません）。本文はそのままです")
+        if any(report is not None for report in reports.values()):
+            print("**すでに送信済みの要求は取り消せません。** 出てしまったものは"
+                  "Threads の画面から手で消してください。")
+    return 1 if refused else 0
 
 
 def cmd_approvals(args) -> int:
@@ -3693,6 +3947,14 @@ def cmd_send(args) -> int:
     if getattr(args, "text", None) is not None:
         # 1 行の文（設計 3.14.0 §2）。複数行・長い本文は --text-file か標準入力で。
         text = args.text
+    elif args.text_file == "-":
+        # 4.5.3: `--text-file -` は標準入力（明示の「-」・こぴちゃ 第3 の 3）。本文の引数が無いときの
+        # 標準入力（下の else）は 4.4.2 で案内した `thth send … < <ファイル>` の互換で残す。
+        try:
+            text = _sys.stdin.read()
+        except OSError:
+            print("標準入力を読めません（--text か --text-file で本文を渡してください）", file=sys.stderr)
+            return 2
     elif args.text_file:
         vm_msg = _require_vm_path(args.text_file, what="送る本文のファイル")
         if vm_msg:
@@ -4212,7 +4474,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_approve.add_argument("file", nargs="*",
                            help="ファイルでもディレクトリでも可（ディレクトリなら draft の .md をまとめて）")
     p_approve.add_argument("--json", action="store_true")
-    p_approve.add_argument("--account", default=None, help="ディレクトリからこの account の draft だけを拾う")
+    p_approve.add_argument("--digest-only", dest="digest_only", action="store_true",
+                           help="1 段目で本文を出さず、束の digest を 1 行だけ出す（hub approve ask の --target 用・"
+                                "lint の誤りは標準エラーと rc 1・--confirm とは一緒に使えない）")
+    p_approve.add_argument("--account", default=None,
+                           help="ディレクトリからこの account の draft だけを拾う・相対パスが複数の repo に"
+                                "当たったらこの account の原稿に絞る")
     p_approve.add_argument("--confirm", default=None,
                            help="一段目が表示した digest。これが無いと承認しない")
     p_approve.add_argument("--confirm-file", dest="confirm_file", default=None,
@@ -4242,8 +4509,12 @@ def build_parser() -> argparse.ArgumentParser:
     account_cli_mod.register(sub)  # `account add` / `account migrate`（設計 v2 §3）
 
     p_revoke = sub.add_parser(
-        "revoke", help="承認を取り消して draft に戻す（本文は触らない）")
-    p_revoke.add_argument("file")
+        "revoke", help="承認を取り消して draft に戻す（本文は触らない・複数本・ディレクトリ可）")
+    p_revoke.add_argument("file", nargs="+",
+                          help="ファイルでもディレクトリでも可（ディレクトリなら承認済みの .md）。"
+                               "- を 1 つだけ渡すと標準入力の 1 行に 1 本のパスを読む")
+    p_revoke.add_argument("--account", default=None,
+                          help="この account の原稿だけ（相対パスが複数の repo に当たったらこの account の repo に絞る）")
     p_revoke.add_argument("--reason", default=None, help="なぜ止めたか（記録に残す）")
     p_revoke.add_argument("--by", default=None, help="誰が止めたか（記録に残す）")
     p_revoke.add_argument("--json", action="store_true")
@@ -4522,7 +4793,7 @@ def build_parser() -> argparse.ArgumentParser:
         "send", help="同席の様態: queue を通さずその場で 1 本出す（本文はファイルか標準入力）")
     p_send.add_argument("account")
     p_send.add_argument("--text-file", dest="text_file", default=None,
-                        help="本文のファイル。省略時は標準入力から読む")
+                        help="本文のファイル（- なら標準入力）。省略時も標準入力から読む")
     p_send.add_argument("--topic", default=None)
     p_send.add_argument("--reply-to", dest="reply_to", default=None,
                         help="返信先の post_id。返信は急な連投（burst）で口座を止めず、"

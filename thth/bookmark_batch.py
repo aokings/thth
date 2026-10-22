@@ -561,8 +561,13 @@ def lines(p: dict) -> list:
 # 2 段目（§20.5・口座のロックの中で呼ぶ）
 # --------------------------------------------------------------------------
 
-def approve_locked(account_name: str, cfg: dict, p: dict, *, actor, via, credential=None, now=None) -> dict:
-    """1 段目の材料 `p`（ロックの中で作り直したもの）を順番待ちに置く。"""
+def approve_locked(account_name: str, cfg: dict, p: dict, *, actor, via, credential=None, now=None,
+                   approval=None) -> dict:
+    """1 段目の材料 `p`（ロックの中で作り直したもの）を順番待ちに置く。
+
+    `approval`（4.5.3）: hub の承認の番号（CLI の `--approval`）。あればまとめのファイルに残す
+    （無ければ鍵ごと書かない——4.5.2 までのまとめと同じ形）。
+    """
     from . import guard, principals
     if not p["included"]:
         raise BatchError("batch_empty")
@@ -598,6 +603,8 @@ def approve_locked(account_name: str, cfg: dict, p: dict, *, actor, via, credent
              "excluded": [{"n": r["n"], "line": r["line"], "url": r.get("url"), "reason": r["reason"],
                            "detail": r.get("detail")} for r in p["items"] if not r["include"]],
              "items": items}
+    if approval:
+        batch["approval"] = approval
     _save_batch(account_name, batch)
     try:
         from . import admin_log
@@ -607,7 +614,7 @@ def approve_locked(account_name: str, cfg: dict, p: dict, *, actor, via, credent
         pass
     return {"account": account_name, "status": "queued", "batch": batch["batch"], "digest": batch["digest"],
             "queued": len(items), "excluded": len(batch["excluded"]), "expires_at": batch["expires_at"],
-            "approved_by": actor}
+            "approved_by": actor, **({"approval": approval} if approval else {})}
 
 
 def cancel_locked(account_name: str, batch_id: str, *, by, item=None, now=None) -> dict:

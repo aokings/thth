@@ -40,6 +40,8 @@ def _stage_args(parser) -> None:
     parser.add_argument("--confirm", default=None, help="1 段目が出した digest")
     parser.add_argument("--by", default=None, help="誰が承認したか（2 段目で必須）")
     parser.add_argument("--production", action="store_true", help="台帳が production: true のときだけ打つ")
+    parser.add_argument("--approval", default=None, metavar="A261021-25",
+                        help="hub の承認の番号（口座の台帳が require_gate: true なら --production に必須・4.5.3）")
     parser.add_argument("--remote", action="store_true",
                         help="台帳が手元にあっても thth.me の鍵で動かす（遠くの道・thth login のあと）")
     parser.add_argument("--json", action="store_true")
@@ -148,6 +150,36 @@ def _guard_refuse(args, exc, *, suffix="") -> int:
     return _out(args, payload, 1, lines, err=True)
 
 
+def _gate_refusal(args):
+    """⑦（4.5.3・計画 4.4.3 の伺い 2）: CLI の `--production` も口座の台帳の `require_gate: true` に従う。
+
+    4.4.1 ではブックマークを gate の範囲の外にしていた（リリースノート 4.4.1）。X などと同じ決まりに
+    そろえ、`require_gate: true` の口座で hub の承認の番号が無いか形が違えば、打つ前・ロックの前に断る。
+    thth.me の `bookmark_request`・`bookmark_batch_request`（Web の口）は求めない（遠くの道は
+    `--approval` を送らない）。断らなければ None。
+    """
+    from . import approval_ledger
+    from .cli import _gate_problem
+    gate = getattr(args, "approval", None)
+    problem = _gate_problem([args.account], gate)
+    if not problem:
+        return None
+    code = ("approval_invalid" if gate is not None and not approval_ledger.valid_gate(gate)
+            else "approval_gate_required")
+    return _refuse(args, code, problem.replace("1 本も承認していません。", "何もしていません。"), rc=1)
+
+
+def _gate_hint(account) -> str:
+    """1 段目の「付けるなら」の命令に足す `--approval`（require_gate の口座だけ）。"""
+    from .cli import _requires_gate
+    return " --approval <番号>" if _requires_gate(account) else ""
+
+
+def _with_gate(args, payload: dict) -> dict:
+    gate = getattr(args, "approval", None)
+    return {**payload, "approval": gate} if gate else payload
+
+
 def _refuse(args, code, message, rc=2, **extra) -> int:
     return _out(args, {"ok": False, "error": code, "message": message, **extra}, rc, [f"{code}: {message}"],
                 err=True)
@@ -198,7 +230,7 @@ def cmd(args) -> int:
                            "preview": hatena_bookmark.preview(p), **_foresight(p)}, 1,
                     [f"{verb}（確認の一段目です）"] + hatena_bookmark.lines(p)
                     + [f"{'消す' if op == 'delete' else '付ける'}なら: thth bookmark {args.verb} {args.account} {flag}"
-                       f"{rest} --confirm {p['digest']} --by <名前> --production"])
+                       f"{rest} --confirm {p['digest']} --by <名前> --production{_gate_hint(args.account)}"])
     if args.confirm != p["digest"]:
         return _refuse(args, "confirm_mismatch", f"digest が一致しません（いまの digest は {p['digest']}）", rc=1)
     by = (args.by or os.environ.get("THTH_ACTOR") or "").strip()
@@ -207,6 +239,9 @@ def cmd(args) -> int:
     if not (cfg.get("production") is True and args.production):
         return _refuse(args, "production_disabled",
                        "台帳が production: true で --production を付けたときだけ打ちます（何もしていません）", rc=1)
+    gated = _gate_refusal(args)
+    if gated is not None:
+        return gated
     state_dir = accounts_mod.state_dir_for(args.account)
     logs = []
     try:
@@ -237,8 +272,8 @@ def cmd(args) -> int:
                      f"打ち直しません。thth bookmark reconcile {args.account} で確かめてください"], err=True)
     if op == "delete":
         note = "（はてなに既にありませんでした）" if done.get("missing") else ""
-        return _out(args, {"ok": True, **done}, 0, [f"ブックマークを消しました{note}: {done['url']}"])
-    return _out(args, {"ok": True, **done}, 0, [f"ブックマークしました: {done['url']}"]
+        return _out(args, _with_gate(args, {"ok": True, **done}), 0, [f"ブックマークを消しました{note}: {done['url']}"])
+    return _out(args, _with_gate(args, {"ok": True, **done}), 0, [f"ブックマークしました: {done['url']}"]
                 + ([f"  {done['permalink']}"] if done.get("permalink") else []))
 
 
@@ -265,7 +300,7 @@ def cmd_edit(args) -> int:
                            "preview": hatena_bookmark.preview_edit(p), **_foresight(p)}, 1,
                     ["直しません（確認の一段目です）"] + hatena_bookmark.edit_lines(p)
                     + [f"直すなら: thth bookmark edit {args.account} {flag}{rest} --confirm {p['digest']}"
-                       " --by <名前> --production"])
+                       f" --by <名前> --production{_gate_hint(args.account)}"])
     if args.confirm != p["digest"]:
         return _refuse(args, "confirm_mismatch", f"digest が一致しません（いまの digest は {p['digest']}）", rc=1)
     by = (args.by or os.environ.get("THTH_ACTOR") or "").strip()
@@ -274,6 +309,9 @@ def cmd_edit(args) -> int:
     if not (cfg.get("production") is True and args.production):
         return _refuse(args, "production_disabled",
                        "台帳が production: true で --production を付けたときだけ打ちます（何もしていません）", rc=1)
+    gated = _gate_refusal(args)
+    if gated is not None:
+        return gated
     logs = []
     try:
         with core._account_locks(args.account, cfg, accounts_mod.state_dir_for(args.account), wait=0):
@@ -297,7 +335,7 @@ def cmd_edit(args) -> int:
                     [f"結果が分かりません（{done.get('error')}）: {done['url']}",
                      f"打ち直しません。thth bookmark reconcile {done.get('holder') or args.account} で確かめてください"],
                     err=True)
-    return _out(args, {"ok": True, **done}, 0, [f"ブックマークを直しました: {done['url']}"]
+    return _out(args, _with_gate(args, {"ok": True, **done}), 0, [f"ブックマークを直しました: {done['url']}"]
                 + ([f"  {done['permalink']}"] if done.get("permalink") else []))
 
 
@@ -376,7 +414,7 @@ def cmd_batch(args) -> int:
         return _out(args, {"ok": False, "stage": 1, "digest": p["digest"], "preview": p}, 1,
                     ["ブックマークしません（まとめて承認の一段目です）"] + bookmark_batch.lines(p)
                     + [f"並べるなら: thth bookmark batch {args.account} {args.file} --confirm {p['digest']}"
-                       " --by <名前> --production"])
+                       f" --by <名前> --production{_gate_hint(args.account)}"])
     if args.confirm != p["digest"]:
         return _refuse(args, "confirm_mismatch", f"digest が一致しません（いまの digest は {p['digest']}）", rc=1)
     by = (args.by or os.environ.get("THTH_ACTOR") or "").strip()
@@ -385,6 +423,9 @@ def cmd_batch(args) -> int:
     if not (cfg.get("production") is True and args.production):
         return _refuse(args, "production_disabled",
                        "台帳が production: true で --production を付けたときだけ並べます（何もしていません）", rc=1)
+    gated = _gate_refusal(args)
+    if gated is not None:
+        return gated
     try:
         with core._account_locks(args.account, cfg, accounts_mod.state_dir_for(args.account), wait=0):
             locked = accounts_mod.load_account(args.account)
@@ -392,7 +433,8 @@ def cmd_batch(args) -> int:
             if again["digest"] != args.confirm:
                 return _refuse(args, "confirm_mismatch", "表示したあとに札か台帳が変わりました。もう一度 1 段目から",
                                rc=1)
-            done = bookmark_batch.approve_locked(args.account, locked, again, actor=by, via="cli")
+            done = bookmark_batch.approve_locked(args.account, locked, again, actor=by, via="cli",
+                                                 approval=getattr(args, "approval", None))
     except lock_mod.LockBusy:
         return _refuse(args, "account_busy", "いま別の実行がロックを持っています", rc=1)
     except guard.GuardRefused as exc:

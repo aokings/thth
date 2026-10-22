@@ -529,6 +529,12 @@ def _body(args) -> str:
         raise RemoteError("invalid_request", reason="--text と --text-file はどちらか 1 つ", rc=2)
     if text is not None:
         body = text
+    elif path == "-":
+        # 4.5.3: `--text-file -` は標準入力（明示の「-」）。
+        try:
+            body = sys.stdin.read()
+        except OSError:
+            raise RemoteError("invalid_request", reason="標準入力を読めません（--text か --text-file）", rc=2) from None
     elif path:
         try:
             with open(path, encoding="utf-8") as f:
