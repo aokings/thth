@@ -57,9 +57,10 @@ MEDIA_PHASES = frozenset({"prepared", "uploading", "granting", "creating", "proc
                           "published", "held", "unknown", "failed"})
 # 媒体の理由は静的な語（`media_publishing_timeout` など）。形が違えば出さない。
 _MEDIA_REASON = re.compile(r"[A-Za-z0-9_:. /-]{1,160}")
-# 添付を --published で解くときの一言（Threads の R2 の付与・doc の約束どおり）。
-MEDIA_GRANT_NOTE = ("添付の置き場（Threads の R2）の付与は ack も後始末もしません"
-                    "（24 時間の backstop で消えます）")
+# 添付を --published で解くときの一言（置き場の付与・doc の約束どおり）。Threads 以外の媒体でも出るので
+# 媒体の名を言わない（監査 Fable 10/23）。
+MEDIA_GRANT_NOTE = ("添付の置き場の付与・未使用の添付は、ack も後始末もしません"
+                    "（Threads の R2 は 24 時間の backstop で消えます）")
 
 
 def register(sub) -> None:
@@ -328,6 +329,13 @@ def refusal(account: str, record, decision: str, post_id):
                     "--published とは食い違います。媒体の画面で確かめてから "
                     f"thth inflight {account} resolve --not-published")
         allowed = (phase == "held" if decision == "not_published" else phase in MEDIA_MAYBE_PUBLISHED)
+        journal_post_id = media.get("post_id") if isinstance(media, dict) else None
+        if not allowed and decision == "not_published" and isinstance(journal_post_id, str) and journal_post_id:
+            # journal が post_id を覚えている（phase `published`）なら、docs へ回さず --published へ
+            # 案内する（監査 Fable 10/23）。
+            return (1, "published_known",
+                    "この inflight は出たことが分かっています（post_id が記録にあります）。"
+                    f"thth inflight {account} resolve --published <post_id> で解いてください")
         if not allowed:
             return (2, "media_inflight_unsupported",
                     "この添付の inflight はこの口では解きません（解けるのは held を --not-published で、"

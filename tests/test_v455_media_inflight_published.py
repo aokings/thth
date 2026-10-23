@@ -128,6 +128,9 @@ def test_journalが覚えているpost_idと違えば断る():
     record = {"file": "a.md", "media": {"phase": "published", "post_id": "8001"}}
     assert inflight_cli.refusal("kopicha-threads", record, "published", "8001") is None
     assert inflight_cli.refusal("kopicha-threads", record, "published", "9999")[1] == "post_id_differs"
+    # 監査（Fable 10/23）: journal が post_id を覚えているなら --not-published は docs でなく --published へ。
+    got = inflight_cli.refusal("kopicha-threads", record, "not_published", None)
+    assert got[1] == "published_known" and "--published" in got[2]
 
 
 def test_添付の記録は媒体をまたいで同じ組み方():
