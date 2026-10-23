@@ -2347,9 +2347,12 @@ def show_measured(result: dict) -> int:
             row_missing = row.get("missing") or []
             missing_text = ("  ⚠この日に無い: " + ", ".join(row_missing)
                             if row_missing else "")
+            # 4.5.4: いつ数えたか（無い古い行は出さない）。
+            seen = jst.parse(row.get("collected_at")) if row.get("collected_at") else None
+            seen_text = f"  数えた {jst.to_jst(seen).strftime('%m/%d %H:%M')}" if seen else ""
             print(f"  {row.get('date')}  "
                   + " ".join(f"{k}={v}" for k, v in metrics.items())
-                  + missing_text)
+                  + seen_text + missing_text)
         print("")
 
     print(f"—— 投稿 {len(posts)} 件")

@@ -244,7 +244,9 @@ def test_アカウント日次も出る(isolated_account):
         {"date": "2026-09-09", "metrics": {"views": 100, "followers_count": 5},
          # **その日に無い指標**。台帳全体の「1 度も現れていない」判定は、
          # 翌日の行が前日の欠測を隠すので、行ごとにも出す（2026-09-12）。
-         "missing": ["likes", "replies", "reposts", "quotes", "clicks"]}]
+         "missing": ["likes", "replies", "reposts", "quotes", "clicks"],
+         # 4.5.4: いつ数えたか（行にあれば出す）。
+         "collected_at": "2026-09-10T00:05:00+09:00"}]
 
 
 def test_別accountの行が混ざらない(isolated_account_factory, tmp_path):
@@ -398,7 +400,8 @@ def test_共有repoでも所有accountだけを根拠付きで選別する(isola
     assert result_a["account_daily"] == [
         {"date": "2026-09-10", "metrics": {"views": 1},
          "missing": ["likes", "replies", "reposts", "quotes",
-                     "followers_count", "clicks"]}], \
+                     "followers_count", "clicks"],
+         "collected_at": "2026-09-11T00:05:00+09:00"}], \
         "B の日次（clicks 9）が A の日次に混ざっている"
     assert "shares" in result_a["missing_post_metrics"], \
         "B の shares が A の投稿単位の欠測から消えている——A は一度も shares を記録していない"

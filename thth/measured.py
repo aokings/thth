@@ -455,6 +455,11 @@ def load(account_name: str, *, observation_metadata: bool = False) -> dict:
                     "date": row.get("date"), "metrics": row.get("metrics"),
                     "missing": _row_missing(row.get("metrics"),
                                             ACCOUNT_DAILY_METRIC_NAMES),
+                    # **いつ数えたか**（4.5.4）。閉じた前日を翌日 0 時台の最初の採取で 1 回だけ
+                    # 取るので、数えた時刻が読めないと「数え終わる前の値か」を疑うしかなかった
+                    # （関東の 10/22 の 1,153）。`tags` と同じ筋で、行に無ければ鍵ごと足さない。
+                    **({"collected_at": row.get("collected_at")}
+                       if row.get("collected_at") else {}),
                 })
 
     # **投稿が 1 件も無いのと、あるのに指標が欠けているのは違う**（運用指摘

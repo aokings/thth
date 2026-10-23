@@ -378,7 +378,7 @@ TOOLS = [
         "name": "thth_events",
         "description": (
             "前回から何が起きたかを時刻順に（公開・取り下げ・届いた返信と言及・止まった口座・"
-            "公開の結果待ち・予算切れ）。読むだけ。他人の本文は入れない（本文は thread_read で読む）"),
+            "公開の結果待ち・予算切れ・予約の在庫と 1 日の本数の不足）。読むだけ。他人の本文は入れない（本文は thread_read で読む）"),
         "inputSchema": {
             "type": "object",
             "properties": {

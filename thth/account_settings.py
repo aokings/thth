@@ -26,6 +26,10 @@
 運営者の CLI だけが `thth account set <口座> scheduled true --by <名前>` で timer に載せる印を
 立てられる（10/15・点検 §B-21。unit は運営者が `thth systemd <口座>` で置く）。
 
+運営者の CLI だけが `thth account set <口座> stock_daily_min <本数> --by <名前>` で、`thth events` の
+`schedule_thin`（1 日の本数の在庫）の物差しを決め打ちにできる（4.5.4。`-` か `0` で外して直近 7 日の
+平均に戻す）。安全装置ではないので `KEYS` には入れない（MCP・遠くの道からは変えない）。
+
 変更は台帳を原子的に書き換え、変更ログに `settings_set`（値の前後）で残す。秘密は無い。
 """
 from __future__ import annotations
@@ -236,6 +240,55 @@ def change_scheduled(account, value, *, by) -> dict:
     return {"account": account, "key": "scheduled", "before": before, "after": after, "changed": True}
 
 
+STOCK_DAILY_MIN_KEY = "stock_daily_min"
+STOCK_DAILY_MIN_MAX = 100
+
+
+def change_stock_daily_min(account, value, *, by) -> dict:
+    """台帳の `stock_daily_min`（`schedule_thin` の物差しの決め打ち・4.5.4）を置く・外す（運営者の CLI だけ）。
+
+    窓口がわざと 1 日の本数を減らしたとき、直近 7 日の平均が追いつくまで鳴り続けないように。
+    値は 1〜`STOCK_DAILY_MIN_MAX` の整数。`-` か `0` で外す（平均に戻る）。
+    """
+    admin_log.actor(by)
+    if not accounts.name_is_safe(account):
+        raise SettingsError("invalid_setting")
+    text = str(value if value is not None else "").strip()
+    if text in ("-", "0"):
+        after = None
+    elif text.isdigit() and len(text) <= 3 and 1 <= int(text) <= STOCK_DAILY_MIN_MAX:
+        after = int(text)
+    else:
+        raise SettingsError("invalid_setting")
+    cfg = accounts.load_account(account)
+    from . import events_cli
+    before = events_cli.thin_fixed(cfg)
+    if before == after and (after is not None or STOCK_DAILY_MIN_KEY not in cfg):
+        return {"account": account, "key": STOCK_DAILY_MIN_KEY, "before": before, "after": after,
+                "changed": False}
+    path = _ledger_path(account)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SettingsError("ledger_unavailable") from exc
+    if not isinstance(raw, dict):
+        raise SettingsError("ledger_unavailable")
+    original = json.loads(json.dumps(raw))
+    if after is None:
+        raw.pop(STOCK_DAILY_MIN_KEY, None)
+    else:
+        raw[STOCK_DAILY_MIN_KEY] = after
+    secrets_fs.atomic_write_json(str(path), raw)
+    try:
+        accounts.load_account(account)
+    except accounts.AccountError:
+        secrets_fs.atomic_write_json(str(path), original)
+        raise SettingsError("ledger_unavailable") from None
+    admin_log.append("settings_set", account, cfg, by=by, via="cli",
+                     diff={STOCK_DAILY_MIN_KEY: [before, after]})
+    return {"account": account, "key": STOCK_DAILY_MIN_KEY, "before": before, "after": after, "changed": True}
+
+
 def change_handle(account, value, *, by) -> dict:
     """台帳の `handle` を直す（**運営者の CLI だけ・トークンが無いときだけ**・10/15）。
 
@@ -404,11 +457,13 @@ def cmd_set(args) -> int:
         pairs = _pairs(rest)
         results = [change_handle(args.name, value, by=args.by) if key == "handle"
                    else change_scheduled(args.name, value, by=args.by) if key == "scheduled"
+                   else change_stock_daily_min(args.name, value, by=args.by) if key == STOCK_DAILY_MIN_KEY
                    else change(args.name, key, value, by=args.by, via="cli") for key, value in pairs]
     except SettingsError as exc:
         reason = str(exc) if str(exc) in REASONS else "invalid_setting"
         if reason == "invalid_setting":
-            reason += (f": 名前は {'・'.join(KEYS)}・handle・scheduled（true／false）"
+            reason += (f": 名前は {'・'.join(KEYS)}・handle・scheduled（true／false）・"
+                       f"{STOCK_DAILY_MIN_KEY}（1 日の本数・- で外す）"
                        "（burst は `burst <件数> <分>` でも）・柵の行の id（"
                        + "・".join(limits_config.ACCOUNT_ROWS) + "）")
         elif reason == "invalid_handle":

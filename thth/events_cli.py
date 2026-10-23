@@ -56,6 +56,18 @@
   （人が気づいたのは止まったあと）ことの再発防止。`ref` は `stock`（在庫が戻れば消える・同じ口座では
   同じ id）、`stock_hours`（最後の予約までの時間・無ければ 0）・`approved_future`（承認済みで未来の本数）・
   `floor_hours`（48）・`last_publish_at` が付く。書かず、媒体の API も呼ばない。
+- `schedule_thin`（4.5.4・続いている状態）: 予約は先まで届いているのに、**1 日の本数**が減っている。物差しは
+  直近 7 日（JST の日・今日を除く）に THTH で公開した根の投稿（返信は除く）の 1 日あたりの平均。今日（もう出た
+  根の投稿＋今日の残りの承認済み予約）・明日・明後日（承認済み予約・返信と待ちの行は除く）のどれかが物差しの
+  6 割を切ると出る。物差しが 2 本未満・はてな・直近 7 日に公開の無い口座は出さない。口座の台帳に
+  `stock_daily_min`（`thth account set <口座> stock_daily_min <本数> --by <名前>`）があれば、平均でなく
+  その本数を切った日で出す（6 割はかけない）。10/21 から関東の朝・夜の枠の原稿が尽きて 1 日 4〜5 本が
+  2 本に減ったのに、昼・夕の予約が 10/29 まであって `schedule_low` が鳴らなかったことの再発防止。
+  `ref` は `daily`（同じ口座では同じ id）、`thin_days`（足りない日の全部・`{date, count}`）・`average_daily`
+  （直近 7 日の平均・小数 1 桁）・`floor_daily`（切ったら鳴る本数）・`window_days`（7）・`free_hours`
+  （最初の足りない日の空いた時間帯＝直近 7 日に 3 日以上使った時のうち、その日に予約も公開も無い時）・
+  決め打ちがあれば `stock_daily_min` が付く。summary は最初の足りない日（例「10/24 は 2 本（直近 7 日は
+  1 日 3.9 本）。空いた時間: 8 時台・19 時台・21 時台」）。書かず、媒体の API も呼ばない。
 - `delivery_resolved`（4.0 S5 §5.3）: 人が衝突を解いた（台帳の `op: resolve` の行・状態に関わらず）。
   id は配信の台帳の出来事と同じ（`thth.delivery/1|<delivery>|<seq>`）。
 
@@ -67,7 +79,8 @@
   **記録した時刻**の順（同じ時刻は event_id の順）。採取の 1 回の中で付いた時刻が、書き込みより
   少し前になることがあるので、カーソルは最後の時刻から `CURSOR_MARGIN` だけ遡った間に受け取った
   event_id を覚えていて、その間に遅れて記録されたものも取りこぼさずに返す（届いたものは
-  返さない）。始まりの時刻が無い状態（予算）は毎回返す（受け手が event_id で除く）。
+  返さない）。始まりの時刻が無い状態（予算・`schedule_low`・`schedule_thin`）は毎回返す（受け手が
+  event_id で除く）。
   `--after <event_id>` は、今読める流れの中でその出来事より後ろから。
 
 `runs-*.ndjson` は使わない: 投稿の行は時刻を持たない（`run_id` は乱数）ので、窓で切れない。
@@ -106,7 +119,9 @@ KINDS = ("published", "retracted", "reply_received", "mention_received",
          # 4.0 S6 §6.3: 第三者がはてなブックマークを付けた（反応の台帳から・本文と user は入れない）。
          "bookmark_received",
          # 4.5.2: 動いている口座の承認済みの予約が 48 時間分を切った（続いている状態・在庫切れの前の知らせ）。
-         "schedule_low")
+         "schedule_low",
+         # 4.5.4: 予約は先まで届いているのに、1 日の本数が直近 7 日の平均の 6 割を切る日がある（続いている状態）。
+         "schedule_thin")
 # 反応の出来事の id の版の語（設計 4.0 S6 §6.3）。
 REACTION_EVENT_PREFIX = "thth.reaction/1"
 # 正本を直した配信の出来事の id の版の語（設計 4.0 S5 §3.4）。
@@ -153,6 +168,16 @@ def delivery_event_id(delivery, seq) -> str:
 # 在庫（承認済みで未来の予約）がこの時間を切ったら知らせる／この日数のうちに公開していれば「動いている口座」。
 STOCK_FLOOR_HOURS = 48
 STOCK_ACTIVE_DAYS = 7
+# 1 日の本数の在庫（4.5.4・`schedule_thin`）: 物差しは直近 `THIN_WINDOW_DAYS` 日（JST の日・今日を除く）の
+# 根の投稿の 1 日あたりの平均。見る日（今日から `THIN_LOOKAHEAD_DAYS` 日）のどれかが平均の `THIN_RATIO` を
+# 切ったら知らせる。平均が `THIN_MIN_AVERAGE` 本未満の口座は見ない。空いた時間は、直近 `THIN_WINDOW_DAYS`
+# 日のうち `THIN_HOUR_MIN_DAYS` 日以上使った時（時台）。台帳の `THIN_FIXED_KEY` があれば平均の代わりに使う。
+THIN_WINDOW_DAYS = 7
+THIN_LOOKAHEAD_DAYS = 3
+THIN_RATIO = 0.6
+THIN_MIN_AVERAGE = 2
+THIN_HOUR_MIN_DAYS = 3
+THIN_FIXED_KEY = "stock_daily_min"
 
 
 def _event(kind, account, occurred, recorded, ref, summary, *, _id=None, **extra) -> dict:
@@ -219,6 +244,83 @@ def _stock_events(name, cfg, now, sent_rows):
     return [_event("schedule_low", name, None, None, "stock", summary, ongoing=True,
                    stock_hours=hours, approved_future=len(approved), floor_hours=STOCK_FLOOR_HOURS,
                    last_publish_at=jst.iso(last) if last is not None else None)]
+
+
+def _is_reply(row) -> bool:
+    return bool(row.get("reply_to") or row.get("reply_to_file"))
+
+
+def thin_fixed(cfg):
+    """台帳の決め打ち（`stock_daily_min`・1 以上の整数）。無い・読めない形なら None。"""
+    value = (cfg or {}).get(THIN_FIXED_KEY)
+    return value if type(value) is int and value >= 1 else None
+
+
+def _thin_events(name, cfg, now):
+    """1 日の本数が減っている口座（続いている状態・4.5.4）。読むだけ。
+
+    `_stock_events` が「最後の予約がどこまで届いているか」を見るのに対し、こちらは「日ごとに何本あるか」を
+    見る。数えるのは根の投稿だけ（返信は公開・予約とも数えない）。予約は承認済みで時刻が未来のもの
+    （待ちの行は除く・`_stock_events` と同じ拾い方）。
+    """
+    if cfg.get("media") == "hatenablog":
+        return []
+    from . import sent as sent_mod
+    now = jst.to_jst(now)
+    today = now.date()
+    first = today - datetime.timedelta(days=THIN_WINDOW_DAYS)
+    published: dict = {}   # JST の日 → その日に公開した根の投稿の時（時台）の list
+    for row in sent_mod.records(accounts_mod.state_dir_for(name)):
+        if row.get("kind") in _HATENA_SENT_KINDS or _is_reply(row):
+            continue
+        at = jst.parse(row.get("sent_at"))
+        if at is None:
+            continue
+        at = jst.to_jst(at)
+        if first <= at.date() <= today and at <= now:
+            published.setdefault(at.date(), []).append(at.hour)
+    window = {day: hours for day, hours in published.items() if day < today}
+    if not window:
+        return []   # 直近 7 日に公開していない口座（手でしか出さない・使っていない）
+    average = sum(len(hours) for hours in window.values()) / THIN_WINDOW_DAYS
+    fixed = thin_fixed(cfg)
+    if fixed is None:
+        if average < THIN_MIN_AVERAGE:
+            return []
+        floor = average * THIN_RATIO
+    else:
+        floor = fixed
+    used = {}
+    for hours in window.values():
+        for hour in set(hours):
+            used[hour] = used.get(hour, 0) + 1
+    usual = sorted(hour for hour, days in used.items() if days >= THIN_HOUR_MIN_DAYS)
+    from . import report as report_mod
+    planned: dict = {}
+    for row in report_mod.schedule(name, now=now):
+        if (row["status"] != "approved" or row["past"] or row.get("waiting_for") or _is_reply(row)):
+            continue
+        at = jst.to_jst(jst.parse(row["publish_at"]))
+        planned.setdefault(at.date(), []).append(at.hour)
+    thin = []
+    for offset in range(THIN_LOOKAHEAD_DAYS):
+        day = today + datetime.timedelta(days=offset)
+        hours = planned.get(day, []) + (published.get(day, []) if day == today else [])
+        if len(hours) < floor:
+            thin.append((day, hours))
+    if not thin:
+        return []
+    day, hours = thin[0]
+    free = [hour for hour in usual if hour not in hours]
+    basis = (f"決め打ちは 1 日 {fixed} 本・直近 {THIN_WINDOW_DAYS} 日は 1 日 {average:.1f} 本" if fixed is not None
+             else f"直近 {THIN_WINDOW_DAYS} 日は 1 日 {average:.1f} 本")
+    summary = f"{day.month}/{day.day} は {len(hours)} 本（{basis}）"
+    if free:
+        summary += "。空いた時間: " + "・".join(f"{hour} 時台" for hour in free)
+    return [_event("schedule_thin", name, None, None, "daily", summary, ongoing=True,
+                   thin_days=[{"date": d.isoformat(), "count": len(h)} for d, h in thin],
+                   average_daily=round(average, 1), floor_daily=round(floor, 1),
+                   window_days=THIN_WINDOW_DAYS, free_hours=free, stock_daily_min=fixed)]
 
 
 def _reply_events(name, titles, allowed_names):
@@ -676,6 +778,10 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
             events += _stock_events(name, cfg, now, sent_rows)
         except Exception:  # noqa: BLE001 — queue が読めなくても他の出所は出す
             cannot_say.add("queue_unreadable")
+        try:
+            events += _thin_events(name, cfg, now)
+        except Exception:  # noqa: BLE001 — queue が読めなくても他の出所は出す
+            cannot_say.add("queue_unreadable")
     events.sort(key=_key)
 
     previous = None
@@ -739,7 +845,7 @@ def render(payload, out=print) -> None:
 
 
 def register(sub) -> None:
-    p = sub.add_parser("events", help="出来事の流れ（公開・返信・言及・止まり・予算）を時刻順に（読むだけ）")
+    p = sub.add_parser("events", help="出来事の流れ（公開・返信・言及・止まり・予算・予約の在庫と 1 日の本数）を時刻順に（読むだけ）")
     p.add_argument("account", metavar="target", help="account 名か project 名")
     p.add_argument("--since", default=None, help="窓の始まり（24h・7d・ISO 時刻・既定 24h）")
     p.add_argument("--after", default=None,
