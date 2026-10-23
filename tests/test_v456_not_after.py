@@ -358,3 +358,33 @@ def test_連投は途中の段で期限を過ぎたら残りを出さない(thre
     cfg = accounts_mod.load_account(account["name"])
     later = B_NOW + datetime.timedelta(minutes=10)
     assert threadthrow.due_bundles(cfg, now=later, tree_sha=None) == []
+
+
+# 監査（Fable 10/23）1: Threads の本文の原稿で公開が曖昧に失敗し、次の run の自己解決が FINISHED の
+# 同じ container を公開する道。期限を過ぎていれば公開せず、inflight を解いて口座を先へ進める。
+def test_自己解決のFINISHEDでも期限を過ぎていれば公開しない(isolated_account_factory, tmp_path, frozen_now_jst):
+    from tests.conftest import init_git_pair, make_queue_text
+    from tests.helpers import fake_threads_status as fake
+    from thth import accounts as accounts_mod
+    from thth import core
+    from thth import inflight as inflight_mod
+    from thth import runs as runs_mod
+    start = datetime.datetime.fromisoformat("2026-09-09T10:00:00+09:00")
+    later = datetime.datetime.fromisoformat("2026-09-09T11:00:00+09:00")
+    text = make_queue_text({"not_after": "2026-09-09T10:30:00+09:00"})
+    pair = init_git_pair(tmp_path, seed_content=text, seed_name="a.md")
+    account = isolated_account_factory(repo_dir=pair["work"], production=True)
+    state_dir = accounts_mod.state_dir_for(account["name"])
+    factory = lambda base_url: (lambda _cfg, _token: fake.adapter(base_url))  # noqa: E731
+    with fake.serve(fake.Script(publish=[(500, None)], status=[503])) as base_url:
+        first = core.throw_once(account["name"], production_flag=True, adapter_factory=factory(base_url), now=start)
+    assert first.action == "inflight"
+    frozen_now_jst(later)
+    script = fake.Script(publish=[("ok", "999")], status=["FINISHED"])
+    with fake.serve(script) as base_url:
+        core.throw_once(account["name"], production_flag=True, adapter_factory=factory(base_url), now=later)
+    assert script.publish_calls == 0 and script.create_calls == 0
+    assert inflight_mod.read(state_dir) is None
+    rows = runs_mod.read_runs(state_dir)
+    assert any(r.get("inflight_resolution") == "remote_finished_not_after"
+               and r.get("error") == "not_after_passed" for r in rows)

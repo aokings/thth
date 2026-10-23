@@ -592,3 +592,11 @@ def test_mcp_の予約は_production_を付けて_cli_を呼ぶ(worker, monkeypa
     monkeypatch.setattr(server, "run_cli", fake_run)
     server.call_tool("thth_schedule_request", {"account": ACCOUNT, "draft_id": "d" * 64})
     assert seen[-1] == ["schedule", ACCOUNT, "--draft=" + "d" * 64, "--production", "--json"]
+
+
+def test_schedule_の_draft_と_not_after_は一緒に使えない(worker, capsys):
+    """4.5.6 監査（Fable 10/23）2: `--draft` に `--not-after` を付けても黙って捨てない（付いたつもりで予約されない）。"""
+    rc, out, err = run(capsys, "schedule", ACCOUNT, "--draft", "d" * 64, "--production",
+                       "--not-after", "2026-09-27T10:00:00+09:00")
+    assert rc == 2 and "--not-after" in (out + err)
+    assert worker.calls == []

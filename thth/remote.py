@@ -699,6 +699,11 @@ def _show_sent(value) -> int:
 
 def _schedule(args, account):
     draft = getattr(args, "draft", None)
+    if draft is not None and getattr(args, "not_after", None):
+        # 4.5.6: 期限は下書きを置くとき（--text・--text-file）に付ける。--draft では付けられない
+        # （黙って捨てると、付いたつもりのまま期限なしで予約される・監査 Fable 10/23）。
+        raise RemoteError("invalid_request", reason="--not-after は --draft と一緒に使えません。"
+                          "期限は下書きを置くとき（--text か --text-file と --at）に付けてください", rc=2)
     if draft is None:
         if getattr(args, "text", None) is None and not getattr(args, "text_file", None):
             # 「いつ何が出るか」の一覧（手元の `thth schedule <口座>` と同じ行・10/15 点検 B-18）。

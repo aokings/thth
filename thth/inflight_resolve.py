@@ -293,6 +293,20 @@ def _publish_finished(account_name, account_cfg, state_dir, record, adapter, *,
             or qf.get("post_id")
             or not core._fingerprint_matches(raw, account_cfg["media"], expected, account_cfg)):
         return stop("finished_fingerprint_mismatch", "原稿が公開したときの内容・承認と違います")
+    # 4.5.6: 出さない期限（`not_after`）を過ぎていれば、FINISHED の container でも公開しない
+    # （監査 Fable 10/23: 曖昧な失敗のあと期限をまたぐと、ここが期限を見ずに公開していた）。
+    # FINISHED は「出ていない」と分かっているので、止めずに解いて口座を先へ進める。
+    check_at = max(jst.to_jst(now) if now is not None else jst.now_jst(), jst.now_jst())
+    if queuefile.not_after_blocks(qf.front_matter, check_at):
+        resolution = "remote_finished_not_after"
+        inflight_mod.archive(state_dir, record, resolved_at=jst.iso(), resolved_by="thth",
+                             resolution=resolution)
+        inflight_mod.clear(state_dir)
+        _run(account_name, state_dir, run_id, now, record, post_id=None, status="error",
+             error="not_after_passed", resolution=resolution, remote_state="finished")
+        log("inflight を解きました: container は FINISHED（出ていません）でしたが、出さない期限"
+            "（not_after）を過ぎたので公開しません。原稿は approved のまま出ません")
+        return Outcome(True, True, "finished", resolution)
     posted_at = jst.iso()
     result = publish(container_id)
     post_id = getattr(result, "post_id", None)
