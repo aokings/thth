@@ -245,7 +245,8 @@ def _publication_fingerprint(path, cfg):
         if b.malformed or problems:
             raise ValueError("invalid_bundle")
         return approval.compute_bundle_sha(segments=bundle.effective_segments(segments, cfg, b.get("topic")), account=b.get("account"), topic=b.get("topic"),
-                                           publish_at=b.get("publish_at"), continue_until=b.get("continue_until"))
+                                           publish_at=b.get("publish_at"), continue_until=b.get("continue_until"),
+                                           not_after=b.get("not_after"))
     value = core._current_fingerprint(str(path), cfg["media"], cfg)
     if not value:
         raise ValueError("invalid_queue")

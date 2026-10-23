@@ -341,6 +341,10 @@ def check(bundle: Bundle, *, account_cfg: dict | None) -> list:
                         "continue_until: publish_at より後にしてください")
             except (ValueError, TypeError):
                 pass
+    # 4.5.6: 出さない期限（`not_after`・根の原稿に 1 つ）。形と publish_at との前後だけ見る。
+    not_after_error = queuefile.not_after_lint_error(fm)
+    if not_after_error:
+        errors.append(not_after_error)
 
     media = account_cfg["media"] if account_cfg else "threads"
     segments, seg_problems = load_segments(bundle, media)

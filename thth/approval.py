@@ -97,7 +97,10 @@ _COMPONENT_ORDER = ("body", "account", "reply_to", "topic", "publish_at")
 _OPTION_ORDER = ("location_id", "share_to_instagram", "media_sources", "media_manifest",
                  "community_id",
                  # 4.0 S4 §9.3: SNS の告知が結ぶ配信 id（値があるときだけ末尾・版は上げない）。
-                 "announces")
+                 "announces",
+                 # 4.5.6: 出さない期限（`not_after`）。値があるときだけ末尾に足す（版は上げない）——
+                 # 期限を延ばしたら承認し直し。期限の無い原稿の入力バイト列は今までと同じ。
+                 "not_after")
 
 
 def is_true(raw) -> bool:
@@ -115,6 +118,7 @@ def publish_options(fm: dict) -> dict:
         "share_to_instagram": is_true(fm.get("share_to_instagram")),
         "community_id": community_id_of(fm),
         "announces": announces_of(fm),
+        "not_after": queuefile.not_after_raw(fm),
     }
 
 
@@ -157,7 +161,26 @@ def reply_to_for_fingerprint(fm: dict) -> str | None:
     return queuefile.REPLY_TO_FILE_MARK + name
 
 
-def _option_components(location_id, share_to_instagram, community_id=None, announces=None) -> dict:
+def _normalize_not_after(not_after) -> str:
+    """`not_after` を指紋の値に（読めれば `isoformat()`・読めなければ書いたまま・無ければ空）。
+
+    読めない値でも指紋は取れるようにする（select と lint が `not_after_invalid` で別に断る）。
+    """
+    if not_after is None:
+        return ""
+    if isinstance(not_after, datetime.datetime):
+        return not_after.isoformat()
+    raw = str(not_after).strip()
+    if not raw:
+        return ""
+    try:
+        return queuefile.parse_publish_at(raw).isoformat()
+    except ValueError:
+        return raw
+
+
+def _option_components(location_id, share_to_instagram, community_id=None, announces=None,
+                       not_after=None) -> dict:
     out = {
         "location_id": (location_id or "").strip() if isinstance(location_id, str) else "",
         "share_to_instagram": "true" if is_true(share_to_instagram) else "",
@@ -168,6 +191,9 @@ def _option_components(location_id, share_to_instagram, community_id=None, annou
     announced = (str(announces).strip() if announces is not None else "")
     if announced:
         out["announces"] = announced
+    until = _normalize_not_after(not_after)
+    if until:
+        out["not_after"] = until
     return out
 
 
@@ -185,7 +211,8 @@ def compute_approved_components(*, section: str, account: str, reply_to: str | N
                                  publish_at: str | datetime.datetime,
                                  location_id: str | None = None,
                                  share_to_instagram=False, media_sources=None, media_manifest=None,
-                                 community_id: str | None = None, announces: str | None = None) -> dict:
+                                 community_id: str | None = None, announces: str | None = None,
+                                 not_after=None) -> dict:
     """`compute_approved_sha()` が hash する前の、5 項目それぞれの正規化済みの値。
 
     外部レビュー第 3 巡・持ち越し項目 C: 指紋（`compute_approved_sha()` の
@@ -204,7 +231,7 @@ def compute_approved_components(*, section: str, account: str, reply_to: str | N
         "topic": queuefile.normalize_topic(topic) or "",
         "publish_at": _normalize_publish_at(publish_at),
     }
-    out.update(_option_components(location_id, share_to_instagram, community_id, announces))
+    out.update(_option_components(location_id, share_to_instagram, community_id, announces, not_after))
     from . import media as media_mod
     component = media_mod.fingerprint_component(media_sources)
     if component:
@@ -219,7 +246,8 @@ def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
                           topic: str | None, publish_at: str | datetime.datetime,
                           location_id: str | None = None,
                           share_to_instagram=False, media_sources=None, media_manifest=None,
-                          community_id: str | None = None, announces: str | None = None) -> str:
+                          community_id: str | None = None, announces: str | None = None,
+                          not_after=None) -> str:
     """承認の対象を固定する sha256（外部レビュー §1・受け入れ 1〜4・11）。
 
     ハッシュの入力は、次の 5 つをこの順序で `\\x1f`（ASCII unit separator）区切りに
@@ -250,7 +278,7 @@ def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
         section=section, account=account, reply_to=reply_to, topic=topic,
         publish_at=publish_at, location_id=location_id,
         share_to_instagram=share_to_instagram, media_sources=media_sources, media_manifest=media_manifest,
-        community_id=community_id, announces=announces)
+        community_id=community_id, announces=announces, not_after=not_after)
     parts = [components[key] for key in _COMPONENT_ORDER] + _option_parts(components)
     joined = _SEP.join(parts)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
@@ -361,7 +389,8 @@ _SEG = "\x1e"          # ASCII record separator（段の境界）
 
 def compute_bundle_components(*, segments: list, account: str, topic: str | None,
                                publish_at, continue_until,
-                               frozen: list | None = None, media_sources=None, media_manifest=None) -> dict:
+                               frozen: list | None = None, media_sources=None, media_manifest=None,
+                               not_after=None) -> dict:
     """束の承認対象を項目ごとに正規化する（設計 §2.2・§5）。
 
     **単なる本文連結ではなく、段の境界と順序を保った配列**（Codex 最終条件 5）。
@@ -419,6 +448,10 @@ def compute_bundle_components(*, segments: list, account: str, topic: str | None
         if any(prepared):
             import json
             out["media_manifest"] = json.dumps(prepared, ensure_ascii=False, separators=(",", ":"))
+    # 4.5.6: 出さない期限（根の原稿の front-matter）。値があるときだけ（期限の無い束の指紋は今までと同じ）。
+    until = _normalize_not_after(not_after)
+    if until:
+        out["not_after"] = until
     return out
 
 
@@ -428,7 +461,8 @@ _BUNDLE_ORDER = ("version", "segments", "segment_count", "account", "topic",
 
 
 def compute_bundle_sha(*, segments: list, account: str, topic: str | None,
-                        publish_at, continue_until, frozen: list | None = None, media_sources=None, media_manifest=None) -> str:
+                        publish_at, continue_until, frozen: list | None = None, media_sources=None, media_manifest=None,
+                        not_after=None) -> str:
     """束の `approved_sha`。
 
     v1 の `compute_approved_sha()` とは**別の入力バイト列**（先頭に
@@ -437,12 +471,15 @@ def compute_bundle_sha(*, segments: list, account: str, topic: str | None,
     """
     components = compute_bundle_components(
         segments=segments, account=account, topic=topic, publish_at=publish_at,
-        continue_until=continue_until, frozen=frozen, media_sources=media_sources, media_manifest=media_manifest)
+        continue_until=continue_until, frozen=frozen, media_sources=media_sources, media_manifest=media_manifest,
+        not_after=not_after)
     parts = [components[key] for key in _BUNDLE_ORDER]
     if components.get("media_sources"):
         parts.append("media_sources=" + components["media_sources"])
     if components.get("media_manifest"):
         parts.append("media_manifest=" + components["media_manifest"])
+    if components.get("not_after"):
+        parts.append("not_after=" + components["not_after"])
     joined = _SEP.join(parts)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 

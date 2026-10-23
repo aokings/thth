@@ -28,7 +28,9 @@ SAFE_ERRORS = frozenset(('invalid_request','unsupported_operation','invalid_scop
 from .lint import REASONS as LINT_REASONS
 # `invalid_draft` に添える理由。**静的な符丁だけ**——lint の日本語 1 行や
 # path をそのままサーバの口から出さない（2.14.1）。
-DRAFT_REASONS = frozenset(('body_not_representable','media_not_representable','publish_at_past')) | LINT_REASONS
+DRAFT_REASONS = frozenset(('body_not_representable','media_not_representable','publish_at_past',
+                           # 4.5.6: 出さない期限を過ぎた下書きは予約しない。
+                           'not_after_past')) | LINT_REASONS
 from .media_uploads import REASONS as MEDIA_REASONS
 # managed repo をモードで断ったときだけは `write_unavailable` で終わらせない——
 # 運用者が chmod で直せる唯一の理由なので、静的な名前のまま上げる。
@@ -161,13 +163,15 @@ def _sync(cfg):
 def draft_put(context, request, via):
     _schema(request, ('body','topic','publish_at','reply_to','draft_id','expected_revision','media',
                       # 4.0 S4 §9.5: SNS の告知（結ぶ配信 id と記事の名）。本文の `{article_url}` は本文の一部。
-                      'announces','article'), ('body','publish_at'))
+                      'announces','article',
+                      # 4.5.6: 出さない期限（この時刻を過ぎたら出さない・形と前後は lint が見る）。
+                      'not_after'), ('body','publish_at'))
     account=request['account'];cfg=current(context,account,write=True)
     clone, _ = managed_repo.locations(account)
     _, queue = _queue(cfg)
     if cfg['repo_dir'] != str(clone): error('managed_repo_required')
     if ('draft_id' in request) != ('expected_revision' in request): error('invalid_request')
-    for key in ('topic','reply_to','publish_at','announces','article'):
+    for key in ('topic','reply_to','publish_at','announces','article','not_after'):
         value=request.get(key)
         if value is not None and (not isinstance(value,str) or writeback.has_control_chars(value)): error('invalid_draft')
     if len(request['body'].encode())>48000: error('invalid_draft')
@@ -184,7 +188,7 @@ def draft_put(context, request, via):
             if q.front_matter.get('status')!='draft' or q.front_matter.get('post_id'): error('draft_not_editable')
             if request['expected_revision']!=hashlib.sha256(old).hexdigest(): error('draft_changed')
         text='---\nthth: 1\naccount: '+account+'\nstatus: draft\npublish_at: '+request['publish_at']+'\n'
-        for key in ('topic','reply_to','announces','article'):
+        for key in ('topic','reply_to','announces','article','not_after'):
             if request.get(key): text+=key+': '+request[key]+'\n'
         if rows is not None:
             # Alt is quoted as JSON so any legal alt survives the round trip;
@@ -408,6 +412,9 @@ def schedule(context, request, via, extra_fields=None):
         now=jst.now_jst()
         if jst.to_jst(publish_at)<now-timedelta(minutes=PAST_GRACE_MINUTES): error('invalid_draft','publish_at_past')
         if jst.to_jst(publish_at)<now: publish_at=now
+        # 4.5.6: 出さない期限を過ぎた下書きは刻まない（刻んでも出ない・手元の 1 段目は警告で言う）。
+        from . import queuefile
+        if queuefile.not_after_blocks(q.front_matter, now): error('invalid_draft','not_after_past')
         hatena=value.get('kind')=='hatena_entry'
         if hatena and not request.get('confirm'):
             # 1 段目: 原稿も台帳も書かない（`inflight_resolve` と同じ 2 段の形）。見せるのは手元の 1 段目と同じ材料。

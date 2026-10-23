@@ -208,6 +208,13 @@ thth approve <file>
 thth approve <file> --confirm ab12cd34ef56 --by "your-name"
 ```
 
+Optional `not_after: 2026-10-25T10:00:00+09:00` (same form as `publish_at`)
+is a deadline: once it has passed, THTH does not post the file, even if the
+queue fell behind or the account was stopped. The file stays `approved` and
+shows up as `not_after_passed` in `thth queue`, `thth schedule`, the board,
+and `thth events`. It is part of the approval fingerprint, so extending it
+needs a new approval.
+
 Changing the body, account, topic, reply target, or `publish_at` after
 approval invalidates it (`approval_stale`); re-run both steps. `--by` is
 required — it lands in the front matter and the commit. You can pass a

@@ -68,6 +68,10 @@
   （最初の足りない日の空いた時間帯＝直近 7 日に 3 日以上使った時のうち、その日に予約も公開も無い時）・
   決め打ちがあれば `stock_daily_min` が付く。summary は最初の足りない日（例「10/24 は 2 本（直近 7 日は
   1 日 3.9 本）。空いた時間: 8 時台・19 時台・21 時台」）。書かず、媒体の API も呼ばない。
+- `not_after_passed`（4.5.6）: 承認済みの原稿が、出さない期限（front matter の `not_after`）を過ぎて出ないまま
+  終わった（予約が詰まった・口座が止まっていた・承認が遅れた）。起きた時刻は期限、`ref` は原稿の名前、
+  `not_after`・`publish_at` が付く。id は `"ev_" + sha256("thth.not_after/1|<口座>|<原稿>|<期限>")[:24]`。
+  原稿は書き換えない（approved のまま。board・morning には held の `not_after_passed` として出る）。
 - `delivery_resolved`（4.0 S5 §5.3）: 人が衝突を解いた（台帳の `op: resolve` の行・状態に関わらず）。
   id は配信の台帳の出来事と同じ（`thth.delivery/1|<delivery>|<seq>`）。
 
@@ -121,7 +125,11 @@ KINDS = ("published", "retracted", "reply_received", "mention_received",
          # 4.5.2: 動いている口座の承認済みの予約が 48 時間分を切った（続いている状態・在庫切れの前の知らせ）。
          "schedule_low",
          # 4.5.4: 予約は先まで届いているのに、1 日の本数が直近 7 日の平均の 6 割を切る日がある（続いている状態）。
-         "schedule_thin")
+         "schedule_thin",
+         # 4.5.6: 承認済みの原稿が、出さない期限（not_after）を過ぎて出ないまま終わった（起きた時刻は期限）。
+         "not_after_passed")
+# 出さない期限を過ぎた原稿の出来事の id の版の語（4.5.6）。
+NOT_AFTER_EVENT_PREFIX = "thth.not_after/1"
 # 反応の出来事の id の版の語（設計 4.0 S6 §6.3）。
 REACTION_EVENT_PREFIX = "thth.reaction/1"
 # 正本を直した配信の出来事の id の版の語（設計 4.0 S5 §3.4）。
@@ -229,7 +237,8 @@ def _stock_events(name, cfg, now, sent_rows):
         return []
     from . import report as report_mod
     approved = [row for row in report_mod.schedule(name, now=now)
-                if row["status"] == "approved" and not row["past"] and not row.get("waiting_for")]
+                if row["status"] == "approved" and not row["past"] and not row.get("waiting_for")
+                and not row.get("expired")]
     last = max((jst.parse(row["publish_at"]) for row in approved), default=None)
     horizon = now + datetime.timedelta(hours=STOCK_FLOOR_HOURS)
     if last is not None and last >= horizon:
@@ -244,6 +253,30 @@ def _stock_events(name, cfg, now, sent_rows):
     return [_event("schedule_low", name, None, None, "stock", summary, ongoing=True,
                    stock_hours=hours, approved_future=len(approved), floor_hours=STOCK_FLOOR_HOURS,
                    last_publish_at=jst.iso(last) if last is not None else None)]
+
+
+def _not_after_events(name, cfg, now):
+    """承認済みのまま出さない期限を過ぎた原稿（4.5.6）。読むだけ。
+
+    起きた時刻は期限（`not_after`）。`ref` は原稿の名前、id は `"ev_" + sha256("thth.not_after/1|<口座>|
+    <原稿>|<期限>")[:24]`——期限を延ばして承認し直せば別の id（延ばした期限も過ぎたらもう 1 度出る）。
+    連投（`thth: 2`）は `thth schedule` に載らないのでここにも出ない。
+    """
+    if cfg.get("media") == "hatenablog":
+        return []
+    from . import report as report_mod
+    out = []
+    for row in report_mod.schedule(name, now=now):
+        if row["status"] != "approved" or not row.get("expired") or not row.get("not_after"):
+            continue
+        until = jst.parse(row["not_after"])
+        raw = f"{NOT_AFTER_EVENT_PREFIX}|{name}|{row['file']}|{row['not_after']}"
+        summary = (f"出さない期限 {jst.iso(until)[:16].replace('T', ' ')} を過ぎて出ませんでした: {row['file']}"
+                   f"（予定 {row['publish_at'][:16].replace('T', ' ')}）")
+        out.append(_event("not_after_passed", name, until, until, row["file"], summary,
+                          _id="ev_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24],
+                          not_after=row["not_after"], publish_at=row["publish_at"]))
+    return out
 
 
 def _is_reply(row) -> bool:
@@ -298,7 +331,8 @@ def _thin_events(name, cfg, now):
     from . import report as report_mod
     planned: dict = {}
     for row in report_mod.schedule(name, now=now):
-        if (row["status"] != "approved" or row["past"] or row.get("waiting_for") or _is_reply(row)):
+        if (row["status"] != "approved" or row["past"] or row.get("waiting_for") or _is_reply(row)
+                or row.get("expired")):
             continue
         at = jst.to_jst(jst.parse(row["publish_at"]))
         planned.setdefault(at.date(), []).append(at.hour)
@@ -780,6 +814,10 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
             cannot_say.add("queue_unreadable")
         try:
             events += _thin_events(name, cfg, now)
+        except Exception:  # noqa: BLE001 — queue が読めなくても他の出所は出す
+            cannot_say.add("queue_unreadable")
+        try:
+            events += _not_after_events(name, cfg, now)
         except Exception:  # noqa: BLE001 — queue が読めなくても他の出所は出す
             cannot_say.add("queue_unreadable")
     events.sort(key=_key)

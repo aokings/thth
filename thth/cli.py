@@ -585,6 +585,29 @@ def _announce_note(fm: dict, account_cfg: dict):
                      f"このままでは出ません（{reason}）")}
 
 
+def _not_after_line(fm) -> str | None:
+    """1 段目の「出さない期限 YYYY-MM-DD HH:MM」（4.5.6）。期限が無い・読めなければ None。"""
+    try:
+        until = queuefile.parse_not_after(fm)
+    except ValueError:
+        return None
+    if until is None:
+        return None
+    return f"出さない期限 {queuefile.jst_minute(until)}（この時刻を過ぎたら THTH は出しません）"
+
+
+def _not_after_expired_line(fm, now) -> str | None:
+    """期限を過ぎていれば「期限を過ぎているので確定しても出ません」（4.5.6）。過ぎていなければ None。"""
+    try:
+        until = queuefile.parse_not_after(fm)
+    except ValueError:
+        return None
+    if until is None or now <= until:
+        return None
+    return (f"**期限を過ぎているので確定しても出ません**: 出さない期限 {queuefile.jst_minute(until)}"
+            "（not_after）を過ぎています。出すなら not_after を直して承認し直してください。")
+
+
 def _late_warning(fm: dict, account_cfg: dict, announce_note: dict | None = None):
     """**予定時刻を過ぎた原稿の扱いを、承認の前に言う**（nigamilab セッション指摘
     2026-09-10）。起草する人と承認する人が別なので、承認までに時刻が過ぎるのは
@@ -595,6 +618,10 @@ def _late_warning(fm: dict, account_cfg: dict, announce_note: dict | None = None
     記事がまだなら「すぐ出ます」と言わず「記事の公開を待って出ます」と言う（見つけたこと 14・10/17）。"""
     warning = None
     now = jst.now_jst()
+    # 4.5.6: 出さない期限を過ぎていれば、時刻の話より先にそれを言う（確定しても出ない）。
+    expired = _not_after_expired_line(fm, now)
+    if expired:
+        return expired
     stale_days = account_cfg.get("stale_days", 7)
     try:
         publish_at = queuefile.parse_publish_at(fm.get("publish_at"))
@@ -693,6 +720,9 @@ def _prepare_one(path: str):
         "location_id": options["location_id"],
         "share_to_instagram": options["share_to_instagram"],
         "community_id": options["community_id"],
+        # 4.5.6: 出さない期限（指紋に入る・1 段目に見せる）。
+        "not_after": options["not_after"],
+        "not_after_line": _not_after_line(fm),
         "approved_sha": approved_sha,
         "digest": approved_sha[:approval_mod.APPROVE_DIGEST_LENGTH],
     }, None
@@ -1443,7 +1473,8 @@ def _prepare_bundle(path: str, text: str):
     approved_sha = approval_mod.compute_bundle_sha(
         segments=effective_segments, account=account_name, topic=b.front_matter.get("topic"),
         publish_at=b.front_matter.get("publish_at"),
-        continue_until=b.front_matter.get("continue_until"), media_manifest=manifests)
+        continue_until=b.front_matter.get("continue_until"), media_manifest=manifests,
+        not_after=queuefile.not_after_raw(b.front_matter))
     return {
         **({"media_manifests": manifests} if any(manifests) else {}),
         "path": path, "kind": "bundle", "account": account_name,
@@ -1451,10 +1482,13 @@ def _prepare_bundle(path: str, text: str):
         "topic": b.front_matter.get("topic"),
         "publish_at": b.front_matter.get("publish_at"),
         "continue_until": b.front_matter.get("continue_until"),
+        # 4.5.6: 出さない期限（根の原稿・束の指紋に入る）。
+        "not_after": queuefile.not_after_raw(b.front_matter),
+        "not_after_line": _not_after_line(b.front_matter),
         "form": b.front_matter.get("form"), "outlet": b.front_matter.get("outlet"),
         # 束に 1 つの目的（設計 3.6.0 §A1）。指紋には入れない。
         "goal": goals_mod.goal_of(b),
-        "approved_sha": approved_sha, "warning": None,
+        "approved_sha": approved_sha, "warning": _not_after_expired_line(b.front_matter, jst.now_jst()),
         "run_id": (run or {}).get("run_id"),
         "digest": approved_sha[:approval_mod.APPROVE_DIGEST_LENGTH],
         "reply_to": None, "text": None,
@@ -1469,6 +1503,10 @@ def _show_bundle_stage(prepared: dict) -> None:
     print(f"■ {prepared['path']}（スレッド連投・{total} 段）")
     print(f"  account: {prepared['account']}")
     print(f"  開始: {prepared['publish_at']}　続けてよい期限: {prepared['continue_until']}")
+    if prepared.get("not_after_line"):
+        print(f"  {prepared['not_after_line']}（途中の段で過ぎたら残りは出しません）")
+    if prepared.get("warning"):
+        print(f"  ⚠ {prepared['warning']}")
     print(f"  topic: {prepared['topic'] or '（なし）'}（**先頭の段だけ**）")
     print(f"  形: {prepared['form'] or '（未記入）'} / 導線: {prepared['outlet'] or '（未記入）'}")
     print("")
@@ -1571,6 +1609,7 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
                                 "location_id": one.get("location_id"),
                                 "share_to_instagram": bool(one.get("share_to_instagram")),
                                 **({"community_id": one["community_id"]} if one.get("community_id") else {}),
+                                **({"not_after": one["not_after"]} if one.get("not_after") else {}),
                                 **({"media_manifest": one["media_manifest"]} if one.get("media_manifest") else {}),
                                 **({"media_manifests": one["media_manifests"]} if one.get("media_manifests") else {}),
                                 **({"plaza_related": one["plaza_related"]}
@@ -1619,6 +1658,8 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
                   "出るまで待ちます）")
         if one.get("announce"):
             print(f"  告知      : {one['announce']['line']}")
+        if one.get("not_after_line"):
+            print(f"  期限      : {one['not_after_line']}")
         if one.get("warning"):
             print(f"  ⚠ {one['warning']}")
         _print_goal_line(one)
@@ -3414,7 +3455,9 @@ def cmd_queue(args) -> int:
             else:
                 print("  原稿の置き場（queue）: 未設定（同席送信は thth send）")
             for rej in info.get("next_rejections") or []:
-                print(f"  いま出ない: {rej['file']} — {rej['reason']}")
+                phrase = ("（出さない期限を過ぎたので出しません）"
+                          if rej["reason"] == queuefile.NOT_AFTER_PASSED else "")
+                print(f"  いま出ない: {rej['file']} — {rej['reason']}{phrase}")
             from . import approve_pending
             pending_line = approve_pending.line(info.get("approval") or {})
             if pending_line:
@@ -3431,7 +3474,8 @@ def cmd_schedule(args) -> int:
     `--text`・`--text-file`・`--at`・`--draft`（予約を刻む）は遠くの道だけ（設計 3.14.0 §2）。
     手元の道の予約は queue に原稿を置いて `thth approve`。
     """
-    if any(getattr(args, name, None) is not None for name in ("text", "text_file", "at", "draft", "media_files")):
+    if any(getattr(args, name, None) is not None
+           for name in ("text", "text_file", "at", "draft", "media_files", "not_after")):
         print("remote_only: 予約を刻む形（--text・--at・--draft）は thth.me の鍵の道だけです。"
               "手元の台帳では queue に原稿を置いて thth approve", file=sys.stderr)
         return 2
@@ -3460,7 +3504,10 @@ def show_schedule(rows) -> int:
     for row in rows:
         mark = "済" if row["status"] == "approved" else "未"
         overdue = "  ← 時刻を過ぎています" if row["past"] else ""
-        if row.get("waiting_for"):
+        if row.get("expired"):
+            # 4.5.6: 出さない期限を過ぎた（承認済みでも出ない・原稿は残る）。
+            overdue = "  ← 出さない期限を過ぎました（出しません）"
+        elif row.get("waiting_for"):
             # 待ちは時刻超過ではない（設計 3.2.0 §2）。
             overdue = f"  ← 返信待ち: {row['waiting_for']}"
         elif row.get("queued_for") == "burst":

@@ -198,7 +198,9 @@ def resolve_reply_to_file(qf, *, account_name: str, pool=None,
 # - stale: publish_at から stale_days を過ぎた（もう出さない）
 # - invalid: それ以外の要確認（型外・文字数・重複本文・未照合の中身 等）
 # - announces_unresolved（4.0 S4 §9.4）: 告知の結ぶ記事が conflict・deleted・無い・読めない（待ちは入れない）
-HELD_CATEGORIES = ("approval_stale", "reply_to_unresolved", "stale", "invalid", "announces_unresolved")
+# - not_after_passed（4.5.6）: 出さない期限（`not_after`）を過ぎた（もう出さない・期限を延ばすなら再承認）
+HELD_CATEGORIES = ("approval_stale", "reply_to_unresolved", "stale", "invalid", "announces_unresolved",
+                   "not_after_passed")
 HELD_PREFIX = "approved_but_held"
 
 
@@ -217,6 +219,8 @@ def held_category(reason) -> str | None:
         return "announces_unresolved"
     if reason == "stale":
         return "stale"
+    if reason == queuefile.NOT_AFTER_PASSED:
+        return "not_after_passed"
     return "invalid"
 
 
@@ -430,6 +434,12 @@ def _validate_hatena(files, *, account_name: str, account_cfg: dict):
             needs_review.append(path)
             rejections.append(Rejection(path, "publish_at_invalid"))
             continue
+        # 4.5.6: 出さない期限の形（時刻に依らない誤りだけ。過ぎたかは 2 段目）。
+        not_after_problem = queuefile.not_after_problem(fm)
+        if not_after_problem is not None:
+            rejections.append(Rejection(path, not_after_problem))
+            needs_review.append(path)
+            continue
         reason, _material = hatena_entry.select_problem(qf, account_cfg, account_name)
         if reason is not None:
             rejections.append(Rejection(path, reason))
@@ -516,6 +526,14 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
             type_mismatch.append(path)
             needs_review.append(path)
             rejections.append(Rejection(path, "publish_at_invalid"))
+            continue
+
+        # 5b. 出さない期限（`not_after`・4.5.6）の形と、publish_at より前でないか。時刻に依らない
+        # 誤りだけをここで言う（**過ぎたかどうかは 2 段目**・`_apply_timing_gate()`）。
+        not_after_problem = queuefile.not_after_problem(fm)
+        if not_after_problem is not None:
+            rejections.append(Rejection(path, not_after_problem))
+            needs_review.append(path)
             continue
 
         # 6. 媒体の節が無い／文字数超過
@@ -714,13 +732,21 @@ def _apply_timing_gate(validated, *, rejections: list, type_mismatch: list,
     """「いま出せるか」だけを決める（診断にはもう影響しない）。
 
     `_validate_all()` を通った候補（`validated`）にだけ適用する。ここで落ちても
-    `needs_review`／`rejections` には（`stale` を除いて）積まない——妥当性の
+    `needs_review`／`rejections` には（`stale` と `not_after_passed` を除いて）積まない——妥当性の
     診断は 1 段目で確定済みで、ここは純粋にタイミングの話だから。
     """
     stale_days = account_cfg.get("stale_days", 7)
     survivors = []
 
     for qf, publish_at, section, resolution in validated:
+        # 8c. 出さない期限（`not_after`・4.5.6）を過ぎた → もう出さない。原稿は書き換えない（approved の
+        # まま）。`stale` と同じく要確認に積み、held（`not_after_passed`）として board・morning・通知に出す。
+        # 口座は止めない（この候補を外すだけで、ほかの原稿は下の関門へ進む）。
+        if queuefile.not_after_blocks(qf.front_matter, now):
+            rejections.append(Rejection(qf.path, queuefile.NOT_AFTER_PASSED))
+            needs_review.append(qf.path)
+            continue
+
         # 9. publish_at が未来 → 出せる時刻ではない（診断には影響しない）
         if publish_at > now:
             rejections.append(Rejection(qf.path, "future"))

@@ -403,6 +403,89 @@ def parse_publish_at(value: str) -> datetime.datetime:
     return datetime.datetime.fromisoformat(value)
 
 
+# --------------------------------------------------------------------------
+# 出さない期限（`not_after:`・4.5.6・構想 5.0 §4.6）
+# --------------------------------------------------------------------------
+
+# この時刻を**過ぎたら**（`now > not_after`）THTH はその原稿を出さない。`publish_at` は
+# 「この時刻より後に出す」だけで、原稿に期限が無かった——予約が詰まって遅れたり口座が
+# 止まったりすると、終わった行事・締め切った申し込みを告げてしまう（関東の学校行事）。
+# 形は `publish_at` と同じ（`+09:00` 付きの ISO）。無い・空なら期限なし（今までどおり）。
+NOT_AFTER_KEY = "not_after"
+# select の断り・held の区分・events の種類に同じ 1 語を使う。
+NOT_AFTER_PASSED = "not_after_passed"
+# 時刻に依らない誤り（select の 1 段目と lint が言う）。
+NOT_AFTER_INVALID = "not_after_invalid"
+NOT_AFTER_BEFORE_PUBLISH_AT = "not_after_before_publish_at"
+
+
+def not_after_raw(fm) -> str | None:
+    """front-matter の `not_after:`（前後の空白だけ落とす）。無い・空なら None。"""
+    raw = (fm or {}).get(NOT_AFTER_KEY)
+    if raw is None:
+        return None
+    return str(raw).strip() or None
+
+
+def parse_not_after(fm) -> datetime.datetime | None:
+    """`not_after:` を時刻に。無ければ None。`+09:00` が無い・壊れていれば ValueError。"""
+    raw = not_after_raw(fm)
+    if raw is None:
+        return None
+    if "+09:00" not in raw:
+        raise ValueError("not_after: +09:00 が無い")
+    return parse_publish_at(raw)
+
+
+def not_after_problem(fm) -> str | None:
+    """時刻に依らない誤り（形が違う・`publish_at` より前）。無い・正しければ None。
+
+    `publish_at` が読めないときは前後を比べない（`publish_at` の誤りは別に言う）。
+    """
+    try:
+        until = parse_not_after(fm)
+    except ValueError:
+        return NOT_AFTER_INVALID
+    if until is None:
+        return None
+    try:
+        start = parse_publish_at((fm or {}).get("publish_at"))
+    except (TypeError, ValueError):
+        return None
+    if until < start:
+        return NOT_AFTER_BEFORE_PUBLISH_AT
+    return None
+
+
+def not_after_lint_error(fm) -> str | None:
+    """lint（`thth: 1` と束）の誤りの 1 行（`not_after: …` で始まる）。無ければ None。"""
+    problem = not_after_problem(fm)
+    if problem == NOT_AFTER_INVALID:
+        return ("not_after: 時刻として読めません（publish_at と同じ形・"
+                "例 2026-10-25T10:00:00+09:00）")
+    if problem == NOT_AFTER_BEFORE_PUBLISH_AT:
+        return "not_after: publish_at より前です（この期限では一度も出せません）"
+    return None
+
+
+def not_after_blocks(fm, now: datetime.datetime) -> bool:
+    """いま出してはいけないか: 期限を過ぎた（`now > not_after`）か、期限が読めない（fail-closed）。
+
+    期限が無ければ False（今までどおり）。公開の直前の関門（`core`・`threadthrow`）が使う。
+    """
+    try:
+        until = parse_not_after(fm)
+    except ValueError:
+        return True
+    return until is not None and now > until
+
+
+def jst_minute(value: datetime.datetime) -> str:
+    """人に見せる時刻（`YYYY-MM-DD HH:MM`・JST）。"""
+    jst_zone = datetime.timezone(datetime.timedelta(hours=9))
+    return value.astimezone(jst_zone).strftime("%Y-%m-%d %H:%M")
+
+
 def normalize_topic(raw: str | None) -> str | None:
     """front-matter の `topic` を検査・送信用に正規化する。前後の空白を落とし、
     先頭の `#` を落とす（人が `#苦味` と書きがちなので機械的に外す。ハッシュタグ

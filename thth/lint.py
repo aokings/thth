@@ -55,6 +55,8 @@ _REASON_TABLE = (
     ("thth: ", "missing_thth_marker"),
     ("account: ", "missing_account"),
     ("publish_at: ", "invalid_publish_at"),
+    # 4.5.6: 出さない期限（形が違う・publish_at より前）。
+    ("not_after: ", "invalid_not_after"),
     ("status: ", "unknown_status"),
     ("media: ", "invalid_media"),
     ("本文に制御文字", "control_char_in_body"),
@@ -162,6 +164,25 @@ def _bundle_or_none(path: str):
     return bundle_mod.parse_text(text, path), text
 
 
+def not_after_notes(fm, now=None) -> list:
+    """出さない期限（`not_after`・4.5.6）の lint。無ければ空（今までどおり）。
+
+    形が違う・publish_at より前は誤り。今より前は警告——承認はできるが、THTH は出さない。
+    """
+    error = queuefile.not_after_lint_error(fm)
+    if error:
+        return [error]
+    until = queuefile.parse_not_after(fm)
+    if until is None:
+        return []
+    from . import jst
+    now = now if now is not None else jst.now_jst()
+    if now > until:
+        return [f"warning: not_after: 出さない期限 {queuefile.jst_minute(until)} を過ぎています"
+                "（承認はできますが、THTH は出しません）"]
+    return []
+
+
 def lint_file(path: str) -> list:
     """形式検査。駄目な理由を 1 行ずつ返す（空リストなら OK）。
 
@@ -186,6 +207,8 @@ def lint_file(path: str) -> list:
         # 公開経路からも呼ばれるので、あちらに profile を読ませない。
         cfg=_account_cfg_or_none(b.front_matter.get("account"))
         notes=bundle_mod.check(b,account_cfg=cfg)+bundle_mod.editorial_notes(b)
+        # 4.5.6: 出さない期限を過ぎていれば警告（形の誤りは `bundle.check()` が言う）。
+        notes.extend(note for note in not_after_notes(b.front_matter) if is_warning(note))
         # **目的は lint と承認の入口でだけ見る**（設計 3.6.0 §A1）。`bundle.check()` は
         # 公開の経路からも呼ばれる——目的は札なので、承認のあとの書き換えで公開を
         # 止めない（書き換えは実行記録に「目的の変更」として残る）。
@@ -248,6 +271,13 @@ def lint_file(path: str) -> list:
 
     account_cfg = _account_cfg_or_none(account_name)
     from . import hatena_entry
+    if (account_cfg is not None and hatena_entry.is_hatena(account_cfg)
+            and queuefile.not_after_raw(fm) is not None):
+        # はてなの配信原稿の指紋（`thth-hatena-entry-1`）は期限を含まない。期限を延ばしても承認し直しに
+        # ならない形を作らないため、はてなでは受け付けない（4.5.6 は SNS の原稿だけ）。
+        errors.append("not_after: はてなブログの配信原稿には使えません（SNS の原稿だけ）")
+    else:
+        errors.extend(not_after_notes(fm))
     if account_cfg is not None and hatena_entry.is_hatena(account_cfg):
         # **はてなブログの配信原稿**（設計 4.0 S1 §3.5）。本文の出所は `article_source` だけで、
         # `## hatenablog` の節・文字数・タグ・返信は見ない（SNS の原稿の検査は通さない）。

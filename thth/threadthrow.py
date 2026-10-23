@@ -99,6 +99,12 @@ def due_bundles(account_cfg: dict, *, now, tree_sha) -> list:
         known = threadrun.find_latest(account_name, rel)
         if known is not None and threadrun.is_complete(known):
             continue
+        # 4.5.6: 出さない期限（根の `not_after`）を過ぎた束は、進んでいる実行が無ければ候補にしない
+        # ——候補に残すと throw が毎回この束で返り、1 本の原稿の道へ進めない（口座を止めない）。
+        # 進んでいる実行があれば 1 度だけ `_locked_step` に通して止めを記録する（次からはここで外れる）。
+        if queuefile.not_after_blocks(b.front_matter, now) and (
+                known is None or threadrun.is_finished(known)):
+            continue
         out.append(rel)
     return sorted(out)
 
@@ -323,7 +329,7 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
     expected = approval_mod.compute_bundle_sha(
         segments=segments, account=account_name, topic=fm.get("topic"),
         publish_at=fm.get("publish_at"), continue_until=fm.get("continue_until"),
-        frozen=frozen, media_manifest=manifests)
+        frozen=frozen, media_manifest=manifests, not_after=queuefile.not_after_raw(fm))
     if fm.get("approved_sha") != expected:
         return StepResult("skipped", None,
                            "approved_sha が中身と合いません（approval_stale）")
@@ -343,7 +349,7 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
                 segments=bundle_mod.effective_segments(current.segments,account_cfg,current.front_matter.get('topic')),
                 account=account_name,topic=current.front_matter.get('topic'),
                 publish_at=current.front_matter.get('publish_at'),continue_until=current.front_matter.get('continue_until'),
-                frozen=frozen,media_manifest=now_manifests)
+                frozen=frozen,media_manifest=now_manifests,not_after=queuefile.not_after_raw(current.front_matter))
             return current.malformed or actual!=expected or current.front_matter.get('approved_sha')!=expected
         except (OSError,ValueError,TypeError):return True
 
@@ -365,6 +371,13 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
         return StepResult("stopped", None,
                            f"継続期限を過ぎています（{fm['continue_until']}）",
                            run_id=(run or {}).get("run_id"))
+    # 4.5.6: 出さない期限（根の原稿の `not_after`）。途中の段で過ぎたら残りは出さない（続きも告げない）。
+    # 原稿は書き換えない。期限を延ばして承認し直せば、止めた実行は同じ run_id で再開できる。
+    if queuefile.not_after_blocks(fm, now):
+        reason = f"出さない期限を過ぎています（not_after {fm.get(queuefile.NOT_AFTER_KEY)}）"
+        if run is not None and not run.get("stop_confirmed_at"):
+            threadrun.confirm_stop(run, reason, now=now)
+        return StepResult("stopped", None, reason, run_id=(run or {}).get("run_id"))
 
     # **停止と完了は別物**（独立検収 P2-6）。停止している実行は、新しい承認版が
     # 成立していれば**同じ run_id のまま**再開できる。完了した束は再開しない。
@@ -458,6 +471,10 @@ def _locked_step(account_name, account_cfg, rel_path, repo_dir, state_dir, *,
         if any(manifests) and media_stale():return 'approval_stale'
         if jst.now_jst() > until:
             return (f"継続期限を越えました（{fm['continue_until']}）。"
+                     f"公開要求は送っていません")
+        # 4.5.6: 出さない期限も、待ったあとにもう一度見る（`publish_vetoed` で止め、残りの段は出さない）。
+        if queuefile.not_after_blocks(fm, max(now, jst.now_jst())):
+            return (f"出さない期限を越えました（not_after {fm.get(queuefile.NOT_AFTER_KEY)}）。"
                      f"公開要求は送っていません")
         return None
 

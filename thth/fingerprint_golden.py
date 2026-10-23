@@ -54,6 +54,16 @@ CASES = (
      "topic": "コーヒー", "account": "golden-bluesky",
      "publish_at": "2026-09-09T08:00:00+09:00",
      "continue_until": "2026-09-09T12:00:00+09:00", "hashtags": True},
+    # 4.5.6: 出さない期限（値があるときだけ末尾に足す任意項目・版は上げない）。期限の無い見本の指紋は
+    # 上のまま変わらない（それが「既存の承認を 1 本も無効にしない」の柵）。
+    {"name": "threads_not_after", "media": "threads", "section": "土曜の説明会です。",
+     "account": "golden-threads", "publish_at": "2026-10-24T08:00:00+09:00",
+     "front_matter": {"not_after": "2026-10-25T10:00:00+09:00"}},
+    {"name": "bundle_not_after", "media": "bluesky", "segments": ["一段目。", "二段目。"],
+     "topic": "コーヒー", "account": "golden-bluesky",
+     "publish_at": "2026-09-09T08:00:00+09:00",
+     "continue_until": "2026-09-09T12:00:00+09:00", "hashtags": True,
+     "not_after": "2026-09-09T11:00:00+09:00"},
 )
 
 # 版ごとの golden（`approval.FINGERPRINT_VERSION` → 見本の名前 → 指紋の先頭
@@ -73,6 +83,9 @@ GOLDEN = {
         "x_community": "d305d1c3e5cab9cc",
         "threads_announces": "ecb7d08a9bf25a68",
         "bundle_bluesky": "e1e13b8e4197f403",
+        # 4.5.6: 出さない期限の見本（足しただけ・上の行は 1 つも変わっていない）。
+        "threads_not_after": "c1d9ce9d33ef4ca8",
+        "bundle_not_after": "1d3489bb32acb8c4",
     },
     # 4.0 S1（設計 §6.1・§7.2）: はてなの承認の指紋。**SNS の v1 とは別の版の数え方**
     # （`approval.HATENA_ENTRY_VERSION`／`HATENA_BOOKMARK_VERSION` の末尾の数）で、
@@ -145,7 +158,7 @@ def compute(case: dict) -> str:
         return approval.compute_bundle_sha(
             segments=bundle.effective_segments(list(case["segments"]), cfg, topic),
             account=case["account"], topic=topic, publish_at=case["publish_at"],
-            continue_until=case["continue_until"])
+            continue_until=case["continue_until"], not_after=case.get("not_after"))
     fm = dict(case.get("front_matter") or {})
     return approval.compute_approved_sha(
         section=approval.effective_section(case["section"], cfg, topic),

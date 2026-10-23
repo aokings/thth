@@ -279,6 +279,11 @@ def schedule(account_name: str | None = None, *, now=None, days: int | None = No
             # reply_to_file（設計 3.2.0 §2）: 解決できていなければその理由（静的）。
             # 待ちの行は時刻超過に数えない（`morning._overdue_rows()`）。
             reply = select_mod.resolve_reply_to_file(qf, account_name=name, pool=files)
+            # 4.5.6: 出さない期限。過ぎたもの（`expired`）は承認済みでも出ない（held・時刻超過とは別）。
+            try:
+                not_after = queuefile.parse_not_after(fm)
+            except ValueError:
+                not_after = None
             rows.append({
                 "account": name,
                 "file": os.path.basename(qf.path),
@@ -293,6 +298,9 @@ def schedule(account_name: str | None = None, *, now=None, days: int | None = No
                 "head": head[:60],
                 # burst の順番待ちに並べた返信（3.25.0）。無ければ None。
                 "queued_for": fm.get("queued_for") or None,
+                "not_after": not_after.isoformat() if not_after is not None else None,
+                # 読めない期限は「過ぎた」と言わない（select が not_after_invalid で要確認に出す）。
+                "expired": not_after is not None and now > not_after,
             })
     rows.sort(key=lambda r: (r["publish_at"], r["account"], r["file"]))
     return rows

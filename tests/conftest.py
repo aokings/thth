@@ -40,7 +40,9 @@ DEFAULT_FM = {
 # `goal`・`approved_goal`（設計 3.6.0）も同じ——渡したときだけ書く。
 FM_ORDER = ["thth", "account", "publish_at", "status", "approved_sha", "approved_at",
             "topic", "reply_to", "reply_to_file", "post_id", "posted_at", "retracted_at",
-            "goal", "approved_goal"]
+            "goal", "approved_goal",
+            # 4.5.6: 出さない期限（渡したときだけ書く・指紋の自動計算にも入れる）。
+            "not_after"]
 
 # quiet_hours の既定（22:00〜07:00）の外にある値。frozen_now_jst() の既定値に使う。
 FIXED_NOW_JST = datetime.datetime(2026, 9, 9, 10, 0, 0, tzinfo=jst.JST)
@@ -223,7 +225,7 @@ def make_queue_text(fm_overrides=None, body="## threads\n\n本文です。\n",
                     fm["approved_sha"] = approval_mod.compute_approved_sha(
                         section=section, account=fm.get("account"),
                         reply_to=approval_mod.reply_to_for_fingerprint(fm), topic=fm.get("topic"),
-                        publish_at=publish_at)
+                        publish_at=publish_at, not_after=fm.get("not_after"))
                 except ValueError:
                     pass  # publish_at が壊れている型外テスト等: 計算できないので触らない
     return render_front_matter(fm, omit=omit) + "\n" + body

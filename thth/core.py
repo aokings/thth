@@ -41,7 +41,7 @@ from .adapters import base as adapter_base
 class ThrowResult:
     exit_code: int
     mode: str              # "rehearsal" | "production"
-    action: str            # "post" | "skip" | "none" | "locked" | "inflight"
+    action: str            # "post" | "skip" | "none" | "locked" | "inflight" | "not_after_passed"（4.5.6）
     message: str
     file: str | None = None
     post_id: str | None = None
@@ -484,6 +484,8 @@ ERROR_PHRASES = {
     "unverified_content": "push した中身と口座の repo が一致しないので timer に任せます",
     "inflight": "前の公開の結果がまだ決まっていないので timer に任せます",
     "stale": "時刻から日が経ちすぎているので出しません",
+    # 4.5.6: 出さない期限（not_after）を過ぎた。原稿は approved のまま残り、口座は止めない。
+    "not_after_passed": "出さない期限（not_after）を過ぎたので出しません",
 }
 
 
@@ -944,6 +946,10 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
                 account_name, account_cfg, state_dir, run_id, mode, chosen, result.section,
                 now, log, adapter_factory, resolution=result.resolution, via=via)
         last_result = one_result
+        if one_result.action == NOT_AFTER_ACTION:
+            # 4.5.6: 公開の直前に出さない期限を過ぎた。出していないので本数・窓に数えず、口座も止めずに
+            # 次の原稿へ進む（この原稿は excluded_paths に入り、次の select でも not_after_passed で落ちる）。
+            continue
         if one_result.exit_code == 0:
             # 出した（dry-run は出したつもり）分を数える。dry-run も窓と本数で「まとめて出したら何が出るか」を見せる。
             if is_reply:
@@ -1216,6 +1222,38 @@ def _announce_for_post(chosen, resolution, account_cfg):
     return {"announces": again.delivery, "article_url": url, "article": again.article}, None
 
 
+# 4.5.6: 公開の直前に出さない期限を過ぎて出さなかった 1 本の `action`（口座は止めない・exit 0）。
+NOT_AFTER_ACTION = "not_after_passed"
+
+
+def _deadline_now(now):
+    """出さない期限を比べる時刻。run の時刻（`now`）と壁時計の遅いほう。
+
+    select は run の始めの `now` で選ぶ。返信を出す間・公開を待つ間も時計は進むので、期限は壁時計でも見る
+    （試験が `now` を先の時刻にしたときはそちらを使う）。
+    """
+    wall = jst.now_jst()
+    if now is None:
+        return wall
+    return now if now > wall else wall
+
+
+def _not_after_result(account_name, state_dir, run_id, mode, chosen, now, log, *, at_publish=False):
+    """出さない期限を過ぎたので出さなかった 1 本。原稿は書き換えない（approved のまま・board に held）。"""
+    try:
+        until = queuefile.jst_minute(queuefile.parse_not_after(chosen.front_matter))
+    except (TypeError, ValueError):
+        until = "（読めない）"
+    where = "公開の直前に" if at_publish else ""
+    msg = (f"{where}出さない期限（not_after {until}）を過ぎたので出しません: "
+           f"{os.path.basename(chosen.path)}（原稿は approved のまま・口座は止めずに次へ進みます）")
+    log(msg)
+    _append_run(state_dir, account_name, run_id, mode, "skip", chosen.path, None, now,
+                status="error", error=queuefile.NOT_AFTER_PASSED)
+    return ThrowResult(exit_code=0, mode=mode, action=NOT_AFTER_ACTION, message=msg,
+                       file=chosen.path, error=queuefile.NOT_AFTER_PASSED)
+
+
 def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, section,
                    now, log, adapter_factory, resolution=None, via="timer") -> ThrowResult:
     """select_one() が選んだ 1 件を投げる（dry-run ならログに出すだけ）。
@@ -1224,6 +1262,10 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
     `resolution` は select が `reply_to_file` を解決した結果（`{"file", "post_id"}`）。
     """
     started = jst.iso()
+    # 4.5.6: 出さない期限（`not_after`）をもう一度見る（inflight を書く前・何も送らないうちに）。select は
+    # run の始めの時刻で選ぶので、返信を出していた間・前の原稿を出していた間に期限を過ぎることがある。
+    if queuefile.not_after_blocks(chosen.front_matter, _deadline_now(now)):
+        return _not_after_result(account_name, state_dir, run_id, mode, chosen, now, log)
     # 返信先を先に決める（inflight を書く前・何も送らないうちに断る）。
     reply_to, reply_refusal = _reply_to_for_post(chosen, resolution, account_name)
     if reply_refusal is not None:
@@ -1362,10 +1404,28 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
             if current.malformed or current.get('status')!='approved' or current.get('approved_sha')!=expected_fingerprint or current.get('revoked_at'):return 'approval_stale'
         except (OSError,ValueError):return 'approval_stale'
         return None if _fingerprint_matches(chosen.path,media,expected_fingerprint,account_cfg) else 'approval_stale'
+
+    # 4.5.6: 公開要求の直前（container を作ったあと・待ちのあと）にもう一度、出さない期限を見る。
+    # Threads は作成から公開まで待つので、待つ間に期限をまたいだら公開しない（`publish_vetoed`）。
+    # 期限は承認の指紋に入っているので、承認した原稿の値（`chosen`）で見る。期限の無い原稿は今までどおり。
+    has_deadline = queuefile.not_after_raw(chosen.front_matter) is not None
+
+    def deadline_veto():
+        if queuefile.not_after_blocks(chosen.front_matter, _deadline_now(now)):
+            return queuefile.NOT_AFTER_PASSED
+        return None
+
+    def final_veto():
+        return deadline_veto() or (final_media_veto() if manifest else None)
     publish_result = media_delivery.publish(adapter,post,cfg=account_cfg,
         fm=chosen.front_matter,manifest=manifest,state_dir=state_dir,
         on_container_created=on_container_created,
-        before_publish=final_media_veto if manifest else None)
+        before_publish=final_veto if (manifest or has_deadline) else None)
+    if publish_result.failure == "publish_vetoed" and publish_result.error == queuefile.NOT_AFTER_PASSED:
+        # 公開要求は送っていない（出ていない）。inflight を消し、口座は止めずに次の原稿へ。
+        # 添付で媒体の側に container を作ったあとに止めたときは `media_held`（下の分岐・inflight を残す）。
+        inflight_mod.clear(state_dir)
+        return _not_after_result(account_name, state_dir, run_id, mode, chosen, now, log, at_publish=True)
 
     if publish_result.error or not publish_result.post_id:
         detail_data = api_diagnostic_mod.clean(publish_result.api_diagnostic)

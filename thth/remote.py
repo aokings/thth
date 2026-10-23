@@ -713,7 +713,8 @@ def _schedule(args, account):
             raise RemoteError("invalid_request", reason="--at <ISO 時刻> を付けてください", rc=2)
         _refuse_past(args.at)
         put = call("draft_put", account, body=_body(args), publish_at=args.at,
-                   topic=args.topic, reply_to=args.reply_to, media=_media(args, account))
+                   topic=args.topic, reply_to=args.reply_to, media=_media(args, account),
+                   not_after=getattr(args, "not_after", None))
         draft = put.get("draft_id")
         if not isinstance(draft, str):
             raise RemoteError("remote_unavailable", rc=2)
@@ -1209,6 +1210,8 @@ def register(sub) -> None:
     schedule.add_argument("--text", default=None, help="遠くの道: 予約する本文（1 行）")
     schedule.add_argument("--text-file", dest="text_file", default=None, help="遠くの道: 予約する本文のファイル")
     schedule.add_argument("--at", default=None, help="遠くの道: 出す時刻（ISO・例 2026-09-27T09:00+09:00）")
+    schedule.add_argument("--not-after", dest="not_after", default=None,
+                          help="遠くの道: 出さない期限（ISO・+09:00 付き。この時刻を過ぎたら出さない・4.5.6）")
     schedule.add_argument("--draft", default=None, help="遠くの道: 置いた下書き（draft_id）を予約する")
     schedule.add_argument("--topic", default=None)
     schedule.add_argument("--reply-to", dest="reply_to", default=None)

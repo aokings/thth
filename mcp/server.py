@@ -814,7 +814,9 @@ SERVER_TOOLS = [
                     "required":["account",*required],"additionalProperties":False}}
     for name,keys,required in (
         # 4.0 S4 §9.5: announces（告知が結ぶ配信 id）・article（記事の名）。本文の {article_url} は本文の一部。
-        ('draft_put',('body','publish_at','topic','reply_to','draft_id','expected_revision','announces','article'),('body','publish_at')),
+        # 4.5.6: not_after（出さない期限・ISO の +09:00 付き。過ぎたら THTH は出さない）。
+        ('draft_put',('body','publish_at','topic','reply_to','draft_id','expected_revision','announces','article',
+                      'not_after'),('body','publish_at')),
         # 4.4.1 ⑦: approval（hub の承認の番号）。口座の台帳が require_gate: true なら要る。
         ('send_request',('body','topic','reply_to','approval'),('body',)),
         ('retract_request',('post_id','reason'),('post_id','reason')),

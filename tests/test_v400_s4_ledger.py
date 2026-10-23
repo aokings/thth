@@ -241,7 +241,8 @@ def test_T_S4_4a_指紋のurlは正規化しない元の文字列():
 def test_T_S4_4b_SNSの指紋のannouncesは末尾に足す任意項目():
     """柵: `announces` を `_OPTION_ORDER` の途中に入れると赤（期待する並びとずれる）。"""
     assert approval.FINGERPRINT_VERSION == 2
-    assert approval._OPTION_ORDER[-1] == "announces"
+    # 4.5.6: `not_after`（出さない期限）を announces のさらに後ろに足した（足しただけ・並びは変えない）。
+    assert approval._OPTION_ORDER[-2:] == ("announces", "not_after")
     args = dict(section="記事を書きました。{article_url}", account="golden-threads", reply_to=None, topic=None,
                 publish_at="2026-10-20T08:30:00+09:00")
     plain = approval.compute_approved_sha(**args)

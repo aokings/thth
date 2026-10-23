@@ -56,8 +56,10 @@ _EXCEPTION_REASONS = set(_KNOWN_EXCEPTIONS.values()) | {"exception_process_error
 # 承認済みなのに出られない（設計 3.3.0 A1）。区分の語は `select.HELD_CATEGORIES`
 # と同じ 4 語だけ・後ろは本数（数字）だけ——本文も原稿名も入らない静的な理由。
 # 4.0 S4: `announces_unresolved`（告知の結ぶ記事が conflict・deleted・無い）を 5 語目に足した。
-_HELD_PART = r"(?:approval_stale|reply_to_unresolved|stale|invalid|announces_unresolved) [1-9][0-9]{0,5}"
-_HELD_CODE = re.compile(rf"approved_but_held: {_HELD_PART}(?:, {_HELD_PART}){{0,4}}")
+# 4.5.6: `not_after_passed`（出さない期限を過ぎた）を 6 語目に足した。
+_HELD_PART = (r"(?:approval_stale|reply_to_unresolved|stale|invalid|announces_unresolved|not_after_passed)"
+              r" [1-9][0-9]{0,5}")
+_HELD_CODE = re.compile(rf"approved_but_held: {_HELD_PART}(?:, {_HELD_PART}){{0,5}}")
 # 0 本に戻った（held の復旧）・指紋の版が変わって再承認が要る（A3・1 回だけ）。
 HELD_CLEARED = "held_cleared"
 _REAPPROVAL_CODE = re.compile(r"reapproval_required: [1-9][0-9]{0,5}")
