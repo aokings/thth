@@ -54,7 +54,7 @@ from .bookmark_batch import REASONS as BOOKMARK_BATCH_REASONS
 DIRECT_REASONS = DIRECT_REASONS | BOOKMARK_BATCH_REASONS
 from .account_settings import REASONS as SETTINGS_REASONS
 # 遠くの道の inflight（見る・解く・3.14.3 穴 3）の断り。手元の `thth inflight` と同じ符丁。
-INFLIGHT_REASONS = frozenset(('no_inflight','inflight_unreadable','media_inflight_unsupported','post_id_invalid',
+INFLIGHT_REASONS = frozenset(('no_inflight','inflight_unreadable','media_inflight_unsupported','media_inflight_held','post_id_invalid',
                               'published_known','post_id_differs','decision_required','confirm_mismatch',
                               'inflight_changed','inflight_writeback_failed'))
 # `publication_unconfirmed` に添える理由（前の公開の結果が分かっていない＝inflight が残っている）。

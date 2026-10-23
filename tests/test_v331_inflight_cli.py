@@ -157,10 +157,14 @@ def test_mcpにはinflightの口が無い():
 
 
 def test_添付のheldはnot_publishedでだけ解ける():
-    """3.20.1: 関東 10/14 の media_describing_http_400 は公開の POST の前で止まった（held）。"""
+    """3.20.1: 関東 10/14 の media_describing_http_400 は公開の POST の前で止まった（held）。
+
+    4.5.5: held に --published は `media_inflight_held`（出ていないと分かっているので矛盾）。
+    unknown を --published で解くのは tests/test_v455_media_inflight_published.py。
+    """
     held = {"file": "a.md", "media": {"phase": "held", "reason": "media_describing_http_400"}}
     assert inflight_cli.refusal("kanto-x", held, "not_published", None) is None
-    assert inflight_cli.refusal("kanto-x", held, "published", "8001")[1] == "media_inflight_unsupported"
+    assert inflight_cli.refusal("kanto-x", held, "published", "8001")[1] == "media_inflight_held"
     unknown = {"file": "a.md", "media": {"phase": "unknown"}}
     assert inflight_cli.refusal("kanto-x", unknown, "not_published", None)[1] == "media_inflight_unsupported"
     assert inflight_cli.refusal("kanto-x", {"file": "a.md", "media": {"account": "x"}},

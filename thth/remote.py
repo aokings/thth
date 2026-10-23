@@ -378,6 +378,12 @@ NEXT = {
     "confirm_mismatch": "もう一度 thth inflight <口座> resolve から（表示した digest と中身が違います）",
     "inflight_changed": "もう一度 thth inflight <口座> から（表示したあとに inflight が替わりました）",
     "decision_required": "--not-published（出ていない）か --published <post_id>（出ていた）を付ける",
+    # 4.5.5: 添付の inflight（手元の `inflight_cli.refusal` と同じ符丁）。
+    "media_inflight_held": ("held は媒体に出ていません。媒体の画面で確かめてから "
+                            "thth inflight <口座> resolve --not-published"),
+    "media_inflight_unsupported": ("thth inflight <口座> で phase を見る（held は --not-published・"
+                                   "unknown／publishing／published は --published <post_id>・ほかは "
+                                   "docs/原稿_添付_2.13.md の手順）"),
 }
 
 
@@ -1132,6 +1138,9 @@ def _inflight(args, account):
             print("  ⚠ 出ていたのに解くと 2 度出ます。媒体の画面（自分の投稿の一覧）で確かめてから")
         else:
             print(f"  決めること: 媒体に出ていた（post_id {value.get('post_id')}）。記録して解きます")
+            if info.get("media"):
+                print("  ⚠ 媒体の画面で、その post_id の投稿の画像と本文が原稿どおりかを確かめてから")
+                print(f"  {inflight_cli.MEDIA_GRANT_NOTE}")
         print(f"digest: {value.get('digest')}")
         print(f"解くなら: {command}")
         return 1

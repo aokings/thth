@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import uuid
 
@@ -41,6 +42,24 @@ _SEP = "\x1f"
 # 人が決めた解き方（runs の `inflight_resolution`・控えの `resolution`）。
 HUMAN_NOT_PUBLISHED = "human_not_published"
 HUMAN_PUBLISHED = "human_published"
+
+# 4.5.5: 添付の inflight で「出たかもしれない」phase。公開の POST を送ったあと
+# （`publishing`）・送った結果が分からない（`unknown`）・出たと分かったが記録が
+# 終わっていない（`published`）。この 3 つだけ `--published <post_id>` で解ける
+# （kopicha-threads 10/23 の `media_publishing_failed` は unknown で残った）。
+# `held` は公開の POST より前で止めたか 4xx で確かに断られた——出ていないので
+# --published は矛盾する。それ以外（uploading・creating・ready など）は公開の
+# POST をまだ送っていない（プロセスが途中で落ちた）ので、出ているはずがない。
+MEDIA_MAYBE_PUBLISHED = frozenset({"unknown", "publishing", "published"})
+# show に出してよい phase の語（journal の静的な語だけ・それ以外は出さない）。
+MEDIA_PHASES = frozenset({"prepared", "uploading", "granting", "creating", "processing", "ready",
+                          "describing", "creating_carousel", "processing_carousel", "publishing",
+                          "published", "held", "unknown", "failed"})
+# 媒体の理由は静的な語（`media_publishing_timeout` など）。形が違えば出さない。
+_MEDIA_REASON = re.compile(r"[A-Za-z0-9_:. /-]{1,160}")
+# 添付を --published で解くときの一言（Threads の R2 の付与・doc の約束どおり）。
+MEDIA_GRANT_NOTE = ("添付の置き場（Threads の R2）の付与は ack も後始末もしません"
+                    "（24 時間の backstop で消えます）")
 
 
 def register(sub) -> None:
@@ -93,10 +112,29 @@ def summary(record: dict, *, now=None) -> dict:
         "mismatch_fields": record.get("mismatch_fields") or None,
         "text_fingerprint_present": bool(record.get("text_fingerprint")),
         "media": bool(record.get("media")),
+        **_media_summary(record),
         "self_resolvable": inflight_resolve.is_self_resolvable(record),
         # はてなの配信（設計 4.0 S1 §8.2）だけ: 配信 id と、結果の行が取る番号。
         **({"delivery": record.get("delivery"), "seq": record.get("seq")} if record.get("delivery") else {}),
     }
+
+
+def media_phase(record) -> str | None:
+    """添付の journal の phase（無い・読めない形なら None）。"""
+    media = (record or {}).get("media")
+    phase = media.get("phase") if isinstance(media, dict) else None
+    return phase if isinstance(phase, str) else None
+
+
+def _media_summary(record) -> dict:
+    """添付の inflight なら phase と理由（静的な語だけ）。添付でなければ何も足さない。"""
+    media = record.get("media")
+    if not isinstance(media, dict):
+        return {}
+    phase = media_phase(record)
+    reason = media.get("reason")
+    return {"media_phase": phase if phase in MEDIA_PHASES else None,
+            "media_reason": reason if isinstance(reason, str) and _MEDIA_REASON.fullmatch(reason) else None}
 
 
 def digest(account: str, record: dict, decision: str, post_id: str | None) -> str:
@@ -146,8 +184,18 @@ def _next_step(account: str, info: dict) -> str:
                 f"確かめ、thth inflight {account} resolve --published <entry_id> か --not-published で "
                 "--by <名前> を付けて解いてください（自動では解きません）")
     if info["media"]:
-        return ("添付の inflight です。docs/原稿_添付_2.13.md の手順で確かめてください"
-                "（この口では解きません）")
+        phase = info.get("media_phase")
+        if phase == "held":
+            return ("添付の inflight（held: 公開の POST より前で止めたか、確かに断られた）。媒体には出ていません。"
+                    f"媒体の画面で確かめてから thth inflight {account} resolve --not-published --by <名前>"
+                    "（原稿は approved のまま・次の run が出し直す）")
+        if phase in MEDIA_MAYBE_PUBLISHED:
+            return ("添付の inflight（公開の結果が分かりません・出ているかもしれません）。媒体の画面で"
+                    "投稿の post_id と、画像と本文が原稿どおりかを確かめ、出ていれば thth inflight "
+                    f"{account} resolve --published <post_id> --by <名前>。出ていなければ"
+                    " docs/原稿_添付_2.13.md の手順で（--not-published では解けません）")
+        return ("添付の inflight です（この phase はこの口では解きません）。docs/原稿_添付_2.13.md の手順で"
+                "確かめてください")
     if info["post_id_present"] or info["mismatch_fields"]:
         return (f"出ていますが記録できていません。原稿を確かめてから thth inflight {account}"
                 " resolve --published <post_id> --by <名前>")
@@ -222,6 +270,9 @@ def show_info(account: str, info: dict, step: str) -> int:
         print(f"  最後の問い合わせ: {info['remote_state']}（{info['remote_checked_at'] or '時刻不明'}）")
     else:
         print("  最後の問い合わせ: まだありません")
+    if info.get("media"):
+        print(f"  添付: phase {info.get('media_phase') or '（不明）'}"
+              + (f"（理由 {info['media_reason']}）" if info.get("media_reason") else ""))
     if info["mismatch_fields"]:
         print(f"  食い違った項目: {', '.join(map(str, info['mismatch_fields']))}")
     if not info["text_fingerprint_present"] and not info.get("delivery"):
@@ -255,7 +306,7 @@ def _resolve(args, account_cfg, state_dir, record) -> int:
         return _fail(args, 1, "confirm_mismatch",
                      f"digest が一致しないので解きません（表示したものと中身が違います）。"
                      f"いまの digest は {expected} です。もう一度 thth inflight {args.account} resolve から")
-    return _execute(args, account_cfg, state_dir, decision, post_id, by)
+    return _execute(args, account_cfg, state_dir, decision, post_id, by, media=bool(record.get("media")))
 
 
 def refusal(account: str, record, decision: str, post_id):
@@ -266,19 +317,32 @@ def refusal(account: str, record, decision: str, post_id):
     if media:
         # 3.20.1: 添付の `held`（公開の POST より前で止めた・または公開が 4xx で確かに断られた）は
         # 媒体に出ていないことが確定しているので、--not-published だけ解ける（関東 10/14 の
-        # media_describing_http_400 が 28 時間止まった）。それ以外（unknown 等）は今までどおり断る。
-        held = isinstance(media, dict) and media.get("phase") == "held"
-        if not (held and decision == "not_published"):
+        # media_describing_http_400 が 28 時間止まった）。
+        # 4.5.5: 出たかもしれない phase（`MEDIA_MAYBE_PUBLISHED`）は --published <post_id> で解ける
+        # （kopicha-threads 10/23・公開の POST が例外で戻ったが出ていた）。書き戻しは文字だけの
+        # inflight と同じ `record_published`（本文の一致を確かめる）。held に --published は断る。
+        phase = media_phase(record)
+        if decision == "published" and phase == "held":
+            return (2, "media_inflight_held",
+                    "この添付の inflight は held です（公開の POST より前で止めたか、確かに断られた＝出ていない）。"
+                    "--published とは食い違います。媒体の画面で確かめてから "
+                    f"thth inflight {account} resolve --not-published")
+        allowed = (phase == "held" if decision == "not_published" else phase in MEDIA_MAYBE_PUBLISHED)
+        if not allowed:
             return (2, "media_inflight_unsupported",
-                    "添付の inflight はこの口では解きません（解けるのは held を --not-published で解くときだけ）。"
+                    "この添付の inflight はこの口では解きません（解けるのは held を --not-published で、"
+                    "unknown・publishing・published を --published <post_id> で解くときだけ）。"
                     "docs/原稿_添付_2.13.md の手順で確かめてください")
     if post_id is not None and not postid_mod.is_usable(post_id):
         return 1, "post_id_invalid", "post_id の形が台帳に書けません。媒体の画面の数字（id）を確かめてください"
-    if decision == "not_published" and (record.get("post_id") or record.get("remote_post_id")):
+    # 添付の journal が覚えている post_id（phase `published`・記録の途中で止まった）も数える。
+    media_post_id = media.get("post_id") if isinstance(media, dict) else None
+    known = record.get("post_id") or record.get("remote_post_id") or (
+        media_post_id if isinstance(media_post_id, str) and media_post_id else None)
+    if decision == "not_published" and known:
         return (1, "published_known",
                 "この inflight は出たことが分かっています（post_id が記録にあります）。"
                 f"thth inflight {account} resolve --published <post_id> で解いてください")
-    known = record.get("post_id") or record.get("remote_post_id")
     if post_id is not None and known and known != post_id:
         return (1, "post_id_differs",
                 "inflight に記録された post_id と違います。媒体の画面で確かめ、"
@@ -294,7 +358,8 @@ def _stage_one(args, record, decision, post_id, by, expected) -> int:
     if args.json:
         _print_json({"ok": False, "resolved": False, "stage": 1, "account": args.account,
                      "inflight": info, "decision": decision, "post_id": post_id, "by": by,
-                     "digest": expected, "command": command})
+                     "digest": expected, "command": command,
+                     **({"note": MEDIA_GRANT_NOTE} if info["media"] and decision == "published" else {})})
         return 1
     print(f"解きません（確認の一段目です）: {args.account} の inflight（{info['file']}・{info['started']}）")
     if decision == "not_published":
@@ -302,6 +367,9 @@ def _stage_one(args, record, decision, post_id, by, expected) -> int:
         print("  ⚠ 出ていたのに解くと 2 度出ます。媒体の画面（自分の投稿の一覧）で確かめてから")
     else:
         print(f"  決めること: 媒体に出ていた（post_id {post_id}）。原稿に書き戻して解きます")
+        if info["media"]:
+            print("  ⚠ 媒体の画面で、その post_id の投稿の画像と本文が原稿どおりかを確かめてから")
+            print(f"  {MEDIA_GRANT_NOTE}")
     print(f"  by: {by}")
     print(f"digest: {expected}")
     print(f"解くなら: {command}")
@@ -383,7 +451,7 @@ def apply(account, account_cfg, state_dir, decision, post_id, by, confirm, *, wa
     return resolution, path, logged
 
 
-def _execute(args, account_cfg, state_dir, decision, post_id, by) -> int:
+def _execute(args, account_cfg, state_dir, decision, post_id, by, media=False) -> int:
     notes = []
     try:
         resolution, path, logged = apply(args.account, account_cfg, state_dir, decision, post_id, by,
@@ -393,7 +461,8 @@ def _execute(args, account_cfg, state_dir, decision, post_id, by) -> int:
     for line in notes:
         print(f"⚠ {line}", file=sys.stderr)
     payload = {"ok": True, "resolved": True, "account": args.account, "resolution": resolution,
-               "post_id": post_id, "by": by, "archive": path, "admin_log": logged}
+               "post_id": post_id, "by": by, "archive": path, "admin_log": logged,
+               **({"note": MEDIA_GRANT_NOTE} if media and decision == "published" else {})}
     if args.json:
         _print_json(payload)
     else:
@@ -401,6 +470,8 @@ def _execute(args, account_cfg, state_dir, decision, post_id, by) -> int:
         print(f"  控え: {path}")
         if decision == "not_published":
             print("  原稿は approved のまま残っています。次の run が出し直します")
+        elif media:
+            print(f"  {MEDIA_GRANT_NOTE}")
         if not logged:
             print("  ⚠ 変更ログに書けませんでした（inflight は解いてあります）")
     return 0

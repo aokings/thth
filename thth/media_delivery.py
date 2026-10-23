@@ -148,6 +148,10 @@ MEDIA_NEXT_STEPS=(
  # どうかは分からないので、消す前に必ず確かめさせる。
  ('media_creating_timeout','次の一歩: 媒体が画像/動画を取り込むのに時間がかかっています。しばらくして inflight を確認し、投稿が無ければ消してから再実行'),
  ('media_creating_carousel_timeout','次の一歩: 媒体が画像/動画を取り込むのに時間がかかっています。しばらくして inflight を確認し、投稿が無ければ消してから再実行'),
+ # 公開の POST の応答が分からない（4.5.5・kopicha-threads 10/23 は出ていた）。
+ # 「出ていない」と読ませない。出ていたら --published で解ける。
+ ('media_publishing_timeout','次の一歩: 公開の要求の応答がありません（出ているかもしれません）。媒体の画面で確かめ、出ていれば thth inflight <アカウント> resolve --published <post_id> --by <名前>（確かめずに消さない）'),
+ ('media_publishing_failed','次の一歩: 公開の要求の応答が分かりません（出ているかもしれません）。媒体の画面で確かめ、出ていれば thth inflight <アカウント> resolve --published <post_id> --by <名前>（確かめずに消さない）'),
  ('media: alt_too_long','次の一歩: alt が長すぎます。2000 バイト以内に縮める'),
  ('media: source_unreadable','次の一歩: 添付を repo から読めません。パスと権限を確かめる'),
  ('media: source_changed','次の一歩: 読んでいる間にファイルが変わりました。もう一度'),

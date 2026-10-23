@@ -328,6 +328,36 @@ def _run(account_name, state_dir, run_id, now, record, *, post_id, status, error
                      extra={"inflight_resolution": resolution, "remote_state": remote_state})
 
 
+def media_receipt(record) -> tuple:
+    """添付の inflight の journal から、ふつうの成功と同じ sent の添付の記録を作る（4.5.5）。
+
+    返り値 `(manifest, receipt)`。添付でなければ `(None, None)`。
+
+    journal（`media_delivery._progress`）は承認した manifest と `remote_ids` を持っている。
+    adapter の `PublishResult.media` は `zip(添付のファイル, remote_ids)`（Threads は
+    子の container・Bluesky は blob・Mastodon と X は媒体の添付 id）——同じ組み方をする。
+    alt の文字そのものは残さない（有無だけ・`base.alt_present`）。remote_ids がファイルより
+    少ない・sha が無いなど組めないときは receipt を残さない（半端な記録を書かない）。
+    `attachment_kinds` は manifest だけで決まるので、そちらは残す。
+    """
+    from .adapters import base
+    media = (record or {}).get("media")
+    manifest = media.get("manifest") if isinstance(media, dict) else None
+    if not isinstance(manifest, dict):
+        return None, None
+    rows = [row for row in manifest.get("files") or () if isinstance(row, dict) and row.get("role") == "media"]
+    ids = media.get("remote_ids")
+    if not rows or not isinstance(ids, list) or len(ids) < len(rows):
+        return manifest, None
+    receipt = []
+    for row, remote in zip(rows, ids):
+        sha, kind = row.get("public_sha256"), row.get("kind")
+        if not (isinstance(sha, str) and sha and isinstance(kind, str) and kind and isinstance(remote, str) and remote):
+            return manifest, None
+        receipt.append({"sha256": sha, "kind": kind, "alt_present": base.alt_present(row), "remote_id": remote})
+    return manifest, receipt
+
+
 def record_published(account_name: str, account_cfg: dict, state_dir: str, record: dict,
                      post_id: str, *, posted_at: str, resolution: str, resolved_by: str,
                      run_id: str, now, log, remote_state: str | None = None) -> tuple:
@@ -394,13 +424,18 @@ def record_published(account_name: str, account_cfg: dict, state_dir: str, recor
     resolved_from = {"file": reply_file, "post_id": reply_to} if reply_file and reply_to else None
     topic = queuefile.normalize_topic(fm.get("topic"))
     inflight_mod.update(state_dir, post_id=post_id)
+    manifest, receipt = media_receipt(record)
     sent_mod.write(state_dir, post_id=post_id, text=effective,
                    body_hash=approval_mod.compute_body_hash(effective), sent_at=posted_at,
                    approved_fingerprint=expected, reply_to=reply_to,
                    resolved_from=resolved_from,
-                   attachment_kinds=media_mod.attachment_kinds(None),
+                   attachment_kinds=media_mod.attachment_kinds(manifest),
                    # 投稿の目的（設計 3.6.0 §A）。公開したときの原稿の front-matter から。
-                   goal=goals_mod.goal_of(qf), goal_change=goals_mod.change(qf))
+                   goal=goals_mod.goal_of(qf), goal_change=goals_mod.change(qf),
+                   # 4.5.5: 添付の inflight を人が --published で解いたときも、ふつうの成功と
+                   # 同じ形（`core._link_urls_kwargs`・adapter の `PublishResult.media`）を残す。
+                   **core._link_urls_kwargs(manifest),
+                   **({"media": receipt} if receipt else {}))
     core._record_engagement(
         account_cfg, account_name, media=media, topic=topic, form=fm.get("form"),
         post_id=post_id, posted_at=posted_at, now=now, log=log, reply_to=reply_to,

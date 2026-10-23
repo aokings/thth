@@ -365,7 +365,10 @@ def publish(adapter,post,*,before_publish=None,on_container_created=None):
         # 作成が終わっていることがある。phase は unknown のままにしたうえで、
         # 理由だけを `media_creating_timeout` と名指す——generic な `_failed` は
         # 「出ていない・作り直してよい」と読まれ、container が二重に残る。
-        timed_out=phase in ('creating','creating_carousel') and socket_timed_out(exc)
+        # 4.5.5: 公開の POST（`publishing`）の時間切れも同じ——こちらが諦めたあとに
+        # 向こうで出ていることがある（kopicha-threads 10/23 は出ていた）。
+        # `media_publishing_timeout` と名指し、`_failed`（出ていない）と読ませない。
+        timed_out=phase in ('creating','creating_carousel','publishing') and socket_timed_out(exc)
         reason='media_relay_endpoint_rejected' if endpoint else str(exc) if isinstance(exc,media.MediaError) else 'media_relay_failed' if isinstance(exc,(media_relay.MediaRelayError,signed_relay.RelayError)) else 'media_'+phase+('_http_'+str(exc.code) if http else '_timeout' if timed_out else '_failed')
         # 4xx の本文には Graph の番号が入っている。**番号だけ**を理由の尾に足す
         # ——「まだ出せない」と「その要求が不正」を運用が見分けられない限り、
