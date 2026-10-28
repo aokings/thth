@@ -91,6 +91,8 @@ COMMANDS += ['bookmark batch-resume']
 COMMANDS += ['approvals']
 # 4.5.0: X の全期間の検索と件数（読むだけ・保存しない）。
 COMMANDS += ['archive']
+# 5.0 段 1: キャンペーンとシリーズ（読むだけ・版つき `thth.scenario/1`）。
+COMMANDS += ['scenario']
 
 
 def test_json_table_covers_every_parser():

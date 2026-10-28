@@ -132,6 +132,7 @@ All subcommands `thth --help` lists, one line each:
 - `observe` — one page for the start of a session: unanswered replies and mentions, yesterday's posts, the topics you watch, and next steps
 - `morning` — alias of `observe`
 - `events` — what happened, in time order (posts, retractions, replies and mentions received, stopped accounts, pending publishes, budget refusals); read-only, versioned JSON (`thth.events/1`)
+- `scenario` — campaigns and series declared next to the drafts (`docs/sns/scenarios/<id>.md`): where each one stands, what is missing next (nouns, no draft text), what has stalled, and the approved stock per series; read-only, versioned JSON (`thth.scenario/1`)
 - `summary` — the numbers per account (posts and reactions in 24h/7d, unanswered replies, followers and day-over-day change, whether it is stopped); read-only (`thth.summary/1`)
 - `deliveries` — the delivery ledger (Hatena Blog articles: state, sequence number, history) for an account or project; read-only (`thth.deliveries/1`)
 - `media` — the media traits ledger bundled with THTH (how each platform is assumed to judge spam, good behaviour, penalties, API limits; each item with its kind of evidence, confidence, URL and date): `traits [<media>]`, `check`; read-only (`thth.media-traits/1`)

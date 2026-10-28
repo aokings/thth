@@ -1,0 +1,256 @@
+{
+  "schema": "thth.scenario/1",
+  "report_type": "scenario",
+  "generated_at": "2026-10-28T11:20:00+09:00",
+  "project": "kp",
+  "accounts": [
+    "kp-hatenablog",
+    "kp-threads",
+    "kp-x"
+  ],
+  "threads": [
+    {
+      "id": "num-04-sencha",
+      "title": "数字で淹れる No.4 煎茶",
+      "goal_text": "煎茶の湯温を数字で覚えてもらう",
+      "declared_in": "docs/sns/scenarios/num-04-sencha.md",
+      "state": "stalled",
+      "stage": {
+        "name": "article",
+        "index": 3,
+        "of": 5
+      },
+      "stages": [
+        {
+          "name": "collect",
+          "medium": "hatena_bookmark",
+          "need": 5,
+          "tag": "num-04",
+          "done": 5,
+          "pending": 0,
+          "satisfied": true,
+          "satisfied_by": "count"
+        },
+        {
+          "name": "diary",
+          "medium": "hatenablog",
+          "need": 1,
+          "done": 1,
+          "pending": 0,
+          "drafts": 0,
+          "conflict": 0,
+          "satisfied": true,
+          "satisfied_by": "count"
+        },
+        {
+          "name": "article",
+          "medium": "site",
+          "need": 1,
+          "done": 0,
+          "pending": 0,
+          "signal": "article_published",
+          "satisfied": false
+        },
+        {
+          "name": "announce",
+          "medium": [
+            "threads",
+            "x"
+          ],
+          "need": 2,
+          "done": 0,
+          "pending": 0,
+          "drafts": 1,
+          "by_medium": {
+            "threads": {
+              "done": 0,
+              "pending": 0
+            },
+            "x": {
+              "done": 0,
+              "pending": 0
+            }
+          },
+          "satisfied": false
+        },
+        {
+          "name": "warm",
+          "medium": [
+            "threads",
+            "x"
+          ],
+          "replies_within_hours": 6,
+          "replies": 0,
+          "overdue": 0,
+          "satisfied": false
+        }
+      ],
+      "next": [
+        {
+          "stage": "article",
+          "kind": "signal",
+          "what": "article_published を糸のファイルに 1 行"
+        }
+      ],
+      "last_movement_at": "2026-10-19T08:38:22+09:00",
+      "idle_days": 9,
+      "stalled": {
+        "days": 9,
+        "stale_after_days": 7,
+        "since": "2026-10-19T08:38:22+09:00"
+      },
+      "events": [
+        {
+          "at": "2026-10-15",
+          "name": "researched",
+          "head": "全国の目安を 5 本はてブ"
+        }
+      ],
+      "cannot_say": []
+    },
+    {
+      "id": "sousa-026",
+      "title": "狭山の霜",
+      "goal_text": null,
+      "declared_in": "docs/sns/scenarios/sousa-026.md",
+      "state": "active",
+      "stage": {
+        "name": "diary",
+        "index": 2,
+        "of": 5
+      },
+      "stages": [
+        {
+          "name": "collect",
+          "medium": "hatena_bookmark",
+          "need": 3,
+          "tag": "sousa-026",
+          "done": 3,
+          "pending": 0,
+          "satisfied": true,
+          "satisfied_by": "count"
+        },
+        {
+          "name": "diary",
+          "medium": "hatenablog",
+          "need": 1,
+          "done": 0,
+          "pending": 1,
+          "drafts": 0,
+          "conflict": 0,
+          "satisfied": false
+        },
+        {
+          "name": "article",
+          "medium": "site",
+          "need": 1,
+          "done": 0,
+          "pending": 0,
+          "signal": "article_published",
+          "satisfied": false
+        },
+        {
+          "name": "announce",
+          "medium": [
+            "threads",
+            "x"
+          ],
+          "need": 2,
+          "done": 0,
+          "pending": 0,
+          "drafts": 0,
+          "by_medium": {
+            "threads": {
+              "done": 0,
+              "pending": 0
+            },
+            "x": {
+              "done": 0,
+              "pending": 0
+            }
+          },
+          "satisfied": false
+        },
+        {
+          "name": "warm",
+          "medium": [
+            "threads",
+            "x"
+          ],
+          "replies_within_hours": 24,
+          "replies": 0,
+          "overdue": 0,
+          "satisfied": false
+        }
+      ],
+      "next": [
+        {
+          "stage": "diary",
+          "kind": "wait",
+          "what": "承認済み 1 本の公開待ち"
+        }
+      ],
+      "last_movement_at": "2026-10-26T09:02:00+09:00",
+      "idle_days": 2,
+      "stalled": null,
+      "events": [],
+      "cannot_say": []
+    }
+  ],
+  "series": [
+    {
+      "id": "num",
+      "title": "数字で淹れる",
+      "goal_text": null,
+      "declared_in": "docs/sns/scenarios/num.md",
+      "accounts": [
+        "kp-threads",
+        "kp-x"
+      ],
+      "slots": [
+        {
+          "day": "tue",
+          "time": "07:00"
+        },
+        {
+          "day": "fri",
+          "time": "07:00"
+        }
+      ],
+      "stock": {
+        "approved_future": 1,
+        "floor": 2,
+        "low": true,
+        "days_covered": 5
+      },
+      "next_slot": {
+        "at": "2026-10-30T07:00:00+09:00",
+        "filled": false
+      },
+      "empty_slots_14d": 3,
+      "material": {
+        "remaining": 4,
+        "written_at": "2026-10-23",
+        "floor": 2,
+        "low": false
+      },
+      "deadline": null,
+      "next": [
+        {
+          "kind": "stock",
+          "what": "承認済みストック 1 本（目安 2）"
+        },
+        {
+          "kind": "slot",
+          "what": "次の枠 2026-10-30 07:00 に原稿 1 本"
+        }
+      ],
+      "cannot_say": []
+    }
+  ],
+  "untied": {
+    "drafts": 3,
+    "deliveries": 0
+  },
+  "cannot_say": []
+}

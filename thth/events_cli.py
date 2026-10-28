@@ -72,6 +72,14 @@
   終わった（予約が詰まった・口座が止まっていた・承認が遅れた）。起きた時刻は期限、`ref` は原稿の名前、
   `not_after`・`publish_at` が付く。id は `"ev_" + sha256("thth.not_after/1|<口座>|<原稿>|<期限>")[:24]`。
   原稿は書き換えない（approved のまま。board・morning には held の `not_after_passed` として出る）。
+- `scenario_stalled`（5.0 段 1・設計 §4.3・続いている状態）: キャンペーン（糸・`docs/sns/scenarios/<id>.md`）が
+  `stale_after_days` を越えて動いていない（配信の台帳が conflict の原稿があるときも）。`account` と `project` は
+  project の名前、`ref` は糸の id、`stage`・`days`・`next`（名詞の列・本文なし）が付く。id は
+  `"ev_" + sha256("thth.scenario/1|<project>|<id>|<stage>")[:24]`——同じ段で止まっているあいだは同じ id。
+- `series_low`（5.0 段 1・続いている状態）: シリーズ（型）の承認済みで未来の原稿が `stock_floor` を切った。
+  `ref` は型の id、`approved_future`・`floor`・`next_slot` が付く。id は
+  `"ev_" + sha256("thth.scenario/1|<project>|<id>|series_low")[:24]`。`schedule_thin`（口座全体の 1 日の本数）とは
+  別の物差し。宣言を 1 つも持たない project では、この 2 つは出ない（読むものも増えない）。
 - `delivery_resolved`（4.0 S5 §5.3）: 人が衝突を解いた（台帳の `op: resolve` の行・状態に関わらず）。
   id は配信の台帳の出来事と同じ（`thth.delivery/1|<delivery>|<seq>`）。
 
@@ -127,7 +135,9 @@ KINDS = ("published", "retracted", "reply_received", "mention_received",
          # 4.5.4: 予約は先まで届いているのに、1 日の本数が直近 7 日の平均の 6 割を切る日がある（続いている状態）。
          "schedule_thin",
          # 4.5.6: 承認済みの原稿が、出さない期限（not_after）を過ぎて出ないまま終わった（起きた時刻は期限）。
-         "not_after_passed")
+         "not_after_passed",
+         # 5.0 段 1（設計 §4.3）: キャンペーンが止まっている・シリーズの承認済みストックが目安を切った（続いている状態）。
+         "scenario_stalled", "series_low")
 # 出さない期限を過ぎた原稿の出来事の id の版の語（4.5.6）。
 NOT_AFTER_EVENT_PREFIX = "thth.not_after/1"
 # 反応の出来事の id の版の語（設計 4.0 S6 §6.3）。
@@ -681,6 +691,42 @@ def _state_events(name, cfg):
     return out, cannot
 
 
+def _scenario_events(read, now, allowed_names, cannot_say):
+    """`scenario_stalled`・`series_low`（設計 5.0 §4.3）。project ごとに 1 回。**読むだけ。**
+
+    `account` は project の名前（出来事は project の宣言に付く）・`project` も添える。始まりの時刻は無い
+    （`schedule_low` と同じ・受け手が event_id で除く）。
+    """
+    from . import morning, scenario
+    projects = {}
+    for name in read:
+        try:
+            cfg = accounts_mod.load_account(name)
+        except (accounts_mod.AccountError, ValueError, TypeError):
+            continue
+        if cfg.get("project"):
+            projects.setdefault(cfg["project"], None)
+    out = []
+    for project in sorted(projects):
+        names = morning.targets(project)
+        if allowed_names is not None:
+            names = [n for n in names if n in allowed_names]
+        if not names:
+            continue
+
+        def make(kind, account, ref, summary, _id, **extra):
+            return _event(kind, account, None, None, ref, summary, _id=_id, ongoing=True, **extra)
+        try:
+            rows, cannot = scenario.events_for(project, names, now=now, make_event=make)
+        except Exception:  # noqa: BLE001 — 宣言が読めなくても他の出所は出す
+            cannot_say.add("scenario_unreadable")
+            continue
+        out += rows
+        if rows or cannot:
+            cannot_say.update(f"scenario_{code}" for code in cannot)
+    return out
+
+
 # ------------------------------------------------------------------ カーソル
 
 def _key(row):
@@ -820,6 +866,8 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
             events += _not_after_events(name, cfg, now)
         except Exception:  # noqa: BLE001 — queue が読めなくても他の出所は出す
             cannot_say.add("queue_unreadable")
+    # 5.0 段 1: シナリオ（project ごと・宣言のある project だけ）。宣言が無ければ何も足さない。
+    events += _scenario_events(read, now, allowed_names, cannot_say)
     events.sort(key=_key)
 
     previous = None

@@ -215,6 +215,9 @@ def lint_file(path: str) -> list:
         if not b.malformed:
             from . import goals as goals_mod
             notes.extend(goals_mod.lint_errors(b.front_matter))
+            # 5.0 段 1: キャンペーン・シリーズの札（予告だけ・指紋に入れない）。
+            from . import scenario as scenario_mod
+            notes.extend(scenario_mod.manuscript_warnings(path, b.front_matter))
         if cfg and not b.malformed:
             from . import media as media_mod, media_delivery
             for index,row in enumerate(b.posts):
@@ -286,6 +289,9 @@ def lint_file(path: str) -> list:
         errors.extend(goals_mod.lint_errors(fm))
         from . import announce
         errors.extend(announce.lint_errors(fm, None, account_cfg, hatena=True))
+        # 5.0 段 1: キャンペーン・シリーズの札（予告だけ・指紋に入れない）。
+        from . import scenario as scenario_mod
+        errors.extend(scenario_mod.manuscript_warnings(path, fm))
         return errors
     media = account_cfg["media"] if account_cfg else "threads"
     from . import media as media_mod
@@ -364,6 +370,10 @@ def lint_file(path: str) -> list:
     # だけの門で、select は見ない）。
     from . import goals as goals_mod
     errors.extend(goals_mod.lint_errors(fm))
+    # 5.0 段 1: キャンペーン・シリーズの札（`thread:`・`series:`）。宣言のファイルが無ければ予告だけ（断らない）。
+    # 承認の指紋には入れない（`approval._option_components` は触らない・`goal:` と同じ扱い）。
+    from . import scenario as scenario_mod
+    errors.extend(scenario_mod.manuscript_warnings(path, fm))
     # 同じリンク先を前後 72 時間に使う click の原稿（設計 3.7.0 §A1）。**断らない**
     # ——投稿ごとのクリックが測れなくなると知らせるだけ（警告は `warning:` で始まる）。
     if not qf.malformed and not goals_mod.lint_errors(fm):
