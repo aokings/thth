@@ -240,9 +240,11 @@ def poll(session, *, rehearsing=False):
 
 def rehearse(cfg, *, redirect_uri=None, log, human_output):
     from . import appenv, oauth
-    if cfg.get('media') in ('mastodon', 'x'):
+    if cfg.get('media') in ('mastodon', 'x', 'facebook'):
         if cfg.get('media') == 'x':
             from .adapters.auth_x import XAuthProfile as Profile
+        elif cfg.get('media') == 'facebook':
+            from .adapters.auth_facebook import FacebookAuthProfile as Profile
         else:
             from .adapters.auth_mastodon import MastodonAuthProfile as Profile
         try:

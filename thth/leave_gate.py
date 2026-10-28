@@ -231,8 +231,8 @@ def bind(adapter,cfg):
     require_active(account)
     # Native helpers lease each request (Threads waits stay outside the lease).
     # Unknown injected adapters have no common transport, so their call is leased.
-    from .adapters import ThreadsAdapter, BlueskyAdapter, MastodonAdapter, XAdapter
-    native=type(adapter) in (ThreadsAdapter,BlueskyAdapter,MastodonAdapter,XAdapter)
+    from .adapters import ThreadsAdapter, BlueskyAdapter, MastodonAdapter, XAdapter, FacebookAdapter
+    native=type(adapter) in (ThreadsAdapter,BlueskyAdapter,MastodonAdapter,XAdapter,FacebookAdapter)
     methods={'publish','publish_container','conversation','fetch_post','inbox','recent_posts','insights','whoami','probe',
              'quota','refresh_token','location_search','delete_post','session','keyword_search','mentions',
              'tag_search','tag_observation','observed_tags','profile_lookup','account_insights','granted_scopes',

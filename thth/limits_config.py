@@ -26,7 +26,7 @@
 """
 from __future__ import annotations
 
-SNS_MEDIA = ("threads", "x", "bluesky", "mastodon")
+SNS_MEDIA = ("threads", "x", "bluesky", "mastodon", "facebook")
 INT_MAX = 1000
 COUNT_MAX = 1000
 MINUTES_MAX = 1440

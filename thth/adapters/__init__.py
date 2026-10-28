@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from . import base
 from .bluesky import BlueskyAdapter
+from .facebook import FacebookAdapter
 from .mastodon import MastodonAdapter
 from .threads import ThreadsAdapter
 from .x import XAdapter
@@ -27,6 +28,7 @@ REGISTRY = {
     "bluesky": BlueskyAdapter,
     "mastodon": MastodonAdapter,
     "x": XAdapter,
+    "facebook": FacebookAdapter,
 }
 
 UnknownMedium = base.UnknownMedium
@@ -82,4 +84,4 @@ def make_adapter(account_cfg: dict, token: dict | None):
 
 __all__ = ["REGISTRY", "UnknownMedium", "adapter_class", "base",
            "capabilities_for", "count_text_for", "known_media", "make_adapter",
-           "BlueskyAdapter", "MastodonAdapter", "ThreadsAdapter", "XAdapter"]
+           "BlueskyAdapter", "FacebookAdapter", "MastodonAdapter", "ThreadsAdapter", "XAdapter"]

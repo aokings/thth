@@ -270,7 +270,8 @@ def inventory(account,cfg):
 
 def revoke(cfg,token,progress,save):
     media=cfg.get('media')
-    if media in ('threads','bluesky'):return 'unconfirmed_manual'
+    # Facebook ページの鍵の取り消しは、ページの持ち主が Meta の画面（ビジネス連携）で外す。
+    if media in ('threads','bluesky','facebook'):return 'unconfirmed_manual'
     if media=='mastodon':
         from .adapters.auth_mastodon import client_for_token,request
         base,client=client_for_token(cfg,token)

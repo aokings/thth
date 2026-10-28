@@ -14,14 +14,14 @@ from .adapters import base
 
 
 def unavailable(cfg):
-    return cfg.get("media") not in ("mastodon","bluesky","threads","x")
+    return cfg.get("media") not in ("mastodon","bluesky","threads","x","facebook")
 
 
 def error_for(cfg,manifest):
     if not manifest:return None
     if unavailable(cfg):return 'media_provider_unavailable'
-    from .adapters import mastodon_media,bluesky_media,threads_media,x_media
-    return {'bluesky':bluesky_media,'mastodon':mastodon_media,'threads':threads_media,'x':x_media}[cfg['media']].intent_error(manifest)
+    from .adapters import mastodon_media,bluesky_media,threads_media,x_media,facebook
+    return {'bluesky':bluesky_media,'mastodon':mastodon_media,'threads':threads_media,'x':x_media,'facebook':facebook}[cfg['media']].intent_error(manifest)
 
 
 def _save(name,data):

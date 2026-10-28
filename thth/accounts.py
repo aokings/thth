@@ -219,7 +219,7 @@ DUMMY_REDIRECT_URI_HOST = "example.invalid"
 DUMMY_INSTANCE_HOST = "mastodon.example"
 # 媒体ごとの雛形の handle。**「`demo` を含む」では見ない**——`demo-band` のような
 # 実在の綴りを巻き込む。雛形の値と丸ごと一致したときだけダミーと呼ぶ。
-DUMMY_HANDLES = {"threads": ("demo",), "mastodon": ("demo",),
+DUMMY_HANDLES = {"threads": ("demo",), "mastodon": ("demo",), "facebook": ("0",),
                  "bluesky": ("demo.bsky.social",), "hatenablog": ("demo",)}
 # はてなの雛形（設計 4.0 S1 §3.3）。口座の `blog_id` と主体の `blogs[].blog_id`・`hatena_id`。
 DUMMY_BLOG_ID = "demo.hatenablog.com"

@@ -67,6 +67,38 @@ def load_app_env(path: str | None = None, *, log=print) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Facebook ページ（Meta のアプリ「THTH」・ID 1648991573463758）
+# ---------------------------------------------------------------------------
+#
+# **Threads のアプリ ID／secret とは別の組**（手順 `docs/手順_FBページと広告_2026-10-28.md`
+# §4 の F1・10/28 に管理画面で見た）。置き場は同じ app.env の別の行にする——
+# 全アカウント共通の 1 本、という app.env の性格は Threads と同じなので。
+# `META_LOGIN_CONFIG_ID` は Facebook ログイン for Business の「構成」の ID（秘密ではない）。
+# 有れば認可の URL に `config_id`、無ければ `scope` を載せる（`auth_facebook.py`）。
+META_REQUIRED_KEYS = ("META_APP_ID", "META_APP_SECRET")
+META_CONFIG_KEY = "META_LOGIN_CONFIG_ID"
+
+
+def load_meta_app_env(path: str | None = None, *, log=print) -> tuple[str, str, str | None]:
+    """`(META_APP_ID, META_APP_SECRET, META_LOGIN_CONFIG_ID か None)`。足りなければ `AppEnvError`。
+
+    **値は出さない**（エラー文にも鍵の名前と path だけ）。Threads の 2 行は見ない。
+    """
+    path = path or default_path()
+    if not os.path.exists(path):
+        raise AppEnvError(
+            f"app.env が無い: {path}（運用者が META_APP_ID・META_APP_SECRET を書く。"
+            "Facebook ページの `thth auth` に要ります）")
+    secrets_fs.ensure_mode_600(path, log=log)
+    data = _parse_env_file(path)
+    missing = [k for k in META_REQUIRED_KEYS if not data.get(k)]
+    if missing:
+        raise AppEnvError(f"app.env に項目が足りません: {missing}（{path}・Facebook ページの認可に要ります）")
+    config_id = (data.get(META_CONFIG_KEY) or "").strip() or None
+    return data["META_APP_ID"].strip(), data["META_APP_SECRET"].strip(), config_id
+
+
+# ---------------------------------------------------------------------------
 # 状態の見立て（`thth doctor` と `thth app show` が共有する）
 # ---------------------------------------------------------------------------
 
@@ -146,8 +178,19 @@ def _read_secret(*, stdin: bool, input_func) -> str:
     return getpass.getpass("Threads の App Secret を貼り付けてください（表示されません）: ")
 
 
-def render_app_env(app_id: str, app_secret: str) -> str:
-    return f"{REQUIRED_KEYS[0]}={app_id}\n{REQUIRED_KEYS[1]}={app_secret}\n"
+def render_app_env(app_id: str, app_secret: str, *, keep_from: str | None = None) -> str:
+    """Threads の 2 行を書く。`keep_from`（いまの app.env の中身）の**ほかの行は残す**。
+
+    同じ app.env に Facebook ページの `META_*` の行を置くので、`thth app set`
+    （Threads）で書き直したときにそれが消えないようにする。
+    """
+    kept = []
+    for line in (keep_from or "").splitlines():
+        key = line.partition("=")[0].strip()
+        if line.strip() and key not in REQUIRED_KEYS:
+            kept.append(line)
+    head = f"{REQUIRED_KEYS[0]}={app_id}\n{REQUIRED_KEYS[1]}={app_secret}\n"
+    return head + "".join(line + "\n" for line in kept)
 
 
 def run_app_set(*, app_id: str | None, stdin: bool = False, input_func=None,

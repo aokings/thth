@@ -55,7 +55,7 @@ def _find_example_dir() -> str:
 
 EXAMPLE_DIR = _find_example_dir()
 
-MEDIA_CHOICES = ("threads", "bluesky", "mastodon", "x", "hatenablog")
+MEDIA_CHOICES = ("threads", "bluesky", "mastodon", "x", "hatenablog", "facebook")
 
 # **アカウント名はファイル名になる**（`<accounts_dir>/<name>.json`）。区切りや
 # `..` を混ぜると置き場の外に書けてしまう——`thth account add ../pwned` が
@@ -255,6 +255,10 @@ def build_ledger(name: str, *, media: str, project: str, handle: str | None = No
     if instance is not None:
         # Mastodon は `instance`、Bluesky は `service`（既存の台帳の綴り）。
         data["service" if media == "bluesky" else "instance"] = instance
+    if media == "facebook":
+        # 台帳の `page_id` が正本（`FacebookAdapter.from_account()` が読む）。
+        data["page_id"] = (handle or "").strip()
+        data["handle"] = data["page_id"]
     data["repo_dir"] = repo_dir or f"$THTH_ROOT/repos/{project}"
     data["env"] = f"~/.config/thth/{name}.env"
     data["token"] = f"~/.config/thth/{name}.token"
@@ -359,6 +363,15 @@ def cmd_add(args) -> int:
                   f"--project {args.project} --handle user "
                   f"--instance https://mastodon.social", file=sys.stderr)
         return 2
+    if args.media == "facebook":
+        # Facebook ページは**ページの id**（数字）で指す。handle にも同じ id を入れる
+        # （`thth token set` の照合と `FacebookAdapter.whoami()` の username がページの id）。
+        if not args.handle or not args.handle.strip().isascii() or not args.handle.strip().isdigit():
+            print("--handle にページの id（数字）が要ります（facebook はページの id で指します）",
+                  file=sys.stderr)
+            print(f"  例: thth account add {name} --media facebook --project {args.project} "
+                  f"--handle 61596075596464 --by <名前>", file=sys.stderr)
+            return 2
     if args.media == "mastodon" and not args.instance:
         # instance が無いと、雛形の `https://mastodon.example`（存在しない）が
         # そのまま残る。**どのインスタンスかは道具には推測できない。**
@@ -624,5 +637,6 @@ def register(sub) -> None:
                 "--redirect-uri を省くと雛形のダミーのまま\n"
                 "  bluesky  : --handle name.bsky.social が必須\n"
                 "  mastodon : --handle user と --instance https://… が必須\n"
+                "  facebook : --handle <ページの id（数字）> が必須（page_id にも同じ値）\n"
                 "  hatenablog: --principal <主体> --blog <blog_id> が必須（handle と token は主体から写す）")
     p.set_defaults(func=dispatch)

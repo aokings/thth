@@ -50,7 +50,7 @@ import copy
 
 from . import media_traits as _mt
 
-SNS_MEDIA = ("threads", "x", "bluesky", "mastodon")
+SNS_MEDIA = ("threads", "x", "bluesky", "mastodon", "facebook")
 FAMILIES = ("sns", "hatenablog", "hatenabookmark", "reaction", "fotolife")
 PHASES = ("halt", "safety", "assess")
 PURPOSES = _mt.PURPOSES
@@ -211,14 +211,18 @@ THTH_DEFAULTS = (
 # 台帳（`thth/media_traits/`）との写像（段 2・監査 中-1）——**この 1 か所だけ**
 # ---------------------------------------------------------------------------
 
+# 媒体の性質の台帳（`thth/media_traits/`）を持つ SNS。facebook（10/29）はまだ台帳が無いので、
+# 表の行（静かな時間・間隔・日の上限・連投の停止）は効かせるが、台帳への写像には入れない。
+LEDGER_SNS_MEDIA = ("threads", "x", "bluesky", "mastodon")
+
 # (媒体, 台帳の行の id) → 表の行の id。SNS の 4 媒体の行は表の 1 行（`family: sns`）に集まり、根拠は媒体ごと。
 LEDGER_MAP = {
-    **{(media, "post.daily"): "post.daily" for media in SNS_MEDIA},
-    **{(media, "retract.daily"): "retract.daily" for media in SNS_MEDIA},
+    **{(media, "post.daily"): "post.daily" for media in LEDGER_SNS_MEDIA},
+    **{(media, "retract.daily"): "retract.daily" for media in LEDGER_SNS_MEDIA},
     # 4.3: 返信の窓の既定（10 分に 10・数の根拠は THTH の線）。根拠の項目は媒体の API の上限。
-    **{(media, "reply.burst"): "reply.burst" for media in SNS_MEDIA},
+    **{(media, "reply.burst"): "reply.burst" for media in LEDGER_SNS_MEDIA},
     # 4.3（監査 中-1）: 返信の日の上限の既定（50・数は推測）。
-    **{(media, "reply.daily"): "reply.daily" for media in SNS_MEDIA},
+    **{(media, "reply.daily"): "reply.daily" for media in LEDGER_SNS_MEDIA},
     # Threads の反応の行は台帳に根拠の項目が無い（段 0 の決め 8）→ その媒体は `thth:reaction.daily`。
     **{(media, "reaction.daily"): "reaction.daily" for media in ("x", "bluesky", "mastodon")},
     ("hatenablog", "entry.daily"): "entry.daily",

@@ -420,10 +420,13 @@ def run_auth(account_name: str, *, redirect_uri: str | None = None, code: str | 
         return authflow.rehearse(account_cfg, redirect_uri=redirect_uri, log=log, human_output=human_output)
 
     media = account_cfg.get("media")
-    if media in ("mastodon", "x"):
+    if media in ("mastodon", "x", "facebook"):
         from . import authflow
         if media == "x":
             from .adapters.auth_x import XAuthProfile as Profile
+        elif media == "facebook":
+            # Facebook ログイン for Business（`thth/adapters/auth_facebook.py`）。
+            from .adapters.auth_facebook import FacebookAuthProfile as Profile
         else:
             from .adapters.auth_mastodon import MastodonAuthProfile as Profile
         try:

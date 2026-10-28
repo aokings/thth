@@ -47,7 +47,9 @@ def save(media,path,data,*,by,expected,origin=None):
         changed=True
         if media=='threads':
             # Threads auth/rehearse still use the established app.env schema.
-            secrets_fs.atomic_write_text(str(path),appenv.render_app_env(data['client_id'],data['client_secret']),mode=0o600)
+            # Facebook ページの `META_*` の行（同じ app.env）は残す（`render_app_env` の説明）。
+            secrets_fs.atomic_write_text(str(path),appenv.render_app_env(data['client_id'],data['client_secret'],
+                                         keep_from=old[0].decode() if old else None),mode=0o600)
         else:authclients.write(path,data)
         admin_log.append('app_set',subject(media,origin),{'media':media},by=by,
                          diff={'client_id':['present' if before['client_id'] else 'absent','present'],
