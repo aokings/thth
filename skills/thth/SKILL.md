@@ -70,6 +70,15 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 
 期日のある原稿（学校説明会・文化祭・申し込みの締め切り）は、queue の front-matter に `not_after: 2026-10-25T10:00:00+09:00`（`publish_at` と同じ形・`+09:00` 必須）を書く。**この時刻を過ぎたら THTH は出さない**——予約が詰まって遅れても、口座が止まっていても、終わった行事を告げない。無ければ今までどおり。`not_after` は承認の指紋（digest）に入る（**期限を延ばしたら承認し直し**）。lint: 形が違う・`publish_at` より前は `invalid_not_after`、今より前は警告（承認はできるが出ない）。`thth approve` の 1 段目に「出さない期限 YYYY-MM-DD HH:MM」、過ぎていれば「期限を過ぎているので確定しても出ません」。過ぎた原稿は書き換えない（approved のまま）・口座も止めない（次の原稿へ進む）。見え方: `thth queue` の「いま出ない: … — not_after_passed」・`thth schedule` の「出さない期限を過ぎました」（`--json` は `not_after`・`expired`）・board と morning の held（区分 `not_after_passed`）・`thth events` の `not_after_passed`（起きた時刻は期限）。公開の直前（container を作って待ったあと）にもう一度見て、過ぎていれば公開しない。連投（`thth: 2`）は根の front-matter の `not_after` を見て、途中の段で過ぎたら残りは出さない。thth.me の道は `thth schedule <account> --text … --at … --not-after …`・MCP の `thth_draft_put` の `not_after`。はてなブログの配信原稿には使えない。
 
+## ダッシュボード（会話の中に出す・5.0）
+
+「ダッシュボード見せて」「〇〇を開いて」と言われたら、`thth dashboard [--json]`（全メディア）・`thth dashboard <project> --json`（メディア）・`thth dashboard <project> campaign|series <id> --json`（キャンペーン・シリーズ）を叩き、**答えの JSON をそのまま** `skills/thth/dashboard/` の型（`all.html`・`project.html`・`campaign.html`・`series.html`）の `<script type="application/json" id="thth-data">` の中身と入れ替えて、会話の横に出す。描くのは型の JS。**数字を HTML に書き込まない・型を変えない・色を足さない。** 読むだけの口で、書かない・媒体を呼ばない。
+
+- `thth observe`（遠くの道では `thth events`）のあとで、`thth dashboard <project> --json` の `attention` が 1 以上なら、頼まれなくてもメディアの階層を 1 枚出す。キャンペーン・シリーズまで 1 回で要るときは `--full`。
+- 押されると「ダッシュボードから: [<project>/<種類>:<id>] …」が会話に届く。角括弧の id をそのまま使って THTH の CLI を動かす（探し直さない）。**公開の承認は承認の頁で本人が押す**（「承認へ」は 1 段目を出して承認の頁の URL を貼るまで）。指示文に「戻せない操作です」があるもの（`irreversible: true`）は、実行の前に 1 度確かめる。取り下げはダッシュボードからは受けない。
+- 取れない数は「—」と理由（`cannot_say`）で出す。0 と書かない。インプレッションと ER は口座ごと（足さない）。要対応の並びは日数の多い順だけで、THTH も型も順位やおすすめを付けない。
+- 見た目を直すときは型（4 つの共通の部分は 4 つとも同じに）と `skills/thth/dashboard/README.md` を直して commit する（release は要らない）。新しい数字が要るときは `--json` に鍵を足す（足すだけ・名前を変えない・消さない）。詳しくは `skills/thth/dashboard/README.md`。
+
 ## X のコミュニティ（3.19.0）
 
 `thth community search <account> <語…> [--limit N] [--json]`（MCP には無い）で探し、`thth send <account> --community <id>` か queue の front-matter `community_id: <id>` で出す。X だけ・認可のやり直しは不要。探すのは有償の読み取り（1 件 0.005 USD・月の X 予算・1 日 60 本には数えない・既定 10 件・最大 25・保存しない）。`community_id` は digest／承認の指紋に入る。返信（reply_to・reply_to_file）と同時には使えない・連投には書けない。**参加は X の画面で先に**（API に参加の口も「参加しているか」の欄も無い）——参加していなければ X の断りが `x_unknown_refusal（…）` で残る。**各コミュニティの規則（宣伝の禁止など）は人が読んで守る**。所有者に頼まれたコミュニティへ、人が選んだ本文を 1 本ずつ出すだけ——検索の結果へ機械的に出さない・同じ本文を複数のコミュニティへ流さない（X の自動化の決まりで bulk・無差別は不可）。断り: `unsupported_on_platform`（X 以外）・`community_id_invalid`・lint の `invalid_publish_option`。

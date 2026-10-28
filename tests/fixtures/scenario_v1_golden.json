@@ -1,0 +1,40 @@
+{
+  "schema": "thth.scenario/1",
+  "report_type": "scenario",
+  "generated_at": "2026-10-28T11:20:00+09:00",
+  "project": "kopicha",
+  "threads": [
+    {
+      "id": "num-04-sencha", "title": "数字で淹れる No.4 煎茶",
+      "declared_in": "docs/sns/scenarios/num-04-sencha.md",
+      "state": "stalled",
+      "stage": {"name": "article", "index": 3, "of": 5},
+      "stages": [
+        {"name": "collect", "medium": "hatena_bookmark", "need": 5, "done": 5, "pending": 0, "satisfied": true, "satisfied_by": "count"},
+        {"name": "diary", "medium": "hatenablog", "need": 1, "done": 1, "pending": 0, "satisfied": true, "satisfied_by": "count"},
+        {"name": "article", "medium": "site", "need": 1, "done": 0, "pending": 0, "satisfied": false, "signal": "article_published"},
+        {"name": "announce", "medium": ["threads", "x"], "need": 2, "done": 0, "pending": 0, "satisfied": false},
+        {"name": "warm", "medium": ["threads", "x"], "replies_within_hours": 6, "replies": null, "overdue": null, "satisfied": false}
+      ],
+      "next": [{"stage": "article", "kind": "signal", "what": "article_published を糸のファイルに 1 行"}],
+      "last_movement_at": "2026-10-23T08:38:22+09:00",
+      "stalled": {"days": 5, "stale_after_days": 7, "since": "2026-10-23T08:38:22+09:00"},
+      "events": [{"at": "2026-10-25", "name": "researched", "head": "全国茶生産団体連合会の目安を 5 本はてブ"}],
+      "cannot_say": []
+    }
+  ],
+  "series": [
+    {
+      "id": "num", "title": "数字で淹れる", "accounts": ["kopicha-threads", "kopicha-x"],
+      "slots": [{"day": "tue", "time": "07:00"}, {"day": "fri", "time": "07:00"}],
+      "stock": {"approved_future": 1, "floor": 2, "low": true, "days_covered": 3},
+      "next_slot": {"at": "2026-10-31T07:00:00+09:00", "filled": false},
+      "empty_slots_14d": 3,
+      "material": {"remaining": 4, "written_at": "2026-10-23", "floor": 2, "low": false},
+      "deadline": null,
+      "cannot_say": []
+    }
+  ],
+  "untied": {"drafts": 3, "deliveries": 0},
+  "cannot_say": []
+}

@@ -1,0 +1,102 @@
+<h2 class="sr-only">THTH のダッシュボード（全メディア）。メディアごとのカード・要対応・今後 7 日の空き。</h2>
+<!-- 型: thth dashboard --json の答えを、下の thth-data の中身（{}）とそっくり入れ替える。ほかは変えない。 -->
+<script type="application/json" id="thth-data">{}</script>
+<style>
+/* ---- 共通の見た目（4 つの型で同じ） ---- */
+#thth-root{font-size:12px;color:var(--text-primary)}
+.th-m{background:var(--surface-1);border-radius:var(--radius);padding:8px 12px;min-width:0}
+.th-m p{margin:0;font-size:11px;color:var(--text-secondary)}
+.th-m b{font-size:20px;font-weight:500;display:block}
+.th-m i{font-style:normal;font-size:11px;color:var(--text-muted);display:block}
+.th-m.warn{background:var(--bg-warning)}.th-m.warn p,.th-m.warn b,.th-m.warn i{color:var(--text-warning)}
+.th-c{background:var(--surface-2);border:.5px solid var(--border);border-radius:12px;padding:12px 14px;margin:0 0 12px;min-width:0}
+.th-h{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px;font-weight:500;margin-bottom:6px}
+.th-h span{font-size:11px;font-weight:400;color:var(--text-secondary)}
+.th-r{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:.5px solid var(--border)}
+.th-r .x{flex:1;min-width:0}
+.th-t{font-size:11px;padding:2px 6px;border-radius:6px;white-space:nowrap;display:inline-block}
+.th-w{background:var(--bg-warning);color:var(--text-warning)}.th-o{background:var(--bg-success);color:var(--text-success)}.th-d{background:var(--bg-danger);color:var(--text-danger)}.th-s{background:var(--bg-accent);color:var(--text-accent)}.th-n{color:var(--text-muted);border:.5px solid var(--border)}.th-q{background:var(--surface-1);color:var(--text-secondary)}
+.th-mu{color:var(--text-secondary);font-size:11px}
+.th-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+#thth-root button{font-size:11px;padding:4px 8px;height:auto;white-space:nowrap}
+.th-copy{margin-top:8px;padding:8px;border:.5px dashed var(--border-warning);border-radius:8px;background:var(--bg-warning);color:var(--text-warning);font-size:11px}
+.th-copy textarea{width:100%;box-sizing:border-box;font-size:11px;margin:4px 0;background:var(--surface-1);color:var(--text-primary);border:.5px solid var(--border);border-radius:6px}
+.th-foot{font-size:11px;color:var(--text-muted);margin-top:8px}
+/* ---- 共通ここまで ---- */
+.g4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 12px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.card{background:var(--surface-2);border:.5px solid var(--border);border-radius:12px;padding:12px 14px;min-width:0}
+.hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.hd b{font-size:14px;font-weight:500}
+.kp{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin:6px 0}.kp div{color:var(--text-secondary);font-size:11px;min-width:0}.kp span{display:block;color:var(--text-primary);font-size:15px;font-weight:500}.kp small{display:block;color:var(--text-primary);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ch{display:flex;gap:4px;flex-wrap:wrap;margin:4px 0}.ch span{font-size:11px;color:var(--text-secondary);border:.5px solid var(--border);border-radius:6px;padding:1px 6px}
+.wk{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;margin-top:6px}.wk div{height:22px;border-radius:4px;background:var(--surface-1);font-size:11px;text-align:center;line-height:22px;color:var(--text-secondary)}
+.wk .g{background:var(--bg-warning);color:var(--text-warning)}
+.alert{margin-top:8px;padding-top:8px;border-top:.5px solid var(--border);color:var(--text-warning)}
+@media (max-width:560px){.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.grid{grid-template-columns:minmax(0,1fr)}}
+</style>
+<div id="thth-root"></div>
+<script>
+/* ---- 共通（4 つの型で同じ。直すなら 4 つとも同じに） ---- */
+const THTH_SCHEMA="thth.dashboard/1";
+const THTH_MEDIUM={threads:"Threads",x:"X",bluesky:"Bluesky",mastodon:"Mastodon",hatenablog:"はてなブログ",hatena_bookmark:"はてブ",site:"サイト"};
+const THTH_STAGE={collect:"リサーチ",diary:"仮説",article:"本記事",announce:"SNS 告知",warm:"エンゲージ"};
+const THTH_KIND={scenario_stalled:"停滞",series_low:"ストック不足",untied_drafts:"未分類の下書き",unanswered_replies:"未返信",schedule_low:"予約切れ間近",schedule_thin:"予約が薄い",not_after_passed:"期限切れ",publish_held:"公開を停止中",account_stopped:"口座が停止",inflight_open:"公開の結果待ち",delivery_held:"配信の保留",delivery_behind:"記事の更新待ち",principal_stopped:"はてな ID が停止",budget_exhausted:"予算切れ"};
+const THTH_REASON={scenario_not_installed:"シナリオ（段 1）が未導入",no_declarations:"宣言が読めない",scenario_schema_unknown:"シナリオの版が違う",blog_pv_not_collected:"ブログ PV は取っていない",article_clicks_not_connected:"記事側の計測とつないでいない",needs_scenario_show:"詳細（段 1 の scenario show）が未接続",posts_unlisted:"投稿の一覧が無い",deliveries_unlisted:"配信の一覧が無い",scenario_show_unavailable:"詳細（段 1 の scenario show）が未接続"};
+function ththEsc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function ththNum(v){return v==null?"—":(typeof v==="number"?v.toLocaleString("ja-JP"):ththEsc(v));}
+function ththPct(v){return v==null?"—":v+"%";}
+function ththSigned(v,unit){return v==null?"—":(v>0?"+":"")+v+(unit||"");}
+function ththReason(c){return c?ththEsc(THTH_REASON[c]||c):"";}
+function ththMD(iso){if(!iso)return "—";const m=String(iso).match(/^\d{4}-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);return m?(+m[1])+"/"+(+m[2])+(m[3]?" "+m[3]+":"+m[4]:""):ththEsc(iso);}
+function ththDate(iso){if(!iso)return "—";const m=String(iso).match(/^\d{4}-(\d{2})-(\d{2})/);return m?(+m[1])+"/"+(+m[2]):ththEsc(iso);}
+function ththMedium(m){return Array.isArray(m)?m.map(ththMedium).join("・"):ththEsc(THTH_MEDIUM[m]||m||"");}
+function ththKind(k){return ththEsc(THTH_KIND[k]||k);}
+function ththAsOf(d){const a=d.as_of||{};return ththMD(a.generated_at||d.generated_at)+" 時点"+(a.measured?"・実測は "+ththMD(a.measured)+" まで":"・実測なし");}
+function ththData(level){
+  const root=document.getElementById("thth-root");let d=null;
+  try{d=JSON.parse(document.getElementById("thth-data").textContent||"{}");}catch(e){d=null;}
+  if(!d||d.schema!==THTH_SCHEMA||d.level!==level){root.innerHTML='<div class="th-c th-mu">thth dashboard の --json の答え（level: '+ththEsc(level)+'）を thth-data に貼ってください。</div>';return null;}
+  return d;
+}
+function ththPress(a){
+  if(typeof sendPrompt==="function"){sendPrompt(a.prompt);return;}
+  const root=document.getElementById("thth-root");let box=root.querySelector(".th-copy");
+  if(!box){box=document.createElement("div");box.className="th-copy";
+    box.innerHTML='<div>この画面からは会話に送れません。下の指示文をコピーして、会話に貼ってください。</div><textarea readonly rows="3"></textarea><button type="button">コピー</button>';
+    root.appendChild(box);
+    box.querySelector("button").onclick=()=>{const t=box.querySelector("textarea");t.select();
+      if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t.value).catch(()=>document.execCommand("copy"));}else{document.execCommand("copy");}};}
+  box.querySelector("textarea").value=a.prompt;box.scrollIntoView({block:"nearest"});
+}
+function ththButton(a){const b=document.createElement("button");b.type="button";b.textContent=a.label+(a.irreversible?"（確認あり）":"")+" ↗";b.title=a.prompt;b.onclick=()=>ththPress(a);return b;}
+function ththActions(list,cls){const d=document.createElement("div");d.className=cls||"th-acts";(list||[]).forEach(a=>d.appendChild(ththButton(a)));return d;}
+function ththDiv(html,cls){const d=document.createElement("div");if(cls)d.className=cls;d.innerHTML=html;return d;}
+/* ---- 共通ここまで ---- */
+(function(){
+  const d=ththData("all");if(!d)return;
+  const root=document.getElementById("thth-root");const t=d.totals||{};
+  root.appendChild(ththDiv(
+    '<div class="th-m'+(t.attention?' warn':'')+'"><p>要対応（全メディア）</p><b>'+ththNum(t.attention)+'</b><i>'+ththNum(d.n_projects)+' メディア中 '+ththNum(d.n_projects_attention)+'</i></div>'+
+    '<div class="th-m"><p>承認待ち</p><b>'+ththNum(t.pending_approval)+'</b><i>下書き → 承認待ち</i></div>'+
+    '<div class="th-m"><p>予約済み</p><b>'+ththNum(t.scheduled_14d)+'</b><i>今後 14 日</i></div>'+
+    '<div class="th-m"><p>公開済み</p><b>'+ththNum(t.published_7d)+'</b><i>直近 7 日</i></div>',"g4"));
+  const grid=ththDiv("","grid");root.appendChild(grid);
+  for(const p of d.projects||[]){
+    const k=p.kpi||{};const acc=(k.impressions_7d||{}).by_account||{};const names=Object.keys(acc);
+    const per=(f,fmt)=>names.length===1?'<span>'+fmt(acc[names[0]][f])+'</span>':names.map(n=>'<small>'+ththMedium(acc[n].medium)+' '+fmt(acc[n][f])+'</small>').join("")||'<span>—</span>';
+    const sc=p.scenario||{};
+    const camp=sc.available?'キャンペーン '+ththNum(sc.n_campaigns)+(sc.n_campaigns_stalled?'（停滞 '+ththNum(sc.n_campaigns_stalled)+'）':'')+' · シリーズ '+ththNum(sc.n_series):'キャンペーン・シリーズ: —（'+ththReason(sc.cannot_say)+'）';
+    const fa=p.first_attention;
+    const card=ththDiv(
+      '<div class="hd"><b>'+ththEsc(p.project)+'</b>'+(p.status==="attention"?'<span class="th-t th-w">要対応 '+ththNum(k.attention)+'</span>':'<span class="th-t th-o">正常</span>')+'</div>'+
+      '<div class="ch">'+[...new Set(Object.values(p.mediums||{}))].map(m=>'<span>'+ththMedium(m)+'</span>').join("")+'</div>'+
+      '<div class="kp"><div>公開 7日<span>'+ththNum((k.published_7d||{}).n)+'</span></div><div>インプレ'+per("impressions",ththNum)+'</div><div>ER'+per("engagement_rate_pct",ththPct)+'</div></div>'+
+      '<div class="th-mu">'+camp+(k.pending_approval?' · 承認待ち '+ththNum(k.pending_approval):'')+'</div>'+
+      '<div class="wk">'+(p.week||[]).map(w=>'<div class="'+(w.gap?'g':'')+'" title="'+ththEsc(w.date)+'">'+ththEsc(w.weekday)+'</div>').join("")+'</div>'+
+      (fa?'<div class="alert">'+ththKind(fa.kind)+(fa.days!=null?' '+ththNum(fa.days)+' 日':'')+': '+ththEsc(fa.title||"")+(fa.next?'<div class="th-mu">'+ththEsc(fa.next)+'</div>':'')+'</div>':'<div class="alert" style="color:var(--text-secondary)">要対応はありません</div>'),"card");
+    card.appendChild(ththActions(p.actions));grid.appendChild(card);
+  }
+  if(!(d.projects||[]).length)root.appendChild(ththDiv("見えるメディアがありません。","th-c th-mu"));
+  root.appendChild(ththDiv('曜日の橙は、シリーズの空き枠か予約の無い日（今日から 7 日）。'+ththAsOf(d)+'。インプレッションと ER は口座ごと（足さない）。'+((d.cannot_say||[]).length?' 読めなかったもの: '+ththEsc(d.cannot_say.join("・")):''),"th-foot"));
+})();
+</script>
