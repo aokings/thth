@@ -1,0 +1,40 @@
+<h2 class="sr-only">THTH の全メディアを並べたダッシュボードの見本。</h2>
+<style>
+.g4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 12px}
+.m{background:var(--surface-1);border-radius:var(--radius);padding:8px 12px}.m p{margin:0;font-size:11px;color:var(--text-secondary)}.m b{font-size:20px;font-weight:500;display:block}.m i{font-style:normal;font-size:11px;color:var(--text-muted)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.c{background:var(--surface-2);border:.5px solid var(--border);border-radius:12px;padding:12px 14px;font-size:12px}
+.hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.hd b{font-size:14px;font-weight:500}
+.t{font-size:11px;padding:2px 6px;border-radius:6px;white-space:nowrap}
+.w{background:var(--bg-warning);color:var(--text-warning)}.o{background:var(--bg-success);color:var(--text-success)}.d{background:var(--bg-danger);color:var(--text-danger)}
+.kp{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin:6px 0}.kp div{color:var(--text-secondary);font-size:11px}.kp span{display:block;color:var(--text-primary);font-size:15px;font-weight:500}
+.ch{display:flex;gap:4px;flex-wrap:wrap;margin:4px 0}.ch span{font-size:11px;color:var(--text-secondary);border:.5px solid var(--border);border-radius:6px;padding:1px 6px}
+.wk{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;margin-top:6px}.wk div{height:22px;border-radius:4px;background:var(--surface-1);font-size:11px;text-align:center;line-height:22px;color:var(--text-secondary)}
+.wk .g{background:var(--bg-warning);color:var(--text-warning)}
+.alert{margin-top:8px;padding-top:8px;border-top:.5px solid var(--border);color:var(--text-warning)}
+button{font-size:11px;padding:4px 8px;height:auto;white-space:nowrap}
+</style>
+<div class="g4">
+<div class="m" style="background:var(--bg-warning)"><p style="color:var(--text-warning)">要対応（全メディア）</p><b style="color:var(--text-warning)">5</b><i style="color:var(--text-warning)">4 メディア中 3</i></div>
+<div class="m"><p>承認待ち</p><b>7</b><i>全メディア</i></div>
+<div class="m"><p>公開済み</p><b>41</b><i>直近 7 日</i></div>
+<div class="m"><p>インプレッション</p><b>96,300</b><i>直近 7 日 · +18%</i></div>
+</div>
+<div class="grid" id="g"></div>
+<script>
+const M=[
+{n:"こぴちゃ",ch:["Threads","X","はてブ","はてなブログ","サイト"],st:["要対応 2","w"],k:[["公開 7日","12"],["インプレ","18,420"],["ER","2.1%"]],camp:"キャンペーン 4（停滞 1）· シリーズ 2",wk:[0,0,0,1,0,0,0],al:"停滞: 数字で淹れる No.4 煎茶（記事が未公開 5 日）"},
+{n:"アスモン関東",ch:["Threads","X","サイト"],st:["要対応 2","w"],k:[["公開 7日","21"],["インプレ","71,900"],["ER","1.4%"]],camp:"キャンペーン 3 · シリーズ 3（期日つき 1）",wk:[0,0,0,0,1,1,0],al:"期日まで 48 時間: 週末の説明会の告知 2 本が未承認"},
+{n:"にがみラボ",ch:["Threads","はてブ"],st:["要対応 1","d"],k:[["公開 7日","3"],["インプレ","2,980"],["ER","3.0%"]],camp:"キャンペーン 1 · シリーズ 1",wk:[1,1,1,1,1,1,1],al:"予約 0 本: 今後 7 日に出るものがありません"},
+{n:"masaru",ch:["X","はてなブログ"],st:["正常","o"],k:[["公開 7日","5"],["インプレ","3,000"],["ER","1.8%"]],camp:"キャンペーン 0 · シリーズ 1",wk:[0,0,0,0,0,0,0],al:""}];
+const g=document.getElementById('g');
+for(const x of M){const c=document.createElement('div');c.className='c';
+c.innerHTML='<div class="hd"><b>'+x.n+'</b><span class="t '+x.st[1]+'">'+x.st[0]+'</span></div>'+
+'<div class="ch">'+x.ch.map(s=>'<span>'+s+'</span>').join('')+'</div>'+
+'<div class="kp">'+x.k.map(([a,b])=>'<div>'+a+'<span>'+b+'</span></div>').join('')+'</div>'+
+'<div style="color:var(--text-secondary)">'+x.camp+'</div>'+
+'<div class="wk">'+["火","水","木","金","土","日","月"].map((d,i)=>'<div class="'+(x.wk[i]?'g':'')+'">'+d+'</div>').join('')+'</div>'+
+(x.al?'<div class="alert">'+x.al+'</div>':'<div class="alert" style="color:var(--text-secondary)">要対応はありません</div>');
+const b=document.createElement('button');b.textContent=x.n+' を開く ↗';b.style.marginTop='8px';b.onclick=()=>sendPrompt('ダッシュボードから: 「'+x.n+'」のダッシュボードを開いてください。');c.appendChild(b);g.appendChild(c);}
+</script>
+<div style="font-size:11px;color:var(--text-muted);margin-top:8px">曜日の橙は、シリーズの空き枠か予約の無い日</div>

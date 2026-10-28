@@ -1,0 +1,68 @@
+<h2 class="sr-only">THTH のメディア（こぴちゃ）のダッシュボードの見本。KPI、要対応、シリーズ、キャンペーン パイプライン、2 週間のコンテンツカレンダー。</h2>
+<style>
+.g6{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 12px}
+.m{background:var(--surface-1);border-radius:var(--radius);padding:8px 12px}
+.m p{margin:0;font-size:11px;color:var(--text-secondary)}.m b{font-size:20px;font-weight:500;display:block}.m i{font-style:normal;font-size:11px;color:var(--text-muted)}
+.c{background:var(--surface-2);border:.5px solid var(--border);border-radius:12px;padding:12px 14px;margin:0 0 12px}
+.h{display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:500;margin-bottom:6px}
+.r{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:.5px solid var(--border);font-size:12px}
+.t{font-size:11px;padding:2px 6px;border-radius:6px;white-space:nowrap;display:inline-block}
+.w{background:var(--bg-warning);color:var(--text-warning)}.o{background:var(--bg-success);color:var(--text-success)}.s{background:var(--bg-accent);color:var(--text-accent)}.n{color:var(--text-muted);border:.5px solid var(--border)}.q{background:var(--surface-1);color:var(--text-secondary)}
+.two{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:12px}
+table{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}td,th{padding:5px 2px;text-align:center;font-weight:400;border-top:.5px solid var(--border)}th{color:var(--text-secondary);border-top:none}td:first-child,th:first-child{text-align:left;width:128px}
+.bar{height:6px;border-radius:3px;background:var(--surface-1);flex:1;overflow:hidden}.bar span{display:block;height:6px}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.d{border:.5px solid var(--border);border-radius:6px;padding:4px;min-height:74px;font-size:11px}
+.d>div:first-child{color:var(--text-secondary);margin-bottom:2px}
+.e{display:block;font-size:11px;line-height:1.3;padding:2px 3px;border-radius:4px;margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;cursor:pointer}
+.gap{border:.5px dashed var(--border-warning);background:var(--bg-warning);color:var(--text-warning)}
+button{font-size:11px;white-space:nowrap;padding:4px 8px;height:auto}
+</style>
+<div class="g6">
+<div class="m" style="background:var(--bg-warning)"><p style="color:var(--text-warning)">要対応</p><b style="color:var(--text-warning)">2</b><i style="color:var(--text-warning)">停滞 1 · 空き枠 1</i></div>
+<div class="m"><p>承認待ち</p><b>3</b><i>下書き → 承認待ち</i></div>
+<div class="m"><p>予約済み</p><b>8</b><i>今後 14 日</i></div>
+<div class="m"><p>公開済み</p><b>12</b><i>直近 7 日 · 前週 +3</i></div>
+<div class="m"><p>インプレッション</p><b>18,420</b><i>直近 7 日 · 前週比 +24%</i></div>
+<div class="m"><p>エンゲージメント率</p><b>2.1%</b><i>いいね・返信・再投稿 ÷ 表示</i></div>
+</div>
+<div class="two">
+<div class="c">
+<div class="h">要対応（2）</div>
+<div class="r"><span class="t w">停滞 5 日</span><div style="flex:1">数字で淹れる No.4 煎茶<br><span style="color:var(--text-secondary)">記事が未公開。はてブ・ブログは済み</span></div><button onclick="sendPrompt('ダッシュボードから: 「数字で淹れる No.4 煎茶」の記事を公開しました。記録して、Threads と X の告知の下書きを作ってください。')">公開した ↗</button></div>
+<div class="r"><span class="t w">空き枠</span><div style="flex:1">数字で淹れる 10/31（金）07:00<br><span style="color:var(--text-secondary)">ストック 1 本（目安 2）</span></div><button onclick="sendPrompt('ダッシュボードから: シリーズ「数字で淹れる」の 10/31（金）07:00 の下書きを 2 案作ってください。')">下書き ↗</button></div>
+<div class="r" style="color:var(--text-secondary)"><div style="flex:1">未分類の下書き 3 件</div><button onclick="sendPrompt('ダッシュボードから: 未分類の下書き 3 件を見せて、どのキャンペーンかシリーズに入れるか提案してください。')">振り分け ↗</button></div>
+</div>
+<div class="c">
+<div class="h">シリーズ（定期投稿）</div>
+<div class="r" style="display:block"><div style="display:flex;justify-content:space-between"><span>数字で淹れる</span><span class="t w">ストック不足</span></div><div style="color:var(--text-secondary);margin:2px 0">火・金 07:00 · Threads / X</div><div style="display:flex;gap:6px;align-items:center"><div class="bar"><span style="width:30%;background:var(--fill-warning)"></span></div><span style="color:var(--text-warning)">1 / 目安 2</span></div></div>
+<div class="r" style="display:block"><div style="display:flex;justify-content:space-between"><span>今日の一杯</span><span class="t o">正常</span></div><div style="color:var(--text-secondary);margin:2px 0">毎日 12:00 · Threads</div><div style="display:flex;gap:6px;align-items:center"><div class="bar"><span style="width:90%;background:var(--fill-success)"></span></div><span>9 / 目安 5</span></div></div>
+</div>
+</div>
+<div class="c">
+<div class="h">キャンペーン パイプライン<span style="font-size:11px;font-weight:400;color:var(--text-secondary)">リサーチ → 仮説 → 本記事 → SNS 告知</span></div>
+<table>
+<tr><th>キャンペーン</th><th>状態</th><th>はてブ</th><th>ブログ</th><th>記事</th><th>Threads</th><th>X</th><th>更新</th></tr>
+<tr><td>数字で淹れる No.4 煎茶</td><td><span class="t w">停滞</span></td><td><span class="t o">5 件</span></td><td><span class="t o">公開</span></td><td><span class="t w">未公開</span></td><td><span class="t n">—</span></td><td><span class="t n">—</span></td><td>10/23</td></tr>
+<tr><td>狭山の霜</td><td><span class="t s">進行中</span></td><td><span class="t o">7 件</span></td><td><span class="t s">11/12</span></td><td><span class="t n">—</span></td><td><span class="t n">—</span></td><td><span class="t n">—</span></td><td>10/27</td></tr>
+<tr><td>和紅茶の値段</td><td><span class="t o">完了</span></td><td><span class="t o">6 件</span></td><td><span class="t o">公開</span></td><td><span class="t o">公開</span></td><td><span class="t o">2 本</span></td><td><span class="t o">1 本</span></td><td>10/26</td></tr>
+<tr><td>深煎りの苦味</td><td><span class="t q">準備中</span></td><td><span class="t s">2/5 件</span></td><td><span class="t n">—</span></td><td><span class="t n">—</span></td><td><span class="t n">—</span></td><td><span class="t n">—</span></td><td>10/28</td></tr>
+</table>
+<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+<button onclick="sendPrompt('ダッシュボードから: 「和紅茶の値段」の成果（インプレッション・エンゲージメント・クリック）を見せてください。')">和紅茶の成果 ↗</button>
+<button onclick="sendPrompt('ダッシュボードから: 「深煎りの苦味」のはてブをあと 3 件集める候補を出してください。')">深煎りのリサーチを進める ↗</button>
+<button onclick="sendPrompt('ダッシュボードから: 次のキャンペーン候補を、反応の多かった問いから 3 つ出してください。')">次のキャンペーン候補 ↗</button>
+</div>
+</div>
+<div class="c">
+<div class="h">コンテンツカレンダー（今後 2 週間）<span style="font-size:11px;font-weight:400;color:var(--text-secondary)">予定を押すと詳細</span></div>
+<div class="cal" id="cal"></div>
+</div>
+<script>
+const P={"10/28":[["07:00 Th 煎茶 No.3","o"],["07:00 X 煎茶 No.3","o"],["12:00 Th 今日の一杯","o"]],"10/29":[["12:00 Th 今日の一杯","s"],["20:00 はてブ 深煎り","s"]],"10/30":[["12:00 Th 今日の一杯","s"]],"10/31":[["07:00 空き枠","gap"],["12:00 Th 今日の一杯","s"]],"11/1":[["12:00 Th 今日の一杯","s"]],"11/2":[["12:00 Th 今日の一杯","s"]],"11/3":[["12:00 Th 今日の一杯","s"]],"11/4":[["07:00 空き枠","gap"],["12:00 Th 今日の一杯","s"]],"11/5":[["12:00 Th 今日の一杯","s"]],"11/6":[["12:00 Th 今日の一杯","s"]],"11/7":[["07:00 空き枠","gap"]]};
+const days=["10/27 月","10/28 火","10/29 水","10/30 木","10/31 金","11/1 土","11/2 日","11/3 月","11/4 火","11/5 水","11/6 木","11/7 金","11/8 土","11/9 日"];
+const cal=document.getElementById('cal');
+for(const d of days){const k=d.split(' ')[0];const el=document.createElement('div');el.className='d';if(k==='10/28')el.style.border='1.5px solid var(--border-accent)';el.innerHTML='<div>'+d+(k==='10/28'?' 今日':'')+'</div>';
+for(const [t,c] of (P[k]||[])){const e=document.createElement('span');e.className='e '+(c==='gap'?'gap':c==='o'?'q':'s');e.textContent=t;e.onclick=()=>sendPrompt(c==='gap'?'ダッシュボードから: '+k+' '+t+' に入れる下書きを作ってください。':'ダッシュボードから: '+k+' の「'+t+'」の中身と状態を見せてください。');el.appendChild(e);}
+cal.appendChild(el);}
+</script>

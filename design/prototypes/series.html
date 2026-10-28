@@ -1,0 +1,59 @@
+<h2 class="sr-only">シリーズ「数字で淹れる」の詳細画面の見本。</h2>
+<style>
+.bc{font-size:11px;color:var(--text-secondary);margin:0 0 6px}
+.top{display:flex;justify-content:space-between;align-items:flex-start;margin:0 0 10px}
+.t{font-size:11px;padding:2px 6px;border-radius:6px;white-space:nowrap}
+.w{background:var(--bg-warning);color:var(--text-warning)}.o{background:var(--bg-success);color:var(--text-success)}.s{background:var(--bg-accent);color:var(--text-accent)}.n{color:var(--text-muted);border:.5px solid var(--border)}
+.g4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 12px}
+.m{background:var(--surface-1);border-radius:var(--radius);padding:8px 10px}.m p{margin:0;font-size:11px;color:var(--text-secondary)}.m b{font-size:18px;font-weight:500}
+.c{background:var(--surface-2);border:.5px solid var(--border);border-radius:12px;padding:10px 12px;font-size:12px;margin:0 0 10px}
+.h{font-size:13px;font-weight:500;margin-bottom:6px}
+.sl{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:4px}
+.sl div{border-radius:6px;padding:6px 4px;font-size:11px;text-align:center;cursor:pointer;border:.5px solid var(--border)}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+table{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}td,th{padding:5px 2px;text-align:right;font-weight:400;border-top:.5px solid var(--border)}th{color:var(--text-secondary);border-top:none}td:first-child,th:first-child{text-align:left;width:46%}
+.r{display:flex;gap:8px;align-items:center;padding:6px 0;border-top:.5px solid var(--border)}.r .x{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mu{color:var(--text-secondary);font-size:11px}
+button{font-size:11px;padding:4px 8px;height:auto;white-space:nowrap}
+</style>
+<div class="bc">全メディア › こぴちゃ › シリーズ</div>
+<div class="top"><div><div style="font-size:18px;font-weight:500">数字で淹れる</div><div class="mu">毎週 火・金 07:00 · Threads / X · 第 1 回 9/30 · 公開 8 回</div></div><span class="t w">ストック不足</span></div>
+<div class="g4">
+<div class="m"><p>承認済みストック</p><b style="color:var(--text-warning)">1</b><p>目安 2 本</p></div>
+<div class="m"><p>空き枠（4 週）</p><b style="color:var(--text-warning)">5 / 8</b></div>
+<div class="m"><p>平均インプレッション</p><b>1,840</b><p>1 回あたり</p></div>
+<div class="m"><p>素材の残り</p><b>4 回分</b><p>10/23 に記入</p></div>
+</div>
+<div class="c">
+<div class="h">配信枠（今後 4 週）<span class="mu" style="font-weight:400"> · 枠を押すと下書きを作る・中身を見る</span></div>
+<div class="sl" id="sl"></div>
+</div>
+<div class="two">
+<div class="c">
+<div class="h">回ごとの成果</div>
+<table>
+<tr><th>回</th><th>表示</th><th>ER</th><th>クリック</th></tr>
+<tr><td>No.3 玉露 10/28</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>No.2 ほうじ茶 10/24</td><td>2,610</td><td>2.8%</td><td>41</td></tr>
+<tr><td>No.1 紅茶 10/21</td><td>1,930</td><td>1.9%</td><td>22</td></tr>
+<tr><td>番外 水出し 10/17</td><td>980</td><td>1.2%</td><td>9</td></tr>
+</table>
+<button style="margin-top:8px" onclick="sendPrompt('ダッシュボードから: シリーズ「数字で淹れる」で反応の良かった回の共通点を分析してください。')">反応の良い回の共通点 ↗</button>
+</div>
+<div class="c">
+<div class="h">ストックと素材</div>
+<div class="r"><span class="t o">承認済み</span><span class="x">No.3 玉露 — 50℃ で 2 分</span><span class="mu">10/28 公開済</span></div>
+<div class="r"><span class="t s">予約</span><span class="x">（なし）</span></div>
+<div class="r"><span class="t n">下書き</span><span class="x">No.4 煎茶 — 70℃ で 1 分</span><span class="mu">承認待ち</span></div>
+<div class="mu" style="margin:8px 0 4px">素材の候補（残り 4）: 煎茶・番茶・白茶・烏龍</div>
+<div style="display:flex;gap:6px;flex-wrap:wrap">
+<button onclick="sendPrompt('ダッシュボードから: シリーズ「数字で淹れる」の空き枠 5 つ分の下書きを、素材の候補から作ってください。')">空き枠を埋める ↗</button>
+<button onclick="sendPrompt('ダッシュボードから: シリーズ「数字で淹れる」の配信枠を変えたいです。')">枠を変える ↗</button>
+</div>
+</div>
+</div>
+<script>
+const S=[["10/28 火","済","o"],["10/31 金","空き","w"],["11/4 火","空き","w"],["11/7 金","空き","w"],["11/11 火","下書き","n"],["11/14 金","空き","w"],["11/18 火","空き","w"],["11/21 金","—","n"]];
+const el=document.getElementById('sl');
+for(const [d,l,c] of S){const x=document.createElement('div');x.className='t '+c;x.style.display='block';x.innerHTML=d+'<br>'+l;x.onclick=()=>sendPrompt(l==='空き'?'ダッシュボードから: シリーズ「数字で淹れる」の '+d+' 07:00 の下書きを作ってください。':'ダッシュボードから: シリーズ「数字で淹れる」の '+d+' の枠の中身を見せてください。');el.appendChild(x);}
+</script>
