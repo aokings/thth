@@ -427,7 +427,7 @@ UNSUPPORTED = frozenset(("throw", "run", "auth", "refresh", "doctor",
 # `--remote` を旗として持つ命令（それ以外に `--remote` が付けば parse の前に断る）。
 REMOTE_PARSERS = ("send", "schedule", "retract", "posts", "replies", "measured", "collect",
                   "mentions", "topics", "profile", "location", "account", "queue", "inflight",
-                  "thread", "where", "who", "events", "summary")
+                  "thread", "where", "who", "events", "summary", "dashboard")
 
 
 # `--remote` を子の命令（`bookmark add`）が持つ命令。`REMOTE_PARSERS` と違い、親には旗を足さない。
@@ -452,7 +452,7 @@ def _account(key, args):
         return getattr(args, "name", None)
     if key == "topics search":
         return getattr(args, "account_flag", None) or getattr(args, "account", None)
-    if key in ("events", "summary"):
+    if key in ("events", "summary", "dashboard"):
         # 対象は口座名か project 名。手元の台帳で project として引ける名前は手元の道（遠くへ送らない）。
         name = getattr(args, "account", None)
         from . import morning
@@ -1168,8 +1168,16 @@ def _summary(args, account):
     return _shown(args, value, lambda v: summary_cli.render(v) or 0)
 
 
+def _dashboard(args, account):
+    """`thth dashboard <口座> [campaign|series <id>]`（5.0 段 2・読むだけ）。手元と同じ形と見せ方。"""
+    from . import dashboard_cli
+    value = call("dashboard", account, level=getattr(args, "level", None), id=getattr(args, "ident", None),
+                 full=True if getattr(args, "full", False) else None)
+    return _shown(args, value, lambda v: dashboard_cli.render(v) or 0)
+
+
 COMMANDS.update({
-    "events": _events, "summary": _summary,
+    "events": _events, "summary": _summary, "dashboard": _dashboard,
     "inflight": _inflight,
     "send": _send, "schedule": _schedule, "retract": _retract, "bookmark add": _bookmark_add,
     "bookmark delete": _bookmark_delete, "bookmark edit": _bookmark_edit,

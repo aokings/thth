@@ -827,8 +827,64 @@ def build(target, *, now=None, ledger=None) -> dict:
     }
 
 
+def _item_row(item, ledger):
+    """`show` の原稿 1 本（本文は持たない・名前と状態と id だけ）。"""
+    now = ledger.now
+    record = ledger.deliveries.get(item.delivery) if item.delivery else None
+    return {"file": item.file, "account": item.account, "medium": item.medium,
+            "status": item.status, "posted": _is_posted(item),
+            "delivery_state": record["state"] if record else None,
+            "publish_at": jst.iso(item.publish_at) if item.publish_at else None,
+            "posted_at": jst.iso(item.posted_at) if item.posted_at else None,
+            # 5.0 段 1＋2（足すだけ）: 回ごとの配信 id（はてなブログは配信の台帳の id・SNS は投稿の id）。
+            "delivery": item.delivery, "post_ids": list(item.post_ids),
+            "future_approved": _is_future_approved(item, now)}
+
+
+def _stage_items(stage, decl, items, ledger):
+    """段 1 つの成果物（段 2 のダッシュボードの「成果物」）。本文・他人の本文・URL は入れない。"""
+    media = stage["media"]
+    if stage["name"] == "warm":
+        return []
+    if media == ["site"]:
+        return [{"kind": "event", "name": e["name"], "at": e["at"], "head": e.get("head")}
+                for e in decl.events if e["name"] == stage["signal"]]
+    if media == ["hatena_bookmark"]:
+        tag = stage["tag"] or decl.id
+        marks = sorted((b for b in ledger.bookmarks if tag in b["tags"]),
+                       key=lambda b: b["at"] or ledger.now)
+        return [{"kind": "bookmark", "status": "confirmed", "at": jst.iso(b["at"]) if b["at"] else None}
+                for b in marks]
+    return [dict(_item_row(item, ledger), kind="draft") for item in items if item.medium in media]
+
+
+def _slots_upcoming(decl, items, ledger, days):
+    """型の今後の枠（`days` 日）と、埋めている承認済みの原稿の名前。"""
+    slots, _bad = parse_slots(decl.fm.get("slots"))
+    if not slots:
+        return []
+    filled = {}
+    for item in items:
+        if _is_future_approved(item, ledger.now):
+            filled.setdefault(_minute(item.publish_at), item.file)
+    out = []
+    for at in _slot_times(slots, ledger.now, days):
+        file_name = filled.get(_minute(at))
+        out.append({"at": jst.iso(at), "filled": file_name is not None, "file": file_name})
+    return out
+
+
+# `show` の型の枠の先（段 2 のシリーズの画面は 4 週）。
+SHOW_SLOT_DAYS = 28
+
+
 def show(target, ident, *, now=None) -> dict:
-    """`thth scenario show <project> <id>`: 1 本の詳細（段ごとの原稿の名前と状態・出来事）。"""
+    """`thth scenario show <project> <id>`: 1 本の詳細（段ごとの原稿の名前と状態・出来事）。
+
+    5.0 段 2 のために足した鍵（`thth.scenario/1` は足すだけ）: 糸は `thread.stages[].items`（段ごとの成果物）、
+    型は `series.slots_upcoming`（今後 4 週の枠）、両方に `items[].delivery`・`items[].post_ids`・
+    `items[].future_approved` と `deliveries`（配信の台帳の id の列）。
+    """
     now = now if now is not None else jst.now_jst()
     project, names = resolve(target)
     if not names:
@@ -840,16 +896,18 @@ def show(target, ident, *, now=None) -> dict:
     key = "thread" if decl.kind == "thread" else "series"
     body = thread_status(decl, ledger) if key == "thread" else series_status(decl, ledger)
     items = [item for item in ledger.items if getattr(item, key) == decl.id]
-    rows = []
-    for item in sorted(items, key=lambda i: (i.publish_at or now, i.file)):
-        record = ledger.deliveries.get(item.delivery) if item.delivery else None
-        rows.append({"file": item.file, "account": item.account, "medium": item.medium,
-                     "status": item.status, "posted": _is_posted(item),
-                     "delivery_state": record["state"] if record else None,
-                     "publish_at": jst.iso(item.publish_at) if item.publish_at else None,
-                     "posted_at": jst.iso(item.posted_at) if item.posted_at else None})
+    items.sort(key=lambda i: (i.publish_at or now, i.file))
+    if key == "thread":
+        for row, stage in zip(body["stages"], decl.stages):
+            row["items"] = _stage_items(stage, decl, items, ledger)
+    else:
+        scope = set(body["accounts"])   # 枠を埋めるのは型の口座の原稿だけ（`series_status` と同じ）
+        body["slots_upcoming"] = _slots_upcoming(decl, [i for i in items if i.account in scope], ledger,
+                                                 SHOW_SLOT_DAYS)
+    rows = [_item_row(item, ledger) for item in items]
     return {"schema": SCHEMA, "report_type": "scenario_show", "generated_at": jst.iso(ledger.now),
             "project": ledger.project, "kind": decl.kind, key: body, "items": rows,
+            "deliveries": sorted({item.delivery for item in items if item.delivery}),
             "cannot_say": sorted(ledger.cannot_say)}
 
 

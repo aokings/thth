@@ -76,8 +76,17 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 - キャンペーン（糸）: front-matter に `thth_scenario: 1`・`kind: thread`・`id`（小文字・数字・`-`・`_`、ファイル名と同じ）・`title`・任意で `goal_text`（60 字まで）・`stale_after_days`（既定 7）・`started`（日付）。本文に段を上から順に 1 行ずつ `- <段>: <媒体> <条件>`（媒体は `hatena_bookmark`・`hatenablog`・`site`・`threads`・`x`・`bluesky`・`mastodon`、SNS は `threads,x` と並べられる。条件は `need=<本数>`・`tag=<タグ>`（はてブ・既定は id）・`signal=<出来事>`（site・既定 `article_published`）・`replies_within_hours=<時間>`（`warm`））。出来事は `- 2026-10-27 article_published <短い文>`（`researched`・`hypothesis`・`article_published`・`closed` など。`researched` は collect、`hypothesis` は diary の本数の代わりになる。`closed` で終わり）。
 - シリーズ（型）: `kind: series`・`accounts: a, b`・`slots: tue 07:00, fri 07:00`（曜日を省けば毎日）・`stock_floor`（既定 2）・任意で `material_remaining`・`material_written_at`（窓口が書く数と日付）。期日の型は `deadline: true`（原稿の `not_after` を数える）。
 - 原稿の札: front-matter に `thread: <id>`・`series: <id>`。**承認の指紋に入らない**（付け足しても直しても再承認は要らない）。宣言が無い id は lint が `thread_not_declared`／`series_not_declared` の予告を出すだけ（断らない）。はてブはタグで結ぶ（札は書かない）。
-- 命令: `thth scenario <project|account> [--json]`（一覧・`schema: "thth.scenario/1"`）・`thth scenario show <project> <id> [--json]`（段ごとの原稿の名前と状態・出来事）・`thth scenario lint <project> [--json]`（宣言の誤り・無い id を指す札・未分類の原稿）。`next` は名詞（「x に 1 本（announce）」「article_published を糸のファイルに 1 行」）で、本文は入らない。読めない台帳は `cannot_say`（0 と混ぜない）。
+- 命令: `thth scenario <project|account> [--json]`（一覧・`schema: "thth.scenario/1"`）・`thth scenario show <project> <id> [--json]`（段ごとの原稿の名前と状態・出来事。キャンペーンは `stages[].items`（段ごとの成果物）、シリーズは `slots_upcoming`（今後 4 週の枠）、両方に `items[].delivery`・`post_ids` と `deliveries`）・`thth scenario lint <project> [--json]`（宣言の誤り・無い id を指す札・未分類の原稿）。`next` は名詞（「x に 1 本（announce）」「article_published を糸のファイルに 1 行」）で、本文は入らない。読めない台帳は `cannot_say`（0 と混ぜない）。
 - `thth events` に 2 種類（どちらも `ongoing: true`・`account` と `project` は project の名前）: `scenario_stalled`（キャンペーンが `stale_after_days` を越えて動いていない・`stage`・`days`・`next`。段が進めば別の id）・`series_low`（シリーズの承認済みの未来の原稿が `stock_floor` を切った・`approved_future`・`floor`・`next_slot`）。宣言の無い project では出ない。
+
+## ダッシュボード（会話の中に出す・5.0）
+
+「ダッシュボード見せて」「〇〇を開いて」と言われたら、`thth dashboard [--json]`（全メディア）・`thth dashboard <project> --json`（メディア）・`thth dashboard <project> campaign|series <id> --json`（キャンペーン・シリーズ）を叩き、**答えの JSON をそのまま** `skills/thth/dashboard/` の型（`all.html`・`project.html`・`campaign.html`・`series.html`）の `<script type="application/json" id="thth-data">` の中身と入れ替えて、会話の横に出す。描くのは型の JS。**数字を HTML に書き込まない・型を変えない・色を足さない。** 読むだけの口で、書かない・媒体を呼ばない。
+
+- `thth observe`（遠くの道では `thth events`）のあとで、`thth dashboard <project> --json` の `attention` が 1 以上なら、頼まれなくてもメディアの階層を 1 枚出す。キャンペーン・シリーズまで 1 回で要るときは `--full`。
+- 押されると「ダッシュボードから: [<project>/<種類>:<id>] …」が会話に届く。角括弧の id をそのまま使って THTH の CLI を動かす（探し直さない）。**公開の承認は承認の頁で本人が押す**（「承認へ」は 1 段目を出して承認の頁の URL を貼るまで）。指示文に「戻せない操作です」があるもの（`irreversible: true`）は、実行の前に 1 度確かめる。取り下げはダッシュボードからは受けない。
+- 取れない数は「—」と理由（`cannot_say`）で出す。0 と書かない。インプレッションと ER は口座ごと（足さない）。要対応の並びは日数の多い順だけで、THTH も型も順位やおすすめを付けない。
+- 見た目を直すときは型（4 つの共通の部分は 4 つとも同じに）と `skills/thth/dashboard/README.md` を直して commit する（release は要らない）。新しい数字が要るときは `--json` に鍵を足す（足すだけ・名前を変えない・消さない）。詳しくは `skills/thth/dashboard/README.md`。
 
 ## X のコミュニティ（3.19.0）
 

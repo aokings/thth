@@ -37,7 +37,9 @@ OPERATIONS = frozenset(('posts', 'replies', 'measured', 'collect', 'mentions',
                         # 4.0 S6 §6.2: 記事の反応を束ねる（読むだけ・台帳から・媒体は呼ばない・fetch は受けない）。
                         'article_reactions',
                         # 4.1（設計 S4 §20.9）: まとめて承認したブックマークの札の状態（読むだけ・媒体は呼ばない）。
-                        'bookmark_batch_status'))
+                        'bookmark_batch_status',
+                        # 5.0 段 2: 会話の中のダッシュボードの中身（読むだけ・既存の読む口を束ねる・媒体は呼ばない）。
+                        'dashboard'))
 # 断りの符丁（`server_writes.SAFE_ERRORS` に足す）。
 REASONS = frozenset(('collect_too_soon', 'upstream_unavailable', 'read_unavailable'))
 # `upstream_unavailable` に添える静的な理由（媒体の返した文を写せないとき）。
@@ -70,6 +72,7 @@ _FIELDS = {
     'article_diff': (('article', 'delivery', 'draft'), ()),
     'article_reactions': (('article', 'delivery', 'comments'), ('article',)),
     'bookmark_batch_status': (('batch',), ()),
+    'dashboard': (('level', 'id', 'full'), ()),
 }
 # 欄の型（範囲と中身の検査は CLI の関数が言う。ここは型だけ）。
 _TYPES = {
@@ -79,6 +82,7 @@ _TYPES = {
     'keep': bool, 'ja': bool, 'question': bool, 'no_replies': bool, 'author_key': str, 'profile': bool,
     'days': int, 'until': str, 'media': str, 'after': str,
     'article': str, 'delivery': str, 'draft': bool, 'comments': bool, 'batch': str,
+    'level': str, 'id': str, 'full': bool,
 }
 # 答えの大きさの目安（JSON の UTF-16 の長さ）。thth.me の 1 件の上限（128 KB）より少し小さく取る。
 RESULT_BUDGET = 120_000
@@ -575,6 +579,32 @@ def _article_reactions(account, request, cfg, context=None):
     return _fit_article_reactions(result)
 
 
+def _dashboard(account, request, cfg, context=None):
+    """5.0 段 2: 手元の `thth dashboard <project> [campaign|series <id>] --json` と同じ形。
+
+    範囲は鍵の口座の project（`context.allowed_accounts`）だけ。宣言（段 1）が読めなければ
+    `scenario: {"available": false, "cannot_say": ...}` のまま KPI・要対応・カレンダーは出す。
+    """
+    from . import dashboard_cli
+    allowed = tuple(context.allowed_accounts) if context is not None else (account,)
+    level = request.get('level')
+    if level is not None and level not in ('campaign', 'series'):
+        error('invalid_options')
+    try:
+        result = dashboard_cli.build(cfg.get('project') or account, level, request.get('id'),
+                                     allowed_names=allowed, full=bool(request.get('full')))
+    except dashboard_cli.DashboardError as exc:
+        error('scope_unavailable' if str(exc) == 'target_unknown' else 'invalid_options')
+    if _size(result) > RESULT_BUDGET:
+        # 詳細（--full）から落とす。それでも大きければ上限で断る側に任せる。
+        result = {k: v for k, v in result.items() if k not in ('campaign_details', 'series_details')}
+        result['cannot_say'] = list(result.get('cannot_say') or []) + ['full_trimmed']
+    if result.get('scenario', {}).get('available') is False:
+        # 遠くの道では repo の宣言を読めないことがある（設計 §5.4）。符丁を 1 つにそろえる。
+        result['scenario'] = {'available': False, 'cannot_say': 'no_declarations'}
+    return result
+
+
 _HANDLERS = {
     'events': _events, 'summary': _summary, 'article_diff': _article_diff,
     'article_reactions': _article_reactions, 'bookmark_batch_status': _bookmark_batch_status,
@@ -603,6 +633,8 @@ def execute(context, request):
             with contextlib.redirect_stdout(sys.stderr):
                 if request['operation'] == 'article_reactions':
                     return _article_reactions(account, request, cfg, context)
+                if request['operation'] == 'dashboard':
+                    return _dashboard(account, request, cfg, context)
                 return _HANDLERS[request['operation']](account, request, cfg)
     except accounts.AccountLeaving:
         error('account_leaving')

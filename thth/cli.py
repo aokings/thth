@@ -4954,6 +4954,9 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth scenario`（5.0 段 1・キャンペーンとシリーズの現在地を読むだけ）。口は `thth/scenario_cli.py` に閉じる。
     from . import scenario_cli
     scenario_cli.register(sub)
+    # `thth dashboard`（5.0 段 2・会話の中の 3 階層のダッシュボード・読むだけ）。口は `thth/dashboard_cli.py` に閉じる。
+    from . import dashboard_cli
+    dashboard_cli.register(sub)
     # `thth deliveries`（4.0 S1 §3.4・配信の台帳を読むだけ）。口は `thth/deliveries_cli.py` に閉じる。
     from . import deliveries_cli
     deliveries_cli.register(sub)

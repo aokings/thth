@@ -93,6 +93,8 @@ COMMANDS += ['approvals']
 COMMANDS += ['archive']
 # 5.0 段 1: キャンペーンとシリーズ（読むだけ・版つき `thth.scenario/1`）。
 COMMANDS += ['scenario']
+# 5.0 段 2: 会話の中のダッシュボードの中身（読むだけ・版つき）。
+COMMANDS += ['dashboard']
 
 
 def test_json_table_covers_every_parser():
