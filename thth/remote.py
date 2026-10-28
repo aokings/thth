@@ -1173,6 +1173,10 @@ def _dashboard(args, account):
     from . import dashboard_cli
     value = call("dashboard", account, level=getattr(args, "level", None), id=getattr(args, "ident", None),
                  full=True if getattr(args, "full", False) else None)
+    if getattr(args, "json", False):
+        # 手元と同じく `</` を `<\\/` に（型に貼る答え）。
+        print(dashboard_cli.dumps(value, indent=2))
+        return 0
     return _shown(args, value, lambda v: dashboard_cli.render(v) or 0)
 
 

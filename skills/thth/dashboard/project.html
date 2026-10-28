@@ -9,6 +9,7 @@
 .th-m b{font-size:20px;font-weight:500;display:block}
 .th-m i{font-style:normal;font-size:11px;color:var(--text-muted);display:block}
 .th-m.warn{background:var(--bg-warning)}.th-m.warn p,.th-m.warn b,.th-m.warn i{color:var(--text-warning)}
+.th-kt{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11px;margin:3px 0 1px}.th-kt td{padding:1px 0;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.th-kt td+td{text-align:right;color:var(--text-primary);font-weight:500}
 .th-c{background:var(--surface-2);border:.5px solid var(--border);border-radius:12px;padding:12px 14px;margin:0 0 12px;min-width:0}
 .th-h{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px;font-weight:500;margin-bottom:6px}
 .th-h span{font-size:11px;font-weight:400;color:var(--text-secondary)}
@@ -36,6 +37,8 @@ table.pl{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}.
 .gap{border:.5px dashed var(--border-warning);background:var(--bg-warning);color:var(--text-warning)}
 .acc{display:block;font-size:11px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:560px){.g6{grid-template-columns:repeat(2,minmax(0,1fr))}.two{grid-template-columns:minmax(0,1fr)}.cal{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.pl .th-t{white-space:normal;line-height:1.25;max-width:100%;box-sizing:border-box}
+@media (max-width:560px){.pl td:last-child,.pl th:last-child{display:none}.pl td:first-child,.pl th:first-child{width:24%}.pl td,.pl th{padding:5px 1px}.pl .th-t{padding:2px 3px}}
 </style>
 <div id="thth-root"></div>
 <script>
@@ -43,22 +46,29 @@ table.pl{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}.
 const THTH_SCHEMA="thth.dashboard/1";
 const THTH_MEDIUM={threads:"Threads",x:"X",bluesky:"Bluesky",mastodon:"Mastodon",hatenablog:"はてなブログ",hatena_bookmark:"はてブ",site:"サイト"};
 const THTH_STAGE={collect:"リサーチ",diary:"仮説",article:"本記事",announce:"SNS 告知",warm:"エンゲージ"};
+const THTH_EVENT={researched:"リサーチ済み",hypothesis:"仮説を書いた",article_published:"本記事を公開",closed:"終えた"};
 const THTH_KIND={scenario_stalled:"停滞",series_low:"ストック不足",untied_drafts:"未分類の下書き",unanswered_replies:"未返信",schedule_low:"予約切れ間近",schedule_thin:"予約が薄い",not_after_passed:"期限切れ",publish_held:"公開を停止中",account_stopped:"口座が停止",inflight_open:"公開の結果待ち",delivery_held:"配信の保留",delivery_behind:"記事の更新待ち",principal_stopped:"はてな ID が停止",budget_exhausted:"予算切れ"};
-const THTH_REASON={scenario_not_installed:"シナリオ（段 1）が未導入",no_declarations:"宣言が読めない",scenario_schema_unknown:"シナリオの版が違う",blog_pv_not_collected:"ブログ PV は取っていない",article_clicks_not_connected:"記事側の計測とつないでいない",needs_scenario_show:"詳細（段 1 の scenario show）が未接続",posts_unlisted:"投稿の一覧が無い",deliveries_unlisted:"配信の一覧が無い",scenario_show_unavailable:"詳細（段 1 の scenario show）が未接続",accounts_not_summed:"口座をまたいで足さない（口座ごとに見る）",not_measured_yet:"実測がまだ無い",not_published_yet:"まだ公開していない",no_deliveries:"配信がまだ無い",measured_unreadable:"実測の台帳が読めない",reactions_unreadable:"反応の台帳が読めない"};
+const THTH_REASON={scenario_not_installed:"シナリオ（段 1）が未導入",no_declarations:"宣言が読めない",scenario_schema_unknown:"シナリオの版が違う",blog_pv_not_collected:"ブログ PV は取っていない",article_clicks_not_connected:"記事側の計測とつないでいない",needs_scenario_show:"詳細が読めない",posts_unlisted:"投稿の一覧が無い",deliveries_unlisted:"配信の一覧が無い",scenario_show_unavailable:"詳細が読めない",accounts_not_summed:"口座をまたいで足さない（口座ごとに見る）",not_measured_yet:"実測がまだ無い",not_published_yet:"まだ公開していない",no_deliveries:"配信がまだ無い",measured_unreadable:"実測の記録が読めない",reactions_unreadable:"反応の記録が読めない",account_unreadable:"口座の台帳が読めない",repo_unreadable:"原稿の置き場が読めない",scenarios_unreadable:"キャンペーン・シリーズの宣言が読めない",queue_unreadable:"原稿の置き場が読めない",sent_unreadable:"送った記録が読めない",deliveries_unreadable:"配信の記録が読めない",replies_unreadable:"返信の記録が読めない",inbox_unreadable:"通知の記録が読めない",source_unreadable:"記事の正本が読めない",inflight_unreadable:"公開の途中の記録が読めない",budget_unreadable:"X の予算の記録が読めない",hatena_account_missing:"はてなの口座がつながっていない",series_account_unknown:"シリーズの口座に知らない名前がある",series_account_out_of_scope:"この鍵では見えない口座がある（その分は数えない）",scenario_unreadable:"キャンペーン・シリーズが読めない",events_unreadable:"出来事が読めない",summary_unreadable:"直近 7 日の集計が読めない",summary_previous_unreadable:"前週の集計が読めない",schedule_unreadable:"予定が読めない",approve_pending_unreadable:"承認待ちが読めない",published_unreadable:"公開の数が読めない",followers_unreadable:"フォロワーの数が読めない",stopped_unreadable:"止まりの印が読めない",unanswered_unreadable:"未返信が読めない",full_trimmed:"詳細は大きすぎて省いた",target_unknown:"対象が見つからない"};
 function ththEsc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function ththNum(v){return v==null?"—":(typeof v==="number"?v.toLocaleString("ja-JP"):ththEsc(v));}
 function ththPct(v){return v==null?"—":v+"%";}
 function ththSigned(v,unit){return v==null?"—":(v>0?"+":"")+v+(unit||"");}
-function ththReason(c){return c?ththEsc(THTH_REASON[c]||c):"";}
-function ththMD(iso){if(!iso)return "—";const m=String(iso).match(/^\d{4}-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);return m?(+m[1])+"/"+(+m[2])+(m[3]?" "+m[3]+":"+m[4]:""):ththEsc(iso);}
-function ththDate(iso){if(!iso)return "—";const m=String(iso).match(/^\d{4}-(\d{2})-(\d{2})/);return m?(+m[1])+"/"+(+m[2]):ththEsc(iso);}
-function ththMedium(m){return Array.isArray(m)?m.map(ththMedium).join("・"):ththEsc(THTH_MEDIUM[m]||m||"");}
-function ththKind(k){return ththEsc(THTH_KIND[k]||k);}
+function ththCode(c){let k=String(c==null?"":c).split(":").pop();if(!THTH_REASON[k]&&k.indexOf("scenario_")===0)k=k.slice(9);return THTH_REASON[k]||null;}
+function ththReason(c){return c?ththEsc(ththCode(c)||"読めない"):"";}
+function ththCannot(list){const seen=[];let other=0;(list||[]).forEach(c=>{const t=ththCode(c);if(!t)other++;else if(seen.indexOf(t)<0)seen.push(t);});if(other)seen.push("ほか "+other+" 件");return ththEsc(seen.join("・"));}
+function ththMD(iso){if(!iso)return "—";const m=String(iso).match(/^\d{4}-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);return m?(+m[1])+"/"+(+m[2])+(m[3]?" "+m[3]+":"+m[4]:""):"—";}
+function ththDate(iso){if(!iso)return "—";const m=String(iso).match(/^\d{4}-(\d{2})-(\d{2})/);return m?(+m[1])+"/"+(+m[2]):"—";}
+function ththMedium(m){return Array.isArray(m)?m.map(ththMedium).join("・"):ththEsc(THTH_MEDIUM[m]||"口座");}
+function ththStage(n,i){return ththEsc(THTH_STAGE[n]||(i!=null?(i+1)+" 段目":"途中の段"));}
+function ththKind(k){return ththEsc(THTH_KIND[k]||"お知らせ");}
+function ththPerAccount(acc,field,fmt,note){const names=Object.keys(acc||{});const has=names.filter(n=>acc[n][field]!=null);
+  if(!has.length)return '<b>—</b><i>'+(names.length?'実測なし':'口座なし')+'</i>';
+  return '<table class="th-kt">'+has.map(n=>'<tr><td>'+ththMedium(acc[n].medium)+'</td><td>'+fmt(acc[n][field])+(note?note(acc[n]):'')+'</td></tr>').join("")+'</table>'+(names.length>has.length?'<i>ほか '+(names.length-has.length)+' 口座は実測なし</i>':'');}
 function ththAsOf(d){const a=d.as_of||{};return ththMD(a.generated_at||d.generated_at)+" 時点"+(a.measured?"・実測は "+ththMD(a.measured)+" まで":"・実測なし");}
 function ththData(level){
   const root=document.getElementById("thth-root");let d=null;
   try{d=JSON.parse(document.getElementById("thth-data").textContent||"{}");}catch(e){d=null;}
-  if(!d||d.schema!==THTH_SCHEMA||d.level!==level){root.innerHTML='<div class="th-c th-mu">thth dashboard の --json の答え（level: '+ththEsc(level)+'）を thth-data に貼ってください。</div>';return null;}
+  if(!d||d.schema!==THTH_SCHEMA||d.level!==level){root.innerHTML='<div class="th-c th-mu">thth dashboard の答え（'+ththEsc(level)+'）を貼ってください。</div>';return null;}
   return d;
 }
 function ththPress(a){
@@ -74,33 +84,33 @@ function ththPress(a){
 function ththButton(a){const b=document.createElement("button");b.type="button";b.textContent=a.label+(a.irreversible?"（確認あり）":"")+" ↗";b.title=a.prompt;b.onclick=()=>ththPress(a);return b;}
 function ththActions(list,cls){const d=document.createElement("div");d.className=cls||"th-acts";(list||[]).forEach(a=>d.appendChild(ththButton(a)));return d;}
 function ththDiv(html,cls){const d=document.createElement("div");if(cls)d.className=cls;d.innerHTML=html;return d;}
+function ththFoot(d,lead,list){const c=ththCannot(list||d.cannot_say);return ththDiv((lead||"")+ththAsOf(d)+"。"+(c?" 読めなかったもの: "+c:""),"th-foot");}
 /* ---- 共通ここまで ---- */
 (function(){
   const d=ththData("project");if(!d)return;
   const root=document.getElementById("thth-root");const k=d.kpi||{};const sc=d.scenario||{};
   const att=k.attention||{};const pend=k.pending_approval||{};const pub=k.published_7d||{};
-  const acc=(k.impressions_7d||{}).by_account||{};const names=Object.keys(acc);
-  const per=(f,fmt)=>names.length===1?'<b>'+fmt(acc[names[0]][f])+'</b>':names.map(n=>'<b class="acc">'+ththMedium(acc[n].medium)+' '+fmt(acc[n][f])+'</b>').join("")||'<b>—</b>';
-  const change=names.length===1?'前週比 '+ththSigned(acc[names[0]].change_pct,"%"):'口座ごと（足さない）';
+  const acc=(k.impressions_7d||{}).by_account||{};
   const byKind=Object.entries(att.by_kind||{}).map(([kk,n])=>ththKind(kk)+' '+n).join(" · ");
+  const chg=a=>a.change_pct!=null?' <span class="th-mu">（'+ththSigned(a.change_pct,"%")+'）</span>':'';
   root.appendChild(ththDiv(
     '<div class="th-m'+(att.n?' warn':'')+'"><p>要対応</p><b>'+ththNum(att.n)+'</b><i>'+(byKind||'なし')+'</i></div>'+
     '<div class="th-m"><p>承認待ち</p><b>'+ththNum(pend.n)+'</b><i>確定待ち '+ththNum(pend.awaiting_confirm)+' · 未依頼 '+ththNum(pend.not_requested)+'</i></div>'+
     '<div class="th-m"><p>予約済み</p><b>'+ththNum((k.scheduled_14d||{}).n)+'</b><i>今後 '+ththNum((k.scheduled_14d||{}).days)+' 日</i></div>'+
     '<div class="th-m"><p>公開済み</p><b>'+ththNum(pub.n)+'</b><i>直近 7 日 · 前週 '+ththSigned(pub.delta)+'</i></div>'+
-    '<div class="th-m"><p>インプレッション</p>'+per("impressions",ththNum)+'<i>直近 7 日 · '+change+'</i></div>'+
-    '<div class="th-m"><p>エンゲージメント率</p>'+per("engagement_rate_pct",ththPct)+'<i>反応 ÷ 表示</i></div>',"g6"));
+    '<div class="th-m"><p>インプレッション（直近 7 日・前週比）</p>'+ththPerAccount(acc,"impressions",ththNum,chg)+'</div>'+
+    '<div class="th-m"><p>エンゲージメント率（反応 ÷ 表示）</p>'+ththPerAccount(acc,"engagement_rate_pct",ththPct)+'</div>',"g6"));
   const two=ththDiv("","two");root.appendChild(two);
   const left=ththDiv('<div class="th-h">要対応（'+ththNum((d.attention||[]).length)+'）<span>日数の多い順</span></div>',"th-c");two.appendChild(left);
   for(const a of d.attention||[]){
-    const r=ththDiv('<span class="th-t th-w">'+ththKind(a.kind)+(a.days!=null?' '+ththNum(a.days)+' 日':'')+'</span><div class="x">'+ththEsc(a.title||a.ref||"")+(a.next?'<br><span class="th-mu">'+ththEsc(a.next)+'</span>':'')+'</div>',"th-r");
+    const r=ththDiv('<span class="th-t th-w">'+ththKind(a.kind)+(a.days!=null?' '+ththNum(a.days)+' 日':'')+'</span><div class="x">'+ththEsc(a.title||ththKind(a.kind))+(a.next?'<br><span class="th-mu">次: '+ththEsc(a.next)+'</span>':'')+'</div>',"th-r");
     r.appendChild(ththActions(a.actions,"th-acts"));r.lastChild.style.marginTop="0";left.appendChild(r);
   }
   if(!(d.attention||[]).length)left.appendChild(ththDiv("要対応はありません","th-r th-mu"));
   if((d.pending_approval||[]).length){
     left.appendChild(ththDiv('<div class="th-h" style="margin-top:8px">承認待ち（'+ththNum(d.pending_approval.length)+'）<span>確定は承認の頁で本人が押す</span></div>'));
     for(const p of d.pending_approval){
-      const r=ththDiv('<span class="th-t '+(p.state==="awaiting_confirm"?'th-s">確定待ち':'th-n">未依頼')+'</span><div class="x">'+ththEsc(p.file)+'<br><span class="th-mu">'+ththEsc(p.account)+' · '+ththMD(p.publish_at)+'</span></div>',"th-r");
+      const r=ththDiv('<span class="th-t '+(p.state==="awaiting_confirm"?'th-s">確定待ち':'th-n">未依頼')+'</span><div class="x">'+ththEsc(p.head||"（題なし）")+'<br><span class="th-mu">'+ththMedium(p.medium||(d.mediums||{})[p.account])+' · '+ththMD(p.publish_at)+'</span></div>',"th-r");
       r.appendChild(ththActions(p.actions));r.lastChild.style.marginTop="0";left.appendChild(r);
     }
   }
@@ -108,12 +118,13 @@ function ththDiv(html,cls){const d=document.createElement("div");if(cls)d.classN
   const DAY={mon:"月",tue:"火",wed:"水",thu:"木",fri:"金",sat:"土",sun:"日"};
   if(!sc.available)right.appendChild(ththDiv("—（"+ththReason(sc.cannot_say)+"）","th-r th-mu"));
   for(const s of d.series||[]){
-    const st=s.stock||{};const ok=!st.low;const w=st.floor?Math.min(100,Math.round((st.approved_future||0)/st.floor*50)):0;
-    const slots=(s.slots||[]).map(x=>(DAY[x.day]||ththEsc(x.day))+" "+ththEsc(x.time||"")).join("・");
-    const r=ththDiv('<div style="display:flex;justify-content:space-between;gap:6px"><span>'+ththEsc(s.title||s.id)+'</span><span class="th-t '+(ok?'th-o">正常':'th-w">ストック不足')+'</span></div>'+
-      '<div class="th-mu" style="margin:2px 0">'+(slots||'—')+' · '+ththMedium((s.accounts||[]).map(a=>(d.mediums||{})[a]||a))+'</div>'+
-      '<div style="display:flex;gap:6px;align-items:center"><div class="bar"><span style="width:'+w+'%;background:var('+(ok?'--fill-success':'--fill-warning')+')"></span></div><span'+(ok?'':' style="color:var(--text-warning)"')+'>'+ththNum(st.approved_future)+' / 目安 '+ththNum(st.floor)+'</span></div>'+
-      '<div class="th-mu" style="margin-top:2px">次の枠 '+ththMD((s.next_slot||{}).at)+((s.next_slot||{}).filled===false?'（空き）':'')+' · 空き枠 14 日 '+ththNum(s.empty_slots_14d)+'</div>',"th-r");
+    const st=s.stock||{};const ok=!st.low;const w=st.floor?Math.min(100,Math.round((st.approved_future||0)/st.floor*50)):(st.approved_future?100:0);
+    const slots=(s.slots||[]).map(x=>(x.day?(DAY[x.day]||""):"毎日")+" "+ththEsc(x.time||"")).join("・");
+    const nx=s.next_slot||{};const part=(nx.filled_by||[]).length&&nx.filled===false?'（'+ththMedium((nx.filled_by||[]).map(a=>(d.mediums||{})[a]))+' だけ）':'';
+    const r=ththDiv('<div style="display:flex;justify-content:space-between;gap:6px"><span>'+ththEsc(s.title||"名前の無いシリーズ")+'</span><span class="th-t '+(ok?'th-o">正常':'th-w">ストック不足')+'</span></div>'+
+      '<div class="th-mu" style="margin:2px 0">'+(slots||'—')+' · '+ththMedium((s.accounts||[]).map(a=>(d.mediums||{})[a]))+'</div>'+
+      '<div style="display:flex;gap:6px;align-items:center"><div class="bar"><span style="width:'+w+'%;background:var('+(ok?'--fill-success':'--fill-warning')+')"></span></div><span'+(ok?'':' style="color:var(--text-warning)"')+'>'+ththNum(st.approved_future)+' 回分'+(st.floor!=null?' / 目安 '+ththNum(st.floor):'')+'</span></div>'+
+      '<div class="th-mu" style="margin-top:2px">次の枠 '+ththMD(nx.at)+(nx.filled===false?'（空き'+part+'）':'')+' · 空き枠 14 日 '+ththNum(s.empty_slots_14d)+'</div>',"th-r");
     r.style.display="block";r.appendChild(ththActions(s.actions));right.appendChild(r);
   }
   if(sc.available&&!(d.series||[]).length)right.appendChild(ththDiv("シリーズの宣言はまだありません","th-r th-mu"));
@@ -127,14 +138,16 @@ function ththDiv(html,cls){const d=document.createElement("div");if(cls)d.classN
     tb.innerHTML='<tr><th>キャンペーン</th><th>状態</th>'+ORDER.map(s=>'<th>'+THTH_STAGE[s]+'</th>').join("")+'<th>更新</th></tr>';
     for(const c of d.campaigns){
       const by={};(c.stages||[]).forEach(s=>by[s.name]=s);
-      const stt=STATE[c.state]||[ththEsc(c.state||"—"),"th-q"];
+      const stt=STATE[c.state]||["—","th-q"];
+      const amt=s=>ththNum(s.done)+'/'+ththNum(s.need)+(s.pending?'<br>途中 '+ththNum(s.pending):'');
       const cell=s=>{if(!s)return '<span class="th-t th-n">—</span>';
-        if(s.satisfied)return '<span class="th-t th-o">'+(s.need!=null?ththNum(s.done)+' / '+ththNum(s.need):'済み')+'</span>';
-        if(s.need==null)return '<span class="th-t th-n">—</span>';
-        if(s.done||s.pending)return '<span class="th-t th-s">'+ththNum(s.done)+' / '+ththNum(s.need)+(s.pending?'（途中 '+ththNum(s.pending)+'）':'')+'</span>';
-        return '<span class="th-t '+((c.stage||{}).name===s.name&&c.state==="stalled"?'th-w':'th-n')+'">0 / '+ththNum(s.need)+'</span>';};
+        if(s.satisfied)return '<span class="th-t th-o">'+(s.need!=null?amt(s):'済み')+'</span>';
+        if(s.need==null)return '<span class="th-t th-n">'+(s.overdue?'未返信 '+ththNum(s.overdue):'—')+'</span>';
+        if(s.done||s.pending)return '<span class="th-t th-s">'+amt(s)+'</span>';
+        return '<span class="th-t '+((c.stage||{}).name===s.name&&c.state==="stalled"?'th-w':'th-n')+'">0/'+ththNum(s.need)+'</span>';};
       const tr=document.createElement("tr");
-      tr.innerHTML='<td title="'+ththEsc(c.title||c.id)+'">'+ththEsc(c.title||c.id)+'</td><td><span class="th-t '+stt[1]+'">'+stt[0]+(c.stalled&&c.stalled.days!=null?' '+ththNum(c.stalled.days)+' 日':'')+'</span></td>'+ORDER.map(n=>'<td>'+cell(by[n])+'</td>').join("")+'<td>'+ththDate(c.last_movement_at)+'</td>';
+      const name=c.title||"名前の無いキャンペーン";
+      tr.innerHTML='<td title="'+ththEsc(name)+'">'+ththEsc(name)+'</td><td><span class="th-t '+stt[1]+'">'+stt[0]+(c.stalled&&c.stalled.days!=null?'<br>'+ththNum(c.stalled.days)+' 日':'')+'</span></td>'+ORDER.map(n=>'<td>'+cell(by[n])+'</td>').join("")+'<td>'+ththDate(c.last_movement_at)+'</td>';
       if((c.actions||[])[0])tr.firstChild.onclick=()=>ththPress(c.actions[0]);
       tb.appendChild(tr);
     }
@@ -150,12 +163,12 @@ function ththDiv(html,cls){const d=document.createElement("div");if(cls)d.classN
     const el=ththDiv('<div>'+ththDate(day.date)+' '+ththEsc(day.weekday)+(day.today?' 今日':'')+'</div>',"dy"+(day.today?" today":"")+(day.past?" past":"")+(day.gap&&!day.past?" gap":""));
     for(const it of day.items||[]){
       const e=document.createElement("span");e.className="e "+(ST[it.status]||"th-q");
-      e.textContent=it.time+" "+(it.status==="gap"?"":(AB[it.medium]||it.medium||"")+" ")+(it.head||"");e.title=(it.head||"")+(it.status==="draft"?"（下書き）":it.status==="overdue"?"（時刻超過）":"");
+      e.textContent=it.time+" "+(it.status==="gap"?"":(AB[it.medium]||"")+" ")+(it.head||"（題なし）");e.title=(it.head||"")+(it.status==="draft"?"（下書き）":it.status==="overdue"?"（時刻超過）":"");
       if((it.actions||[])[0])e.onclick=()=>ththPress(it.actions[0]);el.appendChild(e);
     }
     cal.appendChild(el);
   }
-  calc.appendChild(ththDiv("灰: 公開済み · 青: 予約済み · 枠線: 下書き · 橙: 空き枠・予約の無い日","th-foot"));
-  root.appendChild(ththDiv(ththAsOf(d)+"。インプレッションと ER は口座ごと（足さない）。"+((d.cannot_say||[]).length?" 読めなかったもの: "+ththEsc(d.cannot_say.join("・")):""),"th-foot"));
+  calc.appendChild(ththDiv("灰: 公開済み · 青: 予約済み · 枠線: 下書き · 橙: シリーズの空き枠・予約が薄い日","th-foot"));
+  root.appendChild(ththFoot(d,"インプレッションと ER は口座ごと（足さない）。"));
 })();
 </script>

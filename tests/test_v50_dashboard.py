@@ -33,7 +33,7 @@ def golden():
 
 @pytest.fixture
 def with_scenario(rich, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(dashboard_cli, "_load_scenario", lambda project, now=None: (golden(), None))
+    monkeypatch.setattr(dashboard_cli, "_load_scenario", lambda project, now=None, allowed_names=None: (golden(), None))
     monkeypatch.setattr(jst, "now_jst", lambda: NOW)
     return rich
 
@@ -104,7 +104,7 @@ def test_要対応はdaysの大きい順だけで日数の無いものは後ろ(
     third = json.loads(json.dumps(data["threads"][0]))
     third.update(id="wakocha", title="和紅茶", stalled={"days": 2, "stale_after_days": 7, "since": None})
     data["threads"] += [second, third]
-    monkeypatch.setattr(dashboard_cli, "_load_scenario", lambda project, now=None: (data, None))
+    monkeypatch.setattr(dashboard_cli, "_load_scenario", lambda project, now=None, allowed_names=None: (data, None))
     rows = dashboard_cli.build(PROJECT, now=NOW)["attention"]
     assert [r["ref"] for r in rows[:3]] == ["sayama", "num-04-sencha", "wakocha"]
     assert all(r["days"] is None for r in rows[3:])
@@ -144,7 +144,7 @@ def test_他人の本文と絶対パスを出さず題は60字まで(with_scenar
     data["threads"][0]["title"] = "あ" * 200
     data["threads"][0]["declared_in"] = "/Users/someone/repo/docs/sns/scenarios/x.md"
     data["threads"][0]["events"][0]["comment"] = "他人のコメント"
-    monkeypatch.setattr(dashboard_cli, "_load_scenario", lambda project, now=None: (data, None))
+    monkeypatch.setattr(dashboard_cli, "_load_scenario", lambda project, now=None, allowed_names=None: (data, None))
     got = dashboard_cli.build(PROJECT, now=NOW, full=True)
     text = list(strings(got))
     assert "他人のコメント" not in text and "返信" not in [s for s in text if s == "返信"]

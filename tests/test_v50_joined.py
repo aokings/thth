@@ -115,7 +115,11 @@ def test_要対応はeventsを先に使い同じrefは1度だけ(joined):
     assert [a["label"] for a in stalled[0]["actions"]][0] == "公開した"
     assert stalled[0]["stage"] == "article" and stalled[0]["days"] == 9
     assert low[0]["next_slot"] == "2026-10-30T07:00:00+09:00"
-    assert low[0]["next"] == "承認済みストック 1 本（目安 2）"
+    # 画面の言葉（B1）: 題は段 1 の title・次は名詞の一手。id・符丁は出さない。
+    assert low[0]["title"] == "数字で淹れる — ストックが 1 回分（目安 2 回）"
+    assert low[0]["next"] == "次の枠 10/30 07:00 の原稿を用意する"
+    assert stalled[0]["title"] == "数字で淹れる No.4 煎茶 — 本記事が未公開"
+    assert stalled[0]["next"] == "本記事を公開したら記録する"
     assert got["kpi"]["attention"]["by_kind"]["scenario_stalled"] == 1
     assert got["kpi"]["attention"]["by_kind"]["series_low"] == 1
     # 停滞していない sousa-026 は要対応に入らない。
@@ -162,9 +166,12 @@ def test_シリーズのshowは今後4週の枠と埋めている原稿(joined):
     assert {k: v for k, v in shown["series"].items() if k != "slots_upcoming"} == listed
     up = shown["series"]["slots_upcoming"]
     assert len(up) == 8                                   # 火・金 × 4 週
-    assert up[0] == {"at": "2026-10-30T07:00:00+09:00", "filled": False, "file": None}
-    assert up[1] == {"at": "2026-11-03T07:00:00+09:00", "filled": True, "file": "th-num-1103.md"}
-    assert sum(1 for s in up if s["filled"]) == 1
+    assert up[0] == {"at": "2026-10-30T07:00:00+09:00", "filled": False, "file": None, "head": None,
+                     "filled_by": []}
+    # 11/3 は kp-threads だけ（型の口座は kp-threads・kp-x）なので、回としては埋まっていない（A2）。
+    assert up[1] == {"at": "2026-11-03T07:00:00+09:00", "filled": False, "file": "th-num-1103.md",
+                     "head": "本文はここに書く秘密の一文", "filled_by": ["kp-threads"]}
+    assert sum(1 for s in up if s["filled"]) == 0
     # 14 日の空き枠の数は一覧の empty_slots_14d と食い違わない。
     horizon = jst.iso(NOW + __import__("datetime").timedelta(days=14))
     assert sum(1 for s in up if not s["filled"] and s["at"] <= horizon) == listed["empty_slots_14d"]
@@ -200,7 +207,8 @@ def test_キャンペーンの階層はshowの成果物とはてブ数を使う(
 def test_シリーズの階層は回ごとのインプレッションを投稿のidで引く(joined):
     _with_outcomes(joined)
     got = dashboard_cli.build(PROJECT, "series", "num", now=NOW)["series"]
-    assert len(got["slots_upcoming"]) == 8 and got["slots_upcoming"][1]["filled"] is True
+    assert len(got["slots_upcoming"]) == 8 and got["slots_upcoming"][1]["filled"] is False
+    assert got["slots_upcoming"][1]["filled_by"] == ["kp-threads"]
     assert {i["ref"] for i in got["items"]} == {"th-num-1024.md", "th-num-1103.md"}
     episodes = got["outcomes"]["per_episode"]
     assert [e["ref"] for e in episodes] == ["th-num-1024.md"]

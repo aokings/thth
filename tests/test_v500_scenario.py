@@ -238,8 +238,10 @@ def test_stalled_campaign_details(golden_world):
     assert announce["medium"] == ["threads", "x"] and announce["done"] == 0 and announce["drafts"] == 1
     assert warm["replies"] == 0 and warm["overdue"] == 0 and warm["replies_within_hours"] == 6
     assert row["last_movement_at"] == "2026-10-19T08:38:22+09:00"
-    assert row["stalled"] == {"days": 9, "stale_after_days": 7, "since": "2026-10-19T08:38:22+09:00"}
-    assert row["next"] == [{"stage": "article", "kind": "signal", "what": "article_published を糸のファイルに 1 行"}]
+    assert row["stalled"] == {"days": 9, "stale_after_days": 7, "since": "2026-10-19T08:38:22+09:00",
+                              "since_from": "movement", "label": "本記事が未公開"}
+    assert row["next"] == [{"stage": "article", "kind": "signal", "what": "article_published を糸のファイルに 1 行",
+                            "label": "本記事を公開したら記録する"}]
     assert row["declared_in"] == "docs/sns/scenarios/num-04-sencha.md"
     assert row["goal_text"] == "煎茶の湯温を数字で覚えてもらう"
 
@@ -255,9 +257,13 @@ def test_scheduled_campaign_is_not_stalled(golden_world):
 
 def test_series_low_stock_and_empty_slot(golden_world):
     row = scenario.build(PROJECT, now=NOW)["series"][0]
-    assert row["stock"] == {"approved_future": 1, "floor": 2, "low": True, "days_covered": 5}
-    assert row["next_slot"] == {"at": "2026-10-30T07:00:00+09:00", "filled": False}
-    assert row["empty_slots_14d"] == 3   # 10/30 金・11/6 金・11/10 火（11/3 火は埋まっている）
+    assert row["stock"] == {"approved_future": 1, "floor": 2, "low": True, "days_covered": 5,
+                            "approved_future_items": 1}
+    assert row["next_slot"] == {"at": "2026-10-30T07:00:00+09:00", "filled": False, "filled_by": []}
+    # 10/30 金・11/3 火・11/6 金・11/10 火。11/3 は kp-threads だけが承認済みで、型の口座（kp-threads・kp-x）が
+    # そろっていないので空き（回で数える・A2）。
+    assert row["empty_slots_14d"] == 4
+    assert [s["filled_by"] for s in row["empty_slots"]] == [[], ["kp-threads"], [], []]
     assert row["material"] == {"remaining": 4, "written_at": "2026-10-23", "floor": 2, "low": False}
     assert row["slots"] == [{"day": "tue", "time": "07:00"}, {"day": "fri", "time": "07:00"}]
 
@@ -266,7 +272,15 @@ def test_no_body_and_no_absolute_path_in_output(golden_world, thth_root):
     for payload in (scenario.build(PROJECT, now=NOW), scenario.show(PROJECT, "num-04-sencha", now=NOW),
                     scenario.lint(PROJECT, now=NOW)):
         text = json.dumps(payload, ensure_ascii=False)
-        assert SECRET_BODY not in text
+        # show の原稿の行は題（自分の原稿の先頭 1 行・60 字まで）だけを持つ。それ以外に本文は出さない。
+        heads = [row.get("head") for row in payload.get("items") or []]
+        assert all(h is None or len(h) <= 60 for h in heads)
+        for row in payload.get("items") or []:
+            row.pop("head", None)
+        for stage in (payload.get("thread") or {}).get("stages") or []:
+            for row in stage.get("items") or []:
+                row.pop("head", None) if row.get("kind") == "draft" else None
+        assert SECRET_BODY not in json.dumps(payload, ensure_ascii=False)
         assert golden_world["repo"] not in text and thth_root not in text
         assert '"body"' not in text
 

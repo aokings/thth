@@ -52,6 +52,18 @@ _ATTENTION_POINT_KINDS = ("not_after_passed",)
 _REF_KIND = {"scenario_stalled": "campaign", "series_low": "series", "not_after_passed": "draft",
              "delivery_held": "delivery", "delivery_behind": "delivery"}
 WEEKDAYS_JA = ("月", "火", "水", "木", "金", "土", "日")
+# 画面の言葉（型の THTH_MEDIUM・THTH_KIND と同じ）。中の名前・符丁は画面の文に出さない（B1）。
+MEDIUM_JA = {"threads": "Threads", "x": "X", "bluesky": "Bluesky", "mastodon": "Mastodon",
+             "hatenablog": "はてなブログ", "hatena_bookmark": "はてブ", "site": "サイト"}
+KIND_JA = {"scenario_stalled": "停滞", "series_low": "ストック不足", "untied_drafts": "未分類の下書き",
+           "unanswered_replies": "未返信", "schedule_low": "予約切れ間近", "schedule_thin": "予約が薄い",
+           "not_after_passed": "期限切れ", "publish_held": "公開を停止中", "account_stopped": "口座が停止",
+           "inflight_open": "公開の結果待ち", "delivery_held": "配信の保留", "delivery_behind": "記事の更新待ち",
+           "principal_stopped": "はてな ID が停止", "budget_exhausted": "予算切れ"}
+# 予算の断りの符丁 → 画面の言葉（読むと投稿は別の断り・言葉で分ける）。
+BUDGET_JA = {"budget_exhausted": "X の読む予算が今月の上限", "missing_rate": "X の読む予算の為替の設定が無い",
+             "post_budget_exhausted": "X の投稿の予算が今月の上限"}
+HELD_JA = {"approval_stale": "承認が古い（記事を直した）", "delivery_state_conflict": "配信の記録が食い違っている"}
 
 # 今の THTH で取れない数（設計 §5.3）。0 と混ぜない。
 NOT_COLLECTED = {
@@ -141,7 +153,7 @@ def _scenario_module():
     return scenario
 
 
-def _load_scenario(project, now=None):
+def _load_scenario(project, now=None, allowed_names=None):
     """段 1 の `thth scenario <project> --json` の中身（dict）か、読めない理由の符丁。
 
     戻り値 `(payload, None)` か `(None, 符丁)`。符丁は `scenario_not_installed`（段 1 が無い）・
@@ -151,7 +163,7 @@ def _load_scenario(project, now=None):
     if module is None:
         return None, "scenario_not_installed"
     try:
-        payload = module.build(project, now=now)
+        payload = module.build(project, now=now, allowed_names=allowed_names)
     except Exception:  # noqa: BLE001 — 宣言が読めなくても一覧の他の部分は出す
         return None, "no_declarations"
     if not isinstance(payload, dict):
@@ -161,14 +173,17 @@ def _load_scenario(project, now=None):
     return payload, None
 
 
-def _load_scenario_show(project, ident, now=None):
-    """段 1 の `thth scenario show <project> <id> --json` の中身。読めなければ None。"""
+def _load_scenario_show(project, ident, now=None, allowed_names=None):
+    """段 1 の `thth scenario show <project> <id> --json` の中身。読めなければ None。
+
+    `allowed_names`（遠くの道の鍵の範囲）の外の口座の原稿は段 1 が読まない（`_load_scenario` と同じ）。
+    """
     module = _scenario_module()
     show = getattr(module, "show", None) if module is not None else None
     if not callable(show):
         return None
     try:
-        payload = show(project, ident, now=now)
+        payload = show(project, ident, now=now, allowed_names=allowed_names)
     except Exception:  # noqa: BLE001
         return None
     if not isinstance(payload, dict) or payload.get("schema") != SCENARIO_SCHEMA:
@@ -176,8 +191,8 @@ def _load_scenario_show(project, ident, now=None):
     return payload
 
 
-def _scenario_node(project, now=None):
-    payload, reason = _load_scenario(project, now)
+def _scenario_node(project, now=None, allowed_names=None):
+    payload, reason = _load_scenario(project, now, allowed_names)
     if payload is None:
         return {"available": False, "cannot_say": reason}, None
     node = {"available": True, "generated_at": payload.get("generated_at"),
@@ -267,9 +282,26 @@ def _pending(names, now, cannot_say):
         for state in (approve_pending.AWAITING, approve_pending.NOT_REQUESTED):
             for row in result[state]:
                 rows.append({"account": name, "file": os.path.basename(row["file"]),
-                             "publish_at": row.get("publish_at"), "state": state})
+                             "publish_at": row.get("publish_at"), "state": state,
+                             "medium": cfg.get("media"), "head": _manuscript_head(row["file"], cfg)})
     rows.sort(key=lambda r: (str(r["publish_at"] or ""), r["account"], r["file"]))
     return rows
+
+
+def _manuscript_head(path, cfg):
+    """承認待ちの原稿の題（自分の原稿の先頭 60 字・`report.schedule` と同じ取り方）。読めなければ None。"""
+    try:
+        from .scenario import manuscript_head
+    except ImportError:
+        return None
+    if not isinstance(path, str):
+        return None
+    if not os.path.isabs(path):
+        try:
+            path = os.path.join(accounts_mod.resolved_repo_dir(cfg), cfg.get("queue_dir") or "", path)
+        except Exception:  # noqa: BLE001
+            return None
+    return clip(manuscript_head(path, cfg.get("media")))
 
 
 def _measured_as_of(names):
@@ -332,7 +364,11 @@ def _scheduled(schedule, now):
 
 # ------------------------------------------------------------------ 要対応
 
-def _attention(project, events, summary, scenario, now):
+def _attention(project, events, summary, scenario, now, mediums=None, schedule=None):
+    mediums = mediums or {}
+    threads = {t.get("id"): t for t in (scenario or {}).get("threads") or []}
+    series_by_id = {s.get("id"): s for s in (scenario or {}).get("series") or []}
+    heads = {(r.get("account"), r.get("file")): r.get("head") for r in schedule or []}
     rows, seen = [], set()
     for event in (events or {}).get("events") or []:
         kind = event.get("kind")
@@ -344,10 +380,8 @@ def _attention(project, events, summary, scenario, now):
             continue
         seen.add(key)
         days = event.get("days") if _int(event.get("days")) else _days_since(event.get("occurred_at"), now)
-        next_text = _next_text(event.get("next"))
-        if kind == "series_low" and next_text is None:
-            next_text = _stock_text(event.get("approved_future"), event.get("floor"))
-        rows.append(_attention_row(project, kind, ref, event.get("account"), clip(event.get("summary")),
+        title, next_text = _event_text(event, mediums, threads, series_by_id, heads)
+        rows.append(_attention_row(project, kind, ref, event.get("account"), clip(title),
                                    event.get("occurred_at"), days, clip(next_text),
                                    "events", event.get("event_id"),
                                    stage=event.get("stage"), next_slot=event.get("next_slot")))
@@ -358,41 +392,128 @@ def _attention(project, events, summary, scenario, now):
         for thread in scenario.get("threads") or []:
             if thread.get("state") == "stalled" and ("scenario_stalled", thread.get("id")) not in refs:
                 stalled = thread.get("stalled") or {}
+                title, next_text = _stalled_text(thread, None)
                 rows.append(_attention_row(
-                    project, "scenario_stalled", thread.get("id"), None, clip(thread.get("title")),
+                    project, "scenario_stalled", thread.get("id"), None, clip(title),
                     stalled.get("since"), stalled.get("days") if _int(stalled.get("days")) else None,
-                    clip(_next_text(thread.get("next"))), "scenario", None,
+                    clip(next_text), "scenario", None,
                     stage=(thread.get("stage") or {}).get("name")))
         for series in scenario.get("series") or []:
             if (series.get("stock") or {}).get("low") and ("series_low", series.get("id")) not in refs:
-                stock = series.get("stock") or {}
+                title, next_text = _series_low_text(series, None)
                 rows.append(_attention_row(
-                    project, "series_low", series.get("id"), None, clip(series.get("title")), None, None,
-                    clip(_stock_text(stock.get("approved_future"), stock.get("floor"))),
-                    "scenario", None, next_slot=(series.get("next_slot") or {}).get("at")))
+                    project, "series_low", series.get("id"), None, clip(title), None, None,
+                    clip(next_text), "scenario", None, next_slot=(series.get("next_slot") or {}).get("at")))
         untied = (scenario.get("untied") or {}).get("drafts")
         if _int(untied) and untied > 0:
             rows.append(_attention_row(project, "untied_drafts", "drafts", None, f"未分類の下書き {untied} 件",
-                                       None, None, None, "scenario", None, n=untied))
+                                       None, None, "キャンペーンかシリーズに振り分ける", "scenario", None,
+                                       n=untied))
     for name, row in ((summary or {}).get("by_account") or {}).items():
         n = (row.get("unanswered_replies") or {}).get("n")
         if _int(n) and n > 0:
-            rows.append(_attention_row(project, "unanswered_replies", name, name, f"返していない返信 {n} 件",
+            rows.append(_attention_row(project, "unanswered_replies", name, name,
+                                       f"{_medium_ja(mediums.get(name) or row.get('medium'))} の返していない返信 {n} 件",
                                        None, None, None, "summary", None, n=n))
     rows.sort(key=lambda r: (-(r["days"] if r["days"] is not None else -1), r["kind"], str(r["ref"])))
     return rows
 
 
-def _stock_text(approved_future, floor):
-    return f"承認済みストック {approved_future} 本（目安 {floor}）"
+def _medium_ja(medium) -> str:
+    return MEDIUM_JA.get(medium, "口座") if isinstance(medium, str) else "口座"
 
 
-def _next_text(value):
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list) and value and isinstance(value[0], dict):
-        return value[0].get("what")
+def _md_hm(at) -> str:
+    moment = jst.parse(at) if isinstance(at, str) else None
+    return f"{moment.month}/{moment.day} {moment.strftime('%H:%M')}" if moment is not None else ""
+
+
+def _label_of(next_items, kind=None):
+    """段 1 の `next[]` の画面の言葉（`label`）。`kind` を渡せばその種類を先に。"""
+    if not isinstance(next_items, list):
+        return None
+    rows = [n for n in next_items if isinstance(n, dict)]
+    if kind is not None:
+        rows = [n for n in rows if n.get("kind") == kind] + [n for n in rows if n.get("kind") != kind]
+    for row in rows:
+        if isinstance(row.get("label"), str):
+            return row["label"]
     return None
+
+
+def _stalled_text(thread, event):
+    """停滞の行: 題は段 1 の `title`（無ければ「キャンペーン」）＋止まっている段の言葉。id は出さない。"""
+    thread = thread or {}
+    event = event or {}
+    name = thread.get("title") or event.get("title") or "名前の無いキャンペーン"
+    label = (thread.get("stalled") or {}).get("label") or event.get("label")
+    if label is None:
+        stage = (thread.get("stage") or {}).get("name") or event.get("stage")
+        label = STALLED_FALLBACK.get(stage, "途中の段で止まっている")
+    return f"{name} — {label}", _label_of(thread.get("next")) or _label_of(event.get("next"))
+
+
+STALLED_FALLBACK = {"collect": "リサーチが進んでいない", "diary": "仮説のブログが未公開", "article": "本記事が未公開",
+                    "announce": "SNS 告知が未投稿", "warm": "返信の対応が止まっている"}
+
+
+def _series_low_text(series, event):
+    series = series or {}
+    event = event or {}
+    stock = series.get("stock") or {}
+    n = stock.get("approved_future", event.get("approved_future"))
+    floor = stock.get("floor", event.get("floor"))
+    name = series.get("title") or event.get("title") or "名前の無いシリーズ"
+    title = f"{name} — ストックが {n} 回分" + (f"（目安 {floor} 回）" if floor is not None else "")
+    next_text = _label_of(series.get("next"), "slot") or _label_of(event.get("next"), "slot")
+    slot = (series.get("next_slot") or {}).get("at") or event.get("next_slot")
+    if next_text is None and slot:
+        next_text = f"次の枠 {_md_hm(slot)} の原稿を用意する"
+    return title, next_text
+
+
+def _event_text(event, mediums, threads, series_by_id, heads):
+    """events の 1 行を画面の言葉に（題, 次の一手）。events の `summary`（符丁まじりの長文）は使わない。"""
+    kind = event.get("kind")
+    ref = event.get("ref")
+    medium = _medium_ja(mediums.get(event.get("account")))
+    if kind == "scenario_stalled":
+        return _stalled_text(threads.get(ref), event)
+    if kind == "series_low":
+        return _series_low_text(series_by_id.get(ref), event)
+    if kind == "schedule_low":
+        hours = event.get("stock_hours")
+        if event.get("last_publish_at"):
+            return f"{medium} の予約の在庫が薄い（あと {hours} 時間分）", "承認済みの予約を足す"
+        return f"{medium} の承認済みの予約が無い", "承認済みの予約を足す"
+    if kind == "schedule_thin":
+        thin = next((t for t in event.get("thin_days") or [] if isinstance(t, dict)), None)
+        day = jst.parse(thin["date"] + "T00:00:00+09:00") if thin and isinstance(thin.get("date"), str) else None
+        hours = [h for h in event.get("free_hours") or [] if _int(h)]
+        title = (f"{medium} の {day.month}/{day.day} の予約が薄い（{thin.get('count')} 本）" if day is not None
+                 else f"{medium} の予約が薄い日がある")
+        return title, ("空いた時間: " + "・".join(f"{h} 時台" for h in hours)) if hours else "予約を足す"
+    if kind == "account_stopped":
+        return f"{medium} の口座を止めている", "理由を見て、戻すか決める"
+    if kind == "publish_held":
+        return f"{medium} の自動の公開を止めている", "理由を見て、戻すか決める"
+    if kind == "inflight_open":
+        return f"{medium} の公開の結果待ち", "結果を確かめる"
+    if kind == "principal_stopped":
+        return "はてな ID の書き込みを止めている", "理由を見て、戻すか決める"
+    if kind == "budget_exhausted":
+        return BUDGET_JA.get(ref, "X の予算で断っている"), "来月まで待つか、上限を見直す"
+    if kind == "delivery_held":
+        reason = event.get("reason")
+        why = HELD_JA.get(reason) or ("配信の記録を確かめる" if isinstance(reason, str)
+                                      and reason.startswith("delivery_state_") else "出せない")
+        return f"はてなブログの原稿 — {why}", "中身と理由を確かめる"
+    if kind == "delivery_behind":
+        return "はてなブログの記事 — 正本を直したが記事は前のまま", "更新するか決める"
+    if kind == "not_after_passed":
+        head = heads.get((event.get("account"), ref))
+        return f"{head or medium + ' の原稿'} — 出さない期限を過ぎた", "出し直すか決める"
+    return f"{medium} の{KIND_JA.get(kind, 'お知らせ')}", None
 
 
 def _attention_row(project, kind, ref, account, title, since, days, next_text, source, event_id, **extra):
@@ -499,19 +620,28 @@ def _calendar(project, schedule, events, scenario, mediums, now):
         by_day[at.date().isoformat()].append(_calendar_item(
             project, at, event.get("account"), mediums.get(event.get("account")), "published", clip(title),
             event.get("ref")))
+    # 橙（gap）はシリーズの空き枠（`empty_slots`・古い答えなら `next_slot`）と予約が薄い日（`schedule_thin`）
+    # だけ。予定の無い日は無地（`empty: true`）。
     gap_days = set()
     for series in (scenario or {}).get("series") or []:
-        slot = series.get("next_slot") or {}
-        at = jst.parse(slot.get("at")) if isinstance(slot.get("at"), str) else None
-        if at is None or slot.get("filled") is not False or at.date().isoformat() not in by_day:
-            continue
-        gap_days.add(at.date().isoformat())
-        by_day[at.date().isoformat()].append({
-            "time": at.strftime("%H:%M"), "at": jst.iso(at), "account": None, "medium": None,
-            "status": "gap", "head": clip(f"空き枠: {series.get('title') or series.get('id')}"),
-            "series": series.get("id"),
-            "actions": [action("下書き", project, "series", series.get("id"),
-                               f"{jst.iso(at)} の枠に入れる下書きを作ってください。承認は私がします。")]})
+        empties = series.get("empty_slots")
+        if not isinstance(empties, list):
+            slot = series.get("next_slot") or {}
+            empties = [slot] if slot.get("filled") is False else []
+        for slot in empties:
+            at = jst.parse(slot.get("at")) if isinstance(slot, dict) and isinstance(slot.get("at"), str) else None
+            if at is None or at.date().isoformat() not in by_day:
+                continue
+            filled_by = [a for a in slot.get("filled_by") or [] if isinstance(a, str)]
+            name = series.get("title") or "シリーズ"
+            head = f"空き枠: {name}" + (
+                f"（{'・'.join(_medium_ja(mediums.get(a)) for a in filled_by)} だけ）" if filled_by else "")
+            gap_days.add(at.date().isoformat())
+            by_day[at.date().isoformat()].append({
+                "time": at.strftime("%H:%M"), "at": jst.iso(at), "account": None, "medium": None,
+                "status": "gap", "head": clip(head), "series": series.get("id"), "filled_by": filled_by,
+                "actions": [action("下書き", project, "series", series.get("id"),
+                                   f"{jst.iso(at)} の枠に入れる下書きを作ってください。承認は私がします。")]})
     for event in (events or {}).get("events") or []:
         if event.get("kind") == "schedule_thin":
             for thin in event.get("thin_days") or []:
@@ -524,7 +654,7 @@ def _calendar(project, schedule, events, scenario, mediums, now):
         future = day >= today
         empty = future and not any(item["status"] in ("scheduled", "published") for item in items)
         out.append({"date": key, "weekday": WEEKDAYS_JA[day.weekday()], "today": day == today,
-                    "past": day < today, "gap": key in gap_days or empty, "items": items})
+                    "past": day < today, "gap": key in gap_days, "empty": empty, "items": items})
     return out
 
 
@@ -541,13 +671,14 @@ def _calendar_item(project, at, account, medium, status, head, ref):
 
 # ------------------------------------------------------------------ 階層ごと
 
-def _project_parts(project, names, now, allowed, cannot_say):
+def _project_parts(project, names, now, allowed, cannot_say, scenario_allowed=None):
+    """`scenario_allowed` は段 1 に渡す範囲（遠くの道の鍵の口座・手元なら None で project 全体）。"""
     summary = _summary(project, now, allowed, cannot_say, "summary")
     previous = _summary(project, now - datetime.timedelta(days=7), allowed, cannot_say, "summary_previous")
     events = _events(project, now, allowed, cannot_say)
     schedule = _schedule(names, now, cannot_say)
     pending = _pending(names, now, cannot_say)
-    scenario_node, scenario = _scenario_node(project, now)
+    scenario_node, scenario = _scenario_node(project, now, scenario_allowed)
     if summary:
         cannot_say.update(f"summary:{code}" for code in summary.get("cannot_say") or [])
     return summary, previous, events, schedule, pending, scenario_node, scenario
@@ -583,9 +714,9 @@ def build_project(project, *, now=None, allowed_names=None, full=False) -> dict:
         raise DashboardError("target_unknown")
     cannot_say: set = set()
     summary, previous, events, schedule, pending, scenario_node, scenario = _project_parts(
-        project, names, now, allowed_names, cannot_say)
+        project, names, now, allowed_names, cannot_say, allowed_names)
     mediums = _mediums(names)
-    attention = _attention(project, events, summary, scenario, now)
+    attention = _attention(project, events, summary, scenario, now, mediums, schedule)
     payload = _head("project", now, project)
     payload.update({
         "accounts": names, "mediums": mediums,
@@ -603,8 +734,9 @@ def build_project(project, *, now=None, allowed_names=None, full=False) -> dict:
         "limitations": _limitations()})
     if full and scenario is not None:
         payload["campaign_details"] = [
-            _campaign_detail(project, t, events, now) for t in scenario.get("threads") or []]
-        payload["series_details"] = [_series_detail(project, s, now) for s in scenario.get("series") or []]
+            _campaign_detail(project, t, events, now, allowed_names) for t in scenario.get("threads") or []]
+        payload["series_details"] = [_series_detail(project, s, now, allowed_names)
+                                     for s in scenario.get("series") or []]
     return payload
 
 
@@ -613,20 +745,28 @@ def build_all(*, now=None, allowed_names=None) -> dict:
     projects = _projects(allowed_names)
     cards, cannot_say = [], set()
     totals = {"attention": 0, "pending_approval": 0, "scheduled_14d": 0, "published_7d": 0}
+    # 数えられなかったメディア（鍵 → project の列）。黙って飛ばさない（0 と混ぜない）。
+    totals_cannot_say: dict = {}
     for project, names in sorted(projects.items()):
         local: set = set()
         allowed = names if allowed_names is None else [n for n in names if n in allowed_names]
         summary, previous, events, schedule, pending, scenario_node, scenario = _project_parts(
-            project, names, now, allowed, local)
-        attention = _attention(project, events, summary, scenario, now)
+            project, names, now, allowed, local, allowed_names)
+        mediums = _mediums(names)
+        attention = _attention(project, events, summary, scenario, now, mediums, schedule)
         kpi = _kpi(attention, pending, schedule, summary, previous, now)
-        calendar = _calendar(project, schedule, events, scenario, _mediums(names), now)
-        week = [{"date": d["date"], "weekday": d["weekday"], "gap": d["gap"]}
+        calendar = _calendar(project, schedule, events, scenario, mediums, now)
+        week = [{"date": d["date"], "weekday": d["weekday"], "gap": d["gap"], "empty": d["empty"]}
                 for d in calendar if not d["past"]][:7]
+        unreadable = {"published_7d": summary is None, "attention": events is None,
+                      "pending_approval": "approve_pending_unreadable" in local,
+                      "scheduled_14d": "schedule_unreadable" in local}
         for key in totals:
             value = kpi[key]["n"]
-            if _int(value):
+            if _int(value) and not unreadable[key]:
                 totals[key] += value
+            else:
+                totals_cannot_say.setdefault(key, []).append(project)
         cards.append({
             "project": project, "accounts": names, "mediums": _mediums(names),
             "status": "attention" if attention else "ok",
@@ -642,7 +782,7 @@ def build_all(*, now=None, allowed_names=None) -> dict:
         cannot_say.update(f"{project}:{code}" for code in local)
     payload = _head("all", now, None)
     payload.update({
-        "totals": totals,
+        "totals": totals, "totals_cannot_say": totals_cannot_say,
         "totals_basis": "本数だけを足す。インプレッション・エンゲージメント率はメディアのカードで口座ごとに見る",
         "n_projects": len(cards),
         "n_projects_attention": sum(1 for c in cards if c["status"] == "attention"),
@@ -681,7 +821,7 @@ def _bookmarks_by_delivery(names, cannot_say):
     for name in sorted(set(names)):
         try:
             cfg = accounts_mod.load_account(name)
-            rows, broken = events_cli._reaction_events(name, cfg)
+            rows, broken = events_cli.reaction_events(name, cfg)
         except Exception:  # noqa: BLE001
             cannot_say.add("reactions_unreadable")
             continue
@@ -704,7 +844,8 @@ def _episode(item, measured_index, bookmarks, readable):
     from . import summary_cli
     account, medium = item.get("account"), item.get("medium")
     post_ids = [p for p in item.get("post_ids") or [] if isinstance(p, str)]
-    row = {"ref": item.get("file"), "account": account, "medium": medium, "status": _item_status(item),
+    row = {"ref": item.get("file"), "head": clip(item.get("head")), "account": account, "medium": medium,
+           "status": _item_status(item),
            "at": item.get("posted_at") or item.get("publish_at"), "delivery": item.get("delivery"),
            "post_id": post_ids[0] if post_ids else None,
            "impressions": None, "reactions_total": None, "engagement_rate_pct": None,
@@ -776,9 +917,9 @@ def _impressions_outcome(episodes):
     return None, "not_published_yet", by_account
 
 
-def _campaign_detail(project, thread, events, now):
+def _campaign_detail(project, thread, events, now, allowed_names=None):
     ident = thread.get("id")
-    show = _load_scenario_show(project, ident, now)
+    show = _load_scenario_show(project, ident, now, allowed_names)
     cannot_say = set()
     deliverables, episodes = [], []
     if show is not None:
@@ -787,10 +928,14 @@ def _campaign_detail(project, thread, events, now):
                 if not isinstance(item, dict):
                     continue
                 kind = item.get("kind")
+                # 題: 原稿は自分の原稿の先頭 60 字・出来事は窓口の書いた行・はてブは対象の題が台帳に無いので
+                # 「ブックマーク」（第三者のコメント・user は出さない）。
+                head = item.get("head") if kind in ("event", "draft") else (
+                    "ブックマーク" if kind == "bookmark" else None)
                 deliverables.append(_clean({
                     "stage": stage.get("name"), "kind": kind,
                     "status": _item_status(item) if kind == "draft" else (item.get("status") or "published"),
-                    "head": item.get("head") if kind == "event" else None,
+                    "head": head,
                     "at": item.get("posted_at") or item.get("publish_at") or item.get("at"),
                     "ref": item.get("file") or item.get("name"), "account": item.get("account"),
                     "medium": item.get("medium"), "delivery": item.get("delivery")}))
@@ -866,15 +1011,15 @@ def _campaign_actions(project, thread):
     return acts
 
 
-def _series_detail(project, series, now=None):
+def _series_detail(project, series, now=None, allowed_names=None):
     ident = series.get("id")
-    show = _load_scenario_show(project, ident, now)
+    show = _load_scenario_show(project, ident, now, allowed_names)
     cannot_say = set()
     items, episodes = [], []
     if show is not None:
         for item in show.get("items") or []:
             if isinstance(item, dict):
-                items.append(_clean({"status": _item_status(item), "head": None, "ref": item.get("file"),
+                items.append(_clean({"status": _item_status(item), "head": item.get("head"), "ref": item.get("file"),
                                      "at": item.get("posted_at") or item.get("publish_at"),
                                      "account": item.get("account"), "medium": item.get("medium"),
                                      "delivery": item.get("delivery"),
@@ -937,9 +1082,9 @@ def build_detail(project, level, ident, *, now=None, allowed_names=None) -> dict
         raise DashboardError("target_unknown")
     cannot_say: set = set()
     events = _events(project, now, allowed_names, cannot_say)
-    scenario_node, scenario = _scenario_node(project, now)
+    scenario_node, scenario = _scenario_node(project, now, allowed_names)
     payload = _head(level, now, project)
-    payload.update({"accounts": names, "id": ident, "scenario": scenario_node,
+    payload.update({"accounts": names, "mediums": _mediums(names), "id": ident, "scenario": scenario_node,
                     "as_of": _as_of(now, names, events, scenario)})
     if scenario is None:
         payload.update({level: None, "cannot_say": sorted(cannot_say | {scenario_node["cannot_say"]}),
@@ -949,12 +1094,12 @@ def build_detail(project, level, ident, *, now=None, allowed_names=None) -> dict
         thread = _find(scenario, "threads", ident)
         if thread is None:
             raise DashboardError("campaign_unknown")
-        payload["campaign"] = _campaign_detail(project, thread, events, now)
+        payload["campaign"] = _campaign_detail(project, thread, events, now, allowed_names)
     else:
         series = _find(scenario, "series", ident)
         if series is None:
             raise DashboardError("series_unknown")
-        payload["series"] = _series_detail(project, series, now)
+        payload["series"] = _series_detail(project, series, now, allowed_names)
     payload["actions"] = [action("メディアに戻る", project, None, None,
                                  f"このメディアのダッシュボードを開いてください（thth dashboard {project} --json）。")]
     payload.update({"cannot_say": sorted(cannot_say), "limitations": _limitations()})
@@ -972,6 +1117,11 @@ def _limitations():
             "インプレッション・エンゲージメント率は口座をまたいで足さない",
             "他人の本文（はてブのコメント・返信の本文）は入れない。題・head・next は 60 字まで",
             "取れない数は null と cannot_say（0 と混ぜない）"]
+
+
+def dumps(payload, **kwargs) -> str:
+    """`--json` の文字列。`</` を `<\\/` に（型の `<script>` に貼っても途中で閉じない・JSON としては同じ値）。"""
+    return json.dumps(payload, ensure_ascii=False, **kwargs).replace("</", "<\\/")
 
 
 def build(project=None, level=None, ident=None, *, now=None, allowed_names=None, full=False) -> dict:
@@ -1016,8 +1166,9 @@ def render(payload, out=print) -> None:
             out(f"  {name}: インプレッション {_n(row['impressions'])}（前週比 {_n(row['change_pct'])}%）・"
                 f"ER {_n(row['engagement_rate_pct'])}%")
         for row in payload.get("attention") or []:
-            out(f"  要対応 {row['kind']} {row['ref']}"
-                + (f"（{row['days']} 日）" if row.get("days") is not None else "") + f": {row.get('title') or ''}")
+            out(f"  要対応 {KIND_JA.get(row['kind'], row['kind'])}"
+                + (f"（{row['days']} 日）" if row.get("days") is not None else "") + f": {row.get('title') or ''}"
+                + (f" → {row['next']}" if row.get("next") else ""))
         scenario = payload.get("scenario") or {}
         if not scenario.get("available"):
             out(f"  キャンペーン・シリーズ: —（{scenario.get('cannot_say')}）")
@@ -1058,10 +1209,10 @@ def cmd(args) -> int:
     except DashboardError as exc:
         print(str(exc), file=sys.stderr)
         if args.json:
-            print(json.dumps({"schema": SCHEMA, "cannot_say": [str(exc)]}, ensure_ascii=False))
+            print(dumps({"schema": SCHEMA, "cannot_say": [str(exc)]}))
         return 2
     if args.json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(dumps(payload, indent=2))
         return 0
     render(payload)
     return 0

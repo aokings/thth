@@ -106,10 +106,15 @@ def register(sub) -> None:
     p.set_defaults(func=cmd)
 
 
+def _dumps(payload, **kwargs) -> str:
+    """`--json` の文字列。`</` は `<\\/`（型の `<script>` に貼っても途中で閉じない・JSON の値は同じ）。"""
+    return json.dumps(payload, ensure_ascii=False, **kwargs).replace("</", "<\\/")
+
+
 def _fail(code, as_json) -> int:
     print(code, file=sys.stderr)
     if as_json:
-        print(json.dumps({"schema": scenario_mod.SCHEMA, "cannot_say": [code]}, ensure_ascii=False))
+        print(_dumps({"schema": scenario_mod.SCHEMA, "cannot_say": [code]}))
     return 2
 
 
@@ -132,7 +137,7 @@ def cmd(args) -> int:
     except ValueError as exc:
         return _fail(str(exc), args.json)
     if args.json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(_dumps(payload, indent=2))
     else:
         renderer(payload)
     return 0

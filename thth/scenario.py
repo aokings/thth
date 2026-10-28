@@ -41,6 +41,8 @@ MATERIAL_FLOOR = 2
 DEFAULT_REPLIES_WITHIN_HOURS = 24
 HEAD_CHARS = 60
 SLOT_WINDOW_DAYS = 14
+# 枠の一致の幅（分）。関東は手で時刻を数分ずらすので、枠の前後この幅の承認済みはその枠の回に数える。
+SLOT_TOLERANCE_MINUTES = 15
 DEADLINE_HOURS = 48
 DEFAULT_SIGNAL = "article_published"
 # 知識の出来事が数の条件の代わりになる段（設計 §3.2）。
@@ -106,6 +108,7 @@ class Declaration:
     stages: list
     events: list
     problems: list            # [{"code", "detail"}]
+    mtime: datetime.datetime | None = None   # 宣言のファイルの更新時刻（`started` も動きも無い糸の停滞の起点）
 
 
 def _split(text):
@@ -282,6 +285,7 @@ class Item:
     series: str | None
     delivery: str | None
     not_after: datetime.datetime | None
+    head: str | None = None   # 自分の原稿の題（先頭 60 字・`report.schedule` と同じ取り方）
 
 
 @dataclasses.dataclass
@@ -295,6 +299,7 @@ class Ledger:
     hatena_accounts: list
     cannot_say: set
     now: datetime.datetime
+    hidden: tuple = ()        # 同じ project でも範囲（`allowed_names`）の外で読まなかった口座
 
 
 def resolve(target):
@@ -312,6 +317,25 @@ def resolve(target):
         others = morning.targets(project) if cfg.get("project") else []
         return project, (others or [target])
     return target, names
+
+
+def _scoped(target, allowed_names):
+    """`resolve` の結果を範囲（`allowed_names`）で絞る（`events_cli._scenario_events` と同じ絞り方）。
+
+    戻り値 `(project, 読む口座, 読まなかった口座)`。範囲の外の口座の原稿・台帳は開かない（遠くの道の鍵で、
+    同じ project の別の口座の原稿名・状態がシナリオ経由で見えないように）。対象が無ければ ValueError。
+    """
+    project, names = resolve(target)
+    if not names:
+        raise ValueError("target_unknown")
+    hidden = ()
+    if allowed_names is not None:
+        allowed = set(allowed_names)
+        hidden = tuple(n for n in names if n not in allowed)
+        names = [n for n in names if n in allowed]
+        if not names:
+            raise ValueError("target_unknown")
+    return project, names, hidden
 
 
 def _scenario_dirs(cfg):
@@ -343,6 +367,8 @@ def _read_item(path, account_names, accounts):
         post_ids = [bundle_mod.unquote(p.get("post_id")) for p in b.posts if p.get("post_id")]
         posted = [jst.parse(bundle_mod.unquote(p.get("posted_at"))) for p in b.posts if p.get("posted_at")]
         posted_at = max((p for p in posted if p is not None), default=None)
+        first = next((seg for seg in b.segments if isinstance(seg, str) and seg.strip()), "")
+        head = first.strip().split("\n", 1)[0] if first else None
     else:
         qf = queuefile.parse_text(text, path)
         if qf.malformed:
@@ -350,9 +376,16 @@ def _read_item(path, account_names, accounts):
         fm = qf.front_matter
         post_ids = [fm["post_id"]] if _plain(fm.get("post_id")) else []
         posted_at = jst.parse(_plain(fm.get("posted_at")))
+        head = None
     account = _plain(fm.get("account"))
     if account not in account_names or account not in accounts:
         return None
+    medium = accounts[account].get("media")
+    if medium == "hatenablog":
+        head = _plain(fm.get("title"))
+    elif head is None and not bundle_mod.is_bundle_text(text):
+        section = queuefile.extract_section(qf.body, medium or "") or ""
+        head = section.strip().split("\n", 1)[0] or None
     try:
         publish_at = queuefile.parse_publish_at(fm.get("publish_at")) if fm.get("publish_at") else None
     except (ValueError, TypeError):
@@ -361,13 +394,35 @@ def _read_item(path, account_names, accounts):
         not_after = queuefile.parse_not_after(fm)
     except (ValueError, TypeError):
         not_after = None
-    return Item(file=os.path.basename(path), account=account, medium=accounts[account].get("media"),
+    return Item(file=os.path.basename(path), account=account, medium=medium,
                 status=_plain(fm.get("status")), publish_at=publish_at, posted_at=posted_at,
                 post_ids=post_ids, thread=_plain(fm.get("thread")), series=_plain(fm.get("series")),
-                delivery=_plain(fm.get("delivery")), not_after=not_after)
+                delivery=_plain(fm.get("delivery")), not_after=not_after, head=_head(head) or None)
 
 
-def load_ledger(project, names, *, now=None) -> Ledger:
+def manuscript_head(path, medium) -> str | None:
+    """原稿 1 本の題（先頭 60 字）。SNS は `## <媒体>` の節の 1 行目（`report.schedule` と同じ）、連投は最初の段、
+    はてなブログは front matter の `title`。読めなければ None。本文の残りは返さない。"""
+    from . import bundle as bundle_mod, queuefile
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        if bundle_mod.is_bundle_text(text):
+            b = bundle_mod.parse_text(text, path)
+            first = next((seg for seg in b.segments if isinstance(seg, str) and seg.strip()), "")
+            line = first.strip().split("\n", 1)[0] if first else ""
+        else:
+            qf = queuefile.parse_text(text, path)
+            if medium == "hatenablog":
+                line = _plain(qf.front_matter.get("title")) or ""
+            else:
+                line = (queuefile.extract_section(qf.body, medium or "") or "").strip().split("\n", 1)[0]
+    except (OSError, UnicodeDecodeError, ValueError, TypeError, AttributeError):
+        return None
+    return _head(line) or None
+
+
+def load_ledger(project, names, *, now=None, hidden=()) -> Ledger:
     """project の台帳を 1 回だけ読む。**読むだけ。** 1 つ読めなくても他は読む（`cannot_say`）。"""
     from . import deliveries as deliveries_mod, sent as sent_mod
     now = now if now is not None else jst.now_jst()
@@ -403,11 +458,13 @@ def load_ledger(project, names, *, now=None) -> Ledger:
                 try:
                     with open(path, encoding="utf-8") as f:
                         text = f.read()
+                    mtime = datetime.datetime.fromtimestamp(os.stat(path).st_mtime, tz=jst.JST)
                 except (OSError, UnicodeDecodeError):
                     cannot.add("scenarios_unreadable")
                     continue
                 decl = parse_declaration(text, _rel(path, repo))
                 if decl is not None:
+                    decl.mtime = mtime
                     declarations.append(decl)
         try:
             files = sorted(n for n in os.listdir(queue) if n.endswith(".md"))
@@ -450,7 +507,7 @@ def load_ledger(project, names, *, now=None) -> Ledger:
                 cannot.add("sent_unreadable")
     return Ledger(project=project, accounts=accounts, items=items, declarations=declarations,
                   deliveries=deliveries, bookmarks=bookmarks, hatena_accounts=hatena,
-                  cannot_say=cannot, now=now)
+                  cannot_say=cannot, now=now, hidden=tuple(hidden))
 
 
 def usable_declarations(ledger):
@@ -631,7 +688,13 @@ def thread_status(decl, ledger) -> dict:
         stage_pos = {"name": stages[index]["name"], "index": index + 1, "of": of}
     next_items = [] if closed else _next(decl, stages, index)
     last = max(times, default=None)
-    basis = last if last is not None else started
+    # 停滞の起点: 最後の動き → `started` → 宣言のファイルの更新時刻（どれも無い糸が永遠に停滞しないように）。
+    if last is not None:
+        basis, basis_from = last, "movement"
+    elif started is not None:
+        basis, basis_from = started, "started"
+    else:
+        basis, basis_from = decl.mtime, ("file_mtime" if decl.mtime is not None else None)
     idle_days = int((now - basis).total_seconds() // 86400) if basis is not None and basis <= now else None
     stale = _int(decl.fm.get("stale_after_days"), minimum=1) or DEFAULT_STALE_AFTER_DAYS
     pending_now = index is not None and bool(stages[index].get("pending"))
@@ -645,7 +708,8 @@ def thread_status(decl, ledger) -> dict:
     stalled = None
     if state == "stalled":
         stalled = {"days": idle_days, "stale_after_days": stale,
-                   "since": jst.iso(basis) if basis is not None else None}
+                   "since": jst.iso(basis) if basis is not None else None, "since_from": basis_from}
+        stalled["label"] = stalled_label(stage_pos["name"], stage_pos["index"] if index is not None else None)
         if conflict:
             stalled["reason"] = "delivery_conflict"
     title = _plain(decl.fm.get("title"))
@@ -663,47 +727,84 @@ def thread_status(decl, ledger) -> dict:
     }
 
 
+# 画面に出す日本語（`next[].label`・`stalled_label`）。`what` は今までどおり（LLM 向けの符丁まじり）。
+STAGE_JA = {"collect": "リサーチ", "diary": "仮説", "article": "本記事", "announce": "SNS 告知", "warm": "エンゲージ"}
+MEDIUM_JA = {"threads": "Threads", "x": "X", "bluesky": "Bluesky", "mastodon": "Mastodon",
+             "hatenablog": "はてなブログ", "hatena_bookmark": "はてブ", "site": "サイト"}
+STALLED_JA = {"collect": "リサーチが進んでいない", "diary": "仮説のブログが未公開", "article": "本記事が未公開",
+              "announce": "SNS 告知が未投稿", "warm": "返信の対応が止まっている"}
+
+
+def stage_ja(name, index=None) -> str:
+    """段の名前の日本語。宣言で独自に付けた名前は出さず「n 段目」。"""
+    if name in STAGE_JA:
+        return STAGE_JA[name]
+    return f"{index} 段目" if index else "途中の段"
+
+
+def stalled_label(name, index=None) -> str:
+    return STALLED_JA.get(name) or f"{stage_ja(name, index)}で止まっている"
+
+
+def _media_ja(media) -> str:
+    return "・".join(MEDIUM_JA.get(m, "SNS") for m in media)
+
+
 def _next(decl, stages, index):
-    """現在の段で足りないもの（**名詞で**・本文は書かない）。"""
+    """現在の段で足りないもの（**名詞で**・本文は書かない）。`what` は今までどおり、`label` は画面の言葉。"""
     if index is None:
         return [{"stage": stages[-1]["name"] if stages else None, "kind": "close",
-                 "what": "closed を糸のファイルに 1 行（全段を満たした）"}]
+                 "what": "closed を糸のファイルに 1 行（全段を満たした）",
+                 "label": "全部の段が済んだ（終えるなら記録する）"}]
     row = stages[index]
     name = row["name"]
+    ja = stage_ja(name, index + 1)
     out = []
     if name == "warm":
         if row["replies"] is None:
-            return [{"stage": name, "kind": "cannot_say", "what": "返信の台帳が読めない"}]
+            return [{"stage": name, "kind": "cannot_say", "what": "返信の台帳が読めない",
+                     "label": "返信の台帳が読めない"}]
         if row["overdue"]:
             out.append({"stage": name, "kind": "replies",
-                        "what": f"未返信のうち {row['replies_within_hours']} 時間を越えた {row['overdue']} 件"})
+                        "what": f"未返信のうち {row['replies_within_hours']} 時間を越えた {row['overdue']} 件",
+                        "label": f"返していない返信 {row['overdue']} 件（{row['replies_within_hours']} 時間を過ぎた）"})
         else:
-            out.append({"stage": name, "kind": "wait", "what": "返信待ち（まだ 0 件）"})
+            out.append({"stage": name, "kind": "wait", "what": "返信待ち（まだ 0 件）",
+                        "label": "返信を待つ（まだ 0 件）"})
         return out
     if "signal" in row:
-        return [{"stage": name, "kind": "signal", "what": f"{row['signal']} を糸のファイルに 1 行"}]
+        return [{"stage": name, "kind": "signal", "what": f"{row['signal']} を糸のファイルに 1 行",
+                 "label": f"{ja}を公開したら記録する" if name == "article" else f"{ja}が済んだら記録する"}]
     if row["done"] is None:
-        return [{"stage": name, "kind": "cannot_say", "what": "この段の台帳が読めない"}]
+        return [{"stage": name, "kind": "cannot_say", "what": "この段の台帳が読めない",
+                 "label": f"{ja}の台帳が読めない"}]
     missing = row["need"] - row["done"] - (row.get("pending") or 0)
     if row.get("conflict"):
-        out.append({"stage": name, "kind": "conflict", "what": f"配信の台帳が conflict の原稿 {row['conflict']} 本"})
+        out.append({"stage": name, "kind": "conflict", "what": f"配信の台帳が conflict の原稿 {row['conflict']} 本",
+                    "label": f"配信の記録が食い違う原稿 {row['conflict']} 本を確かめる"})
     if row.get("pending"):
-        out.append({"stage": name, "kind": "wait", "what": f"承認済み {row['pending']} 本の公開待ち"})
+        out.append({"stage": name, "kind": "wait", "what": f"承認済み {row['pending']} 本の公開待ち",
+                    "label": f"承認済み {row['pending']} 本の公開を待つ"})
     if missing > 0:
         if row.get("drafts"):
-            out.append({"stage": name, "kind": "approve", "what": f"下書き {row['drafts']} 本の承認"})
+            out.append({"stage": name, "kind": "approve", "what": f"下書き {row['drafts']} 本の承認",
+                        "label": f"{ja}の下書き {row['drafts']} 本を承認する"})
         medium = row["medium"]
         if isinstance(medium, list):
             done = [m for m in medium if row["by_medium"][m]["done"] or row["by_medium"][m]["pending"]]
             rest = [m for m in medium if m not in done] or medium
             what = f"{'・'.join(rest)} に {missing} 本（{name}）"
+            label = f"{_media_ja(rest)} に{ja}を {missing} 本"
             if done:
                 what += f"（{'・'.join(done)} は済み）"
+                label += f"（{_media_ja(done)} は済み）"
         elif medium == "hatena_bookmark":
             what = f"hatena_bookmark に {missing} 本（タグ {row['tag']}）"
+            label = f"はてブをあと {missing} 本"
         else:
             what = f"{medium} に {missing} 本（{name}）"
-        out.append({"stage": name, "kind": "count", "what": what})
+            label = f"{_media_ja([medium])} に{ja}を {missing} 本"
+        out.append({"stage": name, "kind": "count", "what": what, "label": label})
     return out
 
 
@@ -728,31 +829,88 @@ def _minute(at):
     return jst.to_jst(at).replace(second=0, microsecond=0)
 
 
-def series_status(decl, ledger) -> dict:
-    """型 1 つの現在地（`thth.scenario/1` の `series[]` の 1 行）。"""
-    now = ledger.now
-    accounts = _accounts_list(decl.fm.get("accounts"))
-    scope = set(accounts) if accounts else set(ledger.accounts)
-    items = [item for item in ledger.items if item.series == decl.id and item.account in scope]
+def _round_key(at, slot_times):
+    """承認済み 1 本がどの「回」か。枠の前後 `SLOT_TOLERANCE_MINUTES` 分ならその枠、外れれば公開の分。"""
+    moment = _minute(at)
+    tolerance = datetime.timedelta(minutes=SLOT_TOLERANCE_MINUTES)
+    for slot in slot_times:
+        if abs(moment - slot) <= tolerance:
+            return slot
+    return moment
+
+
+def _rounds(items, slots, now):
+    """承認済みの未来を「回」に束ねる: `{回の時刻: {口座}}`。同じ分（と枠の幅の中）は口座をまたいで 1 回。"""
+    if not items:
+        return {}
+    last = max(item.publish_at for item in items)
+    days = max(SLOT_WINDOW_DAYS, int((last - now).total_seconds() // 86400) + 2)
+    slot_times = [_minute(at) for at in _slot_times(slots, now, days)] if slots else []
+    out = {}
+    for item in items:
+        out.setdefault(_round_key(item.publish_at, slot_times), set()).add(item.account)
+    return out
+
+
+def _series_scope(decl, ledger):
+    """型の口座（宣言の `accounts`・無ければ project の口座）のうち読める口座と、型に要る口座。
+
+    戻り値 `(読める型の口座, 回が「埋まった」と言うのに要る口座の集合か None, 符丁)`。宣言の口座のうち
+    範囲の外（`ledger.hidden`）は数えない・出さない。宣言の口座が無ければ、どれか 1 口座で埋まる。
+    """
+    declared = _accounts_list(decl.fm.get("accounts"))
     cannot = []
-    if accounts:
-        missing = [a for a in accounts if a not in ledger.accounts]
-        if missing:
-            cannot.append("series_account_unknown")
+    if not declared:
+        return sorted(ledger.accounts), None, cannot
+    visible = [a for a in declared if a in ledger.accounts]
+    if [a for a in declared if a not in ledger.accounts and a not in ledger.hidden]:
+        cannot.append("series_account_unknown")
+    if [a for a in declared if a in ledger.hidden]:
+        cannot.append("series_account_out_of_scope")
+    return visible, set(visible), cannot
+
+
+def _filled(accounts, required) -> bool:
+    if not accounts:
+        return False
+    return required <= accounts if required else True
+
+
+def series_status(decl, ledger) -> dict:
+    """型 1 つの現在地（`thth.scenario/1` の `series[]` の 1 行）。
+
+    数えるのは「回」: 同じ分（枠の前後 `SLOT_TOLERANCE_MINUTES` 分は同じ枠）に出る承認済みは、口座をまたいで
+    1 回。`approved_future` は回の数、`approved_future_items` は本数。枠が `filled` なのは、型の口座
+    （宣言の `accounts`）がどれもその回に承認済みを持つとき。`filled_by` はその回に承認済みを持つ口座。
+    """
+    now = ledger.now
+    accounts, required, cannot = _series_scope(decl, ledger)
+    scope = set(accounts)
+    items = [item for item in ledger.items if item.series == decl.id and item.account in scope]
     slots, _bad = parse_slots(decl.fm.get("slots"))
     future = [item for item in items if _is_future_approved(item, now)]
-    floor = _int(decl.fm.get("stock_floor"), minimum=0)
-    floor = DEFAULT_STOCK_FLOOR if floor is None else floor
-    last = max((item.publish_at for item in future), default=None)
-    stock = {"approved_future": len(future), "floor": floor, "low": len(future) < floor,
-             "days_covered": max(0, int((last - now).total_seconds() // 86400)) if last is not None else 0}
-    filled = {_minute(item.publish_at) for item in future}
-    next_slot, empty = None, None
+    rounds = _rounds(future, slots, now)
+    explicit_floor = _int(decl.fm.get("stock_floor"), minimum=0)
+    is_deadline = _true(decl.fm.get("deadline"))
+    # 期日の型は、目安（`stock_floor`）を明示したときだけストック不足を言う（期日の型は枠を持たない）。
+    floor = explicit_floor if explicit_floor is not None else (None if is_deadline else DEFAULT_STOCK_FLOOR)
+    last = max(rounds, default=None)
+    n_rounds = len(rounds)
+    stock = {"approved_future": n_rounds, "floor": floor, "low": floor is not None and n_rounds < floor,
+             "days_covered": max(0, int((last - now).total_seconds() // 86400)) if last is not None else 0,
+             "approved_future_items": len(future)}
+    next_slot, empty, empty_slots = None, None, None
     if slots:
         upcoming = _slot_times(slots, now, SLOT_WINDOW_DAYS)
-        empty = sum(1 for at in upcoming if _minute(at) not in filled)
+        empty_slots = []
+        for at in upcoming:
+            by = rounds.get(_minute(at), set())
+            if not _filled(by, required):
+                empty_slots.append({"at": jst.iso(at), "filled_by": sorted(by)})
+        empty = len(empty_slots)
         if upcoming:
-            next_slot = {"at": jst.iso(upcoming[0]), "filled": _minute(upcoming[0]) in filled}
+            by = rounds.get(_minute(upcoming[0]), set())
+            next_slot = {"at": jst.iso(upcoming[0]), "filled": _filled(by, required), "filled_by": sorted(by)}
     material = None
     remaining = _int(decl.fm.get("material_remaining"), minimum=0)
     if remaining is not None:
@@ -760,7 +918,7 @@ def series_status(decl, ledger) -> dict:
         material = {"remaining": remaining, "written_at": written.date().isoformat() if written else None,
                     "floor": MATERIAL_FLOOR, "low": remaining < MATERIAL_FLOOR}
     deadline = None
-    if _true(decl.fm.get("deadline")):
+    if is_deadline:
         soon = now + datetime.timedelta(hours=DEADLINE_HOURS)
         deadline = {
             "expiring_48h": sum(1 for item in items if not _is_posted(item) and item.status != "approved"
@@ -770,21 +928,27 @@ def series_status(decl, ledger) -> dict:
         }
     next_items = []
     if stock["low"]:
-        next_items.append({"kind": "stock", "what": f"承認済みストック {stock['approved_future']} 本（目安 {floor}）"})
+        next_items.append({"kind": "stock", "what": f"承認済みストック {stock['approved_future']} 本（目安 {floor}）",
+                           "label": f"承認済みのストックが {n_rounds} 回分（目安 {floor} 回）"})
     if next_slot is not None and not next_slot["filled"]:
-        next_items.append({"kind": "slot", "what": f"次の枠 {next_slot['at'][:16].replace('T', ' ')} に原稿 1 本"})
+        at = jst.parse(next_slot["at"])
+        next_items.append({"kind": "slot", "what": f"次の枠 {next_slot['at'][:16].replace('T', ' ')} に原稿 1 本",
+                           "label": f"次の枠 {at.month}/{at.day} {at.strftime('%H:%M')} の原稿を用意する"})
     if material is not None and material["low"]:
-        next_items.append({"kind": "collect", "what": f"調べる（collect）を起こす（素材の残り {remaining} 回）"})
+        next_items.append({"kind": "collect", "what": f"調べる（collect）を起こす（素材の残り {remaining} 回）",
+                           "label": f"素材を集める（残り {remaining} 回分）"})
     if deadline is not None and deadline["expiring_48h"]:
-        next_items.append({"kind": "deadline", "what": f"期限 48 時間以内の未承認 {deadline['expiring_48h']} 本"})
+        next_items.append({"kind": "deadline", "what": f"期限 48 時間以内の未承認 {deadline['expiring_48h']} 本",
+                           "label": f"期限まで 48 時間を切った未承認 {deadline['expiring_48h']} 本を確かめる"})
     title = _plain(decl.fm.get("title"))
     goal = _plain(decl.fm.get("goal_text"))
     return {
         "id": decl.id, "title": _head(title) if title else None,
         "goal_text": _head(goal) if goal else None,
         "declared_in": decl.rel,
-        "accounts": accounts if accounts else sorted(ledger.accounts),
+        "accounts": accounts,
         "slots": slots, "stock": stock, "next_slot": next_slot, "empty_slots_14d": empty,
+        "empty_slots": empty_slots,
         "material": material, "deadline": deadline, "next": next_items,
         "cannot_say": sorted(set(cannot)),
     }
@@ -808,14 +972,15 @@ def _untied(ledger):
     return {"drafts": drafts, "deliveries": deliveries}
 
 
-def build(target, *, now=None, ledger=None) -> dict:
-    """`thth scenario <project|account> --json` の中身。**読むだけ。** 対象が無ければ ValueError。"""
+def build(target, *, now=None, ledger=None, allowed_names=None) -> dict:
+    """`thth scenario <project|account> --json` の中身。**読むだけ。** 対象が無ければ ValueError。
+
+    `allowed_names` が渡されたら、その外の口座（同じ project でも）の原稿・台帳は読まない（遠くの道の鍵）。
+    """
     now = now if now is not None else jst.now_jst()
     if ledger is None:
-        project, names = resolve(target)
-        if not names:
-            raise ValueError("target_unknown")
-        ledger = load_ledger(project, names, now=now)
+        project, names, hidden = _scoped(target, allowed_names)
+        ledger = load_ledger(project, names, now=now, hidden=hidden)
     decls = usable_declarations(ledger)
     threads = [thread_status(d, ledger) for d in decls if d.kind == "thread"]
     series = [series_status(d, ledger) for d in decls if d.kind == "series"]
@@ -836,6 +1001,7 @@ def _item_row(item, ledger):
             "delivery_state": record["state"] if record else None,
             "publish_at": jst.iso(item.publish_at) if item.publish_at else None,
             "posted_at": jst.iso(item.posted_at) if item.posted_at else None,
+            "head": item.head,
             # 5.0 段 1＋2（足すだけ）: 回ごとの配信 id（はてなブログは配信の台帳の id・SNS は投稿の id）。
             "delivery": item.delivery, "post_ids": list(item.post_ids),
             "future_approved": _is_future_approved(item, now)}
@@ -858,19 +1024,23 @@ def _stage_items(stage, decl, items, ledger):
     return [dict(_item_row(item, ledger), kind="draft") for item in items if item.medium in media]
 
 
-def _slots_upcoming(decl, items, ledger, days):
-    """型の今後の枠（`days` 日）と、埋めている承認済みの原稿の名前。"""
+def _slots_upcoming(decl, items, ledger, days, required):
+    """型の今後の枠（`days` 日）と、埋めている承認済みの原稿の名前と題（枠の前後の幅も同じ回）。"""
     slots, _bad = parse_slots(decl.fm.get("slots"))
     if not slots:
         return []
-    filled = {}
-    for item in items:
+    slot_times = [_minute(at) for at in _slot_times(slots, ledger.now, days)]
+    by_slot = {}
+    for item in sorted(items, key=lambda i: (i.publish_at or ledger.now, i.file)):
         if _is_future_approved(item, ledger.now):
-            filled.setdefault(_minute(item.publish_at), item.file)
+            by_slot.setdefault(_round_key(item.publish_at, slot_times), []).append(item)
     out = []
-    for at in _slot_times(slots, ledger.now, days):
-        file_name = filled.get(_minute(at))
-        out.append({"at": jst.iso(at), "filled": file_name is not None, "file": file_name})
+    for at in slot_times:
+        rows = by_slot.get(at, [])
+        accounts = {item.account for item in rows}
+        out.append({"at": jst.iso(at), "filled": _filled(accounts, required),
+                    "file": rows[0].file if rows else None, "head": rows[0].head if rows else None,
+                    "filled_by": sorted(accounts)})
     return out
 
 
@@ -878,7 +1048,7 @@ def _slots_upcoming(decl, items, ledger, days):
 SHOW_SLOT_DAYS = 28
 
 
-def show(target, ident, *, now=None) -> dict:
+def show(target, ident, *, now=None, allowed_names=None) -> dict:
     """`thth scenario show <project> <id>`: 1 本の詳細（段ごとの原稿の名前と状態・出来事）。
 
     5.0 段 2 のために足した鍵（`thth.scenario/1` は足すだけ）: 糸は `thread.stages[].items`（段ごとの成果物）、
@@ -886,10 +1056,8 @@ def show(target, ident, *, now=None) -> dict:
     `items[].future_approved` と `deliveries`（配信の台帳の id の列）。
     """
     now = now if now is not None else jst.now_jst()
-    project, names = resolve(target)
-    if not names:
-        raise ValueError("target_unknown")
-    ledger = load_ledger(project, names, now=now)
+    project, names, hidden = _scoped(target, allowed_names)
+    ledger = load_ledger(project, names, now=now, hidden=hidden)
     decl = next((d for d in usable_declarations(ledger) if d.id == ident), None)
     if decl is None:
         raise ValueError("scenario_unknown")
@@ -901,9 +1069,10 @@ def show(target, ident, *, now=None) -> dict:
         for row, stage in zip(body["stages"], decl.stages):
             row["items"] = _stage_items(stage, decl, items, ledger)
     else:
+        _accounts, required, _cannot = _series_scope(decl, ledger)
         scope = set(body["accounts"])   # 枠を埋めるのは型の口座の原稿だけ（`series_status` と同じ）
         body["slots_upcoming"] = _slots_upcoming(decl, [i for i in items if i.account in scope], ledger,
-                                                 SHOW_SLOT_DAYS)
+                                                 SHOW_SLOT_DAYS, required)
     rows = [_item_row(item, ledger) for item in items]
     return {"schema": SCHEMA, "report_type": "scenario_show", "generated_at": jst.iso(ledger.now),
             "project": ledger.project, "kind": decl.kind, key: body, "items": rows,
@@ -911,13 +1080,11 @@ def show(target, ident, *, now=None) -> dict:
             "cannot_say": sorted(ledger.cannot_say)}
 
 
-def lint(target, *, now=None) -> dict:
+def lint(target, *, now=None, allowed_names=None) -> dict:
     """`thth scenario lint <project>`: 宣言の誤り・無い id を指す札・結ばれていない原稿。**予告だけ。**"""
     now = now if now is not None else jst.now_jst()
-    project, names = resolve(target)
-    if not names:
-        raise ValueError("target_unknown")
-    ledger = load_ledger(project, names, now=now)
+    project, names, hidden = _scoped(target, allowed_names)
+    ledger = load_ledger(project, names, now=now, hidden=hidden)
     problems = []
     seen = {}
     for decl in ledger.declarations:
@@ -927,6 +1094,10 @@ def lint(target, *, now=None) -> dict:
         if declared_project is not None and declared_project != project:
             problems.append({"code": "project_mismatch", "file": decl.rel, "id": decl.id,
                              "detail": declared_project[:64]})
+        if decl.kind == "thread" and decl.fm.get("started") is None:
+            # `started` が無いと、動きの無い糸の停滞は宣言のファイルの更新時刻から数える（予告だけ）。
+            problems.append({"code": "started_missing", "file": decl.rel, "id": decl.id,
+                             "detail": "started: YYYY-MM-DD を書くと、動きの無い糸の停滞をその日から数えます"})
         if decl.id is not None and decl.kind is not None:
             if decl.id in seen:
                 problems.append({"code": "duplicate_id", "file": decl.rel, "id": decl.id, "detail": seen[decl.id]})
@@ -1032,7 +1203,8 @@ def events_for(project, names, *, now, make_event) -> tuple:
                    + (f"。次: {nxt}" if nxt else ""))
         out.append(make_event("scenario_stalled", project, row["id"], summary,
                               stalled_event_id(project, row["id"], stage),
-                              stage=stage, days=days, next=row["next"], project=project))
+                              stage=stage, days=days, next=row["next"], project=project,
+                              title=row["title"], label=(row["stalled"] or {}).get("label")))
     for row in payload["series"]:
         if not row["stock"]["low"]:
             continue
@@ -1043,5 +1215,5 @@ def events_for(project, names, *, now, make_event) -> tuple:
         out.append(make_event("series_low", project, row["id"], summary,
                               series_low_event_id(project, row["id"]),
                               approved_future=row["stock"]["approved_future"], floor=row["stock"]["floor"],
-                              next_slot=slot, project=project))
+                              next_slot=slot, project=project, title=row["title"], next=row["next"]))
     return out, set(payload["cannot_say"])

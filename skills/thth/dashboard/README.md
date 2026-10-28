@@ -11,7 +11,7 @@
 | キャンペーン〇〇を開いて | `thth dashboard <project> campaign <id> --json` | `campaign.html` |
 | シリーズ〇〇を開いて | `thth dashboard <project> series <id> --json` | `series.html` |
 
-貼り方: 型の `<script type="application/json" id="thth-data">{}</script>` の `{}` を、`--json` の答えとそっくり入れ替える。答えの中に `</` があれば `<\/` にする（script が途中で閉じないように）。ほかは変えない。型は `schema: "thth.dashboard/1"` と `level` を確かめてから描き、合わなければ「答えを貼ってください」とだけ出す。
+貼り方: 型の `<script type="application/json" id="thth-data">{}</script>` の `{}` を、`--json` の答えとそっくり入れ替える。`--json` の答えは `</` を `<\/` にしてあるので、そのまま貼れる（script が途中で閉じない・JSON の値は同じ）。ほかは変えない。型は `schema: "thth.dashboard/1"` と `level` を確かめてから描き、合わなければ「答えを貼ってください」とだけ出す。
 
 遠くの道（thth.me の鍵）では `thth dashboard <口座> --json`。宣言（キャンペーン・シリーズ）が読めないときは `scenario: {"available": false, "cannot_say": "no_declarations"}` で、KPI・要対応・承認待ち・カレンダーは出る。
 
@@ -33,6 +33,10 @@
 
 `sendPrompt` が無い環境（外の利用者の LLM など）では、押すと指示文がその場の枠に出て「コピー」で写せる。
 
+## 画面の言葉
+
+画面には中の名前（宣言の id・原稿のファイル名・口座名）や符丁（`_` を含む語）を出さない。題は段 1 の `title`・原稿は自分の原稿の先頭 60 字（`head`）、要対応は `title`・`next` が画面の言葉。`cannot_say` の符丁は型の `THTH_REASON` で日本語にする（足りないと試験 `tests/test_v50_audit_fixes.py` が赤になる）。
+
 ## 型の直し方
 
 - 見た目（並び・色・言葉）は型を直して commit するだけ（release は要らない）。
@@ -44,6 +48,6 @@
 
 - 共通: `schema`・`report_type`・`level`（`all`・`project`・`campaign`・`series`）・`generated_at`・`project`・`as_of`（`generated_at`・`measured`・`schedule`・`events`・`scenario`）・`cannot_say`・`limitations`。
 - `all`: `totals`（要対応・承認待ち・予約済み 14 日・公開済み 7 日の**本数だけ**）・`projects[]`（`mediums`・`kpi`・`scenario`・`week`・`first_attention`・`actions`）。
-- `project`: `kpi`（`attention`・`pending_approval`・`scheduled_14d`・`published_7d`・`impressions_7d.by_account`）・`attention[]`（`kind`・`ref`・`title`・`since`・`days`・`next`・`actions`）・`pending_approval[]`・`scenario`・`campaigns[]`・`series[]`・`calendar[]`（14 日・`items[]` の `status` は `published`・`scheduled`・`draft`・`overdue`・`gap`）・`actions`。`--full` で `campaign_details[]`・`series_details[]`。
+- `project`: `kpi`（`attention`・`pending_approval`・`scheduled_14d`・`published_7d`・`impressions_7d.by_account`）・`attention[]`（`kind`・`ref`・`title`・`since`・`days`・`next`・`actions`）・`pending_approval[]`・`scenario`・`campaigns[]`・`series[]`・`calendar[]`（14 日・`items[]` の `status` は `published`・`scheduled`・`draft`・`overdue`・`gap`。日の `gap` はシリーズの空き枠か予約が薄い日だけ、予定の無い日は `empty`）・`actions`。`--full` で `campaign_details[]`・`series_details[]`。
 - `campaign`: `campaign`（`steps`・`outcomes`・`deliverables`・`history`・`next`・`actions`）。
 - `series`: `series`（`stock`・`next_slot`・`empty_slots_14d`・`material`・`outcomes`・`items`・`slots_upcoming`・`actions`）。

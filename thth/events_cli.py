@@ -513,7 +513,7 @@ def _bookmark_timestamp(text):
         return None
 
 
-def _reaction_events(name, cfg):
+def reaction_events(name, cfg):
     """第三者のブックマーク（4.0 S6 §6.3）。`data/hatena/reactions/<dl>.ndjson` の `bookmark.bookmarks[]` から、
     配信ごとに同じ `user` は 1 度だけ。summary に本文と `user` は入れない。`(出来事, 読めなかったか)`。"""
     from . import hatena_reactions
@@ -686,8 +686,11 @@ def _state_events(name, cfg):
             codes = []
             cannot.append("budget_unreadable")
         for code in codes:
+            # 読む予算と投稿の予算は別の断り（`budget` で分ける・足すだけ）。
+            budget = "post" if code == budget_x_posts.CANNOT_SAY else "read"
             out.append(_event("budget_exhausted", name, None, None, code,
-                              f"X の予算で断っています（{code}）", ongoing=True))
+                              f"X の{'投稿' if budget == 'post' else '読む'}予算で断っています（{code}）",
+                              ongoing=True, budget=budget))
     return out, cannot
 
 
@@ -725,6 +728,10 @@ def _scenario_events(read, now, allowed_names, cannot_say):
         if rows or cannot:
             cannot_say.update(f"scenario_{code}" for code in cannot)
     return out
+
+
+# 5.0 段 2 の前の名前（公開の名前は `reaction_events`）。中身は同じ。
+_reaction_events = reaction_events
 
 
 # ------------------------------------------------------------------ カーソル
@@ -834,7 +841,7 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
             except Exception:  # noqa: BLE001 — 1 つの出所で全部を落とさない
                 cannot_say.add("sent_unreadable")
             try:
-                rows, broken = _reaction_events(name, cfg)
+                rows, broken = reaction_events(name, cfg)
                 events += rows
                 if broken:
                     cannot_say.add("reactions_unreadable")

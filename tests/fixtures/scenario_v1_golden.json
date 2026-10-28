@@ -89,7 +89,8 @@
         {
           "stage": "article",
           "kind": "signal",
-          "what": "article_published を糸のファイルに 1 行"
+          "what": "article_published を糸のファイルに 1 行",
+          "label": "本記事を公開したら記録する"
         }
       ],
       "last_movement_at": "2026-10-19T08:38:22+09:00",
@@ -97,7 +98,9 @@
       "stalled": {
         "days": 9,
         "stale_after_days": 7,
-        "since": "2026-10-19T08:38:22+09:00"
+        "since": "2026-10-19T08:38:22+09:00",
+        "since_from": "movement",
+        "label": "本記事が未公開"
       },
       "events": [
         {
@@ -187,7 +190,8 @@
         {
           "stage": "diary",
           "kind": "wait",
-          "what": "承認済み 1 本の公開待ち"
+          "what": "承認済み 1 本の公開待ち",
+          "label": "承認済み 1 本の公開を待つ"
         }
       ],
       "last_movement_at": "2026-10-26T09:02:00+09:00",
@@ -221,13 +225,35 @@
         "approved_future": 1,
         "floor": 2,
         "low": true,
-        "days_covered": 5
+        "days_covered": 5,
+        "approved_future_items": 1
       },
       "next_slot": {
         "at": "2026-10-30T07:00:00+09:00",
-        "filled": false
+        "filled": false,
+        "filled_by": []
       },
-      "empty_slots_14d": 3,
+      "empty_slots_14d": 4,
+      "empty_slots": [
+        {
+          "at": "2026-10-30T07:00:00+09:00",
+          "filled_by": []
+        },
+        {
+          "at": "2026-11-03T07:00:00+09:00",
+          "filled_by": [
+            "kp-threads"
+          ]
+        },
+        {
+          "at": "2026-11-06T07:00:00+09:00",
+          "filled_by": []
+        },
+        {
+          "at": "2026-11-10T07:00:00+09:00",
+          "filled_by": []
+        }
+      ],
       "material": {
         "remaining": 4,
         "written_at": "2026-10-23",
@@ -238,11 +264,13 @@
       "next": [
         {
           "kind": "stock",
-          "what": "承認済みストック 1 本（目安 2）"
+          "what": "承認済みストック 1 本（目安 2）",
+          "label": "承認済みのストックが 1 回分（目安 2 回）"
         },
         {
           "kind": "slot",
-          "what": "次の枠 2026-10-30 07:00 に原稿 1 本"
+          "what": "次の枠 2026-10-30 07:00 に原稿 1 本",
+          "label": "次の枠 10/30 07:00 の原稿を用意する"
         }
       ],
       "cannot_say": []
