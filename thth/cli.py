@@ -4777,6 +4777,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     from . import worker as worker_mod
     worker_mod.register(sub)
+    # Meta 計画 段 6: Webhook の購読・取り込み・様子（`thth webhook subscribe|pull|status`）。
+    from . import webhook as webhook_mod
+    webhook_mod.register(sub)
 
     p_handoff = sub.add_parser("handoff-report", help="ローカル運用記録を引き継ぐ（読むだけ）")
     p_handoff.add_argument("account", nargs="?")

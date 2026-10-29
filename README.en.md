@@ -114,6 +114,7 @@ All subcommands `thth --help` lists, one line each:
 - `community` — search X Communities (`community search`; paid read, not stored). Post into one with `send --community <id>` or front-matter `community_id:` (X only; join in the X app first; not combined with replies)
 - `trends` — X trends for a place (WOEID, default Japan; one paid read, not stored; X only)
 - `ads` — read a Meta ad account (stage 4 of the Meta plan, read-only): `add` a ledger (ceilings 0, flags off), `auth` a long-lived user token (`--exchange` tries a re-exchange), `accounts`, `doctor`, `show`, `insights`, `collect`. It has no command that writes to Meta; spend caps and THTH's ceilings are never raised from THTH (CLI only)
+- `webhook` — Meta Webhooks (stage 6 of the Meta plan): `subscribe` a Facebook Page (`feed`, `mention`; an Instagram account subscribes its parent Page to try `mentions`) — adds fields, never removes them; `pull` once from the Worker (normally `thth worker` pulls every 30 s); `status` (read-only). Deliveries feed `replies`, `mentions` and `events` (CLI only)
 - `principal` — the authenticating principal (one Hatena ID) behind Hatena Blog accounts: `add`, `show`, `set` limits, `resume` after a stop (CLI only); `auth` arrives in 4.0 S2
 - `fotolife` — a principal's Hatena Fotolife image ledger (images THTH uploaded just before publishing an article; one per content sha256); read-only, CLI only (`thth.fotolife/1`)
 - `counts` — how many X posts matched a query over the last 7 days, by hour or day (one paid read, not stored; X only)

@@ -251,9 +251,11 @@ class FacebookAdapter(base.Adapter):
     # `edit_post`（THTH で出した投稿の本文を直す）・`hide_reply`（コメントを隠す・戻す・消す）。
     # 段 3（10/29）: `quota`（`thth quota`・Meta の量の制限の使用量）。段 2 では試験の 1 行を変えない条件で
     # 足していなかった（THTH開発 第11 の許可で `tests/test_facebook_adapter.py` の能力の集合を 1 行直した）。
+    # 段 6（10/29）: `inbox`・`mentions`（Webhook の `feed`・`mention` を VM が取りに来た記録
+    # `state/<口座>/inbox/` から読む・Meta は呼ばない）。`thth webhook subscribe` で購読してから届く。
     CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "views", "link_preview",
                                          "account_insights", "carousel", "edit_post", "hide_reply",
-                                         "quota"})
+                                         "quota", "inbox", "mentions"})
     UNSUPPORTED_REACTIONS = {
         "repost": "THTH の facebook の口はシェア（再投稿）を扱いません",
         "like": "THTH の facebook の口はいいねを扱いません",
@@ -279,6 +281,10 @@ class FacebookAdapter(base.Adapter):
     MODERATE_PERMISSIONS = ("pages_manage_engagement", "pages_read_user_content")
     # 返信（コメント）に要る権限（L2: pages-api/posts の前提の一覧）。
     REPLY_PERMISSION = "pages_manage_engagement"
+    # Webhook の購読 `POST /{page_id}/subscribed_apps`（L2: webhooks-for-pages「pages_manage_metadata」）。
+    WEBHOOK_PERMISSION = "pages_manage_metadata"
+    # 自分の投稿へのコメントが Webhook（`feed`）で届く媒体の印。`collect` が台帳に写し、届いている間は巡回を減らす。
+    WEBHOOK_REPLIES = True
     DEBUG_TOKEN_KEY = "facebook_debug_token"
     DATA_ACCESS_KEY = "facebook_data_access"
     APPSECRET_PROOF_KEY = "facebook_appsecret_proof"
@@ -305,6 +311,8 @@ class FacebookAdapter(base.Adapter):
         self.auth_account = "<account>"
         # `.token` に保存したデータの期限（`thth auth` が書いた値・doctor が今の値と比べる）。
         self.recorded_data_access_expires_at = None
+        # Webhook の記録を読む口座（`from_account` が台帳の名前を入れる）。None なら inbox・mentions は空。
+        self.webhook_account = None
 
     @classmethod
     def from_account(cls, account_cfg: dict, token: dict):
@@ -336,6 +344,7 @@ class FacebookAdapter(base.Adapter):
         from .. import accounts as accounts_mod
         if accounts_mod.name_is_safe(cfg.get("account")):
             adapter.usage_account = cfg["account"]
+            adapter.webhook_account = cfg["account"]
         # `appsecret_proof`（段 2）: app.env の `META_APP_SECRET`。読めなければ付けずに今までどおり。
         secret = meta_graph.load_app_secret()
         if secret:
@@ -631,6 +640,71 @@ class FacebookAdapter(base.Adapter):
         self._write("DELETE", f"/{value}", "コメントの削除",
                     permission=self.MODERATE_PERMISSIONS[0])
         return {"deleted": True, "comment_id": value}
+
+    # ----- Webhook（段 6） ---------------------------------------------------
+
+    def subscribed_webhooks(self, *, app_id: str | None = None) -> list:
+        """`GET /{page_id}/subscribed_apps`（このページに入っている THTH のアプリと購読の欄・読むだけ）。
+
+        L2: 「現在のアプリの分だけを返す」。`app_id` が分かればその行だけに絞る。戻りは欄の名前の並び。
+        """
+        body = self._get(f"/{self.page_id}/subscribed_apps", "購読の確認",
+                         permission=self.WEBHOOK_PERMISSION)
+        fields = set()
+        for row in self._rows(body, "購読の確認"):
+            if app_id and str(row.get("id") or "") != str(app_id):
+                continue
+            listed = row.get("subscribed_fields")
+            if isinstance(listed, list):
+                fields.update(v for v in listed if isinstance(v, str))
+        return sorted(fields)
+
+    def subscribe_webhooks(self, fields, *, app_id: str | None = None) -> dict:
+        """`POST /{page_id}/subscribed_apps` に `subscribed_fields`（ページの鍵・`pages_manage_metadata`）。
+
+        **今の欄を読んでから足す。外さない**——同じページを FB と IG の口座が別々に購読しても、
+        あとの購読が前の欄を消さない（送る欄は和）。足す欄が無ければ POST しない。
+        """
+        wanted = [f for f in fields if isinstance(f, str) and re.fullmatch(r"[a-z_]{1,40}", f)]
+        if not wanted or len(wanted) != len(list(fields)):
+            raise AdapterError("Webhook の購読: 欄の名前が読めません（購読していません）", failure="definite")
+        before = self.subscribed_webhooks(app_id=app_id)
+        union = sorted(set(before) | set(wanted))
+        added = [f for f in union if f not in before]
+        if added:
+            self._write("POST", f"/{self.page_id}/subscribed_apps", "Webhook の購読",
+                        permission=self.WEBHOOK_PERMISSION, form={"subscribed_fields": ",".join(union)})
+        return {"page_id": self.page_id, "fields": union, "added": added, "before": before}
+
+    def _webhook_messages(self) -> list:
+        """`state/<口座>/inbox/` の Webhook の記録を、媒体の 1 行（`_message` と同じ形）に写す。"""
+        if not self.webhook_account:
+            return []
+        from .. import webhook as webhook_mod
+        out = []
+        for record in webhook_mod.rows_for(self.webhook_account):
+            if record.get("object") != "page" or str(record.get("entry_id")) != self.page_id:
+                continue
+            item = webhook_message(record, self.page_id)
+            if item is not None:
+                out.append(item)
+        return out
+
+    def inbox(self, *, since: str | None = None) -> list:
+        """言及（`mention`）と、訪問者がページに書いた投稿（`feed` の他人の投稿）を返す（Webhook の記録から）。"""
+        rows = [m for kind, m in self._webhook_messages() if kind in ("mention", "visitor_post")]
+        return _since(rows, since)
+
+    def mentions(self, *, since=None) -> list:
+        """ページへの言及（Webhook の `mention`・コメントか投稿で言及された）。**Meta は呼ばない。**"""
+        return _since([m for kind, m in self._webhook_messages() if kind == "mention"], since)
+
+    def webhook_replies(self) -> list:
+        """自分のページの投稿に付いたコメント（Webhook の `feed`・`item: comment`・`verb: add`）。
+
+        `collect` がこれを返信の台帳に写す（`conversation()` と同じ形・`via: webhook`）。
+        """
+        return [m for kind, m in self._webhook_messages() if kind == "reply"]
 
     # ----- 会話 ------------------------------------------------------------
 
@@ -1045,6 +1119,71 @@ def _day_value(row):
             and all(isinstance(k, str) and isinstance(v, (int, float)) and not isinstance(v, bool)
                     for k, v in value.items())):
         return dict(value)
+    return None
+
+
+def _since(rows: list, since) -> list:
+    floor = _parse_time(since) if since else None
+    if floor is None:
+        return rows
+    return [m for m in rows if (_parse_time(m.get("timestamp")) or floor) >= floor]
+
+
+def _webhook_time(value) -> str | None:
+    """Webhook の `created_time`（Unix 秒の数・L2 の例）を Graph の綴り（`+0000`）にする。文字ならそのまま。"""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        try:
+            return datetime.datetime.fromtimestamp(value, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000")
+        except (OverflowError, OSError, ValueError):
+            return None
+    return value if isinstance(value, str) and value else None
+
+
+# 訪問者がページに書く投稿の `item`（L2: webhooks reference/page の feed）。
+WEBHOOK_POST_ITEMS = ("status", "post", "photo", "video", "share")
+
+
+def webhook_message(record: dict, page_id: str):
+    """Webhook の 1 変化 → `(種類, 1 行)`。種類は `reply`（自分の投稿へのコメント）・`mention`・
+    `visitor_post`。それ以外（自分のページの投稿・いいね・編集・削除・隠す）は None（記録には残る）。"""
+    value = record.get("value") if isinstance(record.get("value"), dict) else None
+    if value is None or value.get("verb") != "add":
+        return None
+    field, item = record.get("field"), value.get("item")
+    post_id = value.get("post_id") if isinstance(value.get("post_id"), str) else None
+    common = {"medium": MEDIUM, "reply_deadline": None, "via": "webhook",
+              "timestamp": _webhook_time(value.get("created_time"))}
+    if field == "mention":
+        comment_id = value.get("comment_id") if isinstance(value.get("comment_id"), str) else None
+        message_id = comment_id or post_id
+        if not message_id:
+            return None
+        sender = value.get("sender_id")
+        sender = str(sender) if isinstance(sender, (str, int)) and not isinstance(sender, bool) else None
+        return "mention", {**common, "message_id": message_id,
+                           "username": value.get("sender_name") if isinstance(value.get("sender_name"), str) else None,
+                           "text": value.get("message") if isinstance(value.get("message"), str) else "",
+                           "replied_to": post_id if comment_id else None, "root_post": post_id,
+                           "author_key": base.author_key(MEDIUM, sender),
+                           "mention_kind": "comment" if comment_id else "post"}
+    if field != "feed" or not post_id:
+        return None
+    author = value.get("from") if isinstance(value.get("from"), dict) else {}
+    author_id = str(author.get("id")) if isinstance(author.get("id"), (str, int)) and not isinstance(author.get("id"), bool) else None
+    row = {**common, "username": author.get("name") if isinstance(author.get("name"), str) else None,
+           "text": value.get("message") if isinstance(value.get("message"), str) else "",
+           "author_key": base.author_key(MEDIUM, author_id)}
+    if item == "comment":
+        comment_id = value.get("comment_id") if isinstance(value.get("comment_id"), str) else None
+        if not comment_id:
+            return None
+        parent = value.get("parent_id") if isinstance(value.get("parent_id"), str) else None
+        return "reply", {**row, "message_id": comment_id, "replied_to": parent or post_id, "root_post": post_id}
+    if item in WEBHOOK_POST_ITEMS and author_id and author_id != str(page_id):
+        return "visitor_post", {**row, "message_id": post_id, "replied_to": None, "root_post": post_id,
+                                "mention_kind": "visitor_post"}
     return None
 
 

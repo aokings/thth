@@ -62,6 +62,9 @@ from .adapters import base as adapter_base
 AGE_MARKS_HOURS = [1, 6, 24, 72, 168, 720]
 # Replies retain their existing five marks and configurable collection window.
 REPLY_MARKS_HOURS = [1, 6, 24, 72, 168]
+# Webhook（Meta 計画 段 6）でコメントが届いている口座の巡回の刻み。届いた分は台帳に写るので、
+# 巡回は取りこぼしの拾い直しだけ（1 日目と 7 日目）。届かなくなれば（`webhook.live` が偽）元の刻みに戻る。
+WEBHOOK_REPLY_MARKS_HOURS = [24, 168]
 
 def metric_window_days():
     return math.ceil(max(AGE_MARKS_HOURS) * 1.25 / 24)
@@ -622,6 +625,17 @@ def _collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     # **会話の続く投稿の取り直し**（4.4.0・`thth/reply_follow.py`）。刻みとは別に、候補を
     # ループで集めて、ループの後で新しい動きの順に上限の本数だけ取り直す。
     follow_cfg = reply_follow_mod.settings(account_cfg)
+    # **Webhook でコメントが届いている口座は巡回を減らす**（Meta 計画 段 6 の条件 4）。刻みは
+    # `WEBHOOK_REPLY_MARKS_HOURS`、会話の続く投稿の取り直しはしない（届いた分は台帳に写る）。
+    reply_schedule = REPLY_MARKS_HOURS
+    if getattr(adapter, "WEBHOOK_REPLIES", False):
+        try:
+            from . import webhook as webhook_mod
+            if webhook_mod.live(account_name, now=now):
+                reply_schedule = WEBHOOK_REPLY_MARKS_HOURS
+                follow_cfg = {**follow_cfg, "enabled": False}
+        except Exception:   # noqa: BLE001 — 様子が読めなければ元の巡回（取りこぼさない側）
+            reply_schedule = REPLY_MARKS_HOURS
     follow_due: list = []
     own_reply_at = reply_follow_mod.own_reply_times(sent_rows) if follow_cfg["enabled"] else {}
     follow_state_dir = accounts_mod.state_dir_for(account_name)
@@ -776,7 +790,7 @@ def _collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
         # 最後の刻み（168 時間）で失敗すると、その投稿の返信は永久に取れない。
         # 「部分的な成功は次の実行で埋まる」という約束に反していた。
         marks = due_marks(age_hours, _read_ndjson(insight_path)) if age_hours <= metric_window_days() * 24 else []
-        reply_marks = due_marks(age_hours, _reply_fetches(reply_path), marks=REPLY_MARKS_HOURS) if age_hours <= collect_days * 24 else []
+        reply_marks = due_marks(age_hours, _reply_fetches(reply_path), marks=reply_schedule) if age_hours <= collect_days * 24 else []
         if not reply_marks:
             # 刻みで取る回は取り直さない（同じ回に 2 度読まない）。
             consider_follow(post_id=post_id, posted_at=posted_at, age_hours=age_hours,
@@ -845,6 +859,9 @@ def _collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
         _collect_owned(adapter, owned_due, now=now, errors=errors, write=write_insight,
                        account_name=account_name)
 
+    # --- Webhook で届いたコメント（Meta 計画 段 6）: 自分の投稿へのものを返信の台帳に写す
+    touched.extend(_collect_webhook_replies(adapter, replies_dir, owned, now=now, errors=errors, log=log))
+
     # --- 利用者から始まった会話（**WhatsApp の芽**・設計 v2 §4.2）
     inbox_touched, inbox_state = _collect_inbox(
         account_cfg, adapter, now=now, errors=errors, log=log, inbox_dir=dirs["inbox"])
@@ -863,6 +880,50 @@ def _collect_once(account_name: str, *, adapter, now=None, log=print) -> dict:
     return {"touched": sorted(set(touched)), "posts": posts_seen, "errors": errors,
             "inbox": inbox_state,
             "follow": {k: follow[k] for k in ("requested", "fetched", "new_replies", "failed")}}
+
+
+def _collect_webhook_replies(adapter, replies_dir: str, owned, *, now, errors: list, log) -> list:
+    """Webhook（`feed`・`item: comment`）で届いたコメントのうち、**自分の投稿へのもの**を返信の台帳に写す。
+
+    Meta 計画 段 6 の条件 4。行の形は `conversation()` と同じ（`via: webhook` が付く）で、`thth replies`・
+    `unanswered`・`events` がそのまま読む。重複は返信の id で除く（巡回で同じコメントを採っていても 2 行にしない）。
+    **取得の記録（`kind: fetch`）は書かない**——巡回の刻みと「最後に採った時刻」は巡回だけのもの。
+    自分の投稿でないものは台帳に写さない（記録は `state/<口座>/inbox/` に残る）。
+    """
+    if not getattr(adapter, "WEBHOOK_REPLIES", False):
+        return []
+    getter = getattr(adapter, "webhook_replies", None)
+    if not callable(getter):
+        return []
+    try:
+        rows = getter()
+    except Exception as e:  # noqa: BLE001 — 記録が読めなくても採取の他は続ける
+        errors.append(f"webhook: {redact_mod.redact(str(e))}")
+        return []
+    if not rows:
+        return []
+    mine = {str(pid) for pid in owned()}
+    by_post: dict = {}
+    for row in rows:
+        root = row.get("root_post") if isinstance(row, dict) else None
+        if isinstance(root, str) and root in mine and _safe_post_id(root):
+            by_post.setdefault(root, []).append(row)
+    touched = []
+    for post_id, items in sorted(by_post.items()):
+        path = os.path.join(replies_dir, f"{postid_mod.to_filename(post_id)}.ndjson")
+        known = {reply_row_id(row) for row in _reply_rows(path)}
+        fresh = []
+        for row in items:
+            rid = row.get("message_id")
+            if not isinstance(rid, str) or not rid or rid in known:
+                continue
+            known.add(rid)
+            fresh.append({**row, "kind": "reply", "post_id": post_id, "collected_at": jst.iso(now)})
+        if fresh:
+            _append_ndjson(path, fresh)
+            touched.append(path)
+            log(f"返信 {len(fresh)} 件（Webhook）: {post_id}")
+    return touched
 
 
 def _collect_follow(adapter, account_cfg: dict, due: list, *, now, owned, paid_reads: bool,

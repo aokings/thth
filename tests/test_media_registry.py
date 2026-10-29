@@ -18,7 +18,7 @@ import pytest
 
 from thth import (account_cli, accounts, adapters, dashboard_cli, leave_gate, limits_config,
                   limits_policy, media, media_capabilities, media_delivery, media_registry,
-                  media_traits, queuefile, scenario, thread_read)
+                  media_traits, queuefile, scenario, thread_read, webhook)
 
 REGISTRY = media_registry.names()
 NON_ADAPTER = media_registry.NON_ADAPTER_NAMES
@@ -69,6 +69,8 @@ TABLES = {
     "dashboard_cli.MEDIUM_JA": lambda: set(dashboard_cli.MEDIUM_JA),
     "thread_read.SOURCE_BY_MEDIUM": lambda: set(thread_read.SOURCE_BY_MEDIUM),
     "thread_read.PERMISSION_BY_MEDIUM": lambda: set(thread_read.PERMISSION_BY_MEDIUM),
+    # Meta 計画 段 6: Webhook を購読する欄（Meta の Graph の媒体だけ・ほかは registry に理由）。
+    "webhook.SUBSCRIBE_FIELDS": lambda: set(webhook.SUBSCRIBE_FIELDS),
     **{f"dashboard/{level}.html THTH_MEDIUM": (lambda level=level: _template_medium(level))
        for level in ("all", "project", "campaign", "series")},
 }

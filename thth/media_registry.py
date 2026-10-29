@@ -63,6 +63,11 @@ NOT_LISTED: dict[tuple[str, str], str] = {
     **{("thread_read.PERMISSION_BY_MEDIUM", medium):
        "枝の読み取りに権限の名前が無い（公開の読み取り・provenance.permission は None）"
        for medium in ("bluesky", "mastodon", "x")},
+    # Meta 計画 段 6: Webhook を購読する欄（`webhook.SUBSCRIBE_FIELDS`）。Meta の Graph の媒体だけ。
+    **{("webhook.SUBSCRIBE_FIELDS", medium):
+       "Webhook の受け口（`/webhook/meta`）は Meta の Graph の通知だけを受ける（Threads の webhook は別のアプリ・"
+       "別の署名で、段 6 の範囲の外。Bluesky・Mastodon・X は Meta ではない）"
+       for medium in ("threads", "bluesky", "mastodon", "x")},
 }
 
 

@@ -4,8 +4,8 @@
   "main": "src/worker.js",
   "compatibility_date": "2026-09-01",
   "r2_buckets": [{"binding":"MEDIA_BUCKET","bucket_name":"thth-media"}],
-  "durable_objects": {"bindings": [{"name":"MEDIA_OBJECT","class_name":"MediaObject"}, {"name": "AUTH_RELAY", "class_name": "AuthRelay"}, {"name":"PERSON","class_name":"Person"}, {"name":"ACCOUNT","class_name":"Account"}, {"name":"DELETION_INBOX","class_name":"DeletionInbox"}, {"name":"INVITE_OBJECT","class_name":"InviteObject"}, {"name":"LOGIN","class_name":"Login"}]},
-  "migrations": [{"tag": "v1-relay", "new_sqlite_classes": ["AuthRelay"]}, {"tag":"v2-approval","new_sqlite_classes":["ApprovalPerson","ApprovalSession"]}, {"tag":"v3-leave","new_sqlite_classes":["ApprovalAccount","DeletionInbox"]}, {"tag":"v4-media","new_sqlite_classes":["MediaObject"]}, {"tag":"v5-invite","new_sqlite_classes":["InviteObject"]}, {"tag":"v6-no-approval-session","deleted_classes":["ApprovalSession"]}, {"tag":"v7-rename-person","renamed_classes":[{"from":"ApprovalPerson","to":"Person"},{"from":"ApprovalAccount","to":"Account"}]}, {"tag":"v8-login","new_sqlite_classes":["Login"]}],
+  "durable_objects": {"bindings": [{"name":"MEDIA_OBJECT","class_name":"MediaObject"}, {"name": "AUTH_RELAY", "class_name": "AuthRelay"}, {"name":"PERSON","class_name":"Person"}, {"name":"ACCOUNT","class_name":"Account"}, {"name":"DELETION_INBOX","class_name":"DeletionInbox"}, {"name":"INVITE_OBJECT","class_name":"InviteObject"}, {"name":"LOGIN","class_name":"Login"}, {"name":"WEBHOOK_INBOX","class_name":"WebhookInbox"}]},
+  "migrations": [{"tag": "v1-relay", "new_sqlite_classes": ["AuthRelay"]}, {"tag":"v2-approval","new_sqlite_classes":["ApprovalPerson","ApprovalSession"]}, {"tag":"v3-leave","new_sqlite_classes":["ApprovalAccount","DeletionInbox"]}, {"tag":"v4-media","new_sqlite_classes":["MediaObject"]}, {"tag":"v5-invite","new_sqlite_classes":["InviteObject"]}, {"tag":"v6-no-approval-session","deleted_classes":["ApprovalSession"]}, {"tag":"v7-rename-person","renamed_classes":[{"from":"ApprovalPerson","to":"Person"},{"from":"ApprovalAccount","to":"Account"}]}, {"tag":"v8-login","new_sqlite_classes":["Login"]}, {"tag":"v9-webhook","new_sqlite_classes":["WebhookInbox"]}],
   "ratelimits": [{"name":"MEDIA_PUBLIC_LIMIT","namespace_id":"21301","simple":{"limit":120,"period":60}},
     {"name":"MEDIA_CONTROL_LIMIT","namespace_id":"21302","simple":{"limit":600,"period":60}},
     {"name":"MEDIA_UPLOAD_IP_LIMIT","namespace_id":"21304","simple":{"limit":120,"period":60}},
@@ -31,10 +31,12 @@
   // RELAY_PUBLIC_LIMIT と API_KEY_LIMIT を使い、新しい namespace は作らない）。
   // 3.13.0: DO の class と binding の名前を改めた（ApprovalPerson → Person・ApprovalAccount → Account。
   // migration v7-rename-person の renamed_classes で中身はそのまま）。回数制限は名前だけ改め、namespace_id は変えない。
+  // Meta 計画 段 6: Meta の Webhook の受け口 /webhook/meta（DO は WebhookInbox・migration v9-webhook）。
+  // secret は META_APP_SECRET（署名の照合）と META_WEBHOOK_VERIFY_TOKEN（購読の確認）。新しい回数制限は作らない。
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "run_worker_first": ["/media/*", "/media-upload/*", "/m/*", "/data-deletion", "/data-deletion-status", "/approve/*", "/approval/*", "/pending", "/pending/*", "/activity", "/activity/*", "/invite/*", "/relay/*", "/api/*", "/login/*", "/callback", "/callback/*", "/oauth/client-metadata.json"]
+    "run_worker_first": ["/media/*", "/media-upload/*", "/m/*", "/data-deletion", "/data-deletion-status", "/approve/*", "/approval/*", "/pending", "/pending/*", "/activity", "/activity/*", "/invite/*", "/relay/*", "/api/*", "/login/*", "/webhook", "/webhook/*", "/callback", "/callback/*", "/oauth/client-metadata.json"]
   },
   // observability は有効にしない。認可コードはクエリに乗るので、
   // ログに残す動機を最初から作らない（設計 §3.6 の礼儀と同じ趣旨）。

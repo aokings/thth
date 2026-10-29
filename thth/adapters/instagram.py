@@ -170,6 +170,17 @@ class InstagramAdapter(fb.FacebookAdapter):
         # threads_media と同じ名で持つ（`media_delivery` の journal の instance は base_url）。
         self.user_id = self.ig_user_id
 
+    # IG のコメントの Webhook は Advanced Access が要る（計画 段 6）。審査まで巡回が正本・間隔も変えない。
+    WEBHOOK_REPLIES = False
+
+    def _webhook_messages(self) -> list:
+        """IG の Webhook（`mentions`・段 6 で試す・G-8）は読む口（inbox・mentions）に出さない。
+
+        親のページの Webhook の記録を IG の行に化けさせない（`FacebookAdapter` の版はページの id で引く）。
+        届いたかは `thth webhook status` の口座ごとの数で見る。購読（`subscribe_webhooks`）は親のページの鍵で同じ口。
+        """
+        return []
+
     @classmethod
     def from_account(cls, account_cfg: dict, token: dict):
         """台帳と `.token` から組み立てる。**`ig_user_id` が無い・数字でなければ断る。**"""

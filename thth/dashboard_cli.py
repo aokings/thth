@@ -66,7 +66,9 @@ KIND_JA = {"scenario_stalled": "停滞", "series_low": "ストック不足", "un
            "ads_account_status": "広告アカウントの状態", "ads_spend_over_estimate": "広告の支出が見積もり超え",
            "ads_spend_cap_near": "広告の支出が上限に近い", "ads_budget_low": "広告の月の上限の残りが少ない",
            "ads_spend_cap_unset": "広告アカウントに支出の上限が無い", "ads_token_expiring": "広告の鍵の期限が近い",
-           "ads_read_failed": "広告の口座を読めない"}
+           "ads_read_failed": "広告の口座を読めない",
+           # Meta 計画 段 6: Webhook の受け口から取り込めない（`thth/webhook.py`・続いている状態）。
+           "webhook_down": "Webhook の取り込みが止まっている"}
 # 広告の出来事の次の一手（題は `KIND_JA`）。
 ADS_NEXT = {"ads_active_outside_thth": "広告マネージャで誰が始めたか確かめ、要らなければ止める",
             "ads_no_end_time": "広告マネージャで終了日を入れるか止める",
@@ -527,6 +529,8 @@ def _event_text(event, mediums, threads, series_by_id, heads):
         return f"はてなブログの原稿 — {why}", "中身と理由を確かめる"
     if kind == "delivery_behind":
         return "はてなブログの記事 — 正本を直したが記事は前のまま", "更新するか決める"
+    if kind == "webhook_down":
+        return f"{medium} の Webhook の取り込みが止まっている", "thth webhook status で理由を見る（thth worker が動いているか）"
     if kind in ADS_NEXT:
         return f"広告 {event.get('adaccount') or event.get('account')} — {KIND_JA[kind]}", ADS_NEXT[kind]
     if kind == "not_after_passed":

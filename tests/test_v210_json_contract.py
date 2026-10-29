@@ -103,6 +103,8 @@ COMMANDS += ['quota']
 COMMANDS += ['comments']
 # Meta 計画 段 4: 広告の口座を読む（読むだけ・auth は端末での対話なので --json を持たない）。
 COMMANDS += ['ads add', 'ads accounts', 'ads doctor', 'ads show', 'ads insights', 'ads collect']
+# Meta 計画 段 6: Webhook の購読・取り込み・様子（--json は 1 つの値・失敗は stdout を空に）。
+COMMANDS += ['webhook subscribe', 'webhook pull', 'webhook status']
 
 
 def test_json_table_covers_every_parser():

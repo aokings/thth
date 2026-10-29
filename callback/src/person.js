@@ -1,9 +1,10 @@
-// VM→Worker の署名つき relay（/relay/v/{person,account,deletion,invite,activity}/…）の受け口と、
+// VM→Worker の署名つき relay（/relay/v/{person,account,deletion,invite,activity,webhook}/…）の受け口と、
 // 招待・退会・添付・削除・/activity が使う共通の部品。3.13.0 で approval.js から改名した
 // （承認ページ /approve/<token> と承認待ちの一覧 /pending は無い）。旧 path の /approval/… は
 // 3.12.0 の VM が deploy の間に叩くので 1 版の間だけ受ける。
 import {digest, STATE_PATTERN, HASH_PATTERN, reply} from './relay.js';
 import {deletionStub} from './deletion.js';
+import {webhookStub} from './webhook.js';
 export const PERSON = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
 export const TTL = 600_000;       // /activity に入った session（cookie）は 10 分
 export const LIST_LOCK_MS = 900_000; // /activity に入る secret を 5 回間違えたら 15 分閉じる（時間で戻る）
@@ -147,11 +148,13 @@ export async function relayRequest(request,env,url) {
     // 3.13.0: /relay/v/… に改めた。旧 path /approval/… も 1 版の間だけ受ける（署名は叩かれた path で
     // 確かめるので、どちらの path でも VM が署名した path と一致しなければ通らない）。
     // 承認ページの session（…/session/…）は無い。
-    const route=/^\/(?:relay\/v|approval)\/(person|account|deletion|invite|activity)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|list|read|verify|complete|discard|cleanup-retry|authorize|reset|sync)$/.exec(url.pathname);
+    const route=/^\/(?:relay\/v|approval)\/(person|account|deletion|invite|activity|webhook)\/([A-Za-z0-9_.-]+)\/(set|revoke|unlock|status|create|list|read|verify|complete|discard|cleanup-retry|authorize|reset|sync|pull|ack)$/.exec(url.pathname);
     if(!route||request.method!=='POST')return reply(404,{error:'not_found'});
     const [,type,subject,operation]=route;
     // 3.12.0 §3.4 アクティビティ: VM がオーナー（person）ごとの要約を押し上げ、オーナーの操作を受け取る。
-    if(type==='activity'?!PERSON.test(subject)||operation!=='sync':
+    // Meta 計画 段 6: VM が Webhook の通知を取りに来る（pull）・受け取った分を消す（ack）。subject は meta だけ。
+    if(type==='webhook'?!(subject==='meta'&&['pull','ack'].includes(operation)):
+       type==='activity'?!PERSON.test(subject)||operation!=='sync':
        type==='invite'?!HASH_PATTERN.test(subject)||!['create','status','authorize','reset','complete','revoke'].includes(operation):type==='deletion'?!(subject==='inbox'&&operation==='list'||STATE_PATTERN.test(subject)&&['read','verify','complete','discard'].includes(operation)):type==='account'?!PERSON.test(subject)||!['revoke','status','cleanup-retry'].includes(operation):!PERSON.test(subject)||!['set','revoke','unlock','status'].includes(operation))return reply(400,{error:'invalid_request'});
     if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')||''))return reply(400,{error:'invalid_request'});
     if(!env.RELAY_VERIFY_LIMIT || !(await env.RELAY_VERIFY_LIMIT.limit({key:await digest(request.headers.get('cf-connecting-ip')||'unknown-peer')})).success)return reply(429,{error:'rate_limited'});
@@ -163,7 +166,8 @@ export async function relayRequest(request,env,url) {
     if(!env.RELAY_JOB_LIMIT || !(await env.RELAY_JOB_LIMIT.limit({key:await digest(type+'/'+subject)})).success)return reply(429,{error:'rate_limited'});
     const body=JSON.parse(raw);
     if(type==='activity')return activityRelay(env,subject,body,ticket);
-    const stub=type==='invite'?inviteStub(env,subject):type==='deletion'?deletionStub(env):type==='account'?await accountStub(env,subject):await personStub(env,subject);
+    if(type==='webhook'&&!env.WEBHOOK_INBOX)return reply(503);
+    const stub=type==='webhook'?webhookStub(env):type==='invite'?inviteStub(env,subject):type==='deletion'?deletionStub(env):type==='account'?await accountStub(env,subject):await personStub(env,subject);
     const result=await stub.manage(operation,body,ticket,subject);
     return reply(result.status,result.body);
   }catch{return reply(503,{error:'relay_unavailable'});}

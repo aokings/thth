@@ -70,7 +70,9 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    # 4.2.2（S4 §24）: 止まったブックマークのまとめを人が解いた（止まっていた符丁だけ）。通知は送らない。
                    'bookmark_batch_resumed',
                    # 上限と連投の柵 段 4（§9.2）: 人が媒体の観測を足した（媒体と kind の語だけ）。通知は送らない。
-                   'media_observed'))
+                   'media_observed',
+                   # Meta 計画 段 6: ページに Webhook を購読させた（欄の名前の前後だけ）。通知は送らない。
+                   'webhook_subscribed'))
 SECRET = re.compile(r'token|secret|client_id|password|jwt|env|email|notification|smtp|ping|verifier|private_key', re.I)
 MAIL = re.compile(r'[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+')
 

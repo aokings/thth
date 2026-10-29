@@ -6,6 +6,7 @@
   - 招待の完了を拾う（`invites.run_once`）
   - 持ち主ごとの要約を Worker へ押し上げ、/activity で頼まれた操作を行う（`activity.run_once`）。
     3.14.0: 同じ sync で鍵の表を押し上げ、thth.me/api/v1 の依頼を行う（`api_requests`・待ちがあれば 2 秒ごと）
+  - Meta の Webhook の通知を取り込む（`webhook.run_due`・Meta 計画 段 6・購読した口座があるときだけ）
   - ディスクの版が動いたら自分で終わる（`worker_version`・systemd が新しい版で起こし直す）
 
 3.13.0 で `approval_jobs`・`thth approval-worker`・`thth-approval-worker.service` から改名した。
@@ -73,6 +74,10 @@ def run_once(credentials_path):
     # 動きの一覧（設計 3.12.0 §3.4）: 持ち主ごとの要約を Worker へ押し上げ、/activity で頼まれた操作を行う。
     from . import activity
     activity.run_once(credentials_path)
+    # Meta 計画 段 6: Webhook の通知を Worker から取り込む（購読が無ければ何もしない・30 秒に 1 回・
+    # 失敗は `state/_webhook/status.json` に残して上げない）。
+    from . import webhook
+    webhook.run_due()
 
 
 def command(args):

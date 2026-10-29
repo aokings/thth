@@ -84,6 +84,11 @@
   （Meta のデータに触れる期限・通常 90 日）が 14 日を切った・過ぎた（`thth maintain` の
   `data_access_expiring`・`data_access_expired` と同じ物差し）。`ref` は期限の時刻（ISO）、`state`・
   `remaining_days` が付く。認可し直して期限が変われば別の id。鍵の値は読まない・出さない。
+- `webhook_down`（Meta 計画 段 6・条件 5）: Webhook を購読した口座で、受け口から取り込めなかった時間（`ref`
+  `pull_failed`・5 分以上続いたもの・`occurred_at` が始まり・`recorded_at` が戻り）、Worker で取り込む前に 7 日を
+  過ぎて消えた通知の数（`expired`）、満杯で断った数（`capacity`）、購読したのに一度も取り込めていない
+  （`never_pulled`）。今も取り込めていなければ `ongoing: true`。**過去の分は Meta から取り直せない**（36 時間の
+  送り直しを越えた分）。記録は `state/_webhook/`（`thth/webhook.py`）。本文は入れない。
 - `delivery_resolved`（4.0 S5 §5.3）: 人が衝突を解いた（台帳の `op: resolve` の行・状態に関わらず）。
   id は配信の台帳の出来事と同じ（`thth.delivery/1|<delivery>|<seq>`）。
 
@@ -147,7 +152,9 @@ KINDS = ("published", "retracted", "reply_received", "mention_received",
          # Meta 計画 段 4（D-5・C-2 の 5）: 広告の口座の見張り（どれも続いている状態・`thth/ads/watch.py`）。
          "ads_active_outside_thth", "ads_no_end_time", "ads_account_status", "ads_spend_over_estimate",
          "ads_spend_cap_near", "ads_budget_low", "ads_spend_cap_unset", "ads_token_expiring",
-         "ads_read_failed")
+         "ads_read_failed",
+         # Meta 計画 段 6（条件 5）: Webhook の受け口から取り込めなかった時間・消えた数・断った数（今も続けば ongoing）。
+         "webhook_down")
 # 出さない期限を過ぎた原稿の出来事の id の版の語（4.5.6）。
 NOT_AFTER_EVENT_PREFIX = "thth.not_after/1"
 # 反応の出来事の id の版の語（設計 4.0 S6 §6.3）。
@@ -713,6 +720,15 @@ def _state_events(name, cfg, now=None):
     return out, cannot
 
 
+def _webhook_events(name, now):
+    """`webhook_down`（Meta 計画 段 6）。購読していない口座は何も読まない・Meta も Worker も呼ばない。"""
+    from . import webhook
+
+    def make(occurred, recorded, ref, summary, ongoing):
+        return _event("webhook_down", name, occurred, recorded, ref, summary, ongoing=ongoing or None)
+    return webhook.events_for(name, now=now or jst.now_jst(), make=make)
+
+
 def _scenario_events(read, now, allowed_names, cannot_say):
     """`scenario_stalled`・`series_low`（設計 5.0 §4.3）。project ごとに 1 回。**読むだけ。**
 
@@ -903,6 +919,10 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
         rows, cannot = _state_events(name, cfg, now)
         events += rows
         cannot_say.update(cannot)
+        try:
+            events += _webhook_events(name, now)
+        except Exception:  # noqa: BLE001 — Webhook の記録が読めなくても他の出所は出す
+            cannot_say.add("webhook_unreadable")
         try:
             events += _stock_events(name, cfg, now, sent_rows)
         except Exception:  # noqa: BLE001 — queue が読めなくても他の出所は出す

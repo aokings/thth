@@ -242,7 +242,9 @@ def bind(adapter,cfg):
              # Meta 計画 段 1（10/29）: 直す・隠す・消すの口。止めた口座では呼べない。
              'edit_post','fetch_reply','hide_reply','delete_reply',
              # Meta 計画 段 3（10/29）: Instagram の公開の上限を読む・コメント欄の開け閉め・フォロワー数。
-             'publishing_limit','set_comments_enabled','followers_count'}
+             'publishing_limit','set_comments_enabled','followers_count',
+             # Meta 計画 段 6（10/29）: Webhook の購読（ページの subscribed_apps）と、受けた記録を読む口。
+             'subscribe_webhooks','subscribed_webhooks','webhook_replies'}
     for name in methods:
         original=getattr(adapter,name,None)
         if not callable(original):continue

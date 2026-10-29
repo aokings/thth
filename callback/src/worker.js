@@ -11,6 +11,8 @@ import {activityRequest} from './activity.js';
 import {apiRequest} from './api.js';
 export {Login} from './login-object.js';
 import {loginRequest,loginApiRequest} from './login.js';
+export {WebhookInbox} from './webhook-object.js';
+import {webhookRequest} from './webhook.js';
 // 2026-10-10: 画面の言葉の切り替え（person.js の frame）。ブラウザの第一言語が日本語でなければ、
 // 最初から English を選んでおく。人が見る画面（招待・ログイン・アクティビティ・認可の戻り）だけ。
 export function prefersEnglish(request){
@@ -42,6 +44,8 @@ function route(request,env,url){
   // VM→Worker の署名つき relay（3.13.0 で /approval/ から /relay/v/ へ。旧 path は 1 版の間だけ）。
   // 認可の relay（/relay/<state>）より先に見る。
   if(url.pathname.startsWith('/relay/v/')||url.pathname.startsWith('/approval/'))return relayRequest(request,env,url);
+  // Meta 計画 段 6: Meta の Webhook の受け口（GET の確認・POST の通知）。
+  if(url.pathname==='/webhook'||url.pathname.startsWith('/webhook/'))return webhookRequest(request,env,url);
   if(url.pathname.startsWith('/invite/'))return inviteRequest(request,env,url);
   if(url.pathname==='/activity'||url.pathname.startsWith('/activity/'))return activityRequest(request,env,url);
   // ブラウザ式の thth login（設計 3.14.2 §2）: CLI が始めて待ち、人がブラウザで許可する。
