@@ -44,10 +44,14 @@ SOURCE_BY_MEDIUM = {
     "mastodon": "mastodon:/context",
     "threads": "threads:/conversation",
     "x": "x:/2/tweets/search/recent(conversation_id)",
+    # 10/29 段 0: 根の 1 件と `/{post_id}/comments` の頁（`FacebookAdapter.conversation`）。
+    "facebook": "facebook:/comments",
 }
-# `provenance.permission`（Threads だけ・他は None）。
+# `provenance.permission`（Meta の 2 媒体・他は公開の読み取りで権限の名前が無いので None）。
 PERMISSION_BY_MEDIUM = {
     "threads": "threads_read_replies",
+    # ページの投稿へのコメント（`FacebookAdapter.probe` の comments の行と同じ権限）。
+    "facebook": "pages_read_user_content",
 }
 
 class ThreadReadError(Exception):

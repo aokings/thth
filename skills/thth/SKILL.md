@@ -73,7 +73,7 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 ## キャンペーンとシリーズ（scenario・5.0 段 1）
 
 抜け・漏れ・忘れを 1 枚で見るための宣言。**THTH は読んで数えるだけ**（原稿を書かない・段を進めない・予約を置かない）。宣言は窓口が原稿の隣に書く: `docs/sns/scenarios/<id>.md`（queue の 1 つ上の `scenarios/`）。
-- キャンペーン（糸）: front-matter に `thth_scenario: 1`・`kind: thread`・`id`（小文字・数字・`-`・`_`、ファイル名と同じ）・`title`・任意で `goal_text`（60 字まで）・`stale_after_days`（既定 7）・`started`（日付）。本文に段を上から順に 1 行ずつ `- <段>: <媒体> <条件>`（媒体は `hatena_bookmark`・`hatenablog`・`site`・`threads`・`x`・`bluesky`・`mastodon`、SNS は `threads,x` と並べられる。条件は `need=<本数>`・`tag=<タグ>`（はてブ・既定は id）・`signal=<出来事>`（site・既定 `article_published`）・`replies_within_hours=<時間>`（`warm`））。出来事は `- 2026-10-27 article_published <短い文>`（`researched`・`hypothesis`・`article_published`・`closed` など。`researched` は collect、`hypothesis` は diary の本数の代わりになる。`closed` で終わり）。
+- キャンペーン（糸）: front-matter に `thth_scenario: 1`・`kind: thread`・`id`（小文字・数字・`-`・`_`、ファイル名と同じ）・`title`・任意で `goal_text`（60 字まで）・`stale_after_days`（既定 7）・`started`（日付）。本文に段を上から順に 1 行ずつ `- <段>: <媒体> <条件>`（媒体は `hatena_bookmark`・`hatenablog`・`site`・`threads`・`x`・`bluesky`・`mastodon`・`facebook`、SNS は `threads,x` と並べられる。条件は `need=<本数>`・`tag=<タグ>`（はてブ・既定は id）・`signal=<出来事>`（site・既定 `article_published`）・`replies_within_hours=<時間>`（`warm`））。出来事は `- 2026-10-27 article_published <短い文>`（`researched`・`hypothesis`・`article_published`・`closed` など。`researched` は collect、`hypothesis` は diary の本数の代わりになる。`closed` で終わり）。
 - シリーズ（型）: `kind: series`・`accounts: a, b`・`slots: tue 07:00, fri 07:00`（曜日を省けば毎日）・`stock_floor`（既定 2）・任意で `material_remaining`・`material_written_at`（窓口が書く数と日付）。期日の型は `deadline: true`（原稿の `not_after` を数える）。
 - 原稿の札: front-matter に `thread: <id>`・`series: <id>`。**承認の指紋に入らない**（付け足しても直しても再承認は要らない）。宣言が無い id は lint が `thread_not_declared`／`series_not_declared` の予告を出すだけ（断らない）。はてブはタグで結ぶ（札は書かない）。
 - 命令: `thth scenario <project|account> [--json]`（一覧・`schema: "thth.scenario/1"`）・`thth scenario show <project> <id> [--json]`（段ごとの原稿の名前と状態・出来事。キャンペーンは `stages[].items`（段ごとの成果物）、シリーズは `slots_upcoming`（今後 4 週の枠）、両方に `items[].delivery`・`post_ids` と `deliveries`）・`thth scenario lint <project> [--json]`（宣言の誤り・無い id を指す札・未分類の原稿）。`next` は名詞（「x に 1 本（announce）」「article_published を糸のファイルに 1 行」）で、本文は入らない。読めない台帳は `cannot_say`（0 と混ぜない）。
@@ -95,6 +95,15 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 ## X のトレンドと語ごとの投稿数（3.19.0）
 
 `thth trends <account> [--woeid N] [--max N]`（既定は日本・20 件・1 回 0.010 USD）・`thth counts <account> <語> [--granularity hour|day]`（直近 7 日・1 回 0.005 USD）（MCP には無い）。X だけ・要求は 1 回・返すだけで保存しない・月の X 予算に入り 1 日 60 本には数えない。話題選びの材料に使う——トレンドの語へ機械的に投稿しない。いまのトークンで通るかは未確認（断りは X の文面が短く残る）。
+
+## Facebook ページ（5.1.0・10/29 段 0）
+
+- **口座の作り方**: 1 ページを 1 口座で扱う。`thth account add <口座> --media facebook --project <p> --handle <ページID> --by <名前>` のあと `thth auth <口座> --by <名前>`（VM で人が打つ・MCP には無い）。`--handle` はページの「基本データ → ページの透明性」に出る「ページID」（数字）——**ページの URL の `profile.php?id=` の id ではない**（その id で作ると認可で `facebook_page_not_granted` になり、断り文に許可されたページの名前と id が並ぶ）。認可のログは既定で `$THTH_ROOT/state/_auth/<口座>-<日時>.log`（画面に「ログ: <パス>」）。
+- **post_id の形**: `<ページID>_<数字>`（例 `1361492233719922_122096173233535853`）。返信（コメント）の宛先・`thth retract`・`thth thread` はこの形で渡す。
+- **できること**: 文・リンクつきの文（本文の最初の URL がリンクの読み込みになる）・返信（コメント）・画像 1 枚（jpeg・png・gif・4,000,000 バイトまで）・取り下げ・最近の投稿・コメントを読む・数（反応・コメント・シェア・表示）。静かな時間・間隔・日の上限は SNS の表がそのまま効く（`thth media traits facebook`）。
+- **できないこと**（この版の口に無い・`tool.capabilities` の facebook の行）: 動画・複数枚・字幕・投票・返信の制御・返信に画像、いいね・シェア（`unsupported_on_platform`）、inbox と言及、ページ単位の数（フォロワー）、投稿の編集、ほかのページの観測。
+- **文字数の上限 5,000 は THTH の線**（Facebook の公式の上限ではない）。超えると lint が断り、上げ方（口座の台帳の `char_limit`）を添える。
+- **データに触れる期限**: ページの鍵そのものに期限は無いが、Meta の `data_access_expires_at`（通常 90 日）が 14 日を切ると `thth maintain` が `data_access_expiring`（過ぎたら `data_access_expired`）と言い、`thth events` に `token_data_access_expiring` が出る。対処は `thth auth <口座> --by <名前>` のやり直し（人が VM で打つ）。
 
 ## 何を拒むか
 

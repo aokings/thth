@@ -32,7 +32,7 @@ MARKER = "thth_scenario"
 SCENARIOS_DIRNAME = "scenarios"
 ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 KINDS = ("thread", "series")
-SNS_MEDIA = ("threads", "x", "bluesky", "mastodon")
+SNS_MEDIA = ("threads", "x", "bluesky", "mastodon", "facebook")
 MEDIA = ("hatena_bookmark", "hatenablog", "site") + SNS_MEDIA
 STATES = ("active", "stalled", "closed")
 DEFAULT_STALE_AFTER_DAYS = 7
@@ -730,7 +730,7 @@ def thread_status(decl, ledger) -> dict:
 # 画面に出す日本語（`next[].label`・`stalled_label`）。`what` は今までどおり（LLM 向けの符丁まじり）。
 STAGE_JA = {"collect": "リサーチ", "diary": "仮説", "article": "本記事", "announce": "SNS 告知", "warm": "エンゲージ"}
 MEDIUM_JA = {"threads": "Threads", "x": "X", "bluesky": "Bluesky", "mastodon": "Mastodon",
-             "hatenablog": "はてなブログ", "hatena_bookmark": "はてブ", "site": "サイト"}
+             "facebook": "Facebook", "hatenablog": "はてなブログ", "hatena_bookmark": "はてブ", "site": "サイト"}
 STALLED_JA = {"collect": "リサーチが進んでいない", "diary": "仮説のブログが未公開", "article": "本記事が未公開",
               "announce": "SNS 告知が未投稿", "warm": "返信の対応が止まっている"}
 

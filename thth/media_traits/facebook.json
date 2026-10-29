@@ -1,0 +1,127 @@
+{
+  "schema": "thth.media-traits/1",
+  "media": "facebook",
+  "supported": true,
+  "relates_to": [],
+  "traits": [
+    {
+      "id": "facebook.api_rate",
+      "kind": "api_limit",
+      "statement": "ページの呼び出しは Business Use Case の量の制限（24 時間に 4800 × そのページに関わった人の数）。リールの公開は 24 時間に 30 本",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://developers.facebook.com/docs/graph-api/overview/rate-limiting",
+        "checked_at": "2026-10-29",
+        "also": [
+          {
+            "type": "official_doc",
+            "url": "https://developers.facebook.com/docs/video-api/guides/reels-publishing",
+            "checked_at": "2026-10-29"
+          }
+        ]
+      },
+      "confidence": "high",
+      "signals": [
+        "post.daily",
+        "retract.daily",
+        "reply.burst",
+        "reply.daily"
+      ],
+      "penalty": [
+        "rate_limited"
+      ],
+      "defaults": {
+        "post.daily": {
+          "signal": "frequency",
+          "actions": [
+            "post"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 8,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "daily_limit",
+          "count_evidence": "thth_line"
+        },
+        "retract.daily": {
+          "signal": "frequency",
+          "actions": [
+            "retract"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 5,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "retract_limit",
+          "count_evidence": "thth_line"
+        },
+        "reply.burst": {
+          "signal": "frequency",
+          "actions": [
+            "reply"
+          ],
+          "applies_to": [
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "minutes": 10
+          },
+          "count": 10,
+          "key": "op",
+          "on_exceed": "wait",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "burst_limit",
+          "detail": "burst",
+          "count_evidence": "thth_line"
+        },
+        "reply.daily": {
+          "signal": "frequency",
+          "actions": [
+            "reply"
+          ],
+          "applies_to": [
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 50,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "daily_limit",
+          "detail": "reply_daily",
+          "count_evidence": "inferred"
+        }
+      },
+      "notes": "10/29 段 0。根拠は docs/調査_MetaAPIの事実_2026-10-29.md（BUC 4800 × 関わった人・reels_24h 30）。既定の数はどれも量の制限の内側で、post.daily 8・retract.daily 5・reply.burst 10 分に 10 は THTH の運用の線（ほかの SNS と同じ）。reply.daily 50 は THTH の推測（確かさ low）。反応（いいね・シェア）は THTH の facebook の口に無いので reaction.daily の行は持たない（表の thth:reaction.daily のまま）"
+    },
+    {
+      "id": "facebook.text_length",
+      "kind": "observation",
+      "statement": "投稿の本文の公式の上限は確かめられていない。二次の資料に 63,206 字。画面では数百字で「もっと見る」に畳まれる。THTH は 5,000 字を THTH の線として置く（queuefile.MEDIA_LIMITS・台帳の char_limit で上げられる）",
+      "evidence": {
+        "type": "inferred",
+        "by": "THTH開発（段 0）",
+        "at": "2026-10-29"
+      },
+      "confidence": "low",
+      "signals": [],
+      "notes": "公式の頁で上限を読めたら official_doc に直し、MEDIA_LIMITS の線を見直す。媒体が禁じていない長さを THTH が絞っている形なので、超えた断り文に上げ方を書く（queuefile.LIMIT_NOTES）"
+    }
+  ]
+}

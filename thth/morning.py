@@ -846,6 +846,14 @@ def _publish_hold_row(name):
             "next_action_code": healthcheck.next_action_for(reason)}
 
 
+def _data_access_row(name, cfg, now):
+    """データに触れる期限（Meta の `data_access_expires_at`・10/29 段 0）が 14 日を切った・過ぎたら
+    `{"state", "remaining_days", "expires_at"}`、余裕があれば None。鍵の値は読まない。"""
+    from . import maintain
+    access = maintain.data_access_for(cfg, now=now)
+    return access if access and access["state"] else None
+
+
 def _last_notification(name, cfg):
     """最後に SMTP が受領した運用通知（`incident.summary()` と同じ値）。宛先は出さない。"""
     from . import incident
@@ -1238,6 +1246,9 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
                 # 止まったブックマークのまとめ・照合を待つ結果不明（監査 低-6・鍵は足すだけ）。
                 "bookmark_batch": _guard(lambda name=name: _bookmark_batch_row(name, now))}
                if cfg.get("media") == "hatenablog" else {}),
+            # 10/29 段 0: データに触れる期限（facebook の口座だけ・鍵は足すだけ）。
+            **({"data_access": _guard(lambda name=name, cfg=cfg: _data_access_row(name, cfg, now))}
+               if cfg.get("media") == "facebook" else {}),
             # 承認の確定待ち（設計 3.7.0 §B3）。
             "confirm_items": _guard(lambda name=name, cfg=cfg: _confirm_rows(name, cfg, now)),
             "queue": _queue_cell(node),
@@ -1745,6 +1756,14 @@ def _render_today(account, node, out) -> None:
         out(f"    自動の投稿を止めています: {value['reason']}（{value['held_at'] or '時刻不明'} から）"
             f" 次 {value['next_action_code']}"
             f"（X の画面で直してから thth account resume {account} --by <名前>）")
+    access = node.get("data_access") or {}
+    if access.get("cannot_say") is not None:
+        out(f"    データに触れる期限: 言えない: {access['cannot_say']}")
+    elif access.get("value"):
+        value = access["value"]
+        out(f"    データに触れる期限が{'過ぎています' if value['state'] == 'data_access_expired' else '14 日を切りました'}:"
+            f" {value['expires_at']}（残り {value['remaining_days']:.1f} 日）"
+            f"——thth auth {account} --by <名前> で認可し直す")
     batch = node.get("bookmark_batch") or {}
     if batch.get("cannot_say") is not None:
         out(f"    ブックマークのまとめ: 言えない: {batch['cannot_say']}")

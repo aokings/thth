@@ -59,9 +59,19 @@ TOKEN_INCOMPLETE = "token_incomplete"
 UNREADABLE = "unreadable"
 CONFIG_ERROR = "config_error"
 
+# **鍵そのものは生きているが、データに触れる期限（Meta の `data_access_expires_at`・通常 90 日）が近い・
+# 過ぎた**（10/29 段 0・設計 MetaAPI 計画 C-2 の 1）。ページの鍵は期限なし（`TOKEN_NO_EXPIRY`）でも、
+# この期限を過ぎると Meta がデータを返さなくなる見込み（Instagram の権限に効く【推】）。時計は利用者が
+# 最後に活動したときから進み、サーバーからの呼び出しでは延びない読みが自然なので、**延びる前提で
+# 組まない**——残り 14 日を切ったら人を呼び、`thth auth` のやり直し（.token の値が書き直される）を勧める。
+DATA_ACCESS_EXPIRING = "data_access_expiring"
+DATA_ACCESS_EXPIRED = "data_access_expired"
+DATA_ACCESS_WARN_DAYS = 14.0
+
 # 人の手が要る state（`thth maintain` の終了コードが 1 になるもの）
 ATTENTION_STATES = frozenset({REFRESH_FAILED, EXPIRING, EXPIRED, NO_TOKEN,
-                              TOKEN_INCOMPLETE, UNREADABLE, CONFIG_ERROR})
+                              TOKEN_INCOMPLETE, UNREADABLE, CONFIG_ERROR,
+                              DATA_ACCESS_EXPIRING, DATA_ACCESS_EXPIRED})
 
 # **次の一手は媒体が知っている**（`Adapter.TOKEN_SETUP_HINT`・独立監査 1・
 # P2-4・2026-09-13）。ここの文言は `thth maintain` だけでなく **board と
@@ -81,7 +91,69 @@ _MESSAGES = {
     TOKEN_INCOMPLETE: "token に足りない項目があります。`{hint}` を実行してください",
     UNREADABLE: "token を読めません",
     CONFIG_ERROR: "台帳を読めません",
+    DATA_ACCESS_EXPIRING: ("データに触れる期限（data_access_expires_at）が 14 日を切りました。"
+                           "`{hint}` で認可し直してください（鍵そのものに期限はありません）"),
+    DATA_ACCESS_EXPIRED: ("データに触れる期限（data_access_expires_at）を過ぎました。"
+                          "`{hint}` で認可し直してください"),
 }
+
+
+def _unix_iso(value) -> str:
+    import datetime
+    return jst.iso(datetime.datetime.fromtimestamp(value, jst.JST))
+
+
+def data_access_remaining_days(token, now):
+    """`.token` の `data_access_expires_at`（UNIX 秒）から残り日数。**書いていない・0・形違いは None**。
+
+    0 は「期限を持たない」とも「訊けなかった」とも読めるので、期限として扱わない（推測で鳴らさない）。
+    """
+    value = token.get("data_access_expires_at") if isinstance(token, dict) else None
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        return None
+    return (value - now.timestamp()) / 86400.0
+
+
+def data_access_state(remaining_days):
+    """残り日数 → `DATA_ACCESS_EXPIRED`・`DATA_ACCESS_EXPIRING`・None（余裕がある・書いていない）。"""
+    if remaining_days is None:
+        return None
+    if remaining_days <= 0:
+        return DATA_ACCESS_EXPIRED
+    if remaining_days < DATA_ACCESS_WARN_DAYS:
+        return DATA_ACCESS_EXPIRING
+    return None
+
+
+def data_access_for(account_cfg, *, now):
+    """口座の `.token` のデータの期限: `{"state", "remaining_days", "expires_at"}`、書いていなければ None。
+
+    `thth events`（`token_data_access_expiring`）・`thth observe` が読む口。**値（鍵）は出さない**——
+    読むのは期限の数だけ。読めない `.token` は None（鍵の有無は `inspect()` が言う）。
+    """
+    try:
+        token = accounts_mod.load_token(account_cfg, refresh_x=False)
+    except Exception:  # noqa: BLE001 — 読めない token は inspect() の仕事
+        return None
+    remaining = data_access_remaining_days(token, now)
+    if remaining is None:
+        return None
+    return {"state": data_access_state(remaining), "remaining_days": round(remaining, 2),
+            "expires_at": _unix_iso(token["data_access_expires_at"])}
+
+
+def _with_data_access(row, token, now, hint):
+    """期限を持たない鍵の行に、データの期限を書き足す。近い・過ぎたならその state で終える（None なら続ける）。"""
+    remaining = data_access_remaining_days(token, now)
+    if remaining is None:
+        return None
+    row["data_access_remaining_days"] = round(remaining, 2)
+    row["data_access_expires_at"] = _unix_iso(token["data_access_expires_at"])
+    state = data_access_state(remaining)
+    if state is None:
+        return None
+    return _finish(row, state, hint=f"{hint} {row['account']} --by <名前>",
+                   detail=f"残り {remaining:.1f} 日（{row['data_access_expires_at']}）")
 
 
 def inspect(account_name: str, *, now) -> dict:
@@ -175,6 +247,10 @@ def inspect(account_name: str, *, now) -> dict:
         # `obtained_at` が無くて年齢が判らなくても、**期限が無いことは変わらない**。
         # board に「残り 60 日」と嘘を言わせないための分岐（P1-1・(b)）。
         row["no_expiry"] = True
+        # ただし**データに触れる期限**は別の時計（10/29 段 0・Meta の `data_access_expires_at`）。
+        expiring = _with_data_access(row, token, now, hint)
+        if expiring is not None:
+            return expiring
         return _finish(row, OK, detail="期限を持たないトークンです（更新は不要）")
 
     if unreadable is not None:
@@ -319,6 +395,8 @@ def run_maintain(account: str | None = None, *, check: bool = False,
                 remaining = "—"
             else:
                 remaining = f"残り {r['remaining_days']:.1f} 日"
+            if r.get("data_access_remaining_days") is not None:
+                remaining += f"・データの期限 残り {r['data_access_remaining_days']:.1f} 日"
             mark = "要確認" if needs_attention(r) else "  "
             log(f"{mark} {r['account']}: {r['state']}（{remaining}）— {r['message']}")
         if attention:

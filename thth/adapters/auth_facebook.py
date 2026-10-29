@@ -221,11 +221,16 @@ class FacebookAuthProfile(AuthProfile):
         page = next((row for row in pages if str(row.get("id") or "") == page_id), None)
         if page is None:
             # **取り違え防止**（Threads の handle の照合と同じ考え）。id は秘密ではない。
-            seen = "・".join(str(row.get("id")) for row in pages if isinstance(row.get("id"), str))
-            oauth._out(f"保存しませんでした: 台帳 {account_cfg['account']} の page_id は {page_id} ですが、"
-                       f"許可されたページは {seen} です。", log=log)
+            # 名前を添える（10/29 段 0: id だけでは、どれが目当てのページか人に分からなかった）。
+            listed = [fb.page_label(row.get("name"), row.get("id")) for row in pages
+                      if isinstance(row.get("id"), str)]
+            seen = "・".join(listed[:fb.PAGES_LISTED_MAX]) + (
+                f"・ほか {len(listed) - fb.PAGES_LISTED_MAX} ページ" if len(listed) > fb.PAGES_LISTED_MAX else "")
+            oauth._out(f"保存しませんでした: 台帳 {account_cfg['account']} の page_id {page_id} は許可された"
+                       f"ページに無い。許可されたページ: {seen or '（id の読めるページが無い）'}。", log=log)
             raise FlowError("facebook_page_not_granted: 台帳のページが許可されていません。"
-                            "許可の画面でそのページに印を付けるか、台帳の page_id を直してください")
+                            "許可の画面でそのページに印を付けるか、台帳の page_id を直してください（"
+                            + fb.PAGE_ID_HINT + "）")
         page_token = _token_value(page, "page")
 
         debug = self._debug(page_token)

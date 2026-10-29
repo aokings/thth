@@ -456,7 +456,7 @@ def test_既定の数は柵の表から引く(ledger):
             for rule_id, row in (trait.get("defaults") or {}).items():
                 if rule_id == "post.daily":
                     row["count"] = 9
-    for media in ("threads", "x", "bluesky", "mastodon"):
+    for media in ("threads", "x", "bluesky", "mastodon", "facebook"):
         edit_ledger(ledger, media, bump)
     assert accounts.GUARD_DEFAULTS["daily_max_posts"] == 9
     assert accounts.guard_limits({"media": "threads"})["daily_max_posts"] == 9

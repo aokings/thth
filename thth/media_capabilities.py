@@ -29,7 +29,7 @@ key は `CAPABILITIES` に、組合せ・形の不正を名指しする key は 
 """
 from __future__ import annotations
 
-MEDIA = ('mastodon', 'bluesky', 'threads', 'x')
+MEDIA = ('mastodon', 'bluesky', 'threads', 'x', 'facebook')
 
 # 語彙。`body_only` だけ理由を取らない（「本文に書く」が理由そのもの）。
 PREFIXES = ('unsupported', 'unverified', 'ascii_only')
@@ -58,6 +58,9 @@ NOT_MEASURED = 'unverified: provider_not_measured'
 # 引用は「API に無い」のではなく、**自己サーブの tier では使えない**（2.14 §7 の
 # 一次資料: "Quote-posting … requires an Enterprise plan"）。理由を tier に名指す。
 TIER_ONLY = 'unsupported: provider_tier_enterprise_only'
+# **媒体に口はある（かもしれない）が、THTH のこの版がまだ渡していない**（facebook・10/29 段 0）。
+# 「Facebook にできない」と書かない（媒体の事実でなく THTH の口の範囲）。
+NOT_ROUTED = 'unsupported: thth_not_routed_in_this_version'
 
 CAPABILITIES = {
     'mastodon': {
@@ -128,6 +131,25 @@ CAPABILITIES = {
         'aac_adts': ADTS, 'asf': ASF,
         'bmff brand': BMFF_BRAND, 'unknown format': UNKNOWN_FORMAT,
     },
+    # 10/29 段 0。この版の口は**画像 1 枚**（`adapters/facebook.py` の `intent_error`・
+    # `POST /{page_id}/photos`）と、本文の最初の URL を `link` に渡すリンクの読み込みだけ。
+    # 動画・複数枚・字幕などは媒体の可否でなく THTH の口の範囲（NOT_ROUTED）。
+    'facebook': {
+        'image': 'supported', 'video': NOT_ROUTED, 'audio': NO_AUDIO,
+        'carousel': NOT_ROUTED, 'poll': NOT_ROUTED, 'quote': NOT_ROUTED,
+        'link': 'body_only', 'gif': 'supported', 'text': NO_TEXT,
+        'thumbnail': NOT_ROUTED, 'captions': NOT_ROUTED,
+        'tags': 'body_only', 'labels': NO_LABEL, 'languages': NOT_ROUTED,
+        'spoiler': NOT_ROUTED, 'reply_control': NOT_ROUTED, 'ghost': NO_GHOST,
+        'visibility_private': PRIVATE, 'offset_styling': NOT_ROUTED,
+        'carousel_quote': NOT_ROUTED,
+        'jpeg': 'supported', 'png': 'supported', 'webp': NOT_ROUTED,
+        'mp4': NOT_ROUTED, 'mov': NOT_ROUTED, 'webm': NOT_ROUTED,
+        'mp3': NO_AUDIO, 'wav': NO_AUDIO, 'flac': NO_AUDIO,
+        'ogg': NO_AUDIO, 'ogg_vorbis': NO_AUDIO, 'vtt': NOT_ROUTED,
+        'aac_adts': ADTS, 'asf': ASF,
+        'bmff brand': BMFF_BRAND, 'unknown format': UNKNOWN_FORMAT,
+    },
 }
 
 # 一語の `supported` が嘘にならないための但し書き。値ではなく静的な語。
@@ -162,6 +184,11 @@ NOTES = {
         'tags': 'body_hashtags_observed_by_the_provider',
         'link': 'provider_generates_the_card_from_the_body_url',
         'mov': 'thth_sends_mp4_only_in_this_version',
+    },
+    'facebook': {
+        'image': 'one_image_per_post_up_to_4000000_bytes_not_on_replies',
+        'gif': 'gif_file_sent_as_a_photo',
+        'link': 'first_url_in_the_body_becomes_the_link_preview',
     },
 }
 
@@ -218,6 +245,12 @@ REFUSALS = {
         'ghost_requires_text': 'ghost post cannot carry files',
         'ghost_combination': 'ghost post with another attachment or option',
         'ghost_reply': 'ghost post as a reply',
+    },
+    'facebook': {
+        'typed_attachment': 'typed attachment kind not routed for this medium',
+        'post_options': 'post option outside the facebook set',
+        'no_media': 'media intent with nothing to send',
+        'reply_media': 'image on a reply (comment) is not routed in this version',
     },
 }
 

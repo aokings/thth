@@ -275,7 +275,11 @@ def test_doctorはfacebookのprobeを並べる(env):
     report = doctor.diagnose("alpha")
     assert not report.get("error"), report.get("error")
     keys = [p["key"] for p in report["probes"]]
-    assert keys[:3] == ["whoami", fb.FacebookAdapter.DEBUG_TOKEN_KEY, "posts"]
+    assert keys[:4] == ["whoami", fb.FacebookAdapter.DEBUG_TOKEN_KEY, fb.FacebookAdapter.DATA_ACCESS_KEY,
+                        "posts"]
+    # 応答に data_access_expires_at が無ければ「言えない」（－）で、× にしない。
+    access = next(p for p in report["probes"] if p["key"] == fb.FacebookAdapter.DATA_ACCESS_KEY)
+    assert access["ok"] is None and "data_access_expires_at" in access["detail"]
     assert report["scopes_recorded"]["count"] == len(fb.SCOPES)
     assert env["page_token"] not in json.dumps(report, ensure_ascii=False)
 

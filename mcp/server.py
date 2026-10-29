@@ -49,6 +49,15 @@ MAP_SHOW_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Facebook ページの 1 段（10/29 段 0・設計 MetaAPI 計画）。口座の作り方・post_id の形・できないこと。
+# 判断はしない——CLI の振る舞いをそのまま言うだけ（正本は skills/thth/SKILL.md の「Facebook ページ」）。
+FACEBOOK_NOTE = (
+    "facebook の口座は 1 ページ 1 口座。作るのは CLI（thth account add <口座> --media facebook --handle <ページID>）"
+    "と VM での thth auth で、MCP には無い。ページID はページの「ページの透明性」に出る数字（URL の profile.php?id= "
+    "の id ではない）。post_id は <ページID>_<数字>。できないこと: 動画・複数枚・字幕・投票・返信に画像・いいね・"
+    "シェア・inbox・ページ単位の数・投稿の編集。文字数の上限 5,000 は THTH の線（台帳の char_limit で上げられる）。"
+    "facebook_data_access の行は Meta のデータに触れる期限（14 日を切ったら thth auth のやり直し）")
+
 TOOLS = [
     {
         "name": "thth_lint",
@@ -487,6 +496,7 @@ TOOLS += [
     {"name": "thth_like",
      "description": ("投稿にいいねする（undo: true で取り消す）。所有者が頼んだとき・方針の範囲でだけ使い、"
                      "返事の代わりにしない。Threads は API にいいねが無いので unsupported_on_platform。"
+                     "facebook の口はいいね・シェア（再投稿）を扱わないので同じく unsupported_on_platform。"
                      "scope が無ければ scope_missing（thth auth のやり直し）"),
      "inputSchema": _REACTION_SCHEMA},
 ]
@@ -522,7 +532,7 @@ TOOLS += [
          "required": ["account", "words"], "additionalProperties": False}},
     {"name": "thth_doctor",
      "description": ("そのトークンで実際に何ができるかを、読み取りだけで測る（thth doctor --json と同じ形・"
-                     "副作用なし・トークンの値は出さない）"),
+                     "副作用なし・トークンの値は出さない）。" + FACEBOOK_NOTE),
      "inputSchema": {"type": "object", "properties": {
          "account": {"type": "string", "description": "account 名"}},
          "required": ["account"], "additionalProperties": False}},

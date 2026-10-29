@@ -315,11 +315,12 @@ def test_返信の窓の既定は媒体の台帳の10分に10_根拠つき():
     # 返信の日の上限（監査 中-1）: どの SNS も 50・数は推測。
     for media in limits_policy.SNS_MEDIA:
         assert limits_policy.default_value("reply.daily", media=media) == 50
-    # 根拠（媒体の性質の台帳の行）があるのは台帳を持つ媒体だけ。facebook（10/29）は
-    # 台帳がまだ無いので、数は同じ 50 で根拠は THTH の線のまま。
+    # 根拠（媒体の性質の台帳の行）は SNS の全媒体が持つ。facebook は 10/29 段 0 で台帳を持った
+    # （それまでは数は同じ 50 で根拠は THTH の線だった）。
+    assert set(limits_policy.LEDGER_SNS_MEDIA) == set(limits_policy.SNS_MEDIA)
     for media in limits_policy.LEDGER_SNS_MEDIA:
         assert limits_policy.resolved("reply.daily", cfg={"media": media})["count_evidence"] == "inferred"
-    assert limits_policy.resolved("reply.daily", cfg={"media": "facebook"})["count_evidence"] == "thth_line"
+    assert limits_policy.resolved("reply.daily", cfg={"media": "facebook"})["trait"] == "facebook.api_rate"
     assert limits_policy.rule("post.daily")["actions"] == ("post",)
     rule = limits_policy.rule("reply.burst")
     assert rule["actions"] == ("reply",) and limits_policy.rule("post.burst")["actions"] == ("post", "retract")

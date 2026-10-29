@@ -3953,8 +3953,13 @@ def cmd_auth(args) -> int:
     Threads は OAuth の往復、Bluesky は handle と App Password の対話
     （正式 stdin は `token set --stdin`）、Mastodon/X は共通 relay 認可。
     """
-    return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code, by=args.by, rehearse=getattr(args, "rehearse", False),
-                              input_func=input if getattr(args, "paste", False) else None)
+    from . import auth_log
+    # `--rehearse` は RAM だけで何も書かない約束なので、ログのファイルも作らない（画面だけ）。
+    with auth_log.open_for(args.account, write=not getattr(args, "rehearse", False)) as tee:
+        return oauth_mod.run_auth(args.account, redirect_uri=args.redirect_uri, code=args.code, by=args.by,
+                                  rehearse=getattr(args, "rehearse", False),
+                                  input_func=input if getattr(args, "paste", False) else None,
+                                  log=tee.log, human_output=tee.human_output)
 
 
 def cmd_maintain(args) -> int:

@@ -2009,8 +2009,10 @@ def _send_locked(account_name, account_cfg, state_dir, run_id, *, text, topic, r
             # ある——`thth forms` が媒体ごとの形と「分ける理由になるもの／
             # ならないもの」を述べる。
             figure = queuefile.length_figure(media, n, limit)
+            note = queuefile.limit_note(media, account_cfg)
             msg = ((f"長すぎます: {figure}。切り詰めません。\n" if figure
                     else f"長すぎます（{n} 字・上限 {limit} 字）。切り詰めません。\n")
+                   + (note + "\n" if note else "")
                    + "分けるかどうかは `thth forms`")
             log(msg)
             _append_run(state_dir, account_name, run_id, mode, "skip", None, None, now,

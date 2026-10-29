@@ -80,6 +80,10 @@
   `ref` は型の id、`approved_future`・`floor`・`next_slot` が付く。id は
   `"ev_" + sha256("thth.scenario/1|<project>|<id>|series_low")[:24]`。`schedule_thin`（口座全体の 1 日の本数）とは
   別の物差し。宣言を 1 つも持たない project では、この 2 つは出ない（読むものも増えない）。
+- `token_data_access_expiring`（10/29 段 0・続いている状態）: 口座の `.token` の `data_access_expires_at`
+  （Meta のデータに触れる期限・通常 90 日）が 14 日を切った・過ぎた（`thth maintain` の
+  `data_access_expiring`・`data_access_expired` と同じ物差し）。`ref` は期限の時刻（ISO）、`state`・
+  `remaining_days` が付く。認可し直して期限が変われば別の id。鍵の値は読まない・出さない。
 - `delivery_resolved`（4.0 S5 §5.3）: 人が衝突を解いた（台帳の `op: resolve` の行・状態に関わらず）。
   id は配信の台帳の出来事と同じ（`thth.delivery/1|<delivery>|<seq>`）。
 
@@ -137,7 +141,9 @@ KINDS = ("published", "retracted", "reply_received", "mention_received",
          # 4.5.6: 承認済みの原稿が、出さない期限（not_after）を過ぎて出ないまま終わった（起きた時刻は期限）。
          "not_after_passed",
          # 5.0 段 1（設計 §4.3）: キャンペーンが止まっている・シリーズの承認済みストックが目安を切った（続いている状態）。
-         "scenario_stalled", "series_low")
+         "scenario_stalled", "series_low",
+         # 10/29 段 0（設計 MetaAPI 計画 C-2 の 1）: 鍵のデータに触れる期限が 14 日を切った・過ぎた（続いている状態）。
+         "token_data_access_expiring")
 # 出さない期限を過ぎた原稿の出来事の id の版の語（4.5.6）。
 NOT_AFTER_EVENT_PREFIX = "thth.not_after/1"
 # 反応の出来事の id の版の語（設計 4.0 S6 §6.3）。
@@ -627,7 +633,7 @@ def _held_events(name, cfg, now):
     return out
 
 
-def _state_events(name, cfg):
+def _state_events(name, cfg, now=None):
     """今も続いている止まりの状態。"""
     from . import guard, inflight as inflight_mod, publish_hold
     out, cannot = [], []
@@ -677,6 +683,15 @@ def _state_events(name, cfg):
                               f"{'・行 ' + rule if rule else ''}）"
                               + (f"。戻すのは thth principal resume {cfg['principal']} --by <名前>" if rule else ""),
                               ongoing=True, rule=rule))
+    from . import maintain
+    access = maintain.data_access_for(cfg, now=now or jst.now_jst())
+    if access and access["state"]:
+        expired = access["state"] == maintain.DATA_ACCESS_EXPIRED
+        out.append(_event("token_data_access_expiring", name, None, None, access["expires_at"],
+                          f"データに触れる期限（data_access_expires_at）を{'過ぎました' if expired else '14 日を切りました'}"
+                          f"（{access['expires_at']}・残り {access['remaining_days']:.1f} 日）。"
+                          f"thth auth {name} --by <名前> で認可し直す",
+                          ongoing=True, state=access["state"], remaining_days=access["remaining_days"]))
     if cfg.get("media") == "x":
         try:
             from . import budget_x, budget_x_posts
@@ -858,7 +873,7 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
                     cannot_say.add("source_unreadable")
             except Exception:  # noqa: BLE001 — repo が読めなくても他の出所は出す
                 cannot_say.add("source_unreadable")
-        rows, cannot = _state_events(name, cfg)
+        rows, cannot = _state_events(name, cfg, now)
         events += rows
         cannot_say.update(cannot)
         try:

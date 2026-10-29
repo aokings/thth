@@ -14,7 +14,15 @@ KNOWN_STATUSES = {"draft", "approved", "posted", "withdrawn"}
 # Bluesky は 300（grapheme・**L2**: bsky-docs）、Mastodon は既定 500（**L2**）。
 # X は 280（3.20.0 から X の重み付き＝twitter-text v3・CJK と全角は 2・URL は 23）。
 # 数え方は `XAdapter.count_text`（`adapters/x_text.py`）。
-MEDIA_LIMITS = {"threads": 500, "x": 280, "bluesky": 300, "mastodon": 500}
+# facebook の 5,000 は **THTH の線**（10/29・段 0）。公式の上限は確かめられていない（二次の資料に
+# 63,206・表示は数百字で畳まれる・`thth/media_traits/facebook.json` の `facebook.text_length`）。
+# 媒体が禁じていないことを THTH が絞っている形なので、断り文に上げ方を書く（`LIMIT_NOTES`）。
+MEDIA_LIMITS = {"threads": 500, "x": 280, "bluesky": 300, "mastodon": 500, "facebook": 5000}
+# 上限が媒体の数でなく THTH の線のとき、超えた断り文に添える 1 行（上げ方を隠さない）。
+LIMIT_NOTES = {
+    "facebook": "この上限は THTH の線です（Facebook の公式の上限ではありません）。"
+                "口座の台帳（accounts/<口座>.json）に \"char_limit\": <字数>（正の整数）を書けば上げられます",
+}
 DEFAULT_MEDIA_LIMIT = 500
 # threads の 450 字警告の閾値（食い違い 2 の裁定・2026-09-09）。絵文字カウントが
 # 実物と一致する保証が無い（L3）ので、上限ぎりぎりに座らないための警告として置く。
@@ -257,6 +265,15 @@ def length_figure(media: str, n: int, limit: int) -> str | None:
     if not getattr(cls, "LENGTH_FIGURE", False):
         return None
     return f"{n}/{limit}（{cls.COUNT_UNIT}）"
+
+
+def limit_note(media: str, account_cfg: dict | None = None) -> str:
+    """超えた断り文に添える 1 行（`LIMIT_NOTES`）。台帳の `char_limit` で上書き済みなら添えない。"""
+    note = LIMIT_NOTES.get(media)
+    override = (account_cfg or {}).get("char_limit")
+    if not note or (isinstance(override, int) and not isinstance(override, bool) and override > 0):
+        return ""
+    return note
 
 
 def length_line(media: str, text: str, account_cfg=None) -> str:

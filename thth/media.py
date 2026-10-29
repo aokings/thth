@@ -348,7 +348,7 @@ def _strong_ref(value):
 # ここから `unsupported_attachment: <媒体>/<種類>` が出るので、
 # `thth/media_capabilities.py` の表と突き合わせる試験が読める場所に要る。
 TYPED_KINDS=('quote','link','poll','text','gif')
-TYPED_ALLOWED={'threads':{'quote','link','poll','text','gif'},'mastodon':{'quote','link','poll'},'bluesky':{'quote','link'},'x':{'poll'}}
+TYPED_ALLOWED={'threads':{'quote','link','poll','text','gif'},'mastodon':{'quote','link','poll'},'bluesky':{'quote','link'},'x':{'poll'},'facebook':set()}
 # 記録に残す「添付の種類」（`sent`／`insights` の `attachment_kinds`・第 10 段）。
 # ファイルの kind と型付きの種類を**同じ 1 つの list** に並べる——`analytics-report
 # --by attachment_kind` は 1 行を種類ごとに数えるので、image と poll が付いた 1 本は

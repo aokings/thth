@@ -17,7 +17,7 @@ from thth import media, media_capabilities as caps, mediaformats, tool_version
 
 SOURCE = {path: path.read_text(encoding='utf-8')
           for path in sorted(Path(thth.__file__).resolve().parent.rglob('*.py'))}
-LITERAL = re.compile(r"unsupported_attachment: (mastodon|bluesky|threads|x)/([a-z0-9_]*)")
+LITERAL = re.compile(r"unsupported_attachment: (" + "|".join(caps.MEDIA) + r")/([a-z0-9_]*)")
 BARE = re.compile(r"unsupported_attachment: ([a-z0-9_][a-z0-9_ ]*)['\"]")
 INSPECTION = re.compile(r"Inspection\(\s*'([a-z0-9_]+)'")
 REQUIRED = ('image', 'video', 'audio', 'carousel', 'poll', 'quote', 'link', 'gif', 'text',

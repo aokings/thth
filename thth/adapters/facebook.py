@@ -100,6 +100,33 @@ _INVALID_TOKEN_CODE = 190
 _URL_IN_TEXT = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&*+,;=%]+")
 
 
+# データに触れる期限の注意の線（`maintain.DATA_ACCESS_WARN_DAYS` と同じ 14 日・計画 C-2）。
+DATA_ACCESS_WARN_DAYS = 14.0
+# 名前の長さの上限（断り文が崩れないように。ページ名は人が付けるので長いことがある）。
+PAGE_NAME_MAX = 80
+# 断り文に並べるページの数の上限（許可されたページが多い人の画面を埋めない）。
+PAGES_LISTED_MAX = 20
+# 台帳の `page_id` の正しい引き方（10/29 段 0・`account add`・`from_account` の断り文で同じ文）。
+PAGE_ID_HINT = ("ページの「基本データ → ページの透明性」に出る「ページID」を書きます"
+                "（ページの URL の profile.php?id= の id は人の画面の id で、API のページ id ではありません）")
+
+
+def page_label(name, page_id) -> str:
+    """断り文に出すページの名乗り: 「名前 id」。**名前が無い・形が違えば id だけ**（落ちない）。
+
+    名前は人が付けた文字列なので、制御文字を空白に替えて長さを切る（断り文の 1 行を崩さない）。
+    """
+    pid = str(page_id) if isinstance(page_id, (str, int)) and not isinstance(page_id, bool) else "?"
+    if not isinstance(name, str):
+        return pid
+    clean = " ".join("".join(c if c.isprintable() else " " for c in name).split())
+    if not clean:
+        return pid
+    if len(clean) > PAGE_NAME_MAX:
+        clean = clean[:PAGE_NAME_MAX] + "…"
+    return f"{clean} {pid}"
+
+
 def graph_origin() -> str:
     """宛先の origin。**公式の HTTPS か、明示した loopback の試験先だけ。**
 
@@ -252,6 +279,7 @@ class FacebookAdapter(base.Adapter):
     # 返信（コメント）に要る権限（L2: pages-api/posts の前提の一覧）。
     REPLY_PERMISSION = "pages_manage_engagement"
     DEBUG_TOKEN_KEY = "facebook_debug_token"
+    DATA_ACCESS_KEY = "facebook_data_access"
 
     prepared_media_supported = True
 
@@ -264,6 +292,8 @@ class FacebookAdapter(base.Adapter):
         self.timeout = timeout
         self.granted_scopes = None
         self.auth_account = "<account>"
+        # `.token` に保存したデータの期限（`thth auth` が書いた値・doctor が今の値と比べる）。
+        self.recorded_data_access_expires_at = None
 
     @classmethod
     def from_account(cls, account_cfg: dict, token: dict):
@@ -276,13 +306,14 @@ class FacebookAdapter(base.Adapter):
         page_id = str(cfg.get("page_id") or "").strip()
         if not PAGE_ID.fullmatch(page_id):
             raise ValueError("台帳に page_id がありません（数字の id。例: \"page_id\": "
-                             "\"61596075596464\"）——どのページに出すかは既定では決められません")
+                             "\"1361492233719922\"。" + PAGE_ID_HINT + "）——どのページに出すかは"
+                             "既定では決められません")
         recorded = token.get("user_id")
         if recorded and str(recorded) != page_id:
             # **取り違え防止**（Threads の handle の照合と同じ考え）。別ページの鍵を
-            # この台帳で使わない。
-            raise ValueError("facebook_page_mismatch: .token のページと台帳の page_id が"
-                             "違います。thth auth で認可し直してください")
+            # この台帳で使わない。どのページ同士かを名前つきで言う（10/29 段 0）。
+            raise ValueError(f"facebook_page_mismatch: .token のページ（{page_label(token.get('page_name'), recorded)}）"
+                             f"と台帳の page_id {page_id} が違います。thth auth で認可し直してください")
         from .. import leave_gate
         adapter = cls(base_url=graph_origin(), access_token=token.get("access_token", ""),
                       page_id=page_id)
@@ -291,6 +322,9 @@ class FacebookAdapter(base.Adapter):
                 and all(type(v) is str for v in scopes)):
             adapter.granted_scopes = frozenset(scopes)
         adapter.auth_account = cfg.get("account") or "<account>"
+        recorded_access = token.get("data_access_expires_at")
+        if isinstance(recorded_access, int) and not isinstance(recorded_access, bool):
+            adapter.recorded_data_access_expires_at = recorded_access
         return leave_gate.bind(adapter, account_cfg)
 
     @classmethod
@@ -644,10 +678,10 @@ class FacebookAdapter(base.Adapter):
         page_id = body.get("id")
         if not isinstance(page_id, str) or not PAGE_ID.fullmatch(page_id):
             raise AdapterError("ページの確認: 応答に id がありません")
-        if self.page_id and page_id != self.page_id:
-            raise AdapterError("facebook_page_mismatch: この鍵は台帳の page_id と別のページの"
-                               "ものです")
         name = body.get("name") if isinstance(body.get("name"), str) else None
+        if self.page_id and page_id != self.page_id:
+            raise AdapterError(f"facebook_page_mismatch: この鍵のページは {page_label(name, page_id)} で、"
+                               f"台帳の page_id {self.page_id} と別のページです")
         return {"user_id": page_id, "username": page_id, "name": name}
 
     def _debug_token(self) -> dict:
@@ -709,6 +743,8 @@ class FacebookAdapter(base.Adapter):
             else:
                 row(self.DEBUG_TOKEN_KEY, "鍵の権限（/debug_token）", "（全権限）", None,
                     "応答に scopes の一覧がありません")
+            row(self.DATA_ACCESS_KEY, "データに触れる期限（data_access_expires_at）", "（全権限）",
+                *self._data_access_verdict(data.get("data_access_expires_at")))
 
         latest = None
         try:
@@ -744,6 +780,32 @@ class FacebookAdapter(base.Adapter):
                     "トークンに乗っています（/debug_token）" if permission in granted
                     else base.not_granted_message(permission).replace("<account>", self.auth_account))
         return results
+
+    def _data_access_verdict(self, value, *, now=None):
+        """`/debug_token` の**今の** `data_access_expires_at` → `(ok, detail)`（10/29 段 0・計画 C-2 の 2）。
+
+        doctor は保存した値でなく今の値を言う。**`.token` は書き直さない**——doctor は読むだけの道具で、
+        `.token` を書くと認可の世代（`doctor._credential_generation`）が変わってしまう。保存した値と
+        違えば、そのことと `thth auth` のやり直し（.token が今の値になる）を言う。過ぎていれば ×、
+        14 日を切っていれば○のまま注意を書く（人を呼ぶのは `thth maintain` の `data_access_expiring`）。
+        """
+        import datetime
+        from .. import jst
+        hint = f"thth auth {self.auth_account} --by <名前>"
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            return None, "応答に data_access_expires_at がありません（期限を言えません）"
+        now = now or jst.now_jst()
+        remaining = (value - now.timestamp()) / 86400.0
+        when = jst.iso(datetime.datetime.fromtimestamp(value, jst.JST))
+        detail = f"{when}（残り {remaining:.1f} 日）"
+        recorded = self.recorded_data_access_expires_at
+        if recorded is not None and recorded != value:
+            detail += f"・.token の記録と違います（{hint} で書き直せます）"
+        if remaining <= 0:
+            return False, detail + f"・過ぎています。{hint} で認可し直してください"
+        if remaining < DATA_ACCESS_WARN_DAYS:
+            return True, detail + f"・14 日を切りました。{hint} で認可し直してください"
+        return True, detail
 
     def quota(self):
         return None

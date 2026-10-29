@@ -316,8 +316,10 @@ def lint_file(path: str) -> list:
         n = queuefile.count_for(media, effective)
         if n > limit:
             figure = queuefile.length_figure(media, n, limit)
-            errors.append(f"length: {media} は上限を超えています: {figure}" if figure
-                          else f"length: {media} は {limit} 字以内（{n} 字）")
+            note = queuefile.limit_note(media, account_cfg)
+            errors.append((f"length: {media} は上限を超えています: {figure}" if figure
+                           else f"length: {media} は {limit} 字以内（{n} 字）")
+                          + (f"。{note}" if note else ""))
         else:
             warn_limit = queuefile.WARN_LIMITS.get(media)
             if warn_limit is not None and n > warn_limit:

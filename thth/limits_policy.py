@@ -211,9 +211,9 @@ THTH_DEFAULTS = (
 # 台帳（`thth/media_traits/`）との写像（段 2・監査 中-1）——**この 1 か所だけ**
 # ---------------------------------------------------------------------------
 
-# 媒体の性質の台帳（`thth/media_traits/`）を持つ SNS。facebook（10/29）はまだ台帳が無いので、
-# 表の行（静かな時間・間隔・日の上限・連投の停止）は効かせるが、台帳への写像には入れない。
-LEDGER_SNS_MEDIA = ("threads", "x", "bluesky", "mastodon")
+# 媒体の性質の台帳（`thth/media_traits/`）を持つ SNS。facebook は 10/29 段 0 で台帳
+# （`facebook.json`・post.daily・retract.daily・reply.burst・reply.daily）を持った。
+LEDGER_SNS_MEDIA = ("threads", "x", "bluesky", "mastodon", "facebook")
 
 # (媒体, 台帳の行の id) → 表の行の id。SNS の 4 媒体の行は表の 1 行（`family: sns`）に集まり、根拠は媒体ごと。
 LEDGER_MAP = {
