@@ -20,7 +20,9 @@
 
 種類（`KINDS`。増やしはしても、名前を変えない・消さない）:
 
-- `published`: 公開した（`sent/` の `sent_at`）。summary は自分の投稿の題（先頭 60 字）。
+- `published`: 公開した（`sent/` の `sent_at`）。summary は自分の投稿の題（先頭 60 字）。緊急の札
+  （`urgent: true`）で静かな時間帯を越えて出した行は `crossed_quiet_hours: true` が付き、summary の末尾に
+  「（緊急の札で静かな時間帯を越えた）」が付く（無ければ今までと同じ形）。
 - `retracted`: 取り下げた（`sent/` の `retracted_at`）。
 - `reply_received`: 自分の投稿に他人の返信が付いた（返信の台帳）。**他人の本文・username は
   入れない**——summary は件数と自分の投稿の題まで（保存しない決まりの線）。本文は `thth thread`。
@@ -239,7 +241,10 @@ def _sent_events(name, titles):
         at = jst.parse(row.get("sent_at"))
         if at is not None:
             # 4.0 S4 §11: 告知の行は結んだ記事を添える（欄を足すだけ・無ければ今までと同じ形）。
-            out.append(_event("published", name, at, at, post_id, f"公開: {titles[post_id]}",
+            crossed = row.get("crossed_quiet_hours") is True
+            summary = f"公開: {titles[post_id]}" + ("（緊急の札で静かな時間帯を越えた）" if crossed else "")
+            out.append(_event("published", name, at, at, post_id, summary,
+                              crossed_quiet_hours=True if crossed else None,
                               announces=row.get("announces"),
                               article=row.get("article") if row.get("announces") else None))
         at = jst.parse(row.get("retracted_at"))

@@ -723,6 +723,8 @@ def _prepare_one(path: str):
         # 4.5.6: 出さない期限（指紋に入る・1 段目に見せる）。
         "not_after": options["not_after"],
         "not_after_line": _not_after_line(fm),
+        # 10/30: 緊急の札（指紋に入る・1 段目に見せる）。
+        "urgent": options["urgent"],
         "approved_sha": approved_sha,
         "digest": approved_sha[:approval_mod.APPROVE_DIGEST_LENGTH],
     }, None
@@ -1660,6 +1662,8 @@ def _show_first_stage(prepared: list, bundle: str, *, as_json: bool, note: str =
             print(f"  告知      : {one['announce']['line']}")
         if one.get("not_after_line"):
             print(f"  期限      : {one['not_after_line']}")
+        if one.get("urgent"):
+            print("  緊急      : urgent: true（静かな時間帯でも timer が出します・最短間隔と本数は守ります）")
         if one.get("warning"):
             print(f"  ⚠ {one['warning']}")
         _print_goal_line(one)
@@ -3461,6 +3465,9 @@ def cmd_queue(args) -> int:
                 phrase = ("（出さない期限を過ぎたので出しません）"
                           if rej["reason"] == queuefile.NOT_AFTER_PASSED else "")
                 print(f"  いま出ない: {rej['file']} — {rej['reason']}{phrase}")
+            if info.get("urgent"):
+                print(f"  緊急の札: {', '.join(info['urgent'])}（静かな時間帯でも timer が出します・"
+                      "最短間隔と本数は守ります）")
             from . import approve_pending
             pending_line = approve_pending.line(info.get("approval") or {})
             if pending_line:
@@ -3517,8 +3524,10 @@ def show_schedule(rows) -> int:
             # 返信の burst の順番待ち（3.25.0）。時刻を過ぎていれば timer の次の run で出る。
             overdue = "  ← burst の順番待ち（返信）" + ("・時刻を過ぎています" if row["past"] else "")
         topic = f" [{row['topic']}]" if row["topic"] else ""
+        # 10/30: 緊急の札（静かな時間帯だけ越えて出す）。遠くの道の行に鍵が無ければ出さない。
+        urgent = " [緊急]" if row.get("urgent") else ""
         print(f"{str(row.get('publish_at') or '')[:16]}  {mark}  {row['account']:22} "
-              f"{row['file']:28}{topic} {row['head']}{overdue}")
+              f"{row['file']:28}{topic}{urgent} {row['head']}{overdue}")
     print(f"—— {len(rows)} 本（承認済み {sum(1 for r in rows if r['status'] == 'approved')}）")
     return 0
 

@@ -94,6 +94,9 @@ SPARSE_FIELDS = ["remote_state", "inflight_resolution", "goal",
 # 目的と公開の時点の目的が違った（`{"from", "to"}`）。目的は承認の指紋に入らないので
 # 公開は止めず、ここと sent に残す。形が合わなければ書かない。
 SPARSE_DICT_FIELDS = ["goal_change"]
+# **真のときだけ出す真偽の項目**（10/30）。`crossed_quiet_hours`: 緊急の札（`urgent: true`）で静かな
+# 時間帯を越えて出した（dry-run は出すはずだった）。無い行の形は変えない。
+SPARSE_TRUE_FIELDS = ["crossed_quiet_hours"]
 
 
 def path_for(state_dir: str, jst_month: str) -> str:
@@ -136,6 +139,9 @@ def _append_run(state_dir: str, record: dict, jst_month: str) -> str:
         if (isinstance(value, dict) and set(value) == {"from", "to"}
                 and all(isinstance(v, str) for v in value.values())):
             line[k] = {"from": value["from"], "to": value["to"]}
+    for k in SPARSE_TRUE_FIELDS:
+        if record.get(k) is True:
+            line[k] = True
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
     return path

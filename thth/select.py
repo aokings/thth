@@ -69,6 +69,9 @@ class SelectResult:
     # `reply_to_file` を持つ chosen には必ずこれが付く（`core._throw_chosen()` も
     # 付いていなければ出さない）。
     resolution: dict | None = None
+    # 緊急の札（`urgent: true`）で静かな時間帯を越えて選んだとき True（`--now` で越えたときは False）。
+    # `core._throw_chosen()` が sent の記録・runs・log に残す。
+    crossed_quiet_hours: bool = False
 
 
 # --------------------------------------------------------------------------
@@ -536,6 +539,14 @@ def _validate_all(files, *, account_name: str, account_cfg: dict, recent_texts: 
             needs_review.append(path)
             continue
 
+        # 5c. 緊急の札（`urgent:`・10/30）が真偽値でない。lint も断るが、承認のあとで書き換えた原稿を
+        # 黙って「札なし」として扱わない（人に見せる）。
+        urgent_problem = queuefile.urgent_problem(fm)
+        if urgent_problem is not None:
+            rejections.append(Rejection(path, urgent_problem))
+            needs_review.append(path)
+            continue
+
         # 6. 媒体の節が無い／文字数超過
         section = queuefile.extract_section(qf.body, media, allow_empty=bool(fm.get("media") or fm.get("attachments")))
         if section is None:
@@ -764,12 +775,25 @@ def _apply_timing_gate(validated, *, rejections: list, type_mismatch: list,
     if not survivors:
         return SelectResult(None, rejections, type_mismatch, needs_review)
 
-    # 11. 静かな時間帯 → 妥当性を通った候補（survivors）を全部落とす（出せる時刻
+    # 11. 静かな時間帯 → 妥当性を通った候補（survivors）を落とす（出せる時刻
     # ではない、というだけ。妥当性の診断はすでに確定しているので変えない）。
+    # **緊急の札（`urgent: true`・10/30 masaru）の付いた原稿だけは残す**——越えるのは静かな
+    # 時間帯だけで、下の最短間隔（12）も、core の本数・停止の印も今までどおり掛かる。札は承認の
+    # 指紋に入っているので（`approval._OPTION_ORDER`）、ここに届く札は承認した札。はてなの配信
+    # 原稿は指紋が別（札を含まない）なので札を見ない。
+    crossed_quiet = False
     if not bypass_pace and in_quiet_hours(now, account_cfg["quiet_hours"]):
+        from . import hatena_entry
+        honors_urgent = not hatena_entry.is_hatena(account_cfg)
+        urgent = [item for item in survivors
+                  if honors_urgent and queuefile.is_urgent(item[0].front_matter)]
         for qf, *_rest in survivors:
-            rejections.append(Rejection(qf.path, "quiet_hours"))
-        return SelectResult(None, rejections, type_mismatch, needs_review)
+            if not (honors_urgent and queuefile.is_urgent(qf.front_matter)):
+                rejections.append(Rejection(qf.path, "quiet_hours"))
+        if not urgent:
+            return SelectResult(None, rejections, type_mismatch, needs_review)
+        survivors = urgent
+        crossed_quiet = True
 
     # 12. 前回投稿から min_interval_hours 未満 → 同じく妥当性を通った候補を全部落とす
     if not bypass_pace and last_post_at is not None:
@@ -789,4 +813,5 @@ def _apply_timing_gate(validated, *, rejections: list, type_mismatch: list,
     survivors.sort(key=lambda t: (t[1], os.path.basename(t[0].path)))
     chosen_qf, _chosen_publish_at, chosen_section, chosen_resolution = survivors[0]
     return SelectResult(chosen_qf, rejections, type_mismatch, needs_review,
-                        section=chosen_section, resolution=chosen_resolution)
+                        section=chosen_section, resolution=chosen_resolution,
+                        crossed_quiet_hours=crossed_quiet)

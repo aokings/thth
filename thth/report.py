@@ -106,6 +106,8 @@ def queue_summary(account_name: str | None, now=None) -> dict:
         counts = {k: 0 for k in STATUS_KEYS}
         type_mismatch = 0
         bundles = 0
+        # 緊急の札（`urgent: true`・10/30）の付いた承認済みでまだ出ていない原稿（静かな時間帯でも出る）。
+        urgent_files = []
         for qf in files:
             fm = qf.front_matter
             if qf.malformed:
@@ -123,6 +125,9 @@ def queue_summary(account_name: str | None, now=None) -> dict:
             status = fm.get("status")
             if status in counts:
                 counts[status] += 1
+            if (not qf.malformed and status == "approved" and not fm.get("post_id")
+                    and queuefile.is_urgent(fm)):
+                urgent_files.append(os.path.basename(qf.path))
         now_val = now if now is not None else jst.now_jst()
         next_file, next_at, next_topic, next_rejections = _next_via_select_one(
             files, account_name=name, account_cfg=account_cfg, now=now_val)
@@ -143,6 +148,7 @@ def queue_summary(account_name: str | None, now=None) -> dict:
             "next_topic": next_topic,
             "next_rejections": next_rejections,
             "waiting_reply": waiting_reply,
+            "urgent": sorted(urgent_files),
             # 承認していない原稿を、確定待ち（1 段目が済み確定が残る）と未依頼に分ける
             # （設計 3.7.0 §B3）。draft の数（counts）の内訳。
             "approval": approve_pending_mod.summary(approve_pending_mod.split(
@@ -301,6 +307,8 @@ def schedule(account_name: str | None = None, *, now=None, days: int | None = No
                 "not_after": not_after.isoformat() if not_after is not None else None,
                 # 読めない期限は「過ぎた」と言わない（select が not_after_invalid で要確認に出す）。
                 "expired": not_after is not None and now > not_after,
+                # 10/30: 緊急の札（静かな時間帯だけ越えて timer が出す）。
+                "urgent": queuefile.is_urgent(fm),
             })
     rows.sort(key=lambda r: (r["publish_at"], r["account"], r["file"]))
     return rows

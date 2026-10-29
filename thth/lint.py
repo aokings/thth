@@ -57,6 +57,8 @@ _REASON_TABLE = (
     ("publish_at: ", "invalid_publish_at"),
     # 4.5.6: 出さない期限（形が違う・publish_at より前）。
     ("not_after: ", "invalid_not_after"),
+    # 10/30: 緊急の札（真偽値でない・使えない原稿の種類）。
+    ("urgent: ", "invalid_urgent"),
     ("status: ", "unknown_status"),
     ("media: ", "invalid_media"),
     ("本文に制御文字", "control_char_in_body"),
@@ -164,6 +166,21 @@ def _bundle_or_none(path: str):
     return bundle_mod.parse_text(text, path), text
 
 
+def urgent_errors(fm, *, where: str | None = None) -> list:
+    """緊急の札（`urgent:`・10/30）の lint。無ければ空（今までどおり）。
+
+    `where` が与えられたら（はてなの配信原稿・連投）札そのものを断る——どちらも timer の静かな
+    時間帯の関門を札で越える道が無い（はてなは指紋に札が入らない・連投は静かな時間帯を見ない）。
+    """
+    if queuefile.urgent_raw(fm) is None:
+        return []
+    if where is not None:
+        return [f"urgent: {where}には使えません（緊急の札は SNS の 1 本の原稿だけ）"]
+    if queuefile.urgent_problem(fm) is not None:
+        return ["urgent: true か false で書きます（緊急の札・静かな時間帯だけ越えて出す）"]
+    return []
+
+
 def not_after_notes(fm, now=None) -> list:
     """出さない期限（`not_after`・4.5.6）の lint。無ければ空（今までどおり）。
 
@@ -209,6 +226,7 @@ def lint_file(path: str) -> list:
         notes=bundle_mod.check(b,account_cfg=cfg)+bundle_mod.editorial_notes(b)
         # 4.5.6: 出さない期限を過ぎていれば警告（形の誤りは `bundle.check()` が言う）。
         notes.extend(note for note in not_after_notes(b.front_matter) if is_warning(note))
+        notes.extend(urgent_errors(b.front_matter, where="連投（thth: 2）"))
         # **目的は lint と承認の入口でだけ見る**（設計 3.6.0 §A1）。`bundle.check()` は
         # 公開の経路からも呼ばれる——目的は札なので、承認のあとの書き換えで公開を
         # 止めない（書き換えは実行記録に「目的の変更」として残る）。
@@ -281,6 +299,8 @@ def lint_file(path: str) -> list:
         errors.append("not_after: はてなブログの配信原稿には使えません（SNS の原稿だけ）")
     else:
         errors.extend(not_after_notes(fm))
+    errors.extend(urgent_errors(
+        fm, where="はてなブログの配信原稿" if account_cfg is not None and hatena_entry.is_hatena(account_cfg) else None))
     if account_cfg is not None and hatena_entry.is_hatena(account_cfg):
         # **はてなブログの配信原稿**（設計 4.0 S1 §3.5）。本文の出所は `article_source` だけで、
         # `## hatenablog` の節・文字数・タグ・返信は見ない（SNS の原稿の検査は通さない）。

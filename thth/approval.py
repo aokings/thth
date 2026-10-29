@@ -100,7 +100,11 @@ _OPTION_ORDER = ("location_id", "share_to_instagram", "media_sources", "media_ma
                  "announces",
                  # 4.5.6: 出さない期限（`not_after`）。値があるときだけ末尾に足す（版は上げない）——
                  # 期限を延ばしたら承認し直し。期限の無い原稿の入力バイト列は今までと同じ。
-                 "not_after")
+                 "not_after",
+                 # 5.0.x（10/30）: 緊急の札（`urgent: true`・静かな時間帯だけ越える）。立っているときだけ
+                 # 末尾に `urgent=true` を足す（版は上げない）——承認のあとに札を付けたら承認し直し。
+                 # 札の無い原稿の入力バイト列は今までと同じ。
+                 "urgent")
 
 
 def is_true(raw) -> bool:
@@ -119,6 +123,7 @@ def publish_options(fm: dict) -> dict:
         "community_id": community_id_of(fm),
         "announces": announces_of(fm),
         "not_after": queuefile.not_after_raw(fm),
+        "urgent": queuefile.is_urgent(fm),
     }
 
 
@@ -180,7 +185,7 @@ def _normalize_not_after(not_after) -> str:
 
 
 def _option_components(location_id, share_to_instagram, community_id=None, announces=None,
-                       not_after=None) -> dict:
+                       not_after=None, urgent=False) -> dict:
     out = {
         "location_id": (location_id or "").strip() if isinstance(location_id, str) else "",
         "share_to_instagram": "true" if is_true(share_to_instagram) else "",
@@ -194,6 +199,8 @@ def _option_components(location_id, share_to_instagram, community_id=None, annou
     until = _normalize_not_after(not_after)
     if until:
         out["not_after"] = until
+    if urgent is True:
+        out["urgent"] = "true"
     return out
 
 
@@ -212,7 +219,7 @@ def compute_approved_components(*, section: str, account: str, reply_to: str | N
                                  location_id: str | None = None,
                                  share_to_instagram=False, media_sources=None, media_manifest=None,
                                  community_id: str | None = None, announces: str | None = None,
-                                 not_after=None) -> dict:
+                                 not_after=None, urgent: bool = False) -> dict:
     """`compute_approved_sha()` が hash する前の、5 項目それぞれの正規化済みの値。
 
     外部レビュー第 3 巡・持ち越し項目 C: 指紋（`compute_approved_sha()` の
@@ -231,7 +238,7 @@ def compute_approved_components(*, section: str, account: str, reply_to: str | N
         "topic": queuefile.normalize_topic(topic) or "",
         "publish_at": _normalize_publish_at(publish_at),
     }
-    out.update(_option_components(location_id, share_to_instagram, community_id, announces, not_after))
+    out.update(_option_components(location_id, share_to_instagram, community_id, announces, not_after, urgent))
     from . import media as media_mod
     component = media_mod.fingerprint_component(media_sources)
     if component:
@@ -247,7 +254,7 @@ def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
                           location_id: str | None = None,
                           share_to_instagram=False, media_sources=None, media_manifest=None,
                           community_id: str | None = None, announces: str | None = None,
-                          not_after=None) -> str:
+                          not_after=None, urgent: bool = False) -> str:
     """承認の対象を固定する sha256（外部レビュー §1・受け入れ 1〜4・11）。
 
     ハッシュの入力は、次の 5 つをこの順序で `\\x1f`（ASCII unit separator）区切りに
@@ -278,7 +285,7 @@ def compute_approved_sha(*, section: str, account: str, reply_to: str | None,
         section=section, account=account, reply_to=reply_to, topic=topic,
         publish_at=publish_at, location_id=location_id,
         share_to_instagram=share_to_instagram, media_sources=media_sources, media_manifest=media_manifest,
-        community_id=community_id, announces=announces, not_after=not_after)
+        community_id=community_id, announces=announces, not_after=not_after, urgent=urgent)
     parts = [components[key] for key in _COMPONENT_ORDER] + _option_parts(components)
     joined = _SEP.join(parts)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()

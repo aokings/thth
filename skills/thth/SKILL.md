@@ -70,6 +70,10 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 
 期日のある原稿（学校説明会・文化祭・申し込みの締め切り）は、queue の front-matter に `not_after: 2026-10-25T10:00:00+09:00`（`publish_at` と同じ形・`+09:00` 必須）を書く。**この時刻を過ぎたら THTH は出さない**——予約が詰まって遅れても、口座が止まっていても、終わった行事を告げない。無ければ今までどおり。`not_after` は承認の指紋（digest）に入る（**期限を延ばしたら承認し直し**）。lint: 形が違う・`publish_at` より前は `invalid_not_after`、今より前は警告（承認はできるが出ない）。`thth approve` の 1 段目に「出さない期限 YYYY-MM-DD HH:MM」、過ぎていれば「期限を過ぎているので確定しても出ません」。過ぎた原稿は書き換えない（approved のまま）・口座も止めない（次の原稿へ進む）。見え方: `thth queue` の「いま出ない: … — not_after_passed」・`thth schedule` の「出さない期限を過ぎました」（`--json` は `not_after`・`expired`）・board と morning の held（区分 `not_after_passed`）・`thth events` の `not_after_passed`（起きた時刻は期限）。公開の直前（container を作って待ったあと）にもう一度見て、過ぎていれば公開しない。連投（`thth: 2`）は根の front-matter の `not_after` を見て、途中の段で過ぎたら残りは出さない。thth.me の道は `thth schedule <account> --text … --at … --not-after …`・MCP の `thth_draft_put` の `not_after`。はてなブログの配信原稿には使えない。
 
+## 緊急の札（urgent）
+
+静かな時間帯（`quiet_hours`）でも出したい原稿（運休・中止・安全の知らせ）は、queue の front-matter に `urgent: true` を書いて承認する。**timer が越えるのは静かな時間帯だけ**——最短間隔・1 回の本数（`max_per_run`）・数の柵（1 日の上限など）・停止の印・承認は今までどおり（`thth throw --now` とは別物）。札は承認の指紋に入る（**承認のあとに付け外しすると `approval_stale`**・付けるなら承認の前に）。lint: `true`／`false` 以外は `invalid_urgent`、連投（`thth: 2`）とはてなブログの配信原稿には使えない。見え方: `thth approve` の 1 段目の「緊急」・`thth queue` の「緊急の札: …」・`thth schedule` の `[緊急]`（`--json` は `urgent`）。越えて出したら sent の記録と runs に `crossed_quiet_hours: true`、`thth events` の `published` に同じ鍵と「（緊急の札で静かな時間帯を越えた）」が付く。
+
 ## キャンペーンとシリーズ（scenario・5.0 段 1）
 
 抜け・漏れ・忘れを 1 枚で見るための宣言。**THTH は読んで数えるだけ**（原稿を書かない・段を進めない・予約を置かない）。宣言は窓口が原稿の隣に書く: `docs/sns/scenarios/<id>.md`（queue の 1 つ上の `scenarios/`）。

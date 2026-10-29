@@ -142,7 +142,8 @@ def test_T4b_v1と束の指紋は1バイトも変わらない():
     # golden の行そのものも 4.0 S1 の前と同じ（golden を書き換えて drift を黙らせない）。4.0 S4 §9.3 で
     # 任意項目 `announces` の見本（`threads_announces`）を**足した**——既存の行は 1 つも変えていない。
     # 4.5.6 で任意項目 `not_after` の見本（`threads_not_after`・`bundle_not_after`）を足した（同じく足しただけ）。
-    added = {"threads_announces", "threads_not_after", "bundle_not_after"}
+    # 10/30 で緊急の札の見本（`threads_urgent`）を足した（同じく足しただけ）。
+    added = {"threads_announces", "threads_not_after", "bundle_not_after", "threads_urgent"}
     assert {k: v for k, v in fingerprint_golden.GOLDEN[2].items() if k not in added} == V1_GOLDEN
     assert {k: v for k, v in fingerprint_golden.current().items() if k not in added} == V1_GOLDEN
     assert set(fingerprint_golden.GOLDEN[2]) - set(V1_GOLDEN) == added

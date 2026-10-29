@@ -973,7 +973,8 @@ def _throw_locked(account_name, account_cfg, state_dir, run_id, *,
         else:
             one_result = _throw_chosen(
                 account_name, account_cfg, state_dir, run_id, mode, chosen, result.section,
-                now, log, adapter_factory, resolution=result.resolution, via=via)
+                now, log, adapter_factory, resolution=result.resolution, via=via,
+                crossed_quiet_hours=result.crossed_quiet_hours)
         last_result = one_result
         if one_result.action == NOT_AFTER_ACTION:
             # 4.5.6: 公開の直前に出さない期限を過ぎた。出していないので本数・窓に数えず、口座も止めずに
@@ -1284,13 +1285,18 @@ def _not_after_result(account_name, state_dir, run_id, mode, chosen, now, log, *
 
 
 def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, section,
-                   now, log, adapter_factory, resolution=None, via="timer") -> ThrowResult:
+                   now, log, adapter_factory, resolution=None, via="timer",
+                   crossed_quiet_hours=False) -> ThrowResult:
     """select_one() が選んだ 1 件を投げる（dry-run ならログに出すだけ）。
 
     `_throw_locked()` の max_per_run ループから 1 本ごとに呼ばれる（§3.3）。
     `resolution` は select が `reply_to_file` を解決した結果（`{"file", "post_id"}`）。
+    `crossed_quiet_hours` は緊急の札（`urgent: true`）で静かな時間帯を越えて選んだとき True
+    （log・runs・sent の記録に残す・`thth events` の `published` に出る）。
     """
     started = jst.iso()
+    if crossed_quiet_hours:
+        log(f"緊急の札（urgent: true）で静かな時間帯を越えて出します: {os.path.basename(chosen.path)}")
     # 4.5.6: 出さない期限（`not_after`）をもう一度見る（inflight を書く前・何も送らないうちに）。select は
     # run の始めの時刻で選ぶので、返信を出していた間・前の原稿を出していた間に期限を過ぎることがある。
     if queuefile.not_after_blocks(chosen.front_matter, _deadline_now(now)):
@@ -1391,7 +1397,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
         log(send_section)
         inflight_mod.clear(state_dir)
         _append_run(state_dir, account_name, run_id, mode, "skip", chosen.path, None, now,
-                    status="ok", error=None, resolved_from=resolved_from)
+                    status="ok", error=None, resolved_from=resolved_from,
+                    extra={queuefile.CROSSED_QUIET_HOURS: True if crossed_quiet_hours else None})
         return ThrowResult(exit_code=0, mode=mode, action="skip",
                             message="dry-run: 投げるはずの本文をログに出した", file=chosen.path)
 
@@ -1533,6 +1540,7 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                         resolved_from=resolved_from,
                         attachment_kinds=media_mod.attachment_kinds(manifest),
                         goal=goal_value, goal_change=goal_change,
+                        crossed_quiet_hours=bool(crossed_quiet_hours),
                         **_link_urls_kwargs(manifest),
                         **({"media":publish_result.media} if publish_result.media else {}),
                         **({"community_id": post.community_id} if post.community_id else {}),
@@ -1662,7 +1670,8 @@ def _throw_chosen(account_name, account_cfg, state_dir, run_id, mode, chosen, se
                 engagement_author_lookup_failed=engagement_author_lookup_failed,
                 resolved_from=resolved_from,
                 extra={**_remote_extra(publish_result), "goal": goal_value,
-                       "goal_change": goal_change})
+                       "goal_change": goal_change,
+                       queuefile.CROSSED_QUIET_HOURS: True if crossed_quiet_hours else None})
     return ThrowResult(exit_code=0, mode=mode, action="post", message="投稿しました",
                         file=chosen.path, post_id=post_id)
 

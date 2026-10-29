@@ -64,6 +64,11 @@ CASES = (
      "publish_at": "2026-09-09T08:00:00+09:00",
      "continue_until": "2026-09-09T12:00:00+09:00", "hashtags": True,
      "not_after": "2026-09-09T11:00:00+09:00"},
+    # 10/30: 緊急の札（立っているときだけ末尾に足す任意項目・版は上げない）。札の無い見本の指紋は
+    # 上のまま（`urgent: false` も札なしと同じ指紋・tests/test_urgent_quiet_hours.py）。
+    {"name": "threads_urgent", "media": "threads", "section": "本文です。",
+     "account": "golden-threads", "publish_at": "2026-10-30T08:00:00+09:00",
+     "front_matter": {"urgent": "true"}},
 )
 
 # 版ごとの golden（`approval.FINGERPRINT_VERSION` → 見本の名前 → 指紋の先頭
@@ -86,6 +91,8 @@ GOLDEN = {
         # 4.5.6: 出さない期限の見本（足しただけ・上の行は 1 つも変わっていない）。
         "threads_not_after": "c1d9ce9d33ef4ca8",
         "bundle_not_after": "1d3489bb32acb8c4",
+        # 10/30: 緊急の札の見本（足しただけ・上の行は 1 つも変わっていない）。
+        "threads_urgent": "1116c435c9bf6e5e",
     },
     # 4.0 S1（設計 §6.1・§7.2）: はてなの承認の指紋。**SNS の v1 とは別の版の数え方**
     # （`approval.HATENA_ENTRY_VERSION`／`HATENA_BOOKMARK_VERSION` の末尾の数）で、

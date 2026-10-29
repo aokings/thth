@@ -499,6 +499,42 @@ def not_after_blocks(fm, now: datetime.datetime) -> bool:
     return until is not None and now > until
 
 
+# --------------------------------------------------------------------------
+# 緊急の札（`urgent: true`・5.0.x・masaru 10/30）
+# --------------------------------------------------------------------------
+
+# この札が付いた原稿は、timer が**静かな時間帯（`quiet_hours`）だけ**越えて出す。最短間隔・
+# 1 日の本数・連投の柵・停止の印・guard・承認は今のまま守る。札は承認の指紋に入る（承認の
+# あとに付ければ承認が古くなる）。値は `true`／`false` だけ（lint と select がほかの値を断る）。
+URGENT_KEY = "urgent"
+URGENT_INVALID = "urgent_invalid"
+# sent の記録と events に残す鍵（静かな時間帯を越えて出たときだけ）。
+CROSSED_QUIET_HOURS = "crossed_quiet_hours"
+
+
+def urgent_raw(fm) -> str | None:
+    """front-matter の `urgent:`（前後の空白を落とし小文字に）。無い・空なら None。"""
+    raw = (fm or {}).get(URGENT_KEY)
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return "true" if raw else "false"
+    return str(raw).strip().lower() or None
+
+
+def urgent_problem(fm) -> str | None:
+    """`urgent:` が真偽値でなければ `URGENT_INVALID`。無い・`true`・`false` なら None。"""
+    raw = urgent_raw(fm)
+    if raw is None or raw in ("true", "false"):
+        return None
+    return URGENT_INVALID
+
+
+def is_urgent(fm) -> bool:
+    """緊急の札が立っているか（`urgent: true` だけ。読めない値は立っていない側）。"""
+    return urgent_raw(fm) == "true"
+
+
 def jst_minute(value: datetime.datetime) -> str:
     """人に見せる時刻（`YYYY-MM-DD HH:MM`・JST）。"""
     jst_zone = datetime.timezone(datetime.timedelta(hours=9))
