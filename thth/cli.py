@@ -4991,6 +4991,10 @@ def build_parser() -> argparse.ArgumentParser:
     from . import edit_cli
     edit_cli.register(sub)
 
+    # `thth quota`（Meta 計画 段 2）: 量の制限の使用量を読むだけ。口は `thth/quota_cli.py` に閉じる。
+    from . import quota_cli
+    quota_cli.register(sub)
+
     # `thth repost|unrepost|like|unlike`（設計 3.15.0）。口は `thth/reaction_cli.py` に閉じる。
     from . import reaction_cli
     reaction_cli.register(sub)

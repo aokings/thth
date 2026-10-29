@@ -310,6 +310,18 @@ def throw_once(account_name: str, *, production_flag: bool = False,
         mode = "production" if (bool(account_cfg.get("production")) and production_flag) else "rehearsal"
         return ThrowResult(exit_code=0, mode=mode, action="stopped", message=msg)
 
+    # **Meta の量の制限で待っている口座では timer は投げない**（Meta 計画 段 2・`thth/meta/usage.py`）。
+    # Meta が 80001 などで断ったとき、共通層が `estimated_time_to_regain_access` の分だけの待ちを
+    # `state/<口座>/meta_usage.json` に残す。待ちが明けた次の timer の回で、原稿はそのまま出る
+    # （断られた原稿は出ていない・承認のまま queue に残る）。runs には書かない（毎回同じ行が積もるだけ）。
+    meta_wait = _meta_rate_limit_wait(account_name, account_cfg)
+    if meta_wait is not None:
+        msg = (f"{account_name}: Meta の量の制限で待っています（あと {meta_wait['remaining_minutes']} 分・"
+               f"{meta_wait.get('until')} まで・code {meta_wait.get('code')}）。この回は出しません")
+        log(msg)
+        mode = "production" if (bool(account_cfg.get("production")) and production_flag) else "rehearsal"
+        return ThrowResult(exit_code=0, mode=mode, action="rate_limited", message=msg)
+
     # **スレッド連投を先に見る**（独立検収 2026-09-11・P1-1）。
     # v2 は**段ごとにロックを取り直す**ので、ここで account+repo ロックを
     # 握ったまま入ることはできない。**握る前に**分岐する。
@@ -649,6 +661,23 @@ class _ReplyWindow:
             return datetime.datetime.combine(day, datetime.time(0, 0), tzinfo=jst.JST)
         from . import assess
         return assess.window_slot(self.times, self.count, self.minutes, self.now)
+
+
+def _meta_rate_limit_wait(account_name, account_cfg) -> dict | None:
+    """Meta の共通層に乗る媒体（adapter の `META_GRAPH`）で、量の制限の待ちの間なら待ちの行（段 2）。
+
+    媒体名の表は持たない（adapter のクラスの印で見る）。待ちの置き場が読めなければ待たない
+    （`meta.usage` の注・Meta がもう一度断るだけ）。
+    """
+    from . import adapters as adapters_mod
+    cls = adapters_mod.REGISTRY.get((account_cfg or {}).get("media"))
+    if not getattr(cls, "META_GRAPH", False):
+        return None
+    from .meta import usage as meta_usage
+    try:
+        return meta_usage.waiting(account_name)
+    except (OSError, ValueError):
+        return None
 
 
 def _account_stopped(account_name) -> bool:

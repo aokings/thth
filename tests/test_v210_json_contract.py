@@ -97,6 +97,8 @@ COMMANDS += ['scenario']
 COMMANDS += ['dashboard']
 # Meta 計画 段 1: 投稿の編集・コメントを隠す・消す（二段確認・--json は 1 つの値）。
 COMMANDS += ['edit', 'reply']
+# Meta 計画 段 2: 量の制限の使用量（読むだけ・--json は 1 つの値）。
+COMMANDS += ['quota']
 
 
 def test_json_table_covers_every_parser():

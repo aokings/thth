@@ -38,6 +38,11 @@
   `app_id`・`profile_id`（ページの鍵ならそのページの id）。**`expires_at` が 0 の意味は
   書かれていない**（未確認。0 なら「期限なし」と読むのは **L3**）。
 
+**Meta の共通層 `thth/meta/` に乗る**（段 2・10/29）: 宛先の検査と版は `meta/graph.py`、エラーの
+本文の読みは `meta/errors.py`、`/debug_token` の読みは `meta/tokens.py`。**`appsecret_proof`**
+（`meta.graph.appsecret_proof`）を、鍵を持って呼ぶ 3 つ（`/me/accounts`・`/debug_token`・`/me`）に
+付ける。鍵の交換（`/oauth/access_token`）は `client_secret` そのものを送る口なので付けない。
+
 **秘密は 1 つも出さない。** app secret・code・鍵は受け取った時点で `redact` に登録し、
 HTTP の失敗は静的な符丁（`facebook_auth_http_<番号>`）だけを返す——Graph の
 エラー本文や URL（クエリに secret が入る）を反射しない。
@@ -56,9 +61,12 @@ from .. import httpsafe, jst, leave_gate
 from ..authflow import AuthProfile, FlowError, secret
 from . import base
 from . import facebook as fb
+from ..meta import errors as meta_errors
+from ..meta import graph as meta_graph
+from ..meta import tokens as meta_tokens
 
 CALLBACK = "https://thth.me/callback/"
-DIALOG = "https://www.facebook.com/" + fb.GRAPH_VERSION + "/dialog/oauth"
+DIALOG = "https://www.facebook.com/" + meta_graph.GRAPH_VERSION + "/dialog/oauth"
 SCOPES = list(fb.SCOPES)
 # `/me/accounts` の頁を辿る上限（1 頁 100 件 × 20 頁）。越えたら黙って切らず断る。
 ACCOUNTS_PAGE_LIMIT = 100
@@ -70,14 +78,14 @@ SCOPES_SOURCE_UNKNOWN = "unknown"
 
 def _origin():
     try:
-        return fb.graph_origin()
+        return meta_graph.origin()
     except base.AdapterError as exc:
         raise FlowError(str(exc)) from None
 
 
 def graph_get(path: str, params: dict) -> dict:
     """認可の段の GET を 1 回。**失敗は静的な符丁だけ**（本文・URL を反射しない）。"""
-    url = _origin() + "/" + fb.GRAPH_VERSION + path + "?" + urllib.parse.urlencode(params)
+    url = meta_graph.endpoint(_origin(), path) + "?" + urllib.parse.urlencode(params)
     request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
     try:
         with httpsafe.urlopen(request, timeout=10) as response:
@@ -90,7 +98,7 @@ def graph_get(path: str, params: dict) -> dict:
         return value
     except urllib.error.HTTPError as exc:
         status = exc.code
-        err = fb.graph_error(exc)
+        err = meta_errors.graph_error(exc)
         code = err.get("code") if isinstance(err.get("code"), int) else None
         raise FlowError(f"facebook_auth_http_{status}"
                         + (f"_code_{code}" if code is not None else "")) from None
@@ -158,11 +166,18 @@ class FacebookAuthProfile(AuthProfile):
             params["config_id"] = self.config_id
         else:
             params["scope"] = ",".join(self.scopes)
-        return DIALOG + "?" + urllib.parse.urlencode(params)
+        return DIALOG + "?" + urllib.parse.urlencode(meta_tokens.dialog_params(params))
 
     def _app_token(self):
         # アプリの鍵（L2: debug_token の呼ぶ側に使える）。値は secret を含むので登録する。
         return secret(self.client_id + "|" + self.client_secret)
+
+    def _with_proof(self, params: dict) -> dict:
+        """鍵を持って呼ぶ引数に `appsecret_proof` を足す（段 2・`meta.graph.appsecret_proof`）。"""
+        token = params.get("access_token")
+        if not (isinstance(token, str) and token and self.client_secret):
+            return params
+        return {**params, "appsecret_proof": secret(meta_graph.appsecret_proof(token, self.client_secret))}
 
     def _pages(self, user_token, log):
         out = []
@@ -172,7 +187,7 @@ class FacebookAuthProfile(AuthProfile):
                       "access_token": user_token}
             if after:
                 params["after"] = after
-            body = graph_get("/me/accounts", params)
+            body = graph_get("/me/accounts", self._with_proof(params))
             rows = body.get("data")
             if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
                 raise FlowError("facebook_accounts_invalid: /me/accounts の応答に data の配列がありません")
@@ -192,12 +207,11 @@ class FacebookAuthProfile(AuthProfile):
     def _debug(self, token):
         """`/debug_token` の `data`。**訊けなければ None**（記録を「不明」に落とす）。"""
         try:
-            body = graph_get("/debug_token", {"input_token": token,
-                                              "access_token": self._app_token()})
+            body = graph_get("/debug_token", self._with_proof({"input_token": token,
+                                                               "access_token": self._app_token()}))
         except FlowError:
             return None
-        data = body.get("data")
-        return data if isinstance(data, dict) else None
+        return meta_tokens.debug_data(body)
 
     @leave_gate.configured("account_cfg")
     def exchange(self, code_value, session, account_cfg, *, log):
@@ -242,13 +256,13 @@ class FacebookAuthProfile(AuthProfile):
             if debug.get("profile_id") not in (None, page_id):
                 raise FlowError("facebook_page_token_page_mismatch: 別のページの鍵です")
 
-        me = graph_get("/me", {"fields": "id,name", "access_token": page_token})
+        me = graph_get("/me", self._with_proof({"fields": "id,name", "access_token": page_token}))
         if str(me.get("id") or "") != page_id:
             raise FlowError("facebook_identity_mismatch: ページの鍵が台帳の page_id を指していません")
 
-        scopes = debug.get("scopes") if debug else None
-        if isinstance(scopes, list) and all(isinstance(v, str) for v in scopes):
-            scopes_recorded, scopes_source = list(scopes), SCOPES_SOURCE_RESPONSE
+        scopes = meta_tokens.scopes_of(debug)
+        if scopes is not None:
+            scopes_recorded, scopes_source = scopes, SCOPES_SOURCE_RESPONSE
         elif self.config_id:
             # 構成のときは何を求めたかがこちらに無い（構成の側の一覧）。**嘘の一覧を書かない。**
             scopes_recorded, scopes_source = None, SCOPES_SOURCE_UNKNOWN

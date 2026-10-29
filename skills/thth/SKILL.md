@@ -106,6 +106,7 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 - **できないこと**（この版の口に無い・`tool.capabilities` の facebook の行）: 動画・字幕・投票・返信の制御・返信に画像、いいね・シェア（`unsupported_on_platform`）、inbox と言及、ほかのページの観測。
 - **文字数の上限 5,000 は THTH の線**（Facebook の公式の上限ではない）。超えると lint が断り、上げ方（口座の台帳の `char_limit`）を添える。
 - **データに触れる期限**: ページの鍵そのものに期限は無いが、Meta の `data_access_expires_at`（通常 90 日）が 14 日を切ると `thth maintain` が `data_access_expiring`（過ぎたら `data_access_expired`）と言い、`thth events` に `token_data_access_expiring` が出る。対処は `thth auth <口座> --by <名前>` のやり直し（人が VM で打つ）。
+- **量の制限**（段 2）: `thth quota <口座> [--json]` が Meta の使用量のヘッダ（`X-App-Usage`・`X-Business-Use-Case-Usage`）と待ちを返す（読むだけ・MCP には無い）。Meta が量の制限で断ると（code 4・17・32・80001 など）断り文は `meta_rate_limited` で、**出ていない**。Meta が言う戻るまでの分（無ければ 60 分・THTH の線）だけ、その口座の timer は出さず（`thth throw` は `rate_limited`）、明けた次の回に同じ原稿が出る。待ちは `state/<口座>/meta_usage.json`。
 
 ## 何を拒むか
 

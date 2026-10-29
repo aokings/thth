@@ -25,6 +25,13 @@
 | コメントの非表示 `POST /{comment_id}` に `is_hidden`・削除 `DELETE /{comment_id}` | developers.facebook.com/docs/graph-api/reference/comment・pages-api/comments-mentions | **L2**（応答 `{"success": true}` は **L3**） |
 | ページの日次 `GET /{page_id}/insights?metric=…&period=day`（`read_insights`）。v26 で外れた指標はエラーになる | developers.facebook.com/docs/graph-api/reference/v26.0/insights・changelog v25.0 | **L2**（`PAGE_DAILY_METRICS` の 7 つが v26 で生きているかは**未確認**・doctor の probe で 1 つずつ見る） |
 
+**呼び出しは Meta の共通層 `thth/meta/` に乗る**（段 2・10/29）: 宛先の検査・版・`_request` の中身は
+`meta/graph.py`、エラーの読みと振り分けは `meta/errors.py`、量の制限のヘッダは `meta/usage.py`、
+`/debug_token` とデータの期限の見立ては `meta/tokens.py`。この模組に残る名前（`GRAPH_VERSION`・
+`graph_origin`・`graph_error`・`is_permission_error` など）は共通層の別名で、呼び手と試験は
+今までどおりここから引ける。共通層が足したもの: `appsecret_proof`（app.env の `META_APP_SECRET`
+が読めるときは全部の呼び出しに付く）・量の制限の待ち（`rate_limited`・`thth quota`）。
+
 **鍵の載せ方**: 公式の文書の例は GET の `access_token` をクエリに載せる形だけ
 （overview）。**ヘッダで渡す形は公式の文書に見当たらない**（未確認）ので、GET と
 DELETE はクエリ、POST は**本文（form）**に載せる——URL に残る機会を減らせるのは
@@ -38,25 +45,27 @@ from __future__ import annotations
 
 import datetime
 import json
-import os
 import re
 import urllib.error
 import urllib.parse
-import urllib.request
 import uuid
 
 from .. import httpsafe
 from .. import jst
 from .. import redact as redact_mod
 from . import base
+from ..meta import errors as meta_errors
+from ..meta import graph as meta_graph
+from ..meta import tokens as meta_tokens
+from ..meta import usage as meta_usage
 
 MEDIUM = "facebook"
-# **版は 1 か所**（L2: changelog の最新 v26.0・2026-07-29）。上げるときはここだけを直す。
-GRAPH_VERSION = "v26.0"
-DEFAULT_BASE_URL = "https://graph.facebook.com"
+# **版は 1 か所**（`meta/graph.py`）。ここは別名。
+GRAPH_VERSION = meta_graph.GRAPH_VERSION
+DEFAULT_BASE_URL = meta_graph.DEFAULT_BASE_URL
 # 試験だけが loopback へ向ける（本番は既定のまま）。
-BASE_URL_ENV = "THTH_FACEBOOK_BASE_URL"
-DEFAULT_TIMEOUT_SECONDS = 10.0
+BASE_URL_ENV = meta_graph.BASE_URL_ENV
+DEFAULT_TIMEOUT_SECONDS = meta_graph.DEFAULT_TIMEOUT_SECONDS
 PUBLISH_TIMEOUT_SECONDS = 30.0
 PHOTO_TIMEOUT_SECONDS = 120.0
 
@@ -114,17 +123,16 @@ MIME = {"jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif"}
 # 「4MB を超えられない」（L2）。単位が書かれていないので**狭いほうの SI** で数える。
 MAX_PHOTO_BYTES = 4_000_000
 
-# 権限系の code（L3・Graph API 共通。`threads.py` と同じ一覧）。
-_PERMISSION_ERROR_CODES = frozenset({10} | set(range(200, 300)))
-# 鍵が無効・失効（L3・Graph API 共通の `OAuthException` 190）。
-_INVALID_TOKEN_CODE = 190
+# 権限系の code・鍵の無効（`meta/errors.py` の別名）。
+_PERMISSION_ERROR_CODES = meta_errors.PERMISSION_ERROR_CODES
+_INVALID_TOKEN_CODE = meta_errors.INVALID_TOKEN_CODE
 
 # 本文の中の URL（RFC 3986 の ASCII の文字だけ。和文の句読点や全角の文字で切る）。
 _URL_IN_TEXT = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&*+,;=%]+")
 
 
-# データに触れる期限の注意の線（`maintain.DATA_ACCESS_WARN_DAYS` と同じ 14 日・計画 C-2）。
-DATA_ACCESS_WARN_DAYS = 14.0
+# データに触れる期限の注意の線（`meta/tokens.py` の別名・`maintain.DATA_ACCESS_WARN_DAYS` と同じ 14 日）。
+DATA_ACCESS_WARN_DAYS = meta_tokens.DATA_ACCESS_WARN_DAYS
 # 名前の長さの上限（断り文が崩れないように。ページ名は人が付けるので長いことがある）。
 PAGE_NAME_MAX = 80
 # 断り文に並べるページの数の上限（許可されたページが多い人の画面を埋めない）。
@@ -151,28 +159,8 @@ def page_label(name, page_id) -> str:
 
 
 def graph_origin() -> str:
-    """宛先の origin。**公式の HTTPS か、明示した loopback の試験先だけ。**
-
-    `oauth._auth_graph_base_url()`（Threads）と同じ作り。環境変数の値が
-    ほかのホストを指していたら、鍵を持って出ていく前に断る。
-    """
-    raw = os.environ.get(BASE_URL_ENV, DEFAULT_BASE_URL).rstrip("/")
-    try:
-        parsed = urllib.parse.urlsplit(raw)
-        valid = (not any(ord(c) < 32 or ord(c) == 127 for c in raw)
-                 and not parsed.username and not parsed.password and not parsed.query
-                 and not parsed.fragment and parsed.path in ("", "/")
-                 and ((parsed.scheme == "https" and parsed.hostname == "graph.facebook.com"
-                       and parsed.port in (None, 443))
-                      or (parsed.scheme == "http"
-                          and parsed.hostname in ("127.0.0.1", "localhost", "::1"))))
-    except ValueError:
-        valid = False
-    if not valid:
-        raise base.AdapterError(
-            "facebook_endpoint_invalid: 宛先は https://graph.facebook.com か"
-            " loopback の試験先だけを使えます")
-    return raw
+    """宛先の origin。**公式の HTTPS か、明示した loopback の試験先だけ**（`meta.graph.origin`）。"""
+    return meta_graph.origin()
 
 
 def _parse_time(value) -> datetime.datetime | None:
@@ -192,33 +180,10 @@ def _parse_time(value) -> datetime.datetime | None:
     return dt
 
 
-def graph_error(error: urllib.error.HTTPError) -> dict:
-    """HTTPError の本文から Graph の `error`（`code`・`error_subcode`・`message`）を読む。
-
-    読めなければ空の dict。**本文はここで読み切って閉じる**（同じ例外を 2 度読まない）。
-    """
-    try:
-        raw = error.read(65537)
-    except Exception:   # noqa: BLE001 — 本文が読めないのは「分からない」
-        raw = b""
-    finally:
-        try:
-            error.close()
-        except Exception:   # noqa: BLE001
-            pass
-    try:
-        err = json.loads(raw or b"{}").get("error")
-    except (ValueError, AttributeError):
-        err = None
-    return err if isinstance(err, dict) else {}
-
-
-def is_permission_error(err: dict) -> bool:
-    message = str(err.get("message") or "").lower()
-    code = err.get("code")
-    return ("permission" in message
-            or (isinstance(code, int) and not isinstance(code, bool)
-                and code in _PERMISSION_ERROR_CODES))
+# HTTPError の本文の `error` を読む・権限系か（`meta/errors.py` の別名。共通層が先に読んだ本文は
+# 例外に覚えさせてあるので、ここでもう一度呼んでも同じ値が返る）。
+graph_error = meta_errors.graph_error
+is_permission_error = meta_errors.is_permission_error
 
 
 class AdapterError(base.AdapterError):
@@ -313,16 +278,26 @@ class FacebookAdapter(base.Adapter):
     REPLY_PERMISSION = "pages_manage_engagement"
     DEBUG_TOKEN_KEY = "facebook_debug_token"
     DATA_ACCESS_KEY = "facebook_data_access"
+    APPSECRET_PROOF_KEY = "facebook_appsecret_proof"
+    # Meta の共通層（`thth/meta/`）に乗る印。timer が量の制限の待ちを見る（`core._meta_rate_limit_wait`）。
+    META_GRAPH = True
 
     prepared_media_supported = True
 
     def __init__(self, *, base_url: str = DEFAULT_BASE_URL, access_token: str = "",
-                 page_id: str = "", timeout: float = DEFAULT_TIMEOUT_SECONDS):
+                 page_id: str = "", timeout: float = DEFAULT_TIMEOUT_SECONDS,
+                 app_secret: str | None = None):
         self.base_url = httpsafe.validated_url(base_url, base=True)
         self.access_token = access_token
         redact_mod.register_secret(access_token)
         self.page_id = str(page_id or "")
         self.timeout = timeout
+        # `appsecret_proof` の鍵（段 2・`from_account` が app.env から読む）。None なら付けない。
+        self.app_secret = app_secret or None
+        if self.app_secret:
+            redact_mod.register_secret(self.app_secret)
+        # 量の制限を残す口座（`from_account` が台帳の名前を入れる）。None なら残さず、待ちも見ない。
+        self.usage_account = None
         self.granted_scopes = None
         self.auth_account = "<account>"
         # `.token` に保存したデータの期限（`thth auth` が書いた値・doctor が今の値と比べる）。
@@ -355,6 +330,13 @@ class FacebookAdapter(base.Adapter):
                 and all(type(v) is str for v in scopes)):
             adapter.granted_scopes = frozenset(scopes)
         adapter.auth_account = cfg.get("account") or "<account>"
+        from .. import accounts as accounts_mod
+        if accounts_mod.name_is_safe(cfg.get("account")):
+            adapter.usage_account = cfg["account"]
+        # `appsecret_proof`（段 2）: app.env の `META_APP_SECRET`。読めなければ付けずに今までどおり。
+        secret = meta_graph.load_app_secret()
+        if secret:
+            adapter.app_secret = secret
         recorded_access = token.get("data_access_expires_at")
         if isinstance(recorded_access, int) and not isinstance(recorded_access, bool):
             adapter.recorded_data_access_expires_at = recorded_access
@@ -375,34 +357,23 @@ class FacebookAdapter(base.Adapter):
 
     # ----- HTTP ------------------------------------------------------------
 
+    def _graph(self) -> meta_graph.Client:
+        return meta_graph.Client(self.base_url, self.access_token, app_secret=self.app_secret,
+                                 account=self.usage_account, timeout=self.timeout)
+
+    def _auth_fields(self) -> dict:
+        """鍵（と `appsecret_proof`）。multipart を自分で組む写真の口が本文に入れる。"""
+        return self._graph().auth_fields()
+
     def _request(self, method: str, path: str, *, params: dict | None = None,
                  form: dict | None = None, body: bytes | None = None,
-                 headers: dict | None = None, timeout: float | None = None):
-        """1 回だけ投げて JSON を返す。**urllib の例外はそのまま上げる**（4xx と
-        5xx を呼び手が区別する）。鍵は GET・DELETE はクエリ、POST は本文。"""
-        query = dict(params or {})
-        data = None
-        hdrs = {"Accept": "application/json"}
-        if method == "POST":
-            if body is not None:
-                data = body
-            else:
-                fields = dict(form or {})
-                fields["access_token"] = self.access_token
-                data = urllib.parse.urlencode(fields).encode("utf-8")
-                hdrs["Content-Type"] = "application/x-www-form-urlencoded"
-        else:
-            query["access_token"] = self.access_token
-        hdrs.update(headers or {})
-        url = f"{self.base_url}/{GRAPH_VERSION}{path}"
-        if query:
-            url += "?" + urllib.parse.urlencode(query)
-        req = urllib.request.Request(url, data=data, method=method, headers=hdrs)
-        with httpsafe.urlopen(req, timeout=timeout or self.timeout) as resp:
-            raw = resp.read(4 * 1024 * 1024 + 1)
-        if len(raw) > 4 * 1024 * 1024:
-            raise ValueError("response too large")
-        return json.loads(raw) if raw else {}
+                 headers: dict | None = None, timeout: float | None = None,
+                 urgent: bool = False):
+        """1 回だけ投げて JSON を返す（`meta.graph.Client.request`）。**urllib の例外はそのまま
+        上げる**（4xx と 5xx を呼び手が区別する）。量の制限は `meta_errors.RateLimited`。
+        鍵は GET・DELETE はクエリ、POST は本文。"""
+        return self._graph().request(method, path, params=params, form=form, body=body,
+                                     headers=headers, timeout=timeout, urgent=urgent)
 
     def _fail(self, what: str, error: urllib.error.HTTPError, permission: str | None):
         """HTTPError を口の言葉に直す。権限系は `PermissionMissing`。"""
@@ -508,6 +479,10 @@ class FacebookAdapter(base.Adapter):
                 return base.PublishResult(None, None, ts, error=str(veto), failure="publish_vetoed")
         try:
             body = self._request("POST", path, form=form, timeout=PUBLISH_TIMEOUT_SECONDS)
+        except meta_errors.RateLimited as e:
+            # Meta が量の制限で断った・待ちの間で投げなかった。**出ていない**（段 2）。
+            return base.PublishResult(None, None, ts, error=self._scrub(e)[:300],
+                                      failure="publish_definite")
         except urllib.error.HTTPError as e:
             err = graph_error(e)
             message = self._scrub(err.get("message") or e.reason)[:170]
@@ -804,8 +779,11 @@ class FacebookAdapter(base.Adapter):
 
     @staticmethod
     def _unreachable(exc) -> bool:
-        """確かめられなかった（網・5xx）か。4xx と「200 だが error」は Meta が断った側。"""
-        return (getattr(exc, "failure", None) == "network"
+        """確かめられなかった（網・5xx・量の制限）か。4xx と「200 だが error」は Meta が断った側。
+
+        量の制限（段 2）は「その指標が無い」ではない——その日は記録せず、待ってから取り直す。
+        """
+        return (getattr(exc, "failure", None) in ("network", meta_errors.RATE_LIMITED)
                 or (getattr(exc, "http_status", None) or 0) >= 500)
 
     def account_insights(self, user_id: str, *, since: str, until: str) -> dict:
@@ -886,8 +864,8 @@ class FacebookAdapter(base.Adapter):
         """`GET /debug_token`（L2: 呼ぶ側の鍵は「アプリの鍵」か「アプリの開発者のユーザーの
         鍵」。**ページの鍵で訊けるかは文書に無い**＝未確認）。訊けなければ例外。"""
         body = self._get("/debug_token", "鍵の権限", params={"input_token": self.access_token})
-        data = body.get("data")
-        if not isinstance(data, dict):
+        data = meta_tokens.debug_data(body)
+        if data is None:
             raise AdapterError("鍵の権限: 応答に data がありません")
         return data
 
@@ -906,8 +884,7 @@ class FacebookAdapter(base.Adapter):
         def failed(key, label, permission, exc):
             # 3 値（`threads.py` の probe と同じ物差し）: 権限系・4xx・形違いは ×、
             # 5xx・ネットワーク層は「確かめられなかった」（－）。
-            unverified = (getattr(exc, "failure", None) == "network"
-                          or (getattr(exc, "http_status", None) or 0) >= 500)
+            unverified = self._unreachable(exc)
             ok = None if unverified else False
             row(key, label, permission, ok, self._scrub(exc)[:300],
                 failure=getattr(exc, "failure", None) or (
@@ -1002,36 +979,47 @@ class FacebookAdapter(base.Adapter):
                 row(key, label, permission, permission in granted,
                     "トークンに乗っています（/debug_token）" if permission in granted
                     else base.not_granted_message(permission).replace("<account>", self.auth_account))
+
+        # `appsecret_proof`（段 2）。付けて上の読みが通れば、Meta がこの鍵とアプリの組を認めた。
+        if self.app_secret:
+            row(self.APPSECRET_PROOF_KEY, "appsecret_proof", "（全部の呼び出し）", True,
+                "付けて呼んでいます（app.env の META_APP_SECRET）")
+        else:
+            row(self.APPSECRET_PROOF_KEY, "appsecret_proof", "（全部の呼び出し）", None,
+                "付けていません（app.env の META_APP_ID・META_APP_SECRET が読めない）。"
+                "付けないと Meta のアプリの設定「Require App Secret」を入れられません")
         return results
 
     def _data_access_verdict(self, value, *, now=None):
         """`/debug_token` の**今の** `data_access_expires_at` → `(ok, detail)`（10/29 段 0・計画 C-2 の 2）。
 
-        doctor は保存した値でなく今の値を言う。**`.token` は書き直さない**——doctor は読むだけの道具で、
-        `.token` を書くと認可の世代（`doctor._credential_generation`）が変わってしまう。保存した値と
-        違えば、そのことと `thth auth` のやり直し（.token が今の値になる）を言う。過ぎていれば ×、
-        14 日を切っていれば○のまま注意を書く（人を呼ぶのは `thth maintain` の `data_access_expiring`）。
+        見立ては `meta.tokens.data_access_verdict`（段 2 で抜き出した）。**`.token` は書き直さない**——
+        doctor は読むだけの道具で、`.token` を書くと認可の世代（`doctor._credential_generation`）が
+        変わってしまう。
         """
-        import datetime
-        from .. import jst
-        hint = f"thth auth {self.auth_account} --by <名前>"
-        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-            return None, "応答に data_access_expires_at がありません（期限を言えません）"
-        now = now or jst.now_jst()
-        remaining = (value - now.timestamp()) / 86400.0
-        when = jst.iso(datetime.datetime.fromtimestamp(value, jst.JST))
-        detail = f"{when}（残り {remaining:.1f} 日）"
-        recorded = self.recorded_data_access_expires_at
-        if recorded is not None and recorded != value:
-            detail += f"・.token の記録と違います（{hint} で書き直せます）"
-        if remaining <= 0:
-            return False, detail + f"・過ぎています。{hint} で認可し直してください"
-        if remaining < DATA_ACCESS_WARN_DAYS:
-            return True, detail + f"・14 日を切りました。{hint} で認可し直してください"
-        return True, detail
+        return meta_tokens.data_access_verdict(
+            value, recorded=self.recorded_data_access_expires_at,
+            hint=f"thth auth {self.auth_account} --by <名前>", now=now)
 
     def quota(self):
-        return None
+        """Meta の量の制限の使用量（段 2・`thth quota`）。
+
+        待ちの間でなければ、軽い読み `GET /{page_id}?fields=id` を 1 回投げて**今の**ヘッダを
+        `state/<口座>/meta_usage.json` に残し、その中身を返す。待ちの間は投げず、残っている値と
+        待ちを返す。投げて失敗したら上げる（取れなかったことを 0 と混ぜない）。
+        """
+        if not self.usage_account:
+            raise AdapterError("使用量: 口座の台帳から組み立てた adapter でだけ訊けます")
+        waiting = meta_usage.waiting(self.usage_account)
+        fresh = False
+        if waiting is None:
+            self._get(f"/{self.page_id}", "使用量", params={"fields": "id"},
+                      permission="pages_read_engagement")
+            fresh = True
+        out = meta_usage.summary(self.usage_account)
+        out.update({"medium": MEDIUM, "source": "headers", "fresh": fresh,
+                    "appsecret_proof": bool(self.app_secret)})
+        return out
 
     def refresh_token(self, token):
         raise NotImplementedError("Facebook のページの鍵に期限は無い（TOKEN_NO_EXPIRY の説明）")
@@ -1099,7 +1087,7 @@ def publish_photo(adapter: FacebookAdapter, post: base.Post, *, before_publish=N
                 vetoed = True
                 raise media.MediaError(str(veto))
         payload = b"".join(item.chunks())
-        fields = {"caption": post.text, "access_token": adapter.access_token}
+        fields = {"caption": post.text, **adapter._auth_fields()}
         if isinstance(row.get("alt"), str) and row["alt"].strip():
             fields["alt_text_custom"] = row["alt"]
         body, headers = _multipart(fields, payload, MIME[row["format"]])
@@ -1118,6 +1106,15 @@ def publish_photo(adapter: FacebookAdapter, post: base.Post, *, before_publish=N
     except accounts.AccountStopped:
         return base.PublishResult(None, None, ts, error="account_stopped",
                                   failure="media_ambiguous" if phase != "preflight" else "publish_vetoed")
+    except meta_errors.RateLimited as exc:
+        # 量の制限（段 2）: Meta が断った・待ちの間で投げなかった。**出ていない。**
+        try:
+            if callable(progress):
+                record("failed", reason="meta_rate_limited")
+        except (OSError, ValueError, accounts.AccountStopped):
+            pass
+        return base.PublishResult(None, None, ts, error=adapter._scrub(exc)[:300],
+                                  failure="publish_definite")
     except urllib.error.HTTPError as exc:
         err = graph_error(exc)
         definite = 400 <= exc.code < 500
@@ -1195,7 +1192,7 @@ def publish_carousel(adapter: FacebookAdapter, post: base.Post, *, before_publis
         gate()
         for item in post.media_files:
             row = item.manifest
-            fields = {"published": "false", "access_token": adapter.access_token}
+            fields = {"published": "false", **adapter._auth_fields()}
             if isinstance(row.get("alt"), str) and row["alt"].strip():
                 fields["alt_text_custom"] = row["alt"]
             body, headers = _multipart(fields, b"".join(item.chunks()), MIME[row["format"]])
@@ -1224,6 +1221,15 @@ def publish_carousel(adapter: FacebookAdapter, post: base.Post, *, before_publis
     except accounts.AccountStopped:
         return base.PublishResult(None, None, ts, error="account_stopped",
                                   failure="media_ambiguous" if phase == "publishing" else "publish_vetoed")
+    except meta_errors.RateLimited as exc:
+        # 量の制限（段 2）: Meta が断った・待ちの間で投げなかった。**出ていない。**
+        try:
+            if callable(progress):
+                record("failed", reason="meta_rate_limited")
+        except (OSError, ValueError, accounts.AccountStopped):
+            pass
+        return base.PublishResult(None, None, ts, error=adapter._scrub(exc)[:300],
+                                  failure="publish_definite")
     except urllib.error.HTTPError as exc:
         err = graph_error(exc)
         definite = 400 <= exc.code < 500

@@ -126,6 +126,23 @@ def no_real_hatena_adapters(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_meta_app_secret(monkeypatch):
+    """Meta の共通層（`thth/meta/graph.py`）が `appsecret_proof` のために読む app secret を、
+    **試験が `THTH_APP_ENV_PATH` で隔離した app.env を置いたときだけ**読ませる（段 2）。
+
+    `FacebookAdapter.from_account` は `META_APP_SECRET` を読む。HOME を隔離していない試験が
+    打った人の実物の `~/.config/thth/app.env` を読まないようにする（値は出ないが、読まない）。
+    """
+    from thth.meta import graph as meta_graph
+    original = meta_graph.load_app_secret
+
+    def isolated():
+        import os
+        return original() if os.environ.get("THTH_APP_ENV_PATH") else None
+    monkeypatch.setattr(meta_graph, "load_app_secret", isolated)
+
+
+@pytest.fixture(autouse=True)
 def no_threads_status_poll_wait(monkeypatch):
     """公開の結果が分からないときの container の問い合わせ（設計 3.3.1 §2）を
     試験では待たない。本番の既定は 20 秒おき・最大 3 回。偽サーバは status の
