@@ -18,6 +18,7 @@
 | 4 | kopicha-fb の定期（こぴちゃ #5918） | 10/29 17 時: 停止メールを kopicha-threads と同じ宛先で設定（試し送り 利用者・管理者とも SMTP 受領）、min_interval_hours 6→2、daily_max_posts 8→2。masaru「してよい」で scheduled: true・timer `thth@kopicha-fb.timer`（*:5/10）を置いた。初回 17:15 は production で「出すものが無い」・採取 1 本・正常終了。死活通知（HEALTHCHECK_URL）は未設定 | 号外の最初の 1 本が 8 時に出るか見る |
 | 5 | music-research-fb を本番に（MMR #5921） | 10/29 17 時に production: true（控え VM ~/music-research-fb.json.bak-20261029・doctor rc 0・scheduled false）。停止メールは music-research-threads と同じく管理者あてだけ | MMR が出したら公開で見えるか確かめる |
 | 6 | 染めと化学のはてなブックマーク 1 日分（#5912・#5915） | data/hatena/batch/2026-10-30.jsonl（03eb74c・8 件）の 1 段目を打った。digest c8365207b363・同じホストは最大 2・今日の枠に収まる。2 段目は口座が production: false・scheduled: false で断られる（schedule_unavailable） | masaru の承認と「出して」→ production・scheduled・timer → 2 段目 |
+| 7 | 関東 FB の 1 本目（関東 #5928・承認 A261029-15・masaru 10/30「進めてよい」） | 10/30 06:02 に原稿（asmon `docs/sns/fb/2026-10-30-0730-fb-shuumatsu-1031.md` の ## facebook）を VM で引き直して dry-run: 586/5000 字・digest 1f4b4283d07f。`asmon-kanto-fb` を production: true（控え VM ~/asmon-kanto-fb.json.bak-20261030・doctor rc 0・scheduled false のまま）。07:24 に h2d の起こし | 07:30 に原稿を引き直して `thth send --production --confirm`→ログインなしで見えるか→post_id を関東へ |
 | 2 | kopicha-threads が 10/29 15:49 に `blocked（account_locked）` の運用通知を出した | 原因は前の回とのロックの取り合い（journal に「既に実行中です（ロック取得失敗）」）。次の 15:58 の回は「出すものが無い」で正常に終わった | 閉じた |
 
 ## 気づいたこと（開発へ渡すか判断中）
