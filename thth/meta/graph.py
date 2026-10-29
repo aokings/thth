@@ -98,11 +98,14 @@ class Client:
     """1 本の鍵で `graph.facebook.com` を呼ぶ。口座が分かれば量の制限を state に残す。"""
 
     def __init__(self, base_url: str, access_token: str, *, app_secret: str | None = None,
-                 account: str | None = None, timeout: float = DEFAULT_TIMEOUT_SECONDS):
+                 account: str | None = None, timeout: float = DEFAULT_TIMEOUT_SECONDS,
+                 usage_path: str | None = None):
         self.base_url = base_url
         self.access_token = access_token or ""
         self.app_secret = app_secret or None
         self.account = account
+        # 量の写しの置き場を直に渡す口（広告の口座は `adaccount_state/<名前>/` に置く・段 4）。
+        self.usage_path = usage_path
         self.timeout = timeout
         if self.access_token:
             redact_mod.register_secret(self.access_token)
@@ -124,8 +127,8 @@ class Client:
         return fields
 
     def _observe(self, headers) -> None:
-        if self.account:
-            usage.observe(self.account, headers)
+        if self.account or self.usage_path:
+            usage.observe(self.account, headers, path=self.usage_path)
 
     def request(self, method: str, path: str, *, params: dict | None = None,
                 form: dict | None = None, body: bytes | None = None,
@@ -135,8 +138,8 @@ class Client:
 
         `body` を渡す（multipart）ときは、呼び手が `auth_fields()` を本文に入れる。
         """
-        if not urgent and self.account:
-            wait = usage.waiting(self.account)
+        if not urgent and (self.account or self.usage_path):
+            wait = usage.waiting(self.account, path=self.usage_path)
             if wait is not None:
                 raise errors.RateLimited(
                     f"meta_rate_limited: Meta の量の制限で待っています（あと {wait['remaining_minutes']} 分・"
@@ -170,7 +173,8 @@ class Client:
             self._observe(exc.headers)
             if errors.is_rate_limited(err):
                 code = err.get("code")
-                minutes, until = usage.note_rate_limited(self.account, exc.headers, code)
+                minutes, until = usage.note_rate_limited(self.account, exc.headers, code,
+                                                         path=self.usage_path)
                 if urgent:
                     message = (f"meta_rate_limited: Meta の量の制限で断られました（code {code}）。"
                                "待たずに失敗として返します（止める操作は待たない）")

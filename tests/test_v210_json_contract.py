@@ -101,6 +101,8 @@ COMMANDS += ['edit', 'reply']
 COMMANDS += ['quota']
 # Meta 計画 段 3: コメント欄の開け閉め（--json は 1 つの値）。
 COMMANDS += ['comments']
+# Meta 計画 段 4: 広告の口座を読む（読むだけ・auth は端末での対話なので --json を持たない）。
+COMMANDS += ['ads add', 'ads accounts', 'ads doctor', 'ads show', 'ads insights', 'ads collect']
 
 
 def test_json_table_covers_every_parser():

@@ -100,7 +100,7 @@ MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけで
 
 `thth --help` で各コマンドの説明が出ます。
 
-動くもの（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`approvals`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`unanswered`・`handoff-report`・`observe`・`morning`・`events`・`summary`・`scenario`・`dashboard`・`deliveries`・`media`・`article`・`conflict`・`hatena`・`bookmark`・`serve-reports`・`worker`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`where-log`・`who`・`retract`・`edit`・`reply`・`comments`・`quota`・`repost`・`unrepost`・`like`・`unlike`・`list`・`community`・`trends`・`counts`・`archive`・`principal`・`fotolife`・`inflight`・`location`・`notifications`・`report`・`plaza`・`map`・`admin`・`login`・`logout`。
+動くもの（`thth --help` の全サブコマンド）: `lint`・`preview`・`approve`・`approvals`・`account`・`revoke`・`posts`・`replies`・`measured`・`threads`・`after`・`analytics-report`・`study-report`・`study`・`unanswered`・`handoff-report`・`observe`・`morning`・`events`・`summary`・`scenario`・`dashboard`・`deliveries`・`media`・`article`・`conflict`・`hatena`・`bookmark`・`serve-reports`・`worker`・`topics`・`forms`・`queue`・`schedule`・`throw`・`run`・`systemd`・`board`・`collect`・`pull`・`auth`・`refresh`・`maintain`・`send`・`doctor`・`app`・`token`・`ask`・`mentions`・`profile`・`thread`・`where`・`where-log`・`who`・`retract`・`edit`・`reply`・`comments`・`quota`・`repost`・`unrepost`・`like`・`unlike`・`list`・`community`・`trends`・`counts`・`archive`・`principal`・`ads`・`fotolife`・`inflight`・`location`・`notifications`・`report`・`plaza`・`map`・`admin`・`login`・`logout`。
 
 ## 版と配布
 

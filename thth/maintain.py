@@ -68,10 +68,18 @@ DATA_ACCESS_EXPIRING = "data_access_expiring"
 DATA_ACCESS_EXPIRED = "data_access_expired"
 DATA_ACCESS_WARN_DAYS = 14.0
 
+# **広告の口座の鍵**（Meta 計画 段 4・C-2 の 5）。ユーザーの長い鍵（約 60 日）で、更新の口が無い。
+# 既存の `WARN_REMAINING_DAYS`（7 日）・`REFRESH_AFTER_DAYS`（50 日）の線に乗せず、**残り 14 日**を
+# 明示して人を呼ぶ（始めた配信を止める道の鍵が、配信の途中で切れないため）。`ads_not_granted` は
+# 記録した権限に `ads_read` が無い（doctor は今の値で `NOT_GRANTED` を名指しする）。
+ADS_TOKEN_EXPIRING = "ads_token_expiring"
+ADS_NOT_GRANTED = "ads_not_granted"
+
 # 人の手が要る state（`thth maintain` の終了コードが 1 になるもの）
 ATTENTION_STATES = frozenset({REFRESH_FAILED, EXPIRING, EXPIRED, NO_TOKEN,
                               TOKEN_INCOMPLETE, UNREADABLE, CONFIG_ERROR,
-                              DATA_ACCESS_EXPIRING, DATA_ACCESS_EXPIRED})
+                              DATA_ACCESS_EXPIRING, DATA_ACCESS_EXPIRED,
+                              ADS_TOKEN_EXPIRING, ADS_NOT_GRANTED})
 
 # **次の一手は媒体が知っている**（`Adapter.TOKEN_SETUP_HINT`・独立監査 1・
 # P2-4・2026-09-13）。ここの文言は `thth maintain` だけでなく **board と
@@ -95,6 +103,9 @@ _MESSAGES = {
                            "`{hint}` で認可し直してください（鍵そのものに期限はありません）"),
     DATA_ACCESS_EXPIRED: ("データに触れる期限（data_access_expires_at）を過ぎました。"
                           "`{hint}` で認可し直してください"),
+    ADS_TOKEN_EXPIRING: ("広告の口座の鍵が 14 日を切りました。`{hint}` で取り直してください"
+                         "（切れると THTH から配信を止められない）"),
+    ADS_NOT_GRANTED: "広告の口座の鍵に ads_read がありません。`{hint}` で広告アカウントに印を付けて取り直してください",
 }
 
 
@@ -316,6 +327,40 @@ def _inspect_hatena(row: dict, account_cfg: dict) -> dict:
     return _finish(row, OK, detail="期限を持たないトークンです（はてなの OAuth・主体の token）")
 
 
+def inspect_adaccount(name: str, *, now) -> dict:
+    """広告の口座の鍵（`adaccounts/<名前>.json` の `token`・段 4）。API は叩かない・更新もしない。
+
+    口座の台帳の `media` から adapter を引く道（上の `inspect`）には乗らない（広告は adapter でない・
+    監査 B-14）。はてなの主体の別の分岐（`_inspect_hatena`）と同じ型の、別の分岐。
+    """
+    from .ads import ledger as ads_ledger
+    from .ads import watch as ads_watch
+    row = {"account": name, "kind": "adaccount", "state": None, "obtained_at": None, "age_days": None,
+           "remaining_days": None, "no_expiry": False, "refreshed": False, "message": ""}
+    try:
+        cfg = ads_ledger.load(name)
+    except accounts_mod.AccountError as e:
+        return _finish(row, CONFIG_ERROR, detail=getattr(e, "code", None) or "adaccount_unavailable")
+    hint = f"thth ads auth {name} --by <名前>"
+    state = ads_watch.token_state(cfg, now=now)
+    row["remaining_days"] = state["remaining_days"]
+    row["expires_at"] = state["expires_at"]
+    if state["state"] == ads_watch.NO_TOKEN:
+        return _finish(row, NO_TOKEN, hint=hint)
+    if state["state"] == ads_watch.UNREADABLE:
+        return _finish(row, UNREADABLE, detail="広告の口座の token を読めません")
+    if state["state"] == ads_watch.EXPIRED:
+        return _finish(row, EXPIRED, hint=hint)
+    if state["state"] == ads_watch.ADS_TOKEN_EXPIRING:
+        return _finish(row, ADS_TOKEN_EXPIRING, hint=hint,
+                       detail=f"残り {state['remaining_days']:.1f} 日（{state['expires_at']}）")
+    if state["state"] == ads_watch.ADS_NOT_GRANTED:
+        return _finish(row, ADS_NOT_GRANTED, hint=hint)
+    if state["remaining_days"] is None:
+        return _finish(row, OK, detail="期限が分かりません（thth ads doctor で確かめる）")
+    return _finish(row, OK, detail="広告の口座の鍵（更新の口なし・60 日ごとに取り直す）")
+
+
 def _finish(row: dict, state: str, *, detail: str = "", hint: str | None = None) -> dict:
     """`hint` はその媒体の「トークンの入れ方」（`Adapter.TOKEN_SETUP_HINT`）。
 
@@ -350,11 +395,17 @@ def run_maintain(account: str | None = None, *, check: bool = False,
     now = now if now is not None else jst.now_jst()
     refresh = refresh if refresh is not None else oauth_mod.run_refresh
 
+    from .ads import ledger as ads_ledger
+    ad_names = ads_ledger.list_names()
     if account:
         names = [account]
+        if account in ad_names and account not in accounts_mod.list_account_names():
+            names, ad_names = [], [account]
+        else:
+            ad_names = []
     else:
         names = accounts_mod.list_account_names()
-    if not names:
+    if not names and not ad_names:
         message = "アカウントが 1 つもありません（accounts/ を確認してください）"
         if as_json:
             print(message, file=sys.stderr)
@@ -380,6 +431,12 @@ def run_maintain(account: str | None = None, *, check: bool = False,
         rows.append(row)
         _record(name, row, now=now)
 
+    # 広告の口座（段 4）。更新の口が無いので、述べるだけ（`check` に関わらず何も書き換えない）。
+    for name in ad_names:
+        row = inspect_adaccount(name, now=now)
+        rows.append(row)
+        _record_adaccount(name, row, now=now)
+
     attention = [r for r in rows if needs_attention(r)]
 
     if as_json:
@@ -398,7 +455,8 @@ def run_maintain(account: str | None = None, *, check: bool = False,
             if r.get("data_access_remaining_days") is not None:
                 remaining += f"・データの期限 残り {r['data_access_remaining_days']:.1f} 日"
             mark = "要確認" if needs_attention(r) else "  "
-            log(f"{mark} {r['account']}: {r['state']}（{remaining}）— {r['message']}")
+            kind = "広告の口座 " if r.get("kind") == "adaccount" else ""
+            log(f"{mark} {kind}{r['account']}: {r['state']}（{remaining}）— {r['message']}")
         if attention:
             log(f"人の手が要るアカウントが {len(attention)} 件あります。")
 
@@ -428,3 +486,18 @@ def _record(account_name: str, row: dict, *, now) -> None:
         "status": "error" if needs_attention(row) else "ok",
         "error": row["state"] if needs_attention(row) else None,
     }, jst.month_str(now))
+
+
+def _record_adaccount(name: str, row: dict, *, now) -> None:
+    """広告の口座の maintain の行を `adaccount_state/<名前>/runs-*.ndjson` に（記録の失敗で止めない）。"""
+    from .ads import ledger as ads_ledger
+    try:
+        state_dir = ads_ledger.ensure_state_dir(name)
+        runs_mod.append_run(state_dir, {
+            "account": name, "run_id": "maintain-" + jst.iso(now), "mode": "maintenance",
+            "action": "maintain", "file": None, "post_id": None, "collected": None, "refreshed": False,
+            "quota": None, "status": "error" if needs_attention(row) else "ok",
+            "error": row["state"] if needs_attention(row) else None,
+        }, jst.month_str(now))
+    except (OSError, ValueError, accounts_mod.AccountError):
+        pass

@@ -1209,6 +1209,13 @@ def run_collect(account_name: str, *, adapter=None, now=None, log=print,
     rc = _collect_entry(account_name, adapter=adapter, now=now, log=log, info=info,
                         wait=wait)
     _record_collect_run(account_name, rc=rc, trigger=trigger, now=now, info=info)
+    # Meta 計画 段 4（D-5）: この口座を結んだ広告の口座を読む（読むだけ・失敗で採取を失敗にしない）。
+    if info.get("skipped") != "no_account":
+        try:
+            from .ads import watch as ads_watch
+            ads_watch.collect_linked(account_name, now=now, log=log)
+        except Exception:  # noqa: BLE001 — 広告の読みで口座の採取を落とさない
+            pass
     return rc
 
 

@@ -51,6 +51,8 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    'principal_added', 'principal_stopped', 'principal_resumed',
                    # 主体の認可（設計 4.0 S2 §2.4）。値は入れない——token・consumer の有無と scope・url_name の一致だけ。
                    'principal_auth', 'principal_auth_forgotten',
+                   # Meta 計画 段 4: 広告の口座の台帳を書いた・鍵を取った（値は入れない・有無と通貨の語だけ）。
+                   'adaccount_added', 'adaccount_auth',
                    # 媒体がアカウント側の断り（x_not_permitted）を返して自動の投稿を止めた・人が戻した（3.19.2）。
                    'publish_held', 'publish_resumed',
                    # 段 3: 設定（approval・安全装置の数値）の変更、持ち主の /activity からの予約の取り消し、

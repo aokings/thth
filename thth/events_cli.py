@@ -143,7 +143,11 @@ KINDS = ("published", "retracted", "reply_received", "mention_received",
          # 5.0 段 1（設計 §4.3）: キャンペーンが止まっている・シリーズの承認済みストックが目安を切った（続いている状態）。
          "scenario_stalled", "series_low",
          # 10/29 段 0（設計 MetaAPI 計画 C-2 の 1）: 鍵のデータに触れる期限が 14 日を切った・過ぎた（続いている状態）。
-         "token_data_access_expiring")
+         "token_data_access_expiring",
+         # Meta 計画 段 4（D-5・C-2 の 5）: 広告の口座の見張り（どれも続いている状態・`thth/ads/watch.py`）。
+         "ads_active_outside_thth", "ads_no_end_time", "ads_account_status", "ads_spend_over_estimate",
+         "ads_spend_cap_near", "ads_budget_low", "ads_spend_cap_unset", "ads_token_expiring",
+         "ads_read_failed")
 # 出さない期限を過ぎた原稿の出来事の id の版の語（4.5.6）。
 NOT_AFTER_EVENT_PREFIX = "thth.not_after/1"
 # 反応の出来事の id の版の語（設計 4.0 S6 §6.3）。
@@ -745,6 +749,29 @@ def _scenario_events(read, now, allowed_names, cannot_say):
     return out
 
 
+def _ads_events(target, target_kind, now, cannot_say):
+    """広告の口座の出来事（`thth/ads/watch.py`・続いている状態）。**読むだけ・Meta は呼ばない**（snapshot から）。"""
+    try:
+        from .ads import ledger as ads_ledger
+        from .ads import watch as ads_watch
+        names = (ads_watch.linked_to(target) if target_kind == "account" else ads_watch.of_project(target))
+    except Exception:  # noqa: BLE001 — 広告の台帳が読めなくても他の出所は出す
+        cannot_say.add("ads_unreadable")
+        return []
+    out = []
+    now = now or jst.now_jst()
+    for name in names:
+        try:
+            cfg = ads_ledger.load(name)
+
+            def make(kind, ref, summary, _name=name, **extra):
+                return _event(kind, _name, None, None, ref, summary, ongoing=True, adaccount=_name, **extra)
+            out += ads_watch.events(name, cfg, ads_watch.read_snapshot(name), now=now, make=make)
+        except Exception:  # noqa: BLE001
+            cannot_say.add("ads_unreadable")
+    return out
+
+
 # 5.0 段 2 の前の名前（公開の名前は `reaction_events`）。中身は同じ。
 _reaction_events = reaction_events
 
@@ -890,6 +917,10 @@ def build(target, *, since=None, after=None, now=None, allowed_names=None, limit
             cannot_say.add("queue_unreadable")
     # 5.0 段 1: シナリオ（project ごと・宣言のある project だけ）。宣言が無ければ何も足さない。
     events += _scenario_events(read, now, allowed_names, cannot_say)
+    # Meta 計画 段 4: 広告の口座（project の口座か、その口座を結んだ広告の口座）。**運営者の読みだけ**
+    # （サーバ型の credential が絞った読みには出さない）。台帳が無ければ何も足さない。
+    if allowed_names is None:
+        events += _ads_events(target, kind, now, cannot_say)
     events.sort(key=_key)
 
     previous = None

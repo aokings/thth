@@ -854,6 +854,21 @@ def _data_access_row(name, cfg, now):
     return access if access and access["state"] else None
 
 
+def _ads_names(target, kind) -> list:
+    """project の広告の口座（account の 1 枚ならその口座を結んだ広告の口座）。読めなければ空。"""
+    try:
+        from .ads import watch
+        return watch.linked_to(target) if kind == "account" else watch.of_project(target)
+    except Exception:  # noqa: BLE001 — 広告の台帳で 1 枚を落とさない
+        return []
+
+
+def _ads_rows(names, now) -> list:
+    """広告の口座ごとの状態（鍵の残り・最後の読み・動いている物・要対応）。**Meta は呼ばない。**"""
+    from .ads import watch
+    return [watch.status(name, now=now) for name in names]
+
+
 def _last_notification(name, cfg):
     """最後に SMTP が受領した運用通知（`incident.summary()` と同じ値）。宛先は出さない。"""
     from . import incident
@@ -1260,6 +1275,9 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
             "changes_since_last_read": ((node or {}).get("changes_since") or {}).get("changes"),
         })
     budget_cell = _budget({cfg.get("media") for cfg in configs.values()})
+    # Meta 計画 段 4（C-2 の 5）: 広告の口座（運営者の 1 枚だけ・Meta は呼ばず snapshot から）。無ければ鍵を足さない。
+    ads_names = _ads_names(target, kind) if allowed_names is None else []
+    ads_cell = _guard(lambda: _ads_rows(ads_names, now)) if ads_names else None
     # 広場の新着は第 2 段と同じ窓の始まり（前回の観測から・無ければ前日 JST）。account
     # ごとに窓が違えば、いちばん古い始まりから（見落とすより重ねて見せる）。
     plaza_since = min(observe_window(now, read_ats[name])[0] for name in names)
@@ -1295,6 +1313,7 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
         _section("world", "世間", world_entries),
         {"section": "today", "title": "予定",
          **cell({"by_account": today_entries, "budget": budget_cell,
+                 **({"ads": ads_cell} if ads_cell is not None else {}),
                  # 段 4（§9.2）: 媒体の断りの観測（30 日・読むだけ）。無ければ鍵を足さない。
                  **({"media_observations": seen} if (seen := _media_observations_line(now)) else {})})},
         {"section": "next_steps", "title": "次の一手", **_guard(_steps)},
@@ -1471,6 +1490,20 @@ def _render_section(section, out) -> None:
     if name == "today":
         if value.get("media_observations"):
             out(f"  {value['media_observations']}（thth media observations <媒体>）")
+        ads = value.get("ads")
+        if ads is not None:
+            if ads.get("cannot_say") is not None:
+                out(f"  広告: 言えない: {ads['cannot_say']}")
+            for row in ads.get("value") or []:
+                tok = row["token"]
+                left = f"残り {tok['remaining_days']:.1f} 日" if tok.get("remaining_days") is not None else "期限不明"
+                spent = (row.get("account") or {}).get("amount_spent")
+                cap = (row.get("account") or {}).get("spend_cap")
+                out(f"  広告 {row['adaccount']}: 鍵 {tok['state']}（{left}）・動いている物 "
+                    f"{row['active'] if row['active'] is not None else '不明'}・amount_spent {spent}／spend_cap {cap}"
+                    f"（最後の読み {row['observed_at'] or 'まだ'}）")
+                for item in row["events"]:
+                    out(f"    要対応 {item['kind']}: {item['summary']}")
         budget = value.get("budget") or {}
         if budget.get("cannot_say") is not None:
             out(f"  予算: 言えない: {budget['cannot_say']}")

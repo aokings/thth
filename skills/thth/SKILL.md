@@ -118,6 +118,14 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 - **文字数の上限 2,200**（キャプションの公式の上限）。ハッシュタグ 30・@ 20 は媒体が数える。
 - **90 日ごとに `thth auth` をやり直す**: instagram の権限はデータに触れる期限（`data_access_expires_at`）に当たる見込み。14 日を切ると `thth maintain` が `data_access_expiring` と言う。
 
+## 広告（Meta 計画 段 4・読むだけ・10/29）
+
+- **運営者の CLI だけ**（MCP の道具には無い）。広告は投稿先の媒体ではないので `thth account` でなく `thth ads`。台帳は VM の `adaccounts/<名前>.json`（上限 `ceilings` は 0・`ads_enabled`／`production` は false が既定）、状態は `adaccount_state/<名前>/`。
+- **Meta に書く命令は無い**（作る・配信・予算・`spend_cap`・止めるは段 5）。`spend_cap` と THTH の上限を上げる命令は段 5 になっても無い——`spend_cap` は masaru が広告マネージャで入れ、上限は VM の台帳を直接書く。
+- 命令: `thth ads add <名前> --act-id <数字> --project <p> [--page <口座>] [--ig <口座>] --by <名前>` → `thth ads auth <名前> --by <名前>`（ユーザーの長い鍵・約 60 日）→ `thth ads show|insights|doctor|accounts <名前>`・`thth ads collect`（`thth collect <口座>` のたびにも結んだ広告の口座を読む）。`thth ads auth <名前> --exchange` は鍵の再交換で期限が延びるかを 1 回試す。
+- 金額は**最小単位の整数**（JPY なら円）。通貨が JPY 以外の口座は台帳に `writes_refused: ads_currency_unverified` が付く（段 5 の書く操作を断る）。
+- 見張り（`thth events`・dashboard の要対応・`thth morning` の予定の段）: `ads_active_outside_thth`（THTH の外で誰かが配信を始めた・最優先）・`ads_no_end_time`・`ads_account_status`・`ads_spend_cap_unset`（`spend_cap` が入っていない）・`ads_spend_cap_near`・`ads_budget_low`・`ads_token_expiring`（鍵の残り 14 日・`thth maintain` も `ads_token_expiring`）・`ads_read_failed`。
+
 ## 何を拒むか
 
 - **手元の台帳を使う実行の、`--confirm` の無い本番。** digest の食い違う本番。承認後に本文が変わった下書き

@@ -60,7 +60,23 @@ KIND_JA = {"scenario_stalled": "停滞", "series_low": "ストック不足", "un
            "not_after_passed": "期限切れ", "publish_held": "公開を停止中", "account_stopped": "口座が停止",
            "inflight_open": "公開の結果待ち", "delivery_held": "配信の保留", "delivery_behind": "記事の更新待ち",
            "principal_stopped": "はてな ID が停止", "budget_exhausted": "予算切れ",
-           "token_data_access_expiring": "データの期限が近い（認可し直す）"}
+           "token_data_access_expiring": "データの期限が近い（認可し直す）",
+           # Meta 計画 段 4: 広告の口座の見張り（`thth/ads/watch.py`）。
+           "ads_active_outside_thth": "THTH の外で広告が配信中", "ads_no_end_time": "終了日の無い広告が配信中",
+           "ads_account_status": "広告アカウントの状態", "ads_spend_over_estimate": "広告の支出が見積もり超え",
+           "ads_spend_cap_near": "広告の支出が上限に近い", "ads_budget_low": "広告の月の上限の残りが少ない",
+           "ads_spend_cap_unset": "広告アカウントに支出の上限が無い", "ads_token_expiring": "広告の鍵の期限が近い",
+           "ads_read_failed": "広告の口座を読めない"}
+# 広告の出来事の次の一手（題は `KIND_JA`）。
+ADS_NEXT = {"ads_active_outside_thth": "広告マネージャで誰が始めたか確かめ、要らなければ止める",
+            "ads_no_end_time": "広告マネージャで終了日を入れるか止める",
+            "ads_account_status": "広告マネージャで支払いと審査を確かめる",
+            "ads_spend_over_estimate": "広告マネージャで支出を確かめる",
+            "ads_spend_cap_near": "使ってよい額か決め、管理画面で spend_cap を直す",
+            "ads_budget_low": "今月はここまでにするか決める",
+            "ads_spend_cap_unset": "管理画面で spend_cap を入れる（THTH からは入れない）",
+            "ads_token_expiring": "thth ads auth で鍵を取り直す",
+            "ads_read_failed": "thth ads doctor で読めない理由を見る"}
 # 予算の断りの符丁 → 画面の言葉（読むと投稿は別の断り・言葉で分ける）。
 BUDGET_JA = {"budget_exhausted": "X の読む予算が今月の上限", "missing_rate": "X の読む予算の為替の設定が無い",
              "post_budget_exhausted": "X の投稿の予算が今月の上限"}
@@ -511,6 +527,8 @@ def _event_text(event, mediums, threads, series_by_id, heads):
         return f"はてなブログの原稿 — {why}", "中身と理由を確かめる"
     if kind == "delivery_behind":
         return "はてなブログの記事 — 正本を直したが記事は前のまま", "更新するか決める"
+    if kind in ADS_NEXT:
+        return f"広告 {event.get('adaccount') or event.get('account')} — {KIND_JA[kind]}", ADS_NEXT[kind]
     if kind == "not_after_passed":
         head = heads.get((event.get("account"), ref))
         return f"{head or medium + ' の原稿'} — 出さない期限を過ぎた", "出し直すか決める"

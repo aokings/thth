@@ -44,6 +44,14 @@ MEDIA: dict[str, Medium] = {
     "instagram": Medium("Instagram", "sns", "pull", True, "0"),
 }
 
+# **媒体にしない口**（Meta 計画 段 4・B-4）。表にも `MEDIA` にも `adapters.REGISTRY` にも載せない。理由を書く
+# （`tests/test_meta_stage4.py` が、ここの名前がどの表にも媒体として出ないことを縛る）。
+NOT_MEDIA: dict[str, str] = {
+    "ads": ("広告は投稿先でなく「お金で配る物」。1 口座 = 1 媒体の投稿先・`publish()` の枠に入らず、広告アカウントは"
+            "複数のページ・IG にまたがる。はてなの主体の前例どおり台帳と状態を口座の外（`adaccounts/`・"
+            "`adaccount_state/`）に置き、口は `thth ads`（`thth/ads/`）"),
+}
+
 # 投稿先の adapter を持たない、表に並ぶ名前（はてな・サイト）。媒体の集合の比較から外す。
 NON_ADAPTER_NAMES = frozenset({"hatenablog", "hatena_bookmark", "hatenabookmark", "fotolife", "site"})
 

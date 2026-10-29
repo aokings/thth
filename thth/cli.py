@@ -5017,6 +5017,10 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth principal add|show|set|resume|auth`（4.0 S1・主体＝はてな ID）。口は `thth/principal_cli.py` に閉じる。
     from . import principal_cli
     principal_cli.register(sub)
+    # `thth ads accounts|add|auth|doctor|show|insights|collect`（Meta 計画 段 4・広告を読むだけ）。
+    # 口は `thth/ads/cli.py` に閉じる。**Meta に書く命令はこの段に無い**（tests/test_meta_stage4.py）。
+    from .ads import cli as ads_cli
+    ads_cli.register(sub)
     # `thth fotolife <主体> [list|show]`（4.0 S3 §12.4・主体の画像の台帳を読むだけ）。
     from . import fotolife_cli
     fotolife_cli.register(sub)

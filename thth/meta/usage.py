@@ -107,16 +107,19 @@ def regain_minutes(parsed: dict) -> int | None:
     return best
 
 
-def path_for(account: str) -> str:
+def path_for(account: str | None, path: str | None = None) -> str:
+    """置き場。`path` を渡せばそれ（広告の口座は `adaccount_state/<名前>/meta_usage.json`・段 4）。"""
+    if path is not None:
+        return path
     if not accounts.name_is_safe(account):
         raise ValueError("invalid_account")
     return os.path.join(accounts.state_dir_for(account), FILE)
 
 
-def read(account: str) -> dict | None:
+def read(account: str | None, *, path: str | None = None) -> dict | None:
     """置き場の中身（無ければ None・読めなければ `{"unreadable": True}`）。"""
     try:
-        with open(path_for(account), encoding="utf-8") as stream:
+        with open(path_for(account, path), encoding="utf-8") as stream:
             value = json.loads(stream.read(262145))
     except FileNotFoundError:
         return None
@@ -125,8 +128,13 @@ def read(account: str) -> dict | None:
     return value if isinstance(value, dict) else {"unreadable": True}
 
 
-def _write(account: str, value: dict) -> None:
-    secrets_fs.atomic_write_json(path_for(account), value)
+def _write(account: str | None, value: dict, path: str | None = None) -> None:
+    secrets_fs.atomic_write_json(path_for(account, path), value)
+
+
+def _named(account, path) -> bool:
+    """置き場を引けるか（口座の名前が安全か、置き場のパスを直に渡したか）。"""
+    return path is not None or accounts.name_is_safe(account)
 
 
 def _now(now):
@@ -147,11 +155,11 @@ def _until(row, now) -> datetime.datetime | None:
     return until
 
 
-def waiting(account: str, *, now=None) -> dict | None:
+def waiting(account: str | None, *, now=None, path: str | None = None) -> dict | None:
     """待ちの間なら `{"until", "minutes", "code", "since", "remaining_minutes"}`、でなければ None。"""
-    if not accounts.name_is_safe(account):
+    if not _named(account, path):
         return None
-    row = read(account)
+    row = read(account, path=path)
     now = _now(now)
     until = _until(row, now)
     if until is None or until <= now:
@@ -161,46 +169,61 @@ def waiting(account: str, *, now=None) -> dict | None:
     return out
 
 
-def observe(account: str, headers, *, now=None) -> dict | None:
+def observe(account: str | None, headers, *, now=None, path: str | None = None) -> dict | None:
     """成功・失敗のどちらの応答でも呼ぶ。読めたヘッダがあれば残す（待ちは消さない）。"""
     parsed = parse(headers)
-    if not parsed or not accounts.name_is_safe(account):
+    if not parsed or not _named(account, path):
         return parsed or None
     now = _now(now)
-    row = read(account)
+    row = read(account, path=path)
     value = {"version": VERSION, "observed_at": jst.iso(now), "headers": parsed}
     until = _until(row, now)
     if until is not None and until > now:
         value["wait"] = row["wait"]
     try:
-        _write(account, value)
+        _write(account, value, path)
     except (OSError, ValueError):
         pass   # 残せなくても呼び出しは止めない（量の写しであって柵ではない）
     return parsed
 
 
-def note_rate_limited(account: str | None, headers, code, *, now=None) -> tuple[int, str]:
+def note_rate_limited(account: str | None, headers, code, *, now=None,
+                      path: str | None = None) -> tuple[int, str]:
     """量の制限で断られた。待つ分と、いつまでかを返し、口座が分かれば state に残す。"""
     parsed = parse(headers)
     minutes = regain_minutes(parsed) or DEFAULT_WAIT_MINUTES
     minutes = max(1, min(MAX_WAIT_MINUTES, minutes))
     now = _now(now)
     until = jst.iso(now + datetime.timedelta(minutes=minutes))
-    if account and accounts.name_is_safe(account):
+    if path is not None or (account and accounts.name_is_safe(account)):
         value = {"version": VERSION, "observed_at": jst.iso(now), "headers": parsed,
                  "wait": {"until": until, "minutes": minutes,
                           "code": code if isinstance(code, int) and not isinstance(code, bool) else None,
                           "since": jst.iso(now)}}
         try:
-            _write(account, value)
+            _write(account, value, path)
         except (OSError, ValueError):
             pass
     return minutes, until
 
 
-def summary(account: str, *, now=None) -> dict:
+def insights_throttle_pct(parsed) -> float | None:
+    """`x-fb-ads-insights-throttle` の使用率（`app_id_util_pct`・`acc_id_util_pct` の大きいほう・％）。
+
+    段 4（計画 段 4 の 6）: 広告の成績を読む前に、前回の答えのこの値を見る（L2: insights の
+    best-practices「100% に近づいたら待つ」）。無い・形が違えば None（待たない）。
+    """
+    row = parsed.get("ads_insights_throttle") if isinstance(parsed, dict) else None
+    if not isinstance(row, dict):
+        return None
+    values = [row.get(key) for key in ("app_id_util_pct", "acc_id_util_pct")]
+    values = [float(v) for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    return max(values) if values else None
+
+
+def summary(account: str | None, *, now=None, path: str | None = None) -> dict:
     """`thth quota` が出す形（読むだけ・網に出ない）。"""
-    row = read(account) or {}
+    row = read(account, path=path) or {}
     headers = row.get("headers") if isinstance(row.get("headers"), dict) else {}
     return {
         "observed_at": row.get("observed_at"),
@@ -208,6 +231,7 @@ def summary(account: str, *, now=None) -> dict:
         "business_use_case_usage": headers.get("business_use_case_usage"),
         "ads_insights_throttle": headers.get("ads_insights_throttle"),
         "regain_minutes": regain_minutes(headers),
-        "waiting": waiting(account, now=now),
+        "ads_insights_util_pct": insights_throttle_pct(headers),
+        "waiting": waiting(account, now=now, path=path),
         "unreadable": bool(row.get("unreadable")),
     }

@@ -719,6 +719,22 @@ class InstagramAdapter(fb.FacebookAdapter):
             else:
                 row(key, label, self.INSIGHTS_PERMISSION, True, f"直近の値 {value}")
 
+        # Meta 計画 段 4 の 5: Threads 広告の下地（読むだけ）。`GET /{ig-user-id}/connected_threads_user
+        # ?fields=threads_user_id`（権限 `threads_business_basic`・L3: 公式の頁は検索の抜粋で読んだだけ）。
+        # **Threads 広告の `threads_user_id` を得る以外に使わない**（事実 §2-7）。数字の id だけを言う。
+        try:
+            body = self._get(f"/{self.ig_user_id}/connected_threads_user", "Threads の口座（connected_threads_user）",
+                             params={"fields": "threads_user_id"}, permission="threads_business_basic")
+        except Exception as e:   # noqa: BLE001 — 下地の読み。× にせず「確かめられなかった」（doctor を赤にしない）
+            row("connected_threads_user", "Threads 広告の下地（connected_threads_user）", "threads_business_basic",
+                None, "読めませんでした（" + self._scrub(e)[:200] + "）", http_status=getattr(e, "http_status", None))
+        else:
+            rows = body.get("data") if isinstance(body.get("data"), list) else [body]
+            ids = [str(r.get("threads_user_id")) for r in rows
+                   if isinstance(r, dict) and str(r.get("threads_user_id") or "").isdigit()]
+            row("connected_threads_user", "Threads 広告の下地（connected_threads_user）", "threads_business_basic",
+                True if ids else None, f"threads_user_id={ids[0]}" if ids else "結びついた Threads の口座がありません")
+
         for key, label, permission in (("publish", "Instagram への投稿", self.PUBLISH_PERMISSION),
                                        ("reply", "コメントへの返事・隠す・消す", self.REPLY_PERMISSION),
                                        ("retract", "投稿の削除", self.DELETE_PERMISSION)):
