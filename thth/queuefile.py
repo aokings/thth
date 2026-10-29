@@ -17,7 +17,9 @@ KNOWN_STATUSES = {"draft", "approved", "posted", "withdrawn"}
 # facebook の 5,000 は **THTH の線**（10/29・段 0）。公式の上限は確かめられていない（二次の資料に
 # 63,206・表示は数百字で畳まれる・`thth/media_traits/facebook.json` の `facebook.text_length`）。
 # 媒体が禁じていないことを THTH が絞っている形なので、断り文に上げ方を書く（`LIMIT_NOTES`）。
-MEDIA_LIMITS = {"threads": 500, "x": 280, "bluesky": 300, "mastodon": 500, "facebook": 5000}
+# instagram の 2,200 はキャプションの公式の上限（**L2**: content-publishing「2200 characters」・
+# 段 3・10/29。ハッシュタグ 30・@ 20 は lint でなく媒体が断る）。
+MEDIA_LIMITS = {"threads": 500, "x": 280, "bluesky": 300, "mastodon": 500, "facebook": 5000, "instagram": 2200}
 # 上限が媒体の数でなく THTH の線のとき、超えた断り文に添える 1 行（上げ方を隠さない）。
 LIMIT_NOTES = {
     "facebook": "この上限は THTH の線です（Facebook の公式の上限ではありません）。"

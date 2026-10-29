@@ -99,6 +99,10 @@ def account_daily_metric_names(media) -> tuple:
     if media == "facebook":
         from .adapters import facebook
         return tuple(facebook.PAGE_DAILY_METRICS) + tuple(facebook.PAGE_DAILY_ALIASES.values())
+    if media == "instagram":
+        # 段 3: 口座の日次の表（`instagram.ACCOUNT_DAILY_METRICS`）と、プロフィールのフォロワー数。
+        from .adapters import instagram
+        return tuple(instagram.ACCOUNT_DAILY_METRICS) + ("followers_count",)
     return ACCOUNT_DAILY_METRIC_NAMES
 
 

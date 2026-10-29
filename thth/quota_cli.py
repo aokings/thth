@@ -8,9 +8,12 @@
   軽い読みを 1 回投げて今の値にする（書く口は呼ばない）。
 - 口座が止まっていても読める道は作らない（adapter の口は `leave_gate.bind` で包まれている）。
 
-**capability の語（`quota`）は facebook の `CAPABILITIES` に足していない。** `tests/test_facebook_adapter.py`
-が facebook の能力の集合を 1 つの値で縛っていて、段 2 ではその試験を 1 行も変えない条件だったため。
-`quota()` が値を返すかどうかで見る（計画との違い・段 2 の報告に書いた）。
+- instagram（段 3）: 上の 3 つに、1 日の公開の上限（`content_publishing_limit` の `quota_usage`・
+  `config.quota_total`）を足す。
+
+capability の語 `quota` は段 3 で facebook・instagram の `CAPABILITIES` に足した（段 2 では
+`tests/test_facebook_adapter.py` を 1 行も変えない条件だったので足していなかった）。ここは今も
+`quota()` が値を返すかで見る。
 """
 from __future__ import annotations
 
@@ -25,7 +28,7 @@ from .adapters import base as adapter_base
 
 def register(sub) -> None:
     """`thth/cli.py` の `build_parser()` から 1 行で呼ばれる。"""
-    p = sub.add_parser("quota", help="媒体の量の制限の使用量を読む（読むだけ・Facebook）")
+    p = sub.add_parser("quota", help="媒体の量の制限の使用量を読む（読むだけ・Facebook・Instagram）")
     p.add_argument("account")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_quota)
@@ -57,6 +60,10 @@ def _lines(account: str, value: dict) -> list:
         row = value.get(key)
         out.append(f"  {label}: " + (json.dumps(row, ensure_ascii=False, sort_keys=True) if row is not None
                                        else "ヘッダが返っていません"))
+    publishing = value.get("publishing")
+    if isinstance(publishing, dict):
+        out.append(f"  1 日の公開の上限（content_publishing_limit）: 使用 {publishing.get('usage')} / "
+                   f"上限 {publishing.get('total')}（{publishing.get('duration')} 秒の窓）")
     if value.get("regain_minutes"):
         out.append(f"  戻るまでの見込み: {value['regain_minutes']} 分")
     out.append("  appsecret_proof: " + ("付けています" if value.get("appsecret_proof") else "付けていません"))

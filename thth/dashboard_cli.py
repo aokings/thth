@@ -54,7 +54,7 @@ _REF_KIND = {"scenario_stalled": "campaign", "series_low": "series", "not_after_
 WEEKDAYS_JA = ("月", "火", "水", "木", "金", "土", "日")
 # 画面の言葉（型の THTH_MEDIUM・THTH_KIND と同じ）。中の名前・符丁は画面の文に出さない（B1）。
 MEDIUM_JA = {"threads": "Threads", "x": "X", "bluesky": "Bluesky", "mastodon": "Mastodon",
-             "facebook": "Facebook", "hatenablog": "はてなブログ", "hatena_bookmark": "はてブ", "site": "サイト"}
+             "facebook": "Facebook", "instagram": "Instagram", "hatenablog": "はてなブログ", "hatena_bookmark": "はてブ", "site": "サイト"}
 KIND_JA = {"scenario_stalled": "停滞", "series_low": "ストック不足", "untied_drafts": "未分類の下書き",
            "unanswered_replies": "未返信", "schedule_low": "予約切れ間近", "schedule_thin": "予約が薄い",
            "not_after_passed": "期限切れ", "publish_held": "公開を停止中", "account_stopped": "口座が停止",

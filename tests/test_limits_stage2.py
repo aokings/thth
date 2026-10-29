@@ -87,12 +87,12 @@ def test_段0にだけあった5つのidの行き先():
 
 def test_SNSの4媒体の行は表の1行に集まり根拠は媒体ごと():
     row = limits_policy.rule("post.daily")
-    # facebook は 10/29 段 0 で媒体の性質の台帳を持った（5 媒体）。
-    assert set(row["ledger"]) == {"threads", "x", "bluesky", "mastodon", "facebook"}
+    # facebook は 10/29 段 0 で媒体の性質の台帳を持った（5 媒体）。instagram は段 3（6 媒体）。
+    assert set(row["ledger"]) == {"threads", "x", "bluesky", "mastodon", "facebook", "instagram"}
     traits = {m: limits_policy.resolve(row, cfg={"media": m})["trait"] for m in row["ledger"]}
     assert traits == {"threads": "threads.api_posts_24h", "x": "x.account_post_limit",
                       "bluesky": "bluesky.pds_points", "mastodon": "mastodon.api_rate",
-                      "facebook": "facebook.api_rate"}
+                      "facebook": "facebook.api_rate", "instagram": "instagram.publish_limit"}
     # Threads の反応は台帳に根拠が無い → thth の線
     assert limits_policy.resolve(limits_policy.rule("reaction.daily"), cfg={"media": "threads"})["trait"] \
         == "thth:reaction.daily"

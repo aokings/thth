@@ -40,6 +40,8 @@ MEDIA: dict[str, Medium] = {
     "mastodon": Medium("Mastodon", "sns", "push", True, "demo"),
     "x": Medium("X", "sns", "push", True, None),
     "facebook": Medium("Facebook", "sns", "push", True, "0"),
+    # 段 3（10/29）: Meta が公開の URL を取りに来る（入れ物の 2 段・Threads の relay を貸す）。
+    "instagram": Medium("Instagram", "sns", "pull", True, "0"),
 }
 
 # 投稿先の adapter を持たない、表に並ぶ名前（はてな・サイト）。媒体の集合の比較から外す。

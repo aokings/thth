@@ -103,8 +103,9 @@ All subcommands `thth --help` lists, one line each:
 - `posts` — list your own recent posts
 - `retract` — delete a published post (two-step confirmation on a local ledger; the record is kept)
 - `edit` — correct the text of a post THTH published (two-step confirmation; Facebook only; the previous text stays in the record)
-- `reply` — hide, unhide or delete a comment (`reply hide|unhide|delete`; delete is two-step; Facebook only)
-- `quota` — read the platform usage headers and any rate-limit wait for an account (read-only; Facebook only)
+- `reply` — hide, unhide or delete a comment (`reply hide|unhide|delete`; delete is two-step; Facebook and Instagram)
+- `comments` — open or close the comments on a post (`comments open|close`; Instagram)
+- `quota` — read the platform usage headers, any rate-limit wait and (Instagram) the daily publishing limit for an account (read-only; Facebook and Instagram)
 - `repost` — repost a post (Threads, Bluesky, Mastodon, X; only when the owner asks)
 - `unrepost` — undo a repost made through THTH
 - `like` — like a post (Bluesky, Mastodon, X; the Threads API has no likes)

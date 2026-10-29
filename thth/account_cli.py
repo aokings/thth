@@ -55,7 +55,7 @@ def _find_example_dir() -> str:
 
 EXAMPLE_DIR = _find_example_dir()
 
-MEDIA_CHOICES = ("threads", "bluesky", "mastodon", "x", "hatenablog", "facebook")
+MEDIA_CHOICES = ("threads", "bluesky", "mastodon", "x", "hatenablog", "facebook", "instagram")
 
 # **アカウント名はファイル名になる**（`<accounts_dir>/<name>.json`）。区切りや
 # `..` を混ぜると置き場の外に書けてしまう——`thth account add ../pwned` が
@@ -222,7 +222,7 @@ def example_path(media: str) -> str:
 def build_ledger(name: str, *, media: str, project: str, handle: str | None = None,
                  instance: str | None = None, repo_dir: str | None = None,
                  redirect_uri: str | None = None, principal: str | None = None,
-                 blog_id: str | None = None) -> dict:
+                 blog_id: str | None = None, page_id: str | None = None) -> dict:
     """`accounts.example/<media>.json` の雛形から 1 本ぶんを組み立てる。
 
     **`production` と `scheduled` は必ず false**（設計 §4.2「`production: true` を
@@ -259,6 +259,12 @@ def build_ledger(name: str, *, media: str, project: str, handle: str | None = No
         # 台帳の `page_id` が正本（`FacebookAdapter.from_account()` が読む）。
         data["page_id"] = (handle or "").strip()
         data["handle"] = data["page_id"]
+    if media == "instagram":
+        # 段 3: `ig_user_id`（数字）が正本・`page_id` は親のページ（`thth auth` が照合する）。
+        # handle にも ig_user_id を入れる（`.token` の username と同じ・名前は変えられるので照合に使わない）。
+        data["ig_user_id"] = (handle or "").strip()
+        data["handle"] = data["ig_user_id"]
+        data["page_id"] = (page_id or "").strip()
     data["repo_dir"] = repo_dir or f"$THTH_ROOT/repos/{project}"
     data["env"] = f"~/.config/thth/{name}.env"
     data["token"] = f"~/.config/thth/{name}.token"
@@ -374,6 +380,21 @@ def cmd_add(args) -> int:
             print(f"  例: thth account add {name} --media facebook --project {args.project} "
                   f"--handle 1361492233719922 --by <名前>", file=sys.stderr)
             return 2
+    if args.media == "instagram":
+        # Instagram は**プロ口座の id**（数字・`ig_user_id`）と、つながっている**ページの id**で指す（段 3）。
+        handle_ok = bool(args.handle) and args.handle.strip().isascii() and args.handle.strip().isdigit()
+        page_arg = (getattr(args, "page_id", None) or "").strip()
+        if not handle_ok or not (page_arg.isascii() and page_arg.isdigit()):
+            from .adapters import instagram as instagram_mod
+            print("--handle に Instagram のプロ口座の id（数字）と、--page-id につながっているページの id（数字）が要ります",
+                  file=sys.stderr)
+            print("  " + instagram_mod.IG_USER_ID_HINT, file=sys.stderr)
+            print(f"  例: thth account add {name} --media instagram --project {args.project} "
+                  f"--handle 17841437318552220 --page-id 1361492233719922 --by <名前>", file=sys.stderr)
+            return 2
+    elif getattr(args, "page_id", None):
+        print("--page-id は instagram だけです（facebook は --handle がページの id）", file=sys.stderr)
+        return 2
     if args.media == "mastodon" and not args.instance:
         # instance が無いと、雛形の `https://mastodon.example`（存在しない）が
         # そのまま残る。**どのインスタンスかは道具には推測できない。**
@@ -436,7 +457,8 @@ def cmd_add(args) -> int:
         data = build_ledger(name, media=args.media, project=args.project,
                             handle=args.handle, instance=args.instance,
                             repo_dir=args.repo_dir, redirect_uri=args.redirect_uri,
-                            principal=principal_arg, blog_id=blog_arg)
+                            principal=principal_arg, blog_id=blog_arg,
+                            page_id=getattr(args, "page_id", None))
         if args.media == "hatenablog":
             # 書く前に loader と同じ突き合わせ（§3.3 の 1〜5）を通す。外れる台帳は書かない。
             from . import principals
@@ -600,6 +622,8 @@ def register(sub) -> None:
     p.add_argument("--handle", default=None,
                    help="`add` のとき: 表示上の handle（bluesky・mastodon では必須）。facebook はページの id"
                         "（ページの透明性に出る「ページID」。URL の profile.php?id= の id ではない）")
+    p.add_argument("--page-id", default=None, dest="page_id",
+                   help="`add`（instagram）のとき: つながっている Facebook ページの id（数字・ページの透明性の「ページID」）")
     p.add_argument("--instance", default=None,
                    help="`add` のとき: Mastodon の instance（必須）/ Bluesky の service")
     p.add_argument("--redirect-uri", default=None, dest="redirect_uri",
@@ -643,5 +667,7 @@ def register(sub) -> None:
                 "  facebook : --handle <ページの id（数字）> が必須（page_id にも同じ値）。"
                 "ページの「基本データ → ページの透明性」に出る「ページID」を書く"
                 "（URL の profile.php?id= の id ではない）\n"
+                "  instagram: --handle <プロ口座の id（数字・ig_user_id）> と --page-id <つながっているページの id> が必須。"
+                "id は GET /{page-id}?fields=instagram_business_account で引ける（thth auth が照合する）\n"
                 "  hatenablog: --principal <主体> --blog <blog_id> が必須（handle と token は主体から写す）")
     p.set_defaults(func=dispatch)

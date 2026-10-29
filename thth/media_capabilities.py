@@ -29,7 +29,7 @@ key は `CAPABILITIES` に、組合せ・形の不正を名指しする key は 
 """
 from __future__ import annotations
 
-MEDIA = ('mastodon', 'bluesky', 'threads', 'x', 'facebook')
+MEDIA = ('mastodon', 'bluesky', 'threads', 'x', 'facebook', 'instagram')
 
 # 語彙。`body_only` だけ理由を取らない（「本文に書く」が理由そのもの）。
 PREFIXES = ('unsupported', 'unverified', 'ascii_only')
@@ -151,6 +151,25 @@ CAPABILITIES = {
         'aac_adts': ADTS, 'asf': ASF,
         'bmff brand': BMFF_BRAND, 'unknown format': UNKNOWN_FORMAT,
     },
+    # 段 3（10/29）。この版の口は**JPEG の画像 1〜20 枚**（1 枚は IMAGE、2 枚以上は CAROUSEL の入れ物・
+    # `adapters/instagram_media.py` の `intent_error`）。PNG・GIF・WebP は媒体が受けない（**L2**: JPEG だけ）。
+    # 動画（リール）は資材が来てから（計画 段 3 の 7・NOT_ROUTED）。
+    'instagram': {
+        'image': 'supported', 'video': NOT_ROUTED, 'audio': NO_AUDIO,
+        'carousel': 'supported', 'poll': NO_POLL, 'quote': NOT_ROUTED,
+        'link': 'body_only', 'gif': PROVIDER_FORMAT, 'text': NO_TEXT,
+        'thumbnail': NOT_ROUTED, 'captions': NO_CAPTION,
+        'tags': 'body_only', 'labels': NO_LABEL, 'languages': NO_LANGUAGE,
+        'spoiler': NO_SPOILER, 'reply_control': NOT_ROUTED, 'ghost': NO_GHOST,
+        'visibility_private': PRIVATE, 'offset_styling': NO_OFFSETS,
+        'carousel_quote': NOT_ROUTED,
+        'jpeg': 'supported', 'png': PROVIDER_FORMAT, 'webp': PROVIDER_FORMAT,
+        'mp4': NOT_ROUTED, 'mov': NOT_ROUTED, 'webm': PROVIDER_FORMAT,
+        'mp3': NO_AUDIO, 'wav': NO_AUDIO, 'flac': NO_AUDIO,
+        'ogg': NO_AUDIO, 'ogg_vorbis': NO_AUDIO, 'vtt': NO_CAPTION,
+        'aac_adts': ADTS, 'asf': ASF,
+        'bmff brand': BMFF_BRAND, 'unknown format': UNKNOWN_FORMAT,
+    },
 }
 
 # 一語の `supported` が嘘にならないための但し書き。値ではなく静的な語。
@@ -191,6 +210,12 @@ NOTES = {
         'carousel': 'images_only_up_to_10_per_post_thth_line',
         'gif': 'gif_file_sent_as_a_photo',
         'link': 'first_url_in_the_body_becomes_the_link_preview',
+    },
+    'instagram': {
+        'image': 'jpeg_only_up_to_8000000_bytes_ratio_4_5_to_1_91_width_320_to_1440',
+        'carousel': 'images_only_up_to_20_per_post_one_caption_on_the_parent',
+        'link': 'urls_in_the_caption_are_not_clickable',
+        'tags': 'up_to_30_hashtags_and_20_mentions_counted_by_the_provider',
     },
 }
 
@@ -253,6 +278,12 @@ REFUSALS = {
         'post_options': 'post option outside the facebook set',
         'no_media': 'media intent with nothing to send',
         'reply_media': 'image on a reply (comment) is not routed in this version',
+    },
+    'instagram': {
+        'typed_attachment': 'typed attachment kind not routed for this medium',
+        'post_options': 'post option outside the instagram set',
+        'no_media': 'instagram needs at least one image',
+        'reply_media': 'image on a reply (comment) is not possible',
     },
 }
 

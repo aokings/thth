@@ -215,10 +215,19 @@ class FacebookAuthProfile(AuthProfile):
 
     @leave_gate.configured("account_cfg")
     def exchange(self, code_value, session, account_cfg, *, log):
-        from .. import oauth
         page_id = str(account_cfg.get("page_id") or "").strip()
         if page_id != self.page_id:
             raise FlowError("auth_account_changed")
+        page, page_token, debug, me = self._page_grant(code_value, account_cfg, page_id, log=log)
+        return self._token_record(page_id, page, page_token, debug, me)
+
+    def _page_grant(self, code_value, account_cfg, page_id, *, log):
+        """code → 短い鍵 → 長い鍵 → `/me/accounts` から台帳のページの鍵 → `/debug_token` → `/me`。
+
+        `(page の行, ページの鍵, debug の data か None, /me の答え)`。Instagram（段 3・
+        `auth_instagram.py`）も同じ道でページの鍵を取り、そのあとにページの IG を照合する。
+        """
+        from .. import oauth
         short = graph_get("/oauth/access_token", {
             "client_id": self.client_id, "redirect_uri": CALLBACK,
             "client_secret": self.client_secret, "code": secret(code_value)})
@@ -259,7 +268,10 @@ class FacebookAuthProfile(AuthProfile):
         me = graph_get("/me", self._with_proof({"fields": "id,name", "access_token": page_token}))
         if str(me.get("id") or "") != page_id:
             raise FlowError("facebook_identity_mismatch: ページの鍵が台帳の page_id を指していません")
+        return page, page_token, debug, me
 
+    def _token_record(self, page_id, page, page_token, debug, me) -> dict:
+        """`.token` に書く中身（ページの鍵・権限・期限・データの期限）。"""
         scopes = meta_tokens.scopes_of(debug)
         if scopes is not None:
             scopes_recorded, scopes_source = scopes, SCOPES_SOURCE_RESPONSE

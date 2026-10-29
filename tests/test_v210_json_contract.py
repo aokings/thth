@@ -99,6 +99,8 @@ COMMANDS += ['dashboard']
 COMMANDS += ['edit', 'reply']
 # Meta 計画 段 2: 量の制限の使用量（読むだけ・--json は 1 つの値）。
 COMMANDS += ['quota']
+# Meta 計画 段 3: コメント欄の開け閉め（--json は 1 つの値）。
+COMMANDS += ['comments']
 
 
 def test_json_table_covers_every_parser():

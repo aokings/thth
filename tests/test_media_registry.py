@@ -126,9 +126,19 @@ def test_雛形のhandleは雛形の台帳とダミーの印に一致する():
 
 
 def test_添付を媒体が取りに来るのはrelayを渡す媒体だけ():
+    """段 3（10/29）: relay を渡すかは registry の `media_fetch: pull` だけで決める（`meta.media.relay_for`）。
+
+    `media_delivery` は媒体名で relay を分けない（`relay_for` を呼ぶだけ）。段 2 までは
+    `MediaRelay(...) if cfg['media']=='threads'` の 1 行だったのを、段 3 で Instagram を足すときに置き換えた。
+    """
+    from thth.meta import media as meta_media
     source = inspect.getsource(media_delivery)
-    relayed = set(re.findall(r"MediaRelay\([^)]*\) if cfg\['media'\]=='([a-z_]+)'", source))
-    assert relayed, "media_delivery の relay の分岐を読めません（試験の正規表現を直す）"
+    assert "meta_media.relay_for(cfg,has_items=bool(items))" in source
+    assert not re.search(r"MediaRelay\([^)]*\) if cfg\['media'\]", source), "媒体名で relay を分ける行が戻っている"
     pulled = {name for name, medium in media_registry.MEDIA.items() if medium.media_fetch == "pull"}
-    assert pulled == relayed
+    assert pulled == {"threads", "instagram"}
+    for name in media_registry.MEDIA:
+        relay = meta_media.relay_for({"media": name, "account": "demo-" + name}, has_items=True)
+        assert (relay is not None) == (name in pulled), name
+        assert meta_media.relay_for({"media": name, "account": "demo-" + name}, has_items=False) is None
     assert {m.media_fetch for m in media_registry.MEDIA.values()} <= {"push", "pull"}

@@ -57,7 +57,10 @@ FACEBOOK_NOTE = (
     "の id ではない）。post_id は <ページID>_<数字>。画像は 1〜10 枚（2 枚以上は 1 本にまとまる）。"
     "できないこと: 動画・字幕・投票・返信に画像・いいね・シェア・inbox。投稿の編集とコメントを隠す・消すは "
     "CLI（thth edit・thth reply）だけ。文字数の上限 5,000 は THTH の線（台帳の char_limit で上げられる）。"
-    "facebook_data_access の行は Meta のデータに触れる期限（14 日を切ったら thth auth のやり直し）")
+    "facebook_data_access の行は Meta のデータに触れる期限（14 日を切ったら thth auth のやり直し）。"
+    "instagram の口座（段 3）は 1 プロ口座 1 口座で、作るのは CLI（--media instagram --handle <ig_user_id> "
+    "--page-id <ページID>）と VM での thth auth。出せるのは JPEG の画像 1〜20 枚だけ（文だけ・PNG・動画は断る）。"
+    "post_id は数字。キャプションは 2,200 字。90 日ごとに thth auth のやり直し（instagram_data_access の行）")
 
 TOOLS = [
     {

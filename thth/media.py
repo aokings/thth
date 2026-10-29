@@ -348,7 +348,7 @@ def _strong_ref(value):
 # ここから `unsupported_attachment: <媒体>/<種類>` が出るので、
 # `thth/media_capabilities.py` の表と突き合わせる試験が読める場所に要る。
 TYPED_KINDS=('quote','link','poll','text','gif')
-TYPED_ALLOWED={'threads':{'quote','link','poll','text','gif'},'mastodon':{'quote','link','poll'},'bluesky':{'quote','link'},'x':{'poll'},'facebook':set()}
+TYPED_ALLOWED={'threads':{'quote','link','poll','text','gif'},'mastodon':{'quote','link','poll'},'bluesky':{'quote','link'},'x':{'poll'},'facebook':set(),'instagram':set()}
 # 記録に残す「添付の種類」（`sent`／`insights` の `attachment_kinds`・第 10 段）。
 # ファイルの kind と型付きの種類を**同じ 1 つの list** に並べる——`analytics-report
 # --by attachment_kind` は 1 行を種類ごとに数えるので、image と poll が付いた 1 本は
@@ -437,9 +437,12 @@ def validate_declarations(fm,medium):
         'bluesky':{'languages','labels','presentation','gallery','facets','tags','reply_control'},
         'threads':{'text_spoiler','media_spoiler','ghost','reply_control','reply_approvals'},
         'x':{'reply_settings'},
+        # 段 3（10/29）: AI で作った印（**L2**: content-publishing の `is_ai_generated`・カルーセルは親にだけ）。
+        # manifest の post_options に入るので承認の指紋（media_manifest）に入る——指紋の版は上げない。
+        'instagram':{'is_ai_generated'},
     }
     if set(options)-option_fields.get(medium,set()): raise MediaError('post_options: unknown, duplicate legacy or unsupported field')
-    booleans={'sensitive','gallery','text_spoiler','media_spoiler','ghost','reply_approvals'}
+    booleans={'sensitive','gallery','text_spoiler','media_spoiler','ghost','reply_approvals','is_ai_generated'}
     for key,value in options.items():
         if key=='text_spoiler' and type(value) is list:
             for span in value:

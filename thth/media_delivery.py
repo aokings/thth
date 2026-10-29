@@ -14,14 +14,14 @@ from .adapters import base
 
 
 def unavailable(cfg):
-    return cfg.get("media") not in ("mastodon","bluesky","threads","x","facebook")
+    return cfg.get("media") not in ("mastodon","bluesky","threads","x","facebook","instagram")
 
 
 def error_for(cfg,manifest):
     if not manifest:return None
     if unavailable(cfg):return 'media_provider_unavailable'
-    from .adapters import mastodon_media,bluesky_media,threads_media,x_media,facebook
-    return {'bluesky':bluesky_media,'mastodon':mastodon_media,'threads':threads_media,'x':x_media,'facebook':facebook}[cfg['media']].intent_error(manifest)
+    from .adapters import mastodon_media,bluesky_media,threads_media,x_media,facebook,instagram_media
+    return {'bluesky':bluesky_media,'mastodon':mastodon_media,'threads':threads_media,'x':x_media,'facebook':facebook,'instagram':instagram_media}[cfg['media']].intent_error(manifest)
 
 
 def _save(name,data):
@@ -90,8 +90,10 @@ def publish(adapter,post,*,cfg,fm,manifest,state_dir,before_publish=None,on_cont
                 except (OSError,ValueError) as exc:raise media.MediaError('media_journal_unavailable') from exc
                 durable_phase=phase
             from .adapters import mastodon_media
-            from .media_relay import MediaRelay
-            bound=dataclasses.replace(post,media_manifest=manifest,media_files=tuple(items),media_progress=progress,media_cache=(lambda cap:mastodon_media.cache(cfg,cap)) if cfg['media']=='mastodon' else None,media_relay=MediaRelay(cfg['account'],'operator') if cfg['media']=='threads' and items else None)
+            # 公開の URL を取りに来る媒体（registry の `media_fetch: pull`・Threads と Instagram）にだけ relay を
+            # 貸す（Meta 計画 段 3・`thth/meta/media.py`）。媒体名の表をここに持たない。
+            from .meta import media as meta_media
+            bound=dataclasses.replace(post,media_manifest=manifest,media_files=tuple(items),media_progress=progress,media_cache=(lambda cap:mastodon_media.cache(cfg,cap)) if cfg['media']=='mastodon' else None,media_relay=meta_media.relay_for(cfg,has_items=bool(items)))
             # No request precedes this durable intent. It also changes the old
             # legacy inflight leaf to a private 0600 file without copying blobs.
             progress('prepared',remote_ids=[])
@@ -199,7 +201,17 @@ def lint_notes(cfg,fm,*,text=None,unreachable_warns=False):
     instance that cannot be reached warns instead of refusing. A rehearsal is
     not an upload, and the live limits are observed again before every upload.
     """
+    # Instagram に文だけの投稿は無い（Meta 計画 段 3・L2）。返事（コメントへの返事）だけは画像なしで出せる。
+    if cfg and cfg.get('media')=='instagram' and not media.declared(fm) and not (fm.get('reply_to') or fm.get('reply_to_file')):
+        return ['unsupported_attachment: instagram/no_media']
     if not cfg or not media.declared(fm):return []
+    if cfg.get('media')=='instagram':
+        from .adapters import instagram_media
+        try:
+            with media.prepare(cfg['repo_dir'],fm,'instagram') as (manifest,_):
+                reason=instagram_media.intent_error(manifest)
+                return [reason] if reason else instagram_media.notes(manifest)
+        except (OSError,ValueError) as exc:return unsupported_notes(exc)
     if cfg.get('media')=='threads':
         from .adapters import threads_media
         try:

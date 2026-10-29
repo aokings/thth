@@ -108,6 +108,16 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 - **データに触れる期限**: ページの鍵そのものに期限は無いが、Meta の `data_access_expires_at`（通常 90 日）が 14 日を切ると `thth maintain` が `data_access_expiring`（過ぎたら `data_access_expired`）と言い、`thth events` に `token_data_access_expiring` が出る。対処は `thth auth <口座> --by <名前>` のやり直し（人が VM で打つ）。
 - **量の制限**（段 2）: `thth quota <口座> [--json]` が Meta の使用量のヘッダ（`X-App-Usage`・`X-Business-Use-Case-Usage`）と待ちを返す（読むだけ・MCP には無い）。Meta が量の制限で断ると（code 4・17・32・80001 など）断り文は `meta_rate_limited` で、**出ていない**。Meta が言う戻るまでの分（無ければ 60 分・THTH の線）だけ、その口座の timer は出さず（`thth throw` は `rate_limited`）、明けた次の回に同じ原稿が出る。待ちは `state/<口座>/meta_usage.json`。
 
+## Instagram（Meta 計画 段 3・10/29）
+
+- **口座の作り方**: 1 つのプロ口座を 1 口座で扱う。鍵はつながっている Facebook ページの鍵（Facebook ログインの道）で、口座ごとに別の `.token`。`thth account add <口座> --media instagram --project <p> --handle <ig_user_id> --page-id <ページID> --by <名前>` のあと `thth auth <口座> --by <名前>`（VM で人が打つ・MCP には無い）。`ig_user_id` はプロ口座の数字の id（`@` の名前ではない）で、ページの `instagram_business_account` から引ける。認可はページにつながっている Instagram が台帳の `ig_user_id` と同じときだけ保存する（違えば `instagram_account_mismatch`、つながっていなければ `instagram_account_not_linked`）。
+- **post_id の形**: 数字（例 `17895695668004550`）。返事の宛先（`reply_to`）は**コメントの id**。
+- **できること**: JPEG の画像 1〜20 枚（8MB・縦横比 4:5〜1.91:1・2 枚以上はカルーセル）・`alt`（1000 字まで）・`post_options: {is_ai_generated: true}`（AI で作った印・承認の指紋に入る）・コメントへの返事・取り下げ・最近の投稿・コメントと返事を読む・数（いいね・コメント・表示・リーチ・シェア・保存）・口座の日次（`thth collect`）・`thth quota`（1 日の公開の上限 `content_publishing_limit` と使用量）。公開は Meta が `https://thth.me/m/` の一時 URL から画像を取りに来る（Threads と同じ relay）。公開の前に毎回 1 日の上限を読み、届いていれば出さない。
+- **コメントを隠す・戻す・消す**は `thth reply hide|unhide|delete`（Facebook と同じ）。**コメント欄の開け閉め** `thth comments close|open <口座> <post_id> --by <名前>`（1 段・戻せる・記録は moderation）。どれも台帳の `production: true` が要る。MCP には無い。
+- **できないこと**: 文だけの投稿（Instagram に無い）・PNG・GIF・WebP（JPEG だけ）・動画とリール（資材が来てから）・キャプションの編集・いいね・ストーリー・DM・ハッシュタグ検索。コメントは webhook でなく採取で拾う（審査まで）。
+- **文字数の上限 2,200**（キャプションの公式の上限）。ハッシュタグ 30・@ 20 は媒体が数える。
+- **90 日ごとに `thth auth` をやり直す**: instagram の権限はデータに触れる期限（`data_access_expires_at`）に当たる見込み。14 日を切ると `thth maintain` が `data_access_expiring` と言う。
+
 ## 何を拒むか
 
 - **手元の台帳を使う実行の、`--confirm` の無い本番。** digest の食い違う本番。承認後に本文が変わった下書き

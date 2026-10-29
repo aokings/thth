@@ -1,0 +1,145 @@
+{
+  "schema": "thth.media-traits/1",
+  "media": "instagram",
+  "supported": true,
+  "relates_to": [],
+  "traits": [
+    {
+      "id": "instagram.publish_limit",
+      "kind": "api_limit",
+      "statement": "公開は 24 時間の移動窓で 100 本（カルーセルは 1 本）。本物の値は GET /{ig-user-id}/content_publishing_limit の config.quota_total（こぴちゃの口座で 2026-10-29 に quota_total 100・quota_duration 86400 を読んだ）。THTH は公開の前に毎回この値を読み、quota_usage が quota_total に届いていれば出さない",
+      "evidence": {
+        "type": "observed",
+        "record": "THTH開発 第11 が本番の口座 17841437318552220 で GET content_publishing_limit?fields=quota_usage,config を読んだ（quota_usage 0・config.quota_total 100・quota_duration 86400）",
+        "observed_at": "2026-10-29",
+        "also": [
+          {
+            "type": "official_doc",
+            "url": "https://developers.facebook.com/docs/instagram-platform/content-publishing",
+            "checked_at": "2026-10-29"
+          },
+          {
+            "type": "official_doc",
+            "url": "https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/content_publishing_limit",
+            "checked_at": "2026-10-29"
+          }
+        ]
+      },
+      "confidence": "high",
+      "signals": [
+        "post.daily",
+        "retract.daily",
+        "reply.burst",
+        "reply.daily"
+      ],
+      "penalty": [
+        "rate_limited"
+      ],
+      "defaults": {
+        "post.daily": {
+          "signal": "frequency",
+          "actions": [
+            "post"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 8,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "daily_limit",
+          "count_evidence": "thth_line"
+        },
+        "retract.daily": {
+          "signal": "frequency",
+          "actions": [
+            "retract"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 5,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "retract_limit",
+          "count_evidence": "thth_line"
+        },
+        "reply.burst": {
+          "signal": "frequency",
+          "actions": [
+            "reply"
+          ],
+          "applies_to": [
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "minutes": 10
+          },
+          "count": 10,
+          "key": "op",
+          "on_exceed": "wait",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "burst_limit",
+          "detail": "burst",
+          "count_evidence": "thth_line"
+        },
+        "reply.daily": {
+          "signal": "frequency",
+          "actions": [
+            "reply"
+          ],
+          "applies_to": [
+            "reply"
+          ],
+          "scope": "account",
+          "window": {
+            "day": "jst"
+          },
+          "count": 50,
+          "key": "op",
+          "on_exceed": "refuse",
+          "purpose": "preference",
+          "tighter": "lower",
+          "refusal": "daily_limit",
+          "detail": "reply_daily",
+          "count_evidence": "inferred"
+        }
+      },
+      "notes": "段 3（10/29）。publish_24h は 100【確】（公開の手引きの本文の 100 と本番の quota_total が一致。参照の頁の 50 は古い値と読む）。THTH の post.daily 8・retract.daily 5・reply.burst 10 分に 10 は THTH の運用の線で、どれも 100 の内側。reply.daily 50 は推測（確かさ low）。上限の判断は台帳の数でなく API の quota_total を読む（InstagramAdapter.publishing_limit）。量の制限は BUC（24 時間に 4800 × インプレッション）・code 80002"
+    },
+    {
+      "id": "instagram.caption",
+      "kind": "observation",
+      "statement": "キャプションは 2200 字・ハッシュタグ 30 個・@ 20 個まで。カルーセルの子にはキャプションを付けられない。画像は JPEG だけ（8MB・縦横比 4:5〜1.91:1・幅 320〜1440）。カルーセルは 20 件まで。入れ物は 24 時間で切れる",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://developers.facebook.com/docs/instagram-platform/content-publishing",
+        "checked_at": "2026-10-29"
+      },
+      "confidence": "high",
+      "signals": [],
+      "notes": "queuefile.MEDIA_LIMITS の 2200・media_capabilities の instagram の行・adapters/instagram_media.py の検査の根拠。ハッシュタグと @ の数は THTH では数えず媒体の断りに任せる"
+    },
+    {
+      "id": "instagram.data_access",
+      "kind": "policy",
+      "statement": "instagram_* の権限は 90 日のデータに触れる期限（data_access_expires_at）に当たる見込み。期限の来ない権限の公式の一覧に instagram_* が無い。時計は利用者が最後に活動したときから進み、サーバーの呼び出しでは延びない読みが自然",
+      "evidence": {
+        "type": "official_doc",
+        "url": "https://developers.facebook.com/docs/facebook-login/auth-vs-data",
+        "checked_at": "2026-10-29"
+      },
+      "confidence": "medium",
+      "signals": [],
+      "notes": "運用: IG の口座は 90 日ごとに thth auth をやり直す。thth maintain が残り 14 日で data_access_expiring を出す（計画 C-1・C-2）"
+    }
+  ]
+}

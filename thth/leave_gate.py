@@ -231,8 +231,8 @@ def bind(adapter,cfg):
     require_active(account)
     # Native helpers lease each request (Threads waits stay outside the lease).
     # Unknown injected adapters have no common transport, so their call is leased.
-    from .adapters import ThreadsAdapter, BlueskyAdapter, MastodonAdapter, XAdapter, FacebookAdapter
-    native=type(adapter) in (ThreadsAdapter,BlueskyAdapter,MastodonAdapter,XAdapter,FacebookAdapter)
+    from .adapters import ThreadsAdapter, BlueskyAdapter, MastodonAdapter, XAdapter, FacebookAdapter, InstagramAdapter
+    native=type(adapter) in (ThreadsAdapter,BlueskyAdapter,MastodonAdapter,XAdapter,FacebookAdapter,InstagramAdapter)
     methods={'publish','publish_container','conversation','fetch_post','inbox','recent_posts','insights','whoami','probe',
              'quota','refresh_token','location_search','delete_post','session','keyword_search','mentions',
              'tag_search','tag_observation','observed_tags','profile_lookup','account_insights','granted_scopes',
@@ -240,7 +240,9 @@ def bind(adapter,cfg):
              'list_create','list_add_member','list_remove_member','list_tweets','user_by_username',
              'community_search','trends','post_counts','archive_search','archive_counts',
              # Meta 計画 段 1（10/29）: 直す・隠す・消すの口。止めた口座では呼べない。
-             'edit_post','fetch_reply','hide_reply','delete_reply'}
+             'edit_post','fetch_reply','hide_reply','delete_reply',
+             # Meta 計画 段 3（10/29）: Instagram の公開の上限を読む・コメント欄の開け閉め・フォロワー数。
+             'publishing_limit','set_comments_enabled','followers_count'}
     for name in methods:
         original=getattr(adapter,name,None)
         if not callable(original):continue

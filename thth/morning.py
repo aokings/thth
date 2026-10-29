@@ -1246,9 +1246,9 @@ def build(target, *, now=None, mark=True, allowed_names=None, invoked_as="observ
                 # 止まったブックマークのまとめ・照合を待つ結果不明（監査 低-6・鍵は足すだけ）。
                 "bookmark_batch": _guard(lambda name=name: _bookmark_batch_row(name, now))}
                if cfg.get("media") == "hatenablog" else {}),
-            # 10/29 段 0: データに触れる期限（facebook の口座だけ・鍵は足すだけ）。
+            # 10/29 段 0: データに触れる期限（Meta の口座だけ・鍵は足すだけ。段 3 で instagram も）。
             **({"data_access": _guard(lambda name=name, cfg=cfg: _data_access_row(name, cfg, now))}
-               if cfg.get("media") == "facebook" else {}),
+               if cfg.get("media") in ("facebook", "instagram") else {}),
             # 承認の確定待ち（設計 3.7.0 §B3）。
             "confirm_items": _guard(lambda name=name, cfg=cfg: _confirm_rows(name, cfg, now)),
             "queue": _queue_cell(node),

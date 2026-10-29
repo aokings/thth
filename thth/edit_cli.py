@@ -43,6 +43,8 @@ from . import sent as sent_mod
 from .adapters import base as adapter_base
 
 REPLY_ACTIONS = ("hide", "unhide", "delete")
+# Meta 計画 段 3（10/29）: コメント欄の開け閉め（capability `comment_control`・Instagram）。
+COMMENT_ACTIONS = ("open", "close")
 
 
 def register(sub) -> None:
@@ -72,6 +74,17 @@ def register(sub) -> None:
     r.add_argument("--json", action="store_true")
     r.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
     r.set_defaults(func=cmd_reply)
+
+    c = sub.add_parser(
+        "comments", help="投稿のコメント欄を開ける・閉める（1 段・戻せる・Instagram）")
+    c.add_argument("action", choices=COMMENT_ACTIONS)
+    c.add_argument("account")
+    c.add_argument("post_id")
+    c.add_argument("--reason", default=None, help="なぜか（記録に残す・任意）")
+    c.add_argument("--by", default=None, help="誰がしたか（記録に残す・必須）")
+    c.add_argument("--json", action="store_true")
+    c.add_argument("--wait", type=lock_mod.wait_seconds, default=0, help="ロックを待つ秒数（既定 0）")
+    c.set_defaults(func=cmd_comments)
 
 
 def _print_json(payload) -> None:
@@ -431,5 +444,66 @@ def _cmd_reply(args) -> int:
                      "comment_id": comment_id, "at": at, "by": by, "record": path})
     else:
         print(f"{word}: {args.account} comment {comment_id}（{at}・{by}）")
+        print(f"  記録: {path}")
+    return 0
+
+
+def cmd_comments(args) -> int:
+    try:
+        return _cmd_comments(args)
+    except adapter_base.PermissionMissing as e:
+        return _fail(args, 2, str(e).replace("<account>", args.account))
+
+
+def _cmd_comments(args) -> int:
+    """`thth comments open|close <account> <post_id> --by …`（1 段・戻せる）。記録は moderation に 1 行。"""
+    post_id = (args.post_id or "").strip()
+    by = _by(args)
+    if not by:
+        return _fail(args, 1, "--by を付けてください（誰がしたかを記録します）。"
+                              "環境変数 THTH_ACTOR でも指定できます")
+    loaded, rc, message = _load(args, "comment_control", "コメント欄の開け閉め")
+    if loaded is None:
+        return _fail(args, rc, message)
+    account_cfg, adapter_cls, token = loaded
+    if not adapter_cls.is_post_id(post_id):
+        return _fail(args, 1, adapter_cls.POST_ID_FORM_HINT + "何もしていません")
+    permission = getattr(adapter_cls, "COMMENT_CONTROL_PERMISSION", None)
+    refusal = _ready_to_write(args, account_cfg, adapter_cls, token, [permission] if permission else [])
+    if refusal:
+        return _fail(args, *refusal)
+    enabled = args.action == "open"
+    state_dir = accounts_mod.state_dir_for(args.account)
+    try:
+        with core._account_locks(args.account, account_cfg, state_dir, wait=args.wait):
+            stopped = _guard_stopped(args.account)
+            if stopped:
+                return _fail(args, 1, stopped, guard="stopped")
+            at = jst.iso()
+            record = {"at": at, "action": "comments_" + args.action, "post_id": post_id, "by": by,
+                      "reason": (args.reason or "").strip() or None, "medium": account_cfg.get("media")}
+            try:
+                adapter = adapters_mod.make_adapter(account_cfg, token)
+                adapter.set_comments_enabled(post_id, enabled)    # ← 開け閉めはここ 1 回だけ
+            except adapter_base.PermissionMissing:
+                raise
+            except accounts_mod.AccountStopped as e:
+                return _fail(args, 1, f"{args.account} は止まっています（{e}）。何もしていません")
+            except adapter_base.AdapterError as e:
+                message = redact_mod.redact(str(e))
+                if getattr(e, "failure", None) == "ambiguous":
+                    path = _append_moderation(state_dir, {**record, "result": "unknown"})
+                    return _fail(args, 1, f"済んだかどうか分かりません（{path} に result: unknown を残しました）。"
+                                          f"媒体の画面で確かめてください: {message}", result="unknown")
+                return _fail(args, 1, "できませんでした（何も変えていません）: " + message)
+            path = _append_moderation(state_dir, {**record, "result": "confirmed"})
+    except lock_mod.LockBusy:
+        return _fail(args, 1, f"{args.account} は既に実行中です（ロック取得失敗）。--wait <秒> で空くのを待てます")
+    word = "コメント欄を開けました" if enabled else "コメント欄を閉じました"
+    if args.json:
+        _print_json({"ok": True, "changed": True, "action": args.action, "account": args.account,
+                     "post_id": post_id, "at": at, "by": by, "record": path})
+    else:
+        print(f"{word}: {args.account} post {post_id}（{at}・{by}）")
         print(f"  記録: {path}")
     return 0

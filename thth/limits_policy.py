@@ -50,7 +50,7 @@ import copy
 
 from . import media_traits as _mt
 
-SNS_MEDIA = ("threads", "x", "bluesky", "mastodon", "facebook")
+SNS_MEDIA = ("threads", "x", "bluesky", "mastodon", "facebook", "instagram")
 FAMILIES = ("sns", "hatenablog", "hatenabookmark", "reaction", "fotolife")
 PHASES = ("halt", "safety", "assess")
 PURPOSES = _mt.PURPOSES
@@ -213,7 +213,7 @@ THTH_DEFAULTS = (
 
 # 媒体の性質の台帳（`thth/media_traits/`）を持つ SNS。facebook は 10/29 段 0 で台帳
 # （`facebook.json`・post.daily・retract.daily・reply.burst・reply.daily）を持った。
-LEDGER_SNS_MEDIA = ("threads", "x", "bluesky", "mastodon", "facebook")
+LEDGER_SNS_MEDIA = ("threads", "x", "bluesky", "mastodon", "facebook", "instagram")
 
 # (媒体, 台帳の行の id) → 表の行の id。SNS の 4 媒体の行は表の 1 行（`family: sns`）に集まり、根拠は媒体ごと。
 LEDGER_MAP = {

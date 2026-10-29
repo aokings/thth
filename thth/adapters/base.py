@@ -209,6 +209,9 @@ KNOWN_CAPABILITIES = frozenset({
     "hide_reply",
     # 出した投稿の本文を直せる（`edit_post()`・`thth edit`）。
     "edit_post",
+    # --- Meta 計画 段 3（10/29）
+    # 投稿のコメント欄を開ける・閉める（IG の `comment_enabled`・`set_comments_enabled()`・`thth comments`）。
+    "comment_control",
 })
 
 # 反応の種類（記録の `kind`・CLI の 4 つの命令の元）。

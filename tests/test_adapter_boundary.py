@@ -720,9 +720,11 @@ def test_T3_REGISTRYに5媒体が載っている():
     from thth.adapters import mastodon as mastodon_mod
     from thth.adapters import x as x_mod
     from thth.adapters import facebook as facebook_mod
-    # 10/29: Facebook ページ（`thth/adapters/facebook.py`）を足した。
-    assert adapters_mod.known_media() == ["bluesky", "facebook", "mastodon", "threads", "x"]
+    from thth.adapters import instagram as instagram_mod
+    # 10/29: Facebook ページ（`thth/adapters/facebook.py`）を足した。段 3: Instagram（`instagram.py`）。
+    assert adapters_mod.known_media() == ["bluesky", "facebook", "instagram", "mastodon", "threads", "x"]
     assert adapters_mod.REGISTRY["facebook"] is facebook_mod.FacebookAdapter
+    assert adapters_mod.REGISTRY["instagram"] is instagram_mod.InstagramAdapter
     assert adapters_mod.REGISTRY["bluesky"] is bluesky_mod.BlueskyAdapter
     assert adapters_mod.REGISTRY["mastodon"] is mastodon_mod.MastodonAdapter
     assert adapters_mod.REGISTRY["x"] is x_mod.XAdapter

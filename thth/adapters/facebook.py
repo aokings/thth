@@ -249,8 +249,11 @@ class FacebookAdapter(base.Adapter):
     # この版では作っていない（`inbox()` は既定の空）。反応（repost・like）も持たない。
     # 段 1（10/29）: `account_insights`（ページの日次）・`carousel`（写真 2〜10 枚）・
     # `edit_post`（THTH で出した投稿の本文を直す）・`hide_reply`（コメントを隠す・戻す・消す）。
+    # 段 3（10/29）: `quota`（`thth quota`・Meta の量の制限の使用量）。段 2 では試験の 1 行を変えない条件で
+    # 足していなかった（THTH開発 第11 の許可で `tests/test_facebook_adapter.py` の能力の集合を 1 行直した）。
     CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "views", "link_preview",
-                                         "account_insights", "carousel", "edit_post", "hide_reply"})
+                                         "account_insights", "carousel", "edit_post", "hide_reply",
+                                         "quota"})
     UNSUPPORTED_REACTIONS = {
         "repost": "THTH の facebook の口はシェア（再投稿）を扱いません",
         "like": "THTH の facebook の口はいいねを扱いません",

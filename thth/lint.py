@@ -297,7 +297,8 @@ def lint_file(path: str) -> list:
     from . import media as media_mod
     try:
         manifest=media_mod.manifest_for(fm, account_cfg)
-        if manifest:
+        # 添付の無い原稿も、媒体が画像を要るなら lint_notes が断る（Instagram・Meta 計画 段 3）。
+        if manifest or account_cfg:
             from . import media_delivery
             errors.extend(media_delivery.lint_notes(account_cfg,fm,text=queuefile.extract_section(qf.body,media,allow_empty=True)))
     except media_mod.MediaError as exc:

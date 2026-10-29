@@ -33,7 +33,7 @@ SCHEMA = "thth.media-traits/1"
 TRAITS_DIR = Path(__file__).resolve().parent / "media_traits"
 
 # THTH が対応する媒体（§4.1）。ここに無い媒体は `supported: false` でだけ置ける。
-SUPPORTED_MEDIA = ("threads", "x", "bluesky", "mastodon", "hatenablog", "fotolife", "hatenabookmark", "facebook")
+SUPPORTED_MEDIA = ("threads", "x", "bluesky", "mastodon", "hatenablog", "fotolife", "hatenabookmark", "facebook", "instagram")
 
 KINDS = ("spam_signal", "good_signal", "penalty", "api_limit", "policy", "observation", "culture")
 # 既定（柵の行）を持てない種類（§4.1「既定を持たない項目（good_signal・penalty）は予告の材料」）。
