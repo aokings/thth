@@ -11,7 +11,7 @@
 
 | # | 件 | 状態 | 次の一手 |
 |---|---|---|---|
-| 1 | Facebook ページを THTH につなぐ（手順の正本 `docs/手順_FBページと広告_2026-10-28.md`） | こぴちゃは済み（§0-5。10/29 16 時に本番の `thth board` で `kopicha-fb token=ok/期限なし`）。10/29 16 時、ページの透明性で id を引き、台帳 `nigamilab-fb`（1339887359217489）と `asmon-kanto-fb`（1469823909537300・原稿は `repos/asmon` で asmon-kanto-threads とそろえた）を作った。どちらも `production: false`・`scheduled: false` | `thth auth` を 1 口座ずつ（ログは VM の `~/thth-auth-<口座>.log`）。許可の画面の「次へ」は masaru。通ったら `thth doctor`。本番にするかは masaru。残る 3 ページ（染めと化学・キョンシーラボ・MMR）は masaru が作ってから。Instagram・広告・Webhook は開発の計画ができるまで足さない（開発 #5886） |
+| 1 | Facebook ページを THTH につなぐ（手順の正本 `docs/手順_FBページと広告_2026-10-28.md`） | こぴちゃは済み（§0-5。10/29 16 時に本番の `thth board` で `kopicha-fb token=ok/期限なし`）。10/29 16 時、ページの透明性で id を引き、台帳 `nigamilab-fb`（1339887359217489）と `asmon-kanto-fb`（1469823909537300・原稿は `repos/asmon` で asmon-kanto-threads とそろえた）を作った。どちらも `production: false`・`scheduled: false` | **10/29 16:07〜16:10 に 2 口座とも認可済み**（masaru が「次へ」）。`thth doctor` は両方 rc 0・権限 20 個・`expires_at=0`・ページ名が合う（Nigami Lab（苦味研究所）・関東中学受験データ）。本番にする（`production: true`）かと停止メールの設定は masaru と各レーンに聞いてから。残る 3 ページ（染めと化学・キョンシーラボ・MMR）は masaru が作ってから。Instagram・広告・Webhook は開発の計画ができるまで足さない（開発 #5886） |
 | 2 | kopicha-threads が 10/29 15:49 に `blocked（account_locked）` の運用通知を出した | 原因は前の回とのロックの取り合い（journal に「既に実行中です（ロック取得失敗）」）。次の 15:58 の回は「出すものが無い」で正常に終わった | 閉じた |
 
 ## 気づいたこと（開発へ渡すか判断中）
