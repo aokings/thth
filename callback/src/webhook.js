@@ -106,10 +106,12 @@ export async function webhookRequest(request, env, url) {
     if (request.method === 'GET') {
       if (!env.META_WEBHOOK_VERIFY_TOKEN) return reply(503, {error: 'webhook_unavailable'});
       const params = url.searchParams;
-      if ([...params.keys()].sort().join(',') !== 'hub.challenge,hub.mode,hub.verify_token' || params.get('hub.mode') !== 'subscribe')
+      // Meta の本物の確認は 3 つのほかの引数も付けてくる（10/30 本番で 400 を返していた）。要る 3 つだけを見る。
+      if (params.get('hub.mode') !== 'subscribe' || !params.has('hub.verify_token'))
         return reply(400, {error: 'invalid_request'});
       const challenge = params.get('hub.challenge');
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(challenge)) return reply(400, {error: 'invalid_request'});
+      // text/plain でそのまま返すので、制御文字・HTML の記号・長すぎるものだけを断る。
+      if (!challenge || challenge.length > 1024 || /[\u0000-\u001f\u007f<>"'&]/.test(challenge)) return reply(400, {error: 'invalid_request'});
       if (!await sameSecret(params.get('hub.verify_token'), env.META_WEBHOOK_VERIFY_TOKEN)) return reply(403, {error: 'forbidden'});
       return new Response(challenge, {status: 200, headers: {...HEADERS, 'content-type': 'text/plain; charset=utf-8'}});
     }

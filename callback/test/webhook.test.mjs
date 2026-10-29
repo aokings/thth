@@ -77,6 +77,12 @@ test('GET の確認: verify_token が合えば hub.challenge をそのまま返�
   assert.equal((await q(VERIFY,'unsubscribe')).status,400);
   assert.equal((await q(VERIFY,'subscribe','<script>')).status,400);
   assert.equal((await mf.dispatchFetch(`https://thth.test/webhook/meta?hub.mode=subscribe&hub.challenge=1`)).status,400);
+  // Meta の本物の確認は 3 つのほかの引数も付けてくる（10/30 本番で 400 を返した）。
+  const extra=await mf.dispatchFetch(`https://thth.test/webhook/meta?hub.mode=subscribe&hub.challenge=1158201444&hub.verify_token=${encodeURIComponent(VERIFY)}&hub.extra=1`);
+  assert.equal(extra.status,200);assert.equal(await extra.text(),'1158201444');
+  const long='9'.repeat(300);
+  assert.equal(await (await q(VERIFY,'subscribe',long)).text(),long);
+  assert.equal((await q(VERIFY,'subscribe','9'.repeat(1025))).status,400);
   assert.equal((await mf.dispatchFetch('https://thth.test/webhook/other')).status,404);
   assert.equal((await mf.dispatchFetch('https://thth.test/webhook/meta',{method:'PUT'})).status,405);
 });
