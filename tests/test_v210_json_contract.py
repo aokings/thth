@@ -95,6 +95,8 @@ COMMANDS += ['archive']
 COMMANDS += ['scenario']
 # 5.0 段 2: 会話の中のダッシュボードの中身（読むだけ・版つき）。
 COMMANDS += ['dashboard']
+# Meta 計画 段 1: 投稿の編集・コメントを隠す・消す（二段確認・--json は 1 つの値）。
+COMMANDS += ['edit', 'reply']
 
 
 def test_json_table_covers_every_parser():

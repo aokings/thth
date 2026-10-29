@@ -20,6 +20,10 @@
 | コメント `GET /{post_id}/comments`・返信 `POST /{object_id}/comments` | Graph API の Comments の参照 | **L3**（この版では読み直していない） |
 | ページ投稿の id が `{page_id}_{post_id}` の形 | 応答の例は置き場の名前だけ | **L3**（形が違えば取り下げは loud に断る） |
 | 権限系の error code（10・200〜299） | `threads.py` の `_PERMISSION_ERROR_CODES` と同じ Graph API 共通の一覧 | **L3** |
+| 複数の写真: `POST /{page_id}/photos` に `published=false` で 1 枚ずつ → `POST /{page_id}/feed` の `attached_media[i]={"media_fbid": …}` | 開発者フォーラムの報告だけ（公式の手順は見つからない） | **二次**（段 1・本番の試しの 1 本で確かめる・枚数の上限 10 は THTH の線） |
+| 投稿の編集 `POST /{page_post_id}`（`message`）。**そのアプリで作った投稿だけ** | developers.facebook.com/docs/pages-api/posts | **L2**（応答 `{"success": true}` は **L3**） |
+| コメントの非表示 `POST /{comment_id}` に `is_hidden`・削除 `DELETE /{comment_id}` | developers.facebook.com/docs/graph-api/reference/comment・pages-api/comments-mentions | **L2**（応答 `{"success": true}` は **L3**） |
+| ページの日次 `GET /{page_id}/insights?metric=…&period=day`（`read_insights`）。v26 で外れた指標はエラーになる | developers.facebook.com/docs/graph-api/reference/v26.0/insights・changelog v25.0 | **L2**（`PAGE_DAILY_METRICS` の 7 つが v26 で生きているかは**未確認**・doctor の probe で 1 つずつ見る） |
 
 **鍵の載せ方**: 公式の文書の例は GET の `access_token` をクエリに載せる形だけ
 （overview）。**ヘッダで渡す形は公式の文書に見当たらない**（未確認）ので、GET と
@@ -79,6 +83,25 @@ PAGE_ID = re.compile(r"[0-9]{1,32}")
 # ページの投稿・コメントの id（L3: `{親の id}_{自分の id}`）。`/`・`?`・`..` を含む
 # 値で別の口へ向かう筋を構造で無くす（Mastodon の `POST_ID` と同じ理由）。
 OBJECT_ID = re.compile(r"[0-9]{1,32}_[0-9]{1,32}")
+
+# 複数の写真の上限（**THTH の線**・公式の数は未確認・計画 段 1 の 1）。
+CAROUSEL_MAX = 10
+
+# ページ単位の日次（計画 段 1 の 2・`account_insights()`）。**名前は 1 か所**——v26 で外れた
+# 指標を呼ぶとエラーになる（事実 §1-7）ので、ここに無い名前は呼ばず、ここの名前で取れなかった
+# ものは 0 で埋めずに `unavailable` に書く。指標を足す・外すのはこの表だけを直す。
+PAGE_DAILY_METRICS = (
+    "page_follows",
+    "page_daily_follows",
+    "page_daily_unfollows_unique",
+    "page_media_view",
+    "page_total_media_view_unique",
+    "page_post_engagements",
+    "page_views_total",
+)
+# ほかの媒体の日次と同じ名前でも持つ指標（`collection_context` の `followers_count`）。
+# `page_follows` は「ページのフォロワーの数」（L2: insights の参照）。
+PAGE_DAILY_ALIASES = {"page_follows": "followers_count"}
 
 RECENT_POSTS_MAX = 100
 # コメントの頁を辿る上限（1 頁 100 件 × 50 頁）。越えたら**黙って切らず** loud に断る。
@@ -209,8 +232,8 @@ class AdapterError(base.AdapterError):
 def intent_error(manifest):
     """要求を 1 本も出す前に、この添付が Facebook ページに載るかだけを答える。
 
-    **画像 1 枚だけ**（この版の口）。動画・複数枚・型つきの添付・字幕・投稿の
-    任意項目は断る（`media_delivery.error_for()` が呼ぶ）。
+    **画像 1〜`CAROUSEL_MAX` 枚**（この版の口・2 枚以上は `publish_carousel()`）。動画・
+    型つきの添付・字幕・投稿の任意項目は断る（`media_delivery.error_for()` が呼ぶ）。
     """
     if manifest["captions"]:
         return "unsupported_attachment: facebook/captions"
@@ -221,17 +244,17 @@ def intent_error(manifest):
     rows = manifest["files"]
     if not rows:
         return "unsupported_attachment: facebook/no_media"
-    if len(rows) != 1:
-        return "media_limit_exceeded: count"
-    row = rows[0]
-    if row["role"] != "media":
-        return "unsupported_attachment: facebook/thumbnail"
-    if row["kind"] != "image" or row["format"] not in PHOTO_FORMATS:
-        return "unsupported_attachment: facebook/" + str(row["format"])
-    if type(row["public_size"]) is not int or row["public_size"] < 1:
-        return "media_size_unavailable"
-    if row["public_size"] > MAX_PHOTO_BYTES:
-        return f"media_limit_exceeded: bytes (provisional SI {MAX_PHOTO_BYTES})"
+    if len(rows) > CAROUSEL_MAX:
+        return f"media_limit_exceeded: count (THTH の線 {CAROUSEL_MAX} 枚)"
+    for row in rows:
+        if row["role"] != "media":
+            return "unsupported_attachment: facebook/thumbnail"
+        if row["kind"] != "image" or row["format"] not in PHOTO_FORMATS:
+            return "unsupported_attachment: facebook/" + str(row["format"])
+        if type(row["public_size"]) is not int or row["public_size"] < 1:
+            return "media_size_unavailable"
+        if row["public_size"] > MAX_PHOTO_BYTES:
+            return f"media_limit_exceeded: bytes (provisional SI {MAX_PHOTO_BYTES})"
     return None
 
 
@@ -259,7 +282,10 @@ class FacebookAdapter(base.Adapter):
     # `views`（`post_media_view`・L3）・`link_preview`（本文の最初の URL を `link` に渡す）。
     # `inbox` は持たない——ページへの訪問者の投稿（利用者から始まった会話）を読む口は
     # この版では作っていない（`inbox()` は既定の空）。反応（repost・like）も持たない。
-    CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "views", "link_preview"})
+    # 段 1（10/29）: `account_insights`（ページの日次）・`carousel`（写真 2〜10 枚）・
+    # `edit_post`（THTH で出した投稿の本文を直す）・`hide_reply`（コメントを隠す・戻す・消す）。
+    CAPABILITIES: frozenset = frozenset({"recent_posts", "thread_read", "views", "link_preview",
+                                         "account_insights", "carousel", "edit_post", "hide_reply"})
     UNSUPPORTED_REACTIONS = {
         "repost": "THTH の facebook の口はシェア（再投稿）を扱いません",
         "like": "THTH の facebook の口はいいねを扱いません",
@@ -276,6 +302,13 @@ class FacebookAdapter(base.Adapter):
     # `expires_in` を採る（`oauth.token_age_and_remaining()` は `expires_in` を優先）。
     TOKEN_NO_EXPIRY = True
     DELETE_PERMISSION = "pages_manage_posts"
+    # 投稿の編集（L2: pages-api/posts）。
+    EDIT_PERMISSION = "pages_manage_posts"
+    # 訪問者のコメントを隠す・消す（L2: 権限の参照「訪問者のコメントを消すのは
+    # pages_read_user_content の範囲・ページとしてのコメントは pages_manage_engagement」）。
+    # 隠す・戻す・消すのどれにも **両方**が乗っていることを求める（どちらのコメントかを
+    # 手元では見分けないため・狭いほうに倒さず両方）。
+    MODERATE_PERMISSIONS = ("pages_manage_engagement", "pages_read_user_content")
     # 返信（コメント）に要る権限（L2: pages-api/posts の前提の一覧）。
     REPLY_PERMISSION = "pages_manage_engagement"
     DEBUG_TOKEN_KEY = "facebook_debug_token"
@@ -452,6 +485,10 @@ class FacebookAdapter(base.Adapter):
         if dry_run:
             return base.PublishResult(None, None, ts, error=None, failure="none")
         if post.media_manifest:
+            # 2 枚以上は複数の写真の道（計画 段 1 の 1・原稿の添付の数で自動に決まる）。
+            files = post.media_manifest.get("files") if isinstance(post.media_manifest, dict) else None
+            if isinstance(files, list) and len(files) > 1:
+                return publish_carousel(self, post, before_publish=before_publish)
             return publish_photo(self, post, before_publish=before_publish)
         if post.reply_to:
             target = str(post.reply_to).strip()
@@ -527,6 +564,95 @@ class FacebookAdapter(base.Adapter):
             raise AdapterError("facebook_retract_unconfirmed: 応答に success: true がありません"
                                "（消えたとは言えません）")
         return {"deleted": True, "post_id": value}
+
+    # ----- 直す・隠す・消す（段 1・10/29）-----------------------------------
+    #
+    # どれも **1 回だけ**投げ、再試行しない。失敗は `AdapterError.failure` で 2 つに分ける:
+    # `definite`（4xx・Meta が断った＝変わっていない）／`ambiguous`（時間切れ・5xx・
+    # `success: true` が無い＝変わったか分からない）。権限系は `PermissionMissing`。
+    # 呼ぶのは `edit_cli.py` だけ（`tests/test_facebook_stage1.py` が source で縛る）。
+
+    def _write(self, method: str, path: str, what: str, *, permission: str,
+               form: dict | None = None) -> dict:
+        try:
+            if method == "POST":
+                body = self._request("POST", path, form=form or {}, timeout=PUBLISH_TIMEOUT_SECONDS)
+            else:
+                body = self._request(method, path)
+        except urllib.error.HTTPError as e:
+            err = graph_error(e)
+            message = self._scrub(err.get("message") or e.reason or "")[:170]
+            if is_permission_error(err) or err.get("code") == _INVALID_TOKEN_CODE or e.code in (401, 403):
+                raise base.PermissionMissing(permission, f"HTTP {e.code} {message}".strip()) from None
+            if e.code == 404 or (err.get("code") == 100 and err.get("error_subcode") == 33):
+                raise AdapterError(f"{what}: post_missing: 媒体にその id がありません（既に消えているか、"
+                                   "この鍵から見えません）。何も変えていません",
+                                   failure="definite", http_status=e.code, code=err.get("code")) from None
+            raise AdapterError(f"{what}: HTTP {e.code} {message}".strip(),
+                               failure="definite" if e.code < 500 else "ambiguous",
+                               http_status=e.code, code=err.get("code")) from None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            raise AdapterError(f"{what}: {self._scrub(e)}（済んだかは分かりません）",
+                               failure="ambiguous") from None
+        if not isinstance(body, dict) or body.get("success") is not True:
+            raise AdapterError(f"{what}: 応答に success: true がありません（済んだとは言えません）",
+                               failure="ambiguous")
+        return body
+
+    def edit_post(self, post_id: str, text: str) -> dict:
+        """出した投稿の本文を直す `POST /{page_post_id}`（`message`・L2）。
+
+        **そのアプリで作った投稿しか直せない**（L2）。THTH で出した物に限るのは呼び手
+        （`edit_cli`）が `sent/` の記録で見る。ここでは形だけを見る。
+        """
+        value = post_id.strip() if isinstance(post_id, str) else ""
+        if not OBJECT_ID.fullmatch(value):
+            raise AdapterError("facebook_post_id_invalid: " + self.POST_ID_FORM_HINT + "直しません",
+                               failure="definite")
+        if not isinstance(text, str) or not text.strip():
+            raise AdapterError("投稿の編集: 本文が空です（直しません）", failure="definite")
+        self._write("POST", f"/{value}", "投稿の編集", permission=self.EDIT_PERMISSION,
+                    form={"message": text})
+        return {"edited": True, "post_id": value}
+
+    def fetch_reply(self, comment_id: str) -> dict:
+        """コメントを 1 件読む（隠す・消す前に人に見せる・読むだけ）。"""
+        value = str(comment_id or "").strip()
+        if not OBJECT_ID.fullmatch(value):
+            raise AdapterError("コメントの取得: Facebook のコメントの id は「数字_数字」の形です")
+        row = self._get(f"/{value}", "コメントの取得",
+                        params={"fields": "id,message,created_time,from{id,name},parent{id},"
+                                          "is_hidden,can_hide,can_remove"},
+                        permission="pages_read_user_content")
+        out = self._message(row, value, None)
+        author = row.get("from") if isinstance(row.get("from"), dict) else {}
+        out["by_page"] = str(author.get("id") or "") == self.page_id
+        for key in ("is_hidden", "can_hide", "can_remove"):
+            out[key] = row.get(key) if isinstance(row.get(key), bool) else None
+        return out
+
+    def hide_reply(self, comment_id: str, *, hidden: bool = True) -> dict:
+        """コメントを隠す・戻す `POST /{comment_id}` に `is_hidden`（L2・ページのコメントにだけ効く）。"""
+        value = str(comment_id or "").strip()
+        if not OBJECT_ID.fullmatch(value):
+            raise AdapterError("コメントの非表示: Facebook のコメントの id は「数字_数字」の形です",
+                               failure="definite")
+        if type(hidden) is not bool:
+            raise AdapterError("コメントの非表示: hidden は真か偽です", failure="definite")
+        self._write("POST", f"/{value}", "コメントを隠す" if hidden else "コメントを戻す",
+                    permission=self.MODERATE_PERMISSIONS[0],
+                    form={"is_hidden": "true" if hidden else "false"})
+        return {"hidden": hidden, "comment_id": value}
+
+    def delete_reply(self, comment_id: str) -> dict:
+        """コメントを消す `DELETE /{comment_id}`（L2）。**投稿の取り下げ（`delete_post`）とは別の口。**"""
+        value = str(comment_id or "").strip()
+        if not OBJECT_ID.fullmatch(value):
+            raise AdapterError("コメントの削除: Facebook のコメントの id は「数字_数字」の形です",
+                               failure="definite")
+        self._write("DELETE", f"/{value}", "コメントの削除",
+                    permission=self.MODERATE_PERMISSIONS[0])
+        return {"deleted": True, "comment_id": value}
 
     # ----- 会話 ------------------------------------------------------------
 
@@ -665,6 +791,78 @@ class FacebookAdapter(base.Adapter):
             result["unavailable"] = unavailable
         return result
 
+    def _page_metric_rows(self, metrics: tuple, what: str, *, since=None, until=None) -> dict:
+        """`GET /{page_id}/insights?metric=…&period=day` → `{名前: 行}`。失敗は上げる。"""
+        params = {"metric": ",".join(metrics), "period": "day"}
+        if since is not None:
+            params["since"] = since
+        if until is not None:
+            params["until"] = until
+        body = self._get(f"/{self.page_id}/insights", what, params=params, permission="read_insights")
+        return {row.get("name"): row for row in self._rows(body, what)
+                if isinstance(row.get("name"), str)}
+
+    @staticmethod
+    def _unreachable(exc) -> bool:
+        """確かめられなかった（網・5xx）か。4xx と「200 だが error」は Meta が断った側。"""
+        return (getattr(exc, "failure", None) == "network"
+                or (getattr(exc, "http_status", None) or 0) >= 500)
+
+    def account_insights(self, user_id: str, *, since: str, until: str) -> dict:
+        """ページ単位の日次（計画 段 1 の 2・`collect._collect_account_daily` が呼ぶ）。
+
+        指標は `PAGE_DAILY_METRICS` だけ。まず 1 回でまとめて訊き、Meta が 4xx で断ったら
+        （v26 で外れた名前が 1 つでも混ざるとまとめて断られる・L3）**1 つずつ訊き直す**。
+        取れなかった指標は **0 で埋めず** `unavailable` に名前と理由を書く（投稿の数と同じ作法）。
+        権限系は `PermissionMissing`、網・5xx は上げる（その日は記録せず次の採取で取り直す）。
+
+        日の区切りは Meta の側の「日」（太平洋時間と読める・L3）。`since`・`until` は
+        collect が渡す JST の前日の 0 時〜24 時で、返った値の**最後の 1 つ**を採る。
+        """
+        if str(user_id or "") != self.page_id:
+            raise AdapterError("ページの日次: 台帳のページと違う id です（訊きません）")
+        what = "ページの日次"
+        metrics: dict = {}
+        unavailable: dict = {}
+        try:
+            rows = self._page_metric_rows(PAGE_DAILY_METRICS, what, since=since, until=until)
+        except base.PermissionMissing:
+            raise
+        except base.AdapterError as e:
+            if self._unreachable(e):
+                raise
+            rows = None
+        if rows is not None:
+            for name in PAGE_DAILY_METRICS:
+                value = _day_value(rows.get(name))
+                if value is None:
+                    unavailable[name] = "応答にこの指標の値がありません"
+                else:
+                    metrics[name] = value
+        else:
+            for name in PAGE_DAILY_METRICS:
+                try:
+                    one = self._page_metric_rows((name,), what, since=since, until=until)
+                except base.PermissionMissing:
+                    raise
+                except base.AdapterError as e:
+                    if self._unreachable(e):
+                        raise
+                    unavailable[name] = self._scrub(e)[:200]
+                    continue
+                value = _day_value(one.get(name))
+                if value is None:
+                    unavailable[name] = "応答にこの指標の値がありません"
+                else:
+                    metrics[name] = value
+        for name, alias in PAGE_DAILY_ALIASES.items():
+            if name in metrics:
+                metrics[alias] = metrics[name]
+        out = dict(metrics)
+        if unavailable:
+            out["unavailable"] = unavailable
+        return out
+
     # ----- 素性・検査 ------------------------------------------------------
 
     def whoami(self) -> dict:
@@ -770,6 +968,31 @@ class FacebookAdapter(base.Adapter):
             else:
                 row(key, label, permission, True, detail)
 
+        # ページの日次の指標を 1 つずつ（計画 段 1 の本番の確かめ ①・G-7）。v26 で外れた名前は
+        # Meta が 4xx で断るので ×（`PAGE_DAILY_METRICS` から外す候補）。値が無いだけ（ページの
+        # 規模で数が出ないなど）は「―」。読むだけ。
+        for name in PAGE_DAILY_METRICS:
+            key, label = "page_insights." + name, "ページの日次 " + name
+            try:
+                value = _day_value(self._page_metric_rows((name,), label).get(name))
+            except base.PermissionMissing as e:
+                failed(key, label, "read_insights", e)
+                continue
+            except Exception as e:   # noqa: BLE001
+                if self._unreachable(e):
+                    failed(key, label, "read_insights", e)
+                else:
+                    row(key, label, "read_insights", False,
+                        "unavailable: Meta がこの指標を断りました（" + self._scrub(e)[:200]
+                        + "）。PAGE_DAILY_METRICS から外す候補です",
+                        http_status=getattr(e, "http_status", None))
+                continue
+            if value is None:
+                row(key, label, "read_insights", None,
+                    "unavailable: 応答に値がありません（ページの規模で数が出ないことがあります）")
+            else:
+                row(key, label, "read_insights", True, f"直近の値 {value}")
+
         # 書き込みの権限は読み取りでは確かめられない。`/debug_token` が取れたときだけ言う。
         for key, label, permission in (("publish", "ページへの投稿", "pages_manage_posts"),
                                        ("reply", "コメントへの返事", "pages_manage_engagement")):
@@ -812,6 +1035,26 @@ class FacebookAdapter(base.Adapter):
 
     def refresh_token(self, token):
         raise NotImplementedError("Facebook のページの鍵に期限は無い（TOKEN_NO_EXPIRY の説明）")
+
+
+def _day_value(row):
+    """insights の行（`values: [{value, end_time}]`）の**最後の**値。数か、数だけの dict。
+
+    無い・形が違う・数でないは None（**0 で埋めない**）。
+    """
+    values = row.get("values") if isinstance(row, dict) else None
+    if not isinstance(values, list) or not values or not isinstance(values[-1], dict):
+        return None
+    value = values[-1].get("value")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if (isinstance(value, dict) and value
+            and all(isinstance(k, str) and isinstance(v, (int, float)) and not isinstance(v, bool)
+                    for k, v in value.items())):
+        return dict(value)
+    return None
 
 
 def post_url(post_id: str) -> str:
@@ -900,6 +1143,112 @@ def publish_photo(adapter: FacebookAdapter, post: base.Post, *, before_publish=N
             pass
         # 要求の前に止まったものは**出ていない**。直前の関門で止めたら `publish_vetoed`、
         # 添付が載らない・用意と食い違うなら `publish_definite`。
+        return base.PublishResult(None, None, ts, error=adapter._scrub(reason),
+                                  failure="media_ambiguous" if uncertain
+                                  else "publish_vetoed" if vetoed else "publish_definite")
+
+
+def publish_carousel(adapter: FacebookAdapter, post: base.Post, *, before_publish=None):
+    """写真 2〜`CAROUSEL_MAX` 枚を 1 本に（計画 段 1 の 1・手順は**二次**の資料だけ）。
+
+    1. 1 枚ずつ `POST /{page_id}/photos`（multipart・`published=false`・`alt_text_custom`）→ 写真の id。
+       **未公開の写真は投稿ではない**ので、ここまでの失敗（4xx も時間切れも）は「出ていない」
+       （`publish_definite`）。結果の分からない写真が残っても人の目には出ない（L3）。
+    2. `POST /{page_id}/feed` に `message` と `attached_media[i]={"media_fbid": <id>}`（原稿の添付の順）。
+       ここからが公開。4xx は出ていない（権限系は `permission`）、時間切れ・5xx・id 無しは
+       `media_ambiguous`（自動で投げ直さない）。
+
+    直前の関門（`before_publish`）は 1 の前と 2 の前で 2 回見る（上げている間に止められたら出さない）。
+    """
+    from .. import accounts, media
+    ts = jst.iso()
+    progress = post.media_progress
+    phase = "preflight"
+    vetoed = False
+    uploaded: list = []
+
+    def record(value, **details):
+        nonlocal phase
+        phase = value
+        progress(value, remote_ids=list(uploaded), **details)
+
+    def gate():
+        nonlocal vetoed
+        if before_publish is not None:
+            veto = before_publish()
+            if veto:
+                vetoed = True
+                raise media.MediaError(str(veto))
+
+    try:
+        if not callable(progress):
+            raise media.MediaError("media_journal_required")
+        reason = intent_error(post.media_manifest)
+        if reason:
+            raise media.MediaError(reason)
+        rows = post.media_manifest["files"]
+        if (len(rows) < 2 or len(post.media_files) != len(rows)
+                or any(item.manifest != row for item, row in zip(post.media_files, rows))):
+            raise media.MediaError("media_prepared_mismatch")
+        if post.reply_to:
+            raise media.MediaError("unsupported_attachment: facebook/reply_media")
+        gate()
+        for item in post.media_files:
+            row = item.manifest
+            fields = {"published": "false", "access_token": adapter.access_token}
+            if isinstance(row.get("alt"), str) and row["alt"].strip():
+                fields["alt_text_custom"] = row["alt"]
+            body, headers = _multipart(fields, b"".join(item.chunks()), MIME[row["format"]])
+            record("uploading")
+            value = adapter._request("POST", f"/{adapter.page_id}/photos", body=body,
+                                     headers=headers, timeout=PHOTO_TIMEOUT_SECONDS)
+            photo_id = value.get("id") if isinstance(value, dict) else None
+            if not isinstance(photo_id, str) or not PAGE_ID.fullmatch(photo_id):
+                raise media.MediaError("media_response_invalid: photo id")
+            uploaded.append(photo_id)
+        gate()
+        form = {"message": post.text}
+        for i, photo_id in enumerate(uploaded):
+            form[f"attached_media[{i}]"] = json.dumps({"media_fbid": photo_id}, separators=(",", ":"))
+        record("publishing")
+        value = adapter._request("POST", f"/{adapter.page_id}/feed", form=form,
+                                 timeout=PUBLISH_TIMEOUT_SECONDS)
+        post_id = value.get("id") if isinstance(value, dict) else None
+        if not isinstance(post_id, str) or not post_id:
+            raise media.MediaError("media_response_invalid: post_id")
+        record("published", post_id=post_id)
+        return base.PublishResult(post_id, post_url(post_id), ts, media=[
+            {"sha256": item.manifest["public_sha256"], "kind": item.manifest["kind"],
+             "alt_present": base.alt_present(item.manifest), "remote_id": photo_id}
+            for item, photo_id in zip(post.media_files, uploaded)])
+    except accounts.AccountStopped:
+        return base.PublishResult(None, None, ts, error="account_stopped",
+                                  failure="media_ambiguous" if phase == "publishing" else "publish_vetoed")
+    except urllib.error.HTTPError as exc:
+        err = graph_error(exc)
+        definite = 400 <= exc.code < 500
+        # 未公開の写真を上げている間の失敗は、5xx でも「出ていない」。
+        not_out = definite or phase != "publishing"
+        permission = definite and (is_permission_error(err) or err.get("code") == _INVALID_TOKEN_CODE)
+        reason = f"media_{phase}_http_{exc.code}"
+        try:
+            record("failed" if not_out else "unknown", reason=reason)
+        except (OSError, ValueError, accounts.AccountStopped):
+            pass
+        if permission:
+            return base.PublishResult(None, None, ts, failure="permission", error=adapter._scrub(
+                base.not_granted_message("pages_manage_posts", f"HTTP {exc.code}")
+                .replace("<account>", adapter.auth_account)))
+        return base.PublishResult(None, None, ts, error=reason,
+                                  failure="publish_definite" if not_out else "media_ambiguous")
+    except (OSError, ValueError, RuntimeError, urllib.error.URLError) as exc:
+        uncertain = phase == "publishing"
+        reason = (str(exc) if isinstance(exc, media.MediaError) else "media_" + phase + "_failed")
+        try:
+            if callable(progress):
+                record("unknown" if uncertain else "failed", reason=reason)
+        except (OSError, ValueError, accounts.AccountStopped):
+            pass
         return base.PublishResult(None, None, ts, error=adapter._scrub(reason),
                                   failure="media_ambiguous" if uncertain
                                   else "publish_vetoed" if vetoed else "publish_definite")

@@ -445,6 +445,44 @@ def resolve_bookmark_edit(state_dir: str, post_id: str, *, result: str, at: str)
     return p
 
 
+POST_EDIT_RESULTS = ("confirmed", "unknown")
+
+
+def mark_post_edit(state_dir: str, post_id: str, *, result: str, edited_at: str, by: str,
+                   text: str, reason: str | None = None, digest: str | None = None) -> str:
+    """SNS の投稿の直し（`thth edit`・Meta 計画 段 1）を `sent/<post_id>.json` に**足す**。
+
+    `confirmed`: 行の `text`・`body_hash` を直したあとの値にし、`edited_at` を足す。前の本文は
+    `edits[]` の 1 行（`previous_text`）に残す。`unknown`（時間切れ・5xx）: 行の中身は変えず、
+    `edits[]` に `result: unknown` の行だけ足す（媒体の画面で確かめる）。`sent_at`・
+    `approved_fingerprint`（最初の承認）は変えない。**ブックマークの `attempts[]` とは別の鍵**
+    ——ブックマークの照合が SNS の直しを拾わないように。行が無い・取り下げ済みは `ValueError`。
+    """
+    from . import approval
+    if result not in POST_EDIT_RESULTS:
+        raise ValueError("invalid_result")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("invalid_text")
+    p = path_for(state_dir, post_id)
+    with open(p, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict) or data.get("kind") is not None or data.get("retracted_at"):
+        raise ValueError("post_not_editable")
+    entry = {"edited_at": edited_at, "by": by, "previous_text": data.get("text") or "",
+             "text": text, "result": result}
+    if reason:
+        entry["reason"] = reason
+    if digest:
+        entry["digest"] = digest
+    data["edits"] = list(data.get("edits") or []) + [entry]
+    if result == "confirmed":
+        data["text"] = text
+        data["body_hash"] = approval.compute_body_hash(text)
+        data["edited_at"] = edited_at
+    _save(p, data)
+    return p
+
+
 def retracted_records(state_dir: str) -> list:
     """`sent/` のうち取り下げ済み（`retracted_at` あり）の記録。"""
     return [row for row in records(state_dir) if row.get("retracted_at")]

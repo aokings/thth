@@ -369,6 +369,28 @@ def compute_retract_digest(*, post_id: str, account: str, reason: str,
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:length]
 
 
+# `thth edit` の二段確認の digest（Meta 計画 段 1・10/29）。
+_EDIT_VERSION = "thth-edit-1"
+
+
+def compute_edit_digest(*, post_id: str, account: str, text: str, previous_text: str,
+                        length: int = APPROVE_DIGEST_LENGTH) -> str:
+    """`thth edit` の一段目が出す digest（承認は**直したあとの本文**の digest・投稿と同じ考え）。
+
+    `thth-edit-1`・`post_id`・`account`・直したあとの本文・**直す前の本文**の順。直す前の本文を
+    入れるのは、一段目のあとに別の直しが入っていたら二段目を通さないため。版の語は取り下げの
+    digest（`thth-retract-1`）と同じ理由——ほかの口の digest を流用できないように。
+    """
+    parts = [
+        _EDIT_VERSION,
+        (post_id or "").strip(),
+        (account or "").strip(),
+        (text or "").strip(),
+        (previous_text or "").strip(),
+    ]
+    return hashlib.sha256(_SEP.join(parts).encode("utf-8")).hexdigest()[:length]
+
+
 def compute_body_hash(text: str) -> str:
     """本文だけの sha256（外部レビュー §3・受け入れ 9・10）。
 

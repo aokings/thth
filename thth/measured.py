@@ -91,6 +91,17 @@ ACCOUNT_DAILY_METRIC_NAMES = (
 )
 
 
+def account_daily_metric_names(media) -> tuple:
+    """その媒体の日次に**あるはず**の指標の名前。facebook はページの日次の表（Meta 計画 段 1）。
+
+    ほかの媒体は今までどおり `ACCOUNT_DAILY_METRIC_NAMES`（Threads の日次の名前）。
+    """
+    if media == "facebook":
+        from .adapters import facebook
+        return tuple(facebook.PAGE_DAILY_METRICS) + tuple(facebook.PAGE_DAILY_ALIASES.values())
+    return ACCOUNT_DAILY_METRIC_NAMES
+
+
 def _row_missing(metrics, expected) -> list:
     """**その 1 行に無い指標の名前**（運用指摘 2026-09-12・3 度目）。
 
@@ -292,6 +303,7 @@ def load(account_name: str, *, observation_metadata: bool = False) -> dict:
     dirs = accounts_mod.data_dirs(account_cfg, account_name)
     posts_dir = dirs["insights_posts"]
     account_daily_dir = dirs["insights_account"]
+    daily_expected = account_daily_metric_names(account_cfg.get("media"))
 
     broken: list = []
     posts: list = []
@@ -453,8 +465,10 @@ def load(account_name: str, *, observation_metadata: bool = False) -> dict:
                 seen_daily_metrics.update((row.get("metrics") or {}).keys())
                 account_daily.append({
                     "date": row.get("date"), "metrics": row.get("metrics"),
-                    "missing": _row_missing(row.get("metrics"),
-                                            ACCOUNT_DAILY_METRIC_NAMES),
+                    "missing": _row_missing(row.get("metrics"), daily_expected),
+                    # 媒体が断った・返さなかった指標（facebook・行に無ければ鍵ごと足さない）。
+                    **({"unavailable": row["unavailable"]}
+                       if isinstance(row.get("unavailable"), dict) and row["unavailable"] else {}),
                     # **いつ数えたか**（4.5.4）。閉じた前日を翌日 0 時台の最初の採取で 1 回だけ
                     # 取るので、数えた時刻が読めないと「数え終わる前の値か」を疑うしかなかった
                     # （関東の 10/22 の 1,153）。`tags` と同じ筋で、行に無ければ鍵ごと足さない。
@@ -472,7 +486,7 @@ def load(account_name: str, *, observation_metadata: bool = False) -> dict:
         if posts else None)
     # 台帳が 1 本も無ければ `None`（「欠けている」ではなく「判らない」）。
     missing_daily_metrics = (
-        [m for m in ACCOUNT_DAILY_METRIC_NAMES if m not in seen_daily_metrics]
+        [m for m in daily_expected if m not in seen_daily_metrics]
         if daily_files_seen else None)
 
     posts.sort(key=lambda p: p["post_id"])

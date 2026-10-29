@@ -96,12 +96,14 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 
 `thth trends <account> [--woeid N] [--max N]`（既定は日本・20 件・1 回 0.010 USD）・`thth counts <account> <語> [--granularity hour|day]`（直近 7 日・1 回 0.005 USD）（MCP には無い）。X だけ・要求は 1 回・返すだけで保存しない・月の X 予算に入り 1 日 60 本には数えない。話題選びの材料に使う——トレンドの語へ機械的に投稿しない。いまのトークンで通るかは未確認（断りは X の文面が短く残る）。
 
-## Facebook ページ（5.1.0・10/29 段 0）
+## Facebook ページ（5.1.0・10/29 段 0・段 1）
 
 - **口座の作り方**: 1 ページを 1 口座で扱う。`thth account add <口座> --media facebook --project <p> --handle <ページID> --by <名前>` のあと `thth auth <口座> --by <名前>`（VM で人が打つ・MCP には無い）。`--handle` はページの「基本データ → ページの透明性」に出る「ページID」（数字）——**ページの URL の `profile.php?id=` の id ではない**（その id で作ると認可で `facebook_page_not_granted` になり、断り文に許可されたページの名前と id が並ぶ）。認可のログは既定で `$THTH_ROOT/state/_auth/<口座>-<日時>.log`（画面に「ログ: <パス>」）。
 - **post_id の形**: `<ページID>_<数字>`（例 `1361492233719922_122096173233535853`）。返信（コメント）の宛先・`thth retract`・`thth thread` はこの形で渡す。
-- **できること**: 文・リンクつきの文（本文の最初の URL がリンクの読み込みになる）・返信（コメント）・画像 1 枚（jpeg・png・gif・4,000,000 バイトまで）・取り下げ・最近の投稿・コメントを読む・数（反応・コメント・シェア・表示）。静かな時間・間隔・日の上限は SNS の表がそのまま効く（`thth media traits facebook`）。
-- **できないこと**（この版の口に無い・`tool.capabilities` の facebook の行）: 動画・複数枚・字幕・投票・返信の制御・返信に画像、いいね・シェア（`unsupported_on_platform`）、inbox と言及、ページ単位の数（フォロワー）、投稿の編集、ほかのページの観測。
+- **できること**: 文・リンクつきの文（本文の最初の URL がリンクの読み込みになる）・返信（コメント）・画像 1〜10 枚（jpeg・png・gif・1 枚 4,000,000 バイトまで。2 枚以上は原稿の添付の順に 1 本にまとまる・10 枚は THTH の線）・取り下げ・最近の投稿・コメントを読む・数（反応・コメント・シェア・表示）・ページの日次（`thth collect` が前日分を採り `thth account` に出る。Meta が返さない指標は 0 にせず「媒体が返さない」と出る）。静かな時間・間隔・日の上限は SNS の表がそのまま効く（`thth media traits facebook`）。
+- **投稿の編集** `thth edit <口座> <post_id> --text-file <ファイル> --by <名前>`: THTH で出した投稿だけ（`sent/` の記録が要る）。一段目は今の本文と直したあとの本文と digest を見せて何もしない。同じ命令に `--confirm <digest>` で 1 回だけ直し、記録の本文を直して前の本文を残す。結果が分からないときは「確かめてください」と言い、自動で投げ直さない。
+- **コメントを隠す・戻す・消す** `thth reply hide|unhide <口座> <コメントの id> --by <名前>`（1 段・戻せる）、`thth reply delete … --reason <理由> --by <名前>`（取り下げと同じ二段確認）。記録は `state/<口座>/moderation-<年月>.ndjson`（コメントの本文は残さない）。どれも台帳の `production: true` と、止めていない口座が要る。MCP には無い。
+- **できないこと**（この版の口に無い・`tool.capabilities` の facebook の行）: 動画・字幕・投票・返信の制御・返信に画像、いいね・シェア（`unsupported_on_platform`）、inbox と言及、ほかのページの観測。
 - **文字数の上限 5,000 は THTH の線**（Facebook の公式の上限ではない）。超えると lint が断り、上げ方（口座の台帳の `char_limit`）を添える。
 - **データに触れる期限**: ページの鍵そのものに期限は無いが、Meta の `data_access_expires_at`（通常 90 日）が 14 日を切ると `thth maintain` が `data_access_expiring`（過ぎたら `data_access_expired`）と言い、`thth events` に `token_data_access_expiring` が出る。対処は `thth auth <口座> --by <名前>` のやり直し（人が VM で打つ）。
 

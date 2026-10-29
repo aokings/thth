@@ -131,12 +131,13 @@ CAPABILITIES = {
         'aac_adts': ADTS, 'asf': ASF,
         'bmff brand': BMFF_BRAND, 'unknown format': UNKNOWN_FORMAT,
     },
-    # 10/29 段 0。この版の口は**画像 1 枚**（`adapters/facebook.py` の `intent_error`・
-    # `POST /{page_id}/photos`）と、本文の最初の URL を `link` に渡すリンクの読み込みだけ。
-    # 動画・複数枚・字幕などは媒体の可否でなく THTH の口の範囲（NOT_ROUTED）。
+    # 10/29 段 0・段 1。この版の口は**画像 1〜10 枚**（`adapters/facebook.py` の `intent_error`・
+    # 1 枚は `POST /{page_id}/photos`、2 枚以上は `published=false` → `/feed` の `attached_media`）と、
+    # 本文の最初の URL を `link` に渡すリンクの読み込みだけ。動画・字幕などは媒体の可否でなく
+    # THTH の口の範囲（NOT_ROUTED）。
     'facebook': {
         'image': 'supported', 'video': NOT_ROUTED, 'audio': NO_AUDIO,
-        'carousel': NOT_ROUTED, 'poll': NOT_ROUTED, 'quote': NOT_ROUTED,
+        'carousel': 'supported', 'poll': NOT_ROUTED, 'quote': NOT_ROUTED,
         'link': 'body_only', 'gif': 'supported', 'text': NO_TEXT,
         'thumbnail': NOT_ROUTED, 'captions': NOT_ROUTED,
         'tags': 'body_only', 'labels': NO_LABEL, 'languages': NOT_ROUTED,
@@ -186,7 +187,8 @@ NOTES = {
         'mov': 'thth_sends_mp4_only_in_this_version',
     },
     'facebook': {
-        'image': 'one_image_per_post_up_to_4000000_bytes_not_on_replies',
+        'image': 'each_image_up_to_4000000_bytes_not_on_replies',
+        'carousel': 'images_only_up_to_10_per_post_thth_line',
         'gif': 'gif_file_sent_as_a_photo',
         'link': 'first_url_in_the_body_becomes_the_link_preview',
     },

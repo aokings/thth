@@ -202,6 +202,13 @@ KNOWN_CAPABILITIES = frozenset({
     "repost",
     # いいねして取り消せる（`Adapter.like()`・`unlike()`）。Threads は API に無い。
     "like",
+    # --- Meta 計画 段 1（10/29・設計 MetaAPI 計画 B-2）
+    # 複数の画像を 1 本にできる（FB の `attached_media`・IG の `CAROUSEL`）。
+    "carousel",
+    # 返信（コメント）を隠せる・戻せる・消せる（`hide_reply()`・`delete_reply()`・`thth reply`）。
+    "hide_reply",
+    # 出した投稿の本文を直せる（`edit_post()`・`thth edit`）。
+    "edit_post",
 })
 
 # 反応の種類（記録の `kind`・CLI の 4 つの命令の元）。

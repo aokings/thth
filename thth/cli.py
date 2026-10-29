@@ -2388,6 +2388,9 @@ def show_measured(result: dict) -> int:
             row_missing = row.get("missing") or []
             missing_text = ("  ⚠この日に無い: " + ", ".join(row_missing)
                             if row_missing else "")
+            # 媒体が断った・返さなかった指標（facebook のページの日次・Meta 計画 段 1）。
+            if row.get("unavailable"):
+                missing_text += "  （媒体が返さない: " + ", ".join(sorted(row["unavailable"])) + "）"
             # 4.5.4: いつ数えたか（無い古い行は出さない）。
             seen = jst.parse(row.get("collected_at")) if row.get("collected_at") else None
             seen_text = f"  数えた {jst.to_jst(seen).strftime('%m/%d %H:%M')}" if seen else ""
@@ -4983,6 +4986,10 @@ def build_parser() -> argparse.ArgumentParser:
     # `thth/retract_cli.py` に閉じる——ここに足すのはこの 1 行だけ。
     from . import retract_cli
     retract_cli.register(sub)
+
+    # `thth edit` / `thth reply hide|unhide|delete`（Meta 計画 段 1）。口は `thth/edit_cli.py` に閉じる。
+    from . import edit_cli
+    edit_cli.register(sub)
 
     # `thth repost|unrepost|like|unlike`（設計 3.15.0）。口は `thth/reaction_cli.py` に閉じる。
     from . import reaction_cli

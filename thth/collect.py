@@ -1165,10 +1165,21 @@ def _collect_account_daily(account_name, account_cfg, adapter, *, now, errors,
     except Exception as e:
         errors.append(f"account_insights: {redact_mod.redact(str(e))}")
         return None
+    # 取れなかった指標の名前（facebook・Meta 計画 段 1）。指標と混ぜず行に別に持つ——
+    # **0 で埋めない**（投稿の数の `unavailable` と同じ作法）。Threads は返さない。
+    unavailable = None
+    if isinstance(metrics, dict) and isinstance(metrics.get("unavailable"), dict):
+        metrics = dict(metrics)
+        unavailable = metrics.pop("unavailable")
     if not metrics:
+        if unavailable:
+            errors.append("account_insights: 指標が 1 つも取れませんでした（unavailable: "
+                          + ",".join(sorted(unavailable)) + "）")
         return None
-    _append_ndjson(path, [{"account": account_name, "date": day,
-                            "collected_at": jst.iso(now), "metrics": metrics}])
+    row = {"account": account_name, "date": day, "collected_at": jst.iso(now), "metrics": metrics}
+    if unavailable:
+        row["unavailable"] = unavailable
+    _append_ndjson(path, [row])
     return path
 
 

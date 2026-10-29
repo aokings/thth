@@ -102,6 +102,8 @@ All subcommands `thth --help` lists, one line each:
 - `schedule` — schedule a post, or list what is due in date order
 - `posts` — list your own recent posts
 - `retract` — delete a published post (two-step confirmation on a local ledger; the record is kept)
+- `edit` — correct the text of a post THTH published (two-step confirmation; Facebook only; the previous text stays in the record)
+- `reply` — hide, unhide or delete a comment (`reply hide|unhide|delete`; delete is two-step; Facebook only)
 - `repost` — repost a post (Threads, Bluesky, Mastodon, X; only when the owner asks)
 - `unrepost` — undo a repost made through THTH
 - `like` — like a post (Bluesky, Mastodon, X; the Threads API has no likes)

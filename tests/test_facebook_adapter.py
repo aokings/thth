@@ -92,7 +92,8 @@ def test_REGISTRYにfacebookが載り境界の語彙に収まる():
     cls = adapters_mod.REGISTRY["facebook"]
     assert cls is fb.FacebookAdapter
     assert set(cls.CAPABILITIES) <= base.KNOWN_CAPABILITIES
-    assert cls.capabilities() == {"recent_posts", "thread_read", "views", "link_preview"}
+    assert cls.capabilities() == {"recent_posts", "thread_read", "views", "link_preview",
+                                  "account_insights", "carousel", "edit_post", "hide_reply"}
     assert cls.TOKEN_KEYS == ("access_token",) and cls.has_token({"access_token": "x"})
     assert cls.TOKEN_NO_EXPIRY is True and cls.AUTH_NEEDS_APP_ENV is True
     assert cls.DELETE_PERMISSION == "pages_manage_posts"
@@ -266,7 +267,7 @@ def test_画像の権限不足はpermission():
 
 
 @pytest.mark.parametrize("rows,reason", [
-    ([photo_row(), photo_row(index=2)], "media_limit_exceeded: count"),
+    ([photo_row(index=i) for i in range(1, fb.CAROUSEL_MAX + 2)], "media_limit_exceeded: count"),
     ([photo_row(kind="video", format="mp4")], "unsupported_attachment: facebook/mp4"),
     ([photo_row(format="webp")], "unsupported_attachment: facebook/webp"),
     ([photo_row(public_size=fb.MAX_PHOTO_BYTES + 1)], "media_limit_exceeded: bytes"),
