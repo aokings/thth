@@ -18,8 +18,15 @@ permissions:
   contents: read
 
 jobs:
+  # 1 台で 12 分ほどかかるようになったので、試験のファイルを 4 つに分けて並べて回す
+  # （2026-10-30 masaru「出すのにどんどん時間がかかる」）。分け方は名前の順に 4 つおきで、
+  # 漏れが無いことは最後の job が件数の合計で確かめる。
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v5
 
@@ -30,5 +37,30 @@ jobs:
       - name: 依存を入れる
         run: python -m pip install --quiet --upgrade build pytest pytest-xdist
 
-      - name: 全件テスト
-        run: python -m pytest tests/ -q -n auto -p no:cacheprovider
+      - name: 全件テスト（4 つに分けたうちの 1 つ）
+        run: |
+          python - <<'EOF' > files.txt
+          import pathlib
+          files = sorted(str(p) for p in pathlib.Path("tests").glob("test_*.py"))
+          print("\n".join(files[${{ matrix.shard }}::4]))
+          EOF
+          wc -l < files.txt > count.txt
+          python -m pytest $(cat files.txt) -q -n auto -p no:cacheprovider
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: count.txt
+
+  all-files:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+      - name: 4 つの分け前を足すと全部のファイルになる
+        run: |
+          total=$(ls tests/test_*.py | wc -l)
+          got=$(cat shard-*/count.txt | awk '{s+=$1} END {print s}')
+          echo "全部 ${total}・回した ${got}"
+          test "$total" = "$got"
