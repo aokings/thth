@@ -360,6 +360,8 @@ def test_boostは4つを全部PAUSEDで作り_終了日と通しの予算を送�
             assert c["form"]["status"] == ["PAUSED"], c["path"]
     adset = posts(env, "/adsets")[0]["form"]
     assert adset["lifetime_budget"] == ["500"] and adset["end_time"][0]
+    # 投稿の反応を狙うときは ON_POST が無いと Meta が断る（10/31 本番で 2490408）
+    assert adset["optimization_goal"] == ["POST_ENGAGEMENT"] and adset["destination_type"] == ["ON_POST"]
     targeting = json.loads(adset["targeting"][0])
     assert targeting["geo_locations"] == {"countries": ["JP"]} and targeting["age_min"] == 18
     assert targeting["targeting_automation"] == {"advantage_audience": 0}

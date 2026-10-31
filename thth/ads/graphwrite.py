@@ -42,6 +42,10 @@ ACTIVE = "ACTIVE"
 # 作る口の目的（D-2・段 5 の 2）。名前 → (objective, optimization_goal)。
 OBJECTIVES = {"engagement": ("OUTCOME_ENGAGEMENT", "POST_ENGAGEMENT"),
               "traffic": ("OUTCOME_TRAFFIC", "LINK_CLICKS")}
+# 広告セットの destination_type。OUTCOME_ENGAGEMENT＋POST_ENGAGEMENT は ON_POST が無いと
+# 「この目的では選んだ成果の目標を使えない」（code 100・subcode 2490408）で断られる
+# （2026-10-31 本番の口座で validate_only で確かめた）。traffic は本番で未確認。
+DESTINATIONS = {"engagement": "ON_POST"}
 # 公開の関数 → 呼んでよい `ops.py` の関数（試験がこの表と実際の呼び出しの一致を縛る）。
 ALLOWED_CALLERS = {
     "create_campaign": {"boost"}, "create_adset": {"boost"}, "create_creative": {"boost"},
@@ -154,7 +158,8 @@ class Writer:
             "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
             "promoted_object": json.dumps({"page_id": self._check_id(page_id)}),
             "targeting": json.dumps(targeting, ensure_ascii=False, separators=(",", ":")),
-            "status": PAUSED}, urgent=False)
+            "status": PAUSED, **({"destination_type": DESTINATIONS[objective]} if objective in DESTINATIONS else {})},
+            urgent=False)
         return self._new_id(body)
 
     def create_creative(self, *, name: str, object_story_id: str, instagram_user_id: str | None = None) -> str:
