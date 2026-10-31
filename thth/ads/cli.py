@@ -564,7 +564,7 @@ def cmd_budget(args) -> int:
         def render(v):
             u = v["usage"]
             print(f"広告の口座 {v['adaccount']}  {u['month']}  上限 {v['ceilings']}（最小単位）")
-            print(f"  予約 {u['reserved_minor']}・確定 {u['settled_minor']}・今月の実支出（最後の collect）"
+            print(f"  終わっていない予約の残り {u['reserved_minor']}・今月の実支出（最後の collect）"
                   f"{v['month_spend_minor']}・月の上限 {u['monthly']}（{u['unit']}）")
         return _write_call(args, show, render)
     keys = [k for k in ("monthly", "lifetime_max", "days_max") if getattr(args, k) is not None]

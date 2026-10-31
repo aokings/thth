@@ -815,3 +815,146 @@ def test_MCPのboostはviaにmcpを付けてCLIを呼ぶ_pauseはallかidsのど
         server.call_tool("thth_ads_pause", {"adaccount": NAME, "by": "llm"})
     server.call_tool("thth_ads_stop", {"adaccount": NAME, "by": "llm"})
     assert seen[-1][:3] == ["ads", "stop", NAME]
+
+
+# ================================================================== 監査（Fable・10/31）の再現: 直す前に赤・直したあと緑
+
+def _next_month_15(now):
+    return (now.replace(day=1) + datetime.timedelta(days=32)).replace(day=15)
+
+
+def test_監査1_1_月をまたいだ配信の翌月の実支出を翌月に数え_満額の予約を通さない(env):
+    cfg = setup_ledger(env, monthly=10000)
+    cid = env["meta"].campaign(lifetime=5000)
+    two_stage(cid)                                   # 今月に 5000 を予約
+    now = jst.now_jst()
+    later = _next_month_15(now)
+    view = budget.usage(NAME, cfg, now=later, campaign_spend={cid: 5000})
+    assert view["month"] != watch.local_month(cfg, now)
+    assert view["used_minor"] >= 5000                # 翌月に使った 5000 は翌月の消費
+    with pytest.raises(budget.BudgetRefused) as exc:
+        budget.check(view, 10000)
+    assert exc.value.code == "ads_budget_exhausted"
+
+
+def test_監査1_1_前の月に始めてまだ続く配信は_残りの見込みも今月に数える(env):
+    cfg = setup_ledger(env, monthly=10000)
+    later = _next_month_15(jst.now_jst())
+    prev = budget.previous_month(watch.local_month(cfg, later))
+    budget.reserve(NAME, prev, "op-prev", amount_minor=5000, campaign_id="555",
+                   end_time=jst.iso(later + datetime.timedelta(days=3)), op="activate")
+    budget.mark(NAME, prev, "op-prev", "fired")
+    view = budget.usage(NAME, cfg, now=later, campaign_spend={"555": 1000})
+    assert view["used_minor"] == 5000                # 実支出 1000 ＋ 残りの見込み 4000
+    budget.check(view, 5000)
+    with pytest.raises(budget.BudgetRefused):
+        budget.check(view, 5001)
+
+
+def test_監査2_3_延ばした配信の実支出は1回だけ数える(env):
+    cfg = setup_ledger(env)
+    meta = env["meta"]
+    cid = meta.campaign(lifetime=500, days=1)
+    two_stage(cid)
+    adset = next(o["id"] for o in meta.objects.values() if o["kind"] == "adset" and o["campaign_id"] == cid)
+    first = ops.extend(NAME, adset, by="m", lifetime_minor=800)
+    ops.extend(NAME, adset, by="m", lifetime_minor=800, confirm=first["digest"], approval="A261031-3")
+    later = jst.now_jst() + datetime.timedelta(days=3)
+    view = budget.usage(NAME, cfg, now=later, campaign_spend={cid: 700})
+    assert view["used_minor"] == 700
+
+
+def test_監査1_2_THTHが止めた物を外で再開したら外の配信と言う(env):
+    setup_ledger(env)
+    meta = env["meta"]
+    cid = meta.campaign()
+    two_stage(cid)
+    assert ops.stop(NAME, by="masaru")["confirmed"] is True
+    for o in meta.objects.values():                  # 管理画面（THTH の外）で全部 ACTIVE に戻す
+        if o["kind"] != "creative":
+            o["status"] = "ACTIVE"
+    watch.collect(NAME, force=True)
+    kinds = watch.events(NAME, ledger.load(NAME), watch.read_snapshot(NAME), now=jst.now_jst(),
+                         make=lambda kind, ref, summary, **extra: kind)
+    assert "ads_active_outside_thth" in kinds
+
+
+def test_監査1_2_pauseした物はTHTHが今動かしている物から外れる(env):
+    setup_ledger(env)
+    meta = env["meta"]
+    cid = meta.campaign()
+    two_stage(cid)
+    assert cid in watch._thth_activated(NAME)
+    ops.pause(NAME, by="m", ids=(cid,))
+    assert cid not in watch._thth_activated(NAME)
+
+
+def test_監査1_2_何も始まらなかったactivateのidはTHTHが始めた物に数えない(env):
+    setup_ledger(env)
+    meta = env["meta"]
+    cid = meta.campaign()
+    ad = next(o["id"] for o in meta.objects.values() if o["kind"] == "ad" and o["campaign_id"] == cid)
+    first = ops.activate(NAME, cid, by="masaru")
+    meta.fail[("POST", V + "/" + ad)] = (400, {"error": {"code": 100, "message": "no"}})
+    with pytest.raises(ops.OpsRefused) as exc:
+        ops.activate(NAME, cid, by="masaru", confirm=first["digest"], approval="A261031-1")
+    assert exc.value.code == "ads_activate_failed"
+    assert not watch._thth_activated(NAME)
+
+
+def test_監査2_1_広告セットが複数でも1回のactivateの合計はlifetime_budget_maxを越えない(env):
+    setup_ledger(env, monthly=20000, lifetime_max=5000)
+    cid = env["meta"].campaign(lifetime=2000, adsets=3)
+    with pytest.raises(ops.OpsRefused) as exc:
+        ops.activate(NAME, cid, by="masaru")
+    assert exc.value.code == "ads_lifetime_over_ceiling"
+
+
+def test_監査2_2_stopは木を全部読めていなければ止まったと言わない(env, monkeypatch):
+    setup_ledger(env)
+    env["meta"].campaign(status="ACTIVE")
+    from thth.ads import graphread
+    original = graphread.Reader._list
+
+    def truncated(self, path, params, *, urgent=False):
+        rows, _whole = original(self, path, params, urgent=urgent)
+        return rows, False
+    monkeypatch.setattr(graphread.Reader, "_list", truncated)
+    row = ops.stop(NAME, by="masaru")
+    assert row["confirmed"] is False and row["steps"]["verify"].get("error") == "ads_tree_incomplete"
+    assert "hub_line" in row
+
+
+def test_監査2_5_ads_tree_changedはどの欄が変わったかを言う(env):
+    setup_ledger(env)
+    meta = env["meta"]
+    cid = meta.campaign()
+    first = ops.activate(NAME, cid, by="masaru")
+    adset = next(o for o in meta.objects.values() if o["kind"] == "adset" and o["campaign_id"] == cid)
+    adset["lifetime_budget"] = 400
+    with pytest.raises(ops.OpsRefused) as exc:
+        ops.activate(NAME, cid, by="masaru", confirm=first["digest"], approval="A261031-1")
+    assert exc.value.code == "ads_tree_changed" and "lifetime_budget" in exc.value.message
+
+
+def test_監査3_1_台帳の時間帯がMetaと違えばactivateは断る(env):
+    setup_ledger(env)
+    raw = json.loads(open(ledger.path_for(NAME)).read())
+    raw["timezone_name"] = "America/Los_Angeles"
+    open(ledger.path_for(NAME), "w").write(json.dumps(raw))
+    with pytest.raises(ops.OpsRefused) as exc:
+        ops.activate(NAME, env["meta"].campaign(), by="masaru")
+    assert exc.value.code == "adaccount_changed"
+
+
+def test_監査_USDの口座でstopはPAUSEDだけ書き_spend_capと予算の額は書かない(env):
+    setup_ledger(env, currency="USD")
+    meta = env["meta"]
+    meta.currency = "USD"
+    meta.campaign(status="ACTIVE")
+    adset = next(o["id"] for o in meta.objects.values() if o["kind"] == "adset")
+    row = ops.stop(NAME, by="m")
+    assert row["confirmed"] is True and row["steps"]["spend_cap"]["error"] == "ads_currency_unverified"
+    assert meta.spend_cap == "30000" and not [c for c in posts(env) if c["path"] == V + "/act_" + ACT]
+    low = ops.lower_budget(NAME, adset, by="m", lifetime_minor=100)
+    assert low["result"] == "failed" and low["error"] == "ads_currency_unverified"

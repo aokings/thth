@@ -15,12 +15,17 @@
 取り消し（released）**。`activate` は通しの予算の全額を、`extend` は増やした差分を予約する。
 Meta が確かに断った（何も ACTIVE にならなかった）ときだけ `released` に落とす。結果不明は使ったものとして残す。
 
-**月の消費**（`usage()`）:
+**月の消費**（`usage()`・監査 段 5 の 1-1 で書き直した）: **実支出で縛る**（D-3「月の照合は insights の spend を
+月の範囲で取る」）。
 
-- 予約（reserved・fired・unknown）の合計。ただし**終了日を過ぎた予約は、そのキャンペーンの今月の実支出に置き換える**
-  （確定・collect のたびの照合と同じ値を使う）。
-- **予約の外の実支出**（THTH の外で始まった配信・前の月から続く物ではないキャンペーン）も足す（A-6）。
-  キャンペーンごとの今月の実支出（`insights level=campaign`）が読めなければ `outside_unknown` を立て、
+    使った見積もり = 口座の今月の実支出の全部（THTH が始めた物も外の物も・前の月から続く配信の今月の分も）
+                   ＋ まだ終わっていない予約の残りの見込み（キャンペーンごとに 予約の合計 − 今月の実支出・負なら 0）
+
+- 予約は**どの月のファイルの物も**見る（月末に始めて翌月に続く配信の残りを、翌月にも数える）。終わった予約は
+  実支出だけが残る（確定の時期は「読むとき」。実支出は Meta の数が正本なので、確定のために台帳を書き換えない）。
+- 同じキャンペーンの予約（activate と extend）はキャンペーンごとにまとめて 1 回だけ引く（実支出を重ねて数えない）。
+- 残りの見込みは「予約の合計 − 今月の実支出」なので、前の月に使った分も見込みに残る（多く数える側・安全側）。
+- キャンペーンごとの今月の実支出（`insights level=campaign`）が読めなければ `outside_unknown` を立て、
   `activate`・`extend` は `ads_spend_unknown` で断る（分からないものを 0 と数えない）。
 
 月の上限 `ceilings.monthly` が 0 なら、どの予約も通らない（`ads_budget_exhausted`・既定は止めた状態）。
@@ -33,6 +38,7 @@ import datetime
 import fcntl
 import json
 import os
+import re
 import secrets
 import time
 
@@ -125,16 +131,44 @@ def mark(name: str, month: str, op_id: str, state: str) -> None:
     _save(name, data)
 
 
-def thth_campaigns(name: str, month: str) -> set:
-    """今月と前の月の予約のキャンペーン（予約の外の支出を数えるときに除く）。"""
-    out = set()
-    for m in (month, previous_month(month)):
-        try:
-            data = load(name, m)
-        except BudgetRefused:
-            continue
-        out.update(v.get("campaign_id") for v in data["reservations"].values()
-                   if isinstance(v.get("campaign_id"), str))
+def months(name: str) -> list:
+    """予約のファイルのある月（古い順）。"""
+    try:
+        entries = os.listdir(ledger.state_dir_for(name))
+    except OSError:
+        return []
+    out = []
+    for entry in entries:
+        if entry.startswith("budget-") and entry.endswith(".json"):
+            month = entry[len("budget-"):-len(".json")]
+            if len(month) == 7 and month[4] == "-" and month.replace("-", "").isdigit():
+                out.append(month)
+    return sorted(out)
+
+
+def _end_of(row):
+    value = row.get("end_time")
+    if not isinstance(value, str):
+        return None
+    return jst.parse(re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", value.strip()))
+
+
+def running_reservations(name: str, *, now) -> dict:
+    """まだ終わっていない生きた予約の合計（`{campaign_id: 額}`・どの月のファイルの物も）。
+
+    終了日が読めない予約は終わっていない側に数える（安全側）。読めない予約のファイルは断る。
+    """
+    out = {}
+    for month in months(name):
+        data = load(name, month)
+        for row in data["reservations"].values():
+            if row["state"] not in LIVE_STATES:
+                continue
+            end = _end_of(row)
+            if end is not None and end <= now:
+                continue
+            cid = row.get("campaign_id") if isinstance(row.get("campaign_id"), str) else "?"
+            out[cid] = out.get(cid, 0) + row["amount_minor"]
     return out
 
 
@@ -142,27 +176,17 @@ def usage(name: str, cfg: dict, *, now, campaign_spend: dict | None) -> dict:
     """今月の消費の見立て（最小単位）。`campaign_spend` は `{campaign_id: 今月の実支出}`（読めなければ None）。"""
     from . import watch
     month = watch.local_month(cfg, now)
-    data = load(name, month)
-    reserved = 0
-    settled = 0
-    ours = thth_campaigns(name, month)
-    for row in data["reservations"].values():
-        if row["state"] not in LIVE_STATES:
-            continue
-        end = jst.parse(row.get("end_time")) if isinstance(row.get("end_time"), str) else None
-        actual = (campaign_spend or {}).get(row.get("campaign_id"))
-        if end is not None and end <= now and isinstance(actual, int):
-            settled += actual   # 確定: 終わった予約は実支出に置き換える
-        else:
-            reserved += row["amount_minor"]
-    outside = None
-    if campaign_spend is not None:
-        outside = sum(v for k, v in campaign_spend.items() if k not in ours and isinstance(v, int))
+    running = running_reservations(name, now=now)
+    spend = {k: v for k, v in (campaign_spend or {}).items() if isinstance(v, int)}
+    actual = sum(spend.values()) if campaign_spend is not None else None
+    remaining = sum(max(0, amount - spend.get(cid, 0)) for cid, amount in running.items())
+    outside = (sum(v for k, v in spend.items() if k not in running) if campaign_spend is not None else None)
     monthly = ledger.ceilings(cfg).get("monthly") or 0
-    used = reserved + settled + (outside or 0)
-    return {"month": month, "monthly": monthly, "reserved_minor": reserved, "settled_minor": settled,
+    used = remaining + (actual or 0)
+    return {"month": month, "monthly": monthly, "reserved_minor": remaining, "actual_minor": actual,
             "outside_minor": outside, "outside_unknown": campaign_spend is None, "used_minor": used,
-            "remaining_minor": monthly - used, "unit": "最小単位の整数（JPY なら円）・見積もりで請求書ではない"}
+            "remaining_minor": monthly - used,
+            "unit": "最小単位の整数（JPY なら円）・今月の実支出＋終わっていない予約の残り・見積もりで請求書ではない"}
 
 
 def check(view: dict, amount_minor: int) -> None:

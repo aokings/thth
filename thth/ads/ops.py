@@ -15,11 +15,15 @@
 **上げる口は無い**: `spend_cap` を上げる・外す、月の上限・1 操作の上限・`ads_enabled`・`production` を
 上げる命令は CLI にも MCP にも無い（D-1 の 3）。`spend_cap` は `stop` が `amount_spent` まで下げるだけ。
 
+**「上げられない・戻せない」は、VM の鍵と台帳を読める人以外に対して**（監査 段 5 の 2-4）。VM で `thth ads` を
+打てて鍵（0600）を読める人は、`THTH_ROOT`・`THTH_ADACCOUNTS_DIR` で別の台帳と状態の置き場を指せる。MCP からは
+環境も旗も触れないので越えられない。
+
 **THTH の承認は本人でない者を止める柵ではない**（D-1 の 2・監査 A-1）: digest は取り違えを防ぐ柵、hub の
 番号は THTH が照合しない「記録」。最後の柵は masaru が管理画面で入れる `spend_cap` と、`end_time` 必須。
 
 **記録** `adaccount_state/<名前>/ops/<op_id>-<op>.json`（0600・1 操作 1 ファイル・結果不明も残す）。
-`watch._thth_activated` は `op: activate` の `ids` を「THTH が始めた物」と読む（A-6）。`stop` が「止まった」と
+`watch._thth_activated` は activate から pause・stop を引いて「THTH が今 ACTIVE にしているつもりの物」を組む（A-6・監査 段 5 の 1-2）。`stop` が「止まった」と
 言えなかった記録は `watch` の出来事 `ads_stop_unconfirmed`（最優先）になる。
 
 **hub への知らせ**: THTH は hub を呼ばない（`cli._gate_problem` の注・VM に hub は無い）。`stop` が止まったと
@@ -383,6 +387,11 @@ def _tree_money(cfg, tree, *, now, change=None) -> dict:
                              f"{ceilings['lifetime_budget_max']} を越えます")
         total += amount
         ends.append(end)
+    # 監査 段 5 の 2-1: 1 回の操作の合計も 1 操作の上限の内側（広告セットが複数でも）。
+    if total > ceilings["lifetime_budget_max"]:
+        raise OpsRefused("ads_lifetime_over_ceiling",
+                         f"この操作の通しの額の合計 {total} が lifetime_budget_max {ceilings['lifetime_budget_max']} を越えます"
+                         "（広告セットが複数）")
     return {"amount_minor": total, "end_time": meta_time(max(ends)) if ends else None}
 
 
@@ -390,6 +399,9 @@ def _account_fence(cfg, reader) -> dict:
     account = reader.account()
     if account.get("currency") != cfg.get("currency"):
         raise OpsRefused("adaccount_changed", "台帳の通貨と Meta の通貨が違います")
+    # 監査 段 5 の 3-1: 月の区切りは台帳の時間帯で数えるので、Meta と違えば始めない。
+    if account.get("timezone_name") != cfg.get("timezone_name"):
+        raise OpsRefused("adaccount_changed", "台帳の時間帯と Meta の時間帯が違います（月の区切りがずれる）")
     if account.get("account_status") != 1:
         raise OpsRefused("ads_account_not_active", f"account_status が {account.get('account_status')} です")
     cap = account.get("spend_cap")
@@ -420,6 +432,47 @@ def _prepare(name, op, *, campaign_id, by, now, base_url, change=None):
     value = digest.compute_ads_digest(op=op, act_id=cfg["act_id"], currency=cfg.get("currency"), tree=tree,
                                       change=change)
     return cfg, token, reader, account, tree, money, view, value
+
+
+def _pending_path(name, value) -> str:
+    return os.path.join(ledger.state_dir_for(name), "pending", f"{value}.json")
+
+
+def _remember(name, op, cfg, tree, value, change=None) -> None:
+    """1 段目に見せた木の材料を残す（2 段目で違ったとき、どの欄が変わったかを言うため・監査 段 5 の 2-5）。"""
+    try:
+        parts = digest.components(op=op, act_id=cfg["act_id"], currency=cfg.get("currency"), tree=tree, change=change)
+        secrets_fs.atomic_write_json(_pending_path(name, value), parts, mode=0o600)
+    except (OSError, ValueError):
+        pass   # 残せなくても digest の照合は変わらない（言えるのが「変わった」だけになる）
+
+
+def _changed_fields(name, op, cfg, tree, confirm, change=None) -> str:
+    """1 段目の材料（`confirm` の digest）と今の木の差（`adsets[20].lifetime_budget` の形・最大 8 つ）。"""
+    try:
+        with open(_pending_path(name, confirm), encoding="utf-8") as f:
+            before = json.load(f)
+    except (OSError, ValueError):
+        return "（1 段目の記録が無いので、どの欄かは言えません。digest の打ち間違いもありえます）"
+    after = digest.components(op=op, act_id=cfg["act_id"], currency=cfg.get("currency"), tree=tree, change=change)
+    diffs = []
+
+    def walk(a, b, path):
+        if isinstance(a, dict) and isinstance(b, dict):
+            for key in sorted(set(a) | set(b)):
+                walk(a.get(key), b.get(key), f"{path}.{key}" if path else key)
+        elif isinstance(a, list) and isinstance(b, list) and all(isinstance(x, dict) for x in a + b):
+            ia = {str(x.get("id")): x for x in a}
+            ib = {str(x.get("id")): x for x in b}
+            for key in sorted(set(ia) | set(ib)):
+                if key not in ia or key not in ib:
+                    diffs.append(f"{path}[{key}] が{'増えた' if key in ib else '消えた'}")
+                else:
+                    walk(ia[key], ib[key], f"{path}[{key}]")
+        elif a != b:
+            diffs.append(f"{path}: {a!r} → {b!r}")
+    walk(before, after, "")
+    return "変わった欄: " + "・".join(diffs[:8]) if diffs else "（材料は同じ。digest の打ち間違いかもしれません）"
 
 
 def _summary(tree) -> dict:
@@ -459,6 +512,7 @@ def activate(name, campaign_id, *, by, via="cli", confirm=None, approval=None, n
         cfg, _t, _r, account, tree, money, view, value = _prepare(name, "activate", campaign_id=campaign_id, by=by,
                                                                   now=now, base_url=base_url)
         budget.check(view, money["amount_minor"])
+        _remember(name, "activate", cfg, tree, value)
         return {"stage": 1, "digest": value, "amount_minor": money["amount_minor"], "currency": cfg.get("currency"),
                 "end_time": money["end_time"], "budget": view, "spend_cap": account.get("spend_cap"),
                 "amount_spent": account.get("amount_spent"), "tree": _summary(tree),
@@ -470,7 +524,8 @@ def activate(name, campaign_id, *, by, via="cli", confirm=None, approval=None, n
         if confirm != value:
             raise OpsRefused("ads_tree_changed",
                              "1 段目のあとで木（広告セット・広告・予算・期間・状態）が変わったか、digest が違います。"
-                             "1 段目からやり直してください（何も始めていません）")
+                             "1 段目からやり直してください（何も始めていません）。"
+                             + _changed_fields(name, "activate", cfg, tree, confirm))
         _gate(cfg, approval)
         budget.check(view, money["amount_minor"])
         ids = activation_ids(tree)
@@ -555,6 +610,7 @@ def extend(name, adset_id, *, by, via="cli", end=None, lifetime_minor=None, conf
     if confirm is None:
         cfg2, _t, _r, account, tree, money, view, value = prepared()
         budget.check(view, added)
+        _remember(name, "extend", cfg2, tree, value, change)
         return {"stage": 1, "digest": value, "change": change, "added_minor": added, "budget": view,
                 "tree": _summary(tree),
                 "next": (f"thth ads extend {name} {adset_id} ... --confirm {value} --approval <hub の番号> --by <名前>"
@@ -562,7 +618,8 @@ def extend(name, adset_id, *, by, via="cli", end=None, lifetime_minor=None, conf
     with budget.lock(name):
         cfg2, token2, _r, account, tree, money, view, value = prepared()
         if confirm != value:
-            raise OpsRefused("ads_tree_changed", "1 段目のあとで木が変わったか、digest が違います。1 段目からやり直す")
+            raise OpsRefused("ads_tree_changed", "1 段目のあとで木が変わったか、digest が違います。1 段目からやり直す。"
+                             + _changed_fields(name, "extend", cfg2, tree, confirm, change))
         _gate(cfg2, approval)
         budget.check(view, added)
         op_id = budget.new_op_id(now)
@@ -698,16 +755,24 @@ def stop(name, *, by, via="cli", now=None, base_url=None) -> dict:
     if writer is not None:
         # ① pause
         try:
-            targets = _all_targets(reader.tree(urgent=True))
+            first_tree = reader.tree(urgent=True)
+            targets = _all_targets(first_tree)
             results = pause_targets(writer, targets)
             failed = [{"id": i, "error": e} for i, e in results if e]
-            row["steps"]["pause"] = {"ok": not failed, "targets": targets, "failed": failed}
+            row["steps"]["pause"] = {"ok": not failed and bool(first_tree.get("complete")), "targets": targets,
+                                     "failed": failed}
+            if not first_tree.get("complete"):
+                row["steps"]["pause"]["error"] = "ads_tree_incomplete"
         except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
             row["steps"]["pause"] = {"ok": False, "error": _failure_code(exc)}
-        # ② 読み直し
+        # ② 読み直し（監査 段 5 の 2-2: 木を全部読めていなければ「止まった」と言わない）
         try:
-            still = unpaused(reader.tree(urgent=True))
-            row["steps"]["verify"] = {"ok": not still, "unpaused": still}
+            fresh = reader.tree(urgent=True)
+            still = unpaused(fresh)
+            if not fresh.get("complete"):
+                row["steps"]["verify"] = {"ok": False, "error": "ads_tree_incomplete", "unpaused": still}
+            else:
+                row["steps"]["verify"] = {"ok": not still, "unpaused": still}
         except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
             row["steps"]["verify"] = {"ok": False, "error": _failure_code(exc)}
         # ③ spend_cap を下げる（補助・これだけでは「止まった」と言わない・G-18）

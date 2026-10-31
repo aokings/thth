@@ -11,7 +11,7 @@
 | 種類 | 鳴るとき |
 |---|---|
 | `ads_stop_unconfirmed` | **最優先**（段 5）。最後の `thth ads stop` が「止まった」と確かめられなかった（pause か読み直しが失敗）。管理画面で止める |
-| `ads_active_outside_thth` | **最優先**。THTH の `activate` の記録（`ops/` の `op: activate` の `ids`）に無い物が `ACTIVE` |
+| `ads_active_outside_thth` | **最優先**。THTH が今 ACTIVE にしているつもりの物（`ops/` の activate から pause・stop を引いた物・`_thth_activated`）に無い物が `ACTIVE`。THTH が止めた物を外で再開したときも鳴る |
 | `ads_no_end_time` | 終了日の無い広告セットが `ACTIVE`（THTH は作らないので外で作られた物） |
 | `ads_account_status` | `account_status` が 1（ACTIVE）以外 |
 | `ads_spend_over_estimate` | 今月の実支出が THTH の予約（段 5 の `budget-<月>.json`）の 120% を越えた。予約が無ければ鳴らない |
@@ -246,24 +246,42 @@ def collect_linked(account_name: str, *, now=None, log=print) -> list:
 # 出来事
 # --------------------------------------------------------------------------
 
+def _ids(value) -> set:
+    return {i for i in value if isinstance(i, str)} if isinstance(value, list) else set()
+
+
+def _failed_ids(value) -> set:
+    return {r.get("id") for r in value if isinstance(r, dict)} if isinstance(value, list) else set()
+
+
 def _thth_activated(name) -> set:
-    """THTH が `activate` した物の id（段 5 の `ops/*.json` の `{"op": "activate", "ids": […]}`）。"""
-    directory = os.path.join(ledger.state_dir_for(name), "ops")
+    """THTH が**今** ACTIVE にしているつもりの物の id（監査 段 5 の 1-2 で書き直した）。
+
+    `ops/` を打った順に読んで組む:
+    - `activate`: `ok`・`partial` は実際に書けた `activated` を足す。`started`・`unknown`（どれが書けたか
+      分からない）は `ids` を足す。`failed`（Meta が確かに断り、何も始まらなかった）は足さない。
+    - `pause`: 止められた `targets`（`failed` を除く）を引く。
+    - `stop`: 止められた `targets` を引き、**止まったと確かめられた stop なら全部を引く**。
+
+    だから THTH が止めた物を Ads Manager などで再開すると、記録に無い ACTIVE として
+    `ads_active_outside_thth` が鳴る。
+    """
+    from . import ops
     out = set()
-    try:
-        entries = os.listdir(directory)
-    except OSError:
-        return out
-    for entry in entries:
-        if not entry.endswith(".json"):
-            continue
-        try:
-            with open(os.path.join(directory, entry), encoding="utf-8") as f:
-                row = json.load(f)
-        except (OSError, ValueError):
-            continue
-        if isinstance(row, dict) and row.get("op") == "activate" and isinstance(row.get("ids"), list):
-            out.update(i for i in row["ids"] if isinstance(i, str))
+    for row in ops.read_ops(name):
+        op, result = row.get("op"), row.get("result")
+        if op == "activate":
+            if result in ("ok", "partial"):
+                out |= _ids(row.get("activated"))
+            elif result in ("started", "unknown", None):   # 結果の欄が無い記録も「どれが書けたか分からない」側
+                out |= _ids(row.get("ids"))
+        elif op == "pause":
+            out -= _ids(row.get("targets")) - _failed_ids(row.get("failed"))
+        elif op == "stop":
+            step = (row.get("steps") or {}).get("pause") or {}
+            out -= _ids(step.get("targets")) - _failed_ids(step.get("failed"))
+            if row.get("confirmed") is True:
+                out = set()
     return out
 
 

@@ -125,12 +125,12 @@ THTH は CLI ツール。あなた（エージェント）が使う MCP の道�
 ## 広告（Meta 計画 段 4〜5・10/31）
 
 - 広告は投稿先の媒体ではないので `thth account` でなく `thth ads`。台帳は VM の `adaccounts/<名前>.json`（上限 `ceilings` は 0・`ads_enabled`／`production` は false が既定）、状態は `adaccount_state/<名前>/`。金額は**最小単位の整数**（JPY なら円）。
-- **上げる命令は無い**: `spend_cap` を上げる・外すのは masaru が広告マネージャで。月の上限・1 操作の上限（`lifetime_budget_max`・`days_max`）・`ads_enabled`・`production` を上げるのは VM の台帳を `cp -a` で控えてから直接書く。止めた口座を戻すのも VM（`adaccount_state/<名前>/guard/stopped.json` を控えてから消す）。
+- **上げる命令は無い**: `spend_cap` を上げる・外すのは masaru が広告マネージャで。月の上限・1 操作の上限（`lifetime_budget_max`・`days_max`）・`ads_enabled`・`production` を上げるのは VM の台帳を `cp -a` で控えてから直接書く。止めた口座を戻すのも VM（`adaccount_state/<名前>/guard/stopped.json` を控えてから消す）。この「上げられない・戻せない」は、VM の鍵と台帳を読める人以外に対しての柵（MCP からは越えられない）。
 - 読む: `thth ads add|auth|show|insights|doctor|accounts|collect`（段 4）。鍵が期限なし（`expires_at=0`）なら「期限なし」と言い、残り 14 日の柵はデータに触れる期限（`data_access_expires_at`）で効く。`thth ads doctor` は `/debug_token` の今の値で `.token` の期限の欄を書き直す。
 - 作る（お金は動かない）: `thth ads boost <名前> --post <post_id>|--object-story-id <ページID>_<数字> --lifetime <額> --end <時刻> [--start now] [--platforms facebook,instagram] --by <名前>`。キャンペーン・広告セット・クリエイティブ・広告を**全部 `PAUSED`** で作る。終了日は必須・1 操作の上限を超える指定は作らない。MCP の `thth_ads_boost` も同じ。
 - **始める（お金が動く・CLI だけ）**: `thth ads activate <名前> <campaign_id> --by <名前>` が digest と木（予算・期間・広告）を出す → 人が見て hub で承認 → `--confirm <digest> --approval <hub の番号>` で 2 段目。2 段目で Meta から木を読み直し、変わっていれば `ads_tree_changed` で断る。月の上限の予約・`spend_cap` が入っていること・鍵の残り 14 日以上・`ads_enabled`・`production` が要る。延ばす・増やすは `thth ads extend`（同じ 2 段）。**MCP には無い。**
 - **止める（承認なし・止めた口座でも・量の制限で待たない）**: `thth ads stop <名前> --by <名前>` が全部 PAUSED → Meta から読み直して確かめる → `spend_cap` を使った額まで下げる → THTH の止め。**「止まった」と出なければ管理画面で止める**（出力の `waiting_on_masaru` の 1 行を hub に送る）。一部だけなら `thth ads pause <名前> --id <id>|--all`。減らす `thth ads budget lower <名前> --adset <id> --lifetime <額>`・早める `thth ads end <名前> <adset_id> --end <時刻>`・台帳の上限を下げる `thth ads budget lower <名前> --monthly <額>`。MCP は `thth_ads_pause`・`thth_ads_stop`。
-- THTH の見積もり（`thth ads budget show`）は Meta の請求書ではない。THTH の承認（digest・hub の番号）は取り違えを防ぐ柵で、最後の柵は masaru が入れた `spend_cap` と終了日。
+- 月の上限は**実支出で縛る**: 使った見積もり＝口座の今月の実支出の全部＋終わっていない予約の残り（月末に始めて翌月に続く配信も翌月に数える）。THTH の見積もり（`thth ads budget show`）は Meta の請求書ではない。THTH の承認（digest・hub の番号）は取り違えを防ぐ柵で、最後の柵は masaru が入れた `spend_cap` と終了日。
 - 見張り（`thth events`・dashboard の要対応・`thth morning`）: `ads_stop_unconfirmed`（`stop` が止まったと確かめられなかった・最優先）・`ads_active_outside_thth`（THTH の外で誰かが配信を始めた・最優先）・`ads_no_end_time`・`ads_account_status`・`ads_spend_cap_unset`・`ads_spend_cap_near`・`ads_budget_low`・`ads_spend_over_estimate`・`ads_token_expiring`（残り 14 日）・`ads_read_failed`。
 
 ## 何を拒むか
