@@ -124,7 +124,10 @@ def test_mcp_stdioでtools_listとtools_callが通る(isolated_account):
                           # thth_hatena_collect は出さない（採取は run と CLI だけ）。
                           "thth_article_reactions",
                           # 2026-10-17 に媒体の特性の台帳を読む口を足した（設計「上限と連投の柵」§4.3・段 0・読むだけ）。
-                          "thth_media_traits"}
+                          "thth_media_traits",
+                          # 2026-10-31 に広告の 4 本を足した（Meta 計画 段 5 の 7）。読む・PAUSED で作る・止めるだけ。
+                          # 配信を始める activate・延ばす extend・上限や spend_cap を上げる道具は出さない。
+                          "thth_ads_show", "thth_ads_boost", "thth_ads_pause", "thth_ads_stop"}
     # 承認・投稿・認可の副作用のあるものは出ていない。
     assert not (tool_names & {"thth_approve", "thth_throw", "thth_token",
                                "thth_auth", "thth_refresh", "thth_revoke",

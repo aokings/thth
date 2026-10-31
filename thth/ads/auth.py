@@ -163,7 +163,12 @@ def _token_record(cfg, long_body, long_token, debug, account_row, *, config_id, 
     if scopes is None and not config_id:
         token["scopes"] = list(SCOPES)
     expires_at = meta_tokens.int_field(debug, "expires_at")
-    if expires_at and expires_at > 0:
+    if expires_at == 0:
+        # 本番 10/31: 広告の鍵は `/debug_token` が expires_at=0（期限なし）を返した。効く期限は
+        # データに触れる期限（`data_access_expires_at`）になる（`ledger.token_limits`）。
+        token["no_expiry"] = True
+        token["expiry_source"] = "debug_token"
+    elif expires_at and expires_at > 0:
         token["expires_at"] = expires_at
         token["expires_in"] = max(0, expires_at - now)
         token["expiry_source"] = "debug_token"
@@ -227,7 +232,9 @@ def _save(name, cfg, token, target, *, by, via, log) -> dict:
 
 def _report(cfg, token, log):
     remaining = ledger.token_remaining_days(token, jst.now_jst())
-    oauth._out(f"保存しました: {cfg['token']}（600）・鍵の期限 {_when(token.get('expires_at'))}"
+    head = ("期限なし（expires_at=0）・データに触れる期限 " + _when(token.get("data_access_expires_at"))
+            if ledger.token_no_expiry(token) else _when(token.get("expires_at")))
+    oauth._out(f"保存しました: {cfg['token']}（600）・鍵の期限 {head}"
                + (f"（残り {remaining:.1f} 日）" if remaining is not None else ""), log=log)
     missing = [s for s in (READ_SCOPE,) if isinstance(token.get("scopes"), list) and s not in token["scopes"]]
     if missing:

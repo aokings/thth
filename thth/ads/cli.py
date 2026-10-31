@@ -1,19 +1,36 @@
-"""`thth ads accounts|add|auth|doctor|show|insights|collect`（計画 段 4）。**読むだけ。**
+"""`thth ads …`（計画 段 4・段 5）。
 
     thth ads add <名前> --act-id <数字> --project <project> [--page <口座>]… [--ig <口座>]… --by <名前>
     thth ads auth <名前> --by <名前> [--code <戻り URL>] [--exchange]
     thth ads accounts <名前> [--json]          鍵で見える広告アカウントの一覧（/me/adaccounts）
-    thth ads doctor <名前> [--json]            台帳・鍵・権限・読めるか（読むだけ）
+    thth ads doctor <名前> [--json]            台帳・鍵・権限・読めるか（読むだけ・鍵の期限の欄は今の値で書き直す）
     thth ads show <名前> [--json] [--offline]  アカウント・spend_cap・amount_spent・動いている物
     thth ads insights <名前> [--preset last_30d] [--level account] [--json]
     thth ads collect [<名前>] [--json]         読みを snapshot.json に残す（collect のたびにも回る）
 
-**この段に Meta に書く命令は無い**（作る・配信・予算・`spend_cap`・止める以外の変更。止める `pause`・
-`stop` も段 5）。`spend_cap` と THTH の上限（`ceilings`）・`ads_enabled`・`production` を上げる命令は
-**段 5 になっても持たない**（D-1）。上げるのは VM の台帳 `adaccounts/<名前>.json` を直接書く。
-`add` が書くのは THTH の台帳だけで、上限は 0・旗は false に決め打ち（引数で上げる口は無い）。
+段 5（書く・お金が動くのは activate と extend だけ）:
 
-どれも運営者の CLI だけ（MCP の道具・thth.me には出さない）。金額は最小単位の整数で出す。
+    thth ads boost <名前> (--post <post_id> | --object-story-id <ページID>_<数字>) --lifetime <額>
+                   --start <時刻|now> --end <時刻> [--platforms facebook[,instagram]] [--objective engagement] --by <名前>
+                                                全部 PAUSED で作る（お金は動かない）
+    thth ads activate <名前> <campaign_id> --by <名前>                       1 段目: digest を出す
+    thth ads activate <名前> <campaign_id> --confirm <digest> --approval <hub の番号> --by <名前>
+                                                2 段目: Meta から木を読み直して一致したら始める
+    thth ads extend <名前> <adset_id> [--end <時刻>] [--lifetime <額>] --by <名前> [--confirm … --approval …]
+    thth ads pause <名前> (--all | --id <id>…) --by <名前>        止める（承認なし・止めた口座でも・待たない）
+    thth ads stop <名前> --by <名前>             全部止める → 読み直して確かめる → spend_cap を下げる → THTH を止める
+    thth ads budget show <名前>                  今月の消費の見積もり（請求書ではない）
+    thth ads budget lower <名前> (--monthly <額> | --lifetime-max <額> | --days-max <日>)   台帳の上限を下げる
+    thth ads budget lower <名前> --adset <id> (--lifetime <額> | --daily <額>)              広告セットの予算を減らす
+    thth ads end <名前> <adset_id> --end <時刻|now> --by <名前>   終了日を早める
+
+**上げる命令は無い**: `spend_cap` を上げる・外す、月の上限・1 操作の上限・`ads_enabled`・`production` を
+上げるのは THTH の外（`spend_cap` は管理画面で masaru、上限と旗は VM の台帳 `adaccounts/<名前>.json` を
+`cp -a` で控えてから直接書く・D-1 の 3）。`budget lower` は今より小さい値だけを受ける。止めた口座を戻す命令も
+無い（VM で `adaccount_state/<名前>/guard/stopped.json` を控えてから消す）。
+
+MCP に出すのは show・boost（PAUSED まで）・pause・stop だけ。activate・extend は CLI で masaru か運用が押す。
+金額は最小単位の整数（JPY なら円）。
 """
 from __future__ import annotations
 
@@ -28,8 +45,13 @@ from ..meta import tokens as meta_tokens
 from ..meta import usage as meta_usage
 from . import graphread, ledger, watch
 
-# **この段の命令の全部**（`tests/test_meta_stage4.py` がこの集合と parser の一致を縛る）。
-VERBS = ("accounts", "add", "auth", "doctor", "show", "insights", "collect")
+# **命令の全部**（`tests/test_meta_stage5.py` がこの集合と parser の一致を縛る）。
+READ_VERBS = ("accounts", "add", "auth", "doctor", "show", "insights", "collect")
+# 段 5 の書く命令。Meta に書くのは `ops.py` の決まった関数だけ（`graphwrite.ALLOWED_CALLERS`）。
+WRITE_VERBS = ("boost", "activate", "extend", "pause", "stop", "budget", "end")
+VERBS = READ_VERBS + WRITE_VERBS
+# MCP に出す道具（**activate・extend・budget・end は出さない**・段 5 の 7）。
+MCP_TOOLS = ("thth_ads_show", "thth_ads_boost", "thth_ads_pause", "thth_ads_stop")
 EXPECTED_SCOPES = ("ads_read", "ads_management", "business_management")
 
 
@@ -190,11 +212,10 @@ def cmd_show(args) -> int:
         print(f"  台帳: 通貨 {led['currency'] or '未'}・時間帯 {led['timezone_name'] or '未'}・"
               f"ads_enabled {led['ads_enabled']}・production {led['production']}・上限 {led['ceilings']}"
               f"（{v['unit']}）")
-        print(f"  書く操作: {'断る（' + led['writes_refused'] + '）' if led['writes_refused'] else '段 5 で柵つき'}"
+        print(f"  書く操作: {'断る（' + led['writes_refused'] + '）' if led['writes_refused'] else '柵つき（boost は PAUSED・activate は 2 段）'}"
               f"・止め {led['stopped']['reason'] if led['stopped'] else 'なし'}")
         tok = v["token"]
-        print(f"  鍵: {tok['state']}" + (f"（残り {tok['remaining_days']:.1f} 日・{tok['expires_at']}）"
-                                         if tok["remaining_days"] is not None else ""))
+        print(f"  鍵: {tok['state']}・{watch.token_text(tok)}")
         if v.get("account"):
             a = v["account"]
             print(f"  Meta: {a['name']}・通貨 {a['currency']}・時間帯 {a['timezone_name']}・"
@@ -290,24 +311,18 @@ def doctor_rows(name, *, now=None) -> list:
         f"act_{cfg['act_id']}・通貨 {cfg.get('currency') or '未（thth ads auth で写す）'}・"
         f"時間帯 {cfg.get('timezone_name') or '未'}・上限 {ledger.ceilings(cfg)}・"
         f"ads_enabled {bool(cfg.get('ads_enabled'))}・production {bool(cfg.get('production'))}・"
-        f"書く操作 {'断る（' + refusal + '）' if refusal else '段 5 で柵つき'}")
+        f"書く操作 {'断る（' + refusal + '）' if refusal else '柵つき（boost は PAUSED・activate は 2 段）'}")
     state = watch.token_state(cfg, now=now)
     hint = f"thth ads auth {name} --by <名前>"
     if state["state"] in (watch.NO_TOKEN, watch.UNREADABLE):
         row("token", "鍵", False, f"{state['state']}（{hint}）")
         return rows
-    remaining = state["remaining_days"]
-    row("token", "鍵の期限（ユーザーの長い鍵・約 60 日）",
-        None if remaining is None else remaining >= watch.TOKEN_WARN_DAYS,
-        "期限が分かりません" if remaining is None else
-        f"{state['expires_at']}（残り {remaining:.1f} 日）"
-        + ("" if remaining >= watch.TOKEN_WARN_DAYS else f"・14 日を切りました。{hint}"),
-        remaining_days=remaining)
     try:
         _cfg, token, reader = _reader(name)
     except (accounts.AccountError, graphread.AdsReadError, ValueError) as exc:
         row("reader", "読む口", False, exc)
         return rows
+    debug = None
     try:
         from . import auth
         app_id, app_secret, _config = auth._app_env()
@@ -315,7 +330,25 @@ def doctor_rows(name, *, now=None) -> list:
         if debug is None:
             raise graphread.AdsReadError("debug_token_unavailable")
     except Exception as exc:  # noqa: BLE001 — 訊けなければ「確かめられなかった」
-        row("debug_token", "鍵の権限（/debug_token）", None, f"確かめられませんでした（{_error_text(exc)[:120]}）")
+        debug = None
+        debug_error = exc
+    else:
+        debug_error = None
+        # C-2 の 2: 保存した値でなく今の値で、`.token` の期限の欄を書き直す（鍵の値は触らない）。
+        try:
+            ledger.refresh_token_expiry(cfg, debug)
+        except OSError:
+            pass
+        state = watch.token_state(cfg, now=now)
+    remaining = state["remaining_days"]
+    row("token", "鍵の期限（鍵とデータに触れる期限の早いほう・残り 14 日で activate を断る）",
+        None if remaining is None else remaining >= watch.TOKEN_WARN_DAYS,
+        watch.token_text(state)
+        + ("" if remaining is None or remaining >= watch.TOKEN_WARN_DAYS else f"・14 日を切りました。{hint}"),
+        remaining_days=remaining, no_expiry=state.get("no_expiry"))
+    if debug is None:
+        row("debug_token", "鍵の権限（/debug_token）", None,
+            f"確かめられませんでした（{_error_text(debug_error)[:120]}）")
     else:
         scopes = meta_tokens.scopes_of(debug)
         if scopes is None:
@@ -374,11 +407,192 @@ def cmd_doctor(args) -> int:
     return 1 if bad else 0
 
 
+# ------------------------------------------------------------------ 段 5: 書く
+
+def _write_call(args, func, render, *, bad_rc=3):
+    """書く操作を呼び、断りを 1 語＋文で返す。`AccountStopped` は止めた口座の断り（D-1 の 4）。"""
+    from . import budget, ops
+    try:
+        value = func()
+    except accounts.AccountStopped as exc:
+        if getattr(args, "json", False):
+            print(json.dumps({"ok": False, "code": str(exc)}, ensure_ascii=False))
+        return _fail(f"{exc}: この広告の口座は止まっています。作る・始める・延ばすは断ります"
+                     "（止める・減らす・読むは通る）")
+    except ops.OpsRefused as exc:
+        text = f"{exc.code}: {exc.message}" if exc.message else exc.code
+        if exc.hint:
+            text += "\n" + exc.hint
+        if getattr(args, "json", False):
+            print(json.dumps({"ok": False, "code": exc.code, "message": exc.message, "hint": exc.hint},
+                             ensure_ascii=False))
+        return _fail(text)
+    except budget.BudgetRefused as exc:
+        if getattr(args, "json", False):
+            print(json.dumps({"ok": False, "code": exc.code, "message": exc.detail}, ensure_ascii=False))
+        return _fail(f"{exc.code}: {exc.detail}")
+    except (accounts.AccountError, graphread.AdsReadError, meta_errors.RateLimited, ValueError) as exc:
+        return _fail(_error_text(exc))
+    _emit(value, args.json, render)
+    if isinstance(value, dict) and value.get("result") in ("failed", "unconfirmed"):
+        return bad_rc
+    return 0
+
+
+def _amount_or_zero(text):
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("整数です") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError("0 以上の整数です")
+    return value
+
+
+def _amount(text):
+    value = _amount_or_zero(text)
+    if value <= 0:
+        raise argparse.ArgumentTypeError("金額は正の整数（最小単位・JPY なら円）です")
+    return value
+
+
+def cmd_boost(args) -> int:
+    from . import ops
+    platforms = tuple(p.strip() for p in (args.platforms or "facebook").split(",") if p.strip())
+
+    def render(v):
+        c = v["created"]
+        print(f"作りました（全部 PAUSED・お金は動いていません）: キャンペーン {c['campaign_id']}・広告セット "
+              f"{c['adset_id']}・クリエイティブ {c['creative_id']}・広告 {c['ad_id']}")
+        p = v["plan"]
+        print(f"  投稿 {p['object_story_id']}・通しの予算 {p['lifetime_minor']}（最小単位）・{p['start']} 〜 {p['end']}"
+              f"・出し先 {','.join(p['platforms'])}")
+        print(f"次の一手: {v['next']}")
+    return _write_call(args, lambda: ops.boost(
+        args.name, by=args.by, via=args.via, post=args.post, object_story_id=args.object_story_id,
+        lifetime_minor=args.lifetime, start=args.start, end=args.end, platforms=platforms,
+        objective=args.objective), render)
+
+
+def _render_stage(v, verb):
+    if v.get("stage") == 1:
+        print(f"{verb} の 1 段目（まだ何も変えていません）: digest {v['digest']}")
+        for key in ("amount_minor", "added_minor", "end_time", "spend_cap", "amount_spent"):
+            if key in v:
+                print(f"  {key}: {v[key]}")
+        if v.get("change"):
+            print(f"  変える値: {v['change']}")
+        b = v.get("budget") or {}
+        print(f"  今月の見積もり: 使った {b.get('used_minor')} / 月の上限 {b.get('monthly')}（予約の外の支出 "
+              f"{b.get('outside_minor')}・最小単位・請求書ではない）")
+        t = v.get("tree") or {}
+        print(f"  木: キャンペーン {t.get('campaign')}")
+        for row in t.get("adsets") or []:
+            print(f"    広告セット {row}")
+        for row in t.get("ads") or []:
+            print(f"    広告 {row}")
+        print(f"次の一手: {v['next']}")
+    else:
+        print(f"{verb}: {v.get('activated') or v.get('change')}（hub の番号 {v.get('approval')}・記録 {v['op_id']}）")
+        if v.get("next"):
+            print(f"次の一手: {v['next']}")
+
+
+def cmd_activate(args) -> int:
+    from . import ops
+    return _write_call(args, lambda: ops.activate(args.name, args.campaign_id, by=args.by, via="cli",
+                                                  confirm=args.confirm, approval=args.approval),
+                       lambda v: _render_stage(v, "配信を始める"))
+
+
+def cmd_extend(args) -> int:
+    from . import ops
+    return _write_call(args, lambda: ops.extend(args.name, args.adset_id, by=args.by, via="cli", end=args.end,
+                                                lifetime_minor=args.lifetime, confirm=args.confirm,
+                                                approval=args.approval),
+                       lambda v: _render_stage(v, "延ばす"))
+
+
+def cmd_pause(args) -> int:
+    from . import ops
+    if not args.all and not args.id:
+        return _fail("ads_target_missing: --all か --id <id> が要ります")
+
+    def render(v):
+        print(f"止めました（status=PAUSED）: {len(v['targets'])} 件" + (f"・失敗 {v['failed']}" if v["failed"] else ""))
+        if v["failed"]:
+            print("管理画面で止めてください（失敗した物があります）")
+    return _write_call(args, lambda: ops.pause(args.name, by=args.by, via=args.via, all_=args.all,
+                                               ids=tuple(args.id or ())), render)
+
+
+def cmd_stop(args) -> int:
+    from . import ops
+
+    def render(v):
+        if v["confirmed"]:
+            print(f"止まりました（Meta から読み直して全部 PAUSED を確かめた）・記録 {v['op_id']}")
+        else:
+            print("止まったと確かめられません。管理画面で止めてください")
+            print(f"hub に送る 1 行: {v['hub_line']}")
+        for step, value in v["steps"].items():
+            print(f"  {step}: {value}")
+    return _write_call(args, lambda: ops.stop(args.name, by=args.by, via=args.via), render)
+
+
+def cmd_end(args) -> int:
+    from . import ops
+
+    def render(v):
+        print(f"終了日を早めました: {v['adset_id']} {v['before']} → {v['after']}（{v['result']}）")
+    return _write_call(args, lambda: ops.end(args.name, args.adset_id, by=args.by, via=args.via, end_at=args.end),
+                       render)
+
+
+def cmd_budget(args) -> int:
+    from . import budget, ops
+    if args.budget_verb == "show":
+        def show():
+            cfg = ledger.load(args.name)
+            snap = watch.read_snapshot(args.name) or {}
+            insights = snap.get("insights") if isinstance(snap.get("insights"), dict) else {}
+            return {"adaccount": args.name, "ceilings": ledger.ceilings(cfg),
+                    "usage": budget.usage(args.name, cfg, now=jst.now_jst(), campaign_spend=None),
+                    "month_spend_minor": (insights.get("this_month") or {}).get("spend_minor"),
+                    "note": "予約と、最後の collect の今月の実支出（Meta の請求書ではない）"}
+
+        def render(v):
+            u = v["usage"]
+            print(f"広告の口座 {v['adaccount']}  {u['month']}  上限 {v['ceilings']}（最小単位）")
+            print(f"  予約 {u['reserved_minor']}・確定 {u['settled_minor']}・今月の実支出（最後の collect）"
+                  f"{v['month_spend_minor']}・月の上限 {u['monthly']}（{u['unit']}）")
+        return _write_call(args, show, render)
+    keys = [k for k in ("monthly", "lifetime_max", "days_max") if getattr(args, k) is not None]
+    if args.adset:
+        if keys:
+            return _fail("ads_lower_ambiguous: --adset と台帳の上限は一緒に下げられません")
+
+        def render(v):
+            print(f"減らしました: {v['adset_id']} {v['before']} → {v['after']}（{v['result']}）")
+        return _write_call(args, lambda: ops.lower_budget(args.name, args.adset, by=args.by, via=args.via,
+                                                          lifetime_minor=args.lifetime, daily_minor=args.daily), render)
+    if len(keys) != 1 or args.lifetime is not None or args.daily is not None:
+        return _fail("ads_lower_target: --monthly・--lifetime-max・--days-max のどれか 1 つ、"
+                     "または --adset <id> と --lifetime／--daily")
+    key = keys[0]
+    ledger_key = {"monthly": "monthly", "lifetime_max": "lifetime_budget_max", "days_max": "days_max"}[key]
+
+    def render(v):
+        print(f"下げました: ceilings.{ledger_key} {v['before']} → {v['after']}（上げるのは VM の台帳を直接書く）")
+    return _write_call(args, lambda: ops.lower_ceiling(args.name, ledger_key, getattr(args, key), by=args.by,
+                                                       via=args.via), render)
+
+
 # ------------------------------------------------------------------ 登録
 
 def register(sub) -> None:
     """`build_parser()` に `ads` を足す（cli.py に足すのはこの呼び出しだけ）。"""
-    p = sub.add_parser("ads", help="広告の口座を読む（段 4・Meta に書く命令は無い・CLI だけ）",
+    p = sub.add_parser("ads", help="広告の口座（読む・PAUSED で作る・2 段で始める・止める。上げる命令は無い）",
                        formatter_class=argparse.RawDescriptionHelpFormatter, description=__doc__)
     verbs = p.add_subparsers(dest="ads_verb", required=True)
     p_add = verbs.add_parser("add", help="広告の口座の台帳を 1 本書く（上限 0・旗は false）")
@@ -419,3 +633,78 @@ def register(sub) -> None:
     p_col.add_argument("name", nargs="?", default=None)
     p_col.add_argument("--json", action="store_true")
     p_col.set_defaults(func=cmd_collect)
+
+    def by_via(q):
+        q.add_argument("--by", required=True)
+        q.add_argument("--via", default="cli", choices=("cli", "mcp"), help=argparse.SUPPRESS)
+        q.add_argument("--json", action="store_true")
+
+    p_boost = verbs.add_parser("boost", help="投稿を広告に（全部 PAUSED で作る・お金は動かない）")
+    p_boost.add_argument("name")
+    target = p_boost.add_mutually_exclusive_group(required=True)
+    target.add_argument("--post", default=None, help="THTH で出したページの投稿の post_id")
+    target.add_argument("--object-story-id", dest="object_story_id", default=None,
+                        help="<ページID>_<投稿の数字>（THTH で出していない投稿）")
+    p_boost.add_argument("--lifetime", type=_amount, required=True, help="通しの予算（最小単位・JPY なら円）")
+    p_boost.add_argument("--start", default="now", help="開始（ISO 8601 か now）")
+    p_boost.add_argument("--end", required=True, help="終了（必須・ISO 8601）")
+    p_boost.add_argument("--platforms", default="facebook", help="facebook[,instagram]")
+    p_boost.add_argument("--objective", default="engagement", choices=("engagement", "traffic"))
+    by_via(p_boost)
+    p_boost.set_defaults(func=cmd_boost)
+
+    p_act = verbs.add_parser("activate", help="配信を始める（2 段・CLI だけ・MCP には無い）")
+    p_act.add_argument("name")
+    p_act.add_argument("campaign_id")
+    p_act.add_argument("--confirm", default=None, help="1 段目の digest")
+    p_act.add_argument("--approval", "--gate", dest="approval", default=None, help="hub の承認の番号（記録）")
+    p_act.add_argument("--by", required=True)
+    p_act.add_argument("--json", action="store_true")
+    p_act.set_defaults(func=cmd_activate)
+
+    p_ext = verbs.add_parser("extend", help="期間を延ばす・通しの予算を増やす（2 段・CLI だけ）")
+    p_ext.add_argument("name")
+    p_ext.add_argument("adset_id")
+    p_ext.add_argument("--end", default=None)
+    p_ext.add_argument("--lifetime", type=_amount, default=None)
+    p_ext.add_argument("--confirm", default=None)
+    p_ext.add_argument("--approval", "--gate", dest="approval", default=None)
+    p_ext.add_argument("--by", required=True)
+    p_ext.add_argument("--json", action="store_true")
+    p_ext.set_defaults(func=cmd_extend)
+
+    p_pause = verbs.add_parser("pause", help="止める（status=PAUSED・承認なし・止めた口座でも・待たない）")
+    p_pause.add_argument("name")
+    p_pause.add_argument("--all", action="store_true")
+    p_pause.add_argument("--id", action="append", help="キャンペーン・広告セット・広告の id（何度でも）")
+    by_via(p_pause)
+    p_pause.set_defaults(func=cmd_pause)
+
+    p_stop = verbs.add_parser("stop", help="全部止めて Meta から読み直して確かめる（承認なし・待たない）")
+    p_stop.add_argument("name")
+    by_via(p_stop)
+    p_stop.set_defaults(func=cmd_stop)
+
+    p_end = verbs.add_parser("end", help="終了日を早める（承認なし・延ばすのは extend）")
+    p_end.add_argument("name")
+    p_end.add_argument("adset_id")
+    p_end.add_argument("--end", required=True)
+    by_via(p_end)
+    p_end.set_defaults(func=cmd_end)
+
+    p_budget = verbs.add_parser("budget", help="月の上限の見積もり・下げる（上げる命令は無い）")
+    bverbs = p_budget.add_subparsers(dest="budget_verb", required=True)
+    b_show = bverbs.add_parser("show", help="今月の消費の見積もり")
+    b_show.add_argument("name")
+    b_show.add_argument("--json", action="store_true")
+    b_show.set_defaults(func=cmd_budget)
+    b_lower = bverbs.add_parser("lower", help="台帳の上限か広告セットの予算を下げる（今より小さい値だけ）")
+    b_lower.add_argument("name")
+    b_lower.add_argument("--monthly", type=_amount_or_zero, default=None)
+    b_lower.add_argument("--lifetime-max", dest="lifetime_max", type=_amount_or_zero, default=None)
+    b_lower.add_argument("--days-max", dest="days_max", type=_amount_or_zero, default=None)
+    b_lower.add_argument("--adset", default=None)
+    b_lower.add_argument("--lifetime", type=_amount, default=None)
+    b_lower.add_argument("--daily", type=_amount, default=None)
+    by_via(b_lower)
+    b_lower.set_defaults(func=cmd_budget)

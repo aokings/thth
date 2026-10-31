@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import decimal
 import json
+import hashlib
+import re
 import urllib.error
 
 from ..adapters import base
@@ -37,6 +39,14 @@ ADSET_FIELDS = ("id,name,campaign_id,status,effective_status,lifetime_budget,dai
                 "start_time,end_time")
 AD_FIELDS = "id,name,campaign_id,adset_id,status,effective_status"
 INSIGHT_FIELDS = "spend,impressions,clicks,reach"
+# 段 5: 1 つのキャンペーンの木（digest の材料・D-2）。`account_id` で口座の物かを確かめる。
+CAMPAIGN_TREE_FIELDS = ("id,name,account_id,objective,status,effective_status,lifetime_budget,daily_budget,"
+                        "start_time,stop_time")
+ADSET_TREE_FIELDS = ("id,name,campaign_id,status,effective_status,lifetime_budget,daily_budget,"
+                     "start_time,end_time,targeting")
+AD_TREE_FIELDS = ("id,name,campaign_id,adset_id,status,effective_status,"
+                  "creative{id,object_story_id,source_instagram_media_id}")
+ID_RE = re.compile(r"[0-9]{1,32}")
 ADACCOUNTS_FIELDS = "id,account_id,name,currency,timezone_name,account_status"
 # `date_preset`（L2: insights の参照の一覧から、THTH が使う物だけ）。
 PRESETS = ("today", "yesterday", "last_7d", "last_14d", "last_30d", "this_month", "last_month")
@@ -117,10 +127,14 @@ class Reader:
 
     # ------------------------------------------------------------------ 1 か所
 
-    def _get(self, path: str, params: dict | None = None) -> dict:
-        """**唯一の網の口。GET だけ。** 失敗は静的な符丁の `AdsReadError` にする。"""
+    def _get(self, path: str, params: dict | None = None, *, urgent: bool = False) -> dict:
+        """**唯一の網の口。GET だけ。** 失敗は静的な符丁の `AdsReadError` にする。
+
+        `urgent=True` は止める操作（`thth ads stop` の読み直し）の読み: 量の制限の待ちを見ず、断られたら
+        すぐ返す（A-4・止める道を待たせない）。
+        """
         try:
-            body = self.client.request("GET", path, params=params or {})
+            body = self.client.request("GET", path, params=params or {}, urgent=urgent)
         except meta_errors.RateLimited:
             raise
         except urllib.error.HTTPError as exc:
@@ -135,14 +149,14 @@ class Reader:
             raise AdsReadError("ads_response_invalid")
         return body
 
-    def _list(self, path: str, params: dict) -> tuple[list, bool]:
+    def _list(self, path: str, params: dict, *, urgent: bool = False) -> tuple[list, bool]:
         """頁を辿る。`(行, 全部読めたか)`。`MAX_PAGES` を越えたら読めた所までで False。"""
         rows, after = [], None
         for _ in range(MAX_PAGES):
             query = dict(params, limit=PAGE_LIMIT)
             if after:
                 query["after"] = after
-            body = self._get(path, query)
+            body = self._get(path, query, urgent=urgent)
             data = body.get("data")
             if not isinstance(data, list) or not all(isinstance(r, dict) for r in data):
                 raise AdsReadError("ads_list_invalid")
@@ -158,9 +172,9 @@ class Reader:
 
     # ------------------------------------------------------------------ 読む口
 
-    def account(self) -> dict:
+    def account(self, *, urgent: bool = False) -> dict:
         """`/act_<id>` の本筋の欄（金額は最小単位の整数）。"""
-        body = self._get("/" + self.act, {"fields": ACCOUNT_FIELDS})
+        body = self._get("/" + self.act, {"fields": ACCOUNT_FIELDS}, urgent=urgent)
         if str(body.get("id") or "") != self.act:
             raise AdsReadError("ads_account_mismatch")
         status = body.get("account_status")
@@ -189,23 +203,58 @@ class Reader:
             elif field == "business":
                 out[field] = ({"id": value.get("id"), "name": value.get("name")}
                               if isinstance(value, dict) else None)
+            elif field == "minimum_budgets":
+                # 通貨ごとの最低額の並び（本番 10/30: 全通貨が返る）。**口座の通貨の行だけ**を写す
+                # （通貨が分からないときは並べない・数だけ）。
+                out[field] = _minimum_budgets_for(value, self.cfg.get("currency"))
             else:
-                # `minimum_budgets` は通貨ごとの最低額の並び（形は本物で確かめる・G-1）。小さく写す。
-                out[field] = json.loads(json.dumps(value))[:50] if isinstance(value, list) else value
+                out[field] = value
         out["unavailable"] = unavailable
         return out
 
-    def tree(self) -> dict:
+    def tree(self, *, urgent: bool = False) -> dict:
         """キャンペーン・広告セット・広告の `status`・`effective_status`・予算・期間。"""
         out, complete = {}, True
         for key, edge, fields in (("campaigns", "campaigns", CAMPAIGN_FIELDS),
                                   ("adsets", "adsets", ADSET_FIELDS),
                                   ("ads", "ads", AD_FIELDS)):
-            rows, whole = self._list(f"/{self.act}/{edge}", {"fields": fields})
+            rows, whole = self._list(f"/{self.act}/{edge}", {"fields": fields}, urgent=urgent)
             complete = complete and whole
             out[key] = [_node(row) for row in rows]
         out["complete"] = complete
         return out
+
+    def campaign_tree(self, campaign_id: str, *, urgent: bool = False) -> dict:
+        """1 つのキャンペーンの木の全体（段 5・D-2 の digest の材料・A-5）。
+
+        キャンペーン・その下の**全部の**広告セット（`targeting` つき）と広告（クリエイティブの
+        `object_story_id`・`source_instagram_media_id` つき）。キャンペーンが口座の物でなければ断る。
+        """
+        if not isinstance(campaign_id, str) or not ID_RE.fullmatch(campaign_id):
+            raise AdsReadError("ads_id_invalid")
+        body = self._get("/" + campaign_id, {"fields": CAMPAIGN_TREE_FIELDS}, urgent=urgent)
+        if str(body.get("id") or "") != campaign_id:
+            raise AdsReadError("ads_campaign_mismatch")
+        if str(body.get("account_id") or "") != self.cfg["act_id"]:
+            raise AdsReadError("ads_campaign_other_account")
+        adsets, whole_a = self._list(f"/{campaign_id}/adsets", {"fields": ADSET_TREE_FIELDS}, urgent=urgent)
+        ads, whole_b = self._list(f"/{campaign_id}/ads", {"fields": AD_TREE_FIELDS}, urgent=urgent)
+        return {"campaign": _node(body), "adsets": [_node(row) for row in adsets],
+                "ads": [_node(row) for row in ads], "complete": whole_a and whole_b}
+
+    def node(self, object_id: str, kind: str, *, urgent: bool = False) -> dict:
+        """広告セット・キャンペーン 1 つ（`lower`・`end`・`extend` が今の値を読む）。"""
+        if not isinstance(object_id, str) or not ID_RE.fullmatch(object_id):
+            raise AdsReadError("ads_id_invalid")
+        fields = {"adset": ADSET_TREE_FIELDS + ",account_id", "campaign": CAMPAIGN_TREE_FIELDS}.get(kind)
+        if fields is None:
+            raise AdsReadError("ads_kind_invalid")
+        body = self._get("/" + object_id, {"fields": fields}, urgent=urgent)
+        if str(body.get("id") or "") != object_id:
+            raise AdsReadError("ads_object_mismatch")
+        if str(body.get("account_id") or "") != self.cfg["act_id"]:
+            raise AdsReadError("ads_object_other_account")
+        return _node(body)
 
     def insights_util_pct(self) -> float | None:
         row = meta_usage.read(None, path=ledger.usage_path_for(self.name)) or {}
@@ -256,9 +305,25 @@ def adaccount_row(row: dict) -> dict:
             "account_status": status if isinstance(status, int) and not isinstance(status, bool) else None}
 
 
+def _minimum_budgets_for(value, currency) -> dict:
+    """`minimum_budgets` から口座の通貨の行だけ（`{"rows": [...], "of": 全部の行の数}`）。"""
+    rows = value if isinstance(value, list) else []
+    mine = [json.loads(json.dumps(row)) for row in rows
+            if isinstance(row, dict) and currency and row.get("currency") == currency][:5]
+    return {"currency": currency, "rows": mine, "of": len(rows)}
+
+
+def targeting_sha(value) -> str | None:
+    """`targeting` の sha（並びを決めた JSON・digest の材料）。無ければ None。"""
+    if not isinstance(value, dict):
+        return None
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def _node(row: dict) -> dict:
     out = {}
-    for key in ("id", "name", "campaign_id", "adset_id", "status", "effective_status",
+    for key in ("id", "name", "account_id", "objective", "campaign_id", "adset_id", "status", "effective_status",
                 "start_time", "stop_time", "end_time"):
         value = row.get(key)
         if isinstance(value, str):
@@ -266,4 +331,14 @@ def _node(row: dict) -> dict:
     for key in ("lifetime_budget", "daily_budget"):
         if key in row:
             out[key] = minor(row.get(key))
+    if "targeting" in row:
+        targeting = row.get("targeting")
+        out["targeting_sha"] = targeting_sha(targeting)
+        platforms = targeting.get("publisher_platforms") if isinstance(targeting, dict) else None
+        out["publisher_platforms"] = (sorted(p for p in platforms if isinstance(p, str))
+                                      if isinstance(platforms, list) else None)
+    creative = row.get("creative")
+    if isinstance(creative, dict):
+        out["creative"] = {k: creative[k][:200] for k in ("id", "object_story_id", "source_instagram_media_id")
+                           if isinstance(creative.get(k), str)}
     return out

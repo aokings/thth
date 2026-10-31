@@ -152,7 +152,7 @@ KINDS = ("published", "retracted", "reply_received", "mention_received",
          # 10/29 段 0（設計 MetaAPI 計画 C-2 の 1）: 鍵のデータに触れる期限が 14 日を切った・過ぎた（続いている状態）。
          "token_data_access_expiring",
          # Meta 計画 段 4（D-5・C-2 の 5）: 広告の口座の見張り（どれも続いている状態・`thth/ads/watch.py`）。
-         "ads_active_outside_thth", "ads_no_end_time", "ads_account_status", "ads_spend_over_estimate",
+         "ads_stop_unconfirmed", "ads_active_outside_thth", "ads_no_end_time", "ads_account_status", "ads_spend_over_estimate",
          "ads_spend_cap_near", "ads_budget_low", "ads_spend_cap_unset", "ads_token_expiring",
          "ads_read_failed",
          # Meta 計画 段 6（条件 5）: Webhook の受け口から取り込めなかった時間・消えた数・断った数（今も続けば ongoing）。

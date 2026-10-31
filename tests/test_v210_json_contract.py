@@ -105,6 +105,9 @@ COMMANDS += ['comments']
 COMMANDS += ['ads add', 'ads accounts', 'ads doctor', 'ads show', 'ads insights', 'ads collect']
 # Meta 計画 段 6: Webhook の購読・取り込み・様子（--json は 1 つの値・失敗は stdout を空に）。
 COMMANDS += ['webhook subscribe', 'webhook pull', 'webhook status']
+# Meta 計画 段 5: 広告を書く（--json は 1 つの値・断りは {"ok": false, "code": …}）。
+COMMANDS += ['ads boost', 'ads activate', 'ads extend', 'ads pause', 'ads stop', 'ads end',
+             'ads budget show', 'ads budget lower']
 
 
 def test_json_table_covers_every_parser():

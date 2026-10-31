@@ -62,7 +62,7 @@ KIND_JA = {"scenario_stalled": "停滞", "series_low": "ストック不足", "un
            "principal_stopped": "はてな ID が停止", "budget_exhausted": "予算切れ",
            "token_data_access_expiring": "データの期限が近い（認可し直す）",
            # Meta 計画 段 4: 広告の口座の見張り（`thth/ads/watch.py`）。
-           "ads_active_outside_thth": "THTH の外で広告が配信中", "ads_no_end_time": "終了日の無い広告が配信中",
+           "ads_stop_unconfirmed": "広告を止めたと確かめられない", "ads_active_outside_thth": "THTH の外で広告が配信中", "ads_no_end_time": "終了日の無い広告が配信中",
            "ads_account_status": "広告アカウントの状態", "ads_spend_over_estimate": "広告の支出が見積もり超え",
            "ads_spend_cap_near": "広告の支出が上限に近い", "ads_budget_low": "広告の月の上限の残りが少ない",
            "ads_spend_cap_unset": "広告アカウントに支出の上限が無い", "ads_token_expiring": "広告の鍵の期限が近い",
@@ -70,7 +70,8 @@ KIND_JA = {"scenario_stalled": "停滞", "series_low": "ストック不足", "un
            # Meta 計画 段 6: Webhook の受け口から取り込めない（`thth/webhook.py`・続いている状態）。
            "webhook_down": "Webhook の取り込みが止まっている"}
 # 広告の出来事の次の一手（題は `KIND_JA`）。
-ADS_NEXT = {"ads_active_outside_thth": "広告マネージャで誰が始めたか確かめ、要らなければ止める",
+ADS_NEXT = {"ads_stop_unconfirmed": "広告マネージャで今すぐ止める（THTH の stop が止まったと確かめられなかった）",
+            "ads_active_outside_thth": "広告マネージャで誰が始めたか確かめ、要らなければ止める",
             "ads_no_end_time": "広告マネージャで終了日を入れるか止める",
             "ads_account_status": "広告マネージャで支払いと審査を確かめる",
             "ads_spend_over_estimate": "広告マネージャで支出を確かめる",

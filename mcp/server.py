@@ -558,6 +558,53 @@ TOOLS += [
 ]
 
 
+# 広告（Meta 計画 段 5 の 7）。**出すのは show・boost（PAUSED まで）・pause・stop だけ。** 配信を始める
+# `activate`・延ばす `extend`・予算を下げる・終了日を早めるは MCP に出さない（始める・延ばすは CLI で masaru か
+# 運用が 2 段で押す）。`spend_cap`・月の上限・`ads_enabled` を上げる道具はどこにも無い（D-1）。
+ADS_NOTE = ("金額は最小単位の整数（JPY なら円）。お金が動くのは配信を始めたときだけで、始める（activate）・延ばす（extend）は "
+            "MCP に無い（CLI で人が 2 段で押す）。spend_cap・上限を上げる道具も無い")
+ADS_TOOLS = [
+    {"name": "thth_ads_show",
+     "description": ("広告の口座を読む（thth ads show --json と同じ形・読むだけ）。spend_cap・amount_spent・動いている物・"
+                     "要対応（THTH の外で始まった配信・止めたと確かめられない ほか）。" + ADS_NOTE),
+     "inputSchema": {"type": "object", "properties": {
+         "adaccount": {"type": "string", "description": "広告の口座の名前（例 kopicha-ads）"}},
+         "required": ["adaccount"], "additionalProperties": False}},
+    {"name": "thth_ads_boost",
+     "description": ("ページの投稿を広告にする下書きを作る（キャンペーン・広告セット・クリエイティブ・広告を全部 PAUSED で作る・"
+                     "お金は動かない）。終了日は必須。1 操作の上限（通しの予算・期間）を超える指定は作らない。"
+                     "始めるのは人が CLI で thth ads activate を 2 段で押す。" + ADS_NOTE),
+     "inputSchema": {"type": "object", "properties": {
+         "adaccount": {"type": "string", "description": "広告の口座の名前"},
+         "post": {"type": "string", "description": "THTH で出したページの投稿の post_id（object_story_id とどちらか）"},
+         "object_story_id": {"type": "string", "description": "<ページID>_<投稿の数字>（THTH で出していない投稿）"},
+         "lifetime": {"type": "integer", "description": "通しの予算（最小単位・JPY なら円）"},
+         "start": {"type": "string", "description": "開始（ISO 8601 か now・既定 now）"},
+         "end": {"type": "string", "description": "終了（必須・ISO 8601）"},
+         "platforms": {"type": "string", "description": "facebook か facebook,instagram（既定 facebook）"},
+         "by": {"type": "string", "description": "打った人の名前（記録に残る）"}},
+         "required": ["adaccount", "lifetime", "end", "by"], "additionalProperties": False}},
+    {"name": "thth_ads_pause",
+     "description": ("広告を止める（status=PAUSED・承認なし・止めた口座でも通す・量の制限で待たない）。all か ids のどちらか。"
+                     "失敗した物があれば管理画面で止める"),
+     "inputSchema": {"type": "object", "properties": {
+         "adaccount": {"type": "string", "description": "広告の口座の名前"},
+         "all": {"type": "boolean", "description": "口座の全部を止める"},
+         "ids": {"type": "array", "items": {"type": "string"}, "description": "キャンペーン・広告セット・広告の id"},
+         "by": {"type": "string", "description": "打った人の名前"}},
+         "required": ["adaccount", "by"], "additionalProperties": False}},
+    {"name": "thth_ads_stop",
+     "description": ("広告の口座を止める: 全部 PAUSED → Meta から読み直して確かめる → spend_cap を使った額まで下げる → THTH の止め。"
+                     "「止まった」と言うのは読み直しで確かめたときだけ。言えなければ hub に送る 1 行（waiting_on_masaru）を返すので、"
+                     "そのまま hub に送り、管理画面で止めてもらう"),
+     "inputSchema": {"type": "object", "properties": {
+         "adaccount": {"type": "string", "description": "広告の口座の名前"},
+         "by": {"type": "string", "description": "打った人の名前"}},
+         "required": ["adaccount", "by"], "additionalProperties": False}},
+]
+TOOLS += ADS_TOOLS
+
+
 class ToolInputError(Exception):
     """要求が受け取れない（JSON-RPC `-32602`・セキュリティ監査 2026-09-14・P2-1）。
 
@@ -1821,6 +1868,33 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         args.append("--json")
         proc = run_cli(args)
         text = proc.stdout
+    elif name == "thth_ads_show":
+        proc = run_cli(["ads", "show", arguments["adaccount"], "--json"])
+        text = proc.stdout
+    elif name == "thth_ads_boost":
+        if bool(arguments.get("post")) == bool(arguments.get("object_story_id")):
+            raise ToolInputError("thth_ads_boost: post か object_story_id のどちらか 1 つが要ります")
+        target = (["--post", arguments["post"]] if arguments.get("post")
+                  else ["--object-story-id", arguments["object_story_id"]])
+        args = ["ads", "boost", arguments["adaccount"], *target, "--lifetime", str(arguments["lifetime"]),
+                "--start", arguments.get("start") or "now", "--end", arguments["end"],
+                "--platforms", arguments.get("platforms") or "facebook",
+                "--by", arguments["by"], "--via", "mcp", "--json"]
+        proc = run_cli(args)
+        text = proc.stdout
+    elif name == "thth_ads_pause":
+        if bool(arguments.get("all")) == bool(arguments.get("ids")):
+            raise ToolInputError("thth_ads_pause: all か ids のどちらか 1 つが要ります")
+        args = ["ads", "pause", arguments["adaccount"], "--by", arguments["by"], "--via", "mcp", "--json"]
+        if arguments.get("all"):
+            args.append("--all")
+        for object_id in arguments.get("ids") or []:
+            args += ["--id", object_id]
+        proc = run_cli(args)
+        text = proc.stdout
+    elif name == "thth_ads_stop":
+        proc = run_cli(["ads", "stop", arguments["adaccount"], "--by", arguments["by"], "--via", "mcp", "--json"])
+        text = proc.stdout
     elif name in REACTION_TOOLS:
         kind = REACTION_TOOLS[name]
         args = [("un" + kind) if arguments.get("undo") else kind, arguments["account"],
@@ -1830,7 +1904,8 @@ def call_tool(name: str, arguments: dict | None) -> dict:
     else:
         return {"content": [{"type": "text", "text": f"unknown tool: {name}"}, _channel_note()], "isError": True}
 
-    if name in REACTION_TOOLS or name in X_READ_TOOLS or name in ("thth_doctor", "thth_media_traits"):
+    if name in REACTION_TOOLS or name in X_READ_TOOLS or name in ("thth_doctor", "thth_media_traits") \
+            or name.startswith("thth_ads_"):
         is_error = proc.returncode != 0
     elif name == "thth_conflict_resolve":
         # 1 段目（stage 1・digest）は exit 1 で返る。断りは JSON の ok: false。

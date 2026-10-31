@@ -10,7 +10,8 @@
 
 | 種類 | 鳴るとき |
 |---|---|
-| `ads_active_outside_thth` | **最優先**。THTH の `activate` の記録（段 5 の `ops/`）に無い物が `ACTIVE`。この段では `ACTIVE` の物があれば全部これ |
+| `ads_stop_unconfirmed` | **最優先**（段 5）。最後の `thth ads stop` が「止まった」と確かめられなかった（pause か読み直しが失敗）。管理画面で止める |
+| `ads_active_outside_thth` | **最優先**。THTH の `activate` の記録（`ops/` の `op: activate` の `ids`）に無い物が `ACTIVE` |
 | `ads_no_end_time` | 終了日の無い広告セットが `ACTIVE`（THTH は作らないので外で作られた物） |
 | `ads_account_status` | `account_status` が 1（ACTIVE）以外 |
 | `ads_spend_over_estimate` | 今月の実支出が THTH の予約（段 5 の `budget-<月>.json`）の 120% を越えた。予約が無ければ鳴らない |
@@ -54,7 +55,7 @@ ADS_TOKEN_EXPIRING = "ads_token_expiring"
 ADS_NOT_GRANTED = "ads_not_granted"
 ATTENTION = frozenset({NO_TOKEN, UNREADABLE, EXPIRED, ADS_TOKEN_EXPIRING, ADS_NOT_GRANTED})
 
-KINDS = ("ads_active_outside_thth", "ads_no_end_time", "ads_account_status", "ads_spend_over_estimate",
+KINDS = ("ads_stop_unconfirmed", "ads_active_outside_thth", "ads_no_end_time", "ads_account_status", "ads_spend_over_estimate",
          "ads_spend_cap_near", "ads_budget_low", "ads_spend_cap_unset", "ads_token_expiring",
          "ads_read_failed")
 
@@ -66,15 +67,23 @@ KINDS = ("ads_active_outside_thth", "ads_no_end_time", "ads_account_status", "ad
 def token_state(cfg: dict, *, now) -> dict:
     """鍵の状態（API は叩かない）。`{"state", "remaining_days", "expires_at", "missing_scopes"}`。"""
     token = ledger.load_token(cfg)
-    out = {"state": None, "remaining_days": None, "expires_at": None, "missing_scopes": None}
+    out = {"state": None, "remaining_days": None, "expires_at": None, "missing_scopes": None,
+           "no_expiry": False, "basis": None, "data_access_expires_at": None}
     if token is None:
         out["state"] = NO_TOKEN
         return out
     if token.get("unreadable") or not isinstance(token.get("access_token"), str) or not token["access_token"]:
         out["state"] = UNREADABLE
         return out
-    at = ledger.token_expires_at(token)
+    limits = ledger.token_limits(token)
+    out["no_expiry"] = limits["no_expiry"]
+    out["basis"] = limits["basis"]
+    if limits["data_access_expires_at"] is not None:
+        out["data_access_expires_at"] = jst.iso(
+            datetime.datetime.fromtimestamp(limits["data_access_expires_at"], jst.JST))
+    at = limits["effective_at"]
     if at is not None:
+        # 効く期限＝鍵の期限とデータに触れる期限の早いほう（鍵が期限なしならデータの期限）。
         out["expires_at"] = jst.iso(datetime.datetime.fromtimestamp(at, jst.JST))
         out["remaining_days"] = round((at - now.timestamp()) / 86400.0, 2)
     scopes = token.get("scopes")
@@ -90,6 +99,20 @@ def token_state(cfg: dict, *, now) -> dict:
     else:
         out["state"] = OK
     return out
+
+
+def token_text(state: dict) -> str:
+    """鍵の期限の 1 行（人の言葉）。期限なしは「期限なし」と言い、効く期限（データの期限）を添える。"""
+    remaining = state.get("remaining_days")
+    if state.get("no_expiry"):
+        head = "鍵は期限なし（/debug_token の expires_at=0）"
+        if remaining is None:
+            return head + "・データに触れる期限は分かりません"
+        return head + f"・データに触れる期限 {state['expires_at']}（残り {remaining:.1f} 日）"
+    if remaining is None:
+        return "期限が分かりません（thth ads doctor が /debug_token の今の値で書き直します）"
+    what = "データに触れる期限" if state.get("basis") == "data_access" else "鍵の期限"
+    return f"{what} {state['expires_at']}（残り {remaining:.1f} 日）"
 
 
 # --------------------------------------------------------------------------
@@ -273,6 +296,13 @@ def events(name: str, cfg: dict, snapshot, *, now, make) -> list:
     out = []
     act = cfg["act_id"]
     label = f"広告の口座 {name}（act_{act}）"
+    from . import ops
+    unconfirmed = ops.stop_unconfirmed(name)
+    if unconfirmed:
+        out.append(make("ads_stop_unconfirmed", f"act_{act}:stop:{unconfirmed.get('op_id')}",
+                        f"{label} を THTH から止めたと確かめられませんでした（{unconfirmed.get('at')}）。"
+                        "管理画面で止めてください。" + str(unconfirmed.get("hub_line") or ""),
+                        op_id=unconfirmed.get("op_id")))
     token = token_state(cfg, now=now)
     if token["state"] in (ADS_TOKEN_EXPIRING, EXPIRED):
         expired = token["state"] == EXPIRED

@@ -2,11 +2,12 @@
 
 偽の Graph API（loopback）と、試験の中で作った偽の app id・secret だけを使う。**本物の Meta は叩かない。**
 
-一番大事な柵: **この段の `thth ads` は Meta に書く命令を 1 つも持たない**。3 つの縛り方:
-1. 命令の一覧（parser の `ads` の下）が `ads_cli.VERBS` と一致し、書く語（boost・activate・pause・stop・
-   budget・cap・extend・end…）が無い。`add` の引数に上限・旗を上げる口が無い。
-2. `thth/ads/` の綴りに POST・DELETE が無い。Graph への口は `Reader._get` の GET だけ。
-3. 全部の命令を偽の Graph にかけて、届いた要求の method が GET だけ。
+一番大事な柵（段 5 で書き直した）: **読む命令は Meta に書かない**。書く口は段 5 の決まった命令の決まった関数だけ:
+1. 命令の一覧（parser の `ads` の下）が `ads_cli.READ_VERBS`＋`WRITE_VERBS` と一致し、読む命令に書く語
+   （boost・activate・pause・stop・budget・cap・extend・end…）と上限・旗を上げる引数が無い。
+2. `thth/ads/` の綴りで POST は `graphwrite.Writer._post` の 1 か所だけ、DELETE・PUT・PATCH はどこにも無い。
+   Graph の読む口は `Reader._get` の GET だけ。（書く口を呼ぶ関数の縛りは `tests/test_meta_stage5.py`）
+3. 読む命令を全部、偽の Graph にかけて、届いた要求の method が GET だけ。
 """
 from __future__ import annotations
 
@@ -162,32 +163,44 @@ def _walk(parser, path=()):
                 yield from _walk(child, (*path, name))
 
 
-def test_書く命令が無い_命令の一覧はこの段の7つだけ():
+def test_命令の一覧は読む7つと書く7つだけ_読む命令に書く語も上限を上げる引数も無い():
+    """段 5 で書き直した（段 4 の「書く命令が無い」）。書く命令は決まった 7 つだけ、読む命令は段 4 のまま。"""
     ads = _ads_parser()
     verbs = set()
     for action in ads._actions:
         if isinstance(action, argparse._SubParsersAction):
             verbs |= set(action.choices)
-    assert verbs == set(ads_cli.VERBS) == {"accounts", "add", "auth", "doctor", "show", "insights", "collect"}
+    assert set(ads_cli.READ_VERBS) == {"accounts", "add", "auth", "doctor", "show", "insights", "collect"}
+    assert set(ads_cli.WRITE_VERBS) == {"boost", "activate", "extend", "pause", "stop", "budget", "end"}
+    assert verbs == set(ads_cli.VERBS)
     for path, parser in _walk(ads):
+        if path and path[0] in ads_cli.WRITE_VERBS:
+            continue   # 書く命令の引数は tests/test_meta_stage5.py が縛る（上げる引数が無い）
         for word in path:
-            assert not any(w in word for w in WRITE_VERBS), f"書く語の命令がある: {path}"
+            assert not any(w in word for w in WRITE_VERBS), f"読む命令に書く語がある: {path}"
         for action in parser._actions:
             for option in action.option_strings:
                 assert not re.search(r"ceiling|monthly|budget|cap|enable|production|days", option), \
                     f"上限・旗を上げる引数がある: {path} {option}"
 
 
-def test_書く命令が無い_thth_adsの綴りにPOSTもDELETEも無く_Graphの口はGETの1か所():
+def test_書く口は1か所_POSTはgraphwriteの_postだけ_DELETEはどこにも無い():
+    """段 5 で書き直した。Graph への書く要求は `graphwrite.Writer._post` の 1 か所、読む要求は `Reader._get` の 1 か所。"""
     sources = {p.name: p.read_text(encoding="utf-8") for p in ADS_DIR.glob("*.py")}
-    assert set(sources) >= {"__init__.py", "ledger.py", "graphread.py", "auth.py", "watch.py", "cli.py"}
+    assert set(sources) >= {"__init__.py", "ledger.py", "graphread.py", "graphwrite.py", "auth.py", "watch.py",
+                            "cli.py", "ops.py", "budget.py", "digest.py"}
+    strip = lambda src: re.sub(r'"""[\s\S]*?"""', "", src)   # 説明文は除く（語として出てくる）
+    posts = {}
     for name, src in sources.items():
-        code = re.sub(r'"""[\s\S]*?"""', "", src)   # 説明文は除く（語として出てくる）
-        assert not re.search(r"""["'](POST|DELETE|PUT|PATCH)["']""", code), f"{name} に書く method がある"
+        code = strip(src)
+        assert not re.search(r"""["'](DELETE|PUT|PATCH)["']""", code), f"{name} に DELETE などがある"
         assert "urlopen" not in code and "Request(" not in code, f"{name} が網に直に出ている"
         for call in re.findall(r"\.request\(\s*([^,\)]+)", code):
-            assert call.strip() == '"GET"', f"{name} の request が GET でない: {call}"
-    strip = lambda src: re.sub(r'"""[\s\S]*?"""', "", src)
+            assert call.strip() in ('"GET"', '"POST"'), f"{name} の request の method: {call}"
+        posts[name] = code.count('.request("POST"')
+        if name != "graphwrite.py":
+            assert not re.search(r"""["']POST["']""", code), f"{name} に POST がある"
+    assert posts["graphwrite.py"] == 1 and sum(posts.values()) == 1
     assert strip(sources["graphread.py"]).count('.request("GET"') == 1
     # 認可の口は `auth_facebook.graph_get`（GET だけを組む）を通る。
     from thth.adapters import auth_facebook
@@ -195,7 +208,7 @@ def test_書く命令が無い_thth_adsの綴りにPOSTもDELETEも無く_Graph�
     assert 'method="GET"' in inspect.getsource(auth_facebook.graph_get)
 
 
-def test_書く命令が無い_全部の命令をかけても_Metaへの要求はGETだけ(env, capsys):
+def test_読む命令を全部かけても_Metaへの要求はGETだけ(env, capsys):
     env["campaigns"] = [{"id": "c1", "status": "ACTIVE", "effective_status": "ACTIVE"}]
     cfg = ready(env)
     for argv in (["ads", "accounts", NAME, "--json"], ["ads", "show", NAME, "--json"],

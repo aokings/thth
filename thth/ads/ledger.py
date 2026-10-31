@@ -19,6 +19,7 @@
  "pages": ["kopicha-fb"], "ig_accounts": ["kopicha-ig"],
  "ceilings": {"monthly": 0, "lifetime_budget_max": 0, "days_max": 0},   # 最小単位の整数・既定 0
  "writes_refused": null,                           # 書く操作を断る印（"ads_currency_unverified" など）
+ "require_gate": true,                             # 省略は true（activate・extend に hub の番号の記録が要る・段 5）
  "token": "~/.config/thth/kopicha-ads.token", "provenance": {...}}
 ```
 
@@ -26,7 +27,13 @@
 
 **止めた口座**（D-1 の 4）: 読む・止める・減らすは止まっていても通す（THTH の外で始まった配信に気づく
 ため・止める道を塞がないため）。作る・始める・増やす・延ばす（段 5）は `require_active()` が
-`accounts.AccountStopped` で断る。この段に書く操作は無いので、`require_active()` を呼ぶ口もまだ無い。
+`accounts.AccountStopped` で断る（呼ぶのは `ops.boost`・`ops.activate`・`ops.extend` だけ）。
+止めの印を書くのは `stop()`（`thth ads stop` の 4 番目）。**戻す口は THTH に無い**（上げる操作と同じく
+VM で `guard/stopped.json` を控えてから消す・D-1 の 3）。
+
+**鍵の期限**（段 5・本番 10/31）: 広告の鍵（ユーザーの鍵）は `/debug_token` が `expires_at=0`（期限なし）を
+返した。`token_limits()` は「鍵の期限」と「データに触れる期限（`data_access_expires_at`）」の**早いほう**を
+効く期限にする（0 は期限なし）。残り 14 日の柵（`activate`・maintain）はこの効く期限で見る。
 """
 from __future__ import annotations
 
@@ -156,7 +163,7 @@ def validate(name: str, data) -> None:
     if tz is not None and (not isinstance(tz, str) or not tz or len(tz) > 64
                            or any(ord(c) <= 32 or ord(c) == 127 for c in tz)):
         raise AdAccountError("timezone_invalid", f"{name}: timezone_name は時間帯の名前です（例 Asia/Tokyo）")
-    for key in ("production", "ads_enabled"):
+    for key in ("production", "ads_enabled", "require_gate"):
         if key in data and not isinstance(data[key], bool):
             raise AdAccountError("adaccount_invalid", f"{name}: {key} は true／false です")
     for key in ("pages", "ig_accounts"):
@@ -306,6 +313,65 @@ def write_token(cfg: dict, token: dict) -> str:
     return cfg["token"]
 
 
+def token_no_expiry(token) -> bool:
+    """鍵そのものに期限が無いか（`/debug_token` の `expires_at=0`・本番 10/31）。"""
+    if not isinstance(token, dict):
+        return False
+    if token.get("no_expiry") is True:
+        return True
+    value = token.get("expires_at")
+    return isinstance(value, int) and not isinstance(value, bool) and value == 0
+
+
+def token_limits(token) -> dict:
+    """鍵の期限の見立て。`{"no_expiry", "expires_at", "data_access_expires_at", "effective_at", "basis"}`。
+
+    `effective_at` は鍵の期限とデータに触れる期限の**早いほう**（分からない物は入れない）。
+    `basis` は `token`・`data_access`・None（どちらも分からない）。
+    """
+    no_expiry = token_no_expiry(token)
+    expires_at = None if no_expiry else token_expires_at(token)
+    data_access = token.get("data_access_expires_at") if isinstance(token, dict) else None
+    if not (isinstance(data_access, int) and not isinstance(data_access, bool) and data_access > 0):
+        data_access = None
+    candidates = [(at, basis) for at, basis in ((expires_at, "token"), (data_access, "data_access"))
+                  if at is not None]
+    effective, basis = min(candidates) if candidates else (None, None)
+    return {"no_expiry": no_expiry, "expires_at": expires_at, "data_access_expires_at": data_access,
+            "effective_at": effective, "basis": basis}
+
+
+def refresh_token_expiry(cfg: dict, debug) -> dict | None:
+    """doctor が `/debug_token` の**今の**値で `.token` の期限の欄を書き直す（C-2 の 2）。
+
+    書き直すのは `expires_at`・`no_expiry`・`data_access_expires_at`・`expiry_source` だけ（鍵の値は触らない）。
+    読めない・変わらなければ書かない。書き直した `.token` を返す（書かなければ None）。
+    """
+    if not isinstance(debug, dict):
+        return None
+    token = load_token(cfg)
+    if not isinstance(token, dict) or token.get("unreadable"):
+        return None
+    updated = dict(token)
+    at = debug.get("expires_at")
+    if isinstance(at, int) and not isinstance(at, bool):
+        if at == 0:
+            updated["no_expiry"] = True
+            updated.pop("expires_at", None)
+            updated.pop("expires_in", None)
+        elif at > 0:
+            updated["expires_at"] = at
+            updated.pop("no_expiry", None)
+        updated["expiry_source"] = "debug_token"
+    data_access = debug.get("data_access_expires_at")
+    if isinstance(data_access, int) and not isinstance(data_access, bool) and data_access > 0:
+        updated["data_access_expires_at"] = data_access
+    if updated == token:
+        return None
+    write_token(cfg, updated)
+    return updated
+
+
 def token_expires_at(token) -> int | None:
     """鍵の期限（UNIX 秒）。`expires_at` が正本、無ければ `obtained_at + expires_in`。分からなければ None。"""
     if not isinstance(token, dict):
@@ -321,7 +387,8 @@ def token_expires_at(token) -> int | None:
 
 
 def token_remaining_days(token, now) -> float | None:
-    at = token_expires_at(token)
+    """効く期限（鍵とデータに触れる期限の早いほう）までの日数。分からなければ None。"""
+    at = token_limits(token)["effective_at"]
     if at is None:
         return None
     return (at - now.timestamp()) / 86400.0
@@ -360,7 +427,65 @@ def stopped(name) -> dict | None:
 def require_active(name) -> None:
     """作る・始める・増やす・延ばす（段 5）の前に呼ぶ。止まっていれば `AccountStopped`。
 
-    読む・止める・減らすは呼ばない（D-1 の 4）。
+    読む・止める・減らすは呼ばない（D-1 の 4）。THTH の口座の退出（`leave_gate`）も同じく見る。
     """
     if stopped(name):
         raise accounts.AccountStopped("adaccount_stopped")
+    from .. import leave_gate
+    leave_gate.require_active(name)
+
+
+def stop(name, reason="owner", *, by, via="cli", now=None) -> dict:
+    """止めの印を書く（`thth ads stop` の 4 番目・既に止まっていれば上書きしない）。
+
+    止めると作る・始める・延ばすが断られる。止める・減らす・読むは通る（D-1 の 4）。
+    """
+    if reason not in STOP_REASONS:
+        raise ValueError("invalid_stop_reason")
+    value = {"reason": reason, "stopped_at": jst.iso(now), "actor": by, "via": via}
+    ensure_state_dir(name)
+    with server_files.directory(_guard_directory(name), create=True, private=True) as fd:
+        try:
+            server_files.replace_at(fd, STOP_FILE, server_files.encode(value), new=True, private=True)
+        except server_files.UnsafeFile:
+            pass  # 既に止まっている（先に止めた印を消さない）
+    try:
+        from .. import admin_log
+        admin_log.append("adaccount_stopped", name, {"media": MEDIA}, by=by,
+                         via=via if via in ("cli", "mcp") else "cli",
+                         diff={"stopped": [False, True], "reason": [None, reason]})
+    except Exception:  # noqa: BLE001 — 変更ログに残せなくても止めることは止める（止めた印が正本）
+        pass
+    return value
+
+
+# --------------------------------------------------------------------------
+# 上限を下げる（**上げる口は無い**・D-1 の 3）
+# --------------------------------------------------------------------------
+
+def lower_ceiling(name: str, key: str, value: int, *, by: str, via: str = "cli") -> dict:
+    """`ceilings.<key>` を**下げる**だけ。今の値以上なら `ads_not_lower` で断る（上げる口はここにも無い）。
+
+    台帳は 0600 のまま書き直す。`{"before", "after"}` を返す。
+    """
+    from .. import admin_log
+    admin_log.actor(by)
+    if key not in CEILING_KEYS:
+        raise AdAccountError("ceiling_unknown", f"{name}: 上限の名前は {'・'.join(CEILING_KEYS)} です")
+    if not _int0(value):
+        raise AdAccountError("ceilings_invalid", f"{name}: 上限は 0 以上の整数（最小単位）です")
+    data = load_raw(name)
+    before = data["ceilings"][key]
+    if value >= before:
+        raise AdAccountError("ads_not_lower",
+                             f"{name}: {key} は今 {before} です。下げる値（{before} より小さい数）だけを受けます。"
+                             "上げるのは VM の台帳を直接書く（cp -a で控えてから）")
+    data["ceilings"] = dict(data["ceilings"], **{key: value})
+    validate(name, data)
+    secrets_fs.atomic_write_json(path_for(name), data, mode=0o600)
+    try:
+        admin_log.append("adaccount_lowered", name, {"media": MEDIA}, by=by,
+                         via=via if via in ("cli", "mcp") else "cli", diff={key: [before, value]})
+    except Exception:  # noqa: BLE001 — 下げたことは下げた（台帳が正本）
+        pass
+    return {"before": before, "after": value}

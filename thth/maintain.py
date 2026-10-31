@@ -357,8 +357,10 @@ def inspect_adaccount(name: str, *, now) -> dict:
     if state["state"] == ads_watch.ADS_NOT_GRANTED:
         return _finish(row, ADS_NOT_GRANTED, hint=hint)
     if state["remaining_days"] is None:
-        return _finish(row, OK, detail="期限が分かりません（thth ads doctor で確かめる）")
-    return _finish(row, OK, detail="広告の口座の鍵（更新の口なし・60 日ごとに取り直す）")
+        return _finish(row, OK, detail=ads_watch.token_text(state))
+    if state.get("no_expiry"):
+        row["no_expiry"] = True
+    return _finish(row, OK, detail=ads_watch.token_text(state))
 
 
 def _finish(row: dict, state: str, *, detail: str = "", hint: str | None = None) -> dict:
