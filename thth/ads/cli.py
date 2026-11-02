@@ -272,6 +272,17 @@ def _excludes_today(cfg, preset, since, until) -> bool | None:
     return None
 
 
+ENGAGEMENT_NOTE = ("engagement は Meta の actions から: reactions=post_reaction・comments=comment・shares=post・"
+                   "photo_views=photo_view・page_likes=like。行の無い種類は 0、actions の欄が無い・読めないときは "
+                   "engagement が null で engagement_unknown に理由。site はサイトへの誘導: link_clicks=link_click・"
+                   "outbound_clicks=outbound_clicks の outbound_click・landing_page_views=landing_page_view・"
+                   "inline_link_clicks。site.why が値の訳（reported=Meta が返した・zero_reported_list=並びに行が無い"
+                   "ので 0・no_link_clicks=リンクが押されていないので 0・not_measured_or_left=リンクは押されたのに頁が"
+                   "開いた記録が無い＝頁の計測が無いか開く前に離れた・null・*_missing など=欄が無い）。clicks は広告の"
+                   "どこかを押した数でリンクのクリックではない。cost_per は 1 件あたりの spend（spend と同じ普通の単位・"
+                   "小数 2 桁の文字列・0 件や不明なら null）。actions・outbound_clicks_raw は Meta の生の行")
+
+
 def cmd_insights(args) -> int:
     since, until = args.since, args.until
     if until is not None and since is None:
@@ -287,7 +298,8 @@ def cmd_insights(args) -> int:
     value = {"adaccount": args.name, "preset": None if since else args.preset, "since": since, "until": until,
              "level": args.level, "currency": cfg.get("currency"), "excludes_today": excludes,
              "rows": rows, "ads_insights_util_pct": reader.insights_util_pct(),
-             "unit": "spend は Meta の文字列（普通の単位）・spend_minor は最小単位の整数（JPY だけ直す）"}
+             "unit": "spend は Meta の文字列（普通の単位）・spend_minor は最小単位の整数（JPY だけ直す）",
+             "engagement_note": ENGAGEMENT_NOTE}
     if not rows and excludes:
         value["note"] = ("この期間は今日を含みません（Meta の last_7d などは昨日まで）。今日の分は --preset today か "
                          "--preset maximum で読む")
@@ -298,7 +310,10 @@ def cmd_insights(args) -> int:
         for row in v["rows"]:
             head = f"{row.get('name') or row.get('id')}  " if v["level"] != "account" else ""
             print(f"  {head}spend {row['spend']}（最小単位 {row['spend_minor']}）・impressions {row['impressions']}・"
-                  f"clicks {row['clicks']}・reach {row['reach']}（{row['date_start']}〜{row['date_stop']}）")
+                  f"clicks {row['clicks']}（広告のどこかを押した数・リンクとは限らない）・reach {row['reach']}"
+                  f"（{row['date_start']}〜{row['date_stop']}）")
+            for line in graphread.engagement_text(row, v["currency"]):
+                print(f"    {line}")
         if not v["rows"]:
             print("  行がありません（この期間に配信が無い）")
             if v.get("note"):
@@ -607,6 +622,9 @@ def cmd_watch(args) -> int:
         print(f"{text}: キャンペーン {v['campaign_id']}")
         print(f"  最後の読み: spend {last.get('spend')}（最小単位 {last.get('spend_minor')}）・impressions "
               f"{last.get('impressions')}・{last.get('read_at')}（全期間・今日を含む）")
+        if "engagement" in last:
+            for line in graphread.engagement_text(last):
+                print(f"  {line}")
         print(f"  読んだ回 {v['reads']}・読めなかった回 {v['failed_reads']}" + (f"（{v['errors']}）" if v["errors"] else ""))
         if v.get("hit"):
             print(f"  達した指定: {'・'.join(v['hit'])}")

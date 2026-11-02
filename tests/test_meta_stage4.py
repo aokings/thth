@@ -98,6 +98,9 @@ def env(tmp_path, monkeypatch):
                      {"id": "42", "name": "吾徳"}}
 
     def insights_route(query, form, raw):
+        data.setdefault("insights_queries", []).append(query)
+        if data.get("insights_route"):   # 試験ごとの差し替え（5.6.3 の反応の内訳ほか）
+            return data["insights_route"](query)
         return 200, {"data": [{"spend": "1234", "impressions": "100", "clicks": "7", "reach": "80",
                                "date_start": "2026-10-01", "date_stop": "2026-10-29"}]}
 

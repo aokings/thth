@@ -12,7 +12,9 @@ POST・DELETE を投げる綴りはこの包みに無い（`tests/test_meta_stag
   `minimum_budgets`・`business` は**別の呼び出し**で訊く（欄の名前が 1 つでも違うと全体がエラーになる
   ので、確かめていない欄で本筋の読みを落とさない）。
 - `/act_<id>/campaigns|adsets|ads`: `status`・`effective_status`・予算・期間（D-5 の照合の木）。
-- `/act_<id>/insights`: `spend`（**普通の単位の小数の文字列**【推】）・`impressions`・`clicks`・`reach`。
+- `/act_<id>/insights`: `spend`（**普通の単位の小数の文字列**【推】）・`impressions`・`clicks`・`reach`・
+  `actions`（反応の種類ごとの数の並び）・`inline_link_clicks`（11/03 本番の試しの広告で返るのを確かめた）。
+  反応の名前は Ads Action Stats v26.0（developers.facebook.com/docs/marketing-api/reference/ads-action-stats/）。
   応答の `x-fb-ads-insights-throttle` は共通層が `meta_usage.json` に残し、次に読む前に使用率を見る。
 - `/me/adaccounts`: 鍵で見える広告アカウントの一覧。
 
@@ -38,7 +40,25 @@ CAMPAIGN_FIELDS = "id,name,status,effective_status,lifetime_budget,daily_budget,
 ADSET_FIELDS = ("id,name,campaign_id,status,effective_status,lifetime_budget,daily_budget,"
                 "start_time,end_time")
 AD_FIELDS = "id,name,campaign_id,adset_id,status,effective_status"
-INSIGHT_FIELDS = "spend,impressions,clicks,reach"
+# `actions`・`inline_link_clicks` は 11/03 本番の試しの広告で返るのを確かめた。`outbound_clicks` は文書だけ
+# （ad-account/insights の参照・list<AdsActionStats>）なので、断られたら外して読み直す（INSIGHT_FIELDS_BASE）。
+INSIGHT_FIELDS_BASE = "spend,impressions,clicks,reach,actions,inline_link_clicks"
+INSIGHT_FIELDS = INSIGHT_FIELDS_BASE + ",outbound_clicks"
+# 反応の内訳とサイトへの誘導（5.6.3・masaru 11/03）。`actions` の `action_type` のうち人に見せる物だけ。
+# 名前は Meta の公式の文書 Ads Action Stats（v26.0・
+# developers.facebook.com/docs/marketing-api/reference/ads-action-stats/）で確かめた: post_reaction＝Post
+# Reactions・comment＝Post Comments・post＝Post Shares・photo_view＝Page Photo Views・like＝Page Likes・
+# link_click＝Link Clicks・outbound_click＝Outbound Clicks・landing_page_view＝Landing Page Views。
+# **`clicks` は広告のどこを押しても数える**（文書「The number of clicks on your ads」）のでリンクのクリックでは
+# ない。
+# (JSON の鍵, action_type, 人に見せる名前)
+ENGAGEMENT_ACTIONS = (("reactions", "post_reaction", "いいね・リアクション"),
+                      ("comments", "comment", "コメント"),
+                      ("shares", "post", "シェア"),
+                      ("photo_views", "photo_view", "写真を開いた"),
+                      ("page_likes", "like", "ページへのいいね"))
+SITE_LABELS = (("link_clicks", "リンククリック"), ("outbound_clicks", "サイトへ出たクリック"),
+               ("landing_page_views", "頁が開いた"))
 # 段 5: 1 つのキャンペーンの木（digest の材料・D-2）。`account_id` で口座の物かを確かめる。
 CAMPAIGN_TREE_FIELDS = ("id,name,account_id,objective,status,effective_status,lifetime_budget,daily_budget,"
                         "start_time,stop_time")
@@ -115,6 +135,155 @@ def _count(value) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
         return value
     return None
+
+
+def _action_counts(actions) -> dict | None:
+    """`[{action_type, value}]` → `{action_type: 数}`。並びでなければ None。値が数でない・同じ種類が 2 行ある
+    種類は None（推して埋めない）。"""
+    if not isinstance(actions, list):
+        return None
+    seen: dict = {}
+    for row in actions:
+        if not isinstance(row, dict) or not isinstance(row.get("action_type"), str):
+            continue
+        kind = row["action_type"]
+        seen[kind] = None if kind in seen else _count(row.get("value"))
+    return seen
+
+
+def engagement(actions) -> tuple[dict | None, str | None]:
+    """`actions` の並び → (`{reactions: n, comments: n, …}`, 不明の理由)。
+
+    Meta は数が 0 の種類の行を出さない（11/03 本番: シェア・コメントの行が無かった）ので、**並びが読めて行が
+    無い＝0**。`actions` の欄そのものが無い・並びでないときは全部 None（不明）にし、理由を返す。
+    """
+    if actions is None:
+        return None, "actions_missing"
+    seen = _action_counts(actions)
+    if seen is None:
+        return None, "actions_unreadable"
+    return {key: seen.get(kind, 0) for key, kind, _label in ENGAGEMENT_ACTIONS}, None
+
+
+def site(actions, inline_link_clicks, outbound, *, outbound_asked: bool = True) -> dict:
+    """サイトへの誘導（リンククリック・サイトへ出たクリック・頁が開いた）。
+
+    数ごとに `why`（なぜその値か）を付け、**「計測が無いから出ない」と「本当に 0」を分ける**:
+    - `reported`: Meta が数を返した。
+    - `zero_reported_list`: 並びは読めて、その種類の行が無い（Meta は 0 の行を出さない）。
+    - `no_link_clicks`: リンクが 1 度も押されていないので 0（本当に 0）。
+    - `not_measured_or_left`: リンクは押されたのに頁が開いた記録が無い。頁の側の計測（Meta の pixel など）が
+      無いか、開く前に離れた。**0 とは言わない**（None）。
+    - `actions_missing`／`actions_unreadable`／`outbound_clicks_missing`／`outbound_clicks_unreadable`／
+      `outbound_clicks_not_asked`: 欄が無い・読めない・頼めなかった（None）。
+    """
+    counts = _action_counts(actions) if actions is not None else None
+    links = counts.get("link_click", 0) if counts is not None else None
+    inline = _count(inline_link_clicks)
+    known = [n for n in (links, inline) if isinstance(n, int)]
+    if any(n > 0 for n in known):
+        clicked = True
+    elif known and len(known) == 2:
+        clicked = False   # 両方読めて両方 0 のときだけ「押されていない」と言う
+    else:
+        clicked = None
+    out, why = {}, {}
+    if counts is None:
+        out["link_clicks"] = None
+        why["link_clicks"] = "actions_missing" if actions is None else "actions_unreadable"
+    else:
+        out["link_clicks"] = links
+        why["link_clicks"] = "reported" if "link_click" in counts else "zero_reported_list"
+    out["inline_link_clicks"] = inline
+    # サイトへ出たクリック（`outbound_clicks` の並びの `outbound_click`）
+    out_counts = _action_counts(outbound) if outbound is not None else None
+    if out_counts is not None:
+        out["outbound_clicks"] = out_counts.get("outbound_click", 0)
+        why["outbound_clicks"] = "reported" if "outbound_click" in out_counts else "zero_reported_list"
+    elif clicked is False:
+        out["outbound_clicks"], why["outbound_clicks"] = 0, "no_link_clicks"
+    else:
+        out["outbound_clicks"] = None
+        why["outbound_clicks"] = ("outbound_clicks_not_asked" if not outbound_asked else
+                                  "outbound_clicks_unreadable" if outbound is not None else "outbound_clicks_missing")
+    # 頁が開いた（`actions` の `landing_page_view`）
+    if counts is None:
+        out["landing_page_views"], why["landing_page_views"] = None, why["link_clicks"]
+    elif "landing_page_view" in counts:
+        out["landing_page_views"], why["landing_page_views"] = counts["landing_page_view"], "reported"
+    elif clicked is False:
+        out["landing_page_views"], why["landing_page_views"] = 0, "no_link_clicks"
+    else:
+        out["landing_page_views"], why["landing_page_views"] = None, "not_measured_or_left"
+    out["why"] = why
+    return out
+
+
+SITE_WHY_TEXT = {"not_measured_or_left": "記録なし（リンクは押された。頁の側の計測が無いか、開く前に離れた）",
+                 "actions_missing": "不明（Meta が actions を返さなかった）",
+                 "actions_unreadable": "不明（actions が読めなかった）",
+                 "outbound_clicks_missing": "不明（Meta が outbound_clicks を返さなかった）",
+                 "outbound_clicks_unreadable": "不明（outbound_clicks が読めなかった）",
+                 "outbound_clicks_not_asked": "不明（Meta が outbound_clicks の欄を断ったので頼んでいない）"}
+
+
+def cost_per(spend, counts, keys) -> dict | None:
+    """1 件あたりの額（`spend` と同じ普通の単位・小数 2 桁の文字列）。0 件・不明・spend が読めない物は None。"""
+    if not isinstance(counts, dict):
+        return None
+    try:
+        amount = decimal.Decimal(spend) if isinstance(spend, str) and len(spend) <= 32 else None
+    except decimal.InvalidOperation:
+        amount = None
+    if amount is not None and (not amount.is_finite() or amount < 0):
+        amount = None
+    out = {}
+    for key in keys:
+        n = counts.get(key)
+        out[key] = (str((amount / n).quantize(decimal.Decimal("0.01"), rounding=decimal.ROUND_HALF_UP))
+                    if amount is not None and isinstance(n, int) and not isinstance(n, bool) and n > 0 else None)
+    return out
+
+
+def raw_actions(actions) -> list | None:
+    """`actions` の生の行（`action_type`・`value` だけ・文字列のまま）。並びでなければ None。"""
+    if not isinstance(actions, list):
+        return None
+    return [{"action_type": row["action_type"], "value": row.get("value")} for row in actions
+            if isinstance(row, dict) and isinstance(row.get("action_type"), str)]
+
+
+def engagement_text(row: dict, currency: str | None = None) -> list:
+    """人の読む行（反応・サイトへの誘導・1 件あたり）。`row` は `Reader.insights` の 1 行。"""
+    def num(value):
+        return "不明" if value is None else str(value)
+    lines = []
+    counts = row.get("engagement")
+    if isinstance(counts, dict):
+        lines.append("反応: " + "・".join(f"{label} {num(counts.get(key))}" for key, _kind, label in ENGAGEMENT_ACTIONS))
+    elif "engagement" in row:
+        why = {"actions_missing": "Meta が反応の欄（actions）を返しませんでした",
+               "actions_unreadable": "反応の欄（actions）が読めませんでした"}.get(row.get("engagement_unknown"),
+                                                                              "読めませんでした")
+        lines.append(f"反応: 不明（{why}）")
+    s = row.get("site")
+    if isinstance(s, dict):
+        why = s.get("why") or {}
+        parts = []
+        for key, label in SITE_LABELS:
+            value, reason = s.get(key), why.get(key) or ""
+            if value is None:
+                parts.append(f"{label} " + SITE_WHY_TEXT.get(reason, "不明"))
+            else:
+                parts.append(f"{label} {value}" + ("（リンクが押されていないので 0）" if reason == "no_link_clicks" else ""))
+        lines.append("サイトへの誘導: " + "・".join(parts)
+                     + f"（広告の中のリンクのクリック {num(s.get('inline_link_clicks'))}）")
+    costs = row.get("cost_per") or {}
+    labels = [(key, label) for key, _kind, label in ENGAGEMENT_ACTIONS] + list(SITE_LABELS)
+    priced = [f"{label} {costs[key]}" for key, label in labels if costs.get(key)]
+    if priced:
+        lines.append("1 件あたり（" + (currency or "spend と同じ単位") + "）: " + "・".join(priced))
+    return lines
 
 
 class Reader:
@@ -297,7 +466,16 @@ class Reader:
             raise AdsReadError("ads_insights_throttled", failure=meta_errors.RATE_LIMITED)
         fields = INSIGHT_FIELDS + ("" if level == "account" else f",{level}_id,{level}_name")
         path = f"/{object_id}/insights" if object_id else f"/{self.act}/insights"
-        rows, _ = self._list(path, dict(params, fields=fields))
+        outbound_asked = True
+        try:
+            rows, _ = self._list(path, dict(params, fields=fields))
+        except AdsReadError as exc:
+            # 文書だけで確かめた `outbound_clicks` を断られたら、外して 1 度だけ読み直す（本筋の成績と、
+            # それを使う watch・予算の照合を、確かめていない欄で落とさない）。
+            if not exc.code.startswith("ads_http_400_code_100"):
+                raise
+            outbound_asked = False
+            rows, _ = self._list(path, dict(params, fields=fields.replace(INSIGHT_FIELDS, INSIGHT_FIELDS_BASE, 1)))
         currency = self.cfg.get("currency")
         out = []
         for row in rows:
@@ -306,8 +484,18 @@ class Reader:
                     "impressions": _count(row.get("impressions")),
                     "clicks": _count(row.get("clicks")),
                     "reach": _count(row.get("reach")),
+                    "inline_link_clicks": _count(row.get("inline_link_clicks")),
                     "date_start": row.get("date_start") if isinstance(row.get("date_start"), str) else None,
                     "date_stop": row.get("date_stop") if isinstance(row.get("date_stop"), str) else None}
+            counts, unknown = engagement(row.get("actions"))
+            item["engagement"] = counts
+            item["engagement_unknown"] = unknown
+            item["site"] = site(row.get("actions"), row.get("inline_link_clicks"), row.get("outbound_clicks"),
+                                outbound_asked=outbound_asked)
+            item["cost_per"] = cost_per(item["spend"], {**(counts or {}), **item["site"]},
+                                        [k for k, _a, _l in ENGAGEMENT_ACTIONS] + [k for k, _l in SITE_LABELS])
+            item["actions"] = raw_actions(row.get("actions"))
+            item["outbound_clicks_raw"] = raw_actions(row.get("outbound_clicks"))
             if level != "account":
                 item["id"] = row.get(f"{level}_id")
                 item["name"] = row.get(f"{level}_name")
