@@ -11,9 +11,13 @@
 | `pause`・`stop`（止める） | 通す | **待たない** | なし |
 | `lower_budget`・`end`（減らす・早める） | 通す | **待たない** | 今より小さい／早い値だけ |
 | `lower_ceiling`（月の上限などを下げる・台帳） | 通す | — | 今より小さい値だけ |
+| `watch`（成績を読んで、指定に達したら `stop`） | 通す | 読みは待つ・止めは待たない | 止めるのは `stop` と同じ（承認なし）・`--until` で必ず終わる（既定 6 時間・上限 48 時間） |
+| `resume`（**THTH の止めの印を外す**・masaru 11/02 の例外） | — | 待つ | 2 段の digest（印と口座の木を読み直す）＋ hub の番号が**必須**（`require_gate` に関わらず）・理由 `owner` の印だけ・最後の stop が確かめられていること。**広告は ACTIVE にしない** |
 
 **上げる口は無い**: `spend_cap` を上げる・外す、月の上限・1 操作の上限・`ads_enabled`・`production` を
-上げる命令は CLI にも MCP にも無い（D-1 の 3）。`spend_cap` は `stop` が `amount_spent` まで下げるだけ。
+上げる命令は CLI にも MCP にも無い（D-1 の 3）。`spend_cap` は `stop` が `amount_spent` の 110% まで下げるだけ。
+**例外は 1 つ**: 止めの印を外す `resume`（masaru 11/02「はいお願いします」）。2 段＋hub の番号で、外すのは印だけ
+（広告・`spend_cap`・上限・旗には触らない）。MCP には出さない（activate と同じく CLI で人が押す）。
 
 **「上げられない・戻せない」は、VM の鍵と台帳を読める人以外に対して**（監査 段 5 の 2-4）。VM で `thth ads` を
 打てて鍵（0600）を読める人は、`THTH_ROOT`・`THTH_ADACCOUNTS_DIR` で別の台帳と状態の置き場を指せる。MCP からは
@@ -34,8 +38,10 @@ from __future__ import annotations
 
 import datetime
 import json
+import math
 import os
 import re
+import time
 
 from .. import accounts, admin_log, approval_ledger, jst, secrets_fs, sent
 from ..meta import errors as meta_errors
@@ -44,6 +50,24 @@ from . import budget, digest, graphread, graphwrite, ledger, watch
 OPS_DIR = "ops"
 # 「止まった」と言ってよい `effective_status`（D-4 の 2）。消した・しまった物も止まっている側。
 PAUSED_EFFECTIVE = frozenset({"PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "DELETED", "ARCHIVED"})
+# pause の直後に Meta が返す一時的な `effective_status`（11/01 本番: pause の直後に広告が `IN_PROCESS`、
+# 1 分後には全部 `PAUSED`）。これだけが残っているときは待って読み直す。
+TRANSIENT_EFFECTIVE = frozenset({"IN_PROCESS"})
+# 読み直しの前に待つ秒（合計 30 秒）。**量の制限では待たない**（読みは urgent のまま）。
+STOP_VERIFY_WAITS = (5, 10, 15)
+# `spend_cap` を下げる先: `amount_spent` の 110%（切り上げ）。11/01 本番で `amount_spent`（608 円）ちょうどは
+# code 100 で断られた。Meta の公式の文書（ad-account の参照）には下限の決まりが書かれていない。
+# 「使った額の 10% より上でないと下げられない」は管理画面の案内を写した第三者の説明だけで【未・本番未確認】。
+SPEND_CAP_MARGIN_PCT = 10
+_sleep = time.sleep
+# `thth ads watch`（段 5・11/02）の間隔と上限（**無限に回らない**）。
+WATCH_INTERVAL_DEFAULT = 300
+WATCH_INTERVAL_MIN = 60
+WATCH_UNTIL_DEFAULT_HOURS = 6
+WATCH_UNTIL_MAX_HOURS = 48
+# 止めの印を外してよい理由（`resume`・masaru 11/02 の例外）。`owner`（`thth ads stop` が書く）だけ。
+# `emergency` は非常の止め、`guard_state_unreadable` は印が読めない（中身を確かめられない）ので外さない。
+RESUMABLE_REASONS = frozenset({"owner"})
 DONE_STATUS = frozenset({"PAUSED", "DELETED", "ARCHIVED"})
 SKIP_ACTIVATE = frozenset({"DELETED", "ARCHIVED"})
 POST_ID_RE = re.compile(r"([0-9]{1,32})_([0-9]{1,32})")
@@ -254,7 +278,7 @@ def plan_boost(name, cfg, *, post=None, object_story_id=None, lifetime_minor, st
                objective="engagement", now) -> dict:
     """作る前の検査（網には出ない）。だめなら `OpsRefused`。"""
     if objective not in graphwrite.OBJECTIVES:
-        raise OpsRefused("ads_objective_invalid", "目的は engagement か traffic です")
+        raise OpsRefused("ads_objective_invalid", f"目的は {'・'.join(graphwrite.OBJECTIVES)} のどれかです")
     platforms = tuple(dict.fromkeys(platforms or ("facebook",)))
     unknown = [p for p in platforms if p not in PLATFORMS]
     if unknown:
@@ -286,7 +310,8 @@ def plan_boost(name, cfg, *, post=None, object_story_id=None, lifetime_minor, st
                  "targeting_automation": {"advantage_audience": 0}}
     return {"object_story_id": story, "page_id": page_id, "source": source, "instagram_user_id": ig_user,
             "lifetime_minor": lifetime_minor, "start": meta_time(start_at), "end": meta_time(end_at),
-            "days": round(days, 3), "platforms": list(platforms), "objective": objective, "targeting": targeting}
+            "days": round(days, 3), "platforms": list(platforms), "objective": objective,
+            "objective_verified": objective in graphwrite.VERIFIED_OBJECTIVES, "targeting": targeting}
 
 
 def boost(name, *, by, via="cli", post=None, object_story_id=None, lifetime_minor, start, end,
@@ -650,7 +675,7 @@ def extend(name, adset_id, *, by, via="cli", end=None, lifetime_minor=None, conf
         _record(name, op_id, row)
     _log(name, "extend", by, via, {"adset_id": [None, adset_id], "added_minor": [None, added],
                                     "approval": [None, approval]})
-    return {"stage": 2, "op_id": op_id, "change": change, "added_minor": added}
+    return {"stage": 2, "op_id": op_id, "change": change, "added_minor": added, "approval": approval}
 
 
 # --------------------------------------------------------------------------
@@ -730,6 +755,69 @@ def pause(name, *, by, via="cli", all_=False, ids=(), now=None, base_url=None) -
     return row
 
 
+def spend_cap_target(spent) -> int | None:
+    """`spend_cap` を下げる先（`amount_spent` の 110%・切り上げ）。読めなければ None。"""
+    if isinstance(spent, bool) or not isinstance(spent, int) or spent <= 0:
+        return None
+    return math.ceil(spent * (100 + SPEND_CAP_MARGIN_PCT) / 100)
+
+
+def _covered_by_parent(tree, rows) -> list:
+    """止まっていない行のうち、**読み直した木で**上のキャンペーンか広告セットが止まっている物（の id）。
+
+    上が止まっていれば Meta は配信しない（`effective_status` の CAMPAIGN_PAUSED・ADSET_PAUSED と同じ理屈）。
+    推して埋めない: 上の行を読めていて、その `status` が止める側で `effective_status` も止まっている側のときだけ。
+    """
+    index = {r.get("id"): r for key in ("campaigns", "adsets") for r in tree.get(key) or []}
+
+    def stopped(object_id):
+        parent = index.get(object_id)
+        return bool(parent) and parent.get("status") in DONE_STATUS and parent.get("effective_status") in PAUSED_EFFECTIVE
+
+    out = []
+    for row in tree.get("ads", []) + tree.get("adsets", []):
+        if row.get("id") not in {r.get("id") for r in rows}:
+            continue
+        if stopped(row.get("campaign_id")) or stopped(row.get("adset_id")):
+            out.append(row.get("id"))
+    return out
+
+
+def verify_stopped(reader) -> tuple:
+    """② 読み直し。`(verify の記録, 止まっていない行)`。
+
+    止まっていない行が**一時的な状態（IN_PROCESS）だけ**なら、`STOP_VERIFY_WAITS` の秒を待って読み直す（量の
+    制限では待たない・読みは urgent）。待ち切っても残る一時的な行は、読み直した木で上のキャンペーンか広告セットが
+    止まっていれば「上で止まっている」とし（証拠つき）、そうでなければ「止まった」と言わない。
+    """
+    attempts = []
+    waits = list(STOP_VERIFY_WAITS)
+    while True:
+        try:
+            fresh = reader.tree(urgent=True)
+        except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
+            attempts.append({"error": _failure_code(exc)})
+            return {"ok": False, "error": _failure_code(exc), "attempts": attempts}, None
+        still = unpaused(fresh)
+        attempts.append({"unpaused": len(still)})
+        if not fresh.get("complete"):
+            return {"ok": False, "error": "ads_tree_incomplete", "unpaused": still, "attempts": attempts}, still
+        if not still:
+            return {"ok": True, "unpaused": [], "attempts": attempts}, still
+        transient = all(r.get("effective_status") in TRANSIENT_EFFECTIVE for r in still)
+        if transient and waits:
+            seconds = waits.pop(0)
+            attempts[-1]["waited_s"] = seconds
+            _sleep(seconds)
+            continue
+        if transient:
+            covered = _covered_by_parent(fresh, still)
+            if len(covered) == len(still):
+                return {"ok": True, "unpaused": still, "by_parent": covered, "attempts": attempts,
+                        "note": "一時的な状態のまま残った物は、読み直した木で上のキャンペーンか広告セットが止まっている"}, []
+        return {"ok": False, "unpaused": still, "attempts": attempts}, still
+
+
 def hub_line(name, cfg, unpaused_rows) -> str:
     names = "・".join(f"{r.get('name') or r.get('id')}（{r.get('effective_status')}）" for r in unpaused_rows[:5])
     return (f"waiting_on_masaru: THTH から広告を止めたと確かめられません。管理画面で止めてください"
@@ -766,26 +854,28 @@ def stop(name, *, by, via="cli", now=None, base_url=None) -> dict:
         except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
             row["steps"]["pause"] = {"ok": False, "error": _failure_code(exc)}
         # ② 読み直し（監査 段 5 の 2-2: 木を全部読めていなければ「止まった」と言わない）
-        try:
-            fresh = reader.tree(urgent=True)
-            still = unpaused(fresh)
-            if not fresh.get("complete"):
-                row["steps"]["verify"] = {"ok": False, "error": "ads_tree_incomplete", "unpaused": still}
-            else:
-                row["steps"]["verify"] = {"ok": not still, "unpaused": still}
-        except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
-            row["steps"]["verify"] = {"ok": False, "error": _failure_code(exc)}
+        row["steps"]["verify"], still = verify_stopped(reader)
         # ③ spend_cap を下げる（補助・これだけでは「止まった」と言わない・G-18）
         try:
             account = reader.account(urgent=True)
             spent, cap = account.get("amount_spent"), account.get("spend_cap")
+            target = spend_cap_target(spent)
             if not isinstance(spent, int) or spent <= 0:
                 row["steps"]["spend_cap"] = {"ok": None, "skipped": "amount_spent が 0 か読めない（0 は上限なしになるので書かない）"}
-            elif isinstance(cap, int) and cap != 0 and spent >= cap:
-                row["steps"]["spend_cap"] = {"ok": None, "skipped": "既に amount_spent 以下"}
+            elif isinstance(cap, int) and cap != 0 and target >= cap:
+                row["steps"]["spend_cap"] = {"ok": None, "skipped": f"今の spend_cap {cap} が下げる先 {target}（使った額の "
+                                             f"{100 + SPEND_CAP_MARGIN_PCT}%）以下", "before": cap, "amount_spent": spent}
             else:
-                writer.lower_spend_cap(spent, current_minor=cap)
-                row["steps"]["spend_cap"] = {"ok": True, "before": cap, "after": spent}
+                try:
+                    writer.lower_spend_cap(target, current_minor=cap)
+                    row["steps"]["spend_cap"] = {"ok": True, "before": cap, "after": target, "amount_spent": spent}
+                except graphwrite.AdsWriteError as exc:
+                    step = {"ok": False, "error": _failure_code(exc), "tried": target, "before": cap,
+                            "amount_spent": spent}
+                    if exc.graph_code is not None:
+                        step.update(reason="ads_spend_cap_refused", graph_code=exc.graph_code, subcode=exc.subcode,
+                                    meta_says=exc.user_msg)
+                    row["steps"]["spend_cap"] = step
         except (graphread.AdsReadError, graphwrite.AdsWriteError, meta_errors.RateLimited) as exc:
             row["steps"]["spend_cap"] = {"ok": False, "error": _failure_code(exc)}
     # ④ THTH の止め（ほかが全部だめでも打つ）
@@ -883,3 +973,154 @@ def stop_unconfirmed(name) -> dict | None:
         return None
     last = max(stops, key=lambda r: str(r.get("op_id") or ""))
     return last if last.get("result") == "unconfirmed" else None
+
+
+# --------------------------------------------------------------------------
+# resume（止めの印を外す・**masaru 11/02 の例外**・2 段＋hub の番号）
+# --------------------------------------------------------------------------
+
+def _resume_prepare(name, *, base_url):
+    cfg = ledger.load(name)
+    mark = ledger.stopped(name)
+    if not mark:
+        raise OpsRefused("ads_not_stopped", "この広告の口座は止まっていません（外す印がありません）")
+    reason = mark.get("reason")
+    if reason not in RESUMABLE_REASONS:
+        why = {"guard_state_unreadable": "止めの印が読めません（中身を確かめられないので外しません）",
+               "emergency": "非常の止め（emergency）は THTH からは外しません"}.get(reason, f"理由 {reason!r} の印は外しません")
+        raise OpsRefused("ads_resume_refused", why + "。VM で adaccount_state/<名前>/guard/stopped.json を控えてから確かめる")
+    if stop_unconfirmed(name):
+        raise OpsRefused("ads_stop_unconfirmed",
+                         "最後の thth ads stop が「止まった」と確かめられていません。thth ads stop を打ち直して"
+                         "止まったと確かめてから外す")
+    reader = _reader(name, cfg, _token(cfg), base_url=base_url)
+    try:
+        tree = reader.tree()
+    except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
+        raise OpsRefused("ads_read_failed", f"口座の木を読めませんでした（{_failure_code(exc)}）") from None
+    if not tree.get("complete"):
+        raise OpsRefused("ads_tree_incomplete", "木を全部は読めませんでした（全部を見ないまま外さない）")
+    value = digest.compute_resume_digest(act_id=cfg["act_id"], stopped=mark, tree=tree)
+    return cfg, mark, tree, value
+
+
+def resume(name, *, by, via="cli", confirm=None, approval=None, now=None, base_url=None) -> dict:
+    """THTH の止めの印を外す（2 段）。**広告は ACTIVE にしない**・spend_cap・上限・旗に触らない。
+
+    1 段目: 今の印（reason・stopped_at・actor）・口座の木・ACTIVE の物を出して digest を返すだけ。
+    2 段目: `--confirm <digest>` と `--approval <hub の番号>`（`require_gate` に関わらず必須）。木と印を読み直して
+    digest が違えば `ads_tree_changed`。外したら `ops/` と admin_log に残す（hub の番号つき）。
+    """
+    now = now or jst.now_jst()
+    by = _actor(by)
+    if confirm is None:
+        cfg, mark, tree, value = _resume_prepare(name, base_url=base_url)
+        active = watch.active_ids(tree)
+        return {"stage": 1, "digest": value, "stopped": mark, "active_ids": active,
+                "tree": {key: len(tree.get(key) or []) for key in ("campaigns", "adsets", "ads")},
+                "next": (f"thth ads resume {name} --confirm {value} --approval <hub の番号> --by <名前>"
+                         "（外すのは THTH の止めの印だけ。広告は PAUSED のまま。始めるのは activate）")}
+    if approval in (None, "") or not approval_ledger.valid_gate(approval):
+        raise OpsRefused("approval_gate_required",
+                         "止めの印を外すには hub の承認の番号（--approval A261102-1 の形）が要ります（masaru 11/02）")
+    with budget.lock(name):
+        cfg, mark, tree, value = _resume_prepare(name, base_url=base_url)
+        if confirm != value:
+            raise OpsRefused("ads_tree_changed", "1 段目のあとで止めの印か口座の木が変わったか、digest が違います。"
+                             "1 段目からやり直してください（何も変えていません）")
+        op_id = budget.new_op_id(now)
+        row = {"op": "resume", "op_id": op_id, "at": jst.iso(now), "by": by, "via": via, "adaccount": name,
+               "act_id": cfg["act_id"], "digest": value, "approval": approval, "stopped": mark,
+               "active_ids": watch.active_ids(tree), "result": "started"}
+        _record(name, op_id, row)
+        try:
+            ledger.clear_stop(name, mark, by=by, via=via, approval=approval, now=now)
+        except (ledger.AdAccountError, OSError, ValueError) as exc:
+            row.update(result="failed", error=getattr(exc, "code", type(exc).__name__))
+            _record(name, op_id, row)
+            raise OpsRefused("ads_resume_failed", f"止めの印を外せませんでした（{row['error']}）") from None
+        row["result"] = "ok"
+        _record(name, op_id, row)
+    _log(name, "resume", by, via, {"approval": [None, approval], "reason": [mark.get("reason"), None]})
+    return {"stage": 2, "op_id": op_id, "digest": value, "approval": approval, "result": "ok", "resumed": mark,
+            "next": f"広告は PAUSED のまま。始めるなら thth ads activate {name} <campaign_id> --by <名前>（2 段）"}
+
+
+# --------------------------------------------------------------------------
+# watch（成績を定期的に読み、指定に達したら stop と同じ止め方で止める・承認なし）
+# --------------------------------------------------------------------------
+
+def watch_campaign(name, campaign_id, *, by, via="cli", stop_at_spend=None, stop_at_impressions=None,
+                   interval=WATCH_INTERVAL_DEFAULT, until=None, now_fn=None, sleep=None, log=None,
+                   base_url=None) -> dict:
+    """`thth ads watch`: キャンペーンの成績（`maximum`＝全期間・**今日を含む**）を `interval` 秒ごとに読み、
+    `stop_at_spend`（最小単位）か `stop_at_impressions` に達したら `stop()`（口座の全部を止める・承認なし）。
+    指定が無ければ「表示が 1 以上になった（配信が始まった）」で知らせて終わる。`until` で必ず終わる。
+
+    結果 `result`: `stopped`（止めて確かめた）・`stop_unconfirmed`・`delivering`（始まった）・
+    `until_reached`・`unreadable`（1 回も読めなかった）。読めなかった回は `failed_reads` に数える。
+    """
+    now_fn = now_fn or jst.now_jst
+    sleep = sleep or _sleep
+    log = log or (lambda line: None)
+    by = _actor(by)
+    start = now_fn()
+    cfg = ledger.load(name)
+    for label, value in (("--stop-at-spend", stop_at_spend), ("--stop-at-impressions", stop_at_impressions)):
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
+            raise OpsRefused("ads_watch_invalid", f"{label} は正の整数です")
+    if stop_at_spend is not None and cfg.get("currency") not in graphread.CURRENCY_OFFSETS:
+        raise OpsRefused(ledger.CURRENCY_UNVERIFIED, "spend を最小単位に直せない通貨では --stop-at-spend を使えません")
+    if isinstance(interval, bool) or not isinstance(interval, int) or interval < WATCH_INTERVAL_MIN:
+        raise OpsRefused("ads_watch_invalid", f"--interval は {WATCH_INTERVAL_MIN} 秒以上です")
+    end_at = (start + datetime.timedelta(hours=WATCH_UNTIL_DEFAULT_HOURS)) if until is None \
+        else parse_time(until, cfg, start)
+    if end_at <= start:
+        raise OpsRefused("ads_time_invalid", "--until は今より後にしてください")
+    if end_at > start + datetime.timedelta(hours=WATCH_UNTIL_MAX_HOURS):
+        raise OpsRefused("ads_watch_too_long", f"--until は今から {WATCH_UNTIL_MAX_HOURS} 時間以内です（無限に回らない）")
+    reader = _reader(name, cfg, _token(cfg), base_url=base_url)
+    try:
+        reader.node(campaign_id, "campaign")   # 口座の物か（ほかの口座のキャンペーンは見ない）
+    except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
+        raise OpsRefused("ads_read_failed", f"キャンペーンを読めませんでした（{_failure_code(exc)}）") from None
+    out = {"adaccount": name, "campaign_id": campaign_id, "preset": "maximum",
+           "thresholds": {"spend_minor": stop_at_spend, "impressions": stop_at_impressions},
+           "interval_s": interval, "started_at": jst.iso(start), "until": meta_time(end_at),
+           "reads": 0, "failed_reads": 0, "errors": [], "last": None, "result": None}
+    while True:
+        out["reads"] += 1
+        try:
+            rows = reader.insights("maximum", level="campaign", object_id=campaign_id)
+            last = rows[0] if rows else {"spend": None, "spend_minor": 0, "impressions": 0, "clicks": 0, "reach": 0}
+            last = dict(last, read_at=jst.iso(now_fn()))
+            out["last"] = last
+            log(f"  {last['read_at']} spend {last.get('spend')}（最小単位 {last.get('spend_minor')}）・"
+                f"impressions {last.get('impressions')}")
+        except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
+            out["failed_reads"] += 1
+            out["errors"] = (out["errors"] + [_failure_code(exc)])[-5:]
+            log(f"  読めませんでした（{_failure_code(exc)}）・読めなかった回 {out['failed_reads']}")
+            last = None
+        if last is not None:
+            spent, shown = last.get("spend_minor"), last.get("impressions")
+            hit = []
+            if stop_at_spend is not None and isinstance(spent, int) and spent >= stop_at_spend:
+                hit.append(f"spend {spent} ≥ {stop_at_spend}")
+            if stop_at_impressions is not None and isinstance(shown, int) and shown >= stop_at_impressions:
+                hit.append(f"impressions {shown} ≥ {stop_at_impressions}")
+            if hit:
+                out["hit"] = hit
+                out["stop"] = stop(name, by=by, via=via, base_url=base_url)
+                out["result"] = "stopped" if out["stop"]["confirmed"] else "stop_unconfirmed"
+                break
+            if stop_at_spend is None and stop_at_impressions is None and isinstance(shown, int) and shown > 0:
+                out["result"] = "delivering"
+                break
+        remaining = (end_at - now_fn()).total_seconds()
+        if remaining <= 0:
+            out["result"] = "unreadable" if out["failed_reads"] == out["reads"] else "until_reached"
+            break
+        sleep(min(interval, max(1, int(remaining))))
+    out["ended_at"] = jst.iso(now_fn())
+    return out

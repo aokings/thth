@@ -163,15 +163,17 @@ def _walk(parser, path=()):
                 yield from _walk(child, (*path, name))
 
 
-def test_命令の一覧は読む7つと書く7つだけ_読む命令に書く語も上限を上げる引数も無い():
-    """段 5 で書き直した（段 4 の「書く命令が無い」）。書く命令は決まった 7 つだけ、読む命令は段 4 のまま。"""
+def test_命令の一覧は読む7つと書く9つだけ_読む命令に書く語も上限を上げる引数も無い():
+    """段 5 で書き直した（段 4 の「書く命令が無い」）。書く命令は決まった 9 つだけ、読む命令は段 4 のまま。
+    11/02: `watch`（達したら stop を呼ぶ）と `resume`（止めの印を外す・masaru 11/02 の例外）を書く側に足した。"""
     ads = _ads_parser()
     verbs = set()
     for action in ads._actions:
         if isinstance(action, argparse._SubParsersAction):
             verbs |= set(action.choices)
     assert set(ads_cli.READ_VERBS) == {"accounts", "add", "auth", "doctor", "show", "insights", "collect"}
-    assert set(ads_cli.WRITE_VERBS) == {"boost", "activate", "extend", "pause", "stop", "budget", "end"}
+    assert set(ads_cli.WRITE_VERBS) == {"boost", "activate", "extend", "pause", "stop", "budget", "end", "watch",
+                                        "resume"}
     assert verbs == set(ads_cli.VERBS)
     for path, parser in _walk(ads):
         if path and path[0] in ads_cli.WRITE_VERBS:

@@ -387,6 +387,54 @@ def events(name: str, cfg: dict, snapshot, *, now, make) -> list:
     return out
 
 
+# 配信の診断（段 5・11/02）: 予算が丸ごと残ったまま表示 0 がこの時間を越えたら知らせる（**THTH の線**）。
+DELIVERY_STALL_HOURS = 2.0
+# 1 回の診断で読む広告セットの数の上限（1 つにつき 3 回読む）。
+DELIVERY_MAX_ADSETS = 10
+
+
+def delivery_report(reader, tree, *, now) -> dict:
+    """ACTIVE の広告セットごとに `budget_remaining`・`issues_info`・`delivery_estimate` と全期間の表示数を読み、
+    「予算が丸ごと残ったまま表示 0 が N 時間」を `stalled` にする。**読むだけ**（GET）。1 つ読めなくても続ける。"""
+    from .ops import parse_meta_time
+    rows, warnings = [], []
+    adsets = [r for r in (tree or {}).get("adsets") or [] if r.get("effective_status") == ACTIVE
+              and isinstance(r.get("id"), str)]
+    for adset in adsets[:DELIVERY_MAX_ADSETS]:
+        item = {"id": adset["id"], "name": adset.get("name")}
+        try:
+            info = reader.adset_delivery(adset["id"])
+        except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
+            item["error"] = getattr(exc, "code", None) or type(exc).__name__
+            rows.append(item)
+            continue
+        budget = info.get("lifetime_budget") or info.get("daily_budget")
+        item.update(budget=budget, budget_kind="lifetime" if info.get("lifetime_budget") else "daily",
+                    budget_remaining=info.get("budget_remaining"), issues=info.get("issues") or [],
+                    delivery_estimate=info.get("delivery_estimate"), start_time=info.get("start_time"))
+        try:
+            got = reader.insights("maximum", level="adset", object_id=adset["id"])
+            item["impressions"] = sum(r.get("impressions") or 0 for r in got) if got else 0
+        except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
+            item["impressions"] = None
+            item["insights_error"] = getattr(exc, "code", None) or type(exc).__name__
+        start = parse_meta_time(info.get("start_time"))
+        hours = (now - start).total_seconds() / 3600 if start is not None else None
+        item["hours_since_start"] = round(hours, 1) if hours is not None else None
+        item["stalled"] = bool(isinstance(budget, int) and budget > 0 and item["budget_remaining"] == budget
+                               and item["impressions"] == 0 and hours is not None
+                               and hours >= DELIVERY_STALL_HOURS)
+        if item["stalled"]:
+            warnings.append(f"広告セット {adset['id']}: 予算 {budget} が丸ごと残ったまま表示 0 が {hours:.1f} 時間"
+                            + (f"（Meta の問題: {item['issues'][0].get('error_summary')}）" if item["issues"] else ""))
+        elif item["issues"]:
+            warnings.append(f"広告セット {adset['id']}: Meta が配信の問題を返しています（"
+                            f"{item['issues'][0].get('error_summary') or item['issues'][0].get('error_code')}）")
+        rows.append(item)
+    return {"adsets": rows, "warnings": warnings, "stall_hours": DELIVERY_STALL_HOURS,
+            "skipped": max(0, len(adsets) - DELIVERY_MAX_ADSETS)}
+
+
 def status(name: str, *, now) -> dict:
     """`thth morning`・`thth ads show --offline` の 1 行（API は叩かない）。"""
     cfg = ledger.load(name)

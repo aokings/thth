@@ -28,8 +28,10 @@
 **止めた口座**（D-1 の 4）: 読む・止める・減らすは止まっていても通す（THTH の外で始まった配信に気づく
 ため・止める道を塞がないため）。作る・始める・増やす・延ばす（段 5）は `require_active()` が
 `accounts.AccountStopped` で断る（呼ぶのは `ops.boost`・`ops.activate`・`ops.extend` だけ）。
-止めの印を書くのは `stop()`（`thth ads stop` の 4 番目）。**戻す口は THTH に無い**（上げる操作と同じく
-VM で `guard/stopped.json` を控えてから消す・D-1 の 3）。
+止めの印を書くのは `stop()`（`thth ads stop` の 4 番目）。**戻す口は 1 つだけの例外**（masaru 11/02）:
+`clear_stop()` を `thth ads resume` の 2 段目（digest ＋ hub の番号が必須・`ops.resume`）だけが呼ぶ。外すのは
+理由が `owner` の印だけ（`emergency`・読めない印は VM で `guard/stopped.json` を控えてから消す・D-1 の 3）。
+広告を ACTIVE にはしない（始めるのは activate）。
 
 **鍵の期限**（段 5・本番 10/31）: 広告の鍵（ユーザーの鍵）は `/debug_token` が `expires_at=0`（期限なし）を
 返した。`token_limits()` は「鍵の期限」と「データに触れる期限（`data_access_expires_at`）」の**早いほう**を
@@ -455,6 +457,32 @@ def stop(name, reason="owner", *, by, via="cli", now=None) -> dict:
                          via=via if via in ("cli", "mcp") else "cli",
                          diff={"stopped": [False, True], "reason": [None, reason]})
     except Exception:  # noqa: BLE001 — 変更ログに残せなくても止めることは止める（止めた印が正本）
+        pass
+    return value
+
+
+def clear_stop(name, expected: dict, *, by, via="cli", approval, now=None) -> dict:
+    """止めの印を**外す**（`thth ads resume` の 2 段目だけが呼ぶ・masaru 11/02 の例外）。
+
+    消さずに `guard/cleared-<時刻>.json` へ名前を変えて残す（いつ・誰が止めたかの記録を失わない）。
+    `expected`（2 段目で読み直した印）と今の印が違えば `stop_changed` で断る。広告にも上限にも旗にも触らない。
+    """
+    stamp = jst.iso(now).replace(":", "").replace("+", "p")
+    with server_files.directory(_guard_directory(name), private=True) as fd:
+        raw = server_files.read_at(fd, STOP_FILE, private=True)
+        value = json.loads(raw)
+        if type(value) is not dict or value.get("reason") != "owner" or any(
+                value.get(k) != (expected or {}).get(k) for k in ("reason", "stopped_at", "actor", "via")):
+            raise AdAccountError("stop_changed", f"{name}: 止めの印が読み直しのあとで変わりました")
+        os.rename(STOP_FILE, f"cleared-{stamp}.json", src_dir_fd=fd, dst_dir_fd=fd)
+        os.fsync(fd)
+    try:
+        from .. import admin_log
+        admin_log.append("adaccount_resumed", name, {"media": MEDIA}, by=by,
+                         via=via if via in ("cli", "mcp") else "cli",
+                         diff={"stopped": [True, False], "reason": [value.get("reason"), None],
+                               "approval": [None, approval]})
+    except Exception:  # noqa: BLE001 — 変更ログに残せなくても外したことは ops/ の記録が正本
         pass
     return value
 

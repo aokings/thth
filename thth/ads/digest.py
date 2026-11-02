@@ -63,3 +63,28 @@ def compute_ads_digest(*, op: str, act_id: str, currency: str | None, tree: dict
     raw = json.dumps(components(op=op, act_id=act_id, currency=currency, tree=tree, change=change),
                      ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:length]
+
+
+RESUME_VERSION = "thth-ads-resume-1"
+
+
+def resume_components(*, act_id: str, stopped: dict, tree: dict) -> dict:
+    """`thth ads resume`（止めの印を外す・masaru 11/02 の例外）の digest の材料。
+
+    止めの印（reason・stopped_at・actor・via）と、口座の木の全部の id・`status`・`effective_status`。
+    1 段目のあとで印が書き直される・どれかが ACTIVE になる・物が増える、のどれでも変わる。
+    """
+    rows = []
+    for key in ("campaigns", "adsets", "ads"):
+        for row in tree.get(key) or []:
+            rows.append({"kind": key, "id": row.get("id"), "status": row.get("status"),
+                         "effective_status": row.get("effective_status")})
+    return {"version": RESUME_VERSION, "act_id": act_id,
+            "stopped": {k: (stopped or {}).get(k) for k in ("reason", "stopped_at", "actor", "via")},
+            "tree": sorted(rows, key=lambda r: (r["kind"], str(r["id"])))}
+
+
+def compute_resume_digest(*, act_id: str, stopped: dict, tree: dict, length: int = LENGTH) -> str:
+    raw = json.dumps(resume_components(act_id=act_id, stopped=stopped, tree=tree),
+                     ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:length]

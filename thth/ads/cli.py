@@ -5,13 +5,13 @@
     thth ads accounts <名前> [--json]          鍵で見える広告アカウントの一覧（/me/adaccounts）
     thth ads doctor <名前> [--json]            台帳・鍵・権限・読めるか（読むだけ・鍵の期限の欄は今の値で書き直す）
     thth ads show <名前> [--json] [--offline]  アカウント・spend_cap・amount_spent・動いている物
-    thth ads insights <名前> [--preset last_30d] [--level account] [--json]
+    thth ads insights <名前> [--preset last_30d|maximum|…] [--since YYYY-MM-DD [--until YYYY-MM-DD]] [--level account] [--json]
     thth ads collect [<名前>] [--json]         読みを snapshot.json に残す（collect のたびにも回る）
 
 段 5（書く・お金が動くのは activate と extend だけ）:
 
     thth ads boost <名前> (--post <post_id> | --object-story-id <ページID>_<数字>) --lifetime <額>
-                   --start <時刻|now> --end <時刻> [--platforms facebook[,instagram]] [--objective engagement] --by <名前>
+                   --start <時刻|now> --end <時刻> [--platforms facebook[,instagram]] [--objective engagement|traffic|reach] --by <名前>
                                                 全部 PAUSED で作る（お金は動かない）
     thth ads activate <名前> <campaign_id> --by <名前>                       1 段目: digest を出す
     thth ads activate <名前> <campaign_id> --confirm <digest> --approval <hub の番号> --by <名前>
@@ -23,13 +23,19 @@
     thth ads budget lower <名前> (--monthly <額> | --lifetime-max <額> | --days-max <日>)   台帳の上限を下げる
     thth ads budget lower <名前> --adset <id> (--lifetime <額> | --daily <額>)              広告セットの予算を減らす
     thth ads end <名前> <adset_id> --end <時刻|now> --by <名前>   終了日を早める
+    thth ads watch <名前> <campaign_id> [--stop-at-spend <額>] [--stop-at-impressions <数>] [--interval <秒>]
+                   [--until <時刻>] --by <名前>   成績を読み続け、達したら stop と同じに止める（指定なしは始まったら知らせる）
+    thth ads resume <名前> --by <名前>           1 段目: 止めの印と口座の木を出して digest（何も変えない）
+    thth ads resume <名前> --confirm <digest> --approval <hub の番号> --by <名前>
+                                                2 段目: THTH の止めの印だけを外す（広告は PAUSED のまま・masaru 11/02 の例外）
 
 **上げる命令は無い**: `spend_cap` を上げる・外す、月の上限・1 操作の上限・`ads_enabled`・`production` を
 上げるのは THTH の外（`spend_cap` は管理画面で masaru、上限と旗は VM の台帳 `adaccounts/<名前>.json` を
-`cp -a` で控えてから直接書く・D-1 の 3）。`budget lower` は今より小さい値だけを受ける。止めた口座を戻す命令も
-無い（VM で `adaccount_state/<名前>/guard/stopped.json` を控えてから消す）。
+`cp -a` で控えてから直接書く・D-1 の 3）。`budget lower` は今より小さい値だけを受ける。**例外は 1 つ**:
+止めた印を外す `resume`（masaru 11/02）。2 段＋hub の番号が必須で、外すのは理由 owner の印だけ（広告は
+ACTIVE にしない・spend_cap・上限・旗に触らない）。ほかの印は VM で `guard/stopped.json` を控えてから消す。
 
-MCP に出すのは show・boost（PAUSED まで）・pause・stop だけ。activate・extend は CLI で masaru か運用が押す。
+MCP に出すのは show・boost（PAUSED まで）・pause・stop だけ。activate・extend・resume・watch は CLI で masaru か運用が押す。
 金額は最小単位の整数（JPY なら円）。
 """
 from __future__ import annotations
@@ -43,12 +49,13 @@ from .. import accounts, admin_log, jst, redact
 from ..meta import errors as meta_errors
 from ..meta import tokens as meta_tokens
 from ..meta import usage as meta_usage
-from . import graphread, ledger, watch
+from . import graphread, graphwrite, ledger, watch
 
 # **命令の全部**（`tests/test_meta_stage5.py` がこの集合と parser の一致を縛る）。
 READ_VERBS = ("accounts", "add", "auth", "doctor", "show", "insights", "collect")
 # 段 5 の書く命令。Meta に書くのは `ops.py` の決まった関数だけ（`graphwrite.ALLOWED_CALLERS`）。
-WRITE_VERBS = ("boost", "activate", "extend", "pause", "stop", "budget", "end")
+# `watch` は指定に達したら `ops.stop` を呼ぶので書く側。`resume` は止めの印を外す唯一の例外（masaru 11/02）。
+WRITE_VERBS = ("boost", "activate", "extend", "pause", "stop", "budget", "end", "watch", "resume")
 VERBS = READ_VERBS + WRITE_VERBS
 # MCP に出す道具（**activate・extend・budget・end は出さない**・段 5 の 7）。
 MCP_TOOLS = ("thth_ads_show", "thth_ads_boost", "thth_ads_pause", "thth_ads_stop")
@@ -197,6 +204,7 @@ def cmd_show(args) -> int:
             value["tree"] = _tree_view(tree)
         except (accounts.AccountError, graphread.AdsReadError, meta_errors.RateLimited, ValueError) as exc:
             return _fail(_error_text(exc))
+        value["delivery"] = watch.delivery_report(reader, tree, now=now)
         mismatch = [key for key in ("currency", "timezone_name")
                     if cfg.get(key) is not None and value["account"].get(key) not in (None, cfg[key])]
         value["ledger_mismatch"] = mismatch
@@ -228,6 +236,7 @@ def cmd_show(args) -> int:
                 print(f"  注意: 台帳と Meta が違う欄: {','.join(v['ledger_mismatch'])}")
             t = v["tree"]
             print(f"  木: {t['by_effective_status']}" + ("" if t["complete"] else "（全部は読めていない）"))
+            _render_delivery(v.get("delivery") or {})
         elif v.get("snapshot"):
             s = v["snapshot"]
             print(f"  最後の読み: {s.get('observed_at')}" + (f"（読めなかった: {s.get('error')}）" if s.get("error") else ""))
@@ -237,26 +246,63 @@ def cmd_show(args) -> int:
     return 0
 
 
+def _render_delivery(d) -> None:
+    for row in d.get("adsets") or []:
+        if row.get("error"):
+            print(f"  配信の診断 {row['id']}: 読めませんでした（{row['error']}）")
+            continue
+        print(f"  配信の診断 {row['id']}: 予算 {row.get('budget')}（{row.get('budget_kind')}）・残り "
+              f"{row.get('budget_remaining')}・表示 {row.get('impressions')}（全期間）・開始から "
+              f"{row.get('hours_since_start')} 時間・見込み {row.get('delivery_estimate')}"
+              + (f"・問題 {row['issues']}" if row.get("issues") else ""))
+    for line in d.get("warnings") or []:
+        print(f"  警告: {line}")
+
+
 # ------------------------------------------------------------------ insights
 
+def _excludes_today(cfg, preset, since, until) -> bool | None:
+    """期間が今日（広告アカウントの時間帯の日）を含まないか。分からなければ None。"""
+    if since is not None or until is not None:
+        return (until or "") < watch.local_day(cfg, jst.now_jst())
+    if preset in graphread.PRESETS_WITHOUT_TODAY:
+        return True
+    if preset in ("today", "maximum"):
+        return False
+    return None
+
+
 def cmd_insights(args) -> int:
+    since, until = args.since, args.until
+    if until is not None and since is None:
+        return _fail("ads_time_range_invalid: --until には --since も要ります（YYYY-MM-DD）")
     try:
         cfg, _token, reader = _reader(args.name)
-        rows = reader.insights(args.preset, level=args.level)
+        if since is not None and until is None:
+            until = watch.local_day(cfg, jst.now_jst())
+        rows = reader.insights(args.preset, level=args.level, since=since, until=until)
     except (accounts.AccountError, graphread.AdsReadError, meta_errors.RateLimited, ValueError) as exc:
         return _fail(_error_text(exc))
-    value = {"adaccount": args.name, "preset": args.preset, "level": args.level, "currency": cfg.get("currency"),
+    excludes = _excludes_today(cfg, args.preset, since, until)
+    value = {"adaccount": args.name, "preset": None if since else args.preset, "since": since, "until": until,
+             "level": args.level, "currency": cfg.get("currency"), "excludes_today": excludes,
              "rows": rows, "ads_insights_util_pct": reader.insights_util_pct(),
              "unit": "spend は Meta の文字列（普通の単位）・spend_minor は最小単位の整数（JPY だけ直す）"}
+    if not rows and excludes:
+        value["note"] = ("この期間は今日を含みません（Meta の last_7d などは昨日まで）。今日の分は --preset today か "
+                         "--preset maximum で読む")
 
     def render(v):
-        print(f"成績 {v['adaccount']}  {v['preset']}・{v['level']}（通貨 {v['currency'] or '未'}）")
+        period = f"{v['since']}〜{v['until']}" if v["since"] else v["preset"]
+        print(f"成績 {v['adaccount']}  {period}・{v['level']}（通貨 {v['currency'] or '未'}）")
         for row in v["rows"]:
             head = f"{row.get('name') or row.get('id')}  " if v["level"] != "account" else ""
             print(f"  {head}spend {row['spend']}（最小単位 {row['spend_minor']}）・impressions {row['impressions']}・"
                   f"clicks {row['clicks']}・reach {row['reach']}（{row['date_start']}〜{row['date_stop']}）")
         if not v["rows"]:
             print("  行がありません（この期間に配信が無い）")
+            if v.get("note"):
+                print(f"  注意: {v['note']}")
         print(f"  成績の読みの使用率: {v['ads_insights_util_pct']}%")
     _emit(value, args.json, render)
     return 0
@@ -381,6 +427,11 @@ def doctor_rows(name, *, now=None) -> list:
         row("tree", "キャンペーン・広告セット・広告", True if tree["complete"] else None,
             f"{len(tree['campaigns'])}・{len(tree['adsets'])}・{len(tree['ads'])} 件・動いている物 "
             f"{len(watch.active_ids(tree))}" + ("" if tree["complete"] else "（全部は読めていない）"))
+        report = watch.delivery_report(reader, tree, now=now)
+        if report["adsets"]:
+            row("delivery", "配信の診断（ACTIVE の広告セット）", None if report["warnings"] else True,
+                "・".join(report["warnings"]) or f"{len(report['adsets'])} 件・止まって見える物なし",
+                delivery=report)
     try:
         reader.insights("yesterday")
     except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
@@ -466,7 +517,8 @@ def cmd_boost(args) -> int:
               f"{c['adset_id']}・クリエイティブ {c['creative_id']}・広告 {c['ad_id']}")
         p = v["plan"]
         print(f"  投稿 {p['object_story_id']}・通しの予算 {p['lifetime_minor']}（最小単位）・{p['start']} 〜 {p['end']}"
-              f"・出し先 {','.join(p['platforms'])}")
+              f"・出し先 {','.join(p['platforms'])}・目的 {p['objective']}"
+              + ("" if p.get("objective_verified") else "（この目的は本番未確認。管理画面で中身を見てから始める）"))
         print(f"次の一手: {v['next']}")
     return _write_call(args, lambda: ops.boost(
         args.name, by=args.by, via=args.via, post=args.post, object_story_id=args.object_story_id,
@@ -538,6 +590,59 @@ def cmd_stop(args) -> int:
         for step, value in v["steps"].items():
             print(f"  {step}: {value}")
     return _write_call(args, lambda: ops.stop(args.name, by=args.by, via=args.via), render)
+
+
+def cmd_watch(args) -> int:
+    from . import ops
+    seen = {}
+
+    def render(v):
+        last = v.get("last") or {}
+        text = {"stopped": "指定に達したので止めました（Meta から読み直して確かめた）",
+                "stop_unconfirmed": "指定に達したので止めましたが、止まったと確かめられません。管理画面で止めてください",
+                "delivering": "配信が始まりました（表示が 1 以上）",
+                "until_reached": "--until に達したので見張りを終えました（止めていません）",
+                "unreadable": "1 回も読めませんでした（止めていません）"}[v["result"]]
+        print(f"{text}: キャンペーン {v['campaign_id']}")
+        print(f"  最後の読み: spend {last.get('spend')}（最小単位 {last.get('spend_minor')}）・impressions "
+              f"{last.get('impressions')}・{last.get('read_at')}（全期間・今日を含む）")
+        print(f"  読んだ回 {v['reads']}・読めなかった回 {v['failed_reads']}" + (f"（{v['errors']}）" if v["errors"] else ""))
+        if v.get("hit"):
+            print(f"  達した指定: {'・'.join(v['hit'])}")
+        stop_row = v.get("stop") or {}
+        if stop_row and not stop_row.get("confirmed"):
+            print(f"hub に送る 1 行: {stop_row.get('hub_line')}")
+
+    def run():
+        value = ops.watch_campaign(
+            args.name, args.campaign_id, by=args.by, via=args.via, stop_at_spend=args.stop_at_spend,
+            stop_at_impressions=args.stop_at_impressions, interval=args.interval, until=args.until,
+            log=None if args.json else (lambda line: print(line, file=sys.stderr)))
+        seen["result"] = value["result"]
+        return value
+    rc = _write_call(args, run, render)
+    if rc == 0 and seen.get("result") in ("stop_unconfirmed", "unreadable"):
+        return 3
+    return rc
+
+
+def cmd_resume(args) -> int:
+    from . import ops
+
+    def render(v):
+        if v["stage"] == 1:
+            s = v["stopped"]
+            print(f"止めの印を外す 1 段目（まだ何も変えていません）: digest {v['digest']}")
+            print(f"  今の印: 理由 {s.get('reason')}・止めた時刻 {s.get('stopped_at')}・止めた人 {s.get('actor')}")
+            print(f"  口座の木: {v['tree']}・ACTIVE の物 {v['active_ids'] or 'なし'}")
+            if v["active_ids"]:
+                print("  注意: 止めた口座で ACTIVE の物があります（THTH の外で始まった配信かもしれません）")
+            print(f"次の一手: {v['next']}")
+        else:
+            print(f"止めの印を外しました（hub の番号 {v['approval']}・記録 {v['op_id']}）。広告は PAUSED のままです")
+            print(f"次の一手: {v['next']}")
+    return _write_call(args, lambda: ops.resume(args.name, by=args.by, via="cli", confirm=args.confirm,
+                                                approval=args.approval), render)
 
 
 def cmd_end(args) -> int:
@@ -625,7 +730,10 @@ def register(sub) -> None:
     p_show.set_defaults(func=cmd_show)
     p_ins = verbs.add_parser("insights", help="成績（/insights・読むだけ）")
     p_ins.add_argument("name")
-    p_ins.add_argument("--preset", default="last_30d", choices=graphread.PRESETS)
+    p_ins.add_argument("--preset", default="last_30d", choices=graphread.PRESETS,
+                       help="last_7d などは今日を含まない（Meta の決まり）。全期間は maximum")
+    p_ins.add_argument("--since", default=None, help="YYYY-MM-DD（広告アカウントの時間帯の日・--preset より優先）")
+    p_ins.add_argument("--until", default=None, help="YYYY-MM-DD（既定は今日）")
     p_ins.add_argument("--level", default="account", choices=graphread.LEVELS)
     p_ins.add_argument("--json", action="store_true")
     p_ins.set_defaults(func=cmd_insights)
@@ -649,7 +757,8 @@ def register(sub) -> None:
     p_boost.add_argument("--start", default="now", help="開始（ISO 8601 か now）")
     p_boost.add_argument("--end", required=True, help="終了（必須・ISO 8601）")
     p_boost.add_argument("--platforms", default="facebook", help="facebook[,instagram]")
-    p_boost.add_argument("--objective", default="engagement", choices=("engagement", "traffic"))
+    p_boost.add_argument("--objective", default="engagement", choices=tuple(graphwrite.OBJECTIVES),
+                         help="engagement（本番で確かめた）・traffic・reach（この 2 つは本番未確認）")
     by_via(p_boost)
     p_boost.set_defaults(func=cmd_boost)
 
@@ -691,6 +800,26 @@ def register(sub) -> None:
     p_end.add_argument("--end", required=True)
     by_via(p_end)
     p_end.set_defaults(func=cmd_end)
+
+    p_watch = verbs.add_parser("watch", help="成績を読み続け、指定に達したら stop と同じに止める（承認なし・必ず終わる）")
+    p_watch.add_argument("name")
+    p_watch.add_argument("campaign_id")
+    p_watch.add_argument("--stop-at-spend", dest="stop_at_spend", type=_amount, default=None,
+                         help="全期間の spend（最小単位・JPY なら円）がこれ以上で止める")
+    p_watch.add_argument("--stop-at-impressions", dest="stop_at_impressions", type=_amount, default=None,
+                         help="全期間の表示がこれ以上で止める")
+    p_watch.add_argument("--interval", type=int, default=300, help="読む間隔（秒・60 以上・既定 300）")
+    p_watch.add_argument("--until", default=None, help="見張りを終える時刻（既定 6 時間後・48 時間まで）")
+    by_via(p_watch)
+    p_watch.set_defaults(func=cmd_watch)
+
+    p_resume = verbs.add_parser("resume", help="THTH の止めの印を外す（2 段＋hub の番号・広告は始めない・CLI だけ）")
+    p_resume.add_argument("name")
+    p_resume.add_argument("--confirm", default=None, help="1 段目の digest")
+    p_resume.add_argument("--approval", "--gate", dest="approval", default=None, help="hub の承認の番号（2 段目は必須）")
+    p_resume.add_argument("--by", required=True)
+    p_resume.add_argument("--json", action="store_true")
+    p_resume.set_defaults(func=cmd_resume)
 
     p_budget = verbs.add_parser("budget", help="月の上限の見積もり・下げる（上げる命令は無い）")
     bverbs = p_budget.add_subparsers(dest="budget_verb", required=True)

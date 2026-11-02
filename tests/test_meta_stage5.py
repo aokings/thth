@@ -285,18 +285,26 @@ def _walk(parser, path=()):
                 yield from _walk(child, (*path, name))
 
 
+# 止める側の閾値（下げる・止めるだけ）。`watch` の外には置かない（11/02）。
+STOP_THRESHOLD_OPTIONS = {"--stop-at-spend", "--stop-at-impressions"}
+
+
 def test_CLIにspend_capや上限を上げる引数が無く_上限の名の引数はbudget_lowerだけ():
     seen = {}
     for path, parser in _walk(_ads_parser()):
         for action in parser._actions:
             for option in action.option_strings:
                 seen.setdefault(option, set()).add(path)
+                if option in STOP_THRESHOLD_OPTIONS:
+                    assert path == ("watch",), f"止める閾値が watch の外にある: {path} {option}"
+                    continue
                 assert not re.search(r"spend|cap|raise|increase|enable|production|ceiling|resume|unstop", option), \
                     f"上げる引数がある: {path} {option}"
                 if re.search(r"monthly|lifetime-max|days-max", option):
                     assert path == ("budget", "lower"), f"上限の名の引数が budget lower の外にある: {path} {option}"
     verbs = {p[0] for p in (path for path, _ in _walk(_ads_parser())) if p}
-    assert not verbs & {"resume", "cap", "set", "enable", "raise", "unstop"}
+    # 例外は resume だけ（止めの印を外す・masaru 11/02・2 段＋hub の番号。引数は下の試験が縛る）。
+    assert verbs & {"resume", "cap", "set", "enable", "raise", "unstop"} == {"resume"}
 
 
 def test_MCPの道具はshow_boost_pause_stopだけ_activateもextendも上げる引数も無い():
@@ -672,13 +680,14 @@ def test_stopは80004で断られたら待たずにすぐ失敗とし_止まっ�
     assert "hub_line" in row
 
 
-def test_stopはspend_capを使った額まで下げる_0は書かない(env):
+def test_stopはspend_capを使った額の110パーセントまで下げる_0は書かない(env):
+    # 11/01 本番: amount_spent ちょうどは code 100 で断られた（下限の決まりは公式の文書に無い・10% は第三者の説明）。
     setup_ledger(env)
     meta = env["meta"]
     meta.campaign(status="ACTIVE")
     row = ops.stop(NAME, by="masaru")
-    assert row["steps"]["spend_cap"] == {"ok": True, "before": 30000, "after": 1200}
-    assert meta.spend_cap == "1200"
+    assert row["steps"]["spend_cap"] == {"ok": True, "before": 30000, "after": 1320, "amount_spent": 1200}
+    assert meta.spend_cap == "1320"
     meta.amount_spent = "0"
     row = ops.stop(NAME, by="masaru")
     assert row["steps"]["spend_cap"]["ok"] is None   # 0 は「上限なし」になるので書かない

@@ -40,12 +40,20 @@ from . import graphread, ledger
 PAUSED = "PAUSED"
 ACTIVE = "ACTIVE"
 # 作る口の目的（D-2・段 5 の 2）。名前 → (objective, optimization_goal)。
+# 組み合わせは Meta の ODAX の対応表（developers.facebook.com/docs/marketing-api/reference/ad-campaign-group・
+# 2026-11-02 に読んだ）の行: OUTCOME_ENGAGEMENT＋ON_POST＋POST_ENGAGEMENT・OUTCOME_TRAFFIC＋（なし）＋LINK_CLICKS・
+# OUTCOME_AWARENESS＋（なし）＋REACH（promoted_object は page_id）。
+# **本番で確かめたのは engagement だけ**（10/31 validate_only・11/01 の試しの 1 本）。traffic と reach は本番未確認。
 OBJECTIVES = {"engagement": ("OUTCOME_ENGAGEMENT", "POST_ENGAGEMENT"),
-              "traffic": ("OUTCOME_TRAFFIC", "LINK_CLICKS")}
+              "traffic": ("OUTCOME_TRAFFIC", "LINK_CLICKS"),
+              "reach": ("OUTCOME_AWARENESS", "REACH")}
 # 広告セットの destination_type。OUTCOME_ENGAGEMENT＋POST_ENGAGEMENT は ON_POST が無いと
 # 「この目的では選んだ成果の目標を使えない」（code 100・subcode 2490408）で断られる
-# （2026-10-31 本番の口座で validate_only で確かめた）。traffic は本番で未確認。
+# （2026-10-31 本番の口座で validate_only で確かめた）。reach（OUTCOME_AWARENESS＋REACH）は対応表で
+# destination_type の欄が空なので送らない【文書・本番未確認】。traffic も送らない【本番未確認】。
 DESTINATIONS = {"engagement": "ON_POST"}
+# 本番で確かめた目的（出力に「未確認」を添えるのに使う）。
+VERIFIED_OBJECTIVES = frozenset({"engagement"})
 # 公開の関数 → 呼んでよい `ops.py` の関数（試験がこの表と実際の呼び出しの一致を縛る）。
 ALLOWED_CALLERS = {
     "create_campaign": {"boost"}, "create_adset": {"boost"}, "create_creative": {"boost"},
@@ -62,13 +70,32 @@ class AdsWriteError(base.AdapterError):
     """書けなかった。`code` は静的な符丁（本文・鍵は入れない）。`failure` は 4 つの語のどれか
     （`definite`＝Meta が断った・変わっていない／`ambiguous`＝変わったか分からない ほか）。"""
 
-    def __init__(self, code, *, failure=None, http_status=None, graph_code=None, subcode=None):
+    def __init__(self, code, *, failure=None, http_status=None, graph_code=None, subcode=None, user_msg=None):
         super().__init__(code)
         self.code = code
         self.failure = failure
         self.http_status = http_status
         self.graph_code = graph_code
         self.subcode = subcode
+        # Meta の `error_user_msg`（無ければ `message`）。**伏せてから**持つ（`safe_user_msg`）。
+        self.user_msg = user_msg
+
+
+def safe_user_msg(err: dict, *, secrets=()) -> str | None:
+    """Meta の断りの文（`error_user_title`・`error_user_msg`・`message`）を、鍵を伏せて 300 字まで。
+
+    本番で Meta の文面に鍵が載って会話に漏れたことがある（11/01）。`access_token=` などの形
+    （`redact.redact`）と、渡した値そのもの（鍵の値）の両方を伏せる。
+    """
+    from .. import redact
+    parts = [err.get(k) for k in ("error_user_title", "error_user_msg", "message")]
+    text = " / ".join(p for p in parts if isinstance(p, str) and p.strip())
+    if not text:
+        return None
+    for value in secrets:
+        if isinstance(value, str) and len(value) >= 8:
+            text = text.replace(value, "[REDACTED]")
+    return (redact.redact(text) or "")[:300]
 
 
 def write_amount(amount_minor: int, currency: str | None) -> str:
@@ -99,6 +126,7 @@ class Writer:
             app_secret = meta_graph.load_app_secret()
         self.client = meta_graph.Client(base_url or meta_graph.origin(), access, app_secret=app_secret,
                                         usage_path=ledger.usage_path_for(name))
+        self._hide = (access, app_secret)   # 断りの文から伏せる値（出力しない）
         ledger.ensure_state_dir(name)
 
     # ------------------------------------------------------------------ 1 か所
@@ -115,7 +143,8 @@ class Writer:
             sub = err.get("error_subcode") if isinstance(err.get("error_subcode"), int) else None
             raise AdsWriteError(f"ads_http_{exc.code}" + (f"_code_{code}" if code is not None else ""),
                                 failure=meta_errors.classify(exc.code, err), http_status=exc.code,
-                                graph_code=code, subcode=sub) from None
+                                graph_code=code, subcode=sub,
+                                user_msg=safe_user_msg(err, secrets=self._hide)) from None
         except (OSError, ValueError):
             raise AdsWriteError("ads_response_unavailable", failure=meta_errors.AMBIGUOUS) from None
         if not isinstance(body, dict):

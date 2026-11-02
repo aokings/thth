@@ -48,8 +48,17 @@ AD_TREE_FIELDS = ("id,name,campaign_id,adset_id,status,effective_status,"
                   "creative{id,object_story_id,source_instagram_media_id}")
 ID_RE = re.compile(r"[0-9]{1,32}")
 ADACCOUNTS_FIELDS = "id,account_id,name,currency,timezone_name,account_status"
-# `date_preset`（L2: insights の参照の一覧から、THTH が使う物だけ）。
-PRESETS = ("today", "yesterday", "last_7d", "last_14d", "last_30d", "this_month", "last_month")
+# `date_preset`（L2: insights の参照の一覧から、THTH が使う物だけ）。`maximum` は全期間（最大 37 か月・
+# developers.facebook.com/docs/marketing-api/reference/ad-account/insights）。
+PRESETS = ("today", "yesterday", "last_7d", "last_14d", "last_30d", "this_month", "last_month", "maximum")
+# **今日を含まない**期間（11/01 本番: 今日だけ配信した広告が last_7d で「行がありません」になった）。
+# this_month は今日を含むと読むが【未】、言い切らないので両方の組に入れない。
+PRESETS_WITHOUT_TODAY = frozenset({"yesterday", "last_7d", "last_14d", "last_30d", "last_month"})
+DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+# 配信の診断で読む広告セットの欄（段 5・11/02）。`budget_remaining` は最小単位の文字列【文書】、
+# `issues_info` は配信を妨げた問題の並び【文書】。
+ADSET_DELIVERY_FIELDS = ("id,name,campaign_id,status,effective_status,lifetime_budget,daily_budget,"
+                         "budget_remaining,start_time,end_time,issues_info")
 LEVELS = ("account", "campaign", "adset", "ad")
 PAGE_LIMIT = 100
 MAX_PAGES = 10
@@ -261,18 +270,34 @@ class Reader:
         headers = row.get("headers") if isinstance(row.get("headers"), dict) else {}
         return meta_usage.insights_throttle_pct(headers)
 
-    def insights(self, preset: str = "last_30d", *, level: str = "account") -> list:
-        """`/act_<id>/insights`。**前回の使用率が線を越えていれば呼ばない**（`ads_insights_throttled`）。"""
-        if preset not in PRESETS:
+    def insights(self, preset: str = "last_30d", *, level: str = "account", since: str | None = None,
+                 until: str | None = None, object_id: str | None = None) -> list:
+        """`/act_<id>/insights`（`object_id` を渡せばそのキャンペーン・広告セットの `/insights`）。
+        **前回の使用率が線を越えていれば呼ばない**（`ads_insights_throttled`）。
+
+        `since`・`until`（`YYYY-MM-DD`・広告アカウントの時間帯の日・両端を含む）を渡すと `time_range` で
+        読み、`date_preset` は送らない（Meta は time_range があると date_preset を無視する【文書】）。
+        """
+        if since is None and until is None and preset not in PRESETS:
             raise AdsReadError("ads_preset_invalid")
         if level not in LEVELS:
             raise AdsReadError("ads_level_invalid")
+        params = {"level": level}
+        if since is not None or until is not None:
+            if not (isinstance(since, str) and DATE_RE.fullmatch(since) and isinstance(until, str)
+                    and DATE_RE.fullmatch(until)) or since > until:
+                raise AdsReadError("ads_time_range_invalid")
+            params["time_range"] = json.dumps({"since": since, "until": until}, separators=(",", ":"))
+        else:
+            params["date_preset"] = preset
+        if object_id is not None and (not isinstance(object_id, str) or not ID_RE.fullmatch(object_id)):
+            raise AdsReadError("ads_id_invalid")
         pct = self.insights_util_pct()
         if pct is not None and pct >= INSIGHTS_THROTTLE_PCT:
             raise AdsReadError("ads_insights_throttled", failure=meta_errors.RATE_LIMITED)
         fields = INSIGHT_FIELDS + ("" if level == "account" else f",{level}_id,{level}_name")
-        rows, _ = self._list(f"/{self.act}/insights",
-                             {"fields": fields, "date_preset": preset, "level": level})
+        path = f"/{object_id}/insights" if object_id else f"/{self.act}/insights"
+        rows, _ = self._list(path, dict(params, fields=fields))
         currency = self.cfg.get("currency")
         out = []
         for row in rows:
@@ -287,6 +312,32 @@ class Reader:
                 item["id"] = row.get(f"{level}_id")
                 item["name"] = row.get(f"{level}_name")
             out.append(item)
+        return out
+
+    def adset_delivery(self, adset_id: str) -> dict:
+        """配信の診断（段 5・11/02）: 広告セットの `budget_remaining`・`issues_info`・予算・期間と、
+        `delivery_estimate` の辺（別の呼び出し・読めなくても本筋は落とさない）。"""
+        if not isinstance(adset_id, str) or not ID_RE.fullmatch(adset_id):
+            raise AdsReadError("ads_id_invalid")
+        body = self._get("/" + adset_id, {"fields": ADSET_DELIVERY_FIELDS})
+        if str(body.get("id") or "") != adset_id:
+            raise AdsReadError("ads_object_mismatch")
+        out = _node(body)
+        out["budget_remaining"] = minor(body.get("budget_remaining"))
+        issues = body.get("issues_info") if isinstance(body.get("issues_info"), list) else []
+        out["issues"] = [{k: str(row.get(k))[:200] for k in ("level", "error_code", "error_summary", "error_type",
+                                                             "mid")
+                          if row.get(k) is not None} for row in issues[:5] if isinstance(row, dict)]
+        try:
+            est = self._get(f"/{adset_id}/delivery_estimate", {})
+            data = est.get("data") if isinstance(est.get("data"), list) else []
+            first = data[0] if data and isinstance(data[0], dict) else {}
+            out["delivery_estimate"] = {k: first.get(k) for k in ("estimate_ready", "estimate_dau",
+                                                                  "estimate_mau_lower_bound",
+                                                                  "estimate_mau_upper_bound")
+                                        if isinstance(first.get(k), (int, bool))}
+        except (AdsReadError, meta_errors.RateLimited) as exc:
+            out["delivery_estimate"] = {"unavailable": getattr(exc, "code", type(exc).__name__)}
         return out
 
     def adaccounts(self) -> list:
