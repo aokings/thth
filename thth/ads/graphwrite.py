@@ -95,7 +95,14 @@ def safe_user_msg(err: dict, *, secrets=()) -> str | None:
     for value in secrets:
         if isinstance(value, str) and len(value) >= 8:
             text = text.replace(value, "[REDACTED]")
-    return (redact.redact(text) or "")[:300]
+    text = redact.redact(text) or ""
+    # 綴りの無い別の鍵（THTH が知らない値）が残っていそうなら、文ごと落とす（監査 5.6.2 の 5）。
+    if redact.looks_like_secret(text):
+        return SECRET_DROPPED
+    return text[:300]
+
+
+SECRET_DROPPED = "（鍵らしい値を含むので Meta の文は残しません）"
 
 
 def write_amount(amount_minor: int, currency: str | None) -> str:

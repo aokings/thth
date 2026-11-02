@@ -80,11 +80,34 @@ def test_stopは待ち切ってもIN_PROCESSなら上が止まっていると読
     verify = row["steps"]["verify"]
     assert row["confirmed"] is True and verify["by_parent"] and verify["unpaused"]
     # 上も IN_PROCESS（止まったと読めない）なら「止まった」と言わない。
-    meta2_rows = [o for o in meta.objects.values() if o["kind"] in ("campaign", "adset", "ad")]
     _in_process_for(meta, reads=10**6, kinds=("campaign", "adset", "ad"))
     no_sleep.clear()
     row = ops.stop(NAME, by="masaru")
-    assert row["confirmed"] is False and "hub_line" in row and meta2_rows
+    assert row["confirmed"] is False and "hub_line" in row
+
+
+def test_stopは止めの印をpauseの直後_待ちの前に書き_待ちの途中で落ちても印が残る(env, no_sleep, monkeypatch):
+    # 監査 5.6.2 の 4。記録の steps も pause → thth_stop → verify → spend_cap の順。
+    setup_ledger(env)
+    meta = env["meta"]
+    meta.campaign(status="ACTIVE")
+    row = ops.stop(NAME, by="masaru")
+    assert list(row["steps"]) == ["pause", "thth_stop", "verify", "spend_cap"]
+    ledger_dir = ledger.state_dir_for(NAME)
+    import os
+    import shutil
+    shutil.rmtree(os.path.join(ledger_dir, "guard"))   # 印を消して、もう一度止める（待ちの途中で落ちる）
+    assert not ledger.stopped(NAME)
+    meta.campaign(status="ACTIVE")
+
+    def crash(reader):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(ops, "verify_stopped", crash)
+    with pytest.raises(KeyboardInterrupt):
+        ops.stop(NAME, by="masaru")
+    assert ledger.stopped(NAME)["reason"] == "owner"
+    last = [r for r in ops.read_ops(NAME) if r["op"] == "stop"][-1]
+    assert last["steps"]["thth_stop"]["ok"] is True and "verify" not in last["steps"]
 
 
 def test_stopはACTIVEのままなら待たずに確かめられないと言う(env, no_sleep):
@@ -125,6 +148,28 @@ def test_spend_capの下げる先は使った額の110パーセントで今の�
     meta.spend_cap = "1300"               # 1200 の 110% = 1320 は今の 1300 より上（上げることになる）
     row = ops.stop(NAME, by="masaru")
     assert row["steps"]["spend_cap"]["ok"] is None and meta.spend_cap == "1300"
+
+
+def test_spend_capの余白は1操作の上限lifetime_budget_maxで抑える(env):
+    # 監査 5.6.2 の 3: 通算 30 万円の口座で 10% の余白（3 万円）は 1 操作の上限 5,000 円を越える。
+    assert ops.spend_cap_target(300000, 5000) == 305000 and ops.spend_cap_target(608, 5000) == 669
+    assert ops.spend_cap_target(608, 0) == 608
+    setup_ledger(env, lifetime_max=5000)
+    meta = env["meta"]
+    meta.campaign(status="ACTIVE")
+    meta.amount_spent, meta.spend_cap = "300000", "400000"
+    row = ops.stop(NAME, by="masaru")
+    assert row["steps"]["spend_cap"]["after"] == 305000 and meta.spend_cap == "305000"
+
+
+def test_safe_user_msgは綴りの無い知らない鍵が残れば文ごと落とす():
+    # 監査 5.6.2 の 5。access_token= の綴りが無い、THTH が知らない鍵。
+    other = "EAAB" + "".join(secrets.choice("abcdefghijk0123456789") for _ in range(30))
+    said = graphwrite.safe_user_msg({"error_user_msg": f"token {other} is invalid"})
+    assert other not in said and said == graphwrite.SECRET_DROPPED
+    plain = graphwrite.safe_user_msg({"error_user_title": "上限が低すぎます", "error_user_msg": "608 より上に"})
+    assert plain == "上限が低すぎます / 608 より上に"
+    assert graphwrite.safe_user_msg({}) is None
 
 
 # ================================================================== 3. extend の hub の番号
@@ -239,7 +284,8 @@ def test_watchは指定なしなら配信が始まったら知らせて終わり
     assert out["result"] == "delivering" and out["reads"] == 3 and not posts(env)
 
 
-def test_watchはuntilで必ず終わり_読めなかった回を数える(env, monkeypatch, capsys):
+def test_watchは閾値つきで読めない回が3回続けば止める_閾値なしなら止めずにrc3(env, monkeypatch, capsys):
+    # 監査 5.6.2 の 1: 読めない間に止めずに回り続けない（止めるのは戻せる・止め損なうのはお金）。
     setup_ledger(env)
     cid = env["meta"].campaign(status="ACTIVE")
     from thth.ads import graphread
@@ -247,7 +293,44 @@ def test_watchはuntilで必ず終わり_読めなかった回を数える(env, 
     clock = Clock()
     out = ops.watch_campaign(NAME, cid, by="m", stop_at_impressions=1000, interval=600,
                              until=jst.iso(clock.now + datetime.timedelta(hours=1)), now_fn=clock, sleep=clock.sleep)
-    assert out["result"] == "unreadable" and out["failed_reads"] == out["reads"] == 7 and not posts(env)
+    assert out["result"] == "stopped_on_unreadable" and out["failed_reads"] == out["reads"] == 3
+    assert out["stop"]["confirmed"] is True and ledger.stopped(NAME) and status_posts(env)[cid] == "PAUSED"
+    row = [r for r in ops.read_ops(NAME) if r["op"] == "watch"][-1]
+    assert row["result"] == "stopped_on_unreadable" and row["stop_op_id"] == out["stop"]["op_id"]
+    # 閾値なし: 止めない・rc 3。
+    writes = len(posts(env))
+    capsys.readouterr()
+    rc = cli.main(["ads", "watch", NAME, cid, "--interval", "60", "--by", "m", "--json"])
+    value = json.loads(capsys.readouterr().out)
+    assert rc == 3 and value["result"] == "unreadable" and value["reads"] == 3 and len(posts(env)) == writes
+
+
+def test_watchは閾値に要る欄が数でない回も読めない回に数える(env, monkeypatch):
+    setup_ledger(env)
+    cid = env["meta"].campaign(status="ACTIVE")
+    _install(env, cid, [[{"spend": "1.5", "impressions": "3"}]], monkeypatch)   # JPY で端数＝spend_minor None
+    clock = Clock()
+    out = ops.watch_campaign(NAME, cid, by="m", stop_at_spend=10**6, interval=60, now_fn=clock, sleep=clock.sleep)
+    assert out["result"] == "stopped_on_unreadable" and out["reads"] == 3
+    assert out["errors"][-1] == "ads_field_unreadable:spend_minor"
+
+
+def test_watchは読めない回が回復すれば数え直し_閾値で止める(env, monkeypatch):
+    setup_ledger(env)
+    cid = env["meta"].campaign(status="ACTIVE")
+    from thth.ads import graphread
+    fail = graphread.AdsReadError("ads_http_500")
+    _install(env, cid, [fail, fail, [{"spend": "10", "impressions": "5"}], fail, fail,
+                        [{"spend": "300", "impressions": "9"}]], monkeypatch)
+    clock = Clock()
+    out = ops.watch_campaign(NAME, cid, by="m", stop_at_spend=250, interval=60, now_fn=clock, sleep=clock.sleep)
+    assert out["result"] == "stopped" and out["reads"] == 6 and out["failed_reads"] == 4
+
+
+def test_watchはuntilで必ず終わる(env, monkeypatch, capsys):
+    setup_ledger(env)
+    cid = env["meta"].campaign(status="ACTIVE")
+    clock = Clock()
     for kwargs, code in ((dict(until=jst.iso(clock.now + datetime.timedelta(hours=49))), "ads_watch_too_long"),
                          (dict(interval=10), "ads_watch_invalid")):
         with pytest.raises(ops.OpsRefused) as exc:
@@ -258,6 +341,7 @@ def test_watchはuntilで必ず終わり_読めなかった回を数える(env, 
     _install(env, cid, [[]], monkeypatch)
     out = ops.watch_campaign(NAME, cid, by="m", stop_at_spend=10**6, interval=3600, now_fn=clock2, sleep=clock2.sleep)
     assert out["result"] == "until_reached" and out["reads"] == 7
+    assert [r for r in ops.read_ops(NAME) if r["op"] == "watch"][-1]["result"] == "until_reached"
 
 
 def test_watchのCLIはJSONで結果を返す(env, monkeypatch, capsys):
@@ -304,6 +388,25 @@ def test_showとdoctorは予算が丸ごと残ったまま表示0がN時間を�
     assert {c["method"] for c in env["calls"]} == {"GET"}
 
 
+def test_配信の診断は1つ読めなくても残りを続ける(env):
+    setup_ledger(env)
+    meta = env["meta"]
+    meta.campaign(status="ACTIVE")
+    from thth.ads import graphread
+
+    class Reader:
+        def adset_delivery(self, adset_id):
+            if adset_id == "1":
+                raise graphread.AdsReadError("ads_http_500")
+            return {"lifetime_budget": 500, "budget_remaining": 400, "start_time": None}
+
+        def insights(self, *a, **k):
+            return [{"impressions": 7}]
+    tree = {"adsets": [{"id": "1", "effective_status": "ACTIVE"}, {"id": "2", "effective_status": "ACTIVE"}]}
+    report = watch.delivery_report(Reader(), tree, now=jst.now_jst())
+    assert report["adsets"][0]["error"] == "ads_http_500" and report["adsets"][1]["impressions"] == 7
+
+
 # ================================================================== resume（masaru 11/02 の例外）
 
 def _stopped_account(env):
@@ -337,7 +440,30 @@ def test_resumeは2段でhubの番号が要り_外しても広告はPAUSEDのま
     assert cfg["ceilings"]["monthly"] == 10000 and cfg["production"] is True
     row = [r for r in ops.read_ops(NAME) if r["op"] == "resume"][-1]
     assert row["approval"] == "A261102-1" and row["result"] == "ok" and row["stopped"]["reason"] == "owner"
+    # 監査 5.6.2 の 2: admin_log に adaccount_resumed が残る（EVENTS に無いと黙って落ちる）。
+    from thth import admin_log
+    logged, _broken = admin_log.read(event="adaccount_resumed")
+    assert logged and logged[-1]["diff"]["approval"] == [None, "A261102-1"]
     assert set(watch._thth_activated(NAME)) == set()     # 始めた物には数えない（始めるのは activate）
+
+
+def test_resumeのあとでもactivateの柵は生きている(env):
+    # 監査 5.6.2 の気づき 5: 印を外しても、production・spend_cap・月の上限などの柵はそのまま効く。
+    meta, cid = _stopped_account(env)
+    first = ops.resume(NAME, by="masaru")
+    ops.resume(NAME, by="masaru", confirm=first["digest"], approval="A261102-1")
+    meta.spend_cap = "0"
+    with pytest.raises(ops.OpsRefused) as exc:
+        ops.activate(NAME, cid, by="masaru")
+    assert exc.value.code == "ads_spend_cap_missing"
+    meta.spend_cap = "30000"
+    raw = json.loads(open(ledger.path_for(NAME)).read()); raw["production"] = False
+    open(ledger.path_for(NAME), "w").write(json.dumps(raw))
+    with pytest.raises(ops.OpsRefused) as exc:
+        ops.activate(NAME, cid, by="masaru")
+    assert exc.value.code == "ads_not_production"
+    assert set(status_posts(env).values()) <= {"ACTIVE", "PAUSED"}
+    assert all(o.get("status") != "ACTIVE" for o in meta.objects.values())
 
 
 def test_resumeは1段目のあと木か印が変わればads_tree_changed(env):

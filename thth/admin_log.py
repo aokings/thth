@@ -56,6 +56,8 @@ EVENTS = frozenset(('account_added', 'account_updated', 'deletion_requested', 'a
                    # Meta 計画 段 5: 広告の書く操作（作る・始める・止める・減らす）・止めの印・月の上限を下げた。
                    # 値は入れない——操作の語・id・最小単位の額・hub の番号だけ。
                    'adaccount_op', 'adaccount_stopped', 'adaccount_lowered',
+                   # 5.6.2: 止めの印を外した（`thth ads resume` の 2 段目・masaru 11/02 の例外・hub の番号つき）。
+                   'adaccount_resumed',
                    # 媒体がアカウント側の断り（x_not_permitted）を返して自動の投稿を止めた・人が戻した（3.19.2）。
                    'publish_held', 'publish_resumed',
                    # 段 3: 設定（approval・安全装置の数値）の変更、持ち主の /activity からの予約の取り消し、

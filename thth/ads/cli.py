@@ -18,7 +18,7 @@
                                                 2 段目: Meta から木を読み直して一致したら始める
     thth ads extend <名前> <adset_id> [--end <時刻>] [--lifetime <額>] --by <名前> [--confirm … --approval …]
     thth ads pause <名前> (--all | --id <id>…) --by <名前>        止める（承認なし・止めた口座でも・待たない）
-    thth ads stop <名前> --by <名前>             全部止める → 読み直して確かめる → spend_cap を下げる → THTH を止める
+    thth ads stop <名前> --by <名前>             全部止める → THTH を止める → 読み直して確かめる → spend_cap を下げる
     thth ads budget show <名前>                  今月の消費の見積もり（請求書ではない）
     thth ads budget lower <名前> (--monthly <額> | --lifetime-max <額> | --days-max <日>)   台帳の上限を下げる
     thth ads budget lower <名前> --adset <id> (--lifetime <額> | --daily <額>)              広告セットの予算を減らす
@@ -602,7 +602,8 @@ def cmd_watch(args) -> int:
                 "stop_unconfirmed": "指定に達したので止めましたが、止まったと確かめられません。管理画面で止めてください",
                 "delivering": "配信が始まりました（表示が 1 以上）",
                 "until_reached": "--until に達したので見張りを終えました（止めていません）",
-                "unreadable": "1 回も読めませんでした（止めていません）"}[v["result"]]
+                "stopped_on_unreadable": "読めない回が続いたので止めました（止め損なうのを避ける側）",
+                "unreadable": "読めない回が続いたか、1 回も読めませんでした（閾値が無いので止めていません）"}[v["result"]]
         print(f"{text}: キャンペーン {v['campaign_id']}")
         print(f"  最後の読み: spend {last.get('spend')}（最小単位 {last.get('spend_minor')}）・impressions "
               f"{last.get('impressions')}・{last.get('read_at')}（全期間・今日を含む）")
@@ -619,9 +620,11 @@ def cmd_watch(args) -> int:
             stop_at_impressions=args.stop_at_impressions, interval=args.interval, until=args.until,
             log=None if args.json else (lambda line: print(line, file=sys.stderr)))
         seen["result"] = value["result"]
+        seen["confirmed"] = (value.get("stop") or {}).get("confirmed")
         return value
     rc = _write_call(args, run, render)
-    if rc == 0 and seen.get("result") in ("stop_unconfirmed", "unreadable"):
+    if rc == 0 and (seen.get("result") in ("stop_unconfirmed", "unreadable") or (
+            seen.get("result") == "stopped_on_unreadable" and not seen.get("confirmed"))):
         return 3
     return rc
 

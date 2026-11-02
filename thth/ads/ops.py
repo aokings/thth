@@ -15,7 +15,7 @@
 | `resume`（**THTH の止めの印を外す**・masaru 11/02 の例外） | — | 待つ | 2 段の digest（印と口座の木を読み直す）＋ hub の番号が**必須**（`require_gate` に関わらず）・理由 `owner` の印だけ・最後の stop が確かめられていること。**広告は ACTIVE にしない** |
 
 **上げる口は無い**: `spend_cap` を上げる・外す、月の上限・1 操作の上限・`ads_enabled`・`production` を
-上げる命令は CLI にも MCP にも無い（D-1 の 3）。`spend_cap` は `stop` が `amount_spent` の 110% まで下げるだけ。
+上げる命令は CLI にも MCP にも無い（D-1 の 3）。`spend_cap` は `stop` が `amount_spent` ＋余白（10%・`lifetime_budget_max` まで）へ下げるだけ。
 **例外は 1 つ**: 止めの印を外す `resume`（masaru 11/02「はいお願いします」）。2 段＋hub の番号で、外すのは印だけ
 （広告・`spend_cap`・上限・旗には触らない）。MCP には出さない（activate と同じく CLI で人が押す）。
 
@@ -55,7 +55,7 @@ PAUSED_EFFECTIVE = frozenset({"PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "DELE
 TRANSIENT_EFFECTIVE = frozenset({"IN_PROCESS"})
 # 読み直しの前に待つ秒（合計 30 秒）。**量の制限では待たない**（読みは urgent のまま）。
 STOP_VERIFY_WAITS = (5, 10, 15)
-# `spend_cap` を下げる先: `amount_spent` の 110%（切り上げ）。11/01 本番で `amount_spent`（608 円）ちょうどは
+# `spend_cap` を下げる先: `amount_spent` ＋余白（10%・切り上げ・`lifetime_budget_max` まで・`spend_cap_target`）。11/01 本番で `amount_spent`（608 円）ちょうどは
 # code 100 で断られた。Meta の公式の文書（ad-account の参照）には下限の決まりが書かれていない。
 # 「使った額の 10% より上でないと下げられない」は管理画面の案内を写した第三者の説明だけで【未・本番未確認】。
 SPEND_CAP_MARGIN_PCT = 10
@@ -65,6 +65,8 @@ WATCH_INTERVAL_DEFAULT = 300
 WATCH_INTERVAL_MIN = 60
 WATCH_UNTIL_DEFAULT_HOURS = 6
 WATCH_UNTIL_MAX_HOURS = 48
+# 閾値つきの watch で読めない回がこの回数続いたら止める（監査 5.6.2 の 1）。
+WATCH_UNREADABLE_STOP = 3
 # 止めの印を外してよい理由（`resume`・masaru 11/02 の例外）。`owner`（`thth ads stop` が書く）だけ。
 # `emergency` は非常の止め、`guard_state_unreadable` は印が読めない（中身を確かめられない）ので外さない。
 RESUMABLE_REASONS = frozenset({"owner"})
@@ -755,11 +757,18 @@ def pause(name, *, by, via="cli", all_=False, ids=(), now=None, base_url=None) -
     return row
 
 
-def spend_cap_target(spent) -> int | None:
-    """`spend_cap` を下げる先（`amount_spent` の 110%・切り上げ）。読めなければ None。"""
+def spend_cap_target(spent, margin_max=None) -> int | None:
+    """`spend_cap` を下げる先（`amount_spent` ＋ 余白）。読めなければ None。
+
+    余白は使った額の 10%（切り上げ）で、`margin_max`（台帳の `ceilings.lifetime_budget_max`）で上から抑える
+    （監査 5.6.2 の 3: 通算の使った額が育つと 10% の余白が 1 操作の上限を越えるため）。
+    """
     if isinstance(spent, bool) or not isinstance(spent, int) or spent <= 0:
         return None
-    return math.ceil(spent * (100 + SPEND_CAP_MARGIN_PCT) / 100)
+    margin = math.ceil(spent * SPEND_CAP_MARGIN_PCT / 100)
+    if isinstance(margin_max, int) and not isinstance(margin_max, bool):
+        margin = min(margin, max(0, margin_max))
+    return spent + margin
 
 
 def _covered_by_parent(tree, rows) -> list:
@@ -824,9 +833,22 @@ def hub_line(name, cfg, unpaused_rows) -> str:
             f"（広告アカウント act_{cfg['act_id']}・{name}" + (f"・{names}" if names else "") + "）")
 
 
+def _mark_stopped(name, row, *, by, via, now) -> None:
+    """THTH の止めの印（ほかが全部だめでも打つ）。打ったら記録も書き直す（途中で落ちても印と記録が残る）。"""
+    try:
+        ledger.stop(name, "owner", by=by, via=via, now=now)
+        row["steps"]["thth_stop"] = {"ok": True}
+    except Exception as exc:  # noqa: BLE001 — 止めの印が書けなくても、Meta 側の結果は返す
+        row["steps"]["thth_stop"] = {"ok": False, "error": type(exc).__name__}
+    _record(name, row["op_id"], row)
+
+
 def stop(name, *, by, via="cli", now=None, base_url=None) -> dict:
-    """D-4 の順: ① 全部 pause → ② Meta から読み直して全部止まったか → ③ `spend_cap` を `amount_spent` まで
-    下げる（補助）→ ④ THTH の止めの印。**「止まった」と言うのは ② が通ったときだけ。**"""
+    """順: ① 全部 pause → ② THTH の止めの印 → ③ Meta から読み直して全部止まったか（IN_PROCESS は待つ）→
+    ④ `spend_cap` を下げる（補助）。**「止まった」と言うのは ③ が通ったときだけ。**
+
+    印を pause の直後・待ちの前に書く（監査 5.6.2 の 4: 待ちの途中で落ちても印が残る）。D-4 の元の順では
+    印は最後だった。記録の `steps` もこの順に並ぶ。"""
     now = now or jst.now_jst()
     by = _actor(by)
     cfg = ledger.load(name)
@@ -853,18 +875,22 @@ def stop(name, *, by, via="cli", now=None, base_url=None) -> dict:
                 row["steps"]["pause"]["error"] = "ads_tree_incomplete"
         except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
             row["steps"]["pause"] = {"ok": False, "error": _failure_code(exc)}
-        # ② 読み直し（監査 段 5 の 2-2: 木を全部読めていなければ「止まった」と言わない）
+    # ② THTH の止めの印（pause の直後・待ちの前）
+    _mark_stopped(name, row, by=by, via=via, now=now)
+    if writer is not None:
+        # ③ 読み直し（監査 段 5 の 2-2: 木を全部読めていなければ「止まった」と言わない）
         row["steps"]["verify"], still = verify_stopped(reader)
-        # ③ spend_cap を下げる（補助・これだけでは「止まった」と言わない・G-18）
+        _record(name, op_id, row)
+        # ④ spend_cap を下げる（補助・これだけでは「止まった」と言わない・G-18）
         try:
             account = reader.account(urgent=True)
             spent, cap = account.get("amount_spent"), account.get("spend_cap")
-            target = spend_cap_target(spent)
+            target = spend_cap_target(spent, ledger.ceilings(cfg).get("lifetime_budget_max"))
             if not isinstance(spent, int) or spent <= 0:
                 row["steps"]["spend_cap"] = {"ok": None, "skipped": "amount_spent が 0 か読めない（0 は上限なしになるので書かない）"}
             elif isinstance(cap, int) and cap != 0 and target >= cap:
-                row["steps"]["spend_cap"] = {"ok": None, "skipped": f"今の spend_cap {cap} が下げる先 {target}（使った額の "
-                                             f"{100 + SPEND_CAP_MARGIN_PCT}%）以下", "before": cap, "amount_spent": spent}
+                row["steps"]["spend_cap"] = {"ok": None, "skipped": f"今の spend_cap {cap} が下げる先 {target}（使った額＋"
+                                             "余白）以下", "before": cap, "amount_spent": spent}
             else:
                 try:
                     writer.lower_spend_cap(target, current_minor=cap)
@@ -878,12 +904,6 @@ def stop(name, *, by, via="cli", now=None, base_url=None) -> dict:
                     row["steps"]["spend_cap"] = step
         except (graphread.AdsReadError, graphwrite.AdsWriteError, meta_errors.RateLimited) as exc:
             row["steps"]["spend_cap"] = {"ok": False, "error": _failure_code(exc)}
-    # ④ THTH の止め（ほかが全部だめでも打つ）
-    try:
-        ledger.stop(name, "owner", by=by, via=via, now=now)
-        row["steps"]["thth_stop"] = {"ok": True}
-    except Exception as exc:  # noqa: BLE001 — 止めの印が書けなくても、Meta 側の結果は返す
-        row["steps"]["thth_stop"] = {"ok": False, "error": type(exc).__name__}
     row["confirmed"] = bool(row["steps"].get("pause", {}).get("ok")) and bool(row["steps"].get("verify", {}).get("ok"))
     row["result"] = "ok" if row["confirmed"] else "unconfirmed"
     if not row["confirmed"]:
@@ -1027,7 +1047,8 @@ def resume(name, *, by, via="cli", confirm=None, approval=None, now=None, base_u
         cfg, mark, tree, value = _resume_prepare(name, base_url=base_url)
         if confirm != value:
             raise OpsRefused("ads_tree_changed", "1 段目のあとで止めの印か口座の木が変わったか、digest が違います。"
-                             "1 段目からやり直してください（何も変えていません）")
+                             "1 段目からやり直してください（何も変えていません）。止めた直後は Meta が IN_PROCESS "
+                             "から PAUSED に変わる途中のことがあるので、少し待って 1 段目から")
         op_id = budget.new_op_id(now)
         row = {"op": "resume", "op_id": op_id, "at": jst.iso(now), "by": by, "via": via, "adaccount": name,
                "act_id": cfg["act_id"], "digest": value, "approval": approval, "stopped": mark,
@@ -1057,8 +1078,13 @@ def watch_campaign(name, campaign_id, *, by, via="cli", stop_at_spend=None, stop
     `stop_at_spend`（最小単位）か `stop_at_impressions` に達したら `stop()`（口座の全部を止める・承認なし）。
     指定が無ければ「表示が 1 以上になった（配信が始まった）」で知らせて終わる。`until` で必ず終わる。
 
-    結果 `result`: `stopped`（止めて確かめた）・`stop_unconfirmed`・`delivering`（始まった）・
-    `until_reached`・`unreadable`（1 回も読めなかった）。読めなかった回は `failed_reads` に数える。
+    結果 `result`: `stopped`（止めて確かめた）・`stop_unconfirmed`・`stopped_on_unreadable`（閾値つきで
+    読めない回が `WATCH_UNREADABLE_STOP` 回続いたので止めた）・`delivering`（始まった）・`until_reached`・
+    `unreadable`（1 回も読めなかった・閾値なしで読めない回が続いた。止めない）。
+
+    **読めない回**は、読みが失敗した回と、閾値に要る欄（`spend_minor`・`impressions`。閾値なしなら
+    `impressions`）が数として読めない回（監査 5.6.2 の 1: 読めない間に止めずに回り続けない）。止めるのは
+    戻せる・止め損なうのはお金、なので閾値つきでは止める側に倒す。終わったら `ops/` に 1 行（`op: watch`）残す。
     """
     now_fn = now_fn or jst.now_jst
     sleep = sleep or _sleep
@@ -1088,6 +1114,10 @@ def watch_campaign(name, campaign_id, *, by, via="cli", stop_at_spend=None, stop
            "thresholds": {"spend_minor": stop_at_spend, "impressions": stop_at_impressions},
            "interval_s": interval, "started_at": jst.iso(start), "until": meta_time(end_at),
            "reads": 0, "failed_reads": 0, "errors": [], "last": None, "result": None}
+    thresholds = stop_at_spend is not None or stop_at_impressions is not None
+    needed = (["spend_minor"] if stop_at_spend is not None else []) + \
+        (["impressions"] if stop_at_impressions is not None or not thresholds else [])
+    in_a_row = 0
     while True:
         out["reads"] += 1
         try:
@@ -1097,11 +1127,24 @@ def watch_campaign(name, campaign_id, *, by, via="cli", stop_at_spend=None, stop
             out["last"] = last
             log(f"  {last['read_at']} spend {last.get('spend')}（最小単位 {last.get('spend_minor')}）・"
                 f"impressions {last.get('impressions')}")
+            missing = [k for k in needed if isinstance(last.get(k), bool) or not isinstance(last.get(k), int)]
+            if missing:
+                raise graphread.AdsReadError("ads_field_unreadable:" + ",".join(missing))
         except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
             out["failed_reads"] += 1
+            in_a_row += 1
             out["errors"] = (out["errors"] + [_failure_code(exc)])[-5:]
-            log(f"  読めませんでした（{_failure_code(exc)}）・読めなかった回 {out['failed_reads']}")
+            log(f"  読めませんでした（{_failure_code(exc)}）・続けて {in_a_row} 回・読めなかった回 {out['failed_reads']}")
             last = None
+            if in_a_row >= WATCH_UNREADABLE_STOP:
+                if thresholds:
+                    out["stop"] = stop(name, by=by, via=via, base_url=base_url)
+                    out["result"] = "stopped_on_unreadable"
+                else:
+                    out["result"] = "unreadable"
+                break
+        else:
+            in_a_row = 0
         if last is not None:
             spent, shown = last.get("spend_minor"), last.get("impressions")
             hit = []
@@ -1123,4 +1166,12 @@ def watch_campaign(name, campaign_id, *, by, via="cli", stop_at_spend=None, stop
             break
         sleep(min(interval, max(1, int(remaining))))
     out["ended_at"] = jst.iso(now_fn())
+    # 止めなかった回も含めて 1 行残す（監査 5.6.2 の気づき 2）。止めた中身は stop の記録が正本。
+    op_id = budget.new_op_id(now_fn())
+    _record(name, op_id, {"op": "watch", "op_id": op_id, "at": out["started_at"], "ended_at": out["ended_at"],
+                          "by": by, "via": via, "adaccount": name, "act_id": cfg["act_id"],
+                          "campaign_id": campaign_id, "thresholds": out["thresholds"], "result": out["result"],
+                          "reads": out["reads"], "failed_reads": out["failed_reads"], "errors": out["errors"],
+                          "hit": out.get("hit"), "stop_op_id": (out.get("stop") or {}).get("op_id")})
+    out["op_id"] = op_id
     return out

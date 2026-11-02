@@ -594,7 +594,8 @@ ADS_TOOLS = [
          "by": {"type": "string", "description": "打った人の名前"}},
          "required": ["adaccount", "by"], "additionalProperties": False}},
     {"name": "thth_ads_stop",
-     "description": ("広告の口座を止める: 全部 PAUSED → Meta から読み直して確かめる → spend_cap を使った額まで下げる → THTH の止め。"
+     "description": ("広告の口座を止める: 全部 PAUSED → THTH の止め → Meta から読み直して確かめる（処理中なら最大 30 秒待つ）"
+                     " → spend_cap を使った額＋少しの余白まで下げる。"
                      "「止まった」と言うのは読み直しで確かめたときだけ。言えなければ hub に送る 1 行（waiting_on_masaru）を返すので、"
                      "そのまま hub に送り、管理画面で止めてもらう"),
      "inputSchema": {"type": "object", "properties": {
