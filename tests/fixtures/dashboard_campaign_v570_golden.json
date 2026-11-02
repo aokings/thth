@@ -1,0 +1,419 @@
+{
+  "schema": "thth.dashboard/1",
+  "report_type": "dashboard",
+  "level": "campaign",
+  "generated_at": "2026-10-28T11:20:00+09:00",
+  "project": "kp",
+  "accounts": [
+    "kp-hatenablog",
+    "kp-threads",
+    "kp-x"
+  ],
+  "mediums": {
+    "kp-hatenablog": "hatenablog",
+    "kp-threads": "threads",
+    "kp-x": "x"
+  },
+  "id": "flow-01",
+  "scenario": {
+    "available": true,
+    "generated_at": "2026-10-28T11:20:00+09:00",
+    "n_campaigns": 3,
+    "n_campaigns_stalled": 1,
+    "n_series": 1,
+    "untied": {
+      "drafts": 3,
+      "deliveries": 0
+    },
+    "cannot_say": []
+  },
+  "as_of": {
+    "generated_at": "2026-10-28T11:20:00+09:00",
+    "measured": null,
+    "schedule": "2026-10-28T11:20:00+09:00",
+    "events": "2026-10-28T11:20:00+09:00",
+    "scenario": "2026-10-28T11:20:00+09:00",
+    "site_visits": "2026-10-28T06:00:00+09:00"
+  },
+  "skill": {
+    "name": "thth-flow",
+    "path": "skills/thth-flow/SKILL.md",
+    "command": "thth scenario skill --print",
+    "text": "流れの型は skill thth-flow（`thth scenario skill` で場所、`thth scenario skill --print` で全文）。段の名・印（UTM）・各段の命令・広告に進む条件はそこに"
+  },
+  "campaign": {
+    "id": "flow-01",
+    "title": "流れの見本",
+    "goal_text": null,
+    "declared_in": "docs/sns/scenarios/flow-01.md",
+    "state": "active",
+    "stage": {
+      "name": "boost",
+      "index": 4,
+      "of": 4
+    },
+    "stages": [
+      {
+        "name": "collect",
+        "medium": "hatena_bookmark",
+        "label": "リサーチ",
+        "need": 2,
+        "tag": "flow-01",
+        "target": "external",
+        "done": 2,
+        "pending": 0,
+        "by_target": {
+          "own": 1,
+          "external": 2
+        },
+        "satisfied": true,
+        "satisfied_by": "count"
+      },
+      {
+        "name": "promote",
+        "medium": [
+          "threads",
+          "x"
+        ],
+        "label": "告知",
+        "need": 1,
+        "done": 1,
+        "pending": 0,
+        "drafts": 1,
+        "by_medium": {
+          "threads": {
+            "done": 1,
+            "pending": 0
+          },
+          "x": {
+            "done": 0,
+            "pending": 0
+          }
+        },
+        "satisfied": true,
+        "satisfied_by": "count"
+      },
+      {
+        "name": "selfbm",
+        "medium": "hatena_bookmark",
+        "label": "セルクマ",
+        "need": 1,
+        "tag": "flow-01",
+        "target": "own",
+        "done": 1,
+        "pending": 0,
+        "by_target": {
+          "own": 1,
+          "external": 2
+        },
+        "satisfied": true,
+        "satisfied_by": "count"
+      },
+      {
+        "name": "boost",
+        "medium": "ads",
+        "label": "広告",
+        "need": 1,
+        "done": 0,
+        "pending": 1,
+        "budget_minor": null,
+        "currency": null,
+        "spend_minor": null,
+        "cannot_say": {
+          "spend_minor": "ads_spend_not_recorded"
+        },
+        "satisfied": false
+      }
+    ],
+    "next": [
+      {
+        "stage": "boost",
+        "kind": "wait",
+        "what": "PAUSED で作った広告 1 本の開始待ち",
+        "label": "作った広告 1 本（止めたまま）を始めるか決める"
+      }
+    ],
+    "last_movement_at": "2026-10-23T09:00:00+09:00",
+    "stalled": null,
+    "cannot_say": [],
+    "actions": [
+      {
+        "label": "押し出す候補",
+        "prompt": "ダッシュボードから: [kp/campaign:flow-01] 有機の告知の 48〜72 時間の反応を並べてください（skill thth-flow・thth-ads）。広告で押し出す 1 本は私が選びます。",
+        "irreversible": false
+      },
+      {
+        "label": "成果を見る",
+        "prompt": "ダッシュボードから: [kp/campaign:flow-01] このキャンペーンの投稿の成果（インプレッション・反応・クリック）を見せてください。",
+        "irreversible": false
+      },
+      {
+        "label": "一時停止",
+        "prompt": "ダッシュボードから: [kp/campaign:flow-01] このキャンペーンを一時停止にしてください。理由は私が言います。糸のファイルを書き換えます。（戻せない操作です。実行の前に 1 度確かめてください）",
+        "irreversible": true
+      }
+    ],
+    "steps": [
+      {
+        "name": "collect",
+        "medium": "hatena_bookmark",
+        "label": "リサーチ",
+        "need": 2,
+        "tag": "flow-01",
+        "target": "external",
+        "done": 2,
+        "pending": 0,
+        "by_target": {
+          "own": 1,
+          "external": 2
+        },
+        "satisfied": true,
+        "satisfied_by": "count"
+      },
+      {
+        "name": "promote",
+        "medium": [
+          "threads",
+          "x"
+        ],
+        "label": "告知",
+        "need": 1,
+        "done": 1,
+        "pending": 0,
+        "drafts": 1,
+        "by_medium": {
+          "threads": {
+            "done": 1,
+            "pending": 0
+          },
+          "x": {
+            "done": 0,
+            "pending": 0
+          }
+        },
+        "satisfied": true,
+        "satisfied_by": "count"
+      },
+      {
+        "name": "selfbm",
+        "medium": "hatena_bookmark",
+        "label": "セルクマ",
+        "need": 1,
+        "tag": "flow-01",
+        "target": "own",
+        "done": 1,
+        "pending": 0,
+        "by_target": {
+          "own": 1,
+          "external": 2
+        },
+        "satisfied": true,
+        "satisfied_by": "count"
+      },
+      {
+        "name": "boost",
+        "medium": "ads",
+        "label": "広告",
+        "need": 1,
+        "done": 0,
+        "pending": 1,
+        "budget_minor": null,
+        "currency": null,
+        "spend_minor": null,
+        "cannot_say": {
+          "spend_minor": "ads_spend_not_recorded"
+        },
+        "satisfied": false
+      }
+    ],
+    "history": [],
+    "deliverables": [
+      {
+        "stage": "collect",
+        "kind": "bookmark",
+        "status": "confirmed",
+        "head": "ブックマーク",
+        "at": "2026-10-21T09:00:00+09:00",
+        "ref": null,
+        "account": null,
+        "medium": null,
+        "delivery": null
+      },
+      {
+        "stage": "collect",
+        "kind": "bookmark",
+        "status": "confirmed",
+        "head": "ブックマーク",
+        "at": "2026-10-22T09:00:00+09:00",
+        "ref": null,
+        "account": null,
+        "medium": null,
+        "delivery": null
+      },
+      {
+        "stage": "promote",
+        "kind": "draft",
+        "status": "posted",
+        "head": "本文はここに書く秘密の一文",
+        "at": "2026-10-22T07:00:03+09:00",
+        "ref": "th-flow-01.md",
+        "account": "kp-threads",
+        "medium": "threads",
+        "delivery": null
+      },
+      {
+        "stage": "promote",
+        "kind": "draft",
+        "status": "draft",
+        "head": "本文はここに書く秘密の一文",
+        "at": "2026-11-02T07:00:00+09:00",
+        "ref": "x-flow-01.md",
+        "account": "kp-x",
+        "medium": "x",
+        "delivery": null
+      },
+      {
+        "stage": "selfbm",
+        "kind": "bookmark",
+        "status": "confirmed",
+        "head": "ブックマーク",
+        "at": "2026-10-23T09:00:00+09:00",
+        "ref": null,
+        "account": null,
+        "medium": null,
+        "delivery": null
+      },
+      {
+        "stage": "boost",
+        "kind": "ad",
+        "status": "paused",
+        "head": "広告",
+        "at": "2026-10-24T10:00:00+09:00",
+        "ref": "th-flow-01.md",
+        "account": "kp-ads",
+        "medium": "ads",
+        "delivery": null
+      }
+    ],
+    "outcomes": {
+      "impressions": null,
+      "impressions_by_account": {},
+      "bookmarks_received": null,
+      "blog_pv": null,
+      "article_clicks": null,
+      "per_episode": [
+        {
+          "ref": "th-flow-01.md",
+          "head": "本文はここに書く秘密の一文",
+          "account": "kp-threads",
+          "medium": "threads",
+          "status": "posted",
+          "at": "2026-10-22T07:00:03+09:00",
+          "delivery": null,
+          "post_id": "111_222",
+          "impressions": null,
+          "reactions_total": null,
+          "engagement_rate_pct": null,
+          "bookmarks_received": null,
+          "clicks": null,
+          "collected_at": null,
+          "cannot_say": {
+            "impressions": "not_measured_yet",
+            "clicks": "article_clicks_not_connected"
+          }
+        },
+        {
+          "ref": "x-flow-01.md",
+          "head": "本文はここに書く秘密の一文",
+          "account": "kp-x",
+          "medium": "x",
+          "status": "draft",
+          "at": "2026-11-02T07:00:00+09:00",
+          "delivery": null,
+          "post_id": null,
+          "impressions": null,
+          "reactions_total": null,
+          "engagement_rate_pct": null,
+          "bookmarks_received": null,
+          "clicks": null,
+          "collected_at": null,
+          "cannot_say": {
+            "impressions": "not_published_yet",
+            "clicks": "article_clicks_not_connected"
+          }
+        }
+      ],
+      "cannot_say": {
+        "blog_pv": "blog_pv_not_collected",
+        "impressions": "not_measured_yet",
+        "bookmarks_received": "no_deliveries"
+      },
+      "article_visits": {
+        "label": "本記事への訪問（GA4・hub 経由）",
+        "source": "ga4_via_hub",
+        "as_of": "2026-10-28T06:00:00+09:00",
+        "sessions": 6,
+        "engaged_sessions": null,
+        "sites": [
+          {
+            "site": "kopicha.org",
+            "window": {
+              "from": "2026-10-21",
+              "to": "2026-10-27"
+            },
+            "generated_at": "2026-10-28T06:00:00+09:00",
+            "imported_at": "2026-10-28T11:20:00+09:00",
+            "sessions": 6,
+            "engaged_sessions": null,
+            "by_medium": {
+              "social": 6
+            },
+            "campaigns": [
+              {
+                "campaign": "th-flow-01",
+                "file": "th-flow-01.md",
+                "source": "threads",
+                "medium": "social",
+                "sessions": 6,
+                "engaged_sessions": null,
+                "avg_duration_s": 31.5,
+                "landing_page": "/blog/sencha"
+              }
+            ],
+            "rows_total": 9,
+            "untied_campaigns": {
+              "campaigns": 5,
+              "sessions": 93,
+              "by_reason": {
+                "not_a_campaign": 3,
+                "no_manuscript": 1,
+                "no_thread": 1,
+                "ambiguous": 0
+              }
+            },
+            "cannot_say": null
+          }
+        ],
+        "cannot_say": null
+      }
+    },
+    "deliveries": []
+  },
+  "actions": [
+    {
+      "label": "メディアに戻る",
+      "prompt": "ダッシュボードから: [kp] このメディアのダッシュボードを開いてください（thth dashboard kp --json）。",
+      "irreversible": false
+    }
+  ],
+  "cannot_say": [
+    "events:source_unreadable"
+  ],
+  "limitations": [
+    "読むだけ。媒体の API は呼ばず、THTH の記録と段 1 の宣言の読みだけを束ねる",
+    "要対応の並びは days の大きい順だけ（THTH は重みづけ・おすすめをしない）",
+    "インプレッション・エンゲージメント率は口座をまたいで足さない",
+    "他人の本文（はてブのコメント・返信の本文）は入れない。題・head・next は 60 字まで",
+    "取れない数は null と cannot_say（0 と混ぜない）"
+  ]
+}

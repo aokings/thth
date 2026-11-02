@@ -231,8 +231,10 @@ def test_stalled_campaign_details(golden_world):
     payload = scenario.build(PROJECT, now=NOW)
     row = next(t for t in payload["threads"] if t["id"] == "num-04-sencha")
     collect, diary, article, announce, warm = row["stages"]
-    assert collect == {"name": "collect", "medium": "hatena_bookmark", "need": 5, "tag": "num-04", "done": 5,
-                       "pending": 0, "satisfied": True, "satisfied_by": "count"}
+    # 5.7.0 で足した鍵: `label`（段の日本語の名）・`by_target`（自分の記事か他人のページか）。
+    assert collect == {"name": "collect", "medium": "hatena_bookmark", "label": "リサーチ", "need": 5, "tag": "num-04",
+                       "done": 5, "pending": 0, "by_target": {"own": 0, "external": 5},
+                       "satisfied": True, "satisfied_by": "count"}
     assert diary["done"] == 1 and diary["satisfied"] is True
     assert article["satisfied"] is False and article["signal"] == "article_published"
     assert announce["medium"] == ["threads", "x"] and announce["done"] == 0 and announce["drafts"] == 1

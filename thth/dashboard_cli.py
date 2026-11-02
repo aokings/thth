@@ -708,10 +708,13 @@ def _project_parts(project, names, now, allowed, cannot_say, scenario_allowed=No
     return summary, previous, events, schedule, pending, scenario_node, scenario
 
 
-def _as_of(now, names, events, scenario):
+def _as_of(now, names, events, scenario, project=None):
+    from . import site_visits
     return {"generated_at": jst.iso(now), "measured": _measured_as_of(names),
             "schedule": jst.iso(now), "events": (events or {}).get("generated_at"),
-            "scenario": (scenario or {}).get("generated_at")}
+            "scenario": (scenario or {}).get("generated_at"),
+            # 5.7.0 段 3: hub から受け取った訪問の控えのいちばん新しい generated_at（無ければ null）。
+            "site_visits": site_visits.as_of(project) if project else None}
 
 
 def _kpi(attention, pending, schedule, summary, previous, now):
@@ -744,7 +747,7 @@ def build_project(project, *, now=None, allowed_names=None, full=False) -> dict:
     payload = _head("project", now, project)
     payload.update({
         "accounts": names, "mediums": mediums,
-        "as_of": _as_of(now, names, events, scenario),
+        "as_of": _as_of(now, names, events, scenario, project),
         "kpi": _kpi(attention, pending, schedule, summary, previous, now),
         "attention": attention, "sort_basis": SORT_BASIS,
         "pending_approval": _pending_rows(project, pending),
@@ -799,7 +802,7 @@ def build_all(*, now=None, allowed_names=None) -> dict:
             "scenario": scenario_node, "week": week,
             "first_attention": ({k: v for k, v in attention[0].items() if k != "actions"}
                                 if attention else None),
-            "as_of": _as_of(now, names, events, scenario),
+            "as_of": _as_of(now, names, events, scenario, project),
             "cannot_say": sorted(local),
             "actions": [action("開く", project, None, None,
                                f"このメディアのダッシュボードを開いてください（thth dashboard {project} --json）。")]})
@@ -955,14 +958,16 @@ def _campaign_detail(project, thread, events, now, allowed_names=None):
                 # 題: 原稿は自分の原稿の先頭 60 字・出来事は窓口の書いた行・はてブは対象の題が台帳に無いので
                 # 「ブックマーク」（第三者のコメント・user は出さない）。
                 head = item.get("head") if kind in ("event", "draft") else (
-                    "ブックマーク" if kind == "bookmark" else None)
+                    "ブックマーク" if kind == "bookmark" else "広告" if kind == "ad" else None)
                 deliverables.append(_clean({
                     "stage": stage.get("name"), "kind": kind,
                     "status": _item_status(item) if kind == "draft" else (item.get("status") or "published"),
                     "head": head,
                     "at": item.get("posted_at") or item.get("publish_at") or item.get("at"),
-                    "ref": item.get("file") or item.get("name"), "account": item.get("account"),
-                    "medium": item.get("medium"), "delivery": item.get("delivery")}))
+                    "ref": item.get("file") or item.get("name") or item.get("campaign_id"),
+                    "account": item.get("account") or item.get("adaccount"),
+                    "medium": item.get("medium") or ("ads" if kind == "ad" else None),
+                    "delivery": item.get("delivery")}))
         episodes, unreadable = _episodes(show.get("items") or [])
         cannot_say |= unreadable
     else:
@@ -976,6 +981,15 @@ def _campaign_detail(project, thread, events, now, allowed_names=None):
         "blog_pv": None, "article_clicks": None,
         "per_episode": episodes if show is not None else None,
         "cannot_say": dict(NOT_COLLECTED)}
+    # 5.7.0 段 3: 本記事への訪問（GA4・hub 経由）。控えのある project では「つないでいない」を外す。
+    visits = _clean((show or {}).get("site_visits")) if show is not None else None
+    outcomes["article_visits"] = visits
+    if visits is not None and visits.get("cannot_say") != "site_visits_not_imported":
+        outcomes["cannot_say"].pop("article_clicks", None)
+    if visits is None:
+        outcomes["cannot_say"]["article_visits"] = "needs_scenario_show"
+    elif visits.get("sessions") is None:
+        outcomes["cannot_say"]["article_visits"] = visits.get("cannot_say")
     if show is None:
         outcomes["cannot_say"].update(impressions="needs_scenario_show", bookmarks_received="needs_scenario_show",
                                       per_episode="needs_scenario_show")
@@ -1014,7 +1028,7 @@ def _campaign_actions(project, thread):
                            "糸のファイルに出来事を 1 行足して、次のステップを見せてください。"))
         acts.append(action("記事の構成案", project, "campaign", ident,
                            "ここまでのブックマークとブログから、本記事の構成案を作ってください。"))
-    if stage in ("article", "announce"):
+    if stage in ("article", "announce", "promote"):
         acts.append(action("告知を先に下書き", project, "campaign", ident,
                            "SNS 告知の下書きを先に作ってください（出すのは記事の公開と承認のあと）。"))
     if stage == "collect":
@@ -1023,6 +1037,10 @@ def _campaign_actions(project, thread):
     if stage == "diary":
         acts.append(action("仮説の下書き", project, "campaign", ident,
                            "ブックマークから仮説のブログの下書きを作ってください。承認は私がします。"))
+    if stage == "boost":
+        acts.append(action("押し出す候補", project, "campaign", ident,
+                           "有機の告知の 48〜72 時間の反応を並べてください（skill thth-flow・thth-ads）。"
+                           "広告で押し出す 1 本は私が選びます。"))
     if stage == "warm":
         acts.append(action("返信を見る", project, "campaign", ident,
                            "告知への返信と、返していないものを見せてください。"))
@@ -1109,7 +1127,7 @@ def build_detail(project, level, ident, *, now=None, allowed_names=None) -> dict
     scenario_node, scenario = _scenario_node(project, now, allowed_names)
     payload = _head(level, now, project)
     payload.update({"accounts": names, "mediums": _mediums(names), "id": ident, "scenario": scenario_node,
-                    "as_of": _as_of(now, names, events, scenario)})
+                    "as_of": _as_of(now, names, events, scenario, project)})
     if scenario is None:
         payload.update({level: None, "cannot_say": sorted(cannot_say | {scenario_node["cannot_say"]}),
                         "limitations": _limitations()})
@@ -1118,6 +1136,8 @@ def build_detail(project, level, ident, *, now=None, allowed_names=None) -> dict
         thread = _find(scenario, "threads", ident)
         if thread is None:
             raise DashboardError("campaign_unknown")
+        from . import flow_skill
+        payload["skill"] = flow_skill.skill_ref()   # 5.7.0: 流れの型の skill（出力の先頭の 1 行）
         payload["campaign"] = _campaign_detail(project, thread, events, now, allowed_names)
     else:
         series = _find(scenario, "series", ident)
@@ -1171,6 +1191,8 @@ def _n(value):
 
 def render(payload, out=print) -> None:
     level = payload.get("level")
+    if payload.get("skill"):
+        out("skill: " + (payload["skill"].get("text") or payload["skill"].get("name") or ""))
     out(f"ダッシュボード  {payload.get('project') or '全メディア'}（{level}）  {payload.get('generated_at')}")
     if level == "all":
         t = payload.get("totals") or {}
@@ -1208,6 +1230,13 @@ def render(payload, out=print) -> None:
             out(f"  —（{(payload.get('scenario') or {}).get('cannot_say')}）")
         else:
             out(f"  {node.get('id')} {node.get('title') or ''}")
+            if level == "campaign":
+                from .scenario_cli import _stage_cell, visits_lines
+                steps = [s for s in node.get("steps") or [] if isinstance(s, dict) and s.get("name")]
+                if steps:
+                    out("  段: " + "  ".join(_stage_cell(s) for s in steps))
+                for line in visits_lines((node.get("outcomes") or {}).get("article_visits")):
+                    out("  " + line)
             for act in node.get("actions") or []:
                 out(f"  押すと: {act['prompt']}")
     if payload.get("cannot_say"):

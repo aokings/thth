@@ -33,7 +33,10 @@ SCENARIOS_DIRNAME = "scenarios"
 ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 KINDS = ("thread", "series")
 SNS_MEDIA = ("threads", "x", "bluesky", "mastodon", "facebook", "instagram")
-MEDIA = ("hatena_bookmark", "hatenablog", "site") + SNS_MEDIA
+# `ads`（広告・5.7.0）: 広告の口座の記録（`adaccount_state/<名前>/ops/` の boost・activate）を読むだけ。
+MEDIA = ("hatena_bookmark", "hatenablog", "site") + SNS_MEDIA + ("ads",)
+# はてブの段の `target=`（5.7.0）: `own` は自分の記事（配信の台帳の記事・セルクマ）、`external` は他人のページ。
+BOOKMARK_TARGETS = ("own", "external")
 STATES = ("active", "stalled", "closed")
 DEFAULT_STALE_AFTER_DAYS = 7
 DEFAULT_STOCK_FLOOR = 2
@@ -52,7 +55,7 @@ STAGE_RE = re.compile(r"-\s+([a-z][a-z0-9_]{0,31}):\s*(.*)")
 EVENT_RE = re.compile(r"-\s+(\d{4}-\d{2}-\d{2})\s+([a-z][a-z0-9_]{0,31})(?:\s+(.*))?")
 DATE_LIKE_RE = re.compile(r"-\s+\d{4}-")
 TIME_RE = re.compile(r"([01]\d|2[0-3]):([0-5]\d)")
-STAGE_OPTIONS = ("need", "tag", "signal", "replies_within_hours")
+STAGE_OPTIONS = ("need", "tag", "signal", "replies_within_hours", "target")
 # events の id の版の語（設計 §4.3）。
 EVENT_PREFIX = "thth.scenario/1"
 
@@ -137,7 +140,7 @@ def _parse_stage(name, rest, problems):
         problems.append({"code": "stage_medium_unknown", "detail": f"{name}: {tokens[0]}（並べられるのは SNS だけ）"})
         return None
     stage = {"name": name, "media": media, "need": 1, "tag": None, "signal": None,
-             "replies_within_hours": None}
+             "replies_within_hours": None, "target": None}
     for token in tokens[1:]:
         key, sep, value = token.partition("=")
         if not sep or key not in STAGE_OPTIONS or not value:
@@ -151,6 +154,10 @@ def _parse_stage(name, rest, problems):
             stage[key] = number
         else:
             stage[key] = value
+    if stage["target"] is not None and (media != ["hatena_bookmark"] or stage["target"] not in BOOKMARK_TARGETS):
+        problems.append({"code": "stage_option_invalid",
+                         "detail": f"{name}: target= ははてなブックマークの段だけ（own か external）"})
+        stage["target"] = None
     if stage["tag"] is not None and media != ["hatena_bookmark"]:
         problems.append({"code": "stage_option_invalid", "detail": f"{name}: tag= ははてなブックマークの段だけ"})
     if stage["signal"] is not None and media != ["site"]:
@@ -286,6 +293,7 @@ class Item:
     delivery: str | None
     not_after: datetime.datetime | None
     head: str | None = None   # 自分の原稿の題（先頭 60 字・`report.schedule` と同じ取り方）
+    rel: str | None = None    # repo の根からの相対（posix）。GA4 の campaign との照合だけに使い、出力には出さない
 
 
 @dataclasses.dataclass
@@ -300,6 +308,8 @@ class Ledger:
     cannot_say: set
     now: datetime.datetime
     hidden: tuple = ()        # 同じ project でも範囲（`allowed_names`）の外で読まなかった口座
+    ads: list = dataclasses.field(default_factory=list)   # 広告の記録（boost 1 本 1 行・宣言に ads の段があるときだけ読む）
+    ads_accounts: list = dataclasses.field(default_factory=list)   # project の広告の口座の名前
 
 
 def resolve(target):
@@ -480,6 +490,7 @@ def load_ledger(project, names, *, now=None, hidden=()) -> Ledger:
                 cannot.add("queue_unreadable")
                 continue
             if item is not None:
+                item.rel = _rel(os.path.join(queue, file_name), repo)
                 items.append(item)
     deliveries, bookmarks = {}, []
     hatena = sorted(name for name, cfg in accounts.items() if cfg.get("media") == "hatenablog")
@@ -502,12 +513,95 @@ def load_ledger(project, names, *, now=None, hidden=()) -> Ledger:
                     continue
                 tags = row.get("tags") if isinstance(row.get("tags"), list) else []
                 bookmarks.append({"tags": [t for t in tags if isinstance(t, str)],
-                                  "at": jst.parse(row.get("sent_at"))})
+                                  "at": jst.parse(row.get("sent_at")),
+                                  "target": row.get("target") if row.get("target") in BOOKMARK_TARGETS else None,
+                                  "delivery": row.get("delivery") if isinstance(row.get("delivery"), str) else None})
             if errors:
                 cannot.add("sent_unreadable")
+    ads, ads_accounts = [], []
+    if any("ads" in stage["media"] for decl in declarations for stage in decl.stages):
+        ads, ads_accounts = _load_ads(project, cannot)
     return Ledger(project=project, accounts=accounts, items=items, declarations=declarations,
                   deliveries=deliveries, bookmarks=bookmarks, hatena_accounts=hatena,
-                  cannot_say=cannot, now=now, hidden=tuple(hidden))
+                  cannot_say=cannot, now=now, hidden=tuple(hidden), ads=ads, ads_accounts=ads_accounts)
+
+
+def _utm_campaign(url_tags):
+    """広告の `url_tags` の `utm_campaign`（原稿のファイル名）。無ければ None。"""
+    if not isinstance(url_tags, str):
+        return None
+    for pair in url_tags.split("&"):
+        key, _, value = pair.partition("=")
+        if key == "utm_campaign" and value and "{" not in value:
+            return value
+    return None
+
+
+def _load_ads(project, cannot):
+    """project の広告の口座の記録（`ops/`）から boost 1 本 1 行。**読むだけ**（Meta は呼ばない・書かない）。
+
+    行: 作った時刻・キャンペーンの id・元の投稿（`object_story_id`）・印の campaign・通しの予算（最小単位）・
+    始めたか（同じキャンペーンの activate が ok か partial）。使った額（spend）は口座の記録に
+    キャンペーンごとには無いので持たない（`ads_spend_not_recorded`）。
+    """
+    try:
+        from .ads import ledger as ads_ledger, ops as ads_ops
+    except ImportError:   # 広告を外した配布
+        cannot.add("ads_unreadable")
+        return [], []
+    names = []
+    for name in ads_ledger.list_names():
+        try:
+            cfg = ads_ledger.load(name)
+        except (ads_ledger.AdAccountError, OSError, ValueError, TypeError):
+            cannot.add("ads_unreadable")
+            continue
+        if cfg.get("project") == project:
+            names.append((name, cfg))
+    rows = []
+    for name, cfg in names:
+        ops_rows = ads_ops.read_ops(name)
+        activated = {}
+        for row in ops_rows:
+            if row.get("op") == "activate" and row.get("result") in ("ok", "partial"):
+                activated.setdefault(row.get("campaign_id"), row)
+        for row in ops_rows:
+            if row.get("op") != "boost" or row.get("result") != "ok":
+                continue
+            plan = row.get("plan") if isinstance(row.get("plan"), dict) else {}
+            created = row.get("created") if isinstance(row.get("created"), dict) else {}
+            campaign_id = created.get("campaign_id")
+            act = activated.get(campaign_id)
+            budget = plan.get("lifetime_minor")
+            rows.append({"adaccount": name, "campaign_id": campaign_id, "at": jst.parse(row.get("at")),
+                         "object_story_id": plan.get("object_story_id"),
+                         "utm_campaign": _utm_campaign(plan.get("url_tags")),
+                         "objective": plan.get("objective"), "platforms": list(plan.get("platforms") or []),
+                         "budget_minor": budget if isinstance(budget, int) and not isinstance(budget, bool) else None,
+                         "currency": cfg.get("currency"), "activated": act is not None,
+                         "activated_at": jst.parse(act.get("at")) if act else None})
+    return rows, [name for name, _cfg in names]
+
+
+def _ads_for(decl_id, items, ledger):
+    """糸に結ぶ広告: 元の投稿の id が糸の原稿の `post_id` か、印の campaign が糸の原稿の名前。"""
+    from . import site_visits
+    posts = {pid for item in items for pid in item.post_ids if isinstance(pid, str)}
+    index = site_visits._index(ledger.items)
+    out = []
+    for ad in ledger.ads:
+        file = None
+        if ad["object_story_id"] in posts:
+            file = next((i.file for i in items if ad["object_story_id"] in i.post_ids), None)
+        elif ad["utm_campaign"]:
+            thread, item, _reason = site_visits.tie(ad["utm_campaign"], index)
+            if thread != decl_id:
+                continue
+            file = item.file
+        else:
+            continue
+        out.append(dict(ad, file=file))
+    return out
 
 
 def usable_declarations(ledger):
@@ -610,6 +704,15 @@ def _warm(stage, items, ledger):
     return total, overdue, times
 
 
+def _thread_marks(stage, decl, items, ledger):
+    """はてブの段に入るブックマーク: タグ（既定は糸の id）が付いたもの。`target=own` の段は、糸のはてなブログの
+    配信 id を `--delivery` で付けた自分の記事のブックマークも入れる（タグを忘れても数える）。"""
+    tag = stage["tag"] or decl.id
+    deliveries = {item.delivery for item in items if item.medium == "hatenablog" and item.delivery}
+    return [b for b in ledger.bookmarks
+            if tag in b["tags"] or (stage["target"] == "own" and b.get("delivery") in deliveries)]
+
+
 def thread_status(decl, ledger) -> dict:
     """糸 1 本の現在地（`thth.scenario/1` の `threads[]` の 1 行）。"""
     now = ledger.now
@@ -622,9 +725,9 @@ def thread_status(decl, ledger) -> dict:
             times.append(at)
     started = _date_at(_plain(decl.fm.get("started")))
     conflict = 0
-    for stage in decl.stages:
+    for position, stage in enumerate(decl.stages, start=1):
         medium = stage["media"][0] if len(stage["media"]) == 1 else list(stage["media"])
-        row = {"name": stage["name"], "medium": medium}
+        row = {"name": stage["name"], "medium": medium, "label": stage_ja(stage["name"], position)}
         if stage["name"] == "warm":
             row["replies_within_hours"] = stage["replies_within_hours"]
             try:
@@ -649,13 +752,33 @@ def thread_status(decl, ledger) -> dict:
         elif stage["media"] == ["hatena_bookmark"]:
             tag = stage["tag"] or decl.id
             row["tag"] = tag
+            if stage["target"] is not None:
+                row["target"] = stage["target"]
             if not ledger.hatena_accounts:
-                row.update({"done": None, "pending": None})
+                row.update({"done": None, "pending": None, "by_target": None})
                 cannot.append("hatena_account_missing")
             else:
-                marks = [b for b in ledger.bookmarks if tag in b["tags"]]
+                tied = _thread_marks(stage, decl, items, ledger)
+                marks = [b for b in tied if stage["target"] is None or b["target"] == stage["target"]]
                 times += [b["at"] for b in marks if b["at"] is not None]
-                row.update({"done": len(marks), "pending": 0})
+                row.update({"done": len(marks), "pending": 0,
+                            "by_target": {t: sum(1 for b in tied if b["target"] == t) for t in BOOKMARK_TARGETS}})
+        elif stage["media"] == ["ads"]:
+            if not ledger.ads_accounts:
+                row.update({"done": None, "pending": None})
+                cannot.append("ads_account_missing")
+            else:
+                ads = _ads_for(decl.id, items, ledger)
+                done = [a for a in ads if a["activated"]]
+                times += [a["activated_at"] or a["at"] for a in done if (a["activated_at"] or a["at"]) is not None]
+                budgets = [a["budget_minor"] for a in done]
+                currencies = {a["currency"] for a in done}
+                row.update({"done": len(done), "pending": len(ads) - len(done),
+                            # 始めた広告の通しの予算の和（最小単位の整数・分母は done）。使った額は持たない。
+                            "budget_minor": (sum(budgets) if done and all(isinstance(b, int) for b in budgets)
+                                             and len(currencies) == 1 else None),
+                            "currency": next(iter(currencies)) if len(currencies) == 1 else None,
+                            "spend_minor": None, "cannot_say": {"spend_minor": "ads_spend_not_recorded"}})
         elif stage["media"] == ["hatenablog"]:
             if not ledger.hatena_accounts:
                 row.update({"done": None, "pending": None})
@@ -727,12 +850,16 @@ def thread_status(decl, ledger) -> dict:
     }
 
 
-# 画面に出す日本語（`next[].label`・`stalled_label`）。`what` は今までどおり（LLM 向けの符丁まじり）。
-STAGE_JA = {"collect": "リサーチ", "diary": "仮説", "article": "本記事", "announce": "SNS 告知", "warm": "エンゲージ"}
+# 画面に出す日本語（`next[].label`・`stalled_label`・`stages[].label`）。`what` は今までどおり（LLM 向けの符丁まじり）。
+# `promote`・`selfbm`・`boost` は 5.7.0（skill thth-flow の段の名）。
+STAGE_JA = {"collect": "リサーチ", "diary": "仮説", "article": "本記事", "announce": "SNS 告知", "warm": "エンゲージ",
+            "promote": "告知", "selfbm": "セルクマ", "boost": "広告"}
 MEDIUM_JA = {"threads": "Threads", "x": "X", "bluesky": "Bluesky", "mastodon": "Mastodon",
-             "facebook": "Facebook", "instagram": "Instagram", "hatenablog": "はてなブログ", "hatena_bookmark": "はてブ", "site": "サイト"}
+             "facebook": "Facebook", "instagram": "Instagram", "hatenablog": "はてなブログ", "hatena_bookmark": "はてブ", "site": "サイト",
+             "ads": "広告"}
 STALLED_JA = {"collect": "リサーチが進んでいない", "diary": "仮説のブログが未公開", "article": "本記事が未公開",
-              "announce": "SNS 告知が未投稿", "warm": "返信の対応が止まっている"}
+              "announce": "SNS 告知が未投稿", "warm": "返信の対応が止まっている",
+              "promote": "告知が未投稿", "selfbm": "セルクマが未了", "boost": "広告が始まっていない"}
 
 
 def stage_ja(name, index=None) -> str:
@@ -782,7 +909,10 @@ def _next(decl, stages, index):
     if row.get("conflict"):
         out.append({"stage": name, "kind": "conflict", "what": f"配信の台帳が conflict の原稿 {row['conflict']} 本",
                     "label": f"配信の記録が食い違う原稿 {row['conflict']} 本を確かめる"})
-    if row.get("pending"):
+    if row.get("pending") and row["medium"] == "ads":
+        out.append({"stage": name, "kind": "wait", "what": f"PAUSED で作った広告 {row['pending']} 本の開始待ち",
+                    "label": f"作った広告 {row['pending']} 本（止めたまま）を始めるか決める"})
+    elif row.get("pending"):
         out.append({"stage": name, "kind": "wait", "what": f"承認済み {row['pending']} 本の公開待ち",
                     "label": f"承認済み {row['pending']} 本の公開を待つ"})
     if missing > 0:
@@ -799,8 +929,13 @@ def _next(decl, stages, index):
                 what += f"（{'・'.join(done)} は済み）"
                 label += f"（{_media_ja(done)} は済み）"
         elif medium == "hatena_bookmark":
-            what = f"hatena_bookmark に {missing} 本（タグ {row['tag']}）"
-            label = f"はてブをあと {missing} 本"
+            what = f"hatena_bookmark に {missing} 本（タグ {row['tag']}" + (
+                f"・target {row['target']}）" if row.get("target") else "）")
+            label = (f"自分の記事にセルクマをあと {missing} 本（1 日 1 件）" if row.get("target") == "own"
+                     else f"はてブをあと {missing} 本")
+        elif medium == "ads":
+            what = f"ads に {missing} 本（{name}・skill thth-ads）"
+            label = f"広告をあと {missing} 本（有機の反応を見てから・skill thth-ads）"
         else:
             what = f"{medium} に {missing} 本（{name}）"
             label = f"{_media_ja([medium])} に{ja}を {missing} 本"
@@ -984,8 +1119,10 @@ def build(target, *, now=None, ledger=None, allowed_names=None) -> dict:
     decls = usable_declarations(ledger)
     threads = [thread_status(d, ledger) for d in decls if d.kind == "thread"]
     series = [series_status(d, ledger) for d in decls if d.kind == "series"]
+    from . import flow_skill
     return {
         "schema": SCHEMA, "report_type": "scenario", "generated_at": jst.iso(ledger.now),
+        "skill": flow_skill.skill_ref(),
         "project": ledger.project, "accounts": sorted(ledger.accounts),
         "threads": threads, "series": series, "untied": _untied(ledger),
         "cannot_say": sorted(ledger.cannot_say),
@@ -1016,11 +1153,21 @@ def _stage_items(stage, decl, items, ledger):
         return [{"kind": "event", "name": e["name"], "at": e["at"], "head": e.get("head")}
                 for e in decl.events if e["name"] == stage["signal"]]
     if media == ["hatena_bookmark"]:
-        tag = stage["tag"] or decl.id
-        marks = sorted((b for b in ledger.bookmarks if tag in b["tags"]),
+        marks = sorted((b for b in _thread_marks(stage, decl, items, ledger)
+                        if stage["target"] is None or b["target"] == stage["target"]),
                        key=lambda b: b["at"] or ledger.now)
-        return [{"kind": "bookmark", "status": "confirmed", "at": jst.iso(b["at"]) if b["at"] else None}
+        return [{"kind": "bookmark", "status": "confirmed", "at": jst.iso(b["at"]) if b["at"] else None,
+                 "target": b.get("target")}
                 for b in marks]
+    if media == ["ads"]:
+        rows = sorted(_ads_for(decl.id, items, ledger), key=lambda a: a["at"] or ledger.now)
+        return [{"kind": "ad", "status": "active_started" if a["activated"] else "paused", "adaccount": a["adaccount"],
+                 "campaign_id": a["campaign_id"], "file": a["file"], "objective": a["objective"],
+                 "at": jst.iso(a["activated_at"] or a["at"]) if (a["activated_at"] or a["at"]) else None,
+                 "budget_minor": a["budget_minor"], "currency": a["currency"],
+                 "spend_minor": None, "link_clicks": None,
+                 "cannot_say": {"spend_minor": "ads_spend_not_recorded", "link_clicks": "ads_clicks_not_recorded"}}
+                for a in rows]
     return [dict(_item_row(item, ledger), kind="draft") for item in items if item.medium in media]
 
 
@@ -1074,10 +1221,17 @@ def show(target, ident, *, now=None, allowed_names=None) -> dict:
         body["slots_upcoming"] = _slots_upcoming(decl, [i for i in items if i.account in scope], ledger,
                                                  SHOW_SLOT_DAYS, required)
     rows = [_item_row(item, ledger) for item in items]
-    return {"schema": SCHEMA, "report_type": "scenario_show", "generated_at": jst.iso(ledger.now),
-            "project": ledger.project, "kind": decl.kind, key: body, "items": rows,
-            "deliveries": sorted({item.delivery for item in items if item.delivery}),
-            "cannot_say": sorted(ledger.cannot_say)}
+    from . import flow_skill
+    payload = {"schema": SCHEMA, "report_type": "scenario_show", "generated_at": jst.iso(ledger.now),
+               "skill": flow_skill.skill_ref(),
+               "project": ledger.project, "kind": decl.kind, key: body, "items": rows,
+               "deliveries": sorted({item.delivery for item in items if item.delivery}),
+               "cannot_say": sorted(ledger.cannot_say)}
+    if key == "thread":
+        # 5.7.0 段 3: 本記事への訪問（GA4・hub 経由）。控えが無ければ `site_visits_not_imported`。
+        from . import site_visits
+        payload["site_visits"] = site_visits.thread_block(ledger.project, ledger, decl.id)
+    return payload
 
 
 def lint(target, *, now=None, allowed_names=None) -> dict:

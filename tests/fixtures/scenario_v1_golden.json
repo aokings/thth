@@ -2,6 +2,12 @@
   "schema": "thth.scenario/1",
   "report_type": "scenario",
   "generated_at": "2026-10-28T11:20:00+09:00",
+  "skill": {
+    "name": "thth-flow",
+    "path": "skills/thth-flow/SKILL.md",
+    "command": "thth scenario skill --print",
+    "text": "流れの型は skill thth-flow（`thth scenario skill` で場所、`thth scenario skill --print` で全文）。段の名・印（UTM）・各段の命令・広告に進む条件はそこに"
+  },
   "project": "kp",
   "accounts": [
     "kp-hatenablog",
@@ -24,16 +30,22 @@
         {
           "name": "collect",
           "medium": "hatena_bookmark",
+          "label": "リサーチ",
           "need": 5,
           "tag": "num-04",
           "done": 5,
           "pending": 0,
+          "by_target": {
+            "own": 0,
+            "external": 5
+          },
           "satisfied": true,
           "satisfied_by": "count"
         },
         {
           "name": "diary",
           "medium": "hatenablog",
+          "label": "仮説",
           "need": 1,
           "done": 1,
           "pending": 0,
@@ -45,6 +57,7 @@
         {
           "name": "article",
           "medium": "site",
+          "label": "本記事",
           "need": 1,
           "done": 0,
           "pending": 0,
@@ -57,6 +70,7 @@
             "threads",
             "x"
           ],
+          "label": "SNS 告知",
           "need": 2,
           "done": 0,
           "pending": 0,
@@ -79,6 +93,7 @@
             "threads",
             "x"
           ],
+          "label": "エンゲージ",
           "replies_within_hours": 6,
           "replies": 0,
           "overdue": 0,
@@ -126,16 +141,22 @@
         {
           "name": "collect",
           "medium": "hatena_bookmark",
+          "label": "リサーチ",
           "need": 3,
           "tag": "sousa-026",
           "done": 3,
           "pending": 0,
+          "by_target": {
+            "own": 0,
+            "external": 3
+          },
           "satisfied": true,
           "satisfied_by": "count"
         },
         {
           "name": "diary",
           "medium": "hatenablog",
+          "label": "仮説",
           "need": 1,
           "done": 0,
           "pending": 1,
@@ -146,6 +167,7 @@
         {
           "name": "article",
           "medium": "site",
+          "label": "本記事",
           "need": 1,
           "done": 0,
           "pending": 0,
@@ -158,6 +180,7 @@
             "threads",
             "x"
           ],
+          "label": "SNS 告知",
           "need": 2,
           "done": 0,
           "pending": 0,
@@ -180,6 +203,7 @@
             "threads",
             "x"
           ],
+          "label": "エンゲージ",
           "replies_within_hours": 24,
           "replies": 0,
           "overdue": 0,

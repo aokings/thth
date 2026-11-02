@@ -5,7 +5,7 @@ description: 記事を軸に「調べる→はてブ→はてなブログ→本�
 
 # THTH — 届ける流れの型（thth-flow）
 
-THTH の出力が「次はこれ」と言う前に、まずこの型を読む。命令ひとつずつの詳しい使い方は skill `thth`（`skills/thth/SKILL.md`）、広告の段の手順は skill `thth-ads` に任せる。ここに書くのは流れの形と、THTH が触る所だけ。
+THTH の出力が「次はこれ」と言う前に、まずこの型を読む。`thth scenario`・`thth scenario show`・`thth dashboard <project> campaign <id>` の出力の 1 行目はこの skill の 1 行（`--json` は `skill` の欄）。`thth scenario skill` が場所、`thth scenario skill --print` が全文を出す。命令ひとつずつの詳しい使い方は skill `thth`（`skills/thth/SKILL.md`）、広告の段の手順は skill `thth-ads` に任せる。ここに書くのは流れの形と、THTH が触る所だけ。
 
 **根っこは効果測定。** あとから取り直せないのは 3 つだけ——投稿の URL の印（UTM）・原稿の札 `thread:`・広告の `url_tags`。これは出す前に必ず付ける。数の読みは後からでもできる。
 
@@ -13,17 +13,19 @@ THTH の出力が「次はこれ」と言う前に、まずこの型を読む。
 
 | 段 | 中身 | 宣言に書く行の例 |
 |---|---|---|
-| `collect` | 調べる・はてブで集める | `- collect: hatena_bookmark need=3`（タグは既定で糸の id） |
+| `collect` | 調べる・はてブで集める | `- collect: hatena_bookmark target=external need=3`（タグは既定で糸の id） |
 | `diary` | はてなブログに仮説を書く | `- diary: hatenablog` |
 | `article` | 本体のサイトの記事を出す・直す | `- article: site`（出来事 `article_published` で満たす） |
 | `promote` | 告知（Threads・X・Facebook・Instagram） | `- promote: threads,x,facebook need=3` |
-| `selfbm` | セルクマ（自分の記事を自分のはてな ID で） | 下の §4 を見る |
-| `boost` | 広告（有機の反応を見てから 1 本だけ） | 段 1（5.7）で入る予定。今は宣言に書かない |
+| `selfbm` | セルクマ（自分の記事を自分のはてな ID で） | `- selfbm: hatena_bookmark target=own need=1`（§4） |
+| `boost` | 広告（有機の反応を見てから 1 本だけ） | `- boost: ads need=1`（§5） |
 | `warm` | 返信を返す | `- warm: threads replies_within_hours=24` |
 
 - 段は窓口が選ぶ。全部は要らない。上から順に満たす形で、THTH は読んで数えるだけ（原稿を書かない・段を進めない・選ばない）。
-- 段の名は自由（`[a-z][a-z0-9_]` 32 字まで）。`collect`・`diary`・`article`・`announce`・`warm` だけ画面に日本語の名が出る。`promote`・`selfbm` は今は「n 段目」と出る。
-- 媒体として書けるのは今 9 つ: `hatena_bookmark`・`hatenablog`・`site`・`threads`・`x`・`bluesky`・`mastodon`・`facebook`・`instagram`。`ads`（広告）は段 1（5.7）で入る予定で、今書くと `stage_medium_unknown`。
+- 段の名は自由（`[a-z][a-z0-9_]` 32 字まで）。`collect`（リサーチ）・`diary`（仮説）・`article`（本記事）・`announce`（SNS 告知）・`promote`（告知）・`selfbm`（セルクマ）・`boost`（広告）・`warm`（エンゲージ）は画面に日本語の名が出る（`stages[].label`・表示は `promote（告知） 1/3`）。ほかの名は「n 段目」。
+- 媒体として書けるのは 10 個: `hatena_bookmark`・`hatenablog`・`site`・`threads`・`x`・`bluesky`・`mastodon`・`facebook`・`instagram`・`ads`（5.7.0）。
+- はてブの段は `target=own`（自分の記事だけ・セルクマ）か `target=external`（他人のページだけ）で分けて数える。書かなければ今までどおり両方を数え、`stages[].by_target`（`{"own": n, "external": n}`）に内訳が出る。`target=own` の段は、タグ（既定は糸の id）が付いたものに加えて、糸のはてなブログの配信 id を `--delivery` で付けた自分の記事のブックマークも数える。
+- `ads` の段は広告の口座の記録（`thth ads boost`・`thth ads activate` の記録）を読むだけ。始めた（activate が通った）広告が `done`、PAUSED で作っただけの広告が `pending`。糸に結ぶのは、押し出した元の投稿の id が糸の原稿の `post_id` か、広告の印の `utm_campaign` が糸の原稿の名前のもの。`budget_minor` は始めた広告の通しの予算の和（最小単位の整数・分母は `done`）。**使った額は持たない**（`spend_minor: null`・`ads_spend_not_recorded`）——使った額とクリックは `thth ads insights` で見る。project に広告の口座が無ければ `done: null`・`ads_account_missing`。
 - **台帳の更新は THTH の段ではない。** 知識の側（各 repo）の仕事。糸のファイルには出来事の 1 行だけ残す: `- 2026-11-03 researched <短い文>`・`hypothesis`・`article_published`・`closed`。`researched` は collect、`hypothesis` は diary の本数の代わりになる。
 - 宣言の置き場と書式は skill `thth` の「キャンペーンとシリーズ（scenario）」の節。原稿の札 `thread: <id>` は承認の指紋に入らないので、あとから足しても再承認は要らない。
 
@@ -57,7 +59,9 @@ THTH の出力が「次はこれ」と言う前に、まずこの型を読む。
 ### 測りの読み方
 
 - **分母と窓を必ず添えて言う。** `null`・`cannot_say` は「取れない」で、0 ではない。0 と書かない。
-- 投稿ごとのクリックが THTH で取れるのは Threads だけ（`--per-post-clicks`・同じリンク先を前後 72 時間で 1 本だけが使った投稿 `unique_url_72h`）。X・Facebook・Instagram の投稿ごとのクリックは THTH に無い。Meta の `clicks` はリンク以外も含む。**記事への訪問はサイト側（GA4）で見るのが本筋**——いまは各サイトの GA4 の画面で `utm_campaign` を見る（機械で読むのは hub の仕事・段 2〜3 で入る予定）。
+- 投稿ごとのクリックが THTH で取れるのは Threads だけ（`--per-post-clicks`・同じリンク先を前後 72 時間で 1 本だけが使った投稿 `unique_url_72h`）。X・Facebook・Instagram の投稿ごとのクリックは THTH に無い。Meta の `clicks` はリンク以外も含む。**記事への訪問はサイト側（GA4）で見るのが本筋**（次の 2 行）。
+- THTH は GA4 を読まない。hub（SEO レーン）が GA4 を読み、`hub.site_visits/1` の JSON を 1 サイト 1 ファイルで `thth scenario site-import <project> --file <json>` に渡す（hub の timer が日次で打つ）。THTH は `state/<project>/site_visits/` に控え（サイトと窓の終わりの日で 1 ファイル・二度入れても上書き）、campaign → 原稿の名前（原稿のパスの `/` を `-` にした形も試す）→ `thread:` で糸に結ぶ。
+- 結んだ数は `thth scenario show <project> <id> --json` の `site_visits` と `thth dashboard <project> campaign <id> --json` の `outcomes.article_visits` に「本記事への訪問（GA4・hub 経由）」として出る（`sessions`・`engaged_sessions`・サイトごとの窓・`by_medium`（social と paid）・campaign ごとの行・`as_of`）。窓の違うサイトは足さない（`windows_differ`）。結ばれない campaign（`""`・`(organic)`・`(direct)`・原稿が無い・札が無い）は `untied_campaigns` に数だけ（名前は出さない）。控えが無い project は `cannot_say: site_visits_not_imported`、取れなかった窓は `site_visits_unavailable`、印の付いた原稿の訪問が無い糸は `no_tied_campaign`。どれも 0 ではない。
 - セルクマの効きは「第三者のブックマークが付いたか」: `thth events` の `bookmark_received`、`thth article reactions`。はてなブログの PV は取らない（公式の口が無い）。
 - 効いた・効かなかったは施策としてプラザに置く: `thth plaza post <口座> --kind measure --from after <口座>`（または `--from analytics-report <口座>`）。糸 1 本まるごとを観測として付ける `--from scenario` は段 4 で入る予定。
 
@@ -69,12 +73,12 @@ THTH の出力が「次はこれ」と言う前に、まずこの型を読む。
 - コメントに運営者であることを書く（1 段目に「運営者であることが分かる文に」と出る）。
 - 二段の承認。まとめ打ち（`thth bookmark batch`）や timer に混ぜず、人がその場で `bookmark add` を打つ。記事が出た直後に 1 件。
 - 「何件で新着に載るか」を試さない（表示の仕組みの検証はガイドラインが禁じている）。URL に印を付けない。
-- **宣言の段として数えるのは段 1（5.7）から**（`hatena_bookmark target=own`）。いまの `hatena_bookmark` の段は THTH で付けたブックマークをタグで数えるだけで、自分の記事か他人のページかを分けない。いま `selfbm` の段を書くなら、collect と別のタグ（例 `- selfbm: hatena_bookmark tag=<id>-self`）をセルクマにだけ付ける。
+- 宣言の段は `- selfbm: hatena_bookmark target=own need=1`。collect の段は `target=external` にしておくと、セルクマが調べた数に混ざらない（`target` を書かない段は両方を数える）。
 
 ## 5. 広告に進む条件とピクセル
 
 - **有機の告知を出して 48〜72 時間の反応を見てから**（`thth after`・`--per-post-clicks`）、効いた 1 本だけを押し出す。THTH は選ばない（数を並べるだけ）。選ぶのは窓口と人。
-- 手順・承認・止め方は skill `thth-ads`。
+- 手順・承認・止め方は skill `thth-ads`。宣言の段は `- boost: ads need=1`。作るときに `thth ads boost --utm-campaign <元の投稿の原稿のファイル名>` を付けると、印から糸に結べる（`--post` で THTH から出した投稿を押し出すなら、その投稿の id からも結べる）。
 
 | 広告の目的 | ピクセル | 無いとどうなるか |
 |---|---|---|
