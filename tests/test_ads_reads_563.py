@@ -91,7 +91,10 @@ def test_内訳はbreakdownsで頼み_本筋の欄だけにして1区分1行で�
     cli.main(["ads", "insights", NAME, "--by", "age-gender"])
     out = capsys.readouterr().out
     assert "25-34・female: spend 470・表示 1000・リーチ 800・clicks 60・いいね・リアクション 9" in out
-    assert "35-44・male:" in out and "いいね・リアクション 不明" in out
+    # 5.7.0 で決まりを変えた（masaru 11/03「直して」）: 同じ読みのほかの区分に actions が返っているので、
+    # actions の欄の無い区分は反応が 1 件も無かった区分（Meta は欄ごと返さない）＝ 0。「不明」と出さない。
+    assert "35-44・male: spend 470・表示 1000・リーチ 800・clicks 60・いいね・リアクション 0・リンククリック 0" in out
+    assert "不明" not in out
     for by, wanted in (("placement", "publisher_platform,platform_position"), ("device", "impression_device"),
                        ("hour", "hourly_stats_aggregated_by_advertiser_time_zone"), ("region", "region")):
         env["insights_route"] = lambda q, w=wanted: (200, {"data": []}) if q["breakdowns"] == [w] else (500, {})
