@@ -202,6 +202,7 @@ MCP `thread_read`。枝の会話を**生で**読み、誰がどんな立場か�
 
 **Threads で探す・付ける**（2026-10-12・`docs/調査_Threadsで伸ばす_Xの1枚から活かすもの_2026-10-12.md`・10/9 の承認で公開の検索が使える）: Threads の検索は語だけで演算子は無い（`"…"`・`-語`・`from:`・`lang:` は効かない）。無料・1 頁・既定 25 本・利用者あたり 24 時間で 2,200 回。絞るのは `--recent`（新しい順）・`--since`・`--also`・`--exclude-engaged`。固有名詞と専門語を 1 語に入れ（「豊島岡 場合の数」）、0 件なら語を短くする（敏感と判定された語は 0 件で返る）。
 - トピックタグは 1 投稿 1 つ・本文の `#` でなく front-matter の `topic:`（1〜50 字・`.` と `&` は不可）。「そのトピックに興味がある人に届く」が公式の説明（量は書かれていない）。付けるかどうかは `after --topic`・`analytics-report --by topic` で自分の数で決める。
+- **トピックの下調べはトピックで絞った検索で**（5.7.0）: `thth topics <account> --search <語> --tag [--recent] [--since 7d] [--until …] [--media text|image|video] [--keep] [--json]`（MCP `thth_topics_search` の `tag`・`keep`・`since`・`until`・`media`）。Threads の検索に `search_mode=TAG` で問い、**その語をトピックに付けた投稿**の件数・投稿者の数（重複なし）・最新と最古の時刻だけを返す（本文・username・post_id は出ない）。`--search` だけ（キーワード検索）は本文に語を含む投稿で、トピックの使用例にはならない。0 件は `status: empty`（その条件で 0 件・人がいないとは限らない）、読めなかったときは `status: cannot_say`・`counts: null`（0 件と混ぜない）。応答の `topic_tag` が別の語の行は数えない（`n_label_other`）。`--keep` で数と時刻を下調べの観測として残す（`observation_id`・候補比較の `observation_refs` に書ける・`topics suggest` の判定がトピックの使用例として数える）。合うかどうか（`--note <語> --verdict alive|mismatch|dead`）は数では決まらないので人か LLM が決め、`note_hint` の 1 行（`--status` と観測 ID 入り）で残す。
 - 公式が言うのは 3 つだけ: 返信は Threads の閲覧のほぼ半分／会話を起こす投稿がおすすめに載りやすい／クリックベイト・エンゲージメントベイト・景品・転載はおすすめに載らない。重みの数字は無い。
 - 測るのは `collect` がもう採っている（24h・72h の views・likes・replies）。Threads にいいねの API は無い（`unsupported_on_platform`）。
 - 書き方（「発見の種類」と決まり）・返すかの選び・守る線は X と同じ（上の X の段と「4. 書く」）。

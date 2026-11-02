@@ -77,7 +77,7 @@ An assistant can only tighten these limits. Loosening them, resuming a stopped a
 
 ## What it does not keep
 
-- Search results (`topics --search`, `where`, `thread`, `who`): text and authors are shown, not saved. `where … --keep` saves only per-search-term numbers (numbers below 5 are missing; read with `where-log`).
+- Search results (`topics --search`, `where`, `thread`, `who`): text and authors are shown, not saved. `where … --keep` saves only per-search-term numbers (numbers below 5 are missing; read with `where-log`). `topics --search <word> --tag --keep` (Threads, 5.7.0) saves only the number of posts that carry the word as their topic, the number of distinct authors, and the dates of the newest and oldest (numbers below 5 are missing; no exact times) in the topic research record.
 - It never reads direct messages.
 - Tokens and secrets are redacted from logs and output.
 

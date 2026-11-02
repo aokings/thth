@@ -304,8 +304,10 @@ def _excludes_today(cfg, preset, since, until) -> bool | None:
 
 
 ENGAGEMENT_NOTE = ("engagement は Meta の actions から: reactions=post_reaction・comments=comment・shares=post・"
-                   "photo_views=photo_view・page_likes=like。行の無い種類は 0、actions の欄が無い・読めないときは "
-                   "engagement が null で engagement_unknown に理由。site はサイトへの誘導: link_clicks=link_click・"
+                   "photo_views=photo_view・page_likes=like。行の無い種類は 0。行に actions の欄が無くても、同じ読みの"
+                   "ほかの行に actions が返っていれば 0（Meta は反応が 1 件も無い区分では欄ごと返さない・"
+                   "actions_absent_as_zero が true・site.why は actions_absent_as_zero）。読み全体で actions が 1 行も"
+                   "返らない・読めないときは engagement が null で engagement_unknown に理由。site はサイトへの誘導: link_clicks=link_click・"
                    "outbound_clicks=outbound_clicks の outbound_click・landing_page_views=landing_page_view・"
                    "inline_link_clicks。site.why が値の訳（reported=Meta が返した・zero_reported_list=並びに行が無い"
                    "ので 0・no_link_clicks=リンクが押されていないので 0・not_measured_or_left=リンクは押されたのに頁が"

@@ -137,6 +137,15 @@ def register_topics_flags(p_topics) -> None:
     p_topics.add_argument(
         "--media", default=None, choices=_media_choices(),
         help="--search と併用（Threads だけ）: 投稿の種類で絞る。API の media_type に渡す")
+    # 5.7.0（nigamilab の依頼 11/03）: トピックで絞った検索（search_mode=TAG）。数と時刻だけを出す。
+    p_topics.add_argument(
+        "--tag", action="store_true",
+        help="--search と併用（Threads だけ）: 語をトピックとして検索し（search_mode=TAG）、その語を"
+             "付けた投稿の件数・投稿者の数・最新と最古の時刻だけを出す（本文・username は出さない）")
+    p_topics.add_argument(
+        "--keep", action="store_true",
+        help="--search --tag と併用: 数と時刻を下調べの観測として残す（topic_advice が数える・"
+             "本文も username も残さない）")
 
 
 # ---------------------------------------------------------------- 共通
@@ -588,7 +597,7 @@ def search_narrowing(*, since=None, until=None, media=None, now=None) -> dict:
 
 
 def cmd_topics_search(args) -> int:
-    """`thth topics <account> --search <語> [--recent] [--json]`。"""
+    """`thth topics <account> --search <語> [--recent] [--tag [--keep]] [--json]`。"""
     q = (args.search or "").strip()
     if not q:
         print("語が空です（--search に語を書いてください）", file=sys.stderr)
@@ -596,6 +605,12 @@ def cmd_topics_search(args) -> int:
     account = getattr(args, "account_flag", None) or args.account
     if not account:
         print("account を指定してください（thth topics <account> --search <語>）",
+              file=sys.stderr)
+        return 2
+    if getattr(args, "tag", False):
+        return cmd_topics_tag(args, account, q)
+    if getattr(args, "keep", False):
+        print("--keep は --tag と一緒に使います（残すのはトピックで引いた数と時刻だけ）",
               file=sys.stderr)
         return 2
     search_type = "RECENT" if getattr(args, "recent", False) else "TOP"
@@ -636,6 +651,277 @@ def cmd_topics_search(args) -> int:
 
     return _run(account, capability="keyword_search", call=call, as_json=as_json,
                 render=render, narrowed_note=SEARCH_NARROWED_NOTE)
+
+
+# ---------------------------------------------------------------- --search --tag
+
+# **トピックで絞った検索**（5.7.0・nigamilab の依頼 11/03「ちゃんと下調べして届けたい人に届く投稿を」）。
+#
+# Threads の keyword_search に `search_mode=TAG` を渡す（`thth where --tag` と同じ API の引数）。返った
+# 行から**数と時刻だけ**を数える——件数・投稿者の数（重複なし）・最新と最古の時刻。本文・username・
+# post_id・仮名は**画面にも json にも出さない**（`where --aggregate` と同じ作り）。`--keep` を付けたときだけ、
+# その数を下調べの観測（`topic_store` の observations・`search_mode: topic_tag`）として残す。残す数は
+# `where --keep` と同じ決まり（5 未満は欠測・時刻は日付に丸める・`kept_counts()`）。
+# topic_advice はこれをトピックの使用例として数える。**キーワード検索の結果は残さず、数えない。**
+#
+# 応答の行に `topic_tag` が付いていれば、その語と一致するかを見る（別の語なら数えない）。付いていない
+# 行は、TAG で問うた答えとして数え、`n_label_absent` に別に数える（検索の応答に `topic_tag` が付くかは
+# 一次資料で未確認・`KEYWORD_SEARCH_FIELDS` の注）。
+TAG_NOTE = ("トピック（search_mode=TAG）で引いた先頭 1 頁・要求上限 {limit} 件の中の数です"
+            "（その語の総数ではありません）")
+# 読めなかったときの観測の取得結果（`topics.OBS_STATUS` の語）。設定の誤り（account・token・媒体）は残さない。
+TAG_FAILURE_STATUS = {"not_granted": "permission_denied", "narrowed": "permission_denied",
+                      "upstream": "unavailable"}
+
+
+def tag_counts(rows: list, term: str) -> dict:
+    """TAG の検索結果から**数と時刻だけ**を数える（純粋関数・本文も名前も持たない）。"""
+    from . import jst
+    want = queuefile.normalize_topic(term)
+    counted, matched, other, absent = [], 0, 0, 0
+    for r in rows:
+        label = r.get("topic_tag")
+        if isinstance(label, str) and label.strip():
+            if queuefile.normalize_topic(label) == want:
+                matched += 1
+                counted.append(r)
+            else:
+                other += 1
+        else:
+            absent += 1
+            counted.append(r)
+    authors = {r.get("author_key") or adapter_base.author_key(r.get("medium") or "threads",
+                                                              r.get("username"))
+               for r in counted} - {None}
+    stamps = sorted(at for at in (jst.parse(r.get("timestamp")) for r in counted) if at is not None)
+    return {"n": len(counted), "distinct_authors": len(authors),
+            "latest_at": jst.iso(stamps[-1]) if stamps else None,
+            "oldest_at": jst.iso(stamps[0]) if stamps else None,
+            "n_with_timestamp": len(stamps),
+            "n_label_matched": matched, "n_label_other": other, "n_label_absent": absent}
+
+
+def kept_counts(counts: dict, status: str) -> dict:
+    """`--keep` で残す形（`topic_models.TAG_COUNT_KEYS`）。**画面の数とは別**——privacy の決まり
+    （`where --keep` と同じ）に合わせ、5 未満の数は null（欠測）、件数が 5 未満なら内訳と日付も全部 null、
+    時刻は日付（JST）に丸める。0 件（empty）は 0 のまま。"""
+    from . import topic_models as models
+    small = models.TAG_SMALL
+    if status == "empty":
+        return {"n": 0, "distinct_authors": 0, "latest_date": None, "oldest_date": None,
+                "n_with_timestamp": 0, "n_label_matched": 0,
+                "n_label_other": counts["n_label_other"] if counts["n_label_other"] >= small
+                else (0 if counts["n_label_other"] == 0 else None),
+                "n_label_absent": 0}
+    if counts["n"] < small:
+        return {key: None for key in models.TAG_COUNT_KEYS}
+
+    def keep(value):
+        return value if type(value) is int and value >= small else None
+    return {"n": counts["n"], "distinct_authors": keep(counts["distinct_authors"]),
+            "latest_date": (counts["latest_at"] or "")[:10] or None,
+            "oldest_date": (counts["oldest_at"] or "")[:10] or None,
+            "n_with_timestamp": keep(counts["n_with_timestamp"]),
+            "n_label_matched": keep(counts["n_label_matched"]),
+            "n_label_other": keep(counts["n_label_other"]),
+            "n_label_absent": keep(counts["n_label_absent"])}
+
+
+def tag_search_call(adapter, q: str, *, search_type: str, limit: int, narrow: dict | None = None) -> list:
+    """`--search --tag` の API 呼び出し（CLI とサーバの読む口が共有）。行は数えるためだけに持つ。"""
+    return adapter.keyword_search(q, search_type=search_type, limit=limit, search_mode="TAG",
+                                  **(narrow or {}))
+
+
+def _tag_base(account: str, q: str, *, search_type: str, limit: int, narrow: dict | None) -> dict:
+    term = queuefile.normalize_topic(q) or q
+    return {"account": account, "q": q, "topic": term, "search_mode": "TAG",
+            "search_type": search_type, "requested_limit": limit,
+            "narrow": dict(narrow) if narrow else None, "note": TAG_NOTE.format(limit=limit)}
+
+
+def tag_json(rows: list, account: str, q: str, *, search_type: str, limit: int,
+             narrow: dict | None = None) -> dict:
+    """`thth topics --search --tag --json` の形（読めたとき）。**本文・username・post_id は入れない。**"""
+    out = _tag_base(account, q, search_type=search_type, limit=limit, narrow=narrow)
+    counts = tag_counts(rows, out["topic"])
+    out.update(status="ok" if counts["n"] else "empty", cannot_say=None, counts=counts,
+               n_returned=len(rows),
+               # 要求数まで返った＝続きがあるかもしれない（あるとは言えない）。
+               more_may_exist=len(rows) >= limit,
+               storage="display_only", observation_id=None, kept_counts=None)
+    return out
+
+
+def tag_failed_json(failed, account: str, q: str, *, search_type: str, limit: int,
+                    narrow: dict | None = None) -> dict:
+    """読めなかったときの形。**0 件（empty）と混ぜない**——`status: cannot_say`・`counts: null`。"""
+    out = _tag_base(account, q, search_type=search_type, limit=limit, narrow=narrow)
+    out.update(status="cannot_say", cannot_say={"kind": failed.kind, "message": failed.message},
+               counts=None, n_returned=None, more_may_exist=None,
+               storage="display_only", observation_id=None, kept_counts=None)
+    return out
+
+
+def tag_observation(material: dict, *, by: str | None, now=None) -> dict | None:
+    """`--keep` で残す観測（`topic_models.build_observation()` を通した形）。残さないものは None。
+
+    読めた → `status` ok／empty と `counts`。読めなかった → 権限・応答の異常なら `permission_denied`／
+    `unavailable` を counts なしで（「読めなかった」を残す）。account・token・媒体の誤りは残さない。
+    """
+    from . import jst
+    from . import topic_models as models
+    if material["status"] == "cannot_say":
+        status = TAG_FAILURE_STATUS.get((material.get("cannot_say") or {}).get("kind"))
+        if status is None:
+            return None
+    else:
+        status = material["status"]
+    narrow = material.get("narrow") or {}
+    row = {"topic": material["topic"], "normalized_topic": material["topic"],
+           "query": material["topic"], "search_mode": "topic_tag",
+           "provider": models.TAG_COUNTS_PROVIDER,
+           "retrieved_at": jst.iso(now if now is not None else jst.now_jst()),
+           "status": status, "samples": [], "account": material["account"],
+           "coverage": {"pages": 1 if material["n_returned"] is not None else 0,
+                        "fetched": material["n_returned"] or 0,
+                        "has_more": False if material["more_may_exist"] is False else None},
+           "search": {"search_type": material["search_type"],
+                      "since": narrow.get("since"), "until": narrow.get("until"),
+                      "media_type": narrow.get("media_type"),
+                      "requested_limit": material["requested_limit"]}}
+    if by:
+        row["submitted_by"] = by
+    if material["counts"] is not None:
+        row["counts"] = kept_counts(material["counts"], status)
+    return models.build_observation(row)
+
+
+def keep_tag(material: dict, *, by: str | None) -> dict:
+    """`--keep`: 観測を残して `storage`・`observation_id` を埋める。残せなければ `keep_error` に理由。"""
+    from . import topic_models as models
+    from . import topic_store as store
+    try:
+        row = tag_observation(material, by=by)
+        if row is None:
+            material["keep_error"] = "設定の誤り（account・token・媒体）で読めなかったので残していません"
+            return material
+        saved, _wrote = store.put("observations", row, id_key="observation_id")
+    except (models.SchemaError, store.StoreError, OSError) as e:
+        material["keep_error"] = str(e)
+        return material
+    material["storage"] = "kept"
+    material["observation_id"] = saved["observation_id"]
+    # 残した数（画面の数とは別の決まり: 5 未満は null・日付だけ）。
+    material["kept_counts"] = saved.get("counts")
+    return material
+
+
+def note_hint(material: dict) -> str | None:
+    """判定（`--note … --verdict`）を残す 1 行の見本。**判定は人か LLM がする**（合うかは数では決まらない）。"""
+    if material["status"] == "cannot_say":
+        status = TAG_FAILURE_STATUS.get((material.get("cannot_say") or {}).get("kind"))
+    else:
+        status = material["status"]
+    if status is None:
+        return None
+    reason = f"トピック検索 {material['search_type']}"
+    if material["counts"] is not None:
+        # 判定の記録（topics.json）にも、残す数と同じ決まり（5 未満は欠測・日付だけ）で書く。
+        c = kept_counts(material["counts"], material["status"])
+        reason += (f" n={_kept_cell(c['n'])}・投稿者 {_kept_cell(c['distinct_authors'])}"
+                   f"・最新 {c['latest_date'] or '—'}")
+    else:
+        reason += " 読めなかった"
+    if material.get("observation_id"):
+        reason += f"・観測 {material['observation_id']}"
+    return (f'thth topics {material["account"]} --note {material["topic"]} --status {status} '
+            f'--verdict <alive|mismatch|dead|unknown> --audience "…" --by <名前> --reason "{reason}"')
+
+
+def cmd_topics_tag(args, account: str, q: str) -> int:
+    """`thth topics <account> --search <語> --tag [--recent] [--since …] [--until …] [--media …] [--keep]`。"""
+    search_type = "RECENT" if getattr(args, "recent", False) else "TOP"
+    limit = getattr(args, "limit", 25) or 25
+    as_json = bool(getattr(args, "json", False))
+    keep = bool(getattr(args, "keep", False))
+    try:
+        cfg = accounts_mod.load_account(account)
+    except accounts_mod.AccountError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    if cfg.get("media") != "threads":
+        # 黙って普通の検索に落とさない（`where --tag` と同じ）。
+        print(f"{account}: --tag は Threads の検索の引数です（{cfg.get('media')} では未対応）",
+              file=sys.stderr)
+        return 2
+    try:
+        narrow = search_narrowing(since=getattr(args, "since", None), until=getattr(args, "until", None),
+                                  media=getattr(args, "media", None)) or None
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    by = getattr(args, "by", None) or os.environ.get("THTH_ACTOR")
+    rc = 0
+    try:
+        rows = _fetch(account, capability="keyword_search",
+                      call=lambda adapter: tag_search_call(adapter, q, search_type=search_type,
+                                                           limit=limit, narrow=narrow),
+                      narrowed_note=SEARCH_NARROWED_NOTE)
+        material = tag_json(rows, account, q, search_type=search_type, limit=limit, narrow=narrow)
+    except ReadFailed as failed:
+        material = tag_failed_json(failed, account, q, search_type=search_type, limit=limit,
+                                   narrow=narrow)
+        rc = failed.rc
+    if keep:
+        keep_tag(material, by=by)
+        if material.get("keep_error") and rc == 0:
+            rc = 1
+    material["note_hint"] = note_hint(material)
+    if as_json:
+        print(json.dumps(material, ensure_ascii=False, indent=2))
+    else:
+        show_tag(material)
+    return rc
+
+
+def _kept_cell(value) -> str:
+    return "欠測（5 未満）" if value is None else str(value)
+
+
+def show_tag(material: dict) -> int:
+    """`thth topics --search --tag` の人向けの表示（手元の道と遠くの道が共有）。数と時刻だけ。"""
+    print(f"{material['account']}  トピック {material['topic']!r}（{material['search_type']}・"
+          f"{material['note']}）")
+    if material["status"] == "cannot_say":
+        print(f"  読めませんでした（0 件ではありません）: "
+              f"{(material.get('cannot_say') or {}).get('message')}")
+    else:
+        c = material["counts"]
+        print(f"  件数            : {c['n']}" + ("（その条件では 0 件。人がいないとは限りません）"
+                                                 if c["n"] == 0 else ""))
+        print(f"  投稿者の数      : {c['distinct_authors']}（重複なし）")
+        print(f"  最新            : {c['latest_at'] or '—'}　最古: {c['oldest_at'] or '—'}")
+        print(f"  トピックの印    : 一致 {c['n_label_matched']}・印なし {c['n_label_absent']}"
+              f"（数に入れた）・別の語 {c['n_label_other']}（数に入れていない）")
+        if material.get("more_may_exist"):
+            print(f"  要求数 {material['requested_limit']} 件まで返りました。続きがあるかは分かりません")
+    if material.get("storage") == "kept":
+        kept = material.get("kept_counts")
+        print(f"  残しました（数と日付だけ・5 未満は欠測）: 観測 ID {material['observation_id']}")
+        if kept:
+            print(f"    残した数: 件数 {_kept_cell(kept['n'])}・投稿者 {_kept_cell(kept['distinct_authors'])}"
+                  f"・最新 {kept['latest_date'] or '—'}・最古 {kept['oldest_date'] or '—'}")
+        print("  （候補比較の observation_refs に書けます。topic_advice がトピックの使用例として数えます）")
+    elif material.get("keep_error"):
+        print(f"  残せませんでした: {material['keep_error']}")
+    else:
+        print("  保存していません。残すなら --keep（数と日付だけ・5 未満は欠測・本文も username も残しません）")
+    if material.get("note_hint"):
+        print("")
+        print("  合うかどうかの判定は人か LLM がします。残す形:")
+        print(f"    {material['note_hint']}")
+    return 0
 
 
 def show_search(account: str, material: dict) -> int:

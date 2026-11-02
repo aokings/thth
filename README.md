@@ -17,7 +17,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 | 言及（`thth mentions`） | ○ | ○ | ○ | － |
 | プロフィールと場所の検索 | ○ | － | － | － |
 
-- **調べる**: `thth topics <アカウント> --search <語>` で、その語の件数・投稿者の数・最新の投稿を見ます。`thth where` は「次にどこで話すか」を、自分がすでに絡んだ相手を重ねて探します。X の行には投稿者のフォロワー数（「フォロワー 1.2 万」）と投稿数も付きます（`--json` は `author_followers`・`author_posts`。保存しません）。
+- **調べる**: `thth topics <アカウント> --search <語>` で、その語の件数・投稿者の数・最新の投稿を見ます。Threads では `--tag` を付けると、その語を**トピックに付けた**投稿の件数・投稿者の数・最新と最古の時刻だけを見ます（本文と投稿者は出しません。`--keep` で数と日付を下調べの記録に残します・5.7.0）。`thth where` は「次にどこで話すか」を、自分がすでに絡んだ相手を重ねて探します。X の行には投稿者のフォロワー数（「フォロワー 1.2 万」）と投稿数も付きます（`--json` は `author_followers`・`author_posts`。保存しません）。
 - **出す**: `thth send` で今すぐ、`thth schedule` で予約、`--reply-to` で返信です。
 - **糸の段の語彙と本記事への訪問**（5.7.0・下書き）: キャンペーンの宣言に広告の段（`- boost: ads`・広告の口座の記録を読むだけ）とセルクマの段（`- selfbm: hatena_bookmark target=own`・自分の記事か他人のページかを分けて数える）が書けます。段の日本語の名（告知・セルクマ・広告）も出ます。`thth scenario site-import <project> --file <json>` が hub の GA4 の数（`hub.site_visits/1`）を受け取り、原稿の名前と `thread:` で糸に結んで、`thth scenario show`・`thth dashboard <project> campaign <id>` に「本記事への訪問（GA4・hub 経由）」を出します。結ばれない campaign は数だけ、取れない数は 0 と言いません。`thth scenario`・`show`・`dashboard campaign` の 1 行目は流れの型の skill `thth-flow`（`thth scenario skill --print`）です（[リリースノート 5.7.0（下書き）](docs/リリースノート_5.7.0_2026-11-03.md)）。
 - **広告の成績と手順の skill**（5.6.3・下書き）: `thth ads insights` が反応の内訳（いいね・リアクション／コメント／シェア／写真を開いた／ページへのいいね）・サイトへの誘導（リンククリック・サイトへ出たクリック・頁が開いた）・1 件あたりの額・効率（frequency・cpm・ctr・cpc ほか Meta の計算済みの値）・動画の見られた深さを出します。`clicks` はリンクのクリックではありません。数が 0 か、計測が無くて分からないかを分けて書きます（`site.why`）。`--by age-gender|region|country|placement|device|hour` で内訳、`thth ads estimate` で出す前の見積もり、`thth ads doctor`・`show` でピクセルの有無と最後に動いた時刻を読みます（読むだけ）。`thth ads boost --utm-campaign <原稿のファイル名>` でリンクに有機の投稿と同じ campaign の UTM（`utm_medium=paid`）を付けます。広告を出す LLM 向けの手順は skill `thth-ads`（`skills/thth-ads/`・`thth ads skill --print`）で、広告の命令の次の一手（`next_steps`）とエラーの文は先頭でそれを示します（[リリースノート 5.6.3（下書き）](docs/リリースノート_5.6.3_2026-11-03.md)）。
@@ -95,7 +95,7 @@ MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけで
 
 ## 保存しないもの
 
-- 検索結果（`topics --search`・`where`・`thread`・`who`）の本文と投稿者は、その場で見せるだけで保存しません。`where … --keep` のときだけ、語ごとの数（件数・問いの形・分類・also の当たり）を日付つきで project の私有の置き場に残します（5 未満は欠測・`thth where-log` で読む・3.18.0）。
+- 検索結果（`topics --search`・`where`・`thread`・`who`）の本文と投稿者は、その場で見せるだけで保存しません。`where … --keep` のときだけ、語ごとの数（件数・問いの形・分類・also の当たり）を日付つきで project の私有の置き場に残します（5 未満は欠測・`thth where-log` で読む・3.18.0）。`topics --search <語> --tag --keep` のときだけ、その語をトピックに付けた投稿の件数・投稿者の数・最新と最古の日付をトピックの下調べの記録に残します（5 未満は欠測・正確な時刻は残さない・5.7.0）。
 - ダイレクトメッセージは読みません。
 - トークンとシークレットは、ログと出力から伏せます。
 

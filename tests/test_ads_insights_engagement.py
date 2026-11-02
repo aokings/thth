@@ -47,11 +47,15 @@ def test_本番の形のactionsから反応を数え_行の無い種類は0(env,
     assert fields == graphread.INSIGHT_FIELDS and "actions" in fields and "outbound_clicks" in fields
 
 
-def test_actionsの欄が無いときは0でなく不明(env, capsys):
+def test_読み全体でactionsが1行も返らないときは0でなく不明(env, capsys):
+    # 5.7.0 で決まりを変えた（masaru 11/03「直して」）: 行に actions の欄が無いだけなら 0 と見なす。ただし
+    # **読み全体で 1 行も actions が返らない**ときは、頼めたのか・Meta が出さなかったのかを区別できないので
+    # 「不明」のまま。内訳なしの 1 行の読みもこちら（ほかに比べる行が無い）。
     ready(env)
     env["insights_route"] = _row()
     row = _insights(env, capsys)["rows"][0]
     assert row["engagement"] is None and row["engagement_unknown"] == "actions_missing"
+    assert row["actions_absent_as_zero"] is False
     assert row["cost_per"]["reactions"] is None
     assert row["site"]["link_clicks"] is None and row["site"]["why"]["link_clicks"] == "actions_missing"
     env["insights_route"] = _row(actions="壊れた")
@@ -122,3 +126,65 @@ def test_同じ種類が2行あれば推さずにその種類だけ不明():
     counts, why = graphread.engagement([{"action_type": "post", "value": "1"}, {"action_type": "post", "value": "2"},
                                         {"action_type": "comment", "value": "x"}])
     assert why is None and counts["shares"] is None and counts["comments"] is None and counts["reactions"] == 0
+
+
+def _rows(*rows):
+    return lambda query: (200, {"data": [dict({"spend": "100", "impressions": "300", "clicks": "4", "reach": "200",
+                                                "date_start": "2026-11-01", "date_stop": "2026-11-03"}, **r)
+                                          for r in rows]})
+
+
+def test_内訳で反応の無い区分はactionsの欄が無くても0(env, capsys):
+    # 11/03 本番の `--by age-gender`: Meta は反応が 1 件も無い区分では actions の欄ごと返さない。同じ読みの
+    # ほかの区分に actions が返っているので、頼めていたことは分かる → 欄の無い区分は 0（「不明」と出さない）。
+    ready(env)
+    env["insights_route"] = _rows(
+        {"age": "35-44", "gender": "female", "actions": [{"action_type": "post_reaction", "value": "3"},
+                                                         {"action_type": "link_click", "value": "1"}],
+         "inline_link_clicks": "1"},
+        {"age": "65+", "gender": "male", "inline_link_clicks": "0"})
+    value = _insights(env, capsys, "--by", "age-gender")
+    hit, empty = value["rows"]
+    assert hit["engagement"]["reactions"] == 3 and hit["actions_absent_as_zero"] is False
+    assert empty["engagement"] == {"reactions": 0, "comments": 0, "shares": 0, "photo_views": 0, "page_likes": 0}
+    assert empty["engagement_unknown"] is None and empty["actions_absent_as_zero"] is True
+    assert empty["actions"] is None   # 生の行は Meta が返したまま（欄は無かった）
+    assert empty["site"]["link_clicks"] == 0 and empty["site"]["landing_page_views"] == 0
+    assert empty["site"]["why"]["link_clicks"] == "actions_absent_as_zero"
+    assert empty["cost_per"]["reactions"] is None   # 0 件は 1 件あたりを出さない
+    capsys.readouterr()
+    assert cli.main(["ads", "insights", NAME, "--by", "age-gender"]) == 0
+    out = capsys.readouterr().out
+    assert "65+・male: spend 100・表示 300・リーチ 200・clicks 4・いいね・リアクション 0・リンククリック 0" in out
+    assert "不明" not in out
+
+
+def test_内訳で全区分にactionsが無ければ不明のまま(env, capsys):
+    ready(env)
+    env["insights_route"] = _rows({"age": "18-24", "gender": "female"}, {"age": "65+", "gender": "male"})
+    rows = _insights(env, capsys, "--by", "age-gender")["rows"]
+    assert all(r["engagement"] is None and r["engagement_unknown"] == "actions_missing" for r in rows)
+    assert all(r["site"]["link_clicks"] is None for r in rows)
+    capsys.readouterr()
+    cli.main(["ads", "insights", NAME, "--by", "age-gender"])
+    assert "いいね・リアクション 不明・リンククリック 不明" in capsys.readouterr().out
+
+
+def test_内訳なしでも複数行の読みなら欄の無い行は0(env, capsys):
+    # 内訳なしの成績（--level campaign など）にも同じ考えを当てる: ほかの行に actions があれば頼めている。
+    ready(env)
+    env["insights_route"] = _rows({"campaign_id": "1", "campaign_name": "A",
+                                   "actions": [{"action_type": "post_reaction", "value": "2"}]},
+                                  {"campaign_id": "2", "campaign_name": "B"})
+    rows = _insights(env, capsys, "--level", "campaign")["rows"]
+    assert rows[1]["engagement"]["reactions"] == 0 and rows[1]["actions_absent_as_zero"] is True
+
+
+def test_欄が壊れている行は0にしない(env, capsys):
+    # 欄が「無い」のと「読めない」は違う。読めない行は、ほかの行に actions があっても不明のまま。
+    ready(env)
+    env["insights_route"] = _rows({"actions": [{"action_type": "post_reaction", "value": "2"}]},
+                                  {"actions": "壊れた"})
+    rows = _insights(env, capsys, "--level", "campaign")["rows"]
+    assert rows[1]["engagement"] is None and rows[1]["engagement_unknown"] == "actions_unreadable"
+    assert rows[1]["actions_absent_as_zero"] is False

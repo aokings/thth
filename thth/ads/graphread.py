@@ -192,7 +192,8 @@ def engagement(actions) -> tuple[dict | None, str | None]:
     return {key: seen.get(kind, 0) for key, kind, _label in ENGAGEMENT_ACTIONS}, None
 
 
-def site(actions, inline_link_clicks, outbound, *, outbound_asked: bool = True) -> dict:
+def site(actions, inline_link_clicks, outbound, *, outbound_asked: bool = True,
+         actions_absent_as_zero: bool = False) -> dict:
     """サイトへの誘導（リンククリック・サイトへ出たクリック・頁が開いた）。
 
     数ごとに `why`（なぜその値か）を付け、**「計測が無いから出ない」と「本当に 0」を分ける**:
@@ -203,7 +204,12 @@ def site(actions, inline_link_clicks, outbound, *, outbound_asked: bool = True) 
       無いか、開く前に離れた。**0 とは言わない**（None）。
     - `actions_missing`／`actions_unreadable`／`outbound_clicks_missing`／`outbound_clicks_unreadable`／
       `outbound_clicks_not_asked`: 欄が無い・読めない・頼めなかった（None）。
+    - `actions_absent_as_zero`: その行に `actions` の欄が無いが、同じ読みのほかの行には返っている
+      （`insights()` が決める）。Meta は反応が 1 件も無い区分では欄ごと返さないので、リンククリックも
+      頁が開いた数も 0。
     """
+    if actions_absent_as_zero:
+        actions = []
     counts = _action_counts(actions) if actions is not None else None
     links = counts.get("link_click", 0) if counts is not None else None
     inline = _count(inline_link_clicks)
@@ -242,6 +248,10 @@ def site(actions, inline_link_clicks, outbound, *, outbound_asked: bool = True) 
         out["landing_page_views"], why["landing_page_views"] = 0, "no_link_clicks"
     else:
         out["landing_page_views"], why["landing_page_views"] = None, "not_measured_or_left"
+    if actions_absent_as_zero:
+        # 欄ごと無い＝どの種類の行も無い。リンククリックも頁が開いた数も 0（並びの行が無いのと同じ扱い）。
+        out["landing_page_views"] = 0
+        why["link_clicks"] = why["landing_page_views"] = "actions_absent_as_zero"
     out["why"] = why
     return out
 
@@ -569,8 +579,13 @@ class Reader:
             rows, _ = self._list(path, dict(params, fields=fields.replace(INSIGHT_FIELDS, INSIGHT_FIELDS_BASE, 1)))
         outbound_asked = extras_asked
         currency = self.cfg.get("currency")
+        # **反応が 1 件も無い区分は `actions` の欄ごと返らない**（11/03 本番の `--by age-gender`）。頼んだ読みで、
+        # ほかの行に `actions` が返っているなら、欄の無い行は 0 と見なす。読み全体で 1 行も返らないときは
+        # 頼めたかどうかも分からないので「不明」のまま（内訳なしの 1 行の読みもここに入る）。
+        actions_in_read = any(isinstance(row.get("actions"), list) for row in rows)
         out = []
         for row in rows:
+            absent_as_zero = actions_in_read and row.get("actions") is None
             item = {"spend": row.get("spend") if isinstance(row.get("spend"), str) else None,
                     "spend_minor": spend_minor(row.get("spend"), currency),
                     "impressions": _count(row.get("impressions")),
@@ -579,11 +594,12 @@ class Reader:
                     "inline_link_clicks": _count(row.get("inline_link_clicks")),
                     "date_start": row.get("date_start") if isinstance(row.get("date_start"), str) else None,
                     "date_stop": row.get("date_stop") if isinstance(row.get("date_stop"), str) else None}
-            counts, unknown = engagement(row.get("actions"))
+            counts, unknown = engagement([] if absent_as_zero else row.get("actions"))
             item["engagement"] = counts
             item["engagement_unknown"] = unknown
+            item["actions_absent_as_zero"] = absent_as_zero
             item["site"] = site(row.get("actions"), row.get("inline_link_clicks"), row.get("outbound_clicks"),
-                                outbound_asked=outbound_asked)
+                                outbound_asked=outbound_asked, actions_absent_as_zero=absent_as_zero)
             item["cost_per"] = cost_per(item["spend"], {**(counts or {}), **item["site"]},
                                         [k for k, _a, _l in ENGAGEMENT_ACTIONS] + [k for k, _l in SITE_LABELS])
             item["actions"] = raw_actions(row.get("actions"))
