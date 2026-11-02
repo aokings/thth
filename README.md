@@ -19,6 +19,7 @@ English: [README.en.md](README.en.md) · サイト: https://thth.me · 文書の
 
 - **調べる**: `thth topics <アカウント> --search <語>` で、その語の件数・投稿者の数・最新の投稿を見ます。`thth where` は「次にどこで話すか」を、自分がすでに絡んだ相手を重ねて探します。X の行には投稿者のフォロワー数（「フォロワー 1.2 万」）と投稿数も付きます（`--json` は `author_followers`・`author_posts`。保存しません）。
 - **出す**: `thth send` で今すぐ、`thth schedule` で予約、`--reply-to` で返信です。
+- **広告の成績と手順の skill**（5.6.3・下書き）: `thth ads insights` が反応の内訳（いいね・リアクション／コメント／シェア／写真を開いた／ページへのいいね）・サイトへの誘導（リンククリック・サイトへ出たクリック・頁が開いた）・1 件あたりの額・効率（frequency・cpm・ctr・cpc ほか Meta の計算済みの値）・動画の見られた深さを出します。`clicks` はリンクのクリックではありません。数が 0 か、計測が無くて分からないかを分けて書きます（`site.why`）。`--by age-gender|region|country|placement|device|hour` で内訳、`thth ads estimate` で出す前の見積もり、`thth ads doctor`・`show` でピクセルの有無と最後に動いた時刻を読みます（読むだけ）。`thth ads boost --utm-campaign <原稿のファイル名>` でリンクに有機の投稿と同じ campaign の UTM（`utm_medium=paid`）を付けます。広告を出す LLM 向けの手順は skill `thth-ads`（`skills/thth-ads/`・`thth ads skill --print`）で、広告の命令の次の一手（`next_steps`）とエラーの文は先頭でそれを示します（[リリースノート 5.6.3（下書き）](docs/リリースノート_5.6.3_2026-11-03.md)）。
 - **Meta の広告**（5.6.2）: `thth ads boost` は全部 PAUSED で作り、始めるのは `thth ads activate` の 2 段だけです。`thth ads watch` は成績を読み続け、指定の額か表示数に達したら `thth ads stop` と同じに止めます（`--until` で必ず終わる）。`spend_cap`・月の上限・旗を上げる命令はありません。例外は 1 つで、止めた印を外す `thth ads resume` は 2 段＋hub の承認の番号が必須です（masaru 11/02・外すのは印だけで、広告は PAUSED のまま）（[リリースノート 5.6.2](docs/リリースノート_5.6.2_2026-11-02.md)）。
 - **ブックマークの連投は記事と別に数える**（4.0.1）: はてなブックマークは主体の別の窓（既定 10 分に 10 件）で数え、超えても主体を止めずにその 1 件だけ断ります。1 日 30 件・同じホストへ 1 日 3 件（自分の記事は 1 日 1 件のまま）。記事の連投で止める作りは変わりません（[リリースノート 4.0.1](docs/リリースノート_4.0.1_2026-10-17.md)）。
 - **X の全期間の検索**（4.5.0）: `thth archive <口座> --from <handle> --title <曲名> [--max-total 20] [--json]` で 2006 年からの他人の公開投稿を読みます（id・URL・時刻・本文・handle・保存しない）。`--count-only` は件数だけ（1 回 0.010 USD）。返った本数で月の X 予算に数え、1 日の本数は `x_archive_daily_reads`（既定 0＝読まない）で別に縛ります。timer からは叩きません（[リリースノート 4.5.0](docs/リリースノート_4.5.0_2026-10-21.md)）。
@@ -73,7 +74,7 @@ thth send <アカウント> --text "こんにちは"
 claude mcp add thth -- thth-mcp
 ```
 
-MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけです。スキル（`skills/thth/`）は「投稿する前に何を見るか」「返信をどう扱うか」をアシスタントに教えます。記事を軸に告知・セルクマ・広告までつなぐ流れと、印（UTM）・測り方は `skills/thth-flow/` が教えます。キーはアシスタントに渡しません。`thth login` が手元に置いたキーを `thth` コマンドが使います。
+MCP の道具は CLI の写しで、同じ `thth` コマンドを呼ぶだけです。スキル（`skills/thth/`）は「投稿する前に何を見るか」「返信をどう扱うか」をアシスタントに教えます。記事を軸に告知・セルクマ・広告までつなぐ流れと、印（UTM）・測り方は `skills/thth-flow/` が教えます。広告を出すときの手順は別のスキル（`skills/thth-ads/`・pip で入れた場合は `thth ads skill` が場所を出します）です。キーはアシスタントに渡しません。`thth login` が手元に置いたキーを `thth` コマンドが使います。
 
 ## ガード
 
