@@ -108,6 +108,8 @@ COMMANDS += ['webhook subscribe', 'webhook pull', 'webhook status']
 # Meta 計画 段 5: 広告を書く（--json は 1 つの値・断りは {"ok": false, "code": …}）。
 COMMANDS += ['ads boost', 'ads activate', 'ads extend', 'ads pause', 'ads stop', 'ads end',
              'ads budget show', 'ads budget lower']
+# 11/02: 成績を読み続けて止める watch と、止めの印を外す resume（masaru 11/02 の例外・2 段）。
+COMMANDS += ['ads watch', 'ads resume']
 
 
 def test_json_table_covers_every_parser():
