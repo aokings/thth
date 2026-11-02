@@ -45,7 +45,7 @@ import time
 
 from .. import accounts, admin_log, approval_ledger, jst, secrets_fs, sent
 from ..meta import errors as meta_errors
-from . import budget, digest, graphread, graphwrite, ledger, watch
+from . import budget, digest, graphread, graphwrite, guide, ledger, watch
 
 OPS_DIR = "ops"
 # 「止まった」と言ってよい `effective_status`（D-4 の 2）。消した・しまった物も止まっている側。
@@ -277,7 +277,7 @@ def _instagram_user(cfg) -> str:
 
 
 def plan_boost(name, cfg, *, post=None, object_story_id=None, lifetime_minor, start, end, platforms=("facebook",),
-               objective="engagement", now) -> dict:
+               objective="engagement", now, url_tags=None, landing_url=None, utm_campaign=None) -> dict:
     """作る前の検査（網には出ない）。だめなら `OpsRefused`。"""
     if objective not in graphwrite.OBJECTIVES:
         raise OpsRefused("ads_objective_invalid", f"目的は {'・'.join(graphwrite.OBJECTIVES)} のどれかです")
@@ -305,6 +305,21 @@ def plan_boost(name, cfg, *, post=None, object_story_id=None, lifetime_minor, st
         raise OpsRefused("ads_lifetime_over_ceiling",
                          f"通しの予算 {lifetime_minor} が 1 操作の上限 lifetime_budget_max "
                          f"{ceilings['lifetime_budget_max']} を越えます")
+    # リンクの印（UTM など）と誘導先（5.6.3）: 引数が先、無ければ台帳の `url_tags`・`landing_url`。
+    # どちらも無く `utm_campaign`（元の投稿の原稿のファイル名・拡張子なし）があれば、有機の投稿と同じ鍵の印を
+    # 組む: utm_source=<出し先の 1 つ目>&utm_medium=paid&utm_campaign=<原稿のファイル名>（10/27 に窓口が決めた
+    # 形・有機は medium=social・設計 効果測定と連動 §2-2）。
+    if utm_campaign is not None and not ledger.UTM_CAMPAIGN_RE.fullmatch(str(utm_campaign)):
+        raise OpsRefused("ads_utm_campaign_invalid", "--utm-campaign は原稿のファイル名（拡張子なし・英数字と _ . -）です")
+    url_tags = url_tags if url_tags is not None else cfg.get("url_tags")
+    if url_tags is None and utm_campaign is not None:
+        url_tags = default_url_tags(platforms[0], utm_campaign)
+    if url_tags is not None and not ledger.url_tags_ok(url_tags):
+        raise OpsRefused("ads_url_tags_invalid", "--url-tags は key=value&key=value の形です（例 "
+                         "utm_source=facebook&utm_medium=paid&utm_campaign=kopicha）")
+    landing_url = landing_url if landing_url is not None else cfg.get("landing_url")
+    if landing_url is not None and not ledger.landing_url_ok(landing_url):
+        raise OpsRefused("ads_landing_url_invalid", "--landing-url は http(s):// の URL です")
     story, page_id, source = _object_story(name, cfg, post=post, object_story_id=object_story_id)
     ig_user = _instagram_user(cfg) if "instagram" in platforms else None
     targeting = {"geo_locations": {"countries": ["JP"]}, "age_min": 18,
@@ -313,18 +328,46 @@ def plan_boost(name, cfg, *, post=None, object_story_id=None, lifetime_minor, st
     return {"object_story_id": story, "page_id": page_id, "source": source, "instagram_user_id": ig_user,
             "lifetime_minor": lifetime_minor, "start": meta_time(start_at), "end": meta_time(end_at),
             "days": round(days, 3), "platforms": list(platforms), "objective": objective,
-            "objective_verified": objective in graphwrite.VERIFIED_OBJECTIVES, "targeting": targeting}
+            "objective_verified": objective in graphwrite.VERIFIED_OBJECTIVES, "targeting": targeting,
+            "url_tags": url_tags, "landing_url": landing_url}
+
+
+def default_url_tags(platform: str, utm_campaign: str) -> str:
+    """有機の投稿と同じ鍵の印（medium だけ paid）。"""
+    return f"utm_source={platform}&utm_medium=paid&utm_campaign={utm_campaign}"
+
+
+def boost_steps(name, cfg, plan, *, token=None, base_url=None, reader=None) -> list:
+    """作ったあとの次の一手（**先頭は skill**）。サイトへの誘導（traffic）ならピクセルと印（UTM）を確かめる。"""
+    steps = [guide.skill_step()]
+    if plan.get("objective") != "traffic":
+        return steps
+    try:
+        reader = reader or _reader(name, cfg, token or _token(cfg), base_url=base_url)
+        pixels, error = reader.pixels(), None
+    except (graphread.AdsReadError, meta_errors.RateLimited, OpsRefused) as exc:
+        pixels, error = None, _failure_code(exc) if not isinstance(exc, OpsRefused) else exc.code
+    if not guide.pixel_ready(pixels):
+        steps += guide.pixel_steps(name, pixels, landing_url=plan.get("landing_url"), error=error)[1:]
+    if not plan.get("url_tags"):
+        steps.append({"kind": "url_tags_unset",
+                      "text": ("リンクに印（UTM）が付いていません。付けるなら作り直すときに --utm-campaign "
+                               "<元の投稿の原稿のファイル名・拡張子なし>（utm_source=<出し先>&utm_medium=paid&"
+                               "utm_campaign=<原稿のファイル名> を組む・有機の投稿と同じ campaign）")})
+    return steps
 
 
 def boost(name, *, by, via="cli", post=None, object_story_id=None, lifetime_minor, start, end,
-          platforms=("facebook",), objective="engagement", now=None, base_url=None) -> dict:
+          platforms=("facebook",), objective="engagement", now=None, base_url=None, url_tags=None,
+          landing_url=None, utm_campaign=None) -> dict:
     """キャンペーン・広告セット・クリエイティブ・広告を**全部 `PAUSED`** で作る（お金は動かない）。"""
     now = now or jst.now_jst()
     by = _actor(by)
     cfg = ledger.load(name)
     _guarded(name, cfg)
     plan = plan_boost(name, cfg, post=post, object_story_id=object_story_id, lifetime_minor=lifetime_minor,
-                      start=start, end=end, platforms=platforms, objective=objective, now=now)
+                      start=start, end=end, platforms=platforms, objective=objective, now=now,
+                      url_tags=url_tags, landing_url=landing_url, utm_campaign=utm_campaign)
     token = _token(cfg)
     op_id = budget.new_op_id(now)
     row = {"op": "boost", "op_id": op_id, "at": jst.iso(now), "by": by, "via": via, "adaccount": name,
@@ -346,7 +389,8 @@ def boost(name, *, by, via="cli", post=None, object_story_id=None, lifetime_mino
             _record(name, op_id, row)
             step = "creative"
             row["created"]["creative_id"] = writer.create_creative(
-                name=label, object_story_id=plan["object_story_id"], instagram_user_id=plan["instagram_user_id"])
+                name=label, object_story_id=plan["object_story_id"], instagram_user_id=plan["instagram_user_id"],
+                url_tags=plan["url_tags"])
             _record(name, op_id, row)
             step = "ad"
             row["created"]["ad_id"] = writer.create_ad(name=label, adset_id=row["created"]["adset_id"],
@@ -367,6 +411,8 @@ def boost(name, *, by, via="cli", post=None, object_story_id=None, lifetime_mino
     _log(name, "boost", by, via, {"campaign_id": [None, row["created"]["campaign_id"]],
                                    "lifetime_minor": [None, plan["lifetime_minor"]]})
     return {"op_id": op_id, "status": "PAUSED", "created": row["created"], "plan": row["plan"],
+            "skill": guide.skill_ref(),
+            "next_steps": boost_steps(name, cfg, plan, token=token, base_url=base_url),
             "next": f"thth ads show {name} で見てから thth ads activate {name} {row['created']['campaign_id']} --by <名前>"}
 
 

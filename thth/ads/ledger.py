@@ -51,6 +51,19 @@ ADACCOUNTS_DIR_ENV = "THTH_ADACCOUNTS_DIR"
 REQUIRED_FIELDS = ("adaccount", "act_id", "project", "token", "ceilings")
 CEILING_KEYS = ("monthly", "lifetime_budget_max", "days_max")
 ACT_ID_RE = re.compile(r"[0-9]{1,32}")
+# 台帳の任意の欄（5.6.3）: `url_tags`（クリエイティブのリンクに付ける印・UTM など）と `landing_url`（誘導先の頁）。
+# url_tags は `key=value&key=value` の形だけ（Meta の動的な値 `{{campaign.id}}` などの波括弧は通す）。
+URL_TAGS_RE = re.compile(r"[A-Za-z0-9_.\-]{1,64}=[A-Za-z0-9_.\-{}%+]{1,128}(&[A-Za-z0-9_.\-]{1,64}=[A-Za-z0-9_.\-{}%+]{1,128}){0,15}")
+UTM_CAMPAIGN_RE = re.compile(r"[A-Za-z0-9_.\-]{1,128}")
+LANDING_URL_RE = re.compile(r"https?://[^\s<>\"']{1,2000}")
+
+
+def url_tags_ok(value) -> bool:
+    return isinstance(value, str) and len(value) <= 1000 and bool(URL_TAGS_RE.fullmatch(value))
+
+
+def landing_url_ok(value) -> bool:
+    return isinstance(value, str) and bool(LANDING_URL_RE.fullmatch(value))
 CURRENCY_RE = re.compile(r"[A-Z]{3}")
 # 書く操作を通してよい通貨（B-13）。`spend_cap` の読む欄は最小単位・書く引数は普通の単位の小数、と
 # 頁の中で食い違う【確・原文】。円は小数を持たないので差が出ない。ほかの通貨は単位を本物で確かめるまで断る。
@@ -177,6 +190,11 @@ def validate(name: str, data) -> None:
             or not all(_int0(ceilings[k]) for k in CEILING_KEYS)):
         raise AdAccountError("ceilings_invalid",
                              f"{name}: ceilings は {'・'.join(CEILING_KEYS)} の 3 つ（0 以上の整数・最小単位）です")
+    if data.get("url_tags") is not None and not url_tags_ok(data["url_tags"]):
+        raise AdAccountError("url_tags_invalid", f"{name}: url_tags は key=value&key=value の形です（例 "
+                             "utm_source=facebook&utm_medium=paid）")
+    if data.get("landing_url") is not None and not landing_url_ok(data["landing_url"]):
+        raise AdAccountError("landing_url_invalid", f"{name}: landing_url は http(s):// の URL です")
     refused = data.get("writes_refused")
     if refused is not None and refused not in WRITE_REFUSALS:
         raise AdAccountError("adaccount_invalid", f"{name}: writes_refused は {'・'.join(sorted(WRITE_REFUSALS))} か null です")

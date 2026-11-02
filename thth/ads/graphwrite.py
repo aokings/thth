@@ -198,10 +198,17 @@ class Writer:
             urgent=False)
         return self._new_id(body)
 
-    def create_creative(self, *, name: str, object_story_id: str, instagram_user_id: str | None = None) -> str:
+    def create_creative(self, *, name: str, object_story_id: str, instagram_user_id: str | None = None,
+                        url_tags: str | None = None) -> str:
         form = {"name": name[:200], "object_story_id": object_story_id}
         if instagram_user_id:
             form["instagram_user_id"] = self._check_id(instagram_user_id)
+        if url_tags is not None:
+            # クリエイティブの `url_tags`（ページの投稿の広告のリンクに付ける印・AdCreative の文書。
+            # object_story_id と一緒に送る例が文書にある）。**本番未確認。**
+            if not ledger.url_tags_ok(url_tags):
+                raise AdsWriteError("ads_url_tags_invalid")
+            form["url_tags"] = url_tags
         body = self._post(f"/{self.act}/adcreatives", form, urgent=False)
         return self._new_id(body)
 

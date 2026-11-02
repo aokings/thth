@@ -561,19 +561,26 @@ TOOLS += [
 # 広告（Meta 計画 段 5 の 7）。**出すのは show・boost（PAUSED まで）・pause・stop だけ。** 配信を始める
 # `activate`・延ばす `extend`・予算を下げる・終了日を早めるは MCP に出さない（始める・延ばすは CLI で masaru か
 # 運用が 2 段で押す）。`spend_cap`・月の上限・`ads_enabled` を上げる道具はどこにも無い（D-1）。
+# 5.6.3（masaru 11/03「読めとかやれとか言う前に skills を提示するべき」）: 広告の道具の説明は、まず skill を示す。
+ADS_SKILL = ("まず広告の手順の skill thth-ads を読む（CLI `thth ads skill --print` で全文・repo の skills/thth-ads/SKILL.md・"
+             "pip では thth/skills/thth-ads/SKILL.md）。返る json の next_steps は先頭が skill、そのあとが個別の一手。")
+ADS_PIXEL_FLOW = ("サイトへの誘導（objective traffic）は返る next_steps を上から読む: ピクセルが無ければイベントマネージャで作って"
+                  "もらう・動いていなければ誘導先のサイトの repo にピクセルの基本のコードを入れ、thth ads doctor で動いたかを見る"
+                  "（THTH はピクセルを作らない・サイトに触らない）。")
 ADS_NOTE = ("金額は最小単位の整数（JPY なら円）。お金が動くのは配信を始めたときだけで、始める（activate）・延ばす（extend）は "
             "MCP に無い（CLI で人が 2 段で押す）。spend_cap・上限を上げる道具も無い")
 ADS_TOOLS = [
     {"name": "thth_ads_show",
-     "description": ("広告の口座を読む（thth ads show --json と同じ形・読むだけ）。spend_cap・amount_spent・動いている物・"
-                     "要対応（THTH の外で始まった配信・止めたと確かめられない ほか）。" + ADS_NOTE),
+     "description": (ADS_SKILL + "広告の口座を読む（thth ads show --json と同じ形・読むだけ）。spend_cap・amount_spent・"
+                     "動いている物・ピクセル（pixels・pixel_ready）・要対応（THTH の外で始まった配信・止めたと確かめられない ほか）。"
+                     + ADS_PIXEL_FLOW + ADS_NOTE),
      "inputSchema": {"type": "object", "properties": {
          "adaccount": {"type": "string", "description": "広告の口座の名前（例 kopicha-ads）"}},
          "required": ["adaccount"], "additionalProperties": False}},
     {"name": "thth_ads_boost",
-     "description": ("ページの投稿を広告にする下書きを作る（キャンペーン・広告セット・クリエイティブ・広告を全部 PAUSED で作る・"
+     "description": (ADS_SKILL + "ページの投稿を広告にする下書きを作る（キャンペーン・広告セット・クリエイティブ・広告を全部 PAUSED で作る・"
                      "お金は動かない）。終了日は必須。1 操作の上限（通しの予算・期間）を超える指定は作らない。"
-                     "始めるのは人が CLI で thth ads activate を 2 段で押す。" + ADS_NOTE),
+                     "始めるのは人が CLI で thth ads activate を 2 段で押す。" + ADS_PIXEL_FLOW + ADS_NOTE),
      "inputSchema": {"type": "object", "properties": {
          "adaccount": {"type": "string", "description": "広告の口座の名前"},
          "post": {"type": "string", "description": "THTH で出したページの投稿の post_id（object_story_id とどちらか）"},
@@ -582,10 +589,18 @@ ADS_TOOLS = [
          "start": {"type": "string", "description": "開始（ISO 8601 か now・既定 now）"},
          "end": {"type": "string", "description": "終了（必須・ISO 8601）"},
          "platforms": {"type": "string", "description": "facebook か facebook,instagram（既定 facebook）"},
+         "objective": {"type": "string", "enum": ["engagement", "traffic", "reach"],
+                       "description": "目的（既定 engagement。traffic＝サイトへの誘導・reach＝認知）"},
+         "url_tags": {"type": "string",
+                      "description": "リンクに付ける印（クリエイティブの url_tags・例 utm_source=facebook&utm_medium=paid）"},
+         "utm_campaign": {"type": "string",
+                          "description": "元の投稿の原稿のファイル名（拡張子なし）。url_tags が無ければ "
+                                         "utm_source=<出し先>&utm_medium=paid&utm_campaign=<これ> を付ける"},
+         "landing_url": {"type": "string", "description": "誘導先の頁の URL（次の一手の文に入る・Meta には送らない）"},
          "by": {"type": "string", "description": "打った人の名前（記録に残る）"}},
          "required": ["adaccount", "lifetime", "end", "by"], "additionalProperties": False}},
     {"name": "thth_ads_pause",
-     "description": ("広告を止める（status=PAUSED・承認なし・止めた口座でも通す・量の制限で待たない）。all か ids のどちらか。"
+     "description": (ADS_SKILL + "広告を止める（status=PAUSED・承認なし・止めた口座でも通す・量の制限で待たない）。all か ids のどちらか。"
                      "失敗した物があれば管理画面で止める"),
      "inputSchema": {"type": "object", "properties": {
          "adaccount": {"type": "string", "description": "広告の口座の名前"},
@@ -594,7 +609,7 @@ ADS_TOOLS = [
          "by": {"type": "string", "description": "打った人の名前"}},
          "required": ["adaccount", "by"], "additionalProperties": False}},
     {"name": "thth_ads_stop",
-     "description": ("広告の口座を止める: 全部 PAUSED → THTH の止め → Meta から読み直して確かめる（処理中なら最大 30 秒待つ）"
+     "description": (ADS_SKILL + "広告の口座を止める: 全部 PAUSED → THTH の止め → Meta から読み直して確かめる（処理中なら最大 30 秒待つ）"
                      " → spend_cap を使った額＋少しの余白まで下げる。"
                      "「止まった」と言うのは読み直しで確かめたときだけ。言えなければ hub に送る 1 行（waiting_on_masaru）を返すので、"
                      "そのまま hub に送り、管理画面で止めてもらう"),
@@ -604,6 +619,9 @@ ADS_TOOLS = [
          "required": ["adaccount", "by"], "additionalProperties": False}},
 ]
 TOOLS += ADS_TOOLS
+# MCP の instructions（initialize で返す）。広告は、まず skill を示す（5.6.3）。
+MCP_INSTRUCTIONS = ("THTH は承認済みの投稿だけを投げる門。広告（thth_ads_*）を使う前に、" + ADS_SKILL
+                    + "お金が動く始める・延ばすは MCP に無い（人が CLI で 2 段で押す）。")
 
 
 class ToolInputError(Exception):
@@ -1880,6 +1898,10 @@ def call_tool(name: str, arguments: dict | None) -> dict:
         args = ["ads", "boost", arguments["adaccount"], *target, "--lifetime", str(arguments["lifetime"]),
                 "--start", arguments.get("start") or "now", "--end", arguments["end"],
                 "--platforms", arguments.get("platforms") or "facebook",
+                "--objective", arguments.get("objective") or "engagement",
+                *(["--url-tags", arguments["url_tags"]] if arguments.get("url_tags") else []),
+                *(["--landing-url", arguments["landing_url"]] if arguments.get("landing_url") else []),
+                *(["--utm-campaign", arguments["utm_campaign"]] if arguments.get("utm_campaign") else []),
                 "--by", arguments["by"], "--via", "mcp", "--json"]
         proc = run_cli(args)
         text = proc.stdout
@@ -1971,6 +1993,7 @@ def _handle_request(req: dict):
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "thth", "version": "0.1.0"},
+                "instructions": MCP_INSTRUCTIONS,
             },
         }
     if method == "notifications/initialized":

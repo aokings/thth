@@ -40,10 +40,37 @@ CAMPAIGN_FIELDS = "id,name,status,effective_status,lifetime_budget,daily_budget,
 ADSET_FIELDS = ("id,name,campaign_id,status,effective_status,lifetime_budget,daily_budget,"
                 "start_time,end_time")
 AD_FIELDS = "id,name,campaign_id,adset_id,status,effective_status"
-# `actions`・`inline_link_clicks` は 11/03 本番の試しの広告で返るのを確かめた。`outbound_clicks` は文書だけ
-# （ad-account/insights の参照・list<AdsActionStats>）なので、断られたら外して読み直す（INSIGHT_FIELDS_BASE）。
+# `actions`・`inline_link_clicks` は 11/03 本番の試しの広告で返るのを確かめた。残り（INSIGHT_FIELDS_EXTRA）は
+# 文書だけで確かめた欄（ad-account/insights の参照の欄の表・v26.0・
+# developers.facebook.com/documentation/ads-commerce/marketing-api/reference/ad-account/insights.md）なので、
+# 断られたら（`#100`）外して 1 度だけ読み直す。**本番未確認。**
 INSIGHT_FIELDS_BASE = "spend,impressions,clicks,reach,actions,inline_link_clicks"
-INSIGHT_FIELDS = INSIGHT_FIELDS_BASE + ",outbound_clicks"
+# 効率（Meta の計算済みの値・numeric string）: frequency・cpm・ctr・cpc・cost_per_unique_click・
+# inline_link_click_ctr・cost_per_inline_link_click。list<AdsActionStats>: outbound_clicks・outbound_clicks_ctr・
+# cost_per_outbound_click。動画（list<AdsActionStats>）: video_play_actions・video_p25〜p100_watched_actions・
+# video_avg_time_watched_actions・cost_per_thruplay。
+# **足さなかった名前**（欄の表に無い）: quality_ranking・engagement_rate_ranking・conversion_rate_ranking・
+# unique_clicks・unique_ctr・unique_inline_link_clicks・video_thruplay_watched_actions。
+EFFICIENCY_NUMERIC = ("frequency", "cpm", "ctr", "cpc", "cost_per_unique_click", "inline_link_click_ctr",
+                      "cost_per_inline_link_click")
+EFFICIENCY_LISTS = ("outbound_clicks_ctr", "cost_per_outbound_click")
+VIDEO_FIELDS = (("plays", "video_play_actions"), ("p25", "video_p25_watched_actions"),
+                ("p50", "video_p50_watched_actions"), ("p75", "video_p75_watched_actions"),
+                ("p95", "video_p95_watched_actions"), ("p100", "video_p100_watched_actions"),
+                ("avg_time_watched", "video_avg_time_watched_actions"), ("cost_per_thruplay", "cost_per_thruplay"))
+INSIGHT_FIELDS_EXTRA = ",".join(("outbound_clicks",) + EFFICIENCY_NUMERIC + EFFICIENCY_LISTS
+                                + tuple(f for _k, f in VIDEO_FIELDS))
+INSIGHT_FIELDS = INSIGHT_FIELDS_BASE + "," + INSIGHT_FIELDS_EXTRA
+# 内訳（`breakdowns`・Insights API Breakdowns の文書）。内訳を付けた読みは INSIGHT_FIELDS_BASE だけを頼む
+# （hourly では unique 系・video 系を頼めない・region では video_p* を頼めない【文書】ので一律に絞る）。
+# hourly では reach が 0 で返る【文書】。
+BREAKDOWNS = {"age-gender": "age,gender", "region": "region", "country": "country",
+              "placement": "publisher_platform,platform_position", "device": "impression_device",
+              "hour": "hourly_stats_aggregated_by_advertiser_time_zone"}
+# ピクセル（/act_<id>/adspixels・AdsPixel の欄・文書）。読むだけ。作る口は作らない。
+PIXEL_FIELDS = "id,name,last_fired_time,is_unavailable,creation_time"
+# 出す前の見積もり（/act_<id>/reachestimate・/act_<id>/delivery_estimate・文書）。
+OPTIMIZATION_GOALS = ("POST_ENGAGEMENT", "LINK_CLICKS", "LANDING_PAGE_VIEWS", "REACH", "IMPRESSIONS")
 # 反応の内訳とサイトへの誘導（5.6.3・masaru 11/03）。`actions` の `action_type` のうち人に見せる物だけ。
 # 名前は Meta の公式の文書 Ads Action Stats（v26.0・
 # developers.facebook.com/docs/marketing-api/reference/ads-action-stats/）で確かめた: post_reaction＝Post
@@ -219,6 +246,49 @@ def site(actions, inline_link_clicks, outbound, *, outbound_asked: bool = True) 
     return out
 
 
+def _decimal_text(value) -> str | None:
+    """Meta の numeric string をそのまま（数として読める物だけ）。"""
+    if not isinstance(value, str) or len(value) > 32:
+        return None
+    try:
+        amount = decimal.Decimal(value)
+    except decimal.InvalidOperation:
+        return None
+    return value if amount.is_finite() and amount >= 0 else None
+
+
+def _stat_value(stats, prefer: str):
+    """list<AdsActionStats> から 1 つの値（`prefer` の action_type、無ければ行が 1 つだけのときその値）。
+    並びでない・選べないときは None。値は Meta の文字列のまま（数として読める物だけ）。"""
+    if not isinstance(stats, list):
+        return None
+    rows = [r for r in stats if isinstance(r, dict)]
+    chosen = [r for r in rows if r.get("action_type") == prefer]
+    if not chosen and len(rows) == 1:
+        chosen = rows
+    if len(chosen) != 1:
+        return None
+    return _decimal_text(chosen[0].get("value")) if not isinstance(chosen[0].get("value"), int) \
+        else str(chosen[0]["value"])
+
+
+def efficiency(row: dict, *, asked: bool = True) -> dict | None:
+    """効率（Meta の計算済みの値・文字列のまま）。頼んでいなければ None。欄が無ければその欄は None。"""
+    if not asked:
+        return None
+    out = {key: _decimal_text(row.get(key)) for key in EFFICIENCY_NUMERIC}
+    out["outbound_clicks_ctr"] = _stat_value(row.get("outbound_clicks_ctr"), "outbound_click")
+    out["cost_per_outbound_click"] = _stat_value(row.get("cost_per_outbound_click"), "outbound_click")
+    return out
+
+
+def video(row: dict) -> dict | None:
+    """動画の再生と見られた深さ。**動画の欄が 1 つも返らなければ None**（動画でない広告では出さない）。"""
+    if not any(field in row for _key, field in VIDEO_FIELDS):
+        return None
+    return {key: _stat_value(row.get(field), "video_view") for key, field in VIDEO_FIELDS}
+
+
 SITE_WHY_TEXT = {"not_measured_or_left": "記録なし（リンクは押された。頁の側の計測が無いか、開く前に離れた）",
                  "actions_missing": "不明（Meta が actions を返さなかった）",
                  "actions_unreadable": "不明（actions が読めなかった）",
@@ -278,6 +348,22 @@ def engagement_text(row: dict, currency: str | None = None) -> list:
                 parts.append(f"{label} {value}" + ("（リンクが押されていないので 0）" if reason == "no_link_clicks" else ""))
         lines.append("サイトへの誘導: " + "・".join(parts)
                      + f"（広告の中のリンクのクリック {num(s.get('inline_link_clicks'))}）")
+    eff = row.get("efficiency")
+    if isinstance(eff, dict):
+        names = (("frequency", "1 人あたりの表示"), ("cpm", "1000 表示あたり"), ("ctr", "クリック率（全部・%）"),
+                 ("cpc", "1 クリックあたり（全部）"), ("cost_per_unique_click", "1 人のクリックあたり（推計）"),
+                 ("inline_link_click_ctr", "リンクのクリック率（%）"),
+                 ("cost_per_inline_link_click", "1 リンククリックあたり"),
+                 ("outbound_clicks_ctr", "サイトへ出たクリック率（%）"),
+                 ("cost_per_outbound_click", "1 サイトへ出たクリックあたり"))
+        shown = [f"{label} {eff[key]}" for key, label in names if eff.get(key) is not None]
+        if shown:
+            lines.append("効率（Meta の計算）: " + "・".join(shown))
+    vid = row.get("video")
+    if isinstance(vid, dict):
+        names = (("plays", "再生"), ("p25", "25%"), ("p50", "50%"), ("p75", "75%"), ("p95", "95%"), ("p100", "100%"),
+                 ("avg_time_watched", "平均の再生秒"), ("cost_per_thruplay", "1 ThruPlay あたり"))
+        lines.append("動画: " + "・".join(f"{label} {num(vid.get(key))}" for key, label in names))
     costs = row.get("cost_per") or {}
     labels = [(key, label) for key, _kind, label in ENGAGEMENT_ACTIONS] + list(SITE_LABELS)
     priced = [f"{label} {costs[key]}" for key, label in labels if costs.get(key)]
@@ -440,7 +526,7 @@ class Reader:
         return meta_usage.insights_throttle_pct(headers)
 
     def insights(self, preset: str = "last_30d", *, level: str = "account", since: str | None = None,
-                 until: str | None = None, object_id: str | None = None) -> list:
+                 until: str | None = None, object_id: str | None = None, breakdown: str | None = None) -> list:
         """`/act_<id>/insights`（`object_id` を渡せばそのキャンペーン・広告セットの `/insights`）。
         **前回の使用率が線を越えていれば呼ばない**（`ads_insights_throttled`）。
 
@@ -464,18 +550,24 @@ class Reader:
         pct = self.insights_util_pct()
         if pct is not None and pct >= INSIGHTS_THROTTLE_PCT:
             raise AdsReadError("ads_insights_throttled", failure=meta_errors.RATE_LIMITED)
-        fields = INSIGHT_FIELDS + ("" if level == "account" else f",{level}_id,{level}_name")
+        if breakdown is not None:
+            if breakdown not in BREAKDOWNS:
+                raise AdsReadError("ads_breakdown_invalid")
+            params["breakdowns"] = BREAKDOWNS[breakdown]
+        head = INSIGHT_FIELDS_BASE if breakdown is not None else INSIGHT_FIELDS
+        fields = head + ("" if level == "account" else f",{level}_id,{level}_name")
         path = f"/{object_id}/insights" if object_id else f"/{self.act}/insights"
-        outbound_asked = True
+        extras_asked = breakdown is None
         try:
             rows, _ = self._list(path, dict(params, fields=fields))
         except AdsReadError as exc:
-            # 文書だけで確かめた `outbound_clicks` を断られたら、外して 1 度だけ読み直す（本筋の成績と、
+            # 文書だけで確かめた欄（INSIGHT_FIELDS_EXTRA）を断られたら、外して 1 度だけ読み直す（本筋の成績と、
             # それを使う watch・予算の照合を、確かめていない欄で落とさない）。
-            if not exc.code.startswith("ads_http_400_code_100"):
+            if not extras_asked or not exc.code.startswith("ads_http_400_code_100"):
                 raise
-            outbound_asked = False
+            extras_asked = False
             rows, _ = self._list(path, dict(params, fields=fields.replace(INSIGHT_FIELDS, INSIGHT_FIELDS_BASE, 1)))
+        outbound_asked = extras_asked
         currency = self.cfg.get("currency")
         out = []
         for row in rows:
@@ -496,6 +588,12 @@ class Reader:
                                         [k for k, _a, _l in ENGAGEMENT_ACTIONS] + [k for k, _l in SITE_LABELS])
             item["actions"] = raw_actions(row.get("actions"))
             item["outbound_clicks_raw"] = raw_actions(row.get("outbound_clicks"))
+            item["efficiency"] = efficiency(row, asked=extras_asked)
+            item["video"] = video(row) if extras_asked else None
+            item["extras_asked"] = extras_asked
+            if breakdown is not None:
+                item["breakdown"] = {key: (str(row.get(key))[:100] if row.get(key) is not None else None)
+                                     for key in BREAKDOWNS[breakdown].split(",")}
             if level != "account":
                 item["id"] = row.get(f"{level}_id")
                 item["name"] = row.get(f"{level}_name")
@@ -526,6 +624,61 @@ class Reader:
                                         if isinstance(first.get(k), (int, bool))}
         except (AdsReadError, meta_errors.RateLimited) as exc:
             out["delivery_estimate"] = {"unavailable": getattr(exc, "code", type(exc).__name__)}
+        return out
+
+    def pixels(self) -> list:
+        """広告アカウントのピクセル（`/act_<id>/adspixels`・読むだけ）。`last_fired_time` は最後に動いた時刻。"""
+        rows, _ = self._list(f"/{self.act}/adspixels", {"fields": PIXEL_FIELDS})
+        out = []
+        for row in rows:
+            pid = str(row.get("id") or "")
+            if not ID_RE.fullmatch(pid):
+                continue
+            out.append({"id": pid, "name": str(row.get("name"))[:200] if row.get("name") is not None else None,
+                        "last_fired_time": row.get("last_fired_time") if isinstance(row.get("last_fired_time"), str)
+                        else None,
+                        "is_unavailable": row.get("is_unavailable") if isinstance(row.get("is_unavailable"), bool)
+                        else None,
+                        "creation_time": row.get("creation_time") if isinstance(row.get("creation_time"), str)
+                        else None})
+        return out
+
+    def reach_estimate(self, targeting: dict) -> dict:
+        """狙う相手の大きさ（`/act_<id>/reachestimate`・読むだけ）。`users_lower_bound`〜`users_upper_bound`。
+        -1 は「出せない」（一部のカスタムオーディエンス・文書）で、配信が止まる意味ではない。"""
+        body = self._get(f"/{self.act}/reachestimate",
+                         {"targeting_spec": json.dumps(targeting, ensure_ascii=False, separators=(",", ":"))})
+        data = body.get("data")
+        node = data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else \
+            (data if isinstance(data, dict) else body)
+        out = {}
+        for key in ("users_lower_bound", "users_upper_bound"):
+            value = node.get(key)
+            out[key] = value if isinstance(value, int) and not isinstance(value, bool) else None
+        out["estimate_ready"] = node.get("estimate_ready") if isinstance(node.get("estimate_ready"), bool) else None
+        return out
+
+    def delivery_estimate(self, targeting: dict, goal: str) -> dict:
+        """予算あたりの見込み（`/act_<id>/delivery_estimate`・読むだけ）。`daily_outcomes_curve` は確度の高い
+        予測があるときだけ中身がある（無いときは全部 0 の 1 点・文書）。"""
+        if goal not in OPTIMIZATION_GOALS:
+            raise AdsReadError("ads_goal_invalid")
+        body = self._get(f"/{self.act}/delivery_estimate",
+                         {"optimization_goal": goal,
+                          "targeting_spec": json.dumps(targeting, ensure_ascii=False, separators=(",", ":"))})
+        data = body.get("data") if isinstance(body.get("data"), list) else []
+        first = data[0] if data and isinstance(data[0], dict) else {}
+        out = {k: first.get(k) for k in ("estimate_ready", "estimate_dau", "estimate_mau_lower_bound",
+                                         "estimate_mau_upper_bound") if isinstance(first.get(k), (int, bool))}
+        curve = first.get("daily_outcomes_curve") if isinstance(first.get("daily_outcomes_curve"), list) else []
+        points = []
+        for point in curve[:30]:
+            if not isinstance(point, dict):
+                continue
+            points.append({k: point.get(k) for k in ("spend", "reach", "impressions", "actions")
+                           if isinstance(point.get(k), (int, float)) and not isinstance(point.get(k), bool)})
+        out["daily_outcomes_curve"] = points
+        out["confident"] = any(any(v for v in p.values()) for p in points)
         return out
 
     def adaccounts(self) -> list:

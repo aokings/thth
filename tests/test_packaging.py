@@ -155,6 +155,8 @@ def test_wheel_に_mcp_と_skill_と_VERSION_が入っている(built):
             f"VERSION が wheel に無い（`thth --version` が 0.0.0 になる）: {sorted(names)[:20]}")
         assert "thth/mcp_server.py" in names, "MCP が wheel に入っていません"
         assert "thth/skills/thth/SKILL.md" in names, "skill が wheel に入っていません"
+        # 5.6.3: 広告の手順の skill（`thth ads skill` が wheel の中のここを指す）。
+        assert "thth/skills/thth-ads/SKILL.md" in names, "広告の skill が wheel に入っていません"
         assert "thth/cli.py" in names and "thth/adapters/threads.py" in names
         skill = z.read("thth/skills/thth/SKILL.md").decode("utf-8")
         entry = z.read(f"thth-{_version()}.dist-info/entry_points.txt").decode("utf-8")

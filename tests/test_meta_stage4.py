@@ -115,6 +115,14 @@ def env(tmp_path, monkeypatch):
               ("GET", V + f"/act_{ACT}/adsets"): lambda q, f, r: (200, {"data": data["adsets"]}),
               ("GET", V + f"/act_{ACT}/ads"): lambda q, f, r: (200, {"data": data["ads"]}),
               ("GET", V + f"/act_{ACT}/insights"): insights_route,
+              # 5.6.3: ピクセル・見積もり（試験ごとに data の値で差し替える）。
+              ("GET", V + f"/act_{ACT}/adspixels"): lambda q, f, r: data.get("pixels_route", (200, {"data": []})),
+              ("GET", V + f"/act_{ACT}/reachestimate"): lambda q, f, r: data.get(
+                  "reach_route", (200, {"data": {"users_lower_bound": 1200000, "users_upper_bound": 1400000}})),
+              ("GET", V + f"/act_{ACT}/delivery_estimate"): lambda q, f, r: data.get(
+                  "delivery_route", (200, {"data": [{"estimate_ready": True, "estimate_dau": 50000,
+                                                     "daily_outcomes_curve": [{"spend": 0, "reach": 0,
+                                                                               "impressions": 0, "actions": 0}]}]})),
               # 書く要求が来たら受けて記録する（来ないことを試験が見る）。
               ("POST", V + "/act_" + ACT): posted, ("POST", V + f"/act_{ACT}/campaigns"): posted,
               ("DELETE", V + "/act_" + ACT): posted}
@@ -174,7 +182,9 @@ def test_命令の一覧は読む7つと書く9つだけ_読む命令に書く�
     for action in ads._actions:
         if isinstance(action, argparse._SubParsersAction):
             verbs |= set(action.choices)
-    assert set(ads_cli.READ_VERBS) == {"accounts", "add", "auth", "doctor", "show", "insights", "collect"}
+    # 5.6.3: estimate（出す前の見積もり・GET だけ）と skill（手順の skill の場所・網に出ない）を読む側に足した。
+    assert set(ads_cli.READ_VERBS) == {"accounts", "add", "auth", "doctor", "show", "insights", "collect",
+                                       "estimate", "skill"}
     assert set(ads_cli.WRITE_VERBS) == {"boost", "activate", "extend", "pause", "stop", "budget", "end", "watch",
                                         "resume"}
     assert verbs == set(ads_cli.VERBS)

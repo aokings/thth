@@ -7,6 +7,12 @@
     thth ads show <名前> [--json] [--offline]  アカウント・spend_cap・amount_spent・動いている物
     thth ads insights <名前> [--preset last_30d|maximum|…] [--since YYYY-MM-DD [--until YYYY-MM-DD]] [--level account] [--json]
     thth ads collect [<名前>] [--json]         読みを snapshot.json に残す（collect のたびにも回る）
+    thth ads insights <名前> --by age-gender|region|country|placement|device|hour   内訳（5.6.3）
+    thth ads estimate <名前> --targeting <JSON|@ファイル> [--goal LINK_CLICKS|…] [--json]
+                                                出す前の見積もり（狙う相手の大きさ・予算あたりの見込み・読むだけ）
+    thth ads skill [--print] [--json]          広告の手順の skill（thth-ads）の場所と全文
+
+**広告の手順は skill thth-ads**（`thth ads skill --print`）。広告の命令の次の一手とエラーの文は、先頭にそれを示す。
 
 段 5（書く・お金が動くのは activate と extend だけ）:
 
@@ -49,10 +55,10 @@ from .. import accounts, admin_log, jst, redact
 from ..meta import errors as meta_errors
 from ..meta import tokens as meta_tokens
 from ..meta import usage as meta_usage
-from . import graphread, graphwrite, ledger, watch
+from . import graphread, graphwrite, guide, ledger, watch
 
 # **命令の全部**（`tests/test_meta_stage5.py` がこの集合と parser の一致を縛る）。
-READ_VERBS = ("accounts", "add", "auth", "doctor", "show", "insights", "collect")
+READ_VERBS = ("accounts", "add", "auth", "doctor", "show", "insights", "collect", "estimate", "skill")
 # 段 5 の書く命令。Meta に書くのは `ops.py` の決まった関数だけ（`graphwrite.ALLOWED_CALLERS`）。
 # `watch` は指定に達したら `ops.stop` を呼ぶので書く側。`resume` は止めの印を外す唯一の例外（masaru 11/02）。
 WRITE_VERBS = ("boost", "activate", "extend", "pause", "stop", "budget", "end", "watch", "resume")
@@ -63,6 +69,9 @@ EXPECTED_SCOPES = ("ads_read", "ads_management", "business_management")
 
 
 def _fail(reason, *, json_output=False) -> int:
+    """広告の命令の断り・エラー。**先頭の行は skill thth-ads の在り処**（masaru 11/03「読めとかやれとか言う前に
+    skills を提示するべき」）。2 行目からが個別の理由。"""
+    print(guide.skill_line(), file=sys.stderr)
     print(redact.redact(str(reason)), file=sys.stderr)
     return 2
 
@@ -190,7 +199,8 @@ def cmd_show(args) -> int:
     except accounts.AccountError as exc:
         return _fail(_error_text(exc))
     value = {"adaccount": args.name, "ledger": _ledger_view(args.name, cfg),
-             "token": watch.token_state(cfg, now=now), "unit": "最小単位の整数（JPY なら円）"}
+             "token": watch.token_state(cfg, now=now), "unit": "最小単位の整数（JPY なら円）",
+             "skill": guide.skill_ref(), "next_steps": [guide.skill_step()]}
     if args.offline:
         value["source"] = "snapshot"
         value["snapshot"] = watch.read_snapshot(args.name)
@@ -205,6 +215,14 @@ def cmd_show(args) -> int:
         except (accounts.AccountError, graphread.AdsReadError, meta_errors.RateLimited, ValueError) as exc:
             return _fail(_error_text(exc))
         value["delivery"] = watch.delivery_report(reader, tree, now=now)
+        try:
+            value["pixels"], pixel_error = reader.pixels(), None
+        except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
+            value["pixels"], pixel_error = None, getattr(exc, "code", None) or type(exc).__name__
+        value["pixel_ready"] = guide.pixel_ready(value["pixels"])
+        value["next_steps"] = ([guide.skill_step()] if value["pixel_ready"] else
+                               guide.pixel_steps(args.name, value["pixels"], landing_url=cfg.get("landing_url"),
+                                                 error=pixel_error))
         mismatch = [key for key in ("currency", "timezone_name")
                     if cfg.get(key) is not None and value["account"].get(key) not in (None, cfg[key])]
         value["ledger_mismatch"] = mismatch
@@ -237,13 +255,26 @@ def cmd_show(args) -> int:
             t = v["tree"]
             print(f"  木: {t['by_effective_status']}" + ("" if t["complete"] else "（全部は読めていない）"))
             _render_delivery(v.get("delivery") or {})
+            _render_pixels(v)
         elif v.get("snapshot"):
             s = v["snapshot"]
             print(f"  最後の読み: {s.get('observed_at')}" + (f"（読めなかった: {s.get('error')}）" if s.get("error") else ""))
         for row in v["events"]:
             print(f"  要対応 {row['kind']}: {row['summary']}")
+        _render_steps(v.get("next_steps"))
     _emit(value, args.json, render)
     return 0
+
+
+def _render_pixels(v) -> None:
+    pixels = v.get("pixels")
+    if pixels is None:
+        print("  ピクセル: 読めませんでした")
+    elif not pixels:
+        print("  ピクセル: ありません（サイトへの誘導の頁が開いた数は測れない）")
+    else:
+        print("  ピクセル: " + "・".join(f"{p['id']}（最後に動いた {p.get('last_fired_time') or 'まだ無い'}"
+                                       + ("・使えない" if p.get("is_unavailable") else "") + "）" for p in pixels))
 
 
 def _render_delivery(d) -> None:
@@ -291,22 +322,40 @@ def cmd_insights(args) -> int:
         cfg, _token, reader = _reader(args.name)
         if since is not None and until is None:
             until = watch.local_day(cfg, jst.now_jst())
-        rows = reader.insights(args.preset, level=args.level, since=since, until=until)
+        rows = reader.insights(args.preset, level=args.level, since=since, until=until, breakdown=args.by)
     except (accounts.AccountError, graphread.AdsReadError, meta_errors.RateLimited, ValueError) as exc:
         return _fail(_error_text(exc))
     excludes = _excludes_today(cfg, args.preset, since, until)
+    # 頁が開いた数が測れない（リンクは押されたのに記録が無い）ならピクセルを読み、次の一手を返す。
+    steps = [guide.skill_step()]
+    if any(((row.get("site") or {}).get("why") or {}).get("landing_page_views") == "not_measured_or_left"
+           for row in rows):
+        try:
+            pixels, error = reader.pixels(), None
+        except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
+            pixels, error = None, getattr(exc, "code", None) or type(exc).__name__
+        steps = guide.pixel_steps(args.name, pixels, landing_url=cfg.get("landing_url"), error=error)
     value = {"adaccount": args.name, "preset": None if since else args.preset, "since": since, "until": until,
-             "level": args.level, "currency": cfg.get("currency"), "excludes_today": excludes,
+             "level": args.level, "breakdown": args.by,
+             "breakdown_fields": graphread.BREAKDOWNS.get(args.by) if args.by else None,
+             "currency": cfg.get("currency"), "excludes_today": excludes,
              "rows": rows, "ads_insights_util_pct": reader.insights_util_pct(),
              "unit": "spend は Meta の文字列（普通の単位）・spend_minor は最小単位の整数（JPY だけ直す）",
-             "engagement_note": ENGAGEMENT_NOTE}
+             "engagement_note": ENGAGEMENT_NOTE, "skill": guide.skill_ref(), "next_steps": steps}
+    if args.by:
+        value["breakdown_note"] = ("内訳つきの読みは spend・impressions・clicks・reach・actions・inline_link_clicks だけを"
+                                   "頼む（効率・動画は内訳なしで読む）。hour では reach が 0 で返る（Meta の決まり）")
     if not rows and excludes:
         value["note"] = ("この期間は今日を含みません（Meta の last_7d などは昨日まで）。今日の分は --preset today か "
                          "--preset maximum で読む")
 
     def render(v):
         period = f"{v['since']}〜{v['until']}" if v["since"] else v["preset"]
-        print(f"成績 {v['adaccount']}  {period}・{v['level']}（通貨 {v['currency'] or '未'}）")
+        print(f"成績 {v['adaccount']}  {period}・{v['level']}（通貨 {v['currency'] or '未'}）"
+              + (f"・内訳 {v['breakdown']}" if v.get("breakdown") else ""))
+        if v.get("breakdown"):
+            _render_breakdown(v)
+            return
         for row in v["rows"]:
             head = f"{row.get('name') or row.get('id')}  " if v["level"] != "account" else ""
             print(f"  {head}spend {row['spend']}（最小単位 {row['spend_minor']}）・impressions {row['impressions']}・"
@@ -319,7 +368,103 @@ def cmd_insights(args) -> int:
             if v.get("note"):
                 print(f"  注意: {v['note']}")
         print(f"  成績の読みの使用率: {v['ads_insights_util_pct']}%")
+        _render_steps(v.get("next_steps"))
     _emit(value, args.json, render)
+    return 0
+
+
+def _render_steps(steps) -> None:
+    """次の一手（**先頭は skill**）。skill だけなら 1 行。"""
+    for step in steps or []:
+        print(f"次の一手: {step['text']}")
+
+
+def _render_breakdown(v) -> None:
+    """内訳は 1 区分 1 行（長くしない）。"""
+    for row in v["rows"]:
+        key = "・".join(str(x) for x in (row.get("breakdown") or {}).values())
+        head = f"{row.get('name') or row.get('id')} " if v["level"] != "account" else ""
+        eng = row.get("engagement") or {}
+        site = row.get("site") or {}
+        reactions = "不明" if row.get("engagement") is None else eng.get("reactions")
+        links = "不明" if site.get("link_clicks") is None else site.get("link_clicks")
+        print(f"  {head}{key}: spend {row['spend']}・表示 {row['impressions']}・リーチ {row['reach']}・"
+              f"clicks {row['clicks']}・いいね・リアクション {reactions}・リンククリック {links}")
+    if not v["rows"]:
+        print("  行がありません（この期間に配信が無い）")
+    print(f"  注意: {v['breakdown_note']}")
+    print(f"  成績の読みの使用率: {v['ads_insights_util_pct']}%")
+    _render_steps(v.get("next_steps"))
+
+
+# ------------------------------------------------------------------ estimate・skill
+
+def _targeting(text):
+    """`--targeting` の JSON（`@ファイル` も可）。object でなければ ValueError。"""
+    if text.startswith("@"):
+        with open(text[1:], encoding="utf-8") as f:
+            text = f.read()
+    value = json.loads(text)
+    if not isinstance(value, dict):
+        raise ValueError("ads_targeting_invalid: --targeting は JSON の object です（例 "
+                         '{"geo_locations":{"countries":["JP"]},"age_min":18}）')
+    return value
+
+
+def cmd_estimate(args) -> int:
+    """出す前の見積もり（読むだけ）: 狙う相手の大きさ（reachestimate）と予算あたりの見込み（delivery_estimate）。"""
+    try:
+        targeting = _targeting(args.targeting)
+        _cfg, _token, reader = _reader(args.name)
+    except (accounts.AccountError, graphread.AdsReadError, ValueError, OSError) as exc:
+        return _fail(_error_text(exc))
+    value = {"adaccount": args.name, "targeting": targeting, "goal": args.goal, "skill": guide.skill_ref()}
+    for key, call in (("reach", lambda: reader.reach_estimate(targeting)),
+                      ("delivery", lambda: reader.delivery_estimate(targeting, args.goal))):
+        try:
+            value[key] = call()
+        except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
+            value[key] = {"unavailable": getattr(exc, "code", None) or type(exc).__name__}
+    value["note"] = ("reach は狙う相手の人数の幅（-1 は出せない・配信が止まる意味ではない）。delivery の "
+                     "daily_outcomes_curve は確度の高い予測があるときだけ中身がある（confident=false なら見込みなし）")
+    value["next_steps"] = [guide.skill_step()]
+
+    def render(v):
+        r, d = v["reach"], v["delivery"]
+        print(f"見積もり {v['adaccount']}（読むだけ・目的 {v['goal']}）")
+        if r.get("unavailable"):
+            print(f"  狙う相手の大きさ: 読めませんでした（{r['unavailable']}）")
+        else:
+            print(f"  狙う相手の大きさ: {r.get('users_lower_bound')}〜{r.get('users_upper_bound')} 人")
+        if d.get("unavailable"):
+            print(f"  予算あたりの見込み: 読めませんでした（{d['unavailable']}）")
+        elif not d.get("confident"):
+            print("  予算あたりの見込み: Meta に確度の高い予測がありません")
+        else:
+            for point in d["daily_outcomes_curve"][:10]:
+                print("  1 日 " + "・".join(f"{k} {point[k]}" for k in point))
+        print(f"  注意: {v['note']}")
+        _render_steps(v["next_steps"])
+    _emit(value, args.json, render)
+    return 0
+
+
+def cmd_skill(args) -> int:
+    path = guide.skill_path()
+    if path is None:
+        print("skill thth-ads が見つかりません（skills/thth-ads/SKILL.md）", file=sys.stderr)
+        return 2
+    text = None
+    if args.print_text or args.json:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    if args.json:
+        print(json.dumps(dict(guide.skill_ref(), body=text), ensure_ascii=False))
+    elif args.print_text:
+        print(text, end="")
+    else:
+        print(guide.skill_line())
+        print(path)
     return 0
 
 
@@ -454,6 +599,18 @@ def doctor_rows(name, *, now=None) -> list:
             else False, exc)
     else:
         row("insights", "成績（/insights・昨日）", True, f"使用率 {reader.insights_util_pct()}%")
+    try:
+        pixels, pixel_error = reader.pixels(), None
+    except (graphread.AdsReadError, meta_errors.RateLimited) as exc:
+        pixels, pixel_error = None, getattr(exc, "code", None) or type(exc).__name__
+    ready = guide.pixel_ready(pixels)
+    # ピクセルはサイトへの誘導の頁が開いた数にだけ要る（反応の広告には要らない）ので、無くても × にしない（？）。
+    row("pixel", "ピクセル（/adspixels・サイトへの誘導の頁が開いた数に要る）", True if ready else None,
+        (f"読めませんでした（{pixel_error}）" if pixels is None else
+         "ありません（イベントマネージャで作る・THTH からは作らない）" if not pixels else
+         "・".join(f"{p['id']} 最後に動いた {p.get('last_fired_time') or 'まだ無い'}" for p in pixels)),
+        pixels=pixels, next_steps=[guide.skill_step()] if ready else
+        guide.pixel_steps(name, pixels, landing_url=cfg.get("landing_url"), error=pixel_error))
     usage = meta_usage.summary(None, path=ledger.usage_path_for(name), now=now)
     row("usage", "量の制限", usage["waiting"] is None,
         "待っていません" if usage["waiting"] is None else f"待っています（{usage['waiting'].get('until')} まで）")
@@ -464,12 +621,16 @@ def cmd_doctor(args) -> int:
     rows = doctor_rows(args.name)
     bad = [r for r in rows if r["ok"] is False]
 
+    steps = next((r["next_steps"] for r in rows if r.get("key") == "pixel"), None) or [guide.skill_step()]
+
     def render(v):
         print(f"広告の口座の点検 {v['adaccount']}（読むだけ）")
         for r in v["rows"]:
             mark = {True: "○", False: "×", None: "？"}[r["ok"]]
             print(f"  {mark} {r['label']}: {r['detail']}")
-    _emit({"adaccount": args.name, "ok": not bad, "rows": rows}, args.json, render)
+        _render_steps(v["next_steps"])
+    _emit({"adaccount": args.name, "ok": not bad, "rows": rows, "skill": guide.skill_ref(), "next_steps": steps},
+          args.json, render)
     return 1 if bad else 0
 
 
@@ -482,7 +643,7 @@ def _write_call(args, func, render, *, bad_rc=3):
         value = func()
     except accounts.AccountStopped as exc:
         if getattr(args, "json", False):
-            print(json.dumps({"ok": False, "code": str(exc)}, ensure_ascii=False))
+            print(json.dumps({"ok": False, "code": str(exc), "skill": guide.skill_ref()}, ensure_ascii=False))
         return _fail(f"{exc}: この広告の口座は止まっています。作る・始める・延ばすは断ります"
                      "（止める・減らす・読むは通る）")
     except ops.OpsRefused as exc:
@@ -490,12 +651,13 @@ def _write_call(args, func, render, *, bad_rc=3):
         if exc.hint:
             text += "\n" + exc.hint
         if getattr(args, "json", False):
-            print(json.dumps({"ok": False, "code": exc.code, "message": exc.message, "hint": exc.hint},
-                             ensure_ascii=False))
+            print(json.dumps({"ok": False, "code": exc.code, "message": exc.message, "hint": exc.hint,
+                              "skill": guide.skill_ref()}, ensure_ascii=False))
         return _fail(text)
     except budget.BudgetRefused as exc:
         if getattr(args, "json", False):
-            print(json.dumps({"ok": False, "code": exc.code, "message": exc.detail}, ensure_ascii=False))
+            print(json.dumps({"ok": False, "code": exc.code, "message": exc.detail, "skill": guide.skill_ref()},
+                             ensure_ascii=False))
         return _fail(f"{exc.code}: {exc.detail}")
     except (accounts.AccountError, graphread.AdsReadError, meta_errors.RateLimited, ValueError) as exc:
         return _fail(_error_text(exc))
@@ -534,11 +696,15 @@ def cmd_boost(args) -> int:
         print(f"  投稿 {p['object_story_id']}・通しの予算 {p['lifetime_minor']}（最小単位）・{p['start']} 〜 {p['end']}"
               f"・出し先 {','.join(p['platforms'])}・目的 {p['objective']}"
               + ("" if p.get("objective_verified") else "（この目的は本番未確認。管理画面で中身を見てから始める）"))
+        if p.get("url_tags"):
+            print(f"  リンクの印（url_tags）: {p['url_tags']}")
+        _render_steps(v.get("next_steps"))
         print(f"次の一手: {v['next']}")
     return _write_call(args, lambda: ops.boost(
         args.name, by=args.by, via=args.via, post=args.post, object_story_id=args.object_story_id,
         lifetime_minor=args.lifetime, start=args.start, end=args.end, platforms=platforms,
-        objective=args.objective), render)
+        objective=args.objective, url_tags=args.url_tags, landing_url=args.landing_url,
+        utm_campaign=args.utm_campaign), render)
 
 
 def _render_stage(v, verb):
@@ -756,8 +922,21 @@ def register(sub) -> None:
     p_ins.add_argument("--since", default=None, help="YYYY-MM-DD（広告アカウントの時間帯の日・--preset より優先）")
     p_ins.add_argument("--until", default=None, help="YYYY-MM-DD（既定は今日）")
     p_ins.add_argument("--level", default="account", choices=graphread.LEVELS)
+    p_ins.add_argument("--by", default=None, choices=tuple(graphread.BREAKDOWNS),
+                       help="内訳: 年齢・性別 age-gender／地域 region／国 country／出た場所 placement／端末 device／時間帯 hour")
     p_ins.add_argument("--json", action="store_true")
     p_ins.set_defaults(func=cmd_insights)
+    p_est = verbs.add_parser("estimate", help="出す前の見積もり（狙う相手の大きさ・予算あたりの見込み・読むだけ）")
+    p_est.add_argument("name")
+    p_est.add_argument("--targeting", required=True,
+                       help='狙う相手の JSON か @ファイル（例 {"geo_locations":{"countries":["JP"]},"age_min":18}）')
+    p_est.add_argument("--goal", default="LINK_CLICKS", choices=graphread.OPTIMIZATION_GOALS)
+    p_est.add_argument("--json", action="store_true")
+    p_est.set_defaults(func=cmd_estimate)
+    p_skill = verbs.add_parser("skill", help="広告の手順の skill（thth-ads）の場所と全文")
+    p_skill.add_argument("--print", dest="print_text", action="store_true", help="全文を出す")
+    p_skill.add_argument("--json", action="store_true")
+    p_skill.set_defaults(func=cmd_skill)
     p_col = verbs.add_parser("collect", help="読みを snapshot.json に残す（読むだけ・collect のたびにも回る）")
     p_col.add_argument("name", nargs="?", default=None)
     p_col.add_argument("--json", action="store_true")
@@ -780,6 +959,14 @@ def register(sub) -> None:
     p_boost.add_argument("--platforms", default="facebook", help="facebook[,instagram]")
     p_boost.add_argument("--objective", default="engagement", choices=tuple(graphwrite.OBJECTIVES),
                          help="engagement（本番で確かめた）・traffic・reach（この 2 つは本番未確認）")
+    p_boost.add_argument("--url-tags", dest="url_tags", default=None,
+                         help="リンクに付ける印（クリエイティブの url_tags・例 utm_source=facebook&utm_medium=paid）。"
+                              "無ければ台帳の url_tags")
+    p_boost.add_argument("--utm-campaign", dest="utm_campaign", default=None,
+                         help="元の投稿の原稿のファイル名（拡張子なし）。--url-tags も台帳の url_tags も無ければ "
+                              "utm_source=<出し先>&utm_medium=paid&utm_campaign=<これ> を付ける（有機の投稿と同じ campaign）")
+    p_boost.add_argument("--landing-url", dest="landing_url", default=None,
+                         help="誘導先の頁の URL（次の一手の文に入る・Meta には送らない）。無ければ台帳の landing_url")
     by_via(p_boost)
     p_boost.set_defaults(func=cmd_boost)
 
