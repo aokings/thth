@@ -2639,6 +2639,11 @@ def _cmd_topics(args) -> int:
     # `thth/threads_read_cli.py`**——ここは入口を分けるだけ。
     if getattr(args, "search", None) is not None:
         return threads_read_cli.cmd_topics_search(args)
+    # `--tag`・`--keep` は `--search` の引数（5.7.0）。**黙って一覧に落とさない。**
+    if getattr(args, "tag", False) or getattr(args, "keep", False):
+        print("--tag・--keep は --search と一緒に使います"
+              "（thth topics <account> --search <語> --tag [--keep]）", file=sys.stderr)
+        return 2
     if getattr(args, "history", None) is not None:
         return _topics_history(args.history, as_json=args.json)
     if getattr(args, "retract_note", None) is not None:
@@ -2899,7 +2904,8 @@ _TOPIC_WORDS = ("history", "retract-note")
 _他の枝の引数 = (("--note", "note"), ("--verdict", "verdict"),
                   ("--audience", "audience"), ("--kind", "kind"),
                   ("--status", "status"))
-_他の枝のフラグ = (("--advise", "advise"), ("--plan", "plan"), ("--learned", "learned"))
+_他の枝のフラグ = (("--advise", "advise"), ("--plan", "plan"), ("--learned", "learned"),
+             ("--tag", "tag"), ("--keep", "keep"))
 
 
 def _この枝では使えない引数(args) -> list:

@@ -57,7 +57,7 @@ _FIELDS = {
     'measured': (('limit', 'post_id'), ()),
     'collect': ((), ()),
     'mentions': (('limit', 'refresh', 'since'), ()),
-    'topics_search': (('query', 'limit', 'recent', 'since', 'until', 'media'), ('query',)),
+    'topics_search': (('query', 'limit', 'recent', 'since', 'until', 'media', 'tag', 'keep'), ('query',)),
     'profile': (('username',), ('username',)),
     'location_search': (('query',), ('query',)),
     'thread_read': (('post_id', 'since', 'max_messages', 'limit'), ('post_id',)),
@@ -291,15 +291,21 @@ def _topics_search(account, request, cfg):
     limit = _limit(request)
     search_type = 'RECENT' if request.get('recent') else 'TOP'
     narrow = None
-    if any(request.get(name) is not None for name in ('since', 'until', 'media')):
+    tag = bool(request.get('tag'))
+    if request.get('keep') and not tag:
+        # 手元と同じ: 残すのはトピックで引いた数と時刻だけ（キーワード検索は残さない）。
+        error('invalid_request')
+    if tag or any(request.get(name) is not None for name in ('since', 'until', 'media')):
         # 手元の `topics --search` と同じ: Threads 以外・読めない期間は断る（黙って普通の検索にしない）。
         if cfg.get('media') != 'threads':
             error('invalid_request')
         try:
             narrow = reads.search_narrowing(since=request.get('since'), until=request.get('until'),
-                                            media=request.get('media'))
+                                            media=request.get('media')) or None
         except ValueError:
             error('invalid_request')
+    if tag:
+        return _topics_tag(account, request, query, search_type=search_type, limit=limit, narrow=narrow)
     try:
         result = reads._fetch(account, capability='keyword_search',
                               call=lambda adapter: reads.search_call(adapter, account, query,
@@ -315,6 +321,29 @@ def _topics_search(account, request, cfg):
     material['tag_cannot_say'] = short(material.get('tag_cannot_say'))
     material['replied_lookup'] = dict(material['replied_lookup'],
                                       reason=short(material['replied_lookup'].get('reason')))
+    return material
+
+
+def _topics_tag(account, request, query, *, search_type, limit, narrow):
+    """`topics --search --tag`（5.7.0）: 数と時刻だけ。読めなかったときも 0 件と混ぜず `status: cannot_say`。"""
+    from . import threads_read_cli as reads
+    try:
+        rows = reads._fetch(account, capability='keyword_search',
+                            call=lambda adapter: reads.tag_search_call(adapter, query, search_type=search_type,
+                                                                       limit=limit, narrow=narrow),
+                            narrowed_note=reads.SEARCH_NARROWED_NOTE)
+        material = reads.tag_json(rows, account, query, search_type=search_type, limit=limit, narrow=narrow)
+    except reads.ReadFailed as failed:
+        if failed.kind not in reads.TAG_FAILURE_STATUS:
+            _refuse(failed.kind, failed.message)
+        material = reads.tag_failed_json(failed, account, query, search_type=search_type, limit=limit,
+                                         narrow=narrow)
+        material['cannot_say'] = dict(material['cannot_say'], message=short(material['cannot_say']['message']))
+    if request.get('keep'):
+        reads.keep_tag(material, by=None)
+        if material.get('keep_error'):
+            material['keep_error'] = short(material['keep_error'])
+    material['note_hint'] = reads.note_hint(material)
     return material
 
 

@@ -985,11 +985,18 @@ def _topics_search(args, account):
     query = (args.search or "").strip()
     if not query:
         raise RemoteError("invalid_request", reason="--search に語を書いてください", rc=2)
+    tag, keep = bool(getattr(args, "tag", False)), bool(getattr(args, "keep", False))
+    if keep and not tag:
+        raise RemoteError("invalid_request", reason="--keep は --tag と一緒に使います", rc=2)
     # `--since`／`--until`／`--media`（Threads の検索の絞り込み・点検 §B-5）も渡す。黙って落とさない。
+    # `--tag`・`--keep`（5.7.0）: トピックで引いた数と時刻だけ。
     value = call("topics_search", account, query=query, limit=_limit(args),
                  recent=True if getattr(args, "recent", False) else None,
                  since=getattr(args, "since", None), until=getattr(args, "until", None),
-                 media=getattr(args, "media", None))
+                 media=getattr(args, "media", None), tag=True if tag else None,
+                 keep=True if keep else None)
+    if tag:
+        return _shown(args, value, threads_read_cli.show_tag)
     return _shown(args, value, lambda v: threads_read_cli.show_search(account, v))
 
 

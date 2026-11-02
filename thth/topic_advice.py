@@ -307,6 +307,45 @@ def _authors(observations: list) -> set:
             for s in _tagged_samples(obs) if s.get("author_key")}
 
 
+def _tag_counts(observation: dict) -> dict | None:
+    """**数だけの観測**の `counts`（`topics --search --tag --keep`・5.7.0）。それ以外は None。
+
+    数えてよいのは **Threads の API にトピック（TAG）で問うた観測**だけ。キーワード検索の結果は
+    そもそも数だけの観測にならない（`build_observation()` が `search_mode: topic_tag` 以外を断る）。
+    読む側でも同じ条件を見る——保存された形を信じない。
+    """
+    counts = observation.get("counts")
+    if (observation.get("search_mode") != "topic_tag"
+            or observation.get("provider") != models.TAG_COUNTS_PROVIDER
+            or not isinstance(counts, dict)):
+        return None
+    # 5 未満の数は null（欠測）で残る（`topic_models.TAG_SMALL`）。null は 0 として数えるが、
+    # 「残していない」ことは `_small_tag_counts()` で別に言う。
+    if any(counts.get(k) is not None and (type(counts.get(k)) is not int or counts.get(k) < 0)
+           for k in ("n", "distinct_authors")):
+        return None
+    return counts
+
+
+def _counted_posts(observations: list) -> int:
+    """投稿例（`tagged: true`）と、数だけの観測の件数を足す。"""
+    return sum(len(_tagged_samples(obs)) + ((_tag_counts(obs) or {}).get("n") or 0)
+               for obs in observations)
+
+
+def _author_count(observations: list) -> int:
+    """投稿者の数。**数だけの観測どうしは足さない**（同じ人を二度数えうる）——いちばん多い 1 件と、
+    投稿例の仮名の異なり数の、大きい方。"""
+    counted = [(_tag_counts(obs) or {}).get("distinct_authors") or 0 for obs in observations]
+    return max([len(_authors(observations)), *counted])
+
+
+def _small_tag_counts(observations: list) -> bool:
+    """数だけの観測に「5 未満なので残していない」数があるか（件数・投稿者）。"""
+    return any(c is not None and (c.get("n") is None or c.get("distinct_authors") is None)
+               for c in (_tag_counts(obs) for obs in observations))
+
+
 def evaluate(context: dict, *, article: dict | None, proposal: dict | None,
               observations: dict | None = None, now=None) -> dict:
     """状態を決める（設計 §4.5）。**候補の繰り上げはしない。**
@@ -565,10 +604,10 @@ def _shortfalls(context: dict, chosen: dict, observations: dict, *, now) -> tupl
                          f"（参照しているのは別のトピックの観測です）"))
         return out, notes
 
-    samples = sum(len(_tagged_samples(r)) for r in exact)
+    samples = _counted_posts(exact)
     untagged = sum(len(r.get("samples") or []) - len(_tagged_samples(r))
                     for r in exact)
-    authors = _authors(exact)
+    author_n = _author_count(exact)
     if untagged:
         notes.append(
             f"参照した観測のうち {untagged} 件の投稿例は、**そのトピックを"
@@ -586,21 +625,28 @@ def _shortfalls(context: dict, chosen: dict, observations: dict, *, now) -> tupl
     exhausted = bool(exact) and all(_has_more(r) is False for r in exact)
     limit = "（この取得手段ではこれ以上出ていません）" if exhausted else ""
 
+    small = ("（トピック検索の数は 5 未満を残さないので、5 未満の件数・投稿者は数えていません）"
+             if _small_tag_counts(exact) else "")
     if samples < MIN_SAMPLES:
         out.append(("observation",
                      f"観測の投稿例が {samples} 件（{MIN_SAMPLES} 件以上ほしい）"
-                     f"{limit}"))
-    if samples and not authors:
+                     f"{limit}{small}"))
+    if samples and not author_n and small:
+        # 件数は 5 以上だが投稿者が 5 未満で残っていない（欠測）。0 人とも author_key が無いとも言わない。
+        out.append(("observation",
+                     f"観測の投稿例 {samples} 件の投稿者の数は 5 未満で残っていないので、"
+                     f"{MIN_AUTHORS} 人以上かを確かめられません{small}"))
+    elif samples and not author_n:
         # **「0 人に偏っている」は違う意味になる**（同報告）。キー名が違うだけ
         # なのに「投稿者を増やせ」と読めて、次にすることを間違える。
         out.append(("observation",
                      f"投稿例 {samples} 件の投稿者を数えられません"
                      f"（`author_key` がありません。`author` では数えません）"))
-    elif len(authors) < MIN_AUTHORS:
+    elif author_n < MIN_AUTHORS:
         # 受け入れ T09。**20 件あっても投稿者が 1 人なら 1 人と数える。**
         out.append(("observation",
-                     f"観測の投稿例 {samples} 件は投稿者 {len(authors)} 人に"
-                     f"偏っています（{MIN_AUTHORS} 人以上ほしい）{limit}"))
+                     f"観測の投稿例 {samples} 件は投稿者 {author_n} 人に"
+                     f"偏っています（{MIN_AUTHORS} 人以上ほしい）{limit}{small}"))
     return out, notes
 
 
@@ -641,6 +687,9 @@ OBSERVATION_SHAPE = {
                                  "ことは証拠にならない**"}],
         "coverage": {"pages": "見たページ数", "fetched": "取れた件数",
                       "has_more": "まだ続きがあるか（不明は null）"},
+        "counts": ("**数だけの観測**（任意・5.7.0）。手で書かず "
+                   "`thth topics <account> --search <語> --tag --keep` に作らせる"
+                   "（件数・投稿者の数・最新と最古の日付だけ・5 未満は欠測・samples は空）"),
         "note": "気づいたこと（**判定は混ぜない**）",
         "_注意": "status が ok なら samples が要ります。取得できて 0 件だったなら "
                   "empty です（**0 件は「人がいない」ではありません**）",
