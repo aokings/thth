@@ -223,7 +223,12 @@ def import_file(target, path, *, now=None) -> dict:
 # ------------------------------------------------------------------ 読む
 
 def load(project) -> tuple:
-    """控えのうちサイトごとに最新の窓（`window.to`・同じなら `generated_at`）。`(記録の列, 符丁の集合)`。"""
+    """控えのうちサイトごとに、数の取れた最新の窓（`window.to`・同じなら `generated_at`）。`(記録の列, 符丁の集合)`。
+
+    監査 N-3（11/03）: 最新の窓が「取れなかった窓」（rows が null）でも、前の取れた窓の数を隠さない。
+    取れた控えがあればそれを返し、それより新しい取れなかった窓を `newer_unavailable`（窓・generated_at・
+    理由）として添える（数は前の窓のもの・0 と混ぜない）。取れた控えが 1 つも無ければ最新の取れなかった窓。
+    """
     cannot = set()
     try:
         directory = store_dir(project)
@@ -232,7 +237,7 @@ def load(project) -> tuple:
         return [], cannot
     except OSError:
         return [], {"site_visits_unreadable"}
-    latest = {}
+    latest, good = {}, {}
     for entry in entries:
         try:
             with open(os.path.join(directory, entry), encoding="utf-8") as f:
@@ -247,13 +252,27 @@ def load(project) -> tuple:
         site = record.get("site")
         if site not in latest or key > latest[site][0]:
             latest[site] = (key, record)
-    return [latest[s][1] for s in sorted(latest)], cannot
+        if record.get("rows") is not None and (site not in good or key > good[site][0]):
+            good[site] = (key, record)
+    out = []
+    for site in sorted(latest):
+        key, record = latest[site]
+        if record.get("rows") is None and site in good:
+            shown = dict(good[site][1])
+            shown["newer_unavailable"] = {"window": record.get("window"), "generated_at": record.get("generated_at"),
+                                          "unknown_reason": record.get("unknown_reason") or "unknown"}
+            out.append(shown)
+        else:
+            out.append(record)
+    return out, cannot
 
 
 def as_of(project):
     """いちばん新しい控えの `generated_at`（無ければ None）。"""
     records, _ = load(project)
-    return max((r.get("generated_at") for r in records if r.get("generated_at")), default=None)
+    stamps = [r.get("generated_at") for r in records] + [
+        (r.get("newer_unavailable") or {}).get("generated_at") for r in records]
+    return max((s for s in stamps if s), default=None)
 
 
 def campaign_keys(rel) -> set:
@@ -290,7 +309,9 @@ def tie(campaign, index):
     if not found:
         return None, None, "no_manuscript"
     threads = {item.thread for item in found if item.thread}
-    if len(threads) > 1:
+    # 2 本の糸にまたがる・同じ名前の原稿の一部にだけ札がある（監査 N-2: 札の無い口座の訪問まで糸に足さない）は
+    # どちらも結ばない（ambiguous）。
+    if len(threads) > 1 or (threads and any(not item.thread for item in found)):
         return None, None, "ambiguous"
     if not threads:
         return None, found[0], "no_thread"
@@ -353,6 +374,11 @@ def thread_block(project, ledger, thread_id, records=None, cannot=None) -> dict:
                 "generated_at": record.get("generated_at"), "imported_at": record.get("imported_at"),
                 "sessions": None, "engaged_sessions": None, "by_medium": {}, "campaigns": [],
                 "rows_total": None, "untied_campaigns": None, "cannot_say": None}
+        if record.get("newer_unavailable"):
+            # 新しい窓は取れなかった。数はその前の取れた窓のもの（注記して添える）。
+            site["stale"] = True
+            site["newer_unavailable"] = record["newer_unavailable"]
+            block.setdefault("stale_sites", []).append(record.get("site"))
         if record.get("rows") is None:
             site["cannot_say"] = "site_visits_unavailable"
             site["unknown_reason"] = record.get("unknown_reason") or "unknown"

@@ -387,3 +387,48 @@ def test_skill_thth_flowは予定でなく実際の命令と欄を書く():
                    "thth scenario site-import <project> --file <json>", "hub.site_visits/1", "outcomes.article_visits",
                    "untied_campaigns", "site_visits_not_imported", "ads_spend_not_recorded", "thth scenario skill --print"):
         assert needle in text, needle
+
+
+# ------------------------------------------------------------------ 監査 5.7.0 の直し（N-2・N-3）
+
+def _item(rel, thread, account="a"):
+    return scenario.Item(file=os.path.basename(rel), account=account, medium="threads", status="posted",
+                         publish_at=None, posted_at=None, post_ids=[], thread=thread, series=None, delivery=None,
+                         not_after=None, rel=rel)
+
+
+def test_同じ名前の原稿の一部にだけ札があれば結ばずambiguous():
+    """監査 N-2: 札の無い同じ名前の原稿（別の口座）の訪問まで、糸に足さない。2 本の糸にまたがるのも結ばない。"""
+    partly = [_item("q1/a.md", "t1"), _item("q2/a.md", None, account="b")]
+    assert site_visits.tie("a", site_visits._index(partly))[0::2] == (None, "ambiguous")
+    split = [_item("q1/a.md", "t1"), _item("q2/a.md", "t2", account="b")]
+    assert site_visits.tie("a", site_visits._index(split))[0::2] == (None, "ambiguous")
+    same = [_item("q1/a.md", "t1"), _item("q2/a.md", "t1", account="b")]
+    assert site_visits.tie("a", site_visits._index(same))[0] == "t1"
+    record = {"rows": [_row("a", 5), _row("a", 2, medium="paid", source="facebook"), _row("b", 1)]}
+    got = site_visits.tie_rows(record, partly + [_item("q3/b.md", "t9", account="c")])
+    assert "t1" not in got["by_thread"] and got["by_thread"]["t9"][0]["sessions"] == 1
+    assert got["untied_campaigns"] == {"campaigns": 1, "sessions": 7,
+                                       "by_reason": {"not_a_campaign": 0, "no_manuscript": 0, "no_thread": 0,
+                                                     "ambiguous": 1}}
+    got = site_visits.tie_rows(record, split)
+    assert got["untied_campaigns"]["by_reason"]["ambiguous"] == 1 and got["by_thread"] == {}
+
+
+def test_最新の窓が取れなくても前の取れた窓の数を注記つきで出す(flow, tmp_path, capsys):
+    """監査 N-3: 新しい窓が rows: null でも前の数を隠さない（0 と混ぜない・取れなかったことを言う）。"""
+    site_visits.import_file(PROJECT, _visits(tmp_path, ROWS, to="2026-10-26", frm="2026-10-20", name="a.json"),
+                            now=NOW)
+    site_visits.import_file(PROJECT, _visits(tmp_path, None, to="2026-10-27", reason="ga4_quota_exceeded",
+                                             name="b.json", generated_at="2026-10-28T07:00:00+09:00"), now=NOW)
+    block = scenario.show(PROJECT, THREAD, now=NOW)["site_visits"]
+    assert block["sessions"] == 19 and block["cannot_say"] is None and block["stale_sites"] == ["kopicha.org"]
+    site = block["sites"][0]
+    assert site["window"] == {"from": "2026-10-20", "to": "2026-10-26"} and site["stale"] is True
+    assert site["newer_unavailable"] == {"window": {"from": "2026-10-21", "to": "2026-10-27"},
+                                         "generated_at": "2026-10-28T07:00:00+09:00",
+                                         "unknown_reason": "ga4_quota_exceeded"}
+    assert dashboard_cli.build(PROJECT, "campaign", THREAD, now=NOW)["as_of"]["site_visits"] == \
+        "2026-10-28T07:00:00+09:00"
+    assert cli.main(["scenario", "show", PROJECT, THREAD]) == 0
+    assert "新しい窓 2026-10-21〜2026-10-27 は取れなかった（ga4_quota_exceeded）" in capsys.readouterr().out

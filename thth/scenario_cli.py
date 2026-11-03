@@ -68,6 +68,11 @@ def visits_lines(block) -> list:
         count = site.get("sessions")
         lines.append(f"   {site['site']} {span}: {'—' if count is None else count}"
                      + (f"（{media}）" if media else "") + (f"（{site['cannot_say']}）" if site.get("cannot_say") else ""))
+        newer = site.get("newer_unavailable")
+        if newer:
+            nw = newer.get("window") or {}
+            lines.append(f"      新しい窓 {nw.get('from')}〜{nw.get('to')} は取れなかった（{newer.get('unknown_reason')}）。"
+                         "上は前の窓の数")
         for row in site.get("campaigns") or []:
             lines.append(f"      {row.get('file')}  {row.get('source') or '?'}/{row.get('medium') or '?'}  "
                          f"{'—' if row.get('sessions') is None else row['sessions']}")
