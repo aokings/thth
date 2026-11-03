@@ -19,9 +19,10 @@ import pathlib
 
 import pytest
 
-from tests.test_v500_scenario import NOW, PROJECT, _sns, _write, kp  # noqa: F401
-from thth import (accounts as accounts_mod, after_cli, dashboard_cli, events_cli, jst, morning, plaza_moments,
-                  scenario, scenario_seeds, sent)
+from tests.conftest import write_queue_file
+from tests.test_v500_scenario import NOW, PROJECT, _hb, _sns, _write, kp  # noqa: F401
+from thth import (accounts as accounts_mod, after_cli, dashboard_cli, deliveries, events_cli, jst, morning, plaza,
+                  plaza_moments, scenario, scenario_cli, scenario_seeds, sent)
 
 DONE_THREAD = """---
 thth_scenario: 1
@@ -64,6 +65,12 @@ def _replies(post_id, rows):
     directory = pathlib.Path(accounts_mod.data_dirs(cfg, "kp-threads")["replies"])
     directory.mkdir(parents=True, exist_ok=True)
     (directory / f"{post_id}.ndjson").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def _approved(kp, file, publish_at, **extra):  # noqa: F811
+    fm = {"account": "kp-threads", "status": "approved", "publish_at": publish_at}
+    fm.update(extra)
+    write_queue_file(kp["queue"], file, fm_overrides=fm, body="## threads\n\n予定の原稿の頭\n")
 
 
 def _thread(ident):
@@ -147,9 +154,8 @@ def test_doneの糸にscenario_stalledは出ずscenario_doneが出る(world):
 def test_要対応に済んだ糸と時刻を過ぎた原稿(world):
     _write(os.path.join(world["scen"], "done-01.md"), DONE_THREAD)
     _posted(world, "th-done.md", thread="done-01", post_id="D1", at="2026-10-15T07:00:00+09:00")
-    # 08:00 の予定で承認済み・まだ出ていない（今は 11:20）。
-    _write(os.path.join(world["queue"], "th-late.md"),
-           _sns("kp-threads", status="approved", publish_at="2026-10-28T08:00:00+09:00"))
+    # 08:00 の予定で承認済み（指紋は正しい）・まだ出ていない（今は 11:20）。
+    _approved(world, "th-late.md", "2026-10-28T08:00:00+09:00")
     got = dashboard_cli.build(PROJECT, now=NOW)
     by_kind = {}
     for row in got["attention"]:
@@ -209,3 +215,99 @@ def test_媒体で取れない数はmetric_unavailable(world, isolated_account_f
     # 返信は Bluesky でも取れる。数が少ないのは below_min_n のまま。
     assert "below_min_n:bluesky" in replies["cannot_say"]
     assert "metric_unavailable" not in replies["by_medium"]["bluesky"]
+
+
+# ------------------------------------------------------------------ 監査のあと（5.10.0 の直し）
+
+def test_48時間を越えた未返信があればengageは外れる(world):
+    _write(os.path.join(world["scen"], "eng-01.md"), ENGAGE_THREAD)
+    _posted(world, "th-eng.md", thread="eng-01", post_id="ENG", at="2026-10-24T08:00:00+09:00")
+    # 10/25 の返信に返していない（今は 10/28 11:20・48 時間を越えた）。
+    _replies("ENG", [{"id": "R1", "username": "outside", "text": "PRIVATE", "timestamp": "2026-10-25T09:00:00+09:00",
+                      "post_id": "ENG"}])
+    row = _thread("eng-01")
+    engage = row["stages"][1]
+    assert engage["replies"] == 1 and engage["overdue"] == 1 and engage["satisfied"] is False
+    assert row["state"] == "active" and row["next"][0]["kind"] == "replies"
+
+
+def test_返信0件のまま止まった段は返信が来ていないと言う(world):
+    _write(os.path.join(world["scen"], "eng-01.md"), ENGAGE_THREAD)
+    _posted(world, "th-eng.md", thread="eng-01", post_id="ENG", at="2026-10-15T08:00:00+09:00")
+    row = _thread("eng-01")
+    assert row["state"] == "stalled" and row["stage"]["name"] == "engage"
+    assert row["stalled"]["label"] == "返信が来ていない（13 日）"
+    assert row["next"][0]["kind"] == "wait"
+    # 返していない返信があって止まれば「返信の対応が止まっている」（区別は _next の wait と replies と同じ）。
+    _replies("ENG", [{"id": "R1", "username": "outside", "text": "PRIVATE", "timestamp": "2026-10-16T09:00:00+09:00",
+                      "post_id": "ENG"}])
+    row = _thread("eng-01")
+    assert row["state"] == "stalled" and row["next"][0]["kind"] == "replies"
+    assert row["stalled"]["label"] == "2 段目の返信の対応が止まっている"
+
+
+def test_conflictのある糸は全段を満たしても停滞のまま(world):
+    _write(os.path.join(world["scen"], "c.md"),
+           "---\nthth_scenario: 1\nkind: thread\nid: c-01\nstarted: 2026-10-20\n---\n- diary: hatenablog need=1\n")
+    for delivery, state, file in (("dl_00000000c001", "published", "hb-c1.md"),
+                                  ("dl_00000000c002", "conflict", "hb-c2.md")):
+        deliveries.create("kp-hatenablog", principal="kp-hatena", blog_id="kp.hatenablog.com",
+                          article="kp/sencha", at="2026-10-26T20:00:00+09:00", delivery=delivery)
+        deliveries.advance("kp-hatenablog", delivery, state=state, at="2026-10-27T08:00:00+09:00",
+                           row={"op": "create", "reason": "test"})
+        _write(os.path.join(world["queue"], file), _hb(status="posted", publish_at="2026-10-27T08:00:00+09:00",
+                                                         thread="c-01", delivery=delivery))
+    row = _thread("c-01")
+    assert row["stages"][0]["satisfied"] is True and row["stages"][0]["conflict"] == 1
+    assert row["state"] == "stalled" and row["stalled"]["reason"] == "delivery_conflict" and row["done"] is None
+
+
+def test_期限切れとheldの原稿はpublish_overdueに出ない(world):
+    _approved(world, "th-late.md", "2026-10-28T08:00:00+09:00")
+    # 出さない期限（not_after）を過ぎた原稿。
+    _approved(world, "th-expired.md", "2026-10-28T07:00:00+09:00", not_after="2026-10-28T09:00:00+09:00")
+    # 承認の指紋が古い（approval_stale・held）原稿。
+    _approved(world, "th-stale.md", "2026-10-28T06:00:00+09:00", approved_sha="0" * 64)
+    held = morning.held_files("kp-threads", accounts_mod.load_account("kp-threads"), NOW)
+    assert "th-stale.md" in held and "th-late.md" not in held
+    got = dashboard_cli.build(PROJECT, now=NOW)
+    late = [r["ref"] for r in got["attention"] if r["kind"] == "publish_overdue"]
+    assert late == ["th-late.md"]
+    # morning の overdue_items は今までどおり（held を渡さなければ定義は変わらない）。
+    rows = morning._overdue_rows("kp-threads", NOW)
+    assert {r["file"] for r in rows["items"]} >= {"th-late.md", "th-stale.md"}
+
+
+def test_広場に置いたdoneの糸は要対応と候補から消える(world, monkeypatch):
+    _write(os.path.join(world["scen"], "done-01.md"), DONE_THREAD)
+    _posted(world, "th-done.md", thread="done-01", post_id="D1", at="2026-10-15T07:00:00+09:00")
+    monkeypatch.setattr(after_cli, "reaction_lookup", lambda account: lambda post_id: {"covered": False})
+    configs = {"kp-threads": {"project": "kp", "media": "threads"}, "kp-x": {"project": "kp", "media": "x"}}
+
+    def candidates():
+        return [s["thread"] for s in plaza_moments.trigger_steps(configs, since=NOW - datetime.timedelta(days=1),
+                                                                 now=NOW) if s["candidate"] == "post_scenario"]
+
+    def done_rows():
+        return [r["ref"] for r in dashboard_cli.build(PROJECT, now=NOW)["attention"] if r["kind"] == "scenario_done"]
+    assert candidates() == ["done-01"] and done_rows() == ["done-01"]
+    plaza.post("kp-threads", kind="measure", title=None, by="kp-session", scope_note="済んだ糸・Threads",
+               from_source=("scenario", PROJECT, "done-01"), body="人の解釈")
+    assert candidates() == [] and done_rows() == []
+    # 糸の状態そのものは done のまま（置いたかは要対応と候補だけの話）。
+    assert _thread("done-01")["state"] == "done"
+
+
+def test_renderにdoneと返信の段のチェック(world):
+    _write(os.path.join(world["scen"], "eng-01.md"), ENGAGE_THREAD)
+    _posted(world, "th-eng.md", thread="eng-01", post_id="ENG", at="2026-10-27T08:00:00+09:00")
+    _replies("ENG", [{"id": "R1", "username": "outside", "text": "PRIVATE", "timestamp": "2026-10-27T20:00:00+09:00",
+                      "post_id": "ENG"}])
+    sent.write(accounts_mod.state_dir_for("kp-threads"), post_id="ANSWER", text="PRIVATE SENT", body_hash="h",
+               sent_at="2026-10-27T20:30:00+09:00", reply_to="R1")
+    lines = []
+    scenario_cli.render(scenario.build(PROJECT, now=NOW), out=lines.append)
+    text = "\n".join(lines)
+    assert "済んだ（閉じるか広場に置く）" in text
+    assert "engage 返信 1・越えた 0 ✓" in text
+    assert "PRIVATE" not in text

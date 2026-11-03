@@ -442,6 +442,7 @@ def _attention(project, events, summary, scenario, now, mediums=None, schedule=N
             rows.append(_attention_row(project, "untied_drafts", "drafts", None, f"未分類の下書き {untied} 件",
                                        None, None, "キャンペーンかシリーズに振り分ける", "scenario", None,
                                        n=untied))
+    rows = _without_posted_done(project, rows)
     rows += _overdue_attention(project, rows, schedule, mediums, now)
     for name, row in ((summary or {}).get("by_account") or {}).items():
         n = (row.get("unanswered_replies") or {}).get("n")
@@ -453,17 +454,33 @@ def _attention(project, events, summary, scenario, now, mediums=None, schedule=N
     return rows
 
 
+def _without_posted_done(project, rows):
+    """広場に置いた糸の `scenario_done` は要対応から外す（`plaza_moments` の候補と同じ判定・5.10.0）。"""
+    if not any(row["kind"] == "scenario_done" for row in rows):
+        return rows
+    from . import plaza_moments
+    posted = plaza_moments.posted_threads()
+    return [row for row in rows if not (row["kind"] == "scenario_done" and (project, row["ref"]) in posted)]
+
+
 def _overdue_attention(project, rows, schedule, mediums, now):
     """時刻を過ぎて出ていない原稿（5.10.0 段 6）。定義は `morning.overdue_hours`（morning の `overdue_items` と
     同じ・ここで数え直さない）。出さない期限を過ぎた原稿（`not_after_passed` の行がある）は重ねて出さない。"""
     from . import morning
     expired = {(row["account"], row["ref"]) for row in rows if row["kind"] == "not_after_passed"}
+    held_by_account = {}
     out = []
     for item in schedule or []:
-        elapsed = morning.overdue_hours(item, now)
-        if elapsed is None or (item.get("account"), item.get("file")) in expired:
-            continue
         account = item.get("account")
+        if account not in held_by_account:
+            # held（はてなの delivery_held も同じ集合）・期限切れは別の行で出るので除く（定義は morning の 1 か所）。
+            try:
+                held_by_account[account] = morning.held_files(account, accounts_mod.load_account(account), now)
+            except Exception:  # noqa: BLE001 — 読めなければ期限切れだけ除く（held は別の行が出す）
+                held_by_account[account] = frozenset()
+        elapsed = morning.overdue_hours(item, now, held=held_by_account[account])
+        if elapsed is None or (account, item.get("file")) in expired:
+            continue
         head = item.get("head") or f"{_medium_ja(mediums.get(account))} の原稿"
         out.append(_attention_row(project, "publish_overdue", item.get("file"), account,
                                   clip(f"{head} — 時刻を過ぎて出ていない（{_md_hm(item.get('publish_at'))} の予定）"),

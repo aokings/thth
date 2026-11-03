@@ -847,7 +847,8 @@ def thread_status(decl, ledger) -> dict:
         stalled = {"days": idle_days, "stale_after_days": stale,
                    "since": jst.iso(basis) if basis is not None else None, "since_from": basis_from}
         stalled["label"] = stalled_label(stage_pos["name"], stage_pos["index"] if index is not None else None,
-                                         replies=index is not None and counts_replies(stages[index]))
+                                         reply_row=stages[index] if index is not None and counts_replies(stages[index])
+                                         else None, days=idle_days)
         if conflict:
             stalled["reason"] = "delivery_conflict"
     # 済んだ糸（5.10.0・鍵は足すだけ）: 最後の動き（無ければ起点）と、そこからの日数。
@@ -891,8 +892,12 @@ def stage_ja(name, index=None) -> str:
     return f"{index} 段目" if index else "途中の段"
 
 
-def stalled_label(name, index=None, replies=False) -> str:
-    if name not in STALLED_JA and replies:
+def stalled_label(name, index=None, reply_row=None, days=None) -> str:
+    """止まっている段の言葉。返信を数える段（`reply_row`）は、返信が 0 件のまま（`_next` の `wait`）と、
+    返していない返信がある（`_next` の `replies`）を分ける（5.10.0）。"""
+    if reply_row is not None and reply_row.get("replies") == 0:
+        return "返信が来ていない" + (f"（{days} 日）" if days is not None else "")
+    if reply_row is not None and name not in STALLED_JA:
         return f"{stage_ja(name, index)}の返信の対応が止まっている"
     return STALLED_JA.get(name) or f"{stage_ja(name, index)}で止まっている"
 
