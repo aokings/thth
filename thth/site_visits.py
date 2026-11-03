@@ -552,51 +552,28 @@ def referrer_host(raw):
     return text
 
 
-def referrers_block(project, records=None, cannot=None, *, now=None) -> dict:
+def referrers_block(project, records=None, cannot=None) -> dict:
     """project の「サイトへの参照元」: サイトごとに host と sessions だけ（本文・URL の path・username は持たない）。
 
     同じ host に整った行は足す。形の合わない値（`(direct)`・空・path だけ等）は捨てて、行数と sessions だけ
     `dropped` に数える。取れなかった窓は `cannot_say: referrers_unavailable`（0 と混ぜない）。
 
-    5.11.0 段 8: 日ごとの控えのあるサイトは、ここ `REFERRERS_DAYS` 日（終わりは D-2・それより新しい日の控えが
-    あればその日）の日ごとの控えを host ごとに足す（`window_basis: recent_days_daily`・`days_missing` など）。
-    日ごとの控えが無いサイトは今までどおり幅のある窓の最新（`window_basis: latest_window`）。
+    5.11.0 段 8: 日ごとの控えを足すのは呼ぶ側（`site_referrers`）。ここは渡された控えを 1 つずつ読むだけ。
     """
     if records is None:
-        records, cannot = read_all(project)
-    now = now if now is not None else jst.now_jst()
+        records, cannot = load(project)
     cannot = set(cannot or ())
     block = {"label": REFERRERS_LABEL, "source": SOURCE, "as_of": None, "sites": [], "cannot_say": None}
     if not records:
         block["cannot_say"] = "site_visits_unreadable" if cannot else "site_visits_not_imported"
         return block
     block["as_of"] = max((r.get("generated_at") for r in records if r.get("generated_at")), default=None)
-    daily, _dropped = daily_index(records)
-    latest_day = max((_day(d) for days in daily.values() for d in days), default=None)
-    end = max(d for d in (last_due_day(now), latest_day) if d is not None)
-    start = end - datetime.timedelta(days=REFERRERS_DAYS - 1)
-    for plan in plan_sites(records, start, end, now, key="referrers"):
-        if plan["mode"] == "wide":
-            record = plan["record"]
-            site = {"site": record.get("site"), "window": record.get("window"), "window_basis": BASIS_LATEST,
-                    "generated_at": record.get("generated_at"), "referrers": [],
-                    "dropped": {"rows": 0, "sessions": 0}, "stale": bool(record.get("newer_unavailable")),
-                    "cannot_say": None}
-            refs = record.get("referrers")
-        else:
-            span = plan["span"]
-            used = span["records"]
-            site = {"site": plan["site"], "window": {"from": start.isoformat(), "to": end.isoformat()},
-                    "window_basis": BASIS_RECENT_DAILY, **_span_keys(span),
-                    "generated_at": max((r.get("generated_at") for r in used if r.get("generated_at")), default=None),
-                    "referrers": [], "dropped": {"rows": 0, "sessions": 0}, "stale": False, "cannot_say": None}
-            if plan["mixed_windows"]:
-                site["mixed_windows"] = plan["mixed_windows"]
-            refs = [row for r in used for row in r["referrers"]] if used else None
-            if not used:
-                site["cannot_say"] = "referrers_unavailable" if span["days_unavailable"] else "no_daily_in_window"
-                block["sites"].append(site)
-                continue
+    for record in records:
+        site = {"site": record.get("site"), "window": record.get("window"),
+                "generated_at": record.get("generated_at"), "referrers": [],
+                "dropped": {"rows": 0, "sessions": 0}, "stale": bool(record.get("newer_unavailable")),
+                "cannot_say": None}
+        refs = record.get("referrers")
         if refs is None:
             site["cannot_say"] = "referrers_unavailable"
             block["sites"].append(site)
@@ -629,6 +606,48 @@ def referrers_block(project, records=None, cannot=None, *, now=None) -> dict:
         block["sites"].append(site)
     if cannot:
         block["read_problems"] = sorted(cannot)
+    return block
+
+
+def site_referrers(project, *, now=None) -> dict:
+    """dashboard の「サイトへの参照元」（5.11.0 段 8）。日ごとの足し算はここで組み、`referrers_block` に渡す。
+
+    日ごとの控えのあるサイトは、ここ `REFERRERS_DAYS` 日（終わりは D-2・それより新しい日の控えがあればその日）の
+    日ごとの控えの `referrers` を 1 つの控えにつないで渡す（host ごとの足し算は `referrers_block` がする・
+    `window_basis: recent_days_daily`・`days_missing` など）。日ごとの控えが無いサイトは今までどおり幅のある窓の
+    最新（`window_basis: latest_window`）。
+    """
+    now = now if now is not None else jst.now_jst()
+    records, cannot = read_all(project)
+    if not records:
+        return referrers_block(project, [], cannot)
+    daily, _dropped = daily_index(records)
+    latest_day = max((_day(d) for days in daily.values() for d in days), default=None)
+    end = max(d for d in (last_due_day(now), latest_day) if d is not None)
+    start = end - datetime.timedelta(days=REFERRERS_DAYS - 1)
+    plans = plan_sites(records, start, end, now, key="referrers")
+    joined = []
+    for plan in plans:
+        if plan["mode"] == "wide":
+            joined.append(plan["record"])
+            continue
+        used = plan["span"]["records"]
+        joined.append({"site": plan["site"], "window": {"from": start.isoformat(), "to": end.isoformat()},
+                       "generated_at": max((r.get("generated_at") for r in used if r.get("generated_at")),
+                                           default=None),
+                       "referrers": [row for r in used for row in r["referrers"]] if used else None})
+    block = referrers_block(project, joined, cannot)
+    for plan, site in zip(plans, block["sites"]):
+        if plan["mode"] == "wide":
+            site["window_basis"] = BASIS_LATEST
+            continue
+        span = plan["span"]
+        site["window_basis"] = BASIS_RECENT_DAILY
+        site.update(_span_keys(span))
+        if plan["mixed_windows"]:
+            site["mixed_windows"] = plan["mixed_windows"]
+        if not span["records"] and not span["days_unavailable"]:
+            site["cannot_say"] = "no_daily_in_window"   # 日ごとの控えはあるが、この窓には 1 日も無い
     return block
 
 

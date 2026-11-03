@@ -8,6 +8,7 @@ hub は日ごとの窓（`window.from == window.to`・終わり D-2）を 1 サ�
   - 3 日分の日ごとの控えを足す（`window_basis: thread_period_daily`）。
   - 同じサイトの同じ日の控えが 2 つあれば、`generated_at` の新しい 1 つだけ（二重に足さない）。
   - 控えの無い日は `days_missing`（数だけ・0 と混ぜない）。D-2 より後の日は `days_pending` に分ける。
+    取れなかった日（rows が null）は `days_unavailable`。
   - 幅のある窓（7 日）の控えだけなら今までどおり（`window_basis: latest_window`）。
   - 混ざったとき: 期間に日ごとの控えがあるサイトは日ごとだけを足し、幅のある窓は使わず `mixed_windows`。
   - 糸の期間の外の日は足さない（閉じた糸）。
@@ -126,6 +127,19 @@ def test_D2より後の日はdays_pending_来ていればその日も足す(flow
     _import(_hub_day(tmp_path, "2026-10-27", [_row("th-flow-01", 10)]))
     block = _show()
     assert block["sessions"] == 17 and (_site(block)["days_covered"], _site(block)["days_pending"]) == (8, 1)
+
+
+def test_取れなかった日はdays_unavailable_欠けとも0とも混ぜない(flow, tmp_path):
+    _import(_hub_day(tmp_path, "2026-10-21", [_row("th-flow-01", 4)]))
+    # hub は取れなかった日を rows・referrers とも null と unknown_reason で送る（ga4.py build_site_visits）。
+    _import(_visits(tmp_path, None, frm="2026-10-22", to="2026-10-22", site="kopicha", reason="ga4_error",
+                    name="failed.json"))
+    block = _show()
+    site = _site(block)
+    assert site["sessions"] == 4 and (site["days_covered"], site["days_unavailable"], site["days_missing"]) == (1, 1, 5)
+    assert block["partial_sites"] == ["kopicha"]
+    ref = _site(dashboard_cli.build(PROJECT, now=NOW)["site_referrers"])
+    assert ref["days_unavailable"] == 1 and ref["days_covered"] == 1
 
 
 def test_古い7日の窓だけなら今までどおり(flow, tmp_path):

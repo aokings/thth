@@ -811,7 +811,8 @@ def _kpi(attention, pending, schedule, summary, previous, now):
 def _site_referrers(project, now=None):
     from . import site_visits
     try:
-        return site_visits.referrers_block(project, now=now)
+        # 5.11.0 段 8: 日ごとの控えは呼ぶ側（site_referrers）で足してから referrers_block に渡す。
+        return site_visits.site_referrers(project, now=now)
     except Exception:  # noqa: BLE001 — 控えが読めなくても dashboard は止めない
         return {"label": site_visits.REFERRERS_LABEL, "source": site_visits.SOURCE, "as_of": None,
                 "sites": [], "cannot_say": "site_visits_unreadable"}
